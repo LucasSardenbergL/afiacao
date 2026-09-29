@@ -125,10 +125,12 @@ if [ "${1:-}" = "--falsificar" ]; then
   sem_cor() { LC_ALL=C sed "s/${esc}\[[0-9;]*m//g" "$1"; }
   # Asserts EXECUTADOS numa rodada (ok + FALHA): o recibo de que a suíte rodou inteira.
   asserts() { LC_ALL=C grep -cE '^  (ok +|FALHA )' "$1" || true; }
-  # Erro de execução do bash/awk no ALVO: no log (o `run` junta o stderr dele e o `quero` que falha
-  # o despeja) e no que ERROS_DO_ALVO recolhe das chamadas que a suíte normal manda para /dev/null
-  # (o --resumo MEDE o stdout: stderr misturado reprovaria por ruído de ambiente).
-  erros_exec() { cat "$1" "$1.stderr" 2>/dev/null | LC_ALL=C grep -cE 'unbound variable|command not found|syntax error|bad substitution|awk: ' || true; }
+  # A camada 4: o stderr INTEIRO do alvo, recolhido pelo EMBRULHO em cada rodada — o do `run` (que a
+  # suíte mescla na saída e o `quero` que falha despeja CORTADO em 220 caracteres) e o do --resumo
+  # (que ela manda para /dev/null: o --resumo MEDE o stdout) —, contra o do controle, por linha. O
+  # erro do programa awk do alvo deixa de precisar de lugar numa lista-negra.
+  # shellcheck source=scripts/lib/falsificacao-stderr.sh disable=SC1091
+  . "$here/lib/falsificacao-stderr.sh"
   vermelhos() { { LC_ALL=C grep -Eo '^  FALHA [A-Z]+[0-9]+ ' "$1" || true; } | LC_ALL=C awk '{ printf "%s ", $2 }'; }
 
   # sabota <descricao> <regra-que-deve-quebrar> <expressao-sed>
@@ -176,10 +178,11 @@ if [ "${1:-}" = "--falsificar" ]; then
   for loc in C pt_BR.UTF-8; do
     ctl="$tmp/controle.$loc.log"
     : > "$ctl.stderr"
-    LC_ALL="$loc" ORFAOS_ALVO="$controle" ERROS_DO_ALVO="$ctl.stderr" bash "$0" >"$ctl.cru" 2>&1; rc=$?
+    emb_alvo="$(embrulha_alvo "$controle" "$ctl.stderr")" || { falha "nao consegui embrulhar o controle"; exit 1; }
+    LC_ALL="$loc" ORFAOS_ALVO="$emb_alvo" bash "$0" >"$ctl.cru" 2>&1; rc=$?
     sem_cor "$ctl.cru" > "$ctl"
     if [ "$rc" -eq 0 ] && [ "$(asserts "$ctl")" -gt 0 ]; then
-      printf '  \033[32mok\033[0m    [%-11s] controle (sem sabotagem) -> VERDE (%s asserts)\n' "$loc" "$(asserts "$ctl")"
+      printf '  \033[32mok\033[0m    [%-11s] controle (sem sabotagem) -> VERDE (%s asserts; %s)\n' "$loc" "$(asserts "$ctl")" "$(linha_de_base "$ctl")"
     else
       falha "[$loc] controle SEM sabotagem ja esta VERMELHO (exit $rc, $(asserts "$ctl") asserts) — sem linha de base, falsificar nao prova nada"
       falhou=1
@@ -260,8 +263,9 @@ if [ "${1:-}" = "--falsificar" ]; then
   #   1. a sabotagem APLICOU (as travas de aplica());
   #   2. a suíte rodou INTEIRA (nº de asserts = o do controle: aborto no meio não é assert);
   #   3. CADA assert declarado está VERDE no controle e VERMELHO aqui (o mesmo assert virou);
-  #   4. nenhum erro de execução do bash/awk que o controle não tem — o alvo que morre no ramo do
-  #      assert derruba o assert certo por CRASH, não por julgamento.
+  #   4. nenhuma linha de erro que o controle não tem (`camada4`: o stderr INTEIRO do alvo, por linha
+  #      normalizada) — o alvo que morre no ramo do assert derruba o assert certo por CRASH, não por
+  #      julgamento, e o erro de ferramenta (o awk inclusive) não está em lista-negra nenhuma.
   # Nome repetido rodaria a mesma mutação duas vezes (e inflaria o recibo); `|` (OU) não é
   # suportado por este juiz: os dois greps poderiam casar MEMBROS diferentes (Codex, 2026-09-27).
   # shellcheck disable=SC2086  # a divisão em palavras da lista é o ponto
@@ -286,7 +290,8 @@ if [ "${1:-}" = "--falsificar" ]; then
     for loc in C pt_BR.UTF-8; do
       ctl="$tmp/controle.$loc.log"; log="$tmp/sabotada-$sab.$loc.log"
       : > "$log.stderr"
-      LC_ALL="$loc" ORFAOS_ALVO="$copia" ERROS_DO_ALVO="$log.stderr" bash "$0" >"$log.cru" 2>&1; rc=$?
+      emb_alvo="$(embrulha_alvo "$copia" "$log.stderr")" || { falha "[$loc] \"$desc\": nao consegui embrulhar a copia"; falhou=1; continue; }
+      LC_ALL="$loc" ORFAOS_ALVO="$emb_alvo" bash "$0" >"$log.cru" 2>&1; rc=$?
       sem_cor "$log.cru" > "$log"
       if [ "$rc" -eq 0 ]; then
         falha "[$loc] \"$desc\" passou VERDE — a suite nao cobre: $regra"; falhou=1; continue
@@ -301,8 +306,9 @@ if [ "${1:-}" = "--falsificar" ]; then
       if [ "$(asserts "$log")" != "$(asserts "$ctl")" ]; then
         falha "[$loc] \"$desc\": a suite NAO rodou inteira ($(asserts "$log") de $(asserts "$ctl") asserts) — vermelho de aborto, nao de assert"
         falhou=1
-      elif [ "$(erros_exec "$log")" != "$(erros_exec "$ctl")" ]; then
-        falha "[$loc] \"$desc\": vermelha com ERRO de execucao no alvo — o assert caiu por crash, nao por julgamento"
+      elif novas="$(camada4 "$sab" "$log" "$ctl" "$copia" "$controle")"; [ -n "$novas" ]; then
+        falha "[$loc] \"$desc\": vermelha com erro que o CONTROLE nao tem — o assert caiu por crash, nao por julgamento"
+        printf '%s\n' "$novas" | head -3 | LC_ALL=C sed 's/^/       /'
         falhou=1
       elif [ -n "$faltam" ]; then
         falha "[$loc] \"$desc\": vermelha, mas o assert declarado NAO virou (verde no controle -> vermelho aqui):$faltam · vermelhos: $(vermelhos "$log")"
@@ -394,8 +400,8 @@ echo "── --resumo: 1 linha pro hook, SILÊNCIO quando não há nada ──"
 # então qualquer ruído de ambiente no stderr as reprova sozinho. `grep -qF` é
 # imune a isso; contagem e igualdade não são. Descartar o stderr não cega o
 # teste: script quebrado devolve stdout vazio, que reprova em ambas.
-r_com="$(PATH="$tmp:$PATH" PS_FIXTURE="$tmp/fix-real.txt" bash "$ALVO" --resumo 2>>"${ERROS_DO_ALVO:-/dev/null}")"
-r_sem="$(PATH="$tmp:$PATH" PS_FIXTURE="$tmp/fix-vazio.txt" bash "$ALVO" --resumo 2>>"${ERROS_DO_ALVO:-/dev/null}")"
+r_com="$(PATH="$tmp:$PATH" PS_FIXTURE="$tmp/fix-real.txt" bash "$ALVO" --resumo 2>/dev/null)"
+r_sem="$(PATH="$tmp:$PATH" PS_FIXTURE="$tmp/fix-vazio.txt" bash "$ALVO" --resumo 2>/dev/null)"
 quero "O19 resumo cita o pid culpado" "$r_com" "91234"
 if [ "$(printf '%s' "$r_com" | grep -c .)" -eq 1 ]; then ok "O20 resumo tem exatamente 1 linha"
 else falha "O20 resumo tem $(printf '%s' "$r_com" | grep -c .) linhas — o hook vira parede de texto"; fi
@@ -410,7 +416,7 @@ echo "── o relato é ESTÁVEL entre locales (o ps emite 68,4 sob pt_BR) ─�
 # reprovava por ruído de ambiente, com o relato idêntico. Ironia do #1483: a
 # asserção que existe pra não variar com o ambiente variava com o ambiente.
 # `-n` é a trava que impede o par vazio=vazio de passar por "estável".
-relato() { LC_ALL="$1" PATH="$tmp:$PATH" PS_FIXTURE="$tmp/fix-real.txt" bash "$ALVO" --resumo 2>>"${ERROS_DO_ALVO:-/dev/null}"; }
+relato() { LC_ALL="$1" PATH="$tmp:$PATH" PS_FIXTURE="$tmp/fix-real.txt" bash "$ALVO" --resumo 2>/dev/null; }
 n_c="$(relato C)"
 n_br="$(relato pt_BR.UTF-8)"
 if [ -n "$n_c" ] && [ "$n_c" = "$n_br" ]; then ok "O22 mesma linha sob C e pt_BR.UTF-8"
@@ -447,7 +453,7 @@ mem_dir() {  # mem_dir <nome> <consecutiveFailures|-> [porta] → cria o diretó
 resumo_mem() {  # resumo_mem <mem_dir> <CURL_MODO> [fixture] → --resumo com a sonda registrada em CURL_LOG
   rm -f "$tmp/curl.log"
   CLAUDE_MEM_DATA_DIR="$1" CURL_MODO="$2" CURL_LOG="$tmp/curl.log" \
-    PATH="$tmp:$PATH" PS_FIXTURE="${3:-$tmp/fix-mem.txt}" bash "$ALVO" --resumo 2>>"${ERROS_DO_ALVO:-/dev/null}"
+    PATH="$tmp:$PATH" PS_FIXTURE="${3:-$tmp/fix-mem.txt}" bash "$ALVO" --resumo 2>/dev/null
 }
 RECEITA="docs/historico/claude-mem-worker-vivo-mas-surdo.md"
 
@@ -488,7 +494,7 @@ nao_quero "O40 sem contador: NAO aponta a receita (condicao nao provada)" "$r_se
 mkdir -p "$tmp/bin-sem-curl"
 ln -sf "$tmp/ps" "$tmp/bin-sem-curl/ps"
 for t in awk grep sed cat; do ln -sf "$(command -v "$t")" "$tmp/bin-sem-curl/$t"; done   # cat: o stub do ps usa
-r_semcurl="$(CLAUDE_MEM_DATA_DIR="$(mem_dir sem-curl 5)" PATH="$tmp/bin-sem-curl" PS_FIXTURE="$tmp/fix-mem.txt" "$BASH" "$ALVO" --resumo 2>>"${ERROS_DO_ALVO:-/dev/null}")"
+r_semcurl="$(CLAUDE_MEM_DATA_DIR="$(mem_dir sem-curl 5)" PATH="$tmp/bin-sem-curl" PS_FIXTURE="$tmp/fix-mem.txt" "$BASH" "$ALVO" --resumo 2>/dev/null)"
 r_quebrado="$(resumo_mem "$(mem_dir quebrado 5)" quebrado)"
 for par in "A|curl ausente|$r_semcurl" "Q|curl quebrado (rc 2)|$r_quebrado"; do
   tag="${par%%|*}"; par="${par#*|}"; nome="${par%%|*}"; r="${par#*|}"   # ID: CA<n> / CQ<n>
@@ -526,7 +532,7 @@ if [ "$(grep -c . "$tmp/curl.log" 2>/dev/null)" = "1" ]; then ok "O47 dois orfao
 else falha "O47 dois orfaos: esperava 1 chamada do curl, log: $(tr '\n' '|' < "$tmp/curl.log" 2>/dev/null)"; fi
 
 echo "── o relatório (wt-status) também carrega o discriminador ──"
-rel_mem="$(CLAUDE_MEM_DATA_DIR="$(mem_dir relatorio 5)" CURL_MODO=surdo PATH="$tmp:$PATH" PS_FIXTURE="$tmp/fix-mem.txt" bash "$ALVO" 2>>"${ERROS_DO_ALVO:-/dev/null}")"
+rel_mem="$(CLAUDE_MEM_DATA_DIR="$(mem_dir relatorio 5)" CURL_MODO=surdo PATH="$tmp:$PATH" PS_FIXTURE="$tmp/fix-mem.txt" bash "$ALVO" 2>/dev/null)"
 quero "O48 relatorio: diz SURDO"        "$rel_mem" "SURDO"
 quero "O49 relatorio: aponta a receita" "$rel_mem" "$RECEITA"
 
@@ -538,7 +544,7 @@ echo "── curl REAL contra porta fechada: as flags existem, e 'recusada' é S
 if command -v curl >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1; then
   porta_livre="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()' 2>/dev/null)"
   mkdir -p "$tmp/soh-ps"; ln -sf "$tmp/ps" "$tmp/soh-ps/ps"
-  r_real="$(CLAUDE_MEM_DATA_DIR="$(mem_dir real 5 "${porta_livre:-1}")" PATH="$tmp/soh-ps:$PATH" PS_FIXTURE="$tmp/fix-mem.txt" bash "$ALVO" --resumo 2>>"${ERROS_DO_ALVO:-/dev/null}")"
+  r_real="$(CLAUDE_MEM_DATA_DIR="$(mem_dir real 5 "${porta_livre:-1}")" PATH="$tmp/soh-ps:$PATH" PS_FIXTURE="$tmp/fix-mem.txt" bash "$ALVO" --resumo 2>/dev/null)"
   quero     "O50 curl real, porta ${porta_livre:-1} fechada: SURDO (curl 7 = recusada)" "$r_real" "SURDO"
   quero     "O51 curl real: a receita sai (contador 5)"                                 "$r_real" "$RECEITA"
   nao_quero "O52 curl real: NAO caiu em 'nao sondei' (flag invalida?)"                 "$r_real" "nao sondei"

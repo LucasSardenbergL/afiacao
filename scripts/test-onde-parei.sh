@@ -135,9 +135,12 @@ if [ "${1:-}" = "--falsificar" ]; then
 
   # Asserts EXECUTADOS numa rodada da suíte (✅ + ❌): o recibo de que ela rodou inteira.
   asserts() { LC_ALL=C grep -cE '^  (✅|❌) ' "$1" || true; }
-  # Erro de execução do BASH na sonda — o `caso`/`contem` que falha despeja a saída dela.
-  erros_bash() { LC_ALL=C grep -cE 'unbound variable|command not found|syntax error|bad substitution' "$1" || true; }
   vermelhos() { { LC_ALL=C grep -Eo '^  ❌ P[0-9]+[a-z]? ' "$1" || true; } | LC_ALL=C awk '{ printf "%s ", $2 }'; }
+  # A camada 4 (o stderr INTEIRO da sonda, por linha, contra o do controle) e o embrulho que o
+  # recolhe: a suíte roda a sonda com `2>&1` DENTRO da saída que os asserts julgam, e o log só a
+  # mostrava quando um assert caía — o stderr de toda chamada chegava ao juiz por acaso.
+  # shellcheck source=scripts/lib/falsificacao-stderr.sh disable=SC1091
+  . "$here/lib/falsificacao-stderr.sh"
 
   # ── CONTROLE: verde ANTES do primeiro sed ─────────────────────────────────
   # "Ficou vermelho" só é informação se existir um verde do qual sair. Sem esta
@@ -150,8 +153,10 @@ if [ "${1:-}" = "--falsificar" ]; then
   # quantos asserts a suíte executa, e que o assert declarado SABE ficar verde.
   controle="$raiz/controle-sonda.sh"; ctl="$raiz/controle.log"
   cp "$SONDA" "$controle"; chmod +x "$controle"
-  if SONDA_OVERRIDE="$controle" bash "$0" >"$ctl" 2>&1; then
-    ok "controle (copia SEM sabotagem) -> VERDE ($(asserts "$ctl") asserts)"
+  : > "$ctl.stderr"
+  emb_ctl="$(embrulha_alvo "$controle" "$ctl.stderr")" || { ruim "nao consegui embrulhar o controle"; exit 1; }
+  if SONDA_OVERRIDE="$emb_ctl" bash "$0" >"$ctl" 2>&1; then
+    ok "controle (copia SEM sabotagem) -> VERDE ($(asserts "$ctl") asserts; $(linha_de_base "$ctl"))"
   else
     ruim "controle SEM sabotagem ja esta VERMELHO — sem linha de base, sabotar nao prova nada"
   fi
@@ -238,8 +243,9 @@ if [ "${1:-}" = "--falsificar" ]; then
   #   1. a sabotagem APLICOU (as travas de aplica());
   #   2. a suíte rodou INTEIRA (nº de asserts = o do controle: aborto no meio não é assert);
   #   3. CADA assert declarado está VERDE no controle e VERMELHO aqui (o mesmo assert virou);
-  #   4. nenhum erro de execução do bash que o controle não tem — a sonda que morre de `set -u`
-  #      no ramo do assert derruba o assert certo por CRASH, não por julgamento.
+  #   4. nenhuma linha de erro que o controle não tem (`camada4`): o stderr INTEIRO da sonda, por
+  #      linha normalizada — a sonda que morre de `set -u` no ramo do assert derruba o assert certo
+  #      por CRASH, não por julgamento, e o erro de FERRAMENTA não está em lista-negra nenhuma.
   # Nome repetido rodaria a mesma mutação duas vezes (e inflaria o recibo); `|` (OU) não é
   # suportado por este juiz: os dois greps poderiam casar MEMBROS diferentes (Codex, 2026-09-27).
   # shellcheck disable=SC2086  # a divisão em palavras da lista é o ponto
@@ -253,8 +259,9 @@ if [ "${1:-}" = "--falsificar" ]; then
       ruim "\"$sab\": na lista SABOTAGENS e SEM registro — nada foi sabotado"; continue
     fi
     aplica || continue
-    log="$raiz/sabotada-$sab.log"
-    if SONDA_OVERRIDE="$copia" bash "$0" >"$log" 2>&1; then
+    log="$raiz/sabotada-$sab.log"; : > "$log.stderr"
+    emb="$(embrulha_alvo "$copia" "$log.stderr")" || { ruim "\"$desc\": nao consegui embrulhar a copia"; continue; }
+    if SONDA_OVERRIDE="$emb" bash "$0" >"$log" 2>&1; then
       ruim "\"$desc\" passou VERDE — a suite NAO cobre: $regra"; continue
     fi
     # Daqui em diante a rodada saiu ≠0 — o que, sozinho, não prova NADA.
@@ -266,9 +273,9 @@ if [ "${1:-}" = "--falsificar" ]; then
     done
     if [ "$(asserts "$log")" != "$(asserts "$ctl")" ]; then
       ruim "\"$desc\": a suite NAO rodou inteira ($(asserts "$log") de $(asserts "$ctl") asserts) — vermelho de aborto, nao de assert"
-    elif [ "$(erros_bash "$log")" != "$(erros_bash "$ctl")" ]; then
-      ruim "\"$desc\": vermelha com ERRO de execucao do bash na sonda — o assert caiu por crash, nao por julgamento"
-      { LC_ALL=C grep -m2 -E 'unbound variable|command not found|syntax error|bad substitution' "$log" || true; } | LC_ALL=C sed 's/^/       /'
+    elif novas="$(camada4 "$sab" "$log" "$ctl" "$copia" "$controle")"; [ -n "$novas" ]; then
+      ruim "\"$desc\": vermelha com erro que o CONTROLE nao tem — o assert caiu por crash, nao por julgamento"
+      printf '%s\n' "$novas" | head -3 | LC_ALL=C sed 's/^/       /'
     elif [ -n "$faltam" ]; then
       ruim "\"$desc\": vermelha, mas o assert declarado NAO virou (verde no controle -> vermelho aqui):$faltam"
       printf '       vermelhos desta rodada: %s\n' "$(vermelhos "$log")"

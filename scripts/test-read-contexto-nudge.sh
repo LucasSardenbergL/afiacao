@@ -49,10 +49,11 @@ if [ "${1:-}" = "--falsificar" ]; then
   sem_cor() { LC_ALL=C sed "s/${esc}\[[0-9;]*m//g" "$1"; }
   # Asserts EXECUTADOS numa rodada (ok + FALHA): o recibo de que a suíte rodou inteira.
   asserts() { LC_ALL=C grep -cE '^  (ok +|FALHA )' "$1" || true; }
-  # Erro de execução do BASH no hook. A suíte normal joga o stderr dele fora (`2>/dev/null`: o
-  # contrato é o stdout); aqui ERROS_DO_ALVO o recolhe num arquivo por rodada — sem isso, o hook
-  # que morre de `set -u` no ramo de um assert CALA, e o silêncio passa por julgamento.
-  erros_exec() { cat "$1" "$1.stderr" 2>/dev/null | LC_ALL=C grep -cE 'unbound variable|command not found|syntax error|bad substitution' || true; }
+  # A camada 4: o stderr INTEIRO do hook, recolhido pelo EMBRULHO do alvo em cada rodada, contra o do
+  # controle, por linha. A suíte normal joga esse stderr fora (`2>/dev/null`: o contrato é o stdout),
+  # e o hook que morre de `set -u` no ramo de um assert CALA — o silêncio passaria por julgamento.
+  # shellcheck source=scripts/lib/falsificacao-stderr.sh disable=SC1091
+  . "$here/lib/falsificacao-stderr.sh"
   vermelhos() { { LC_ALL=C grep -Eo '^  FALHA [A-Za-z]+[0-9]+[a-z]? ' "$1" || true; } | LC_ALL=C awk '{ printf "%s ", $2 }'; }
 
   # Locale UTF-8 por SONDA POSITIVA, não por nome fixo (mesmo padrão de test-claude-md-budget.sh).
@@ -129,10 +130,11 @@ if [ "${1:-}" = "--falsificar" ]; then
   cp "$HOOK" "$controle"
   for loc in C "$utf8"; do
     ctl="$tmp/controle.$loc.log"; : > "$ctl.stderr"
-    LC_ALL="$loc" HOOK_SOB_TESTE="$controle" ERROS_DO_ALVO="$ctl.stderr" bash "$0" >"$ctl.cru" 2>&1; rc=$?
+    emb_alvo="$(embrulha_alvo "$controle" "$ctl.stderr")" || { printf '  FALHA nao consegui embrulhar o controle\n'; exit 1; }
+    LC_ALL="$loc" HOOK_SOB_TESTE="$emb_alvo" bash "$0" >"$ctl.cru" 2>&1; rc=$?
     sem_cor "$ctl.cru" > "$ctl"
     if [ "$rc" -eq 0 ] && [ "$(asserts "$ctl")" -gt 0 ]; then
-      printf '  \033[32mok\033[0m   [%-11s] controle (sem sabotagem) -> VERDE (%s asserts)\n' "$loc" "$(asserts "$ctl")"
+      printf '  \033[32mok\033[0m   [%-11s] controle (sem sabotagem) -> VERDE (%s asserts; %s)\n' "$loc" "$(asserts "$ctl")" "$(linha_de_base "$ctl")"
     else
       printf '  \033[31mFALHA\033[0m [%s] controle SEM sabotagem ja esta VERMELHO (exit %s, %s asserts) — sem linha de base, falsificar nao prova nada\n' "$loc" "$rc" "$(asserts "$ctl")"
       falhou=1
@@ -183,8 +185,9 @@ if [ "${1:-}" = "--falsificar" ]; then
   #   1. a sabotagem APLICOU (as travas de aplica());
   #   2. a suíte rodou INTEIRA (nº de asserts = o do controle: aborto no meio não é assert);
   #   3. CADA assert declarado está VERDE no controle e VERMELHO aqui (o mesmo assert virou);
-  #   4. nenhum erro de execução do bash no hook que o controle não tem (ERROS_DO_ALVO) — o hook
-  #      que morre no ramo do assert derruba o assert certo por CRASH, não por julgamento.
+  #   4. nenhuma linha de erro que o controle não tem (`camada4`: o stderr INTEIRO do hook, por linha
+  #      normalizada) — o hook que morre no ramo do assert derruba o assert certo por CRASH, não por
+  #      julgamento, e o erro de ferramenta não está em lista-negra nenhuma.
   # Nome repetido rodaria a mesma mutação duas vezes (e inflaria o recibo); `|` (OU) não é
   # suportado por este juiz: os dois greps poderiam casar MEMBROS diferentes (Codex, 2026-09-27).
   # shellcheck disable=SC2086  # a divisão em palavras da lista é o ponto
@@ -200,7 +203,8 @@ if [ "${1:-}" = "--falsificar" ]; then
     aplica || continue
     for loc in C "$utf8"; do
       ctl="$tmp/controle.$loc.log"; log="$tmp/sabotada-$sab.$loc.log"; : > "$log.stderr"
-      LC_ALL="$loc" HOOK_SOB_TESTE="$copia" ERROS_DO_ALVO="$log.stderr" bash "$0" >"$log.cru" 2>&1; rc=$?
+      emb_alvo="$(embrulha_alvo "$copia" "$log.stderr")" || { printf '  FALHA [%s] "%s": nao consegui embrulhar a copia\n' "$loc" "$desc"; falhou=1; continue; }
+      LC_ALL="$loc" HOOK_SOB_TESTE="$emb_alvo" bash "$0" >"$log.cru" 2>&1; rc=$?
       sem_cor "$log.cru" > "$log"
       if [ "$rc" -eq 0 ]; then
         printf '  \033[31mFALHA\033[0m [%s] "%s" passou VERDE — a suite nao cobre: %s\n' "$loc" "$desc" "$regra"
@@ -217,9 +221,9 @@ if [ "${1:-}" = "--falsificar" ]; then
         printf '  \033[31mFALHA\033[0m [%s] "%s": a suite NAO rodou inteira (%s de %s asserts) — vermelho de aborto, nao de assert\n' \
           "$loc" "$desc" "$(asserts "$log")" "$(asserts "$ctl")"
         falhou=1
-      elif [ "$(erros_exec "$log")" != "$(erros_exec "$ctl")" ]; then
-        printf '  \033[31mFALHA\033[0m [%s] "%s": vermelha com ERRO de execucao no hook — o assert caiu por crash, nao por julgamento\n' "$loc" "$desc"
-        { LC_ALL=C grep -m2 -E 'unbound variable|command not found|syntax error|bad substitution' "$log.stderr" || true; } | LC_ALL=C sed 's/^/       /'
+      elif novas="$(camada4 "$sab" "$log" "$ctl" "$copia" "$controle")"; [ -n "$novas" ]; then
+        printf '  \033[31mFALHA\033[0m [%s] "%s": vermelha com erro que o CONTROLE nao tem — o assert caiu por crash, nao por julgamento\n' "$loc" "$desc"
+        printf '%s\n' "$novas" | head -3 | LC_ALL=C sed 's/^/       /'
         falhou=1
       elif [ -n "$faltam" ]; then
         printf '  \033[31mFALHA\033[0m [%s] "%s": vermelha, mas o assert declarado NAO virou (verde no controle -> vermelho aqui):%s · vermelhos: %s\n' \
@@ -260,7 +264,7 @@ run() {  # $1=file_path $2=session $3=limit(0=ausente) $4=offset(0=ausente)
       tool_input:({file_path:$f}
                   + (if $l > 0 then {limit:$l} else {} end)
                   + (if $o > 0 then {offset:$o} else {} end))}' \
-  | bash "$HOOK" 2>>"${ERROS_DO_ALVO:-/dev/null}"
+  | bash "$HOOK" 2>/dev/null
 }
 
 fail=0
@@ -396,7 +400,7 @@ _porta() {  # $1=nome do contrato  $2=corpo do stub de `stat`
         tool_input:({file_path:$f}
                     + (if $l > 0 then {limit:$l} else {} end)
                     + (if $o > 0 then {offset:$o} else {} end))}' \
-    | env PATH="$d:$PATH" STAT_REAL="$STAT_REAL" bash "$HOOK" 2>>"${ERROS_DO_ALVO:-/dev/null}"
+    | env PATH="$d:$PATH" STAT_REAL="$STAT_REAL" bash "$HOOK" 2>/dev/null
   }
 
   # (i) ainda DETECTA a releitura de verdade. Sem este caso, um mtime constante
@@ -457,7 +461,7 @@ check "R13 imagem → silêncio" silencio "$(run "$imagem" s13)"
 
 # 14. outra ferramenta no payload → silêncio (defesa se o matcher mudar)
 check "R14 tool_name != Read → silêncio" silencio \
-  "$(jq -nc --arg f "$grande" '{hook_event_name:"PreToolUse",tool_name:"Grep",session_id:"s14",tool_input:{file_path:$f}}' | bash "$HOOK" 2>>"${ERROS_DO_ALVO:-/dev/null}")"
+  "$(jq -nc --arg f "$grande" '{hook_event_name:"PreToolUse",tool_name:"Grep",session_id:"s14",tool_input:{file_path:$f}}' | bash "$HOOK" 2>/dev/null)"
 
 # 15. o aviso de volume sai UMA VEZ por arquivo/sessão — na 2ª vez quem fala é a
 #     releitura, senão o mesmo arquivo grande gritaria volume a cada leitura.
