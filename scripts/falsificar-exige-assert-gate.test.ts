@@ -255,7 +255,9 @@ describe('R3 — cada falsificar=<n> do núcleo tem juiz, e o juiz tem as âncor
   });
 
   it('juiz registrado para arquivo que o fiscal não leu → R3 (renomear não apaga o dever)', () => {
-    expect(julgarNucleo([], new Map(), juizes)).toEqual([expect.objectContaining({ regra: 'R3', arquivo: 'db/a.sh' })]);
+    expect(julgarNucleo([], new Map(), juizes)).toEqual([
+      expect.objectContaining({ regra: 'R3', arquivo: 'db/a.sh', detalhe: expect.stringContaining('juiz registrado para arquivo que o fiscal não leu') }),
+    ]);
   });
 
   it('cada juiz REAL do núcleo: remover QUALQUER âncora do arquivo real fica vermelho', () => {
@@ -368,7 +370,9 @@ describe('R4 — todo alvo do test:falsificacao usa o idioma limpo ou tem juiz, 
 
   it('alvo que o fiscal NÃO leu (slug com nome errado) → R4 — rodar arquivo inexistente não é estar julgado', () => {
     const r = analisar([{ caminho: 'scripts/test-a.sh', fonte: LACO_REFERENCIA }], null, {}, pacoteCom('for t in a zz; do bash scripts/test-$t.sh --falsificar; done'));
-    expect(r.violacoes).toEqual([expect.objectContaining({ regra: 'R4', detalhe: expect.stringContaining('scripts/test-zz.sh') })]);
+    // a MARCA do ramo, não só o nome do alvo: o ramo "sem idioma e sem juiz" também cita o alvo, e acusaria
+    // o slug errado com o diagnóstico errado
+    expect(r.violacoes).toEqual([expect.objectContaining({ regra: 'R4', detalhe: expect.stringContaining('scripts/test-zz.sh, que o fiscal não leu') })]);
   });
 
   it('alvo TS cuja limpeza COMEU código (bloco descartado acima do teto) vira INDETERMINADO — âncora "ausente" ali seria cegueira', () => {

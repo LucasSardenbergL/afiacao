@@ -46,7 +46,7 @@ PEGA | o idioma limpo deixa de dispensar o juiz (o #2606 travaria)            | 
 PEGA | idioma COM violação dispensa o juiz                                    | s/if \(d\.listas > 0 && d\.violacoes\.length === 0\) idiomaLimpo/if (d.listas > 0) idiomaLimpo/
 PEGA | arquivo SEM lista conta como idioma limpo                              | s/if \(d\.listas > 0 && d\.violacoes/if (d.violacoes/
 PEGA | âncora sumida passa                                                    | s/if \(!limpo\.includes\(ancora\)\) \{/if (false) {/
-PEGA | juiz de arquivo não lido passa calado                                  | s/v\.push\(\{ regra: 'R3', arquivo, linha: 1, detalhe: 'juiz registrado/void ({ regra: 'R3', arquivo, linha: 1, detalhe: 'juiz registrado/
+PEGA | juiz de arquivo não lido passa calado                                  | s/v\.push\(\{ regra, arquivo, linha: 1, detalhe: 'juiz registrado/void ({ regra, arquivo, linha: 1, detalhe: 'juiz registrado/
 PEGA | falsificar=fora-do-ci vira linha julgada                               | s/falsificar=\\d\+\(\?:\\s\|\$\)/falsificar=\\S+(?:\\s|\$)/
 PEGA | linha COMENTADA do manifesto vira linha julgada                        | s/\.filter\(\(\{ l \}\) => !l\.startsWith\('\x23'\)\)/.filter(() => true)/
 
