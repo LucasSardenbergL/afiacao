@@ -87,6 +87,18 @@ if [ "${1:-}" = "--falsificar" ]; then
     sabotar S4 C5 'ramo da nuvem ignorado' 's|\[ "\${CLAUDE_CODE_REMOTE:-}" = "true" \]|false|'
     controle "$LOC"
     sabotar S5 C2 'envelope sem hookEventName (a classe do incidente)' 's|"hookEventName":"SessionStart",||g'
+    controle "$LOC"
+    sabotar S6 C7 'upgrade FALHOU fica mudo' 's|\[ "\$estado" = FALHOU \]|false|'
+    controle "$LOC"
+    sabotar S7 C8 'job parado nunca vence o prazo' 's|-gt 864000|-gt 999999999|'
+    controle "$LOC"
+    sabotar S8 C9 'status ausente lido como presente' 's|\[ ! -r "\$ST" \]|false|'
+    controle "$LOC"
+    sabotar S9 C7 'texto do status entra CRU no JSON' 's|^  LC_ALL=C tr -cd .*$|  cat|'
+    controle "$LOC"
+    sabotar S10 C11 'ultimo_ok ilegivel vira "agora"' 's|ok=0 ;;|ok=$agora ;;|'
+    controle "$LOC"
+    sabotar S11 C10 'PENDENTE aparece a cada boot' 's|      mostrar=0|      mostrar=1|'
   done
 
   echo
@@ -99,25 +111,39 @@ fail=0
 ok()   { printf '  ok   [%s] %s\n' "$1" "$2"; }
 ruim() { printf '  FAIL [%s] %s\n' "$1" "$2"; fail=1; }
 
-# HOMEs sintéticos: instalado · vazio · bin/ só com arquivo NÃO-executável · sem a skill browse.
+# HOMEs sintéticos: instalado · vazio · bin/ só com arquivo NÃO-executável · sem a skill browse; e,
+# instalados, os estados do preparo semanal do upgrade (status de scripts/gstack-auto-upgrade.sh).
+status_up() { local h="$1"; shift; mkdir -p "$h/.gstack/auto-upgrade"; printf '%s\n' "$@" > "$h/.gstack/auto-upgrade/status"; }
 novo_home() {
-  local h="$tmp/$1" s
+  local h="$tmp/$1" s agora
+  agora="$(date +%s)"
   mkdir -p "$h/.claude/skills/gstack/bin"
   case "$1" in
-    ok|sem-browse) printf '#!/bin/sh\n' > "$h/.claude/skills/gstack/bin/gstack-config"
-                   chmod +x "$h/.claude/skills/gstack/bin/gstack-config" ;;
-    bin-vazio)     printf 'nao executavel\n' > "$h/.claude/skills/gstack/bin/LEIAME" ;;
-    vazio)         rm -rf "$h/.claude" ;;
+    ok|sem-browse|up-*) printf '#!/bin/sh\n' > "$h/.claude/skills/gstack/bin/gstack-config"
+                        chmod +x "$h/.claude/skills/gstack/bin/gstack-config" ;;
+    bin-vazio)          printf 'nao executavel\n' > "$h/.claude/skills/gstack/bin/LEIAME" ;;
+    vazio)              rm -rf "$h/.claude" ;;
   esac
   for s in review investigate browse qa; do
     [ "$1" = vazio ] && continue
     [ "$1" = sem-browse ] && [ "$s" = browse ] && continue
     mkdir -p "$h/.claude/skills/$s"; printf -- '---\nname: %s\n---\n' "$s" > "$h/.claude/skills/$s/SKILL.md"
   done
+  case "$1" in
+    ok)          status_up "$h" estado=JA-EM-DIA "ultimo_ok=$agora" versao=1.91.2.0 ;;
+    # detalhe HOSTIL: aspas e barra invertida quebrariam o JSON se entrassem cruas
+    up-falhou)   status_up "$h" estado=FALHOU "ultimo_ok=$agora" versao=1.91.2.0 'detalhe=setup "quebrou" \ e seguiu' ;;
+    up-parado)   status_up "$h" estado=JA-EM-DIA "ultimo_ok=$((agora - 11 * 86400))" versao=1.91.2.0 ;;
+    up-lixo)     status_up "$h" estado=JA-EM-DIA ultimo_ok=abc versao=1.91.2.0 ;;
+    up-pendente) status_up "$h" estado=PENDENTE "ultimo_ok=$agora" versao=1.91.2.0 nova=1.91.6.0 alvo=65bfb0cabc ;;
+    up-sem-rede) status_up "$h" estado=SEM-REDE "ultimo_ok=$((agora - 2 * 86400))" versao=1.91.2.0 ;;
+  esac
   printf '%s' "$h"
 }
 H_OK="$(novo_home ok)"; H_VAZIO="$(novo_home vazio)"
 H_BIN="$(novo_home bin-vazio)"; H_BROWSE="$(novo_home sem-browse)"
+H_UP_FALHOU="$(novo_home up-falhou)"; H_UP_PARADO="$(novo_home up-parado)"; H_UP_LIXO="$(novo_home up-lixo)"
+H_UP_PENDENTE="$(novo_home up-pendente)"; H_UP_SEM_REDE="$(novo_home up-sem-rede)"; H_UP_SEM_STATUS="$(novo_home up-sem-status)"
 
 # rodar <home> <local|nuvem> → define $out e $rc
 rodar() {
@@ -189,6 +215,62 @@ rodar "$H_OK" nuvem
 if contrato C6; then
   if [ -z "$(sys)" ] && ! tem "$(ctx)" 'GSTACK-'; then ok C6 'nuvem com gstack -> silencio (mede, nao presume)'
   else ruim C6 "nuvem com gstack instalado deveria ficar em silencio: $out"; fi
+fi
+
+# ── upgrade (preparo semanal fora da sessão; scripts/gstack-auto-upgrade.sh) ──
+
+# C7 upgrade FALHOU → alto, e o detalhe HOSTIL do status chega limpo (JSON válido, texto preservado).
+rodar "$H_UP_FALHOU" local
+if contrato C7; then
+  if envelope && tem "$(sys)" 'GSTACK-UPGRADE-FALHOU' && tem "$(ctx)" 'GSTACK-UPGRADE-FALHOU' && tem "$(sys)" 'setup quebrou  e seguiu'; then
+    ok C7 'upgrade falhou -> alto, detalhe hostil sanitizado'
+  else ruim C7 "upgrade FALHOU deveria avisar alto com o detalhe limpo: $out"; fi
+fi
+
+# C8 nenhuma rodada completa em 11 dias (o job é semanal) → PARADO.
+rodar "$H_UP_PARADO" local
+if contrato C8; then
+  if envelope && tem "$(sys)" 'GSTACK-UPGRADE-PARADO'; then ok C8 'sem rodada em 11 dias -> PARADO'
+  else ruim C8 "11 dias sem rodada deveria acusar PARADO: $out"; fi
+fi
+
+# C9 gstack instalado mas SEM status → nunca rodou: ausente não é "em dia".
+rodar "$H_UP_SEM_STATUS" local
+if contrato C9; then
+  if envelope && tem "$(sys)" 'GSTACK-UPGRADE-SEM-STATUS' && tem "$(sys)" 'gstack-auto-upgrade-instalar.sh'; then
+    ok C9 'sem status -> SEM-STATUS com a instalacao'
+  else ruim C9 "status ausente deveria acusar SEM-STATUS: $out"; fi
+fi
+
+# C10 PENDENTE → o founder vê UMA vez por dia; o modelo recebe SEMPRE o como aplicar (o sha revisado).
+rodar "$H_UP_PENDENTE" local; out1="$out"; sys1="$(sys)"; ctx1="$(ctx)"
+rodar "$H_UP_PENDENTE" local
+if contrato C10; then
+  if tem "$sys1" 'GSTACK-UPGRADE-PENDENTE' && tem "$ctx1" '--aplicar 65bfb0cabc' \
+     && envelope && [ -z "$(sys)" ] && tem "$(ctx)" 'GSTACK-UPGRADE-PENDENTE' && tem "$(ctx)" '--aplicar 65bfb0cabc'; then
+    ok C10 'pendente -> founder 1x por dia, modelo sempre com o sha revisado'
+  else ruim C10 "pendente: 1a rodada deveria mostrar e a 2a calar para o founder: 1a=$out1 · 2a=$out"; fi
+fi
+
+# C11 ultimo_ok ilegível → PARADO (ausente ≠ agora).
+rodar "$H_UP_LIXO" local
+if contrato C11; then
+  if tem "$(sys)" 'GSTACK-UPGRADE-PARADO'; then ok C11 'ultimo_ok ilegivel -> PARADO'
+  else ruim C11 "ultimo_ok ilegivel deveria contar como nunca: $out"; fi
+fi
+
+# C12 SEM-REDE recente → silêncio: rede ruim num domingo não é anomalia; o prazo de 10 dias é que é.
+rodar "$H_UP_SEM_REDE" local
+if contrato C12; then
+  if [ -z "$(sys)" ] && ! tem "$(ctx)" 'GSTACK-'; then ok C12 'sem rede ha 2 dias -> silencio'
+  else ruim C12 "SEM-REDE recente deveria ficar em silencio: $out"; fi
+fi
+
+# C13 nuvem com status FALHOU no HOME → silêncio: lá não há launchd, o status não é desta máquina.
+rodar "$H_UP_FALHOU" nuvem
+if contrato C13; then
+  if [ -z "$(sys)" ] && ! tem "$(ctx)" 'GSTACK-UPGRADE'; then ok C13 'nuvem -> nao le status de upgrade'
+  else ruim C13 "nuvem nao deveria ler o status de upgrade: $out"; fi
 fi
 
 echo
