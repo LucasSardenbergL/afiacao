@@ -1016,6 +1016,13 @@ varredura de 2026-09-27 chamava os que conhecia de "já-corretos"; **três não 
 Residual comum aos de `FAIL [<id>]`: sem camada de crash — o assert declarado que inclui o rc também cai
 se o alvo MORRER no ramo dele. Registrado no motivo de cada juiz, e pendência com dono (abaixo).
 
+**O R4 no merge real.** No rebase sobre a main, o gate acusou um 18º alvo que ninguém tinha
+registrado: `[R4] package.json:87 scripts/test-gstack-auto-upgrade.sh roda no test:falsificacao sem o
+idioma SABOTAGENS limpo e sem JUIZ registrado` — o #2655 o pôs no roteiro enquanto este PR corria.
+É o caso que o R4 existe para pegar, acontecendo. Relido (o molde do `vigia-gstack`, com a rodada
+recortada ao caso-alvo por `SO_CASO`) e registrado; as âncoras do `claude-mem-saude` e do
+`vigia-gstack`, que a main também mudou, sobreviveram.
+
 **Os três afetados, medidos antes do conserto:**
 
 - **`setup-contrato`** — sonda num arquivo com um teste vermelho e um verde: o vitest lista o irmão

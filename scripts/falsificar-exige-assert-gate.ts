@@ -273,6 +273,18 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
       `      printf 'ABORTA — controle SEM sabotagem ja esta VERMELHO (LC_ALL=%s, rc=%s). Sabotar agora aprovaria qualquer coisa.\\n%s\\n' \\`,
     ],
   },
+  // Entrou no roteiro com o #2655 DURANTE este PR — e o R4 o acusou no rebase, antes de registrado:
+  // exatamente o caso que o R4 existe para pegar. Relido: o molde do vigia-gstack, recortado ao caso.
+  'scripts/test-gstack-auto-upgrade.sh': {
+    motivo:
+      'o molde do vigia-gstack: controle verde por locale (aborta sem ele), cópia que difere, e a rodada RECORTADA ao caso-alvo (SO_CASO) tem de sair exit EXATO 1 com `FAIL [<caso>]`',
+    ancoras: [
+      `    if [ "$rc" -eq 1 ] && printf '%s\\n' "$saida" | grep -F "FAIL [$caso]" >/dev/null; then`,
+      '    saida="$(LC_ALL="$LOC" SO_CASO="$caso" GSTACK_AUTO_UPGRADE_SCRIPT="$copia" bash "$0" 2>&1)"; rc=$?',
+      '    if cmp -s "$ALVO" "$copia"; then',
+      `      printf 'ABORTA — controle nao esta verde (LC_ALL=%s, rc=%s). Sabotar agora aprovaria qualquer coisa.\\n%s\\n' "$1" "$rc" "$saida"`,
+    ],
+  },
   'scripts/test-instrucoes-carregadas.sh': {
     motivo: 'o molde do vigia-gstack: controle verde por locale, cópia que difere, exit EXATO 1 + `FAIL [<caso>]`',
     ancoras: [
