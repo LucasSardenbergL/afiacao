@@ -1289,6 +1289,17 @@ chamada que força a vírgula muda; em pt_BR, TODA linha com percentual muda, e 
 recorte foi refeito. Os 9 laços novos: verdes nos dois locales (o `fecho`, 92/92), e o modo normal das
 9 suítes, que o `test:hooks` roda, também.
 
+**No rebase sobre o #2652** (as camadas sem dente do `fecho`, mergeadas antes deste PR): 3 conflitos
+no `test-fecho-edges-pendentes.sh` — o `bad()` (o recibo de término deles + o embrulho), o bloco do
+alvo e o controle (recibo + IDs únicos deles, linha de base minha) —, resolvidos por FORMA, com o
+resolvedor abortando em estrutura inesperada. O `fecho` combinado: controle com 93 asserts, recibo e
+IDs únicos, e **1 linha** de stderr do alvo, 0 de crash: `bun-quebrado: saida 1 de proposito` — o stub
+do E13d (auxiliar do grafo de imports que FALHA de propósito), repassado pelo alvo. Medida POR FORA, com
+o stderr do alvo capturado no modo normal numa sombra; a 1ª sombra, com a cópia do alvo fora da árvore,
+ficou vermelha no E13/E13b/E13d/E14b/E14b2 — o auxiliar derivado de `$0` fecha fail-closed, a mesma
+armadilha que o espelho do laço documenta — e foi refeita com o espelho. `test:falsificacao` inteiro
+sobre o rebase: exit 0.
+
 **O que mais entrou:** o `idioma-errexit-leitura` ganhou as camadas 2 (o recibo `RESULTADO` com o nº
 de asserts do controle) e 4; o limiar do `bash-contexto-nudge` julga o stderr INTEIRO do hook sabotado
 contra o do hook REAL na mesma entrada (era `/dev/null`); o `eval-diagnostico-cegueira` carrega o bloco
