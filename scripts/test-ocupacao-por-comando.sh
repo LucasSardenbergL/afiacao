@@ -325,7 +325,10 @@ if [ "${1:-}" = "--falsificar" ]; then
   declara_stderr sem_bash_tabela_normal 'TAXONOMIA-QUIETA: nenhuma chamada Bash na janela'
   declara_stderr ver_shell_descarta_alvo 'VER-SHELL n='
   declara_stderr ver_shell_default 'a --por-arquivo (modo atual: ferramenta).'
-  declara_stderr locale_nao_forcado ',0%), 0,0% da ocupacao Bash'
+  # A vírgula decimal num PERCENTUAL, em qualquer linha do relatório: medido nos dois locales — com o
+  # shell de fora em C só a chamada que força a vírgula muda; em pt_BR, TODA linha com % muda (a 1ª
+  # declaração, medida só em C, reprovou esta sabotagem no 2º locale da meta).
+  declara_stderr locale_nao_forcado ',0%' ',1%' ',2%' ',3%' ',4%' ',5%' ',6%' ',7%' ',8%' ',9%'
 
   # A rodada só conta como vermelha com as QUATRO camadas (as do sync-reprocess):
   #   1. a sabotagem APLICOU e não quebrou o alvo (as travas de aplica());

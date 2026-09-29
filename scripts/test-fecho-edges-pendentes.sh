@@ -1125,8 +1125,8 @@ if [ "${1:-}" = "--falsificar" ]; then
   for loc in C "$utf8"; do
     ctl="$logs/controle.$loc.log"
     : > "$ctl.stderr"
-    # shellcheck disable=SC2030,SC2031
     emb_alvo="$(embrulha_alvo "$controle" "$ctl.stderr")" || { printf '  FALHA nao consegui embrulhar o controle\n'; exit 1; }
+    # shellcheck disable=SC2030,SC2031
     ( export LC_ALL="$loc"; ALVO="$emb_alvo"; fail=0; suite; [ "$fail" -eq 0 ] ) > "$ctl.cru" 2>&1; rc=$?
     sem_cor "$ctl.cru" > "$ctl"
     ids_ctl="$(executados "$ctl")"
@@ -1475,8 +1475,8 @@ if [ "${1:-}" = "--falsificar" ]; then
       ctl="$logs/controle.$loc.log"; log="$logs/sabotada-$sab.$loc.log"
       # subshell de proposito: a sabotagem e o locale morrem com ela, e o ALVO global fica intacto
       : > "$log.stderr"
-      # shellcheck disable=SC2030,SC2031
       emb_alvo="$(embrulha_alvo "$copia" "$log.stderr")" || { printf '  FALHA [%s] "%s": nao consegui embrulhar a copia\n' "$loc" "$desc"; falhou=1; continue; }
+      # shellcheck disable=SC2030,SC2031
       ( export LC_ALL="$loc"; ALVO="$emb_alvo"; fail=0; suite; [ "$fail" -eq 0 ] ) > "$log.cru" 2>&1; rc=$?
       sem_cor "$log.cru" > "$log"
       if [ "$rc" -eq 0 ]; then

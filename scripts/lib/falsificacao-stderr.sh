@@ -34,7 +34,8 @@
 # alvo (`executa_t` do bash-contexto-nudge) — um arquivo estranho ali mudaria o que o alvo vê.
 embrulha_alvo() {
   local alvo="$1" dest="$2" emb="$1.embrulho.sh" cat_ rm_
-  cat_="$(command -v cat)" && rm_="$(command -v rm)" || { printf 'embrulha_alvo: sem cat/rm no PATH\n' >&2; return 2; }
+  cat_="$(command -v cat)" || { printf 'embrulha_alvo: sem cat no PATH\n' >&2; return 2; }
+  rm_="$(command -v rm)" || { printf 'embrulha_alvo: sem rm no PATH\n' >&2; return 2; }
   {
     printf '#!%s\n' "$BASH"
     printf 'alvo=%q; dest=%q; bash_=%q; cat_=%q; rm_=%q\n' "$alvo" "$dest" "$BASH" "$cat_" "$rm_"
