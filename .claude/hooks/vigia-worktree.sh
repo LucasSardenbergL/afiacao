@@ -131,7 +131,8 @@ fi
 # em SILÊNCIO; e em 2026-09-25 o banco mostrou a memória sem gravar observação desde
 # 27/07 — 60 dias, com o worker "saudável" e o contador de falhas em 0. Os dois eixos
 # (contador de falhas de hook e prompts gravados sem observação) e seus limiares
-# vivem em scripts/claude-mem-saude.sh, num lugar só, como os blocos 4 e 5.
+# vivem em scripts/claude-mem-saude.sh, num lugar só, como os blocos 4 e 5 — e a
+# guarda do plugin DESLIGADO de propósito (enabledPlugins false: sai 0 e mudo).
 #
 # Teto de 2s, não 3: são três blocos com teto no mesmo timeout:10 do SessionStart
 # (3+3+2 = 8s no pior caso). A sonda mede 0,06s no banco real (sqlite3 -readonly
