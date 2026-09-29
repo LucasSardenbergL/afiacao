@@ -68,7 +68,9 @@ levantados por dois subagentes read-only.
 
 - **`fin_period_lock_trigger`** (money-path): para `fin_categoria_dre_mapping` o alvo é o hoje — no último
   dia de um mês já fechado, das 21h às 24h BRT, a trava LIBERAVA o UPDATE/DELETE que em SP é
-  PERIOD_LOCKED. Falha ABERTA de uma trava contábil.
+  PERIOD_LOCKED. Falha ABERTA de uma trava contábil — hoje LATENTE: `fin_fechamentos` está vazia na
+  prod (0 linhas, psql-ro 2026-09-29), nenhum mês foi fechado e a trava ainda não trava nada; o defeito
+  passa a valer no primeiro fechamento. Por isso esperar o Codex não custa nada aqui.
 - **`radar_atribuir_tarefa`**: a tarefa de retomada vencia D+8 em vez de D+7 (a `v_tarefas_estado` julga
   atraso pelo hoje de SP).
 - **`vendas_sync_semear_janela`**: a guarda anti-futuro aceitava `date_to` = amanhã de SP.
