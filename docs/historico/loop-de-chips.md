@@ -109,6 +109,25 @@ Rodar o script abaixo (`python3 arvore_chips.py 2026-09-30`) e comparar com este
 **Falsificação:** R abaixo de 0,3 mas volume de meta estável ⇒ o problema é o CONTEÚDO das sessões,
 não o clique — aí vem a poda das 5 máquinas, numa sessão única, lista fechada, sem chip filho.
 
+## Validação — o mesmo fecho com a regra antiga e com a nova (2026-09-29)
+
+Um cenário de 8 achados (PR entregue; bug no cupom apontado pelo Codex no próprio PR; bug de comissão
+fora do escopo; pr-watch atrapalhando por check não obrigatório; ideia de sensor; main vermelha por
+outra sessão; edge sem deploy; bug de DRE), rodado por agentes Fable que liam SÓ a cópia da regra:
+
+| | regra antiga | regra nova |
+|---|---|---|
+| chips | 2 | 1 |
+| veredito final | "CLIQUE OS CHIPS e então arquive" | "PODE ARQUIVAR" |
+| ideia de sensor | 📌 "vira chip se…" | descartada (meta sem incidente) |
+| bug de DRE | chip "por eliminação, não por necessidade" | issue `produto`, sem chip |
+| sentiu-se obrigado a chipar | sim | não |
+
+A 1ª rodada da regra nova achou um furo: o 2º bug de produto ficava só numa linha do resumo, que
+morre com a sessão arquivada (o texto vetava espelho para o que não fosse chip). Corrigido — todo bug
+de produto ganha issue com label; o limite de 1 é do chip — e a re-rodada confirmou: 1 chip, 2 issues
+com label, nenhum achado real sem destino durável.
+
 <details><summary>Script da medição (árvore de chips e R)</summary>
 
 ```python
