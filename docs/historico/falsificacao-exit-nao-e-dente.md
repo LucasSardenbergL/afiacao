@@ -979,6 +979,148 @@ carteira-saude 10), 24 da rodada Codex e os 8 controles do HEAD final.
 - **Sonda de locale no postmaster não prova o locale da SESSÃO:** `ALTER DATABASE … SET lc_messages`
   sobrepõe o do servidor.
 
+## As camadas sem dente do `fecho-edges` e os resíduos do Codex (2026-09-28)
+
+**Passo 0 — instância única ou classe? Classe, e varrida.** A classe é a da 2ª leva — sabotagem que
+fica VERDE isolada e sai da lista —, e só o `fecho` tinha sabotagem FORA da lista com o `sed` guardado
+em comentário (a 2ª leva mediu os 14 sites com a rodada isolada). A medição revelou um irmão: **assert
+cujo cenário não alcança o caminho que declara medir**, varrido em todo o bloco do ledger (E16…E16p)
+com a pergunta "o cenário chega a CHAMAR o ledger?" — E16f e E16g não chegavam, e o E16h dizia "NEM
+é consultado" sem medir a consulta. Os dois resíduos do Codex são **instância**: a varredura dos outros
+12 juízes do `test:falsificacao` (delegada; cada "afetado" reconferido no código) mostrou que todos os
+que usam `SABOTAGENS` comparam CONTAGEM — o `fecho` era o único juiz de CONJUNTO — e criam o `$tmp`
+por rodada (re-execução do script ou `mktemp` dentro da função). Ela trouxe dois achados de OUTRA
+classe: o `falsificar-implementado` julga por presença do ID + rc 1 (um crash de `set -u` depois da
+marca também sai 1 — o resíduo da camada 4, já com dono em "Gate R4", abaixo); e o
+`psql-ro-error-stop` restaura por `git checkout`, em TODA execução (o `trap` não depende do
+`--falsificar`), um arquivo que o dirty-check dele não cobre — edição não commitada no gate some calada.
+Virou a tarefa **"Impedir que o test-psql-ro apague edição do gate"**.
+
+### A medição, antes de qualquer cenário
+
+Harness fora do repo, com as fixtures da suíte e um TRAÇO de chamadas no stub do ledger; cada trava
+tirada sozinha pelo `sed` PRECISO que o bloco "SEM DENTE" guardou, contra cenários candidatos — **23/23
+medições com o mesmo veredito em `C` e `pt_BR.UTF-8`** (rc, nº de chamadas, marcas; só o corte de
+exibição, por byte × por caractere, e a ordem de um `sort` do harness diferem):
+
+| trava | sozinha, na suíte de 2026-09-27 | o que SÓ ela impede (medido) | caso |
+|---|---|---|---|
+| l4 — o ledger só com a mecânica OK | verde | a CHAMADA ao CLI com o banco reprovado (0→1); com a worktree defasada, "⛔ ANTES DE AGIR: sincronize" apontando a causa ERRADA | E16h2 |
+| l5 — quem respondeu na janela não é candidato | verde | a CHAMADA com a janela decidindo tudo (0→1); com a worktree defasada, o "sincronize" em cima de um DESATUALIZADA já PROVADO | E16f2 |
+| `-z "$servido"` — a parceira da l5 | verde (o E16f tinha 1 edge) | com uma 2ª edge puxando a consulta, o CONFERE histórico absolve a `edge-velha`: `LEDGER_CONFERE` no lugar do DESATUALIZADA | E16f, E16g |
+| l6 — `-n "$esperado"` | verde | CLI com CONFERE e `observado` VAZIO para edge fora do mapa: `"" = ""` → `LEDGER_CONFERE` | E16g2 |
+| via (c) — `exit 2` com o auxiliar falhando | verde | `bun` presente-porém-quebrado: exit 1 e a `edge-fora-do-mapa` some calada | E13d |
+| mecânica na classificação — (A) a leitura de `esperado`/`servido`, (B) a condição do NO_AR | A verde, B verde | nada — cada uma torna a outra INALCANÇÁVEL; juntas, o E5e cai com **exit 0 e NO_AR** | par → E5e |
+
+Três diagnósticos do bloco "SEM DENTE" não se confirmaram:
+
+- **A l4 não ficava verde porque "o CLI cai junto".** O E16h já era banco quebrado com CLI são. A
+  absolvição, o laço do veredito barra sozinho (com a mecânica reprovada ele nem lê o `esperado`); o
+  que SÓ a l4 impede é a chamada — e a chamada não muda a classificação, então nenhum assert a via.
+- **l5 e l6 não eram redundantes: era o CENÁRIO que não as separava.** l5 × `-z "$servido"` só se
+  cobrem com UMA edge (o ledger nem é chamado); l6 × dupla chave só se cobrem com `observado` real.
+- **A mecânica é a única redundância ESTRUTURAL.** Nenhuma entrada torna `esperado` não-vazio com a
+  mecânica reprovada, e juntas as duas travas guardam o pior desfecho do script: a mecânica que ele
+  próprio reprovou (a linha `#anonimas` sumiu) absolvendo tudo — "nenhum chip", exit 0.
+
+**Decisão do founder (2026-09-28):** a mecânica fica como defesa em profundidade, provada em PAR
+(`mecanica_fora_da_classificacao:E5e`, o idioma do par da janela viva); l5 e l6, pelos cenários
+próprios.
+
+A mesma pergunta achou uma **6ª trava, que nem estava na lista**: a OUTRA metade do contrato da l5
+("o ledger só é consultado quando há a quem perguntar") — edge FORA do mapa não é candidata. Sem ela,
+uma janela só com edge fora do mapa chama o CLI (0→1) e, com a worktree defasada, imprime o "ANTES DE
+AGIR" sobre uma edge que o ledger nem julgaria; a classificação não muda, então nenhum assert via.
+Medida à parte, **7/7 com o mesmo veredito nos 2 locales**, antes do caso E16f3.
+
+### Os cenários
+
+- **E13d** — `bun` presente-porém-quebrado só no PATH do caso (`command -v` o acha; sai 1): exit 2,
+  nada classificado, e o stderr dele repassado (`bun-quebrado`) prova que o caso CHEGOU ao auxiliar.
+- **E16h2, E16f2 e E16f3** — o stub do ledger registra cada chamada num traço (`LEDGER_TRACE`, na
+  rodada). Mecânica reprovada → 0; janela viva decidindo todas as edges → 0; só edge fora do mapa → 0;
+  o controle da MESMA rodada (a `edge-muda`, que a janela não decidiu) → 1, senão o zero seria
+  ausência de dado.
+- **E16f e E16g** ganharam a `edge-muda`, que PUXA a consulta — e o "ledger: sem veredito" dela é o
+  controle de que o ledger FOI lido. O `-z "$servido"` cai sozinho nos dois; o par antigo
+  (`janela_viva_sem_as_duas_travas`) saiu da lista.
+- **E16g2** — o modo `confere-vazio` do stub: CONFERE com `observado` e TODOS os campos seguintes
+  vazios para a `edge-fora-do-mapa`. Todos, porque o `IFS=$'\t' read` do alvo colapsa campo vazio (tab
+  é espaço-IFS) e o `l_obs` herdaria o campo seguinte. Latente e sem efeito de veredito hoje (nenhum
+  campo seguinte é um sha de 64 hex), mas o `LEDGER_DIVERGE` imprimiria campos deslocados.
+
+### A Tarefa 2 — os resíduos do Codex
+
+- **(a) Multiplicidade e recibo.** Cada laço (E5f, E14c2, H1, H2, H4) imprime UM assert por iteração,
+  com ID próprio (`H1_<n>`) nos dois ramos, e fecha com o resumo — o ID que a lista declara — também
+  nos dois (o E16d já era assim). A suíte termina com `FIM_DA_SUITE locale=<loc> asserts=<n>`. O juiz
+  compara o recibo e a LISTA com repetição, e o controle acusa ID repetido (a premissa "um ID, uma
+  linha") e recibo incoerente com as linhas (assert sem ID é invisível às camadas 2 e 3). A execução
+  normal passou a exigir o recibo e o mesmo nº de asserts nos dois locales: um `return` no meio pulava
+  os asserts seguintes EM VERDE.
+- **(b) Fixtures.** O tree sujo, a corrida (que nasce EM DIA, sem o reset de antes), o eco do SQL, o
+  `pares-shared` e o traço do ledger nascem na rodada. O que continua compartilhado entre as ~100
+  execuções virou SÓ LEITURA (`chmod -R a-w`): um caso — ou um alvo sabotado — que escrevesse ali
+  falha alto em vez de vazar. O `git` da frescura (`rev-parse`, `diff`/`status` com
+  `--no-optional-locks`) lê o repo só-leitura sem tropeçar: a suíte inteira passa com ele.
+
+### A varredura dos `sed` — a única conflada
+
+Na revisão, uma varredura barata: quantas linhas do alvo cada uma das 52 sabotagens muda. Só três
+mudam mais de uma — o par da mecânica e a `frescura_antes_da_chamada` (duas edições de propósito) e a
+`shared_sem_mapa_ok`, que, sem endereço, trocava os TRÊS `exit 2` de 6 espaços (o do mapa, o do `bun`
+ausente e o da via (c)). O vermelho declarado (E13c) vinha da trava certa, mas o E13d caía de tabela.
+Agora a faixa começa no `if` do mapa — 1 linha; medido nos 2 locales: `vermelhos: E13c`, onde o `sed`
+antigo dava `vermelhos: E13d E13c`.
+
+### A meta-falsificação
+
+Pelo harness da sessão, fora do repo: repo-sombra por variante (o teste é cópia do commit, `scripts/`
+por symlink), edições exatas (casar ≠1× = erro da META), `bash -n` antes e o desfecho (rc + marca)
+declarado ANTES. Com a máquina em load ~200, a suíte inteira levava 12–16 min por variante; a 2ª forma
+do harness REDEFINE a `suite()` só com os blocos que a camada exercita (âncoras exatas), e cada família
+de recorte tem o seu controle — o recorte não pode fabricar o verde. O modo normal roda só com o locale
+de fora `C` (ele força os dois internos); o `--falsificar`, onde o juiz tem locale, nos dois. Cada
+célula: C · pt_BR, ✅ = o desfecho declarado.
+
+| camada | a reprodução | controle | novo | antes |
+|---|---|---|---|---|
+| as 6 entradas novas | R6: cada trava tirada sozinha → vermelho SÓ no assert declarado | ✅✅ | ✅✅ | a medição de 2026-09-27 (verdes — por isso saíram da lista) |
+| a 6ª trava | E16f3 | ✅✅ | ✅✅ | ✅ a suíte de antes, INTEIRA, aprova o alvo sem ela |
+| o par da mecânica | só a metade B → o juiz acusa o VERDE | ✅✅ | ✅✅ | — |
+| recibo + lista | aborto PARCIAL do laço H1, só na rodada sabotada | ✅✅ | ✅✅ reprova (`recibo [C 12] x controle [C 15]`) | ✅✅ aprovava |
+| — sem o recibo | idem | | ✅✅ reprova (a lista pega) | |
+| — sem a lista | idem | | ✅✅ reprova (o recibo pega) | |
+| recibo por locale | a rodada sabotada roda no locale ERRADO (sempre C) | | ✅✅ reprova | ✅✅ aprovava |
+| — sem o recibo | idem — os IDs batem | | ✅✅ ESCAPA: só o recibo vê | |
+| recibo na execução normal | `return` no meio da suíte | ✅ | ✅ "NAO chegou ao fim" | ✅ aprovava (verde) |
+| um ID por linha | o laço H1 volta a repetir o ID | | ✅✅ o controle acusa | |
+| — sem a checagem de repetido | idem | | ✅✅ ESCAPA | |
+| tree sujo na rodada | alvo que LIMPA o tree + sabotagem INERTE declarando E16n | ✅✅ | ✅✅ a inerte reprova | ✅✅ aprovava (vermelho emprestado) |
+| compartilhado só-leitura | alvo que MOVE a ref do `cli_defasado` + INERTE declarando E16j | ✅✅ | ✅✅ a inerte reprova | ✅✅ aprovava |
+| — sem o `chmod a-w` | idem | | ✅✅ ESCAPA: só o só-leitura protege | |
+| o `sed` preciso | `shared_sem_mapa_ok` com o `sed` novo × o antigo | | ✅✅ vermelho só no E13c | ✅✅ o antigo derrubava o E13d junto |
+
+Mais as três da 1ª forma, com a suíte INTEIRA (antes de o load a inviabilizar): as duas suítes verdes
+contra o alvo íntegro e a via (c) sem o `exit 2` reprovando no E13d, nos 2 locales. **56/56 rodadas
+conferem** com o desfecho declarado. A meta não pegou o juiz novo; pegou o próprio HARNESS duas vezes,
+antes de valer: a checagem de âncoras rodou em zsh, onde `"$ref:scripts/…"` aplica o modificador `:s`
+e o `git show` leu o COMMIT em vez do arquivo (os harnesses rodam em `bash`); e a 2ª forma editava o
+corpo da suíte DEPOIS de recortá-la — o bloco editado existiria duas vezes, e o `troca` acusaria.
+
+### Lições
+
+- **"Verde isolada" é relativo ao CENÁRIO.** Das 5, quatro tinham propriedade própria que nenhum caso
+  alcançava. Antes de chamar uma trava de defesa em profundidade, pergunte o que SÓ ela impede e se a
+  suíte chega lá; redundância de verdade é ESTRUTURAL (uma trava torna a outra inalcançável) — e se
+  prova em PAR.
+- **Efeito que não muda a saída só se vê por um traço.** A chamada indevida ao CLI não mexia na
+  classificação, e a classificação era tudo o que os asserts olhavam. Stub que registra as próprias
+  chamadas, com o controle de 1 chamada na mesma rodada.
+- **O assert tem de alcançar o que o nome dele promete.** O E16h dizia "NEM é consultado" e media a
+  absolvição; E16f e E16g diziam provar o tratamento do veredito do ledger sem nunca o chamar.
+- **Vazio = vazio é o modo de falha da dupla chave.** A 2ª chave só é eixo de fora se EXISTIR (`-n`).
+
 ## O que ficou de fora, com dono
 
 As fases seguintes da erradicação (fora do núcleo, onde nenhum recibo é confiado às cegas) viraram
@@ -1012,14 +1154,20 @@ tarefas com a assinatura calibrada e a lista de sites no briefing:
 
 Da 2ª leva ficaram, com dono:
 
-- **"Isolar as camadas sem dente do fecho-edges"** — as 5 que saíram da lista do `fecho` por ficarem
-  VERDES isoladas (o `sed` de cada uma está comentado no próprio teste): cenário com banco quebrado e
-  CLI são (l4); auxiliar do grafo de imports que FALHA (a via (c)); e a decisão de produto sobre as
-  travas redundantes (l5/l6, a mecânica na classificação) — manter como defesa em profundidade sem
-  prova própria, ou provar cada uma com um cenário que neutralize a outra. Levam junto os dois
-  resíduos do Codex no mesmo arquivo: um recibo de término da suíte + IDs por iteração/locale (o
-  CONJUNTO de IDs perde a multiplicidade dos laços H1/H2/H4/E14c2), e as fixtures mutáveis de CLI e SQL
-  criadas DENTRO da rodada (hoje isoladas pela ordem dos resets, não pela estrutura).
+- ✅ **"Isolar as camadas sem dente do fecho-edges"** — ENTREGUE (seção "As camadas sem dente do
+  `fecho-edges` e os resíduos do Codex", acima): as 5 de volta à lista — quatro com o cenário que as
+  isola, a da mecânica em PAR por decisão do founder —, a 6ª trava que nem estava na lista (E16f3), o
+  irmão que a medição revelou (E16f/E16g sem chamar o ledger) e os dois resíduos do Codex. Deixou, com
+  dono:
+  - **"Cobrir as travas do edges-pendentes sem sabotagem"** — o resto da classe da 6ª trava no mesmo
+    alvo: commit-base não achado (o E14c3 passa por ele e só exige rc≠3), `bun` ausente na via (c), os
+    `mecanica_ok=0` de mapa/janela/psql/consulta sem sabotagem (psql ausente × sonda `SELECT 1` parece
+    PAR estrutural — decisão do founder) e o exit final;
+  - **"Impedir que o test-psql-ro apague edição do gate"** — achado da varredura dos 12 juízes, de
+    OUTRA classe: o `trap` restaura por `git checkout`, em toda execução, um arquivo fora do dirty-check.
+  - Sem tarefa, registrado: o `IFS=$'\t' read` do alvo colapsa campo vazio do ledger (o `l_obs` herda
+    o campo seguinte) — não muda veredito hoje, e o E16g2 vale nas duas leituras (todos os campos
+    vazios).
 - **"Gate R4: todo slug do test:falsificacao usa o idioma limpo ou tem juiz registrado"** — o análogo
   do R3 para o `test:falsificacao`: hoje R1/R2 só enxergam quem USA a lista; um teste novo com juiz
   "exit≠0" entraria no CI sem nenhum gate acusar. Os de valor/marca exata (codex-prompt, guard-noop,

@@ -236,3 +236,15 @@ db/test-fuso-sp-relogio-sessao.sh          53  falsificar=16
 # current_date é palavra-chave e escapa do relógio, então o R0 chama cada RPC SEM pin e exige o
 # tripwire. O pai do --falsificar exige o filho completo e todo erro de execução declarado.
 db/test-hoje-sp-sessao-utc-precos-piso.sh  50  falsificar=18
+
+# ── Eixo 8 — PATTERN LITERAL (o curinga do termo não é pattern) ─────────────────────────────────
+# `%`, `_` e `\` de um termo que devia casar literal viram curinga, e o termo vazio vira %%, que casa
+# tudo (classe pattern-like-cru, camada SQL — 20260929000234). O helper private.padrao_like_contem
+# (escape + NULL no degenerado) e as 7 RPCs que o usam EXECUTADOS sobre o schema-snapshot, com os
+# corpos de PROD como predecessores (md5 exato, C1-C7): a semente REPRODUZ o bug antes (A1-A8), e
+# depois o literal casa, o curinga não e o degenerado não casa nada (F1-F26). A migration roda sob o
+# executor (bloco M: a PRE recusa corpo estranho, função ausente e trava que não é no-op, e TRAVA a
+# linha — duas conexões com barreira observada; a POS pega DROP+CREATE, corpo editado sem o md5 e
+# helper sem escape ou sem o degenerado). Cada sabotagem declara o vermelho E o verde; erro de
+# execução não conta. Irmão estático: scripts/like-cru-em-migrations-gate.ts (vitest).
+db/test-padrao-like-contem.sh              59  falsificar=19

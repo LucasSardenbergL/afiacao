@@ -98,7 +98,7 @@ Sucessão troca nome/telefone/raiz. Pegue pelo comportamento: um CNPJ **parou** 
 with ped as (
   select regexp_replace(coalesce(p.cnpj,p.document,''),'\D','','g') as doc,
          lower(trim(regexp_replace(a.city,'\s*\([^)]*\)\s*$',''))) as cidade,
-         so.created_at::date as data,
+         (so.created_at at time zone 'America/Sao_Paulo')::date as data,   -- data de SP (a sessão é UTC)
          coalesce(p.razao_social, p.name) as nome,
          regexp_replace(coalesce(so.customer_phone,''),'\D','','g') as tel
   from sales_orders so
@@ -124,8 +124,8 @@ from attr a join attr b
   on a.cidade = b.cidade and a.doc <> b.doc
  and a.ultimo < b.primeiro                         -- A morre antes de B nascer (sem sobreposição)
  and (b.primeiro - a.ultimo) between 0 and 180     -- B começou logo depois
- and b.ultimo > current_date - 180                 -- B está ativo agora
- and a.ultimo < current_date - 180                 -- A parou de vez
+ and b.ultimo > (now() at time zone 'America/Sao_Paulo')::date - 180   -- B está ativo agora (hoje de SP)
+ and a.ultimo < (now() at time zone 'America/Sao_Paulo')::date - 180   -- A parou de vez
 order by mesmo_telefone desc, a.cidade, gap_dias   -- candidatos com telefone igual no topo
 limit 80;
 ```

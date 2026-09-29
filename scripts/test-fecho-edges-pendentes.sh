@@ -20,7 +20,8 @@ RAIZ="$(cd "$(dirname "$0")/.." && pwd)"
 ALVO="$RAIZ/.claude/skills/fecho/scripts/edges-pendentes.sh"
 [ -f "$ALVO" ] || { echo "VERMELHO — alvo não encontrado: $ALVO"; exit 1; }
 
-tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+# o `chmod u+w` antes do `rm`: as fixtures compartilhadas são só leitura (ver o fim das fixtures)
+tmp="$(mktemp -d)"; trap 'chmod -R u+w "$tmp" 2>/dev/null; rm -rf "$tmp"' EXIT
 
 # ------------------------------------------------------------------ fixtures ---
 SHA_NOVO="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -83,6 +84,10 @@ chmod +x "$tmp/psql-stub"
 # pendência, e ausência de erro não é resposta.
 cat > "$tmp/ledger-stub" <<'LSTUB'
 #!/usr/bin/env bash
+# O TRAÇO de chamadas, antes de tudo (até a chamada sem `--json` conta): "o ledger NEM é consultado"
+# é contrato do alvo (mecânica reprovada; janela viva que já decidiu), e uma consulta que não muda a
+# classificação é INVISÍVEL na saída — só o traço a mede.
+[ -z "${LEDGER_TRACE:-}" ] || printf '%s\n' "${LEDGER_MODO:-confere}" >> "$LEDGER_TRACE"
 # o alvo tem de pedir `--json`: sem a flag, o CLI real imprimiria o relatório HUMANO, e ler texto
 # como se fosse dado é o defeito que a marca de formato existe para impedir.
 case " $* " in *" --json "*) ;; *) echo "stub: chamado SEM --json" >&2; exit 64 ;; esac
@@ -97,6 +102,11 @@ case "${LEDGER_MODO:-confere}" in
   # todas as edges do fixture CONFEREM — para provar que quem responde na janela viva é julgado
   # por ela, e que edge FORA do mapa não é absolvida por rótulo nenhum.
   confere-tudo)   j 'pendencias-deploy/1' "$(v edge-velha CONFERE "$SHA_NOVO" "$SHA_NOVO" v1 30),$(v edge-no-ar CONFERE "$SHA_NOVO" "$SHA_NOVO" v1 30),$(v edge-pre-fonte CONFERE "$SHA_NOVO" "$SHA_NOVO" v1 30),$(v edge-fora-do-mapa CONFERE "$SHA_NOVO" "$SHA_NOVO" v1 30)"; exit 0 ;;
+  # a 2ª chave VAZIA: CONFERE para a edge FORA do mapa com `observado` "" — e TODOS os campos depois
+  # dele vazios, porque o `read` do alvo (IFS=tab) colapsa campo vazio (tab é espaço-IFS) e o `l_obs`
+  # herdaria o campo seguinte. Sem o `-n "$esperado"` do alvo, "" = "" absolve. Quem puxa a consulta é
+  # a `edge-muda` (NUNCA_ATESTADA): edge fora do mapa nunca é candidata ao ledger.
+  confere-vazio)  j 'pendencias-deploy/1' "$(v edge-muda NUNCA_ATESTADA "$SHA_NOVO" null null null),"'{"edge":"edge-fora-do-mapa","estado":"CONFERE","esperado":"","observado":"","versaoEsperada":"","versao":"","via":"","criado":"","idadeHoras":"","diasPendente":null,"escalada":false}'; exit 1 ;;
   mudo)           exit 0 ;;                                        # exit 0 e stdout VAZIO
   lixo)           echo "relatorio humano: ✅ confere — 46"; exit 0 ;;  # saída que não é JSON
   sem-marca)      j 'outro-contrato/9' "$(v edge-muda CONFERE "$SHA_NOVO" "$SHA_NOVO" v1 31.5)"; exit 0 ;;
@@ -116,6 +126,13 @@ case "${LEDGER_MODO:-confere}" in
 esac
 LSTUB
 chmod +x "$tmp/ledger-stub"
+
+# `bun` presente-porém-QUEBRADO, só no PATH do cenário que o pede: `command -v bun` o acha e o
+# auxiliar do grafo de imports (via c) sai ≠0 — o modo de falha que o fail-closed da via (c) nomeia
+# e que nenhum cenário alcançava (a sabotagem dele ficava VERDE isolada, 2026-09-27).
+mkdir -p "$tmp/bun-quebrado"
+printf '#!/usr/bin/env bash\necho "bun-quebrado: saida 1 de proposito" >&2\nexit 1\n' > "$tmp/bun-quebrado/bun"
+chmod +x "$tmp/bun-quebrado/bun"
 
 # ---------------------------------------------- a CASA do CLI do ledger (fixtures) ---
 # O alvo roda o `pendencias-deploy.ts` do WORKING TREE, e só aceita o veredito dele se o fecho de
@@ -162,21 +179,23 @@ cli_fora="$tmp/cli-fora-do-fecho"; cli_base "$cli_fora"
 cli_main_anda "$cli_fora" supabase/functions/_shared/sonda-fingerprints.ts 'export const FONTE_SHA256 = { "x": "y" };'
 cli_alias="$tmp/cli-alias";         cli_base "$cli_alias"
 cli_main_anda "$cli_alias" src/lib/erro-mensagem.ts "export const erro = 'mudou na main';"
-cli_sujo="$tmp/cli-sujo";           cli_base "$cli_sujo"
-printf "export const julgar = 'editado, sem commit';\n" >> "$cli_sujo/scripts/lib/pendencias-deploy.ts"
 cli_sem_ref="$tmp/cli-sem-ref";     cli_base "$cli_sem_ref"
 git -C "$cli_sem_ref" update-ref -d refs/remotes/origin/main
-# a CORRIDA: em dia no começo; o stub `intruso-apos-fetch` move a origin/main para CORRIDA_NOVO,
-# como o `git fetch origin main` do CLI real faria se a main andasse entre o fetch do /fecho e o dele.
-cli_corrida="$tmp/cli-corrida";     cli_base "$cli_corrida"
-cli_main_anda "$cli_corrida" supabase/functions/_shared/sonda-cron-alvos.ts "$ALVOS_ONDA5"
-CORRIDA_NOVO="$(git -C "$cli_corrida" rev-parse refs/remotes/origin/main)"
-CORRIDA_BASE="$(git -C "$cli_corrida" rev-parse HEAD)"
-git -C "$cli_corrida" update-ref refs/heads/futuro "$CORRIDA_NOVO"
+# O TREE SUJO (16n) e a CORRIDA (16o) NÃO moram aqui: o estado deles é o que se mede e é MUTÁVEL (a
+# mudança local sem commit; a REF que o stub move DURANTE a chamada). Nascem na rodada, junto do
+# caso que os consome — o isolamento vem da estrutura, não da ordem dos resets (Codex, 2026-09-27).
 MSG_INTRUSO="❌ MECÂNICA: o banco sonda edge(s) que o repo NÃO aprovou: omie-desconto-backfill. Só a allowlist do repo teve todos os closures históricos executados (\`bun run sonda:cron-prova\`). Desative no banco: UPDATE public.deploy_sonda_alvos SET ativo = false WHERE edge IN ('omie-desconto-backfill');"
-export CORRIDA_NOVO MSG_INTRUSO
+export MSG_INTRUSO
 
-export FECHO_MAPA_FONTE="$tmp/mapa.ts" STUB_PARES="$tmp/pares.txt" STUB_SQL_ECO="$tmp/sql.txt"
+# O que fica FORA da rodada é compartilhado pelas ~100 execuções da suíte sob o --falsificar, e é
+# SÓ LEITURA por construção, não por convenção: um caso — ou um alvo sabotado — que escrevesse aqui
+# falha alto em vez de vazar estado para a rodada seguinte (a classe do --desde poluído, #2639).
+# Tudo o que algum caso ESCREVE nasce na rodada: os repos do --desde/INERTE, o tree sujo, a corrida,
+# o eco do SQL e o traço do ledger.
+chmod -R a-w "$tmp/mapa.ts" "$tmp/pares.txt" "$tmp/psql-stub" "$tmp/ledger-stub" "$tmp/bun-quebrado" \
+  "$cli_ok" "$cli_defasado" "$cli_fora" "$cli_alias" "$cli_sem_ref"
+
+export FECHO_MAPA_FONTE="$tmp/mapa.ts" STUB_PARES="$tmp/pares.txt"
 export STUB_ANONIMAS=0
 export SHA_NOVO SHA_VELHO
 # Por padrão o ledger está INDISPONÍVEL nesta suíte: os casos anteriores ao ledger (2026-09-05)
@@ -199,14 +218,19 @@ run() {
 }
 
 fail=0
-ok()  { printf '  \033[32mok\033[0m   %s\n' "${1//$'\n'/ | }"; }
+# `n_asserts` conta as linhas de assert da suíte em curso — o RECIBO de término (fim da suíte) a imprime
+n_asserts=0; terminou=""
+ok()  { printf '  \033[32mok\033[0m   %s\n' "${1//$'\n'/ | }"; n_asserts=$((n_asserts + 1)); }
 # um assert = UMA linha (`\n` do alvo no dump forjaria linha de outro assert); e, sob o --falsificar,
 # a saída INTEIRA do alvo vai para ERROS_DO_ALVO — o dump da mensagem é truncado, e o erro de
 # execução que vem depois do corte ficaria fora da camada 4 (Codex, 2026-09-27).
 bad() {
-  printf '  \033[31mFALHA\033[0m %s\n' "${1//$'\n'/ | }"; fail=1
+  printf '  \033[31mFALHA\033[0m %s\n' "${1//$'\n'/ | }"; fail=1; n_asserts=$((n_asserts + 1))
   if [ -n "${ERROS_DO_ALVO:-}" ]; then printf '%s\n' "${out:-}" >> "$ERROS_DO_ALVO"; fi
 }
+# quantas chamadas ao CLI do ledger o traço da rodada registrou. O caso ZERA o traço antes de rodar;
+# traço que SUMIU não é "zero chamadas" (ausente ≠ zero): devolve `ausente`, que não casa número.
+chamadas() { if [ -f "$LEDGER_TRACE" ]; then wc -l < "$LEDGER_TRACE" | tr -d ' '; else echo ausente; fi; }
 # marcador ASCII, caixa fixa, sem -i, via `command grep` (o grep do shell é shim p/ ugrep)
 tem() { printf '%s' "$2" | command grep -q -- "$1"; }
 
@@ -219,6 +243,9 @@ suite() {
   # no mesmo $tmp — da 3a rodada em diante o --desde caía em TODA rodada, com ou sem sabotagem, e o
   # juiz antigo ("vermelho = dente") aprovava as 46 sabotagens pela poluição (medido 2026-09-27).
   local rodada; rodada="$(mktemp -d "$tmp/rodada.XXXXXX")"
+  # ...e o que os STUBS escrevem também: o SQL que o alvo mandou e as chamadas ao CLI do ledger
+  export STUB_SQL_ECO="$rodada/sql.txt" LEDGER_TRACE="$rodada/ledger-chamadas"
+  n_asserts=0; terminou=""
 
   # 1. prova POSITIVA: fonte servida == main -> some o chip
   run ok "$tmp/psql-stub" edge-no-ar
@@ -333,12 +360,21 @@ suite() {
   # 5f. `--request-ids` e o ESCAPE, e toda recusa dele e exit 3 (uso), nunca veredito de deploy.
   #     Par malformado aceito em silencio e o modo de falha caro: o operador acha que colou, a
   #     edge segue sem vinculo, e a saida diz "sem sonda" com a mesma cara de sempre.
-  local caso_ruim ruins_ok=1
+  #     Todo laço desta suíte imprime UM assert por iteração, com ID próprio (`E5f_<n>`) e nos DOIS
+  #     ramos, e fecha com o resumo (`E5f`) também nos dois: a lista de asserts executados é o que o
+  #     --falsificar compara com o controle, e um ID que se repete nas iterações perde a multiplicidade
+  #     — um aborto que cortasse só iterações não mudaria o CONJUNTO (Codex, 2026-09-27).
+  local caso_ruim ruins_ok=1 i=0
   for caso_ruim in "edge-muda" "edge muda=1" "edge-muda=abc" "edge-muda=" "=1" "EDGE=1"; do
+    i=$((i + 1))
     run ok "$tmp/psql-stub" edge-muda --request-ids "$caso_ruim"
-    [ "$rc" -eq 3 ] || { ruins_ok=0; bad "E5f --request-ids '$caso_ruim' devia ser exit 3 (rc=$rc)"; }
+    if [ "$rc" -eq 3 ]
+    then ok "E5f_$i --request-ids '$caso_ruim' -> exit 3"
+    else ruins_ok=0; bad "E5f_$i --request-ids '$caso_ruim' devia ser exit 3 (rc=$rc)"; fi
   done
-  [ "$ruins_ok" = 1 ] && ok "E5f --request-ids malformado -> exit 3 nos 6 formatos ruins"
+  if [ "$ruins_ok" = 1 ]
+  then ok "E5f --request-ids malformado -> exit 3 nos 6 formatos ruins"
+  else bad "E5f --request-ids malformado: ao menos um formato passou (acima)"; fi
 
   # 5g. slug que nao esta na leva: o typo deixaria a edge de verdade SEM o vinculo que o operador
   #     acha que deu — mesma trava do `--caro` forasteiro do sonda:sql.
@@ -349,14 +385,14 @@ suite() {
 
   # 5h. o par BOM entra no SQL como VALUES, e sem ele a CTE nasce vazia por WHERE false — a FORMA
   #     do SQL e a mesma nos dois caminhos, senao o guardrail textual mede uma consulta que nao roda.
-  : > "$tmp/sql.txt"; run ok "$tmp/psql-stub" edge-muda --request-ids "edge-muda=777" > /dev/null
-  if tem "VALUES ('edge-muda', 777::bigint)" "$(cat "$tmp/sql.txt")"
+  : > "$STUB_SQL_ECO"; run ok "$tmp/psql-stub" edge-muda --request-ids "edge-muda=777" > /dev/null
+  if tem "VALUES ('edge-muda', 777::bigint)" "$(cat "$STUB_SQL_ECO")"
   then ok "E5h --request-ids bom vira VALUES no SQL"
-  else bad "E5h o par colado nao chegou ao SQL: $(head -c 120 "$tmp/sql.txt")"; fi
-  : > "$tmp/sql.txt"; run ok "$tmp/psql-stub" edge-muda > /dev/null
-  if tem 'SELECT NULL::text, NULL::bigint WHERE false' "$(cat "$tmp/sql.txt")"
+  else bad "E5h o par colado nao chegou ao SQL: $(head -c 120 "$STUB_SQL_ECO")"; fi
+  : > "$STUB_SQL_ECO"; run ok "$tmp/psql-stub" edge-muda > /dev/null
+  if tem 'SELECT NULL::text, NULL::bigint WHERE false' "$(cat "$STUB_SQL_ECO")"
   then ok "E5h2 sem --request-ids a CTE vinculo nasce vazia (mesma FORMA de SQL)"
-  else bad "E5h2 sem colagem a CTE vinculo devia nascer vazia: $(head -c 120 "$tmp/sql.txt")"; fi
+  else bad "E5h2 sem colagem a CTE vinculo devia nascer vazia: $(head -c 120 "$STUB_SQL_ECO")"; fi
 
   # 6. O TESTE-SENTINELA: wrapper PRESENTE porem MUDO. A mesma edge que no caso 1 era NO_AR tem de
   #    voltar a ser pendencia — `command -v` acharia o arquivo e esvaziaria o guard.
@@ -459,6 +495,20 @@ MAPA1
   then ok "E13b --desde: edge FORA do mapa afetada por _shared/ entra pelo grafo de imports"
   else bad "E13b edge-fora-do-mapa sumiu: _shared/ mudou, ela importa, e nenhuma via a enxergou"; fi
 
+  # 13d. a via (c) FALHANDO: o auxiliar do grafo de imports sai !=0 (`bun` presente-porem-quebrado,
+  #      que `command -v` aprova). Lista vazia por ERRO e indistinguivel de lista vazia por merito:
+  #      seguir em frente classificaria so o que as vias (a) e (b) viram, e a `edge-fora-do-mapa`
+  #      sumiria calada, com exit 1 e chip para as outras. Nenhum cenario fazia o auxiliar falhar, e a
+  #      sabotagem deste fail-closed ficava VERDE (medido 2026-09-27). O `bun-quebrado` na saida prova
+  #      que o caso CHEGOU ao auxiliar (o stderr dele e repassado): sem essa marca, o exit 2 podia vir
+  #      de outro ramo. Antes do 13c, que tira o mapa do repo.
+  out="$(PATH="$tmp/bun-quebrado:$PATH" STUB_MODO=ok AFIACAO_PSQL="$tmp/psql-stub" CLAUDE_PROJECT_DIR="$repo" \
+         FECHO_MAPA_FONTE="" bash "$ALVO" --desde "$(cat "$rodada/base_sha")" 2>&1)"; rc=$?
+  if [ "$rc" -eq 2 ] && tem 'bun-quebrado' "$out" && ! tem 'SEM_PROVA' "$out" \
+     && ! tem 'RESOLVER_NESTA_SESSAO' "$out"
+  then ok "E13d --desde: auxiliar do grafo FALHANDO (bun presente-porem-quebrado) -> exit 2, nada classificado"
+  else bad "E13d auxiliar do grafo falhando devia dar exit 2 sem classificar (rc=$rc): ${out:0:160}"; fi
+
   # mapa ilegivel + _shared/ tocado = nao sei quais edges foram afetadas -> exit 2, nunca "nada"
   git -C "$repo" rm -q --cached supabase/functions/_shared/sonda-fingerprints.ts >/dev/null 2>&1
   rm -f "$repo/supabase/functions/_shared/sonda-fingerprints.ts"
@@ -496,11 +546,11 @@ MAPA2
     git -C "$repo2" add -A >/dev/null; git -C "$repo2" commit -qm "shared + mapa nasce"
     git -C "$repo2" update-ref refs/remotes/origin/main HEAD
   fi
-  printf 'edge-do-shared %s\n' "$SHA_NOVO" > "$tmp/pares-shared.txt"
+  printf 'edge-do-shared %s\n' "$SHA_NOVO" > "$rodada/pares-shared.txt"
 
   # o SINAL tem de sobreviver: com a fonte servida batendo, a edge sai NO_AR e o chip some
   out="$(STUB_MODO=ok AFIACAO_PSQL="$tmp/psql-stub" CLAUDE_PROJECT_DIR="$repo2" \
-         STUB_PARES="$tmp/pares-shared.txt" FECHO_MAPA_FONTE="" \
+         STUB_PARES="$rodada/pares-shared.txt" FECHO_MAPA_FONTE="" \
          bash "$ALVO" --desde "$(cat "$rodada/base2_sha")" 2>&1)"; rc=$?
   if [ "$rc" -eq 0 ] && tem 'NO_AR' "$out" && tem 'mapa_base ausente' "$out"
   then ok "E14b --desde: janela anterior ao mapa -> enumera pelo mapa INTEIRO e preserva o NO_AR"
@@ -533,7 +583,9 @@ MAPA2
 
   # o PAR MINIMO e o que da valor ao caso acima: MESMA data, so o sufixo muda. Sem este lado, um
   # guard que recusasse TUDO passaria no 14c sem guardar coisa nenhuma.
+  local lote_ok=1; i=0
   for _suf in "UTC" "Z" "-0300" "+00:00"; do
+    i=$((i + 1))
     case "$_suf" in
       Z) _d="2026-08-28T14:00:00Z" ;;
       *) _d="2026-08-28 14:00 $_suf" ;;
@@ -541,9 +593,12 @@ MAPA2
     out="$(STUB_MODO=ok AFIACAO_PSQL="$tmp/psql-stub" CLAUDE_PROJECT_DIR="$repo" \
            bash "$ALVO" --desde "$_d" 2>&1)"; rc=$?
     if [ "$rc" -ne 3 ] && ! tem 'DESDE_SEM_FUSO' "$out"
-    then ok "E14c2 --desde: fuso explicito ($_suf) passa pelo guard"
-    else bad "E14c2 fuso explicito ($_suf) nao devia ser recusado (rc=$rc): ${out:0:140}"; fi
+    then ok "E14c2_$i --desde: fuso explicito ($_suf) passa pelo guard"
+    else lote_ok=0; bad "E14c2_$i fuso explicito ($_suf) nao devia ser recusado (rc=$rc): ${out:0:140}"; fi
   done
+  if [ "$lote_ok" = 1 ]
+  then ok "E14c2 --desde: fuso explicito passa pelo guard nas 4 formas"
+  else bad "E14c2 --desde: ao menos uma forma com fuso explicito foi recusada (acima)"; fi
 
   # ...e as formas NAO-absolutas (data relativa, SHA) nunca sao ambiguas: nao podem ser recusadas.
   out="$(STUB_MODO=ok AFIACAO_PSQL="$tmp/psql-stub" CLAUDE_PROJECT_DIR="$repo" \
@@ -561,25 +616,35 @@ MAPA2
   #       do bug. Os IDs `H<n>` abrem a mensagem porque o --falsificar exige o vermelho DESTE assert,
   #       nao "a suite ficou vermelha" (docs/historico/falsificacao-exit-nao-e-dente.md).
   # H1: data COM fuso e SEM hora — a forma que passava pelo guard de fuso.
+  lote_ok=1; i=0
   for _d in "2026-09-27 UTC" "2026-09-27 +0000" "2026-09-27Z" "2026/09/27 GMT"; do
+    i=$((i + 1))
     out="$(STUB_MODO=ok AFIACAO_PSQL="$tmp/psql-stub" CLAUDE_PROJECT_DIR="$repo" \
            bash "$ALVO" --desde "$_d" 2>&1)"; rc=$?
     if [ "$rc" -eq 3 ] && tem 'DESDE_SEM_HORA' "$out" && ! tem 'DESDE_SEM_FUSO' "$out" \
        && ! tem 'nenhuma edge' "$out"
-    then ok "H1 --desde: data com fuso e SEM hora ($_d) -> DESDE_SEM_HORA, exit 3"
-    else bad "H1 data com fuso e sem hora ($_d) devia RECUSAR com DESDE_SEM_HORA (rc=$rc): ${out:0:140}"; fi
+    then ok "H1_$i --desde: data com fuso e SEM hora ($_d) -> DESDE_SEM_HORA, exit 3"
+    else lote_ok=0; bad "H1_$i data com fuso e sem hora ($_d) devia RECUSAR com DESDE_SEM_HORA (rc=$rc): ${out:0:140}"; fi
   done
+  if [ "$lote_ok" = 1 ]
+  then ok "H1 --desde: data com fuso e SEM hora -> DESDE_SEM_HORA nas 4 formas"
+  else bad "H1 --desde: ao menos uma data com fuso e sem hora passou pelo guard (acima)"; fi
 
   # H2: `±hh:mm` sem hora antes NAO e fuso para o git: `"2026-09-27 -03:00"` virou 06:00Z (leu
   #     `03:00` como HORA LOCAL) e `"2026-09-27 +00:00"`, 03:00Z. Um detector de hora ingenuo
   #     (`[0-9]:[0-9][0-9]` solto) casa o proprio offset e deixa a forma passar pelos dois guards.
+  lote_ok=1; i=0
   for _d in "2026-09-27 -03:00" "2026-09-27 +00:00"; do
+    i=$((i + 1))
     out="$(STUB_MODO=ok AFIACAO_PSQL="$tmp/psql-stub" CLAUDE_PROJECT_DIR="$repo" \
            bash "$ALVO" --desde "$_d" 2>&1)"; rc=$?
     if [ "$rc" -eq 3 ] && tem 'DESDE_SEM_HORA' "$out" && ! tem 'nenhuma edge' "$out"
-    then ok "H2 --desde: offset sem hora ($_d) nao conta como hora -> DESDE_SEM_HORA"
-    else bad "H2 offset sem hora ($_d) devia RECUSAR com DESDE_SEM_HORA (rc=$rc): ${out:0:140}"; fi
+    then ok "H2_$i --desde: offset sem hora ($_d) nao conta como hora -> DESDE_SEM_HORA"
+    else lote_ok=0; bad "H2_$i offset sem hora ($_d) devia RECUSAR com DESDE_SEM_HORA (rc=$rc): ${out:0:140}"; fi
   done
+  if [ "$lote_ok" = 1 ]
+  then ok "H2 --desde: offset sem hora nao conta como hora nas 2 formas"
+  else bad "H2 --desde: ao menos um offset sem hora passou como hora (acima)"; fi
 
   # H3: data NUA (sem hora e sem fuso): a HORA se diagnostica primeiro, e o remedio impresso e
   #     `"<data> 00:00 UTC"` — nunca `"<data> UTC"`, que o git le como a hora de agora.
@@ -593,14 +658,19 @@ MAPA2
   # H4: o PAR MINIMO — a MESMA data COM hora passa pelos DOIS guards. Sem este lado, um guard que
   #     recusasse toda data passaria no H1-H3 alegando que guarda. Hora de 1 digito, `T`/`t` do ISO
   #     e offset colado na hora sao formas que o detector de hora tem de reconhecer.
+  lote_ok=1; i=0
   for _d in "2026-09-27 00:00 UTC" "2026-09-27T00:00:00Z" "2026-09-27 9:05 UTC" \
             "2026-09-27t14:00z" "2026-09-27 14:00-03:00"; do
+    i=$((i + 1))
     out="$(STUB_MODO=ok AFIACAO_PSQL="$tmp/psql-stub" CLAUDE_PROJECT_DIR="$repo" \
            bash "$ALVO" --desde "$_d" 2>&1)"; rc=$?
     if [ "$rc" -ne 3 ] && ! tem 'DESDE_SEM_HORA' "$out" && ! tem 'DESDE_SEM_FUSO' "$out"
-    then ok "H4 --desde: data COM hora e fuso ($_d) passa pelos dois guards"
-    else bad "H4 data com hora e fuso ($_d) nao devia ser recusada (rc=$rc): ${out:0:140}"; fi
+    then ok "H4_$i --desde: data COM hora e fuso ($_d) passa pelos dois guards"
+    else lote_ok=0; bad "H4_$i data com hora e fuso ($_d) nao devia ser recusada (rc=$rc): ${out:0:140}"; fi
   done
+  if [ "$lote_ok" = 1 ]
+  then ok "H4 --desde: data COM hora e fuso passa pelos dois guards nas 5 formas"
+  else bad "H4 --desde: ao menos uma data com hora e fuso foi recusada (acima)"; fi
 
   # 14d. a JANELA EFETIVAMENTE USADA sai impressa. O guard so alcanca a forma ambigua; SHA e data
   #      relativa ainda podem resolver para um base surpreendente (worktree atras, REF errada), e
@@ -615,8 +685,8 @@ MAPA2
   # 12. guardrail de FORMA do SQL: o stub nao executa SQL, entao o que da para provar aqui e que a
   #     consulta pede a resposta MAIS RECENTE por edge. Sem isso, um deploy no meio da janela deixa
   #     o bundle velho no resultado e ele seria lido como prova (o caso do omie-vendas-sync).
-  : > "$tmp/sql.txt"; run ok "$tmp/psql-stub" edge-no-ar > /dev/null
-  if tem 'DISTINCT ON (edge)' "$(cat "$tmp/sql.txt")" && tem 'created DESC' "$(cat "$tmp/sql.txt")"
+  : > "$STUB_SQL_ECO"; run ok "$tmp/psql-stub" edge-no-ar > /dev/null
+  if tem 'DISTINCT ON (edge)' "$(cat "$STUB_SQL_ECO")" && tem 'created DESC' "$(cat "$STUB_SQL_ECO")"
   then ok "E12 SQL pede a resposta mais recente por edge (DISTINCT ON + created DESC)"
   else bad "E12 SQL sem DISTINCT ON (edge)/created DESC — deploy no meio da janela viraria prova falsa"; fi
 
@@ -624,14 +694,14 @@ MAPA2
   #      (com `? 'fonte'` cru ela some antes de ser classificada, e a edge cai em "nenhuma sonda"),
   #      e ao admiti-la tem de exigir o eco POSITIVO de sonda — sem o `probe`, QUALQUER 200 com um
   #      campo `edge` entraria como se fosse resposta de sonda, e isso afrouxaria o fail-closed.
-  : > "$tmp/sql.txt"; run ok "$tmp/psql-stub" edge-no-ar > /dev/null
+  : > "$STUB_SQL_ECO"; run ok "$tmp/psql-stub" edge-no-ar > /dev/null
   #      Apertado em 2026-09-27: `->> 'probe'` e `'sem-campo-fonte'` SOLTOS casavam também a 3a
   #      classe (o JOIN por request_id e o CASE dela) — tirar a trava ou trocar o sentinela SÓ da 2a
   #      classe deixava este assert verde. O juiz antigo do --falsificar não via (a poluição entre
   #      rodadas pintava tudo de vermelho); com a rodada isolada, as duas sabotagens ficavam verdes.
-  if tem "NOT ((content::jsonb) ? 'fonte')" "$(cat "$tmp/sql.txt")" \
-     && tem "AND (content::jsonb) ->> 'probe'  = 'true'" "$(cat "$tmp/sql.txt")" \
-     && tem "'sem-campo-fonte'  *AS fonte" "$(cat "$tmp/sql.txt")"
+  if tem "NOT ((content::jsonb) ? 'fonte')" "$(cat "$STUB_SQL_ECO")" \
+     && tem "AND (content::jsonb) ->> 'probe'  = 'true'" "$(cat "$STUB_SQL_ECO")" \
+     && tem "'sem-campo-fonte'  *AS fonte" "$(cat "$STUB_SQL_ECO")"
   then ok "E12b SQL admite a resposta sem \`fonte\`, exige o eco de probe e emite o mesmo sentinela"
   else bad "E12b SQL sem o ramo 'sem fonte' + probe — 200 sondado voltaria a virar 'nenhuma sonda'"; fi
 
@@ -639,8 +709,8 @@ MAPA2
   #      alcanca o bundle pre-#1789, e as DUAS travas dela nao podem sumir — o eco de probe (senao
   #      um id de resposta de CRON vira "prova de sonda") e a recusa de slug CONTRADITORIO (senao
   #      uma colagem trocada FABRICA identidade, que e o pior erro possivel neste script).
-  : > "$tmp/sql.txt"; run ok "$tmp/psql-stub" edge-no-ar > /dev/null
-  sqltxt="$(cat "$tmp/sql.txt")"
+  : > "$STUB_SQL_ECO"; run ok "$tmp/psql-stub" edge-no-ar > /dev/null
+  sqltxt="$(cat "$STUB_SQL_ECO")"
   if tem 'JOIN vinculo v ON v.request_id = b.id' "$sqltxt" \
      && tem "COALESCE((b.content::jsonb) ->> 'edge', v.edge) = v.edge" "$sqltxt" \
      && tem "(b.content::jsonb) ->> 'probe'  = 'true'" "$sqltxt"
@@ -782,18 +852,67 @@ MAPA3
   #      — nao pode ter nada mais novo. Sem esta trava, um CONFERE historico apagaria o
   #      DESATUALIZADA de um bundle velho servindo AGORA, que e a falha silenciosa que este script
   #      existe para pegar (o caso `omie-vendas-sync`).
-  LEDGER_MODO=confere-tudo run ok "$tmp/psql-stub" edge-velha
-  if tem 'DESATUALIZADA' "$out" && [ "$rc" -eq 1 ] && ! tem 'LEDGER_CONFERE' "$out"
-  then ok "E16f janela viva VENCE o ledger: bundle velho servindo segue DESATUALIZADA"
+  #      DUAS edges de proposito: a `edge-muda` (sem resposta na janela) e quem PUXA a consulta. So com
+  #      a `edge-velha` o ledger nem era chamado — a janela ja decidira tudo —, e o caso media o pulo
+  #      dos candidatos (16f2) em vez do `-z "$servido"`: as duas travas pareciam redundantes uma com
+  #      a outra (2026-09-27), e era o CENARIO que nao separava. O "sem veredito" da `edge-muda` prova
+  #      que o ledger FOI lido.
+  LEDGER_MODO=confere-tudo run ok "$tmp/psql-stub" edge-velha edge-muda
+  if tem 'DESATUALIZADA *edge-velha ' "$out" && [ "$rc" -eq 1 ] && ! tem 'LEDGER_CONFERE' "$out" \
+     && tem 'ledger: sem veredito' "$out"
+  then ok "E16f janela viva VENCE o ledger: bundle velho servindo segue DESATUALIZADA (com o ledger lido)"
   else bad "E16f ledger nao pode apagar o DESATUALIZADA da janela viva (rc=$rc): ${out:0:200}"; fi
 
+  # 16f2. ...e quem a janela viva JA decidiu nem chega a ser perguntado. Com todas as edges
+  #       respondendo na janela o ledger nao tem o que dizer, e chama-lo nao e inocuo: o CLI real faz
+  #       `git fetch` + consulta, e o desfecho dele sai no TOPO da lista — com a worktree defasada, o
+  #       "ANTES DE AGIR: sincronize e rode de novo" em cima de um DESATUALIZADA ja PROVADO pela janela
+  #       (medido 2026-09-28). A chamada nao muda a classificacao, entao so o TRACO do stub a ve; o
+  #       controle (1 chamada para a `edge-muda`, que a janela NAO decidiu) prova que o traco registra.
+  local n_ctl n_cham
+  : > "$LEDGER_TRACE"; LEDGER_MODO=confere run ok "$tmp/psql-stub" edge-muda
+  n_ctl="$(chamadas)"
+  : > "$LEDGER_TRACE"
+  FECHO_LEDGER_RAIZ="$cli_defasado" LEDGER_MODO=confere run ok "$tmp/psql-stub" edge-velha edge-no-ar
+  n_cham="$(chamadas)"
+  if [ "$n_ctl" = 1 ] && [ "$n_cham" = 0 ] && tem 'DESATUALIZADA *edge-velha ' "$out" && [ "$rc" -eq 1 ] \
+     && ! tem 'LEDGER_WORKTREE_DEFASADA' "$out" && ! tem 'ANTES DE AGIR' "$out"
+  then ok "E16f2 janela viva decidiu TODAS as edges -> o CLI do ledger NEM e chamado (sem aviso de defasagem)"
+  else bad "E16f2 com a janela decidindo tudo o ledger nao podia ser chamado (chamadas=$n_cham, controle=$n_ctl, rc=$rc): ${out:0:200}"; fi
+
+  # 16f3. A OUTRA METADE do mesmo contrato ("so pergunta quando ha a quem"): edge FORA do mapa nao tem
+  #       `esperado`, o ledger nao tem o que dizer dela, e a janela so com ela nao chama o CLI — senao a
+  #       worktree defasada poe o "ANTES DE AGIR" em cima de uma edge que o ledger nem julgaria (medido
+  #       2026-09-28). A trava ficava fora da lista E sem caso: a chamada nao muda a classificacao.
+  : > "$LEDGER_TRACE"; LEDGER_MODO=confere run ok "$tmp/psql-stub" edge-muda
+  n_ctl="$(chamadas)"
+  : > "$LEDGER_TRACE"
+  FECHO_LEDGER_RAIZ="$cli_defasado" LEDGER_MODO=confere run ok "$tmp/psql-stub" edge-fora-do-mapa
+  n_cham="$(chamadas)"
+  if [ "$n_ctl" = 1 ] && [ "$n_cham" = 0 ] && tem 'SEM_PROVA *edge-fora-do-mapa ' "$out" && [ "$rc" -eq 1 ] \
+     && ! tem 'LEDGER_WORKTREE_DEFASADA' "$out" && ! tem 'ANTES DE AGIR' "$out"
+  then ok "E16f3 so edge FORA do mapa na janela -> o CLI do ledger NEM e chamado (sem aviso de defasagem)"
+  else bad "E16f3 edge fora do mapa nao tem o que perguntar ao ledger (chamadas=$n_cham, controle=$n_ctl, rc=$rc): ${out:0:200}"; fi
+
   # 16g. ...e o mesmo vale para a resposta que PROVA bundle velho sem `fonte` (pre-#1998) e para a
-  #      edge FORA do mapa, que nao tem `esperado` com que casar a 2a chave.
-  LEDGER_MODO=confere-tudo run ok "$tmp/psql-stub" edge-pre-fonte edge-fora-do-mapa
-  if tem 'PRE_SONDA_FONTE' "$out" && tem 'SEM_PROVA' "$out" && [ "$rc" -eq 1 ] \
-     && ! tem 'LEDGER_CONFERE' "$out"
+  #      edge FORA do mapa, que nao tem `esperado` com que casar a 2a chave. A `edge-muda` puxa a
+  #      consulta, como no 16f: sem ela o ledger nem era chamado e o caso nao lia veredito nenhum.
+  LEDGER_MODO=confere-tudo run ok "$tmp/psql-stub" edge-pre-fonte edge-fora-do-mapa edge-muda
+  if tem 'PRE_SONDA_FONTE *edge-pre-fonte ' "$out" && tem 'SEM_PROVA *edge-fora-do-mapa ' "$out" \
+     && [ "$rc" -eq 1 ] && ! tem 'LEDGER_CONFERE' "$out" && tem 'ledger: sem veredito' "$out"
   then ok "E16g ledger nao absolve PRE_SONDA_FONTE nem edge fora do mapa (sem esperado, sem 2a chave)"
   else bad "E16g ledger absolveu quem nao podia (rc=$rc): ${out:0:200}"; fi
+
+  # 16g2. A 2a chave nao pode ser VAZIA. Edge fora do mapa tem `esperado` vazio; um CLI que diga
+  #       CONFERE para ela com `observado` "" faria a dupla chave casar "" = "" — absolvicao sem
+  #       regua, e so o `-n "$esperado"` do alvo barra. Com um `observado` de verdade (o 16g) a propria
+  #       dupla chave ja barrava, e a trava ficava sem caso proprio (verde isolada, 2026-09-27). O
+  #       NUNCA_ATESTADA da `edge-muda` prova que o ledger FOI lido.
+  LEDGER_MODO=confere-vazio run ok "$tmp/psql-stub" edge-muda edge-fora-do-mapa
+  if tem 'SEM_PROVA *edge-fora-do-mapa ' "$out" && ! tem 'LEDGER_CONFERE' "$out" && [ "$rc" -eq 1 ] \
+     && tem 'NUNCA_ATESTADA' "$out"
+  then ok "E16g2 CLI com CONFERE de campos VAZIOS p/ edge fora do mapa -> segue SEM_PROVA ('' = '' nao e 2a chave)"
+  else bad "E16g2 a 2a chave vazia absolveu edge fora do mapa (rc=$rc): ${out:0:200}"; fi
 
   # 16h. PRECEDENCIA: mecanica quebrada nao consulta o ledger. O wrapper mudo e o mesmo caminho ate
   #      o banco que o CLI usaria — confiar no ledger com o psql reprovado seria contornar o
@@ -802,6 +921,22 @@ MAPA3
   if tem 'SEM_PROVA' "$out" && [ "$rc" -eq 2 ] && ! tem 'LEDGER_CONFERE' "$out"
   then ok "E16h psql mudo -> ledger NEM e consultado (fail-closed do banco tem precedencia)"
   else bad "E16h com mecanica quebrada o ledger nao pode absolver (rc=$rc): ${out:0:200}"; fi
+
+  # 16h2. ...e "NEM e consultado" e LITERAL. O 16h so enxerga a absolvicao, que a leitura do veredito
+  #       ja barra sozinha (com a mecanica reprovada o laco nem le o `esperado`): a chamada em si era
+  #       invisivel, e a trava que a impede ficava VERDE isolada (2026-09-27 — nao porque "o CLI cai
+  #       junto": o 16h ja e banco quebrado com CLI sao). Chamar o CLI com o banco reprovado custa o
+  #       `git fetch` + a consulta, e com a worktree defasada o "sincronize e rode de novo" apontaria a
+  #       causa ERRADA — o problema e o banco (medido 2026-09-28). Traco + controle, como no 16f2.
+  : > "$LEDGER_TRACE"; LEDGER_MODO=confere run ok "$tmp/psql-stub" edge-muda
+  n_ctl="$(chamadas)"
+  : > "$LEDGER_TRACE"
+  FECHO_LEDGER_RAIZ="$cli_defasado" LEDGER_MODO=confere run mudo "$tmp/psql-stub" edge-muda
+  n_cham="$(chamadas)"
+  if [ "$n_ctl" = 1 ] && [ "$n_cham" = 0 ] && [ "$rc" -eq 2 ] \
+     && ! tem 'LEDGER_WORKTREE_DEFASADA' "$out" && ! tem 'ANTES DE AGIR' "$out"
+  then ok "E16h2 psql mudo -> o CLI do ledger NEM e chamado (traco vazio; nenhum aviso de defasagem com o banco reprovado)"
+  else bad "E16h2 com a mecanica reprovada o ledger foi chamado (chamadas=$n_cham, controle=$n_ctl, rc=$rc): ${out:0:200}"; fi
 
   # ----------------------------------------------- FRESCURA do CLI do ledger ---
   # 16i. O DEFEITO DE 2026-09-10, reproduzido: /fecho numa worktree 11 commits ATRAS da main, com
@@ -864,7 +999,10 @@ MAPA3
 
   # 16n. TREE SUJO: o checkout pelado falharia ou carregaria a mudanca local junto (e a defasagem
   #      voltaria). O remedio muda — e sem `git stash` pelado, que e pilha COMPARTILHADA entre as
-  #      worktrees. O par minimo do remedio e o 16i (tree limpo).
+  #      worktrees. O par minimo do remedio e o 16i (tree limpo). O tree sujo nasce AQUI, na rodada: a
+  #      mudanca sem commit e o que se mede, e nenhuma outra rodada pode herda-la (nem perde-la).
+  local cli_sujo="$rodada/cli-sujo"; cli_base "$cli_sujo"
+  printf "export const julgar = 'editado, sem commit';\n" >> "$cli_sujo/scripts/lib/pendencias-deploy.ts"
   FECHO_LEDGER_RAIZ="$cli_sujo" LEDGER_MODO=confere run ok "$tmp/psql-stub" edge-muda
   if tem 'LEDGER_WORKTREE_DEFASADA' "$out" && tem 'scripts/lib/pendencias-deploy.ts' "$out" \
      && tem 'commit WIP' "$out" && ! tem 'LEDGER_CONFERE' "$out"
@@ -874,8 +1012,17 @@ MAPA3
   # 16o. A CORRIDA: em dia ANTES da chamada, defasada DEPOIS — o `git fetch origin main` do CLI trouxe
   #      a onda nova. A comparacao que vale e contra a REF que o CLI julgou, que so existe depois que
   #      ele volta; uma trava ANTES da chamada leria a mensagem de 2026-09-10 de novo.
-  git -C "$cli_corrida" update-ref refs/remotes/origin/main "$CORRIDA_BASE"
-  FECHO_LEDGER_RAIZ="$cli_corrida" LEDGER_MODO=intruso-apos-fetch run ok "$tmp/psql-stub" edge-muda
+  #      A corrida nasce na rodada e EM DIA (origin/main = HEAD), com o commit novo guardado em
+  #      `futuro`; o stub `intruso-apos-fetch` move a origin/main para ele DURANTE a chamada, como o
+  #      `git fetch origin main` do CLI real faria. Um repo comum as rodadas dependia de um reset aqui.
+  local cli_corrida="$rodada/cli-corrida" corrida_novo
+  cli_base "$cli_corrida"
+  cli_main_anda "$cli_corrida" supabase/functions/_shared/sonda-cron-alvos.ts "$ALVOS_ONDA5"
+  corrida_novo="$(git -C "$cli_corrida" rev-parse refs/remotes/origin/main)"
+  git -C "$cli_corrida" update-ref refs/heads/futuro "$corrida_novo"
+  git -C "$cli_corrida" update-ref refs/remotes/origin/main HEAD
+  CORRIDA_NOVO="$corrida_novo" FECHO_LEDGER_RAIZ="$cli_corrida" LEDGER_MODO=intruso-apos-fetch \
+    run ok "$tmp/psql-stub" edge-muda
   if tem 'LEDGER_WORKTREE_DEFASADA' "$out" && tem 'sonda-cron-alvos.ts' "$out" \
      && ! tem 'LEDGER_NAO_CONSULTADO' "$out" && ! tem 'aprovou: omie-desconto-backfill' "$out"
   then ok "E16o REF andou DURANTE a chamada (fetch do CLI) -> a frescura e medida depois, contra a REF julgada"
@@ -888,6 +1035,13 @@ MAPA3
      && ! tem 'LEDGER_WORKTREE_DEFASADA' "$out"
   then ok "E16p frescura do CLI nao verificavel (REF ausente) -> LEDGER_NAO_CONSULTADO, nunca absolve"
   else bad "E16p sem provar a frescura o ledger nao pode absolver (rc=$rc): ${out:0:220}"; fi
+
+  # O RECIBO de término — a ÚLTIMA coisa da suíte, com o locale e o nº de linhas de assert. Um
+  # `return` ou aborto no meio pula os asserts seguintes sem vermelho nenhum (o `fail` só conta o que
+  # rodou): quem lê o recibo — a execução normal, abaixo, e a camada 2 do --falsificar — sabe que
+  # a suíte chegou ao FIM, e com quantos asserts.
+  terminou="${LC_ALL:-?}"
+  printf 'FIM_DA_SUITE locale=%s asserts=%s\n' "$terminou" "$n_asserts"
 }
 
 # ---------------------------------------------------------------- falsificação ---
@@ -898,10 +1052,15 @@ if [ "${1:-}" = "--falsificar" ]; then
   # Os logs das rodadas saem SEM cor (`sem_cor`), para o ID casar logo depois da palavra.
   esc="$(printf '\033')"
   sem_cor() { LC_ALL=C sed "s/${esc}\[[0-9;]*m//g" "$1"; }
-  # O CONJUNTO de asserts executados numa rodada (IDs distintos). Conjunto, não contagem: o 5f e o
-  # 16d imprimem um `bad` POR item que falha, e o 14c um par por sufixo — a contagem de linhas varia
-  # legitimamente; um aborto no meio, não: os IDs seguintes somem.
-  executados() { { LC_ALL=C grep -Eo '^  (ok +|FALHA )[EH][0-9]+[a-z0-9_]* ' "$1" || true; } | LC_ALL=C awk '{ print $2 }' | sort -u | tr '\n' ' '; }
+  # A LISTA dos asserts executados numa rodada — ordenada e COM repetição. Até 2026-09-28 era o
+  # CONJUNTO (`sort -u`), porque os laços repetiam o ID a cada iteração e o 5f só imprimia o `bad`:
+  # a multiplicidade se perdia, e um aborto que cortasse só iterações não mudava o conjunto (Codex).
+  # Hoje cada assert imprime UMA linha com um ID SÓ DELE, nos dois ramos (os laços numeram a
+  # iteração e fecham com o resumo) — a lista É o conjunto, e o controle prova isso (ID repetido lá
+  # é FALHA: a premissa do juiz quebrou).
+  executados() { { LC_ALL=C grep -Eo '^  (ok +|FALHA )[EH][0-9]+[a-z0-9_]* ' "$1" || true; } | LC_ALL=C awk '{ print $2 }' | LC_ALL=C sort | tr '\n' ' '; }
+  # O RECIBO de término que a suíte imprime por último: "<locale> <nº de asserts>" (vazio sem recibo)
+  recibo() { LC_ALL=C sed -n 's/^FIM_DA_SUITE locale=\([^ ]*\) asserts=\([0-9][0-9]*\)$/\1 \2/p' "$1" | tail -1; }
   # Erro de execução do bash no ALVO, no que a suíte despeja da saída dele (`${out:0:N}` dos `bad`).
   erros_exec() { cat "$1" "$1.stderr" 2>/dev/null | LC_ALL=C grep -cE 'unbound variable|command not found|syntax error|bad substitution' || true; }
   vermelhos() { { LC_ALL=C grep -Eo '^  FALHA [EH][0-9]+[a-z0-9_]* ' "$1" || true; } | LC_ALL=C awk '!v[$2]++ { printf "%s ", $2 }'; }
@@ -968,11 +1127,23 @@ if [ "${1:-}" = "--falsificar" ]; then
     # shellcheck disable=SC2030,SC2031
     ( export LC_ALL="$loc"; ALVO="$controle"; ERROS_DO_ALVO="$ctl.stderr"; fail=0; suite; [ "$fail" -eq 0 ] ) > "$ctl.cru" 2>&1; rc=$?
     sem_cor "$ctl.cru" > "$ctl"
-    if [ "$rc" -eq 0 ] && [ -n "$(executados "$ctl")" ]; then
-      printf '  \033[32mok\033[0m   [%-11s] controle (sem sabotagem) -> VERDE (%s asserts)\n' "$loc" "$(executados "$ctl" | wc -w | tr -d ' ')"
-    else
+    ids_ctl="$(executados "$ctl")"
+    n_ids="$(printf '%s' "$ids_ctl" | wc -w | tr -d ' ')"
+    # shellcheck disable=SC2086  # a divisão em palavras da lista é o ponto
+    dup="$(printf '%s\n' $ids_ctl | uniq -d | tr '\n' ' ')"
+    if [ "$rc" -ne 0 ] || [ "$n_ids" -eq 0 ]; then
       printf '  \033[31mFALHA\033[0m [%s] controle SEM sabotagem ja esta VERMELHO — sem linha de base, falsificar nao prova nada\n' "$loc"
       falhou=1
+    elif [ -n "$dup" ]; then
+      printf '  \033[31mFALHA\033[0m [%s] controle com ID de assert REPETIDO (%s) — a lista de executados perde a multiplicidade\n' "$loc" "$dup"
+      falhou=1
+    elif [ "$(recibo "$ctl")" != "$loc $n_ids" ]; then
+      # o recibo conta as chamadas de ok()/bad(); as linhas com ID contam o que o juiz ENXERGA — se
+      # divergem, há assert sem ID (invisível às camadas 2 e 3) ou a suíte não chegou ao fim
+      printf '  \033[31mFALHA\033[0m [%s] controle sem o RECIBO de termino coerente (esperado [%s %s], veio [%s])\n' "$loc" "$loc" "$n_ids" "$(recibo "$ctl")"
+      falhou=1
+    else
+      printf '  \033[32mok\033[0m   [%-11s] controle (sem sabotagem) -> VERDE (%s asserts, recibo de termino, IDs unicos)\n' "$loc" "$n_ids"
     fi
   done
   if [ "$falhou" -ne 0 ]; then
@@ -987,19 +1158,23 @@ if [ "${1:-}" = "--falsificar" ]; then
   # sintaxe quebrada (não havia `bash -n`). Colaterais ficam de fora de propósito.
   # docs/historico/falsificacao-exit-nao-e-dente.md
   SABOTAGENS="presenca_wrapper_basta:E6c sonda_saida_inteira:E1 shared_sem_mapa_ok:E13c
-              mapa_base_cegueira:E14b rodape_sem_remedio:E3b via_c_muda:E13b qualquer_fonte_prova:E2
+              mapa_base_cegueira:E14b rodape_sem_remedio:E3b via_c_muda:E13b grafo_falho_segue:E13d
+              mecanica_fora_da_classificacao:E5e qualquer_fonte_prova:E2
               pre_sonda_fonte_neutro:E5b sql_descarta_sem_fonte:E12b segunda_classe_sem_probe:E12b
               sentinela_diverge:E12b anonima_neutra:E5c anonimas_ausente_zero:E5e slug_forasteiro_calado:E5g
               request_ids_sem_flag:E5h par_fora_do_sql:E5h aposentada_ignorada:E15 marcador_do_wt:E15c
               sql_sem_distinct_on:E12 ledger_pelo_rotulo:E16b ledger_sem_marca:E16d_sem_marca
-              ledger_exit_anomalo:E16k divergencia_generica:E16e ledger_sem_json:E16
+              ledger_exit_anomalo:E16k ledger_sem_gate_da_mecanica:E16h2 ledger_pergunta_a_janela:E16f2
+              ledger_pergunta_fora_do_mapa:E16f3
+              janela_viva_sem_z_servido:E16f,E16g ledger_segunda_chave_vazia:E16g2
+              divergencia_generica:E16e ledger_sem_json:E16
               ledger_sem_diagnostico:E16c frescura_sempre_em_dia:E16i,E16j defasada_vale:E16j
               frescura_nao_verificavel_ok:E16p defasada_no_dispare:E16i fecho_sem_imports:E16i
               fecho_sem_alias:E16m fecho_sem_import_dinamico:E16m fecho_por_linha:E16m
               remedio_ignora_tree_sujo:E16n frescura_antes_da_chamada:E16o frescura_repo_inteiro:E16l
               rodape_sem_sincronizar:E16i defasada_repete_cli:E16i fuso_frouxo:E14c fuso_apertado:E14c2 hora_frouxo:H1,H3 hora_apertado:H4
               hora_ingenuo:H2 hora_remedio_ensina_bug:H3
-              janela_nao_impressa:E14d janela_viva_sem_as_duas_travas:E16f"
+              janela_nao_impressa:E14d"
 
   # registra <nome> <descricao> <expressao-sed> — a TABELA das sabotagens. Nome da lista sem
   # registro e registro fora da lista são FALHA (no fim do laço): o primeiro não sabotaria nada, o
@@ -1016,8 +1191,13 @@ if [ "${1:-}" = "--falsificar" ]; then
   registra sonda_saida_inteira "sonda exigindo saida inteira == 1 (ignora os SET do wrapper)" \
     "s%| command grep -Fxq -- '1'%| tr -d '[:space:]' | command grep -Fxq -- '1'%"
   # (a3) o fail-closed do `_shared/` sem mapa vira aviso: enumeracao voltaria a absolver por ausencia
+  #      SÓ o `exit 2` do mapa da MAIN ilegível (faixa a partir do `if` dele): o sed antigo, sem
+  #      endereço, trocava os TRÊS `exit 2` de 6 espaços — o do `bun` ausente e o da via (c) junto —, e
+  #      derrubava o E13d de tabela (medido 2026-09-28: 3 linhas; das 52 sabotagens, a única conflada
+  #      sem querer — as outras de 2 linhas são pares de propósito).
+  # shellcheck disable=SC2016  # a expressao sed e PADRAO literal do alvo
   registra shared_sem_mapa_ok "_shared sem mapa deixando de ser exit 2" \
-    's%      exit 2$%      :%'
+    '/if \[ ! -s "$tmp\/mapa_agora" \]; then/,/^      exit 2$/s/^      exit 2$/      :/'
   # (a4) a assimetria de papel entre as duas pontas do mapa some, e `mapa_base` volta a valer por
   #      cegueira — o defeito medido em 2026-09-05: janela cujo base e anterior ao #1998 (que criou
   #      o mapa) desistia por atacado, sem veredito nenhum, justo quando `_shared/` afetou 41 das
@@ -1038,10 +1218,20 @@ if [ "${1:-}" = "--falsificar" ]; then
   registra via_c_muda "via (c) sem contribuir alvos (grafo de imports mudo)" \
     's%    cat "$tmp/afetadas" >> "$tmp/alvos"%    :%'
   # (a6) a via (c) deixa de ser fail-closed: erro do auxiliar vira seguir-em-frente, e lista vazia
-  #      por ERRO volta a ser indistinguivel de lista vazia por merito
+  #      por ERRO volta a ser indistinguivel de lista vazia por merito. SÓ o `exit 2` desse ramo: o sed
+  #      antigo (`if false && ! bun`) impedia o bun de RODAR, e o que caía era o E13b da vizinha. O
+  #      13d é o cenário que faltava — nenhum outro faz o auxiliar FALHAR (bun presente-porém-quebrado).
+  registra grafo_falho_segue "via (c) seguindo em frente quando o auxiliar do grafo FALHA" \
+    '/lista vazia por ERRO/,/^      exit 2$/s/^      exit 2$/      :/'
+  # (b) o fail-closed some da classificacao: mecanica quebrada passaria a absolver. São DUAS travas
+  #     no laço do veredito — o `esperado`/`servido` só é lido com a mecânica OK, e o NO_AR exige
+  #     `mecanica_ok = 1` — e cada uma torna a outra INALCANÇÁVEL: nenhuma entrada isola uma delas
+  #     (medido 2026-09-28: cada uma sozinha fica verde nos 2 locales). Juntas, o E5e cai com exit 0 e
+  #     NO_AR — a mecânica que o próprio script reprovou (a linha `#anonimas` sumiu) absolvendo tudo.
+  #     Decisão do founder (2026-09-28): as duas ficam como defesa em profundidade, provadas em PAR.
   # shellcheck disable=SC2016  # a expressao sed e PADRAO literal do alvo
-  # (b) o fail-closed some da classificacao: mecanica quebrada passaria a absolver
-  # shellcheck disable=SC2016  # a expressao sed e PADRAO literal do alvo
+  registra mecanica_fora_da_classificacao "classificacao ignorando a mecanica (leitura E condicao do NO_AR)" \
+    's%^  if \[ "$mecanica_ok" = 1 \]; then$%  if true; then%;s%if \[ "$mecanica_ok" = 1 \] && \[ -n "$esperado" \] && %if [ -n "$esperado" ] \&\& %'
   # (c) presenca vira prova: qualquer fonte servida absolveria, inclusive a velha
   # shellcheck disable=SC2016  # a expressao sed e PADRAO literal do alvo
   registra qualquer_fonte_prova "aceitar qualquer fonte servida como prova" \
@@ -1118,14 +1308,37 @@ if [ "${1:-}" = "--falsificar" ]; then
   registra ledger_exit_anomalo "exit anomalo do ledger tratado como resposta" \
     's%    0|1)%    0|1|2|127)%'
   # (l4) a PRECEDÊNCIA some: com o psql reprovado, o ledger seria consultado assim mesmo — o
-  #      fail-closed do banco contornado por uma porta lateral (o CLI usa o MESMO wrapper).
+  #      fail-closed do banco contornado por uma porta lateral (o CLI usa o MESMO wrapper). A
+  #      absolvição, a leitura do veredito já barra sozinha (o laço não lê `esperado` com a mecânica
+  #      reprovada); o que SÓ esta trava impede é a CHAMADA — e o aviso de defasagem que ela imprime
+  #      com a causa errada. O 16h2 a mede pelo traço do stub.
   # shellcheck disable=SC2016  # a expressao sed e PADRAO literal do alvo
-  # (l5) a JANELA VIVA deixa de vencer: uma atestação histórica apagaria o `DESATUALIZADA` de um
-  #      bundle velho servindo AGORA — a falha silenciosa que este script existe para pegar.
+  registra ledger_sem_gate_da_mecanica "ledger consultado com a mecanica do banco reprovada" \
+    's%if \[ "$mecanica_ok" = 1 \]; then  # ledger: mesmo gate do banco%if true; then%'
+  # (l5) quem a JANELA VIVA já decidiu vira candidato: o ledger é chamado sem ter a quem responder, e
+  #      com a worktree defasada o "sincronize antes de agir" sai sobre uma prova da janela. A
+  #      classificação segue certa (quem a guarda é o `-z "$servido"`, abaixo); o 16f2 mede a chamada.
   # shellcheck disable=SC2016  # a expressao sed e PADRAO literal do alvo
+  registra ledger_pergunta_a_janela "ledger perguntado sobre edge que a janela viva ja decidiu" \
+    's%    command grep -q -- "\^$slug " "$tmp/ar"   2>/dev/null && continue%    :%'
+  # (l5c) a outra metade do "só pergunta quando há a quem": edge FORA do mapa vira candidata — o CLI é
+  #      chamado para uma edge sem `esperado`, sobre a qual o veredito dele nem seria lido (16f3).
+  # shellcheck disable=SC2016  # a expressao sed e PADRAO literal do alvo
+  registra ledger_pergunta_fora_do_mapa "ledger perguntado sobre edge fora do mapa (sem esperado)" \
+    's%    command grep -q -- "\^$slug " "$tmp/mapa" 2>/dev/null || continue   # fora do mapa: nada a perguntar%    :%'
+  # (l5b) a JANELA VIVA deixa de vencer: o veredito do ledger é lido para quem respondeu na janela, e
+  #      uma atestação histórica apaga o `DESATUALIZADA` de um bundle velho servindo AGORA (16f) e o
+  #      `PRE_SONDA_FONTE` (16g). Só aparece quando OUTRA edge puxa a consulta — sozinha, a edge da
+  #      janela nem é candidata (l5) —, e por isso as duas travas pareciam redundantes (2026-09-27).
+  # shellcheck disable=SC2016  # a expressao sed e PADRAO literal do alvo
+  registra janela_viva_sem_z_servido "ledger passando por cima da janela viva (mais fresca)" \
+    's%  if \[ "$ledger_ok" = 1 \] && \[ -n "$esperado" \] && \[ -z "$servido" \]; then%  if [ "$ledger_ok" = 1 ] \&\& [ -n "$esperado" ]; then%'
   # (l6) o ledger passa a opinar sobre edge FORA do mapa, onde não há `esperado` com que casar a
-  #      2ª chave — absolvição sem régua.
+  #      2ª chave — absolvição sem régua. Com um `observado` de verdade a dupla chave barra sozinha;
+  #      o caso desta trava é o CLI que diz CONFERE com `observado` VAZIO: "" = "" (16g2).
   # shellcheck disable=SC2016  # a expressao sed e PADRAO literal do alvo
+  registra ledger_segunda_chave_vazia "ledger opinando sobre edge fora do mapa (2a chave vazia)" \
+    's%  if \[ "$ledger_ok" = 1 \] && \[ -n "$esperado" \] && \[ -z "$servido" \]; then%  if [ "$ledger_ok" = 1 ] \&\& [ -z "$servido" ]; then%'
   # (l7) a divergência do ledger perde o nome e cai no ramo genérico: além de sumir a marca, a
   #      edge volta para a lista do DISPARE — convidando a sondar bundle pré-sensor, que EXECUTA
   #      o fluxo real (deploy antes, sonda depois).
@@ -1228,37 +1441,17 @@ if [ "${1:-}" = "--falsificar" ]; then
   registra janela_nao_impressa "janela efetiva deixando de ser impressa" \
     '/echo "janela:/d'
 
-  # O PAR de travas da janela viva: o pulo de quem está na janela (l5) E o `-z "$servido"` da
-  # condição do ledger. Cada uma SOZINHA é redundante com a outra (medido: as duas ficam verdes);
-  # juntas, o ledger passa por cima da evidência mais fresca e o E16f cai.
-  # shellcheck disable=SC2016  # a expressao sed e PADRAO literal do alvo
-  registra janela_viva_sem_as_duas_travas "janela viva sem as DUAS travas (pulo + -z servido)" \
-    's%    command grep -q -- "\^$slug " "$tmp/ar"   2>/dev/null && continue%    :%;s%  if \[ "$ledger_ok" = 1 \] && \[ -n "$esperado" \] && \[ -z "$servido" \]; then%  if [ "$ledger_ok" = 1 ] \&\& [ -n "$esperado" ]; then%'
-
-  # ── SEM DENTE, medidas em 2026-09-27 — FORA da lista até ganharem um cenário que as isole ──
-  # Com a rodada isolada, estas ficaram VERDES nos 2 locales: a camada que miram é redundante com
-  # outra (defesa em profundidade) ou nenhum cenário da suíte a alcança. O juiz antigo as aprovava
-  # pela POLUIÇÃO entre rodadas (o --desde caía em toda rodada). O sed fica aqui para quem escrever
-  # o cenário — docs/historico/falsificacao-exit-nao-e-dente.md.
-  #   · mecânica quebrada classificando NO_AR — só a condição da mecânica:
-  #       's%if \[ "$mecanica_ok" = 1 \] && \[ -n "$esperado" \] && %if [ -n "$esperado" ] \&\& %'
-  #     (o sed antigo tirava também `servido = esperado`, e o que caía era o E2 — o alvo da
-  #     "aceitar qualquer fonte servida como prova"); precisa, nenhum assert cai.
-  #   · via (c) seguindo em frente quando o auxiliar FALHA — só o fail-closed desse ramo:
-  #       '/lista vazia por ERRO/,/^      exit 2$/s/^      exit 2$/      :/'
-  #     (o sed antigo, `if false && ! bun`, impedia o bun de RODAR: o E13b caía como na "via (c)
-  #     sem contribuir alvos"); nenhum cenário da suíte faz o `edges-afetadas.ts` falhar.
-  #   · (l4) ledger consultado com a mecânica do banco reprovada:
-  #       's%if \[ "$mecanica_ok" = 1 \]; then  # ledger: mesmo gate do banco%if true; then%'
-  #     o CLI usa o MESMO wrapper do banco: nos cenários de mecânica quebrada ele falha junto.
-  #   · (l5) sozinha e (l6) ledger fora do mapa — cada uma é redundante com outra trava: o pulo da
-  #     janela × o `-z "$servido"` (o PAR entra acima), e o `-n "$esperado"` × a dupla chave
-  #     `l_obs = esperado` (que a "ledger absolvendo pelo ROTULO" já prova). O sed da l6 tirava
-  #     as DUAS condições dela; precisa (só `-n "$esperado"`), fica verde.
+  # As 5 que ficaram SEM DENTE com a rodada isolada (2026-09-27) voltaram à lista em 2026-09-28:
+  # quatro com o cenário que as isola (13d, 16f2, 16g2, 16h2) e a da mecânica provada em PAR, por
+  # decisão do founder (as duas travas dela se tornam inalcançáveis uma à outra). O PAR da janela viva
+  # (l5 + `-z "$servido"`) se desfez: com duas edges no 16f, cada trava cai sozinha no SEU assert — o
+  # que as fazia parecer redundantes era o cenário. E a outra metade do contrato da l5 (edge FORA do
+  # mapa não é candidata), que nem estava na lista, ganhou o 16f3. docs/historico/falsificacao-exit-nao-e-dente.md
 
   # A rodada só conta como vermelha com as QUATRO camadas (as do sync-reprocess):
   #   1. a sabotagem APLICOU e não quebrou a sintaxe (as travas de aplica());
-  #   2. a suíte rodou INTEIRA (o conjunto de asserts executados = o do controle);
+  #   2. a suíte rodou INTEIRA: o RECIBO de término (locale e nº de asserts) e a LISTA de asserts
+  #      executados — um ID por linha, com repetição — iguais aos do controle;
   #   3. CADA assert declarado está VERDE no controle e VERMELHO aqui (o mesmo assert virou);
   #   4. nenhum erro de execução do bash no alvo que o controle não tem — o alvo que morre no ramo
   #      do assert derruba o assert certo por CRASH, não por julgamento.
@@ -1292,8 +1485,9 @@ if [ "${1:-}" = "--falsificar" ]; then
           faltam="$faltam $exigido"
         fi
       done
-      if [ "$(executados "$log")" != "$(executados "$ctl")" ]; then
-        printf '  \033[31mFALHA\033[0m [%s] "%s": a suite NAO rodou inteira (asserts ausentes do log) — vermelho de aborto, nao de assert\n' "$loc" "$desc"
+      if [ "$(recibo "$log")" != "$(recibo "$ctl")" ] || [ "$(executados "$log")" != "$(executados "$ctl")" ]; then
+        printf '  \033[31mFALHA\033[0m [%s] "%s": a suite NAO rodou inteira (recibo [%s] x controle [%s], ou asserts ausentes/repetidos no log) — vermelho de aborto, nao de assert\n' \
+          "$loc" "$desc" "$(recibo "$log")" "$(recibo "$ctl")"
         falhou=1
       elif [ "$(erros_exec "$log")" != "$(erros_exec "$ctl")" ]; then
         printf '  \033[31mFALHA\033[0m [%s] "%s": vermelha com ERRO de execucao no alvo — o assert caiu por crash, nao por julgamento\n' "$loc" "$desc"
@@ -1326,13 +1520,24 @@ for cand in pt_BR.UTF-8 pt_BR.utf8 en_US.UTF-8 en_US.utf8 C.UTF-8 C.utf8; do
 done
 [ -n "$utf8" ] || { echo "FALHA: nenhum locale UTF-8 disponivel"; exit 1; }
 
-total=0
+total=0; contagens=""
 for loc in C "$utf8"; do
   # shellcheck disable=SC2031
   export LC_ALL="$loc"
   fail=0
   suite
   total=$((total + fail))
+  # o RECIBO: `terminou` só é escrito na última linha da suíte — um `return` no meio pularia os
+  # asserts seguintes EM VERDE, porque o `fail` só conta o que rodou
+  if [ "$terminou" != "$loc" ]; then
+    printf '  \033[31mFALHA\033[0m a suite NAO chegou ao fim em %s (sem recibo de termino)\n' "$loc"; total=$((total + 1))
+  fi
+  contagens="${contagens:+$contagens }$n_asserts"
 done
+# ...e o MESMO nº de asserts nos dois locales: assert que só roda num deles é metade da cobertura
+# fingindo ser inteira (#1483)
+if [ "$contagens" != "$n_asserts $n_asserts" ]; then
+  printf '  \033[31mFALHA\033[0m nº de asserts difere entre os locales (%s)\n' "$contagens"; total=$((total + 1))
+fi
 [ "$total" -eq 0 ] || { printf '\n\033[31m== REPROVOU ==\033[0m\n'; exit 1; }
 printf '\n\033[32m== verde nos 2 locales ==\033[0m\n'

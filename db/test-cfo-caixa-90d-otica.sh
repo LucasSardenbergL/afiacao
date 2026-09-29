@@ -114,48 +114,48 @@ col() { Pq -c "SELECT coalesce(($1)::text, 'NULL') FROM bloco_c WHERE company = 
 P -q <<'SQL'
 INSERT INTO public.fin_movimentacoes (company, data_movimento, tipo, valor, categoria_descricao, omie_codigo_lancamento) VALUES
   -- C1 o mesmo recebimento nas duas óticas (o banco credita no dia útil seguinte)
-  ('acme', CURRENT_DATE - 10, 'E', 1000, 'CONTA_A_RECEBER',        1001),
-  ('acme', CURRENT_DATE -  9, 'E', 1000, 'CONTA_CORRENTE_REC',     1001),
+  ('acme', (now() AT TIME ZONE 'America/Sao_Paulo')::date - 10, 'E', 1000, 'CONTA_A_RECEBER',        1001),
+  ('acme', (now() AT TIME ZONE 'America/Sao_Paulo')::date -  9, 'E', 1000, 'CONTA_CORRENTE_REC',     1001),
   -- C2 par divergente em VALOR e DATA (21,3% / 39,4% dos pares na PROD): vale o do banco
-  ('acme', CURRENT_DATE - 20, 'E', 1050, 'CONTA_A_RECEBER',        1002),
-  ('acme', CURRENT_DATE - 17, 'E', 1000, 'CONTA_CORRENTE_REC',     1002),
+  ('acme', (now() AT TIME ZONE 'America/Sao_Paulo')::date - 20, 'E', 1050, 'CONTA_A_RECEBER',        1002),
+  ('acme', (now() AT TIME ZONE 'America/Sao_Paulo')::date - 17, 'E', 1000, 'CONTA_CORRENTE_REC',     1002),
   -- C3 duas baixas PARCIAIS no banco (eventos distintos) + o resumo cumulativo do título
-  ('acme', CURRENT_DATE - 30, 'E', 1000, 'CONTA_A_RECEBER',        1003),
-  ('acme', CURRENT_DATE - 40, 'E',  400, 'CONTA_CORRENTE_REC',     1003),
-  ('acme', CURRENT_DATE - 29, 'E',  600, 'CONTA_CORRENTE_REC',     1003),
+  ('acme', (now() AT TIME ZONE 'America/Sao_Paulo')::date - 30, 'E', 1000, 'CONTA_A_RECEBER',        1003),
+  ('acme', (now() AT TIME ZONE 'America/Sao_Paulo')::date - 40, 'E',  400, 'CONTA_CORRENTE_REC',     1003),
+  ('acme', (now() AT TIME ZONE 'America/Sao_Paulo')::date - 29, 'E',  600, 'CONTA_CORRENTE_REC',     1003),
   -- C4/C5 PREVISÕES: tipo E, valor>0, título preenchido — e não é dinheiro que entrou
-  ('acme', CURRENT_DATE -  5, 'E',  700, 'PREVISAO_PEDIDO_VENDA',  1004),
-  ('acme', CURRENT_DATE -  5, 'E',  300, 'PREVISAO_ORDEM_SERVICO', 1005),
+  ('acme', (now() AT TIME ZONE 'America/Sao_Paulo')::date -  5, 'E',  700, 'PREVISAO_PEDIDO_VENDA',  1004),
+  ('acme', (now() AT TIME ZONE 'America/Sao_Paulo')::date -  5, 'E',  300, 'PREVISAO_ORDEM_SERVICO', 1005),
   -- C6/C7 banco SEM título: transferência / tarifa — valores ASSIMÉTRICOS de propósito, para
   -- uma coluna que somasse o tipo errado não coincidir com a certa
-  ('acme', CURRENT_DATE -  3, 'E',  250, 'CONTA_CORRENTE_REC',     NULL),
-  ('acme', CURRENT_DATE -  3, 'S',   70, 'CONTA_CORRENTE_PAG',     NULL),
+  ('acme', (now() AT TIME ZONE 'America/Sao_Paulo')::date -  3, 'E',  250, 'CONTA_CORRENTE_REC',     NULL),
+  ('acme', (now() AT TIME ZONE 'America/Sao_Paulo')::date -  3, 'S',   70, 'CONTA_CORRENTE_PAG',     NULL),
   -- C8 o mesmo pagamento nas duas óticas
-  ('acme', CURRENT_DATE - 15, 'S',  800, 'CONTA_A_PAGAR',          2001),
-  ('acme', CURRENT_DATE - 15, 'S',  800, 'CONTA_CORRENTE_PAG',     2001),
+  ('acme', (now() AT TIME ZONE 'America/Sao_Paulo')::date - 15, 'S',  800, 'CONTA_A_PAGAR',          2001),
+  ('acme', (now() AT TIME ZONE 'America/Sao_Paulo')::date - 15, 'S',  800, 'CONTA_CORRENTE_PAG',     2001),
   -- C9 muito fora da janela
-  ('acme', CURRENT_DATE - 120, 'E', 9999, 'CONTA_CORRENTE_REC',    1009),
+  ('acme', (now() AT TIME ZONE 'America/Sao_Paulo')::date - 120, 'E', 9999, 'CONTA_CORRENTE_REC',    1009),
   -- C10 título ABERTO na ótica do título (nValPago = 0) — a data mais recente da empresa
-  ('acme', CURRENT_DATE -  1, 'E',    0, 'CONTA_A_RECEBER',        1010),
+  ('acme', (now() AT TIME ZONE 'America/Sao_Paulo')::date -  1, 'E',    0, 'CONTA_A_RECEBER',        1010),
   -- C11/C12 a FRONTEIRA da janela: hoje-90 entra, hoje-91 não
-  ('acme', CURRENT_DATE - 90, 'E',   90, 'CONTA_CORRENTE_REC',     1011),
-  ('acme', CURRENT_DATE - 91, 'E', 5000, 'CONTA_CORRENTE_REC',     1012),
+  ('acme', (now() AT TIME ZONE 'America/Sao_Paulo')::date - 90, 'E',   90, 'CONTA_CORRENTE_REC',     1011),
+  ('acme', (now() AT TIME ZONE 'America/Sao_Paulo')::date - 91, 'E', 5000, 'CONTA_CORRENTE_REC',     1012),
   -- C13 ótica AUSENTE (categoria nula) com título — não se sabe o que é, fica fora
-  ('acme', CURRENT_DATE -  4, 'E',   50, NULL,                     1013),
+  ('acme', (now() AT TIME ZONE 'America/Sao_Paulo')::date -  4, 'E',   50, NULL,                     1013),
   -- C14 ótica DESCONHECIDA com o prefixo bancário — allowlist exata, não por prefixo
-  ('acme', CURRENT_DATE -  4, 'E',   60, 'CONTA_CORRENTE_TRF',     1014),
+  ('acme', (now() AT TIME ZONE 'America/Sao_Paulo')::date -  4, 'E',   60, 'CONTA_CORRENTE_TRF',     1014),
   -- C15 valor NEGATIVO numa saída: S é saída qualquer que seja o sinal (espelha o
   -- Math.abs do helper do produto). Zero negativos na PROD hoje — é cobertura defensiva.
-  ('acme', CURRENT_DATE -  6, 'S',  -30, 'CONTA_CORRENTE_PAG',     2015),
+  ('acme', (now() AT TIME ZONE 'America/Sao_Paulo')::date -  6, 'S',  -30, 'CONTA_CORRENTE_PAG',     2015),
   -- B  outra empresa, mesmo desenho, com uma tarifa sem título
-  ('beta', CURRENT_DATE -  2, 'E',  100, 'CONTA_A_RECEBER',        3001),
-  ('beta', CURRENT_DATE -  1, 'E',  100, 'CONTA_CORRENTE_REC',     3001),
-  ('beta', CURRENT_DATE -  2, 'S',   40, 'CONTA_A_PAGAR',          4001),
-  ('beta', CURRENT_DATE -  2, 'S',   40, 'CONTA_CORRENTE_PAG',     4001),
-  ('beta', CURRENT_DATE -  2, 'S',   15, 'CONTA_CORRENTE_PAG',     NULL);
+  ('beta', (now() AT TIME ZONE 'America/Sao_Paulo')::date -  2, 'E',  100, 'CONTA_A_RECEBER',        3001),
+  ('beta', (now() AT TIME ZONE 'America/Sao_Paulo')::date -  1, 'E',  100, 'CONTA_CORRENTE_REC',     3001),
+  ('beta', (now() AT TIME ZONE 'America/Sao_Paulo')::date -  2, 'S',   40, 'CONTA_A_PAGAR',          4001),
+  ('beta', (now() AT TIME ZONE 'America/Sao_Paulo')::date -  2, 'S',   40, 'CONTA_CORRENTE_PAG',     4001),
+  ('beta', (now() AT TIME ZONE 'America/Sao_Paulo')::date -  2, 'S',   15, 'CONTA_CORRENTE_PAG',     NULL);
 SQL
-HOJE_MENOS_1="$(Pq -c "SELECT (CURRENT_DATE - 1)::text;")"
-HOJE_MENOS_3="$(Pq -c "SELECT (CURRENT_DATE - 3)::text;")"
+HOJE_MENOS_1="$(Pq -c "SELECT ((now() AT TIME ZONE 'America/Sao_Paulo')::date - 1)::text;")"
+HOJE_MENOS_3="$(Pq -c "SELECT ((now() AT TIME ZONE 'America/Sao_Paulo')::date - 3)::text;")"
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ZONA 4 — ASSERTS sobre o bloco REAL (esperados escritos à mão a partir do seed)
@@ -250,6 +250,9 @@ if sabota "F9" " AS fluxo_liquido_banco_total_90d" " AS total_verdadeiro_renomea
 fi
 
 echo "── F5 o SQL de ANTES (retrato do bloco até 2026-09-10) ──"
+# O relógio do retrato é o de SP, como o dos seeds (2026-09-28): o bloco real passou a partir do
+# hoje de SP, e um retrato no CURRENT_DATE da sessão (UTC no CI) deslocaria a borda dos 90 dias
+# das 21:00 às 23:59 BRT — a F5 mediria o relógio, não a ótica que ela existe para mostrar.
 carrega "$(cat <<'SQL'
 SELECT company,
        round(sum(valor) FILTER (WHERE tipo = 'E')::numeric,2) AS entradas_caixa_90d,
@@ -259,7 +262,7 @@ SELECT company,
        count(*)            AS movimentos,
        max(data_movimento) AS ultimo_movimento
 FROM fin_movimentacoes
-WHERE data_movimento >= CURRENT_DATE - interval '90 days'
+WHERE data_movimento >= (now() AT TIME ZONE 'America/Sao_Paulo')::date - interval '90 days'
 GROUP BY company ORDER BY company;
 SQL
 )" || { bad "F5 o SQL de antes NÃO carregou"; aborta; }

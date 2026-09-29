@@ -50,7 +50,8 @@
  *     views DES viveram assim até 20260927202603, sem CREATE no repo;
  *   · SQL montado em string (`EXECUTE format(...)`), unidade ou relógio vindos de variável;
  *   · a classe irmã, `current_date`/`now()::date` NUS (fora de date_trunc): medido em 2026-09-27, 15 dos
- *     34 sítios em corpo sem SP são UTC-consistentes (44% de falso-positivo) — fica com o irmão de SP.
+ *     34 sítios em corpo sem SP são UTC-consistentes (44% de falso-positivo) — tem fiscal próprio,
+ *     `scripts/relogio-nu-da-sessao-gate.ts` (baseline COM VEREDITO nos corpos vivos).
  */
 
 import { readdirSync, readFileSync, statSync } from 'node:fs';
