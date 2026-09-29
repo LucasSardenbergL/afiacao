@@ -160,28 +160,38 @@ rodar_scanner() {  # <dir> <json>
 }
 
 # Delta do gate (o mesmo algoritmo da revisão de 2026-09-27): multiconjunto de achados por
-# (severidade, regra, arquivo relativo, trecho de 90 caracteres); novos = nova - atual.
+# (severidade, regra, arquivo relativo ao REPO, trecho de 90 caracteres); novos = nova - atual.
+# O scanner real (2.1.0, medido em 2026-09-29) dá o `file_path` RELATIVO À SKILL e o `skill_path`
+# absoluto em cada resultado: sem juntar os dois, um `browse/bin/x` de skill aninhada viraria `bin/x`
+# e entraria como código da raiz que dispara sozinho.
 delta_scanner() {  # <json atual> <json nova> → markdown no stdout; exit != 0 = JSON ilegível
   python3 - "$1" "$2" "${SOZINHO[@]}" <<'PY'
 import collections, fnmatch, json, re, sys
 atual_fn, nova_fn, sozinho = sys.argv[1], sys.argv[2], sys.argv[3:]
+RAIZ = r"^.*/revisao/(atual|nova)(/|$)"
 def carregar(fn):
     with open(fn) as fh:
         d = json.load(fh)
     c = collections.Counter()
     for r in d.get("results", []):
+        base = re.sub(RAIZ, "", r.get("skill_path") or "").strip("/")
         for f in r.get("findings", []):
-            fp = re.sub(r"^.*/revisao/(atual|nova)/", "", f.get("file_path") or "")
+            fp = f.get("file_path") or ""
+            if re.search(RAIZ, fp):
+                rel = re.sub(RAIZ, "", fp)
+            else:
+                rel = f"{base}/{fp}" if base else fp
             sn = re.sub(r"\s+", " ", str(f.get("snippet") or f.get("description") or ""))[:90]
-            c[(f.get("severity") or "?", f.get("rule_id") or "?", fp, sn)] += 1
+            c[(f.get("severity") or "?", f.get("rule_id") or "?", rel, sn)] += 1
     return c
 atual, nova = carregar(atual_fn), carregar(nova_fn)
 novos = nova - atual
 sev = collections.Counter(k[0] for k in novos.elements())
 dispara = sorted(k for k in novos if any(fnmatch.fnmatch(k[2], p) for p in sozinho))
+n_dispara = sum(novos[k] for k in dispara)  # achados, não chaves: o mesmo achado repetido conta
 print(f"- achados: instalada {sum(atual.values())} · nova {sum(nova.values())} · **novos {sum(novos.values())}**"
       + (" (" + ", ".join(f"{s} {n}" for s, n in sev.most_common()) + ")" if sev else ""))
-print(f"- **novos em código que dispara sozinho: {len(dispara)}**" + (" ← o gate exige ZERO aqui" if dispara else ""))
+print(f"- **novos em código que dispara sozinho: {n_dispara}**" + (" ← o gate exige ZERO aqui" if dispara else ""))
 for s, r, fp, sn in dispara[:40]:
     print(f"  - `{s}` `{r}` em `{fp}`: {sn}")
 crit = collections.Counter((k[0], k[1]) for k in novos if k[0] in ("CRITICAL", "HIGH"))

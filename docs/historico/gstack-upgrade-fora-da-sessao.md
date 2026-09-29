@@ -69,6 +69,14 @@ recomendação saiu do diagnóstico técnico (o classificador) e ignorou a polí
 - **`git checkout -- A B C` é tudo-ou-nada:** um pathspec sem match faz o git recusar o comando INTEIRO, e
   a sujeira de render do `SKILL.md` ficava (caso A12). O `/gstack-upgrade` original tem a mesma forma, e lá
   funciona porque os três padrões sempre casam. Agora é um checkout por padrão.
+- **O scanner real dá o caminho relativo À SKILL, não ao repo** (medido no 2.1.0: `skill_path` absoluto no
+  resultado, `file_path` relativo à skill). O stub dos testes usava caminho absoluto, então nada acusou: foi
+  preciso rodar o scanner de verdade numa árvore com skill aninhada. Sem juntar `skill_path` + `file_path`, um
+  `sub/bin/x` virava `bin/x` e contava como código da raiz que dispara sozinho (4 em vez de 2 no teste real).
+  O stub agora imita o esquema real, com uma skill aninhada.
+- **A falsificação pegou uma asserção sem dente:** a contagem de "dispara sozinho" contava CHAVES distintas;
+  sob a sabotagem, os dois achados colapsavam na mesma chave e o número não mudava. A contagem agora soma
+  os achados, e o arquivo aninhado do teste tem nome próprio (sabotagem F12).
 - **`env -u X <função>`:** o `env` executa BINÁRIO, e a função `pesado` virava "No such file". Foi pego na
   revisão, antes do primeiro teste; o `env` agora vem DENTRO do `pesado`.
 
@@ -77,5 +85,5 @@ recomendação saiu do diagnóstico técnico (o classificador) e ignorou a polí
 - `cat ~/.gstack/auto-upgrade/status` · `~/.gstack/auto-upgrade/log` · `~/.gstack/auto-upgrade/revisao.md`
 - `launchctl print gui/$(id -u)/com.lucas.gstack-upgrade`
 - Testes: `scripts/test-gstack-auto-upgrade.sh` (15 casos contra um "GitHub" local servido pela URL real via
-  `insteadOf`, com ambiente zerado por `env -i`; 11 sabotagens) e `scripts/test-vigia-gstack.sh`
+  `insteadOf`, com ambiente zerado por `env -i`; 12 sabotagens) e `scripts/test-vigia-gstack.sh`
   (C7–C13; sabotagens S6–S11). Os dois estão no `test:hooks` e no `test:falsificacao`.

