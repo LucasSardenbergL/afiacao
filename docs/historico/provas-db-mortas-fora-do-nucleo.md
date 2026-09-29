@@ -12,8 +12,9 @@ re-dump (`9c9aae173`, #1509) matou 7.
 
 **Classe.** O eco-passivo era a 3ª ocorrência registrada: 5 dos 8 harnesses de data-health já
 tinham apodrecido em 2026-08-14 ([sync.md](../agent/sync.md), "dependem do `schema-snapshot.sql`"),
-e 2 provas tint em 2026-09-27 ([provas-tint-apodrecidas.md](provas-tint-apodrecidas.md)). Nenhuma
-das três vezes varreu o resto. A assinatura é de COMPORTAMENTO, não de texto — "a prova sai ≠0 antes
+e 2 provas tint em 2026-09-27 ([provas-tint-apodrecidas.md](provas-tint-apodrecidas.md)). Cada vez
+mediu só o seu domínio (8 harnesses de data-health, 19 tint, os 4 afetados do #2636) — nenhuma rodou
+as outras. A assinatura é de COMPORTAMENTO, não de texto — "a prova sai ≠0 antes
 do 1º assert, ou um assert cai por deriva do alvo" — então a varredura foi EXECUTAR, não `grep`.
 
 ## O método
@@ -89,8 +90,10 @@ de authz está certo nas duas sabotagens (abaixo).
 2. **PR que muda o SQL sob teste e atualiza só a prova irmã (1).** O #1315 mudou
    `db/reposicao-demanda-insumos-bom.sql` e consertou `test-reposicao-religamento.sh`; a prova do
    próprio arquivo (que também carrega o snapshot) caiu no dia seguinte ao nascimento e ficou 78 dias
-   assim — os blocos H–L (a
-   explosão de BOM propriamente dita, money-path de compra) sem prova executável.
+   assim. A irmã segue provando o agregado da explosão (A2: 2,7 L), o guard de CFOP (C1/C2, com a
+   SAB1) e a graduação (D1); ficou sem prova executável o que só esta tinha, linha a linha: explosão
+   sem fan-out (H1/H2), `valor` NULL em vez de zero (J), a unidade do insumo (K) e a venda direta
+   preservada (L).
 3. **Calendário (1).** Data literal no seed + janela móvel no SQL. Morre sem commit nenhum.
 4. **O alvo da sabotagem evoluiu (1 prova, 2 sabotagens).** F4 editava um trecho de
    `scripts/lib/authz-funcoes.ts` exigindo `count == 1`; a Parte F (#2334) duplicou o trecho, e a
@@ -100,7 +103,8 @@ de authz está certo nas duas sabotagens (abaixo).
 
 E o dado que dá o tamanho do risco: das 261, **48 carregam o snapshot e 42 re-aplicam migration
 anterior ao último re-dump (2026-09-05)** — as 9 do modo 1 estão entre elas; **33 verdes estão
-armadas para o próximo**. No núcleo são 11 no mesmo padrão, mas lá o re-dump que as matar fica vermelho no próprio PR.
+armadas para o próximo**. No núcleo são 11 no mesmo padrão, mas lá o re-dump que as matar fica
+vermelho no próprio PR.
 
 ## Decisões por prova
 
@@ -117,22 +121,41 @@ armadas para o próximo**. No núcleo são 11 no mesmo padrão, mas lá o re-dum
   roda o `espera`; F4 e F5 declaram o `describe` que TEM de cair (medido: com o detector desligado, 31
   linhas `authz-funcoes.test.ts > auditGrantsFuncoes`; com a allowlist aberta, a
   `AUTHZ_FUNCOES_FECHADAS — sanidade do contrato > nenhuma entrada permite anon`) — "vitest saiu 1"
-  aceitaria import quebrado.
+  aceitava qualquer quebra. **E aceitou ao vivo:** o 1º controle da versão revivida esperou mais de
+  30 min pela vaga do `heavy` (1 slot nesta máquina; até 18 processos `heavy` vivos na hora), e ele saiu 1 com
+  `heavy: timeout … abortando` **sem rodar o vitest**. O juiz antigo teria impresso "OK F4 — detector
+  desligado derruba os testes"; o novo reprovou (`codigo=0`) e passou a imprimir a linha que explica.
+  A varredura do #2636 tinha classificado este harness como já-correto.
+  Meta-falsificação (C e pt_BR; nas cópias, o vitest vira a saída REAL medida de cada sabotagem, para
+  não enfileirar 16 vezes no `heavy`): **10/10 nos dois locales** — controle com 0 falhas; M1 (um
+  re-fecho NÃO declarado depois da âncora) → "PREMISSA DO F1 MUDOU" e só o F1 falha; M2 (a âncora do
+  F4 duplicada, o que a Parte F fez) → "casou 2 vez(es)" e só o F4; M3 (o `heavy` desistindo da fila,
+  saída real) → só o F4, `codigo=0`; M3′ (a mesma, com o juiz antigo) → `OK F4`: o furo reproduzido,
+  e a marca é a camada que o pega. Árvore limpa ao fim. Com o vitest de verdade: F1–F3c verdes no
+  controle real; F4 e F5 medidos à mão (rc=1 e a marca presente).
 - **As outras 10 — reviver, apontando para o alvo de HOJE**, em fases por domínio (abaixo, com dono):
   - data-health (`familia-ausente`, `familia-ausente-lista-email`, `carteira-rebuild`): montar o
-    trio vivo por `db/lib/data-health-vivo.sh`. As especificações seguem valendo em prod e estão sem
-    prova executável — o núcleo só tem o T12 textual ("o watchdog chama o helper"). Os asserts de
+    trio vivo por `db/lib/data-health-vivo.sh`. As especificações seguem valendo em prod e o destino
+    não tem prova nem falsificação executável — o núcleo só tem o T12 textual ("o watchdog chama o
+    helper"). Os asserts de
     push E2E precisam ser re-derivados do watchdog vivo (episódio + anti-flap), não copiados;
   - canal (`whatsapp-hsm`, `-funil`, `-proposta`): as migrations de 07-13 já estão no snapshot e
     nenhuma posterior redefine os objetos; parar de re-aplicar o que o snapshot absorveu — o INSERT de
-    templates da `010000` é dado, não schema, e tem de continuar entrando;
+    templates da `010000` é dado, não schema, e tem de continuar entrando. Templates, log idempotente,
+    funil e proposta não têm outra prova; a irmã `whatsapp-pendentes` (verde, falsificação ×2) cobre
+    só a RPC de pendentes;
   - carteira e canal Melhorias (`fornecedores-classificacao`, `melhorias-rpcs`): seed compatível com
-    o trigger/CHECK de hoje; e a `melhoria_clientes_por_produto` foi redefinida duas vezes depois da migration que a
-    prova re-aplica (`20260718150000`, `20260905225613`) — medir o corpo vivo;
+    o trigger/CHECK de hoje; e a `melhoria_clientes_por_produto` foi redefinida duas vezes depois da
+    migration que a prova re-aplica (`20260718150000`, `20260905225613`) — medir o corpo vivo. O corpo
+    vivo dela é exercitado, cada um no seu eixo, por `preco-ausente-nao-e-zero` (núcleo) e
+    `fu7-helpers-schema-privado`; guards, RLS de itens/mensagens e `melhoria_produtos_relacionados`, e
+    as 4 funções de fornecedores, só as mortas provavam;
   - money-path (`reposicao-demanda-insumos-bom`, `preco-tier`): CFOP da allowlist no seed do bloco H
-    e um assert novo de que a 6202 NÃO explode (a intenção do #1315); datas relativas ao relógio; e o
-    `medir_abaixo_piso_tier`/`get_ultimos_precos_cliente` que a prova mede são os de 07-04, redefinidos
-    em `20260718190000` e `20260927172443`.
+    (a exclusão da 6202 já é provada, com sabotagem, na irmã `reposicao-religamento`); datas relativas
+    ao relógio; e o `medir_abaixo_piso_tier`/`get_ultimos_precos_cliente` que a prova mede são os de
+    07-04, redefinidos em `20260718190000` e `20260927172443` — a borda do dia do corpo vivo é provada
+    no núcleo (`hoje-sp-sessao-utc-precos-piso`), a política de tier (P1–P13, gates N, sabotagens F)
+    só na morta.
   Toda revivida que carregar o snapshot **entra no núcleo** — é regra desde 2026-09-27
   ([database.md](../agent/database.md), "Prova que carrega o `schema-snapshot.sql` entra no núcleo"):
   revivê-la fora do CI é marcar a próxima morte.
@@ -182,6 +205,8 @@ e cada site pede leitura.
   um snapshot que o branch não tinha.
 - **Bisect por "saiu ≠0" fabrica matador.** A `melhorias-rpcs` morreu duas vezes (07-21 e 08-28, com
   assinaturas diferentes); o juiz tem de ser a assinatura exata, e a ponta boa tem de ser MEDIDA boa.
+- **"Saiu 1" também é o que o SEMÁFORO devolve quando desiste.** Juiz de falsificação que aceita
+  qualquer exit≠0 aprova a sabotagem que nem chegou a ser julgada — aqui, o `heavy` estourando a fila.
 - **Sabotagem que não aplica tem de falhar com nome próprio.** Rodar o juiz sobre o código íntegro
   imprime "FALHA … exit=0 (esperado 1)" — que se lê como furo no gate, e ninguém investiga o que
   parece conhecido.
@@ -194,10 +219,15 @@ e cada site pede leitura.
 
 ## O que ficou de fora, com dono
 
-- **"Reviver provas data-health mortas pelo re-dump (familia ×2, carteira-rebuild)"** — pelo
-  `data-health-vivo.sh`, com os asserts de push re-derivados do watchdog vivo, e para o núcleo.
-- **"Reviver provas de canal e carteira mortas pelo re-dump do snapshot"** — `whatsapp-hsm`/`-funil`/
-  `-proposta`, `melhorias-rpcs`, `fornecedores-classificacao`, e para o núcleo.
-- **"Reviver provas money-path apodrecidas (insumos-bom, preco-tier)"** — com a 2ª opinião do Codex
-  quando a cota reabrir (03/10), ou Caminho B registrado.
-- **O sensor** — a decisão de custo (A semanal? C já?) é do founder; o desenho está acima.
+Chips criados na sessão (quem clica é o founder), com o diagnóstico acima no briefing:
+
+- **"Reviver provas data-health mortas pelo re-dump"** — `familia-ausente`, `familia-ausente-lista-email`
+  e `carteira-rebuild`, pelo `data-health-vivo.sh`, com os asserts de push re-derivados do watchdog
+  vivo, e para o núcleo.
+- **"Reviver provas de canal e carteira mortas pelo re-dump"** — `whatsapp-hsm`/`-funil`/`-proposta`,
+  `melhorias-rpcs` e `fornecedores-classificacao`, e para o núcleo.
+- **"Reviver provas money-path: insumos-bom e preco-tier"** — com a 2ª opinião do Codex quando a cota
+  reabrir (03/10), ou Caminho B registrado.
+- **"Gate: prova no snapshot não re-aplica migration absorvida"** — a opção C do sensor (custo ~0).
+- **"Rodada semanal das provas db/ fora do núcleo no CI"** — a opção A; clicar é aprovar o custo
+  (~60–100 min/mês de Actions, estimado).
