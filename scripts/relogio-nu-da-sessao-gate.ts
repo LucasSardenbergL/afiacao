@@ -145,7 +145,6 @@ export interface SitioConhecido {
   motivo: string;
 }
 
-const RETROATIVO = 'conserto na 20260929001651_hoje_sp_sessao_utc_sete_funcoes.sql';
 const DATA_CICLO = 'compara com pedido_compra_sugerido.data_ciclo, que a edge gerar-pedidos-diario grava em UTC '
   + '(`new Date().toISOString().slice(0, 10)`): UTC contra UTC; trocar só este lado criaria a divergência';
 
@@ -168,15 +167,10 @@ export const CONHECIDOS: readonly SitioConhecido[] = [
     motivo: 'só o cron detectar-outliers-diario, 07:30 UTC (04:30 BRT): o mesmo dia nos dois fusos' },
   { alvo: 'fin_audit_trigger()', trecho: 'current_date', n: 3, veredito: 'latente',
     motivo: 'fin_audit_log.period_ref não tem leitor (useAuditTrail ordena por changed_at; só um índice a usa)' },
-  { alvo: 'fin_period_lock_trigger()', trecho: 'current_date', n: 1, veredito: 'afetado', motivo: RETROATIVO },
-  { alvo: 'get_regua_preco(uuid,uuid,numeric,numeric,numeric[])', trecho: 'current_date', n: 2, veredito: 'afetado', motivo: RETROATIVO },
-  { alvo: 'listar_pedidos_a_separar(text)', trecho: 'current_date', n: 1, veredito: 'afetado', motivo: RETROATIVO },
-  { alvo: 'listar_pedidos_a_separar(text)', trecho: 'so.created_at::date', n: 3, veredito: 'afetado', motivo: RETROATIVO },
   { alvo: 'melhoria_clientes_por_produto(text)', trecho: 'current_date', n: 1, veredito: 'afetado',
     motivo: 'conserto na 20260929000234 (a sessão do escape de curinga do LIKE recria a função no mesmo voo; combinado)' },
   { alvo: 'melhoria_clientes_por_produto(text)', trecho: 'so.created_at::date', n: 2, veredito: 'afetado',
     motivo: 'conserto na 20260929000234 (a sessão do escape de curinga do LIKE recria a função no mesmo voo; combinado)' },
-  { alvo: 'radar_atribuir_tarefa(text,integer)', trecho: 'current_date', n: 1, veredito: 'afetado', motivo: RETROATIVO },
   { alvo: 'reposicao_param_fila_sensor(text)', trecho: 'current_date', n: 5, veredito: 'utc-consistente',
     motivo: 'relê o próprio carimbo (reposicao_param_fila_log.medido_em = CURRENT_DATE); cron 11:45 UTC' },
   { alvo: 'reposicao_param_limbo_watchdog()', trecho: 'current_date', n: 2, veredito: 'utc-consistente',
@@ -184,7 +178,6 @@ export const CONHECIDOS: readonly SitioConhecido[] = [
   { alvo: 'reposicao_pos_candidatos(text)', trecho: 'now()::date', n: 1, veredito: 'utc-consistente', motivo: DATA_CICLO },
   { alvo: 'sugerir_negociacao_paralela_hoje(text,integer)', trecho: 'current_date', n: 4, veredito: 'latente',
     motivo: 'sem chamador desde a 20260606230000 (o cron saiu); os 3 valido_ate comparam com o próprio CURRENT_DATE' },
-  { alvo: 'vendas_sync_semear_janela(date,date,text[])', trecho: 'current_date', n: 1, veredito: 'afetado', motivo: RETROATIVO },
 ];
 
 export interface Analise {

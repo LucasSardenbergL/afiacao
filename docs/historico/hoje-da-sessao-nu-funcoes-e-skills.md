@@ -116,6 +116,42 @@ Pisos por universo (migrations 700, corte 2, arquivos de skill 40, linhas de có
 uma por camada. Limites declarados no próprio gate: o que só existe na prod, SQL em string, timestamptz
 fora de `*_at`/`*_em`, e literal que CITA a forma errada (numa POS, escreva a agulha partida).
 
+## A prova (PR-B) — 41 asserts, 18 sabotagens
+
+`db/test-hoje-sp-sete-funcoes.sh`, no contrato do irmão `db/test-hoje-sp-sessao-utc-precos-piso.sh`:
+
+- Relógio controlado (`test.agora`, tripwire Z9T01; só as 7 funções têm `pg_catalog` depois de `public`).
+  D = 28/02/2025 — último dia de um mês que a trava tem FECHADO —, 4 instantes (20:59:59 · 21:00:00 ·
+  23:59:59 BRT de D · 00:00:00 de D+1) sob sessão UTC e SP; B0 prova que as duas sessões são mundos
+  diferentes.
+- H1: os 7 predecessores da fixture têm o md5 exato da prod; H2: onde há CREATE no repo, a fixture é a
+  última definição módulo comentário (5/5 — a deriva de 2 corpos era só `--`).
+- X: deriva numa RPC e num gatilho aborta a PRE; as 7 AUSENTES nascem com o fecho PORTA_GATE nas 4 RPCs,
+  sem e com o default ACL do Supabase; re-aplicar é seguro. D1: cada corpo instalado, com a troca
+  desfeita, tem o md5 exato do predecessor (a troca é a ÚNICA diferença).
+- R0: sem `test.agora`, cada função bate no tripwire — é o que pega o `current_date` LITERAL, que o
+  relógio controlado não intercepta; no radar o dedupe já lê `now()`, e quem pega o literal lá é o bloco
+  B. A1: anon barrado pelo ACL nas 4 RPCs. W: as 7 com o `search_path` de prod restaurado (o semeador
+  com `''`) executam no relógio real.
+- Matriz: servidor UTC/SP × `lc_messages` C/pt_BR — 41/41 nas 4; `--falsificar` 4/4 × (controle verde
+  + 18/18 vermelhas no assert certo).
+
+O que a falsificação ensinou (e por isso ela existe): (1) com o ACL reaberto a anon, o A1 caía no gate do
+corpo e virava ERRO de execução — vermelho que não mata mutante; passou a ler ACL × GATE pela mensagem
+exata, e o vermelho é por RESULTADO. (2) Sob carga, 3 execuções do X1 saíram "falhou, mas não pela PRE"
+com a mensagem certa na saída; o teste era `printf "$out" | grep -q` sob `pipefail`. Trocado por
+casamento nativo do bash, a matriz seguinte (mesma carga) não repetiu. A hipótese — pipe de 512 bytes
+sob pressão de memória, `grep -q` saindo cedo, SIGPIPE virando "falso" — foi medida numa máquina ociosa
+e NÃO reproduziu (0/900): fica como suspeita, com dono (chip "Trocar printf | grep -q sob pipefail nas
+provas de db/": 22 sítios em 8 provas).
+
+## O ensaio na PROD
+
+`bun run db:aplicar supabase/migrations/20260929001651_hoje_sp_sessao_utc_sete_funcoes.sql --ensaio`
+(sha256 `803ee5ca…`): rodou INTEIRA contra o estado real — trava, PRE batendo o md5 exato dos 7 corpos
+vivos, os 7 `CREATE OR REPLACE`, o fecho e a POS (`NOTICE: POS OK: 7 funções…`) — e fez ROLLBACK. A 2ª
+testemunha (psql-ro, outra conexão) mostrou o radar ainda com o md5 do predecessor: nada gravado.
+
 ## Codex
 
 Consultado em 2026-09-29 00:4x: **exit 79** — cota em 86% (teto de 85%), janela reabre 03/10 19:11; o

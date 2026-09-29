@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 564
+-- Total de custom migrations: 565
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -605,7 +605,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260927133606', 'positivacao_mes_sp_sessao_utc', '20260927133606_positivacao_mes_sp_sessao_utc.sql'),
   ('20260927172443', 'hoje_sp_sessao_utc_precos_piso', '20260927172443_hoje_sp_sessao_utc_precos_piso.sql'),
   ('20260927195430', 'positivacao_universo_canonico', '20260927195430_positivacao_universo_canonico.sql'),
-  ('20260927202603', 'fuso_sp_relogio_da_sessao_rpcs_views_des', '20260927202603_fuso_sp_relogio_da_sessao_rpcs_views_des.sql')
+  ('20260927202603', 'fuso_sp_relogio_da_sessao_rpcs_views_des', '20260927202603_fuso_sp_relogio_da_sessao_rpcs_views_des.sql'),
+  ('20260929001651', 'hoje_sp_sessao_utc_sete_funcoes', '20260929001651_hoje_sp_sessao_utc_sete_funcoes.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2438,7 +2439,14 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('fuso_sp_relogio_da_sessao_rpcs_views_des', 'function', 'public', 'radar_kpis', ''),
   ('fuso_sp_relogio_da_sessao_rpcs_views_des', 'function', 'public', 'fin_projecao_13_semanas', ''),
   ('fuso_sp_relogio_da_sessao_rpcs_views_des', 'view', 'public', 'v_des_pedidos_em_transito', ''),
-  ('fuso_sp_relogio_da_sessao_rpcs_views_des', 'view', 'public', 'v_des_posicao_trimestre_ao_vivo', '')
+  ('fuso_sp_relogio_da_sessao_rpcs_views_des', 'view', 'public', 'v_des_posicao_trimestre_ao_vivo', ''),
+  ('hoje_sp_sessao_utc_sete_funcoes', 'function', 'public', 'fin_period_lock_trigger', ''),
+  ('hoje_sp_sessao_utc_sete_funcoes', 'function', 'public', 'get_regua_preco', ''),
+  ('hoje_sp_sessao_utc_sete_funcoes', 'function', 'public', 'listar_pedidos_a_separar', ''),
+  ('hoje_sp_sessao_utc_sete_funcoes', 'function', 'public', 'radar_atribuir_tarefa', ''),
+  ('hoje_sp_sessao_utc_sete_funcoes', 'function', 'public', 'sincronizar_ativo_omie_para_reposicao', ''),
+  ('hoje_sp_sessao_utc_sete_funcoes', 'function', 'public', 'trg_campanha_gera_alerta', ''),
+  ('hoje_sp_sessao_utc_sete_funcoes', 'function', 'public', 'vendas_sync_semear_janela', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4319,7 +4327,14 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('fuso_sp_relogio_da_sessao_rpcs_views_des', 'function', 'public', 'radar_kpis', ''),
   ('fuso_sp_relogio_da_sessao_rpcs_views_des', 'function', 'public', 'fin_projecao_13_semanas', ''),
   ('fuso_sp_relogio_da_sessao_rpcs_views_des', 'view', 'public', 'v_des_pedidos_em_transito', ''),
-  ('fuso_sp_relogio_da_sessao_rpcs_views_des', 'view', 'public', 'v_des_posicao_trimestre_ao_vivo', '')
+  ('fuso_sp_relogio_da_sessao_rpcs_views_des', 'view', 'public', 'v_des_posicao_trimestre_ao_vivo', ''),
+  ('hoje_sp_sessao_utc_sete_funcoes', 'function', 'public', 'fin_period_lock_trigger', ''),
+  ('hoje_sp_sessao_utc_sete_funcoes', 'function', 'public', 'get_regua_preco', ''),
+  ('hoje_sp_sessao_utc_sete_funcoes', 'function', 'public', 'listar_pedidos_a_separar', ''),
+  ('hoje_sp_sessao_utc_sete_funcoes', 'function', 'public', 'radar_atribuir_tarefa', ''),
+  ('hoje_sp_sessao_utc_sete_funcoes', 'function', 'public', 'sincronizar_ativo_omie_para_reposicao', ''),
+  ('hoje_sp_sessao_utc_sete_funcoes', 'function', 'public', 'trg_campanha_gera_alerta', ''),
+  ('hoje_sp_sessao_utc_sete_funcoes', 'function', 'public', 'vendas_sync_semear_janela', '')
 )
 SELECT
   e.migration,
@@ -4347,7 +4362,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 115.
+-- Funções redefinidas com corpo extraível: 117.
 
 WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (VALUES
   ('public', 'has_role', 1, '20260207192203_1ed442e5-a224-456e-9d94-cfe50e88c670.sql', 'c63a92e3cfa92e6aab8cb894ad505e30'),
@@ -4451,6 +4466,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'fin_period_lock_trigger', 2, '20260519000200_fin_a1_audit_lock_attach.sql', '70220bd326099735fb0e11d0c645026d'),
   ('public', 'fin_period_lock_trigger', 3, '20260519020000_fin_onda1_ncg.sql', '95d2d80c3d3628cfd5d480739ee9ef59'),
   ('public', 'fin_period_lock_trigger', 4, '20260524102500_fix_fin_triggers_json_field_access.sql', '9aa562b0f4a3b10110a094f21a9c60d4'),
+  ('public', 'fin_period_lock_trigger', 5, '20260929001651_hoje_sp_sessao_utc_sete_funcoes.sql', 'b7252e4d465b9f77e950cd6c1439c753'),
   ('public', 'fin_categorias_sem_mapping', 1, '20260518003100_rpc_categorias_sem_mapping.sql', '42af53a153c5f337c99e71d59bb04599'),
   ('public', 'fin_categorias_sem_mapping', 2, '20260525020001_fin_rpc_gate_auth_p1.sql', 'ac74eb62a61aed3b8275df53a1bbd321'),
   ('public', 'enqueue_score_recalc_from_call', 1, '20260518110000_scoring_v2_signal_modifiers.sql', '909217cb2128179ff2e4e835965e4415'),
@@ -4598,6 +4614,8 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'tarefas_guard_comprovacao', 2, '20260605120000_tarefas_guard_old_requer.sql', '68ef0d6ec102a6d3dabce26375c359d4'),
   ('public', 'tarefas_materializar_recorrentes', 1, '20260601103000_tarefas_fase2_bloco_d.sql', 'db0662d7905a7d86dcd65f2500d6f669'),
   ('public', 'tarefas_materializar_recorrentes', 2, '20260605130000_tarefas_leitura_na_instancia.sql', 'e1762fd5b59fd5203b22871be8ef1364'),
+  ('public', 'listar_pedidos_a_separar', 1, '20260604120000_picking_bridge.sql', 'bcf62e7e9ec993e44518bae7bd60ee7e'),
+  ('public', 'listar_pedidos_a_separar', 2, '20260929001651_hoje_sp_sessao_utc_sete_funcoes.sql', '0e81f25c2733ba452fa7f215a8013856'),
   ('public', 'envio_portal_claim_ids', 1, '20260604150000_envio_portal_claim_ids.sql', 'a4eb797178f7d5edba455c1dc68fca0b'),
   ('public', 'envio_portal_claim_ids', 2, '20260604180000_envio_portal_claim_ids_lista_positiva.sql', '43d2c6f6944c71866c15159c9b8ce6b2'),
   ('public', 'envio_portal_claim_ids', 3, '20260906170000_reposicao_selo_aprovacao_m1_expandir.sql', 'e1a13c15d8126faae634aaa1a225cdaa'),
@@ -4651,6 +4669,8 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'aprovar_versao_boletim', 2, '20260613180000_kb_hardening_codex.sql', 'f42e6e6696c2a2f9266ee9b9dd41b0d9'),
   ('public', 'radar_contagem_por_municipio', 1, '20260613190000_radar_fatia3.sql', 'e2280b3dda8eb76207371e534a90e170'),
   ('public', 'radar_contagem_por_municipio', 2, '20260614140000_radar_contagem_perf.sql', 'a0067efe8a2bf49bb83877ca34c0142b'),
+  ('public', 'radar_atribuir_tarefa', 1, '20260613190000_radar_fatia3.sql', '136df6cdae5d8cbb506c1662789342e8'),
+  ('public', 'radar_atribuir_tarefa', 2, '20260929001651_hoje_sp_sessao_utc_sete_funcoes.sql', '17278ad16ee09fbae874c91e0d88e6f7'),
   ('public', 'radar_prospects_para_rota', 1, '20260613230000_roteirizador_prospects.sql', '5e60b8b20f0fb33d469b664c36b792a8'),
   ('public', 'radar_prospects_para_rota', 2, '20260614160000_roteirizador_campo_banco.sql', 'cba7b31d56e029925d06a13804fffeac'),
   ('public', 'radar_prospects_para_rota', 3, '20260615190000_geocoding_cep_geo.sql', '6c9e09329e90a7f5752de1c92e186047'),
@@ -4669,6 +4689,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'get_tint_prices', 4, '20260906164001_captura_authz_gate_custo_rpcs_preco.sql', '00341ad64e34cc42c0b8a2b75b91703b'),
   ('public', 'get_regua_preco', 1, '20260616120000_regua_preco.sql', 'f618d27140e81536da49804768dc408b'),
   ('public', 'get_regua_preco', 2, '20260723150000_authz_custo_fu4f_fase2_regua.sql', 'd5c7e56d8a41a0bb08f0b1cfe8d3c081'),
+  ('public', 'get_regua_preco', 3, '20260929001651_hoje_sp_sessao_utc_sete_funcoes.sql', '0e923377f866736c52f233e34c42c0c6'),
   ('public', 'get_regua_preco_customer360', 1, '20260616120001_regua_preco_customer360.sql', '0f31a54ccf34b366d0dba606dc3b6c19'),
   ('public', 'get_regua_preco_customer360', 2, '20260723150000_authz_custo_fu4f_fase2_regua.sql', '17a6d9cf6af6e9e3117d103b9ed9d242'),
   ('public', 'enqueue_score_recalc_from_sinais', 1, '20260616140941_fatia2_sinais_ligacao.sql', 'dfc85730eaa1d60a5272a400074541db'),
@@ -4734,6 +4755,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('private', 'fbrec_sem_margem', 2, '20260725126000_authz_custo_fu4f_fase3_trigger_nulifica_lie.sql', '875cea045f4567dac177c5be87510fae'),
   ('public', 'vendas_sync_semear_janela', 1, '20260726130000_vendas_sync_semear_janela.sql', '490d938fa275c4aa2ee669239a9ef2fd'),
   ('public', 'vendas_sync_semear_janela', 2, '20260726140000_vendas_sync_semear_janela_v2.sql', '504ffc039e88ee5c33e36cecab1fcd64'),
+  ('public', 'vendas_sync_semear_janela', 3, '20260929001651_hoje_sp_sessao_utc_sete_funcoes.sql', 'e438005c0180328ffbbb3569579914e1'),
   ('private', 'margem_cliente_agregada', 1, '20260726150000_margem_cliente_helper_compartilhado.sql', 'a4f8e8f9189a9902d8375a1836f75d15'),
   ('private', 'margem_cliente_agregada', 2, '20260726160000_margem_reconciliacao_universo_unico.sql', '56549da47ed4091706a5fdfc2df82037'),
   ('private', 'margem_cliente_agregada', 3, '20260905225613_preco_ausente_nao_e_zero.sql', '4f4f7d8b17ed930e006231a287e9d85a'),

@@ -229,3 +229,11 @@ db/test-fuso-sp-relogio-sessao.sh          53  falsificar=16
 # current_date é palavra-chave e escapa do relógio, então o R0 chama cada RPC SEM pin e exige o
 # tripwire. O pai do --falsificar exige o filho completo e todo erro de execução declarado.
 db/test-hoje-sp-sessao-utc-precos-piso.sh  50  falsificar=18
+# O "hoje" de SP em 7 funções (20260929001651): a trava contábil do mapeamento DRE, a régua de
+# preço, o picking, o radar, o gatilho do Omie, o de campanha e o semeador de vendas — a classe (ii),
+# o dia da sessão lido NU. D = 28/02/2025 (último dia de um mês fechado), 4 instantes cruzando 21:00
+# e 00:00 BRT sob sessão UTC e SP; R0 pega o current_date literal pelo tripwire (no radar, o bloco
+# B); D1 prova que a troca é a ÚNICA diferença para o predecessor; um sítio sabotado por vez nas
+# funções com mais de um. Autocontida: initdb + stubs + a migration + a fixture
+# db/fixtures/hoje-sp-sete-funcoes-predecessoras-prod-20260929.sql.
+db/test-hoje-sp-sete-funcoes.sh            41  falsificar=18
