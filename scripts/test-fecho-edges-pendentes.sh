@@ -880,6 +880,20 @@ MAPA3
   then ok "E16f2 janela viva decidiu TODAS as edges -> o CLI do ledger NEM e chamado (sem aviso de defasagem)"
   else bad "E16f2 com a janela decidindo tudo o ledger nao podia ser chamado (chamadas=$n_cham, controle=$n_ctl, rc=$rc): ${out:0:200}"; fi
 
+  # 16f3. A OUTRA METADE do mesmo contrato ("so pergunta quando ha a quem"): edge FORA do mapa nao tem
+  #       `esperado`, o ledger nao tem o que dizer dela, e a janela so com ela nao chama o CLI — senao a
+  #       worktree defasada poe o "ANTES DE AGIR" em cima de uma edge que o ledger nem julgaria (medido
+  #       2026-09-28). A trava ficava fora da lista E sem caso: a chamada nao muda a classificacao.
+  : > "$LEDGER_TRACE"; LEDGER_MODO=confere run ok "$tmp/psql-stub" edge-muda
+  n_ctl="$(chamadas)"
+  : > "$LEDGER_TRACE"
+  FECHO_LEDGER_RAIZ="$cli_defasado" LEDGER_MODO=confere run ok "$tmp/psql-stub" edge-fora-do-mapa
+  n_cham="$(chamadas)"
+  if [ "$n_ctl" = 1 ] && [ "$n_cham" = 0 ] && tem 'SEM_PROVA *edge-fora-do-mapa ' "$out" && [ "$rc" -eq 1 ] \
+     && ! tem 'LEDGER_WORKTREE_DEFASADA' "$out" && ! tem 'ANTES DE AGIR' "$out"
+  then ok "E16f3 so edge FORA do mapa na janela -> o CLI do ledger NEM e chamado (sem aviso de defasagem)"
+  else bad "E16f3 edge fora do mapa nao tem o que perguntar ao ledger (chamadas=$n_cham, controle=$n_ctl, rc=$rc): ${out:0:200}"; fi
+
   # 16g. ...e o mesmo vale para a resposta que PROVA bundle velho sem `fonte` (pre-#1998) e para a
   #      edge FORA do mapa, que nao tem `esperado` com que casar a 2a chave. A `edge-muda` puxa a
   #      consulta, como no 16f: sem ela o ledger nem era chamado e o caso nao lia veredito nenhum.
@@ -1151,6 +1165,7 @@ if [ "${1:-}" = "--falsificar" ]; then
               request_ids_sem_flag:E5h par_fora_do_sql:E5h aposentada_ignorada:E15 marcador_do_wt:E15c
               sql_sem_distinct_on:E12 ledger_pelo_rotulo:E16b ledger_sem_marca:E16d_sem_marca
               ledger_exit_anomalo:E16k ledger_sem_gate_da_mecanica:E16h2 ledger_pergunta_a_janela:E16f2
+              ledger_pergunta_fora_do_mapa:E16f3
               janela_viva_sem_z_servido:E16f,E16g ledger_segunda_chave_vazia:E16g2
               divergencia_generica:E16e ledger_sem_json:E16
               ledger_sem_diagnostico:E16c frescura_sempre_em_dia:E16i,E16j defasada_vale:E16j
@@ -1301,6 +1316,11 @@ if [ "${1:-}" = "--falsificar" ]; then
   # shellcheck disable=SC2016  # a expressao sed e PADRAO literal do alvo
   registra ledger_pergunta_a_janela "ledger perguntado sobre edge que a janela viva ja decidiu" \
     's%    command grep -q -- "\^$slug " "$tmp/ar"   2>/dev/null && continue%    :%'
+  # (l5c) a outra metade do "só pergunta quando há a quem": edge FORA do mapa vira candidata — o CLI é
+  #      chamado para uma edge sem `esperado`, sobre a qual o veredito dele nem seria lido (16f3).
+  # shellcheck disable=SC2016  # a expressao sed e PADRAO literal do alvo
+  registra ledger_pergunta_fora_do_mapa "ledger perguntado sobre edge fora do mapa (sem esperado)" \
+    's%    command grep -q -- "\^$slug " "$tmp/mapa" 2>/dev/null || continue   # fora do mapa: nada a perguntar%    :%'
   # (l5b) a JANELA VIVA deixa de vencer: o veredito do ledger é lido para quem respondeu na janela, e
   #      uma atestação histórica apaga o `DESATUALIZADA` de um bundle velho servindo AGORA (16f) e o
   #      `PRE_SONDA_FONTE` (16g). Só aparece quando OUTRA edge puxa a consulta — sozinha, a edge da
@@ -1420,7 +1440,8 @@ if [ "${1:-}" = "--falsificar" ]; then
   # quatro com o cenário que as isola (13d, 16f2, 16g2, 16h2) e a da mecânica provada em PAR, por
   # decisão do founder (as duas travas dela se tornam inalcançáveis uma à outra). O PAR da janela viva
   # (l5 + `-z "$servido"`) se desfez: com duas edges no 16f, cada trava cai sozinha no SEU assert — o
-  # que as fazia parecer redundantes era o cenário. docs/historico/falsificacao-exit-nao-e-dente.md
+  # que as fazia parecer redundantes era o cenário. E a outra metade do contrato da l5 (edge FORA do
+  # mapa não é candidata), que nem estava na lista, ganhou o 16f3. docs/historico/falsificacao-exit-nao-e-dente.md
 
   # A rodada só conta como vermelha com as QUATRO camadas (as do sync-reprocess):
   #   1. a sabotagem APLICOU e não quebrou a sintaxe (as travas de aplica());
