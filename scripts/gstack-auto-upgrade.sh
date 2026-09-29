@@ -218,11 +218,13 @@ print(f"- achados: instalada {sum(atual.values())} · nova {sum(nova.values())} 
 print(f"- **novos em código que dispara sozinho: {n_dispara}**" + (" ← o gate exige ZERO aqui" if dispara else ""))
 for s, r, fp, sn in dispara[:40]:
     print(f"  - `{s}` `{r}` em `{fp}`: {sn}")
-crit = collections.Counter((k[0], k[1]) for k in novos if k[0] in ("CRITICAL", "HIGH"))
+# POR ARQUIVO, como o gate manda triar (a 1ª revisão real listava só por regra: medido em 2026-09-29,
+# os 3 CRITICAL/HIGH novos da 1.91.6 eram todos de um script de CI do próprio gstack).
+crit = sorted(k for k in novos if k[0] in ("CRITICAL", "HIGH"))
 if crit:
-    print("- CRITICAL/HIGH novos por regra (todos os caminhos; em skill de segurança costuma ser o próprio assunto, trie POR ARQUIVO):")
-    for (s, r), n in crit.most_common(15):
-        print(f"  - `{s}` `{r}`: {n}")
+    print("- CRITICAL/HIGH novos (todos os caminhos; em skill de segurança costuma ser o próprio assunto, trie POR ARQUIVO):")
+    for s, r, fp, sn in crit[:40]:
+        print(f"  - `{s}` `{r}` em `{fp}`: {sn}")
 PY
 }
 

@@ -91,6 +91,7 @@ if [ "${1:-}" = "--falsificar" ]; then
     sabotar F12 A2  'skill aninhada vira codigo da raiz'     's#rel = f"{base}/{fp}" if base else fp#rel = fp#'
     sabotar F13 A14 'reaproveita revisao INCOMPLETA'         's#\[ "\$(campo gate)" = COMPLETO \] \&\& ##'
     sabotar F14 A14 'aplica com o gate incompleto'           's#\[ "\$(campo gate)" != COMPLETO \]#false#'
+    sabotar F15 A2  'CRITICAL/HIGH sem o arquivo'            's#for s, r, fp, sn in crit\[:40\]:#for s, r, fp, sn in []:#'
   done
 
   echo
@@ -270,6 +271,7 @@ if roda A2; then
   if [ "$rc1" -eq 0 ] && [ "$(st "$w" estado)" = PENDENTE ] && [ "$(st "$w" nova)" = 1.1.0.0 ] && [ "$(st "$w" alvo)" = "$alvo" ] \
      && [ "$g1" = COMPLETO ] && [ "$(versao "$w")" = 1.0.0.0 ] && [ ! -e "$w/marcas/setup" ] \
      && tem "$r" '**novos 2**' && tem "$r" 'dispara sozinho: 1**' && tem "$r" 'EXFIL` em `bin/malicioso' && tem "$r" "--aplicar $alvo" \
+     && tem "$r" 'EXFIL` em `sub/bin/malicioso-sub' \
      && tem "$r" 'add-event --event SessionStart' \
      && [ "$rc2" -eq 0 ] && tem "$out" 'ja preparado antes' && [ "$(st "$w" gate)" = COMPLETO ]; then
     ok A2 'versao nova -> PENDENTE com o delta do gate; nada aplicado; revisao completa reaproveitada'
