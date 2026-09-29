@@ -278,3 +278,13 @@ scripts/lab-claude-mem-reanimar/com_tty.py 240 bash scripts/claude-mem-reanimar.
 (reclaim do worker travado + hooks de prompt em fail-open) está em draft com 3 achados P1 em 28/09 —
 quando entrar, a receita vira automática. Até lá: **Mac que morreu de bateria acorda com o worker
 surdo** — o bloco 6 do vigia acusa e `bun run claude-mem:reanimar` resolve.
+
+**Decisão (28/09, founder): plugin DESLIGADO até o #4129 entrar** (`enabledPlugins` false no
+`~/.claude/settings.json`). O que se perde, medido no mesmo dia: 0 observações em 13 dos 14 dias
+anteriores (só 27/09, na janela do token renovado); contexto injetado pelo hook `context` do
+SessionStart = 0 bytes (repo principal e worktree com histórico — a memória é fragmentada por
+worktree, 87 `project` distintos); 5 de 933 transcripts de 30 dias usaram a busca MCP do plugin
+(todos 19–21/09) e nenhum usou skill `claude-mem:*`. O acervo (5.274 observações, 1.556 resumos,
+56 MB em `~/.claude-mem/claude-mem.db`) fica no disco. Sessões abertas antes da mudança mantêm os
+hooks até reiniciar e tentam subir o worker se ele cair (lazy-spawn, visto no log) — pare o worker
+(`worker-service.cjs stop`) só depois que elas reiniciarem.
