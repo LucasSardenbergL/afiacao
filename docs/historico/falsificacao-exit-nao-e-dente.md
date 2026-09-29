@@ -1165,6 +1165,16 @@ idioma SABOTAGENS limpo e sem JUIZ registrado` — o #2655 o pôs no roteiro enq
 recortada ao caso-alvo por `SO_CASO`) e registrado; as âncoras do `claude-mem-saude` e do
 `vigia-gstack`, que a main também mudou, sobreviveram.
 
+**O R4 no CI (#2660): casar o padrão 1× não é rodar a mutação.** As 17 mutações novas do contrato
+do gate tinham o padrão conferido (casa UMA linha), não o dente — o `mutation-check` do 1º push deu
+53/55: um INVÁLIDO (o padrão ainda casava `regra: 'R3'`, que virou `regra` quando o `julgarAncoras`
+passou a herdar a regra do domínio) e um SOBREVIVE — desligar o ramo "alvo que o fiscal não leu"
+fazia o ramo vizinho ("sem idioma e sem juiz") acusar o mesmo alvo com o diagnóstico ERRADO, e o
+teste, que casava só o NOME do alvo, aprovava. Consertado casando a MARCA do ramo (o gêmeo em TS do
+`toThrow()` pelado); 55/55 local, `--seco` 55/55 cirúrgicos. E o `mutation-check` do push do conserto
+saiu `cancelled` no teto de 25 min — como em 8 dos 13 runs recentes de outros PRs (#2650): o PR
+entrou sem esse sinal no CI, e a evidência do contrato é a rodada local.
+
 **Os três afetados, medidos antes do conserto:**
 
 - **`setup-contrato`** — sonda num arquivo com um teste vermelho e um verde: o vitest lista o irmão
