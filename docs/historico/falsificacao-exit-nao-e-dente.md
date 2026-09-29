@@ -1220,6 +1220,90 @@ de sabotagem no código. Lidos: 4 são rótulo/fixture (`stop-contexto-caro`, `c
   cala, o furo que o `lovable` fechou. Fora do domínio do R4: pendência com dono (abaixo), junto com
   o gate que falta (um R5 para o `test:hooks`).
 
+## A camada 4 por LINHA — o stderr INTEIRO do alvo (2026-09-29)
+
+**Passo 0 — instância única ou classe? Classe** — o resíduo do Codex da 2ª leva, nos 8 laços que o
+herdaram (`onde-parei`, `orfaos-custosos`, `read-contexto-nudge`, `ocupacao-por-arquivo`,
+`ocupacao-por-comando`, `fecho-edges-pendentes`, `eval-diagnostico-cegueira`, `bash-contexto-nudge`),
+mais o `idioma-errexit-leitura`, que passava limpo no R1/R2 sem camada 2 nem 4. A camada comparava a
+CONTAGEM de assinaturas do bash entre a rodada sabotada e o controle — dois furos: a sabotagem que
+apaga um diagnóstico legítimo do controle e cria um crash real passa por `1 = 1`; e erro de
+FERRAMENTA fica fora de qualquer lista-negra (o `usage:` do git que o juiz do `lovable` aprovou).
+
+**Medido antes de mudar (a linha de base).** Rodei o `--falsificar` real dos 8 numa sombra com a
+limpeza neutralizada (um shim de `mktemp`: neste macOS o `/usr/bin/mktemp -d` IGNORA o `TMPDIR`) e
+contei, no controle, o que a camada de então lia (log + o `.stderr` do `ERROS_DO_ALVO`): **zero**
+assinaturas nos 8, nos dois locales — o `1 = 1` estava latente, não ativo. Mas o stderr dos
+controles do `ocupacao-*` NÃO era vazio (26 e 58 linhas só nas chamadas que o `ERROS_DO_ALVO`
+cobria): ali o stderr é o RELATÓRIO do alvo ("sessões analisadas", `TAXONOMIA-…`), e 7 das 11
+sabotagens do `ocupacao-por-comando` o mudavam de propósito. "Sabotada ⊆ controle" ingênuo reprovaria
+sabotagem legítima — a medição decidiu o desenho.
+
+**O desenho** (`scripts/lib/falsificacao-stderr.sh`, carregada com `.`):
+
+- **O canal: um EMBRULHO do alvo**, criado só no laço (a suíte normal não muda): roda a cópia, apensa
+  o stderr INTEIRO dela a `<log>.stderr` e o devolve no stderr. Toda chamada passa por ele — a que a
+  suíte mescla na saída (`2>&1`, antes vista só no dump do assert que falha, às vezes CORTADO em 220
+  caracteres), a que ela descarta e a que ela recolhia. Síncrono (arquivo, não `tee` em `>(…)`: o
+  processo de fundo sobreviveria ao alvo — fail-open); caminhos ABSOLUTOS de `bash`/`cat`/`rm` (há
+  suíte que roda o alvo com `PATH` restrito a stubs); temporário `<arquivo>.<pid>`, fora do `TMPDIR`
+  que a suíte aponta para o alvo. A encanação por chamada do #2639 (`2>>"${ERROS_DO_ALVO:-/dev/null}"`,
+  23 pontos em 6 arquivos) volta a `2>/dev/null`: o canal agora é o embrulho.
+- **Linha nova = FORMA que o controle nunca disse** (normalizada: o caminho da cópia e o diretório
+  temporário viram marcadores, o `line N` do bash vira N; os demais dígitos NÃO — `rc=0` ≠ `rc=129`).
+  Repetir uma forma que o controle disse não é crash — a menos que a linha tenha assinatura de crash,
+  que conta por OCORRÊNCIA (1 no controle, 2 na sabotada = 1 nova). O awk lê o controle por
+  `FILENAME == ARGV[1]`, nunca `FNR == NR`: com o controle VAZIO (o caso comum) o `FNR==NR` trataria as
+  linhas da sabotada como controle e aprovaria tudo.
+- **`declara_stderr <sabotagem> <trecho>`**: o que a sabotagem muda de PROPÓSITO no stderr — o
+  `ID!MARCA` do #2606 para a camada 4. Trecho ASCII, específico; trecho vazio aborta (casaria tudo).
+- **`linha_de_base`**: cada controle diz em voz alta o que mediu — "stderr do alvo: N linha(s), M com
+  assinatura de crash"; arquivo ausente é dito como tal (ausente ≠ zero).
+- O log da suíte (o arnês que morre) segue julgado pelas linhas com assinatura de crash — ali o log
+  difere do controle por desenho. `camada4` sai sempre 0: o veredito é a SAÍDA (sob `set -e`, um
+  status ≠0 mataria o laço em vez de reprovar a rodada).
+
+**Medido depois, com o embrulho** (linha de base dos controles, stderr INTEIRO): `onde-parei` 3 linhas,
+`ocupacao-por-arquivo` 45, `ocupacao-por-comando` 74, os demais 0 — **0 com assinatura de crash em
+todos**. Rodadas com linha nova: `ocupacao-por-comando` 7/11, todas relatório (`TAXONOMIA-NAO-CLASSIFICADO
+n=1 de 1`, `TAXONOMIA-SILENCIOSA`, `TAXONOMIA-QUIETA`, `VER-SHELL n=0`, `ERRO: --ver-shell … (modo atual:
+ferramenta)`, a vírgula decimal) → declaradas; `ocupacao-por-arquivo` 1/11 — **`mktemp: too few X's in
+template`**, erro de ferramenta que a contagem nunca viu, e que aqui É o vermelho declarado do
+`mktemp_so_bsd` (a suíte monta um stub do mktemp GNU para provar que a forma só-BSD quebra) → declarado;
+todos os outros laços, 0.
+
+**A meta-falsificação** (o arquivo de ANTES = o da camada por contagem, e o novo; edições exatas numa
+sombra do worktree — o hook-base do M1 modificado numa CÓPIA, nunca no repo —, o desfecho declarado
+antes, C e pt_BR):
+
+| site | a reprodução (o buraco) | controle | antes aprovava | novo reprova |
+|---|---|---|---|---|
+| `bash-contexto-nudge` | M1, o resíduo do Codex: o hook-base ganha um diagnóstico LEGÍTIMO com assinatura em toda chamada (a linha de base do controle passa a dizer "28 linha(s), 28 com assinatura de crash"); a sabotagem o troca por um crash REAL (`set -u` + variável inexistente) — o hook morre em toda chamada, 10 asserts caem, e a contagem dá 28 = 28 | ✅✅ · ✅✅ | ✅✅ | ✅✅ |
+| `onde-parei` | M2: a sonda chama o `git` REAL com flag inexistente e engole o rc — `unknown option` + `usage: git …`, nenhuma assinatura do bash (o de antes: "✅ … vermelho no assert declarado (P5)") | ✅✅ · ✅✅ | ✅✅ | ✅✅ |
+| `ocupacao-por-comando` | M4: a sabotagem que DECLARA `TAXONOMIA-SILENCIOSA n=` ganha um erro de ferramenta NÃO declarado (`sort: unrecognized option`) — a declaração não o engole | ✅✅ · ✅✅ | ✅✅ | ✅✅ |
+
+**24/24 conferem**, cada rodada vermelha com UMA falha, a da avaria. **A meta pegou um defeito meu no 2º
+locale:** a declaração do `locale_nao_forcado` tinha sido medida com o shell de fora em C, onde só a
+chamada que força a vírgula muda; em pt_BR, TODA linha com percentual muda, e o controle do
+`ocupacao-por-comando` ficou vermelho. A declaração virou "vírgula decimal num percentual" (`,D%`) e o
+recorte foi refeito. Os 9 laços novos: verdes nos dois locales (o `fecho`, 92/92), e o modo normal das
+9 suítes, que o `test:hooks` roda, também.
+
+**O que mais entrou:** o `idioma-errexit-leitura` ganhou as camadas 2 (o recibo `RESULTADO` com o nº
+de asserts do controle) e 4; o limiar do `bash-contexto-nudge` julga o stderr INTEIRO do hook sabotado
+contra o do hook REAL na mesma entrada (era `/dev/null`); o `eval-diagnostico-cegueira` carrega o bloco
+com `.` — sem embrulho possível —, então lá o "stderr do alvo" é tudo o que a rodada imprimiu fora das
+linhas de assert e do recibo. O teste da lib (`test-falsificacao-stderr.sh`, no `test:hooks`) tem o
+dente provado por 17 mutações (17/17 PEGA). E o `shellcheck-gate` não cobria `scripts/lib/*.sh` — a lib
+nova (e o `wt-medida.sh`) entraram no escopo em zero achados.
+
+**Residual, registrado:** (1) alvo cujo stderr é contrato cobra declaração de toda sabotagem nova que
+mude o relatório — custo de manutenção, fail-closed (vermelho falso, nunca aprovação); (2) no
+`eval-diagnostico`, o que o bloco imprime dentro de `$(… 2>&1)` (D6–D10) é julgado pelos próprios
+asserts; (3) o embrulho devolve o stderr DEPOIS do stdout — o controle passa pelo mesmo embrulho (maçã
+com maçã), e nenhum dos 9 controles ficou vermelho com isso; (4) os juízes `FAIL [<id>]` fora do
+idioma no `test:falsificacao` seguem sem camada de crash (pendência com dono, abaixo).
+
 ## O que ficou de fora, com dono
 
 As fases seguintes da erradicação (fora do núcleo, onde nenhum recibo é confiado às cegas) viraram
@@ -1271,7 +1355,7 @@ Da 2ª leva ficaram, com dono:
   (seção "O gate R4", acima): o R4, 19 juízes relidos e registrados, e os 3 "já-corretos" que a
   releitura desmentiu — `setup-contrato`, `medir-footprint`, `sonda-cron-prova` —, consertados com meta
   nos dois locales. O resíduo do Codex na camada 4 (comparar as LINHAS, não a contagem; o stderr
-  INTEIRO, não só as assinaturas do bash) segue no PR seguinte da mesma sessão.
+  INTEIRO, não só as assinaturas do bash) — ✅ ENTREGUE (seção "A camada 4 por LINHA", acima).
 - **"Estender o R4 ao test:hooks e consertar os juízes por silêncio"** — a avaliação dos que falsificam
   fora do `test:falsificacao` (seção "O gate R4") achou 9 falsificações dentro da suíte normal do
   `test:hooks`, fora de qualquer gate: o `sonda-processo-guard` conta QUALQUER stdout do hook sabotado
