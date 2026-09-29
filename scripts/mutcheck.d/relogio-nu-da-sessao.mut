@@ -1,0 +1,46 @@
+# Invariantes do fiscal do DIA da sessão lido NU (classe ii do fuso da sessão).
+# @src: scripts/relogio-nu-da-sessao-gate.ts
+# @test: scripts/relogio-nu-da-sessao-gate.test.ts
+#
+# A classe (docs/historico/hoje-da-sessao-nu-funcoes-e-skills.md): `current_date`, `now()::date` e o
+# instante que vira data por `::date` usam o fuso da SESSÃO — UTC na prod e no psql-ro das skills: das
+# 21:00 às 23:59 BRT o dia já é o seguinte. Cada PEGA quebra UMA camada e exige a suíte vermelha: a
+# assinatura (e as duas exclusões que a tornam precisa), a limpeza de SQL, só as cercas dos .md, o
+# corte nos dois sentidos, a baseline dos corpos vivos nos dois sentidos e na contagem, cada piso
+# SOZINHO, os alarmes e a identidade do trecho.
+#
+# ⚠️ No lado da SUBSTITUIÇÃO o perl interpola: `$x` vira vazio e `@x` também. Escreva `\$`.
+
+# CONTROLE+ : o detector cego. Se isto sobreviver, nenhum outro veredito deste arquivo vale.
+PEGA | controle+: detector cego (nenhuma forma casa)                          | s/for \(const m of limpo\.matchAll\(re\)\) \{/for (const m of limpo.matchAll(\/NUNCA_CASA\/g)) {/
+
+# A leitura.
+PEGA | sem a limpeza de SQL: a forma antiga citada num `--` vira violação      | s/const limpo = removerComentariosSql\(sqlCru\);/const limpo = removerComentariosSql('') + sqlCru;/
+PEGA | prosa de .md lida como código (a skill que EXPLICA reprova)             | s/if \(!a\.caminho\.endsWith\('\.md'\)\) return \{ codigo: a\.fonte \};/return { codigo: a.fonte };/
+PEGA | cerca que não fecha passa calada (lida como prosa)                        | s/alarme: cercaAberta \?/alarme: false ?/
+PEGA | alarme do stripper desligado (o que come código mede prosa)             | s/if \(bloco > teto\)/if (false)/
+PEGA | identidade do trecho sem normalizar (CURRENT_DATE ≠ current_date)       | s/s\.replace\(\/\\s\+\/g, ' '\)\.trim\(\)\.toLowerCase\(\);/s;/
+
+# A assinatura: 3 formas, e as 2 exclusões que a tornam precisa.
+PEGA | forma: o dia da sessão (current_date/localtimestamp) some              | s/current_date\|localtimestamp\|localtime\|current_time/NUNCA_CASA/
+PEGA | forma: min/max(instante)::date some                                    | s/\\b\(\?:min\|max\)/\\bNUNCA_CASA(?:min|max)/
+PEGA | forma: to_char(relógio, …) some                                        | s/\\bto_char\\s\*\\\(\\s\*\$\{RELOGIO\}/NUNCA_CASA/
+PEGA | exclusão: ::timestamp with time zone passa a reprovar                   | s/\(\?!\\s\*with\\b\)//
+PEGA | exclusão: os 3 *_em que são date passam a reprovar                      | s/\(\?!\(\?:inicio_em\|medido_em\|suspensa_em\)\\b\)//
+
+# O corte (2º universo), nos dois sentidos.
+PEGA | sem o corte: as definições velhas (texto) reprovam                       | s/if \(nomeDe\(a\.caminho\)\.slice\(0, 14\) < CORTE\) continue;/if (false) continue;/
+PEGA | corte que pula tudo: nenhuma migration nova é lida                       | s/< CORTE\) continue;/< '99999999999999') continue;/
+
+# A baseline dos corpos vivos (3º universo): novo, quitado, contagem, leitura.
+PEGA | sítio novo num corpo vivo passa calado                                    | s/for \(const \[k, n\] of contagem\) if/if (false) for (const [k, n] of contagem) if/
+PEGA | entrada quitada que fica passa calada                                     | s/for \(const \[k, n\] of esperado\) if/if (false) for (const [k, n] of esperado) if/
+PEGA | a contagem vira presença (um sítio a MAIS passa)                         | s/if \(\(esperado\.get\(k\) \?\? 0\) < n\) novos/if (!esperado.has(k)) novos/
+PEGA | corpos vivos não lidos                                                    | s/for \(const \[alvo, corpo\] of corpos\) \{/for (const [alvo, corpo] of new Map<string, string>()) {/
+
+# Cada piso, SOZINHO (um piso que só cai junto com outro é decoração).
+PEGA | piso de migrations desligado                                              | s/if \(r\.migrations < PISOS\.migrations\)/if (false)/
+PEGA | piso do corte desligado                                                   | s/if \(r\.migracoesNovas < PISOS\.migracoesNovas\)/if (false)/
+PEGA | piso de arquivos de skill desligado                                       | s/if \(r\.arquivosDeSkill < PISOS\.arquivosDeSkill\)/if (false)/
+PEGA | piso de linhas de código de skill desligado                               | s/if \(r\.linhasDeCodigoDeSkill < PISOS\.linhasDeCodigoDeSkill\)/if (false)/
+PEGA | piso de corpos vivos desligado                                            | s/if \(r\.corposVivos < PISOS\.corposVivos\)/if (false)/

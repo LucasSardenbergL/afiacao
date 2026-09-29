@@ -183,7 +183,8 @@ mas a ação é graduada por faixa de aging:
 > A faixa **>90d** é a que alimenta a *taxa de inadimplência* da projeção de caixa (engine).
 > Não confunda "vencido há 2 dias" (recuperável, não vira provisão) com "inadimplência dura".
 > Aging: pegue o CONJUNTO de vencidos por `status_titulo IN ('ATRASADO','VENCE HOJE')` e a FAIXA
-> por **data** (`CURRENT_DATE − data_vencimento`). **NUNCA** use `saldo > 0`/`data_recebimento` pra
+> por **data** (hoje de SP `− data_vencimento`, com o hoje = `(now() AT TIME ZONE 'America/Sao_Paulo')::date`:
+> o `CURRENT_DATE` é o dia da sessão UTC, que das 21:00 às 23:59 BRT já é amanhã). **NUNCA** use `saldo > 0`/`data_recebimento` pra
 > definir aberto/vencido — o `saldo` não zera na baixa (armadilha 1 do schema) e conta quitado como vencido.
 - Também mostre **concentração**: top 1 cliente vencido vs total vencido. Acima do threshold
   `concentracao_top1_max_pct` = risco de concentração.

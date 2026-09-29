@@ -94,7 +94,7 @@ WITH banco AS (
   SELECT company, tipo, abs(valor) AS valor, data_movimento,
          (omie_codigo_lancamento IS NOT NULL) AS com_titulo
   FROM fin_movimentacoes
-  WHERE data_movimento >= CURRENT_DATE - interval '90 days'
+  WHERE data_movimento >= (now() AT TIME ZONE 'America/Sao_Paulo')::date - interval '90 days'
     AND categoria_descricao IN ('CONTA_CORRENTE_REC', 'CONTA_CORRENTE_PAG')
 )
 SELECT company,
@@ -114,13 +114,13 @@ GROUP BY company ORDER BY company;
 -- (d) OVERLAY: eventos que a projeção (a) NÃO inclui — recorrentes (folha) e eventuais
 SELECT company, 'recorrente' AS origem, descricao, tipo, valor, dia_do_mes AS dia, is_folha
 FROM fin_eventos_recorrentes
-WHERE ativo AND (fim IS NULL OR fim >= CURRENT_DATE)
+WHERE ativo AND (fim IS NULL OR fim >= (now() AT TIME ZONE 'America/Sao_Paulo')::date)
 UNION ALL
 SELECT company, 'eventual', descricao, tipo, valor,
        EXTRACT(DAY FROM data_prevista)::int, false
 FROM fin_eventos_eventuais
 WHERE status IN ('previsto','confirmado')
-  AND data_prevista BETWEEN CURRENT_DATE AND (CURRENT_DATE + interval '90 days')
+  AND data_prevista BETWEEN (now() AT TIME ZONE 'America/Sao_Paulo')::date AND ((now() AT TIME ZONE 'America/Sao_Paulo')::date + interval '90 days')
 ORDER BY company, origem, tipo;
 -- (vazio = folha/eventos nunca cadastrados → projeção subestima saídas futuras; ação de setup)
 
