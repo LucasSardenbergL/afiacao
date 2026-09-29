@@ -347,9 +347,35 @@ describe('R4 — todo alvo do test:falsificacao usa o idioma limpo ou tem juiz, 
     expect(r.violacoes.map((v) => [v.regra, v.detalhe.includes('âncora do juiz sumiu')])).toEqual([['R4', true]]);
   });
 
+  it('o juiz DELEGADO (o lab que o slug despacha) reprova com a regra do despachante — R4, não R3', () => {
+    const juizes: Record<string, Juiz> = {
+      'scripts/test-a.sh': { motivo: 'despacha', ancoras: ['roda lab/falsifica.sh'] },
+      'scripts/lab/falsifica.sh': { motivo: 'juiz do lab', ancoras: ['exige "$marca"'], delegadoPor: 'scripts/test-a.sh' },
+    };
+    const r = analisar(
+      [
+        { caminho: 'scripts/test-a.sh', fonte: 'roda lab/falsifica.sh\n' },
+        { caminho: 'scripts/lab/falsifica.sh', fonte: 'x=1\n' },
+      ],
+      null,
+      juizes,
+      pacoteCom('for t in a; do bash scripts/test-$t.sh --falsificar; done'),
+    );
+    expect(r.violacoes).toEqual([
+      expect.objectContaining({ regra: 'R4', arquivo: 'scripts/lab/falsifica.sh', detalhe: expect.stringContaining('âncora do juiz sumiu') }),
+    ]);
+  });
+
   it('alvo que o fiscal NÃO leu (slug com nome errado) → R4 — rodar arquivo inexistente não é estar julgado', () => {
     const r = analisar([{ caminho: 'scripts/test-a.sh', fonte: LACO_REFERENCIA }], null, {}, pacoteCom('for t in a zz; do bash scripts/test-$t.sh --falsificar; done'));
     expect(r.violacoes).toEqual([expect.objectContaining({ regra: 'R4', detalhe: expect.stringContaining('scripts/test-zz.sh') })]);
+  });
+
+  it('alvo TS cuja limpeza COMEU código (bloco descartado acima do teto) vira INDETERMINADO — âncora "ausente" ali seria cegueira', () => {
+    const fonte = `/* abre e nunca fecha\n${'const x = 1;\n'.repeat(200)}`;
+    const r = analisar([{ caminho: 'scripts/prova.ts', fonte }], null, {}, pacoteCom('bun scripts/prova.ts --falsificar'));
+    expect(r.alarmes).toEqual([expect.stringContaining('scripts/prova.ts')]);
+    expect(veredito(r, false).codigo).toBe(2);
   });
 
   it('o resíduo do roteiro vira INDETERMINADO (2), mesmo sem pisos', () => {

@@ -95,6 +95,11 @@ export interface Juiz {
   motivo: string;
   /** Trechos de CÓDIGO (sobrevivem ao stripper) sem os quais o juiz volta a aceitar qualquer vermelho. */
   ancoras: string[];
+  /**
+   * O arquivo que DESPACHA para este juiz (o slug do `test:falsificacao` que roda um `lab-*`): a
+   * âncora que some daqui reprova com a regra do despachante — o juiz de verdade mora aqui.
+   */
+  delegadoPor?: string;
 }
 
 /**
@@ -183,6 +188,194 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
       'erro="${out#*ERROR:  }"',
       `*:*"$no_lugar"*)`,
       'bad "$1 — sabotado, mas o vermelho não é o declarado [$no_lugar]',
+    ],
+  },
+
+  // ── R4: os alvos do `test:falsificacao` fora do idioma SABOTAGENS (2026-09-29). Cada um RELIDO: a
+  // varredura de 2026-09-27 os chamava de "já-corretos", e três não eram (setup-contrato,
+  // medir-footprint, sonda-cron-prova — consertados junto; docs/historico/falsificacao-exit-nao-e-dente.md).
+  // Residual comum aos de `FAIL [<id>]`: sem camada de crash — o assert declarado que inclui o rc
+  // também cai se o alvo MORRER no ramo dele (pendência com dono no diário).
+  'scripts/test-codex-async.sh': {
+    motivo:
+      'sabotar <id> <marca> <python>: sobre controle VERDE nos 2 locales (aborta sem ele), troca 1× + `bash -n`, e só conta com `FAIL [<marca>]` — o assert que a declara',
+    ancoras: [
+      `      elif printf '%s' "$saida_suite" | grep -qF "FAIL [$marca]"; then`,
+      `        printf '  FAIL [%s]  vermelho pelo motivo ERRADO (locale %s): faltou FAIL [%s]. Veio:\\n' "$id" "$loc" "$marca"`,
+      `    bash -n "$alvo" 2>/dev/null || { printf '  FAIL [%s]  sabotagem quebrou a SINTAXE (vermelho por crash nao prova nada)\\n' "$id"; falhas=1; return; }`,
+      '  [ "$falhas" -eq 0 ] || { echo "FALSIFICACAO ABORTADA: sem controle verde nada abaixo tem valor."; exit 1; }',
+    ],
+  },
+  'scripts/test-codex-async-nuvem.sh': {
+    motivo: 'o molde do codex-async: troca LITERAL que casa exatamente 1×, `bash -n`, controle verde nos 2 locales, e `FAIL [<marca>]` do assert declarado',
+    ancoras: [
+      '      elif grep -qF "FAIL [$marca]" <<< "$saida_suite"; then',
+      'if s.count(de)!=1: sys.exit(1)',
+      '  [ "$falhas" -eq 0 ] || { echo "FALSIFICACAO ABORTADA: sem controle verde nada abaixo tem valor."; exit 1; }',
+    ],
+  },
+  'scripts/test-gate-senha-bootstrap.sh': {
+    motivo:
+      'sabota a ENTRADA (planta o defeito na raiz-fixture) com controle antes de cada uma: rc EXATO + o marcador do ramo + a senha falsa ausente; sabotagem que não muda a raiz aborta',
+    ancoras: [
+      '  if [ "$rc" -ne "$rc_esp" ]; then falhou "$desc — esperava rc=$rc_esp, veio rc=$rc"; return; fi',
+      '  if ! grep -q "$marca" "$TMP/saida"; then falhou "$desc — rc certo, mas sem o marcador $marca"; return; fi',
+      '  if grep -q "$FALSA" "$TMP/saida"; then falhou "$desc — VAZOU a senha falsa na saída do gate"; return; fi',
+      '  if [ "$antes" = "$depois" ]; then',
+    ],
+  },
+  'scripts/test-codex-prompt-paginacao.sh': {
+    motivo: 'o VALOR devolvido pela definição sabotada: G1/G2 = o SHA do citador, G3/G4 vazios, e exatamente 2 vermelhos — o defeito exato, não um erro que esvazia a resposta',
+    ancoras: [
+      `[ "$got_1856" = "$sha_citador" ]      || faltam="$faltam G1(veio '$got_1856', esperado o citador '$sha_citador')"`,
+      `[ "$got_1889" = "$sha_citador_1889" ] || faltam="$faltam G2(veio '$got_1889', esperado o citador '$sha_citador_1889')"`,
+      'if [ -n "$faltam" ] || [ "$falhas" -ne 2 ]; then',
+    ],
+  },
+  'scripts/test-guard-noop-sabotagem.sh': {
+    motivo: 'rc 1 E a LINHA exata (`grep -qxF`) da resposta do guard frágil com o alvo presente; `bash -n` antes — o bash cita a linha do erro de sintaxe',
+    ancoras: [
+      "  marca_exata='     com o alvo PRESENTE o guard respondeu:   [XX ] sabotagem NO-OP (alvo sumiu)'",
+      '  LC_ALL=C grep -qxF -- "$marca_exata" <<<"$veredito" && rc_v="$rc_v+marca"',
+      '    1+marca:*)',
+      '  if ! bash -n "$TMP/sabotado.sh" 2>/dev/null; then',
+    ],
+  },
+  'scripts/test-eval-via-morta.sh': {
+    motivo: 'S1: exit EXATO 1 + o baseline do caso-alvo vermelho + o recibo do laço completo (12); S2: nenhuma pegada, com o recibo — erro alheio e laço abortado são recusados',
+    ancoras: [
+      `  1:*'o caso-alvo "velho_com_controle"'*'cegueira(s) em 12 sabotagem(ns)'*)`,
+      '  *) ruim "S1 saiu do verde, mas NÃO pelo declarado (exit 1 + o baseline do caso-alvo vermelho): saiu $r_rc — erro alheio não é dente"',
+      '  *"cegueira(s) em 12 sabotagem(ns)"*)',
+    ],
+  },
+  'scripts/test-gates-frescura.sh': {
+    motivo: 'sabota a ENTRADA (a raiz-fixture) com controle remontado antes de cada uma: rc EXATO + o marcador do ramo (ORFAO, CENSO-OBSOLETO, …)',
+    ancoras: [
+      '  if [ "$rc" -ne "$rc_esp" ]; then',
+      `  if ! printf '%s' "$saida" | grep -q "$marca"; then`,
+      '    falhou "$desc — rc correto mas sem o marcador $marca"',
+    ],
+  },
+  'scripts/test-vigia-gstack.sh': {
+    motivo: 'controle verde por locale (aborta sem ele); cópia que difere; exit EXATO 1 + `FAIL [<caso>]` do caso-alvo',
+    ancoras: [
+      `    if [ "$rc" -eq 1 ] && printf '%s\\n' "$saida" | grep -F "FAIL [$alvo]" >/dev/null; then`,
+      '    if cmp -s "$HOOK" "$copia"; then',
+      `      printf 'ABORTA — controle nao esta verde (LC_ALL=%s, rc=%s). Sabotar agora aprovaria qualquer coisa.\\n%s\\n' "$1" "$rc" "$saida"`,
+    ],
+  },
+  'scripts/test-vigia-nuvem.sh': {
+    motivo: 'o molde do vigia-gstack: controle verde por locale, sabotagem que muda o arquivo, exit EXATO 1 + `FAIL [<caso>]`',
+    ancoras: [
+      `    if [ "$rc" -eq 1 ] && printf '%s\\n' "$saida" | grep -F "FAIL [$2]" >/dev/null; then`,
+      '    if ! preparar "$1-$LOC" "$4" "$5"; then',
+      `      printf 'ABORTA — controle SEM sabotagem ja esta VERMELHO (LC_ALL=%s, rc=%s). Sabotar agora aprovaria qualquer coisa.\\n%s\\n' \\`,
+    ],
+  },
+  'scripts/test-instrucoes-carregadas.sh': {
+    motivo: 'o molde do vigia-gstack: controle verde por locale, cópia que difere, exit EXATO 1 + `FAIL [<caso>]`',
+    ancoras: [
+      `    if [ "$rc" -eq 1 ] && printf '%s\\n' "$saida" | grep -F "FAIL [$alvo]" >/dev/null; then`,
+      '    if cmp -s "$HOOK" "$copia"; then',
+      `      printf 'ABORTA — controle nao esta verde (LC_ALL=%s, rc=%s). Sabotar agora aprovaria qualquer coisa.\\n%s\\n' "$1" "$rc" "$saida"`,
+    ],
+  },
+  'scripts/test-pr-watch.sh': {
+    motivo: 'a marca carrega o ID do caso E o valor errado exato (`FAIL [nao-obrig-mergeia] exit: want 0, got 4`); sed inválido, no-op e sintaxe quebrada são sabotagem vazia',
+    ancoras: [
+      '      elif ! grep -qF -- "$marca" <<<"$saida_suite"; then',
+      '    if ! bash -n "$copia" 2>/dev/null; then',
+      '         "FAIL [nao-obrig-mergeia] exit: want 0, got 4" \\',
+    ],
+  },
+  'scripts/test-claude-mem-saude.sh': {
+    motivo: 'controle das duas cópias íntegras; sed inválido/no-op/sintaxe recusados; `FALHA <caso>:` do caso declarado em cada locale',
+    ancoras: [
+      '      elif ! grep -qF -- "FALHA ${SCASO[i]}:" "$r"; then',
+      "      if grep -qx 'RC=0' \"$r\"; then",
+      '    elif ! bash -n "$copia" 2>/dev/null; then',
+    ],
+  },
+  'scripts/test-setup-contrato.sh': {
+    motivo:
+      'marca do ramo (erro do motor, nome do teste) casada só nas linhas de FALHA: fora das `✓` e do code-frame, onde o vitest cita teste VERDE — até 2026-09-29 casava na saída inteira',
+    ancoras: [
+      `linhas_de_falha() { sem_ansi "$1" | LC_ALL=C grep -avE '^[[:space:]]*(✓|[0-9]*[[:space:]]*\\|)'; }`,
+      '  falha_txt="$(linhas_de_falha "$saida")"',
+      '      grep -qaF -- "$alt" <<<"$falha_txt" && { achou=1; break; }',
+      '    aviso "  ❌ [$nome] vermelho (rc=$rc) mas SEM a marca do ramo:$faltando"',
+    ],
+  },
+  'scripts/test-medir-footprint.sh': {
+    motivo:
+      'medição incompleta (rc, campo não numérico, 0 amostras) é ruim; o vermelho que conta é o SENTIDO declarado — SAB1 cai, SAB2/SAB4 sobem, SAB3 abaixo do mínimo; até 2026-09-29 valia "fora da janela" para qualquer lado',
+    ancoras: [
+      'elif [ "$(( S1_PESADO - S1_LEVE ))" -gt "$JANELA_MAX" ]; then',
+      'elif [ "$(( S2_DIV - S2_LEVE ))" -lt "$JANELA_MIN" ]; then',
+      'elif [ "$(( S4_SEQ - S4_LEVE ))" -lt "$SEQ_MIN" ]; then',
+      '  [ "$R_EXIT" -eq 0 ] || return 1',
+    ],
+  },
+  'scripts/test-claude-mem-reanimar.sh': {
+    motivo: 'despacha para lab-claude-mem-reanimar/{falsifica.sh, prova_com_tty.sh --falsificar} e exige rc 0 + a LINHA exata do marcador verde de cada um',
+    ancoras: [
+      '  roda falsifica.sh FALSIFICACAO-VERDE || exit 1',
+      '  roda prova_com_tty.sh FALSIFICACAO-COM-TTY-VERDE --falsificar',
+      '  if [ "$rc" -eq 0 ] && grep -qx "$marca" "$saida"; then',
+    ],
+  },
+  'scripts/lab-claude-mem-reanimar/falsifica.sh': {
+    motivo: 'RC≠0 + LAB-VERMELHO (o lab TERMINOU) + o texto da FALHA declarada numa linha `  FALHA `, por locale',
+    ancoras: [
+      "    if ! grep -qx 'RC=[1-9][0-9]*' \"$r\"; then",
+      "    elif ! grep -qx 'LAB-VERMELHO' \"$r\"; then",
+      `    elif ! grep -F '  FALHA ' "$r" | grep -qF -- "\${ESPERADO[i]}"; then`,
+    ],
+    delegadoPor: 'scripts/test-claude-mem-reanimar.sh',
+  },
+  'scripts/lab-claude-mem-reanimar/prova_com_tty.sh': {
+    motivo: 'o python sabotado tem de parsear; PROVA-COM-TTY-VERMELHA (a prova TERMINOU) + a FALHA declarada, com os rc exatos no texto',
+    ancoras: [
+      "        elif ! grep -qx 'PROVA-COM-TTY-VERMELHA' \"$r\"; then",
+      `        elif ! grep -F '  FALHA ' "$r" | grep -qF -- "\${ESPERADO[i]}"; then`,
+    ],
+    delegadoPor: 'scripts/test-claude-mem-reanimar.sh',
+  },
+  'scripts/test-retry-pgdg.sh': {
+    motivo: 'despacha para lab-retry-pgdg/falsifica.sh e exige rc 0 + a LINHA exata do marcador verde',
+    ancoras: ['  roda falsifica.sh FALSIFICACAO-VERDE', '  if [ "$rc" -eq 0 ] && grep -qx "$2" "$saida"; then'],
+  },
+  'scripts/lab-retry-pgdg/falsifica.sh': {
+    motivo: 'LAB-VERMELHO + o controle C0 do lab VERDE (quebrar o lab não é quebrar a guarda) + CADA caso declarado vermelho, por locale',
+    ancoras: [
+      '      *LAB-VERMELHO*) ;;',
+      '      *"✅ C0 controle — sem falha, step verde"*) ;;',
+      '        *"❌ $c"*) ;;',
+      '      falhou "$nome [$loc] — vermelho, mas os casos${faltando} seguiram verdes"',
+    ],
+    delegadoPor: 'scripts/test-retry-pgdg.sh',
+  },
+  'scripts/sonda-cron-prova.ts': {
+    motivo:
+      'cada sintético DECLARA a classe exata (os seis defeituosos: FALHA) e a FALHA não pode vir do handler que LANÇA (status -1); até 2026-09-29 valia "≠ PASSA", e INVERIFICAVEL/NAO_COMPILA contavam como defeito pego',
+    ancoras: [
+      "        const esperado: Classe = classeExata.get(nome) ?? (devemPassar.has(nome) ? 'PASSA' : 'FALHA');",
+      "        const lancou = esperado === 'FALHA' && [v.a, ...(v.b ?? [])].some((x) => x?.status === -1);",
+      '        const ok = cls === esperado && !lancou;',
+    ],
+  },
+
+  // ── Fora do `test:falsificacao`, com falsificação PRÓPRIA dentro da suíte normal (roda no
+  // `test:hooks`). Registro opcional, cobrado igual: sem ele a regressão do juiz voltaria calada.
+  'scripts/test-lovable-revert-scan.sh': {
+    motivo:
+      'o desfecho declarado é SILÊNCIO julgado: stdout mudo E exit 0 E stderr vazio como o do controle — o scan que MORRE também sai mudo; sed inválido, cópia vazia, no-op e sintaxe recusados',
+    ancoras: [
+      '  if [ -n "$out" ]; then',
+      '  elif [ "$rc" -ne 0 ] || [ -s "$base/copia.err" ]; then',
+      `if printf '%s' "$out_ctl" | grep -qF "REVERSAO" && [ ! -s "$base/controle.err" ]; then`,
+      '  if ! erro_sed="$(sed "$expr" "$SCAN" 2>&1 >"$base/copia.sh")" || [ -n "$erro_sed" ] || [ ! -s "$base/copia.sh" ]; then',
     ],
   },
 };
@@ -504,7 +697,8 @@ export function analisar(
   }
   const falsificacao = pacote === null ? null : lerFalsificacao(pacote);
   const alvosR4 = new Set(falsificacao?.alvos ?? []);
-  const regraDe = (arquivo: string): Regra => (alvosR4.has(arquivo) ? 'R4' : 'R3');
+  const regraDe = (arquivo: string): Regra =>
+    alvosR4.has(arquivo) || alvosR4.has(juizes[arquivo]?.delegadoPor ?? '') ? 'R4' : 'R3';
   if (manifesto !== null) {
     const nucleo = lerNucleo(manifesto);
     r.linhasNucleo = nucleo.length;

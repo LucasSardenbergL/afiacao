@@ -64,3 +64,22 @@ PEGA | manifesto do núcleo não lido vira "limpo"                              
 PEGA | piso de linhas do núcleo desligado                                     | s/else if \(r\.linhasNucleo < PISOS\.linhasFalsificarNucleo\) \{/else if (false) {/
 PEGA | alarme/piso furado deixa de bloquear o veredito                        | s/if \(furos\.length > 0\) \{/if (false) {/
 PEGA | violação sai 0                                                         | s/codigo: 1,/codigo: 0,/
+
+# R4 — os alvos do test:falsificacao (2026-09-29).
+PEGA | R4: alvo sem idioma nem juiz passa                                  | s/\} else if \(!\(alvo in juizes\) && !idiomaLimpo\.has\(alvo\)\) \{/} else if (false) {/
+PEGA | R4: alvo que o fiscal NÃO leu passa calado                           | s/if \(!limpos\.has\(alvo\)\) \{/if (false) {/
+PEGA | R4: o idioma limpo deixa de dispensar o juiz (os 10 laços travariam) | s/ && !idiomaLimpo\.has\(alvo\)\) \{/) {/
+PEGA | R4: resíduo do roteiro ignorado                                     | s/if \(falsificacao\.residuo !== ''\) \{/if (false) {/
+PEGA | R4: invocação direta não sai do resíduo                             | s/\.replace\(INVOCACAO, ' '\)/.replace(\/(?!)\/, ' ')/
+PEGA | R4: o molde do laço não sai do resíduo                              | s/\.replace\(MOLDE_DO_LACO, ' '\)/.replace(\/(?!)\/, ' ')/
+PEGA | R4: slug do laço sem o prefixo scripts/ (o defeito da 1ª versão)    | s/\.map\(\(f\) => `scripts\/\$\{f\}`\)/.map((f) => f)/
+PEGA | R4: a invocação direta não vira alvo (o .ts do fim do roteiro)      | s/\[\.\.\.doLaco, \.\.\.diretos\]/[...doLaco]/
+PEGA | R4: âncora de alvo do roteiro reprova como R3                       | s/\? 'R4' : 'R3';/? 'R3' : 'R3';/
+PEGA | R4: o juiz DELEGADO (lab) perde a regra do despachante              | s/ \|\| alvosR4\.has\(juizes\[arquivo\]\?\.delegadoPor \?\? ''\)//
+PEGA | R4: sem roteiro vira ZERO alvos em vez de null                      | s/if \(typeof roteiro !== 'string'\) return null;/if (typeof roteiro !== 'string') return { alvos: [], residuo: '', linha: 1 };/
+PEGA | TS: alvo TS lido CRU (âncora só em comentário valeria)              | s/limpos\.set\(a\.caminho, removerComentarios\(a\.fonte\)\);/limpos.set(a.caminho, a.fonte);/
+PEGA | TS: o sentinela do stripper de TS desligado                         | s/if \(bloco > TETO_BLOCO_DESCARTADO\) \{/if (false) {/
+PEGA | TS: o corpo do repo deixa de ler o alvo TS                          | s/if \(fonte !== null\) arquivos\.push\(\{ caminho: alvo, fonte \}\);//
+PEGA | piso: package.json não lido vira "limpo"                            | s/if \(r\.alvosFalsificacao === null\) furos\.push\(/if (r.alvosFalsificacao === null) void (/
+PEGA | piso de alvos do roteiro desligado                                  | s/else if \(r\.alvosFalsificacao < PISOS\.alvosFalsificacao\) \{/else if (false) {/
+PEGA | o INDETERMINADO do roteiro deixa de bloquear o veredito             | s/  furos\.push\(\.\.\.r\.indeterminados\);//
