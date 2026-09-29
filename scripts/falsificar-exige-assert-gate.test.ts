@@ -384,12 +384,17 @@ describe('R4 — todo alvo do test:falsificacao usa o idioma limpo ou tem juiz, 
   });
 
   it('controle POSITIVO no corpo REAL: um slug novo com juiz exit≠0 no package.json de verdade fica vermelho (R4)', () => {
-    const { arquivos, manifesto, pacote } = lerCorpoDoRepo(RAIZ);
+    const { arquivos, pacote } = lerCorpoDoRepo(RAIZ);
     expect(pacote).not.toBeNull();
     const cru = pacote ?? '';
     const comNovo = cru.replace('for t in codex-async ', 'for t in novo-exit codex-async ');
     expect(comNovo).not.toBe(cru);
-    const r = analisar([...arquivos, { caminho: 'scripts/test-novo-exit.sh', fonte: JUIZ_EXIT }], manifesto, JUIZES, comNovo);
+    // O RECORTE que o R4 julga (os alvos do roteiro e os arquivos com juiz), não o corpo inteiro: a
+    // análise dos ~470 arquivos DENTRO do `it` estourou o timeout de 20 s com a máquina carregada.
+    const julgados = new Set([...(lerFalsificacao(comNovo)?.alvos ?? []), ...Object.keys(JUIZES)]);
+    const recorte = arquivos.filter((a) => julgados.has(a.caminho));
+    expect(recorte.length).toBeGreaterThanOrEqual(PISOS.alvosFalsificacao);
+    const r = analisar([...recorte, { caminho: 'scripts/test-novo-exit.sh', fonte: JUIZ_EXIT }], null, JUIZES, comNovo);
     expect(r.violacoes).toEqual([
       expect.objectContaining({ regra: 'R4', arquivo: PACOTE, detalhe: expect.stringContaining('scripts/test-novo-exit.sh') }),
     ]);
