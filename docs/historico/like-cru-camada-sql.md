@@ -40,7 +40,9 @@ que era o "já-correto". Foi ampliada antes de virar veredito:
 
 Dado vivo: 0 códigos de fornecedor com `%`/`_`/`\` (151 itens), 0 tarefas com `target_texto`, 0
 chamadas registradas da tool de dados da triagem. Era brecha latente, e o conserto não muda nenhum
-resultado atual. A RLS de `omie_products` (staff) e a falta de SELECT para `anon` fazem o curinga não
+resultado atual. **Medido, não deduzido** (psql-ro, 2026-09-29): para os 52 pares (empresa, código)
+reais de `promocao_item`, a contagem da `listar_skus` de prod e a do pattern escapado deram 52 iguais,
+0 diferentes (49 casamentos antes = 49 depois). A RLS de `omie_products` (staff) e a falta de SELECT para `anon` fazem o curinga não
 escalar acesso nas RPCs *invoker*: o dano é de correção (SKU errado confirmado), não de vazamento.
 
 ## O idioma: helper, não a cadeia de `replace()`
