@@ -280,12 +280,16 @@ function pularTipo(t: readonly string[], i: number): number {
 
 type Tipo = 'literal' | 'helper' | 'valor';
 
-/** Um operando: o que vem até o próximo operador binário (casts e subscritos incluídos). */
-function lerOperando(t: readonly string[], i: number): { fim: number; tipo: Tipo } {
+/**
+ * Um operando: o que vem até o próximo operador binário (casts e subscritos incluídos). `concat` diz se
+ * há `||` DENTRO dele (um grupo) — `('%' || p || '%')` é concatenação, não valor opaco.
+ */
+function lerOperando(t: readonly string[], i: number): { fim: number; tipo: Tipo; concat: boolean } {
   let k = i;
   let tipo: Tipo;
+  let concat = false;
   const x = t[k];
-  if (x === undefined) return { fim: k, tipo: 'valor' };
+  if (x === undefined) return { fim: k, tipo: 'valor', concat };
   if (x === '+' || x === '-') return lerOperando(t, k + 1);
   if (ehLiteral(x) || ehDollar(x) || ehNumero(x)) {
     k++;
@@ -295,6 +299,7 @@ function lerOperando(t: readonly string[], i: number): { fim: number; tipo: Tipo
     const f = fechar(t, k, '(', ')');
     const dentro = classificarCadeia(t.slice(k + 1, f), 0);
     tipo = dentro.completa ? dentro.tipo : 'valor';
+    concat = dentro.concat;
     k = f + 1;
   } else if (x === 'array' && t[k + 1] === '[') {
     const f = fechar(t, k + 1, '[', ']');
@@ -323,10 +328,10 @@ function lerOperando(t: readonly string[], i: number): { fim: number; tipo: Tipo
       tipo = 'valor';
     }
   } else {
-    return { fim: k + 1, tipo: 'valor' };
+    return { fim: k + 1, tipo: 'valor', concat };
   }
   while (t[k] === '::') k = pularTipo(t, k + 1);
-  return { fim: k, tipo };
+  return { fim: k, tipo, concat };
 }
 
 /** O operando da direita inteiro: operando (operador-não-de-comparação operando)*. */
@@ -335,11 +340,13 @@ function classificarCadeia(t: readonly string[], i: number): { fim: number; tipo
   let concat = false;
   let r = lerOperando(t, i);
   tipos.push(r.tipo);
+  if (r.concat) concat = true;
   let k = r.fim;
   while (ehOperador(t[k]) && !COMPARACAO.has(t[k])) {
     if (t[k] === '||') concat = true;
     r = lerOperando(t, k + 1);
     tipos.push(r.tipo);
+    if (r.concat) concat = true;
     k = r.fim;
   }
   const tipo: Tipo = tipos.every((x) => x === 'literal') ? 'literal' : tipos.length === 1 && tipos[0] === 'helper' ? 'helper' : 'valor';

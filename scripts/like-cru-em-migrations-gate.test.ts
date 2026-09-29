@@ -224,7 +224,10 @@ describe('o repo', () => {
   });
 
   it('10 migrations não são o repo → INDETERMINADO só pelo piso de migrations', () => {
-    const v = veredito(analisar(REPO.arquivos.slice(0, 10), REPO.corpos, VIVOS_PERMITIDOS), true);
+    // Os demais arquivos continuam LIDOS (os operadores não caem), só deixam de contar como migration:
+    // cortar a lista derrubaria junto o piso de operadores, e o teste não isolaria piso nenhum.
+    const dez = REPO.arquivos.map((a, i) => (i < 10 ? a : { ...a, caminho: `fora/${a.caminho}` }));
+    const v = veredito(analisar(dez, REPO.corpos, VIVOS_PERMITIDOS), true);
     expect(v.codigo).toBe(2);
     expect(v.linhas.filter((l) => l.startsWith('  · '))).toEqual([`  · 10 migration(s) lida(s) < piso ${PISOS.migrations}`]);
   });

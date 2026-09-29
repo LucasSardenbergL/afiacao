@@ -602,10 +602,13 @@ eq M7 "re-aplicação: a PRE aceita o próprio corpo e o retrato não muda" "$v"
 
 # M8-M10 — o dente da POS contra a migration EDITADA: corpo mudado sem o md5, helper sem o termo
 # degenerado, helper sem escape. Cada uma tem de ser recusada pela linha certa, e nada fica.
+# Sem sabotagem cada uma é recusada e nada fica; sob sabotagem da POS a variante commita, e é desfeita
+# ANTES da próxima — senão a PRE da seguinte recusaria pelo corpo que a anterior deixou.
 eq M8 "corpo editado sem atualizar o md5: a POS10 recusa" "$(veredito "$(variante var_corpo_editado)" 'POS10 FALHOU: o corpo instalado de public.listar_skus_por_codigo_fornecedor(text,text)')" "RECUSOU"
+[ "$(retrato)" = "$retrato_novo" ] || restaurar_novo
 eq M9 "helper sem o termo degenerado: a POS3 recusa" "$(veredito "$(variante var_helper_degenerado)" 'POS3 FALHOU')" "RECUSOU"
+[ "$(retrato)" = "$retrato_novo" ] || restaurar_novo
 eq M10 "helper sem escape: a POS4/POS5 recusa" "$(veredito "$(variante var_helper_escape)" 'POS4 FALHOU')" "RECUSOU"
-# Sem sabotagem, as três foram recusadas e nada ficou; sob sabotagem da POS, uma delas commitou.
 [ "$(retrato)" = "$retrato_novo" ] || restaurar_novo
 
 # ── SABOTAGEM DE CORPO (só no --falsificar) — no BANCO, recriando a função a partir da migration
@@ -661,45 +664,34 @@ eq F6 "listar _12: o _ é literal" "$(listar '_12')" "2:P1,P4"
 eq F7 "resolver AB_12: único, o SKU certo" "$(resolver 'AB_12')" "unico:1001"
 eq F8 "resolver %: não encontrado" "$(resolver '%')" "nao_encontrado:-"
 eq F9 "resolver verniz: ambíguo como antes" "$(resolver 'verniz')" "ambiguo:3"
-# expandir (overload bigint,numeric; o de 1 argumento é ambíguo em prod — 42725 — e fica fora)
-expandir() { Pq -c "SELECT r->>'status' FROM public.expandir_promocao_item(p_item_id => $1, p_threshold_similaridade => 0.5) r;" 2>&1 || true; }
-st="$(expandir 91001)"
-eq F10 "expandir AB_12: resolve único no SKU literal e confirma (status|qualidade|sku|confirmado)" \
-   "$st|$(Pq -c "SELECT mapeamento_qualidade || '|' || sku_codigo_omie || '|' || confirmado FROM public.promocao_item WHERE id = 91001;" 2>&1 || true)" \
-   "resolvido_unico|unico|1001|true"
-# O laço de expansão cita similarity() NA MESMA consulta (dentro de um CASE), e o parse resolve a
-# chamada mesmo no ramo não tomado: em prod o laço quebra SEMPRE com 42883 (similarity mora em
-# `extensions`, fora do search_path — achado lateral, fora desta classe; só o caminho "único" roda).
-# Para medir o LIKE do laço, F11/F13 rodam numa transação com um public.similarity que delega a
-# extensions.similarity (o conserto do lateral SIMULADO) e desfazem tudo no ROLLBACK.
-expandir_com_similarity() {   # <item_id> <código do fornecedor> → status|skus das variantes criadas
+# expandir_promocao_item (overload bigint,numeric; o de 1 argumento é AMBÍGUO em prod — 42725 — e
+# fica fora). Ele cita similarity() sem qualificar, e o pg_trgm mora em `extensions`: o parse quebra
+# com 42883 o ramo de 0 variantes E o laço de ≥2 (o CASE do laço cita a função na mesma consulta) —
+# achado lateral, fora desta classe; em prod só o caminho "único" roda. Para medir o LIKE, cada
+# chamada roda numa transação com um public.similarity que delega a extensions.similarity (o conserto
+# do lateral SIMULADO) e é DESFEITA no ROLLBACK. Sem isso, a sabotagem que muda a contagem (o curinga
+# vivo) levaria o assert ao 42883 — erro de execução, não resultado — e o assert perderia o dente.
+expandir_tx() {   # <item_id> <consulta do estado, na mesma transação> → status|estado
   Pq 2>&1 <<SQL | paste -sd'|' - || true
 BEGIN;
 CREATE FUNCTION public.similarity(text, text) RETURNS real LANGUAGE sql IMMUTABLE AS 'SELECT extensions.similarity(\$1, \$2)';
 SELECT r->>'status' FROM public.expandir_promocao_item(p_item_id => $1, p_threshold_similaridade => 0.5) r;
-SELECT COALESCE(string_agg(sku_codigo_omie::text, ',' ORDER BY sku_codigo_omie), '-') FROM public.promocao_item WHERE campanha_id = 9001 AND sku_codigo_fornecedor = '$2' AND id <> $1;
+$2
 ROLLBACK;
 SQL
 }
-eq F11 "expandir _12 (com similarity resolvível): expande só nas 2 variantes literais (status|skus criados)" \
-   "$(expandir_com_similarity 91002 '_12')" "expandido|1001,1004"
-# O termo degenerado não resolve nem expande. Hoje o caminho de 0 variantes cai no ramo de
-# similaridade, que QUEBRA em prod com 42883 (similarity mora em `extensions`, fora do search_path —
-# achado lateral, fora desta classe); o 42883 é capturado por SQLSTATE e qualquer outro erro sobe.
-# O invariante vale para os dois mundos: item intocado (ou nao_encontrado) e nenhuma variante.
-eq F12 "expandir %: o degenerado não resolve nem expande" "$(Pq <<'SQL' 2>&1 || true
-DO $f12$ BEGIN
-  PERFORM public.expandir_promocao_item(p_item_id => 91003, p_threshold_similaridade => 0.5);
-EXCEPTION WHEN undefined_function THEN NULL;
-END $f12$;
-SELECT CASE WHEN COALESCE(mapeamento_qualidade, 'nao_encontrado') = 'nao_encontrado' AND sku_codigo_omie IS NULL
-             AND (SELECT count(*) FROM public.promocao_item WHERE campanha_id = 9001 AND sku_codigo_fornecedor = '%') = 1
-            THEN 'NAO_EXPANDIU' ELSE 'EXPANDIU:' || COALESCE(mapeamento_qualidade, '-') || ':' || COALESCE(sku_codigo_omie::text, '-') END
-  FROM public.promocao_item WHERE id = 91003;
-SQL
-)" "NAO_EXPANDIU"
-eq F13 "expandir VERNIZ (com similarity resolvível): o literal com 3 variantes expande como antes" \
-   "$(expandir_com_similarity 91004 'VERNIZ')" "expandido|1001,1002,1003"
+variantes() { printf "SELECT COALESCE(string_agg(sku_codigo_omie::text, ',' ORDER BY sku_codigo_omie), '-') FROM public.promocao_item WHERE campanha_id = 9001 AND sku_codigo_fornecedor = '%s' AND id <> %s;" "$1" "$2"; }
+eq F10 "expandir AB_12: resolve único no SKU literal e confirma (status|qualidade|sku|confirmado)" \
+   "$(expandir_tx 91001 "SELECT mapeamento_qualidade || '|' || sku_codigo_omie || '|' || confirmado FROM public.promocao_item WHERE id = 91001;")" \
+   "resolvido_unico|unico|1001|true"
+eq F11 "expandir _12: expande só nas 2 variantes literais (status|skus criados)" \
+   "$(expandir_tx 91002 "$(variantes _12 91002)")" "expandido|1001,1004"
+# O degenerado não resolve nem expande: cai no ramo de similaridade, que com '%' não passa do limiar.
+eq F12 "expandir %: o degenerado não resolve nem expande (status|veredito)" \
+   "$(expandir_tx 91003 "SELECT CASE WHEN COALESCE(mapeamento_qualidade, 'nao_encontrado') = 'nao_encontrado' AND sku_codigo_omie IS NULL AND (SELECT count(*) FROM public.promocao_item WHERE campanha_id = 9001 AND sku_codigo_fornecedor = '%') = 1 THEN 'NAO_EXPANDIU' ELSE 'EXPANDIU:' || COALESCE(mapeamento_qualidade, '-') || ':' || COALESCE(sku_codigo_omie::text, '-') END FROM public.promocao_item WHERE id = 91003;")" \
+   "nao_encontrado|NAO_EXPANDIU"
+eq F13 "expandir VERNIZ: o literal com 3 variantes expande como antes" \
+   "$(expandir_tx 91004 "$(variantes VERNIZ 91004)")" "expandido|1001,1002,1003"
 eq F14 "buscar ['']: nada" "$(buscar "ARRAY['']")" "0:-"
 eq F15 "buscar ['  ','%','_']: nada" "$(buscar "ARRAY['  ', '%', '_']")" "0:-"
 eq F16 "buscar ['ab_12']: só o literal, nas 2 contas" "$(buscar "ARRAY['ab_12']")" "2:P1,Q1"
