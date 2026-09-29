@@ -39,7 +39,9 @@ sessão nova". Os quatro destinos:
 3. **Chip (`spawn_task`) — no máximo UM por sessão, e só para** (a) bug de PRODUTO/dinheiro com
    evidência, que não coube aqui; ou (b) continuação da mesma tarefa, via `/handoff-sessao`.
    Prompt AUTO-CONTIDO + **título exato** no chat. É SUGESTÃO: não clicar é decisão válida do
-   founder. Um 2º achado de produto vira linha no resumo, não 2º chip.
+   founder. **Todo** bug de produto/dinheiro achado — com chip ou sem — ganha issue com label
+   `produto` ou `money-path` (procure antes: `gh issue list --search`); issue não abre sessão, e o
+   chip, se houver, vai para o mais grave.
 4. **📌 Registrar com gatilho/data** — o que depende de tempo ou de etapa futura (fase 5 que
    espera a 3; Codex sem cota: o PR fica DRAFT ou vai por Caminho B com `sem-codex:` no corpo,
    [money-path.md](../../../docs/agent/money-path.md) — "rodar depois" NUNCA vira chip): 1 linha
@@ -522,9 +524,9 @@ chips e então arquive" fazia cada fecho ABRIR a sessão seguinte — foi o moto
 [loop-de-chips.md](../../../docs/historico/loop-de-chips.md) (pico: 96% das sessões nascidas de chip, na semana seguinte ao #2042).
 Não clicar é decisão válida do founder; o veredito não espera o clique.
 
-**Espelho durável só para chip de PRODUTO.** O chip mora na sessão que o criou e morre com ela
-arquivada. Chip (a) — bug de produto/dinheiro — ganha **issue com label `produto` ou
-`money-path`** antes do veredito (o card é o atalho; a issue é o destino). Chip (b) —
+**Destino durável só para PRODUTO.** O chip mora na sessão que o criou e morre com ela
+arquivada. **Todo** bug de produto/dinheiro — com chip ou sem — ganha **issue com label `produto`
+ou `money-path`** antes do veredito (o card é o atalho; a issue é o destino). Chip (b) —
 continuação — já tem o briefing do `/handoff-sessao`. **Nada mais ganha espelho:** issue de meta
 sem dono vira fila que ninguém consome (as "espelho durável do chip" de meta eram parte da fila
 parada — ver o doc do loop).
@@ -564,7 +566,7 @@ Pendências (TODAS com destino — nenhuma "na memória"):
   ✔ <pendência resolvida agora, com a evidência>
   🚫 <achado descartado> — 1 linha
   🔘 chip "<título exato>" (bug de produto X, issue #N · OU continuação via /handoff-sessao) — sugestão
-  📌 <pendência futura> — <onde está registrada>, quando <gatilho/data>
+  📌 <pendência futura · bug de produto sem chip> — <onde: issue #M, PR, doc>, quando <gatilho/data>
 
 Veredito: PODE ARQUIVAR a sessão. / AINDA NÃO — falta (1)…
 ```
