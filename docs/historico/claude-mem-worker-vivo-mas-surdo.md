@@ -288,3 +288,48 @@ worktree, 87 `project` distintos); 5 de 933 transcripts de 30 dias usaram a busc
 56 MB em `~/.claude-mem/claude-mem.db`) fica no disco. Sessões abertas antes da mudança mantêm os
 hooks até reiniciar e tentam subir o worker se ele cair (lazy-spawn, visto no log) — pare o worker
 (`worker-service.cjs stop`) só depois que elas reiniciarem.
+
+## 29/09 — o sensor sabe do desligamento (`enabledPlugins`)
+
+**O ruído:** desligar o plugin não desliga as sessões que já estavam abertas — elas mantêm os hooks
+e seguem gravando prompts no banco. O eixo "gravação" (≥ 30 prompts sem observação, espalhados por
+≥ 60 min, o último há ≤ 72 h) passou a acusar em todo SessionStart novo — medido no desta sessão:
+`a memoria NAO GRAVA ha 1d: 40 prompts desde a ultima observacao (2026-09-28)`, sugerindo o `/login`
+que a decisão de 28/09 tornou inútil. Duraria até ~3 dias (72 h depois do último prompt das sessões
+velhas); o eixo "contador" acusaria igual se os hooks delas falhassem.
+
+**Conserto — seção 0 do `scripts/claude-mem-saude.sh`:** `"claude-mem@<marketplace>": false` no
+objeto `enabledPlugins` = não mede (`--resumo` mudo, relatório `DESLIGADO (enabledPlugins)`, exit 0).
+
+- **Precedência por chave, como o Claude Code:** `.claude/settings.local.json` >
+  `.claude/settings.json` (os do projeto, relativos ao diretório corrente — o hook e o `bun run`
+  rodam na raiz) > `${CLAUDE_CONFIG_DIR:-~/.claude}/settings.json`. Olhar só o do usuário calaria o
+  sensor com o plugin RELIGADO num projeto — sensor mudo com memória viva, a direção perigosa. O
+  merge por chave foi conferido na própria sessão: `github`, `posthog`, `serena` e `zapier` do
+  marketplace oficial (true no usuário, false no projeto) ficam fora, e `superpowers`/`context7` (só
+  no usuário) seguem ativos.
+- **Só o literal `false` desliga.** `true`, chave ausente, arquivo ausente ou ilegível não declaram
+  nada → mede (ausente ≠ desligado). Ilegível = o Claude Code, com o mesmo uid, também não o lê.
+- **Só o objeto `enabledPlugins` e só a chave `claude-mem@` exata** — outro plugin em false,
+  `claude-mem-extra@…` ou uma chave futura que também mapeie plugin → bool não desligam.
+- **Texto, não parser** (`sed`/`tr`, nunca `jq` — o PATH do hook). Fora do alcance: managed-settings
+  (não existe nesta máquina) e o `--settings` da linha de comando (só o processo do Claude o vê).
+- **Custo medido:** a 1ª versão (`cat` + `tr` + `sed` por arquivo, ~18 processos) deixou o caminho
+  que SAI CEDO em 2,2× o tempo do `main` medindo de verdade (0,187 s × 0,084 s) — num hook que existe
+  por pressão de RAM, com teto de 2 s. Com leitura builtin (`$(<arq)`) e o pipeline só no arquivo que
+  cita `"claude-mem@`, ficou abaixo do `main` nas duas rodadas seguintes.
+
+**Prova:** a suíte ficou hermética nos settings (diretório corrente, `CLAUDE_CONFIG_DIR` e `HOME`
+temporários — o `~/.claude` real desliga o plugin e, lido, calaria a suíte inteira) e ganhou 15
+casos (Y1–Y14 e o Z, no hook), todos com fixture que ACUSA nos dois eixos: o silêncio só pode vir da
+guarda. RED antes do código: caíram exatamente os 7 casos de "mudo". No `--falsificar`, 19
+sabotagens novas, cada uma derrubando o caso certo, com controle verde na mesma invocação, em C e
+pt_BR.UTF-8. Uma delas mostrou camada invisível: o filtro por `case` (só roda o pipeline no arquivo
+que cita `"claude-mem@`) escondia do caso "outro plugin em false" a restrição de chave do regex —
+quem a prova é o caso do formato real (`superpowers: true` ao lado do `false`), não o que parecia
+feito para ela. No ambiente real: `--resumo` mudo com rc 0, e o hook de SessionStart num sandbox com
+settings e banco reais sem nenhuma menção ao claude-mem.
+
+**Ao religar (`true` + reiniciar as sessões):** o sensor volta a medir sozinho. Aviso que apareça
+nas primeiras horas é MEDIDO — prompts das sessões antigas sem observação, ainda dentro das 72 h — e
+some na 1ª observação nova.
