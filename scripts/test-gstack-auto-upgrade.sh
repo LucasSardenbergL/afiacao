@@ -32,9 +32,10 @@ tmp="$(mktemp -d)" || exit 2
 trap 'rm -rf "$tmp"' EXIT
 
 # ── falsificação ───────────────────────────────────────────────────────────────────────────────
-# O CONTROLE roda a suíte INTEIRA sobre o script REAL no começo e no fim de cada locale: uma suíte
-# sempre-vermelha aprovaria todas as sabotagens sem provar nada, e o controle do fim pega o ambiente
-# que apodreceu no meio do laço (docs/historico/falsificacao-sem-linha-de-base.md). Cada sabotagem
+# O CONTROLE roda a suíte INTEIRA sobre o script REAL no começo de cada locale, na MESMA invocação
+# do laço: uma suíte sempre-vermelha aprovaria todas as sabotagens sem provar nada
+# (docs/historico/falsificacao-sem-linha-de-base.md). Um controle só por locale, e não um antes de
+# cada sabotagem, porque aqui a suíte cria repositórios git e custa caro no CI. Cada sabotagem
 # roda SÓ o caso que ela mira (SO_CASO) e tem de sair com exit 1 E FAIL nesse caso: exit 2 é infra
 # e não conta como detecção.
 if [ "${1:-}" = "--falsificar" ]; then
@@ -87,7 +88,6 @@ if [ "${1:-}" = "--falsificar" ]; then
     sabotar F9  A2  'o preparo APLICA (a promessa central)'  's#  montar_revisao "\$head" "\$alvo"#  git -C "$G" merge --ff-only "$alvo" >/dev/null 2>\&1; montar_revisao "$head" "$alvo"#'
     sabotar F10 A2  'gate cego para o que dispara sozinho'   's#any(fnmatch.fnmatch(k\[2\], p) for p in sozinho)#False#'
     sabotar F11 A15 'prepara revisao de clone divergente'    's#|| falhou "o clone divergiu da origin#|| true "o clone divergiu da origin#'
-    controle "$LOC"
   done
 
   echo
@@ -104,20 +104,28 @@ roda() { [ -z "${SO_CASO:-}" ] || [ "$SO_CASO" = "$1" ]; }
 tem() { printf '%s' "$1" | grep -F -- "$2" >/dev/null; }
 GC() { local w="$1"; shift; GIT_CONFIG_GLOBAL="$w/gitconfig" GIT_CONFIG_NOSYSTEM=1 git "$@"; }
 
-# mundo <nome>: upstream na v1.0.0.0 e o clone "instalado" pela URL do GitHub; imprime o diretório.
-mundo() {
-  local w="$tmp/$1" v
-  mkdir -p "$w/src" "$w/marcas" "$w/home/.bun/bin" "$w/home/.claude/skills" || return 1
-  printf '#!/bin/sh\nexit 0\n' > "$w/home/.bun/bin/bun" && chmod +x "$w/home/.bun/bin/bun"
-  cat > "$w/gitconfig" <<EOF
+# O gitconfig de cada mundo: identidade e o insteadOf que serve a URL REAL do gstack a partir do
+# upstream LOCAL daquele mundo (a URL crua do remote continua a do GitHub, como na máquina).
+escrever_gitconfig() {
+  cat > "$1/gitconfig" <<EOF
 [user]
 	name = teste
 	email = teste@example.invalid
 [init]
 	defaultBranch = main
-[url "$w/upstream.git"]
+[url "$1/upstream.git"]
 	insteadOf = https://github.com/garrytan/gstack.git
 EOF
+}
+
+# montar_base: upstream na v1.0.0.0 e o clone "instalado" pela URL do GitHub. Roda UMA vez por
+# processo: git init/commit/clone custam caro em processo, e cada caso ganha uma CÓPIA (mundo).
+base="$tmp/_base"
+montar_base() {
+  local w="$base" v
+  mkdir -p "$w/src" "$w/marcas" "$w/home/.bun/bin" "$w/home/.claude/skills" || return 1
+  printf '#!/bin/sh\nexit 0\n' > "$w/home/.bun/bin/bun" && chmod +x "$w/home/.bun/bin/bun"
+  escrever_gitconfig "$w"
   cat > "$w/scanner" <<'EOF'
 #!/usr/bin/env bash
 # stub do skill-scanner (scan-all <dir> ... --output-json <arq>): um LOW de base em TODO scan e um HIGH
@@ -159,6 +167,14 @@ EOF
   ) || return 1
   GC "$w" clone -q --bare "$w/src" "$w/upstream.git" || return 1
   GC "$w" clone -q https://github.com/garrytan/gstack.git "$w/home/.claude/skills/gstack" || return 1
+}
+
+# mundo <nome>: cópia do mundo-base com o gitconfig apontando para o upstream DESTA cópia.
+mundo() {
+  local w="$tmp/$1"
+  [ -d "$base/home/.claude/skills/gstack" ] || montar_base || return 1
+  cp -R "$base" "$w" || return 1
+  escrever_gitconfig "$w"
   printf '%s' "$w"
 }
 
