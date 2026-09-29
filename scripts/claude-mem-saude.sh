@@ -25,17 +25,22 @@
 # Sonda ausente = NAO MEDI, nunca "ok": sqlite3 fora do PATH, banco ou contador ausente, consulta
 # que falha, valor nao-inteiro. Sem o diretorio de dados, o claude-mem nao existe nesta maquina
 # (sessao na nuvem, por exemplo): nada a medir, silencio.
+# Plugin DESLIGADO de proposito ("claude-mem@<marketplace>": false em enabledPlugins, secao 0
+# abaixo) = nao mede: --resumo mudo, relatorio DESLIGADO, exit 0.
 # Parse do JSON com sed, nao jq: o PATH do hook e herdado do app e pode nao ter /opt/homebrew/bin.
 #
 # Uso: bash scripts/claude-mem-saude.sh            # relatorio
 #      bash scripts/claude-mem-saude.sh --resumo   # 1 linha p/ o hook, ou NADA
-# Env: CLAUDE_MEM_DATA_DIR (~/.claude-mem — o MESMO nome que o plugin honra)
-# Exit: 0 = mediu os dois eixos (achando ou nao) · 3 = algum eixo NAO MEDIDO (a saida diz qual)
+# Env: CLAUDE_MEM_DATA_DIR (~/.claude-mem — o MESMO nome que o plugin honra) · CLAUDE_CONFIG_DIR
+#      (~/.claude — o do Claude Code; o settings.json do usuario mora nele)
+# Exit: 0 = mediu os dois eixos (achando ou nao), ou o plugin esta DESLIGADO de proposito ·
+#       3 = algum eixo NAO MEDIDO (a saida diz qual)
 set -u
 
 resumo=0
 [ "${1:-}" = "--resumo" ] && resumo=1
 DATA="${CLAUDE_MEM_DATA_DIR:-${HOME:-}/.claude-mem}"
+CFG="${CLAUDE_CONFIG_DIR:-${HOME:-}/.claude}"
 PROMPTS_MIN=30
 JANELA_S=3600
 EM_USO_S=259200
@@ -48,9 +53,44 @@ humano() { # segundos -> "60d" / "5h" / "12min"
   elif [ "$1" -ge 3600 ]; then echo "$(($1 / 3600))h"
   else echo "$(($1 / 60))min"; fi
 }
+mem_plugins() { # conteudo de 1 settings.json -> "claude-mem@<mkt> true|false" por linha, so do objeto enabledPlugins
+  printf '%s\n' "$1" | tr '\n' ' ' |
+    sed -n 's/.*"enabledPlugins"[[:space:]]*:[[:space:]]*{\([^}]*\)}.*/\1/p' | tr ',' '\n' |
+    sed -n -E 's/^[[:space:]]*"(claude-mem@[^"]+)"[[:space:]]*:[[:space:]]*(true|false)[[:space:]]*$/\1 \2/p'
+}
 
 if [ ! -d "$DATA" ]; then
   [ "$resumo" -eq 1 ] || echo "claude-mem: sem $DATA — o plugin nao roda nesta maquina; nada a medir."
+  exit 0
+fi
+
+# ------------------------------------------------------------------ 0. desligado de proposito?
+# Em 2026-09-28 o founder desligou o plugin ate o upstream thedotmack/claude-mem#4129 entrar. As
+# sessoes abertas ANTES seguem com os hooks e gravando prompts por ate ~3 dias, e os dois eixos
+# acusariam uma memoria que ninguem quer (e mandariam fazer /login ou reanimar).
+# Precedencia do Claude Code, POR CHAVE: .claude/settings.local.json > .claude/settings.json (os do
+# projeto, relativos ao diretorio corrente: o hook e o `bun run` rodam na raiz) > o do usuario.
+# Olhar so o do usuario calaria o sensor com o plugin RELIGADO num projeto — a direcao perigosa.
+# So o literal false desliga; true, chave ausente, arquivo ausente ou ilegivel (o Claude Code, com
+# o mesmo uid, tambem nao o le) nao declaram nada -> mede. Fora do alcance: managed-settings (nao
+# existe nesta maquina) e o --settings da linha de comando (so o processo do Claude o ve).
+# Custo: o hook roda sob pressao de RAM, entao a leitura e builtin e o pipeline so roda no arquivo
+# que cita "claude-mem@ (sem o texto, nao ha chave a decidir).
+desligado="" ligado=0 decididas=" "
+for arq in .claude/settings.local.json .claude/settings.json "$CFG/settings.json"; do # maior -> menor precedencia
+  { [ -f "$arq" ] && conteudo="$(<"$arq")"; } 2>/dev/null || continue
+  case "$conteudo" in *'"claude-mem@'*) ;; *) continue ;; esac
+  novas=""
+  while read -r chave valor; do
+    [ -n "$chave" ] || continue
+    case "$decididas" in *" $chave "*) continue ;; esac # um escopo de maior precedencia ja a decidiu
+    novas="$novas$chave "
+    if [ "$valor" = false ]; then desligado="${desligado:+$desligado, }$chave=false em $arq"; else ligado=1; fi
+  done <<<"$(mem_plugins "$conteudo")"
+  decididas="$decididas$novas"
+done
+if [ "$ligado" -eq 0 ] && [ -n "$desligado" ]; then
+  [ "$resumo" -eq 1 ] || echo "claude-mem: DESLIGADO (enabledPlugins): $desligado -> o sensor nao mede de proposito (religar = true + reiniciar as sessoes)."
   exit 0
 fi
 
