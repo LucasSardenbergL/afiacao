@@ -28,8 +28,8 @@ volta. **Nunca** proponha `INSERT/UPDATE/DELETE` nem `curl`/`psql`/CLI.
 -- (1) Histórico de compra real existe e é recente? (gate da condição de valor)
 select count(*) as pedidos_total,
        count(distinct customer_user_id) as clientes_com_pedido,
-       min(created_at)::date as primeiro_pedido,
-       max(created_at)::date as ultimo_pedido,
+       (min(created_at) at time zone 'America/Sao_Paulo')::date as primeiro_pedido,   -- data de SP (a sessão é UTC)
+       (max(created_at) at time zone 'America/Sao_Paulo')::date as ultimo_pedido,
        count(*) filter (where created_at > now() - interval '90 days') as pedidos_90d
 from sales_orders
 where status in ('faturado','importado','separacao','enviado') and deleted_at is null;
@@ -84,7 +84,7 @@ com sinais de queda + produtos comprados (a skill classifica em categorias via
 
 ```sql
 with pedidos as (
-  select so.id, so.customer_user_id, so.created_at::date as data, so.account, so.items,
+  select so.id, so.customer_user_id, (so.created_at at time zone 'America/Sao_Paulo')::date as data, so.account, so.items,
          coalesce(so.total, (                                  -- ⚙️ ajustar se 'total' não existir
            select sum((it->>'quantity')::numeric * (it->>'unit_price')::numeric)
            from jsonb_array_elements(so.items) it              -- ⚙️ json_array_elements se 'items' for json
@@ -121,11 +121,11 @@ agg as (
          (array_agg(cidade_key order by data desc) filter (where cidade_key is not null))[1] as cidade_key,
          count(distinct id) as qtd_pedidos,
          min(data) as primeira_compra, max(data) as ultima_compra,
-         (current_date - max(data)) as dias_desde_ultima,
+         ((now() at time zone 'America/Sao_Paulo')::date - max(data)) as dias_desde_ultima,   -- hoje de SP
          case when count(distinct id) > 1
               then round((max(data)-min(data))::numeric / nullif(count(distinct id)-1,0),0) end as intervalo_medio_dias,
-         round(coalesce(sum(valor) filter (where data > current_date-60),0),2) as gasto_60d,
-         round(coalesce(sum(valor) filter (where data > current_date-180)/6.0,0),2) as media_mensal_6m,
+         round(coalesce(sum(valor) filter (where data > (now() at time zone 'America/Sao_Paulo')::date - 60),0),2) as gasto_60d,
+         round(coalesce(sum(valor) filter (where data > (now() at time zone 'America/Sao_Paulo')::date - 180)/6.0,0),2) as media_mensal_6m,
          round(coalesce(sum(valor),0),2) as gasto_total
   from cli group by cliente_key
 ),
