@@ -73,8 +73,14 @@ verificar_upgrade() {
     else
       printf '%s\n' "$hoje" > "$marca" 2>/dev/null
     fi
-    [ "$mostrar" -eq 1 ] && up_sys="GSTACK-UPGRADE-PENDENTE: gstack v$nova pronto para revisar (instalado: v$ver). Para aplicar, diga: aplica o upgrade do gstack"
-    up_ctx="Vigia do gstack: GSTACK-UPGRADE-PENDENTE, v$ver para v$nova (alvo $alvo). Não mencione se o Lucas não perguntar. Se ele pedir para aplicar: leia ~/.gstack/auto-upgrade/revisao.md, aplique o gate de supply chain de docs/agent/skills.md (zero achado novo no que dispara sozinho; leia o diff de setup, bin e hooks), diga o veredito e rode EM BACKGROUND: bash ~/.gstack/auto-upgrade/atualizar-gstack.sh --aplicar $alvo"
+    # gate ausente (status de versão antiga do script) conta como INCOMPLETO: ausente ≠ completo
+    if [ "$(campo gate)" = COMPLETO ]; then
+      [ "$mostrar" -eq 1 ] && up_sys="GSTACK-UPGRADE-PENDENTE: gstack v$nova pronto para revisar (instalado: v$ver). Para aplicar, diga: aplica o upgrade do gstack"
+      up_ctx="Vigia do gstack: GSTACK-UPGRADE-PENDENTE, v$ver para v$nova (alvo $alvo). Não mencione se o Lucas não perguntar. Se ele pedir para aplicar: leia ~/.gstack/auto-upgrade/revisao.md, aplique o gate de supply chain de docs/agent/skills.md (zero achado novo no que dispara sozinho; leia o diff de setup, bin e hooks), diga o veredito e rode EM BACKGROUND: bash ~/.gstack/auto-upgrade/atualizar-gstack.sh --aplicar $alvo"
+    else
+      [ "$mostrar" -eq 1 ] && up_sys="GSTACK-UPGRADE-PENDENTE: gstack v$nova disponível, mas a revisão saiu com GATE INCOMPLETO (o scanner não rodou). O preparo tenta de novo no próximo domingo; para agora, diga: refaz o preparo do upgrade do gstack"
+      up_ctx="Vigia do gstack: GSTACK-UPGRADE-PENDENTE com GATE INCOMPLETO, v$ver para v$nova (alvo $alvo). Não mencione se o Lucas não perguntar. NÃO aplique: se ele pedir, rode EM BACKGROUND o preparo de novo (bash ~/.gstack/auto-upgrade/atualizar-gstack.sh) e leia o log (~/.gstack/auto-upgrade/log)."
+    fi
   fi
 }
 
