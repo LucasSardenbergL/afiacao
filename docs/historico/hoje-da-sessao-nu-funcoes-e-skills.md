@@ -147,6 +147,12 @@ sob pressão de memória, `grep -q` saindo cedo, SIGPIPE virando "falso" — foi
 e NÃO reproduziu (0/900): fica como suspeita, com dono (chip "Trocar printf | grep -q sob pipefail nas
 provas de db/": 22 sítios em 8 provas).
 
+No CI, a prova passou de primeira no runner Linux (41 asserts em 3 s; `--falsificar` 18/18 em 52 s) —
+e foi ela que estourou o teto do job `provas-sql`: o passo do núcleo sozinho foi a 11 min 35 s, e o job
+foi CANCELADO no teto de 12 min com `SQL_PROOF_OK 46/46` já impresso (a main levava 8,5–10 min). O teto
+subiu para 20, com a medição no comentário do `ci.yml` — o cancelamento no teto não diz qual prova
+custou, então ele tem de ficar acima do custo.
+
 ## O ensaio na PROD
 
 `bun run db:aplicar supabase/migrations/20260929001651_hoje_sp_sessao_utc_sete_funcoes.sql --ensaio`
