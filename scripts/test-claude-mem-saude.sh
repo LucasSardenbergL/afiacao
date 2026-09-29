@@ -83,6 +83,37 @@ if [ "${1:-}" = "--falsificar" ]; then
     's/^  \[ -z "\$saida" \] || echo "claude-mem: \$saida"$/  echo "claude-mem: $saida"/'
   sabota sensor "achado em duas linhas" "Q uma-linha" \
     's/^  \[ -z "\$saida" \] || echo "claude-mem: \$saida"$/  [ -z "$saida" ] || printf "claude-mem: %s\\n" "$cont_txt" "$grav_txt"/'
+  # a guarda do plugin DESLIGADO (secao 0: enabledPlugins)
+  sabota sensor "desligado nao cala" "Y1 desligado-mudo" \
+    's/^if \[ "\$ligado" -eq 0 \] \&\& \[ -n "\$desligado" \]; then$/if false; then/'
+  sabota sensor "desligado sai 3 (o hook cobra FALTA DE DADO)" "Z vigia-desligado" \
+    '/^if \[ "\$ligado" -eq 0 \]/,/^fi$/s/^  exit 0$/  exit 3/'
+  sabota sensor "true tambem desliga" "Y3 ligado-mede" 's/if \[ "\$valor" = false \]; then/if true; then/'
+  sabota sensor "qualquer chave decide (true de outro plugin religa)" "Y1 desligado-mudo" 's/(claude-mem@/([^"]*@/'
+  sabota sensor "qualquer plugin em false desliga" "Y4 outro-plugin-mede" \
+    's/(claude-mem@/([^"]*@/;s/in \*."claude-mem@.\*) ;; \*) continue ;;/in *) ;; *) continue ;;/'
+  sabota sensor "chave fora do enabledPlugins conta" "Y9 fora-do-enabledPlugins-mede" \
+    's#^    sed -n .s/\.\*"enabledPlugins".*/p. | tr#    cat | tr#'
+  sabota sensor "nada declarado desliga" "Y5 settings-ausente-mede" \
+    's/^if \[ "\$ligado" -eq 0 \] \&\& \[ -n "\$desligado" \]; then$/if [ "$ligado" -eq 0 ]; then/'
+  sabota sensor "ilegivel vira desligado" "Y6 settings-ilegivel-mede" \
+    's/^  { \[ -f "\$arq" \] \&\& conteudo="\$(<"\$arq")"; } 2>\/dev\/null || continue$/  [ -f "$arq" ] || continue; { conteudo="$(<"$arq")"; } 2>\/dev\/null || { desligado=ilegivel; continue; }/'
+  sabota sensor "espacamento fixo" "Y7 minificado-mudo" 's/"\[\[:space:]]\*:\[\[:space:]]\*(true|false)/": (true|false)/'
+  sabota sensor "so espaco ASCII" "Y8 tabs-crlf-mudo" '/(claude-mem@/s/\[\[:space:]]/ /g'
+  sabota sensor "sem achatar as quebras de linha" "Y1 desligado-mudo" 's/"\$1" | tr .\\n. . . |$/"$1" |/'
+  sabota sensor "so o settings do usuario" "Y10 projeto-religa-mede" \
+    's/^for arq in \.claude\/settings\.local\.json \.claude\/settings\.json "\$CFG\/settings\.json"; do/for arq in "$CFG\/settings.json"; do/'
+  sabota sensor "sem o settings.local do projeto" "Y12 local-religa-mede" 's/^for arq in \.claude\/settings\.local\.json /for arq in /'
+  sabota sensor "precedencia invertida" "Y11 projeto-desliga-mudo" \
+    's/^for arq in \.claude\/settings\.local\.json \.claude\/settings\.json "\$CFG\/settings\.json"; do/for arq in "$CFG\/settings.json" .claude\/settings.json .claude\/settings.local.json; do/'
+  sabota sensor "escopo menor reabre chave decidida" "Y11 projeto-desliga-mudo" 's/^    case "\$decididas" in .*esac.*$/    :/'
+  sabota sensor "1o escopo que cita decide tudo" "Y13 outra-chave-ligada-mede" \
+    's/^  decididas="\$decididas\$novas"$/  decididas="$decididas$novas"; [ -z "$novas" ] || break/'
+  sabota sensor "ignora CLAUDE_CONFIG_DIR" "Y1 desligado-mudo" \
+    's/^CFG="\${CLAUDE_CONFIG_DIR:-\${HOME:-}\/\.claude}"$/CFG="${HOME:-}\/.claude"/'
+  sabota sensor "sem cair no HOME" "Y14 home-sem-config-dir-mudo" \
+    's/^CFG="\${CLAUDE_CONFIG_DIR:-\${HOME:-}\/\.claude}"$/CFG="${CLAUDE_CONFIG_DIR:-\/nao-existe}"/'
+  sabota sensor "relatorio mudo" "Y2 desligado-relatorio" 's/^  \[ "\$resumo" -eq 1 \] || echo "claude-mem: DESLIGADO.*$/  :/'
   # a fiacao no SessionStart (so dentro do bloco 6: o bloco 5 tem linhas iguais)
   sabota vigia "hook sem o bloco 6" "U vigia-achado" \
     's/^if \[ -f scripts\/claude-mem-saude.sh \]; then$/if false; then/'
