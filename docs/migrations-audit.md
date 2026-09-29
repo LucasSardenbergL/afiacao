@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **565** custom migrations totais
-- **1851** objetos esperados (criados por estas migrations)
+- **566** custom migrations totais
+- **1859** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 612
+  - `function`: 620
   - `rls_policy`: 462
   - `index`: 261
   - `cron_job`: 174
@@ -4622,6 +4622,19 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.fin_projecao_13_semanas` | — |
 | `view` | `public.v_des_pedidos_em_transito` | — |
 | `view` | `public.v_des_posicao_trimestre_ao_vivo` | — |
+
+### `20260929000234_padrao_like_contem_escapa_curinga.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.padrao_like_contem` | — |
+| `function` | `public.listar_skus_por_codigo_fornecedor` | — |
+| `function` | `public.resolver_sku_por_codigo_fornecedor` | — |
+| `function` | `public.expandir_promocao_item` | — |
+| `function` | `public.buscar_skus_candidatos` | — |
+| `function` | `public.melhoria_clientes_por_produto` | — |
+| `function` | `public.melhoria_produtos_relacionados` | — |
+| `function` | `public.tarefas_matcher_tick` | — |
 
 ### `20260929001651_hoje_sp_sessao_utc_sete_funcoes.sql`
 

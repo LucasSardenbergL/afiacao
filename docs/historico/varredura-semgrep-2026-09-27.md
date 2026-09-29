@@ -184,7 +184,12 @@ não compilou é de linguagem ausente.
   mesma forma nas RPCs SQL de prod, onde o ESLint não entra. Censo por `psql-ro`:
   `pg_proc.prosrc ~* '\mi?like\s+[^\n;]{0,90}?(\|\||concat\s*\()'` em `public`/`private` devolveu 9
   funções. `buscar_skus_candidatos` já escapa (`replace` de `\ % _` + `ESCAPE '\'`, o modelo); 6
-  concatenam parâmetro cru e 2 concatenam valor de coluna. Vai para o chip abaixo.
+  concatenam parâmetro cru e 2 concatenam valor de coluna. **✅ Camada SQL fechada em
+  `20260929000234`** ([like-cru-camada-sql.md](like-cru-camada-sql.md)). O censo refeito em
+  2026-09-28 corrigiu 3 pontos deste parágrafo: (1) o "modelo" tinha o furo do termo vazio (`''` →
+  `%%`) e também foi consertado; (2) 2 dos 6 com parâmetro eram falso-positivo, validados a montante
+  (`radar_*`); (3) a assinatura perdia `ILIKE v_fornecedor` (lado direito sem `||`). Idioma
+  `private.padrao_like_contem(t) ESCAPE '\'` em 7 funções, gate `scripts/like-cru-em-migrations-gate.ts`.
 - **B3 — P4, curinga, `supabase/functions/promocao-extrair-via-vision/index.ts:210`.** "Match exato
   case-insensitive" via `.ilike` sem escapar `%`/`_` do nome que a IA extraiu do documento. No pior
   caso, fornecedor normalizado errado (ou `maybeSingle` erra e cai no match por substring). O fluxo
@@ -225,7 +230,8 @@ nessa cegueira (helper espelhado na edge, onde o lint não entra).
   "Passar github.base_ref por env no ci.yml" (A2, ✅ #2626) · "Pôr o sanitizador .or() da
   analyze-unified-order em MIRROR" (B1, classe — ✅ #2633) · "Fechar .ilike cru com curinga
   (AdminReposicaoVendaPerdida)" (B2 + gate ESLint, ✅ #2627) · "Escapar curinga de LIKE nas RPCs
-  SQL" (a camada SQL da classe do B2, achada na varredura do #2627).
+  SQL" (a camada SQL da classe do B2, achada na varredura do #2627; ✅ `20260929000234` + gate das
+  migrations).
 - 🧭 Decisões do founder: (a) pin das actions por SHA e a política de atualização (A1); (b) o bug do
   `--include` já estava reportado (#297 da ToB), falta decidir se comentamos com a medida em TS e o
   caminho do workflow; (c) semgrep no CI como 2º eixo de gate (custo de CI × a cegueira do ESLint

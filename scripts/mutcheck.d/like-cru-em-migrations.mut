@@ -1,0 +1,50 @@
+# Invariantes do fiscal da classe pattern-like-cru na camada SQL (pattern de LIKE montado com valor).
+# @src: scripts/like-cru-em-migrations-gate.ts
+# @test: scripts/like-cru-em-migrations-gate.test.ts
+#
+# A classe (docs/historico/like-cru-camada-sql.md): `%`, `_` e `\` do termo viram curinga/escape, e o
+# termo vazio vira %% (casa tudo). O lexer é o compartilhado (tokensSql) e não tem mutação aqui; aqui
+# se prova que ESTE fiscal o consulta e cada camada que é só dele: o dollar-quote lido por dentro, a
+# leitura do operando da direita, o idioma aceito (helper + ESCAPE '\'), as exceções que não são o
+# operador, a baseline nos dois sentidos, os corpos vivos, a allowlist com âncora, cada piso SOZINHO e
+# os alarmes. Cada PEGA quebra UMA camada e exige a suíte vermelha.
+#
+# ⚠️ No lado da SUBSTITUIÇÃO o perl interpola: `$x` vira vazio e `@x` também. Escreva `\$`.
+
+# CONTROLE+ : o detector cego. Se isto sobreviver, nenhum outro veredito deste arquivo vale.
+PEGA | controle+: detector cego (nenhum operador é achado)                  | s/    if \(!op\) continue;/    if (true) continue;/
+
+# A leitura.
+PEGA | dollar-quote não lido por dentro: o corpo das funções some            | s/tokensSql\(x\.slice\(tag\.length, x\.length - tag\.length\)\)/tokensSql('')/
+PEGA | o contexto do bloco DO se perde                                      | s/if \(t\[i - 1\] === 'do'\) return 'bloco DO';/if (false) return 'bloco DO';/
+PEGA | cast de várias palavras esconde a concatenação que vem depois        | s/while \(CONT_TIPO\.has\(t\[k\] \?\? ''\)\) k\+\+;/while (false) k++;/
+PEGA | a concatenação dentro de um grupo não sobe: o grupo vira valor opaco   | s/    concat = dentro\.concat;/    concat = false;/
+PEGA | literais concatenados viram valor (falso-positivo no pattern fixo)   | s/tipos\.every\(\(x\) => x === 'literal'\) \? 'literal'/tipos.length === 1 \&\& tipos[0] === 'literal' ? 'literal'/
+
+# O idioma e as formas que não o têm.
+PEGA | helper aceito sem o ESCAPE                                           | s/\? null : 'helper sem ESCAPE';/? null : null;/
+PEGA | helper aceito com ESCAPE de qualquer caractere                       | s/t\[fim \+ 1\] === "'\\\\'" \? null/t[fim + 1] !== undefined ? null/
+PEGA | homônimo de outro schema passa por helper                            | s/if \(nome\.join\('\.'\) === 'private\.padrao_like_contem'\) tipo = 'helper';/if (nome[nome.length - 1] === 'padrao_like_contem') tipo = 'helper';/
+PEGA | o operador ~~ (sem cláusula ESCAPE) passa como LIKE                   | s/else if \(op\.includes\('~~'\)\) motivo/else if (false) motivo/
+PEGA | SIMILAR TO passa como LIKE                                           | s/else if \(op === 'similar to'\) motivo/else if (false) motivo/
+PEGA | LIKE ANY de array não-constante passa                                | s/if \(!todosConstantes\(t\.slice\(j \+ 2, f\)\)\) motivo = 'ANY\/ALL';/if (false) motivo = 'ANY\/ALL';/
+PEGA | CREATE TABLE (LIKE outra) vira operador                              | s/if \(op === 'like' && \(antes === '\(' \|\| antes === ','\)\) continue;/if (false) continue;/
+
+# A baseline nos dois sentidos, os corpos vivos e a allowlist com âncora.
+PEGA | sítio NOVO passa calado                                              | s/< n\) novos\.push\(/< n \&\& false) novos.push(/
+PEGA | entrada QUITADA fica na baseline sem reprovar                        | s/< n\) quitados\.push\(/< n \&\& false) quitados.push(/
+PEGA | corpos vivos não medidos: a definição morta ressuscita calada        | s/const l = lerSql\(alvo, corpo, 'corpo vivo'\);/const l = lerSql(alvo, '', 'corpo vivo');/
+PEGA | a âncora do vivo permitido não é conferida                           | s/\} else if \(!temAncora\(corpo, p\.ancora\)\) \{/} else if (false) {/
+PEGA | vivo permitido que saiu do corpo fica na allowlist sem reprovar      | s/if \(!vistos\.has\(/if (false \&\& !vistos.has(/
+PEGA | em modo fixture (sem baseline) nada reprova                          | s/: \{ novos: r\.violacoes\.map\(/: { novos: [] as string[], x: r.violacoes.map(/
+
+# Os alarmes — leitura que não conseguiu ler NUNCA é "limpo".
+PEGA | literal que não fecha passa calado                                   | s/if \(ehLiteral\(x\) && \(x\.length < 2/if (false \&\& ehLiteral(x) \&\& (x.length < 2/
+PEGA | dollar-quote que não fecha passa calado                              | s/if \(x\.length < 2 \* tag\.length \|\| !x\.endsWith\(tag\)\) \{/if (false) {/
+PEGA | stripper que come código passa calado                                | s/if \(bloco > TETO_BLOCO_DESCARTADO\) \{/if (bloco < 0) {/
+
+# Cada piso sozinho — um piso que só cai junto com outro é decoração.
+PEGA | nenhum arquivo lido vira "limpo"                                     | s/if \(r\.arquivos === 0\) furos\.push/if (r.arquivos < 0) furos.push/
+PEGA | piso de migrations desligado                                         | s/if \(r\.migrations < PISOS\.migrations\) furos\.push/if (r.migrations < 0) furos.push/
+PEGA | piso de corpos vivos desligado                                       | s/if \(r\.corposVivos < PISOS\.corposVivos\) furos\.push/if (r.corposVivos < 0) furos.push/
+PEGA | piso de operadores desligado                                         | s/if \(r\.operadores < PISOS\.operadores\) furos\.push/if (r.operadores < 0) furos.push/
