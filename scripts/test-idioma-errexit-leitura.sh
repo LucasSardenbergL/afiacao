@@ -21,8 +21,16 @@ if [ "${1:-}" = "--falsificar" ]; then
   # antes da primeira (sempre-vermelha aprovaria tudo). docs/historico/falsificacao-exit-nao-e-dente.md
   SELF="${BASH_SOURCE[0]}"
   TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
-  ctl="$(bash "$SELF" 2>&1)" || { echo "controle NÃO verde — a falsificação não roda:"; echo "$ctl"; exit 1; }
-  printf '%s\n' "$ctl" | command grep -qx 'RESULTADO: 5 ok / 0 fail' || { echo "controle sem o recibo 5/0:"; echo "$ctl"; exit 1; }
+  # Camadas 2 e 4 (2026-09-29): a rodada chega ao recibo com o MESMO nº de asserts, e não traz linha de
+  # stderr que o controle não traz. Até então o laço julgava só os FAIL declarados — uma rodada que os
+  # imprimisse e MORRESSE antes do recibo, ou que caísse por crash, passava.
+  # shellcheck source=scripts/lib/falsificacao-stderr.sh disable=SC1091
+  . "$(dirname "$SELF")/lib/falsificacao-stderr.sh"
+  bash "$SELF" > "$TMP/c.log" 2> "$TMP/c.log.stderr" || { echo "controle NÃO verde — a falsificação não roda:"; cat "$TMP/c.log" "$TMP/c.log.stderr"; exit 1; }
+  command grep -qx 'RESULTADO: 5 ok / 0 fail' "$TMP/c.log" || { echo "controle sem o recibo 5/0:"; cat "$TMP/c.log"; exit 1; }
+  echo "  controle: 5 ok / 0 fail; $(linha_de_base "$TMP/c.log")"
+  # asserts EXECUTADOS numa rodada = ok+fail do recibo; vazio se ela morreu antes dele
+  recibo() { sed -n 's/^RESULTADO: \([0-9][0-9]*\) ok \/ \([0-9][0-9]*\) fail$/\1 \2/p' "$1" | awk '{ print $1 + $2 }'; }
   SABOTAGENS="sem_errexit_na_leitura:A1,A2,A3 operando_que_existe:A5"
   VERM=0; FALH=0
   for s in $SABOTAGENS; do
@@ -34,11 +42,14 @@ if [ "${1:-}" = "--falsificar" ]; then
       *) echo "  ❌ $nome — sabotagem sem ramo"; FALH=$((FALH+1)); continue ;;
     esac
     if cmp -s "$SELF" "$TMP/s.sh" || ! bash -n "$TMP/s.sh"; then echo "  ❌ $nome — a sabotagem NÃO aplicou (ou quebrou a sintaxe)"; FALH=$((FALH+1)); continue; fi
-    out="$(bash "$TMP/s.sh" 2>&1)" && { echo "  ❌ $nome — saiu 0: sem dente"; FALH=$((FALH+1)); continue; }
+    bash "$TMP/s.sh" > "$TMP/s.log" 2> "$TMP/s.log.stderr" && { echo "  ❌ $nome — saiu 0: sem dente"; FALH=$((FALH+1)); continue; }
+    out="$(cat "$TMP/s.log")"
     faltou=""
     for id in ${decl//,/ }; do printf '%s\n' "$out" | command grep -q "^  FAIL $id " || faltou="$faltou $id"; done
     n="$(printf '%s\n' "$out" | command grep -c '^  FAIL ' || true)"; esperado="$(printf '%s\n' "${decl//,/ }" | wc -w | tr -d ' ')"
-    if [ -n "$faltou" ]; then echo "  ❌ $nome — os declarados NÃO caíram:$faltou"; FALH=$((FALH+1))
+    if [ "$(recibo "$TMP/s.log")" != "$(recibo "$TMP/c.log")" ]; then echo "  ❌ $nome — a rodada NÃO chegou ao recibo com os $(recibo "$TMP/c.log") asserts: vermelho de aborto, não de assert"; FALH=$((FALH+1))
+    elif novas="$(camada4 "$nome" "$TMP/s.log" "$TMP/c.log" "$TMP/s.sh" "$SELF")"; [ -n "$novas" ]; then echo "  ❌ $nome — vermelha com erro que o CONTROLE não tem (crash, não julgamento): $(printf '%s' "$novas" | head -c 160)"; FALH=$((FALH+1))
+    elif [ -n "$faltou" ]; then echo "  ❌ $nome — os declarados NÃO caíram:$faltou"; FALH=$((FALH+1))
     elif [ "$n" != "$esperado" ]; then echo "  ❌ $nome — caíram $n, declarados $esperado ($decl)"; FALH=$((FALH+1))
     else echo "  ✅ $nome — vermelha no que declara ($decl)"; VERM=$((VERM+1)); fi
   done

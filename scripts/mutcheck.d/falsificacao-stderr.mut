@@ -1,0 +1,42 @@
+# Invariantes da camada 4 dos laços de falsificação (scripts/lib/falsificacao-stderr.sh).
+# @src: scripts/lib/falsificacao-stderr.sh
+# @test: scripts/test-falsificacao-stderr.sh
+# @test_cmd: bash
+# @compile_cmd: bash -n
+#
+# A camada decide se a rodada sabotada caiu por JULGAMENTO ou por CRASH: cada regra abaixo, desligada,
+# volta a aprovar um crash (ou a acusar o relatório legítimo do alvo). Cada PEGA desliga UMA regra de
+# forma limpa — nunca quebrando a sintaxe do awk, que "pegaria" pelo motivo errado (poder inflado).
+#
+# ⚠️ No lado da SUBSTITUIÇÃO o perl interpola: escreva `\$`.
+
+# CONTROLE+ : o truque FNR==NR com o controle VAZIO (o caso comum) lê a sabotada como controle.
+PEGA | controle+: FNR==NR no lugar de FILENAME==ARGV[1]           | s{FILENAME == ARGV\[1\] \{}{FNR == NR \{}
+
+# A forma nova e a repetição.
+PEGA | a linha de crash deixa de contar por OCORRÊNCIA            | s{^\s+if \(k ~ ENVIRON\["ASSINATURA"\]\) \{ if \(conta\[k\] > 0\) conta\[k\]--; else print \}}{      :}
+PEGA | toda repetição vira nova (o relatório do ocupacao reprova) | s{if \(!\(k in visto\)\) \{ print; next \}}{print; next}
+
+# A normalização: o que muda entre rodadas sem mudar o sentido.
+PEGA | o trecho literal (a cópia do alvo) deixa de normalizar     | s{if \(t\[i\] != ""\)}{if (0)}
+PEGA | o nº de linha do diagnóstico deixa de normalizar          | s{^\s+gsub\(/line \[0-9\]\+/, "line N", s\)}{      :}
+PEGA | o caminho temporário deixa de normalizar                  | s{\\/var\\/folders\\/}{\\/var\\/NUNCA\\/}
+
+# Fail-closed.
+PEGA | stderr AUSENTE vira "nada novo"                           | s{\|\| \{ printf 'JUIZ: stderr AUSENTE}{|| \{ return 0; printf 'JUIZ: stderr AUSENTE}
+
+# camada4 + declara_stderr.
+PEGA | a linha DECLARADA deixa de sair                            | s{if \[ -n "\$decl" \] &&}{if false &&}
+PEGA | a declaração passa a casar TUDO (linha vazia no -f)       | s{<\(printf '%s' "\$decl"\)}{<(printf '%s\\n\\n' "\$decl")}
+PEGA | declarar trecho VAZIO deixa de abortar                    | s{\[ -n "\$t" \] \|\|}{true ||}
+PEGA | o crash do ARNÊS (log da suíte) deixa de ser julgado      | s{^\s+linhas_novas "\$log\.crash".*}{    :}
+
+# O embrulho do alvo.
+PEGA | o embrulho não APENSA o stderr ao arquivo                 | s{"\$cat_" "\$e" >> "\$dest"; }{}
+PEGA | o embrulho não DEVOLVE o stderr à suíte                   | s{"\$cat_" "\$e" >&2; }{}
+PEGA | o embrulho perde o exit do alvo                           | s{^exit "\$rc"}{exit 0}
+PEGA | o embrulho procura o bash no PATH (quebra com PATH restrito) | s{^"\$bash_" "\$alvo"}{bash "\$alvo"}
+
+# A linha de base que o controle diz em voz alta.
+PEGA | linha de base: stderr AUSENTE vira contagem                  | s{\[ -f "\$ctl\.stderr" \] \|\| \{ printf 'stderr do alvo AUSENTE'; return 0; \}}{:}
+PEGA | linha de base morre sob set -e quando conta zero            | s{grep -c '' "\$ctl\.stderr" \|\| true\)}{grep -c '' "\$ctl.stderr")}

@@ -69,7 +69,7 @@ novo_projects() { # <nome> -> ecoa o dir de projects
   mkdir -p "$d"; printf '%s' "$tmp/$1/projects"
 }
 
-roda() { CLAUDE_PROJECTS_DIR="$1" bash "$ALVO" --por-arquivo --linhas 99 "${@:2}" 2>>"${ERROS_DO_ALVO:-/dev/null}"; }
+roda() { CLAUDE_PROJECTS_DIR="$1" bash "$ALVO" --por-arquivo --linhas 99 "${@:2}" 2>/dev/null; }
 
 # ---- fixture 1: a TESE (mesmo arquivo, mesmo tamanho, posições opostas) ------
 # 200 requests. `cedo.md` é lido no 1º, `tarde.md` no 199º — bytes IDÊNTICOS, e
@@ -162,7 +162,7 @@ fi
 # Foi assim que este mesmo caso voltou a ser vazio depois de já ter sido curado.
 soma_col5() { printf '%s\n' "$1" | command grep -E '%$' | LC_ALL=C awk '{s+=$(NF-1)} END{printf "%.1f", s}'; }
 por_ferr="$(CLAUDE_PROJECTS_DIR="$P3" bash "$ALVO" --por-ferramenta --linhas 99 \
-              "$J3" 2>>"${ERROS_DO_ALVO:-/dev/null}")"
+              "$J3" 2>/dev/null)"
 sa="$(soma_col5 "$saida_b")"; sf="$(soma_col5 "$por_ferr")"
 # CONTROLE POSITIVO antes da igualdade: `0.0 = 0.0` é verdade em toda régua
 # quebrada que existe. A asserção só vale se as duas somas forem MEDIDAS.
@@ -247,7 +247,7 @@ if [ -z "$LOC_VIRGULA" ]; then
   printf '  \033[33mSKIP\033[0m  locale decimal-virgula ausente nesta maquina — caso 8 SEM cobertura\n'
 else
   saida_loc="$(LC_ALL="$LOC_VIRGULA" bash "$ALVO" --por-arquivo --linhas 99 \
-                 "$P1/-Users-x-Projetos-afiacao-teste/tese.jsonl" 2>>"${ERROS_DO_ALVO:-/dev/null}")"
+                 "$P1/-Users-x-Projetos-afiacao-teste/tese.jsonl" 2>/dev/null)"
   n_virg="$(printf '%s\n' "$saida_loc" | command grep -cE '[0-9],[0-9]+%?$' || true)"
   if [ "$n_virg" = "0" ] && tem "$saida_loc" "cedo.md"; then
     ok "A8 sob $LOC_VIRGULA a saida sai com PONTO decimal (ranking nao muda com o ambiente)"
@@ -334,9 +334,12 @@ if [ "${1:-}" = "--falsificar" ]; then
   sem_cor() { LC_ALL=C sed "s/${esc}\[[0-9;]*m//g" "$1"; }
   # Asserts EXECUTADOS numa rodada (ok + FALHA): o recibo de que a suíte rodou inteira.
   asserts() { LC_ALL=C grep -cE '^  (ok +|FALHA )' "$1" || true; }
-  # Erro de execução do bash no ALVO: no log (o que a suíte despeja da saída dele) e no que
-  # ERROS_DO_ALVO recolhe das chamadas que a suíte normal manda para /dev/null (elas MEDEM o stdout).
-  erros_exec() { cat "$1" "$1.stderr" 2>/dev/null | LC_ALL=C grep -cE 'unbound variable|command not found|syntax error|bad substitution' || true; }
+  # A camada 4: o stderr INTEIRO do alvo, recolhido pelo EMBRULHO em cada rodada — o das chamadas que a
+  # suíte mescla na saída e o das que ela manda para /dev/null (elas MEDEM o stdout) —, contra o do
+  # controle, por linha. ⚠️ Aqui o stderr é CONTRATO (o relatório: "sessões analisadas", marcadores
+  # de taxonomia), não só diagnóstico: a sabotagem que o muda de propósito o DECLARA (`declara_stderr`).
+  # shellcheck source=scripts/lib/falsificacao-stderr.sh disable=SC1091
+  . "$here/lib/falsificacao-stderr.sh"
   vermelhos() { { LC_ALL=C grep -Eo '^  FALHA A[0-9]+[a-z]? ' "$1" || true; } | LC_ALL=C awk '{ printf "%s ", $2 }'; }
 
   # ── CONTROLE: verde ANTES do primeiro sed ─────────────────────────────────
@@ -356,10 +359,11 @@ if [ "${1:-}" = "--falsificar" ]; then
   # assert declarado SABE ficar verde nesta invocação.
   ctl="$tmp/controle.log"
   : > "$ctl.stderr"
-  OCUPACAO_OVERRIDE="$controle" ERROS_DO_ALVO="$ctl.stderr" bash "$0" >"$ctl.cru" 2>&1; rc=$?
+  emb_alvo="$(embrulha_alvo "$controle" "$ctl.stderr")" || { ruim "nao consegui embrulhar o controle"; exit 1; }
+  OCUPACAO_OVERRIDE="$emb_alvo" bash "$0" >"$ctl.cru" 2>&1; rc=$?
   sem_cor "$ctl.cru" > "$ctl"
   if [ "$rc" -eq 0 ] && [ "$(asserts "$ctl")" -gt 0 ]; then
-    ok "controle (copia SEM sabotagem) -> VERDE ($(asserts "$ctl") asserts)"
+    ok "controle (copia SEM sabotagem) -> VERDE ($(asserts "$ctl") asserts; $(linha_de_base "$ctl"))"
   else
     ruim "controle SEM sabotagem ja esta VERMELHO — sem linha de base, sabotar nao prova nada"
     printf '\n❌ falsificacao ABORTADA: sem verde de partida.\n'
@@ -468,12 +472,20 @@ if [ "${1:-}" = "--falsificar" ]; then
            "sob ${LOC_VIRGULA:-o locale de virgula} o printf sai com virgula e o sort -rn pode reordenar o ranking" \
            's/^export LC_ALL=C$/: LC_ALL/'
 
+  # O que a sabotagem muda DE PROPÓSITO no stderr do alvo (a camada 4 não o conta como crash). O A10
+  # prova que a forma só-BSD QUEBRA sob o mktemp GNU (o stub acima): o vermelho declarado É esse erro
+  # de execução — o `ID!MARCA` do #2606. Medido em 2026-09-29: a única linha nova das 11 rodadas; a
+  # camada por contagem de assinaturas do bash nunca a viu (não está em lista nenhuma).
+  declara_stderr mktemp_so_bsd "mktemp: too few X's in template"
+
   # A rodada só conta como vermelha com as QUATRO camadas (as do sync-reprocess):
   #   1. a sabotagem APLICOU (as travas de aplica());
   #   2. a suíte rodou INTEIRA (nº de asserts = o do controle: aborto no meio não é assert);
   #   3. CADA assert declarado está VERDE no controle e VERMELHO aqui (o mesmo assert virou);
-  #   4. nenhum erro de execução do bash no alvo que o controle não tem — o alvo que morre no ramo
-  #      do assert derruba o assert certo por CRASH, não por julgamento.
+  #   4. nenhuma linha de erro que o controle não tem (`camada4`: o stderr INTEIRO do alvo, por linha
+  #      normalizada, menos o que a sabotagem DECLARA mudar) — o alvo que morre no ramo do assert
+  #      derruba o assert certo por CRASH, não por julgamento, e o erro de ferramenta não está em
+  #      lista-negra nenhuma.
   # Nome repetido rodaria a mesma mutação duas vezes (e inflaria o recibo); `|` (OU) não é
   # suportado por este juiz: os dois greps poderiam casar MEMBROS diferentes (Codex, 2026-09-27).
   # shellcheck disable=SC2086  # a divisão em palavras da lista é o ponto
@@ -493,7 +505,8 @@ if [ "${1:-}" = "--falsificar" ]; then
     aplica || continue
     log="$tmp/sabotada-$sab.log"
     : > "$log.stderr"
-    OCUPACAO_OVERRIDE="$copia" ERROS_DO_ALVO="$log.stderr" bash "$0" >"$log.cru" 2>&1; rc=$?
+    emb_alvo="$(embrulha_alvo "$copia" "$log.stderr")" || { ruim "\"$desc\": nao consegui embrulhar a copia"; continue; }
+    OCUPACAO_OVERRIDE="$emb_alvo" bash "$0" >"$log.cru" 2>&1; rc=$?
     sem_cor "$log.cru" > "$log"
     if [ "$rc" -eq 0 ]; then
       ruim "\"$desc\" passou VERDE — a suite NAO cobre: $regra"; continue
@@ -511,9 +524,9 @@ if [ "${1:-}" = "--falsificar" ]; then
     done
     if [ "$(asserts "$log")" != "$(asserts "$ctl")" ]; then
       ruim "\"$desc\": a suite NAO rodou inteira ($(asserts "$log") de $(asserts "$ctl") asserts) — vermelho de aborto, nao de assert"
-    elif [ "$(erros_exec "$log")" != "$(erros_exec "$ctl")" ]; then
-      ruim "\"$desc\": vermelha com ERRO de execucao no alvo — o assert caiu por crash, nao por julgamento"
-      { LC_ALL=C grep -m2 -E 'unbound variable|command not found|syntax error|bad substitution' "$log" || true; } | LC_ALL=C sed 's/^/       /'
+    elif novas="$(camada4 "$sab" "$log" "$ctl" "$copia" "$controle")"; [ -n "$novas" ]; then
+      ruim "\"$desc\": vermelha com erro que o CONTROLE nao tem — o assert caiu por crash, nao por julgamento"
+      printf '%s\n' "$novas" | head -3 | LC_ALL=C sed 's/^/       /'
     elif [ -n "$faltam" ]; then
       ruim "\"$desc\": vermelha, mas o assert declarado NAO virou (verde no controle -> vermelho aqui):$faltam · vermelhos: $(vermelhos "$log")"
     elif [ -n "$caiu" ]; then

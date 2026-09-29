@@ -167,15 +167,23 @@ PY
 }
 # asserts EXECUTADOS numa rodada = ok+falha do recibo final; vazio se ela abortou antes dele
 executados() { LC_ALL=C sed -n 's/^ok:\([0-9][0-9]*\) falha:\([0-9][0-9]*\)$/\1 \2/p' "$1" | LC_ALL=C awk '{ print $1 + $2 }'; }
-erros_exec() { LC_ALL=C grep -cE 'unbound variable|command not found|syntax error|bad substitution' "$1" || true; }
 vermelhos() { { LC_ALL=C grep -Eo '^   ✗ D[0-9]+ ' "$1" || true; } | LC_ALL=C awk '{ printf "%s ", $2 }'; }
+# A camada 4. O bloco é carregado com `.` — roda no MESMO processo que os asserts, e não há embrulho
+# possível —, então o "stderr do alvo" é tudo o que a rodada imprimiu FORA das linhas de assert (✓/✗)
+# e do recibo, julgado INTEIRO contra o do controle. O que o bloco imprime dentro de `$(… 2>&1)` é o
+# que os asserts D6–D10 julgam, e fica com eles.
+# shellcheck source=scripts/lib/falsificacao-stderr.sh disable=SC1091
+. "$RAIZ/scripts/lib/falsificacao-stderr.sh"
+fora_dos_asserts() { { LC_ALL=C grep -vE '^   (✓|✗) |^ok:[0-9]+ falha:[0-9]+$' "$1" || true; } > "$1.stderr"; }
 
-ctl="$CAIXA/controle.log"; printf '%s\n' "$res" > "$ctl"
+ctl="$CAIXA/controle.log"; printf '%s\n' "$res" > "$ctl"; fora_dos_asserts "$ctl"
+echo "  ✅ linha de base do controle: $(linha_de_base "$ctl")"
 cegas=0
 mut="$CAIXA/mutante.sh"
 # A rodada só conta como PEGADA com as quatro camadas: (1) a troca aplicou 1× e o mutante tem
 # sintaxe válida; (2) rodar_asserts rodou INTEIRA (ok+falha = o do controle); (3) cada assert
-# declarado está ✓ no controle e ✗ aqui; (4) nenhum erro de execução do bash que o controle não tem.
+# declarado está ✓ no controle e ✗ aqui; (4) nenhuma linha que o controle não tem fora dos asserts
+# (`camada4`: tudo o que o bloco imprimiu, por linha normalizada) — não só as assinaturas do bash.
 # Nome repetido rodaria a mesma mutação duas vezes (e inflaria o recibo); `|` (OU) não é
 # suportado por este juiz: os dois greps poderiam casar MEMBROS diferentes (Codex, 2026-09-27).
 # shellcheck disable=SC2086  # a divisão em palavras da lista é o ponto
@@ -196,7 +204,7 @@ for item in $SABOTAGENS; do
   fi
   log="$CAIXA/sabotada-$sab.log"
   # SUBSHELL: rodar_asserts carrega o bloco com `.` — um `exit` sabotado sairia do TESTE, não dela.
-  ( rodar_asserts "$mut" ) > "$log" 2>&1; rc_sab=$?
+  ( rodar_asserts "$mut" ) > "$log" 2>&1; rc_sab=$?; fora_dos_asserts "$log"
   if [ "$rc_sab" -eq 0 ]; then
     echo "  [XX ] sabotagem PASSOU DESPERCEBIDA: $nome" >&2; cegas=$((cegas + 1)); continue
   fi
@@ -210,8 +218,9 @@ for item in $SABOTAGENS; do
   if [ "$(executados "$log")" != "$(executados "$ctl")" ]; then
     echo "  [XX ] vermelha SEM rodar os asserts inteiros ($(executados "$log") de $(executados "$ctl"); exit $rc_sab) — vermelho de aborto, não de assert: $nome" >&2
     cegas=$((cegas + 1))
-  elif [ "$(erros_exec "$log")" != "$(erros_exec "$ctl")" ]; then
-    echo "  [XX ] vermelha com ERRO de execução do bash no bloco — o assert caiu por crash, não por julgamento: $nome" >&2
+  elif novas="$(camada4 "$sab" "$log" "$ctl" "$mut" "$BLOCO")"; [ -n "$novas" ]; then
+    echo "  [XX ] vermelha com erro que o CONTROLE não tem — o assert caiu por crash, não por julgamento: $nome" >&2
+    printf '%s\n' "$novas" | head -3 | LC_ALL=C sed 's/^/       /' >&2
     cegas=$((cegas + 1))
   elif [ -n "$faltam" ]; then
     echo "  [XX ] vermelha, mas o assert declarado NÃO virou (✓ no controle → ✗ aqui):$faltam · vermelhos: $(vermelhos "$log")— $nome" >&2
