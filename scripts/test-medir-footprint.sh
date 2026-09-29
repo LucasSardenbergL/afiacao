@@ -266,6 +266,11 @@ if [ -z "$S1_LEVE" ] || [ -z "$S1_PESADO" ]; then
   ruim "SAB1: a medicao sabotada nao completou — nao da para dizer se a prova pegou"
 elif na_janela "$(( S1_PESADO - S1_LEVE ))"; then
   ruim "SAB1 PASSOU VERDE: so-a-raiz deu delta=$(( S1_PESADO - S1_LEVE ))MB, dentro da janela — a PROVA 1 nao ve a arvore"
+# O vermelho que conta é o SENTIDO que a sabotagem declara: só-a-raiz não vê a árvore, então o delta
+# CAI. "Fora da janela" para CIMA seria outro defeito aprovado como este (o "≠ verde" da classe
+# docs/historico/falsificacao-exit-nao-e-dente.md).
+elif [ "$(( S1_PESADO - S1_LEVE ))" -gt "$JANELA_MAX" ]; then
+  ruim "SAB1 vermelha no SENTIDO ERRADO: delta=$(( S1_PESADO - S1_LEVE ))MB ACIMA da janela — so-a-raiz tem de CAIR; subir nao e o que esta sabotagem declara"
 else
   ok "SAB1 (ANDAR_ARVORE=False): delta caiu para $(( S1_PESADO - S1_LEVE ))MB -> PROVA 1 VERMELHA"
 fi
@@ -280,6 +285,9 @@ if [ -z "$S2_LEVE" ] || [ -z "$S2_DIV" ]; then
 elif na_janela "$(( S2_DIV - S2_LEVE ))"; then
   ruim "SAB2 PASSOU VERDE: com RSS o delta divergente deu $(( S2_DIV - S2_LEVE ))MB, dentro da janela.
        Ou a coluna nao esta sendo lida de fato, ou a fixture parou de divergir — NAO ajuste a janela."
+# Declarado: o RSS conta as páginas LIMPAS de arquivo que o footprint ignora — o delta SOBE.
+elif [ "$(( S2_DIV - S2_LEVE ))" -lt "$JANELA_MIN" ]; then
+  ruim "SAB2 vermelha no SENTIDO ERRADO: delta divergente=$(( S2_DIV - S2_LEVE ))MB ABAIXO da janela — o RSS da fixture de arquivo tem de SUBIR"
 else
   ok "SAB2 (CAMPO_LIDO=resident_size): delta divergente virou $(( S2_DIV - S2_LEVE ))MB -> PROVA 2 VERMELHA"
 fi
@@ -321,6 +329,9 @@ elif na_janela_seq "$(( S4_SEQ - S4_LEVE ))"; then
   ruim "SAB4 PASSOU VERDE: a soma dos maximos deu delta=$(( S4_SEQ - S4_LEVE ))MB, dentro da janela.
        Ou a formula nao esta sendo aplicada, ou os dois descendentes deixaram de se DESENCONTRAR
        no tempo (o 1o tem de SAIR antes de o 2o alocar) — NAO ajuste a janela."
+# Declarado: a soma dos máximos conta os dois descendentes que nunca viveram juntos — o delta SOBE (~2x).
+elif [ "$(( S4_SEQ - S4_LEVE ))" -lt "$SEQ_MIN" ]; then
+  ruim "SAB4 vermelha no SENTIDO ERRADO: delta=$(( S4_SEQ - S4_LEVE ))MB ABAIXO da janela — a soma dos maximos tem de SUBIR (~2x de ${MIB_SEQ})"
 else
   ok "SAB4 (PICO_DA_SOMA=False): delta virou $(( S4_SEQ - S4_LEVE ))MB (~2x de ${MIB_SEQ}) -> PROVA 4 VERMELHA"
 fi
