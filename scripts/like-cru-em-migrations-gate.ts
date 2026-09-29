@@ -181,7 +181,7 @@ export const CONHECIDOS: readonly SitioConhecido[] = [
   {
     arquivo: 'supabase/migrations/20260613190000_radar_fatia3.sql',
     trecho: "like '%CNPJ ' || p_cnpj || '%'", n: 1,
-    motivo: 'radar_atribuir_tarefa: a definição viva, em VIVOS_PERMITIDOS (p_cnpj validado por ^[0-9]{14}$)',
+    motivo: 'radar_atribuir_tarefa: definição antiga (a viva é a 20260929001651, em VIVOS_PERMITIDOS)',
   },
   {
     arquivo: 'supabase/migrations/20260613190000_radar_fatia3.sql',
@@ -207,6 +207,12 @@ export const CONHECIDOS: readonly SitioConhecido[] = [
     arquivo: 'supabase/migrations/20260905225613_preco_ausente_nao_e_zero.sql',
     trecho: "ilike '%' || trim ( p_termo ) || '%'", n: 2,
     motivo: `melhoria_clientes_por_produto, a que a prod rodava até 2026-09-28 — ${SUPERA}`,
+  },
+  {
+    arquivo: 'supabase/migrations/20260929001651_hoje_sp_sessao_utc_sete_funcoes.sql',
+    trecho: "like '%CNPJ ' || p_cnpj || '%'", n: 1,
+    motivo: 'radar_atribuir_tarefa: a definição viva (a 20260929001651 só troca o hoje da sessão pelo de SP), '
+      + 'em VIVOS_PERMITIDOS (p_cnpj validado por ^[0-9]{14}$)',
   },
 ];
 
