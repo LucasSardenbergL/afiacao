@@ -40,14 +40,21 @@ order by fat_mtd_atual desc nulls last;
 ## #1b — Pedidos comerciais por empresa (momentum): 7 dias vs 7 anteriores
 Confiabilidade: **alta**. Fonte: `sales_orders` (filtra rascunho/cancelado + soft-delete).
 ```sql
+with h as (
+  select now() at time zone 'America/Sao_Paulo' as agora_sp   -- relógio de parede de SP (a sessão é UTC)
+), b as (   -- created_at é timestamptz: as bordas são o INSTANTE da meia-noite de SP
+  select (date_trunc('day', h.agora_sp) - interval '7 days')  at time zone 'America/Sao_Paulo' as ini_7d,
+         (date_trunc('day', h.agora_sp) - interval '14 days') at time zone 'America/Sao_Paulo' as ini_14d
+    from h
+)
 select
   account as empresa,
-  count(*)     filter (where created_at >= current_date - interval '7 days')                                            as pedidos_7d,
-  round(sum(total) filter (where created_at >= current_date - interval '7 days'), 2)                                    as valor_7d,
-  count(*)     filter (where created_at >= current_date - interval '14 days' and created_at < current_date - interval '7 days') as pedidos_7d_ant,
-  round(sum(total) filter (where created_at >= current_date - interval '14 days' and created_at < current_date - interval '7 days'), 2) as valor_7d_ant
-from sales_orders
-where created_at >= current_date - interval '14 days'
+  count(*)     filter (where created_at >= b.ini_7d)                                    as pedidos_7d,
+  round(sum(total) filter (where created_at >= b.ini_7d), 2)                            as valor_7d,
+  count(*)     filter (where created_at >= b.ini_14d and created_at < b.ini_7d)         as pedidos_7d_ant,
+  round(sum(total) filter (where created_at >= b.ini_14d and created_at < b.ini_7d), 2) as valor_7d_ant
+from sales_orders cross join b
+where created_at >= b.ini_14d
   and status not in ('cancelado','rascunho')
   and deleted_at is null
 group by account
@@ -66,7 +73,7 @@ with vendas_cliente as (
          max(v.cliente_cnpj_cpf) as cnpj_cpf,
          sum(v.valor_total)      as faturamento_90d
   from venda_items_history v
-  where v.data_emissao >= current_date - interval '90 days'
+  where v.data_emissao >= (now() at time zone 'America/Sao_Paulo')::date - 90   -- data_emissao é date: borda na DATA de SP
     and v.cliente_codigo_omie is not null
   group by v.empresa, v.cliente_codigo_omie
 ),
@@ -121,13 +128,16 @@ que pequeno caindo 90%.
 Confiabilidade: **alta**. Fonte: `sales_orders`. O vocabulário de status pode variar — se a
 query vier vazia ou estranha, rode antes o diagnóstico de status (ver schema-conventions §5).
 ```sql
+with h as (
+  select (now() at time zone 'America/Sao_Paulo')::date as hoje   -- "hoje" de SP (a sessão é UTC)
+)
 select
   account as empresa, id, status, round(total,2) as total, created_at,
-  (current_date - created_at::date) as dias_em_aberto, ready_by_date
-from sales_orders
+  (h.hoje - (created_at at time zone 'America/Sao_Paulo')::date) as dias_em_aberto, ready_by_date
+from sales_orders cross join h
 where status in ('pendente','confirmado')   -- estados ativos não-finalizados; ajuste ao vocabulário real
   and deleted_at is null
-  and created_at::date <= current_date - interval '3 days'
+  and (created_at at time zone 'America/Sao_Paulo')::date <= h.hoje - 3
 order by created_at asc
 limit 50;
 ```

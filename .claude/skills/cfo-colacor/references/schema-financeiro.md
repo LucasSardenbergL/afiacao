@@ -44,7 +44,9 @@ Tudo read-only. Fonte: migrations `supabase/migrations/2026032820*`, `2026051900
    - Vencido = `'ATRASADO'`. **NÃO existem** `'ABERTO'`/`'VENCIDO'`/`'PARCIAL'`/`'LIQUIDADO'`.
    - **Rode `00-sanity-status.sql` primeiro** — é onde se vê se o sync mudou os rótulos.
 3. **Aging: conjunto por status, faixa por data.** Pegue os vencidos por `status_titulo IN ('ATRASADO','VENCE HOJE')`
-   e calcule os dias com `CURRENT_DATE − data_vencimento`. O status defasa 1-7 dias (um "VENCE HOJE" já venceu),
+   e calcule os dias com o hoje de SP: `(now() AT TIME ZONE 'America/Sao_Paulo')::date − data_vencimento`
+   (o `CURRENT_DATE` é o dia da sessão UTC — das 21:00 às 23:59 BRT já é amanhã e todo título ganha 1 dia de atraso).
+   O status defasa 1-7 dias (um "VENCE HOJE" já venceu),
    então a FAIXA vem da data; o CONJUNTO vem do status (nunca de `saldo`/`data_recebimento`, furados).
 4. **`nome_cliente`/`cnpj_cpf` VAZIOS** em `fin_contas_receber`/`_pagar`; `omie_clientes` **não tem coluna
    de nome** (só `omie_codigo_cliente`, `empresa_omie`, `omie_codigo_vendedor`). Lista de cobrança sai por

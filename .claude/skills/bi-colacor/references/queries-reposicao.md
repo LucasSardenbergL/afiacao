@@ -29,7 +29,7 @@ select
   empresa_lower as empresa, fornecedor_nome, familia,
   sku_codigo_omie, aumento_perc, data_vigencia_efetiva
 from v_sku_aumento_vigente
-where data_vigencia_efetiva <= current_date + interval '30 days'
+where data_vigencia_efetiva <= (now() at time zone 'America/Sao_Paulo')::date + 30   -- DATA de SP (a sessão é UTC)
 order by data_vigencia_efetiva asc, aumento_perc desc
 limit 50;
 ```

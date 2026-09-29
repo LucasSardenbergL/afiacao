@@ -49,5 +49,5 @@ ORDER BY c.company;
 SELECT company, ano, mes, round(resultado_liquido::numeric,2) AS resultado_liquido
 FROM fin_dre_snapshots
 WHERE regime = 'competencia'
-  AND make_date(ano, mes, 1) > (CURRENT_DATE - interval '6 months')
+  AND make_date(ano, mes, 1) > ((now() AT TIME ZONE 'America/Sao_Paulo')::date - interval '6 months')
 ORDER BY company, ano, mes;

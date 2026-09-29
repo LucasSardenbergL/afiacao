@@ -17,13 +17,13 @@ Colunas reais (não erre como `company` vs `companies`):
 $RO -tAc "select now() as agora_no_banco;"
 $RO -c "select jobid, jobname, schedule, active from cron.job where jobname ilike '%<sync>%';"
 ```
-Calcule a **última janela em que deveria ter rodado** a partir do `schedule` + `now()`. Ausência só é falha se essa janela já passou (cuidado com fim de semana / `1-5` / cadência rara).
+Calcule a **última janela em que deveria ter rodado** a partir do `schedule` + `now()` (o `schedule` do pg_cron é UTC; por isso as horas abaixo saem em UTC ESCRITO — colunas `*_utc` —, não no fuso da sessão). Ausência só é falha se essa janela já passou (cuidado com fim de semana / `1-5` / cadência rara).
 
 ## Passo 2 — Confirmar o incidente
 
 ```bash
 # alertas ATIVOS (não dismissados) — o que o Sentinela está gritando agora
-$RO -c "select tipo, severidade, left(mensagem,70) msg, to_char(criado_em,'MM-DD HH24:MI') em
+$RO -c "select tipo, severidade, left(mensagem,70) msg, to_char(criado_em at time zone 'UTC','MM-DD HH24:MI') em_utc
         from public.fin_alertas where dismissed_at is null order by criado_em desc limit 20;"
 ```
 + **probe de efeito do domínio** (ver `sync-registry.md` — NÃO `MAX(updated_at)` genérico). Ex.: vendas → última `sync_pedidos` em `fin_sync_log`; financeiro → idem CP/CR/mov.
@@ -58,11 +58,11 @@ $RO -c "select status_code, timed_out, count(*) n
 
 ```bash
 $RO -c "select companies, action, status, left(coalesce(error_message,''),50) erro,
-               to_char(started_at,'MM-DD HH24:MI') ini, to_char(completed_at,'MM-DD HH24:MI') fim
+               to_char(started_at at time zone 'UTC','MM-DD HH24:MI') ini_utc, to_char(completed_at at time zone 'UTC','MM-DD HH24:MI') fim_utc
         from public.fin_sync_log where action ilike '%<action>%'
         order by started_at desc limit 10;"
 # órfãs 'running' antigas (kill/catch não finalizou) — sinal CONFIÁVEL de morte:
-$RO -c "select companies, action, to_char(started_at,'MM-DD HH24:MI') ini, age(now(), started_at) idade
+$RO -c "select companies, action, to_char(started_at at time zone 'UTC','MM-DD HH24:MI') ini_utc, age(now(), started_at) idade
         from public.fin_sync_log
         where status='running' and started_at < now() - interval '30 minutes'
         order by started_at limit 20;"
