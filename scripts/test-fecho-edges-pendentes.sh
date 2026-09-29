@@ -1191,8 +1191,13 @@ if [ "${1:-}" = "--falsificar" ]; then
   registra sonda_saida_inteira "sonda exigindo saida inteira == 1 (ignora os SET do wrapper)" \
     "s%| command grep -Fxq -- '1'%| tr -d '[:space:]' | command grep -Fxq -- '1'%"
   # (a3) o fail-closed do `_shared/` sem mapa vira aviso: enumeracao voltaria a absolver por ausencia
+  #      SÓ o `exit 2` do mapa da MAIN ilegível (faixa a partir do `if` dele): o sed antigo, sem
+  #      endereço, trocava os TRÊS `exit 2` de 6 espaços — o do `bun` ausente e o da via (c) junto —, e
+  #      derrubava o E13d de tabela (medido 2026-09-28: 3 linhas; das 52 sabotagens, a única conflada
+  #      sem querer — as outras de 2 linhas são pares de propósito).
+  # shellcheck disable=SC2016  # a expressao sed e PADRAO literal do alvo
   registra shared_sem_mapa_ok "_shared sem mapa deixando de ser exit 2" \
-    's%      exit 2$%      :%'
+    '/if \[ ! -s "$tmp\/mapa_agora" \]; then/,/^      exit 2$/s/^      exit 2$/      :/'
   # (a4) a assimetria de papel entre as duas pontas do mapa some, e `mapa_base` volta a valer por
   #      cegueira — o defeito medido em 2026-09-05: janela cujo base e anterior ao #1998 (que criou
   #      o mapa) desistia por atacado, sem veredito nenhum, justo quando `_shared/` afetou 41 das
