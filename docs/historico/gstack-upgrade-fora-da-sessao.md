@@ -77,6 +77,12 @@ recomendação saiu do diagnóstico técnico (o classificador) e ignorou a polí
 - **A falsificação pegou uma asserção sem dente:** a contagem de "dispara sozinho" contava CHAVES distintas;
   sob a sabotagem, os dois achados colapsavam na mesma chave e o número não mudava. A contagem agora soma
   os achados, e o arquivo aninhado do teste tem nome próprio (sabotagem F12).
+- **O lock só era renovado ENTRE etapas** (achado no 1º preparo real, com a máquina em swap: o scan esperou
+  ~20 min na fila do `heavy`). Com o TTL de 30 min, outro upgrade poderia tomar o lock de um dono VIVO, e o
+  `heavy` desistiria da fila aos 30 min (revisão com GATE INCOMPLETO). Agora há um batimento de fundo a cada
+  5 min, como no `bin/gstack-session-update`, com um trap que mata o próprio `sleep` (sem ele: 23 `sleep 300`
+  órfãos por rodada da suíte), e a fila do `heavy` espera até 3 h no job. Entrou num PR de follow-up: o
+  #2655 mergeou antes do push.
 - **`env -u X <função>`:** o `env` executa BINÁRIO, e a função `pesado` virava "No such file". Foi pego na
   revisão, antes do primeiro teste; o `env` agora vem DENTRO do `pesado`.
 

@@ -71,8 +71,30 @@ log() { printf '%s  %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$1" | tee -a "$LOG"; }
 limpa() { LC_ALL=C tr -cd 'A-Za-z0-9 ._:/@=+,;()>-'; }
 campo() { [ -r "$STATUS" ] || return 0; sed -n "s/^$1=//p" "$STATUS" | sed -n 1p; }
 versao_instalada() { [ -r "$G/VERSION" ] && LC_ALL=C tr -cd '0-9.' < "$G/VERSION"; }
-pesado() { if command -v heavy >/dev/null 2>&1; then heavy "$@"; else "$@"; fi; }
+# heavy = o semáforo de RAM da máquina. Por padrão ele desiste depois de 30 min na fila; o job de
+# domingo não tem pressa, e desistir viraria revisão com GATE INCOMPLETO (medido em 2026-09-29: fila
+# de ~20 min com a máquina em swap). Espera até 3 h.
+pesado() {
+  if command -v heavy >/dev/null 2>&1; then AFIACAO_HEAVY_TIMEOUT="${AFIACAO_HEAVY_TIMEOUT:-10800}" heavy "$@"; else "$@"; fi
+}
 batimento() { touch "$LOCK_DIR/pid" 2>/dev/null; }   # renova o TTL do lock entre etapas longas
+# Batimento de FUNDO, como o do bin/gstack-session-update: um scan na fila do heavy passa fácil dos
+# 30 min do TTL, e sem isso outro upgrade tomaria o lock de um dono VIVO. Sai sozinho quando o lock
+# deixa de ser deste processo. A saída vai para /dev/null: herdar o stdout prenderia quem captura a
+# saída do script (o `$(...)` dos testes) até o `sleep` acabar.
+# O trap mata o PRÓPRIO sleep: matar só o subshell deixaria o `sleep 300` órfão (medido: 23 órfãos por
+# rodada da suíte).
+batimento_de_fundo() {
+  ( s=""
+    trap 'kill "$s" 2>/dev/null; exit 0' TERM
+    while :; do
+      sleep 300 & s=$!
+      wait "$s" || exit 0
+      [ "$(cat "$LOCK_DIR/pid" 2>/dev/null)" = "$1" ] || exit 0
+      touch "$LOCK_DIR/pid" 2>/dev/null
+    done ) >/dev/null 2>&1 &
+  BATIMENTO_PID=$!
+}
 
 # escrever_status <estado> <detalhe> [chave=valor ...]
 escrever_status() {
@@ -117,7 +139,9 @@ pegar_lock() {
   return 1
 }
 # shellcheck disable=SC2329  # invocada indiretamente, pelo trap EXIT do fim do script
-soltar_lock() {
+sair() {
+  if [ -n "${BATIMENTO_PID:-}" ]; then kill "$BATIMENTO_PID" 2>/dev/null; fi
+  # solta o lock só se ainda for DESTE processo (um lock retomado por outro não é nosso para apagar)
   if [ "$(cat "$LOCK_DIR/pid" 2>/dev/null)" = "$$" ]; then rm -rf "$LOCK_DIR"; fi
 }
 
@@ -331,5 +355,6 @@ esac
 mkdir -p "$AUTO" || { echo "ERRO: nao consegui criar $AUTO" >&2; exit 1; }
 podar_log
 pegar_lock || { log "OCUPADO: outro upgrade do gstack em curso ($LOCK_DIR) - nada feito"; exit 4; }
-trap soltar_lock EXIT
+trap sair EXIT
+batimento_de_fundo "$$"
 if [ "${1:-}" = --aplicar ]; then aplicar "${2:-}"; else preparar; fi
