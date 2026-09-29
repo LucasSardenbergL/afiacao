@@ -50,6 +50,11 @@ espera() {
     printf '  [%s] OK    %-40s exit=%s %s\n' "$LOC" "$rot" "$rc" "${cod:-—}"
   else
     printf '  [%s] FALHA %-40s exit=%s (esperado %s) codigo=%s\n' "$LOC" "$rot" "$rc" "$exp" "$ok_cod"
+    # A linha que EXPLICA: o `heavy` que desiste da fila sai 1 sem rodar o vitest (medido
+    # 2026-09-28 — o juiz antigo, "saiu 1", contava isso como o detector caindo).
+    local dica
+    dica="$(printf '%s\n' "$out" | command grep -m1 -F 'heavy: timeout' || printf '%s\n' "$out" | sed '/^[[:space:]]*$/d' | tail -1)"
+    printf '        saida: %s\n' "$(printf '%s' "$dica" | cut -c1-160)"
     falhas=$((falhas+1))
   fi
 }
