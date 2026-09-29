@@ -987,8 +987,12 @@ tarefas com a assinatura calibrada e a lista de sites no briefing:
 - ✅ **"Erradicar falsificação sem assert em db/ fora do núcleo"** — feito ("Afetados de `db/` fora do núcleo", acima): os 4
   afetados, mais o sucessor e o `rpc()`; um aposentado. Risco residual (Codex): dois erros com a MESMA
   linha ERROR numa MESMA medição continuam indistinguíveis pelo log.
-  - ↳ a classe vizinha que ela revelou — prova fora do CI que MORRE e ninguém vê — virou a tarefa
-    **"Varrer provas db/ fora do núcleo mortas na main"**.
+  - ↳ ✅ a classe vizinha que ela revelou — prova fora do CI que MORRE e ninguém vê — virou a tarefa
+    **"Varrer provas db/ fora do núcleo mortas na main"**, ENTREGUE em
+    [provas-db-mortas-fora-do-nucleo.md](provas-db-mortas-fora-do-nucleo.md): as 261 rodadas uma a
+    uma, 12 apodrecidas (8 mortas, 4 vermelhas), 9 delas por re-dump do snapshot; um matador medido
+    para cada, a falsificação de authz revivida e a do marcador v2 aposentada; as outras 10 em fases
+    por domínio, com dono, e o sensor proposto para a decisão de custo do founder.
 - ✅ **"Declarar valor sabotado nas provas db/ com juiz ≠ verde"** — ENTREGUE (seções "Parciais de
   `db/`, fase 1" a "fase 5", acima): os 27 parciais, em 5 fases por domínio, cada uma com a 2ª opinião
   do Codex e a meta-falsificação nos dois locales. Os residuais ficaram registrados em cada seção. A
