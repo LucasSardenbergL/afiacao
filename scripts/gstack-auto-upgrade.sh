@@ -32,7 +32,7 @@
 # Status em $AUTO/status (chave=valor, ASCII, gravado por mv atômico). É o que o
 # .claude/hooks/vigia-gstack.sh lê:
 #   estado=JA-EM-DIA | PENDENTE | ATUALIZADO | SEM-REDE | FALHOU
-#   versao (instalada), nova e alvo (só PENDENTE), de (só ATUALIZADO), epoch (esta rodada),
+#   versao (instalada), nova, alvo e gate=COMPLETO|INCOMPLETO (só PENDENTE), de (só ATUALIZADO), epoch (esta rodada),
 #   ultimo_ok (última rodada que cumpriu o papel: JA-EM-DIA, PENDENTE ou ATUALIZADO; SEM-REDE e
 #   FALHOU preservam o anterior, para o vigia medir "parado há quanto tempo"), detalhe (frase curta).
 #
@@ -229,6 +229,7 @@ PY
 # shellcheck disable=SC2016  # as crases aqui são MARKDOWN literal da revisão, não expansão de shell
 montar_revisao() {  # <head> <alvo> <de> <nova>
   local head="$1" alvo="$2" de="$3" nova="$4" scan
+  GATE=INCOMPLETO
   rm -rf "$REV" && mkdir -p "$REV/atual" "$REV/nova" || return 1
   git -C "$G" archive "$head" | tar -x -C "$REV/atual" || return 1
   git -C "$G" archive "$alvo" | tar -x -C "$REV/nova" || return 1
@@ -238,6 +239,8 @@ montar_revisao() {  # <head> <alvo> <de> <nova>
     scan="- ⚠️ **GATE INCOMPLETO: o scanner falhou** (ver $LOG). Não aplique sem rodar o preparo de novo."
   elif ! scan="$(delta_scanner "$REV/scan-atual.json" "$REV/scan-nova.json" 2>>"$LOG")"; then
     scan="- ⚠️ **GATE INCOMPLETO: JSON do scanner ilegível** (ver $LOG)."
+  else
+    GATE=COMPLETO
   fi
   {
     printf '# Revisão do upgrade do gstack: v%s → v%s\n\n' "$de" "$nova"
@@ -278,15 +281,18 @@ preparar() {
     || falhou "o clone divergiu da origin (commits locais e remotos) - resolver com /gstack-upgrade"
   nova="$(git -C "$G" show "$alvo:VERSION" 2>/dev/null | LC_ALL=C tr -cd '0-9.')"
   de="$(versao_instalada)"
-  if [ "$(campo estado)" = PENDENTE ] && [ "$(campo alvo)" = "$alvo" ] && [ -s "$REVMD" ]; then
-    escrever_status PENDENTE "revisao ja pronta (a origin nao mudou)" "nova=$nova" "alvo=$alvo"
+  # Só reaproveita revisão COMPLETA: uma com GATE INCOMPLETO (scanner fora, fila do heavy estourada)
+  # tem de tentar o scan de novo, senão nunca sairia do incompleto (medido no 1º preparo real).
+  if [ "$(campo estado)" = PENDENTE ] && [ "$(campo alvo)" = "$alvo" ] && [ "$(campo gate)" = COMPLETO ] && [ -s "$REVMD" ]; then
+    escrever_status PENDENTE "revisao ja pronta (a origin nao mudou)" "nova=$nova" "alvo=$alvo" gate=COMPLETO
     log "PENDENTE: v$de -> v$nova ja preparado antes ($alvo)"
     exit 0
   fi
   log "preparo: v$de -> v$nova ($alvo) - montando a revisao"
   montar_revisao "$head" "$alvo" "$de" "$nova" || falhou "nao consegui montar a revisao (ver $LOG)"
-  escrever_status PENDENTE "revisao pronta em $REVMD" "nova=$nova" "alvo=$alvo"
-  log "PENDENTE: v$de -> v$nova ($alvo) - revisao em $REVMD"
+  if [ "$GATE" = COMPLETO ]; then d="revisao pronta em $REVMD"; else d="revisao com GATE INCOMPLETO em $REVMD - o preparo tenta de novo"; fi
+  escrever_status PENDENTE "$d" "nova=$nova" "alvo=$alvo" "gate=$GATE"
+  log "PENDENTE (gate $GATE): v$de -> v$nova ($alvo) - revisao em $REVMD"
   exit 0
 }
 
@@ -316,6 +322,10 @@ aplicar() {
   conferir_clone
   full="$(git -C "$G" rev-parse --verify -q "$pedido^{commit}")" || recusa "sha desconhecido: $pedido"
   [ "$full" = "$alvo" ] || recusa "o sha pedido ($full) nao e o revisado ($alvo)"
+  # Gate incompleto = o scanner não rodou: aplicar seria pular o gate. Falha FECHADA; o opt-in é explícito.
+  if [ "$(campo gate)" != COMPLETO ] && [ "${GSTACK_AUTO_ACEITO_SEM_SCANNER:-0}" != 1 ]; then
+    recusa "a revisao tem GATE INCOMPLETO (o scanner nao rodou): refaca o preparo (bash $AUTO/atualizar-gstack.sh) ou, para aplicar mesmo assim, GSTACK_AUTO_ACEITO_SEM_SCANNER=1"
+  fi
   head="$(git -C "$G" rev-parse HEAD)"
   de="$(versao_instalada)"
   if [ "$head" = "$alvo" ]; then
