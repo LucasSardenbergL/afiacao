@@ -99,6 +99,8 @@ if [ "${1:-}" = "--falsificar" ]; then
     sabotar S10 C11 'ultimo_ok ilegivel vira "agora"' 's|ok=0 ;;|ok=$agora ;;|'
     controle "$LOC"
     sabotar S11 C10 'PENDENTE aparece a cada boot' 's|      mostrar=0|      mostrar=1|'
+    controle "$LOC"
+    sabotar S12 C14 'gate incompleto vira "pronto"' 's|\[ "\$(campo gate)" = COMPLETO \]|true|'
   done
 
   echo
@@ -135,7 +137,8 @@ novo_home() {
     up-falhou)   status_up "$h" estado=FALHOU "ultimo_ok=$agora" versao=1.91.2.0 'detalhe=setup "quebrou" \ e seguiu' ;;
     up-parado)   status_up "$h" estado=JA-EM-DIA "ultimo_ok=$((agora - 11 * 86400))" versao=1.91.2.0 ;;
     up-lixo)     status_up "$h" estado=JA-EM-DIA ultimo_ok=abc versao=1.91.2.0 ;;
-    up-pendente) status_up "$h" estado=PENDENTE "ultimo_ok=$agora" versao=1.91.2.0 nova=1.91.6.0 alvo=65bfb0cabc ;;
+    up-pendente) status_up "$h" estado=PENDENTE "ultimo_ok=$agora" versao=1.91.2.0 nova=1.91.6.0 alvo=65bfb0cabc gate=COMPLETO ;;
+    up-incompleto) status_up "$h" estado=PENDENTE "ultimo_ok=$agora" versao=1.91.2.0 nova=1.91.6.0 alvo=65bfb0cabc gate=INCOMPLETO ;;
     up-sem-rede) status_up "$h" estado=SEM-REDE "ultimo_ok=$((agora - 2 * 86400))" versao=1.91.2.0 ;;
   esac
   printf '%s' "$h"
@@ -143,7 +146,7 @@ novo_home() {
 H_OK="$(novo_home ok)"; H_VAZIO="$(novo_home vazio)"
 H_BIN="$(novo_home bin-vazio)"; H_BROWSE="$(novo_home sem-browse)"
 H_UP_FALHOU="$(novo_home up-falhou)"; H_UP_PARADO="$(novo_home up-parado)"; H_UP_LIXO="$(novo_home up-lixo)"
-H_UP_PENDENTE="$(novo_home up-pendente)"; H_UP_SEM_REDE="$(novo_home up-sem-rede)"; H_UP_SEM_STATUS="$(novo_home up-sem-status)"
+H_UP_PENDENTE="$(novo_home up-pendente)"; H_UP_INCOMPLETO="$(novo_home up-incompleto)"; H_UP_SEM_REDE="$(novo_home up-sem-rede)"; H_UP_SEM_STATUS="$(novo_home up-sem-status)"
 
 # rodar <home> <local|nuvem> → define $out e $rc
 rodar() {
@@ -264,6 +267,15 @@ rodar "$H_UP_SEM_REDE" local
 if contrato C12; then
   if [ -z "$(sys)" ] && ! tem "$(ctx)" 'GSTACK-'; then ok C12 'sem rede ha 2 dias -> silencio'
   else ruim C12 "SEM-REDE recente deveria ficar em silencio: $out"; fi
+fi
+
+# C14 PENDENTE com GATE INCOMPLETO → o founder vê que o scanner não rodou, e o modelo NÃO recebe como
+# aplicar (recebe como refazer o preparo).
+rodar "$H_UP_INCOMPLETO" local
+if contrato C14; then
+  if envelope && tem "$(sys)" 'GATE INCOMPLETO' && tem "$(ctx)" 'GATE INCOMPLETO' && ! tem "$(ctx)" '--aplicar'; then
+    ok C14 'pendente com gate incompleto -> avisa e nao ensina a aplicar'
+  else ruim C14 "gate incompleto deveria avisar sem instruir o --aplicar: $out"; fi
 fi
 
 # C13 nuvem com status FALHOU no HOME → silêncio: lá não há launchd, o status não é desta máquina.
