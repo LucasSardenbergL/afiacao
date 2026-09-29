@@ -45,6 +45,9 @@ export type SkuParam = {
   // 'descontinuado' = desligado de propósito pelo humano (botão "descontinuar SKU" nos Pedidos).
   // Opcional no tipo (os literais de view não o fornecem); o select('*') o traz em runtime.
   tipo_reposicao?: string | null;
+  // O flag que o motor lê: gerar_pedidos_sugeridos_ciclo só considera SKU com TRUE. Opcional pelo mesmo
+  // motivo do tipo_reposicao — e AUSENTE não é "desligado" (ver isReposicaoDesligada).
+  habilitado_reposicao_automatica?: boolean | null;
 };
 
 export type ViewStats = {
@@ -83,9 +86,19 @@ export type RowWithPrice = SkuParam & {
   recorrencia_clientes_180d?: number | null;
   dias_desde_ultima_venda?: number | null;
   ja_habilitado?: boolean | null;
+  // Só no filtro 'fora_do_motor' (vem da v_reposicao_sku_fora_do_motor): o flag caiu numa inativação do
+  // Omie e o SKU já voltou a ficar ativo — a reativação não religa sozinha.
+  reativado_omie_pendente?: boolean | null;
 };
 
-export type StatusFilterValue = 'pendente' | 'aprovado' | 'aguardando_fornecedor' | 'primeira_compra' | 'todos' | 'descontinuados';
+const STATUS_FILTROS = [
+  'pendente', 'aprovado', 'aguardando_fornecedor', 'primeira_compra', 'todos', 'descontinuados', 'fora_do_motor',
+] as const;
+export type StatusFilterValue = (typeof STATUS_FILTROS)[number];
+
+/** Filtro vindo da URL (`?filtro=`): valor desconhecido — link velho, digitação — cai em 'todos'. */
+export const statusFiltroDaUrl = (raw: string | null | undefined): StatusFilterValue =>
+  (STATUS_FILTROS as readonly string[]).includes(raw ?? '') ? (raw as StatusFilterValue) : 'todos';
 
 export const fonteBadgeVariant = (
   fonte: string | null | undefined,
@@ -130,7 +143,21 @@ export const isDescontinuado = (row: { tipo_reposicao?: string | null }): boolea
   row.tipo_reposicao === 'descontinuado';
 
 /**
- * Campos que religam um SKU descontinuado ao motor de reposição automática.
+ * SKU que o motor NÃO lê por causa do flag: tipo 'automatica' (NULL o motor trata como automatica) com
+ * habilitado_reposicao_automatica false/NULL — o motor exige TRUE. Nenhuma ação da tela produz esse
+ * estado (descontinuar grava 'descontinuado'; baixo giro, 'sob_encomenda'): ele vem da inativação no
+ * Omie (a reativação não religa) ou da linha criada pelo job de classificação (default false).
+ * Flag AUSENTE (undefined: linha que não trouxe a coluna) não afirma nada.
+ */
+export const isReposicaoDesligada = (row: {
+  tipo_reposicao?: string | null;
+  habilitado_reposicao_automatica?: boolean | null;
+}): boolean =>
+  (row.tipo_reposicao ?? 'automatica') === 'automatica' &&
+  (row.habilitado_reposicao_automatica === false || row.habilitado_reposicao_automatica === null);
+
+/**
+ * Campos que religam ao motor de reposição automática um SKU descontinuado OU com a reposição desligada.
  * tipo='automatica' é seguro mesmo num fabricado '04' — a guarda do motor barra '04'
  * independentemente (#527/#529). Religar SÓ `habilitado` deixaria tipo='descontinuado'
  * e o motor seguiria barrando; por isso o payload reseta os DOIS campos.
@@ -138,4 +165,13 @@ export const isDescontinuado = (row: { tipo_reposicao?: string | null }): boolea
 export const reativarPayload = (): { habilitado_reposicao_automatica: true; tipo_reposicao: 'automatica' } => ({
   habilitado_reposicao_automatica: true,
   tipo_reposicao: 'automatica',
+});
+
+/**
+ * A outra saída do estado sem dono: "este SKU não deve ser comprado". Mesma escrita do "descontinuar SKU"
+ * dos Pedidos — tira o SKU do "fora do motor" e o põe em Descontinuados, de onde o Reativar o traz de volta.
+ */
+export const descontinuarPayload = (): { habilitado_reposicao_automatica: false; tipo_reposicao: 'descontinuado' } => ({
+  habilitado_reposicao_automatica: false,
+  tipo_reposicao: 'descontinuado',
 });

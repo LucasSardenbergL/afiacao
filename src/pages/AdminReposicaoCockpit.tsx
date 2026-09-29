@@ -26,6 +26,7 @@ import { escapeHtml } from "@/lib/escape-html";
 import { ContinuarBanner } from "@/components/reposicao/ContinuarBanner";
 import { EtapasGrid } from "@/components/reposicao/EtapasGrid";
 import { BaixoGiroBadge } from "@/components/reposicao/BaixoGiroBadge";
+import { ForaDoMotorBadge } from "@/components/reposicao/foraDoMotor/ForaDoMotorBadge";
 import { MetricsStrip } from "@/components/reposicao/MetricsStrip";
 import { AuditLogSection } from "@/components/reposicao/AuditLogSection";
 import { DataHealthBanner } from "@/components/dataHealth/DataHealthBanner";
@@ -335,7 +336,11 @@ export default function AdminReposicaoCockpit() {
       <DataHealthBanner source="reposicao_sugestoes" />
       <DataHealthBanner source="estoque_inventario" />
 
-      <BaixoGiroBadge />
+      {/* empty:hidden — sem nenhum aviso, a div vazia não ganha o espaçamento do space-y. */}
+      <div className="flex items-center gap-2 flex-wrap empty:hidden">
+        <ForaDoMotorBadge />
+        <BaixoGiroBadge />
+      </div>
 
       <MetricsStrip items={itensDia} />
 
