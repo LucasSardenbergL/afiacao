@@ -1064,6 +1064,15 @@ Medida à parte, **7/7 com o mesmo veredito nos 2 locales**, antes do caso E16f3
   falha alto em vez de vazar. O `git` da frescura (`rev-parse`, `diff`/`status` com
   `--no-optional-locks`) lê o repo só-leitura sem tropeçar: a suíte inteira passa com ele.
 
+### A varredura dos `sed` — a única conflada
+
+Na revisão, uma varredura barata: quantas linhas do alvo cada uma das 52 sabotagens muda. Só três
+mudam mais de uma — o par da mecânica e a `frescura_antes_da_chamada` (duas edições de propósito) e a
+`shared_sem_mapa_ok`, que, sem endereço, trocava os TRÊS `exit 2` de 6 espaços (o do mapa, o do `bun`
+ausente e o da via (c)). O vermelho declarado (E13c) vinha da trava certa, mas o E13d caía de tabela.
+Agora a faixa começa no `if` do mapa — 1 linha; medido nos 2 locales: `vermelhos: E13c`, onde o `sed`
+antigo dava `vermelhos: E13d E13c`.
+
 ### A meta-falsificação
 
 Pelo harness da sessão, fora do repo: repo-sombra por variante (o teste é cópia do commit, `scripts/`
@@ -1090,9 +1099,10 @@ célula: C · pt_BR, ✅ = o desfecho declarado.
 | tree sujo na rodada | alvo que LIMPA o tree + sabotagem INERTE declarando E16n | ✅✅ | ✅✅ a inerte reprova | ✅✅ aprovava (vermelho emprestado) |
 | compartilhado só-leitura | alvo que MOVE a ref do `cli_defasado` + INERTE declarando E16j | ✅✅ | ✅✅ a inerte reprova | ✅✅ aprovava |
 | — sem o `chmod a-w` | idem | | ✅✅ ESCAPA: só o só-leitura protege | |
+| o `sed` preciso | `shared_sem_mapa_ok` com o `sed` novo × o antigo | | ✅✅ vermelho só no E13c | ✅✅ o antigo derrubava o E13d junto |
 
 Mais as três da 1ª forma, com a suíte INTEIRA (antes de o load a inviabilizar): as duas suítes verdes
-contra o alvo íntegro e a via (c) sem o `exit 2` reprovando no E13d, nos 2 locales. **52/52 rodadas
+contra o alvo íntegro e a via (c) sem o `exit 2` reprovando no E13d, nos 2 locales. **56/56 rodadas
 conferem** com o desfecho declarado. A meta não pegou o juiz novo; pegou o próprio HARNESS duas vezes,
 antes de valer: a checagem de âncoras rodou em zsh, onde `"$ref:scripts/…"` aplica o modificador `:s`
 e o `git show` leu o COMMIT em vez do arquivo (os harnesses rodam em `bash`); e a 2ª forma editava o
