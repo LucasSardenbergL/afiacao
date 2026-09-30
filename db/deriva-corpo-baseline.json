@@ -207,6 +207,15 @@
       "classe": "NAO_MENSURAVEL",
       "motivo": "declarada com corpo SQL-padrão (prosqlbody): prod não tem prosrc textual para comparar.",
       "desde": "2026-09-26"
+    },
+    {
+      "funcao": "expandir_promocao_item",
+      "identidade": "bigint",
+      "classe": "OVERLOAD_FORA_DO_REPO",
+      "md5": "6677fa80de976b37dd784544058ccf4b",
+      "md5Tokens": "4f91eb6c61d213e53296e5a0880a3fa5",
+      "motivo": "Overload (bigint) que só existe em prod: nenhuma migration o declara, só um ALTER … SET search_path na 20260510223800. Entrou no universo da deriva quando a 20260929000234 (#2653) declarou o nome pela 1ª vez. É morto na prática: a chamada de 1 argumento é ambígua com o (bigint, numeric DEFAULT 0.5) — 42725 —, e dropar ou versionar é a issue #2665. Aceito pelo founder em 2026-09-30, preso ao md5 de prod: qualquer mudança no corpo derruba o aceite.",
+      "desde": "2026-09-30"
     }
   ]
 }
