@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 567
+-- Total de custom migrations: 568
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -608,6 +608,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260927202603', 'fuso_sp_relogio_da_sessao_rpcs_views_des', '20260927202603_fuso_sp_relogio_da_sessao_rpcs_views_des.sql'),
   ('20260929000234', 'padrao_like_contem_escapa_curinga', '20260929000234_padrao_like_contem_escapa_curinga.sql'),
   ('20260929001651', 'hoje_sp_sessao_utc_sete_funcoes', '20260929001651_hoje_sp_sessao_utc_sete_funcoes.sql'),
+  ('20260929002059', 'des_desconto_total_maximo_por_faixa', '20260929002059_des_desconto_total_maximo_por_faixa.sql'),
   ('20260929003006', 'reposicao_v_sku_fora_do_motor', '20260929003006_reposicao_v_sku_fora_do_motor.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
@@ -2457,6 +2458,7 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('hoje_sp_sessao_utc_sete_funcoes', 'function', 'public', 'sincronizar_ativo_omie_para_reposicao', ''),
   ('hoje_sp_sessao_utc_sete_funcoes', 'function', 'public', 'trg_campanha_gera_alerta', ''),
   ('hoje_sp_sessao_utc_sete_funcoes', 'function', 'public', 'vendas_sync_semear_janela', ''),
+  ('des_desconto_total_maximo_por_faixa', 'view', 'public', 'v_des_desconto_por_checkin', ''),
   ('reposicao_v_sku_fora_do_motor', 'view', 'public', 'v_reposicao_sku_fora_do_motor', '')
 ),
 obj_status AS (
@@ -4354,6 +4356,7 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('hoje_sp_sessao_utc_sete_funcoes', 'function', 'public', 'sincronizar_ativo_omie_para_reposicao', ''),
   ('hoje_sp_sessao_utc_sete_funcoes', 'function', 'public', 'trg_campanha_gera_alerta', ''),
   ('hoje_sp_sessao_utc_sete_funcoes', 'function', 'public', 'vendas_sync_semear_janela', ''),
+  ('des_desconto_total_maximo_por_faixa', 'view', 'public', 'v_des_desconto_por_checkin', ''),
   ('reposicao_v_sku_fora_do_motor', 'view', 'public', 'v_reposicao_sku_fora_do_motor', '')
 )
 SELECT

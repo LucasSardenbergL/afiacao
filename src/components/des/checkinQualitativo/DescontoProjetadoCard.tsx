@@ -15,8 +15,8 @@ import { fmtPct } from "./format";
 
 interface DescontoProjetadoCardProps {
   desconto: DescontoCheckin | null | undefined;
-  max: number;
-  total: number;
+  max: number | null;
+  total: number | null;
   cardColor: string;
   totalColor: string;
   saving: boolean;
@@ -52,11 +52,9 @@ export function DescontoProjetadoCard({
               <strong>{fmtPct(desconto?.qualitativos_atingidos_perc)}</strong> + Bônus:{" "}
               <strong>{fmtPct(desconto?.bonus_atingido_perc)}</strong>
             </p>
-            {max > 0 && (
-              <p className="text-xs text-muted-foreground mt-1">
-                Máximo possível desta faixa: {fmtPct(max)}
-              </p>
-            )}
+            <p className="text-xs text-muted-foreground mt-1">
+              Máximo possível desta faixa: {fmtPct(max)}
+            </p>
           </div>
 
           <div className="flex items-center gap-2">
