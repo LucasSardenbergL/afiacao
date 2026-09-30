@@ -101,44 +101,44 @@ begin
 
   -- 2. sales normal: nome via join, qtd somada, names em ordem, order_number, account, origin
   select * into r from public.order_feed where id='a0000001-0000-0000-0000-000000000001';
-  if r.origin <> 'sales' then raise exception 'FALHOU: origin sales (got %)', r.origin; end if;
-  if r.customer_name <> 'ALICE LTDA' then raise exception 'FALHOU: customer_name join (got %)', r.customer_name; end if;
-  if r.item_quantity <> 3 then raise exception 'FALHOU: item_quantity 2+1=3 (got %)', r.item_quantity; end if;
-  if r.item_names <> array['Verniz','Catalisador']::text[] then raise exception 'FALHOU: item_names ordem (got %)', r.item_names; end if;
-  if r.order_number <> '0000123' then raise exception 'FALHOU: order_number (got %)', r.order_number; end if;
-  if r.account <> 'oben' then raise exception 'FALHOU: account (got %)', r.account; end if;
-  if r.omie_pedido_id <> 777 then raise exception 'FALHOU: omie_pedido_id (got %)', r.omie_pedido_id; end if;
+  if r.origin IS DISTINCT FROM 'sales' then raise exception 'FALHOU: origin sales (got %)', r.origin; end if;
+  if r.customer_name IS DISTINCT FROM 'ALICE LTDA' then raise exception 'FALHOU: customer_name join (got %)', r.customer_name; end if;
+  if r.item_quantity IS DISTINCT FROM 3 then raise exception 'FALHOU: item_quantity 2+1=3 (got %)', r.item_quantity; end if;
+  if r.item_names IS DISTINCT FROM array['Verniz','Catalisador']::text[] then raise exception 'FALHOU: item_names ordem (got %)', r.item_names; end if;
+  if r.order_number IS DISTINCT FROM '0000123' then raise exception 'FALHOU: order_number (got %)', r.order_number; end if;
+  if r.account IS DISTINCT FROM 'oben' then raise exception 'FALHOU: account (got %)', r.account; end if;
+  if r.omie_pedido_id IS DISTINCT FROM 777 then raise exception 'FALHOU: omie_pedido_id (got %)', r.omie_pedido_id; end if;
 
   -- 3. itens malformados: view não quebrou, qty=0, names preservados
   select * into r from public.order_feed where id='a0000003-0000-0000-0000-000000000003';
-  if r.item_quantity <> 0 then raise exception 'FALHOU: malformado item_quantity=0 (got %)', r.item_quantity; end if;
-  if r.item_names <> array['X','Y']::text[] then raise exception 'FALHOU: malformado item_names (got %)', r.item_names; end if;
+  if r.item_quantity IS DISTINCT FROM 0 then raise exception 'FALHOU: malformado item_quantity=0 (got %)', r.item_quantity; end if;
+  if r.item_names IS DISTINCT FROM array['X','Y']::text[] then raise exception 'FALHOU: malformado item_names (got %)', r.item_names; end if;
 
   -- 4. sem profile → customer_name null (mas pedido aparece)
   select * into r from public.order_feed where id='a0000004-0000-0000-0000-000000000004';
   if r.customer_name is not null then raise exception 'FALHOU: sem profile deveria ser null (got %)', r.customer_name; end if;
-  if r.item_quantity <> 5 then raise exception 'FALHOU: sem profile qty (got %)', r.item_quantity; end if;
+  if r.item_quantity IS DISTINCT FROM 5 then raise exception 'FALHOU: sem profile qty (got %)', r.item_quantity; end if;
 
   -- 5. items não-array → '{}' e 0
   select * into r from public.order_feed where id='a0000005-0000-0000-0000-000000000005';
-  if r.item_names <> '{}'::text[] then raise exception 'FALHOU: nao-array item_names vazio (got %)', r.item_names; end if;
-  if r.item_quantity <> 0 then raise exception 'FALHOU: nao-array item_quantity 0 (got %)', r.item_quantity; end if;
+  if r.item_names IS DISTINCT FROM '{}'::text[] then raise exception 'FALHOU: nao-array item_names vazio (got %)', r.item_names; end if;
+  if r.item_quantity IS DISTINCT FROM 0 then raise exception 'FALHOU: nao-array item_quantity 0 (got %)', r.item_quantity; end if;
 
   -- 6. afiação
   select * into r from public.order_feed where id='b0000001-0000-0000-0000-000000000001';
-  if r.origin <> 'afiacao' then raise exception 'FALHOU: origin afiacao (got %)', r.origin; end if;
-  if r.account <> 'colacor_sc' then raise exception 'FALHOU: afiacao account colacor_sc (got %)', r.account; end if;
+  if r.origin IS DISTINCT FROM 'afiacao' then raise exception 'FALHOU: origin afiacao (got %)', r.origin; end if;
+  if r.account IS DISTINCT FROM 'colacor_sc' then raise exception 'FALHOU: afiacao account colacor_sc (got %)', r.account; end if;
   if r.order_number is not null then raise exception 'FALHOU: afiacao order_number null (got %)', r.order_number; end if;
   if r.omie_pedido_id is not null then raise exception 'FALHOU: afiacao omie_pedido_id null (got %)', r.omie_pedido_id; end if;
-  if r.customer_name <> 'ALICE LTDA' then raise exception 'FALHOU: afiacao nome via join (got %)', r.customer_name; end if;
-  if r.item_quantity <> 3 then raise exception 'FALHOU: afiacao qty (got %)', r.item_quantity; end if;
-  if r.item_names <> array['Afiacao Serra']::text[] then raise exception 'FALHOU: afiacao names (got %)', r.item_names; end if;
+  if r.customer_name IS DISTINCT FROM 'ALICE LTDA' then raise exception 'FALHOU: afiacao nome via join (got %)', r.customer_name; end if;
+  if r.item_quantity IS DISTINCT FROM 3 then raise exception 'FALHOU: afiacao qty (got %)', r.item_quantity; end if;
+  if r.item_names IS DISTINCT FROM array['Afiacao Serra']::text[] then raise exception 'FALHOU: afiacao names (got %)', r.item_names; end if;
 
   -- 7. a view inteira roda sem erro de cast (conta os 6 vivos: 5 sales nao-deletados + 1 afiacao)
   if (select count(*) from public.order_feed
       where id in ('a0000001-0000-0000-0000-000000000001','a0000003-0000-0000-0000-000000000003',
                    'a0000004-0000-0000-0000-000000000004','a0000005-0000-0000-0000-000000000005',
-                   'b0000001-0000-0000-0000-000000000001')) <> 5 then
+                   'b0000001-0000-0000-0000-000000000001')) IS DISTINCT FROM 5 then
     raise exception 'FALHOU: contagem dos pedidos vivos esperados';
   end if;
 

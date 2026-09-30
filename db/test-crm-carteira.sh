@@ -252,7 +252,7 @@ do $$
 declare n int;
 begin
   select count(*) into n from public.v_cliente_interacoes where customer_user_id='aaaaaaaa-0000-0000-0000-000000000001';
-  if n <> 3 then raise exception 'A1_CONTAGEM_ERRADA n=%', n; end if;
+  if n IS DISTINCT FROM 3 then raise exception 'A1_CONTAGEM_ERRADA n=%', n; end if;
   perform 1 from public.v_cliente_interacoes where customer_user_id='bbbbbbbb-0000-0000-0000-000000000002';
   if found then raise exception 'A1_VAZAMENTO_B'; end if;
   raise notice 'A1_VERDE';
