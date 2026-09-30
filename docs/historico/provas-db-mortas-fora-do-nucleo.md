@@ -219,15 +219,15 @@ e cada site pede leitura.
 
 ## O que ficou de fora, com dono
 
-Chips criados na sessão (quem clica é o founder), com o diagnóstico acima no briefing:
+Reconciliado no fecho (2026-09-30) com a regra de chips do #2651 — no máximo UM, e de continuação:
 
-- **"Reviver provas data-health mortas pelo re-dump"** — `familia-ausente`, `familia-ausente-lista-email`
-  e `carteira-rebuild`, pelo `data-health-vivo.sh`, com os asserts de push re-derivados do watchdog
-  vivo, e para o núcleo.
-- **"Reviver provas de canal e carteira mortas pelo re-dump"** — `whatsapp-hsm`/`-funil`/`-proposta`,
-  `melhorias-rpcs` e `fornecedores-classificacao`, e para o núcleo.
-- **"Reviver provas money-path: insumos-bom e preco-tier"** — com a 2ª opinião do Codex quando a cota
-  reabrir (03/10), ou Caminho B registrado.
-- **"Gate: prova no snapshot não re-aplica migration absorvida"** — a opção C do sensor (custo ~0).
-- **"Rodada semanal das provas db/ fora do núcleo no CI"** — a opção A; clicar é aprovar o custo
-  (~60–100 min/mês de Actions, estimado).
+- 🔘 **"Reviver provas data-health mortas pelo re-dump"** — o chip de continuação (fatia 1, com o
+  briefing do `/handoff-sessao`): `familia-ausente`, `familia-ausente-lista-email` e
+  `carteira-rebuild`, pelo `data-health-vivo.sh`, e para o núcleo.
+- 📌 **Fatia 2 — canal e carteira** (`whatsapp-hsm`/`-funil`/`-proposta`, `melhorias-rpcs`,
+  `fornecedores-classificacao`): depois da fatia 1; o diagnóstico de cada uma está na tabela e em
+  "Decisões por prova", acima.
+- 📌 **Fatia 3 — money-path** (`reposicao-demanda-insumos-bom`, `preco-tier`): a partir de 03/10,
+  quando a cota do Codex reabre, ou antes por Caminho B com `sem-codex:` no corpo.
+- 📌 **O sensor** — decisão de custo do founder (as opções A e C, acima). Sem ela, nada de A é
+  implementado; a C tem custo ~0 e pode entrar junto de qualquer fatia.
