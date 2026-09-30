@@ -111,3 +111,9 @@ assert declarado.
   ACL porque as funções dela eram fechadas, e o DROP+CREATE as reabria para `anon`. Esta é aberta
   (PUBLIC/anon/authenticated), e um DROP+CREATE renasceria com o mesmo EXECUTE. O sinal que sobra é o
   **OID**, capturado na PRE e comparado na POS.
+- **Sabotar uma camada trocando `RAISE EXCEPTION` por `RAISE NOTICE` deixa o rótulo no log.** Se o
+  veredito da recusa casa o rótulo no texto TODO da saída, uma camada POSTERIOR que também recusa a
+  variante faz a sabotada parecer ter dente. A 1ª falsificação pegou 3 camadas da POS assim (POS1,
+  POS2 e POS3 saíram "verdes com a sabotagem ativa"). O veredito passou a exigir o rótulo na linha de
+  ERRO do servidor. O `db/test-padrao-like-contem.sh` usa o mesmo veredito; lá nenhuma camada
+  posterior recusa as variantes, então o defeito está latente, sem ter mordido.
