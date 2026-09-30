@@ -81,6 +81,28 @@ sem sinal do flag; o botão "Reativar" só existia para `descontinuado`. Não ha
   estoque (`estoque_efetivo = físico + entrada pendente + trânsito`); a demanda entra só pela média de
   90 dias das NFs.
 
+## Desfecho em produção (medido em 2026-09-30)
+
+- **Publish** pelo MCP (`deploy_project`, `name: "steu"`): entry `index-D6F9cOzP.js` → `index-DTPr_RGI.js`,
+  `monitor-deploy.sh --pr 2661` → `PR_NO_AR` (ar `c85a19c9` = main), e a sentinela exclusiva
+  `v_reposicao_sku_fora_do_motor` achada em `/assets/api-B7nV8rXm.js` com controle negativo. A
+  `deriva:corpo:prod` saiu 1 por um overload legado de `expandir_promocao_item(bigint)` sobrando em prod
+  (tratado no #2667); não bloqueou, porque nada que a main consome faltava no banco.
+- **No ciclo real de 29/09, 9 dos 15 religados entraram** no cockpit, mas **não o FCA.7090QT**, que o
+  ensaio da madrugada previa com 7 un. Não foi o flag (seguia ligado): o comprador já tinha comprado
+  **por fora, no Omie — pedido #1247, de 25/09**, o mesmo dia do pedido de venda #12976. Até eu religar,
+  o FCA não tinha linha em `sku_estoque_atual`, e o motor calcula
+  `estoque_efetivo = físico + entrada pendente + trânsito` a partir dela; sem a linha, as 6 un em entrada
+  entravam como 0. Foi isso que o ensaio mediu. A sincronização de estoque criou a linha logo depois de
+  religar (físico 4, entrada 6), antes do ciclo, e o motor corretamente não duplicou a compra.
+- ⚠️ **Correção do diagnóstico:** eu tinha afirmado "nenhum pedido de compra em andamento" para o FCA. Era
+  falso negativo: a busca em `purchase_orders_tracking` filtrava `fornecedor_nome ILIKE '%SAYERLACK%'`, e o
+  #1247 está com `fornecedor_nome` NULL. O controle positivo que usei (#1094) tinha fornecedor, então não
+  cobria esse caso. Busca de compra por fora se faz pelo SKU no `raw_data`, **sem** filtro de fornecedor.
+- **Risco residual, medido:** entre um "Religar" e a próxima sincronização de estoque, um SKU sem linha
+  em `sku_estoque_atual` tem a entrada pendente lida como 0 pelo motor. Exposição hoje: 0 dos 361 SKUs
+  ligados sem linha. E, com a auto-aprovação desligada, a sugestão ainda passa por um humano.
+
 ## Como diagnosticar "o SKU X não aparece no cockpit"
 
 ```sql
