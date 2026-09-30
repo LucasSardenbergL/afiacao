@@ -128,10 +128,10 @@ DECLARE r RECORD; res jsonb;
 BEGIN
   -- A9 (insert trigger): deriva SÓ is_fornecedor; excluir NÃO é setado pelo trigger (fica default false)
   SELECT is_fornecedor AS isf, excluir_da_carteira AS exc INTO r FROM cliente_classificacao WHERE user_id='00000000-0000-0000-0000-0000000000c1';
-  IF NOT r.isf THEN RAISE EXCEPTION 'A9 FALHOU (insert): c1 deveria nascer is_fornecedor=true'; END IF;
-  IF r.exc THEN RAISE EXCEPTION 'A9 FALHOU (insert): trigger NÃO deve setar excluir (é da RPC) — c1 nasceu exc=true'; END IF;
+  IF r.isf IS NOT TRUE THEN RAISE EXCEPTION 'A9 FALHOU (insert): c1 deveria nascer is_fornecedor=true'; END IF;
+  IF r.exc IS NOT FALSE THEN RAISE EXCEPTION 'A9 FALHOU (insert): trigger NÃO deve setar excluir (é da RPC) — c1 nasceu exc=true'; END IF;
   SELECT is_fornecedor AS isf INTO r FROM cliente_classificacao WHERE user_id='00000000-0000-0000-0000-0000000000c3';
-  IF r.isf THEN RAISE EXCEPTION 'A9 FALHOU (insert): c3 comum não deveria ser fornecedor'; END IF;
+  IF r.isf IS NOT FALSE THEN RAISE EXCEPTION 'A9 FALHOU (insert): c3 comum não deveria ser fornecedor'; END IF;
   RAISE NOTICE 'OK A9 (insert): trigger seta só is_fornecedor (c1=t, c3=f); excluir fica p/ a RPC';
 
   -- corromper as flags SEM tocar tags_omie (trigger é UPDATE OF tags_omie → não dispara) — valores
@@ -145,32 +145,32 @@ BEGIN
 
   -- A1: c1 fornecedor SEM venda (só cancelada) → exclui
   SELECT is_fornecedor AS isf, excluir_da_carteira AS exc INTO r FROM cliente_classificacao WHERE user_id='00000000-0000-0000-0000-0000000000c1';
-  IF NOT (r.isf AND r.exc) THEN RAISE EXCEPTION 'A1 FALHOU: c1 fornecedor sem venda deveria excluir'; END IF;
+  IF (r.isf AND r.exc) IS NOT TRUE THEN RAISE EXCEPTION 'A1 FALHOU: c1 fornecedor sem venda deveria excluir'; END IF;
   RAISE NOTICE 'OK A1 — fornecedor sem venda exclui';
   -- A2
   SELECT is_fornecedor AS isf, excluir_da_carteira AS exc INTO r FROM cliente_classificacao WHERE user_id='00000000-0000-0000-0000-0000000000c2';
-  IF NOT r.isf OR r.exc THEN RAISE EXCEPTION 'A2 FALHOU: c2 (is=% exc=%) exceção deveria manter na carteira', r.isf, r.exc; END IF;
+  IF r.isf IS NOT TRUE OR r.exc IS NOT FALSE THEN RAISE EXCEPTION 'A2 FALHOU: c2 (is=% exc=%) exceção deveria manter na carteira', r.isf, r.exc; END IF;
   RAISE NOTICE 'OK A2 — exceção vence (fica)';
   -- A3
   SELECT is_fornecedor AS isf, excluir_da_carteira AS exc INTO r FROM cliente_classificacao WHERE user_id='00000000-0000-0000-0000-0000000000c3';
-  IF r.isf OR r.exc THEN RAISE EXCEPTION 'A3 FALHOU: c3 comum não deveria sair'; END IF;
+  IF r.isf IS NOT FALSE OR r.exc IS NOT FALSE THEN RAISE EXCEPTION 'A3 FALHOU: c3 comum não deveria sair'; END IF;
   RAISE NOTICE 'OK A3 — cliente comum fica';
   -- A4 (case/acento/trim)
   SELECT is_fornecedor AS isf, excluir_da_carteira AS exc INTO r FROM cliente_classificacao WHERE user_id='00000000-0000-0000-0000-0000000000c4';
-  IF NOT (r.isf AND r.exc) THEN RAISE EXCEPTION 'A4 FALHOU: FORNECEDOR/'' Transportadora '' c/ case/trim não detectado'; END IF;
+  IF (r.isf AND r.exc) IS NOT TRUE THEN RAISE EXCEPTION 'A4 FALHOU: FORNECEDOR/'' Transportadora '' c/ case/trim não detectado'; END IF;
   RAISE NOTICE 'OK A4 — case/trim detectado';
   -- A8 (RÉGUA A): c6 fornecedor COM venda → NÃO exclui (poupado); venda cancelada de c1 não conta
   SELECT tem_venda_real AS tvr, is_fornecedor AS isf, excluir_da_carteira AS exc INTO r FROM cliente_classificacao WHERE user_id='00000000-0000-0000-0000-0000000000c6';
-  IF NOT r.tvr THEN RAISE EXCEPTION 'A8 FALHOU: c6 tem venda enviada → tem_venda_real=true'; END IF;
-  IF NOT r.isf THEN RAISE EXCEPTION 'A8 FALHOU: c6 tem tag Fornecedor → is_fornecedor=true'; END IF;
-  IF r.exc THEN RAISE EXCEPTION 'A8 FALHOU (régua A): c6 fornecedor COM venda NÃO deve sair (exc=true)'; END IF;
+  IF r.tvr IS NOT TRUE THEN RAISE EXCEPTION 'A8 FALHOU: c6 tem venda enviada → tem_venda_real=true'; END IF;
+  IF r.isf IS NOT TRUE THEN RAISE EXCEPTION 'A8 FALHOU: c6 tem tag Fornecedor → is_fornecedor=true'; END IF;
+  IF r.exc IS NOT FALSE THEN RAISE EXCEPTION 'A8 FALHOU (régua A): c6 fornecedor COM venda NÃO deve sair (exc=true)'; END IF;
   SELECT tem_venda_real AS tvr INTO r FROM cliente_classificacao WHERE user_id='00000000-0000-0000-0000-0000000000c1';
-  IF r.tvr THEN RAISE EXCEPTION 'A8 FALHOU: c1 só tem venda cancelada → tem_venda_real=false'; END IF;
+  IF r.tvr IS NOT FALSE THEN RAISE EXCEPTION 'A8 FALHOU: c1 só tem venda cancelada → tem_venda_real=false'; END IF;
   RAISE NOTICE 'OK A8 (régua A) — fornecedor COM venda (c6) fica; cancelada (c1) não conta';
   -- A8b (Codex #5): c8 fornecedor com SÓ orçamento → orcamento ∉ venda → exclui
   SELECT tem_venda_real AS tvr, excluir_da_carteira AS exc INTO r FROM cliente_classificacao WHERE user_id='00000000-0000-0000-0000-0000000000c8';
-  IF r.tvr THEN RAISE EXCEPTION 'A8b FALHOU: c8 só tem orçamento → tem_venda_real=false (orcamento não é venda)'; END IF;
-  IF NOT r.exc THEN RAISE EXCEPTION 'A8b FALHOU (Codex #5): c8 fornecedor com só orçamento DEVE sair'; END IF;
+  IF r.tvr IS NOT FALSE THEN RAISE EXCEPTION 'A8b FALHOU: c8 só tem orçamento → tem_venda_real=false (orcamento não é venda)'; END IF;
+  IF r.exc IS NOT TRUE THEN RAISE EXCEPTION 'A8b FALHOU (Codex #5): c8 fornecedor com só orçamento DEVE sair'; END IF;
   RAISE NOTICE 'OK A8b (#5) — orçamento não conta como venda; fornecedor-só-orçamento sai';
 END $$;
 SQL
@@ -184,10 +184,10 @@ BEGIN
   INSERT INTO auth.users (id) VALUES ('00000000-0000-0000-0000-0000000000c7');
   INSERT INTO cliente_classificacao (user_id, tags_omie) VALUES ('00000000-0000-0000-0000-0000000000c7', ARRAY['Cliente']);
   SELECT is_fornecedor AS isf INTO r FROM cliente_classificacao WHERE user_id='00000000-0000-0000-0000-0000000000c7';
-  IF r.isf THEN RAISE EXCEPTION 'A9b FALHOU: c7 nasceu comum, não deveria ser fornecedor'; END IF;
+  IF r.isf IS NOT FALSE THEN RAISE EXCEPTION 'A9b FALHOU: c7 nasceu comum, não deveria ser fornecedor'; END IF;
   UPDATE cliente_classificacao SET tags_omie = ARRAY['Transportadora'] WHERE user_id='00000000-0000-0000-0000-0000000000c7';
   SELECT is_fornecedor AS isf INTO r FROM cliente_classificacao WHERE user_id='00000000-0000-0000-0000-0000000000c7';
-  IF NOT r.isf THEN RAISE EXCEPTION 'A9b FALHOU: UPDATE de tags_omie não re-derivou is_fornecedor (is=%)', r.isf; END IF;
+  IF r.isf IS NOT TRUE THEN RAISE EXCEPTION 'A9b FALHOU: UPDATE de tags_omie não re-derivou is_fornecedor (is=%)', r.isf; END IF;
   RAISE NOTICE 'OK A9b — UPDATE OF tags_omie re-deriva is_fornecedor (excluir fica p/ a RPC)';
 END $$;
 SQL
@@ -230,7 +230,7 @@ DECLARE n int; r RECORD;
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM fornecedor_excecao WHERE user_id='00000000-0000-0000-0000-0000000000c1') THEN RAISE EXCEPTION 'A7 FALHOU: exceção não criada'; END IF;
   SELECT excluir_da_carteira AS exc INTO r FROM cliente_classificacao WHERE user_id='00000000-0000-0000-0000-0000000000c1';
-  IF r.exc THEN RAISE EXCEPTION 'A7 FALHOU: excluir ainda true'; END IF;
+  IF r.exc IS NOT FALSE THEN RAISE EXCEPTION 'A7 FALHOU: excluir ainda true'; END IF;
   IF EXISTS (SELECT 1 FROM carteira_assignments WHERE customer_user_id='00000000-0000-0000-0000-0000000000c1' AND NOT eligible) THEN RAISE EXCEPTION 'A7 FALHOU: ainda há assignment não-elegível'; END IF;
   SELECT count(*) INTO n FROM visit_score_recalc_queue WHERE customer_user_id='00000000-0000-0000-0000-0000000000c1' AND processed_at IS NULL;
   IF n < 1 THEN RAISE EXCEPTION 'A7 FALHOU: visit_score_recalc_queue não enfileirada'; END IF;
