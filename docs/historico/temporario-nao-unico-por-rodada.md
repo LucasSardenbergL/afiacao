@@ -6,7 +6,7 @@
 > - #2678 (pedido/corrida)
 > - #2679 (carteira/preço)
 > - #2680 (farmer e outros)
-> - o PR da fase 6, com este registro
+> - #2682 (fase 6, com este registro)
 >
 > Método: skill `matar-classe`.
 
