@@ -169,11 +169,12 @@ PASS=0; FAIL=0
 ok()       { PASS=$((PASS+1)); echo "  ✅ $1 OK — $2"; }
 bad()      { FAIL=$((FAIL+1)); echo "  ❌ $1 FALHOU — $2"; }
 erro_exec(){ FAIL=$((FAIL+1)); echo "  ❌ $1 ERRO_DE_EXECUCAO — $2"; }
-# Um VALOR que é erro do psql ou vazio não é resultado: vira ERRO_DE_EXECUCAO, que o laço de
-# falsificação não aceita como dente. Só um resultado válido que contraria o esperado é FALHOU.
+# Um VALOR que é erro do psql, erro do próprio bash ("<script>: line N: …") ou vazio não é
+# resultado: vira ERRO_DE_EXECUCAO, que o laço de falsificação não aceita como dente. Só um
+# resultado válido que contraria o esperado é FALHOU.
 eq() {
   case "$3" in
-    ""|*ERROR:*|*ERRO:*|*FATAL:*|*psql:*)
+    ""|*ERROR:*|*ERRO:*|*FATAL:*|*psql:*|*": line "[0-9]*)
       erro_exec "$1" "$2 — sem resultado válido: [$(printf '%s' "$3" | tr '\n' ' ' | head -c 200)]" ;;
     *) if [ "$3" = "$4" ]; then ok "$1" "$2 (=$3)"; else bad "$1" "$2 — esperado [$4], veio [$3]"; fi ;;
   esac
@@ -385,7 +386,7 @@ SQL
 chamar() {
   P -qtA 2>&1 <<SQL || true
 BEGIN;
-$5
+${5:-}
 SET LOCAL ROLE authenticated;
 SET LOCAL "test.uid" = '$1';
 DO \$c\$
