@@ -248,3 +248,10 @@ db/test-hoje-sp-sessao-utc-precos-piso.sh  50  falsificar=18
 # helper sem escape ou sem o degenerado). Cada sabotagem declara o vermelho E o verde; erro de
 # execução não conta. Irmão estático: scripts/like-cru-em-migrations-gate.ts (vitest).
 db/test-padrao-like-contem.sh              59  falsificar=19
+# expandir_promocao_item (20260930220148, #2665): um overload só (o (bigint) sai: a chamada de 1
+# argumento do front dava 42725), extensions.similarity (42883 no parse, até no ramo não tomado) e a
+# expansão com volume preenchido, que colidia no UNIQUE com o próprio original e o desativava sem
+# variante. A semente REPRODUZ os 3 antes (A1-A6); depois, a chamada do front como authenticated nos
+# 3 caminhos, com e sem volume e similaridade (F1-F12). PRE/POS exercitadas camada a camada,
+# inclusive a TRAVA (M5, duas conexões) e o DROP+CREATE pego pelo OID (M12).
+db/test-expandir-promocao-item.sh          41  falsificar=18

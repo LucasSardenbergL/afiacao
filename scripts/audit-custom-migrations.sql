@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 566
+-- Total de custom migrations: 567
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -607,7 +607,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260927195430', 'positivacao_universo_canonico', '20260927195430_positivacao_universo_canonico.sql'),
   ('20260927202603', 'fuso_sp_relogio_da_sessao_rpcs_views_des', '20260927202603_fuso_sp_relogio_da_sessao_rpcs_views_des.sql'),
   ('20260929000234', 'padrao_like_contem_escapa_curinga', '20260929000234_padrao_like_contem_escapa_curinga.sql'),
-  ('20260929003006', 'reposicao_v_sku_fora_do_motor', '20260929003006_reposicao_v_sku_fora_do_motor.sql')
+  ('20260929003006', 'reposicao_v_sku_fora_do_motor', '20260929003006_reposicao_v_sku_fora_do_motor.sql'),
+  ('20260930220148', 'expandir_promocao_item_overload_similarity_volume', '20260930220148_expandir_promocao_item_overload_similarity_volume.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2449,7 +2450,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('padrao_like_contem_escapa_curinga', 'function', 'public', 'melhoria_clientes_por_produto', ''),
   ('padrao_like_contem_escapa_curinga', 'function', 'public', 'melhoria_produtos_relacionados', ''),
   ('padrao_like_contem_escapa_curinga', 'function', 'public', 'tarefas_matcher_tick', ''),
-  ('reposicao_v_sku_fora_do_motor', 'view', 'public', 'v_reposicao_sku_fora_do_motor', '')
+  ('reposicao_v_sku_fora_do_motor', 'view', 'public', 'v_reposicao_sku_fora_do_motor', ''),
+  ('expandir_promocao_item_overload_similarity_volume', 'function', 'public', 'expandir_promocao_item', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4339,7 +4341,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('padrao_like_contem_escapa_curinga', 'function', 'public', 'melhoria_clientes_por_produto', ''),
   ('padrao_like_contem_escapa_curinga', 'function', 'public', 'melhoria_produtos_relacionados', ''),
   ('padrao_like_contem_escapa_curinga', 'function', 'public', 'tarefas_matcher_tick', ''),
-  ('reposicao_v_sku_fora_do_motor', 'view', 'public', 'v_reposicao_sku_fora_do_motor', '')
+  ('reposicao_v_sku_fora_do_motor', 'view', 'public', 'v_reposicao_sku_fora_do_motor', ''),
+  ('expandir_promocao_item_overload_similarity_volume', 'function', 'public', 'expandir_promocao_item', '')
 )
 SELECT
   e.migration,
@@ -4367,7 +4370,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 118.
+-- Funções redefinidas com corpo extraível: 119.
 
 WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (VALUES
   ('public', 'has_role', 1, '20260207192203_1ed442e5-a224-456e-9d94-cfe50e88c670.sql', 'c63a92e3cfa92e6aab8cb894ad505e30'),
@@ -4814,7 +4817,9 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'desconto_backfill_aplicar', 1, '20260908220625_desconto_backfill_aplicar.sql', '59d9c1e4482bf524c5da1eff2700aa08'),
   ('public', 'desconto_backfill_aplicar', 2, '20260910214850_desconto_backfill_aplicar_ja_apuradas.sql', '09e34b475c6f2b9cfd832b90e62d9b77'),
   ('public', 'pedido_total_liquido_converter', 1, '20260914181500_pedido_total_liquido_acervo.sql', 'ed8296520bc8513f55f4039161657cc8'),
-  ('public', 'pedido_total_liquido_converter', 2, '20260914193000_pedido_total_liquido_acervo_mes_entre_contas.sql', 'dc365744059741095767a967d0c05055')
+  ('public', 'pedido_total_liquido_converter', 2, '20260914193000_pedido_total_liquido_acervo_mes_entre_contas.sql', 'dc365744059741095767a967d0c05055'),
+  ('public', 'expandir_promocao_item', 1, '20260929000234_padrao_like_contem_escapa_curinga.sql', '6a4779419c33db1ffe1f5c6bc6d7670b'),
+  ('public', 'expandir_promocao_item', 2, '20260930220148_expandir_promocao_item_overload_similarity_volume.sql', '15cd9b2496f669df8e979de9545b4f98')
 ),
 ultima AS (
   SELECT schema_name, object_name, max(ordem) AS ordem FROM corpo_esperado GROUP BY 1, 2
