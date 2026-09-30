@@ -139,13 +139,13 @@ BEGIN
 
   -- A. DEPOIS: NENHUMA fração — toda qtde_sugerida e qtde_final é inteira.
   SELECT count(*) INTO d FROM scratch_depois WHERE qtde_final <> trunc(qtde_final) OR qtde_sugerida <> trunc(qtde_sugerida);
-  IF d <> 0 THEN RAISE EXCEPTION 'A FALHOU: DEPOIS ainda tem % linha(s) fracionária(s)', d; END IF;
+  IF d IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'A FALHOU: DEPOIS ainda tem % linha(s) fracionária(s)', d; END IF;
   RAISE NOTICE 'OK A — DEPOIS: zero fração (toda qtde inteira)';
 
   -- B. DEPOIS = ceil(ANTES) em ambas as colunas (valor exato, item a item).
   SELECT count(*) INTO d FROM scratch_antes a JOIN scratch_depois p ON p.sku = a.sku
    WHERE p.qtde_final <> ceil(a.qtde_final) OR p.qtde_sugerida <> ceil(a.qtde_sugerida);
-  IF d <> 0 THEN RAISE EXCEPTION 'B FALHOU: % linha(s) DEPOIS != ceil(ANTES)', d; END IF;
+  IF d IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'B FALHOU: % linha(s) DEPOIS != ceil(ANTES)', d; END IF;
   RAISE NOTICE 'OK B — DEPOIS = ceil(ANTES) em qtde_sugerida e qtde_final (item a item)';
 
   -- B2. casos pontuais DEPOIS
@@ -170,7 +170,7 @@ BEGIN
     UNION ALL
     (SELECT sku FROM scratch_depois EXCEPT SELECT sku FROM scratch_antes)
   ) x;
-  IF d <> 0 THEN RAISE EXCEPTION 'C FALHOU: conjunto de itens MUDOU (% SKU divergente) — ceil não pode mudar inclusão', d; END IF;
+  IF d IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'C FALHOU: conjunto de itens MUDOU (% SKU divergente) — ceil não pode mudar inclusão', d; END IF;
   PERFORM 1 FROM scratch_antes WHERE sku='8006'; IF FOUND THEN RAISE EXCEPTION 'C FALHOU: 8006 (nat 0) não devia entrar ANTES'; END IF;
   PERFORM 1 FROM scratch_depois WHERE sku='8006'; IF FOUND THEN RAISE EXCEPTION 'C FALHOU: 8006 (nat 0) não devia entrar DEPOIS'; END IF;
   PERFORM 1 FROM scratch_antes WHERE sku='8007'; IF NOT FOUND THEN RAISE EXCEPTION 'C FALHOU: 8007 (0,00004) devia entrar ANTES'; END IF;
@@ -179,13 +179,13 @@ BEGIN
 
   -- D. valor_linha DEPOIS = qtde_final(inteira) × cmc(10); valor_total do header = Σ valor_linha.
   SELECT count(*) INTO d FROM scratch_depois WHERE valor_linha <> qtde_final * 10;
-  IF d <> 0 THEN RAISE EXCEPTION 'D FALHOU: % valor_linha != qtde_final*cmc', d; END IF;
+  IF d IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'D FALHOU: % valor_linha != qtde_final*cmc', d; END IF;
   SELECT count(*) INTO d FROM (
     SELECT pcs.id FROM pedido_compra_sugerido pcs JOIN pedido_compra_item pci ON pci.pedido_id=pcs.id
     WHERE pcs.data_ciclo=CURRENT_DATE AND pcs.status='pendente_aprovacao'
     GROUP BY pcs.id, pcs.valor_total HAVING pcs.valor_total IS DISTINCT FROM sum(pci.valor_linha)
   ) x;
-  IF d <> 0 THEN RAISE EXCEPTION 'D FALHOU: % header(s) com valor_total != Σ valor_linha', d; END IF;
+  IF d IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'D FALHOU: % header(s) com valor_total != Σ valor_linha', d; END IF;
   RAISE NOTICE 'OK D — valor_linha = qtde_final×cmc; valor_total = Σ valor_linha';
 
   -- E. retorno da RPC DEPOIS == agregado persistido; bloqueados=0.
@@ -194,8 +194,8 @@ BEGIN
     SELECT pedidos, skus, valor, bloqueados INTO rped, rskus, rval, bloq FROM scratch_ret WHERE fase='depois';
     SELECT count(*), COALESCE(sum(num_skus),0), COALESCE(sum(valor_total),0) INTO aped, askus, aval
       FROM pedido_compra_sugerido WHERE empresa='OBEN' AND data_ciclo=CURRENT_DATE AND status='pendente_aprovacao';
-    IF bloq <> 0 THEN RAISE EXCEPTION 'E FALHOU: bloqueados=% (esperado 0)', bloq; END IF;
-    IF rped<>aped OR rskus<>askus OR rval IS DISTINCT FROM aval THEN
+    IF bloq IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'E FALHOU: bloqueados=% (esperado 0)', bloq; END IF;
+    IF rped IS DISTINCT FROM aped OR rskus IS DISTINCT FROM askus OR rval IS DISTINCT FROM aval THEN
       RAISE EXCEPTION 'E FALHOU: retorno(%,%,%) <> persistido(%,%,%)', rped,rskus,rval, aped,askus,aval; END IF;
   END;
   RAISE NOTICE 'OK E — retorno da RPC == persistido; bloqueados=0';
@@ -210,7 +210,7 @@ BEGIN
   IF fdef NOT LIKE '%minimo_forcado_manual%'          THEN RAISE EXCEPTION 'F FALHOU: perdeu mínimo forçado'; END IF;
   -- e os 3 ceil entraram (qtde_sugerida + os 2 do qtde_final)
   d := (length(fdef) - length(replace(lower(fdef),'ceil(',''))) / length('ceil(');
-  IF d <> 3 THEN RAISE EXCEPTION 'F FALHOU: esperava 3 ceil( na função, achei %', d; END IF;
+  IF d IS DISTINCT FROM 3 THEN RAISE EXCEPTION 'F FALHOU: esperava 3 ceil( na função, achei %', d; END IF;
   RAISE NOTICE 'OK F — todas as guardas preservadas + exatamente 3 ceil( na função';
 
   RAISE NOTICE '──────── TODOS OS ASSERTS SQL OK ────────';
