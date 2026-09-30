@@ -57,7 +57,7 @@ import { readFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 
 import { maiorBlocoDescartado, removerComentarios } from '@/lib/gates/limpeza-fonte';
-import { diagnosticarShell, removerComentariosShell } from '@/lib/gates/limpeza-shell';
+import { diagnosticarShell, mascaraContexto, removerComentariosShell } from '@/lib/gates/limpeza-shell';
 import { TETO_BLOCO_DESCARTADO } from './gate-sonda-autentica';
 import { arquivosExecutados } from './lib/lacos-test-hooks';
 import { PISOS as PISOS_DO_VIZINHO, RAIZES_PADRAO, alarmesDoStripper, enumerar } from './shell-variavel-colada-gate';
@@ -90,11 +90,27 @@ export const PISOS = {
   alvosFalsificacao: 20, // medido em 2026-09-29: 27 (26 slugs do laço + sonda-cron-prova.ts)
 } as const;
 
+/**
+ * Uma âncora: um TRECHO de uma linha de código, ou um BLOCO — linhas CONSECUTIVAS de código, cada uma
+ * casada INTEIRA (o juízo da medição ao veredito: nada inserido no meio, nenhum ramo trocado). As duas
+ * formas casam sobre a FORMA NORMAL (sem recuo, espaço colapsado), e `"…"`/`'…'` é o curinga de PROSA:
+ * uma string entre aspas de conteúdo qualquer, sem aspa dentro — a mensagem do diagnóstico pode mudar,
+ * o código em volta dela não.
+ */
+export type Ancora = string | readonly string[];
+
 export interface Juiz {
   /** POR QUE o vermelho que este arquivo conta é do assert — o idioma dele, em uma frase. */
   motivo: string;
-  /** Trechos de CÓDIGO (sobrevivem ao stripper) sem os quais o juiz volta a aceitar qualquer vermelho. */
-  ancoras: string[];
+  /** O código (sobrevive ao stripper) sem o qual o juiz volta a aceitar qualquer vermelho. */
+  ancoras: readonly Ancora[];
+  /**
+   * As variáveis que o veredito JULGA — o que a medição escreve: o valor (`DSAB=$(…)`) ou o arquivo que
+   * o veredito lê (`> "$log"`). TODA escrita delas no arquivo tem de estar numa linha presa INTEIRA por
+   * uma âncora: a medição fica presa, e nenhuma escrita a mais (`DSAB=720` logo depois da leitura) passa
+   * sem o gate ver. E alguma âncora tem de LÊ-las — medição presa sem veredito ligado a ela é decoração.
+   */
+  mede: readonly string[];
   /**
    * O arquivo que DESPACHA para este juiz (o slug do `test:falsificacao` que roda um `lab-*`): a
    * âncora que some daqui reprova com a regra do despachante — o juiz de verdade mora aqui.
@@ -115,6 +131,7 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
   'db/test-data-health-sync-reprocess.sh': {
     motivo:
       'SABOTAGENS nome:A<n> (R1/R2), e a rodada só conta se a sabotagem APLICOU, a suíte rodou INTEIRA e o assert declarado virou de verde para vermelho',
+    mede: [],
     ancoras: [
       `if ! grep -q 'SABOTAGEM ATIVA em ' "$log"; then`,
       `elif [ "$(executados "$log")" != "$asserts_controle" ]; then`,
@@ -126,10 +143,12 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
   'db/test-canaria-veredito.sh': {
     motivo:
       'sabota <id> <desc> <marca>: CERTO só com a marca da asserção nos 2 locales; SQL inválido e morte do shell recusados; padrão que não casa invalida',
+    mede: [],
     ancoras: [`m="$(julga_log "$log" "$marca")"`, `if tem_marca "$1" "$2"; then printf 'CERTO'; else printf "vermelho SEM a marca`, 'padrao nao casou, SQL intacto'],
   },
   'db/test-db-aplicar.sh': {
     motivo: 'confere <rc> <rc-esperado> <log> <marca>…: CERTO só com o rc EXATO e TODAS as marcas; o rc sozinho é recusado',
+    mede: [],
     ancoras: [
       'confere sem marca: o rc sozinho aceita qualquer vermelho',
       `grep -qF -- "$marca" "$log" || faltam=`,
@@ -139,6 +158,7 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
   'db/test-pedido-total-liquido-acervo.sh': {
     motivo:
       'vermelha <rótulo> <valor> <verde> <declarado>: conta só o valor que a sabotagem DECLARA; vermelha_por exige a assinatura do ramo; texto inalterado é falha',
+    mede: [],
     ancoras: [
       `elif [ "$2" = "$4" ]; then sab_verm`,
       `vermelha_por() { if [ "$2" = "$3" ]; then sab_verm`,
@@ -151,6 +171,7 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
   'db/test-transporte-nuvem.sh': {
     motivo:
       'sabota <id> <marca>: vermelho só com a marca do assert (`FALHA [T<n>]`) no log, sobre um controle `0 fail` da MESMA invocação; sabotagem que não aplica é falha',
+    mede: [],
     ancoras: [
       `grep -qE '^RESULTADO: [0-9]+ ok / 0 fail$' "$TMP/controle.log"`,
       `if grep -qF -- "$marca" "$log"; then`,
@@ -163,6 +184,7 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
   'db/test-tint-promocao-assincrona.sh': {
     motivo:
       'fals <nome> <esperado>: vermelho só com o CONJUNTO EXATO de asserts caídos (falhas_de); sabotagem no-op aborta (cmp na migration, RAISE no corpo do promote)',
+    mede: [],
     ancoras: [
       `got="$(suite "$mig" "$sab" | falhas_de)"`,
       `if [ "$got" = "$esperado" ]; then`,
@@ -172,21 +194,38 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
   },
   'db/test-authz-revoke-anon-rpc.sh': {
     motivo: 'falsificação na suíte normal: ABORTOU só com a marca da postcondição na saída do apply; outro erro vira "ERRO ALHEIO"',
+    mede: [],
     ancoras: [`elif grep -q 'ERROR:  POSTCONDICAO FALHOU' "$alvo.out"; then echo "ABORTOU"`, 'else echo "ERRO ALHEIO a postcondicao:'],
   },
+  // O juízo inteiro, da LEITURA ao `esac`: as 4 âncoras soltas de antes deixavam passar a leitura
+  // trocada por `DSAB=720`, o ramo `0|""` liberado e o registro apagado (Codex, fase 4).
   'db/test-tint-promote.sh': {
     motivo:
       'falsificação na suíte normal: a divergência EXATA que cada sabotagem declara (F1 720, F2 1928) — "qualquer ≠ 0" aceitava divergência de outra causa',
+    mede: ['DSAB', 'DSAB2'],
     ancoras: [
-      '  720)  ok "F1 — NULL-honesto furado diverge do loop em $DSAB linhas',
-      '  *)    echo "✗ F1 FALHOU: a identidade divergiu em $DSAB linhas, NÃO nas 720 que a sabotagem declara"; exit 1 ;;',
-      '  1928) ok "F2 — fator=1 diverge do loop em $DSAB2 linhas',
-      '  *)    echo "✗ F2 FALHOU: a identidade divergiu em $DSAB2 linhas, NÃO nas 1928 que a sabotagem declara"; exit 1 ;;',
+      [
+        'DSAB=$(P -tA -c "SELECT _dif_count();")',
+        'case "$DSAB" in',
+        '720) ok "…" ;;',
+        '0|"") echo "…"; exit 1 ;;',
+        '*) echo "…"; exit 1 ;;',
+        'esac',
+      ],
+      [
+        'DSAB2=$(P -tA -c "SELECT _dif_count();")',
+        'case "$DSAB2" in',
+        '1928) ok "…" ;;',
+        '0|"") echo "…"; exit 1 ;;',
+        '*) echo "…"; exit 1 ;;',
+        'esac',
+      ],
     ],
   },
   'db/test-pedido-edicao-atomica.sh': {
     motivo:
       'falsificação na suíte normal: rc≠0 só conta com a marca do que a sabotagem DECLARA vir no lugar da recusa (default: a chamada completa)',
+    mede: [],
     ancoras: [
       'no_lugar="${5:-ASSERT_NAO_LANCOU}"',
       'erro="${out#*ERROR:  }"',
@@ -203,6 +242,7 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
   'scripts/test-codex-async.sh': {
     motivo:
       'sabotar <id> <marca> <python>: sobre controle VERDE nos 2 locales (aborta sem ele), troca 1× + `bash -n`, e só conta com `FAIL [<marca>]` — o assert que a declara',
+    mede: [],
     ancoras: [
       `      elif printf '%s' "$saida_suite" | grep -qF "FAIL [$marca]"; then`,
       `        printf '  FAIL [%s]  vermelho pelo motivo ERRADO (locale %s): faltou FAIL [%s]. Veio:\\n' "$id" "$loc" "$marca"`,
@@ -212,6 +252,7 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
   },
   'scripts/test-codex-async-nuvem.sh': {
     motivo: 'o molde do codex-async: troca LITERAL que casa exatamente 1×, `bash -n`, controle verde nos 2 locales, e `FAIL [<marca>]` do assert declarado',
+    mede: [],
     ancoras: [
       '      elif grep -qF "FAIL [$marca]" <<< "$saida_suite"; then',
       'if s.count(de)!=1: sys.exit(1)',
@@ -221,6 +262,7 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
   'scripts/test-gate-senha-bootstrap.sh': {
     motivo:
       'sabota a ENTRADA (planta o defeito na raiz-fixture) com controle antes de cada uma: rc EXATO + o marcador do ramo + a senha falsa ausente; sabotagem que não muda a raiz aborta',
+    mede: [],
     ancoras: [
       '  if [ "$rc" -ne "$rc_esp" ]; then falhou "$desc — esperava rc=$rc_esp, veio rc=$rc"; return; fi',
       '  if ! grep -q "$marca" "$TMP/saida"; then falhou "$desc — rc certo, mas sem o marcador $marca"; return; fi',
@@ -230,6 +272,7 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
   },
   'scripts/test-codex-prompt-paginacao.sh': {
     motivo: 'o VALOR devolvido pela definição sabotada: G1/G2 = o SHA do citador, G3/G4 vazios, e exatamente 2 vermelhos — o defeito exato, não um erro que esvazia a resposta',
+    mede: [],
     ancoras: [
       `[ "$got_1856" = "$sha_citador" ]      || faltam="$faltam G1(veio '$got_1856', esperado o citador '$sha_citador')"`,
       `[ "$got_1889" = "$sha_citador_1889" ] || faltam="$faltam G2(veio '$got_1889', esperado o citador '$sha_citador_1889')"`,
@@ -238,6 +281,7 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
   },
   'scripts/test-guard-noop-sabotagem.sh': {
     motivo: 'rc 1 E a LINHA exata (`grep -qxF`) da resposta do guard frágil com o alvo presente; `bash -n` antes — o bash cita a linha do erro de sintaxe',
+    mede: [],
     ancoras: [
       "  marca_exata='     com o alvo PRESENTE o guard respondeu:   [XX ] sabotagem NO-OP (alvo sumiu)'",
       '  LC_ALL=C grep -qxF -- "$marca_exata" <<<"$veredito" && rc_v="$rc_v+marca"',
@@ -247,6 +291,7 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
   },
   'scripts/test-eval-via-morta.sh': {
     motivo: 'S1: exit EXATO 1 + o baseline do caso-alvo vermelho + o recibo do laço completo (12); S2: nenhuma pegada, com o recibo — erro alheio e laço abortado são recusados',
+    mede: [],
     ancoras: [
       `  1:*'o caso-alvo "velho_com_controle"'*'cegueira(s) em 12 sabotagem(ns)'*)`,
       '  *) ruim "S1 saiu do verde, mas NÃO pelo declarado (exit 1 + o baseline do caso-alvo vermelho): saiu $r_rc — erro alheio não é dente"',
@@ -255,6 +300,7 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
   },
   'scripts/test-gates-frescura.sh': {
     motivo: 'sabota a ENTRADA (a raiz-fixture) com controle remontado antes de cada uma: rc EXATO + o marcador do ramo (ORFAO, CENSO-OBSOLETO, …)',
+    mede: [],
     ancoras: [
       '  if [ "$rc" -ne "$rc_esp" ]; then',
       `  if ! printf '%s' "$saida" | grep -q "$marca"; then`,
@@ -263,6 +309,7 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
   },
   'scripts/test-vigia-gstack.sh': {
     motivo: 'controle verde por locale (aborta sem ele); cópia que difere; exit EXATO 1 + `FAIL [<caso>]` do caso-alvo',
+    mede: [],
     ancoras: [
       `    if [ "$rc" -eq 1 ] && printf '%s\\n' "$saida" | grep -F "FAIL [$alvo]" >/dev/null; then`,
       '    if cmp -s "$HOOK" "$copia"; then',
@@ -271,6 +318,7 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
   },
   'scripts/test-vigia-nuvem.sh': {
     motivo: 'o molde do vigia-gstack: controle verde por locale, sabotagem que muda o arquivo, exit EXATO 1 + `FAIL [<caso>]`',
+    mede: [],
     ancoras: [
       `    if [ "$rc" -eq 1 ] && printf '%s\\n' "$saida" | grep -F "FAIL [$2]" >/dev/null; then`,
       '    if ! preparar "$1-$LOC" "$4" "$5"; then',
@@ -282,6 +330,7 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
   'scripts/test-gstack-auto-upgrade.sh': {
     motivo:
       'o molde do vigia-gstack: controle verde por locale (aborta sem ele), cópia que difere, e a rodada RECORTADA ao caso-alvo (SO_CASO) tem de sair exit EXATO 1 com `FAIL [<caso>]`',
+    mede: [],
     ancoras: [
       `    if [ "$rc" -eq 1 ] && printf '%s\\n' "$saida" | grep -F "FAIL [$caso]" >/dev/null; then`,
       '    saida="$(LC_ALL="$LOC" SO_CASO="$caso" GSTACK_AUTO_UPGRADE_SCRIPT="$copia" bash "$0" 2>&1)"; rc=$?',
@@ -291,6 +340,7 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
   },
   'scripts/test-instrucoes-carregadas.sh': {
     motivo: 'o molde do vigia-gstack: controle verde por locale, cópia que difere, exit EXATO 1 + `FAIL [<caso>]`',
+    mede: [],
     ancoras: [
       `    if [ "$rc" -eq 1 ] && printf '%s\\n' "$saida" | grep -F "FAIL [$alvo]" >/dev/null; then`,
       '    if cmp -s "$HOOK" "$copia"; then',
@@ -299,6 +349,7 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
   },
   'scripts/test-pr-watch.sh': {
     motivo: 'a marca carrega o ID do caso E o valor errado exato (`FAIL [nao-obrig-mergeia] exit: want 0, got 4`); sed inválido, no-op e sintaxe quebrada são sabotagem vazia',
+    mede: [],
     ancoras: [
       '      elif ! grep -qF -- "$marca" <<<"$saida_suite"; then',
       '    if ! bash -n "$copia" 2>/dev/null; then',
@@ -307,6 +358,7 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
   },
   'scripts/test-claude-mem-saude.sh': {
     motivo: 'controle das duas cópias íntegras; sed inválido/no-op/sintaxe recusados; `FALHA <caso>:` do caso declarado em cada locale',
+    mede: [],
     ancoras: [
       '      elif ! grep -qF -- "FALHA ${SCASO[i]}:" "$r"; then',
       "      if grep -qx 'RC=0' \"$r\"; then",
@@ -316,6 +368,7 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
   'scripts/test-setup-contrato.sh': {
     motivo:
       'marca do ramo (erro do motor, nome do teste) casada só nas linhas de FALHA: fora das `✓` e do code-frame, onde o vitest cita teste VERDE — até 2026-09-29 casava na saída inteira',
+    mede: [],
     ancoras: [
       `linhas_de_falha() { sem_ansi "$1" | LC_ALL=C grep -avE '^[[:space:]]*(✓|[0-9]*[[:space:]]*\\|)'; }`,
       '  falha_txt="$(linhas_de_falha "$saida")"',
@@ -326,6 +379,7 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
   'scripts/test-medir-footprint.sh': {
     motivo:
       'medição incompleta (rc, campo não numérico, 0 amostras) é ruim; o vermelho que conta é o SENTIDO declarado — SAB1 cai, SAB2/SAB4 sobem, SAB3 abaixo do mínimo; até 2026-09-29 valia "fora da janela" para qualquer lado',
+    mede: [],
     ancoras: [
       'elif [ "$(( S1_PESADO - S1_LEVE ))" -gt "$JANELA_MAX" ]; then',
       'elif [ "$(( S2_DIV - S2_LEVE ))" -lt "$JANELA_MIN" ]; then',
@@ -335,6 +389,7 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
   },
   'scripts/test-claude-mem-reanimar.sh': {
     motivo: 'despacha para lab-claude-mem-reanimar/{falsifica.sh, prova_com_tty.sh --falsificar} e exige rc 0 + a LINHA exata do marcador verde de cada um',
+    mede: [],
     ancoras: [
       '  roda falsifica.sh FALSIFICACAO-VERDE || exit 1',
       '  roda prova_com_tty.sh FALSIFICACAO-COM-TTY-VERDE --falsificar',
@@ -343,6 +398,7 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
   },
   'scripts/lab-claude-mem-reanimar/falsifica.sh': {
     motivo: 'RC≠0 + LAB-VERMELHO (o lab TERMINOU) + o texto da FALHA declarada numa linha `  FALHA `, por locale',
+    mede: [],
     ancoras: [
       "    if ! grep -qx 'RC=[1-9][0-9]*' \"$r\"; then",
       "    elif ! grep -qx 'LAB-VERMELHO' \"$r\"; then",
@@ -352,6 +408,7 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
   },
   'scripts/lab-claude-mem-reanimar/prova_com_tty.sh': {
     motivo: 'o python sabotado tem de parsear; PROVA-COM-TTY-VERMELHA (a prova TERMINOU) + a FALHA declarada, com os rc exatos no texto',
+    mede: [],
     ancoras: [
       "        elif ! grep -qx 'PROVA-COM-TTY-VERMELHA' \"$r\"; then",
       `        elif ! grep -F '  FALHA ' "$r" | grep -qF -- "\${ESPERADO[i]}"; then`,
@@ -360,10 +417,12 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
   },
   'scripts/test-retry-pgdg.sh': {
     motivo: 'despacha para lab-retry-pgdg/falsifica.sh e exige rc 0 + a LINHA exata do marcador verde',
+    mede: [],
     ancoras: ['  roda falsifica.sh FALSIFICACAO-VERDE', '  if [ "$rc" -eq 0 ] && grep -qx "$2" "$saida"; then'],
   },
   'scripts/lab-retry-pgdg/falsifica.sh': {
     motivo: 'LAB-VERMELHO + o controle C0 do lab VERDE (quebrar o lab não é quebrar a guarda) + CADA caso declarado vermelho, por locale',
+    mede: [],
     ancoras: [
       '      *LAB-VERMELHO*) ;;',
       '      *"✅ C0 controle — sem falha, step verde"*) ;;',
@@ -375,6 +434,7 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
   'scripts/sonda-cron-prova.ts': {
     motivo:
       'cada sintético DECLARA a classe exata (os seis defeituosos: FALHA) e a FALHA não pode vir do handler que LANÇA (status -1); até 2026-09-29 valia "≠ PASSA", e INVERIFICAVEL/NAO_COMPILA contavam como defeito pego',
+    mede: [],
     ancoras: [
       "        const esperado: Classe = classeExata.get(nome) ?? (devemPassar.has(nome) ? 'PASSA' : 'FALHA');",
       "        const lancou = esperado === 'FALHA' && [v.a, ...(v.b ?? [])].some((x) => x?.status === -1);",
@@ -387,6 +447,7 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
   'scripts/test-lovable-revert-scan.sh': {
     motivo:
       'o desfecho declarado é SILÊNCIO julgado: stdout mudo E exit 0 E stderr vazio como o do controle — o scan que MORRE também sai mudo; sed inválido, cópia vazia, no-op e sintaxe recusados',
+    mede: [],
     ancoras: [
       '  if [ -n "$out" ]; then',
       '  elif [ "$rc" -ne 0 ] || [ -s "$base/copia.err" ]; then',
@@ -401,6 +462,7 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
   // camada fica CEGA sem ninguém acusar.
   'scripts/test-onde-parei.sh': {
     motivo: MOTIVO_CAMADA4,
+    mede: [],
     ancoras: [
       '    if SONDA_OVERRIDE="$emb" bash "$0" >"$log" 2>&1; then',
       '    elif novas="$(camada4 "$sab" "$log" "$ctl" "$copia" "$controle")"; [ -n "$novas" ]; then',
@@ -408,6 +470,7 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
   },
   'scripts/test-orfaos-custosos.sh': {
     motivo: MOTIVO_CAMADA4,
+    mede: [],
     ancoras: [
       '      LC_ALL="$loc" ORFAOS_ALVO="$emb_alvo" bash "$0" >"$log.cru" 2>&1; rc=$?',
       '      elif novas="$(camada4 "$sab" "$log" "$ctl" "$copia" "$controle")"; [ -n "$novas" ]; then',
@@ -415,6 +478,7 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
   },
   'scripts/test-read-contexto-nudge.sh': {
     motivo: MOTIVO_CAMADA4,
+    mede: [],
     ancoras: [
       '      LC_ALL="$loc" HOOK_SOB_TESTE="$emb_alvo" bash "$0" >"$log.cru" 2>&1; rc=$?',
       '      elif novas="$(camada4 "$sab" "$log" "$ctl" "$copia" "$controle")"; [ -n "$novas" ]; then',
@@ -422,6 +486,7 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
   },
   'scripts/test-ocupacao-por-arquivo.sh': {
     motivo: `${MOTIVO_CAMADA4}; o mktemp_so_bsd DECLARA o erro do mktemp GNU — é o vermelho dele`,
+    mede: [],
     ancoras: [
       '    OCUPACAO_OVERRIDE="$emb_alvo" bash "$0" >"$log.cru" 2>&1; rc=$?',
       '    elif novas="$(camada4 "$sab" "$log" "$ctl" "$copia" "$controle")"; [ -n "$novas" ]; then',
@@ -430,6 +495,7 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
   },
   'scripts/test-ocupacao-por-comando.sh': {
     motivo: `${MOTIVO_CAMADA4}; o stderr aqui é o RELATÓRIO, e as 7 sabotagens que o mudam DECLARAM a família de linha`,
+    mede: [],
     ancoras: [
       '    OCUPACAO_OVERRIDE="$emb_alvo" bash "$0" >"$log.cru" 2>&1; rc=$?',
       '    elif novas="$(camada4 "$sab" "$log" "$ctl" "$copia" "$controle")"; [ -n "$novas" ]; then',
@@ -437,6 +503,7 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
   },
   'scripts/test-fecho-edges-pendentes.sh': {
     motivo: MOTIVO_CAMADA4,
+    mede: [],
     ancoras: [
       '      ( export LC_ALL="$loc"; ALVO="$emb_alvo"; fail=0; suite; [ "$fail" -eq 0 ] ) > "$log.cru" 2>&1; rc=$?',
       '      elif novas="$(camada4 "$sab" "$log" "$ctl" "$copia" "$controle")"; [ -n "$novas" ]; then',
@@ -445,6 +512,7 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
   'scripts/test-eval-diagnostico-cegueira.sh': {
     motivo:
       'o idioma SABOTAGENS com as quatro camadas; o bloco é carregado com `.` (sem embrulho possível), então a 4ª julga tudo o que a rodada imprimiu FORA dos asserts, por linha, contra o controle',
+    mede: [],
     ancoras: [
       '  ( rodar_asserts "$mut" ) > "$log" 2>&1; rc_sab=$?; fora_dos_asserts "$log"',
       '  elif novas="$(camada4 "$sab" "$log" "$ctl" "$mut" "$BLOCO")"; [ -n "$novas" ]; then',
@@ -453,6 +521,7 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
   'scripts/test-idioma-errexit-leitura.sh': {
     motivo:
       'os FAIL declarados e SÓ eles, com a camada 2 (a rodada chega ao recibo com o nº de asserts do controle) e a 4 (nenhuma linha de stderr que o controle não traz) — até 2026-09-29, só os FAIL',
+    mede: [],
     ancoras: [
       'bash "$TMP/s.sh" > "$TMP/s.log" 2> "$TMP/s.log.stderr"',
       'if [ "$(recibo "$TMP/s.log")" != "$(recibo "$TMP/c.log")" ]; then',
@@ -462,6 +531,7 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
   'scripts/test-bash-contexto-nudge.sh': {
     motivo:
       'limiar: exit 0 + exatamente 1 JSON + o nudge no additionalContext, E o stderr INTEIRO do hook sabotado sem linha que o hook REAL não traz na mesma entrada (até 2026-09-29, /dev/null); corte: o idioma com a camada 4 por linha',
+    mede: [],
     ancoras: [
       `    saida_sab="$(printf '%s' "$(entrada 500 'ls')" | bash "$sabotado" 2>"$sabotado.err")"; rc_sab=$?`,
       '    novas="$(linhas_novas "$sabotado.err" "$sabotado.ctl.err" "$sabotado" "$HOOK")"',
@@ -472,6 +542,54 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
     ],
   },
 };
+
+/**
+ * O fecho do JUIZES (`julgarRegistro`): exatamente estes arquivos, em ordem alfabética. Juiz novo entra
+ * aqui junto com a entrada; juiz que sai, sai daqui TAMBÉM — com o porquê no PR. Sem isto, apagar a
+ * entrada de um juiz voluntário (o da suíte normal, fora de R3/R4) deixava o gate verde.
+ */
+export const REGISTRO_FECHADO: readonly string[] = [
+  'db/test-authz-revoke-anon-rpc.sh',
+  'db/test-canaria-veredito.sh',
+  'db/test-data-health-sync-reprocess.sh',
+  'db/test-db-aplicar.sh',
+  'db/test-pedido-edicao-atomica.sh',
+  'db/test-pedido-total-liquido-acervo.sh',
+  'db/test-tint-promocao-assincrona.sh',
+  'db/test-tint-promote.sh',
+  'db/test-transporte-nuvem.sh',
+  'scripts/lab-claude-mem-reanimar/falsifica.sh',
+  'scripts/lab-claude-mem-reanimar/prova_com_tty.sh',
+  'scripts/lab-retry-pgdg/falsifica.sh',
+  'scripts/sonda-cron-prova.ts',
+  'scripts/test-bash-contexto-nudge.sh',
+  'scripts/test-claude-mem-reanimar.sh',
+  'scripts/test-claude-mem-saude.sh',
+  'scripts/test-codex-async-nuvem.sh',
+  'scripts/test-codex-async.sh',
+  'scripts/test-codex-prompt-paginacao.sh',
+  'scripts/test-eval-diagnostico-cegueira.sh',
+  'scripts/test-eval-via-morta.sh',
+  'scripts/test-fecho-edges-pendentes.sh',
+  'scripts/test-gate-senha-bootstrap.sh',
+  'scripts/test-gates-frescura.sh',
+  'scripts/test-gstack-auto-upgrade.sh',
+  'scripts/test-guard-noop-sabotagem.sh',
+  'scripts/test-idioma-errexit-leitura.sh',
+  'scripts/test-instrucoes-carregadas.sh',
+  'scripts/test-lovable-revert-scan.sh',
+  'scripts/test-medir-footprint.sh',
+  'scripts/test-ocupacao-por-arquivo.sh',
+  'scripts/test-ocupacao-por-comando.sh',
+  'scripts/test-onde-parei.sh',
+  'scripts/test-orfaos-custosos.sh',
+  'scripts/test-pr-watch.sh',
+  'scripts/test-read-contexto-nudge.sh',
+  'scripts/test-retry-pgdg.sh',
+  'scripts/test-setup-contrato.sh',
+  'scripts/test-vigia-gstack.sh',
+  'scripts/test-vigia-nuvem.sh',
+];
 
 export type Regra = 'R1' | 'R2' | 'R3' | 'R4';
 
@@ -644,9 +762,146 @@ export function julgarNucleo(
   return [...v, ...julgarAncoras(limpos, juizes, regraDaAncora)];
 }
 
+/** Forma normal de uma linha de código: sem recuo nem espaço no fim, espaço interno colapsado. */
+const normalizarLinha = (linha: string) => linha.trim().replace(/[ \t]+/g, ' ');
+const escaparRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** A âncora (já normalizada) como regex: tudo literal, menos o curinga de prosa `"…"`/`'…'`. */
+const padraoDe = (trecho: string) =>
+  normalizarLinha(trecho)
+    .split(/("…"|'…')/)
+    .map((p) => (p === '"…"' ? '"[^"]*"' : p === "'…'" ? "'[^']*'" : escaparRegex(p)))
+    .join('');
+
+interface LinhaDeCodigo {
+  /** 1-based na fonte (o stripper preserva o número de linhas). */
+  n: number;
+  texto: string;
+}
+/** As linhas de CÓDIGO, normalizadas — a vazia (e o comentário, que o stripper esvaziou) não conta. */
+const linhasDeCodigo = (limpo: string): LinhaDeCodigo[] =>
+  limpo
+    .split('\n')
+    .map((l, i) => ({ n: i + 1, texto: normalizarLinha(l) }))
+    .filter((l) => l.texto !== '');
+
+export interface Achado {
+  ini: number;
+  fim: number;
+  /** A âncora casa a(s) linha(s) INTEIRA(s) — só assim ela prende a escrita que mora ali. */
+  inteira: boolean;
+}
+
+/** Onde a âncora casa no código limpo (vazio = sumiu). Bloco: linhas CONSECUTIVAS de código, inteiras. */
+export function acharAncora(limpo: string, ancora: Ancora): Achado[] {
+  const codigo = linhasDeCodigo(limpo);
+  if (typeof ancora === 'string') {
+    const trecho = new RegExp(padraoDe(ancora));
+    const inteira = new RegExp(`^${padraoDe(ancora)}$`);
+    return codigo.filter((l) => trecho.test(l.texto)).map((l) => ({ ini: l.n, fim: l.n, inteira: inteira.test(l.texto) }));
+  }
+  const linhas = ancora.map((l) => new RegExp(`^${padraoDe(l)}$`));
+  const achados: Achado[] = [];
+  for (let i = 0; i + linhas.length <= codigo.length; i++) {
+    if (linhas.every((re, k) => re.test(codigo[i + k].texto))) {
+      achados.push({ ini: codigo[i].n, fim: codigo[i + linhas.length - 1].n, inteira: true });
+    }
+  }
+  return achados;
+}
+
+/** Por que o bloco não casa: o maior prefixo dele que casa, e a linha que não seguiu. */
+function diagnosticoDoBloco(limpo: string, bloco: readonly string[]): string {
+  const codigo = linhasDeCodigo(limpo);
+  const linhas = bloco.map((l) => new RegExp(`^${padraoDe(l)}$`));
+  let melhor = { k: 0, i: -1 };
+  for (let i = 0; i < codigo.length; i++) {
+    let k = 0;
+    while (k < linhas.length && i + k < codigo.length && linhas[k].test(codigo[i + k].texto)) k++;
+    if (k > melhor.k) melhor = { k, i };
+  }
+  if (melhor.k === 0) return 'a 1ª linha não está no código';
+  const ultima = codigo[melhor.i + melhor.k - 1];
+  const seguinte = codigo[melhor.i + melhor.k];
+  return `casa até «${bloco[melhor.k - 1]}» (linha ${ultima.n}), e ${
+    seguinte ? `a linha ${seguinte.n} não é` : 'o arquivo acaba antes de'
+  } «${bloco[melhor.k]}»`;
+}
+
+type Forma = { re: RegExp; emComando: boolean };
+
+/** `"$V"`, `$V`, `"${V}"` ou `${V}` como PALAVRA inteira — `"$V.cru"` é outro arquivo. */
+const alvoDe = (n: string) => String.raw`"?\$(?:${n}|\{${n}\})"?(?=[\s;&|)<>]|$)`;
+
 /**
- * Todo juiz registrado foi LIDO e tem TODAS as âncoras no código limpo. A regra que reprova é a do
- * domínio que obriga o registro — R4 para um alvo do `test:falsificacao`, R3 para o resto.
+ * As formas de ESCREVER uma variável de shell. O grupo 1 é o ponto que a máscara do stripper julga
+ * (1 = código): `echo "D=720"` é prosa, `x="$(D=1)"` é código. Fora daqui (resíduo documentado):
+ * `eval`, nameref (`declare -n`), `printf -v "$1"` indireto, `source` de arquivo que a atribui.
+ */
+function formasShell(n: string): Forma[] {
+  const fim = String.raw`(?!\w)`;
+  const antesDeOp = String.raw`(?:[-+*/%&|^]|<<|>>)?=(?!=)`;
+  return [
+    // V=… · V+=… · V[i]=… — começo de palavra, inclusive depois de local/export/declare/readonly
+    { re: new RegExp(String.raw`(?<=^|[\s;&|(){}\x60!])(${n})(?:\[[^\]\n]*\])?\+?=`, 'dgm'), emComando: true },
+    { re: new RegExp(String.raw`\b(?:read|mapfile|readarray|unset)\b[^\n;&|]*?[ \t](${n})${fim}`, 'dg'), emComando: true },
+    { re: new RegExp(String.raw`\bprintf[ \t]+-v[ \t]*(${n})${fim}`, 'dg'), emComando: true },
+    { re: new RegExp(String.raw`\bfor[ \t]+(${n})[ \t]+in\b`, 'dg'), emComando: true },
+    // `${V:=…}` atribui também dentro de "…"
+    { re: new RegExp(String.raw`\$\{(${n}):?=`, 'dg'), emComando: false },
+    { re: new RegExp(String.raw`\blet\b[^\n;&|]*?(?<![\w$])(${n})[ \t]*${antesDeOp}`, 'dg'), emComando: true },
+    { re: new RegExp(String.raw`\(\([^()\n]*?(?<![\w$])(${n})[ \t]*(?:${antesDeOp}|\+\+|--)`, 'dg'), emComando: true },
+    { re: new RegExp(String.raw`\(\([^()\n]*?(?:\+\+|--)(${n})${fim}`, 'dg'), emComando: true },
+    // o CONTEÚDO do arquivo que ela nomeia: > "$V" · >> · 2> · &> · | tee [-a] "$V"
+    { re: new RegExp(String.raw`(?:^|[^<>&\d])((?:\d|&)?>>?)[ \t]*${alvoDe(n)}`, 'dgm'), emComando: true },
+    { re: new RegExp(String.raw`\b(tee)\b(?:[ \t]+-a)?[ \t]+${alvoDe(n)}`, 'dg'), emComando: true },
+  ];
+}
+
+const OP_TS = String.raw`(?:[-+*/%&|^]|\*\*|<<|>>>?|\?\?|\|\||&&)?=(?![=>])`;
+const declaracoesTs = (n: string) => new RegExp(String.raw`\b(?:const|let|var)[ \t]+(${n})(?![\w$])`, 'dg');
+
+/** TS: declaração, reatribuição e `++`/`--` (o fonte já sem comentário; string conta — lado fail-closed). */
+const formasTs = (n: string): Forma[] => [
+  { re: declaracoesTs(n), emComando: false },
+  { re: new RegExp(String.raw`(?<![\w$.])(${n})[ \t]*${OP_TS}`, 'dg'), emComando: false },
+  { re: new RegExp(String.raw`(?:\+\+|--)(${n})(?![\w$])`, 'dg'), emComando: false },
+  { re: new RegExp(String.raw`(?<![\w$.])(${n})(?:\+\+|--)`, 'dg'), emComando: false },
+];
+
+function linhasDasFormas(limpo: string, formas: Forma[], mascara: Uint8Array | null): number[] {
+  const linhas = new Set<number>();
+  for (const { re, emComando } of formas) {
+    for (const m of limpo.matchAll(re)) {
+      const pos = m.indices?.[1]?.[0] ?? m.index ?? 0;
+      if (emComando && mascara !== null && mascara[pos] !== 1) continue;
+      linhas.add(linhaDe(limpo, pos));
+    }
+  }
+  return [...linhas].sort((a, b) => a - b);
+}
+
+/** As linhas onde o código ESCREVE a variável (valor, ou o conteúdo do arquivo que ela nomeia). */
+export function escritasDe(limpo: string, variavel: string, ts: boolean): number[] {
+  const n = escaparRegex(variavel);
+  return ts ? linhasDasFormas(limpo, formasTs(n), null) : linhasDasFormas(limpo, formasShell(n), mascaraContexto(limpo));
+}
+
+/** A âncora LÊ a variável? Shell: `$V`/`${V…`. TS: o identificador fora de posição de escrita. */
+function leVariavel(ancora: Ancora, variavel: string, ts: boolean): boolean {
+  const n = escaparRegex(variavel);
+  const le = ts
+    ? new RegExp(String.raw`(?<![\w$.])(?<!\b(?:const|let|var)[ \t]+)${n}(?![\w$])(?![ \t]*${OP_TS})`)
+    : new RegExp(String.raw`\$\{?${n}(?!\w)`);
+  return (typeof ancora === 'string' ? [ancora] : ancora).some((l) => le.test(l));
+}
+
+const rotuloDoBloco = (b: readonly string[]) => `${b.length} linhas, de «${b[0]}» a «${b[b.length - 1]}»`;
+
+/**
+ * Todo juiz registrado foi LIDO, tem TODAS as âncoras no código limpo e a LIGAÇÃO com a medição: cada
+ * variável julgada só é escrita em linhas presas inteiras, e alguma âncora a lê. A regra que reprova é
+ * a do domínio que obriga o registro — R4 para um alvo do `test:falsificacao`, R3 para o resto.
  */
 export function julgarAncoras(
   limpos: ReadonlyMap<string, string>,
@@ -657,14 +912,95 @@ export function julgarAncoras(
   for (const [arquivo, juiz] of Object.entries(juizes)) {
     const regra = regraDe(arquivo);
     const limpo = limpos.get(arquivo);
+    const acusa = (linha: number, detalhe: string) => v.push({ regra, arquivo, linha, detalhe });
     if (limpo === undefined) {
-      v.push({ regra, arquivo, linha: 1, detalhe: 'juiz registrado para arquivo que o fiscal não leu (renomeado? removido?)' });
+      acusa(1, 'juiz registrado para arquivo que o fiscal não leu (renomeado? removido?)');
       continue;
     }
+    /** As linhas presas INTEIRAS por alguma âncora (só elas podem escrever a variável julgada), e as de cada âncora. */
+    const presas = new Set<number>();
+    const ocupa = new Map<Ancora, number[]>();
     for (const ancora of juiz.ancoras) {
-      if (!limpo.includes(ancora)) {
-        v.push({ regra, arquivo, linha: 1, detalhe: `âncora do juiz sumiu do código: ${ancora} — (${juiz.motivo})` });
+      const achados = acharAncora(limpo, ancora);
+      if (achados.length === 0) {
+        acusa(
+          1,
+          typeof ancora === 'string'
+            ? `âncora do juiz sumiu do código: ${ancora} — (${juiz.motivo})`
+            : `bloco do juízo rompeu (${rotuloDoBloco(ancora)}): ${diagnosticoDoBloco(limpo, ancora)} — (${juiz.motivo})`,
+        );
       }
+      ocupa.set(ancora, achados.flatMap(({ ini, fim }) => Array.from({ length: fim - ini + 1 }, (_, i) => ini + i)));
+      for (const { ini, fim, inteira } of achados) if (inteira) for (let l = ini; l <= fim; l++) presas.add(l);
+    }
+    const ts = ehTypeScript(arquivo);
+    const texto = limpo.split('\n');
+    for (const nome of juiz.mede) {
+      const escritas = escritasDe(limpo, nome, ts);
+      if (escritas.length === 0) {
+        acusa(1, `a variável julgada ${nome} não é ESCRITA em lugar nenhum do código — a medição sumiu, ou mudou de nome (${juiz.motivo})`);
+        continue;
+      }
+      const leitoras = juiz.ancoras.filter((a) => leVariavel(a, nome, ts));
+      if (leitoras.length === 0) {
+        acusa(1, `nenhuma âncora LÊ a variável julgada ${nome}: a medição presa não está ligada a veredito nenhum (${juiz.motivo})`);
+      }
+      const medicoes = escritas.filter((l) => presas.has(l));
+      if (medicoes.length === 0) {
+        acusa(
+          escritas[0],
+          `a medição da variável julgada ${nome} não está presa: nenhuma escrita dela (${escritas.length === 1 ? 'linha' : 'linhas'} ${escritas.join(', ')}) está numa linha presa INTEIRA por uma âncora (${juiz.motivo})`,
+        );
+        continue;
+      }
+      // O JUÍZO vai da 1ª medição presa à última linha de âncora que lê a variável: ali dentro, uma
+      // escrita a mais troca o que o veredito julga. Fora dele, não (a medição sobrescreve antes; o
+      // veredito já leu depois) — e é por isso que o `rc=$?` da suíte normal não precisa de âncora.
+      const lidas = leitoras.flatMap((a) => ocupa.get(a) ?? []);
+      const ini = Math.min(...medicoes, ...lidas);
+      const fim = Math.max(...medicoes, ...lidas);
+      for (const l of escritas) {
+        if (l < ini || l > fim || presas.has(l)) continue;
+        acusa(
+          l,
+          `a variável julgada ${nome} é ESCRITA na linha ${l}, dentro do juízo (linhas ${ini}–${fim}), fora das âncoras — o veredito julgaria ela, não a medição: «${normalizarLinha(texto[l - 1] ?? '')}» (${juiz.motivo})`,
+        );
+      }
+    }
+  }
+  return v;
+}
+
+/**
+ * O REGISTRO FECHADO: o JUIZES tem exatamente estes arquivos. Metade dos juízes é VOLUNTÁRIA (falsifica
+ * dentro da suíte normal, fora de R3/R4) — sem o fecho, apagar a entrada inteira deixava o gate verde e o
+ * juiz regredia sem ninguém ver (Codex, 2026-09-27). Remover um juiz passa a ser DUAS mudanças no diff.
+ */
+export function julgarRegistro(
+  juizes: Readonly<Record<string, Juiz>>,
+  registro: readonly string[],
+  regraDe: (arquivo: string) => Regra = () => 'R3',
+): Violacao[] {
+  const fechado = new Set(registro);
+  const v: Violacao[] = [];
+  for (const arquivo of registro) {
+    if (!(arquivo in juizes)) {
+      v.push({
+        regra: regraDe(arquivo),
+        arquivo,
+        linha: 1,
+        detalhe: `juiz do REGISTRO FECHADO sumiu do JUIZES — encolher o registro é decisão EXPLÍCITA: tire-o também do REGISTRO_FECHADO, com o porquê no PR`,
+      });
+    }
+  }
+  for (const arquivo of Object.keys(juizes)) {
+    if (!fechado.has(arquivo)) {
+      v.push({
+        regra: regraDe(arquivo),
+        arquivo,
+        linha: 1,
+        detalhe: `juiz fora do REGISTRO FECHADO — acrescente-o ao REGISTRO_FECHADO (é o que torna a remoção dele, depois, uma decisão explícita)`,
+      });
     }
   }
   return v;
@@ -752,6 +1088,8 @@ export function analisar(
   manifesto: string | null = null,
   juizes: Readonly<Record<string, Juiz>> = JUIZES,
   pacote: string | null = null,
+  /** O fecho do registro (o corpo do repo passa `REGISTRO_FECHADO`); `null` = fixture, sem fecho. */
+  registro: readonly string[] | null = null,
 ): Analise {
   const r: Analise = {
     caminhos: [],
@@ -799,6 +1137,7 @@ export function analisar(
   } else if (pacote !== null) {
     r.violacoes.push(...julgarAncoras(limpos, juizes, regraDe));
   }
+  if (registro !== null) r.violacoes.push(...julgarRegistro(juizes, registro, regraDe));
   if (falsificacao !== null) {
     r.alvosFalsificacao = falsificacao.alvos.length;
     r.violacoes.push(...julgarFalsificacao(falsificacao, limpos, juizes, idiomaLimpo));
@@ -902,7 +1241,8 @@ function main(): number {
           manifesto: null,
           pacote: null,
         };
-  const { codigo, linhas } = veredito(analisar(arquivos, manifesto, JUIZES, pacote), argv.length === 0);
+  const doRepo = argv.length === 0;
+  const { codigo, linhas } = veredito(analisar(arquivos, manifesto, JUIZES, pacote, doRepo ? REGISTRO_FECHADO : null), doRepo);
   if (codigo === 0) console.log(linhas.join('\n'));
   else console.error(linhas.join('\n'));
   return codigo;
