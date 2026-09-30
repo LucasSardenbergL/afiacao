@@ -1,5 +1,6 @@
 // Gate do DIA da sessão lido NU (classe ii do fuso da sessão) — o módulo explica a classe.
 // Diário: docs/historico/hoje-da-sessao-nu-funcoes-e-skills.md
+import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -10,10 +11,12 @@ import {
   PISOS,
   analisar,
   confrontar,
+  corposVivosDe,
   detectarNoSql,
   lerRepo,
   veredito,
 } from './relogio-nu-da-sessao-gate';
+import { removerComentariosSql } from './lib/sql-comentarios';
 
 const RAIZ = resolve(fileURLToPath(import.meta.url), '../..');
 const REPO = lerRepo(RAIZ);
@@ -23,6 +26,8 @@ const FINANCEIRO = '.claude/skills/bi-colacor/references/queries-financeiro.md';
 const VENDAS = '.claude/skills/bi-colacor/references/queries-vendas.md';
 const FARMER = '.claude/skills/farmer-industrial/references/queries-sql.md';
 const AGING = '.claude/skills/cfo-colacor/assets/sql/03-inadimplencia-aging.sql';
+const FIX = 'supabase/migrations/20260929001651_hoje_sp_sessao_utc_sete_funcoes.sql';
+const FIXTURE = 'db/fixtures/hoje-sp-sete-funcoes-predecessoras-prod-20260929.sql';
 const arq = (caminho: string): Arquivo => {
   const a = REPO.arquivos.find((x) => x.caminho === caminho);
   if (!a) throw new Error(`não lido: ${caminho}`);
@@ -55,6 +60,19 @@ describe('calibração — o detector pega o sítio pré-fix e solta a correçã
     expect(detectarNoSql(PICKING, arq(PICKING).fonte).map((s) => `${s.linha} ${s.trecho}`)).toEqual([
       '147 so.created_at::date', '152 current_date', '152 so.created_at::date', '154 so.created_at::date',
     ]);   // …mas a assinatura o reconhece: é o corpo VIVO que a baseline vigia
+  });
+
+  it('os 7 predecessores da prod (fixture) carregam os 12 sítios que a 20260929001651 troca — e só eles', () => {
+    const fonte = readFileSync(resolve(RAIZ, FIXTURE), 'utf8');
+    const conta = (t: string) => detectarNoSql(FIXTURE, fonte).filter((s) => s.trecho === t).length;
+    expect(detectarNoSql(FIXTURE, fonte)).toHaveLength(12);
+    expect([conta('current_date'), conta('so.created_at::date')]).toEqual([9, 3]);
+  });
+
+  it('a correção 20260929001651 não acusa nada — e o conserto foi LIDO (9 hojes de SP no código)', () => {
+    const fonte = arq(FIX).fonte;
+    expect(removerComentariosSql(fonte).match(/\(now\(\) AT TIME ZONE 'America\/Sao_Paulo'\)::date/g)?.length).toBe(9);
+    expect(detectarNoSql(FIX, fonte)).toEqual([]);
   });
 
   it('a skill pré-fix acusa as 2 formas na linha certa — e a prosa fica de fora', () => {
@@ -193,6 +211,17 @@ describe('o repo', () => {
   it('UTC de propósito, escrito, passa numa migration nova', () => {
     const v = veredito(analisar([...REPO.arquivos, nova("SELECT (now() AT TIME ZONE 'UTC')::date;")], REPO.corpos), true);
     expect(v.codigo).toBe(0);
+  });
+
+  it('sem a 20260929001651, os 5 corpos que ela conserta (e têm CREATE antigo no repo) voltam como NOVOS', () => {
+    const semFix = REPO.arquivos.filter((a) => a.caminho !== FIX);
+    const v = veredito(analisar(semFix, corposVivosDe(semFix)), true);
+    expect(v.codigo).toBe(1);
+    const txt = v.linhas.join('\n');
+    for (const f of ['fin_period_lock_trigger()', 'get_regua_preco(uuid,uuid,numeric,numeric,numeric[])', 'listar_pedidos_a_separar(text)',
+      'radar_atribuir_tarefa(text,integer)', 'vendas_sync_semear_janela(date,date,text[])']) {
+      expect(txt).toContain(`CORPO VIVO NOVO ${f} · `);
+    }
   });
 
   it('sítio conhecido que sai do corpo vivo reprova como QUITADO (a lista só encolhe)', () => {
