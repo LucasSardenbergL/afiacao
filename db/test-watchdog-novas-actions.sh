@@ -17,12 +17,13 @@ PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
 PORT="${PGPORT_TEST:-5466}"
 SLUG="watchdog-novas-actions"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
+RODADA="$(dirname "$DATA")"   # dir ÚNICO desta rodada (o trap apaga): temporário mora aqui, nunca em /tmp/<nome-fixo>
 export LC_ALL=C LANG=C
 
 # Corpo REAL da função, extraído do snapshot VERSIONADO (auto-contido, fiel ao repo —
 # sem dependência de scratchpad efêmero). pg_dump escreve `CREATE FUNCTION ... AS $$ ... $$;`,
 # aplicável direto num PG vazio. O drift snapshot×prod foi conferido no momento da prova.
-FN_SQL="$(mktemp "/tmp/fn-${SLUG}.XXXXXX.sql")"
+FN_SQL="$(mktemp "$RODADA/fn-${SLUG}.XXXXXX")"
 # sed: pg_dump emite `CREATE FUNCTION`; a falsificação re-aplica → precisa de OR REPLACE.
 awk '/^CREATE FUNCTION public\.fin_sync_watchdog_check\(\)/{f=1} f{print} f&&/^\$\$;/{exit}' \
   "$REPO_ROOT/supabase/schema-snapshot.sql" \
