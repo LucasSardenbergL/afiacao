@@ -277,7 +277,7 @@ BEGIN
   IF r->>'faixa' IS DISTINCT FROM 'verde' OR r->>'motivo' IS DISTINCT FROM 'abaixo_da_meta' THEN
     RAISE EXCEPTION 'A1 FALHOU: faixa=% motivo=% (esperado verde/abaixo_da_meta)', r->>'faixa', r->>'motivo';
   END IF;
-  IF (r->>'tem_custo')::boolean IS NOT TRUE OR r->>'proveniencia' NOT ILIKE '%vendas%' THEN
+  IF (r->>'tem_custo')::boolean IS NOT TRUE OR r->>'proveniencia' IS NULL OR r->>'proveniencia' NOT ILIKE '%vendas%' THEN
     RAISE EXCEPTION 'A1b FALHOU: tem_custo=% proveniencia=% (esperado true / inventory_position(vendas))', r->>'tem_custo', r->>'proveniencia';
   END IF;
   RAISE NOTICE 'OK A1 — account-aware: cmc 60 via vendas, preço 85 entre piso 78 e meta 90 → verde/abaixo_da_meta';
@@ -331,7 +331,8 @@ BEGIN
   IF r->'cmc' = 'null'::jsonb OR (r->>'cmc')::numeric IS DISTINCT FROM 60 THEN
     RAISE EXCEPTION 'A4 FALHOU: gestor não viu cmc (=%)', r->>'cmc';
   END IF;
-  IF r->'markup_perc' = 'null'::jsonb OR r->'piso_markup' = 'null'::jsonb THEN
+  IF r->'markup_perc' IS NULL OR r->'markup_perc' = 'null'::jsonb
+     OR r->'piso_markup' IS NULL OR r->'piso_markup' = 'null'::jsonb THEN
     RAISE EXCEPTION 'A4b FALHOU: gestor não viu markup_perc/piso_markup';
   END IF;
   RAISE NOTICE 'OK A4 — gestor vê cmc=60, markup e piso/meta';

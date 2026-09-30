@@ -480,7 +480,8 @@ BEGIN
   SET LOCAL test.uid = '00000000-0000-0000-0000-00000000000a';
   SELECT (public.get_defasagem_cliente('[{"empresa":"oben","codigo":1001,"preco":100}]'::jsonb,
           '11111111-1111-1111-1111-111111111111'::uuid))->0 INTO r;
-  IF r->'c_last' = 'null'::jsonb OR r->'c_now' = 'null'::jsonb OR r->'p_last' = 'null'::jsonb THEN
+  IF r->'c_last' IS NULL OR r->'c_last' = 'null'::jsonb OR r->'c_now' IS NULL OR r->'c_now' = 'null'::jsonb
+     OR r->'p_last' IS NULL OR r->'p_last' = 'null'::jsonb THEN
     RAISE EXCEPTION 'D9a FALHOU: gestor não viu c_last/c_now/p_last';
   END IF;
 
@@ -571,7 +572,8 @@ BEGIN
   SET LOCAL test.uid = '00000000-0000-0000-0000-00000000000e';  -- employee ESTRATÉGICO
   SELECT (public.get_defasagem_cliente('[{"empresa":"oben","codigo":1001,"preco":100}]'::jsonb,
           '11111111-1111-1111-1111-111111111111'::uuid))->0 INTO r;
-  IF r->'c_last' = 'null'::jsonb OR r->'c_now' = 'null'::jsonb OR r->'p_last' = 'null'::jsonb THEN
+  IF r->'c_last' IS NULL OR r->'c_last' = 'null'::jsonb OR r->'c_now' IS NULL OR r->'c_now' = 'null'::jsonb
+     OR r->'p_last' IS NULL OR r->'p_last' = 'null'::jsonb THEN
     RAISE EXCEPTION 'D13 FALHOU: estrategico NAO viu os absolutos — cap_custo_ler degenerou a master-only';
   END IF;
   RAISE NOTICE 'OK D13 — estrategico ve c_last/c_now/p_last (cap_custo_ler nao virou master-only)';
