@@ -13,8 +13,9 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PGVER=17
 PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
-PORT=5435
+PORT="${PGPORT_TEST:-5435}"   # honra a porta do runner: duas rodadas simultâneas não disputam a 5435
 DATA="$(mktemp -d /tmp/pgtest-acctaware.XXXXXX)/data"
+RODADA="$(dirname "$DATA")"   # dir ÚNICO desta rodada (o trap apaga): temporário mora aqui, nunca em /tmp/<nome-fixo>
 export LC_ALL=C LANG=C
 
 [ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER} pgvector"; exit 1; }
@@ -238,26 +239,26 @@ echo ""
 echo "→ DIFF MECÂNICO (prova que o corpo muda em EXATAMENTE a cláusula account-aware):"
 # Extrai o bloco da função das duas migrations.
 awk '/^CREATE OR REPLACE FUNCTION public\.gerar_pedidos_sugeridos_ciclo/,/^\$function\$;$/' \
-  "$REPO_ROOT/supabase/migrations/20260604190000_reposicao_minimo_forcado.sql" > /tmp/aa-funcB.sql
+  "$REPO_ROOT/supabase/migrations/20260604190000_reposicao_minimo_forcado.sql" > "$RODADA/aa-funcB.sql"
 awk '/^CREATE OR REPLACE FUNCTION public\.gerar_pedidos_sugeridos_ciclo/,/^\$function\$;$/' \
-  "$REPO_ROOT/supabase/migrations/20260606120000_reposicao_rpc_account_aware.sql" > /tmp/aa-funcC.sql
+  "$REPO_ROOT/supabase/migrations/20260606120000_reposicao_rpc_account_aware.sql" > "$RODADA/aa-funcC.sql"
 # Endurecimento (Codex P2): a migration C deve ter EXATAMENTE 1 CREATE OR REPLACE da RPC. O awk
 # extrai só o 1º bloco $function$; um 2º override posterior escaparia ao cmp abaixo.
 NF=$(grep -c '^CREATE OR REPLACE FUNCTION public\.gerar_pedidos_sugeridos_ciclo' "$REPO_ROOT/supabase/migrations/20260606120000_reposicao_rpc_account_aware.sql")
 [ "$NF" = "1" ] || { echo "✗ migration C tem $NF CREATE OR REPLACE da RPC (esperado 1; um 2º override escaparia ao diff mecânico)"; exit 1; }
-N=$(grep -c '^      AND op.account = lower(p_empresa)$' /tmp/aa-funcC.sql)
+N=$(grep -c '^      AND op.account = lower(p_empresa)$' "$RODADA/aa-funcC.sql")
 [ "$N" = "1" ] || { echo "✗ cláusula aparece $N vezes (esperado 1)"; exit 1; }
 # A cláusula deve vir imediatamente APÓS a linha do JOIN omie_products.
-grep -A1 '^    LEFT JOIN omie_products op ON op.omie_codigo_produto::text = sp.sku_codigo_omie::text$' /tmp/aa-funcC.sql \
+grep -A1 '^    LEFT JOIN omie_products op ON op.omie_codigo_produto::text = sp.sku_codigo_omie::text$' "$RODADA/aa-funcC.sql" \
   | grep -q '^      AND op.account = lower(p_empresa)$' || { echo "✗ cláusula não está logo após o JOIN"; exit 1; }
 # Remove APENAS essa linha de C e compara com B byte-a-byte → devem ser idênticos.
-grep -v '^      AND op.account = lower(p_empresa)$' /tmp/aa-funcC.sql > /tmp/aa-funcC-stripped.sql
-if cmp -s /tmp/aa-funcB.sql /tmp/aa-funcC-stripped.sql; then
+grep -v '^      AND op.account = lower(p_empresa)$' "$RODADA/aa-funcC.sql" > "$RODADA/aa-funcC-stripped.sql"
+if cmp -s "$RODADA/aa-funcB.sql" "$RODADA/aa-funcC-stripped.sql"; then
   echo "✓ corpo de C == corpo de B + exatamente a cláusula 'AND op.account = lower(p_empresa)' (cmp idêntico)"
 else
-  echo "✗ DIFF MECÂNICO FALHOU: C menos a cláusula difere de B:"; diff -u /tmp/aa-funcB.sql /tmp/aa-funcC-stripped.sql | head -40; exit 1
+  echo "✗ DIFF MECÂNICO FALHOU: C menos a cláusula difere de B:"; diff -u "$RODADA/aa-funcB.sql" "$RODADA/aa-funcC-stripped.sql" | head -40; exit 1
 fi
-rm -f /tmp/aa-funcB.sql /tmp/aa-funcC.sql /tmp/aa-funcC-stripped.sql
+rm -f "$RODADA/aa-funcB.sql" "$RODADA/aa-funcC.sql" "$RODADA/aa-funcC-stripped.sql"
 
 echo ""
 echo "✓ db/test-rpc-account-aware.sh — PASSOU"
