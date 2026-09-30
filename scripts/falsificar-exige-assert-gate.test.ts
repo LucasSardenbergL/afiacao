@@ -445,6 +445,13 @@ describe('a LIGAÇÃO do juiz com a medição (Codex, fase 4): o juízo é UM bl
     expect(v).toEqual([expect.stringContaining('nenhuma âncora LÊ a variável julgada D')]);
   });
 
+  it('âncora ou bloco VAZIO no registro reprova — casaria qualquer linha (ou derrubaria o gate)', () => {
+    const com = (extra: string | readonly string[]) => julga(JUIZO, { ...JUIZ_DO_JUIZO, ancoras: [...JUIZ_DO_JUIZO.ancoras, extra] });
+    for (const vazia of ['', '   ', [], ['case "$D" in', '  ']] as const) {
+      expect(com(vazia), JSON.stringify(vazia)).toEqual([expect.stringContaining('âncora VAZIA no registro')]);
+    }
+  });
+
   it('juiz sem `mede` tem de dizer POR QUE (`semLigacao`) — senão a ligação volta a ser voluntária', () => {
     expect(julga(JUIZO, { motivo: 'm', mede: [], ancoras: [MEDICAO] })).toEqual([
       expect.stringContaining('juiz sem variável julgada (`mede` vazio) e sem `semLigacao`'),

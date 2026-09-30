@@ -105,6 +105,7 @@ PEGA | redirecionamento para o arquivo julgado deixa de ser escrita         | s/
 PEGA | `read … V` deixa de ser escrita                                      | s/\\b\(\?:read\|mapfile\|readarray\|unset\)\\b/\\b(?:mapfile|readarray|unset)\\b/
 PEGA | fronteira do nome desligada (`XD=1` vira escrita de D)               | s/\(\?<=\^\|\[\\s;&\|\(\)\{\}\\x60!\]\)\(\$\{n\}\)/(\${n})/
 PEGA | alvo do redirecionamento sem fronteira (`"$V.cru"` vira escrita)     | s/\(\?=\[\\s;&\|\)<>\]\|\$\)`;/`;/
+PEGA | âncora/bloco VAZIO no registro passa (vácuo) ou derruba o gate    | s/if \(partes\.length === 0 \|\| partes\.some\(\(l\) => normalizarLinha\(l\) === ''\)\) \{/if (false) {/
 PEGA | registro: juiz que sumiu do JUIZES passa                             | s/if \(!\(arquivo in juizes\)\) \{/if (false) {/
 PEGA | registro: juiz fora do REGISTRO_FECHADO passa                        | s/if \(!fechado\.has\(arquivo\)\) \{/if (false) {/
 PEGA | analisar deixa de aplicar o registro que recebe                      | s/if \(registro !== null\) r\.violacoes\.push\(\.\.\.julgarRegistro\(juizes, registro, regraDe\)\);//

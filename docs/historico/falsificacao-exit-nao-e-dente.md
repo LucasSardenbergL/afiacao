@@ -916,7 +916,7 @@ reprova) e fechados, menos os marcados:
 | pos X6/X6b "≠ barrado" aceitava erro alheio; `barra()` aceitava a marca num NOTICE antes de outro erro | desfecho nomeado (`vazou`, com `PSQL_RC`); a marca na linha do ERRO, depois da SQLSTATE da pós-condição (42P13/42501) |
 | oportunidade `NENHUM`: a geração INERTE (`RETURN;`) dá o mesmo — o `OFERTADOS` apaga tudo antes | a medição leva a linha-resumo da RPC e header×itens: bloco 1 `ret=0\|0\|0\|0\|{promo_flat}\|hi=0\|0`, bloco 2 `ret=1\|1\|200\|0\|{promo_flat}\|hi=1\|0` |
 | **residual (baixa):** 720/1928 são contagens — no modelo aritmético da cena, outras sabotagens (preço 999; fator 2 nas maiores) dariam o mesmo número | registrado: o juiz barra erro, vazio e outra cardinalidade; o CONJUNTO afetado fica para quando a prova mudar |
-| **residual (média):** o `JUIZES` ancora aceitação e rejeição, não a LIGAÇÃO com a medição (`DSAB=720` fixo passa), e o registro é voluntário | limite do desenho textual do gate (R3), fora desta fase |
+| **residual (média):** o `JUIZES` ancora aceitação e rejeição, não a LIGAÇÃO com a medição (`DSAB=720` fixo passa), e o registro é voluntário | limite do desenho textual do gate (R3), fora desta fase → ✅ fechado em 2026-09-30 ("A ligação do juiz com a medição — e o registro fechado", abaixo) |
 | **fora da classe:** assert PRINCIPAL verde por ausência (`IF q900 <> 12.5` com `q900` NULL; `eq … "$(cand)" ""` com a leitura que erra) | tarefa **"Erradicar assert principal verde por ausência em db/"**, com as duas assinaturas calibradas |
 
 **Meta-falsificação** (C e pt_BR, controle verde na mesma invocação, uma camada por vez): **102/102** —
@@ -1324,6 +1324,102 @@ mude o relatório — custo de manutenção, fail-closed (vermelho falso, nunca 
 asserts; (3) o embrulho devolve o stderr DEPOIS do stdout — o controle passa pelo mesmo embrulho (maçã
 com maçã), e nenhum dos 9 controles ficou vermelho com isso; (4) os juízes `FAIL [<id>]` fora do
 idioma no `test:falsificacao` seguem sem camada de crash (pendência com dono, abaixo).
+
+## A ligação do juiz com a medição — e o registro fechado (2026-09-30)
+
+**Passo 0 — instância única ou classe? Classe.** O achado (Codex, fase 4, média, confirmado por ele
+com o gate real): as âncoras do `JUIZES` provavam a PRESENÇA das linhas de aceitação e rejeição, não a
+LIGAÇÃO com a medição; o registro era voluntário para quem falsifica na suíte normal; e as âncoras
+prendiam espaço e prosa que não sustentam o julgamento (excesso, baixa). É propriedade do MECANISMO —
+âncora = substring solta —, não do tint: a varredura (subagente, hipótese; quem decidiu foi o próprio
+gate depois) achou a medição fora das âncoras em **35 dos 40 juízes** (26 inteiramente, 9 em parte) e
+18 âncoras de pura prosa.
+
+**Reprodução, antes de mexer** (sombra do worktree, edições exatas — casou ≠1× é erro da meta —,
+desfecho declarado antes, C e pt_BR, controle verde na mesma invocação) — **20/20**:
+
+| variante no `db/test-tint-promote.sh` | gate de antes |
+|---|---|
+| a leitura trocada por `DSAB=720` | verde (exit 0) |
+| `DSAB=720` inserido logo depois da leitura | verde |
+| o ramo `0\|"")` liberado (`ok`) | verde |
+| o `case` desligado da variável (`case "720" in`) | verde |
+| um ramo pega-tudo antes do `720)` | verde |
+| a entrada do tint apagada do `JUIZES` | verde |
+| controle+: tirar uma âncora existente | vermelho (a sombra mede) |
+| excesso: colapsar o espaço duplo de `720)  ok`; reescrever a prosa do `*)` | vermelho sem mudar o julgamento |
+
+Erro da meta, registrado: a 1ª variante de excesso PREFIXOU recuo — e a âncora, substring, seguiu
+casando. O excesso de espaço aparece ao TIRAR espaço.
+
+**O desenho** (`scripts/falsificar-exige-assert-gate.ts`):
+
+- **Forma normal + curinga de prosa.** Âncora e código casam sem recuo e com espaço colapsado; `"…"`
+  ou `'…'` numa âncora é UMA string entre aspas (a dupla aceita `\"`), que não atravessa a aspa que
+  fecha — a mensagem pode mudar, o código em volta dela não.
+- **Bloco.** Uma âncora pode ser um BLOCO: linhas CONSECUTIVAS de código (vazia e comentário não
+  contam), cada uma casada INTEIRA. O juízo compacto — a leitura, o `case`, os três ramos, o `esac` —
+  vira um bloco: ramo liberado, `case` desligado e ramo inserido rompem, e o diagnóstico diz onde
+  ("casa até «X» (linha N), e a linha N+1 não é «Y»").
+- **`mede` — a ligação.** Cada juiz declara as variáveis que o veredito julga. O gate acha toda
+  ESCRITA delas pela MÁSCARA do stripper compartilhado (`mascaraContexto`: código, nunca string) —
+  atribuição, `local`/`export`, `read`, `printf -v`, `for`, `${V:=}`, aritmética, `unset`, `mapfile`, e
+  o redirecionamento para `"$V"` (o log que o veredito lê) — e exige: ≥1 escrita numa linha presa
+  INTEIRA (a medição presa), nenhuma escrita solta DENTRO do juízo (da medição presa à última âncora
+  que lê a variável; em `(( ))` a leitura é o nome nu) e alguma âncora que a leia. **Por que o recorte,
+  e não "toda escrita presa":** a varredura mediu `rc=$?`/`saida=` reusados pela suíte normal e pelo
+  controle em 24 dos 40 arquivos — "toda escrita" prenderia dezenas de linhas alheias ao juízo (o
+  excesso de volta), e fora do juízo a escrita não muda o julgamento (a medição sobrescreve antes; o
+  veredito já leu depois).
+- **`semLigacao`.** Juiz sem `mede` tem de dizer POR QUE (texto não vazio). Os dois juízes-helper —
+  `db-aplicar` (`confere` chamado em ~15 pontos) e `pedido-total` (14 medições INLINE no argumento de
+  `vermelha`) — ligam medição e veredito pelo argumento posicional, que o texto não segue: presos o
+  juízo inteiro e a primitiva que mede; a ligação é detecção MANUAL documentada, explícita no diff.
+- **Registro fechado.** `REGISTRO_FECHADO` lista os 40 arquivos; o `JUIZES` tem de ser exatamente ele.
+  Apagar um juiz — voluntário ou não — vira DUAS mudanças no diff; juiz novo fora do registro também
+  reprova (senão a remoção dele, depois, voltaria calada).
+
+**A erradicação.** Os 40 juízes reescritos: 38 com `mede` (a medição presa; o juízo compacto em bloco)
+e 2 com `semLigacao`. As âncoras de pura prosa viraram a CONDIÇÃO que descreviam, com a mensagem em
+curinga (a do `pr-watch` fica: é o VALOR declarado, não prosa). Onde a mensagem traz `$(… "x" …)`
+dentro da string — o curinga não atravessa aspa —, a linha fica literal: excesso residual em 9 linhas.
+
+**A falsificação do gate:**
+
+- **ponta a ponta** (CLI numa sombra, C e pt_BR, controle verde PRIMEIRO em cada locale, desfecho
+  declarado antes) — **36/36**: as 6 variantes do tint reprovam, e a classe fora dele também — a
+  medição do `codex-async` trocada por constante; uma forja entre `suite` e o veredito; o log do
+  `transporte-nuvem` escrito à mão; a camada 4 do `data-health` cegada (`erros_sql="$erros_controle"`);
+  `S2_DIV` forjado no `medir-footprint` (leitura aritmética); a classe reatribuída no
+  `sonda-cron-prova.ts`; o `semLigacao` do `db-aplicar` apagado; o `lovable` (voluntário de
+  `scripts/`) apagado do registro. Os excessos (espaço e prosa, no tint e no `vigia-gstack`) ficam
+  verdes. Cada vermelho com a marca do seu ramo.
+- **propriedades no registro REAL** (vitest, um `it` por juiz): apagar as linhas de QUALQUER âncora
+  ou bloco dos 40 reprova com a marca do ramo; uma escrita forjada de QUALQUER variável julgada entre
+  a medição e o veredito — ou na própria linha, quando os dois moram nela — reprova pela ligação
+  (219 casos, conferidos também por fora do vitest).
+- **contrato de mutações** (`scripts/mutcheck.d/falsificar-exige-assert.mut`): 22 novas, uma por
+  camada, e as 2 que miravam código que mudou (`limpo.includes`, o `v.push` do juiz não lido)
+  reescritas. `--seco`: 77/77 cirúrgicas. RODADA_CHEIA.
+
+**Erros da meta e do caminho, registrados:**
+
+- a 1ª versão da propriedade reprovou 18 casos que eram dela: forjar logo depois da medição do
+  CONTROLE rompe o bloco do controle (vermelho legítimo, com outra marca), e em
+  `elif novas="$(camada4 …)"; [ -n "$novas" ]` medição e veredito moram na MESMA linha — "depois" já
+  é fora do juízo, e corretamente não reprova. A propriedade passou a forjar ENTRE os dois, ou NA linha.
+- a forma `const|let|var` do TS era redundante (a atribuição já pega `const x = …`) — a mutação que a
+  removesse sobreviveria; saiu.
+- `String.raw` interpola `${…}`: a âncora com `${decl//,/ }` virou template comum com `\${`.
+- o 1º "RED" não rodou nada: o `heavy` estourou 30 min na fila (a vaga presa 60 min por um
+  `roda-nucleo-ci` de outra sessão) — `exit=1` do semáforo, não do teste. Refeito: RED_REFEITO.
+
+**Resíduo, registrado:** (1) a ligação é textual — `eval`, nameref, `printf -v "$1"` indireto e a
+escrita por helper num arquivo de caminho literal ficam fora; (2) a forma normal não julga espaço
+DENTRO de literal (mudá-lo quebra o casamento em runtime — vermelho falso, nunca aprovação); (3) nos 2
+juízes-helper a ligação é manual (`semLigacao`); (4) a tarefa **"Blindar provas db/ contra ~/.psqlrc
+(psql -X)"** vai mexer na linha de medição do `pedido-edicao-atomica` (`"$PGBIN/psql" -p …`): o gate
+a acusa e a âncora se atualiza no mesmo PR — o gate fazendo o trabalho dele, não fricção a contornar.
 
 ## O que ficou de fora, com dono
 

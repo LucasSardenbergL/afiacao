@@ -1452,6 +1452,11 @@ export function julgarAncoras(
     const presas = new Set<number>();
     const ocupa = new Map<Ancora, number[]>();
     for (const ancora of juiz.ancoras) {
+      const partes = typeof ancora === 'string' ? [ancora] : ancora;
+      if (partes.length === 0 || partes.some((l) => normalizarLinha(l) === '')) {
+        acusa(1, `âncora VAZIA no registro (${JSON.stringify(ancora)}): casa qualquer linha e não prende nada — (${juiz.motivo})`);
+        continue;
+      }
       const achados = acharAncora(limpo, ancora);
       if (achados.length === 0) {
         acusa(
