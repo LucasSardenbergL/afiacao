@@ -143,17 +143,20 @@ cenario() {
 # SABOTAGENS: <nome>:<VERMELHOS>[:<VERDES>] — os asserts que TÊM de acusar a sabotagem e as
 # pré-condições que TÊM de seguir verdes (`,` = E; `|` = OU). Vermelho em outra camada (setup
 # quebrado, erro de execução) é quebra, não dente. O corte é sabotado pelos DOIS lados (frouxo e
-# apertado), e o `mede_o_scoring` é o incidente de volta: o ramo lendo o writer ERRADO.
+# apertado), e o `mede_o_scoring` é o incidente de volta: o ramo lendo o writer ERRADO. As
+# `migracao_nova_*` são a regressão chegando pela PRÓXIMA migration — a do app só fica vermelha
+# porque get_data_health está em DHV_GUARDADAS; fora dela, a cadeia não a pega e a sabotagem reprova.
 SABOTAGENS="limiar_frouxo:R5,R10:R4,R8 limiar_apertado:R7:R4,R5 vazia_ok:R8:R5
             ramo_some:R1,R10:R2,R9 vizinho_some:R2:R1,R10 mede_o_scoring:R10,R11:R1,R9
             esperado_diverge:R3:R1,R5 causa_sem_enqueue:R6:R5 app_filtra:R11:R10
-            migracao_nova_limiar_frouxo:R5,R10:R4,R8"
+            migracao_nova_limiar_frouxo:R5,R10:R4,R8 migracao_nova_app_filtra:R11:R10"
 
 # sabotagem <nome> — troca UM trecho do corpo VIVO no banco da rodada (âncora única, conferida pelo
 # dhv_sabotar). Status ≠0 = não aplicou.
 sabotagem() {
   local cp='public._data_health_compute()' gd='public.get_data_health()'
   local corte="now() - max(ca.last_synced_at) > interval '30 hours' THEN 'stale'"
+  local app="FROM public._data_health_compute() c;" app_sem="FROM public._data_health_compute() c WHERE c.source <> 'carteira_rebuild';"
   case "$1" in
     limiar_frouxo)     dhv_sabotar "$cp" "$corte" "now() - max(ca.last_synced_at) > interval '90 hours' THEN 'stale'" ;;
     limiar_apertado)   dhv_sabotar "$cp" "$corte" "now() - max(ca.last_synced_at) > interval '28 hours' THEN 'stale'" ;;
@@ -163,9 +166,11 @@ sabotagem() {
     mede_o_scoring)    dhv_sabotar "$cp" "FROM public.carteira_assignments ca" "FROM (SELECT calculated_at AS last_synced_at FROM public.farmer_client_scores) ca" ;;
     esperado_diverge)  dhv_sabotar "$cp" "(30*3600)::bigint, 'last_synced_at'" "(36*3600)::bigint, 'last_synced_at'" ;;
     causa_sem_enqueue) dhv_sabotar "$cp" "cron.job_run_details so prova o ENQUEUE" "cron.job_run_details prova a execucao" ;;
-    app_filtra)        dhv_sabotar "$gd" "FROM public._data_health_compute() c;" "FROM public._data_health_compute() c WHERE c.source <> 'carteira_rebuild';" ;;
+    app_filtra)        dhv_sabotar "$gd" "$app" "$app_sem" ;;
     migracao_nova_limiar_frouxo)
                        dhv_migracao_nova "$cp" "$corte" "now() - max(ca.last_synced_at) > interval '90 hours' THEN 'stale'" ;;
+    migracao_nova_app_filtra)
+                       dhv_migracao_nova "$gd" "$app" "$app_sem" ;;
     *) echo "sabotagem desconhecida: $1" >&2; return 1 ;;
   esac
 }
