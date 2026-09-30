@@ -268,45 +268,58 @@ describe('R3 — cada falsificar=<n> do núcleo tem juiz, e o juiz tem as âncor
     ]);
   });
 
-  it('cada juiz REAL: apagar as linhas de QUALQUER âncora (ou bloco) do arquivo real fica vermelho, com a marca do ramo', () => {
-    for (const [arquivo, juiz] of Object.entries(JUIZES)) {
-      const fonte = real(arquivo);
-      expect(juiz.ancoras.length, arquivo).toBeGreaterThan(0);
-      for (const ancora of juiz.ancoras) {
-        const achados = acharAncora(limpar(arquivo, fonte), ancora);
-        expect(achados.length, `${arquivo}: ${rotulo(ancora)}`).toBeGreaterThan(0);
-        const apagar = new Set(achados.flatMap(({ ini, fim }) => Array.from({ length: fim - ini + 1 }, (_, i) => ini + i)));
-        const sem = fonte
-          .split('\n')
-          .map((l, i) => (apagar.has(i + 1) ? '' : l))
-          .join('\n');
-        const v = julgarAncoras(new Map([[arquivo, limpar(arquivo, sem)]]), { [arquivo]: juiz }).map((x) => x.detalhe);
-        const marca = typeof ancora === 'string' ? `âncora do juiz sumiu do código: ${ancora}` : `bloco do juízo rompeu (${ancora.length} linhas, de «${ancora[0]}»`;
-        expect(v, `${arquivo}: ${rotulo(ancora)}`).toContainEqual(expect.stringContaining(marca));
-      }
+  // Um `it` POR JUIZ: os 40 num só levam ~1,5 s sem carga, e este gate já estourou o timeout de 20 s
+  // com load > 100 quando o corpo inteiro rodava dentro de um `it` (docs/historico/falsificacao-exit-nao-e-dente.md).
+  it.each(Object.entries(JUIZES))('juiz REAL %s: apagar as linhas de QUALQUER âncora (ou bloco) fica vermelho, com a marca do ramo', (arquivo, juiz) => {
+    const fonte = real(arquivo);
+    expect(juiz.ancoras.length, arquivo).toBeGreaterThan(0);
+    for (const ancora of juiz.ancoras) {
+      const achados = acharAncora(limpar(arquivo, fonte), ancora);
+      expect(achados.length, `${arquivo}: ${rotulo(ancora)}`).toBeGreaterThan(0);
+      const apagar = new Set(achados.flatMap(({ ini, fim }) => Array.from({ length: fim - ini + 1 }, (_, i) => ini + i)));
+      const sem = fonte
+        .split('\n')
+        .map((l, i) => (apagar.has(i + 1) ? '' : l))
+        .join('\n');
+      const v = julgarAncoras(new Map([[arquivo, limpar(arquivo, sem)]]), { [arquivo]: juiz }).map((x) => x.detalhe);
+      const marca = typeof ancora === 'string' ? `âncora do juiz sumiu do código: ${ancora}` : `bloco do juízo rompeu (${ancora.length} linhas, de «${ancora[0]}»`;
+      expect(v, `${arquivo}: ${rotulo(ancora)}`).toContainEqual(expect.stringContaining(marca));
     }
   });
 
-  it('cada juiz REAL: uma escrita FORJADA da variável julgada logo depois da medição presa fica vermelha', () => {
-    for (const [arquivo, juiz] of Object.entries(JUIZES)) {
-      const fonte = real(arquivo);
-      const limpo = limpar(arquivo, fonte);
-      const inteiras = new Set(
-        juiz.ancoras.flatMap((a) => acharAncora(limpo, a).filter((x) => x.inteira).flatMap(({ ini, fim }) => Array.from({ length: fim - ini + 1 }, (_, i) => ini + i))),
+  it.each(Object.entries(JUIZES))('juiz REAL %s: uma escrita FORJADA da variável julgada entre a medição presa e o veredito fica vermelha', (arquivo, juiz) => {
+    const fonte = real(arquivo);
+    const limpo = limpar(arquivo, fonte);
+    const ts = arquivo.endsWith('.ts');
+    const linhasDe = (a: string | readonly string[], inteira: boolean) =>
+      acharAncora(limpo, a)
+        .filter((x) => !inteira || x.inteira)
+        .flatMap(({ ini, fim }) => Array.from({ length: fim - ini + 1 }, (_, i) => ini + i));
+    const inteiras = new Set(juiz.ancoras.flatMap((a) => linhasDe(a, true)));
+    for (const nome of juiz.mede) {
+      const presa = escritasDe(limpo, nome, ts).find((l) => inteiras.has(l));
+      expect(presa, `${arquivo}: a medição de ${nome} está presa`).toBeDefined();
+      const m = presa ?? 0;
+      // o veredito que LÊ a variável, pelo texto das âncoras (`$V`, `${V`, ou nu dentro de `(( ))`)
+      const le = new RegExp(ts ? `\\b${nome}\\b` : `\\$\\{?${nome}(?!\\w)|\\(\\([^()]*\\b${nome}\\b`);
+      const veredito = juiz.ancoras.filter((a) => (typeof a === 'string' ? [a] : a).some((l) => le.test(l))).flatMap((a) => linhasDe(a, false));
+      const forja = ts ? `${nome} = 'FORJADO';` : `${nome}=FORJADO`;
+      const linhas = fonte.split('\n');
+      const entre = veredito.some((l) => l > m);
+      // Com veredito DEPOIS da medição, a forja entra entre os dois; com os dois na MESMA linha
+      // (`elif novas="$(…)"; [ -n "$novas" ]`), não há "entre" — a forja vai NA linha
+      if (entre) linhas.splice(m, 0, forja);
+      else linhas[m - 1] = `${forja}${ts ? ' ' : '; '}${linhas[m - 1]}`;
+      const v = julgarAncoras(new Map([[arquivo, limpar(arquivo, linhas.join('\n'))]]), { [arquivo]: juiz }).map((x) => x.detalhe);
+      // nunca verde, e sempre pela ligação: a escrita a mais dentro do juízo, a medição solta, ou o
+      // bloco que a prendia rompido NA linha da forja
+      const acusou = v.some(
+        (d) =>
+          d.includes(`${nome} é ESCRITA na linha ${m + 1}, dentro do juízo`) ||
+          d.includes(`a medição da variável julgada ${nome} não está presa`) ||
+          (entre && d.includes('bloco do juízo rompeu') && d.includes(`e a linha ${m + 1} não é`)),
       );
-      for (const nome of juiz.mede) {
-        const presa = escritasDe(limpo, nome, arquivo.endsWith('.ts')).find((l) => inteiras.has(l));
-        expect(presa, `${arquivo}: a medição de ${nome} está presa`).toBeDefined();
-        const linhas = fonte.split('\n');
-        linhas.splice(presa ?? 0, 0, arquivo.endsWith('.ts') ? `${nome} = 'FORJADO';` : `${nome}=FORJADO`);
-        const v = julgarAncoras(new Map([[arquivo, limpar(arquivo, linhas.join('\n'))]]), { [arquivo]: juiz }).map((x) => x.detalhe);
-        // a forja DENTRO do juízo: ou rompe o bloco que prendia a medição (e ela fica solta), ou a
-        // ligação acusa a escrita a mais — nunca verde
-        const acusou = v.some(
-          (d) => d.includes(`${nome} é ESCRITA na linha ${(presa ?? 0) + 1}, dentro do juízo`) || d.includes(`a medição da variável julgada ${nome} não está presa`),
-        );
-        expect(acusou, `${arquivo}: ${nome} → ${v.join(' | ')}`).toBe(true);
-      }
+      expect(acusou, `${arquivo}: ${nome} (${entre ? 'entre' : 'na linha'}) → ${v.join(' | ')}`).toBe(true);
     }
   });
 });
@@ -516,6 +529,14 @@ describe('o REGISTRO FECHADO — remover um juiz exige mudança explícita, não
     expect(julgarRegistro(um, [])).toEqual([
       expect.objectContaining({ arquivo: 'db/a.sh', detalhe: expect.stringContaining('juiz fora do REGISTRO FECHADO') }),
     ]);
+  });
+
+  it('analisar aplica o registro que recebe (o corpo do repo passa o REGISTRO_FECHADO); fixture sem registro não é cobrada', () => {
+    const arquivos = [{ caminho: 'db/a.sh', fonte: 'x\n' }];
+    expect(analisar(arquivos, '', um, null, ['db/a.sh', 'db/b.sh']).violacoes).toEqual([
+      expect.objectContaining({ arquivo: 'db/b.sh', detalhe: expect.stringContaining('juiz do REGISTRO FECHADO sumiu do JUIZES') }),
+    ]);
+    expect(analisar(arquivos, '', um, null).violacoes).toEqual([]);
   });
 
   it('o registro REAL fecha com o JUIZES real, e o corpo real reprova sem a entrada do tint-promote', () => {

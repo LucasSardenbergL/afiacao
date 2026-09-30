@@ -45,8 +45,8 @@ PEGA | falsificar=<n> sem juiz nem idioma passa                               | 
 PEGA | o idioma limpo deixa de dispensar o juiz (o #2606 travaria)            | s/ && !idiomaLimpo\.has\(arquivo\)\) \{/) {/
 PEGA | idioma COM violação dispensa o juiz                                    | s/if \(d\.listas > 0 && d\.violacoes\.length === 0\) idiomaLimpo/if (d.listas > 0) idiomaLimpo/
 PEGA | arquivo SEM lista conta como idioma limpo                              | s/if \(d\.listas > 0 && d\.violacoes/if (d.violacoes/
-PEGA | âncora sumida passa                                                    | s/if \(!limpo\.includes\(ancora\)\) \{/if (false) {/
-PEGA | juiz de arquivo não lido passa calado                                  | s/v\.push\(\{ regra, arquivo, linha: 1, detalhe: 'juiz registrado/void ({ regra, arquivo, linha: 1, detalhe: 'juiz registrado/
+PEGA | âncora sumida passa                                                    | s/if \(achados\.length === 0\) \{/if (false) {/
+PEGA | juiz de arquivo não lido passa calado                                  | s/acusa\(1, 'juiz registrado para arquivo/void (1, 'juiz registrado para arquivo/
 PEGA | falsificar=fora-do-ci vira linha julgada                               | s/falsificar=\\d\+\(\?:\\s\|\$\)/falsificar=\\S+(?:\\s|\$)/
 PEGA | linha COMENTADA do manifesto vira linha julgada                        | s/\.filter\(\(\{ l \}\) => !l\.startsWith\('\x23'\)\)/.filter(() => true)/
 
@@ -83,3 +83,28 @@ PEGA | TS: o corpo do repo deixa de ler o alvo TS                          | s/i
 PEGA | piso: package.json não lido vira "limpo"                            | s/if \(r\.alvosFalsificacao === null\) furos\.push\(/if (r.alvosFalsificacao === null) void (/
 PEGA | piso de alvos do roteiro desligado                                  | s/else if \(r\.alvosFalsificacao < PISOS\.alvosFalsificacao\) \{/else if (false) {/
 PEGA | o INDETERMINADO do roteiro deixa de bloquear o veredito             | s/  furos\.push\(\.\.\.r\.indeterminados\);//
+
+# A LIGAÇÃO do juiz com a medição (2026-09-30, Codex fase 4): o juízo em BLOCO, a forma normal e o
+# curinga de prosa, a variável julgada com escritores só presos DENTRO do juízo, e o REGISTRO FECHADO.
+PEGA | forma normal desligada: recuo e espaço voltam a reprovar             | s/linha\.trim\(\)\.replace\(\/\[ \\t\]\+\/g, ' '\)/linha/
+PEGA | curinga de prosa atravessa aspas (um `ok` enfiado passa)            | s/String\.raw`"\(\?:\[\^"\\\\\]\|\\\\\.\)\*"`/'".*"'/
+PEGA | curinga de prosa sem escape (a mensagem com \" deixa de casar)       | s/String\.raw`"\(\?:\[\^"\\\\\]\|\\\\\.\)\*"`/'"[^"]*"'/
+PEGA | bloco sem contiguidade (linha inserida no juízo passa)              | s/if \(linhas\.every\(\(re, k\) => re\.test\(codigo\[i \+ k\]\.texto\)\)\) \{/if (linhas.every((re) => codigo.some((l) => re.test(l.texto)))) {/
+PEGA | linha do bloco casada como TRECHO (escrita colada na medição passa) | s/const linhas = ancora\.map\(\(l\) => new RegExp\(`\^\$\{padraoDe\(l\)\}\$`\)\);/const linhas = ancora.map((l) => new RegExp(padraoDe(l)));/
+PEGA | trecho de uma linha conta como linha INTEIRA presa                  | s/inteira: inteira\.test\(l\.texto\)/inteira: true/
+PEGA | escrita a mais DENTRO do juízo não é acusada                        | s/if \(l < ini \|\| l > fim \|\| presas\.has\(l\)\) continue;/if (true) continue;/
+PEGA | juízo sem recorte: escrita FORA dele (o rc=$? da suíte) acusa       | s/if \(l < ini \|\| l > fim \|\| presas\.has\(l\)\) continue;/if (presas.has(l)) continue;/
+PEGA | medição solta (nenhuma escrita presa) não é acusada                 | s/if \(medicoes\.length === 0\) \{/if (false) {/
+PEGA | variável julgada sem escritor não é acusada                         | s/if \(escritas\.length === 0\) \{/if (false) {/
+PEGA | variável julgada que nenhuma âncora lê não é acusada                | s/if \(leitoras\.length === 0\) \{/if (false) {/
+PEGA | juiz sem `mede` e sem `semLigacao` passa                             | s/if \(juiz\.mede\.length === 0 && \(juiz\.semLigacao \?\? ''\)\.trim\(\) === ''\) \{/if (false) {/
+PEGA | `semLigacao` só de brancos vale como justificativa                   | s/\(juiz\.semLigacao \?\? ''\)\.trim\(\) === ''/(juiz.semLigacao ?? '') === ''/
+PEGA | leitura aritmética (`$(( A - B ))`, sem `$`) deixa de contar         | s/\|\\\(\\\(\[\^\(\)\]\*\?\(\?<!\[\\w\$\]\)\$\{n\}\(\?!\\w\)//
+PEGA | máscara do stripper ignorada: escrita dentro de aspas conta          | s/if \(emComando && mascara !== null && mascara\[pos\] !== 1\) continue;/if (false) continue;/
+PEGA | redirecionamento para o arquivo julgado deixa de ser escrita         | s/^    \{ re: new RegExp\(String\.raw`\(\?:\^\|\[\^<>&\\d\]\)\(\(\?:\\d\|&\)\?>>\?\).*$//
+PEGA | `read … V` deixa de ser escrita                                      | s/\\b\(\?:read\|mapfile\|readarray\|unset\)\\b/\\b(?:mapfile|readarray|unset)\\b/
+PEGA | fronteira do nome desligada (`XD=1` vira escrita de D)               | s/\(\?<=\^\|\[\\s;&\|\(\)\{\}\\x60!\]\)\(\$\{n\}\)/(\${n})/
+PEGA | alvo do redirecionamento sem fronteira (`"$V.cru"` vira escrita)     | s/\(\?=\[\\s;&\|\)<>\]\|\$\)`;/`;/
+PEGA | registro: juiz que sumiu do JUIZES passa                             | s/if \(!\(arquivo in juizes\)\) \{/if (false) {/
+PEGA | registro: juiz fora do REGISTRO_FECHADO passa                        | s/if \(!fechado\.has\(arquivo\)\) \{/if (false) {/
+PEGA | analisar deixa de aplicar o registro que recebe                      | s/if \(registro !== null\) r\.violacoes\.push\(\.\.\.julgarRegistro\(juizes, registro, regraDe\)\);//

@@ -35,7 +35,12 @@
  * R3 · cada linha `falsificar=<n>` de `db/nucleo-ci.txt` — o recibo que o CI confia sem saber o que é
  *      sabotagem — usa o idioma acima LIMPO (R1/R2 sem violação no arquivo) OU tem um JUIZ registrado
  *      em `JUIZES`: POR QUE o vermelho é do assert, e as âncoras de código sem as quais ele volta a
- *      aceitar qualquer vermelho. Juiz de arquivo não lido reprova.
+ *      aceitar qualquer vermelho. Juiz de arquivo não lido reprova. E todo juiz registrado (2026-09-30)
+ *      prende a MEDIÇÃO: cada variável julgada (`mede`) só é escrita, DENTRO do juízo, por linha presa
+ *      inteira, e alguma âncora a lê — ou o juiz diz por que não dá (`semLigacao`). O juízo compacto é
+ *      um BLOCO de linhas consecutivas (ramo inserido ou trocado rompe); a âncora casa na forma normal,
+ *      com `"…"` de curinga para a prosa; e o JUIZES é FECHADO (`REGISTRO_FECHADO`): apagar um juiz,
+ *      voluntário ou não, é mudança explícita, não um bloco a menos.
  * R4 · o análogo do R3 para o `test:falsificacao` do package.json (o step que o CI roda no `validate`):
  *      cada arquivo que o roteiro EXECUTA — os slugs do laço, expandidos pelo MESMO parser do
  *      `test:hooks` (`scripts/lib/lacos-test-hooks.ts`), e os comandos fora dele — usa o idioma limpo
@@ -50,7 +55,9 @@
  * aprenderia um idioma por arquivo. A varredura de 2026-09-27, site a site, está no diário, e as fases
  * seguintes são tarefa com dono. Na 2ª leva (2026-09-27), os 10 laços de `scripts/` que tinham lista de
  * sabotagens migraram para o idioma e caem sob R1/R2; os de sabotagem única usam valor/marca exata. Âncora também não prova SEMÂNTICA — só torna vermelha a remoção da
- * linha que sustenta o juiz; quem prova o juiz é a meta-falsificação registrada no diário.
+ * linha que sustenta o juiz; quem prova o juiz é a meta-falsificação registrada no diário. A ligação
+ * com a medição também é textual: `eval`, nameref, `printf -v "$1"` indireto e a escrita por helper num
+ * arquivo de caminho literal ficam fora — e o juiz-helper chamado em N pontos declara `semLigacao`.
  */
 
 import { readFileSync } from 'node:fs';
@@ -1380,11 +1387,11 @@ function formasShell(n: string): Forma[] {
 }
 
 const OP_TS = String.raw`(?:[-+*/%&|^]|\*\*|<<|>>>?|\?\?|\|\||&&)?=(?![=>])`;
-const declaracoesTs = (n: string) => new RegExp(String.raw`\b(?:const|let|var)[ \t]+(${n})(?![\w$])`, 'dg');
-
-/** TS: declaração, reatribuição e `++`/`--` (o fonte já sem comentário; string conta — lado fail-closed). */
+/**
+ * TS: atribuição (inclusive a da declaração, `const x = …`) e `++`/`--` — o fonte já sem comentário;
+ * string conta (lado fail-closed). `const` em OUTRO escopo cai fora do juízo pelo recorte.
+ */
 const formasTs = (n: string): Forma[] => [
-  { re: declaracoesTs(n), emComando: false },
   { re: new RegExp(String.raw`(?<![\w$.])(${n})[ \t]*${OP_TS}`, 'dg'), emComando: false },
   { re: new RegExp(String.raw`(?:\+\+|--)(${n})(?![\w$])`, 'dg'), emComando: false },
   { re: new RegExp(String.raw`(?<![\w$.])(${n})(?:\+\+|--)`, 'dg'), emComando: false },
