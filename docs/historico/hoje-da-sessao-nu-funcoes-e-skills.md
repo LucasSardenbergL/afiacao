@@ -27,7 +27,7 @@ levantados por dois subagentes read-only.
 | Universo | Denominador | Casamentos | Veredito |
 |---|---|---|---|
 | Prod: funções (fora de extensão) | 398 | 26 sem menção a SP (+1 com SP) | 9 **afetadas** · 4 UTC-consistentes · 12 latentes · 1 falso-positivo |
-| Prod: views | 83 | 20 (+1 com SP) | **fase 2** (chip) — a com SP é falso-positivo (`suspensa_em` é `date`) |
+| Prod: views | 83 | 20 (+1 com SP) | **fase 2** (issue #2669) — a com SP é falso-positivo (`suspensa_em` é `date`) |
 | Prod: matviews | 5 | 2 | fase 2 |
 | Prod: DEFAULTs de coluna | 1.439 | 10 | fase 2 |
 | Prod: CHECK / policies / crons | 362 / 711 / 99 | 0 | — |
@@ -47,8 +47,8 @@ levantados por dois subagentes read-only.
   briefing — está **quebrada na prod por outro defeito**: o INSERT em `promocao_item` usa
   `sku_descricao_extraido`, `desconto_base_perc`, `mapeamento_confianca` e `mapeamento_origem`, que a
   tabela não tem (pg_attribute) → 42703 a qualquer hora; **0 conversões em 325 sugestões**. Consertar só o
-  relógio de uma RPC que nunca funcionou exigiria stub INFIEL à prod: foi para um reparo próprio (chip),
-  com as trocas de fuso no briefing.
+  relógio de uma RPC que nunca funcionou exigiria stub INFIEL à prod: foi para um reparo próprio (issue
+  #2668), com as trocas de fuso no briefing.
 - **UTC-consistentes (4 + `_data_health_compute`).** `atualizar_parametros_numericos_skus` e
   `reposicao_pos_candidatos` comparam com `pedido_compra_sugerido.data_ciclo`, que a edge
   gerar-pedidos-diario grava em UTC; `reposicao_param_fila_sensor`/`_limbo_watchdog` releem o próprio
@@ -144,8 +144,8 @@ exata, e o vermelho é por RESULTADO. (2) Sob carga, 3 execuções do X1 saíram
 com a mensagem certa na saída; o teste era `printf "$out" | grep -q` sob `pipefail`. Trocado por
 casamento nativo do bash, a matriz seguinte (mesma carga) não repetiu. A hipótese — pipe de 512 bytes
 sob pressão de memória, `grep -q` saindo cedo, SIGPIPE virando "falso" — foi medida numa máquina ociosa
-e NÃO reproduziu (0/900): fica como suspeita, com dono (chip "Trocar printf | grep -q sob pipefail nas
-provas de db/": 22 sítios em 8 provas).
+e NÃO reproduziu (0/900). Fica como suspeita, descartada no fecho: é meta de passagem, sem incidente em
+prod nem no CI. Se o falso-vermelho voltar numa prova, a assinatura está aqui: 22 sítios em 8 provas de `db/`.
 
 No CI, a prova passou de primeira no runner Linux (41 asserts em 3 s; `--falsificar` 18/18 em 52 s) —
 e foi ela que estourou o teto do job `provas-sql`: o passo do núcleo sozinho foi a 11 min 35 s, e o job
@@ -168,14 +168,16 @@ a prova PG17 falsificável é o Caminho B já pronto. O PR-A (skills + gate) nã
 
 ## Fora, com dono
 
-- **Fase 2 — views, matviews e DEFAULTs** (chip "Consertar o dia da sessão UTC em views, matviews e
-  defaults"): inclui o aging ao vivo, a campanha "ativa hoje" e o cron `15 */2` UTC do omie-cron-diario,
-  que roda 21:15 e 23:15 BRT e GRAVA parâmetros de compra lidos de views com `CURRENT_DATE`.
-- **`converter_sugestao_em_campanha_flat`** (chip "Consertar converter_sugestao_em_campanha_flat
-  quebrada na prod").
+- **Fase 2 — views, matviews e DEFAULTs** (issue #2669, `money-path`, com o briefing inteiro): inclui o
+  aging ao vivo, a campanha "ativa hoje" e o cron `15 */2` UTC do omie-cron-diario, que roda 21:15 e
+  23:15 BRT e GRAVA parâmetros de compra lidos de views com `CURRENT_DATE`.
+- **`converter_sugestao_em_campanha_flat`** (issue #2668, `produto`).
+- **Teto do `mutation-check`** (25 min): cancelou 41 de 56 runs entre 28/09 04:01Z e 30/09 01:48Z, todos
+  no teto. Os contratos rodam em série e, no mesmo commit, o runner lento levou 1,6–1,8× o tempo do
+  rápido (~34 min para o job inteiro). O #2667 (sessão do LIKE) sobe o teto para 45 min com essa medição.
 - **`melhoria_clientes_por_produto`**: FEITO pela 20260929000234 (sessão do LIKE, #2653), com as 3 trocas de
   fuso combinadas — as 2 entradas saíram da baseline no merge do #2653, e a migration foi APLICADA na prod
   em 2026-09-30 ~01:30Z (db:aplicar, tentativa #197). 2ª testemunha (psql-ro, outra conexão): md5
   `fb00b17a…`, zero `current_date`, zero `created_at::date`, 3× `America/Sao_Paulo`.
 - **Classe irmã no TypeScript**: `new Date().toISOString().slice(0,10)` como "hoje" (edge
-  gerar-pedidos-diario, dialogs de reposição, `useRoutePlanner`) — anotada no chip da fase 2.
+  gerar-pedidos-diario, dialogs de reposição, `useRoutePlanner`) — anotada na issue #2669.
