@@ -41,6 +41,7 @@ export PGVER=17   # consumido pelo db/lib/pg-harness.sh via source
 PORT="${PGPORT_TEST:-5461}"
 SLUG="tintf5wd"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
+RODADA="$(dirname "$DATA")"   # dir ÚNICO desta rodada (o trap apaga): temporário mora aqui, nunca em /tmp/<nome-fixo>
 export LC_ALL=C LANG=C
 
 cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$(dirname "$DATA")"; }
@@ -140,7 +141,7 @@ GRANT EXECUTE ON FUNCTION public.tint_watchdog_corante_check() TO anon, authenti
 SQL
 
 # ── a VIEW REAL, extraída da última migration que a define (não um stub) ──
-VIEWSQL="/tmp/_f5wd_view.sql"
+VIEWSQL="$RODADA/_f5wd_view.sql"
 python3 - "$REPO_ROOT" "$VIEWSQL" <<'PY'
 import sys, os, re, glob
 repo, dst = sys.argv[1], sys.argv[2]
@@ -170,7 +171,7 @@ P -q -f "$MIG"
 echo "=== migration aplicada ==="
 
 P -q -c "CREATE TABLE _bkp AS SELECT pg_get_functiondef('public.tint_watchdog_fase5_check()'::regprocedure) AS def;"
-restaura() { Pq -c "SELECT def FROM _bkp;" > /tmp/_f5wd_real.sql; P -q -f /tmp/_f5wd_real.sql; }
+restaura() { Pq -c "SELECT def FROM _bkp;" > "$RODADA/_f5wd_real.sql"; P -q -f "$RODADA/_f5wd_real.sql"; }
 
 # ══ ZONA 3 — seeds ══
 # Cada chave (account, sku_id, cor_id) tem a '1' CARIMBADA pela Fase 5 + uma SL.
@@ -512,7 +513,7 @@ FALSIF_ERR=0
 sabota_e_mede() {   # $1=rotulo  $2=busca  $3=troca  $4..=asserts esperados
   local rot="$1" busca="$2" troca="$3"; shift 3
   local esperado="$*"
-  local sab="/tmp/_f5wd_sab_${rot}.sql"
+  local sab="$RODADA/_f5wd_sab_${rot}.sql"
 
   # `if !` e nao `cmd; if [ $? -ne 0 ]`: com `set -euo pipefail` ativo e esta funcao chamada NUA
   # (`sabota_e_mede "F1" \`), o python3 saindo !=0 abortava o script AQUI — o bloco de erro abaixo
@@ -536,7 +537,7 @@ PY
   fi
 
   P -q -f "$sab" >/dev/null 2>&1
-  roda_suite > /tmp/_f5wd_suite.log 2>&1
+  roda_suite > "$RODADA/_f5wd_suite.log" 2>&1
 
   local caidos=""
   if [ "${#FALHAS[@]}" -gt 0 ]; then
