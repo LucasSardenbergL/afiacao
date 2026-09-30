@@ -103,6 +103,38 @@ sem sinal do flag; o botão "Reativar" só existia para `descontinuado`. Não ha
   em `sku_estoque_atual` tem a entrada pendente lida como 0 pelo motor. Exposição hoje: 0 dos 361 SKUs
   ligados sem linha. E, com a auto-aprovação desligada, a sugestão ainda passa por um humano.
 
+## Sinal de uso — a query, a 1ª leitura e o gatilho
+
+A superfície nasceu com o sensor: três eventos `track()` — `reposicao.fora_do_motor_aberto` (clique no
+aviso do cockpit), `reposicao.sku_religado` e `reposicao.sku_descontinuado` (as duas saídas na Revisão).
+Evento client-side, censurável por bloqueador (#1984). Medir é query, rodada por
+`bash scripts/posthog-query.sh` (read-only):
+
+```sql
+SELECT event, count() AS n, uniq(distinct_id) AS pessoas
+FROM events
+WHERE event IN ('reposicao.fora_do_motor_aberto', 'reposicao.sku_religado', 'reposicao.sku_descontinuado')
+  AND timestamp > toDateTime('2026-09-30 02:17:00')
+GROUP BY event
+```
+
+E o denominador — quantas vezes abriu a página onde o aviso mora:
+
+```sql
+SELECT count() AS aberturas, uniq(distinct_id) AS pessoas
+FROM events
+WHERE event = '$pageview' AND properties.$pathname = '/admin/reposicao/sessao'
+  AND timestamp > toDateTime('2026-09-30 02:17:00')
+```
+
+**1ª leitura (30/09, ~20 h depois do Publish):** 0 eventos e 0 aberturas. É ausência de USO, não de
+sensor: o mesmo predicado enxerga as aberturas de antes (15 em 30 dias sob `/admin/reposicao/sessao*`,
+a última em 28/09). ⚠️ **O aviso mora na página menos visitada da reposição:** em 30 dias,
+`/admin/reposicao/sessao` teve **7** aberturas e `/admin/reposicao/pedidos`, **46**.
+
+**Gatilho:** se a página seguir abrindo e os eventos seguirem em zero, o aviso não está sendo notado;
+se a página seguir sem abrir, a decisão é levar o aviso para Pedidos — onde o comprador de fato está.
+
 ## Como diagnosticar "o SKU X não aparece no cockpit"
 
 ```sql
