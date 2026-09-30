@@ -18,6 +18,7 @@ PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
 PORT="${PGPORT_TEST:-5462}"
 SLUG="precoscompra"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
+RODADA="$(dirname "$DATA")"   # dir ÚNICO desta rodada (o trap apaga): temporário mora aqui, nunca em /tmp/<nome-fixo>
 export LC_ALL=C LANG=C
 
 [ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER}"; exit 1; }
@@ -218,8 +219,8 @@ echo "═══ 2. O DEFEITO reproduzido (view ANTIGA: MESMO corpo, fonte crua) 
 #     (renomear/reordenar coluna aborta — foi o que pegou o stub de 6 colunas que
 #     este harness tinha antes). A ÚNICA diferença entre as duas é a fonte da CTE.
 sed 's/v_sku_leadtime_efetivo/v_sku_leadtime_history_normal/g' \
-  "$REPO_ROOT/supabase/migrations/20260717020000_precos_compra_leadtime_efetivo.sql" > /tmp/pr-b-antiga.sql
-P -q -f /tmp/pr-b-antiga.sql
+  "$REPO_ROOT/supabase/migrations/20260717020000_precos_compra_leadtime_efetivo.sql" > "$RODADA/pr-b-antiga.sql"
+P -q -f "$RODADA/pr-b-antiga.sql"
 echo "  view antiga instalada (CTE lendo v_sku_leadtime_history_normal)"
 eq "SKU 1001: preço PONDERADO pela cópia (defeito)"    "$(preco 1001)" "12.5000"
 eq "SKU 1001: n_compras conta LINHA, não NFe (defeito)" "$(ncomp 1001)" "4"
@@ -230,10 +231,10 @@ eq "SKU 1004: compra de oportunidade fora (escopo)"     "$(preco 1004)" "NULL"
 echo ""
 echo "═══ 3. Aplicando a migration DESTA entrega (Lei #1) ═══"
 # a migration real carrega o corpo de prod inteiro; aqui ela sobrepõe a view antiga.
-if P -q -f "$REPO_ROOT/supabase/migrations/20260717020000_precos_compra_leadtime_efetivo.sql" > /tmp/pr-b-apply.log 2>&1; then
+if P -q -f "$REPO_ROOT/supabase/migrations/20260717020000_precos_compra_leadtime_efetivo.sql" > "$RODADA/pr-b-apply.log" 2>&1; then
   echo "  20260717020000 aplicada"
 else
-  echo "  ❌ a migration REAL não aplicou:"; sed -n '1,12p' /tmp/pr-b-apply.log; FAIL=$((FAIL+1))
+  echo "  ❌ a migration REAL não aplicou:"; sed -n '1,12p' "$RODADA/pr-b-apply.log"; FAIL=$((FAIL+1))
 fi
 
 echo ""
@@ -263,7 +264,7 @@ echo ""
 echo "═══ 5. FALSIFICAÇÃO (Lei #3) — sabota e EXIGE vermelho ═══"
 # Sabotagem A: volta a fonte da CTE p/ a view crua-por-linha. Os asserts do conserto
 # DEVEM ficar vermelhos — senão eles não estavam medindo a dedup.
-P -q -f /tmp/pr-b-antiga.sql > /tmp/pr-b-sabota.log 2>&1 || true
+P -q -f "$RODADA/pr-b-antiga.sql" > "$RODADA/pr-b-sabota.log" 2>&1 || true
 p="$(preco 1001)"; n="$(ncomp 1001)"
 if [ "$p" = "15.0000" ] || [ "$n" = "2" ]; then
   bad "FALSIFICAÇÃO A: sabotei a fonte e o assert seguiu VERDE (preço=$p n=$n) — sem dente"

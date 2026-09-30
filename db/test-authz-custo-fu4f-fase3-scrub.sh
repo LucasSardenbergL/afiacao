@@ -26,6 +26,7 @@ PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
 PORT="${PGPORT_TEST:-5457}"
 SLUG="fu4f-scrub"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
+RODADA="$(dirname "$DATA")"   # dir ÚNICO desta rodada (o trap apaga): temporário mora aqui, nunca em /tmp/<nome-fixo>
 export LC_ALL=C LANG=C
 
 [ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER} pgvector"; exit 1; }
@@ -149,26 +150,26 @@ MIG126="$REPO_ROOT/supabase/migrations/20260725126000_authz_custo_fu4f_fase3_tri
 # Assert negativo com sentinela ANTI-TEATRO: a sentinela ('affinity_score/affinity_bundle
 # ausentes') é o texto da mensagem ESPERADA e não aparece em nenhuma outra RAISE do arquivo.
 echo "── P: precondições de ORDEM (fail-closed) ──"
-if P -q -f "$MIG126" > /tmp/p0-${SLUG}.log 2>&1; then
+if P -q -f "$MIG126" > "$RODADA/p0-${SLUG}.log" 2>&1; then
   bad "P0 126000 aplicou SEM as colunas de afinidade — precondição não existe"
 else
-  if command grep -q "affinity_score/affinity_bundle ausentes" "/tmp/p0-${SLUG}.log"; then
+  if command grep -q "affinity_score/affinity_bundle ausentes" "$RODADA/p0-${SLUG}.log"; then
     ok "P0 126000 ABORTA sem as colunas (nulificar lie sem substituto mataria o ranking)"
   else
-    bad "P0 126000 falhou, mas por OUTRO motivo: $(command grep -m1 ERROR "/tmp/p0-${SLUG}.log" || echo '(sem ERROR no log)')"
+    bad "P0 126000 falhou, mas por OUTRO motivo: $(command grep -m1 ERROR "$RODADA/p0-${SLUG}.log" || echo '(sem ERROR no log)')"
   fi
 fi
 
 P -q -f "$MIG121"
 echo "migration aplicada: $(basename "$MIG121")"
 
-if P -q -f "$MIG126" > /tmp/p1-${SLUG}.log 2>&1; then
+if P -q -f "$MIG126" > "$RODADA/p1-${SLUG}.log" 2>&1; then
   bad "P1 126000 aplicou SEM a 125000 — o scrub do histórico e a limpeza do jsonb ficariam de fora"
 else
-  if command grep -q "frec_sem_margem/fbrec_sem_margem ausentes" "/tmp/p1-${SLUG}.log"; then
+  if command grep -q "frec_sem_margem/fbrec_sem_margem ausentes" "$RODADA/p1-${SLUG}.log"; then
     ok "P1 126000 ABORTA sem a 125000 (ela é quem faz o scrub que esta endurece)"
   else
-    bad "P1 126000 falhou, mas por OUTRO motivo: $(command grep -m1 ERROR "/tmp/p1-${SLUG}.log" || echo '(sem ERROR no log)')"
+    bad "P1 126000 falhou, mas por OUTRO motivo: $(command grep -m1 ERROR "$RODADA/p1-${SLUG}.log" || echo '(sem ERROR no log)')"
   fi
 fi
 

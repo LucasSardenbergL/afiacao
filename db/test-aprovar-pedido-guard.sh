@@ -28,6 +28,7 @@ PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
 PORT="${PGPORT_TEST:-5475}"
 SLUG="aprovar-guard"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
+RODADA="$(dirname "$DATA")"   # dir ÚNICO desta rodada (o trap apaga): temporário mora aqui, nunca em /tmp/<nome-fixo>
 export LC_ALL=C LANG=C
 
 [ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER} pgvector"; exit 1; }
@@ -299,10 +300,11 @@ esperar_bloqueio() {
 
 liberar_A() { P -q -c "INSERT INTO public.barreira VALUES ('liberar') ON CONFLICT DO NOTHING;" >/dev/null; }
 
-# ⚠️ CAMINHO FIXO, nao variavel: `corrida()` e sempre chamada dentro de `$( )`, que e um
+# ⚠️ CAMINHO definido AQUI, fora da `corrida()`: ela e sempre chamada dentro de `$( )`, que e um
 # SUBSHELL -- uma global atribuida la dentro morre com ele e o pai leria string vazia (o
-# assert entao "passaria" ou falharia por arquivo inexistente, sem medir nada).
-B_OUT="/tmp/corrida-b-saida-aprovar.txt"
+# assert entao "passaria" ou falharia por arquivo inexistente, sem medir nada). Mora na RODADA:
+# um /tmp fixo fazia duas rodadas simultaneas lerem a saida uma da outra.
+B_OUT="$RODADA/corrida-b-saida-aprovar.txt"
 # $1 = id; $2 = SQL da chamada de B; $3 = status destino de A. Ecoa "<status>|<aprovado_por>|<bloqueio>"
 corrida() {
   local id="$1" chamada="$2" destino="${3:-cancelado_humano}" out bpid visto

@@ -22,6 +22,7 @@ PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
 PORT="${PGPORT_TEST:-5474}"
 SLUG="omie-identidade-a2"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
+RODADA="$(dirname "$DATA")"   # dir ÚNICO desta rodada (o trap apaga): temporário mora aqui, nunca em /tmp/<nome-fixo>
 export LC_ALL=C LANG=C
 
 [ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER} pgvector"; exit 1; }
@@ -332,7 +333,7 @@ eq "L4 service_role (o writer/leitor real) SEGUE lendo a evidencia" \
 # provadamente "a versao que vai a producao MENOS uma defesa", nao uma reescrita a mao que poderia
 # divergir em outra coisa. Sabotar duas juntas nao provaria que qualquer uma tem dente.
 echo "-- falsificacao (cada defesa sozinha) --"
-MUT="$(mktemp /tmp/mut-a2.XXXXXX.sql)"
+MUT="$(mktemp "$RODADA/mut-a2.XXXXXX")"
 trap 'rm -f "$MUT"; cleanup' EXIT
 
 # $1=rotulo  $2=expressao do assert  $3=valor com a migration REAL  $4=valor esperado SOB o mutante  $5..=seds
