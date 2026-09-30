@@ -16,6 +16,7 @@ export PGVER=17   # consumido pelo db/lib/pg-harness.sh via source
 PORT="${PGPORT_TEST:-5461}"
 SLUG="tint-dedup"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
+RODADA="$(dirname "$DATA")"   # dir ÚNICO desta rodada (o trap apaga): temporário mora aqui, nunca em /tmp/<nome-fixo>
 export LC_ALL=C LANG=C
 
 cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$(dirname "$DATA")"; }
@@ -41,10 +42,10 @@ bad() { FAIL=$((FAIL+1)); echo "  ❌ $1"; }
 eq()  { if [ "$2" = "$3" ]; then ok "$1 (=$2)"; else bad "$1 — esperado [$3], veio [$2]"; fi; }
 
 echo "═══ setup PG17 :$PORT ═══"
-RR="$(mktemp /tmp/snap-rr.XXXXXX.sql)"
+RR="$(mktemp "$RODADA/snap-rr.XXXXXX")"
 sed -E 's/^(CREATE SCHEMA public;)/-- \1/' "$REPO_ROOT/supabase/schema-snapshot.sql" | grep -vE '^\\(un)?restrict ' > "$RR"
 P -q -f "$REPO_ROOT/supabase/schema-extensions-prelude.sql" 2>/dev/null || true
-P0 -q -f "$RR" >/tmp/snap-apply.log 2>&1 || true
+P0 -q -f "$RR" >"$RODADA/snap-apply.log" 2>&1 || true
 rm -f "$RR"
 P -q <<'SQL'
 CREATE TABLE IF NOT EXISTS public.tint_staging_precos_base (
@@ -56,7 +57,7 @@ ALTER TABLE public.tint_formulas ADD COLUMN IF NOT EXISTS desativada_em timestam
 SQL
 for m in 20260609150000_tint_sync_promote 20260611190000_tint_sync_codex_fixes \
          20260615140000_tint_promote_indices_timeout 20260615160000_tint_promote_set_based; do
-  P0 -q -f "$REPO_ROOT/supabase/migrations/${m}.sql" >>/tmp/mig-apply.log 2>&1 || true
+  P0 -q -f "$REPO_ROOT/supabase/migrations/${m}.sql" >>"$RODADA/mig-apply.log" 2>&1 || true
 done
 echo "snapshot + cadeia aplicados"
 

@@ -16,6 +16,7 @@ export PGVER=17   # consumido pelo db/lib/pg-harness.sh via source
 PORT="${PGPORT_TEST:-5458}"
 SLUG="tint-reexpand"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
+RODADA="$(dirname "$DATA")"   # dir ÚNICO desta rodada (o trap apaga): temporário mora aqui, nunca em /tmp/<nome-fixo>
 export LC_ALL=C LANG=C
 
 cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$(dirname "$DATA")"; rm -f "${RR:-}"; }
@@ -48,7 +49,7 @@ RR="$(mktemp "${TMPDIR:-/tmp}/snap-rr.XXXXXX")"
 sed -E 's/^(CREATE SCHEMA public;)/-- \1/' "$REPO_ROOT/supabase/schema-snapshot.sql" \
   | grep -vE '^\\(un)?restrict ' > "$RR"
 P -q -f "$REPO_ROOT/supabase/schema-extensions-prelude.sql" 2>/dev/null || true
-P0 -q -f "$RR" >/tmp/snap-apply.log 2>&1 || true
+P0 -q -f "$RR" >"$RODADA/snap-apply.log" 2>&1 || true
 rm -f "$RR"
 P -q <<'SQL'
 CREATE TABLE IF NOT EXISTS public.tint_staging_precos_base (
@@ -62,11 +63,11 @@ for t in tint_produtos tint_bases tint_embalagens tint_corantes tint_skus tint_f
          tint_sync_runs tint_integration_settings tint_importacoes tint_staging_formulas tint_staging_formula_itens \
          tint_staging_precos_base tint_staging_skus tint_staging_produtos tint_staging_bases tint_staging_embalagens tint_staging_corantes; do
   EX=$(Pq -c "SELECT to_regclass('public.$t') IS NOT NULL;")
-  [ "$EX" = "t" ] || { echo "❌ SETUP: tabela $t não criada (ver /tmp/snap-apply.log)"; exit 1; }
+  [ "$EX" = "t" ] || { echo "❌ SETUP: tabela $t não criada — fim do log:"; tail -n 20 "$RODADA/snap-apply.log"; exit 1; }
 done
 for m in 20260609150000_tint_sync_promote 20260611190000_tint_sync_codex_fixes \
          20260615140000_tint_promote_indices_timeout 20260615160000_tint_promote_set_based; do
-  P0 -q -f "$REPO_ROOT/supabase/migrations/${m}.sql" >>/tmp/mig-apply.log 2>&1 || true
+  P0 -q -f "$REPO_ROOT/supabase/migrations/${m}.sql" >>"$RODADA/mig-apply.log" 2>&1 || true
 done
 echo "snapshot + cadeia de migrations aplicados"
 

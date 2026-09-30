@@ -30,6 +30,7 @@ PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
 PORT="${PGPORT_TEST:-5471}"
 SLUG="import-tint-formulas"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
+RODADA="$(dirname "$DATA")"   # dir ÚNICO desta rodada (o trap apaga): temporário mora aqui, nunca em /tmp/<nome-fixo>
 export LC_ALL=C LANG=C
 
 # md5 do prosrc medido em PRODUÇÃO via psql-ro em 2026-08-06. O A0 compara o corpo
@@ -113,7 +114,7 @@ SQL
 # ZONA 2 — A FUNÇÃO REAL (Lei #1) — extraída verbatim da migration, sem reescrever
 # ══════════════════════════════════════════════════════════════════════════════
 MIG="$REPO_ROOT/supabase/migrations/20260512101346_632761fc-2bd6-4caa-9c61-d35f872c2489.sql"
-FN="$(mktemp "/tmp/itf-fn.XXXXXX.sql")"
+FN="$(mktemp "$RODADA/itf-fn.XXXXXX")"
 sed -n '1,128p' "$MIG" > "$FN"          # linhas 1-128 = o CREATE OR REPLACE de import_tint_formulas
 P -q -f "$FN"
 rm -f "$FN"
