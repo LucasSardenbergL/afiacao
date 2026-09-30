@@ -23,6 +23,7 @@ PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
 PORT="${PGPORT_TEST:-5471}"     # mude se colidir com outro harness (multi-worktree)
 SLUG="cm-datahealth"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
+RODADA="$(dirname "$DATA")"   # dir ÚNICO desta rodada (o trap apaga): temporário mora aqui, nunca em /tmp/<nome-fixo>
 export LC_ALL=C LANG=C          # sem isso o postmaster aborta ("became multithreaded during startup")
 MIG="$REPO_ROOT/supabase/migrations/20260717160000_data_health_customer_metrics_watchdog.sql"
 
@@ -72,7 +73,7 @@ SQL
 #   de problema quando status='ok' (idêntico ao rodapé da função da PROD).
 #   $1 = interval do threshold ('8 hours' real; '99 hours' na falsificação).
 # ══════════════════════════════════════════════════════════════════════════════
-TMPFN="$(mktemp /tmp/cm-testfn.XXXXXX.sql)"
+TMPFN="$(mktemp "$RODADA/cm-testfn.XXXXXX")"
 build_test_fn() {
   local IV="$1"
   {

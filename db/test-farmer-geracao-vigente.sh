@@ -267,7 +267,6 @@ TOT_ANTES=$(Pq -c "SELECT count(*) FROM public.farmer_recommendations;")
 
 # P1 — a substituição roda e devolve o balanço (3 pendentes de A expiram, 2 entram).
 R=$(Pq -c "SELECT public.farmer_recomendacoes_substituir('$FARMER_A','$RUN_1',NULL,'$LOTE_OK'::jsonb);")
-echo "$R" > /tmp/farmer-r1.json
 eq "P1 expiradas" "$(printf '%s' "$R" | python3 -c 'import json,sys; print(json.load(sys.stdin)["expiradas"])')" "3"
 eq "P2 inseridas" "$(printf '%s' "$R" | python3 -c 'import json,sys; print(json.load(sys.stdin)["inseridas"])')" "2"
 

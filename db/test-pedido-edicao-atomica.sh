@@ -22,6 +22,7 @@ export PGVER=17   # consumido pelo db/lib/pg-harness.sh via source
 PORT="${PGPORT_TEST:-5484}"   # porta propria: 5461 ja e usada por outras 2 provas do nucleo
 SLUG="pedido-edicao-atomica"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
+RODADA="$(dirname "$DATA")"   # dir ÚNICO desta rodada (o trap apaga): temporário mora aqui, nunca em /tmp/<nome-fixo>
 export LC_ALL=C LANG=C          # sem isso o postmaster aborta ("became multithreaded during startup")
 
 # PGBIN resolvido por PLATAFORMA (macOS Homebrew / Linux PGDG) pelo helper compartilhado. O
@@ -370,7 +371,7 @@ fi
 
 sabotar() { # $1 rotulo | $2 sed | $3 sqlstate que DEVE deixar de vir | $4 chamada | $5 marca do que vem NO LUGAR (default: a chamada completa)
   local f out rc no_lugar="${5:-ASSERT_NAO_LANCOU}"
-  f="$(mktemp /tmp/mig-sab-XXXXXX.sql)"
+  f="$(mktemp "$RODADA/mig-sab-XXXXXX")"
   sed "$2" "$MIG" > "$f"
   if cmp -s "$f" "$MIG"; then bad "$1 — o sed NÃO alterou nada (sabotagem inócua = teatro)"; rm -f "$f"; return; fi
   montar sab "$f" >/dev/null 2>&1
@@ -405,7 +406,7 @@ sabotar "G2 compare-and-set de revisão (D14)" 's/IF v_lido_atual IS NOT NULL AN
 
 # G-pid: sem a herança, o product_id do item preexistente vira NULL — a FK de custo da margem
 # some sem nenhum erro. O assert mede o VALOR, então a sabotagem tem de deixá-lo diferente.
-FPID="$(mktemp /tmp/mig-sab-XXXXXX.sql)"
+FPID="$(mktemp "$RODADA/mig-sab-XXXXXX")"
 sed "s|(v_pid_por_sku->>(it->>'omie_codigo_produto'))::uuid|NULL::uuid|" "$MIG" > "$FPID"
 if cmp -s "$FPID" "$MIG"; then bad "G6 sed inócuo (herança de product_id)"; else
   montar sab "$FPID" >/dev/null 2>&1
@@ -429,7 +430,7 @@ sabotar "G3 guard de desconto (D7)" "s/AND (it->>'discount')::numeric <> 0/AND f
 # a forma mais fácil de uma falsificação virar teatro. Por isso troca-se a ROLE, não a linha.
 apply_sabotado() { # $1 rotulo | $2 sed | $3 marcador que o erro DEVE conter
   local f out rc
-  f="$(mktemp /tmp/mig-sab-XXXXXX.sql)"
+  f="$(mktemp "$RODADA/mig-sab-XXXXXX")"
   sed "$2" "$MIG" > "$f"
   if cmp -s "$f" "$MIG"; then bad "$1 — o sed NÃO alterou nada (sabotagem inócua = teatro)"; rm -f "$f"; return; fi
   set +e; out="$(montar sab "$f")"; rc=$?; set -e

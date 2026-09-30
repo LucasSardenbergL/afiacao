@@ -21,6 +21,7 @@ PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
 PORT="${PGPORT_TEST:-5471}"
 SLUG="carteira-rebuild-health"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
+RODADA="$(dirname "$DATA")"   # dir ÚNICO desta rodada (o trap apaga): temporário mora aqui, nunca em /tmp/<nome-fixo>
 export LC_ALL=C LANG=C
 
 [ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER} pgvector"; exit 1; }
@@ -60,7 +61,7 @@ echo "=== setup pronto (PG17 :$PORT) ==="
 #          E a _data_health_compute ANTIGA — assim o CREATE OR REPLACE da migration
 #          roda sobre a versão existente, igual à produção).
 # ══════════════════════════════════════════════════════════════════════════════
-RR="$(mktemp /tmp/snap-rr.XXXXXX.sql)"
+RR="$(mktemp "$RODADA/snap-rr.XXXXXX")"
 sed -E 's/^(CREATE SCHEMA public;)/-- \1/' "$REPO_ROOT/supabase/schema-snapshot.sql" \
   | grep -vE '^\\(un)?restrict ' > "$RR"
 [ -f "$REPO_ROOT/supabase/schema-extensions-prelude.sql" ] && P -q -f "$REPO_ROOT/supabase/schema-extensions-prelude.sql"
@@ -166,7 +167,7 @@ echo "-- falsificacao --"
 
 # F1: afrouxa o threshold só do MEU ramo (o padrão 'ca.last_synced_at' é exclusivo dele —
 #     um sed global em "interval '30 hours'" atingiria custos_produtos por engano).
-SAB1="$(mktemp /tmp/sab1.XXXXXX.sql)"
+SAB1="$(mktemp "$RODADA/sab1.XXXXXX")"
 sed "s/max(ca\.last_synced_at) > interval '30 hours'/max(ca.last_synced_at) > interval '90 hours'/g" "$MIG" > "$SAB1"
 grep -q "interval '90 hours'" "$SAB1" || { echo "!! F1 nao sabotou nada (padrao nao casou)"; exit 1; }
 P -q -f "$SAB1"
@@ -178,7 +179,7 @@ eq "F1r restaurado: A2 volta a stale" "$(status_carteira_rebuild)" "stale"
 rm -f "$SAB1"
 
 # F2: remove o ramo inteiro (reintroduz o ponto cego). A5 e A6b têm de ficar vermelhos.
-SAB2="$(mktemp /tmp/sab2.XXXXXX.sql)"
+SAB2="$(mktemp "$RODADA/sab2.XXXXXX")"
 python3 - "$MIG" "$SAB2" <<'PY'
 import sys
 src, dst = sys.argv[1], sys.argv[2]

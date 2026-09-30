@@ -20,6 +20,7 @@ export PGVER=17   # consumido pelo db/lib/pg-harness.sh via source
 . "$REPO_ROOT/db/lib/pg-harness.sh"   # exporta PGBIN — fail-CLOSED, confere a major POSITIVAMENTE
 PORT="${PGPORT_TEST:-5435}"
 DATA="$(mktemp -d /tmp/pgtest-tintpromote.XXXXXX)/data"
+RODADA="$(dirname "$DATA")"   # dir ÚNICO desta rodada (o trap apaga): temporário mora aqui, nunca em /tmp/<nome-fixo>
 export LC_ALL=C LANG=C
 
 cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$(dirname "$DATA")"; rm -f "${RR:-}"; }
@@ -948,9 +949,9 @@ echo "── falsificação C13 (prova que a identidade diferencial tem DENTE) �
 MIG="$REPO_ROOT/supabase/migrations/20260615160000_tint_promote_set_based.sql"
 
 # F1 — sabota o NULL-honesto: corante faltante deixa de zerar p/ NULL → fabrica preço.
-sed 's/WHEN COALESCE(it.faltante, false) THEN NULL/WHEN false THEN NULL/' "$MIG" > /tmp/sab-tint-nullhonest.sql
-grep -q 'WHEN false THEN NULL' /tmp/sab-tint-nullhonest.sql || { echo "✗ F1: sed não casou o alvo NULL-honesto"; exit 1; }
-P -v ON_ERROR_STOP=1 -q -f /tmp/sab-tint-nullhonest.sql >/dev/null
+sed 's/WHEN COALESCE(it.faltante, false) THEN NULL/WHEN false THEN NULL/' "$MIG" > "$RODADA/sab-tint-nullhonest.sql"
+grep -q 'WHEN false THEN NULL' "$RODADA/sab-tint-nullhonest.sql" || { echo "✗ F1: sed não casou o alvo NULL-honesto"; exit 1; }
+P -v ON_ERROR_STOP=1 -q -f "$RODADA/sab-tint-nullhonest.sql" >/dev/null
 P -v ON_ERROR_STOP=1 -q -c "SELECT tint_promote_sync_run('da000000-0000-0000-0000-000000000002');" >/dev/null
 # O vermelho é a divergência EXATA que cada sabotagem declara (F1 720, F2 1928 — o fixture é fixo, e
 # 2 rodadas deram o mesmo número): "qualquer ≠ 0" aceitava divergência vinda de outra causa.
@@ -965,9 +966,9 @@ P -v ON_ERROR_STOP=1 -q -f "$MIG" >/dev/null
 P -v ON_ERROR_STOP=1 -q -c "SELECT tint_promote_sync_run('da000000-0000-0000-0000-000000000002');" >/dev/null
 
 # F2 — sabota o fator (regra de 3 → 1): expansão p/ embalagem ≠ formulação fica errada.
-sed 's#(e.volume_ml / fl.volume_final_ml) AS fator#(1) AS fator#' "$MIG" > /tmp/sab-tint-fator.sql
-grep -q '(1) AS fator' /tmp/sab-tint-fator.sql || { echo "✗ F2: sed não casou o alvo fator"; exit 1; }
-P -v ON_ERROR_STOP=1 -q -f /tmp/sab-tint-fator.sql >/dev/null
+sed 's#(e.volume_ml / fl.volume_final_ml) AS fator#(1) AS fator#' "$MIG" > "$RODADA/sab-tint-fator.sql"
+grep -q '(1) AS fator' "$RODADA/sab-tint-fator.sql" || { echo "✗ F2: sed não casou o alvo fator"; exit 1; }
+P -v ON_ERROR_STOP=1 -q -f "$RODADA/sab-tint-fator.sql" >/dev/null
 P -v ON_ERROR_STOP=1 -q -c "SELECT tint_promote_sync_run('da000000-0000-0000-0000-000000000002');" >/dev/null
 DSAB2=$(P -tA -c "SELECT _dif_count();")
 case "$DSAB2" in
@@ -1465,9 +1466,9 @@ ok "baseline VERDE — migration real: corrompido preserva 2 itens (COR14F)"
 # SABOTAGEM: remove o filtro NOT EXISTS do _expand → a corrompida volta a expandir → grava parcial.
 # Alvo: o DELETE que aplica o Guard 4 sobre o VENCEDOR (_expand_uniq). Removê-lo faz a fórmula
 # corrompida voltar a ser promovida → o DELETE de itens roda → receita PARCIAL.
-sed 's/^  USING _fl_corrompida c$/  USING (SELECT NULL::uuid AS staging_formula_id WHERE false) c/' "$MIGG" > /tmp/sab-tint-guard4.sql
-grep -q '^  USING _fl_corrompida c$' /tmp/sab-tint-guard4.sql && { echo "✗ sabotagem guard4: sed não neutralizou o DELETE do _expand_uniq"; exit 1; }
-P -v ON_ERROR_STOP=1 -q -f /tmp/sab-tint-guard4.sql >/dev/null
+sed 's/^  USING _fl_corrompida c$/  USING (SELECT NULL::uuid AS staging_formula_id WHERE false) c/' "$MIGG" > "$RODADA/sab-tint-guard4.sql"
+grep -q '^  USING _fl_corrompida c$' "$RODADA/sab-tint-guard4.sql" && { echo "✗ sabotagem guard4: sed não neutralizou o DELETE do _expand_uniq"; exit 1; }
+P -v ON_ERROR_STOP=1 -q -f "$RODADA/sab-tint-guard4.sql" >/dev/null
 P -v ON_ERROR_STOP=1 -q -c "SELECT tint_promote_sync_run('e14f0000-0000-0000-0000-0000000000c0');" >/dev/null
 NSAB=$(P -tA -c "SELECT count(*) FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='oben' AND f.cor_id='COR14F';")
 case "$NSAB" in
@@ -1730,10 +1731,10 @@ NBASE1C=$(P -tA -c "SELECT count(*) FROM tint_formula_itens fi JOIN tint_formula
 [ "$NBASE1C" = "2" ] || { echo "✗ baseline F1c: COR24 deveria ter 2 itens, achei $NBASE1C"; exit 1; }
 ok "baseline VERDE — COR24 re-populada {10,5} pelo protocolo íntegro"
 # SABOTAGEM: neutraliza o predicado do gate (mismatch nunca detectado) e re-aplica SÓ a função.
-sed 's/AND fl.expected_item_count <> COALESCE(si.n, 0)/AND false/' "$MIGF" > /tmp/sab-tint-1c.sql
-grep -q 'AND fl.expected_item_count <> COALESCE(si.n, 0)' /tmp/sab-tint-1c.sql && { echo "✗ sabotagem F1c: sed não neutralizou o predicado do gate"; exit 1; }
-grep -q 'AND false' /tmp/sab-tint-1c.sql || { echo "✗ sabotagem F1c: predicado não encontrado (a migration mudou?)"; exit 1; }
-P -v ON_ERROR_STOP=1 -q -f /tmp/sab-tint-1c.sql >/dev/null
+sed 's/AND fl.expected_item_count <> COALESCE(si.n, 0)/AND false/' "$MIGF" > "$RODADA/sab-tint-1c.sql"
+grep -q 'AND fl.expected_item_count <> COALESCE(si.n, 0)' "$RODADA/sab-tint-1c.sql" && { echo "✗ sabotagem F1c: sed não neutralizou o predicado do gate"; exit 1; }
+grep -q 'AND false' "$RODADA/sab-tint-1c.sql" || { echo "✗ sabotagem F1c: predicado não encontrado (a migration mudou?)"; exit 1; }
+P -v ON_ERROR_STOP=1 -q -f "$RODADA/sab-tint-1c.sql" >/dev/null
 # Run SUBCONJUNTO (declarados=3, ingeridos=2, doses 77): SEM o gate, SUBSTITUI a receita.
 P -v ON_ERROR_STOP=1 -q <<'SQL'
 INSERT INTO tint_sync_runs (id, setting_id, account, store_code, sync_type, status)
@@ -2075,10 +2076,10 @@ SQL
 echo ""
 echo "── falsificação F1d-1 (a EXCEÇÃO declarada tem dente: sem ela, a limpeza legítima NÃO executa) ──"
 # Sabota o predicado da tríade no (c') → tríade nunca reconhecida → vazio declarado volta a barrar.
-sed 's/^      AND fl.expected_item_count = 0$/      AND false/' "$MIG1D" > /tmp/sab-tint-1d-excecao.sql
-grep -q '^      AND fl.expected_item_count = 0$' /tmp/sab-tint-1d-excecao.sql && { echo "✗ F1d-1: sed não neutralizou a tríade"; exit 1; }
-grep -q '^      AND false$' /tmp/sab-tint-1d-excecao.sql || { echo "✗ F1d-1: âncora da tríade não encontrada (a migration mudou?)"; exit 1; }
-P -v ON_ERROR_STOP=1 -q -f /tmp/sab-tint-1d-excecao.sql >/dev/null
+sed 's/^      AND fl.expected_item_count = 0$/      AND false/' "$MIG1D" > "$RODADA/sab-tint-1d-excecao.sql"
+grep -q '^      AND fl.expected_item_count = 0$' "$RODADA/sab-tint-1d-excecao.sql" && { echo "✗ F1d-1: sed não neutralizou a tríade"; exit 1; }
+grep -q '^      AND false$' "$RODADA/sab-tint-1d-excecao.sql" || { echo "✗ F1d-1: âncora da tríade não encontrada (a migration mudou?)"; exit 1; }
+P -v ON_ERROR_STOP=1 -q -f "$RODADA/sab-tint-1d-excecao.sql" >/dev/null
 P -v ON_ERROR_STOP=1 -q <<'SQL'
 INSERT INTO tint_sync_runs (id, setting_id, account, store_code, sync_type, status)
 VALUES ('e1df1000-0000-0000-0000-000000000001','aaaaaaaa-0000-0000-0000-000000000001','oben','L1','formulas','complete');
@@ -2091,13 +2092,14 @@ NF1=$(P -tA -c "SELECT count(*) FROM tint_formula_itens fi JOIN tint_formulas f 
 ok "exceção sabotada → tríade legítima barrada (receita preservada): C30 tem dente"
 
 echo "── falsificação F1d-2 (o fail-closed tem dente: exceção sempre-verdadeira limparia vazio SEM declaração) ──"
-perl -0pe 's/fl\.is_base_pura IS TRUE\n      AND fl\.expected_item_count = 0/true\n      AND true/' "$MIG1D" > /tmp/sab-tint-1d-failopen.sql
-python3 - <<'EOF'
-orig = open("/tmp/sab-tint-1d-failopen.sql").read()
+perl -0pe 's/fl\.is_base_pura IS TRUE\n      AND fl\.expected_item_count = 0/true\n      AND true/' "$MIG1D" > "$RODADA/sab-tint-1d-failopen.sql"
+python3 - "$RODADA/sab-tint-1d-failopen.sql" <<'EOF'
+import sys
+orig = open(sys.argv[1]).read()
 assert "true\n      AND true" in orig, "F1d-2: perl não sabotou a tríade"
 assert "fl.is_base_pura IS TRUE\n      AND fl.expected_item_count = 0" not in orig, "F1d-2: tríade original sobrou"
 EOF
-P -v ON_ERROR_STOP=1 -q -f /tmp/sab-tint-1d-failopen.sql >/dev/null
+P -v ON_ERROR_STOP=1 -q -f "$RODADA/sab-tint-1d-failopen.sql" >/dev/null
 P -v ON_ERROR_STOP=1 -q <<'SQL'
 -- Vazio SEM declaração sobre COR33_5 (tem receita): sob a sabotagem, a "exceção" pega qualquer
 -- vazio bruto → LIMPA — exatamente a regressão que C26/C27 vigiam.
@@ -2112,9 +2114,9 @@ NF2=$(P -tA -c "SELECT count(*) FROM tint_formula_itens fi JOIN tint_formulas f 
 ok "exceção sempre-verdadeira → vazio SEM declaração LIMPOU (dano provado): o fail-closed da tríade tem dente"
 
 echo "── falsificação F1d-3 (o cap tem dente: cap gigante deixa a limpeza em massa passar) ──"
-sed 's/v_cap_limpezas   constant int := 50;/v_cap_limpezas   constant int := 100000;/' "$MIG1D" > /tmp/sab-tint-1d-cap.sql
-grep -q 'constant int := 100000;' /tmp/sab-tint-1d-cap.sql || { echo "✗ F1d-3: sed não trocou o cap"; exit 1; }
-P -v ON_ERROR_STOP=1 -q -f /tmp/sab-tint-1d-cap.sql >/dev/null
+sed 's/v_cap_limpezas   constant int := 50;/v_cap_limpezas   constant int := 100000;/' "$MIG1D" > "$RODADA/sab-tint-1d-cap.sql"
+grep -q 'constant int := 100000;' "$RODADA/sab-tint-1d-cap.sql" || { echo "✗ F1d-3: sed não trocou o cap"; exit 1; }
+P -v ON_ERROR_STOP=1 -q -f "$RODADA/sab-tint-1d-cap.sql" >/dev/null
 # Baseline deste ponto: COR33_% com receita = 52 - 1 (F1d-2 limpou COR33_5; o cap segurou as 51
 # declaradas restantes) = 51.
 NB33=$(P -tA -c "SELECT count(*) FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='oben' AND f.cor_id ~ '^COR33_';")
@@ -2126,10 +2128,10 @@ NF3=$(P -tA -c "SELECT count(*) FROM tint_formula_itens fi JOIN tint_formulas f 
 ok "cap gigante → 51 receitas limpas num run (dano provado): C33 tem dente"
 
 echo "── falsificação F1d-4 (o ACUMULADO tem dente: janela zerada → a catraca C34 passa) ──"
-sed "s/interval '24 hours'/interval '0 hours'/" "$MIG1D" > /tmp/sab-tint-1d-janela.sql
-grep -q "interval '0 hours'" /tmp/sab-tint-1d-janela.sql || { echo "✗ F1d-4: sed não zerou a janela"; exit 1; }
-grep -q "interval '24 hours'" /tmp/sab-tint-1d-janela.sql && { echo "✗ F1d-4: janela original sobrou"; exit 1; }
-P -v ON_ERROR_STOP=1 -q -f /tmp/sab-tint-1d-janela.sql >/dev/null
+sed "s/interval '24 hours'/interval '0 hours'/" "$MIG1D" > "$RODADA/sab-tint-1d-janela.sql"
+grep -q "interval '0 hours'" "$RODADA/sab-tint-1d-janela.sql" || { echo "✗ F1d-4: sed não zerou a janela"; exit 1; }
+grep -q "interval '24 hours'" "$RODADA/sab-tint-1d-janela.sql" && { echo "✗ F1d-4: janela original sobrou"; exit 1; }
+P -v ON_ERROR_STOP=1 -q -f "$RODADA/sab-tint-1d-janela.sql" >/dev/null
 # Re-invoca o run B da catraca (L2): sem acumulado, 2+0 ≤ 50 → LIMPA as 2 (o dano do Codex P0).
 P -v ON_ERROR_STOP=1 -q -c "SELECT tint_promote_sync_run('e1d34000-0000-0000-0000-000000000002');" >/dev/null
 NF4=$(P -tA -c "SELECT count(*) FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='oben' AND f.cor_id IN ('COR34_51','COR34_52');")

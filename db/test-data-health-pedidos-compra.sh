@@ -15,6 +15,7 @@ PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
 PORT="${PGPORT_TEST:-5471}"
 SLUG="pedidos-compra"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
+RODADA="$(dirname "$DATA")"   # dir ÚNICO desta rodada (o trap apaga): temporário mora aqui, nunca em /tmp/<nome-fixo>
 export LC_ALL=C LANG=C
 
 [ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER} pgvector"; exit 1; }
@@ -95,7 +96,7 @@ END $$;
 SQL
 # sabotagem: replace literal robusto a metacaracteres via python
 sabota() {  # $1=OLD  $2=NEW  $3=count esperado
-  local SAB; SAB=$(mktemp /tmp/sab-pc.XXXXXX.sql)
+  local SAB; SAB=$(mktemp "$RODADA/sab-pc.XXXXXX")
   SAB="$SAB" MIG="$MIG" SAB_OLD="$1" SAB_NEW="$2" SAB_CNT="$3" python3 - <<'PYEOF'
 import os
 s = open(os.environ['MIG']).read()

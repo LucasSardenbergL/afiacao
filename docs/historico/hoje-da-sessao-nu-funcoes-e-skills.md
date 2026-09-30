@@ -27,7 +27,7 @@ levantados por dois subagentes read-only.
 | Universo | Denominador | Casamentos | Veredito |
 |---|---|---|---|
 | Prod: funções (fora de extensão) | 398 | 26 sem menção a SP (+1 com SP) | 9 **afetadas** · 4 UTC-consistentes · 12 latentes · 1 falso-positivo |
-| Prod: views | 83 | 20 (+1 com SP) | **fase 2** (chip) — a com SP é falso-positivo (`suspensa_em` é `date`) |
+| Prod: views | 83 | 20 (+1 com SP) | **fase 2** (issue #2669) — a com SP é falso-positivo (`suspensa_em` é `date`) |
 | Prod: matviews | 5 | 2 | fase 2 |
 | Prod: DEFAULTs de coluna | 1.439 | 10 | fase 2 |
 | Prod: CHECK / policies / crons | 362 / 711 / 99 | 0 | — |
@@ -47,8 +47,8 @@ levantados por dois subagentes read-only.
   briefing — está **quebrada na prod por outro defeito**: o INSERT em `promocao_item` usa
   `sku_descricao_extraido`, `desconto_base_perc`, `mapeamento_confianca` e `mapeamento_origem`, que a
   tabela não tem (pg_attribute) → 42703 a qualquer hora; **0 conversões em 325 sugestões**. Consertar só o
-  relógio de uma RPC que nunca funcionou exigiria stub INFIEL à prod: foi para um reparo próprio (chip),
-  com as trocas de fuso no briefing.
+  relógio de uma RPC que nunca funcionou exigiria stub INFIEL à prod: foi para um reparo próprio (issue
+  #2668), com as trocas de fuso no briefing.
 - **UTC-consistentes (4 + `_data_health_compute`).** `atualizar_parametros_numericos_skus` e
   `reposicao_pos_candidatos` comparam com `pedido_compra_sugerido.data_ciclo`, que a edge
   gerar-pedidos-diario grava em UTC; `reposicao_param_fila_sensor`/`_limbo_watchdog` releem o próprio
@@ -68,7 +68,9 @@ levantados por dois subagentes read-only.
 
 - **`fin_period_lock_trigger`** (money-path): para `fin_categoria_dre_mapping` o alvo é o hoje — no último
   dia de um mês já fechado, das 21h às 24h BRT, a trava LIBERAVA o UPDATE/DELETE que em SP é
-  PERIOD_LOCKED. Falha ABERTA de uma trava contábil.
+  PERIOD_LOCKED. Falha ABERTA de uma trava contábil — hoje LATENTE: `fin_fechamentos` está vazia na
+  prod (0 linhas, psql-ro 2026-09-29), nenhum mês foi fechado e a trava ainda não trava nada; o defeito
+  passa a valer no primeiro fechamento. Por isso esperar o Codex não custa nada aqui.
 - **`radar_atribuir_tarefa`**: a tarefa de retomada vencia D+8 em vez de D+7 (a `v_tarefas_estado` julga
   atraso pelo hoje de SP).
 - **`vendas_sync_semear_janela`**: a guarda anti-futuro aceitava `date_to` = amanhã de SP.
@@ -116,20 +118,83 @@ Pisos por universo (migrations 700, corte 2, arquivos de skill 40, linhas de có
 uma por camada. Limites declarados no próprio gate: o que só existe na prod, SQL em string, timestamptz
 fora de `*_at`/`*_em`, e literal que CITA a forma errada (numa POS, escreva a agulha partida).
 
+## A prova (PR-B) — 41 asserts, 18 sabotagens
+
+`db/test-hoje-sp-sete-funcoes.sh`, no contrato do irmão `db/test-hoje-sp-sessao-utc-precos-piso.sh`:
+
+- Relógio controlado (`test.agora`, tripwire Z9T01; só as 7 funções têm `pg_catalog` depois de `public`).
+  D = 28/02/2025 — último dia de um mês que a trava tem FECHADO —, 4 instantes (20:59:59 · 21:00:00 ·
+  23:59:59 BRT de D · 00:00:00 de D+1) sob sessão UTC e SP; B0 prova que as duas sessões são mundos
+  diferentes.
+- H1: os 7 predecessores da fixture têm o md5 exato da prod; H2: onde há CREATE no repo, a fixture é a
+  última definição módulo comentário (5/5 — a deriva de 2 corpos era só `--`).
+- X: deriva numa RPC e num gatilho aborta a PRE; as 7 AUSENTES nascem com o fecho PORTA_GATE nas 4 RPCs,
+  sem e com o default ACL do Supabase; re-aplicar é seguro. D1: cada corpo instalado, com a troca
+  desfeita, tem o md5 exato do predecessor (a troca é a ÚNICA diferença).
+- R0: sem `test.agora`, cada função bate no tripwire — é o que pega o `current_date` LITERAL, que o
+  relógio controlado não intercepta; no radar o dedupe já lê `now()`, e quem pega o literal lá é o bloco
+  B. A1: anon barrado pelo ACL nas 4 RPCs. W: as 7 com o `search_path` de prod restaurado (o semeador
+  com `''`) executam no relógio real.
+- Matriz: servidor UTC/SP × `lc_messages` C/pt_BR — 41/41 nas 4; `--falsificar` 4/4 × (controle verde
+  + 18/18 vermelhas no assert certo).
+
+O que a falsificação ensinou (e por isso ela existe): (1) com o ACL reaberto a anon, o A1 caía no gate do
+corpo e virava ERRO de execução — vermelho que não mata mutante; passou a ler ACL × GATE pela mensagem
+exata, e o vermelho é por RESULTADO. (2) Sob carga, 3 execuções do X1 saíram "falhou, mas não pela PRE"
+com a mensagem certa na saída; o teste era `printf "$out" | grep -q` sob `pipefail`. Trocado por
+casamento nativo do bash, a matriz seguinte (mesma carga) não repetiu. A hipótese — pipe de 512 bytes
+sob pressão de memória, `grep -q` saindo cedo, SIGPIPE virando "falso" — foi medida numa máquina ociosa
+e NÃO reproduziu (0/900). Fica como suspeita, descartada no fecho: é meta de passagem, sem incidente em
+prod nem no CI. Se o falso-vermelho voltar numa prova, a assinatura está aqui: 22 sítios em 8 provas de `db/`.
+
+No CI, a prova passou de primeira no runner Linux (41 asserts em 3 s; `--falsificar` 18/18 em 52 s) —
+e foi ela que estourou o teto do job `provas-sql`: o passo do núcleo sozinho foi a 11 min 35 s, e o job
+foi CANCELADO no teto de 12 min com `SQL_PROOF_OK 46/46` já impresso (a main levava 8,5–10 min). O teto
+subiu para 20, com a medição no comentário do `ci.yml` — o cancelamento no teto não diz qual prova
+custou, então ele tem de ficar acima do custo.
+
+## O ensaio na PROD
+
+`bun run db:aplicar supabase/migrations/20260929001651_hoje_sp_sessao_utc_sete_funcoes.sql --ensaio`
+(sha256 `803ee5ca…`): rodou INTEIRA contra o estado real — trava, PRE batendo o md5 exato dos 7 corpos
+vivos, os 7 `CREATE OR REPLACE`, o fecho e a POS (`NOTICE: POS OK: 7 funções…`) — e fez ROLLBACK. A 2ª
+testemunha (psql-ro, outra conexão) mostrou o radar ainda com o md5 do predecessor: nada gravado.
+
 ## Codex
 
-Consultado em 2026-09-29 00:4x: **exit 79** — cota em 86% (teto de 85%), janela reabre 03/10 19:11; o
-wrapper não gastou a chamada. Money-path (trava contábil e régua) → o PR-B fica **DRAFT** até o Codex;
-a prova PG17 falsificável é o Caminho B já pronto. O PR-A (skills + gate) não é money-path.
+Consultado em 2026-09-29 00:4x: **exit 79**. A cota estava em 86% (teto de 85%) e a janela reabre em
+03/10 19:11; o wrapper não gastou a chamada. Money-path (trava contábil e régua) → o PR-B ficou **DRAFT**.
+O PR-A (skills + gate) não é money-path.
+
+Em 2026-09-30 o founder pediu o merge. Rodei de novo usando a reserva: o teto de 85% existe para guardar o
+resto da cota para money-path, então passei `CODEX_ASYNC_TETO_SALDO=97`. O servidor recusou (**exit 75**,
+cota esgotada, reabre 03/10 19:11); o plano declarado no token é `prolite`, o de sempre, então o limite é
+real. O PR-B seguiu pelo **Caminho B** (`sem-codex:` no corpo) com a revisão adversarial própria:
+
+- tipo de cada coluna comparada, medido na prod: `sales_orders.created_at timestamptz`, `order_date_kpi`,
+  `eventos_outlier.data_evento`, `promocao_campanha.data_fim` e as 6 colunas que a trava contábil lê via
+  `to_jsonb` são `date`, e `fin_fechamentos` guarda `ano`/`mes` inteiros. Nenhuma troca cruza data com
+  instante, e nenhuma data passa pelo fuso da sessão no caminho;
+- o resto dos corpos não lê o relógio da sessão: sobram `now()` comparado com instante, `EXTRACT` e
+  `make_date` sobre `date` (conferido linha a linha, além do gate e da POS);
+- a troca é a única diferença para o predecessor (D1 da prova) e o pré-voo de 30/09 deu os 7 corpos vivos
+  iguais ao predecessor, sem deriva.
+
+**REVISÃO INDEPENDENTE PENDENTE.** O Codex retroativo (adversarial do código, `-r max`) roda quando a
+janela reabrir, a partir de 03/10 19:11, com o prompt guardado no PR.
 
 ## Fora, com dono
 
-- **Fase 2 — views, matviews e DEFAULTs** (chip "Consertar o dia da sessão UTC em views, matviews e
-  defaults"): inclui o aging ao vivo, a campanha "ativa hoje" e o cron `15 */2` UTC do omie-cron-diario,
-  que roda 21:15 e 23:15 BRT e GRAVA parâmetros de compra lidos de views com `CURRENT_DATE`.
-- **`converter_sugestao_em_campanha_flat`** (chip "Consertar converter_sugestao_em_campanha_flat
-  quebrada na prod").
-- **`melhoria_clientes_por_produto`**: com a 20260929000234 (sessão do LIKE); quando entrar, o gate pede
-  para tirar a linha da baseline (QUITADO).
+- **Fase 2 — views, matviews e DEFAULTs** (issue #2669, `money-path`, com o briefing inteiro): inclui o
+  aging ao vivo, a campanha "ativa hoje" e o cron `15 */2` UTC do omie-cron-diario, que roda 21:15 e
+  23:15 BRT e GRAVA parâmetros de compra lidos de views com `CURRENT_DATE`.
+- **`converter_sugestao_em_campanha_flat`** (issue #2668, `produto`).
+- **Teto do `mutation-check`** (25 min): cancelou 41 de 56 runs entre 28/09 04:01Z e 30/09 01:48Z, todos
+  no teto. Os contratos rodam em série e, no mesmo commit, o runner lento levou 1,6–1,8× o tempo do
+  rápido (~34 min para o job inteiro). O #2667 (sessão do LIKE) sobe o teto para 45 min com essa medição.
+- **`melhoria_clientes_por_produto`**: FEITO pela 20260929000234 (sessão do LIKE, #2653), com as 3 trocas de
+  fuso combinadas — as 2 entradas saíram da baseline no merge do #2653, e a migration foi APLICADA na prod
+  em 2026-09-30 ~01:30Z (db:aplicar, tentativa #197). 2ª testemunha (psql-ro, outra conexão): md5
+  `fb00b17a…`, zero `current_date`, zero `created_at::date`, 3× `America/Sao_Paulo`.
 - **Classe irmã no TypeScript**: `new Date().toISOString().slice(0,10)` como "hoje" (edge
-  gerar-pedidos-diario, dialogs de reposição, `useRoutePlanner`) — anotada no chip da fase 2.
+  gerar-pedidos-diario, dialogs de reposição, `useRoutePlanner`) — anotada na issue #2669.

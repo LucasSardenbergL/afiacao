@@ -333,3 +333,10 @@ settings e banco reais sem nenhuma menção ao claude-mem.
 **Ao religar (`true` + reiniciar as sessões):** o sensor volta a medir sozinho. Aviso que apareça
 nas primeiras horas é MEDIDO — prompts das sessões antigas sem observação, ainda dentro das 72 h — e
 some na 1ª observação nova.
+
+**Desfecho (30/09 18:56): worker PARADO** — 0 sessões anteriores a 28/09 22:06 (as 10 vivas eram de
+30/09 18:51); `curl` rc 7, 37701 sem LISTEN, `chroma-mcp` foi junto. **Com o plugin desligado,
+`node bun-runner.js worker-service.cjs stop` sai 0 SEM RODAR** (o launcher faz `exit(0)` se
+`enabledPlugins` diz false, antes de ler os argumentos; o `worker-service.cjs` só barra `start`/`hook`/
+`restart`/`--daemon`): o stop é `~/.bun/bin/bun …/13.28.0/scripts/worker-service.cjs stop` direto — que
+também sai 0 com a porta presa (só loga `warn`), então o juiz é o `curl` rc 7.

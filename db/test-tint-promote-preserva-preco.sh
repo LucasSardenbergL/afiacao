@@ -15,6 +15,7 @@ export PGVER=17   # consumido pelo db/lib/pg-harness.sh via source
 PORT="${PGPORT_TEST:-5457}"
 SLUG="tint-preco"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
+RODADA="$(dirname "$DATA")"   # dir ÚNICO desta rodada (o trap apaga): temporário mora aqui, nunca em /tmp/<nome-fixo>
 export LC_ALL=C LANG=C
 
 cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$(dirname "$DATA")"; rm -f "${RR:-}"; }
@@ -46,7 +47,7 @@ RR="$(mktemp "${TMPDIR:-/tmp}/snap-rr.XXXXXX")"
 sed -E 's/^(CREATE SCHEMA public;)/-- \1/' "$REPO_ROOT/supabase/schema-snapshot.sql" \
   | grep -vE '^\\(un)?restrict ' > "$RR"
 P -q -f "$REPO_ROOT/supabase/schema-extensions-prelude.sql" 2>/dev/null || true
-P0 -q -f "$RR" >/tmp/snap-apply.log 2>&1 || true
+P0 -q -f "$RR" >"$RODADA/snap-apply.log" 2>&1 || true
 rm -f "$RR"
 # snapshot STALE (§database.md): cria o que falta — tint_staging_precos_base (tabela inteira) e
 # desativada_em em tint_formulas (coluna). Schema reconstruído de prod via information_schema.
@@ -63,7 +64,7 @@ for t in tint_produtos tint_bases tint_embalagens tint_corantes tint_skus tint_f
          tint_sync_runs tint_integration_settings tint_importacoes tint_staging_formulas tint_staging_formula_itens \
          tint_staging_precos_base tint_staging_skus tint_staging_produtos tint_staging_bases tint_staging_embalagens tint_staging_corantes; do
   EX=$(Pq -c "SELECT to_regclass('public.$t') IS NOT NULL;")
-  [ "$EX" = "t" ] || { echo "❌ SETUP: tabela $t não criada pelo snapshot (ver /tmp/snap-apply.log)"; exit 1; }
+  [ "$EX" = "t" ] || { echo "❌ SETUP: tabela $t não criada pelo snapshot — fim do log:"; tail -n 20 "$RODADA/snap-apply.log"; exit 1; }
 done
 echo "snapshot aplicado; tabelas tint OK"
 # Cadeia de migrations da promoção (P0 tolera colisão de objetos já no snapshot). As 4 primeiras
@@ -71,11 +72,11 @@ echo "snapshot aplicado; tabelas tint OK"
 # + a promoção v1→v2 (set_based). A minha (v3) é a sob teste (ZONA 2, ON_ERROR_STOP).
 for m in 20260609150000_tint_sync_promote 20260611190000_tint_sync_codex_fixes \
          20260615140000_tint_promote_indices_timeout 20260615160000_tint_promote_set_based; do
-  P0 -q -f "$REPO_ROOT/supabase/migrations/${m}.sql" >>/tmp/mig-apply.log 2>&1 || true
+  P0 -q -f "$REPO_ROOT/supabase/migrations/${m}.sql" >>"$RODADA/mig-apply.log" 2>&1 || true
 done
 for fn in tint_calc_preco_final tint_recalc_preco_oficial tint_ensure_corante_stub; do
   EX=$(Pq -c "SELECT count(*)>0 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname='$fn';")
-  [ "$EX" = "t" ] || { echo "❌ SETUP: helper $fn não criado (ver /tmp/mig-apply.log)"; exit 1; }
+  [ "$EX" = "t" ] || { echo "❌ SETUP: helper $fn não criado — fim do log:"; tail -n 20 "$RODADA/mig-apply.log"; exit 1; }
 done
 echo "helpers + promoção (cadeia de migrations) aplicados"
 
