@@ -1338,13 +1338,14 @@ jobs:
     # com os 44s do contrato novo; sem folga, todo PR seguinte perderia o sinal. Quem pesa é
     # `sonda-versao-sql.mut` (103 mutações, 7m26s ≈ metade do job). 25min volta a ~60% de uso; o
     # conserto de fundo é o fan-out por contrato, como o `validate` fez no #2346.
-    # 2026-09-30: CANCELADO na main (run 36655667002) aos 25min, com 41 de 43 contratos concluídos
-    # em 23,8min e o `sonda-versao-bump` (4,4min no run rápido) no meio. O mesmo conjunto fechou em
-    # 17,6min num run do PR #2653 minutos antes: é ~35% de variância de runner sobre um job que já
-    # vivia a ~70% do teto. O `like-cru-em-migrations.mut` (#2653) entrou com 2,0–4,0min, o maior
-    # acréscimo da leva; a memoização do `lerSql` corta a parte dele. 35min devolve a folga para o
-    # runner lento; o conserto de fundo segue sendo o fan-out por contrato.
-    timeout-minutes: 35
+    # 2026-09-30: o teto virou a regra, não a exceção. 12 dos últimos 20 runs foram CANCELADOS, todos
+    # aos 25,2min (e 41 de 56 numa janela de 60 runs). Os contratos rodam em SÉRIE, e o carimbo de
+    # cada bloco `mutcheck:` do log marca o FIM do contrato: a duração é o delta entre blocos. No
+    # mesmo commit c85a19c92, um run fechou em 20,9min e o outro foi cancelado aos 25,2min. No runner
+    # lento cada contrato leva 1,6 a 1,8× mais (sonda-versao-sql 299→~510s; like-cru-em-migrations,
+    # #2653, 129→238s), e o job inteiro pede ~34min. 45min ≈ 75% no lento. O memo do `lerSql` corta a
+    # parte do like-cru. O conserto de fundo segue sendo o fan-out por contrato.
+    timeout-minutes: 45
     # issues:write p/ o sensor abaixo abrir/fechar a Issue `mutcheck-cobertura`; contents:read p/ checkout.
     permissions:
       contents: read
