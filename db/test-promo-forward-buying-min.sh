@@ -67,19 +67,19 @@ DECLARE r record;
 BEGIN
   -- A: promo>necessidade → 100; qtde_sem_promocao = necessidade real (30); preço 9; vl 100*9=900
   SELECT * INTO r FROM pedido_compra_item WHERE id=10;
-  IF r.qtde_final<>100 OR r.qtde_sem_promocao<>30 OR r.valor_linha<>900 THEN
+  IF r.qtde_final IS DISTINCT FROM 100 OR r.qtde_sem_promocao IS DISTINCT FROM 30 OR r.valor_linha IS DISTINCT FROM 900 THEN
     RAISE EXCEPTION 'A (901) errado: qf=% qsp=% vl=%', r.qtde_final, r.qtde_sem_promocao, r.valor_linha; END IF;
   RAISE NOTICE 'B1 OK: A promo(100)>necessidade(30) -> compra 100, qsp=30';
 
   -- B: promo<necessidade → PISO na necessidade (100), NÃO 30; qsp=100; vl 100*9=900
   SELECT * INTO r FROM pedido_compra_item WHERE id=20;
-  IF r.qtde_final<>100 OR r.qtde_sem_promocao<>100 OR r.valor_linha<>900 THEN
+  IF r.qtde_final IS DISTINCT FROM 100 OR r.qtde_sem_promocao IS DISTINCT FROM 100 OR r.valor_linha IS DISTINCT FROM 900 THEN
     RAISE EXCEPTION 'B (902) errado [KEY]: qf=% qsp=% vl=% (esperado 100/100/900; bug daria 30)', r.qtde_final, r.qtde_sem_promocao, r.valor_linha; END IF;
   RAISE NOTICE 'B2 OK [KEY]: B promo(30)<necessidade(100) -> NAO reduz, compra 100';
 
   -- C: promo fracionária 80.7 → ceil(GREATEST(80.7,50))=81; vl 81*9=729
   SELECT * INTO r FROM pedido_compra_item WHERE id=30;
-  IF r.qtde_final<>81 OR r.valor_linha<>729 THEN
+  IF r.qtde_final IS DISTINCT FROM 81 OR r.valor_linha IS DISTINCT FROM 729 THEN
     RAISE EXCEPTION 'C (903) errado: qf=% vl=% (esperado 81/729)', r.qtde_final, r.valor_linha; END IF;
   RAISE NOTICE 'B3 OK: C promo fracionaria 80.7 -> ceil 81';
 END $$;
@@ -90,9 +90,9 @@ DO $$
 DECLARE r record; ret record;
 BEGIN
   SELECT * INTO ret FROM r2;
-  IF ret.itens_forward_buying_aplicados<>0 THEN RAISE EXCEPTION 'IDEMPOTENCIA: 2a passada aplicou fb=%', ret.itens_forward_buying_aplicados; END IF;
+  IF ret.itens_forward_buying_aplicados IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'IDEMPOTENCIA: 2a passada aplicou fb=%', ret.itens_forward_buying_aplicados; END IF;
   SELECT * INTO r FROM pedido_compra_item WHERE id=20;
-  IF r.qtde_final<>100 THEN RAISE EXCEPTION 'IDEMPOTENCIA: B mudou na 2a passada -> %', r.qtde_final; END IF;
+  IF r.qtde_final IS DISTINCT FROM 100 THEN RAISE EXCEPTION 'IDEMPOTENCIA: B mudou na 2a passada -> %', r.qtde_final; END IF;
   RAISE NOTICE 'B4 OK: idempotente.';
 END $$;
 SQL
