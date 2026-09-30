@@ -18,6 +18,7 @@ PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
 PORT="${PGPORT_TEST:-5471}"
 SLUG="ia-uso-cota"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
+RODADA="$(dirname "$DATA")"   # dir ÚNICO desta rodada (o trap apaga): temporário mora aqui, nunca em /tmp/<nome-fixo>
 
 # O SHELL herda o locale sob teste; o POSTGRES roda sempre em C (via `env` inline).
 export LC_ALL="${HARNESS_LOCALE:-C}" LANG="${HARNESS_LOCALE:-C}"
@@ -362,7 +363,7 @@ P -q -c "UPDATE public.ia_uso_limite SET limite_hora=20, limite_dia=60 WHERE fun
 # ══════════════════════════════════════════════════════════════════════════════
 echo "── falsificação (cada sabotagem tem de matar o assert que ela mira) ──"
 
-SAB="$(mktemp "/tmp/sabotagem-${SLUG}.XXXXXX.sql")"
+SAB="$(mktemp "$RODADA/sabotagem-${SLUG}.XXXXXX")"
 # Sabota via sed SOBRE A MIGRATION REAL: garante que só o trecho mirado muda.
 sabotar()   { sed -E "$1" "$MIG" > "$SAB"; cmp -s "$SAB" "$MIG" && { echo "  ❌ sed NAO casou nada — sabotagem inerte"; FAIL=$((FAIL+1)); return 1; }; P -q -f "$SAB" >/dev/null; }
 restaurar() { P -q -f "$MIG" >/dev/null; }

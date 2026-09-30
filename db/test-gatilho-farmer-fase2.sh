@@ -21,6 +21,7 @@ PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
 PORT="${PGPORT_TEST:-5474}"
 SLUG="gatilho-fase2"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
+RODADA="$(dirname "$DATA")"   # dir ÚNICO desta rodada (o trap apaga): temporário mora aqui, nunca em /tmp/<nome-fixo>
 export LC_ALL=C LANG=C
 
 [ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER}"; exit 1; }
@@ -152,7 +153,7 @@ eq "C7 bundle (nunca rodou)" "$(veredito bundle)" "SEM DENOMINADOR"
 # ZONA 4 — FALSIFICACAO: sem o ramo, o C4 encerra a linha com n=1
 # ════════════════════════════════════════════════════════
 # Sabota uma COPIA — o arquivo real nunca e tocado, entao nao ha restaurar() para falhar.
-SABOTADO="$(mktemp "/tmp/gatilho-sabotado-XXXXXX.sql")"
+SABOTADO="$(mktemp "$RODADA/gatilho-sabotado-XXXXXX")"
 python3 - "$GATILHO" "$SABOTADO" <<'PY'
 import sys
 ini = "    WHEN farmers = 1 AND farmers_com_carteira > 1 THEN"
