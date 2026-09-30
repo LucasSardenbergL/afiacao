@@ -20,6 +20,7 @@ PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
 PORT="${PGPORT_TEST:-5471}"
 SLUG="carteira-saude-eligible"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
+RODADA="$(dirname "$DATA")"   # dir ÚNICO desta rodada (o trap apaga): temporário mora aqui, nunca em /tmp/<nome-fixo>
 export LC_ALL=C LANG=C
 
 [ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER} pgvector"; exit 1; }
@@ -29,7 +30,7 @@ cp -Rn "$CELLAR"/share/postgresql/. "/opt/homebrew/share/postgresql@${PGVER}/" 2
 mkdir -p "/opt/homebrew/lib/postgresql@${PGVER}"
 cp -Rn "$CELLAR"/lib/postgresql/. "/opt/homebrew/lib/postgresql@${PGVER}/" 2>/dev/null || true
 
-cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$(dirname "$DATA")"; rm -f "/tmp/fn-${SLUG}"-*.sql 2>/dev/null || true; }
+cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$(dirname "$DATA")"; }
 trap cleanup EXIT
 
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
@@ -199,7 +200,7 @@ P -q -c "INSERT INTO public.carteira_positivacao_snapshot (created_at)
 echo "── falsificação ──"
 
 # F1: remove o filtro eligible (regressão pra v1) → A4 tem que divergir de 3
-SAB1="/tmp/fn-${SLUG}-f1.sql"
+SAB1="$RODADA/fn-${SLUG}-f1.sql"
 perl -0pe 's/WHERE ca\.eligible\s+AND /WHERE /g; s/\n\s*WHERE eligible\n/\n/g; s/carteira_assignments WHERE eligible\)/carteira_assignments)/g' "$MIG" > "$SAB1"
 if grep -qE 'WHERE (ca\.)?eligible' "$SAB1"; then bad "F1 sabotagem não removeu o filtro (perl falhou)"; fi
 P -q -f "$SAB1"
@@ -214,7 +215,7 @@ V=$(Pq -c "SET test.uid='aaaaaaaa-0000-0000-0000-000000000001'; SELECT public.ge
 eq "F1-restore migration real de volta (carteira=3)" "$V" "3"
 
 # F2: mata o fallback por efeito (effect_at ← NULL) → A11 tem que sair de 'succeeded'
-SAB2="/tmp/fn-${SLUG}-f2.sql"
+SAB2="$RODADA/fn-${SLUG}-f2.sql"
 perl -0pe 's/max\(s\.created_at\) AS effect_at/NULL::timestamptz AS effect_at/' "$MIG" > "$SAB2"
 if grep -q 'max(s.created_at)' "$SAB2"; then bad "F2 sabotagem não trocou o effect_at (perl falhou)"; fi
 P -q -f "$SAB2"

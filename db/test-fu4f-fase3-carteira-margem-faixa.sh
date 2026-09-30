@@ -21,6 +21,7 @@ PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
 PORT="${PGPORT_TEST:-5473}"
 SLUG="fu4f3faixa"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
+RODADA="$(dirname "$DATA")"   # dir ÚNICO desta rodada (o trap apaga): temporário mora aqui, nunca em /tmp/<nome-fixo>
 export LC_ALL=C LANG=C
 
 [ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER}"; exit 1; }
@@ -245,7 +246,7 @@ echo "-- K. FALSIFICAÇÃO (o passo que separa prova de teatro) --"
 # A sabotagem é um `sed` CIRÚRGICO sobre o arquivo REAL — nunca um corpo reescrito à mão, que
 # testaria a minha cópia em vez da migration que o founder vai colar no SQL Editor.
 MIG="$REPO_ROOT/supabase/migrations/20260726170000_fu4f_fase3_carteira_margem_faixa.sql"
-SABOTADA="/tmp/sabota-${SLUG}.sql"
+SABOTADA="$RODADA/sabota-${SLUG}.sql"
 
 sabota() { # $1 = expressão sed
   sed "$1" "$MIG" > "$SABOTADA"
