@@ -173,7 +173,9 @@ a prova PG17 falsificável é o Caminho B já pronto. O PR-A (skills + gate) nã
   que roda 21:15 e 23:15 BRT e GRAVA parâmetros de compra lidos de views com `CURRENT_DATE`.
 - **`converter_sugestao_em_campanha_flat`** (chip "Consertar converter_sugestao_em_campanha_flat
   quebrada na prod").
-- **`melhoria_clientes_por_produto`**: com a 20260929000234 (sessão do LIKE); quando entrar, o gate pede
-  para tirar a linha da baseline (QUITADO).
+- **`melhoria_clientes_por_produto`**: FEITO pela 20260929000234 (sessão do LIKE, #2653), com as 3 trocas de
+  fuso combinadas — as 2 entradas saíram da baseline no merge do #2653, e a migration foi APLICADA na prod
+  em 2026-09-30 ~01:30Z (db:aplicar, tentativa #197). 2ª testemunha (psql-ro, outra conexão): md5
+  `fb00b17a…`, zero `current_date`, zero `created_at::date`, 3× `America/Sao_Paulo`.
 - **Classe irmã no TypeScript**: `new Date().toISOString().slice(0,10)` como "hoje" (edge
   gerar-pedidos-diario, dialogs de reposição, `useRoutePlanner`) — anotada no chip da fase 2.
