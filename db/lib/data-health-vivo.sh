@@ -48,7 +48,8 @@
 #     da 20260918200000 exige o compute FECHADO para anon/PUBLIC; reproduz-se o ACL MEDIDO em prod
 #     (2026-09-27: postgres, service_role e sandbox_exec — nem `authenticated`) ANTES do apply, e aí
 #     a pós-condição mede o que a migration faz com ele (CREATE OR REPLACE preserva) em vez de medir
-#     o default do harness. Mesmo idioma de db/test-data-health-sync-reprocess.sh.
+#     o default do harness. Mesmo idioma de db/test-data-health-sync-reprocess.sh. Idem, desde
+#     2026-09-30, o de get_data_health (authenticated e service_role; anon não).
 
 DHV_INICIO=20260918200000
 DHV_GUARDADAS=(_data_health_compute data_health_watchdog fin_sync_heartbeat _data_health_episodio
@@ -126,6 +127,11 @@ BEGIN
 END $mv$;
 REVOKE ALL ON FUNCTION public._data_health_compute() FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public._data_health_compute() TO service_role;
+-- get_data_health, a RPC do app: o ACL MEDIDO em prod (2026-09-30: postgres, authenticated,
+-- service_role e sandbox_exec — nem anon). Sem ele o snapshot a deixa aberta a PUBLIC, e a prova que
+-- a lê "como o app" não distinguiria o app de qualquer um nem pegaria um DROP+CREATE que reseta o ACL.
+REVOKE ALL ON FUNCTION public.get_data_health() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.get_data_health() TO authenticated, service_role;
 SQL
   echo "  → cadeia viva (≥ $DHV_INICIO que redefine função guardada):"
   dhv_aplicar_cadeia "$REPO_ROOT/supabase/migrations"

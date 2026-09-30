@@ -6,15 +6,23 @@
 # carteira_assignments ficou 24h congelada com o Sentinela VERDE — o único check da família,
 # carteira_scores, mede o SCORING (farmer_client_scores.calculated_at), e o scoring daquela manhã estava
 # fresco. Dois writers, dois frescores. A 20260729160000 acrescentou o ramo; esta prova asserta:
-#  • o ramo existe EXATAMENTE 1x e os vizinhos seguem (era o "+1 check" da revisão de julho — num corpo
-#    que cresce toda semana, a contagem total não é invariante de ninguém);
-#  • o corte é em 30h pelos DOIS lados (31h stale, 29h ok), a carteira vazia é broken (max NULL não
-#    vira ok por omissão), e a causa provável ensina que cron.job_run_details só prova o ENQUEUE;
-#  • o incidente como assert executável: scoring fresco + rebuild de 31h → carteira_scores ok e
-#    carteira_rebuild stale — no compute e em get_data_health(), a RPC que o app lê (useDataHealth →
-#    banner/badge). É a ÚNICA superfície do ramo: carteira_rebuild está FORA do v_sources do watchdog
-#    e do resumo do heartbeat desde que nasceu (a 20260729160000 só tocou o compute), então não vira
-#    e-mail. Esta prova não congela isso: promover a push é decisão de produto em aberto.
+#  • o ramo existe EXATAMENTE 1x e os vizinhos seguem, cada um 1x (era o "+1 check" da revisão de julho
+#    — num corpo que cresce toda semana, a contagem total não é invariante de ninguém);
+#  • o corte é em 30h pelos DOIS lados (31h stale, 29h ok), a carteira vazia é broken (max NULL não vira
+#    ok por omissão), a idade é a do rebuild (não fabricada), e a causa provável ensina que
+#    cron.job_run_details só prova o ENQUEUE;
+#  • os dois writers são independentes nos DOIS sentidos: rebuild fresco com o scoring parado → ok, e o
+#    incidente (rebuild de 31h com o scoring recém-recalculado) → carteira_scores ok e carteira_rebuild
+#    stale — no compute e em get_data_health(), a RPC que o app lê (useDataHealth → banner/badge), lida
+#    COMO o app (papel authenticated, com o ACL de prod). É a ÚNICA superfície do ramo: carteira_rebuild
+#    está FORA do v_sources do watchdog e do resumo do heartbeat desde que nasceu (a 20260729160000 só
+#    tocou o compute), então não vira e-mail. Esta prova não congela isso: promover a push é decisão de
+#    produto em aberto.
+#
+# O scoring é CONTROLADO à parte, de propósito: o INSERT na carteira dispara
+# reconcile_score_owner_from_carteira, que cria a linha do cliente em farmer_client_scores com
+# calculated_at DEFAULT now() — o scoring nasceria fresco por efeito colateral da própria carteira, e o
+# "dois writers" viraria um INSERT só (achado da revisão independente de 2026-09-30).
 #
 # Até 2026-09-30 esta prova re-aplicava a 20260729160000 sobre o snapshot e suas sabotagens editavam
 # a migration de julho por sed. O re-dump e3d500327 (#1675) absorveu as reescritas seguintes, e o
@@ -86,11 +94,12 @@ q() {
   if out="$(P -tA -c "$1" 2>/dev/null)"; then printf '%s' "$out" | tr '\n' ' ' | sed 's/ *$//'
   else printf 'ERRO: %s' "$(P -tA -c "$1" 2>&1 >/dev/null | tr '\n' ' ' | cut -c1-300)"; fi
 }
-# A mesma leitura COMO o app: o uid é fixado na MESMA sessão que lê (dois -c, um psql só).
+# A mesma leitura COMO o app: papel authenticated e o uid fixados na MESMA sessão que lê (vários -c,
+# um psql só). Sem EXECUTE para authenticated, o valor é o ERRO — e o assert cai com o porquê.
 q_app() {
-  local out
-  if out="$(P -tA -q -c "SET test.uid = '$VENDEDOR'" -c "$1" 2>/dev/null)"; then printf '%s' "$out" | tr '\n' ' ' | sed 's/ *$//'
-  else printf 'ERRO: %s' "$(P -tA -q -c "SET test.uid = '$VENDEDOR'" -c "$1" 2>&1 >/dev/null | tr '\n' ' ' | cut -c1-300)"; fi
+  local ctx=(-c "SET ROLE authenticated" -c "SET test.uid = '$VENDEDOR'" -c "$1") out
+  if out="$(P -tA -q "${ctx[@]}" 2>/dev/null)"; then printf '%s' "$out" | tr '\n' ' ' | sed 's/ *$//'
+  else printf 'ERRO: %s' "$(P -tA -q "${ctx[@]}" 2>&1 >/dev/null | tr '\n' ' ' | cut -c1-300)"; fi
 }
 # O PASSO também é assert: SQL que erra fica vermelho (com o erro no log) em vez de derrubar a rodada.
 roda() {  # <id> <descrição> <sql>
@@ -99,43 +108,53 @@ roda() {  # <id> <descrição> <sql>
   else chk "$1" "$2" "ERRO: $(printf '%s' "$saida" | tr '\n' ' ' | cut -c1-300)" "ok"; fi
 }
 qr() { q "SELECT $1 FROM public._data_health_compute() WHERE source='carteira_rebuild';"; }
-# semear <id> <expressão do last_synced_at> — a carteira com UMA atribuição, sincronizada naquele instante.
-# Relativo ao now() do banco, a 1h de cada lado do corte: sem borda de calendário, sem relógio do bash.
+qs() { q "SELECT status FROM public._data_health_compute() WHERE source='carteira_scores';"; }
+# semear <id> <expressão do last_synced_at> — a carteira com UMA atribuição, sincronizada naquele
+# instante, e o SCORING do cliente parado há 40h (upsert explícito: o trigger da carteira o criaria
+# fresco). Relativo ao now() do banco, a 1h de cada lado do corte: sem borda de calendário, sem relógio
+# do bash.
 semear() {
-  roda "$1" "carteira sincronizada em $2" "TRUNCATE public.carteira_assignments CASCADE;
+  roda "$1" "carteira sincronizada em $2, scoring parado há 40h" "TRUNCATE public.carteira_assignments CASCADE;
     INSERT INTO public.carteira_assignments (customer_user_id, owner_user_id, source, last_synced_at)
-    VALUES ('$CLIENTE', '$VENDEDOR', 'omie', $2);"
+    VALUES ('$CLIENTE', '$VENDEDOR', 'omie', $2);
+    INSERT INTO public.farmer_client_scores (customer_user_id, farmer_id, calculated_at)
+    VALUES ('$CLIENTE', '$VENDEDOR', now() - interval '40 hours')
+    ON CONFLICT (customer_user_id) DO UPDATE SET calculated_at = EXCLUDED.calculated_at;"
 }
 
 cenario() {
   PASS=0; FAIL=0; FALHOS=" "
   echo "→ o ramo no corpo vivo"
   chk R1 "carteira_rebuild aparece exatamente 1x" "$(qr "count(*)")" "1"
-  chk R2 "os vizinhos seguem (saldo_bancario, contas_pagar, contas_receber, carteira_scores, custos_produtos, estoque_reposicao)" \
-    "$(q "SELECT count(DISTINCT source) FROM public._data_health_compute() WHERE source IN ('saldo_bancario','contas_pagar','contas_receber','carteira_scores','custos_produtos','estoque_reposicao');")" "6"
+  # count(*), não count(DISTINCT): um vizinho DUPLICADO também é quebra (o watchdog vivo não roda o laço).
+  chk R2 "os vizinhos seguem, 1x cada (saldo_bancario, contas_pagar, contas_receber, carteira_scores, custos_produtos, estoque_reposicao)" \
+    "$(q "SELECT count(*) FROM public._data_health_compute() WHERE source IN ('saldo_bancario','contas_pagar','contas_receber','carteira_scores','custos_produtos','estoque_reposicao');")" "6"
   chk R3 "metadados: domínio, base do frescor, esperado de 30h e severidade" \
     "$(qr "domain || '|' || freshness_basis || '|' || expected_max_age_seconds || '|' || severity")" "carteira|last_synced_at|108000|warning"
+  chk R4 "a RPC do app NÃO executa para anon (o ACL de prod; um DROP+CREATE o resetaria)" \
+    "$(q "SELECT has_function_privilege('anon', 'public.get_data_health()', 'EXECUTE')::text;")" "false"
 
-  echo "→ o frescor do rebuild — o corte em 30h pelos dois lados"
+  echo "→ o frescor do rebuild — o corte em 30h pelos dois lados, com o scoring PARADO"
   semear S1 "now()"
-  chk R4 "rebuild de agora → ok" "$(qr "status")" "ok"
+  chk R5 "rebuild de agora → ok (o ramo não lê o scoring, parado há 40h)" "$(qr "status")" "ok"
   semear S2 "now() - interval '31 hours'"
-  chk R5 "rebuild de 31h → stale" "$(qr "status")" "stale"
-  chk R6 "stale: a causa provável ensina que cron.job_run_details só prova o ENQUEUE" \
+  chk R6 "rebuild de 31h → stale" "$(qr "status")" "stale"
+  chk R7 "a idade é a do rebuild (31h ± 10 min), não fabricada" \
+    "$(qr "(age_seconds BETWEEN 31*3600 - 600 AND 31*3600 + 600)::text")" "true"
+  chk R8 "stale: a causa provável ensina que cron.job_run_details só prova o ENQUEUE" \
     "$(qr "(strpos(probable_cause, 'job_run_details so prova o ENQUEUE') > 0)::text")" "true"
   semear S3 "now() - interval '29 hours'"
-  chk R7 "rebuild de 29h → ok (o corte é 30h, não um stale preguiçoso)" "$(qr "status")" "ok"
+  chk R9 "rebuild de 29h → ok (o corte é 30h, não um stale preguiçoso)" "$(qr "status")" "ok"
   roda S4 "esvazia a carteira" "TRUNCATE public.carteira_assignments CASCADE;"
-  chk R8 "carteira vazia → broken (max NULL não vira ok por omissão)" "$(qr "status")" "broken"
+  chk R10 "carteira vazia → broken (max NULL não vira ok por omissão)" "$(qr "status")" "broken"
 
-  echo "→ o incidente de 2026-07-28: scoring fresco, rebuild parado há 31h"
+  echo "→ o incidente de 2026-07-28: rebuild parado há 31h, scoring recalculado agora"
   semear S5 "now() - interval '31 hours'"
-  roda S6 "o scoring recalculou agora" "INSERT INTO public.farmer_client_scores (customer_user_id, farmer_id, calculated_at)
-    VALUES (gen_random_uuid(), gen_random_uuid(), now());"
-  chk R9  "carteira_scores ok (o scoring está mesmo fresco)" \
-    "$(q "SELECT status FROM public._data_health_compute() WHERE source='carteira_scores';")" "ok"
-  chk R10 "carteira_rebuild stale (o rebuild parou — o Sentinela deixa de ficar verde)" "$(qr "status")" "stale"
-  chk R11 "o app vê: get_data_health() devolve carteira_rebuild stale" \
+  chk R11 "carteira_scores stale com o scoring de 40h (o frescor dele é do SCORING)" "$(qs)" "stale"
+  roda S6 "o scoring recalcula agora" "UPDATE public.farmer_client_scores SET calculated_at = now() WHERE customer_user_id = '$CLIENTE';"
+  chk R12 "carteira_scores ok (o scoring está mesmo fresco)" "$(qs)" "ok"
+  chk R13 "carteira_rebuild stale (o rebuild parou — o Sentinela deixa de ficar verde)" "$(qr "status")" "stale"
+  chk R14 "o app vê (authenticated): get_data_health() devolve carteira_rebuild stale" \
     "$(q_app "SELECT status FROM public.get_data_health() WHERE source='carteira_rebuild';")" "stale"
   return 0
 }
@@ -143,13 +162,15 @@ cenario() {
 # SABOTAGENS: <nome>:<VERMELHOS>[:<VERDES>] — os asserts que TÊM de acusar a sabotagem e as
 # pré-condições que TÊM de seguir verdes (`,` = E; `|` = OU). Vermelho em outra camada (setup
 # quebrado, erro de execução) é quebra, não dente. O corte é sabotado pelos DOIS lados (frouxo e
-# apertado), e o `mede_o_scoring` é o incidente de volta: o ramo lendo o writer ERRADO. As
-# `migracao_nova_*` são a regressão chegando pela PRÓXIMA migration — a do app só fica vermelha
-# porque get_data_health está em DHV_GUARDADAS; fora dela, a cadeia não a pega e a sabotagem reprova.
-SABOTAGENS="limiar_frouxo:R5,R10:R4,R8 limiar_apertado:R7:R4,R5 vazia_ok:R8:R5
-            ramo_some:R1,R10:R2,R9 vizinho_some:R2:R1,R10 mede_o_scoring:R10,R11:R1,R9
-            esperado_diverge:R3:R1,R5 causa_sem_enqueue:R6:R5 app_filtra:R11:R10
-            migracao_nova_limiar_frouxo:R5,R10:R4,R8 migracao_nova_app_filtra:R11:R10"
+# apertado), e o `mede_o_scoring` é o incidente de volta — o ramo lendo o writer ERRADO, que cai nos
+# dois sentidos (R5: rebuild fresco com scoring parado; R13/R14: o incidente). As `migracao_nova_*`
+# são a regressão chegando pela PRÓXIMA migration: as de get_data_health só ficam vermelhas porque
+# ela está em DHV_GUARDADAS — fora dela, a cadeia não as pega e a sabotagem reprova.
+SABOTAGENS="limiar_frouxo:R6,R13:R5,R10 limiar_apertado:R9:R5,R6 vazia_ok:R10:R6
+            ramo_some:R1,R13:R2,R12 vizinho_some:R2:R1,R13 mede_o_scoring:R5,R13,R14:R1,R11,R12
+            idade_fabricada:R7:R6 esperado_diverge:R3:R1,R6 causa_sem_enqueue:R8:R6 app_filtra:R14:R13
+            migracao_nova_limiar_frouxo:R6,R13:R5,R10 migracao_nova_app_filtra:R14:R13
+            migracao_nova_drop_create:R4:R13,R14"
 
 # sabotagem <nome> — troca UM trecho do corpo VIVO no banco da rodada (âncora única, conferida pelo
 # dhv_sabotar). Status ≠0 = não aplicou.
@@ -164,6 +185,7 @@ sabotagem() {
     ramo_some)         dhv_sabotar "$cp" "SELECT 'carteira_rebuild'::text, 'carteira'::text," "SELECT 'carteira_rebuild_x'::text, 'carteira'::text," ;;
     vizinho_some)      dhv_sabotar "$cp" "SELECT 'carteira_scores'::text, 'carteira'::text," "SELECT 'carteira_scores_x'::text, 'carteira'::text," ;;
     mede_o_scoring)    dhv_sabotar "$cp" "FROM public.carteira_assignments ca" "FROM (SELECT calculated_at AS last_synced_at FROM public.farmer_client_scores) ca" ;;
+    idade_fabricada)   dhv_sabotar "$cp" "EXTRACT(EPOCH FROM now() - max(ca.last_synced_at))::bigint" "0::bigint" ;;
     esperado_diverge)  dhv_sabotar "$cp" "(30*3600)::bigint, 'last_synced_at'" "(36*3600)::bigint, 'last_synced_at'" ;;
     causa_sem_enqueue) dhv_sabotar "$cp" "cron.job_run_details so prova o ENQUEUE" "cron.job_run_details prova a execucao" ;;
     app_filtra)        dhv_sabotar "$gd" "$app" "$app_sem" ;;
@@ -171,6 +193,11 @@ sabotagem() {
                        dhv_migracao_nova "$cp" "$corte" "now() - max(ca.last_synced_at) > interval '90 hours' THEN 'stale'" ;;
     migracao_nova_app_filtra)
                        dhv_migracao_nova "$gd" "$app" "$app_sem" ;;
+    # A armadilha do CLAUDE.md: DROP FUNCTION + CREATE devolve o ACL ao default (EXECUTE a PUBLIC);
+    # o CREATE OR REPLACE preservaria. A RPC segue funcionando (R13/R14) — só o anon passa a executar.
+    migracao_nova_drop_create)
+                       dhv_migracao_nova "$gd" "CREATE OR REPLACE FUNCTION public.get_data_health()" \
+                         $'DROP FUNCTION public.get_data_health();\nCREATE FUNCTION public.get_data_health()' ;;
     *) echo "sabotagem desconhecida: $1" >&2; return 1 ;;
   esac
 }

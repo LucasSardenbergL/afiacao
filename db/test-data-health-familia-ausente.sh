@@ -5,14 +5,15 @@
 # × ativo × conta e asserta:
 #  • compute: conta NULLIF(btrim(familia),'') × COALESCE(ativo,false) × account IN (oben, colacor) —
 #    vazia e só-espaço contam, inativo e colacor_sc não; a mensagem traz o breakdown oben/colacor;
-#    stale/warning com n>0, ok/info com n=0;
+#    stale/warning com n>0, ok/info com n=0; e, sendo contagem, idade NULL (ausente ≠ zero);
 #  • helper: lista cada produto que conta como '• [conta] descrição (cód. X)', sob o cabeçalho, e
 #    EXCLUI os que não contam — o MESMO predicado do compute, provado no MESMO seed (F4 × L9: a lista
 #    que diverge da contagem manda o founder classificar o produto errado); cap honesto "… e mais N";
 #    ordem por conta e, dentro dela, por descrição; NULL com n=0;
 #  • E2E: numa rodada COMPLETA do watchdog vivo, o alerta abre em fin_alertas SEM a lista e o e-mail
-#    sai COM ela, depois da mensagem original; o heartbeat traz o source no resumo; com n=0 o watchdog
-#    dispensa o alerta.
+#    sai COM ela, depois da mensagem original; os pushes vizinhos que a reescrita de junho já reverteu
+#    uma vez (estoque_reposicao, omie_tipo_produto_oben) seguem EMPURRADOS — medido pelo alerta aberto,
+#    não pelo texto do corpo; o heartbeat traz o source no resumo; com n=0 o watchdog dispensa o alerta.
 #
 # Até 2026-09-30 eram duas provas, esta e a test-familia-ausente-lista-email.sh, e as duas re-aplicavam
 # a 20260604150000 (junho) sobre o snapshot: morreram no setup quando o re-dump #1509 absorveu o drop de
@@ -121,6 +122,8 @@ cenario() {
     "$(qf "substring(message from ': ([0-9]+) produto')")" "5"
   chk F5 "breakdown: oben 3"    "$(qf "substring(message from '[(]oben ([0-9]+) ')")" "3"
   chk F6 "breakdown: colacor 2" "$(qf "substring(message from ' colacor ([0-9]+)[)]')")" "2"
+  chk F7 "check de CONTAGEM não tem idade: age e esperado NULL (ausente ≠ zero — 0 leria 'atualizado agora')" \
+    "$(qf "(age_seconds IS NULL AND expected_max_age_seconds IS NULL)::text")" "true"
 
   echo "→ helper — conteúdo, formato e o MESMO predicado do compute"
   chk L1 "cabeçalho na 1ª linha" \
@@ -153,6 +156,15 @@ cenario() {
     "$(q "SELECT count(*) $EMAIL AND starts_with(mensagem, $MSG_COMPUTE);")" "1"
   chk W6 "o ALERTA leva só a mensagem — a lista (volátil) fica no e-mail" \
     "$(q "SELECT count(*) $ALERTA AND dismissed_at IS NULL AND mensagem = $MSG_COMPUTE;")" "1"
+  # Anti-cascata EXECUTÁVEL: a migration de junho desta lista reverteu o push do estoque_reposicao ao
+  # reescrever o watchdog. A versão morta checava o TEXTO (`LIKE '%estoque_reposicao%'`), e o nome
+  # também está num COMENTÁRIO do watchdog vivo — ficaria verde com o source fora do push. Aqui mede o
+  # push: no seed, os dois checks estão degradados (sem estoque sincronizado; oben sem tipo_produto), e
+  # o valor diz qual das duas partes caiu ("true|0" = empurrável e não empurrado).
+  chk W7 "anti-cascata: estoque_reposicao degradado segue EMPURRADO (alerta aberto)" \
+    "$(q "SELECT (status <> 'ok')::text || '|' || (SELECT count(*) FROM public.fin_alertas WHERE company='oben' AND tipo='data_health_estoque_reposicao' AND dismissed_at IS NULL) FROM public._data_health_compute() WHERE source='estoque_reposicao';")" "true|1"
+  chk W8 "anti-cascata: omie_tipo_produto_oben degradado segue EMPURRADO (alerta aberto)" \
+    "$(q "SELECT (status <> 'ok')::text || '|' || (SELECT count(*) FROM public.fin_alertas WHERE company='oben' AND tipo='data_health_omie_tipo_produto_oben' AND dismissed_at IS NULL) FROM public._data_health_compute() WHERE source='omie_tipo_produto_oben';")" "true|1"
   roda E2 "heartbeat executou" "SELECT public.fin_sync_heartbeat();"
   chk H1 "heartbeat: o resumo traz vendas_familia_ausente com o status" \
     "$(q "SELECT count(*) FROM public.fornecedor_alerta WHERE titulo LIKE '[Watchdog%' AND mensagem LIKE '%vendas_familia_ausente: stale%';")" "1"
@@ -175,11 +187,12 @@ cenario() {
 # lados, porque a divergência entre eles é o defeito que a lista existe para não ter.
 SABOTAGENS="compute_sem_btrim:F4,F5:F1,F2,L9 compute_sem_nullif:F4,F6:F1,F2,L9
             compute_conta_inativo:F4,F5:F1,L9 compute_conta_colacor_sc:F4:F5,F6,L9
-            compute_nunca_dispara:F2,W2:F4,W1
+            compute_nunca_dispara:F2,W2:F4,W1 compute_idade_fabricada:F7:F1,F4
             lista_sem_btrim:L4,L9:L2,F4 lista_conta_inativo:L7,L9:L2,F4 lista_conta_colacor_sc:L8,L9:L2,F4
             lista_sem_cap:L11:L10 lista_ordem_invertida:L13,L14:L2,L9
             email_sem_lista:W4:W1,W3,W5 email_sem_mensagem:W5:W3,W4 alerta_com_lista:W6:W2,W4
-            push_sem_familia:W2,W3:W1 nao_dispensa:Z5:Z4,W2 resumo_sem_familia:H1:E2,W2
+            push_sem_familia:W2,W3:W1 cascata_sem_estoque:W7:W1,W2 cascata_sem_tipo_produto:W8:W1,W2
+            nao_dispensa:Z5:Z4,W2 resumo_sem_familia:H1:E2,W2
             migracao_nova_sem_push:W2,W3:W1"
 
 # O trecho do watchdog que monta o e-mail tem aspas simples e barras (E'\n\n'): entre aspas duplas,
@@ -202,6 +215,10 @@ sabotagem() {
     compute_conta_inativo)    dhv_sabotar "$cp" "$pred" "NULLIF(btrim(familia), '') IS NULL AND true" ;;
     compute_conta_colacor_sc) dhv_sabotar "$cp" "COALESCE(ativo, false) AND account IN ('oben','colacor')" "COALESCE(ativo, false) AND account IN ('oben','colacor','colacor_sc')" ;;
     compute_nunca_dispara)    dhv_sabotar "$cp" "CASE WHEN fa.n = 0 THEN 'ok' ELSE 'stale' END" "'ok'::text" ;;
+    # `NULL::bigint, NULL::bigint,` aparece 6x no compute (todo check de contagem): a âncora leva a
+    # linha seguinte, a base de frescor DESTE check, para ser única.
+    compute_idade_fabricada)  dhv_sabotar "$cp" $'NULL::bigint, NULL::bigint,\n      \'count_omie_products_ativo_familia_vazia' \
+                                $'0::bigint, 0::bigint,\n      \'count_omie_products_ativo_familia_vazia' ;;
     lista_sem_btrim)          dhv_sabotar "$hl" "WHERE NULLIF(btrim(familia), '') IS NULL" "WHERE NULLIF(familia, '') IS NULL" ;;
     lista_conta_inativo)      dhv_sabotar "$hl" "AND COALESCE(ativo, false)" "AND true" ;;
     lista_conta_colacor_sc)   dhv_sabotar "$hl" "AND account IN ('oben','colacor')" "AND account IN ('oben','colacor','colacor_sc')" ;;
@@ -211,6 +228,8 @@ sabotagem() {
     email_sem_mensagem)       dhv_sabotar "$wd" "$ANC_EMAIL" "$TROCA_EMAIL" ;;
     alerta_com_lista)         dhv_sabotar "$wd" "r.message, v_msg_email," "v_msg_email, v_msg_email," ;;
     push_sem_familia)         dhv_sabotar "$wd" "$push" "'omie_tipo_produto_oben'," ;;
+    cascata_sem_estoque)      dhv_sabotar "$wd" "'estoque_inventario','estoque_reposicao'," "'estoque_inventario'," ;;
+    cascata_sem_tipo_produto) dhv_sabotar "$wd" "$push" "'vendas_familia_ausente'," ;;
     nao_dispensa)             dhv_sabotar "$wd" "WHERE company = 'oben' AND tipo = 'data_health_' || r.source AND dismissed_at IS NULL;" "WHERE false;" ;;
     resumo_sem_familia)       dhv_sabotar "$hb" "'vendas_familia_ausente'," "" ;;
     migracao_nova_sem_push)   dhv_migracao_nova "$wd" "$push" "'omie_tipo_produto_oben'," ;;

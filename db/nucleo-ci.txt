@@ -205,8 +205,8 @@ db/test-tint-cobertura-lista-email.sh      22  falsificar=6
 # com a carteira 24h congelada), o corte de 30h pelos dois lados, e o incidente visto por
 # get_data_health() — a RPC do app e a ÚNICA superfície do ramo, que está fora do push do watchdog
 # (docs/historico/provas-data-health-revividas.md).
-db/test-data-health-familia-ausente.sh     36  falsificar=17
-db/test-data-health-carteira-rebuild.sh    17  falsificar=11
+db/test-data-health-familia-ausente.sh     39  falsificar=20
+db/test-data-health-carteira-rebuild.sh    20  falsificar=13
 # Reposição: o sensor do SKU que VENDE e o motor não lê — flag habilitado_reposicao_automatica
 # desligado sem dono (reativação no Omie não religa; linha nascida com o default false). Sem ele o
 # SKU some do cockpit calado (FCA.7090QT, 6 un em pedido aberto). A view espelha o WHERE do motor
