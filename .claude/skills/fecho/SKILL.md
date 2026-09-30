@@ -23,22 +23,31 @@ Cada item abaixo tem um comando concreto; o resultado decide ✅/❌. Se QUALQUE
 estiver pendente, o veredito é "**ainda não** — falta X" com a lista numerada do que fica na
 mão do founder.
 
-**Pendência sem DESTINO não existe (pedido do founder, 2026-07-18).** Toda pendência que o
-fecho detectar — crítica, informativa ou "opcional" — recebe UM de três destinos ANTES do
-veredito, para nada ficar dependendo da memória dele:
+**Pendência sem DESTINO não existe (pedido do founder, 2026-07-18) — e DESCARTAR em 1 linha é
+destino de primeira classe (decisão de 2026-09-29).** A versão de 18/07 fazia até o "opcional"
+virar chip, e o passo 6 de 26/08 exigia o clique para arquivar: medido em 28/09, **81% das
+sessões nasciam de chip**, cada sessão gerava ~0,9 filho e 55% dos chips eram meta achada de
+passagem ([loop-de-chips.md](../../../docs/historico/loop-de-chips.md)). "Não depender da memória" nunca quis dizer "tudo vira
+sessão nova". Os quatro destinos:
 
-1. **Resolver AGORA na sessão** — quando é pequena, do escopo, e cabe sem alongar o fecho
-   (ex.: rodar uma validação que faltou, armar um watcher, disparar um Codex retroativo).
-2. **Abrir CHIP (`spawn_task`)** — para tudo que merece sessão própria: prompt AUTO-CONTIDO
-   (a sessão nova não vê esta conversa) + anunciar o **título exato** no chat. Vale também
-   para os "opcionais": se valem a pena, viram chip; o founder decide clicando, não lembrando.
-   ⚠️ Chip é destino **perecível** — vale só até a sessão ser arquivada. Ver passo 6: se não for
-   clicado no fecho, o prompt também vai para um lugar durável.
-3. **Descartar COM o porquê** — dito explicitamente no veredito ("não vale porque X").
-   Exceção: pendência que depende de decisão/etapa futura (ex.: fase 5 que espera a 3) fica
-   registrada em doc/plano com o gatilho de quando virar chip — e isso é dito no veredito.
+1. **Resolver AGORA na sessão** — OBRIGATÓRIO quando o achado é sobre a PRÓPRIA entrega
+   (revisão, Codex ou falsificação apontou defeito no que esta sessão fez; camada de deploy que
+   a sessão consegue fazer) ou é defeito de ferramenta que ATRAPALHOU e se conserta em 1 linha.
+2. **Descartar em 1 linha** — o PADRÃO para meta achada de passagem (gate, sensor, sonda, hook,
+   CI, doc, skill) sem incidente real ([critério](../../../docs/agent/maquinas-meta.md)). Não
+   precisa provar que não vale: "meta de passagem, sem incidente" basta.
+3. **Chip (`spawn_task`) — no máximo UM por sessão, e só para** (a) bug de PRODUTO/dinheiro com
+   evidência, que não coube aqui; ou (b) continuação da mesma tarefa, via `/handoff-sessao`.
+   Prompt AUTO-CONTIDO + **título exato** no chat. É SUGESTÃO: não clicar é decisão válida do
+   founder. **Todo** bug de produto/dinheiro achado — com chip ou sem — ganha issue com label
+   `produto` ou `money-path` (procure antes: `gh issue list --search`); issue não abre sessão, e o
+   chip, se houver, vai para o mais grave.
+4. **📌 Registrar com gatilho/data** — o que depende de tempo ou de etapa futura (fase 5 que
+   espera a 3; Codex sem cota: o PR fica DRAFT ou vai por Caminho B com `sem-codex:` no corpo,
+   [money-path.md](../../../docs/agent/money-path.md) — "rodar depois" NUNCA vira chip): 1 linha
+   no corpo do PR ou em doc/plano.
 
-⚠️ **O destino 2 tem DUAS portas antes dele (pedido do founder, 2026-09-08: *"eu quero abrir
+⚠️ **O chip (destino 3) tem DUAS portas antes dele (pedido do founder, 2026-09-08: *"eu quero abrir
 chips que de fato eu precise clicar visto que você não consegue automatizar durante a sessão"*).**
 A escolha do destino é por **CAPACIDADE**, não por tamanho — "merece sessão própria" é a pergunta
 errada quando existe comando que responde aqui:
@@ -58,19 +67,20 @@ errada quando existe comando que responde aqui:
   founder.
   Sem o conector, o destino é UMA linha pedindo para conectá-lo — chip para sessão LOCAL, nunca.
 - **Consulta que NÃO RESPONDEU não é pendência, é tentativa a repetir.** Exit 2, "inconsultável",
-  "não consegui consultar" = mecânica, e `ausente ≠ zero` vale no tempo. RODE DE NOVO antes de
-  virar chip; só se falhar OUTRA vez vira chip — e aí o chip é *"consertar o sensor"*, nunca
-  *"provar X"*. Caso: em 08/09 um `pendencias:deploy` em exit 2 virou chip e a re-execução no
-  mesmo dia deu exit 0 com 59/59.
-- **Estado COMPARTILHADO duplica por desenho.** Antes de chipar defeito de infra comum (CI, gate,
-  sonda, ledger, edge pendente), lembre que ~30 worktrees veem o mesmo estado: em 06–08/09, DOIS
-  defeitos viraram **35 chips**. O `chip-duplicata-guard.sh` avisa no `spawn_task`, mas o aviso
-  chega depois de você já ter decidido — decida antes.
+  "não consegui consultar" = mecânica, e `ausente ≠ zero` vale no tempo. RODE DE NOVO; se falhar
+  OUTRA vez, o veredito diz "não consegui consultar X" em 1 linha (📌, com o comando) — nunca
+  chip, nem *"provar X"* nem *"consertar o sensor"*. Caso: em 08/09 um `pendencias:deploy` em
+  exit 2 virou chip e a re-execução no mesmo dia deu exit 0 com 59/59.
+- **Estado COMPARTILHADO nunca vira chip de worktree.** Defeito de infra comum (main vermelha,
+  CI, gate, sonda, ledger, edge pendente, cota) é visto pelas ~30 worktrees ao mesmo tempo: em
+  06–08/09, DOIS defeitos viraram **35 chips**, e em 09–28/09 ~16% dos chips ainda eram
+  duplicatas. Quem quebrou conserta; as outras sessões não chipam. O `chip-duplicata-guard.sh`
+  avisa no `spawn_task`, mas o aviso chega depois de você já ter decidido — decida antes.
 
 Detalhe e números: [chips-duplicados-por-estado-compartilhado.md](../../../docs/historico/chips-duplicados-por-estado-compartilhado.md).
 
 O veredito final rotula cada pendência com seu destino: ✔ resolvida agora · 🔘 chip
-"<título exato>" · 🚫 descartada (porquê) · 📌 registrada em <doc> com gatilho. **"PODE
+"<título exato>" · 🚫 descartada (1 linha) · 📌 registrada em <doc> com gatilho. **"PODE
 ARQUIVAR" só quando TODA pendência tem destino** — "fica na sua mão lembrar" não é destino.
 
 Crie estes todos (TodoWrite) e siga em ordem:
@@ -80,7 +90,7 @@ Crie estes todos (TodoWrite) e siga em ordem:
 3. **Edges** — deployadas via chat do Lovable?
 4. **Publish** — frontend publicado (ou pendente)?
 5. **A MAIN está verde?** — PR verde ≠ main verde (só se a sessão mergeou algo)
-6. **Chips** — abertos nesta sessão, com título exato
+6. **Chip** — no máximo um, título exato; sugestão, não gate
 7. **Resumo de fecho** — formato padrão do CLAUDE.md
 8. **wt:status** — higiene de RAM + oferta de limpeza
 
@@ -502,31 +512,24 @@ rodou dias a segundos do teto sem ninguém ver. Se você automatizar esta verifi
 **três** (`success` / `failure` / resto), e o `resto` reprova por não poder afirmar nada:
 `cancelled`, `skipped`, `timed_out`, `null` (ainda rodando) e o campo ausente caem todos ali.
 
-### Passo 6 — Chips (spawn_task): criado ≠ CLICADO
+### Passo 6 — Chip (spawn_task): no máximo UM, e é sugestão
 
-Liste TODO chip criado nesta sessão com o **título exato** e 1 linha do que faz — o founder é
-quem clica, e chip sem rastreio já gerou confusão ("não consegui identificar qual é este chip").
-Se um chip ficou obsoleto pelo próprio trabalho da sessão, diga explicitamente que pode ignorar.
+Liste o chip criado nesta sessão (se houver) com o **título exato** e 1 linha do que faz — o
+founder é quem clica, e chip sem rastreio já gerou confusão ("não consegui identificar qual é
+este chip"). Se ficou obsoleto pelo próprio trabalho da sessão, diga que pode ignorar. Mais de
+um chip na sessão = reveja o Princípio: o excedente vira linha no resumo.
 
-⚠️ **E aqui o passo GATEIA o veredito.** Criar o chip não entrega a pendência: o chip é um convite
-que só vira trabalho quando o founder CLICA. Havendo chip não clicado, o veredito **não** é "pode
-arquivar" — é "**clique os chips e então arquive**", com a lista na frente dele.
+**O chip NÃO gateia o veredito (decisão de 2026-09-29, revoga o gate do #2042).** "Clique os
+chips e então arquive" fazia cada fecho ABRIR a sessão seguinte — foi o motor do loop medido em
+[loop-de-chips.md](../../../docs/historico/loop-de-chips.md) (pico: 96% das sessões nascidas de chip, na semana seguinte ao #2042).
+Não clicar é decisão válida do founder; o veredito não espera o clique.
 
-**O clique não é verificável por sonda, e não tente.** O único caminho seria o `dismiss_task`, que
-até responde se o founder já agiu — mas RETIRA o chip quando ele ainda não agiu. Sonda que destrói
-o que mede não é sonda. Pergunte ao founder, ou liste e deixe o gate explícito.
-
-⚠️ **Chip não clicado é destino PERECÍVEL — e isso colide com o princípio desta skill.** O chip
-mora dentro da sessão que o criou, o `/tasks` é por-sessão e não há fila global. Arquivada a sessão
-antes do clique — pelo founder ou pelo auto-archive —, não há caminho conhecido de volta até aquele
-chip. Levantado em 2026-08-26: **não está documentado** se o chip sobrevive ao arquivamento (o
-`spawn_task` é MCP local, sem doc pública; em disco, `~/.claude/tasks/` guarda TodoWrite, não chip).
-Ausência de dado não é "sobrevive" — num ritual que termina em arquivamento, isso é **fail-CLOSED**.
-
-**A regra:** chip que não for clicado durante o fecho tem o prompt copiado para um lugar DURÁVEL
-antes do veredito — corpo do PR da sessão, `docs/historico/`, ou issue. O chip vira o atalho; o
-texto durável vira o destino. "Pendência sem destino não existe" vale **também** quando o destino
-é perecível.
+**Destino durável só para PRODUTO.** O chip mora na sessão que o criou e morre com ela
+arquivada. **Todo** bug de produto/dinheiro — com chip ou sem — ganha **issue com label `produto`
+ou `money-path`** antes do veredito (o card é o atalho; a issue é o destino). Chip (b) —
+continuação — já tem o briefing do `/handoff-sessao`. **Nada mais ganha espelho:** issue de meta
+sem dono vira fila que ninguém consome (as "espelho durável do chip" de meta eram parte da fila
+parada — ver o doc do loop).
 
 ### Passo 7 — Resumo de fecho (formato padrão)
 
@@ -561,12 +564,11 @@ Sugerir a limpeza manual em cima disso é redundante e faz o founder trabalhar �
 ✅ Main: CI completo verde (run <id>, disparado agora)
 Pendências (TODAS com destino — nenhuma "na memória"):
   ✔ <pendência resolvida agora, com a evidência>
-  🔘 chip "<título exato>" (faz X — CLIQUE ANTES de arquivar; prompt salvo em <lugar durável>)
-  🚫 <pendência descartada> — porquê em 1 linha
-  📌 <pendência futura> — registrada em <doc/plano>, vira chip quando <gatilho>
+  🚫 <achado descartado> — 1 linha
+  🔘 chip "<título exato>" (bug de produto X, issue #N · OU continuação via /handoff-sessao) — sugestão
+  📌 <pendência futura · bug de produto sem chip> — <onde: issue #M, PR, doc>, quando <gatilho/data>
 
-Veredito: PODE ARQUIVAR a sessão. / CLIQUE OS CHIPS e então arquive. /
-         AINDA NÃO — falta (1)…
+Veredito: PODE ARQUIVAR a sessão. / AINDA NÃO — falta (1)…
 ```
 
 **Diga "pode ARQUIVAR", não "pode excluir".** Arquivar para o processo, limpa o worktree
@@ -587,13 +589,14 @@ isso.
 **O que sobra é o que importa aqui:** "finished running" quer dizer *o agente parou*, não *a
 entrega acabou*. Neste repo **merge ≠ produção** — a sessão que mergeou um PR com migration dentro
 e está parada esperando o founder colar o SQL no Lovable satisfaz as duas condições e arquiva com a
-pendência viva. O evento de PR não enxerga SQL Editor, deploy de edge nem Publish, e não enxerga
-**chip não clicado** (passo 6). Só mencione o toggle quando a sessão fechou com **exatamente UM PR,
-zero camada manual pendente e zero chip por clicar** — fora disso ele arquiva cedo demais.
+pendência viva. O evento de PR não enxerga SQL Editor, deploy de edge nem Publish. Só mencione o
+toggle quando a sessão fechou com **exatamente UM PR e zero camada manual pendente** — fora disso
+ele arquiva cedo demais. (Chip não clicado deixou de importar aqui: o de produto já tem issue, e o
+de continuação tem o briefing — passo 6.)
 
 **E não dá para torná-lo condicional:** não há setting, flag ou hook documentado que suprima ou
 adie o arquivamento (levantado em 2026-08-26). O ritual não controla o gatilho; controla a **ORDEM**
-— o veredito segura o arquivamento até os chips serem clicados e as camadas manuais nomeadas.
+— o veredito segura o arquivamento até as camadas manuais serem nomeadas.
 
 A classe: **recomendação embutida em ritual sai com a AUTORIDADE do ritual.** O founder lê "o
 fecho mandou", não "o agente sugeriu" — então recomendação daqui carrega a própria pré-condição
