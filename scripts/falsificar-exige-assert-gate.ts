@@ -112,6 +112,12 @@ export interface Juiz {
    */
   mede: readonly string[];
   /**
+   * Obrigatório quando `mede` é vazio: POR QUE a ligação medição→veredito não é textual (a medição mora
+   * nos N pontos de chamada de um helper, e o que liga é o argumento posicional). É a detecção MANUAL
+   * documentada — explícita no diff, nunca a omissão calada que o `mede` existe para impedir.
+   */
+  semLigacao?: string;
+  /**
    * O arquivo que DESPACHA para este juiz (o slug do `test:falsificacao` que roda um `lab-*`): a
    * âncora que some daqui reprova com a regra do despachante — o juiz de verdade mora aqui.
    */
@@ -123,19 +129,29 @@ const MOTIVO_CAMADA4 =
   'o idioma SABOTAGENS (R1/R2) com as quatro camadas — a 4ª por LINHA, sobre o stderr INTEIRO do alvo que o EMBRULHO recolhe na rodada sabotada, contra o do controle';
 
 /**
- * Os juízes do núcleo. Obrigatório para toda linha `falsificar=<n>` do manifesto; opcional (mas
- * cobrado igual, âncora por âncora) para os que fazem a falsificação DENTRO da suíte normal e foram
- * consertados na mesma leva — sem o registro, a regressão deles voltaria calada.
+ * Os juízes do núcleo. Obrigatório para toda linha `falsificar=<n>` do manifesto; voluntário para os
+ * que fazem a falsificação DENTRO da suíte normal — mas, uma vez aqui, preso pelo REGISTRO_FECHADO:
+ * apagar a entrada é mudança explícita, não um bloco a menos. Cada juiz prende a MEDIÇÃO (`mede`) ou
+ * diz por que não dá (`semLigacao`).
  */
 export const JUIZES: Readonly<Record<string, Juiz>> = {
   'db/test-data-health-sync-reprocess.sh': {
     motivo:
       'SABOTAGENS nome:A<n> (R1/R2), e a rodada só conta se a sabotagem APLICOU, a suíte rodou INTEIRA e o assert declarado virou de verde para vermelho',
-    mede: [],
+    mede: ['log', 'erros_sql', 'faltam'],
     ancoras: [
+      'if PGPORT_TEST=$porta SABOTAGEM="$sab" bash "$0" > "$log" 2>&1; then',
+      `erros_sql="$(grep -c 'ERROR:  ' "$log" || true)"`,
+      [
+        'faltam=""',
+        'for exigido in ${exigidos//,/ }; do',
+        'if ! grep -Eq "^  ✅ ($exigido) " "$LOGDIR/controle.log" || ! grep -Eq "^  ❌ ($exigido) " "$log"; then',
+        'faltam="$faltam $exigido"',
+        'fi',
+        'done',
+      ],
       `if ! grep -q 'SABOTAGEM ATIVA em ' "$log"; then`,
       `elif [ "$(executados "$log")" != "$asserts_controle" ]; then`,
-      `! grep -Eq "^  ❌ ($exigido) " "$log"`,
       `elif [ "$erros_sql" != "$erros_controle" ]; then`,
       `elif [ -n "$faltam" ]; then`,
     ],
@@ -143,40 +159,86 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
   'db/test-canaria-veredito.sh': {
     motivo:
       'sabota <id> <desc> <marca>: CERTO só com a marca da asserção nos 2 locales; SQL inválido e morte do shell recusados; padrão que não casa invalida',
-    mede: [],
-    ancoras: [`m="$(julga_log "$log" "$marca")"`, `if tem_marca "$1" "$2"; then printf 'CERTO'; else printf "vermelho SEM a marca`, 'padrao nao casou, SQL intacto'],
+    mede: ['log', 'm'],
+    ancoras: [
+      [
+        'log="$LOGS_F/$id.$loc.log"',
+        'if roda_suite "$alvo" "$loc" "$log"; then motivo="…"; continue; fi',
+        'm="$(julga_log "$log" "$marca")"',
+        '[ "$m" = CERTO ] || motivo="…"',
+      ],
+      `if tem_marca "$1" "$2"; then printf 'CERTO'; else printf "…" "$2"; fi`,
+      'if cmp -s "$GERADO" "$copia"; then invalida "$id" "$desc" "…"; return 0; fi',
+    ],
   },
   'db/test-db-aplicar.sh': {
     motivo: 'confere <rc> <rc-esperado> <log> <marca>…: CERTO só com o rc EXATO e TODAS as marcas; o rc sozinho é recusado',
     mede: [],
+    semLigacao:
+      'a medição mora nos ~15 pontos de chamada (`r="$(rc_de …)"; confere "$r" <rc> "$OUT" <marca>…`) e liga pelo argumento posicional, que o texto não segue — presos aqui o juízo (`confere`) inteiro e a primitiva que mede (`rc_de`)',
     ancoras: [
-      'confere sem marca: o rc sozinho aceita qualquer vermelho',
-      `grep -qF -- "$marca" "$log" || faltam=`,
-      `if [ -n "$faltam" ]; then printf 'rc %s certo, SEM a marca`,
+      'rc_de() { local r=0; aplicar "$@" > "$OUT" 2>&1 || r=$?; echo "$r"; }',
+      [
+        'confere() {',
+        'local veio="$1" esperado="$2" log="$3" marca="" faltam=""',
+        'shift 3',
+        `[ "$#" -ge 1 ] || { printf '…'; return 0; }`,
+        'if [ "$veio" != "$esperado" ]; then printf "…" "$veio" "$esperado"; return 0; fi',
+        `[ -s "$log" ] || { printf '…' "$veio"; return 0; }`,
+        'for marca in "$@"; do',
+        `grep -qF -- "$marca" "$log" || faltam="$faltam '$marca'"`,
+        'done',
+        `if [ -n "$faltam" ]; then printf '…' "$veio" "$faltam"; return 0; fi`,
+        `printf 'CERTO'`,
+        '}',
+      ],
     ],
   },
   'db/test-pedido-total-liquido-acervo.sh': {
     motivo:
       'vermelha <rótulo> <valor> <verde> <declarado>: conta só o valor que a sabotagem DECLARA; vermelha_por exige a assinatura do ramo; texto inalterado é falha',
     mede: [],
+    semLigacao:
+      'medição INLINE nas 14 chamadas (`vermelha <rótulo> "$(medida)" <verde> <declarado>`): o valor julgado é argumento posicional, que o texto não liga — presos aqui os juízes (`vermelha`, `vermelha_por`, `postcondicao_de`) e o no-op do `sabotar`',
     ancoras: [
-      `elif [ "$2" = "$4" ]; then sab_verm`,
-      `vermelha_por() { if [ "$2" = "$3" ]; then sab_verm`,
-      'a sabotagem não alterou o texto da migration',
-      'else sab_falha "$1 — vermelha, mas NÃO no valor que a sabotagem declara',
+      [
+        'vermelha() {',
+        'if [ "$2" = "$3" ]; then sab_falha "…"',
+        'elif [ "$2" = "$4" ]; then sab_verm "…"',
+        'else sab_falha "…"; fi',
+        '}',
+      ],
+      'vermelha_por() { if [ "$2" = "$3" ]; then sab_verm "…"; else sab_falha "…"; fi; }',
+      ['perl -0pe "$3" "$2" > "$TMPM"', 'if cmp -s "$2" "$TMPM"; then', 'sab_falha "…"', 'return 1', 'fi'],
+      [
+        'if P -q -f "$TMPM" >"$TMPD/post.out" 2>&1; then echo aplicou',
+        `elif grep -q 'ERROR:  POSTCONDICAO FALHOU' "$TMPD/post.out"; then echo postcondicao`,
+        'else echo outro_erro; fi',
+      ],
       '"$(estado_c)" "23514:pedido_venda_coerencia"',
-      `elif grep -q 'ERROR:  POSTCONDICAO FALHOU' "$TMPD/post.out"`,
     ],
   },
   'db/test-transporte-nuvem.sh': {
     motivo:
       'sabota <id> <marca>: vermelho só com a marca do assert (`FALHA [T<n>]`) no log, sobre um controle `0 fail` da MESMA invocação; sabotagem que não aplica é falha',
-    mede: [],
+    mede: ['log'],
     ancoras: [
       `grep -qE '^RESULTADO: [0-9]+ ok / 0 fail$' "$TMP/controle.log"`,
-      `if grep -qF -- "$marca" "$log"; then`,
-      `echo "  FALHA $id: vermelho SEM a marca '$marca' (motivo errado)"`,
-      'a sabotagem nao aplicou (o texto-alvo mudou?)',
+      'local id="$1" marca="$2" expr="$3" log="$TMP/sab-$1.log"',
+      [
+        'if git -C "$WT_SABOTADO" diff --quiet -- scripts/lib/transporte-nuvem.ts; then',
+        'echo "…"; SAB_FALHAS=$((SAB_FALHAS + 1)); return',
+        'fi',
+        'if entrada_normal "$log"; then',
+        'echo "…"; SAB_FALHAS=$((SAB_FALHAS + 1)); return',
+        'fi',
+        'if grep -qF -- "$marca" "$log"; then',
+        'echo "…"; SAB_VERMELHAS=$((SAB_VERMELHAS + 1))',
+        'else',
+        'echo "…"; tail -c 800 "$log"',
+        'SAB_FALHAS=$((SAB_FALHAS + 1))',
+        'fi',
+      ],
     ],
   },
   // Pré-registrado para o #2605, que o põe no núcleo com `falsificar=12` (o registro de arquivo lido e
@@ -184,18 +246,35 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
   'db/test-tint-promocao-assincrona.sh': {
     motivo:
       'fals <nome> <esperado>: vermelho só com o CONJUNTO EXATO de asserts caídos (falhas_de); sabotagem no-op aborta (cmp na migration, RAISE no corpo do promote)',
-    mede: [],
+    mede: ['got'],
     ancoras: [
-      `got="$(suite "$mig" "$sab" | falhas_de)"`,
-      `if [ "$got" = "$esperado" ]; then`,
-      'echo "  ✗ $nome: esperado [$esperado], veio [$got]"',
-      `if cmp -s "$MIG" "$1"; then echo "✗ sabotagem no-op`,
+      [
+        'local nome=$1 esperado=$2 mig=$3 sab=$4 got',
+        'got="$(suite "$mig" "$sab" | falhas_de)"',
+        'if [ "$got" = "$esperado" ]; then',
+        'echo "…"',
+        'VERM=$((VERM + 1))',
+        'else',
+        'echo "…"',
+        'FALSOS=$((FALSOS + 1))',
+        'fi',
+      ],
+      'if cmp -s "$MIG" "$1"; then echo "…"; exit 1; fi',
     ],
   },
   'db/test-authz-revoke-anon-rpc.sh': {
     motivo: 'falsificação na suíte normal: ABORTOU só com a marca da postcondição na saída do apply; outro erro vira "ERRO ALHEIO"',
-    mede: [],
-    ancoras: [`elif grep -q 'ERROR:  POSTCONDICAO FALHOU' "$alvo.out"; then echo "ABORTOU"`, 'else echo "ERRO ALHEIO a postcondicao:'],
+    mede: ['F1', 'F2', 'F3'],
+    ancoras: [
+      [
+        'if P -q -f "$alvo" >"$alvo.out" 2>&1; then echo "APLICOU"',
+        `elif grep -q 'ERROR:  POSTCONDICAO FALHOU' "$alvo.out"; then echo "ABORTOU"`,
+        `else echo "ERRO ALHEIO a postcondicao: $(grep -m1 'ERROR' "$alvo.out" | cut -c1-120)"; fi`,
+      ],
+      [`F1="$(sabotar '…' '…')"`, `eq "…" "$F1" 'ABORTOU'`],
+      [`F2="$(sabotar '…' '…')"`, `eq "…" "$F2" 'ABORTOU'`],
+      [`F3="$(sabotar "…" '…')"`, `eq "…" "$F3" 'APLICOU'`],
+    ],
   },
   // O juízo inteiro, da LEITURA ao `esac`: as 4 âncoras soltas de antes deixavam passar a leitura
   // trocada por `DSAB=720`, o ramo `0|""` liberado e o registro apagado (Codex, fase 4).
@@ -225,12 +304,23 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
   'db/test-pedido-edicao-atomica.sh': {
     motivo:
       'falsificação na suíte normal: rc≠0 só conta com a marca do que a sabotagem DECLARA vir no lugar da recusa (default: a chamada completa)',
-    mede: [],
+    mede: ['out', 'rc'],
     ancoras: [
-      'no_lugar="${5:-ASSERT_NAO_LANCOU}"',
-      'erro="${out#*ERROR:  }"',
-      `*:*"$no_lugar"*)`,
-      'bad "$1 — sabotado, mas o vermelho não é o declarado [$no_lugar]',
+      'local f out rc no_lugar="${5:-ASSERT_NAO_LANCOU}"',
+      [
+        'out="$("$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d sab -v ON_ERROR_STOP=1 -q -c \\',
+        String.raw`"DO \$a\$ BEGIN PERFORM $4; RAISE EXCEPTION 'ASSERT_NAO_LANCOU'; EXCEPTION WHEN sqlstate '$3' THEN NULL; WHEN OTHERS THEN RAISE; END \$a\$;" 2>&1)"`,
+        'rc=$?',
+        'set -e',
+        'rm -f "$f"',
+        'local erro=""',
+        'case "$out" in *"ERROR:  "*) erro="${out#*ERROR:  }"; erro="${erro%%$\'\\n\'*}" ;; esac',
+        'case "$rc:$erro" in',
+        '0:*) bad "…" ;;',
+        '*:*"$no_lugar"*) ok "…" ;;',
+        '*) bad "…" ;;',
+        'esac',
+      ],
     ],
   },
 
@@ -242,204 +332,535 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
   'scripts/test-codex-async.sh': {
     motivo:
       'sabotar <id> <marca> <python>: sobre controle VERDE nos 2 locales (aborta sem ele), troca 1× + `bash -n`, e só conta com `FAIL [<marca>]` — o assert que a declara',
-    mede: [],
+    mede: ['saida_suite', 'rc_suite'],
     ancoras: [
-      `      elif printf '%s' "$saida_suite" | grep -qF "FAIL [$marca]"; then`,
-      `        printf '  FAIL [%s]  vermelho pelo motivo ERRADO (locale %s): faltou FAIL [%s]. Veio:\\n' "$id" "$loc" "$marca"`,
-      `    bash -n "$alvo" 2>/dev/null || { printf '  FAIL [%s]  sabotagem quebrou a SINTAXE (vermelho por crash nao prova nada)\\n' "$id"; falhas=1; return; }`,
-      '  [ "$falhas" -eq 0 ] || { echo "FALSIFICACAO ABORTADA: sem controle verde nada abaixo tem valor."; exit 1; }',
+      'saida_suite="$(LC_ALL="$2" CODEX_ASYNC_ALVO="$1" bash "$0" 2>&1)"; rc_suite=$?',
+      `bash -n "$alvo" 2>/dev/null || { printf '…' "$id"; falhas=1; return; }`,
+      '[ "$falhas" -eq 0 ] || { echo "…"; exit 1; }',
+      [
+        'suite "$alvo" "$loc"',
+        'if [ "$rc_suite" -eq 0 ]; then',
+        `printf '…' "$id" "$loc"; falhas=1`,
+        `elif printf '%s' "$saida_suite" | grep -qF "FAIL [$marca]"; then`,
+        `printf '…' "$id" "$marca" "$loc"`,
+        'else',
+        `printf '…' "$id" "$loc" "$marca"`,
+        String.raw`printf '%s\n' "$saida_suite" | grep -m3 'FAIL' | sed 's/^/        /'`,
+        'falhas=1',
+        'fi',
+      ],
     ],
+
   },
   'scripts/test-codex-async-nuvem.sh': {
     motivo: 'o molde do codex-async: troca LITERAL que casa exatamente 1×, `bash -n`, controle verde nos 2 locales, e `FAIL [<marca>]` do assert declarado',
-    mede: [],
+    mede: ['saida_suite', 'rc_suite'],
     ancoras: [
-      '      elif grep -qF "FAIL [$marca]" <<< "$saida_suite"; then',
+      'saida_suite="$(LC_ALL="$2" CODEX_ASYNC_ALVO="$1" bash "$0" 2>&1)"; rc_suite=$?',
       'if s.count(de)!=1: sys.exit(1)',
-      '  [ "$falhas" -eq 0 ] || { echo "FALSIFICACAO ABORTADA: sem controle verde nada abaixo tem valor."; exit 1; }',
+      '[ "$falhas" -eq 0 ] || { echo "…"; exit 1; }',
+      [
+        'suite "$alvo" "$loc"',
+        'if [ "$rc_suite" -eq 0 ]; then',
+        `printf '…' "$id" "$loc"; falhas=1`,
+        'elif grep -qF "FAIL [$marca]" <<< "$saida_suite"; then',
+        `printf '…' "$id" "$marca" "$loc"`,
+        'else',
+        `printf '…' "$id" "$loc" "$marca"`,
+        `grep -m3 'FAIL' <<< "$saida_suite" | sed 's/^/        /'`,
+        'falhas=1',
+        'fi',
+      ],
     ],
+
   },
   'scripts/test-gate-senha-bootstrap.sh': {
     motivo:
       'sabota a ENTRADA (planta o defeito na raiz-fixture) com controle antes de cada uma: rc EXATO + o marcador do ramo + a senha falsa ausente; sabotagem que não muda a raiz aborta',
-    mede: [],
+    mede: ['rc'],
     ancoras: [
-      '  if [ "$rc" -ne "$rc_esp" ]; then falhou "$desc — esperava rc=$rc_esp, veio rc=$rc"; return; fi',
-      '  if ! grep -q "$marca" "$TMP/saida"; then falhou "$desc — rc certo, mas sem o marcador $marca"; return; fi',
-      '  if grep -q "$FALSA" "$TMP/saida"; then falhou "$desc — VAZOU a senha falsa na saída do gate"; return; fi',
-      '  if [ "$antes" = "$depois" ]; then',
+      `rodar() { "$GATE" --raiz "$RAIZ" > "$TMP/saida" 2>&1; printf '%s' "$?"; }`,
+      [
+        'local rc; rc="$(rodar)"',
+        `if [ "$rc" -ne 0 ] || ! grep -q 'BOOTSTRAP-SENHA-OK' "$TMP/saida"; then`,
+        `printf '…' "$rc"`,
+        'cut -c1-300 "$TMP/saida"',
+        'exit 1',
+        'fi',
+      ],
+      [
+        'antes="$(hash_raiz)"',
+        '( cd "$RAIZ" && eval "$cmd" ) >/dev/null 2>&1',
+        'depois="$(hash_raiz)"',
+        'if [ "$antes" = "$depois" ]; then',
+        `printf '…' "$desc"`,
+        'exit 1',
+        'fi',
+        'rc="$(rodar)"',
+        'if [ "$rc" -ne "$rc_esp" ]; then falhou "…"; return; fi',
+        'if ! grep -q "$marca" "$TMP/saida"; then falhou "…"; return; fi',
+        'if grep -q "$FALSA" "$TMP/saida"; then falhou "…"; return; fi',
+        'ok "…"',
+      ],
     ],
+
   },
   'scripts/test-codex-prompt-paginacao.sh': {
     motivo: 'o VALOR devolvido pela definição sabotada: G1/G2 = o SHA do citador, G3/G4 vazios, e exatamente 2 vermelhos — o defeito exato, não um erro que esvazia a resposta',
-    mede: [],
+    mede: ['got_1856', 'got_1889', 'got_9999', 'got_185', 'falhas'],
     ancoras: [
-      `[ "$got_1856" = "$sha_citador" ]      || faltam="$faltam G1(veio '$got_1856', esperado o citador '$sha_citador')"`,
-      `[ "$got_1889" = "$sha_citador_1889" ] || faltam="$faltam G2(veio '$got_1889', esperado o citador '$sha_citador_1889')"`,
-      'if [ -n "$faltam" ] || [ "$falhas" -ne 2 ]; then',
+      ['rodar_assercoes() {', 'falhas=0', 'unset -f sha_de', 'eval "$1"'],
+      'got="$(sha_de 1856)"; got_1856="$got"',
+      'got="$(sha_de 1889)"; got_1889="$got"',
+      'got="$(sha_de 9999)"; got_9999="$got"',
+      'got="$(sha_de 185)"; got_185="$got"',
+      [
+        'log="$tmp/sabotada.log"',
+        'rodar_assercoes "$defn_sabotado" > "$log" 2>&1',
+        'cat "$log"',
+        'echo',
+        'faltam=""',
+        '[ "$got_1856" = "$sha_citador" ] || faltam="…"',
+        '[ "$got_1889" = "$sha_citador_1889" ] || faltam="…"',
+        '[ -z "$got_9999" ] || faltam="…"',
+        '[ -z "$got_185" ] || faltam="…"',
+        'if [ "$falhas" -eq 0 ]; then',
+        'echo "…"',
+        'exit 1',
+        'fi',
+        'if [ -n "$faltam" ] || [ "$falhas" -ne 2 ]; then',
+        'echo "…"',
+        'echo "…"',
+        'exit 1',
+        'fi',
+      ],
     ],
+
   },
   'scripts/test-guard-noop-sabotagem.sh': {
     motivo: 'rc 1 E a LINHA exata (`grep -qxF`) da resposta do guard frágil com o alvo presente; `bash -n` antes — o bash cita a linha do erro de sintaxe',
-    mede: [],
+    mede: ['veredito', 'rc_v'],
     ancoras: [
-      "  marca_exata='     com o alvo PRESENTE o guard respondeu:   [XX ] sabotagem NO-OP (alvo sumiu)'",
-      '  LC_ALL=C grep -qxF -- "$marca_exata" <<<"$veredito" && rc_v="$rc_v+marca"',
-      '    1+marca:*)',
-      '  if ! bash -n "$TMP/sabotado.sh" 2>/dev/null; then',
+      [
+        'if ! bash -n "$TMP/sabotado.sh" 2>/dev/null; then',
+        `printf '…' "$base"`,
+        'cegas=$((cegas + 1)); continue',
+        'fi',
+        'veredito=$(verificar_guard "$TMP/sabotado.sh"); rc_v=$?',
+        "marca_exata='     com o alvo PRESENTE o guard respondeu:   [XX ] sabotagem NO-OP (alvo sumiu)'",
+        'LC_ALL=C grep -qxF -- "$marca_exata" <<<"$veredito" && rc_v="$rc_v+marca"',
+        'case "$rc_v:$veredito" in',
+        '0:*)',
+        `printf '…' "$base"`,
+        'cegas=$((cegas + 1)) ;;',
+        '1+marca:*)',
+        `printf '…' "$base" ;;`,
+        '*)',
+        `printf '…' "$base" "$rc_v"`,
+        String.raw`printf '%s\n' "$veredito" | sed 's/^/       /' | head -4`,
+        'cegas=$((cegas + 1)) ;;',
+        'esac',
+      ],
     ],
+
   },
   'scripts/test-eval-via-morta.sh': {
     motivo: 'S1: exit EXATO 1 + o baseline do caso-alvo vermelho + o recibo do laço completo (12); S2: nenhuma pegada, com o recibo — erro alheio e laço abortado são recusados',
-    mede: [],
+    mede: ['r_rc', 'r_out'],
     ancoras: [
-      `  1:*'o caso-alvo "velho_com_controle"'*'cegueira(s) em 12 sabotagem(ns)'*)`,
-      '  *) ruim "S1 saiu do verde, mas NÃO pelo declarado (exit 1 + o baseline do caso-alvo vermelho): saiu $r_rc — erro alheio não é dente"',
+      `local out; out=$(bash "$sc" "$@" 2>&1); printf '%s|%s' "$?" "$out"`,
+      [
+        'r=$(roda "$EVALDIR/eval.sh" --falsify); r_rc="${r%%|*}"; r_out="${r#*|}"',
+        'case "$r_rc:$r_out" in',
+        '2:*"$MARCA"*) ruim "…" ;;',
+        `1:*'o caso-alvo "velho_com_controle"'*'cegueira(s) em 12 sabotagem(ns)'*)`,
+        'ok "…" ;;',
+        `1:*'o caso-alvo "velho_com_controle"'*)`,
+        'ruim "…" ;;',
+        '0:*) ruim "…" ;;',
+        '*) ruim "…"',
+        String.raw`printf '%s\n' "$r_out" | sed 's/^/     /' | tail -4 ;;`,
+        'esac',
+      ],
       '  *"cegueira(s) em 12 sabotagem(ns)"*)',
     ],
+
   },
   'scripts/test-gates-frescura.sh': {
     motivo: 'sabota a ENTRADA (a raiz-fixture) com controle remontado antes de cada uma: rc EXATO + o marcador do ramo (ORFAO, CENSO-OBSOLETO, …)',
-    mede: [],
+    mede: ['saida', 'rc'],
     ancoras: [
-      '  if [ "$rc" -ne "$rc_esp" ]; then',
-      `  if ! printf '%s' "$saida" | grep -q "$marca"; then`,
-      '    falhou "$desc — rc correto mas sem o marcador $marca"',
+      'rodar() { (cd "$RAIZ_REPO" && LC_ALL="$LOCALE_ATUAL" bun "$GATE" --raiz "$TMP/raiz" 2>&1); }',
+      [
+        'set +e; saida="$(rodar)"; rc=$?; set -e',
+        `if [ "$rc" -ne 0 ] || ! printf '%s' "$saida" | grep -q 'FRESCURA-OK'; then`,
+        `printf '…' "\${LOCALE_ATUAL:-default}" "$rc"`,
+        String.raw`printf '%s\n' "$saida"`,
+        'exit 1',
+        'fi',
+      ],
+      [
+        'set +e; saida="$(rodar)"; rc=$?; set -e',
+        'if [ "$rc" -ne "$rc_esp" ]; then',
+        'falhou "…"',
+        'return',
+        'fi',
+        `if ! printf '%s' "$saida" | grep -q "$marca"; then`,
+        'falhou "…"',
+        'return',
+        'fi',
+        'ok "…"',
+      ],
     ],
+
   },
   'scripts/test-vigia-gstack.sh': {
     motivo: 'controle verde por locale (aborta sem ele); cópia que difere; exit EXATO 1 + `FAIL [<caso>]` do caso-alvo',
-    mede: [],
+    mede: ['saida', 'rc'],
     ancoras: [
-      `    if [ "$rc" -eq 1 ] && printf '%s\\n' "$saida" | grep -F "FAIL [$alvo]" >/dev/null; then`,
-      '    if cmp -s "$HOOK" "$copia"; then',
-      `      printf 'ABORTA — controle nao esta verde (LC_ALL=%s, rc=%s). Sabotar agora aprovaria qualquer coisa.\\n%s\\n' "$1" "$rc" "$saida"`,
+      [
+        'saida="$(LC_ALL="$1" VIGIA_GSTACK_HOOK="$HOOK" bash "$0" 2>&1)"; rc=$?',
+        'if [ "$rc" -ne 0 ]; then',
+        `printf '…' "$1" "$rc" "$saida"`,
+        'exit 1',
+        'fi',
+      ],
+      [
+        'if cmp -s "$HOOK" "$copia"; then',
+        `printf '…' "$id"`,
+        'falhas=$((falhas + 1)); return',
+        'fi',
+        'saida="$(LC_ALL="$LOC" VIGIA_GSTACK_HOOK="$copia" bash "$0" 2>&1)"; rc=$?',
+        String.raw`if [ "$rc" -eq 1 ] && printf '%s\n' "$saida" | grep -F "FAIL [$alvo]" >/dev/null; then`,
+        `printf '…' "$id" "$desc" "$alvo" "$LOC"`,
+        'else',
+        `printf '…' "$id" "$desc" "$alvo" "$rc" "$saida"`,
+        'falhas=$((falhas + 1))',
+        'fi',
+      ],
     ],
+
   },
   'scripts/test-vigia-nuvem.sh': {
     motivo: 'o molde do vigia-gstack: controle verde por locale, sabotagem que muda o arquivo, exit EXATO 1 + `FAIL [<caso>]`',
-    mede: [],
+    mede: ['saida', 'rc'],
     ancoras: [
-      `    if [ "$rc" -eq 1 ] && printf '%s\\n' "$saida" | grep -F "FAIL [$2]" >/dev/null; then`,
-      '    if ! preparar "$1-$LOC" "$4" "$5"; then',
-      `      printf 'ABORTA — controle SEM sabotagem ja esta VERMELHO (LC_ALL=%s, rc=%s). Sabotar agora aprovaria qualquer coisa.\\n%s\\n' \\`,
+      [
+        'saida="$(LC_ALL="$LOC" VIGIA_NUVEM_HOOK="$tmp/$1/hook.sh" VIGIA_NUVEM_SETTINGS="$tmp/$1/settings.json" \\',
+        'bash "$0" 2>&1)"; rc=$?',
+      ],
+      [
+        `preparar "controle-$LOC" nada ''`,
+        'rodar_suite "controle-$LOC"',
+        'if [ "$rc" -ne 0 ]; then',
+        `printf '…' \\`,
+        '"$LOC" "$rc" "$saida"',
+        'exit 1',
+        'fi',
+      ],
+      [
+        'if ! preparar "$1-$LOC" "$4" "$5"; then',
+        `printf '…' "$1"`,
+        'falhas=$((falhas + 1)); return',
+        'fi',
+        'rodar_suite "$1-$LOC"',
+        String.raw`if [ "$rc" -eq 1 ] && printf '%s\n' "$saida" | grep -F "FAIL [$2]" >/dev/null; then`,
+        `printf '…' "$1" "$3" "$2" "$LOC"`,
+        'else',
+        `printf '…' "$1" "$3" "$2" "$rc" "$saida"`,
+        'falhas=$((falhas + 1))',
+        'fi',
+      ],
     ],
+
   },
   // Entrou no roteiro com o #2655 DURANTE este PR — e o R4 o acusou no rebase, antes de registrado:
   // exatamente o caso que o R4 existe para pegar. Relido: o molde do vigia-gstack, recortado ao caso.
   'scripts/test-gstack-auto-upgrade.sh': {
     motivo:
       'o molde do vigia-gstack: controle verde por locale (aborta sem ele), cópia que difere, e a rodada RECORTADA ao caso-alvo (SO_CASO) tem de sair exit EXATO 1 com `FAIL [<caso>]`',
-    mede: [],
+    mede: ['saida', 'rc'],
     ancoras: [
-      `    if [ "$rc" -eq 1 ] && printf '%s\\n' "$saida" | grep -F "FAIL [$caso]" >/dev/null; then`,
-      '    saida="$(LC_ALL="$LOC" SO_CASO="$caso" GSTACK_AUTO_UPGRADE_SCRIPT="$copia" bash "$0" 2>&1)"; rc=$?',
-      '    if cmp -s "$ALVO" "$copia"; then',
-      `      printf 'ABORTA — controle nao esta verde (LC_ALL=%s, rc=%s). Sabotar agora aprovaria qualquer coisa.\\n%s\\n' "$1" "$rc" "$saida"`,
+      [
+        'saida="$(env -u SO_CASO LC_ALL="$1" GSTACK_AUTO_UPGRADE_SCRIPT="$ALVO" bash "$0" 2>&1)"; rc=$?',
+        'if [ "$rc" -ne 0 ]; then',
+        `printf '…' "$1" "$rc" "$saida"`,
+        'exit 1',
+        'fi',
+      ],
+      [
+        'if cmp -s "$ALVO" "$copia"; then',
+        `printf '…' "$id"`,
+        'falhas=$((falhas + 1)); return',
+        'fi',
+        'saida="$(LC_ALL="$LOC" SO_CASO="$caso" GSTACK_AUTO_UPGRADE_SCRIPT="$copia" bash "$0" 2>&1)"; rc=$?',
+        String.raw`if [ "$rc" -eq 1 ] && printf '%s\n' "$saida" | grep -F "FAIL [$caso]" >/dev/null; then`,
+        `printf '…' "$id" "$desc" "$caso" "$LOC"`,
+        'else',
+        `printf '…' "$id" "$desc" "$caso" "$rc" "$saida"`,
+        'falhas=$((falhas + 1))',
+        'fi',
+      ],
     ],
+
   },
   'scripts/test-instrucoes-carregadas.sh': {
     motivo: 'o molde do vigia-gstack: controle verde por locale, cópia que difere, exit EXATO 1 + `FAIL [<caso>]`',
-    mede: [],
+    mede: ['saida', 'rc'],
     ancoras: [
-      `    if [ "$rc" -eq 1 ] && printf '%s\\n' "$saida" | grep -F "FAIL [$alvo]" >/dev/null; then`,
-      '    if cmp -s "$HOOK" "$copia"; then',
-      `      printf 'ABORTA — controle nao esta verde (LC_ALL=%s, rc=%s). Sabotar agora aprovaria qualquer coisa.\\n%s\\n' "$1" "$rc" "$saida"`,
+      [
+        'saida="$(LC_ALL="$1" INSTR_HOOK="$HOOK" bash "$0" 2>&1)"; rc=$?',
+        'if [ "$rc" -ne 0 ]; then',
+        `printf '…' "$1" "$rc" "$saida"`,
+        'exit 1',
+        'fi',
+      ],
+      [
+        'if cmp -s "$HOOK" "$copia"; then',
+        `printf '…' "$id"`,
+        'falhas=$((falhas + 1)); return',
+        'fi',
+        'saida="$(LC_ALL="$LOC" INSTR_HOOK="$copia" bash "$0" 2>&1)"; rc=$?',
+        String.raw`if [ "$rc" -eq 1 ] && printf '%s\n' "$saida" | grep -F "FAIL [$alvo]" >/dev/null; then`,
+        `printf '…' "$id" "$desc" "$alvo" "$LOC"`,
+        'else',
+        `printf '…' "$id" "$desc" "$alvo" "$rc" "$saida"`,
+        'falhas=$((falhas + 1))',
+        'fi',
+      ],
     ],
+
   },
   'scripts/test-pr-watch.sh': {
     motivo: 'a marca carrega o ID do caso E o valor errado exato (`FAIL [nao-obrig-mergeia] exit: want 0, got 4`); sed inválido, no-op e sintaxe quebrada são sabotagem vazia',
-    mede: [],
+    mede: ['saida_suite', 'rc_suite'],
     ancoras: [
-      '      elif ! grep -qF -- "$marca" <<<"$saida_suite"; then',
-      '    if ! bash -n "$copia" 2>/dev/null; then',
-      '         "FAIL [nao-obrig-mergeia] exit: want 0, got 4" \\',
+      'saida_suite="$(LC_ALL="$2" PR_WATCH_ALVO="$1" bash "$0" 2>&1)"; rc_suite=$?',
+      'if ! bash -n "$copia" 2>/dev/null; then',
+      '"FAIL [nao-obrig-mergeia] exit: want 0, got 4" \\',
+      [
+        'suite "$copia" "$loc"',
+        'if [ "$rc_suite" -eq 0 ]; then',
+        'echo "…"; falhas=$((falhas + 1))',
+        'elif ! grep -qF -- "$marca" <<<"$saida_suite"; then',
+        'echo "…"',
+        `grep -F 'FAIL [' <<<"$saida_suite" | cut -c1-150 | sed 's/^/        /'`,
+        'falhas=$((falhas + 1))',
+        'else',
+        'echo "…"',
+        'fi',
+      ],
     ],
+
   },
   'scripts/test-claude-mem-saude.sh': {
     motivo: 'controle das duas cópias íntegras; sed inválido/no-op/sintaxe recusados; `FALHA <caso>:` do caso declarado em cada locale',
-    mede: [],
+    mede: ['r'],
     ancoras: [
-      '      elif ! grep -qF -- "FALHA ${SCASO[i]}:" "$r"; then',
-      "      if grep -qx 'RC=0' \"$r\"; then",
+      [
+        'LC_ALL="$loc" CLAUDE_MEM_SAUDE_ALVO="$sensor" VIGIA_ALVO="$vigia" "$BASH_BIN" "$0" >"$tmp/res-$i-$loc.txt" 2>&1',
+        'echo "RC=$?" >>"$tmp/res-$i-$loc.txt"',
+      ],
+      [
+        'r="$tmp/res-$i-$loc.txt"',
+        `if grep -qx 'RC=0' "$r"; then`,
+        `printf '…' "$loc" "\${SNOME[i]}"; falhou=1`,
+        'elif ! grep -qF -- "FALHA ${SCASO[i]}:" "$r"; then',
+        `printf '…' "$loc" "\${SNOME[i]}" "\${SCASO[i]}" \\`,
+        `"$(grep -m1 'FALHA' "$r" | sed 's/^ *//' | cut -c1-80)"`,
+        'falhou=1',
+        'else',
+        `printf '…' "$loc" "\${SNOME[i]}" "\${SCASO[i]}"`,
+        'fi',
+      ],
       '    elif ! bash -n "$copia" 2>/dev/null; then',
     ],
+
   },
   'scripts/test-setup-contrato.sh': {
     motivo:
       'marca do ramo (erro do motor, nome do teste) casada só nas linhas de FALHA: fora das `✓` e do code-frame, onde o vitest cita teste VERDE — até 2026-09-29 casava na saída inteira',
-    mede: [],
+    mede: ['saida', 'rc', 'falha_txt'],
     ancoras: [
       `linhas_de_falha() { sem_ansi "$1" | LC_ALL=C grep -avE '^[[:space:]]*(✓|[0-9]*[[:space:]]*\\|)'; }`,
-      '  falha_txt="$(linhas_de_falha "$saida")"',
-      '      grep -qaF -- "$alt" <<<"$falha_txt" && { achou=1; break; }',
-      '    aviso "  ❌ [$nome] vermelho (rc=$rc) mas SEM a marca do ramo:$faltando"',
+      'rodar_testemunhas() { NO_COLOR=1 FORCE_COLOR=0 COLUMNS=400 bunx vitest run "${TESTEMUNHAS[@]}" >"$1" 2>&1; }',
+      [
+        'local saida="$TMPD/sabotagem-$SABOTAGENS.txt"',
+        'local rc',
+        'rodar_testemunhas "$saida"',
+        'rc=$?',
+        'restaurar',
+        'if [ "$rc" -eq 0 ]; then',
+        'aviso "…"',
+        'FALHAS=$((FALHAS + 1))',
+        'return',
+        'fi',
+      ],
+      'falha_txt="$(linhas_de_falha "$saida")"',
+      'grep -qaF -- "$alt" <<<"$falha_txt" && { achou=1; break; }',
+      ['if [ -n "$faltando" ]; then', 'aviso "…"'],
     ],
+
   },
   'scripts/test-medir-footprint.sh': {
     motivo:
       'medição incompleta (rc, campo não numérico, 0 amostras) é ruim; o vermelho que conta é o SENTIDO declarado — SAB1 cai, SAB2/SAB4 sobem, SAB3 abaixo do mínimo; até 2026-09-29 valia "fora da janela" para qualquer lado',
-    mede: [],
+    mede: ['S1_LEVE', 'S1_PESADO', 'S2_LEVE', 'S2_DIV', 'S4_LEVE', 'S4_SEQ'],
     ancoras: [
+      [
+        'bash "$1" sh -c "$2" > "$TMP/saida.txt" 2>"$TMP/erro.txt"',
+        'rc=$?',
+        `R_PICO="$(sed -n 's/^pico_mb=//p' "$TMP/saida.txt")"`,
+      ],
+      '  [ "$R_EXIT" -eq 0 ] || return 1',
+      `if medir "$SAB1" "$ALVO_LEVE"; then S1_LEVE="$R_PICO"; else S1_LEVE=''; fi`,
+      `if medir "$SAB1" "$ALVO_PESADO"; then S1_PESADO="$R_PICO"; else S1_PESADO=''; fi`,
+      `if medir "$SAB2" "$ALVO_LEVE"; then S2_LEVE="$R_PICO"; else S2_LEVE=''; fi`,
+      `if medir "$SAB2" "$ALVO_DIVERGENTE"; then S2_DIV="$R_PICO"; else S2_DIV=''; fi`,
+      `if medir "$SAB4" "$ALVO_LEVE"; then S4_LEVE="$R_PICO"; else S4_LEVE=''; fi`,
+      `if medir "$SAB4" "$ALVO_SEQUENCIAL"; then S4_SEQ="$R_PICO"; else S4_SEQ=''; fi`,
       'elif [ "$(( S1_PESADO - S1_LEVE ))" -gt "$JANELA_MAX" ]; then',
       'elif [ "$(( S2_DIV - S2_LEVE ))" -lt "$JANELA_MIN" ]; then',
       'elif [ "$(( S4_SEQ - S4_LEVE ))" -lt "$SEQ_MIN" ]; then',
-      '  [ "$R_EXIT" -eq 0 ] || return 1',
     ],
+
   },
   'scripts/test-claude-mem-reanimar.sh': {
     motivo: 'despacha para lab-claude-mem-reanimar/{falsifica.sh, prova_com_tty.sh --falsificar} e exige rc 0 + a LINHA exata do marcador verde de cada um',
-    mede: [],
+    mede: ['saida', 'rc'],
     ancoras: [
       '  roda falsifica.sh FALSIFICACAO-VERDE || exit 1',
       '  roda prova_com_tty.sh FALSIFICACAO-COM-TTY-VERDE --falsificar',
-      '  if [ "$rc" -eq 0 ] && grep -qx "$marca" "$saida"; then',
+      [
+        'saida="$(mktemp)"',
+        'if [ "$(uname -s)" = Linux ]; then',
+        'python3 "$LAB/subreaper.py" bash "$LAB/$script" "$@" >"$saida" 2>&1',
+        'else',
+        'bash "$LAB/$script" "$@" >"$saida" 2>&1',
+        'fi',
+        'rc=$?',
+        'cat "$saida"',
+        'if [ "$rc" -eq 0 ] && grep -qx "$marca" "$saida"; then',
+        'rm -f "$saida"',
+        'return 0',
+        'fi',
+      ],
     ],
+
   },
   'scripts/lab-claude-mem-reanimar/falsifica.sh': {
     motivo: 'RC≠0 + LAB-VERMELHO (o lab TERMINOU) + o texto da FALHA declarada numa linha `  FALHA `, por locale',
-    mede: [],
+    mede: ['r'],
     ancoras: [
-      "    if ! grep -qx 'RC=[1-9][0-9]*' \"$r\"; then",
-      "    elif ! grep -qx 'LAB-VERMELHO' \"$r\"; then",
-      `    elif ! grep -F '  FALHA ' "$r" | grep -qF -- "\${ESPERADO[i]}"; then`,
+      [
+        'LC_ALL="$loc" SCRIPT="$TMP/sabotado-${NOME[i]}.sh" LAB_FAIXAS=1 \\',
+        'bash "$L/lab.sh" "${CEN[i]}" >"$TMP/res-$i-$loc.txt" 2>&1',
+        'echo "RC=$?" >>"$TMP/res-$i-$loc.txt"',
+      ],
+      [
+        'r="$TMP/res-$i-$loc.txt"',
+        "if ! grep -qx 'RC=[1-9][0-9]*' \"$r\"; then",
+        'problema="…"',
+        "elif ! grep -qx 'LAB-VERMELHO' \"$r\"; then",
+        'problema="$problema [$loc] saiu sem o marcador LAB-VERMELHO (o lab nao terminou: $(tail -1 "$r"))"',
+        `elif ! grep -F '  FALHA ' "$r" | grep -qF -- "\${ESPERADO[i]}"; then`,
+        `problema="$problema [$loc] vermelho pelo MOTIVO ERRADO: $(grep -m1 -F '  FALHA ' "$r" | sed 's/^ *//' | cut -c1-90)"`,
+        'fi',
+      ],
     ],
     delegadoPor: 'scripts/test-claude-mem-reanimar.sh',
   },
   'scripts/lab-claude-mem-reanimar/prova_com_tty.sh': {
     motivo: 'o python sabotado tem de parsear; PROVA-COM-TTY-VERMELHA (a prova TERMINOU) + a FALHA declarada, com os rc exatos no texto',
-    mede: [],
+    mede: ['r', 'rc'],
     ancoras: [
-      "        elif ! grep -qx 'PROVA-COM-TTY-VERMELHA' \"$r\"; then",
-      `        elif ! grep -F '  FALHA ' "$r" | grep -qF -- "\${ESPERADO[i]}"; then`,
+      [
+        'r="$T/res-$i-$loc.txt"',
+        'LC_ALL="$loc" COM_TTY="$copia" bash "$L/prova_com_tty.sh" >"$r" 2>&1',
+        'rc=$?',
+        'if [ "$rc" -eq 0 ]; then',
+        'problema="…"',
+        "elif ! grep -qx 'PROVA-COM-TTY-VERMELHA' \"$r\"; then",
+        'problema="…"',
+        `elif ! grep -F '  FALHA ' "$r" | grep -qF -- "\${ESPERADO[i]}"; then`,
+        `problema="$problema [$loc] vermelho pelo MOTIVO ERRADO: $(grep -m1 -F '  FALHA ' "$r" | sed 's/^ *//' | cut -c1-90)"`,
+        'fi',
+      ],
     ],
     delegadoPor: 'scripts/test-claude-mem-reanimar.sh',
   },
   'scripts/test-retry-pgdg.sh': {
     motivo: 'despacha para lab-retry-pgdg/falsifica.sh e exige rc 0 + a LINHA exata do marcador verde',
-    mede: [],
-    ancoras: ['  roda falsifica.sh FALSIFICACAO-VERDE', '  if [ "$rc" -eq 0 ] && grep -qx "$2" "$saida"; then'],
+    mede: ['saida', 'rc'],
+    ancoras: [
+      '  roda falsifica.sh FALSIFICACAO-VERDE',
+      [
+        'saida="$(mktemp)"',
+        'bash "$LAB/$1" >"$saida" 2>&1',
+        'rc=$?',
+        'cat "$saida"',
+        'if [ "$rc" -eq 0 ] && grep -qx "$2" "$saida"; then',
+        'rm -f "$saida"',
+        'return 0',
+        'fi',
+      ],
+    ],
+
   },
   'scripts/lab-retry-pgdg/falsifica.sh': {
     motivo: 'LAB-VERMELHO + o controle C0 do lab VERDE (quebrar o lab não é quebrar a guarda) + CADA caso declarado vermelho, por locale',
-    mede: [],
+    mede: ['SAI'],
     ancoras: [
-      '      *LAB-VERMELHO*) ;;',
-      '      *"✅ C0 controle — sem falha, step verde"*) ;;',
-      '        *"❌ $c"*) ;;',
-      '      falhou "$nome [$loc] — vermelho, mas os casos${faltando} seguiram verdes"',
+      'roda_lab() { ALVO_YML="$1" LC_ALL="$2" LAB_CENARIOS="${3:-C1 C2 C3 C4 C5 C6 C7 C8}" bash "$L/lab.sh" 2>&1; }',
+      [
+        'SAI="$(roda_lab "$TMP/controle.yml" "$loc")"',
+        'case "$SAI" in',
+        '*LAB-VERDE*) passou "…" ;;',
+        '*) echo "…"',
+        `echo "$SAI" | sed 's/^/      | /' | head -30`,
+        'echo "…"; exit 1 ;;',
+        'esac',
+      ],
+      [
+        'local SAI; SAI="$(roda_lab "$TMP/sab.yml" "$loc" "$esperados")"',
+        'case "$SAI" in',
+        '*LAB-VERMELHO*) ;;',
+        '*) falhou "…"; continue ;;',
+        'esac',
+        'case "$SAI" in',
+        '*"✅ C0 controle — sem falha, step verde"*) ;;',
+        '*) falhou "…"; continue ;;',
+        'esac',
+        'local faltando="" c',
+        'for c in $esperados; do',
+        'case "$SAI" in',
+        '*"❌ $c"*) ;;',
+        '*) faltando="$faltando $c" ;;',
+        'esac',
+        'done',
+        'if [ -n "$faltando" ]; then',
+        'falhou "…"',
+        'else',
+        'passou "…"',
+        'fi',
+      ],
     ],
     delegadoPor: 'scripts/test-retry-pgdg.sh',
   },
   'scripts/sonda-cron-prova.ts': {
     motivo:
       'cada sintético DECLARA a classe exata (os seis defeituosos: FALHA) e a FALHA não pode vir do handler que LANÇA (status -1); até 2026-09-29 valia "≠ PASSA", e INVERIFICAVEL/NAO_COMPILA contavam como defeito pego',
-    mede: [],
+    mede: ['cls'],
     ancoras: [
-      "        const esperado: Classe = classeExata.get(nome) ?? (devemPassar.has(nome) ? 'PASSA' : 'FALHA');",
-      "        const lancou = esperado === 'FALHA' && [v.a, ...(v.b ?? [])].some((x) => x?.status === -1);",
-      '        const ok = cls === esperado && !lancou;',
+      [
+        'const v = JSON.parse(linhas[linhas.length - 1]) as Veredito;',
+        'const cls = classificarVeredito(v, false);',
+        "const esperado: Classe = classeExata.get(nome) ?? (devemPassar.has(nome) ? 'PASSA' : 'FALHA');",
+        "const lancou = esperado === 'FALHA' && [v.a, ...(v.b ?? [])].some((x) => x?.status === -1);",
+        'const ok = cls === esperado && !lancou;',
+      ],
     ],
+
   },
 
   // ── Fora do `test:falsificacao`, com falsificação PRÓPRIA dentro da suíte normal (roda no
@@ -447,13 +868,24 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
   'scripts/test-lovable-revert-scan.sh': {
     motivo:
       'o desfecho declarado é SILÊNCIO julgado: stdout mudo E exit 0 E stderr vazio como o do controle — o scan que MORRE também sai mudo; sed inválido, cópia vazia, no-op e sintaxe recusados',
-    mede: [],
+    mede: ['out', 'rc'],
     ancoras: [
-      '  if [ -n "$out" ]; then',
-      '  elif [ "$rc" -ne 0 ] || [ -s "$base/copia.err" ]; then',
+      'env $COR_ENV LRS_PATTERNS="^supabase/functions/" bash "${SCAN_ATUAL:-$SCAN}" 2>>"${ERROS_DO_SCAN:-/dev/null}"',
       `if printf '%s' "$out_ctl" | grep -qF "REVERSAO" && [ ! -s "$base/controle.err" ]; then`,
       '  if ! erro_sed="$(sed "$expr" "$SCAN" 2>&1 >"$base/copia.sh")" || [ -n "$erro_sed" ] || [ ! -s "$base/copia.sh" ]; then',
+      [
+        ': > "$base/copia.err"',
+        'out="$(ERROS_DO_SCAN="$base/copia.err" run_scan)"; rc=$?',
+        'if [ -n "$out" ]; then',
+        'echo "…"; fail=1',
+        'elif [ "$rc" -ne 0 ] || [ -s "$base/copia.err" ]; then',
+        `echo "  FAIL  $nome → o alarme sumiu por CRASH, não por julgamento (exit $rc, stderr não-vazio): $(head -c 160 "$base/copia.err" | tr '\\n' ' ')"; fail=1`,
+        'else',
+        'echo "…"',
+        'fi',
+      ],
     ],
+
   },
 
   // ── A camada 4 por LINHA (2026-09-29): o stderr INTEIRO do alvo, que o EMBRULHO recolhe em cada rodada,
@@ -462,84 +894,169 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
   // camada fica CEGA sem ninguém acusar.
   'scripts/test-onde-parei.sh': {
     motivo: MOTIVO_CAMADA4,
-    mede: [],
+    mede: ['log', 'emb', 'novas'],
     ancoras: [
-      '    if SONDA_OVERRIDE="$emb" bash "$0" >"$log" 2>&1; then',
+      [
+        'emb="$(embrulha_alvo "$copia" "$log.stderr")" || { ruim "…"; continue; }',
+        'if SONDA_OVERRIDE="$emb" bash "$0" >"$log" 2>&1; then',
+      ],
       '    elif novas="$(camada4 "$sab" "$log" "$ctl" "$copia" "$controle")"; [ -n "$novas" ]; then',
     ],
+
   },
   'scripts/test-orfaos-custosos.sh': {
     motivo: MOTIVO_CAMADA4,
-    mede: [],
+    mede: ['log', 'rc', 'emb_alvo', 'novas'],
     ancoras: [
-      '      LC_ALL="$loc" ORFAOS_ALVO="$emb_alvo" bash "$0" >"$log.cru" 2>&1; rc=$?',
+      [
+        'emb_alvo="$(embrulha_alvo "$copia" "$log.stderr")" || { falha "…"; falhou=1; continue; }',
+        'LC_ALL="$loc" ORFAOS_ALVO="$emb_alvo" bash "$0" >"$log.cru" 2>&1; rc=$?',
+        'sem_cor "$log.cru" > "$log"',
+        'if [ "$rc" -eq 0 ]; then',
+        'falha "…"; falhou=1; continue',
+        'fi',
+      ],
       '      elif novas="$(camada4 "$sab" "$log" "$ctl" "$copia" "$controle")"; [ -n "$novas" ]; then',
     ],
+
   },
   'scripts/test-read-contexto-nudge.sh': {
     motivo: MOTIVO_CAMADA4,
-    mede: [],
+    mede: ['log', 'rc', 'emb_alvo', 'novas'],
     ancoras: [
-      '      LC_ALL="$loc" HOOK_SOB_TESTE="$emb_alvo" bash "$0" >"$log.cru" 2>&1; rc=$?',
+      [
+        `emb_alvo="$(embrulha_alvo "$copia" "$log.stderr")" || { printf '…' "$loc" "$desc"; falhou=1; continue; }`,
+        'LC_ALL="$loc" HOOK_SOB_TESTE="$emb_alvo" bash "$0" >"$log.cru" 2>&1; rc=$?',
+        'sem_cor "$log.cru" > "$log"',
+        'if [ "$rc" -eq 0 ]; then',
+        `printf '…' "$loc" "$desc" "$regra"`,
+        'falhou=1; continue',
+        'fi',
+      ],
       '      elif novas="$(camada4 "$sab" "$log" "$ctl" "$copia" "$controle")"; [ -n "$novas" ]; then',
     ],
+
   },
   'scripts/test-ocupacao-por-arquivo.sh': {
     motivo: `${MOTIVO_CAMADA4}; o mktemp_so_bsd DECLARA o erro do mktemp GNU — é o vermelho dele`,
-    mede: [],
+    mede: ['log', 'rc', 'emb_alvo', 'novas'],
     ancoras: [
-      '    OCUPACAO_OVERRIDE="$emb_alvo" bash "$0" >"$log.cru" 2>&1; rc=$?',
+      [
+        'log="$tmp/sabotada-$sab.log"',
+        ': > "$log.stderr"',
+        'emb_alvo="$(embrulha_alvo "$copia" "$log.stderr")" || { ruim "…"; continue; }',
+        'OCUPACAO_OVERRIDE="$emb_alvo" bash "$0" >"$log.cru" 2>&1; rc=$?',
+        'sem_cor "$log.cru" > "$log"',
+        'if [ "$rc" -eq 0 ]; then',
+        'ruim "…"; continue',
+        'fi',
+      ],
       '    elif novas="$(camada4 "$sab" "$log" "$ctl" "$copia" "$controle")"; [ -n "$novas" ]; then',
       `  declara_stderr mktemp_so_bsd "mktemp: too few X's in template"`,
     ],
+
   },
   'scripts/test-ocupacao-por-comando.sh': {
     motivo: `${MOTIVO_CAMADA4}; o stderr aqui é o RELATÓRIO, e as 7 sabotagens que o mudam DECLARAM a família de linha`,
-    mede: [],
+    mede: ['log', 'rc', 'emb_alvo', 'novas'],
     ancoras: [
-      '    OCUPACAO_OVERRIDE="$emb_alvo" bash "$0" >"$log.cru" 2>&1; rc=$?',
+      [
+        'log="$tmp/sabotada-$sab.log"',
+        ': > "$log.stderr"',
+        'emb_alvo="$(embrulha_alvo "$copia" "$log.stderr")" || { ruim "…"; continue; }',
+        'OCUPACAO_OVERRIDE="$emb_alvo" bash "$0" >"$log.cru" 2>&1; rc=$?',
+        'sem_cor "$log.cru" > "$log"',
+        'if [ "$rc" -eq 0 ]; then',
+        'ruim "…"; continue',
+        'fi',
+      ],
       '    elif novas="$(camada4 "$sab" "$log" "$ctl" "$copia" "$controle")"; [ -n "$novas" ]; then',
     ],
+
   },
   'scripts/test-fecho-edges-pendentes.sh': {
     motivo: MOTIVO_CAMADA4,
-    mede: [],
+    mede: ['log', 'rc', 'emb_alvo', 'novas'],
     ancoras: [
-      '      ( export LC_ALL="$loc"; ALVO="$emb_alvo"; fail=0; suite; [ "$fail" -eq 0 ] ) > "$log.cru" 2>&1; rc=$?',
+      [
+        ': > "$log.stderr"',
+        `emb_alvo="$(embrulha_alvo "$copia" "$log.stderr")" || { printf '…' "$loc" "$desc"; falhou=1; continue; }`,
+        '( export LC_ALL="$loc"; ALVO="$emb_alvo"; fail=0; suite; [ "$fail" -eq 0 ] ) > "$log.cru" 2>&1; rc=$?',
+        'sem_cor "$log.cru" > "$log"',
+        'if [ "$rc" -eq 0 ]; then',
+        `printf '…' "$loc" "$desc"; falhou=1; continue`,
+      ],
       '      elif novas="$(camada4 "$sab" "$log" "$ctl" "$copia" "$controle")"; [ -n "$novas" ]; then',
     ],
+
   },
   'scripts/test-eval-diagnostico-cegueira.sh': {
     motivo:
       'o idioma SABOTAGENS com as quatro camadas; o bloco é carregado com `.` (sem embrulho possível), então a 4ª julga tudo o que a rodada imprimiu FORA dos asserts, por linha, contra o controle',
-    mede: [],
+    mede: ['log', 'rc_sab', 'novas'],
     ancoras: [
-      '  ( rodar_asserts "$mut" ) > "$log" 2>&1; rc_sab=$?; fora_dos_asserts "$log"',
+      [
+        'log="$CAIXA/sabotada-$sab.log"',
+        '( rodar_asserts "$mut" ) > "$log" 2>&1; rc_sab=$?; fora_dos_asserts "$log"',
+        'if [ "$rc_sab" -eq 0 ]; then',
+        'echo "…" >&2; cegas=$((cegas + 1)); continue',
+        'fi',
+      ],
       '  elif novas="$(camada4 "$sab" "$log" "$ctl" "$mut" "$BLOCO")"; [ -n "$novas" ]; then',
     ],
+
   },
   'scripts/test-idioma-errexit-leitura.sh': {
     motivo:
       'os FAIL declarados e SÓ eles, com a camada 2 (a rodada chega ao recibo com o nº de asserts do controle) e a 4 (nenhuma linha de stderr que o controle não traz) — até 2026-09-29, só os FAIL',
-    mede: [],
+    mede: ['out', 'faltou', 'n', 'novas'],
     ancoras: [
-      'bash "$TMP/s.sh" > "$TMP/s.log" 2> "$TMP/s.log.stderr"',
-      'if [ "$(recibo "$TMP/s.log")" != "$(recibo "$TMP/c.log")" ]; then',
-      'elif novas="$(camada4 "$nome" "$TMP/s.log" "$TMP/c.log" "$TMP/s.sh" "$SELF")"; [ -n "$novas" ]; then',
+      [
+        'bash "$TMP/s.sh" > "$TMP/s.log" 2> "$TMP/s.log.stderr" && { echo "…"; FALH=$((FALH+1)); continue; }',
+        'out="$(cat "$TMP/s.log")"',
+        'faltou=""',
+        `for id in \${decl//,/ }; do printf '%s\\n' "$out" | command grep -q "^  FAIL $id " || faltou="$faltou $id"; done`,
+        `n="$(printf '%s\\n' "$out" | command grep -c '^  FAIL ' || true)"; esperado="$(printf '%s\\n' "\${decl//,/ }" | wc -w | tr -d ' ')"`,
+        `if [ "$(recibo "$TMP/s.log")" != "$(recibo "$TMP/c.log")" ]; then echo "  ❌ $nome — a rodada NÃO chegou ao recibo com os $(recibo "$TMP/c.log") asserts: vermelho de aborto, não de assert"; FALH=$((FALH+1))`,
+        `elif novas="$(camada4 "$nome" "$TMP/s.log" "$TMP/c.log" "$TMP/s.sh" "$SELF")"; [ -n "$novas" ]; then echo "  ❌ $nome — vermelha com erro que o CONTROLE não tem (crash, não julgamento): $(printf '%s' "$novas" | head -c 160)"; FALH=$((FALH+1))`,
+        'elif [ -n "$faltou" ]; then echo "…"; FALH=$((FALH+1))',
+        'elif [ "$n" != "$esperado" ]; then echo "…"; FALH=$((FALH+1))',
+        'else echo "…"; VERM=$((VERM+1)); fi',
+      ],
     ],
+
   },
   'scripts/test-bash-contexto-nudge.sh': {
     motivo:
       'limiar: exit 0 + exatamente 1 JSON + o nudge no additionalContext, E o stderr INTEIRO do hook sabotado sem linha que o hook REAL não traz na mesma entrada (até 2026-09-29, /dev/null); corte: o idioma com a camada 4 por linha',
-    mede: [],
+    mede: ['saida_sab', 'rc_sab', 'novas', 'log', 'rc', 'emb_alvo'],
     ancoras: [
-      `    saida_sab="$(printf '%s' "$(entrada 500 'ls')" | bash "$sabotado" 2>"$sabotado.err")"; rc_sab=$?`,
-      '    novas="$(linhas_novas "$sabotado.err" "$sabotado.ctl.err" "$sabotado" "$HOOK")"',
-      `    elif [ "$rc_sab" -eq 0 ] && printf '%s' "$saida_sab" | jq -se 'length == 1' >/dev/null 2>&1 \\`,
-      '       && ctx_de "$saida_sab" | command grep -qF "BASH-SAIDA-GRANDE"; then',
-      '        NUDGE_OVERRIDE="$emb_alvo" bash "$0" > "$log" 2>&1; rc=$?',
+      [
+        `saida_sab="$(printf '%s' "$(entrada 500 'ls')" | bash "$sabotado" 2>"$sabotado.err")"; rc_sab=$?`,
+        `printf '%s' "$(entrada 500 'ls')" | bash "$HOOK" >/dev/null 2>"$sabotado.ctl.err"`,
+        'novas="$(linhas_novas "$sabotado.err" "$sabotado.ctl.err" "$sabotado" "$HOOK")"',
+        'if [ -n "$novas" ]; then',
+        `echo "  FALHA o hook sabotado trouxe stderr que o REAL nao traz na mesma entrada — crash, nao o limiar: $(printf '%s' "$novas" | head -c 120)"`,
+        'falhas=$((falhas + 1))',
+        `elif [ "$rc_sab" -eq 0 ] && printf '%s' "$saida_sab" | jq -se 'length == 1' >/dev/null 2>&1 \\`,
+        '&& ctx_de "$saida_sab" | command grep -qF "BASH-SAIDA-GRANDE"; then',
+        'echo "…"',
+        'elif [ -n "$saida_sab" ]; then',
+        `echo "  FALHA o silêncio quebrou, mas SEM o nudge — vermelho que não é o do limiar: $(printf '%s' "$saida_sab" | head -c 100)"`,
+        'falhas=$((falhas + 1))',
+      ],
+      [
+        'log="$sab_dir/sabotada-$sab.log"; : > "$log.stderr"',
+        'emb_alvo="$(embrulha_alvo "$copia" "$log.stderr")" || { echo "…"; falhas=$((falhas + 1)); continue; }',
+        'NUDGE_OVERRIDE="$emb_alvo" bash "$0" > "$log" 2>&1; rc=$?',
+        'if [ "$rc" -eq 0 ]; then',
+        'echo "…"',
+        'falhas=$((falhas + 1)); continue',
+        'fi',
+      ],
       '        elif novas="$(camada4 "$sab" "$log" "$ctl" "$copia" "$sab_dir/controle.sh")"; [ -n "$novas" ]; then',
     ],
+
   },
 };
 
@@ -766,11 +1283,15 @@ export function julgarNucleo(
 const normalizarLinha = (linha: string) => linha.trim().replace(/[ \t]+/g, ' ');
 const escaparRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-/** A âncora (já normalizada) como regex: tudo literal, menos o curinga de prosa `"…"`/`'…'`. */
+/**
+ * A âncora (já normalizada) como regex: tudo literal, menos o curinga de prosa. `"…"` é UMA string
+ * entre aspas duplas (com `\"` escapada dentro, como o shell); `'…'`, uma entre simples (sem escape,
+ * como o shell) — nenhum dos dois atravessa a aspa que fecha, então código entre duas strings não some.
+ */
 const padraoDe = (trecho: string) =>
   normalizarLinha(trecho)
     .split(/("…"|'…')/)
-    .map((p) => (p === '"…"' ? '"[^"]*"' : p === "'…'" ? "'[^']*'" : escaparRegex(p)))
+    .map((p) => (p === '"…"' ? String.raw`"(?:[^"\\]|\\.)*"` : p === "'…'" ? "'[^']*'" : escaparRegex(p)))
     .join('');
 
 interface LinhaDeCodigo {
@@ -887,12 +1408,15 @@ export function escritasDe(limpo: string, variavel: string, ts: boolean): number
   return ts ? linhasDasFormas(limpo, formasTs(n), null) : linhasDasFormas(limpo, formasShell(n), mascaraContexto(limpo));
 }
 
-/** A âncora LÊ a variável? Shell: `$V`/`${V…`. TS: o identificador fora de posição de escrita. */
+/**
+ * A âncora LÊ a variável? Shell: `$V`/`${V…`, ou o nome nu dentro de `(( … ))` (aritmética não usa `$`).
+ * TS: o identificador fora de posição de escrita.
+ */
 function leVariavel(ancora: Ancora, variavel: string, ts: boolean): boolean {
   const n = escaparRegex(variavel);
   const le = ts
     ? new RegExp(String.raw`(?<![\w$.])(?<!\b(?:const|let|var)[ \t]+)${n}(?![\w$])(?![ \t]*${OP_TS})`)
-    : new RegExp(String.raw`\$\{?${n}(?!\w)`);
+    : new RegExp(String.raw`\$\{?${n}(?!\w)|\(\([^()]*?(?<![\w$])${n}(?!\w)`);
   return (typeof ancora === 'string' ? [ancora] : ancora).some((l) => le.test(l));
 }
 
@@ -935,6 +1459,9 @@ export function julgarAncoras(
     }
     const ts = ehTypeScript(arquivo);
     const texto = limpo.split('\n');
+    if (juiz.mede.length === 0 && (juiz.semLigacao ?? '').trim() === '') {
+      acusa(1, `juiz sem variável julgada (\`mede\` vazio) e sem \`semLigacao\` que diga por quê: a ligação medição→veredito voltaria a ser voluntária (${juiz.motivo})`);
+    }
     for (const nome of juiz.mede) {
       const escritas = escritasDe(limpo, nome, ts);
       if (escritas.length === 0) {

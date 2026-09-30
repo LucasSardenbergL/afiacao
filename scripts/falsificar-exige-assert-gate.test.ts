@@ -215,7 +215,7 @@ describe('o que NÃO é a classe', () => {
 });
 
 describe('R3 — cada falsificar=<n> do núcleo tem juiz, e o juiz tem as âncoras', () => {
-  const juizes: Record<string, Juiz> = { 'db/a.sh': { motivo: 'm', mede: [], ancoras: ['confere "$marca"'] } };
+  const juizes: Record<string, Juiz> = { 'db/a.sh': { motivo: 'm', mede: [], semLigacao: 'fixture', ancoras: ['confere "$marca"'] } };
   const limpos = new Map([
     ['db/a.sh', 'x=1\nconfere "$marca"\n'],
     ['db/b.sh', 'y=2\n'],
@@ -406,6 +406,11 @@ describe('a LIGAÇÃO do juiz com a medição (Codex, fase 4): o juízo é UM bl
     expect(julga(enfiado)).toEqual([expect.stringContaining('bloco do juízo rompeu')]);
   });
 
+  it('o curinga de prosa aceita aspa ESCAPADA dentro da string (`"  FAIL  \\"$regra\\" …"`)', () => {
+    const escapada = troca(JUIZO, 'echo "✗ F1 FALHOU: a identidade NÃO acusou"', 'echo "✗ \\"F1\\" FALHOU: não acusou"');
+    expect(julga(escapada)).toEqual([]);
+  });
+
   it('comentário e linha em branco entre as linhas do bloco não rompem (o stripper é quem decide o que é código)', () => {
     expect(julga(troca(JUIZO, 'case "$D" in', '\n# o veredito:\ncase "$D" in'))).toEqual([]);
   });
@@ -416,9 +421,25 @@ describe('a LIGAÇÃO do juiz com a medição (Codex, fase 4): o juízo é UM bl
     expect(v).toEqual([expect.stringContaining('a variável julgada D não é ESCRITA em lugar nenhum')]);
   });
 
+  it('leitura em contexto ARITMÉTICO (`$(( A - B ))`, sem `$`) conta como leitura', () => {
+    const fonte = 'A="$(medir)"\nif [ "$(( A - 1 ))" -gt 0 ]; then ok; fi\n';
+    const juiz: Juiz = { motivo: 'm', mede: ['A'], ancoras: ['A="$(medir)"', 'if [ "$(( A - 1 ))" -gt 0 ]; then ok; fi'] };
+    expect(julga(fonte, juiz)).toEqual([]);
+  });
+
   it('variável julgada que NENHUMA âncora lê reprova — medição presa sem veredito ligado a ela', () => {
     const v = julga(JUIZO, { ...JUIZ_DO_JUIZO, ancoras: [[MEDICAO]] });
     expect(v).toEqual([expect.stringContaining('nenhuma âncora LÊ a variável julgada D')]);
+  });
+
+  it('juiz sem `mede` tem de dizer POR QUE (`semLigacao`) — senão a ligação volta a ser voluntária', () => {
+    expect(julga(JUIZO, { motivo: 'm', mede: [], ancoras: [MEDICAO] })).toEqual([
+      expect.stringContaining('juiz sem variável julgada (`mede` vazio) e sem `semLigacao`'),
+    ]);
+    expect(julga(JUIZO, { motivo: 'm', mede: [], semLigacao: '   ', ancoras: [MEDICAO] })).toEqual([
+      expect.stringContaining('juiz sem variável julgada (`mede` vazio) e sem `semLigacao`'),
+    ]);
+    expect(julga(JUIZO, { motivo: 'm', mede: [], semLigacao: 'a medição mora nos pontos de chamada do helper', ancoras: [MEDICAO] })).toEqual([]);
   });
 
   it('âncora de UMA linha também prende a medição — mas só se casar a linha INTEIRA', () => {
@@ -479,7 +500,7 @@ describe('escritasDe — o que é ESCRITA da variável julgada (pela máscara do
 });
 
 describe('o REGISTRO FECHADO — remover um juiz exige mudança explícita, não um bloco apagado', () => {
-  const um: Record<string, Juiz> = { 'db/a.sh': { motivo: 'm', mede: [], ancoras: ['x'] } };
+  const um: Record<string, Juiz> = { 'db/a.sh': { motivo: 'm', mede: [], semLigacao: 'fixture', ancoras: ['x'] } };
 
   it('registro e JUIZES iguais: limpo', () => {
     expect(julgarRegistro(um, ['db/a.sh'])).toEqual([]);
@@ -585,7 +606,7 @@ describe('R4 — todo alvo do test:falsificacao usa o idioma limpo ou tem juiz, 
         { caminho: 'scripts/prova.ts', fonte: 'const x = 1;\n' },
       ],
       null,
-      { 'scripts/prova.ts': { motivo: 'm', mede: [], ancoras: ['const x = 1;'] } },
+      { 'scripts/prova.ts': { motivo: 'm', mede: [], semLigacao: 'fixture', ancoras: ['const x = 1;'] } },
       pacoteCom(ROTEIRO),
     );
     expect(r.alvosFalsificacao).toBe(3);
@@ -596,8 +617,8 @@ describe('R4 — todo alvo do test:falsificacao usa o idioma limpo ou tem juiz, 
 
   it('o mesmo alvo com JUIZ registrado passa — e a âncora dele que some reprova como R4, não R3', () => {
     const juizes = {
-      'scripts/test-b.sh': { motivo: 'm', mede: [], ancoras: ['echo "❌ passou VERDE"'] },
-      'scripts/prova.ts': { motivo: 'm', mede: [], ancoras: ['const x = 1;'] },
+      'scripts/test-b.sh': { motivo: 'm', mede: [], semLigacao: 'fixture', ancoras: ['echo "❌ passou VERDE"'] },
+      'scripts/prova.ts': { motivo: 'm', mede: [], semLigacao: 'fixture', ancoras: ['const x = 1;'] },
     };
     const arquivos = (b: string) => [
       { caminho: 'scripts/test-a.sh', fonte: LACO_REFERENCIA },
@@ -612,7 +633,7 @@ describe('R4 — todo alvo do test:falsificacao usa o idioma limpo ou tem juiz, 
   });
 
   it('âncora de alvo TS vale sobre o código limpo pelo stripper de TS — só num comentário, reprova', () => {
-    const juizes = { 'scripts/prova.ts': { motivo: 'm', mede: [], ancoras: ['exige(marca)'] } };
+    const juizes = { 'scripts/prova.ts': { motivo: 'm', mede: [], semLigacao: 'fixture', ancoras: ['exige(marca)'] } };
     const pacote = pacoteCom('bun scripts/prova.ts --falsificar');
     const r = analisar([{ caminho: 'scripts/prova.ts', fonte: '// exige(marca)\nconst y = 2;\n' }], null, juizes, pacote);
     expect(r.violacoes.map((v) => [v.regra, v.detalhe.includes('âncora do juiz sumiu')])).toEqual([['R4', true]]);
@@ -620,8 +641,8 @@ describe('R4 — todo alvo do test:falsificacao usa o idioma limpo ou tem juiz, 
 
   it('o juiz DELEGADO (o lab que o slug despacha) reprova com a regra do despachante — R4, não R3', () => {
     const juizes: Record<string, Juiz> = {
-      'scripts/test-a.sh': { motivo: 'despacha', mede: [], ancoras: ['roda lab/falsifica.sh'] },
-      'scripts/lab/falsifica.sh': { motivo: 'juiz do lab', mede: [], ancoras: ['exige "$marca"'], delegadoPor: 'scripts/test-a.sh' },
+      'scripts/test-a.sh': { motivo: 'despacha', mede: [], semLigacao: 'fixture', ancoras: ['roda lab/falsifica.sh'] },
+      'scripts/lab/falsifica.sh': { motivo: 'juiz do lab', mede: [], semLigacao: 'fixture', ancoras: ['exige "$marca"'], delegadoPor: 'scripts/test-a.sh' },
     };
     const r = analisar(
       [
