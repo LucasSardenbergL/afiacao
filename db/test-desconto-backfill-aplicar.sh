@@ -63,10 +63,10 @@ trap cleanup EXIT
 # O SERVIDOR sempre arranca sob LC_ALL=C (no macOS, sem isso o postmaster aborta). O eixo que a
 # lição #1483 manda variar é a LÍNGUA DAS MENSAGENS do servidor, e essa é GUC do BANCO.
 HARNESS_LC="${HARNESS_LC:-C}"
-"$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d postgres -q -c "ALTER DATABASE prove SET lc_messages='$HARNESS_LC';" \
+"$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d postgres -q -c "ALTER DATABASE prove SET lc_messages='$HARNESS_LC';" \
   || { echo "INFRA: lc_messages='$HARNESS_LC' indisponível neste servidor"; exit 1; }
 
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }
 
 P -q -f "$REPO_ROOT/db/stubs-supabase.sql"
@@ -76,7 +76,7 @@ bad() { FAIL=$((FAIL+1)); echo "  FAIL $1"; }
 eq()  { if [ "$2" = "$3" ]; then ok "$1 (=$2)"; else bad "$1 -- esperado [$3], veio [$2]"; fi; }
 
 # Controle do próprio eixo de locale: provoca um erro do SERVIDOR e mostra em que língua vem.
-AMOSTRA_MSG=$("$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -tA -c "SELECT 1/0;" 2>&1 | head -1) || true
+AMOSTRA_MSG=$("$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -tA -c "SELECT 1/0;" 2>&1 | head -1) || true
 echo "═══ setup pronto (PG17 :$PORT) lc_messages=$HARNESS_LC ═══"
 echo "═══ controle do eixo de locale, mensagem do servidor: $AMOSTRA_MSG"
 

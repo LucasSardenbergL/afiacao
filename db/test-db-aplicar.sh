@@ -988,7 +988,7 @@ roda_cenario() {
 
 # ── 1. SONDAS — o ambiente que a falsificação promete existe? Resposta POSITIVA, antes de tudo ───
 echo "▶ SONDAS do ambiente — ausencia ABORTA, nunca pula"
-v_psql="$("$PGBIN/psql" --version 2>/dev/null || true)"
+v_psql="$("$PGBIN/psql" -X --version 2>/dev/null || true)"
 case "$v_psql" in
   *"(PostgreSQL) $PGVER."*) nota "o psql do shim e do executor e PostgreSQL $PGVER ($v_psql)" ;;
   *) aborta PSQL_DE_OUTRA_MAJOR "o psql que o shim usa ($PGBIN/psql) respondeu '$v_psql'; esperado PostgreSQL $PGVER" ;;

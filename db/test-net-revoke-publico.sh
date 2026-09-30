@@ -28,7 +28,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U dono_admin -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l /tmp/pg-netrevoke.log -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U dono_admin netverify
-P() { "$PGBIN/psql" -v ON_ERROR_STOP=1 -p "$PORT" -h /tmp -U dono_admin -d netverify "$@"; }
+P() { "$PGBIN/psql" -X -v ON_ERROR_STOP=1 -p "$PORT" -h /tmp -U dono_admin -d netverify "$@"; }
 
 # ── Réplica da estrutura e do ACL de PROD (pg_net 0.19.5, medido 2026-08-27) ────────────
 P -q <<'SQL'
@@ -52,7 +52,7 @@ SQL
 falha=0
 esperar_sqlstate() { # $1=papel $2=sql $3=sqlstate esperada $4=rotulo
   local got
-  got="$("$PGBIN/psql" -qtAX -p "$PORT" -h /tmp -U "$1" -d netverify \
+  got="$("$PGBIN/psql" -X -qtAX -p "$PORT" -h /tmp -U "$1" -d netverify \
         -c "DO \$\$ BEGIN $2 ; RAISE EXCEPTION 'SEM_ERRO_INESPERADO'; EXCEPTION
               WHEN sqlstate '$3' THEN RAISE NOTICE 'MARCA_OK'; END \$\$;" 2>&1 || true)"
   case "$got" in
@@ -61,12 +61,12 @@ esperar_sqlstate() { # $1=papel $2=sql $3=sqlstate esperada $4=rotulo
   esac
 }
 esperar_ok() { # $1=papel $2=sql $3=rotulo
-  if "$PGBIN/psql" -qtAX -v ON_ERROR_STOP=1 -p "$PORT" -h /tmp -U "$1" -d netverify -c "$2" >/dev/null 2>&1
+  if "$PGBIN/psql" -X -qtAX -v ON_ERROR_STOP=1 -p "$PORT" -h /tmp -U "$1" -d netverify -c "$2" >/dev/null 2>&1
   then echo "  OK   [$3] passou"; else echo "  FALHA[$3] deveria passar e falhou"; falha=1; fi
 }
-acl() { "$PGBIN/psql" -qtAX -p "$PORT" -h /tmp -U dono_admin -d netverify \
+acl() { "$PGBIN/psql" -X -qtAX -p "$PORT" -h /tmp -U dono_admin -d netverify \
         -c "SELECT coalesce(relacl::text,'NULL') FROM pg_class WHERE oid='net.http_request_queue'::regclass"; }
-priv() { "$PGBIN/psql" -qtAX -p "$PORT" -h /tmp -U dono_admin -d netverify \
+priv() { "$PGBIN/psql" -X -qtAX -p "$PORT" -h /tmp -U dono_admin -d netverify \
          -c "SELECT has_table_privilege('$1','$2','$3')"; }
 
 echo "== BASELINE (PUBLIC com tudo, como prod hoje) =="

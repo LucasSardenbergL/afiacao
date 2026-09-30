@@ -65,12 +65,12 @@ echo "── setup: PG${PGVER} em :$PORT · locale do shell LC_ALL=$LC_ALL ─�
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "$TMPD/pg.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
-P() { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 -q "$@"; }
+P() { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 -q "$@"; }
 
 # Wrapper que o audit invoca como se fosse o psql-ro de prod (repassa os args ao psql local).
 cat > "$WRAP" <<WRAPEOF
 #!/usr/bin/env bash
-exec "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove "\$@"
+exec "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove "\$@"
 WRAPEOF
 chmod +x "$WRAP"
 
@@ -80,19 +80,19 @@ chmod +x "$WRAP"
 # que não casa nada sai 1 e o erro viria do execFileSync, dando o exit certo pelo motivo errado.
 cat > "$WRAP_PERDA" <<WRAPEOF
 #!/usr/bin/env bash
-exec "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove "\$@" | sed '/|MAINTAIN|/d'
+exec "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove "\$@" | sed '/|MAINTAIN|/d'
 WRAPEOF
 chmod +x "$WRAP_PERDA"
 cat > "$WRAP_SEM_VER" <<WRAPEOF
 #!/usr/bin/env bash
-exec "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove "\$@" | sed '/^VER|/d'
+exec "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove "\$@" | sed '/^VER|/d'
 WRAPEOF
 chmod +x "$WRAP_SEM_VER"
 # Reescreve UMA linha AUSENTE da tabela inexistente como NAO (cenário M): a tabela fica "meio
 # ausente, meio medida" — a forma de saída que a guarda de consistência do audit tem de recusar.
 cat > "$WRAP_MEIO" <<WRAPEOF
 #!/usr/bin/env bash
-exec "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove "\$@" | sed '/zz_nao_aplicada_test|anon|SELECT|AUSENTE/s/AUSENTE\$/NAO/'
+exec "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove "\$@" | sed '/zz_nao_aplicada_test|anon|SELECT|AUSENTE/s/AUSENTE\$/NAO/'
 WRAPEOF
 chmod +x "$WRAP_MEIO"
 
