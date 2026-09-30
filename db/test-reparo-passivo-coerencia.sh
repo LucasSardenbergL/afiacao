@@ -14,6 +14,7 @@ MIGRACAO="${MIGRACAO:-}"
 
 PGVER=17; PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"; PORT="${PGPORT_TEST:-5479}"
 SLUG="reparo-coerencia"; DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
+RODADA="$(dirname "$DATA")"   # dir ÚNICO desta rodada (o trap apaga): temporário mora aqui, nunca em /tmp/<nome-fixo>
 [ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente"; exit 1; }
 cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$(dirname "$DATA")"; }
 trap cleanup EXIT
@@ -96,8 +97,8 @@ if [ -n "$MIGRACAO" ]; then
 fi
 
 echo "== B · o REPARO (executado de verdade) =="
-if Q -q -f "$REPARO" 2>/tmp/reparo-erro.log; then ok "B1 reparo commitou"
-else bad "B1 reparo commitou" "exit 0" "$(head -c 300 /tmp/reparo-erro.log)"; fi
+if Q -q -f "$REPARO" 2>"$RODADA/reparo-erro.log"; then ok "B1 reparo commitou"
+else bad "B1 reparo commitou" "exit 0" "$(head -c 300 "$RODADA/reparo-erro.log")"; fi
 
 echo "== C · DEPOIS =="
 eq "C1 so 12121128593 diverge (14 reparados)" 1 "$(V "$DIVERGENTES;")"
@@ -162,8 +163,8 @@ eq "F0 ANTES: o banco diz 2x110,90" 1 \
          WHERE so.omie_pedido_id=12121128593 AND oi.omie_codigo_produto=8689743515
            AND oi.quantity=2 AND oi.unit_price=110.90;")"
 
-if Q -q -f "$REPARO15" 2>/tmp/reparo15-erro.log; then ok "F1 reparo do 15o commitou"
-else bad "F1 reparo do 15o commitou" "exit 0" "$(head -c 300 /tmp/reparo15-erro.log)"; fi
+if Q -q -f "$REPARO15" 2>"$RODADA/reparo15-erro.log"; then ok "F1 reparo do 15o commitou"
+else bad "F1 reparo do 15o commitou" "exit 0" "$(head -c 300 "$RODADA/reparo15-erro.log")"; fi
 
 eq "F2 ZERO pedidos divergem (os 15 coerentes)" 0 "$(V "$DIVERGENTES;")"
 eq "F3 6 linhas no 11701" 6 \
@@ -196,15 +197,15 @@ eq "F9 uma unidade a MENOS no sinal de demanda (12 -> 11)" 11 \
 # NAO e idempotente de proposito: a pre-condicao ancora no estado conferido no
 # Omie, entao re-colar tem de ABORTAR — e dizendo que ja foi aplicado, nao com um
 # erro obscuro. Assert casa a MARCA do ramo, nao "lancou algo".
-if Q -q -f "$REPARO15" >/tmp/reparo15-2a.log 2>&1; then
+if Q -q -f "$REPARO15" >"$RODADA/reparo15-2a.log" 2>&1; then
   bad "F10 2a execucao RECUSA (fail-closed)" "exit != 0" "commitou de novo"
 else
   ok "F10 2a execucao RECUSA (fail-closed)"
 fi
 # rotulo IDENTICO nos dois ramos: assert cujo texto de falha nao casa com o de
 # sucesso e invisivel para quem faz grep (o falsificador quase deu verde por isso).
-if grep -q 'JA APLICADO' /tmp/reparo15-2a.log; then ok "F11 recusa pela marca certa (JA APLICADO)"
-else bad "F11 recusa pela marca certa (JA APLICADO)" "JA APLICADO" "$(head -c 200 /tmp/reparo15-2a.log)"; fi
+if grep -q 'JA APLICADO' "$RODADA/reparo15-2a.log"; then ok "F11 recusa pela marca certa (JA APLICADO)"
+else bad "F11 recusa pela marca certa (JA APLICADO)" "JA APLICADO" "$(head -c 200 "$RODADA/reparo15-2a.log")"; fi
 eq "F12 continua 6 linhas (a recusa nao mexeu em nada)" 6 \
    "$(V "SELECT count(*) FROM order_items oi JOIN sales_orders so ON so.id=oi.sales_order_id WHERE so.omie_pedido_id=12121128593;")"
 
@@ -241,15 +242,15 @@ UPDATE sales_orders so SET items = (
  WHERE so.omie_pedido_id = 12121128593;
 COMMIT;
 SQL
-  if Q -q -f "$REPARO15" >/tmp/reparo15-g.log 2>&1; then
+  if Q -q -f "$REPARO15" >"$RODADA/reparo15-g.log" 2>&1; then
     bad "G1 recusa estado divergente do verificado" "exit != 0" "commitou assim mesmo"
   else
     ok "G1 recusa estado divergente do verificado"
   fi
-  if grep -q 'jsonb nao diz mais 1x221,80' /tmp/reparo15-g.log; then
+  if grep -q 'jsonb nao diz mais 1x221,80' "$RODADA/reparo15-g.log"; then
     ok "G2 recusa pela marca certa (jsonb mudou)"
   else
-    bad "G2 recusa pela marca certa" "jsonb nao diz mais 1x221,80" "$(head -c 200 /tmp/reparo15-g.log)"
+    bad "G2 recusa pela marca certa" "jsonb nao diz mais 1x221,80" "$(head -c 200 "$RODADA/reparo15-g.log")"
   fi
 fi
 
