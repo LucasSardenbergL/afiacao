@@ -172,7 +172,9 @@ describe('o repo', () => {
 
   it('a baseline é EXATA: as definições mortas estão no texto, e nada além delas', () => {
     expect(confrontar(r.contagem, CONHECIDOS)).toEqual({ novos: [], quitados: [] });
-    expect(CONHECIDOS.reduce((n, c) => n + c.n, 0)).toBe(22);
+    // 22 + 1: a 20260929001651 recria radar_atribuir_tarefa (só o hoje de SP muda) — o MESMO
+    // falso-positivo de VIVOS_PERMITIDOS, agora no arquivo da definição viva.
+    expect(CONHECIDOS.reduce((n, c) => n + c.n, 0)).toBe(23);
   });
 
   it('os 3 vivos permitidos estão no corpo vivo, com a âncora de pé', () => {

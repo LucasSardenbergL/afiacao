@@ -27,6 +27,7 @@ PORT="${PGPORT_TEST:-5481}"
 SLUG="deploy-sonda-cron"
 MIG="$REPO_ROOT/supabase/migrations/20260906151204_deploy_sonda_cron_fail_closed.sql"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
+RODADA="$(dirname "$DATA")"   # dir ÚNICO desta rodada (o trap apaga): temporário mora aqui, nunca em /tmp/<nome-fixo>
 export LC_ALL=C LANG=C
 
 [ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER} pgvector"; exit 1; }
@@ -39,7 +40,6 @@ cp -Rn "$CELLAR"/lib/postgresql/. "/opt/homebrew/lib/postgresql@${PGVER}/" 2>/de
 cleanup() {
   "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true
   rm -rf "$(dirname "$DATA")"
-  rm -f /tmp/pg-"${SLUG}"-sab-* /tmp/pg-"${SLUG}"-apply.err /tmp/pg-"${SLUG}"-reapply.err
   return 0
 }
 trap cleanup EXIT
@@ -121,8 +121,8 @@ SQL
 
   # ZONA 2: a migration
   echo "═══ apply: $(basename "$mig") ═══"
-  if ! P -q -f "$mig" 2>"/tmp/pg-${SLUG}-apply.err"; then
-    bad "APPLY: a migration abortou — $(grep -m1 -E 'FALHOU|ERROR' "/tmp/pg-${SLUG}-apply.err" | cut -c1-170)"
+  if ! P -q -f "$mig" 2>"$RODADA/pg-${SLUG}-apply.err"; then
+    bad "APPLY: a migration abortou — $(grep -m1 -E 'FALHOU|ERROR' "$RODADA/pg-${SLUG}-apply.err" | cut -c1-170)"
     return 0
   fi
   ok "APPLY sem erro"
@@ -213,8 +213,8 @@ SQL
      "$(Pq -f "$REPO_ROOT/db/valida-deploy-sonda-cron.sql" | grep -c '^✅')" "1"
 
   # — re-apply é idempotente —
-  if ! P -q -f "$mig" 2>"/tmp/pg-${SLUG}-reapply.err"; then
-    bad "RE-APPLY abortou — $(grep -m1 -E 'FALHOU|ERROR' "/tmp/pg-${SLUG}-reapply.err" | cut -c1-150)"
+  if ! P -q -f "$mig" 2>"$RODADA/pg-${SLUG}-reapply.err"; then
+    bad "RE-APPLY abortou — $(grep -m1 -E 'FALHOU|ERROR' "$RODADA/pg-${SLUG}-reapply.err" | cut -c1-150)"
   else
     ok "RE-APPLY sem erro"
     eq "re-apply não duplica o cron" "$(Pq -c "SELECT count(*) FROM cron.job WHERE jobname='deploy-sonda-cron'")" "1"
@@ -226,7 +226,7 @@ SQL
 # ── sabotagem(<nome>, <sed-expr>) — copia da migration com UMA camada removida ─────────
 sabotar() {
   local nome="$1" expr="$2" out
-  out="$(mktemp "/tmp/pg-${SLUG}-sab-${nome}.XXXXXX")" || { echo "  ❌ mktemp falhou para $nome"; exit 1; }
+  out="$(mktemp "$RODADA/sab-${nome}.XXXXXX")" || { echo "  ❌ mktemp falhou para $nome"; exit 1; }
   sed -e "$expr" "$MIG" > "$out"
   if cmp -s "$MIG" "$out"; then echo "  ❌ sabotagem $nome NÃO alterou a migration (regex cega) — falsificação inválida"; exit 1; fi
   printf '%s' "$out"

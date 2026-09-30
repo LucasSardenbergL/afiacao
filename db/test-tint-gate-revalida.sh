@@ -85,6 +85,7 @@ export PGVER=17   # consumido pelo db/lib/pg-harness.sh via source
 . "$REPO_ROOT/db/lib/pg-harness.sh"   # exporta PGBIN — fail-CLOSED, confere a major POSITIVAMENTE
 PORT="${PGPORT_TEST:-5449}"
 DATA="$(mktemp -d /tmp/pgtest-tintgate.XXXXXX)/data"
+RODADA="$(dirname "$DATA")"   # dir ÚNICO desta rodada (o trap apaga): temporário mora aqui, nunca em /tmp/<nome-fixo>
 export LC_ALL=C LANG=C
 
 for f in "$MIG_F2" "$MIG_F2B" "$MIG_F2C" "$MIG_F2D" "$MIGRATION" "$MIG_PISO"; do
@@ -738,7 +739,7 @@ restore_gate
 
 echo ""
 echo "════════ F2 — sabotagem: formula_morta vira passe silencioso ════════"
-TMP_SAB="$(mktemp "${TMPDIR:-/tmp}/sab-f2.XXXXXX.sql")"
+TMP_SAB="$(mktemp "$RODADA/sab-f2.XXXXXX")"
 # migration real com o bloqueio de canônica-ausente trocado por CONTINUE
 sed "s/'motivo', 'formula_morta',/'motivo', 'formula_morta_DESLIGADA',/" "$MIGRATION" > "$TMP_SAB"
 P -q -f "$TMP_SAB" >/dev/null
@@ -756,7 +757,7 @@ restore_gate
 echo ""
 echo "════════ F3 — sabotagem: fonte 'tabela' pula o gate do motor ════════"
 # migration real com o check do motor condicionado a fonte ≠ tabela
-TMP_SAB="$(mktemp "${TMPDIR:-/tmp}/sab-f3.XXXXXX.sql")"
+TMP_SAB="$(mktemp "$RODADA/sab-f3.XXXXXX")"
 sed "s/IF v_calc_raw IS NULL THEN/IF v_calc_raw IS NULL AND COALESCE(v_item->>'tint_price_source','') <> 'tabela' THEN/" "$MIGRATION" > "$TMP_SAB"
 P -q -f "$TMP_SAB" >/dev/null
 rm -f "$TMP_SAB"
@@ -807,7 +808,7 @@ restore_gate
 
 echo ""
 echo "════════ F6 — sabotagem: ultimo_preco vira SECURITY DEFINER (fura a RLS) ════════"
-TMP_SAB="$(mktemp "${TMPDIR:-/tmp}/sab-f6.XXXXXX.sql")"
+TMP_SAB="$(mktemp "$RODADA/sab-f6.XXXXXX")"
 sed "s/^STABLE$/STABLE SECURITY DEFINER/" "$MIGRATION" > "$TMP_SAB"
 P -q -f "$TMP_SAB" >/dev/null
 rm -f "$TMP_SAB"
@@ -821,7 +822,7 @@ restore_gate
 
 echo ""
 echo "════════ F7 — sabotagem: sem o exclude anti-autovalidação ════════"
-TMP_SAB="$(mktemp "${TMPDIR:-/tmp}/sab-f7.XXXXXX.sql")"
+TMP_SAB="$(mktemp "$RODADA/sab-f7.XXXXXX")"
 sed "s/AND (p_exclude_sales_order_id IS NULL OR so.id <> p_exclude_sales_order_id)/AND true/" "$MIGRATION" > "$TMP_SAB"
 P -q -f "$TMP_SAB" >/dev/null
 rm -f "$TMP_SAB"
@@ -836,7 +837,7 @@ restore_gate
 
 echo ""
 echo "════════ F8 — sabotagem: item sem cor ignorado SEM classificar o produto ════════"
-TMP_SAB="$(mktemp "${TMPDIR:-/tmp}/sab-f8.XXXXXX.sql")"
+TMP_SAB="$(mktemp "$RODADA/sab-f8.XXXXXX")"
 sed "s/CONTINUE WHEN NOT v_is_base_tint;/CONTINUE;/" "$MIGRATION" > "$TMP_SAB"
 P -q -f "$TMP_SAB" >/dev/null
 rm -f "$TMP_SAB"
@@ -851,7 +852,7 @@ restore_gate
 
 echo ""
 echo "════════ F9 — sabotagem: coerência de fórmula sempre-true (anti-adulteração morre) ════════"
-TMP_SAB="$(mktemp "${TMPDIR:-/tmp}/sab-f9.XXXXXX.sql")"
+TMP_SAB="$(mktemp "$RODADA/sab-f9.XXXXXX")"
 sed "s/v_declarada_coerente := false;/v_declarada_coerente := true;/" "$MIGRATION" > "$TMP_SAB"
 P -q -f "$TMP_SAB" >/dev/null
 rm -f "$TMP_SAB"
@@ -871,7 +872,7 @@ echo "════════ F10 — sabotagem: o PISO volta a ler o RÓTULO (
 # É o estado da main antes de 2026-07-21 — e o que o challenge do Codex apontou:
 # encolher o max para dar precisão de proveniência ao rótulo AFROUXAVA o piso.
 # Se G32/G33 seguissem verdes aqui, eles não teriam dente nenhum.
-TMP_SAB="$(mktemp "${TMPDIR:-/tmp}/sab-f10.XXXXXX.sql")"
+TMP_SAB="$(mktemp "$RODADA/sab-f10.XXXXXX")"
 sed 's/COALESCE(v_piso, v_calc)/COALESCE(v_tab, v_calc)/' "$MIG_PISO" > "$TMP_SAB"
 P -q -f "$TMP_SAB" >/dev/null
 rm -f "$TMP_SAB"
@@ -898,7 +899,7 @@ echo "════════ F11 — DEFESA EM PROFUNDIDADE: view sabotada, ga
 # falsificação do spec ingênuo continua existindo e VERMELHA, no harness certo:
 # db/test-tint-canonica.sh, F14 → derruba {C26,C28}. Aqui a afirmação é outra,
 # e verdadeira: as duas camadas são independentes, e uma cobre a queda da outra.
-TMP_SAB="$(mktemp "${TMPDIR:-/tmp}/sab-f11.XXXXXX.sql")"
+TMP_SAB="$(mktemp "$RODADA/sab-f11.XXXXXX")"
 sed 's/))) IS NULL/))) IS NULL AND false/' "$MIG_PISO" > "$TMP_SAB"
 P -q -f "$TMP_SAB" >/dev/null
 rm -f "$TMP_SAB"
@@ -917,7 +918,7 @@ echo "════════ F12 — sabotagem: v_piso SEM o acoplamento a v_t
 # VERDES (K32 tem csv=0, que não é NULL), mas o guard `> 0` do gate derruba
 # v_tab e deixa v_piso=90 de pé — o piso efetivo cai de 102.5 para 90 e o
 # manual 95 passa. Falha ABERTA por um caminho que os invariantes não enxergam.
-TMP_SAB="$(mktemp "${TMPDIR:-/tmp}/sab-f12.XXXXXX.sql")"
+TMP_SAB="$(mktemp "$RODADA/sab-f12.XXXXXX")"
 sed 's/CASE WHEN v_tab IS NOT NULL AND v_can_piso IS NOT NULL/CASE WHEN v_can_piso IS NOT NULL/' "$MIG_PISO" > "$TMP_SAB"
 P -q -f "$TMP_SAB" >/dev/null
 rm -f "$TMP_SAB"
@@ -938,7 +939,7 @@ echo "════════ F13 — sabotagem: SÓ o ramo LEGADO volta a v_ta
 # SEGUINTE (`n;s///`) — o ramo 'manual' fica intacto. Sem o G35 estrutural,
 # esta sabotagem passaria VERDE (nenhum assert comportamental cobre o legado
 # com piso divergente hoje).
-TMP_SAB="$(mktemp "${TMPDIR:-/tmp}/sab-f13.XXXXXX.sql")"
+TMP_SAB="$(mktemp "$RODADA/sab-f13.XXXXXX")"
 sed '/mesmo piso conservador da fonte/{n;s/COALESCE(v_piso, v_calc)/COALESCE(v_tab, v_calc)/;}' "$MIG_PISO" > "$TMP_SAB"
 P -q -f "$TMP_SAB" >/dev/null
 rm -f "$TMP_SAB"
@@ -957,7 +958,7 @@ echo "════════ F14 — sabotagem: piso SEM o ceil10 (usa o valor
 # O contador de ✅ é do nível bash e o G36 vive DENTRO do run_central — então o
 # número não prova que ele rodou. Esta sabotagem prova. Só K33 (piso 90.01)
 # distingue: para pisos inteiros ceil10(x)=x e nada muda.
-TMP_SAB="$(mktemp "${TMPDIR:-/tmp}/sab-f14.XXXXXX.sql")"
+TMP_SAB="$(mktemp "$RODADA/sab-f14.XXXXXX")"
 sed 's|ceil((v_can_piso)::float8 \* 10) / 10|(v_can_piso)::float8|' "$MIG_PISO" > "$TMP_SAB"
 P -q -f "$TMP_SAB" >/dev/null
 rm -f "$TMP_SAB"

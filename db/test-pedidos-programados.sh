@@ -12,6 +12,7 @@ PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
 PORT="${PGPORT_TEST:-5463}"
 SLUG="pedidos-programados"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
+RODADA="$(dirname "$DATA")"   # dir ÚNICO desta rodada (o trap apaga): temporário mora aqui, nunca em /tmp/<nome-fixo>
 export LC_ALL=C LANG=C
 
 [ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER}"; exit 1; }
@@ -354,8 +355,8 @@ preparar_sabota
 
 # F1 — RLS é o que barra o customer (R2). Sabota comentando o ENABLE ROW LEVEL SECURITY
 #      de pedidos_programados: sem RLS, customer passa a ver o header (count>0, não 0).
-sed 's/^ALTER TABLE public\.pedidos_programados        ENABLE ROW LEVEL SECURITY;/-- SABOTADO: &/' "$MIG" > /tmp/sab-pp-rls.sql
-SB -q -f /tmp/sab-pp-rls.sql
+sed 's/^ALTER TABLE public\.pedidos_programados        ENABLE ROW LEVEL SECURITY;/-- SABOTADO: &/' "$MIG" > "$RODADA/sab-pp-rls.sql"
+SB -q -f "$RODADA/sab-pp-rls.sql"
 SB -q <<SQL
 INSERT INTO public.pedidos_programados (cliente_ref, arquivo_path, status, created_by)
 VALUES ('lider', 'x.pdf', 'ativo', '$STAFF');
@@ -381,8 +382,8 @@ P -q -c "RESET ROLE;" >/dev/null
 #      migration insere 2 linhas; sem RLS o customer passa a vê-las (S4 tem dente).
 #      O "restaurado" desta falsificação é o S4 do banco prove (migration real → count=0).
 preparar_sabota
-sed 's/^ALTER TABLE public\.pedidos_programados_config[[:space:]]*ENABLE ROW LEVEL SECURITY;/-- SABOTADO: &/' "$MIG" > /tmp/sab-pp-config.sql
-SB -q -f /tmp/sab-pp-config.sql
+sed 's/^ALTER TABLE public\.pedidos_programados_config[[:space:]]*ENABLE ROW LEVEL SECURITY;/-- SABOTADO: &/' "$MIG" > "$RODADA/sab-pp-config.sql"
+SB -q -f "$RODADA/sab-pp-config.sql"
 CONF_SABOTADO=$(SBq -c "SET ROLE authenticated; SET test.uid='$CUST'; SELECT count(*) FROM public.pedidos_programados_config;")
 SB -q -c "RESET ROLE;" >/dev/null
 if [ "$CONF_SABOTADO" = "2" ]; then ok "F2 RLS da config sabotado → customer VÊ as 2 linhas do seed (S4 tem dente)"; else bad "F2 sabotagem da config não mudou a visibilidade → S4 é teatro [veio $CONF_SABOTADO]"; fi

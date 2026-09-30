@@ -18,6 +18,7 @@ PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
 PORT="${PGPORT_TEST:-5471}"
 SLUG="assocrules"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
+RODADA="$(dirname "$DATA")"   # dir ÚNICO desta rodada (o trap apaga): temporário mora aqui, nunca em /tmp/<nome-fixo>
 export LC_ALL=C LANG=C
 
 [ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER} pgvector"; exit 1; }
@@ -423,7 +424,7 @@ SQL
 # pra matar. (Aconteceu aqui: `0,/re/s//../` é sintaxe do GNU sed, o macOS usa BSD.)
 sabota() {
   local expr="$1" tmp
-  tmp="$(mktemp /tmp/sabota-XXXXXX.sql)"
+  tmp="$(mktemp "$RODADA/sabota-XXXXXX")"
   sed -E "$expr" "$MIG" > "$tmp"
   if cmp -s "$tmp" "$MIG"; then
     bad "SABOTAGEM INERTE: [$expr] não alterou a migration — falsificação sem valor"

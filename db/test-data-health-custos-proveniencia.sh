@@ -16,6 +16,7 @@ PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
 PORT="${PGPORT_TEST:-5468}"
 SLUG="custos-prov"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
+RODADA="$(dirname "$DATA")"   # dir ÚNICO desta rodada (o trap apaga): temporário mora aqui, nunca em /tmp/<nome-fixo>
 export LC_ALL=C LANG=C
 
 [ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER} pgvector"; exit 1; }
@@ -82,7 +83,7 @@ chksev() { Pq -c "SELECT severity FROM public._data_health_compute() WHERE sourc
 seed1()  { P -q -c "TRUNCATE public.product_costs; INSERT INTO public.product_costs(product_id,cost_source,cost_confidence,cost_final,updated_at) VALUES (gen_random_uuid(),$1,$2,$3,now());"; }
 # sabotagem: replace LITERAL (robusto a metacaracteres da regex) via python; aplica a versão furada
 sabota() {  # $1=OLD literal  $2=NEW literal  $3=count esperado
-  local SAB; SAB=$(mktemp /tmp/sab-custos.XXXXXX.sql)
+  local SAB; SAB=$(mktemp "$RODADA/sab-custos.XXXXXX")
   SAB="$SAB" MIG="$MIG" SAB_OLD="$1" SAB_NEW="$2" SAB_CNT="$3" python3 - <<'PYEOF'
 import os
 s = open(os.environ['MIG']).read()

@@ -23,6 +23,7 @@ export PGVER=17   # consumido pelo db/lib/pg-harness.sh via source
 PORT="${PGPORT_TEST:-5473}"
 SLUG="cancelar-guard"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
+RODADA="$(dirname "$DATA")"   # dir ÚNICO desta rodada (o trap apaga): temporário mora aqui, nunca em /tmp/<nome-fixo>
 export LC_ALL=C LANG=C
 
 # PGBIN: resolvido por plataforma (macOS Homebrew / Linux PGDG) com conferencia
@@ -93,7 +94,7 @@ SQL
 # ══════════════════════════════════════════════════════════════════════════════
 MIG="$REPO_ROOT/supabase/migrations/20260905224959_cancelar_pedido_guard_atomico.sql"
 MIG_VELHA="$REPO_ROOT/supabase/migrations/20260530210001_cancelar_pedido_limpa_portal.sql"
-POSTBLOCO="$(mktemp /tmp/postbloco.XXXXXX.sql)"
+POSTBLOCO="$(mktemp "$RODADA/postbloco.XXXXXX")"
 # shellcheck disable=SC2016  # `$post$` e a TAG de dollar-quote do SQL: tem de ficar literal.
 sed -n '/^DO \$post\$/,/^\$post\$;/p' "$MIG" > "$POSTBLOCO"
 [ -s "$POSTBLOCO" ] || { echo "INFRA: não extraí o bloco de postcondição do .sql"; exit 1; }
@@ -420,7 +421,7 @@ fi
 #     (a) contra o corpo velho ela tem de ABORTAR com a mensagem do guard;
 #     (b) contra o corpo certo ela tem de PASSAR.
 P -q -f "$MIG_VELHA"
-ERRLOG="$(mktemp /tmp/post-erro.XXXXXX.log)"
+ERRLOG="$(mktemp "$RODADA/post-erro.XXXXXX")"
 if P -q -f "$POSTBLOCO" >/dev/null 2>"$ERRLOG"; then
   bad "F4a a postcondicao PASSOU sobre o corpo velho vulneravel -- ela e decorativa"
 else
@@ -454,7 +455,7 @@ fi
 
 # F5b: perda EFETIVA de EXECUTE -> a postcondicao TEM de abortar, pelo sentinela certo.
 P -q -c "REVOKE EXECUTE ON FUNCTION public.cancelar_pedido_sugerido(bigint,text,text) FROM authenticated;" >/dev/null
-ERRLOG2="$(mktemp /tmp/post-acl.XXXXXX.log)"
+ERRLOG2="$(mktemp "$RODADA/post-acl.XXXXXX")"
 if P -q -f "$POSTBLOCO" >/dev/null 2>"$ERRLOG2"; then
   bad "F5b authenticated sem EXECUTE e a postcondicao passou -- o eixo ACL e decorativo"
 else

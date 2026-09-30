@@ -42,6 +42,7 @@ PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
 PORT="${PGPORT_TEST:-5478}"
 SLUG="tick-corrida"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
+RODADA="$(dirname "$DATA")"   # dir ÚNICO desta rodada (o trap apaga): temporário mora aqui, nunca em /tmp/<nome-fixo>
 export LC_ALL=C LANG=C
 
 # md5(prosrc) MEDIDO NA PROD em 2026-09-06 via ~/.config/afiacao/psql-ro. Se o corpo local
@@ -195,7 +196,7 @@ aplica_callee() { P -q -f "$VAR_DIR/$1.sql" >/dev/null; }
 # A = quem remove item do pedido (a via real: remover_itens_pedido trava o pai com
 #     FOR NO KEY UPDATE antes de escrever). B = o tick.
 # ══════════════════════════════════════════════════════════════════════════════
-B_OUT="/tmp/corrida-b-saida-tick.txt"   # CAMINHO FIXO: corrida() roda em $( ) = subshell.
+B_OUT="$RODADA/corrida-b-saida-tick.txt"   # definido FORA da corrida() (roda em $( ) = subshell); na RODADA, nao em /tmp fixo.
 BLOQ_PID=""
 
 lancar_bloqueador() {   # $1 = pedido; $2 = quantos itens remover
