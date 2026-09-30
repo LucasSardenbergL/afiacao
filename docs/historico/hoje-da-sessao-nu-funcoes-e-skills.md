@@ -162,9 +162,26 @@ testemunha (psql-ro, outra conexão) mostrou o radar ainda com o md5 do predeces
 
 ## Codex
 
-Consultado em 2026-09-29 00:4x: **exit 79** — cota em 86% (teto de 85%), janela reabre 03/10 19:11; o
-wrapper não gastou a chamada. Money-path (trava contábil e régua) → o PR-B fica **DRAFT** até o Codex;
-a prova PG17 falsificável é o Caminho B já pronto. O PR-A (skills + gate) não é money-path.
+Consultado em 2026-09-29 00:4x: **exit 79**. A cota estava em 86% (teto de 85%) e a janela reabre em
+03/10 19:11; o wrapper não gastou a chamada. Money-path (trava contábil e régua) → o PR-B ficou **DRAFT**.
+O PR-A (skills + gate) não é money-path.
+
+Em 2026-09-30 o founder pediu o merge. Rodei de novo usando a reserva: o teto de 85% existe para guardar o
+resto da cota para money-path, então passei `CODEX_ASYNC_TETO_SALDO=97`. O servidor recusou (**exit 75**,
+cota esgotada, reabre 03/10 19:11); o plano declarado no token é `prolite`, o de sempre, então o limite é
+real. O PR-B seguiu pelo **Caminho B** (`sem-codex:` no corpo) com a revisão adversarial própria:
+
+- tipo de cada coluna comparada, medido na prod: `sales_orders.created_at timestamptz`, `order_date_kpi`,
+  `eventos_outlier.data_evento`, `promocao_campanha.data_fim` e as 6 colunas que a trava contábil lê via
+  `to_jsonb` são `date`, e `fin_fechamentos` guarda `ano`/`mes` inteiros. Nenhuma troca cruza data com
+  instante, e nenhuma data passa pelo fuso da sessão no caminho;
+- o resto dos corpos não lê o relógio da sessão: sobram `now()` comparado com instante, `EXTRACT` e
+  `make_date` sobre `date` (conferido linha a linha, além do gate e da POS);
+- a troca é a única diferença para o predecessor (D1 da prova) e o pré-voo de 30/09 deu os 7 corpos vivos
+  iguais ao predecessor, sem deriva.
+
+**REVISÃO INDEPENDENTE PENDENTE.** O Codex retroativo (adversarial do código, `-r max`) roda quando a
+janela reabrir, a partir de 03/10 19:11, com o prompt guardado no PR.
 
 ## Fora, com dono
 
