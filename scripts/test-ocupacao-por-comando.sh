@@ -59,7 +59,7 @@ linha_res() { jq -nc --arg s "$1" --arg i "$2" --argjson n "$3" \
   '{sessionId:$s, message:{content:[{type:"tool_result", tool_use_id:$i, content:("x"*$n)}]}}'; }
 
 novo_projects() { d="$tmp/$1/projects/-Users-x-Projetos-afiacao-teste"; mkdir -p "$d"; printf '%s' "$tmp/$1/projects"; }
-roda()  { CLAUDE_PROJECTS_DIR="$1" bash "$ALVO" --por-comando --linhas 99 "${@:2}" 2>>"${ERROS_DO_ALVO:-/dev/null}"; }
+roda()  { CLAUDE_PROJECTS_DIR="$1" bash "$ALVO" --por-comando --linhas 99 "${@:2}" 2>/dev/null; }
 rodae() { CLAUDE_PROJECTS_DIR="$1" bash "$ALVO" --por-comando --linhas 99 "${@:2}" 2>&1; }
 
 # ---- fixture: uma sessão, um comando por chamada, saídas de tamanho igual ----
@@ -173,7 +173,7 @@ monta "$P11" s11 'cat a.md' 'git log' 'psql -c "select 1"' '{ }'
 # O cabecalho tambem termina em `%`; o guard de numerico o descarta.
 soma() { printf '%s\n' "$1" | LC_ALL=C awk '$NF ~ /%$/ && $(NF-3) ~ /^[0-9]+$/ {s+=$(NF-3)} END{printf "%d", s}'; }
 sc="$(soma "$(roda "$P11")")"
-sf="$(CLAUDE_PROJECTS_DIR="$P11" bash "$ALVO" --por-ferramenta --linhas 99 "$P11"/-Users-x-Projetos-afiacao-teste/s11.jsonl 2>>"${ERROS_DO_ALVO:-/dev/null}")"
+sf="$(CLAUDE_PROJECTS_DIR="$P11" bash "$ALVO" --por-ferramenta --linhas 99 "$P11"/-Users-x-Projetos-afiacao-teste/s11.jsonl 2>/dev/null)"
 sf="$(soma "$sf")"
 if LC_ALL=C awk -v v="${sc:-0}" 'BEGIN{exit !(v > 0)}'; then
   if [ "$sc" = "$sf" ]; then ok "K11 caso 11: --por-comando e --por-ferramenta contam os mesmos $sc chars"
@@ -183,15 +183,15 @@ else ruim "K11 caso 11: controle positivo falhou — soma zero, nada foi medido"
 # ---- caso 12: --ver-shell dobra a leitura via shell no ranking -------------
 P12="$(novo_projects p12)"
 monta "$P12" s12 "sed -n 1,120p docs/agent/money-path.md"
-sv="$(CLAUDE_PROJECTS_DIR="$P12" bash "$ALVO" --por-arquivo --ver-shell --linhas 99 2>>"${ERROS_DO_ALVO:-/dev/null}")"
-sn="$(CLAUDE_PROJECTS_DIR="$P12" bash "$ALVO" --por-arquivo --linhas 99 2>>"${ERROS_DO_ALVO:-/dev/null}")"
+sv="$(CLAUDE_PROJECTS_DIR="$P12" bash "$ALVO" --por-arquivo --ver-shell --linhas 99 2>/dev/null)"
+sn="$(CLAUDE_PROJECTS_DIR="$P12" bash "$ALVO" --por-arquivo --linhas 99 2>/dev/null)"
 if tem "$sv" "docs/agent/money-path.md"; then ok "K12 caso 12: --ver-shell atribui 'sed -n X,Yp F' ao arquivo F"
 else ruim "K12 caso 12: --ver-shell nao dobrou a leitura via shell no ranking"; fi
 if tem "$sn" "(Bash - sem arquivo)"; then ok "K12b caso 12: SEM o flag a linha de base fica intacta"
 else ruim "K12b caso 12: o comportamento default mudou — a linha de base de 2026-09-07 deixa de reproduzir"; fi
 
 # ---- caso 13: flag fora de contexto RECUSA em vez de ignorar --------------
-CLAUDE_PROJECTS_DIR="$P12" bash "$ALVO" --por-comando --ver-shell >/dev/null 2>>"${ERROS_DO_ALVO:-/dev/null}"
+CLAUDE_PROJECTS_DIR="$P12" bash "$ALVO" --por-comando --ver-shell >/dev/null 2>/dev/null
 if [ "$?" = "2" ]; then ok "K13 caso 13: --ver-shell com --por-comando -> exit 2 (recusa)"
 else ruim "K13 caso 13: flag ignorado em silencio — a tabela mente sobre o que mede"; fi
 
@@ -205,7 +205,7 @@ done
 if [ -z "$LOC_VIRGULA" ]; then
   printf '  \033[33mSKIP\033[0m  locale decimal-virgula ausente — caso 14 SEM cobertura\n'
 else
-  sl="$(LC_ALL="$LOC_VIRGULA" CLAUDE_PROJECTS_DIR="$P11" bash "$ALVO" --por-comando --linhas 99 2>>"${ERROS_DO_ALVO:-/dev/null}")"
+  sl="$(LC_ALL="$LOC_VIRGULA" CLAUDE_PROJECTS_DIR="$P11" bash "$ALVO" --por-comando --linhas 99 2>/dev/null)"
   nv="$(printf '%s' "$sl" | command grep -cE '[0-9],[0-9]' || true)"
   if [ "${nv:-0}" -eq 0 ]; then ok "K14 caso 14: sob $LOC_VIRGULA a saida segue com ponto decimal"
   else ruim "K14 caso 14: sob $LOC_VIRGULA sairam $nv numero(s) com virgula — saida depende do locale"; fi
@@ -220,9 +220,12 @@ if [ "${1:-}" = "--falsificar" ]; then
   sem_cor() { LC_ALL=C sed "s/${esc}\[[0-9;]*m//g" "$1"; }
   # Asserts EXECUTADOS numa rodada (ok + FALHA): o recibo de que a suíte rodou inteira.
   asserts() { LC_ALL=C grep -cE '^  (ok +|FALHA )' "$1" || true; }
-  # Erro de execução do bash no ALVO: no log (o que a suíte despeja da saída dele) e no que
-  # ERROS_DO_ALVO recolhe das chamadas que a suíte normal manda para /dev/null (elas MEDEM o stdout).
-  erros_exec() { cat "$1" "$1.stderr" 2>/dev/null | LC_ALL=C grep -cE 'unbound variable|command not found|syntax error|bad substitution' || true; }
+  # A camada 4: o stderr INTEIRO do alvo, recolhido pelo EMBRULHO em cada rodada — o das chamadas que a
+  # suíte mescla na saída e o das que ela manda para /dev/null (elas MEDEM o stdout) —, contra o do
+  # controle, por linha. ⚠️ Aqui o stderr é CONTRATO (o relatório: "sessões analisadas", marcadores
+  # de taxonomia), não só diagnóstico: a sabotagem que o muda de propósito o DECLARA (`declara_stderr`).
+  # shellcheck source=scripts/lib/falsificacao-stderr.sh disable=SC1091
+  . "$here/lib/falsificacao-stderr.sh"
   vermelhos() { { LC_ALL=C grep -Eo '^  FALHA K[0-9]+[a-z]? ' "$1" || true; } | LC_ALL=C awk '{ printf "%s ", $2 }'; }
 
   # CONTROLE antes do primeiro sed: um arnês incondicionalmente vermelho APROVA
@@ -236,10 +239,11 @@ if [ "${1:-}" = "--falsificar" ]; then
   # assert declarado SABE ficar verde nesta invocação.
   ctl="$tmp/controle.log"
   : > "$ctl.stderr"
-  OCUPACAO_OVERRIDE="$controle" ERROS_DO_ALVO="$ctl.stderr" bash "$0" >"$ctl.cru" 2>&1; rc=$?
+  emb_alvo="$(embrulha_alvo "$controle" "$ctl.stderr")" || { ruim "nao consegui embrulhar o controle"; exit 1; }
+  OCUPACAO_OVERRIDE="$emb_alvo" bash "$0" >"$ctl.cru" 2>&1; rc=$?
   sem_cor "$ctl.cru" > "$ctl"
   if [ "$rc" -eq 0 ] && [ "$(asserts "$ctl")" -gt 0 ]; then
-    ok "controle (copia SEM sabotagem) -> VERDE ($(asserts "$ctl") asserts)"
+    ok "controle (copia SEM sabotagem) -> VERDE ($(asserts "$ctl") asserts; $(linha_de_base "$ctl"))"
   else
     ruim "controle SEM sabotagem ja esta VERMELHO — sem linha de base, sabotar nao prova nada"
     printf '   Abortando: sabotagem sobre arnes vermelho aprova qualquer coisa.\n'; exit 1
@@ -310,12 +314,30 @@ if [ "${1:-}" = "--falsificar" ]; then
   registra locale_nao_forcado "locale deixa de ser forcado" \
     's|^export LC_ALL=C|export LC_ALL=${LC_ALL:-C}|'
 
+  # O que cada sabotagem muda DE PROPÓSITO no stderr do alvo — aqui o stderr é o RELATÓRIO (contagens,
+  # marcadores que os asserts leem), e mudar o que o alvo classifica muda o que ele relata. Medido em
+  # 2026-09-29 com o stderr inteiro: 7 das 11 rodadas trazem linha que o controle nunca disse, e as 7
+  # são a família de linha abaixo — nenhuma é crash. Trecho ASCII e específico: um erro de execução
+  # não contém nenhum deles.
+  declara_stderr prefixo_1a_palavra 'TAXONOMIA-NAO-CLASSIFICADO n='
+  declara_stderr ultimo_estagio 'VER-SHELL n='
+  declara_stderr sem_marcador_nao_classificado 'TAXONOMIA-SILENCIOSA n='
+  declara_stderr sem_bash_tabela_normal 'TAXONOMIA-QUIETA: nenhuma chamada Bash na janela'
+  declara_stderr ver_shell_descarta_alvo 'VER-SHELL n='
+  declara_stderr ver_shell_default 'a --por-arquivo (modo atual: ferramenta).'
+  # A vírgula decimal num PERCENTUAL, em qualquer linha do relatório: medido nos dois locales — com o
+  # shell de fora em C só a chamada que força a vírgula muda; em pt_BR, TODA linha com % muda (a 1ª
+  # declaração, medida só em C, reprovou esta sabotagem no 2º locale da meta).
+  declara_stderr locale_nao_forcado ',0%' ',1%' ',2%' ',3%' ',4%' ',5%' ',6%' ',7%' ',8%' ',9%'
+
   # A rodada só conta como vermelha com as QUATRO camadas (as do sync-reprocess):
   #   1. a sabotagem APLICOU e não quebrou o alvo (as travas de aplica());
   #   2. a suíte rodou INTEIRA (nº de asserts = o do controle: aborto no meio não é assert);
   #   3. CADA assert declarado está VERDE no controle e VERMELHO aqui (o mesmo assert virou);
-  #   4. nenhum erro de execução do bash no alvo que o controle não tem — o alvo que morre no ramo
-  #      do assert derruba o assert certo por CRASH, não por julgamento.
+  #   4. nenhuma linha de erro que o controle não tem (`camada4`: o stderr INTEIRO do alvo, por linha
+  #      normalizada, menos o que a sabotagem DECLARA mudar) — o alvo que morre no ramo do assert
+  #      derruba o assert certo por CRASH, não por julgamento, e o erro de ferramenta não está em
+  #      lista-negra nenhuma.
   # Nome repetido rodaria a mesma mutação duas vezes (e inflaria o recibo); `|` (OU) não é
   # suportado por este juiz: os dois greps poderiam casar MEMBROS diferentes (Codex, 2026-09-27).
   # shellcheck disable=SC2086  # a divisão em palavras da lista é o ponto
@@ -336,7 +358,8 @@ if [ "${1:-}" = "--falsificar" ]; then
     aplica || continue
     log="$tmp/sabotada-$sab.log"
     : > "$log.stderr"
-    OCUPACAO_OVERRIDE="$copia" ERROS_DO_ALVO="$log.stderr" bash "$0" >"$log.cru" 2>&1; rc=$?
+    emb_alvo="$(embrulha_alvo "$copia" "$log.stderr")" || { ruim "\"$desc\": nao consegui embrulhar a copia"; continue; }
+    OCUPACAO_OVERRIDE="$emb_alvo" bash "$0" >"$log.cru" 2>&1; rc=$?
     sem_cor "$log.cru" > "$log"
     if [ "$rc" -eq 0 ]; then
       ruim "\"$desc\": alvo sabotado e a suite passou VERDE — invariante sem cobertura"; continue
@@ -350,8 +373,9 @@ if [ "${1:-}" = "--falsificar" ]; then
     done
     if [ "$(asserts "$log")" != "$(asserts "$ctl")" ]; then
       ruim "\"$desc\": a suite NAO rodou inteira ($(asserts "$log") de $(asserts "$ctl") asserts) — vermelho de aborto, nao de assert"
-    elif [ "$(erros_exec "$log")" != "$(erros_exec "$ctl")" ]; then
-      ruim "\"$desc\": vermelha com ERRO de execucao no alvo — o assert caiu por crash, nao por julgamento"
+    elif novas="$(camada4 "$sab" "$log" "$ctl" "$copia" "$controle")"; [ -n "$novas" ]; then
+      ruim "\"$desc\": vermelha com erro que o CONTROLE nao tem — o assert caiu por crash, nao por julgamento"
+      printf '%s\n' "$novas" | head -3 | LC_ALL=C sed 's/^/       /'
     elif [ -n "$faltam" ]; then
       ruim "\"$desc\": vermelha, mas o assert declarado NAO virou (verde no controle -> vermelho aqui):$faltam · vermelhos: $(vermelhos "$log")"
     else

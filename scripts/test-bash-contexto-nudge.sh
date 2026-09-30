@@ -34,10 +34,10 @@ entrada_s() { # <n_chars> <comando> <session_id>
 }
 
 # roda o hook e devolve stdout
-executa() { printf '%s' "$1" | bash "$HOOK" 2>>"${ERROS_DO_ALVO:-/dev/null}"; }
+executa() { printf '%s' "$1" | bash "$HOOK" 2>/dev/null; }
 # idem, com TMPDIR proprio: a marca de "ja ensinou" vive la, e sem isolar, a 2a
 # rodada de locale herdaria a marca da 1a e o caso do 1o disparo viraria falso.
-executa_t() { printf '%s' "$2" | TMPDIR="$1" bash "$HOOK" 2>>"${ERROS_DO_ALVO:-/dev/null}"; }
+executa_t() { printf '%s' "$2" | TMPDIR="$1" bash "$HOOK" 2>/dev/null; }
 ctx_de() { printf '%s' "$1" | jq -r '.hookSpecificOutput.additionalContext // ""' 2>/dev/null; }
 
 checa() { # <titulo> <esperado: MARCADOR|VAZIO> <json>
@@ -80,7 +80,7 @@ rodada() {
 
   # (7) ROBUSTEZ: JSON inválido não pode quebrar nem falar
   local saida
-  saida="$(printf '%s' 'isto não é json' | bash "$HOOK" 2>>"${ERROS_DO_ALVO:-/dev/null}")"
+  saida="$(printf '%s' 'isto não é json' | bash "$HOOK" 2>/dev/null)"
   if [ -z "$saida" ]; then printf '  ok   N7 entrada invalida -> silencio\n'
   else printf '  FALHA N7 entrada invalida falou: %s\n' "${saida//$'\n'/ | }"; falhas=$((falhas + 1)); fi
 
@@ -150,18 +150,29 @@ fi
 # Se continuar verde, a asserção (4) não estava provando nada.
 # Só no nível de cima: a reexecução da suíte (NUDGE_OVERRIDE) não refaz a falsificação.
 if [ -z "${NUDGE_OVERRIDE:-}" ]; then
+  # A camada 4 (scripts/lib/falsificacao-stderr.sh) — aqui e no bloco do corte, abaixo.
+  # shellcheck source=scripts/lib/falsificacao-stderr.sh disable=SC1091
+  . "$(dirname "$0")/lib/falsificacao-stderr.sh"
   echo "--- falsificação (sabota o limiar; o silêncio TEM de quebrar) ---"
-  sabotado="$(mktemp)"; trap 'rm -f "$sabotado"' EXIT
+  sabotado="$(mktemp)"; trap 'rm -f "$sabotado" "$sabotado.err" "$sabotado.ctl.err"' EXIT
   # shellcheck disable=SC2016  # o $chars é literal de propósito: casa o TEXTO do hook, não expande
   sed 's/\[ "\$chars" -ge 4000 \]/[ "$chars" -ge 1 ]/' "$HOOK" > "$sabotado"
   if command grep -q '\-ge 1 \]' "$sabotado"; then
     # O silêncio tem de quebrar COM o nudge (o marcador no additionalContext) — o valor que só o
     # limiar sabotado produz. Até 2026-09-27 valia "o hook imprimiu QUALQUER coisa": um hook que
     # quebra e cospe erro no stdout passava por dente. docs/historico/falsificacao-exit-nao-e-dente.md
-    saida_sab="$(printf '%s' "$(entrada 500 'ls')" | bash "$sabotado" 2>/dev/null)"; rc_sab=$?
+    saida_sab="$(printf '%s' "$(entrada 500 'ls')" | bash "$sabotado" 2>"$sabotado.err")"; rc_sab=$?
+    # A linha de base do stderr é o hook REAL na MESMA entrada, e o do sabotado é julgado INTEIRO
+    # contra ela: até 2026-09-29 ia para /dev/null, e o nudge impresso seguido de um erro que não muda
+    # o rc passava pelas exigências de baixo — erro de ferramenta não está em lista-negra nenhuma.
+    printf '%s' "$(entrada 500 'ls')" | bash "$HOOK" >/dev/null 2>"$sabotado.ctl.err"
+    novas="$(linhas_novas "$sabotado.err" "$sabotado.ctl.err" "$sabotado" "$HOOK")"
     # rc 0 e UM documento JSON válido antes de olhar o campo: o nudge seguido de `exit 9`, ou de lixo
     # depois do JSON (o jq emite o campo e só então falha), não é resposta do hook (Codex, 2026-09-27).
-    if [ "$rc_sab" -eq 0 ] && printf '%s' "$saida_sab" | jq -se 'length == 1' >/dev/null 2>&1 \
+    if [ -n "$novas" ]; then
+      echo "  FALHA o hook sabotado trouxe stderr que o REAL nao traz na mesma entrada — crash, nao o limiar: $(printf '%s' "$novas" | head -c 120)"
+      falhas=$((falhas + 1))
+    elif [ "$rc_sab" -eq 0 ] && printf '%s' "$saida_sab" | jq -se 'length == 1' >/dev/null 2>&1 \
        && ctx_de "$saida_sab" | command grep -qF "BASH-SAIDA-GRANDE"; then
       echo "  ok   sabotagem detectada (o silêncio quebrou COM o nudge BASH-SAIDA-GRANDE)"
     elif [ -n "$saida_sab" ]; then
@@ -192,21 +203,22 @@ if [ -z "${NUDGE_OVERRIDE:-}" ]; then
     sab_dir="$(mktemp -d)"
     # Asserts EXECUTADOS numa rodada (ok + FALHA): o recibo de que a suíte rodou inteira.
     asserts() { LC_ALL=C grep -cE '^  (ok +|FALHA )' "$1" || true; }
-    # Erro de execução do BASH no hook: a suíte normal joga o stderr dele fora (o contrato é o
-    # stdout); aqui ERROS_DO_ALVO o recolhe — o hook que morre de `set -u` CALA, e silêncio é
-    # justamente o que metade dos asserts espera.
-    erros_exec() { cat "$1" "$1.stderr" 2>/dev/null | LC_ALL=C grep -cE 'unbound variable|command not found|syntax error|bad substitution' || true; }
+    # A camada 4 lê o stderr INTEIRO do hook, que o EMBRULHO recolhe em cada rodada: a suíte normal o
+    # joga fora (o contrato é o stdout), e o hook que morre de `set -u` CALA — silêncio é justamente o
+    # que metade dos asserts espera.
     vermelhos() { { LC_ALL=C grep -Eo '^  FALHA N[0-9]+ ' "$1" || true; } | LC_ALL=C awk '!v[$2]++ { printf "%s ", $2 }'; }
 
     # CONTROLE na MESMA invocação do laço (cópia INTACTA, o mesmo NUDGE_OVERRIDE): as caixas acima
     # rodaram sobre o hook real; o LOG desta rodada é a régua das camadas abaixo.
     ctl="$sab_dir/controle.log"; : > "$ctl.stderr"
     cp "$HOOK" "$sab_dir/controle.sh"; chmod +x "$sab_dir/controle.sh"
-    NUDGE_OVERRIDE="$sab_dir/controle.sh" ERROS_DO_ALVO="$ctl.stderr" bash "$0" > "$ctl" 2>&1; rc=$?
+    emb_alvo="$(embrulha_alvo "$sab_dir/controle.sh" "$ctl.stderr")" || { echo "  FALHA nao consegui embrulhar o controle"; exit 1; }
+    NUDGE_OVERRIDE="$emb_alvo" bash "$0" > "$ctl" 2>&1; rc=$?
     if [ "$rc" -ne 0 ] || [ "$(asserts "$ctl")" -eq 0 ]; then
       echo "  FALHA controle (cópia INTACTA) já VERMELHO (exit $rc, $(asserts "$ctl") asserts) — sem linha de base, sabotar não prova nada"
       falhas=$((falhas + 1))
     else
+      echo "  ok   controle (cópia INTACTA) -> VERDE ($(asserts "$ctl") asserts; $(linha_de_base "$ctl"))"
       # <sabotagem>:<IDs dos asserts que TÊM de acusá-la> — `,` = E, `|` = OU; o ID é o 1º token do
       # assert (`FALHA N4 …`). Colaterais (asserts que também caem) ficam de fora de propósito.
       SABOTAGENS="corte_desligado:N11 corte_global:N12 breve_nao_breve:N13"
@@ -231,8 +243,8 @@ if [ -z "${NUDGE_OVERRIDE:-}" ]; then
 
       # A rodada só conta como vermelha com as QUATRO camadas (as do sync-reprocess): (1) a
       # sabotagem aplicou e não quebrou a sintaxe; (2) a suíte rodou INTEIRA (nº de asserts = o do
-      # controle); (3) CADA assert declarado está verde no controle e vermelho aqui; (4) nenhum erro
-      # de execução do bash no hook que o controle não tem.
+      # controle); (3) CADA assert declarado está verde no controle e vermelho aqui; (4) nenhuma linha
+      # de erro que o controle não tem (`camada4`: o stderr INTEIRO do hook, por linha normalizada).
       copia="$sab_dir/h.sh"
       # Nome repetido rodaria a mesma mutação duas vezes (e inflaria o recibo); `|` (OU) não é
       # suportado por este juiz: os dois greps poderiam casar MEMBROS diferentes (Codex, 2026-09-27).
@@ -257,7 +269,8 @@ if [ -z "${NUDGE_OVERRIDE:-}" ]; then
         fi
         chmod +x "$copia"
         log="$sab_dir/sabotada-$sab.log"; : > "$log.stderr"
-        NUDGE_OVERRIDE="$copia" ERROS_DO_ALVO="$log.stderr" bash "$0" > "$log" 2>&1; rc=$?
+        emb_alvo="$(embrulha_alvo "$copia" "$log.stderr")" || { echo "  FALHA \"$desc\": nao consegui embrulhar a copia"; falhas=$((falhas + 1)); continue; }
+        NUDGE_OVERRIDE="$emb_alvo" bash "$0" > "$log" 2>&1; rc=$?
         if [ "$rc" -eq 0 ]; then
           echo "  FALHA \"$desc\": hook sabotado e a suíte passou VERDE — invariante sem cobertura"
           falhas=$((falhas + 1)); continue
@@ -272,8 +285,9 @@ if [ -z "${NUDGE_OVERRIDE:-}" ]; then
         if [ "$(asserts "$log")" != "$(asserts "$ctl")" ]; then
           echo "  FALHA \"$desc\": a suíte NÃO rodou inteira ($(asserts "$log") de $(asserts "$ctl") asserts) — vermelho de aborto, não de assert"
           falhas=$((falhas + 1))
-        elif [ "$(erros_exec "$log")" != "$(erros_exec "$ctl")" ]; then
-          echo "  FALHA \"$desc\": vermelha com ERRO de execução no hook — o assert caiu por crash, não por julgamento"
+        elif novas="$(camada4 "$sab" "$log" "$ctl" "$copia" "$sab_dir/controle.sh")"; [ -n "$novas" ]; then
+          echo "  FALHA \"$desc\": vermelha com erro que o CONTROLE não tem — o assert caiu por crash, não por julgamento"
+          printf '%s\n' "$novas" | head -3 | LC_ALL=C sed 's/^/       /'
           falhas=$((falhas + 1))
         elif [ -n "$faltam" ]; then
           echo "  FALHA \"$desc\": vermelha, mas o assert declarado NÃO virou (verde no controle -> vermelho aqui):$faltam · vermelhos: $(vermelhos "$log")"

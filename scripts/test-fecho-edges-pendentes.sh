@@ -221,12 +221,11 @@ fail=0
 # `n_asserts` conta as linhas de assert da suíte em curso — o RECIBO de término (fim da suíte) a imprime
 n_asserts=0; terminou=""
 ok()  { printf '  \033[32mok\033[0m   %s\n' "${1//$'\n'/ | }"; n_asserts=$((n_asserts + 1)); }
-# um assert = UMA linha (`\n` do alvo no dump forjaria linha de outro assert); e, sob o --falsificar,
-# a saída INTEIRA do alvo vai para ERROS_DO_ALVO — o dump da mensagem é truncado, e o erro de
-# execução que vem depois do corte ficaria fora da camada 4 (Codex, 2026-09-27).
+# um assert = UMA linha (`\n` do alvo no dump forjaria linha de outro assert). O dump da mensagem é
+# truncado — o erro que vem depois do corte ficava fora da camada 4 (Codex, 2026-09-27); sob o
+# --falsificar, o stderr INTEIRO do alvo chega a ela pelo EMBRULHO de cada rodada, não por este dump.
 bad() {
   printf '  \033[31mFALHA\033[0m %s\n' "${1//$'\n'/ | }"; fail=1; n_asserts=$((n_asserts + 1))
-  if [ -n "${ERROS_DO_ALVO:-}" ]; then printf '%s\n' "${out:-}" >> "$ERROS_DO_ALVO"; fi
 }
 # quantas chamadas ao CLI do ledger o traço da rodada registrou. O caso ZERA o traço antes de rodar;
 # traço que SUMIU não é "zero chamadas" (ausente ≠ zero): devolve `ausente`, que não casa número.
@@ -1061,8 +1060,10 @@ if [ "${1:-}" = "--falsificar" ]; then
   executados() { { LC_ALL=C grep -Eo '^  (ok +|FALHA )[EH][0-9]+[a-z0-9_]* ' "$1" || true; } | LC_ALL=C awk '{ print $2 }' | LC_ALL=C sort | tr '\n' ' '; }
   # O RECIBO de término que a suíte imprime por último: "<locale> <nº de asserts>" (vazio sem recibo)
   recibo() { LC_ALL=C sed -n 's/^FIM_DA_SUITE locale=\([^ ]*\) asserts=\([0-9][0-9]*\)$/\1 \2/p' "$1" | tail -1; }
-  # Erro de execução do bash no ALVO, no que a suíte despeja da saída dele (`${out:0:N}` dos `bad`).
-  erros_exec() { cat "$1" "$1.stderr" 2>/dev/null | LC_ALL=C grep -cE 'unbound variable|command not found|syntax error|bad substitution' || true; }
+  # A camada 4: o stderr INTEIRO do alvo, recolhido pelo EMBRULHO em cada rodada (a suíte o mescla em
+  # `out` e só o mostra, CORTADO, no `bad` que falha), contra o do controle, por linha.
+  # shellcheck source=scripts/lib/falsificacao-stderr.sh disable=SC1091
+  . "$RAIZ/scripts/lib/falsificacao-stderr.sh"
   vermelhos() { { LC_ALL=C grep -Eo '^  FALHA [EH][0-9]+[a-z0-9_]* ' "$1" || true; } | LC_ALL=C awk '!v[$2]++ { printf "%s ", $2 }'; }
   logs="$tmp/falsificacao"; mkdir -p "$logs"
 
@@ -1124,8 +1125,9 @@ if [ "${1:-}" = "--falsificar" ]; then
   for loc in C "$utf8"; do
     ctl="$logs/controle.$loc.log"
     : > "$ctl.stderr"
+    emb_alvo="$(embrulha_alvo "$controle" "$ctl.stderr")" || { printf '  FALHA nao consegui embrulhar o controle\n'; exit 1; }
     # shellcheck disable=SC2030,SC2031
-    ( export LC_ALL="$loc"; ALVO="$controle"; ERROS_DO_ALVO="$ctl.stderr"; fail=0; suite; [ "$fail" -eq 0 ] ) > "$ctl.cru" 2>&1; rc=$?
+    ( export LC_ALL="$loc"; ALVO="$emb_alvo"; fail=0; suite; [ "$fail" -eq 0 ] ) > "$ctl.cru" 2>&1; rc=$?
     sem_cor "$ctl.cru" > "$ctl"
     ids_ctl="$(executados "$ctl")"
     n_ids="$(printf '%s' "$ids_ctl" | wc -w | tr -d ' ')"
@@ -1143,7 +1145,7 @@ if [ "${1:-}" = "--falsificar" ]; then
       printf '  \033[31mFALHA\033[0m [%s] controle sem o RECIBO de termino coerente (esperado [%s %s], veio [%s])\n' "$loc" "$loc" "$n_ids" "$(recibo "$ctl")"
       falhou=1
     else
-      printf '  \033[32mok\033[0m   [%-11s] controle (sem sabotagem) -> VERDE (%s asserts, recibo de termino, IDs unicos)\n' "$loc" "$n_ids"
+      printf '  \033[32mok\033[0m   [%-11s] controle (sem sabotagem) -> VERDE (%s asserts, recibo de termino, IDs unicos; %s)\n' "$loc" "$n_ids" "$(linha_de_base "$ctl")"
     fi
   done
   if [ "$falhou" -ne 0 ]; then
@@ -1453,8 +1455,9 @@ if [ "${1:-}" = "--falsificar" ]; then
   #   2. a suíte rodou INTEIRA: o RECIBO de término (locale e nº de asserts) e a LISTA de asserts
   #      executados — um ID por linha, com repetição — iguais aos do controle;
   #   3. CADA assert declarado está VERDE no controle e VERMELHO aqui (o mesmo assert virou);
-  #   4. nenhum erro de execução do bash no alvo que o controle não tem — o alvo que morre no ramo
-  #      do assert derruba o assert certo por CRASH, não por julgamento.
+  #   4. nenhuma linha de erro que o controle não tem (`camada4`: o stderr INTEIRO do alvo, por linha
+  #      normalizada) — o alvo que morre no ramo do assert derruba o assert certo por CRASH, não por
+  #      julgamento, e o erro de ferramenta (psql, git) não está em lista-negra nenhuma.
   # Nome repetido rodaria a mesma mutação duas vezes (e inflaria o recibo); `|` (OU) não é
   # suportado por este juiz: os dois greps poderiam casar MEMBROS diferentes (Codex, 2026-09-27).
   # shellcheck disable=SC2086  # a divisão em palavras da lista é o ponto
@@ -1472,8 +1475,9 @@ if [ "${1:-}" = "--falsificar" ]; then
       ctl="$logs/controle.$loc.log"; log="$logs/sabotada-$sab.$loc.log"
       # subshell de proposito: a sabotagem e o locale morrem com ela, e o ALVO global fica intacto
       : > "$log.stderr"
+      emb_alvo="$(embrulha_alvo "$copia" "$log.stderr")" || { printf '  FALHA [%s] "%s": nao consegui embrulhar a copia\n' "$loc" "$desc"; falhou=1; continue; }
       # shellcheck disable=SC2030,SC2031
-      ( export LC_ALL="$loc"; ALVO="$copia"; ERROS_DO_ALVO="$log.stderr"; fail=0; suite; [ "$fail" -eq 0 ] ) > "$log.cru" 2>&1; rc=$?
+      ( export LC_ALL="$loc"; ALVO="$emb_alvo"; fail=0; suite; [ "$fail" -eq 0 ] ) > "$log.cru" 2>&1; rc=$?
       sem_cor "$log.cru" > "$log"
       if [ "$rc" -eq 0 ]; then
         printf '  \033[31mFALHA\033[0m [%s] "%s": suite ficou VERDE — assercao frouxa\n' "$loc" "$desc"; falhou=1; continue
@@ -1489,8 +1493,9 @@ if [ "${1:-}" = "--falsificar" ]; then
         printf '  \033[31mFALHA\033[0m [%s] "%s": a suite NAO rodou inteira (recibo [%s] x controle [%s], ou asserts ausentes/repetidos no log) — vermelho de aborto, nao de assert\n' \
           "$loc" "$desc" "$(recibo "$log")" "$(recibo "$ctl")"
         falhou=1
-      elif [ "$(erros_exec "$log")" != "$(erros_exec "$ctl")" ]; then
-        printf '  \033[31mFALHA\033[0m [%s] "%s": vermelha com ERRO de execucao no alvo — o assert caiu por crash, nao por julgamento\n' "$loc" "$desc"
+      elif novas="$(camada4 "$sab" "$log" "$ctl" "$copia" "$controle")"; [ -n "$novas" ]; then
+        printf '  \033[31mFALHA\033[0m [%s] "%s": vermelha com erro que o CONTROLE nao tem — o assert caiu por crash, nao por julgamento\n' "$loc" "$desc"
+        printf '%s\n' "$novas" | head -3 | LC_ALL=C sed 's/^/       /'
         falhou=1
       elif [ -n "$faltam" ]; then
         printf '  \033[31mFALHA\033[0m [%s] "%s": vermelha, mas o assert declarado NAO virou (verde no controle -> vermelho aqui):%s · vermelhos: %s\n' \

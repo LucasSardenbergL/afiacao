@@ -102,6 +102,10 @@ export interface Juiz {
   delegadoPor?: string;
 }
 
+/** O idioma da camada 4 nova, comum aos laços que a usam (docs/historico/falsificacao-exit-nao-e-dente.md). */
+const MOTIVO_CAMADA4 =
+  'o idioma SABOTAGENS (R1/R2) com as quatro camadas — a 4ª por LINHA, sobre o stderr INTEIRO do alvo que o EMBRULHO recolhe na rodada sabotada, contra o do controle';
+
 /**
  * Os juízes do núcleo. Obrigatório para toda linha `falsificar=<n>` do manifesto; opcional (mas
  * cobrado igual, âncora por âncora) para os que fazem a falsificação DENTRO da suíte normal e foram
@@ -388,6 +392,83 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
       '  elif [ "$rc" -ne 0 ] || [ -s "$base/copia.err" ]; then',
       `if printf '%s' "$out_ctl" | grep -qF "REVERSAO" && [ ! -s "$base/controle.err" ]; then`,
       '  if ! erro_sed="$(sed "$expr" "$SCAN" 2>&1 >"$base/copia.sh")" || [ -n "$erro_sed" ] || [ ! -s "$base/copia.sh" ]; then',
+    ],
+  },
+
+  // ── A camada 4 por LINHA (2026-09-29): o stderr INTEIRO do alvo, que o EMBRULHO recolhe em cada rodada,
+  // contra o do controle (scripts/lib/falsificacao-stderr.sh). Registro opcional nos laços do idioma,
+  // cobrado igual: sem o embrulho na invocação sabotada, os dois stderr saem vazios — iguais — e a
+  // camada fica CEGA sem ninguém acusar.
+  'scripts/test-onde-parei.sh': {
+    motivo: MOTIVO_CAMADA4,
+    ancoras: [
+      '    if SONDA_OVERRIDE="$emb" bash "$0" >"$log" 2>&1; then',
+      '    elif novas="$(camada4 "$sab" "$log" "$ctl" "$copia" "$controle")"; [ -n "$novas" ]; then',
+    ],
+  },
+  'scripts/test-orfaos-custosos.sh': {
+    motivo: MOTIVO_CAMADA4,
+    ancoras: [
+      '      LC_ALL="$loc" ORFAOS_ALVO="$emb_alvo" bash "$0" >"$log.cru" 2>&1; rc=$?',
+      '      elif novas="$(camada4 "$sab" "$log" "$ctl" "$copia" "$controle")"; [ -n "$novas" ]; then',
+    ],
+  },
+  'scripts/test-read-contexto-nudge.sh': {
+    motivo: MOTIVO_CAMADA4,
+    ancoras: [
+      '      LC_ALL="$loc" HOOK_SOB_TESTE="$emb_alvo" bash "$0" >"$log.cru" 2>&1; rc=$?',
+      '      elif novas="$(camada4 "$sab" "$log" "$ctl" "$copia" "$controle")"; [ -n "$novas" ]; then',
+    ],
+  },
+  'scripts/test-ocupacao-por-arquivo.sh': {
+    motivo: `${MOTIVO_CAMADA4}; o mktemp_so_bsd DECLARA o erro do mktemp GNU — é o vermelho dele`,
+    ancoras: [
+      '    OCUPACAO_OVERRIDE="$emb_alvo" bash "$0" >"$log.cru" 2>&1; rc=$?',
+      '    elif novas="$(camada4 "$sab" "$log" "$ctl" "$copia" "$controle")"; [ -n "$novas" ]; then',
+      `  declara_stderr mktemp_so_bsd "mktemp: too few X's in template"`,
+    ],
+  },
+  'scripts/test-ocupacao-por-comando.sh': {
+    motivo: `${MOTIVO_CAMADA4}; o stderr aqui é o RELATÓRIO, e as 7 sabotagens que o mudam DECLARAM a família de linha`,
+    ancoras: [
+      '    OCUPACAO_OVERRIDE="$emb_alvo" bash "$0" >"$log.cru" 2>&1; rc=$?',
+      '    elif novas="$(camada4 "$sab" "$log" "$ctl" "$copia" "$controle")"; [ -n "$novas" ]; then',
+    ],
+  },
+  'scripts/test-fecho-edges-pendentes.sh': {
+    motivo: MOTIVO_CAMADA4,
+    ancoras: [
+      '      ( export LC_ALL="$loc"; ALVO="$emb_alvo"; fail=0; suite; [ "$fail" -eq 0 ] ) > "$log.cru" 2>&1; rc=$?',
+      '      elif novas="$(camada4 "$sab" "$log" "$ctl" "$copia" "$controle")"; [ -n "$novas" ]; then',
+    ],
+  },
+  'scripts/test-eval-diagnostico-cegueira.sh': {
+    motivo:
+      'o idioma SABOTAGENS com as quatro camadas; o bloco é carregado com `.` (sem embrulho possível), então a 4ª julga tudo o que a rodada imprimiu FORA dos asserts, por linha, contra o controle',
+    ancoras: [
+      '  ( rodar_asserts "$mut" ) > "$log" 2>&1; rc_sab=$?; fora_dos_asserts "$log"',
+      '  elif novas="$(camada4 "$sab" "$log" "$ctl" "$mut" "$BLOCO")"; [ -n "$novas" ]; then',
+    ],
+  },
+  'scripts/test-idioma-errexit-leitura.sh': {
+    motivo:
+      'os FAIL declarados e SÓ eles, com a camada 2 (a rodada chega ao recibo com o nº de asserts do controle) e a 4 (nenhuma linha de stderr que o controle não traz) — até 2026-09-29, só os FAIL',
+    ancoras: [
+      'bash "$TMP/s.sh" > "$TMP/s.log" 2> "$TMP/s.log.stderr"',
+      'if [ "$(recibo "$TMP/s.log")" != "$(recibo "$TMP/c.log")" ]; then',
+      'elif novas="$(camada4 "$nome" "$TMP/s.log" "$TMP/c.log" "$TMP/s.sh" "$SELF")"; [ -n "$novas" ]; then',
+    ],
+  },
+  'scripts/test-bash-contexto-nudge.sh': {
+    motivo:
+      'limiar: exit 0 + exatamente 1 JSON + o nudge no additionalContext, E o stderr INTEIRO do hook sabotado sem linha que o hook REAL não traz na mesma entrada (até 2026-09-29, /dev/null); corte: o idioma com a camada 4 por linha',
+    ancoras: [
+      `    saida_sab="$(printf '%s' "$(entrada 500 'ls')" | bash "$sabotado" 2>"$sabotado.err")"; rc_sab=$?`,
+      '    novas="$(linhas_novas "$sabotado.err" "$sabotado.ctl.err" "$sabotado" "$HOOK")"',
+      `    elif [ "$rc_sab" -eq 0 ] && printf '%s' "$saida_sab" | jq -se 'length == 1' >/dev/null 2>&1 \\`,
+      '       && ctx_de "$saida_sab" | command grep -qF "BASH-SAIDA-GRANDE"; then',
+      '        NUDGE_OVERRIDE="$emb_alvo" bash "$0" > "$log" 2>&1; rc=$?',
+      '        elif novas="$(camada4 "$sab" "$log" "$ctl" "$copia" "$sab_dir/controle.sh")"; [ -n "$novas" ]; then',
     ],
   },
 };

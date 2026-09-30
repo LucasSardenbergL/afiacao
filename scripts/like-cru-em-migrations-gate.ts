@@ -428,10 +428,29 @@ function lerTokens(t: readonly string[], arquivo: string, contexto: string, acc:
   }
 }
 
+/**
+ * Memo por (texto, arquivo, contexto). A leitura é função pura dos três, e o teste re-analisa as
+ * mesmas ~740 migrations em ~9 cenários — o mutcheck repete a suíte a cada mutação, e sem o memo o
+ * contrato deste gate era o maior acréscimo ao teto do job `mutation-check` (2–4 min, 2026-09-30).
+ * O texto é a chave de fora (o V8 guarda o hash na própria string, que é a mesma entre chamadas);
+ * arquivo+contexto, a de dentro: o mesmo SQL com outro caminho gera sítios com outro `arquivo`.
+ * Quem recebe a Leitura só a LÊ (analisar copia os sítios para a própria lista).
+ */
+const memo = new Map<string, Map<string, Leitura>>();
+
 /** Os sítios num texto SQL (migration, corpo de função ou fixture). */
 export function lerSql(arquivo: string, sql: string, contexto = 'texto'): Leitura {
+  let porTexto = memo.get(sql);
+  if (porTexto === undefined) {
+    porTexto = new Map();
+    memo.set(sql, porTexto);
+  }
+  const chave = `${arquivo}\u0000${contexto}`;
+  const pronta = porTexto.get(chave);
+  if (pronta !== undefined) return pronta;
   const acc: Leitura = { sitios: [], operadores: 0, alarmes: [] };
   lerTokens(tokensSql(sql), arquivo, contexto, acc);
+  porTexto.set(chave, acc);
   return acc;
 }
 
@@ -465,6 +484,17 @@ export interface Analise {
   alarmes: string[];
 }
 
+/** O sentinela do stripper é função pura do texto: memo pelo mesmo motivo do `lerSql`. */
+const memoBloco = new Map<string, number>();
+function blocoDescartado(fonte: string): number {
+  let n = memoBloco.get(fonte);
+  if (n === undefined) {
+    n = maiorBlocoDescartadoSql(fonte);
+    memoBloco.set(fonte, n);
+  }
+  return n;
+}
+
 export function analisar(
   arquivos: readonly Arquivo[],
   corpos: ReadonlyMap<string, string> = new Map(),
@@ -476,7 +506,7 @@ export function analisar(
   };
   for (const a of arquivos) {
     if (a.caminho.startsWith('supabase/migrations/')) r.migrations++;
-    const bloco = maiorBlocoDescartadoSql(a.fonte);
+    const bloco = blocoDescartado(a.fonte);
     if (bloco > TETO_BLOCO_DESCARTADO) {
       r.alarmes.push(`${a.caminho}: o stripper descartou ${bloco} linhas seguidas (teto ${TETO_BLOCO_DESCARTADO}) — comeu código?`);
     }
