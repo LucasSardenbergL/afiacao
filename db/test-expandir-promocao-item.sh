@@ -468,16 +468,20 @@ variante() {   # <nome> → caminho da cópia da migration efetiva com a variant
   py migration "$MIG_EFETIVA" "$1" "$v" || { echo "INFRA: variante $1 não montada"; exit 1; }
   printf '%s' "$v"
 }
-# O veredito de um apply que TEM de ser recusado: o exit do psql decide se recusou; a mensagem, POR
-# QUEM. Apply que passou é APLICOU (FALHOU no eq); recusa pelo motivo errado é RECUSOU_POR_OUTRO —
-# um NOTICE com o mesmo texto não conta, porque um apply que passou não chega a olhar a mensagem.
+# O veredito de um apply que TEM de ser recusado: o exit do psql decide se recusou; a LINHA DE ERRO
+# do servidor, POR QUEM. Apply que passou é APLICOU (FALHOU no eq); recusa pelo motivo errado é
+# RECUSOU_POR_OUTRO. Casar o rótulo no texto TODO dava verde falso: a sabotagem de uma camada vira
+# NOTICE com o MESMO rótulo, e quando uma camada POSTERIOR também recusa, o NOTICE "provava" a recusa
+# da sabotada (pego pela 1ª falsificação: POS1, POS2 e POS3 saíram sem dente).
 veredito() {   # <arquivo> <texto esperado na recusa>
-  local saida
+  local saida linha
   if saida="$(aplicar "$1")"; then printf 'APLICOU'; return 0; fi
-  case "$saida" in
-    *"$2"*) printf 'RECUSOU' ;;
-    *)      printf 'RECUSOU_POR_OUTRO %s' "$(printf '%s' "$saida" | grep -E 'FALHOU|ERRO|ERROR' | head -1 | tr -d ':' | head -c 150)" ;;
-  esac
+  while IFS= read -r linha; do
+    case "$linha" in
+      *"ERROR: "*"$2"*|*"ERRO: "*"$2"*) printf 'RECUSOU'; return 0 ;;
+    esac
+  done <<< "$saida"
+  printf 'RECUSOU_POR_OUTRO %s' "$(printf '%s\n' "$saida" | grep -E '(ERROR|ERRO): ' | head -1 | tr -d ':' | head -c 150 || true)"
 }
 existe() { Pq -c "SELECT to_regprocedure('$1') IS NOT NULL;" 2>&1 || true; }
 
