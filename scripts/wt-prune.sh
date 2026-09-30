@@ -208,7 +208,7 @@ cur_wt=""; cur_locked=0
 
 handle() {
   [ -n "$cur_wt" ] || return 0
-  local wt sz rc; wt="$(rp "$cur_wt")"
+  local wt sz rc err; wt="$(rp "$cur_wt")"
   local short="${wt/#$HOME/~}"
 
   if [ "$wt" = "$self" ]; then printf '  skip    %-50s (atual)\n' "$short"; kept=$((kept+1)); return 0; fi
@@ -225,11 +225,11 @@ handle() {
     if is_active "$wt" || ! classify "$wt"; then
       printf '  skip    %-50s (mudou na revalidação)\n' "$short"; kept=$((kept+1)); return 0
     fi
-    if git worktree remove "$wt" 2>/tmp/wt-prune-err; then
+    if err="$(git worktree remove "$wt" 2>&1 >/dev/null)"; then   # stderr na variável: /tmp/wt-prune-err fixo misturava 2 wt:prune simultâneos
       printf '  PRUNE   %-50s %s (%s)\n' "$short" "$(medida_humana "$sz" "$rc")" "$REASON"
       removed=$((removed+1)); soma_medida "$sz" "$rc"
     else
-      printf '  FALHOU  %-50s (%s)\n' "$short" "$(tr -d '\n' </tmp/wt-prune-err)"; kept=$((kept+1))
+      printf '  FALHOU  %-50s (%s)\n' "$short" "$(printf '%s' "$err" | tr -d '\n')"; kept=$((kept+1))
     fi
   else
     printf '  would   %-50s %s (%s)\n' "$short" "$(medida_humana "$sz" "$rc")" "$REASON"
