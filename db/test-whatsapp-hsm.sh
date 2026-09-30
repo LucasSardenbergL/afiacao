@@ -70,7 +70,7 @@ P -v ON_ERROR_STOP=1 -q <<'SQL'
 -- seed presente?
 DO $$ DECLARE n int; BEGIN
   SELECT count(*) INTO n FROM public.whatsapp_templates WHERE nome IN ('colacor_proposta_recompra','colacor_status_pedido');
-  IF n <> 2 THEN RAISE EXCEPTION 'FALHA: seed do catálogo ausente (n=%)', n; END IF;
+  IF n IS DISTINCT FROM 2 THEN RAISE EXCEPTION 'FALHA: seed do catálogo ausente (n=%)', n; END IF;
 END $$;
 
 -- conversa de teste (FK real)
@@ -136,9 +136,9 @@ SET LOCAL ROLE authenticated;
 SET LOCAL request.jwt.claims = '{"sub":"00000000-0000-0000-0000-0000000bbbb2","role":"authenticated"}';
 DO $$ DECLARE n int; BEGIN
   SELECT count(*) INTO n FROM public.whatsapp_templates;
-  IF n <> 0 THEN RAISE EXCEPTION 'FALHA RLS: não-staff vê o catálogo (n=%)', n; END IF;
+  IF n IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'FALHA RLS: não-staff vê o catálogo (n=%)', n; END IF;
   SELECT count(*) INTO n FROM public.whatsapp_template_sends;
-  IF n <> 0 THEN RAISE EXCEPTION 'FALHA RLS: não-staff vê o log (n=%)', n; END IF;
+  IF n IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'FALHA RLS: não-staff vê o log (n=%)', n; END IF;
 END $$;
 ROLLBACK;
 
