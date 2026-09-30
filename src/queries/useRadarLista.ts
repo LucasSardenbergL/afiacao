@@ -1,6 +1,6 @@
 import { useInfiniteQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
-import { ilike, ilikeOr, isSearchablePostgrestTerm } from '@/lib/postgrest';
+import { ilike, ilikeOr, isSearchablePostgrestTerm, likePrefixPattern } from '@/lib/postgrest';
 import { presetParaParams, digitosCnae, type PresetRadar } from '@/lib/radar/ui-helpers';
 import type { Database } from '@/integrations/supabase/types';
 
@@ -36,10 +36,11 @@ export function useRadarLista(filtros: RadarFiltros, hojeISO: string) {
       if (isSearchablePostgrestTerm(filtros.municipio.trim())) q = q.or(ilike('municipio_nome', filtros.municipio.trim()));
       // CNAE: o banco guarda 7 dígitos puros; o usuário digita o formato oficial
       // (3101-2/00). Normaliza p/ dígitos. Completo (7) = match exato pelo índice;
-      // parcial = prefix match (a família do CNAE). cnaeDigitos é só-dígitos (seguro).
+      // parcial = prefix match (a família do CNAE). Vazio = sem filtro (null do helper).
       const cnaeDigitos = digitosCnae(filtros.cnae);
+      const cnaePrefixo = likePrefixPattern(cnaeDigitos);
       if (cnaeDigitos.length === 7) q = q.eq('cnae_principal', cnaeDigitos);
-      else if (cnaeDigitos) q = q.like('cnae_principal', `${cnaeDigitos}%`);
+      else if (cnaePrefixo) q = q.like('cnae_principal', cnaePrefixo);
       if (filtros.status) q = q.eq('prospeccao_status', filtros.status);
       else q = q.neq('prospeccao_status', 'descartado'); // fila default esconde descartados
       if (!filtros.incluirJaClientes) q = q.eq('ja_cliente', false);

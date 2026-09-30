@@ -191,11 +191,22 @@ export function fecharGrafo(
   return [...vistos].sort();
 }
 
-/** SHA-256 sobre `caminho \0 tamanho \0 bytes` de cada arquivo, em ordem estável. */
-export function digerir(arquivos: string[], raiz = process.cwd()): string {
+/**
+ * SHA-256 sobre `caminho \0 tamanho \0 bytes` de cada arquivo, em ordem estável.
+ *
+ * Lê da MESMA `arvore` do `fecharGrafo`: fecho da ref com bytes do disco seria um hash de estado
+ * que não existe em árvore nenhuma. Arquivo ausente na árvore LANÇA — o default (disco) já lançava
+ * pelo `readFileSync`.
+ */
+export function digerir(
+  arquivos: string[],
+  raiz = process.cwd(),
+  arvore: ArvoreDeFonte = arvoreDeTrabalho(raiz),
+): string {
   const h = createHash('sha256');
   for (const rel of arquivos) {
-    const bytes = readFileSync(resolve(raiz, rel));
+    const bytes = arvore.ler(rel);
+    if (bytes === null) throw new Error(`arquivo do fecho ausente em ${arvore.rotulo}: ${rel}`);
     h.update(rel);
     h.update('\0');
     h.update(String(bytes.length));
@@ -214,10 +225,22 @@ export function edgesInstrumentadas(raiz = process.cwd()): string[] {
     .sort();
 }
 
+/**
+ * O fingerprint de UMA edge numa árvore qualquer — a régua do `--write`, exportada para quem precisa
+ * dela fora do disco (o `pendencias:pacote` recalcula NA REF que vai deployar, #2611).
+ */
+export function fingerprintDaEdge(
+  edge: string,
+  raiz = process.cwd(),
+  arvore: ArvoreDeFonte = arvoreDeTrabalho(raiz),
+): string {
+  return digerir(fecharGrafo(`${RAIZ_EDGES}/${edge}/index.ts`, raiz, arvore), raiz, arvore);
+}
+
 export function calcularTodos(raiz = process.cwd()): Record<string, string> {
   const mapa: Record<string, string> = {};
   for (const edge of edgesInstrumentadas(raiz)) {
-    mapa[edge] = digerir(fecharGrafo(`${RAIZ_EDGES}/${edge}/index.ts`, raiz), raiz);
+    mapa[edge] = fingerprintDaEdge(edge, raiz);
   }
   return mapa;
 }

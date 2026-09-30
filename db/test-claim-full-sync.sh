@@ -9,7 +9,8 @@
 #   D7  finalize com run_id ALHEIO (claim roubado (TTL 15min)) → false + status fica 'syncing' (ownership)
 #   D7b finalize sobre status != 'syncing' → false
 #   D5  REVOKE: anon NÃO pode executar; service_role pode (claim + finalize)
-# Base: db/test-data-health-estoque-marcador.sh. Pré-req: brew install postgresql@17 pgvector.
+# Base: db/test-data-health-estoque-marcador.sh (aposentada em 2026-09-28 — provava o marcador v2,
+# que prod abandonou; docs/historico/provas-db-mortas-fora-do-nucleo.md). Pré-req: brew install postgresql@17 pgvector.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

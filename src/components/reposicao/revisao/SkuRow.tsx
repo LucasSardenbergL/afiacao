@@ -12,6 +12,7 @@ import {
   fmt,
   fmtBRL,
   isDescontinuado,
+  isReposicaoDesligada,
 } from "@/lib/reposicao/sku-param";
 import {
   AlertDialog,
@@ -33,12 +34,25 @@ interface SkuRowProps {
   promovendo?: boolean;
   onReativar?: (sku: number) => void;
   reativando?: boolean;
+  onDescontinuar?: (sku: number) => void;
+  descontinuando?: boolean;
 }
 
-export function SkuRow({ row: r, onOpenDetail, onPromover, promovendo, onReativar, reativando }: SkuRowProps) {
+export function SkuRow({
+  row: r,
+  onOpenDetail,
+  onPromover,
+  promovendo,
+  onReativar,
+  reativando,
+  onDescontinuar,
+  descontinuando,
+}: SkuRowProps) {
   const isCandidato = r.status_sugestao === "CANDIDATO_PRIMEIRA_COMPRA";
   const umClienteSo = isCandidato && r.recorrencia_clientes_180d === 1;
   const descontinuado = isDescontinuado(r);
+  // Reposição desligada sem decisão humana: o motor não lê este SKU (ver isReposicaoDesligada).
+  const desligada = isReposicaoDesligada(r);
   return (
     <TableRow className={r.read_only ? "bg-muted/30" : undefined}>
       <TableCell className="font-mono text-xs align-top">{r.sku_codigo_omie}</TableCell>
@@ -102,6 +116,24 @@ export function SkuRow({ row: r, onOpenDetail, onPromover, promovendo, onReativa
           >
             Descontinuado
           </Badge>
+        ) : desligada ? (
+          <div className="flex flex-col items-start gap-0.5">
+            <Badge
+              variant="secondary"
+              className="bg-status-warning-bg text-status-warning border-status-warning/20"
+              title="A reposição automática está desligada sem que ninguém tenha decidido isso: o motor não sugere este SKU, nem abaixo do ponto de pedido. Religue se ele deve voltar a ser comprado; descontinue se não deve."
+            >
+              Reposição desligada
+            </Badge>
+            {r.reativado_omie_pendente && (
+              <span
+                className="text-[11px] text-muted-foreground"
+                title="O SKU foi inativado no Omie (o que desligou a reposição) e depois reativado — a reativação não religa sozinha."
+              >
+                reativado no Omie
+              </span>
+            )}
+          </div>
         ) : isCandidato ? (
           <Badge
             variant="secondary"
@@ -155,6 +187,59 @@ export function SkuRow({ row: r, onOpenDetail, onPromover, promovendo, onReativa
                   <AlertDialogCancel disabled={reativando}>Voltar</AlertDialogCancel>
                   <AlertDialogAction onClick={() => onReativar(r.sku_codigo_omie)} disabled={reativando}>
                     Reativar
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          )}
+          {desligada && onReativar && (
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button size="sm" variant="outline" disabled={reativando}>
+                  {reativando ? <Loader2 className="h-4 w-4 animate-spin" /> : "Religar"}
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Religar ao motor?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    <span className="font-mono">{r.sku_codigo_omie}</span> — {r.sku_descricao ?? "—"}.
+                    <br />
+                    Hoje o motor não sugere este SKU: a reposição automática está desligada. Religando, ele volta
+                    a ser sugerido a partir do próximo ciclo (só se o estoque estiver no ponto de pedido). Os
+                    parâmetros são preservados.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel disabled={reativando}>Voltar</AlertDialogCancel>
+                  <AlertDialogAction onClick={() => onReativar(r.sku_codigo_omie)} disabled={reativando}>
+                    Religar
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          )}
+          {desligada && onDescontinuar && (
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button size="sm" variant="ghost" disabled={descontinuando}>
+                  {descontinuando ? <Loader2 className="h-4 w-4 animate-spin" /> : "Descontinuar"}
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Descontinuar SKU?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    <span className="font-mono">{r.sku_codigo_omie}</span> — {r.sku_descricao ?? "—"}.
+                    <br />
+                    Registra que este SKU não deve ser comprado pela reposição automática. Ele sai do "Fora do
+                    motor" e vai para Descontinuados, de onde o Reativar o traz de volta.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel disabled={descontinuando}>Voltar</AlertDialogCancel>
+                  <AlertDialogAction onClick={() => onDescontinuar(r.sku_codigo_omie)} disabled={descontinuando}>
+                    Descontinuar
                   </AlertDialogAction>
                 </AlertDialogFooter>
               </AlertDialogContent>

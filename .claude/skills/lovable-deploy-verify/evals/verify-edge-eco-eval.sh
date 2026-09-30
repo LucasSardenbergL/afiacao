@@ -98,66 +98,144 @@ caso leva_mista_incompl  leva_mista          3 "mapa sem a nfes ⇒ RECUSA (comp
 caso leva_mista_por_edge leva_mista          0 "chave do mapa pode ser a EDGE ecoada, não só o step" \
   'omie-sync-ctes-recebidos=v1.1-eco-identidade-fonte,omie-sync-nfes-recebidas=v1.2-eco-identidade-fonte'
 
-# ── falsificação: sabota o guard EM CÓPIA e exige vermelho ──────────────────────────────────────
+# ── falsificação: sabota o guard EM CÓPIA e exige o vermelho PREVISTO ───────────────────────────
+# Cada sabotagem DECLARA o desfecho que a acusa: o exit E a marca do ramo que o caso-alvo tem de
+# imprimir. "Divergiu do exit normal" (o juiz de antes) aceitava crash, sintaxe quebrada e erro
+# alheio: com a (2) trocada por `[ 1 -ge 0 ] || ( recusa` o script morria de SINTAXE com exit 2 —
+# o MESMO exit do ramo previsto — e o laço contava dente. → docs/historico/falsificacao-exit-nao-e-dente.md
+# Referência no mesmo diretório: monitor-deploy-eval.sh (sabota/bate/controle por locale).
 if [ "${1:-}" = "--falsify" ]; then
   echo ""
-  echo "== falsificação (sabota o guard, exige vermelho) =="
-  fals=0; total=0
+  echo "== falsificação (sabota o guard em CÓPIA, exige o vermelho PREVISTO) =="
+  # locales: sonda POSITIVA — "setei LC_ALL" não prova que o locale existe (glibc cai em C calado)
+  LOCALES="C"
+  for cand in pt_BR.UTF-8 pt_BR.utf8 en_US.UTF-8 en_US.utf8 C.UTF-8 C.utf8; do
+    if [ "$(LC_ALL="$cand" locale charmap 2>/dev/null)" = "UTF-8" ]; then LOCALES="C $cand"; break; fi
+  done
+  [ "$LOCALES" = "C" ] && echo "  ⚠️  nenhum locale UTF-8 disponível — falsificação só em C (metade da prova)"
 
-  # (1) guard temporal arrancado: count==0 passa a concluir "pendente" em vez de indeterminado
-  total=$((total+1))
-  sed 's/^  exit 2$/  exit 1/' "$SCRIPT" > "$TMP/sab1.sh"
-  if ! command grep -q '^  exit 1$' "$TMP/sab1.sh"; then
-    echo "  [XX ] sabotagem 1 não aplicou — o eval não estaria testando nada"; rc=1
-  else
-    CENARIO=sem_tick_posterior PSQL_RO="$TMP/psql-fake" bash "$TMP/sab1.sh" \
-      --desde '2026-08-28 22:32:00+00' --esperado 'v1.1-eco-identidade-fonte' >/dev/null 2>&1; sabrc=$?
-    if [ "$sabrc" -ne 2 ]; then echo "  [ok ] guard temporal arrancado -> o caso VIRA vermelho"; fals=$((fals+1))
-    else echo "  [XX ] guard arrancado e o caso seguiu verde — eval CEGO"; rc=1; fi
-  fi
+  roda() { # script cenario locale → exit do script; saída em $TMP/out
+    CENARIO="$2" PSQL_RO="$TMP/psql-fake" LC_ALL="$3" LANG="$3" bash "$1" --desde '2026-08-28 22:32:00+00' \
+      --esperado 'v1.1-eco-identidade-fonte' >"$TMP/out" 2>&1
+  }
+  # bate <exit obtido> <exit previsto> <marca> → 0 só se o exit E a marca batem. `case` do próprio
+  # shell, não `grep`: sem fork, sem shim que dobra acento; a marca é ASCII de caixa fixa (#1483).
+  bate() {
+    local s
+    [ "$1" -eq "$2" ] || return 1
+    s=$(cat "$TMP/out")
+    case "$s" in *"$3"*) return 0 ;; esac
+    return 1
+  }
+  # erro_de_shell → 0 se a saída traz um erro de EXECUÇÃO do bash (`<script>: line N: …`: variável não
+  # definida, comando inexistente, `${x?…}`). A marca pode ter vindo do PRÓPRIO diagnóstico, ou saído
+  # antes de o script morrer com o exit previsto (achados do Codex, 2026-09-27): crash não é dente.
+  erro_de_shell() { local s re=': line [0-9]+: '; s=$(cat "$TMP/out"); [[ $s =~ $re ]]; }
+  aplica() { # de para — substituição LITERAL em cópia; o alvo tem de aparecer EXATAMENTE 1 vez
+    python3 - "$SCRIPT" "$TMP/sab.sh" "$1" "$2" <<'PY'
+import sys
+src, dst, de, para = sys.argv[1:5]
+s = open(src, encoding="utf-8").read()
+if s.count(de) != 1:
+    sys.exit("o alvo aparece %d vez(es): %r" % (s.count(de), de[:70]))
+open(dst, "w", encoding="utf-8").write(s.replace(de, para, 1))
+PY
+  }
+  fals=0; total=0; ULTIMO_MOTIVO=""
+  # sabota <id> <cenario> <exit do caso ÍNTEGRO> <exit previsto> <marca prevista> <de> <para>
+  sabota() {
+    local id="$1" cen="$2" normal="$3" pexit="$4" pmarca="$5" loc got pegou=0 n_loc=0 errado=""
+    total=$((total+1))
+    if ! aplica "$6" "$7" 2>"$TMP/aplica.err" || cmp -s "$SCRIPT" "$TMP/sab.sh"; then
+      printf '  [XX ] %-18s a sabotagem NÃO aplicou (%s) — o eval não testaria nada\n' "$id" "$(tr '\n' ' ' < "$TMP/aplica.err")"
+      rc=1; ULTIMO_MOTIVO=NAO-APLICOU; return
+    fi
+    if ! bash -n "$TMP/sab.sh" 2>/dev/null; then
+      printf '  [XX ] %-18s a sabotagem quebrou a SINTAXE do script — vermelho pelo motivo errado\n' "$id"; rc=1; ULTIMO_MOTIVO=SINTAXE; return
+    fi
+    for loc in $LOCALES; do
+      n_loc=$((n_loc+1))
+      # CONTROLE na mesma invocação e locale: o caso-alvo passa com o script ÍNTEGRO, e o desfecho
+      # previsto NÃO o descreve — senão "bateu o previsto" não distinguiria sabotagem de nada.
+      roda "$SCRIPT" "$cen" "$loc"; got=$?
+      if [ "$got" -ne "$normal" ]; then errado="$errado $loc:CONTROLE-VERMELHO-exit$got"; continue; fi
+      if bate "$got" "$pexit" "$pmarca"; then errado="$errado $loc:o-PREVISTO-casa-o-CONTROLE"; continue; fi
+      roda "$TMP/sab.sh" "$cen" "$loc"; got=$?
+      if erro_de_shell; then errado="$errado $loc:ERRO-DE-SHELL"
+      elif bate "$got" "$pexit" "$pmarca"; then pegou=$((pegou+1))
+      else errado="$errado $loc:exit$got"; fi
+    done
+    if [ "$pegou" -eq "$n_loc" ]; then
+      fals=$((fals+1)); ULTIMO_MOTIVO=CREDITADO
+      printf '  [ok ] %-18s -> %-18s exit %s + "%s" em %d locale(s)\n' "$id" "$cen" "$pexit" "$pmarca" "$n_loc"
+    else
+      printf '  [XX ] %-18s -> %s NÃO saiu pelo previsto (exit %s + "%s"; obtido%s)\n' "$id" "$cen" "$pexit" "$pmarca" "$errado"
+      sed 's/^/        | /' "$TMP/out" | head -4
+      rc=1; ULTIMO_MOTIVO="${errado# }"
+    fi
+  }
 
-  # (2) fail-closed do ping removido: psql morto deixaria de recusar
-  total=$((total+1))
-  # shellcheck disable=SC2016  # literal do script-alvo, não deve expandir aqui
-  sed 's/\[ "${PING:-0}" -ge 1 \] || recusa/[ 1 -ge 0 ] || recusa/' "$SCRIPT" > "$TMP/sab2.sh"
-  if ! command grep -q '\[ 1 -ge 0 \]' "$TMP/sab2.sh"; then
-    echo "  [XX ] sabotagem 2 não aplicou"; rc=1
-  else
-    # psql_morto NÃO serve aqui: com a via morta o guard do COUNT recusa sozinho e a sabotagem
-    # sai inócua (medido). O ping só é o ÚNICO guard quando a via responde vazio SEM erro.
-    CENARIO=psql_mudo PSQL_RO="$TMP/psql-fake" bash "$TMP/sab2.sh" \
-      --desde '2026-08-28 22:32:00+00' --esperado 'v1.1-eco-identidade-fonte' >/dev/null 2>&1; sabrc=$?
-    if [ "$sabrc" -ne 3 ]; then echo "  [ok ] fail-closed do ping removido -> o caso VIRA vermelho (vira indeterminado)"; fals=$((fals+1))
-    else echo "  [XX ] ping sabotado e ainda recusou — sabotagem inócua"; rc=1; fi
-  fi
+  # (1) guard temporal arrancado: count==0 passa a concluir "pendente" (exit 1) em vez de
+  #     indeterminado. O alvo é o `exit 2` DESTE ramo — o script tem dois (o 2º é o do background).
+  sabota guard-temporal sem_tick_posterior 2 1 "nenhum tick POSTERIOR" \
+    '  exit 2
+fi
 
+# O veredito sai do tick MAIS RECENTE' \
+    '  exit 1
+fi
+
+# O veredito sai do tick MAIS RECENTE'
+  # (2) fail-closed do ping removido. psql_morto NÃO serve aqui: com a via morta o guard do COUNT
+  #     recusa sozinho e a sabotagem sai inócua (medido). O ping só é o ÚNICO guard quando a via
+  #     responde vazio SEM erro — e então ela cai no INDETERMINADO, exit 2, o MESMO exit de um
+  #     script que morre de sintaxe: aqui só a marca separa o julgamento do crash.
+  # shellcheck disable=SC2016  # literais do script-alvo, não devem expandir aqui
+  sabota ping psql_mudo 3 2 "nenhum tick POSTERIOR" \
+    '[ "${PING:-0}" -ge 1 ] || recusa' '[ 1 -ge 0 ] || recusa'
   # (3) veredito pelo tick QUALQUER em vez do mais recente: o intermediário volta a reprovar
-  total=$((total+1))
-  sed 's/^ID_VEREDITO=.*/ID_VEREDITO=""/' "$SCRIPT" > "$TMP/sab3.sh"
-  if ! command grep -q '^ID_VEREDITO=""$' "$TMP/sab3.sh"; then
-    echo "  [XX ] sabotagem 3 não aplicou"; rc=1
-  else
-    CENARIO=tick_intermediario PSQL_RO="$TMP/psql-fake" bash "$TMP/sab3.sh" \
-      --desde '2026-08-28 22:32:00+00' --esperado 'v1.1-eco-identidade-fonte' >/dev/null 2>&1; sabrc=$?
-    if [ "$sabrc" -ne 0 ]; then echo "  [ok ] veredito por tick qualquer -> o caso VIRA vermelho"; fals=$((fals+1))
-    else echo "  [XX ] tick intermediário ignorado mesmo sem o filtro — caso não discrimina"; rc=1; fi
-  fi
+  # shellcheck disable=SC2016
+  sabota tick-mais-recente tick_intermediario 0 1 "BUNDLE VELHO provado" \
+    'ID_VEREDITO=$(printf' 'ID_VEREDITO=""; : $(printf'
+  # (4) recusa do "marcador do lote" arrancada: a leva mista volta a reprovar a nfes
+  # shellcheck disable=SC2016
+  sabota marcador-do-lote leva_mista 3 1 "BUNDLE VELHO provado" \
+    '*) [ "$N_UTEIS_PRE" -le 1 ] || recusa' '*) true || recusa'
 
-  # (4) recusa do "marcador do lote" arrancada: a leva mista voltaria a reprovar a nfes
-  total=$((total+1))
-  # shellcheck disable=SC2016  # literal do script-alvo, não deve expandir aqui
-  sed 's/^  \*) \[ "$N_UTEIS_PRE" -le 1 \].*/  *) : ;;/' "$SCRIPT" > "$TMP/sab4.sh"
-  if ! command grep -qE '^\s+\*\) : ;;$' "$TMP/sab4.sh"; then
-    echo "  [XX ] sabotagem 4 não aplicou"; rc=1
-  else
-    CENARIO=leva_mista PSQL_RO="$TMP/psql-fake" bash "$TMP/sab4.sh" \
-      --desde '2026-08-28 22:32:00+00' --esperado 'v1.1-eco-identidade-fonte' >/dev/null 2>&1; sabrc=$?
-    if [ "$sabrc" -ne 3 ]; then echo "  [ok ] recusa do marcador-de-lote arrancada -> a leva mista VIRA vermelha (exit $sabrc)"; fals=$((fals+1))
-    else echo "  [XX ] lote sabotado e ainda recusou — sabotagem inócua"; rc=1; fi
-  fi
+  echo "  falsificações que pegaram pelo previsto: $fals/$total"
+  [ "$total" -ge 4 ] && [ "$fals" -eq "$total" ] || rc=1
 
-  echo "  falsificações que pegaram: $fals/$total"
-  [ "$fals" -eq "$total" ] || rc=1
+  # CONTROLES NEGATIVOS DO JUIZ — o gate de reintrodução. Cada um é uma sabotagem que o juiz TEM de
+  # recusar, e o gate exige a RAZÃO do julgamento (não "não aplicou", "sintaxe" ou "controle"): uma
+  # recusa por outro motivo deixaria o gate verde com o juiz quebrado (achado do Codex, 2026-09-27).
+  #   marca: sai com o exit PREVISTO SEM passar pelo ramo (`exit 2` no lugar do guard) — só a MARCA a
+  #          separa do julgamento; um juiz que regredir a "exit ≠ normal" ou a "só o exit" a credita.
+  #   shell: o ramo imprime a marca e o script MORRE (variável não definida) com o exit 1 previsto —
+  #          só a camada do erro de shell a separa.
+  juiz_negativo() { # razão-exigida  args do sabota…
+    local razao="$1" fals_ok=$fals total_ok=$total rc_ok=$rc; shift
+    ULTIMO_MOTIVO=""
+    sabota "$@" > "$TMP/juiz.out"
+    fals=$fals_ok; total=$total_ok; rc=$rc_ok
+    case "$ULTIMO_MOTIVO" in
+      CREDITADO) echo "  [XX ] controle negativo do juiz ($1): CREDITADO — o juiz perdeu a identidade"; rc=1 ;;
+      *"$razao"*) echo "  [ok ] controle negativo do juiz ($1): recusado pelo julgamento [$razao]" ;;
+      *) echo "  [XX ] controle negativo do juiz ($1): recusado por OUTRO motivo [${ULTIMO_MOTIVO:-nenhum}] — o gate não exercitou o juiz"; rc=1 ;;
+    esac
+  }
+  # shellcheck disable=SC2016
+  juiz_negativo "C:exit2" juiz-negativo-marca psql_mudo 3 2 "nenhum tick POSTERIOR" \
+    '[ "${PING:-0}" -ge 1 ] || recusa' 'exit 2; [ 1 -ge 0 ] || recusa'
+  # shellcheck disable=SC2016
+  juiz_negativo "ERRO-DE-SHELL" juiz-negativo-shell sem_tick_posterior 2 1 "nenhum tick POSTERIOR" \
+    '  exit 2
+fi
+
+# O veredito sai do tick MAIS RECENTE' \
+    '  : "$FALHA_NAO_DEFINIDA_JUIZ_NEGATIVO"
+fi
+
+# O veredito sai do tick MAIS RECENTE'
 fi
 
 echo ""

@@ -194,6 +194,12 @@ PY
 }
 
 SABOTAGENS=0
+# A saída sabotada SEM as linhas que citam teste que PASSOU: num arquivo com um teste vermelho o
+# vitest lista TODOS os irmãos (`   ✓ <nome>`) e o code-frame cita as linhas-fonte vizinhas da falha
+# (`      2| it("<nome>", …)`) — medido 2026-09-29 numa sonda com um irmão verde. Nome de teste como
+# marca casaria ali com o teste VERDE, e o vermelho de outro teste do arquivo passaria por este
+# (o "≠ verde" de docs/historico/falsificacao-exit-nao-e-dente.md).
+linhas_de_falha() { sem_ansi "$1" | LC_ALL=C grep -avE '^[[:space:]]*(✓|[0-9]*[[:space:]]*\|)'; }
 # rodar_sabotagem <nome> <arquivo> <de> <para> <marca...>
 # As marcas são casadas com `grep -F` (string literal), ASCII e em CAIXA FIXA — sem `-i`. Marca
 # frouxa casa com qualquer vermelho e devolve a aprovação que ela deveria negar.
@@ -227,12 +233,15 @@ rodar_sabotagem() {
   # como binding vazio — e o runner do CI, sem esse binding, diz outra coisa. Aceitar as duas
   # NÃO é afrouxar para "lançou algo": cada alternativa continua sendo específica do ramo do
   # storage. É a mesma lição do `LC_ALL` (falsificar num ambiente só não prova a asserção).
-  local faltando="" marca
+  local faltando="" marca falha_txt
+  # Uma vez, e casada por here-string: `… | grep -q` sai no 1º acerto e, sob `pipefail`, o SIGPIPE
+  # do estágio de cima viraria "sem a marca".
+  falha_txt="$(linhas_de_falha "$saida")"
   for marca in "$@"; do
     local achou=0 alt
     while IFS= read -r alt; do
       [ -z "$alt" ] && continue
-      sem_ansi "$saida" | grep -qaF -- "$alt" && { achou=1; break; }
+      grep -qaF -- "$alt" <<<"$falha_txt" && { achou=1; break; }
     done <<EOF_ALT
 $(printf '%s\n' "$marca" | tr '|' '\n')
 EOF_ALT

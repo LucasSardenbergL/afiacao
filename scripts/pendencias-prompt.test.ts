@@ -16,7 +16,7 @@ import {
   type SaidaGitBytes,
   sincronizarRef,
 } from './pendencias-prompt';
-import { sha256Arquivo } from './sonda-fingerprint';
+import { type ArvoreDeFonte, fingerprintDaEdge, renderizarMapa, sha256Arquivo } from './sonda-fingerprint';
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════
 // Por que este arquivo existe
@@ -57,7 +57,23 @@ const INDEX_MAIN = `import "./a.ts";\nimport "../_shared/b.ts";\nexport default 
 const A_MAIN = `export const a = "main";\n`;
 const B_MAIN = `export const b = "main";\n`;
 const VERSAO_MAIN = `export const VERSAO = "v1.0-main";\n`;
-const MAPA_MAIN = `export const FONTE_SHA256: Record<string, string> = {\n  "e": "${'0'.repeat(64)}",\n};\n`;
+/**
+ * O mapa COERENTE com a fatia acima, pela régua do `--write`: desde o #2611 o emissor recusa (exit 5)
+ * mapa que não descreve a fonte da ref, e um fixture com hash inventado seria justamente esse caso.
+ */
+const ARVORE_MAIN: ArvoreDeFonte = {
+  rotulo: 'fixture',
+  ler(rel) {
+    const c = ({
+      'supabase/functions/edge-e/index.ts': INDEX_MAIN,
+      'supabase/functions/edge-e/a.ts': A_MAIN,
+      'supabase/functions/edge-e/versao.ts': VERSAO_MAIN,
+      'supabase/functions/_shared/b.ts': B_MAIN,
+    } as Record<string, string>)[rel];
+    return c === undefined ? null : Buffer.from(c, 'utf8');
+  },
+};
+const MAPA_MAIN = renderizarMapa({ 'edge-e': fingerprintDaEdge('edge-e', '/fixture', ARVORE_MAIN) });
 
 /** Repo local + `origin` bare, com a fatia da `edge-e` commitada e publicada. */
 function montarRepo(): void {

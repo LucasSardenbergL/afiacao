@@ -643,16 +643,32 @@ describe('auditGrantsFuncoes — contra o repo REAL', () => {
     expect(erros.map((e) => `${e.codigo} ${e.funcao} ${e.file}`)).toEqual([]);
   }, ORCAMENTO_VARREDURA_MS);
 
+  /** O fecho REEMITIDO depois do DROP também sai. O detector percorre as migrations por nome de
+   *  arquivo e um `REVOKE … FROM anon` posterior zera a abertura da recriação — com razão: o estado
+   *  final está fechado. Mas aí a sabotagem da migration do DROP deixa de produzir o achado e o
+   *  canário daquela função perde o dente em silêncio. Aconteceu com a 20260927172443, que recria
+   *  `get_ultimos_precos_cliente` por CREATE OR REPLACE e reemite `REVOKE … FROM PUBLIC, anon`
+   *  (medido: sem este passo, 0 achados para ela; com ele, 1 — e as outras 3 funções não mudam). */
+  const semFechoPosterior = (fn: string) => {
+    const drops = migrations.filter((m) => m.sql.includes(`DROP FUNCTION IF EXISTS ${fn}`)).map((m) => m.file).sort();
+    const ultimoDrop = drops[drops.length - 1];
+    const refecho = new RegExp(`REVOKE\\s+(?:EXECUTE|ALL)\\s+ON\\s+FUNCTION\\s+${fn.replace(/\./g, '\\.')}\\b[^;]*;`, 'gi');
+    return (m: { file: string; sql: string }) =>
+      ultimoDrop && m.file.localeCompare(ultimoDrop) > 0 ? { ...m, sql: m.sql.replace(refecho, '-- fecho posterior removido') } : m;
+  };
+
   /** Tira todo REVOKE da migration que DROPa `fn`. `REVOKE ALL` **e** `REVOKE EXECUTE`: as duas
    *  formas convivem no repo (a 20260723150000 usa ALL; a 20260704120000, EXECUTE), e sabotar só
    *  uma deixaria a sabotagem sem efeito — o teste afirmaria "o detector é cego" quando o cego
    *  era o `replace`. Custou uma falha vermelha para descobrir. */
-  const semRevokeNaMigrationDoDrop = (fn: string) =>
-    migrations.map((m) =>
+  const semRevokeNaMigrationDoDrop = (fn: string) => {
+    const posterior = semFechoPosterior(fn);
+    return migrations.map((m) =>
       m.sql.includes(`DROP FUNCTION IF EXISTS ${fn}`)
         ? { ...m, sql: m.sql.replace(/REVOKE\s+(?:EXECUTE|ALL)[^;]*;/gi, '-- revoke removido') }
-        : m,
+        : posterior(m),
     );
+  };
 
   // O repo TEM 5 DROP+CREATE de função do contrato (medido 2026-08-15) e as 5 restauram o fecho.
   // Sem este teste, o verde acima seria indistinguível de "o detector não olhou nada". Estas 4 são
@@ -676,8 +692,9 @@ describe('auditGrantsFuncoes — contra o repo REAL', () => {
   /** Reescreve o `DROP FUNCTION <fn>(args)` REAL para a grafia SEM parêntese, e tira o REVOKE da
    *  mesma migration. É a sabotagem do #2001 aplicada à grafia nova: se o detector voltasse a
    *  exigir o `(`, este DROP some do radar e o teste abaixo fica verde por CEGUEIRA. */
-  const semParenteseNoDropReal = (fn: string) =>
-    migrations.map((m) =>
+  const semParenteseNoDropReal = (fn: string) => {
+    const posterior = semFechoPosterior(fn);
+    return migrations.map((m) =>
       m.sql.includes(`DROP FUNCTION IF EXISTS ${fn}`)
         ? {
             ...m,
@@ -685,8 +702,9 @@ describe('auditGrantsFuncoes — contra o repo REAL', () => {
               .replace(new RegExp(`DROP FUNCTION IF EXISTS ${fn}\\s*\\([^)]*\\)`, 'g'), `DROP FUNCTION IF EXISTS ${fn}`)
               .replace(/REVOKE\s+(?:EXECUTE|ALL)[^;]*;/gi, '-- revoke removido'),
           }
-        : m,
+        : posterior(m),
     );
+  };
 
   // Anti-inércia da grafia NOVA, contra o repo REAL — não contra fixture. Sem isto, os casos
   // sintéticos acima seriam compatíveis com "o detector novo nunca roda no pipeline de verdade".

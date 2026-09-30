@@ -51,7 +51,10 @@ printf '%s\n' "$VERSAO" | grep -E '^version:' | sed 's/^/  shellcheck /'
 # `scripts/lab-*/*.sh` entrou em 2026-09-25 com o laboratorio do claude-mem-reanimar.sh: o lab
 # prova um script que MATA processo, e o `scripts/*.sh` raso nao desce ate ele — exatamente o
 # harness que "passa e afirma que a invariante vale" se tiver bug de shell. Entrou em ZERO achados.
-GLOBS=( 'scripts/*.sh' 'scripts/lab-*/*.sh' '.claude/hooks/*.sh' 'db/*.sh' 'db/lib/*.sh' '.claude/skills/*/scripts/*.sh' '.claude/skills/*/evals/*.sh' )
+# `scripts/lib/*.sh` entrou em 2026-09-29 com a camada 4 dos laços de falsificação
+# (scripts/lib/falsificacao-stderr.sh): o juiz que 9 laços carregam com `.` estava fora do linter, e
+# o `wt-medida.sh` do wt-clean/wt-prune também. Os dois entraram em ZERO achados.
+GLOBS=( 'scripts/*.sh' 'scripts/lab-*/*.sh' 'scripts/lib/*.sh' '.claude/hooks/*.sh' 'db/*.sh' 'db/lib/*.sh' '.claude/skills/*/scripts/*.sh' '.claude/skills/*/evals/*.sh' )
 
 ARQUIVOS=()
 for g in "${GLOBS[@]}"; do

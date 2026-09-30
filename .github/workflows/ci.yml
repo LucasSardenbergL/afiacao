@@ -790,8 +790,12 @@ jobs:
       # caminho obrigatório (leia o comentário dele, mais abaixo).
       # NÃO substitui o `mutation-check`: aqui a suíte não roda, então isto não afirma NADA
       # sobre cobertura. Só afirma que os padrões ainda são cirúrgicos.
+      # A base entra por `env:`, nunca `${{ }}` cru no `run:`: a expressão é colada no texto do
+      # script ANTES do bash (script injection). A2 de docs/historico/varredura-semgrep-2026-09-27.md.
       - name: Contratos de mutação ainda cirúrgicos (mutcheck --seco, introduzidos por ESTE diff)
-        run: bash scripts/mutcheck-seco-gate.sh origin/${{ github.base_ref || 'main' }}
+        env:
+          BASE_REF: ${{ github.base_ref || 'main' }}
+        run: bash scripts/mutcheck-seco-gate.sh "origin/${BASE_REF}"
 
   # ─── Agregador — É ESTE o required status check ─────────────────────────────
   # `validate` não roda trabalho nenhum: ele só AFIRMA que os 4 jobs acima terminaram em
@@ -850,9 +854,19 @@ jobs:
   # modo normal somam 48–58s e o `--falsificar` da promoção assíncrona 71–86s. Projeção: ~6 min
   # de job, com folga no teto de 12 e longe do caminho crítico do `validate`
   # (docs/historico/provas-tint-no-nucleo.md).
+  #
+  # A folga acabou em 2026-09-29: o job da main levava 8,5–10 min (5 runs), e no PR que pôs no
+  # núcleo a prova das 7 funções do fuso (41 asserts em 3 s + `--falsificar` com 18 sabotagens em
+  # 52 s) o passo do núcleo sozinho foi a 11 min 35 s — o job foi CANCELADO no teto de 12 com
+  # `SQL_PROOF_OK 46/46` já impresso, e a autofalsificação do runner nem rodou. No mesmo dia entrou
+  # a do LIKE (`--falsificar` com 19 sobre o schema-snapshot), e PRs SEM a prova do fuso também
+  # passaram a cair no teto (12 min 10 s, dois de outras sessões). Teto 20: o cancelamento no teto não
+  # diz QUAL prova custou, então ele tem de ficar acima do custo, e a mediana medida é o sinal de
+  # quando a próxima prova pedir paralelizar o runner em vez de subir o teto de novo
+  # (docs/historico/hoje-da-sessao-nu-funcoes-e-skills.md).
   provas-sql:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 20
     permissions:
       contents: read
 
@@ -1324,7 +1338,14 @@ jobs:
     # com os 44s do contrato novo; sem folga, todo PR seguinte perderia o sinal. Quem pesa é
     # `sonda-versao-sql.mut` (103 mutações, 7m26s ≈ metade do job). 25min volta a ~60% de uso; o
     # conserto de fundo é o fan-out por contrato, como o `validate` fez no #2346.
-    timeout-minutes: 25
+    # 2026-09-30: o teto virou a regra, não a exceção. 12 dos últimos 20 runs foram CANCELADOS, todos
+    # aos 25,2min (e 41 de 56 numa janela de 60 runs). Os contratos rodam em SÉRIE, e o carimbo de
+    # cada bloco `mutcheck:` do log marca o FIM do contrato: a duração é o delta entre blocos. No
+    # mesmo commit c85a19c92, um run fechou em 20,9min e o outro foi cancelado aos 25,2min. No runner
+    # lento cada contrato leva 1,6 a 1,8× mais (sonda-versao-sql 299→~510s; like-cru-em-migrations,
+    # #2653, 129→238s), e o job inteiro pede ~34min. 45min ≈ 75% no lento. O memo do `lerSql` corta a
+    # parte do like-cru. O conserto de fundo segue sendo o fan-out por contrato.
+    timeout-minutes: 45
     # issues:write p/ o sensor abaixo abrir/fechar a Issue `mutcheck-cobertura`; contents:read p/ checkout.
     permissions:
       contents: read

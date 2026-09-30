@@ -28,7 +28,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }
 
 PASS=0; FAIL=0
@@ -109,7 +109,11 @@ WHERE s.document_id = d.id
   AND (d.product_code IS NULL OR btrim(d.product_code) = '');   -- SABOTADO: removido AND s.approved_at IS NOT NULL
 SQL
 V=$(Pq -c "SELECT coalesce(product_code,'') FROM public.kb_documents WHERE id='d2222222-0000-0000-0000-000000000002';")
-if [ "$V" = "" ]; then bad "F1 sem approved_at devia VAZAR p/ rascunho, mas D2 seguiu vazio → A2 sem dente"; else ok "F1 sem approved_at vaza p/ rascunho (D2=[$V]) → A2 tem dente"; fi
+# Cada sabotagem DECLARA o código que produz (o da ficha do próprio doc; no F3, o do OUTRO doc) — "≠ verde"
+# aceitava qualquer outro valor. O vermelho tem de ser do SEU assert: docs/historico/falsificacao-exit-nao-e-dente.md.
+if [ "$V" = "" ]; then bad "F1 sem approved_at devia VAZAR p/ rascunho, mas D2 seguiu vazio → A2 sem dente"
+elif [ "$V" = "FL.9999.00" ]; then ok "F1 sem approved_at vaza p/ rascunho (D2=[$V]) → A2 tem dente"
+else bad "F1 — NÃO é o que a sabotagem declara (FL.9999.00, o code da ficha-rascunho do D2): veio [$V]"; fi
 
 # F2 — sem o guard (d.product_code vazio): DEVE sobrescrever o manual (D4). Se D4 seguir MANUAL, A4 não tem dente.
 seed_base
@@ -122,7 +126,9 @@ WHERE s.document_id = d.id
   AND s.product_code IS NOT NULL AND btrim(s.product_code) <> '';   -- SABOTADO: removido o guard (d.product_code IS NULL OR vazio)
 SQL
 V=$(Pq -c "SELECT coalesce(product_code,'') FROM public.kb_documents WHERE id='d4444444-0000-0000-0000-000000000004';")
-if [ "$V" = "MANUAL.XX" ]; then bad "F2 sem guard devia SOBRESCREVER o manual, mas D4 seguiu MANUAL.XX → A4 sem dente"; else ok "F2 sem guard sobrescreve o manual (D4=[$V]) → A4 tem dente"; fi
+if [ "$V" = "MANUAL.XX" ]; then bad "F2 sem guard devia SOBRESCREVER o manual, mas D4 seguiu MANUAL.XX → A4 sem dente"
+elif [ "$V" != "YC.1401.00" ]; then bad "F2 — NÃO é o que a sabotagem declara (YC.1401.00, o code da ficha do D4): veio [$V]"
+else ok "F2 sem guard sobrescreve o manual (D4=[$V]) → A4 tem dente"; fi
 
 # F3 — join invertido (<>): com 2 docs, cada um casa a ficha do OUTRO → D1 recebe o code de D3.
 P -q <<'SQL'
@@ -142,7 +148,9 @@ WHERE s.document_id <> d.id                                        -- SABOTADO: 
   AND (d.product_code IS NULL OR btrim(d.product_code) = '');
 SQL
 V=$(Pq -c "SELECT coalesce(product_code,'') FROM public.kb_documents WHERE id='d1111111-0000-0000-0000-000000000001';")
-if [ "$V" = "FL.6269.02" ]; then bad "F3 join invertido devia CRUZAR, mas D1 manteve o seu → A1/A3 sem dente"; else ok "F3 join invertido cruza o code (D1=[$V], veio o de outro doc) → A1/A3 tem dente"; fi
+if [ "$V" = "FL.6269.02" ]; then bad "F3 join invertido devia CRUZAR, mas D1 manteve o seu → A1/A3 sem dente"
+elif [ "$V" != "PC.2992.00" ]; then bad "F3 — NÃO é o que a sabotagem declara (PC.2992.00, o code do OUTRO doc): veio [$V]"
+else ok "F3 join invertido cruza o code (D1=[$V], veio o de outro doc) → A1/A3 tem dente"; fi
 
 # ── veredito ──
 echo "──────────────────────────────"

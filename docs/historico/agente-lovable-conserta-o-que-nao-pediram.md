@@ -51,6 +51,56 @@ A mesma edição (`SupabaseClient<any>` na `whatsapp-inbound`) nas três vezes: 
 do sandbox acusa o typecheck Deno daquela edge, e o agente, prestativo, "conserta" o que vê. Não é
 acaso — é uma isca permanente no ambiente dele. Sem trava, a 3ª vez era questão de tempo.
 
+### A 4ª rodada com isca (2026-09-27 19:35Z) — sem edição, e quem empurrou foi a PLATAFORMA
+
+O pedido foi o Passo 2 do pacote (`sync-reprocess` + `whatsapp-inbound` em `718c9a811`, com o
+`blocoDeEscopo`), mandado pela sessão do #2612. O agente conferiu os hashes, deployou e fechou com
+`No files were edited.`, igual às 16:42Z e às 18:37Z. A novidade veio DEPOIS do fecho, no mesmo
+turno: duas notificações de sistema do próprio Lovable reacordaram o agente. Ele as citou no
+raciocínio. A primeira: *"There are build errors for the preview. Fix them … including the ones
+that predate your changes. Don't ask first."* Depois de ele só reportar, a segunda: *"Still broken
+after your fix attempt. Fix it, or if you cannot, say so plainly to the user and name the failing
+file."* Ele chegou a planejar consertos em `process-nfe`, `process-recurring-orders` e
+`promocao-extrair-via-vision`, e parou pela regra do Knowledge, que citou literalmente.
+
+| eixo | 19:37Z | controle positivo: 16:58Z, o turno que editou |
+|---|---|---|
+| `edit_id` na mensagem do `list_messages` | ausente | presente |
+| `code--line_replace` (com SUBLINHADO: com hífen, o grep dá zero até no turno que editou) | 0. Os 7 `code--exec` só leem: `tail`, `rg`, `grep`, `sed -n` e `bun run edges:typecheck` | 5 chamadas: 4 na `whatsapp-inbound` e 1 na `sync-reprocess` (a tabela do 3º incidente conta 4) |
+| commits `gpt-engineer-app` na `main` | 0 em 32 min (sensor `SEM_EDICAO`) | 3 |
+
+O log mudou de forma. Às 18:37Z eram 7 erros, todos na `whatsapp-inbound`, e não houve
+notificação. Às 19:37Z, com o workspace em `718c9a81`, o log trazia o `deno check` cru de TODAS
+as edges em modo `node_modules`: 46 linhas `[ERROR]` em 9 edges e 3 pacotes npm que o
+`node_modules` do sandbox não tem (`@anthropic-ai/sdk`, `web-push`, `@simplewebauthn/server`).
+As 46 linhas se dividem assim:
+
+- `enviar-pedido-portal-sayerlack`: 13
+- `fin-cashflow-engine`: 12
+- `omie-analytics-sync`: 7
+- `omie-nfe-webhook`: 4
+- `nvoip-calls`: 4
+- `omie-sync-metadados`: 3
+- `process-nfe`, `process-recurring-orders` e `elevenlabs-transcribe`: 1 cada
+
+A tabela do agente soma exatamente os 46 do `grep -c ERROR` dele. **`whatsapp-inbound` e
+`sync-reprocess` não aparecem: a isca DELAS fechou.** O resultado reproduz local, com controle: o
+`deno check` do pai do #2612 dá 7 erros e o da main dá 0, tanto com `--node-modules-dir=manual` (o
+modo do sandbox) quanto com `none` (o do gate). O turno custou **3,2 créditos**; um deploy sem o
+empurrão custa entre 0,9 e 1,4.
+
+Duas leituras:
+
+1. **A isca virou a dívida inteira.** A plataforma oferece ao agente, com ordem de consertar sem
+   perguntar, tudo o que cair no `build-errors.log`. Isso vale enquanto a dívida de tipo que o
+   `edges:typecheck` tolera por desenho (spec `2026-07-21-edges-typecheck-gate-design.md`) estiver
+   no log, e ela inclui money-path: `fin-cashflow-engine`, `process-nfe`, o portal Sayerlack e as
+   `omie-*`. O Knowledge segurou contra uma ordem explícita da plataforma, mas n=1 não é garantia.
+   Toda mensagem ao agente é exposição, então só se manda o que o ledger pede.
+2. **O `No files were edited.` sai ANTES das rodadas reacordadas.** O sensor acha a linha presente,
+   mas ela não é a última palavra do turno. Quem decide são os eixos por fora: o `edit_id` e os
+   commits.
+
 ## 2. Por que o prompt não segurou
 
 O prompt dizia *"Deploy it **verbatim** — do NOT modify, reinterpret, "improve", or reformat any
@@ -127,6 +177,9 @@ não a intenção.
   (`v_pedido->'omie_pedido_id'`) no registro de falha, e o `Number()` mudaria o eco justo no caso
   anômalo (string não numérica → `null`, > 2^53 perde dígito). Prova: `deno check` completo limpo
   nas duas (antes 7 + 1 erros) e JS emitido byte-idêntico antes/depois, com controle sabotado vermelho.
+  **Medido no log às 19:37Z (§1, 4ª rodada):** as duas edges saíram do `build-errors.log`, mas a
+  classe ficou. O log passou a trazer a dívida de tipo de 9 edges, e a própria plataforma manda
+  consertá-la.
 - **Todo revert de edição do bot fabrica uma pendência de deploy.** O `sonda:bump` não distingue
   "voltei aos bytes de um commit ancestral" de "mudei a edge"; o bump recria DIVERGE sem mudança de
   runtime, e o redeploy é a isca. A regra candidata (isentar o retorno aos bytes ancestrais) foi

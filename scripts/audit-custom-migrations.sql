@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 561
+-- Total de custom migrations: 566
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -602,7 +602,12 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260925210332', 'reposicao_em_transito_guarda_fantasma_null_safe', '20260925210332_reposicao_em_transito_guarda_fantasma_null_safe.sql'),
   ('20260925225004', 'reposicao_em_transito_simulado_e_join_grupo_null_safe', '20260925225004_reposicao_em_transito_simulado_e_join_grupo_null_safe.sql'),
   ('20260926001425', 'param_auto_em_transito_conta_disparado_simulado', '20260926001425_param_auto_em_transito_conta_disparado_simulado.sql'),
-  ('20260927133606', 'positivacao_mes_sp_sessao_utc', '20260927133606_positivacao_mes_sp_sessao_utc.sql')
+  ('20260927133606', 'positivacao_mes_sp_sessao_utc', '20260927133606_positivacao_mes_sp_sessao_utc.sql'),
+  ('20260927172443', 'hoje_sp_sessao_utc_precos_piso', '20260927172443_hoje_sp_sessao_utc_precos_piso.sql'),
+  ('20260927195430', 'positivacao_universo_canonico', '20260927195430_positivacao_universo_canonico.sql'),
+  ('20260927202603', 'fuso_sp_relogio_da_sessao_rpcs_views_des', '20260927202603_fuso_sp_relogio_da_sessao_rpcs_views_des.sql'),
+  ('20260929000234', 'padrao_like_contem_escapa_curinga', '20260929000234_padrao_like_contem_escapa_curinga.sql'),
+  ('20260929003006', 'reposicao_v_sku_fora_do_motor', '20260929003006_reposicao_v_sku_fora_do_motor.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2428,7 +2433,23 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('reposicao_em_transito_guarda_fantasma_null_safe', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
   ('reposicao_em_transito_simulado_e_join_grupo_null_safe', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
   ('param_auto_em_transito_conta_disparado_simulado', 'function', 'public', 'atualizar_parametros_numericos_skus', ''),
-  ('positivacao_mes_sp_sessao_utc', 'function', 'public', '_carteira_positivacao_for_owner', '')
+  ('positivacao_mes_sp_sessao_utc', 'function', 'public', '_carteira_positivacao_for_owner', ''),
+  ('hoje_sp_sessao_utc_precos_piso', 'function', 'public', 'get_ultimos_precos_cliente', ''),
+  ('hoje_sp_sessao_utc_precos_piso', 'function', 'public', 'medir_abaixo_piso_tier', ''),
+  ('positivacao_universo_canonico', 'function', 'public', '_carteira_positivacao_for_owner', ''),
+  ('fuso_sp_relogio_da_sessao_rpcs_views_des', 'function', 'public', 'radar_kpis', ''),
+  ('fuso_sp_relogio_da_sessao_rpcs_views_des', 'function', 'public', 'fin_projecao_13_semanas', ''),
+  ('fuso_sp_relogio_da_sessao_rpcs_views_des', 'view', 'public', 'v_des_pedidos_em_transito', ''),
+  ('fuso_sp_relogio_da_sessao_rpcs_views_des', 'view', 'public', 'v_des_posicao_trimestre_ao_vivo', ''),
+  ('padrao_like_contem_escapa_curinga', 'function', 'private', 'padrao_like_contem', ''),
+  ('padrao_like_contem_escapa_curinga', 'function', 'public', 'listar_skus_por_codigo_fornecedor', ''),
+  ('padrao_like_contem_escapa_curinga', 'function', 'public', 'resolver_sku_por_codigo_fornecedor', ''),
+  ('padrao_like_contem_escapa_curinga', 'function', 'public', 'expandir_promocao_item', ''),
+  ('padrao_like_contem_escapa_curinga', 'function', 'public', 'buscar_skus_candidatos', ''),
+  ('padrao_like_contem_escapa_curinga', 'function', 'public', 'melhoria_clientes_por_produto', ''),
+  ('padrao_like_contem_escapa_curinga', 'function', 'public', 'melhoria_produtos_relacionados', ''),
+  ('padrao_like_contem_escapa_curinga', 'function', 'public', 'tarefas_matcher_tick', ''),
+  ('reposicao_v_sku_fora_do_motor', 'view', 'public', 'v_reposicao_sku_fora_do_motor', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4302,7 +4323,23 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('reposicao_em_transito_guarda_fantasma_null_safe', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
   ('reposicao_em_transito_simulado_e_join_grupo_null_safe', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
   ('param_auto_em_transito_conta_disparado_simulado', 'function', 'public', 'atualizar_parametros_numericos_skus', ''),
-  ('positivacao_mes_sp_sessao_utc', 'function', 'public', '_carteira_positivacao_for_owner', '')
+  ('positivacao_mes_sp_sessao_utc', 'function', 'public', '_carteira_positivacao_for_owner', ''),
+  ('hoje_sp_sessao_utc_precos_piso', 'function', 'public', 'get_ultimos_precos_cliente', ''),
+  ('hoje_sp_sessao_utc_precos_piso', 'function', 'public', 'medir_abaixo_piso_tier', ''),
+  ('positivacao_universo_canonico', 'function', 'public', '_carteira_positivacao_for_owner', ''),
+  ('fuso_sp_relogio_da_sessao_rpcs_views_des', 'function', 'public', 'radar_kpis', ''),
+  ('fuso_sp_relogio_da_sessao_rpcs_views_des', 'function', 'public', 'fin_projecao_13_semanas', ''),
+  ('fuso_sp_relogio_da_sessao_rpcs_views_des', 'view', 'public', 'v_des_pedidos_em_transito', ''),
+  ('fuso_sp_relogio_da_sessao_rpcs_views_des', 'view', 'public', 'v_des_posicao_trimestre_ao_vivo', ''),
+  ('padrao_like_contem_escapa_curinga', 'function', 'private', 'padrao_like_contem', ''),
+  ('padrao_like_contem_escapa_curinga', 'function', 'public', 'listar_skus_por_codigo_fornecedor', ''),
+  ('padrao_like_contem_escapa_curinga', 'function', 'public', 'resolver_sku_por_codigo_fornecedor', ''),
+  ('padrao_like_contem_escapa_curinga', 'function', 'public', 'expandir_promocao_item', ''),
+  ('padrao_like_contem_escapa_curinga', 'function', 'public', 'buscar_skus_candidatos', ''),
+  ('padrao_like_contem_escapa_curinga', 'function', 'public', 'melhoria_clientes_por_produto', ''),
+  ('padrao_like_contem_escapa_curinga', 'function', 'public', 'melhoria_produtos_relacionados', ''),
+  ('padrao_like_contem_escapa_curinga', 'function', 'public', 'tarefas_matcher_tick', ''),
+  ('reposicao_v_sku_fora_do_motor', 'view', 'public', 'v_reposicao_sku_fora_do_motor', '')
 )
 SELECT
   e.migration,
@@ -4330,7 +4367,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 114.
+-- Funções redefinidas com corpo extraível: 118.
 
 WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (VALUES
   ('public', 'has_role', 1, '20260207192203_1ed442e5-a224-456e-9d94-cfe50e88c670.sql', 'c63a92e3cfa92e6aab8cb894ad505e30'),
@@ -4358,6 +4395,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'fin_projecao_13_semanas', 1, '20260328200600_financeiro_v3_backend.sql', 'b5756b1b1d90a7f2fd58fd91333c4222'),
   ('public', 'fin_projecao_13_semanas', 2, '20260329161846_ef165ca0-5e29-4b16-8c40-9e14396fdc7b.sql', '9dede1b56c8a2c125ec4f6c20d1051be'),
   ('public', 'fin_projecao_13_semanas', 3, '20260512101121_a96fa007-f688-4c3a-8cd9-43f9d88e5505.sql', '5780d220bb9d6109fd51de63d4e79fba'),
+  ('public', 'fin_projecao_13_semanas', 4, '20260927202603_fuso_sp_relogio_da_sessao_rpcs_views_des.sql', '5eda772f6a71cfee714aa0a363552f35'),
   ('public', 'fin_consolidado_intercompany', 1, '20260328200600_financeiro_v3_backend.sql', 'c77fe935eab2b0b9e22b2323cd6a1df1'),
   ('public', 'fin_consolidado_intercompany', 2, '20260512101121_a96fa007-f688-4c3a-8cd9-43f9d88e5505.sql', 'cd4ea51faea13ce2c4d5c74ae64f71d0'),
   ('public', 'fin_consolidado_intercompany', 3, '20260518004300_fin_consolidado_v2.sql', '63da5e26146917b95a323938b202c435'),
@@ -4416,6 +4454,8 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'refresh_sku_ranking_negociacao', 4, '20260627200000_fix_refresh_sku_ranking_gate_cron.sql', '159b25993b713ff9972caad40aeaa07e'),
   ('public', 'sugerir_negociacao_paralela_hoje', 1, '20260512101346_632761fc-2bd6-4caa-9c61-d35f872c2489.sql', '92a123622d39cad25956b7a29451b950'),
   ('public', 'sugerir_negociacao_paralela_hoje', 2, '20260524203000_rpc_staff_guard_permite_cron_backend.sql', '7aac0d077fe1b0519898eb93463f2dfe'),
+  ('public', 'resolver_sku_por_codigo_fornecedor', 1, '20260513005653_ef077490-1563-4287-b6bb-a48d3aadf780.sql', 'eb00a3299f699935b6ecfac82dcdb677'),
+  ('public', 'resolver_sku_por_codigo_fornecedor', 2, '20260929000234_padrao_like_contem_escapa_curinga.sql', '23b949f189b64fe93e2c643eeb9e801a'),
   ('public', 'calcular_gatilhos_reposicao', 1, '20260513233050_2b5510fb-e9d5-40a9-b6cd-8789d972803c.sql', '38752164924bf851776e7e515dc06d71'),
   ('public', 'calcular_gatilhos_reposicao', 2, '20260513233141_ada2b9bf-9bf4-4cd0-a44d-5f9b6cd49c77.sql', 'cd3a827993284f8ae1e21e534f3a09c1'),
   ('public', 'calcular_gatilhos_reposicao', 3, '20260515003131_0035f604-5186-461d-80de-c6e639fe5807.sql', '2e54cfe74af09b125817173109ebb94b'),
@@ -4489,6 +4529,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', '_carteira_mixgap_for_owner', 2, '20260526230000_mixgap_feedback.sql', '09b8ada4bb8fa3cdb389d6f8257a95f2'),
   ('public', '_carteira_positivacao_for_owner', 1, '20260525210000_viewas_rpcs_for.sql', '93a9d455cf68c1d47b589849b505909f'),
   ('public', '_carteira_positivacao_for_owner', 2, '20260927133606_positivacao_mes_sp_sessao_utc.sql', 'f0292c2defd776c715af118c4e8053a8'),
+  ('public', '_carteira_positivacao_for_owner', 3, '20260927195430_positivacao_universo_canonico.sql', '9ded7c1530049a13422001fc66956069'),
   ('public', 'pode_ver_carteira_completa', 1, '20260526020000_rls_score_carteira_hardening.sql', '97cb07844e04b8ad26c95e63df5e6fe6'),
   ('public', 'pode_ver_carteira_completa', 2, '20260526040000_rls_carteira_relacionamento_hardening.sql', '97cb07844e04b8ad26c95e63df5e6fe6'),
   ('public', 'pode_ver_carteira_completa', 3, '20260718180000_fu7b_pode_ver_carteira_completa_privado.sql', 'e3c5b09d2d30fc13a9b024836ce21b53'),
@@ -4560,6 +4601,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'tarefas_matcher_tick', 1, '20260528133000_tarefas_bloco_d.sql', '1d22a8a6cebe7a7ac1329fc8f98fe20d'),
   ('public', 'tarefas_matcher_tick', 2, '20260528135000_tarefas_matcher_created_at_floor.sql', '99785df6ed7189c49aad580f09b24a1c'),
   ('public', 'tarefas_matcher_tick', 3, '20260615194500_fix_tarefas_matcher_enum.sql', '0bc8eb0402988ad408b80add2df00e56'),
+  ('public', 'tarefas_matcher_tick', 4, '20260929000234_padrao_like_contem_escapa_curinga.sql', 'a11cc91d6ce9118a8b479a87d2e5f199'),
   ('public', 'tarefas_escalonamento_tick', 1, '20260528133000_tarefas_bloco_d.sql', 'ebc7979b5a779370596a788937c87b55'),
   ('public', 'tarefas_escalonamento_tick', 2, '20260601000000_tarefas_escalonamento_titulo_mensagem.sql', '43abd7dd4a5fba6775f9b09649057e6f'),
   ('public', 'promover_candidato_primeira_compra', 1, '20260530210000_reposicao_candidatos_primeira_compra.sql', 'd2dffca872be4dc53ce53bd84154c045'),
@@ -4617,13 +4659,20 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'tint_apply_keys_snapshot', 2, '20260611190000_tint_sync_codex_fixes.sql', '368d2f3da7dd73d8741acadf440341eb'),
   ('public', 'melhoria_clientes_por_produto', 1, '20260610130000_melhorias_canal.sql', 'e5602e92c3623e426e2461f782ee712e'),
   ('public', 'melhoria_clientes_por_produto', 2, '20260905225613_preco_ausente_nao_e_zero.sql', '128cc895c0826dfb03e79223f5c93c8e'),
+  ('public', 'melhoria_clientes_por_produto', 3, '20260929000234_padrao_like_contem_escapa_curinga.sql', 'c50978d0ad66d3357f89a7b60f9a55e3'),
+  ('public', 'melhoria_produtos_relacionados', 1, '20260610130000_melhorias_canal.sql', 'ad55a3cb8e7ef3aa8cc4d09d48e00133'),
+  ('public', 'melhoria_produtos_relacionados', 2, '20260929000234_padrao_like_contem_escapa_curinga.sql', '77dbd55fc1077fd0b6bb3b4b9d6fcf37'),
   ('public', 'reposicao_pedido_auto_aprovavel', 1, '20260610150000_reposicao_auto_aprovacao_piloto.sql', 'a169166d1b33f40a5c7a82e1ad45e297'),
   ('public', 'reposicao_pedido_auto_aprovavel', 2, '20260615210000_reposicao_auto_aprovacao_v2.sql', 'af98b16e4efefa646d6a206be52c725b'),
   ('public', 'reposicao_pedido_auto_aprovavel', 3, '20260629140000_reposicao_preco_ausente_null.sql', '3a26656e94c9bbd8db410c2a33c1a704'),
   ('public', 'gerar_pedidos_oportunidade_ciclo', 1, '20260611120000_reposicao_fixes_codex_711.sql', '0b88073f4ac26f6c3aedc8055a5c7ab7'),
   ('public', 'gerar_pedidos_oportunidade_ciclo', 2, '20260922225449_oportunidade_erro_terminal_nao_bloqueia_oferta.sql', 'feeda17a3271a3791a39db4870aae2da'),
+  ('public', 'buscar_skus_candidatos', 1, '20260611140000_kb_fundacao_casamento.sql', '1495a27d5ddd47d145e1123a99861a0c'),
+  ('public', 'buscar_skus_candidatos', 2, '20260929000234_padrao_like_contem_escapa_curinga.sql', '70b42aa312d47e00816a37cf11ba1198'),
   ('public', 'confirmar_vinculo_boletim', 1, '20260611140000_kb_fundacao_casamento.sql', '69ec58b207bc65e6437f16e391f7a109'),
   ('public', 'confirmar_vinculo_boletim', 2, '20260613120000_kb_0c_aprovacao_master_only.sql', 'b8332df9e8b9ed7291daccf313524f23'),
+  ('public', 'radar_kpis', 1, '20260612130000_radar_rpcs_contato.sql', 'd880343a76c717903aaf8c070286042c'),
+  ('public', 'radar_kpis', 2, '20260927202603_fuso_sp_relogio_da_sessao_rpcs_views_des.sql', '35f3ea00ada679166cc8270f76651f84'),
   ('public', 'kbv_block_mutation', 1, '20260613150000_kb_spec_versions_faseA.sql', 'a56599c70fe40052ba5cb31aee16c4c4'),
   ('public', 'kbv_block_mutation', 2, '20260613180000_kb_hardening_codex.sql', 'd4041ea6ffb7fd5b146e56a674cbe648'),
   ('public', 'aprovar_versao_boletim', 1, '20260613150000_kb_spec_versions_faseA.sql', 'f7e424f89058376c964730041ef20b99'),
@@ -4680,6 +4729,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'registrar_resultado_plano', 4, '20260718170000_fu7_conserta_callers_orfaos.sql', '80eadffae682a73a448ec454c388e994'),
   ('public', 'get_ultimos_precos_cliente', 1, '20260625120000_get_ultimos_precos_cliente.sql', '31e656cabe303377266ac4f1dca141b1'),
   ('public', 'get_ultimos_precos_cliente', 2, '20260704120000_preco_por_tier.sql', '2428b7471db5fccecfc45d923dcbf355'),
+  ('public', 'get_ultimos_precos_cliente', 3, '20260927172443_hoje_sp_sessao_utc_precos_piso.sql', 'fd1733a96c8c5d5344941684dae4c2e7'),
   ('public', 'reposicao_cold_start_parametros', 1, '20260626210000_reposicao_cold_start_parametros.sql', 'd5f00b40b7ac6c5a06bf8306a9e1ad67'),
   ('public', 'reposicao_cold_start_parametros', 2, '20260627130000_reposicao_cold_start_fix_gate_cron.sql', '7452b0fd4a5354e176b29464e5ed0208'),
   ('public', 'reposicao_cold_start_parametros', 3, '20260826021000_reposicao_cold_start_fusivel_graduacao.sql', '4e60a2f241446e15287ccec01947f537'),
@@ -4689,6 +4739,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'venda_gate_credito', 2, '20260703140000_trava_credito_gate_excecao_por_par.sql', '1fb9610a4c6f70fb2a67d5d01396c767'),
   ('public', 'medir_abaixo_piso_tier', 1, '20260704120000_preco_por_tier.sql', '0e2c798dc7098adb3c67cb923087cefa'),
   ('public', 'medir_abaixo_piso_tier', 2, '20260718190000_authz_capability_matrix_e2.sql', 'cae48dfdd1ecb9b983b065f06edfdbbf'),
+  ('public', 'medir_abaixo_piso_tier', 3, '20260927172443_hoje_sp_sessao_utc_precos_piso.sql', '7044b253b88286338d34cabb8ce9461b'),
   ('public', 'get_whatsapp_proposta_cotacao', 1, '20260713040000_whatsapp_proposta_cotacao.sql', 'a6808315bb23d377f76b75f7f417f89b'),
   ('public', 'get_whatsapp_proposta_cotacao', 2, '20260713050000_whatsapp_proposta_cotacao_v2.sql', '10fd7be817823288fde96eaa690e9b88'),
   ('public', 'register_carteira_member', 1, '20260718170000_register_carteira_member.sql', 'a7b3a3e50c6b0a9d8a2b2ebfca67f6f2'),

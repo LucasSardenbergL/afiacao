@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **561** custom migrations totais
-- **1837** objetos esperados (criados por estas migrations)
+- **566** custom migrations totais
+- **1853** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 600
+  - `function`: 613
   - `rls_policy`: 462
   - `index`: 261
   - `cron_job`: 174
   - `table`: 166
   - `trigger`: 92
-  - `view`: 78
+  - `view`: 81
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -4600,6 +4600,47 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public._carteira_positivacao_for_owner` | — |
+
+### `20260927172443_hoje_sp_sessao_utc_precos_piso.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_ultimos_precos_cliente` | — |
+| `function` | `public.medir_abaixo_piso_tier` | — |
+
+### `20260927195430_positivacao_universo_canonico.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._carteira_positivacao_for_owner` | — |
+
+### `20260927202603_fuso_sp_relogio_da_sessao_rpcs_views_des.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.radar_kpis` | — |
+| `function` | `public.fin_projecao_13_semanas` | — |
+| `view` | `public.v_des_pedidos_em_transito` | — |
+| `view` | `public.v_des_posicao_trimestre_ao_vivo` | — |
+
+### `20260929000234_padrao_like_contem_escapa_curinga.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.padrao_like_contem` | — |
+| `function` | `public.listar_skus_por_codigo_fornecedor` | — |
+| `function` | `public.resolver_sku_por_codigo_fornecedor` | — |
+| `function` | `public.expandir_promocao_item` | — |
+| `function` | `public.buscar_skus_candidatos` | — |
+| `function` | `public.melhoria_clientes_por_produto` | — |
+| `function` | `public.melhoria_produtos_relacionados` | — |
+| `function` | `public.tarefas_matcher_tick` | — |
+
+### `20260929003006_reposicao_v_sku_fora_do_motor.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.v_reposicao_sku_fora_do_motor` | — |
 
 ## Próximos passos por status
 

@@ -9,8 +9,9 @@
 # DOCUMENTAVA o padrão que ele detectava. Menção != execução — os casos (N1..N9) são exatamente as
 # formas em que um agente escreve `PIPESTATUS` sem executá-lo.
 #
-# Inclui FALSIFICAÇÃO: no fim, sabota o scanner de quoting e exige que os negativos fiquem
-# VERMELHOS. Um teste que passa com o código sabotado não prova nada.
+# Inclui FALSIFICAÇÃO: no fim, sabota uma CÓPIA do hook — três regras, uma por vez — e exige que os
+# negativos que dependem de cada uma fiquem VERMELHOS. Um teste que passa com o código sabotado não
+# prova nada.
 # shellcheck disable=SC2016  # ARQUIVO INTEIRO: os comandos de teste sao strings LITERAIS de
 # proposito — expandir ${PIPESTATUS[0]} aqui destruiria justamente o que o guard tem de ver.
 set -u
@@ -30,7 +31,8 @@ entrada() { # <comando> [tool_name]
 # SINTETICOS no log real (~/.claude/afiacao-pipestatus-guard.jsonl) e a query de campo passa a
 # medir teste como se fosse uso. Sensor que mede a propria suite nao mede nada.
 LOGTESTE="$(mktemp "${TMPDIR:-/tmp}/pipestatus-guard-suite.XXXXXX")"
-trap 'rm -f "$LOGTESTE"' EXIT
+FDIR=""   # a copia do hook da falsificacao em curso (la no fim); vazio fora dela
+trap 'rm -f "$LOGTESTE"; [ -z "$FDIR" ] || rm -rf "$FDIR"' EXIT
 
 executa() { printf '%s' "$1" | PIPESTATUS_GUARD_LOG="$LOGTESTE" bash "$HOOK" 2>/dev/null; }
 
@@ -205,115 +207,117 @@ else
 fi
 
 # ── FALSIFICAÇÃO ────────────────────────────────────────────────────────────────────────────
-# Sabota o scanner para NUNCA entrar em estado de aspas simples. Se os NEGATIVOS que dependem
-# disso continuarem verdes, é porque nunca dependeram do scanner — e a suíte não provava nada.
-# A sabotagem é ela própria verificada (arquivo tem de MUDAR): sabotagem que não sabota é teatro.
-echo "-- falsificacao: scanner deixa de reconhecer aspas simples --"
-BKP="$(mktemp)"; cp "$HOOK" "$BKP"
-restaura() { cp "$BKP" "$HOOK"; rm -f "$BKP"; }
-trap 'restaura; rm -f "$LOGTESTE"' EXIT   # o `restaura` sobrescreveria o trap do LOGTESTE
+# Tres regras do hook, cada uma a UNICA defesa de um grupo de negativos: sabotada, o grupo tem de
+# ficar VERMELHO. As tres no MESMO molde (regras em docs/historico/falsificacao-sem-linha-de-base.md):
+#   (0) sabota uma COPIA em mktemp -d, nunca o hook real. Ele e o guard VIVO desta worktree
+#       (PreToolUse de toda chamada Bash de toda sessao ali): sabotado no lugar, a janela valia para
+#       todas elas, uma rodada morta por SIGKILL entre o perl e o restaura o deixava sabotado em
+#       silencio, e duas suites concorrentes (ou o que COPIASSE o hook na janela) corriam contra ele;
+#   (1) CONTROLE: a MESMA invocacao da sabotagem, com a sabotagem trocada por nada, nos 2 locales —
+#       os casos calados E um positivo avisando (silencio de copia que nem rodou nao e verde).
+#       Vermelho ali ABORTA antes do perl: senao a sabotagem "passaria" de graca;
+#   (2) cada troca e LITERAL e ancorada UNICA: 1x antes, 0x depois, o texto novo +1x. O `cmp` so
+#       prova que o arquivo mudou, nao que mudou o alvo — com duas trocas (a 2), uma no-op passaria
+#       nele;
+#   (3) vermelho pelo MARCADOR do ramo — nao por silencio (que awk quebrado tambem produz), nem por
+#       "disse alguma coisa" (que outro ramo tambem diz);
+#   (4) CONTROLE DE SAIDA: o hook real byte-identico ao snapshot de antes do bloco.
+FALS_LOCALES=(C)
+if locale -a 2>/dev/null | command grep -qi '^pt_BR.UTF-8$'; then FALS_LOCALES+=(pt_BR.UTF-8)
+else echo "  (pt_BR.UTF-8 indisponivel: as falsificacoes rodam so em C)"; fi
 
-perl -0pi -e 's/\{ st = 1; i\+\+; continue \}/{ st = 0; i++; continue }/' "$HOOK"
-if cmp -s "$BKP" "$HOOK"; then
-  echo "  FALHA a sabotagem NAO alterou o hook — a falsificacao seria teatro"
-  falhas=$((falhas + 1))
-else
-  sabotado_pegou=0
-  # exatamente os negativos cuja unica defesa e o estado de aspas simples
-  for caso in "echo 'use \${PIPESTATUS[0]} nunca'" "bash -c 'x | y; echo \${PIPESTATUS[0]}'"; do
-    [ -n "$(executa "$(entrada "$caso")")" ] && sabotado_pegou=$((sabotado_pegou + 1))
+f_roda()  { printf '%s' "$(entrada "$2")" | LC_ALL="$1" PIPESTATUS_GUARD_LOG="$LOGTESTE" bash "$FDIR/hook.sh" 2>/dev/null; }
+f_avisa() { f_roda "$1" "$2" | jq -r '.hookSpecificOutput.additionalContext // ""' 2>/dev/null | command grep -q "$3"; }
+# Ocorrencias LITERAIS: o \Q..\E desliga os metacaracteres. Escapar regex a mao e onde uma ancora
+# vira no-op sem ninguem ver.
+f_conta() { ALVO="$1" perl -0777 -ne 'print scalar(() = /\Q$ENV{ALVO}\E/g)' "$2" 2>/dev/null; }
+
+f_troca() { # <arquivo> <de> <para>
+  local de0 para0 de1 para1
+  de0="$(f_conta "$2" "$1")"; para0="$(f_conta "$3" "$1")"
+  if [ "$de0" != 1 ] || [ -z "$para0" ]; then
+    echo "  FALHA ancora da sabotagem casou ${de0:-?}x no hook (esperava 1): $2"; return 1
+  fi
+  DE="$2" PARA="$3" perl -0777 -pi -e 's/\Q$ENV{DE}\E/$ENV{PARA}/' "$1" 2>/dev/null
+  de1="$(f_conta "$2" "$1")"; para1="$(f_conta "$3" "$1")"
+  [ "$de1" = 0 ] && [ "$para1" = "$((para0 + 1))" ] && return 0
+  echo "  FALHA a troca nao pegou (ancora ${de1:-?}x, texto novo ${para0}x -> ${para1:-?}x): $2"; return 1
+}
+
+# A sabotagem e DADO, nao codigo: pares de/para em TROCAS, aplicados em ordem na copia. Par impar
+# derruba a suite (`set -u`) em vez de sabotar pela metade.
+f_sabota() { # <arquivo>
+  local k=0
+  while [ "$k" -lt "${#TROCAS[@]}" ]; do
+    f_troca "$1" "${TROCAS[$k]}" "${TROCAS[$((k + 1))]}" || return 1
+    k=$((k + 2))
   done
-  if [ "$sabotado_pegou" -eq 2 ]; then
-    echo "  ok   sabotagem ficou VERMELHA nos 2 negativos (o scanner e mesmo o que os protege)"
+}
+
+falsifica() { # <n> <titulo> <marcador> <positivo> <negativo...>   (a sabotagem vem de TROCAS)
+  local n="$1" titulo="$2" marca="$3" positivo="$4" loc caso ctrl=0 total=0 pegou=0
+  shift 4
+  echo "-- falsificacao $n: $titulo --"
+  FDIR="$(mktemp -d "${TMPDIR:-/tmp}/pipestatus-f$n.XXXXXX")"
+  # UMA leitura do hook real: a copia sai do snapshot, e os dois nascem identicos mesmo que algo
+  # grave o hook no meio
+  cp "$HOOK" "$FDIR/real-antes.sh"; cp "$FDIR/real-antes.sh" "$FDIR/hook.sh"
+  for loc in "${FALS_LOCALES[@]}"; do
+    f_avisa "$loc" "$positivo" "$marca" || ctrl=$((ctrl + 1))
+    for caso in "$@"; do [ -z "$(f_roda "$loc" "$caso")" ] || ctrl=$((ctrl + 1)); done
+  done
+  if [ "$ctrl" -ne 0 ]; then
+    echo "  FALHA controle SEM sabotagem ja esta VERMELHO em $ctrl caso(s) — falsificacao $n abortada antes de sabotar"
+    falhas=$((falhas + 1))
+  elif ! f_sabota "$FDIR/hook.sh" || cmp -s "$FDIR/real-antes.sh" "$FDIR/hook.sh"; then
+    echo "  FALHA a sabotagem $n NAO alterou a copia como devia — a falsificacao seria teatro"
+    falhas=$((falhas + 1))
   else
-    echo "  FALHA sabotagem passou despercebida em $((2 - sabotado_pegou)) caso(s)"
+    for loc in "${FALS_LOCALES[@]}"; do for caso in "$@"; do
+      total=$((total + 1)); f_avisa "$loc" "$caso" "$marca" && pegou=$((pegou + 1))
+    done; done
+    if [ "$pegou" -eq "$total" ]; then
+      echo "  ok   controle VERDE e sabotagem $n VERMELHA pelo marcador em $pegou/$total (locales: ${FALS_LOCALES[*]})"
+    else
+      echo "  FALHA sabotagem $n passou despercebida em $((total - pegou)) de $total caso(s)"
+      falhas=$((falhas + 1))
+    fi
+  fi
+  if ! cmp -s "$HOOK" "$FDIR/real-antes.sh"; then
+    echo "  FALHA o hook REAL mudou durante a falsificacao $n — ela so pode tocar a copia"
     falhas=$((falhas + 1))
   fi
-fi
-restaura; trap - EXIT
+  rm -rf "$FDIR"; FDIR=""
+}
+
+# FALSIFICAÇÃO 1 — o estado de aspas SIMPLES do scanner e a UNICA defesa de N3/N7: sabotado, a aspa
+# e pulada mas o scanner segue "fora de aspas", e a mencao vira uso. O positivo do controle e P7, o
+# gemeo de N7 em aspas DUPLAS: a copia tem de separar os dois.
+TROCAS=('{ st = 1; i++; continue }' '{ st = 0; i++; continue }')
+falsifica 1 "scanner deixa de reconhecer aspas simples" "$A" \
+  'bash -c "x | y; echo ${PIPESTATUS[0]}"' \
+  "echo 'use \${PIPESTATUS[0]} nunca'" "bash -c 'x | y; echo \${PIPESTATUS[0]}'"
 
 # FALSIFICAÇÃO 2 — a precisao do ramo ECO-DE-EXIT vem de TRES regras independentes, e cada
 # negativo depende de UMA delas: E5 (`echo $?` sozinho) vive de `pos > 0`; E6 (rc usado no fim)
 # vive da exigencia de echo/printf; E7 (echo no MEIO) vive de olhar so o ULTIMO segmento, ancorado.
 # Esta sabotagem ataca a terceira — logo os casos tem de ser os de E7, e nao E5/E6, que seguiriam
-# calados por motivo alheio e dariam VERDE a uma falsificacao que nao falsificou nada.
-BKP2="$(mktemp)"; cp "$HOOK" "$BKP2"
-trap 'cp "$BKP2" "$HOOK"; rm -f "$BKP2"' EXIT
-perl -0pi -e 's/ultimo = substr\(linhaf, pos \+ 1\)/ultimo = linhaf/' "$HOOK"
-perl -0pi -e 's/ultimo \~ \/\^\[\[:space:\]\]\*\(echo\|printf\)/ultimo ~ \/[[:space:]]*(echo|printf)/' "$HOOK"
-if cmp -s "$BKP2" "$HOOK"; then
-  echo "  FALHA a sabotagem 2 NAO alterou o hook — seria teatro"
-  falhas=$((falhas + 1))
-else
-  pegou2=0
-  for caso in 'cmd; echo "EXIT=$?"; exit 1' 'cmd; echo "EXIT=$?"; ls -la'; do
-    [ -n "$(executa "$(entrada "$caso")")" ] && pegou2=$((pegou2 + 1))
-  done
-  if [ "$pegou2" -eq 2 ]; then
-    echo "  ok   sabotagem 2 ficou VERMELHA nos 2 casos (a regra do ULTIMO comando e o que da precisao)"
-  else
-    echo "  FALHA sabotagem 2 passou despercebida em $((2 - pegou2)) caso(s) — E7 nao prova precisao"
-    falhas=$((falhas + 1))
-  fi
-fi
-cp "$BKP2" "$HOOK"; rm -f "$BKP2"; trap - EXIT
+# calados por motivo alheio e dariam VERDE a uma falsificacao que nao falsificou nada. As DUAS
+# trocas juntas desligam a regra: so a 1a, o `^` ainda exige o echo no inicio da linha inteira; so
+# a 2a, `ultimo` ainda e o `exit 1`. O positivo do controle e o gemeo de E7 sem o comando de depois.
+TROCAS=('ultimo = substr(linhaf, pos + 1)'     'ultimo = linhaf'
+        'ultimo ~ /^[[:space:]]*(echo|printf)' 'ultimo ~ /[[:space:]]*(echo|printf)')
+falsifica 2 "sem a regra do ULTIMO comando, o echo no MEIO vira eco-de-exit" "$E" \
+  'cmd; echo "EXIT=$?"' \
+  'cmd; echo "EXIT=$?"; exit 1' 'cmd; echo "EXIT=$?"; ls -la'
 
-# FALSIFICAÇÃO 3 — o ramo `herestring` e a UNICA defesa de H1/H2 (regras em
-# docs/historico/falsificacao-sem-linha-de-base.md). Diferente das duas acima, sabota uma COPIA: o
-# hook real e o guard VIVO desta worktree, e uma rodada interrompida o deixaria sabotado.
-#   (1) CONTROLE: a MESMA invocacao da sabotagem, com a sabotagem trocada por nada, nos 2 locales —
-#       H1/H2 calados E um positivo avisando (silencio de copia que nem rodou nao e verde).
-#       Vermelho ali ABORTA antes do perl: senao a sabotagem "passaria" de graca;
-#   (2) vermelho pelo MARCADOR, que awk quebrado nao produz — por isso H3 fica de fora: o vermelho
-#       dele e SILENCIO, e silencio awk quebrado tambem produz;
-#   (3) CONTROLE DE SAIDA: o hook real byte-identico ao de antes do bloco.
-# H1/H2 dependem SO desta regra: sem `$?` (ECO-DE-EXIT fora), sem `((`/`[[`/`let` (nome nu fora),
-# e a mencao em aspas simples so vaza se a aspa de abertura for comida.
-echo "-- falsificacao 3: sem o ramo herestring, o <<< volta a comer a aspa --"
-F3="$(mktemp -d "${TMPDIR:-/tmp}/pipestatus-f3.XXXXXX")"
-trap 'rm -rf "$F3"; rm -f "$LOGTESTE"' EXIT
-cp "$HOOK" "$F3/hook.sh"; cp "$HOOK" "$F3/real-antes.sh"
-F3_LOCALES=(C)
-if locale -a 2>/dev/null | command grep -qi '^pt_BR.UTF-8$'; then F3_LOCALES+=(pt_BR.UTF-8)
-else echo "  (pt_BR.UTF-8 indisponivel: falsificacao 3 roda so em C)"; fi
-F3_CASOS=("read -r a b <<< \"\$st\"; echo 'doc: \${PIPESTATUS[0]} e bash-ism'"
-          "cat <<< 'docs: \${PIPESTATUS[0]} e vazio no zsh'")
-f3_roda()  { printf '%s' "$(entrada "$2")" | LC_ALL="$1" PIPESTATUS_GUARD_LOG="$LOGTESTE" bash "$F3/hook.sh" 2>/dev/null; }
-f3_avisa() { f3_roda "$1" "$2" | jq -r '.hookSpecificOutput.additionalContext // ""' 2>/dev/null | command grep -q "$A"; }
-
-f3_ctrl=0
-for loc in "${F3_LOCALES[@]}"; do
-  f3_avisa "$loc" 'false | true; [ "${PIPESTATUS[0]}" -eq 0 ]' || f3_ctrl=$((f3_ctrl + 1))
-  for caso in "${F3_CASOS[@]}"; do [ -z "$(f3_roda "$loc" "$caso")" ] || f3_ctrl=$((f3_ctrl + 1)); done
-done
-if [ "$f3_ctrl" -ne 0 ]; then
-  echo "  FALHA controle SEM sabotagem ja esta VERMELHO em $f3_ctrl caso(s) — falsificacao 3 abortada antes de sabotar"
-  falhas=$((falhas + 1))
-else
-  perl -0pi -e 's/substr\(linha, i\+2, 1\) == "<"\) \{ emite\("<<<"\)/substr(linha, i+2, 1) == "NUNCA") { emite("<<<")/' "$F3/hook.sh"
-  if cmp -s "$HOOK" "$F3/hook.sh"; then
-    echo "  FALHA a sabotagem 3 NAO alterou a copia — a falsificacao seria teatro"
-    falhas=$((falhas + 1))
-  else
-    f3_total=0; f3_pegou=0
-    for loc in "${F3_LOCALES[@]}"; do for caso in "${F3_CASOS[@]}"; do
-      f3_total=$((f3_total + 1)); f3_avisa "$loc" "$caso" && f3_pegou=$((f3_pegou + 1))
-    done; done
-    if [ "$f3_pegou" -eq "$f3_total" ]; then
-      echo "  ok   controle VERDE e sabotagem 3 VERMELHA pelo marcador em $f3_pegou/$f3_total (locales: ${F3_LOCALES[*]})"
-    else
-      echo "  FALHA sabotagem 3 passou despercebida em $((f3_total - f3_pegou)) de $f3_total caso(s)"
-      falhas=$((falhas + 1))
-    fi
-  fi
-fi
-if ! cmp -s "$HOOK" "$F3/real-antes.sh"; then
-  echo "  FALHA o hook REAL mudou durante a falsificacao 3 — ela so pode tocar a copia"
-  falhas=$((falhas + 1))
-fi
-# Religa a limpeza do LOGTESTE: o `trap - EXIT` das falsificacoes 1 e 2 a derrubava, e cada rodada
-# da suite deixava um log orfao no TMPDIR.
-rm -rf "$F3"; trap 'rm -f "$LOGTESTE"' EXIT
+# FALSIFICAÇÃO 3 — o ramo `herestring` e a UNICA defesa de H1/H2: sem `$?` (ECO-DE-EXIT fora), sem
+# `((`/`[[`/`let` (nome nu fora), e a mencao em aspas simples so vaza se a aspa de abertura for
+# comida. H3 fica de fora: o vermelho dele e SILENCIO, e silencio awk quebrado tambem produz.
+TROCAS=('substr(linha, i+2, 1) == "<") { emite("<<<")' 'substr(linha, i+2, 1) == "NUNCA") { emite("<<<")')
+falsifica 3 "sem o ramo herestring, o <<< volta a comer a aspa" "$A" \
+  'false | true; [ "${PIPESTATUS[0]}" -eq 0 ]' \
+  "read -r a b <<< \"\$st\"; echo 'doc: \${PIPESTATUS[0]} e bash-ism'" "cat <<< 'docs: \${PIPESTATUS[0]} e vazio no zsh'"
 
 echo
 if [ "$falhas" -eq 0 ]; then echo "PIPESTATUS-GUARD: TODOS OS TESTES PASSARAM"; exit 0; fi

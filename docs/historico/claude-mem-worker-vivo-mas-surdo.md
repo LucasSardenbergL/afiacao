@@ -231,3 +231,105 @@ sabotagens, C e pt_BR.UTF-8) no `test:falsificacao`. No Linux, pela leitura do `
 tardia é ACEITA (o EIO de lá é só na leitura): a prova mede o que o kernel fez e, onde ele aceita,
 emula o EIO do macOS **dizendo isso** — sem o que o CI nunca veria a guarda regredir. Classe: §7 de
 [evidencia-positiva-shell.md](evidencia-positiva-shell.md).
+
+## 28/09 — 3ª recorrência: o gatilho é a HIBERNAÇÃO, não a auth
+
+**O que aconteceu:** worker 13.28.0 (pid 1551, bun **1.3.14** — o mesmo de 05/09) surdo: `curl` 28
+(timeout; em 05/09 era 55/56), duas conexões do health presas no backlog em `CLOSE_WAIT` com 88 B
+não lidos (o processo nunca chamou `accept()`), 100 % de CPU, `sample`: thread principal 52 % em
+`kevent64` + o laço do bun, demais threads paradas — a assinatura de 05/09. O bloco 6 do vigia avisou
+no SessionStart ("4 FALHAS DE HOOK"); `claude-mem:reanimar` deu `RECUPERADO`.
+
+**Quando o giro começou — medido pela CPU acumulada, não pela última linha do log.** O processo tinha
+136,9 min de CPU às 19:57. `pmset -g log`: 02:38:29 `Low Power Sleep … TCPKeepAlive=inactive …
+Charge:1%` → 07:09:59 `Wake from Hibernate`. Acordado desde então: 07:09:59→08:08:55 + 18:44:36→19:57
+= 131 min, mais 50 DarkWakes de segundos e o CPU normal das 6 h anteriores — **bate**. Se tivesse
+começado às 01:01 seriam +97 min (o Mac ficou acordado até 02:38) ≈ 228 min; às 18:44, ≈ 72 min.
+Mesmo gatilho e mesma assinatura (`kevent64` com timeout zero, só a thread principal, sem autocura) em
+[anthropics/claude-code#67664](https://github.com/anthropics/claude-code/issues/67664), outro processo
+bun, fechada como *not planned*; o mecanismo que ela propõe (fd de socket morto na hibernação deixa um
+handle/timer que zera o timeout do poll) é DELA — aqui não foi medido. 05/09 (08:22 da manhã) é
+compatível, mas não verificável: o `pmset` só guarda desde 21/09.
+
+**A hipótese que caiu.** A última linha do worker (01:01:18) era `Generator paused for auth; preserving
+buffered work {pendingCount=1}`, e a pausa anterior (0 pendentes) não tinha silenciado nada — parecia o
+gatilho. Refutada por observação: depois do restart houve duas pausas por auth com `pendingCount=1`
+(20:06:41 e 20:06:56) e o worker seguiu respondendo. **Última linha antes do silêncio é vizinhança,
+não causa** — o silêncio pode começar horas depois (aqui, o Mac dormiu). Meça o INÍCIO do giro (CPU
+acumulada × tempo acordado) antes de culpar a linha.
+
+**O achado secundário (de novo): memória parada desde 00:39 — token que o Desktop nunca renova.** O
+plugin relê `Claude Code-credentials` (conta = usuário) no keychain a cada spawn do SDK e recusa token
+vencido (`Refusing to inject expired CLAUDE_CODE_OAUTH_TOKEN`, grava `~/.claude-mem/oauth-stale.marker`).
+As sessões do app Desktop se autenticam pelo host (`CLAUDE_CODE_SDK_HAS_HOST_AUTH_REFRESH`,
+`ANTHROPIC_BASE_URL` no ambiente) e **nunca tocam nesse item** — a sessão ativa às 01:00 não o renovou,
+nem as 36 de hoje. Quem renova é o `claude` de **terminal**. Token de 8 h: renovado 27/09 16:39, venceu
+28/09 00:39. Armadilha que eu caí: o `mdat` do item mudou às 18:42 e o token continuou o de 00:39 — o
+JSON guarda mais que o token do Claude.ai. **Item modificado ≠ token renovado** (medi o contêiner, não o
+conteúdo). A prova é o `expiresAt` que o próprio worker loga ao recusar — sem ler segredo. Conserto é
+do founder: `claude` no terminal (renova pelo refresh token; se não der, `/login`).
+
+**Confirmar o kill sem TTY (agente):** o script lê `/dev/tty`; sem TTY ele cancela sem tocar em nada
+(fail-closed, correto). O `script(1)` do macOS perde a resposta (o `read` lê vazio — já previsto no
+`com_tty.py`). O que funciona, depois de ver a evidência: `printf 's\n' | python3
+scripts/lab-claude-mem-reanimar/com_tty.py 240 bash scripts/claude-mem-reanimar.sh`.
+
+**Upstream:** [thedotmack/claude-mem#4129](https://github.com/thedotmack/claude-mem/pull/4129)
+(reclaim do worker travado + hooks de prompt em fail-open) está em draft com 3 achados P1 em 28/09 —
+quando entrar, a receita vira automática. Até lá: **Mac que morreu de bateria acorda com o worker
+surdo** — o bloco 6 do vigia acusa e `bun run claude-mem:reanimar` resolve.
+
+**Decisão (28/09, founder): plugin DESLIGADO até o #4129 entrar** (`enabledPlugins` false no
+`~/.claude/settings.json`). O que se perde, medido no mesmo dia: 0 observações em 13 dos 14 dias
+anteriores (só 27/09, na janela do token renovado); contexto injetado pelo hook `context` do
+SessionStart = 0 bytes (repo principal e worktree com histórico — a memória é fragmentada por
+worktree, 87 `project` distintos); 5 de 933 transcripts de 30 dias usaram a busca MCP do plugin
+(todos 19–21/09) e nenhum usou skill `claude-mem:*`. O acervo (5.274 observações, 1.556 resumos,
+56 MB em `~/.claude-mem/claude-mem.db`) fica no disco. Sessões abertas antes da mudança mantêm os
+hooks até reiniciar e tentam subir o worker se ele cair (lazy-spawn, visto no log) — pare o worker
+(`worker-service.cjs stop`) só depois que elas reiniciarem.
+
+## 29/09 — o sensor sabe do desligamento (`enabledPlugins`)
+
+**O ruído:** desligar o plugin não desliga as sessões que já estavam abertas — elas mantêm os hooks
+e seguem gravando prompts no banco. O eixo "gravação" (≥ 30 prompts sem observação, espalhados por
+≥ 60 min, o último há ≤ 72 h) passou a acusar em todo SessionStart novo — medido no desta sessão:
+`a memoria NAO GRAVA ha 1d: 40 prompts desde a ultima observacao (2026-09-28)`, sugerindo o `/login`
+que a decisão de 28/09 tornou inútil. Duraria até ~3 dias (72 h depois do último prompt das sessões
+velhas); o eixo "contador" acusaria igual se os hooks delas falhassem.
+
+**Conserto — seção 0 do `scripts/claude-mem-saude.sh`:** `"claude-mem@<marketplace>": false` no
+objeto `enabledPlugins` = não mede (`--resumo` mudo, relatório `DESLIGADO (enabledPlugins)`, exit 0).
+
+- **Precedência por chave, como o Claude Code:** `.claude/settings.local.json` >
+  `.claude/settings.json` (os do projeto, relativos ao diretório corrente — o hook e o `bun run`
+  rodam na raiz) > `${CLAUDE_CONFIG_DIR:-~/.claude}/settings.json`. Olhar só o do usuário calaria o
+  sensor com o plugin RELIGADO num projeto — sensor mudo com memória viva, a direção perigosa. O
+  merge por chave foi conferido na própria sessão: `github`, `posthog`, `serena` e `zapier` do
+  marketplace oficial (true no usuário, false no projeto) ficam fora, e `superpowers`/`context7` (só
+  no usuário) seguem ativos.
+- **Só o literal `false` desliga.** `true`, chave ausente, arquivo ausente ou ilegível não declaram
+  nada → mede (ausente ≠ desligado). Ilegível = o Claude Code, com o mesmo uid, também não o lê.
+- **Só o objeto `enabledPlugins` e só a chave `claude-mem@` exata** — outro plugin em false,
+  `claude-mem-extra@…` ou uma chave futura que também mapeie plugin → bool não desligam.
+- **Texto, não parser** (`sed`/`tr`, nunca `jq` — o PATH do hook). Fora do alcance: managed-settings
+  (não existe nesta máquina) e o `--settings` da linha de comando (só o processo do Claude o vê).
+- **Custo medido:** a 1ª versão (`cat` + `tr` + `sed` por arquivo, ~18 processos) deixou o caminho
+  que SAI CEDO em 2,2× o tempo do `main` medindo de verdade (0,187 s × 0,084 s) — num hook que existe
+  por pressão de RAM, com teto de 2 s. Com leitura builtin (`$(<arq)`) e o pipeline só no arquivo que
+  cita `"claude-mem@`, ficou abaixo do `main` nas duas rodadas seguintes.
+
+**Prova:** a suíte ficou hermética nos settings (diretório corrente, `CLAUDE_CONFIG_DIR` e `HOME`
+temporários — o `~/.claude` real desliga o plugin e, lido, calaria a suíte inteira) e ganhou 15
+casos (Y1–Y14 e o Z, no hook), todos com fixture que ACUSA nos dois eixos: o silêncio só pode vir da
+guarda. RED antes do código: caíram exatamente os 7 casos de "mudo". No `--falsificar`, 19
+sabotagens novas, cada uma derrubando o caso certo, com controle verde na mesma invocação, em C e
+pt_BR.UTF-8. Uma delas mostrou camada invisível: o filtro por `case` (só roda o pipeline no arquivo
+que cita `"claude-mem@`) escondia do caso "outro plugin em false" a restrição de chave do regex —
+quem a prova é o caso do formato real (`superpowers: true` ao lado do `false`), não o que parecia
+feito para ela. No ambiente real: `--resumo` mudo com rc 0, e o hook de SessionStart num sandbox com
+settings e banco reais sem nenhuma menção ao claude-mem.
+
+**Ao religar (`true` + reiniciar as sessões):** o sensor volta a medir sozinho. Aviso que apareça
+nas primeiras horas é MEDIDO — prompts das sessões antigas sem observação, ainda dentro das 72 h — e
+some na 1ª observação nova.

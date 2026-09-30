@@ -35,7 +35,9 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+# -X: sem ~/.psqlrc — ele mudaria o formato da linha ERROR que o juiz do F4 lê; e nada abaixo de ERROR
+# chega ao cliente (NOTICE/WARNING são o canal por onde se forja uma linha "ERROR:")
+P()  { PGOPTIONS='-c client_min_messages=error' "$PGBIN/psql" -X -v VERBOSITY=default -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }   # tuples-only, unaligned (pra capturar 1 valor)
 
 # ── base mínima do Supabase: roles, schema auth, auth.uid()/role() via GUC (impersonação de RLS) ──
@@ -54,6 +56,13 @@ eq()  { if [ "$2" = "$3" ]; then ok "$1 (=$2)"; else bad "$1 — esperado [$3], 
 # exige que um comando SQL FALHE (caminho negativo grosso). Pra checar a SQLSTATE exata, use o
 # padrão DO/EXCEPTION de references/assert-patterns.md (preferível — Lei #2).
 must_fail() { if P -q -c "$1" >/dev/null 2>&1; then bad "$2 — devia ter falhado e PASSOU"; else ok "$2 (rejeitado)"; fi; }
+# As linhas que INTERROMPEM, num stderr capturado: ERROR/FATAL/PANIC com a severidade ANCORADA no
+# início (um NOTICE que cite "ERROR:" não conta) e todo erro do cliente psql (conexão que cai), sem o
+# prefixo "psql:<arquivo>:<linha>: ", várias unidas por " ;; ". O juiz compara o resultado INTEIRO:
+# uma linha só, e a do ramo. As conexões nem recebem NOTICE (client_min_messages=error, em P) — por
+# ali se forjaria uma linha "ERROR:" inteira, e um FATAL depois dela esconderia que o erro real não
+# veio (Codex, 2026-09-27).
+linhas_error() { grep -E '^(psql:[^ ]*: )?(ERROR|FATAL|PANIC):  |^psql: error: |server closed the connection|connection to server was lost' "$1" | sed -E 's/^psql:[^ ]*: //' | awk 'NR > 1 { printf " ;; " } { printf "%s", $0 }' || true; }
 
 echo "═══ setup pronto (PG17 :$PORT) ═══"
 
@@ -203,7 +212,20 @@ restaurar
 echo "F4 — constraint presente porém NOT VALID: a POSTCONDIÇÃO da migration tem de RECUSAR"
 P -q -c "$DROP" >/dev/null
 P -q -c "ALTER TABLE public.sales_orders ADD CONSTRAINT sales_orders_hash_omie_canonico CHECK (hash_payload IS NULL OR hash_payload NOT LIKE 'omie\_%' OR (omie_pedido_id IS NOT NULL AND hash_payload = 'omie_' || account || '_' || omie_pedido_id::text)) NOT VALID" >/dev/null
-if P -q -f "$MIG" >/dev/null 2>&1; then bad "F4 SEM DENTE — a migration aceitou uma constraint NOT VALID como aplicada"; else ok "F4 postcondição recusa constraint NAO validada ('existe' != 'vale')"; fi
+# A recusa que conta é a DA POSTCONDIÇÃO, lida na linha ERROR do apply. Aborto por outro erro —
+# ou a marca num NOTICE antes dele — é ERRO ALHEIO, não dente: até 2026-09-27 qualquer exit≠0
+# contava (docs/historico/falsificacao-exit-nao-e-dente.md).
+F4_ERR="$(dirname "$DATA")/f4.err"
+if P -q -f "$MIG" >/dev/null 2>"$F4_ERR"; then
+  bad "F4 SEM DENTE — a migration aceitou uma constraint NOT VALID como aplicada"
+else
+  F4_ERRO="$(linhas_error "$F4_ERR")"
+  if [ "$F4_ERRO" = "ERROR:  postcondicao: sales_orders_hash_omie_canonico existe mas NAO esta validada" ]; then
+    ok "F4 postcondição recusa constraint NAO validada ('existe' != 'vale')"
+  else
+    bad "F4 ERRO ALHEIO à postcondição — a linha ERROR tinha de ser a do ramo NOT VALID, veio [${F4_ERRO:-<nenhuma linha ERROR>}]"
+  fi
+fi
 restaurar
 
 echo

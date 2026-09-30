@@ -17,6 +17,9 @@ const MIGS = readdirSync(DIR)
 
 const ORIGEM = '20260525210000_viewas_rpcs_for.sql';
 const CORRECAO = '20260927133606_positivacao_mes_sp_sessao_utc.sql';
+// A definição VIGENTE: a 20260927195430 (universo canônico, só order_date_kpi) recriou a função
+// depois da correção de fuso. Mudou a função, este pin reprova — é o lembrete de reolhar a classe.
+const VIGENTE = '20260927195430_positivacao_universo_canonico.sql';
 const ALVO = '_carteira_positivacao_for_owner(uuid)';
 const corpoEm = (migration: string): string => {
   const m = MIGS.find((x) => x.nome === migration);
@@ -107,9 +110,12 @@ describe('o corpo VIVO do repo (a última definição de cada função)', () => 
     expect(v.identidadesComSp).toContain(ALVO);
   });
 
-  it('a positivação vale pelo corpo da correção, e ele está limpo', () => {
+  it('a positivação vale pelo corpo VIGENTE, e ele está limpo', () => {
     const versoes = v.modelo.identidades.get(ALVO)?.versoes ?? [];
-    expect(versoes.at(-1)?.migration).toBe(CORRECAO);
+    expect(versoes.at(-1)?.migration).toBe(VIGENTE);
+    // controle positivo: o vigente ainda converte a ligação para SP — sem ele, "limpo" e "não leu
+    // o corpo" dariam o mesmo `undefined`
+    expect(versoes.at(-1)?.corpo).toContain("(fc.started_at AT TIME ZONE 'America/Sao_Paulo')::date >= mes_inicio");
     expect(v.achados.get(ALVO)).toBeUndefined();
   });
 

@@ -49,6 +49,28 @@ export default tseslint.config(
           message:
             "Não interpole input em .or() do PostgREST com template literal — use os helpers de @/lib/postgrest (ilikeOr/ilike/eqInt/eqText/orFilter), que sanitizam. Ver CLAUDE.md §9b.",
         },
+        // Pattern de LIKE/ILIKE montado na chamada (classe do #1062; B2 da varredura semgrep de
+        // 2026-09-27). O argumento de pattern de .ilike/.like (e irmãos) é interpretado: `%`, `_`
+        // e `*` (alias de `%` no PostgREST) do input viram curinga, e `**`/`%%` casa tudo. Template
+        // com interpolação ou concatenação ali = input chegando cru. A família inteira entra porque
+        // a evasão óbvia do erro seria trocar `.ilike(c, p)` por `.filter(c, 'ilike', p)`. Limite:
+        // variável montada ANTES da chamada não aparece no AST (ver docs/agent/database.md §5).
+        // Prova do gate: scripts/eslint-postgrest-pattern-like.test.ts.
+        ...[
+          // .ilike(col, `%${t}%`) · .like(col, pre + '%')
+          "CallExpression[callee.property.name=/^i?like$/] > TemplateLiteral:nth-child(2)[expressions.length>0]",
+          "CallExpression[callee.property.name=/^i?like$/] > BinaryExpression:nth-child(2)[operator='+']",
+          // .ilikeAnyOf(col, [`%${t}%`]) · .likeAllOf(…)
+          "CallExpression[callee.property.name=/^i?like(Any|All)Of$/] > ArrayExpression:nth-child(2) > TemplateLiteral[expressions.length>0]",
+          "CallExpression[callee.property.name=/^i?like(Any|All)Of$/] > ArrayExpression:nth-child(2) > BinaryExpression[operator='+']",
+          // .filter(col, 'ilike', `%${t}%`) · .not(col, 'like', pre + '%')
+          "CallExpression[callee.property.name=/^(filter|not)$/][arguments.1.value=/like/] > TemplateLiteral:nth-child(3)[expressions.length>0]",
+          "CallExpression[callee.property.name=/^(filter|not)$/][arguments.1.value=/like/] > BinaryExpression:nth-child(3)[operator='+']",
+        ].map((selector) => ({
+          selector,
+          message:
+            "Pattern de LIKE/ILIKE montado com input: `%`, `_` e `*` do termo viram curinga (`**` casa tudo). Use ilikeContainsPattern (contém) ou likePrefixPattern (prefixo) de @/lib/postgrest e trate o null do termo degenerado. Ver docs/agent/database.md §5 (classe pattern-like-cru).",
+        })),
         {
           // PR0.0-bis: omie_payload/omie_response de sales_orders foram fechados à leitura de
           // `authenticated` (REVOKE SELECT column-level). Um `.select('*')` daria 42501 (o *

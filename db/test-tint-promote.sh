@@ -952,10 +952,14 @@ sed 's/WHEN COALESCE(it.faltante, false) THEN NULL/WHEN false THEN NULL/' "$MIG"
 grep -q 'WHEN false THEN NULL' /tmp/sab-tint-nullhonest.sql || { echo "✗ F1: sed não casou o alvo NULL-honesto"; exit 1; }
 P -v ON_ERROR_STOP=1 -q -f /tmp/sab-tint-nullhonest.sql >/dev/null
 P -v ON_ERROR_STOP=1 -q -c "SELECT tint_promote_sync_run('da000000-0000-0000-0000-000000000002');" >/dev/null
+# O vermelho é a divergência EXATA que cada sabotagem declara (F1 720, F2 1928 — o fixture é fixo, e
+# 2 rodadas deram o mesmo número): "qualquer ≠ 0" aceitava divergência vinda de outra causa.
+# O vermelho tem de ser do SEU assert: docs/historico/falsificacao-exit-nao-e-dente.md.
 DSAB=$(P -tA -c "SELECT _dif_count();")
 case "$DSAB" in
+  720)  ok "F1 — NULL-honesto furado diverge do loop em $DSAB linhas (C13.4 tem dente)" ;;
   0|"") echo "✗ F1 FALHOU: sabotei o NULL-honesto e a identidade NÃO acusou → C13.4 é fraco"; exit 1 ;;
-  *)    ok "F1 — NULL-honesto furado diverge do loop em $DSAB linhas (C13.4 tem dente)" ;;
+  *)    echo "✗ F1 FALHOU: a identidade divergiu em $DSAB linhas, NÃO nas 720 que a sabotagem declara"; exit 1 ;;
 esac
 P -v ON_ERROR_STOP=1 -q -f "$MIG" >/dev/null
 P -v ON_ERROR_STOP=1 -q -c "SELECT tint_promote_sync_run('da000000-0000-0000-0000-000000000002');" >/dev/null
@@ -967,8 +971,9 @@ P -v ON_ERROR_STOP=1 -q -f /tmp/sab-tint-fator.sql >/dev/null
 P -v ON_ERROR_STOP=1 -q -c "SELECT tint_promote_sync_run('da000000-0000-0000-0000-000000000002');" >/dev/null
 DSAB2=$(P -tA -c "SELECT _dif_count();")
 case "$DSAB2" in
+  1928) ok "F2 — fator=1 diverge do loop em $DSAB2 linhas (regra de 3 coberta)" ;;
   0|"") echo "✗ F2 FALHOU: troquei o fator e a identidade NÃO acusou → C13.4 é fraco"; exit 1 ;;
-  *)    ok "F2 — fator=1 diverge do loop em $DSAB2 linhas (regra de 3 coberta)" ;;
+  *)    echo "✗ F2 FALHOU: a identidade divergiu em $DSAB2 linhas, NÃO nas 1928 que a sabotagem declara"; exit 1 ;;
 esac
 P -v ON_ERROR_STOP=1 -q -f "$MIG" >/dev/null
 P -v ON_ERROR_STOP=1 -q -c "SELECT tint_promote_sync_run('da000000-0000-0000-0000-000000000002');" >/dev/null
@@ -2442,9 +2447,14 @@ grep -q "'viola',      false," "$SAB2" || { echo "✗ Flog-2: sed não neutraliz
 P -v ON_ERROR_STOP=1 -q -f "$SAB2" >/dev/null
 RESET38
 P -v ON_ERROR_STOP=1 -q -c "SELECT tint_promote_sync_run('e1d38000-0000-0000-0000-000000000001');" >/dev/null
-NM=$(P -tA -c "SELECT count(*) FROM tint_sync_errors e, jsonb_array_elements(e.error_details->'itens') it WHERE e.sync_run_id='e1d38000-0000-0000-0000-000000000001' AND e.entity_id='COR38' AND (it->>'viola')::boolean IS TRUE;")
-[ "$NM" = "0" ] || { echo "✗ Flog-2 FALHOU: marcação sabotada ainda apontou $NM culpado(s) — C38.2 não tem dente"; exit 1; }
-ok "marcação sabotada → 0 itens apontados: C38.2 tem dente"
+# "0 apontados" sozinho aceitava a chamada que nem gerou o log (o RESET38 o apagou antes): a medição
+# leva o total de itens do log. Declarado: 0 marcados DOS 3 itens que o C38.1 exige (intacto: 1|3).
+NM=$(P -tA -c "SELECT count(*) FILTER (WHERE (it->>'viola')::boolean IS TRUE) || '|' || count(*) FROM tint_sync_errors e, jsonb_array_elements(e.error_details->'itens') it WHERE e.sync_run_id='e1d38000-0000-0000-0000-000000000001' AND e.entity_id='COR38';")
+case "$NM" in
+  "0|3") ok "marcação sabotada → 0 dos 3 itens apontados: C38.2 tem dente" ;;
+  "1|3") echo "✗ Flog-2 FALHOU: marcação sabotada ainda apontou o culpado — C38.2 não tem dente"; exit 1 ;;
+  *) echo "✗ Flog-2 FALHOU: NÃO é o que a sabotagem declara (0 marcados dos 3 itens do log): veio [$NM]"; exit 1 ;;
+esac
 rm -f "$SAB2"
 
 echo "── falsificação Flog-3 (o C38.6 tem dente: mensagem volta a acusar o ramo (a)) ──"
@@ -2491,8 +2501,12 @@ grep -q '^      AND fl.expected_item_count IS NOT NULL$' "$SAB5" && { echo "✗ 
 P -v ON_ERROR_STOP=1 -q -f "$SAB5" >/dev/null
 P -v ON_ERROR_STOP=1 -q -c "SELECT tint_promote_sync_run('e1d41000-0000-0000-0000-0000000000c0');" >/dev/null
 R41=$(P -tA -c "SELECT count(*) || '/' || COALESCE(max(fi.qtd_ml)::text,'-') FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='oben' AND f.cor_id='COR41';")
-[ "$R41" != "1/9.000" ] || { echo "✗ Flog-5 FALHOU: sem o ramo (c) a receita de COR41 continuou {1 item, 9} — o C41 não tem dente"; exit 1; }
-ok "ramo (c) sabotado → a parcial mascarada promoveu (receita virou $R41, era 1/9.000): C41 tem dente"
+# declarado: a receita da parcial mascarada — "≠ 1/9.000" aceitava também a receita APAGADA (0/-)
+case "$R41" in
+  "1/9.000") echo "✗ Flog-5 FALHOU: sem o ramo (c) a receita de COR41 continuou {1 item, 9} — o C41 não tem dente"; exit 1 ;;
+  "1/5.000000") ok "ramo (c) sabotado → a parcial mascarada promoveu (receita virou $R41, era 1/9.000): C41 tem dente" ;;
+  *) echo "✗ Flog-5 FALHOU: NÃO é o que a sabotagem declara (1/5.000000: a parcial mascarada promovida, só o item válido de 5 ml): veio [$R41]"; exit 1 ;;
+esac
 rm -f "$SAB5"
 
 # RESTAURA a v6 real e prova que o diagnóstico honesto voltou (o órfão reaparece marcado).

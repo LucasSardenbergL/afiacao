@@ -41,11 +41,21 @@
  *   3  ORDEM declarada entre edges da leva (`deploy-ordem.json`, #2469). Este emissor não prova a
  *      predecessora nem parte a leva em ondas, então RECUSA com stdout vazio — o caminho com ordem é
  *      o `pendencias:pacote`. Uma colagem única aqui seria exatamente o pacote `2a52229c0e39`.
+ *   5  RECUSADO — o mapa de fingerprints da ref não descreve a fonte da ref (commit do bot que editou
+ *      o corpo sem regravar o mapa, #2611). A sonda serviria o par do mapa com outro corpo rodando;
+ *      ver `lib/mapa-coerente-na-ref.ts`. Stdout vazio.
  */
 
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 
+import {
+  conferirMapaNaRef,
+  type ConferenciaMapa,
+  recusa,
+  relatarForaDoRegime,
+  relatarRecusa,
+} from './lib/mapa-coerente-na-ref';
 import { caminhoDoManifesto, lerManifesto, type Manifesto } from './lib/ordem-entre-edges';
 import {
   conferirCobertura,
@@ -245,6 +255,26 @@ export function lerManifestosDaRef(
   return manifestos;
 }
 
+/**
+ * O mapa de fingerprints do COMMIT `sha` bate com a fonte desse commit, para estas edges? (#2611)
+ *
+ * Mesma árvore e mesmo inventário do resto do emissor — o `sha` resolvido, nunca o nome da ref nem
+ * o disco. Mecânica que não responde LANÇA; quem chama converte em exit 2.
+ */
+export function conferirMapaDaRef(
+  git: ExecutorGitBytes,
+  sha: string,
+  edges: readonly string[],
+  raiz: string,
+): ConferenciaMapa {
+  return conferirMapaNaRef({
+    edges,
+    arvore: arvoreDaRef(sha, git),
+    inventario: inventarioDaRef(git, sha, edges),
+    raiz,
+  });
+}
+
 /** Lê o `--json` do `pendencias:deploy` e devolve as edges que exigem deploy. */
 export function lerVeredito(bruto: string): string[] {
   let obj: unknown;
@@ -296,6 +326,7 @@ export function main(argv: string[], raiz = process.cwd(), git = gitBytes(raiz))
   let proc: Procedencia;
   let leva: EdgeParaDeploy[];
   let comOrdem: string[];
+  let mapa: ConferenciaMapa;
   try {
     proc = { ref: REF_DEPLOYADA, sha: sincronizarRef(git, semRede) };
     // A árvore sai do SHA resolvido, não do NOME da ref (o contrato do pacote, #2428): o manifesto de
@@ -303,10 +334,18 @@ export function main(argv: string[], raiz = process.cwd(), git = gitBytes(raiz))
     const arvore = arvoreDaRef(proc.sha, git);
     leva = nomes.map((n) => fatiaDeDeploy(n, raiz, arvore));
     comOrdem = [...lerManifestosDaRef(git, proc.sha, nomes).keys()].sort();
+    mapa = conferirMapaDaRef(git, proc.sha, nomes, raiz);
   } catch (e) {
     process.stderr.write(`⛔ mecânica: ${(e as Error).message}\n`);
     return 2;
   }
+
+  if (recusa(mapa)) {
+    process.stderr.write(`${relatarRecusa(mapa, proc.sha)}\n`);
+    return 5;
+  }
+  const foraDoRegime = relatarForaDoRegime(mapa);
+  if (foraDoRegime !== null) process.stderr.write(`${foraDoRegime}\n`);
 
   if (comOrdem.length > 0) {
     process.stderr.write(

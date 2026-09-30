@@ -50,8 +50,23 @@ espera() {
     printf '  [%s] OK    %-40s exit=%s %s\n' "$LOC" "$rot" "$rc" "${cod:-—}"
   else
     printf '  [%s] FALHA %-40s exit=%s (esperado %s) codigo=%s\n' "$LOC" "$rot" "$rc" "$exp" "$ok_cod"
+    # A linha que EXPLICA: o `heavy` que desiste da fila sai 1 sem rodar o vitest (medido
+    # 2026-09-28 — o juiz antigo, "saiu 1", contava isso como o detector caindo).
+    local dica
+    dica="$(printf '%s\n' "$out" | command grep -m1 -F 'heavy: timeout' || printf '%s\n' "$out" | sed '/^[[:space:]]*$/d' | tail -1)"
+    printf '        saida: %s\n' "$(printf '%s' "$dica" | cut -c1-160)"
     falhas=$((falhas+1))
   fi
+}
+
+# nao_aplicou <rótulo> — a sabotagem NÃO entrou: é falha da PROVA, com nome próprio, e o `espera`
+# não roda. Rodá-lo sobre o código íntegro dava "FALHA … exit=0 (esperado 1)", que se lê como furo
+# no GATE — foi assim que o F4 ficou 22 dias morto sem ninguém ver (a Parte F, #2334, duplicou o
+# trecho-âncora) e o F1 virou vácuo com a 20260927172443
+# (docs/historico/provas-db-mortas-fora-do-nucleo.md).
+nao_aplicou() {
+  printf '  [%s] FALHA %-40s a SABOTAGEM NAO APLICOU (a premissa da prova mudou; ver a mensagem acima)\n' "$LOC" "$1"
+  falhas=$((falhas+1))
 }
 
 echo "== falsificação da Parte E (EXECUTE de função) — locale $LOC =="
@@ -62,16 +77,34 @@ espera "C0 canario authz:check" 0 "" bun run authz:check
 # F1 — o REVOKE some da migration-âncora que faz DROP+CREATE. É o vetor EXATO que a Parte E
 #      existe para pegar, na forma que ele de fato tem neste repo (recriação DENTRO da âncora),
 #      e o teste que separa "o gate existe" de "o gate segura o caso real".
-python3 - <<'PY'
-import re
-p='supabase/migrations/20260704120000_preco_por_tier.sql'; s=open(p).read()
-novo=re.sub(r'REVOKE\s+(?:EXECUTE|ALL)[^;]*get_ultimos_precos_cliente[^;]*;', '-- revoke removido (sabotagem)', s)
-assert novo != s, 'sabotagem F1 nao casou nada — o harness ficaria verde por vacuidade'
-open(p,'w').write(novo)
+#      Some também de cada migration POSTERIOR que re-fecha a função: desde a 20260927172443 (hoje
+#      SP: CREATE OR REPLACE + REVOKE FROM PUBLIC, anon), tirar só o da âncora deixa o estado FINAL
+#      fechado — o gate fica verde com razão, e a sabotagem vira vácuo. Os re-fechos são DECLARADOS;
+#      um novo reprova com nome próprio ("PREMISSA DO F1 MUDOU") em vez de passar por furo no gate.
+if python3 - <<'PY'
+import glob, os, re, sys
+fn = 'get_ultimos_precos_cliente'
+ancora = '20260704120000_preco_por_tier.sql'
+refechos = ['20260927172443_hoje_sp_sessao_utc_precos_piso.sql']
+pat = re.compile(r'REVOKE\s+(?:EXECUTE|ALL)[^;]*' + fn + r'[^;]*;')
+depois = sorted(os.path.basename(m) for m in glob.glob('supabase/migrations/*.sql')
+                if os.path.basename(m) > ancora and pat.search(open(m).read()))
+if depois != refechos:
+    sys.exit('PREMISSA DO F1 MUDOU: re-fechos de %s depois da ancora = %s; declarados = %s' % (fn, depois, refechos))
+for a in [ancora] + refechos:
+    p = 'supabase/migrations/' + a
+    novo, n = pat.subn('-- revoke removido (sabotagem)', open(p).read())
+    if n != 1:
+        sys.exit('sabotagem F1 casou %d REVOKE(s) em %s (esperado 1)' % (n, a))
+    open(p, 'w').write(novo)
 PY
-espera "F1 REVOKE removido da ancora"      1 "FUNCAO_RECRIADA_SEM_FECHO" bun run authz:check
-espera "F1 nomeia o ARQUIVO certo"         1 "20260704120000_preco_por_tier.sql" bun run authz:check
-espera "F1 nomeia a FUNCAO certa"          1 "public.get_ultimos_precos_cliente" bun run authz:check
+then
+  espera "F1 REVOKE removido da ancora"      1 "FUNCAO_RECRIADA_SEM_FECHO" bun run authz:check
+  espera "F1 nomeia o ARQUIVO certo"         1 "20260704120000_preco_por_tier.sql" bun run authz:check
+  espera "F1 nomeia a FUNCAO certa"          1 "public.get_ultimos_precos_cliente" bun run authz:check
+else
+  nao_aplicou "F1"
+fi
 restaurar
 
 # F2 — migration NOVA que reabre uma função fechada por privilégio para `anon`.
@@ -123,25 +156,45 @@ restaurar
 
 # F4 — detector desligado: a allowlist vira decoração e os testes anti-inércia têm de cair.
 #      Sem este, um detector quebrado deixaria TUDO verde e o silêncio pareceria cobertura.
-python3 - <<'PY'
-p='scripts/lib/authz-funcoes.ts'; s=open(p).read()
-alvo="  const out: FuncaoFinding[] = [];\n  const ordered = [...migrations]"
-assert s.count(alvo)==1, 'sabotagem F4 nao encontrou o ponto de entrada'
-open(p,'w').write(s.replace(alvo, "  const out: FuncaoFinding[] = [];\n  if (migrations) return out; // SABOTAGEM\n  const ordered = [...migrations]", 1))
+#      A âncora é a ASSINATURA de `auditGrantsFuncoes`: o par `const out`/`const ordered` sozinho
+#      passou a ocorrer 2× com a Parte F (`auditRevokeSemPublic`, #2334), e o `count == 1` reprovava
+#      dizendo "não encontrou".
+if python3 - <<'PY'
+import sys
+p = 'scripts/lib/authz-funcoes.ts'; s = open(p).read()
+alvo = "  existingFiles?: Set<string>,\n): FuncaoFinding[] {\n  const out: FuncaoFinding[] = [];\n"
+n = s.count(alvo)
+if n != 1:
+    sys.exit('sabotagem F4: o ponto de entrada casou %d vez(es) (esperado 1)' % n)
+open(p, 'w').write(s.replace(alvo, alvo + "  if (migrations) return out; // SABOTAGEM\n", 1))
 PY
-espera "F4 detector desligado -> testes"   1 "" heavy bunx vitest run scripts/authz-funcoes.test.ts
+then
+  # A marca é o caminho `arquivo > describe` que o vitest só imprime na linha FAIL (as que passam
+  # saem como `✓ describe > teste`, sem o arquivo): "vitest saiu 1" aceitaria qualquer quebra —
+  # import que falha, outro describe — e não provaria que o DETECTOR desligado é o que caiu.
+  espera "F4 detector desligado -> testes"   1 "authz-funcoes.test.ts > auditGrantsFuncoes" heavy bunx vitest run scripts/authz-funcoes.test.ts
+else
+  nao_aplicou "F4"
+fi
 restaurar
 
 # F5 — a allowlist afrouxada em silêncio: `permitido.anon = true` numa entrada. O contrato diz que
 #      NENHUMA função classificada é alcançável por anon (medido em prod), então mudar isso é
 #      decisão de política e tem de passar por um teste vermelho, não por um diff discreto.
-python3 - <<'PY'
-p='scripts/authz-funcoes-fechadas.ts'; s=open(p).read()
-alvo="const PORTA_FECHADA = { anon: false, authenticated: false } as const;"
-assert s.count(alvo)==1
-open(p,'w').write(s.replace(alvo, "const PORTA_FECHADA = { anon: true, authenticated: false } as const;", 1))
+if python3 - <<'PY'
+import sys
+p = 'scripts/authz-funcoes-fechadas.ts'; s = open(p).read()
+alvo = "const PORTA_FECHADA = { anon: false, authenticated: false } as const;"
+n = s.count(alvo)
+if n != 1:
+    sys.exit('sabotagem F5: o ponto de entrada casou %d vez(es) (esperado 1)' % n)
+open(p, 'w').write(s.replace(alvo, "const PORTA_FECHADA = { anon: true, authenticated: false } as const;", 1))
 PY
-espera "F5 allowlist permite anon -> testes" 1 "" heavy bunx vitest run scripts/authz-funcoes.test.ts
+then
+  espera "F5 allowlist permite anon -> testes" 1 "authz-funcoes.test.ts > AUTHZ_FUNCOES_FECHADAS" heavy bunx vitest run scripts/authz-funcoes.test.ts
+else
+  nao_aplicou "F5"
+fi
 restaurar
 
 # F6 — só com psql-ro: o audit de PROD tem de acusar quando o contrato proíbe o que prod TEM.
