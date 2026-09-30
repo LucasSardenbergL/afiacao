@@ -174,6 +174,12 @@ direto; o transporte com md5 é para quando um CLI consome a resposta (Passo 3).
 
 ### Passo 2b — A sentinela do `claude_ro` (rápido, e é o único vigia que ele tem)
 
+⚠️ **Sincronize ANTES do 2b e do 2c.** Os dois rodam o código DESTA worktree, e o 2c ainda lê a
+baseline do disco (`db/deriva-corpo-baseline.json`). No /fecho a worktree está quase sempre atrás
+da main. Medido em 2026-09-30: com 42 commits de atraso, o 2c acusou um `OVERLOAD_FORA_DO_REPO` que
+a main já aceitava (#2667); sincronizada, deu `✅ 316 identidade(s) batem`. Antes, capture o que
+depende da branch (os `git diff … origin/main...HEAD` dos Passos 2 e 3); depois rode o sync do Passo 3.
+
 ```bash
 bun run authz:claude-ro:prod; echo "exit=$?"
 ```
