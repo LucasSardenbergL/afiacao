@@ -19,6 +19,7 @@ PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
 PORT="${PGPORT_TEST:-5479}"
 SLUG="motivo-gate"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
+RODADA="$(dirname "$DATA")"   # dir ÚNICO desta rodada (o trap apaga): temporário mora aqui, nunca em /tmp/<nome-fixo>
 export LC_ALL=C LANG=C
 
 [ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER} pgvector"; exit 1; }
@@ -216,7 +217,7 @@ eq "E3 o master (legítimo) AINDA calibra — a capacidade não foi destruída p
 # ═══════════════════════════════════════════════════════════════════════════════
 echo ""
 echo "── F. FALSIFICAÇÃO — os asserts têm dente? ──"
-SAB="/tmp/sab-${SLUG}.sql"
+SAB="$RODADA/sab-${SLUG}.sql"
 
 # K1 — remove o gate do motivo (volta ao corpo do #1543). B1/B3 têm de ficar VERMELHOS.
 # O `.*?` com /s atravessa as 5 linhas do CASE interno; o wrapper some e o CASE interno vira a
