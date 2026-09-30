@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 568
+-- Total de custom migrations: 569
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -609,7 +609,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260929000234', 'padrao_like_contem_escapa_curinga', '20260929000234_padrao_like_contem_escapa_curinga.sql'),
   ('20260929001651', 'hoje_sp_sessao_utc_sete_funcoes', '20260929001651_hoje_sp_sessao_utc_sete_funcoes.sql'),
   ('20260929002059', 'des_desconto_total_maximo_por_faixa', '20260929002059_des_desconto_total_maximo_por_faixa.sql'),
-  ('20260929003006', 'reposicao_v_sku_fora_do_motor', '20260929003006_reposicao_v_sku_fora_do_motor.sql')
+  ('20260929003006', 'reposicao_v_sku_fora_do_motor', '20260929003006_reposicao_v_sku_fora_do_motor.sql'),
+  ('20260930230623', 'hoje_sp_views_defaults_classe_ii', '20260930230623_hoje_sp_views_defaults_classe_ii.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2459,7 +2460,25 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('hoje_sp_sessao_utc_sete_funcoes', 'function', 'public', 'trg_campanha_gera_alerta', ''),
   ('hoje_sp_sessao_utc_sete_funcoes', 'function', 'public', 'vendas_sync_semear_janela', ''),
   ('des_desconto_total_maximo_por_faixa', 'view', 'public', 'v_des_desconto_por_checkin', ''),
-  ('reposicao_v_sku_fora_do_motor', 'view', 'public', 'v_reposicao_sku_fora_do_motor', '')
+  ('reposicao_v_sku_fora_do_motor', 'view', 'public', 'v_reposicao_sku_fora_do_motor', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'fin_aging_pagar', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'fin_aging_receber', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'fin_fluxo_caixa_diario', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_caca_candidatos', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_caca_compradores', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_desconto_flat_condicional_ativo', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_fornecedor_lt_logistica_total', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_grupo_comercial', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_grupo_contas_receber', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_grupo_contas_receber_por_doc', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_sku_aumento_vigente', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_sku_candidatos_primeira_compra', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_sku_demanda_estatisticas', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_sku_demanda_rajada', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_sku_leadtime_estatisticas', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_sku_parametros_sugeridos', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_sku_sigma_demanda', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_sugestao_negociacao_ativa', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4357,7 +4376,25 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('hoje_sp_sessao_utc_sete_funcoes', 'function', 'public', 'trg_campanha_gera_alerta', ''),
   ('hoje_sp_sessao_utc_sete_funcoes', 'function', 'public', 'vendas_sync_semear_janela', ''),
   ('des_desconto_total_maximo_por_faixa', 'view', 'public', 'v_des_desconto_por_checkin', ''),
-  ('reposicao_v_sku_fora_do_motor', 'view', 'public', 'v_reposicao_sku_fora_do_motor', '')
+  ('reposicao_v_sku_fora_do_motor', 'view', 'public', 'v_reposicao_sku_fora_do_motor', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'fin_aging_pagar', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'fin_aging_receber', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'fin_fluxo_caixa_diario', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_caca_candidatos', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_caca_compradores', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_desconto_flat_condicional_ativo', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_fornecedor_lt_logistica_total', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_grupo_comercial', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_grupo_contas_receber', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_grupo_contas_receber_por_doc', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_sku_aumento_vigente', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_sku_candidatos_primeira_compra', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_sku_demanda_estatisticas', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_sku_demanda_rajada', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_sku_leadtime_estatisticas', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_sku_parametros_sugeridos', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_sku_sigma_demanda', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_sugestao_negociacao_ativa', '')
 )
 SELECT
   e.migration,
