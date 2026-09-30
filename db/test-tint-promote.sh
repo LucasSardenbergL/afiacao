@@ -2249,11 +2249,11 @@ BEGIN
   IF n_validos IS DISTINCT FROM 2 THEN RAISE EXCEPTION 'C38.4 FALHOU: os 2 itens válidos deveriam vir viola=false/motivos=null (achei %)', n_validos; END IF;
   -- (4) a MENSAGEM para de acusar o inocente. Sentinelas ASCII puras e exclusivas de cada ramo
   --     (sem acento: nada de casar por dobra de encoding), uma positiva e uma negativa.
-  IF msg NOT LIKE '%sem corante identificado%' THEN
+  IF msg IS NULL OR msg NOT LIKE '%sem corante identificado%' THEN
     RAISE EXCEPTION 'C38.5 FALHOU: a mensagem nao cita o ramo que disparou (orfao). msg=%', msg; END IF;
   IF msg LIKE '%corante presente sem dose%' THEN
     RAISE EXCEPTION 'C38.6 FALHOU: a mensagem AINDA acusa o ramo (a), que nao disparou aqui. msg=%', msg; END IF;
-  IF msg NOT LIKE '%corrompida%' THEN
+  IF msg IS NULL OR msg NOT LIKE '%corrompida%' THEN
     RAISE EXCEPTION 'C38.7 FALHOU: prefixo receita corrompida perdido (quebra a UI e os asserts). msg=%', msg; END IF;
   RAISE NOTICE 'OK C38 — NB.9142: 3 itens no log, orfao(2.4645) MARCADO, 2 validos intactos, mensagem cita (b) e nao (a)';
 END $$;
@@ -2292,7 +2292,7 @@ BEGIN
     WHERE e.sync_run_id='e1d39000-0000-0000-0000-000000000001' AND e.entity_id='COR39'
       AND it->>'id_corante'='AX24' AND (it->>'viola')::boolean IS FALSE AND (it->>'qtd_ml')='20.794';
   IF n_ok IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'C39.3 FALHOU: AX24 (20.794) deveria vir viola=false e verbatim (achei %)', n_ok; END IF;
-  IF msg NOT LIKE '%corante presente sem dose%' THEN
+  IF msg IS NULL OR msg NOT LIKE '%corante presente sem dose%' THEN
     RAISE EXCEPTION 'C39.4 FALHOU: aqui o ramo (a) DISPAROU e a mensagem tem de dize-lo. msg=%', msg; END IF;
   RAISE NOTICE 'OK C39 — FO10.6554: VM24(0) marcado corante_sem_dose_valida, AX24(20.794) intacto, mensagem cita (a)';
 END $$;
