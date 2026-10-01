@@ -315,7 +315,7 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
     ancoras: [
       'local f out rc no_lugar="${5:-ASSERT_NAO_LANCOU}"',
       [
-        'out="$("$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d sab -v ON_ERROR_STOP=1 -q -c \\',
+        'out="$("$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d sab -v ON_ERROR_STOP=1 -q -c \\',
         String.raw`"DO \$a\$ BEGIN PERFORM $4; RAISE EXCEPTION 'ASSERT_NAO_LANCOU'; EXCEPTION WHEN sqlstate '$3' THEN NULL; WHEN OTHERS THEN RAISE; END \$a\$;" 2>&1)"`,
         'rc=$?',
         'set -e',

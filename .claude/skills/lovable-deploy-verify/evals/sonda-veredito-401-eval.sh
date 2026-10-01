@@ -76,7 +76,7 @@ mkdir -p "$PGSOCK"
   -l "$TMP/pg.log" -w start >/dev/null 2>&1 || {
   echo "❌ VIA_NAO_OBSERVAVEL: o Postgres efêmero não subiu. $(tail -3 "$TMP/pg.log")"; exit 2; }
 
-P() { "$PGBIN/psql" -p "$PORT" -h "$PGSOCK" -U postgres -d postgres -v ON_ERROR_STOP=1 "$@"; }
+P() { "$PGBIN/psql" -X -p "$PORT" -h "$PGSOCK" -U postgres -d postgres -v ON_ERROR_STOP=1 "$@"; }
 # Sonda POSITIVA da via: servidor no ar E respondendo o valor certo.
 [ "$(P -tAc 'SELECT 1' 2>/dev/null)" = "1" ] || {
   echo "❌ VIA_NAO_OBSERVAVEL: Postgres subiu mas não respondeu 'SELECT 1'."; exit 2; }

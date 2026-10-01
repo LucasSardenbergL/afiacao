@@ -1,0 +1,48 @@
+# Invariantes do fiscal de psql LOCAL sem `-X` logo depois do binário.
+# @src: scripts/psql-local-X-gate.ts
+# @test: scripts/psql-local-X-gate.test.ts
+#
+# A classe (docs/historico/psql-sem-X-le-o-psqlrc.md): o psql lê ~/.psqlrc DEPOIS das opções, e um
+# `\set ON_ERROR_STOP off` pessoal faz a prova aprovar o SQL que errou. O fiscal é TEXTUAL, então
+# cada camada dele é uma aposta que pode apodrecer sem vermelho nenhum: as três formas do binário e a
+# fronteira que o separa do psql-ro, a posição canônica do `-X`, a isenção `PSQLRC=` (só do MESMO
+# comando), o stripper COMPARTILHADO, o piso da forma certa e o código de saída. O universo e os
+# alarmes do stripper são do irmão (`shell-variavel-colada.mut`). Cada PEGA quebra UMA camada.
+#
+# ⚠️ No lado da SUBSTITUIÇÃO o perl interpola: `$x` vira vazio e `@x` também. Escreva `\$`. O `#`
+# da regex local vai como `\x23`, e a crase como `\x60`, para a linha do contrato não carregar os crus.
+
+# CONTROLE+ : o detector cego. Se isto sobreviver, nenhum outro veredito deste arquivo vale.
+PEGA | controle+: detector cego (lookahead vazio que nunca casa)              | s/^const BINARIO = \/\(\?:/const BINARIO = \/(?!)(?:/
+
+# As formas do binário, uma por vez, e a fronteira que separa `psql` de `psql-ro`/`psqlrc`.
+PEGA | forma entre aspas duplas some ("$PGBIN/psql" invisível)               | s/\/\(\?:"\[\^"\\n\]\*\\\/psql"\|/\/(?:/
+PEGA | forma nua some ($PGBIN/psql, "$PGBIN"/psql, caminho absoluto)         | s/\|\[\^\\s"'\x60;\|&\(\)<>\]\*\\\/psql\)\(\?=/)(?=/
+PEGA | fronteira removida: psql-ro e psqlrc passam a ser psql local         | s/\\\/psql\)\(\?=\[\\s;\|&\)\x60\]\|\$\)\/g;/\\\/psql)\/g;/
+
+# A posição canônica do `-X`.
+PEGA | COM_X sempre verdadeiro (toda chamada vira forma certa)              | s/^const COM_X = \/\^/const COM_X = \/(?:)|^/
+PEGA | -X em QUALQUER lugar da linha conta (perde a posição canônica)       | s/^const COM_X = \/\^\[ \\t\]\+-X/const COM_X = \/[ \\t]+-X/
+PEGA | -x minúsculo (saída expandida) passa por -X                          | s/\]\+-X\(\?=\[\\s;/]+-[xX](?=[\\s;/
+PEGA | -X sem fronteira: -Xq e -Xfoo contam                                 | s/\]\+-X\(\?=\[\\s;\|&\)\x60\]\|\$\)\/;/]+-X\/;/
+
+# A isenção: `PSQLRC=` explícito, e só no MESMO comando.
+PEGA | isenção sempre (toda chamada sem -X vira isenta)                     | s/^const PSQLRC_EXPLICITO = \/\(\?:\^\|\\s\)PSQLRC=\/;/const PSQLRC_EXPLICITO = \/(?:)\/;/
+PEGA | isenção nunca (o fake que lê psqlrc de propósito vira violação)      | s/: PSQLRC_EXPLICITO\.test\(comandoAte\(linha, m\.index\)\)/: PSQLRC_EXPLICITO.test(comandoAte(linha, m.index)) && false/
+PEGA | isenção olha a LINHA inteira, não o comando (separador ignorado)     | s/for \(const m of antes\.matchAll\(SEPARADOR\)\) corte = m\.index \+ 1;/void SEPARADOR;/
+PEGA | nome parecido isenta (MEU_PSQLRC=)                                   | s/\/\(\?:\^\|\\s\)PSQLRC=\//\/PSQLRC=\//
+
+# A isenção de comentário. A 2ª é a versão INGÊNUA que a regra da casa proíbe: ela apaga o `#` que
+# mora dentro de aspas e, com ele, a chamada que vem depois — verde por cegueira.
+PEGA | stripper ignorado: comentário vira código                            | s/^  removerComentariosShell\(fonte\)$/  (removerComentariosShell.length >= 0 ? fonte : fonte)/
+PEGA | regex LOCAL no lugar do stripper compartilhado                        | s/^  removerComentariosShell\(fonte\)$/  (removerComentariosShell.length >= 0 ? fonte.replace(\/\x23.*\$\/gm, '') : fonte)/
+PEGA | a linha reportada deixa de ser a da fonte                            | s/linha: i \+ 1, situacao/linha: i, situacao/
+PEGA | analisar deixa de consultar o stripper                               | s/r\.alarmes\.push\(\.\.\.alarmesDoStripper\(a\.caminho, diagnosticarShell\(a\.fonte\)\)\);/void alarmesDoStripper; void diagnosticarShell;/
+
+# O veredito: 2 nunca é "passou", e violação nunca é 0.
+PEGA | nenhum arquivo lido vira "limpo"                                       | s/if \(r\.caminhos\.length === 0\) furos/if (false) furos/
+PEGA | piso por raiz desligado                                                | s/if \(lidos < piso\) furos/if (false) furos/
+PEGA | piso da forma certa em db/ desligado                                   | s/if \(comXEmDb < PISOS\.comXEmDb\) \{/if (false) {/
+PEGA | piso da forma certa conta -X de FORA de db/                            | s/const comXEmDb = contar\(r, 'comX', 'db'\);/const comXEmDb = contar(r, 'comX');/
+PEGA | alarme/piso furado deixa de bloquear o veredito                        | s/if \(furos\.length > 0\) \{/if (false) {/
+PEGA | violação sai 0                                                         | s/codigo: 1,/codigo: 0,/
