@@ -30,6 +30,7 @@ migrations.** A classificação final:
 | **corrigidos aqui** | **13** | preço 7 · recência 4 · caça 2 (abaixo) |
 | canônico por parâmetro | 1 | `apriori_universo_snapshot` (recebe a lista e a VALIDA contra a autoridade) |
 | lookup por id | 11 | ATP (5), picking por id, gatilho de item, total líquido (classificar), coerência, payload, tint no submit |
+| + lookup por alias | 1 | `_data_health_compute` (o sensor de gêmeos, chegado na `main` durante a entrega): só o `EXISTS` do gêmeo |
 | escritor | 4 | edição, importador, conversão de total líquido, reconciliação Omie |
 | propósito | 5 | `order_feed`, `selfservice_meus_pedidos`, `listar_pedidos_a_separar`, `get_whatsapp_funil`, `cockpit_itens_snapshot` |
 
@@ -149,6 +150,14 @@ snapshot somariam ~3 min. Entra no núcleo o controle (117 asserts, ~29 s no lap
 `scripts/universo-pedidos-sql-gate.test.ts` sobre o núcleo `scripts/lib/universo-pedidos-sql.ts`:
 lê a autoridade do TS, modela a última definição de cada objeto e julga cada leitura. O que não é
 universo de venda de propósito vive no `REGISTRO_UNIVERSO_PEDIDOS` (tipo + motivo), que só encolhe.
+
+**O gate pegou um leitor novo durante a própria entrega.** Ao mesclar a `main`, chegou a
+`20261001011500` (o sensor de vendas empurradas sem gêmeo, outra sessão), que recria
+`_data_health_compute` lendo `sales_orders`: a leitura principal já usa o universo canônico, mas o
+`EXISTS` que procura o gêmeo IMPORTADO por `(conta, omie_pedido_id)` não — e não deve, é busca por
+identidade. Registrar o objeto inteiro tiraria do julgamento também a leitura canônica; o registro
+passou a aceitar isenção por ALIAS (só aquelas leituras saem; o alias isento tem de continuar
+existindo e não-canônico). Leitores: 39, registrados: 22.
 
 **Calibração (o passo 1 da skill):** sem as 3 migrations o gate acusa os 13; com elas, 0 — mesmo
 denominador (38) nos dois lados. **A calibração pegou um furo do próprio gate:** a MV nasceu em
