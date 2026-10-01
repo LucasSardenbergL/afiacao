@@ -83,7 +83,7 @@ leitura). Cobertura por vizinho é acaso: atualizar o esperado do vizinho reabre
 | 3b reposição | LucasSardenbergL/afiacao#2693 | embalagem-auto-cadastro-wp, fixes-codex-711, qtde-inteira(-persist), reposicao-consolidacao-demanda, rpc-account-aware, oportunidade-erro-terminal, fornecedores-classificacao | `bloq <> 0` cego (o vizinho já tinha um `IS DISTINCT FROM` no 3º termo); retorno de função NULL |
 | 4 KB/farmer/CRM | LucasSardenbergL/afiacao#2688 | kb-0c-aprovacao, kb-extraction-drafts, kb-fundacao-casamento, kb-hardening-codex, kb-spec-versions, melhorias-rpcs, order-feed-view, crm-carteira, tool-spec-custom-option, data-health-customer-metrics | `max`/`bool_or` de zero linhas, `RETURNING`, `ANY(NULL)`, `t2 <= t1` |
 | 5 radar/whatsapp | LucasSardenbergL/afiacao#2689 | radar-fatia3, radar-rpcs, radar-fundacao, radar-rls-perf, roteirizador-prospects, geocoding-cep, whatsapp-funil/hsm/pendentes/proposta | `NOT (r->>'deduped')::boolean`, `string_agg` vazio, marcador sumido |
-| gate | LucasSardenbergL/afiacao#2690 (DRAFT) | `scripts/assert-verde-por-ausencia-gate.ts` | ver abaixo |
+| gate | LucasSardenbergL/afiacao#2690 | `scripts/assert-verde-por-ausencia-gate.ts` | ver abaixo |
 
 **Provas QUEBRADAS na main** (fora do núcleo — nenhum CI as roda; a versão de antes quebra igual): `fornecedores-classificacao` e `melhorias-rpcs` (seed viola constraint nova), `whatsapp-funil/hsm/proposta` (`policy "wt_staff_read" … already exists`: a migration reaplicada já está no schema-snapshot). Nelas só entrou a conversão MECÂNICA do `<>` (drop-in); os consertos manuais ficam registrados, não executáveis.
 
@@ -138,9 +138,11 @@ código (80.707) e **asserts reconhecidos (887)**, o sensor de cegueira do próp
 conversor Python das fases (381/381 sites), 17/17 casos sintéticos, 27/27 mutações cirúrgicas no seco. Como
 gate, achou o site que a varredura por `db/test-*.sh` não cobria (`db/lib/data-health-vivo.sh`).
 
-**DRAFT, por desenho**: a regra das máquinas-meta exige incidente — e nenhum controle mostrou verde-falso
-VIVO (ver "O controle É a descoberta"). A cegueira está provada por reprodução, inclusive em money-path; se o
-founder aceitar isso como incidente, o PR sai de DRAFT rebaseado sobre as fases. O que ele não cobre está na
+**Máquina-meta — decisão do founder (2026-10-01).** A regra das máquinas-meta exige incidente, e
+nenhum controle mostrou verde-falso VIVO (ver "O controle É a descoberta"). O founder aceitou a
+cegueira provada por REPRODUÇÃO — inclusive em money-path (o C1.2 do tint-promote) — como o incidente;
+o gate entrou depois das cinco fases, porque o teste do corpo real só fica limpo com elas (o CI dele,
+antes disso, reprovou exatamente os 3 testes do corpo real: 448 violações). O que ele não cobre está na
 continuação (abaixo).
 
 ## Lições
