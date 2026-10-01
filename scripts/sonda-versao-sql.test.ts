@@ -728,6 +728,14 @@ describe('o passo seguinte volta pelas DUAS vias — célula no SQL Editor, NOTI
     );
   });
 
+  it.each(modos)('$modo: nenhuma linha é BEGIN/END/DECLARE sozinha — a função não se lê como moldura', ({ sql }) => {
+    // Linha `BEGIN`/`END` isolada é lida como controle de transação ou moldura por ferramenta de
+    // LINHA. Medido 2026-09-27: a sabotagem (g2) de db/test-canaria-veredito.sh apaga `^BEGIN$` e
+    // `^END$` no arquivo inteiro para tirar o envelope inerte — e levava junto o corpo da função, o
+    // disparo morria antes de sair, e a sentinela deixava de ver "DISPAROU" (a g2 falhava).
+    expect(sql()).not.toMatch(/^(BEGIN|END|DECLARE)$/m);
+  });
+
   it.each(modos)('$modo: o cabeçalho diz o canal de CADA via, com o comando do passo certo', ({ sql }) => {
     for (const { passo, texto } of blocosDeDisparo(sql())) {
       const cabecalho = texto.slice(0, texto.indexOf('CREATE OR REPLACE FUNCTION'));
