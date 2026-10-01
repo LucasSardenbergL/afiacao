@@ -22,15 +22,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 ## Resumo
 
 - **569** custom migrations totais
-- **1879** objetos esperados (criados por estas migrations)
+- **1862** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 620
+  - `function`: 621
   - `rls_policy`: 462
   - `index`: 261
   - `cron_job`: 174
   - `table`: 166
-  - `view`: 100
   - `trigger`: 92
+  - `view`: 82
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -4660,28 +4660,11 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `view` | `public.v_reposicao_sku_fora_do_motor` | — |
 
-### `20260930230623_hoje_sp_views_defaults_classe_ii.sql`
+### `20260930220148_expandir_promocao_item_overload_similarity_volume.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
-| `view` | `public.fin_aging_pagar` | — |
-| `view` | `public.fin_aging_receber` | — |
-| `view` | `public.fin_fluxo_caixa_diario` | — |
-| `view` | `public.v_caca_candidatos` | — |
-| `view` | `public.v_caca_compradores` | — |
-| `view` | `public.v_desconto_flat_condicional_ativo` | — |
-| `view` | `public.v_fornecedor_lt_logistica_total` | — |
-| `view` | `public.v_grupo_comercial` | — |
-| `view` | `public.v_grupo_contas_receber` | — |
-| `view` | `public.v_grupo_contas_receber_por_doc` | — |
-| `view` | `public.v_sku_aumento_vigente` | — |
-| `view` | `public.v_sku_candidatos_primeira_compra` | — |
-| `view` | `public.v_sku_demanda_estatisticas` | — |
-| `view` | `public.v_sku_demanda_rajada` | — |
-| `view` | `public.v_sku_leadtime_estatisticas` | — |
-| `view` | `public.v_sku_parametros_sugeridos` | — |
-| `view` | `public.v_sku_sigma_demanda` | — |
-| `view` | `public.v_sugestao_negociacao_ativa` | — |
+| `function` | `public.expandir_promocao_item` | — |
 
 ## Próximos passos por status
 

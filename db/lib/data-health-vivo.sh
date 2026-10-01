@@ -3,8 +3,9 @@
 # EXECUTA (_data_health_compute + data_health_watchdog + fin_sync_heartbeat), sobre o schema-snapshot.
 # ================================================================================================
 # NÃO é executável: é `source`-ado pela prova DEPOIS de ela definir REPO_ROOT e `P` (psql no banco
-# que vai receber o schema). Usado por db/test-tint-vigia-cobertura.sh e
-# db/test-tint-cobertura-lista-email.sh.
+# que vai receber o schema). Usado por db/test-tint-vigia-cobertura.sh,
+# db/test-tint-cobertura-lista-email.sh, db/test-data-health-familia-ausente.sh e
+# db/test-data-health-carteira-rebuild.sh.
 #
 # ## Por que ele existe (docs/historico/provas-tint-apodrecidas.md)
 #
@@ -19,7 +20,10 @@
 # snapshot (pg_dump de 2026-09-05) + as migrations a partir de DHV_INICIO que redefinem uma função
 # guardada. Em 2026-09-27 isso reproduziu, com md5(pg_get_functiondef) IDÊNTICO ao da produção
 # (psql-ro), as 6 funções de DHV_GUARDADAS. O snapshot sozinho batia só em 3 delas: o trio estava
-# 4 migrations atrás.
+# 4 migrations atrás. Em 2026-09-30 as 6 seguiam iguais, e entrou a 7ª: get_data_health, a RPC que o
+# app lê (useDataHealth), exercida por db/test-data-health-carteira-rebuild.sh — igual à de prod já
+# no snapshot (md5 ee63a06f…; a última redefinição é de 2026-05-27). Guardá-la é o que faz a PRÓXIMA
+# redefinição entrar na cadeia, em vez de a prova seguir medindo a do snapshot.
 #
 # ## A cadeia é DINÂMICA de propósito
 #
@@ -44,11 +48,12 @@
 #     da 20260918200000 exige o compute FECHADO para anon/PUBLIC; reproduz-se o ACL MEDIDO em prod
 #     (2026-09-27: postgres, service_role e sandbox_exec — nem `authenticated`) ANTES do apply, e aí
 #     a pós-condição mede o que a migration faz com ele (CREATE OR REPLACE preserva) em vez de medir
-#     o default do harness. Mesmo idioma de db/test-data-health-sync-reprocess.sh.
+#     o default do harness. Mesmo idioma de db/test-data-health-sync-reprocess.sh. Idem, desde
+#     2026-09-30, o de get_data_health (authenticated e service_role; anon não).
 
 DHV_INICIO=20260918200000
 DHV_GUARDADAS=(_data_health_compute data_health_watchdog fin_sync_heartbeat _data_health_episodio
-               _tint_cobertura_bases_lista_email _vendas_familia_ausente_lista_email)
+               _tint_cobertura_bases_lista_email _vendas_familia_ausente_lista_email get_data_health)
 
 # dhv_cadeia <dir de migrations> — imprime, em ordem de versão, as migrations com versão ≥ DHV_INICIO
 # que redefinem uma função guardada. Fail-CLOSED: diretório sem migrations, versão fora do formato,
@@ -122,6 +127,11 @@ BEGIN
 END $mv$;
 REVOKE ALL ON FUNCTION public._data_health_compute() FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public._data_health_compute() TO service_role;
+-- get_data_health, a RPC do app: o ACL MEDIDO em prod (2026-09-30: postgres, authenticated,
+-- service_role e sandbox_exec — nem anon). Sem ele o snapshot a deixa aberta a PUBLIC, e a prova que
+-- a lê "como o app" não distinguiria o app de qualquer um nem pegaria um DROP+CREATE que reseta o ACL.
+REVOKE ALL ON FUNCTION public.get_data_health() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.get_data_health() TO authenticated, service_role;
 SQL
   echo "  → cadeia viva (≥ $DHV_INICIO que redefine função guardada):"
   dhv_aplicar_cadeia "$REPO_ROOT/supabase/migrations"

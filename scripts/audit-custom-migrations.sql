@@ -610,7 +610,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260929001651', 'hoje_sp_sessao_utc_sete_funcoes', '20260929001651_hoje_sp_sessao_utc_sete_funcoes.sql'),
   ('20260929002059', 'des_desconto_total_maximo_por_faixa', '20260929002059_des_desconto_total_maximo_por_faixa.sql'),
   ('20260929003006', 'reposicao_v_sku_fora_do_motor', '20260929003006_reposicao_v_sku_fora_do_motor.sql'),
-  ('20260930230623', 'hoje_sp_views_defaults_classe_ii', '20260930230623_hoje_sp_views_defaults_classe_ii.sql')
+  ('20260930220148', 'expandir_promocao_item_overload_similarity_volume', '20260930220148_expandir_promocao_item_overload_similarity_volume.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2461,24 +2461,7 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('hoje_sp_sessao_utc_sete_funcoes', 'function', 'public', 'vendas_sync_semear_janela', ''),
   ('des_desconto_total_maximo_por_faixa', 'view', 'public', 'v_des_desconto_por_checkin', ''),
   ('reposicao_v_sku_fora_do_motor', 'view', 'public', 'v_reposicao_sku_fora_do_motor', ''),
-  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'fin_aging_pagar', ''),
-  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'fin_aging_receber', ''),
-  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'fin_fluxo_caixa_diario', ''),
-  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_caca_candidatos', ''),
-  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_caca_compradores', ''),
-  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_desconto_flat_condicional_ativo', ''),
-  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_fornecedor_lt_logistica_total', ''),
-  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_grupo_comercial', ''),
-  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_grupo_contas_receber', ''),
-  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_grupo_contas_receber_por_doc', ''),
-  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_sku_aumento_vigente', ''),
-  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_sku_candidatos_primeira_compra', ''),
-  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_sku_demanda_estatisticas', ''),
-  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_sku_demanda_rajada', ''),
-  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_sku_leadtime_estatisticas', ''),
-  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_sku_parametros_sugeridos', ''),
-  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_sku_sigma_demanda', ''),
-  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_sugestao_negociacao_ativa', '')
+  ('expandir_promocao_item_overload_similarity_volume', 'function', 'public', 'expandir_promocao_item', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4377,24 +4360,7 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('hoje_sp_sessao_utc_sete_funcoes', 'function', 'public', 'vendas_sync_semear_janela', ''),
   ('des_desconto_total_maximo_por_faixa', 'view', 'public', 'v_des_desconto_por_checkin', ''),
   ('reposicao_v_sku_fora_do_motor', 'view', 'public', 'v_reposicao_sku_fora_do_motor', ''),
-  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'fin_aging_pagar', ''),
-  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'fin_aging_receber', ''),
-  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'fin_fluxo_caixa_diario', ''),
-  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_caca_candidatos', ''),
-  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_caca_compradores', ''),
-  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_desconto_flat_condicional_ativo', ''),
-  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_fornecedor_lt_logistica_total', ''),
-  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_grupo_comercial', ''),
-  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_grupo_contas_receber', ''),
-  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_grupo_contas_receber_por_doc', ''),
-  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_sku_aumento_vigente', ''),
-  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_sku_candidatos_primeira_compra', ''),
-  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_sku_demanda_estatisticas', ''),
-  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_sku_demanda_rajada', ''),
-  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_sku_leadtime_estatisticas', ''),
-  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_sku_parametros_sugeridos', ''),
-  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_sku_sigma_demanda', ''),
-  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_sugestao_negociacao_ativa', '')
+  ('expandir_promocao_item_overload_similarity_volume', 'function', 'public', 'expandir_promocao_item', '')
 )
 SELECT
   e.migration,
@@ -4422,7 +4388,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 120.
+-- Funções redefinidas com corpo extraível: 121.
 
 WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (VALUES
   ('public', 'has_role', 1, '20260207192203_1ed442e5-a224-456e-9d94-cfe50e88c670.sql', 'c63a92e3cfa92e6aab8cb894ad505e30'),
@@ -4876,7 +4842,9 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'desconto_backfill_aplicar', 1, '20260908220625_desconto_backfill_aplicar.sql', '59d9c1e4482bf524c5da1eff2700aa08'),
   ('public', 'desconto_backfill_aplicar', 2, '20260910214850_desconto_backfill_aplicar_ja_apuradas.sql', '09e34b475c6f2b9cfd832b90e62d9b77'),
   ('public', 'pedido_total_liquido_converter', 1, '20260914181500_pedido_total_liquido_acervo.sql', 'ed8296520bc8513f55f4039161657cc8'),
-  ('public', 'pedido_total_liquido_converter', 2, '20260914193000_pedido_total_liquido_acervo_mes_entre_contas.sql', 'dc365744059741095767a967d0c05055')
+  ('public', 'pedido_total_liquido_converter', 2, '20260914193000_pedido_total_liquido_acervo_mes_entre_contas.sql', 'dc365744059741095767a967d0c05055'),
+  ('public', 'expandir_promocao_item', 1, '20260929000234_padrao_like_contem_escapa_curinga.sql', '6a4779419c33db1ffe1f5c6bc6d7670b'),
+  ('public', 'expandir_promocao_item', 2, '20260930220148_expandir_promocao_item_overload_similarity_volume.sql', '15cd9b2496f669df8e979de9545b4f98')
 ),
 ultima AS (
   SELECT schema_name, object_name, max(ordem) AS ordem FROM corpo_esperado GROUP BY 1, 2
