@@ -62,6 +62,8 @@ PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); echo "  OK   $1"; }
 bad() { FAIL=$((FAIL+1)); echo "  FAIL $1"; }
 eq()  { if [ "$2" = "$3" ]; then ok "$1 (=$2)"; else bad "$1 -- esperado [$3], veio [$2]"; fi; }
+# Leitura que ERRA não pode virar "" — o esperado do fail-closed É "": o erro vira ERRO_rc=<n> (assert verde por ausência).
+medir() { local v rc; set +e; v="$(set -e; "$@")"; rc=$?; set -e; if [ "$rc" -eq 0 ]; then printf '%s\n' "$v"; else printf 'ERRO_rc=%s\n' "$rc"; fi; }
 
 echo "=== setup (PG17 :$PORT) ==="
 
@@ -216,7 +218,7 @@ eq "R2 marcador do seq 2 (o maior VÁLIDO), não o seq 5 (maior de todos)" \
 # `WHERE seq IN (1,2)` e não um UPDATE geral: os runs 4 e 5 precisam continuar inválidos, senão o
 # restore os promoveria a válidos e todo o cenário seguinte mudaria em silêncio.
 P -q -c "UPDATE public.reposicao_pedidos_compra_run SET volume_ok=false WHERE seq IN (1,2);"
-eq "R3 sem marcador válido -> VAZIO (fail-closed intacto)" "$(cand)" ""
+eq "R3 sem marcador válido -> VAZIO (fail-closed intacto)" "$(medir cand)" ""
 P -q -c "UPDATE public.reposicao_pedidos_compra_run SET volume_ok=true WHERE seq IN (1,2);"
 eq "R4 restaurado" "$(cand)" "802"
 
