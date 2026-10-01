@@ -37,7 +37,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=en_US.UTF-8 >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l /tmp/pg-reposicao.log -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres reposicao_verify
-P() { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d reposicao_verify "$@"; }
+P() { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d reposicao_verify "$@"; }
 
 RR="$(mktemp "${TMPDIR:-/tmp}/snap-reposicao.XXXXXX")"
 sed -E 's/^(CREATE SCHEMA public;)/-- \1/' "$REPO_ROOT/supabase/schema-snapshot.sql" \
@@ -95,22 +95,22 @@ BEGIN
   SELECT count(*) INTO n FROM pg_class c JOIN pg_namespace ns ON ns.oid=c.relnamespace
    WHERE ns.nspname='public' AND c.relkind='v' AND c.relname = ANY(v5)
      AND COALESCE(array_to_string(c.reloptions,','),'') ~* 'security_invoker=(on|true)';
-  IF n <> 5 THEN RAISE EXCEPTION 'FAIL SEC1: esperava 5 views invoker=on, veio % (reaplicar o .sql reabriria o P0)', n; END IF;
+  IF n IS DISTINCT FROM 5 THEN RAISE EXCEPTION 'FAIL SEC1: esperava 5 views invoker=on, veio % (reaplicar o .sql reabriria o P0)', n; END IF;
 
   -- SEC2: anon SEM SELECT em nenhuma das 5 (o REVOKE do .sql fecha a anon-key)
   SELECT count(*) INTO n FROM information_schema.role_table_grants
    WHERE grantee='anon' AND privilege_type='SELECT' AND table_name = ANY(v5);
-  IF n <> 0 THEN RAISE EXCEPTION 'FAIL SEC2: anon ainda tem SELECT em %/5 view(s)', n; END IF;
+  IF n IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'FAIL SEC2: anon ainda tem SELECT em %/5 view(s)', n; END IF;
 
   -- SEC3: PUBLIC SEM SELECT em nenhuma das 5 (blinda contra grant-drift)
   SELECT count(*) INTO n FROM information_schema.role_table_grants
    WHERE grantee='PUBLIC' AND privilege_type='SELECT' AND table_name = ANY(v5);
-  IF n <> 0 THEN RAISE EXCEPTION 'FAIL SEC3: PUBLIC ainda tem SELECT em %/5 view(s)', n; END IF;
+  IF n IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'FAIL SEC3: PUBLIC ainda tem SELECT em %/5 view(s)', n; END IF;
 
   -- SEC4: authenticated MANTÉM SELECT nas 5 (staff não pode regredir de acesso)
   SELECT count(*) INTO n FROM information_schema.role_table_grants
    WHERE grantee='authenticated' AND privilege_type='SELECT' AND table_name = ANY(v5);
-  IF n <> 5 THEN RAISE EXCEPTION 'FAIL SEC4: authenticated deveria ter SELECT nas 5, veio %', n; END IF;
+  IF n IS DISTINCT FROM 5 THEN RAISE EXCEPTION 'FAIL SEC4: authenticated deveria ter SELECT nas 5, veio %', n; END IF;
 END $$;
 SQL
 echo "   ✓ SEC (invoker=on + anon/PUBLIC revogados + authenticated mantém)"
@@ -131,8 +131,8 @@ BEGIN
     IF has_table_privilege('anon','public.'||vn,'SELECT')              THEN n_anon:=n_anon+1; END IF;
     IF NOT has_table_privilege('authenticated','public.'||vn,'SELECT') THEN n_auth:=n_auth+1; END IF;
   END LOOP;
-  IF n_anon <> 0 THEN RAISE EXCEPTION 'FAIL SEC5a: anon TEM SELECT efetivo em %/5 view(s) (herança PUBLIC?)', n_anon; END IF;
-  IF n_auth <> 0 THEN RAISE EXCEPTION 'FAIL SEC5b: authenticated SEM SELECT efetivo em %/5 (staff regrediria)', n_auth; END IF;
+  IF n_anon IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'FAIL SEC5a: anon TEM SELECT efetivo em %/5 view(s) (herança PUBLIC?)', n_anon; END IF;
+  IF n_auth IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'FAIL SEC5b: authenticated SEM SELECT efetivo em %/5 (staff regrediria)', n_auth; END IF;
 END $$;
 SQL
 echo "   ✓ SEC5 (privilégio efetivo: anon negado, authenticated concedido)"
@@ -156,13 +156,13 @@ BEGIN
   SELECT count(*) INTO n_on FROM pg_class c JOIN pg_namespace ns ON ns.oid=c.relnamespace
    WHERE ns.nspname='public' AND c.relkind='v' AND c.relname = ANY(v5)
      AND COALESCE(array_to_string(c.reloptions,','),'') ~* 'security_invoker=(on|true)';
-  IF n_on <> 5 THEN RAISE EXCEPTION 'FAIL SEC6a: após 2ª aplicação esperava 5 invoker=on, veio %', n_on; END IF;
+  IF n_on IS DISTINCT FROM 5 THEN RAISE EXCEPTION 'FAIL SEC6a: após 2ª aplicação esperava 5 invoker=on, veio %', n_on; END IF;
   FOREACH vn IN ARRAY v5 LOOP
     IF has_table_privilege('anon','public.'||vn,'SELECT')             THEN n_anon:=n_anon+1; END IF;
     IF NOT has_table_privilege('service_role','public.'||vn,'SELECT') THEN n_svc:=n_svc+1;  END IF;
   END LOOP;
-  IF n_anon <> 0 THEN RAISE EXCEPTION 'FAIL SEC6b: após 2ª aplicação anon reganhou SELECT em %/5', n_anon; END IF;
-  IF n_svc  <> 0 THEN RAISE EXCEPTION 'FAIL SEC6c: REVOKE do arquivo tirou SELECT de service_role em %/5 (recompute quebraria)', n_svc; END IF;
+  IF n_anon IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'FAIL SEC6b: após 2ª aplicação anon reganhou SELECT em %/5', n_anon; END IF;
+  IF n_svc  IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'FAIL SEC6c: REVOKE do arquivo tirou SELECT de service_role em %/5 (recompute quebraria)', n_svc; END IF;
 END $$;
 SQL
 echo "   ✓ SEC6 (2ª aplicação: invoker=on preservado, anon re-barrado, service_role intacto)"
@@ -185,7 +185,7 @@ BEGIN
   SELECT count(*) INTO n FROM pg_class c JOIN pg_namespace ns ON ns.oid=c.relnamespace
    WHERE ns.nspname='public' AND c.relkind='v' AND c.relname = ANY(v5)
      AND COALESCE(array_to_string(c.reloptions,','),'') ~* 'security_invoker=(on|true)';
-  IF n <> 4 THEN RAISE EXCEPTION 'FAIL SEC-F: sob sabotagem SEC1 deveria contar 4/5, veio % (SEC1 sem dente ou risco não reproduz)', n; END IF;
+  IF n IS DISTINCT FROM 4 THEN RAISE EXCEPTION 'FAIL SEC-F: sob sabotagem SEC1 deveria contar 4/5, veio % (SEC1 sem dente ou risco não reproduz)', n; END IF;
   EXECUTE 'CREATE OR REPLACE VIEW v_venda_items_history_efetivo WITH (security_invoker = true) AS ' || d;  -- restaura
 END $$;
 SQL
@@ -216,7 +216,7 @@ DO $$
 DECLARE k bigint;
 BEGIN
   SELECT sku_codigo_omie INTO k FROM v_venda_items_history_efetivo WHERE nfe_chave_acesso='NFE-A';
-  IF k <> 8040 THEN RAISE EXCEPTION 'FAIL A1: passthrough esperado 8040, veio %', k; END IF;
+  IF k IS DISTINCT FROM 8040 THEN RAISE EXCEPTION 'FAIL A1: passthrough esperado 8040, veio %', k; END IF;
 END $$;
 INSERT INTO sku_substituicao (empresa, sku_codigo_antigo, sku_codigo_novo, status)
 VALUES ('OBEN','8040','4080','aplicada');
@@ -224,7 +224,7 @@ DO $$
 DECLARE k bigint;
 BEGIN
   SELECT sku_codigo_omie INTO k FROM v_venda_items_history_efetivo WHERE nfe_chave_acesso='NFE-A';
-  IF k <> 4080 THEN RAISE EXCEPTION 'FAIL A2: reescrita esperada 4080, veio %', k; END IF;
+  IF k IS DISTINCT FROM 4080 THEN RAISE EXCEPTION 'FAIL A2: reescrita esperada 4080, veio %', k; END IF;
 END $$;
 SQL
 echo "   ✓ A"
@@ -259,7 +259,7 @@ BEGIN
   IF m IS DISTINCT FROM 3.5   THEN RAISE EXCEPTION 'FAIL B2: média/dia esperada 3.5, veio %', m; END IF;
   SELECT count(*) INTO n FROM v_sku_demanda_estatisticas
     WHERE empresa='OBEN' AND sku_codigo_omie IN (8040,4128);
-  IF n <> 0 THEN RAISE EXCEPTION 'FAIL B3: antigos não deviam aparecer, vieram % linhas', n; END IF;
+  IF n IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'FAIL B3: antigos não deviam aparecer, vieram % linhas', n; END IF;
   -- B4: isolamento estrutural — mapa legado 'transferir' NÃO consolida → 7777 fica com sua demanda
   SELECT demanda_total_90d INTO t FROM v_sku_demanda_estatisticas WHERE empresa='OBEN' AND sku_codigo_omie=7777;
   IF t IS DISTINCT FROM 30 THEN RAISE EXCEPTION 'FAIL B4: 7777 (mapa legado) deveria ficar isolado=30, veio %', t; END IF;
@@ -275,13 +275,13 @@ DECLARE n int;
 BEGIN
   SELECT count(*) INTO n FROM v_sku_sigma_demanda
     WHERE empresa='OBEN' AND sku_codigo_omie::bigint IN (8040,4128);
-  IF n <> 0 THEN RAISE EXCEPTION 'FAIL C-sigma: antigos apareceram (% linhas)', n; END IF;
+  IF n IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'FAIL C-sigma: antigos apareceram (% linhas)', n; END IF;
   SELECT count(*) INTO n FROM v_sku_demanda_rajada
     WHERE empresa='OBEN' AND sku_codigo_omie::bigint IN (8040,4128);
-  IF n <> 0 THEN RAISE EXCEPTION 'FAIL C-rajada: antigos apareceram (% linhas)', n; END IF;
+  IF n IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'FAIL C-rajada: antigos apareceram (% linhas)', n; END IF;
   SELECT count(*) INTO n FROM v_sku_candidatos_primeira_compra
     WHERE empresa='OBEN' AND sku_codigo_omie IN (8040,4128);
-  IF n <> 0 THEN RAISE EXCEPTION 'FAIL C-candidatos: antigo mapeado virou candidato (% linhas)', n; END IF;
+  IF n IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'FAIL C-candidatos: antigo mapeado virou candidato (% linhas)', n; END IF;
 END $$;
 SQL
 echo "   ✓ C"
@@ -302,7 +302,7 @@ BEGIN
     RAISE EXCEPTION 'FAIL D: demanda do destino nos sugeridos esperava 3.5, veio %', d;
   END IF;
   SELECT count(*) INTO n FROM v_sku_parametros_sugeridos WHERE empresa='OBEN' AND sku_codigo_omie IN (8040,4128);
-  IF n <> 0 THEN RAISE EXCEPTION 'FAIL D: antigos apareceram nos sugeridos (% linhas)', n; END IF;
+  IF n IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'FAIL D: antigos apareceram nos sugeridos (% linhas)', n; END IF;
 END $$;
 SQL
 echo "   ✓ D"

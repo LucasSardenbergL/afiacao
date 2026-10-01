@@ -22,6 +22,7 @@ PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
 PORT="${PGPORT_TEST:-5469}"
 SLUG="dhwd-reemissao"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
+RODADA="$(dirname "$DATA")"   # dir ÚNICO desta rodada (o trap apaga): temporário mora aqui, nunca em /tmp/<nome-fixo>
 
 [ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER} pgvector"; exit 1; }
 
@@ -38,7 +39,7 @@ PGE=(env LC_ALL=C LANG=C)
 "${PGE[@]}" "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "${PGE[@]}" "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "${PGE[@]}" "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
-P()  { "${PGE[@]}" "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+P()  { "${PGE[@]}" "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }
 
 PASS=0; FAIL=0
@@ -777,7 +778,7 @@ fi
 restaurar
 
 # --- F7: remove o GUARD de drift => a migration passa a aplicar sobre corpo alheio ---
-MIG_SEM_GUARD="$(mktemp /tmp/mig-sem-guard.XXXXXX.sql)"
+MIG_SEM_GUARD="$(mktemp "$RODADA/mig-sem-guard.XXXXXX")"
 perl -0pe 's/DO \$guard\$.*?\$guard\$;//s' "$MIG" > "$MIG_SEM_GUARD"
 # O que a sabotagem DECLARA: aplicou E o corpo alheio foi SOBRESCRITO. O exit 0 sozinho tambem vem
 # de um arquivo vazio (perl que falhou) -- e ai o corpo alheio segue la.

@@ -28,6 +28,8 @@ const FARMER = '.claude/skills/farmer-industrial/references/queries-sql.md';
 const AGING = '.claude/skills/cfo-colacor/assets/sql/03-inadimplencia-aging.sql';
 const FIX = 'supabase/migrations/20260929001651_hoje_sp_sessao_utc_sete_funcoes.sql';
 const FIXTURE = 'db/fixtures/hoje-sp-sete-funcoes-predecessoras-prod-20260929.sql';
+const FIX_FASE2 = 'supabase/migrations/20260930230623_hoje_sp_views_defaults_classe_ii.sql';
+const FIXTURE_FASE2 = 'db/fixtures/hoje-sp-views-defaults-predecessoras-prod-20260930.sql';
 const arq = (caminho: string): Arquivo => {
   const a = REPO.arquivos.find((x) => x.caminho === caminho);
   if (!a) throw new Error(`não lido: ${caminho}`);
@@ -75,6 +77,22 @@ describe('calibração — o detector pega o sítio pré-fix e solta a correçã
     expect(detectarNoSql(FIX, fonte)).toEqual([]);
   });
 
+  // Fase 2 (views e DEFAULTs): a fixture é o texto EXATO da prod de 2026-09-30 — 18 views e 6 DEFAULTs.
+  it('as predecessoras da fase 2 (fixture) carregam os 82 sítios que a 20260930230623 troca — inclusive a forma com intervalo', () => {
+    const fonte = readFileSync(resolve(RAIZ, FIXTURE_FASE2), 'utf8');
+    const conta = (t: string) => detectarNoSql(FIXTURE_FASE2, fonte).filter((s) => s.trecho === t).length;
+    expect(detectarNoSql(FIXTURE_FASE2, fonte)).toHaveLength(82);
+    expect([conta('current_date'), conta('so.created_at::date'), conta('now()::date')]).toEqual([76, 3, 2]);
+    // o ativo_6m de v_caca_candidatos: a assinatura sem a forma com intervalo NÃO o via
+    expect(conta("(now() - '6 mons'::interval)::date")).toBe(1);
+  });
+
+  it('a correção 20260930230623 não acusa nada — e o conserto foi LIDO (79 dias de SP no código)', () => {
+    const fonte = arq(FIX_FASE2).fonte;
+    expect(removerComentariosSql(fonte).match(/\(now\(\) AT TIME ZONE 'America\/Sao_Paulo'::text\)/g)?.length).toBe(79);
+    expect(detectarNoSql(FIX_FASE2, fonte)).toEqual([]);
+  });
+
   it('a skill pré-fix acusa as 2 formas na linha certa — e a prosa fica de fora', () => {
     expect(trechos({ caminho: '.claude/skills/x/q.md', fonte: SKILL_PRE_FIX })).toEqual([
       '5 created_at::date', '5 current_date', '7 created_at::date', '7 current_date',
@@ -119,11 +137,17 @@ describe('as camadas', () => {
       'data_vencimento::date',       // date já é date
       'current_timestamp',
       'age(now(), started_at)',
+      // a aritmética de intervalo com o fuso ESCRITO, ou sem virar data
+      "((now() AT TIME ZONE 'America/Sao_Paulo') - interval '6 months')::date",
+      "((now() - interval '6 months') AT TIME ZONE 'America/Sao_Paulo')::date",
+      "(now() - interval '1 day')::timestamptz",
+      "now() - interval '1 day'",
     ];
     for (const e of passa) expect(sql(`select ${e};`), e).toEqual([]);
     const reprova = [
       'current_date', 'CURRENT_DATE', 'localtimestamp', 'localtime', 'current_time',
       'now()::date', 'now() :: timestamp', 'now()::timestamp without time zone', 'current_timestamp::date',
+      "(now() - interval '6 months')::date", "(current_timestamp + make_interval(days => 3))::timestamp",
       'clock_timestamp()::date', 'cast(now() as date)', 'date(now())', "to_char(now(), 'YYYY-MM')",
       'extract(day from now())', "date_part('month', current_timestamp)",
       'created_at::date', 'so.created_at::date', 'criado_em::timestamp', 'max(created_at)::date', 'date(started_at)',

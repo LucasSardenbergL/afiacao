@@ -28,7 +28,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l /tmp/pg-intraday.log -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres intraday_verify
-P() { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d intraday_verify "$@"; }
+P() { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d intraday_verify "$@"; }
 
 RR="$(mktemp "${TMPDIR:-/tmp}/snap-intraday.XXXXXX")"
 sed -E 's/^(CREATE SCHEMA public;)/-- \1/' "$REPO_ROOT/supabase/schema-snapshot.sql" \
@@ -123,7 +123,7 @@ BEGIN
   -- I1: oportunidade pendente do dia PRESERVADA (limpeza tipo-aware)
   SELECT count(*) INTO d FROM pedido_compra_sugerido
   WHERE tipo_ciclo='oportunidade_promo' AND status='pendente_aprovacao' AND data_ciclo=CURRENT_DATE;
-  IF d <> 1 THEN RAISE EXCEPTION 'I1 FALHOU: oportunidade do dia foi apagada (count=%)', d; END IF;
+  IF d IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'I1 FALHOU: oportunidade do dia foi apagada (count=%)', d; END IF;
   RAISE NOTICE 'OK I1 — limpeza preserva pedido de oportunidade pendente do dia';
 
   -- I2: SKU 4001 (na oportunidade pendente) NÃO re-sugerido no ciclo normal (NOT EXISTS)
@@ -131,60 +131,60 @@ BEGIN
   JOIN pedido_compra_sugerido pcs ON pcs.id = pci.pedido_id
   WHERE pci.sku_codigo_omie='4001' AND pcs.status='pendente_aprovacao'
     AND COALESCE(pcs.tipo_ciclo,'normal')='normal' AND pcs.data_ciclo=CURRENT_DATE;
-  IF d <> 0 THEN RAISE EXCEPTION 'I2 FALHOU: SKU da oportunidade re-sugerido no normal (compra dupla)'; END IF;
+  IF d IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'I2 FALHOU: SKU da oportunidade re-sugerido no normal (compra dupla)'; END IF;
   RAISE NOTICE 'OK I2 — NOT EXISTS: SKU em oportunidade pendente não nasce no ciclo normal';
 
   -- I3: bloqueado_guardrail NORMAL do dia foi APAGADO e o SKU 4002 renasceu pendente 1× (não 2)
   SELECT count(*) INTO d FROM pedido_compra_sugerido WHERE status='bloqueado_guardrail';
-  IF d <> 0 THEN RAISE EXCEPTION 'I3 FALHOU: bloqueado_guardrail do dia sobreviveu à limpeza'; END IF;
+  IF d IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'I3 FALHOU: bloqueado_guardrail do dia sobreviveu à limpeza'; END IF;
   SELECT count(*) INTO d FROM pedido_compra_item pci
   JOIN pedido_compra_sugerido pcs ON pcs.id = pci.pedido_id
   WHERE pci.sku_codigo_omie='4002' AND pcs.status='pendente_aprovacao' AND pcs.data_ciclo=CURRENT_DATE;
-  IF d <> 1 THEN RAISE EXCEPTION 'I3 FALHOU: SKU 4002 aparece %× pendente (esperado 1 — anti compra dupla)', d; END IF;
+  IF d IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'I3 FALHOU: SKU 4002 aparece %× pendente (esperado 1 — anti compra dupla)', d; END IF;
   RAISE NOTICE 'OK I3 — bloqueado normal do dia re-avaliado (apagado + SKU renasce 1×)';
 
   -- I4: zumbi pendente NORMAL de ontem EXPIRADO
   SELECT status INTO s FROM pedido_compra_sugerido WHERE fornecedor_nome='FORN-Z';
-  IF s <> 'expirado_sem_aprovacao' THEN RAISE EXCEPTION 'I4 FALHOU: zumbi de ontem status=%', s; END IF;
+  IF s IS DISTINCT FROM 'expirado_sem_aprovacao' THEN RAISE EXCEPTION 'I4 FALHOU: zumbi de ontem status=%', s; END IF;
   RAISE NOTICE 'OK I4 — pendente normal de ontem expirado pela rodada de hoje';
 
   -- I5: zumbi de OPORTUNIDADE de ontem NÃO tocado (território do outro ciclo)
   SELECT status INTO s FROM pedido_compra_sugerido WHERE fornecedor_nome='FORN-OPP-Z';
-  IF s <> 'pendente_aprovacao' THEN RAISE EXCEPTION 'I5 FALHOU: oportunidade de ontem foi tocada (status=%)', s; END IF;
+  IF s IS DISTINCT FROM 'pendente_aprovacao' THEN RAISE EXCEPTION 'I5 FALHOU: oportunidade de ontem foi tocada (status=%)', s; END IF;
   RAISE NOTICE 'OK I5 — oportunidade de ontem intocada (fora do território da RPC normal)';
 
   -- I6: aprovado de hoje INTACTO + comportamento base (4003 abaixo do ponto vira pendente; 4004 não)
   SELECT status INTO s FROM pedido_compra_sugerido WHERE fornecedor_nome='FORN-APR';
-  IF s <> 'aprovado_aguardando_disparo' THEN RAISE EXCEPTION 'I6 FALHOU: aprovado foi tocado (%)', s; END IF;
+  IF s IS DISTINCT FROM 'aprovado_aguardando_disparo' THEN RAISE EXCEPTION 'I6 FALHOU: aprovado foi tocado (%)', s; END IF;
   SELECT count(*) INTO d FROM pedido_compra_item pci
   JOIN pedido_compra_sugerido pcs ON pcs.id = pci.pedido_id
   WHERE pci.sku_codigo_omie='4003' AND pcs.status='pendente_aprovacao' AND pcs.data_ciclo=CURRENT_DATE;
-  IF d <> 1 THEN RAISE EXCEPTION 'I6 FALHOU: SKU 4003 (necessita) não gerou pedido'; END IF;
+  IF d IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'I6 FALHOU: SKU 4003 (necessita) não gerou pedido'; END IF;
   SELECT count(*) INTO d FROM pedido_compra_item pci
   JOIN pedido_compra_sugerido pcs ON pcs.id = pci.pedido_id
   WHERE pci.sku_codigo_omie='4004' AND pcs.status='pendente_aprovacao';
-  IF d <> 0 THEN RAISE EXCEPTION 'I6 FALHOU: SKU 4004 (sobra de estoque) gerou pedido'; END IF;
+  IF d IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'I6 FALHOU: SKU 4004 (sobra de estoque) gerou pedido'; END IF;
   RAISE NOTICE 'OK I6 — aprovado intacto; base inalterada (4003 entra, 4004 não)';
 
   -- I7: re-rodada idempotente (mesmo dia, 2ª vez) mantém as invariantes I1/I2/I5
   PERFORM public.gerar_pedidos_sugeridos_ciclo('OBEN', CURRENT_DATE);
   SELECT count(*) INTO d FROM pedido_compra_sugerido
   WHERE tipo_ciclo LIKE 'oportunidade%' AND status='pendente_aprovacao';
-  IF d <> 2 THEN RAISE EXCEPTION 'I7 FALHOU: re-rodada mexeu nas oportunidades (count=%)', d; END IF;
+  IF d IS DISTINCT FROM 2 THEN RAISE EXCEPTION 'I7 FALHOU: re-rodada mexeu nas oportunidades (count=%)', d; END IF;
   SELECT count(*) INTO d FROM pedido_compra_item pci
   JOIN pedido_compra_sugerido pcs ON pcs.id = pci.pedido_id
   WHERE pci.sku_codigo_omie IN ('4002','4003') AND pcs.status='pendente_aprovacao' AND pcs.data_ciclo=CURRENT_DATE;
-  IF d <> 2 THEN RAISE EXCEPTION 'I7 FALHOU: re-rodada duplicou/perdeu SKUs (count=%)', d; END IF;
+  IF d IS DISTINCT FROM 2 THEN RAISE EXCEPTION 'I7 FALHOU: re-rodada duplicou/perdeu SKUs (count=%)', d; END IF;
   RAISE NOTICE 'OK I7 — re-rodada no mesmo dia: idempotente, sem duplicação';
 
   -- I8: crons agendados + marcas na def viva
   SELECT count(*) INTO d FROM cron.job WHERE jobname IN ('gerar-pedidos-intraday-oben','omie-sync-estoque-intraday-oben');
-  IF d <> 2 THEN RAISE EXCEPTION 'I8 FALHOU: crons intraday ausentes (%)', d; END IF;
+  IF d IS DISTINCT FROM 2 THEN RAISE EXCEPTION 'I8 FALHOU: crons intraday ausentes (%)', d; END IF;
   SELECT schedule INTO s FROM cron.job WHERE jobname='omie-sync-estoque-diario';
-  IF s <> '0 9 * * *' THEN RAISE EXCEPTION 'I8 FALHOU: omie-sync-estoque-diario não reagendado (%)', s; END IF;
+  IF s IS DISTINCT FROM '0 9 * * *' THEN RAISE EXCEPTION 'I8 FALHOU: omie-sync-estoque-diario não reagendado (%)', s; END IF;
   SELECT count(*) INTO d FROM pg_proc WHERE proname='gerar_pedidos_sugeridos_ciclo'
     AND pg_get_functiondef(oid) LIKE '%INTRADAY 4/4%' AND pg_get_functiondef(oid) LIKE '%pg_advisory_xact_lock%';
-  IF d <> 1 THEN RAISE EXCEPTION 'I8 FALHOU: marcas INTRADAY ausentes na def'; END IF;
+  IF d IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'I8 FALHOU: marcas INTRADAY ausentes na def'; END IF;
   RAISE NOTICE 'OK I8 — crons agendados (diário reagendado 0 9) + marcas na def';
 
   RAISE NOTICE '✅ TODOS OS 8 ASSERTS DO INTRA-DAY PASSARAM';

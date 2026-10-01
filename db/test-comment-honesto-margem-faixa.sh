@@ -21,6 +21,7 @@ PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
 PORT="${PGPORT_TEST:-5474}"
 SLUG="fu4f3comment"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
+RODADA="$(dirname "$DATA")"   # dir ÚNICO desta rodada (o trap apaga): temporário mora aqui, nunca em /tmp/<nome-fixo>
 export LC_ALL=C LANG=C
 
 MIG_RPC="$REPO_ROOT/supabase/migrations/20260726170000_fu4f_fase3_carteira_margem_faixa.sql"
@@ -39,7 +40,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }
 
 PASS=0; FAIL=0
@@ -155,7 +156,7 @@ eq "D2 re-aplicar não mexe no corpo" \
 echo "-- E. FALSIFICAÇÃO --"
 # Sem isto, B2/B3/B4 seriam decorativos: um arquivo que não aplicasse NADA deixaria o comentário
 # velho em pé, e só um assert com dente distingue "corrigi" de "não fiz nada".
-SAB="/tmp/sabota-${SLUG}.sql"
+SAB="$RODADA/sabota-${SLUG}.sql"
 sed 's/COMMENT ON FUNCTION public.get_carteira_margem_faixa() IS/RAISE NOTICE %sabotado%; -- COMMENT ON FUNCTION public.get_carteira_margem_faixa() IS/' "$MIG_COM" > "$SAB"
 if cmp -s "$SAB" "$MIG_COM"; then
   bad "E0 SABOTAGEM NÃO APLICADA — o sed não casou nada"

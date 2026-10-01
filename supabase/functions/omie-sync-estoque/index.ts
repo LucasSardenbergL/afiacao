@@ -16,6 +16,7 @@ import {
   varreduraTruncada as detectarVarreduraTruncada,
 } from "../_shared/omie-paginacao.ts";
 import { cabeEspera, timeoutRequestMs } from "../_shared/omie-deadline.ts";
+import { hojeSP, paraDataOmie, somarDias } from "../_shared/hoje-sp.ts";
 
 const corsHeaders = {
   ...sharedCors,
@@ -76,12 +77,6 @@ interface OmieSaldoPendenteResponse {
   saldo_pendente_lista?: OmieSaldoPendenteItem[];
   faultcode?: string;
   faultstring?: string;
-}
-
-function ddmmyyyy(d: Date): string {
-  const dd = String(d.getDate()).padStart(2, "0");
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  return `${dd}/${mm}/${d.getFullYear()}`;
 }
 
 async function callOmie<T>(
@@ -245,12 +240,6 @@ function computePendenteEntradaPorSku(
   return porSku;
 }
 
-function ddmmyyyyPed(d: Date): string {
-  const dd = String(d.getDate()).padStart(2, "0");
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  return `${dd}/${mm}/${d.getFullYear()}`;
-}
-
 async function callOmiePedidos(
   appKey: string, appSecret: string, pagina: number, dataDe: string, dataAte: string,
   deadline: number,
@@ -322,8 +311,9 @@ async function fetchEmTransitoKeys(
 ): Promise<{ numeros: Set<string>; codInts: Set<string> }> {
   const numeros = new Set<string>();
   const codInts = new Set<string>();
-  const corte = new Date();
-  corte.setDate(corte.getDate() - 7);
+  // A janela de 7 dias é a da RPC (atualizar_parametros_numericos_skus: dia de SP − 7, desde a
+  // 20261001023000) — no Deno, `new Date()` + `getDate()` é o dia UTC, um a mais das 21h BRT em diante.
+  const corte = somarDias(hojeSP(), -7);
   const { data, error } = await supabase
     .from("pedido_compra_sugerido")
     .select("id, omie_pedido_compra_numero")
@@ -332,7 +322,7 @@ async function fetchEmTransitoKeys(
     // do 1º ramo da CTE: status que a RPC conta e o sync não exclui = contado 2× (suprime compra); o inverso
     // = contado 0× (compra dupla). Paridade vigiada em edges-onorder-guardrail.test.ts.
     .in("status", ["aprovado_aguardando_disparo", "disparado", "disparado_simulado", "concluido_recebido"])
-    .gte("data_ciclo", corte.toISOString().slice(0, 10));
+    .gte("data_ciclo", corte);
   if (error) throw new Error(`em_transito query: ${error.message}`);
   for (const r of (data ?? []) as Array<{ id: string; omie_pedido_compra_numero: string | null }>) {
     if (r.omie_pedido_compra_numero) numeros.add(String(r.omie_pedido_compra_numero).trim());
@@ -368,13 +358,12 @@ async function computePendenteViaPedidosCompra(
 ): Promise<{ pendente: Map<string, number>; confiavel: boolean; problemas: string[] }> {
   const { numeros: emTransitoNumeros, codInts: emTransitoCodInts } = await fetchEmTransitoKeys(supabase);
 
-  const hoje = new Date();
-  const inicio = new Date();
-  inicio.setDate(hoje.getDate() - PEDIDOS_JANELA_PASSADO_DIAS);
-  const fimJanela = new Date();
-  fimJanela.setDate(hoje.getDate() + PEDIDOS_JANELA_FUTURO_DIAS);
-  const dataDe = ddmmyyyyPed(inicio);
-  const dataAte = ddmmyyyyPed(fimJanela); // [fix] cobre previsões de entrega FUTURAS (era ddmmyyyyPed(hoje) → cortava tudo a caminho)
+  // A janela parte do dia de SP (o servidor é UTC: das 21h BRT em diante `new Date()` já é amanhã).
+  const hoje = hojeSP();
+  const inicioJanela = somarDias(hoje, -PEDIDOS_JANELA_PASSADO_DIAS);
+  const fimJanela = somarDias(hoje, PEDIDOS_JANELA_FUTURO_DIAS);
+  const dataDe = paraDataOmie(inicioJanela);
+  const dataAte = paraDataOmie(fimJanela); // [fix] cobre previsões de entrega FUTURAS (era ddmmyyyyPed(hoje) → cortava tudo a caminho)
 
   const items: PoItemOmie[] = [];
   const etapasInesperadas = new Set<string>();
@@ -690,7 +679,7 @@ Deno.serve(async (req) => {
     // Se o mesmo nCodProd está em N locais (matriz, filial, depósito),
     // precisamos SOMAR físico/reservado/pendente de todos os locais —
     // sobrescrever (Map.set) gerava estoque menor que o do ME.
-    const dataPosicao = ddmmyyyy(new Date());
+    const dataPosicao = paraDataOmie(hojeSP()); // a posição de HOJE em SP (no servidor UTC, getDate() é amanhã às 21h+)
     const encontrados = new Map<string, { fisico: number; reservado: number; pendente: number; locais: number }>();
 
     let page = 1;
@@ -912,7 +901,7 @@ Deno.serve(async (req) => {
           sku_descricao: habilitadoMap.get(codigo) ?? null,
           tipo: "sku_inativado_omie",
           severidade: "atencao",
-          data_evento: new Date().toISOString().slice(0, 10),
+          data_evento: hojeSP(),
           detalhes: {
             mensagem:
               "SKU foi inativado no Omie. Decidir: (1) merge histórico com outro SKU, (2) descadastrar do módulo de reposição, (3) reativar manualmente no Omie.",

@@ -20,6 +20,7 @@ PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
 PORT="${PGPORT_TEST:-5474}"
 SLUG="estoque-fonte-dado"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
+RODADA="$(dirname "$DATA")"   # dir ÚNICO desta rodada (o trap apaga): temporário mora aqui, nunca em /tmp/<nome-fixo>
 export LC_ALL=C LANG=C
 
 [ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER} pgvector"; exit 1; }
@@ -35,7 +36,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }
 
 P -q -f "$REPO_ROOT/db/stubs-supabase.sql"
@@ -123,7 +124,7 @@ SQL
 limpa() { P -q -c "DELETE FROM public.sku_estoque_atual;"; }
 # sabotagem: replace literal robusto a metacaracteres via python (Lei #3 — muta a migration REAL)
 sabota() {  # $1=OLD  $2=NEW  $3=count esperado
-  local SAB; SAB=$(mktemp /tmp/sab-efd.XXXXXX.sql)
+  local SAB; SAB=$(mktemp "$RODADA/sab-efd.XXXXXX")
   # O `|| return 1` e o que faz a sabotagem que NAO casa reprovar tambem sob `if sabota` (F3): ali o
   # errexit fica suspenso ate dentro da funcao, o assert do python falhava, o $SAB ficava VAZIO, e o
   # `P -f` de arquivo vazio sai 0 — a sabotagem nao aplicada contava como "APLICOU".
@@ -302,7 +303,7 @@ AS $function$
 $function$;
 SQL
 MD5_ALIEN="$(Pq -c "SELECT md5(pg_get_functiondef('public._data_health_compute()'::regprocedure));")"
-if P -q -f "$MIG" >/dev/null 2>/tmp/guard-err.log; then
+if P -q -f "$MIG" >/dev/null 2>"$RODADA/guard-err.log"; then
   bad "N7 guard NÃO abortou sobre base alienígena (aplicou por cima de drift!)"
 else
   ok "N7 guard abortou a migration sobre base alienígena (exit≠0)"

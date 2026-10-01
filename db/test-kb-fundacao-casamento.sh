@@ -45,7 +45,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l /tmp/pg-kb.log -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres kb_verify
-P() { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d kb_verify "$@"; }
+P() { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d kb_verify "$@"; }
 
 echo "→ stubs mínimos do Supabase (roles, auth, app_role, user_roles, has_role, storage)…"
 P -v ON_ERROR_STOP=1 -q <<'SQL'
@@ -172,10 +172,10 @@ BEGIN
   VALUES ('SAYERLACK', 'fo20.6827.00gl', 'Verniz GL')
   RETURNING id, product_code_normalized, supplier INTO v_id, v_norm, v_sup;
 
-  IF v_norm <> 'FO20.6827.00GL' THEN
+  IF v_norm IS DISTINCT FROM 'FO20.6827.00GL' THEN
     RAISE EXCEPTION 'A2 FALHOU: product_code_normalized=% (esperado FO20.6827.00GL)', v_norm;
   END IF;
-  IF v_sup <> 'sayerlack' THEN
+  IF v_sup IS DISTINCT FROM 'sayerlack' THEN
     RAISE EXCEPTION 'A2b FALHOU: supplier=% (esperado sayerlack lower)', v_sup;
   END IF;
   RAISE NOTICE 'OK A2 — normalized=FO20.6827.00GL, supplier=sayerlack';
@@ -241,14 +241,14 @@ BEGIN
   -- confirmed + approved_at != null → 1 linha
   SELECT count(*) INTO n FROM public.v_omie_product_current_spec
    WHERE account='oben' AND omie_codigo_produto=7777;
-  IF n <> 1 THEN RAISE EXCEPTION 'A4a FALHOU: view deveria ter 1 linha (confirmed+approved), tem %', n; END IF;
+  IF n IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'A4a FALHOU: view deveria ter 1 linha (confirmed+approved), tem %', n; END IF;
   RAISE NOTICE 'OK A4a — view mostra 1 (confirmed + approved_at)';
 
   -- approved_at = NULL → 0 linhas
   UPDATE public.kb_product_specs SET approved_at = NULL WHERE id = spec_v;
   SELECT count(*) INTO n FROM public.v_omie_product_current_spec
    WHERE account='oben' AND omie_codigo_produto=7777;
-  IF n <> 0 THEN RAISE EXCEPTION 'A4b FALHOU: spec não-aprovado deveria sumir da view, tem %', n; END IF;
+  IF n IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'A4b FALHOU: spec não-aprovado deveria sumir da view, tem %', n; END IF;
   RAISE NOTICE 'OK A4b — spec sem approved_at some da view';
 
   -- restaura approved + vira link rejected → 0 linhas
@@ -257,7 +257,7 @@ BEGIN
    WHERE account='oben' AND omie_codigo_produto=7777 AND kb_product_spec_id=spec_v;
   SELECT count(*) INTO n FROM public.v_omie_product_current_spec
    WHERE account='oben' AND omie_codigo_produto=7777;
-  IF n <> 0 THEN RAISE EXCEPTION 'A4c FALHOU: link rejected deveria sumir da view, tem %', n; END IF;
+  IF n IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'A4c FALHOU: link rejected deveria sumir da view, tem %', n; END IF;
   RAISE NOTICE 'OK A4c — link rejected some da view';
 
   -- limpeza
@@ -284,7 +284,7 @@ BEGIN
 
   -- master confirma (oben, 6001) → spec1, via RPC. Retorna 1.
   SELECT public.confirmar_vinculo_boletim(spec1, '[{"account":"oben","omie_codigo_produto":6001}]'::jsonb) INTO n;
-  IF n <> 1 THEN RAISE EXCEPTION 'A5a FALHOU: confirmar retornou % (esperado 1)', n; END IF;
+  IF n IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'A5a FALHOU: confirmar retornou % (esperado 1)', n; END IF;
   RAISE NOTICE 'OK A5a — master confirmou (oben,6001)→spec1';
 
   -- tentar confirmar o MESMO SKU pra spec2 → RAISE "já vinculado"
@@ -303,7 +303,7 @@ BEGIN
   SELECT public.confirmar_vinculo_boletim(spec1, '[{"account":"oben","omie_codigo_produto":6001}]'::jsonb) INTO n;
   SELECT count(*) INTO n FROM public.omie_product_spec_links
    WHERE account='oben' AND omie_codigo_produto=6001 AND status='confirmed';
-  IF n <> 1 THEN RAISE EXCEPTION 'A5d FALHOU: re-confirmar duplicou (% linhas confirmed)', n; END IF;
+  IF n IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'A5d FALHOU: re-confirmar duplicou (% linhas confirmed)', n; END IF;
   RAISE NOTICE 'OK A5d — re-confirmar do mesmo dono é idempotente (1 linha)';
 END $$;
 SQL
@@ -358,12 +358,12 @@ BEGIN
   -- termo '6827' casa a descrição 'VERNIZ PU FO20.6827.00GL'
   SELECT count(*) INTO n_hit FROM public.buscar_skus_candidatos(ARRAY['6827'])
    WHERE omie_codigo_produto = 5001;
-  IF n_hit <> 1 THEN RAISE EXCEPTION 'A7a FALHOU: termo 6827 deveria casar o SKU 5001, casou %', n_hit; END IF;
+  IF n_hit IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'A7a FALHOU: termo 6827 deveria casar o SKU 5001, casou %', n_hit; END IF;
   RAISE NOTICE 'OK A7a — termo 6827 casa o SKU 5001';
 
   -- termo '9999' não casa nada
   SELECT count(*) INTO n_miss FROM public.buscar_skus_candidatos(ARRAY['9999']);
-  IF n_miss <> 0 THEN RAISE EXCEPTION 'A7b FALHOU: termo 9999 não deveria casar nada, casou %', n_miss; END IF;
+  IF n_miss IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'A7b FALHOU: termo 9999 não deveria casar nada, casou %', n_miss; END IF;
   RAISE NOTICE 'OK A7b — termo 9999 não casa nada';
 END $$;
 SQL
@@ -479,7 +479,7 @@ BEGIN
   VALUES ('sayerlack', E'ﬀ20.6827.00', 'nfkc')
   RETURNING id, product_code_normalized INTO v_id, v_norm;
 
-  IF v_norm <> 'FF20.6827.00' THEN
+  IF v_norm IS DISTINCT FROM 'FF20.6827.00' THEN
     RAISE EXCEPTION 'A9 FALHOU: normalized=% (esperado FF20.6827.00 — NFKC expandiu ﬀ→ff)', v_norm;
   END IF;
   RAISE NOTICE 'OK A9 — NFKC expandiu ligadura ﬀ→FF: normalized=%', v_norm;
@@ -501,7 +501,7 @@ BEGIN
   -- O buscar_skus_candidatos deve escapar '%' → '\%' (literal), casando 0 linhas.
   -- Sem o escape, LIKE '%\%%' ainda casaria todas as linhas (qualquer string).
   SELECT count(*) INTO n FROM public.buscar_skus_candidatos(ARRAY['%']);
-  IF n <> 0 THEN
+  IF n IS DISTINCT FROM 0 THEN
     RAISE EXCEPTION 'A10 FALHOU: termo %% casou % linhas (esperado 0 — LIKE-escape ausente)', n;
   END IF;
   RAISE NOTICE 'OK A10 — termo %% escapado corretamente (0 linhas)';

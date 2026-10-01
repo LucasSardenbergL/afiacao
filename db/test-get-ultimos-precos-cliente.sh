@@ -27,7 +27,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }
 
 P -q <<'SQL'
@@ -42,6 +42,8 @@ PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); echo "  ✅ $1"; }
 bad() { FAIL=$((FAIL+1)); echo "  ❌ $1"; }
 eq()  { if [ "$2" = "$3" ]; then ok "$1 (=$2)"; else bad "$1 — esperado [$3], veio [$2]"; fi; }
+# Leitura que ERRA não pode virar "" — o esperado de M5/M6 É "": o erro vira ERRO_rc=<n> (assert verde por ausência).
+medir() { local v rc; set +e; v="$(set -e; "$@")"; rc=$?; set -e; if [ "$rc" -eq 0 ]; then printf '%s\n' "$v"; else printf 'ERRO_rc=%s\n' "$rc"; fi; }
 
 echo "═══ setup pronto (PG17 :$PORT) ═══"
 
@@ -152,8 +154,8 @@ eq "M1 status: ignora cancelado (30, não 99)"            "$(preco 00000000-0000
 eq "M2 anti-futuro: ignora 2027 (40, não 88)"            "$(preco 00000000-0000-0000-0000-000000000004)" "40"
 eq "M3 deleted_at: ignora deletado (25, não 77)"         "$(preco 00000000-0000-0000-0000-000000000005)" "25"
 eq "M4 unit_price>0: ignora preço 0 (15)"                "$(preco 00000000-0000-0000-0000-000000000006)" "15"
-eq "M5 product_id NULL: prod7 não aparece"               "$(preco 00000000-0000-0000-0000-000000000007)" ""
-eq "M6 defesa oi=so: prod8 (pai=B) não vaza p/ A"        "$(preco 00000000-0000-0000-0000-000000000008)" ""
+eq "M5 product_id NULL: prod7 não aparece"               "$(medir preco 00000000-0000-0000-0000-000000000007)" ""
+eq "M6 defesa oi=so: prod8 (pai=B) não vaza p/ A"        "$(medir preco 00000000-0000-0000-0000-000000000008)" ""
 
 echo "── asserts negativos (gate) — SQLSTATE + re-raise, sentinela própria ──"
 # N1: customer (A) chamando → RAISE forbidden (42501)

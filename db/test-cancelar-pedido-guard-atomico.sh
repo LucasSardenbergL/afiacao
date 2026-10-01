@@ -23,6 +23,7 @@ export PGVER=17   # consumido pelo db/lib/pg-harness.sh via source
 PORT="${PGPORT_TEST:-5473}"
 SLUG="cancelar-guard"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
+RODADA="$(dirname "$DATA")"   # dir ÚNICO desta rodada (o trap apaga): temporário mora aqui, nunca em /tmp/<nome-fixo>
 export LC_ALL=C LANG=C
 
 # PGBIN: resolvido por plataforma (macOS Homebrew / Linux PGDG) com conferencia
@@ -39,15 +40,15 @@ trap cleanup EXIT
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
 # TimeZone fixo: `timestamptz::text` renderiza no fuso da SESSAO -- sem isto as mensagens de
 # recusa mudariam de forma conforme o fuso do host e os asserts abaixo seriam frageis.
-"$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d postgres -q -c "ALTER DATABASE prove SET TimeZone='UTC';"
+"$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d postgres -q -c "ALTER DATABASE prove SET TimeZone='UTC';"
 # ── DOIS LOCALES (licao #1483: falsificar num ambiente so nao prova a asrercao) ────────
 # O SERVIDOR sempre arranca sob LC_ALL=C -- no macOS, sem isso o postmaster aborta. O eixo
 # que a licao manda variar e a LINGUA DAS MENSAGENS do servidor, e essa e GUC do BANCO.
 # HARNESS_LC=pt_BR.UTF-8 bash db/test-cancelar-pedido-guard-atomico.sh
 HARNESS_LC="${HARNESS_LC:-C}"
-"$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d postgres -q -c "ALTER DATABASE prove SET lc_messages='$HARNESS_LC';" \
+"$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d postgres -q -c "ALTER DATABASE prove SET lc_messages='$HARNESS_LC';" \
   || { echo "INFRA: lc_messages='$HARNESS_LC' indisponivel neste servidor"; exit 1; }
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }
 
 P -q -f "$REPO_ROOT/db/stubs-supabase.sql"
@@ -65,7 +66,7 @@ eq()  { if [ "$2" = "$3" ]; then ok "$1 (=$2)"; else bad "$1 -- esperado [$3], v
 # Controle do proprio eixo: provoca um erro do SERVIDOR e mostra em que lingua ele vem.
 # `|| true`: o psql SAI 1 de proposito aqui (divisao por zero e o provocador) e o `set -e`
 # mataria o script antes de qualquer assert.
-AMOSTRA_MSG=$("$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -tA -c "SELECT 1/0;" 2>&1 | head -1) || true
+AMOSTRA_MSG=$("$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -tA -c "SELECT 1/0;" 2>&1 | head -1) || true
 echo "=== setup pronto (PG17 :$PORT) lc_messages=$HARNESS_LC ==="
 echo "=== controle do eixo de locale, mensagem do servidor: $AMOSTRA_MSG"
 
@@ -93,7 +94,7 @@ SQL
 # ══════════════════════════════════════════════════════════════════════════════
 MIG="$REPO_ROOT/supabase/migrations/20260905224959_cancelar_pedido_guard_atomico.sql"
 MIG_VELHA="$REPO_ROOT/supabase/migrations/20260530210001_cancelar_pedido_limpa_portal.sql"
-POSTBLOCO="$(mktemp /tmp/postbloco.XXXXXX.sql)"
+POSTBLOCO="$(mktemp "$RODADA/postbloco.XXXXXX")"
 # shellcheck disable=SC2016  # `$post$` e a TAG de dollar-quote do SQL: tem de ficar literal.
 sed -n '/^DO \$post\$/,/^\$post\$;/p' "$MIG" > "$POSTBLOCO"
 [ -s "$POSTBLOCO" ] || { echo "INFRA: não extraí o bloco de postcondição do .sql"; exit 1; }
@@ -420,7 +421,7 @@ fi
 #     (a) contra o corpo velho ela tem de ABORTAR com a mensagem do guard;
 #     (b) contra o corpo certo ela tem de PASSAR.
 P -q -f "$MIG_VELHA"
-ERRLOG="$(mktemp /tmp/post-erro.XXXXXX.log)"
+ERRLOG="$(mktemp "$RODADA/post-erro.XXXXXX")"
 if P -q -f "$POSTBLOCO" >/dev/null 2>"$ERRLOG"; then
   bad "F4a a postcondicao PASSOU sobre o corpo velho vulneravel -- ela e decorativa"
 else
@@ -454,7 +455,7 @@ fi
 
 # F5b: perda EFETIVA de EXECUTE -> a postcondicao TEM de abortar, pelo sentinela certo.
 P -q -c "REVOKE EXECUTE ON FUNCTION public.cancelar_pedido_sugerido(bigint,text,text) FROM authenticated;" >/dev/null
-ERRLOG2="$(mktemp /tmp/post-acl.XXXXXX.log)"
+ERRLOG2="$(mktemp "$RODADA/post-acl.XXXXXX")"
 if P -q -f "$POSTBLOCO" >/dev/null 2>"$ERRLOG2"; then
   bad "F5b authenticated sem EXECUTE e a postcondicao passou -- o eixo ACL e decorativo"
 else

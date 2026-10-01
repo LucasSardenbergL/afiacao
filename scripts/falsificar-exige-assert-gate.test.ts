@@ -4,13 +4,21 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
+import { removerComentarios } from '@/lib/gates/limpeza-fonte';
+import { removerComentariosShell } from '@/lib/gates/limpeza-shell';
+
 import {
   JUIZES,
   PACOTE,
   PISOS,
+  REGISTRO_FECHADO,
+  acharAncora,
   analisar,
   detectar,
+  escritasDe,
+  julgarAncoras,
   julgarNucleo,
+  julgarRegistro,
   lerCorpoDoRepo,
   lerFalsificacao,
   lerNucleo,
@@ -167,7 +175,7 @@ describe('o que NÃO é a classe', () => {
       'done',
     ].join('\n');
     expect(detectar('x.sh', viaApelido).violacoes).toEqual([]);
-    expect(detectar(ALVO, real(ALVO))).toMatchObject({ listas: 1, entradas: 13, lacos: 1, violacoes: [] });
+    expect(detectar(ALVO, real(ALVO))).toMatchObject({ listas: 1, entradas: 15, lacos: 1, violacoes: [] });
   });
 
   it('o idioma do #2606 passa: nome:VERMELHOS:VERDES, ID!MARCA e a cadeia de 3 elos até o grep', () => {
@@ -207,7 +215,7 @@ describe('o que NÃO é a classe', () => {
 });
 
 describe('R3 — cada falsificar=<n> do núcleo tem juiz, e o juiz tem as âncoras', () => {
-  const juizes: Record<string, Juiz> = { 'db/a.sh': { motivo: 'm', ancoras: ['confere "$marca"'] } };
+  const juizes: Record<string, Juiz> = { 'db/a.sh': { motivo: 'm', mede: [], semLigacao: 'fixture', ancoras: ['confere "$marca"'] } };
   const limpos = new Map([
     ['db/a.sh', 'x=1\nconfere "$marca"\n'],
     ['db/b.sh', 'y=2\n'],
@@ -260,17 +268,336 @@ describe('R3 — cada falsificar=<n> do núcleo tem juiz, e o juiz tem as âncor
     ]);
   });
 
-  it('cada juiz REAL do núcleo: remover QUALQUER âncora do arquivo real fica vermelho', () => {
-    for (const [arquivo, juiz] of Object.entries(JUIZES)) {
-      const fonte = real(arquivo);
-      expect(juiz.ancoras.length, arquivo).toBeGreaterThan(0);
-      for (const ancora of juiz.ancoras) {
-        expect(fonte.includes(ancora), `${arquivo}: ${ancora}`).toBe(true);
-        const sem = fonte.split(ancora).join('');
-        const v = julgarNucleo([], new Map([[arquivo, sem]]), { [arquivo]: juiz });
-        expect(v.map((x) => x.detalhe), `${arquivo}: ${ancora}`).toEqual([expect.stringContaining(ancora)]);
-      }
+  // Um `it` POR JUIZ: os 40 num só levam ~1,5 s sem carga, e este gate já estourou o timeout de 20 s
+  // com load > 100 quando o corpo inteiro rodava dentro de um `it` (docs/historico/falsificacao-exit-nao-e-dente.md).
+  it.each(Object.entries(JUIZES))('juiz REAL %s: apagar as linhas de QUALQUER âncora (ou bloco) fica vermelho, com a marca do ramo', (arquivo, juiz) => {
+    const fonte = real(arquivo);
+    expect(juiz.ancoras.length, arquivo).toBeGreaterThan(0);
+    for (const ancora of juiz.ancoras) {
+      const achados = acharAncora(limpar(arquivo, fonte), ancora);
+      expect(achados.length, `${arquivo}: ${rotulo(ancora)}`).toBeGreaterThan(0);
+      const apagar = new Set(achados.flatMap(({ ini, fim }) => Array.from({ length: fim - ini + 1 }, (_, i) => ini + i)));
+      const sem = fonte
+        .split('\n')
+        .map((l, i) => (apagar.has(i + 1) ? '' : l))
+        .join('\n');
+      const v = julgarAncoras(new Map([[arquivo, limpar(arquivo, sem)]]), { [arquivo]: juiz }).map((x) => x.detalhe);
+      const marca = typeof ancora === 'string' ? `âncora do juiz sumiu do código: ${ancora}` : `bloco do juízo rompeu (${ancora.length} linhas, de «${ancora[0]}»`;
+      expect(v, `${arquivo}: ${rotulo(ancora)}`).toContainEqual(expect.stringContaining(marca));
     }
+  });
+
+  it.each(Object.entries(JUIZES))('juiz REAL %s: uma escrita FORJADA da variável julgada entre a medição presa e o veredito fica vermelha', (arquivo, juiz) => {
+    const fonte = real(arquivo);
+    const limpo = limpar(arquivo, fonte);
+    const ts = arquivo.endsWith('.ts');
+    const linhasDe = (a: string | readonly string[], inteira: boolean) =>
+      acharAncora(limpo, a)
+        .filter((x) => !inteira || x.inteira)
+        .flatMap(({ ini, fim }) => Array.from({ length: fim - ini + 1 }, (_, i) => ini + i));
+    const inteiras = new Set(juiz.ancoras.flatMap((a) => linhasDe(a, true)));
+    for (const nome of juiz.mede) {
+      const presa = escritasDe(limpo, nome, ts).find((l) => inteiras.has(l));
+      expect(presa, `${arquivo}: a medição de ${nome} está presa`).toBeDefined();
+      const m = presa ?? 0;
+      // o veredito que LÊ a variável, pelo texto das âncoras (`$V`, `${V`, ou nu dentro de `(( ))`)
+      const le = new RegExp(ts ? `\\b${nome}\\b` : `\\$\\{?${nome}(?!\\w)|\\(\\([^()]*\\b${nome}\\b`);
+      const veredito = juiz.ancoras.filter((a) => (typeof a === 'string' ? [a] : a).some((l) => le.test(l))).flatMap((a) => linhasDe(a, false));
+      const forja = ts ? `${nome} = 'FORJADO';` : `${nome}=FORJADO`;
+      const linhas = fonte.split('\n');
+      const entre = veredito.some((l) => l > m);
+      // Com veredito DEPOIS da medição, a forja entra entre os dois; com os dois na MESMA linha
+      // (`elif novas="$(…)"; [ -n "$novas" ]`), não há "entre" — a forja vai NA linha
+      if (entre) linhas.splice(m, 0, forja);
+      else linhas[m - 1] = `${forja}${ts ? ' ' : '; '}${linhas[m - 1]}`;
+      const v = julgarAncoras(new Map([[arquivo, limpar(arquivo, linhas.join('\n'))]]), { [arquivo]: juiz }).map((x) => x.detalhe);
+      // nunca verde, e sempre pela ligação: a escrita a mais dentro do juízo, a medição solta, ou o
+      // bloco que a prendia rompido NA linha da forja
+      const acusou = v.some(
+        (d) =>
+          d.includes(`${nome} é ESCRITA na linha ${m + 1}, dentro do juízo`) ||
+          d.includes(`a medição da variável julgada ${nome} não está presa`) ||
+          (entre && d.includes('bloco do juízo rompeu') && d.includes(`e a linha ${m + 1} não é`)),
+      );
+      expect(acusou, `${arquivo}: ${nome} (${entre ? 'entre' : 'na linha'}) → ${v.join(' | ')}`).toBe(true);
+    }
+  });
+});
+
+/** A limpeza que o gate aplica ao arquivo (TS pelo stripper de TS; o resto é shell). */
+const limpar = (caminho: string, fonte: string) => (caminho.endsWith('.ts') ? removerComentarios(fonte) : removerComentariosShell(fonte));
+const rotulo = (a: string | readonly string[]) => (typeof a === 'string' ? a : `[bloco] ${a[0]} …`);
+/** Troca que TEM de casar exatamente 1× — casar 0 ou 2 é erro do teste, não veredito. */
+const troca = (fonte: string, de: string, para: string) => {
+  expect(fonte.split(de).length - 1, de).toBe(1);
+  return fonte.replace(de, para);
+};
+
+/** O juízo na forma do tint-promote (F1): a medição, o `case` e os três ramos — o que o Codex furou. */
+const MEDICAO = 'D=$(P -tA -c "SELECT _dif_count();")';
+const JUIZO = [
+  'P -q -f "$sab" >/dev/null',
+  MEDICAO,
+  'case "$D" in',
+  '  720)  ok "F1 — diverge do loop em $D linhas" ;;',
+  '  0|"") echo "✗ F1 FALHOU: a identidade NÃO acusou"; exit 1 ;;',
+  '  *)    echo "✗ F1 FALHOU: divergiu em $D linhas, NÃO nas 720"; exit 1 ;;',
+  'esac',
+  'P -q -f "$mig" >/dev/null',
+].join('\n');
+const JUIZ_DO_JUIZO: Juiz = {
+  motivo: 'a divergência EXATA declarada',
+  mede: ['D'],
+  ancoras: [[MEDICAO, 'case "$D" in', '720) ok "…" ;;', '0|"") echo "…"; exit 1 ;;', '*) echo "…"; exit 1 ;;', 'esac']],
+};
+const julga = (fonte: string, juiz: Juiz = JUIZ_DO_JUIZO) =>
+  analisar([{ caminho: 'db/t.sh', fonte }], '', { 'db/t.sh': juiz }).violacoes.map((v) => v.detalhe);
+
+describe('a LIGAÇÃO do juiz com a medição (Codex, fase 4): o juízo é UM bloco, e a variável julgada tem só escritores presos', () => {
+  it('controle: o juízo intacto passa', () => {
+    expect(julga(JUIZO)).toEqual([]);
+  });
+
+  const SOLTA = 'a medição da variável julgada D não está presa';
+
+  it('a leitura trocada por constante (`D=720`) reprova: o bloco rompe NA medição, e a medição deixa de estar presa', () => {
+    expect(julga(troca(JUIZO, MEDICAO, 'D=720'))).toEqual([
+      expect.stringContaining('bloco do juízo rompeu (6 linhas, de «D=$(P -tA -c "SELECT _dif_count();")» a «esac»): a 1ª linha não está no código'),
+      expect.stringContaining(SOLTA),
+    ]);
+  });
+
+  it('`D=720` inserido LOGO DEPOIS da leitura reprova — o bloco rompe na 2ª linha', () => {
+    expect(julga(troca(JUIZO, MEDICAO, `${MEDICAO}\nD=720`))).toEqual([
+      expect.stringContaining('casa até «D=$(P -tA -c "SELECT _dif_count();")» (linha 2), e a linha 3 não é «case "$D" in»'),
+      expect.stringContaining(SOLTA),
+    ]);
+  });
+
+  it('`D=720` na MESMA linha da leitura reprova — o bloco casa a linha INTEIRA, não um trecho', () => {
+    expect(julga(troca(JUIZO, MEDICAO, `${MEDICAO}; D=720`))).toEqual([
+      expect.stringContaining('bloco do juízo rompeu'),
+      expect.stringContaining(SOLTA),
+    ]);
+  });
+
+  /** O mesmo juízo preso em PEÇAS de uma linha (sem bloco): aí quem pega a escrita a mais é a ligação. */
+  const PECAS: Juiz = { ...JUIZ_DO_JUIZO, ancoras: [MEDICAO, 'case "$D" in', '720) ok "…" ;;', '0|"") echo "…"; exit 1 ;;', '*) echo "…"; exit 1 ;;'] };
+
+  it('em peças soltas, `D=720` entre a leitura e o veredito reprova pela ESCRITA dentro do juízo', () => {
+    expect(julga(JUIZO, PECAS)).toEqual([]);
+    expect(julga(troca(JUIZO, MEDICAO, `${MEDICAO}\nD=720`), PECAS)).toEqual([
+      // o juízo vai da escrita presa à ÚLTIMA âncora que lê `$D` — o `case` já avaliou a palavra; os
+      // ramos não a releem (a prosa deles é curinga)
+      expect.stringContaining('a variável julgada D é ESCRITA na linha 3, dentro do juízo (linhas 2–4), fora das âncoras'),
+    ]);
+  });
+
+  it('FORA do juízo — antes da leitura ou depois do esac — a escrita não muda o julgamento, e não reprova', () => {
+    expect(julga(`D=0\n${JUIZO}\nD=720\n`)).toEqual([]);
+    expect(julga(`D=0\n${JUIZO}\nD=720\n`, PECAS)).toEqual([]);
+  });
+
+  it('o ramo `0|""` liberado, o `case` desligado da variável e um ramo pega-tudo inserido: os três rompem o bloco', () => {
+    const zero = troca(JUIZO, '0|"") echo "✗ F1 FALHOU: a identidade NÃO acusou"; exit 1 ;;', '0|"") ok "zero aceito" ;;');
+    const cabeca = troca(JUIZO, 'case "$D" in', 'case "720" in');
+    const pegaTudo = troca(JUIZO, 'case "$D" in', 'case "$D" in\n  *) ok "qualquer" ;;');
+    // o bloco é tudo-ou-nada: rompido, ele deixa de prender a leitura — e a medição solta acusa junto
+    for (const sabotado of [zero, cabeca, pegaTudo]) {
+      expect(julga(sabotado)).toEqual([expect.stringContaining('bloco do juízo rompeu'), expect.stringContaining(SOLTA)]);
+    }
+  });
+
+  it('o EXCESSO não reprova: recuo, espaço interno e a PROSA do diagnóstico mudam sem mudar o julgamento', () => {
+    const reescrito = JUIZO.replace('  720)  ok', '720) ok')
+      .replace('    echo "✗ F1 FALHOU: divergiu em $D linhas, NÃO nas 720"', '\techo "✗ F1: veio $D, não o declarado"');
+    expect(reescrito).not.toBe(JUIZO);
+    expect(julga(reescrito)).toEqual([]);
+  });
+
+  it('o curinga de prosa é UMA string: não atravessa aspas (um `ok` enfiado entre o echo e o exit reprova)', () => {
+    const enfiado = troca(JUIZO, 'echo "✗ F1 FALHOU: a identidade NÃO acusou"; exit 1', 'echo "✗"; ok "enfiado"; exit 1');
+    expect(julga(enfiado)).toEqual([expect.stringContaining('bloco do juízo rompeu'), expect.stringContaining(SOLTA)]);
+  });
+
+  it('o curinga de prosa aceita aspa ESCAPADA dentro da string (`"  FAIL  \\"$regra\\" …"`)', () => {
+    const escapada = troca(JUIZO, 'echo "✗ F1 FALHOU: a identidade NÃO acusou"', 'echo "✗ \\"F1\\" FALHOU: não acusou"');
+    expect(julga(escapada)).toEqual([]);
+  });
+
+  it('comentário e linha em branco entre as linhas do bloco não rompem (o stripper é quem decide o que é código)', () => {
+    expect(julga(troca(JUIZO, 'case "$D" in', '\n# o veredito:\ncase "$D" in'))).toEqual([]);
+  });
+
+  it('variável julgada sem escritor nenhum reprova — a medição sumiu, ou mudou de nome', () => {
+    const renomeada = JUIZO.replaceAll('$D', '$E').replace('D=$(', 'E=$(');
+    const v = julga(renomeada, { ...JUIZ_DO_JUIZO, ancoras: [['E=$(P -tA -c "SELECT _dif_count();")', 'case "$E" in']] });
+    expect(v).toEqual([expect.stringContaining('a variável julgada D não é ESCRITA em lugar nenhum')]);
+  });
+
+  it('leitura em contexto ARITMÉTICO (`$(( A - B ))`, sem `$`) conta como leitura', () => {
+    const fonte = 'A="$(medir)"\nif [ "$(( A - 1 ))" -gt 0 ]; then ok; fi\n';
+    const juiz: Juiz = { motivo: 'm', mede: ['A'], ancoras: ['A="$(medir)"', 'if [ "$(( A - 1 ))" -gt 0 ]; then ok; fi'] };
+    expect(julga(fonte, juiz)).toEqual([]);
+  });
+
+  it('variável julgada que NENHUMA âncora lê reprova — medição presa sem veredito ligado a ela', () => {
+    const v = julga(JUIZO, { ...JUIZ_DO_JUIZO, ancoras: [[MEDICAO]] });
+    expect(v).toEqual([expect.stringContaining('nenhuma âncora LÊ a variável julgada D')]);
+  });
+
+  it('âncora ou bloco VAZIO no registro reprova — casaria qualquer linha (ou derrubaria o gate)', () => {
+    const com = (extra: string | readonly string[]) => julga(JUIZO, { ...JUIZ_DO_JUIZO, ancoras: [...JUIZ_DO_JUIZO.ancoras, extra] });
+    for (const vazia of ['', '   ', [], ['case "$D" in', '  ']] as const) {
+      expect(com(vazia), JSON.stringify(vazia)).toEqual([expect.stringContaining('âncora VAZIA no registro')]);
+    }
+  });
+
+  it('juiz sem `mede` tem de dizer POR QUE (`semLigacao`) — senão a ligação volta a ser voluntária', () => {
+    expect(julga(JUIZO, { motivo: 'm', mede: [], ancoras: [MEDICAO] })).toEqual([
+      expect.stringContaining('juiz sem variável julgada (`mede` vazio) e sem `semLigacao`'),
+    ]);
+    expect(julga(JUIZO, { motivo: 'm', mede: [], semLigacao: '   ', ancoras: [MEDICAO] })).toEqual([
+      expect.stringContaining('juiz sem variável julgada (`mede` vazio) e sem `semLigacao`'),
+    ]);
+    expect(julga(JUIZO, { motivo: 'm', mede: [], semLigacao: 'a medição mora nos pontos de chamada do helper', ancoras: [MEDICAO] })).toEqual([]);
+  });
+
+  it('âncora de UMA linha também prende a medição — mas só se casar a linha INTEIRA', () => {
+    const juiz: Juiz = { motivo: 'm', mede: ['D'], ancoras: [MEDICAO, 'case "$D" in'] };
+    expect(julga(JUIZO, juiz)).toEqual([]);
+    const parcial: Juiz = { motivo: 'm', mede: ['D'], ancoras: ['D=$(P -tA', 'case "$D" in'] };
+    expect(julga(JUIZO, parcial)).toEqual([expect.stringContaining(`${SOLTA}: nenhuma escrita dela (linha 2)`)]);
+  });
+});
+
+describe('escritasDe — o que é ESCRITA da variável julgada (pela máscara do stripper compartilhado)', () => {
+  const linhas = (fonte: string, v = 'D') => escritasDe(removerComentariosShell(fonte), v, false);
+
+  it.each([
+    ['atribuição', 'D=1'],
+    ['acréscimo', 'D+=1'],
+    ['local/export/declare/readonly', 'local D=1'],
+    ['vários na mesma declaração', 'local a="$1" D="$2"'],
+    ['read', 'IFS= read -r x D <<<"$y"'],
+    ['printf -v', "printf -v D '%s' 1"],
+    ['for', 'for D in 720; do :; done'],
+    ['${D:=}', 'echo "${D:=720}"'],
+    ['aritmética', '(( D = 720 ))'],
+    ['let', 'let D=720'],
+    ['unset', 'unset D'],
+    ['mapfile', 'mapfile -t D < "$f"'],
+    ['redirecionamento para o arquivo', 'echo 720 > "$D"'],
+    ['redirecionamento de acréscimo', 'echo 720 >>"$D"'],
+    ['stderr para o arquivo', 'cmd 2>"${D}"'],
+    ['tee', 'cmd | tee -a "$D"'],
+    ['atribuição dentro de $( )', 'x="$(D=1; echo)"'],
+  ])('%s é escrita', (_nome, fonte) => {
+    expect(linhas(`: antes\n${fonte}\n: depois`)).toEqual([2]);
+  });
+
+  it.each([
+    ['comparação', '[ "$D" = 720 ]'],
+    ['leitura', 'echo "$D"'],
+    ['dentro de aspas', 'echo "D=720"'],
+    ['dentro de aspas simples', "echo 'D=720'"],
+    // só a MÁSCARA do stripper exclui estes: a palavra começa depois de um espaço, DENTRO da string
+    // (nos dois de cima, a aspa colada já barrava pela fronteira — a mutação que desligava a máscara
+    // sobreviveu ao mutation-check enquanto só eles existiam)
+    ['prosa com espaço antes do nome, em aspas duplas', 'echo "texto D=720 dentro"'],
+    ['redirecionamento dentro de aspas', 'echo "manda > $D"'],
+    ['prosa com espaço antes do nome, em aspas simples', "echo 'x D=1'"],
+    ['atribuição dentro do VALOR de outra', 'msg="a D=1 b"'],
+    ['comentário', '# D=720'],
+    ['nome mais longo', 'DSAB=720; XD=1; D2=3'],
+    ['flag', 'grep --D=1 x'],
+    ['redirecionamento para OUTRO arquivo', 'echo 720 > "$D.cru"'],
+    ['leitura do arquivo', 'grep -q x "$D"'],
+    ['heredoc de SQL que só LÊ', 'P <<SQL\nSELECT 1 WHERE x = $D;\nSQL'],
+  ])('%s não é escrita', (_nome, fonte) => {
+    expect(linhas(fonte)).toEqual([]);
+  });
+
+  it('TS: declaração e reatribuição são escrita; comparação e leitura não', () => {
+    const ts = (f: string) => escritasDe(removerComentarios(f), 'cls', true);
+    expect(ts('const x = 1;\nconst cls = medir();\n')).toEqual([2]);
+    expect(ts('let cls = 1;\ncls = 2;\ncls += 1;\n')).toEqual([1, 2, 3]);
+    expect(ts('const ok = cls === esperado && cls !== x;\nf(cls);\nconst y = (cls) => cls >= 1;\n')).toEqual([]);
+    expect(ts('// cls = 2;\n')).toEqual([]);
+  });
+});
+
+describe('o REGISTRO FECHADO — remover um juiz exige mudança explícita, não um bloco apagado', () => {
+  const um: Record<string, Juiz> = { 'db/a.sh': { motivo: 'm', mede: [], semLigacao: 'fixture', ancoras: ['x'] } };
+
+  it('registro e JUIZES iguais: limpo', () => {
+    expect(julgarRegistro(um, ['db/a.sh'])).toEqual([]);
+  });
+
+  it('juiz do registro que sumiu do JUIZES reprova, nomeando-o — o furo do Codex: apagar a entrada inteira passava', () => {
+    expect(julgarRegistro({}, ['db/a.sh'])).toEqual([
+      expect.objectContaining({ arquivo: 'db/a.sh', detalhe: expect.stringContaining('juiz do REGISTRO FECHADO sumiu do JUIZES') }),
+    ]);
+  });
+
+  it('juiz NOVO fora do registro reprova — senão a próxima remoção dele voltaria a passar calada', () => {
+    expect(julgarRegistro(um, [])).toEqual([
+      expect.objectContaining({ arquivo: 'db/a.sh', detalhe: expect.stringContaining('juiz fora do REGISTRO FECHADO') }),
+    ]);
+  });
+
+  it('analisar aplica o registro que recebe (o corpo do repo passa o REGISTRO_FECHADO); fixture sem registro não é cobrada', () => {
+    const arquivos = [{ caminho: 'db/a.sh', fonte: 'x\n' }];
+    expect(analisar(arquivos, '', um, null, ['db/a.sh', 'db/b.sh']).violacoes).toEqual([
+      expect.objectContaining({ arquivo: 'db/b.sh', detalhe: expect.stringContaining('juiz do REGISTRO FECHADO sumiu do JUIZES') }),
+    ]);
+    expect(analisar(arquivos, '', um, null).violacoes).toEqual([]);
+  });
+
+  it('o registro REAL fecha com o JUIZES real, e o corpo real reprova sem a entrada do tint-promote', () => {
+    expect(julgarRegistro(JUIZES, REGISTRO_FECHADO)).toEqual([]);
+    const { 'db/test-tint-promote.sh': _removido, ...semTint } = JUIZES;
+    expect(julgarRegistro(semTint, REGISTRO_FECHADO)).toEqual([
+      expect.objectContaining({ arquivo: 'db/test-tint-promote.sh', detalhe: expect.stringContaining('sumiu do JUIZES') }),
+    ]);
+  });
+});
+
+describe('o juiz REAL do tint-promote — as brechas do Codex no arquivo de verdade', () => {
+  const arquivo = 'db/test-tint-promote.sh';
+  const julgaReal = (fonte: string) =>
+    julgarAncoras(new Map([[arquivo, removerComentariosShell(fonte)]]), { [arquivo]: JUIZES[arquivo] }).map((v) => v.detalhe);
+
+  it('controle: o arquivo real passa', () => {
+    expect(julgaReal(real(arquivo))).toEqual([]);
+  });
+
+  const LEITURA_F1 = 'DSAB=$(P -tA -c "SELECT _dif_count();")';
+  const linhaDaLeitura = () => real(arquivo).split('\n').indexOf(LEITURA_F1) + 1;
+  const F1 = `bloco do juízo rompeu (6 linhas, de «${LEITURA_F1}»`;
+  const F2 = 'bloco do juízo rompeu (6 linhas, de «DSAB2=$(P -tA -c "SELECT _dif_count();")»';
+
+  const SOLTA = 'a medição da variável julgada DSAB não está presa';
+
+  it('a leitura do F1 trocada por DSAB=720 (o furo do Codex): o bloco do F1 rompe e a medição deixa de estar presa', () => {
+    expect(julgaReal(troca(real(arquivo), LEITURA_F1, 'DSAB=720'))).toEqual([
+      expect.stringContaining(F1),
+      expect.stringContaining(`${SOLTA}: nenhuma escrita dela (linha ${linhaDaLeitura()})`),
+    ]);
+  });
+
+  it('DSAB=720 logo depois da leitura: o bloco do F1 rompe e a medição deixa de estar presa', () => {
+    expect(julgaReal(troca(real(arquivo), LEITURA_F1, `${LEITURA_F1}\nDSAB=720`))).toEqual([
+      expect.stringContaining(F1),
+      expect.stringContaining(`${SOLTA}: nenhuma escrita dela (linhas ${linhaDaLeitura()}, ${linhaDaLeitura() + 1})`),
+    ]);
+  });
+
+  it('o ramo 0|"" do F2 liberado (o outro furo do Codex) e o case do F2 desligado: o bloco do F2 rompe', () => {
+    const zero = troca(real(arquivo), '0|"") echo "✗ F2 FALHOU: troquei o fator e a identidade NÃO acusou → C13.4 é fraco"; exit 1 ;;', '0|"") ok "F2 zero" ;;');
+    const solta2 = 'a medição da variável julgada DSAB2 não está presa';
+    expect(julgaReal(zero)).toEqual([expect.stringContaining(F2), expect.stringContaining(solta2)]);
+    expect(julgaReal(troca(real(arquivo), 'case "$DSAB2" in', 'case "1928" in'))).toEqual([expect.stringContaining(F2), expect.stringContaining(solta2)]);
   });
 });
 
@@ -316,7 +643,7 @@ describe('R4 — todo alvo do test:falsificacao usa o idioma limpo ou tem juiz, 
         { caminho: 'scripts/prova.ts', fonte: 'const x = 1;\n' },
       ],
       null,
-      { 'scripts/prova.ts': { motivo: 'm', ancoras: ['const x = 1;'] } },
+      { 'scripts/prova.ts': { motivo: 'm', mede: [], semLigacao: 'fixture', ancoras: ['const x = 1;'] } },
       pacoteCom(ROTEIRO),
     );
     expect(r.alvosFalsificacao).toBe(3);
@@ -327,8 +654,8 @@ describe('R4 — todo alvo do test:falsificacao usa o idioma limpo ou tem juiz, 
 
   it('o mesmo alvo com JUIZ registrado passa — e a âncora dele que some reprova como R4, não R3', () => {
     const juizes = {
-      'scripts/test-b.sh': { motivo: 'm', ancoras: ['echo "❌ passou VERDE"'] },
-      'scripts/prova.ts': { motivo: 'm', ancoras: ['const x = 1;'] },
+      'scripts/test-b.sh': { motivo: 'm', mede: [], semLigacao: 'fixture', ancoras: ['echo "❌ passou VERDE"'] },
+      'scripts/prova.ts': { motivo: 'm', mede: [], semLigacao: 'fixture', ancoras: ['const x = 1;'] },
     };
     const arquivos = (b: string) => [
       { caminho: 'scripts/test-a.sh', fonte: LACO_REFERENCIA },
@@ -343,7 +670,7 @@ describe('R4 — todo alvo do test:falsificacao usa o idioma limpo ou tem juiz, 
   });
 
   it('âncora de alvo TS vale sobre o código limpo pelo stripper de TS — só num comentário, reprova', () => {
-    const juizes = { 'scripts/prova.ts': { motivo: 'm', ancoras: ['exige(marca)'] } };
+    const juizes = { 'scripts/prova.ts': { motivo: 'm', mede: [], semLigacao: 'fixture', ancoras: ['exige(marca)'] } };
     const pacote = pacoteCom('bun scripts/prova.ts --falsificar');
     const r = analisar([{ caminho: 'scripts/prova.ts', fonte: '// exige(marca)\nconst y = 2;\n' }], null, juizes, pacote);
     expect(r.violacoes.map((v) => [v.regra, v.detalhe.includes('âncora do juiz sumiu')])).toEqual([['R4', true]]);
@@ -351,8 +678,8 @@ describe('R4 — todo alvo do test:falsificacao usa o idioma limpo ou tem juiz, 
 
   it('o juiz DELEGADO (o lab que o slug despacha) reprova com a regra do despachante — R4, não R3', () => {
     const juizes: Record<string, Juiz> = {
-      'scripts/test-a.sh': { motivo: 'despacha', ancoras: ['roda lab/falsifica.sh'] },
-      'scripts/lab/falsifica.sh': { motivo: 'juiz do lab', ancoras: ['exige "$marca"'], delegadoPor: 'scripts/test-a.sh' },
+      'scripts/test-a.sh': { motivo: 'despacha', mede: [], semLigacao: 'fixture', ancoras: ['roda lab/falsifica.sh'] },
+      'scripts/lab/falsifica.sh': { motivo: 'juiz do lab', mede: [], semLigacao: 'fixture', ancoras: ['exige "$marca"'], delegadoPor: 'scripts/test-a.sh' },
     };
     const r = analisar(
       [
@@ -477,7 +804,7 @@ describe('veredito — 2 nunca é "passou"', () => {
 
 describe('o corpo REAL do repo', () => {
   const { arquivos, manifesto, pacote } = lerCorpoDoRepo(RAIZ);
-  const r = analisar(arquivos, manifesto, JUIZES, pacote);
+  const r = analisar(arquivos, manifesto, JUIZES, pacote, REGISTRO_FECHADO);
 
   it('todo alvo do test:falsificacao é julgado — pelo idioma limpo ou por juiz — e o roteiro não voltou vazio', () => {
     const f = lerFalsificacao(pacote ?? '');

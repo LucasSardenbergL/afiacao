@@ -15,7 +15,7 @@ DB_DIR="$(mktemp -d)"; PORT=55473
 "$PGBIN/initdb" -D "$DB_DIR" -U postgres -A trust -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DB_DIR" -o "-p $PORT -k $DB_DIR" -l "$DB_DIR/log" start >/dev/null
 trap '"$PGBIN/pg_ctl" -D "$DB_DIR" stop -m immediate >/dev/null 2>&1; rm -rf "$DB_DIR"' EXIT
-P=("$PGBIN/psql" -h "$DB_DIR" -p "$PORT" -U postgres -d postgres -v ON_ERROR_STOP=1 -q)
+P=("$PGBIN/psql" -X -h "$DB_DIR" -p "$PORT" -U postgres -d postgres -v ON_ERROR_STOP=1 -q)
 
 echo "=== setup (stubs + tabela pré-migration) ==="
 "${P[@]}" <<'SQL'
@@ -71,30 +71,30 @@ BEGIN
   SELECT count(*) INTO v FROM information_schema.columns
     WHERE table_schema='public' AND table_name='radar_empresas'
       AND column_name IN ('lat','lng','geocoded_em','geocode_status');
-  IF v <> 4 THEN RAISE EXCEPTION 'A1 FALHOU: colunas geo = % (esperava 4)', v; END IF;
+  IF v IS DISTINCT FROM 4 THEN RAISE EXCEPTION 'A1 FALHOU: colunas geo = % (esperava 4)', v; END IF;
 
   -- A2: prospects da cidade — exclui descartado/virou_cliente/ja_cliente
   SELECT count(*) INTO v FROM public.radar_prospects_para_rota('TOM123');
-  IF v <> 5 THEN RAISE EXCEPTION 'A2 FALHOU: TOM123 retornou % prospects (esperava 5)', v; END IF;
+  IF v IS DISTINCT FROM 5 THEN RAISE EXCEPTION 'A2 FALHOU: TOM123 retornou % prospects (esperava 5)', v; END IF;
 
   -- A2b: a_contatar primeiro (as 3 primeiras linhas)
   SELECT string_agg(prospeccao_status, ',') INTO v_first3 FROM (
     SELECT prospeccao_status FROM public.radar_prospects_para_rota('TOM123') LIMIT 3
   ) t;
-  IF v_first3 <> 'a_contatar,a_contatar,a_contatar' THEN
+  IF v_first3 IS DISTINCT FROM 'a_contatar,a_contatar,a_contatar' THEN
     RAISE EXCEPTION 'A2b FALHOU: ordem das 3 primeiras = % (esperava 3x a_contatar)', v_first3;
   END IF;
 
   -- A2c: não vaza outra cidade
   SELECT count(*) INTO v FROM public.radar_prospects_para_rota('TOM999');
-  IF v <> 1 THEN RAISE EXCEPTION 'A2c FALHOU: TOM999 retornou % (esperava 1)', v; END IF;
+  IF v IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'A2c FALHOU: TOM999 retornou % (esperava 1)', v; END IF;
 
   -- A3: salvar geocode ok → grava lat/lng + status
   PERFORM public.radar_salvar_geocode('00000000000001', -19.97, -44.20, 'ok');
   SELECT count(*) INTO v FROM public.radar_empresas
     WHERE cnpj='00000000000001' AND lat=-19.97 AND lng=-44.20
       AND geocode_status='ok' AND geocoded_em IS NOT NULL;
-  IF v <> 1 THEN RAISE EXCEPTION 'A3 FALHOU: geocode ok não persistiu'; END IF;
+  IF v IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'A3 FALHOU: geocode ok não persistiu'; END IF;
 
   -- A3b: a RPC devolve o geo cacheado
   SELECT lat INTO v FROM public.radar_prospects_para_rota('TOM123') WHERE cnpj='00000000000001';
@@ -104,11 +104,11 @@ BEGIN
   PERFORM public.radar_salvar_geocode('00000000000002', NULL, NULL, 'falhou');
   SELECT count(*) INTO v FROM public.radar_empresas
     WHERE cnpj='00000000000002' AND lat IS NULL AND lng IS NULL AND geocode_status='falhou';
-  IF v <> 1 THEN RAISE EXCEPTION 'A4 FALHOU: geocode falhou não persistiu corretamente'; END IF;
+  IF v IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'A4 FALHOU: geocode falhou não persistiu corretamente'; END IF;
 
   -- A10: p_limit respeitado
   SELECT count(*) INTO v FROM public.radar_prospects_para_rota('TOM123', 2);
-  IF v <> 2 THEN RAISE EXCEPTION 'A10 FALHOU: p_limit=2 retornou % (esperava 2)', v; END IF;
+  IF v IS DISTINCT FROM 2 THEN RAISE EXCEPTION 'A10 FALHOU: p_limit=2 retornou % (esperava 2)', v; END IF;
 
   RAISE NOTICE 'A1..A4, A10 (caminhos felizes) OK';
 END $$;

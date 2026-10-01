@@ -27,6 +27,7 @@ PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
 PORT="${PGPORT_TEST:-5459}"
 SLUG="reconciliar-pedidos"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
+RODADA="$(dirname "$DATA")"   # dir ÚNICO desta rodada (o trap apaga): temporário mora aqui, nunca em /tmp/<nome-fixo>
 export LC_ALL=C LANG=C
 
 [ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER} pgvector"; exit 1; }
@@ -46,7 +47,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }
 
 P -q -f "$REPO_ROOT/db/stubs-supabase.sql"
@@ -141,7 +142,7 @@ MIG_PRECO_FULL="$REPO_ROOT/supabase/migrations/20260905225613_preco_ausente_nao_
 # arrastaria a Zona 1 inteira para dentro deste harness. O que importa AQUI é o que o sujeito
 # desta prova depende: o `unit_price` nullable e o corpo vigente da função. Os dois vêm do
 # arquivo REAL por extração (nunca copiados à mão), então uma mudança lá aparece aqui.
-MIG_PRECO="$(mktemp "/tmp/preco-${SLUG}.XXXXXX.sql")"
+MIG_PRECO="$(mktemp "$RODADA/preco-${SLUG}.XXXXXX")"
 {
   grep '^ALTER TABLE public.order_items ALTER COLUMN unit_price' "$MIG_PRECO_FULL"
   # ⚠️ O terminador é `$function$` SOZINHO na linha, com o `;` numa linha seguinte — NÃO
@@ -231,7 +232,7 @@ eq "A0 revisão ANTIGA completa no seed" "$(Pq -c "$CESTA")" "$ANTIGA_COMPLETA"
 
 R=$(Pq -c "SELECT public.reconciliar_pedidos_omie('$NOVA'::jsonb, $GERIDO, $LIDO)::text;")
 eq "A1 corrections = 1 delete + 1 update + 1 insert" \
-   "$(printf '%s' "$R" | "$PGBIN/psql" -q -t -A -p "$PORT" -h /tmp -U postgres -d prove -c "SELECT ('$R'::jsonb)->>'corrections';")" "3"
+   "$(printf '%s' "$R" | "$PGBIN/psql" -X -q -t -A -p "$PORT" -h /tmp -U postgres -d prove -c "SELECT ('$R'::jsonb)->>'corrections';")" "3"
 eq "A2 upserts = 1 pedido tocado"     "$(Pq -c "SELECT ('$R'::jsonb)->>'upserts';")"     "1"
 eq "A3 divergences = 1 (status E total mudaram)" "$(Pq -c "SELECT ('$R'::jsonb)->>'divergences';")" "1"
 eq "A4 nenhuma falha"                 "$(Pq -c "SELECT jsonb_array_length(('$R'::jsonb)->'falhas');")" "0"
@@ -632,7 +633,7 @@ P -q -c "DELETE FROM public.sales_orders WHERE origem = 'lote100';"
 echo "── F6: sabota a CTE de DELETE — exija VERMELHO em T2b ──"
 # Sem a remoção, o pós-estado vira "desejado + o que já estava lá": exatamente a revisão
 # "nova mais um estranho" que o diff computado FORA da transação produziria.
-SAB5="$(mktemp "/tmp/sab5-${SLUG}.XXXXXX.sql")"
+SAB5="$(mktemp "$RODADA/sab5-${SLUG}.XXXXXX")"
 sed "s/^             AND NOT EXISTS (SELECT 1 FROM par WHERE par.aid = a.id)$/             AND false/" "$MIG" > "$SAB5"
 eq "F6 sabotagem aplicada (a CTE de delete não casa mais ninguém)" \
    "$(grep -c '^             AND false$' "$SAB5")" "1"
@@ -651,7 +652,7 @@ P -q -f "$MIG"
 rm -f "$SAB5"
 
 echo "── F2: sabota a igualdade de CONJUNTO da lista de status — exija VERMELHO em B5 ──"
-SAB1="$(mktemp "/tmp/sab1-${SLUG}.XXXXXX.sql")"
+SAB1="$(mktemp "$RODADA/sab1-${SLUG}.XXXXXX")"
 # A sabotagem é o guard FRACO que o desenho recusou: "não-vazia e sem NULL" em vez de conjunto.
 sed -e 's/^     OR (SELECT array_agg(DISTINCT x ORDER BY x) FROM unnest(p_status_gerido_omie) x) IS DISTINCT FROM$/     OR cardinality(p_status_gerido_omie) = 0 OR false = (/' \
     -e 's/^        (SELECT array_agg(DISTINCT x ORDER BY x) FROM unnest(c_status_omie) x)$/        SELECT true)/' \
@@ -674,7 +675,7 @@ P -q -f "$MIG"   # restaura a versão verdadeira
 seed
 
 echo "── F3: sabota 'ausente ≠ zero' do total — exija VERMELHO em C1c ──"
-SAB2="$(mktemp "/tmp/sab2-${SLUG}.XXXXXX.sql")"
+SAB2="$(mktemp "$RODADA/sab2-${SLUG}.XXXXXX")"
 sed -e "s/^        RAISE EXCEPTION 'pedido % sem total — ausente não é zero', v_hash USING ERRCODE = '22023';$/        NULL;/" \
     -e "s/^      v_total_novo := (v_pedido->>'total')::numeric;$/      v_total_novo := coalesce((v_pedido->>'total')::numeric, 0);/" \
     "$MIG" > "$SAB2"
@@ -691,7 +692,7 @@ P -q -f "$MIG"
 echo "── F4: sabota o guard de duplicidade — exija VERMELHO em C6d (o caso de PROD) ──"
 # A sabotagem é o guard ANTIGO, que olhava só o conjunto desejado: é o defeito exato que o
 # challenge Codex achou e que atinge 1.049 pedidos Omie vivos hoje.
-SAB3="$(mktemp "/tmp/sab3-${SLUG}.XXXXXX.sql")"
+SAB3="$(mktemp "$RODADA/sab3-${SLUG}.XXXXXX")"
 sed "s/^        IF v_n_distintos <> v_n_validos OR v_atual_dup > 0 THEN$/        IF v_n_distintos <> v_n_validos THEN/" "$MIG" > "$SAB3"
 eq "F4 sabotagem aplicada (o guard volta a olhar só o payload)" \
    "$(grep -c '^        IF v_n_distintos <> v_n_validos THEN$' "$SAB3")" "1"
@@ -719,7 +720,7 @@ fi
 P -q -f "$MIG"
 
 echo "── F7: remove o COMPARE-AND-SET — exija VERMELHO em T5b/T5c ──"
-SAB6="$(mktemp "/tmp/sab6-${SLUG}.XXXXXX.sql")"
+SAB6="$(mktemp "$RODADA/sab6-${SLUG}.XXXXXX")"
 sed "s/^      IF v_lido_atual IS NOT NULL AND p_lido_em < v_lido_atual THEN$/      IF false THEN/" "$MIG" > "$SAB6"
 eq "F7 sabotagem aplicada (o CAS some; sobra só o FOR UPDATE)" "$(grep -c '^      IF false THEN$' "$SAB6")" "1"
 P -q -f "$SAB6"
@@ -736,7 +737,7 @@ P -q -f "$MIG"
 rm -f "$SAB6"
 
 echo "── F8: cabeçalho volta a olhar só status/total — exija VERMELHO em T6 ──"
-SAB7="$(mktemp "/tmp/sab7-${SLUG}.XXXXXX.sql")"
+SAB7="$(mktemp "$RODADA/sab7-${SLUG}.XXXXXX")"
 sed -e "s/^                  OR v_items_atual IS DISTINCT FROM v_items_json$/                  OR false/" \
     -e "s/^                  OR abs(coalesce(v_subtotal_atual, 0) - v_total_novo) > 0.01$/                  OR false/" \
     -e "s/^                  OR v_lido_atual IS DISTINCT FROM p_lido_em;$/                  OR false;/" "$MIG" > "$SAB7"
@@ -759,7 +760,7 @@ P -q -f "$MIG"
 rm -f "$SAB7"
 
 echo "── F9: allowlist volta a ser WHEN OTHERS — exija VERMELHO em T7b ──"
-SAB8="$(mktemp "/tmp/sab8-${SLUG}.XXXXXX.sql")"
+SAB8="$(mktemp "$RODADA/sab8-${SLUG}.XXXXXX")"
 python3 - "$MIG" "$SAB8" <<'PYEOF'
 import sys
 src, dst = sys.argv[1], sys.argv[2]
@@ -805,7 +806,7 @@ echo "── F5c: só o REVOKE sai, a POSTCONDIÇÃO fica — a migration tem de
 # própria migration é a segunda. Derrubar UMA não pode abrir a outra. Aqui só o REVOKE cai; o
 # apply precisa MORRER no A4, com a SQLSTATE de RAISE (P0001) — e não terminar em "Success" com a
 # RPC de ESCRITA aberta para `anon`, que é exatamente como isso apareceria no SQL Editor.
-SAB4C="$(mktemp "/tmp/sab4c-${SLUG}.XXXXXX.sql")"
+SAB4C="$(mktemp "$RODADA/sab4c-${SLUG}.XXXXXX")"
 grep -v '^REVOKE ALL ON FUNCTION public.reconciliar_pedidos_omie' "$MIG" > "$SAB4C"
 P -q -c "DROP FUNCTION public.reconciliar_pedidos_omie(jsonb, text[], timestamptz);" >/dev/null   # DROP reseta o ACL
 if P -q -f "$SAB4C" >/dev/null 2>&1
@@ -819,7 +820,7 @@ echo "── F5: remove o REVOKE E o assert A4 — exija VERMELHO em C9 ──"
 # Agora o alvo é o C9, e por isso a sabotagem precisa derrubar AS DUAS defesas: com o A4 de pé o
 # arquivo nem aplica (F5c acima), e o `bad` que sairia daqui seria sobre o assert errado — uma
 # falsificação contaminada, que é o que a Lei #3 proíbe.
-SAB4="$(mktemp "/tmp/sab4-${SLUG}.XXXXXX.sql")"
+SAB4="$(mktemp "$RODADA/sab4-${SLUG}.XXXXXX")"
 grep -v '^REVOKE ALL ON FUNCTION public.reconciliar_pedidos_omie' "$MIG" \
   | sed "/-- A4: o ACL não afrouxou/,/END IF;/d" > "$SAB4"
 eq "F5 sabotagem aplicada (o REVOKE sai do arquivo)" "$(grep -c '^REVOKE ALL ON FUNCTION public.reconciliar_pedidos_omie' "$SAB4")" "0"
@@ -954,7 +955,7 @@ eq "I8c e o leitor REAL vê a revisão NOVA COMPLETA" "$(Pq -c "$CESTA")" "$NOVA
 echo "── F10: remove o 1-1 do lado ATUAL no nível 2 — exija VERMELHO em I8b (valor DOBRADO) ──"
 # É a defesa ESTRUTURAL contra o defeito que o parecer achou: sem ela, as duas linhas do mesmo SKU
 # casam com o MESMO item desejado, as duas são atualizadas, nenhuma é deletada.
-SAB9="$(mktemp "/tmp/sab9-${SLUG}.XXXXXX.sql")"
+SAB9="$(mktemp "$RODADA/sab9-${SLUG}.XXXXXX")"
 sed "s/^           WHERE a.cod IN (SELECT cod FROM ar1)$/           WHERE true/" "$MIG" > "$SAB9"
 eq "F10 sabotagem aplicada (o nível 2 aceita casar com SKU repetido no atual)" \
    "$(grep -c '^           WHERE true$' "$SAB9")" "1"
@@ -972,7 +973,7 @@ P -q -f "$MIG"; rm -f "$SAB9"
 echo "── F11: remove a adoção como motivo de escrita — exija VERMELHO em I1 (desenho INERTE) ──"
 # A falha mais cara possível aqui não é escrever errado: é a coluna nunca se preencher e ninguém
 # ver, porque o pedido estável não dispara UPDATE por nenhum outro motivo.
-SAB10="$(mktemp "/tmp/sab10-${SLUG}.XXXXXX.sql")"
+SAB10="$(mktemp "$RODADA/sab10-${SLUG}.XXXXXX")"
 sed "s/^                        AND (d.cid IS NULL OR a.cid IS NOT DISTINCT FROM d.cid) )$/                        AND true )/" "$MIG" > "$SAB10"
 eq "F11 sabotagem aplicada (a diferença de identidade deixa de contar como mudança)" \
    "$(grep -c '^                        AND true )$' "$SAB10")" "1"
@@ -988,7 +989,7 @@ fi
 P -q -f "$MIG"; rm -f "$SAB10"
 
 echo "── F12: remove o G-b (identidade repetida no BANCO) — exija VERMELHO em I6 ──"
-SAB11="$(mktemp "/tmp/sab11-${SLUG}.XXXXXX.sql")"
+SAB11="$(mktemp "$RODADA/sab11-${SLUG}.XXXXXX")"
 sed "s/^      IF v_atual_id_dup > 0 THEN$/      IF false THEN/" "$MIG" > "$SAB11"
 eq "F12 sabotagem aplicada (o guard do lado do banco some)" "$(grep -c '^      IF false THEN$' "$SAB11")" "1"
 P -q -f "$SAB11"
@@ -1011,7 +1012,7 @@ fi
 P -q -f "$MIG"; rm -f "$SAB11"
 
 echo "── F13: remove o G-a (identidade repetida no PAYLOAD) — exija VERMELHO em I5 ──"
-SAB12="$(mktemp "/tmp/sab12-${SLUG}.XXXXXX.sql")"
+SAB12="$(mktemp "$RODADA/sab12-${SLUG}.XXXXXX")"
 sed "s/^      IF v_n_id_desej > 0 AND v_n_id_desej_d <> v_n_id_desej THEN$/      IF false THEN/" "$MIG" > "$SAB12"
 eq "F13 sabotagem aplicada (o guard do lado do payload some)" "$(grep -c '^      IF false THEN$' "$SAB12")" "1"
 P -q -f "$SAB12"

@@ -12,6 +12,7 @@ PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
 PORT="${PGPORT_TEST:-5461}"
 SLUG="criar-pedidos-com-itens"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
+RODADA="$(dirname "$DATA")"   # dir ÚNICO desta rodada (o trap apaga): temporário mora aqui, nunca em /tmp/<nome-fixo>
 export LC_ALL=C LANG=C
 
 [ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER} pgvector"; exit 1; }
@@ -26,7 +27,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }
 
 P -q -f "$REPO_ROOT/db/stubs-supabase.sql"
@@ -367,7 +368,7 @@ eq "A14 régua de preço do #2224 SOBREVIVEU à derivação (ausente=NULL, zero 
 # ZONA 5 — FALSIFICAÇÃO (Lei #3): sabota cada guard → exige VERMELHO → restaura
 # ════════════════════════════════════════════════════════════════════════════
 echo "── falsificação (sabota → exige vermelho → restaura) ──"
-SAB="/tmp/mig-sabotada-${SLUG}.sql"
+SAB="$RODADA/mig-sabotada-${SLUG}.sql"
 restaura() { P -q -f "$MIG_BASE"; P -q -f "$MIG"; }   # re-aplica as DUAS (idempotentes)
 
 # Toda sabotagem passa por aqui: um `sed` que nao casa mais (porque o corpo evoluiu) produz um

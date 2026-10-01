@@ -21,7 +21,8 @@
  * ## A assinatura
  *
  * O dia da sessão (`current_date`, `localtimestamp`/`localtime`/`current_time`, o relógio `now()`/
- * `current_timestamp`/`clock_timestamp()`… convertido a `date`/`timestamp` por `::`, `CAST`, `date()`,
+ * `current_timestamp`/`clock_timestamp()`… convertido a `date`/`timestamp` por `::` — colado, ou depois de
+ * aritmética de intervalo, `(now() - '6 mons'::interval)::date` —, `CAST`, `date()`,
  * `to_char` ou `extract`/`date_part` de campo de calendário) e o instante que vira data na sessão (a
  * coluna `*_at`/`*_em` — a convenção de timestamptz que o irmão de SP mediu em 92,4% da prod, menos os
  * 3 `*_em` que são `date` — por `::date`/`::timestamp`, `date()`, `CAST`, `min/max(…)::date`,
@@ -47,6 +48,10 @@
  *   · o que só existe na PROD — função, view ou DEFAULT criados fora de migration (9 das 26
  *     funções que casaram na varredura de 2026-09-28 viviam só lá);
  *   · SQL montado em string (`EXECUTE format(...)`), e timestamptz fora da convenção `*_at`/`*_em`;
+ *   · a borda contra TIMESTAMPTZ montada com o dia já certo: `t2_data_faturamento >= (dia_sp - '180 days')`
+ *     compara timestamptz com timestamp SEM fuso, e o cast implícito usa o fuso da SESSÃO — o tipo da
+ *     coluna não está no texto (v_sku_leadtime_estatisticas, fase 2: a borda é o INSTANTE da meia-noite
+ *     de SP, `(dia_sp - '180 days') AT TIME ZONE 'America/Sao_Paulo'`);
  *   · literal que CITA a forma errada conta como código (o stripper só tira comentário): numa POS,
  *     escreva a agulha partida — `'created' || '_at::date'` — ou com `\m` na frente, como a
  *     20260929001651.
@@ -99,6 +104,10 @@ export type Forma = 'dia da sessão' | 'instante→data na sessão';
 const FORMAS: readonly { forma: Forma; re: RegExp }[] = [
   { forma: 'dia da sessão', re: /\b(?:current_date|localtimestamp|localtime|current_time)\b/gi },
   { forma: 'dia da sessão', re: new RegExp(String.raw`\b${RELOGIO}\s*::\s*${SEM_FUSO}`, 'gi') },
+  // O relógio com aritmética de intervalo ANTES do cast: `(now() - '6 mons'::interval)::date` — o dia da
+  // sessão do mesmo jeito, só que deslocado. Achado na varredura da prod da fase 2 (v_caca_candidatos, o
+  // ativo_6m): a assinatura acima exige o `::` colado ao relógio e não o via.
+  { forma: 'dia da sessão', re: new RegExp(String.raw`\(\s*${RELOGIO}\s*[-+][^()]*(?:\([^()]*\)[^()]*)*\)\s*::\s*${SEM_FUSO}`, 'gi') },
   { forma: 'dia da sessão', re: new RegExp(String.raw`\bcast\s*\(\s*${RELOGIO}\s+as\s+${SEM_FUSO}`, 'gi') },
   { forma: 'dia da sessão', re: new RegExp(String.raw`\bdate\s*\(\s*${RELOGIO}\s*\)`, 'gi') },
   { forma: 'dia da sessão', re: new RegExp(String.raw`\bto_char\s*\(\s*${RELOGIO}\s*,`, 'gi') },
@@ -145,18 +154,14 @@ export interface SitioConhecido {
   motivo: string;
 }
 
-const DATA_CICLO = 'compara com pedido_compra_sugerido.data_ciclo, que a edge gerar-pedidos-diario grava em UTC '
-  + '(`new Date().toISOString().slice(0, 10)`): UTC contra UTC; trocar só este lado criaria a divergência';
-
 // Os sítios da classe nos corpos VIVOS em 2026-09-29, cada um com veredito lido no corpo e medido na
 // prod (varredura de 398 funções + chamadores, horários de cron e leitores). A lista só ENCOLHE.
+// (Os "UTC contra UTC" da família data_ciclo eram falsos: a medição da fase 2 mostrou data_ciclo = dia de SP
+// em 19 de 20 noites, e desde a 20261001023000 o edge também o grava assim. atualizar_parametros_numericos_skus
+// e reposicao_pos_candidatos saíram com ela; _data_health_compute ficou com a #2698, que recria a função.)
 export const CONHECIDOS: readonly SitioConhecido[] = [
-  { alvo: '_data_health_compute()', trecho: 'current_date', n: 2, veredito: 'utc-consistente',
-    motivo: `${DATA_CICLO} (o mesmo sítio da baseline de scripts/fuso-da-sessao-gate.ts, que lê o corpo com SP)` },
   { alvo: 'analytics_outbox_purgar()', trecho: 'r.ocorrido_em::date', n: 1, veredito: 'latente',
     motivo: 'o dia é só chave de agrupamento de analytics_outbox_perda, que não tem leitor; cron 04:20 UTC' },
-  { alvo: 'atualizar_parametros_numericos_skus(text,uuid)', trecho: 'current_date', n: 1, veredito: 'utc-consistente',
-    motivo: DATA_CICLO },
   { alvo: 'converter_sugestao_em_campanha_flat(bigint,numeric,numeric,text,date,text,text,text)', trecho: 'current_date', n: 2,
     veredito: 'afetado',
     motivo: 'RPC quebrada na prod por outro defeito (INSERT em promocao_item com 4 colunas que a tabela não tem → '
@@ -171,7 +176,6 @@ export const CONHECIDOS: readonly SitioConhecido[] = [
     motivo: 'relê o próprio carimbo (reposicao_param_fila_log.medido_em = CURRENT_DATE); cron 11:45 UTC' },
   { alvo: 'reposicao_param_limbo_watchdog()', trecho: 'current_date', n: 2, veredito: 'utc-consistente',
     motivo: 'relê o próprio carimbo (reposicao_param_limbo_log.medido_em = CURRENT_DATE); cron 11:30 UTC' },
-  { alvo: 'reposicao_pos_candidatos(text)', trecho: 'now()::date', n: 1, veredito: 'utc-consistente', motivo: DATA_CICLO },
   { alvo: 'sugerir_negociacao_paralela_hoje(text,integer)', trecho: 'current_date', n: 4, veredito: 'latente',
     motivo: 'sem chamador desde a 20260606230000 (o cron saiu); os 3 valido_ate comparam com o próprio CURRENT_DATE' },
 ];

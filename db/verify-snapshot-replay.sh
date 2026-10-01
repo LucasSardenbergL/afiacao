@@ -44,7 +44,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l /tmp/pg-snap.log -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres baseline_verify
-P() { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d baseline_verify "$@"; }
+P() { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d baseline_verify "$@"; }
 
 # Snapshot restore-ready: remove meta-comandos psql do pg_dump 17 e o CREATE SCHEMA
 # public (já existe num DB novo). Ver "Armadilhas" no README-schema.md.

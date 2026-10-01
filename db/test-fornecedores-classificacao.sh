@@ -34,7 +34,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l /tmp/pg-fornec.log -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres fornec_verify
-P() { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d fornec_verify "$@"; }
+P() { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d fornec_verify "$@"; }
 
 RR="$(mktemp "${TMPDIR:-/tmp}/snap-fornec.XXXXXX")"
 sed -E 's/^(CREATE SCHEMA public;)/-- \1/' "$REPO_ROOT/supabase/schema-snapshot.sql" \
@@ -140,7 +140,7 @@ BEGIN
 
   -- classificar (RPC) deve restaurar tudo conforme a RÉGUA A
   SELECT classificar_clientes_fornecedores() INTO res;
-  IF (res->>'excluidos')::int <> 4 THEN RAISE EXCEPTION 'RPC excluidos=% (esperado 4: c1,c4,c5,c8 — c6 tem venda, fica)', res->>'excluidos'; END IF;
+  IF (res->>'excluidos')::int IS DISTINCT FROM 4 THEN RAISE EXCEPTION 'RPC excluidos=% (esperado 4: c1,c4,c5,c8 — c6 tem venda, fica)', res->>'excluidos'; END IF;
   RAISE NOTICE 'OK RPC classificar → %', res;
 
   -- A1: c1 fornecedor SEM venda (só cancelada) → exclui

@@ -111,9 +111,9 @@ cp -Rn "$CELLAR"/lib/postgresql/. "/opt/homebrew/lib/postgresql@${PGVER}/" 2>/de
 
 # P  = sessão SUPERUSER SEM o módulo  (o ambiente do harness antigo / do SQL Editor)
 # PA = sessão do role com o módulo pré-carregado (o ambiente do PostgREST)
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }
-PA() { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres_rest -d prove -tA "$@"; }
+PA() { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres_rest -d prove -tA "$@"; }
 
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); echo "  OK   $1"; }

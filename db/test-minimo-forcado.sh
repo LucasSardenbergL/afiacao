@@ -28,7 +28,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l /tmp/pg-minforc.log -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres minforc_verify
-P() { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d minforc_verify "$@"; }
+P() { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d minforc_verify "$@"; }
 
 RR="$(mktemp "${TMPDIR:-/tmp}/snap-minforc.XXXXXX")"
 sed -E 's/^(CREATE SCHEMA public;)/-- \1/' "$REPO_ROOT/supabase/schema-snapshot.sql" \
@@ -100,21 +100,21 @@ BEGIN
   -- SKU-A (1001): natural 10, minimo 200 → qtde_sugerida=10, qtde_final=200, valor_linha=200*10
   SELECT qtde_sugerida, qtde_final, valor_linha INTO r FROM pedido_compra_item WHERE sku_codigo_omie='1001';
   IF r IS NULL THEN RAISE EXCEPTION 'A1 FALHOU: SKU-A não entrou no pedido (deveria, precisa repor)'; END IF;
-  IF r.qtde_sugerida <> 10 THEN RAISE EXCEPTION 'A2 FALHOU: SKU-A qtde_sugerida=% (esperado 10=natural)', r.qtde_sugerida; END IF;
-  IF r.qtde_final <> 200 THEN RAISE EXCEPTION 'A3 FALHOU: SKU-A qtde_final=% (esperado 200=mínimo forçado)', r.qtde_final; END IF;
-  IF r.valor_linha <> 2000 THEN RAISE EXCEPTION 'A4 FALHOU: SKU-A valor_linha=% (esperado 2000=200*10)', r.valor_linha; END IF;
+  IF r.qtde_sugerida IS DISTINCT FROM 10 THEN RAISE EXCEPTION 'A2 FALHOU: SKU-A qtde_sugerida=% (esperado 10=natural)', r.qtde_sugerida; END IF;
+  IF r.qtde_final IS DISTINCT FROM 200 THEN RAISE EXCEPTION 'A3 FALHOU: SKU-A qtde_final=% (esperado 200=mínimo forçado)', r.qtde_final; END IF;
+  IF r.valor_linha IS DISTINCT FROM 2000 THEN RAISE EXCEPTION 'A4 FALHOU: SKU-A valor_linha=% (esperado 2000=200*10)', r.valor_linha; END IF;
   RAISE NOTICE 'OK A — piso eleva: sugerida=10 final=200 valor=2000';
 
   -- SKU-B (1002): natural 500 >= minimo 200 → final mantém 500
   SELECT qtde_sugerida, qtde_final INTO r FROM pedido_compra_item WHERE sku_codigo_omie='1002';
   IF r IS NULL THEN RAISE EXCEPTION 'B1 FALHOU: SKU-B não entrou'; END IF;
-  IF r.qtde_sugerida <> 500 OR r.qtde_final <> 500 THEN RAISE EXCEPTION 'B2 FALHOU: SKU-B sugerida=% final=% (esperado 500/500)', r.qtde_sugerida, r.qtde_final; END IF;
+  IF r.qtde_sugerida IS DISTINCT FROM 500 OR r.qtde_final IS DISTINCT FROM 500 THEN RAISE EXCEPTION 'B2 FALHOU: SKU-B sugerida=% final=% (esperado 500/500)', r.qtde_sugerida, r.qtde_final; END IF;
   RAISE NOTICE 'OK B — natural acima do mínimo: 500/500';
 
   -- SKU-C (1003): sem minimo (NULL) → final = natural 50 = comportamento atual
   SELECT qtde_sugerida, qtde_final INTO r FROM pedido_compra_item WHERE sku_codigo_omie='1003';
   IF r IS NULL THEN RAISE EXCEPTION 'C1 FALHOU: SKU-C não entrou'; END IF;
-  IF r.qtde_sugerida <> 50 OR r.qtde_final <> 50 THEN RAISE EXCEPTION 'C2 FALHOU: SKU-C sugerida=% final=% (esperado 50/50, sem piso)', r.qtde_sugerida, r.qtde_final; END IF;
+  IF r.qtde_sugerida IS DISTINCT FROM 50 OR r.qtde_final IS DISTINCT FROM 50 THEN RAISE EXCEPTION 'C2 FALHOU: SKU-C sugerida=% final=% (esperado 50/50, sem piso)', r.qtde_sugerida, r.qtde_final; END IF;
   RAISE NOTICE 'OK C — sem mínimo (NULL): 50/50 (idêntico ao atual)';
 
   -- SKU-D (1004): NÃO precisa (estoque>ponto) → não entra, mesmo com minimo setado (PISO, NÃO GATILHO)

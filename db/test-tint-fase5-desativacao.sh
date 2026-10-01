@@ -118,7 +118,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "$DATA/pg.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres fase5_verify
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d fase5_verify -v ON_ERROR_STOP=1 "$@"; }
+P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d fase5_verify -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }
 
 PASS=0; FAIL=0
@@ -495,23 +495,23 @@ roda_asserts_sql() {
 DO $$
 DECLARE f text[] := '{}';
 BEGIN
-  IF (SELECT COALESCE(preco_csv_legado::text,'-') FROM public.v_tint_formula_canonica WHERE cor_id='K1') <> '300'
+  IF (SELECT COALESCE(preco_csv_legado::text,'-') FROM public.v_tint_formula_canonica WHERE cor_id='K1') IS DISTINCT FROM '300'
     THEN f := array_append(f, 'V1'); END IF;
-  IF (SELECT COALESCE(preco_csv_legado::text,'-') FROM public.v_tint_formula_canonica WHERE cor_id='K5') <> '-'
+  IF (SELECT COALESCE(preco_csv_legado::text,'-') FROM public.v_tint_formula_canonica WHERE cor_id='K5') IS DISTINCT FROM '-'
     THEN f := array_append(f, 'V2'); END IF;
-  IF (SELECT count(*) FROM public.v_tint_formula_canonica WHERE (preco_csv_legado IS NULL) <> (preco_piso_legado IS NULL)) <> 0
+  IF (SELECT count(*) FROM public.v_tint_formula_canonica WHERE (preco_csv_legado IS NULL) <> (preco_piso_legado IS NULL)) IS DISTINCT FROM 0
     THEN f := array_append(f, 'V3'); END IF;
-  IF (SELECT count(*) FROM public.v_tint_formula_canonica WHERE preco_csv_legado IS NOT NULL AND preco_piso_legado < preco_csv_legado) <> 0
+  IF (SELECT count(*) FROM public.v_tint_formula_canonica WHERE preco_csv_legado IS NOT NULL AND preco_piso_legado < preco_csv_legado) IS DISTINCT FROM 0
     THEN f := array_append(f, 'V4'); END IF;
-  IF (SELECT count(*) FROM public.v_tint_formula_canonica WHERE id='f0010000-0000-0000-0000-000000000011') <> 0
+  IF (SELECT count(*) FROM public.v_tint_formula_canonica WHERE id='f0010000-0000-0000-0000-000000000011') IS DISTINCT FROM 0
     THEN f := array_append(f, 'V5'); END IF;
-  IF (SELECT COALESCE(preco_csv_legado::text,'-') FROM public.v_tint_formula_canonica WHERE cor_id='K6') <> '700'
+  IF (SELECT COALESCE(preco_csv_legado::text,'-') FROM public.v_tint_formula_canonica WHERE cor_id='K6') IS DISTINCT FROM '700'
     THEN f := array_append(f, 'V6'); END IF;
   -- V5c ISOLA O FILTRO DE CANDIDATA DO RANK. K10 tem a '1' carimbada e a SL
   -- desativada DEPOIS ⇒ nenhuma linha ativa ⇒ a chave some da canônica.
   -- Sob F1 (filtro relaxado) a '1' carimbada volta, porque aqui o rank NÃO
   -- protege: não há gêmea ativa melhor para excluí-la.
-  IF (SELECT count(*) FROM public.v_tint_formula_canonica WHERE cor_id='K10') <> 0
+  IF (SELECT count(*) FROM public.v_tint_formula_canonica WHERE cor_id='K10') IS DISTINCT FROM 0
     THEN f := array_append(f, 'V5c'); END IF;
   IF array_length(f,1) IS NULL THEN RAISE NOTICE 'TODOS_OK';
   ELSE RAISE NOTICE 'FALHAS[%]: %', array_length(f,1),

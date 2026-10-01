@@ -4,15 +4,21 @@ import { X, Package, Wrench } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { type AIProduct, type AIService, type Product, type UserTool } from './types';
-import { fmt, getToolName } from './helpers';
+import { getToolName } from './helpers';
+import { PrecoNascimentoIA } from './PrecoNascimentoIA';
 
 interface IdentifiedProductsListProps {
   items: AIProduct[];
   catalog: Product[];
   onRemove: (idx: number) => void;
+  /** Preço com que o item VAI nascer no carrinho (getProductPrice) — o único que o painel exibe. */
+  precoNascimentoPorId: (productId: string) => number | null;
+  precoLoading?: boolean;
 }
 
-export function IdentifiedProductsList({ items, catalog, onRemove }: IdentifiedProductsListProps) {
+export function IdentifiedProductsList({
+  items, catalog, onRemove, precoNascimentoPorId, precoLoading = false,
+}: IdentifiedProductsListProps) {
   return (
     <div className="space-y-1.5">
       <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
@@ -27,11 +33,11 @@ export function IdentifiedProductsList({ items, catalog, onRemove }: IdentifiedP
                 <p className="font-medium text-sm truncate">{prod?.descricao || item.descricao || item.codigo}</p>
                 <div className="flex items-center gap-2 mt-0.5">
                   <Badge variant="outline" className="text-[10px]">{item.account === 'colacor' ? 'Colacor' : 'Oben'}</Badge>
-                  {item.unit_price ? (
-                    <span className="text-[10px] text-muted-foreground">
-                      {fmt(item.unit_price)}/un <Badge variant="secondary" className="text-[9px] ml-1">Preço cliente</Badge>
-                    </span>
-                  ) : prod && <span className="text-[10px] text-muted-foreground">{fmt(prod.valor_unitario)}/un</span>}
+                  <PrecoNascimentoIA
+                    productId={item.product_id}
+                    precoNascimentoPorId={precoNascimentoPorId}
+                    precoLoading={precoLoading}
+                  />
                 </div>
                 {item.notes && <p className="text-xs text-muted-foreground mt-1 italic">Obs: {item.notes}</p>}
               </div>

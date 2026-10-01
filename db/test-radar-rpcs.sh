@@ -10,7 +10,7 @@ DB_DIR="$(mktemp -d)"; PORT=55437
 "$PGBIN/initdb" -D "$DB_DIR" -U postgres -A trust -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DB_DIR" -o "-p $PORT -k $DB_DIR" -l "$DB_DIR/log" start >/dev/null
 trap '"$PGBIN/pg_ctl" -D "$DB_DIR" stop -m immediate >/dev/null 2>&1; rm -rf "$DB_DIR"' EXIT
-PSQL=("$PGBIN/psql" -h "$DB_DIR" -p "$PORT" -U postgres -d postgres -v ON_ERROR_STOP=1 -q)
+PSQL=("$PGBIN/psql" -X -h "$DB_DIR" -p "$PORT" -U postgres -d postgres -v ON_ERROR_STOP=1 -q)
 
 # Stubs: schema mínimo que a migration referencia.
 "${PSQL[@]}" <<'SQL'
@@ -55,9 +55,9 @@ DECLARE r jsonb;
 BEGIN
   r := public.registrar_contato_radar('11111111000111','em_conversa','falei com o dono');
   IF (r->>'deduped')::boolean THEN RAISE EXCEPTION 'A1 FALHOU: não deveria deduplicar 1ª vez'; END IF;
-  IF (SELECT prospeccao_status FROM public.radar_empresas WHERE cnpj='11111111000111') <> 'em_conversa'
+  IF (SELECT prospeccao_status FROM public.radar_empresas WHERE cnpj='11111111000111') IS DISTINCT FROM 'em_conversa'
     THEN RAISE EXCEPTION 'A1 FALHOU: status não mudou'; END IF;
-  IF (SELECT status_anterior FROM public.radar_contatos WHERE id=(r->>'id')::uuid) <> 'a_contatar'
+  IF (SELECT status_anterior FROM public.radar_contatos WHERE id=(r->>'id')::uuid) IS DISTINCT FROM 'a_contatar'
     THEN RAISE EXCEPTION 'A1 FALHOU: status_anterior errado'; END IF;
   RAISE NOTICE 'A1 OK';
 END $$;
@@ -67,7 +67,7 @@ DO $$
 DECLARE r jsonb;
 BEGIN
   r := public.registrar_contato_radar('11111111000111','em_conversa',NULL);
-  IF NOT (r->>'deduped')::boolean THEN RAISE EXCEPTION 'A2 FALHOU: deveria deduplicar'; END IF;
+  IF (r->>'deduped')::boolean IS NOT TRUE THEN RAISE EXCEPTION 'A2 FALHOU: deveria deduplicar'; END IF;
   RAISE NOTICE 'A2 OK';
 END $$;
 
@@ -78,13 +78,13 @@ BEGIN
   -- novo contato (descartado) numa empresa limpa, depois desfaz
   r := public.registrar_contato_radar('22222222000122','descartado','não é do ramo');
   v_id := (r->>'id')::uuid;
-  IF (SELECT prospeccao_status FROM public.radar_empresas WHERE cnpj='22222222000122') <> 'descartado'
+  IF (SELECT prospeccao_status FROM public.radar_empresas WHERE cnpj='22222222000122') IS DISTINCT FROM 'descartado'
     THEN RAISE EXCEPTION 'A3 FALHOU: não descartou'; END IF;
-  IF (SELECT descarte_motivo FROM public.radar_empresas WHERE cnpj='22222222000122') <> 'não é do ramo'
+  IF (SELECT descarte_motivo FROM public.radar_empresas WHERE cnpj='22222222000122') IS DISTINCT FROM 'não é do ramo'
     THEN RAISE EXCEPTION 'A3 FALHOU: motivo não gravou'; END IF;
   u := public.desfazer_contato_radar(v_id);
-  IF NOT (u->>'deleted')::boolean THEN RAISE EXCEPTION 'A3 FALHOU: undo não deletou'; END IF;
-  IF (SELECT prospeccao_status FROM public.radar_empresas WHERE cnpj='22222222000122') <> 'a_contatar'
+  IF (u->>'deleted')::boolean IS NOT TRUE THEN RAISE EXCEPTION 'A3 FALHOU: undo não deletou'; END IF;
+  IF (SELECT prospeccao_status FROM public.radar_empresas WHERE cnpj='22222222000122') IS DISTINCT FROM 'a_contatar'
     THEN RAISE EXCEPTION 'A3 FALHOU: status não reverteu'; END IF;
   IF EXISTS (SELECT 1 FROM public.radar_contatos WHERE id=v_id)
     THEN RAISE EXCEPTION 'A3 FALHOU: linha não apagou'; END IF;
@@ -100,8 +100,8 @@ BEGIN
   v_id1 := (r1->>'id')::uuid;
   r2 := public.registrar_contato_radar('11111111000111','virou_cliente',NULL);         -- status→virou_cliente (mais novo)
   u := public.desfazer_contato_radar(v_id1);  -- desfaz o VELHO
-  IF NOT (u->>'deleted')::boolean THEN RAISE EXCEPTION 'A4 FALHOU: deveria apagar a linha velha'; END IF;
-  IF (SELECT prospeccao_status FROM public.radar_empresas WHERE cnpj='11111111000111') <> 'virou_cliente'
+  IF (u->>'deleted')::boolean IS NOT TRUE THEN RAISE EXCEPTION 'A4 FALHOU: deveria apagar a linha velha'; END IF;
+  IF (SELECT prospeccao_status FROM public.radar_empresas WHERE cnpj='11111111000111') IS DISTINCT FROM 'virou_cliente'
     THEN RAISE EXCEPTION 'A4 FALHOU: undo do velho pisou no status novo'; END IF;
   RAISE NOTICE 'A4 OK';
 END $$;
@@ -111,9 +111,9 @@ DO $$
 DECLARE k jsonb;
 BEGIN
   k := public.radar_kpis();
-  IF (k->>'lote') <> '2026-05' THEN RAISE EXCEPTION 'A5 FALHOU: lote'; END IF;
-  IF (k->>'novos')::int <> 1000 THEN RAISE EXCEPTION 'A5 FALHOU: novos (esperado 1000 do state)'; END IF;
-  IF (k->>'virou_cliente_mes')::int <> 1 THEN RAISE EXCEPTION 'A5 FALHOU: virou_cliente_mes (esperado 1)'; END IF;
+  IF (k->>'lote') IS DISTINCT FROM '2026-05' THEN RAISE EXCEPTION 'A5 FALHOU: lote'; END IF;
+  IF (k->>'novos')::int IS DISTINCT FROM 1000 THEN RAISE EXCEPTION 'A5 FALHOU: novos (esperado 1000 do state)'; END IF;
+  IF (k->>'virou_cliente_mes')::int IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'A5 FALHOU: virou_cliente_mes (esperado 1)'; END IF;
   RAISE NOTICE 'A5 OK';
 END $$;
 
@@ -122,7 +122,7 @@ END $$;
 DO $$
 BEGIN
   PERFORM public.registrar_contato_radar('22222222000122','descartado','fora do ramo');
-  IF (SELECT descarte_motivo FROM public.radar_empresas WHERE cnpj='22222222000122') <> 'fora do ramo'
+  IF (SELECT descarte_motivo FROM public.radar_empresas WHERE cnpj='22222222000122') IS DISTINCT FROM 'fora do ramo'
     THEN RAISE EXCEPTION 'A8 FALHOU: motivo não gravou no descarte'; END IF;
   PERFORM public.registrar_contato_radar('22222222000122','em_conversa',NULL);
   IF (SELECT descarte_motivo FROM public.radar_empresas WHERE cnpj='22222222000122') IS NOT NULL

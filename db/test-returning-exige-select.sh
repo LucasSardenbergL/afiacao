@@ -39,9 +39,9 @@ trap cleanup EXIT
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U dono verifica
 
 # dono: DDL/GRANT (ON_ERROR_STOP para que um GRANT que falhe derrube o teste, não o mascare)
-psql_dono() { "$PGBIN/psql" -qtAX -v ON_ERROR_STOP=1 -p "$PORT" -h /tmp -U dono -d verifica -c "$1"; }
+psql_dono() { "$PGBIN/psql" -X -qtAX -v ON_ERROR_STOP=1 -p "$PORT" -h /tmp -U dono -d verifica -c "$1"; }
 # chamador: devolve a saída CRUA (erro incluso); o `|| true` é deliberado — ver armadilha 2
-psql_como() { "$PGBIN/psql" -qtAX -p "$PORT" -h /tmp -U chamador -d verifica -c "$1" 2>&1 | head -1 || true; }
+psql_como() { "$PGBIN/psql" -X -qtAX -p "$PORT" -h /tmp -U chamador -d verifica -c "$1" 2>&1 | head -1 || true; }
 
 falhas=0
 ok()    { echo "  OK   [$1] $2"; }

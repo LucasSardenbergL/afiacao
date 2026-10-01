@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { toast } from 'sonner';
+import { hojeSP } from '@/lib/time/sp-day';
 
 type Props = { open: boolean; onOpenChange: (open: boolean) => void };
 
@@ -25,7 +26,7 @@ export function ConfigCashflowDialog({ open, onOpenChange }: Props) {
   const { data: estoqueAtual } = useEstoqueValor(activeCompany);
   const salvarEstoque = useSalvarEstoque(activeCompany);
   const [estoqueValor, setEstoqueValor] = useState<string>('');
-  const [estoqueDataRef, setEstoqueDataRef] = useState<string>(() => new Date().toISOString().slice(0, 10));
+  const [estoqueDataRef, setEstoqueDataRef] = useState<string>(() => hojeSP()); // data_ref é dia de SP
   const [estoqueEstimando, setEstoqueEstimando] = useState(false);
   const [estoqueEstimativa, setEstoqueEstimativa] = useState<{ cobertura_pct: number } | null>(null);
 

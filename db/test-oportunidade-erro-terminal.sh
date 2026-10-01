@@ -34,7 +34,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l /tmp/pg-oppfant.log -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres oppfant_verify
-P() { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d oppfant_verify "$@"; }
+P() { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d oppfant_verify "$@"; }
 
 RR="$(mktemp "${TMPDIR:-/tmp}/snap-oppfant.XXXXXX")"
 sed -E 's/^(CREATE SCHEMA public;)/-- \1/' "$REPO_ROOT/supabase/schema-snapshot.sql" \
@@ -140,10 +140,10 @@ BEGIN
   SELECT COALESCE(SUM(num_skus),0) INTO v_header FROM pedido_compra_sugerido WHERE tipo_ciclo LIKE 'oportunidade_%';
   SELECT count(*) INTO v_itens FROM pedido_compra_item pci
     JOIN pedido_compra_sugerido pcs ON pcs.id = pci.pedido_id WHERE pcs.tipo_ciclo LIKE 'oportunidade_%';
-  IF v_header <> v_itens THEN
+  IF v_header IS DISTINCT FROM v_itens THEN
     RAISE EXCEPTION 'A4 FALHOU: header num_skus=% x itens=% — a guarda entrou em so UM dos NOT EXISTS', v_header, v_itens;
   END IF;
-  IF v_itens <> 1 THEN
+  IF v_itens IS DISTINCT FROM 1 THEN
     RAISE EXCEPTION 'A4 FALHOU: esperava 1 item na oportunidade, veio %', v_itens;
   END IF;
 END $$;
