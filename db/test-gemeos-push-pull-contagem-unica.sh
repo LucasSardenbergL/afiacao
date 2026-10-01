@@ -357,6 +357,7 @@ P -q -c "CREATE TABLE public._prova_bandeira (id int);"
 Pbg() {  # $1 = application_name, $2 = SQL → conexão própria (para segurar transação ou esperar lock)
   PGAPPNAME="$1" "$PGBIN/psql" -X -p "$PORT" -h "$SOCK" -U postgres -d prove -v ON_ERROR_STOP=1 -v VERBOSITY=verbose -q -tA -c "$2"
 }
+# shellcheck disable=SC2016  # $w$ é o dollar-quote do PostgreSQL, não variável do shell: não pode expandir
 SEGURAR='DO $w$ BEGIN WHILE NOT EXISTS (SELECT 1 FROM public._prova_bandeira) LOOP PERFORM pg_sleep(0.02); END LOOP; END $w$;'
 esperar() {  # $1 = application_name, $2 = condição sobre pg_stat_activity (alias a). Nunca aborta a suíte.
   local i=0

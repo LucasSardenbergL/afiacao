@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 571
+-- Total de custom migrations: 575
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -612,7 +612,11 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260929003006', 'reposicao_v_sku_fora_do_motor', '20260929003006_reposicao_v_sku_fora_do_motor.sql'),
   ('20260930220148', 'expandir_promocao_item_overload_similarity_volume', '20260930220148_expandir_promocao_item_overload_similarity_volume.sql'),
   ('20260930230623', 'hoje_sp_views_defaults_classe_ii', '20260930230623_hoje_sp_views_defaults_classe_ii.sql'),
-  ('20261001011500', 'data_health_vendas_empurradas_sem_gemeo', '20261001011500_data_health_vendas_empurradas_sem_gemeo.sql')
+  ('20261001011500', 'data_health_vendas_empurradas_sem_gemeo', '20261001011500_data_health_vendas_empurradas_sem_gemeo.sql'),
+  ('20261001023000', 'hoje_sp_familia_data_ciclo', '20261001023000_hoje_sp_familia_data_ciclo.sql'),
+  ('20261001043717', 'hoje_sp_route_visits_visit_date', '20261001043717_hoje_sp_route_visits_visit_date.sql'),
+  ('20261001100000', 'sales_orders_colunas_whatsapp_select', '20261001100000_sales_orders_colunas_whatsapp_select.sql'),
+  ('20261001100001', 'sales_orders_gemeo_importado_contagem_unica', '20261001100001_sales_orders_gemeo_importado_contagem_unica.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2484,7 +2488,23 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_sugestao_negociacao_ativa', ''),
   ('data_health_vendas_empurradas_sem_gemeo', 'function', 'public', '_data_health_compute', ''),
   ('data_health_vendas_empurradas_sem_gemeo', 'function', 'public', 'data_health_watchdog', ''),
-  ('data_health_vendas_empurradas_sem_gemeo', 'function', 'public', 'fin_sync_heartbeat', '')
+  ('data_health_vendas_empurradas_sem_gemeo', 'function', 'public', 'fin_sync_heartbeat', ''),
+  ('hoje_sp_familia_data_ciclo', 'function', 'public', 'aplicar_promocoes_no_ciclo', ''),
+  ('hoje_sp_familia_data_ciclo', 'function', 'public', 'ciclo_oportunidade_do_dia', ''),
+  ('hoje_sp_familia_data_ciclo', 'function', 'public', 'gerar_pedidos_oportunidade_ciclo', ''),
+  ('hoje_sp_familia_data_ciclo', 'function', 'public', 'atualizar_parametros_numericos_skus', ''),
+  ('hoje_sp_familia_data_ciclo', 'function', 'public', 'reposicao_pos_candidatos', ''),
+  ('hoje_sp_familia_data_ciclo', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
+  ('hoje_sp_familia_data_ciclo', 'view', 'public', 'v_promocao_avaliacao_hoje', ''),
+  ('hoje_sp_familia_data_ciclo', 'view', 'public', 'v_oportunidade_economica_hoje', ''),
+  ('sales_orders_gemeo_importado_contagem_unica', 'function', 'public', 'sales_orders_gemeo_app_derivar', ''),
+  ('sales_orders_gemeo_importado_contagem_unica', 'function', 'public', 'sales_orders_gemeo_importada_antes', ''),
+  ('sales_orders_gemeo_importado_contagem_unica', 'function', 'public', 'sales_orders_gemeo_importada_depois', ''),
+  ('sales_orders_gemeo_importado_contagem_unica', 'index', 'public', 'idx_sales_orders_app_pedido_omie', 'sales_orders'),
+  ('sales_orders_gemeo_importado_contagem_unica', 'index', 'public', 'uniq_sales_orders_kpi_por_pedido_omie', 'sales_orders'),
+  ('sales_orders_gemeo_importado_contagem_unica', 'trigger', 'public', 'trg_sales_orders_gemeo_app', 'sales_orders'),
+  ('sales_orders_gemeo_importado_contagem_unica', 'trigger', 'public', 'trg_sales_orders_gemeo_importada_antes', 'sales_orders'),
+  ('sales_orders_gemeo_importado_contagem_unica', 'trigger', 'public', 'trg_sales_orders_gemeo_importada_depois', 'sales_orders')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4404,7 +4424,23 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_sugestao_negociacao_ativa', ''),
   ('data_health_vendas_empurradas_sem_gemeo', 'function', 'public', '_data_health_compute', ''),
   ('data_health_vendas_empurradas_sem_gemeo', 'function', 'public', 'data_health_watchdog', ''),
-  ('data_health_vendas_empurradas_sem_gemeo', 'function', 'public', 'fin_sync_heartbeat', '')
+  ('data_health_vendas_empurradas_sem_gemeo', 'function', 'public', 'fin_sync_heartbeat', ''),
+  ('hoje_sp_familia_data_ciclo', 'function', 'public', 'aplicar_promocoes_no_ciclo', ''),
+  ('hoje_sp_familia_data_ciclo', 'function', 'public', 'ciclo_oportunidade_do_dia', ''),
+  ('hoje_sp_familia_data_ciclo', 'function', 'public', 'gerar_pedidos_oportunidade_ciclo', ''),
+  ('hoje_sp_familia_data_ciclo', 'function', 'public', 'atualizar_parametros_numericos_skus', ''),
+  ('hoje_sp_familia_data_ciclo', 'function', 'public', 'reposicao_pos_candidatos', ''),
+  ('hoje_sp_familia_data_ciclo', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
+  ('hoje_sp_familia_data_ciclo', 'view', 'public', 'v_promocao_avaliacao_hoje', ''),
+  ('hoje_sp_familia_data_ciclo', 'view', 'public', 'v_oportunidade_economica_hoje', ''),
+  ('sales_orders_gemeo_importado_contagem_unica', 'function', 'public', 'sales_orders_gemeo_app_derivar', ''),
+  ('sales_orders_gemeo_importado_contagem_unica', 'function', 'public', 'sales_orders_gemeo_importada_antes', ''),
+  ('sales_orders_gemeo_importado_contagem_unica', 'function', 'public', 'sales_orders_gemeo_importada_depois', ''),
+  ('sales_orders_gemeo_importado_contagem_unica', 'index', 'public', 'idx_sales_orders_app_pedido_omie', 'sales_orders'),
+  ('sales_orders_gemeo_importado_contagem_unica', 'index', 'public', 'uniq_sales_orders_kpi_por_pedido_omie', 'sales_orders'),
+  ('sales_orders_gemeo_importado_contagem_unica', 'trigger', 'public', 'trg_sales_orders_gemeo_app', 'sales_orders'),
+  ('sales_orders_gemeo_importado_contagem_unica', 'trigger', 'public', 'trg_sales_orders_gemeo_importada_antes', 'sales_orders'),
+  ('sales_orders_gemeo_importado_contagem_unica', 'trigger', 'public', 'trg_sales_orders_gemeo_importada_depois', 'sales_orders')
 )
 SELECT
   e.migration,
@@ -4432,7 +4468,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 121.
+-- Funções redefinidas com corpo extraível: 122.
 
 WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (VALUES
   ('public', 'has_role', 1, '20260207192203_1ed442e5-a224-456e-9d94-cfe50e88c670.sql', 'c63a92e3cfa92e6aab8cb894ad505e30'),
@@ -4507,6 +4543,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'gerar_pedidos_sugeridos_ciclo', 27, '20260904232555_reposicao_qtde_multiplo_embalagem_portal.sql', 'f7eaa40bfca2b43443e676908f66aa57'),
   ('public', 'gerar_pedidos_sugeridos_ciclo', 28, '20260925210332_reposicao_em_transito_guarda_fantasma_null_safe.sql', '500ea75a69de21db5e08bbfa346f771a'),
   ('public', 'gerar_pedidos_sugeridos_ciclo', 29, '20260925225004_reposicao_em_transito_simulado_e_join_grupo_null_safe.sql', '398616d7fde6f91b15fd32874bcfc50b'),
+  ('public', 'gerar_pedidos_sugeridos_ciclo', 30, '20261001023000_hoje_sp_familia_data_ciclo.sql', '722f2c1f8113e32ec38865428f6f10f2'),
   ('public', 'envio_portal_lock_candidatos', 1, '20260430005120_ac9adac9-3575-4449-9703-2f88ba333c3f.sql', 'bcdd860ddf768655ce2a5d72fe0e02a7'),
   ('public', 'envio_portal_lock_candidatos', 2, '20260512101121_a96fa007-f688-4c3a-8cd9-43f9d88e5505.sql', 'fd19eefabbdaf5c42ec7d9b8e6a38e7e'),
   ('public', 'envio_portal_lock_candidatos', 3, '20260515010000_99661119-2843-4684-9dba-d21d55bf2ab9.sql', 'b116b7039ef4387546d2b86957b18c50'),
@@ -4643,7 +4680,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', '_data_health_compute', 31, '20260920210000_sync_reprocess_retry_nao_liquida_erro.sql', '282eae5b933019e2e9f806b1f67a224b'),
   ('public', '_data_health_compute', 32, '20260920233000_sync_reprocess_degradado_so_das_vigiadas.sql', '5eae2f124f63fba7cb27914e9610e5d8'),
   ('public', '_data_health_compute', 33, '20260922225500_data_health_portal_humano_critico_apos_24h.sql', 'aa3cac116f66f5bfdcfdf549dbe9afb1'),
-  ('public', '_data_health_compute', 34, '20261001011500_data_health_vendas_empurradas_sem_gemeo.sql', 'aa94df19bd609e91a8264e88eea4d2d2'),
+  ('public', '_data_health_compute', 34, '20261001011500_data_health_vendas_empurradas_sem_gemeo.sql', '04da1485a726ec5737464547eb8a886d'),
   ('public', 'data_health_watchdog', 1, '20260527220000_data_health_watchdog.sql', '4d210b1cab0b10bcf589746005859c4b'),
   ('public', 'data_health_watchdog', 2, '20260527250000_data_health_checks_high.sql', '936015f396af02ab4229e4e20f656803'),
   ('public', 'data_health_watchdog', 3, '20260530190000_data_health_portal_push.sql', '0e436fed51baecafdfbccbe3191e5bfa'),
@@ -4684,6 +4721,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'atualizar_parametros_numericos_skus', 3, '20260605150000_param_auto_fusivel_calibracao.sql', 'fd7c292b873875e30ddfaf5fda1f2a80'),
   ('public', 'atualizar_parametros_numericos_skus', 4, '20260712140000_param_auto_log_valor_barrado_fusivel.sql', '7b1730f2e9c2af673b12de72bf0f4b28'),
   ('public', 'atualizar_parametros_numericos_skus', 5, '20260926001425_param_auto_em_transito_conta_disparado_simulado.sql', '2e97357542270b2e5c44d9fb46d09bff'),
+  ('public', 'atualizar_parametros_numericos_skus', 6, '20261001023000_hoje_sp_familia_data_ciclo.sql', '9bc12d1b4ba22fadc2f1e7ddb2ad3e3e'),
   ('public', 'registrar_contato_rota', 1, '20260531170000_route_contact_log_escrita.sql', '46a7d7aefdeb438671ca1e2f3737b82f'),
   ('public', 'registrar_contato_rota', 2, '20260718170000_fu7_conserta_callers_orfaos.sql', '1f636cd3c55102641b965a09008ba39a'),
   ('public', 'tarefas_guard_comprovacao', 1, '20260601103000_tarefas_fase2_bloco_d.sql', '6e383f9950617271dbdcd5ab70f253c9'),
@@ -4705,6 +4743,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'aplicar_promocoes_no_ciclo', 2, '20260606180000_reposicao_aplicar_promocoes_hardening.sql', 'c0ac59ea6b0d5efb186bb9c7e1669097'),
   ('public', 'aplicar_promocoes_no_ciclo', 3, '20260606200000_reposicao_promo_forward_buying_min.sql', 'f31bcba5fecc035004a42a7e4c4a102d'),
   ('public', 'aplicar_promocoes_no_ciclo', 4, '20260830214547_reposicao_aplicar_promocoes_captura_corpo_vivo.sql', 'b48783701e1a5987cffc04da2965d719'),
+  ('public', 'aplicar_promocoes_no_ciclo', 5, '20261001023000_hoje_sp_familia_data_ciclo.sql', 'b48783701e1a5987cffc04da2965d719'),
   ('public', 'reposicao_alerta_pedido_minimo_tick', 1, '20260609150000_reposicao_alerta_pedido_minimo.sql', '149d7d577c0ca6dc0faff56269f31bb1'),
   ('public', 'reposicao_alerta_pedido_minimo_tick', 2, '20260610150000_reposicao_auto_aprovacao_piloto.sql', 'cf138b87a62881c13c5ce6154a4af3f6'),
   ('public', 'reposicao_alerta_pedido_minimo_tick', 3, '20260611120000_reposicao_fixes_codex_711.sql', '69d6c5fcfac5db26eaee12e912ab676c'),
@@ -4738,6 +4777,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'reposicao_pedido_auto_aprovavel', 3, '20260629140000_reposicao_preco_ausente_null.sql', '3a26656e94c9bbd8db410c2a33c1a704'),
   ('public', 'gerar_pedidos_oportunidade_ciclo', 1, '20260611120000_reposicao_fixes_codex_711.sql', '0b88073f4ac26f6c3aedc8055a5c7ab7'),
   ('public', 'gerar_pedidos_oportunidade_ciclo', 2, '20260922225449_oportunidade_erro_terminal_nao_bloqueia_oferta.sql', 'feeda17a3271a3791a39db4870aae2da'),
+  ('public', 'gerar_pedidos_oportunidade_ciclo', 3, '20261001023000_hoje_sp_familia_data_ciclo.sql', 'bb80edea94d19835ec55c34f007dc0ed'),
   ('public', 'buscar_skus_candidatos', 1, '20260611140000_kb_fundacao_casamento.sql', '1495a27d5ddd47d145e1123a99861a0c'),
   ('public', 'buscar_skus_candidatos', 2, '20260929000234_padrao_like_contem_escapa_curinga.sql', '70b42aa312d47e00816a37cf11ba1198'),
   ('public', 'confirmar_vinculo_boletim', 1, '20260611140000_kb_fundacao_casamento.sql', '69ec58b207bc65e6437f16e391f7a109'),
@@ -4825,8 +4865,11 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'reposicao_pos_candidatos', 1, '20260721190000_reposicao_pos_candidatos.sql', 'a47409151569eb8d5571937a32c02bbb'),
   ('public', 'reposicao_pos_candidatos', 2, '20260813195914_reposicao_pos_candidatos_guard_temporal.sql', '6bc3427923bd40d7f4974fc24f49e01f'),
   ('public', 'reposicao_pos_candidatos', 3, '20260814000125_reposicao_pos_frescor_marcador.sql', '2439966a9d06019c0a21bb3d4792fbbb'),
+  ('public', 'reposicao_pos_candidatos', 4, '20261001023000_hoje_sp_familia_data_ciclo.sql', '0478257110616de8ce8c3499cccc7f2f'),
   ('public', 'tint_gate_revalida', 1, '20260722100001_tint_gate_revalida_submit.sql', 'b46bd0dc7e83094a608ed8554a4c9bfb'),
   ('public', 'tint_gate_revalida', 2, '20260726160000_tint_canonica_piso_legado.sql', '67947c3b37e874638ebe013d90bdfcb4'),
+  ('public', 'ciclo_oportunidade_do_dia', 1, '20260722110000_ciclo_oportunidade_registra_execucao.sql', 'e9b625fa0078e96ecae422debbe16dab'),
+  ('public', 'ciclo_oportunidade_do_dia', 2, '20261001023000_hoje_sp_familia_data_ciclo.sql', '193eb913efb92a886539b065cf3e55b7'),
   ('public', 'get_customer_margin_summary', 1, '20260723150000_farmer_margem_server_side.sql', '4bec72709f6cbaeea10e3ac63c2063b9'),
   ('public', 'get_customer_margin_summary', 2, '20260726160000_margem_reconciliacao_universo_unico.sql', '58a93d6a130e01b0ba38ab1644909dcc'),
   ('public', 'get_customer_margin_summary', 3, '20260905225613_preco_ausente_nao_e_zero.sql', '33c8cea833be4410fed2e07a07330860'),
