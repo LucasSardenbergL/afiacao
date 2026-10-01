@@ -34,6 +34,7 @@ function base(overrides: Partial<React.ComponentProps<typeof AIResultPanel>> = {
     onConfirmItems: vi.fn(),
     suggestions: [],
     onAcceptSuggestion: vi.fn(),
+    precoNascimentoPorId: () => null,
     ...overrides,
   };
   render(<AIResultPanel {...props} />);
@@ -67,6 +68,26 @@ describe('AIResultPanel', () => {
   it('mostra botão de confirmar itens quando há itens e cliente selecionado', () => {
     const props = base({ identifiedProducts: oneProduct, hasCustomerSelected: true });
     const btn = screen.getByRole('button', { name: /Adicionar 1 item\(ns\) ao Pedido/ });
+    fireEvent.click(btn);
+    expect(props.onConfirmItems).toHaveBeenCalledTimes(1);
+  });
+
+  it('preço de partida não firme: confirmar PRODUTO fica bloqueado (mesmo gate do ADD da lista)', () => {
+    const props = base({ identifiedProducts: oneProduct, hasCustomerSelected: true, precoLoading: true });
+    const btn = screen.getByRole('button', { name: /Adicionar 1 item\(ns\) ao Pedido/ }) as HTMLButtonElement;
+    expect(btn.disabled).toBe(true);
+    fireEvent.click(btn);
+    expect(props.onConfirmItems).not.toHaveBeenCalled();
+  });
+
+  it('preço de partida não firme NÃO bloqueia confirmar só SERVIÇO (serviço não nasce pelo precoPartida)', () => {
+    const props = base({
+      identifiedServices: [{ userToolId: 'ut1', omie_codigo_servico: 1, servico_descricao: 'Afiação', quantity: 1 }],
+      hasCustomerSelected: true,
+      precoLoading: true,
+    });
+    const btn = screen.getByRole('button', { name: /Adicionar 1 item\(ns\) ao Pedido/ }) as HTMLButtonElement;
+    expect(btn.disabled).toBe(false);
     fireEvent.click(btn);
     expect(props.onConfirmItems).toHaveBeenCalledTimes(1);
   });

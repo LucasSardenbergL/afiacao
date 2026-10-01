@@ -326,6 +326,8 @@ const UnifiedOrder = () => {
               customerUserId={h.customerUserId}
               hasCustomerSelected={!!h.selectedCustomer}
               isLoading={h.submitting}
+              precoNascimentoPorId={h.precoNascimentoPorId}
+              precoLoading={h.precoPartidaLoading}
             />
           )}
 

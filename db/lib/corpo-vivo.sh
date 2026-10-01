@@ -187,7 +187,7 @@ DECLARE
   v_n   int;
 BEGIN
   v_n := (length(v_def) - length(replace(v_def, v_anc, ''))) / length(v_anc);
-  IF v_n <> 1 THEN
+  IF v_n IS DISTINCT FROM 1 THEN
     RAISE EXCEPTION 'SABOTAGEM SEM ANCORA UNICA: % ocorrencia(s) em %', v_n, v_fn;
   END IF;
   EXECUTE replace(v_def, v_anc, current_setting('cv.troca'));

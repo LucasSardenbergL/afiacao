@@ -44,7 +44,7 @@ export function CanariaPrecoCard() {
           )}
         </div>
         <CardDescription className="text-xs">
-          Prova que a edge <span className="font-mono">analyze-unified-order</span> SERVIDA em produção honra "preço praticado vence o Omie" (local 123 vs Omie 999). Pega reversão silenciosa do deploy do Lovable que o CI do repo não enxerga. Roda sozinha ao abrir esta página.
+          Prova que a edge <span className="font-mono">analyze-unified-order</span> SERVIDA em produção não precifica: nenhum preço sai da análise da IA (o item nasce pelo preço de partida do pedido, como na lista). Pega reversão silenciosa do deploy do Lovable que o CI do repo não enxerga. Roda sozinha ao abrir esta página.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-2">
