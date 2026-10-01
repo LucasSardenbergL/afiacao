@@ -65,21 +65,34 @@ DEFAULTS="D01:farmer_agenda:agenda_date D02:fornecedor_cadeia_logistica:valido_d
 # Formato: <sabotagem>:<vermelhos,separados>[:<verdes,separados>]
 # ══════════════════════════════════════════════════════════════════════════════
 if [ "${1:-}" = "--falsificar" ]; then
-  SABOTAGENS=""
-  for item in $VIEWS; do
-    id="${item%%:*}"; resto="${item#*:}"; nome="${resto%%:*}"
-    # candidatos (V12) e parâmetros (V16) leem OUTRAS views da leva, já consertadas: a saída delas muda à
-    # 00:00 de SP pelas filhas mesmo com o relógio próprio sabotado — o c não discrimina ali; a e b sim.
-    case "$id" in
-      V12|V16) SABOTAGENS="$SABOTAGENS sessao_$nome:${id}a,${id}b:${id}d" ;;
-      *)       SABOTAGENS="$SABOTAGENS sessao_$nome:${id}a,${id}b,${id}c:${id}d" ;;
-    esac
-  done
-  for item in $DEFAULTS; do
-    id="${item%%:*}"; resto="${item#*:}"; col="${resto#*:}"
-    SABOTAGENS="$SABOTAGENS default_sessao_$col:${id}a,${id}b:${id}c,${id}d"
-  done
-  SABOTAGENS="$SABOTAGENS
+  # Uma por view (o GÊMEO da sessão: vermelha em a/b/c, verde em d) e por DEFAULT (vermelha em a/b; o c dos
+  # DEFAULTs é valor absoluto que o gêmeo também acerta — quem o derruba é o relógio de parede). Candidatos
+  # (V12) e parâmetros (V16) leem OUTRAS views da leva, já consertadas: a saída delas muda à 00:00 de SP
+  # pelas filhas mesmo com o relógio próprio sabotado — o c não discrimina ali; a e b sim.
+  SABOTAGENS="sessao_fin_aging_pagar:V01a,V01b,V01c:V01d
+              sessao_fin_aging_receber:V02a,V02b,V02c:V02d
+              sessao_fin_fluxo_caixa_diario:V03a,V03b,V03c:V03d
+              sessao_v_caca_candidatos:V04a,V04b,V04c:V04d
+              sessao_v_caca_compradores:V05a,V05b,V05c:V05d
+              sessao_v_desconto_flat_condicional_ativo:V06a,V06b,V06c:V06d
+              sessao_v_fornecedor_lt_logistica_total:V07a,V07b,V07c:V07d
+              sessao_v_grupo_comercial:V08a,V08b,V08c:V08d
+              sessao_v_grupo_contas_receber:V09a,V09b,V09c:V09d
+              sessao_v_grupo_contas_receber_por_doc:V10a,V10b,V10c:V10d
+              sessao_v_sku_aumento_vigente:V11a,V11b,V11c:V11d
+              sessao_v_sku_candidatos_primeira_compra:V12a,V12b:V12d
+              sessao_v_sku_demanda_estatisticas:V13a,V13b,V13c:V13d
+              sessao_v_sku_demanda_rajada:V14a,V14b,V14c:V14d
+              sessao_v_sku_leadtime_estatisticas:V15a,V15b,V15c:V15d
+              sessao_v_sku_parametros_sugeridos:V16a,V16b:V16d
+              sessao_v_sku_sigma_demanda:V17a,V17b,V17c:V17d
+              sessao_v_sugestao_negociacao_ativa:V18a,V18b,V18c:V18d
+              default_sessao_agenda_date:D01a,D01b:D01c,D01d
+              default_sessao_valido_desde:D02a,D02b:D02c,D02d
+              default_sessao_score_date:D03a,D03b:D03c,D03d
+              default_sessao_vigente_desde:D04a,D04b:D04c,D04d
+              default_sessao_data_geracao:D05a,D05b:D05c,D05d
+              default_sessao_valido_ate:D06a,D06b:D06c,D06d
               leadtime_borda_ingenua:V15b:V15a,V15c,V15d
               aging_de_parede:V01c:V01a,V01b,V01d
               aging_em_utc_escrito:V01a,V01c,V01d:V01b
