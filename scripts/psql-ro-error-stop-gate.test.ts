@@ -143,7 +143,7 @@ describe('o corpo REAL do repo', () => {
     expect(r.sitios.length).toBeGreaterThanOrEqual(PISOS.sitios);
   });
 
-  it('o censo bate com o histórico: 16 consumidores executam o wrapper', () => {
+  it('o censo bate com o histórico: 17 consumidores executam o wrapper', () => {
     // O doc do #2167 contou 14 varrendo à mão "quem EXECUTA" (≠ as 200+ menções em prosa).
     // Se esta conta divergir, ou nasceu consumidor novo (atualize) ou o fiscal ficou cego.
     // 2026-09-07: 14 → 15, consumidor novo e legítimo — `scripts/pendencias-pacote.ts` mede a
@@ -153,13 +153,16 @@ describe('o corpo REAL do repo', () => {
     // 2026-09-26: 15 → 16, consumidor novo e legítimo — `db/audit-deriva-corpo-prod.ts`
     // (`deriva:corpo:prod`) mede o corpo de toda função `public` contra o repo. Também por `-c`
     // (e já com `ON_ERROR_STOP`), então a exigência de `-f` abaixo não muda.
-    expect(r.arquivosComVinculo).toBe(16);
+    // 2026-10-01: 16 → 17, consumidor novo e legítimo — `scripts/jev/exportar.ts` (backtest do
+    // Jev, #2719) exporta os datasets por `-f` COM `-v ON_ERROR_STOP=1` e exige o marcador de fim
+    // na saída. É o 2º sítio com `-f`, e entra na lista abaixo com a mesma exigência.
+    expect(r.arquivosComVinculo).toBe(17);
   });
 
-  it('o único sítio que precisa de ON_ERROR_STOP por `-f` é o do #2167, e ele tem', () => {
+  it('os sítios que leem por `-f` são o do #2167 e o exportador do Jev, e TODOS têm ON_ERROR_STOP', () => {
     const porArquivo = r.sitios.filter((s) => s.temF);
-    expect(porArquivo.map((s) => s.arquivo)).toEqual(['db/audit-anon-dml-bypass.sh']);
-    expect(porArquivo[0].temErrorStop).toBe(true);
+    expect(porArquivo.map((s) => s.arquivo)).toEqual(['db/audit-anon-dml-bypass.sh', 'scripts/jev/exportar.ts']);
+    for (const s of porArquivo) expect(s.temErrorStop).toBe(true);
   });
 
   /**
