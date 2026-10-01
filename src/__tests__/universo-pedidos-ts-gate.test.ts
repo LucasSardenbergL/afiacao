@@ -111,11 +111,11 @@ describe('gate: universo de pedidos de venda no TypeScript e nas edges', () => {
       .filter(([k, n]) => n > (esperado.get(k) ?? 0))
       .map(([k, n]) => `${k} (${n}× no arquivo, registro ${esperado.get(k) ?? 0})`);
     expect(
-      novos,
+      novos.join('\n'),
       'leitura de sales_orders sem o universo de venda: aplique .not("status","in",STATUS_NAO_VENDA_POSTGREST) + ' +
         '.is("deleted_at", null) — ou, se NÃO é pergunta de venda de propósito, registre em ' +
         'src/lib/gates/universo-pedidos-ts-registro.ts com categoria e motivo',
-    ).toEqual([]);
+    ).toBe('');
   });
 
   it('G2: o registro só encolhe — entrada sem sítio (sumiu, virou canônico ou mudou de forma) reprova', () => {
@@ -127,7 +127,7 @@ describe('gate: universo de pedidos de venda no TypeScript e nas edges', () => {
     const orfas = REGISTRO.filter((e) => (achado.get(chave(e.arquivo, e.forma)) ?? 0) < (e.n ?? 1)).map(
       (e) => `${chave(e.arquivo, e.forma)} (${e.categoria})`,
     );
-    expect(orfas, 'entrada quitada ou mudou de forma: remova-a do registro (ou reclassifique a forma nova)').toEqual([]);
+    expect(orfas.join('\n'), 'entrada quitada ou mudou de forma: remova-a do registro (ou reclassifique a forma nova)').toBe('');
   });
 
   it('G3: feed de propósito esconde o pedido apagado (ou diz por que não)', () => {
@@ -135,7 +135,7 @@ describe('gate: universo de pedidos de venda no TypeScript e nas edges', () => {
     const semFiltro = REGISTRO.filter(
       (e) => e.categoria === 'proposito' && !e.incluiApagado && !porChave.get(chave(e.arquivo, e.forma))?.deletedAt,
     ).map((e) => chave(e.arquivo, e.forma));
-    expect(semFiltro, 'feed de propósito sem .is("deleted_at", null) e sem `incluiApagado` no registro').toEqual([]);
+    expect(semFiltro.join('\n'), 'feed de propósito sem .is("deleted_at", null) e sem `incluiApagado` no registro').toBe('');
   });
 
   it('G4: a dívida só desce, e toda entrada de dívida nomeia o domínio que a quita', () => {
@@ -153,10 +153,10 @@ describe('gate: universo de pedidos de venda no TypeScript e nas edges', () => {
     const conhecidas = new Set(CONSTANTES_DIVIDA.map((c) => k(c.arquivo, c.membros)));
     const vistas = new Set(achadas.map((c) => k(c.arquivo, c.membros.join(','))));
     expect(
-      achadas.filter((c) => !conhecidas.has(k(c.arquivo, c.membros.join(',')))).map((c) => `${c.arquivo}:${c.linha} [${c.membros.join(',')}]`),
+      achadas.filter((c) => !conhecidas.has(k(c.arquivo, c.membros.join(',')))).map((c) => `${c.arquivo}:${c.linha} [${c.membros.join(',')}]`).join('\n'),
       'cópia da lista de status de venda: importe STATUS_NAO_VENDA de @/lib/farmer/universo-pedidos ' +
         '(edge: ./_shared/universo-pedidos.ts) em vez de copiá-la',
-    ).toEqual([]);
+    ).toBe('');
     expect(
       CONSTANTES_DIVIDA.filter((c) => !vistas.has(k(c.arquivo, c.membros))).map((c) => k(c.arquivo, c.membros)),
       'constante quitada: remova-a de CONSTANTES_DIVIDA',
