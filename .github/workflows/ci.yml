@@ -35,6 +35,10 @@
 #   `index.ts` é importado por teste algum. Até 2026-07-21 erro de tipo em edge passava VERDE em
 #   todos os gates e só quebrava em RUNTIME na produção (#1498). Único step do job que precisa de
 #   REDE; o porquê disso ser inevitável aqui está no próprio step.
+# - edges:sintaxe (node --check): blocking — todo módulo de edge (index.ts, helpers, _shared)
+#   PARSEIA no V8. Os dois acima não cobrem: `deno test` não importa `index.ts`, e o
+#   edges:typecheck tolera a redeclaração (TS2451/TS2393) por precisão — mas redeclaração é early
+#   error, o V8 recusa o módulo inteiro e a edge responde BOOT_ERROR 503 (#2720). Offline, sem Deno.
 # - build (vite build): blocking — pega Tailwind quebrado + import errors + PWA setup
 # - lint (eslint): blocking em ERRORS — a dívida de `no-explicit-any` foi zerada
 #   (era ~1300 errors, hoje 0; ver CLAUDE.md §10/§13), então o lint virou gate
@@ -296,6 +300,18 @@ jobs:
 
       - name: Tests (edge functions — Deno, offline)
         run: bun run test:edges
+
+      # SINTAXE das edges no V8 — blocking. Módulo que o V8 recusa é edge que NÃO BOOTA: BOOT_ERROR 503
+      # a toda chamada até o redeploy. Nenhum outro gate pega: o `test:edges` acima não importa
+      # `index.ts`, o `edges:typecheck` abaixo tolera a redeclaração (TS2451/TS2393) por desenho e o
+      # vitest lê a edge como texto. Incidente #2720: o #2700 passou VERDE em todos os gates com
+      # `resposta` declarada 2× no handler da `analyze-unified-order`, ~75 min fora do ar em prod.
+      # Recorrência: 3 commits da main na mesma classe (NAO_COMPILA da sonda por cron, #2415).
+      # Duas camadas — parser do TS (o transpile CONSERTA arquivo truncado, então o diagnóstico
+      # reprova sozinho) + `node --check` no JS transpilado —, calibradas na mesma invocação
+      # (fail-closed). Offline, sem Deno, ~5s. Números e porquê: cabeçalho de scripts/edges-sintaxe-gate.ts.
+      - name: Sintaxe das edges — o V8 aceita todo módulo (node --check, offline)
+        run: bun run edges:sintaxe
 
       # TESTE DECISIVO da sonda por cron (spec 2026-09-05-sonda-por-cron-fail-closed-design.md §5):
       # materializa bundles históricos REAIS por `git archive` — inclusive os que NÃO autenticavam
