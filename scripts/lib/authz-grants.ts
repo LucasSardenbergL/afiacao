@@ -80,12 +80,45 @@ function mencionaTabela(stmt: string, schema: string, name: string): boolean {
   return re.test(stmt);
 }
 
-function parsePrivList(s: string): Priv[] {
-  if (/\bALL\b/i.test(s)) return [...TODOS_PRIV];
-  const out: Priv[] = [];
-  for (const p of s.split(',')) {
-    const t = p.trim().toUpperCase().replace(/\s*\([^)]*\)/, ''); // remove lista de colunas
-    if ((TODOS_PRIV as string[]).includes(t)) out.push(t as Priv);
+/** Um item da lista de privilégios: o privilégio e, se for de COLUNA, as colunas (minúsculas, sem aspas). */
+interface ItemPriv {
+  priv: Priv;
+  colunas: string[] | null; // null = privilégio de TABELA
+}
+
+/** Divide no nível de cima: a vírgula DENTRO de `SELECT (a, b)` não separa privilégio. */
+function partesTopo(s: string): string[] {
+  const out: string[] = [];
+  let nivel = 0;
+  let cur = '';
+  for (const ch of s) {
+    if (ch === '(') nivel++;
+    else if (ch === ')') nivel--;
+    if (ch === ',' && nivel === 0) {
+      out.push(cur);
+      cur = '';
+    } else cur += ch;
+  }
+  out.push(cur);
+  return out;
+}
+
+function parsePrivItens(s: string): ItemPriv[] {
+  if (/\bALL\b/i.test(s)) return TODOS_PRIV.map((priv) => ({ priv, colunas: null }));
+  const out: ItemPriv[] = [];
+  for (const p of partesTopo(s)) {
+    const m = /^\s*([A-Za-z]+)\s*(?:\(([^)]*)\))?\s*$/.exec(p);
+    if (!m) continue;
+    const t = m[1].toUpperCase();
+    if (!(TODOS_PRIV as string[]).includes(t)) continue;
+    const colunas =
+      m[2] === undefined
+        ? null
+        : m[2]
+            .split(',')
+            .map((c) => c.trim().replace(/"/g, '').toLowerCase())
+            .filter(Boolean);
+    out.push({ priv: t as Priv, colunas });
   }
   return out;
 }
@@ -108,7 +141,7 @@ function alvoCreateTable(stmt: string): { schema: string | null; name: string } 
 }
 
 interface ParsedGrant {
-  privs: Priv[];
+  itens: ItemPriv[];
   roles: string[];
   allTables: boolean;
 }
@@ -118,15 +151,15 @@ function parseGrant(stmt: string): ParsedGrant | null {
   const m = /\bGRANT\s+(.+?)\s+ON\s+(.+?)\s+TO\s+(.+)$/is.exec(stmt.trim());
   if (!m) return null;
   const [, privRaw, onRaw, toRaw] = m;
-  const privs = parsePrivList(privRaw);
-  if (privs.length === 0) return null; // privilégio irreconhecível → não garanto → fail-closed
+  const itens = parsePrivItens(privRaw);
+  if (itens.length === 0) return null; // privilégio irreconhecível → não garanto → fail-closed
   const roles = toRaw
     .replace(/\bWITH\s+GRANT\s+OPTION\b/i, '')
     .split(',')
     .map((r) => r.trim().replace(/"/g, '').toLowerCase())
     .filter(Boolean);
   const allTables = /\bALL\s+TABLES\s+IN\s+SCHEMA\b/i.test(onRaw);
-  return { privs, roles, allTables };
+  return { itens, roles, allTables };
 }
 
 /**
@@ -257,7 +290,17 @@ export function auditGrantsTabelas(
           for (const role of ROLES_VIGIADAS) {
             if (!g.roles.includes(role)) continue;
             const permit = entry.permitido[role] ?? [];
-            const extra = g.privs.filter((p) => !permit.includes(p));
+            const contrato = entry.colunasPermitidas?.[role];
+            // GRANT por COLUNA só passa numa tabela com contrato de coluna, e com TODA coluna nele; sem
+            // contrato, conta como privilégio de TABELA — o estrito de sempre (a coluna sensível de uma
+            // tabela fechada inteira reabre do mesmo jeito que o GRANT de tabela).
+            const extra = g.itens
+              .filter((it) => {
+                if (permit.includes(it.priv)) return false;
+                const cols = it.colunas ? contrato?.[it.priv] : undefined;
+                return !(cols && it.colunas!.every((c) => cols.includes(c)));
+              })
+              .map((it) => (it.colunas ? `${it.priv} (${it.colunas.join(', ')})` : it.priv));
             if (extra.length) {
               out.push({
                 level: 'error',

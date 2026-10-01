@@ -220,6 +220,107 @@ do `setMonth` que ele substitui.
    propósito)?
 3. o `dataFim` do Omie no dia de SP pode perder registro?
 
+## Fase visitas: o DEFAULT de `route_visits.visit_date` junto com os leitores
+
+**Por que agora.** A fase 2 (20260930230623) adiou este DEFAULT de propósito. Os leitores eram mistos: o
+planner e os KPIs de 30 dias liam o hoje UTC, e o MTD e a positivação liam o de SP. Trocar só o DEFAULT
+movia a divergência de lugar. Nesta fase vão o DEFAULT e os leitores TS juntos.
+
+**O que a prod mostrou** (psql-ro, 01/10):
+- `route_visits` e `visitas_agendadas` têm **0 linhas**: o domínio ainda não foi usado, e o conserto chega
+  antes do primeiro dado.
+- Os 3 check-ins do app (2 em `useRoutePlanner` e 1 em `useVisitasAgendadas`) OMITEM `visit_date`, então todo
+  check-in usa o DEFAULT. Ele é exercido, não latente.
+- O trigger `reconcile_visita_agendada` dá baixa na agendada mais antiga com `scheduled_date <= NEW.visit_date`.
+  Com o dia UTC, o check-in das 22h dava baixa na visita agendada para AMANHÃ, que sumia da agenda antes de
+  acontecer.
+- `_carteira_positivacao_for_owner` e o edge `carteira-positivacao-snapshot` já liam o MÊS de SP: o check-in
+  da noite do último dia do mês contava no mês seguinte.
+
+| Onde | O que era | Veredito |
+|---|---|---|
+| `route_visits.visit_date` DEFAULT | o dia da sessão (UTC) em todo check-in | afetado: migration `20261001043717` |
+| `lib/visitas/today.ts` `hojeISO` | o dia UTC para os 6 consumidores (a agenda, o `min` do agendamento, os follow-ups) | afetado-alto |
+| `useRoutePlanner` (2) | `.eq('visit_date')` e `.eq('scheduled_date')` com o hoje UTC: das 21h em diante, o planner carregava amanhã | afetado-alto |
+| `useCheckinQualitativo` | `data_avaliacao` persistida com o dia UTC | afetado-alto |
+| `RotaPropostas`, `usePropostaPreview` | o dia de referência da proposta e da cesta de recompra mandadas por WhatsApp | afetado-alto |
+| `useKpisVisita`, `useFollowupsVisita` | a borda de 30 dias em `visit_date` com o dia UTC; eram "UTC-consistentes" com o DEFAULT antigo e mudam com ele | afetado (junto do DEFAULT) |
+| `visit-score-recalc-batch` | `cutoff.slice(0, 10)` contra `visit_date` | latente: só roda no cron das 04:00 BRT, quando o dia UTC é o de SP; dono: `[fase datas-omie-e-edges]` |
+| `carteira-positivacao-snapshot`, `_carteira_positivacao_for_owner` | já leem o mês de SP | já-correto: ganham com o DEFAULT |
+
+O sítio do `visit-score-recalc-batch` era o ISO guardado numa variável e fatiado depois. A 1ª versão do gate
+não via essa forma, e o gate passou a ver (PR do gate).
+
+**A trava** é `ACCESS EXCLUSIVE` já na entrada. Medido no PG17: o `ALTER COLUMN … SET DEFAULT` toma
+AccessExclusiveLock. A fase 2 travou as tabelas dos DEFAULTs em `SHARE UPDATE EXCLUSIVE`, e o ALTER subiu o
+lock no meio da transação (já aplicada, sem incidente; a lição está registrada na #2705 com a
+`pedido_compra_sugerido`).
+
+**A prova** é `db/test-hoje-sp-visitas.sh`, com 15 asserts:
+- P01-P02: o DEFAULT e o corpo do trigger são os da prod (md5 `06eb0e83…`);
+- K1-K2: a trava e o NÍVEL dela (nem a leitura passa);
+- Z0;
+- D01 a/b/c/d;
+- E1-E3: ponta a ponta com o trigger. Só a agendada de D+1 fica pendente: o check-in das 22:30 BRT não dá
+  baixa nela, e o da 00:30 de D+1 dá (é o controle positivo);
+- G1-G3.
+
+A prova fica fora do núcleo do CI e roda local: o `provas-sql` cancelou 16 de 25 runs a 20,2 min em 01/10, e o motivo está registrado em `db/nucleo-ci.txt`. O `--falsificar` teve 8 sabotagens, todas vermelhas no assert declarado, nos dois ambientes (`TZ=UTC` + `C`, e
+sem TZ + `pt_BR.UTF-8`):
+- o gêmeo da sessão;
+- o fuso escrito errado (UTC);
+- o relógio de parede;
+- sem pin;
+- sem trava;
+- trava fraca;
+- PRÉ removida;
+- PÓS removida.
+
+A migration desta fase é a **11ª a partir do `CORTE` do relógio-nu** (`20260927195430`) e detonou um teste do gate
+no ensaio da PR já rebaseada (1 de 10.057). O `10 migrations não são o repo`, em
+`scripts/relogio-nu-da-sessao-gate.test.ts`, montava a amostra com `velhas.slice(0, 10 - novas.length)`, e na 11ª o
+fim fica **negativo**. O slice devolvia o repo quase inteiro, a amostra passava no piso e o veredito saía 0, não 2.
+Consertei na própria PR: as do corte vão na frente, completadas com velhas e cortadas em 10, e a contagem passou a
+ser afirmada. A falsificação teve controle 31/31; o piso 700→5 e a fórmula velha ficaram vermelhos só no alvo.
+Lição: uma amostra de tamanho RELATIVO ao universo explode quando o universo cresce. Use `slice(0, n)` sobre a
+união, nunca `n - parte.length`.
+
+**Deploy:**
+- **Migration:** FEITO (eu). `db:aplicar --ensaio` e depois o apply às **01:49 BRT de 01/10**: a tentativa
+  #212 virou recibo (sha256 `f25a4b97…`). 2ª testemunha (psql-ro): o DEFAULT em SP, o trigger com o md5 de
+  antes e o ledger `aplicada`.
+- **Publish do front:** founder. Até o Publish, o planner velho lê o hoje UTC contra o `visit_date` novo, o
+  que é só exibição noturna e com 0 linhas.
+- **Edges:** nenhuma.
+
+## Fases reposição e resto (só front)
+
+São 14 sítios em 13 entradas, e a baseline cai de 98 para 85:
+
+| Onde | O que era | Veredito |
+|---|---|---|
+| `TrocaParceiroDialog` (2), `useCadeiaLogistica` | o default de `dataTroca` e o `valido_ate` da etapa encerrada, **persistidos** com o dia UTC | afetado-alto |
+| `useNegociacaoParalela` | o `data_geracao` explícito em UTC sobrescrevia o DEFAULT de SP da coluna (fase 2); o `valido_ate` era `setDate` local + ISO UTC | afetado-alto (2) |
+| `DesovaMissaoDialog` | o `due_date` da tarefa de desova, persistido | afetado-alto |
+| `useFarmerPerformance` | `period_start`/`period_end` gravados em `farmer_performance_scores` | afetado-alto (2) |
+| `SkuDetailSheet` | os buckets do gráfico de 90 dias (à noite: sem o dia mais antigo, com um "amanhã" vazio) | afetado-baixo |
+| `useBaixoGiro`, `useExcessoEstoque` | dias sem vender com +1 das 21h às 24h BRT | afetado-baixo (2) |
+| `useSlaFornecedor`, `AdminReposicaoBaixoGiro`, `useExportNaoVinculados` | o nome do CSV baixado | afetado-baixo (3) |
+
+No `useFarmerPerformance`, o `period_start` é o dia de SP do início da janela. O instante da janela (`startStr`)
+segue o mesmo, então o rótulo e a consulta passam a falar do mesmo dia.
+
+O gate ajusta 2 âncoras que dependiam de sítios que as fases consertam:
+- o teste de "contagem" passa a ancorar num FALSO-POSITIVO estável (`route-schedule.ts`), e não no
+  `useExportNaoVinculados`, que esta fase conserta;
+- o piso de "detector cego" passa a ancorar no que NÃO se conserta (falsos-positivos, latentes sem dono e
+  UTC-consistentes: 42 sítios): 100 → 35.
+
+Mutcheck de novo: 18/18.
+
+Depois desta fase, os afetados que sobram na baseline são só os `[fase datas-omie-e-edges]`: 16 edges e 54
+sítios. Deploy desta fase: só o Publish (founder).
+
 ## Fora, com dono
 
 - **O gate de TS** — FEITO no PR seguinte: `src/__tests__/hoje-utc-gate.test.ts` + `src/lib/gates/hoje-utc.ts`
@@ -232,8 +333,10 @@ do `setMonth` que ele substitui.
     versão não via: `const cutoff = ….toISOString()` e depois `cutoff.slice(0, 10)`, no
     `visit-score-recalc-batch`. É latente: só roda no cron das 04:00 BRT, quando o dia UTC é o de SP.
   - Varredura dessa forma: 1 caso no repo inteiro.
-- **As fases de TS por domínio**: financeiro — FEITO (a seção acima); visitas (`hojeISO()` e os 6 consumidores, o planner, e
-  `route_visits.visit_date` com os leitores UTC); as datas mandadas ao Omie (forma B); o resto.
+- **As fases de TS por domínio**: financeiro, visitas, reposição e resto — FEITAS (as seções acima). Falta
+  `[fase datas-omie-e-edges]`: 16 edges e 54 sítios, entre eles o `dDataPosicao` do `sync-reprocess` em D+1
+  toda noite (cron 21:15/23:15/23:30 BRT). Pede 16 deploys do founder e tem trecho money-path (estoque,
+  vendas): fica para uma sessão própria, com o Codex de volta.
 - **Anotado, fora da classe:** `_data_health_compute` converte `saldo_data` (date) em instante no fuso da
   sessão (a idade do saldo sai 3h maior; limiar de 36h); as 4 RPCs de ciclo têm EXECUTE para PUBLIC/anon
   (SECURITY INVOKER: a RLS das tabelas é quem barra).

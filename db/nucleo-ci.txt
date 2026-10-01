@@ -52,6 +52,13 @@ db/test-tint-gate-custo-staff.sh           25
 # versão anterior dava GRANT ALL a anon/authenticated e morreu no re-dump #1509 fora do núcleo
 # (docs/historico/provas-canal-revividas.md).
 db/test-whatsapp-hsm.sh                    18  falsificar=17
+# Funil do canal WhatsApp (get_whatsapp_funil, INVOKER): roda para o staff — que em prod levava
+# "permission denied" até a 20261001100000 (coluna nova não herda o GRANT por coluna de sales_orders) —,
+# o anon é barrado no EXECUTE (o DROP+CREATE que reseta o ACL é sabotagem), o hardening por coluna segue
+# fechado (omie_payload), e a atribuição é conservadora: só o elo explícito conta, resposta só em 24h
+# depois do envio. A cadeia guarda sales_orders, então a migration do GRANT entra sozinha
+# (docs/historico/provas-canal-revividas.md).
+db/test-whatsapp-funil.sh                  12  falsificar=18
 
 # ── Eixo 2 — FINITUDE MONETÁRIA ───────────────────────────────────────────────────
 # `ausente ≠ zero`: preço que o Omie não mandou não vira R$ 0,00; custo sem cmc
@@ -173,6 +180,12 @@ db/test-canaria-veredito.sh                24  falsificar=18
 # cada sonda COMO outro papel, para a sentinela do `claude_ro` medir pela nuvem). T13 é o falso
 # verde que o desenho existe para matar: o SET ROLE negado sai 42501, a mesma SQLSTATE da negação.
 db/test-transporte-nuvem.sh                25  falsificar=14
+# O TRANSPORTE do passo seguinte (2026-09-27): pelo `db:aplicar` a célula que o disparo devolve
+# morre no EXECUTE do `aplicar_sql()`, e o passo vem por NOTICE no log. Roda o `db-aplicar.sh` e o
+# bootstrap REAIS contra stubs de pg_net/vault, com o SQL do gerador deste disco (bun, como a
+# canária), e executa o comando que o PRÓPRIO cabeçalho manda rodar. As 7 sabotagens vão nos dois
+# idiomas do servidor (a palavra NOTICE/NOTA muda; o recorte não pode depender dela) = 14.
+db/test-sonda-passo-pelo-db-aplicar.sh     32  falsificar=14
 
 # ── Eixo 6 — DUPLA CONTAGEM (o mesmo fato sob N óticas) ──────────────────────────
 # `fin_movimentacoes` guarda o MESMO pagamento do Omie duas vezes (lançamento do título e
@@ -329,3 +342,7 @@ db/test-hoje-sp-views-defaults.sh          129  falsificar=fora-do-ci  # TETO do
 # (a deriva de 14 colunas do snapshot + o texto vivo) + a migration. O `--falsificar` (17 sabotagens, todas
 # vermelhas no assert certo, matriz UTC/SP × C/pt_BR verde) roda FORA do CI pelo motivo da linha abaixo.
 db/test-hoje-sp-data-ciclo.sh               57  falsificar=fora-do-ci  # o job provas-sql mediu 19,6–19,9 min de 20 em 3 PRs de 30/09–01/10 (mediana 17,9 em 8): +17 sabotagens (~3 min) o cancelaria no teto; o comentário do ci.yml pede paralelizar o runner, não subir o teto
+# FORA do núcleo (de propósito): db/test-hoje-sp-visitas.sh — o DEFAULT de route_visits.visit_date no dia de SP
+# (15 asserts, 8 sabotagens, matriz UTC/SP × C/pt_BR verde; roda local). O job provas-sql está no TETO: em 01/10
+# 02:20–05:00, 16 de 25 runs de PR foram canceladas a 20,2 min (as verdes: 16,9–19,9) — +20 s aqui faria
+# todo PR esbarrar mais. Entra quando o runner for paralelizado (o comentário do ci.yml), não subindo o teto.

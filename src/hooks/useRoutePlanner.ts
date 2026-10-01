@@ -47,6 +47,7 @@ import { ordenarFilaGeocode, ordenarFilaGeocodeCep } from '@/lib/route/geocode-f
 import { interpretarResolver } from '@/lib/route/cep-resolver';
 import { normalizarCep } from '@/lib/route/cep';
 import { fetchAllPages } from '@/lib/postgrest';
+import { hojeSP } from '@/lib/time/sp-day';
 
 // Teto de prospects por cidade pedido à RPC (a RPC capa em 2000 no SQL).
 // Divinópolis (673) cabe inteira; metrópole mostra os 1000 mais quentes — e são MUITAS: em
@@ -421,7 +422,7 @@ export function useRoutePlanner() {
 
   const loadTodayVisits = async () => {
     if (!user) return;
-    const today = new Date().toISOString().split('T')[0];
+    const today = hojeSP(); // o dia de SP: o mesmo do DEFAULT de visit_date e do hojeISO da agenda
     const { data } = await supabase
       .from('route_visits')
       .select('*')
@@ -616,7 +617,7 @@ export function useRoutePlanner() {
       return;
     }
     try {
-      const today = new Date().toISOString().split('T')[0];
+      const today = hojeSP(); // o dia de SP: o mesmo do DEFAULT de visit_date e do hojeISO da agenda
       const { data, error } = await visitasAgendadasTable()
         .select('*')
         .eq('scheduled_by', user.id)

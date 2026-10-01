@@ -8,6 +8,7 @@ import type { Database } from "@/integrations/supabase/types";
 import { useReposicaoEmpresa } from "@/contexts/ReposicaoEmpresaContext";
 import { STATUS_RANK } from "./config";
 import type { ForCompliance, SkuCompliance, SlaStatus } from "./types";
+import { hojeSP } from "@/lib/time/sp-day";
 
 export function useSlaFornecedor() {
   const { empresa } = useReposicaoEmpresa();
@@ -157,7 +158,7 @@ export function useSlaFornecedor() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `sla-fornecedor-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = `sla-fornecedor-${hojeSP()}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   };

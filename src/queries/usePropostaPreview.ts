@@ -8,6 +8,7 @@ import { formatarPropostaRecompra } from '@/lib/whatsapp/proposta-format';
 import type { PropostaFormatada } from '@/lib/whatsapp/proposta-format';
 import { selecionarCrossSell } from '@/lib/whatsapp/cross-sell';
 import { assembleLinesEContexto, buildCrossSellCandidatos } from '@/lib/whatsapp/proposta-preview-core';
+import { hojeSP } from '@/lib/time/sp-day';
 import type { PreviewOrder, PreviewItem, PreviewRec, PreviewProdById } from '@/lib/whatsapp/proposta-preview-core';
 
 // Status do Omie que NUNCA contam como compra válida. Permissivo no PREVIEW — a whitelist EXATA é
@@ -16,7 +17,7 @@ const STATUS_CANCELAMENTO = new Set(['CANCELADO', 'CANCELADA', 'EXCLUIDO', 'EXCL
 const JANELA_FETCH_DIAS = 365;
 const MAX_CROSS_SELL = 2;
 
-function hojeIso(): string { return new Date().toISOString().slice(0, 10); }
+function hojeIso(): string { return hojeSP(); } // o dia de SP (o UTC vira às 21h BRT)
 function addDays(iso: string, n: number): string {
   const d = new Date(iso + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10);
 }

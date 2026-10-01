@@ -38,6 +38,14 @@ describe('AUTHZ_TABELAS_FECHADAS — sanidade do contrato', () => {
       expect(chave.split('.')).toHaveLength(2);
     }
   });
+
+  it('o SELECT por coluna de sales_orders nunca contém o que o fecho fechou (omie_payload/omie_response)', () => {
+    const select = AUTHZ_TABELAS_FECHADAS['public.sales_orders'].colunasPermitidas?.authenticated?.SELECT ?? [];
+    expect(select.length).toBeGreaterThan(0);
+    expect(select).not.toContain('omie_payload');
+    expect(select).not.toContain('omie_response');
+    expect(AUTHZ_TABELAS_FECHADAS['public.sales_orders'].colunasPermitidas?.anon).toBeUndefined();
+  });
 });
 
 // ══════════════════════════════════════════════════════════════════════════════════════════
@@ -311,5 +319,60 @@ describe('compararGrantsProd — audit de prod (puro)', () => {
     expect(codigos(compararGrantsProd({ 'public.product_costs': TABELA_AUSENTE }, AL))).toEqual([
       'TABELA_NAO_APLICADA',
     ]);
+  });
+});
+
+// A tabela fechada POR COLUNA (o modelo de sales_orders): SELECT de tabela fora do permitido, e um
+// contrato de coluna. O GRANT por coluna dentro dele é legítimo (é como a 20261001100000 abriu as 2
+// colunas do canal); fora dele, ou numa tabela sem contrato de coluna, segue sendo reabertura.
+const ANCORA_COL = '20260724120000_fecha_pedidos.sql';
+const AL_COL: Record<string, TabelaFechada> = {
+  'public.pedidos': {
+    fechadaPor: ANCORA_COL,
+    permitido: { anon: [], authenticated: ['INSERT'] },
+    colunasPermitidas: { authenticated: { SELECT: ['id', 'total', 'canal_id'] } },
+    motivo: 'pedido — fixture fechada por coluna',
+  },
+};
+const auditaCol = (sql: string) =>
+  auditGrantsTabelas(
+    [mig('20261001000000_coluna.sql', sql)],
+    AL_COL,
+    new Set([ANCORA_COL, '20261001000000_coluna.sql']),
+  );
+
+describe('auditGrantsTabelas — GRANT por COLUNA', () => {
+  it('1. GRANT SELECT de colunas DENTRO do contrato → silêncio (a vírgula da lista não quebra o parser)', () => {
+    expect(auditaCol('GRANT SELECT (canal_id, total) ON public.pedidos TO authenticated;')).toHaveLength(0);
+  });
+
+  it('2. uma coluna FORA do contrato na lista → REABERTURA, nomeando a coluna', () => {
+    const f = auditaCol('GRANT SELECT (canal_id, payload_bruto) ON public.pedidos TO authenticated;');
+    expect(codigos(f)).toEqual(['REABERTURA']);
+    expect(f[0].msg).toContain('payload_bruto');
+  });
+
+  it('3. SELECT de TABELA na tabela fechada por coluna → REABERTURA (é o vetor que o contrato fecha)', () => {
+    expect(codigos(auditaCol('GRANT SELECT ON public.pedidos TO authenticated;'))).toEqual(['REABERTURA']);
+  });
+
+  it('4. GRANT por coluna numa tabela SEM contrato de coluna → REABERTURA (o estrito de antes)', () => {
+    const f = auditGrantsTabelas(
+      [mig('20260801000000_coluna.sql', 'GRANT SELECT (id, custo) ON public.product_costs TO anon;')],
+      AL,
+      files('20260801000000_coluna.sql'),
+    );
+    expect(codigos(f)).toEqual(['REABERTURA']);
+  });
+
+  it('5. coluna do contrato a OUTRO papel → REABERTURA (o contrato é por papel)', () => {
+    expect(codigos(auditaCol('GRANT SELECT (total) ON public.pedidos TO anon;'))).toEqual(['REABERTURA']);
+  });
+
+  it('6. privilégio de coluna e de tabela na MESMA lista: o de tabela permitido não esconde o resto', () => {
+    expect(auditaCol('GRANT INSERT, SELECT (id) ON public.pedidos TO authenticated;')).toHaveLength(0);
+    const f = auditaCol('GRANT INSERT, UPDATE (total) ON public.pedidos TO authenticated;');
+    expect(codigos(f)).toEqual(['REABERTURA']);
+    expect(f[0].msg).toContain('UPDATE (total)');
   });
 });

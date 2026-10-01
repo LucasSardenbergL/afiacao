@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { supabase } from '@/integrations/supabase/client';
+import { addDias, hojeSP } from '@/lib/time/sp-day';
 import { montarKpisVisita, type KpisVisita, type KpiVisitaRow } from '@/lib/visitas/kpis';
 
 /**
@@ -17,7 +18,8 @@ export function useKpisVisita(janelaDias = 30) {
     gcTime: 5 * 60_000,
     queryFn: async (): Promise<KpisVisita> => {
       if (!uid) return montarKpisVisita([]);
-      const desde = new Date(Date.now() - janelaDias * 86_400_000).toISOString().slice(0, 10);
+      // O dia de SP, o mesmo do DEFAULT de visit_date (20261001043717): a borda não anda às 21h BRT.
+      const desde = addDias(hojeSP(), -janelaDias);
       const { data, error } = await supabase
         .from('route_visits')
         .select('result, revenue_generated')
