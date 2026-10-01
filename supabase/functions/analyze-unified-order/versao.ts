@@ -80,8 +80,17 @@ export const respostaSonda = criarRespostaSonda("analyze-unified-order");
  *
  * O gate que impede o retorno ao valor congelado: `_shared/sonda-versao-contrato_test.ts`,
  * "bump v1.1-corpo-tipado". Um `git revert` deste bump devolveria a sonda a "responde verde sem provar nada".
+ *
+ * `v1.3-ia-nao-precifica` nomeia a fatia em que a edge deixou de DECIDIR preço: saiu o
+ * enriquecimento ("último praticado" lido de `order_items` cru + `ListarPedidos` do Omie +
+ * `mergeCustomerPrices`), saiu `unit_price` do schema do tool e `Preço:` da lista de produtos do
+ * prompt, e a resposta passou pela fronteira de lista fechada `montarRespostaAnalise`
+ * (saida-ia.ts). O preço de nascimento tem um decisor só — o `precoPartida` do front, para o
+ * cliente SELECIONADO. A canária de preço muda de objeto junto (`praticado-vence-omie-v1` →
+ * `ia-nao-precifica-v1`); esta sonda é o que separa o bundle desta fatia do anterior SEM o app
+ * logado.
  */
-export const VERSAO = "v1.2-b1-termo-degenerado";
+export const VERSAO = "v1.3-ia-nao-precifica";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

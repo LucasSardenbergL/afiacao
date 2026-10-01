@@ -34,7 +34,7 @@ function assert(cond: boolean, msg: string) {
 
 /** Dois conjuntos de dados TOTALMENTE diferentes, para provar que o estável não se mexe. */
 const DADOS_A: DadosVariaveis = {
-  produtosLista: "- ID:aaa | Código:DR.4403LT | THINNER | Conta:oben | Preço:120 | Estoque:7",
+  produtosLista: "- ID:aaa | Código:DR.4403LT | THINNER | Conta:oben | Estoque:7",
   ferramentasLista: "- ToolID:t1 | Nome:Serra | Categoria:Corte | Qtd:2",
   servicosLista: "- CódigoServiço:900 | Afiação de serra",
   historicoCompras: "\n\nHISTÓRICO DE COMPRAS DO CLIENTE (produtos mais comprados):\n- THINNER (DR.4403LT, oben) — pedido 3x, total 9 un",
@@ -42,7 +42,7 @@ const DADOS_A: DadosVariaveis = {
 };
 
 const DADOS_B: DadosVariaveis = {
-  produtosLista: "- ID:zzz | Código:FC.6975QT | CATALISADOR | Conta:colacor | Preço:88 | Estoque:0",
+  produtosLista: "- ID:zzz | Código:FC.6975QT | CATALISADOR | Conta:colacor | Estoque:0",
   ferramentasLista: "Nenhuma ferramenta cadastrada",
   servicosLista: "- CódigoServiço:901 | Afiação de fresa",
   historicoCompras: "",
