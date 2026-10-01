@@ -35,15 +35,18 @@ function fixtura(nome: string) {
 const NOMES = readdirSync(DIR_FIXTURES).filter((n) => n.endsWith('.fixture')).sort();
 
 describe('fixtures — cada uma isola UMA camada', () => {
-  it('a coleção existe e tem os dois lados (sem par positivo, "recusa tudo" passaria)', () => {
+  it('a coleção existe e tem os três lados (sem par positivo, "recusa tudo" passaria)', () => {
     expect(NOMES.filter((n) => n.startsWith('viola-')).length).toBeGreaterThanOrEqual(10);
     expect(NOMES.filter((n) => n.startsWith('limpo-')).length).toBeGreaterThanOrEqual(8);
+    expect(NOMES.filter((n) => n.startsWith('indeterminado-')).length).toBeGreaterThanOrEqual(1);
   });
 
   it.each(NOMES)('%s', (nome) => {
-    const esperaViolacao = nome.startsWith('viola-');
     const r = analisar([fixtura(nome)]);
-    expect(r.violacoes.length > 0).toBe(esperaViolacao);
+    // INDETERMINADO é o fiscal dizendo "não consegui medir": nunca LIMPO, e só onde o nome manda.
+    expect(r.indeterminados.length > 0).toBe(nome.startsWith('indeterminado-'));
+    if (nome.startsWith('indeterminado-')) return;
+    expect(r.violacoes.length > 0).toBe(nome.startsWith('viola-'));
   });
 });
 
@@ -162,6 +165,30 @@ describe('o corpo REAL do repo', () => {
     expect(porArquivo[0].temErrorStop).toBe(true);
   });
 
+  it('stripper e parser concordam, em toda fonte, sobre onde mora o caminho do wrapper', () => {
+    expect(r.indeterminados).toEqual([]);
+  });
+
+  it('o censo das instruções EMITIDAS: quem imprime o caminho do wrapper para o operador rodar', () => {
+    // Eixo de 2026-10-01 (achado no #2718). Medido: 8 instruções em 4 arquivos — os geradores da
+    // sonda e do relatório de RPCs, e dois testes que pinam a forma certa. Se esta lista mudar, ou
+    // nasceu emissor novo (confira se a instrução dele leva a flag, e atualize) ou o leitor de
+    // literais ficou cego.
+    expect([...new Set(r.emitidos.map((s) => s.arquivo))].sort()).toEqual([
+      'scripts/lib/edge-rpcs.ts',
+      'scripts/psql-local-X-gate.test.ts',
+      'scripts/sonda-versao-sql.test.ts',
+      'scripts/sonda-versao-sql.ts',
+    ]);
+    expect(r.emitidos.length).toBeGreaterThanOrEqual(PISOS.emitidos);
+    // Os geradores PRECISAM da flag (leem de cano, colagem ou `-f -`) e a carregam: os 4 da sonda
+    // (3 deles saíam sem ela até 2026-10-01; o `comandoDeExtracao` já a tinha desde o #2718) e o
+    // do relatório de RPCs.
+    const comAFlag = r.emitidos.filter((s) => s.precisaErrorStop && s.temErrorStop).map((s) => s.arquivo);
+    expect(comAFlag.filter((a) => a === 'scripts/sonda-versao-sql.ts')).toHaveLength(4);
+    expect(comAFlag).toContain('scripts/lib/edge-rpcs.ts');
+  });
+
   /**
    * `diagnosticarShell` em vez dos quatro alarmes soltos: uma varredura por arquivo em vez de
    * seis. Não é microotimização — com os quatro soltos, 377 `.sh` levavam o caso para perto do
@@ -201,5 +228,16 @@ describe('o stripper é o COMPARTILHADO, não regex local', () => {
     const fonte = '# "$PSQL" -f q.sql\nPSQL="$HOME/.config/afiacao/psql-ro"\n"$PSQL" -Atc x\n';
     expect(removerComentariosShell(fonte).split('\n')[0]).toBe('');
     expect(analisar([{ caminho: 'x.sh', fonte }]).sitios).toHaveLength(1);
+  });
+
+  it('no TS, a lente é o `removerComentarios` — e o parser do TS confere a contagem POR FORA', () => {
+    // O caminho é montado em tempo de execução: escrito literal aqui, ESTE arquivo viraria emissor.
+    const caminho = ['~', '.config', 'afiacao', 'psql-ro'].join('/');
+    const soComentario = analisar([{ caminho: 'x.ts', fonte: `// rode: ${caminho} -f q.sql\nexport const x = 1;\n` }]);
+    expect(soComentario.emitidos).toEqual([]);
+    expect(soComentario.indeterminados).toEqual([]);
+    // Controle: a MESMA instrução num literal é lida — e acusada.
+    const emLiteral = analisar([{ caminho: 'x.ts', fonte: `export const x = '${caminho} -f q.sql';\n` }]);
+    expect(emLiteral.violacoes.map((v) => v.origem)).toEqual(['emissao']);
   });
 });

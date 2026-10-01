@@ -1,0 +1,12 @@
+// O par positivo de `viola-m`/`viola-n`/`viola-o`: as MESMAS formas com `-v ON_ERROR_STOP=1` — sem
+// este arquivo, um fiscal que recusasse todo caminho emitido passaria em todos os negativos. A
+// última linha põe o ON_ERROR_STOP DEPOIS de uma interpolação: o texto cozido é lido inteiro, com a
+// interpolação opaca no meio, e não em pedaços.
+export function cabecalhos(janelaMin: number, flags: string): string[] {
+  return [
+    `--          bun run sonda:sql --so-leitura <edge>… | ~/.config/afiacao/psql-ro -v ON_ERROR_STOP=1\n`,
+    '-- É SELECT puro — roda no read-only: cole no chat, ou em ~/.config/afiacao/psql-ro -v ON_ERROR_STOP=1\n',
+    'Cruze com a PROD (~/.config/afiacao/psql-ro -v ON_ERROR_STOP=1 -f -). Vazio = bomba armada:',
+    `-- janela de ${janelaMin} min: ~/.config/afiacao/psql-ro ${flags} -v ON_ERROR_STOP=1 -f q.sql\n`,
+  ];
+}

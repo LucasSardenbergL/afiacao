@@ -186,7 +186,7 @@ export function montarRelatorio(edge: string, achado: ExtracaoRpc): Relatorio {
   const nomes = [...new Set(achado.rpcs.map((r) => r.nome))].sort();
   if (nomes.length > 0) {
     linhas.push('');
-    linhas.push('Cruze com a PROD (~/.config/afiacao/psql-ro -f -). Vazio = bomba armada:');
+    linhas.push('Cruze com a PROD (~/.config/afiacao/psql-ro -v ON_ERROR_STOP=1 -f -). Vazio = bomba armada:');
     linhas.push('```sql');
     linhas.push(`WITH esperadas(nome) AS (VALUES
   ${nomes.map((n) => `('${n}')`).join(',\n  ')})`);

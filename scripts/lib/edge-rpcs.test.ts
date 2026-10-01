@@ -261,6 +261,17 @@ describe('montarRelatorio', () => {
     expect(r.texto).toMatch(/'has_role'/);
   });
 
+  it('a instrução de cruzar com a PROD lê o bloco de stdin COM ON_ERROR_STOP', () => {
+    // `-f -` lê o SQL de stdin, e o wrapper não liga ON_ERROR_STOP: um bloco que falhe imprime
+    // ERROR e o psql sai 0 — quem automatiza o cruzamento lê sucesso onde não houve consulta
+    // (docs/historico/psql-ro-exit-zero-em-sql-que-falhou.md).
+    const linhas = montarRelatorio('minha-edge', semIndirecao)
+      .texto.split('\n')
+      .filter((l) => l.includes('afiacao/psql-ro'));
+    expect(linhas).toHaveLength(1);
+    expect(linhas[0]).toContain('psql-ro -v ON_ERROR_STOP=1 -f -');
+  });
+
   it('zero RPCs e zero indireções → código 0, dito EXPLICITAMENTE (não linha em branco)', () => {
     const r = montarRelatorio('minha-edge', { rpcs: [], indirecoes: [] });
     expect(r.codigo).toBe(0);

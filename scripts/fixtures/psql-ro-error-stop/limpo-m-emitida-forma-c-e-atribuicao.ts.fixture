@@ -1,0 +1,7 @@
+// Duas formas emitidas que NÃO exigem ON_ERROR_STOP: `-c` (o psql já sai 1 em ERROR) e a
+// ATRIBUIÇÃO do caminho a uma variável num trecho de shell — ali o caminho é VÍNCULO, não
+// invocação. A linha do `-c` separa "ler os argumentos" de "exigir sempre"; a da atribuição separa
+// "vínculo" de "invocação sem argumento".
+export const TRECHO =
+  'PSQL="$HOME/.config/afiacao/psql-ro"\n' +
+  '"$HOME/.config/afiacao/psql-ro" -tA -c "SELECT 1"\n';
