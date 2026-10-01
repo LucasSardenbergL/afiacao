@@ -501,6 +501,13 @@ describe('escritasDe — o que é ESCRITA da variável julgada (pela máscara do
     ['leitura', 'echo "$D"'],
     ['dentro de aspas', 'echo "D=720"'],
     ['dentro de aspas simples', "echo 'D=720'"],
+    // só a MÁSCARA do stripper exclui estes: a palavra começa depois de um espaço, DENTRO da string
+    // (nos dois de cima, a aspa colada já barrava pela fronteira — a mutação que desligava a máscara
+    // sobreviveu ao mutation-check enquanto só eles existiam)
+    ['prosa com espaço antes do nome, em aspas duplas', 'echo "texto D=720 dentro"'],
+    ['redirecionamento dentro de aspas', 'echo "manda > $D"'],
+    ['prosa com espaço antes do nome, em aspas simples', "echo 'x D=1'"],
+    ['atribuição dentro do VALOR de outra', 'msg="a D=1 b"'],
     ['comentário', '# D=720'],
     ['nome mais longo', 'DSAB=720; XD=1; D2=3'],
     ['flag', 'grep --D=1 x'],

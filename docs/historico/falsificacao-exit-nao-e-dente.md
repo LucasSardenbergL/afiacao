@@ -1400,7 +1400,12 @@ dentro da string — o curinga não atravessa aspa —, a linha fica literal: ex
   (219 casos, conferidos também por fora do vitest).
 - **contrato de mutações** (`scripts/mutcheck.d/falsificar-exige-assert.mut`): 23 novas, uma por
   camada, e as 2 que miravam código que mudou (`limpo.includes`, o `v.push` do juiz não lido)
-  reescritas. `--seco`: 78/78 cirúrgicas. RODADA_CHEIA.
+  reescritas. `--seco`: 78/78 cirúrgicas. Rodada cheia (numa sombra, sob `heavy`): **78 mutações · 77 pegas · 1
+  sobrevivente** — a máscara do stripper desligada. Furo do TESTE, não do gate: nos casos "dentro de
+  aspas" (`echo "D=720"`) quem excluía era a fronteira do nome (a aspa colada), não a máscara.
+  Entraram 4 casos que SÓ a máscara exclui (`echo "texto D=720 dentro"`, `echo "manda > $D"`, a prosa
+  em aspas simples, a atribuição dentro do valor de outra) — medidos antes: com a máscara, nenhuma
+  escrita; sem ela, 4 —, e a rodada dirigida (controle+ e a mutação) deu PEGA_DIRIGIDO.
 
 **Erros da meta e do caminho, registrados:**
 
