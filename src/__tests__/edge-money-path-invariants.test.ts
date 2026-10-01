@@ -3689,7 +3689,7 @@ describe('canária VERSIONADA: analyze-unified-order (a IA não precifica)', () 
       'sumiu o marcador da canária de preço — um deploy integralmente velho responderia a canária velha',
     ).toMatch(/export const CONTRATO_CANARIA_PRECO = ['"]ia-nao-precifica-v1['"]/);
     expect(removerComentarios(src), 'o ramo da canária não serializa canariaSemPreco()').toMatch(
-      /tipo === ['"]sonda['"][\s\S]{0,200}JSON\.stringify\(canariaSemPreco\(\)\)/,
+      /decisaoCanaria\.tipo === ['"]sonda['"][\s\S]{0,400}JSON\.stringify\(canariaSemPreco\(\)\)/,
     );
   });
 
@@ -3735,8 +3735,12 @@ describe('canária VERSIONADA: analyze-unified-order (a IA não precifica)', () 
   });
 
   it('a canária continua PURA (não toca LLM/Omie/DB) — é o que a torna barata de sondar', () => {
-    const bloco = removerComentarios(src).match(/tipo === ['"]sonda['"][\s\S]*?\n {4}\}/)?.[0] ?? '';
+    // Âncora no `decisaoCanaria`: o 1º `tipo === "sonda"` do arquivo é a SONDA DE VERSÃO (antes do gate
+    // de staff), e até 2026-09-30 este teste casava ELA — a canária nunca foi de fato inspecionada aqui.
+    const bloco = removerComentarios(src).match(/decisaoCanaria\.tipo === ['"]sonda['"][\s\S]*?\n {4}\}/)?.[0] ?? '';
     expect(bloco, 'âncora: não achei o bloco da canária').not.toBe('');
+    expect(bloco, 'âncora casou outro bloco: o da canária serializa canariaSemPreco()').toContain('canariaSemPreco()');
+    expect(bloco, 'canária faz I/O (Omie/DB) — deixaria de ser dry-run barato').not.toMatch(/\bfetch\(|\bsupabase\./);
     expect(bloco, 'canária faz escrita no DB — deve ser dry-run puro').not.toMatch(/\.(upsert|insert|update|delete)\(/);
     expect(bloco, 'canária chama a Anthropic — deixaria de ser barata e gastaria token').not.toMatch(/anthropic|messages\.create/i);
   });
