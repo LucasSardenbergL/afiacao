@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { supabase } from '@/integrations/supabase/client';
 import { hojeISO } from '@/lib/visitas/today';
+import { addDias } from '@/lib/time/sp-day';
 import {
   montarFollowups,
   type FollowupItem,
@@ -32,7 +33,8 @@ export function useFollowupsVisita() {
     queryFn: async (): Promise<FollowupsVisita> => {
       if (!uid) return { items: [], nomePorCliente: new Map() };
       const hoje = hojeISO();
-      const desdeData = new Date(Date.now() - JANELA_DIAS * 86_400_000).toISOString().slice(0, 10);
+      // visit_date é o dia de SP (o DEFAULT, 20261001043717); o hoje é o hojeISO (SP). O instante abaixo é outra régua.
+      const desdeData = addDias(hoje, -JANELA_DIAS);
       const desdeISO = new Date(Date.now() - JANELA_DIAS * 86_400_000).toISOString();
 
       const [visRes, agRes, callRes] = await Promise.all([
