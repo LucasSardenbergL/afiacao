@@ -287,7 +287,7 @@ awk -v P1="$PARTE1" -v P2="$PARTE2" 'BEGIN{p=1} {print > (p ? P1 : P2)} /^\$pre\
 awk '/^DO \$trava\$$/{s=1} !s{print} /^\$trava\$;$/{s=0}' "$PARTE1" > "$PARTE1_SEM"
 # A divisão tem de ter cortado onde se pensa: parte 1 com a trava e a PRE, parte 2 com os CREATE.
 # shellcheck disable=SC2016  # o $ é LITERAL (rótulo de dollar-quote do PL/pgSQL), não expansão
-if ! { grep -q '^DO \$trava\$$' "$PARTE1" && grep -q '^\$pre\$;$' "$PARTE1" && ! grep -q '\$trava\$' "$PARTE1_SEM" \
+if ! { grep -q '^DO \$trava\$$' "$PARTE1" && grep -q '^\$pre\$;$' "$PARTE1" && ! grep -q '^DO \$trava\$$' "$PARTE1_SEM" && ! grep -q '^ *ALTER ' "$PARTE1_SEM" \
        && grep -q '^CREATE OR REPLACE FUNCTION public.trava_alvo_f' "$PARTE2" && grep -q '^\$pos\$;$' "$PARTE2"; }; then
   echo "ABORTA: o template não se divide em TRAVA+PRE | CREATE+PÓS como a prova espera"; exit 3
 fi
