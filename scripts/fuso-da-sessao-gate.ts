@@ -123,14 +123,7 @@ export interface SitioConhecido {
 // (A instância-mãe, `_carteira_positivacao_for_owner`, não está aqui: a 20260927133606 a quitou. As 2
 // dívidas da família C — `get_ultimos_precos_cliente(uuid)` e `medir_abaixo_piso_tier(integer)`, com
 // `current_date` num corpo SP — saíram com a 20260927172443, que usa o hoje de SP pelo instante.)
-export const CONHECIDOS: readonly SitioConhecido[] = [
-  {
-    alvo: '_data_health_compute()', familia: 'C', trecho: 'current_date', n: 2, veredito: 'falso-positivo',
-    motivo: 'compara com `pedido_compra_sugerido.data_ciclo`, que a edge gerar-pedidos-diario grava como data '
-      + 'UTC (`new Date().toISOString().slice(0, 10)`): UTC contra UTC é consistente. O SP do corpo é de '
-      + 'outros checks. Ressalva não medida: o override `body.data_ciclo` da edge aceita data do caller.',
-  },
-];
+export const CONHECIDOS: readonly SitioConhecido[] = [];
 
 export const PISOS = {
   /** Migrations lidas — zero é leitura quebrada, nunca "repo sem DDL". Eram 739 em 2026-09-27. */

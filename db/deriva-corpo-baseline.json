@@ -72,17 +72,6 @@
       "desde": "2026-09-26"
     },
     {
-      "funcao": "reposicao_pos_candidatos",
-      "identidade": "text",
-      "classe": "PATCH",
-      "patch": "20260814022626_reposicao_po_inexistente_antes_de.sql",
-      "efeito": "ALTERA",
-      "motivo": "patch por âncora do PO-inexistente-antes-de; colado em 2026-08-14 17:54–18:07Z (xmin 9130460), conferido em 2026-09-26.",
-      "md5": "645733d1f4d2f7b835de6632cfc4a588",
-      "md5Tokens": "8fbcbd57a0c45daffff641e29e7b0833",
-      "desde": "2026-09-26"
-    },
-    {
       "funcao": "tint_promote_sync_run",
       "identidade": "uuid",
       "classe": "PATCH",

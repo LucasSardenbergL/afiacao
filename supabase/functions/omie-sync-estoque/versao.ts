@@ -35,7 +35,7 @@ export const respostaSonda = criarRespostaSonda("omie-sync-estoque");
  * em_transito de `gerar_pedidos_sugeridos_ciclo` (migration 20260925225004). As duas listas são UMA
  * fonte: status que a RPC conta e este sync não exclui do pendente vira dupla contagem.
  */
-export const VERSAO = "v1.2-simulado-a-caminho";
+export const VERSAO = "v1.3-datas-dia-sp";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

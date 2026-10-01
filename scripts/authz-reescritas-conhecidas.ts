@@ -40,16 +40,10 @@ export interface ReescritaConhecida {
   md5ProdEsperado: string;
 }
 
-export const AUTHZ_REESCRITAS_CONHECIDAS: ReescritaConhecida[] = [
-  {
-    arquivo: '20260814022626_reposicao_po_inexistente_antes_de.sql',
-    funcao: 'public.reposicao_pos_candidatos',
-    motivo:
-      'Troca cirúrgica do predicado do guard temporal (omie_registrado_em → omie_po_inexistente_antes_de) preservando por construção SECURITY DEFINER, STABLE, SET search_path, o gate FU4-G e as colunas de frescor da 20260814000125. Aplicada em prod (medido: o corpo vivo tem o predicado CAUSAL e não tem o antigo; o last-writer do repo, 20260814000125, tem o inverso). É o caso que provou que o padrão é recorrente e não acidente: o FU4-G já reescrevera a MESMA função 25 dias antes.',
-    provaExecutada: 'db/test-pos-candidatos-guard-temporal.sh (N1 roda a RPC como não-staff e exige 42501)',
-    md5ProdEsperado: '632964445c40e792ca62d945aeb2e85e',
-  },
-];
+// A última entrada (`20260814022626_reposicao_po_inexistente_antes_de.sql` · `reposicao_pos_candidatos`) saiu em
+// 2026-10-01: a 20261001023000_hoje_sp_familia_data_ciclo.sql recria a função com CREATE OR REPLACE literal, e a
+// Parte A voltou a medir a última definição (a dívida está PAGA — cabeçalho acima).
+export const AUTHZ_REESCRITAS_CONHECIDAS: ReescritaConhecida[] = [];
 
 /** chave de casamento — arquivo + função, porque uma migration pode reescrever várias */
 export function chaveReescrita(arquivo: string, funcao: string): string {

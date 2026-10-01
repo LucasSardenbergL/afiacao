@@ -1153,6 +1153,108 @@ novo em `ExecucaoGate` sem conferência, `invocacao` virando obrigatória e opci
 os três dão `tsc` rc 2 na lib (`TS1360`, a tabela não satisfaz `FormaDe<...>`; `TS2820` no `?` que sobrou).
 O vitest transpila sem type-check: este guard só vive no `typecheck`.
 
+## O eixo HOOK-SEM-TESTE ganha mira (2026-09-27 → 30) — o defeito é LIGAR, não tirar do laço
+
+O #2607 deu ao `gates:frescura` o eixo `HOOK-SEM-TESTE` — todo hook ligado no `.claude/settings.json`
+tem de ser citado como caminho (`…/<hook>`), fora de comentário, por alguma suíte que os laços do
+`test:hooks` executam — e o gate seguiu relatando `EXCLUSIVIDADE_ZERO`: a matriz é de 2026-09-25, a
+única linha que mira o gate é a `censo-sem-o-gate` (DEFASADA, seção acima), e nenhum defeito do corpus
+exercitava o eixo novo.
+
+### Qual defeito — escolhido pelo que já estava medido
+
+| candidato | quem pega | por quê |
+|---|---|---|
+| tirar uma suíte do laço do `test:hooks` | `gates:frescura` **e** `test` | a suíte vira ÓRFÃ, e órfã é o eixo do `hooks-guard-cobertura.test.ts` (medido no #2607) |
+| a suíte deixa de citar o hook | costuma acender o `test:hooks` | a suíte quebra junto com a citação |
+| **ligar um hook novo sem suíte** | só o eixo novo (medido abaixo) | ninguém mais confronta a lista de hooks LIGADOS com as suítes |
+
+O defeito `hook-ligado-sem-suite` (`scripts/exclusividade.d/manifesto.def`) põe um grupo a mais na
+frente do array `Stop`, apontando `"$CLAUDE_PROJECT_DIR/.claude/hooks/hook-sem-suite.sh"`. O motor muta
+UM alvo, então o arquivo do hook não existe no estado sabotado — e isso foi conferido antes de gastar o
+`heavy`, porque um vermelho por "arquivo ausente" mediria OUTRA classe. O gate lê a fonte ausente como
+`null` (sem deny, sem erro) e acusa o hook só pela cobertura; e nenhum outro leitor do `settings.json`
+confere a existência do arquivo de hook — `teto-saida-bash.test.ts` lê só o `env`,
+`test-vigia-nuvem.sh` e `test-instrucoes-carregadas.sh` conferem o PRÓPRIO registro, e o
+`gates-frescura-check.test.ts` roda sobre fixture sintética.
+
+### O preflight — controle verde na mesma invocação
+
+Sabotagem na árvore real com a expressão **como `parseDefeitos` a entrega**, guardas 3 e 4 do motor
+reproduzidas, restauração conferida por `shasum -a 256`:
+
+| fase | `gates:frescura` | o resto |
+|---|---|---|
+| controle | rc 0 · `FRESCURA-OK` | `jq empty` rc 0 |
+| sabotado | **rc 1** · `HOOK-SEM-TESTE: hook-sem-suite.sh (.claude/settings.json:Stop) — nenhuma das 56 suite(s)…` e `+ 1 hook(s) sem suite` como ÚNICO achado | guarda 3 `casou=true`, guarda 4 `perturbadas=2` (teto 2), `jq empty` rc 0 |
+| restauro | — | `RESTAURADO_IDENTICO=SIM`, `git status` vazio |
+
+### A medição — só a linha nova, fatiada
+
+A re-medição INTEIRA foi descartada ANTES de disparar, pelo custo lido da própria matriz: ~31 min de
+baseline + ~157 min de fase-defeito (a soma das execuções gravadas em 2026-09-25), e mais — a
+`bun-despinado` e a `censo-sem-o-gate`, com a segunda porta fechada, deixariam de podar e rodariam os
+31. Na M2 recém-reiniciada, com swap em 4,2 de 5,1 GB e load 13–33, isso é tarde inteira segurando o
+único slot do `heavy` que as outras worktrees disputam. Mediu-se só `hook-ligado-sem-suite`, em
+fatias (`--defeitos hook-ligado-sem-suite --gates <fatia>`), cada uma commitada antes da próxima:
+
+| fatia | gates | baseline | sob a sabotagem |
+|---|---|---|---|
+| A | 25 leves/médios | 25 verdes (o `tsc` em 259 s — ~10× o nominal, pela carga) | **só `gates:frescura` vermelho** (703 ms) |
+| B | `evals:deploy-verify` + `:falsificacao` | verdes (110 s, 403 s — ~3×) | verdes (107 s, 843 s) |
+| C | `test:hooks` + `sonda:cron-prova` | verdes (333 s, 842 s) | verdes (304 s, 468 s) |
+| D | `test` | verde (232 s) | verde (259 s) — na 1ª tentativa, INVÁLIDA (abaixo) |
+| E | `test:falsificacao` | verde (4.699 s — ~4,7× os 1.003 s da matriz, a 12 min do teto de 5.400 s) | verde (2.565 s) |
+
+### O resultado: 31 de 31, único vermelho `gates:frescura` — `[SO ELE]`
+
+A linha `hook-ligado-sem-suite` tem **31 execuções**, sem poda (`parouCedo: false`), sem `invalido`,
+nenhuma estourada, e **um** vermelho: o `gates:frescura`. As outras 16 linhas são as de 2026-09-25,
+byte a byte (mesmo hash, mesma ordem), e o baseline segue 31 verdes de 31.
+
+| leitor | matriz da `main` | esta matriz |
+|---|---|---|
+| `bun run exclusividade` | `RELATA gates:frescura EXCLUSIVIDADE_ZERO` | sem `RELATA` do `gates:frescura` — a ÚNICA diferença nos vereditos |
+| `bun run exclusividade -- --resumo` | `[redund] gates:frescura exclusivos 0/16` | **`[SO ELE] gates:frescura exclusivos 1/17`** |
+
+O `AVISA LINHA_PODRE` do `gates:frescura` continua, e já estava na `main`: ele compara a fonte de hoje
+com a da 1ª execução do gate na ordem das linhas — a de uma linha antiga, de antes do #2607. E o
+cabeçalho do leitor passou a dizer "medida em 2026-10-01": `medidoEm` e `sourceHead` são os da ÚLTIMA
+rodada do motor (a fatia E), só exibidos e nunca decididos — não datam o corpus.
+
+### O que o fatiamento custou — três tropeços, nenhum do defeito
+
+**A fila do `heavy` tem teto, e ele vence antes da vaga.** A 1ª tentativa da C morreu ESPERANDO: o
+`heavy` desiste após `AFIACAO_HEAVY_TIMEOUT` (default 1.800 s), e com load 145 e 7 jobs na fila a vaga
+não veio — `rc=1`, nada medido, nada gravado. A cadeia seguinte exportou `AFIACAO_HEAVY_TIMEOUT=7200`; a
+D ainda esperou em **14º** na fila.
+
+**Uma fatia INVÁLIDA apaga as válidas na cópia de trabalho.** A 1ª tentativa da D (load ~100) saiu
+`LINHA-INVALIDA`: sob o defeito, o `test` deu `rc=1` com **0 teste falhando** — 858 arquivos / 9.891
+testes passando e 1 RPC estourado. O motor leu certo — é o vermelho de contenção da seção "A causa raiz
+do RPC", ausência de dado —, mas `fundirLinhas` devolve a linha NOVA quando uma das duas é inválida, e a
+matriz gravada ficou com a linha `hook-ligado-sem-suite` com **0 execuções**: commitada, ela apagaria A,
+B e C. O que segurou foi a ordem da cadeia — commit por fatia, e nenhum commit sem conferir `.invalido`
+—, e a matriz voltou do git (`git checkout -- scripts/exclusividade-matriz.json`). Uma hora depois, com load 12 e a fila vazia, a
+repetição passou: `test` verde nos dois lados (232 s e 259 s), sem RPC. Quem
+medir em fatias: commite cada uma ANTES da próxima e confira a linha antes do `git add`.
+
+**Três dias entre B e C — e a superfície medida foi re-conferida, não presumida.** A sessão parou depois
+da B (2026-09-27) e retomou em 2026-09-30, com a main 44 commits à frente. Antes de medir C: matriz,
+corpus, fonte do gate e `settings.json` intocados; no `ci.yml`, só `env BASE_REF` e tetos de tempo; o
+universo segue com 31 gates (`bun run exclusividade -- --ci <ci.yml da main>`: 0 REPROVA); lockfile
+igual. Mudaram os laços de `test:hooks` e `test:falsificacao` no `package.json` — medidos DEPOIS do sync
+(C e E), então o que rodou foi o laço novo —, e o `lint:shell` só usa globs, sem ler o
+`settings.json`: o verde dele na A vale. Entre B e C ainda houve um exec preso em `_dyld_start` no macOS
+(o pre-commit chamando um script NOVO, com o xattr `com.apple.provenance`, travou até o reboot; depois
+dele o commit passou pelo gancho normal, sem `--no-verify`).
+
+### O que fica pendente — e por que não é desta entrega
+
+- **A re-medição INTEIRA do corpus** (o custo acima). Só ela tira o `LINHA_PODRE` (AVISA) do
+  `gates:frescura` — ele compara com a 1ª execução do gate em ordem de defeito, que é de uma linha
+  antiga — e renova as linhas DEFASADAS `bun-despinado` e `censo-sem-o-gate`.
+
 ## A regra
 
 **Instrumento de medição prova que rodou O QUE diz medir**: a invocação exata do CI, contra a árvore
