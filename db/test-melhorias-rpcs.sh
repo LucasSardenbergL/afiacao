@@ -291,7 +291,7 @@ BEGIN
     bool_or((el->>'codigo') = 'P001') INTO has_p1
   FROM jsonb_array_elements(v_familia) el;
 
-  IF has_p2 IS NOT TRUE THEN
+  IF NOT has_p2 THEN
     RAISE EXCEPTION 'A5a FALHOU: P2 (LIXA GR120) deveria estar em mesma_familia';
   END IF;
   IF has_p4 THEN
@@ -310,7 +310,7 @@ BEGIN
   FROM jsonb_array_elements(v_juntos) el
   WHERE (el->>'codigo') = 'P003';
 
-  IF has_p3 IS NOT TRUE THEN
+  IF NOT has_p3 THEN
     RAISE EXCEPTION 'A5d FALHOU: P3 (COLA TESTE) deveria estar em comprados_juntos';
   END IF;
   IF p3_lift IS NULL OR p3_lift IS DISTINCT FROM 2.10 THEN
