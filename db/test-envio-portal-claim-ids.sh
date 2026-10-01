@@ -34,7 +34,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l /tmp/pg-claim.log -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres claim_test
-P() { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d claim_test "$@"; }
+P() { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d claim_test "$@"; }
 
 # 1) Schema mínimo que a RPC referencia
 P -v ON_ERROR_STOP=1 -q <<'SQL'

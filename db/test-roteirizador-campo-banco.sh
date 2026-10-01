@@ -17,7 +17,7 @@ DB_DIR="$(mktemp -d)"; PORT=55478
 "$PGBIN/initdb" -D "$DB_DIR" -U postgres -A trust -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DB_DIR" -o "-p $PORT -k $DB_DIR" -l "$DB_DIR/log" start >/dev/null
 trap '"$PGBIN/pg_ctl" -D "$DB_DIR" stop -m immediate >/dev/null 2>&1; rm -rf "$DB_DIR"' EXIT
-P=("$PGBIN/psql" -h "$DB_DIR" -p "$PORT" -U postgres -d postgres -v ON_ERROR_STOP=1 -q)
+P=("$PGBIN/psql" -X -h "$DB_DIR" -p "$PORT" -U postgres -d postgres -v ON_ERROR_STOP=1 -q)
 MIG="$(cd "$(dirname "$0")/.." && pwd)/supabase/migrations/20260614160000_roteirizador_campo_banco.sql"
 MIG2="$(cd "$(dirname "$0")/.." && pwd)/supabase/migrations/20260614170000_roteirizador_campo_carteira_sufixo_uf.sql"
 

@@ -35,7 +35,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }
 
 PASS=0; FAIL=0
@@ -312,9 +312,9 @@ eq "F0 estado de partida coerente (2 linhas)" \
 # Duas sessoes REAIS, intercaladas por FIFO (ordem deterministica, sem sleep-e-torcer)
 F1=/tmp/pvc-fifo1.$$; F2=/tmp/pvc-fifo2.$$
 mkfifo "$F1" "$F2"
-"$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=0 -q < "$F1" > /tmp/pvc-s1.$$ 2>&1 &
+"$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=0 -q < "$F1" > /tmp/pvc-s1.$$ 2>&1 &
 S1=$!
-"$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=0 -q < "$F2" > /tmp/pvc-s2.$$ 2>&1 &
+"$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=0 -q < "$F2" > /tmp/pvc-s2.$$ 2>&1 &
 S2=$!
 exec 8> "$F1"; exec 9> "$F2"
 
@@ -364,8 +364,8 @@ COMMIT;"
 
 G1=/tmp/pvc-g1.$$; G2=/tmp/pvc-g2.$$
 mkfifo "$G1" "$G2"
-"$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -q < "$G1" > /tmp/pvc-r1.$$ 2>&1 & R1=$!
-"$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -q < "$G2" > /tmp/pvc-r2.$$ 2>&1 & R2=$!
+"$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -q < "$G1" > /tmp/pvc-r1.$$ 2>&1 & R1=$!
+"$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -q < "$G2" > /tmp/pvc-r2.$$ 2>&1 & R2=$!
 exec 8> "$G1"; exec 9> "$G2"
 
 # ambas em REPEATABLE READ; cada uma FIXA o snapshot com um SELECT antes de escrever
@@ -399,7 +399,7 @@ echo
 echo "-- H. POSTCONDICAO: sabotar o ENABLE ALWAYS e exigir que o APPLY aborte --"
 MIG="$REPO_ROOT/supabase/migrations/20260907220000_pedido_venda_coerencia_agregado.sql"
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres sab
-Ps() { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d sab -v ON_ERROR_STOP=1 "$@"; }
+Ps() { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d sab -v ON_ERROR_STOP=1 "$@"; }
 Ps -q -c "
 CREATE TABLE sales_orders (id uuid PRIMARY KEY, items jsonb, subtotal numeric NOT NULL DEFAULT 0,
   discount numeric NOT NULL DEFAULT 0, total numeric NOT NULL DEFAULT 0, status text,

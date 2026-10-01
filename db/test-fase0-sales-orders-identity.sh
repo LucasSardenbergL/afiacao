@@ -17,7 +17,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k $SOCK -c listen_addresses=" -l "$SOCK/pg-fase0.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h "$SOCK" -U postgres fase0_verify
-P() { "$PGBIN/psql" -p "$PORT" -h "$SOCK" -U postgres -d fase0_verify "$@"; }
+P() { "$PGBIN/psql" -X -p "$PORT" -h "$SOCK" -U postgres -d fase0_verify "$@"; }
 RR="$(mktemp "${TMPDIR:-/tmp}/snap-rr.XXXXXX")"
 sed -E 's/^(CREATE SCHEMA public;)/-- \1/' "$REPO_ROOT/supabase/schema-snapshot.sql" | grep -vE '^\\(un)?restrict ' > "$RR"
 P -v ON_ERROR_STOP=1 -q -f "$REPO_ROOT/db/stubs-supabase.sql"

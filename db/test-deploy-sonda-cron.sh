@@ -62,7 +62,7 @@ prova() {
   local mig="$1" db="$2"
   PASS=0; FAIL=0; NOMES_FALHOS=""
   "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres "$db"
-  P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d "$db" -v ON_ERROR_STOP=1 "$@"; }
+  P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d "$db" -v ON_ERROR_STOP=1 "$@"; }
   Pq() { P -q -tA "$@"; }
 
   P -q -f "$REPO_ROOT/db/stubs-supabase.sql"

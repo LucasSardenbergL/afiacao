@@ -51,7 +51,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres --locale=C --encoding=UTF8 >/dev/null 2>&1
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -c listen_addresses=localhost" -l "$DATA/log" -w start >/dev/null 2>&1
 
-P()  { "$PGBIN/psql" -h localhost -p "$PORT" -U postgres -d postgres -v ON_ERROR_STOP=1 "$@"; }
+P()  { "$PGBIN/psql" -X -h localhost -p "$PORT" -U postgres -d postgres -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }
 
 PASS=0; FAIL=0

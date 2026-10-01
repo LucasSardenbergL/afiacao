@@ -106,7 +106,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }
 
 P -q -f "$REPO_ROOT/db/stubs-supabase.sql" >/dev/null
@@ -329,7 +329,7 @@ echo "-- zona lease: concorrencia real --"
 CLEAR
 CDIR="$(mktemp -d /tmp/claim-cs-conc.XXXXXX)"; pids=()
 for i in $(seq 1 8); do
-  "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -tA \
+  "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -tA \
     -c "SELECT public.claim_calculate_scores('conc-$i');" > "$CDIR/c$i.out" 2>"$CDIR/c$i.err" &
   pids+=($!)
 done

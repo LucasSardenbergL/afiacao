@@ -18,7 +18,7 @@ cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true
 trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l /tmp/pg-promohard.log -w start >/dev/null
-PSQL=("$PGBIN/psql" -h /tmp -p "$PORT" -U postgres -d postgres -v ON_ERROR_STOP=1 -q)
+PSQL=("$PGBIN/psql" -X -h /tmp -p "$PORT" -U postgres -d postgres -v ON_ERROR_STOP=1 -q)
 
 # ── Stubs (colunas novas: view tem campanha_id/qtde_base/fornecedor_nome; item tem ajustado_humano; sugerido tem tipo_ciclo) ──
 "${PSQL[@]}" <<'SQL'
