@@ -34,16 +34,6 @@ Em paralelo, o #2712 (decisão do founder, com todo PR bloqueado) subiu o teto p
 - **O `validate` não mudou:** ele lê `needs.provas-sql.result`, que a matriz agrega (success só se TODAS as partes passarem). A proteção da `main` exige só o check `validate`, então os nomes novos `provas-sql (1)`, `(2)` e `(3)` não travam nada.
 - **A autofalsificação do runner roda só na 1ª parte** (`if: strategy.job-index == 0`). Ela exercita o RUNNER, que é o mesmo nas N partes.
 
-## O dente
-
-`db/falsifica-nucleo-ci.sh` ganhou 6 casos (piso 39 → 45). Rodada local: `FALSIFICACAO: OK=45 XX=0`, em 49 s.
-
-- **3 recusas, cada uma pela marca certa:** parte malformada, parte fora da faixa e parte vazia.
-- **Cobertura:** a UNIÃO das 3 listas é o manifesto, sem repetição. O risco novo é de partição, e o juiz da cobertura tem a própria falsificação: um runner sabotado que entrega sempre a fatia 0 é PEGO como `REPETE`/`BURACO`.
-- **Controle positivo:** a parte 1 de 3 EXECUTA só as 2 provas dela e fecha o recibo da parte (`SQL_PROOF_OK provas=2/2 … parte=0/3`). Sem esse controle, um runner que recusasse toda `NUCLEO_PARTE` passaria nas recusas.
-
-No manifesto da `main` de 2026-10-01 (57 provas, já com o #2712), as 3 partes ficaram com 19, 19 e 19 provas; a união é o manifesto inteiro, sem repetição.
-
 ## Complemento — o recibo de cada parte e a UNIÃO a cada run (01/10)
 
 A partição estava provada no harness, mas a EXECUÇÃO de cada run não estava: a matriz agrega `success` também quando o step do núcleo de uma parte é PULADO (um `if:` novo, uma condição que muda de tipo) — a parte some e as outras saem verdes.
@@ -53,6 +43,16 @@ A partição estava provada no harness, mas a EXECUÇÃO de cada run não estava
 - **Argumentos estritos:** o runner só lia o 1º argumento e ignorava os outros; com o `--uniao` no mundo, erro de digitação rodaria o núcleo inteiro no job sem banco.
 - **Harness:** +20 casos (piso 45 → 65) — controle positivo (2 partes e a união verdes), um vermelho por regra da união, os argumentos, e a ponta a ponta: a seleção sabotada PERDE uma prova, as duas partes saem verdes e só a união pega.
 - **As 2 falsificações voltam:** `hoje-sp-views-defaults` (`falsificar=33`) e `hoje-sp-data-ciclo` (`falsificar=17`; local: `SABOTAGENS: 17 vermelhas / 0 falhas`, exit 0) — 50 sabotagens de volta ao caminho obrigatório. Simulado com os tempos da run verde `36815770229`, a parte mais pesada vai a ~636 s com N=3: as duas são vizinhas no manifesto e caem sempre em partes diferentes, mas o rodízio por prova não equilibra por duração. Fica abaixo do teto do job e fora do caminho crítico (o `gates-e-falsificacao`); se encostar no teto, vale a regra de "O que fica para depois": mais uma parte.
+
+## O dente
+
+`db/falsifica-nucleo-ci.sh` ganhou 6 casos (piso 39 → 45). Rodada local: `FALSIFICACAO: OK=45 XX=0`, em 49 s.
+
+- **3 recusas, cada uma pela marca certa:** parte malformada, parte fora da faixa e parte vazia.
+- **Cobertura:** a UNIÃO das 3 listas é o manifesto, sem repetição. O risco novo é de partição, e o juiz da cobertura tem a própria falsificação: um runner sabotado que entrega sempre a fatia 0 é PEGO como `REPETE`/`BURACO`.
+- **Controle positivo:** a parte 1 de 3 EXECUTA só as 2 provas dela e fecha o recibo da parte (`SQL_PROOF_OK provas=2/2 … parte=0/3`). Sem esse controle, um runner que recusasse toda `NUCLEO_PARTE` passaria nas recusas.
+
+No manifesto da `main` de 2026-10-01 (57 provas, já com o #2712), as 3 partes ficaram com 19, 19 e 19 provas; a união é o manifesto inteiro, sem repetição.
 
 ## O que fica para depois
 
