@@ -332,3 +332,7 @@ db/test-hoje-sp-views-defaults.sh          129  falsificar=fora-do-ci  # TETO do
 # (a deriva de 14 colunas do snapshot + o texto vivo) + a migration. O `--falsificar` (17 sabotagens, todas
 # vermelhas no assert certo, matriz UTC/SP × C/pt_BR verde) roda FORA do CI pelo motivo da linha abaixo.
 db/test-hoje-sp-data-ciclo.sh               57  falsificar=fora-do-ci  # o job provas-sql mediu 19,6–19,9 min de 20 em 3 PRs de 30/09–01/10 (mediana 17,9 em 8): +17 sabotagens (~3 min) o cancelaria no teto; o comentário do ci.yml pede paralelizar o runner, não subir o teto
+# FORA do núcleo (de propósito): db/test-hoje-sp-visitas.sh — o DEFAULT de route_visits.visit_date no dia de SP
+# (15 asserts, 8 sabotagens, matriz UTC/SP × C/pt_BR verde; roda local). O job provas-sql está no TETO: em 01/10
+# 02:20–05:00, 16 de 25 runs de PR foram canceladas a 20,2 min (as verdes: 16,9–19,9) — +20 s aqui faria
+# todo PR esbarrar mais. Entra quando o runner for paralelizado (o comentário do ci.yml), não subindo o teto.
