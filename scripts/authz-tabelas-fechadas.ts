@@ -45,6 +45,10 @@ export interface TabelaFechada {
   fechadaPor: string | null;
   /** Privilégios PERMITIDOS por role. Ausente da lista = proibido (allowlist de privilégio). */
   permitido: { anon: Priv[]; authenticated: Priv[] };
+  /** Só para a tabela fechada POR COLUNA: as colunas em que um GRANT de COLUNA é permitido, por role e
+   *  privilégio. O GRANT por coluna passa só se TODA coluna estiver aqui; sem esta lista, ele conta como
+   *  privilégio de TABELA (o estrito de sempre). Ausente da lista = proibido. */
+  colunasPermitidas?: Partial<Record<'anon' | 'authenticated', Partial<Record<Priv, string[]>>>>;
   motivo: string;
 }
 
@@ -73,6 +77,25 @@ export const AUTHZ_TABELAS_FECHADAS: Record<string, TabelaFechada> = {
   'public.sales_orders': {
     fechadaPor: '20260724120000_authz_sales_orders_split_escrita_fu4.sql',
     permitido: { anon: [], authenticated: ['INSERT', 'DELETE'] },
+    // O attacl de prod (psql-ro, 2026-09-30) + as 2 colunas do canal que a 20261001100000 abriu: coluna
+    // nova não herda GRANT por coluna, e o funil (get_whatsapp_funil, INVOKER) e a releitura do orçamento
+    // da proposta davam "permission denied" para o staff (docs/historico/provas-canal-revividas.md).
+    // omie_payload/omie_response NUNCA entram no SELECT — eram o motivo do fecho.
+    colunasPermitidas: {
+      authenticated: {
+        SELECT: [
+          'account', 'atendimento_id', 'checkout_id', 'created_at', 'created_by', 'customer_address',
+          'customer_document', 'customer_phone', 'customer_user_id', 'deleted_at', 'discount',
+          'hash_payload', 'id', 'items', 'notes', 'omie_numero_pedido', 'omie_pedido_id',
+          'order_date_kpi', 'origem', 'pedido_programado_envio_id', 'ready_by_date', 'status',
+          'subtotal', 'total', 'updated_at', 'whatsapp_conversation_id', 'whatsapp_proposta_dedupe',
+        ],
+        UPDATE: [
+          'customer_address', 'customer_document', 'customer_phone', 'deleted_at', 'items', 'notes',
+          'omie_payload', 'ready_by_date', 'status', 'subtotal', 'total',
+        ],
+      },
+    },
     motivo:
       'pedido de venda (money-path) — fechada por privilégio de COLUNA, modelo distinto das outras duas ' +
       'entradas, em DUAS etapas: (1) 20260709163500 (PR0.0-bis) trocou o SELECT table-level pelo SELECT ' +

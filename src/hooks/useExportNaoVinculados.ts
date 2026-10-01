@@ -2,6 +2,7 @@ import { useMutation } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { track } from '@/lib/analytics';
 import { toCsv, type NaoVinculadoCsvRow } from '@/lib/clientes-nao-vinculados/csv';
+import { hojeSP } from '@/lib/time/sp-day';
 
 const EMPRESA = 'oben';
 const PAGE = 1000;
@@ -43,7 +44,7 @@ export function useExportNaoVinculados() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `clientes-nao-vinculados-oben-${new Date().toISOString().slice(0, 10)}.csv`;
+      a.download = `clientes-nao-vinculados-oben-${hojeSP()}.csv`;
       document.body.appendChild(a);
       a.click();
       a.remove();
