@@ -127,6 +127,7 @@ import {
   lerDadosNuvem,
   type ResultadoSonda,
   separarFlagsNuvem,
+  type SondaExecutiva,
   type SondasExecutivas,
 } from '../scripts/lib/transporte-nuvem';
 
@@ -447,7 +448,7 @@ export function consultasNuvem(b: Baseline): Consultas {
  * negadas devolvem só o desfecho, então a da vault nunca traz o segredo, nem se um dia ler.
  */
 export function sondasNuvem(b: Baseline): SondasExecutivas {
-  const sondas: Record<string, { sql: string; devolverValor?: boolean }> = {};
+  const sondas: Record<string, SondaExecutiva> = {};
   b.sondasNegadas.forEach((s, i) => {
     sondas[`negada_${i + 1}`] = { sql: s.sql };
   });
