@@ -3,7 +3,8 @@
 # contra o schema que PRODUÇÃO executa (db/lib/corpo-vivo.sh: snapshot + ACL medido em prod + cadeia viva
 # das migrations que tocam whatsapp_templates / whatsapp_template_sends).
 #
-# O que ela assevera, cada um com sabotagem própria:
+# O que ela assevera (cada regra com sabotagem própria; os positivos — a edge escreve, staff e master
+# leem, o master escreve — são as pré-condições que as sabotagens exigem verdes):
 #  • o seed do catálogo da 20260713010000 é DADO (o dump é schema-only) e continua entrando: os 2
 #    templates, inativos até a Meta aprovar;
 #  • a idempotência do envio é do BANCO (dedupe_key UNIQUE → 23505) e os CHECKs/FK barram lixo (23514,
@@ -93,17 +94,17 @@ chk() {  # <id> <descrição> <obtido> <esperado>
   else echo "  ✗ $1 $2 — got[$3] exp[$4]"; FAIL=$((FAIL+1)); FALHOS="$FALHOS$1 "; fi
 }
 # q_como <papel> <uid ou ''> <sql> — a leitura COMO o app: o papel e o JWT fixados na MESMA sessão que
-# lê (vários -c, um psql só), como o PostgREST faz. Na falha, o valor é o erro — assert vermelho com o
-# porquê.
+# lê (vários -c, um psql só), como o PostgREST faz. ON_ERROR_STOP: um SET ROLE que falhe aborta, em vez
+# de deixar a leitura rodar como superusuário. Na falha, o valor é o erro — assert vermelho com o porquê.
 q_como() {
   local claims ctx out
   if [ -n "$2" ]; then claims="{\"sub\":\"$2\",\"role\":\"$1\"}"; else claims="{\"role\":\"$1\"}"; fi
   ctx=(-c "SET ROLE $1" -c "SET request.jwt.claims = '$claims'" -c "$3")
-  if out="$(P -tA -q "${ctx[@]}" 2>/dev/null)"; then printf '%s' "$out" | tr '\n' ' ' | sed 's/ *$//'
-  else printf 'ERRO: %s' "$(P -tA -q "${ctx[@]}" 2>&1 >/dev/null | tr '\n' ' ' | cut -c1-300)"; fi
+  if out="$(P -v ON_ERROR_STOP=1 -tA -q "${ctx[@]}" 2>/dev/null)"; then printf '%s' "$out" | tr '\n' ' ' | sed 's/ *$//'
+  else printf 'ERRO: %s' "$(P -v ON_ERROR_STOP=1 -tA -q "${ctx[@]}" 2>&1 >/dev/null | tr '\n' ' ' | cut -c1-300)"; fi
 }
 # st_como <papel> <uid ou ''> <sql> — o veredito do comando COMO o app: 'OK' ou a SQLSTATE, com a camada
-# que negou quando é 42501 (prova.sqlstate, em db/lib/corpo-vivo.sh).
+# e o objeto que negaram quando é 42501 (prova.sqlstate, em db/lib/corpo-vivo.sh).
 st_como() { q_como "$1" "$2" "SELECT prova.sqlstate(\$cmd\$$3\$cmd\$);"; }
 envio() {  # <dedupe_key> [status] [origem] [template] — INSERT de envio com a conversa do seed
   printf "INSERT INTO public.whatsapp_template_sends (template_nome, conversation_id, phone_e164, body_params, dedupe_key, status, origem) VALUES ('%s', '%s', '5537999990000', '[\"Ana\",\"42\",\"sai amanha\"]'::jsonb, '%s', '%s', '%s')" \
@@ -141,12 +142,12 @@ cenario() {
   chk H8 "mais de 10 parâmetros → 23514" "$(st_como service_role '' "$(template x_params utility 11)")" "23514"
 
   echo "→ a escrita: o log é da edge, o catálogo é do master"
-  chk H14 "staff não escreve no log — nega o GRANT da tabela (42501/acl-tabela)" "$(st_como authenticated "$STAFF" "$(envio k14)")" "42501/acl-tabela"
+  chk H14 "staff não escreve no log — nega o GRANT da tabela (42501/acl-tabela)" "$(st_como authenticated "$STAFF" "$(envio k14)")" "42501/acl-tabela:whatsapp_template_sends"
   chk H15 "staff não muda status no log — nega o GRANT (sem ele a policy calaria: 0 linhas, sem erro)" \
-    "$(st_como authenticated "$STAFF" "UPDATE public.whatsapp_template_sends SET status = 'read' WHERE dedupe_key = 'k1'")" "42501/acl-tabela"
-  chk H16 "employee não escreve no catálogo — nega a POLICY do master (42501/rls)" "$(st_como authenticated "$STAFF" "$(template x_employee)")" "42501/rls"
+    "$(st_como authenticated "$STAFF" "UPDATE public.whatsapp_template_sends SET status = 'read' WHERE dedupe_key = 'k1'")" "42501/acl-tabela:whatsapp_template_sends"
+  chk H16 "employee não escreve no catálogo — nega a POLICY do master (42501/rls)" "$(st_como authenticated "$STAFF" "$(template x_employee)")" "42501/rls:whatsapp_templates"
   chk H17 "master escreve no catálogo" "$(st_como authenticated "$MASTER" "$(template x_master)")" "OK"
-  chk H18 "anon não escreve no catálogo — nega o GRANT da tabela (42501/acl-tabela)" "$(st_como anon '' "$(template x_anon)")" "42501/acl-tabela"
+  chk H18 "anon não escreve no catálogo — nega o GRANT da tabela (42501/acl-tabela)" "$(st_como anon '' "$(template x_anon)")" "42501/acl-tabela:whatsapp_templates"
   return 0
 }
 
@@ -158,7 +159,7 @@ cenario() {
 # fica vermelha porque a cadeia dinâmica a pega (DDL sobre tabela guardada).
 SABOTAGENS="seed_incompleto:H1:H2 dedupe_some:H3:H2,H9 categoria_aberta:H4:H5 status_aberto:H5:H4
             origem_aberta:H6:H5 fk_template_some:H7:H2 params_sem_teto:H8:H4
-            catalogo_aberto:H11:H9,H12 log_aberto:H12:H9,H11 log_sem_master:H10:H9 anon_le:H13:H11,H12
+            catalogo_aberto:H11:H9,H12 log_aberto:H12:H9,H11 log_sem_master:H10:H9 anon_le:H13:H11,H12 anon_le_log:H13:H11,H12
             log_insert_grant:H14:H16 log_update_grant:H15:H14 catalogo_employee_escreve:H16:H17,H14
             anon_insert_grant:H18:H16 migracao_nova_log_aberto:H12:H9"
 
@@ -179,6 +180,7 @@ sabotagem() {
     log_aberto)        P -v ON_ERROR_STOP=1 -q -c "ALTER POLICY wts_staff_read ON $wts USING (true);" ;;
     log_sem_master)    P -v ON_ERROR_STOP=1 -q -c "ALTER POLICY wts_staff_read ON $wts USING ($so_employee);" ;;
     anon_le)           P -v ON_ERROR_STOP=1 -q -c "CREATE POLICY sabotagem_anon_le ON $wt FOR SELECT TO anon USING (true);" ;;
+    anon_le_log)       P -v ON_ERROR_STOP=1 -q -c "CREATE POLICY sabotagem_anon_le_log ON $wts FOR SELECT TO anon USING (true);" ;;
     log_insert_grant)  P -v ON_ERROR_STOP=1 -q -c "GRANT INSERT ON $wts TO authenticated;" ;;
     log_update_grant)  P -v ON_ERROR_STOP=1 -q -c "GRANT UPDATE ON $wts TO authenticated;" ;;
     catalogo_employee_escreve)
@@ -192,9 +194,10 @@ CREATE POLICY wts_staff_read ON $wts FOR SELECT TO authenticated USING (true);" 
 }
 
 # rodada <sabotagem|""> — clona o banco-base e roda o cenário no clone. Exit 3 = a sabotagem não
-# aplicou (âncora sumiu do schema vivo): isso é FALHA da falsificação, nunca dente.
+# aplicou (âncora sumiu do schema vivo); exit 4 = o clone falhou (a rodada não pode seguir no banco da
+# sabotagem anterior). Os dois são FALHA da falsificação, nunca dente.
 rodada() {
-  adm -c "DROP DATABASE IF EXISTS rodada;" -c "CREATE DATABASE rodada TEMPLATE base;"
+  adm -c "DROP DATABASE IF EXISTS rodada;" -c "CREATE DATABASE rodada TEMPLATE base;" || return 4
   DB=rodada
   if [ -n "$1" ]; then sabotagem "$1" || return 3; fi
   cenario

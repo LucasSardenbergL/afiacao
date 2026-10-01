@@ -1,22 +1,26 @@
 #!/usr/bin/env bash
 # Prova PG17 da recotação da proposta 1-toque do canal WhatsApp (get_whatsapp_proposta_cotacao, SECURITY
 # INVOKER) e da identidade imutável do orçamento (whatsapp_proposta_dedupe UNIQUE), contra o schema que
-# PRODUÇÃO executa (db/lib/corpo-vivo.sh: snapshot + ACL medido em prod + cadeia viva da RPC).
+# PRODUÇÃO executa (db/lib/corpo-vivo.sh: snapshot + ACL medido em prod + a cadeia viva da RPC e das
+# tabelas que ela lê — hoje 4 migrations de order_items/sales_orders que o snapshot não tem: unit_price
+# nullable, o trigger de coerência cabeçalho × linhas e colunas novas).
 #
-# O que ela assevera, cada um com sabotagem própria:
+# O que ela assevera:
 #  • o praticado VÁLIDO mais recente do próprio cliente NA CONTA consultada vence a tabela — nem o de
-#    outro cliente nem o da outra conta (Codex P0-1) o contaminam; "mais recente" é cronologia COMERCIAL:
-#    o item sem data herda a do pedido pai (Codex P1-10);
-#  • ausente ≠ zero: praticado 0 é ignorado, tabela 0 vira preço NULL (nunca fabrica); NaN e Infinity não
-#    vazam como preço, nem do praticado nem da tabela; estoque NULL volta NULL; o inativo volta com
-#    ativo=false (a trava é do consumidor); SKU de outra conta ou inexistente não volta;
+#    outro cliente nem o da outra conta (Codex P0-1) o contaminam, dos DOIS lados; "mais recente" é
+#    cronologia COMERCIAL: o item sem data herda a do pedido pai (Codex P1-10);
+#  • ausente ≠ zero: praticado 0 ou NULL é ignorado (o NULL mais recente não esconde o válido mais
+#    antigo), tabela 0 vira preço NULL (nunca fabrica); NaN e Infinity não vazam como preço, nem do
+#    praticado nem da tabela; estoque NULL volta NULL; o inativo volta com ativo=false (a trava é do
+#    consumidor); SKU de outra conta ou inexistente não volta;
 #  • a identidade do orçamento é do BANCO: a mesma chave de proposta de novo → 23505 (Codex P0-3), e a
 #    chave NULL dos pedidos comuns não colide — escrito COMO o staff, que é quem cria o orçamento;
 #  • o cliente não recebe nada (o catálogo é de staff) e o anon não executa (nega o EXECUTE da RPC, não o
 #    SELECT da tabela).
-# A releitura do orçamento existente por whatsapp_proposta_dedupe (o caminho do 23505 no app) depende de
-# um GRANT por coluna que prod não tem: mora em db/test-whatsapp-funil.sh, com o funil, que tem a mesma
-# causa (docs/historico/provas-canal-revividas.md).
+# Cada regra tem sabotagem própria; os positivos (P14, o 1º orçamento entra) são as pré-condições que as
+# sabotagens exigem verdes. A releitura do orçamento por whatsapp_proposta_dedupe (o caminho do 23505 no
+# app) depende de um GRANT por coluna que prod não tem: mora em db/test-whatsapp-funil.sh, com o funil,
+# que tem a mesma causa (docs/historico/provas-canal-revividas.md).
 #
 # A guarda `<> 'NaN'` da RPC é REDUNDANTE com a `< 'Infinity'` (em numeric, NaN não é < Infinity —
 # medido): sabotar só ela fica verde por desenho, então a sabotagem do NaN tira as duas.
@@ -60,11 +64,12 @@ P()   { "$PGBIN/psql" -X -p "$PORT" -h "$TMPD" -U postgres -d "$DB" "$@"; }
 adm() { "$PGBIN/psql" -X -p "$PORT" -h "$TMPD" -U postgres -d postgres -v ON_ERROR_STOP=1 -q "$@"; }
 adm -c "CREATE DATABASE base;"
 
-# O objeto que esta prova assevera: a migration nova que o redefinir entra na cadeia sozinha.
+# Os objetos que esta prova assevera — a RPC e as tabelas que ela lê (o praticado, o pai, o catálogo): a
+# migration nova que fizer DDL sobre eles entra na cadeia sozinha.
 # shellcheck disable=SC2034  # consumida pelo db/lib/corpo-vivo.sh, que o shellcheck sem -x não segue
 CV_FUNCOES=(get_whatsapp_proposta_cotacao)
 # shellcheck disable=SC2034  # consumida pelo db/lib/corpo-vivo.sh, que o shellcheck sem -x não segue
-CV_TABELAS=()
+CV_TABELAS=(order_items sales_orders omie_products)
 # shellcheck disable=SC1091  # idem: versionado ao lado, em db/lib/
 . "$REPO_ROOT/db/lib/corpo-vivo.sh"
 echo "→ banco-base: stubs + prelude + snapshot + ACL de prod + cadeia viva…"
@@ -74,11 +79,15 @@ STAFF='00000000-0000-0000-0000-0000000aaaa1'     # employee: cria o orçamento e
 OUTRO='00000000-0000-0000-0000-0000000bbbb2'     # outro cliente (não-staff)
 CLIENTE='00000000-0000-0000-0000-0000000cccc3'   # o cliente da proposta
 pe() { printf '00000000-0000-0000-0000-00000000e00%s' "$1"; }
-echo "→ seed-base: staff, 2 clientes, o catálogo de bordas e o histórico de praticados…"
+# Numa transação SÓ: o trigger de coerência (cadeia viva) é DEFERIDO e confere, no COMMIT, que o `items`
+# do cabeçalho descreve as mesmas linhas de order_items — o pedido que prod aceita. O cabeçalho é
+# derivado das linhas, como a RPC de criação faz; se a forma mudar, o COMMIT falha alto.
+echo "→ seed-base: staff, 2 clientes, o catálogo de bordas e o histórico de praticados (pedidos coerentes)…"
 P -v ON_ERROR_STOP=1 -q <<SQL
+BEGIN;
 INSERT INTO auth.users (id) VALUES ('$STAFF'), ('$OUTRO'), ('$CLIENTE');
 INSERT INTO public.user_roles (user_id, role) VALUES ('$STAFF', 'employee'), ('$OUTRO', 'customer'), ('$CLIENTE', 'customer');
--- cada SKU uma borda; o 101 existe nas DUAS contas (Codex P0-1)
+-- cada SKU uma borda; o 101 e o 113 existem nas DUAS contas (Codex P0-1)
 INSERT INTO public.omie_products (omie_codigo_produto, codigo, descricao, unidade, valor_unitario, estoque, ativo, account) VALUES
   (101, 'C101', 'LIXA A275',          'UN', 99,         100,  true,  'oben'),
   (101, 'K101', 'LIXA COLACOR',       'UN', 80,         100,  true,  'colacor'),
@@ -89,19 +98,26 @@ INSERT INTO public.omie_products (omie_codigo_produto, codigo, descricao, unidad
   (106, 'C106', 'INATIVO',            'UN', 30,         100,  false, 'oben'),
   (107, 'C107', 'OUTRA CONTA',        'UN', 10,         100,  true,  'colacor'),
   (109, 'C109', 'CRONOLOGIA',         'UN', 70,         100,  true,  'oben'),
+  (110, 'C110', 'PRATICADO NULL',     'UN', 60,         100,  true,  'oben'),
   (111, 'C111', 'TABELA INFINITA',    'UN', 'Infinity', 100,  true,  'oben'),
-  (112, 'C112', 'PRATICADO INFINITO', 'UN', 50,         100,  true,  'oben');
--- pedidos-pai com a CONTA explícita (e004 = colacor; e005/e006 para a cronologia comercial)
+  (112, 'C112', 'PRATICADO INFINITO', 'UN', 50,         100,  true,  'oben'),
+  (113, 'C113', 'DUAS CONTAS',        'UN', 40,         100,  true,  'oben'),
+  (113, 'K113', 'DUAS CONTAS',        'UN', 35,         100,  true,  'colacor');
+-- pedidos-pai com a CONTA explícita
 INSERT INTO public.sales_orders (id, customer_user_id, created_by, total, status, account, created_at) VALUES
   ('$(pe 1)', '$CLIENTE', '$STAFF', 100, 'confirmado', 'oben',    now() - interval '30 days'),
   ('$(pe 2)', '$CLIENTE', '$STAFF', 100, 'confirmado', 'oben',    now() - interval '1 day'),
   ('$(pe 3)', '$OUTRO',   '$STAFF', 100, 'confirmado', 'oben',    now() - interval '1 day'),
   ('$(pe 4)', '$CLIENTE', '$STAFF', 100, 'confirmado', 'colacor', now() - interval '2 hours'),
   ('$(pe 5)', '$CLIENTE', '$STAFF', 100, 'confirmado', 'oben',    now() - interval '3 hours'),
-  ('$(pe 6)', '$CLIENTE', '$STAFF', 100, 'confirmado', 'oben',    now() - interval '10 days');
+  ('$(pe 6)', '$CLIENTE', '$STAFF', 100, 'confirmado', 'oben',    now() - interval '10 days'),
+  ('$(pe 7)', '$CLIENTE', '$STAFF', 100, 'confirmado', 'oben',    now() - interval '10 days'),
+  ('$(pe 8)', '$CLIENTE', '$STAFF', 100, 'confirmado', 'colacor', now() - interval '5 days'),
+  ('$(pe 9)', '$CLIENTE', '$STAFF', 100, 'confirmado', 'oben',    now() - interval '1 hour');
 -- 101: oben 8.00 (30d) e 10.50 (1d) — o recente vence; colacor 5.00 (2h, o mais recente de todos) não
 -- contamina a oben; o 7.77 de OUTRO cliente (1h) não contamina o do cliente.
--- 102 praticado 0 · 104 praticado NaN · 112 praticado Infinity — os três inválidos.
+-- 113: colacor 9.00 (5d) × oben 7.00 (1h) — a consulta colacor fica com o 9.00 (a partição do outro lado).
+-- 102 praticado 0 · 104 NaN · 112 Infinity · 110 NULL (1d) sobre um 12.00 válido de 10d.
 -- 109: 33.00 sem data num pai de 3h × 22.00 datado de 10d — a cronologia comercial escolhe 33.00.
 INSERT INTO public.order_items (sales_order_id, customer_user_id, omie_codigo_produto, quantity, unit_price, created_at) VALUES
   ('$(pe 1)', '$CLIENTE', 101, 1, 8.00,       now() - interval '30 days'),
@@ -109,10 +125,22 @@ INSERT INTO public.order_items (sales_order_id, customer_user_id, omie_codigo_pr
   ('$(pe 2)', '$CLIENTE', 102, 1, 0,          now() - interval '1 day'),
   ('$(pe 2)', '$CLIENTE', 104, 1, 'NaN',      now() - interval '1 day'),
   ('$(pe 2)', '$CLIENTE', 112, 1, 'Infinity', now() - interval '1 day'),
+  ('$(pe 2)', '$CLIENTE', 110, 1, NULL,       now() - interval '1 day'),
   ('$(pe 4)', '$CLIENTE', 101, 1, 5.00,       now() - interval '2 hours'),
   ('$(pe 3)', '$OUTRO',   101, 1, 7.77,       now() - interval '1 hour'),
   ('$(pe 5)', '$CLIENTE', 109, 1, 33.00,      NULL),
-  ('$(pe 6)', '$CLIENTE', 109, 1, 22.00,      now() - interval '10 days');
+  ('$(pe 6)', '$CLIENTE', 109, 1, 22.00,      now() - interval '10 days'),
+  ('$(pe 7)', '$CLIENTE', 110, 1, 12.00,      now() - interval '10 days'),
+  ('$(pe 8)', '$CLIENTE', 113, 1, 9.00,       now() - interval '5 days'),
+  ('$(pe 9)', '$CLIENTE', 113, 1, 7.00,       now() - interval '1 hour');
+UPDATE public.sales_orders so
+   SET items = (SELECT jsonb_agg(jsonb_build_object('omie_codigo_produto', oi.omie_codigo_produto,
+                                                    'quantidade', oi.quantity,
+                                                    'valor_unitario', oi.unit_price::text,
+                                                    'desconto', oi.discount) ORDER BY oi.id)
+                  FROM public.order_items oi WHERE oi.sales_order_id = so.id)
+ WHERE EXISTS (SELECT 1 FROM public.order_items oi WHERE oi.sales_order_id = so.id);
+COMMIT;
 SQL
 
 PASS=0; FAIL=0; FALHOS=" "
@@ -121,17 +149,17 @@ chk() {  # <id> <descrição> <obtido> <esperado>
   else echo "  ✗ $1 $2 — got[$3] exp[$4]"; FAIL=$((FAIL+1)); FALHOS="$FALHOS$1 "; fi
 }
 # q_como <papel> <uid ou ''> <sql> — a leitura COMO o app: o papel e o JWT fixados na MESMA sessão que
-# lê (vários -c, um psql só), como o PostgREST faz. Na falha, o valor é o erro — assert vermelho com o
-# porquê.
+# lê (vários -c, um psql só), como o PostgREST faz. ON_ERROR_STOP: um SET ROLE que falhe aborta, em vez
+# de deixar a leitura rodar como superusuário. Na falha, o valor é o erro — assert vermelho com o porquê.
 q_como() {
   local claims ctx out
   if [ -n "$2" ]; then claims="{\"sub\":\"$2\",\"role\":\"$1\"}"; else claims="{\"role\":\"$1\"}"; fi
   ctx=(-c "SET ROLE $1" -c "SET request.jwt.claims = '$claims'" -c "$3")
-  if out="$(P -tA -q "${ctx[@]}" 2>/dev/null)"; then printf '%s' "$out" | tr '\n' ' ' | sed 's/ *$//'
-  else printf 'ERRO: %s' "$(P -tA -q "${ctx[@]}" 2>&1 >/dev/null | tr '\n' ' ' | cut -c1-300)"; fi
+  if out="$(P -v ON_ERROR_STOP=1 -tA -q "${ctx[@]}" 2>/dev/null)"; then printf '%s' "$out" | tr '\n' ' ' | sed 's/ *$//'
+  else printf 'ERRO: %s' "$(P -v ON_ERROR_STOP=1 -tA -q "${ctx[@]}" 2>&1 >/dev/null | tr '\n' ' ' | cut -c1-300)"; fi
 }
 # st_como <papel> <uid ou ''> <sql> — o veredito do comando COMO o app: 'OK' ou a SQLSTATE, com a camada
-# que negou quando é 42501 (prova.sqlstate, em db/lib/corpo-vivo.sh).
+# e o objeto que negaram quando é 42501 (prova.sqlstate, em db/lib/corpo-vivo.sh).
 st_como() { q_como "$1" "$2" "SELECT prova.sqlstate(\$cmd\$$3\$cmd\$);"; }
 # cot <conta> <sku> <colunas> — a recotação de UM SKU do cliente, COMO o staff; NULL vira 'NULL' (o
 # ausente não pode sumir na concatenação).
@@ -149,11 +177,12 @@ cenario() {
   PASS=0; FAIL=0; FALHOS=" "
   echo "→ o praticado vence a tabela: o do próprio cliente, na conta, o mais recente VÁLIDO"
   chk P1 "101 oben: 10.50 (não o antigo, nem a tabela, nem o de outro cliente, nem o da colacor)" "$(cot oben 101 "$PRECO")" "10.50|praticado"
-  chk P2 "101 colacor: 5.00 (a partição por conta vale dos dois lados)" "$(cot colacor 101 "$PRECO")" "5.00|praticado"
+  chk P2 "113 colacor: 9.00 de 5d, não o oben de 1h (a partição por conta vale do outro lado)" "$(cot colacor 113 "$PRECO")" "9.00|praticado"
   chk P3 "cronologia comercial: o item sem data herda a do pedido pai (109 → 33.00)" "$(cot oben 109 "$PRECO")" "33.00|praticado"
 
   echo "→ ausente ≠ zero: nada inválido vira preço"
   chk P4 "praticado 0 é ignorado → tabela (102 → 45)" "$(cot oben 102 "$PRECO")" "45|tabela"
+  chk P17 "praticado NULL mais recente não esconde o válido mais antigo (110 → 12.00)" "$(cot oben 110 "$PRECO")" "12.00|praticado"
   chk P5 "tabela 0 sem praticado → NULL, nunca 0 (103)" "$(cot oben 103 "$PRECO")" "NULL|NULL"
   chk P6 "NaN no praticado e na tabela → NULL (104)" "$(cot oben 104 "$PRECO")" "NULL|NULL"
   chk P7 "Infinity na tabela → NULL (111)" "$(cot oben 111 "$PRECO")" "NULL|NULL"
@@ -161,14 +190,15 @@ cenario() {
   chk P9 "estoque NULL volta NULL — desconhecido ≠ 0 (105)" "$(cot oben 105 "coalesce(estoque::text, 'NULL') || '|' || preco")" "NULL|20"
   chk P10 "o inativo volta com ativo=false — a trava é do consumidor (106)" "$(cot oben 106 "ativo")" "f"
   chk P11 "só SKUs da conta consultada (107 é colacor, 108 não existe)" \
-    "$(q_como authenticated "$STAFF" "SELECT string_agg(omie_codigo_produto::text, ',' ORDER BY omie_codigo_produto) FROM public.get_whatsapp_proposta_cotacao('$CLIENTE', 'oben', ARRAY[101,102,103,104,105,106,107,108,109,111,112]::bigint[]);")" \
-    "101,102,103,104,105,106,109,111,112"
+    "$(q_como authenticated "$STAFF" "SELECT string_agg(omie_codigo_produto::text, ',' ORDER BY omie_codigo_produto) FROM public.get_whatsapp_proposta_cotacao('$CLIENTE', 'oben', ARRAY[101,102,103,104,105,106,107,108,109,110,111,112,113]::bigint[]);")" \
+    "101,102,103,104,105,106,109,110,111,112,113"
 
   echo "→ a RLS e o ACL como o app os vê"
   chk P12 "o cliente não recebe nada — o catálogo é de staff (OUTRO consultando o cliente)" \
     "$(q_como authenticated "$OUTRO" "SELECT count(*) FROM public.get_whatsapp_proposta_cotacao('$CLIENTE', 'oben', ARRAY[101,102,109]::bigint[]);")" "0"
-  chk P13 "anon não executa — nega o EXECUTE da RPC (42501/acl-funcao), não o SELECT da tabela" \
-    "$(st_como anon '' "SELECT * FROM public.get_whatsapp_proposta_cotacao('$CLIENTE', 'oben', ARRAY[101]::bigint[])")" "42501/acl-funcao"
+  chk P13 "anon não executa — nega o EXECUTE da RPC, não o SELECT de uma tabela" \
+    "$(st_como anon '' "SELECT * FROM public.get_whatsapp_proposta_cotacao('$CLIENTE', 'oben', ARRAY[101]::bigint[])")" \
+    "42501/acl-funcao:get_whatsapp_proposta_cotacao"
 
   echo "→ a identidade do orçamento é do banco (escrita COMO o staff, que é quem o cria)"
   chk P14 "o 1º orçamento da proposta entra" "$(st_como authenticated "$STAFF" "$(orcamento 'proposta:cccc3:2026-07-14' 21)")" "OK"
@@ -181,18 +211,24 @@ cenario() {
 # SABOTAGENS: <nome>:<VERMELHOS>[:<VERDES>] — os asserts que TÊM de acusar a sabotagem e as
 # pré-condições que TÊM de seguir verdes (`,` = E; `|` = OU). Vermelho em outra camada (setup
 # quebrado, erro de execução) é quebra, não dente. As do corpo trocam UM trecho da RPC viva (âncora
-# única, cv_sabotar); a do NaN tira as DUAS guardas que o filtram (a `<> 'NaN'` sozinha é redundante).
-# As `migracao_nova_*` são a regressão chegando pela PRÓXIMA migration; a drop_create é a armadilha do
-# CLAUDE.md (DROP+CREATE devolve o EXECUTE a PUBLIC), que só o P13 distingue, porque nomeia a camada.
-SABOTAGENS="conta_atravessa:P1:P3,P4 cliente_atravessa:P1:P2,P3 cronologia_por_item:P3:P1
+# única, cv_sabotar); a do NaN tira as DUAS guardas que o filtram (a `<> 'NaN'` sozinha é redundante),
+# e a `praticado_sem_guardas` tira as três (o NULL só passa sem todas). As `migracao_nova_*` são a
+# regressão chegando pela PRÓXIMA migration; as drop_create são a armadilha do CLAUDE.md — DROP+CREATE
+# devolve o EXECUTE ao default de prod, que o dá ao anon EXPLÍCITO, e o `REVOKE … FROM PUBLIC` não o
+# tira: só o P13 distingue, porque nomeia a camada e o objeto.
+SABOTAGENS="conta_atravessa:P1,P2:P3,P4 cliente_atravessa:P1:P2,P3 cronologia_por_item:P3:P1
             praticado_zero_conta:P4:P1,P5 zero_fabricado:P5:P1,P4 praticado_nan:P6,P8:P1,P4
-            tabela_infinita:P7:P1,P5 praticado_infinito:P8:P1,P6 definer_fura_rls:P12:P1
-            catalogo_aberto_ao_cliente:P12:P1,P13 anon_executa:P13:P1,P12 dedupe_some:P15:P14,P16
-            migracao_nova_conta_atravessa:P1:P3,P4 migracao_nova_drop_create:P13:P1,P12"
+            tabela_infinita:P7:P1,P5 praticado_infinito:P8:P1,P6 praticado_sem_guardas:P4,P6,P8,P17:P1,P5
+            estoque_fabricado:P9:P1 ativo_fabricado:P10:P1 catalogo_sem_conta:P11:P12
+            definer_fura_rls:P12:P1 catalogo_aberto_ao_cliente:P12:P1,P13 anon_executa:P13:P1,P12
+            dedupe_some:P15:P14,P16 chave_nula_colide:P16:P14,P15 migracao_nova_conta_atravessa:P1,P2:P3,P4
+            migracao_nova_drop_create:P13:P1,P12 migracao_nova_drop_create_sem_anon:P13:P1,P12"
 
 # sabotagem <nome> — troca UMA camada do schema vivo no banco da rodada. Status ≠0 = não aplicou.
 sabotagem() {
   local fn='public.get_whatsapp_proposta_cotacao(uuid,text,bigint[])' conta='AND so.account = p_account'
+  local cria='CREATE OR REPLACE FUNCTION public.get_whatsapp_proposta_cotacao('
+  local recria=$'DROP FUNCTION public.get_whatsapp_proposta_cotacao(uuid, text, bigint[]);\nCREATE FUNCTION public.get_whatsapp_proposta_cotacao('
   case "$1" in
     conta_atravessa)     cv_sabotar "$fn" "$conta" "" ;;
     cliente_atravessa)   cv_sabotar "$fn" "WHERE oi.customer_user_id = p_customer_user_id" "WHERE true" ;;
@@ -203,26 +239,37 @@ sabotagem() {
                            && cv_sabotar "$fn" "AND oi.unit_price < 'Infinity'::numeric" "" ;;
     tabela_infinita)     cv_sabotar "$fn" "THEN p.valor_unitario END" "OR p.valor_unitario = 'Infinity'::numeric THEN p.valor_unitario END" ;;
     praticado_infinito)  cv_sabotar "$fn" "AND oi.unit_price < 'Infinity'::numeric" "" ;;
+    praticado_sem_guardas)
+                         cv_sabotar "$fn" "AND oi.unit_price > 0" "" \
+                           && cv_sabotar "$fn" "AND oi.unit_price <> 'NaN'::numeric" "" \
+                           && cv_sabotar "$fn" "AND oi.unit_price < 'Infinity'::numeric" "" ;;
+    estoque_fabricado)   cv_sabotar "$fn" "p.estoque," "COALESCE(p.estoque, 0)," ;;
+    ativo_fabricado)     cv_sabotar "$fn" "p.ativo," "true," ;;
+    catalogo_sem_conta)  cv_sabotar "$fn" "WHERE p.account = p_account" "WHERE true" ;;
     definer_fura_rls)    P -v ON_ERROR_STOP=1 -q -c "ALTER FUNCTION $fn SECURITY DEFINER;" ;;
     catalogo_aberto_ao_cliente)
                          P -v ON_ERROR_STOP=1 -q -c "ALTER POLICY omie_products_select_staff ON public.omie_products USING (true);" ;;
     anon_executa)        P -v ON_ERROR_STOP=1 -q -c "GRANT EXECUTE ON FUNCTION $fn TO anon;" ;;
     dedupe_some)         P -v ON_ERROR_STOP=1 -q -c "DROP INDEX public.uq_so_whatsapp_proposta_dedupe;" ;;
+    # o UNIQUE que trata NULL como valor: as chaves NULL dos orçamentos comuns passam a colidir
+    chave_nula_colide)   P -v ON_ERROR_STOP=1 -q -c "DROP INDEX public.uq_so_whatsapp_proposta_dedupe;" \
+                           -c "CREATE UNIQUE INDEX sabotagem_dedupe ON public.sales_orders ((coalesce(whatsapp_proposta_dedupe, ''))) WHERE status = 'orcamento';" ;;
     migracao_nova_conta_atravessa)
                          cv_migracao_nova "$fn" "$conta" "" ;;
-    # A armadilha do CLAUDE.md: DROP FUNCTION + CREATE devolve o ACL ao default (EXECUTE a PUBLIC); o
-    # CREATE OR REPLACE preservaria. O anon passa a executar e só a tabela o barra — o P13 vê a troca.
     migracao_nova_drop_create)
-                         cv_migracao_nova "$fn" "CREATE OR REPLACE FUNCTION public.get_whatsapp_proposta_cotacao(" \
-                           $'DROP FUNCTION public.get_whatsapp_proposta_cotacao(uuid, text, bigint[]);\nCREATE FUNCTION public.get_whatsapp_proposta_cotacao(' ;;
+                         cv_migracao_nova "$fn" "$cria" "$recria" ;;
+    migracao_nova_drop_create_sem_anon)
+                         cv_migracao_nova "$fn" "$cria" "$recria" \
+                           "REVOKE ALL ON FUNCTION $fn FROM PUBLIC; GRANT EXECUTE ON FUNCTION $fn TO authenticated, service_role;" ;;
     *) echo "sabotagem desconhecida: $1" >&2; return 1 ;;
   esac
 }
 
 # rodada <sabotagem|""> — clona o banco-base e roda o cenário no clone. Exit 3 = a sabotagem não
-# aplicou (âncora sumiu do schema vivo): isso é FALHA da falsificação, nunca dente.
+# aplicou (âncora sumiu do schema vivo); exit 4 = o clone falhou (a rodada não pode seguir no banco da
+# sabotagem anterior). Os dois são FALHA da falsificação, nunca dente.
 rodada() {
-  adm -c "DROP DATABASE IF EXISTS rodada;" -c "CREATE DATABASE rodada TEMPLATE base;"
+  adm -c "DROP DATABASE IF EXISTS rodada;" -c "CREATE DATABASE rodada TEMPLATE base;" || return 4
   DB=rodada
   if [ -n "$1" ]; then sabotagem "$1" || return 3; fi
   cenario

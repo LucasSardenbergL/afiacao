@@ -3,7 +3,7 @@
 # contra o schema que PRODUÇÃO executa (db/lib/corpo-vivo.sh: snapshot + ACL medido em prod + cadeia viva
 # das migrations que tocam a RPC e as tabelas do canal).
 #
-# O que ela assevera, cada um com sabotagem própria:
+# O que ela assevera (cada regra com sabotagem própria):
 #  • o funil RODA para o staff (F0) — com o ACL de prod. Em 2026-09-30 NÃO roda: a RPC filtra por
 #    sales_orders.whatsapp_conversation_id, e authenticated não lê essa coluna (o GRANT por coluna da
 #    20260709163500 é anterior a ela). A releitura do orçamento por whatsapp_proposta_dedupe
@@ -13,7 +13,10 @@
 #  • os estágios (enviado = sent/delivered/read; queued é reserva), "respondeu" só com inbound DEPOIS do
 #    envio e em até 24h (a mensagem que sai não conta), proposta/pedido SÓ com o elo explícito (pedido de
 #    telefone não conta), receita só do que virou pedido Omie, o período com piso de 1 dia e teto de 365;
-#  • a RLS: o cliente lê tudo 0; o anon não executa (nega o EXECUTE da RPC, não o SELECT da tabela);
+#  • a RLS: o cliente sem pedido lê tudo 0; o cliente COM pedidos do canal lê só os dele (envios e
+#    mensagens seguem de staff) — com o GRANT, ele passa a ler as 2 colunas nas PRÓPRIAS linhas, e se
+#    isso é desejado faz parte da decisão do conserto; o anon não executa (nega o EXECUTE da RPC, não o
+#    SELECT da tabela);
 #  • o hardening por coluna segue: o staff não lê omie_payload.
 #
 # Até 2026-09-30 esta prova re-aplicava as migrations de 07-13 sobre o snapshot; o re-dump 9c9aae173
@@ -55,11 +58,12 @@ P()   { "$PGBIN/psql" -X -p "$PORT" -h "$TMPD" -U postgres -d "$DB" "$@"; }
 adm() { "$PGBIN/psql" -X -p "$PORT" -h "$TMPD" -U postgres -d postgres -v ON_ERROR_STOP=1 -q "$@"; }
 adm -c "CREATE DATABASE base;"
 
-# Os objetos que esta prova assevera: a migration nova que fizer DDL sobre eles entra na cadeia sozinha.
+# Os objetos que esta prova assevera — a RPC, as tabelas do canal e sales_orders (o elo e o GRANT por
+# coluna): a migration nova que fizer DDL sobre eles entra na cadeia sozinha, inclusive a do conserto.
 # shellcheck disable=SC2034  # consumida pelo db/lib/corpo-vivo.sh, que o shellcheck sem -x não segue
 CV_FUNCOES=(get_whatsapp_funil)
 # shellcheck disable=SC2034  # consumida pelo db/lib/corpo-vivo.sh, que o shellcheck sem -x não segue
-CV_TABELAS=(whatsapp_template_sends whatsapp_messages whatsapp_conversations)
+CV_TABELAS=(whatsapp_template_sends whatsapp_messages whatsapp_conversations sales_orders)
 # shellcheck disable=SC1091  # idem: versionado ao lado, em db/lib/
 . "$REPO_ROOT/db/lib/corpo-vivo.sh"
 echo "→ banco-base: stubs + prelude + snapshot + ACL de prod + cadeia viva…"
@@ -81,10 +85,10 @@ INSERT INTO public.user_roles (user_id, role) VALUES
 INSERT INTO public.whatsapp_templates (nome, categoria, corpo_referencia) VALUES ('teste_funil', 'utility', 'Ola, {{1}}!');
 INSERT INTO public.whatsapp_conversations (id, phone_key, status) VALUES
   ('$(c 1)', 'c1', 'aberta'), ('$(c 2)', 'c2', 'aberta'), ('$(c 3)', 'c3', 'aberta'),
-  ('$(c 4)', 'c4', 'aberta'), ('$(c 5)', 'c5', 'aberta');
+  ('$(c 4)', 'c4', 'aberta'), ('$(c 5)', 'c5', 'aberta'), ('$(c 6)', 'c6', 'aberta');
 -- s1 sent (sem resposta) · s2 delivered (in +1h → respondeu) · s3 read (in +30h → fora da janela)
 -- s4 failed · s5 delivered (in ANTES do envio → não conta) · s6 queued (reserva, não é envio)
--- s7 sent (só mensagem que SAI depois → não conta)
+-- s7 sent (só mensagem que SAI depois → não conta) · s8 failed com inbound +1h (falha não é resposta)
 INSERT INTO public.whatsapp_template_sends (template_nome, conversation_id, phone_e164, dedupe_key, status, created_at) VALUES
   ('teste_funil', '$(c 1)', '5537000000001', 's1', 'sent',      now() - interval '2 days 2 hours'),
   ('teste_funil', '$(c 2)', '5537000000002', 's2', 'delivered', now() - interval '2 days 2 hours'),
@@ -92,12 +96,14 @@ INSERT INTO public.whatsapp_template_sends (template_nome, conversation_id, phon
   ('teste_funil', '$(c 1)', '5537000000001', 's4', 'failed',    now() - interval '2 days 2 hours'),
   ('teste_funil', '$(c 4)', '5537000000004', 's5', 'delivered', now() - interval '20 hours'),
   ('teste_funil', '$(c 2)', '5537000000002', 's6', 'queued',    now() - interval '20 hours'),
-  ('teste_funil', '$(c 5)', '5537000000005', 's7', 'sent',      now() - interval '20 hours');
+  ('teste_funil', '$(c 5)', '5537000000005', 's7', 'sent',      now() - interval '20 hours'),
+  ('teste_funil', '$(c 6)', '5537000000006', 's8', 'failed',    now() - interval '2 days 2 hours');
 INSERT INTO public.whatsapp_messages (conversation_id, direction, body, created_at) VALUES
   ('$(c 2)', 'in',  'quero sim',      now() - interval '2 days 1 hour'),
   ('$(c 3)', 'in',  'tarde demais',   now() - interval '3 days' + interval '30 hours'),
   ('$(c 4)', 'in',  'antes do envio', now() - interval '21 hours'),
-  ('$(c 5)', 'out', 'so a gente fala', now() - interval '19 hours');
+  ('$(c 5)', 'out', 'so a gente fala', now() - interval '19 hours'),
+  ('$(c 6)', 'in',  'respondeu o que falhou', now() - interval '2 days 1 hour');
 -- o1 elo+Omie (1000) · o2 elo, orçamento da proposta (dedupe) · o3 Omie SEM elo (telefone)
 -- o4 elo+Omie a 60d (fora de 30d) · o6 elo+Omie a 400d (fora do teto de 365)
 INSERT INTO public.sales_orders (id, customer_user_id, created_by, account, total, status, omie_pedido_id,
@@ -115,17 +121,17 @@ chk() {  # <id> <descrição> <obtido> <esperado>
   else echo "  ✗ $1 $2 — got[$3] exp[$4]"; FAIL=$((FAIL+1)); FALHOS="$FALHOS$1 "; fi
 }
 # q_como <papel> <uid ou ''> <sql> — a leitura COMO o app: o papel e o JWT fixados na MESMA sessão que
-# lê (vários -c, um psql só), como o PostgREST faz. Na falha, o valor é o erro — assert vermelho com o
-# porquê.
+# lê (vários -c, um psql só), como o PostgREST faz. ON_ERROR_STOP: um SET ROLE que falhe aborta, em vez
+# de deixar a leitura rodar como superusuário. Na falha, o valor é o erro — assert vermelho com o porquê.
 q_como() {
   local claims ctx out
   if [ -n "$2" ]; then claims="{\"sub\":\"$2\",\"role\":\"$1\"}"; else claims="{\"role\":\"$1\"}"; fi
   ctx=(-c "SET ROLE $1" -c "SET request.jwt.claims = '$claims'" -c "$3")
-  if out="$(P -tA -q "${ctx[@]}" 2>/dev/null)"; then printf '%s' "$out" | tr '\n' ' ' | sed 's/ *$//'
-  else printf 'ERRO: %s' "$(P -tA -q "${ctx[@]}" 2>&1 >/dev/null | tr '\n' ' ' | cut -c1-300)"; fi
+  if out="$(P -v ON_ERROR_STOP=1 -tA -q "${ctx[@]}" 2>/dev/null)"; then printf '%s' "$out" | tr '\n' ' ' | sed 's/ *$//'
+  else printf 'ERRO: %s' "$(P -v ON_ERROR_STOP=1 -tA -q "${ctx[@]}" 2>&1 >/dev/null | tr '\n' ' ' | cut -c1-300)"; fi
 }
 # st_como <papel> <uid ou ''> <sql> — o veredito do comando COMO o app: 'OK' ou a SQLSTATE, com a camada
-# que negou quando é 42501 (prova.sqlstate, em db/lib/corpo-vivo.sh).
+# e o objeto que negaram quando é 42501 (prova.sqlstate, em db/lib/corpo-vivo.sh).
 st_como() { q_como "$1" "$2" "SELECT prova.sqlstate(\$cmd\$$3\$cmd\$);"; }
 # funil <uid> <dias> <colunas> — lê o funil COMO o app. Quando ele não roda, o valor diz por quê (a
 # SQLSTATE e a camada) em vez de um erro cru: quem impede o funil de rodar cai por VALOR no F0, e as
@@ -151,8 +157,8 @@ cenario() {
 
   echo "→ os estágios e a atribuição conservadora (30 dias)"
   chk F1 "enviados|entregues|lidos|falhas (queued é reserva, não envio)" \
-    "$(funil "$STAFF" 30 "enviados || '|' || entregues || '|' || lidos || '|' || falhas")" "5|3|1|1"
-  chk F2 "respondeu = inbound DEPOIS do envio e em até 24h (anterior, 30h e a que sai não contam)" \
+    "$(funil "$STAFF" 30 "enviados || '|' || entregues || '|' || lidos || '|' || falhas")" "5|3|1|2"
+  chk F2 "respondeu = inbound DEPOIS do envio e em até 24h (anterior, 30h, a que sai e a do envio que falhou não contam)" \
     "$(funil "$STAFF" 30 "respondidos")" "1"
   chk F3 "propostas|pedidos|receita só com o elo explícito (o de telefone não conta) e no período" \
     "$(funil "$STAFF" 30 "propostas || '|' || pedidos_omie || '|' || receita_omie")" "2|1|1000"
@@ -165,10 +171,12 @@ cenario() {
   echo "→ a RLS e o ACL como o app os vê"
   chk F7 "cliente lê o funil zerado (envios e mensagens são de staff; ele não tem pedido)" \
     "$(funil "$CLIENTE" 30 "enviados || '|' || respondidos || '|' || propostas")" "0|0|0"
+  chk F7b "o cliente COM pedidos do canal lê só os dele: enviados|propostas|pedidos|receita" \
+    "$(funil "$COMPRADOR" 30 "enviados || '|' || propostas || '|' || pedidos_omie || '|' || receita_omie")" "0|2|1|1000"
   chk F8 "anon não executa — nega o EXECUTE da RPC (42501/acl-funcao), não o SELECT da tabela" \
-    "$(st_como anon '' "SELECT * FROM public.get_whatsapp_funil(30)")" "42501/acl-funcao"
+    "$(st_como anon '' "SELECT * FROM public.get_whatsapp_funil(30)")" "42501/acl-funcao:get_whatsapp_funil"
   chk F9 "o hardening por coluna segue: staff não lê omie_payload (42501/acl-tabela)" \
-    "$(st_como authenticated "$STAFF" "SELECT omie_payload FROM public.sales_orders")" "42501/acl-tabela"
+    "$(st_como authenticated "$STAFF" "SELECT omie_payload FROM public.sales_orders")" "42501/acl-tabela:sales_orders"
   return 0
 }
 
@@ -182,8 +190,9 @@ cenario() {
 SABOTAGENS="elo_some:F3:F0,F1,F2 janela_frouxa:F2:F0,F1,F3 resposta_anterior_conta:F2:F0,F1,F3
             direcao_ignorada:F2:F0,F1,F3 queued_conta:F1:F0,F2,F3 receita_sem_filtro:F3:F0,F1,F2
             periodo_pedidos_some:F3:F0,F1,F2 sem_piso_de_dia:F5:F0,F4 sem_teto_de_ano:F6:F0,F3
-            definer_fura_rls:F7:F0,F1 anon_executa:F8:F0,F7 sem_o_grant_da_coluna:F0,F10:F8,F9
-            select_de_tabela:F9:F0,F1 migracao_nova_elo_some:F3:F0,F1 migracao_nova_drop_create:F8:F0,F1"
+            definer_fura_rls:F7,F7b:F0,F1 respondidos_sem_status:F2:F0,F1,F3 sends_sem_periodo:F4:F0,F3 anon_executa:F8:F0,F7 sem_o_grant_da_coluna:F0,F10:F8,F9
+            select_de_tabela:F9:F0,F1 migracao_nova_elo_some:F3:F0,F1 migracao_nova_drop_create:F8:F0,F1
+            migracao_nova_drop_create_sem_anon:F8:F0,F1"
 
 # sabotagem <nome> — troca UMA camada do schema vivo no banco da rodada. Status ≠0 = não aplicou.
 sabotagem() {
@@ -200,6 +209,8 @@ sabotagem() {
     periodo_pedidos_some)    cv_sabotar "$fn" "AND o.created_at >= periodo.inicio" "" ;;
     sem_piso_de_dia)         cv_sabotar "$fn" "$clamp" "least(p_dias, 365)" ;;
     sem_teto_de_ano)         cv_sabotar "$fn" "$clamp" "greatest(p_dias, 1)" ;;
+    respondidos_sem_status)  cv_sabotar "$fn" "WHERE s.status IN ('sent','delivered','read')" "WHERE true" ;;
+    sends_sem_periodo)       cv_sabotar "$fn" "WHERE s.created_at >= periodo.inicio" "WHERE true" ;;
     definer_fura_rls)        P -v ON_ERROR_STOP=1 -q -c "ALTER FUNCTION $fn SECURITY DEFINER;" ;;
     anon_executa)            P -v ON_ERROR_STOP=1 -q -c "GRANT EXECUTE ON FUNCTION $fn TO anon;" ;;
     sem_o_grant_da_coluna)   P -v ON_ERROR_STOP=1 -q -c "REVOKE SELECT (whatsapp_conversation_id, whatsapp_proposta_dedupe) ON public.sales_orders FROM authenticated;" ;;
@@ -210,14 +221,20 @@ sabotagem() {
     migracao_nova_drop_create)
                              cv_migracao_nova "$fn" "CREATE OR REPLACE FUNCTION public.get_whatsapp_funil(" \
                                $'DROP FUNCTION public.get_whatsapp_funil(integer);\nCREATE FUNCTION public.get_whatsapp_funil(' ;;
+    # A mesma, com o REVOKE … FROM PUBLIC que esquece o anon: o default de prod lhe deu EXECUTE EXPLÍCITO.
+    migracao_nova_drop_create_sem_anon)
+                             cv_migracao_nova "$fn" "CREATE OR REPLACE FUNCTION public.get_whatsapp_funil(" \
+                               $'DROP FUNCTION public.get_whatsapp_funil(integer);\nCREATE FUNCTION public.get_whatsapp_funil(' \
+                               "REVOKE ALL ON FUNCTION $fn FROM PUBLIC; GRANT EXECUTE ON FUNCTION $fn TO authenticated, service_role;" ;;
     *) echo "sabotagem desconhecida: $1" >&2; return 1 ;;
   esac
 }
 
 # rodada <sabotagem|""> — clona o banco-base e roda o cenário no clone. Exit 3 = a sabotagem não
-# aplicou (âncora sumiu do schema vivo): isso é FALHA da falsificação, nunca dente.
+# aplicou (âncora sumiu do schema vivo); exit 4 = o clone falhou (a rodada não pode seguir no banco da
+# sabotagem anterior). Os dois são FALHA da falsificação, nunca dente.
 rodada() {
-  adm -c "DROP DATABASE IF EXISTS rodada;" -c "CREATE DATABASE rodada TEMPLATE base;"
+  adm -c "DROP DATABASE IF EXISTS rodada;" -c "CREATE DATABASE rodada TEMPLATE base;" || return 4
   DB=rodada
   if [ -n "$1" ]; then sabotagem "$1" || return 3; fi
   cenario

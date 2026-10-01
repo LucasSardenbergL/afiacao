@@ -2,8 +2,8 @@
 -- `--no-privileges`). Aplicado por db/lib/corpo-vivo.sh ANTES da cadeia viva.
 -- =================================================================================================
 -- MEDIDO em 2026-09-30 via psql-ro: o default do Supabase (todo objeto novo nasce com ALL para anon,
--- authenticated e service_role) + as 546 EXCEÇÕES que prod tem — tabelas (81), colunas e funções (297) cujo
--- ACL foge do default. Sem isto, sob `SET ROLE authenticated` a prova veria "permission denied" no lugar
+-- authenticated e service_role) + as 556 EXCEÇÕES que prod tem — tabelas (81), colunas e funções (307, 10 delas só
+-- do dono) cujo ACL foge do default — + o DEFAULT PRIVILEGES de prod. Sem isto, sob `SET ROLE authenticated` a prova veria "permission denied" no lugar
 -- da RLS, ou o contrário: veria passar o que prod nega. Com um `GRANT ALL ON ALL TABLES` de mentira, as
 -- provas de julho não podiam ver o funil do canal quebrado em prod (docs/historico/provas-canal-revividas.md).
 --
@@ -21,6 +21,13 @@ GRANT USAGE ON SCHEMA private TO anon, authenticated, service_role;
 GRANT ALL ON ALL TABLES    IN SCHEMA public TO anon, authenticated, service_role;
 GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, service_role;
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public, private TO anon, authenticated, service_role;
+-- O DEFAULT PRIVILEGES de prod (pg_default_acl, medido): objeto que o postgres cria em public nasce com
+-- ALL/EXECUTE explícito para os 3 papéis. Sem isto, a função que a cadeia recria por DROP+CREATE
+-- voltaria só com o PUBLIC do PG — e um `REVOKE … FROM PUBLIC` que esquece o anon o deixaria NEGADO
+-- aqui e EXECUTANDO em prod (a armadilha do CLAUDE.md, ao contrário).
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON SEQUENCES TO anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO anon, authenticated, service_role;
 
 DO $acl$
 DECLARE
@@ -96,6 +103,8 @@ BEGIN
     ('f', 'data_health_watchdog()', 'authenticated,service_role', ''),
     ('f', 'delete_push_subscription(text)', 'authenticated,service_role', ''),
     ('f', 'deploy_atestacoes_colher()', 'service_role', ''),
+    ('f', 'deploy_sonda_disparar(text[])', '', ''),
+    ('f', 'deploy_sonda_resultados_colher()', '', ''),
     ('f', 'desconto_backfill_aplicar(jsonb)', 'service_role', ''),
     ('f', 'desfazer_contato_radar(uuid)', 'authenticated,service_role', ''),
     ('f', 'desfazer_contato_rota(uuid)', 'authenticated,service_role', ''),
@@ -223,6 +232,7 @@ BEGIN
     ('f', 'pode_ver_carteira_completa(uuid)', 'service_role', ''),
     ('f', 'private.atp_disponivel(text,bigint,uuid)', 'service_role', ''),
     ('f', 'private.atp_pedido_canonico(uuid)', 'service_role', ''),
+    ('f', 'private.atp_reconciliar_job()', '', ''),
     ('f', 'private.cap_carteira_escrever(uuid)', 'authenticated,service_role', ''),
     ('f', 'private.cap_carteira_ler(uuid)', 'authenticated,service_role', ''),
     ('f', 'private.cap_compras_escrever(uuid)', 'authenticated,service_role', ''),
@@ -234,11 +244,18 @@ BEGIN
     ('f', 'private.cap_preco_escrever(uuid)', 'authenticated,service_role', ''),
     ('f', 'private.cap_regua_log_escrever(uuid)', 'authenticated', ''),
     ('f', 'private.carteira_visivel_para(uuid,uuid)', 'authenticated,service_role', ''),
+    ('f', 'private.custo_canonico(numeric,numeric)', '', ''),
+    ('f', 'private.expirar_reservas_vencidas_job()', '', ''),
+    ('f', 'private.farmer_expirar_pendentes_do_dono_anterior()', '', ''),
+    ('f', 'private.fbrec_sem_margem()', '', ''),
     ('f', 'private.frec_desfecho_imutavel()', 'PUBLIC', ''),
+    ('f', 'private.frec_sem_margem()', '', ''),
     ('f', 'private.is_super_admin(uuid)', 'authenticated,service_role', ''),
     ('f', 'private.margem_cliente_agregada()', 'service_role', ''),
     ('f', 'private.padrao_like_contem(text)', 'PUBLIC', ''),
     ('f', 'private.pode_ver_carteira_completa(uuid)', 'authenticated,service_role', ''),
+    ('f', 'private.regua_num_finito(numeric)', '', ''),
+    ('f', 'private.regua_piso_calc(numeric,numeric,numeric[],numeric)', '', ''),
     ('f', 'promover_candidato_primeira_compra(text,bigint)', 'authenticated,service_role', ''),
     ('f', 'protect_master_config()', 'service_role', ''),
     ('f', 'public.set_config(text,text,boolean)', 'authenticated,service_role', ''),
@@ -601,7 +618,7 @@ BEGIN
   RAISE NOTICE 'corpo-vivo-acl: % exceção(ões) de prod aplicada(s), % objeto(s) ausente(s) do snapshot', v_n, v_ausente;
 END $acl$;
 
-/* A consulta de medição (rode no psql-ro com -tA; a saída são as linhas do VALUES acima):
+/* As consultas de medição (rode no psql-ro com -tA). (1) As linhas do VALUES acima:
 WITH papeis AS (SELECT unnest(ARRAY['anon','authenticated','service_role']) AS r),
 tab AS (
   SELECT c.oid, n.nspname||'.'||c.relname AS obj, p.r,
@@ -619,13 +636,14 @@ col AS (
     CROSS JOIN LATERAL aclexplode(a.attacl) x JOIN pg_roles g ON g.oid = x.grantee
    WHERE n.nspname = 'public' AND a.attnum > 0 AND g.rolname IN ('anon','authenticated','service_role')),
 fn AS (
+  -- toda função entra (a entrada do dono garante a linha); `quem` = '' quando nenhum dos 4 executa
   SELECT p.oid::regprocedure::text AS obj,
-         string_agg(coalesce(g.rolname, 'PUBLIC'), ',' ORDER BY coalesce(g.rolname, 'PUBLIC')) AS quem
+         coalesce(string_agg(coalesce(g.rolname, 'PUBLIC'), ',' ORDER BY coalesce(g.rolname, 'PUBLIC'))
+                    FILTER (WHERE x.grantee = 0 OR g.rolname IN ('anon','authenticated','service_role')), '') AS quem
     FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
     CROSS JOIN LATERAL aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) x
     LEFT JOIN pg_roles g ON g.oid = x.grantee
    WHERE n.nspname IN ('public','private') AND p.prokind IN ('f','p')
-     AND (x.grantee = 0 OR g.rolname IN ('anon','authenticated','service_role'))
    GROUP BY 1)
 SELECT format('    (%L, %L, %L, %L),', k, o, r, v) FROM (
   SELECT 't' AS k, t.obj AS o, t.r, coalesce(t.privs, '') AS v FROM tab t JOIN tab_exc e USING (obj)
@@ -635,4 +653,10 @@ SELECT format('    (%L, %L, %L, %L),', k, o, r, v) FROM (
   UNION ALL
   SELECT 'f', obj, quem, '' FROM fn WHERE quem <> 'PUBLIC,anon,authenticated,service_role'
 ) s ORDER BY k, o, r, v;
+
+(2) O DEFAULT PRIVILEGES — tem de seguir dando ALL/EXECUTE aos 3 papéis em public (as 3 linhas acima):
+SELECT pg_get_userbyid(d.defaclrole), n.nspname, d.defaclobjtype, coalesce(g.rolname, 'PUBLIC'), x.privilege_type
+  FROM pg_default_acl d LEFT JOIN pg_namespace n ON n.oid = d.defaclnamespace
+  CROSS JOIN LATERAL aclexplode(d.defaclacl) x LEFT JOIN pg_roles g ON g.oid = x.grantee
+ WHERE n.nspname = 'public' ORDER BY 1, 3, 4, 5;
 */
