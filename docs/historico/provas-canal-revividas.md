@@ -1,4 +1,4 @@
-# As 3 provas do canal WhatsApp revividas — e o funil que não roda para o staff em prod
+# As 3 provas do canal WhatsApp revividas — e o funil que não rodava para o staff em prod
 
 **2026-09-30.** Fatia 2 (a parte do canal) da revivência registrada em
 [provas-db-mortas-fora-do-nucleo.md](provas-db-mortas-fora-do-nucleo.md). As três morriam no setup
@@ -9,7 +9,7 @@ não é idempotente); a da proposta nasceu morta.
 |---|---|---|
 | `test-whatsapp-hsm.sh` | `policy "wt_staff_read" … already exists` (re-dump `9c9aae173`, #1509) | revivida, **núcleo**: 18 asserts, 17 sabotagens |
 | `test-whatsapp-proposta.sh` | idem — nasceu morta (`250754cdf`) | revivida, **núcleo**: 17 asserts, 20 sabotagens |
-| `test-whatsapp-funil.sh` | idem | revivida e **VERMELHA**: achou o funil quebrado em prod; fora do núcleo até o conserto |
+| `test-whatsapp-funil.sh` | idem | revivida; achou o funil quebrado em prod — **consertado** pela `20261001100000` e no **núcleo**: 12 asserts, 18 sabotagens |
 
 A parte da carteira (`melhorias-rpcs`, `fornecedores-classificacao`) fica para a próxima sessão — o
 alvo dela já está medido (abaixo).
@@ -24,7 +24,8 @@ objetos) mostrou em `sales_orders`/`order_items` o constraint trigger de coerên
 guardam também as tabelas que a RPC lê, e a cadeia viva pega as 4 migrations da proposta (1 no funil);
 a do HSM sai vazia, e isso é legítimo. Fora de qualquer cadeia ficou a `20260830122702`, que tira de
 `profiles` um trigger que o snapshot ainda tem — versão anterior ao corte, mergeada depois do dump (só
-dispara para employee com o CPF do master; nenhuma prova o aciona).
+dispara para employee com o CPF do master; nenhuma prova do canal o aciona — a de Melhorias, da fatia 2b,
+o dispara no INSERT de profiles de clientes, sem efeito).
 
 O que o snapshot não carrega de jeito nenhum é o **ACL**: o dump é `--no-privileges`. As provas de julho
 davam `GRANT ALL ON ALL TABLES` a anon/authenticated — um ACL que prod não tem. Medido: 81 tabelas e 297
@@ -70,10 +71,10 @@ não foi ligado. Quando ligar, o funil e o "reusar orçamento" falham para todo 
 **O conserto proposto** é o idioma do próprio hardening — as duas colunas entram na lista por coluna:
 `GRANT SELECT (whatsapp_conversation_id, whatsapp_proposta_dedupe) ON public.sales_orders TO
 authenticated;` (`omie_payload`/`omie_response` seguem fechadas, nenhum SELECT de tabela). Validado num
-espelho com o GRANT só no fixture: 12/0 e falsificação 18/0 nos dois locales. **Não está no repo:** a
+espelho com o GRANT só no fixture: 12/0 e falsificação 18/0 nos dois locales. Ficou FORA do #2703: a
 sessão tentou escrever a migration e o classificador de permissão a barrou (mudança de autorização que
-chega a prod) — é decisão do founder. A prova do funil fica fora do núcleo até prod ter o GRANT e o
-fixture ser re-medido.
+chega a prod) — a decisão era do founder. **Aprovado em 2026-10-01**, com o efeito do F7b aceito (o
+cliente com pedidos do canal lê as 2 colunas nas próprias linhas); entrou no PR seguinte (abaixo).
 
 A classe tem mais um membro medido, sem leitor authenticated: `omie_reconciliado_em` (nenhum uso em
 `src/`).
@@ -88,8 +89,8 @@ que seguem verdes; o juiz é o do molde. Controle verde na MESMA invocação, an
 |---|---|---|---|
 | HSM | `PASS=18  FAIL=0` | `SABOTAGENS: 17 vermelhas / 0 falhas` | 17/0 |
 | proposta | `PASS=17  FAIL=0` | `SABOTAGENS: 20 vermelhas / 0 falhas` | 20/0 |
-| funil, ACL de prod | `PASS=2  FAIL=10` (o achado) | — (controle vermelho aborta) | — |
-| funil, espelho com o GRANT | `PASS=12  FAIL=0` | `SABOTAGENS: 18 vermelhas / 0 falhas` | 18/0 |
+| funil, ACL de prod ANTES do conserto | `PASS=2  FAIL=10` (o achado) | — (controle vermelho aborta) | — |
+| funil, com a `20261001100000` na cadeia | `PASS=12  FAIL=0` | `SABOTAGENS: 18 vermelhas / 0 falhas` | 18/0 |
 
 O juiz pegou, ao vivo, duas declarações MINHAS erradas: `seed_incompleto` apagava justo o template que o
 H2 usa (a FK derrubou um verde declarado), e a sabotagem do NaN tira as duas guardas, então o Infinity
@@ -118,6 +119,36 @@ HSM 4 s + 26 s, proposta 6 s + 38 s.
   `<> 'NaN'` é REDUNDANTE com a `< 'Infinity'` (medido: `'NaN'::numeric < 'Infinity'` é falso), então a
   sabotagem do NaN tira as duas. O UNIQUE da proposta é escrito COMO o staff (`cap_pedido_escrever`).
 - **Não portado:** o `GRANT ALL ON ALL TABLES` (ficção) e as sabotagens por stub.
+
+## O conserto (2026-10-01)
+
+A `20261001100000_sales_orders_colunas_whatsapp_select.sql` — PRE (a tabela e as 2 colunas existem), o
+GRANT por coluna e POS (as 2 legíveis por authenticated; `omie_payload`/`omie_response` fechadas;
+nenhum SELECT de TABELA; anon sem a coluna), sem `BEGIN/COMMIT` para o `db:aplicar`. Como a prova do
+funil guarda `sales_orders`, a cadeia dinâmica a pegou SOZINHA — a prova ficou verde sem editar o
+fixture (12/0; falsificação 18/0 nos dois locales, agora do repo e não de um espelho) e entrou no
+núcleo; e o PRE/POS dela passou contra o ACL de prod reproduzido, que é o ensaio dela. Runner com as 3
+linhas do canal: `SQL_PROOF_OK provas=3/3 falsificacoes=3/3` (funil 5 s + 35 s no M2).
+
+**O gate de autorização não entendia GRANT por coluna.** O `authz:check` barrou a migration com
+`GRANT_NAO_PARSEAVEL`: o parser dividia a lista de privilégios por vírgula SEM respeitar parênteses
+(`SELECT (a, b)` virava dois pedaços irreconhecíveis), e mesmo com uma coluna só ele contaria o GRANT
+como SELECT de TABELA — a reabertura que o fecho de `sales_orders` proíbe. O conserto é estrito: o
+contrato da tabela fechada ganhou `colunasPermitidas` (para `sales_orders`, o attacl medido em prod —
+25 colunas no SELECT, 11 no UPDATE — mais as 2 do canal), e o GRANT por coluna só passa com TODA
+coluna no contrato; tabela sem contrato de coluna segue contando-o como de tabela, como antes. 7 testes
+novos, e a falsificação por mutação: "o contrato sempre libera" derruba 4, "a vírgula ingênua"
+derruba 3.
+
+**Deploy — aplicado em 2026-10-01** pelo envelope, com a aprovação do founder e antes do merge do
+#2715 (o funil seguia quebrado em prod enquanto o CI rodava): `db:aplicar --ensaio` ok contra o ACL
+REAL de prod (PRE + GRANT + POS1–POS4, ROLLBACK) → apply real, tentativa #216 virou recibo na mesma
+transação. 2ª testemunha por `psql-ro`, outra conexão, depois do commit: as 2 colunas legíveis por
+authenticated = `true`; `omie_payload`/`omie_response` = `false`; SELECT de tabela = `false`; anon na
+coluna = `false`; ledger #216 `aplicada`. Como as migrations custom recentes, fica no ledger
+`db_aplicacoes`, não em `supabase_migrations.schema_migrations` (medido: as 4 de 09-29 a 10-01 aplicadas
+pelo envelope seguem esse caminho). O fixture de ACL foi medido ANTES do apply; a prova do funil pega o
+GRANT pela cadeia, então a próxima re-medição só o confirma.
 
 ## Revisão independente (Caminho B)
 

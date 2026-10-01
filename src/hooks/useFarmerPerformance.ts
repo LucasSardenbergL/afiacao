@@ -4,6 +4,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { proporcaoChurnBaixo } from '@/lib/scoring/churn';
+import { addDias, hojeSP } from '@/lib/time/sp-day';
 
 export interface PerformanceScore {
   id: string;
@@ -191,7 +192,6 @@ export const useFarmerPerformance = () => {
         return;
       }
 
-      const periodEnd = new Date();
       const periodStart = new Date();
       periodStart.setDate(periodStart.getDate() - periodDays);
       const startStr = periodStart.toISOString();
@@ -324,8 +324,8 @@ export const useFarmerPerformance = () => {
       // Save score
       const scoreData = {
         farmer_id: farmerId,
-        period_start: periodStart.toISOString().split('T')[0],
-        period_end: periodEnd.toISOString().split('T')[0],
+        period_start: addDias(hojeSP(), -periodDays), // o dia de SP do início da janela (o UTC vira às 21h BRT)
+        period_end: hojeSP(),
         iee_ptpl_usage: ieePtplUsage,
         iee_objective_adherence: ieeObjectiveAdherence,
         iee_questions_usage: ieeQuestionsUsage,

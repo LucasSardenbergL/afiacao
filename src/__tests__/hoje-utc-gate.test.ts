@@ -15,8 +15,12 @@ const DIRS = ['src', 'supabase/functions'];
 const EXT = /\.(ts|tsx)$/;
 const IGNORAR = /(\.test\.|_test\.|\.d\.ts$|__tests__|\.stories\.)/;
 
-/** Pisos por universo: zero é leitura quebrada, nunca "repo sem a classe". Medido em 2026-10-01: 1.491 e 243. */
-const PISOS = { src: 1300, edges: 200, sitios: 100 } as const;
+/**
+ * Pisos por universo: zero é leitura quebrada, nunca "repo sem a classe". Medido em 2026-10-01: 1.491 e 243.
+ * O de sítios ancora no que NÃO se conserta — falsos-positivos, latentes sem dono e UTC-consistentes (42 em
+ * 2026-10-01): as fases quitam os afetados e o total desce até perto dele, sem nunca precisar cruzá-lo.
+ */
+const PISOS = { src: 1300, edges: 200, sitios: 35 } as const;
 
 function listar(dir: string, acc: string[] = []): string[] {
   for (const nome of readdirSync(resolve(RAIZ, dir))) {
@@ -125,12 +129,14 @@ describe('gate: o "hoje" UTC no TypeScript (classe ii do fuso, fase 3)', () => {
   });
 
   it('a contagem é identidade: o MESMO trecho a mais num arquivo da baseline reprova', () => {
-    const alvo = 'src/hooks/useExportNaoVinculados.ts';
-    const base = CONHECIDOS.find((c) => c.arquivo === alvo && c.trecho === 'new Date().toISOString().slice(0, 10)');
+    // A âncora é um FALSO-POSITIVO (aritmética pura sobre data dada): as fases consertam os afetados e
+    // quitam as entradas deles; um falso-positivo fica na baseline enquanto o código existir.
+    const alvo = 'src/lib/whatsapp/route-schedule.ts';
+    const base = CONHECIDOS.find((c) => c.arquivo === alvo && c.trecho === 'd.toISOString().slice(0, 10)');
     expect(base?.n).toBe(1);   // controle: o arquivo tem 1 na baseline
-    const fonte = readFileSync(resolve(RAIZ, alvo), 'utf8') + '\nexport const outra = new Date().toISOString().slice(0, 10);\n';
+    const fonte = readFileSync(resolve(RAIZ, alvo), 'utf8') + '\nexport const outra = (d: Date) => d.toISOString().slice(0, 10);\n';
     const { novos } = confrontar([...sitios.filter((s) => s.arquivo !== alvo), ...detectar(alvo, fonte)], CONHECIDOS);
-    expect(novos).toEqual([`${alvo} · new Date().toISOString().slice(0, 10) (2× no arquivo, baseline 1)`]);
+    expect(novos).toEqual([`${alvo} · d.toISOString().slice(0, 10) (2× no arquivo, baseline 1)`]);
   });
 
   it('toda entrada da baseline diz o veredito e o porquê; afetado diz o dono', () => {

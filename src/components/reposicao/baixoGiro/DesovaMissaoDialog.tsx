@@ -15,10 +15,10 @@ import { autoSatisfyDaCategoria } from '@/lib/tarefas/categoria-map';
 import { formatarMissaoDesova } from '@/lib/reposicao/desova-helpers';
 import { track } from '@/lib/analytics';
 import type { RowExcesso } from './types';
+import { addDias, hojeSP } from '@/lib/time/sp-day';
 
 function dataMaisDias(dias: number): string {
-  const d = new Date(Date.now() + dias * 86400000);
-  return d.toISOString().slice(0, 10);
+  return addDias(hojeSP(), dias); // o due_date persistido é dia de SP (o UTC vira às 21h BRT)
 }
 
 export function DesovaMissaoDialog({ open, onOpenChange, alvos, empresa }: {

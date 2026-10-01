@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import { EMPRESA, type Sugestao, type ConvertForm, type LinhaViewSugeridos, type CandidatoNegociacao } from "./types";
 import { lastDayOfNextMonth } from "./helpers";
 import { avaliarNegociacao, clampDesconto, DESCONTO_PADRAO } from "@/lib/reposicao/negociacao-valor-helpers";
+import { addDias, hojeSP } from "@/lib/time/sp-day";
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { extrairCodigoSayerlack } from "./helpers";
 
@@ -105,8 +106,6 @@ export function useNegociacaoParalela() {
   // "Vou negociar este" → cria sugestão acao_tomada (puxa da fila pro acompanhamento).
   const handleVouNegociar = async (c: CandidatoNegociacao) => {
     try {
-      const validoAte = new Date();
-      validoAte.setDate(validoAte.getDate() + 30);
       const { error } = await supabase.from("sugestao_negociacao_paralela").insert({
         empresa: EMPRESA,
         sku_codigo_omie: c.sku_codigo_omie,
@@ -116,8 +115,8 @@ export function useNegociacaoParalela() {
         preco_medio_unitario: c.preco_compra,
         status: "acao_tomada",
         data_acao: new Date().toISOString(),
-        data_geracao: new Date().toISOString().slice(0, 10),
-        valido_ate: validoAte.toISOString().slice(0, 10),
+        data_geracao: hojeSP(), // o dia de SP — o mesmo do DEFAULT da coluna (20260930230623)
+        valido_ate: addDias(hojeSP(), 30),
       } as never);
       if (error) throw error;
       toast.success(`Negociação iniciada para ${c.sku_descricao ?? c.sku_codigo_omie}.`);

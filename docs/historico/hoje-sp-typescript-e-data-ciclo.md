@@ -293,6 +293,34 @@ união, nunca `n - parte.length`.
   que é só exibição noturna e com 0 linhas.
 - **Edges:** nenhuma.
 
+## Fases reposição e resto (só front)
+
+São 14 sítios em 13 entradas, e a baseline cai de 98 para 85:
+
+| Onde | O que era | Veredito |
+|---|---|---|
+| `TrocaParceiroDialog` (2), `useCadeiaLogistica` | o default de `dataTroca` e o `valido_ate` da etapa encerrada, **persistidos** com o dia UTC | afetado-alto |
+| `useNegociacaoParalela` | o `data_geracao` explícito em UTC sobrescrevia o DEFAULT de SP da coluna (fase 2); o `valido_ate` era `setDate` local + ISO UTC | afetado-alto (2) |
+| `DesovaMissaoDialog` | o `due_date` da tarefa de desova, persistido | afetado-alto |
+| `useFarmerPerformance` | `period_start`/`period_end` gravados em `farmer_performance_scores` | afetado-alto (2) |
+| `SkuDetailSheet` | os buckets do gráfico de 90 dias (à noite: sem o dia mais antigo, com um "amanhã" vazio) | afetado-baixo |
+| `useBaixoGiro`, `useExcessoEstoque` | dias sem vender com +1 das 21h às 24h BRT | afetado-baixo (2) |
+| `useSlaFornecedor`, `AdminReposicaoBaixoGiro`, `useExportNaoVinculados` | o nome do CSV baixado | afetado-baixo (3) |
+
+No `useFarmerPerformance`, o `period_start` é o dia de SP do início da janela. O instante da janela (`startStr`)
+segue o mesmo, então o rótulo e a consulta passam a falar do mesmo dia.
+
+O gate ajusta 2 âncoras que dependiam de sítios que as fases consertam:
+- o teste de "contagem" passa a ancorar num FALSO-POSITIVO estável (`route-schedule.ts`), e não no
+  `useExportNaoVinculados`, que esta fase conserta;
+- o piso de "detector cego" passa a ancorar no que NÃO se conserta (falsos-positivos, latentes sem dono e
+  UTC-consistentes: 42 sítios): 100 → 35.
+
+Mutcheck de novo: 18/18.
+
+Depois desta fase, os afetados que sobram na baseline são só os `[fase datas-omie-e-edges]`: 16 edges e 54
+sítios. Deploy desta fase: só o Publish (founder).
+
 ## Fora, com dono
 
 - **O gate de TS** — FEITO no PR seguinte: `src/__tests__/hoje-utc-gate.test.ts` + `src/lib/gates/hoje-utc.ts`
@@ -305,8 +333,10 @@ união, nunca `n - parte.length`.
     versão não via: `const cutoff = ….toISOString()` e depois `cutoff.slice(0, 10)`, no
     `visit-score-recalc-batch`. É latente: só roda no cron das 04:00 BRT, quando o dia UTC é o de SP.
   - Varredura dessa forma: 1 caso no repo inteiro.
-- **As fases de TS por domínio**: financeiro — FEITO; visitas — FEITO (as seções acima); as datas mandadas
-  ao Omie (forma B) e o resto — `[fase datas-omie-e-edges]`, `[fase reposicao]`, `[fase resto]` na baseline.
+- **As fases de TS por domínio**: financeiro, visitas, reposição e resto — FEITAS (as seções acima). Falta
+  `[fase datas-omie-e-edges]`: 16 edges e 54 sítios, entre eles o `dDataPosicao` do `sync-reprocess` em D+1
+  toda noite (cron 21:15/23:15/23:30 BRT). Pede 16 deploys do founder e tem trecho money-path (estoque,
+  vendas): fica para uma sessão própria, com o Codex de volta.
 - **Anotado, fora da classe:** `_data_health_compute` converte `saldo_data` (date) em instante no fuso da
   sessão (a idade do saldo sai 3h maior; limiar de 36h); as 4 RPCs de ciclo têm EXECUTE para PUBLIC/anon
   (SECURITY INVOKER: a RLS das tabelas é quem barra).

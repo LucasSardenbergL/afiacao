@@ -489,6 +489,13 @@ mesma imposição do `pg_net`: o `http_post` só ENFILEIRA e o worker de fundo s
 enquanto o SQL Editor roda o batch inteiro como UMA transação. Medido 2026-08-24 sondando a oitava leva
 (#1937); `format()` provado contra prod em 2026-09-06 (#2278).
 
+⚠️ **Pelo `db:aplicar` a célula NÃO volta — o passo vem por NOTICE, no log.** O executor roda o arquivo
+dentro do `aplicar_sql()`, por `EXECUTE`, que descarta o resultado do SELECT (2 sessões seguiram o
+cabeçalho antigo até um log vazio, #2578/#2593). Desde 2026-09-27 o bloco de disparo repete o texto
+num NOTICE entre `SONDA_PASSO_<n>_INICIO`/`_FIM`, e o próprio cabeçalho traz o `awk` que o extrai do
+`log: …` para o `psql-ro`. Log de `--ensaio` não serve: o ROLLBACK desfez o disparo e aquele passo
+fica em AGUARDE para sempre. → [sonda-passo-seguinte-pelo-db-aplicar.md](../historico/sonda-passo-seguinte-pelo-db-aplicar.md)
+
 ⚠️ **A leitura NÃO pede mais o `request_id` colado — ela acha a linha pelo ECO do slug.** A resposta da
 sonda carrega o próprio nome no corpo (`criarRespostaSonda` devolve `{ok, probe, versao, edge, fonte}`),
 então o passo de leitura procura, dentro de uma janela curta, a resposta que diz ser daquela edge. A
