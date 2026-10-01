@@ -22,8 +22,12 @@ import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
 /** Resposta da sonda desta edge, com a identidade embutida (ver `criarRespostaSonda`). */
 export const respostaSonda = criarRespostaSonda("omie-nfe-recebimento-sync");
 
-/** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.0-sensor-inicial";
+/**
+ * Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho.
+ * v1.1: NCM gravado em 8 dígitos (o pontuado do Omie estourava `varchar(8)` e zerava os itens de
+ * TODA NF-e) e a falha do insert de itens sai em errors[] em vez de contar como importada.
+ */
+export const VERSAO = "v1.1-ncm-8-digitos";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

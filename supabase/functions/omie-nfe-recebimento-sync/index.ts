@@ -2,6 +2,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { avaliarPagina, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
+import { mapearItensRecebimento, type OmieRecebimentoItem } from "./itens.ts";
 
 // Teto anti-runaway do total DECLARADO pelo Omie (o teto de LEITURA por rodada continua
 // maxPages=3, deliberado: cron horário com MAX_DETAIL_CALLS=1 — amostra retomável, não truncagem).
@@ -53,24 +54,6 @@ interface OmieListarRecebimentosResponse {
   nTotalPaginas?: number;
 }
 
-interface OmieItemCabec {
-  nSequencia?: number;
-  cCodigoProduto?: string | null;
-  cDescricaoProduto?: string | null;
-  cNCM?: string | null;
-  cEAN?: string | null;
-  cUnidadeNfe?: string | null;
-  nQtdeNFe?: number | string | null;
-  nPrecoUnit?: number | string | null;
-  vTotalItem?: number | string | null;
-  nIdProduto?: number | string | null;
-}
-
-interface OmieRecebimentoItem {
-  itensCabec?: OmieItemCabec;
-  [key: string]: unknown;
-}
-
 interface OmieConsultarRecebimentoResponse {
   cabec?: OmieRecebimentoCabec;
   itensRecebimento?: OmieRecebimentoItem[];
@@ -90,11 +73,6 @@ function jsonResponse(body: Record<string, unknown>, status = 200) {
     status,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
-}
-
-function smartRound(qty: number): number {
-  const rounded = Math.round(qty);
-  return Math.abs(qty - rounded) < 0.05 ? rounded : Math.ceil(qty);
 }
 
 /** Convert "DD/MM/YYYY" to "YYYY-MM-DD" for Postgres */
@@ -382,37 +360,21 @@ Deno.serve(async (req) => {
         }
 
         // Parse items from itensRecebimento
-        const rawItems = detail.itensRecebimento ?? [];
+        const rawItems: OmieRecebimentoItem[] = detail.itensRecebimento ?? [];
         if (rawItems.length > 0) {
-          const itens = rawItems.map((item: OmieRecebimentoItem, idx: number) => {
-            const iCabec: OmieItemCabec = item.itensCabec ?? (item as unknown as OmieItemCabec);
-            const quantidadeNfe = parseFloat(String(iCabec.nQtdeNFe ?? 0));
-            return {
-              nfe_recebimento_id: newNfe.id,
-              sequencia: iCabec.nSequencia ?? idx + 1,
-              codigo_produto: iCabec.cCodigoProduto ?? null,
-              descricao: iCabec.cDescricaoProduto ?? "Item",
-              ncm: iCabec.cNCM ?? null,
-              ean: iCabec.cEAN ?? null,
-              unidade_nfe: iCabec.cUnidadeNfe ?? "UN",
-              quantidade_nfe: quantidadeNfe,
-              valor_unitario: iCabec.nPrecoUnit ? parseFloat(String(iCabec.nPrecoUnit)) : null,
-              valor_total: iCabec.vTotalItem ? parseFloat(String(iCabec.vTotalItem)) : null,
-              unidade_estoque: null,
-              quantidade_convertida: null,
-              quantidade_conferida: 0,
-              quantidade_esperada: smartRound(quantidadeNfe),
-              status_item: "pendente",
-              produto_omie_id: iCabec.nIdProduto ? parseInt(String(iCabec.nIdProduto)) : null,
-            };
-          });
-
           const { error: itensErr } = await supabase
             .from("nfe_recebimento_itens")
-            .insert(itens);
+            .insert(mapearItensRecebimento(rawItems, newNfe.id));
 
           if (itensErr) {
+            // A NF-e ficou SÓ com o cabeçalho e a retentativa a pula (`existingIds`): o erro tem de
+            // sair em errors[] — com o console.error sozinho ela contava como importada e a run
+            // dizia success:true (foi assim que o NCM pontuado zerou os itens de prod em silêncio).
+            // O cabeçalho NÃO é apagado: com MAX_DETAIL_CALLS=1, uma falha determinística re-tentada
+            // a cada run travaria a fila inteira atrás dela.
             console.error(`[sync] Erro ao inserir itens da NF-e ${numeroNfe}:`, itensErr);
+            errors.push(`NF-e ${numeroNfe}: cabeçalho gravado SEM itens — ${itensErr.message}`);
+            continue;
           }
         }
 
