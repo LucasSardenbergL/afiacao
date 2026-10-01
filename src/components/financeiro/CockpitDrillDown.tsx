@@ -7,6 +7,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { supabase } from '@/integrations/supabase/client';
 import { BAIXA_OMIE_LIST, baixaOuIndisponivel } from '@/lib/financeiro/procedencia-baixa';
 import type {
+import { addDias, hojeSP } from '@/lib/time/sp-day';
   FinContaCorrenteRow,
   FinContaPagarRow,
   FinContaReceberRow,
@@ -174,13 +175,13 @@ async function loadData(type: DrillDownType): Promise<{ rows: DrillRow[]; total:
   }
 
   if (type === 'aging_critico') {
-    const cutoff60 = new Date();
-    cutoff60.setDate(cutoff60.getDate() - 60);
+    // dia de SP − 60 (data_vencimento é date): setDate local + toISOString UTC punha a borda um dia à frente às 21h+.
+    const cutoff60 = addDias(hojeSP(), -60);
     const { data } = await supabase
       .from('fin_contas_receber')
       .select('*')
       .eq('status_titulo', 'ATRASADO')
-      .lt('data_vencimento', cutoff60.toISOString().split('T')[0])
+      .lt('data_vencimento', cutoff60)
       .order('data_vencimento', { ascending: true })
       .limit(500);
     const rows = data ?? [];

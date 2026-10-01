@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
+import { hojeSP } from '@/lib/time/sp-day';
 
 const SUGESTOES = [
   { descricao: 'Folha de pagamento', valor: 50000, tipo: 'saida' as const, categoria_dre: 'despesas_administrativas', is_folha: true, dia_do_mes: 5 },
@@ -25,7 +26,7 @@ export function EventosOnboarding({ onDone }: { onDone?: () => void }) {
       await create.mutateAsync({
         company: activeCompany,
         ...sug,
-        inicio: new Date().toISOString().slice(0, 10),
+        inicio: hojeSP(), // o evento começa HOJE em SP (o toISOString gravava amanhã das 21h em diante)
         fim: null,
         ativo: true,
         observacao: null,
