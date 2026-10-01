@@ -47,3 +47,13 @@ No manifesto real, as 3 partes ficaram com 19, 19 e 18 provas; a união é o man
 - **As três falsificações `fora-do-ci` podem voltar ao CI:** cada parte tem ~6 min de folga. Fica para PRs próprios, um por dono, para cada volta ser medida.
 - **Folga acabando de novo:** acrescente uma parte à matriz. Não suba o teto e não tire falsificação do CI.
 - **Custo:** mais minutos de runner (setup do PGDG e sonda ×3, ~1 min cada) em troca de wall-clock. O caminho crítico do `validate` volta a ser o `gates-e-falsificacao` (~21–22 min), não o `provas-sql`.
+
+## Complemento — o recibo de cada parte e a UNIÃO a cada run (01/10)
+
+A partição estava provada no harness, mas a EXECUÇÃO de cada run não estava: a matriz agrega `success` também quando o step do núcleo de uma parte é PULADO (um `if:` novo, uma condição que muda de tipo) — a parte some e as outras saem verdes.
+
+- **Recibo:** com `NUCLEO_RECIBO`, cada parte grava — só depois do próprio conjunto conferido — o sha256 do manifesto, `parte i/N` e cada unidade (arquivo, modo) concluída. Sobe como artefato (`upload-artifact@v7`, `if-no-files-found: error`).
+- **União:** o job `provas-sql-uniao` (no `needs` do `validate`, que passou a esperar 6 jobs e guarda o nome dele como já guardava o `provas-sql`) não sobe banco: baixa os recibos e roda `db/roda-nucleo-ci.sh --uniao`, que refaz a partição k mod N sobre o manifesto INTEIRO e exige N recibos, as partes 0..N-1 uma vez cada, o mesmo manifesto, cada unidade uma vez e na sua parte; nada fora do formato é ignorado. Exige também o recibo do harness da 1ª parte. Roda com `!cancelled()`, para dizer QUAL parte falhou em vez de virar um `skipped` mudo.
+- **Argumentos estritos:** o runner só lia o 1º argumento e ignorava os outros; com o `--uniao` no mundo, erro de digitação rodaria o núcleo inteiro no job sem banco.
+- **Harness:** +20 casos (piso 45 → 65) — controle positivo (2 partes e a união verdes), um vermelho por regra da união, os argumentos, e a ponta a ponta: a seleção sabotada PERDE uma prova, as duas partes saem verdes e só a união pega.
+- **As 2 falsificações voltam:** `hoje-sp-views-defaults` (`falsificar=33`) e `hoje-sp-data-ciclo` (`falsificar=17`; local: `SABOTAGENS: 17 vermelhas / 0 falhas`, exit 0) — 50 sabotagens de volta ao caminho obrigatório. Simulado com os tempos da run verde `36815770229`, a parte mais pesada vai a ~636 s com N=3 (o rodízio por prova não equilibra as duas grandes); ainda abaixo do teto e fora do caminho crítico (o `gates-e-falsificacao`). Se encostar no teto, a regra acima vale: mais uma parte.
