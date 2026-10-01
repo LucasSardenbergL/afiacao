@@ -132,9 +132,11 @@ CREATE OR REPLACE FUNCTION auth.role() RETURNS text LANGUAGE sql STABLE AS $f$
 $f$;
 GRANT USAGE ON SCHEMA auth TO anon, authenticated, service_role;
 -- prova.sqlstate(sql): executa como QUEM CHAMA (invoker) e devolve 'OK' ou a SQLSTATE, com a CAMADA que
--- negou quando é 42501 — '/acl' (GRANT) ou '/rls' (policy): as duas dão 42501, e sabotar uma camada
--- tem de mudar o veredito. O servidor sobe com --locale=C, então SQLERRM é inglês em qualquer LC_ALL do
--- cliente. Não é `WHEN OTHERS THEN 'OK'`: o código volta e o assert o compara EXATO.
+-- negou quando é 42501 — GRANT de função, de tabela/coluna ou de schema, ou a policy: todas dão 42501,
+-- e sabotar UMA camada tem de mudar o veredito (o anon, barrado no EXECUTE da RPC, ainda bateria no
+-- SELECT da tabela — sem nomear o objeto, abrir o EXECUTE ficaria verde). O servidor sobe com
+-- --locale=C, então SQLERRM é inglês em qualquer LC_ALL do cliente. Não é `WHEN OTHERS THEN 'OK'`: o
+-- código volta e o assert o compara EXATO.
 CREATE SCHEMA prova;
 GRANT USAGE ON SCHEMA prova TO anon, authenticated, service_role;
 CREATE FUNCTION prova.sqlstate(p_sql text) RETURNS text LANGUAGE plpgsql AS $f$
@@ -143,7 +145,9 @@ BEGIN
   RETURN 'OK';
 EXCEPTION WHEN OTHERS THEN
   RETURN SQLSTATE || CASE WHEN SQLSTATE <> '42501' THEN ''
-                          WHEN SQLERRM LIKE 'permission denied%' THEN '/acl'
+                          WHEN SQLERRM LIKE 'permission denied for function %' THEN '/acl-funcao'
+                          WHEN SQLERRM LIKE 'permission denied for table %' THEN '/acl-tabela'
+                          WHEN SQLERRM LIKE 'permission denied for schema %' THEN '/acl-schema'
                           WHEN SQLERRM LIKE '%row-level security%' THEN '/rls'
                           ELSE '/?' END;
 END $f$;

@@ -11,7 +11,7 @@
 #  • a RLS como o app a vê (SET ROLE + JWT na mesma sessão): staff lê catálogo e log, master lê o log,
 #    cliente e anon não leem nada;
 #  • a escrita: o log só a edge (service_role) escreve — authenticated leva 42501 do GRANT, não da policy
-#    (a camada que morde é declarada: '/acl' × '/rls'); o catálogo só o master escreve (a policy morde
+#    (a camada que morde é declarada: '/acl-tabela' × '/rls'); o catálogo só o master escreve (a policy morde
 #    o employee, o GRANT morde o anon).
 #
 # Até 2026-09-30 esta prova re-aplicava a 20260713010000 sobre o snapshot; o re-dump 9c9aae173 (#1509)
@@ -139,19 +139,19 @@ cenario() {
   chk H8 "mais de 10 parâmetros → 23514" "$(st_como service_role '' "$(template x_params utility 11)")" "23514"
 
   echo "→ a escrita: o log é da edge, o catálogo é do master"
-  chk H14 "staff não escreve no log — nega o GRANT (42501/acl)" "$(st_como authenticated "$STAFF" "$(envio k14)")" "42501/acl"
+  chk H14 "staff não escreve no log — nega o GRANT da tabela (42501/acl-tabela)" "$(st_como authenticated "$STAFF" "$(envio k14)")" "42501/acl-tabela"
   chk H15 "staff não muda status no log — nega o GRANT (sem ele a policy calaria: 0 linhas, sem erro)" \
-    "$(st_como authenticated "$STAFF" "UPDATE public.whatsapp_template_sends SET status = 'read' WHERE dedupe_key = 'k1'")" "42501/acl"
+    "$(st_como authenticated "$STAFF" "UPDATE public.whatsapp_template_sends SET status = 'read' WHERE dedupe_key = 'k1'")" "42501/acl-tabela"
   chk H16 "employee não escreve no catálogo — nega a POLICY do master (42501/rls)" "$(st_como authenticated "$STAFF" "$(template x_employee)")" "42501/rls"
   chk H17 "master escreve no catálogo" "$(st_como authenticated "$MASTER" "$(template x_master)")" "OK"
-  chk H18 "anon não escreve no catálogo — nega o GRANT (42501/acl)" "$(st_como anon '' "$(template x_anon)")" "42501/acl"
+  chk H18 "anon não escreve no catálogo — nega o GRANT da tabela (42501/acl-tabela)" "$(st_como anon '' "$(template x_anon)")" "42501/acl-tabela"
   return 0
 }
 
 # SABOTAGENS: <nome>:<VERMELHOS>[:<VERDES>] — os asserts que TÊM de acusar a sabotagem e as
 # pré-condições que TÊM de seguir verdes (`,` = E; `|` = OU). Vermelho em outra camada (setup
 # quebrado, erro de execução) é quebra, não dente. Cada uma troca UMA camada do schema vivo no banco
-# da rodada; as de GRANT provam que a camada declarada ('/acl') é a que morde — aberta, a outra
+# da rodada; as de GRANT provam que a camada declarada ('/acl-tabela') é a que morde — aberta, a outra
 # responde ('/rls') ou cala. A `migracao_nova_*` é a regressão chegando pela PRÓXIMA migration: só
 # fica vermelha porque a cadeia dinâmica a pega (DDL sobre tabela guardada).
 SABOTAGENS="seed_incompleto:H1:H2 dedupe_some:H3:H2,H9 categoria_aberta:H4:H5 status_aberto:H5:H4
