@@ -126,8 +126,10 @@ Cada regra abaixo foi medida em PG17; nenhuma é preferência de estilo.
 - **A trava vem antes da PRE, na mesma transação.** No `db:aplicar` a transação é do executor, e o arquivo vai sem `BEGIN;`. No SQL Editor ou no MCP, o arquivo leva `BEGIN;` no topo e `COMMIT;` no fim. Ler primeiro e travar depois deixa a janela aberta: é o "guard fora da escrita" de `docs/agent/money-path.md`.
 - **Trave cada objeto que a PRE guarda, e só objeto que o arquivo recria.** O ALTER muda o valor durante a transação, e quem fixa o valor final é o `CREATE OR REPLACE`. Uma trava sem CREATE num view-gate `security_invoker = off` (os `selfservice_*`) o deixaria `on` e zeraria o customer.
 - **Função:** use `ALTER FUNCTION … <volatilidade viva>`, lida em `pg_proc.provolatile` (`v`/`s`/`i`). Também serve `SET search_path = <o mesmo>` com assert de `proconfig` antes = depois (forma da `20260927195430`).
-  - Quem chega depois espera e falha alto com `XX000 tuple concurrently updated` (M1/M2).
+  - Quem chega depois espera e falha alto com `XX000 tuple concurrently updated` (M1/M2). Se o atrasado também estiver no molde, ele morre no **próprio ALTER da trava**, antes da PRE dele (M5).
   - A trava não impede **chamar** a função.
+  - **Procedure** não tem volatilidade: `ALTER PROCEDURE … VOLATILE` dá `42P13`. Use `ALTER PROCEDURE … SET search_path = <o mesmo>`, que trava (medido).
+  - **Aggregate** não tem ALTER sem efeito que trave: `OWNER TO <o mesmo dono>` é no-op (medido). Fica só com a fila do `db:aplicar`; fora dele, coordene. Matview não tem `CREATE OR REPLACE`, então não se aplica.
   - `OWNER TO <o mesmo dono>` **não** trava: é no-op que nem toca a linha.
   - `SELECT … FOR UPDATE` em `pg_proc` não serve: o `postgres` da prod não tem `UPDATE` no catálogo.
 - **View:** use `ALTER VIEW … SET (security_invoker = <valor vivo>)`. Ele prende a view em ACCESS EXCLUSIVE até o COMMIT.
