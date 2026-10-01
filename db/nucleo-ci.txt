@@ -367,6 +367,15 @@ db/test-hoje-sp-data-ciclo.sh               57  falsificar=fora-do-ci  # o job p
 # 02:20–05:00, 16 de 25 runs de PR foram canceladas a 20,2 min (as verdes: 16,9–19,9) — +20 s aqui faria
 # todo PR esbarrar mais. Entra quando o runner for paralelizado (o comentário do ci.yml), não subindo o teto.
 
+# converter_sugestao_em_campanha_flat (#2668): P0 EXECUTA o predecessor de prod e exige o 42703 (o
+# defeito: INSERT em 4 colunas que promocao_item não tem); X — a deriva aborta a PRE, a função nasce
+# com a porta PORTA_GATE (sem e com o default ACL do Supabase), re-aplicar passa; O1/A1 a assinatura
+# antiga saiu e a porta; P1-P3 campanha/item/sugestão; N1-N7+NZ os portões sem gravar; B — D =
+# 28/02/2025, 4 instantes cruzando 21:00 BRT sob sessão UTC e SP, convertendo com data fim = hoje; W
+# como authenticated no relógio real. Autocontida: initdb + stubs + a fixture
+# db/fixtures/converter-campanha-flat-predecessora-prod-20261001.sql + o gatilho de campanha vivo + a migration.
+db/test-converter-campanha-flat.sh          25  falsificar=19
+
 # ── Eixo 9 — UNIVERSO DE PEDIDOS (o que conta como VENDA) ──────────────────────────────────
 # A autoridade: status NOT IN ('cancelado','rascunho','pendente','orcamento') + deleted_at IS NULL
 # (src/lib/farmer/universo-pedidos.ts). As 4 migrations de 2026-10-01 (caça, recência, preço e a proposta, sozinha) levam
