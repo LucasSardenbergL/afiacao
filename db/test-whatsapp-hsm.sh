@@ -166,7 +166,7 @@ sabotagem() {
   so_employee="EXISTS (SELECT 1 FROM public.user_roles ur WHERE ur.user_id = (SELECT auth.uid()) AND ur.role = 'employee')"
   staff="EXISTS (SELECT 1 FROM public.user_roles ur WHERE ur.user_id = (SELECT auth.uid()) AND ur.role IN ('employee','master'))"
   case "$1" in
-    seed_incompleto)   P -v ON_ERROR_STOP=1 -q -c "DELETE FROM $wt WHERE nome = 'colacor_status_pedido';" ;;
+    seed_incompleto)   P -v ON_ERROR_STOP=1 -q -c "DELETE FROM $wt WHERE nome = 'colacor_proposta_recompra';" ;;
     dedupe_some)       P -v ON_ERROR_STOP=1 -q -c "ALTER TABLE $wts DROP CONSTRAINT whatsapp_template_sends_dedupe_key_key;" ;;
     categoria_aberta)  P -v ON_ERROR_STOP=1 -q -c "ALTER TABLE $wt DROP CONSTRAINT whatsapp_templates_categoria_check;" ;;
     status_aberto)     P -v ON_ERROR_STOP=1 -q -c "ALTER TABLE $wts DROP CONSTRAINT whatsapp_template_sends_status_check;" ;;
