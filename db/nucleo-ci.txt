@@ -327,3 +327,7 @@ db/test-hoje-sp-views-defaults.sh          129  falsificar=33
 # vermelhas no assert certo, matriz UTC/SP × C/pt_BR verde) roda no CI desde que o provas-sql foi dividido
 # em partes (2026-10-01); antes ficava fora pelo teto de 20 min do job serial.
 db/test-hoje-sp-data-ciclo.sh               57  falsificar=17
+# FORA do núcleo (de propósito): db/test-hoje-sp-visitas.sh — o DEFAULT de route_visits.visit_date no dia de SP
+# (15 asserts, 8 sabotagens, matriz UTC/SP × C/pt_BR verde; roda local). O job provas-sql está no TETO: em 01/10
+# 02:20–05:00, 16 de 25 runs de PR foram canceladas a 20,2 min (as verdes: 16,9–19,9) — +20 s aqui faria
+# todo PR esbarrar mais. Entra quando o runner for paralelizado (o comentário do ci.yml), não subindo o teto.

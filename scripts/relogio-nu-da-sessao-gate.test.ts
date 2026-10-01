@@ -285,7 +285,11 @@ describe('o repo', () => {
   const skills = REPO.arquivos.filter((a) => a.caminho.startsWith('.claude/skills/'));
 
   it('10 migrations não são o repo → INDETERMINADO só pelo piso de migrations', () => {
-    soPorEste([...novas, ...velhas.slice(0, 10 - novas.length), ...skills], REPO.corpos, 'migrations');
+    // As do corte na frente (o piso delas segue de pé), completadas com velhas. Nunca `velhas.slice(0, 10 - novas.length)`:
+    // na 11ª migration do corte o fim fica NEGATIVO e o slice devolve o repo quase inteiro — passa no piso, código 0.
+    const dez = [...novas, ...velhas].slice(0, 10);
+    expect(dez).toHaveLength(10);
+    soPorEste([...dez, ...skills], REPO.corpos, 'migrations');
   });
 
   it('as migrations do corte não lidas → INDETERMINADO só pelo piso do corte', () => {

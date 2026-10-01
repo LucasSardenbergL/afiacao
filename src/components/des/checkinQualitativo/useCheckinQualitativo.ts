@@ -5,6 +5,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
+import { hojeSP } from "@/lib/time/sp-day";
 import {
   type Props,
   type Criterio,
@@ -174,7 +175,7 @@ export function useCheckinQualitativo({ empresa, ano, trimestre }: Props) {
     }
     setSaving(true);
     try {
-      const hoje = new Date().toISOString().slice(0, 10);
+      const hoje = hojeSP(); // data_avaliacao é o dia de SP (às 22h o UTC já é amanhã)
       const avaliadoCom = tipo === "confirmacao_andre" ? "André (Sayerlack)" : null;
       const avaliadoPor = user.email ?? user.id;
 
