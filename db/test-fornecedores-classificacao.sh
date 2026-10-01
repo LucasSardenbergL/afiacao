@@ -5,14 +5,17 @@
 # (db/lib/corpo-vivo.sh: snapshot + ACL medido em prod + a cadeia viva das 4 funções, dos triggers que o
 # seed e a limpeza disparam — o da carteira, o guard e os de coerência de sales_orders no seed, o
 # farmer_expirar_pendentes_do_dono_anterior no DELETE da aplicar — e das tabelas que elas leem e escrevem;
-# hoje 2 migrations sobre sales_orders, o trigger de coerência e o GRANT por coluna do funil). As 4 funções
-# são IGUAIS às do snapshot (md5 = o de prod, medido em 2026-10-01).
+# hoje 5 migrations: o trigger de coerência e o GRANT por coluna do funil em sales_orders, a
+# 20261001014100 do #2726 e as 2 que levam a melhoria_clientes_por_produto até o predecessor que o PRE
+# dela exige). Aplicar, reverter e o trigger são IGUAIS aos do snapshot (md5 = o de prod, medido em
+# 2026-10-01); a classificar é a PRÓXIMA — a da 20261001014100 (#2726: o pedido apagado não é venda), que a
+# prod recebe quando a migration for aplicada.
 #
 # O que ela assevera (cada regra com sabotagem própria; os positivos são as pré-condições que as
 # sabotagens exigem verdes):
 #  • a régua A: fornecedor (tag 'fornecedor'/'transportadora', sem caixa nem espaço) SEM venda real sai
 #    da carteira; a exceção curada vence; o cliente comum fica; o fornecedor COM venda real fica — e
-#    cancelado, rascunho, pendente e orçamento não são venda, na coluna e na decisão. A RPC reescreve as 3
+#    cancelado, rascunho, pendente, orçamento e o pedido APAGADO não são venda, na coluna e na decisão. A RPC reescreve as 3
 #    flags nas DUAS direções: o K00 corrompe CADA linha para o valor ERRADO (e lê o estado corrompido),
 #    então cada flag é posta e tirada em algum cliente — e devolve a contagem certa;
 #  • a limpeza: a aplicar RE-CLASSIFICA antes de limpar (o cron chama só ela), desliga o eligible e apaga
@@ -82,7 +85,17 @@ adm -c "CREATE DATABASE base;"
 # shellcheck disable=SC2034  # consumida pelo db/lib/corpo-vivo.sh, que o shellcheck sem -x não segue
 CV_FUNCOES=(classificar_clientes_fornecedores aplicar_exclusao_fornecedores reverter_exclusao_fornecedor
             cliente_classificacao_derive reconcile_score_owner_from_carteira fcs_block_flagged_insert
-            farmer_expirar_pendentes_do_dono_anterior pedido_venda_coerencia_cab pedido_venda_coerencia_lin has_role)
+            farmer_expirar_pendentes_do_dono_anterior pedido_venda_coerencia_cab pedido_venda_coerencia_lin has_role
+            melhoria_clientes_por_produto)
+# melhoria_clientes_por_produto não é asseverada aqui: está na lista porque a 20261001014100 (#2726), que a
+# cadeia pega pela classificar, confere no PRE o predecessor de prod dela — e só a cadeia dela o alcança.
+# O de v_grupo_comercial, que a cadeia NÃO alcança (o PRE das migrations que a levaram até ele reprova o
+# snapshot, que perdeu barras de literais de regex), vem do fixture verbatim da prova do #2726, pelo md5.
+# shellcheck disable=SC2329  # chamada pelo cv_montar (db/lib/corpo-vivo.sh), que o shellcheck sem -x não segue
+cv_antes_da_cadeia() {
+  cv_predecessora_view db/fixtures/universo-pedidos-predecessoras-prod-20261001.sql public.v_grupo_comercial \
+    73de52bd7737a62d2828589f97661e9a
+}
 # shellcheck disable=SC2034  # consumida pelo db/lib/corpo-vivo.sh, que o shellcheck sem -x não segue
 CV_TABELAS=(cliente_classificacao fornecedor_excecao carteira_assignments sales_orders customer_visit_scores
             farmer_client_scores visit_score_recalc_queue score_recalc_queue customer_canonical_alias user_roles)
@@ -95,7 +108,7 @@ MASTER='00000000-0000-0000-0000-0000000000aa'   # master: o único que reverte
 EMP='00000000-0000-0000-0000-0000000000bb'      # employee: lê, não reverte
 F1='00000000-0000-0000-0000-0000000000f1'       # o dono da carteira
 cid() { printf '00000000-0000-0000-0000-0000000000c%s' "$1"; }
-# c1 fornecedor só com cancelado/rascunho/pendente · c2 fornecedor com exceção curada · c3 comum ·
+# c1 fornecedor só com cancelado/rascunho/pendente e um enviado APAGADO · c2 fornecedor com exceção curada · c3 comum ·
 # c4 'FORNECEDOR' (caixa) · c5 ' Transportadora ' (espaço; alias fiscal ATIVO de c3) · c6 fornecedor com
 # venda enviada · c8 fornecedor só com orçamento · ca fornecedor sem venda, alias fiscal INATIVO de c3 ·
 # c7 e c9 entram no cenário (o trigger).
@@ -115,6 +128,7 @@ INSERT INTO public.customer_visit_scores (customer_user_id, farmer_id) VALUES ('
 INSERT INTO public.sales_orders (customer_user_id, created_by, status) VALUES
   ('$(cid 6)', '$F1', 'enviado'),  ('$(cid 1)', '$F1', 'cancelado'), ('$(cid 1)', '$F1', 'rascunho'),
   ('$(cid 1)', '$F1', 'pendente'), ('$(cid 8)', '$F1', 'orcamento');
+INSERT INTO public.sales_orders (customer_user_id, created_by, status, deleted_at) VALUES ('$(cid 1)', '$F1', 'enviado', now());
 INSERT INTO public.cliente_classificacao (user_id, tags_omie) VALUES
   ('$(cid 1)', ARRAY['Fornecedor']), ('$(cid 2)', ARRAY['Fornecedor']), ('$(cid 3)', ARRAY['Cliente VIP']),
   ('$(cid 4)', ARRAY['FORNECEDOR']), ('$(cid 5)', ARRAY[' Transportadora ']), ('$(cid 6)', ARRAY['Fornecedor']),
@@ -237,7 +251,8 @@ cenario() {
 # `REVOKE … FROM PUBLIC` não tira: só G2/G3 distinguem, porque nomeiam a camada e o objeto.
 SABOTAGENS="excecao_ignorada:K2:K1,K3,K6 venda_real_ignorada:K6:K1,K2,K3
             cancelado_vira_venda:K1:K3,K6,K7 rascunho_vira_venda:K1:K3,K6,K7 pendente_vira_venda:K1:K3,K6,K7
-            orcamento_vira_venda:K7:K1,K3,K6 coluna_venda_conta_cancelado:K1:K6 coluna_venda_conta_rascunho:K1:K6
+            orcamento_vira_venda:K7:K1,K3,K6 coluna_venda_conta_apagado:K1:K6 decisao_conta_apagado:K1:K3,K6
+            coluna_venda_conta_cancelado:K1:K6 coluna_venda_conta_rascunho:K1:K6
             coluna_venda_conta_pendente:K1:K6 coluna_venda_conta_orcamento:K7:K1,K6
             coluna_tag_sem_caixa:K4:K3 coluna_tag_sem_espaco:K5:K3,K4 decisao_tag_sem_caixa:K4:K3
             decisao_tag_sem_espaco:K5:K3,K4
@@ -261,7 +276,8 @@ sabotagem() {
   local cl='public.classificar_clientes_fornecedores()' ap='public.aplicar_exclusao_fornecedores()'
   local rv='public.reverter_exclusao_fornecedor(uuid,text)' dv='public.cliente_classificacao_derive()'
   local status="NOT IN ('cancelado','rascunho','pendente','orcamento')"
-  local decisao=$'\n      )\n      AND NOT EXISTS (SELECT 1 FROM public.fornecedor_excecao'
+  local apagado=' AND so.deleted_at IS NULL'
+  local decisao="$apagado"$'\n      )\n      AND NOT EXISTS (SELECT 1 FROM public.fornecedor_excecao'
   local coluna_venda=$'tem_venda_real = EXISTS (\n      SELECT 1 FROM public.sales_orders so\n      WHERE so.customer_user_id = cc.user_id\n        AND so.status '
   local coluna_tag=$'is_fornecedor = EXISTS (\n      SELECT 1 FROM unnest(cc.tags_omie) t\n      WHERE '
   local decisao_tag=$'excluir_da_carteira = (\n      EXISTS (\n        SELECT 1 FROM unnest(cc.tags_omie) t\n        WHERE '
@@ -283,6 +299,10 @@ sabotagem() {
                           cv_sabotar "$cl" "$coluna_venda$status" "${coluna_venda}NOT IN ('cancelado','rascunho','orcamento')" ;;
     coluna_venda_conta_orcamento)
                           cv_sabotar "$cl" "$coluna_venda$status" "${coluna_venda}NOT IN ('cancelado','rascunho','pendente')" ;;
+    # o pedido APAGADO não é venda (#2726), na coluna e na decisão — o c1 tem um enviado apagado
+    coluna_venda_conta_apagado)
+                          cv_sabotar "$cl" "$coluna_venda$status$apagado" "$coluna_venda$status" ;;
+    decisao_conta_apagado) cv_sabotar "$cl" "$status$decisao" "$status${decisao#"$apagado"}" ;;
     coluna_tag_sem_caixa) cv_sabotar "$cl" "${coluna_tag}lower(trim(t))" "${coluna_tag}trim(t)" ;;
     coluna_tag_sem_espaco) cv_sabotar "$cl" "${coluna_tag}lower(trim(t))" "${coluna_tag}lower(t)" ;;
     decisao_tag_sem_caixa) cv_sabotar "$cl" "${decisao_tag}lower(trim(t))" "${decisao_tag}trim(t)" ;;
