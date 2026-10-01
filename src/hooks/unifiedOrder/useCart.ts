@@ -9,6 +9,7 @@ import type {
   CartItem,
   UserTool,
 } from '@/hooks/useUnifiedOrder';
+import { nascerItemProduto } from './nascimento-item';
 
 const VOLUME_UNITS = ['5L', 'GL', 'LT', 'BD', 'BH'];
 
@@ -83,7 +84,6 @@ export function useCart({ getProductPrice, getServicePrice, servicos }: UseCartA
         setTintPendingProduct(product);
         return;
       }
-      const account = (product.account || 'oben') as ProductAccount;
       setCart(prev => {
         const existing = prev.find(
           (c): c is ProductCartItem =>
@@ -98,18 +98,8 @@ export function useCart({ getProductPrice, getServicePrice, servicos }: UseCartA
               : c,
           );
         }
-        const preco = getProductPrice(product);
-        return [
-          ...prev,
-          {
-            type: 'product',
-            product,
-            quantity: qty,
-            unit_price: preco,
-            precoNascimento: preco, // marca "não-editado" p/ a reprecificação da fronteira
-            account,
-          } as ProductCartItem,
-        ];
+        // Mesma função de nascimento do caminho da IA (handleUnifiedAIResult): um decisor de preço só.
+        return [...prev, nascerItemProduto(product, qty, getProductPrice)];
       });
     },
     [getProductPrice],

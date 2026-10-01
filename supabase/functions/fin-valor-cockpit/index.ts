@@ -24,6 +24,7 @@ import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { valorMedido } from "../_shared/score-ponderado.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { atenderSondaOptions } from '../_shared/sonda-cron.ts';
+import { hojeSP, somarDias } from '../_shared/hoje-sp.ts';
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -464,16 +465,17 @@ Deno.serve(async (req: Request) => {
   if (!auth.ok) return auth.response;
   const db = createClient(SUPABASE_URL, SERVICE_ROLE);
 
-  const now = new Date();
-  const ttm_fim = now.toISOString().slice(0, 10);
-  const ttm_inicio = new Date(now.getTime() - 365 * 86400000).toISOString().slice(0, 10);
+  // A janela TTM em dias de SP (order_date_kpi é date de SP): com o UTC, das 21h BRT em diante ela andava um dia.
+  const hoje = hojeSP();
+  const ttm_fim = hoje;
+  const ttm_inicio = somarDias(hoje, -365);
   // Prefiltro de BUSCA do order_items (created_at = data de CARGA) com 90d de folga antes do ttm_inicio.
   // A janela REAL do cockpit é por order_date_kpi (Bug C, mais abaixo); created_at só LIMITA o fetch.
   // Provado (psql-ro 2026-06-18) que todo item com order_date_kpi na janela tem created_at >= order_date_kpi
   // (0 falso-negativo hoje); a folga de 90d blinda contra pedido pós-datado futuro (created_at < data pedido).
-  const ttm_prefetch = new Date(now.getTime() - (365 + 90) * 86400000).toISOString().slice(0, 10);
+  const ttm_prefetch = somarDias(hoje, -(365 + 90));
   // Guard de formato p/ as datas que entram em .or()/.gte() (defesa anti-injeção: só ISO
-  // YYYY-MM-DD; aqui vêm de toISOString, mas o guard documenta e blinda contra regressão).
+  // YYYY-MM-DD; aqui vêm de hojeSP/somarDias, mas o guard documenta e blinda contra regressão).
   const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
   if (!ISO_DATE.test(ttm_inicio) || !ISO_DATE.test(ttm_fim) || !ISO_DATE.test(ttm_prefetch)) {
     return jsonResponse({ error: "janela TTM inválida" }, 500);

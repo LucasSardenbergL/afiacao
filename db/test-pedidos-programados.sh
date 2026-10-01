@@ -28,7 +28,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -qtA "$@"; }
 
 P -q -f "$REPO_ROOT/db/stubs-supabase.sql"
@@ -309,7 +309,7 @@ P -q -c "RESET ROLE;" >/dev/null
 # SEPARADO ("sabota"), aplicando a migration REAL (sabotada via sed) do zero.
 echo "── falsificação ──"
 
-SB()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d sabota -v ON_ERROR_STOP=1 "$@"; }
+SB()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d sabota -v ON_ERROR_STOP=1 "$@"; }
 SBq() { SB -qtA "$@"; }
 
 # Recria o banco "sabota" do zero com a base idêntica à zona 1-2 (stubs + pré-requisitos),

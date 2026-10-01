@@ -29,7 +29,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }
 
 P -q -f "$REPO_ROOT/db/stubs-supabase.sql"
@@ -54,7 +54,7 @@ SO_ORC='aaaaaaaa-0000-0000-0000-000000000002'   # orçamento, sem omie_pedido_id
 # Roda um comando como <role> com o GUC do JWT. Devolve stdout+stderr (o SQLSTATE
 # do permission denied sai no stderr) SEM abortar o script.
 as_role() { # $1=uid $2=role $3=sql
-  "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -tA -v ON_ERROR_STOP=0 2>&1 <<SQL
+  "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -tA -v ON_ERROR_STOP=0 2>&1 <<SQL
 SET test.uid='$1'; SET ROLE $2;
 $3
 SQL

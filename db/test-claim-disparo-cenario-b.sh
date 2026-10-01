@@ -44,12 +44,12 @@ trap cleanup EXIT
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
 # TimeZone fixo: `timestamptz::text` renderiza no fuso da SESSAO -- sem isto as mensagens de
 # recusa mudariam de forma conforme o fuso do host e os asserts abaixo seriam frageis.
-"$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d postgres -q -c "ALTER DATABASE prove SET TimeZone='UTC';"
+"$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d postgres -q -c "ALTER DATABASE prove SET TimeZone='UTC';"
 # ── DOIS LOCALES (licao #1483: falsificar num ambiente so nao prova a asrercao) ────────
 HARNESS_LC="${HARNESS_LC:-C}"
-"$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d postgres -q -c "ALTER DATABASE prove SET lc_messages='$HARNESS_LC';" \
+"$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d postgres -q -c "ALTER DATABASE prove SET lc_messages='$HARNESS_LC';" \
   || { echo "INFRA: lc_messages='$HARNESS_LC' indisponivel neste servidor"; exit 1; }
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }
 
 P -q -f "$REPO_ROOT/db/stubs-supabase.sql"
@@ -71,7 +71,7 @@ ok()  { PASS=$((PASS+1)); echo "  OK   $1"; }
 bad() { FAIL=$((FAIL+1)); echo "  FAIL $1"; }
 eq()  { if [ "$2" = "$3" ]; then ok "$1 (=$2)"; else bad "$1 -- esperado [$3], veio [$2]"; fi; }
 
-AMOSTRA_MSG=$("$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -tA -c "SELECT 1/0;" 2>&1 | head -1) || true
+AMOSTRA_MSG=$("$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -tA -c "SELECT 1/0;" 2>&1 | head -1) || true
 echo "=== setup pronto (PG17 :$PORT) lc_messages=$HARNESS_LC ==="
 echo "=== controle do eixo de locale, mensagem do servidor: $AMOSTRA_MSG"
 
@@ -167,7 +167,7 @@ cancelar() { Pq -c "SELECT public.cancelar_pedido_sugerido($1, 'lucas', 'motivo 
 # ASCII de caixa fixa, entao o assert nao depende do locale das mensagens do servidor.
 cancelar_x() {
   local out rc
-  out="$("$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 -tA \
+  out="$("$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 -tA \
         -c "SELECT public.cancelar_pedido_sugerido($1, 'lucas', 'motivo do teste')::text;" 2>&1)"; rc=$?
   if [ "$rc" -eq 0 ]; then printf '%s\n' "$out" | tail -1
   else printf 'EXC:%s\n' "$(printf '%s' "$out" | grep -o '\[[A-Z][A-Z-]*\]' | head -1)"; fi
@@ -179,7 +179,7 @@ cancelar_veredito() {
 }
 porta_veredito() {
   local out rc
-  out="$("$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 -tA \
+  out="$("$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 -tA \
         -c "SET test.role='service_role'; SELECT CASE WHEN public.corrigir_cancelamento_pos_disparo($1,'lucas','cancelado_junto_ao_fornecedor','PO cancelado no Omie em 2026-09-07, protocolo 4711') ? 'error' THEN 'RECUSADO' ELSE 'PASSOU' END;" 2>&1)"; rc=$?
   if [ "$rc" -eq 0 ]; then printf '%s\n' "$out" | tail -1
   else printf 'EXC:%s\n' "$(printf '%s' "$out" | grep -o '\[[A-Z][A-Z-]*\]' | head -1)"; fi
@@ -277,7 +277,7 @@ eq "C3e e a linha seguiu intacta"                    "$(campo 8 status)" "dispar
 # disparo. Conciliar nao prova que uma execucao em voo nao vai comprar depois.
 semear
 P -q -c "SELECT public.reposicao_claim_disparo(2,'producao@r1');" >/dev/null
-C8="$("$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 -tA 2>&1 <<'SQL'
+C8="$("$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 -tA 2>&1 <<'SQL'
 BEGIN;
 SELECT set_config('app.correcao_cancelamento_pos_disparo', '2', true);
 UPDATE public.pedido_compra_sugerido
@@ -557,7 +557,7 @@ else
 fi
 # F1c: o CONTROLE da MESMA sabotagem -- os gates do vizinho seguem de pe, entao eu dropei UM trigger,
 # nao a cadeia inteira. Sem este par, F1b passaria tambem num banco onde nada mais funciona.
-F1C="$("$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 -tA \
+F1C="$("$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 -tA \
       -c "SET test.role='service_role'; SELECT public.corrigir_cancelamento_pos_disparo(7,'lucas','motivo_invalido','evidencia');" 2>&1)" || true
 if printf '%s' "$F1C" | grep -q 'CANCEL-POS-DISPARO-MOTIVO'; then
   ok "F1c CONTROLE: na MESMA sabotagem o gate de motivo do #2309 ainda recusa -- a sabotagem foi cirurgica"
@@ -636,7 +636,7 @@ fi
 # F4b: o CONTROLE na MESMA sabotagem -- o eixo da pendencia continua de pe para `cancelado` puro.
 semear
 P -q -c "SELECT public.reposicao_claim_disparo(2,'producao@r1');" >/dev/null
-F4B="$("$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 -tA \
+F4B="$("$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 -tA \
       -c "UPDATE public.pedido_compra_sugerido SET status='cancelado' WHERE id=2;" 2>&1)" || true
 if printf '%s' "$F4B" | grep -q 'CANCEL-COM-DISPARO-PENDENTE'; then
   ok "F4b CONTROLE: na MESMA sabotagem o veto ainda dispara para 'cancelado' -- a sabotagem foi cirurgica"

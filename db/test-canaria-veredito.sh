@@ -153,7 +153,7 @@ done
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null 2>&1
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k $SOCK -c listen_addresses=" -l "$TMP/pg.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h "$SOCK" -U postgres canaria_verify
-P() { "$PGBIN/psql" -p "$PORT" -h "$SOCK" -U postgres -d canaria_verify "$@"; }
+P() { "$PGBIN/psql" -X -p "$PORT" -h "$SOCK" -U postgres -d canaria_verify "$@"; }
 
 P -v ON_ERROR_STOP=1 -q <<'SQL'
 CREATE SCHEMA net;

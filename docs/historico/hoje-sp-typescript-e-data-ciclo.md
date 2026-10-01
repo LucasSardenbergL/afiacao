@@ -175,6 +175,51 @@ silêncio o dia de SP e o corte dessa função. Antes de aplicá-la: regenerar a
 20261001023000) e pôr a PRÉ por md5. (Ela também é um conserto money-path pendente: o anti-compra-dupla da
 oportunidade não vê `disparado_simulado`.)
 
+## Fase financeira (a PR depois do gate)
+
+São 45 sítios em 32 entradas da baseline, e todos saem dela nesta PR: 8 de gravidade alta, 32 baixa, 2 latentes e 3 falsos-positivos.
+
+| Onde | O que era | Veredito |
+|---|---|---|
+| `EventosManager`, `EventosOnboarding`, `ConfigCashflowDialog` | o `inicio`/`data_prevista` do evento de caixa e o `data_ref` do saldo inicial eram **persistidos** com o dia UTC: lançados às 22h, nasciam amanhã | afetado-alto (4) |
+| `omie-financeiro` | o saldo pedido ao Omie (`dataBR`, montado com `getDate()` no servidor) e o `saldo_data` gravado iam juntos para D+1 no sync noturno | afetado-alto (4) |
+| `omie-financeiro` | as janelas de 6 e 3 meses (`setMonth` no servidor), o `dataFim`, o ano/mês do `calcular_dre_year` (na noite do último dia, o mês que nem começou saía zerado), o `_hojeBR` do debug | afetado-baixo (16) |
+| `fin-cashflow-engine` | a semana corrente (do domingo às 21h em diante ela sumia do horizonte: a classe que a 20260927202603 consertou no SQL); as curvas de aging; o NCG; a janela de 12 meses das taxas; o corte do CMV TTM; os rótulos da projeção de 12 meses | afetado-baixo (11) |
+| `fin-valor-cockpit` | a janela TTM (fim, início e prefetch) | afetado-baixo (3) |
+| `fin-funding` | o `.gt(data_vencimento)` da lista antecipável: das 21h em diante, os títulos que vencem amanhã sumiam | afetado-baixo (1) |
+| `CockpitDrillDown` | o corte de 60 dias do aging crítico | afetado-baixo (1) |
+| `omie-financeiro` | `nowDre`, o default de ano/mês (o front sempre passa) | latente (2), vai junto |
+| `omie-financeiro` | `formatOmieDate`, helper puro que ficou sem caller depois da troca | falso-positivo (3), removido |
+
+**O invariante desta fase:** a qualquer hora do dia D de SP, o valor novo é o que o código velho já dava
+durante o DIA (00:00–20:59 BRT) de D. A noite passa a se comportar como o dia, e nenhum comportamento é
+novo; o que some é só a divergência noturna. Vale para todos os 45 sítios, porque todos são funções do DIA,
+nenhum do instante.
+
+**O helper:** `somarMeses` mora em `supabase/functions/_shared/meses-sp.ts`, que tem teste Deno. Ele fica
+SEPARADO do `hoje-sp.ts` de propósito: mexer no `hoje-sp.ts` muda o fingerprint das 2 edges da #2705 e pediria
+um redeploy sem mudança de comportamento. A semântica é a do `setUTCMonth` (31/08 − 6 meses = 03/03), igual à
+do `setMonth` que ele substitui.
+
+**Fica de fora, de propósito:**
+- `fin-funding`, os `dias` até o vencimento (l. ~590), calculados como `round((vencimento 00:00Z − agora) / 1 dia)`.
+  - O efeito: das 09:00 às 23:59 BRT o resultado é 1 dia a menos que os dias corridos (um título que vence em 5
+    dias corridos sai com 4).
+  - O que esses `dias` dirigem: o deságio, o IOF diário e o custo em R$ das fontes.
+  - Por que não entra aqui: não é o fuso, é a RÉGUA. Trocar muda o custo da antecipação também de DIA.
+  - 🧭 Decisão do founder: o prazo é em dias corridos do dia de SP até o vencimento?
+- Os helpers espelhados VERBATIM entre front e edge (`funding-helpers`, os do fluxo de caixa) não têm sítio.
+
+**Deploy:** não há migration. As 4 edges são deployadas pelo founder no chat do Lovable, e quem decide é
+`pendencias:deploy`: `fin-cashflow-engine` v1.2, `fin-funding` v1.1, `fin-valor-cockpit` v1.6 e
+`omie-financeiro` v1.2. O Publish também é do founder.
+
+**Codex:** a cota segue esgotada até 03/10 19:11, então vale o Caminho B. O retroativo leva 3 perguntas:
+1. o invariante "a noite vira o dia" vale nos 45 sítios?
+2. há algum consumidor desses valores que dependia do D+1 noturno (algum cron noturno que gravava "amanhã" de
+   propósito)?
+3. o `dataFim` do Omie no dia de SP pode perder registro?
+
 ## Fora, com dono
 
 - **O gate de TS** — FEITO no PR seguinte: `src/__tests__/hoje-utc-gate.test.ts` + `src/lib/gates/hoje-utc.ts`
@@ -187,9 +232,7 @@ oportunidade não vê `disparado_simulado`.)
     versão não via: `const cutoff = ….toISOString()` e depois `cutoff.slice(0, 10)`, no
     `visit-score-recalc-batch`. É latente: só roda no cron das 04:00 BRT, quando o dia UTC é o de SP.
   - Varredura dessa forma: 1 caso no repo inteiro.
-- **As fases de TS por domínio**: financeiro (`fin-cashflow-engine` — o domingo à noite pula a semana, a
-  mesma classe que a 20260927202603 consertou no SQL —, `fin-funding`, `fin-valor-cockpit`, os eventos de
-  caixa persistidos com a data UTC); visitas (`hojeISO()` e os 6 consumidores, o planner, e
+- **As fases de TS por domínio**: financeiro — FEITO (a seção acima); visitas (`hojeISO()` e os 6 consumidores, o planner, e
   `route_visits.visit_date` com os leitores UTC); as datas mandadas ao Omie (forma B); o resto.
 - **Anotado, fora da classe:** `_data_health_compute` converte `saldo_data` (date) em instante no fuso da
   sessão (a idade do saldo sai 3h maior; limiar de 36h); as 4 RPCs de ciclo têm EXECUTE para PUBLIC/anon
