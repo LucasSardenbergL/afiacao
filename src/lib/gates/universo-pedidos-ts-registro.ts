@@ -13,7 +13,7 @@
 // Medido em 2026-10-01 (docs/historico/universo-pedidos-classe-ts.md): 61 sítios — 4 canônicos,
 // 17 escritas, 1 complemento e 39 fora; destes, 21 de propósito e 18 de dívida.
 
-export type Categoria =
+type Categoria =
   /** Lê UM pedido (ou os de uma chave) pela identidade: a pergunta é "qual é este pedido?", não "foi venda?". */
   | 'lookup'
   /** O importador/sincronização lê pela chave do Omie para reconciliar — cancelado inclusive. */
@@ -23,9 +23,9 @@ export type Categoria =
   /** Divergente medido; a correção está no PR do domínio indicado. Só encolhe. */
   | 'divida';
 
-export type Dominio = 'dashboard' | 'customer360' | 'ligacao' | 'proposta' | 'auditoria' | 'operacionais';
+type Dominio = 'dashboard' | 'customer360' | 'ligacao' | 'proposta' | 'auditoria' | 'operacionais';
 
-export interface EntradaRegistro {
+interface EntradaRegistro {
   arquivo: string;
   forma: string;
   /** Quantas vezes a forma aparece no arquivo (default 1). */
@@ -92,7 +92,7 @@ export const REGISTRO: readonly EntradaRegistro[] = [
  */
 export const TETO_DIVIDA = 18;
 
-export interface ConstanteDivida {
+interface ConstanteDivida {
   arquivo: string;
   /**
    * Os membros da autoridade que a cópia contém, normalizados, em ordem e separados por vírgula

@@ -35,7 +35,7 @@ import tsInterop from "typescript";
 // `import =` e não `const` (o porquê em erro-colapsado-em-vazio.ts: o Proxy de interop do vite-node).
 import ts = tsInterop;
 
-export type Operacao = "leitura" | "escrita" | "indefinida";
+type Operacao = "leitura" | "escrita" | "indefinida";
 
 export interface SitioPedidos {
   arquivo: string;
@@ -257,14 +257,14 @@ const EMBED = /\bsales_orders\s*(?:!\s*\w+\s*)?\(/;
 // cópia com 1 membro (`STATUS_CANCELAMENTO`, sinônimos em caixa alta), erradicada na mesma leva.
 // Esse é o limite declarado: cópia de UM status só não é distinguível de outro domínio.
 
-export interface ConstanteParalela {
+interface ConstanteParalela {
   arquivo: string;
   linha: number;
   /** Os membros da autoridade que a lista copia, normalizados e em ordem. */
   membros: string[];
 }
 
-export function normalizarStatus(s: string): string {
+function normalizarStatus(s: string): string {
   return s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().trim();
 }
 
