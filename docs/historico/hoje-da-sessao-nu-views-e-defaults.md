@@ -119,6 +119,27 @@ candidatos e parâmetros não cai com o relógio próprio sabotado, porque as fi
 meia-noite de SP (lá o dente é a/b, declarado). Matriz: servidor SP/UTC × `lc_messages` C/pt_BR — 129/129
 nas 4.
 
+## Flagrante, apply e validação — na mesma noite, dentro da janela
+
+O comparador roda, por view, a view VIVA e a definição NOVA (como SELECT puro, via psql-ro) sob
+`TimeZone=UTC` e `America/Sao_Paulo`, com impressão digital (`count` + `md5` das linhas ordenadas):
+
+| Instante (BRT, 30/09) | Sessão UTC: viva × nova | Sessão SP: viva × nova | nova (UTC) = viva (SP) |
+|---|---|---|---|
+| 19:42 (controle, fora da janela) | 20/20 iguais | 20/20 iguais | — (o dia é o mesmo nos dois fusos) |
+| 21:02 (flagrante, antes do apply) | **9 diferem** (os 2 agings, o fluxo, as 2 da Caça, estatísticas, sigma, parâmetros, candidatos) | 18/18 iguais | 16/18 — parâmetros e candidatos, rodados sozinhos, ainda liam as filhas VELHAS |
+| 21:05 (depois do apply) | 18/18 iguais | 18/18 iguais | **18/18** |
+
+O que o flagrante mostrou em número: às 21:02, sob a sessão UTC da prod, `v_sku_parametros_sugeridos` tinha
+**367 SKUs em vez de 370** (3 saíam da janela de 90 dias às 21h — é a view que a classificação das 21:15
+percorre), `v_sku_demanda_estatisticas` idem (367 × 370) e a Caça listava 10.801 candidatos em vez de 10.795.
+
+`bun run db:aplicar --ensaio` (20:47, rodou inteira e fez ROLLBACK; 2ª testemunha: nada gravado) e depois o
+apply às **21:04 BRT** — tentativa #200 virou recibo na mesma transação (sha256 `8894512309b9…`).
+Validação por fora (psql-ro, outra conexão): 18/18 views com o md5 da POS, `security_invoker` e dono
+preservados, 6/6 DEFAULTs, ledger `aplicada`, ACL idêntico (14 views com SELECT para anon, 4 sem, 18 com
+authenticated).
+
 ## Codex
 
 `scripts/codex-async.sh -r max`: **exit 79** — cota em 86% (teto 85%), janela reabre 03/10 19:11; o
