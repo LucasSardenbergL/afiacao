@@ -54,7 +54,7 @@ acidente, agora explícita, a cada 2 h, com guardas.
   `sync_reprocess_saude`, que lê status, acende).
 - `inventory-lote.ts`: `avaliarCompletudeListagem` (página intermediária curta ou última CHEIA = incompleta) e
   `planejarZeramentoForaDaLista` (estoque local ≠ 0, resolvido sem ambiguidade, ausente da listagem →
-  estoque 0; pulado inteiro se a listagem é incompleta, o snapshot veio vazio ou o raio passa do teto
+  estoque 0; pulado inteiro se a listagem é incompleta (página curta, última cheia ou item que o parser recusou — que pode ser produto COM saldo), o snapshot veio vazio ou o raio passa do teto
   `max(20, 5% das posições)`; dedupe contra 21000).
 - `estoque-local.ts`: loader **keyset** das linhas locais com estoque ≠ 0 (ver lição 3).
 - `index.ts`: passo 4b depois do espelho de estoque; metadata `zerados_fora_da_lista` /
@@ -81,9 +81,9 @@ acidente, agora explícita, a cada 2 h, com guardas.
 
 ## A prova
 
-- Deno: produtos 25 → 30 testes, estoque 11 → 24, loader 0 → 4 — RED observado por asserção antes de cada
+- Deno: produtos 25 → 30 testes, estoque 11 → 25, loader 0 → 4 — RED observado por asserção antes de cada
   GREEN; `test:edges` 1.317 passaram / 0 falharam.
-- Falsificação: **12/12 sabotagens vermelhas no teste-alvo**, em `LC_ALL=C` e `pt_BR.UTF-8`, controle verde na
+- Falsificação: **13/13 sabotagens vermelhas no teste-alvo**, em `LC_ALL=C` e `pt_BR.UTF-8`, controle verde na
   mesma invocação, árvore limpa depois.
 - Gates: `edges:typecheck` (0 crash; `deno check` direto nos 4 arquivos, 0 erro), `sonda:bump`,
   `sonda:fingerprint`, os 10 vitest que leem a edge como texto e a suíte completa.
