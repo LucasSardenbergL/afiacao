@@ -466,6 +466,129 @@ else
 fi
 rm -f "$ESPELHO"/db/test-fake-parte-*.sh "$ESPELHO/db/roda-nucleo-ci-torto.sh" "$MP" "$ESPELHO/manifesto-parte-vazia.txt"
 
+# ── O RECIBO de cada parte e a UNIÃO deles (2026-10-01) ─────────────────────────────────────────
+# A partição acima está provada aqui; a EXECUÇÃO de cada run não estava: parte cujo step não rodou sai
+# verde, e a matriz agrega `success`. Cada parte grava um recibo (NUCLEO_RECIBO) e o job
+# `provas-sql-uniao` exige o CONJUNTO (`--uniao`). Cada regra da união tem caso aqui, e o 1º grupo é
+# o CONTROLE POSITIVO na mesma invocação — sem ele, um runner que recusasse todo recibo e toda união
+# passaria em todos os casos de recusa.
+echo
+echo "=== a UNIÃO dos recibos pega a parte que não rodou? ==="
+
+fake_falsificavel test-fake-falsificavel.sh '  echo "SABOTAGENS: 3 vermelhas / 0 falhas"; exit 0'
+cp "$ESPELHO/$FALSO" "$ESPELHO/db/test-fake-falsificavel-2.sh"
+cp "$ESPELHO/$FALSO" "$ESPELHO/db/test-fake-falsificavel-3.sh"
+MPR="$ESPELHO/manifesto-recibos.txt"
+printf '%s 5 falsificar=3\ndb/test-fake-falsificavel-2.sh 5 falsificar=3\ndb/test-fake-falsificavel-3.sh 5 falsificar=3\n' "$FALSO" > "$MPR"
+# 3 provas em 2 partes (k mod 2): parte 0 = provas 1 e 3 (4 unidades), parte 1 = prova 2 (2 unidades).
+REC="$ESPELHO/recibos"; rm -rf "$REC"; mkdir -p "$REC"
+exec_verde "CONTROLE: a parte 0/2 roda as dela e grava o recibo" "RECIBO_DA_PARTE 0/2 unidades=4" \
+  env MANIFESTO="$MPR" NUCLEO_PARTE=0/2 NUCLEO_RECIBO="$REC/parte-0.txt" bash "$ESPELHO/db/roda-nucleo-ci.sh"
+exec_verde "CONTROLE: a parte 1/2 roda as dela e grava o recibo" "RECIBO_DA_PARTE 1/2 unidades=2" \
+  env MANIFESTO="$MPR" NUCLEO_PARTE=1/2 NUCLEO_RECIBO="$REC/parte-1.txt" bash "$ESPELHO/db/roda-nucleo-ci.sh"
+exec_verde "CONTROLE: a união dos 2 recibos é o manifesto inteiro" "SQL_PROOF_OK uniao=2/2 provas=3/3 falsificacoes=3/3" \
+  env MANIFESTO="$MPR" bash "$ESPELHO/db/roda-nucleo-ci.sh" --uniao "$REC"
+
+# variante <nome> -> ecoa um diretório com CÓPIA dos recibos honestos, para o caso adulterar.
+variante() { local d="$ESPELHO/rec-$1"; rm -rf "$d"; cp -R "$REC" "$d"; printf '%s' "$d"; }
+# adultera <arquivo> <filtro...>: reescreve pelo filtro (stdin → stdout) e EXIGE que o arquivo mudou —
+# adulteração que não aplicou é falsificação inválida, nunca "a união não pega" (regra 3).
+adultera() {
+  local a="$1"; shift
+  cp "$a" "$a.antes"
+  "$@" < "$a.antes" > "$a"
+  if cmp -s "$a" "$a.antes"; then
+    rm -f "$a.antes"; bad "adulteração NÃO APLICOU em $(basename "$a") — falsificação inválida: $*"; return 1
+  fi
+  rm -f "$a.antes"
+}
+uniao_exige() { # <descrição> <marca> <diretório>
+  exec_exige "$1" "$2" env MANIFESTO="$MPR" bash "$ESPELHO/db/roda-nucleo-ci.sh" --uniao "$3"
+}
+
+D="$(variante falta)"; rm -f "$D/parte-1.txt"
+uniao_exige "parte que não rodou (recibo ausente) REPROVA a união" "falta o recibo da parte 1/2" "$D"
+
+D="$(variante dup)"; cp "$D/parte-0.txt" "$D/parte-9.txt"
+uniao_exige "a MESMA parte duas vezes (recibo copiado) REPROVA" "a parte 0/2 apareceu 2 vezes" "$D"
+
+D="$(variante sem-unidade)"
+if adultera "$D/parte-1.txt" sed -e '/^unidade db\/test-fake-falsificavel-2.sh falsificar$/d' -e 's/^fim 2$/fim 1/'; then
+  uniao_exige "unidade sem conclusão em parte nenhuma REPROVA (o conjunto, não a contagem)" \
+    "sem recibo de conclusão: db/test-fake-falsificavel-2.sh falsificar" "$D"
+fi
+
+D="$(variante truncado)"
+if adultera "$D/parte-0.txt" sed -e '/^unidade db\/test-fake-falsificavel.sh normal$/d'; then
+  uniao_exige "recibo TRUNCADO (o fim não bate com as unidades) REPROVA" "recibo TRUNCADO" "$D"
+fi
+
+D="$(variante outro-manifesto)"
+if adultera "$D/parte-0.txt" sed -e "s/^manifesto_sha256 .*/manifesto_sha256 $(printf '%064d' 0)/"; then
+  uniao_exige "recibo de OUTRO manifesto REPROVA" "recibo de OUTRO manifesto" "$D"
+fi
+
+D="$(variante outro-n)"
+if adultera "$D/parte-1.txt" sed -e 's/^parte 1\/2$/parte 1\/3/'; then
+  uniao_exige "partes de partições DIFERENTES (N diverge) REPROVA" "partes de partições diferentes" "$D"
+fi
+
+D="$(variante parte-errada)"
+if adultera "$D/parte-1.txt" sed -e '/^unidade db\/test-fake-falsificavel-2.sh normal$/d' -e 's/^fim 2$/fim 1/' \
+   && adultera "$D/parte-0.txt" awk '/^fim 4$/ { print "unidade db/test-fake-falsificavel-2.sh normal"; print "fim 5"; next } { print }'; then
+  uniao_exige "unidade no recibo de OUTRA parte (a parte rodou outro conjunto) REPROVA" "a parte rodou OUTRO conjunto" "$D"
+fi
+
+D="$(variante fora-do-manifesto)"
+if adultera "$D/parte-0.txt" awk '/^fim 4$/ { print "unidade db/test-nao-existe.sh normal"; print "fim 5"; next } { print }'; then
+  uniao_exige "unidade que o manifesto não tem REPROVA" "unidade fora do manifesto" "$D"
+fi
+
+D="$(variante duas-vezes)"
+if adultera "$D/parte-0.txt" awk '/^unidade db\/test-fake-falsificavel.sh normal$/ { print; print; next } /^fim 4$/ { print "fim 5"; next } { print }'; then
+  uniao_exige "unidade concluída DUAS vezes REPROVA" "concluída DUAS vezes" "$D"
+fi
+
+D="$(variante linha-estranha)"
+if adultera "$D/parte-0.txt" awk 'NR == 2 { print "ok tudo certo" } { print }'; then
+  uniao_exige "linha que o recibo não prevê REPROVA (nunca é ignorada)" "linha não reconhecida" "$D"
+fi
+
+D="$ESPELHO/rec-vazio"; rm -rf "$D"; mkdir -p "$D"
+uniao_exige "união sem recibo nenhum REPROVA (não é 'nada a conferir')" "nenhum recibo parte-*.txt" "$D"
+
+exec_exige "--uniao com NUCLEO_PARTE ABORTA (a união é de TODAS as partes)" "não se combina" \
+  env MANIFESTO="$MPR" NUCLEO_PARTE=0/2 bash "$ESPELHO/db/roda-nucleo-ci.sh" --uniao "$REC"
+exec_exige "NUCLEO_RECIBO sem NUCLEO_PARTE ABORTA (a execução inteira não é parte)" "NUCLEO_RECIBO só vale com NUCLEO_PARTE" \
+  env MANIFESTO="$MPR" NUCLEO_RECIBO="$ESPELHO/rec-x.txt" bash "$ESPELHO/db/roda-nucleo-ci.sh"
+exec_exige "argumento desconhecido ABORTA (flag ignorada rodaria tudo)" "argumento desconhecido" \
+  env MANIFESTO="$MPR" bash "$ESPELHO/db/roda-nucleo-ci.sh" --uniaoo "$REC"
+
+# O buraco de ponta a ponta: a seleção da parte, sabotada, PERDE a 3ª prova. As DUAS partes saem
+# verdes — cada uma confere só o próprio conjunto, e nenhuma tem a prova perdida. Só a UNIÃO, que
+# refaz a partição sobre o manifesto inteiro, vê. Sabotagem conferida por conteúdo (regra 3).
+if python3 - "$ESPELHO/db/roda-nucleo-ci.sh" "$ESPELHO/db/roda-nucleo-ci-perde.sh" > "$LOGS/sabotagem-recibo.log" 2>&1 <<'PY'
+import sys, pathlib
+t = pathlib.Path(sys.argv[1]).read_text()
+a = 'if [ $((k % p_n)) -eq "$p_i" ]; then'
+assert t.count(a) == 1, f"esperava 1 filtro de parte, achei {t.count(a)}"
+pathlib.Path(sys.argv[2]).write_text(t.replace(a, 'if [ "$k" -ne 2 ] && [ $((k % p_n)) -eq "$p_i" ]; then', 1))
+PY
+then
+  DP="$ESPELHO/rec-perde"; rm -rf "$DP"; mkdir -p "$DP"
+  exec_verde "(sabotagem) a parte 0/2 do runner que PERDE uma prova sai verde — é o buraco" "RECIBO_DA_PARTE 0/2 unidades=2" \
+    env MANIFESTO="$MPR" NUCLEO_PARTE=0/2 NUCLEO_RECIBO="$DP/parte-0.txt" bash "$ESPELHO/db/roda-nucleo-ci-perde.sh"
+  exec_verde "(sabotagem) a parte 1/2 do mesmo runner também sai verde" "RECIBO_DA_PARTE 1/2 unidades=2" \
+    env MANIFESTO="$MPR" NUCLEO_PARTE=1/2 NUCLEO_RECIBO="$DP/parte-1.txt" bash "$ESPELHO/db/roda-nucleo-ci-perde.sh"
+  exec_exige "partição que PERDE uma prova é pega pela UNIÃO" \
+    "sem recibo de conclusão: db/test-fake-falsificavel-3.sh normal" \
+    env MANIFESTO="$MPR" bash "$ESPELHO/db/roda-nucleo-ci-perde.sh" --uniao "$DP"
+else
+  bad "runner que perde uma prova na partição — SABOTAGEM NÃO APLICOU (falsificação inválida): $(tail -1 "$LOGS/sabotagem-recibo.log")"
+fi
+rm -f "$ESPELHO/$FALSO" "$ESPELHO/db/test-fake-falsificavel-2.sh" "$ESPELHO/db/test-fake-falsificavel-3.sh" \
+  "$ESPELHO/db/roda-nucleo-ci-perde.sh" "$MPR"
+
 # ── CONTROLE FINAL ──────────────────────────────────────────────────────────────
 echo
 echo "=== controle final — o verde voltou? ==="
@@ -484,7 +607,8 @@ echo "FALSIFICACAO: OK=$OK XX=$XX"
 # Mas este piso mora no arquivo que ele vigia: um harness TRUNCADO perde o piso junto e sai 0
 # (parecer Codex 2026-09-14). No CI quem decide é o step do `provas-sql`, que confere o recibo
 # acima com o piso FORA daqui — `HARNESS_OK_MINIMO` no ci.yml; mude os dois juntos.
-OK_MINIMO=45
+# 45 → 65 em 2026-10-01: os 20 casos do recibo das partes e da união.
+OK_MINIMO=65
 if [ "$OK" -lt "$OK_MINIMO" ]; then
   echo "❌ só $OK caso(s) ok, o piso é $OK_MINIMO — o harness encolheu (ou parou no meio)"; exit 1
 fi

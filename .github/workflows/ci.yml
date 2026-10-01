@@ -1130,9 +1130,11 @@ jobs:
       # Ele também exige, por prova, o mínimo de asserts declarado em `db/nucleo-ci.txt`:
       # o fechamento das provas é `[ "$FAIL" -eq 0 ]`, que TAMBÉM aceita PASS=0, e uma
       # prova truncada sairia 0. Falsificação: o step seguinte.
+      # O RECIBO da parte nasce só se o conjunto dela fechou; o artefato o leva ao `provas-sql-uniao`.
       - name: Núcleo de provas SQL executadas (db/nucleo-ci.txt)
         env:
           NUCLEO_PARTE: ${{ strategy.job-index }}/${{ strategy.job-total }}
+          NUCLEO_RECIBO: ${{ runner.temp }}/nucleo-recibo/parte-${{ strategy.job-index }}.txt
         run: bash db/roda-nucleo-ci.sh
 
       # O dente do RUNNER, provado onde o runner vale. `db/falsifica-nucleo-ci.sh` restaura
@@ -1152,7 +1154,7 @@ jobs:
       - name: Falsificação do núcleo — o runner reprova pelo motivo certo?
         if: ${{ strategy.job-index == 0 }}
         env:
-          HARNESS_OK_MINIMO: "45"
+          HARNESS_OK_MINIMO: "65"
         run: |
           log="$RUNNER_TEMP/falsifica-nucleo.log"
           bash db/falsifica-nucleo-ci.sh > "$log" 2>&1 && rc=0 || rc=$?
@@ -1164,10 +1166,73 @@ jobs:
             exit 1
           fi
           echo "HARNESS_NUCLEO_OK casos=$casos (piso $HARNESS_OK_MINIMO)"
+          # O recibo do harness vai no artefato da 1ª parte: a união o exige — step pulado não reprova nada.
+          mkdir -p "$RUNNER_TEMP/nucleo-recibo"
+          echo "HARNESS_NUCLEO_OK casos=$casos piso=$HARNESS_OK_MINIMO" > "$RUNNER_TEMP/nucleo-recibo/harness.txt"
+
+      # `if-no-files-found: error`: parte verde sem recibo é contradição, e vira vermelho aqui.
+      - name: Recibo da parte → artefato da união
+        uses: actions/upload-artifact@v7
+        with:
+          name: nucleo-recibo-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/nucleo-recibo/
+          if-no-files-found: error
+          retention-days: 3
+
+  # A UNIÃO das partes (2026-10-01). A matriz do `provas-sql` agrega `success` quando as N partes
+  # saem verdes — inclusive a parte cujo step do núcleo foi PULADO (um `if:` novo, uma condição que
+  # mudou de tipo). Este job não sobe banco: baixa o recibo de cada parte e exige o CONJUNTO contra o
+  # manifesto (`db/roda-nucleo-ci.sh --uniao`; cada regra tem caso no db/falsifica-nucleo-ci.sh), e o
+  # recibo do harness da 1ª parte. `!cancelled()` em vez do default: com uma parte vermelha ele roda
+  # mesmo assim e diz o porquê — o default o pularia, e o `validate` só leria "skipped".
+  provas-sql-uniao:
+    needs: [provas-sql]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v5
+
+      # Antes de qualquer recibo: a matriz inteira terminou em success? Parte vermelha, cancelada no
+      # teto ou que nem começou deixa os recibos das OUTRAS — e eles não bastam.
+      - name: As partes terminaram em success?
+        env:
+          RESULTADO_PARTES: ${{ needs.provas-sql.result }}
+        run: |
+          if [ "$RESULTADO_PARTES" != success ]; then
+            echo "::error::provas-sql terminou '${RESULTADO_PARTES:-<vazio>}' — alguma parte não fechou (vermelha, estourou o teto ou não rodou); veja o job dela"
+            exit 1
+          fi
+          echo "PARTES_OK resultado=$RESULTADO_PARTES"
+
+      - name: Recibos das partes
+        uses: actions/download-artifact@v8
+        with:
+          pattern: nucleo-recibo-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/recibos
+
+      - name: União das partes — cada unidade do núcleo concluída exatamente uma vez?
+        run: |
+          set -euo pipefail
+          bash db/roda-nucleo-ci.sh --uniao "$RUNNER_TEMP/recibos"
+          # O dente do runner rodou na 1ª parte? Sem o recibo dele, "não reprovou" é ausência de dado.
+          h="$RUNNER_TEMP/recibos/harness.txt"
+          [ -f "$h" ] || { echo "::error::sem recibo do harness do núcleo (1ª parte): o dente do runner não rodou"; exit 1; }
+          linha="$(cat "$h")"
+          printf '%s' "$linha" | grep -qxE 'HARNESS_NUCLEO_OK casos=[0-9]+ piso=[0-9]+' \
+            || { echo "::error::recibo do harness malformado: $(printf '%s' "$linha" | head -c 200)"; exit 1; }
+          casos="$(printf '%s' "$linha" | sed -E 's/.* casos=([0-9]+) .*/\1/')"
+          piso="$(printf '%s' "$linha" | sed -E 's/.* piso=([0-9]+)$/\1/')"
+          [ "$casos" -ge "$piso" ] || { echo "::error::harness com $casos caso(s), abaixo do piso $piso"; exit 1; }
+          echo "$linha"
 
   validate:
     if: always()
-    needs: [typecheck, testes, edges-e-build, gates-e-falsificacao, provas-sql]
+    needs: [typecheck, testes, edges-e-build, gates-e-falsificacao, provas-sql, provas-sql-uniao]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     # issues:write p/ o alerta de main-vermelha (abaixo) abrir Issue.
@@ -1181,11 +1246,12 @@ jobs:
           RESULTADOS: ${{ toJSON(needs) }}
         run: |
           set -euo pipefail
-          esperados=5
-          total=0; falhou=0; viu_provas_sql=0
+          esperados=6
+          total=0; falhou=0; viu_provas_sql=0; viu_uniao=0
           while IFS="$(printf '\t')" read -r job resultado; do
             total=$((total + 1))
             [ "$job" = "provas-sql" ] && viu_provas_sql=1
+            [ "$job" = "provas-sql-uniao" ] && viu_uniao=1
             if [ "$resultado" = "success" ]; then
               echo "  ✅ $job: success"
             else
@@ -1207,6 +1273,12 @@ jobs:
           # outro job — manteria total=5 e o agregador seguiria dizendo ✅ com o SQL fora do merge.
           if [ "$viu_provas_sql" -ne 1 ]; then
             echo "::error::o job 'provas-sql' não está entre os $total lidos — as provas SQL saíram do caminho obrigatório."
+            exit 1
+          fi
+          # A mesma guarda para a UNIÃO das partes (2026-10-01): sem ela, tirar `provas-sql-uniao` do
+          # `needs` e baixar o `esperados` deixaria a parte que não rodou de novo invisível.
+          if [ "$viu_uniao" -ne 1 ]; then
+            echo "::error::o job 'provas-sql-uniao' não está entre os $total lidos — ninguém confere que as partes somaram o núcleo inteiro."
             exit 1
           fi
           if [ "$falhou" -ne 0 ]; then
