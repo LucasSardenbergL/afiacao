@@ -45,14 +45,14 @@ INSERT INTO public.radar_empresas (cnpj, uf) VALUES ('11111111000111','MG'),('22
 -- A1: gestor lê as 2 linhas
 SET ROLE authenticated; SET test.uid='00000000-0000-0000-0000-0000000000a1';
 DO $$ BEGIN
-  IF (SELECT count(*) FROM public.radar_empresas) <> 2 THEN RAISE EXCEPTION 'A1 FALHOU: gestor não leu'; END IF;
+  IF (SELECT count(*) FROM public.radar_empresas) IS DISTINCT FROM 2 THEN RAISE EXCEPTION 'A1 FALHOU: gestor não leu'; END IF;
   RAISE NOTICE 'A1 OK (gestor lê)';
 END $$;
 
 -- A2: não-gestor lê 0 (segurança preservada pelo fix)
 SET test.uid='00000000-0000-0000-0000-0000000000b2';
 DO $$ BEGIN
-  IF (SELECT count(*) FROM public.radar_empresas) <> 0 THEN RAISE EXCEPTION 'A2 FALHOU: não-gestor leu'; END IF;
+  IF (SELECT count(*) FROM public.radar_empresas) IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'A2 FALHOU: não-gestor leu'; END IF;
   RAISE NOTICE 'A2 OK (não-gestor nega)';
 END $$;
 RESET ROLE; SET test.uid='';

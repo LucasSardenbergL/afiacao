@@ -186,7 +186,7 @@ DO $$ DECLARE r record; n int; BEGIN
   -- 107 (conta colacor) e 108 (inexistente) não retornam linha na consulta por oben
   SELECT count(*) INTO n FROM public.get_whatsapp_proposta_cotacao(
     '00000000-0000-0000-0000-0000000cccc3', 'oben', ARRAY[101,102,103,104,105,106,107,108,109]::bigint[]);
-  IF n <> 7 THEN RAISE EXCEPTION 'FALHA catálogo: esperava 7 linhas oben (101–106,109), veio %', n; END IF;
+  IF n IS DISTINCT FROM 7 THEN RAISE EXCEPTION 'FALHA catálogo: esperava 7 linhas oben (101–106,109), veio %', n; END IF;
 END $$;
 ROLLBACK;
 

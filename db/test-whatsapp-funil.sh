@@ -113,13 +113,13 @@ SET LOCAL ROLE authenticated;
 SET LOCAL request.jwt.claims = '{"sub":"00000000-0000-0000-0000-0000000aaaa1","role":"authenticated"}';
 DO $$ DECLARE r record; BEGIN
   SELECT * INTO r FROM public.get_whatsapp_funil(30);
-  IF r.enviados     <> 4 THEN RAISE EXCEPTION 'FALHA enviados: esperava 4 (s1,s2,s3,s5 — queued fora), veio %', r.enviados; END IF;
-  IF r.entregues    <> 3 THEN RAISE EXCEPTION 'FALHA entregues: esperava 3 (s2,s3,s5), veio %', r.entregues; END IF;
-  IF r.lidos        <> 1 THEN RAISE EXCEPTION 'FALHA lidos: esperava 1 (s3), veio %', r.lidos; END IF;
-  IF r.falhas       <> 1 THEN RAISE EXCEPTION 'FALHA falhas: esperava 1 (s4), veio %', r.falhas; END IF;
-  IF r.respondidos  <> 1 THEN RAISE EXCEPTION 'FALHA respondidos: esperava 1 (só s2 — anterior/30h não contam), veio %', r.respondidos; END IF;
-  IF r.propostas    <> 2 THEN RAISE EXCEPTION 'FALHA propostas: esperava 2 (o1,o2 — sem elo/fora do período não contam), veio %', r.propostas; END IF;
-  IF r.pedidos_omie <> 1 THEN RAISE EXCEPTION 'FALHA pedidos_omie: esperava 1 (o1 — o3 sem elo é TELEFONE), veio %', r.pedidos_omie; END IF;
+  IF r.enviados     IS DISTINCT FROM 4 THEN RAISE EXCEPTION 'FALHA enviados: esperava 4 (s1,s2,s3,s5 — queued fora), veio %', r.enviados; END IF;
+  IF r.entregues    IS DISTINCT FROM 3 THEN RAISE EXCEPTION 'FALHA entregues: esperava 3 (s2,s3,s5), veio %', r.entregues; END IF;
+  IF r.lidos        IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'FALHA lidos: esperava 1 (s3), veio %', r.lidos; END IF;
+  IF r.falhas       IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'FALHA falhas: esperava 1 (s4), veio %', r.falhas; END IF;
+  IF r.respondidos  IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'FALHA respondidos: esperava 1 (só s2 — anterior/30h não contam), veio %', r.respondidos; END IF;
+  IF r.propostas    IS DISTINCT FROM 2 THEN RAISE EXCEPTION 'FALHA propostas: esperava 2 (o1,o2 — sem elo/fora do período não contam), veio %', r.propostas; END IF;
+  IF r.pedidos_omie IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'FALHA pedidos_omie: esperava 1 (o1 — o3 sem elo é TELEFONE), veio %', r.pedidos_omie; END IF;
   IF r.receita_omie IS DISTINCT FROM 1000 THEN RAISE EXCEPTION 'FALHA receita: esperava 1000 (só o1), veio %', r.receita_omie; END IF;
 END $$;
 ROLLBACK;
@@ -130,7 +130,7 @@ SET LOCAL ROLE authenticated;
 SET LOCAL request.jwt.claims = '{"sub":"00000000-0000-0000-0000-0000000aaaa1","role":"authenticated"}';
 DO $$ DECLARE r record; BEGIN
   SELECT * INTO r FROM public.get_whatsapp_funil(2);
-  IF r.enviados <> 1 THEN RAISE EXCEPTION 'FALHA período: p_dias=2 esperava 1 enviado (s5), veio %', r.enviados; END IF;
+  IF r.enviados IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'FALHA período: p_dias=2 esperava 1 enviado (s5), veio %', r.enviados; END IF;
 END $$;
 ROLLBACK;
 
@@ -140,7 +140,7 @@ SET LOCAL ROLE authenticated;
 SET LOCAL request.jwt.claims = '{"sub":"00000000-0000-0000-0000-0000000bbbb2","role":"authenticated"}';
 DO $$ DECLARE r record; BEGIN
   SELECT * INTO r FROM public.get_whatsapp_funil(30);
-  IF r.enviados <> 0 OR r.respondidos <> 0 OR r.propostas <> 0
+  IF r.enviados IS DISTINCT FROM 0 OR r.respondidos IS DISTINCT FROM 0 OR r.propostas IS DISTINCT FROM 0
     THEN RAISE EXCEPTION 'FALHA RLS: não-staff viu enviados=% respondidos=% propostas=%', r.enviados, r.respondidos, r.propostas; END IF;
 END $$;
 ROLLBACK;
@@ -176,7 +176,7 @@ SET LOCAL ROLE authenticated;
 SET LOCAL request.jwt.claims = '{"sub":"00000000-0000-0000-0000-0000000aaaa1","role":"authenticated"}';
 DO $$ DECLARE r record; BEGIN
   SELECT * INTO r FROM public.get_whatsapp_funil(30);
-  IF r.pedidos_omie <> 1 THEN RAISE EXCEPTION 'sabotagem detectada (pedidos=%)' , r.pedidos_omie; END IF;
+  IF r.pedidos_omie IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'sabotagem detectada (pedidos=%)' , r.pedidos_omie; END IF;
 END $$;
 ROLLBACK;
 SQL
