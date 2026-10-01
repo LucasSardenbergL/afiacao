@@ -27,10 +27,17 @@ GATE="scripts/psql-ro-error-stop-gate.ts"
 DIR_FIXTURES="scripts/fixtures/psql-ro-error-stop"
 ALVO_SCANNER="scripts/lib/psql-ro-error-stop.ts"
 ALVO_STRIPPER="src/lib/gates/limpeza-shell.ts"
+ALVO_STRIPPER_JS="src/lib/gates/limpeza-fonte.ts"
 ALVO_CLI="$GATE"
+ALVOS=("$ALVO_SCANNER" "$ALVO_STRIPPER" "$ALVO_STRIPPER_JS" "$ALVO_CLI")
 
 TMPD="$(mktemp -d)"
-trap 'rm -rf "$TMPD"; git checkout -- "$ALVO_SCANNER" "$ALVO_STRIPPER" "$ALVO_CLI" 2>/dev/null' EXIT
+# Por ora o trap só limpa o tmp. A restauração dos ALVOS por `git checkout` só é armada DEPOIS de
+# provar que eles não têm alteração não commitada, e só no modo que sabota. Até 2026-10-01 ela vinha
+# aqui, antes da checagem: o script dizia "commite antes", saía 70 — e o trap de saída apagava
+# justamente a edição que a checagem protegia (medido: a edição sumiu, rc=70). E restaurava também
+# no modo (A), que não sabota nada e roda em todo `test:hooks`.
+trap 'rm -rf "$TMPD"' EXIT
 
 FALHAS=0
 # Forma CANÔNICA da casa (`[ "${1:-}" = "--falsificar" ]`) — não é estilo: é o que
@@ -46,9 +53,12 @@ git rev-parse --is-inside-work-tree >/dev/null 2>&1 || { aviso "❌ fora de repo
 command -v bun >/dev/null 2>&1 || { aviso "❌ bun ausente — abortando"; exit 70; }
 bun --version >/dev/null 2>&1 || { aviso "❌ bun presente mas quebrado — abortando"; exit 70; }
 [ -f "$GATE" ] && [ -d "$DIR_FIXTURES" ] || { aviso "❌ gate ou fixtures ausentes — abortando"; exit 70; }
-for f in "$ALVO_SCANNER" "$ALVO_STRIPPER"; do
-  git diff --quiet -- "$f" || { aviso "❌ $f tem alteração NÃO COMMITADA — a restauração por git checkout a perderia. Commite antes."; exit 70; }
-done
+if [ "$FALSIFICAR" -eq 1 ]; then
+  for f in "${ALVOS[@]}"; do
+    git diff --quiet -- "$f" || { aviso "❌ $f tem alteração NÃO COMMITADA — a restauração por git checkout a perderia. Commite antes."; exit 70; }
+  done
+  trap 'rm -rf "$TMPD"; git checkout -- "${ALVOS[@]}" 2>/dev/null' EXIT
+fi
 
 # ── locales: sonda POSITIVA. "Setei LC_ALL" não prova que o locale EXISTE — glibc/musl caem em C
 # silenciosamente, e aí "rodei nos dois" é uma frase, não uma medição.
@@ -69,7 +79,7 @@ for f in "$DIR_FIXTURES"/*.fixture; do
   cp "$f" "$TMPD/casos/$base/$base"
   N_FIX=$((N_FIX + 1))
 done
-[ "$N_FIX" -ge 18 ] || { aviso "❌ só $N_FIX fixture(s) materializada(s) — corpo pequeno demais para provar nada"; exit 70; }
+[ "$N_FIX" -ge 28 ] || { aviso "❌ só $N_FIX fixture(s) materializada(s) — corpo pequeno demais para provar nada"; exit 70; }
 
 # O veredito do CLI é o PAR "<rc> <MARCA>": o rc sozinho não separa "o fiscal acusou" (1 + a linha
 # de violação) de "o bun MORREU" (1 + stack trace) — e é esse o vermelho que a sabotagem que só quebra
@@ -93,7 +103,12 @@ conferir() {
   for d in "$TMPD"/casos/*; do
     local base esperado obtido
     base="$(basename "$d")"
-    case "$base" in viola-*) esperado="1 VIOLA" ;; limpo-*) esperado="0 LIMPO" ;; *) continue ;; esac
+    case "$base" in
+      viola-*) esperado="1 VIOLA" ;;
+      limpo-*) esperado="0 LIMPO" ;;
+      indeterminado-*) esperado="2 INDETERMINADO" ;;
+      *) continue ;;
+    esac
     obtido="$(LC_ALL="$loc" LANG="$loc" veredito_do_caso "$base")"
     if [ "$obtido" != "$esperado" ]; then
       quebrou=1
@@ -140,11 +155,13 @@ PY
 
 # O que cada ID DECLARA: `V<letra>` = a fixture viola-<letra>-*, que sabotada tem de sair "0 LIMPO" (a
 # violação ESCAPOU); `L<letra>` = limpo-<letra>-*, que tem de sair "1 VIOLA" (falso positivo, com a
-# linha de violação); REPO = o corpo real, que tem de sair "2 INDETERMINADO" (o piso acusou).
-esperado_sabotado() { case "$1" in V?) echo "0 LIMPO" ;; L?) echo "1 VIOLA" ;; REPO) echo "2 INDETERMINADO" ;; *) echo "ID-DESCONHECIDO" ;; esac; }
+# linha de violação); `I<letra>` = indeterminado-<letra>-*, que tem de sair "0 LIMPO" (o alarme
+# CALOU e a fonte que o fiscal não sabe julgar passou como limpa); REPO = o corpo real, que tem de
+# sair "2 INDETERMINADO" (o piso ou a contagem cruzada acusou).
+esperado_sabotado() { case "$1" in V?|I?) echo "0 LIMPO" ;; L?) echo "1 VIOLA" ;; REPO) echo "2 INDETERMINADO" ;; *) echo "ID-DESCONHECIDO" ;; esac; }
 caso_do_id() { # VA → viola-a-…; vazio se o ID não tem fixture
   local pre letra d
-  case "$1" in V?) pre=viola ;; L?) pre=limpo ;; *) return 0 ;; esac
+  case "$1" in V?) pre=viola ;; L?) pre=limpo ;; I?) pre=indeterminado ;; *) return 0 ;; esac
   letra="$(printf '%s' "${1#?}" | tr '[:upper:]' '[:lower:]')"
   for d in "$TMPD/casos/$pre-$letra"-*; do [ -d "$d" ] && basename "$d"; done
 }
@@ -195,10 +212,14 @@ aviso "═══ (B) SABOTAGEM — uma camada por vez, exigindo vermelho POR CAU
 # até 2026-09-27 valia QUALQUER fixture com rc ≠ esperado no 1º locale que quebrasse — e a sabotagem
 # que só quebra o TypeScript faz o bun morrer com exit 1, toda `limpo-*` "quebrava" e a camada saía
 # ✅ sem nenhum julgamento. docs/historico/falsificacao-exit-nao-e-dente.md
-SABOTAGENS="descoberta_de_vinculo:VB refutacao_da_semente:LE forma_c:LJ forma_f:VA forma_file_longa:VG
+SABOTAGENS="descoberta_de_vinculo:VB refutacao_da_semente:LE forma_c:LJ,LM forma_f:VA forma_file_longa:VG
             deteccao_errorstop:VA valor_errorstop:VF deteccao_stdin:VD repasse_opaco:VH
             mascara_de_contexto:LF limpeza_de_comentario:REPO herestring:REPO pilha_de_contexto:VA
-            piso_do_walker:REPO"
+            piso_do_walker:REPO
+            pipe_entrando:VL pipe_nao_e_ou_logico:LK
+            ancora_do_caminho:VM,REPO sem_c_le_sql:VN recusa_todo_emitido:LL interpolacao_opaca:LL
+            prefixo_rodavel:LO vinculo_emitido:LM referencia_parentetica:LN referencia_so_o_caminho:VO
+            literal_simples:REPO literal_template:REPO contagem_cruzada:IA stripper_js_linha:REPO"
 
 registra descoberta_de_vinculo 'descoberta-de-vínculo' "$ALVO_SCANNER" \
   'if (MARCA_WRAPPER.test(rhs)) vinculados.add(nome);' \
@@ -259,6 +280,68 @@ registra pilha_de_contexto 'pilha de contexto (substituicao dentro de aspas dupl
 registra piso_do_walker 'piso de denominador (walker vazio)' "$ALVO_CLI" \
   '  for (const r of raizes) andar(resolve(base, r));' \
   '  if (raizes.length > 0) return achados;'
+
+# ── 2026-10-01: o cano no lado shell e o eixo da instrução EMITIDA (literal TS de gerador) ──────
+registra pipe_entrando 'pipe para dentro do wrapper (… | wrapper)' "$ALVO_SCANNER" \
+  'return /(?:^|[^|])\|&?$/.test(t);' \
+  'return false;'
+
+registra pipe_nao_e_ou_logico 'OU lógico (||) NÃO é cano' "$ALVO_SCANNER" \
+  'return /(?:^|[^|])\|&?$/.test(t);' \
+  'return /\|&?$/.test(t);'
+
+# A âncora quebrada esvazia o eixo inteiro SEM disparar a contagem cruzada (as duas metades contam
+# com a mesma âncora, e 0 = 0): só o PISO dos emitidos separa isso de "nenhuma instrução sem a
+# flag". É o REPO, aqui, que prova o piso.
+registra ancora_do_caminho 'âncora do caminho do wrapper' "$ALVO_SCANNER" \
+  'const ANCORA_CAMINHO = /\/\.config\/afiacao\/psql-ro(?![\w-])/g;' \
+  'const ANCORA_CAMINHO = /\/\.config\/afiacao\/psql-ro-NUNCA(?![\w-])/g;'
+
+registra sem_c_le_sql 'emitida sem -c lê SQL (colar é stdin)' "$ALVO_SCANNER" \
+  'const precisaErrorStop = temF || !temC;' \
+  'const precisaErrorStop = temF;'
+
+registra recusa_todo_emitido 'emitida lê o ON_ERROR_STOP (não recusa tudo)' "$ALVO_SCANNER" \
+  'const violaEmitida = precisaErrorStop && !temErrorStop;' \
+  'const violaEmitida = true;'
+
+registra interpolacao_opaca 'interpolação opaca (o cozido é lido inteiro)' "$ALVO_SCANNER" \
+  "cozido: n.head.text + n.templateSpans.map((s) => INTERPOLACAO_OPACA + s.literal.text).join('')," \
+  "cozido: n.head.text + n.templateSpans.map((s) => '\\n' + s.literal.text).join(''),"
+
+registra prefixo_rodavel 'âncora sem prefixo é agulha, não caminho' "$ALVO_SCANNER" \
+  "if (prefixo === '') continue;" \
+  'if (false) continue;'
+
+registra vinculo_emitido 'atribuição do caminho é vínculo' "$ALVO_SCANNER" \
+  'if (VINCULO.test(antes)) continue;' \
+  'if (false) continue;'
+
+registra referencia_parentetica '(caminho) é referência' "$ALVO_SCANNER" \
+  "if (ABRE_REFERENCIA.test(antes) && depois.startsWith(')')) continue;" \
+  'if (false) continue;'
+
+registra referencia_so_o_caminho 'o parêntese só absolve se contém SÓ o caminho' "$ALVO_SCANNER" \
+  "if (ABRE_REFERENCIA.test(antes) && depois.startsWith(')')) continue;" \
+  'if (ABRE_REFERENCIA.test(antes)) continue;'
+
+registra literal_simples 'parser: literal de aspas' "$ALVO_SCANNER" \
+  'if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) {' \
+  'if (false) {'
+
+registra literal_template 'parser: template com interpolação' "$ALVO_SCANNER" \
+  '} else if (ts.isTemplateExpression(n)) {' \
+  '} else if (false) {'
+
+registra contagem_cruzada 'contagem cruzada stripper × parser' "$ALVO_SCANNER" \
+  'if (noCodigo !== nosLiterais) {' \
+  'if (false) {'
+
+# O stripper COMPARTILHADO que para de limpar `//`: o comentário com o caminho sobra no código, e só
+# o parser — a máquina de FORA — sabe que ali não há literal. É a sub-limpeza vista por fora.
+registra stripper_js_linha 'stripper JS: comentário de linha' "$ALVO_STRIPPER_JS" \
+  "if (c === '/' && prox === '/') {" \
+  "if (false && prox === '/') {"
 
 # A camada só conta como vermelha se CADA ID declarado deu o veredito declarado nos DOIS locales —
 # o par (rc, marca) que só o julgamento produz. Crash do bun sai "1 OUTRO"; sabotagem que nem aplica

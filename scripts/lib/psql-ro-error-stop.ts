@@ -552,6 +552,7 @@ function analisarEmissoes(
         const comando = depois.slice(0, fimDoComando(depois, 0));
         const { temC, temF, temErrorStop } = classificarArgumentos(fatiarPalavras(comando));
         const precisaErrorStop = temF || !temC;
+        const violaEmitida = precisaErrorStop && !temErrorStop;
         sitios.push({
           arquivo,
           linha,
@@ -563,7 +564,7 @@ function analisarEmissoes(
           temStdin: !temC && !temF,
           temErrorStop,
           precisaErrorStop,
-          viola: precisaErrorStop && !temErrorStop,
+          viola: violaEmitida,
         });
       }
     }

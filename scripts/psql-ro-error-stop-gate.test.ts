@@ -19,7 +19,7 @@ import { removerComentariosShell } from '@/lib/gates/limpeza-shell';
  *
  * As fixtures são ARQUIVOS de verdade em `scripts/fixtures/psql-ro-error-stop/`, com a
  * expectativa no nome (`viola-*` / `limpo-*`), e são os MESMOS bytes que
- * `scripts/falsificar-psql-ro-error-stop.sh` materializa em tmp para rodar o CLI nos dois locales
+ * `scripts/test-psql-ro-error-stop.sh` materializa em tmp para rodar o CLI nos dois locales
  * e sabotar uma camada por vez. Fixture duplicada entre os dois consumidores desanda; esta não.
  */
 
