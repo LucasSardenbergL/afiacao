@@ -121,15 +121,6 @@
       "desde": "2026-09-26"
     },
     {
-      "funcao": "get_regua_preco",
-      "identidade": "uuid,uuid,numeric,numeric,numeric[]",
-      "classe": "PATCH",
-      "patch": "20260723150000_authz_custo_fu4f_fase2_regua.sql",
-      "efeito": "SO_CITA",
-      "motivo": "mesmo arquivo do CREATE, menção DEPOIS dele — postcondição: to_regprocedure confirma que a assinatura VELHA (3 args) saiu; não é reescrita.",
-      "desde": "2026-09-26"
-    },
-    {
       "funcao": "get_regua_preco_customer360",
       "identidade": "uuid,bigint[]",
       "classe": "PATCH",
