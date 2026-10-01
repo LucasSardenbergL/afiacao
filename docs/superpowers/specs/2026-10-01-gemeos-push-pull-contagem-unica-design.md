@@ -45,7 +45,7 @@ Soma contada em dobro:
 
 1. **3 dos 25 pares não são a mesma venda.** ART MÓVEIS faturou R$ 527,20 no Omie como #10518; o
    app reenviou 2× (10:49/10:55 → #10520/#10521) e esses pedidos foram **reaproveitados no Omie**
-   para FRANCCINO (R$ 600) e NILSON (R$ 560); idem LOHAN R$ 540 → JOSÉ AUGUSTO R$ 1.200. A ART
+   para outros dois clientes (R$ 600 e R$ 560); idem LOHAN R$ 540 → outro cliente, R$ 1.200. A ART
    conta essa venda 3× em abril. ⇒ depois do push a linha do app não é confiável nem no cliente:
    **a importada é a autoridade**. Totais divergem em 8 dos 25 pares.
 2. **O congelado de abril NÃO está duplicado — está incompleto.** `carteira_positivacao_snapshot`
