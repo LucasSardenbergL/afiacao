@@ -60,7 +60,7 @@ trap cleanup EXIT
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
 
 # Sabotagem/restauração rodam como superuser; a MEDIÇÃO nunca (senão o audit veria tudo).
-S(){ "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 -q "$@"; }
+S(){ "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 -q "$@"; }
 
 # ── o mundo prod-like ─────────────────────────────────────────────────────────────────────────
 S <<'SQL'

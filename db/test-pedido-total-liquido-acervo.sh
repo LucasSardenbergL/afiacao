@@ -68,7 +68,7 @@ fi
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "$TMPD/pg.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }
 
 PASS=0; FAIL=0
@@ -495,7 +495,7 @@ else
   ok "P1 o gêmeo não tem controle de transação"
 fi
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres gemeo
-PG() { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d gemeo -v ON_ERROR_STOP=1 "$@"; }
+PG() { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d gemeo -v ON_ERROR_STOP=1 "$@"; }
 PG -q -f "$REPO_ROOT/db/stubs-supabase.sql"
 PG -q -f "$SCHEMA"
 PG -q -f "$COER"
