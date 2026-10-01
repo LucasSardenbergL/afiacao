@@ -5,7 +5,7 @@
  * Três camadas, e cada uma com controle:
  *   1. o REPO está limpo — com DENOMINADOR (zero leitor é leitura quebrada, nunca "limpo");
  *   2. CALIBRAÇÃO com as formas REAIS: os 13 corpos PRÉ-fix (verbatim da prod, no fixture da prova
- *      PG17) reprovam todos; os 13 PÓS-fix (as 3 migrations) passam todos;
+ *      PG17) reprovam todos; os 13 PÓS-fix (as 4 migrations) passam todos;
  *   3. CANÁRIOS de reintrodução: cada forma da classe, plantada numa migration nova, reprova — e os
  *      controles inócuos (o predicado dentro de LITERAL ou de COMENTÁRIO não conta) também.
  */
@@ -63,11 +63,11 @@ describe('universo de pedidos — calibração com as formas REAIS', () => {
     }
   });
 
-  it('os 13 corpos PÓS-fix (as 3 migrations) passam, cada um', () => {
+  it('os 13 corpos PÓS-fix (as 4 migrations) passam, cada um', () => {
     const modelo = modelar(lerMigrations(RAIZ));
     for (const o of CORRIGIDOS) {
       const d = modelo.get(o)!;
-      expect(d.migration, o).toMatch(/^20261001014[012]00_universo_pedidos_/);
+      expect(d.migration, o).toMatch(/^20261001014(000|100|210|220)_universo_pedidos_/);
       expect(julgarDefinicao(d, AUT), o).toEqual([]);
     }
   });

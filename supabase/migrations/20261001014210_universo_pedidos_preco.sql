@@ -1,7 +1,11 @@
--- 20261001014200_universo_pedidos_preco.sql
+-- 20261001014210_universo_pedidos_preco.sql
 -- ============================================================
--- Preço (régua, régua 360, proposta de WhatsApp, últimos preços, abaixo do piso, defasagem, tint):
--- universo de pedidos CANÔNICO. A data de cada função NÃO muda — só o universo.
+-- Preço (régua, régua 360, últimos preços, abaixo do piso, defasagem, tint): universo de pedidos
+-- CANÔNICO. A data de cada função NÃO muda — só o universo. A proposta de WhatsApp vai na
+-- 20261001014220, SOZINHA: a prova do canal (db/test-whatsapp-proposta.sh) monta o corpo vivo dela pela
+-- cadeia de migrations que a redefinem (db/lib/corpo-vivo.sh), e uma migration multi-objeto com PRE de
+-- md5 exato em TODOS os objetos não aplica numa cadeia que só reproduz o objeto guardado (a PRE abortava
+-- na régua, que ali está no corpo anterior ao 20260929001651 — pego pelo CI da 1ª versão desta entrega).
 -- ============================================================
 -- A classe e a autoridade: ver o cabeçalho de 20261001014000_universo_pedidos_caca.sql e
 -- docs/historico/universo-pedidos-classe-sql.md.
@@ -9,24 +13,21 @@
 -- Antes desta migration (prod, 2026-10-01), predicado sobre o alias de sales_orders:
 --   · get_regua_preco (precos_cliente e comparaveis) e get_regua_preco_customer360 (produto e
 --     preco_atual, que decide abaixo_piso): NENHUM filtro de status;
---   · get_whatsapp_proposta_cotacao (preço "praticado" da proposta que vai ao CLIENTE): nenhum filtro
---     de status NEM de deleted_at;
 --   · get_ultimos_precos_cliente e medir_abaixo_piso_tier: COALESCE(status,'') NOT IN (cancelado,
 --     orcamento) — rascunho e pendente entravam;
 --   · get_defasagem_cliente: ALLOWLIST dos 4 de venda (igual hoje; diverge se surgir status novo);
 --   · tint_ultimo_preco_cliente: status IS DISTINCT FROM 'cancelado', sem deleted_at.
 --
--- Decisão do founder (2026-10-01): canônico nas 7. Efeito medido na prod (psql-ro, 2026-10-01 01:00
--- UTC; só os 28 pedidos cancelados importam — orçamento e rascunho não têm itens): régua — 33 itens de
+-- Decisão do founder (2026-10-01): canônico nas 7 (6 aqui + a proposta). Efeito medido na prod
+-- (psql-ro, 2026-10-01 01:00 UTC; só os 28 pedidos cancelados importam — orçamento e rascunho não têm itens): régua — 33 itens de
 -- cancelados na janela de 180 d, 28 de 2.388 pares cliente×produto (4 só com cancelado: precos_cliente
 -- vira []), 27 de 448 produtos com cancelado nos comparáveis; 360 — em 14 de 7.294 pares o preco_atual
--- vinha de cancelado (11 mudam: 5 viram sem_preco, 6 outro preço); proposta — 14 de 24.093
--- (cliente, conta, sku) (11 mudam, 5 somem e caem para tabela ou sem_preco). As outras 4: 0 linhas.
+-- vinha de cancelado (11 mudam: 5 viram sem_preco, 6 outro preço). As outras 4: 0 linhas.
 --
 -- Conserto: a ÚNICA mudança em cada corpo é o predicado do universo no alias so. O resto é o texto
 -- VIVO da prod (pg_get_functiondef, 2026-10-01; a régua já com o fuso de SP da 20260929001651,
 -- aplicada em 2026-10-01 00:58 UTC), gerado por troca exata com contagem conferida — mesmas
--- assinaturas, retornos, volatilidade, SECURITY DEFINER, search_path, dono e ACL (CREATE OR REPLACE
+-- assinaturas, retornos, volatilidade, SECURITY DEFINER/INVOKER, search_path, dono e ACL (CREATE OR REPLACE
 -- preserva OID e ACL). No tint, o omie_pedido_id IS NOT NULL e a janela de 180 d são regra própria
 -- do acordo comercial e ficam.
 --
@@ -39,13 +40,15 @@
 
 ALTER FUNCTION public.get_regua_preco(uuid,uuid,numeric,numeric,numeric[]) VOLATILE;
 ALTER FUNCTION public.get_regua_preco_customer360(uuid,bigint[]) VOLATILE;
-ALTER FUNCTION public.get_whatsapp_proposta_cotacao(uuid,text,bigint[]) STABLE;
 ALTER FUNCTION public.get_ultimos_precos_cliente(uuid) STABLE;
 ALTER FUNCTION public.medir_abaixo_piso_tier(integer) STABLE;
 ALTER FUNCTION public.get_defasagem_cliente(jsonb,uuid) STABLE;
 ALTER FUNCTION public.tint_ultimo_preco_cliente(uuid,uuid,text,uuid) STABLE;
 
-CREATE TEMP TABLE IF NOT EXISTS universo_retrato (alvo text PRIMARY KEY, config text NOT NULL, acl text NOT NULL) ON COMMIT DROP;
+-- retrato de antes: tabela temporária de SESSÃO (não ON COMMIT DROP) — a cadeia viva de db/lib/corpo-vivo.sh
+-- aplica em autocommit; o DROP explícito no fim limpa nos três modos de execução.
+CREATE TEMP TABLE IF NOT EXISTS universo_retrato (alvo text PRIMARY KEY, config text NOT NULL, acl text NOT NULL);
+TRUNCATE pg_temp.universo_retrato;
 
 DO $pre$
 DECLARE r record; v_md5 text;
@@ -53,7 +56,6 @@ BEGIN
   FOR r IN SELECT * FROM (VALUES
       ('public.get_regua_preco(uuid,uuid,numeric,numeric,numeric[])', '846b8d591627674ff59b904b53222ff1', 'b07051bec32e32f6b40b1991a92f07df'),
       ('public.get_regua_preco_customer360(uuid,bigint[])', '92362d82b03f36e594664e16a334297c', '53c8cc09fdad207c8930384033a47a00'),
-      ('public.get_whatsapp_proposta_cotacao(uuid,text,bigint[])', 'd73ff1824d15ec00b9e0c85091b9e3e7', 'bda0102ab47ca37b0ee126f5028233c8'),
       ('public.get_ultimos_precos_cliente(uuid)', '77a6962c6f62b1d82d1d31b43b38c5fc', 'd20fc5118db564025fc8e3aba8b67746'),
       ('public.medir_abaixo_piso_tier(integer)', '9fc343369c69aeeb510f67ec22037a12', '3f0e6844dbcea3bea8bf6a1aca5e0a30'),
       ('public.get_defasagem_cliente(jsonb,uuid)', '4ad3e130bdf9fda5546ced1450e7b6af', 'a03eb600ef0d2a946e550aa55bba415e'),
@@ -265,57 +267,6 @@ BEGIN
 
   RETURN v_out;
 END;
-$function$;
-
--- public.get_whatsapp_proposta_cotacao
-CREATE OR REPLACE FUNCTION public.get_whatsapp_proposta_cotacao(p_customer_user_id uuid, p_account text, p_skus bigint[])
- RETURNS TABLE(omie_codigo_produto bigint, product_id uuid, codigo text, descricao text, unidade text, ativo boolean, estoque numeric, preco numeric, fonte_preco text)
- LANGUAGE sql
- STABLE
- SET search_path TO 'public'
-AS $function$
-  WITH praticado AS (
-    -- último preço praticado VÁLIDO do próprio cliente NA CONTA consultada, por SKU
-    -- (cronologia comercial: item → pedido pai; tie-break estável por id)
-    SELECT DISTINCT ON (oi.omie_codigo_produto)
-           oi.omie_codigo_produto, oi.unit_price
-      FROM public.order_items oi
-      JOIN public.sales_orders so ON so.id = oi.sales_order_id
-     WHERE oi.customer_user_id = p_customer_user_id
-       AND so.account = p_account
-       AND so.status NOT IN ('cancelado','rascunho','pendente','orcamento')
-       AND so.deleted_at IS NULL
-       AND oi.omie_codigo_produto = ANY(p_skus)
-       AND oi.unit_price > 0
-       AND oi.unit_price <> 'NaN'::numeric
-       AND oi.unit_price < 'Infinity'::numeric
-     ORDER BY oi.omie_codigo_produto,
-              COALESCE(oi.created_at, so.created_at) DESC NULLS LAST,
-              oi.id DESC
-  )
-  SELECT p.omie_codigo_produto,
-         p.id AS product_id,
-         p.codigo,
-         p.descricao,
-         p.unidade,
-         p.ativo,
-         p.estoque,
-         COALESCE(
-           pr.unit_price,
-           CASE WHEN p.valor_unitario > 0
-                 AND p.valor_unitario <> 'NaN'::numeric
-                 AND p.valor_unitario < 'Infinity'::numeric
-                THEN p.valor_unitario END
-         ) AS preco,
-         CASE WHEN pr.unit_price IS NOT NULL THEN 'praticado'
-              WHEN p.valor_unitario > 0
-               AND p.valor_unitario <> 'NaN'::numeric
-               AND p.valor_unitario < 'Infinity'::numeric THEN 'tabela'
-         END AS fonte_preco
-    FROM public.omie_products p
-    LEFT JOIN praticado pr ON pr.omie_codigo_produto = p.omie_codigo_produto
-   WHERE p.account = p_account
-     AND p.omie_codigo_produto = ANY(p_skus);
 $function$;
 
 -- public.get_ultimos_precos_cliente
@@ -658,7 +609,6 @@ BEGIN
   FOR r IN SELECT * FROM (VALUES
       ('public.get_regua_preco(uuid,uuid,numeric,numeric,numeric[])', 'b07051bec32e32f6b40b1991a92f07df'),
       ('public.get_regua_preco_customer360(uuid,bigint[])', '53c8cc09fdad207c8930384033a47a00'),
-      ('public.get_whatsapp_proposta_cotacao(uuid,text,bigint[])', 'bda0102ab47ca37b0ee126f5028233c8'),
       ('public.get_ultimos_precos_cliente(uuid)', 'd20fc5118db564025fc8e3aba8b67746'),
       ('public.medir_abaixo_piso_tier(integer)', '3f0e6844dbcea3bea8bf6a1aca5e0a30'),
       ('public.get_defasagem_cliente(jsonb,uuid)', 'a03eb600ef0d2a946e550aa55bba415e'),
@@ -692,3 +642,5 @@ BEGIN
   END LOOP;
   RAISE NOTICE 'POS OK';
 END $pos$;
+
+DROP TABLE IF EXISTS pg_temp.universo_retrato;

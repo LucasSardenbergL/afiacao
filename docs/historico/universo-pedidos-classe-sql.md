@@ -2,8 +2,9 @@
 
 **2026-10-01.** Fecha o chip "Erradicar a classe do universo divergente", aberto no fecho de
 [positivacao-universo-canonico.md](positivacao-universo-canonico.md). Skill `matar-classe`.
-Migrations `20261001014000_universo_pedidos_caca.sql`, `…014100_universo_pedidos_recencia.sql` e
-`…014200_universo_pedidos_preco.sql` (uma por domínio); prova `db/test-universo-pedidos-classe.sh`;
+Migrations `20261001014000_universo_pedidos_caca.sql`, `…014100_universo_pedidos_recencia.sql`,
+`…014210_universo_pedidos_preco.sql` e `…014220_universo_pedidos_proposta_whatsapp.sql` (uma por
+domínio; a proposta sozinha — ver Lições); prova `db/test-universo-pedidos-classe.sh`;
 gate `scripts/universo-pedidos-sql-gate.test.ts`.
 
 ## A classe
@@ -99,8 +100,8 @@ redundante não se falsifica.
 ## A prova
 
 `db/test-universo-pedidos-classe.sh` — PG17 com o schema-snapshot, os predecessores EXATOS da prod
-(H01–H15: md5 dos 14 alvos e o ACL da MV iguais aos de prod) e as 3 migrations sob o search_path do
-`aplicar_sql`. **117 asserts**, controle verde em 28,7 s no laptop:
+(H01–H15: md5 dos 14 alvos e o ACL da MV iguais aos de prod) e as 4 migrations sob o search_path do
+`aplicar_sql`. **118 asserts**, controle verde em 28,7 s no laptop:
 
 - **bloco U** — para cada objeto e cada predicado (cancelado, rascunho, pendente, orcamento,
   faturado APAGADO), um cliente-sonda com um pedido válido (R$ 1) e um excluído SÓ por aquele
@@ -121,7 +122,7 @@ deparse DEPOIS do RENAME (a gate segue a MV pelo OID e passa a dizer `_antiga` �
 uma inserção feita por regex engoliu o `;` de um statement da semente; e o `case` dentro de `$( … )`
 quebra no bash 3.2 do macOS.
 
-**`--falsificar`: controle verde (117 asserts) + 17/17 sabotagens vermelhas no assert certo, nos DOIS
+**`--falsificar`: controle verde (118 asserts) + 17/17 sabotagens vermelhas no assert certo, nos DOIS
 locales (`C` e `pt_BR.UTF-8`, 2026-10-01).** As sabotagens de CORPO desligam a POS para o corpo
 sabotado chegar ao banco — o dente que se prova é o do assert: uma por predicado em todos os objetos
 de uma vez (cada uma vermelha nos 14 asserts daquele predicado e verde nos outros), o `kpi IS NOT
@@ -142,7 +143,7 @@ exige o assert DECLARADO e recusa erro não declarado, é o que transformou isso
 dente falso.
 
 **Fora do CI:** o job `provas-sql` já leva 15–16 min de um teto de 20 na `main`; 18 rodadas com o
-snapshot somariam ~3 min. Entra no núcleo o controle (117 asserts, ~29 s no laptop) e o
+snapshot somariam ~3 min. Entra no núcleo o controle (118 asserts, ~29 s no laptop) e o
 `--falsificar` fica `fora-do-ci` com o motivo na linha — o recibo é este parágrafo e o do PR.
 
 ## O gate
@@ -159,7 +160,7 @@ identidade. Registrar o objeto inteiro tiraria do julgamento também a leitura c
 passou a aceitar isenção por ALIAS (só aquelas leituras saem; o alias isento tem de continuar
 existindo e não-canônico). Leitores: 39, registrados: 22.
 
-**Calibração (o passo 1 da skill):** sem as 3 migrations o gate acusa os 13; com elas, 0 — mesmo
+**Calibração (o passo 1 da skill):** sem as migrations do universo o gate acusa os 13; com elas, 0 — mesmo
 denominador (38) nos dois lados. **A calibração pegou um furo do próprio gate:** a MV nasceu em
 `public` (20260623140000) e foi movida para `private` por um `SET SCHEMA` dentro de um `DO`
 (20260629120000); o modelo não seguia o movimento, a definição pré-fix sumia e o gate ficava verde
@@ -205,3 +206,18 @@ universo de pedidos divergente em TS/edges"**.
    ela é a ÚLTIMA a defini-los. As migrations daqui re-definem `get_regua_preco` e a `melhoria` por
    cima, herdando o conserto, e os dois contrafactuais pararam de reverter. A correção honesta é
    tirar junto a SUCESSORA que herda o conserto (com o porquê no teste), não afrouxar a asserção.
+7. **Migration multi-objeto com PRE de md5 exato não aplica numa CADEIA VIVA parcial.** A prova do canal
+   (`db/test-whatsapp-proposta.sh`) monta o corpo vivo da proposta pela cadeia de migrations que a
+   redefinem (`db/lib/corpo-vivo.sh`) — e a 1ª versão desta entrega punha a proposta junto com as 6
+   funções de preço. A cadeia a pegou (é o desenho: a versão nova tem de ser exercitada), mas ali a régua
+   estava no corpo anterior ao 20260929001651 e a PRE abortou, fail-closed. O CI pegou. A proposta foi
+   para uma migration própria (`…014220`), e a `…014200` original — commitada, nunca aplicada nem
+   mergeada — saiu da branch em vez de ser editada: migration commitada é imutável (hook
+   `migration-immutability-guard.sh`). ⇒ objeto que alguma prova monta por cadeia viva vai SOZINHO na
+   migration; e o ADVERSARIAL do Codex roda ANTES do 1º commit da migration, porque depois do commit
+   qualquer achado vira migration nova.
+   Na mesma cadeia apareceu o 2º tropeço: ela aplica a migration em AUTOCOMMIT, statement a
+   statement, e a tabela temporária do retrato (PRE → POS) era `ON COMMIT DROP` — sumia ao fim do próprio
+   CREATE. As migrations novas usam tabela de SESSÃO + `DROP` explícito no fim, que vale nos três modos
+   (`db:aplicar`, `--single-transaction`, autocommit); as de caça e recência, já commitadas, não entram
+   em cadeia viva nenhuma (a seleção não casa view/MV) e ficaram como estão.

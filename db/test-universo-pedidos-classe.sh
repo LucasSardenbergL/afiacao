@@ -1,20 +1,22 @@
 #!/usr/bin/env bash
 # ============================================================================
-# test-universo-pedidos-classe.sh — prova PG17 das 3 migrations que alinham ao universo CANÔNICO de
+# test-universo-pedidos-classe.sh — prova PG17 das 4 migrations que alinham ao universo CANÔNICO de
 # pedidos de venda os 13 objetos SQL que liam public.sales_orders com outro universo.
 # ============================================================================
 # A autoridade: status NOT IN ('cancelado','rascunho','pendente','orcamento') junto com
-# deleted_at IS NULL (src/lib/farmer/universo-pedidos.ts). Migrations (uma por domínio):
+# deleted_at IS NULL (src/lib/farmer/universo-pedidos.ts). Migrations (uma por domínio; a proposta sozinha):
 #   20261001014000_universo_pedidos_caca.sql      v_caca_compradores, v_caca_candidatos (+ data só kpi)
 #   20261001014100_universo_pedidos_recencia.sql  private.customer_metrics_mv (+ view-gate), melhoria,
 #                                                 classificar_clientes_fornecedores, v_grupo_comercial
-#   20261001014200_universo_pedidos_preco.sql     régua, régua 360, proposta WhatsApp, últimos preços,
-#                                                 abaixo do piso, defasagem, tint
+#   20261001014210_universo_pedidos_preco.sql     régua, régua 360, últimos preços, abaixo do piso,
+#                                                 defasagem, tint
+#   20261001014220_universo_pedidos_proposta_whatsapp.sql  a proposta de WhatsApp (sozinha: a prova do
+#                                                 canal a exercita pela cadeia viva de db/lib/corpo-vivo.sh)
 # Diário: docs/historico/universo-pedidos-classe-sql.md.
 #
 # O banco: schema-snapshot da prod + os predecessores EXATOS da fixture
 # (db/fixtures/universo-pedidos-predecessoras-prod-20261001.sql, H01–H15 conferem o md5 e o ACL de
-# prod) + a semente + as 3 migrations, cada uma na sua transação e sob o search_path do executor
+# prod) + a semente + as 4 migrations, cada uma na sua transação e sob o search_path do executor
 # do db:aplicar (aplicar_sql: pg_catalog, public, pg_temp).
 #
 # BLOCO U (o coração): para cada objeto e cada predicado do universo há um cliente-sonda com UM
@@ -39,10 +41,11 @@ HARNESS_LC="${HARNESS_LC:-C}"
 export LC_ALL=C LANG=C
 MIG_CACA="$REPO_ROOT/supabase/migrations/20261001014000_universo_pedidos_caca.sql"
 MIG_REC="$REPO_ROOT/supabase/migrations/20261001014100_universo_pedidos_recencia.sql"
-MIG_PRECO="$REPO_ROOT/supabase/migrations/20261001014200_universo_pedidos_preco.sql"
+MIG_PRECO="$REPO_ROOT/supabase/migrations/20261001014210_universo_pedidos_preco.sql"
+MIG_PROPOSTA="$REPO_ROOT/supabase/migrations/20261001014220_universo_pedidos_proposta_whatsapp.sql"
 FIXTURE="$REPO_ROOT/db/fixtures/universo-pedidos-predecessoras-prod-20261001.sql"
 SNAP="$REPO_ROOT/supabase/schema-snapshot.sql"
-TOTAL_ESPERADO=117
+TOTAL_ESPERADO=118
 
 # ── Falsificação ─────────────────────────────────────────────────────────────────────────────
 # Formato: nome:vermelhos[:verdes]. Vermelho = o assert FALHOU (ou ERRO_DE_EXECUCAO com a marca
@@ -50,7 +53,7 @@ TOTAL_ESPERADO=117
 # (RAISE EXCEPTION 'POS → RAISE NOTICE 'POS) para o corpo sabotado chegar ao banco: o dente que se
 # prova é o do ASSERT, não o da POS. As sabotagens "_pos" mantêm a POS e provam o dente DELA.
 if [ "${1:-}" = "--falsificar" ]; then
-  SABOTAGENS="sem_cancelado:CC1,CD1,RM1,MM1,CL1,GG1,RG1,RC1,R31,R3S,WP1,UP1,MP1,DF1,TP1:CC2,RM2,RG2,UP2,A1,A2,A3
+  SABOTAGENS="sem_cancelado:CC1,CD1,RM1,MM1,CL1,GG1,RG1,RC1,R31,R3S,WP1,UP1,MP1,DF1,TP1:CC2,RM2,RG2,UP2,A1,A2,A3,A4
               sem_rascunho:CC2,CD2,RM2,MM2,CL2,GG2,RG2,RC2,R32,WP2,UP2,MP2,DF2,TP2:CC1,RM1,RG1,UP1
               sem_pendente:CC3,CD3,RM3,MM3,CL3,GG3,RG3,RC3,R33,WP3,UP3,MP3,DF3,TP3:CC1,RM1,RG1,UP1
               sem_orcamento:CC4,CD4,RM4,MM4,CL4,GG4,RG4,RC4,R34,WP4,UP4,MP4,DF4,TP4:CC1,RM1,RG1,UP1
@@ -64,9 +67,9 @@ if [ "${1:-}" = "--falsificar" ]; then
               corpo_antigo_recencia:RM3,RM4,RM5,RMG,RMC,MM4,MMG,CL5,GGG,GGN:RM1,RM2,MM1,CL1,GG1,GG5
               corpo_antigo_preco:RG1,RG4,RC1,RC4,R31,R34,R3S,WP1,WP5,UP2,UP3,MP2,MP3,DFN,TP2,TP5:RG5,RC5,R35,UP1,UP4,UP5,MP1,DF1,DF5,TP1
               pre_cega:M2,M3,M4:M1
-              data_coalesce_pos:A1:A2,A3
-              mv_sem_acl_pos:A2:A1,A3
-              gate_sem_with_pos:A2:A1,A3"
+              data_coalesce_pos:A1:A2,A3,A4
+              mv_sem_acl_pos:A2:A1,A3,A4
+              gate_sem_with_pos:A2:A1,A3,A4"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-${SLUG}.XXXXXX")"
   porta=$PORT
   # o filho rodou até o fim, com TODOS os asserts? (senão o vermelho pode ser de um aborto)
@@ -386,7 +389,7 @@ SQL
 # ══════════════════════════════════════════════════════════════════════════════════════════════
 # AS MIGRATIONS (cópias; a sabotagem age na cópia — supabase/migrations/ é DR e não se toca)
 # ══════════════════════════════════════════════════════════════════════════════════════════════
-cp "$MIG_CACA" "$TMPD/m1.sql"; cp "$MIG_REC" "$TMPD/m2.sql"; cp "$MIG_PRECO" "$TMPD/m3.sql"
+cp "$MIG_CACA" "$TMPD/m1.sql"; cp "$MIG_REC" "$TMPD/m2.sql"; cp "$MIG_PRECO" "$TMPD/m3.sql"; cp "$MIG_PROPOSTA" "$TMPD/m4.sql"
 sub() {  # sub <arquivo> <perl-s///> — aborta se não trocou nada (sabotagem que não aplica não prova)
   local antes; antes="$(md5sum < "$1" 2>/dev/null || md5 -q "$1")"
   perl -0pi -e "$2" "$1"
@@ -396,16 +399,16 @@ pos_off() { local f; for f in "$@"; do sub "$f" "s/RAISE EXCEPTION 'POS/RAISE NO
 LISTA="'cancelado','rascunho','pendente','orcamento'"
 case "$SABOTAGEM" in
   "") ;;
-  sem_cancelado)  pos_off "$TMPD/m1.sql" "$TMPD/m2.sql" "$TMPD/m3.sql"
-                  for f in m1 m2 m3; do sub "$TMPD/$f.sql" "s/'cancelado','rascunho','pendente','orcamento'/'rascunho','pendente','orcamento'/g"; done ;;
-  sem_rascunho)   pos_off "$TMPD/m1.sql" "$TMPD/m2.sql" "$TMPD/m3.sql"
-                  for f in m1 m2 m3; do sub "$TMPD/$f.sql" "s/'cancelado','rascunho','pendente','orcamento'/'cancelado','pendente','orcamento'/g"; done ;;
-  sem_pendente)   pos_off "$TMPD/m1.sql" "$TMPD/m2.sql" "$TMPD/m3.sql"
-                  for f in m1 m2 m3; do sub "$TMPD/$f.sql" "s/'cancelado','rascunho','pendente','orcamento'/'cancelado','rascunho','orcamento'/g"; done ;;
-  sem_orcamento)  pos_off "$TMPD/m1.sql" "$TMPD/m2.sql" "$TMPD/m3.sql"
-                  for f in m1 m2 m3; do sub "$TMPD/$f.sql" "s/'cancelado','rascunho','pendente','orcamento'/'cancelado','rascunho','pendente'/g"; done ;;
-  sem_deleted_at) pos_off "$TMPD/m1.sql" "$TMPD/m2.sql" "$TMPD/m3.sql"
-                  for f in m1 m2 m3; do sub "$TMPD/$f.sql" "s/so\.deleted_at (IS|is) (NULL|null)/true/g"; done ;;
+  sem_cancelado)  pos_off "$TMPD/m1.sql" "$TMPD/m2.sql" "$TMPD/m3.sql" "$TMPD/m4.sql"
+                  for f in m1 m2 m3 m4; do sub "$TMPD/$f.sql" "s/'cancelado','rascunho','pendente','orcamento'/'rascunho','pendente','orcamento'/g"; done ;;
+  sem_rascunho)   pos_off "$TMPD/m1.sql" "$TMPD/m2.sql" "$TMPD/m3.sql" "$TMPD/m4.sql"
+                  for f in m1 m2 m3 m4; do sub "$TMPD/$f.sql" "s/'cancelado','rascunho','pendente','orcamento'/'cancelado','pendente','orcamento'/g"; done ;;
+  sem_pendente)   pos_off "$TMPD/m1.sql" "$TMPD/m2.sql" "$TMPD/m3.sql" "$TMPD/m4.sql"
+                  for f in m1 m2 m3 m4; do sub "$TMPD/$f.sql" "s/'cancelado','rascunho','pendente','orcamento'/'cancelado','rascunho','orcamento'/g"; done ;;
+  sem_orcamento)  pos_off "$TMPD/m1.sql" "$TMPD/m2.sql" "$TMPD/m3.sql" "$TMPD/m4.sql"
+                  for f in m1 m2 m3 m4; do sub "$TMPD/$f.sql" "s/'cancelado','rascunho','pendente','orcamento'/'cancelado','rascunho','pendente'/g"; done ;;
+  sem_deleted_at) pos_off "$TMPD/m1.sql" "$TMPD/m2.sql" "$TMPD/m3.sql" "$TMPD/m4.sql"
+                  for f in m1 m2 m3 m4; do sub "$TMPD/$f.sql" "s/so\.deleted_at (IS|is) (NULL|null)/true/g"; done ;;
   sem_kpi_not_null) pos_off "$TMPD/m1.sql" "$TMPD/m2.sql"
                   for f in m1 m2; do sub "$TMPD/$f.sql" "s/ AND so\.order_date_kpi IS NOT NULL//g"; done ;;
   melhoria_coalesce) pos_off "$TMPD/m2.sql"
@@ -419,8 +422,8 @@ case "$SABOTAGEM" in
                   sub "$TMPD/m3.sql" "s/(-- public\.get_regua_preco_customer360\n(?:(?!-- public\.).)*?)so\.account = v_account AND so\.deleted_at IS NULL AND so\.status NOT IN \($LISTA\)/\${1}so.account = v_account AND so.deleted_at IS NULL/s" ;;
   corpo_antigo_caca)     : > "$TMPD/m1.sql" ;;
   corpo_antigo_recencia) : > "$TMPD/m2.sql" ;;
-  corpo_antigo_preco)    : > "$TMPD/m3.sql" ;;
-  pre_cega)       for f in m1 m2 m3; do sub "$TMPD/$f.sql" "s/RAISE EXCEPTION 'PRE: % deriva/RAISE NOTICE 'PRE: % deriva/g"; done
+  corpo_antigo_preco)    : > "$TMPD/m3.sql"; : > "$TMPD/m4.sql" ;;
+  pre_cega)       for f in m1 m2 m3 m4; do sub "$TMPD/$f.sql" "s/RAISE EXCEPTION 'PRE: % deriva/RAISE NOTICE 'PRE: % deriva/g"; done
                   sub "$TMPD/m2.sql" "s/RAISE EXCEPTION 'PRE: private\.customer_metrics_mv deriva/RAISE NOTICE 'PRE: private.customer_metrics_mv deriva/" ;;
   data_coalesce_pos) sub "$TMPD/m1.sql" "s/            so\.order_date_kpi AS dt,/            COALESCE(so.order_date_kpi, (so.created_at AT TIME ZONE 'America\/Sao_Paulo'::text)::date) AS dt,/" ;;
   mv_sem_acl_pos) sub "$TMPD/m2.sql" "s/    EXECUTE format\('GRANT %s ON private\.customer_metrics_mv TO %s%s'/    PERFORM format('GRANT %s ON private.customer_metrics_mv TO %s%s'/" ;;
@@ -439,12 +442,13 @@ fi
 
 # cada migration na SUA transação, sob o search_path do executor (aplicar_sql: pg_catalog, public, pg_temp)
 aplica() { PGOPTIONS="-c search_path=pg_catalog,public,pg_temp" P -q --single-transaction -f "$1" 2>&1 || echo "APLICACAO_FALHOU"; }
-saida1="$(aplica "$TMPD/m1.sql")"; saida2="$(aplica "$TMPD/m2.sql")"; saida3="$(aplica "$TMPD/m3.sql")"
+saida1="$(aplica "$TMPD/m1.sql")"; saida2="$(aplica "$TMPD/m2.sql")"; saida3="$(aplica "$TMPD/m3.sql")"; saida4="$(aplica "$TMPD/m4.sql")"
 aplicada() { case "$1" in *APLICACAO_FALHOU*) printf 'falhou: %s' "$(printf '%s' "$1" | { grep -E 'ERRO|ERROR' || true; } | head -1 | sed -E 's/.*(ERRO|ERROR):[[:space:]]*//' | head -c 160)";; *"POS OK"*) echo aplicada;; *) echo "sem POS OK";; esac; }
-echo "── A: as 3 migrations aplicam e a POS de cada uma passa ──"
+echo "── A: as 4 migrations aplicam e a POS de cada uma passa ──"
 eq A1 "caça aplicada (POS OK)"     "$(aplicada "$saida1")" aplicada
 eq A2 "recência aplicada (POS OK)" "$(aplicada "$saida2")" aplicada
 eq A3 "preço aplicada (POS OK)"    "$(aplicada "$saida3")" aplicada
+eq A4 "proposta aplicada (POS OK)" "$(aplicada "$saida4")" aplicada
 
 # ══════════════════════════════════════════════════════════════════════════════════════════════
 # BLOCO U — CAÇA
@@ -602,9 +606,9 @@ retrato() { Q "SELECT md5(string_agg(x, '|' ORDER BY x)) FROM (
                      || coalesce((SELECT string_agg(a::text, ',' ORDER BY a::text) FROM unnest(c.relacl) a), '') FROM pg_class c
      WHERE c.oid IN ('public.v_caca_compradores'::regclass, 'public.v_caca_candidatos'::regclass, 'private.customer_metrics_mv'::regclass, 'public.customer_metrics_mv'::regclass)) s"; }
 antes="$(retrato)"
-r1="$(aplica "$TMPD/m1.sql")$(aplica "$TMPD/m2.sql")$(aplica "$TMPD/m3.sql")"
+r1="$(aplica "$TMPD/m1.sql")$(aplica "$TMPD/m2.sql")$(aplica "$TMPD/m3.sql")$(aplica "$TMPD/m4.sql")"
 case "$r1" in *APLICACAO_FALHOU*) m1="falhou";; *) [ "$(retrato)" = "$antes" ] && m1="no-op" || m1="mudou";; esac
-eq M1 "re-aplicar as 3 é no-op (passa e o retrato não muda)" "$m1" "no-op"
+eq M1 "re-aplicar as 4 é no-op (passa e o retrato não muda)" "$m1" "no-op"
 # corpo ESTRANHO numa função (comentário a mais): a PRE aborta, e o rollback preserva o estranho E a vizinha.
 # Os predecessores voltam primeiro (fixture), para a vizinha ter o que perder se a transação vazasse.
 PGOPTIONS="-c search_path=public,pg_catalog" P -q -f "$FIXTURE" >/dev/null 2>&1 || true
