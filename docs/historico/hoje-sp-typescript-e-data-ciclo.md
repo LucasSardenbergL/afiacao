@@ -389,9 +389,12 @@ o experimento é o que a prod já roda: as rodadas noturnas mandam D+1 três vez
 O sentinela `limpeza-fonte.test.ts` reprova arquivo com ≥60 linhas não vazias que preserva menos de 10% depois
 de tirar os comentários. Ele existe para pegar stripper que engole código. O `sync-reprocess/versao.ts` já
 estava EXATAMENTE no piso (9 de 90), e as 5 linhas de histórico da v1.13 o derrubaram (9/95): o vitest
-inteiro ficou vermelho só por isso. O histórico da v1.13 mora aqui, e o arquivo leva só um ponteiro na
-própria linha do `VERSAO`, que não muda a fração. O próximo bump ali tem o mesmo limite: linha nova de
-comentário é vermelho.
+inteiro ficou vermelho só por isso. A 2ª tentativa, um ponteiro como comentário NA linha do `VERSAO` (não
+muda a fração), caiu noutra trava: o `sonda-versao-sql` lê aquela linha com um padrão que termina no `;`, e
+a `sync-reprocess` virou "Edge não sondável" (`scripts/sonda-versao-sql.test.ts`, contra o repo real). O
+deploy travaria na prova do ledger. Então o histórico da v1.13 mora só aqui, e a linha do `VERSAO` fica pura,
+como a v1.12 já tinha feito. O próximo bump ali tem os dois limites: linha nova de comentário é vermelho, e
+comentário na linha do `VERSAO` também.
 
 ### Deploy
 
