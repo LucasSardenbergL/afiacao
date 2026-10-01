@@ -59,7 +59,7 @@ export interface Sitio {
 }
 
 /** O fiscal não conseguiu medir o arquivo — e isso nunca é "limpo". */
-export interface Indeterminado {
+interface Indeterminado {
   arquivo: string;
   motivo: string;
 }

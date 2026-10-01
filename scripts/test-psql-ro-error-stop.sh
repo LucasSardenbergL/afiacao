@@ -29,7 +29,6 @@ ALVO_SCANNER="scripts/lib/psql-ro-error-stop.ts"
 ALVO_STRIPPER="src/lib/gates/limpeza-shell.ts"
 ALVO_STRIPPER_JS="src/lib/gates/limpeza-fonte.ts"
 ALVO_CLI="$GATE"
-ALVOS=("$ALVO_SCANNER" "$ALVO_STRIPPER" "$ALVO_STRIPPER_JS" "$ALVO_CLI")
 
 TMPD="$(mktemp -d)"
 # Por ora o trap só limpa o tmp. A restauração dos ALVOS por `git checkout` só é armada DEPOIS de
@@ -54,10 +53,10 @@ command -v bun >/dev/null 2>&1 || { aviso "❌ bun ausente — abortando"; exit 
 bun --version >/dev/null 2>&1 || { aviso "❌ bun presente mas quebrado — abortando"; exit 70; }
 [ -f "$GATE" ] && [ -d "$DIR_FIXTURES" ] || { aviso "❌ gate ou fixtures ausentes — abortando"; exit 70; }
 if [ "$FALSIFICAR" -eq 1 ]; then
-  for f in "${ALVOS[@]}"; do
+  for f in "$ALVO_SCANNER" "$ALVO_STRIPPER" "$ALVO_STRIPPER_JS" "$ALVO_CLI"; do
     git diff --quiet -- "$f" || { aviso "❌ $f tem alteração NÃO COMMITADA — a restauração por git checkout a perderia. Commite antes."; exit 70; }
   done
-  trap 'rm -rf "$TMPD"; git checkout -- "${ALVOS[@]}" 2>/dev/null' EXIT
+  trap 'rm -rf "$TMPD"; git checkout -- "$ALVO_SCANNER" "$ALVO_STRIPPER" "$ALVO_STRIPPER_JS" "$ALVO_CLI" 2>/dev/null' EXIT
 fi
 
 # ── locales: sonda POSITIVA. "Setei LC_ALL" não prova que o locale EXISTE — glibc/musl caem em C

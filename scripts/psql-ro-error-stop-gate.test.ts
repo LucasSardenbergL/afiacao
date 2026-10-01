@@ -165,30 +165,6 @@ describe('o corpo REAL do repo', () => {
     expect(porArquivo[0].temErrorStop).toBe(true);
   });
 
-  it('stripper e parser concordam, em toda fonte, sobre onde mora o caminho do wrapper', () => {
-    expect(r.indeterminados).toEqual([]);
-  });
-
-  it('o censo das instruções EMITIDAS: quem imprime o caminho do wrapper para o operador rodar', () => {
-    // Eixo de 2026-10-01 (achado no #2718). Medido: 8 instruções em 4 arquivos — os geradores da
-    // sonda e do relatório de RPCs, e dois testes que pinam a forma certa. Se esta lista mudar, ou
-    // nasceu emissor novo (confira se a instrução dele leva a flag, e atualize) ou o leitor de
-    // literais ficou cego.
-    expect([...new Set(r.emitidos.map((s) => s.arquivo))].sort()).toEqual([
-      'scripts/lib/edge-rpcs.ts',
-      'scripts/psql-local-X-gate.test.ts',
-      'scripts/sonda-versao-sql.test.ts',
-      'scripts/sonda-versao-sql.ts',
-    ]);
-    expect(r.emitidos.length).toBeGreaterThanOrEqual(PISOS.emitidos);
-    // Os geradores PRECISAM da flag (leem de cano, colagem ou `-f -`) e a carregam: os 4 da sonda
-    // (3 deles saíam sem ela até 2026-10-01; o `comandoDeExtracao` já a tinha desde o #2718) e o
-    // do relatório de RPCs.
-    const comAFlag = r.emitidos.filter((s) => s.precisaErrorStop && s.temErrorStop).map((s) => s.arquivo);
-    expect(comAFlag.filter((a) => a === 'scripts/sonda-versao-sql.ts')).toHaveLength(4);
-    expect(comAFlag).toContain('scripts/lib/edge-rpcs.ts');
-  });
-
   /**
    * `diagnosticarShell` em vez dos quatro alarmes soltos: uma varredura por arquivo em vez de
    * seis. Não é microotimização — com os quatro soltos, 377 `.sh` levavam o caso para perto do
@@ -220,6 +196,30 @@ describe('o corpo REAL do repo', () => {
     const mencoes = arquivos.filter((a) => /psql-ro/.test(a.fonte)).length;
     expect(mencoes).toBeGreaterThan(50);
     expect(r.arquivosComVinculo).toBeLessThan(mencoes / 2);
+  });
+
+  it('stripper e parser concordam, em toda fonte, sobre onde mora o caminho do wrapper', () => {
+    expect(r.indeterminados).toEqual([]);
+  });
+
+  it('o censo das instruções EMITIDAS: quem imprime o caminho do wrapper para o operador rodar', () => {
+    // Eixo de 2026-10-01 (achado no #2718). Medido: 8 instruções em 4 arquivos — os geradores da
+    // sonda e do relatório de RPCs, e dois testes que pinam a forma certa. Se esta lista mudar, ou
+    // nasceu emissor novo (confira se a instrução dele leva a flag, e atualize) ou o leitor de
+    // literais ficou cego.
+    expect([...new Set(r.emitidos.map((s) => s.arquivo))].sort()).toEqual([
+      'scripts/lib/edge-rpcs.ts',
+      'scripts/psql-local-X-gate.test.ts',
+      'scripts/sonda-versao-sql.test.ts',
+      'scripts/sonda-versao-sql.ts',
+    ]);
+    expect(r.emitidos.length).toBeGreaterThanOrEqual(PISOS.emitidos);
+    // Os geradores PRECISAM da flag (leem de cano, colagem ou `-f -`) e a carregam: os 4 da sonda
+    // (3 deles saíam sem ela até 2026-10-01; o `comandoDeExtracao` já a tinha desde o #2718) e o
+    // do relatório de RPCs.
+    const comAFlag = r.emitidos.filter((s) => s.precisaErrorStop && s.temErrorStop).map((s) => s.arquivo);
+    expect(comAFlag.filter((a) => a === 'scripts/sonda-versao-sql.ts')).toHaveLength(4);
+    expect(comAFlag).toContain('scripts/lib/edge-rpcs.ts');
   });
 });
 
