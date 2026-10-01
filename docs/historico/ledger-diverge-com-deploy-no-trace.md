@@ -82,6 +82,9 @@ ecoa o slug. O custo apareceria no caso em que o mapa é insubstituível — bun
 resposta sem eco —, onde o veredito cairia em indeterminado (fail-closed: pendência que continua,
 não falso verde).
 
+**Fechada em 2026-09-27:** o passo seguinte passou a sair também por NOTICE, que chega ao log do
+`db:aplicar` → [sonda-passo-seguinte-pelo-db-aplicar.md](sonda-passo-seguinte-pelo-db-aplicar.md).
+
 ## `tint-sync-agent` — provada pelo trace; a assinatura comportamental espera o 1º dia útil
 
 Fora do mapa de sondas ⇒ o ledger não a atesta. O trace mostra DOIS deploys conferidos por hash
