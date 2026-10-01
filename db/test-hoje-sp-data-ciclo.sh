@@ -15,14 +15,14 @@
 #   d — o (a) sob sessão SP: fica VERDE com o gêmeo da sessão sabotado (o defeito só aparece em UTC).
 # Objetos: V1 v_promocao_avaliacao_hoje · V2 v_oportunidade_economica_hoje · F1 ciclo_oportunidade_do_dia
 # (DEFAULT, o único exercido em prod) · F3 gerar_pedidos_sugeridos_ciclo (DEFAULT: o ciclo e os pendentes de
-# HOJE) · F4 aplicar_promocoes_no_ciclo (DEFAULT + a view) · F5 _data_health_compute · F6 reposicao_pos_candidatos
+# HOJE) · F4 aplicar_promocoes_no_ciclo (DEFAULT + a view) · F6 reposicao_pos_candidatos
 # · F7 atualizar_parametros_numericos_skus (a janela do em trânsito) · DEF o DEFAULT de pedido_compra_sugerido.
 # data_ciclo. E F2: o corte em hora de SP (a oportunidade às 18:00, o normal no horario_corte_pedido).
-# Mais: P01-P11 (cada predecessora e as 18 dependências batem o md5 EXATO da prod — o ensaio do predicado da
+# Mais: P01-P10 (cada predecessora e as 18 dependências batem o md5 EXATO da prod — o ensaio do predicado da
 # PRÉ), K1-K4 (a trava e a ORDEM dos leitores), Z0 (o pin), G1-G7 (a PRÉ e a PÓS recusam o que devem).
 #
 # ⏰ Relógio CONTROLADO (`test.agora`): `public.now()` é TRIPWIRE (Z9T01) sem a GUC. Views e DEFAULTs de
-# parâmetro o amarram no CREATE (search_path com `public` antes de `pg_catalog`); os CORPOS das 7 funções
+# parâmetro o amarram no CREATE (search_path com `public` antes de `pg_catalog`); os CORPOS das 6 funções
 # resolvem nomes ao executar, pelo proconfig — a prova põe `public` antes de `pg_catalog` neles (o mesmo
 # expediente da 20260929001651). `CURRENT_DATE` não é função — nenhum sombreamento o alcança —, por isso o
 # texto antigo entra na falsificação pelo GÊMEO controlável (`now()` truncado no fuso da SESSÃO).
@@ -42,8 +42,9 @@ export LC_ALL=C LANG=C
 MIG="$REPO_ROOT/supabase/migrations/20261001023000_hoje_sp_familia_data_ciclo.sql"
 FIX="$REPO_ROOT/db/fixtures/hoje-sp-data-ciclo-prod-20261001.sql"
 SNAP="$REPO_ROOT/supabase/schema-snapshot.sql"
-# Denominador: P01-P11 · K1-K4 · Z0 · G1-G7 · V1,V2 × a,b,c,d · F1,F3..F7 × a,b,c,d · F2a,F2b,F2c · DEF a,b,c,d.
-TOTAL_ESPERADO=62
+# Denominador: P01-P10 · K1-K4 · Z0 · G1-G7 · V1,V2 × a,b,c,d · F1,F3,F4,F6,F7 × a,b,c,d · F2a,F2b,F2c · DEF a,b,c,d.
+# (F5 era _data_health_compute: a função ficou com a #2698, que a recria — coordenado em 2026-10-01.)
+TOTAL_ESPERADO=57
 
 # ══════════════════════════════════════════════════════════════════════════════
 # MODO --falsificar: prova que os asserts têm DENTE.
@@ -64,7 +65,6 @@ if [ "${1:-}" = "--falsificar" ]; then
               default_sessao_aplicar_promocoes_no_ciclo:F4a,F4b,F4c:F4d
               corte_na_sessao_oportunidade:F2a:F2b,F2c
               corte_na_sessao_normal:F2b:F2a,F2c
-              sessao_data_health:F5a,F5b,F5c:F5d
               sessao_pos_candidatos:F6a,F6b,F6c:F6d
               sessao_param_auto:F7a,F7b,F7c:F7d
               default_sessao_coluna_data_ciclo:DEFa,DEFb,DEFc:DEFd
@@ -241,9 +241,9 @@ SQL
 
 # ══════════════════════════════════════════════════════════════════════════════
 # A PROD VIVA — da fixture: a deriva de colunas do snapshot, as 18 dependências e as PREDECESSORAS.
-# P01-P02: o md5 EXATO de cada view; P03-P09: o de cada função (prosrc E argumentos — o DEFAULT mora em
-# proargdefaults); P10: o DEFAULT da coluna; P11: as 18 dependências. É o ensaio do predicado da PRÉ.
-# O ACL de PROD nas 9 (o snapshot vem SEM privilégios: sem isto a foto do ACL na PRÉ e a POS6 comparariam
+# P01-P02: o md5 EXATO de cada view; P03-P08: o de cada função (prosrc E argumentos — o DEFAULT mora em
+# proargdefaults); P09: o DEFAULT da coluna; P10: as 18 dependências. É o ensaio do predicado da PRÉ.
+# O ACL de PROD nas 8 (o snapshot vem SEM privilégios: sem isto a foto do ACL na PRÉ e a POS6 comparariam
 # o default com o default, e o predicado que estreia na prod nunca teria sido exercido aqui).
 # ══════════════════════════════════════════════════════════════════════════════
 PGOPTIONS="-c search_path=public,pg_catalog" P -q -f "$FIX" >/dev/null
@@ -252,8 +252,7 @@ GRANT ALL ON public.v_promocao_avaliacao_hoje, public.v_oportunidade_economica_h
 GRANT EXECUTE ON FUNCTION public.aplicar_promocoes_no_ciclo(text, date), public.ciclo_oportunidade_do_dia(text, date),
   public.gerar_pedidos_oportunidade_ciclo(text, date, text[]), public.gerar_pedidos_sugeridos_ciclo(text, date),
   public.atualizar_parametros_numericos_skus(text, uuid) TO anon, authenticated, service_role;
-REVOKE ALL ON FUNCTION public._data_health_compute(), public.reposicao_pos_candidatos(text) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public._data_health_compute() TO service_role;
+REVOKE ALL ON FUNCTION public.reposicao_pos_candidatos(text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.reposicao_pos_candidatos(text) TO authenticated, service_role;
 SQL
 Exec() { PGOPTIONS="-c search_path=public,pg_catalog,pg_temp" Pq -c "$1" 2>&1 || true; }
@@ -265,7 +264,6 @@ FUNCS_PROD="aplicar_promocoes_no_ciclo(text,date):9a6de552bec25dbce3333679ef1b97
             ciclo_oportunidade_do_dia(text,date):9a6de552bec25dbce3333679ef1b971d:7cdcfdb9161482ff739cfcd4468e8a3c
             gerar_pedidos_oportunidade_ciclo(text,date,text[]):b474180b587175bb4adbdeac31edad90:c4a1306ee04559cf097abfd6fe19f5f5
             gerar_pedidos_sugeridos_ciclo(text,date):9a6de552bec25dbce3333679ef1b971d:ec2c33db40ce3394c711768713efda7b
-            _data_health_compute():d41d8cd98f00b204e9800998ecf8427e:a136ea5345a29ee720e7e3ab6c5820d3
             atualizar_parametros_numericos_skus(text,uuid):c2f2e23354fbab735c9539a5775904f2:e475a9bbca943a5a1b34150b93522668
             reposicao_pos_candidatos(text):12d784009ff4c40b62383656a968dcc8:645733d1f4d2f7b835de6632cfc4a588"
 n=2
@@ -275,7 +273,7 @@ for item in $FUNCS_PROD; do
     "$(Exec "SELECT md5(pg_get_function_arguments(p.oid)) || ':' || md5(p.prosrc) FROM pg_proc p WHERE p.oid = 'public.$alvo'::regprocedure")" "$resto"
 done
 DIA_SESSAO="CURRENT""_DATE"   # a agulha partida: o texto antigo do DEFAULT, sem citá-lo inteiro
-eq P10 "DEFAULT de pedido_compra_sugerido.data_ciclo predecessor = prod" \
+eq P09 "DEFAULT de pedido_compra_sugerido.data_ciclo predecessor = prod" \
   "$(Exec "SELECT pg_get_expr(d.adbin, d.adrelid) FROM pg_attrdef d JOIN pg_attribute a ON a.attrelid = d.adrelid AND a.attnum = d.adnum
            WHERE d.adrelid = 'public.pedido_compra_sugerido'::regclass AND a.attname = 'data_ciclo'")" "$DIA_SESSAO"
 DEPS_PROD="vw_pcp_malha_itens:1de81628e4f55fb27b2af3ff302cbeb6 vw_pcp_malha_componentes:d17181a51f37d1f589704418133b5cf0
@@ -293,7 +291,7 @@ for par in $DEPS_PROD; do
   vivo="$(Exec "SELECT md5(pg_get_viewdef('public.$nome'::regclass, true))")"
   if [ "$vivo" = "$md5" ]; then dep_ok=$((dep_ok+1)); else dep_div="$dep_div $nome"; fi
 done
-eq P11 "as 18 dependências vivas = prod (md5 EXATO)${dep_div:+ — divergem:$dep_div}" "$dep_ok" 18
+eq P10 "as 18 dependências vivas = prod (md5 EXATO)${dep_div:+ — divergem:$dep_div}" "$dep_ok" 18
 
 # ══════════════════════════════════════════════════════════════════════════════
 # K — A TRAVA. A sessão A roda a migration ATÉ o fim da pré-condição e PARA, com a transação aberta: o
@@ -347,7 +345,7 @@ eq K1 "com A parada após a pré-condição, B não mexe em v_promocao_avaliacao
   "$(barra "ALTER VIEW public.v_promocao_avaliacao_hoje SET (security_invoker = on)")" BARROU
 eq K2 "... nem lê pedido_compra_sugerido (ACCESS EXCLUSIVE: o SET DEFAULT sem subida de modo no meio)" \
   "$(barra "LOCK TABLE public.pedido_compra_sugerido IN ACCESS SHARE MODE")" BARROU
-eq K3 "... nem recria uma das 7 funções" \
+eq K3 "... nem recria uma das 6 funções" \
   "$(barra "ALTER FUNCTION public.ciclo_oportunidade_do_dia(text, date) VOLATILE")" BARROU
 printf 'ROLLBACK;\n\\q\n' >&7
 exec 7>&-
@@ -377,7 +375,7 @@ echo "migration aplicada: $(basename "$MIG") (PRE e POS passaram)"
 
 # `public` antes de `pg_catalog` não troca só o now(): TODA função de `public` com a MESMA assinatura de um
 # embutido passa a vencê-lo. A guarda pergunta ao CATÁLOGO: das funções de `public` que sombreiam
-# `pg_catalog`, de quais as 2 views e as 7 funções (os DEFAULTs de parâmetro) DEPENDEM? Tem de ser só o
+# `pg_catalog`, de quais as 2 views e as 6 funções (os DEFAULTs de parâmetro) DEPENDEM? Tem de ser só o
 # nosso now(). Controle POSITIVO: se não vê nem ele, está cega — aborta.
 sombra="$(Pq -c "SELECT COALESCE(string_agg(DISTINCT p.proname, ',') FILTER (WHERE p.proname = 'now'), '') || '|' ||
     COALESCE(string_agg(DISTINCT p.proname, ',') FILTER (WHERE p.proname <> 'now'), '')
@@ -552,7 +550,6 @@ case "$SABOTAGEM" in
     sabotar funcao gerar_pedidos_oportunidade_ciclo "((p_data_ciclo + TIME '18:00') AT TIME ZONE 'America/Sao_Paulo')" "(p_data_ciclo + TIME '18:00')::timestamptz" 1 ;;
   corte_na_sessao_normal)
     sabotar funcao gerar_pedidos_sugeridos_ciclo "((p_data_ciclo + MAX(sn.horario_corte_pedido)) AT TIME ZONE 'America/Sao_Paulo')" "(p_data_ciclo + MAX(sn.horario_corte_pedido))::timestamptz" 1 ;;
-  sessao_data_health)  sabotar funcao _data_health_compute "$SP_DIA_CORPO" "$GEMEO_DIA" 2 ;;
   sessao_pos_candidatos) sabotar funcao reposicao_pos_candidatos "$SP_DIA_CORPO" "$GEMEO_DIA" 1 ;;
   sessao_param_auto)   sabotar funcao atualizar_parametros_numericos_skus "$SP_DIA_CORPO" "$GEMEO_DIA" 1 ;;
   default_sessao_coluna_data_ciclo)
@@ -569,7 +566,6 @@ ALTER FUNCTION public.aplicar_promocoes_no_ciclo(text, date) SET search_path = p
 ALTER FUNCTION public.ciclo_oportunidade_do_dia(text, date) SET search_path = public, pg_catalog, pg_temp;
 ALTER FUNCTION public.gerar_pedidos_oportunidade_ciclo(text, date, text[]) SET search_path = public, pg_catalog, pg_temp;
 ALTER FUNCTION public.gerar_pedidos_sugeridos_ciclo(text, date) SET search_path = public, pg_catalog, pg_temp;
-ALTER FUNCTION public._data_health_compute() SET search_path = public, pg_catalog, pg_temp;
 ALTER FUNCTION public.atualizar_parametros_numericos_skus(text, uuid) SET search_path = public, pg_catalog, pg_temp;
 ALTER FUNCTION public.reposicao_pos_candidatos(text) SET search_path = public, pg_catalog, pg_temp;
 SQL
@@ -624,13 +620,11 @@ INSERT INTO public.fornecedor_aumento_item (id, aumento_id, categoria_fornecedor
 VALUES (7211, 7201, 'CAT-PROVA', 8, true, true);
 INSERT INTO public.categoria_aumento_familia_mapeamento (aumento_item_id, familia_omie) VALUES (7211, 'FAM-AUMENTO');
 -- Pedidos sugeridos: 9301 e 9401 pendentes NORMAIS do ciclo de HOJE (D) — a RPC do motor os expira se abrir
--- o ciclo D+1; 9401 tem o item 5102, que a promoção flat alcança. 9501: o ciclo mais antigo de pé, D-3 (a
--- frescura da sugestão). 9601: disparado em D-7 (idade 7 em D, 8 em D+1). 9701: aprovado em D-7 com 4
+-- o ciclo D+1; 9401 tem o item 5102, que a promoção flat alcança. 9601: disparado em D-7 (idade 7 em D, 8 em D+1). 9701: aprovado em D-7 com 4
 -- unidades do 5103 a caminho (dentro da janela de 7 dias em D, fora em D+1).
 INSERT INTO public.pedido_compra_sugerido (id, empresa, fornecedor_nome, data_ciclo, status, tipo_ciclo, omie_pedido_compra_id) VALUES
   (9301, 'OBEN', 'FORNECEDOR CICLO', DATE '2025-03-12', 'pendente_aprovacao', 'normal', NULL),
   (9401, 'OBEN', 'FORNECEDOR CICLO', DATE '2025-03-12', 'pendente_aprovacao', 'normal', NULL),
-  (9501, 'OBEN', 'FORNECEDOR CICLO', DATE '2025-03-09', 'concluido_recebido', 'normal', NULL),
   (9601, 'OBEN', 'FORNECEDOR CICLO', DATE '2025-03-05', 'disparado', 'normal', '9601'),
   (9701, 'OBEN', 'FORNECEDOR CICLO', DATE '2025-03-05', 'aprovado_aguardando_disparo', 'normal', NULL);
 INSERT INTO public.pedido_compra_item (pedido_id, sku_codigo_omie, qtde_sugerida, qtde_final, preco_unitario, valor_linha) VALUES
@@ -644,8 +638,6 @@ INSERT INTO public.reposicao_param_auto_log (run_id, empresa, sku_codigo_omie, s
                                              estoque_maximo_antes, estoque_maximo_depois)
 VALUES ('0e000000-0000-0000-0000-0000000000f7', 'OBEN', '5103', 'aplicado', 10, 10, 20, 20);
 SQL
-# _data_health_compute lê a matview de métricas de cliente — ela vem do snapshot SEM dados.
-P -q -c "REFRESH MATERIALIZED VIEW private.customer_metrics_mv;"
 
 # ══════════════════════════════════════════════════════════════════════════════
 # CONTROLES E BLOCOS
@@ -688,11 +680,6 @@ bloco F3 "gerar_pedidos_sugeridos_ciclo('OBEN') sem data: ciclo|pendentes de D e
 # F4: a promoção que termina HOJE entra no ciclo de HOJE às 21h (view e DEFAULT no mesmo dia).
 bloco F4 "aplicar_promocoes_no_ciclo('OBEN') sem data: itens flat aplicados" \
   "SELECT itens_flat_aplicados FROM public.aplicar_promocoes_no_ciclo('OBEN')"
-# F5: a frescura da sugestão de compra — o ciclo mais novo de pé é D-3 (os de D saem nesta transação).
-bloco F5 "_data_health_compute(): status|idade da sugestão de compra" \
-  "SET LOCAL session_replication_role = replica" \
-  "DELETE FROM public.pedido_compra_sugerido WHERE data_ciclo > DATE '2025-03-09'" \
-  "SELECT status || '|' || age_seconds FROM public._data_health_compute() WHERE source = 'reposicao_sugestoes'"
 # F6: a idade do PO disparado em D-7 e a janela de 7 dias.
 bloco F6 "reposicao_pos_candidatos('OBEN'): idade|na janela de 7 dias" \
   "SELECT idade_dias || '|' || na_janela_7d FROM public.reposicao_pos_candidatos('OBEN') WHERE pedido_id = 9601"
@@ -714,9 +701,9 @@ corte() {   # <TimeZone> <sql do motor> <filtro do pedido novo>
 eq F2a "oportunidade de D gerada sob sessão UTC: corte às 18:00 de SP" \
   "$(corte "$UTC" "public.gerar_pedidos_oportunidade_ciclo('OBEN', DATE '2025-03-12')" "tipo_ciclo LIKE 'oportunidade_%'")" "2025-03-12 18:00"
 eq F2b "ciclo normal de D gerado sob sessão UTC: corte às 10:00 de SP (o cadastro do fornecedor)" \
-  "$(corte "$UTC" "public.gerar_pedidos_sugeridos_ciclo('OBEN', DATE '2025-03-12')" "tipo_ciclo = 'normal' AND id NOT IN (9301, 9401, 9501, 9601, 9701)")" "2025-03-12 10:00"
+  "$(corte "$UTC" "public.gerar_pedidos_sugeridos_ciclo('OBEN', DATE '2025-03-12')" "tipo_ciclo = 'normal' AND id NOT IN (9301, 9401, 9601, 9701)")" "2025-03-12 10:00"
 eq F2c "o mesmo ciclo normal sob sessão SP (controle: o corte não depende do fuso da sessão)" \
-  "$(corte "$SPZ" "public.gerar_pedidos_sugeridos_ciclo('OBEN', DATE '2025-03-12')" "tipo_ciclo = 'normal' AND id NOT IN (9301, 9401, 9501, 9601, 9701)")" "2025-03-12 10:00"
+  "$(corte "$SPZ" "public.gerar_pedidos_sugeridos_ciclo('OBEN', DATE '2025-03-12')" "tipo_ciclo = 'normal' AND id NOT IN (9301, 9401, 9601, 9701)")" "2025-03-12 10:00"
 
 echo
 echo "PASS=$PASS  FAIL=$FAIL"

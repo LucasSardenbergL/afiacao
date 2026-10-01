@@ -122,10 +122,15 @@ export interface SitioConhecido {
 // corpo e medido em prod. A lista só ENCOLHE: sítio novo reprova; entrada quitada que fica reprova.
 // (A instância-mãe, `_carteira_positivacao_for_owner`, não está aqui: a 20260927133606 a quitou. As 2
 // dívidas da família C — `get_ultimos_precos_cliente(uuid)` e `medir_abaixo_piso_tier(integer)`, com
-// `current_date` num corpo SP — saíram com a 20260927172443, que usa o hoje de SP pelo instante. A
-// última, `_data_health_compute()` × `current_date` — "UTC contra UTC" com data_ciclo —, saiu com a
-// 20261001023000: data_ciclo já era o dia de SP em 19 de 20 noites, e o edge passou a gravá-lo assim.)
-export const CONHECIDOS: readonly SitioConhecido[] = [];
+// `current_date` num corpo SP — saíram com a 20260927172443, que usa o hoje de SP pelo instante.)
+export const CONHECIDOS: readonly SitioConhecido[] = [
+  {
+    alvo: '_data_health_compute()', familia: 'C', trecho: 'current_date', n: 2, veredito: 'falso-positivo',
+    motivo: 'compara com `pedido_compra_sugerido.data_ciclo`, que a edge gerar-pedidos-diario grava como data '
+      + 'UTC (`new Date().toISOString().slice(0, 10)`): UTC contra UTC é consistente. O SP do corpo é de '
+      + 'outros checks. Ressalva não medida: o override `body.data_ciclo` da edge aceita data do caller.',
+  },
+];
 
 export const PISOS = {
   /** Migrations lidas — zero é leitura quebrada, nunca "repo sem DDL". Eram 739 em 2026-09-27. */

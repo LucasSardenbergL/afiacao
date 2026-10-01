@@ -156,10 +156,15 @@ export interface SitioConhecido {
 
 // Os sítios da classe nos corpos VIVOS em 2026-09-29, cada um com veredito lido no corpo e medido na
 // prod (varredura de 398 funções + chamadores, horários de cron e leitores). A lista só ENCOLHE.
-// (Os 3 "UTC contra UTC" da família data_ciclo — _data_health_compute, atualizar_parametros_numericos_skus
-// e reposicao_pos_candidatos — saíram com a 20261001023000: a medição da fase 2 mostrou que data_ciclo já
-// era o dia de SP em 19 de 20 noites, e o edge passou a gravá-lo assim.)
+// (Os "UTC contra UTC" da família data_ciclo eram falsos: a medição da fase 2 mostrou data_ciclo = dia de SP
+// em 19 de 20 noites, e desde a 20261001023000 o edge também o grava assim. atualizar_parametros_numericos_skus
+// e reposicao_pos_candidatos saíram com ela; _data_health_compute ficou com a #2698, que recria a função.)
 export const CONHECIDOS: readonly SitioConhecido[] = [
+  { alvo: '_data_health_compute()', trecho: 'current_date', n: 2, veredito: 'afetado',
+    motivo: 'a frescura da sugestão de compra compara current_date com max(pedido_compra_sugerido.data_ciclo), que é o dia '
+      + 'de SP (fase 3, 20261001023000): das 21h às 24h BRT a idade sai +1 dia. O conserto vai na #2698 (sensor de venda '
+      + 'empurrada), que recria a função — coordenado com a sessão dela em 2026-10-01 (o mesmo sítio da baseline de '
+      + 'scripts/fuso-da-sessao-gate.ts)' },
   { alvo: 'analytics_outbox_purgar()', trecho: 'r.ocorrido_em::date', n: 1, veredito: 'latente',
     motivo: 'o dia é só chave de agrupamento de analytics_outbox_perda, que não tem leitor; cron 04:20 UTC' },
   { alvo: 'converter_sugestao_em_campanha_flat(bigint,numeric,numeric,text,date,text,text,text)', trecho: 'current_date', n: 2,

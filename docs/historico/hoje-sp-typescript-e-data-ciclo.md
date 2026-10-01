@@ -68,7 +68,8 @@ Migration `20261001023000_hoje_sp_familia_data_ciclo.sql` — o texto VIVO da pr
 | `v_oportunidade_economica_hoje` | 5 | afetado — janela da campanha (2), `dias_ate_limite` (1), quantidade dos cenários de aumento (2) |
 | DEFAULT de `p_data_ciclo` nas 4 RPCs de ciclo | 4 | afetado — o de `ciclo_oportunidade_do_dia` é exercido (cron e botão sem data); os outros 3, não |
 | corte de `gerar_pedidos_oportunidade_ciclo` / `gerar_pedidos_sugeridos_ciclo` | 2 | afetado (exibição) — `(data + hora) AT TIME ZONE 'America/Sao_Paulo'` |
-| `_data_health_compute` / `atualizar_parametros_numericos_skus` / `reposicao_pos_candidatos` | 2 / 1 / 1 | afetado — a frescura da sugestão, a janela do em trânsito, a idade do PO |
+| `atualizar_parametros_numericos_skus` / `reposicao_pos_candidatos` | 1 / 1 | afetado — a janela do em trânsito, a idade do PO |
+| `_data_health_compute` | 2 | afetado — a frescura da sugestão de compra; **fica com a #2698** (sensor de venda empurrada), que recria a função e escrevia ali o UTC explícito sob a premissa "UTC contra UTC". Coordenado com a sessão dela em 2026-10-01 (mensagem com a medição): 2 migrations recriando a mesma função quente fariam a PRÉ de uma derrubar a outra |
 | DEFAULT de `pedido_compra_sugerido.data_ciclo` | 1 | latente (nunca exercido) — vai junto para não sobrar o dia da sessão na família |
 
 O TypeScript da família, no mesmo PR: `gerar-pedidos-diario` (`dataCiclo = hojeSP()`), `omie-sync-estoque`
@@ -102,13 +103,13 @@ CORPOS das 7 funções com `public` antes de `pg_catalog` (resolvem nomes ao exe
 seria o de parede) e duas guardas de sombra: o que views e DEFAULTs amarraram (pg_depend) e o catálogo
 inteiro (só o now() de `public` tem a assinatura de um embutido; o `public.set_config` do snapshot sai).
 
-62 asserts: P01-P11 (cada predecessora e as 18 dependências com o md5 EXATO da prod), K1-K4 (a trava e a
+57 asserts: P01-P10 (cada predecessora e as 18 dependências com o md5 EXATO da prod), K1-K4 (a trava e a
 ordem), Z0, G1-G7 (a PRÉ recusa view e função divergentes; a PÓS recusa texto adulterado, ACL mexido,
 `security_invoker` perdido e DEFAULT trocado; re-aplicar passa) e, por objeto, os 4 instantes 20:59:59 ·
 21:00:00 · 23:59:59 BRT de D e 00:00:00 de D+1 sob sessão UTC e SP. As RPCs são EXECUTADAS: o ciclo de
 oportunidade sem data (`promo_e_aumento` em D, `sem_eventos_hoje` em D+1), o motor sem data (`2025-03-12|0`:
 o ciclo de hoje, nenhum pendente de hoje expirado — e `2025-03-13|2` à meia-noite de SP), a promoção que
-termina hoje aplicada no ciclo de hoje (1 → 0), a frescura (`ok|259200` → `stale|345600`), a idade do PO
+termina hoje aplicada no ciclo de hoje (1 → 0), a idade do PO
 (`7|true` → `8|false`), a posição com o a caminho (compra 14 → 18), o DEFAULT da coluna — e o corte: a
 oportunidade às 18:00 de SP e o normal às 10:00 de SP sob sessão UTC.
 
