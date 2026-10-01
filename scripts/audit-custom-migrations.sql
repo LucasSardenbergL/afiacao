@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 573
+-- Total de custom migrations: 574
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -614,6 +614,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260930230623', 'hoje_sp_views_defaults_classe_ii', '20260930230623_hoje_sp_views_defaults_classe_ii.sql'),
   ('20261001011500', 'data_health_vendas_empurradas_sem_gemeo', '20261001011500_data_health_vendas_empurradas_sem_gemeo.sql'),
   ('20261001023000', 'hoje_sp_familia_data_ciclo', '20261001023000_hoje_sp_familia_data_ciclo.sql'),
+  ('20261001043717', 'hoje_sp_route_visits_visit_date', '20261001043717_hoje_sp_route_visits_visit_date.sql'),
   ('20261001083000', 'converter_campanha_flat_colunas_reais', '20261001083000_converter_campanha_flat_colunas_reais.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
