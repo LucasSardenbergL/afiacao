@@ -46,6 +46,12 @@ db/test-authz-is-not-true-escritas.sh      24
 # corantes só sai para staff: customer e anon recebem NULL e mantêm o preço final.
 db/test-tint-formulas-rls-initplan.sh      26
 db/test-tint-gate-custo-staff.sh           25
+# Canal WhatsApp, núcleo HSM: o log de envio só a edge escreve (authenticated leva 42501 do GRANT, e a
+# camada que nega é DECLARADA), o catálogo só o master; a idempotência e os CHECKs são do banco. Monta o
+# schema por db/lib/corpo-vivo.sh — snapshot + o ACL MEDIDO em prod + a cadeia dinâmica — porque a
+# versão anterior dava GRANT ALL a anon/authenticated e morreu no re-dump #1509 fora do núcleo
+# (docs/historico/provas-canal-revividas.md).
+db/test-whatsapp-hsm.sh                    18  falsificar=17
 
 # ── Eixo 2 — FINITUDE MONETÁRIA ───────────────────────────────────────────────────
 # `ausente ≠ zero`: preço que o Omie não mandou não vira R$ 0,00; custo sem cmc
@@ -79,6 +85,12 @@ db/test-tint-get-prices.sh                 27
 db/test-tint-promote-preserva-preco.sh      6
 db/test-tint-canonica.sh                   29
 db/test-tint-gate-revalida.sh              38
+# Recotação da proposta 1-toque do canal WhatsApp: praticado 0/NaN/Infinity nunca vira preço, tabela 0
+# vira NULL (ausente ≠ zero), o praticado não atravessa conta nem cliente, e a chave do orçamento é
+# UNIQUE no banco — escrita como o staff. Corpo vivo + ACL de prod + as 4 migrations de order_items/
+# sales_orders que o snapshot não tem, com seed coerente (db/lib/corpo-vivo.sh); nasceu morta
+# fora do núcleo em 08-06 (docs/historico/provas-canal-revividas.md).
+db/test-whatsapp-proposta.sh               17  falsificar=20
 
 # ── Eixo 3 — ATOMICIDADE ──────────────────────────────────────────────────────────
 # "Guard fora da escrita não é guard": o predicado tem de estar DENTRO do `WHERE`
@@ -302,3 +314,13 @@ db/test-expandir-promocao-item.sh          41  falsificar=18
 # db/fixtures/hoje-sp-views-defaults-predecessoras-prod-20260930.sql (o snapshot perdeu as barras dos
 # literais de regex — as predecessoras vêm da fixture) + a migration.
 db/test-hoje-sp-views-defaults.sh          129  falsificar=33
+
+# Eixo 7 (fuso), fase 3 da classe (ii) — a família data_ciclo (20261001023000_hoje_sp_familia_data_ciclo.sql):
+# as 2 views "_hoje", o DEFAULT de p_data_ciclo das 4 RPCs de ciclo, o corte em HORA DE SP e 2 leitores de
+# data_ciclo (o 3º, _data_health_compute, ficou com a #2698), com as RPCs EXECUTADAS (o motor sem data não expira os pendentes de hoje às 21h; a
+# promoção que termina hoje entra no ciclo de hoje; o corte das 10:00 grava 10:00 de SP sob sessão UTC).
+# P01-P10 (predecessoras e as 18 dependências = md5 da prod), K1-K4 (a trava e a ordem dos leitores), Z0,
+# G1-G7. Autocontida: initdb + stubs + schema-snapshot + db/fixtures/hoje-sp-data-ciclo-prod-20261001.sql
+# (a deriva de 14 colunas do snapshot + o texto vivo) + a migration. O `--falsificar` (17 sabotagens, todas
+# vermelhas no assert certo, matriz UTC/SP × C/pt_BR verde) roda FORA do CI pelo motivo da linha abaixo.
+db/test-hoje-sp-data-ciclo.sh               57  falsificar=fora-do-ci  # o job provas-sql mediu 19,6–19,9 min de 20 em 3 PRs de 30/09–01/10 (mediana 17,9 em 8): +17 sabotagens (~3 min) o cancelaria no teto; o comentário do ci.yml pede paralelizar o runner, não subir o teto

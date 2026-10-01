@@ -6,6 +6,7 @@
 // 4. Grava log em sync_reprocess_log
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
+import { hojeSP } from "../_shared/hoje-sp.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -271,7 +272,10 @@ Deno.serve(async (req: Request) => {
   const windowStart = new Date().toISOString();
 
   let empresa = "OBEN";
-  let dataCiclo = new Date().toISOString().slice(0, 10);
+  // O dia de SP, não o UTC: das 21h BRT em diante o UTC já é amanhã, e o botão do Cockpit (body sem
+  // data_ciclo) abria o ciclo D+1 — a RPC expira os pendentes com data_ciclo < p_data_ciclo, os de HOJE.
+  // Decisão do founder (2026-09-30): ciclo disparado depois do corte é o dia de SP, com o corte passado.
+  let dataCiclo = hojeSP();
   // [INTRADAY] rodadas extras (cron gerar-pedidos-intraday-oben, 2/2h em horário comercial):
   // mesma orquestração (RPC + promoções + tick do alerta), mas SEM o digest de e-mail — senão
   // seriam 6 digests/dia. O digest fica só na rodada matinal (9h15 UTC, body sem a flag).
