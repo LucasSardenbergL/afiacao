@@ -864,9 +864,17 @@ jobs:
   # diz QUAL prova custou, então ele tem de ficar acima do custo, e a mediana medida é o sinal de
   # quando a próxima prova pedir paralelizar o runner em vez de subir o teto de novo
   # (docs/historico/hoje-da-sessao-nu-funcoes-e-skills.md).
+  #
+  # O teto de 20 estourou em 2026-09-30/10-01: em 22 runs, o passo do núcleo foi a 1100–1192 s e 11
+  # foram CANCELADOS no teto — de vários PRs e do `workflow_dispatch` da main —, primeiro com o núcleo
+  # verde e a autofalsificação do runner cortada, depois com o próprio núcleo cortado aos 1187 s. O
+  # salto veio de UMA prova: `test-hoje-sp-views-defaults --falsificar`, 304 s (26% do núcleo, #2685);
+  # as 2 do WhatsApp (#2703) passaram o núcleo do teto sozinho. Teto 30 é STOPGAP DECLARADO, contra a
+  # nota acima e por decisão do founder (todo PR bloqueado): o próximo passo é PARALELIZAR o runner
+  # (shards do manifesto) ou baratear a prova de 304 s — não subir o teto uma 3ª vez.
   provas-sql:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     permissions:
       contents: read
 
