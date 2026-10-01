@@ -159,7 +159,7 @@ export function acumularProdutosDaPagina(
 // Rows de upsert (payload COMPLETO — carrega as NOT NULL sem default codigo/descricao com os
 // fallbacks do N+1, então não existe o 23502 do #1344 aqui) + divergências contra as linhas
 // locais de omie_products. O upsert é INCONDICIONAL como no N+1 (divergência é métrica, nunca
-// gate de escrita).
+// gate de escrita) — a única exceção é o item sem valor_unitario, que fica fora do plano.
 export function planejarEscritaProdutos(
   catalogo: Map<number, ProdutoCadastroOmie>,
   locais: LinhaProdutoCatalogo[],
