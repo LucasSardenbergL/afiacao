@@ -38,7 +38,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }
 
 P -q -f "$REPO_ROOT/db/stubs-supabase.sql"
@@ -144,7 +144,7 @@ PROD30='bbbb0000-0000-0000-0000-000000000030'   # so o payload conhece (item ACR
 
 seed() {  # semeia P1/P2/P3 no banco $1
   local db="$1"
-  "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d "$db" -v ON_ERROR_STOP=1 -q -c "
+  "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d "$db" -v ON_ERROR_STOP=1 -q -c "
 INSERT INTO auth.users(id) VALUES ('$CLI') ON CONFLICT DO NOTHING;
 INSERT INTO public.omie_products(id) VALUES ('$PROD10'),('$PROD20'),('$PROD30') ON CONFLICT DO NOTHING;
 INSERT INTO public.sales_orders (id, account, hash_payload, customer_user_id, status, omie_pedido_id,
@@ -196,7 +196,7 @@ LIDO='2026-09-07T20:00:00Z'
 
 rpc() { # $1 pedido | $2 itens | $3 items | $4 total | $5 lido_em | (opcional $6 = db)
   local db="${6:-prove}"
-  "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d "$db" -v ON_ERROR_STOP=1 -tA -c \
+  "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d "$db" -v ON_ERROR_STOP=1 -tA -c \
     "SELECT public.aplicar_edicao_pedido_omie('$1'::uuid, '$3'::jsonb, '$2'::jsonb, $4::numeric,
         'obs nova', '{\"cabecalho\":1}'::jsonb, '{\"validated\":true}'::jsonb, '$5'::timestamptz);"
 }
@@ -222,7 +222,7 @@ eq "A4 estado restaurado (coerente de novo)" "$(coerente "$P1")" "t"
 echo
 echo "-- B. a RPC: pedido canônico com linhas, editado no Omie --"
 RET="$(rpc "$P1" "$ITENS_P1" "$ITEMS_P1" "$TOTAL_P1" "$LIDO")"
-eq "B1 retorno: tinha_linhas"     "$(printf '%s' "$RET" | "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -tA -c "SELECT ('$RET'::jsonb)->>'tinha_linhas'")" "true"
+eq "B1 retorno: tinha_linhas"     "$(printf '%s' "$RET" | "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -tA -c "SELECT ('$RET'::jsonb)->>'tinha_linhas'")" "true"
 eq "B2 retorno: linhas_antes"     "$(Pq -c "SELECT ('$RET'::jsonb)->>'linhas_antes'")" "2"
 eq "B3 retorno: linhas_removidas" "$(Pq -c "SELECT ('$RET'::jsonb)->>'linhas_removidas'")" "2"
 eq "B4 retorno: linhas_inseridas" "$(Pq -c "SELECT ('$RET'::jsonb)->>'linhas_inseridas'")" "2"
@@ -352,7 +352,7 @@ echo "═══ ZONA 5 — FALSIFICAÇÃO ═══"
 montar() { # $1 = db, $2 = arquivo de migration
   "$PGBIN/dropdb" -p "$PORT" -h /tmp -U postgres --if-exists "$1"
   "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres "$1"
-  local Ps=("$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d "$1" -v ON_ERROR_STOP=1)
+  local Ps=("$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d "$1" -v ON_ERROR_STOP=1)
   "${Ps[@]}" -q -f "$REPO_ROOT/db/stubs-supabase.sql" >/dev/null 2>&1
   "${Ps[@]}" -q -c "$PREREQ_SQL" >/dev/null
   "${Ps[@]}" -f "$2" 2>&1
@@ -377,7 +377,7 @@ sabotar() { # $1 rotulo | $2 sed | $3 sqlstate que DEVE deixar de vir | $4 chama
   montar sab "$f" >/dev/null 2>&1
   seed sab
   set +e
-  out="$("$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d sab -v ON_ERROR_STOP=1 -q -c \
+  out="$("$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d sab -v ON_ERROR_STOP=1 -q -c \
     "DO \$a\$ BEGIN PERFORM $4; RAISE EXCEPTION 'ASSERT_NAO_LANCOU'; EXCEPTION WHEN sqlstate '$3' THEN NULL; WHEN OTHERS THEN RAISE; END \$a\$;" 2>&1)"
   rc=$?
   set -e
@@ -412,7 +412,7 @@ if cmp -s "$FPID" "$MIG"; then bad "G6 sed inócuo (herança de product_id)"; el
   montar sab "$FPID" >/dev/null 2>&1
   seed sab
   rpc "$P1" "$ITENS_P1" "$ITEMS_P1" "$TOTAL_P1" "$LIDO" sab >/dev/null
-  VPID="$("$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d sab -tA -c "SELECT coalesce(product_id::text,'NULL') FROM public.order_items WHERE sales_order_id='$P1' AND omie_codigo_produto=10")"
+  VPID="$("$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d sab -tA -c "SELECT coalesce(product_id::text,'NULL') FROM public.order_items WHERE sales_order_id='$P1' AND omie_codigo_produto=10")"
   if [ "$VPID" = "NULL" ]; then ok "G6 sem a herança, o product_id preexistente ZERA (o assert B15 tinha dente)"
   else bad "G6 sabotado e o product_id continuou [$VPID] — B15 media outra coisa"; fi
 fi

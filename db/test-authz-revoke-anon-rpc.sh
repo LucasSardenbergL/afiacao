@@ -45,10 +45,10 @@ trap cleanup EXIT
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
 HARNESS_LC="${HARNESS_LC:-C}"
-"$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d postgres -q -c "ALTER DATABASE prove SET lc_messages='$HARNESS_LC';" \
+"$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d postgres -q -c "ALTER DATABASE prove SET lc_messages='$HARNESS_LC';" \
   || { echo "INFRA: lc_messages='$HARNESS_LC' indisponivel neste servidor"; exit 1; }
 
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }
 
 PASS=0; FAIL=0
@@ -58,7 +58,7 @@ eq()  { if [ "$2" = "$3" ]; then ok "$1 (=$2)"; else bad "$1 -- esperado [$3], v
 
 P -q -f "$REPO_ROOT/db/stubs-supabase.sql"
 
-AMOSTRA_MSG=$("$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -tA -c "SELECT 1/0;" 2>&1 | head -1) || true
+AMOSTRA_MSG=$("$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -tA -c "SELECT 1/0;" 2>&1 | head -1) || true
 echo "=== setup pronto (PG17 :$PORT) lc_messages=$HARNESS_LC ==="
 echo "=== controle do eixo de locale, mensagem do servidor: $AMOSTRA_MSG"
 
@@ -137,7 +137,7 @@ montar_estado() { P -q -f "$MONTAR"; }
 # probe: executa como $1 e devolve 'EXECUTOU' ou 'SQLSTATE-<codigo>'
 probe() {   # $1 = role, $2 = SQL
   local out
-  if out=$("$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -tA -v ON_ERROR_STOP=1 2>&1 <<SQL
+  if out=$("$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -tA -v ON_ERROR_STOP=1 2>&1 <<SQL
 \set VERBOSITY verbose
 SET ROLE $1;
 $2

@@ -16,6 +16,7 @@ import { fetchAll } from "../_shared/paginate.ts";
 // antes dele e traz o seu próprio (ver versao.ts, lista GATE_PROPRIO do gate de contrato).
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
+import { hojeSP } from "../_shared/hoje-sp.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -401,7 +402,9 @@ Deno.serve(async (req: Request) => {
 
   const db: DbClient = createClient(SUPABASE_URL, SERVICE_ROLE);
   const hoje = new Date();
-  const hojeISO = hoje.toISOString().slice(0, 10);
+  // O dia de SP: com o UTC, das 21h BRT em diante os títulos que vencem AMANHÃ sumiam da lista antecipável
+  // (.gt data_vencimento). O `hoje` instante segue nos `dias` até o vencimento (l. ~587) — isso é outra régua.
+  const hojeISO = hojeSP();
   const motivos_confianca: string[] = [];
 
   // ── 1. Lê fin_funding_inputs ────────────────────────────────────────────────

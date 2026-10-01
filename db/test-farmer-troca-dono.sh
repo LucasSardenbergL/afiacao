@@ -31,7 +31,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }
 
 P -q -f "$REPO_ROOT/db/stubs-supabase.sql"
@@ -309,7 +309,7 @@ SQL2
   ) &
   local bg=$!
   local i=0
-  while [ ! -f "$SINAL" ] && [ $i -lt 100 ]; do i=$((i+1)); "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -tAc "SELECT pg_sleep(0.1);" >/dev/null 2>&1; done
+  while [ ! -f "$SINAL" ] && [ $i -lt 100 ]; do i=$((i+1)); "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -tAc "SELECT pg_sleep(0.1);" >/dev/null 2>&1; done
   [ -f "$SINAL" ] || { echo "SINAL_NAO_VEIO"; wait $bg 2>/dev/null || true; return; }
   Pq -c "SET lock_timeout='1500ms';
     DO \$t\$ BEGIN

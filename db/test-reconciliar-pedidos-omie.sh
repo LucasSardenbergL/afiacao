@@ -47,7 +47,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }
 
 P -q -f "$REPO_ROOT/db/stubs-supabase.sql"
@@ -232,7 +232,7 @@ eq "A0 revisão ANTIGA completa no seed" "$(Pq -c "$CESTA")" "$ANTIGA_COMPLETA"
 
 R=$(Pq -c "SELECT public.reconciliar_pedidos_omie('$NOVA'::jsonb, $GERIDO, $LIDO)::text;")
 eq "A1 corrections = 1 delete + 1 update + 1 insert" \
-   "$(printf '%s' "$R" | "$PGBIN/psql" -q -t -A -p "$PORT" -h /tmp -U postgres -d prove -c "SELECT ('$R'::jsonb)->>'corrections';")" "3"
+   "$(printf '%s' "$R" | "$PGBIN/psql" -X -q -t -A -p "$PORT" -h /tmp -U postgres -d prove -c "SELECT ('$R'::jsonb)->>'corrections';")" "3"
 eq "A2 upserts = 1 pedido tocado"     "$(Pq -c "SELECT ('$R'::jsonb)->>'upserts';")"     "1"
 eq "A3 divergences = 1 (status E total mudaram)" "$(Pq -c "SELECT ('$R'::jsonb)->>'divergences';")" "1"
 eq "A4 nenhuma falha"                 "$(Pq -c "SELECT jsonb_array_length(('$R'::jsonb)->'falhas');")" "0"

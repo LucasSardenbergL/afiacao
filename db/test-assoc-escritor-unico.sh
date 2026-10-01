@@ -35,7 +35,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }   # tuples-only, unaligned (pra capturar 1 valor)
 
 # ── base mínima do Supabase: roles, schema auth, auth.uid()/role() via GUC (impersonação de RLS) ──
@@ -358,7 +358,7 @@ else ok "F3 a migration RECUSA aplicar com policy de escrita sobrevivente (o blo
 # EXECUTE tem de VOLTAR a existir no fim (rollback). Se tiver commitado no meio, some.
 P -q -c "GRANT EXECUTE ON FUNCTION public.farmer_association_rules_substituir(jsonb) TO authenticated;"
 P -q -c "SELECT 1;" >/dev/null   # garante que o GRANT acima commitou antes do teste
-if "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 -1 -q -f "$MIG" >/dev/null 2>&1; then
+if "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 -1 -q -f "$MIG" >/dev/null 2>&1; then
   bad "F4 a migration PASSOU em transação única com a policy órfã — a verificação não morde"
 else
   ok "F4 a migration falha em transação única (como no SQL Editor)"

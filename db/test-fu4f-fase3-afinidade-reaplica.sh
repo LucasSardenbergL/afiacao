@@ -30,7 +30,7 @@ trap limpar EXIT
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k $TMP -c listen_addresses=''" -l "$TMP/log" -w start >/dev/null 2>&1 \
   || { echo "falha ao subir PG17 na porta $PORT"; cat "$TMP/log"; exit 1; }
 
-psql() { "$PGBIN/psql" -h "$TMP" -p "$PORT" -U postgres -d postgres -v ON_ERROR_STOP=1 "$@"; }
+psql() { "$PGBIN/psql" -X -h "$TMP" -p "$PORT" -U postgres -d postgres -v ON_ERROR_STOP=1 "$@"; }
 
 ok=0; fail=0
 afirma() { # afirma <rotulo> <esperado: OK|FALHA> <arquivo_sql>

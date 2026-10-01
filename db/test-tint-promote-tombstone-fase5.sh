@@ -37,7 +37,7 @@ trap cleanup EXIT
 
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k $TMP" -l "$TMP/pg.log" -w start >/dev/null
-PA() { "$PGBIN/psql" -p "$PORT" -h "$TMP" -U postgres -X -v ON_ERROR_STOP=1 "$@"; }
+PA() { "$PGBIN/psql" -X -p "$PORT" -h "$TMP" -U postgres -v ON_ERROR_STOP=1 "$@"; }
 
 # ── template: stubs + prelude + snapshot + seed (a Fase 5 já carimbou a '1') ─────────────────
 PA -q -d postgres -c "CREATE DATABASE tpl_tombstone" >/dev/null

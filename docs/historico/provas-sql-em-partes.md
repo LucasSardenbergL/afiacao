@@ -18,6 +18,8 @@ O núcleo de provas SQL rodava **serial**, num job com teto de 20 min.
 
 O próprio `ci.yml` já tinha decidido o que fazer quando isso acontecesse (2026-09-29): "a mediana medida é o sinal de quando a próxima prova pedir **paralelizar o runner em vez de subir o teto de novo**".
 
+Em paralelo, o #2712 (decisão do founder, com todo PR bloqueado) subiu o teto para **30 min** como *stopgap declarado*: o comentário dele no `ci.yml` aponta a paralelização como o próximo passo, e este PR é esse passo. No merge, o teto de 30 e o comentário do #2712 ficaram como estavam, e a matriz entrou depois deles.
+
 ## O desenho
 
 - **Matriz no job:** `strategy.matrix.parte: [1, 2, 3]`, com `fail-fast: false`, para que uma parte vermelha não esconda as outras. Cada parte roda num runner próprio, então as portas TCP dos clusters não colidem.
@@ -40,10 +42,11 @@ O próprio `ci.yml` já tinha decidido o que fazer quando isso acontecesse (2026
 - **Cobertura:** a UNIÃO das 3 listas é o manifesto, sem repetição. O risco novo é de partição, e o juiz da cobertura tem a própria falsificação: um runner sabotado que entrega sempre a fatia 0 é PEGO como `REPETE`/`BURACO`.
 - **Controle positivo:** a parte 1 de 3 EXECUTA só as 2 provas dela e fecha o recibo da parte (`SQL_PROOF_OK provas=2/2 … parte=0/3`). Sem esse controle, um runner que recusasse toda `NUCLEO_PARTE` passaria nas recusas.
 
-No manifesto real, as 3 partes ficaram com 19, 19 e 18 provas; a união é o manifesto inteiro, sem repetição.
+No manifesto da `main` de 2026-10-01 (57 provas, já com o #2712), as 3 partes ficaram com 19, 19 e 19 provas; a união é o manifesto inteiro, sem repetição.
 
 ## O que fica para depois
 
-- **As três falsificações `fora-do-ci` podem voltar ao CI:** cada parte tem ~6 min de folga. Fica para PRs próprios, um por dono, para cada volta ser medida.
+- **As três falsificações `fora-do-ci` podem voltar ao CI:** a simulação dá ~6 min por parte, contra o teto de 30. Fica para PRs próprios, um por dono, para cada volta ser medida.
+- **O teto de 30 do stopgap pode voltar a 20** quando a duração das partes for MEDIDA em runs reais. A decisão é do founder.
 - **Folga acabando de novo:** acrescente uma parte à matriz. Não suba o teto e não tire falsificação do CI.
 - **Custo:** mais minutos de runner (setup do PGDG e sonda ×3, ~1 min cada) em troca de wall-clock. O caminho crítico do `validate` volta a ser o `gates-e-falsificacao` (~21–22 min), não o `provas-sql`.

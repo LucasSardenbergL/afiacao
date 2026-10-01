@@ -22,7 +22,7 @@ trap cleanup EXIT
 
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l /tmp/pg-promofix.log -w start >/dev/null
-PSQL=("$PGBIN/psql" -h /tmp -p "$PORT" -U postgres -d postgres -v ON_ERROR_STOP=1 -q)
+PSQL=("$PGBIN/psql" -X -h /tmp -p "$PORT" -U postgres -d postgres -v ON_ERROR_STOP=1 -q)
 
 # ── 1. Stubs (só as colunas que a função toca) ────────────────────────────────
 "${PSQL[@]}" <<'SQL'
