@@ -92,3 +92,13 @@ Codex: desenho=? · código=? — `sem-codex`: o wrapper recusou com a cota em 8
 03/10 19:11) e o founder autorizou o merge sem Codex em 2026-10-01 (**Caminho B**: falsificação Deno 4/4 e
 vitest 10/10 sob `LC_ALL=C` e `pt_BR.UTF-8`, controle verde na mesma invocação, + auto-revisão).
 **REVISÃO INDEPENDENTE PENDENTE** — rodar o Codex RETROATIVO no diff do #2700 quando a cota reabrir.
+
+## Incidente pós-deploy (2026-10-01): BOOT_ERROR 503 por `resposta` redeclarada
+
+O deploy de `471e5245a` subiu verbatim (8 hashes conferidos) e a edge NÃO bootou: `const resposta =
+montarRespostaAnalise(…)` foi declarada no MESMO escopo do `let resposta` da chamada à Anthropic —
+*early error* do V8 ("Identifier 'resposta' has already been declared"). Escapou de três redes: o
+`transpileModule` (só erro SINTÁTICO do TS; redeclaração é do binder, TS2451), o `edges:typecheck` do CI
+(que TOLERA TS2451 como "dívida conhecida") e os testes (nenhum importa o `index.ts`). Hotfix: renomear
+para `corpoResposta` (`v1.4-boot-resposta-unica`), validado com transpilar→`node --check` — o parser
+do V8 acusa a classe (controle: a versão da main fica VERMELHA). Fora do ar: ~08:41Z até o redeploy.

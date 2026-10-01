@@ -104,7 +104,61 @@ individual na RPC `criar_pedidos_com_itens`), e os três casos só viram **conta
 
 - **Desenho:** exit 79 (`SALDO_ALTO`, 86% da cota semanal, janela reabre em 03/10 19:11). Foi pelo
   Caminho B, com a seção `RÉGUA:` escrita e conferida por mim (no prompt preservado do consult).
-- **Adversarial de código:** pendente. Não se pula; o PR fica DRAFT até a janela reabrir.
+- **Adversarial de código:** o founder mergeou o #2698 sem ele em 2026-10-01 07:21Z (Caminho B, `sem-codex`
+  no corpo do PR). Ele roda RETROATIVO sobre o código mergeado quando a janela reabrir (03/10 19:11), e
+  achado vira PR novo.
+
+## O desfecho (2026-10-01)
+
+### O órfão 4c19af2a
+
+O founder ia conferir o nº 10536 no Omie, mas o banco respondeu antes. A resposta veio de cruzar
+`venda_items_history` (itens das NF-e) com `fin_contas_receber` (títulos, com `id_origem` e a NF citada):
+
+- O 10536 foi para o cadastro Omie 12008261284, um CNPJ em `omie_clientes_nao_vinculados`. Se o pedido
+  ainda existe no Omie, o importador o pula (`skippedNoClient`), e semear abril não traria o gêmeo.
+- No mesmo dia entrou o nº **10538** (omie 12070361032), com os mesmos 2 itens, quantidades e preços, para
+  outro cadastro (um CPF vinculado a outro cliente do app). Ele foi faturado na NF-e 8291, de R$ 314,40. O
+  importador o trouxe (`142e5f72`, faturado, kpi 06/04).
+- Um título manual (origem `MANR`) de R$ 314,40, que cita a NF 8291, está RECEBIDO no CNPJ do 10536.
+
+O 10536 não virou venda; a venda é o 10538, e ela contava 2× em abril. É o ramo "cancelado/excluído" da
+regra. Com a confirmação do founder, [`db/aplicar-cancelar-orfa-4c19af2a.sql`](../../db/aplicar-cancelar-orfa-4c19af2a.sql)
+passou a linha para `cancelado` pelo `db:aplicar`: ensaio e depois o real, recibo #214, sha256 `243a5855…`,
+às 08:02:25Z. A PRE ancora no estado medido (linha `enviado`, gêmeo ausente, 10538 faturado com os mesmos
+itens). A POS confere pelo predicado do próprio sensor. Validação por fora (psql-ro):
+
+- a linha está `cancelado` e o resto dela ficou intacto;
+- o 10538 continua faturado;
+- há 0 órfãs no universo do sensor;
+- o cliente da linha tem 0 vendas canônicas em abril no ao vivo.
+
+Fica no Omie, como higiene do founder: conferir que o 10536 não ficou aberto, para ninguém faturá-lo de novo.
+
+### O congelado de abril
+
+O `carteira_positivacao_snapshot` de abril, gravado em 25/05, marca o cliente da linha como positivado por
+R$ 314,40 só por ela, e a mesma venda conta também no cliente do 10538. **Decisão do founder (2026-10-01):
+mês fechado não se reescreve.** Abril congelado fica com R$ 314,40 contados 2× e um positivado a mais.
+Reescrevê-lo mexeria também nos dias desde a última compra e no risco de churn dos meses seguintes.
+
+### O apply
+
+O founder aplicou a migration pelo **SQL Editor**, fora do `db:aplicar`, entre 07:23Z (pré-voo ainda com os
+predecessores no ar) e 08:00Z. Por isso não há recibo em `db_aplicacoes` nem linha em
+`supabase_migrations.schema_migrations`. Validação por fora (psql-ro, 08:04Z):
+
+- md5 dos três corpos = repo (`79362363…`, `633a9b71…`, `6be719aa…`);
+- `search_path=public, pg_temp`;
+- ACL das três só com `postgres`, `service_role` e `sandbox_exec_<ref>`, sem PUBLIC, anon ou authenticated;
+- watchdog com 23 avaliados e 0 falhos às 08:00Z.
+
+**O sensor nasceu vermelho, não verde.** O apply veio antes do reparo, e a 1ª rodada (08:00:00Z) pegou a
+órfã: alerta `broken` ("1 venda empurrada ao Omie sem gemeo do importador ha mais de 6 h (1 fora da janela
+de 5 dias do importador) - oben: 1 (R$ 314,40, a mais antiga de 06/04/2026)"), com e-mail enfileirado às
+08:00:02Z. O reparo entrou às 08:02Z, e a rodada das 08:30Z fechou o episódio sozinha: alerta resolvido às 08:30:00Z,
+23 avaliados e 0 falhos, nenhum alerta novo. É o 1º sinal positivo do
+sensor em prod: na 1ª rodada, achou a órfã real que já conhecíamos.
 
 ## Sinal (fase-sem-sinal)
 
@@ -138,3 +192,13 @@ aberto há semanas = o alerta virou ruído.
 6. **O motivo escrito numa baseline é hipótese até alguém medir o ESCRITOR.** "UTC contra UTC" estava
    documentado nas duas baselines de fuso e era falso em 645 de 646 linhas. Antes de herdar o veredito de uma
    baseline num conserto, meça quem grava o dado.
+7. **Antes de pedir a alguém para abrir o Omie, cruze o que o banco já copia dele.** `venda_items_history`
+   (itens das NF-e) e `fin_contas_receber` (títulos, com a origem e a NF citada) mostraram o que houve com o
+   10536 sem ninguém abrir o Omie. A órfã tem um 3º destino além de "existe" e "cancelada": **substituída**,
+   quando a venda é refeita como outro pedido, às vezes em outro cadastro. Aí semear não traz o gêmeo, e o
+   remédio é o mesmo da cancelada.
+8. **Com dois caminhos de apply, a ordem "resolve antes do apply" tem de estar onde se aplica.** O SQL Editor
+   do founder e o `db:aplicar` da sessão aplicam a mesma migration. O pré-voo das 07:23Z envelheceu em 40 min:
+   o founder aplicou pelo SQL Editor antes do reparo, e o sensor nasceu vermelho e com e-mail. Combine QUEM
+   aplica e re-meça o md5 vivo imediatamente antes de aplicar. Quando a ordem importa, a PRE da migration pode
+   exigir a pré-condição (aqui, "0 órfãs") e recusar o apply cedo demais em qualquer caminho.
