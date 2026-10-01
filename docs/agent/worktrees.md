@@ -338,14 +338,19 @@ completo no cabeçalho do hook; medição e motivo em `docs/historico/gates-no-p
   permission"). O `auto-merge.yml` liga o auto-merge com o `GITHUB_TOKEN`, e esse token não tem
   essa permissão.
   - **Explicação provável:** o squash geraria um workflow que nenhum push autorizado criou. O #2713
-    e o #2712 também mexiam no `ci.yml` e entraram pelo mesmo token.
+    e o #2712 também mexiam no `ci.yml` e entraram pelo mesmo token, mas sem a `main` mudar um
+    workflow no meio do CI deles.
   - **Nada avisa.** Não é CI vermelho nem conflito, então o Auto-fix não dispara. O PR fica verde,
     `CLEAN` e aberto.
   - **Conserto:** `git fetch origin main` + `git merge FETCH_HEAD` + push. O `synchronize` religa o
     auto-merge, e o CI valida a combinação.
   - **Não mergeie na mão:** a combinação do PR com o workflow novo da `main` nunca passou pelo CI.
   - **Ver o motivo:** na timeline do PR, `gh api graphql` com `AutoMergeDisabledEvent { reason reasonCode }`.
-  - **Caso:** no #2725, o #2721 mudou o `ci.yml` às 09:43Z, e o CI do PR tinha começado às 09:18Z.
+  - **Dois PRs de workflow abertos ao mesmo tempo:** o que entra primeiro trava o outro, em silêncio.
+    O que ficou para trás traz a `main` e dá push.
+  - **Casos:** no #2725, duas vezes no mesmo dia, cada uma minutos depois de outro PR mudar um
+    workflow durante o CI dele. O #2721 mudou o `ci.yml` às 09:43Z, e a recusa veio às 10:15Z. O
+    #2731 entrou às 13:19Z, e a recusa veio às 13:33Z.
 
 ## Higiene de RAM/Node (M2 8GB satura; **swap em uso = RAM cheia**)
 
