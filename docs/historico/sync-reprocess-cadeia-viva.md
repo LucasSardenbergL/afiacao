@@ -101,11 +101,15 @@ Não substitui o Codex; cobre o intervalo. Revisão retroativa quando a cota vol
   trio tem essas formas (medido na revisão).
 - **"A versão de prod" é a do repo, em ordem de versão.** Merge não é apply (o founder aplica à mão),
   e um PR com timestamp antigo mergeado depois de outro inverte quem vence. O md5 no log existe para
-  essa conferência — não é comparado com nada no CI, que não lê prod.
-- **A4 (`30` sources) e A26 (`22` checks) são contagens congeladas.** Com a cadeia viva, a próxima
-  fonte nova as derruba no PR que a acrescenta — vermelho do próprio PR, não corrida de merge; mas um
-  commit direto do bot do Lovable na main não passa por CI de PR. Ficam porque provam o que a 0918
-  acrescentou, e "sem enfraquecer" era o contrato.
+  essa conferência — não é comparado com nada no CI, que não lê prod. Medido no mesmo dia: depois do
+  merge do #2698, a prova passou a exercitar `e81de322…` (com a `20261001011500`), e prod seguia em
+  `4cc51b39…` até o apply — a prova cobre a versão ENTREGUE, que é a que o apply vai pôr no ar.
+- **A4 e A26 são contagens congeladas.** Com a cadeia viva, a próxima fonte nova as derruba no PR
+  que a acrescenta (ou no que mergear por segundo); um commit direto do bot do Lovable na main não
+  passa por CI de PR. Materializou no MESMO dia: o #2698 (`20261001011500`,
+  `vendas_empurradas_sem_gemeo`) entrou na cadeia, e o A4 foi de 30 a 31 e o A26 de 22 a 23 —
+  atualizados aqui. A mesma migration derrubou a âncora do `fora_do_v_sources`, que era o FIM do
+  array (`'sync_reprocess_saude'];`): virou só o nome entre aspas, que não depende da posição.
 - **A30/A31 são textuais** (o `LIKE` casa até comentário), e o A31 — a perna do heartbeat — não tem
   sabotagem própria; já era assim antes desta entrega.
 

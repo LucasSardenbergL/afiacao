@@ -361,7 +361,10 @@ case "${SABOTAGEM:-}" in
       sabotar _data_health_compute "WHEN sr.n_broken > 0 THEN 'Reprocesso Omie PARADO: ' || sr.resumo" \
                                    "WHEN sr.n_broken > 0 THEN 'Reprocesso Omie PARADO'" ;;
   fora_do_v_sources)
-      sabotar data_health_watchdog "    'sync_reprocess_saude'];" "    'nao_existe_este_source'];" ;;
+      # Âncora só entre ASPAS, sem a pontuação do array: até 2026-10-01 era "'sync_reprocess_saude'];"
+      # (o fim do array), e a 20261001011500 acrescentou uma fonte depois dela. O nome entre aspas
+      # ocorre 1× no watchdog vivo (o comentário o cita sem aspas) — o dhv_sabotar exige isso.
+      sabotar data_health_watchdog "'sync_reprocess_saude'" "'nao_existe_este_source'" ;;
   migracao_nova_*)
       # O dente da CADEIA DINÂMICA (a reescrita foi posta no diretório da cadeia pela pré-fase). Se o
       # compute instalado não é ela, o SETUP não segue a cadeia — o incidente de 22–30/09 — e a rodada
@@ -408,8 +411,11 @@ eq "A2 tabela VAZIA ⇒ broken (chave vigiada que nunca executou é falha, não 
 semear_saudavel
 eq "A3 1 linha por source no compute INTEIRO" \
    "$(Pq -c "SELECT (count(*) = count(DISTINCT source))::text FROM public._data_health_compute();")" "true"
-eq "A4 o compute tem 30 sources (29 de prod + o novo)" \
-   "$(Pq -c "SELECT count(DISTINCT source)::text FROM public._data_health_compute();")" "30"
+# Contagem da VERSÃO VIVA (cadeia dinâmica): a 0918 levou o compute a 30 (29 + este) e a
+# 20261001011500 (vendas_empurradas_sem_gemeo) a 31. Fonte nova no trio muda este número — no PR que
+# a acrescenta, que é onde o vermelho tem de aparecer.
+eq "A4 o compute tem 31 sources (a 0918 trouxe este; a 20261001011500, o 31º)" \
+   "$(Pq -c "SELECT count(DISTINCT source)::text FROM public._data_health_compute();")" "31"
 eq "A5 status dentro do vocabulário que o watchdog aceita" \
    "$(Pq -c "SELECT (status IN ('ok','stale','broken','unknown'))::text FROM public._data_health_compute() WHERE source='sync_reprocess_saude';")" "true"
 
@@ -579,10 +585,11 @@ echo "── as outras 2 pernas do trio EXECUTAM (late-bound: CREATE não prova 
 semear_saudavel
 P -q -c "UPDATE public.sync_reprocess_log SET status='error' WHERE reprocess_type='operational' AND entity_type='orders';"
 P -q -c "SELECT public.data_health_watchdog();" >/dev/null
-# 22 = tamanho do v_sources (21 + o novo). O compute produz 30 sources; o watchdog avalia os do
-# array e ignora o resto — por isso os dois números são diferentes DE PROPÓSITO.
-eq "A26 watchdog avalia 22 checks (o v_sources, não os 30 do compute)" \
-   "$(Pq -c "SELECT checks_avaliados::text FROM public.data_health_watchdog_estado WHERE id;")" "22"
+# 23 = tamanho do v_sources na versão viva (a 0918 levou a 22; a 20261001011500, a 23). O compute
+# produz 31 sources; o watchdog avalia os do array e ignora o resto — por isso os dois números são
+# diferentes DE PROPÓSITO.
+eq "A26 watchdog avalia 23 checks (o v_sources, não os 31 do compute)" \
+   "$(Pq -c "SELECT checks_avaliados::text FROM public.data_health_watchdog_estado WHERE id;")" "23"
 # ⚠️ checks_falhos conta EXCECAO DE EXECUCAO do check, nunca status de negocio: o laco so o
 # incrementa no EXCEPTION. Com o check novo em `broken`, o certo e ZERO — ele avaliou bem, o
 # resultado e que e ruim. Foi por isso que o estado de 14/09 (checks_avaliados=21, checks_falhos=0)
