@@ -24,7 +24,7 @@ const cliente = (over: Record<string, unknown> = {}) => ({
 });
 
 function abrirPrimeiro(clientes: ReturnType<typeof cliente>[]) {
-  render(<MemoryRouter><ClientesAPositivarCard clientes={clientes} /></MemoryRouter>);
+  render(<MemoryRouter><ClientesAPositivarCard clientes={clientes} total={clientes.length} /></MemoryRouter>);
   fireEvent.click(screen.getByText(clientes[0].nome as string));
   return track.mock.calls.find((c) => c[0] === 'carteira.a_positivar_cliente_aberto')?.[1] as
     Record<string, unknown> | undefined;

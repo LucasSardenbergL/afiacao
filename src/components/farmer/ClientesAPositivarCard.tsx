@@ -4,8 +4,14 @@ import { Badge } from '@/components/ui/badge';
 import { track } from '@/lib/analytics';
 import type { ClienteAPositivar } from '@/lib/positivacao/types';
 
-export function ClientesAPositivarCard({ clientes }: { clientes: ClienteAPositivar[] }) {
-  if (clientes.length === 0) {
+/**
+ * `total` conta a carteira (elegíveis sem pedido no mês); `clientes` é a lista que a RPC corta em
+ * 200, e daqui só saem os 30 primeiros. Contar pela lista dizia "200" com 1.179–2.388 sem pedido
+ * (2026-09-30) e comemorava a lista vazia mesmo com cliente sem pedido. Ver
+ * docs/historico/positivacao-win-back-era-novos.md.
+ */
+export function ClientesAPositivarCard({ clientes, total }: { clientes: ClienteAPositivar[]; total: number }) {
+  if (total === 0) {
     return (
       <Card className="p-6 text-2xs text-muted-foreground">
         Toda a carteira elegível já comprou este mês. 🎯
@@ -17,7 +23,7 @@ export function ClientesAPositivarCard({ clientes }: { clientes: ClienteAPositiv
       <CardHeader className="pb-2">
         <h2 className="text-base font-medium">Clientes a positivar</h2>
         <p className="text-2xs text-muted-foreground">
-          {clientes.length} clientes da sua carteira ainda sem pedido este mês — ordenados por prioridade
+          {total} clientes da sua carteira ainda sem pedido este mês — ordenados por prioridade
         </p>
       </CardHeader>
       <div className="divide-y divide-border">
