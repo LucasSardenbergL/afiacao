@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-10-01T11:13:37.559Z",
-  "sourceHead": "a695f3edabec51423a82b41364b0c5e85c7437d0",
+  "medidoEm": "2026-10-01T12:59:07.787Z",
+  "sourceHead": "2f42e42d71d08e8455227b9a78cf10405061a2da",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -39,10 +39,10 @@
     "claudeRo": {
       "script": "authz:claude-ro:prod",
       "exit": 0,
-      "resumo": "✅ 38 asserções batem. O endurecimento continua de pé.",
+      "resumo": "✅ 39 asserções batem. O endurecimento continua de pé.",
       "denominador": null,
-      "contratoFingerprint": "96d72b6e231ea5f6ff2e99f2def99b9f3237de1a5be8b14f024621c7bf057396",
-      "auditorFingerprint": "de53cb9e346dd1b39f9b427a1df1ffca800b0877ba6c325ff1fb0a825578a11b",
+      "contratoFingerprint": "04316fe60798236f918838351936ac2a6fccac22b321cdc671b2e61784f34864",
+      "auditorFingerprint": "ac629e0219497568c48abfe3fcbca62ae5f13b62bdf6833b443df5ffcebf8993",
       "achados": []
     },
     "rls": {
@@ -57,10 +57,10 @@
     "corpo": {
       "script": "deriva:corpo:prod",
       "exit": 0,
-      "resumo": "✅ deriva-corpo — 317 identidade(s) batem com o repo (240 em dia, 71 só cosméticas, 5 aceitas na baseline) e 15 aposentada(s) estão ausentes",
-      "denominador": "🔎 deriva-corpo — 317 identidade(s) conferida(s) · 15 aposentada(s) · ref origin/main@388599d58 (fetch ok) · prod 2026-10-01 11:14:15.819865Z",
-      "contratoFingerprint": "32a2595ef0ef81acdabb5e41facdb8aac4468ad4c499f11a0e841721d94af68b",
-      "auditorFingerprint": "a07989df9ed0fa552abd2963788287214d21003755b18ed15a9ea88f97c9d3aa",
+      "resumo": "✅ deriva-corpo — 317 identidade(s) batem com o repo (241 em dia, 70 só cosméticas, 5 aceitas na baseline) e 16 aposentada(s) estão ausentes",
+      "denominador": "🔎 deriva-corpo — 317 identidade(s) conferida(s) · 16 aposentada(s) · ref origin/main@14d672da2 (fetch ok) · prod 2026-10-01 12:59:34.277999Z",
+      "contratoFingerprint": "537d1399f07dc355095b05f81f54dcc46af9859b565aee0c772288a33ecb6d9b",
+      "auditorFingerprint": "c389990491baf56162e7b3835001ef55f6e23418966a5845010d52842521c7b8",
       "achados": []
     }
   }
