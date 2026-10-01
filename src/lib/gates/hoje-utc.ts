@@ -40,7 +40,7 @@ import tsInterop from "typescript";
 // `import =` e não `const` (o porquê em erro-colapsado-em-vazio.ts: o Proxy de interop do vite-node).
 import ts = tsInterop;
 
-export type Forma = "iso-fatiado" | "calendario-local-no-servidor" | "locale-sem-fuso-no-servidor";
+type Forma = "iso-fatiado" | "calendario-local-no-servidor" | "locale-sem-fuso-no-servidor";
 
 export interface Sitio {
   arquivo: string;
@@ -60,7 +60,7 @@ const SPLIT = new Set(["split"]);
 const LOCALE_STRING = new Set(["toLocaleString"]);
 
 /** O arquivo é de edge (servidor UTC)? É o que liga as formas do servidor. */
-export const ehEdge = (arquivo: string): boolean => arquivo.replace(/\\/g, "/").startsWith("supabase/functions/");
+const ehEdge = (arquivo: string): boolean => arquivo.replace(/\\/g, "/").startsWith("supabase/functions/");
 
 /** Filtro barato ANTES do parser: só se analisa arquivo que pode ter sítio. */
 const PODE_TER = /toISOString|toJSON|getDate|getDay|getMonth|getFullYear|getHours|setDate|setHours|setMonth|setFullYear|toLocale|DateTimeFormat/;
@@ -126,7 +126,7 @@ export function detectar(arquivo: string, fonte: string): Sitio[] {
   return sitios;
 }
 
-export type Veredito = "afetado-alto" | "afetado-baixo" | "utc-consistente" | "latente" | "falso-positivo" | "ja-correto";
+type Veredito = "afetado-alto" | "afetado-baixo" | "utc-consistente" | "latente" | "falso-positivo" | "ja-correto";
 
 export interface SitioConhecido {
   arquivo: string;
