@@ -57,6 +57,10 @@ censo-sem-o-gate | docs/agent/deploy.md | s/ · `docs:citacoes`//
 # troca o motivo do vermelho: o gate le a fonte ausente como `null` (sem deny, sem erro) e acusa o
 # hook so pela cobertura — HOOK-SEM-TESTE, rc=1. Perturbacao: a linha `"Stop": [` sai e volta com o
 # grupo novo na frente do array (1+1=2), e o JSON segue valido.
+#
+# Medido em 2026-09-30, so esta linha e em 5 fatias (a completude e da LINHA): 31/31 gates, baseline
+# todo verde, unico vermelho o `gates:frescura` — [SO ELE] (antes, `[redund]` com EXCLUSIVIDADE_ZERO).
+# Registro, tropecos e a pendencia (re-medicao inteira): docs/historico/exclusividade-media-outra-coisa.md
 # @origem: scripts/gates-frescura-check.ts (HOOK-SEM-TESTE)
 # @suspeito: gates:frescura
 hook-ligado-sem-suite | .claude/settings.json | s/^(\s*)"Stop": \[$/$1"Stop": [ { "hooks": [ { "type": "command", "command": "\\"\$CLAUDE_PROJECT_DIR\/.claude\/hooks\/hook-sem-suite.sh\\"" } ] },/
