@@ -1433,7 +1433,9 @@ Deno.serve(async (req) => {
     // FRONTEIRA DE SAÍDA (money-path): todo item sai pela lista fechada de `montarRespostaAnalise`
     // — nenhum `unit_price`/preço atravessa, venha do LLM ou de quem for. O vitest
     // (edge-money-path-invariants) exige que o `JSON.stringify` do fluxo real consuma ESTA chamada.
-    const resposta = montarRespostaAnalise({
+    // `corpoResposta`, não `resposta`: o handler já tem `let resposta` (a resposta da Anthropic, l.~880) no
+    // MESMO escopo — redeclarar é early error do V8 e a edge não BOOTA (incidente 2026-10-01, BOOT_ERROR 503).
+    const corpoResposta = montarRespostaAnalise({
       products: validProducts,
       services: validServices,
       suggestions: validSuggestions,
@@ -1441,7 +1443,7 @@ Deno.serve(async (req) => {
       imagens_rejeitadas: imagensRejeitadas,
       message: avisoFotos ? `${mensagemBase} ⚠️ ${avisoFotos}` : mensagemBase,
     });
-    return new Response(JSON.stringify(resposta), {
+    return new Response(JSON.stringify(corpoResposta), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
 
