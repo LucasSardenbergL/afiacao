@@ -2,7 +2,8 @@
 
 > Regra viva em `docs/agent/database.md` §2 (bullet da trava). Template colável na skill
 > `lovable-db-operator`, `references/sql-house-style.md` ("Recriar objeto VIVO"). Prova:
-> `db/test-pre-anti-deriva-concorrencia.sh` (núcleo do CI, 56 asserts, 8 sabotagens).
+> `db/test-pre-anti-deriva-concorrencia.sh` (núcleo do CI, 56 asserts; as 8 sabotagens rodam fora do CI —
+> ver "Custo no CI").
 
 ## O achado
 
@@ -91,7 +92,7 @@ Não houve P0. A revisão **concedeu**:
 
 | achado | o que virou |
 |---|---|
-| P1 · o job `provas-sql` já leva ~13m41s, com teto de 20 min | medido no PR em DRAFT antes de qualquer merge; a falsificação roda só o nível que cada sabotagem ataca |
+| P1 · o job `provas-sql` já leva ~13m41s, com teto de 20 min | **confirmado no PR** — ver "Custo no CI" abaixo |
 | P1 · a porta é `postgres` também para `service_role` **e** `sandbox_exec_<ref>` | registrado abaixo; decisão do founder (é anterior a esta entrega, e o `CREATE OR REPLACE` preserva a ACL) |
 | P2 · a trava do próprio delta não tinha sabotagem | E15 + sabotagem `delta_sem_trava` |
 | P2 · a sonda da PÓS só cobria o começo da porta | sonda nova (tentativa de ensaio → recibo, desfeita por `P0S01`) + E14b, a porta quebrada **no fim**, que a sonda antiga deixaria passar |
@@ -105,6 +106,19 @@ Não houve P0. A revisão **concedeu**:
 - **Dois applies dos MESMOS bytes:** a checagem "já aplicado" do script fica fora da fila. O segundo espera, roda o corpo e bate no índice único do recibo (`23505`, exit 4). Não aplica duas vezes, mas a mensagem é "duplicate key" em vez de "já aplicado".
 - **`VEZ_OCUPADA` deixa o recibo como `falhou`:** a espera além dos 15 s grava `falhou` para algo que não chegou a rodar. Isso é por desenho: o corpo não rodou, e o operador roda de novo.
 - **O bootstrap continua sendo escritor sem PRE:** colar um bootstrap VELHO por cima reverteria a fila em silêncio. Bootstrap ≡ porta é disciplina, não gate (o E3 cobre só o delta atual).
+
+## Custo no CI
+
+- **Mediana da `main`** (3 runs de 2026-10-01): o passo do núcleo leva **13m41s–13m54s**, contra um teto de 20 min.
+- **Com esta prova completa no PR #2702** (modo normal + `--falsificar` de 8 sabotagens × 2 idiomas), o passo foi **CANCELADO no teto** às 19m48s (run 36806101676).
+  - Localmente a prova custa 25 s mais 189 s de falsificação.
+  - O runner é ~1,7–2× mais lento que o M2.
+- **O `ci.yml` já decidiu o que fazer quando isso acontecesse:** "a próxima prova que estourar pede **paralelizar o runner**, não subir o teto de novo". Paralelizar é infra compartilhada (portas por slot, o `roda-nucleo-ci.sh` e a autofalsificação dele) e fica fora deste PR.
+- **Enquanto isso:**
+  - O modo normal (56 asserts, 22 s pelo runner real) segue no núcleo.
+  - O `--falsificar` foi declarado **`fora-do-ci`**, com o motivo na própria linha. O runner o imprime a cada execução como "ausência de dado, não aprovação".
+  - Quem mexer na prova roda a falsificação no laptop (recibo de hoje: 8 vermelhas / 0 falhas, 189 s).
+  - É a 1ª exceção `fora-do-ci` do manifesto, e o sinal de que o runner precisa paralelizar.
 
 ## Defeitos do próprio harness (lições para quem escreve prova de duas sessões)
 
