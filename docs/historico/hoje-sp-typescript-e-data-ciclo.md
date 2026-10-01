@@ -415,8 +415,9 @@ CONFIRMADO`), e o `pendencias:deploy` saiu 0 na `e570a1f4b`.
 O Publish que cobriria a #2711 ficou redundante. O bundle servido já trazia o front da #2737 (`ja_importada` no
 chunk do Recebimento), e a #2711 é ancestral dela. Alguém publicou esse front depois das 13:34Z, ANTES da edge, que
 só subiu às 20:34Z. Nessa janela, o botão "Importar NF-e" chamava a v1.1, que segundo a própria #2737 roda a sync
-inteira. A ordem "edge primeiro" estava só na prosa da PR. O que a teria segurado é exigir `pendencias:deploy` 0
-antes do Publish.
+inteira. Não houve uso nem efeito: a sessão da #2737 conferiu 0 eventos do PostHog em `/recebimento` na janela e 0
+cabeçalhos novos em `nfe_recebimentos`. A ordem "edge primeiro" estava só na prosa da PR. O que a teria segurado é
+exigir `pendencias:deploy` 0 antes do Publish.
 
 ### Codex
 
