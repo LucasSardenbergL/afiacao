@@ -39,7 +39,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }
 
 P -q -f "$REPO_ROOT/db/stubs-supabase.sql"
@@ -428,9 +428,9 @@ MIG_RECONC="$(find "$REPO_ROOT/supabase/migrations" -name "*_reconciliar_carrega
 MD5_BASE="136b40ad30ac7bec2a8105907b1e9fa6"   # md5(prosrc) de reconciliar_pedidos_omie em PROD, 2026-09-14
 
 DB=""
-Q()   { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d "$DB" -v ON_ERROR_STOP=1 -tA -c "$1"; }
-Qf()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d "$DB" -v ON_ERROR_STOP=1 -q -c "SET client_min_messages = warning" -f "$1"; }
-Qft() { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d "$DB" -v ON_ERROR_STOP=1 -q -tA -f "$1"; }
+Q()   { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d "$DB" -v ON_ERROR_STOP=1 -tA -c "$1"; }
+Qf()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d "$DB" -v ON_ERROR_STOP=1 -q -c "SET client_min_messages = warning" -f "$1"; }
+Qft() { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d "$DB" -v ON_ERROR_STOP=1 -q -tA -f "$1"; }
 tem() { if grep -q -- "$2" <<< "$1"; then echo sim; else echo nao; fi; }
 
 # Helpers de TESTE (schema `teste`, só nestes bancos). Montam o pedido como a edge monta: items-jsonb
@@ -622,7 +622,7 @@ novo_banco prove_h0 antiga
 eq "H0.0 a função ANTIGA desta prova é byte a byte a da prod (md5 do prosrc)" "$(Q "SELECT md5(prosrc) FROM pg_proc WHERE proname='reconciliar_pedidos_omie'")" "$MD5_BASE"
 semeia_h
 set +e; OUT=$(Q "SELECT teste.reconc($LOTE_H, -10)" 2>&1); RC=$?; set -e
-OUT_V=$("$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d "$DB" -v VERBOSITY=verbose -tA -c "SELECT teste.reconc($LOTE_H, -9)" 2>&1 || true)
+OUT_V=$("$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d "$DB" -v VERBOSITY=verbose -tA -c "SELECT teste.reconc($LOTE_H, -9)" 2>&1 || true)
 eq "H0 (contrafactual = o incidente de prod) a função antiga perde a chamada INTEIRA no commit, com 23514" "$RC|$(tem "$OUT_V" '23514')" "1|sim"
 eq "H0b e nenhum pedido do lote foi reconciliado — nem os dois bons" "$(precos)" "100,100,100"
 [ -n "$OUT" ] || true

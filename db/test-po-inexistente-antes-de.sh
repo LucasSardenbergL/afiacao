@@ -53,8 +53,8 @@ trap cleanup EXIT
 # TimeZone FIXO: sem isto o `::text` de um timestamptz sai no fuso do HOST (aqui -03), e os asserts que
 # comparam o valor da coluna passariam ou falhariam por acidente de ambiente — a mesma classe do
 # `grep -i` sob pt_BR.UTF-8 que o CLAUDE.md registra.
-"$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d postgres -q -c "ALTER DATABASE prove SET TimeZone TO 'UTC';"
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+"$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d postgres -q -c "ALTER DATABASE prove SET TimeZone TO 'UTC';"
+P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }
 
 PASS=0; FAIL=0

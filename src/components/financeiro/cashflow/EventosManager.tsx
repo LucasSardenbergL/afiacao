@@ -22,6 +22,7 @@ import { toast } from 'sonner';
 import { AuditTrailDrawer } from '@/components/financeiro/AuditTrailDrawer';
 import { formatBRL } from '@/lib/financeiro/cashflow-format';
 import { EventosOnboarding } from './EventosOnboarding';
+import { hojeSP } from '@/lib/time/sp-day';
 
 type Tab = 'recorrentes' | 'eventuais';
 
@@ -197,7 +198,7 @@ function EventoFormDialog({
           categoria_dre: form.categoria_dre as string | null ?? null,
           is_folha: Boolean(form.is_folha),
           dia_do_mes: Number(form.dia_do_mes ?? 1),
-          inicio: String(form.inicio ?? new Date().toISOString().slice(0, 10)),
+          inicio: String(form.inicio ?? hojeSP()),
           fim: (form.fim as string | null) ?? null,
           ativo: form.ativo === undefined ? true : Boolean(form.ativo),
           observacao: (form.observacao as string | null) ?? null,
@@ -211,7 +212,7 @@ function EventoFormDialog({
           valor: Number(form.valor ?? 0),
           tipo: (form.tipo as 'entrada' | 'saida') ?? 'saida',
           categoria_dre: form.categoria_dre as string | null ?? null,
-          data_prevista: String(form.data_prevista ?? new Date().toISOString().slice(0, 10)),
+          data_prevista: String(form.data_prevista ?? hojeSP()),
           data_realizada: (form.data_realizada as string | null) ?? null,
           status: (form.status as 'previsto' | 'confirmado' | 'cancelado' | 'realizado') ?? 'previsto',
           observacao: (form.observacao as string | null) ?? null,

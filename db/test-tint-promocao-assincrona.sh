@@ -67,7 +67,7 @@ trap cleanup EXIT
 # inteiro no WAL, e com a máquina em swap a suíte passava de 1h. Não muda NADA do que é provado.
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k $SOCK -c lc_messages=$LOC -c fsync=off -c full_page_writes=off -c synchronous_commit=off" \
   -l "$TMP/pg.log" -w start >/dev/null
-PA() { "$PGBIN/psql" -p "$PORT" -h "$SOCK" -U postgres -X -v ON_ERROR_STOP=1 "$@"; }
+PA() { "$PGBIN/psql" -X -p "$PORT" -h "$SOCK" -U postgres -v ON_ERROR_STOP=1 "$@"; }
 echo "PG: $("$PGBIN/postgres" --version) · locale=$LOC"
 
 # ── X1: premissa (ANTES de tudo) ─────────────────────────────────────────────────────────────
