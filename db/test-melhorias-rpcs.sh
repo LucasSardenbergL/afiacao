@@ -303,7 +303,7 @@ BEGIN
     RAISE EXCEPTION 'SABOTAGEM SEM EXPRESSAO: %.% (%)', v_tab, v_pol, v_campo;
   END IF;
   v_n := (length(v_expr) - length(replace(v_expr, v_anc, ''))) / length(v_anc);
-  IF v_n <> 1 THEN
+  IF v_n IS DISTINCT FROM 1 THEN
     RAISE EXCEPTION 'SABOTAGEM SEM ANCORA UNICA: % ocorrencia(s) em %.%', v_n, v_tab, v_pol;
   END IF;
   EXECUTE format('ALTER POLICY %I ON public.%I %s (%s)', v_pol, v_tab,
