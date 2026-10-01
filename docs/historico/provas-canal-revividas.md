@@ -86,10 +86,10 @@ que seguem verdes; o juiz é o do molde. Controle verde na MESMA invocação, an
 
 | prova | modo normal | `--falsificar` em `LC_ALL=C` | em `pt_BR.UTF-8` |
 |---|---|---|---|
-| HSM | `PASS=18  FAIL=0` | `SABOTAGENS: 17 vermelhas / 0 falhas` | PT_HSM |
-| proposta | `PASS=17  FAIL=0` | `SABOTAGENS: 20 vermelhas / 0 falhas` | PT_PROP |
+| HSM | `PASS=18  FAIL=0` | `SABOTAGENS: 17 vermelhas / 0 falhas` | 17/0 |
+| proposta | `PASS=17  FAIL=0` | `SABOTAGENS: 20 vermelhas / 0 falhas` | 20/0 |
 | funil, ACL de prod | `PASS=2  FAIL=10` (o achado) | — (controle vermelho aborta) | — |
-| funil, espelho com o GRANT | `PASS=12  FAIL=0` | `SABOTAGENS: 18 vermelhas / 0 falhas` | PT_FUNIL |
+| funil, espelho com o GRANT | `PASS=12  FAIL=0` | `SABOTAGENS: 18 vermelhas / 0 falhas` | 18/0 |
 
 O juiz pegou, ao vivo, duas declarações MINHAS erradas: `seed_incompleto` apagava justo o template que o
 H2 usa (a FK derrubou um verde declarado), e a sabotagem do NaN tira as duas guardas, então o Infinity
@@ -97,7 +97,8 @@ vaza junto (P8 não era pré-condição). **Meta-falsificação** formal (cópia
 que não vira e uma sabotagem inexistente): `SABOTAGENS: 1 vermelhas / 2 falhas`, exit 1.
 
 **Runner** com manifesto parcial (`MANIFESTO=` só com as 2 linhas novas): `SQL_PROOF_OK provas=2/2
-falsificacoes=2/2 fora_do_ci=0`, 73 s. Custo no M2 no modo do CI: HSM 4 s + 27 s, proposta 5 s + 36 s.
+falsificacoes=2/2 fora_do_ci=0`, 77 s, depois da revisão e do merge da `main`. Custo no M2 no modo do CI:
+HSM 4 s + 26 s, proposta 6 s + 38 s.
 
 ## O que mudou ao portar
 
