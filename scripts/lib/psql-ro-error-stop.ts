@@ -173,6 +173,17 @@ function fimDoComando(s: string, ini: number): number {
   return n;
 }
 
+/**
+ * O SQL chega por CANO? `… | "$PSQL"` lê o stdin do pipe — e é a forma de toda instrução que um
+ * gerador imprime (`bun run sonda:sql … | ~/.config/afiacao/psql-ro`). Até 2026-10-01 o fiscal só
+ * via `<`/heredoc, e o pipe passava sem ON_ERROR_STOP. `||` é OU lógico, não cano; `|&` (bash) é
+ * cano com o stderr junto. A quebra de linha depois do `|` continua o pipeline, então sai junto.
+ */
+function recebeDoCano(antes: string): boolean {
+  const t = antes.replace(/(?:\s|\\\n)+$/, '');
+  return /(?:^|[^|])\|&?$/.test(t);
+}
+
 /** Há leitura de stdin (`<`, `<<`, `<<<`) FORA de aspas neste trecho? */
 function leDeStdin(trecho: string): boolean {
   let i = 0;
@@ -261,7 +272,7 @@ function analisarShell(arquivo: string, fonte: string): Sitio[] {
       const trecho = limpo.slice(ini, fim);
       const palavras = fatiarPalavras(trecho);
       const { temC, temF, temErrorStop } = classificarArgumentos(palavras.slice(1));
-      const temStdin = leDeStdin(trecho.slice(palavras[0]?.cru.length ?? 0));
+      const temStdin = recebeDoCano(limpo.slice(0, ini)) || leDeStdin(trecho.slice(palavras[0]?.cru.length ?? 0));
       const opaco = repassaArgumentosOpacos(palavras.slice(1));
       const precisaErrorStop = temF || ((temStdin || opaco) && !temC);
       sitios.push({
