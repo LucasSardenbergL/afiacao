@@ -57,11 +57,14 @@ A erradicação é estritamente mecânica: `"$PGBIN/psql" ` → `"$PGBIN/psql" -
 (só as linhas da varredura), conferida por comando — cada linha `+` do diff é a `-` com ` -X`
 inserido depois do binário (378/378), `bash -n` limpo nos arquivos tocados.
 
-**A classe reincidiu DURANTE o PR — quatro vezes.** Enquanto ele rodava, entraram na `main` quatro
-provas novas do núcleo, todas copiadas do template antigo: `test-des-desconto-total-maximo` (3
-chamadas, #2670), `test-expandir-promocao-item` (2, #2683), `test-hoje-sp-sete-funcoes` (2, #2659) e
-`test-hoje-sp-views-defaults` (3, #2685). O gate as acusou no 1º rodar de cada rebase; mesma troca
-mecânica (10/10). Os conflitos do rebase foram re-derivados, não editados
+**A classe reincidiu DURANTE o PR — cinco vezes.** Enquanto ele rodava, entraram na `main` cinco
+provas novas, todas copiadas do template antigo: `test-des-desconto-total-maximo` (3 chamadas,
+#2670), `test-expandir-promocao-item` (2, #2683), `test-hoje-sp-sete-funcoes` (2, #2659),
+`test-hoje-sp-views-defaults` (3, #2685) e `test-data-health-vendas-empurradas` (1, #2698 — vista
+na varredura dos PRs abertos, ainda em draft, e mergeada antes deste PR: a corrida do `strict:
+false`). O gate as acusou no 1º rodar depois de cada rebase/merge; mesma troca mecânica (11/11).
+Duas entregas do mesmo período — as provas do canal WhatsApp revividas e a nova
+`test-hoje-sp-data-ciclo` (#2705) — já vieram com `-X`. Os conflitos do rebase foram re-derivados, não editados
 à mão: pega-se a versão da `main` e re-aplica-se a troca (as 2 provas de data-health reescritas no
 `bf449e5c8` já não tinham chamada sem `-X`; a 3ª, `test-familia-ausente-lista-email`, a `main` apagou).
 
