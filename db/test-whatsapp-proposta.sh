@@ -183,7 +183,7 @@ cenario() {
 # As `migracao_nova_*` são a regressão chegando pela PRÓXIMA migration; a drop_create é a armadilha do
 # CLAUDE.md (DROP+CREATE devolve o EXECUTE a PUBLIC), que só o P13 distingue, porque nomeia a camada.
 SABOTAGENS="conta_atravessa:P1:P3,P4 cliente_atravessa:P1:P2,P3 cronologia_por_item:P3:P1
-            praticado_zero_conta:P4:P1,P5 zero_fabricado:P5:P1,P4 praticado_nan:P6:P1,P8
+            praticado_zero_conta:P4:P1,P5 zero_fabricado:P5:P1,P4 praticado_nan:P6,P8:P1,P4
             tabela_infinita:P7:P1,P5 praticado_infinito:P8:P1,P6 definer_fura_rls:P12:P1
             catalogo_aberto_ao_cliente:P12:P1,P13 anon_executa:P13:P1,P12 dedupe_some:P15:P14,P16
             migracao_nova_conta_atravessa:P1:P3,P4 migracao_nova_drop_create:P13:P1,P12"
