@@ -402,6 +402,23 @@ São 5 edges, sem pré-condição de banco e sem ordem entre elas. `hoje-sp.ts` 
 já deployadas não mudam de fingerprint (o `sonda:fingerprint` acusou só as 5). Não há front, logo não há
 Publish desta fase.
 
+**No ar em 01/10** (squash `f88422990`). O pacote da main trazia 6 edges. A sexta era a
+`omie-nfe-recebimento-sync`, que outra sessão tinha colado às 13:10Z em v1.1. A lista explícita do
+`pendencias:pacote` recortou a leva para as 5, sem deploy em dobro. A colagem saiu às 20:16Z (3,8 créditos), e
+o sensor de edição deu `SEM_EDICAO`. A `disparar-pedidos-aprovados` e a `omie-sync`, fora da allowlist do cron,
+tiveram `DEPLOY CONFIRMADO` pela sonda via `query_database`. As outras 3 foram atestadas pelo tick das 20:37Z.
+
+O `pendencias:deploy` ainda saía 1 por causa da v1.2 da #2737 ("importar NF-e por chave", mergeada às 13:34Z), que
+ninguém tinha colado. Com o OK do founder, ela foi numa leva própria (2,2 créditos, `SEM_EDICAO`, `DEPLOY
+CONFIRMADO`), e o `pendencias:deploy` saiu 0 na `e570a1f4b`.
+
+O Publish que cobriria a #2711 ficou redundante. O bundle servido já trazia o front da #2737 (`ja_importada` no
+chunk do Recebimento), e a #2711 é ancestral dela. Alguém publicou esse front depois das 13:34Z, ANTES da edge, que
+só subiu às 20:34Z. Nessa janela, o botão "Importar NF-e" chamava a v1.1, que segundo a própria #2737 roda a sync
+inteira. Não houve uso nem efeito: a sessão da #2737 conferiu 0 eventos do PostHog em `/recebimento` na janela e 0
+cabeçalhos novos em `nfe_recebimentos`. A ordem "edge primeiro" estava só na prosa da PR. O que a teria segurado é
+exigir `pendencias:deploy` 0 antes do Publish.
+
 ### Codex
 
 Cota esgotada até 03/10 19:11, então **REVISÃO INDEPENDENTE PENDENTE** (Caminho B). Perguntas para o
