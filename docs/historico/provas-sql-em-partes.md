@@ -44,13 +44,6 @@ Em paralelo, o #2712 (decisão do founder, com todo PR bloqueado) subiu o teto p
 
 No manifesto da `main` de 2026-10-01 (57 provas, já com o #2712), as 3 partes ficaram com 19, 19 e 19 provas; a união é o manifesto inteiro, sem repetição.
 
-## O que fica para depois
-
-- **As três falsificações `fora-do-ci` podem voltar ao CI:** a simulação dá ~6 min por parte, contra o teto de 30. Fica para PRs próprios, um por dono, para cada volta ser medida.
-- **O teto de 30 do stopgap pode voltar a 20** quando a duração das partes for MEDIDA em runs reais. A decisão é do founder.
-- **Folga acabando de novo:** acrescente uma parte à matriz. Não suba o teto e não tire falsificação do CI.
-- **Custo:** mais minutos de runner (setup do PGDG e sonda ×3, ~1 min cada) em troca de wall-clock. O caminho crítico do `validate` volta a ser o `gates-e-falsificacao` (~21–22 min), não o `provas-sql`.
-
 ## Complemento — o recibo de cada parte e a UNIÃO a cada run (01/10)
 
 A partição estava provada no harness, mas a EXECUÇÃO de cada run não estava: a matriz agrega `success` também quando o step do núcleo de uma parte é PULADO (um `if:` novo, uma condição que muda de tipo) — a parte some e as outras saem verdes.
@@ -59,4 +52,11 @@ A partição estava provada no harness, mas a EXECUÇÃO de cada run não estava
 - **União:** o job `provas-sql-uniao` (no `needs` do `validate`, que passou a esperar 6 jobs e guarda o nome dele como já guardava o `provas-sql`) não sobe banco: baixa os recibos e roda `db/roda-nucleo-ci.sh --uniao`, que refaz a partição k mod N sobre o manifesto INTEIRO e exige N recibos, as partes 0..N-1 uma vez cada, o mesmo manifesto, cada unidade uma vez e na sua parte; nada fora do formato é ignorado. Exige também o recibo do harness da 1ª parte. Roda com `!cancelled()`, para dizer QUAL parte falhou em vez de virar um `skipped` mudo.
 - **Argumentos estritos:** o runner só lia o 1º argumento e ignorava os outros; com o `--uniao` no mundo, erro de digitação rodaria o núcleo inteiro no job sem banco.
 - **Harness:** +20 casos (piso 45 → 65) — controle positivo (2 partes e a união verdes), um vermelho por regra da união, os argumentos, e a ponta a ponta: a seleção sabotada PERDE uma prova, as duas partes saem verdes e só a união pega.
-- **As 2 falsificações voltam:** `hoje-sp-views-defaults` (`falsificar=33`) e `hoje-sp-data-ciclo` (`falsificar=17`; local: `SABOTAGENS: 17 vermelhas / 0 falhas`, exit 0) — 50 sabotagens de volta ao caminho obrigatório. Simulado com os tempos da run verde `36815770229`, a parte mais pesada vai a ~636 s com N=3 (o rodízio por prova não equilibra as duas grandes); ainda abaixo do teto e fora do caminho crítico (o `gates-e-falsificacao`). Se encostar no teto, a regra acima vale: mais uma parte.
+- **As 2 falsificações voltam:** `hoje-sp-views-defaults` (`falsificar=33`) e `hoje-sp-data-ciclo` (`falsificar=17`; local: `SABOTAGENS: 17 vermelhas / 0 falhas`, exit 0) — 50 sabotagens de volta ao caminho obrigatório. Simulado com os tempos da run verde `36815770229`, a parte mais pesada vai a ~636 s com N=3: as duas são vizinhas no manifesto e caem sempre em partes diferentes, mas o rodízio por prova não equilibra por duração. Fica abaixo do teto do job e fora do caminho crítico (o `gates-e-falsificacao`); se encostar no teto, vale a regra de "O que fica para depois": mais uma parte.
+
+## O que fica para depois
+
+- **As três falsificações `fora-do-ci` podem voltar ao CI:** a simulação dá ~6 min por parte, contra o teto de 30. Fica para PRs próprios, um por dono, para cada volta ser medida.
+- **O teto de 30 do stopgap pode voltar a 20** quando a duração das partes for MEDIDA em runs reais. A decisão é do founder.
+- **Folga acabando de novo:** acrescente uma parte à matriz. Não suba o teto e não tire falsificação do CI.
+- **Custo:** mais minutos de runner (setup do PGDG e sonda ×3, ~1 min cada) em troca de wall-clock. O caminho crítico do `validate` volta a ser o `gates-e-falsificacao` (~21–22 min), não o `provas-sql`.
