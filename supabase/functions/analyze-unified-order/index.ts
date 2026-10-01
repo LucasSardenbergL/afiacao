@@ -191,8 +191,8 @@ Deno.serve(async (req) => {
   // NÃO conhece `x-cron-secret`, então uma sonda colocada depois dele seria inalcançável pelo
   // caminho documentado (SQL Editor via net.http_post) — exatamente o defeito que o #1882 corrigiu
   // na `recommend`. É também o que separa esta sonda da CANÁRIA de preço logo abaixo: aquela vive
-  // depois do gate de staff, então só o app logado a alcança, e o `contrato` dela nomeia a fatia
-  // do MERGE DE PREÇO, não a do prompt.
+  // depois do gate de staff, então só o app logado a alcança, e o `contrato` dela nomeia o
+  // contrato de PREÇO (hoje: a IA não precifica), não a fatia do prompt.
   //
   // O parse subiu para cá porque `req.json()` é one-shot: o corpo lido aqui é reaproveitado como
   // `body` pelo fluxo real. JSON inválido passa a responder 400 em vez de 500 pelo catch geral
