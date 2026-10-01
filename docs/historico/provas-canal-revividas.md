@@ -139,10 +139,15 @@ coluna no contrato; tabela sem contrato de coluna segue contando-o como de tabel
 novos, e a falsificação por mutação: "o contrato sempre libera" derruba 4, "a vírgula ingênua"
 derruba 3.
 
-**Deploy:** `bun run db:aplicar` (ensaio, depois o real) e a 2ª testemunha por `psql-ro` — registro na
-seção seguinte quando aplicado. Como as migrations custom recentes, fica no ledger `db_aplicacoes`, não
-em `supabase_migrations.schema_migrations` (medido: as 4 de 09-29 a 10-01 aplicadas pelo envelope
-seguem esse caminho).
+**Deploy — aplicado em 2026-10-01** pelo envelope, com a aprovação do founder e antes do merge do
+#2715 (o funil seguia quebrado em prod enquanto o CI rodava): `db:aplicar --ensaio` ok contra o ACL
+REAL de prod (PRE + GRANT + POS1–POS4, ROLLBACK) → apply real, tentativa #216 virou recibo na mesma
+transação. 2ª testemunha por `psql-ro`, outra conexão, depois do commit: as 2 colunas legíveis por
+authenticated = `true`; `omie_payload`/`omie_response` = `false`; SELECT de tabela = `false`; anon na
+coluna = `false`; ledger #216 `aplicada`. Como as migrations custom recentes, fica no ledger
+`db_aplicacoes`, não em `supabase_migrations.schema_migrations` (medido: as 4 de 09-29 a 10-01 aplicadas
+pelo envelope seguem esse caminho). O fixture de ACL foi medido ANTES do apply; a prova do funil pega o
+GRANT pela cadeia, então a próxima re-medição só o confirma.
 
 ## Revisão independente (Caminho B)
 
