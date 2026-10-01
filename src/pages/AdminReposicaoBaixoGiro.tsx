@@ -24,6 +24,7 @@ import {
 import type { FiltrosBaixoGiro, RowBaixoGiro, RowExcesso } from "@/components/reposicao/baixoGiro/types";
 import { track } from "@/lib/analytics";
 import { toast } from "sonner";
+import { hojeSP } from "@/lib/time/sp-day";
 
 /** Alvo comum dos dois fluxos de descontinuação (baixo giro e excesso). */
 type AlvoDescontinuar = Pick<RowBaixoGiro, "sku_codigo_omie" | "sku_descricao">;
@@ -49,7 +50,7 @@ function exportarCsvExcesso(rows: RowExcesso[]) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `excesso-estoque-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.download = `excesso-estoque-${hojeSP()}.csv`;
   a.click();
   URL.revokeObjectURL(url);
 }

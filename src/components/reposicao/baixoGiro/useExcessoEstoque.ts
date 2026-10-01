@@ -14,8 +14,9 @@ import {
   type SituacaoExcesso,
 } from "@/lib/reposicao/excesso-helpers";
 import type { RowExcesso } from "./types";
+import { hojeSP } from "@/lib/time/sp-day";
 
-const HOJE_ISO = () => new Date().toISOString().slice(0, 10);
+const HOJE_ISO = () => hojeSP(); // o dia de SP: com o UTC, dias sem vender ganhava +1 das 21h às 24h BRT
 
 interface ParamRow {
   sku_codigo_omie: number;

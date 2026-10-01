@@ -7,6 +7,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 import { Etapa, Fornecedor, HistoricoItem } from "./types";
 import { EMPRESA } from "./shared";
+import { hojeSP } from "@/lib/time/sp-day";
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 export function useCadeiaLogistica() {
@@ -211,7 +212,7 @@ export function useCadeiaLogistica() {
       const ltAntes = await ltTotalAtualForn(etapa.fornecedor_nome);
       const { error } = await supabase
         .from("fornecedor_cadeia_logistica")
-        .update({ ativo: false, valido_ate: new Date().toISOString().split("T")[0] })
+        .update({ ativo: false, valido_ate: hojeSP() })
         .eq("id", etapa.id);
       if (error) throw error;
       await recalcularComImpacto({
