@@ -16,6 +16,12 @@ export interface PositivacaoKpis {
   pctCobertura: number;
   recenciaCritica: number;
   novosPositivados: number;
+  /**
+   * Elegíveis sem pedido no mês (`total_eligible − positivados`). É ESTE o número de "clientes a
+   * positivar": a lista `aPositivar` vem cortada em 200 pela RPC (`LIMIT 200`) e serve só para
+   * ordenar quem ligar primeiro, nunca para contar.
+   */
+  aPositivarTotal: number;
   aPositivar: ClienteAPositivar[];
 }
 
@@ -53,6 +59,7 @@ export function useMyPositivacao() {
         pctCobertura: pctCobertura(r.contatados_mtd, r.total_eligible),
         recenciaCritica: r.recencia_critica,
         novosPositivados: r.novos_clientes_positivados,
+        aPositivarTotal: r.total_eligible - r.positivados,
         aPositivar: rankAPositivar(r.a_positivar ?? []),
       };
     },
