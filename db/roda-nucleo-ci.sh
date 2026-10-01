@@ -161,6 +161,41 @@ if [ "$esperados" -lt 1 ]; then
   echo "::error::manifesto sem nenhuma prova — um gate que não executa nada não pode afirmar nada"; exit 1
 fi
 
+# ── 1b. A PARTE deste runner (NUCLEO_PARTE="i/N", 0 ≤ i < N) ─────────────────────────────────
+# O job `provas-sql` roda em N partes paralelas (matriz do ci.yml): serial, o núcleo passou do teto de
+# 20 min quando o #2685 entrou (runs 36799444473 e 36802018807, `main` vermelha) — e o ci.yml já dizia
+# que a próxima prova a estourar pedia PARALELIZAR, não subir o teto de novo.
+#   · Partição round-robin sobre a ordem do manifesto: a prova de posição k vai para a parte k mod N.
+#     Nenhuma prova em duas partes e nenhuma fora de todas, DESDE QUE as N partes rodem — e quem diz
+#     i e N é o próprio GitHub (`strategy.job-index`/`job-total`), contados pela matriz real: mexer na
+#     lista da matriz não abre buraco nem repete parte.
+#   · O manifesto INTEIRO já foi validado acima, em toda parte: linha podre reprova as N.
+#   · Malformada ou fora da faixa ABORTA. Rodar tudo estouraria o teto em silêncio; rodar nada seria o
+#     verde vazio. Parte sem prova nenhuma (N maior que o manifesto) também aborta.
+#   · Sem NUCLEO_PARTE, roda o manifesto inteiro — é como o laptop e o harness usam o runner.
+parte=""
+if [ -n "${NUCLEO_PARTE:-}" ]; then
+  if ! printf '%s' "$NUCLEO_PARTE" | grep -qE '^[0-9]{1,2}/[0-9]{1,2}$'; then
+    echo "::error::NUCLEO_PARTE inválida: '$NUCLEO_PARTE' (formato i/N, com 0 ≤ i < N)"; exit 1
+  fi
+  p_i=$((10#${NUCLEO_PARTE%/*})); p_n=$((10#${NUCLEO_PARTE#*/}))
+  if [ "$p_n" -lt 1 ] || [ "$p_i" -ge "$p_n" ]; then
+    echo "::error::NUCLEO_PARTE inválida: '$NUCLEO_PARTE' (formato i/N, com 0 ≤ i < N)"; exit 1
+  fi
+  sel_s=(); sel_m=(); sel_f=(); sel_mf=()
+  for k in "${!scripts[@]}"; do
+    if [ $((k % p_n)) -eq "$p_i" ]; then
+      sel_s+=("${scripts[$k]}"); sel_m+=("${minimos[$k]}"); sel_f+=("${falsifs[$k]}"); sel_mf+=("${motivos_fora[$k]}")
+    fi
+  done
+  if [ "${#sel_s[@]}" -lt 1 ]; then
+    echo "::error::NUCLEO_PARTE $NUCLEO_PARTE: parte sem nenhuma prova ($esperados no manifesto) — reduza N"; exit 1
+  fi
+  parte="parte $((p_i + 1)) de $p_n: ${#sel_s[@]} de $esperados provas"
+  scripts=("${sel_s[@]}"); minimos=("${sel_m[@]}"); falsifs=("${sel_f[@]}"); motivos_fora=("${sel_mf[@]}")
+  esperados=${#scripts[@]}
+fi
+
 # Identidades que o recibo final exige: toda prova no modo normal, e cada `falsificar=<n>` como
 # identidade PRÓPRIA — a canária verde no modo normal não vale como falsificação concluída.
 n_falsif=0; n_fora=0
@@ -169,7 +204,7 @@ for f in ${falsifs[@]+"${falsifs[@]}"}; do
 done
 
 if [ "$so_lista" -eq 1 ]; then
-  printf '%s\n' "manifesto=$MANIFESTO provas=$esperados falsificacoes=$n_falsif fora_do_ci=$n_fora"
+  printf '%s\n' "manifesto=$MANIFESTO provas=$esperados falsificacoes=$n_falsif fora_do_ci=$n_fora${parte:+ ($parte)}"
   for i in "${!scripts[@]}"; do
     case "${falsifs[$i]}" in
       '')   extra="" ;;
@@ -312,7 +347,7 @@ executa() {
 }
 
 echo
-echo "=== núcleo: $esperados prova(s) + $n_falsif falsificação(ões), serial ==="
+echo "=== núcleo: $esperados prova(s) + $n_falsif falsificação(ões), serial${parte:+ — $parte} ==="
 for i in "${!scripts[@]}"; do
   executa "${scripts[$i]}" normal "${minimos[$i]}"
   case "${falsifs[$i]}" in
@@ -352,5 +387,5 @@ ok_normal=0; ok_falsif=0
 for feito in "${concluidas[@]}"; do
   case "$feito" in *' normal') ok_normal=$((ok_normal + 1)) ;; *' falsificar') ok_falsif=$((ok_falsif + 1)) ;; esac
 done
-echo "SQL_PROOF_OK provas=$ok_normal/$esperados falsificacoes=$ok_falsif/$n_falsif fora_do_ci=$n_fora server_version_num=$versao_num pgbin=$PGBIN"
+echo "SQL_PROOF_OK provas=$ok_normal/$esperados falsificacoes=$ok_falsif/$n_falsif fora_do_ci=$n_fora server_version_num=$versao_num pgbin=$PGBIN${parte:+ parte=$NUCLEO_PARTE}"
 rm -rf "$LOGS"
