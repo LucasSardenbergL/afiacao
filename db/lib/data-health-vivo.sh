@@ -5,7 +5,10 @@
 # NÃO é executável: é `source`-ado pela prova DEPOIS de ela definir REPO_ROOT e `P` (psql no banco
 # que vai receber o schema). Usado por db/test-tint-vigia-cobertura.sh,
 # db/test-tint-cobertura-lista-email.sh, db/test-data-health-familia-ausente.sh e
-# db/test-data-health-carteira-rebuild.sh.
+# db/test-data-health-carteira-rebuild.sh — e por db/test-data-health-sync-reprocess.sh, que usa só
+# dhv_cadeia/dhv_aplicar_cadeia/dhv_sabotar: monta sobre os stubs do trio (não o snapshot), estreita
+# DHV_GUARDADAS às 3 funções que executa, fixa o próprio DHV_INICIO e põe a reescrita nova no
+# diretório que o SETUP dela lê (não usa o dhv_migracao_nova — ver o comentário dele).
 #
 # ## Por que ele existe (docs/historico/provas-tint-apodrecidas.md)
 #
@@ -152,7 +155,7 @@ DECLARE
   v_n   int;
 BEGIN
   v_n := (length(v_def) - length(replace(v_def, v_anc, ''))) / length(v_anc);
-  IF v_n <> 1 THEN
+  IF v_n IS DISTINCT FROM 1 THEN
     RAISE EXCEPTION 'SABOTAGEM SEM ANCORA UNICA: % ocorrencia(s) em %', v_n, v_fn;
   END IF;
   EXECUTE replace(v_def, v_anc, current_setting('dhv.troca'));
@@ -166,8 +169,10 @@ SQL
 # dhv_migracao_nova <regprocedure> <âncora> <troca> — escreve uma migration NOVA (versão
 # 29991231235959) com o corpo vivo da função sabotado e reaplica a cadeia a partir de um diretório
 # que a contém. É a falsificação da cadeia DINÂMICA: é a regressão que chega pela PRÓXIMA reescrita
-# do trio. Se a seleção não pegar a migration nova, a sabotagem não chega ao banco, a suíte fica
-# verde e o recibo acusa o dente que falta.
+# do trio. Se a seleção não pegar a migration nova, a função RECUSA (return 1) — a sabotagem nunca
+# sai "aplicada" sem ter chegado ao banco. Limite (revisão de 2026-09-30): ela reaplica a PRÓPRIA
+# cadeia, então prova a seleção, não que o setup da prova a siga — um setup re-fixado à mão numa lista
+# passaria. A sync-reprocess fecha isso pondo a reescrita no diretório que o setup dela lê.
 dhv_migracao_nova() {
   local dir nova corpo lista
   dir="$(mktemp -d "${TMPDIR:-/tmp}/dhv-migracoes.XXXXXX")"

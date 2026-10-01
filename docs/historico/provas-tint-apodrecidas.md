@@ -101,7 +101,8 @@ min: a folga até o `timeout-minutes: 12` cai de ~1,8× para ~1,6×.
 que ela cobre (md5 `f0eecc…`) não é o de prod (`4cc51b…`, da `20260922225500`). É a mesma classe,
 dentro do núcleo. O conserto de 2026-09-27 no JUIZ dela (exit≠0 não é dente) não toca nisso: o alvo
 segue velho. Fica como tarefa com dono (chip "Levar a prova sync-reprocess ao compute que prod
-executa"), não consertada aqui.
+executa"), não consertada aqui. → **Consertada em 2026-09-30:**
+[sync-reprocess-cadeia-viva.md](sync-reprocess-cadeia-viva.md).
 
 ## Lições
 
