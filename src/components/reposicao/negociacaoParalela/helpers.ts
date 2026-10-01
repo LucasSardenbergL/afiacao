@@ -70,6 +70,19 @@ export function lastDayOfNextMonth(): string {
   return d.toISOString().slice(0, 10);
 }
 
+// Código Sayerlack que vem no fim da descrição do SKU no Omie: "VERNIZ PU FOSCO FO5.6717.00GL"
+// → "FO5.6717.00GL". É o mesmo texto que `resolver_sku_por_codigo_fornecedor` procura dentro da
+// descrição, então o item da campanha volta a casar com este SKU numa expansão. Começa por letra
+// para não confundir com volume ("0.9L"). Sem código reconhecível, devolve "" e quem converte
+// digita. Medido em 01/10/2026: 210 dos 213 SKUs Sayerlack da fila têm código no formato.
+export function extrairCodigoSayerlack(descricao: string | null | undefined): string {
+  const tokens = (descricao ?? "").trim().split(/\s+/);
+  for (let i = tokens.length - 1; i >= 0; i--) {
+    if (/^[A-Za-z][A-Za-z0-9]*(?:\.[A-Za-z0-9]+)+$/.test(tokens[i])) return tokens[i];
+  }
+  return "";
+}
+
 // Toggle imutável de um valor num Set (helper genérico, puro).
 export function toggleSet<T>(set: Set<T>, value: T): Set<T> {
   const next = new Set(set);

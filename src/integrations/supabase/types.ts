@@ -19447,6 +19447,7 @@ export type Database = {
           p_desconto_perc: number
           p_observacoes?: string
           p_responsavel_nome?: string
+          p_sku_codigo_fornecedor: string
           p_sugestao_id: number
           p_volume_minimo: number
           p_volume_unidade: string
