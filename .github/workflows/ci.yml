@@ -879,12 +879,18 @@ jobs:
   # contados pela matriz REAL — acrescentar ou tirar uma parte da lista não abre buraco nem repete
   # prova. Toda parte valida o manifesto INTEIRO antes de rodar a sua fatia. O `validate` lê
   # `needs.provas-sql.result`, que a matriz agrega: success só se TODAS as partes passarem. Simulado
-  # com as durações medidas: 3 partes de ~5,5–6 min, contra 16,7 serial. O teto de 30 do stopgap
-  # fica como está: baixá-lo é decisão do founder, com a duração das partes MEDIDA. Para mais folga,
-  # acrescente um número à lista `parte` — nada mais muda.
+  # com as durações medidas: 3 partes de ~5,5–6 min, contra 16,7 serial. Para mais folga, acrescente
+  # um número à lista `parte` — nada mais muda.
+  #
+  # Teto de volta a 20 em 2026-10-01 (decisão do founder, com as partes MEDIDAS): nos 2 runs completos
+  # da matriz (36831464837 e 36833933356), o JOB de cada parte — setup, núcleo e, na 1ª, a
+  # autofalsificação do runner — levou de 4m36s a 6m52s (mediana ~5m38s): folga de ~2,9× sobre a
+  # maior. A espera por runner NÃO conta no teto: na 36831464837 as partes 2 e 3 ficaram 30m31s e
+  # 31m39s na fila, sob teto 20, e passaram. Antes de devolver ao CI uma falsificação `fora-do-ci`,
+  # veja em que parte ela cai (`NUCLEO_PARTE=i/3 bash db/roda-nucleo-ci.sh --lista`) e meça de novo.
   provas-sql:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
