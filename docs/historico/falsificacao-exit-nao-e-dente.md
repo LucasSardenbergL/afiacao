@@ -1398,9 +1398,9 @@ dentro da string — o curinga não atravessa aspa —, a linha fica literal: ex
   ou bloco dos 40 reprova com a marca do ramo; uma escrita forjada de QUALQUER variável julgada entre
   a medição e o veredito — ou na própria linha, quando os dois moram nela — reprova pela ligação
   (219 casos, conferidos também por fora do vitest).
-- **contrato de mutações** (`scripts/mutcheck.d/falsificar-exige-assert.mut`): 22 novas, uma por
+- **contrato de mutações** (`scripts/mutcheck.d/falsificar-exige-assert.mut`): 23 novas, uma por
   camada, e as 2 que miravam código que mudou (`limpo.includes`, o `v.push` do juiz não lido)
-  reescritas. `--seco`: 77/77 cirúrgicas. RODADA_CHEIA.
+  reescritas. `--seco`: 78/78 cirúrgicas. RODADA_CHEIA.
 
 **Erros da meta e do caminho, registrados:**
 
@@ -1408,11 +1408,19 @@ dentro da string — o curinga não atravessa aspa —, a linha fica literal: ex
   CONTROLE rompe o bloco do controle (vermelho legítimo, com outra marca), e em
   `elif novas="$(camada4 …)"; [ -n "$novas" ]` medição e veredito moram na MESMA linha — "depois" já
   é fora do juízo, e corretamente não reprova. A propriedade passou a forjar ENTRE os dois, ou NA linha.
+- 3 expectativas escritas ANTES do código esperavam só "bloco rompeu"; o 1º GREEN (183/186) mostrou
+  que o gate acusa também a medição solta — o bloco é tudo-ou-nada: rompido, deixa de prender a
+  leitura. O comportamento é o certo; as expectativas foram corrigidas.
 - a forma `const|let|var` do TS era redundante (a atribuição já pega `const x = …`) — a mutação que a
   removesse sobreviveria; saiu.
+- a revisão do próprio diff achou a âncora VAZIA: `''` casava qualquer linha (verde por vácuo) e o bloco
+  `[]` derrubava o gate (`codigo[-1]`) — agora reprova como registro inválido, com teste e mutação.
 - `String.raw` interpola `${…}`: a âncora com `${decl//,/ }` virou template comum com `\${`.
 - o 1º "RED" não rodou nada: o `heavy` estourou 30 min na fila (a vaga presa 60 min por um
-  `roda-nucleo-ci` de outra sessão) — `exit=1` do semáforo, não do teste. Refeito: RED_REFEITO.
+  `roda-nucleo-ci` de outra sessão) — `exit=1` do semáforo, não do teste. Refeito (o teste novo sobre o gate de `origin/main`): **52 de 106
+  vermelhos** pelo motivo certo — função ausente (`acharAncora`, `escritasDe`, `julgarRegistro`) ou
+  comportamento ausente (a brecha que ficava verde, o excesso que reprovava, o bloco não suportado) —, e
+  os 54 de antes, verdes.
 
 **Resíduo, registrado:** (1) a ligação é textual — `eval`, nameref, `printf -v "$1"` indireto e a
 escrita por helper num arquivo de caminho literal ficam fora; (2) a forma normal não julga espaço

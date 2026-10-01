@@ -402,8 +402,9 @@ describe('a LIGAÇÃO do juiz com a medição (Codex, fase 4): o juízo é UM bl
     const zero = troca(JUIZO, '0|"") echo "✗ F1 FALHOU: a identidade NÃO acusou"; exit 1 ;;', '0|"") ok "zero aceito" ;;');
     const cabeca = troca(JUIZO, 'case "$D" in', 'case "720" in');
     const pegaTudo = troca(JUIZO, 'case "$D" in', 'case "$D" in\n  *) ok "qualquer" ;;');
+    // o bloco é tudo-ou-nada: rompido, ele deixa de prender a leitura — e a medição solta acusa junto
     for (const sabotado of [zero, cabeca, pegaTudo]) {
-      expect(julga(sabotado)).toEqual([expect.stringContaining('bloco do juízo rompeu')]);
+      expect(julga(sabotado)).toEqual([expect.stringContaining('bloco do juízo rompeu'), expect.stringContaining(SOLTA)]);
     }
   });
 
@@ -416,7 +417,7 @@ describe('a LIGAÇÃO do juiz com a medição (Codex, fase 4): o juízo é UM bl
 
   it('o curinga de prosa é UMA string: não atravessa aspas (um `ok` enfiado entre o echo e o exit reprova)', () => {
     const enfiado = troca(JUIZO, 'echo "✗ F1 FALHOU: a identidade NÃO acusou"; exit 1', 'echo "✗"; ok "enfiado"; exit 1');
-    expect(julga(enfiado)).toEqual([expect.stringContaining('bloco do juízo rompeu')]);
+    expect(julga(enfiado)).toEqual([expect.stringContaining('bloco do juízo rompeu'), expect.stringContaining(SOLTA)]);
   });
 
   it('o curinga de prosa aceita aspa ESCAPADA dentro da string (`"  FAIL  \\"$regra\\" …"`)', () => {
@@ -587,8 +588,9 @@ describe('o juiz REAL do tint-promote — as brechas do Codex no arquivo de verd
 
   it('o ramo 0|"" do F2 liberado (o outro furo do Codex) e o case do F2 desligado: o bloco do F2 rompe', () => {
     const zero = troca(real(arquivo), '0|"") echo "✗ F2 FALHOU: troquei o fator e a identidade NÃO acusou → C13.4 é fraco"; exit 1 ;;', '0|"") ok "F2 zero" ;;');
-    expect(julgaReal(zero)).toEqual([expect.stringContaining(F2)]);
-    expect(julgaReal(troca(real(arquivo), 'case "$DSAB2" in', 'case "1928" in'))).toEqual([expect.stringContaining(F2)]);
+    const solta2 = 'a medição da variável julgada DSAB2 não está presa';
+    expect(julgaReal(zero)).toEqual([expect.stringContaining(F2), expect.stringContaining(solta2)]);
+    expect(julgaReal(troca(real(arquivo), 'case "$DSAB2" in', 'case "1928" in'))).toEqual([expect.stringContaining(F2), expect.stringContaining(solta2)]);
   });
 });
 
