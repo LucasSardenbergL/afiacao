@@ -52,6 +52,27 @@ db/test-tint-gate-custo-staff.sh           25
 # versão anterior dava GRANT ALL a anon/authenticated e morreu no re-dump #1509 fora do núcleo
 # (docs/historico/provas-canal-revividas.md).
 db/test-whatsapp-hsm.sh                    18  falsificar=17
+# Funil do canal WhatsApp (get_whatsapp_funil, INVOKER): roda para o staff — que em prod levava
+# "permission denied" até a 20261001100000 (coluna nova não herda o GRANT por coluna de sales_orders) —,
+# o anon é barrado no EXECUTE (o DROP+CREATE que reseta o ACL é sabotagem), o hardening por coluna segue
+# fechado (omie_payload), e a atribuição é conservadora: só o elo explícito conta, resposta só em 24h
+# depois do envio. A cadeia guarda sales_orders, então a migration do GRANT entra sozinha
+# (docs/historico/provas-canal-revividas.md).
+db/test-whatsapp-funil.sh                  12  falsificar=18
+# Canal Melhorias: quem vê quais clientes na melhoria_clientes_por_produto (o master todos, a vendedora só a
+# carteira; só pedido válido conta), a melhoria_produtos_relacionados, os guards (P0001 dos dois: cada entrada
+# só tropeça em UM) e a RLS de melhoria_itens/melhoria_mensagens — autoria, gate de staff, campos do founder,
+# UPDATE só do master (calado para os outros), papel founder só do master. Corpo vivo + ACL de prod + a cadeia
+# das RPCs (0929000234) e das tabelas lidas; as policies sabotadas pelo texto VIVO de pg_policies. Morreu duas
+# vezes fora do núcleo (07-21 e 08-28) re-aplicando a migration de junho (docs/historico/provas-carteira-revividas.md).
+db/test-melhorias-rpcs.sh                  39  falsificar=55
+# Fornecedor fora da carteira: a régua A (sem venda real sai; exceção vence; cancelado/rascunho/pendente/
+# orçamento não são venda), a limpeza que o cron chama (re-classifica, desliga o eligible, apaga os scores só
+# dos excluídos), a reversão com o gate INTERNO do master (authenticated tem EXECUTE em prod) e a porta dos
+# fundos fechada (o employee não escreve a exceção direto), o ACL de prod (classificar/aplicar só do
+# service_role) e o trigger que deriva is_fornecedor sem decidir a exclusão. Morreu no seed em 06-25: o gatilho
+# da carteira CRIA o score de farmer e o seed o reinseria (docs/historico/provas-carteira-revividas.md).
+db/test-fornecedores-classificacao.sh      26  falsificar=53
 
 # ── Eixo 2 — FINITUDE MONETÁRIA ───────────────────────────────────────────────────
 # `ausente ≠ zero`: preço que o Omie não mandou não vira R$ 0,00; custo sem cmc
@@ -149,6 +170,15 @@ db/test-tint-promote-reexpand.sh            6
 # que a contagem somava as escritas da própria chamada e que esta prova CONFIRMAVA o número errado
 # (o esperado fora transcrito da saída). Até então rodava só no laptop.
 db/test-desconto-backfill-aplicar.sh       30
+# A PRE anti-deriva × CREATE OR REPLACE concorrente (2026-09-30): a PRE lê num comando e o CREATE
+# grava em outro — sem trava, outra sessão commita no meio e é apagada com a PÓS aprovando. Nos
+# dois níveis, com baseline VERMELHO: o template TRAVA→PRE→CREATE→PÓS (duas sessões psql) e a
+# fila de `aplicar_sql` (dois db-aplicar.sh REAIS; o corpo antigo é o de prod, md5 âncora). 2 idiomas.
+# O `--falsificar` (8 sabotagens × 2 idiomas) NÃO roda aqui: no PR #2702 ele levou o passo do núcleo
+# de ~13m50s (mediana da main, 3 runs) ao teto de 20 min, CANCELADO (run 36806101676). O ci.yml manda
+# a próxima prova que estourar levar a PARALELIZAR o runner, não a subir o teto — enquanto isso não
+# vier, a falsificação roda no laptop (recibo: 8 vermelhas / 0 falhas, 189 s) a cada mudança na prova.
+db/test-pre-anti-deriva-concorrencia.sh    56  falsificar=fora-do-ci  # custo: estoura o teto de 20 min do job (run 36806101676); falsificação local até o runner paralelizar
 
 # ── Eixo 5 — VEREDITO DE DEPLOY ──────────────────────────
 # O SQL que responde "a edge está REALMENTE no ar?". O dano aqui é acreditar num
@@ -170,6 +200,12 @@ db/test-canaria-veredito.sh                24  falsificar=18
 # pela lib real (`scripts/lib/transporte-nuvem.ts`, só builtins — o runtime bun do job basta),
 # como a canária. As 10 sabotagens rodam num worktree do HEAD.
 db/test-transporte-nuvem.sh                18  falsificar=10
+# O TRANSPORTE do passo seguinte (2026-09-27): pelo `db:aplicar` a célula que o disparo devolve
+# morre no EXECUTE do `aplicar_sql()`, e o passo vem por NOTICE no log. Roda o `db-aplicar.sh` e o
+# bootstrap REAIS contra stubs de pg_net/vault, com o SQL do gerador deste disco (bun, como a
+# canária), e executa o comando que o PRÓPRIO cabeçalho manda rodar. As 7 sabotagens vão nos dois
+# idiomas do servidor (a palavra NOTICE/NOTA muda; o recorte não pode depender dela) = 14.
+db/test-sonda-passo-pelo-db-aplicar.sh     32  falsificar=14
 
 # ── Eixo 6 — DUPLA CONTAGEM (o mesmo fato sob N óticas) ──────────────────────────
 # `fin_movimentacoes` guarda o MESMO pagamento do Omie duas vezes (lançamento do título e

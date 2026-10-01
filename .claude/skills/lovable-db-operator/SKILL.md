@@ -186,7 +186,7 @@ bun run wt:preflight supabase/migrations/<arquivo>.sql --full   # + origin/main
 - **Referências existem na PROD?** Toda tabela/coluna/função que o SQL REFERENCIA (FK, JOIN de backfill, trigger sobre tabela) → confira em `information_schema.columns` / `pg_proc`. O repo pode estar à frente do banco (migration anterior ainda não colada) — a ORDEM de apply entra no handoff.
 - **UNIQUE novo?** `SELECT <cols>, count(*) FROM <tab> GROUP BY <cols> HAVING count(*) > 1` — duplicata pré-existente de dado sujo derruba o `CREATE UNIQUE INDEX` na frente do founder (o prove-sql local não pega, o dado é da PROD).
 - **NOT NULL novo em tabela populada?** `SELECT count(*) FROM <tab> WHERE <col> IS NULL` — sem default/backfill, quebra.
-- **`CREATE OR REPLACE` função/view?** `pg_get_functiondef`/`pg_get_viewdef` da PROD ANTES (apply manual diverge do repo — a última a recriar VENCE; view só ACRESCENTA coluna no fim, ordem preservada).
+- **`CREATE OR REPLACE` função/view?** `pg_get_functiondef`/`pg_get_viewdef` da PROD ANTES (apply manual diverge do repo — a última a recriar VENCE; view só ACRESCENTA coluna no fim, ordem preservada). E a migration sai no molde **TRAVA → PRE → CREATE → PÓS** (`references/sql-house-style.md`, "Recriar objeto VIVO"): PRE anti-deriva sem a trava ANTES deixa outra sessão commitar no meio e ser apagada com a sua PÓS aprovando (provado em PG17).
 - **Já aplicado?** Se o objeto já existe na forma nova, diga no handoff ("já aplicado — não precisa colar"; re-colar é seguro por idempotência, mas poupe o founder).
 
 Só entregue o bloco do Passo 3 com o pré-voo 🟢 (ou com a pendência EXPLÍCITA na ordem de apply).

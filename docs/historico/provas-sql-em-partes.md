@@ -54,9 +54,22 @@ A partição estava provada no harness, mas a EXECUÇÃO de cada run não estava
 
 No manifesto da `main` de 2026-10-01 (57 provas, já com o #2712), as 3 partes ficaram com 19, 19 e 19 provas; a união é o manifesto inteiro, sem repetição.
 
+## Medido: as partes de verdade, e o teto de volta a 20
+
+Os 2 runs completos da matriz, os do próprio #2713, deram a duração do JOB de cada parte (setup, núcleo e, na 1ª, a autofalsificação do runner):
+
+| run | parte 1 | parte 2 | parte 3 |
+|---|---|---|---|
+| 36831464837 (teto 20 naquele head) | 5m24s | 6m52s | 4m36s |
+| 36833933356 (teto 30) | 6m21s | 5m51s | 4m42s |
+
+- A maior foi 6m52s, e a mediana ~5m38s. A simulação dava 327 / 309 / 364 s só de provas; a diferença é o setup de cada runner.
+- **A fila de runner não conta no teto.** Na 36831464837, sob teto 20, as partes 2 e 3 esperaram **30m31s e 31m39s** por máquina e passaram.
+- A fila é geral, não da matriz: nesses runs, `typecheck`, `testes`, `edges-e-build` e `gates-e-falsificacao` também esperaram de 11 a 32 min. O wall-clock de um PR hoje é decidido pela concorrência de runners, não pela execução.
+- Com isso o founder decidiu: **teto de volta a 20** (folga de ~2,9× sobre a maior parte). O #2712 tinha declarado o 30 como paliativo.
+
 ## O que fica para depois
 
-- **As três falsificações `fora-do-ci` podem voltar ao CI:** a simulação dá ~6 min por parte, contra o teto de 30. Fica para PRs próprios, um por dono, para cada volta ser medida.
-- **O teto de 30 do stopgap pode voltar a 20** quando a duração das partes for MEDIDA em runs reais. A decisão é do founder.
+- **As três falsificações `fora-do-ci` podem voltar ao CI:** fica para PRs próprios, um por dono, para cada volta ser medida. Antes, veja em que parte cada uma cai (`NUCLEO_PARTE=i/3 bash db/roda-nucleo-ci.sh --lista`). Duas na mesma parte somam: com o manifesto do #2702, a de 304 s (`test-hoje-sp-views-defaults`) e a de ~190 s local (`test-pre-anti-deriva-concorrencia`) caem as duas na parte 3, e juntas levariam essa parte de ~5 para ~13 min.
 - **Folga acabando de novo:** acrescente uma parte à matriz. Não suba o teto e não tire falsificação do CI.
-- **Custo:** mais minutos de runner (setup do PGDG e sonda ×3, ~1 min cada) em troca de wall-clock. O caminho crítico do `validate` volta a ser o `gates-e-falsificacao` (~21–22 min), não o `provas-sql`.
+- **Custo:** mais minutos de runner (setup do PGDG e sonda ×3, ~1 min cada) em troca de wall-clock. O caminho crítico do `validate` volta a ser o `gates-e-falsificacao` (~21 min de job), não o `provas-sql`.

@@ -81,9 +81,9 @@ export const respostaSonda = criarRespostaSonda("analyze-unified-order");
  * O gate que impede o retorno ao valor congelado: `_shared/sonda-versao-contrato_test.ts`,
  * "bump v1.1-corpo-tipado". Um `git revert` deste bump devolveria a sonda a "responde verde sem provar nada".
  * `v1.3-ia-nao-precifica`: a edge deixou de decidir preço (fronteira `montarRespostaAnalise`, canária
- * `ia-nao-precifica-v1`). O que saiu e por quê: docs/historico/ia-nao-precifica.md.
+ * `ia-nao-precifica-v1`); v1.4 = hotfix do BOOT_ERROR. Por quê: docs/historico/ia-nao-precifica.md.
  */
-export const VERSAO = "v1.3-ia-nao-precifica";
+export const VERSAO = "v1.4-boot-resposta-unica";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/select";
 import { Etapa } from "./types";
 import { TIPOS_PARCEIRO, tipoLabel } from "./shared";
+import { hojeSP } from "@/lib/time/sp-day";
 
 export function TrocaParceiroDialog({
   etapa,
@@ -45,7 +46,7 @@ export function TrocaParceiroDialog({
   const [novoLt, setNovoLt] = useState(etapa?.lt_dias ?? 1);
   const [unidade, setUnidade] = useState(etapa?.lt_unidade ?? "uteis");
   const [dataTroca, setDataTroca] = useState(
-    new Date().toISOString().split("T")[0],
+    hojeSP(),
   );
 
   useMemo(() => {
@@ -55,7 +56,7 @@ export function TrocaParceiroDialog({
       setNovoContato("");
       setNovoLt(etapa.lt_dias);
       setUnidade(etapa.lt_unidade);
-      setDataTroca(new Date().toISOString().split("T")[0]);
+      setDataTroca(hojeSP());
     }
   }, [etapa]);
 
