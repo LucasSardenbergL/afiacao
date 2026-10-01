@@ -111,6 +111,36 @@ BEGIN
       USING ERRCODE = '22023';
   END IF;
 
+  -- UM apply POR VEZ, daqui até o COMMIT (achado do Codex, 2026-09-27). A PRE anti-deriva de uma
+  -- migration LÊ o corpo vivo num comando e o CREATE OR REPLACE GRAVA em outro: em READ COMMITTED,
+  -- um apply concorrente que commitasse entre os dois era apagado em silêncio, com a PÓS aprovando
+  -- (medido em PG17: db/test-pre-anti-deriva-concorrencia.sh). A fila fecha isso para TODO apply que
+  -- passa por esta porta, com ou sem PRE, com ou sem trava no arquivo: quem chega depois espera AQUI,
+  -- antes de ler qualquer coisa. Não alcança quem não passa por ela (SQL Editor, MCP, builder) —
+  -- para esses vale a trava por ALTER sem efeito no próprio arquivo (skill lovable-db-operator).
+  --
+  -- READ COMMITTED é EXIGIDO, não suposto: a fila só serve se cada comando do corpo tirar snapshot
+  -- NOVO depois dela. Em REPEATABLE READ o snapshot nasce no 1º comando da transação, antes desta
+  -- espera, e a PRE de quem esperou leria o mundo de antes do primeiro.
+  --
+  -- Espera até o `lock_timeout` de quem chama (15 s no db-aplicar.sh); estourou, recusa com nome
+  -- próprio e o corpo não roda. Chave (int4, int4) = (20260909, 1), o nascimento do db:aplicar:
+  -- as outras travas do repo são todas bigint, e as duas formas não colidem.
+  IF current_setting('transaction_isolation') <> 'read committed' THEN
+    RAISE EXCEPTION 'APLICAR_SQL: isolamento % — a fila exige READ COMMITTED (ISOLAMENTO_ERRADO); NADA foi executado',
+      current_setting('transaction_isolation') USING ERRCODE = '25000';
+  END IF;
+
+  IF NOT pg_try_advisory_xact_lock(20260909, 1) THEN
+    RAISE NOTICE 'APLICAR_SQL: outro apply em curso — aguardando a vez';
+    BEGIN
+      PERFORM pg_advisory_xact_lock(20260909, 1);
+    EXCEPTION WHEN lock_not_available THEN
+      RAISE EXCEPTION 'APLICAR_SQL: outro apply segurou a vez além do lock_timeout (VEZ_OCUPADA) — NADA foi executado; rode de novo'
+        USING ERRCODE = '55P03';
+    END;
+  END IF;
+
   -- TRAVA e VALIDA a tentativa ANTES do EXECUTE. Conferir só depois seria tarde: o corpo já
   -- teria rodado. E `WHERE id = p_id` sozinho não bastava — aceitava um id JÁ fechado (o corpo
   -- executava de novo e a mesma linha era reescrita, sem violar unicidade nenhuma) e aceitava
@@ -149,8 +179,9 @@ END
 $funcao$;
 
 COMMENT ON FUNCTION public.aplicar_sql(text, text, bigint) IS
-  'Porta de escrita automatizada (SECURITY DEFINER = postgres). Confere o sha256 do corpo '
-  'antes de executar e grava o recibo na mesma transação. EXECUTE só para claude_rw.';
+  'Porta de escrita automatizada (SECURITY DEFINER = postgres). Um apply por vez (advisory '
+  '(20260909,1), exige READ COMMITTED). Confere o sha256 do corpo antes de executar e grava o '
+  'recibo na mesma transação. EXECUTE só para claude_rw.';
 
 -- ════════════════════════════════════════════════════════════════════════════════════════
 -- 4) RLS + ACL — as duas pontas, sempre
@@ -206,6 +237,9 @@ SELECT
      AND has_table_privilege('claude_rw', 'public.db_aplicacoes', 'INSERT')
      AND (SELECT prosecdef FROM pg_proc WHERE oid = 'public.aplicar_sql(text,text,bigint)'::regprocedure)
      AND has_function_privilege('claude_rw', 'public.aplicar_sql(text,text,bigint)', 'EXECUTE')
+     -- a fila (um apply por vez) está no corpo que este arquivo acabou de criar
+     AND (SELECT position('pg_advisory_xact_lock(20260909, 1)' IN prosrc) > 0
+            FROM pg_proc WHERE oid = 'public.aplicar_sql(text,text,bigint)'::regprocedure)
      AND NOT has_function_privilege('anon',   'public.aplicar_sql(text,text,bigint)', 'EXECUTE')
      AND NOT has_function_privilege('public', 'public.aplicar_sql(text,text,bigint)', 'EXECUTE')
     THEN 'BOOTSTRAP_OK'
