@@ -121,8 +121,8 @@ describe('guardrail money-path: analyze-unified-order NÃO precifica (a IA só i
     const CRU = /JSON\.stringify\(\{[^)]*\bproducts\s*:(?!\s*\[\s*\])/;
     expect(codigo).not.toMatch(CRU);
     // CALIBRAÇÃO: a forma velha da resposta do fluxo real CASA, e a vazia legítima não.
-    expect('return new Response(JSON.stringify({\n      products: validProducts,\n')).toMatch(CRU);
-    expect('return new Response(JSON.stringify({\n          products: [], services: [],')).not.toMatch(CRU);
+    expect('return new Response(JSON.stringify({\n      products: validProducts,\n').toMatch(CRU);
+    expect('return new Response(JSON.stringify({\n          products: [], services: [],').not.toMatch(CRU);
   });
 
   it('CONTRATO edge×front: as listas fechadas de saída batem campo a campo com os tipos que o front lê', () => {
