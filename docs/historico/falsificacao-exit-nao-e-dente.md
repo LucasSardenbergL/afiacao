@@ -1405,7 +1405,10 @@ dentro da string — o curinga não atravessa aspa —, a linha fica literal: ex
   aspas" (`echo "D=720"`) quem excluía era a fronteira do nome (a aspa colada), não a máscara.
   Entraram 4 casos que SÓ a máscara exclui (`echo "texto D=720 dentro"`, `echo "manda > $D"`, a prosa
   em aspas simples, a atribuição dentro do valor de outra) — medidos antes: com a máscara, nenhuma
-  escrita; sem ela, 4 —, e a rodada dirigida (controle+ e a mutação) deu PEGA_DIRIGIDO.
+  escrita; sem ela, 4 —, e a rodada dirigida (controle+ e a mutação) deu **2/2 pegas** (baseline verde), exit 0.
+- **as suítes**: `heavy bunx vitest run scripts/falsificar-exige-assert-gate.test.ts` → **190/190**, exit 0;
+  `heavy bash db/roda-nucleo-ci.sh` → `SQL_PROOF_OK provas=49/49 falsificacoes=14/14`, exit 0 — os 9 juízes
+  de `db/` presos aqui rodam verdes, com os `--falsificar`; `tsc -p tsconfig.scripts.json`, exit 0.
 
 **Erros da meta e do caminho, registrados:**
 
