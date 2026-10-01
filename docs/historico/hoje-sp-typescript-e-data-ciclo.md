@@ -129,12 +129,41 @@ INDEPENDENTE PENDENTE** — o prompt está em `docs/historico/` (este arquivo, a
 
 ## Deploy — quem faz cada camada
 
-1. **Migration** (eu, `bun run db:aplicar`, fora das 21h–24h e fora dos crons de reposição): ela vem ANTES
-   do edge. Com a migration e o edge velho, só o botão noturno do Cockpit diverge — o que já acontecia com o
-   "recalcular" da tela Pedidos contra as views em UTC.
+1. **Migration** — FEITO (eu): `db:aplicar --ensaio` (rodou inteira contra a prod e fez ROLLBACK, marcador
+   `FIM_APLICACAO_OK`) e o apply às **00:45 BRT de 01/10** — tentativa #210 virou recibo na mesma transação
+   (sha256 `b926c2aea4d6…`). 2ª testemunha (psql-ro, outra conexão): as 2 views com o md5 da POS,
+   `security_invoker=on` e ACL idêntico; as 6 funções com o md5 de argumentos e corpo e os atributos; ACL 6/6
+   igual ao medido antes; o DEFAULT da coluna em SP; ledger `210 aplicada`. Veio ANTES do edge: com a
+   migration e o edge velho, só o botão noturno do Cockpit diverge — o que já acontecia com o "recalcular" da
+   tela Pedidos contra as views em UTC.
 2. **Edges** `gerar-pedidos-diario` e `omie-sync-estoque` (founder, pelo chat do Lovable; quem decide é
    `bun run pendencias:deploy`).
 3. **Publish** do front (founder).
+
+## O que a aplicação antes do merge cobra (e o rito)
+
+- `AUTHZ_REESCRITAS_CONHECIDAS`: a entrada de `reposicao_pos_candidatos` (o patch por âncora de 14/08) foi
+  SUPERADA pelo CREATE desta migration — o `authz-gate-check` exige a poda no mesmo PR, e a poda muda o
+  contrato do audit `audit`: carimbo regravado (5 audits exit 0; a deriva com 4 `SEM_PAR` — DDL aplicada antes
+  do merge, que somem no merge).
+- Depois do merge: a entrada PATCH de `reposicao_pos_candidatos` em `db/deriva-corpo-baseline.json` vira
+  `BASELINE_OBSOLETA` — sai num PR seguinte com o carimbo limpo (o rito do #2695).
+- O guard `embalagem-motor-paridade` exige que `db/embalagem-motor-rpc.sql` seja, do CREATE ao fim, o trecho
+  da ÚLTIMA migration que recria o motor — e 3 provas carregam e SABOTAM essa fixture. Por isso o motor vai por
+  ÚLTIMO na migration, com uma pós-condição autocontida (md5 e ACL só com a foto da PRÉ); e a
+  `db/test-em-transito-erro-terminal.sh` passou a usar o md5 da fixture viva como referência das restaurações.
+- `hojeSP`/`addDias` foram para a plataforma (`@/lib/time/sp-day`): importá-los de `@/lib/dashboard/sp-date`
+  nas telas de reposição era vazamento de fronteira (`fronteiras.gate`).
+
+## ⚠️ Migration órfã que reverteria parte disto
+
+A worktree `infallible-blackburn-5ce599` (branch `claude/oportunidade-antidup-disparado-simulado`, commit
+local de 26/09, nunca enviada, sem PR) tem a `20260926115128_oportunidade_antidup_conta_disparado_simulado.sql`,
+que recria `gerar_pedidos_oportunidade_ciclo` SEM pré-condição executável (só o md5 de 26/09 num
+comentário), com o `DEFAULT CURRENT_DATE` e o corte `::timestamptz`. Aplicada DEPOIS desta, ela reverteria em
+silêncio o dia de SP e o corte dessa função. Antes de aplicá-la: regenerar a partir do corpo vivo (o da
+20261001023000) e pôr a PRÉ por md5. (Ela também é um conserto money-path pendente: o anti-compra-dupla da
+oportunidade não vê `disparado_simulado`.)
 
 ## Fora, com dono
 
