@@ -147,7 +147,7 @@ BEGIN
     INTO r
     FROM tint_formulas f JOIN tint_subcolecoes s ON s.id = f.subcolecao_id
    WHERE f.cor_id = 'COR1' AND s.id_subcolecao_sayersystem = '1';
-  IF NOT r.inativa                                   THEN n := n+1; msg := msg || ' [A1 tombstone reativado]'; END IF;
+  IF r.inativa IS NOT TRUE                           THEN n := n+1; msg := msg || ' [A1 tombstone reativado]'; END IF;
   IF r.desativada_motivo IS DISTINCT FROM 'fase5_geracao_legada' THEN n := n+1; msg := msg || ' [A2 carimbo perdido]'; END IF;
   IF r.preco_final_sayersystem IS DISTINCT FROM 123.45 THEN n := n+1; msg := msg || ' [A3 preço do tombstone mudou]'; END IF;
   IF r.itens IS DISTINCT FROM 'AX=7'                 THEN n := n+1; msg := msg || ' [A4 itens do tombstone: ' || COALESCE(r.itens,'∅') || ']'; END IF;

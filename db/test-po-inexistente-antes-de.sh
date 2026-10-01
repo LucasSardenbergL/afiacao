@@ -61,6 +61,8 @@ PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); echo "  OK   $1"; }
 bad() { FAIL=$((FAIL+1)); echo "  FAIL $1"; }
 eq()  { if [ "$2" = "$3" ]; then ok "$1 (=$2)"; else bad "$1 -- esperado [$3], veio [$2]"; fi; }
+# Leitura que ERRA não pode virar "" — o esperado do fail-closed É "": o erro vira ERRO_rc=<n> (assert verde por ausência).
+medir() { local v rc; set +e; v="$(set -e; "$@")"; rc=$?; set -e; if [ "$rc" -eq 0 ]; then printf '%s\n' "$v"; else printf 'ERRO_rc=%s\n' "$rc"; fi; }
 
 echo "=== setup (PG17 :$PORT) ==="
 
@@ -260,7 +262,7 @@ eq "R2b service_role executa o marco" \
 
 echo "== A: fail-closed sem marcador valido =="
 P -q -c "UPDATE public.reposicao_pedidos_compra_run SET volume_ok=false;"
-eq "A1 sem run valido -> VAZIO" "$(cand)" ""
+eq "A1 sem run valido -> VAZIO" "$(medir cand)" ""
 P -q -c "UPDATE public.reposicao_pedidos_compra_run SET volume_ok=true;"
 
 echo "== D: gate de authz (preservado do #1718) =="

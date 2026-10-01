@@ -119,7 +119,7 @@ INSERT INTO public.whatsapp_messages (conversation_id, direction, body, created_
 VALUES ('00000000-0000-0000-0000-00000000bb0b', 'out', 'retry atrasado', now() - interval '10 hours');
 DO $$ DECLARE t timestamptz; BEGIN
   SELECT last_outbound_at INTO t FROM public.whatsapp_conversations WHERE id='00000000-0000-0000-0000-00000000bb0b';
-  IF t < now() - interval '60 seconds'
+  IF t IS NULL OR t < now() - interval '60 seconds'
     THEN RAISE EXCEPTION 'FALHA trigger: out atrasado REGREDIU o marcador (%)' , t; END IF;
 END $$;
 
@@ -143,9 +143,9 @@ SET LOCAL ROLE authenticated;
 SET LOCAL request.jwt.claims = '{"sub":"00000000-0000-0000-0000-0000000aaaa1","role":"authenticated"}';
 DO $$ DECLARE ids uuid[]; BEGIN
   SELECT array_agg(conversation_id ORDER BY last_inbound_at ASC) INTO ids FROM public.get_whatsapp_pendentes();
-  IF ids IS NULL OR array_length(ids,1) <> 2
+  IF ids IS NULL OR array_length(ids,1) IS DISTINCT FROM 2
     THEN RAISE EXCEPTION 'FALHA RPC staff1: esperava 2 pendentes (A,G), veio %', coalesce(array_length(ids,1),0); END IF;
-  IF ids[1] <> '00000000-0000-0000-0000-00000000aa0a'
+  IF ids[1] IS DISTINCT FROM '00000000-0000-0000-0000-00000000aa0a'
     THEN RAISE EXCEPTION 'FALHA RPC: mais antigo (A) deveria vir primeiro, veio %', ids[1]; END IF;
   IF '00000000-0000-0000-0000-00000000bb0b' = ANY(ids)
     THEN RAISE EXCEPTION 'FALHA RPC: B foi RESPONDIDA (trigger) e continua na fila'; END IF;
@@ -161,7 +161,7 @@ SET LOCAL request.jwt.claims = '{"sub":"00000000-0000-0000-0000-0000000cccc3","r
 DO $$ DECLARE n int; BEGIN
   SELECT count(*) INTO n FROM public.get_whatsapp_pendentes()
    WHERE conversation_id = '00000000-0000-0000-0000-00000000ff0f';
-  IF n <> 1 THEN RAISE EXCEPTION 'FALHA RPC staff2: deveria ver a própria conversa F'; END IF;
+  IF n IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'FALHA RPC staff2: deveria ver a própria conversa F'; END IF;
 END $$;
 ROLLBACK;
 
@@ -171,7 +171,7 @@ SET LOCAL ROLE authenticated;
 SET LOCAL request.jwt.claims = '{"sub":"00000000-0000-0000-0000-0000000bbbb2","role":"authenticated"}';
 DO $$ DECLARE n int; BEGIN
   SELECT count(*) INTO n FROM public.get_whatsapp_pendentes();
-  IF n <> 0 THEN RAISE EXCEPTION 'FALHA RPC: não-staff vê % pendentes', n; END IF;
+  IF n IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'FALHA RPC: não-staff vê % pendentes', n; END IF;
 END $$;
 ROLLBACK;
 

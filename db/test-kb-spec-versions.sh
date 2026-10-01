@@ -227,7 +227,7 @@ BEGIN
   SELECT count(*), min(version_number) INTO cnt_v, v_num
     FROM public.kb_product_spec_versions
    WHERE id = v_id;
-  IF cnt_v <> 1 OR v_num <> 1 THEN
+  IF cnt_v IS DISTINCT FROM 1 OR v_num IS DISTINCT FROM 1 THEN
     RAISE EXCEPTION 'V1b FALHOU: cnt=% version_number=% (esperado cnt=1 v=1)', cnt_v, v_num;
   END IF;
   RAISE NOTICE 'OK V1b — 1 linha version_number=1 em kb_product_spec_versions';
@@ -237,7 +237,7 @@ BEGIN
     FROM public.kb_product_specs
    WHERE product_code_normalized = 'FO20.6827.00'
      AND supplier = 'sayerlack';
-  IF cnt_s <> 1 THEN
+  IF cnt_s IS DISTINCT FROM 1 THEN
     RAISE EXCEPTION 'V1c FALHOU: cnt_specs=% (esperado 1)', cnt_s;
   END IF;
   RAISE NOTICE 'OK V1c — 1 spec upsertada em kb_product_specs';
@@ -252,7 +252,7 @@ BEGIN
   IF v_cat IS DISTINCT FROM 'FC.6975' THEN
     RAISE EXCEPTION 'V1d FALHOU: catalisador_codigo=% (esperado FC.6975)', v_cat;
   END IF;
-  IF NOT ('MDF' = ANY(v_sub)) THEN
+  IF ('MDF' = ANY(v_sub)) IS NOT TRUE THEN
     RAISE EXCEPTION 'V1d FALHOU: substrato não contém MDF: %', v_sub;
   END IF;
   RAISE NOTICE 'OK V1d — campos numérico/texto/array corretos na versão';
@@ -329,7 +329,7 @@ BEGIN
    WHERE s.product_code_normalized = 'FO20.6827.00'
      AND s.supplier = 'sayerlack'
      AND v.superseded_at IS NULL;
-  IF live_cnt <> 1 THEN
+  IF live_cnt IS DISTINCT FROM 1 THEN
     RAISE EXCEPTION 'V2c FALHOU: live_cnt=% (esperado 1)', live_cnt;
   END IF;
   RAISE NOTICE 'OK V2c — 1 versão live (superseded_at IS NULL)';
@@ -587,7 +587,7 @@ BEGIN
   IF cnt < 2 THEN
     RAISE EXCEPTION 'V6 FALHOU: cnt=% (esperado ≥2 para verificar sequência)', cnt;
   END IF;
-  IF min_v <> 1 THEN
+  IF min_v IS DISTINCT FROM 1 THEN
     RAISE EXCEPTION 'V6 FALHOU: min_version=% (esperado 1)', min_v;
   END IF;
   -- Verifica que todos os inteiros 1..max existem (sem buracos)
@@ -664,7 +664,7 @@ BEGIN
     JOIN public.kb_product_specs s ON s.id = v.kb_product_spec_id
    WHERE s.product_code_normalized IN ('FO20.1111.00', 'FO20.2222.00');
 
-  IF cnt_before <> 2 THEN
+  IF cnt_before IS DISTINCT FROM 2 THEN
     RAISE EXCEPTION 'V7a FALHOU: %  versões de backfill (esperado 2)', cnt_before;
   END IF;
   RAISE NOTICE 'OK V7a — backfill criou 2 versões para 2 specs';
@@ -705,7 +705,7 @@ BEGIN
     JOIN public.kb_product_specs s ON s.id = v.kb_product_spec_id
    WHERE s.product_code_normalized IN ('FO20.1111.00', 'FO20.2222.00');
 
-  IF cnt_after <> 2 THEN
+  IF cnt_after IS DISTINCT FROM 2 THEN
     RAISE EXCEPTION 'V7b FALHOU: re-run criou duplicatas — cnt=% (esperado 2)', cnt_after;
   END IF;
   RAISE NOTICE 'OK V7b — re-run idempotente: cnt=% (sem duplicatas)', cnt_after;
@@ -786,7 +786,7 @@ DECLARE cnt int;
 BEGIN
   SELECT count(*) INTO cnt FROM public.kb_extraction_drafts
    WHERE document_id = '${DOC_V9}'::uuid;
-  IF cnt <> 1 THEN
+  IF cnt IS DISTINCT FROM 1 THEN
     RAISE EXCEPTION 'V9 setup FALHOU: draft não foi inserido (cnt=%)', cnt;
   END IF;
   RAISE NOTICE 'OK V9 setup — draft presente antes da RPC';
@@ -820,7 +820,7 @@ BEGIN
   SELECT count(*) INTO cnt FROM public.kb_extraction_drafts
    WHERE document_id = '${DOC_V9}'::uuid;
 
-  IF cnt <> 0 THEN
+  IF cnt IS DISTINCT FROM 0 THEN
     RAISE EXCEPTION 'V9 FALHOU: draft ainda existe após RPC (cnt=%, esperado 0)', cnt;
   END IF;
   RAISE NOTICE 'OK V9 — draft deletado após aprovar versão (version_id=%)', v_id;

@@ -70,27 +70,27 @@ DECLARE r jsonb; opts jsonb;
 BEGIN
   -- A) append no fim, valor_canonico
   r := public.adicionar_opcao_tool_spec('11111111-1111-1111-1111-111111111111','290mm');
-  IF r->>'valor_canonico' <> '290mm' THEN RAISE EXCEPTION 'A FALHOU: canonico=%', r->>'valor_canonico'; END IF;
+  IF r->>'valor_canonico' IS DISTINCT FROM '290mm' THEN RAISE EXCEPTION 'A FALHOU: canonico=%', r->>'valor_canonico'; END IF;
   SELECT options INTO opts FROM public.tool_specifications WHERE id='11111111-1111-1111-1111-111111111111';
-  IF opts <> '["300mm","250mm","290mm"]'::jsonb THEN RAISE EXCEPTION 'A FALHOU: options=%', opts; END IF;
+  IF opts IS DISTINCT FROM '["300mm","250mm","290mm"]'::jsonb THEN RAISE EXCEPTION 'A FALHOU: options=%', opts; END IF;
   RAISE NOTICE 'OK A — append no fim';
 
   -- B) dedupe exato idempotente
   PERFORM public.adicionar_opcao_tool_spec('11111111-1111-1111-1111-111111111111','290mm');
   SELECT options INTO opts FROM public.tool_specifications WHERE id='11111111-1111-1111-1111-111111111111';
-  IF jsonb_array_length(opts) <> 3 THEN RAISE EXCEPTION 'B FALHOU: duplicou len=%', jsonb_array_length(opts); END IF;
+  IF jsonb_array_length(opts) IS DISTINCT FROM 3 THEN RAISE EXCEPTION 'B FALHOU: duplicou len=%', jsonb_array_length(opts); END IF;
   RAISE NOTICE 'OK B — dedupe exato idempotente';
 
   -- C) dedupe case-insensitive → canônico do servidor é o existente
   r := public.adicionar_opcao_tool_spec('11111111-1111-1111-1111-111111111111','290MM');
-  IF r->>'valor_canonico' <> '290mm' THEN RAISE EXCEPTION 'C FALHOU: canonico=%', r->>'valor_canonico'; END IF;
+  IF r->>'valor_canonico' IS DISTINCT FROM '290mm' THEN RAISE EXCEPTION 'C FALHOU: canonico=%', r->>'valor_canonico'; END IF;
   SELECT options INTO opts FROM public.tool_specifications WHERE id='11111111-1111-1111-1111-111111111111';
-  IF jsonb_array_length(opts) <> 3 THEN RAISE EXCEPTION 'C FALHOU: duplicou case len=%', jsonb_array_length(opts); END IF;
+  IF jsonb_array_length(opts) IS DISTINCT FROM 3 THEN RAISE EXCEPTION 'C FALHOU: duplicou case len=%', jsonb_array_length(opts); END IF;
   RAISE NOTICE 'OK C — dedupe case-insensitive';
 
   -- D) normaliza espaços
   r := public.adicionar_opcao_tool_spec('11111111-1111-1111-1111-111111111111','  301   mm  ');
-  IF r->>'valor_canonico' <> '301 mm' THEN RAISE EXCEPTION 'D FALHOU: [%]', r->>'valor_canonico'; END IF;
+  IF r->>'valor_canonico' IS DISTINCT FROM '301 mm' THEN RAISE EXCEPTION 'D FALHOU: [%]', r->>'valor_canonico'; END IF;
   RAISE NOTICE 'OK D — normaliza trim/espaços';
 END $$;
 
@@ -98,12 +98,12 @@ END $$;
 --    independe do locale do banco — este teste roda em locale C). '290<NBSP>mm' dedupa com '290 mm'.
 DO $$ DECLARE r jsonb; opts jsonb; BEGIN
   r := public.adicionar_opcao_tool_spec('55555555-5555-5555-5555-555555555555', '290' || chr(160) || 'mm');
-  IF r->>'valor_canonico' <> '290 mm' THEN RAISE EXCEPTION 'R FALHOU NBSP: canonico=[%]', r->>'valor_canonico'; END IF;
+  IF r->>'valor_canonico' IS DISTINCT FROM '290 mm' THEN RAISE EXCEPTION 'R FALHOU NBSP: canonico=[%]', r->>'valor_canonico'; END IF;
   PERFORM public.adicionar_opcao_tool_spec('55555555-5555-5555-5555-555555555555', '290 mm');
   SELECT options INTO opts FROM public.tool_specifications WHERE id='55555555-5555-5555-5555-555555555555';
-  IF jsonb_array_length(opts) <> 1 THEN RAISE EXCEPTION 'R FALHOU: NBSP nao dedupou com espaco comum, len=%', jsonb_array_length(opts); END IF;
+  IF jsonb_array_length(opts) IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'R FALHOU: NBSP nao dedupou com espaco comum, len=%', jsonb_array_length(opts); END IF;
   r := public.adicionar_opcao_tool_spec('55555555-5555-5555-5555-555555555555', '300' || chr(8239) || 'mm' || chr(65279));
-  IF r->>'valor_canonico' <> '300 mm' THEN RAISE EXCEPTION 'R FALHOU narrow/BOM: [%]', r->>'valor_canonico'; END IF;
+  IF r->>'valor_canonico' IS DISTINCT FROM '300 mm' THEN RAISE EXCEPTION 'R FALHOU narrow/BOM: [%]', r->>'valor_canonico'; END IF;
   RAISE NOTICE 'OK R — Unicode whitespace colapsado (NBSP/narrow/BOM)';
 END $$;
 
@@ -152,7 +152,7 @@ EXCEPTION WHEN sqlstate '22023' THEN RAISE NOTICE 'OK J — faixa fechada pela m
 DO $$ DECLARE opts jsonb; BEGIN
   PERFORM public.adicionar_opcao_tool_spec('44444444-4444-4444-4444-444444444444','Freud');
   SELECT options INTO opts FROM public.tool_specifications WHERE id='44444444-4444-4444-4444-444444444444';
-  IF opts <> '["Freud"]'::jsonb THEN RAISE EXCEPTION 'K FALHOU: options=%', opts; END IF;
+  IF opts IS DISTINCT FROM '["Freud"]'::jsonb THEN RAISE EXCEPTION 'K FALHOU: options=%', opts; END IF;
   RAISE NOTICE 'OK K — options NULL → COALESCE';
 END $$;
 
@@ -179,7 +179,7 @@ END $$;
 SELECT set_config('test.role','master',false);
 DO $$ DECLARE r jsonb; BEGIN
   r := public.adicionar_opcao_tool_spec('11111111-1111-1111-1111-111111111111','310mm');
-  IF r->>'valor_canonico' <> '310mm' THEN RAISE EXCEPTION 'N FALHOU'; END IF;
+  IF r->>'valor_canonico' IS DISTINCT FROM '310mm' THEN RAISE EXCEPTION 'N FALHOU'; END IF;
   RAISE NOTICE 'OK N — master adiciona';
 END $$;
 
