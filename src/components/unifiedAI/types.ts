@@ -3,13 +3,16 @@
 // As interfaces públicas (AIProduct/AIService/AISuggestion/AICustomerMatch/AIOrderResult)
 // são re-exportadas pelo arquivo principal para preservar os imports existentes.
 
+// Sem `unit_price` em AIProduct/AISuggestion: a IA NÃO precifica. O item nasce no carrinho pelo
+// mesmo `getProductPrice` da lista (src/hooks/unifiedOrder/nascimento-item.ts) e a edge
+// `analyze-unified-order` não manda preço (fronteira `montarRespostaAnalise`). Tirar do TIPO faz o
+// compilador recusar quem voltar a ler um preço da IA.
 export interface AIProduct {
   product_id: string;
   codigo: string;
   descricao: string;
   quantity: number;
   account: 'oben' | 'colacor';
-  unit_price?: number;
   notes?: string;
 }
 
@@ -28,7 +31,6 @@ export interface AISuggestion {
   descricao: string;
   quantity?: number;
   account?: string;
-  unit_price?: number;
   reason: string;
   userToolId?: string;
   omie_codigo_servico?: number;
@@ -83,4 +85,11 @@ export interface UnifiedAIAssistantProps {
   customerUserId?: string | null;
   hasCustomerSelected?: boolean;
   isLoading?: boolean;
+  /** Preço com que o item VAI nascer no carrinho (= getProductPrice da lista), pelo id do catálogo.
+   *  É o único preço que o painel exibe; null = fora do catálogo carregado (não exibe número).
+   *  OBRIGATÓRIO: opcional, um caller que o esquecesse deixaria o painel sem preço em silêncio. */
+  precoNascimentoPorId: (productId: string) => number | null;
+  /** Preço de partida ainda não firme (tier/config carregando): o painel não exibe número e o ADD
+   *  fica bloqueado — o MESMO gate do ADD da lista (`precoLoading` do ProductItemForm). */
+  precoLoading?: boolean;
 }
