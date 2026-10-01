@@ -1,0 +1,9 @@
+// CAMADA: o parêntese NÃO absolve quando há argumento. `(~/.config/afiacao/psql-ro -f -)` é um
+// comando entre parênteses, não uma referência ao caminho — o par positivo é o `limpo-n`, em que o
+// parêntese contém SÓ o caminho. Forma do relatório de `scripts/lib/edge-rpcs.ts` até 2026-10-01.
+export function relatorio(edge: string): string[] {
+  const linhas: string[] = [];
+  linhas.push(`Edge ${edge}: RPCs citadas.`);
+  linhas.push('Cruze com a PROD (~/.config/afiacao/psql-ro -f -). Vazio = bomba armada:');
+  return linhas;
+}
