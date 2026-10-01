@@ -19,10 +19,6 @@ ALTER TABLE public.pedido_compra_sugerido
   ADD COLUMN IF NOT EXISTS aprovacao_selo_em timestamp with time zone,
   ADD COLUMN IF NOT EXISTS aprovacao_selo text,
   ADD COLUMN IF NOT EXISTS cancelamento_pos_disparo_em timestamp with time zone,
-ALTER TABLE public.pedido_compra_sugerido
-  ADD COLUMN IF NOT EXISTS aprovacao_selo_em timestamp with time zone,
-  ADD COLUMN IF NOT EXISTS aprovacao_selo text,
-  ADD COLUMN IF NOT EXISTS cancelamento_pos_disparo_em timestamp with time zone,
   ADD COLUMN IF NOT EXISTS cancelamento_pos_disparo_evidencia text,
   ADD COLUMN IF NOT EXISTS cancelamento_pos_disparo_motivo text,
   ADD COLUMN IF NOT EXISTS cancelamento_pos_disparo_por text,
