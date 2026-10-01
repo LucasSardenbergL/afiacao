@@ -23,8 +23,9 @@ import { ChamadasPendentesNudge } from '@/components/farmer/ChamadasPendentesNud
  * Dashboard Farmer V2 — placar do mês (positivação) + a FILA é o dia (G1).
  *
  * O bloco de positivação (PositivacaoHero) é o NORTE da farmer: positivação MTD,
- * receita MTD, win-back, cobertura — KPIs comerciais que também serão base do OTE
- * (ver docs/superpowers/specs/2026-06-06-kpis-farmer-meu-dia-design.md). A fila é
+ * receita MTD, novos na carteira, cobertura — KPIs comerciais que também serão base do OTE
+ * (ver docs/superpowers/specs/2026-06-06-kpis-farmer-meu-dia-design.md; o "win-back" de lá
+ * nunca existiu, era a contagem de novos: docs/historico/positivacao-win-back-era-novos.md). A fila é
  * a ação do dia. Os cards antigos (tarefas, ligações da rota, agenda) repetem a
  * fila → recolhidos num "modo antigo" (1 clique). VISITAS foram removidas: não são
  * o trabalho da farmer (isso é o CloserDashboard). isHunter=false: hunter tem o

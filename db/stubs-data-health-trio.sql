@@ -376,6 +376,25 @@ CREATE TABLE IF NOT EXISTS public.product_costs (
   custo_producao_status text,
   custo_producao_computed_at timestamp with time zone
 );
+-- Lida pelo check vendas_empurradas_sem_gemeo (20261001011500). So as colunas que ele le, na forma
+-- medida em prod em 2026-09-30; os NOT NULL tambem sao de prod e a logica depende deles (a ancora
+-- de idade usa updated_at sem fallback). A ancora tambem depende do gatilho de prod
+-- update_sales_orders_updated_at (BEFORE UPDATE, medido em 2026-09-30) — fato de PROD, que harness
+-- nenhum prova; as provas semeiam updated_at explicito.
+CREATE TABLE IF NOT EXISTS public.sales_orders (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  account text NOT NULL,
+  omie_pedido_id bigint,
+  omie_numero_pedido text,
+  omie_payload jsonb,
+  hash_payload text,
+  status text NOT NULL,
+  total numeric NOT NULL,
+  order_date_kpi date,
+  deleted_at timestamp with time zone,
+  created_at timestamp with time zone NOT NULL,
+  updated_at timestamp with time zone NOT NULL
+);
 CREATE TABLE IF NOT EXISTS public.sku_estoque_atual (
   empresa text,
   sku_codigo_omie text,
