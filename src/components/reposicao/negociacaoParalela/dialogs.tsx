@@ -100,6 +100,19 @@ export function ConverterDialog({
           </DialogDescription>
         </DialogHeader>
         <div className="grid grid-cols-2 gap-4">
+          <div className="col-span-2 space-y-2">
+            <Label>Código Sayerlack</Label>
+            <Input
+              className="font-mono"
+              value={form.sku_codigo_fornecedor}
+              onChange={(e) => setForm((f) => ({ ...f, sku_codigo_fornecedor: e.target.value }))}
+              placeholder="Ex: FO5.6717.00GL"
+            />
+            <p className="text-xs text-muted-foreground">
+              Vem da descrição do SKU{target?.sku_descricao ? ` (${target.sku_descricao})` : ""}. Confira
+              antes de converter: é o código que identifica o item na campanha.
+            </p>
+          </div>
           <div className="space-y-2">
             <Label>Desconto percentual (%)</Label>
             <Input

@@ -162,10 +162,6 @@ export interface SitioConhecido {
 export const CONHECIDOS: readonly SitioConhecido[] = [
   { alvo: 'analytics_outbox_purgar()', trecho: 'r.ocorrido_em::date', n: 1, veredito: 'latente',
     motivo: 'o dia é só chave de agrupamento de analytics_outbox_perda, que não tem leitor; cron 04:20 UTC' },
-  { alvo: 'converter_sugestao_em_campanha_flat(bigint,numeric,numeric,text,date,text,text,text)', trecho: 'current_date', n: 2,
-    veredito: 'afetado',
-    motivo: 'RPC quebrada na prod por outro defeito (INSERT em promocao_item com 4 colunas que a tabela não tem → '
-      + '42703; 0 conversões em 325 sugestões) — o relógio entra no reparo dela' },
   { alvo: 'detectar_outliers_empresa(text)', trecho: 'current_date', n: 2, veredito: 'latente',
     motivo: 'só o cron detectar-outliers-diario, 07:30 UTC (04:30 BRT): o mesmo dia nos dois fusos' },
   { alvo: 'detectar_skus_sem_grupo(text)', trecho: 'current_date', n: 1, veredito: 'latente',

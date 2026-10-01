@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-10-01T12:40:50.274Z",
-  "sourceHead": "624a7c8966689a4d3078dfc73f40de9f1de6f687",
+  "medidoEm": "2026-10-01T12:58:51.507Z",
+  "sourceHead": "cb6c800cff4ae5a7c8c79b146473979ac98736d6",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -14,7 +14,7 @@
       "exit": 0,
       "resumo": "✅ o EXECUTE de prod bate com o contrato nas 59 função(ões) da allowlist. ⚠️ 1 delas têm o fecho FORA do repo (fechadaPor=null) e portanto NÃO são vigiadas pelo CI: public.aplicar_sql.",
       "denominador": "🔎 authz:funcoes:prod — 60 definição(ões) lida(s) para 59 chave(s) da allowlist.",
-      "contratoFingerprint": "dbd5285c2f0099d957c331de7fbd5b9c22c3c09005db28ceb79f007acd66525f",
+      "contratoFingerprint": "5dfdb5579ea3037a0c09318b8a2bc06796d9d0e188c92f461d901d13cccaffee",
       "auditorFingerprint": "8971003ee5ae2343ff6129fe9569b7afb3b5cfd5bab5abed86c6e27520c8358f",
       "achados": []
     },
@@ -56,25 +56,12 @@
     },
     "corpo": {
       "script": "deriva:corpo:prod",
-      "exit": 1,
-      "resumo": "deriva-corpo — 2 divergência(s) em prod (1 AUSENTE, 1 OVERLOAD_FORA_DO_REPO) — ver as linhas ❌",
-      "denominador": "🔎 deriva-corpo — 318 identidade(s) conferida(s) · 15 aposentada(s) · ref origin/main@624a7c896 (fetch ok) · prod 2026-10-01 12:41:18.160548Z",
+      "exit": 0,
+      "resumo": "✅ deriva-corpo — 317 identidade(s) batem com o repo (241 em dia, 70 só cosméticas, 5 aceitas na baseline) e 16 aposentada(s) estão ausentes",
+      "denominador": "🔎 deriva-corpo — 317 identidade(s) conferida(s) · 16 aposentada(s) · ref origin/main@14d672da2 (fetch ok) · prod 2026-10-01 12:59:17.58545Z",
       "contratoFingerprint": "eb9224da5a9aca94cd135996662d66f2d1994c8c558ac3227df452940da65d97",
       "auditorFingerprint": "69c1d81ade7136cfb5c6e68b6b81a8325842588d31d6a592f308395af573bd8c",
-      "achados": [
-        {
-          "id": "3819751d0ab4b3b6",
-          "linha": "❌ [AUSENTE] converter_sugestao_em_campanha_flat(bigint,numeric,numeric,text,date,text,text,text): viva no repo (último CREATE: 20260512101121_a96fa007-f688-4c3a-8cd9-43f9d88e5505.sql) e ausente em prod — migration não aplicada ou DROP manual",
-          "primeiraVez": "2026-10-01",
-          "ultimaVez": "2026-10-01"
-        },
-        {
-          "id": "91a39fe8d41332d8",
-          "linha": "❌ [OVERLOAD_FORA_DO_REPO] converter_sugestao_em_campanha_flat(bigint,numeric,numeric,text,date,text,text,text,text): overload vivo em prod que nenhuma migration declara (xmin 10987456)",
-          "primeiraVez": "2026-10-01",
-          "ultimaVez": "2026-10-01"
-        }
-      ]
+      "achados": []
     }
   }
 }

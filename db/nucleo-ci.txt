@@ -65,14 +65,14 @@ db/test-whatsapp-funil.sh                  12  falsificar=18
 # UPDATE só do master (calado para os outros), papel founder só do master. Corpo vivo + ACL de prod + a cadeia
 # das RPCs (0929000234) e das tabelas lidas; as policies sabotadas pelo texto VIVO de pg_policies. Morreu duas
 # vezes fora do núcleo (07-21 e 08-28) re-aplicando a migration de junho (docs/historico/provas-carteira-revividas.md).
-db/test-melhorias-rpcs.sh                  39  falsificar=55
+db/test-melhorias-rpcs.sh                  39  falsificar=57
 # Fornecedor fora da carteira: a régua A (sem venda real sai; exceção vence; cancelado/rascunho/pendente/
 # orçamento não são venda), a limpeza que o cron chama (re-classifica, desliga o eligible, apaga os scores só
 # dos excluídos), a reversão com o gate INTERNO do master (authenticated tem EXECUTE em prod) e a porta dos
 # fundos fechada (o employee não escreve a exceção direto), o ACL de prod (classificar/aplicar só do
 # service_role) e o trigger que deriva is_fornecedor sem decidir a exclusão. Morreu no seed em 06-25: o gatilho
 # da carteira CRIA o score de farmer e o seed o reinseria (docs/historico/provas-carteira-revividas.md).
-db/test-fornecedores-classificacao.sh      26  falsificar=53
+db/test-fornecedores-classificacao.sh      26  falsificar=55
 
 # ── Eixo 2 — FINITUDE MONETÁRIA ───────────────────────────────────────────────────
 # `ausente ≠ zero`: preço que o Omie não mandou não vira R$ 0,00; custo sem cmc
@@ -366,6 +366,15 @@ db/test-hoje-sp-data-ciclo.sh               57  falsificar=fora-do-ci  # o job p
 # (15 asserts, 8 sabotagens, matriz UTC/SP × C/pt_BR verde; roda local). O job provas-sql está no TETO: em 01/10
 # 02:20–05:00, 16 de 25 runs de PR foram canceladas a 20,2 min (as verdes: 16,9–19,9) — +20 s aqui faria
 # todo PR esbarrar mais. Entra quando o runner for paralelizado (o comentário do ci.yml), não subindo o teto.
+
+# converter_sugestao_em_campanha_flat (#2668): P0 EXECUTA o predecessor de prod e exige o 42703 (o
+# defeito: INSERT em 4 colunas que promocao_item não tem); X — a deriva aborta a PRE, a função nasce
+# com a porta PORTA_GATE (sem e com o default ACL do Supabase), re-aplicar passa; O1/A1 a assinatura
+# antiga saiu e a porta; P1-P3 campanha/item/sugestão; N1-N7+NZ os portões sem gravar; B — D =
+# 28/02/2025, 4 instantes cruzando 21:00 BRT sob sessão UTC e SP, convertendo com data fim = hoje; W
+# como authenticated no relógio real. Autocontida: initdb + stubs + a fixture
+# db/fixtures/converter-campanha-flat-predecessora-prod-20261001.sql + o gatilho de campanha vivo + a migration.
+db/test-converter-campanha-flat.sh          25  falsificar=19
 
 # ── Eixo 9 — UNIVERSO DE PEDIDOS (o que conta como VENDA) ──────────────────────────────────
 # A autoridade: status NOT IN ('cancelado','rascunho','pendente','orcamento') + deleted_at IS NULL

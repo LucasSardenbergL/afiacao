@@ -5,6 +5,7 @@ import {
   categoriaBadgeClass,
   statusLabel,
   lastDayOfNextMonth,
+  extrairCodigoSayerlack,
 } from "../helpers";
 
 describe("toggleSet", () => {
@@ -49,5 +50,29 @@ describe("lastDayOfNextMonth", () => {
   it("retorna data ISO (YYYY-MM-DD) do último dia do mês seguinte", () => {
     const s = lastDayOfNextMonth();
     expect(s).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+});
+
+describe("extrairCodigoSayerlack", () => {
+  // Descrições reais de SKUs Sayerlack no Omie (fila da negociação paralela, 01/10/2026).
+  it("pega o código do fim da descrição", () => {
+    expect(extrairCodigoSayerlack("VERNIZ PU FOSCO FO5.6717.00GL")).toBe("FO5.6717.00GL");
+    expect(extrairCodigoSayerlack("THINNER DR.4403L5")).toBe("DR.4403L5");
+    expect(extrairCodigoSayerlack("BASE ACAB TRANSP BRIL 20 WFOT.6501GL")).toBe("WFOT.6501GL");
+  });
+
+  it("não confunde volume com código: o código começa por letra", () => {
+    expect(extrairCodigoSayerlack("SELADORA 0.9L")).toBe("");
+    expect(extrairCodigoSayerlack("TINGIDOR CHERRY TEH 3505.103FG")).toBe("");
+  });
+
+  it("sem código reconhecível devolve vazio, e quem converte digita", () => {
+    expect(extrairCodigoSayerlack("CARTELA DE CORES METALIZADAS CARTMETAL")).toBe("");
+    expect(extrairCodigoSayerlack(null)).toBe("");
+    expect(extrairCodigoSayerlack("   ")).toBe("");
+  });
+
+  it("com dois candidatos, fica com o último", () => {
+    expect(extrairCodigoSayerlack("KIT FO.1000GL + CAT FC.6902QT")).toBe("FC.6902QT");
   });
 });
