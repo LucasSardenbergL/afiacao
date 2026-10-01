@@ -80,6 +80,15 @@ O arquivo `db/aplicar-executor-serializa.sql` é aplicado pelo próprio `db:apli
 
 O mesmo corpo vai no bootstrap: E3 exige o mesmo md5 pelos dois caminhos, e o `BOOTSTRAP_OK` passou a conferir a fila. O `--ensaio` em prod deu exit 0 duas vezes, a 2ª já com a sonda completa; por fora (psql-ro), md5 continuou `ac51b3c…`, com 0 linhas no ledger e 0 locks.
 
+**Aplicado em 2026-10-01 às 11:16:42 UTC (08:16 BRT), tentativa #222**, depois do merge do #2702 (`e2ba159af`), a partir de um checkout limpo com os bytes da `main` (sha `717af739…`):
+
+- **Pré-voo (psql-ro):** corpo `ac51b3c…` (o que a PRE aceita), SECDEF, `search_path` fixo, EXECUTE só para `claude_rw` entre os papéis do app (`anon` e `public` sem), 0 locks da fila, 0 `aplicar_sql` ativo, isolamento padrão READ COMMITTED.
+- **Ensaio de novo, logo antes:** exit 0 (rodou inteiro, ROLLBACK).
+- **Apply:** exit 0, "tentativa #222 virou recibo, na mesma transação".
+- **2ª testemunha (psql-ro, outra conexão):** md5 `38699b…` com a fila no corpo, SECDEF e `search_path` iguais, `claude_rw` executa e `anon`/`public` não, recibo #222 `aplicada` com o sha do arquivo, 0 linhas da sonda no ledger, 0 locks da fila.
+
+Desde então todo `db:aplicar` entra na fila.
+
 ## Revisão adversarial interina (subagente; o Codex estava sem cota)
 
 Não houve P0. A revisão **concedeu**:
@@ -119,6 +128,7 @@ Não houve P0. A revisão **concedeu**:
   - O `--falsificar` foi declarado **`fora-do-ci`**, com o motivo na própria linha. O runner o imprime a cada execução como "ausência de dado, não aprovação".
   - Quem mexer na prova roda a falsificação no laptop (recibo de hoje: 8 vermelhas / 0 falhas, 189 s).
   - É a 1ª exceção `fora-do-ci` do manifesto, e o sinal de que o runner precisa paralelizar.
+- **De volta ao CI em 2026-10-01**, por decisão do founder: o runner foi paralelizado em 3 partes (#2713), e o teto voltou a 20 com as partes medidas (#2721; ver [provas-sql-em-partes.md](provas-sql-em-partes.md)). A linha do manifesto voltou a `falsificar=8`; a prova cai na parte 3, e a duração dela fica medida no CI do PR da volta.
 
 ## Defeitos do próprio harness (lições para quem escreve prova de duas sessões)
 
@@ -142,3 +152,5 @@ Não houve P0. A revisão **concedeu**:
 ## Fora do escopo, registrado
 
 `service_role` **e** `sandbox_exec_fzvklzpomgnyikkfkzai` têm `EXECUTE` em `aplicar_sql`. O `sandbox_exec` é o papel do builder do Lovable, que recebeu um GRANT em massa em 14/08 e tem LOGIN, BYPASSRLS e `INSERT` no ledger; o `service_role` também insere no ledger, com BYPASSRLS. Os dois podem gravar uma tentativa e chamar a porta, ou seja, executar SQL arbitrário como `postgres`. O problema é anterior a esta entrega: o bootstrap revogou PUBLIC, anon e authenticated, e o `CREATE OR REPLACE` preserva a ACL. Fechar é uma decisão de autorização do founder, e precisa ser fechado nas DUAS pontas: a porta e o `INSERT` no ledger.
+
+**Decidido em 2026-10-01:** o founder escolheu fechar as duas pontas para `service_role` e `sandbox_exec`. Medido nesse dia: a ACL da porta tem os GRANTs DIRETOS (`service_role=X`, `sandbox_exec_fzvklzpomgnyikkfkzai=X`, além de `claude_rw=X` e do dono), e nenhum código do app ou edge chama a função (só o `types.ts` gerado a lista). O fechamento vai num PR próprio, com prova PG17, apply pelo `db:aplicar` e validação por fora.
