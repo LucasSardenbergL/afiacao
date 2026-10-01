@@ -9,7 +9,7 @@ de prod pela lib da fatia 2a, `db/lib/corpo-vivo.sh` (snapshot + ACL medido em p
 | prova | como morria | agora |
 |---|---|---|
 | `test-melhorias-rpcs.sh` | em 07-21, no 1º assert (o corpo de junho chamava `carteira_visivel_para`, que o fu7 moveu para `private`); desde `39ec9e31e` (08-28), já no seed: o CHECK `farmer_association_rules_cluster_segment_check` | **núcleo**: 39 asserts, 55 sabotagens |
-| `test-fornecedores-classificacao.sh` | em 06-25 (`1c05aa8e3`), no seed: `23505 farmer_client_scores_customer_unique` | **núcleo**: 26 asserts, 50 sabotagens |
+| `test-fornecedores-classificacao.sh` | em 06-25 (`1c05aa8e3`), no seed: `23505 farmer_client_scores_customer_unique` | **núcleo**: 26 asserts, 53 sabotagens |
 
 ## O alvo, medido
 
@@ -114,7 +114,7 @@ molde, com o controle verde na MESMA invocação.
 | prova | modo normal | `--falsificar` em `LC_ALL=C` | em `pt_BR.UTF-8` |
 |---|---|---|---|
 | melhorias | `PASS=39  FAIL=0` | `SABOTAGENS: 55 vermelhas / 0 falhas` | 55/0 |
-| fornecedores | `PASS=26  FAIL=0` | `SABOTAGENS: 50 vermelhas / 0 falhas` | 50/0 |
+| fornecedores | `PASS=26  FAIL=0` | `SABOTAGENS: 53 vermelhas / 0 falhas` | 53/0 |
 
 O juiz pegou, ao vivo, uma declaração MINHA errada. A `janela_aberta` declarava o D3 verde, mas o D3
 media também o valor do cliente da carteira, e o pedido fora da janela vaza nele. Agora o D3 mede QUEM a
@@ -183,6 +183,18 @@ E mais, sem defeito no veredito:
   `profiles` que "nenhuma prova aciona" — a de Melhorias o dispara, sem efeito) e o cabeçalho de
   fornecedores, que delegava o guard a uma prova sem dizer que ela está FORA do núcleo.
 
+**A 2ª passada**, só leitura, sobre os consertos, achou mais um dente que faltava, e ele é o de maior
+impacto: **o reverter religava o `eligible` com `WHERE customer_user_id = p_user_id`, e nada provava esse
+WHERE.** Sem ele, cada reversão reescreve a carteira INTEIRA com o valor que serve ao alvo. Em prod, um
+clique do master viraria as 7.301 atribuições, inclusive as 2.127 inelegíveis. Tudo ficava verde, porque
+cada assert só olhava o alvo. Agora o V2 lê também o c4 (intacto) e o V3 lê o total das filas, que só
+pode ter o alvo; o V0 mede as filas inteiras vazias antes. Entraram 3 sabotagens: o eligible da carteira
+inteira, a flag da carteira inteira e a fila da carteira inteira. Também entraram na cadeia os 2 gatilhos
+de coerência que o seed dispara (`pedido_venda_coerencia_cab`/`_lin`, 0 migration a mais). O helper deles,
+`pedido_venda_exigir_coerencia`, NÃO entrou, ao contrário do que a revisão estimou: a única DDL posterior
+nele é um `GRANT` dentro da `20260914180104`, e guardá-lo puxaria a migration inteira (medido por
+`cv_cadeia`).
+
 Conferido por ele e certo: o md5 e o ACL de 21 funções (as 13 do doc mais os gatilhos e helpers que o seed
 e a limpeza disparam), as policies, colunas e índices das 16 tabelas, as 2 cadeias, o ACL de prod com a
 camada nomeada, o cron (`classificar-fornecedores-nightly` chama só a aplicar), as irmãs no núcleo, o
@@ -208,3 +220,5 @@ relógio (datas do dia de SP, longe de borda), o `ON_ERROR_STOP` do `q_como`, o 
   dela" sem cliente de outra carteira nem cliente inelegível não tem dente sobre o filtro que diz provar.
 - **A revisão adversarial achou 6 vácuos que o juiz não podia achar.** O juiz mede a declaração. Ele não vê
   o dente que ninguém declarou, e foi isso que a revisão encontrou.
+- **Assert que só olha o alvo não vê a escrita que vaza para os vizinhos.** O WHERE de uma escrita
+  pontual (o reverter, as filas) só tem dente se outro registro for lido depois e estiver intacto.
