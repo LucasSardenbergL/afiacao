@@ -360,8 +360,10 @@ async function computePendenteViaPedidosCompra(
 
   // A janela parte do dia de SP (o servidor é UTC: das 21h BRT em diante `new Date()` já é amanhã).
   const hoje = hojeSP();
-  const dataDe = paraDataOmie(somarDias(hoje, -PEDIDOS_JANELA_PASSADO_DIAS));
-  const dataAte = paraDataOmie(somarDias(hoje, PEDIDOS_JANELA_FUTURO_DIAS)); // [fix] cobre previsões de entrega FUTURAS (era ddmmyyyyPed(hoje) → cortava tudo a caminho)
+  const inicioJanela = somarDias(hoje, -PEDIDOS_JANELA_PASSADO_DIAS);
+  const fimJanela = somarDias(hoje, PEDIDOS_JANELA_FUTURO_DIAS);
+  const dataDe = paraDataOmie(inicioJanela);
+  const dataAte = paraDataOmie(fimJanela); // [fix] cobre previsões de entrega FUTURAS (era ddmmyyyyPed(hoje) → cortava tudo a caminho)
 
   const items: PoItemOmie[] = [];
   const etapasInesperadas = new Set<string>();

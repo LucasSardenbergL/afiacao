@@ -69,7 +69,7 @@ Migration `20261001023000_hoje_sp_familia_data_ciclo.sql` — o texto VIVO da pr
 | DEFAULT de `p_data_ciclo` nas 4 RPCs de ciclo | 4 | afetado — o de `ciclo_oportunidade_do_dia` é exercido (cron e botão sem data); os outros 3, não |
 | corte de `gerar_pedidos_oportunidade_ciclo` / `gerar_pedidos_sugeridos_ciclo` | 2 | afetado (exibição) — `(data + hora) AT TIME ZONE 'America/Sao_Paulo'` |
 | `atualizar_parametros_numericos_skus` / `reposicao_pos_candidatos` | 1 / 1 | afetado — a janela do em trânsito, a idade do PO |
-| `_data_health_compute` | 2 | afetado — a frescura da sugestão de compra; **fica com a #2698** (sensor de venda empurrada), que recria a função e escrevia ali o UTC explícito sob a premissa "UTC contra UTC". Coordenado com a sessão dela em 2026-10-01 (mensagem com a medição): 2 migrations recriando a mesma função quente fariam a PRÉ de uma derrubar a outra |
+| `_data_health_compute` | 2 | afetado — a frescura da sugestão de compra; **fica com a #2698** (sensor de venda empurrada), que recria a função e escrevia ali o UTC explícito sob a premissa "UTC contra UTC". Coordenado com a sessão dela em 2026-10-01 (mensagem com a medição): 2 migrations recriando a mesma função quente fariam a PRÉ de uma derrubar a outra. Ela reconferiu (645 de 646 execuções do motor no dia de SP) e adotou o dia de SP nos 2 sítios |
 | DEFAULT de `pedido_compra_sugerido.data_ciclo` | 1 | latente (nunca exercido) — vai junto para não sobrar o dia da sessão na família |
 
 O TypeScript da família, no mesmo PR: `gerar-pedidos-diario` (`dataCiclo = hojeSP()`), `omie-sync-estoque`
@@ -99,7 +99,7 @@ PG17 com o schema-snapshot e a fixture `db/fixtures/hoje-sp-data-ciclo-prod-2026
 05/09: a fixture traz a **deriva de colunas** (14 colunas de `pcs`/`pci` criadas depois — sem elas o motor só
 falha EXECUTANDO, `fator_embalagem_portal does not exist`), as 18 views do fecho de dependências no texto
 vivo (6 delas são as da fase 2) e as predecessoras. Relógio controlado (`test.agora`, tripwire Z9T01); os
-CORPOS das 7 funções com `public` antes de `pg_catalog` (resolvem nomes ao executar — sem isto o now() deles
+CORPOS das 6 funções com `public` antes de `pg_catalog` (resolvem nomes ao executar — sem isto o now() deles
 seria o de parede) e duas guardas de sombra: o que views e DEFAULTs amarraram (pg_depend) e o catálogo
 inteiro (só o now() de `public` tem a assinatura de um embutido; o `public.set_config` do snapshot sai).
 
