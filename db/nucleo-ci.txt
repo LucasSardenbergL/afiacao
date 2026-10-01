@@ -305,7 +305,7 @@ db/test-expandir-promocao-item.sh          41  falsificar=18
 # removida. Autocontida: initdb + stubs + schema-snapshot + a fixture
 # db/fixtures/hoje-sp-views-defaults-predecessoras-prod-20260930.sql (o snapshot perdeu as barras dos
 # literais de regex — as predecessoras vêm da fixture) + a migration.
-db/test-hoje-sp-views-defaults.sh          129  falsificar=33
+db/test-hoje-sp-views-defaults.sh          129  falsificar=fora-do-ci  # TETO do provas-sql: o --falsificar (33 sabotagens) custava 274 s de 1.040 numa run verde (26%, o maior do job; 2026-10-01) e 16 de 25 runs de PR foram canceladas a 20,2 min em 01/10 02:20–05:00 — a prova crua (129 asserts, 8 s) segue aqui; o --falsificar roda local (verde nos 2 locales no PR da fase 2)
 
 # Eixo 7 (fuso), fase 3 da classe (ii) — a família data_ciclo (20261001023000_hoje_sp_familia_data_ciclo.sql):
 # as 2 views "_hoje", o DEFAULT de p_data_ciclo das 4 RPCs de ciclo, o corte em HORA DE SP e 2 leitores de
