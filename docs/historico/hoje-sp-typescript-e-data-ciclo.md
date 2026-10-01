@@ -276,6 +276,15 @@ sem TZ + `pt_BR.UTF-8`):
 - PRÉ removida;
 - PÓS removida.
 
+A migration desta fase é a **11ª a partir do `CORTE` do relógio-nu** (`20260927195430`) e detonou um teste do gate
+no ensaio da PR já rebaseada (1 de 10.057). O `10 migrations não são o repo`, em
+`scripts/relogio-nu-da-sessao-gate.test.ts`, montava a amostra com `velhas.slice(0, 10 - novas.length)`, e na 11ª o
+fim fica **negativo**. O slice devolvia o repo quase inteiro, a amostra passava no piso e o veredito saía 0, não 2.
+Consertei na própria PR: as do corte vão na frente, completadas com velhas e cortadas em 10, e a contagem passou a
+ser afirmada. A falsificação teve controle 31/31; o piso 700→5 e a fórmula velha ficaram vermelhos só no alvo.
+Lição: uma amostra de tamanho RELATIVO ao universo explode quando o universo cresce. Use `slice(0, n)` sobre a
+união, nunca `n - parte.length`.
+
 **Deploy:**
 - **Migration:** FEITO (eu). `db:aplicar --ensaio` e depois o apply às **01:49 BRT de 01/10**: a tentativa
   #212 virou recibo (sha256 `f25a4b97…`). 2ª testemunha (psql-ro): o DEFAULT em SP, o trigger com o md5 de
