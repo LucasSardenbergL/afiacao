@@ -194,8 +194,10 @@ db/test-tint-promote-dedup-itens.sh        11
 # Esta prova entra no núcleo justamente porque o motivo dela existir foi um SENSOR AUSENTE — e
 # 5 dos 8 harnesses de data-health apodreceram em silêncio por ficarem FORA do caminho do merge
 # (o CI é vitest; ninguém os roda). Autocontida: initdb + db/stubs-data-health-trio.sql + a
-# migration do repo. Sem psql-ro, sem deno, sem dado de fora.
-db/test-data-health-sync-reprocess.sh      31  falsificar=13
+# CADEIA VIVA do trio (db/lib/data-health-vivo.sh, estreitada às 3 funções que ela executa — até
+# 2026-09-30 era uma lista fixa que parou na 0920b e mediu um compute que prod não roda mais).
+# Sem psql-ro, sem deno, sem dado de fora.
+db/test-data-health-sync-reprocess.sh      32  falsificar=15
 # A venda que o app empurra ao Omie e cujo gêmeo o importador nunca traz fica fora da positivação ao
 # vivo E do mês congelado — e ninguém fica sabendo (incidente 4c19af2a, 1 em 26). O check
 # vendas_empurradas_sem_gemeo (20261001011500) é provado pela SAÍDA do compute real: universo, gêmeo,
