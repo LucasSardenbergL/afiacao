@@ -62,7 +62,7 @@ export const PISOS = {
    * cegar (regex quebrada, stripper comendo o código), as violações zeram junto — e só este piso diz
    * que o zero não foi mérito. Por raiz porque `db/` é onde mora a classe (as provas PG17).
    */
-  comXEmDb: 350, // medido: 416
+  comXEmDb: 350, // medido: 419
 } as const;
 
 /**
