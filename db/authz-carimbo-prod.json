@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-10-01T09:26:33.422Z",
-  "sourceHead": "7c6344f49d2ee3be884e0a9011a1d4cd91b9e3a2",
+  "medidoEm": "2026-10-01T12:40:50.274Z",
+  "sourceHead": "624a7c8966689a4d3078dfc73f40de9f1de6f687",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -56,12 +56,25 @@
     },
     "corpo": {
       "script": "deriva:corpo:prod",
-      "exit": 0,
-      "resumo": "✅ deriva-corpo — 317 identidade(s) batem com o repo (240 em dia, 71 só cosméticas, 5 aceitas na baseline) e 15 aposentada(s) estão ausentes",
-      "denominador": "🔎 deriva-corpo — 317 identidade(s) conferida(s) · 15 aposentada(s) · ref origin/main@a7ed65c69 (fetch ok) · prod 2026-10-01 09:27:00.06253Z",
-      "contratoFingerprint": "32a2595ef0ef81acdabb5e41facdb8aac4468ad4c499f11a0e841721d94af68b",
-      "auditorFingerprint": "a07989df9ed0fa552abd2963788287214d21003755b18ed15a9ea88f97c9d3aa",
-      "achados": []
+      "exit": 1,
+      "resumo": "deriva-corpo — 2 divergência(s) em prod (1 AUSENTE, 1 OVERLOAD_FORA_DO_REPO) — ver as linhas ❌",
+      "denominador": "🔎 deriva-corpo — 318 identidade(s) conferida(s) · 15 aposentada(s) · ref origin/main@624a7c896 (fetch ok) · prod 2026-10-01 12:41:18.160548Z",
+      "contratoFingerprint": "eb9224da5a9aca94cd135996662d66f2d1994c8c558ac3227df452940da65d97",
+      "auditorFingerprint": "69c1d81ade7136cfb5c6e68b6b81a8325842588d31d6a592f308395af573bd8c",
+      "achados": [
+        {
+          "id": "3819751d0ab4b3b6",
+          "linha": "❌ [AUSENTE] converter_sugestao_em_campanha_flat(bigint,numeric,numeric,text,date,text,text,text): viva no repo (último CREATE: 20260512101121_a96fa007-f688-4c3a-8cd9-43f9d88e5505.sql) e ausente em prod — migration não aplicada ou DROP manual",
+          "primeiraVez": "2026-10-01",
+          "ultimaVez": "2026-10-01"
+        },
+        {
+          "id": "91a39fe8d41332d8",
+          "linha": "❌ [OVERLOAD_FORA_DO_REPO] converter_sugestao_em_campanha_flat(bigint,numeric,numeric,text,date,text,text,text,text): overload vivo em prod que nenhuma migration declara (xmin 10987456)",
+          "primeiraVez": "2026-10-01",
+          "ultimaVez": "2026-10-01"
+        }
+      ]
     }
   }
 }
