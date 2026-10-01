@@ -6,7 +6,10 @@ import {
   fmt,
   fmtBRL,
   isDescontinuado,
+  isReposicaoDesligada,
   reativarPayload,
+  descontinuarPayload,
+  statusFiltroDaUrl,
 } from '../sku-param';
 
 describe('fonteBadgeVariant', () => {
@@ -138,6 +141,51 @@ describe('isDescontinuado', () => {
     expect(isDescontinuado({ tipo_reposicao: null })).toBe(false);
     expect(isDescontinuado({})).toBe(false);
     expect(isDescontinuado({ tipo_reposicao: 'produto_acabado' })).toBe(false);
+  });
+});
+
+describe('isReposicaoDesligada', () => {
+  it('automatica com o flag false → true (o motor só lê SKU com o flag TRUE)', () => {
+    expect(isReposicaoDesligada({ tipo_reposicao: 'automatica', habilitado_reposicao_automatica: false })).toBe(true);
+  });
+  it('tipo NULL conta como automatica e flag NULL conta como desligado (o motor exige TRUE)', () => {
+    expect(isReposicaoDesligada({ tipo_reposicao: null, habilitado_reposicao_automatica: null })).toBe(true);
+  });
+  it('flag TRUE → false', () => {
+    expect(isReposicaoDesligada({ tipo_reposicao: 'automatica', habilitado_reposicao_automatica: true })).toBe(false);
+  });
+  it('flag AUSENTE não afirma nada: linha que não trouxe a coluna → false', () => {
+    expect(isReposicaoDesligada({ tipo_reposicao: 'automatica' })).toBe(false);
+    expect(isReposicaoDesligada({})).toBe(false);
+  });
+  it('estado decidido por humano tem tela própria → false', () => {
+    for (const tipo of ['descontinuado', 'sob_encomenda', 'produto_acabado']) {
+      expect(isReposicaoDesligada({ tipo_reposicao: tipo, habilitado_reposicao_automatica: false })).toBe(false);
+    }
+  });
+});
+
+describe('statusFiltroDaUrl', () => {
+  it('aceita os filtros que a tela conhece', () => {
+    expect(statusFiltroDaUrl('fora_do_motor')).toBe('fora_do_motor');
+    expect(statusFiltroDaUrl('descontinuados')).toBe('descontinuados');
+    expect(statusFiltroDaUrl('primeira_compra')).toBe('primeira_compra');
+    expect(statusFiltroDaUrl('todos')).toBe('todos');
+  });
+  it('valor desconhecido, vazio ou ausente cai em "todos" (link velho não vira filtro inexistente)', () => {
+    expect(statusFiltroDaUrl('xyz')).toBe('todos');
+    expect(statusFiltroDaUrl('')).toBe('todos');
+    expect(statusFiltroDaUrl(null)).toBe('todos');
+    expect(statusFiltroDaUrl(undefined)).toBe('todos');
+  });
+});
+
+describe('descontinuarPayload', () => {
+  it('desliga o flag E marca descontinuado: sai do "fora do motor" e vai para Descontinuados', () => {
+    expect(descontinuarPayload()).toEqual({
+      habilitado_reposicao_automatica: false,
+      tipo_reposicao: 'descontinuado',
+    });
   });
 });
 

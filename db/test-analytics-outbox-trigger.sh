@@ -45,7 +45,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }
 
 P -q -f "$REPO_ROOT/db/stubs-supabase.sql"
@@ -270,11 +270,20 @@ echo "── FALSIFICAÇÃO (baseline: $PASS verdes, $FAIL vermelhos) ──"
 FALSIF_OK=0; FALSIF_BAD=0
 # shellcheck disable=SC2016  # literal de proposito (padrao de sed / leitura diferida)
 so_compute() { sed -n '/^CREATE OR REPLACE FUNCTION public._data_health_compute/,/^\$function\$;$/p'; }
-sabota() { # $1=nome  $2=sql_sabotado  $3=leitura  $4=valor_real_que_NAO_pode_mais_vir
+# Vermelho = a leitura sob sabotagem é o valor que a sabotagem DECLARA ($5) — não só "≠ real".
+# O "≠ real" sozinho aceitava QUALQUER desvio: a medição VAZIA (a linha da fonte sumiu do compute,
+# 0 rows, exit 0) contava como dente. E o ERRO no meio de uma leitura composta (sem errexit no
+# subshell) seguia adiante: a leitura roda com `set -e` e o rc é capturado fora de lista ||/&&
+# (onde o bash 5 ignora o errexit do subshell). Erro de execução não é dente.
+# O vermelho tem de ser do SEU assert: docs/historico/falsificacao-exit-nao-e-dente.md.
+sabota() { # $1=nome  $2=sql_sabotado  $3=leitura  $4=valor_real_que_NAO_pode_mais_vir  $5=valor_que_a_sabotagem_DECLARA
   P -q -c "$2" >/dev/null 2>&1 || { echo "  ⚠️  $1 — o SQL sabotado nem aplicou"; FALSIF_BAD=$((FALSIF_BAD+1)); return; }
-  local got; got="$(eval "$3")"
-  if [ "$got" != "$4" ]; then FALSIF_OK=$((FALSIF_OK+1)); echo "  🔴 $1 — VERMELHO como esperado (veio [$got], real e' [$4])"
-  else FALSIF_BAD=$((FALSIF_BAD+1)); echo "  ⚠️  $1 — SEGUIU VERDE com a sabotagem: nao tem dente"; fi
+  local got rc
+  set +e; got="$(set -e; eval "$3")"; rc=$?; set -e
+  if [ "$rc" -ne 0 ]; then FALSIF_BAD=$((FALSIF_BAD+1)); echo "  ⚠️  $1 — a LEITURA ERROU (rc=$rc): erro de execucao nao e' dente"
+  elif [ "$got" = "$4" ]; then FALSIF_BAD=$((FALSIF_BAD+1)); echo "  ⚠️  $1 — SEGUIU VERDE com a sabotagem: nao tem dente"
+  elif [ "$got" = "$5" ]; then FALSIF_OK=$((FALSIF_OK+1)); echo "  🔴 $1 — VERMELHO como esperado (veio [$got], real e' [$4])"
+  else FALSIF_BAD=$((FALSIF_BAD+1)); echo "  ⚠️  $1 — vermelha, mas NAO no valor que a sabotagem declara: esperado [$5], veio [$got] (real [$4])"; fi
   P -q -f "$MIG" >/dev/null
 }
 
@@ -286,14 +295,14 @@ P -q -c "DELETE FROM public.analytics_outbox WHERE chave_dedup='pcs:9101:reposic
          VALUES ('reposicao.sugestao_aprovada','sistema:reposicao','{}'::jsonb,'pcs:9999:reposicao.sugestao_aprovada', now());" >/dev/null
 sabota "G1 reconciliacao por CONTAGEM (a view) em vez de linha a linha" \
   "$(perl -0pe "s/ON o\.chave_dedup = 'pcs:' \|\| p\.id::text \|\| ':reposicao\.sugestao_aprovada'/ON o.evento = 'reposicao.sugestao_aprovada'/s" "$MIG" | so_compute)" \
-  'sensor status' "broken"
+  'sensor status' "broken" "ok"
 
 # G2 — janela esticada para 7 dias: a purga de linha ACEITA passa a fabricar orfao.
 limpar; aprovar 9102 60
 P -q -c "DELETE FROM public.analytics_outbox WHERE chave_dedup='pcs:9102:reposicao.sugestao_aprovada';" >/dev/null
 sabota "G2 janela de 7d (a purga fabrica deficit falso)" \
   "$(perl -0pe "s/WHERE p\.aprovado_em > now\(\) - interval '48 hours'/WHERE p.aprovado_em > now() - interval '7 days'/s" "$MIG" | so_compute)" \
-  'sensor status' "ok"
+  'sensor status' "ok" "broken"
 
 # G3 — piso ancorado em min(ocorrido_em) da outbox: o piso ANDA com a purga e, quando
 # ultrapassa a janela, o check fica verde por construcao. Fail-open disfarcado.
@@ -303,16 +312,18 @@ P -q -c "DELETE FROM public.analytics_outbox WHERE chave_dedup='pcs:9103:reposic
          VALUES ('reposicao.sugestao_criada','sistema:reposicao','{}'::jsonb,'piso', now());" >/dev/null
 sabota "G3 piso movel em min(ocorrido_em) (a purga cega o check)" \
   "$(perl -0pe "s/WHERE p\.aprovado_em > now\(\) - interval '48 hours'/WHERE p.aprovado_em > greatest(now() - interval '48 hours', (SELECT min(ocorrido_em) FROM public.analytics_outbox))/s" "$MIG" | so_compute)" \
-  'sensor status' "broken"
+  'sensor status' "broken" "ok"
 
 # G4 — mensagem volatil: o fingerprint nunca se repete e o watchdog nunca escala.
+# A leitura leva o comprimento dos dois md5: "volatil" sozinho é binário, e a 2ª leitura VAZIA
+# (a fonte sumiu com mais órfãos) também diria "volatil" — com o prefixo, sai 32:0 e reprova.
 limpar; aprovar 9104 1; aprovar 9105 1
 P -q -c "DELETE FROM public.analytics_outbox WHERE evento='reposicao.sugestao_aprovada';" >/dev/null
 # shellcheck disable=SC2016  # literal de proposito (leitura diferida, avaliada em sabota())
 sabota "G4 message com a contagem (fingerprint nunca confirma)" \
   "$(perl -0pe "s/THEN 'Trigger da outbox PERDEU evento: aprovacao de compra sem linha na fila'/THEN 'Trigger perdeu ' || tg.orfaos || ' evento\(s\)'/s" "$MIG" | so_compute)" \
-  'FPA="$(sensor_fp)"; aprovar 9106 1; P -q -c "DELETE FROM public.analytics_outbox WHERE evento='"'"'reposicao.sugestao_aprovada'"'"';" >/dev/null; FPB="$(sensor_fp)"; [ "$FPA" = "$FPB" ] && echo estavel || echo volatil' \
-  "estavel"
+  'FPA="$(sensor_fp)"; aprovar 9106 1; P -q -c "DELETE FROM public.analytics_outbox WHERE evento='"'"'reposicao.sugestao_aprovada'"'"';" >/dev/null; FPB="$(sensor_fp)"; if [ "$FPA" = "$FPB" ]; then v=estavel; else v=volatil; fi; echo "${#FPA}:${#FPB}:$v"' \
+  "32:32:estavel" "32:32:volatil"
 
 echo
 echo "═══════════════════════════════════════════"

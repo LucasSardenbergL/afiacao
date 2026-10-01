@@ -20,6 +20,7 @@ export PGVER=17   # consumido pelo db/lib/pg-harness.sh via source
 . "$REPO_ROOT/db/lib/pg-harness.sh"   # exporta PGBIN — fail-CLOSED, confere a major POSITIVAMENTE
 PORT="${PGPORT_TEST:-5435}"
 DATA="$(mktemp -d /tmp/pgtest-tintpromote.XXXXXX)/data"
+RODADA="$(dirname "$DATA")"   # dir ÚNICO desta rodada (o trap apaga): temporário mora aqui, nunca em /tmp/<nome-fixo>
 export LC_ALL=C LANG=C
 
 cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$(dirname "$DATA")"; rm -f "${RR:-}"; }
@@ -28,7 +29,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l /tmp/pg-tintpromote.log -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres tintpromote_verify
-P() { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d tintpromote_verify "$@"; }
+P() { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d tintpromote_verify "$@"; }
 # Recibo para o db/roda-nucleo-ci.sh. A prova é FAIL-FAST (asserção em SQL = RAISE sob ON_ERROR_STOP;
 # em bash = exit 1), então FAIL é 0 por construção e o que se conta são os checkpoints ✓ ALCANÇADOS:
 # truncar a prova — ou um `exit 0` no meio — derruba a contagem abaixo do mínimo do manifesto.
@@ -105,7 +106,7 @@ DO $$
 DECLARE n int; q900 numeric; q3600_ax numeric; q3600_vm numeric; v3600 numeric;
 BEGIN
   SELECT count(*) INTO n FROM tint_formulas WHERE account='oben' AND cor_id='COR1';
-  IF n <> 2 THEN RAISE EXCEPTION 'C1.1 FALHOU: esperado 2 fórmulas (900+3600), achei %', n; END IF;
+  IF n IS DISTINCT FROM 2 THEN RAISE EXCEPTION 'C1.1 FALHOU: esperado 2 fórmulas (900+3600), achei %', n; END IF;
 
   -- item AX na embalagem 900 = 12.5 (fator 1)
   SELECT fi.qtd_ml INTO q900 FROM tint_formula_itens fi
@@ -113,7 +114,7 @@ BEGIN
     JOIN tint_embalagens e ON e.id=f.embalagem_id
     JOIN tint_corantes c ON c.id=fi.corante_id
     WHERE f.cor_id='COR1' AND e.id_embalagem_sayersystem='E900' AND c.id_corante_sayersystem='AX';
-  IF q900 <> 12.5 THEN RAISE EXCEPTION 'C1.2 FALHOU: AX@900 = % (esperado 12.5)', q900; END IF;
+  IF q900 IS DISTINCT FROM 12.5 THEN RAISE EXCEPTION 'C1.2 FALHOU: AX@900 = % (esperado 12.5)', q900; END IF;
 
   -- item AX na embalagem 3600 = 50 (12.5 × 4)
   SELECT fi.qtd_ml INTO q3600_ax FROM tint_formula_itens fi
@@ -121,7 +122,7 @@ BEGIN
     JOIN tint_embalagens e ON e.id=f.embalagem_id
     JOIN tint_corantes c ON c.id=fi.corante_id
     WHERE f.cor_id='COR1' AND e.id_embalagem_sayersystem='E3600' AND c.id_corante_sayersystem='AX';
-  IF q3600_ax <> 50 THEN RAISE EXCEPTION 'C1.3 FALHOU: AX@3600 = % (esperado 50)', q3600_ax; END IF;
+  IF q3600_ax IS DISTINCT FROM 50 THEN RAISE EXCEPTION 'C1.3 FALHOU: AX@3600 = % (esperado 50)', q3600_ax; END IF;
 
   -- item VM na 3600 = 12.8 (3.2 × 4)
   SELECT fi.qtd_ml INTO q3600_vm FROM tint_formula_itens fi
@@ -129,13 +130,13 @@ BEGIN
     JOIN tint_embalagens e ON e.id=f.embalagem_id
     JOIN tint_corantes c ON c.id=fi.corante_id
     WHERE f.cor_id='COR1' AND e.id_embalagem_sayersystem='E3600' AND c.id_corante_sayersystem='VM';
-  IF round(q3600_vm,6) <> 12.8 THEN RAISE EXCEPTION 'C1.4 FALHOU: VM@3600 = % (esperado 12.8)', q3600_vm; END IF;
+  IF round(q3600_vm,6) IS DISTINCT FROM 12.8 THEN RAISE EXCEPTION 'C1.4 FALHOU: VM@3600 = % (esperado 12.8)', q3600_vm; END IF;
 
   -- volume_final_ml da 3600
   SELECT volume_final_ml INTO v3600 FROM tint_formulas f
     JOIN tint_embalagens e ON e.id=f.embalagem_id
     WHERE f.cor_id='COR1' AND e.id_embalagem_sayersystem='E3600';
-  IF v3600 <> 3600 THEN RAISE EXCEPTION 'C1.5 FALHOU: volume_final_ml = % (esperado 3600)', v3600; END IF;
+  IF v3600 IS DISTINCT FROM 3600 THEN RAISE EXCEPTION 'C1.5 FALHOU: volume_final_ml = % (esperado 3600)', v3600; END IF;
 
   RAISE NOTICE 'OK C1 — expansão: 2 fórmulas; AX@900=12.5 AX@3600=50 VM@3600=12.8 vol=3600';
 END $$;
@@ -201,15 +202,15 @@ DO $$
 DECLARE p numeric; pz numeric; pz_is_null boolean; pk numeric;
 BEGIN
   SELECT preco_final_sayersystem INTO p FROM tint_formulas WHERE account='oben' AND cor_id='COR2';
-  IF p IS NULL OR p <> 196.11 THEN RAISE EXCEPTION 'C2.1 FALHOU: preço COR2 = % (esperado 196.11)', p; END IF;
+  IF p IS NULL OR p IS DISTINCT FROM 196.11 THEN RAISE EXCEPTION 'C2.1 FALHOU: preço COR2 = % (esperado 196.11)', p; END IF;
 
   SELECT preco_final_sayersystem, preco_final_sayersystem IS NULL INTO pz, pz_is_null
     FROM tint_formulas WHERE account='oben' AND cor_id='COR2Z';
-  IF NOT pz_is_null THEN RAISE EXCEPTION 'C2.2 FALHOU: COR2Z deveria ter preço NULL (corante sem preço), achei %', pz; END IF;
+  IF pz_is_null IS NOT TRUE THEN RAISE EXCEPTION 'C2.2 FALHOU: COR2Z deveria ter preço NULL (corante sem preço), achei % (is_null=%; NULL = a fórmula sumiu)', pz, pz_is_null; END IF;
 
   -- custo_base=0 (≠ ausente): preço = só corantes = (200/900)*9 = 2.00
   SELECT preco_final_sayersystem INTO pk FROM tint_formulas WHERE account='oben' AND cor_id='COR2K';
-  IF pk IS NULL OR pk <> 2 THEN RAISE EXCEPTION 'C2.3 FALHOU: COR2K (custo_base=0) = % (esperado 2.00 = só corantes, NÃO NULL)', pk; END IF;
+  IF pk IS NULL OR pk IS DISTINCT FROM 2 THEN RAISE EXCEPTION 'C2.3 FALHOU: COR2K (custo_base=0) = % (esperado 2.00 = só corantes, NÃO NULL)', pk; END IF;
 
   RAISE NOTICE 'OK C2 — preço pág 9: COR2=196.11; COR2Z=NULL (corante sem preço); COR2K=2.00 (custo_base=0 válido)';
 END $$;
@@ -231,11 +232,11 @@ DO $$
 DECLARE p numeric; n_itens int; q numeric;
 BEGIN
   SELECT preco_final_sayersystem INTO p FROM tint_formulas WHERE account='oben' AND cor_id='COR2';
-  IF p IS NULL OR p <> 391.11 THEN RAISE EXCEPTION 'C3.1 FALHOU: preço recalculado COR2 = % (esperado 391.11)', p; END IF;
+  IF p IS NULL OR p IS DISTINCT FROM 391.11 THEN RAISE EXCEPTION 'C3.1 FALHOU: preço recalculado COR2 = % (esperado 391.11)', p; END IF;
   -- itens intactos: AXP 5ml
   SELECT count(*) INTO n_itens FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.cor_id='COR2';
   SELECT fi.qtd_ml INTO q FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.cor_id='COR2';
-  IF n_itens <> 1 OR q <> 5 THEN RAISE EXCEPTION 'C3.2 FALHOU: itens de COR2 mudaram (n=% q=%, esperado 1/5)', n_itens, q; END IF;
+  IF n_itens IS DISTINCT FROM 1 OR q IS DISTINCT FROM 5 THEN RAISE EXCEPTION 'C3.2 FALHOU: itens de COR2 mudaram (n=% q=%, esperado 1/5)', n_itens, q; END IF;
   RAISE NOTICE 'OK C3 — recálculo por insumo (precos_base): COR2 100→200 custo ⇒ preço 196.11→391.11; itens intactos';
 END $$;
 SQL
@@ -255,9 +256,9 @@ DO $$
 DECLARE p numeric; q numeric;
 BEGIN
   SELECT preco_final_sayersystem INTO p FROM tint_formulas WHERE account='oben' AND cor_id='COR2';
-  IF p IS NULL OR p <> 392.22 THEN RAISE EXCEPTION 'C3b.1 FALHOU: preço recalculado por corante COR2 = % (esperado 392.22)', p; END IF;
+  IF p IS NULL OR p IS DISTINCT FROM 392.22 THEN RAISE EXCEPTION 'C3b.1 FALHOU: preço recalculado por corante COR2 = % (esperado 392.22)', p; END IF;
   SELECT fi.qtd_ml INTO q FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.cor_id='COR2';
-  IF q <> 5 THEN RAISE EXCEPTION 'C3b.2 FALHOU: item de COR2 mudou (q=%, esperado 5)', q; END IF;
+  IF q IS DISTINCT FROM 5 THEN RAISE EXCEPTION 'C3b.2 FALHOU: item de COR2 mudou (q=%, esperado 5)', q; END IF;
   RAISE NOTICE 'OK C3b — recálculo por corante: AXP 200→400 ⇒ COR2 preço 391.11→392.22; itens intactos';
 END $$;
 SQL
@@ -307,7 +308,7 @@ DECLARE p numeric;
 BEGIN
   SELECT preco_final_sayersystem INTO p FROM tint_formulas WHERE account='oben' AND cor_id='COR4';
   -- 300×1×1 (imp/marg 0) = 300; sem itens.
-  IF p IS NULL OR p <> 300 THEN RAISE EXCEPTION 'C4.1 FALHOU: preço COR4 = % (esperado 300 = staging MAIS RECENTE, não 100 do run velho)', p; END IF;
+  IF p IS NULL OR p IS DISTINCT FROM 300 THEN RAISE EXCEPTION 'C4.1 FALHOU: preço COR4 = % (esperado 300 = staging MAIS RECENTE, não 100 do run velho)', p; END IF;
   RAISE NOTICE 'OK C4 — latest-per-key: run velho (custo 100) aplicado por último ⇒ preço fica 300 (staging recente)';
 END $$;
 SQL
@@ -331,14 +332,14 @@ DO $$
 DECLARE n int; q5l numeric;
 BEGIN
   SELECT count(*) INTO n FROM tint_formulas WHERE account='oben' AND cor_id='COR1';
-  IF n <> 3 THEN RAISE EXCEPTION 'C5.1 FALHOU: esperado 3 fórmulas COR1 (900/3600/5000), achei %', n; END IF;
+  IF n IS DISTINCT FROM 3 THEN RAISE EXCEPTION 'C5.1 FALHOU: esperado 3 fórmulas COR1 (900/3600/5000), achei %', n; END IF;
   -- AX na E5L = 12.5 × (5000/900) = 69.444…
   SELECT fi.qtd_ml INTO q5l FROM tint_formula_itens fi
     JOIN tint_formulas f ON f.id=fi.formula_id
     JOIN tint_embalagens e ON e.id=f.embalagem_id
     JOIN tint_corantes c ON c.id=fi.corante_id
     WHERE f.cor_id='COR1' AND e.id_embalagem_sayersystem='E5L' AND c.id_corante_sayersystem='AX';
-  IF round(q5l,4) <> round(12.5 * 5000.0/900.0, 4) THEN RAISE EXCEPTION 'C5.2 FALHOU: AX@5L = % (esperado %)', q5l, round(12.5*5000.0/900.0,4); END IF;
+  IF round(q5l,4) IS DISTINCT FROM round(12.5 * 5000.0/900.0, 4) THEN RAISE EXCEPTION 'C5.2 FALHOU: AX@5L = % (esperado %)', q5l, round(12.5*5000.0/900.0,4); END IF;
   RAISE NOTICE 'OK C5 — re-expansão por sku novo: COR1 ganhou a fórmula da E5L (3 no total); AX@5L=%', round(q5l,4);
 END $$;
 SQL
@@ -383,12 +384,12 @@ DO $$
 DECLARE n6 int; n7 int; e6 int; e7 int;
 BEGIN
   SELECT count(*) INTO n6 FROM tint_formulas WHERE account='oben' AND cor_id='COR6';
-  IF n6 <> 0 THEN RAISE EXCEPTION 'C6.1 FALHOU: COR6 (vol=0) promoveu % fórmulas (esperado 0)', n6; END IF;
+  IF n6 IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'C6.1 FALHOU: COR6 (vol=0) promoveu % fórmulas (esperado 0)', n6; END IF;
   SELECT count(*) INTO e6 FROM tint_sync_errors WHERE sync_run_id='66666666-0000-0000-0000-000000000002' AND entity_type='formula_promote';
   IF e6 < 1 THEN RAISE EXCEPTION 'C6.2 FALHOU: COR6 (vol=0) não gerou tint_sync_errors'; END IF;
 
   SELECT count(*) INTO n7 FROM tint_formulas WHERE account='oben' AND cor_id='COR7';
-  IF n7 <> 0 THEN RAISE EXCEPTION 'C6.3 FALHOU: COR7 (zero vendáveis) promoveu % fórmulas (esperado 0)', n7; END IF;
+  IF n7 IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'C6.3 FALHOU: COR7 (zero vendáveis) promoveu % fórmulas (esperado 0)', n7; END IF;
   SELECT count(*) INTO e7 FROM tint_sync_errors WHERE sync_run_id='66666666-0000-0000-0000-000000000004' AND entity_type='formula_promote';
   IF e7 < 1 THEN RAISE EXCEPTION 'C6.4 FALHOU: COR7 (zero vendáveis) não gerou tint_sync_errors'; END IF;
 
@@ -420,7 +421,7 @@ DECLARE n_ativas int;
 BEGIN
   -- 7 LINHAS oficiais intactas (nada desativado); blast é sobre as 5 chaves-fonte distintas.
   SELECT count(*) INTO n_ativas FROM tint_formulas WHERE account='oben' AND desativada_em IS NULL;
-  IF n_ativas <> 7 THEN RAISE EXCEPTION 'C7.1 FALHOU: snapshot incompleto/blast desativou (linhas ativas=%, esperado 7 intactas)', n_ativas; END IF;
+  IF n_ativas IS DISTINCT FROM 7 THEN RAISE EXCEPTION 'C7.1 FALHOU: snapshot incompleto/blast desativou (linhas ativas=%, esperado 7 intactas)', n_ativas; END IF;
   IF NOT EXISTS (SELECT 1 FROM tint_sync_errors WHERE entity_id='77777777-0000-0000-0000-000000000001' AND error_message LIKE '%incompleto%') THEN
     RAISE EXCEPTION 'C7.2 FALHOU: snapshot incompleto não logou erro'; END IF;
   IF NOT EXISTS (SELECT 1 FROM tint_sync_errors WHERE entity_id='77777777-0000-0000-0000-000000000002' AND error_message LIKE '%blast%') THEN
@@ -444,12 +445,12 @@ DO $$
 DECLARE z_desativada boolean; n_ativas int; n_cor1 int;
 BEGIN
   SELECT desativada_em IS NOT NULL INTO z_desativada FROM tint_formulas WHERE account='oben' AND cor_id='COR2Z';
-  IF NOT z_desativada THEN RAISE EXCEPTION 'C7.4 FALHOU: COR2Z deveria estar desativada (chave-fonte fora do snapshot)'; END IF;
+  IF z_desativada IS NOT TRUE THEN RAISE EXCEPTION 'C7.4 FALHOU: COR2Z deveria estar desativada (chave-fonte fora do snapshot) — desativada=% (NULL = a fórmula sumiu)', z_desativada; END IF;
   -- as 3 expansões de COR1 (chave única no snapshot) seguem TODAS ativas — prova do collapse 4 partes.
   SELECT count(*) INTO n_cor1 FROM tint_formulas WHERE account='oben' AND cor_id='COR1' AND desativada_em IS NULL;
-  IF n_cor1 <> 3 THEN RAISE EXCEPTION 'C7.4b FALHOU: COR1 (chave única) deveria manter 3 expansões ativas, achei %', n_cor1; END IF;
+  IF n_cor1 IS DISTINCT FROM 3 THEN RAISE EXCEPTION 'C7.4b FALHOU: COR1 (chave única) deveria manter 3 expansões ativas, achei %', n_cor1; END IF;
   SELECT count(*) INTO n_ativas FROM tint_formulas WHERE account='oben' AND desativada_em IS NULL;
-  IF n_ativas <> 6 THEN RAISE EXCEPTION 'C7.5 FALHOU: esperado 6 linhas ativas após desativar COR2Z, achei %', n_ativas; END IF;
+  IF n_ativas IS DISTINCT FROM 6 THEN RAISE EXCEPTION 'C7.5 FALHOU: esperado 6 linhas ativas após desativar COR2Z, achei %', n_ativas; END IF;
   RAISE NOTICE 'OK C7b — snapshot saudável (chave-fonte 4 partes) desativou só COR2Z; COR1×3 intacto (6 ativas)';
 END $$;
 SQL
@@ -467,9 +468,9 @@ DO $$
 DECLARE z_ativa boolean; n_ativas int;
 BEGIN
   SELECT desativada_em IS NULL INTO z_ativa FROM tint_formulas WHERE account='oben' AND cor_id='COR2Z';
-  IF NOT z_ativa THEN RAISE EXCEPTION 'C7.6 FALHOU: COR2Z deveria reativar (desativada_em NULL) ao voltar no staging'; END IF;
+  IF z_ativa IS NOT TRUE THEN RAISE EXCEPTION 'C7.6 FALHOU: COR2Z deveria reativar (desativada_em NULL) ao voltar no staging — ativa=% (NULL = a fórmula sumiu)', z_ativa; END IF;
   SELECT count(*) INTO n_ativas FROM tint_formulas WHERE account='oben' AND desativada_em IS NULL;
-  IF n_ativas <> 7 THEN RAISE EXCEPTION 'C7.7 FALHOU: esperado 7 ativas após reativar COR2Z, achei %', n_ativas; END IF;
+  IF n_ativas IS DISTINCT FROM 7 THEN RAISE EXCEPTION 'C7.7 FALHOU: esperado 7 ativas após reativar COR2Z, achei %', n_ativas; END IF;
   RAISE NOTICE 'OK C7c — reativação: COR2Z voltou no staging ⇒ desativada_em=NULL (7 ativas)';
 END $$;
 SQL
@@ -506,10 +507,10 @@ BEGIN
     (SELECT COALESCE(sum(preco_final_sayersystem),0) FROM tint_formulas WHERE account='oben') AS soma_precos,
     (SELECT COALESCE(sum(qtd_ml),0) FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='oben') AS soma_qtd
   INTO b;
-  IF a.n_formulas <> b.n_formulas THEN RAISE EXCEPTION 'C8.1 FALHOU: n_formulas mudou % → %', a.n_formulas, b.n_formulas; END IF;
-  IF a.n_itens <> b.n_itens THEN RAISE EXCEPTION 'C8.2 FALHOU: n_itens mudou % → %', a.n_itens, b.n_itens; END IF;
-  IF round(a.soma_precos,2) <> round(b.soma_precos,2) THEN RAISE EXCEPTION 'C8.3 FALHOU: soma_precos mudou % → %', a.soma_precos, b.soma_precos; END IF;
-  IF round(a.soma_qtd,4) <> round(b.soma_qtd,4) THEN RAISE EXCEPTION 'C8.4 FALHOU: soma_qtd mudou % → %', a.soma_qtd, b.soma_qtd; END IF;
+  IF a.n_formulas IS DISTINCT FROM b.n_formulas THEN RAISE EXCEPTION 'C8.1 FALHOU: n_formulas mudou % → %', a.n_formulas, b.n_formulas; END IF;
+  IF a.n_itens IS DISTINCT FROM b.n_itens THEN RAISE EXCEPTION 'C8.2 FALHOU: n_itens mudou % → %', a.n_itens, b.n_itens; END IF;
+  IF round(a.soma_precos,2) IS DISTINCT FROM round(b.soma_precos,2) THEN RAISE EXCEPTION 'C8.3 FALHOU: soma_precos mudou % → %', a.soma_precos, b.soma_precos; END IF;
+  IF round(a.soma_qtd,4) IS DISTINCT FROM round(b.soma_qtd,4) THEN RAISE EXCEPTION 'C8.4 FALHOU: soma_qtd mudou % → %', a.soma_qtd, b.soma_qtd; END IF;
   RAISE NOTICE 'OK C8 — idempotência: re-rodar todos os runs = estado idêntico (formulas=% itens=% Σpreço=% Σqtd=%)',
     b.n_formulas, b.n_itens, round(b.soma_precos,2), round(b.soma_qtd,4);
 END $$;
@@ -564,7 +565,7 @@ BEGIN
   -- disparando um recálculo: novo run de precos_base reusa a chave? Mais simples: a fórmula promovida
   -- já saiu com 500 (a latest), provando que a promoção leu a NOVA, não a VELHA.
   SELECT preco_final_sayersystem INTO p FROM tint_formulas WHERE account='oben' AND cor_id='COR9';
-  IF p IS NULL OR p <> 500 THEN RAISE EXCEPTION 'C9.3 FALHOU: COR9 preço = % (esperado 500 = custo da linha NOVA latest)', p; END IF;
+  IF p IS NULL OR p IS DISTINCT FROM 500 THEN RAISE EXCEPTION 'C9.3 FALHOU: COR9 preço = % (esperado 500 = custo da linha NOVA latest)', p; END IF;
   RAISE NOTICE 'OK C9 — purge: apaga VELHA superseded (>30d), PRESERVA NOVA latest (>30d); COR9 preço=500 (leu a latest)';
 END $$;
 SQL
@@ -581,7 +582,7 @@ BEGIN
   SELECT id INTO fid FROM tint_formulas WHERE account='oben' AND cor_id='COR9';
   -- S2: assinatura nova com p_store_code (2º arg). store=L1.
   p := tint_recalc_preco_oficial('oben', 'L1', fid, 'P9', 'B9', 'E900I');
-  IF p IS NULL OR p <> 500 THEN RAISE EXCEPTION 'C9b FALHOU: recalc pós-purge = % (esperado 500 = base latest preservada, NÃO NULL por insumo apagado)', p; END IF;
+  IF p IS NULL OR p IS DISTINCT FROM 500 THEN RAISE EXCEPTION 'C9b FALHOU: recalc pós-purge = % (esperado 500 = base latest preservada, NÃO NULL por insumo apagado)', p; END IF;
   RAISE NOTICE 'OK C9b — recalc pós-purge acha a base latest preservada (preço 500), não NULL';
 END $$;
 SQL
@@ -627,19 +628,19 @@ DECLARE vol numeric; n int; vff numeric;
 BEGIN
   -- volume oficial da E10 continua 900 (NÃO rebaixado p/ 0 pelo staging NULL).
   SELECT volume_ml INTO vol FROM tint_embalagens WHERE account='oben' AND id_embalagem_sayersystem='E10';
-  IF vol IS NULL OR vol <> 900 THEN RAISE EXCEPTION 'C10.1 FALHOU: volume oficial E10 = % (esperado 900; staging NULL rebaixou)', vol; END IF;
+  IF vol IS NULL OR vol IS DISTINCT FROM 900 THEN RAISE EXCEPTION 'C10.1 FALHOU: volume oficial E10 = % (esperado 900; staging NULL rebaixou)', vol; END IF;
 
   -- a fórmula COR10 da E10 segue existindo (a expansão não foi dropada).
   SELECT count(*) INTO n FROM tint_formulas f
     JOIN tint_embalagens e ON e.id=f.embalagem_id
     WHERE f.account='oben' AND f.cor_id='COR10' AND e.id_embalagem_sayersystem='E10';
-  IF n <> 1 THEN RAISE EXCEPTION 'C10.2 FALHOU: fórmula COR10@E10 sumiu/duplicou (n=%, esperado 1)', n; END IF;
+  IF n IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'C10.2 FALHOU: fórmula COR10@E10 sumiu/duplicou (n=%, esperado 1)', n; END IF;
 
   -- volume_final_ml da fórmula continua 900 (re-expandiu com o volume oficial preservado).
   SELECT f.volume_final_ml INTO vff FROM tint_formulas f
     JOIN tint_embalagens e ON e.id=f.embalagem_id
     WHERE f.account='oben' AND f.cor_id='COR10' AND e.id_embalagem_sayersystem='E10';
-  IF vff <> 900 THEN RAISE EXCEPTION 'C10.3 FALHOU: volume_final_ml COR10@E10 = % (esperado 900)', vff; END IF;
+  IF vff IS DISTINCT FROM 900 THEN RAISE EXCEPTION 'C10.3 FALHOU: volume_final_ml COR10@E10 = % (esperado 900)', vff; END IF;
   RAISE NOTICE 'OK C10 — embalagem volume NULL não rebaixa o oficial: E10 segue 900, COR10@E10 expandida';
 END $$;
 SQL
@@ -698,11 +699,11 @@ DECLARE p numeric; cor_desc text; cor_vol numeric;
 BEGIN
   SELECT preco_final_sayersystem INTO p FROM tint_formulas WHERE account='oben' AND cor_id='COR11';
   IF p IS NULL THEN RAISE EXCEPTION 'C11.1 FALHOU: preço COR11 regrediu p/ NULL (corante só-descrição derrotou o preço) — S3 não pegou'; END IF;
-  IF p <> 202 THEN RAISE EXCEPTION 'C11.2 FALHOU: preço COR11 = % (esperado 202.00 = base 200 + corante da linha NÃO-NULA 300/900×6)', p; END IF;
+  IF p IS DISTINCT FROM 202 THEN RAISE EXCEPTION 'C11.2 FALHOU: preço COR11 = % (esperado 202.00 = base 200 + corante da linha NÃO-NULA 300/900×6)', p; END IF;
   -- a descrição oficial do corante FOI atualizada (o só-descrição vale p/ texto), mas o volume oficial
   -- NÃO foi rebaixado p/ 0 pelo NULL (preserva o COALESCE do upsert de corante).
   SELECT descricao, volume_total_ml INTO cor_desc, cor_vol FROM tint_corantes WHERE account='oben' AND id_corante_sayersystem='CX11';
-  IF cor_vol IS NULL OR cor_vol <> 900 THEN RAISE EXCEPTION 'C11.3 FALHOU: volume oficial CX11 = % (esperado 900, NULL não rebaixa)', cor_vol; END IF;
+  IF cor_vol IS NULL OR cor_vol IS DISTINCT FROM 900 THEN RAISE EXCEPTION 'C11.3 FALHOU: volume oficial CX11 = % (esperado 900, NULL não rebaixa)', cor_vol; END IF;
   RAISE NOTICE 'OK C11 — corante só-descrição (NULL custo/vol) NÃO regride preço: COR11=202.00 (S3 pega a latest não-nula 300/900)';
 END $$;
 SQL
@@ -746,7 +747,7 @@ BEGIN
   -- Com SÓ a linha L2 presente, o preço da fórmula L1 = NULL (a base L2 é filtrada por store_code).
   SELECT preco_final_sayersystem, preco_final_sayersystem IS NULL INTO p, p_is_null
     FROM tint_formulas WHERE account='oben' AND cor_id='COR12';
-  IF NOT p_is_null THEN RAISE EXCEPTION 'C12.1 FALHOU: COR12 (L1) usou a precos_base da L2 (vazamento cross-store) — preço=% (esperado NULL)', p; END IF;
+  IF p_is_null IS NOT TRUE THEN RAISE EXCEPTION 'C12.1 FALHOU: COR12 (L1) usou a precos_base da L2 (vazamento cross-store) — preço=% (esperado NULL; is_null=%, NULL = a fórmula sumiu)', p, p_is_null; END IF;
   RAISE NOTICE 'OK C12a — precos_base da L2 NÃO vaza p/ a fórmula da L1: preço NULL';
 END $$;
 SQL
@@ -764,7 +765,7 @@ DO $$
 DECLARE p numeric;
 BEGIN
   SELECT preco_final_sayersystem INTO p FROM tint_formulas WHERE account='oben' AND cor_id='COR12';
-  IF p IS NULL OR p <> 50 THEN RAISE EXCEPTION 'C12.2 FALHOU: COR12 com precos_base da L1 (custo 50) = % (esperado 50 = usa a base da PRÓPRIA loja)', p; END IF;
+  IF p IS NULL OR p IS DISTINCT FROM 50 THEN RAISE EXCEPTION 'C12.2 FALHOU: COR12 com precos_base da L1 (custo 50) = % (esperado 50 = usa a base da PRÓPRIA loja)', p; END IF;
   RAISE NOTICE 'OK C12b — com a precos_base da L1 presente (custo 50), COR12=50.00 (era o filtro de store_code que zerava)';
 END $$;
 SQL
@@ -902,12 +903,12 @@ DECLARE na int; nb int; ia int; ib int; nulls_a int; reais_a int; d int; ms_new 
 BEGIN
   SELECT count(*) INTO na FROM tint_formulas WHERE account='difa';
   SELECT count(*) INTO nb FROM tint_formulas WHERE account='difb';
-  IF na <> nb THEN RAISE EXCEPTION 'C13.1 FALHOU: nº de fórmulas difere (set-based %, loop %)', na, nb; END IF;
-  IF na <> 603 THEN RAISE EXCEPTION 'C13.1b FALHOU: esperado 603 fórmulas (200×3 + 3 da colisão CVCOLLIDE), achei %', na; END IF;
+  IF na IS DISTINCT FROM nb THEN RAISE EXCEPTION 'C13.1 FALHOU: nº de fórmulas difere (set-based %, loop %)', na, nb; END IF;
+  IF na IS DISTINCT FROM 603 THEN RAISE EXCEPTION 'C13.1b FALHOU: esperado 603 fórmulas (200×3 + 3 da colisão CVCOLLIDE), achei %', na; END IF;
 
   SELECT count(*) INTO ia FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='difa';
   SELECT count(*) INTO ib FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='difb';
-  IF ia <> ib THEN RAISE EXCEPTION 'C13.2 FALHOU: nº de itens difere (set-based %, loop %)', ia, ib; END IF;
+  IF ia IS DISTINCT FROM ib THEN RAISE EXCEPTION 'C13.2 FALHOU: nº de itens difere (set-based %, loop %)', ia, ib; END IF;
 
   -- Mix NULL-honesto real: tem fórmula NULL (corante sem preço) E fórmula com preço.
   SELECT count(*) FILTER (WHERE preco_final_sayersystem IS NULL),
@@ -922,12 +923,12 @@ BEGIN
 
   -- IDENTIDADE CONTÁBIL: set-based ≡ loop em TODAS as fórmulas e itens.
   d := _dif_count();
-  IF d <> 0 THEN RAISE EXCEPTION 'C13.4 FALHOU: set-based DIVERGE do loop em % linhas (fórmulas+itens)', d; END IF;
+  IF d IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'C13.4 FALHOU: set-based DIVERGE do loop em % linhas (fórmulas+itens)', d; END IF;
 
   -- Colisão de chave oficial: exercitada (3 expansões, 1 vencedor/embalagem) e o vencedor é B
   -- (subcolecao=' ' > '', personalizada=false) — o MESMO que o loop. _dif_count já garante difa≡difb;
   -- este assert documenta QUAL é o vencedor e que a colisão de fato ocorreu (não-trivial).
-  IF (SELECT count(*) FROM tint_formulas WHERE account='difa' AND cor_id='CVCOLLIDE') <> 3 THEN
+  IF (SELECT count(*) FROM tint_formulas WHERE account='difa' AND cor_id='CVCOLLIDE') IS DISTINCT FROM 3 THEN
     RAISE EXCEPTION 'C13.6 FALHOU: CVCOLLIDE deveria colapsar em 3 expansões (1 vencedor/embalagem), achei %',
       (SELECT count(*) FROM tint_formulas WHERE account='difa' AND cor_id='CVCOLLIDE'); END IF;
   IF EXISTS (SELECT 1 FROM tint_formulas WHERE account='difa' AND cor_id='CVCOLLIDE'
@@ -937,7 +938,7 @@ BEGIN
   SELECT round(extract(epoch from ((SELECT ts FROM _t13 WHERE k='a1') - (SELECT ts FROM _t13 WHERE k='a0')))*1000,1),
          round(extract(epoch from ((SELECT ts FROM _t13 WHERE k='a2') - (SELECT ts FROM _t13 WHERE k='a1')))*1000,1)
     INTO ms_new, ms_old;
-  IF ms_new > 30000 THEN RAISE EXCEPTION 'C13.5 FALHOU: set-based demorou % ms (>30s — regressão grave)', ms_new; END IF;
+  IF ms_new IS NULL OR ms_new > 30000 THEN RAISE EXCEPTION 'C13.5 FALHOU: set-based demorou % ms (>30s — regressão grave; NULL = cronômetro sem marca)', ms_new; END IF;
   RAISE NOTICE 'OK C13 — identidade set-based≡loop: % fórmulas / % itens (% NULL, % com preço; +colisão CVCOLLIDE→B); tempo set-based % ms vs loop % ms',
     na, ia, nulls_a, reais_a, ms_new, ms_old;
 END $$;
@@ -948,27 +949,32 @@ echo "── falsificação C13 (prova que a identidade diferencial tem DENTE) �
 MIG="$REPO_ROOT/supabase/migrations/20260615160000_tint_promote_set_based.sql"
 
 # F1 — sabota o NULL-honesto: corante faltante deixa de zerar p/ NULL → fabrica preço.
-sed 's/WHEN COALESCE(it.faltante, false) THEN NULL/WHEN false THEN NULL/' "$MIG" > /tmp/sab-tint-nullhonest.sql
-grep -q 'WHEN false THEN NULL' /tmp/sab-tint-nullhonest.sql || { echo "✗ F1: sed não casou o alvo NULL-honesto"; exit 1; }
-P -v ON_ERROR_STOP=1 -q -f /tmp/sab-tint-nullhonest.sql >/dev/null
+sed 's/WHEN COALESCE(it.faltante, false) THEN NULL/WHEN false THEN NULL/' "$MIG" > "$RODADA/sab-tint-nullhonest.sql"
+grep -q 'WHEN false THEN NULL' "$RODADA/sab-tint-nullhonest.sql" || { echo "✗ F1: sed não casou o alvo NULL-honesto"; exit 1; }
+P -v ON_ERROR_STOP=1 -q -f "$RODADA/sab-tint-nullhonest.sql" >/dev/null
 P -v ON_ERROR_STOP=1 -q -c "SELECT tint_promote_sync_run('da000000-0000-0000-0000-000000000002');" >/dev/null
+# O vermelho é a divergência EXATA que cada sabotagem declara (F1 720, F2 1928 — o fixture é fixo, e
+# 2 rodadas deram o mesmo número): "qualquer ≠ 0" aceitava divergência vinda de outra causa.
+# O vermelho tem de ser do SEU assert: docs/historico/falsificacao-exit-nao-e-dente.md.
 DSAB=$(P -tA -c "SELECT _dif_count();")
 case "$DSAB" in
+  720)  ok "F1 — NULL-honesto furado diverge do loop em $DSAB linhas (C13.4 tem dente)" ;;
   0|"") echo "✗ F1 FALHOU: sabotei o NULL-honesto e a identidade NÃO acusou → C13.4 é fraco"; exit 1 ;;
-  *)    ok "F1 — NULL-honesto furado diverge do loop em $DSAB linhas (C13.4 tem dente)" ;;
+  *)    echo "✗ F1 FALHOU: a identidade divergiu em $DSAB linhas, NÃO nas 720 que a sabotagem declara"; exit 1 ;;
 esac
 P -v ON_ERROR_STOP=1 -q -f "$MIG" >/dev/null
 P -v ON_ERROR_STOP=1 -q -c "SELECT tint_promote_sync_run('da000000-0000-0000-0000-000000000002');" >/dev/null
 
 # F2 — sabota o fator (regra de 3 → 1): expansão p/ embalagem ≠ formulação fica errada.
-sed 's#(e.volume_ml / fl.volume_final_ml) AS fator#(1) AS fator#' "$MIG" > /tmp/sab-tint-fator.sql
-grep -q '(1) AS fator' /tmp/sab-tint-fator.sql || { echo "✗ F2: sed não casou o alvo fator"; exit 1; }
-P -v ON_ERROR_STOP=1 -q -f /tmp/sab-tint-fator.sql >/dev/null
+sed 's#(e.volume_ml / fl.volume_final_ml) AS fator#(1) AS fator#' "$MIG" > "$RODADA/sab-tint-fator.sql"
+grep -q '(1) AS fator' "$RODADA/sab-tint-fator.sql" || { echo "✗ F2: sed não casou o alvo fator"; exit 1; }
+P -v ON_ERROR_STOP=1 -q -f "$RODADA/sab-tint-fator.sql" >/dev/null
 P -v ON_ERROR_STOP=1 -q -c "SELECT tint_promote_sync_run('da000000-0000-0000-0000-000000000002');" >/dev/null
 DSAB2=$(P -tA -c "SELECT _dif_count();")
 case "$DSAB2" in
+  1928) ok "F2 — fator=1 diverge do loop em $DSAB2 linhas (regra de 3 coberta)" ;;
   0|"") echo "✗ F2 FALHOU: troquei o fator e a identidade NÃO acusou → C13.4 é fraco"; exit 1 ;;
-  *)    ok "F2 — fator=1 diverge do loop em $DSAB2 linhas (regra de 3 coberta)" ;;
+  *)    echo "✗ F2 FALHOU: a identidade divergiu em $DSAB2 linhas, NÃO nas 1928 que a sabotagem declara"; exit 1 ;;
 esac
 P -v ON_ERROR_STOP=1 -q -f "$MIG" >/dev/null
 P -v ON_ERROR_STOP=1 -q -c "SELECT tint_promote_sync_run('da000000-0000-0000-0000-000000000002');" >/dev/null
@@ -1039,7 +1045,7 @@ DO $$
 DECLARE n int; qax numeric; qvm numeric;
 BEGIN
   SELECT count(*) INTO n FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='oben' AND f.cor_id='COR14';
-  IF n <> 2 THEN RAISE EXCEPTION 'C14.1 FALHOU: COR14 boa deveria ter 2 itens, achei %', n; END IF;
+  IF n IS DISTINCT FROM 2 THEN RAISE EXCEPTION 'C14.1 FALHOU: COR14 boa deveria ter 2 itens, achei %', n; END IF;
   SELECT max(fi.qtd_ml) FILTER (WHERE c.id_corante_sayersystem='AX14'),
          max(fi.qtd_ml) FILTER (WHERE c.id_corante_sayersystem='VM14')
     INTO qax, qvm
@@ -1076,7 +1082,7 @@ DECLARE n int; qax numeric; qvm numeric; nerr int;
 BEGIN
   -- (a) receita PRESERVADA: ainda 2 itens {AX14:10, VM14:5}, NÃO parcial {AX14:10}.
   SELECT count(*) INTO n FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='oben' AND f.cor_id='COR14';
-  IF n <> 2 THEN RAISE EXCEPTION 'C14.2 FALHOU: receita PARCIAL gravada (COR14 tem % itens, esperado 2 preservados)', n; END IF;
+  IF n IS DISTINCT FROM 2 THEN RAISE EXCEPTION 'C14.2 FALHOU: receita PARCIAL gravada (COR14 tem % itens, esperado 2 preservados)', n; END IF;
   SELECT max(fi.qtd_ml) FILTER (WHERE c.id_corante_sayersystem='AX14'),
          max(fi.qtd_ml) FILTER (WHERE c.id_corante_sayersystem='VM14')
     INTO qax, qvm
@@ -1096,7 +1102,7 @@ BEGIN
        OR f.desativada_em           IS DISTINCT FROM a.desativada_em
   ) THEN RAISE EXCEPTION 'C14.4 FALHOU: header de COR14 alterado pelo run corrompido (preço/importacao_id/updated_at/desativada_em) — o upsert rodou'; END IF;
   -- e nenhuma fórmula sumiu/apareceu na chave
-  IF (SELECT count(*) FROM _c14_header_antes) <> (SELECT count(*) FROM tint_formulas WHERE account='oben' AND cor_id='COR14') THEN
+  IF (SELECT count(*) FROM _c14_header_antes) IS DISTINCT FROM (SELECT count(*) FROM tint_formulas WHERE account='oben' AND cor_id='COR14') THEN
     RAISE EXCEPTION 'C14.5 FALHOU: nº de fórmulas COR14 mudou no run corrompido'; END IF;
   RAISE NOTICE 'OK C14 — corrompida (VM14 qtd=0) NÃO grava parcial: {AX14:10, VM14:5} + HEADER intactos, erro logado';
 END $$;
@@ -1124,14 +1130,14 @@ DECLARE n15 int; n15q int; nerr15 int; nerr15q int;
 BEGIN
   -- C15a (1d): vazio SEM declaração NÃO cria header em chave nova + loga o motivo novo.
   SELECT count(*) INTO n15 FROM tint_formulas WHERE account='oben' AND cor_id='COR15';
-  IF n15 <> 0 THEN RAISE EXCEPTION 'C15.1 FALHOU (1d): COR15 vazio sem declaração criou % header(s) — o C15a antigo voltou (fórmula vazia ativa)', n15; END IF;
+  IF n15 IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'C15.1 FALHOU (1d): COR15 vazio sem declaração criou % header(s) — o C15a antigo voltou (fórmula vazia ativa)', n15; END IF;
   SELECT count(*) INTO nerr15 FROM tint_sync_errors WHERE entity_id='COR15' AND error_message LIKE '%sem declaração de base pura%';
   IF nerr15 < 1 THEN RAISE EXCEPTION 'C15.1b FALHOU (1d): COR15 barrado não logou o motivo "sem declaração de base pura"'; END IF;
   SELECT count(*) INTO nerr15 FROM tint_sync_errors WHERE entity_id='COR15' AND error_message LIKE '%corrompida%';
-  IF nerr15 <> 0 THEN RAISE EXCEPTION 'C15.1c FALHOU: COR15 vazio NÃO é corrompida (nerr=%)', nerr15; END IF;
+  IF nerr15 IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'C15.1c FALHOU: COR15 vazio NÃO é corrompida (nerr=%)', nerr15; END IF;
   -- C15b: toda-quebrada NÃO virou header (o mal das 28.609 fórmulas vazias ativas).
   SELECT count(*) INTO n15q FROM tint_formulas WHERE account='oben' AND cor_id='COR15Q';
-  IF n15q <> 0 THEN RAISE EXCEPTION 'C15.2 FALHOU: COR15Q toda-quebrada criou % fórmula(s) (esperado 0 — não vira vazia ativa)', n15q; END IF;
+  IF n15q IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'C15.2 FALHOU: COR15Q toda-quebrada criou % fórmula(s) (esperado 0 — não vira vazia ativa)', n15q; END IF;
   SELECT count(*) INTO nerr15q FROM tint_sync_errors WHERE entity_id='COR15Q' AND error_message LIKE '%corrompida%';
   IF nerr15q < 1 THEN RAISE EXCEPTION 'C15.3 FALHOU: COR15Q toda-quebrada não logou corrompida'; END IF;
   RAISE NOTICE 'OK C15 (1d) — vazio sem declaração barrado (0 headers + motivo novo); COR15Q toda-quebrada NÃO cria header + loga corrompida';
@@ -1158,12 +1164,12 @@ DO $$
 DECLARE n int; q numeric; nerr int;
 BEGIN
   SELECT count(*) INTO n FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='oben' AND f.cor_id='COR16';
-  IF n <> 1 THEN RAISE EXCEPTION 'C16.1 FALHOU: COR16 deveria ter 1 item (AX14 dedup), achei %', n; END IF;
+  IF n IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'C16.1 FALHOU: COR16 deveria ter 1 item (AX14 dedup), achei %', n; END IF;
   SELECT fi.qtd_ml INTO q FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id JOIN tint_corantes c ON c.id=fi.corante_id
     WHERE f.account='oben' AND f.cor_id='COR16' AND c.id_corante_sayersystem='AX14';
   IF q IS DISTINCT FROM 12 THEN RAISE EXCEPTION 'C16.1b FALHOU: AX14 em COR16 = % (esperado 12 = max-ordem, dose válida)', q; END IF;
   SELECT count(*) INTO nerr FROM tint_sync_errors WHERE entity_id='COR16' AND error_message LIKE '%corrompida%';
-  IF nerr <> 0 THEN RAISE EXCEPTION 'C16.2 FALHOU: COR16 (dose 2 etapas) NÃO deveria ser barrada (nerr=%)', nerr; END IF;
+  IF nerr IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'C16.2 FALHOU: COR16 (dose 2 etapas) NÃO deveria ser barrada (nerr=%)', nerr; END IF;
   RAISE NOTICE 'OK C16 — dose 2 etapas (AX14 ordem1=0 + ordem2=12) promove com AX14=12; NÃO barrada';
 END $$;
 SQL
@@ -1236,7 +1242,7 @@ BEGIN
   -- nenhuma receita do account pode conter NaN
   SELECT count(*) INTO n_nan FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id
     WHERE f.account='oben' AND fi.qtd_ml = 'NaN'::numeric;
-  IF n_nan <> 0 THEN RAISE EXCEPTION 'C18.2 FALHOU: % item(ns) com qtd_ml=NaN entraram na receita', n_nan; END IF;
+  IF n_nan IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'C18.2 FALHOU: % item(ns) com qtd_ml=NaN entraram na receita', n_nan; END IF;
   SELECT count(*) INTO nerr FROM tint_sync_errors WHERE entity_id='COR18' AND error_message LIKE '%corrompida%';
   IF nerr < 1 THEN RAISE EXCEPTION 'C18.3 FALHOU: dose NaN não logou corrompida'; END IF;
   RAISE NOTICE 'OK C18 — dose NaN é inválida: receita {AX14:10} preservada, 0 NaN na receita, erro logado';
@@ -1281,7 +1287,7 @@ BEGIN
   -- o PERDEDOR (A, VM14=3) NÃO pode ter virado vencedor
   SELECT count(*) INTO n_vm FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id JOIN tint_corantes c ON c.id=fi.corante_id
     WHERE f.account='oben' AND f.cor_id='COR19' AND c.id_corante_sayersystem='VM14';
-  IF n_vm <> 0 THEN RAISE EXCEPTION 'C19.3 FALHOU: o PERDEDOR da colisão promoveu (VM14 presente) — vencedor corrompido não omitiu a chave'; END IF;
+  IF n_vm IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'C19.3 FALHOU: o PERDEDOR da colisão promoveu (VM14 presente) — vencedor corrompido não omitiu a chave'; END IF;
   RAISE NOTICE 'OK C19 — vencedor corrompido omite a chave INTEIRA: {AX14:10} preservado, perdedor NÃO promoveu';
 END $$;
 SQL
@@ -1357,11 +1363,11 @@ DO $$
 DECLARE n int; n_ruim int;
 BEGIN
   SELECT count(*) INTO n FROM tint_formulas WHERE account='oben' AND cor_id='COR23INF';
-  IF n <> 0 THEN RAISE EXCEPTION 'C21.1 FALHOU: volume Infinity promoveu % fórmula(s) (esperado 0)', n; END IF;
+  IF n IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'C21.1 FALHOU: volume Infinity promoveu % fórmula(s) (esperado 0)', n; END IF;
   -- nenhuma dose zerada/não-finita entrou na receita do account
   SELECT count(*) INTO n_ruim FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id
     WHERE f.account='oben' AND (fi.qtd_ml = 'NaN'::numeric OR fi.qtd_ml <= 0 OR NOT (fi.qtd_ml < 'Infinity'::numeric));
-  IF n_ruim <> 0 THEN RAISE EXCEPTION 'C21.2 FALHOU: % item(ns) com dose zerada/não-finita na receita', n_ruim; END IF;
+  IF n_ruim IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'C21.2 FALHOU: % item(ns) com dose zerada/não-finita na receita', n_ruim; END IF;
   RAISE NOTICE 'OK C21 — volume Infinity não expande (0 fórmulas); 0 doses zeradas/não-finitas na receita';
 END $$;
 SQL
@@ -1387,7 +1393,7 @@ DO $$
 DECLARE n int; q numeric;
 BEGIN
   SELECT count(*) INTO n FROM tint_formulas WHERE account='oben' AND cor_id='COR24ERR' AND desativada_em IS NULL;
-  IF n <> 1 THEN RAISE EXCEPTION 'C23.1 FALHOU: staging de run ''error'' NÃO promoveu (n=%). Alguém reintroduziu o filtro status=''complete''? Em prod isso congela 59%% do catálogo — leia o cabeçalho da migration', n; END IF;
+  IF n IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'C23.1 FALHOU: staging de run ''error'' NÃO promoveu (n=%). Alguém reintroduziu o filtro status=''complete''? Em prod isso congela 59%% do catálogo — leia o cabeçalho da migration', n; END IF;
   SELECT fi.qtd_ml INTO q FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id JOIN tint_corantes c ON c.id=fi.corante_id
     WHERE f.account='oben' AND f.cor_id='COR24ERR' AND c.id_corante_sayersystem='AX14';
   IF q IS DISTINCT FROM 6 THEN RAISE EXCEPTION 'C23.2 FALHOU: receita de COR24ERR = % (esperado 6)', q; END IF;
@@ -1460,9 +1466,9 @@ ok "baseline VERDE — migration real: corrompido preserva 2 itens (COR14F)"
 # SABOTAGEM: remove o filtro NOT EXISTS do _expand → a corrompida volta a expandir → grava parcial.
 # Alvo: o DELETE que aplica o Guard 4 sobre o VENCEDOR (_expand_uniq). Removê-lo faz a fórmula
 # corrompida voltar a ser promovida → o DELETE de itens roda → receita PARCIAL.
-sed 's/^  USING _fl_corrompida c$/  USING (SELECT NULL::uuid AS staging_formula_id WHERE false) c/' "$MIGG" > /tmp/sab-tint-guard4.sql
-grep -q '^  USING _fl_corrompida c$' /tmp/sab-tint-guard4.sql && { echo "✗ sabotagem guard4: sed não neutralizou o DELETE do _expand_uniq"; exit 1; }
-P -v ON_ERROR_STOP=1 -q -f /tmp/sab-tint-guard4.sql >/dev/null
+sed 's/^  USING _fl_corrompida c$/  USING (SELECT NULL::uuid AS staging_formula_id WHERE false) c/' "$MIGG" > "$RODADA/sab-tint-guard4.sql"
+grep -q '^  USING _fl_corrompida c$' "$RODADA/sab-tint-guard4.sql" && { echo "✗ sabotagem guard4: sed não neutralizou o DELETE do _expand_uniq"; exit 1; }
+P -v ON_ERROR_STOP=1 -q -f "$RODADA/sab-tint-guard4.sql" >/dev/null
 P -v ON_ERROR_STOP=1 -q -c "SELECT tint_promote_sync_run('e14f0000-0000-0000-0000-0000000000c0');" >/dev/null
 NSAB=$(P -tA -c "SELECT count(*) FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='oben' AND f.cor_id='COR14F';")
 case "$NSAB" in
@@ -1516,7 +1522,7 @@ DO $$
 DECLARE n int;
 BEGIN
   SELECT count(*) INTO n FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='oben' AND f.cor_id='COR24';
-  IF n <> 2 THEN RAISE EXCEPTION 'C24.0 FALHOU: COR24 boa (protocolo novo íntegro) deveria ter 2 itens, achei %', n; END IF;
+  IF n IS DISTINCT FROM 2 THEN RAISE EXCEPTION 'C24.0 FALHOU: COR24 boa (protocolo novo íntegro) deveria ter 2 itens, achei %', n; END IF;
   RAISE NOTICE 'OK C24.0 — protocolo novo íntegro (expected=2, 2 itens) promove normal';
 END $$;
 SQL
@@ -1541,7 +1547,7 @@ DECLARE n int; qax numeric; nerr int;
 BEGIN
   -- (a) receita ÍNTEGRA preservada (10/5) — o subconjunto VÁLIDO (99/99) NÃO entrou.
   SELECT count(*) INTO n FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='oben' AND f.cor_id='COR24';
-  IF n <> 2 THEN RAISE EXCEPTION 'C24.1 FALHOU: COR24 deveria seguir com 2 itens, achei %', n; END IF;
+  IF n IS DISTINCT FROM 2 THEN RAISE EXCEPTION 'C24.1 FALHOU: COR24 deveria seguir com 2 itens, achei %', n; END IF;
   SELECT max(fi.qtd_ml) FILTER (WHERE c.id_corante_sayersystem='AX24') INTO qax
     FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id JOIN tint_corantes c ON c.id=fi.corante_id
     WHERE f.account='oben' AND f.cor_id='COR24';
@@ -1580,7 +1586,7 @@ DO $$
 DECLARE n int; nerr int;
 BEGIN
   SELECT count(*) INTO n FROM tint_formulas WHERE account='oben' AND cor_id='COR25';
-  IF n <> 0 THEN RAISE EXCEPTION 'C25.1 FALHOU: chave nova incompleta criou % header(s) — fórmula parcial/vazia ativa (o mal das 28.609)', n; END IF;
+  IF n IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'C25.1 FALHOU: chave nova incompleta criou % header(s) — fórmula parcial/vazia ativa (o mal das 28.609)', n; END IF;
   SELECT count(*) INTO nerr FROM tint_sync_errors WHERE sync_run_id='e1c25000-0000-0000-0000-000000000001'
     AND entity_type='formula_promote' AND entity_id='COR25' AND error_message LIKE '%staging incompleto%';
   IF nerr < 1 THEN RAISE EXCEPTION 'C25.2 FALHOU: incompleta em chave nova não logou'; END IF;
@@ -1606,14 +1612,14 @@ DECLARE n int; nerr int;
 BEGIN
   -- (a) receita PRESERVADA (expected=0 não limpa).
   SELECT count(*) INTO n FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='oben' AND f.cor_id='COR24';
-  IF n <> 2 THEN RAISE EXCEPTION 'C26.1 FALHOU: expected=0 mexeu na receita (COR24 tem % itens, esperado 2 {10,5})', n; END IF;
+  IF n IS DISTINCT FROM 2 THEN RAISE EXCEPTION 'C26.1 FALHOU: expected=0 mexeu na receita (COR24 tem % itens, esperado 2 {10,5})', n; END IF;
   -- (b) barrado pelo guard (c) — 'sem receita' — e NÃO pelo gate de transporte (0=0 é íntegro).
   SELECT count(*) INTO nerr FROM tint_sync_errors WHERE sync_run_id='e1c26000-0000-0000-0000-000000000001'
     AND entity_id='COR24' AND error_message LIKE '%sem receita%';
   IF nerr < 1 THEN RAISE EXCEPTION 'C26.2 FALHOU: expected=0 vazio não logou o guard (c)'; END IF;
   SELECT count(*) INTO nerr FROM tint_sync_errors WHERE sync_run_id='e1c26000-0000-0000-0000-000000000001'
     AND entity_id='COR24' AND error_message LIKE '%staging incompleto%';
-  IF nerr <> 0 THEN RAISE EXCEPTION 'C26.3 FALHOU: 0 declarado = 0 ingerido é ÍNTEGRO — o gate de transporte não devia disparar'; END IF;
+  IF nerr IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'C26.3 FALHOU: 0 declarado = 0 ingerido é ÍNTEGRO — o gate de transporte não devia disparar'; END IF;
   RAISE NOTICE 'OK C26 — expected=0 vazio: transporte íntegro, guard (c) barra, receita {10,5} intacta';
 END $$;
 SQL
@@ -1642,7 +1648,7 @@ DO $$
 DECLARE n int; nerr int;
 BEGIN
   SELECT count(*) INTO n FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='oben' AND f.cor_id='COR24';
-  IF n <> 2 THEN RAISE EXCEPTION 'C27.1 FALHOU: vazio ambíguo mexeu na receita (COR24 tem % itens, esperado 2 {11,6})', n; END IF;
+  IF n IS DISTINCT FROM 2 THEN RAISE EXCEPTION 'C27.1 FALHOU: vazio ambíguo mexeu na receita (COR24 tem % itens, esperado 2 {11,6})', n; END IF;
   SELECT count(*) INTO nerr FROM tint_sync_errors WHERE sync_run_id='e1c27000-0000-0000-0000-0000000000c0'
     AND entity_id='COR24' AND error_message LIKE '%sem receita%';
   IF nerr < 1 THEN RAISE EXCEPTION 'C27.2 FALHOU: vazio ambíguo não logou o guard (c)'; END IF;
@@ -1666,7 +1672,7 @@ DO $$
 DECLARE n int; qax numeric; nerr int;
 BEGIN
   SELECT count(*) INTO n FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='oben' AND f.cor_id='COR24';
-  IF n <> 2 THEN RAISE EXCEPTION 'C28.1 FALHOU: mismatch 0≠1 mexeu na receita (esperado 2 itens {11,6} preservados, achei %)', n; END IF;
+  IF n IS DISTINCT FROM 2 THEN RAISE EXCEPTION 'C28.1 FALHOU: mismatch 0≠1 mexeu na receita (esperado 2 itens {11,6} preservados, achei %)', n; END IF;
   SELECT max(fi.qtd_ml) FILTER (WHERE c.id_corante_sayersystem='AX24') INTO qax
     FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id JOIN tint_corantes c ON c.id=fi.corante_id
     WHERE f.account='oben' AND f.cor_id='COR24';
@@ -1699,7 +1705,7 @@ DO $$
 DECLARE n int; nerr int;
 BEGIN
   SELECT count(*) INTO n FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='oben' AND f.cor_id='COR24';
-  IF n <> 2 THEN RAISE EXCEPTION 'C29.1 FALHOU: placeholders completos mexeram na receita (COR24 tem % itens, esperado 2 {11,6})', n; END IF;
+  IF n IS DISTINCT FROM 2 THEN RAISE EXCEPTION 'C29.1 FALHOU: placeholders completos mexeram na receita (COR24 tem % itens, esperado 2 {11,6})', n; END IF;
   SELECT count(*) INTO nerr FROM tint_sync_errors WHERE sync_run_id='e1c29000-0000-0000-0000-000000000001'
     AND entity_id='COR24' AND error_message LIKE '%sem receita%';
   IF nerr < 1 THEN RAISE EXCEPTION 'C29.2 FALHOU: placeholders completos não logaram o guard (c) sob a v4'; END IF;
@@ -1725,10 +1731,10 @@ NBASE1C=$(P -tA -c "SELECT count(*) FROM tint_formula_itens fi JOIN tint_formula
 [ "$NBASE1C" = "2" ] || { echo "✗ baseline F1c: COR24 deveria ter 2 itens, achei $NBASE1C"; exit 1; }
 ok "baseline VERDE — COR24 re-populada {10,5} pelo protocolo íntegro"
 # SABOTAGEM: neutraliza o predicado do gate (mismatch nunca detectado) e re-aplica SÓ a função.
-sed 's/AND fl.expected_item_count <> COALESCE(si.n, 0)/AND false/' "$MIGF" > /tmp/sab-tint-1c.sql
-grep -q 'AND fl.expected_item_count <> COALESCE(si.n, 0)' /tmp/sab-tint-1c.sql && { echo "✗ sabotagem F1c: sed não neutralizou o predicado do gate"; exit 1; }
-grep -q 'AND false' /tmp/sab-tint-1c.sql || { echo "✗ sabotagem F1c: predicado não encontrado (a migration mudou?)"; exit 1; }
-P -v ON_ERROR_STOP=1 -q -f /tmp/sab-tint-1c.sql >/dev/null
+sed 's/AND fl.expected_item_count <> COALESCE(si.n, 0)/AND false/' "$MIGF" > "$RODADA/sab-tint-1c.sql"
+grep -q 'AND fl.expected_item_count <> COALESCE(si.n, 0)' "$RODADA/sab-tint-1c.sql" && { echo "✗ sabotagem F1c: sed não neutralizou o predicado do gate"; exit 1; }
+grep -q 'AND false' "$RODADA/sab-tint-1c.sql" || { echo "✗ sabotagem F1c: predicado não encontrado (a migration mudou?)"; exit 1; }
+P -v ON_ERROR_STOP=1 -q -f "$RODADA/sab-tint-1c.sql" >/dev/null
 # Run SUBCONJUNTO (declarados=3, ingeridos=2, doses 77): SEM o gate, SUBSTITUI a receita.
 P -v ON_ERROR_STOP=1 -q <<'SQL'
 INSERT INTO tint_sync_runs (id, setting_id, account, store_code, sync_type, status)
@@ -1797,14 +1803,14 @@ DO $$
 DECLARE n int; nerr int; v_limpas int; v_ativa int;
 BEGIN
   SELECT count(*) INTO n FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='oben' AND f.cor_id='COR24';
-  IF n <> 0 THEN RAISE EXCEPTION 'C30.1 FALHOU: tríade declarada NÃO limpou a receita (COR24 com % itens, esperado 0)', n; END IF;
+  IF n IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'C30.1 FALHOU: tríade declarada NÃO limpou a receita (COR24 com % itens, esperado 0)', n; END IF;
   SELECT count(*) INTO v_ativa FROM tint_formulas WHERE account='oben' AND cor_id='COR24' AND desativada_em IS NULL;
-  IF v_ativa <> 1 THEN RAISE EXCEPTION 'C30.2 FALHOU: COR24 deveria seguir ativa como base pura (achei %)', v_ativa; END IF;
+  IF v_ativa IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'C30.2 FALHOU: COR24 deveria seguir ativa como base pura (achei %)', v_ativa; END IF;
   -- Filtra por entity_id: o promote processa o PAR inteiro e RE-LOGA honestamente os latest
   -- ruins herdados de cenários anteriores (ex.: COR25 incompleta) — sinal por FÓRMULA, não do run.
   SELECT count(*) INTO nerr FROM tint_sync_errors WHERE sync_run_id='e1d30000-0000-0000-0000-000000000001'
     AND entity_type='formula_promote' AND entity_id='COR24';
-  IF nerr <> 0 THEN RAISE EXCEPTION 'C30.3 FALHOU: transição legítima logou % erro(s) p/ COR24 (esperado 0)', nerr; END IF;
+  IF nerr IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'C30.3 FALHOU: transição legítima logou % erro(s) p/ COR24 (esperado 0)', nerr; END IF;
   SELECT (metadata->>'receitas_limpas')::int INTO v_limpas FROM tint_sync_runs WHERE id='e1d30000-0000-0000-0000-000000000001';
   IF v_limpas IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'C30.4 FALHOU: metadata receitas_limpas=% (esperado 1)', v_limpas; END IF;
   RAISE NOTICE 'OK C30 — tríade declarada limpou {77,77}→0 itens, header ativo, 0 erros, receitas_limpas=1';
@@ -1844,7 +1850,7 @@ DO $$
 DECLARE n int; qax numeric; nerr int;
 BEGIN
   SELECT count(*) INTO n FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='oben' AND f.cor_id='COR24';
-  IF n <> 2 THEN RAISE EXCEPTION 'C31.1 FALHOU: contraditórios mexeram na receita (COR24 com % itens, esperado 2 {9,4})', n; END IF;
+  IF n IS DISTINCT FROM 2 THEN RAISE EXCEPTION 'C31.1 FALHOU: contraditórios mexeram na receita (COR24 com % itens, esperado 2 {9,4})', n; END IF;
   SELECT max(fi.qtd_ml) FILTER (WHERE c.id_corante_sayersystem='AX24') INTO qax
     FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id JOIN tint_corantes c ON c.id=fi.corante_id
     WHERE f.account='oben' AND f.cor_id='COR24';
@@ -1873,12 +1879,12 @@ DO $$
 DECLARE n int; ni int; nerr int; v_limpas int;
 BEGIN
   SELECT count(*) INTO n FROM tint_formulas WHERE account='oben' AND cor_id='COR32' AND desativada_em IS NULL;
-  IF n <> 1 THEN RAISE EXCEPTION 'C32.1 FALHOU: base pura declarada em chave nova deveria criar 1 header ativo, achei %', n; END IF;
+  IF n IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'C32.1 FALHOU: base pura declarada em chave nova deveria criar 1 header ativo, achei %', n; END IF;
   SELECT count(*) INTO ni FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='oben' AND f.cor_id='COR32';
-  IF ni <> 0 THEN RAISE EXCEPTION 'C32.2 FALHOU: COR32 deveria ter 0 itens, achei %', ni; END IF;
+  IF ni IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'C32.2 FALHOU: COR32 deveria ter 0 itens, achei %', ni; END IF;
   SELECT count(*) INTO nerr FROM tint_sync_errors WHERE sync_run_id='e1d32000-0000-0000-0000-000000000001'
     AND entity_type='formula_promote' AND entity_id='COR32';
-  IF nerr <> 0 THEN RAISE EXCEPTION 'C32.3 FALHOU: declarada em chave nova logou % erro(s) p/ COR32', nerr; END IF;
+  IF nerr IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'C32.3 FALHOU: declarada em chave nova logou % erro(s) p/ COR32', nerr; END IF;
   -- Chave nova NÃO conta como limpeza (nada foi destruído).
   SELECT (metadata->>'receitas_limpas')::int INTO v_limpas FROM tint_sync_runs WHERE id='e1d32000-0000-0000-0000-000000000001';
   IF v_limpas IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'C32.4 FALHOU: chave nova contou como limpeza (receitas_limpas=%)', v_limpas; END IF;
@@ -1914,10 +1920,10 @@ DO $$
 DECLARE n int; nerr int; v_limpas int;
 BEGIN
   SELECT count(*) INTO n FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='oben' AND f.cor_id ~ '^COR33_';
-  IF n <> 52 THEN RAISE EXCEPTION 'C33.1 FALHOU: cap furado — % receitas restantes (esperado 52 intactas)', n; END IF;
+  IF n IS DISTINCT FROM 52 THEN RAISE EXCEPTION 'C33.1 FALHOU: cap furado — % receitas restantes (esperado 52 intactas)', n; END IF;
   SELECT count(*) INTO nerr FROM tint_sync_errors WHERE sync_run_id='e1d33000-0000-0000-0000-000000000001'
     AND error_message LIKE '%limpeza em massa%';
-  IF nerr <> 52 THEN RAISE EXCEPTION 'C33.2 FALHOU: esperava 52 logs de limpeza em massa, achei %', nerr; END IF;
+  IF nerr IS DISTINCT FROM 52 THEN RAISE EXCEPTION 'C33.2 FALHOU: esperava 52 logs de limpeza em massa, achei %', nerr; END IF;
   SELECT (metadata->>'receitas_limpas')::int INTO v_limpas FROM tint_sync_runs WHERE id='e1d33000-0000-0000-0000-000000000001';
   IF v_limpas IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'C33.3 FALHOU: receitas_limpas=% com cap estourado (esperado 0)', v_limpas; END IF;
   RAISE NOTICE 'OK C33a — 52 limpezas num run: NENHUMA executou, 52 receitas intactas + 52 logs';
@@ -1949,7 +1955,7 @@ DO $$
 DECLARE n int; qax numeric; nerr int;
 BEGIN
   SELECT count(*) INTO n FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='oben' AND f.cor_id='COR24';
-  IF n <> 2 THEN RAISE EXCEPTION 'C35.1 FALHOU: receita mudou (COR24 com % itens, esperado 2 {9,4} preservados)', n; END IF;
+  IF n IS DISTINCT FROM 2 THEN RAISE EXCEPTION 'C35.1 FALHOU: receita mudou (COR24 com % itens, esperado 2 {9,4} preservados)', n; END IF;
   SELECT max(fi.qtd_ml) FILTER (WHERE c.id_corante_sayersystem='AX24') INTO qax
     FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id JOIN tint_corantes c ON c.id=fi.corante_id
     WHERE f.account='oben' AND f.cor_id='COR24';
@@ -1980,7 +1986,7 @@ DO $$
 DECLARE n int; qax numeric; nerr int;
 BEGIN
   SELECT count(*) INTO n FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='oben' AND f.cor_id='COR24';
-  IF n <> 2 THEN RAISE EXCEPTION 'C36.1 FALHOU: receita mudou (COR24 com % itens, esperado 2 {9,4})', n; END IF;
+  IF n IS DISTINCT FROM 2 THEN RAISE EXCEPTION 'C36.1 FALHOU: receita mudou (COR24 com % itens, esperado 2 {9,4})', n; END IF;
   SELECT max(fi.qtd_ml) FILTER (WHERE c.id_corante_sayersystem='AX24') INTO qax
     FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id JOIN tint_corantes c ON c.id=fi.corante_id
     WHERE f.account='oben' AND f.cor_id='COR24';
@@ -2011,7 +2017,7 @@ DO $$
 DECLARE n int; nerr int;
 BEGIN
   SELECT count(*) INTO n FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='oben' AND f.cor_id='COR24';
-  IF n <> 2 THEN RAISE EXCEPTION 'C37.1 FALHOU: placeholders sob v5 mexeram na receita (COR24 com % itens, esperado 2 {9,4})', n; END IF;
+  IF n IS DISTINCT FROM 2 THEN RAISE EXCEPTION 'C37.1 FALHOU: placeholders sob v5 mexeram na receita (COR24 com % itens, esperado 2 {9,4})', n; END IF;
   SELECT count(*) INTO nerr FROM tint_sync_errors WHERE sync_run_id='e1d37000-0000-0000-0000-000000000001'
     AND entity_id='COR24' AND error_message LIKE '%corrompida%';
   IF nerr < 1 THEN RAISE EXCEPTION 'C37.2 FALHOU: placeholders sob v5 não logaram corrompida ([1d-E])'; END IF;
@@ -2057,7 +2063,7 @@ BEGIN
   IF v_a IS DISTINCT FROM 50 THEN RAISE EXCEPTION 'C34.1 FALHOU: run A deveria limpar 50 (receitas_limpas=%)', v_a; END IF;
   SELECT count(*) INTO n FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id
    WHERE f.account='oben' AND f.cor_id IN ('COR34_51','COR34_52');
-  IF n <> 2 THEN RAISE EXCEPTION 'C34.2 FALHOU: a CATRACA passou — run B limpou as restantes (% itens, esperado 2)', n; END IF;
+  IF n IS DISTINCT FROM 2 THEN RAISE EXCEPTION 'C34.2 FALHOU: a CATRACA passou — run B limpou as restantes (% itens, esperado 2)', n; END IF;
   SELECT (metadata->>'receitas_limpas')::int INTO v_b FROM tint_sync_runs WHERE id='e1d34000-0000-0000-0000-000000000002';
   IF v_b IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'C34.3 FALHOU: run B contabilizou limpeza (receitas_limpas=%)', v_b; END IF;
   SELECT count(*) INTO nerr FROM tint_sync_errors WHERE sync_run_id='e1d34000-0000-0000-0000-000000000002'
@@ -2070,10 +2076,10 @@ SQL
 echo ""
 echo "── falsificação F1d-1 (a EXCEÇÃO declarada tem dente: sem ela, a limpeza legítima NÃO executa) ──"
 # Sabota o predicado da tríade no (c') → tríade nunca reconhecida → vazio declarado volta a barrar.
-sed 's/^      AND fl.expected_item_count = 0$/      AND false/' "$MIG1D" > /tmp/sab-tint-1d-excecao.sql
-grep -q '^      AND fl.expected_item_count = 0$' /tmp/sab-tint-1d-excecao.sql && { echo "✗ F1d-1: sed não neutralizou a tríade"; exit 1; }
-grep -q '^      AND false$' /tmp/sab-tint-1d-excecao.sql || { echo "✗ F1d-1: âncora da tríade não encontrada (a migration mudou?)"; exit 1; }
-P -v ON_ERROR_STOP=1 -q -f /tmp/sab-tint-1d-excecao.sql >/dev/null
+sed 's/^      AND fl.expected_item_count = 0$/      AND false/' "$MIG1D" > "$RODADA/sab-tint-1d-excecao.sql"
+grep -q '^      AND fl.expected_item_count = 0$' "$RODADA/sab-tint-1d-excecao.sql" && { echo "✗ F1d-1: sed não neutralizou a tríade"; exit 1; }
+grep -q '^      AND false$' "$RODADA/sab-tint-1d-excecao.sql" || { echo "✗ F1d-1: âncora da tríade não encontrada (a migration mudou?)"; exit 1; }
+P -v ON_ERROR_STOP=1 -q -f "$RODADA/sab-tint-1d-excecao.sql" >/dev/null
 P -v ON_ERROR_STOP=1 -q <<'SQL'
 INSERT INTO tint_sync_runs (id, setting_id, account, store_code, sync_type, status)
 VALUES ('e1df1000-0000-0000-0000-000000000001','aaaaaaaa-0000-0000-0000-000000000001','oben','L1','formulas','complete');
@@ -2086,13 +2092,14 @@ NF1=$(P -tA -c "SELECT count(*) FROM tint_formula_itens fi JOIN tint_formulas f 
 ok "exceção sabotada → tríade legítima barrada (receita preservada): C30 tem dente"
 
 echo "── falsificação F1d-2 (o fail-closed tem dente: exceção sempre-verdadeira limparia vazio SEM declaração) ──"
-perl -0pe 's/fl\.is_base_pura IS TRUE\n      AND fl\.expected_item_count = 0/true\n      AND true/' "$MIG1D" > /tmp/sab-tint-1d-failopen.sql
-python3 - <<'EOF'
-orig = open("/tmp/sab-tint-1d-failopen.sql").read()
+perl -0pe 's/fl\.is_base_pura IS TRUE\n      AND fl\.expected_item_count = 0/true\n      AND true/' "$MIG1D" > "$RODADA/sab-tint-1d-failopen.sql"
+python3 - "$RODADA/sab-tint-1d-failopen.sql" <<'EOF'
+import sys
+orig = open(sys.argv[1]).read()
 assert "true\n      AND true" in orig, "F1d-2: perl não sabotou a tríade"
 assert "fl.is_base_pura IS TRUE\n      AND fl.expected_item_count = 0" not in orig, "F1d-2: tríade original sobrou"
 EOF
-P -v ON_ERROR_STOP=1 -q -f /tmp/sab-tint-1d-failopen.sql >/dev/null
+P -v ON_ERROR_STOP=1 -q -f "$RODADA/sab-tint-1d-failopen.sql" >/dev/null
 P -v ON_ERROR_STOP=1 -q <<'SQL'
 -- Vazio SEM declaração sobre COR33_5 (tem receita): sob a sabotagem, a "exceção" pega qualquer
 -- vazio bruto → LIMPA — exatamente a regressão que C26/C27 vigiam.
@@ -2107,9 +2114,9 @@ NF2=$(P -tA -c "SELECT count(*) FROM tint_formula_itens fi JOIN tint_formulas f 
 ok "exceção sempre-verdadeira → vazio SEM declaração LIMPOU (dano provado): o fail-closed da tríade tem dente"
 
 echo "── falsificação F1d-3 (o cap tem dente: cap gigante deixa a limpeza em massa passar) ──"
-sed 's/v_cap_limpezas   constant int := 50;/v_cap_limpezas   constant int := 100000;/' "$MIG1D" > /tmp/sab-tint-1d-cap.sql
-grep -q 'constant int := 100000;' /tmp/sab-tint-1d-cap.sql || { echo "✗ F1d-3: sed não trocou o cap"; exit 1; }
-P -v ON_ERROR_STOP=1 -q -f /tmp/sab-tint-1d-cap.sql >/dev/null
+sed 's/v_cap_limpezas   constant int := 50;/v_cap_limpezas   constant int := 100000;/' "$MIG1D" > "$RODADA/sab-tint-1d-cap.sql"
+grep -q 'constant int := 100000;' "$RODADA/sab-tint-1d-cap.sql" || { echo "✗ F1d-3: sed não trocou o cap"; exit 1; }
+P -v ON_ERROR_STOP=1 -q -f "$RODADA/sab-tint-1d-cap.sql" >/dev/null
 # Baseline deste ponto: COR33_% com receita = 52 - 1 (F1d-2 limpou COR33_5; o cap segurou as 51
 # declaradas restantes) = 51.
 NB33=$(P -tA -c "SELECT count(*) FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='oben' AND f.cor_id ~ '^COR33_';")
@@ -2121,10 +2128,10 @@ NF3=$(P -tA -c "SELECT count(*) FROM tint_formula_itens fi JOIN tint_formulas f 
 ok "cap gigante → 51 receitas limpas num run (dano provado): C33 tem dente"
 
 echo "── falsificação F1d-4 (o ACUMULADO tem dente: janela zerada → a catraca C34 passa) ──"
-sed "s/interval '24 hours'/interval '0 hours'/" "$MIG1D" > /tmp/sab-tint-1d-janela.sql
-grep -q "interval '0 hours'" /tmp/sab-tint-1d-janela.sql || { echo "✗ F1d-4: sed não zerou a janela"; exit 1; }
-grep -q "interval '24 hours'" /tmp/sab-tint-1d-janela.sql && { echo "✗ F1d-4: janela original sobrou"; exit 1; }
-P -v ON_ERROR_STOP=1 -q -f /tmp/sab-tint-1d-janela.sql >/dev/null
+sed "s/interval '24 hours'/interval '0 hours'/" "$MIG1D" > "$RODADA/sab-tint-1d-janela.sql"
+grep -q "interval '0 hours'" "$RODADA/sab-tint-1d-janela.sql" || { echo "✗ F1d-4: sed não zerou a janela"; exit 1; }
+grep -q "interval '24 hours'" "$RODADA/sab-tint-1d-janela.sql" && { echo "✗ F1d-4: janela original sobrou"; exit 1; }
+P -v ON_ERROR_STOP=1 -q -f "$RODADA/sab-tint-1d-janela.sql" >/dev/null
 # Re-invoca o run B da catraca (L2): sem acumulado, 2+0 ≤ 50 → LIMPA as 2 (o dano do Codex P0).
 P -v ON_ERROR_STOP=1 -q -c "SELECT tint_promote_sync_run('e1d34000-0000-0000-0000-000000000002');" >/dev/null
 NF4=$(P -tA -c "SELECT count(*) FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='oben' AND f.cor_id IN ('COR34_51','COR34_52');")
@@ -2229,7 +2236,7 @@ BEGIN
       AND btrim(COALESCE(it->>'id_corante','')) = ''
       AND (it->>'viola')::boolean IS TRUE
       AND it->'motivos' @> '"dose_sem_corante"'::jsonb;
-  IF n_orfao <> 1 THEN RAISE EXCEPTION 'C38.2 FALHOU: o órfão não está marcado viola+dose_sem_corante (achei %)', n_orfao; END IF;
+  IF n_orfao IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'C38.2 FALHOU: o órfão não está marcado viola+dose_sem_corante (achei %)', n_orfao; END IF;
   IF q_orfao IS DISTINCT FROM '2.4645' THEN RAISE EXCEPTION 'C38.3 FALHOU: dose do órfão no log = % (esperado 2.4645)', q_orfao; END IF;
   -- (3) os itens VÁLIDOS seguem verbatim e NÃO são acusados (precisão: marcar todo mundo é tão
   --     inútil quanto marcar ninguém — o diagnóstico tem de apontar o culpado).
@@ -2239,14 +2246,14 @@ BEGIN
       AND it->>'id_corante' IN ('AX24','VM24')
       AND (it->>'viola')::boolean IS FALSE
       AND it->'motivos' = 'null'::jsonb;
-  IF n_validos <> 2 THEN RAISE EXCEPTION 'C38.4 FALHOU: os 2 itens válidos deveriam vir viola=false/motivos=null (achei %)', n_validos; END IF;
+  IF n_validos IS DISTINCT FROM 2 THEN RAISE EXCEPTION 'C38.4 FALHOU: os 2 itens válidos deveriam vir viola=false/motivos=null (achei %)', n_validos; END IF;
   -- (4) a MENSAGEM para de acusar o inocente. Sentinelas ASCII puras e exclusivas de cada ramo
   --     (sem acento: nada de casar por dobra de encoding), uma positiva e uma negativa.
-  IF msg NOT LIKE '%sem corante identificado%' THEN
+  IF msg IS NULL OR msg NOT LIKE '%sem corante identificado%' THEN
     RAISE EXCEPTION 'C38.5 FALHOU: a mensagem nao cita o ramo que disparou (orfao). msg=%', msg; END IF;
   IF msg LIKE '%corante presente sem dose%' THEN
     RAISE EXCEPTION 'C38.6 FALHOU: a mensagem AINDA acusa o ramo (a), que nao disparou aqui. msg=%', msg; END IF;
-  IF msg NOT LIKE '%corrompida%' THEN
+  IF msg IS NULL OR msg NOT LIKE '%corrompida%' THEN
     RAISE EXCEPTION 'C38.7 FALHOU: prefixo receita corrompida perdido (quebra a UI e os asserts). msg=%', msg; END IF;
   RAISE NOTICE 'OK C38 — NB.9142: 3 itens no log, orfao(2.4645) MARCADO, 2 validos intactos, mensagem cita (b) e nao (a)';
 END $$;
@@ -2279,13 +2286,13 @@ BEGIN
     WHERE e.sync_run_id='e1d39000-0000-0000-0000-000000000001' AND e.entity_id='COR39'
       AND it->>'id_corante'='VM24' AND (it->>'viola')::boolean IS TRUE
       AND it->'motivos' @> '"corante_sem_dose_valida"'::jsonb;
-  IF n_culp <> 1 THEN RAISE EXCEPTION 'C39.2 FALHOU: VM24 (dose 0) nao esta marcado como culpado (achei %)', n_culp; END IF;
+  IF n_culp IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'C39.2 FALHOU: VM24 (dose 0) nao esta marcado como culpado (achei %)', n_culp; END IF;
   SELECT count(*) INTO n_ok
     FROM tint_sync_errors e, jsonb_array_elements(e.error_details->'itens') it
     WHERE e.sync_run_id='e1d39000-0000-0000-0000-000000000001' AND e.entity_id='COR39'
       AND it->>'id_corante'='AX24' AND (it->>'viola')::boolean IS FALSE AND (it->>'qtd_ml')='20.794';
-  IF n_ok <> 1 THEN RAISE EXCEPTION 'C39.3 FALHOU: AX24 (20.794) deveria vir viola=false e verbatim (achei %)', n_ok; END IF;
-  IF msg NOT LIKE '%corante presente sem dose%' THEN
+  IF n_ok IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'C39.3 FALHOU: AX24 (20.794) deveria vir viola=false e verbatim (achei %)', n_ok; END IF;
+  IF msg IS NULL OR msg NOT LIKE '%corante presente sem dose%' THEN
     RAISE EXCEPTION 'C39.4 FALHOU: aqui o ramo (a) DISPAROU e a mensagem tem de dize-lo. msg=%', msg; END IF;
   RAISE NOTICE 'OK C39 — FO10.6554: VM24(0) marcado corante_sem_dose_valida, AX24(20.794) intacto, mensagem cita (a)';
 END $$;
@@ -2341,16 +2348,16 @@ BEGIN
   -- (iii) NaN barrou: nenhuma receita criada.
   SELECT count(*) INTO nc FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id
     WHERE f.account='oben' AND f.cor_id='COR40C';
-  IF nc <> 0 THEN RAISE EXCEPTION 'C40.3 FALHOU (REGRESSAO): dose NaN promoveu sob a v6 (% itens)', nc; END IF;
+  IF nc IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'C40.3 FALHOU (REGRESSAO): dose NaN promoveu sob a v6 (% itens)', nc; END IF;
   -- (iv) órfão legado barrou.
   SELECT count(*) INTO nd FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id
     WHERE f.account='oben' AND f.cor_id='COR40D';
-  IF nd <> 0 THEN RAISE EXCEPTION 'C40.4 FALHOU (REGRESSAO): orfao legado promoveu sob a v6 (% itens)', nd; END IF;
+  IF nd IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'C40.4 FALHOU (REGRESSAO): orfao legado promoveu sob a v6 (% itens)', nd; END IF;
   -- e as 2 barradas logaram (o log continua existindo para ambas).
   SELECT count(DISTINCT entity_id) INTO n_msg FROM tint_sync_errors
     WHERE sync_run_id='e1d40000-0000-0000-0000-000000000001' AND entity_id IN ('COR40C','COR40D')
       AND error_message LIKE '%corrompida%';
-  IF n_msg <> 2 THEN RAISE EXCEPTION 'C40.5 FALHOU: as 2 barradas deveriam logar corrompida (achei %)', n_msg; END IF;
+  IF n_msg IS DISTINCT FROM 2 THEN RAISE EXCEPTION 'C40.5 FALHOU: as 2 barradas deveriam logar corrompida (achei %)', n_msg; END IF;
   RAISE NOTICE 'OK C40 — decisao intacta sob a v6: 2-etapas(AX24=4, maior ordem) e sadia PROMOVEM; NaN e orfao BARRAM e logam';
 END $$;
 SQL
@@ -2393,7 +2400,7 @@ DECLARE n int; q numeric; n_marc int;
 BEGIN
   SELECT count(*), max(fi.qtd_ml) INTO n, q FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id
     WHERE f.account='oben' AND f.cor_id='COR41';
-  IF n <> 1 OR q IS DISTINCT FROM 9 THEN
+  IF n IS DISTINCT FROM 1 OR q IS DISTINCT FROM 9 THEN
     RAISE EXCEPTION 'C41.1 FALHOU ([1d-E] NAO protege sob a v6): receita virou % item(ns) qtd=% (esperado 1 item qtd=9 preservado)', n, q; END IF;
   -- e o log da v6 aponta a linha inválida do protocolo (o motivo exclusivo deste ramo)
   SELECT count(*) INTO n_marc
@@ -2442,9 +2449,14 @@ grep -q "'viola',      false," "$SAB2" || { echo "✗ Flog-2: sed não neutraliz
 P -v ON_ERROR_STOP=1 -q -f "$SAB2" >/dev/null
 RESET38
 P -v ON_ERROR_STOP=1 -q -c "SELECT tint_promote_sync_run('e1d38000-0000-0000-0000-000000000001');" >/dev/null
-NM=$(P -tA -c "SELECT count(*) FROM tint_sync_errors e, jsonb_array_elements(e.error_details->'itens') it WHERE e.sync_run_id='e1d38000-0000-0000-0000-000000000001' AND e.entity_id='COR38' AND (it->>'viola')::boolean IS TRUE;")
-[ "$NM" = "0" ] || { echo "✗ Flog-2 FALHOU: marcação sabotada ainda apontou $NM culpado(s) — C38.2 não tem dente"; exit 1; }
-ok "marcação sabotada → 0 itens apontados: C38.2 tem dente"
+# "0 apontados" sozinho aceitava a chamada que nem gerou o log (o RESET38 o apagou antes): a medição
+# leva o total de itens do log. Declarado: 0 marcados DOS 3 itens que o C38.1 exige (intacto: 1|3).
+NM=$(P -tA -c "SELECT count(*) FILTER (WHERE (it->>'viola')::boolean IS TRUE) || '|' || count(*) FROM tint_sync_errors e, jsonb_array_elements(e.error_details->'itens') it WHERE e.sync_run_id='e1d38000-0000-0000-0000-000000000001' AND e.entity_id='COR38';")
+case "$NM" in
+  "0|3") ok "marcação sabotada → 0 dos 3 itens apontados: C38.2 tem dente" ;;
+  "1|3") echo "✗ Flog-2 FALHOU: marcação sabotada ainda apontou o culpado — C38.2 não tem dente"; exit 1 ;;
+  *) echo "✗ Flog-2 FALHOU: NÃO é o que a sabotagem declara (0 marcados dos 3 itens do log): veio [$NM]"; exit 1 ;;
+esac
 rm -f "$SAB2"
 
 echo "── falsificação Flog-3 (o C38.6 tem dente: mensagem volta a acusar o ramo (a)) ──"
@@ -2491,8 +2503,12 @@ grep -q '^      AND fl.expected_item_count IS NOT NULL$' "$SAB5" && { echo "✗ 
 P -v ON_ERROR_STOP=1 -q -f "$SAB5" >/dev/null
 P -v ON_ERROR_STOP=1 -q -c "SELECT tint_promote_sync_run('e1d41000-0000-0000-0000-0000000000c0');" >/dev/null
 R41=$(P -tA -c "SELECT count(*) || '/' || COALESCE(max(fi.qtd_ml)::text,'-') FROM tint_formula_itens fi JOIN tint_formulas f ON f.id=fi.formula_id WHERE f.account='oben' AND f.cor_id='COR41';")
-[ "$R41" != "1/9.000" ] || { echo "✗ Flog-5 FALHOU: sem o ramo (c) a receita de COR41 continuou {1 item, 9} — o C41 não tem dente"; exit 1; }
-ok "ramo (c) sabotado → a parcial mascarada promoveu (receita virou $R41, era 1/9.000): C41 tem dente"
+# declarado: a receita da parcial mascarada — "≠ 1/9.000" aceitava também a receita APAGADA (0/-)
+case "$R41" in
+  "1/9.000") echo "✗ Flog-5 FALHOU: sem o ramo (c) a receita de COR41 continuou {1 item, 9} — o C41 não tem dente"; exit 1 ;;
+  "1/5.000000") ok "ramo (c) sabotado → a parcial mascarada promoveu (receita virou $R41, era 1/9.000): C41 tem dente" ;;
+  *) echo "✗ Flog-5 FALHOU: NÃO é o que a sabotagem declara (1/5.000000: a parcial mascarada promovida, só o item válido de 5 ml): veio [$R41]"; exit 1 ;;
+esac
 rm -f "$SAB5"
 
 # RESTAURA a v6 real e prova que o diagnóstico honesto voltou (o órfão reaparece marcado).

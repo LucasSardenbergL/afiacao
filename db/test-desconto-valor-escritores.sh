@@ -23,6 +23,7 @@ export PGVER=17   # consumido pelo db/lib/pg-harness.sh via source
 PORT="${PGPORT_TEST:-5473}"
 SLUG="desconto-valor-escritores"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
+RODADA="$(dirname "$DATA")"   # dir ÚNICO desta rodada (o trap apaga): temporário mora aqui, nunca em /tmp/<nome-fixo>
 export LC_ALL=C LANG=C
 
 # PGBIN: resolvido por plataforma (macOS Homebrew / Linux PGDG) com conferência POSITIVA da
@@ -38,7 +39,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }
 
 P -q -f "$REPO_ROOT/db/stubs-supabase.sql"
@@ -195,7 +196,7 @@ D1=$(Pq -c "SELECT position('desconto_valor' in pg_get_functiondef(p.oid)) > 0 F
 eq "D1 e o desconto canônico, na MESMA função (consolidada, não alternada)" "$D1" "t"
 
 # Falsificação da cobrança: uma versão SEM omie_codigo_item tem de fazer a postcondição abortar.
-SABD="/tmp/sabotado-identidade-${SLUG}.sql"
+SABD="$RODADA/sabotado-identidade-${SLUG}.sql"
 # Remove a coluna E o valor de forma CONSISTENTE. A primeira versão desta sabotagem comentava só
 # o valor e deixava a vírgula de `v_created_at,` órfã: a migration morria de erro de SINTAXE, não
 # na postcondição, e o assert lia "não abortou pela minha causa" como "não abortou". Sabotagem que
@@ -293,7 +294,7 @@ eq "F4 pedido sem desconto: nenhuma divergência de total na reconciliação" "$
 # Com uma tolerância maior que o desconto, o mesmo órfão legado passa a ser REPARADO com o cabeçalho
 # bruto sobre linhas líquidas — duas portas de aprovação, e a errada abre. Se F5 não ficar vermelho,
 # F2 não tem dente. O controle é F2, na MESMA invocação e com a função verdadeira, logo acima.
-SABG5="/tmp/sabotado-g5-${SLUG}.sql"
+SABG5="$RODADA/sabotado-g5-${SLUG}.sql"
 sed 's/v_pl_total) > 0\.01/v_pl_total) > 200/' "$MIG" > "$SABG5"
 if ! grep -q "v_pl_total) > 200" "$SABG5"; then
   bad "F5.0 a sabotagem da tolerância NÃO alterou o G5 — a falsificação seria teatro"
@@ -318,7 +319,7 @@ echo "═══ E · FALSIFICAÇÃO (Lei #3): sabota → exige VERMELHO → rest
 
 # E1 — o coalesce(...,0) na ingestão. Se este assert não ficar vermelho, A3 não tem dente e todo
 # o resto da prova é decoração: a coluna aceitaria "desconto zero" carimbado no acervo inteiro.
-SAB="/tmp/sabotado-${SLUG}.sql"
+SAB="$RODADA/sabotado-${SLUG}.sql"
 sed "s/(\(c\.\)\{0,1\}it->>'desconto_valor')::numeric,/coalesce((\1it->>'desconto_valor')::numeric, 0),/g" "$MIG" > "$SAB"
 if ! grep -q "coalesce((c.it->>'desconto_valor')::numeric, 0)" "$SAB"; then
   bad "E0 a sabotagem NÃO alterou a seção 1/3 (a que o assert observa) — a falsificação seria teatro"
@@ -378,7 +379,7 @@ fi
 # colado na base nova. É o defeito que o Codex apontou, e ele não produz erro nenhum.
 P -q -c "DROP FUNCTION IF EXISTS public.criar_pedidos_com_itens(jsonb);" >/dev/null
 P -q -f "$MIG" >/dev/null
-SAB3="/tmp/sabotado3-${SLUG}.sql"
+SAB3="$RODADA/sabotado3-${SLUG}.sql"
 sed "s/                 desconto_valor = NULL,/                 desconto_valor = coalesce(NULL, oi.desconto_valor),/" "$MIG" > "$SAB3"
 if ! grep -q "coalesce(NULL, oi.desconto_valor)" "$SAB3"; then
   bad "E3.0 a sabotagem da reconciliação NÃO alterou o arquivo — assert seria teatro"
@@ -427,9 +428,9 @@ MIG_RECONC="$(find "$REPO_ROOT/supabase/migrations" -name "*_reconciliar_carrega
 MD5_BASE="136b40ad30ac7bec2a8105907b1e9fa6"   # md5(prosrc) de reconciliar_pedidos_omie em PROD, 2026-09-14
 
 DB=""
-Q()   { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d "$DB" -v ON_ERROR_STOP=1 -tA -c "$1"; }
-Qf()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d "$DB" -v ON_ERROR_STOP=1 -q -c "SET client_min_messages = warning" -f "$1"; }
-Qft() { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d "$DB" -v ON_ERROR_STOP=1 -q -tA -f "$1"; }
+Q()   { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d "$DB" -v ON_ERROR_STOP=1 -tA -c "$1"; }
+Qf()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d "$DB" -v ON_ERROR_STOP=1 -q -c "SET client_min_messages = warning" -f "$1"; }
+Qft() { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d "$DB" -v ON_ERROR_STOP=1 -q -tA -f "$1"; }
 tem() { if grep -q -- "$2" <<< "$1"; then echo sim; else echo nao; fi; }
 
 # Helpers de TESTE (schema `teste`, só nestes bancos). Montam o pedido como a edge monta: items-jsonb
@@ -621,7 +622,7 @@ novo_banco prove_h0 antiga
 eq "H0.0 a função ANTIGA desta prova é byte a byte a da prod (md5 do prosrc)" "$(Q "SELECT md5(prosrc) FROM pg_proc WHERE proname='reconciliar_pedidos_omie'")" "$MD5_BASE"
 semeia_h
 set +e; OUT=$(Q "SELECT teste.reconc($LOTE_H, -10)" 2>&1); RC=$?; set -e
-OUT_V=$("$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d "$DB" -v VERBOSITY=verbose -tA -c "SELECT teste.reconc($LOTE_H, -9)" 2>&1 || true)
+OUT_V=$("$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d "$DB" -v VERBOSITY=verbose -tA -c "SELECT teste.reconc($LOTE_H, -9)" 2>&1 || true)
 eq "H0 (contrafactual = o incidente de prod) a função antiga perde a chamada INTEIRA no commit, com 23514" "$RC|$(tem "$OUT_V" '23514')" "1|sim"
 eq "H0b e nenhum pedido do lote foi reconciliado — nem os dois bons" "$(precos)" "100,100,100"
 [ -n "$OUT" ] || true

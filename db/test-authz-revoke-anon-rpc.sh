@@ -45,10 +45,10 @@ trap cleanup EXIT
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
 HARNESS_LC="${HARNESS_LC:-C}"
-"$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d postgres -q -c "ALTER DATABASE prove SET lc_messages='$HARNESS_LC';" \
+"$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d postgres -q -c "ALTER DATABASE prove SET lc_messages='$HARNESS_LC';" \
   || { echo "INFRA: lc_messages='$HARNESS_LC' indisponivel neste servidor"; exit 1; }
 
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }
 
 PASS=0; FAIL=0
@@ -58,7 +58,7 @@ eq()  { if [ "$2" = "$3" ]; then ok "$1 (=$2)"; else bad "$1 -- esperado [$3], v
 
 P -q -f "$REPO_ROOT/db/stubs-supabase.sql"
 
-AMOSTRA_MSG=$("$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -tA -c "SELECT 1/0;" 2>&1 | head -1) || true
+AMOSTRA_MSG=$("$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -tA -c "SELECT 1/0;" 2>&1 | head -1) || true
 echo "=== setup pronto (PG17 :$PORT) lc_messages=$HARNESS_LC ==="
 echo "=== controle do eixo de locale, mensagem do servidor: $AMOSTRA_MSG"
 
@@ -137,7 +137,7 @@ montar_estado() { P -q -f "$MONTAR"; }
 # probe: executa como $1 e devolve 'EXECUTOU' ou 'SQLSTATE-<codigo>'
 probe() {   # $1 = role, $2 = SQL
   local out
-  if out=$("$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -tA -v ON_ERROR_STOP=1 2>&1 <<SQL
+  if out=$("$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -tA -v ON_ERROR_STOP=1 2>&1 <<SQL
 \set VERBOSITY verbose
 SET ROLE $1;
 $2
@@ -212,8 +212,13 @@ sabotar() {   # $1 = regex sed, $2 = rotulo
     return 1
   fi
   montar_estado
-  # a postcondicao embutida deve ABORTAR o apply; capturamos isso como o vermelho
-  if P -q -f "$alvo" >/dev/null 2>&1; then echo "APLICOU"; else echo "ABORTOU"; fi
+  # A postcondicao embutida deve ABORTAR o apply — e o vermelho so e DELA com a marca dela na saida.
+  # Ate 2026-09-27 qualquer exit≠0 virava ABORTOU: um sed que quebrasse a sintaxe, ou um erro alheio,
+  # passava por "a postcondicao abortou" (docs/historico/falsificacao-exit-nao-e-dente.md). A marca
+  # vale NA linha do ERROR: num NOTICE antes de outro erro ela nao diz quem abortou (Codex).
+  if P -q -f "$alvo" >"$alvo.out" 2>&1; then echo "APLICOU"
+  elif grep -q 'ERROR:  POSTCONDICAO FALHOU' "$alvo.out"; then echo "ABORTOU"
+  else echo "ERRO ALHEIO a postcondicao: $(grep -m1 'ERROR' "$alvo.out" | cut -c1-120)"; fi
 }
 
 F1="$(sabotar 's/^REVOKE ALL ON FUNCTION public\.aprovar_pedido_sugerido\(bigint, text, jsonb\) FROM anon;$/-- sabotado/' 'aprovar-anon')"

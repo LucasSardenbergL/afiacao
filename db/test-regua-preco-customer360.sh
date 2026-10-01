@@ -12,6 +12,7 @@ PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
 PORT="${PGPORT_TEST:-5462}"
 SLUG="regua-preco-360"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
+RODADA="$(dirname "$DATA")"   # dir ÚNICO desta rodada (o trap apaga): temporário mora aqui, nunca em /tmp/<nome-fixo>
 export LC_ALL=C LANG=C
 
 [ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER} pgvector"; exit 1; }
@@ -27,7 +28,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -qtA "$@"; }
 
 P -q -f "$REPO_ROOT/db/stubs-supabase.sql"
@@ -120,6 +121,12 @@ CA="11111111-1111-1111-1111-111111111111"
 ARR="ARRAY[7001,7002,7003,7004,7005,7007]::bigint[]"
 fnum() { Pq -c "SET test.uid='$S'; SELECT ((e->>'$2')::numeric = $3) FROM jsonb_array_elements(public.get_regua_preco_customer360('$CA'::uuid, $ARR)) e WHERE (e->>'omie_codigo')::bigint=$1;" | tail -1; }
 ftxt() { Pq -c "SET test.uid='$S'; SELECT (e->>'$2') FROM jsonb_array_elements(public.get_regua_preco_customer360('$CA'::uuid, $ARR)) e WHERE (e->>'omie_codigo')::bigint=$1;" | tail -1; }
+# Campo NULL vira "(null)"; "" fica só para o elemento AUSENTE do retorno — com ftxt os dois davam "",
+# e o assert "sem X" passava com a omie_codigo sumida (assert verde por ausência).
+fnulo() { Pq -c "SET test.uid='$S'; SELECT coalesce(e->>'$2', '(null)') FROM jsonb_array_elements(public.get_regua_preco_customer360('$CA'::uuid, $ARR)) e WHERE (e->>'omie_codigo')::bigint=$1;" | tail -1; }
+# A medição roda com `set -e` e o rc capturado fora de ||/&&: dentro do `[ ]` o status se perdia
+# (Codex, 2026-09-27). Falha vira ERRO_rc=<n>, que nenhum declarado casa — nem o "" de um assert.
+medir() { local v rc; set +e; v="$(set -e; "$@")"; rc=$?; set -e; if [ "$rc" -eq 0 ]; then printf '%s\n' "$v"; else printf 'ERRO_rc=%s\n' "$rc"; fi; }
 has360() { Pq -c "SET test.uid='$S'; SELECT EXISTS(SELECT 1 FROM jsonb_array_elements((SELECT e->'comparaveis' FROM jsonb_array_elements(public.get_regua_preco_customer360('$CA'::uuid,$ARR)) e WHERE (e->>'omie_codigo')::bigint=7001)) c WHERE (c->>'preco')::numeric=$1);" | tail -1; }
 
 # A1 — camada customer360 (caso feliz 7001); banda = QTY DA ÚLTIMA VENDA (10), não mediana
@@ -128,7 +135,7 @@ eq "A1b 7001 preco_atual = 130 (ÚLTIMO)"    "$(fnum 7001 preco_atual 130)" "t"
 eq "A1c 7001 preco_atual_at = date-10"      "$(ftxt 7001 preco_atual_at)" "$(Pq -c "SELECT (current_date-10)::text;" | tail -1)"
 eq "A1d 7001 qty_ref = 10 (qty da última venda, não mediana)" "$(fnum 7001 qty_ref 10)" "t"
 eq "A1f 7001 qty_ref_source = ultima_venda" "$(ftxt 7001 qty_ref_source)" "ultima_venda"
-eq "A1g 7001 hide_reason null"              "$(ftxt 7001 hide_reason)" ""
+eq "A1g 7001 hide_reason null"              "$(medir fnulo 7001 hide_reason)" "(null)"
 
 # A2 — merge do pacote (prova reuso da get_regua_preco: herda cmc/alíquota)
 eq "A2a 7001 piso_mc = 125 (cmc/(1-0.20))"  "$(fnum 7001 piso_mc 125)" "t"
@@ -146,7 +153,7 @@ eq "A4b 7002 piso_mc = 125 (preco<piso)"    "$(fnum 7002 piso_mc 125)" "t"
 
 # A5 — sem_produto
 eq "A5a 7003 hide_reason = sem_produto"     "$(ftxt 7003 hide_reason)" "sem_produto"
-eq "A5b 7003 sem product_id"                "$(ftxt 7003 product_id)" ""
+eq "A5b 7003 sem product_id"                "$(medir fnulo 7003 product_id)" "(null)"
 
 # A6 — sem_preco
 eq "A6a 7004 hide_reason = sem_preco"       "$(ftxt 7004 hide_reason)" "sem_preco"
@@ -165,8 +172,8 @@ eq "A9b NULL -> array vazio"                "$(Pq -c "SET test.uid='$S'; SELECT 
 # A10 — sem_quantidade: qty 0 NÃO vira banda 0..0; expõe preco_atual + product_id, mas NÃO chama a régua
 eq "A10a 7005 hide_reason = sem_quantidade" "$(ftxt 7005 hide_reason)" "sem_quantidade"
 eq "A10b 7005 preco_atual = 100 (exposto)"  "$(fnum 7005 preco_atual 100)" "t"
-eq "A10c 7005 sem qty_ref (não chamou régua)"    "$(ftxt 7005 qty_ref)" ""
-eq "A10d 7005 sem comparaveis (não chamou régua)" "$(ftxt 7005 comparaveis)" ""
+eq "A10c 7005 sem qty_ref (não chamou régua)"    "$(medir fnulo 7005 qty_ref)" "(null)"
+eq "A10d 7005 sem comparaveis (não chamou régua)" "$(medir fnulo 7005 comparaveis)" "(null)"
 
 # A11 — desempate determinístico no mesmo dia (created_at): preco_atual = 210 (created_at mais tarde)
 eq "A11a 7007 preco_atual = 210 (desempate created_at)" "$(fnum 7007 preco_atual 210)" "t"
@@ -190,23 +197,31 @@ case "$R" in *GATEBARROU360*) ok "N1 gate barra customer (42501) no caminho sem_
 
 # ════════ ZONA 5 — falsificação (sabota → exige vermelho → restaura) ════════
 echo "── falsificação ──"
+# a sabotagem que não casa é NOMEADA (antes reprovava como "sabotagem não mudou" — causa errada)
+sed_aplicou() { if cmp -s "$1" "$2"; then bad "$3 — o sed NÃO casou: a sabotagem não aplicou"; return 1; fi; }
 
 # F1 — preco_atual DEVE ser o ÚLTIMO. Sabota DESC->ASC (data): vira o mais antigo (128).
-sed 's/DESC NULLS LAST/ASC NULLS LAST/g' "$MIG360" > /tmp/sab-360-preco.sql
-P -q -f /tmp/sab-360-preco.sql
-if [ "$(fnum 7001 preco_atual 128)" = "t" ]; then ok "F1 preco_atual sabotado (ASC) → vira 128 (A1b/A7 têm dente)"; else bad "F1 sabotagem não mudou preco_atual → A1b é teatro"; fi
+sed 's/DESC NULLS LAST/ASC NULLS LAST/g' "$MIG360" > "$RODADA/sab-360-preco.sql"
+sed_aplicou "$MIG360" "$RODADA/sab-360-preco.sql" "F1" || true
+P -q -f "$RODADA/sab-360-preco.sql"
+if [ "$(medir fnum 7001 preco_atual 128)" = "t" ]; then ok "F1 preco_atual sabotado (ASC) → vira 128 (A1b/A7 têm dente)"; else bad "F1 sabotagem não mudou preco_atual → A1b é teatro"; fi
 P -q -f "$MIG360"  # restaura
 eq "F1b restaurado → preco_atual = 130" "$(fnum 7001 preco_atual 130)" "t"
 
 # F2 — gate da customer360 protege o caminho hide_reason. Sabota (IF false): customer recebe dados.
-sed "s/IF NOT (public.has_role(auth.uid(), 'employee') OR public.has_role(auth.uid(), 'master')) THEN/IF false THEN/" "$MIG360" > /tmp/sab-360-gate.sql
-P -q -f /tmp/sab-360-gate.sql
-RG=$(P -tA 2>&1 <<SQL || true
+sed "s/IF NOT (public.has_role(auth.uid(), 'employee') OR public.has_role(auth.uid(), 'master')) THEN/IF false THEN/" "$MIG360" > "$RODADA/sab-360-gate.sql"
+sed_aplicou "$MIG360" "$RODADA/sab-360-gate.sql" "F2" || true
+P -q -f "$RODADA/sab-360-gate.sql"
+# O que a sabotagem DECLARA: o customer recebe exatamente 1 linha, com o psql saindo 0. O `*1*` sobre a
+# saída com stderr casava QUALQUER texto com o dígito 1 — inclusive o `LINE 1:` de um erro qualquer.
+# O vermelho tem de ser do SEU assert: docs/historico/falsificacao-exit-nao-e-dente.md.
+set +e; RG=$(P -tA -q <<SQL
 SET test.uid='$CUST';
 SELECT jsonb_array_length(public.get_regua_preco_customer360('$CA'::uuid, ARRAY[7003]::bigint[]));
 SQL
-)
-case "$RG" in *1*) ok "F2 gate furado → customer recebe dados (N1 tem dente)";; *) bad "F2 sabotagem do gate não detectada → N1 é teatro [$RG]";; esac
+); RC_RG=$?; set -e
+if [ "$RC_RG" -eq 0 ] && [ "$RG" = "1" ]; then ok "F2 gate furado → customer recebe dados (N1 tem dente)"
+else bad "F2 — NÃO é o que a sabotagem declara (1 linha, psql 0): rc=$RC_RG [$RG]"; fi
 P -q -f "$MIG360"  # restaura
 RG2=$(P -tA 2>&1 <<SQL || true
 SET test.uid='$CUST';
@@ -217,9 +232,10 @@ case "$RG2" in *REBARROU360*) ok "F2b restaurado → customer barrado de novo";;
 
 # F3 — desempate determinístico por created_at no mesmo dia. Sabota created_at DESC->ASC:
 #      7007 (empate em order_date_kpi) passa a pegar o created_at mais CEDO (200) em vez de 210.
-sed 's/so.created_at DESC NULLS LAST/so.created_at ASC NULLS LAST/g' "$MIG360" > /tmp/sab-360-tie.sql
-P -q -f /tmp/sab-360-tie.sql
-if [ "$(fnum 7007 preco_atual 200)" = "t" ]; then ok "F3 tiebreaker sabotado (created_at ASC) → 7007 vira 200 (A11 tem dente)"; else bad "F3 sabotagem não mudou o desempate → A11 é teatro [veio $(ftxt 7007 preco_atual)]"; fi
+sed 's/so.created_at DESC NULLS LAST/so.created_at ASC NULLS LAST/g' "$MIG360" > "$RODADA/sab-360-tie.sql"
+sed_aplicou "$MIG360" "$RODADA/sab-360-tie.sql" "F3" || true
+P -q -f "$RODADA/sab-360-tie.sql"
+if [ "$(medir fnum 7007 preco_atual 200)" = "t" ]; then ok "F3 tiebreaker sabotado (created_at ASC) → 7007 vira 200 (A11 tem dente)"; else bad "F3 sabotagem não mudou o desempate → A11 é teatro [veio $(ftxt 7007 preco_atual)]"; fi
 P -q -f "$MIG360"  # restaura
 eq "F3b restaurado → 7007 preco_atual = 210" "$(fnum 7007 preco_atual 210)" "t"
 

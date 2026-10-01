@@ -35,7 +35,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }   # tuples-only, unaligned (pra capturar 1 valor)
 
 # ── base mínima do Supabase: roles, schema auth, auth.uid()/role() via GUC (impersonação de RLS) ──
@@ -333,29 +333,53 @@ negsql "20 anon não executa a RPC (REVOKE por nome)" "42501" \
 echo ""
 echo "═══ FALSIFICAÇÃO ═══"
 FALS_OK=0; FALS_BAD=0
-# roda um SQL e imprime a SQLSTATE que veio (ou 'NENHUM_ERRO')
+# roda um SQL e imprime a SQLSTATE que veio, ou 'SENTINELA_SEM_ERRO n=<ROW_COUNT do último comando>'
 sqlstate_de() {
-  P -q -c "DO \$T\$ BEGIN
+  P -q -c "DO \$T\$ DECLARE v_n bigint; BEGIN
       $1
-      RAISE NOTICE 'SENTINELA_SEM_ERRO';
+      GET DIAGNOSTICS v_n = ROW_COUNT;
+      RAISE NOTICE 'SENTINELA_SEM_ERRO n=%', v_n;
     EXCEPTION WHEN OTHERS THEN RAISE NOTICE 'SENTINELA_ESTADO=%', SQLSTATE;
-    END \$T\$;" 2>&1 | command grep -oE 'SENTINELA_ESTADO=[A-Z0-9]{5}|SENTINELA_SEM_ERRO' | head -1
+    END \$T\$;" 2>&1 | command grep -oE 'SENTINELA_ESTADO=[A-Z0-9]{5}|SENTINELA_SEM_ERRO n=[0-9]+' | paste -sd'|' -
 }
-# Exige que, DEPOIS da sabotagem, a defesa NÃO barre mais (= o assert ficaria vermelho).
-falsifica() { # falsifica <nome> <estado_que_a_defesa_produzia> <sql_de_prova>
-  local nome="$1" esperado_antes="SENTINELA_ESTADO=$2" veio
+# (TODAS as sentinelas, juntas: com `head -1`, uma marca emitida ANTES de um erro que o DO captura
+# vencia a SENTINELA_ESTADO do erro — Codex, 2026-09-27. Duas marcas não casam declarado nenhum.)
+# Exige que, DEPOIS da sabotagem, a defesa NÃO barre mais — e que a prova complete como a sabotagem
+# DECLARA ($4: sem erro, tocando n linhas). "!= a SQLSTATE da defesa" sozinho aceitava QUALQUER outro
+# erro (o DO captura WHEN OTHERS: a RPC sabotada que divide por zero virava SENTINELA_ESTADO=22012 e
+# contava como dente) e o UPDATE que não tocou linha nenhuma (sem erro por VÁCUO, não pela sabotagem).
+# O vermelho tem de ser do SEU assert: docs/historico/falsificacao-exit-nao-e-dente.md.
+falsifica() { # falsifica <nome> <estado_que_a_defesa_produzia> <sql_de_prova> <o_que_a_sabotagem_DECLARA>
+  local nome="$1" esperado_antes="SENTINELA_ESTADO=$2" declarado="$4" veio
   veio="$(sqlstate_de "$3")"
   if [ "$veio" = "$esperado_antes" ]; then
     FALS_BAD=$((FALS_BAD+1)); echo "  ❌ FALSIFICAÇÃO INERTE: $nome — sabotado e AINDA barrou com $2 (assert não tem dente)"
-  else
+  elif [ "$veio" = "$declarado" ]; then
     FALS_OK=$((FALS_OK+1)); echo "  ✅ $nome — sabotado ⇒ deixou passar (veio [$veio]); o assert TEM dente"
+  else
+    FALS_BAD=$((FALS_BAD+1)); echo "  ❌ $nome — vermelha, mas NÃO no que a sabotagem declara: esperado [$declarado], veio [$veio]"
   fi
 }
 restaura() { P -q -f "$MIG"; }
+# Controle da CENA, nesta invocação, ANTES da sabotagem: com a defesa intacta a prova TEM de barrar com
+# a SQLSTATE dela. Sem isso, uma cena que não exercita a defesa (o F4 com UMA pendente só, sem
+# ambiguidade) completaria sem erro também sabotada — o vermelho seria do vácuo, não da sabotagem.
+# A defesa intacta RECUSA: o controle não tem efeito colateral.
+controle_cena() { # <nome> <estado_que_a_defesa_produz> <sql_de_prova>
+  local veio; veio="$(sqlstate_de "$3")"
+  if [ "$veio" = "SENTINELA_ESTADO=$2" ]; then echo "  ✅ controle $1: intacta, a defesa barra ($2)"
+  else FALS_BAD=$((FALS_BAD+1)); echo "  ❌ controle $1: com a defesa INTACTA veio [$veio], não [SENTINELA_ESTADO=$2] — a cena não exercita a defesa"; fi
+}
 
 # ── F1: remover o `farmer_id = auth.uid()` FIXO ⇒ o assert 10 (lente/carteira
 #        alheia) tem de deixar de barrar. Se continuasse barrando, o assert 10
 #        estaria provando outra coisa (ex.: a policy) e não o gate da RPC.
+#        Quem tenta é o $GESTOR, como no assert 10. Até 2026-09-27 era o $OUTRO — que TEM
+#        oferta da mesma chave: com o gate INTACTO ele registrava a PRÓPRIA linha, sem erro, e o
+#        "≠ FD004" contava esse vácuo como dente (o controle da cena é que acusou).
+F1_SQL="SET LOCAL ROLE authenticated; PERFORM set_config('test.uid','$GESTOR',true); PERFORM set_config('test.gestor','on',true);
+   PERFORM $RPC('$CLI','$PRODA','cross_sell','aceito');"
+controle_cena "F1" "FD004" "$F1_SQL"
 P -q <<'SQL'
 CREATE OR REPLACE FUNCTION public.farmer_recomendacao_registrar_desfecho(
   p_customer_user_id uuid, p_product_id uuid, p_recommendation_type text,
@@ -372,27 +396,27 @@ BEGIN
   RETURN '{}'::jsonb;
 END $$;
 SQL
-falsifica "F1 gate farmer_id=auth.uid() (assert 10)" "FD004" \
-  "SET LOCAL ROLE authenticated; PERFORM set_config('test.uid','$OUTRO',true); PERFORM set_config('test.gestor','on',true);
-   PERFORM $RPC('$CLI','$PRODA','cross_sell','aceito');"
+falsifica "F1 gate farmer_id=auth.uid() (assert 10)" "FD004" "$F1_SQL" "SENTINELA_SEM_ERRO n=1"
 restaura
 repor_pendente "$PRODA" 'cross_sell' 44
 
 # ── F2: dropar o CHECK de motivo ⇒ o assert 18 (recusa SEM porquê) tem de passar.
-P -q -c "ALTER TABLE public.farmer_recommendations DROP CONSTRAINT farmer_recommendations_motivo_coerente;"
-falsifica "F2 CHECK de motivo (assert 18)" "23514" \
-  "UPDATE public.farmer_recommendations SET status='rejeitado', rejected_at=now()
+F2_SQL="UPDATE public.farmer_recommendations SET status='rejeitado', rejected_at=now()
     WHERE farmer_id='$VEND' AND status='pendente';"
+controle_cena "F2" "23514" "$F2_SQL"
+P -q -c "ALTER TABLE public.farmer_recommendations DROP CONSTRAINT farmer_recommendations_motivo_coerente;"
+falsifica "F2 CHECK de motivo (assert 18)" "23514" "$F2_SQL" "SENTINELA_SEM_ERRO n=1"
 P -q -c "DELETE FROM public.farmer_recommendations
           WHERE farmer_id='$VEND' AND status='rejeitado' AND rejection_reason IS NULL;"
 restaura
 
 # ── F3: dropar a trigger ⇒ o assert 16 (UPDATE direto reescrevendo desfecho) tem
 #        de passar. É a prova de que a imutabilidade vem da TRIGGER e não do CHECK.
-P -q -c "DROP TRIGGER trg_frec_desfecho_imutavel ON public.farmer_recommendations;"
-falsifica "F3 trigger de imutabilidade (assert 16)" "FD007" \
-  "UPDATE public.farmer_recommendations SET status='aceito', accepted_at=now(), rejected_at=NULL, rejection_reason=NULL
+F3_SQL="UPDATE public.farmer_recommendations SET status='aceito', accepted_at=now(), rejected_at=NULL, rejection_reason=NULL
     WHERE product_id='$PRODB' AND status='rejeitado';"
+controle_cena "F3" "FD007" "$F3_SQL"
+P -q -c "DROP TRIGGER trg_frec_desfecho_imutavel ON public.farmer_recommendations;"
+falsifica "F3 trigger de imutabilidade (assert 16)" "FD007" "$F3_SQL" "SENTINELA_SEM_ERRO n=1"
 P -q -c "DELETE FROM public.farmer_recommendations WHERE product_id='$PRODB';
          INSERT INTO public.farmer_recommendations
            (farmer_id, customer_user_id, recommendation_type, product_id, affinity_score, status, rejected_at, rejection_reason)
@@ -402,6 +426,16 @@ restaura
 # ── F4: trocar o guard de ambiguidade pelo `ORDER BY ... LIMIT 1` do desenho
 #        ORIGINAL ⇒ o assert 15 tem de deixar de barrar. Esta é a falsificação que
 #        prova que o achado do /codex foi de fato CORRIGIDO, e não só comentado.
+# A cena precisa de DUAS pendentes da MESMA chave, antes do controle. O F2 rejeita e apaga a da
+# vendedora: até 2026-09-27 o F4 inseria só a 2ª, sem ambiguidade nenhuma — a RPC intacta também
+# aceitava, e o "≠ FD006" contava o vácuo como dente (o controle da cena é que acusou).
+repor_pendente "$PRODA" 'cross_sell' 44
+P -q -c "INSERT INTO public.farmer_recommendations
+  (farmer_id, customer_user_id, recommendation_type, product_id, affinity_score, status)
+  VALUES ('$VEND','$CLI','cross_sell','$PRODA', 45, 'pendente');"
+F4_SQL="SET LOCAL ROLE authenticated; PERFORM set_config('test.uid','$VEND',true);
+   PERFORM $RPC('$CLI','$PRODA','cross_sell','aceito');"
+controle_cena "F4" "FD006" "$F4_SQL"
 P -q <<'SQL'
 CREATE OR REPLACE FUNCTION public.farmer_recomendacao_registrar_desfecho(
   p_customer_user_id uuid, p_product_id uuid, p_recommendation_type text,
@@ -419,12 +453,7 @@ BEGIN
   RETURN '{}'::jsonb;
 END $$;
 SQL
-P -q -c "INSERT INTO public.farmer_recommendations
-  (farmer_id, customer_user_id, recommendation_type, product_id, affinity_score, status)
-  VALUES ('$VEND','$CLI','cross_sell','$PRODA', 45, 'pendente');"
-falsifica "F4 guard de chave ambígua (assert 15)" "FD006" \
-  "SET LOCAL ROLE authenticated; PERFORM set_config('test.uid','$VEND',true);
-   PERFORM $RPC('$CLI','$PRODA','cross_sell','aceito');"
+falsifica "F4 guard de chave ambígua (assert 15)" "FD006" "$F4_SQL" "SENTINELA_SEM_ERRO n=1"
 restaura
 
 echo ""

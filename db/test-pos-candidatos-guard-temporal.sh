@@ -53,17 +53,19 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }
 # SEM ON_ERROR_STOP: usado só onde o erro é o DADO medido (veredito do gate sob sabotagem). Com
 # ON_ERROR_STOP o psql abortaria e o `set -e` derrubaria o harness antes de o assert decidir nada.
 # Sem `"$@"` de propósito: os dois chamadores usam heredoc, e aceitar args daria o SC2120 do shellcheck.
-Pv() { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -tA; }
+Pv() { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -tA; }
 
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); echo "  OK   $1"; }
 bad() { FAIL=$((FAIL+1)); echo "  FAIL $1"; }
 eq()  { if [ "$2" = "$3" ]; then ok "$1 (=$2)"; else bad "$1 -- esperado [$3], veio [$2]"; fi; }
+# Leitura que ERRA não pode virar "" — o esperado do fail-closed É "": o erro vira ERRO_rc=<n> (assert verde por ausência).
+medir() { local v rc; set +e; v="$(set -e; "$@")"; rc=$?; set -e; if [ "$rc" -eq 0 ]; then printf '%s\n' "$v"; else printf 'ERRO_rc=%s\n' "$rc"; fi; }
 
 echo "=== setup (PG17 :$PORT) ==="
 
@@ -199,7 +201,7 @@ eq "G6 conjunto final exato"                          "$(cand)"    "902,903,904"
 
 echo "== A: fail-closed sem marcador valido =="
 P -q -c "UPDATE public.reposicao_pedidos_compra_run SET volume_ok=false;"
-eq "A1 sem run valido -> VAZIO" "$(cand)" ""
+eq "A1 sem run valido -> VAZIO" "$(medir cand)" ""
 P -q -c "UPDATE public.reposicao_pedidos_compra_run SET volume_ok=true;"
 eq "A2 restaurado" "$(cand)" "902,903,904"
 
@@ -309,7 +311,7 @@ eq "F4b restaurado apos falsificacao" "$(cand)" "902,903,904"
 
 # F5: sem private.cap_compras_ler -> a PRE-CONDICAO barra (banco limpo, so os helpers)
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove_f5
-Q() { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove_f5 -v ON_ERROR_STOP=1 "$@"; }
+Q() { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove_f5 -v ON_ERROR_STOP=1 "$@"; }
 Q -q -f "$REPO_ROOT/db/stubs-supabase.sql" >/dev/null 2>&1
 if Q -q -f "$MIG" >/dev/null 2>&1; then
   bad "F5 sem cap_compras_ler -- a migration APLICOU: a pre-condicao nao tem dente"

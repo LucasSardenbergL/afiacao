@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { removerCercas, removerCodigo } from './markdown-codigo';
+import { removerCercas, removerCodigo, somenteCercas } from './markdown-codigo';
 
 describe('removerCercas — só o bloco cercado, a crase inline fica', () => {
   it('esvazia bloco cercado preservando a NUMERAÇÃO das linhas', () => {
@@ -68,5 +68,37 @@ describe('removerCodigo — cerca E crase, para quem mede o que não deve morar 
 
   it('cerca não fechada é sinalizada com a linha da abertura', () => {
     expect(removerCodigo('a\n```\nb').cercaAberta).toMatchObject({ linha: 2, marca: '```' });
+  });
+});
+
+describe('somenteCercas — o inverso: só o CÓDIGO das cercas, para quem mede o que o doc manda rodar', () => {
+  it('a prosa vira linha vazia e o código fica, na MESMA numeração de linha', () => {
+    const { texto, cercaAberta } = somenteCercas('prosa now()\n```sql\nselect 1\n\nselect 2\n```\ndepois');
+    expect(cercaAberta).toBeNull();
+    const linhas = texto.split('\n');
+    expect(linhas).toHaveLength(7);
+    expect(linhas[0]).toBe('');
+    expect(linhas[2]).toBe('select 1');
+    expect(linhas[4]).toBe('select 2');
+    expect(linhas[6]).toBe('');
+  });
+
+  it('crase inline na prosa NÃO é código de cerca — some junto com a prosa', () => {
+    expect(somenteCercas("use `date_trunc('month', now())` com cuidado").texto).toBe('');
+  });
+
+  it('é o complemento exato de removerCercas: nenhuma linha não vazia aparece nos dois', () => {
+    const doc = 'a\n~~~\nb\n~~~\nc\n```ts\nd\n```\ne';
+    const fora = removerCercas(doc).texto.split('\n');
+    const dentro = somenteCercas(doc).texto.split('\n');
+    fora.forEach((l, i) => expect(l !== '' && dentro[i] !== '').toBe(false));
+    expect(dentro.join('')).toContain('b');
+    expect(dentro.join('')).toContain('d');
+  });
+
+  it('cerca não fechada: o resto do arquivo é código, e a abertura é sinalizada', () => {
+    const { texto, cercaAberta } = somenteCercas('a\n```\nb');
+    expect(cercaAberta).toMatchObject({ linha: 2, marca: '```' });
+    expect(texto).toContain('b');
   });
 });

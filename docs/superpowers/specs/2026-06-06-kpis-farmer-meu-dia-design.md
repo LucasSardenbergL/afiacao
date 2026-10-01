@@ -29,7 +29,7 @@ Framework: **retenção · penetração · expansão · atividade**. Classifica�
 |---|---|---|---|---|
 | **Positivação MTD %** ⭐ NORTE | % da carteira elegível que comprou no mês (penetração/active accounts) | output | **comissionável** | `compradores_mtd / total_eligible` ✅ |
 | **Receita da carteira MTD** | faturamento do mês da carteira | output | **comissionável** | `receita_mtd` ✅ |
-| **Win-back** | clientes recuperados (1ª compra/retorno no mês) | output | **comissionável** | `novos_clientes_positivados` ✅ |
+| **Win-back** | clientes recuperados (1ª compra/retorno no mês) | output | **comissionável** | ❌ **não existe** — `novos_clientes_positivados` conta só a 1ª compra da VIDA; o "retorno" nunca foi implementado (corrigido em 2026-09-30: o card virou "Novos na carteira", ver `docs/historico/positivacao-win-back-era-novos.md`) |
 | **Cobertura MTD %** | % da carteira contatada (ligação/WhatsApp) | leading | higiene | `contatados_mtd / total_eligible` ✅ |
 | **Ligações hoje** | pulso de atividade do dia | leading | higiene | `calls_today` (useMyKpis) ✅ |
 | **Clientes a positivar** | quem ainda não comprou (a ação) | acionável | — | `a_positivar[]` ✅ |

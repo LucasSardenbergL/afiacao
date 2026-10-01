@@ -28,6 +28,7 @@ export default function AdminReposicaoRevisao() {
     updateMutation,
     promoverMutation,
     reativarMutation,
+    descontinuarMutation,
   } = useRevisaoParametros();
 
   return (
@@ -48,6 +49,14 @@ export default function AdminReposicaoRevisao() {
           SKUs que você descontinuou de propósito (fora da reposição automática). Clique em
           <strong> Reativar</strong> quando o preço voltar a ser competitivo — o item volta ao fluxo
           normal de compra a partir do próximo ciclo (o motor só compra se o estoque estiver baixo).
+        </p>
+      )}
+      {statusFilter === "fora_do_motor" && (
+        <p className="text-sm text-status-warning">
+          SKUs que vendem, mas o motor não sugere: a reposição automática deles está desligada sem que ninguém
+          tenha decidido isso — uma inativação no Omie que não religou na volta, ou o cadastro inicial. Nenhum
+          deles aparece no cockpit, nem com o estoque zerado. Clique em <strong>Religar</strong> para o SKU voltar
+          a ser sugerido, ou em <strong>Descontinuar</strong> se ele não deve ser comprado.
         </p>
       )}
 
@@ -75,6 +84,8 @@ export default function AdminReposicaoRevisao() {
         promovendo={promoverMutation.isPending}
         onReativar={(sku) => reativarMutation.mutate(sku)}
         reativando={reativarMutation.isPending}
+        onDescontinuar={(sku) => descontinuarMutation.mutate(sku)}
+        descontinuando={descontinuarMutation.isPending}
       />
 
       <SkuDetailSheet

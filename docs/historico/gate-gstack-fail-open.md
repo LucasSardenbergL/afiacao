@@ -114,3 +114,12 @@ não acontecer, com um controle que prove que a sonda estava ligada.
 A varredura irmã — linha de envelope (`additionalContext` ou `permissionDecision`) sem
 `hookEventName` na mesma linha, em `.claude/hooks/*.sh` — devolveu **0 de 24** linhas em
 2026-09-27. Um sensor com envelope incompleto é o mesmo fail-open, só que calando um aviso.
+
+## A outra razão de ninguém ver — fechada no mesmo dia
+
+O `check-gstack.sh` era também o ÚNICO hook ligado fora do `test:hooks`, e nada exigia que hook
+ligado tivesse teste. Agora exige: o `gates:frescura` reprova `HOOK-SEM-TESTE` quando nenhuma suíte
+que os laços do `test:hooks` executam cita o hook como caminho, fora de comentário. Ao ligar o eixo,
+o último hook sem suíte era o `instrucoes-carregadas.sh`, que ganhou `scripts/test-instrucoes-carregadas.sh`.
+Detalhe, critério e falsificação: [vigia-de-cobertura-parcial.md](vigia-de-cobertura-parcial.md),
+seção "A ponta oposta".

@@ -15,12 +15,17 @@
 -- ============================================================================
 
 -- (a) projeção semanal por empresa (entradas = CR aberto vencendo; saídas = CP aberto)
+--     A semana 0 é a CORRENTE de SÃO PAULO. A sessão da prod é UTC: domingo das 21:00 às 23:59 BRT
+--     `date_trunc('week', CURRENT_DATE)` já é a semana SEGUINTE, e a corrente — com os títulos em
+--     aberto dela — sumia da projeção (o mesmo defeito que a RPC fin_projecao_13_semanas tinha até
+--     20260927202603). `data_vencimento` é `date`: as bordas são datas, sem fuso.
 WITH comp(company) AS (VALUES ('colacor'),('oben'),('colacor_sc')),
+s0 AS (
+  SELECT date_trunc('week', now() AT TIME ZONE 'America/Sao_Paulo')::date AS ini
+),
 semanas AS (
-  SELECT generate_series(
-           date_trunc('week', CURRENT_DATE)::date,
-           (date_trunc('week', CURRENT_DATE) + interval '12 weeks')::date,
-           interval '1 week')::date AS semana_ini
+  SELECT generate_series(s0.ini::timestamp, (s0.ini + 84)::timestamp, interval '1 week')::date AS semana_ini
+  FROM s0
 ),
 saldo_ini AS (
   SELECT company, COALESCE(sum(saldo_atual),0) AS saldo_inicial
@@ -30,16 +35,16 @@ entradas AS (
   SELECT company, date_trunc('week', data_vencimento)::date AS semana_ini, sum(valor_documento) AS entra
   FROM fin_contas_receber
   WHERE status_titulo IN ('A VENCER','ATRASADO','VENCE HOJE')   -- status, NÃO saldo
-    AND data_vencimento >= date_trunc('week', CURRENT_DATE)::date
-    AND data_vencimento <  (date_trunc('week', CURRENT_DATE) + interval '13 weeks')::date
+    AND data_vencimento >= (SELECT ini FROM s0)
+    AND data_vencimento <  (SELECT ini FROM s0) + 91              -- 13 semanas
   GROUP BY company, 2
 ),
 saidas AS (
   SELECT company, date_trunc('week', data_vencimento)::date AS semana_ini, sum(valor_documento) AS sai
   FROM fin_contas_pagar
   WHERE status_titulo IN ('A VENCER','ATRASADO')               -- status, NÃO saldo
-    AND data_vencimento >= date_trunc('week', CURRENT_DATE)::date
-    AND data_vencimento <  (date_trunc('week', CURRENT_DATE) + interval '13 weeks')::date
+    AND data_vencimento >= (SELECT ini FROM s0)
+    AND data_vencimento <  (SELECT ini FROM s0) + 91              -- 13 semanas
   GROUP BY company, 2
 ),
 base AS (
@@ -89,7 +94,7 @@ WITH banco AS (
   SELECT company, tipo, abs(valor) AS valor, data_movimento,
          (omie_codigo_lancamento IS NOT NULL) AS com_titulo
   FROM fin_movimentacoes
-  WHERE data_movimento >= CURRENT_DATE - interval '90 days'
+  WHERE data_movimento >= (now() AT TIME ZONE 'America/Sao_Paulo')::date - interval '90 days'
     AND categoria_descricao IN ('CONTA_CORRENTE_REC', 'CONTA_CORRENTE_PAG')
 )
 SELECT company,
@@ -109,13 +114,13 @@ GROUP BY company ORDER BY company;
 -- (d) OVERLAY: eventos que a projeção (a) NÃO inclui — recorrentes (folha) e eventuais
 SELECT company, 'recorrente' AS origem, descricao, tipo, valor, dia_do_mes AS dia, is_folha
 FROM fin_eventos_recorrentes
-WHERE ativo AND (fim IS NULL OR fim >= CURRENT_DATE)
+WHERE ativo AND (fim IS NULL OR fim >= (now() AT TIME ZONE 'America/Sao_Paulo')::date)
 UNION ALL
 SELECT company, 'eventual', descricao, tipo, valor,
        EXTRACT(DAY FROM data_prevista)::int, false
 FROM fin_eventos_eventuais
 WHERE status IN ('previsto','confirmado')
-  AND data_prevista BETWEEN CURRENT_DATE AND (CURRENT_DATE + interval '90 days')
+  AND data_prevista BETWEEN (now() AT TIME ZONE 'America/Sao_Paulo')::date AND ((now() AT TIME ZONE 'America/Sao_Paulo')::date + interval '90 days')
 ORDER BY company, origem, tipo;
 -- (vazio = folha/eventos nunca cadastrados → projeção subestima saídas futuras; ação de setup)
 

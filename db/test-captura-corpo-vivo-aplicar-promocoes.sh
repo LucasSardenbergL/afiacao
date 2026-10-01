@@ -32,7 +32,7 @@ cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true
 trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "$TMPROOT/pg.log" -w start >/dev/null
-PSQL=("$PGBIN/psql" -h /tmp -p "$PORT" -U postgres -v ON_ERROR_STOP=1 -q)
+PSQL=("$PGBIN/psql" -X -h /tmp -p "$PORT" -U postgres -v ON_ERROR_STOP=1 -q)
 
 FALHAS=0
 ok()    { echo "  ok   $1"; }

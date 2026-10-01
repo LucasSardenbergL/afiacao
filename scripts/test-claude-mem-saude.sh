@@ -3,7 +3,9 @@
 # GRAVANDO?") e da fiacao dele no SessionStart (bloco 6 do .claude/hooks/vigia-worktree.sh).
 #
 # Hermetica: CLAUDE_MEM_DATA_DIR aponta para um temporario com banco e contador FABRICADOS (nunca
-# o ~/.claude-mem real), e os tempos das fixtures sao relativos ao `date +%s` desta execucao.
+# o ~/.claude-mem real), e os tempos das fixtures sao relativos ao `date +%s` desta execucao. Os
+# settings tambem: diretorio corrente, CLAUDE_CONFIG_DIR e HOME temporarios (o ~/.claude real
+# desliga o plugin desde 2026-09-28 — lido, calaria a suite inteira).
 # Cada caso tem ROTULO; a falsificacao exige que cada sabotagem derrube o caso que a vigia — nao
 # "algum" caso (vermelho pelo motivo errado conta como verde mentiroso).
 #
@@ -81,6 +83,37 @@ if [ "${1:-}" = "--falsificar" ]; then
     's/^  \[ -z "\$saida" \] || echo "claude-mem: \$saida"$/  echo "claude-mem: $saida"/'
   sabota sensor "achado em duas linhas" "Q uma-linha" \
     's/^  \[ -z "\$saida" \] || echo "claude-mem: \$saida"$/  [ -z "$saida" ] || printf "claude-mem: %s\\n" "$cont_txt" "$grav_txt"/'
+  # a guarda do plugin DESLIGADO (secao 0: enabledPlugins)
+  sabota sensor "desligado nao cala" "Y1 desligado-mudo" \
+    's/^if \[ "\$ligado" -eq 0 \] \&\& \[ -n "\$desligado" \]; then$/if false; then/'
+  sabota sensor "desligado sai 3 (o hook cobra FALTA DE DADO)" "Z vigia-desligado" \
+    '/^if \[ "\$ligado" -eq 0 \]/,/^fi$/s/^  exit 0$/  exit 3/'
+  sabota sensor "true tambem desliga" "Y3 ligado-mede" 's/if \[ "\$valor" = false \]; then/if true; then/'
+  sabota sensor "qualquer chave decide (true de outro plugin religa)" "Y1 desligado-mudo" 's/(claude-mem@/([^"]*@/'
+  sabota sensor "qualquer plugin em false desliga" "Y4 outro-plugin-mede" \
+    's/(claude-mem@/([^"]*@/;s/in \*."claude-mem@.\*) ;; \*) continue ;;/in *) ;; *) continue ;;/'
+  sabota sensor "chave fora do enabledPlugins conta" "Y9 fora-do-enabledPlugins-mede" \
+    's#^    sed -n .s/\.\*"enabledPlugins".*/p. | tr#    cat | tr#'
+  sabota sensor "nada declarado desliga" "Y5 settings-ausente-mede" \
+    's/^if \[ "\$ligado" -eq 0 \] \&\& \[ -n "\$desligado" \]; then$/if [ "$ligado" -eq 0 ]; then/'
+  sabota sensor "ilegivel vira desligado" "Y6 settings-ilegivel-mede" \
+    's/^  { \[ -f "\$arq" \] \&\& conteudo="\$(<"\$arq")"; } 2>\/dev\/null || continue$/  [ -f "$arq" ] || continue; { conteudo="$(<"$arq")"; } 2>\/dev\/null || { desligado=ilegivel; continue; }/'
+  sabota sensor "espacamento fixo" "Y7 minificado-mudo" 's/"\[\[:space:]]\*:\[\[:space:]]\*(true|false)/": (true|false)/'
+  sabota sensor "so espaco ASCII" "Y8 tabs-crlf-mudo" '/(claude-mem@/s/\[\[:space:]]/ /g'
+  sabota sensor "sem achatar as quebras de linha" "Y1 desligado-mudo" 's/"\$1" | tr .\\n. . . |$/"$1" |/'
+  sabota sensor "so o settings do usuario" "Y10 projeto-religa-mede" \
+    's/^for arq in \.claude\/settings\.local\.json \.claude\/settings\.json "\$CFG\/settings\.json"; do/for arq in "$CFG\/settings.json"; do/'
+  sabota sensor "sem o settings.local do projeto" "Y12 local-religa-mede" 's/^for arq in \.claude\/settings\.local\.json /for arq in /'
+  sabota sensor "precedencia invertida" "Y11 projeto-desliga-mudo" \
+    's/^for arq in \.claude\/settings\.local\.json \.claude\/settings\.json "\$CFG\/settings\.json"; do/for arq in "$CFG\/settings.json" .claude\/settings.json .claude\/settings.local.json; do/'
+  sabota sensor "escopo menor reabre chave decidida" "Y11 projeto-desliga-mudo" 's/^    case "\$decididas" in .*esac.*$/    :/'
+  sabota sensor "1o escopo que cita decide tudo" "Y13 outra-chave-ligada-mede" \
+    's/^  decididas="\$decididas\$novas"$/  decididas="$decididas$novas"; [ -z "$novas" ] || break/'
+  sabota sensor "ignora CLAUDE_CONFIG_DIR" "Y1 desligado-mudo" \
+    's/^CFG="\${CLAUDE_CONFIG_DIR:-\${HOME:-}\/\.claude}"$/CFG="${HOME:-}\/.claude"/'
+  sabota sensor "sem cair no HOME" "Y14 home-sem-config-dir-mudo" \
+    's/^CFG="\${CLAUDE_CONFIG_DIR:-\${HOME:-}\/\.claude}"$/CFG="${CLAUDE_CONFIG_DIR:-\/nao-existe}"/'
+  sabota sensor "relatorio mudo" "Y2 desligado-relatorio" 's/^  \[ "\$resumo" -eq 1 \] || echo "claude-mem: DESLIGADO.*$/  :/'
   # a fiacao no SessionStart (so dentro do bloco 6: o bloco 5 tem linhas iguais)
   sabota vigia "hook sem o bloco 6" "U vigia-achado" \
     's/^if \[ -f scripts\/claude-mem-saude.sh \]; then$/if false; then/'
@@ -155,7 +188,25 @@ ok() { printf '  ok    %s\n' "$1"; }
 falha() { printf '  FALHA %s\n' "$1"; falhas=$((falhas + 1)); }
 
 ms() { echo $(((AGORA - $1) * 1000)); } # ms <segundos atras> -> epoch em ms
-novo() { rm -rf "${T:?}/${1:?}"; mkdir -p "$T/$1/state"; D="$T/$1"; }
+# settings padrao de todo caso: nenhum (sem settings.json em CLAUDE_CONFIG_DIR, no projeto nem no HOME)
+mkdir -p "$T/cfg-vazio" "$T/proj-vazio" "$T/home-vazio"
+C="$T/cfg-vazio"; P="$T/proj-vazio"; H="$T/home-vazio"
+novo() {
+  rm -rf "${T:?}/${1:?}" "$T/$1-cfg" "$T/$1-proj" "$T/$1-home"; mkdir -p "$T/$1/state"; D="$T/$1"
+  C="$T/cfg-vazio"; P="$T/proj-vazio"; H="$T/home-vazio"
+}
+# settings <usuario|projeto|local|home> <json> — o settings.json daquele escopo, so neste caso
+# (home = sem CLAUDE_CONFIG_DIR: o sensor cai no $HOME/.claude)
+settings() {
+  local dir
+  case "$1" in
+    usuario) C="$D-cfg"; dir="$C" ;;
+    projeto | local) P="$D-proj"; dir="$P/.claude" ;;
+    home) C=""; H="$D-home"; dir="$H/.claude" ;;
+  esac
+  mkdir -p "$dir"
+  if [ "$1" = local ]; then printf '%s\n' "$2" >"$dir/settings.local.json"; else printf '%s\n' "$2" >"$dir/settings.json"; fi
+}
 contador() { printf '{"consecutiveFailures":%s,"lastFailureAt":%s}' "$1" "$2" >"$D/state/hook-failures.json"; }
 # banco <obs: segundos atras | nenhuma> <n prompts> <1o prompt: s atras> <ultimo: s atras>
 banco() {
@@ -172,15 +223,19 @@ banco() {
   } | sqlite3 "$D/claude-mem.db"
 }
 saudavel() { banco 600 5 540 300; } # observacao ha 10 min, 5 prompts depois dela
-# roda [PATH] -> OUT (stdout) e RC; o stderr nao entra (o hook o descarta)
-roda() {
-  if [ -n "${1:-}" ]; then
-    OUT="$(PATH="$1" CLAUDE_MEM_DATA_DIR="$D" "$BASH_BIN" "$ALVO" --resumo 2>/dev/null)"
-  else
-    OUT="$(CLAUDE_MEM_DATA_DIR="$D" "$BASH_BIN" "$ALVO" --resumo 2>/dev/null)"
-  fi
+achado() { contador 4 "$(ms 720)"; banco 5184000 40 7200 600; } # os DOIS eixos acusam
+# sensor <--resumo | ''> [PATH] -> OUT (stdout) e RC; o stderr nao entra (o hook o descarta).
+# Roda no projeto $P, com CLAUDE_CONFIG_DIR=$C (vazio = sem a variavel) e HOME=$H.
+sensor() {
+  OUT="$(
+    cd "$P" || exit 99
+    if [ -n "$C" ]; then export CLAUDE_CONFIG_DIR="$C"; else unset CLAUDE_CONFIG_DIR; fi
+    CLAUDE_MEM_DATA_DIR="$D" HOME="$H" PATH="${2:-$PATH}" "$BASH_BIN" "$ALVO" ${1:+"$1"} 2>/dev/null
+  )"
   RC=$?
 }
+roda() { sensor --resumo "${1:-}"; } # roda [PATH]
+relatorio() { sensor ""; }
 # confere <rotulo> <rc esperado> <texto que TEM de aparecer | - para exigir SILENCIO> [texto proibido]
 confere() {
   local rot="$1" rce="$2" tem="$3" nao="${4:-}" bom=1 esp
@@ -264,8 +319,7 @@ else falha "Q uma-linha: a saida do --resumo tem $(printf '%s\n' "$OUT" | wc -l 
 novo r; contador 0 0; banco nenhuma 40 7200 600; roda
 confere "R nunca-gravou" 0 "40 prompts e nenhuma observacao jamais gravada"
 
-novo s; contador 0 0; banco 5184000 40 7200 600
-OUT="$(CLAUDE_MEM_DATA_DIR="$D" "$BASH_BIN" "$ALVO" 2>/dev/null)"; RC=$?
+novo s; contador 0 0; banco 5184000 40 7200 600; relatorio
 confere "S relatorio" 0 "gravacao: [ACHADO] a memoria NAO GRAVA"
 
 # sqlite3 que responde lixo com exit 0: so a validacao dos inteiros separa isto de "gravando"
@@ -274,6 +328,62 @@ mkdir -p "$T/sqlite-lixo"
 printf '#!/bin/sh\necho "abc|def"\nexit 0\n' >"$T/sqlite-lixo/sqlite3"; chmod +x "$T/sqlite-lixo/sqlite3"
 roda "$T/sqlite-lixo:$PATH"
 confere "T resposta-inesperada" 3 "NAO MEDI a gravacao (resposta inesperada do sqlite3"
+
+# ---------------------------------------------------------------------------- plugin desligado
+# 2026-09-28: o founder desligou o plugin ("claude-mem@thedotmack": false em enabledPlugins) e as
+# sessoes abertas antes seguem gravando prompts por ate ~3 dias -> o sensor nao mede. Toda fixture
+# daqui ACUSA nos dois eixos (achado): o silencio so pode vir da guarda, nunca de falta de achado.
+DESL='{
+  "env": { "X": "1" },
+  "enabledPlugins": {
+    "claude-mem@thedotmack": false,
+    "superpowers@claude-plugins-official": true
+  }
+}'
+LIGA='{"enabledPlugins": {"claude-mem@thedotmack": true}}'
+novo y1; achado; settings usuario "$DESL"; roda
+confere "Y1 desligado-mudo" 0 -
+novo y2; achado; settings usuario "$DESL"; relatorio
+confere "Y2 desligado-relatorio" 0 "DESLIGADO (enabledPlugins)" "NAO GRAVA"
+novo y3; achado; settings usuario "$LIGA"; roda
+confere "Y3 ligado-mede" 0 "NAO GRAVA"
+# outro plugin em false — e um de nome PARECIDO — nao desliga o claude-mem
+novo y4; achado
+settings usuario '{"enabledPlugins": {"superpowers@claude-plugins-official": false, "claude-mem-extra@thedotmack": false}}'; roda
+confere "Y4 outro-plugin-mede" 0 "NAO GRAVA"
+# ausente != desligado: sem settings.json nenhum
+novo y5; achado; roda
+confere "Y5 settings-ausente-mede" 0 "NAO GRAVA"
+# ilegivel = o Claude Code tambem nao o le: nao declara nada -> mede
+novo y6; achado; settings usuario "$DESL"; chmod 000 "$C/settings.json"
+if [ -r "$C/settings.json" ]; then # root le mesmo com 000: o ilegivel vira um diretorio no lugar
+  rm -f "$C/settings.json"; mkdir "$C/settings.json"; echo "  (root: settings.json ilegivel simulado por um diretorio)"
+fi
+roda
+confere "Y6 settings-ilegivel-mede" 0 "NAO GRAVA"
+# espacamento: minificado (sem espaco algum) e tabs + CRLF + espaco antes do ':'
+novo y7; achado
+settings usuario '{"enabledPlugins":{"superpowers@claude-plugins-official":true,"claude-mem@thedotmack":false}}'; roda
+confere "Y7 minificado-mudo" 0 -
+novo y8; achado
+settings usuario "$(printf '{\r\n\t"enabledPlugins"\t:\t{\r\n\t\t"claude-mem@thedotmack" \t:\tfalse\r\n\t}\r\n}')"; roda
+confere "Y8 tabs-crlf-mudo" 0 -
+# so o objeto enabledPlugins conta (uma chave futura que tambem mapeie plugin -> bool nao desliga)
+novo y9; achado
+settings usuario '{"enabledPlugins": {"superpowers@x": true}, "outraLista": {"a@b": true, "claude-mem@thedotmack": false, "c@d": true}}'; roda
+confere "Y9 fora-do-enabledPlugins-mede" 0 "NAO GRAVA"
+# precedencia do Claude Code, POR CHAVE: .claude/settings.local.json > .claude/settings.json > usuario
+novo y10; achado; settings usuario "$DESL"; settings projeto "$LIGA"; roda
+confere "Y10 projeto-religa-mede" 0 "NAO GRAVA"
+novo y11; achado; settings usuario "$LIGA"; settings projeto "$DESL"; roda
+confere "Y11 projeto-desliga-mudo" 0 -
+novo y12; achado; settings projeto "$DESL"; settings local "$LIGA"; roda
+confere "Y12 local-religa-mede" 0 "NAO GRAVA"
+novo y13; achado; settings usuario '{"enabledPlugins": {"claude-mem@outro": true}}'; settings projeto "$DESL"; roda
+confere "Y13 outra-chave-ligada-mede" 0 "NAO GRAVA"
+# sem CLAUDE_CONFIG_DIR, o do usuario e o $HOME/.claude/settings.json
+novo y14; achado; settings home "$DESL"; roda
+confere "Y14 home-sem-config-dir-mudo" 0 -
 
 # ---------------------------------------------------------------------------- fiacao no hook
 # O bloco 6 do vigia-worktree.sh roda a sonda do diretorio corrente, como os blocos 4 e 5. Sandbox:
@@ -284,7 +394,7 @@ mkdir -p "$SB/scripts" "$SB/node_modules"
 echo '{}' >"$SB/package.json"
 cp "$ALVO" "$SB/scripts/claude-mem-saude.sh"
 vigia() { # vigia <DATA> -> OUT (o JSON do hook) e CTX (o additionalContext)
-  OUT="$(cd "$SB" && CLAUDE_MEM_DATA_DIR="$1" "$BASH_BIN" "$VIGIA" 2>/dev/null)"
+  OUT="$(cd "$SB" && CLAUDE_MEM_DATA_DIR="$1" CLAUDE_CONFIG_DIR="$C" HOME="$H" "$BASH_BIN" "$VIGIA" 2>/dev/null)"
   CTX="$(printf '%s' "$OUT" | jq -r '.hookSpecificOutput.additionalContext // ""' 2>/dev/null)"
 }
 json_ok() { printf '%s' "$OUT" | jq -e 'type == "object"' >/dev/null 2>&1; }
@@ -296,6 +406,12 @@ else falha "U vigia-achado: o aviso do sensor NAO chegou ao SessionStart: [$(pri
 novo v; contador 0 0; saudavel; vigia "$D"
 if json_ok && ! printf '%s' "$CTX" | grep -qF "claude-mem"; then ok "V vigia-limpo"
 else falha "V vigia-limpo: falou do claude-mem sem achado (ou JSON invalido): [$(printf '%s' "$OUT" | head -c 200)]"; fi
+
+# o incidente de 28/09: plugin desligado, sessoes antigas ainda gravando -> o SessionStart nao cobra
+# /login nem reanimar, e sonda que sai != 0 sem texto viraria o "FALTA DE DADO" (o mesmo ruido)
+novo z; achado; settings usuario "$DESL"; vigia "$D"
+if json_ok && ! printf '%s' "$CTX" | grep -qF "claude-mem"; then ok "Z vigia-desligado"
+else falha "Z vigia-desligado: com o plugin desligado o SessionStart ainda falou do claude-mem: [$(printf '%s' "$OUT" | head -c 200)]"; fi
 
 # sonda que saiu != 0 SEM texto = a medicao nem rodou: o hook tem de dizer FALTA DE DADO
 printf '#!/usr/bin/env bash\nexit 7\n' >"$SB/scripts/claude-mem-saude.sh"

@@ -13,6 +13,7 @@ PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
 PORT="${PGPORT_TEST:-5468}"
 SLUG="gate-estoque"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
+RODADA="$(dirname "$DATA")"   # dir ÚNICO desta rodada (o trap apaga): temporário mora aqui, nunca em /tmp/<nome-fixo>
 export LC_ALL=C LANG=C
 MIG="$REPO_ROOT/db/embalagem-motor-rpc.sql"   # fixture VIVA: galão + gate estoque-não-confirmado
 
@@ -26,7 +27,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }
 
 PASS=0; FAIL=0
@@ -194,8 +195,8 @@ eq "M1 run_id casa o log"        "$(Pq -c 'SELECT count(*) FROM reposicao_motor_
 # ── ZONA 5: FALSIFICAÇÃO (sabota → exige VERMELHO → restaura) ──
 echo "── falsificação ──"
 falsify() { # $1 desc | $2 sed-expr | $3 SQL-valor (eval) | $4 valor_são (deve MUDAR após sabotar)
-  sed "$2" "$MIG" > /tmp/mig-gate-sab.sql
-  P -q -f /tmp/mig-gate-sab.sql >/dev/null
+  sed "$2" "$MIG" > "$RODADA/mig-gate-sab.sql"
+  P -q -f "$RODADA/mig-gate-sab.sql" >/dev/null
   P -q -c "TRUNCATE reposicao_estoque_nao_confirmado_log, reposicao_motor_run;" >/dev/null
   run_ciclo
   local got; got="$(eval "$3")"

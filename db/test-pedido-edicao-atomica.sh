@@ -22,6 +22,7 @@ export PGVER=17   # consumido pelo db/lib/pg-harness.sh via source
 PORT="${PGPORT_TEST:-5484}"   # porta propria: 5461 ja e usada por outras 2 provas do nucleo
 SLUG="pedido-edicao-atomica"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
+RODADA="$(dirname "$DATA")"   # dir ÚNICO desta rodada (o trap apaga): temporário mora aqui, nunca em /tmp/<nome-fixo>
 export LC_ALL=C LANG=C          # sem isso o postmaster aborta ("became multithreaded during startup")
 
 # PGBIN resolvido por PLATAFORMA (macOS Homebrew / Linux PGDG) pelo helper compartilhado. O
@@ -37,7 +38,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }
 
 P -q -f "$REPO_ROOT/db/stubs-supabase.sql"
@@ -143,7 +144,7 @@ PROD30='bbbb0000-0000-0000-0000-000000000030'   # so o payload conhece (item ACR
 
 seed() {  # semeia P1/P2/P3 no banco $1
   local db="$1"
-  "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d "$db" -v ON_ERROR_STOP=1 -q -c "
+  "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d "$db" -v ON_ERROR_STOP=1 -q -c "
 INSERT INTO auth.users(id) VALUES ('$CLI') ON CONFLICT DO NOTHING;
 INSERT INTO public.omie_products(id) VALUES ('$PROD10'),('$PROD20'),('$PROD30') ON CONFLICT DO NOTHING;
 INSERT INTO public.sales_orders (id, account, hash_payload, customer_user_id, status, omie_pedido_id,
@@ -195,7 +196,7 @@ LIDO='2026-09-07T20:00:00Z'
 
 rpc() { # $1 pedido | $2 itens | $3 items | $4 total | $5 lido_em | (opcional $6 = db)
   local db="${6:-prove}"
-  "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d "$db" -v ON_ERROR_STOP=1 -tA -c \
+  "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d "$db" -v ON_ERROR_STOP=1 -tA -c \
     "SELECT public.aplicar_edicao_pedido_omie('$1'::uuid, '$3'::jsonb, '$2'::jsonb, $4::numeric,
         'obs nova', '{\"cabecalho\":1}'::jsonb, '{\"validated\":true}'::jsonb, '$5'::timestamptz);"
 }
@@ -221,7 +222,7 @@ eq "A4 estado restaurado (coerente de novo)" "$(coerente "$P1")" "t"
 echo
 echo "-- B. a RPC: pedido canônico com linhas, editado no Omie --"
 RET="$(rpc "$P1" "$ITENS_P1" "$ITEMS_P1" "$TOTAL_P1" "$LIDO")"
-eq "B1 retorno: tinha_linhas"     "$(printf '%s' "$RET" | "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -tA -c "SELECT ('$RET'::jsonb)->>'tinha_linhas'")" "true"
+eq "B1 retorno: tinha_linhas"     "$(printf '%s' "$RET" | "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -tA -c "SELECT ('$RET'::jsonb)->>'tinha_linhas'")" "true"
 eq "B2 retorno: linhas_antes"     "$(Pq -c "SELECT ('$RET'::jsonb)->>'linhas_antes'")" "2"
 eq "B3 retorno: linhas_removidas" "$(Pq -c "SELECT ('$RET'::jsonb)->>'linhas_removidas'")" "2"
 eq "B4 retorno: linhas_inseridas" "$(Pq -c "SELECT ('$RET'::jsonb)->>'linhas_inseridas'")" "2"
@@ -351,7 +352,7 @@ echo "═══ ZONA 5 — FALSIFICAÇÃO ═══"
 montar() { # $1 = db, $2 = arquivo de migration
   "$PGBIN/dropdb" -p "$PORT" -h /tmp -U postgres --if-exists "$1"
   "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres "$1"
-  local Ps=("$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d "$1" -v ON_ERROR_STOP=1)
+  local Ps=("$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d "$1" -v ON_ERROR_STOP=1)
   "${Ps[@]}" -q -f "$REPO_ROOT/db/stubs-supabase.sql" >/dev/null 2>&1
   "${Ps[@]}" -q -c "$PREREQ_SQL" >/dev/null
   "${Ps[@]}" -f "$2" 2>&1
@@ -368,21 +369,33 @@ else
   bad "G0 CONTROLE VERMELHO (rc=$RC_CTRL) — nada abaixo prova coisa alguma"
 fi
 
-sabotar() { # $1 rotulo | $2 sed | $3 sqlstate que DEVE deixar de vir | $4 chamada
-  local f out rc
-  f="$(mktemp /tmp/mig-sab-XXXXXX.sql)"
+sabotar() { # $1 rotulo | $2 sed | $3 sqlstate que DEVE deixar de vir | $4 chamada | $5 marca do que vem NO LUGAR (default: a chamada completa)
+  local f out rc no_lugar="${5:-ASSERT_NAO_LANCOU}"
+  f="$(mktemp "$RODADA/mig-sab-XXXXXX")"
   sed "$2" "$MIG" > "$f"
   if cmp -s "$f" "$MIG"; then bad "$1 — o sed NÃO alterou nada (sabotagem inócua = teatro)"; rm -f "$f"; return; fi
   montar sab "$f" >/dev/null 2>&1
   seed sab
   set +e
-  out="$("$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d sab -v ON_ERROR_STOP=1 -q -c \
+  out="$("$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d sab -v ON_ERROR_STOP=1 -q -c \
     "DO \$a\$ BEGIN PERFORM $4; RAISE EXCEPTION 'ASSERT_NAO_LANCOU'; EXCEPTION WHEN sqlstate '$3' THEN NULL; WHEN OTHERS THEN RAISE; END \$a\$;" 2>&1)"
   rc=$?
   set -e
   rm -f "$f"
-  if [ "$rc" -ne 0 ]; then ok "$1 — sabotado, a recusa SUMIU (o assert tinha dente)"
-  else bad "$1 — sabotado e a recusa CONTINUOU: o assert media outra coisa"; fi
+  # rc≠0 só diz que a SQLSTATE esperada não veio — e qualquer erro diz isso (divisão por zero, função
+  # ausente). O vermelho só é DESTA sabotagem com a marca do que ela DECLARA vir no lugar: a chamada
+  # completa (`ASSERT_NAO_LANCOU`) ou, com defesa em profundidade, a camada seguinte que barra (G3).
+  # Até 2026-09-27 todo rc≠0 contava como dente (docs/historico/falsificacao-exit-nao-e-dente.md).
+  # A marca vale NA linha do ERROR (a única, sob ON_ERROR_STOP): num NOTICE antes de outro erro ela
+  # não diz quem barrou (Codex). `case` e expansão, não `printf | grep -q`: sob pipefail, o SIGPIPE
+  # do grep que sai cedo derruba o casamento.
+  local erro=""
+  case "$out" in *"ERROR:  "*) erro="${out#*ERROR:  }"; erro="${erro%%$'\n'*}" ;; esac
+  case "$rc:$erro" in
+    0:*)              bad "$1 — sabotado e a recusa CONTINUOU: o assert media outra coisa" ;;
+    *:*"$no_lugar"*)  ok "$1 — sabotado, a recusa SUMIU${5:+ e a camada seguinte barrou [$5]} (o assert tinha dente)" ;;
+    *)                bad "$1 — sabotado, mas o vermelho não é o declarado [$no_lugar]: ${erro:-${out%%$'\n'*}}" ;;
+  esac
 }
 
 CH_SAB_DIV="public.aplicar_edicao_pedido_omie('$P3'::uuid,'[{\"omie_codigo_produto\":40,\"quantidade\":3,\"valor_unitario\":10}]'::jsonb,'[{\"omie_codigo_produto\":40,\"quantity\":3,\"unit_price\":10,\"discount\":0}]'::jsonb,30,'n',NULL,NULL,'$LIDO'::timestamptz)"
@@ -393,20 +406,23 @@ sabotar "G2 compare-and-set de revisão (D14)" 's/IF v_lido_atual IS NOT NULL AN
 
 # G-pid: sem a herança, o product_id do item preexistente vira NULL — a FK de custo da margem
 # some sem nenhum erro. O assert mede o VALOR, então a sabotagem tem de deixá-lo diferente.
-FPID="$(mktemp /tmp/mig-sab-XXXXXX.sql)"
+FPID="$(mktemp "$RODADA/mig-sab-XXXXXX")"
 sed "s|(v_pid_por_sku->>(it->>'omie_codigo_produto'))::uuid|NULL::uuid|" "$MIG" > "$FPID"
 if cmp -s "$FPID" "$MIG"; then bad "G6 sed inócuo (herança de product_id)"; else
   montar sab "$FPID" >/dev/null 2>&1
   seed sab
   rpc "$P1" "$ITENS_P1" "$ITEMS_P1" "$TOTAL_P1" "$LIDO" sab >/dev/null
-  VPID="$("$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d sab -tA -c "SELECT coalesce(product_id::text,'NULL') FROM public.order_items WHERE sales_order_id='$P1' AND omie_codigo_produto=10")"
+  VPID="$("$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d sab -tA -c "SELECT coalesce(product_id::text,'NULL') FROM public.order_items WHERE sales_order_id='$P1' AND omie_codigo_produto=10")"
   if [ "$VPID" = "NULL" ]; then ok "G6 sem a herança, o product_id preexistente ZERA (o assert B15 tinha dente)"
   else bad "G6 sabotado e o product_id continuou [$VPID] — B15 media outra coisa"; fi
 fi
 rm -f "$FPID"
 
+# G3: sem o D7, o desconto 5 do order_items diverge do 0 do items(jsonb) — e a coerência (D12) barra.
+# É defesa em profundidade, e o vermelho do D7 é legítimo SÓ com essa marca: declarada no 5º argumento.
 sabotar "G3 guard de desconto (D7)" "s/AND (it->>'discount')::numeric <> 0/AND false/" 22023 \
-  "public.aplicar_edicao_pedido_omie('$P3'::uuid,'[{\"omie_codigo_produto\":40,\"quantidade\":3,\"valor_unitario\":10,\"desconto\":0}]'::jsonb,'[{\"omie_codigo_produto\":40,\"quantity\":3,\"unit_price\":10,\"discount\":5}]'::jsonb,30,'n',NULL,NULL,'$LIDO'::timestamptz)"
+  "public.aplicar_edicao_pedido_omie('$P3'::uuid,'[{\"omie_codigo_produto\":40,\"quantidade\":3,\"valor_unitario\":10,\"desconto\":0}]'::jsonb,'[{\"omie_codigo_produto\":40,\"quantity\":3,\"unit_price\":10,\"discount\":5}]'::jsonb,30,'n',NULL,NULL,'$LIDO'::timestamptz)" \
+  'ficaria incoerente'
 
 # --- G4/G5: sabotar a FRONTEIRA e exigir que o APPLY aborte na postcondição ---
 # O sed tem de manter o SQL VÁLIDO: comentar só a 1ª linha de um GRANT/REVOKE de 2 linhas deixa
@@ -414,7 +430,7 @@ sabotar "G3 guard de desconto (D7)" "s/AND (it->>'discount')::numeric <> 0/AND f
 # a forma mais fácil de uma falsificação virar teatro. Por isso troca-se a ROLE, não a linha.
 apply_sabotado() { # $1 rotulo | $2 sed | $3 marcador que o erro DEVE conter
   local f out rc
-  f="$(mktemp /tmp/mig-sab-XXXXXX.sql)"
+  f="$(mktemp "$RODADA/mig-sab-XXXXXX")"
   sed "$2" "$MIG" > "$f"
   if cmp -s "$f" "$MIG"; then bad "$1 — o sed NÃO alterou nada (sabotagem inócua = teatro)"; rm -f "$f"; return; fi
   set +e; out="$(montar sab "$f")"; rc=$?; set -e

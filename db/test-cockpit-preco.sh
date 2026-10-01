@@ -47,7 +47,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l /tmp/pg-cockpit.log -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres cockpit_verify
-P() { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d cockpit_verify "$@"; }
+P() { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d cockpit_verify "$@"; }
 
 echo "→ stubs mínimos do Supabase (roles, auth, app_role, has_role, pode_ver_carteira_completa, tabelas)…"
 P -v ON_ERROR_STOP=1 -q <<'SQL'
@@ -187,7 +187,7 @@ BEGIN
   END IF;
   v_def := pg_get_functiondef(v_oid);
   SELECT count(*) INTO v_ocorr FROM regexp_matches(v_def, c_re_antigo, 'g');
-  IF v_ocorr <> 1 THEN
+  IF v_ocorr IS DISTINCT FROM 1 THEN
     RAISE EXCEPTION 'E2/harness: esperava 1 chamada do gate antigo, encontrei % — corpo divergente do medido', v_ocorr;
   END IF;
   v_novo := regexp_replace(
@@ -274,10 +274,10 @@ DECLARE r jsonb;
 BEGIN
   SET LOCAL test.uid = '00000000-0000-0000-0000-00000000000a';  -- master
   SELECT (public.get_preco_cockpit('[{"empresa":"oben","codigo":1001,"preco":85}]'::jsonb))->0 INTO r;
-  IF r->>'faixa' <> 'verde' OR r->>'motivo' <> 'abaixo_da_meta' THEN
+  IF r->>'faixa' IS DISTINCT FROM 'verde' OR r->>'motivo' IS DISTINCT FROM 'abaixo_da_meta' THEN
     RAISE EXCEPTION 'A1 FALHOU: faixa=% motivo=% (esperado verde/abaixo_da_meta)', r->>'faixa', r->>'motivo';
   END IF;
-  IF (r->>'tem_custo')::boolean IS NOT TRUE OR r->>'proveniencia' NOT ILIKE '%vendas%' THEN
+  IF (r->>'tem_custo')::boolean IS NOT TRUE OR r->>'proveniencia' IS NULL OR r->>'proveniencia' NOT ILIKE '%vendas%' THEN
     RAISE EXCEPTION 'A1b FALHOU: tem_custo=% proveniencia=% (esperado true / inventory_position(vendas))', r->>'tem_custo', r->>'proveniencia';
   END IF;
   RAISE NOTICE 'OK A1 — account-aware: cmc 60 via vendas, preço 85 entre piso 78 e meta 90 → verde/abaixo_da_meta';
@@ -292,7 +292,7 @@ DECLARE r jsonb;
 BEGIN
   SET LOCAL test.uid = '00000000-0000-0000-0000-00000000000a';
   SELECT (public.get_preco_cockpit('[{"empresa":"oben","codigo":1001,"preco":50}]'::jsonb))->0 INTO r;
-  IF r->>'faixa' <> 'vermelho' OR r->>'motivo' <> 'abaixo_do_custo' THEN
+  IF r->>'faixa' IS DISTINCT FROM 'vermelho' OR r->>'motivo' IS DISTINCT FROM 'abaixo_do_custo' THEN
     RAISE EXCEPTION 'A2 FALHOU: faixa=% motivo=% (esperado vermelho/abaixo_do_custo)', r->>'faixa', r->>'motivo';
   END IF;
   RAISE NOTICE 'OK A2 — preço 50 < cmc 60 → vermelho/abaixo_do_custo';
@@ -307,13 +307,13 @@ DECLARE r jsonb;
 BEGIN
   SET LOCAL test.uid = '00000000-0000-0000-0000-00000000000a';  -- master (vê cmc)
   SELECT (public.get_preco_cockpit('[{"empresa":"colacor","codigo":1003,"preco":150}]'::jsonb))->0 INTO r;
-  IF r->>'faixa' <> 'neutro' OR r->>'motivo' <> 'sem_politica' THEN
+  IF r->>'faixa' IS DISTINCT FROM 'neutro' OR r->>'motivo' IS DISTINCT FROM 'sem_politica' THEN
     RAISE EXCEPTION 'A3 FALHOU: faixa=% motivo=% (esperado neutro/sem_politica)', r->>'faixa', r->>'motivo';
   END IF;
   IF (r->>'tem_custo')::boolean IS NOT TRUE OR (r->>'tem_politica')::boolean IS NOT FALSE THEN
     RAISE EXCEPTION 'A3b FALHOU: tem_custo=% tem_politica=% (esperado true/false)', r->>'tem_custo', r->>'tem_politica';
   END IF;
-  IF (r->>'cmc')::numeric <> 100 THEN
+  IF (r->>'cmc')::numeric IS DISTINCT FROM 100 THEN
     RAISE EXCEPTION 'A3c FALHOU: cmc=% (esperado 100 via colacor_vendas)', r->>'cmc';
   END IF;
   RAISE NOTICE 'OK A3 — colacor cmc 100 (ponte), preço 150 sem política → neutro/sem_politica (NUNCA verde)';
@@ -328,10 +328,11 @@ DECLARE r jsonb;
 BEGIN
   SET LOCAL test.uid = '00000000-0000-0000-0000-00000000000a';  -- master
   SELECT (public.get_preco_cockpit('[{"empresa":"oben","codigo":1001,"preco":85}]'::jsonb))->0 INTO r;
-  IF r->'cmc' = 'null'::jsonb OR (r->>'cmc')::numeric <> 60 THEN
+  IF r->'cmc' = 'null'::jsonb OR (r->>'cmc')::numeric IS DISTINCT FROM 60 THEN
     RAISE EXCEPTION 'A4 FALHOU: gestor não viu cmc (=%)', r->>'cmc';
   END IF;
-  IF r->'markup_perc' = 'null'::jsonb OR r->'piso_markup' = 'null'::jsonb THEN
+  IF r->'markup_perc' IS NULL OR r->'markup_perc' = 'null'::jsonb
+     OR r->'piso_markup' IS NULL OR r->'piso_markup' = 'null'::jsonb THEN
     RAISE EXCEPTION 'A4b FALHOU: gestor não viu markup_perc/piso_markup';
   END IF;
   RAISE NOTICE 'OK A4 — gestor vê cmc=60, markup e piso/meta';
@@ -346,11 +347,11 @@ DECLARE r jsonb;
 BEGIN
   SET LOCAL test.uid = '00000000-0000-0000-0000-00000000000b';  -- employee
   SELECT (public.get_preco_cockpit('[{"empresa":"oben","codigo":1001,"preco":85}]'::jsonb))->0 INTO r;
-  IF r->'cmc' <> 'null'::jsonb OR r->'markup_perc' <> 'null'::jsonb OR r->'folga_reais' <> 'null'::jsonb
-     OR r->'piso_markup' <> 'null'::jsonb OR r->'proveniencia' <> 'null'::jsonb THEN
+  IF r->'cmc' IS DISTINCT FROM 'null'::jsonb OR r->'markup_perc' IS DISTINCT FROM 'null'::jsonb OR r->'folga_reais' IS DISTINCT FROM 'null'::jsonb
+     OR r->'piso_markup' IS DISTINCT FROM 'null'::jsonb OR r->'proveniencia' IS DISTINCT FROM 'null'::jsonb THEN
     RAISE EXCEPTION 'A5 FALHOU: vendedora viu número (cmc=% markup=% prov=%)', r->>'cmc', r->>'markup_perc', r->>'proveniencia';
   END IF;
-  IF r->>'faixa' <> 'verde' OR r->>'motivo' <> 'abaixo_da_meta' THEN
+  IF r->>'faixa' IS DISTINCT FROM 'verde' OR r->>'motivo' IS DISTINCT FROM 'abaixo_da_meta' THEN
     RAISE EXCEPTION 'A5b FALHOU: vendedora não viu a faixa (=%/%)', r->>'faixa', r->>'motivo';
   END IF;
   RAISE NOTICE 'OK A5 — vendedora vê faixa (verde/abaixo_da_meta) mas cmc/markup/prov = null';
@@ -410,11 +411,11 @@ DECLARE r jsonb;
 BEGIN
   SET LOCAL test.uid = '00000000-0000-0000-0000-00000000000d';  -- employee GERENCIAL
   SELECT (public.get_preco_cockpit('[{"empresa":"oben","codigo":1001,"preco":85}]'::jsonb))->0 INTO r;
-  IF r->'cmc' <> 'null'::jsonb OR r->'markup_perc' <> 'null'::jsonb OR r->'proveniencia' <> 'null'::jsonb THEN
+  IF r->'cmc' IS DISTINCT FROM 'null'::jsonb OR r->'markup_perc' IS DISTINCT FROM 'null'::jsonb OR r->'proveniencia' IS DISTINCT FROM 'null'::jsonb THEN
     RAISE EXCEPTION 'A11 FALHOU: gerencial VIU o numero (cmc=% markup=%) — o gate voltou a pode_ver_carteira_completa',
       r->>'cmc', r->>'markup_perc';
   END IF;
-  IF r->>'faixa' <> 'verde' OR r->>'motivo' <> 'abaixo_da_meta' THEN
+  IF r->>'faixa' IS DISTINCT FROM 'verde' OR r->>'motivo' IS DISTINCT FROM 'abaixo_da_meta' THEN
     RAISE EXCEPTION 'A11b FALHOU: gerencial perdeu a FAIXA (=%/%) — o corte foi longe demais', r->>'faixa', r->>'motivo';
   END IF;
   RAISE NOTICE 'OK A11 — gerencial ve a faixa mas NAO o numero (cap_custo_ler barra; gate velho liberaria)';
@@ -430,7 +431,7 @@ DECLARE r jsonb;
 BEGIN
   SET LOCAL test.uid = '00000000-0000-0000-0000-00000000000e';  -- employee ESTRATÉGICO
   SELECT (public.get_preco_cockpit('[{"empresa":"oben","codigo":1001,"preco":85}]'::jsonb))->0 INTO r;
-  IF r->'cmc' = 'null'::jsonb OR (r->>'cmc')::numeric <> 60 THEN
+  IF r->'cmc' = 'null'::jsonb OR (r->>'cmc')::numeric IS DISTINCT FROM 60 THEN
     RAISE EXCEPTION 'A13 FALHOU: estrategico NAO viu o cmc (=%) — cap_custo_ler degenerou a master-only', r->>'cmc';
   END IF;
   RAISE NOTICE 'OK A13 — estrategico ve cmc=60 (cap_custo_ler nao virou master-only)';
@@ -467,7 +468,7 @@ BEGIN
       END IF;
     END IF;
   END LOOP;
-  IF divergiu <> 1 THEN
+  IF divergiu IS DISTINCT FROM 1 THEN
     RAISE EXCEPTION 'A12c FALHOU: nenhuma persona separou os 2 gates — o bloco de authz nao prova politica';
   END IF;
   RAISE NOTICE 'OK A12 — gerencial e o UNICO discriminante (custo=false, carteira=true); demais concordam';
@@ -591,7 +592,7 @@ DECLARE r jsonb;
 BEGIN
   SET LOCAL test.uid = '00000000-0000-0000-0000-00000000000a';
   SELECT (public.get_preco_cockpit('[{"empresa":"oben","codigo":1006,"preco":100}]'::jsonb))->0 INTO r;
-  IF (r->>'tem_custo')::boolean IS NOT FALSE OR r->>'faixa' <> 'neutro' OR r->>'motivo' <> 'sem_custo' THEN
+  IF (r->>'tem_custo')::boolean IS NOT FALSE OR r->>'faixa' IS DISTINCT FROM 'neutro' OR r->>'motivo' IS DISTINCT FROM 'sem_custo' THEN
     RAISE EXCEPTION 'A6 FALHOU: tem_custo=% faixa=% motivo=% (esperado false/neutro/sem_custo)', r->>'tem_custo', r->>'faixa', r->>'motivo';
   END IF;
   RAISE NOTICE 'OK A6 — sku só em colacor_vendas, consultado oben → não casa → neutro/sem_custo';
@@ -607,7 +608,7 @@ BEGIN
   SET LOCAL test.uid = '00000000-0000-0000-0000-00000000000a';  -- master (vê cmc)
   -- parte 1: corante2 (7202) SEM CMC → custo incompleto → neutro/sem_custo (NÃO soma parcial)
   SELECT (public.get_preco_cockpit('[{"empresa":"oben","codigo":9999,"preco":100,"tint_formula_id":"00000000-0000-0000-0000-0000000f0001"}]'::jsonb))->0 INTO r;
-  IF (r->>'tem_custo')::boolean IS NOT FALSE OR r->>'motivo' <> 'sem_custo' THEN
+  IF (r->>'tem_custo')::boolean IS NOT FALSE OR r->>'motivo' IS DISTINCT FROM 'sem_custo' THEN
     RAISE EXCEPTION 'A7a FALHOU: corante faltando deu tem_custo=% motivo=% (esperado false/sem_custo — all-or-nothing)', r->>'tem_custo', r->>'motivo';
   END IF;
   RAISE NOTICE 'OK A7a — corante sem CMC → custo nulo (neutro), NÃO soma parcial';
@@ -624,8 +625,8 @@ BEGIN
   IF (r->>'tem_custo')::boolean IS NOT TRUE THEN
     RAISE EXCEPTION 'A7b FALHOU: com todos os CMC, tem_custo=% (esperado true)', r->>'tem_custo';
   END IF;
-  IF abs((r->>'cmc')::numeric - 43.5) > 0.0001 THEN
-    RAISE EXCEPTION 'A7c FALHOU: custo tint=% (esperado 43.5 = base 40 + corantes 3.5)', r->>'cmc';
+  IF r->>'cmc' IS NULL OR abs((r->>'cmc')::numeric - 43.5) > 0.0001 THEN
+    RAISE EXCEPTION 'A7c FALHOU: custo tint=% (esperado 43.5 = base 40 + corantes 3.5; NULL = a chave cmc sumiu)', r->>'cmc';
   END IF;
   RAISE NOTICE 'OK A7b — custo tint = base 40 + corantes 3.5 = 43.5 (all-or-nothing satisfeito)';
 END $$;
@@ -641,22 +642,22 @@ BEGIN
   -- o INSERT do seed (1001) já gerou 1 linha (cmc_anterior NULL). UPDATE do cmc → +1.
   UPDATE public.inventory_position SET cmc = 75 WHERE omie_codigo_produto = 1001 AND account='vendas';
   SELECT count(*) INTO n1 FROM public.cmc_ledger WHERE omie_codigo_produto = 1001 AND account='vendas';
-  IF n1 <> n0 + 1 THEN RAISE EXCEPTION 'A8a FALHOU: UPDATE de cmc gerou % linha(s) (esperado +1)', n1 - n0; END IF;
+  IF n1 IS DISTINCT FROM n0 + 1 THEN RAISE EXCEPTION 'A8a FALHOU: UPDATE de cmc gerou % linha(s) (esperado +1)', n1 - n0; END IF;
   SELECT cmc_anterior, cmc_novo INTO v_ant, v_novo
     FROM public.cmc_ledger WHERE omie_codigo_produto=1001 AND account='vendas' ORDER BY observed_at DESC LIMIT 1;
-  IF v_ant <> 60 OR v_novo <> 75 THEN
+  IF v_ant IS DISTINCT FROM 60 OR v_novo IS DISTINCT FROM 75 THEN
     RAISE EXCEPTION 'A8b FALHOU: ledger gravou anterior=% novo=% (esperado 60→75)', v_ant, v_novo;
   END IF;
 
   -- UPDATE de coluna NÃO-cmc (saldo) → trigger não dispara (AFTER UPDATE OF cmc) → 0 novas.
   UPDATE public.inventory_position SET saldo = 999 WHERE omie_codigo_produto = 1001 AND account='vendas';
   SELECT count(*) INTO n2 FROM public.cmc_ledger WHERE omie_codigo_produto = 1001 AND account='vendas';
-  IF n2 <> n1 THEN RAISE EXCEPTION 'A8c FALHOU: UPDATE de saldo gerou % linha(s) (esperado 0)', n2 - n1; END IF;
+  IF n2 IS DISTINCT FROM n1 THEN RAISE EXCEPTION 'A8c FALHOU: UPDATE de saldo gerou % linha(s) (esperado 0)', n2 - n1; END IF;
 
   -- UPDATE de cmc p/ o MESMO valor → dispara mas guard IS DISTINCT FROM → 0 novas.
   UPDATE public.inventory_position SET cmc = 75 WHERE omie_codigo_produto = 1001 AND account='vendas';
   SELECT count(*) INTO n3 FROM public.cmc_ledger WHERE omie_codigo_produto = 1001 AND account='vendas';
-  IF n3 <> n2 THEN RAISE EXCEPTION 'A8d FALHOU: UPDATE cmc p/ valor igual gerou % linha(s) (esperado 0)', n3 - n2; END IF;
+  IF n3 IS DISTINCT FROM n2 THEN RAISE EXCEPTION 'A8d FALHOU: UPDATE cmc p/ valor igual gerou % linha(s) (esperado 0)', n3 - n2; END IF;
 
   RAISE NOTICE 'OK A8 — ledger: UPDATE cmc=+1 (60→75); UPDATE saldo=0; UPDATE cmc igual=0';
 END $$;
@@ -705,7 +706,7 @@ BEGIN
   INSERT INTO public.markup_policy (account, escopo, sku_codigo, piso_markup, meta_markup) VALUES ('oben','sku',1001,35,55);
   GET DIAGNOSTICS c = ROW_COUNT;
   RESET ROLE;
-  IF c <> 1 THEN RAISE EXCEPTION 'A9c FALHOU: master INSERT afetou % (esperado 1)', c; END IF;
+  IF c IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'A9c FALHOU: master INSERT afetou % (esperado 1)', c; END IF;
   RAISE NOTICE 'OK A9c — master insere em markup_policy';
 END $$;
 SQL
@@ -775,7 +776,7 @@ BEGIN
   SELECT count(*) INTO n_master FROM public.cmc_ledger;
   RESET ROLE;
   IF n_master = 0 THEN RAISE EXCEPTION 'B1 setup: ledger vazio (A8 devia ter inserido)'; END IF;
-  IF n_emp <> 0 THEN RAISE EXCEPTION 'B1 FALHOU: employee leu % linha(s) do ledger (gate furado)', n_emp; END IF;
+  IF n_emp IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'B1 FALHOU: employee leu % linha(s) do ledger (gate furado)', n_emp; END IF;
   RAISE NOTICE 'OK B1 — employee vê 0 do ledger, master vê % (gate #1)', n_master;
 END $$;
 SQL
@@ -809,7 +810,7 @@ DECLARE r jsonb;
 BEGIN
   SET LOCAL test.uid='00000000-0000-0000-0000-00000000000a';  -- master (vê cmc)
   SELECT (public.get_preco_cockpit('[{"empresa":"oben","codigo":2002,"preco":100}]'::jsonb))->0 INTO r;
-  IF (r->>'cmc')::numeric <> 50 THEN
+  IF (r->>'cmc')::numeric IS DISTINCT FROM 50 THEN
     RAISE EXCEPTION 'B2 FALHOU: cmc=% (esperado 50 — vendas synced_at novo; oben 999 só updated_at novo)', r->>'cmc';
   END IF;
   RAISE NOTICE 'OK B2 — venceu o synced_at mais novo (cmc 50), não o updated_at';
@@ -823,11 +824,11 @@ DECLARE r jsonb;
 BEGIN
   SET LOCAL test.uid='00000000-0000-0000-0000-00000000000a';
   SELECT (public.get_preco_cockpit('[{"empresa":"oben","codigo":2003}]'::jsonb))->0 INTO r;
-  IF r->>'faixa' <> 'neutro' OR r->>'motivo' <> 'sem_custo' THEN
+  IF r->>'faixa' IS DISTINCT FROM 'neutro' OR r->>'motivo' IS DISTINCT FROM 'sem_custo' THEN
     RAISE EXCEPTION 'B3a FALHOU: preco ausente deu %/% (esperado neutro/sem_custo)', r->>'faixa', r->>'motivo';
   END IF;
   SELECT (public.get_preco_cockpit('[{"empresa":"oben","codigo":2003,"preco":"NaN"}]'::jsonb))->0 INTO r;
-  IF r->>'faixa' <> 'neutro' THEN
+  IF r->>'faixa' IS DISTINCT FROM 'neutro' THEN
     RAISE EXCEPTION 'B3b FALHOU: preco NaN deu faixa % (esperado neutro)', r->>'faixa';
   END IF;
   RAISE NOTICE 'OK B3 — preco ausente/NaN → neutro (não verde fabricado)';

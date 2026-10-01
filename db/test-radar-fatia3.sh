@@ -10,7 +10,7 @@ DB_DIR="$(mktemp -d)"; PORT=55438
 "$PGBIN/initdb" -D "$DB_DIR" -U postgres -A trust -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DB_DIR" -o "-p $PORT -k $DB_DIR" -l "$DB_DIR/log" start >/dev/null
 trap '"$PGBIN/pg_ctl" -D "$DB_DIR" stop -m immediate >/dev/null 2>&1; rm -rf "$DB_DIR"' EXIT
-PSQL=("$PGBIN/psql" -h "$DB_DIR" -p "$PORT" -U postgres -d postgres -v ON_ERROR_STOP=1 -q)
+PSQL=("$PGBIN/psql" -X -h "$DB_DIR" -p "$PORT" -U postgres -d postgres -v ON_ERROR_STOP=1 -q)
 
 # Stubs: schema mínimo que a migration referencia (radar_* + tarefas + gate).
 "${PSQL[@]}" <<'SQL'
@@ -86,13 +86,13 @@ BEGIN
   FOR r IN SELECT * FROM public.radar_contagem_por_municipio() LOOP
     n := n + 1;
     IF r.municipio_codigo = '3106200' THEN
-      IF r.total <> 2 THEN RAISE EXCEPTION 'A1 FALHOU: BH total=% (esperado 2)', r.total; END IF;
-      IF r.com_telefone <> 1 THEN RAISE EXCEPTION 'A1 FALHOU: BH com_telefone=% (esperado 1)', r.com_telefone; END IF;
-      IF r.a_contatar <> 2 THEN RAISE EXCEPTION 'A1 FALHOU: BH a_contatar=% (esperado 2)', r.a_contatar; END IF;
+      IF r.total IS DISTINCT FROM 2 THEN RAISE EXCEPTION 'A1 FALHOU: BH total=% (esperado 2)', r.total; END IF;
+      IF r.com_telefone IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'A1 FALHOU: BH com_telefone=% (esperado 1)', r.com_telefone; END IF;
+      IF r.a_contatar IS DISTINCT FROM 2 THEN RAISE EXCEPTION 'A1 FALHOU: BH a_contatar=% (esperado 2)', r.a_contatar; END IF;
       IF r.lat IS NULL THEN RAISE EXCEPTION 'A1 FALHOU: BH sem lat (join radar_municipios)'; END IF;
     END IF;
   END LOOP;
-  IF n <> 2 THEN RAISE EXCEPTION 'A1 FALHOU: % municípios (esperado 2: BH+SP)', n; END IF;
+  IF n IS DISTINCT FROM 2 THEN RAISE EXCEPTION 'A1 FALHOU: % municípios (esperado 2: BH+SP)', n; END IF;
   RAISE NOTICE 'A1 OK';
 END $$;
 
@@ -101,7 +101,7 @@ DO $$
 DECLARE n int;
 BEGIN
   SELECT count(*) INTO n FROM public.radar_contagem_por_municipio('MG', NULL, '3101200');
-  IF n <> 1 THEN RAISE EXCEPTION 'A2 FALHOU: % linhas (esperado 1 = só BH)', n; END IF;
+  IF n IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'A2 FALHOU: % linhas (esperado 1 = só BH)', n; END IF;
   RAISE NOTICE 'A2 OK';
 END $$;
 
@@ -110,7 +110,7 @@ DO $$
 DECLARE r record;
 BEGIN
   SELECT * INTO r FROM public.radar_contagem_por_municipio('MG',NULL,NULL,NULL,true) WHERE municipio_codigo='3106200';
-  IF r.total <> 3 THEN RAISE EXCEPTION 'A3 FALHOU: BH com já-clientes total=% (esperado 3)', r.total; END IF;
+  IF r.total IS DISTINCT FROM 3 THEN RAISE EXCEPTION 'A3 FALHOU: BH com já-clientes total=% (esperado 3)', r.total; END IF;
   RAISE NOTICE 'A3 OK';
 END $$;
 
@@ -122,10 +122,10 @@ BEGIN
   IF (r->>'deduped')::boolean THEN RAISE EXCEPTION 'A4 FALHOU: não deveria deduplicar 1ª vez'; END IF;
   SELECT * INTO t FROM public.tarefas WHERE id=(r->>'id')::uuid;
   IF t.customer_user_id IS NOT NULL THEN RAISE EXCEPTION 'A4 FALHOU: customer_user_id deveria ser NULL'; END IF;
-  IF t.assigned_to <> '00000000-0000-0000-0000-0000000000a1' THEN RAISE EXCEPTION 'A4 FALHOU: assigned_to'; END IF;
-  IF t.empresa <> 'oben' OR t.categoria <> 'ligar' OR t.modo <> 'data' THEN RAISE EXCEPTION 'A4 FALHOU: campos'; END IF;
-  IF t.due_date <> current_date + 7 THEN RAISE EXCEPTION 'A4 FALHOU: due_date'; END IF;
-  IF t.descricao NOT LIKE '%CNPJ 11111111000111%' THEN RAISE EXCEPTION 'A4 FALHOU: descricao sem cnpj'; END IF;
+  IF t.assigned_to IS DISTINCT FROM '00000000-0000-0000-0000-0000000000a1' THEN RAISE EXCEPTION 'A4 FALHOU: assigned_to'; END IF;
+  IF t.empresa IS DISTINCT FROM 'oben' OR t.categoria IS DISTINCT FROM 'ligar' OR t.modo IS DISTINCT FROM 'data' THEN RAISE EXCEPTION 'A4 FALHOU: campos'; END IF;
+  IF t.due_date IS DISTINCT FROM current_date + 7 THEN RAISE EXCEPTION 'A4 FALHOU: due_date'; END IF;
+  IF t.descricao IS NULL OR t.descricao NOT LIKE '%CNPJ 11111111000111%' THEN RAISE EXCEPTION 'A4 FALHOU: descricao sem cnpj'; END IF;
   RAISE NOTICE 'A4 OK';
 END $$;
 
@@ -134,9 +134,9 @@ DO $$
 DECLARE r jsonb; n int;
 BEGIN
   r := public.radar_atribuir_tarefa('11111111000111', 7);
-  IF NOT (r->>'deduped')::boolean THEN RAISE EXCEPTION 'A5 FALHOU: deveria deduplicar'; END IF;
+  IF (r->>'deduped')::boolean IS NOT TRUE THEN RAISE EXCEPTION 'A5 FALHOU: deveria deduplicar'; END IF;
   SELECT count(*) INTO n FROM public.tarefas WHERE descricao LIKE '%CNPJ 11111111000111%';
-  IF n <> 1 THEN RAISE EXCEPTION 'A5 FALHOU: criou % tarefas (esperado 1)', n; END IF;
+  IF n IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'A5 FALHOU: criou % tarefas (esperado 1)', n; END IF;
   RAISE NOTICE 'A5 OK';
 END $$;
 
@@ -145,13 +145,13 @@ DO $$
 DECLARE r jsonb; e record; c int;
 BEGIN
   r := public.radar_registrar_cadastro_omie('22222222000122', '9988', false);
-  IF NOT (r->>'ok')::boolean THEN RAISE EXCEPTION 'A6 FALHOU: ok'; END IF;
+  IF (r->>'ok')::boolean IS NOT TRUE THEN RAISE EXCEPTION 'A6 FALHOU: ok'; END IF;
   SELECT * INTO e FROM public.radar_empresas WHERE cnpj='22222222000122';
-  IF e.prospeccao_status <> 'virou_cliente' THEN RAISE EXCEPTION 'A6 FALHOU: status'; END IF;
-  IF e.ja_cliente <> true THEN RAISE EXCEPTION 'A6 FALHOU: ja_cliente'; END IF;
-  IF e.omie_codigo_cliente <> '9988' THEN RAISE EXCEPTION 'A6 FALHOU: codigo'; END IF;
+  IF e.prospeccao_status IS DISTINCT FROM 'virou_cliente' THEN RAISE EXCEPTION 'A6 FALHOU: status'; END IF;
+  IF e.ja_cliente IS DISTINCT FROM true THEN RAISE EXCEPTION 'A6 FALHOU: ja_cliente'; END IF;
+  IF e.omie_codigo_cliente IS DISTINCT FROM '9988' THEN RAISE EXCEPTION 'A6 FALHOU: codigo'; END IF;
   SELECT count(*) INTO c FROM public.radar_contatos WHERE cnpj='22222222000122' AND acao='virou_cliente';
-  IF c <> 1 THEN RAISE EXCEPTION 'A6 FALHOU: não logou'; END IF;
+  IF c IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'A6 FALHOU: não logou'; END IF;
   RAISE NOTICE 'A6 OK';
 END $$;
 

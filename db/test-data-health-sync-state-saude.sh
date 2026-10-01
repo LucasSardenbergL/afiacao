@@ -41,7 +41,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }   # tuples-only, unaligned (pra capturar 1 valor)
 
 # ── base mínima do Supabase: roles, schema auth, auth.uid()/role() via GUC (impersonação de RLS) ──
@@ -209,40 +209,64 @@ has "J3 message lista os DOIS" "$J_NOVO" "products/vendas (falhou)"
 # ══════════════════════════════════════════════════════════════════════════════
 echo; echo "═══ FALSIFICAÇÃO — cada assert tem de ficar VERMELHO com a sabotagem ═══"
 SAB="$(mktemp -d)/sab.sql"
-# roda um cenario com a migration SABOTADA e devolve o valor observado
-sabota() { sed "$1" "$MIG" > "$SAB"; P -q -f "$SAB"; }
 restaura() { P -q -f "$MIG"; }   # NAO usa 'git checkout' — o arquivo do repo nunca e tocado
-falsifica() { # $1=rotulo $2=sed $3=comando_que_produz_valor $4=valor_verdadeiro
-  sabota "$2" >/dev/null 2>&1
-  local v; v="$(eval "$3")"
-  if [ "$v" = "$4" ]; then bad "FALS $1 — sabotado e o assert SEGUIU VERDE (assert sem dente)"
-  else ok "FALS $1 — sabotado => [$v] != [$4] (assert morde)"; fi
+# Vermelho = o valor sob sabotagem e o que a sabotagem DECLARA ($5) — nao so "!= verdadeiro".
+# O "!=" sozinho aceitava QUALQUER desvio: a leitura VAZIA (a fonte sumiu do compute, 0 rows,
+# exit 0) contava como dente. A leitura roda com `set -e` e o rc e capturado fora de lista ||/&&
+# (onde o bash 5 ignora o errexit do subshell): erro de execucao nao e dente. O sed que nao casa
+# e o apply que falha sao nomeados (antes: SAB == MIG virava "sem dente", e o apply que falhava
+# abortava MUDO, com a saida em /dev/null).
+# O vermelho tem de ser do SEU assert: docs/historico/falsificacao-exit-nao-e-dente.md.
+falsifica() { # $1=rotulo $2=sed $3=comando_que_produz_valor $4=valor_verdadeiro $5=valor_que_a_sabotagem_DECLARA
+  sed "$2" "$MIG" > "$SAB"
+  if cmp -s "$MIG" "$SAB"; then bad "FALS $1 — o sed NAO casou: a sabotagem nao aplicou"; return; fi
+  P -q -f "$SAB" >/dev/null 2>&1 || { bad "FALS $1 — o SQL sabotado nem aplicou"; restaura; return; }
+  local v rc
+  set +e; v="$(set -e; eval "$3")"; rc=$?; set -e
+  if [ "$rc" -ne 0 ]; then bad "FALS $1 — a LEITURA ERROU (rc=$rc): erro de execucao nao e dente"
+  elif [ "$v" = "$4" ]; then bad "FALS $1 — sabotado e o assert SEGUIU VERDE (assert sem dente)"
+  elif [ "$v" = "$5" ]; then ok "FALS $1 — sabotado => [$v] != [$4] (assert morde)"
+  else bad "FALS $1 — vermelha, mas NAO no valor que a sabotagem declara: esperado [$5], veio [$v]"; fi
   restaura
 }
 
 seed_base
 P -q -c "UPDATE public.sync_state SET status='error', error_message='x' WHERE entity_type='tint_watchdog_corante';"
 falsifica "eixo 1 (auto-declarado) cego" \
-  "s/WHEN ss.status = 'error' THEN 'broken'/WHEN false THEN 'broken'/" 'st' "broken"
+  "s/WHEN ss.status = 'error' THEN 'broken'/WHEN false THEN 'broken'/" 'st' "broken" "ok"
 
 seed_base
 P -q -c "UPDATE public.sync_state SET last_sync_at=now()-interval '40 hours' WHERE entity_type='customers' AND account='vendas';"
 falsifica "eixo 2 (estagnacao) cego" \
-  "s/make_interval(hours => req.sla_h)/make_interval(hours => 99999)/" 'st' "broken"
+  "s/make_interval(hours => req.sla_h)/make_interval(hours => 99999)/" 'st' "broken" "ok"
 
 seed_base
 P -q -c "UPDATE public.sync_state SET status='error', error_message='x', last_sync_at=now()-interval '37 days'
          WHERE entity_type='customers' AND account='servicos';"
 falsifica "dedup (par nos 2 eixos seria contado/listado 2x)" \
-  "s/SELECT DISTINCT ON (u.entity_type, u.account)/SELECT/" "ndup 'customers/servicos'" "1"
+  "s/SELECT DISTINCT ON (u.entity_type, u.account)/SELECT/" "ndup 'customers/servicos'" "1" "2"
 
 seed_base
 P -q -c "UPDATE public.sync_state SET status='error', error_message='x', updated_at=now()-interval '30 hours'
          WHERE entity_type='customers' AND account='servicos';"
 FP_REF="$(msg)"
+# O que a sabotagem DECLARA e a mensagem VOLATIL: o heartbeat anda (o J1) e a mensagem crua MUDA,
+# com a forma "falhou ha <N>h". A forma sozinha aceitava uma mensagem CONSTANTE que contivesse a
+# hora (Codex, 2026-09-27). A hora corrida sai com 4 casas (0,0001 h = 0,36 s): o numero depende de
+# QUANDO a leitura cai, e por isso e normalizado; a mudanca e julgada na mensagem crua.
+fp_volatil() {
+  local a b
+  a="$(msg)"
+  P -q -c "UPDATE public.sync_state SET updated_at=now()-interval '5 minutes' WHERE entity_type='customers' AND account='servicos';" >/dev/null
+  b="$(msg)"
+  P -q -c "UPDATE public.sync_state SET updated_at=now()-interval '30 hours' WHERE entity_type='customers' AND account='servicos';" >/dev/null
+  if [ "$a" = "$b" ]; then b=estavel; else b=mudou; fi
+  a="$(printf '%s' "$a" | sed -E 's/falhou ha [0-9]+[.][0-9]+h/falhou ha <N>h/')"
+  echo "$a|$b"
+}
 falsifica "estabilidade do fingerprint (hora corrida na message)" \
   "s/WHEN ss.status = 'error' THEN 'falhou'/WHEN ss.status = 'error' THEN 'falhou ha '||round((EXTRACT(EPOCH FROM now()-ss.updated_at)\/3600.0)::numeric,4)::text||'h'/" \
-  'msg' "$FP_REF"
+  'fp_volatil' "$FP_REF|estavel" "Sync Omie PARADO: customers/servicos (falhou ha <N>h)|mudou"
 
 echo; echo "═══ RESUMO: $PASS ok · $FAIL falhas ═══"
 [ "$FAIL" = "0" ] || { echo "❌ HARNESS VERMELHO"; exit 1; }

@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **560** custom migrations totais
-- **1836** objetos esperados (criados por estas migrations)
+- **571** custom migrations totais
+- **1883** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 599
+  - `function`: 624
   - `rls_policy`: 462
   - `index`: 261
   - `cron_job`: 174
   - `table`: 166
+  - `view`: 100
   - `trigger`: 92
-  - `view`: 78
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -4594,6 +4594,108 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.atualizar_parametros_numericos_skus` | — |
+
+### `20260927133606_positivacao_mes_sp_sessao_utc.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._carteira_positivacao_for_owner` | — |
+
+### `20260927172443_hoje_sp_sessao_utc_precos_piso.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_ultimos_precos_cliente` | — |
+| `function` | `public.medir_abaixo_piso_tier` | — |
+
+### `20260927195430_positivacao_universo_canonico.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._carteira_positivacao_for_owner` | — |
+
+### `20260927202603_fuso_sp_relogio_da_sessao_rpcs_views_des.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.radar_kpis` | — |
+| `function` | `public.fin_projecao_13_semanas` | — |
+| `view` | `public.v_des_pedidos_em_transito` | — |
+| `view` | `public.v_des_posicao_trimestre_ao_vivo` | — |
+
+### `20260929000234_padrao_like_contem_escapa_curinga.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.padrao_like_contem` | — |
+| `function` | `public.listar_skus_por_codigo_fornecedor` | — |
+| `function` | `public.resolver_sku_por_codigo_fornecedor` | — |
+| `function` | `public.expandir_promocao_item` | — |
+| `function` | `public.buscar_skus_candidatos` | — |
+| `function` | `public.melhoria_clientes_por_produto` | — |
+| `function` | `public.melhoria_produtos_relacionados` | — |
+| `function` | `public.tarefas_matcher_tick` | — |
+
+### `20260929001651_hoje_sp_sessao_utc_sete_funcoes.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_period_lock_trigger` | — |
+| `function` | `public.get_regua_preco` | — |
+| `function` | `public.listar_pedidos_a_separar` | — |
+| `function` | `public.radar_atribuir_tarefa` | — |
+| `function` | `public.sincronizar_ativo_omie_para_reposicao` | — |
+| `function` | `public.trg_campanha_gera_alerta` | — |
+| `function` | `public.vendas_sync_semear_janela` | — |
+
+### `20260929002059_des_desconto_total_maximo_por_faixa.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.v_des_desconto_por_checkin` | — |
+
+### `20260929003006_reposicao_v_sku_fora_do_motor.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.v_reposicao_sku_fora_do_motor` | — |
+
+### `20260930220148_expandir_promocao_item_overload_similarity_volume.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.expandir_promocao_item` | — |
+
+### `20260930230623_hoje_sp_views_defaults_classe_ii.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.fin_aging_pagar` | — |
+| `view` | `public.fin_aging_receber` | — |
+| `view` | `public.fin_fluxo_caixa_diario` | — |
+| `view` | `public.v_caca_candidatos` | — |
+| `view` | `public.v_caca_compradores` | — |
+| `view` | `public.v_desconto_flat_condicional_ativo` | — |
+| `view` | `public.v_fornecedor_lt_logistica_total` | — |
+| `view` | `public.v_grupo_comercial` | — |
+| `view` | `public.v_grupo_contas_receber` | — |
+| `view` | `public.v_grupo_contas_receber_por_doc` | — |
+| `view` | `public.v_sku_aumento_vigente` | — |
+| `view` | `public.v_sku_candidatos_primeira_compra` | — |
+| `view` | `public.v_sku_demanda_estatisticas` | — |
+| `view` | `public.v_sku_demanda_rajada` | — |
+| `view` | `public.v_sku_leadtime_estatisticas` | — |
+| `view` | `public.v_sku_parametros_sugeridos` | — |
+| `view` | `public.v_sku_sigma_demanda` | — |
+| `view` | `public.v_sugestao_negociacao_ativa` | — |
+
+### `20261001011500_data_health_vendas_empurradas_sem_gemeo.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+| `function` | `public.data_health_watchdog` | — |
+| `function` | `public.fin_sync_heartbeat` | — |
 
 ## Próximos passos por status
 

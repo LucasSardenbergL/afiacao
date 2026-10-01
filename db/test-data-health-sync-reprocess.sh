@@ -26,45 +26,98 @@ export LC_ALL=C LANG=C          # sem isso o postmaster aborta ("became multithr
 # teatro — uma suíte sempre-vermelha (por ambiente quebrado, porta ocupada, migration inválida)
 # aprovaria TODAS as sabotagens. Por isso o controle roda PRIMEIRO, aqui dentro, e um controle
 # vermelho ABORTA antes da primeira sabotagem, em vez de deixar o laço "passar".
+#
+# E exit≠0 NÃO é dente (money-path.md: "o vermelho tem de ser do SEU assert"). Até 2026-09-27 este
+# laço contava toda rodada vermelha como "vermelha como devia", inclusive o `exit 9` de uma sabotagem
+# NÃO APLICÁVEL (o padrão derivou depois de editar a migration), cuja própria linha "❌ SABOTAGEM NÃO
+# APLICÁVEL" ainda entrava na contagem de "asserts quebrados". Agora cada sabotagem DECLARA os asserts
+# que têm de acusá-la, e a rodada só conta como vermelha se:
+#   1. a sabotagem APLICOU (a linha "SABOTAGEM ATIVA em" está no log);
+#   2. a suíte rodou INTEIRA (PASS+FAIL do recibo = o do controle: aborto no meio não é assert);
+#   3. CADA assert declarado está VERDE no controle e VERMELHO aqui (o mesmo assert virou);
+#   4. a rodada não tem ERRO de execução do SQL que o controle não tem — a medição que erra sai
+#      vazia e o assert cai por ERRO, não por julgamento (achado do Codex, 2026-09-27).
+# Qualquer outro vermelho é FALHA da falsificação. Diário: docs/historico/falsificacao-exit-nao-e-dente.md
 # ══════════════════════════════════════════════════════════════════════════════
 if [ "${1:-}" = "--falsificar" ]; then
-  SABOTAGENS="erro_nao_e_broken desconhecido_vira_ok nao_catalogada_vira_ok orfa_nunca_dispara
-              stale_nunca_dispara nunca_executou_vira_ok retry_liquida_erro degradado_conta_dispensada message_com_idade
-              message_com_data_do_relogio message_com_hora_de_parede message_constante fora_do_v_sources"
+  # <sabotagem>:<IDs dos asserts que TÊM de acusá-la>. `,` = E (cada um tem de virar); `|` = OU
+  # (basta um). O ID é o prefixo `A<n> ` que cada assert imprime. Os colaterais (asserts que também
+  # caem, mas não existem para pegar ESTA sabotagem) ficam de fora de propósito: alguns oscilam
+  # (o A25 sob `message_com_hora_de_parede` depende de a leitura cruzar a virada de um segundo).
+  SABOTAGENS="erro_nao_e_broken:A7,A9 desconhecido_vira_ok:A13 nao_catalogada_vira_ok:A14
+              orfa_nunca_dispara:A10 stale_nunca_dispara:A12 nunca_executou_vira_ok:A2
+              retry_liquida_erro:A15 degradado_conta_dispensada:A18 message_com_idade:A23
+              message_com_data_do_relogio:A23 message_com_hora_de_parede:A23 message_constante:A24
+              fora_do_v_sources:A28,A30"
   LOGDIR="$(mktemp -d "/tmp/falsifica-${SLUG}.XXXXXX")"
   porta=$PORT
+  # asserts EXECUTADOS numa rodada = PASS+FAIL do recibo final; vazio se ela abortou antes dele
+  executados() { sed -n 's/^PASS=\([0-9][0-9]*\)  FAIL=\([0-9][0-9]*\)$/\1 \2/p' "$1" | awk '{ print $1 + $2 }'; }
 
   echo "══ CONTROLE (migration real, sem sabotagem) — tem de ficar VERDE ══"
   if PGPORT_TEST=$porta SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
-    echo "  ✅ controle VERDE ($(grep -c '✅' "$LOGDIR/controle.log") asserts) — a suíte sabe passar"
+    asserts_controle="$(executados "$LOGDIR/controle.log")"
+    erros_controle="$(grep -c 'ERROR:  ' "$LOGDIR/controle.log" || true)"
+    echo "  ✅ controle VERDE (${asserts_controle:-?} asserts) — a suíte sabe passar"
   else
     echo "  ❌ CONTROLE VERMELHO — abortando ANTES de sabotar. Uma suíte que já falha sozinha"
     echo "     aprovaria todas as sabotagens por vermelhidão constante, não por dente."
     tail -25 "$LOGDIR/controle.log"; exit 1
   fi
+  case "$asserts_controle" in
+    ''|0|*[!0-9]*) echo "  ❌ controle verde SEM um recibo PASS/FAIL legível [$asserts_controle] — sem ele não há como"
+                   echo "     saber se uma rodada sabotada rodou a suíte inteira. Abortando antes de sabotar."; exit 1 ;;
+  esac
 
   falhas=0
-  for sab in $SABOTAGENS; do
-    porta=$((porta+1))
-    if PGPORT_TEST=$porta SABOTAGEM="$sab" bash "$0" > "$LOGDIR/$sab.log" 2>&1; then
-      echo "  ❌ $sab — suíte ficou VERDE com a sabotagem ativa: o assert correspondente NÃO tem dente"
+  for item in $SABOTAGENS; do
+    sab="${item%%:*}"; exigidos="${item#*:}"
+    porta=$((porta+1)); log="$LOGDIR/$sab.log"
+    if PGPORT_TEST=$porta SABOTAGEM="$sab" bash "$0" > "$log" 2>&1; then
+      echo "  ❌ $sab — suíte ficou VERDE com a sabotagem ativa: o assert NÃO tem dente"
+      falhas=$((falhas+1)); continue
+    fi
+    # Daqui em diante a rodada saiu ≠0 — o que, sozinho, não prova NADA.
+    vermelhos="$(grep -Eo '^  ❌ A[0-9]+ ' "$log" | grep -Eo 'A[0-9]+' | tr '\n' ' ' || true)"
+    erros_sql="$(grep -c 'ERROR:  ' "$log" || true)"
+    faltam=""
+    for exigido in ${exigidos//,/ }; do
+      if ! grep -Eq "^  ✅ ($exigido) " "$LOGDIR/controle.log" || ! grep -Eq "^  ❌ ($exigido) " "$log"; then
+        faltam="$faltam $exigido"
+      fi
+    done
+    if ! grep -q 'SABOTAGEM ATIVA em ' "$log"; then
+      echo "  ❌ $sab — vermelha SEM a sabotagem aplicada (padrão derivou? nome sem ramo?): nenhum assert acusou nada"
+      { grep -m3 -E 'SABOTAGEM|padrão ocorre|ERROR' "$log" || true; } | sed 's/^/       /'
+      falhas=$((falhas+1))
+    elif [ "$(executados "$log")" != "$asserts_controle" ]; then
+      echo "  ❌ $sab — a suíte NÃO rodou inteira ($(executados "$log") de $asserts_controle asserts): vermelho de aborto, não de assert"
+      tail -3 "$log" | sed 's/^/       /'
+      falhas=$((falhas+1))
+    elif [ "$erros_sql" != "$erros_controle" ]; then
+      echo "  ❌ $sab — vermelha com ERRO de execução do SQL ($erros_sql linha(s) ERROR, o controle tem $erros_controle): a medição que erra sai vazia e o assert cai por ERRO, não por julgamento"
+      { grep -m2 'ERROR:  ' "$log" || true; } | sed 's/^/       /'
+      falhas=$((falhas+1))
+    elif [ -n "$faltam" ]; then
+      echo "  ❌ $sab — vermelha, mas o assert declarado não virou (verde no controle → vermelho aqui):$faltam"
+      echo "       vermelhos desta rodada: ${vermelhos:-nenhum assert}"
       falhas=$((falhas+1))
     else
-      quebrou="$(grep -c '❌' "$LOGDIR/$sab.log" || true)"
-      echo "  ✅ $sab — vermelha como devia ($quebrou assert(s) quebraram)"
+      echo "  ✅ $sab — vermelha no assert certo ($exigidos) · vermelhos: $vermelhos"
     fi
   done
 
   # Recibo EXCLUSIVO deste modo (o normal nunca o emite): é como o runner confere que a flag
-  # `--falsificar` não foi silenciosamente ignorada. Vermelhas = sabotagens que ficaram vermelhas.
+  # `--falsificar` não foi silenciosamente ignorada. Vermelhas = as que ficaram vermelhas NO ASSERT
+  # DECLARADO; vermelho de outra causa entra em falhas.
   total="$(wc -w <<<"$SABOTAGENS" | tr -d ' ')"
   echo "SABOTAGENS: $((total - falhas)) vermelhas / $falhas falhas"
   echo
   if [ "$falhas" -eq 0 ]; then
-    echo "═══ falsificação OK: controle verde + $total sabotagens todas vermelhas ═══"
+    echo "═══ falsificação OK: controle verde + $total sabotagens vermelhas no assert declarado ═══"
     rm -rf "$LOGDIR"; exit 0
   fi
-  echo "═══ falsificação REPROVOU: $falhas sabotagem(ns) passaram despercebidas (logs em $LOGDIR) ═══"
+  echo "═══ falsificação REPROVOU: $falhas sabotagem(ns) sem o vermelho certo (logs em $LOGDIR) ═══"
   exit 1
 fi
 
@@ -80,7 +133,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }   # tuples-only, unaligned (pra capturar 1 valor)
 
 # ── base mínima do Supabase: roles, schema auth, auth.uid()/role() via GUC (impersonação de RLS) ──
@@ -140,7 +193,9 @@ echo "═══ migration real aplicada (postcondição passou) ═══"
 # Sabota no BANCO, recriando a função com o trecho trocado — o repo NUNCA é tocado, então não há
 # `git checkout --` para restaurar (que é onde a falsificação costuma comer trabalho não commitado).
 # Cada sabotagem EXIGE que o padrão ocorra exatamente 1× no corpo: uma substituição que não pegou
-# deixaria a suíte verde e faria a falsificação aprovar tudo — teatro.
+# deixaria a suíte verde e faria a falsificação aprovar tudo — teatro. O `exit 9` abaixo NÃO é o
+# vermelho que a falsificação procura: o laço exige a linha "SABOTAGEM ATIVA em" e o assert declarado,
+# e conta este exit como FALHA (era contado como dente até 2026-09-27).
 # ══════════════════════════════════════════════════════════════════════════════
 sabotar() {
   local fn="$1" de="$2" para="$3"
@@ -250,31 +305,31 @@ nlin(){ Pq -c "SELECT count(*)::text FROM public._data_health_compute() WHERE so
 
 echo "── contrato de forma (o que cega os outros checks se quebrar) ──"
 P -q -c "TRUNCATE public.sync_reprocess_log;"
-eq "tabela VAZIA ainda devolve 1 linha (catálogo é o FROM, não a tabela)" "$(nlin)" "1"
-eq "tabela VAZIA ⇒ broken (chave vigiada que nunca executou é falha, não silêncio)" "$(st)" "broken"
+eq "A1 tabela VAZIA ainda devolve 1 linha (catálogo é o FROM, não a tabela)" "$(nlin)" "1"
+eq "A2 tabela VAZIA ⇒ broken (chave vigiada que nunca executou é falha, não silêncio)" "$(st)" "broken"
 
 semear_saudavel
-eq "1 linha por source no compute INTEIRO" \
+eq "A3 1 linha por source no compute INTEIRO" \
    "$(Pq -c "SELECT (count(*) = count(DISTINCT source))::text FROM public._data_health_compute();")" "true"
-eq "o compute tem 30 sources (29 de prod + o novo)" \
+eq "A4 o compute tem 30 sources (29 de prod + o novo)" \
    "$(Pq -c "SELECT count(DISTINCT source)::text FROM public._data_health_compute();")" "30"
-eq "status dentro do vocabulário que o watchdog aceita" \
+eq "A5 status dentro do vocabulário que o watchdog aceita" \
    "$(Pq -c "SELECT (status IN ('ok','stale','broken','unknown'))::text FROM public._data_health_compute() WHERE source='sync_reprocess_saude';")" "true"
 
 echo "── vereditos por eixo ──"
-eq "catálogo todo com complete fresco ⇒ ok" "$(st)" "ok"
+eq "A6 catálogo todo com complete fresco ⇒ ok" "$(st)" "ok"
 
 semear_saudavel
 P -q -c "UPDATE public.sync_reprocess_log SET status='error', error_message='pedido 7b6f incoerente'
           WHERE reprocess_type='operational' AND entity_type='orders';"
-eq "última linha em error ⇒ broken (o incidente real)" "$(st)" "broken"
-eq "o erro técnico chega ao last_error" \
+eq "A7 última linha em error ⇒ broken (o incidente real)" "$(st)" "broken"
+eq "A8 o erro técnico chega ao last_error" \
    "$(Pq -c "SELECT (last_error LIKE '%7b6f%')::text FROM public._data_health_compute() WHERE source='sync_reprocess_saude';")" "true"
 
 semear_saudavel
 P -q -c "UPDATE public.sync_reprocess_log SET status='failed'
           WHERE reprocess_type='status_produtos' AND account='oben';"
-eq "dialeto 'failed' (omie-sync-status-produtos) também é broken" "$(st)" "broken"
+eq "A9 dialeto 'failed' (omie-sync-status-produtos) também é broken" "$(st)" "broken"
 
 # O cenário da órfã precisa de um SUCESSO DENTRO do SLA, senão o `broken` vem da cláusula "nunca
 # completou" e o assert passa pelo motivo errado — foi o que a falsificação flagrou: sabotar o
@@ -285,27 +340,27 @@ P -q -c "DELETE FROM public.sync_reprocess_log WHERE reprocess_type='operational
 P -q -c "INSERT INTO public.sync_reprocess_log (account, reprocess_type, entity_type, status, created_at) VALUES
   ('oben','operational','orders','complete', now() - interval '3 hours'),
   ('oben','operational','orders','running',  now() - interval '150 minutes');"
-eq "running iniciada há 2h30 sobre sucesso ainda no SLA ⇒ broken (órfã; máx real 2,6 min)" "$(st)" "broken"
+eq "A10 running iniciada há 2h30 sobre sucesso ainda no SLA ⇒ broken (órfã; máx real 2,6 min)" "$(st)" "broken"
 
 semear_saudavel
 P -q -c "INSERT INTO public.sync_reprocess_log (account, reprocess_type, entity_type, status, created_at)
          VALUES ('oben','operational','orders','running', now() - interval '10 minutes');"
-eq "running há 10min sobre sucesso fresco ⇒ ok (run em voo não é órfã)" "$(st)" "ok"
+eq "A11 running há 10min sobre sucesso fresco ⇒ ok (run em voo não é órfã)" "$(st)" "ok"
 
 semear_saudavel
 P -q -c "UPDATE public.sync_reprocess_log SET created_at = now() - interval '9 hours'
           WHERE reprocess_type='operational' AND entity_type='inventory';"
-eq "sem complete há 9h num SLA de 4h ⇒ stale" "$(st)" "stale"
+eq "A12 sem complete há 9h num SLA de 4h ⇒ stale" "$(st)" "stale"
 
 semear_saudavel
 P -q -c "UPDATE public.sync_reprocess_log SET status='enigma'
           WHERE reprocess_type='strategic' AND entity_type='products';"
-eq "status FORA dos 3 dialetos ⇒ unknown, NUNCA ok" "$(st)" "unknown"
+eq "A13 status FORA dos 3 dialetos ⇒ unknown, NUNCA ok" "$(st)" "unknown"
 
 semear_saudavel
 P -q -c "INSERT INTO public.sync_reprocess_log (account, reprocess_type, entity_type, status, created_at)
          VALUES ('nova_conta','operational','orders','complete', now());"
-eq "chave ATIVA fora do catálogo ⇒ unknown (cobertura desconhecida não é saudável)" "$(st)" "unknown"
+eq "A14 chave ATIVA fora do catálogo ⇒ unknown (cobertura desconhecida não é saudável)" "$(st)" "unknown"
 
 # ⚠️ REPRODUÇÃO do achado E.1 do Codex (challenge retroativo 2026-09-20): um `running` posterior
 # NÃO pode liquidar um erro terminal. Sucesso 10h → erro 12h → retry grava `running` 12h29: a última
@@ -317,14 +372,14 @@ P -q -c "INSERT INTO public.sync_reprocess_log (account, reprocess_type, entity_
   ('oben','operational','orders','complete', NULL,             now() - interval '150 minutes'),
   ('oben','operational','orders','error',    'RPC falhou',     now() - interval '31 minutes'),
   ('oben','operational','orders','running',  NULL,             now() - interval '1 minute');"
-eq "erro terminal seguido de retry em voo NÃO pode virar ok (E.1)" "$(st)" "broken"
+eq "A15 erro terminal seguido de retry em voo NÃO pode virar ok (E.1)" "$(st)" "broken"
 
 echo "── precisão: degradação ≠ quebra ──"
 semear_saudavel
 P -q -c "UPDATE public.sync_reprocess_log SET error_message='2 pedidos falharam na reconciliação'
           WHERE reprocess_type='operational' AND entity_type='orders';"
-eq "complete COM error_message ⇒ continua ok (o estágio andou)" "$(st)" "ok"
-eq "…mas a degradação aparece na message" \
+eq "A16 complete COM error_message ⇒ continua ok (o estágio andou)" "$(st)" "ok"
+eq "A17 …mas a degradação aparece na message" \
    "$(Pq -c "SELECT (message LIKE '%falha por pedido%')::text FROM public._data_health_compute() WHERE source='sync_reprocess_saude';")" "true"
 
 # O contador de degradação tem de contar só as chaves VIGIADAS. Medido em prod 2026-09-20:
@@ -335,18 +390,18 @@ eq "…mas a degradação aparece na message" \
 semear_saudavel
 P -q -c "INSERT INTO public.sync_reprocess_log (account, reprocess_type, entity_type, status, error_message, created_at)
          VALUES ('oben','manual','orders','complete','1 pedido com SKU repetido', now() - interval '94 days');"
-eq "fóssil DISPENSADO com error_message não conta como degradação" \
+eq "A18 fóssil DISPENSADO com error_message não conta como degradação" \
    "$(Pq -c "SELECT (message LIKE '%falha por pedido%')::text FROM public._data_health_compute() WHERE source='sync_reprocess_saude';")" "false"
 
 echo "── o catálogo não deixa fóssil nem escritor alheio poluir ──"
 semear_saudavel
 P -q -c "INSERT INTO public.sync_reprocess_log (account, reprocess_type, entity_type, status, created_at)
          VALUES ('colacor','manual','products','error', now() - interval '200 days');"
-eq "manual em error desde fevereiro NÃO derruba o check (dispensado)" "$(st)" "ok"
+eq "A19 manual em error desde fevereiro NÃO derruba o check (dispensado)" "$(st)" "ok"
 P -q -c "INSERT INTO public.sync_reprocess_log (account, reprocess_type, entity_type, status, created_at) VALUES
   ('OBEN','ciclo_diario','pedidos_compra_sugeridos','ok', now()),
   ('OBEN','disparo_diario','pedidos_compra_disparo','partial', now());"
-eq "grupo OBEN (dialeto ok/partial, vigiado por efeito) não vira 'não catalogada'" "$(st)" "ok"
+eq "A20 grupo OBEN (dialeto ok/partial, vigiado por efeito) não vira 'não catalogada'" "$(st)" "ok"
 
 echo "── message estável (senão re-emaila a cada 30 min) ──"
 # ⚠️ QUEM ANDA É O RELÓGIO, NÃO O DADO. Até 2026-09-26 este assert simulava "o mesmo problema ficou 3h
@@ -386,10 +441,10 @@ P -q -c "SELECT pg_sleep(1.1);" >/dev/null
 M2="$(msg_em "$T1")"; I2="$(idade_em "$T1")"
 # Controle POSITIVO: um relógio que não interceptasse nada deixaria M1=M2 por construção, e o assert
 # de estabilidade passaria por CEGUEIRA. A idade que o compute enxerga TEM de andar as 3h.
-eq "o compute lê o relógio controlado: idade de 30 min às 23:00" "$I1" "1800"
-eq "…e de 3h30 às 02:00 do dia seguinte (o relógio andou 3h, o dado ficou parado)" "$I2" "12600"
-if [ "$M1" = "$M2" ] && [ -n "$M1" ]; then ok "message idêntica com o relógio 3h adiante, cruzando a meia-noite local (data congelada)"; else
-  bad "message VARIOU só porque o tempo passou — o fingerprint source|status|severity|message re-emailaria
+eq "A21 o compute lê o relógio controlado: idade de 30 min às 23:00" "$I1" "1800"
+eq "A22 …e de 3h30 às 02:00 do dia seguinte (o relógio andou 3h, o dado ficou parado)" "$I2" "12600"
+if [ "$M1" = "$M2" ] && [ -n "$M1" ]; then ok "A23 message idêntica com o relógio 3h adiante, cruzando a meia-noite local (data congelada)"; else
+  bad "A23 message VARIOU só porque o tempo passou — o fingerprint source|status|severity|message re-emailaria
        antes: [$M1]
        depois: [$M2]"; fi
 
@@ -399,15 +454,15 @@ if [ "$M1" = "$M2" ] && [ -n "$M1" ]; then ok "message idêntica com o relógio 
 P -q -c "UPDATE public.sync_reprocess_log SET status='error'
           WHERE reprocess_type='strategic' AND entity_type='products';"
 M3="$(msg_em "$T1")"
-if [ "$M3" != "$M2" ] && [ -n "$M3" ]; then ok "message MUDA quando um 2º estágio quebra (re-emite, como deve)"; else
-  bad "message NÃO mudou com um 2º estágio quebrado — uma message constante passaria o teste de
+if [ "$M3" != "$M2" ] && [ -n "$M3" ]; then ok "A24 message MUDA quando um 2º estágio quebra (re-emite, como deve)"; else
+  bad "A24 message NÃO mudou com um 2º estágio quebrado — uma message constante passaria o teste de
        estabilidade sem avisar nada: [$M3]"; fi
 
 # Dois problemas simultâneos: o resumo tem de ser DETERMINÍSTICO (o string_agg é ordenado por
 # reprocess_type, entity_type, account). Sem ordem explícita a message oscilaria entre formas e o
 # fingerprint re-emailaria sozinho — a lição do #1980, aqui no eixo do agregado.
 M4="$(msg_em "$T1")"
-eq "resumo com 2 problemas é estável entre leituras (string_agg ordenado)" "$M4" "$M3"
+eq "A25 resumo com 2 problemas é estável entre leituras (string_agg ordenado)" "$M4" "$M3"
 
 # Desliga o relógio controlado: o resto da prova (watchdog/heartbeat) roda no compute EXATAMENTE como a
 # migration o deixou — conferido, não suposto.
@@ -424,23 +479,23 @@ P -q -c "UPDATE public.sync_reprocess_log SET status='error' WHERE reprocess_typ
 P -q -c "SELECT public.data_health_watchdog();" >/dev/null
 # 22 = tamanho do v_sources (21 + o novo). O compute produz 30 sources; o watchdog avalia os do
 # array e ignora o resto — por isso os dois números são diferentes DE PROPÓSITO.
-eq "watchdog avalia 22 checks (o v_sources, não os 30 do compute)" \
+eq "A26 watchdog avalia 22 checks (o v_sources, não os 30 do compute)" \
    "$(Pq -c "SELECT checks_avaliados::text FROM public.data_health_watchdog_estado WHERE id;")" "22"
 # ⚠️ checks_falhos conta EXCECAO DE EXECUCAO do check, nunca status de negocio: o laco so o
 # incrementa no EXCEPTION. Com o check novo em `broken`, o certo e ZERO — ele avaliou bem, o
 # resultado e que e ruim. Foi por isso que o estado de 14/09 (checks_avaliados=21, checks_falhos=0)
 # nao provava saude nenhuma durante os 10 dias do incidente: provava so que nada explodiu.
-eq "checks_falhos=0 mesmo com o check novo em broken (conta exceção, não negócio)" \
+eq "A27 checks_falhos=0 mesmo com o check novo em broken (conta exceção, não negócio)" \
    "$(Pq -c "SELECT checks_falhos::text FROM public.data_health_watchdog_estado WHERE id;")" "0"
-eq "watchdog ROTEOU o source novo para o push (_data_health_episodio)" \
+eq "A28 watchdog ROTEOU o source novo para o push (_data_health_episodio)" \
    "$(Pq -c "SELECT (count(*) > 0)::text FROM public._spy_episodio WHERE tipo='data_health_sync_reprocess_saude';")" "true"
 P -q -c "SELECT public.fin_sync_heartbeat();" >/dev/null
-ok "fin_sync_heartbeat executa com o source novo na IN-list"
+ok "A29 fin_sync_heartbeat executa com o source novo na IN-list"
 
 echo "── o source está nas DUAS pontas (senão o check existe e nunca é avaliado) ──"
-eq "sync_reprocess_saude no v_sources do watchdog" \
+eq "A30 sync_reprocess_saude no v_sources do watchdog" \
    "$(Pq -c "SELECT (pg_get_functiondef(p.oid) LIKE '%''sync_reprocess_saude''%')::text FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname='data_health_watchdog';")" "true"
-eq "sync_reprocess_saude na IN-list do heartbeat" \
+eq "A31 sync_reprocess_saude na IN-list do heartbeat" \
    "$(Pq -c "SELECT (pg_get_functiondef(p.oid) LIKE '%''sync_reprocess_saude''%')::text FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname='fin_sync_heartbeat';")" "true"
 
 echo

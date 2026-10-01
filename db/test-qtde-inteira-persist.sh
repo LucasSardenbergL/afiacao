@@ -30,7 +30,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l /tmp/pg-qtdepersist.log -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres qtdepersist_verify
-P() { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d qtdepersist_verify "$@"; }
+P() { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d qtdepersist_verify "$@"; }
 
 RR="$(mktemp "${TMPDIR:-/tmp}/snap-qtdepersist.XXXXXX")"
 sed -E 's/^(CREATE SCHEMA public;)/-- \1/' "$REPO_ROOT/supabase/schema-snapshot.sql" \
@@ -118,12 +118,12 @@ BEGIN
 
   -- E. IDEMPOTÊNCIA: 2ª chamada em P1 retorna 0 ajustes
   SELECT public.reposicao_persistir_qtde_inteira(90001) INTO n;
-  IF n <> 0 THEN RAISE EXCEPTION 'E FALHOU: 2ª chamada ajustou % (esperado 0 — não idempotente)', n; END IF;
+  IF n IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'E FALHOU: 2ª chamada ajustou % (esperado 0 — não idempotente)', n; END IF;
   RAISE NOTICE 'OK E — função idempotente (2ª passada = 0 ajustes)';
 
   -- F. Função em pedido só-inteiro retorna 0 e não recomputa (P3 já provou preservação)
   SELECT public.reposicao_persistir_qtde_inteira(90003) INTO n;
-  IF n <> 0 THEN RAISE EXCEPTION 'F FALHOU: P3 (já inteiro) ajustou % (esperado 0)', n; END IF;
+  IF n IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'F FALHOU: P3 (já inteiro) ajustou % (esperado 0)', n; END IF;
   RAISE NOTICE 'OK F — pedido já inteiro → 0 ajustes (não toca valor_linha capturado)';
 
   RAISE NOTICE '──────── TODOS OS ASSERTS SQL OK ────────';

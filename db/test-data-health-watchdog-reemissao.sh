@@ -22,6 +22,7 @@ PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
 PORT="${PGPORT_TEST:-5469}"
 SLUG="dhwd-reemissao"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
+RODADA="$(dirname "$DATA")"   # dir ÚNICO desta rodada (o trap apaga): temporário mora aqui, nunca em /tmp/<nome-fixo>
 
 [ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER} pgvector"; exit 1; }
 
@@ -38,7 +39,7 @@ PGE=(env LC_ALL=C LANG=C)
 "${PGE[@]}" "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "${PGE[@]}" "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "${PGE[@]}" "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
-P()  { "${PGE[@]}" "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+P()  { "${PGE[@]}" "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }
 
 PASS=0; FAIL=0
@@ -231,7 +232,20 @@ so_watchdog() { sed -n '/CREATE OR REPLACE FUNCTION public.data_health_watchdog/
 # ══════════════════════════════════════════════════════════════════════════════
 # ZONA 3 — HELPERS DE CENÁRIO
 # ══════════════════════════════════════════════════════════════════════════════
-rodar()      { P -q -c "SELECT public.data_health_watchdog();" >/dev/null 2>&1 || return 1; }
+# FALHOS_ACUM soma, por rodada, os checks falhos E as fontes que faltaram (17 = as fontes do fixture,
+# o K6b): o watchdog ISOLA erro por check (WHEN OTHERS -> v_falhos++) e a rodada sai 0 -- o erro de
+# uma sabotagem so fica visivel ai; e uma fonte ausente deixaria checks_falhos=0. Estado AUSENTE ou
+# ilegivel e erro (rodar devolve 1), nunca "0 falhas"; a leitura e validada ANTES da aritmetica, que
+# com operando vazio mata o shell na hora -- antes do RESET do cen_claim (Codex, 2026-09-27).
+# Zerado no reset_tudo.
+FALHOS_ACUM=0
+rodar()      { P -q -c "SELECT public.data_health_watchdog();" >/dev/null 2>&1 || return 1
+  local e; e="$(Pq -c "SELECT checks_avaliados||':'||checks_falhos FROM public.data_health_watchdog_estado WHERE id;")" || return 1
+  [[ "$e" =~ ^[0-9]+:[0-9]+$ ]] || return 1
+  FALHOS_ACUM=$(( FALHOS_ACUM + ${e#*:} + 17 - ${e%%:*} )); }
+# imprime "<medicao>|f=<falhas>" com a medicao numa ATRIBUICAO propria: no argumento de um echo, o erro
+# de quem mede sumia (o echo sai 0 com o que veio antes do erro) (Codex, 2026-09-27)
+mede() { local v; v="$("$@")"; printf '%s|f=%s\n' "$v" "$FALHOS_ACUM"; }
 rodar_erro() { P -q -c "SELECT public.data_health_watchdog();" >/dev/null 2>&1 && return 1 || return 0; }
 # Conta e-mails da fonte: o titulo e' '[Saude de dados] <source>' e <source> e' ASCII puro,
 # entao o LIKE roda no SQL e nenhuma comparacao de shell toca acento (imune a locale).
@@ -249,6 +263,7 @@ set_check() { # source status severity message [age_seconds]
   P -q -c "UPDATE public._dh_control SET status='$2', severity='$3', message='$4', age_seconds=$idade WHERE source='$1';" >/dev/null
 }
 reset_tudo() {
+  FALHOS_ACUM=0
   P -q -c "TRUNCATE public.fin_alertas; TRUNCATE public.fornecedor_alerta;
            DELETE FROM public.data_health_watchdog_estado;
            UPDATE public._dh_control SET status='ok', severity='info', message='tudo certo em '||source,
@@ -623,9 +638,20 @@ eq "K6b e a rodada segue COMPLETA (17/17, zero falhas)" "$(Pq -c "SELECT checks_
 echo "-- falsificacao --"
 FALSIF_OK=0; FALSIF_BAD=0
 # Sentinelas ASCII puro, caixa fixa, sem -i: identicas sob LC_ALL=C e pt_BR.UTF-8.
-verdicto() { # nome  resultado_do_cenario(0=verde,1=vermelho)
-  if [ "$2" = "1" ]; then FALSIF_OK=$((FALSIF_OK+1)); echo "  [DENTE] $1 -- sabotagem ficou VERMELHA"
-  else FALSIF_BAD=$((FALSIF_BAD+1)); echo "  [SEM-DENTE] $1 -- sabotagem passou VERDE (assert fraco)"; fi
+# Vermelho = a medicao do cenario sob sabotagem e o valor que a sabotagem DECLARA ($4) -- nao so
+# "o cenario devolveu !=0". O "!=0" aceitava QUALQUER desvio: dentro de `if cen_X` o errexit fica
+# suspenso, e um `rodar` que ERRA (o watchdog levanta; `rodar` engole e devolve 1) seguia adiante
+# com zero e-mails -- o cenario "quebrava" e contava como dente. O cenario roda num subshell com
+# `set -e` e o rc capturado fora de lista ||/&& (onde o bash 5 ignora o errexit do subshell):
+# erro de execucao nao e dente. O vermelho tem de ser do SEU assert:
+# docs/historico/falsificacao-exit-nao-e-dente.md.
+julga() { # nome  cenario  valor_verde  valor_que_a_sabotagem_DECLARA
+  local v rc
+  set +e; v="$(set -e; "$2")"; rc=$?; set -e
+  if [ "$rc" -ne 0 ]; then FALSIF_BAD=$((FALSIF_BAD+1)); echo "  [ERRO] $1 -- o cenario ERROU (rc=$rc): erro de execucao nao e dente"
+  elif [ "$v" = "$3" ]; then FALSIF_BAD=$((FALSIF_BAD+1)); echo "  [SEM-DENTE] $1 -- sabotagem passou VERDE (assert fraco)"
+  elif [ "$v" = "$4" ]; then FALSIF_OK=$((FALSIF_OK+1)); echo "  [DENTE] $1 -- sabotagem ficou VERMELHA [$v] (verde [$3])"
+  else FALSIF_BAD=$((FALSIF_BAD+1)); echo "  [OUTRO-VERMELHO] $1 -- NAO e o valor que a sabotagem declara: esperado [$4], veio [$v] (verde [$3])"; fi
 }
 # Re-aplicar os arquivos inteiros nao serve mais: o guard da v1 ABORTA sobre o marcador v2
 # (de proposito). Restauramos exatamente as duas funcoes sob teste -- _data_health_episodio vem
@@ -635,45 +661,58 @@ restaurar() {
   P -q -c "$(so_watchdog < "$MIG2")" >/dev/null
 }
 
-# Cada cenario abaixo devolve 1 quando o invariante QUEBRA (ou seja: quando a sabotagem pegou).
+# Cada cenario IMPRIME a sua medicao -- "<contagem>|f=<checks falhos nas rodadas>"; o verde e o valor
+# que a sabotagem declara ficam na chamada. O f= e o que separa "o predicado sumiu" de "o caminho
+# ERROU e o isolamento engoliu": medido em 2026-09-27, o F1 com `PERFORM 1/0` no lembrete dava 1
+# e-mail -- exatamente o valor da sabotagem -- com a rodada saindo 0.
 cen_lembrete() { reset_tudo; set_check carteira_scores stale warning 'M' 1000; rodar
   P -q -c "UPDATE public.fin_alertas SET contexto = contexto || jsonb_build_object('_prox_email_em', to_jsonb(clock_timestamp() - interval '1 minute')) WHERE dismissed_at IS NULL;" >/dev/null
-  rodar; [ "$(emails carteira_scores)" = "2" ] && return 0 || return 1; }
+  rodar; mede emails carteira_scores; }
 cen_escalada() { reset_tudo; set_check carteira_scores stale warning 'M' 1000; rodar
   set_check carteira_scores broken warning 'M' 2000; rodar
-  [ "$(emails carteira_scores)" = "2" ] && return 0 || return 1; }
+  mede emails carteira_scores; }
 cen_material() { reset_tudo; set_check reposicao_disparo stale warning 'Disparo: 1 pedido' 1000; rodar
   # sai do cooldown de 4h da materialidade -- senao o cenario mede o cooldown, nao o fingerprint
   P -q -c "UPDATE public.fin_alertas SET email_enfileirado_em = clock_timestamp() - interval '5 hours'
            WHERE tipo='data_health_reposicao_disparo' AND dismissed_at IS NULL;" >/dev/null
   set_check reposicao_disparo stale warning 'Disparo: 2 pedido' 1000; rodar; rodar
-  [ "$(emails reposicao_disparo)" = "2" ] && return 0 || return 1; }
+  mede emails reposicao_disparo; }
 cen_antispam() { reset_tudo; set_check carteira_scores stale warning 'M' 1000
   for _ in $(seq 1 10); do rodar; done
-  [ "$(emails carteira_scores)" = "1" ] && return 0 || return 1; }
+  mede emails carteira_scores; }
 cen_nulo() { reset_tudo; set_check vendas_pedidos stale warning 'M' 1000; rodar
   P -q -c "UPDATE public._dh_control SET status=NULL WHERE source='vendas_pedidos';" >/dev/null
   rodar; R=$(alertas vendas_pedidos)
   P -q -c "UPDATE public._dh_control SET status='ok' WHERE source='vendas_pedidos';" >/dev/null
-  [ "$R" = "1" ] && return 0 || return 1; }
+  echo "$R|f=$FALHOS_ACUM"; }
 cen_antiflap() { reset_tudo
   for _ in $(seq 1 6); do
     set_check estoque_reposicao stale warning 'Estoque: marcador parado' 200000; rodar
     set_check estoque_reposicao ok info 'Estoque: ok'; rodar
   done
-  [ "$(emails estoque_reposicao)" = "1" ] && return 0 || return 1; }
+  mede emails estoque_reposicao; }
+# O RESET do GUC vem ANTES de qualquer saida por erro: o reset_tudo nao limpa GUC, e um `rodar` que
+# erra (o cenario roda com set -e) deixaria o banco em modo silencioso para os cenarios seguintes.
 cen_claim() { reset_tudo; set_check vendas_cadastros broken critical 'M' 1000
-  P -q -c "ALTER DATABASE prove SET test.outbox_falha = 'silencioso';" >/dev/null; rodar
-  R=$(Pq -c "SELECT count(*) FROM public.fin_alertas WHERE tipo='data_health_vendas_cadastros' AND email_enfileirado_em IS NOT NULL;")
+  P -q -c "ALTER DATABASE prove SET test.outbox_falha = 'silencioso';" >/dev/null
+  local rc=0; rodar || rc=$?
   P -q -c "ALTER DATABASE prove RESET test.outbox_falha;" >/dev/null
-  [ "$R" = "0" ] && return 0 || return 1; }
+  [ "$rc" -eq 0 ] || return "$rc"
+  mede Pq -c "SELECT count(*) FROM public.fin_alertas WHERE tipo='data_health_vendas_cadastros' AND email_enfileirado_em IS NOT NULL;"; }
+# fronteira que sobrevive ao fim do cenario (que roda num subshell com set -e): o RESET de dentro nao
+# cobre uma morte do shell no meio -- este, chamado pelo pai depois, cobre
+reset_guc_outbox() { P -q -c "ALTER DATABASE prove RESET test.outbox_falha;" >/dev/null; }
 
 # Baseline explicito: os 6 cenarios estao VERDES com a migration INTACTA (senao o vermelho
 # da sabotagem nao prova nada -- pode ser o comando quebrado, nao o bug).
 BASE_VERDE=0
-for c in cen_lembrete cen_escalada cen_material cen_antispam cen_nulo cen_claim cen_antiflap; do
-  if $c; then BASE_VERDE=$((BASE_VERDE+1)); else echo "  [XX] baseline de $c JA vermelho -- falsificacao invalida"; fi
-done
+base_cen() { # cenario  valor_verde
+  local v rc
+  set +e; v="$(set -e; "$1")"; rc=$?; set -e
+  if [ "$rc" -eq 0 ] && [ "$v" = "$2" ]; then BASE_VERDE=$((BASE_VERDE+1)); else echo "  [XX] baseline de $1 JA vermelho [rc=$rc, veio $v, verde $2] -- falsificacao invalida"; fi
+}
+base_cen cen_lembrete '2|f=0'; base_cen cen_escalada '2|f=0'; base_cen cen_material '2|f=0'; base_cen cen_antispam '1|f=0'
+base_cen cen_nulo '1|f=1'; base_cen cen_claim '0|f=1'; reset_guc_outbox; base_cen cen_antiflap '1|f=0'
 eq "F0 baseline: 7 cenarios verdes com a migration intacta" "$BASE_VERDE" "7"
 
 # Extrai UMA funcao da migration, aplica a versao sabotada e PROVA que a sabotagem entrou.
@@ -694,25 +733,25 @@ WD='public.data_health_watchdog()'
 
 # --- F1: remove o predicado TEMPORAL (lembrete) ---
 if sabota "F1 predicado temporal" "$EPIS" "v_lembrete := false;" < <(perl -0pe 's/v_lembrete := [^;]*;/v_lembrete := false;/s' "$MIG" | so_episodio); then
-  if cen_lembrete; then verdicto "F1 predicado temporal" 0; else verdicto "F1 predicado temporal" 1; fi
+  julga "F1 predicado temporal" cen_lembrete '2|f=0' '1|f=0'
 fi
 restaurar
 
 # --- F2: remove o predicado de ESCALADA ---
 if sabota "F2 predicado de escalada" "$EPIS" "v_escalou := false;" < <(perl -0pe 's/v_escalou := [^;]*;/v_escalou := false;/s' "$MIG" | so_episodio); then
-  if cen_escalada; then verdicto "F2 predicado de escalada" 0; else verdicto "F2 predicado de escalada" 1; fi
+  julga "F2 predicado de escalada" cen_escalada '2|f=0' '1|f=0'
 fi
 restaurar
 
 # --- F3: remove a MATERIALIDADE (fingerprint) ---
 if sabota "F3 fingerprint/materialidade" "$EPIS" "v_material := false;" < <(perl -0pe 's/v_material := [^;]*;/v_material := false;/s' "$MIG" | so_episodio); then
-  if cen_material; then verdicto "F3 fingerprint/materialidade" 0; else verdicto "F3 fingerprint/materialidade" 1; fi
+  julga "F3 fingerprint/materialidade" cen_material '2|f=0' '1|f=0'
 fi
 restaurar
 
 # --- F4: remove o GATE anti-spam (tudo notifica) ---
 if sabota "F4 gate anti-spam" "$EPIS" "SABOTADO-ANTISPAM" < <(perl -0pe 's/v_deve := v_escalou[^;]*;/v_deve := true; -- SABOTADO-ANTISPAM/s' "$MIG" | so_episodio); then
-  if cen_antispam; then verdicto "F4 gate anti-spam" 0; else verdicto "F4 gate anti-spam" 1; fi
+  julga "F4 gate anti-spam" cen_antispam '1|f=0' '10|f=0'
 fi
 restaurar
 
@@ -725,7 +764,7 @@ restaurar
 if sabota "F5 validacao de status NULL" "$WD" "IS NOT TRUE THEN" < <(
      perl -0pe "s/IF r\.status IS NULL OR r\.status NOT IN \('ok','stale','broken','unknown'\) THEN/IF false THEN/s" "$MIG" \
    | perl -0pe "s/IF r\.status = 'ok' THEN/IF (r.status <> 'ok') IS NOT TRUE THEN/s" | so_watchdog); then
-  if cen_nulo; then verdicto "F5 validacao de status NULL" 0; else verdicto "F5 validacao de status NULL" 1; fi
+  julga "F5 validacao de status NULL" cen_nulo '1|f=1' '0|f=0'
 fi
 restaurar
 
@@ -733,19 +772,26 @@ restaurar
 # O outbox fica em modo SILENCIOSO (INSERT com sucesso e zero linhas) e a sabotagem remove o
 # GET DIAGNOSTICS que existe justamente para pegar isso -- a "escrita que falha calada".
 if sabota "F6 atomicidade do claim" "$EPIS" "SABOTADO-ROWCOUNT" < <(perl -0pe "s/GET DIAGNOSTICS v_upd = ROW_COUNT;\s*\n\s*IF v_upd <> 1 THEN.*?END IF;/-- SABOTADO-ROWCOUNT/gs" "$MIG" | so_episodio); then
-  if cen_claim; then verdicto "F6 atomicidade do claim" 0; else verdicto "F6 atomicidade do claim" 1; fi
+  julga "F6 atomicidade do claim" cen_claim '0|f=1' '1|f=0'
+  reset_guc_outbox
 fi
 restaurar
 
 # --- F7: remove o GUARD de drift => a migration passa a aplicar sobre corpo alheio ---
-MIG_SEM_GUARD="$(mktemp /tmp/mig-sem-guard.XXXXXX.sql)"
+MIG_SEM_GUARD="$(mktemp "$RODADA/mig-sem-guard.XXXXXX")"
 perl -0pe 's/DO \$guard\$.*?\$guard\$;//s' "$MIG" > "$MIG_SEM_GUARD"
-P -q -c "CREATE OR REPLACE FUNCTION public.data_health_watchdog() RETURNS void LANGUAGE plpgsql AS \$f\$ BEGIN RAISE NOTICE 'corpo alheio'; END \$f\$;" >/dev/null
+# O que a sabotagem DECLARA: aplicou E o corpo alheio foi SOBRESCRITO. O exit 0 sozinho tambem vem
+# de um arquivo vazio (perl que falhou) -- e ai o corpo alheio segue la.
+cen_sem_guard() {
+  P -q -c "CREATE OR REPLACE FUNCTION public.data_health_watchdog() RETURNS void LANGUAGE plpgsql AS \$f\$ BEGIN RAISE NOTICE 'corpo alheio'; END \$f\$;" >/dev/null
+  if P -q -f "$MIG_SEM_GUARD" >/dev/null 2>&1; then
+    echo "aplicou|alheio=$(Pq -c "SELECT (pg_get_functiondef('$WD'::regprocedure) LIKE '%corpo alheio%')::text;")"
+  else echo "abortou"; fi
+}
 # shellcheck disable=SC2016  # literal: e' a TAG do dollar-quote que a sabotagem tem de remover.
 if command grep -qF '$guard$' "$MIG_SEM_GUARD"; then
   FALSIF_BAD=$((FALSIF_BAD+1)); bad "F7 guard de drift -- SABOTAGEM NAO APLICOU (o bloco do guard sobreviveu)"
-elif P -q -f "$MIG_SEM_GUARD" >/dev/null 2>&1; then verdicto "F7 guard de drift" 1
-else verdicto "F7 guard de drift" 0; fi
+else julga "F7 guard de drift" cen_sem_guard "abortou" "aplicou|alheio=false"; fi
 rm -f "$MIG_SEM_GUARD"
 P -q -f "$BASE" >/dev/null
 restaurar
@@ -755,7 +801,7 @@ restaurar
 # manda e-mail". E' o furo espelho -- e sem este assert ele passaria despercebido, porque
 # TODOS os outros cenarios continuam verdes com ele.
 if sabota "F8 anti-flap por tipo" "$EPIS" "v_deve := true; -- SABOTADO" < <(perl -0pe 's/v_deve := v_ult_email IS NULL[^;]*;/v_deve := true; -- SABOTADO/s' "$MIG" | so_episodio); then
-  if cen_antiflap; then verdicto "F8 anti-flap por tipo" 0; else verdicto "F8 anti-flap por tipo" 1; fi
+  julga "F8 anti-flap por tipo" cen_antiflap '1|f=0' '6|f=0'
 fi
 restaurar
 
@@ -764,9 +810,9 @@ cen_rearme() { reset_tudo; set_check reposicao_disparo broken warning 'M3' 70000
   set_check reposicao_disparo stale warning 'M1' 176400; rodar
   P -q -c "UPDATE public.fin_alertas SET acknowledged_at = now() WHERE tipo='data_health_reposicao_disparo' AND dismissed_at IS NULL;" >/dev/null
   set_check reposicao_disparo broken warning 'M3' 700000; rodar
-  [ "$(emails reposicao_disparo)" = "2" ] && return 0 || return 1; }
+  mede emails reposicao_disparo; }
 if sabota "F9 rearme na recuperacao" "$EPIS" "SABOTADO-REARME" < <(perl -0pe 's/IF v_grav_email IS NOT NULL AND v_grav < v_grav_email THEN\s*\n\s*v_grav_email := v_grav;\s*\n\s*END IF;/-- SABOTADO-REARME/s' "$MIG" | so_episodio); then
-  if cen_rearme; then verdicto "F9 rearme na recuperacao" 0; else verdicto "F9 rearme na recuperacao" 1; fi
+  julga "F9 rearme na recuperacao" cen_rearme '2|f=0' '1|f=0'
 fi
 restaurar
 
@@ -776,9 +822,9 @@ cen_cooldown() { reset_tudo; set_check custos_produtos stale warning 'vA' 5000; 
     set_check custos_produtos stale warning 'vB' 5000; rodar; rodar
     set_check custos_produtos stale warning 'vA' 5000; rodar; rodar
   done
-  [ "$(emails custos_produtos)" = "1" ] && return 0 || return 1; }
+  mede emails custos_produtos; }
 if sabota "F10 cooldown da materialidade" "$EPIS" "SABOTADO-COOLDOWN" < <(perl -0pe 's/AND \(v_ult_email IS NULL OR clock_timestamp\(\) >= v_ult_email \+ v_min_material\);/AND true; -- SABOTADO-COOLDOWN/s' "$MIG" | so_episodio); then
-  if cen_cooldown; then verdicto "F10 cooldown da materialidade" 0; else verdicto "F10 cooldown da materialidade" 1; fi
+  julga "F10 cooldown da materialidade" cen_cooldown '1|f=0' '7|f=0'
 fi
 restaurar
 
@@ -787,7 +833,7 @@ eq "F12 nenhuma sabotagem passou verde"   "$FALSIF_BAD" "0"
 
 # Re-roda um cenario apos a restauracao final: prova que o restore devolveu a versao boa
 # (uma falsificacao que deixa a sabotagem no banco envenenaria qualquer leitura posterior).
-if cen_antispam; then ok "F13 restauracao final devolveu a versao verdadeira"; else bad "F13 apos restaurar, o gate anti-spam segue quebrado"; fi
+if [ "$(cen_antispam)" = "1|f=0" ]; then ok "F13 restauracao final devolveu a versao verdadeira"; else bad "F13 apos restaurar, o gate anti-spam segue quebrado"; fi
 
 echo "------------------------------"
 echo "RESULTADO: $PASS ok / $FAIL fail  (falsificacao: $FALSIF_OK com dente / $FALSIF_BAD sem dente)"

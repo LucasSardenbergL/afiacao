@@ -41,5 +41,5 @@ SELECT company, ano, mes,
        CASE WHEN receita_bruta > 0 THEN round(100.0*impostos/receita_bruta,2) END AS aliquota_efetiva_pct
 FROM fin_dre_snapshots
 WHERE regime = 'competencia'
-  AND make_date(ano, mes, 1) > (CURRENT_DATE - interval '6 months')
+  AND make_date(ano, mes, 1) > ((now() AT TIME ZONE 'America/Sao_Paulo')::date - interval '6 months')
 ORDER BY company, ano, mes;

@@ -28,7 +28,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l /tmp/pg-melhorias.log -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres melhorias_verify
-P() { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d melhorias_verify "$@"; }
+P() { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d melhorias_verify "$@"; }
 
 # Snapshot restore-ready: remove meta-comandos psql e o CREATE SCHEMA public.
 RR="$(mktemp "${TMPDIR:-/tmp}/snap-melhorias.XXXXXX")"
@@ -174,10 +174,10 @@ BEGIN
 
   v_total  := (res->>'total_clientes_visiveis')::int;
   v_escopo := res->>'escopo';
-  IF v_total <> 2 THEN
+  IF v_total IS DISTINCT FROM 2 THEN
     RAISE EXCEPTION 'A1 FALHOU: master deveria ver 2 clientes, viu %', v_total;
   END IF;
-  IF v_escopo <> 'todos' THEN
+  IF v_escopo IS DISTINCT FROM 'todos' THEN
     RAISE EXCEPTION 'A1b FALHOU: escopo=% (esperado "todos")', v_escopo;
   END IF;
   RAISE NOTICE 'OK A1 — master total_clientes_visiveis=2, escopo=todos';
@@ -195,10 +195,10 @@ BEGIN
     JOIN public.profiles pr ON pr.name = (el->>'cliente')
     WHERE pr.user_id = '00000000-0000-0000-0000-000000000001';
 
-    IF c1_nped IS NULL OR c1_nped <> 1 THEN
+    IF c1_nped IS NULL OR c1_nped IS DISTINCT FROM 1 THEN
       RAISE EXCEPTION 'A1c FALHOU: c1 n_pedidos=% (esperado 1)', c1_nped;
     END IF;
-    IF c1_val IS NULL OR c1_val <> 50.00 THEN
+    IF c1_val IS NULL OR c1_val IS DISTINCT FROM 50.00 THEN
       RAISE EXCEPTION 'A1d FALHOU: c1 valor_12m=% (esperado 50.00)', c1_val;
     END IF;
     RAISE NOTICE 'OK A1c — c1 n_pedidos=1 valor_12m=50.00';
@@ -208,7 +208,7 @@ BEGIN
     JOIN public.profiles pr ON pr.name = (el->>'cliente')
     WHERE pr.user_id = '00000000-0000-0000-0000-000000000002';
 
-    IF c2_val IS NULL OR c2_val <> 10.00 THEN
+    IF c2_val IS NULL OR c2_val IS DISTINCT FROM 10.00 THEN
       RAISE EXCEPTION 'A1e FALHOU: c2 valor_12m=% (esperado 10.00)', c2_val;
     END IF;
     RAISE NOTICE 'OK A1e — c2 valor_12m=10.00';
@@ -220,10 +220,10 @@ BEGIN
 
   v_total  := (res->>'total_clientes_visiveis')::int;
   v_escopo := res->>'escopo';
-  IF v_total <> 1 THEN
+  IF v_total IS DISTINCT FROM 1 THEN
     RAISE EXCEPTION 'A2 FALHOU: vendedora deveria ver 1 cliente (só carteira), viu %', v_total;
   END IF;
-  IF v_escopo <> 'minha_carteira' THEN
+  IF v_escopo IS DISTINCT FROM 'minha_carteira' THEN
     RAISE EXCEPTION 'A2b FALHOU: escopo=% (esperado "minha_carteira")', v_escopo;
   END IF;
   RAISE NOTICE 'OK A2 — vendedora total_clientes_visiveis=1, escopo=minha_carteira';
@@ -313,7 +313,7 @@ BEGIN
   IF NOT has_p3 THEN
     RAISE EXCEPTION 'A5d FALHOU: P3 (COLA TESTE) deveria estar em comprados_juntos';
   END IF;
-  IF p3_lift IS NULL OR p3_lift <> 2.10 THEN
+  IF p3_lift IS NULL OR p3_lift IS DISTINCT FROM 2.10 THEN
     RAISE EXCEPTION 'A5e FALHOU: P3 lift=% (esperado 2.10)', p3_lift;
   END IF;
   RAISE NOTICE 'OK A5d/e — comprados_juntos contém P3 com lift=2.10';
@@ -390,7 +390,7 @@ BEGIN
   -- A6e: SELECT — u_vend vê 1 (o dela)
   SET LOCAL test.uid = '00000000-0000-0000-0000-00000000000b';
   SELECT count(*) INTO n_rows FROM public.melhoria_itens;
-  IF n_rows <> 1 THEN
+  IF n_rows IS DISTINCT FROM 1 THEN
     RAISE EXCEPTION 'A6e FALHOU: u_vend deveria ver 1 item, viu %', n_rows;
   END IF;
   RAISE NOTICE 'OK A6e — u_vend vê 1 item';
@@ -398,7 +398,7 @@ BEGIN
   -- A6f: SELECT — u_master vê 2
   SET LOCAL test.uid = '00000000-0000-0000-0000-00000000000a';
   SELECT count(*) INTO n_rows FROM public.melhoria_itens;
-  IF n_rows <> 2 THEN
+  IF n_rows IS DISTINCT FROM 2 THEN
     RAISE EXCEPTION 'A6f FALHOU: u_master deveria ver 2 itens, viu %', n_rows;
   END IF;
   RAISE NOTICE 'OK A6f — u_master vê 2 itens';
@@ -407,7 +407,7 @@ BEGIN
   SET LOCAL test.uid = '00000000-0000-0000-0000-00000000000b';
   UPDATE public.melhoria_itens SET status = 'resolvido' WHERE id = item_vend_id;
   GET DIAGNOSTICS n_rows = ROW_COUNT;
-  IF n_rows <> 0 THEN
+  IF n_rows IS DISTINCT FROM 0 THEN
     RAISE EXCEPTION 'A6g FALHOU: u_vend não deveria conseguir UPDATE (policy master-only), afetou % linhas', n_rows;
   END IF;
   RAISE NOTICE 'OK A6g — u_vend UPDATE status bloqueado (0 linhas afetadas, policy master-only)';
@@ -416,7 +416,7 @@ BEGIN
   SET LOCAL test.uid = '00000000-0000-0000-0000-00000000000a';
   UPDATE public.melhoria_itens SET status = 'em_andamento' WHERE id = item_vend_id;
   GET DIAGNOSTICS n_rows = ROW_COUNT;
-  IF n_rows <> 1 THEN
+  IF n_rows IS DISTINCT FROM 1 THEN
     RAISE EXCEPTION 'A6h FALHOU: u_master deveria conseguir UPDATE, afetou % linhas', n_rows;
   END IF;
   RAISE NOTICE 'OK A6h — u_master UPDATE status OK (1 linha afetada)';

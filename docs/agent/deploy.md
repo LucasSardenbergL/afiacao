@@ -41,6 +41,8 @@ tinham no repo inteiro. Não edite o bloco à mão sem rodar o gate: ele confere
 
 ⚠️ **Deny fora desse envelope não nega nada — e agora reprova (`DENY-SEM-ENVELOPE`).** O `check-gstack.sh` ficou nesta lista de 2026-05-14 a 2026-09-27 sem negar uma chamada: emitia `{"permissionDecision":"deny"}` no topo do JSON, e o censo o contava por uma regex que casava o token em qualquer lugar do fonte. Medido com sonda no harness: no topo, ou sem o `hookEventName`, a chamada passa. Ele saiu (o gstack virou sensor de SessionStart, `vigia-gstack.sh`) → [gate-gstack-fail-open.md](../historico/gate-gstack-fail-open.md).
 
+⚠️ **Hook ligado sem suíte que o EXECUTE também reprova (`HOOK-SEM-TESTE`).** O `check-gstack.sh` era ainda o único hook fora do `test:hooks`. O `gates:frescura` lê os DOIS laços do `test:hooks` no `package.json` e exige que alguma suíte deles cite o hook como caminho (`…/<hook>`) fora de comentário — rótulo de `echo` não conta; laço ilegível ou stripper perdido é rc=2. Ligou hook novo: crie a suíte `scripts/test-*.sh` e ponha o nome num laço ([detalhe](../historico/vigia-de-cobertura-parcial.md)).
+
 ⚠️ **A segunda lista não é decoração — até 2026-09-07 aqueles dois nomes estavam na PRIMEIRA.** O
 job `mutation-check` está fora de `validate.needs` (job `mutation-check` no `ci.yml`) e abre Issue em vez de barrar,
 desde o #2344; o censo mesmo assim os anunciava como "reprovam o PR". A causa é que `inventarioCI`
@@ -63,7 +65,7 @@ exceções que envelhece sozinha.
 ## Merge na `main` ≠ produção — 3 deploys MANUAIS e independentes (+ a 4ª dependência)
 
 1. **Migration** → colar o SQL no **SQL Editor do Lovable** → Run → validar com query de contagem. O Lovable **NÃO** aplica migration de nome custom sozinho (falha SILENCIOSA: a feature compila e quebra em runtime). Detalhe + ritual + skill `lovable-db-operator`: `docs/agent/database.md`.
-2. **Frontend** → **Publish** manual no editor do Lovable. `steu.lovable.app` serve o **build velho** até o Publish (lição 2026-05-31: mergear e achar que foi pro ar é o erro recorrente).
+2. **Frontend** → **Publish** manual no editor do Lovable. `steu.lovable.app` serve o **build velho** até o Publish (lição 2026-05-31: mergear e achar que foi pro ar é o erro recorrente). **Desde 2026-09-29 a SESSÃO também publica, pelo MCP** (a pedido do founder, no fecho do #2627): `mcp__lovable__deploy_project` com o projeto `8f005805-000a-42b7-88a1-9683f785fab6` e `name: "steu"`. O `name` é o slug da URL publicada: fixe o canônico, porque outro valor muda o endereço de produção. Não é `send_message`, então não acorda o agente, e o bot não commitou nada depois. Antes, a ordem da casa: DDL aplicada (`deriva:corpo:prod` em exit 0) e `pendencias:deploy` em exit 0. O Lovable publica o commit em que o workspace está (`get_project` → `latest_commit_sha`), então confira que é a main. A prova é a troca do bundle de entrada no HTML de `steu.lovable.app` (`/assets/index-*.js`), lido antes e depois do Publish, com espera limitada. Medido no 1º uso: `index-CQMs4SNa.js` → `index-D6F9cOzP.js`. Bytes provam disponibilidade, não adoção: o PWA só troca de build quando o cliente aceita a atualização.
 3. **Edge functions** → criadas/editadas pelo **chat do Lovable** (ele lê `supabase/functions/<nome>/index.ts` do repo e deploya **verbatim**), **NÃO** pela UI Cloud (que só mostra logs). **Desde 2026-09-08 quem cola é a SESSÃO, pelo MCP** — §Deploy de edge pela SESSÃO.
 4. **SECRET novo de edge** → **Edge Functions → Secrets**, e **antes** do deploy da edge. Não é camada de código — nenhuma das 3 acima o acusa — e falha do jeito mais caro: a edge fica **Active**, o cron fica **verde**, `cron.job_run_details` diz `succeeded`, e a função morre no 1º `Deno.env.get` devolvendo 500 sem fazer nada. Deployar antes do secret **arma** exatamente esse estado, e a verificação por sonda pode carimbar "no ar" uma edge que não faz nada. #2035 (`analytics-outbox-drain` ↔ `POSTHOG_INGEST_KEY`, lido por essa edge e por nenhuma outra) só não quebrou porque o secret já estava lá — **sorte, não processo**.
 
@@ -154,7 +156,11 @@ inteira parecendo normal. `ausente ≠ zero` na dimensão **ARQUIVO COMPARTILHAD
 só enxerga um deploy depois da sonda, então ele não diz que outra sessão pediu a mesma edge minutos
 antes. No caso medido, o `sync-reprocess` saiu duas vezes em 15 min. O deploy redundante não custa só
 crédito: cada mensagem de deploy acorda o agente, e foi depois de uma delas que ele editou edges por
-conta própria (a proibição no prompt e o sensor pós-envio são do #2596).
+conta própria (a proibição no prompt e o sensor pós-envio são do #2596). Desde 27/09 o **Knowledge
+do projeto** também carrega a regra, e vale para toda mensagem, inclusive as do chat: nenhuma edição
+sem pedido explícito na mensagem atual, e erro de build em log só se reporta. Confira com
+`get_project_knowledge`. O `set_project_knowledge` SUBSTITUI o conteúdo inteiro, então leia antes de
+gravar.
 
 O **Passo 2** do pacote vai **verbatim** para `mcp__lovable__send_message` (projeto `steu`,
 `8f005805-000a-42b7-88a1-9683f785fab6`). O prompt carrega o `sha256` de cada arquivo do closure e
@@ -172,6 +178,11 @@ DEPOIS edita OUTRAS edges pelo `build-errors.log`; o sync empurra "Changes" na `
 proíbe (`blocoDeEscopo`: nenhum arquivo, erro de log só reportado, fecho `No files were edited.`) —
 e **≥5 min após o envio** rode `bun scripts/lovable-sensor-edicao.ts --desde <ISO> <resposta>` (exit 1 =
 editou → revert por PR com bump de `VERSAO`). [Narrativa](../historico/agente-lovable-conserta-o-que-nao-pediram.md).
+**Quem reacorda o agente depois do fecho pode ser a PLATAFORMA** (medido em 2026-09-27 19:37Z).
+Com erro no `build-errors.log`, o Lovable injeta *"Fix them … including the ones that predate your
+changes. Don't ask first"* e insiste se ele só reporta. O Knowledge segurou, mas o turno custou 3,2
+créditos (0,9–1,4 sem o empurrão), e o log passou a trazer a dívida de tipo de 9 edges, money-path
+incluído. Toda mensagem ao agente é exposição: só mande o que o ledger pede.
 
 #### Ordem ENTRE edges: o pacote sai em ONDAS (#2469, 2026-09-14)
 
@@ -193,6 +204,14 @@ O gate acima é banco → edge. Entre duas edges, a ordem **só existe se estive
   está certo) · `2` mecânica (manifesto ilegível, ciclo).
 - **A seção "Retidas" não tem colagem, de propósito.** Colar a retida à mão, ou juntar as edges numa
   mensagem, é reencenar o #2469. `pendencias:prompt` recusa (exit 3) a leva com manifesto: ele não faz ondas.
+- **Exit `5` = RECUSADO: o mapa da ref não descreve a fonte da ref** (#2611). Os dois emissores
+  (`pacote` e `prompt`) recalculam o fingerprint do fecho de cada edge instrumentada da leva **e das
+  predecessoras** NA ÁRVORE DO SHA que vai deployar, e recusam se diverge do `sonda-fingerprints.ts`
+  commitado. É o commit "Changes" do bot editando corpo sem regravar o mapa: a sonda serve o mapa
+  ESTÁTICO, então o corpo do bot iria ao ar respondendo o par canônico e o ledger daria CONFERE.
+  Remédio: edição não pedida → revert por PR (com bump); legítima → PR com `sonda:fingerprint -- --write`.
+  Nunca "regravar o mapa para passar" sem ler o que o bot mudou. →
+  [`mapa-incoerente-recusa-o-pacote.md`](../historico/mapa-incoerente-recusa-o-pacote.md)
 - **Não há expiração automática.** Retirar uma exigência é PR com motivo — inércia por VERSAO liberaria
   o deploy INCOERENTE (parecer do Codex). Parecer, desenho e o que fica descoberto:
   [`ordem-entre-edges-da-mesma-leva.md`](../historico/ordem-entre-edges-da-mesma-leva.md).
@@ -258,7 +277,7 @@ bun run pendencias:deploy --sql-nuvem > "$SQL"
 #   → grave em "$RESP" a resposta inteira ({"rows":[{"dados_nuvem":…}]}) ou só o objeto dados_nuvem
 bun run pendencias:deploy --dados-nuvem="$RESP" --json > "$PEND"   # o MESMO veredito e os MESMOS exits
 # resolver = o deploy pela SESSÃO (seção acima), com a sonda de pré-condição pelo transporte:
-bun run pendencias:pacote - --sql-nuvem < "$PEND" > "$SQL"   # stdout vazio = leva sem RPC: rode sem as flags
+bun run pendencias:pacote - --sql-nuvem < "$PEND" > "$SQL"   # stdout vazio COM exit 0 = leva sem RPC: rode sem as flags (exit 5 = mapa recusado)
 #   query_database(…, sql = <conteúdo de $SQL>) → grave em "$RESP"
 bun run pendencias:pacote - --dados-nuvem="$RESP" < "$PEND"  # a MESMA entrada nas duas rodadas
 ```

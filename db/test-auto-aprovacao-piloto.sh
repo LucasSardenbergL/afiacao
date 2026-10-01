@@ -89,7 +89,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l /tmp/pg-autoaprov.log -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres autoaprov_verify
-P() { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d autoaprov_verify "$@"; }
+P() { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d autoaprov_verify "$@"; }
 
 RR="$(mktemp "${TMPDIR:-/tmp}/snap-autoaprov.XXXXXX")"
 sed -E 's/^(CREATE SCHEMA public;)/-- \1/' "$REPO_ROOT/supabase/schema-snapshot.sql" \
@@ -289,23 +289,23 @@ BEGIN
   pid := pg_temp.mk('G1', 8400);          -- 1 item de 8400; ref 8000 → delta 5%
   PERFORM public.reposicao_alerta_pedido_minimo_tick();
   SELECT status INTO s FROM pedido_compra_sugerido WHERE id = pid;
-  IF s <> 'aprovado_aguardando_disparo' THEN RAISE EXCEPTION 'B1 FALHOU: status=%', s; END IF;
+  IF s IS DISTINCT FROM 'aprovado_aguardando_disparo' THEN RAISE EXCEPTION 'B1 FALHOU: status=%', s; END IF;
   SELECT aprovado_por INTO s FROM pedido_compra_sugerido WHERE id = pid;
-  IF s <> 'auto:sayerlack-v1' THEN RAISE EXCEPTION 'B1 FALHOU: aprovado_por=%', s; END IF;
+  IF s IS DISTINCT FROM 'auto:sayerlack-v1' THEN RAISE EXCEPTION 'B1 FALHOU: aprovado_por=%', s; END IF;
   SELECT delta_pct INTO v FROM reposicao_auto_aprovacao_log WHERE pedido_id = pid;
-  IF v <> 5.0 THEN RAISE EXCEPTION 'B1 FALHOU: delta_pct=%, esperado 5.0', v; END IF;
+  IF v IS DISTINCT FROM 5.0 THEN RAISE EXCEPTION 'B1 FALHOU: delta_pct=%, esperado 5.0', v; END IF;
   SELECT valor_total INTO v FROM reposicao_auto_aprovacao_log WHERE pedido_id = pid;
-  IF v <> 8400 THEN RAISE EXCEPTION 'B1 FALHOU: log.valor_total=%, esperado 8400 (itens)', v; END IF;
+  IF v IS DISTINCT FROM 8400 THEN RAISE EXCEPTION 'B1 FALHOU: log.valor_total=%, esperado 8400 (itens)', v; END IF;
   SELECT count(*) INTO d FROM fornecedor_alerta WHERE tipo='reposicao_pedido_minimo' AND titulo LIKE '%Auto-aprovado%';
-  IF d <> 1 THEN RAISE EXCEPTION 'B1 FALHOU: % informativos, esperado 1', d; END IF;
+  IF d IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'B1 FALHOU: % informativos, esperado 1', d; END IF;
   SELECT count(*) INTO d FROM fornecedor_alerta WHERE tipo='reposicao_pedido_minimo' AND titulo LIKE '%pronto pra aprovar%';
-  IF d <> 0 THEN RAISE EXCEPTION 'B1 FALHOU: call-to-action saiu junto'; END IF;
+  IF d IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'B1 FALHOU: call-to-action saiu junto'; END IF;
   RAISE NOTICE 'OK B1 — elegível auto-aprova: log usa valor dos ITENS, informativo único';
 
   -- ── B2: idempotência ──
   PERFORM public.reposicao_alerta_pedido_minimo_tick();
   SELECT count(*) INTO d FROM reposicao_auto_aprovacao_log;
-  IF d <> 1 THEN RAISE EXCEPTION 'B2 FALHOU: % logs', d; END IF;
+  IF d IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'B2 FALHOU: % logs', d; END IF;
   RAISE NOTICE 'OK B2 — idempotência';
 
   -- ── B3: fusível OFF → não aprova, sai call-to-action ──
@@ -314,18 +314,18 @@ BEGIN
   pid := pg_temp.mk('G2', 8200);
   PERFORM public.reposicao_alerta_pedido_minimo_tick();
   SELECT status INTO s FROM pedido_compra_sugerido WHERE id = pid;
-  IF s <> 'pendente_aprovacao' THEN RAISE EXCEPTION 'B3 FALHOU: fusível OFF aprovou'; END IF;
+  IF s IS DISTINCT FROM 'pendente_aprovacao' THEN RAISE EXCEPTION 'B3 FALHOU: fusível OFF aprovou'; END IF;
   SELECT count(*) INTO d FROM fornecedor_alerta WHERE tipo='reposicao_pedido_minimo' AND titulo LIKE '%pronto pra aprovar%';
-  IF d <> 1 THEN RAISE EXCEPTION 'B3 FALHOU: % call-to-action', d; END IF;
+  IF d IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'B3 FALHOU: % call-to-action', d; END IF;
   UPDATE company_config SET value = 'true' WHERE key = 'reposicao_auto_aprovacao_ativa';
   RAISE NOTICE 'OK B3 — fusível OFF';
 
   -- ── B4: alerta já ativo + fusível religado → aprova e informa (ramo NOT FOUND) ──
   PERFORM public.reposicao_alerta_pedido_minimo_tick();
   SELECT status INTO s FROM pedido_compra_sugerido WHERE id = pid;
-  IF s <> 'aprovado_aguardando_disparo' THEN RAISE EXCEPTION 'B4 FALHOU: status=%', s; END IF;
+  IF s IS DISTINCT FROM 'aprovado_aguardando_disparo' THEN RAISE EXCEPTION 'B4 FALHOU: status=%', s; END IF;
   SELECT count(*) INTO d FROM fornecedor_alerta WHERE tipo='reposicao_pedido_minimo' AND titulo LIKE '%Auto-aprovado%';
-  IF d <> 2 THEN RAISE EXCEPTION 'B4 FALHOU: % informativos, esperado 2', d; END IF;
+  IF d IS DISTINCT FROM 2 THEN RAISE EXCEPTION 'B4 FALHOU: % informativos, esperado 2', d; END IF;
   RAISE NOTICE 'OK B4 — fusível religado, ramo NOT FOUND informa';
 
   -- ── B5: delta > máx → não aprova ──
@@ -333,7 +333,7 @@ BEGIN
   pid := pg_temp.mk('G3', 12000);          -- delta 50%
   PERFORM public.reposicao_alerta_pedido_minimo_tick();
   SELECT status INTO s FROM pedido_compra_sugerido WHERE id = pid;
-  IF s <> 'pendente_aprovacao' THEN RAISE EXCEPTION 'B5 FALHOU: delta 50%% aprovou'; END IF;
+  IF s IS DISTINCT FROM 'pendente_aprovacao' THEN RAISE EXCEPTION 'B5 FALHOU: delta 50%% aprovou'; END IF;
   UPDATE pedido_compra_sugerido SET status='cancelado', cancelado_em=now() WHERE id = pid;
   RAISE NOTICE 'OK B5 — delta > 30%%';
 
@@ -341,7 +341,7 @@ BEGIN
   pid := pg_temp.mk('G9', 8000);
   PERFORM public.reposicao_alerta_pedido_minimo_tick();
   SELECT status INTO s FROM pedido_compra_sugerido WHERE id = pid;
-  IF s <> 'pendente_aprovacao' THEN RAISE EXCEPTION 'B6 FALHOU: grupo sem ref aprovou'; END IF;
+  IF s IS DISTINCT FROM 'pendente_aprovacao' THEN RAISE EXCEPTION 'B6 FALHOU: grupo sem ref aprovou'; END IF;
   UPDATE pedido_compra_sugerido SET status='cancelado', cancelado_em=now() WHERE id = pid;
   RAISE NOTICE 'OK B6 — grupo sem referência fica humano';
 
@@ -350,7 +350,7 @@ BEGIN
   pid := pg_temp.mk('G8', 8000);
   PERFORM public.reposicao_alerta_pedido_minimo_tick();
   SELECT status INTO s FROM pedido_compra_sugerido WHERE id = pid;
-  IF s <> 'pendente_aprovacao' THEN RAISE EXCEPTION 'B7 FALHOU: ref de 100d valeu'; END IF;
+  IF s IS DISTINCT FROM 'pendente_aprovacao' THEN RAISE EXCEPTION 'B7 FALHOU: ref de 100d valeu'; END IF;
   UPDATE pedido_compra_sugerido SET status='cancelado', cancelado_em=now() WHERE id = pid;
   RAISE NOTICE 'OK B7 — referência stale (>90d) não vale';
 
@@ -360,7 +360,7 @@ BEGIN
   UPDATE pedido_compra_item SET preco_unitario = 0, valor_linha = 0 WHERE pedido_id = pid;
   PERFORM public.reposicao_alerta_pedido_minimo_tick();
   SELECT status INTO s FROM pedido_compra_sugerido WHERE id = pid;
-  IF s <> 'pendente_aprovacao' THEN RAISE EXCEPTION 'B8 FALHOU: item preço-0 aprovou'; END IF;
+  IF s IS DISTINCT FROM 'pendente_aprovacao' THEN RAISE EXCEPTION 'B8 FALHOU: item preço-0 aprovou'; END IF;
   UPDATE pedido_compra_sugerido SET status='cancelado', cancelado_em=now() WHERE id = pid;
   RAISE NOTICE 'OK B8 — item com preço 0 fica humano';
 
@@ -370,7 +370,7 @@ BEGIN
   UPDATE pedido_compra_item SET ajustado_humano = true WHERE pedido_id = pid;
   PERFORM public.reposicao_alerta_pedido_minimo_tick();
   SELECT status INTO s FROM pedido_compra_sugerido WHERE id = pid;
-  IF s <> 'pendente_aprovacao' THEN RAISE EXCEPTION 'B9 FALHOU: ajustado por humano aprovou'; END IF;
+  IF s IS DISTINCT FROM 'pendente_aprovacao' THEN RAISE EXCEPTION 'B9 FALHOU: ajustado por humano aprovou'; END IF;
   UPDATE pedido_compra_sugerido SET status='cancelado', cancelado_em=now() WHERE id = pid;
   RAISE NOTICE 'OK B9 — ajuste humano = decisão humana';
 
@@ -381,7 +381,7 @@ BEGIN
   pid := pg_temp.mk('G6', 8150);
   PERFORM public.reposicao_alerta_pedido_minimo_tick();
   SELECT status INTO s FROM pedido_compra_sugerido WHERE id = pid;
-  IF s <> 'pendente_aprovacao' THEN RAISE EXCEPTION 'B10 FALHOU: cooldown de disparo não segurou'; END IF;
+  IF s IS DISTINCT FROM 'pendente_aprovacao' THEN RAISE EXCEPTION 'B10 FALHOU: cooldown de disparo não segurou'; END IF;
   UPDATE pedido_compra_sugerido SET atualizado_em = now() - interval '3 days' WHERE status='falha_envio';
   UPDATE pedido_compra_sugerido SET status='cancelado', cancelado_em=now() WHERE id = pid;
   RAISE NOTICE 'OK B10 — cooldown de falha de disparo';
@@ -393,7 +393,7 @@ BEGIN
   pid := pg_temp.mk('G10', 8000);
   PERFORM public.reposicao_alerta_pedido_minimo_tick();
   SELECT status INTO s FROM pedido_compra_sugerido WHERE id = pid;
-  IF s <> 'pendente_aprovacao' THEN RAISE EXCEPTION 'B11 FALHOU: aprovou com vigia acusando'; END IF;
+  IF s IS DISTINCT FROM 'pendente_aprovacao' THEN RAISE EXCEPTION 'B11 FALHOU: aprovou com vigia acusando'; END IF;
   UPDATE fin_alertas SET dismissed_at = now() WHERE tipo='data_health_reposicao_disparo';
   UPDATE pedido_compra_sugerido SET status='cancelado', cancelado_em=now() WHERE id = pid;
   RAISE NOTICE 'OK B11 — suspensão por alerta de reposição';
@@ -404,7 +404,7 @@ BEGIN
   pid := pg_temp.mk('G11', 8000);
   PERFORM public.reposicao_alerta_pedido_minimo_tick();
   SELECT status INTO s FROM pedido_compra_sugerido WHERE id = pid;
-  IF s <> 'pendente_aprovacao' THEN RAISE EXCEPTION 'B12 FALHOU: aprovou fora da janela'; END IF;
+  IF s IS DISTINCT FROM 'pendente_aprovacao' THEN RAISE EXCEPTION 'B12 FALHOU: aprovou fora da janela'; END IF;
   UPDATE company_config SET value = '23:59' WHERE key = 'reposicao_auto_aprovacao_corte_utc';
   UPDATE pedido_compra_sugerido SET status='cancelado', cancelado_em=now() WHERE id = pid;
   RAISE NOTICE 'OK B12 — fora da janela';
@@ -414,7 +414,7 @@ BEGIN
   pid := pg_temp.mk('G12', 8000, 'pendente_aprovacao', 'oportunidade_promo');
   PERFORM public.reposicao_alerta_pedido_minimo_tick();
   SELECT status INTO s FROM pedido_compra_sugerido WHERE id = pid;
-  IF s <> 'pendente_aprovacao' THEN RAISE EXCEPTION 'B13 FALHOU: oportunidade aprovou'; END IF;
+  IF s IS DISTINCT FROM 'pendente_aprovacao' THEN RAISE EXCEPTION 'B13 FALHOU: oportunidade aprovou'; END IF;
   UPDATE pedido_compra_sugerido SET status='cancelado', cancelado_em=now() WHERE id = pid;
   RAISE NOTICE 'OK B13 — ciclo não-normal é humano';
 
@@ -424,7 +424,7 @@ BEGIN
   PERFORM pg_temp.mk('G13', 7900);
   PERFORM public.reposicao_alerta_pedido_minimo_tick();
   SELECT count(*) INTO d FROM pedido_compra_sugerido WHERE grupo_codigo='G13' AND aprovado_por='auto:sayerlack-v1';
-  IF d <> 0 THEN RAISE EXCEPTION 'B14 FALHOU: aprovou com identidade duplicada'; END IF;
+  IF d IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'B14 FALHOU: aprovou com identidade duplicada'; END IF;
   UPDATE pedido_compra_sugerido SET status='cancelado', cancelado_em=now() WHERE grupo_codigo='G13' AND status='pendente_aprovacao';
   RAISE NOTICE 'OK B14 — zumbi duplo fica humano';
 
@@ -434,9 +434,9 @@ BEGIN
   UPDATE pedido_compra_sugerido SET aprovado_em=now(), aprovado_por='founder@colacor', status='aprovado_aguardando_disparo' WHERE id = pid;
   PERFORM public.reposicao_alerta_pedido_minimo_tick();
   SELECT aprovado_por INTO s FROM pedido_compra_sugerido WHERE id = pid;
-  IF s <> 'founder@colacor' THEN RAISE EXCEPTION 'B15 FALHOU: máquina sobrescreveu humano (%)', s; END IF;
+  IF s IS DISTINCT FROM 'founder@colacor' THEN RAISE EXCEPTION 'B15 FALHOU: máquina sobrescreveu humano (%)', s; END IF;
   SELECT count(*) INTO d FROM reposicao_auto_aprovacao_log WHERE pedido_id = pid;
-  IF d <> 0 THEN RAISE EXCEPTION 'B15 FALHOU: logou aprovação que não fez'; END IF;
+  IF d IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'B15 FALHOU: logou aprovação que não fez'; END IF;
   RAISE NOTICE 'OK B15 — claim condicional, humano vence';
 
   -- ══ FIXES DO CODEX ══
@@ -446,7 +446,7 @@ BEGIN
   pid := pg_temp.mk('G15', 8000, 'pendente_aprovacao', 'normal', false, 'COLACOR');
   PERFORM public.reposicao_alerta_pedido_minimo_tick();
   SELECT status INTO s FROM pedido_compra_sugerido WHERE id = pid;
-  IF s <> 'pendente_aprovacao' THEN RAISE EXCEPTION 'C1 FALHOU: COLACOR auto-aprovou (deveria ser OBEN-only)'; END IF;
+  IF s IS DISTINCT FROM 'pendente_aprovacao' THEN RAISE EXCEPTION 'C1 FALHOU: COLACOR auto-aprovou (deveria ser OBEN-only)'; END IF;
   UPDATE pedido_compra_sugerido SET status='cancelado', cancelado_em=now() WHERE id = pid;
   RAISE NOTICE 'OK C1 (P1.1) — COLACOR fica humano (OBEN-only)';
 
@@ -455,7 +455,7 @@ BEGIN
   pid := pg_temp.mk('G16', 8000, 'pendente_aprovacao', 'normal', true);  -- promo=true
   PERFORM public.reposicao_alerta_pedido_minimo_tick();
   SELECT status INTO s FROM pedido_compra_sugerido WHERE id = pid;
-  IF s <> 'pendente_aprovacao' THEN RAISE EXCEPTION 'C2 FALHOU: pedido promocional aprovou'; END IF;
+  IF s IS DISTINCT FROM 'pendente_aprovacao' THEN RAISE EXCEPTION 'C2 FALHOU: pedido promocional aprovou'; END IF;
   UPDATE pedido_compra_sugerido SET status='cancelado', cancelado_em=now() WHERE id = pid;
   RAISE NOTICE 'OK C2 (P1.3) — promoção é decisão humana';
 
@@ -470,7 +470,7 @@ BEGIN
   pid := pg_temp.mk('G17', 5200);
   PERFORM public.reposicao_alerta_pedido_minimo_tick();
   SELECT status INTO s FROM pedido_compra_sugerido WHERE id = pid;
-  IF s <> 'pendente_aprovacao' THEN RAISE EXCEPTION 'C3 FALHOU: delta vs filho de split aprovou (devia colapsar p/ 8000)'; END IF;
+  IF s IS DISTINCT FROM 'pendente_aprovacao' THEN RAISE EXCEPTION 'C3 FALHOU: delta vs filho de split aprovou (devia colapsar p/ 8000)'; END IF;
   UPDATE pedido_compra_sugerido SET status='cancelado', cancelado_em=now() WHERE id = pid;
   RAISE NOTICE 'OK C3 (P1.4) — referência agregada colapsa split (5200 vs 8000 = 35%% bloqueia)';
 
@@ -479,11 +479,11 @@ BEGIN
   pid := pg_temp.mk('G18', 8000);
   PERFORM public.reposicao_alerta_pedido_minimo_tick();   -- aprova o 1º
   SELECT status INTO s FROM pedido_compra_sugerido WHERE id = pid;
-  IF s <> 'aprovado_aguardando_disparo' THEN RAISE EXCEPTION 'C4 setup FALHOU: 1º não aprovou (%)', s; END IF;
+  IF s IS DISTINCT FROM 'aprovado_aguardando_disparo' THEN RAISE EXCEPTION 'C4 setup FALHOU: 1º não aprovou (%)', s; END IF;
   pid := pg_temp.mk('G18', 8100);                          -- SKUs novos do mesmo grupo
   PERFORM public.reposicao_alerta_pedido_minimo_tick();
   SELECT status INTO s FROM pedido_compra_sugerido WHERE id = pid;
-  IF s <> 'pendente_aprovacao' THEN RAISE EXCEPTION 'C4 FALHOU: 2º auto-aprovado do grupo passou (exposição cumulativa)'; END IF;
+  IF s IS DISTINCT FROM 'pendente_aprovacao' THEN RAISE EXCEPTION 'C4 FALHOU: 2º auto-aprovado do grupo passou (exposição cumulativa)'; END IF;
   UPDATE pedido_compra_sugerido SET status='cancelado', cancelado_em=now() WHERE id = pid;
   RAISE NOTICE 'OK C4 (P1.6) — máx 1 auto-aprovado não-disparado por grupo';
 
@@ -493,7 +493,7 @@ BEGIN
   pid := pg_temp.mk('G19', 90000);   -- delta gigante; com 3000% passaria
   PERFORM public.reposicao_alerta_pedido_minimo_tick();
   SELECT status INTO s FROM pedido_compra_sugerido WHERE id = pid;
-  IF s <> 'pendente_aprovacao' THEN RAISE EXCEPTION 'C5 FALHOU: delta_max=30 (3000%%) ligou a automação'; END IF;
+  IF s IS DISTINCT FROM 'pendente_aprovacao' THEN RAISE EXCEPTION 'C5 FALHOU: delta_max=30 (3000%%) ligou a automação'; END IF;
   UPDATE company_config SET value = '0.30' WHERE key = 'reposicao_auto_aprovacao_delta_max';
   UPDATE pedido_compra_sugerido SET status='cancelado', cancelado_em=now() WHERE id = pid;
   RAISE NOTICE 'OK C5 (P1.5) — delta_max fora de (0,0.30] desliga o braço';
@@ -503,9 +503,9 @@ BEGIN
   pid := pg_temp.mk('G20', 3000, 'pendente_aprovacao', 'normal', false, 'OBEN', 8000);  -- item_val=8000
   PERFORM public.reposicao_alerta_pedido_minimo_tick();
   SELECT status INTO s FROM pedido_compra_sugerido WHERE id = pid;
-  IF s <> 'aprovado_aguardando_disparo' THEN RAISE EXCEPTION 'C6 FALHOU: não usou a soma dos itens (%)', s; END IF;
+  IF s IS DISTINCT FROM 'aprovado_aguardando_disparo' THEN RAISE EXCEPTION 'C6 FALHOU: não usou a soma dos itens (%)', s; END IF;
   SELECT valor_total INTO v FROM reposicao_auto_aprovacao_log WHERE pedido_id = pid;
-  IF v <> 8000 THEN RAISE EXCEPTION 'C6 FALHOU: log gravou cabeçalho %, esperado 8000 (itens)', v; END IF;
+  IF v IS DISTINCT FROM 8000 THEN RAISE EXCEPTION 'C6 FALHOU: log gravou cabeçalho %, esperado 8000 (itens)', v; END IF;
   RAISE NOTICE 'OK C6 (P1.2) — valor pela soma dos itens, não pelo cabeçalho';
 
   -- ── C7 (P2.11): item com preço NaN → não aprova ──
@@ -514,7 +514,7 @@ BEGIN
   UPDATE pedido_compra_item SET preco_unitario = 'NaN'::numeric WHERE pedido_id = pid;
   PERFORM public.reposicao_alerta_pedido_minimo_tick();
   SELECT status INTO s FROM pedido_compra_sugerido WHERE id = pid;
-  IF s <> 'pendente_aprovacao' THEN RAISE EXCEPTION 'C7 FALHOU: item NaN aprovou'; END IF;
+  IF s IS DISTINCT FROM 'pendente_aprovacao' THEN RAISE EXCEPTION 'C7 FALHOU: item NaN aprovou'; END IF;
   UPDATE pedido_compra_item SET preco_unitario = 100 WHERE pedido_id = pid;
   UPDATE pedido_compra_sugerido SET status='cancelado', cancelado_em=now() WHERE id = pid;
   RAISE NOTICE 'OK C7 (P2.11) — item NaN rejeitado';
@@ -525,7 +525,7 @@ BEGIN
   pid := pg_temp.mk('G22', 8000);
   PERFORM public.reposicao_alerta_pedido_minimo_tick();
   SELECT status INTO s FROM pedido_compra_sugerido WHERE id = pid;
-  IF s <> 'pendente_aprovacao' THEN RAISE EXCEPTION 'C8 FALHOU: corte 24:00 ligou a automação'; END IF;
+  IF s IS DISTINCT FROM 'pendente_aprovacao' THEN RAISE EXCEPTION 'C8 FALHOU: corte 24:00 ligou a automação'; END IF;
   UPDATE company_config SET value = '23:59' WHERE key = 'reposicao_auto_aprovacao_corte_utc';
   UPDATE pedido_compra_sugerido SET status='cancelado', cancelado_em=now() WHERE id = pid;
   RAISE NOTICE 'OK C8 (P2.8) — corte 24:00 inválido desliga o braço';
@@ -537,12 +537,12 @@ BEGIN
   pid := pg_temp.mk('G23', 8000);
   PERFORM public.reposicao_alerta_pedido_minimo_tick();
   SELECT status INTO s FROM pedido_compra_sugerido WHERE id = pid;
-  IF s <> 'pendente_aprovacao' THEN RAISE EXCEPTION 'C9 FALHOU: falha de portal não acionou cooldown'; END IF;
+  IF s IS DISTINCT FROM 'pendente_aprovacao' THEN RAISE EXCEPTION 'C9 FALHOU: falha de portal não acionou cooldown'; END IF;
   RAISE NOTICE 'OK C9 (P2.7) — cooldown enxerga falha de portal';
 
   -- ── B-cron: cron agendado (base) ──
   SELECT count(*) INTO d FROM cron.job WHERE jobname='reposicao-alerta-pedido-minimo';
-  IF d <> 1 THEN RAISE EXCEPTION 'B-cron FALHOU: cron não agendado'; END IF;
+  IF d IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'B-cron FALHOU: cron não agendado'; END IF;
   RAISE NOTICE 'OK B-cron — cron agendado';
 
   RAISE NOTICE '✅ TODOS OS 25 ASSERTS DOS CENÁRIOS B/C PASSARAM (+ J0-J2 da janela acima)';

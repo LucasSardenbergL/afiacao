@@ -29,7 +29,8 @@
 # ║   F1 anti-join ignora receita_valida    -> S1 cega                             ║
 # ║   F2 junta as 2 classes no MESMO tipo   -> reproduz o bug que o Codex apontou  ║
 # ║   F3 mata o vigia de cardinalidade      -> {B10,B12}                           ║
-# ║   F4 marcador sob outro nome            -> {B2,B13a,B13b}                      ║
+# ║   F4 marcador sob outro nome            -> {B2,B10,B12,B13a,B13b}              ║
+# ║   F5 tira a anti-sobreposição (lock)    -> {B14}                               ║
 # ╚══════════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
 
@@ -40,15 +41,21 @@ export PGVER=17   # consumido pelo db/lib/pg-harness.sh via source
 PORT="${PGPORT_TEST:-5461}"
 SLUG="tintf5wd"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
+RODADA="$(dirname "$DATA")"   # dir ÚNICO desta rodada (o trap apaga): temporário mora aqui, nunca em /tmp/<nome-fixo>
 export LC_ALL=C LANG=C
 
 cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$(dirname "$DATA")"; }
 trap cleanup EXIT
 
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
-"$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
+# autovacuum=off: o PLANO da varredura não pode depender de QUANDO o autovacuum acorda. Era isso que
+# fazia a prova oscilar entre 185s e 252s no runner — as 2 primeiras varreduras pagavam 121s até o
+# autoanalyze —, e estatística no meio da execução (ANALYZE após o seed, medido por ablação) troca o
+# plano, a partir da 3ª suíte, por um ~7× mais lento. Com os índices de prod da ZONA 1 e sem
+# estatística, cada varredura fica em ~0,03s nas 7 suítes. Não muda o que a varredura DEVOLVE.
+"$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp -c autovacuum=off" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }
 
 PASS=0; FAIL=0; FALHAS=()
@@ -91,9 +98,16 @@ CREATE TABLE public.tint_formulas (
   preco_final_sayersystem numeric, subcolecao_id uuid, personalizada boolean DEFAULT false,
   updated_at timestamptz DEFAULT now(),
   desativada_em timestamptz, desativada_motivo text);
+-- Os índices que a PROD tem nestas duas tabelas (supabase/schema-snapshot.sql), com os nomes de lá.
+-- A view canônica é correlacionada por fórmula (EXISTS nos itens, max() pela chave, NOT EXISTS por
+-- gêmea); sem eles cada correlação vira seq scan, e uma única varredura do watchdog sobre as 1004
+-- chaves do seed custava 64–80s no runner (7–25ms com eles, com ou sem estatística). O universo
+-- NÃO encolheu: 1000 chaves BULK é o mínimo que o B5 exige (v_s1 >= 1000 -> critico).
+CREATE INDEX idx_tint_formulas_busca_cor ON public.tint_formulas USING btree (account, sku_id, cor_id);
 CREATE TABLE public.tint_formula_itens (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  formula_id uuid, corante_id uuid, qtd_ml numeric);
+  formula_id uuid, corante_id uuid, qtd_ml numeric,
+  CONSTRAINT tint_formula_itens_formula_id_corante_id_key UNIQUE (formula_id, corante_id));
 -- os CHECKs REAIS de prod: os dois vocabulários de severidade são DIFERENTES,
 -- e é o que faz o helper derivar um do outro em vez de recebê-los soltos.
 CREATE TABLE public.fin_alertas (
@@ -127,7 +141,7 @@ GRANT EXECUTE ON FUNCTION public.tint_watchdog_corante_check() TO anon, authenti
 SQL
 
 # ── a VIEW REAL, extraída da última migration que a define (não um stub) ──
-VIEWSQL="/tmp/_f5wd_view.sql"
+VIEWSQL="$RODADA/_f5wd_view.sql"
 python3 - "$REPO_ROOT" "$VIEWSQL" <<'PY'
 import sys, os, re, glob
 repo, dst = sys.argv[1], sys.argv[2]
@@ -157,7 +171,7 @@ P -q -f "$MIG"
 echo "=== migration aplicada ==="
 
 P -q -c "CREATE TABLE _bkp AS SELECT pg_get_functiondef('public.tint_watchdog_fase5_check()'::regprocedure) AS def;"
-restaura() { Pq -c "SELECT def FROM _bkp;" > /tmp/_f5wd_real.sql; P -q -f /tmp/_f5wd_real.sql; }
+restaura() { Pq -c "SELECT def FROM _bkp;" > "$RODADA/_f5wd_real.sql"; P -q -f "$RODADA/_f5wd_real.sql"; }
 
 # ══ ZONA 3 — seeds ══
 # Cada chave (account, sku_id, cor_id) tem a '1' CARIMBADA pela Fase 5 + uma SL.
@@ -251,6 +265,23 @@ emails()       { Pq -c "SELECT count(*) FROM public.fornecedor_alerta WHERE titu
 marcador()     { Pq -c "SELECT COALESCE(max(status),'AUSENTE') FROM public.sync_state WHERE entity_type='tint_watchdog_fase5';"; }
 meta()         { Pq -c "SELECT COALESCE(metadata->>'$1','AUSENTE') FROM public.sync_state WHERE entity_type='tint_watchdog_fase5';"; }
 
+# O advisory lock do watchdog concedido a OUTRA sessão. A chave bigint aparece no pg_locks
+# partida em duas metades de 32 bits: classid (alta) e objid (baixa), com objsubid = 1.
+LOCK_DO_WATCHDOG="locktype = 'advisory' AND granted AND objsubid = 1 AND pid <> pg_backend_pid()
+  AND ((classid::bigint << 32) | objid::bigint) = hashtext('tint_watchdog_fase5')::bigint"
+# espera_lock <n>: devolve 0 só quando o pg_locks CONFIRMA n sessões com o lock (1 = tomado,
+# 0 = livre). Teto de 10s, e estourar o teto é FALHA: uma espera que só reconhece o sucesso
+# seguiria esperando quando a sessão do lock morre sem pegá-lo.
+espera_lock() {
+  local n
+  for _ in $(seq 1 100); do
+    n="$(Pq -c "SELECT count(*) FROM pg_locks WHERE $LOCK_DO_WATCHDOG;")"
+    [ "$n" = "$1" ] && return 0
+    sleep 0.1
+  done
+  return 1
+}
+
 # ══ ZONA 4 — a suíte ══
 roda_suite() {
   PASS=0; FAIL=0; FALHAS=()
@@ -328,20 +359,37 @@ roda_suite() {
   restaura_universo
   roda
 
-  # ── B14: com o lock tomado por outra sessão, a função SAI sem avançar o marcador
+  # ── B14: com o lock tomado por outra sessão, a função SAI sem avançar o marcador.
+  # A sessão do lock SEGURA até ser encerrada, e as duas esperas são POSITIVAS, com teto: o
+  # pg_locks tem de mostrar o lock com OUTRA sessão antes do `roda`, e livre depois. Antes eram
+  # `pg_sleep(6)` + `sleep 2` — ~6s de relógio parado por suíte, 6 suítes por execução — e um
+  # palpite: a sessão que levasse mais de 2s para pegar o lock deixava o B14 medir o watchdog SEM
+  # contenção.
   P -q -c "DELETE FROM public.sync_state WHERE entity_type='tint_watchdog_fase5';"
-  "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -q -c \
-    "BEGIN; SELECT pg_advisory_xact_lock(hashtext('tint_watchdog_fase5')); SELECT pg_sleep(6); COMMIT;" \
+  PGAPPNAME=f5wd_lock "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -q -c \
+    "BEGIN; SELECT pg_advisory_xact_lock(hashtext('tint_watchdog_fase5')); SELECT pg_sleep(60); COMMIT;" \
     >/dev/null 2>&1 &
   local lockpid=$!
-  sleep 2
-  roda
-  eq "B14 lock tomado -> nao avanca o marcador" "$(marcador)" "AUSENTE"
-  # ⚠️ ESPERAR a sessão do lock morrer. Sem isto ela segue segurando o advisory lock
-  # por ~4s, e QUALQUER cenário seguinte que chame `roda` sai cedo (a função retorna
-  # sem gravar marcador) — o assert seguinte mede o watchdog CALADO por contenção e
-  # se lê como "o código não alarma". Custou uma rodada de diagnóstico: o B20 falhava
-  # com a migration correta, porque nasceu depois deste bloco.
+  if espera_lock 1; then
+    roda
+    eq "B14 lock tomado -> nao avanca o marcador" "$(marcador)" "AUSENTE"
+  else
+    bad "B14 pre-condicao: nenhuma outra sessao pegou o lock em 10s (sem contencao o B14 nao mede nada)"
+  fi
+  # ⚠️ SOLTAR o lock antes de seguir. Tomado, ele faz QUALQUER cenário seguinte que chame `roda`
+  # sair cedo (a função retorna sem gravar marcador) — o assert seguinte mede o watchdog CALADO
+  # por contenção e se lê como "o código não alarma". Custou uma rodada de diagnóstico: o B20
+  # falhava com a migration correta, porque nasceu depois deste bloco. O encerramento é pelo
+  # application_name, e não pelo lock: se a sessão ainda não o tiver pegado, ela morre do mesmo
+  # jeito, em vez de pegá-lo depois e calar o watchdog por até 60s.
+  Pq -c "SELECT pg_terminate_backend(pid, 5000) FROM pg_stat_activity WHERE application_name = 'f5wd_lock';" >/dev/null
+  # A pós-condição vem ANTES do `wait`. Depois dele ela é inalcançável: com o encerramento quebrado,
+  # o `wait` aguarda o pg_sleep(60) acabar e o lock sai livre "de graça" — medido por sabotagem, a
+  # prova ficava VERDE e só custava 60s a mais por suíte, em silêncio.
+  if ! espera_lock 0; then
+    bad "B14 pos-condicao: o lock segue tomado 10s depois de encerrar a sessao que o segurava"
+    kill "$lockpid" 2>/dev/null || true
+  fi
   wait "$lockpid" 2>/dev/null || true
 
   # ══ asserts dos FIXES do challenge Codex sobre este diff (2026-07-28) ══
@@ -441,7 +489,6 @@ roda_suite() {
      "$(Pq -c "SELECT metadata->>'universo_max' FROM public.sync_state WHERE entity_type='tint_watchdog_fase5';")" "$umax0"
   # restaura o carimbo: a suite inteira re-roda em cada falsificacao
   P -q -c "UPDATE public.tint_formulas SET desativada_motivo='fase5_geracao_legada' WHERE desativada_em IS NOT NULL AND desativada_motivo IS NULL AND id IN (SELECT id FROM public.tint_formulas WHERE desativada_em IS NOT NULL);"
-  wait "$lockpid" 2>/dev/null || true
 }
 
 echo "=== BASELINE (migration real) ==="
@@ -466,7 +513,7 @@ FALSIF_ERR=0
 sabota_e_mede() {   # $1=rotulo  $2=busca  $3=troca  $4..=asserts esperados
   local rot="$1" busca="$2" troca="$3"; shift 3
   local esperado="$*"
-  local sab="/tmp/_f5wd_sab_${rot}.sql"
+  local sab="$RODADA/_f5wd_sab_${rot}.sql"
 
   # `if !` e nao `cmd; if [ $? -ne 0 ]`: com `set -euo pipefail` ativo e esta funcao chamada NUA
   # (`sabota_e_mede "F1" \`), o python3 saindo !=0 abortava o script AQUI — o bloco de erro abaixo
@@ -490,7 +537,7 @@ PY
   fi
 
   P -q -f "$sab" >/dev/null 2>&1
-  roda_suite > /tmp/_f5wd_suite.log 2>&1
+  roda_suite > "$RODADA/_f5wd_suite.log" 2>&1
 
   local caidos=""
   if [ "${#FALHAS[@]}" -gt 0 ]; then
@@ -565,12 +612,24 @@ sabota_e_mede "F4" \
 #   marcador nao e so telemetria do dead-man — e ESTADO do qual S3 depende. Medido,
 #   nao previsto; declarado como medido.
 
+# F5 — tira a anti-sobreposição: com o lock tomado, a varredura roda POR CIMA e avança o
+#      marcador. Um ciclo preso empilharia outro, e o dead-man do PR 1 nunca veria o marcador
+#      parado. É também o dente do B14: a espera pelo lock deixou de ser `sleep` e passou a ser
+#      confirmada no pg_locks — sem esta sabotagem, nada provaria que o B14 novo ainda morde.
+sabota_e_mede "F5" \
+  "IF NOT pg_try_advisory_xact_lock(hashtext('tint_watchdog_fase5')) THEN" \
+  "IF false THEN" \
+  B14
+
 # ══ fecho: re-roda a suíte na versão REAL e exige verde ══
 echo "=== VERIFICACAO FINAL (migration real restaurada) ==="
 roda_suite
 echo "--- final: $PASS ok / $FAIL falhas | falsificacoes invalidas/erradas: $FALSIF_ERR ---"
+# Recibo lido pelo db/roda-nucleo-ci.sh ("falhas" não casa o "fail" que ele procura). Falsificação
+# inválida entra no FAIL de propósito: prova sem dente não pode sair com FAIL=0.
+echo "PASS=$PASS  FAIL=$((FAIL + FALSIF_ERR))"
 if [ "$FAIL" -ne 0 ] || [ "$FALSIF_ERR" -ne 0 ]; then
   echo "RESULTADO: VERMELHO"
   exit 1
 fi
-echo "RESULTADO: VERDE — $PASS asserts + 4 falsificacoes com conjunto exato"
+echo "RESULTADO: VERDE — $PASS asserts + 5 falsificacoes com conjunto exato"

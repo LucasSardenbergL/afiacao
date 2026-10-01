@@ -946,7 +946,49 @@ No CI, o `lint:shell` (shellcheck sobre `db/*.sh`) barra o parse antes de rodar.
 medido**. A contramedida local é `bash -n <arquivo>` antes de rodar uma cópia gerada; para a prova,
 um recibo de contagem (`PASS=N`) que alguém confira contra um mínimo.
 
-## O padrão por trás das vinte e duas
+### 23. `git log --since=<só a data>` usa a HORA ATUAL — "nada hoje" vira "nada desde agora"
+
+Medido em 2026-09-27 (verificação da isca da `whatsapp-inbound`, [narrativa](agente-lovable-conserta-o-que-nao-pediram.md)).
+O briefing mandava conferir `git log origin/main --author=gpt-engineer-app --since=2026-09-27` antes
+de implementar. Às 19:4x (BRT) o comando devolveu **vazio**, e os 3 commits do bot daquele dia
+(`1b654757d`, `ea6339e52`, `5552991e2`, das 16:58Z) estavam na `main`. O `approxidate` do git
+completa a data nua com a hora DO RELÓGIO: `git rev-parse --since=2026-09-27` dá `--max-age=` de
+**hoje às 19:41:30**, e não da meia-noite. Pôr o fuso não resolve: `"2026-09-27 UTC"` vira
+2026-09-27 às 22:42Z, a hora UTC do momento. Vale igual para `--until`, `--before` e `--after`.
+
+```bash
+git log --author=gpt-engineer-app --since=2026-09-27 --format=%h | wc -l           # 0
+git log --author=gpt-engineer-app --since='2026-09-27 00:00' --format=%h | wc -l   # 3
+git rev-parse --since=2026-09-27      # --max-age=<a data, na hora de agora>
+```
+
+O vazio não quer dizer "o bot não mexeu hoje". Quer dizer "o bot não mexeu desde a hora em que você
+rodou". Quanto mais tarde no dia, mais cego o comando fica, e a pergunta costuma vir justamente no fim
+do dia, sobre o que aconteceu de manhã. A contramedida é sempre escrever a hora (`'AAAA-MM-DD 00:00'`,
+ou ISO com fuso) e, quando o vazio for decidir alguma coisa, ler o corte com `git rev-parse
+--since=…`. Janela RELATIVA (`"48 hours ago"`, `"30 days ago"`) não tem o problema.
+
+Uso vivo, varrido no mesmo dia. `lovable-sensor-edicao.ts` passa ISO completo, e
+`lovable-revert-scan.sh` e `boletim-modulos.ts` usam janela relativa: os três estão seguros. O
+guard de fuso do `edges-pendentes.sh` (`/fecho`) recusava data sem fuso, mas o `case` dele aceitava
+`"2026-09-27 UTC"`, que cai aqui. E aquele script SUPRIME pendência: executado num fixture com um
+merge de edge às 00:00:30Z, devolveu `✅ nenhuma edge na janela`, exit 0. **Consertado** com um
+guard de HORA antes do de fuso (marca `DESDE_SEM_HORA`; casos H1–H4 de
+`scripts/test-fecho-edges-pendentes.sh`, cada sabotagem acusada pelo assert que declara). O conserto
+mediu mais três coisas da família:
+
+- **Sem hora antes, `±hh:mm` não é fuso** para o git: `"2026-09-27 -03:00"` vira 06:00Z (ele leu
+  `03:00` como hora LOCAL). Detector de hora com `[0-9]:[0-9][0-9]` solto casa o próprio offset;
+  hora é `H:MM` logo após espaço ou `T`. Na mesma linha, `"… midnight UTC"` vira meia-noite LOCAL
+  (o `UTC` é ignorado) e `"… 14:00 UTC+3"` vira 14:00Z (o `+3` é ignorado; `UTC+03:00` é lido).
+- **O guard ensinava o bug.** Para a data nua, o remédio impresso era `--desde "<data> UTC"`, a
+  forma que o git lê como agora. Mensagem de recusa que sugere um comando está sugerindo uma
+  ENTRADA, e a sugestão se prova como entrada: o H3 casa o remédio impresso, e uma sabotagem o
+  reverte.
+- **Furo residual:** `27/09/2026`, `Sep 27 2026`, `2026.09.27` e `20260927` também pegam a hora
+  atual e não passam por guard nenhum, porque o guard só reconhece `AAAA-MM-DD`/`AAAA/MM/DD`.
+
+## O padrão por trás das vinte e três
 
 Seis produzem **verde por construção**, não por mérito; a sétima mostra que o mesmo defeito
 fabrica **vermelho** com a mesma facilidade; a oitava, que o veredito certo pode existir e ainda
@@ -999,6 +1041,11 @@ mecanismo já estar nomeado por escrito.
 A vigésima segunda fecha pelo lado do PARSER: o script nem chega ao comando que falharia, e o
 status que sobra é o da LIMPEZA. É o verde por construção da primeira, só que sem pipe nenhum: o
 trap, que existe por higiene, vira o autor do veredito.
+
+A vigésima terceira é a décima nona no eixo do TEMPO. "Sem ocorrência" é verdade sobre a janela que
+o git escolheu, completada em silêncio com a hora do relógio, e a conclusão é escrita sobre o dia
+inteiro. O comando, o canal e o exit são honestos. Quem mente é o PARÂMETRO, e o erro cresce com a
+hora da consulta.
 
 É a mesma família de `WHEN OTHERS THEN 'OK'` (SQL) e `toThrow()` pelado (TS): o teste passa sem
 provar nada. Ver `docs/historico/tothrow-pelado.md`.

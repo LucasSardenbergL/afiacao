@@ -16,6 +16,13 @@
 # caminho do SQL) com o gerador JÁ RESTAURADO. Vermelho + cenário sem veredito + via morta ⇒
 # exit 2 nomeando a causa, em vez de `[ok] pegada`.
 #
+# DESDE 2026-09-27 ela não é mais a ÚNICA trava: o `--falsify` passou a exigir o veredito PREVISTO
+# do caso que acusa cada sabotagem, contra um baseline ÍNTEGRO do mesmo caso — e com a via morta o
+# baseline já sai vermelho, então sem `via_viva` o eval recusa igual, só que pela causa errada (exit
+# 1, "o caso-alvo não passa íntegro"). O papel que sobra a ela é NOMEAR a via (exit 2), e é isso que
+# o S1 da falsificação prova; o S2 da falsificação passou a guardar a outra camada (nenhuma sabotagem
+# creditada sem o discriminador). → docs/historico/falsificacao-exit-nao-e-dente.md
+#
 # Por que roda o eval de VERDADE num sandbox, e não um mock: o ponto em teste é justamente o que
 # acontece quando a infraestrutura do eval morre. Mock de infraestrutura não tem como morrer.
 #
@@ -121,8 +128,9 @@ if [ "$FALSIFICAR" = 0 ]; then
     *) ruim "S1 --falsify com a via morta devia sair 2 com $MARCA; saiu $r_rc"
        printf '%s\n' "$r_out" | sed 's/^/     /' | head -6 ;;
   esac
+  # âncora no `--falsify:` — `*"0 cegueira(s)"*` sozinho casaria "10 cegueira(s)"
   case "$r_out" in
-    *"0 cegueira(s)"*) ruim "S2 o eval AINDA declarou '0 cegueira(s)' com a via morta (fail-OPEN)" ;;
+    *"--falsify: 0 cegueira(s)"*) ruim "S2 o eval AINDA declarou '0 cegueira(s)' com a via morta (fail-OPEN)" ;;
     *) ok "S2 não declara '0 cegueira(s)': via morta não vira aprovação" ;;
   esac
   case "$r_out" in
@@ -148,13 +156,30 @@ prepara "$EVALDIR/eval.sh" "$MATA_VIA_DE" "$MATA_VIA_PARA" "$TIRA_GUARD_DE" "$TI
   echo "  FALHA a mutação não achou o alvo — o teste ficaria verde por CEGUEIRA"; exit 1; }
 
 r=$(roda "$EVALDIR/eval.sh" --falsify); r_rc="${r%%|*}"; r_out="${r#*|}"
+# O vermelho do S1 que conta é o DECLARADO: sem o discriminador a via morta deixa de ser NOMEADA e o
+# eval recusa pela causa errada — o baseline íntegro do caso-alvo já sai vermelho, exit 1. Até
+# 2026-09-27 valia "qualquer coisa menos 2+MARCA", que aceitava também um eval morto de erro alheio.
 case "$r_rc:$r_out" in
   2:*"$MARCA"*) ruim "S1 continuou VERDE sem o discriminador — a asserção não é sobre via_viva" ;;
-  *) ok "S1 vira vermelho sem o discriminador (exit $r_rc) — via_viva é load-bearing" ;;
+  1:*'o caso-alvo "velho_com_controle"'*'cegueira(s) em 12 sabotagem(ns)'*)
+    ok "S1 sem o discriminador a via morta NÃO é nomeada: exit 1 pelo baseline vermelho, laço COMPLETO (o declarado) — via_viva é quem nomeia" ;;
+  1:*'o caso-alvo "velho_com_controle"'*)
+    ruim "S1 exit 1 com o baseline vermelho, mas SEM o recibo das 12 — o laço abortou no meio (achado do Codex)" ;;
+  0:*) ruim "S1 sem o discriminador o eval APROVOU com a via morta (exit 0) — o defeito de origem voltou: o juiz do previsto sumiu" ;;
+  *) ruim "S1 saiu do verde, mas NÃO pelo declarado (exit 1 + o baseline do caso-alvo vermelho): saiu $r_rc — erro alheio não é dente"
+     printf '%s\n' "$r_out" | sed 's/^/     /' | tail -4 ;;
 esac
+# O S2 mudou de lado em 2026-09-27. Antes, sem o discriminador o eval VOLTAVA a aprovar 11/11 com a
+# via morta (o defeito de origem) e o S2 exigia isso. Com o juiz do PREVISTO (baseline íntegro +
+# veredito declarado por sabotagem) o defeito de origem NÃO volta — medido: o baseline do caso-alvo
+# já sai vermelho com a via morta. O que se exige agora é essa 2ª camada: nenhuma sabotagem
+# creditada. Sobre o eval de ANTES do juiz (rc≠0) este S2 fica vermelho — é o dente dele.
 case "$r_out" in
-  *"0 cegueira(s)"*) ok "S2 sem o guard o eval VOLTA a aprovar 11/11 com a via morta (o defeito de origem)" ;;
-  *) ruim "S2 não reproduziu o fail-OPEN original — a mutação não é o avesso da correção" ;;
+  *"--falsify: 0 cegueira(s)"*|*"[ok ] pegada"*)
+    ruim "S2 sem o discriminador o eval VOLTOU a creditar sabotagem com a via morta — o juiz do previsto perdeu o dente" ;;
+  *"cegueira(s) em 12 sabotagem(ns)"*)
+    ok "S2 sem o discriminador o juiz do PREVISTO ainda recusa as 12 (laço completo, nenhuma pegada) — via_viva nomeia a causa, não é mais a única trava" ;;
+  *) ruim "S2 sem o recibo das 12 — nenhuma pegada num laço que abortou não prova nada (achado do Codex)" ;;
 esac
 
 [ "$rc" -eq 0 ] && echo "VERDE — as asserções dependem mesmo do discriminador" || echo "❌ asserção sem dente"

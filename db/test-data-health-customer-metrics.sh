@@ -23,6 +23,7 @@ PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
 PORT="${PGPORT_TEST:-5471}"     # mude se colidir com outro harness (multi-worktree)
 SLUG="cm-datahealth"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
+RODADA="$(dirname "$DATA")"   # dir ÚNICO desta rodada (o trap apaga): temporário mora aqui, nunca em /tmp/<nome-fixo>
 export LC_ALL=C LANG=C          # sem isso o postmaster aborta ("became multithreaded during startup")
 MIG="$REPO_ROOT/supabase/migrations/20260717160000_data_health_customer_metrics_watchdog.sql"
 
@@ -40,7 +41,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }
 
 PASS=0; FAIL=0
@@ -72,7 +73,7 @@ SQL
 #   de problema quando status='ok' (idêntico ao rodapé da função da PROD).
 #   $1 = interval do threshold ('8 hours' real; '99 hours' na falsificação).
 # ══════════════════════════════════════════════════════════════════════════════
-TMPFN="$(mktemp /tmp/cm-testfn.XXXXXX.sql)"
+TMPFN="$(mktemp "$RODADA/cm-testfn.XXXXXX")"
 build_test_fn() {
   local IV="$1"
   {
@@ -107,6 +108,10 @@ echo "função de teste criada (aridade/tipo validados pelo CREATE)"
 seed_empty() { P -q -c "TRUNCATE private.customer_metrics_mv;"; }
 seed_age()   { P -q -c "TRUNCATE private.customer_metrics_mv; INSERT INTO private.customer_metrics_mv(customer_user_id, calculated_at) VALUES (gen_random_uuid(), now() - interval '$1');"; }
 f() { Pq -c "SELECT $1 FROM public._test_cm_data_health();"; }
+# Campo NULL vira "(null)"; "" fica só para a linha AUSENTE — e a leitura que ERRA vira ERRO_rc=<n>:
+# com f os três davam "" e o assert "NULL" passava sem medir (assert verde por ausência).
+fnulo() { Pq -c "SELECT coalesce(($1)::text, '(null)') FROM public._test_cm_data_health();"; }
+medir() { local v rc; set +e; v="$(set -e; "$@")"; rc=$?; set -e; if [ "$rc" -eq 0 ]; then printf '%s\n' "$v"; else printf 'ERRO_rc=%s\n' "$rc"; fi; }
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ZONA 4 — ASSERTS (positivo / limites / constantes)
@@ -120,7 +125,7 @@ eq "A0 emite 1 linha (âncora não polui)" "$(f 'count(*)')" "1"
 # A1 — MV vazia → broken (max NULL)
 seed_empty
 eq       "A1 broken.status"          "$(f status)"         "broken"
-eq       "A1 broken.age_seconds NULL" "$(f age_seconds)"   ""
+eq       "A1 broken.age_seconds NULL" "$(medir fnulo age_seconds)"   "(null)"
 contains "A1 broken.message"          "$(f message)"        "nunca"
 eq       "A1 broken.probable_cause"   "$(f probable_cause)" "refresh_customer_metrics nunca rodou"
 eq       "A1 broken.severity"         "$(f severity)"       "warning"
@@ -132,9 +137,9 @@ eq "A2 ok.source"                "$(f source)"                     "customer_met
 eq "A2 ok.domain"                "$(f domain)"                     "vendas"
 eq "A2 ok.freshness_basis"       "$(f freshness_basis)"            "max_calculated_at"
 eq "A2 ok.expected_max_age(8h)"  "$(f expected_max_age_seconds)"   "28800"
-eq "A2 ok.probable_cause NULADO" "$(f probable_cause)"             ""
-eq "A2 ok.how_to_fix NULADO"     "$(f how_to_fix)"                 ""
-eq "A2 ok.last_error NULADO"     "$(f last_error)"                 ""
+eq "A2 ok.probable_cause NULADO" "$(medir fnulo probable_cause)"             "(null)"
+eq "A2 ok.how_to_fix NULADO"     "$(medir fnulo how_to_fix)"                 "(null)"
+eq "A2 ok.last_error NULADO"     "$(medir fnulo last_error)"                 "(null)"
 
 # A3 — velho (9h > 8h) → stale, com how_to_fix/probable_cause PRESENTES
 seed_age '9 hours'

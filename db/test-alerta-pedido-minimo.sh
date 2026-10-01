@@ -27,7 +27,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l /tmp/pg-alerta3k.log -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres alerta3k_verify
-P() { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d alerta3k_verify "$@"; }
+P() { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d alerta3k_verify "$@"; }
 
 RR="$(mktemp "${TMPDIR:-/tmp}/snap-alerta3k.XXXXXX")"
 sed -E 's/^(CREATE SCHEMA public;)/-- \1/' "$REPO_ROOT/supabase/schema-snapshot.sql" \
@@ -72,31 +72,31 @@ BEGIN
   PERFORM public.reposicao_alerta_pedido_minimo_tick();
 
   SELECT count(*) INTO d FROM reposicao_alerta_pedido_minimo WHERE resolvido_em IS NULL;
-  IF d <> 1 THEN RAISE EXCEPTION 'A1 FALHOU: % alertas ativos, esperado 1', d; END IF;
+  IF d IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'A1 FALHOU: % alertas ativos, esperado 1', d; END IF;
   SELECT count(*) INTO d FROM fornecedor_alerta WHERE tipo='reposicao_pedido_minimo' AND status='pendente_notificacao';
-  IF d <> 1 THEN RAISE EXCEPTION 'A1 FALHOU: % e-mails enfileirados, esperado 1', d; END IF;
+  IF d IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'A1 FALHOU: % e-mails enfileirados, esperado 1', d; END IF;
   RAISE NOTICE 'OK A1 — transição: 1 alerta ativo + 1 e-mail (CHECK aceita o tipo novo)';
 
   -- ── A2: anti-spam — tick de novo NÃO re-enfileira ──
   PERFORM public.reposicao_alerta_pedido_minimo_tick();
   SELECT count(*) INTO d FROM fornecedor_alerta WHERE tipo='reposicao_pedido_minimo';
-  IF d <> 1 THEN RAISE EXCEPTION 'A2 FALHOU: % e-mails, esperado 1 (anti-spam)', d; END IF;
+  IF d IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'A2 FALHOU: % e-mails, esperado 1 (anti-spam)', d; END IF;
   RAISE NOTICE 'OK A2 — anti-spam: tick repetido não re-enfileira';
 
   -- ── A3: valor cresce 3.2k→10k → valor_ultimo atualiza, SEM novo e-mail ──
   UPDATE pedido_compra_sugerido SET valor_total = 10000 WHERE id = pid;
   PERFORM public.reposicao_alerta_pedido_minimo_tick();
   SELECT valor_ultimo INTO v FROM reposicao_alerta_pedido_minimo WHERE resolvido_em IS NULL;
-  IF v <> 10000 THEN RAISE EXCEPTION 'A3 FALHOU: valor_ultimo=%, esperado 10000', v; END IF;
+  IF v IS DISTINCT FROM 10000 THEN RAISE EXCEPTION 'A3 FALHOU: valor_ultimo=%, esperado 10000', v; END IF;
   SELECT count(*) INTO d FROM fornecedor_alerta WHERE tipo='reposicao_pedido_minimo';
-  IF d <> 1 THEN RAISE EXCEPTION 'A3 FALHOU: % e-mails, esperado 1', d; END IF;
+  IF d IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'A3 FALHOU: % e-mails, esperado 1', d; END IF;
   RAISE NOTICE 'OK A3 — valor cresce sem re-spam (valor_ultimo=10000)';
 
   -- ── A4: aprovação resolve (re-arma) ──
   UPDATE pedido_compra_sugerido SET status = 'aprovado_aguardando_disparo' WHERE id = pid;
   PERFORM public.reposicao_alerta_pedido_minimo_tick();
   SELECT count(*) INTO d FROM reposicao_alerta_pedido_minimo WHERE resolvido_em IS NULL;
-  IF d <> 0 THEN RAISE EXCEPTION 'A4 FALHOU: % alertas ativos pós-aprovação, esperado 0', d; END IF;
+  IF d IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'A4 FALHOU: % alertas ativos pós-aprovação, esperado 0', d; END IF;
   RAISE NOTICE 'OK A4 — aprovação resolve o alerta';
 
   -- ── A5: re-arma — pedido NOVO do mesmo fornecedor/grupo cruza a régua → e-mail NOVO ──
@@ -104,9 +104,9 @@ BEGIN
   VALUES ('OBEN','SAYERLACK DO BRASIL LTDA','G1',CURRENT_DATE,3100,4,'pendente_aprovacao','normal');
   PERFORM public.reposicao_alerta_pedido_minimo_tick();
   SELECT count(*) INTO d FROM reposicao_alerta_pedido_minimo WHERE resolvido_em IS NULL;
-  IF d <> 1 THEN RAISE EXCEPTION 'A5 FALHOU: % ativos, esperado 1', d; END IF;
+  IF d IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'A5 FALHOU: % ativos, esperado 1', d; END IF;
   SELECT count(*) INTO d FROM fornecedor_alerta WHERE tipo='reposicao_pedido_minimo';
-  IF d <> 2 THEN RAISE EXCEPTION 'A5 FALHOU: % e-mails, esperado 2 (re-armou)', d; END IF;
+  IF d IS DISTINCT FROM 2 THEN RAISE EXCEPTION 'A5 FALHOU: % e-mails, esperado 2 (re-armou)', d; END IF;
   RAISE NOTICE 'OK A5 — re-arma: pedido novo do grupo gera e-mail novo';
 
   -- ── A6: fornecedor fora do pattern não alerta ──
@@ -114,7 +114,7 @@ BEGIN
   VALUES ('OBEN','ACRE CAXIAS','',CURRENT_DATE,5000,3,'pendente_aprovacao','normal');
   PERFORM public.reposicao_alerta_pedido_minimo_tick();
   SELECT count(*) INTO d FROM reposicao_alerta_pedido_minimo a WHERE a.fornecedor_nome='ACRE CAXIAS';
-  IF d <> 0 THEN RAISE EXCEPTION 'A6 FALHOU: fornecedor fora do pattern alertou'; END IF;
+  IF d IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'A6 FALHOU: fornecedor fora do pattern alertou'; END IF;
   RAISE NOTICE 'OK A6 — fornecedor fora do pattern não alerta';
 
   -- ── A7: Sayerlack abaixo da régua não alerta ──
@@ -122,14 +122,14 @@ BEGIN
   VALUES ('OBEN','SAYERLACK DO BRASIL LTDA','G2',CURRENT_DATE,2000,2,'pendente_aprovacao','normal');
   PERFORM public.reposicao_alerta_pedido_minimo_tick();
   SELECT count(*) INTO d FROM reposicao_alerta_pedido_minimo a WHERE a.grupo_codigo='G2' AND a.resolvido_em IS NULL;
-  IF d <> 0 THEN RAISE EXCEPTION 'A7 FALHOU: pedido abaixo da régua alertou'; END IF;
+  IF d IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'A7 FALHOU: pedido abaixo da régua alertou'; END IF;
   RAISE NOTICE 'OK A7 — abaixo da régua não alerta';
 
   -- ── A8: config inválida → tick vira no-op limpo (nada novo, nada explode) ──
   UPDATE company_config SET value = '0' WHERE key = 'reposicao_alerta_pedido_valor_minimo';
   PERFORM public.reposicao_alerta_pedido_minimo_tick();
   SELECT count(*) INTO d FROM fornecedor_alerta WHERE tipo='reposicao_pedido_minimo';
-  IF d <> 2 THEN RAISE EXCEPTION 'A8 FALHOU: config inválida gerou e-mail'; END IF;
+  IF d IS DISTINCT FROM 2 THEN RAISE EXCEPTION 'A8 FALHOU: config inválida gerou e-mail'; END IF;
   UPDATE company_config SET value = '3000' WHERE key = 'reposicao_alerta_pedido_valor_minimo';
   RAISE NOTICE 'OK A8 — config inválida desliga o alerta sem erro';
 
@@ -141,10 +141,10 @@ BEGIN
   PERFORM public.reposicao_alerta_pedido_minimo_tick();
   SELECT count(*) INTO d FROM reposicao_alerta_pedido_minimo a
   WHERE a.grupo_codigo='' AND a.resolvido_em IS NULL;
-  IF d <> 1 THEN RAISE EXCEPTION 'A9 FALHOU: % alertas pra identidade NULL/vazio, esperado 1', d; END IF;
+  IF d IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'A9 FALHOU: % alertas pra identidade NULL/vazio, esperado 1', d; END IF;
   SELECT valor_ultimo INTO v FROM reposicao_alerta_pedido_minimo a
   WHERE a.grupo_codigo='' AND a.resolvido_em IS NULL;
-  IF v <> 3600 THEN RAISE EXCEPTION 'A9 FALHOU: valor_ultimo=% (esperado MAX=3600)', v; END IF;
+  IF v IS DISTINCT FROM 3600 THEN RAISE EXCEPTION 'A9 FALHOU: valor_ultimo=% (esperado MAX=3600)', v; END IF;
   RAISE NOTICE 'OK A9 — grupo NULL e vazio = mesma identidade (1 alerta, MAX valor)';
 
   -- ── A10: resolve quando o valor CAI abaixo da régua ──
@@ -153,12 +153,12 @@ BEGIN
   PERFORM public.reposicao_alerta_pedido_minimo_tick();
   SELECT count(*) INTO d FROM reposicao_alerta_pedido_minimo a
   WHERE a.grupo_codigo='' AND a.resolvido_em IS NULL;
-  IF d <> 0 THEN RAISE EXCEPTION 'A10 FALHOU: alerta não resolveu quando caiu da régua'; END IF;
+  IF d IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'A10 FALHOU: alerta não resolveu quando caiu da régua'; END IF;
   RAISE NOTICE 'OK A10 — valor caiu da régua → resolve (re-arma)';
 
   -- ── A11: cron agendado ──
   SELECT count(*) INTO d FROM cron.job WHERE jobname='reposicao-alerta-pedido-minimo';
-  IF d <> 1 THEN RAISE EXCEPTION 'A11 FALHOU: cron não agendado'; END IF;
+  IF d IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'A11 FALHOU: cron não agendado'; END IF;
   RAISE NOTICE 'OK A11 — cron reposicao-alerta-pedido-minimo agendado';
 
   RAISE NOTICE '✅ TODOS OS 11 ASSERTS DO ALERTA R$3K PASSARAM';

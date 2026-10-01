@@ -13,8 +13,9 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PGVER=17
 PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
-PORT=5435
+PORT="${PGPORT_TEST:-5435}"   # honra a porta do runner: duas rodadas simultâneas não disputam a 5435
 DATA="$(mktemp -d /tmp/pgtest-acctaware.XXXXXX)/data"
+RODADA="$(dirname "$DATA")"   # dir ÚNICO desta rodada (o trap apaga): temporário mora aqui, nunca em /tmp/<nome-fixo>
 export LC_ALL=C LANG=C
 
 [ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER} pgvector"; exit 1; }
@@ -30,7 +31,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l /tmp/pg-acctaware.log -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres acctaware_verify
-P() { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d acctaware_verify "$@"; }
+P() { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d acctaware_verify "$@"; }
 
 RR="$(mktemp "${TMPDIR:-/tmp}/snap-acctaware.XXXXXX")"
 sed -E 's/^(CREATE SCHEMA public;)/-- \1/' "$REPO_ROOT/supabase/schema-snapshot.sql" \
@@ -156,14 +157,14 @@ BEGIN
   -- A. MATRIZ antes (account-blind: prova multi-match/exclusão pela linha errada)
   FOR r IN SELECT * FROM esperado_cnt LOOP
     SELECT count(*) INTO d FROM scratch_antes WHERE sku_codigo_omie = r.sku AND empresa = r.empresa;
-    IF d <> r.n_antes THEN RAISE EXCEPTION 'ANTES % (%): % itens, esperado %', r.sku, r.empresa, d, r.n_antes; END IF;
+    IF d IS DISTINCT FROM r.n_antes THEN RAISE EXCEPTION 'ANTES % (%): % itens, esperado %', r.sku, r.empresa, d, r.n_antes; END IF;
   END LOOP;
   RAISE NOTICE 'OK A — matriz ANTES (account-blind) bate (multi-match 2001/2008/3001=2; exclusão linha-errada)';
 
   -- B. MATRIZ depois (account-aware)
   FOR r IN SELECT * FROM esperado_cnt LOOP
     SELECT count(*) INTO d FROM scratch_depois WHERE sku_codigo_omie = r.sku AND empresa = r.empresa;
-    IF d <> r.n_depois THEN RAISE EXCEPTION 'DEPOIS % (%): % itens, esperado %', r.sku, r.empresa, d, r.n_depois; END IF;
+    IF d IS DISTINCT FROM r.n_depois THEN RAISE EXCEPTION 'DEPOIS % (%): % itens, esperado %', r.sku, r.empresa, d, r.n_depois; END IF;
   END LOOP;
   RAISE NOTICE 'OK B — matriz DEPOIS (account-aware) bate (multi-match→1; fail-open 2051/2052/2053→1; 3002 mata hardcode oben)';
 
@@ -175,14 +176,14 @@ BEGIN
     (SELECT empresa,sku_codigo_omie,qtde_final,valor_linha FROM scratch_depois
        EXCEPT ALL SELECT empresa,sku,qtde_final,valor_linha FROM esperado_depois)
   ) x;
-  IF d <> 0 THEN RAISE EXCEPTION 'C FALHOU: multiset DEPOIS diverge em % linha(s)', d; END IF;
+  IF d IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'C FALHOU: multiset DEPOIS diverge em % linha(s)', d; END IF;
   RAISE NOTICE 'OK C — multiset DEPOIS (empresa,sku,qtde_final,valor_linha) exato';
 
   -- D. UNICIDADE no ciclo: nenhum (empresa,data_ciclo,sku) com >1 item depois
   SELECT count(*) INTO d FROM (
     SELECT empresa, data_ciclo, sku_codigo_omie FROM scratch_depois
     GROUP BY 1,2,3 HAVING count(*) > 1) x;
-  IF d <> 0 THEN RAISE EXCEPTION 'D FALHOU: % SKU(s) duplicado(s) no ciclo depois', d; END IF;
+  IF d IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'D FALHOU: % SKU(s) duplicado(s) no ciclo depois', d; END IF;
   RAISE NOTICE 'OK D — zero duplicação por (empresa,data_ciclo,sku)';
 
   -- E. HEADER depois: num_skus = count(*) itens = count(distinct sku); valor_total = sum(valor_linha); sem header vazio
@@ -197,7 +198,7 @@ BEGIN
         OR pcs.valor_total IS DISTINCT FROM COALESCE(sum(pci.valor_linha),0)
         OR count(pci.*) = 0
   ) x;
-  IF d <> 0 THEN RAISE EXCEPTION 'E FALHOU: % header(s) com num_skus/valor_total inconsistente ou vazio', d; END IF;
+  IF d IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'E FALHOU: % header(s) com num_skus/valor_total inconsistente ou vazio', d; END IF;
   RAISE NOTICE 'OK E — headers: num_skus=itens=distinct(sku), valor_total=sum(valor_linha), sem header vazio';
 
   -- F. RETORNO da RPC depois == agregado persistido (pedidos/skus/valor) + bloqueados=0
@@ -209,8 +210,8 @@ BEGIN
       SELECT count(*), COALESCE(sum(num_skus),0), COALESCE(sum(valor_total),0)
         INTO rped, rskus, rval FROM pedido_compra_sugerido
         WHERE empresa=r.empresa AND data_ciclo=CURRENT_DATE AND status='pendente_aprovacao';
-      IF bloq <> 0 THEN RAISE EXCEPTION 'F FALHOU: % bloqueados=% (esperado 0)', r.empresa, bloq; END IF;
-      IF ped<>rped OR skus<>rskus OR val IS DISTINCT FROM rval THEN
+      IF bloq IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'F FALHOU: % bloqueados=% (esperado 0)', r.empresa, bloq; END IF;
+      IF ped IS DISTINCT FROM rped OR skus IS DISTINCT FROM rskus OR val IS DISTINCT FROM rval THEN
         RAISE EXCEPTION 'F FALHOU: % retorno(ped=%,skus=%,val=%) <> persistido(%,%,%)', r.empresa, ped,skus,val, rped,rskus,rval; END IF;
     END;
   END LOOP;
@@ -226,7 +227,7 @@ BEGIN
        EXCEPT ALL
      SELECT empresa,sku_codigo_omie,qtde_final,valor_linha FROM scratch_antes  WHERE sku_codigo_omie IN ('9001','9002','9003'))
   ) x;
-  IF d <> 0 THEN RAISE EXCEPTION 'G FALHOU: neutralidade quebrada (antes<>depois) em % linha(s)', d; END IF;
+  IF d IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'G FALHOU: neutralidade quebrada (antes<>depois) em % linha(s)', d; END IF;
   RAISE NOTICE 'OK G — neutralidade: SKUs sem colisão idênticos antes/depois (fix não muda o estado dos 292)';
 
   RAISE NOTICE '──────── TODOS OS ASSERTS SQL OK ────────';
@@ -238,26 +239,26 @@ echo ""
 echo "→ DIFF MECÂNICO (prova que o corpo muda em EXATAMENTE a cláusula account-aware):"
 # Extrai o bloco da função das duas migrations.
 awk '/^CREATE OR REPLACE FUNCTION public\.gerar_pedidos_sugeridos_ciclo/,/^\$function\$;$/' \
-  "$REPO_ROOT/supabase/migrations/20260604190000_reposicao_minimo_forcado.sql" > /tmp/aa-funcB.sql
+  "$REPO_ROOT/supabase/migrations/20260604190000_reposicao_minimo_forcado.sql" > "$RODADA/aa-funcB.sql"
 awk '/^CREATE OR REPLACE FUNCTION public\.gerar_pedidos_sugeridos_ciclo/,/^\$function\$;$/' \
-  "$REPO_ROOT/supabase/migrations/20260606120000_reposicao_rpc_account_aware.sql" > /tmp/aa-funcC.sql
+  "$REPO_ROOT/supabase/migrations/20260606120000_reposicao_rpc_account_aware.sql" > "$RODADA/aa-funcC.sql"
 # Endurecimento (Codex P2): a migration C deve ter EXATAMENTE 1 CREATE OR REPLACE da RPC. O awk
 # extrai só o 1º bloco $function$; um 2º override posterior escaparia ao cmp abaixo.
 NF=$(grep -c '^CREATE OR REPLACE FUNCTION public\.gerar_pedidos_sugeridos_ciclo' "$REPO_ROOT/supabase/migrations/20260606120000_reposicao_rpc_account_aware.sql")
 [ "$NF" = "1" ] || { echo "✗ migration C tem $NF CREATE OR REPLACE da RPC (esperado 1; um 2º override escaparia ao diff mecânico)"; exit 1; }
-N=$(grep -c '^      AND op.account = lower(p_empresa)$' /tmp/aa-funcC.sql)
+N=$(grep -c '^      AND op.account = lower(p_empresa)$' "$RODADA/aa-funcC.sql")
 [ "$N" = "1" ] || { echo "✗ cláusula aparece $N vezes (esperado 1)"; exit 1; }
 # A cláusula deve vir imediatamente APÓS a linha do JOIN omie_products.
-grep -A1 '^    LEFT JOIN omie_products op ON op.omie_codigo_produto::text = sp.sku_codigo_omie::text$' /tmp/aa-funcC.sql \
+grep -A1 '^    LEFT JOIN omie_products op ON op.omie_codigo_produto::text = sp.sku_codigo_omie::text$' "$RODADA/aa-funcC.sql" \
   | grep -q '^      AND op.account = lower(p_empresa)$' || { echo "✗ cláusula não está logo após o JOIN"; exit 1; }
 # Remove APENAS essa linha de C e compara com B byte-a-byte → devem ser idênticos.
-grep -v '^      AND op.account = lower(p_empresa)$' /tmp/aa-funcC.sql > /tmp/aa-funcC-stripped.sql
-if cmp -s /tmp/aa-funcB.sql /tmp/aa-funcC-stripped.sql; then
+grep -v '^      AND op.account = lower(p_empresa)$' "$RODADA/aa-funcC.sql" > "$RODADA/aa-funcC-stripped.sql"
+if cmp -s "$RODADA/aa-funcB.sql" "$RODADA/aa-funcC-stripped.sql"; then
   echo "✓ corpo de C == corpo de B + exatamente a cláusula 'AND op.account = lower(p_empresa)' (cmp idêntico)"
 else
-  echo "✗ DIFF MECÂNICO FALHOU: C menos a cláusula difere de B:"; diff -u /tmp/aa-funcB.sql /tmp/aa-funcC-stripped.sql | head -40; exit 1
+  echo "✗ DIFF MECÂNICO FALHOU: C menos a cláusula difere de B:"; diff -u "$RODADA/aa-funcB.sql" "$RODADA/aa-funcC-stripped.sql" | head -40; exit 1
 fi
-rm -f /tmp/aa-funcB.sql /tmp/aa-funcC.sql /tmp/aa-funcC-stripped.sql
+rm -f "$RODADA/aa-funcB.sql" "$RODADA/aa-funcC.sql" "$RODADA/aa-funcC-stripped.sql"
 
 echo ""
 echo "✓ db/test-rpc-account-aware.sh — PASSOU"

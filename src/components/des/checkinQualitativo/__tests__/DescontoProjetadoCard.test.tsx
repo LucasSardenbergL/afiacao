@@ -28,6 +28,20 @@ describe("DescontoProjetadoCard", () => {
     expect(screen.getByText(/Máximo possível desta faixa: 10,00%/)).toBeTruthy();
   });
 
+  it("sem check-in no trimestre: — no total e no máximo, sem fabricar 0,00%", () => {
+    render(
+      <DescontoProjetadoCard
+        desconto={null} max={null} total={null}
+        cardColor="border-border" totalColor="text-muted-foreground"
+        saving={false} isLoading={false}
+        onSalvarProjecao={vi.fn()} onSalvarConfirmacao={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/Se confirmar os critérios, será —/)).toBeTruthy();
+    expect(screen.getByText(/Máximo possível desta faixa: —/)).toBeTruthy();
+    expect(screen.queryByText(/0,00%/)).toBeNull();
+  });
+
   it("desabilita o botão Salvar quando saving", () => {
     render(
       <DescontoProjetadoCard

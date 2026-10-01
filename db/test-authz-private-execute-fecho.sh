@@ -37,8 +37,8 @@ trap cleanup EXIT
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
 # LC_ALL=C acima é exigência do postmaster; o que varia o TEXTO dos erros é lc_messages do
 # servidor. Parametrizado p/ a prova rodar em C e pt_BR.UTF-8 (falsificar num locale só não prova).
-"$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -q -c "ALTER DATABASE prove SET lc_messages='${HARNESS_LC_MESSAGES:-C}';" >/dev/null
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+"$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -q -c "ALTER DATABASE prove SET lc_messages='${HARNESS_LC_MESSAGES:-C}';" >/dev/null
+P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }   # tuples-only, unaligned (pra capturar 1 valor)
 
 # ── base mínima do Supabase: roles, schema auth, auth.uid()/role() via GUC (impersonação de RLS) ──
@@ -148,8 +148,12 @@ SQL
 # Sentinelas ASCII inventadas — nenhuma aparece em mensagem do Postgres, então o veredito não
 # depende de locale nem de tradução (é por SQLSTATE, não por texto).
 veredito() { # veredito <role> <corpo_plpgsql> <condicao_plpgsql>
-  local out
-  out=$(P -tA 2>&1 <<SQL || true
+  local out rc marcas
+  # O rc do psql vai numa variável, FORA do texto julgado: uma linha "PSQL_RC=0" na saída pode ser
+  # impressa pela própria função sob teste (um NOTICE) — o Codex forjou assim um EXECUTOU com a chamada
+  # abortada. E o desfecho é o CONJUNTO das marcas: exatamente uma, com o psql saindo 0 (a marca antes
+  # de outro erro, ou duas marcas, não é desfecho): docs/historico/falsificacao-exit-nao-e-dente.md.
+  if out=$(P -tA 2>&1 <<SQL
 SET ROLE $1;
 DO \$blk\$ BEGIN
   $2;
@@ -159,9 +163,10 @@ EXCEPTION
   WHEN OTHERS THEN RAISE NOTICE 'ZQ_OUTRO_ERRO_%', SQLSTATE; RAISE;
 END \$blk\$;
 SQL
-)
-  if   printf '%s' "$out" | command grep -Fq 'ZQ_BARROU_ESPERADO';  then echo "BARROU"
-  elif printf '%s' "$out" | command grep -Fq 'ZQ_EXECUTOU_SEM_ERRO'; then echo "EXECUTOU"
+); then rc=0; else rc=$?; fi
+  marcas=$(printf '%s\n' "$out" | { command grep -oE 'ZQ_[A-Z_]+[0-9A-Z]*' || true; } | sort -u | paste -sd'|' -)
+  if   [ "$rc" -eq 0 ] && [ "$marcas" = "ZQ_BARROU_ESPERADO" ];   then echo "BARROU"
+  elif [ "$rc" -eq 0 ] && [ "$marcas" = "ZQ_EXECUTOU_SEM_ERRO" ]; then echo "EXECUTOU"
   else printf '%s' "$out" | command grep -Fo 'ZQ_OUTRO_ERRO_' >/dev/null 2>&1 \
          && printf 'OUTRO:%s' "$(printf '%s' "$out" | sed -n 's/.*ZQ_OUTRO_ERRO_\([0-9A-Z]*\).*/\1/p' | head -1)" \
          || echo "SEM_SENTINELA"; fi
@@ -274,13 +279,19 @@ echo "── falsificação ──"
 # F1 — L9 mede o SCRUB, ou só "o insert funcionou"? Dropa o trigger e exige que L9 caia.
 P -q -c "DROP TRIGGER trg_frec_sem_margem ON public.farmer_recommendations; DELETE FROM public.farmer_recommendations;"
 S=$(Pq -c "SET ROLE authenticated; INSERT INTO public.farmer_recommendations(m_ij, lie, affinity_score) VALUES (99.5, 123.45, 0.8); RESET ROLE; SELECT coalesce(m_ij::text,'N')||'/'||coalesce(lie::text,'N')||'/'||coalesce(affinity_score::text,'N') FROM public.farmer_recommendations;" | tail -1)
-if [ "$S" = "N/N/0.8" ]; then bad "F1 sabotagem (trigger dropado) NÃO derrubou L9 — assert sem dente"; else ok "F1 sem o trigger, L9 fica vermelho (veio [$S]) — L9 mede o scrub"; fi
+# declarado: sem o trigger, os números entram INTACTOS — "≠ scrub" aceitava qualquer outra coisa
+if [ "$S" = "N/N/0.8" ]; then bad "F1 sabotagem (trigger dropado) NÃO derrubou L9 — assert sem dente"
+elif [ "$S" = "99.5/123.45/0.8" ]; then ok "F1 sem o trigger, L9 fica vermelho (veio [$S]) — L9 mede o scrub"
+else bad "F1 — NÃO é o que a sabotagem declara (99.5/123.45/0.8, os números intactos): veio [$S]"; fi
 P -q -c "CREATE TRIGGER trg_frec_sem_margem BEFORE INSERT OR UPDATE ON public.farmer_recommendations FOR EACH ROW EXECUTE FUNCTION private.frec_sem_margem(); DELETE FROM public.farmer_recommendations;"
 
 # F2 — L7 mede PRIVILÉGIO, ou o acidente do regua_num_finito? Reabre custo_canonico E o helper.
 P -q -c "GRANT EXECUTE ON FUNCTION private.custo_canonico(numeric,numeric) TO authenticated; GRANT EXECUTE ON FUNCTION private.regua_num_finito(numeric) TO authenticated;"
 V=$(veredito authenticated "PERFORM private.custo_canonico(10,5)" "insufficient_privilege")
-if [ "$V" = "BARROU" ]; then bad "F2 sabotagem (GRANT de volta) NÃO derrubou L7 — assert sem dente"; else ok "F2 com o GRANT de volta, L7 fica vermelho (veio [$V]) — L7 mede privilégio"; fi
+# declarado: com o GRANT, authenticated EXECUTA — "≠ BARROU" aceitava OUTRO:<sqlstate> e SEM_SENTINELA
+if [ "$V" = "BARROU" ]; then bad "F2 sabotagem (GRANT de volta) NÃO derrubou L7 — assert sem dente"
+elif [ "$V" = "EXECUTOU" ]; then ok "F2 com o GRANT de volta, L7 fica vermelho (veio [$V]) — L7 mede privilégio"
+else bad "F2 — NÃO é o que a sabotagem declara (EXECUTOU): veio [$V]"; fi
 P -q -c "REVOKE ALL ON FUNCTION private.custo_canonico(numeric,numeric) FROM authenticated; REVOKE ALL ON FUNCTION private.regua_num_finito(numeric) FROM authenticated;"
 
 # F3 — L4 dizia "hoje já barra anon, mas por ACIDENTE". Prova de que é acidente MESMO: com o

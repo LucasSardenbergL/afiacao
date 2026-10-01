@@ -28,7 +28,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l /tmp/pg-fixcodex.log -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres fixcodex_verify
-P() { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d fixcodex_verify "$@"; }
+P() { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d fixcodex_verify "$@"; }
 
 RR="$(mktemp "${TMPDIR:-/tmp}/snap-fixcodex.XXXXXX")"
 sed -E 's/^(CREATE SCHEMA public;)/-- \1/' "$REPO_ROOT/supabase/schema-snapshot.sql" \
@@ -93,16 +93,16 @@ BEGIN
   SELECT count(*) INTO d FROM pedido_compra_item pci
   JOIN pedido_compra_sugerido pcs ON pcs.id = pci.pedido_id
   WHERE pcs.tipo_ciclo LIKE 'oportunidade_%' AND pci.sku_codigo_omie='5001';
-  IF d <> 0 THEN RAISE EXCEPTION 'F1 FALHOU: SKU em pedido normal ativo entrou na oportunidade (compra dupla)'; END IF;
+  IF d IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'F1 FALHOU: SKU em pedido normal ativo entrou na oportunidade (compra dupla)'; END IF;
   RAISE NOTICE 'OK F1 — [SIMETRIA-NORMAL] SKU em pedido normal ativo fica fora da oportunidade';
 
   -- F2: SKU 5002 (livre) ENTROU; header consistente (num_skus=1, valor = 10×20×0.9=180)
   SELECT count(*) INTO d FROM pedido_compra_item pci
   JOIN pedido_compra_sugerido pcs ON pcs.id = pci.pedido_id
   WHERE pcs.tipo_ciclo LIKE 'oportunidade_%' AND pci.sku_codigo_omie='5002';
-  IF d <> 1 THEN RAISE EXCEPTION 'F2 FALHOU: SKU livre não entrou na oportunidade (count=%)', d; END IF;
+  IF d IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'F2 FALHOU: SKU livre não entrou na oportunidade (count=%)', d; END IF;
   SELECT num_skus INTO d FROM pedido_compra_sugerido WHERE tipo_ciclo LIKE 'oportunidade_%' AND status='pendente_aprovacao';
-  IF d <> 1 THEN RAISE EXCEPTION 'F2 FALHOU: header num_skus=% (esperado 1 — divergência header×itens)', d; END IF;
+  IF d IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'F2 FALHOU: header num_skus=% (esperado 1 — divergência header×itens)', d; END IF;
   RAISE NOTICE 'OK F2 — SKU livre entra; header e itens consistentes (sem divergência)';
 
   -- F3: idempotência — re-rodar não duplica (limpeza própria + simetria estável)
@@ -110,14 +110,14 @@ BEGIN
   SELECT count(*) INTO d FROM pedido_compra_item pci
   JOIN pedido_compra_sugerido pcs ON pcs.id = pci.pedido_id
   WHERE pcs.tipo_ciclo LIKE 'oportunidade_%';
-  IF d <> 1 THEN RAISE EXCEPTION 'F3 FALHOU: re-rodada duplicou/perdeu itens (count=%)', d; END IF;
+  IF d IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'F3 FALHOU: re-rodada duplicou/perdeu itens (count=%)', d; END IF;
   RAISE NOTICE 'OK F3 — re-rodada idempotente';
 
   -- F4: [CAST-SEGURO] config malformada não mata o tick (no-op limpo)
   UPDATE company_config SET value = 'abc' WHERE key = 'reposicao_alerta_pedido_valor_minimo';
   PERFORM public.reposicao_alerta_pedido_minimo_tick();  -- não pode lançar exceção
   SELECT count(*) INTO d FROM fornecedor_alerta WHERE tipo='reposicao_pedido_minimo';
-  IF d <> 0 THEN RAISE EXCEPTION 'F4 FALHOU: config malformada gerou alerta'; END IF;
+  IF d IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'F4 FALHOU: config malformada gerou alerta'; END IF;
   UPDATE company_config SET value = '3000' WHERE key = 'reposicao_alerta_pedido_valor_minimo';
   RAISE NOTICE 'OK F4 — [CAST-SEGURO] config malformada = no-op limpo (tick sobrevive)';
 
@@ -126,7 +126,7 @@ BEGIN
   VALUES ('OBEN','SAYERLACK DO BRASIL','G1',CURRENT_DATE,3200,5,'pendente_aprovacao','normal');
   PERFORM public.reposicao_alerta_pedido_minimo_tick();
   SELECT count(*) INTO d FROM fornecedor_alerta WHERE tipo='reposicao_pedido_minimo';
-  IF d <> 1 THEN RAISE EXCEPTION 'F5 FALHOU: tick não alertou pós-REPLACE (count=%)', d; END IF;
+  IF d IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'F5 FALHOU: tick não alertou pós-REPLACE (count=%)', d; END IF;
   RAISE NOTICE 'OK F5 — tick funcional pós-REPLACE (alerta dispara)';
 
   RAISE NOTICE '✅ TODOS OS 5 ASSERTS DOS FIXES PASSARAM';

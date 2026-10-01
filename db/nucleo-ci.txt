@@ -46,6 +46,12 @@ db/test-authz-is-not-true-escritas.sh      24
 # corantes só sai para staff: customer e anon recebem NULL e mantêm o preço final.
 db/test-tint-formulas-rls-initplan.sh      26
 db/test-tint-gate-custo-staff.sh           25
+# Canal WhatsApp, núcleo HSM: o log de envio só a edge escreve (authenticated leva 42501 do GRANT, e a
+# camada que nega é DECLARADA), o catálogo só o master; a idempotência e os CHECKs são do banco. Monta o
+# schema por db/lib/corpo-vivo.sh — snapshot + o ACL MEDIDO em prod + a cadeia dinâmica — porque a
+# versão anterior dava GRANT ALL a anon/authenticated e morreu no re-dump #1509 fora do núcleo
+# (docs/historico/provas-canal-revividas.md).
+db/test-whatsapp-hsm.sh                    18  falsificar=17
 
 # ── Eixo 2 — FINITUDE MONETÁRIA ───────────────────────────────────────────────────
 # `ausente ≠ zero`: preço que o Omie não mandou não vira R$ 0,00; custo sem cmc
@@ -79,6 +85,12 @@ db/test-tint-get-prices.sh                 27
 db/test-tint-promote-preserva-preco.sh      6
 db/test-tint-canonica.sh                   29
 db/test-tint-gate-revalida.sh              38
+# Recotação da proposta 1-toque do canal WhatsApp: praticado 0/NaN/Infinity nunca vira preço, tabela 0
+# vira NULL (ausente ≠ zero), o praticado não atravessa conta nem cliente, e a chave do orçamento é
+# UNIQUE no banco — escrita como o staff. Corpo vivo + ACL de prod + as 4 migrations de order_items/
+# sales_orders que o snapshot não tem, com seed coerente (db/lib/corpo-vivo.sh); nasceu morta
+# fora do núcleo em 08-06 (docs/historico/provas-canal-revividas.md).
+db/test-whatsapp-proposta.sh               17  falsificar=20
 
 # ── Eixo 3 — ATOMICIDADE ──────────────────────────────────────────────────────────
 # "Guard fora da escrita não é guard": o predicado tem de estar DENTRO do `WHERE`
@@ -184,15 +196,137 @@ db/test-tint-promote-dedup-itens.sh        11
 # (o CI é vitest; ninguém os roda). Autocontida: initdb + db/stubs-data-health-trio.sql + a
 # migration do repo. Sem psql-ro, sem deno, sem dado de fora.
 db/test-data-health-sync-reprocess.sh      31  falsificar=13
+# A venda que o app empurra ao Omie e cujo gêmeo o importador nunca traz fica fora da positivação ao
+# vivo E do mês congelado — e ninguém fica sabendo (incidente 4c19af2a, 1 em 26). O check
+# vendas_empurradas_sem_gemeo (20261001011500) é provado pela SAÍDA do compute real: universo, gêmeo,
+# âncora de idade (orçamento convertido não acusa cedo; linha tocada não rejuvenesce), bordas de 6 h e
+# 6 dias, message estável sob relógio/fuso/lc_numeric, as 3 pernas do trio, o fecho de ACL (42501 sob
+# authenticated), re-apply e a PRE. Mínimo 43, não 44: o A29 (lc_numeric pt_BR) é NÃO MEDIDO — e não
+# conta — num servidor sem o locale.
+db/test-data-health-vendas-empurradas.sh   43  falsificar=18
 # Tintométrico: corante impagável EM USO alerta (fora de uso ou desativada, não), agravamento
 # re-emite e o dead-man dispara com a camada B parada.
 db/test-tint-watchdog-corante.sh           11
+# Tintométrico, a camada B: chave carimbada pela Fase 5 que ficou sem preço alarma (S1), a fonte
+# que retirou a chave alarma em tipo PRÓPRIO (S2: no mesmo tipo, o ON CONFLICT calaria um dos dois),
+# e o universo carimbado que encolhe alarma com piso 1 (S3, o vigia de vacuidade). As 5 sabotagens
+# rodam inline no modo normal; a inválida conta no FAIL do recibo. Entrou em 2026-09-27, ao cair de
+# 185–252s para ~12s no runner: o custo era o plano da view num fixture SEM os índices de prod (mais
+# 36s de sleep no B14), não o universo — docs/historico/fixture-sem-indices-de-prod.md.
+db/test-tint-fase5-watchdog.sh             31
+# Tintométrico: o vigia da cobertura (o Check A empurra e-mail; o B, vínculo tint↔Omie, é
+# dashboard-only) e a lista das bases divergentes no corpo do e-mail. Ficaram fora do #2605 como
+# APODRECIDAS, e o defeito era de ALVO: re-aplicavam a migration da sua fase (junho/julho) sobre o
+# snapshot de setembro e mediam um watchdog que ninguém executa. Agora medem o trio que PROD executa
+# (db/lib/data-health-vivo.sh: snapshot + cadeia DINÂMICA, md5 igual ao de prod em 2026-09-27). Cada
+# sabotagem exige vermelho NO assert-alvo com as pré-condições verdes, e a `migracao_nova_*` prova
+# que a PRÓXIMA reescrita do trio entra sozinha na cadeia (docs/historico/provas-tint-apodrecidas.md).
+db/test-tint-vigia-cobertura.sh            30  falsificar=13
+db/test-tint-cobertura-lista-email.sh      22  falsificar=6
+# O mesmo trio, dois checks que apodreceram FORA do núcleo pelo mesmo defeito de alvo (re-aplicavam a
+# migration da sua fase sobre o snapshot, e o re-dump os matou — docs/historico/provas-db-mortas-fora-
+# do-nucleo.md). Família ausente (oben/colacor): o compute, a LISTA do e-mail e o push no MESMO seed —
+# cada lado do predicado é sabotado com o outro verde, porque a lista que diverge da contagem manda
+# classificar o produto errado. Carteira: o frescor do REBUILD (incidente de 2026-07-28, Sentinela verde
+# com a carteira 24h congelada), o corte de 30h pelos dois lados, e o incidente visto por
+# get_data_health() — a RPC do app e a ÚNICA superfície do ramo, que está fora do push do watchdog
+# (docs/historico/provas-data-health-revividas.md).
+db/test-data-health-familia-ausente.sh     39  falsificar=20
+db/test-data-health-carteira-rebuild.sh    20  falsificar=13
+# Reposição: o sensor do SKU que VENDE e o motor não lê — flag habilitado_reposicao_automatica
+# desligado sem dono (reativação no Omie não religa; linha nascida com o default false). Sem ele o
+# SKU some do cockpit calado (FCA.7090QT, 6 un em pedido aberto). A view espelha o WHERE do motor
+# com o flag invertido: cada um dos 18 filtros é sabotado SOZINHO, inline, com controle verde na
+# mesma invocação, + security_invoker/anon/RLS e o dente das postcondições A1–A3. Autocontida:
+# initdb + db/stubs-supabase.sql + a migration. docs/historico/sku-fora-do-motor-em-silencio.md.
+db/test-v-sku-fora-do-motor.sh             33
 
-# ── Medidas no runner e deixadas de FORA (2026-09-27) — ausência de dado DECLARADA ────────────────
-# db/test-tint-fase5-watchdog.sh — verde, mas 185–252s sozinha (mais que o núcleo inteiro de antes):
-#   custo de FIXTURE, não de asserção — universo de ~464 mil chaves × 17 execuções do watchdog ×
-#   (controle + 4 sabotagens). Entra quando o universo encolher preservando os limiares.
-# db/test-tint-cobertura-lista-email.sh e db/test-tint-vigia-cobertura.sh — APODRECIDAS: reprovam
-#   contra o snapshot de hoje em qualquer plataforma (o `_data_health_compute` atual lê a
-#   `customer_metrics_mv`, que a prova não popula; o stub de `_vendas_familia_ausente_lista_email`
-#   colide com a função real). Consertar antes de entrar.
+# ── Eixo 7 — FUSO DA SESSÃO (a prod roda UTC; o negócio mede em São Paulo) ─────────────────────
+# A positivação AO VIVO fixava o mês em SP e comparava ligação e pedido no fuso da SESSÃO: das
+# 21:00 às 23:59 BRT do último dia, o evento contava no mês seguinte (20260927133606). A prova
+# roda num relógio CONTROLADO (tripwire: `now()` sem pin levanta exceção), cruza a borda do mês
+# de SP em pares de 1 s sob `TimeZone=UTC` E `America/Sao_Paulo` — sob sessão SP o corpo antigo
+# PASSA, então só a rodada UTC o pega — e cada sabotagem declara o assert que tem de ficar
+# vermelho E o que tem de continuar verde; vermelho por erro de execução não conta como dente.
+# Desde a 20260927195430 prova também o UNIVERSO de pedidos (bloco U: cada predicado canônico
+# tem um seed que só ele exclui, com kpi no mês, e a data é só o kpi, como no mês congelado) e a
+# própria migration sob o executor (bloco M: a PRE recusa corpo estranho e TRAVA a linha da função
+# contra um CREATE concorrente, duas conexões com barreira observada; a POS reprovada desfaz o
+# CREATE). Autocontida: initdb + db/stubs-supabase.sql + as 3 migrations. Irmão estático: o gate
+# vitest `scripts/fuso-da-sessao-gate.ts`, que vigia a CLASSE de fuso nas demais funções.
+db/test-positivacao-eligible-consumo.sh    58  falsificar=26
+# O relógio da sessão TRUNCADO ao calendário (20260927202603): a projeção de caixa de 13 semanas, o
+# KPI mensal do radar e as 2 views da posição DES (trimestre, dias restantes e a faixa de desconto
+# que o pedido em trânsito ajuda a alcançar). Mesmo desenho — borda cruzada em pares de 1 s sob
+# UTC e SP, tripwire —, mais: o predecessor de cada objeto tem de bater o md5 da prod (P1-P4, o
+# ensaio da PRÉ-condição, md5 EXATO), a TRAVA contra corrida entre a pré-condição e o CREATE OR
+# REPLACE (K1/K2: outra sessão é barrada com a migration parada no meio), o desconto projetado do
+# check-in pela view dependente REAL, e as views sabotam UMA camada por vez (a que agrupa o pedido no
+# trimestre e a que o exibe). CURRENT_DATE não é função — o relógio controlado não o alcança —, por
+# isso o corpo antigo das views e da projeção entra pelo gêmeo controlável (`now()` na sessão).
+# Autocontida: initdb + stubs + a migration + db/fixtures/des-views-predecessoras-prod-20260927.sql.
+db/test-fuso-sp-relogio-sessao.sh          53  falsificar=16
+# O "máximo possível" do check-in DES (20260929002059): a tautologia `cp2.faixa_id = cp2.faixa_id`
+# somava as 6 faixas; agora é o da faixa do check-in, na versão '2026'. Faixas com somas distintas,
+# percentual de outra versão ligado à faixa, ids ≠ números de faixa, faixa sem percentual ⇒ NULL, as
+# 12 colunas vizinhas idênticas ao predecessor, RLS sob SET ROLE, e o envelope camada por camada
+# (trava, PRÉ, as 2 metades da PÓS, reaplicar). `sem_invoker` deixa o md5 VERDE — só S1/S2 o pegam.
+# Autocontida: initdb + stubs + a migration + db/fixtures/des-views-predecessoras-prod-20260927.sql.
+db/test-des-desconto-total-maximo.sh       19  falsificar=12
+# O "hoje" de SP no preço de partida (get_ultimos_precos_cliente) e na medição do piso
+# (medir_abaixo_piso_tier): o current_date da sessão UTC era amanhã das 21:00 às 23:59 BRT
+# (20260927172443). Mesmo relógio controlado, borda do DIA cruzada sob as duas sessões; o
+# current_date é palavra-chave e escapa do relógio, então o R0 chama cada RPC SEM pin e exige o
+# tripwire. O pai do --falsificar exige o filho completo e todo erro de execução declarado.
+db/test-hoje-sp-sessao-utc-precos-piso.sh  50  falsificar=18
+# O "hoje" de SP em 7 funções (20260929001651): a trava contábil do mapeamento DRE, a régua de
+# preço, o picking, o radar, o gatilho do Omie, o de campanha e o semeador de vendas — a classe (ii),
+# o dia da sessão lido NU. D = 28/02/2025 (último dia de um mês fechado), 4 instantes cruzando 21:00
+# e 00:00 BRT sob sessão UTC e SP; R0 pega o current_date literal pelo tripwire (no radar, o bloco
+# B); D1 prova que a troca é a ÚNICA diferença para o predecessor; um sítio sabotado por vez nas
+# funções com mais de um. Autocontida: initdb + stubs + a migration + a fixture
+# db/fixtures/hoje-sp-sete-funcoes-predecessoras-prod-20260929.sql.
+db/test-hoje-sp-sete-funcoes.sh            41  falsificar=18
+
+# ── Eixo 8 — PATTERN LITERAL (o curinga do termo não é pattern) ─────────────────────────────────
+# `%`, `_` e `\` de um termo que devia casar literal viram curinga, e o termo vazio vira %%, que casa
+# tudo (classe pattern-like-cru, camada SQL — 20260929000234). O helper private.padrao_like_contem
+# (escape + NULL no degenerado) e as 7 RPCs que o usam EXECUTADOS sobre o schema-snapshot, com os
+# corpos de PROD como predecessores (md5 exato, C1-C7): a semente REPRODUZ o bug antes (A1-A8), e
+# depois o literal casa, o curinga não e o degenerado não casa nada (F1-F26). A migration roda sob o
+# executor (bloco M: a PRE recusa corpo estranho, função ausente e trava que não é no-op, e TRAVA a
+# linha — duas conexões com barreira observada; a POS pega DROP+CREATE, corpo editado sem o md5 e
+# helper sem escape ou sem o degenerado). Cada sabotagem declara o vermelho E o verde; erro de
+# execução não conta. Irmão estático: scripts/like-cru-em-migrations-gate.ts (vitest).
+db/test-padrao-like-contem.sh              59  falsificar=19
+# expandir_promocao_item (20260930220148, #2665): um overload só (o (bigint) sai: a chamada de 1
+# argumento do front dava 42725), extensions.similarity (42883 no parse, até no ramo não tomado) e a
+# expansão com volume preenchido, que colidia no UNIQUE com o próprio original e o desativava sem
+# variante. A semente REPRODUZ os 3 antes (A1-A6); depois, a chamada do front como authenticated nos
+# 3 caminhos, com e sem volume e similaridade (F1-F12). PRE/POS exercitadas camada a camada,
+# inclusive a TRAVA (M5, duas conexões) e o DROP+CREATE pego pelo OID (M12).
+db/test-expandir-promocao-item.sh          41  falsificar=18
+
+# Eixo 7 (fuso), fase 2 da classe (ii) — o dia da sessão lido NU em VIEWS e DEFAULTs de coluna
+# (20260930230623_hoje_sp_views_defaults_classe_ii.sql). 18 views e 6 DEFAULTs, cada um com os mesmos 4
+# asserts nos instantes 20:59:59 · 21:00:00 · 23:59:59 BRT de D e 00:00:00 de D+1, sob sessão UTC E SP (a:
+# 21:00 = 20:59:59; b: UTC = SP; c: controle POSITIVO, muda à 00:00 de SP; d: a sob SP, verde na
+# sabotagem); P01-P24 (predecessoras = md5/texto da prod), K1-K3 (a trava e a ORDEM dela, a dos
+# leitores — outra ordem abre deadlock), Z0 (o pin), G1-G5 (a PRÉ e a PÓS com dente: predecessora
+# divergente, texto adulterado, ACL mexido, security_invoker perdido; re-aplicar passa). Uma sabotagem
+# por objeto (o GÊMEO da sessão, now()::date — CURRENT_DATE não é função) + borda ingênua do lead time
+# (timestamptz), relógio de parede, UTC escrito, sem pin, sem trava, ordem errada, PRÉ neutralizada, PÓS
+# removida. Autocontida: initdb + stubs + schema-snapshot + a fixture
+# db/fixtures/hoje-sp-views-defaults-predecessoras-prod-20260930.sql (o snapshot perdeu as barras dos
+# literais de regex — as predecessoras vêm da fixture) + a migration.
+db/test-hoje-sp-views-defaults.sh          129  falsificar=fora-do-ci  # TETO do provas-sql: o --falsificar (33 sabotagens) custava 274 s de 1.040 numa run verde (26%, o maior do job; 2026-10-01) e 16 de 25 runs de PR foram canceladas a 20,2 min em 01/10 02:20–05:00 — a prova crua (129 asserts, 8 s) segue aqui; o --falsificar roda local (verde nos 2 locales no PR da fase 2)
+
+# Eixo 7 (fuso), fase 3 da classe (ii) — a família data_ciclo (20261001023000_hoje_sp_familia_data_ciclo.sql):
+# as 2 views "_hoje", o DEFAULT de p_data_ciclo das 4 RPCs de ciclo, o corte em HORA DE SP e 2 leitores de
+# data_ciclo (o 3º, _data_health_compute, ficou com a #2698), com as RPCs EXECUTADAS (o motor sem data não expira os pendentes de hoje às 21h; a
+# promoção que termina hoje entra no ciclo de hoje; o corte das 10:00 grava 10:00 de SP sob sessão UTC).
+# P01-P10 (predecessoras e as 18 dependências = md5 da prod), K1-K4 (a trava e a ordem dos leitores), Z0,
+# G1-G7. Autocontida: initdb + stubs + schema-snapshot + db/fixtures/hoje-sp-data-ciclo-prod-20261001.sql
+# (a deriva de 14 colunas do snapshot + o texto vivo) + a migration. O `--falsificar` (17 sabotagens, todas
+# vermelhas no assert certo, matriz UTC/SP × C/pt_BR verde) roda FORA do CI pelo motivo da linha abaixo.
+db/test-hoje-sp-data-ciclo.sh               57  falsificar=fora-do-ci  # o job provas-sql mediu 19,6–19,9 min de 20 em 3 PRs de 30/09–01/10 (mediana 17,9 em 8): +17 sabotagens (~3 min) o cancelaria no teto; o comentário do ci.yml pede paralelizar o runner, não subir o teto

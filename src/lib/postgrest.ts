@@ -23,26 +23,30 @@ import { captureException } from '@/lib/analytics';
  * URL-encoding do `%`); sem removê-lo, `a*b` viraria o padrão `%a%b%`. O texto
  * restante vira filtro literal — a busca continua sendo ILIKE parcial.
  */
+// MIRROR-START postgrest-or — manter IDÊNTICO (sem `export`) na edge analyze-unified-order/index.ts e no
+// tool MCP src/lib/mcp/tools/search-customers.ts: os dois rodam em Deno, que não resolve `@/`. A deriva de
+// UMA cópia foi o B1 (o #1051 pôs o `*` só aqui). A paridade — e a descoberta de cópia NOVA fora de bloco —
+// é vigiada pelo CI (edge-money-path-invariants). Dentro do bloco, só código e `//`: o normalizador do
+// teste descarta linha `//`, não JSDoc.
 export function sanitizeForPostgrestOr(input: string): string {
   return input.replace(/[%_,()\\"*]/g, '');
 }
 
-/**
- * `true` quando `term` ainda tem conteúdo após `sanitizeForPostgrestOr` — i.e. gera um predicado
- * `.or()` de ILIKE útil. `false` no caso DEGENERADO: termo vazio OU só-de-metacaracteres do `.or()`
- * (`*`, `%%`, `**`, `(),`…), em que `ilikeOr`/`ilike` colapsariam pra `col.ilike.%%` = match-all dos
- * valores não-nulos da coluna. Como o `.or(pred)` não tem como virar no-op por dentro (string vazia
- * não dropa o filtro), a defesa vive no CALLER, que gateia o `.or()` por isto:
- *   - lista c/ filtro opcional → `if (isSearchablePostgrestTerm(t)) q = q.or(…)` (senão = lista base)
- *   - busca pura            → `if (!isSearchablePostgrestTerm(t)) return []` (senão = linhas arbitrárias)
- * É o análogo, no contexto `.or()`, do `ilikeContainsPattern(t) === null` do `.ilike()` único (#1062);
- * um booleano (não pattern-or-null) porque a condição degenerada — `sanitizeForPostgrestOr(term)===''`
- * — é a MESMA pras 3 formas de `.or()` com ilike, inclusive o `orFilter` misto (eqInt+ilike), onde
- * não há um pattern único a retornar (aí o eqInt vira `eq.0`, inerte, e dropar o `.or()` é correto).
- */
+// `true` quando `term` ainda tem conteúdo após `sanitizeForPostgrestOr` — i.e. gera um predicado
+// `.or()` de ILIKE útil. `false` no caso DEGENERADO: termo vazio OU só-de-metacaracteres do `.or()`
+// (`*`, `%%`, `**`, `(),`…), em que `ilikeOr`/`ilike` colapsariam pra `col.ilike.%%` = match-all dos
+// valores não-nulos da coluna. Como o `.or(pred)` não tem como virar no-op por dentro (string vazia
+// não dropa o filtro), a defesa vive no CALLER, que gateia o `.or()` por isto:
+//   - lista c/ filtro opcional → `if (isSearchablePostgrestTerm(t)) q = q.or(…)` (senão = lista base)
+//   - busca pura            → `if (!isSearchablePostgrestTerm(t)) return []` (senão = linhas arbitrárias)
+// É o análogo, no contexto `.or()`, do `ilikeContainsPattern(t) === null` do `.ilike()` único (#1062);
+// um booleano (não pattern-or-null) porque a condição degenerada — `sanitizeForPostgrestOr(term)===''`
+// — é a MESMA pras 3 formas de `.or()` com ilike, inclusive o `orFilter` misto (eqInt+ilike), onde
+// não há um pattern único a retornar (aí o eqInt vira `eq.0`, inerte, e dropar o `.or()` é correto).
 export function isSearchablePostgrestTerm(term: string): boolean {
   return sanitizeForPostgrestOr(term) !== '';
 }
+// MIRROR-END postgrest-or
 
 /**
  * Sanitiza um termo pra um `.ilike(coluna, `%${termo}%`)` ÚNICO (fora de `.or()`).
@@ -66,10 +70,23 @@ export function sanitizeIlikeTerm(input: string): string {
  * `const p = ilikeContainsPattern(t); if (p) q = q.ilike(col, p)`. Retornar null evita o
  * `%${''}%` = `%%`, que casaria todo valor não-nulo da coluna (match-all) — o caso degenerado
  * do wildcard-only input, que strippar os wildcards do MEIO do termo sozinho não cobre.
+ * O template cru no pattern de `.ilike`/`.like` é barrado pelo ESLint em `src/` (classe
+ * `pattern-like-cru`, docs/agent/database.md §5).
  */
 export function ilikeContainsPattern(input: string): string | null {
   const safe = sanitizeIlikeTerm(input);
   return safe ? `%${safe}%` : null;
+}
+
+/**
+ * Pattern `termo%` de "começa com": o irmão de PREFIXO do `ilikeContainsPattern`, com o mesmo
+ * contrato (termo sanitizado, ou `null` quando fica VAZIO, porque `${''}%` = `%` casaria todo
+ * valor não-nulo). Serve `.like` e `.ilike` igual: os curingas são os mesmos e o `i` só tira a
+ * caixa, por isso o nome não leva o `i`. Caller: `const p = likePrefixPattern(t); if (p) q = q.like(col, p)`.
+ */
+export function likePrefixPattern(input: string): string | null {
+  const safe = sanitizeIlikeTerm(input);
+  return safe ? `${safe}%` : null;
 }
 
 /** Uma cláusula `coluna.ilike.%termo%` com o termo sanitizado. */

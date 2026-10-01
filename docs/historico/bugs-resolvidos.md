@@ -926,3 +926,51 @@ vai para a PROD (`db/`) é o que a prova testa (a migration) — agora o grupo P
 concorrência) estava em prod sem recibo — o ledger só tinha a 1ª versão (sha `0b414eb8d1`). Aqui não mudou
 nada, porque a PROD batia byte a byte com o repo antes da troca, mas quem ler o ledger como "o que está
 aplicado" erra.
+
+## A run de pedidos que abortava gravava `metadata: {}` — e o denominador tem de cobrir página INTEIRA (2026-09-27)
+
+**Sintoma** (achado P2 do Codex, preexistente). No `sync-reprocess`/`reprocessOrders`, quando TODOS os
+pedidos de uma página com ≥2 pedidos falham na RPC `reconciliar_pedidos_omie`, a run aborta por desenho
+(falha sistêmica). Mas o catch chamava `completeReprocessLog` sem `metadata`, que grava `{}`: a
+`falhas_amostra` da página que abortou — e todo contador já apurado — se perdia justamente na run que mais
+precisava dela. Só a 1ª falha sobrevivia no `error_message`.
+
+**Correção** (v1.12). A apuração virou módulo puro (`sync-reprocess/apuracao-pedidos.ts`), usado pelos dois
+desfechos. Na run abortada, cada fase é gateada pelo seu denominador (`paginas_montadas`,
+`paginas_reconciliadas`): fase não apurada vai `null`, nunca `0`/`[]`; as colunas de contagem vão NULL se
+nenhuma página foi reconciliada. A decisão de abortar e o metadata da run completa não mudaram.
+
+**Lições.** (1) **Denominador só é verdade se o numerador entra pela MESMA unidade.** A 1ª versão contava
+`paginas_montadas` no fim da página e mexia nos contadores no meio dela: um abort no meio da montagem
+publicava uma parcela que o denominador não descreve (achado do challenge Codex). Contador por página +
+consolidação ao fim fecha. (2) **Pin textual de fiação não prova o fluxo**: o Codex mostrou, executando o
+corpo mutado em memória, que `if (!paginaInteiraFalhou(...))` e o incremento antes da RPC passavam 9/9
+verdes. A decisão saiu para `reconciliarPagina` com a RPC injetada, e o teste passou a EXECUTÁ-LA; o pin
+ficou só com a fiação (quem chama quem, e o catch). (3) **Vermelho de typecheck não é dente.** Uma das 14
+sabotagens (`if (false && error)`) ficou vermelha pelo `TS18047`, não pelo assert: o script de falsificação
+passou a exigir ausência de `Type checking failed` além da marca.
+
+## O "máximo possível" do check-in DES somava as 6 faixas — nome solto no subselect ligou ao escopo de DENTRO (2026-09-29)
+
+**Defeito.** `v_des_desconto_por_checkin.desconto_total_maximo` (view só na prod, sem CREATE no repo) era
+`desconto_padrao + (SELECT sum(cp2.percentual) … WHERE cp2.faixa_id = cp2.faixa_id)` — tautologia
+(`faixa_id` é NOT NULL): somava os 54 percentuais das 6 faixas, 36,41 p.p. Na faixa 4, "máximo" de 40,78%
+contra 10,09% (4,37 + 4,72 qualitativos + 1,00 bônus). **Alcance medido:** 0 linhas na view (nenhum
+check-in salvo) — o número nunca foi exibido; correção preventiva. Intenção confirmada pelo founder:
+padrão + **todos** os critérios da faixa do check-in (qualitativos + bônus), versão `'2026'` como o CTE do
+projetado. Faixa sem percentual ⇒ NULL. Migration `20260929002059` (trava → PRÉ por md5 → replace
+`WITH (security_invoker = on)` → PÓS md5 + invoker); prova `db/test-des-desconto-total-maximo.sh`
+(19 asserts, 12 sabotagens, nos 2 `lc_messages`), no núcleo do CI. Front: `?? 0` → `numeroOuNulo` +
+card neutro ("—") — e o zero que estava ATIVO era o do **total** ("será 0,00%" em vermelho sem check-in),
+não o do máximo (escondido por `max > 0`): medir onde a ausência chega apontou qual dos dois era o vivo.
+
+**Lições.** (1) **Nome sem qualificador num subselect liga ao escopo MAIS INTERNO que tem a coluna** —
+`WHERE cp2.faixa_id = faixa_id` compara `cp2` com `cp2`, e o `pg_get_viewdef` denuncia escrevendo
+`cp2.faixa_id = cp2.faixa_id`. Detector barato: back-reference `(\m[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*)\s*=\s*\1\M`
+sobre o deparse de toda view — prod 2026-09-29: **91 views, 1 casamento (esta)**. No `prosrc` cru de
+função o padrão casa ATRIBUIÇÃO (`x = x || y`): 662 funções, 3 casamentos, 0 comparações — leia o
+contexto antes de acusar. (2) **O md5 do deparse não enxerga o `security_invoker`**: na sabotagem
+`sem_invoker` os asserts de md5 seguiram VERDES com a view lendo como dono; só `reloptions` (POS3/S1) e o
+`SET ROLE` (S2) pegaram — PÓS de view precisa das duas metades. (3) **A trava tem dente medido no PG17:**
+sem o `ALTER VIEW` sem efeito antes da PRÉ, uma 2ª sessão altera a view com a migration parada entre a
+PRÉ e o replace (o deparse solta o lock da própria view; só as relações lidas ficam presas).

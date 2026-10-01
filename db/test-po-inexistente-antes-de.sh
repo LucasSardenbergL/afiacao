@@ -53,14 +53,16 @@ trap cleanup EXIT
 # TimeZone FIXO: sem isto o `::text` de um timestamptz sai no fuso do HOST (aqui -03), e os asserts que
 # comparam o valor da coluna passariam ou falhariam por acidente de ambiente — a mesma classe do
 # `grep -i` sob pt_BR.UTF-8 que o CLAUDE.md registra.
-"$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d postgres -q -c "ALTER DATABASE prove SET TimeZone TO 'UTC';"
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+"$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d postgres -q -c "ALTER DATABASE prove SET TimeZone TO 'UTC';"
+P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }
 
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); echo "  OK   $1"; }
 bad() { FAIL=$((FAIL+1)); echo "  FAIL $1"; }
 eq()  { if [ "$2" = "$3" ]; then ok "$1 (=$2)"; else bad "$1 -- esperado [$3], veio [$2]"; fi; }
+# Leitura que ERRA não pode virar "" — o esperado do fail-closed É "": o erro vira ERRO_rc=<n> (assert verde por ausência).
+medir() { local v rc; set +e; v="$(set -e; "$@")"; rc=$?; set -e; if [ "$rc" -eq 0 ]; then printf '%s\n' "$v"; else printf 'ERRO_rc=%s\n' "$rc"; fi; }
 
 echo "=== setup (PG17 :$PORT) ==="
 
@@ -260,7 +262,7 @@ eq "R2b service_role executa o marco" \
 
 echo "== A: fail-closed sem marcador valido =="
 P -q -c "UPDATE public.reposicao_pedidos_compra_run SET volume_ok=false;"
-eq "A1 sem run valido -> VAZIO" "$(cand)" ""
+eq "A1 sem run valido -> VAZIO" "$(medir cand)" ""
 P -q -c "UPDATE public.reposicao_pedidos_compra_run SET volume_ok=true;"
 
 echo "== D: gate de authz (preservado do #1718) =="
