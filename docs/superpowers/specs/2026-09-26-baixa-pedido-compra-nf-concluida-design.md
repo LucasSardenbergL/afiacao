@@ -570,7 +570,21 @@ GROUP BY p.grupo ORDER BY p.grupo;
   com o **protocolo dela**, que o nosso PO guarda em `cContrato`. E o disparo deixa o `cNumPedido` ("Nº do Pedido
   do Fornecedor") em branco de propósito (`disparar-pedidos-aprovados/index.ts:1182-1185`): 661 de 663 POs com
   `cNumPedido` vazio.
-- **Sonda S2** (`omie-sonda-recebimento` sobre os POs 1205, 1217 e 1037): resultado na §14.1 quando o disparo chegar.
+- **Sonda S2** (`omie-sonda-recebimento`, read-only): **não disparada** (0 respostas em `net._http_response` até
+  2026-10-01). A F2 fica respondida pela doc + dado guardado acima; a sonda é confirmação opcional. O disparo é do
+  founder (lê `vault`, faz `net.http_post`); a leitura é minha por `psql-ro` (`content LIKE '%s2_associacao_por_item%'`,
+  dentro de ~6 h). Amostra escolhida: 1205 (NF exclusiva), 1217 (NF consolidada), 1037 (contrato duplicado).
+
+  ```sql
+  SELECT net.http_post(
+    url := 'https://fzvklzpomgnyikkfkzai.supabase.co/functions/v1/omie-sonda-recebimento',
+    headers := jsonb_build_object(
+      'Content-Type', 'application/json',
+      'x-cron-secret', (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'CRON_SECRET' LIMIT 1)),
+    body := '{"empresa":"OBEN","limite":3,"pedidos":["1205","1217","1037"]}'::jsonb,
+    timeout_milliseconds := 150000
+  ) AS request_id;
+  ```
 
 ### F3 — o que acontece com o PO
 
