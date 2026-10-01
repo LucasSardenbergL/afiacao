@@ -306,3 +306,13 @@ db/test-expandir-promocao-item.sh          41  falsificar=18
 # db/fixtures/hoje-sp-views-defaults-predecessoras-prod-20260930.sql (o snapshot perdeu as barras dos
 # literais de regex — as predecessoras vêm da fixture) + a migration.
 db/test-hoje-sp-views-defaults.sh          129  falsificar=33
+
+# Eixo 7 (fuso), fase 3 da classe (ii) — a família data_ciclo (20261001023000_hoje_sp_familia_data_ciclo.sql):
+# as 2 views "_hoje", o DEFAULT de p_data_ciclo das 4 RPCs de ciclo, o corte em HORA DE SP e 2 leitores de
+# data_ciclo (o 3º, _data_health_compute, ficou com a #2698), com as RPCs EXECUTADAS (o motor sem data não expira os pendentes de hoje às 21h; a
+# promoção que termina hoje entra no ciclo de hoje; o corte das 10:00 grava 10:00 de SP sob sessão UTC).
+# P01-P10 (predecessoras e as 18 dependências = md5 da prod), K1-K4 (a trava e a ordem dos leitores), Z0,
+# G1-G7. Autocontida: initdb + stubs + schema-snapshot + db/fixtures/hoje-sp-data-ciclo-prod-20261001.sql
+# (a deriva de 14 colunas do snapshot + o texto vivo) + a migration. O `--falsificar` (17 sabotagens, todas
+# vermelhas no assert certo, matriz UTC/SP × C/pt_BR verde) roda FORA do CI pelo motivo da linha abaixo.
+db/test-hoje-sp-data-ciclo.sh               57  falsificar=fora-do-ci  # o job provas-sql mediu 19,6–19,9 min de 20 em 3 PRs de 30/09–01/10 (mediana 17,9 em 8): +17 sabotagens (~3 min) o cancelaria no teto; o comentário do ci.yml pede paralelizar o runner, não subir o teto

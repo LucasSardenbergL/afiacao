@@ -5,7 +5,7 @@ import { auditAuthz, auditCompleto, type Migration } from './authz-gate-check';
 import { AUTHZ_TABELAS_FECHADAS } from './authz-tabelas-fechadas';
 import { AUTHZ_FUNCOES_FECHADAS } from './authz-funcoes-fechadas';
 import { AUTHZ_MANIFEST, ACKNOWLEDGED_SENSITIVE, manifestKey } from './authz-manifest';
-import { AUTHZ_REESCRITAS_CONHECIDAS } from './authz-reescritas-conhecidas';
+import { AUTHZ_REESCRITAS_CONHECIDAS, chaveReescrita } from './authz-reescritas-conhecidas';
 import { detectarReescritaViva } from './lib/authz-reescrita';
 
 function mig(file: string, sql: string): Migration {
@@ -509,14 +509,22 @@ END $r$;`;
   });
 
   it('CREATE posterior + entrada AINDA na baseline → REESCRITA_BASELINE_OBSOLETA (a poda é devida)', () => {
-    // Usa a entrada REAL da baseline (o índice é do módulo, não injetável) e coloca um CREATE
-    // parseável DEPOIS dela: é a configuração exata em que o `authz:check` emudeceria enquanto o
-    // `authz:audit:prod` seguiria cobrando um md5 de corpo morto.
+    // A entrada é INJETADA: a baseline real zerou em 2026-10-01 (a 20261001023000 pagou a última dívida,
+    // justamente esta), e o caminho precisa de dente com a lista vazia. Um CREATE parseável DEPOIS da
+    // entrada é a configuração exata em que o `authz:check` emudeceria enquanto o `authz:audit:prod`
+    // seguiria cobrando um md5 de corpo morto.
     const GATE_COMPRAS = `IF NOT COALESCE(private.cap_compras_ler(auth.uid()),false) THEN RAISE EXCEPTION 'Acesso negado'; END IF; `;
+    const entrada = {
+      arquivo: '20260814022626_reposicao_po_inexistente_antes_de.sql',
+      funcao: 'public.reposicao_pos_candidatos',
+      motivo: 'a entrada histórica (podada em 2026-10-01), reinjetada como fixture deste teste',
+      provaExecutada: 'db/test-pos-candidatos-guard-temporal.sh',
+      md5ProdEsperado: '632964445c40e792ca62d945aeb2e85e',
+    };
     const f = auditAuthz([
       mig('20260814022626_reposicao_po_inexistente_antes_de.sql', reescritaViva('public.reposicao_pos_candidatos(text)')),
       mig('20260901000000_recria.sql', fn('reposicao_pos_candidatos', GATE_COMPRAS + READ)),
-    ]);
+    ], new Map([[chaveReescrita(entrada.arquivo, entrada.funcao), entrada]]));
     const err = errorsOf(f).filter((e) => e.msg.includes('REESCRITA_BASELINE_OBSOLETA'));
     expect(err).toHaveLength(1);
     expect(err[0].fn).toBe('public.reposicao_pos_candidatos');

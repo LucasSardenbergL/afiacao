@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-10-01T01:09:45.115Z",
-  "sourceHead": "89cb0c8bb0db18fc8fe2fb3cb0a2803e200c71d6",
+  "medidoEm": "2026-10-01T03:46:38.829Z",
+  "sourceHead": "e60f0284f5e2c16c55b1928d093727ef648109c0",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -30,9 +30,9 @@
     "audit": {
       "script": "authz:audit:prod",
       "exit": 0,
-      "resumo": "✅ gate do manifest vale no corpo VIVO das 23 funções, e as 1 reescritas baselinadas batem no md5 de prod.",
+      "resumo": "✅ gate do manifest vale no corpo VIVO das 23 funções, e as 0 reescritas baselinadas batem no md5 de prod.",
       "denominador": "🔎 authz:audit:prod — 24 definição(ões) lida(s) para 23 chave(s) do manifest.",
-      "contratoFingerprint": "2bff8345b7ec5c55e6d1dffb7c55aeba14da5170791da92b5e5b08b7ea9b42bb",
+      "contratoFingerprint": "7318749018a7457ca3ab6fc4f2cc72c1eb61b848d059be188f5e51fa11363e10",
       "auditorFingerprint": "8243bb07ec22b02ca36694989777a7859c086994435fe38f9e48b649907e8909",
       "achados": []
     },
@@ -56,12 +56,37 @@
     },
     "corpo": {
       "script": "deriva:corpo:prod",
-      "exit": 0,
-      "resumo": "✅ deriva-corpo — 317 identidade(s) batem com o repo (238 em dia, 72 só cosméticas, 6 aceitas na baseline) e 15 aposentada(s) estão ausentes",
-      "denominador": "🔎 deriva-corpo — 317 identidade(s) conferida(s) · 15 aposentada(s) · ref origin/main@f56be1634 (fetch ok) · prod 2026-10-01 01:10:12.481269Z",
+      "exit": 1,
+      "resumo": "deriva-corpo — 4 divergência(s) em prod (4 SEM_PAR) — ver as linhas ❌",
+      "denominador": "🔎 deriva-corpo — 317 identidade(s) conferida(s) · 15 aposentada(s) · ref origin/main@c32f9f4cb (fetch ok) · prod 2026-10-01 03:47:02.650454Z",
       "contratoFingerprint": "4dcd8bddc86285d5ecf0931e73ffd06ffb0470c6419b6bd9c8de0cd33dc8ddd4",
       "auditorFingerprint": "7697dadeea273a69dd499490b0b68d4cef37cf1cc49eefcbe1ae940445932b29",
-      "achados": []
+      "achados": [
+        {
+          "id": "2021f7353ac34cf8",
+          "linha": "❌ [SEM_PAR] gerar_pedidos_sugeridos_ciclo(text,date): corpo que nenhuma das 29 versão(ões) commitadas explica — edição manual, ou DDL aplicada ANTES do merge (compare com as migrations das branches abertas) — último CREATE: 20260925225004_reposicao_em_transito_simulado_e_join_grupo_null_safe.sql (xmin 10963510)",
+          "primeiraVez": "2026-10-01",
+          "ultimaVez": "2026-10-01"
+        },
+        {
+          "id": "06c5485021ad70e9",
+          "linha": "❌ [SEM_PAR] atualizar_parametros_numericos_skus(text,uuid): corpo que nenhuma das 4 versão(ões) commitadas explica — edição manual, ou DDL aplicada ANTES do merge (compare com as migrations das branches abertas) — último CREATE: 20260926001425_param_auto_em_transito_conta_disparado_simulado.sql (xmin 10963510)",
+          "primeiraVez": "2026-10-01",
+          "ultimaVez": "2026-10-01"
+        },
+        {
+          "id": "ffcf3066a21353af",
+          "linha": "❌ [SEM_PAR] gerar_pedidos_oportunidade_ciclo(text,date,text[]): corpo que nenhuma das 2 versão(ões) commitadas explica — edição manual, ou DDL aplicada ANTES do merge (compare com as migrations das branches abertas) — último CREATE: 20260922225449_oportunidade_erro_terminal_nao_bloqueia_oferta.sql (xmin 10963510)",
+          "primeiraVez": "2026-10-01",
+          "ultimaVez": "2026-10-01"
+        },
+        {
+          "id": "5d63054248baa08e",
+          "linha": "❌ [SEM_PAR] reposicao_pos_candidatos(text): corpo que nem o último CREATE (20260814000125_reposicao_pos_frescor_marcador.sql) nem o patch aceito (20260814022626_reposicao_po_inexistente_antes_de.sql) explicam (xmin 10963510)",
+          "primeiraVez": "2026-10-01",
+          "ultimaVez": "2026-10-01"
+        }
+      ]
     }
   }
 }
