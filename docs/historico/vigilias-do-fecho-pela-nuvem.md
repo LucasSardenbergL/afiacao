@@ -91,6 +91,6 @@ Os três exits rodaram contra o banco de verdade, com `PSQL_RO=/nao/existe` na l
   `postgres|admin=f,inherit=f,set=t|postgres`, as sondas rodaram como o papel (`ERRO|42501` auth,
   `ERRO|42501` vault, `ERRO|42703` token, `RODOU|615`) e a saída saiu **idêntica por `cmp`** à do
   `psql-ro`.
-- **exit 1**, 2c (11:52Z): 11 divergências vivas, todas de fora desta entrega (migrations de um PR
-  mergeado e ainda não aplicadas, mais o overload de um PR aberto que foi aplicado antes do merge).
-  Saída de mesmo tamanho, e a única diferença é o instante da medição.
+- **exit 1**, 2c (11:52Z): 11 divergências vivas, todas de fora desta entrega (9 corpos de um PR
+  mergeado que prod ainda não roda, mais a troca de assinatura de um PR aberto cuja migration já está
+  em prod). Saída de mesmo tamanho, e a única diferença é o instante da medição.
