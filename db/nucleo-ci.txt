@@ -59,6 +59,20 @@ db/test-whatsapp-hsm.sh                    18  falsificar=17
 # depois do envio. A cadeia guarda sales_orders, então a migration do GRANT entra sozinha
 # (docs/historico/provas-canal-revividas.md).
 db/test-whatsapp-funil.sh                  12  falsificar=18
+# Canal Melhorias: quem vê quais clientes na melhoria_clientes_por_produto (o master todos, a vendedora só a
+# carteira; só pedido válido conta), a melhoria_produtos_relacionados, os guards (P0001 dos dois: cada entrada
+# só tropeça em UM) e a RLS de melhoria_itens/melhoria_mensagens — autoria, gate de staff, campos do founder,
+# UPDATE só do master (calado para os outros), papel founder só do master. Corpo vivo + ACL de prod + a cadeia
+# das RPCs (0929000234) e das tabelas lidas; as policies sabotadas pelo texto VIVO de pg_policies. Morreu duas
+# vezes fora do núcleo (07-21 e 08-28) re-aplicando a migration de junho (docs/historico/provas-carteira-revividas.md).
+db/test-melhorias-rpcs.sh                  39  falsificar=55
+# Fornecedor fora da carteira: a régua A (sem venda real sai; exceção vence; cancelado/rascunho/pendente/
+# orçamento não são venda), a limpeza que o cron chama (re-classifica, desliga o eligible, apaga os scores só
+# dos excluídos), a reversão com o gate INTERNO do master (authenticated tem EXECUTE em prod) e a porta dos
+# fundos fechada (o employee não escreve a exceção direto), o ACL de prod (classificar/aplicar só do
+# service_role) e o trigger que deriva is_fornecedor sem decidir a exclusão. Morreu no seed em 06-25: o gatilho
+# da carteira CRIA o score de farmer e o seed o reinseria (docs/historico/provas-carteira-revividas.md).
+db/test-fornecedores-classificacao.sh      26  falsificar=53
 
 # ── Eixo 2 — FINITUDE MONETÁRIA ───────────────────────────────────────────────────
 # `ausente ≠ zero`: preço que o Omie não mandou não vira R$ 0,00; custo sem cmc

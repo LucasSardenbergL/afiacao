@@ -24,7 +24,8 @@ objetos) mostrou em `sales_orders`/`order_items` o constraint trigger de coerên
 guardam também as tabelas que a RPC lê, e a cadeia viva pega as 4 migrations da proposta (1 no funil);
 a do HSM sai vazia, e isso é legítimo. Fora de qualquer cadeia ficou a `20260830122702`, que tira de
 `profiles` um trigger que o snapshot ainda tem — versão anterior ao corte, mergeada depois do dump (só
-dispara para employee com o CPF do master; nenhuma prova o aciona).
+dispara para employee com o CPF do master; nenhuma prova do canal o aciona — a de Melhorias, da fatia 2b,
+o dispara no INSERT de profiles de clientes, sem efeito).
 
 O que o snapshot não carrega de jeito nenhum é o **ACL**: o dump é `--no-privileges`. As provas de julho
 davam `GRANT ALL ON ALL TABLES` a anon/authenticated — um ACL que prod não tem. Medido: 81 tabelas e 297
