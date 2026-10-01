@@ -45,7 +45,7 @@ const TIMEOUT_LEITURA_MS = 5_000;
  * Corpo JSON que o supabase-js guarda em `error.context` (uma `Response` ainda não lida).
  * `null` quando não há context, o corpo não é JSON/objeto ou a leitura passa do teto — nunca lança.
  */
-async function corpoDoErro(error: unknown): Promise<Record<string, unknown> | null> {
+export async function corpoDoErro(error: unknown): Promise<Record<string, unknown> | null> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const ctx = comoRegistro(error)?.context as { json?: unknown; clone?: unknown } | undefined;
