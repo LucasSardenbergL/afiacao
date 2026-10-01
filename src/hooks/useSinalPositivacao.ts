@@ -160,7 +160,9 @@ export function useSinalPositivacao(): EstadoSinal | null {
       pct: temDado ? data.pctPositivacao : null,
       positivados,
       total_eligible: totalEligible,
-      a_positivar: temDado ? data.aPositivar.length : null,
+      // Elegíveis sem pedido. Até 2026-09-30 era o tamanho da lista, que a RPC corta em 200 —
+      // a série tinha 1 evento em 90 dias, nada a reconciliar (positivacao-win-back-era-novos.md).
+      a_positivar: temDado ? data.aPositivarTotal : null,
       is_hunter: isHunter,
       sob_lente: isImpersonating,
       desatualizado: desatualizacao,
