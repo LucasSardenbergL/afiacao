@@ -7,6 +7,16 @@ import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } fro
 import { mapearItensRecebimento, type OmieRecebimentoItem } from "./itens.ts";
 import { mapearCabecalho } from "./cabecalho.ts";
 import { avaliarDetalhePorChave, classificarConsultaPorChave, normalizarChaveAcesso } from "./chave.ts";
+import {
+  type ContagemArmazem,
+  contagemVazia,
+  falhaNoCorpo,
+  interpretarPaginaListagem,
+  paramsListagem,
+  type RegistroListagem,
+  registrarPulo,
+  triarRegistro,
+} from "./listagem.ts";
 
 // Teto anti-runaway do total DECLARADO pelo Omie (o teto de LEITURA por rodada continua
 // maxPages=3, deliberado: cron horário com MAX_DETAIL_CALLS=1 — amostra retomável, não truncagem).
@@ -45,17 +55,6 @@ interface OmieRecebimentoCabec {
 interface OmieRecebimentoInfoCadastro {
   cCancelada?: string;
   cRecebido?: string;
-}
-
-interface OmieRecebimentoListItem {
-  cabec?: OmieRecebimentoCabec;
-  nIdReceb?: number | string;
-  infoCadastro?: OmieRecebimentoInfoCadastro;
-}
-
-interface OmieListarRecebimentosResponse {
-  recebimentos?: OmieRecebimentoListItem[];
-  nTotalPaginas?: number;
 }
 
 interface OmieConsultarRecebimentoResponse {
@@ -326,6 +325,9 @@ Deno.serve(async (req) => {
   let totalImported = 0;
   let totalSkipped = 0;
   const errors: string[] = [];
+  // O sensor do cron: o `net._http_response` guarda esta resposta, e é por ela que se vê, conta a
+  // conta, o que a listagem trouxe e por que cada NF-e não virou importação.
+  const porArmazem: Record<string, ContagemArmazem> = {};
 
   for (const cred of allCreds) {
     try {
@@ -339,7 +341,10 @@ Deno.serve(async (req) => {
 
       const warehouse = warehouseData as unknown as WarehouseRow | null;
       if (!warehouse) {
+        // Credencial configurada sem armazém: a conta inteira some da rodada — vai em errors[],
+        // não só no log (era o último caminho que zerava uma conta com success:true).
         console.log(`[sync] Warehouse ${cred.warehouseCode} não encontrado, pulando`);
+        errors.push(`${cred.warehouseCode}: armazém não encontrado em warehouses — a conta não foi sincronizada`);
         continue;
       }
 
@@ -363,7 +368,7 @@ Deno.serve(async (req) => {
       const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
       const dtDe = `${String(thirtyDaysAgo.getDate()).padStart(2,'0')}/${String(thirtyDaysAgo.getMonth()+1).padStart(2,'0')}/${thirtyDaysAgo.getFullYear()}`;
 
-      const allRecebimentos: OmieRecebimentoListItem[] = [];
+      const allRecebimentos: RegistroListagem[] = [];
       let page = 1;
       const maxPages = 3;
       let totalPages = 1; // piso monotônico do total declarado (guards de _shared/omie-paginacao.ts)
@@ -371,19 +376,19 @@ Deno.serve(async (req) => {
 
       while (hasMore && page <= maxPages) {
         try {
-          const pageResult = (await omieCall(
+          // O corpo decide antes do status: falha com HTTP 200 vira erro visível (e "não existem
+          // registros" vira fim) — antes ela passava por listagem vazia, com success:true.
+          const pagina = interpretarPaginaListagem(await omieCall(
             cred.appKey,
             cred.appSecret,
             "produtos/recebimentonfe/",
             "ListarRecebimentos",
-            {
-              nPagina: page,
-              nRegistrosPorPagina: 50,
-              dtEmissaoDe: dtDe,
-            },
-          )) as unknown as OmieListarRecebimentosResponse;
-          totalPages = proximoTotalPaginas(totalPages, pageResult.nTotalPaginas, MAX_PAGINAS_RECEBIMENTOS);
-          const recs = pageResult.recebimentos ?? [];
+            paramsListagem(page, dtDe),
+          ));
+          if (pagina.tipo === "falha") throw new Error(pagina.mensagem);
+          if (pagina.tipo === "fim") break;
+          totalPages = proximoTotalPaginas(totalPages, pagina.totalPaginas, MAX_PAGINAS_RECEBIMENTOS);
+          const recs = pagina.registros;
           const veredicto = avaliarPagina(recs.length, page, totalPages);
           if (veredicto === "anomalia") {
             throw new Error(`página ${page}/${totalPages} veio vazia antes do fim declarado — acumulado parcial`);
@@ -405,34 +410,37 @@ Deno.serve(async (req) => {
 
       console.log(`[sync] ${allRecebimentos.length} registros recentes (últimos 30 dias)`);
 
+      const contagem = contagemVazia();
+      porArmazem[cred.warehouseCode] = contagem;
+      contagem.listados = allRecebimentos.length;
+
       let detailCalls = 0;
       // 1 por conta/rodada: ConsultarRecebimento tem trava anti-redundância POR MÉTODO
       // (~60s) no Omie — rajada de detalhes = "1 passa, resto REDUNDANT" (visto em prod
-      // 2026-07-16). Com o cron horário, 1/rodada importa 13/dia por conta — dá conta do
-      // fluxo. Follow-up no GOAL: migrar pra ListarRecebimentos(cExibirDetalhes:'S').
+      // 2026-07-16). Com o cron horário, 1/rodada importa 13/dia por conta. A consulta vai só
+      // para quem a TRIAGEM da listagem deixa passar (listagem.ts): sem ela, a NF-e recebida
+      // direto no Omie que estivesse no topo gastava a consulta de toda rodada.
       const MAX_DETAIL_CALLS = 1;
 
       for (const rec of allRecebimentos) {
-        if (detailCalls >= MAX_DETAIL_CALLS) break;
-
-        const cabec = rec.cabec ?? rec;
-        const nIdReceb = cabec.nIdReceb;
-        if (!nIdReceb) continue;
-
-        // Quick skip if already imported (normalizado pra number, como o Set)
-        if (existingIds.has(Number(nIdReceb))) {
-          totalSkipped++;
+        const triagem = triarRegistro(rec, existingIds);
+        if (triagem.tipo === "pular") {
+          registrarPulo(contagem, triagem.motivo);
+          // `skipped` mantém o sentido de antes: já importada ou já recebida no Omie.
+          if (triagem.motivo === "ja_importado" || triagem.motivo === "recebido_no_omie") totalSkipped++;
           continue;
         }
-
-        // Skip cancelled/faturado
-        const infoCad = rec.infoCadastro ?? {};
-        if (infoCad.cCancelada === "S") {
+        if (triagem.listagemMagra) contagem.listagem_magra++;
+        // Sem `break` no teto: a listagem inteira passa pela triagem, para a contagem dizer o
+        // tamanho da fila (`aguardando`). Só a consulta de detalhe é que tem teto.
+        if (detailCalls >= MAX_DETAIL_CALLS) {
+          contagem.aguardando++;
           continue;
         }
+        const nIdReceb = triagem.nIdReceb;
 
-        // Need to fetch detail for chave_acesso and items
         detailCalls++;
+        contagem.consultados++;
         let detail: OmieConsultarRecebimentoResponse;
         try {
           detail = (await omieCall(
@@ -448,6 +456,14 @@ Deno.serve(async (req) => {
           // inteira atrás dela com success:true — errors[] é o único sinal visível disso.
           errors.push(`${cred.warehouseCode} ConsultarRecebimento ${nIdReceb}: ${msg}`);
           console.warn(`[sync] Erro ao consultar recebimento ${nIdReceb}: ${msg}`);
+          continue;
+        }
+        // Falha com HTTP 200: o corpo é a `faultstring`, sem `cabec`. Antes caía no "sem chave",
+        // calada, e a mesma NF-e voltava a gastar a consulta na rodada seguinte.
+        const falhaDetalhe = falhaNoCorpo(detail);
+        if (falhaDetalhe !== null) {
+          errors.push(`${cred.warehouseCode} ConsultarRecebimento ${nIdReceb}: ${falhaDetalhe}`);
+          console.warn(`[sync] Falha do Omie no detalhe ${nIdReceb}: ${falhaDetalhe}`);
           continue;
         }
 
@@ -514,12 +530,11 @@ Deno.serve(async (req) => {
         }
 
         totalImported++;
+        contagem.importados++;
         console.log(`[sync] NF-e ${numeroNfe} importada (${rawItems.length} itens)`);
       }
 
-      if (detailCalls >= MAX_DETAIL_CALLS) {
-        console.log(`[sync] Limite de ${MAX_DETAIL_CALLS} consultas de detalhe atingido para ${cred.warehouseCode}. Execute novamente para mais.`);
-      }
+      console.log(`[sync] ${cred.warehouseCode} triagem: ${JSON.stringify(contagem)}`);
     } catch (credErr) {
       const msg = credErr instanceof Error ? credErr.message : String(credErr);
       console.error(`[sync] Erro na conta ${cred.warehouseCode}:`, credErr);
@@ -537,5 +552,6 @@ Deno.serve(async (req) => {
     imported: totalImported,
     skipped: totalSkipped,
     errors: errors.length > 0 ? errors : undefined,
+    por_armazem: porArmazem,
   });
 });

@@ -4466,4 +4466,16 @@ describe('guardrail: omie-nfe-recebimento-sync não conta NF-e como importada qu
   it('o NCM cru não volta ao index.ts', () => {
     expect(src).not.toMatch(/ncm:\s*iCabec\.cNCM/);
   });
+
+  it('cron: a única consulta de detalhe passa pela triagem da listagem com detalhes, e a falha com HTTP 200 não cala', () => {
+    // 2026-10-01: a Oben teve 70 recebimentos no Omie desde 14/08 e a sync importou 0 — a NF-e
+    // recebida direto no Omie, no topo da listagem magra, gastava a consulta de TODA rodada.
+    expect(cron, 'a listagem voltou a ser magra (sem cExibirDetalhes)').toContain('paramsListagem(');
+    expect(cron, 'a faultstring com HTTP 200 voltou a virar listagem vazia').toContain('interpretarPaginaListagem(');
+    const triagem = cron.indexOf('triarRegistro(');
+    const consulta = cron.indexOf('"ConsultarRecebimento"');
+    expect(triagem, 'a triagem sumiu do laço do cron').toBeGreaterThan(-1);
+    expect(consulta, 'a consulta de detalhe veio antes da triagem').toBeGreaterThan(triagem);
+    expect(cron.slice(consulta), 'a falha no corpo do detalhe tem de ser lida').toContain('falhaNoCorpo(');
+  });
 });

@@ -28,8 +28,11 @@ export const respostaSonda = criarRespostaSonda("omie-nfe-recebimento-sync");
  * TODA NF-e) e a falha do insert de itens sai em errors[] em vez de contar como importada.
  * v1.2: importação de UMA NF-e pela chave (`{ chave_acesso, warehouse_id }`), o caminho do botão
  * "Importar NF-e" — antes ele chamava o `omie-nfe-webhook`, que dá 401 sem o segredo do Omie.
+ * v1.3: a listagem do cron pede `cExibirDetalhes:'S'` e a triagem pula recebida/cancelada/sem chave
+ * ANTES da única consulta de detalhe (a recebida no topo travava a fila da Oben desde 14/08); falha
+ * do Omie com HTTP 200 vira erro visível; a resposta traz `por_armazem` (o sensor do cron).
  */
-export const VERSAO = "v1.2-importar-por-chave";
+export const VERSAO = "v1.3-listagem-com-detalhes";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
