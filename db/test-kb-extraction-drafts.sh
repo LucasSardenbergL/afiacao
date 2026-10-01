@@ -135,13 +135,13 @@ BEGIN
   -- Coluna document_id (PK)
   SELECT count(*) INTO n FROM information_schema.columns
    WHERE table_name='kb_extraction_drafts' AND column_name='document_id';
-  IF n <> 1 THEN RAISE EXCEPTION 'A1a FALHOU: coluna document_id ausente'; END IF;
+  IF n IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'A1a FALHOU: coluna document_id ausente'; END IF;
 
   -- Coluna status com default 'extracting'
   SELECT count(*) INTO n FROM information_schema.columns
    WHERE table_name='kb_extraction_drafts' AND column_name='status'
      AND column_default LIKE '%extracting%';
-  IF n <> 1 THEN RAISE EXCEPTION 'A1b FALHOU: status sem default extracting'; END IF;
+  IF n IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'A1b FALHOU: status sem default extracting'; END IF;
 
   -- CHECK de status barra valor inválido
   BEGIN
@@ -185,7 +185,7 @@ BEGIN
     FROM public.kb_extraction_drafts
    WHERE document_id = 'd0000000-0000-0000-0000-000000000001';
 
-  IF t2 <= t1 THEN
+  IF (t2 > t1) IS NOT TRUE THEN
     RAISE EXCEPTION 'A2 FALHOU: updated_at não avançou (t1=%, t2=%) — trigger ausente', t1, t2;
   END IF;
   RAISE NOTICE 'OK A2 — updated_at avançou (trigger funciona): t1=%, t2=%', t1, t2;
@@ -205,7 +205,7 @@ BEGIN
   SET LOCAL test.uid = '00000000-0000-0000-0000-00000000000a';  -- master
   SELECT count(*) INTO n FROM public.kb_extraction_drafts;
   RESET ROLE;
-  IF n <> 1 THEN
+  IF n IS DISTINCT FROM 1 THEN
     RAISE EXCEPTION 'A3a FALHOU: master viu % linhas (esperado 1)', n;
   END IF;
   RAISE NOTICE 'OK A3a — master vê 1 linha';
@@ -221,7 +221,7 @@ BEGIN
   SET LOCAL test.uid = '00000000-0000-0000-0000-00000000000b';  -- employee
   SELECT count(*) INTO n FROM public.kb_extraction_drafts;
   RESET ROLE;
-  IF n <> 0 THEN
+  IF n IS DISTINCT FROM 0 THEN
     RAISE EXCEPTION 'A3b FALHOU: employee viu % linhas (esperado 0 — RLS master-only)', n;
   END IF;
   RAISE NOTICE 'OK A3b — employee vê 0 linhas (RLS filtra)';
@@ -253,7 +253,7 @@ BEGIN
    WHERE document_id = 'd0000000-0000-0000-0000-000000000002';
   GET DIAGNOSTICS rc = ROW_COUNT;
   RESET ROLE;
-  IF rc <> 0 THEN
+  IF rc IS DISTINCT FROM 0 THEN
     RAISE EXCEPTION 'A4a FALHOU: employee deletou % linha(s) (esperado 0 — RLS master-only)', rc;
   END IF;
   RAISE NOTICE 'OK A4a — employee DELETE é no-op (ROW_COUNT=0, RLS filtra)';
@@ -271,7 +271,7 @@ BEGIN
    WHERE document_id = 'd0000000-0000-0000-0000-000000000002';
   GET DIAGNOSTICS rc = ROW_COUNT;
   RESET ROLE;
-  IF rc <> 1 THEN
+  IF rc IS DISTINCT FROM 1 THEN
     RAISE EXCEPTION 'A4b FALHOU: master DELETE afetou % linha(s) (esperado 1)', rc;
   END IF;
   RAISE NOTICE 'OK A4b — master DELETE bem-sucedido (ROW_COUNT=1)';
@@ -361,7 +361,7 @@ BEGIN
   SELECT claim_token INTO tok
     FROM public.kb_extraction_drafts
    WHERE document_id = 'd0000000-0000-0000-0000-000000000001';
-  IF tok::text <> '${TOKEN_A}' THEN
+  IF tok::text IS DISTINCT FROM '${TOKEN_A}' THEN
     RAISE EXCEPTION 'A7b FALHOU: claim_token mudou para % (esperado ${TOKEN_A})', tok;
   END IF;
   RAISE NOTICE 'OK A7b — claim_token original preservado (${TOKEN_A})';
@@ -399,7 +399,7 @@ BEGIN
   SELECT claim_token INTO tok
     FROM public.kb_extraction_drafts
    WHERE document_id = 'd0000000-0000-0000-0000-000000000001';
-  IF tok::text <> '${TOKEN_D}' THEN
+  IF tok::text IS DISTINCT FROM '${TOKEN_D}' THEN
     RAISE EXCEPTION 'A8b FALHOU: claim_token é % após re-claim (esperado ${TOKEN_D})', tok;
   END IF;
 

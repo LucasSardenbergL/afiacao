@@ -152,15 +152,15 @@ SELECT cep_geo_upsert('30140071',-19.93,-43.93,'nom','street');
 SELECT cep_geo_upsert('30140071',-19.93,-43.93,'nom','street');
 DO $$ DECLARE n int; p text; BEGIN
   SELECT count(*), max(precision) INTO n, p FROM cep_geo WHERE cep='30140071';
-  IF n<>1 THEN RAISE EXCEPTION 'U-IDEMP FAIL: % linhas', n; END IF;
-  IF p<>'street' THEN RAISE EXCEPTION 'U-IDEMP FAIL: precision=%', p; END IF;
+  IF n IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'U-IDEMP FAIL: % linhas', n; END IF;
+  IF p IS DISTINCT FROM 'street' THEN RAISE EXCEPTION 'U-IDEMP FAIL: precision=%', p; END IF;
   RAISE NOTICE 'U-IDEMP OK (1 linha, street)';
 END $$;
 
 SELECT cep_geo_upsert('30140071',-1,-1,'mun','city_centroid');
 DO $$ DECLARE p text; la double precision; BEGIN
   SELECT precision, lat INTO p, la FROM cep_geo WHERE cep='30140071';
-  IF p<>'street' OR la<>-19.93 THEN RAISE EXCEPTION 'U-DOWNGRADE FAIL: %/%', p, la; END IF;
+  IF p IS DISTINCT FROM 'street' OR la IS DISTINCT FROM -19.93 THEN RAISE EXCEPTION 'U-DOWNGRADE FAIL: %/%', p, la; END IF;
   RAISE NOTICE 'U-DOWNGRADE OK (street preservado contra city_centroid)';
 END $$;
 
@@ -168,8 +168,8 @@ DO $$ DECLARE t0 timestamptz; t1 timestamptz; p text; BEGIN
   SELECT updated_at INTO t0 FROM cep_geo WHERE cep='30140071';
   PERFORM cep_geo_upsert('30140071',-19.9,-43.9,'nom','rooftop');
   SELECT precision, updated_at INTO p, t1 FROM cep_geo WHERE cep='30140071';
-  IF p<>'rooftop' THEN RAISE EXCEPTION 'U-UPGRADE FAIL: precision=%', p; END IF;
-  IF t1<=t0 THEN RAISE EXCEPTION 'U-UPGRADE FAIL: updated_at não avançou'; END IF;
+  IF p IS DISTINCT FROM 'rooftop' THEN RAISE EXCEPTION 'U-UPGRADE FAIL: precision=%', p; END IF;
+  IF (t1 > t0) IS NOT TRUE THEN RAISE EXCEPTION 'U-UPGRADE FAIL: updated_at não avançou'; END IF;
   RAISE NOTICE 'U-UPGRADE OK (rooftop sobrescreve + updated_at avança)';
 END $$;
 
@@ -178,7 +178,7 @@ DO $$ DECLARE n0 int; n1 int; BEGIN
   PERFORM cep_geo_upsert('abc',-1,-1,'x','street');
   PERFORM cep_geo_upsert('123',-1,-1,'x','street');
   SELECT count(*) INTO n1 FROM cep_geo;
-  IF n1<>n0 THEN RAISE EXCEPTION 'U-LIXO FAIL: % -> %', n0, n1; END IF;
+  IF n1 IS DISTINCT FROM n0 THEN RAISE EXCEPTION 'U-LIXO FAIL: % -> %', n0, n1; END IF;
   RAISE NOTICE 'U-LIXO OK (CEP inválido = no-op)';
 END $$;
 SQL
@@ -212,7 +212,7 @@ END $$;
 -- seed: municipio_geo veio de radar_municipios, filtrando lat NULL (9999999 fora)
 DO $$ DECLARE n int; BEGIN
   SELECT count(*) INTO n FROM municipio_geo;
-  IF n<>1 THEN RAISE EXCEPTION 'G-SEED FAIL: municipio_geo=% (esperado 1)', n; END IF;
+  IF n IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'G-SEED FAIL: municipio_geo=% (esperado 1)', n; END IF;
   RAISE NOTICE 'G-SEED OK (municipio_geo=1, sem-lat filtrado)';
 END $$;
 -- gate: RPC nega sem permissão

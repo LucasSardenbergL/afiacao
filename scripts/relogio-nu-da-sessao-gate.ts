@@ -21,7 +21,8 @@
  * ## A assinatura
  *
  * O dia da sessão (`current_date`, `localtimestamp`/`localtime`/`current_time`, o relógio `now()`/
- * `current_timestamp`/`clock_timestamp()`… convertido a `date`/`timestamp` por `::`, `CAST`, `date()`,
+ * `current_timestamp`/`clock_timestamp()`… convertido a `date`/`timestamp` por `::` — colado, ou depois de
+ * aritmética de intervalo, `(now() - '6 mons'::interval)::date` —, `CAST`, `date()`,
  * `to_char` ou `extract`/`date_part` de campo de calendário) e o instante que vira data na sessão (a
  * coluna `*_at`/`*_em` — a convenção de timestamptz que o irmão de SP mediu em 92,4% da prod, menos os
  * 3 `*_em` que são `date` — por `::date`/`::timestamp`, `date()`, `CAST`, `min/max(…)::date`,
@@ -47,6 +48,10 @@
  *   · o que só existe na PROD — função, view ou DEFAULT criados fora de migration (9 das 26
  *     funções que casaram na varredura de 2026-09-28 viviam só lá);
  *   · SQL montado em string (`EXECUTE format(...)`), e timestamptz fora da convenção `*_at`/`*_em`;
+ *   · a borda contra TIMESTAMPTZ montada com o dia já certo: `t2_data_faturamento >= (dia_sp - '180 days')`
+ *     compara timestamptz com timestamp SEM fuso, e o cast implícito usa o fuso da SESSÃO — o tipo da
+ *     coluna não está no texto (v_sku_leadtime_estatisticas, fase 2: a borda é o INSTANTE da meia-noite
+ *     de SP, `(dia_sp - '180 days') AT TIME ZONE 'America/Sao_Paulo'`);
  *   · literal que CITA a forma errada conta como código (o stripper só tira comentário): numa POS,
  *     escreva a agulha partida — `'created' || '_at::date'` — ou com `\m` na frente, como a
  *     20260929001651.
@@ -99,6 +104,10 @@ export type Forma = 'dia da sessão' | 'instante→data na sessão';
 const FORMAS: readonly { forma: Forma; re: RegExp }[] = [
   { forma: 'dia da sessão', re: /\b(?:current_date|localtimestamp|localtime|current_time)\b/gi },
   { forma: 'dia da sessão', re: new RegExp(String.raw`\b${RELOGIO}\s*::\s*${SEM_FUSO}`, 'gi') },
+  // O relógio com aritmética de intervalo ANTES do cast: `(now() - '6 mons'::interval)::date` — o dia da
+  // sessão do mesmo jeito, só que deslocado. Achado na varredura da prod da fase 2 (v_caca_candidatos, o
+  // ativo_6m): a assinatura acima exige o `::` colado ao relógio e não o via.
+  { forma: 'dia da sessão', re: new RegExp(String.raw`\(\s*${RELOGIO}\s*[-+][^()]*(?:\([^()]*\)[^()]*)*\)\s*::\s*${SEM_FUSO}`, 'gi') },
   { forma: 'dia da sessão', re: new RegExp(String.raw`\bcast\s*\(\s*${RELOGIO}\s+as\s+${SEM_FUSO}`, 'gi') },
   { forma: 'dia da sessão', re: new RegExp(String.raw`\bdate\s*\(\s*${RELOGIO}\s*\)`, 'gi') },
   { forma: 'dia da sessão', re: new RegExp(String.raw`\bto_char\s*\(\s*${RELOGIO}\s*,`, 'gi') },

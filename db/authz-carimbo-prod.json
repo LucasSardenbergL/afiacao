@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-09-30T22:49:29.975Z",
-  "sourceHead": "8452e22997dee51e651cea07333831ee1e19aa57",
+  "medidoEm": "2026-10-01T01:09:45.115Z",
+  "sourceHead": "89cb0c8bb0db18fc8fe2fb3cb0a2803e200c71d6",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -56,61 +56,12 @@
     },
     "corpo": {
       "script": "deriva:corpo:prod",
-      "exit": 1,
-      "resumo": "deriva-corpo — 8 divergência(s) em prod (5 CORPO_ANTERIOR, 2 SEM_PAR, 1 OVERLOAD_FORA_DO_REPO) — ver as linhas ❌",
-      "denominador": "🔎 deriva-corpo — 318 identidade(s) conferida(s) · 15 aposentada(s) · ref origin/main@744ead16a (fetch ok) · prod 2026-09-30 22:50:51.966663Z",
-      "contratoFingerprint": "bb341105b593b89a9608acc048d3b8412cfb5c4b0f574af7ae6cb973bb703402",
-      "auditorFingerprint": "12455e2b4124ae98932a63d644d6e4ed15e270267130f07c1c7c27fbb356dc4f",
-      "achados": [
-        {
-          "id": "1a7aec9eaa18de9a",
-          "linha": "❌ [CORPO_ANTERIOR] fin_period_lock_trigger(): prod roda o corpo de 20260524102500_fix_fin_triggers_json_field_access.sql; o repo commitou 20260929001651_hoje_sp_sessao_utc_sete_funcoes.sql depois — revert por ordem de colagem, ou migration mergeada e não aplicada (xmin 9106714)",
-          "primeiraVez": "2026-09-30",
-          "ultimaVez": "2026-09-30"
-        },
-        {
-          "id": "50c3814143fe4424",
-          "linha": "❌ [CORPO_ANTERIOR] listar_pedidos_a_separar(text): prod roda o corpo de 20260604120000_picking_bridge.sql; o repo commitou 20260929001651_hoje_sp_sessao_utc_sete_funcoes.sql depois — revert por ordem de colagem, ou migration mergeada e não aplicada (xmin 9106714)",
-          "primeiraVez": "2026-09-30",
-          "ultimaVez": "2026-09-30"
-        },
-        {
-          "id": "9c332c492ebbb3a7",
-          "linha": "❌ [CORPO_ANTERIOR] radar_atribuir_tarefa(text,integer): prod roda o corpo de 20260613190000_radar_fatia3.sql; o repo commitou 20260929001651_hoje_sp_sessao_utc_sete_funcoes.sql depois — revert por ordem de colagem, ou migration mergeada e não aplicada (xmin 9106714)",
-          "primeiraVez": "2026-09-30",
-          "ultimaVez": "2026-09-30"
-        },
-        {
-          "id": "d3c1de42ef7bd9ec",
-          "linha": "❌ [CORPO_ANTERIOR] get_regua_preco(uuid,uuid,numeric,numeric,numeric[]): prod roda o corpo de 20260723150000_authz_custo_fu4f_fase2_regua.sql; o repo commitou 20260929001651_hoje_sp_sessao_utc_sete_funcoes.sql depois — revert por ordem de colagem, ou migration mergeada e não aplicada (xmin 9106714)",
-          "primeiraVez": "2026-09-30",
-          "ultimaVez": "2026-09-30"
-        },
-        {
-          "id": "d96fae40920ad1e1",
-          "linha": "❌ [CORPO_ANTERIOR] vendas_sync_semear_janela(date,date,text[]): prod roda o corpo de 20260726140000_vendas_sync_semear_janela_v2.sql; o repo commitou 20260929001651_hoje_sp_sessao_utc_sete_funcoes.sql depois — revert por ordem de colagem, ou migration mergeada e não aplicada (xmin 9106714)",
-          "primeiraVez": "2026-09-30",
-          "ultimaVez": "2026-09-30"
-        },
-        {
-          "id": "c2b7bf4055d125db",
-          "linha": "❌ [SEM_PAR] sincronizar_ativo_omie_para_reposicao(): corpo que nenhuma das 1 versão(ões) commitadas explica — edição manual, ou DDL aplicada ANTES do merge (compare com as migrations das branches abertas) — último CREATE: 20260929001651_hoje_sp_sessao_utc_sete_funcoes.sql (xmin 9106714)",
-          "primeiraVez": "2026-09-30",
-          "ultimaVez": "2026-09-30"
-        },
-        {
-          "id": "b330fd8e40f841c6",
-          "linha": "❌ [SEM_PAR] trg_campanha_gera_alerta(): corpo que nenhuma das 1 versão(ões) commitadas explica — edição manual, ou DDL aplicada ANTES do merge (compare com as migrations das branches abertas) — último CREATE: 20260929001651_hoje_sp_sessao_utc_sete_funcoes.sql (xmin 9106714)",
-          "primeiraVez": "2026-09-30",
-          "ultimaVez": "2026-09-30"
-        },
-        {
-          "id": "71ff05aa158f24e5",
-          "linha": "❌ [OVERLOAD_FORA_DO_REPO] expandir_promocao_item(bigint): overload vivo em prod que nenhuma migration declara (xmin 9106714)",
-          "primeiraVez": "2026-09-30",
-          "ultimaVez": "2026-09-30"
-        }
-      ]
+      "exit": 0,
+      "resumo": "✅ deriva-corpo — 317 identidade(s) batem com o repo (238 em dia, 72 só cosméticas, 6 aceitas na baseline) e 15 aposentada(s) estão ausentes",
+      "denominador": "🔎 deriva-corpo — 317 identidade(s) conferida(s) · 15 aposentada(s) · ref origin/main@f56be1634 (fetch ok) · prod 2026-10-01 01:10:12.481269Z",
+      "contratoFingerprint": "4dcd8bddc86285d5ecf0931e73ffd06ffb0470c6419b6bd9c8de0cd33dc8ddd4",
+      "auditorFingerprint": "7697dadeea273a69dd499490b0b68d4cef37cf1cc49eefcbe1ae940445932b29",
+      "achados": []
     }
   }
 }

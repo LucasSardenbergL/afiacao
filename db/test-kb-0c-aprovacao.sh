@@ -194,7 +194,7 @@ BEGIN
   UPDATE public.kb_product_specs SET rendimento_m2_por_litro = 999 WHERE id = '$SPEC2';
   GET DIAGNOSTICS rc = ROW_COUNT;
   RESET ROLE;
-  IF rc <> 0 THEN RAISE EXCEPTION 'B2a FALHOU: employee adulterou % linha(s) (esperado 0 — RLS master-only)', rc; END IF;
+  IF rc IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'B2a FALHOU: employee adulterou % linha(s) (esperado 0 — RLS master-only)', rc; END IF;
   RAISE NOTICE 'OK B2a — employee UPDATE é no-op (ROW_COUNT=0, sem erro)';
 END \$\$;
 SQL
@@ -218,9 +218,9 @@ BEGIN
   UPDATE public.kb_product_specs SET rendimento_m2_por_litro = 12 WHERE id = '$SPEC2';
   GET DIAGNOSTICS rc = ROW_COUNT;
   RESET ROLE;
-  IF rc <> 1 THEN RAISE EXCEPTION 'B2c FALHOU: master UPDATE afetou % linha(s) (esperado 1)', rc; END IF;
+  IF rc IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'B2c FALHOU: master UPDATE afetou % linha(s) (esperado 1)', rc; END IF;
   SELECT rendimento_m2_por_litro INTO v FROM public.kb_product_specs WHERE id = '$SPEC2';
-  IF v <> 12 THEN RAISE EXCEPTION 'B2d FALHOU: master não gravou (rendimento=%)', v; END IF;
+  IF v IS DISTINCT FROM 12 THEN RAISE EXCEPTION 'B2d FALHOU: master não gravou (rendimento=%)', v; END IF;
   RAISE NOTICE 'OK B2c — master UPDATE grava (ROW_COUNT=1, rendimento=12)';
 END \$\$;
 SQL
@@ -304,7 +304,7 @@ BEGIN
 
   -- (a) SKU existente (oben,8001) → retorna 1
   SELECT public.confirmar_vinculo_boletim(spec, '[{"account":"oben","omie_codigo_produto":8001}]'::jsonb) INTO n;
-  IF n <> 1 THEN RAISE EXCEPTION 'B4a FALHOU: confirmar retornou % (esperado 1) p/ SKU existente', n; END IF;
+  IF n IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'B4a FALHOU: confirmar retornou % (esperado 1) p/ SKU existente', n; END IF;
   RAISE NOTICE 'OK B4a — SKU existente (oben,8001) confirmado (retorno 1)';
 
   -- (b) SKU inexistente (oben,999999) → RAISE "inexistente em omie_products"
@@ -373,17 +373,17 @@ BEGIN
 
   -- 1ª confirmação (oben,8001)→spec → retorna 1
   SELECT public.confirmar_vinculo_boletim(spec, '[{"account":"oben","omie_codigo_produto":8001}]'::jsonb) INTO n1;
-  IF n1 <> 1 THEN RAISE EXCEPTION 'B5a FALHOU: 1ª confirmação retornou % (esperado 1)', n1; END IF;
+  IF n1 IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'B5a FALHOU: 1ª confirmação retornou % (esperado 1)', n1; END IF;
 
   -- 2ª confirmação IDÊNTICA (mesmo dono) → ON CONFLICT DO NOTHING → ROW_COUNT=0 → retorna 0 (NÃO 1)
   SELECT public.confirmar_vinculo_boletim(spec, '[{"account":"oben","omie_codigo_produto":8001}]'::jsonb) INTO n2;
-  IF n2 <> 0 THEN RAISE EXCEPTION 'B5b FALHOU: 2ª confirmação (no-op) retornou % (esperado 0 — contador devia ser ROW_COUNT)', n2; END IF;
+  IF n2 IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'B5b FALHOU: 2ª confirmação (no-op) retornou % (esperado 0 — contador devia ser ROW_COUNT)', n2; END IF;
   RAISE NOTICE 'OK B5 — contador real: 1ª=1, 2ª (DO NOTHING)=0';
 
   -- count confirmed para (oben,8001) = 1 (não duplicou)
   SELECT count(*) INTO c FROM public.omie_product_spec_links
    WHERE account='oben' AND omie_codigo_produto=8001 AND status='confirmed';
-  IF c <> 1 THEN RAISE EXCEPTION 'B5c FALHOU: % linhas confirmed (esperado 1)', c; END IF;
+  IF c IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'B5c FALHOU: % linhas confirmed (esperado 1)', c; END IF;
   RAISE NOTICE 'OK B5c — 1 linha confirmed (sem duplicata)';
 
   -- limpeza p/ liberar o SKU 8001 pro B6
@@ -408,23 +408,23 @@ BEGIN
 
   -- (a) desvincular com id ERRADO (stale UI) → retorna 0; count confirmed = 1 (nada apagado)
   SELECT public.desvincular_boletim('oben', 8001, '00000000-0000-0000-0000-0000000000ff') INTO d;
-  IF d <> 0 THEN RAISE EXCEPTION 'B6a FALHOU: desvincular com id errado apagou % (esperado 0 — stale-delete)', d; END IF;
+  IF d IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'B6a FALHOU: desvincular com id errado apagou % (esperado 0 — stale-delete)', d; END IF;
   SELECT count(*) INTO c FROM public.omie_product_spec_links
    WHERE account='oben' AND omie_codigo_produto=8001 AND status='confirmed';
-  IF c <> 1 THEN RAISE EXCEPTION 'B6a2 FALHOU: % confirmed após stale-delete (esperado 1)', c; END IF;
+  IF c IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'B6a2 FALHOU: % confirmed após stale-delete (esperado 1)', c; END IF;
   RAISE NOTICE 'OK B6a — id errado não apaga (retorno 0, 1 confirmed intacto)';
 
   -- (b) desvincular com o id CERTO → retorna 1; count confirmed = 0
   SELECT public.desvincular_boletim('oben', 8001, specA) INTO d;
-  IF d <> 1 THEN RAISE EXCEPTION 'B6b FALHOU: desvincular com id certo retornou % (esperado 1)', d; END IF;
+  IF d IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'B6b FALHOU: desvincular com id certo retornou % (esperado 1)', d; END IF;
   SELECT count(*) INTO c FROM public.omie_product_spec_links
    WHERE account='oben' AND omie_codigo_produto=8001 AND status='confirmed';
-  IF c <> 0 THEN RAISE EXCEPTION 'B6b2 FALHOU: % confirmed após desvincular certo (esperado 0)', c; END IF;
+  IF c IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'B6b2 FALHOU: % confirmed após desvincular certo (esperado 0)', c; END IF;
   RAISE NOTICE 'OK B6b — id certo desvincula (retorno 1, 0 confirmed)';
 
   -- (c) reatribuir: agora (oben,8001)→specB é aceito (SKU livre)
   SELECT public.confirmar_vinculo_boletim(specB, '[{"account":"oben","omie_codigo_produto":8001}]'::jsonb) INTO d;
-  IF d <> 1 THEN RAISE EXCEPTION 'B6c FALHOU: reatribuição p/ specB retornou % (esperado 1)', d; END IF;
+  IF d IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'B6c FALHOU: reatribuição p/ specB retornou % (esperado 1)', d; END IF;
   RAISE NOTICE 'OK B6c — reatribuição (oben,8001)→specB aceita após desvincular';
 END $$;
 SQL

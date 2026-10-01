@@ -285,3 +285,17 @@ db/test-padrao-like-contem.sh              59  falsificar=19
 # 3 caminhos, com e sem volume e similaridade (F1-F12). PRE/POS exercitadas camada a camada,
 # inclusive a TRAVA (M5, duas conexões) e o DROP+CREATE pego pelo OID (M12).
 db/test-expandir-promocao-item.sh          41  falsificar=18
+
+# Eixo 7 (fuso), fase 2 da classe (ii) — o dia da sessão lido NU em VIEWS e DEFAULTs de coluna
+# (20260930230623_hoje_sp_views_defaults_classe_ii.sql). 18 views e 6 DEFAULTs, cada um com os mesmos 4
+# asserts nos instantes 20:59:59 · 21:00:00 · 23:59:59 BRT de D e 00:00:00 de D+1, sob sessão UTC E SP (a:
+# 21:00 = 20:59:59; b: UTC = SP; c: controle POSITIVO, muda à 00:00 de SP; d: a sob SP, verde na
+# sabotagem); P01-P24 (predecessoras = md5/texto da prod), K1-K3 (a trava e a ORDEM dela, a dos
+# leitores — outra ordem abre deadlock), Z0 (o pin), G1-G5 (a PRÉ e a PÓS com dente: predecessora
+# divergente, texto adulterado, ACL mexido, security_invoker perdido; re-aplicar passa). Uma sabotagem
+# por objeto (o GÊMEO da sessão, now()::date — CURRENT_DATE não é função) + borda ingênua do lead time
+# (timestamptz), relógio de parede, UTC escrito, sem pin, sem trava, ordem errada, PRÉ neutralizada, PÓS
+# removida. Autocontida: initdb + stubs + schema-snapshot + a fixture
+# db/fixtures/hoje-sp-views-defaults-predecessoras-prod-20260930.sql (o snapshot perdeu as barras dos
+# literais de regex — as predecessoras vêm da fixture) + a migration.
+db/test-hoje-sp-views-defaults.sh          129  falsificar=33
