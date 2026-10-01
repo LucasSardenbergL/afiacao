@@ -175,7 +175,7 @@ db/test-transporte-nuvem.sh                18  falsificar=10
 # bootstrap REAIS contra stubs de pg_net/vault, com o SQL do gerador deste disco (bun, como a
 # canária), e executa o comando que o PRÓPRIO cabeçalho manda rodar. As 7 sabotagens vão nos dois
 # idiomas do servidor (a palavra NOTICE/NOTA muda; o recorte não pode depender dela) = 14.
-db/test-sonda-passo-pelo-db-aplicar.sh     27  falsificar=14
+db/test-sonda-passo-pelo-db-aplicar.sh     32  falsificar=14
 
 # ── Eixo 6 — DUPLA CONTAGEM (o mesmo fato sob N óticas) ──────────────────────────
 # `fin_movimentacoes` guarda o MESMO pagamento do Omie duas vezes (lançamento do título e

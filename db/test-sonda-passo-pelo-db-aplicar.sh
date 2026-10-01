@@ -29,9 +29,14 @@
 #   E5 canária: os passos 2 e 4 chegam ao log com o id do disparo. Sem eco, é a ÚNICA via.
 #
 # Falsifica (`--falsificar`) sabotando os ARTEFATOS gerados — uma camada por vez, cada sabotagem com
-# a MARCA esperada —, depois de um CONTROLE verde na MESMA invocação, nos dois idiomas do servidor: a
-# palavra da severidade do NOTICE muda com o `lc_messages`, e a extração não pode depender dela.
+# os asserts que TÊM de acusá-la e os que TÊM de seguir verdes (o idioma de
+# scripts/falsificar-exige-assert-gate.ts) —, depois de um CONTROLE verde na MESMA invocação, nos dois
+# idiomas do servidor: a palavra da severidade do NOTICE muda com o `lc_messages`, e a extração não
+# pode depender dela.
 set -euo pipefail
+# fd 3 = a saída de verdade: o julgamento da falsificação vai para um log por rodada, e erro de
+# HARNESS dentro dele não pode morrer calado nesse log.
+exec 3>&1
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck disable=SC1091  # o gate roda sem -x; o helper é versionado ao lado, em db/lib/
@@ -52,12 +57,11 @@ unset LANGUAGE
 FALSIFICAR=0
 [ "${1:-}" = "--falsificar" ] && FALSIFICAR=1
 
-PASS=0; FAIL=0; MARCAS=""; SILENCIO=0
-ok()  { PASS=$((PASS + 1)); [ "$SILENCIO" -eq 1 ] || printf '  ✅ %s\n' "$1"; }
-nok() { # <asserção> <MARCA> <detalhe>
-  FAIL=$((FAIL + 1)); MARCAS="$MARCAS $2"
-  [ "$SILENCIO" -eq 1 ] || printf '  ❌ %s — [%s] %s\n' "$1" "$2" "$3"
-}
+# Cada assert tem um ID estável, impresso nas DUAS saídas: é por ele que a falsificação confere que a
+# sabotagem foi acusada pelo assert DECLARADO, e não por um vermelho qualquer.
+PASS=0; FAIL=0
+ok()  { PASS=$((PASS + 1)); printf '  ✓ (%s) %s\n' "$1" "$2"; }           # <ID> <asserção>
+nok() { FAIL=$((FAIL + 1)); printf '  ✗ (%s) %s — %s\n' "$1" "$2" "$3"; }  # <ID> <asserção> <detalhe>
 
 # SONDAS com resposta POSITIVA das duas dependências de fora do Postgres. `command -v` não basta:
 # presente-porém-quebrada esvazia o guard igual (docs/historico/sonda-ausente-em-script-que-apaga.md).
@@ -245,18 +249,21 @@ campo_da_linha() { # <arquivo_de_linhas> <chave> <campo: id|veredito>
 tem() { grep -qF -- "$2" <<<"$1"; }
 
 # ─── o julgamento ─────────────────────────────────────────────────────────────────────────────
-julga() { # <dir_artefatos> <rótulo> — E1…E5; cada falha soma a sua MARCA em MARCAS
-  local d="$1" rot="$2" arq p cmd antes id_a id_b n v l
+# Executa SEMPRE os 32 asserts — nenhum `continue` pula assert dependente. A contagem faz parte do
+# juízo da falsificação: rodada que executa menos que o controle é vermelho de ABORTO, não de assert.
+julga() { # <dir_artefatos> <rótulo>
+  local d="$1" rot="$2" arq sigla p cmd antes id_a id_b n v l
   # shellcheck source=/dev/null  # meta.env é escrito pelo gerador nesta execução
   . "$d/meta.env"
 
   # E1 ─ o cabeçalho de cada bloco de disparo diz o comando que extrai o passo do log
   for arq in sonda canaria; do
+    sigla=S; [ "$arq" = sonda ] || sigla=C
     for p in 2 4; do
       if cmd="$(comando_do_cabecalho "$p" "$d/$arq.sql")" && [ -n "$cmd" ]; then
-        ok "E1 [$arq] o cabeçalho manda extrair o PASSO $p do log do db:aplicar"
+        ok "C_$sigla$p" "E1 [$arq] o cabeçalho manda extrair o PASSO $p do log do db:aplicar"
       else
-        nok "E1 [$arq] o cabeçalho manda extrair o PASSO $p" CABECALHO_SEM_COMANDO \
+        nok "C_$sigla$p" "E1 [$arq] o cabeçalho manda extrair o PASSO $p" \
           "nenhuma linha \`-- awk '…SONDA_PASSO_${p}_INICIO…' <log> | …\`"
       fi
     done
@@ -264,69 +271,72 @@ julga() { # <dir_artefatos> <rótulo> — E1…E5; cada falha soma a sua MARCA e
 
   # E2 ─ como o SQL Editor roda: a CÉLULA e o NOTICE são o MESMO texto, na MESMA execução
   for arq in sonda canaria; do
+    sigla=S; [ "$arq" = sonda ] || sigla=C
     separa_blocos "$d/$arq.sql" "$d/$arq"
     for p in 2 4; do
       l="$d/$arq.ed$p"
-      if ! editor "$d/$arq.bloco$((p - 1)).sql" "$l"; then
-        nok "E2 [$arq] o bloco do passo $((p - 1)) roda numa transação" EDITOR_FALHOU "$(head -c 300 "$l.err")"
-        continue
-      fi
-      if ! extrai "$p" "$d/$arq.sql" "$l.err" > "$l.notice" 2> "$l.xerr" || [ ! -s "$l.notice" ]; then
-        nok "E2 [$arq] o NOTICE do passo $p sai na execução do bloco" SEM_NOTICE_NO_EDITOR "$(head -c 200 "$l.xerr")"
-        continue
+      : > "$l.notice"
+      if editor "$d/$arq.bloco$((p - 1)).sql" "$l" \
+         && extrai "$p" "$d/$arq.sql" "$l.err" > "$l.notice" 2> "$l.xerr" && [ -s "$l.notice" ]; then
+        ok "N_$sigla$p" "E2 [$arq] o bloco do passo $((p - 1)) roda numa transação e o NOTICE do passo $p sai"
+      else
+        nok "N_$sigla$p" "E2 [$arq] o NOTICE do passo $p sai na execução do bloco" \
+          "$(cat "$l.err" "$l.xerr" 2>/dev/null | head -c 200 | tr '\n' ' ')"
       fi
       # `$(cat …)` tira só as quebras do FIM: o psql fecha cada resultado com `\n`. O miolo é
       # comparado byte a byte.
-      if [ -s "$l.out" ] && [ "$(cat "$l.out")" = "$(cat "$l.notice")" ]; then
-        ok "E2 [$arq] a célula do passo $p e o NOTICE são o MESMO texto ($(wc -c < "$l.notice" | tr -d ' ') bytes)"
+      if [ -s "$l.out" ] && [ -s "$l.notice" ] && [ "$(cat "$l.out")" = "$(cat "$l.notice")" ]; then
+        ok "D_$sigla$p" "E2 [$arq] a célula do passo $p e o NOTICE são o MESMO texto ($(wc -c < "$l.notice" | tr -d ' ') bytes)"
       else
-        nok "E2 [$arq] a célula do passo $p é o texto do NOTICE" CELULA_DIFERE_DO_NOTICE \
-          "célula $(wc -c < "$l.out" | tr -d ' ') bytes × NOTICE $(wc -c < "$l.notice" | tr -d ' ') bytes"
+        nok "D_$sigla$p" "E2 [$arq] a célula do passo $p é o texto do NOTICE" \
+          "célula $(wc -c < "$l.out" 2>/dev/null | tr -d ' ') bytes × NOTICE $(wc -c < "$l.notice" | tr -d ' ') bytes"
       fi
     done
   done
 
   # Os bytes de uma rodada podem repetir os da anterior (sabotagem que só toca um arquivo): o
   # ledger descartável é zerado para "já aplicado" (exit 3) não se passar por veredito.
-  escalar "DELETE FROM public.db_aplicacoes" > /dev/null || { echo "ERRO: não consegui zerar o ledger"; exit 1; }
-  commita_artefatos "$d" "$rot"
+  escalar "DELETE FROM public.db_aplicacoes" > /dev/null \
+    || { echo "ERRO: não consegui zerar o ledger do cluster $CLUSTER" >&3; exit 1; }
+  commita_artefatos "$d" "$rot" \
+    || { echo "ERRO: não consegui commitar os artefatos no repo descartável" >&3; exit 1; }
 
   # E3 ─ pelo db:aplicar REAL
   antes="$(escalar "SELECT coalesce(max(id), 0) FROM net.fila_de_mentira")" || antes="ERRO"
   aplica db/sonda.sql
   if [ "$APLICA_RC" = 0 ] && grep -q 'APLICADO' "$APLICA_OUT"; then
-    ok "E3 o db:aplicar aplica o PASSO 1+3 (exit 0, APLICADO)"
+    ok A3_APLICA "E3 o db:aplicar aplica o PASSO 1+3 (exit 0, APLICADO)"
   else
-    nok "E3 o db:aplicar aplica o PASSO 1+3" APPLY_FALHOU "rc=$APLICA_RC: $(tail -c 300 "$APLICA_OUT")"
+    nok A3_APLICA "E3 o db:aplicar aplica o PASSO 1+3" "rc=$APLICA_RC: $(tail -c 300 "$APLICA_OUT")"
   fi
   if [ -n "$APLICA_LOG" ] && [ -f "$APLICA_LOG" ]; then
-    ok "E3 o db:aplicar anuncia o log (\`log: …\`)"
+    ok A3_LOG "E3 o db:aplicar anuncia o log (\`log: …\`)"
   else
-    nok "E3 o db:aplicar anuncia o log" SEM_LOG "$(tail -c 300 "$APLICA_OUT")"
+    nok A3_LOG "E3 o db:aplicar anuncia o log" "$(tail -c 300 "$APLICA_OUT")"
     APLICA_LOG="/dev/null"
   fi
   # O defeito em si, medido SEM passar pelo cabeçalho: o texto do passo embutido está no log?
   n="$(grep -c 'EMBUTIDO aqui' "$APLICA_LOG" || true)"
   if [ "$n" -ge 2 ]; then
-    ok "E3 o texto dos passos 2 e 4 CHEGA ao log do db:aplicar"
+    ok A3_TEXTO "E3 o texto dos passos 2 e 4 CHEGA ao log do db:aplicar"
   else
-    nok "E3 o texto dos passos 2 e 4 chega ao log" SEM_PASSO_NO_LOG \
+    nok A3_TEXTO "E3 o texto dos passos 2 e 4 chega ao log" \
       "$n de 2 — o log tem: $(tr '\n' '|' < "$APLICA_LOG" | head -c 200)"
   fi
   for p in 2 4; do
     if extrai "$p" "$d/sonda.sql" "$APLICA_LOG" > "$d/log.p$p.sql" 2> "$d/log.p$p.err" && [ -s "$d/log.p$p.sql" ]; then
-      ok "E3 o comando do CABEÇALHO extrai o passo $p do log"
+      ok "A3_X$p" "E3 o comando do CABEÇALHO extrai o passo $p do log"
     else
-      nok "E3 o comando do cabeçalho extrai o passo $p do log" EXTRACAO_FALHOU "$(head -c 200 "$d/log.p$p.err")"
+      nok "A3_X$p" "E3 o comando do cabeçalho extrai o passo $p do log" "$(head -c 200 "$d/log.p$p.err")"
     fi
   done
   id_a="$(escalar "SELECT id FROM net.fila_de_mentira WHERE id > $antes AND url LIKE '%/sonda-a'")" || id_a=""
   id_b="$(escalar "SELECT id FROM net.fila_de_mentira WHERE id > $antes AND url LIKE '%/sonda-b'")" || id_b=""
   n="$(escalar "SELECT count(*) FROM net.fila_de_mentira WHERE id > $antes AND url LIKE '%/sonda-c'")" || n="ERRO"
   if [ -n "$id_a" ] && [ -n "$id_b" ] && [ "$n" = 0 ]; then
-    ok "E3 disparou as baratas ($id_a, $id_b) e a trava segurou a cara"
+    ok A3_DISPARO "E3 disparou as baratas ($id_a, $id_b) e a trava segurou a cara"
   else
-    nok "E3 disparou as baratas e a trava segurou a cara" DISPARO_ERRADO "a=$id_a b=$id_b c=$n"
+    nok A3_DISPARO "E3 disparou as baratas e a trava segurou a cara" "a=$id_a b=$id_b c=$n"
   fi
   if [ -n "$id_a" ] && [ -n "$id_b" ]; then
     # sonda-a responde a sonda de VERDADE (eco completo); sonda-b é um bundle PRÉ-SENSOR: 200 com o
@@ -339,91 +349,92 @@ julga() { # <dir_artefatos> <rótulo> — E1…E5; cada falha soma a sua MARCA e
   roda_passo "$d/log.p4.sql" "$d/log.p4.linhas" || true
   v="$(campo_da_linha "$d/log.p2.linhas" sonda-a id)"
   if [ -n "$id_a" ] && [ "$v" = "$id_a" ] && [ "$(campo_da_linha "$d/log.p2.linhas" sonda-b id)" = "$id_b" ]; then
-    ok "E3 o mapa que o log traz é o DESTE disparo (sonda-a → $id_a, sonda-b → $id_b)"
+    ok A3_MAPA "E3 o mapa que o log traz é o DESTE disparo (sonda-a → $id_a, sonda-b → $id_b)"
   else
-    nok "E3 o mapa do log é o deste disparo" MAPA_AUSENTE "passo 2 julgou sonda-a com id='$v' (disparo: '$id_a')"
+    nok A3_MAPA "E3 o mapa do log é o deste disparo" "passo 2 julgou sonda-a com id='$v' (disparo: '$id_a')"
   fi
   v="$(campo_da_linha "$d/log.p2.linhas" sonda-a veredito)"
   if tem "$v" 'DEPLOY CONFIRMADO'; then
-    ok "E3 o passo 2 do log julga sonda-a: DEPLOY CONFIRMADO"
+    ok A3_VA "E3 o passo 2 do log julga sonda-a: DEPLOY CONFIRMADO"
   else
-    nok "E3 o passo 2 do log julga sonda-a" VEREDITO_ERRADO "veio: $(head -c 160 <<<"$v")"
+    nok A3_VA "E3 o passo 2 do log julga sonda-a" "veio: $(head -c 160 <<<"$v")"
   fi
   v="$(campo_da_linha "$d/log.p2.linhas" sonda-b veredito)"
   if tem "$v" 'PRE-SENSOR'; then
-    ok "E3 o passo 2 do log julga sonda-b: PRE-SENSOR — o veredito que só o MAPA alcança"
+    ok A3_VB "E3 o passo 2 do log julga sonda-b: PRE-SENSOR — o veredito que só o MAPA alcança"
   else
-    nok "E3 o passo 2 do log julga sonda-b (sem eco)" VEREDITO_ERRADO "veio: $(head -c 160 <<<"$v")"
+    nok A3_VB "E3 o passo 2 do log julga sonda-b (sem eco)" "veio: $(head -c 160 <<<"$v")"
   fi
   v="$(campo_da_linha "$d/log.p4.linhas" sonda-c veredito)"
   if tem "$v" 'INDETERMINADO' && [ -z "$(campo_da_linha "$d/log.p4.linhas" sonda-c id)" ]; then
-    ok "E3 o passo 4 do log julga sonda-c: INDETERMINADO (trava fechada, id nulo)"
+    ok A3_VC "E3 o passo 4 do log julga sonda-c: INDETERMINADO (trava fechada, id nulo)"
   else
-    nok "E3 o passo 4 do log julga sonda-c" TRAVA_SEM_INDETERMINADO "veio: $(head -c 160 <<<"$v")"
+    nok A3_VC "E3 o passo 4 do log julga sonda-c" "veio: $(head -c 160 <<<"$v")"
   fi
 
   # E4 ─ o --ensaio: o NOTICE sai antes do ROLLBACK, o disparo não
   antes="$(escalar "SELECT coalesce(max(id), 0) FROM net.fila_de_mentira")" || antes="ERRO"
   aplica db/sonda.sql --ensaio
   if [ "$APLICA_RC" = 0 ] && grep -q 'ENSAIO ok' "$APLICA_OUT"; then
-    ok "E4 o --ensaio roda inteiro (exit 0, ENSAIO ok)"
+    ok A4_ENSAIO "E4 o --ensaio roda inteiro (exit 0, ENSAIO ok)"
   else
-    nok "E4 o --ensaio roda inteiro" ENSAIO_FALHOU "rc=$APLICA_RC: $(tail -c 300 "$APLICA_OUT")"
+    nok A4_ENSAIO "E4 o --ensaio roda inteiro" "rc=$APLICA_RC: $(tail -c 300 "$APLICA_OUT")"
   fi
   n="$(escalar "SELECT count(*) FROM net.fila_de_mentira WHERE id > $antes")" || n="ERRO"
   if [ "$n" = 0 ]; then
-    ok "E4 o --ensaio não disparou nada (a fila voltou no ROLLBACK)"
+    ok A4_NADA "E4 o --ensaio não disparou nada (a fila voltou no ROLLBACK)"
   else
-    nok "E4 o --ensaio não dispara" ENSAIO_DISPAROU "$n linha(s) na fila"
+    nok A4_NADA "E4 o --ensaio não dispara" "$n linha(s) na fila"
   fi
   [ -n "$APLICA_LOG" ] && [ -f "$APLICA_LOG" ] || APLICA_LOG="/dev/null"
-  if extrai 2 "$d/sonda.sql" "$APLICA_LOG" > "$d/ens.p2.sql" 2> "$d/ens.p2.err" && [ -s "$d/ens.p2.sql" ] \
-     && roda_passo "$d/ens.p2.sql" "$d/ens.p2.linhas"; then
-    v="$(campo_da_linha "$d/ens.p2.linhas" sonda-a veredito)"
-    if tem "$v" 'AGUARDE' && tem "$(campo_da_linha "$d/ens.p2.linhas" sonda-b veredito)" 'AGUARDE'; then
-      ok "E4 o log do --ensaio TAMBÉM traz o passo 2 — e ele fica em AGUARDE para sempre"
-    else
-      nok "E4 o passo 2 do --ensaio fica em AGUARDE" ENSAIO_NAO_AGUARDA "veio: $(head -c 160 <<<"$v")"
-    fi
+  if extrai 2 "$d/sonda.sql" "$APLICA_LOG" > "$d/ens.p2.sql" 2> "$d/ens.p2.err" && [ -s "$d/ens.p2.sql" ]; then
+    ok A4_PASSO "E4 o log do --ensaio TAMBÉM traz o passo 2 (o NOTICE sai antes do ROLLBACK)"
   else
-    nok "E4 o log do --ensaio traz o passo 2" ENSAIO_SEM_PASSO "$(head -c 200 "$d/ens.p2.err")"
+    nok A4_PASSO "E4 o log do --ensaio traz o passo 2" "$(head -c 200 "$d/ens.p2.err")"
+  fi
+  roda_passo "$d/ens.p2.sql" "$d/ens.p2.linhas" || true
+  v="$(campo_da_linha "$d/ens.p2.linhas" sonda-a veredito)"
+  if tem "$v" 'AGUARDE' && tem "$(campo_da_linha "$d/ens.p2.linhas" sonda-b veredito)" 'AGUARDE'; then
+    ok A4_AGUARDE "E4 e o passo 2 do --ensaio fica em AGUARDE para sempre — o aviso do cabeçalho"
+  else
+    nok A4_AGUARDE "E4 o passo 2 do --ensaio fica em AGUARDE" "veio: $(head -c 160 <<<"$v")"
   fi
 
   # E5 ─ a canária pelo db:aplicar: sem eco de slug, o mapa do log é a ÚNICA via
   antes="$(escalar "SELECT coalesce(max(id), 0) FROM net.fila_de_mentira")" || antes="ERRO"
   aplica db/canaria.sql
   if [ "$APLICA_RC" = 0 ] && grep -q 'APLICADO' "$APLICA_OUT"; then
-    ok "E5 o db:aplicar aplica o disparo das canárias (exit 0, APLICADO)"
+    ok A5_APLICA "E5 o db:aplicar aplica o disparo das canárias (exit 0, APLICADO)"
   else
-    nok "E5 o db:aplicar aplica o disparo das canárias" CANARIA_APPLY_FALHOU "rc=$APLICA_RC: $(tail -c 300 "$APLICA_OUT")"
+    nok A5_APLICA "E5 o db:aplicar aplica o disparo das canárias" "rc=$APLICA_RC: $(tail -c 300 "$APLICA_OUT")"
   fi
   [ -n "$APLICA_LOG" ] && [ -f "$APLICA_LOG" ] || APLICA_LOG="/dev/null"
   n="$(grep -c 'EMBUTIDO aqui' "$APLICA_LOG" || true)"
   if [ "$n" -ge 2 ]; then
-    ok "E5 o texto dos passos 2 e 4 da canária CHEGA ao log"
+    ok A5_TEXTO "E5 o texto dos passos 2 e 4 da canária CHEGA ao log"
   else
-    nok "E5 o texto dos passos da canária chega ao log" CANARIA_SEM_PASSO_NO_LOG "$n de 2"
+    nok A5_TEXTO "E5 o texto dos passos da canária chega ao log" "$n de 2"
   fi
   for p in 2 4; do
     if extrai "$p" "$d/canaria.sql" "$APLICA_LOG" > "$d/can.p$p.sql" 2> "$d/can.p$p.err" && [ -s "$d/can.p$p.sql" ]; then
-      ok "E5 o comando do CABEÇALHO extrai o passo $p da canária"
+      ok "A5_X$p" "E5 o comando do CABEÇALHO extrai o passo $p da canária"
     else
-      nok "E5 o comando do cabeçalho extrai o passo $p da canária" CANARIA_EXTRACAO_FALHOU "$(head -c 200 "$d/can.p$p.err")"
+      nok "A5_X$p" "E5 o comando do cabeçalho extrai o passo $p da canária" "$(head -c 200 "$d/can.p$p.err")"
     fi
     roda_passo "$d/can.p$p.sql" "$d/can.p$p.linhas" || true
   done
   v="$(campo_da_linha "$d/can.p2.linhas" "$CANARIA_BARATA" id)"
   n="$(escalar "SELECT count(*) FROM net.fila_de_mentira WHERE id > $antes AND id = ${v:-0}")" || n="ERRO"
   if [ -n "$v" ] && [ "$n" = 1 ] && tem "$(campo_da_linha "$d/can.p2.linhas" "$CANARIA_BARATA" veredito)" 'AGUARDE'; then
-    ok "E5 o passo 2 da canária traz o id DESTE disparo ($CANARIA_BARATA → $v) e aguarda a resposta"
+    ok A5_MAPA "E5 o passo 2 da canária traz o id DESTE disparo ($CANARIA_BARATA → $v) e aguarda a resposta"
   else
-    nok "E5 o passo 2 da canária traz o id deste disparo" CANARIA_MAPA_AUSENTE "id='$v', na fila=$n"
+    nok A5_MAPA "E5 o passo 2 da canária traz o id deste disparo" "id='$v', na fila=$n"
   fi
   v="$(campo_da_linha "$d/can.p4.linhas" "$CANARIA_CARA" veredito)"
   if tem "$v" 'INDETERMINADO' && [ -z "$(campo_da_linha "$d/can.p4.linhas" "$CANARIA_CARA" id)" ]; then
-    ok "E5 o passo 4 da canária julga $CANARIA_CARA: INDETERMINADO (trava fechada)"
+    ok A5_TRAVA "E5 o passo 4 da canária julga $CANARIA_CARA: INDETERMINADO (trava fechada)"
   else
-    nok "E5 o passo 4 da canária julga a cara" CANARIA_TRAVA_SEM_INDETERMINADO "veio: $(head -c 160 <<<"$v")"
+    nok A5_TRAVA "E5 o passo 4 da canária julga a cara" "veio: $(head -c 160 <<<"$v")"
   fi
 }
 
@@ -441,67 +452,104 @@ if [ "$FALSIFICAR" -eq 0 ]; then
 fi
 
 # ─── falsificação ─────────────────────────────────────────────────────────────────────────────
-# Cada sabotagem: <id> | <arquivo(s): sonda, canaria ou ambos> | <MARCA esperada> | <expressão sed -E>
-# O sed atua sobre uma CÓPIA dos artefatos; sabotagem que não muda byte nenhum é FALHA (não
-# "vermelha"): mediria o próprio harness. Uma camada por vez — a que fica VERDE é redundante ou
+# SABOTAGENS: <nome>:<VERMELHOS>[:<VERDES>] — os asserts que TÊM de acusar a sabotagem (`,` = E) e os
+# que TÊM de seguir verdes: é o que prova que ela pegou a SUA camada, e não derrubou a rodada. Cada
+# uma atua numa CÓPIA dos artefatos (`sabotar`), uma camada por vez — a que fica VERDE é redundante ou
 # inalcançada.
-SABOTAGENS=(
-  "s1|ambos|SEM_PASSO_NO_LOG|s/RAISE NOTICE/RAISE DEBUG/"
-  "s2|ambos|SEM_PASSO_NO_LOG|s/^([[:space:]]*)RAISE NOTICE .*$/\\1NULL;/"
-  "s3|ambos|CELULA_DIFERE_DO_NOTICE|s/RETURN p_texto;/RETURN left(p_texto, 200);/"
-  "s4|sonda|MAPA_AUSENTE|s/^\\\$sonda\\\$, m\\.ids\\)\$/\$sonda\$, '{}')/"
-  "s5|sonda|EXTRACAO_FALHOU|s/'SONDA_PASSO_2_FIM'/'SONDA_PASSO_2_FIX'/"
-  "s6|ambos|CABECALHO_SEM_COMANDO|/^--[[:space:]]+awk '/d"
-  "s7|canaria|CANARIA_SEM_PASSO_NO_LOG|s/RAISE NOTICE/RAISE DEBUG/"
-)
-DESCRICAO=(
-  "o NOTICE rebaixado a DEBUG — abaixo do client_min_messages, não sai da sessão"
-  "a função não levanta nada — a forma do defeito original: só a célula, que o EXECUTE descarta"
-  "a célula deixa de ser o texto do NOTICE (a função devolve outro)"
-  "o mapa não entra no texto (format recebe {}) — o passo chega, mas sem o que o faz insubstituível"
-  "o marcador de FIM que a função emite não é o que o cabeçalho procura"
-  "o cabeçalho deixa de dizer o comando que extrai o passo"
-  "só a CANÁRIA perde o NOTICE — a marca dela não pode pegar carona na da sonda"
-)
+SABOTAGENS="notice_debug:A3_TEXTO,A5_TEXTO:A3_APLICA,A3_DISPARO
+            sem_raise:A3_TEXTO,A5_TEXTO:A3_APLICA,A3_DISPARO
+            celula_outra:D_S2,D_S4,D_C2,D_C4:A3_TEXTO,A3_X2
+            mapa_vazio:A3_MAPA:A3_TEXTO,A3_X2
+            fim_trocado:A3_X2:A3_X4,A3_TEXTO
+            cabecalho_mudo:C_S2,C_S4,C_C2,C_C4:A3_TEXTO
+            canaria_debug:A5_TEXTO:A5_APLICA,A3_TEXTO"
+
+descricao() {
+  case "$1" in
+    notice_debug)   echo "o NOTICE rebaixado a DEBUG — abaixo do client_min_messages, não sai da sessão" ;;
+    sem_raise)      echo "a função não levanta nada — a forma do defeito original: só a célula, que o EXECUTE descarta" ;;
+    celula_outra)   echo "a célula deixa de ser o texto do NOTICE (a função devolve outro)" ;;
+    mapa_vazio)     echo "o mapa não entra no texto (format recebe {}) — o passo chega, sem o que o faz insubstituível" ;;
+    fim_trocado)    echo "o marcador de FIM que a função emite não é o que o cabeçalho procura" ;;
+    cabecalho_mudo) echo "o cabeçalho deixa de dizer o comando que extrai o passo" ;;
+    canaria_debug)  echo "só a CANÁRIA perde o NOTICE — o assert dela não pega carona no da sonda" ;;
+    *)              echo "(sem descrição)" ;;
+  esac
+}
+
+# sabotar <nome> <dir> — aplica a sabotagem na CÓPIA dos artefatos. Status ≠0 = não aplicou: expressão
+# que não muda byte nenhum mediria o próprio harness, não a prova.
+sabotar() {
+  local alvos expr arq mudou=1
+  case "$1" in
+    notice_debug)   alvos="sonda canaria"; expr='s/RAISE NOTICE/RAISE DEBUG/' ;;
+    sem_raise)      alvos="sonda canaria"; expr='s/^([[:space:]]*)RAISE NOTICE .*$/\1NULL;/' ;;
+    celula_outra)   alvos="sonda canaria"; expr='s/RETURN p_texto;/RETURN left(p_texto, 200);/' ;;
+    mapa_vazio)     alvos="sonda";         expr="s/^\\\$sonda\\\$, m\\.ids\\)\$/\$sonda\$, '{}')/" ;;
+    fim_trocado)    alvos="sonda";         expr="s/'SONDA_PASSO_2_FIM'/'SONDA_PASSO_2_FIX'/" ;;
+    cabecalho_mudo) alvos="sonda canaria"; expr="/^--[[:space:]]+awk '/d" ;;
+    canaria_debug)  alvos="canaria";       expr='s/RAISE NOTICE/RAISE DEBUG/' ;;
+    *)              return 2 ;;
+  esac
+  for arq in $alvos; do
+    sed -E "$expr" "$2/$arq.sql" > "$2/$arq.sab" || return 2
+    cmp -s "$2/$arq.sql" "$2/$arq.sab" || mudou=0
+    mv "$2/$arq.sab" "$2/$arq.sql"
+  done
+  return "$mudou"
+}
 
 gera_artefatos "$WORK/pristino"
-SILENCIO=1
 VERM=0; FALHAS=0
 for cl in c pt; do
   seleciona_cluster "$cl"
   sobe_cluster
-  PASS=0; FAIL=0; MARCAS=""
-  julga "$WORK/pristino" "controle-$cl"
-  if [ "$FAIL" -ne 0 ] || [ "$PASS" -lt 20 ]; then
-    echo "CONTROLE PODRE (lc_messages=$LOC_SRV): $PASS ok / $FAIL fail —$MARCAS"
-    echo "Sem controle verde, vermelho de sabotagem não prova nada. Nada a julgar."
+  # Sabotar sem CONTROLE verde na MESMA invocação é teatro: uma suíte sempre-vermelha aprovaria todas
+  # as sabotagens. O controle roda primeiro, em cada idioma, e vermelho aborta ANTES de sabotar.
+  controle="$WORK/controle-$cl.log"
+  PASS=0; FAIL=0
+  julga "$WORK/pristino" "controle-$cl" > "$controle" 2>&1
+  executados_controle=$((PASS + FAIL))
+  if [ "$FAIL" -ne 0 ] || [ "$PASS" -lt 30 ]; then
+    echo "CONTROLE PODRE (lc_messages=$LOC_SRV): $PASS ok / $FAIL fail — nada a julgar"
+    { grep -E '^  ✗ ' "$controle" || true; } | head -8
     exit 3
   fi
   echo "  ✅ controle verde (lc_messages=$LOC_SRV): $PASS asserts, 0 falhas"
-  for i in "${!SABOTAGENS[@]}"; do
-    IFS='|' read -r sid alvo marca expr <<<"${SABOTAGENS[$i]}"
-    dir="$WORK/sab-$sid-$cl"
+  # O vermelho que conta é o do assert DECLARADO — verde no controle, vermelho na rodada —; os verdes
+  # declarados seguem verdes; e a rodada executa tantos asserts quanto o controle.
+  for item in $SABOTAGENS; do
+    sab="${item%%:*}"; resto="${item#*:}"
+    verm="${resto%%:*}"; verdes=""
+    [ "$resto" = "$verm" ] || verdes="${resto#*:}"
+    dir="$WORK/sab-$sab-$cl"; log="$dir.log"
     rm -rf "$dir"; cp -R "$WORK/pristino" "$dir"
-    mudou=0
-    for arq in sonda canaria; do
-      case "$alvo" in ambos|"$arq") ;; *) continue ;; esac
-      sed -E "$expr" "$dir/$arq.sql" > "$dir/$arq.sab"
-      cmp -s "$dir/$arq.sql" "$dir/$arq.sab" || mudou=1
-      mv "$dir/$arq.sab" "$dir/$arq.sql"
-    done
-    if [ "$mudou" -eq 0 ]; then
-      FALHAS=$((FALHAS + 1))
-      echo "  ⚠️  $sid ($LOC_SRV) NÃO APLICOU — a expressão não casou nada: ${DESCRICAO[$i]}"
-      continue
+    motivo=""
+    if ! sabotar "$sab" "$dir"; then
+      motivo=" a sabotagem NÃO APLICOU (a expressão não mudou byte nenhum)"
+    else
+      PASS=0; FAIL=0
+      julga "$dir" "$sab-$cl" > "$log" 2>&1
+      if [ "$((PASS + FAIL))" -ne "$executados_controle" ]; then
+        motivo=" a rodada executou $((PASS + FAIL)) asserts e o controle $executados_controle: vermelho de aborto, não de assert"
+      else
+        for id in ${verm//,/ }; do
+          if ! grep -Eq "^  ✓ \($id\) " "$controle" || ! grep -Eq "^  ✗ \($id\) " "$log"; then
+            motivo="$motivo $id não virou (verde no controle → vermelho aqui);"
+          fi
+        done
+        for id in ${verdes//,/ }; do
+          grep -Eq "^  ✓ \($id\) " "$log" || motivo="$motivo $id ficou VERMELHO (a sabotagem quebrou outra camada);"
+        done
+      fi
     fi
-    PASS=0; FAIL=0; MARCAS=""
-    julga "$dir" "$sid-$cl"
-    if [[ " $MARCAS " == *" $marca "* ]]; then
+    if [ -z "$motivo" ]; then
       VERM=$((VERM + 1))
-      echo "  🔴 $sid ($LOC_SRV) VERMELHA [$marca] — ${DESCRICAO[$i]}"
+      echo "  🔴 $sab ($LOC_SRV) — vermelho no assert declarado ($verm): $(descricao "$sab")"
     else
       FALHAS=$((FALHAS + 1))
-      echo "  ⚠️  $sid ($LOC_SRV) sem a marca [$marca] (veio:${MARCAS:- nenhuma}) — ${DESCRICAO[$i]}"
+      echo "  ⚠️  $sab ($LOC_SRV) —$motivo"
+      { grep -E '^  ✗ ' "$log" 2>/dev/null || true; } | head -6 | sed 's/^/       /'
     fi
   done
   derruba_cluster

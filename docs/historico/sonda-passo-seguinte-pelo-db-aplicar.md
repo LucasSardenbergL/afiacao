@@ -80,8 +80,11 @@ mas não o ON_ERROR_STOP — sem ele, um passo extraído que falhe imprime ERROR
 ## Evidência
 
 - `db/test-sonda-passo-pelo-db-aplicar.sh` — antes da correção `6 ok / 21 fail` (o defeito, com o
-  executor real); depois `RESULTADO: 27 ok / 0 fail`; `--falsificar`: controle verde (27) nos dois
-  idiomas do servidor e `SABOTAGENS: 14 vermelhas / 0 falhas` (44 s no laptop). No núcleo de CI.
+  executor real); depois `RESULTADO: 32 ok / 0 fail`; `--falsificar`: controle verde (32) nos dois
+  idiomas do servidor e `SABOTAGENS: 14 vermelhas / 0 falhas` (≈50 s no laptop), cada uma no assert
+  DECLARADO e com os verdes declarados seguindo verdes — o idioma de
+  `scripts/falsificar-exige-assert-gate.ts`, que reprovou a 1ª versão no CI (o laço julgava por
+  marca num formato que o fiscal não lê). No núcleo de CI.
 - `scripts/sonda-versao-sql.test.ts` — vermelho de ASSERÇÃO antes da implementação
   (`11 failed | 207 passed`); o `BEGIN`/`END` e o `ON_ERROR_STOP` também nasceram vermelhos
   (`3 failed`); verde no fim (`220 passed`).
