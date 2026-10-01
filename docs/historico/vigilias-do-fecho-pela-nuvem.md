@@ -79,3 +79,18 @@ e quem concedeu.
 - vitest: `claude-ro-nuvem.test.ts` e `deriva-corpo-nuvem.test.ts` cobrem o pacote (todo SQL que o
   caminho local manda ao psql está no pacote) e o veredito byte a byte entre o psql falso e o payload
   montado como o banco montaria (`transporte-nuvem-fixture.ts`).
+
+## Em prod, pelo conector (2026-10-01)
+
+Os três exits rodaram contra o banco de verdade, com `PSQL_RO=/nao/existe` na leitura da nuvem e o
+`psql-ro` logo depois, como testemunha:
+
+- **exit 2**, 2b antes do GRANT (09:07Z): as 4 sondas voltaram `PAPEL|42501`. A guarda do 42501 que
+  valia por dois disparou em prod, e não houve falso verde.
+- **exit 0**, 2b depois do GRANT (11:49Z): o `pg_auth_members` ganhou a aresta
+  `postgres|admin=f,inherit=f,set=t|postgres`, as sondas rodaram como o papel (`ERRO|42501` auth,
+  `ERRO|42501` vault, `ERRO|42703` token, `RODOU|615`) e a saída saiu **idêntica por `cmp`** à do
+  `psql-ro`.
+- **exit 1**, 2c (11:52Z): 11 divergências vivas, todas de fora desta entrega (migrations de um PR
+  mergeado e ainda não aplicadas, mais o overload de um PR aberto que foi aplicado antes do merge).
+  Saída de mesmo tamanho, e a única diferença é o instante da medição.
