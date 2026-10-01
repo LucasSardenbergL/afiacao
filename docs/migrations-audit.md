@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **579** custom migrations totais
-- **1914** objetos esperados (criados por estas migrations)
+- **580** custom migrations totais
+- **1915** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 642
+  - `function`: 643
   - `rls_policy`: 462
   - `index`: 264
   - `cron_job`: 174
@@ -4748,6 +4748,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20261001043717_hoje_sp_route_visits_visit_date.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20261001083000_converter_campanha_flat_colunas_reais.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.converter_sugestao_em_campanha_flat` | — |
 
 ### `20261001100000_sales_orders_colunas_whatsapp_select.sql`
 

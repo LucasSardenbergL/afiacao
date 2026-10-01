@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 579
+-- Total de custom migrations: 580
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -619,6 +619,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261001014220', 'universo_pedidos_proposta_whatsapp', '20261001014220_universo_pedidos_proposta_whatsapp.sql'),
   ('20261001023000', 'hoje_sp_familia_data_ciclo', '20261001023000_hoje_sp_familia_data_ciclo.sql'),
   ('20261001043717', 'hoje_sp_route_visits_visit_date', '20261001043717_hoje_sp_route_visits_visit_date.sql'),
+  ('20261001083000', 'converter_campanha_flat_colunas_reais', '20261001083000_converter_campanha_flat_colunas_reais.sql'),
   ('20261001100000', 'sales_orders_colunas_whatsapp_select', '20261001100000_sales_orders_colunas_whatsapp_select.sql'),
   ('20261001100001', 'sales_orders_gemeo_importado_contagem_unica', '20261001100001_sales_orders_gemeo_importado_contagem_unica.sql')
 ),
@@ -2516,6 +2517,7 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('hoje_sp_familia_data_ciclo', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
   ('hoje_sp_familia_data_ciclo', 'view', 'public', 'v_promocao_avaliacao_hoje', ''),
   ('hoje_sp_familia_data_ciclo', 'view', 'public', 'v_oportunidade_economica_hoje', ''),
+  ('converter_campanha_flat_colunas_reais', 'function', 'public', 'converter_sugestao_em_campanha_flat', ''),
   ('sales_orders_gemeo_importado_contagem_unica', 'function', 'public', 'sales_orders_gemeo_app_derivar', ''),
   ('sales_orders_gemeo_importado_contagem_unica', 'function', 'public', 'sales_orders_gemeo_importada_antes', ''),
   ('sales_orders_gemeo_importado_contagem_unica', 'function', 'public', 'sales_orders_gemeo_importada_depois', ''),
@@ -4467,6 +4469,7 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('hoje_sp_familia_data_ciclo', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
   ('hoje_sp_familia_data_ciclo', 'view', 'public', 'v_promocao_avaliacao_hoje', ''),
   ('hoje_sp_familia_data_ciclo', 'view', 'public', 'v_oportunidade_economica_hoje', ''),
+  ('converter_campanha_flat_colunas_reais', 'function', 'public', 'converter_sugestao_em_campanha_flat', ''),
   ('sales_orders_gemeo_importado_contagem_unica', 'function', 'public', 'sales_orders_gemeo_app_derivar', ''),
   ('sales_orders_gemeo_importado_contagem_unica', 'function', 'public', 'sales_orders_gemeo_importada_antes', ''),
   ('sales_orders_gemeo_importado_contagem_unica', 'function', 'public', 'sales_orders_gemeo_importada_depois', ''),
@@ -4502,7 +4505,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 124.
+-- Funções redefinidas com corpo extraível: 125.
 
 WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (VALUES
   ('public', 'has_role', 1, '20260207192203_1ed442e5-a224-456e-9d94-cfe50e88c670.sql', 'c63a92e3cfa92e6aab8cb894ad505e30'),
@@ -4588,6 +4591,8 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'refresh_sku_ranking_negociacao', 2, '20260524203000_rpc_staff_guard_permite_cron_backend.sql', 'c8c7d51e7a602d760dafa182b809eb8b'),
   ('public', 'refresh_sku_ranking_negociacao', 3, '20260527160000_matview_ranking_negociacao_private.sql', '6dbe4a2ad197d6be76de763d8077e201'),
   ('public', 'refresh_sku_ranking_negociacao', 4, '20260627200000_fix_refresh_sku_ranking_gate_cron.sql', '159b25993b713ff9972caad40aeaa07e'),
+  ('public', 'converter_sugestao_em_campanha_flat', 1, '20260512101121_a96fa007-f688-4c3a-8cd9-43f9d88e5505.sql', 'a2ea61e7f5a8f6dd56260d83f392394d'),
+  ('public', 'converter_sugestao_em_campanha_flat', 2, '20261001083000_converter_campanha_flat_colunas_reais.sql', 'e7871153d715acc3fe288f79462dc79c'),
   ('public', 'sugerir_negociacao_paralela_hoje', 1, '20260512101346_632761fc-2bd6-4caa-9c61-d35f872c2489.sql', '92a123622d39cad25956b7a29451b950'),
   ('public', 'sugerir_negociacao_paralela_hoje', 2, '20260524203000_rpc_staff_guard_permite_cron_backend.sql', '7aac0d077fe1b0519898eb93463f2dfe'),
   ('public', 'resolver_sku_por_codigo_fornecedor', 1, '20260513005653_ef077490-1563-4287-b6bb-a48d3aadf780.sql', 'eb00a3299f699935b6ecfac82dcdb677'),

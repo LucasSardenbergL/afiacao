@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-10-01T09:26:33.422Z",
-  "sourceHead": "7c6344f49d2ee3be884e0a9011a1d4cd91b9e3a2",
+  "medidoEm": "2026-10-01T11:13:37.559Z",
+  "sourceHead": "a695f3edabec51423a82b41364b0c5e85c7437d0",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -14,7 +14,7 @@
       "exit": 0,
       "resumo": "✅ o EXECUTE de prod bate com o contrato nas 59 função(ões) da allowlist. ⚠️ 1 delas têm o fecho FORA do repo (fechadaPor=null) e portanto NÃO são vigiadas pelo CI: public.aplicar_sql.",
       "denominador": "🔎 authz:funcoes:prod — 60 definição(ões) lida(s) para 59 chave(s) da allowlist.",
-      "contratoFingerprint": "dbd5285c2f0099d957c331de7fbd5b9c22c3c09005db28ceb79f007acd66525f",
+      "contratoFingerprint": "5dfdb5579ea3037a0c09318b8a2bc06796d9d0e188c92f461d901d13cccaffee",
       "auditorFingerprint": "8971003ee5ae2343ff6129fe9569b7afb3b5cfd5bab5abed86c6e27520c8358f",
       "achados": []
     },
@@ -58,7 +58,7 @@
       "script": "deriva:corpo:prod",
       "exit": 0,
       "resumo": "✅ deriva-corpo — 317 identidade(s) batem com o repo (240 em dia, 71 só cosméticas, 5 aceitas na baseline) e 15 aposentada(s) estão ausentes",
-      "denominador": "🔎 deriva-corpo — 317 identidade(s) conferida(s) · 15 aposentada(s) · ref origin/main@a7ed65c69 (fetch ok) · prod 2026-10-01 09:27:00.06253Z",
+      "denominador": "🔎 deriva-corpo — 317 identidade(s) conferida(s) · 15 aposentada(s) · ref origin/main@388599d58 (fetch ok) · prod 2026-10-01 11:14:15.819865Z",
       "contratoFingerprint": "32a2595ef0ef81acdabb5e41facdb8aac4468ad4c499f11a0e841721d94af68b",
       "auditorFingerprint": "a07989df9ed0fa552abd2963788287214d21003755b18ed15a9ea88f97c9d3aa",
       "achados": []
