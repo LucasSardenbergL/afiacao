@@ -178,9 +178,15 @@ oportunidade não vê `disparado_simulado`.)
 ## Fora, com dono
 
 - **O gate de TS** — FEITO no PR seguinte: `src/__tests__/hoje-utc-gate.test.ts` + `src/lib/gates/hoje-utc.ts`
-  (AST; 3 formas: o ISO fatiado no front e nas edges, o calendário local e o locale sem fuso só nas edges),
-  baseline `src/lib/gates/hoje-utc-baseline.ts` com veredito e DONO por sítio (136 entradas, 162 sítios), e
-  `scripts/mutcheck.d/hoje-utc.mut` (16/16 pegas). É ele que dirige as fases seguintes: `[fase …]` no motivo.
+  (AST, com 3 formas: o ISO fatiado no front e nas edges, também quando guardado numa variável e fatiado
+  depois; o calendário local e o locale sem fuso, só nas edges).
+  - Baseline `src/lib/gates/hoje-utc-baseline.ts`, com veredito e DONO por sítio: 137 entradas, 163 sítios.
+  - `scripts/mutcheck.d/hoje-utc.mut`: 18/18 pegas.
+  - É ele que dirige as fases seguintes: `[fase …]` no motivo.
+  - A forma "ISO numa variável" entrou depois de a fase visitas achar um leitor de `visit_date` que a 1ª
+    versão não via: `const cutoff = ….toISOString()` e depois `cutoff.slice(0, 10)`, no
+    `visit-score-recalc-batch`. É latente: só roda no cron das 04:00 BRT, quando o dia UTC é o de SP.
+  - Varredura dessa forma: 1 caso no repo inteiro.
 - **As fases de TS por domínio**: financeiro (`fin-cashflow-engine` — o domingo à noite pula a semana, a
   mesma classe que a 20260927202603 consertou no SQL —, `fin-funding`, `fin-valor-cockpit`, os eventos de
   caixa persistidos com a data UTC); visitas (`hojeISO()` e os 6 consumidores, o planner, e
