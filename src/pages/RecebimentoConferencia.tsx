@@ -28,6 +28,7 @@ import { useOfflineMutation } from '@/hooks/useOfflineMutation';
 import { confirmUnit, type ConfirmUnitVars } from '@/services/recebimento-confirm';
 import { reportDivergencia, type ReportDivergenciaVars } from '@/services/recebimento-divergencia';
 import { addCte, type AddCteVars } from '@/services/recebimento-cte';
+import { listarLotesEscaneados, type LoteEscaneado } from '@/services/recebimento-lotes';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { interpretarRespostaEfetivacao } from '@/lib/recebimento/efetivacao-resposta';
 import { estadoDeRegistro, naoConsegui } from '@/lib/leitura/estado-de-leitura';
@@ -46,15 +47,6 @@ interface NfeItem {
   unidade_estoque?: string | null;
   unidade_nfe?: string | null;
   status_item?: ItemStatus | null;
-  [k: string]: unknown;
-}
-
-interface NfeLoteEscaneado {
-  id: string;
-  nfe_recebimento_item_id: string;
-  numero_lote: string;
-  data_fabricacao: string | null;
-  data_validade: string | null;
   [k: string]: unknown;
 }
 
@@ -154,19 +146,9 @@ export default function RecebimentoConferencia() {
   const estadoNfe = estadoDeRegistro({ status: statusNfe, fetchStatus: fetchNfe, error: erroNfe }, nfe != null);
 
   // Fetch scanned lotes grouped
-  const { data: lotes } = useQuery<NfeLoteEscaneado[]>({
+  const { data: lotes } = useQuery<LoteEscaneado[]>({
     queryKey: ['nfe_lotes', id],
-    queryFn: async () => {
-      // `select('*').eq(...)` em `nfe_lotes_escaneados` dispara "Type instantiation
-      // is excessively deep" — usar `as unknown as ...` para curto-circuitar inferência.
-      type LoteQueryResult = { data: NfeLoteEscaneado[] | null; error: { message: string } | null };
-      const builder = supabase.from('nfe_lotes_escaneados').select('*') as unknown as {
-        eq: (col: string, val: string) => Promise<LoteQueryResult>;
-      };
-      const { data, error } = await builder.eq('nfe_recebimento_id', id!);
-      if (error) throw error;
-      return data ?? [];
-    },
+    queryFn: () => listarLotesEscaneados(id!),
     enabled: !!id,
   });
 
@@ -194,7 +176,7 @@ export default function RecebimentoConferencia() {
   // Group lotes by item
   const lotesPerItem = useMemo(() => {
     const map = new Map<string, Map<string, { count: number; fab: string | null; val: string | null }>>();
-    ((lotes ?? []) as NfeLoteEscaneado[]).forEach((l) => {
+    (lotes ?? []).forEach((l) => {
       if (!map.has(l.nfe_recebimento_item_id)) map.set(l.nfe_recebimento_item_id, new Map());
       const itemMap = map.get(l.nfe_recebimento_item_id)!;
       const existing = itemMap.get(l.numero_lote);
@@ -438,7 +420,7 @@ export default function RecebimentoConferencia() {
         if (veredito.tipo === 'parcial') {
           toast.warning(`NF-e ${nfeTyped?.numero_nfe}: efetivação PARCIAL — ${veredito.mensagem}. Reprocesse na lista.`);
         } else {
-          const totalLotes = new Set(((lotes ?? []) as NfeLoteEscaneado[]).map((l) => l.numero_lote)).size;
+          const totalLotes = new Set((lotes ?? []).map((l) => l.numero_lote)).size;
           const verbo = veredito.modo === 'reconciliado' ? 'reconciliada (já estava recebida no Omie)' : 'efetivada';
           toast.success(`NF-e ${nfeTyped?.numero_nfe} ${verbo} — ${totalConferida} unidades, ${totalLotes} lotes registrados`);
         }
