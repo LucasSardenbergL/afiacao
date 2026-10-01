@@ -1717,7 +1717,7 @@ Deno.serve(async (req: Request) => {
   const windowStart = new Date().toISOString();
 
   let empresa = "OBEN";
-  let dataCiclo = hojeSP(); // sem data_ciclo no corpo, o ciclo é HOJE em SP (só o cron das 13:00 UTC chega aqui)
+  let dataCiclo = hojeSP(); // sem data_ciclo no corpo, HOJE em SP (o modo lote, sem pedido_id, é o cron das 13:00 UTC)
   let pedidoId: number | null = null;
   let ignorarMinimo = false;
 
