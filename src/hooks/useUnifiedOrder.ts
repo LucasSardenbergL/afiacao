@@ -8,6 +8,7 @@ import { OmieServico } from '@/services/omieService';
 import { usePricingEngine } from '@/hooks/usePricingEngine';
 import { usePriceHistory } from '@/hooks/usePriceHistory';
 import { useCart } from '@/hooks/unifiedOrder/useCart';
+import { nascerItemProduto } from '@/hooks/unifiedOrder/nascimento-item';
 import { useCustomerSelection } from '@/hooks/unifiedOrder/useCustomerSelection';
 import { useProductCatalog } from '@/hooks/unifiedOrder/useProductCatalog';
 import { useClienteTier, useTierPrecoConfig } from '@/hooks/useClienteTier';
@@ -334,8 +335,9 @@ export function useUnifiedOrder() {
   // tier/mult firmarem — por QUALQUER via (lista, IA, recomendação, deep-link), não só a lista.
   // Quando o preço de partida fica firme, corrige os itens que o vendedor NÃO editou
   // (unit_price === precoNascimento). Idempotente: roda sobre a TABELA (getProductPrice), nunca
-  // sobre o preço já no carrinho — se já está certo, devolve o mesmo valor e nada muda. Tint e
-  // preço fixado pela IA ficam de fora (precoNascimento ausente).
+  // sobre o preço já no carrinho — se já está certo, devolve o mesmo valor e nada muda. Tint fica
+  // de fora (precoNascimento ausente). O item da IA ENTRA desde 2026-09-30: ele nasce pela mesma
+  // `nascerItemProduto` da lista (a IA deixou de fixar preço).
   useEffect(() => {
     if (precoPartidaLoading) return;
     setCart(prev => {
@@ -633,15 +635,12 @@ export function useUnifiedOrder() {
             ? { ...c, quantity: c.quantity + aiProd.quantity } as ProductCartItem : c
         ));
       } else {
-        const account = (product.account || aiProd.account || 'oben') as ProductAccount;
-        const aiPrice = aiProd.unit_price;
-        const usouTabela = !(aiPrice && aiPrice > 0);
-        const unitPrice = usouTabela ? getProductPrice(product as Product) : aiPrice;
-        newCartItems.push({
-          type: 'product', product: product as Product, quantity: aiProd.quantity, unit_price: unitPrice, account,
-          // só marca p/ reprecificação se nasceu da tabela/tier (não do preço que a IA fixou)
-          ...(usouTabela ? { precoNascimento: unitPrice } : {}),
-        });
+        // A IA NÃO precifica: o item nasce pela MESMA função da lista do catálogo (getProductPrice =
+        // precoPartida, para o cliente SELECIONADO) e com precoNascimento — a reprecificação da
+        // fronteira o corrige se nasceu antes do tier/preços do cliente firmarem. O tipo AIProduct
+        // não tem mais `unit_price`; a edge também não o manda (montarRespostaAnalise). Ver
+        // src/hooks/unifiedOrder/nascimento-item.ts.
+        newCartItems.push(nascerItemProduto(product as Product, aiProd.quantity, getProductPrice));
       }
     }
     for (const aiSvc of result.services) {
@@ -653,6 +652,15 @@ export function useUnifiedOrder() {
     }
     if (newCartItems.length > 0) setCart(prev => [...prev, ...newCartItems]);
   }, [obenProducts, colacorProducts, userTools, servicos, cart, getProductPrice, setCart]);
+
+  // Preço com que um item da IA vai NASCER, pelo id do catálogo — o MESMO getProductPrice que o
+  // handleUnifiedAIResult usa. O painel do assistente exibe ESTE número: a tela mostra o preço que o
+  // carrinho vai gravar, não um "Preço cliente" vindo da edge (que deixou de mandar preço).
+  // null = produto fora do catálogo carregado (o painel não inventa número).
+  const precoNascimentoPorId = useCallback((productId: string): number | null => {
+    const product = [...obenProducts, ...colacorProducts].find(p => p.id === productId);
+    return product ? getProductPrice(product as Product) : null;
+  }, [obenProducts, colacorProducts, getProductPrice]);
 
   // Generic cart actions and subtotals (updateQuantity, updateProductPrice,
   // removeFromCart, obenSubtotal, colacorProdSubtotal, serviceSubtotal,
@@ -1041,7 +1049,7 @@ export function useUnifiedOrder() {
     currentStep,
     // Handlers
     handleVoiceItemsIdentified, handleImageCategoryIdentified,
-    handleAICustomerSelect, handleUnifiedAIResult,
+    handleAICustomerSelect, handleUnifiedAIResult, precoNascimentoPorId,
     handleAddRecommendation, handleStaffAddTool,
     submitOrder, submitQuote, loadUserTools,
     // Order success
