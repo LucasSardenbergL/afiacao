@@ -176,8 +176,10 @@ db/test-tint-promote-dedup-itens.sh        11
 # Esta prova entra no núcleo justamente porque o motivo dela existir foi um SENSOR AUSENTE — e
 # 5 dos 8 harnesses de data-health apodreceram em silêncio por ficarem FORA do caminho do merge
 # (o CI é vitest; ninguém os roda). Autocontida: initdb + db/stubs-data-health-trio.sql + a
-# migration do repo. Sem psql-ro, sem deno, sem dado de fora.
-db/test-data-health-sync-reprocess.sh      31  falsificar=13
+# CADEIA VIVA do trio (db/lib/data-health-vivo.sh, estreitada às 3 funções que ela executa — até
+# 2026-09-30 era uma lista fixa que parou na 0920b e mediu um compute que prod não roda mais).
+# Sem psql-ro, sem deno, sem dado de fora.
+db/test-data-health-sync-reprocess.sh      32  falsificar=15
 # Tintométrico: corante impagável EM USO alerta (fora de uso ou desativada, não), agravamento
 # re-emite e o dead-man dispara com a camada B parada.
 db/test-tint-watchdog-corante.sh           11
