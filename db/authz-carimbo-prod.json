@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-10-01T10:42:56.474Z",
-  "sourceHead": "c47d3f6d31a6eafbcdae67d8403778e2c6be27a6",
+  "medidoEm": "2026-10-01T11:45:05.492Z",
+  "sourceHead": "75ef963d6f13b249dee1c0d1885006a6fed3bdfc",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -38,19 +38,12 @@
     },
     "claudeRo": {
       "script": "authz:claude-ro:prod",
-      "exit": 1,
-      "resumo": "   da extensão feito pelo Supabase — reavalie e atualize o baseline com o novo estado.",
+      "exit": 0,
+      "resumo": "✅ 39 asserções batem. O endurecimento continua de pé.",
       "denominador": null,
       "contratoFingerprint": "04316fe60798236f918838351936ac2a6fccac22b321cdc671b2e61784f34864",
       "auditorFingerprint": "ac629e0219497568c48abfe3fcbca62ae5f13b62bdf6833b443df5ffcebf8993",
-      "achados": [
-        {
-          "id": "3d77763c816bffb4",
-          "linha": "❌ 1 divergência(s). O endurecimento de `claude_ro` REGREDIU ou drifou.",
-          "primeiraVez": "2026-10-01",
-          "ultimaVez": "2026-10-01"
-        }
-      ]
+      "achados": []
     },
     "rls": {
       "script": "authz:rls:prod",
@@ -63,12 +56,79 @@
     },
     "corpo": {
       "script": "deriva:corpo:prod",
-      "exit": 0,
-      "resumo": "✅ deriva-corpo — 317 identidade(s) batem com o repo (240 em dia, 71 só cosméticas, 5 aceitas na baseline) e 15 aposentada(s) estão ausentes",
-      "denominador": "🔎 deriva-corpo — 317 identidade(s) conferida(s) · 15 aposentada(s) · ref origin/main@aaa87e62a (fetch ok) · prod 2026-10-01 10:43:20.718965Z",
+      "exit": 1,
+      "resumo": "deriva-corpo — 11 divergência(s) em prod (1 AUSENTE, 9 CORPO_ANTERIOR, 1 OVERLOAD_FORA_DO_REPO) — ver as linhas ❌",
+      "denominador": "🔎 deriva-corpo — 318 identidade(s) conferida(s) · 15 aposentada(s) · ref origin/main@9a71976ec (fetch ok) · prod 2026-10-01 11:45:32.95349Z",
       "contratoFingerprint": "537d1399f07dc355095b05f81f54dcc46af9859b565aee0c772288a33ecb6d9b",
       "auditorFingerprint": "c389990491baf56162e7b3835001ef55f6e23418966a5845010d52842521c7b8",
-      "achados": []
+      "achados": [
+        {
+          "id": "3819751d0ab4b3b6",
+          "linha": "❌ [AUSENTE] converter_sugestao_em_campanha_flat(bigint,numeric,numeric,text,date,text,text,text): viva no repo (último CREATE: 20260512101121_a96fa007-f688-4c3a-8cd9-43f9d88e5505.sql) e ausente em prod — migration não aplicada ou DROP manual",
+          "primeiraVez": "2026-10-01",
+          "ultimaVez": "2026-10-01"
+        },
+        {
+          "id": "8166cba85e9f1e48",
+          "linha": "❌ [CORPO_ANTERIOR] classificar_clientes_fornecedores(): prod roda o corpo de 20260606170100_fornecedores_classificacao_rpcs.sql; o repo commitou 20261001014100_universo_pedidos_recencia.sql depois — revert por ordem de colagem, ou migration mergeada e não aplicada (xmin 9106714)",
+          "primeiraVez": "2026-10-01",
+          "ultimaVez": "2026-10-01"
+        },
+        {
+          "id": "6375a8b76683ab1e",
+          "linha": "❌ [CORPO_ANTERIOR] melhoria_clientes_por_produto(text): prod roda o corpo de 20260929000234_padrao_like_contem_escapa_curinga.sql; o repo commitou 20261001014100_universo_pedidos_recencia.sql depois — revert por ordem de colagem, ou migration mergeada e não aplicada (xmin 10881584)",
+          "primeiraVez": "2026-10-01",
+          "ultimaVez": "2026-10-01"
+        },
+        {
+          "id": "ef2df246363fdaca",
+          "linha": "❌ [CORPO_ANTERIOR] get_regua_preco_customer360(uuid,bigint[]): prod roda o corpo de 20260723150000_authz_custo_fu4f_fase2_regua.sql; o repo commitou 20261001014210_universo_pedidos_preco.sql depois — revert por ordem de colagem, ou migration mergeada e não aplicada (xmin 9106714)",
+          "primeiraVez": "2026-10-01",
+          "ultimaVez": "2026-10-01"
+        },
+        {
+          "id": "c56adddc7d3aa8d8",
+          "linha": "❌ [CORPO_ANTERIOR] get_ultimos_precos_cliente(uuid): prod roda o corpo de 20260927172443_hoje_sp_sessao_utc_precos_piso.sql; o repo commitou 20261001014210_universo_pedidos_preco.sql depois — revert por ordem de colagem, ou migration mergeada e não aplicada (xmin 10805294)",
+          "primeiraVez": "2026-10-01",
+          "ultimaVez": "2026-10-01"
+        },
+        {
+          "id": "143af577a2b49b03",
+          "linha": "❌ [CORPO_ANTERIOR] get_defasagem_cliente(jsonb,uuid): prod roda o corpo de 20260905225613_preco_ausente_nao_e_zero.sql; o repo commitou 20261001014210_universo_pedidos_preco.sql depois — revert por ordem de colagem, ou migration mergeada e não aplicada (xmin 9889358)",
+          "primeiraVez": "2026-10-01",
+          "ultimaVez": "2026-10-01"
+        },
+        {
+          "id": "32c1f420f00ec767",
+          "linha": "❌ [CORPO_ANTERIOR] medir_abaixo_piso_tier(integer): prod roda o corpo de 20260927172443_hoje_sp_sessao_utc_precos_piso.sql; o repo commitou 20261001014210_universo_pedidos_preco.sql depois — revert por ordem de colagem, ou migration mergeada e não aplicada (xmin 10805294)",
+          "primeiraVez": "2026-10-01",
+          "ultimaVez": "2026-10-01"
+        },
+        {
+          "id": "03f5088c3e1a24c1",
+          "linha": "❌ [CORPO_ANTERIOR] get_whatsapp_proposta_cotacao(uuid,text,bigint[]): prod roda o corpo de 20260713050000_whatsapp_proposta_cotacao_v2.sql; o repo commitou 20261001014220_universo_pedidos_proposta_whatsapp.sql depois — revert por ordem de colagem, ou migration mergeada e não aplicada (xmin 9106714)",
+          "primeiraVez": "2026-10-01",
+          "ultimaVez": "2026-10-01"
+        },
+        {
+          "id": "ac1c5544ca8f2cec",
+          "linha": "❌ [CORPO_ANTERIOR] tint_ultimo_preco_cliente(uuid,uuid,text,uuid): prod roda o corpo de 20260722100001_tint_gate_revalida_submit.sql; o repo commitou 20261001014210_universo_pedidos_preco.sql depois — revert por ordem de colagem, ou migration mergeada e não aplicada (xmin 9106714)",
+          "primeiraVez": "2026-10-01",
+          "ultimaVez": "2026-10-01"
+        },
+        {
+          "id": "d3c1de42ef7bd9ec",
+          "linha": "❌ [CORPO_ANTERIOR] get_regua_preco(uuid,uuid,numeric,numeric,numeric[]): prod roda o corpo de 20260929001651_hoje_sp_sessao_utc_sete_funcoes.sql; o repo commitou 20261001014210_universo_pedidos_preco.sql depois — revert por ordem de colagem, ou migration mergeada e não aplicada (xmin 10955412)",
+          "primeiraVez": "2026-10-01",
+          "ultimaVez": "2026-10-01"
+        },
+        {
+          "id": "91a39fe8d41332d8",
+          "linha": "❌ [OVERLOAD_FORA_DO_REPO] converter_sugestao_em_campanha_flat(bigint,numeric,numeric,text,date,text,text,text,text): overload vivo em prod que nenhuma migration declara (xmin 10987456)",
+          "primeiraVez": "2026-10-01",
+          "ultimaVez": "2026-10-01"
+        }
+      ]
     }
   }
 }
