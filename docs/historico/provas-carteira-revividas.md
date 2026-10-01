@@ -209,6 +209,57 @@ camada nomeada, o cron (`classificar-fornecedores-nightly` chama só a aplicar),
 relógio (datas do dia de SP, longe de borda), o `ON_ERROR_STOP` do `q_como`, o preparo como assert e as
 âncoras multi-linha via `psql -v`.
 
+## O 1º teste da cadeia dinâmica: o #2726 e a `main` vermelha (2026-10-01)
+
+O #2727 mergeou às 11:10:56Z e o #2726 (o universo canônico de pedidos) às 11:17:31Z. O CI de cada um
+rodou sem o outro, e push na `main` não dispara CI, então ninguém viu. A migration `20261001014100` do #2726
+reescreve a `melhoria_clientes_por_produto` e a `classificar_clientes_fornecedores`, que as duas provas
+guardam. A cadeia dinâmica a pegou, como promete, e ela não aplicou. Isso deixou vermelho o `provas-sql` de
+todo PR aberto (4 sessões reportaram, com runs do #2722, #2723, #2725 e #2729). Foram 2 modos de falha,
+medidos:
+
+1. **Autocommit.** A migration cria o retrato da PRE com `CREATE TEMP TABLE … ON COMMIT DROP` e o lê nos
+   blocos seguintes. Ela conta com a transação do envelope (`db:aplicar`). O `cv_aplicar_cadeia` aplicava
+   com `psql -f` em autocommit, e a tabela morria no fim do próprio CREATE (`relation
+   "pg_temp.universo_retrato" does not exist`). **Conserto:** cada migration da cadeia numa transação
+   (`--single-transaction`), como o envelope e o SQL Editor fazem. Das 70 migrations ≥ `CV_INICIO`, 48 já
+   trazem `BEGIN`/`COMMIT` (o psql só avisa da transação aninhada; o aviso fica preso e só aparece se a
+   migration falhar) e nenhuma tem `CONCURRENTLY` como statement.
+2. **O PRE de uma migration de 13 objetos.** O PRE confere o md5 do predecessor de prod em TODOS os alvos,
+   inclusive os que a prova não guarda:
+   - **Fornecedores:** não guardava a `melhoria_clientes_por_produto`, que ficava no corpo do snapshot
+     (`d299e604…` ≠ `fb00b17a…`). Agora a guarda, só para a cadeia levá-la até o predecessor (+2
+     migrations).
+   - **As duas provas:** tinham `v_grupo_comercial` em `090f1fa8…`, não em `73de52bd…`. Ela só chega lá
+     pelas `0914193000`/`0930230623`, cujo PRE o snapshot reprova (ele perdeu barras de literais de
+     regex), então a cadeia não a alcança. **Conserto:** o gancho `cv_antes_da_cadeia` + o helper
+     `cv_predecessora_view`, que tira a view do fixture VERBATIM de prod da própria prova do #2726
+     (`db/fixtures/universo-pedidos-predecessoras-prod-20261001.sql`) e confere o md5 anotado lá.
+
+Usar o fixture inteiro foi descartado: ele traz o predecessor de 13 objetos, inclusive
+`get_whatsapp_proposta_cotacao` e `padrao_like_contem`, que outras migrations da cadeia re-aplicam com PRE
+próprio.
+
+**As provas foram para os corpos NOVOS**, que a prod recebe quando a migration for aplicada (hoje ela
+ainda roda o predecessor):
+
+- **Melhorias:** o orçamento fica fora do universo, e a data comercial passa a ser só `order_date_kpi` (o
+  pedido sem ela não entra). Entraram 2 pedidos no seed e 2 sabotagens: `orcamento_conta` e
+  `kpi_nulo_conta`, este com o fallback antigo pela data de criação.
+- **Fornecedores:** o pedido APAGADO não é venda, na coluna e na decisão. É o latente que este doc tinha
+  medido (0 de 829 em prod), agora consertado pelo #2726. Entrou um enviado apagado no c1 e as sabotagens
+  `coluna_venda_conta_apagado` e `decisao_conta_apagado`.
+
+**Medido no conserto:**
+
+- O runner sobre as 5 usuárias da lib deu `SQL_PROOF_OK provas=5/5 falsificacoes=5/5`: HSM, funil e
+  proposta (que já carrega a `20261001014220`, a do #2726 que reescreve a proposta) seguem verdes com a
+  transação.
+- As minhas 2 provas: **57/0** e **55/0** em C e em pt_BR.
+- **Latente, registrado:** o `dhv_aplicar_cadeia` (`db/lib/data-health-vivo.sh`) tem o mesmo autocommit
+  (apontado pela sessão do #2723). Hoje não quebra nada. Vira conserto na 1ª migration do trio escrita
+  para o envelope com temp table.
+
 ## Lições
 
 - **O gatilho que fabrica a pré-condição também mata o seed que a fabrica de novo.** O score de farmer
@@ -228,5 +279,9 @@ relógio (datas do dia de SP, longe de borda), o `ON_ERROR_STOP` do `q_como`, o 
   dela" sem cliente de outra carteira nem cliente inelegível não tem dente sobre o filtro que diz provar.
 - **A revisão adversarial achou 6 vácuos que o juiz não podia achar.** O juiz mede a declaração. Ele não vê
   o dente que ninguém declarou, e foi isso que a revisão encontrou.
+- **Dois PRs verdes isoladamente quebram a `main` juntos, e a cadeia dinâmica TORNA isso visível.** Ela
+  pegou a reescrita da RPC no 1º PR que a trouxe, que era a promessa. O preço é que a prova precisa
+  aplicar a migration como a prod aplica (uma transação) e ter os predecessores que o PRE exige, mesmo dos
+  objetos que ela não assevera.
 - **Assert que só olha o alvo não vê a escrita que vaza para os vizinhos.** O WHERE de uma escrita
   pontual (o reverter, as filas) só tem dente se outro registro for lido depois e estiver intacto.
