@@ -8,8 +8,8 @@ de prod pela lib da fatia 2a, `db/lib/corpo-vivo.sh` (snapshot + ACL medido em p
 
 | prova | como morria | agora |
 |---|---|---|
-| `test-melhorias-rpcs.sh` | em 07-21, no 1º assert (o corpo de junho chamava `carteira_visivel_para`, que o fu7 moveu para `private`); desde `39ec9e31e` (08-28), já no seed: o CHECK `farmer_association_rules_cluster_segment_check` | **núcleo**: 37 asserts, 45 sabotagens |
-| `test-fornecedores-classificacao.sh` | em 06-25 (`1c05aa8e3`), no seed: `23505 farmer_client_scores_customer_unique` | **núcleo**: 25 asserts, 33 sabotagens |
+| `test-melhorias-rpcs.sh` | em 07-21, no 1º assert (o corpo de junho chamava `carteira_visivel_para`, que o fu7 moveu para `private`); desde `39ec9e31e` (08-28), já no seed: o CHECK `farmer_association_rules_cluster_segment_check` | **núcleo**: 39 asserts, 55 sabotagens |
+| `test-fornecedores-classificacao.sh` | em 06-25 (`1c05aa8e3`), no seed: `23505 farmer_client_scores_customer_unique` | **núcleo**: 26 asserts, 50 sabotagens |
 
 ## O alvo, medido
 
@@ -113,8 +113,8 @@ molde, com o controle verde na MESMA invocação.
 
 | prova | modo normal | `--falsificar` em `LC_ALL=C` | em `pt_BR.UTF-8` |
 |---|---|---|---|
-| melhorias | `PASS=37  FAIL=0` | `SABOTAGENS: 45 vermelhas / 0 falhas` | 45/0 |
-| fornecedores | `PASS=25  FAIL=0` | `SABOTAGENS: 33 vermelhas / 0 falhas` | 33/0 |
+| melhorias | `PASS=39  FAIL=0` | `SABOTAGENS: 55 vermelhas / 0 falhas` | 55/0 |
+| fornecedores | `PASS=26  FAIL=0` | `SABOTAGENS: 50 vermelhas / 0 falhas` | 50/0 |
 
 O juiz pegou, ao vivo, uma declaração MINHA errada. A `janela_aberta` declarava o D3 verde, mas o D3
 media também o valor do cliente da carteira, e o pedido fora da janela vaza nele. Agora o D3 mede QUEM a
@@ -126,13 +126,68 @@ exigência e fica registrada como tal (a mesma lição da fatia 2a).
 **Meta-falsificação**, sobre a cópia COMMITADA de cada prova num espelho fora da árvore, com 4
 declarações: 1 certa, 1 vermelho que não vira, 1 verde que cai e 1 sabotagem inexistente. Resultado nas
 duas: `SABOTAGENS: 1 vermelhas / 3 falhas`, exit 1. Cada falha saiu pelo motivo plantado ("não virou",
-"ficou VERMELHO (pré-condição…)", "não aplicou (exit 3)").
+"ficou VERMELHO (pré-condição…)", "não aplicou (exit 3)"). E o juiz novo (ERRO em qualquer parte do `got`,
+da revisão abaixo) foi falsificado num cenário SINTÉTICO com um assert composto. Com `valor`, ele dá
+vermelho por valor e é dente. Com `erro_no_meio` (`got[ok|ERRO: …]`), ele dá `1 vermelhas / 1 falhas`,
+exit 1, nas duas provas. A MESMA cópia com o regex do juiz do molde (`got\[ERRO: `) dá `2 vermelhas / 0
+falhas`, exit 0: aceita o erro como dente. É o ponto cego, reproduzido.
 
 **Custo:** PENDENTE.
 
 ## Revisão independente (Caminho B)
 
-PENDENTE.
+O Codex não foi consultado. O `scripts/codex-async.sh` barrou pelo sensor de cota sem gastar a chamada
+(exit 79, `SALDO_ALTO`: 86% contra um teto de 85%; a janela reabre em 03/10 19:11), a mesma janela da
+fatia 2a. No lugar dele rodou uma revisão adversarial por subagente só-leitura, com o roteiro das 12 da
+fatia 2a. Ela rodou sabotagens PRÓPRIAS em cópias fora da árvore e conferiu prod por `psql-ro`.
+
+Achou **6 defeitos medidos**, e todos entraram:
+
+1. **O D3 passava por AUSÊNCIA.** O seed só tinha o cliente da carteira da vendedora e um cliente sem
+   dono. As duas conjunções do helper de carteira que fazem a "carteira DELA" (o dono e o `eligible`) podiam
+   sumir com o D3 verde. Entraram um cliente da carteira de OUTRA vendedora e um da carteira dela
+   inelegível, com uma sabotagem para cada conjunção.
+2. **"Reescreve as 3 flags nas DUAS direções" era falso.** A corrupção era uniforme por coluna, então uma
+   classificação "pegajosa" (que nunca tira o `is_fornecedor`) passava 25/25. Agora o K00 corrompe cada
+   linha para o valor ERRADO e lê o estado corrompido, e cada flag tem uma sabotagem por direção
+   ("pegajosa" e "nunca liga").
+3. **O U2 tinha deixado de provar a TRIAGEM.** O A6h de junho, em que o master atualiza o item da
+   vendedora, virou um update do item do próprio master, e uma policy restrita ao autor passava. Agora o U2
+   é sobre o item alheio (muda a urgência; o status segue aberto para as mensagens) e tem sabotagem própria.
+4. **O status `'active'` do alias passava por ausência.** O seed só tinha alias ativo. Entrou um alias
+   INATIVO (V5: ele volta para a carteira) com a sua sabotagem. Em prod são 1.633 ativos e 0 de outro
+   status, então o risco é latente.
+5. **O trim do trigger não tinha dente.** As tags do T1 e do T2 eram limpas. Agora o T2 re-deriva
+   `' Transportadora '`, com sabotagem.
+6. **O trim da `produtos_relacionados` não tinha dente** (só a `clientes` era testada com espaço). O G2
+   passou a usar `'  ab  '`.
+
+E mais, sem defeito no veredito:
+
+- **Dentes que existiam sem sabotagem:** o item da mensagem (`i.id = item_id`, o dente do M2), a caixa na
+  decisão da classificar, o `max(lift)`, o escopo `todos`, o "só dos excluídos" das 3 escritas da aplicar,
+  os 3 status na coluna `tem_venda_real`, o autor da exceção e o motivo e o dono das filas. Todos ganharam
+  sabotagem.
+- **Conjunções sem dente por construção:** o `'em_andamento'` da policy de mensagens (entrou um item em
+  andamento, o M10) e o anon lendo e escrevendo MENSAGEM (S4 e W2, com sabotagem).
+- **Objetos executados fora das listas CV:** em Melhorias, `get_commercial_role`, `commercial_roles` e
+  `carteira_coverage` (a vendedora "sem papel gerencial" é premissa do D3); em fornecedores, o
+  `farmer_expirar_pendentes_do_dono_anterior`, o gatilho que o DELETE da aplicar dispara. Todos entraram
+  (0 migration a mais hoje). A `farmer_recommendations` custaria +1 migration e ficou de fora, registrado
+  aqui.
+- **O juiz só reconhecia ERRO no INÍCIO do `got`.** Nos asserts compostos (G1, V4, V5, T1, T2, K00, I6),
+  um ERRO na 2ª medição contaria como dente "por valor". Agora ele procura `ERRO:` em qualquer parte. O
+  juiz dos moldes do canal tem o mesmo ponto cego. Fica registrado aqui, porque consertá-lo é outra
+  entrega.
+- **Textos desatualizados:** o cabeçalho da `corpo-vivo.sh` (as usuárias), a fatia 2a (o gatilho de
+  `profiles` que "nenhuma prova aciona" — a de Melhorias o dispara, sem efeito) e o cabeçalho de
+  fornecedores, que delegava o guard a uma prova sem dizer que ela está FORA do núcleo.
+
+Conferido por ele e certo: o md5 e o ACL de 21 funções (as 13 do doc mais os gatilhos e helpers que o seed
+e a limpeza disparam), as policies, colunas e índices das 16 tabelas, as 2 cadeias, o ACL de prod com a
+camada nomeada, o cron (`classificar-fornecedores-nightly` chama só a aplicar), as irmãs no núcleo, o
+relógio (datas do dia de SP, longe de borda), o `ON_ERROR_STOP` do `q_como`, o preparo como assert e as
+âncoras multi-linha via `psql -v`.
 
 ## Lições
 
@@ -147,3 +202,9 @@ PENDENTE.
   outra borda: cada borda precisa do seu caso.
 - **md5 diferente não é lógica diferente, mas a prova mede o texto que prod executa.** A cadeia viva
   resolve isso sem julgamento manual, e a hipótese "revertia" só se confirma lendo o diff.
+- **"Nas duas direções" exige que cada linha comece no valor ERRADO.** Corromper uma coluna para um valor
+  uniforme testa uma direção só. A outra fica verde por ausência, e uma reescrita "pegajosa" passa.
+- **Assert de visibilidade precisa do caso que NÃO pode ser visto, um por motivo.** "Vê só a carteira
+  dela" sem cliente de outra carteira nem cliente inelegível não tem dente sobre o filtro que diz provar.
+- **A revisão adversarial achou 6 vácuos que o juiz não podia achar.** O juiz mede a declaração. Ele não vê
+  o dente que ninguém declarou, e foi isso que a revisão encontrou.

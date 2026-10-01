@@ -65,7 +65,7 @@ db/test-melhorias-rpcs.sh                  39  falsificar=55
 # fundos fechada (o employee não escreve a exceção direto), o ACL de prod (classificar/aplicar só do
 # service_role) e o trigger que deriva is_fornecedor sem decidir a exclusão. Morreu no seed em 06-25: o gatilho
 # da carteira CRIA o score de farmer e o seed o reinseria (docs/historico/provas-carteira-revividas.md).
-db/test-fornecedores-classificacao.sh      26  falsificar=50
+db/test-fornecedores-classificacao.sh      26  falsificar=53
 
 # ── Eixo 2 — FINITUDE MONETÁRIA ───────────────────────────────────────────────────
 # `ausente ≠ zero`: preço que o Omie não mandou não vira R$ 0,00; custo sem cmc

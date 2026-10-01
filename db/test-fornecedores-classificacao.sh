@@ -3,8 +3,9 @@
 # a limpeza recorrente (aplicar_exclusao_fornecedores), a reversão pelo master (reverter_exclusao_fornecedor)
 # e o trigger que deriva is_fornecedor (cliente_classificacao_derive) — contra o schema que PRODUÇÃO executa
 # (db/lib/corpo-vivo.sh: snapshot + ACL medido em prod + a cadeia viva das 4 funções, dos triggers que o
-# seed e a limpeza disparam — o da carteira e o guard no seed, o farmer_expirar_pendentes_do_dono_anterior
-# no DELETE da aplicar — e das tabelas que elas leem e escrevem; hoje 1 migration, o trigger de coerência
+# seed e a limpeza disparam — o da carteira, o guard e os de coerência de sales_orders no seed, o
+# farmer_expirar_pendentes_do_dono_anterior no DELETE da aplicar — e das tabelas que elas leem e escrevem;
+# hoje 1 migration, o trigger de coerência
 # de sales_orders). As 4 funções são IGUAIS às do snapshot (md5 = o de prod, medido em 2026-10-01).
 #
 # O que ela assevera (cada regra com sabotagem própria; os positivos são as pré-condições que as
@@ -18,8 +19,9 @@
 #    os scores (visita e farmer) dos excluídos — e só deles;
 #  • a reversão: só o master (o gate é INTERNO — authenticated tem EXECUTE em prod); cria a exceção,
 #    tira a flag, religa o eligible (menos o alias fiscal ATIVO, que segue fora; o INATIVO volta) e
-#    enfileira as DUAS filas de recálculo, com o motivo e o dono; o employee não reverte nem escreve a
-#    exceção direto na tabela (a porta dos fundos do gate);
+#    enfileira as DUAS filas de recálculo, com o motivo e o dono — e toca SÓ o alvo: o eligible, a flag e as
+#    filas dos outros clientes ficam como estavam (sem o WHERE, um clique do master reescreveria a carteira
+#    inteira); o employee não reverte nem escreve a exceção direto na tabela (a porta dos fundos do gate);
 #  • o ACL de prod: classificar e aplicar são só do service_role; o anon não executa a reversão (nega o
 #    EXECUTE, camada nomeada);
 #  • o trigger: deriva is_fornecedor no INSERT e no UPDATE OF tags_omie (caixa e espaço), e NÃO decide a
@@ -80,7 +82,7 @@ adm -c "CREATE DATABASE base;"
 # shellcheck disable=SC2034  # consumida pelo db/lib/corpo-vivo.sh, que o shellcheck sem -x não segue
 CV_FUNCOES=(classificar_clientes_fornecedores aplicar_exclusao_fornecedores reverter_exclusao_fornecedor
             cliente_classificacao_derive reconcile_score_owner_from_carteira fcs_block_flagged_insert
-            farmer_expirar_pendentes_do_dono_anterior has_role)
+            farmer_expirar_pendentes_do_dono_anterior pedido_venda_coerencia_cab pedido_venda_coerencia_lin has_role)
 # shellcheck disable=SC2034  # consumida pelo db/lib/corpo-vivo.sh, que o shellcheck sem -x não segue
 CV_TABELAS=(cliente_classificacao fornecedor_excecao carteira_assignments sales_orders customer_visit_scores
             farmer_client_scores visit_score_recalc_queue score_recalc_queue customer_canonical_alias user_roles)
@@ -157,6 +159,8 @@ fila() {
   printf "(SELECT count(*) FROM public.%s WHERE customer_user_id = '%s' AND processed_at IS NULL%s)" "$1" "$(cid "$2")" "$filtro"
 }
 reverter() { printf "SELECT public.reverter_exclusao_fornecedor('%s', '%s')" "$(cid "$1")" "$2"; }
+# as pendências INTEIRAS das 2 filas (visita|score): o reverter enfileira só o alvo
+TOTAL_FILAS="(SELECT count(*) FROM public.visit_score_recalc_queue WHERE processed_at IS NULL) || '|' || (SELECT count(*) FROM public.score_recalc_queue WHERE processed_at IS NULL)"
 
 cenario() {
   PASS=0; FAIL=0; FALHOS=" "
@@ -191,13 +195,13 @@ cenario() {
     "$(q_como service_role '' "SELECT $(scores 1) || '|' || $(scores 3) || '|' || (SELECT count(*) FROM public.farmer_client_scores WHERE customer_user_id = '$(cid 6)');")" "0|0|1|1|1"
 
   echo "→ reverter: só o master; exceção, flag, eligible (menos o alias ativo) e as DUAS filas"
-  chk V0 "antes: filas de c1 vazias (visita|score), c1 excluído e fora (exclui|eligible) — pré-condição" \
-    "$(q_como service_role '' "SELECT $(fila visit_score_recalc_queue 1) || '|' || $(fila score_recalc_queue 1) || '|' || (SELECT $(b excluir_da_carteira) FROM public.cliente_classificacao WHERE user_id = '$(cid 1)') || '|' || (SELECT $(b eligible) FROM public.carteira_assignments WHERE customer_user_id = '$(cid 1)');")" "0|0|t|f"
+  chk V0 "antes: filas vazias — de c1 e inteiras (visita|score|total visita|total score) —, c1 excluído e fora (exclui|eligible) — pré-condição" \
+    "$(q_como service_role '' "SELECT $(fila visit_score_recalc_queue 1) || '|' || $(fila score_recalc_queue 1) || '|' || $TOTAL_FILAS || '|' || (SELECT $(b excluir_da_carteira) FROM public.cliente_classificacao WHERE user_id = '$(cid 1)') || '|' || (SELECT $(b eligible) FROM public.carteira_assignments WHERE customer_user_id = '$(cid 1)');")" "0|0|0|0|t|f"
   chk V1 "o master reverte c1" "$(st_como authenticated "$MASTER" "$(reverter 1 teste-reversao)")" "OK"
-  chk V2 "c1: exceção criada PELO master | flag tirada | eligible religado" \
-    "$(q_como service_role '' "SELECT (SELECT count(*) FROM public.fornecedor_excecao WHERE user_id = '$(cid 1)' AND criado_por = '$MASTER') || '|' || (SELECT $(b excluir_da_carteira) FROM public.cliente_classificacao WHERE user_id = '$(cid 1)') || '|' || (SELECT $(b eligible) FROM public.carteira_assignments WHERE customer_user_id = '$(cid 1)');")" "1|f|t"
-  chk V3 "as DUAS filas de recálculo de c1, com o motivo e o dono (visita|score)" \
-    "$(q_como service_role '' "SELECT $(fila visit_score_recalc_queue 1 reversao_fornecedor) || '|' || $(fila score_recalc_queue 1 reversao_fornecedor);")" "1|1"
+  chk V2 "c1: exceção criada PELO master | flag tirada | eligible religado — e o c4 intacto (exclui|eligible)" \
+    "$(q_como service_role '' "SELECT (SELECT count(*) FROM public.fornecedor_excecao WHERE user_id = '$(cid 1)' AND criado_por = '$MASTER') || '|' || (SELECT $(b excluir_da_carteira) FROM public.cliente_classificacao WHERE user_id = '$(cid 1)') || '|' || (SELECT $(b eligible) FROM public.carteira_assignments WHERE customer_user_id = '$(cid 1)') || '|' || (SELECT $(b excluir_da_carteira) FROM public.cliente_classificacao WHERE user_id = '$(cid 4)') || '|' || (SELECT $(b eligible) FROM public.carteira_assignments WHERE customer_user_id = '$(cid 4)');")" "1|f|t|t|f"
+  chk V3 "as DUAS filas de recálculo de c1, com o motivo e o dono — e só ele (visita|score|total visita|total score)" \
+    "$(q_como service_role '' "SELECT $(fila visit_score_recalc_queue 1 reversao_fornecedor) || '|' || $(fila score_recalc_queue 1 reversao_fornecedor) || '|' || $TOTAL_FILAS;")" "1|1|1|1"
   chk V4 "o alias fiscal ATIVO (c5) sai da exclusão mas segue fora da carteira (reverte|exclui|eligible)" \
     "$(st_como authenticated "$MASTER" "$(reverter 5 alias)")|$(q_como service_role '' "SELECT (SELECT $(b excluir_da_carteira) FROM public.cliente_classificacao WHERE user_id = '$(cid 5)') || '|' || (SELECT $(b eligible) FROM public.carteira_assignments WHERE customer_user_id = '$(cid 5)');")" "OK|f|f"
   chk V5 "o alias INATIVO (ca) não segura ninguém: volta para a carteira (reverte|exclui|eligible)" \
@@ -242,9 +246,10 @@ SABOTAGENS="excecao_ignorada:K2:K1,K3,K6 venda_real_ignorada:K6:K1,K2,K3
             aplicar_sem_reclassificar:A3,A4:A2 elegivel_nao_desliga:A3:A2,A4 elegivel_desliga_todos:A3:A2,A4
             visita_fica:A4:A2,A3 farmer_fica:A4:A2,A3 visita_apaga_todos:A4:A2,A3 farmer_apaga_todos:A4:A2,A3
             reverter_sem_gate:G1:V1,G2 reverter_sem_excecao:V2:V1,V3 excecao_sem_autor:V2:V1,V3
-            reverter_nao_desmarca:V2:V1,V3 reverter_nao_religa:V2:V1,V3 reverter_ignora_alias:V4:V2,V5
+            reverter_nao_desmarca:V2:V1,V3 reverter_nao_religa:V2:V1,V3 reverter_religa_todos:V2:V1,V3
+            reverter_desmarca_todos:V2:V1,V3 reverter_ignora_alias:V4:V2,V5
             alias_qualquer_status:V5:V2,V4 reverter_sem_fila_visita:V3:V2 reverter_sem_fila_score:V3:V2
-            fila_sem_motivo:V3:V2 fila_dono_errado:V3:V2
+            fila_sem_motivo:V3:V2 fila_dono_errado:V3:V2 fila_toda_carteira:V3:V2
             anon_executa_reverter:G2:G1 authenticated_executa_classificar:G3:K0
             authenticated_executa_aplicar:G3:A2 excecao_employee_escreve:G4:G1
             trigger_sem_caixa:T1:K1 trigger_sem_espaco:T2:T1 trigger_decide_exclusao:T1:T2 trigger_so_no_insert:T2:T1
@@ -304,6 +309,9 @@ sabotagem() {
     excecao_sem_autor)    cv_sabotar "$rv" "VALUES (p_user_id, p_motivo, auth.uid())" "VALUES (p_user_id, p_motivo, NULL)" ;;
     reverter_nao_desmarca) cv_sabotar "$rv" "SET excluir_da_carteira = false, updated_at = now() WHERE user_id = p_user_id;" "SET updated_at = now() WHERE user_id = p_user_id;" ;;
     reverter_nao_religa)  cv_sabotar "$rv" "SET eligible = NOT EXISTS (" "SET eligible = eligible AND NOT EXISTS (" ;;
+    # o reverter toca SÓ o alvo: sem o WHERE, o eligible / a flag da carteira INTEIRA viram os do alvo
+    reverter_religa_todos) cv_sabotar "$rv" $'\n   WHERE customer_user_id = p_user_id;' ";" ;;
+    reverter_desmarca_todos) cv_sabotar "$rv" "SET excluir_da_carteira = false, updated_at = now() WHERE user_id = p_user_id;" "SET excluir_da_carteira = false, updated_at = now();" ;;
     reverter_ignora_alias) cv_sabotar "$rv" "WHERE cca.alias_user_id = p_user_id AND cca.status = 'active'" "WHERE false" ;;
     alias_qualquer_status) cv_sabotar "$rv" "WHERE cca.alias_user_id = p_user_id AND cca.status = 'active'" "WHERE cca.alias_user_id = p_user_id" ;;
     reverter_sem_fila_visita)
@@ -313,6 +321,7 @@ sabotagem() {
     # o motivo e o dono que o V3 filtra: a fila de visita sem o motivo, a de score com o cliente no lugar do dono
     fila_sem_motivo)      cv_sabotar "$rv" "'reversao_fornecedor'"$'\n    '"${fila_fim}v_enfileirados" "'outro_motivo'"$'\n    '"${fila_fim}v_enfileirados" ;;
     fila_dono_errado)     cv_sabotar "$rv" "ca.owner_user_id, 'reversao_fornecedor'"$'\n    '"${fila_fim}v_tmp" "ca.customer_user_id, 'reversao_fornecedor'"$'\n    '"${fila_fim}v_tmp" ;;
+    fila_toda_carteira)   cv_sabotar "$rv" "${fila_fim}v_enfileirados" "$(printf '%s' "${fila_fim}v_enfileirados" | sed 's/ca.customer_user_id = p_user_id/true/')" ;;
     anon_executa_reverter)  P -v ON_ERROR_STOP=1 -q -c "GRANT EXECUTE ON FUNCTION $rv TO anon;" ;;
     authenticated_executa_classificar) P -v ON_ERROR_STOP=1 -q -c "GRANT EXECUTE ON FUNCTION $cl TO authenticated;" ;;
     authenticated_executa_aplicar)     P -v ON_ERROR_STOP=1 -q -c "GRANT EXECUTE ON FUNCTION $ap TO authenticated;" ;;

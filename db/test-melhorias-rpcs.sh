@@ -81,11 +81,14 @@ P()   { "$PGBIN/psql" -X -p "$PORT" -h "$TMPD" -U postgres -d "$DB" "$@"; }
 adm() { "$PGBIN/psql" -X -p "$PORT" -h "$TMPD" -U postgres -d postgres -v ON_ERROR_STOP=1 -q "$@"; }
 adm -c "CREATE DATABASE base;"
 
-# Os objetos que esta prova assevera — as 2 RPCs, os helpers que elas e as policies chamam e as
-# tabelas que elas leem e escrevem: a migration nova que fizer DDL sobre eles entra na cadeia sozinha.
+# Os objetos que esta prova assevera — as 2 RPCs, os helpers que elas e as policies chamam, os gatilhos
+# de coerência que o seed dispara e as tabelas que elas leem e escrevem: a migration nova que fizer DDL
+# sobre eles entra na cadeia sozinha. Fora, de propósito: pedido_venda_exigir_coerencia, cuja única DDL
+# posterior é um GRANT dentro da 20260914180104 — guardá-la puxaria a migration inteira (reconciliar_*).
 # shellcheck disable=SC2034  # consumida pelo db/lib/corpo-vivo.sh, que o shellcheck sem -x não segue
 CV_FUNCOES=(melhoria_clientes_por_produto melhoria_produtos_relacionados padrao_like_contem
-            carteira_visivel_para pode_ver_carteira_completa get_commercial_role has_role)
+            carteira_visivel_para pode_ver_carteira_completa get_commercial_role has_role
+            pedido_venda_coerencia_cab pedido_venda_coerencia_lin)
 # shellcheck disable=SC2034  # consumida pelo db/lib/corpo-vivo.sh, que o shellcheck sem -x não segue
 CV_TABELAS=(melhoria_itens melhoria_mensagens omie_products order_items sales_orders profiles
             farmer_association_rules carteira_assignments carteira_coverage commercial_roles user_roles)
