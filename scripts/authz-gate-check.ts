@@ -25,7 +25,7 @@ import { join } from 'node:path';
 import { extractFunctions, checkGate, touchesSensitive, rawIsSensitiveSecdef, type FunctionDef } from './lib/authz-contract';
 import { detectarReescritaViva } from './lib/authz-reescrita';
 import { AUTHZ_MANIFEST, ACKNOWLEDGED_SENSITIVE, ACL_ONLY_INTERNAL, manifestKey } from './authz-manifest';
-import { REESCRITAS_CONHECIDAS_INDEX, chaveReescrita } from './authz-reescritas-conhecidas';
+import { REESCRITAS_CONHECIDAS_INDEX, type ReescritaConhecida, chaveReescrita } from './authz-reescritas-conhecidas';
 import { auditGrantsTabelas } from './lib/authz-grants';
 import { AUTHZ_TABELAS_FECHADAS } from './authz-tabelas-fechadas';
 import { auditGrantsFuncoes, auditRevokeSemPublic } from './lib/authz-funcoes';
@@ -43,8 +43,15 @@ export interface Migration {
   sql: string;
 }
 
-/** núcleo testável: lista de migrations → achados (erros bloqueiam, avisos não). */
-export function auditAuthz(migrations: Migration[]): Finding[] {
+/**
+ * núcleo testável: lista de migrations → achados (erros bloqueiam, avisos não). `reescritas` é a baseline
+ * de reescritas conhecidas — injetável para o teste da Parte D não depender de a lista real ter entrada (ela
+ * ZERA quando a última dívida é paga, e o caminho REESCRITA_BASELINE_OBSOLETA perderia o dente junto).
+ */
+export function auditAuthz(
+  migrations: Migration[],
+  reescritas: ReadonlyMap<string, ReescritaConhecida> = REESCRITAS_CONHECIDAS_INDEX,
+): Finding[] {
   const findings: Finding[] = [];
   const finalByName = new Map<string, { def: FunctionDef; file: string }>(); // p/ Parte A (gate por nome)
   const finalBySig = new Map<string, { def: FunctionDef; file: string }>(); // p/ Parte B (overloads distintos)
@@ -106,7 +113,7 @@ export function auditAuthz(migrations: Migration[]): Finding[] {
   // "a última def de X tem o gate" é falso — a Parte A mediu uma definição que não é a última.
   // A Parte D não proíbe o padrão (ele preserva SECDEF/search_path/ACL, que um corpo colado
   // perderia): ela impede o CI de AFIRMAR o que não mediu.
-  findings.push(...auditReescritas(ordered, lastMention));
+  findings.push(...auditReescritas(ordered, lastMention, reescritas));
 
   // Parte B — cobertura: toda SECDEF sensível no estado final (por assinatura) está classificada.
   for (const [, { def, file }] of finalBySig) {
@@ -176,7 +183,11 @@ export function auditAuthz(migrations: Migration[]): Finding[] {
  * O CÓDIGO ASCII no início da msg é contrato com os testes (e legível no log do CI): asserção
  * que casa frase em pt-BR quebra conforme o locale (#1483).
  */
-function auditReescritas(ordered: Migration[], lastMention: Map<string, { file: string; parsed: boolean }>): Finding[] {
+function auditReescritas(
+  ordered: Migration[],
+  lastMention: Map<string, { file: string; parsed: boolean }>,
+  reescritas: ReadonlyMap<string, ReescritaConhecida>,
+): Finding[] {
   const findings: Finding[] = [];
   for (const mig of ordered) {
     const r = detectarReescritaViva(mig.sql);
@@ -200,7 +211,7 @@ function auditReescritas(ordered: Migration[], lastMention: Map<string, { file: 
 
     for (const fnKey of doManifest) {
       const mention = lastMention.get(fnKey);
-      const conhecida = REESCRITAS_CONHECIDAS_INDEX.get(chaveReescrita(mig.file, fnKey));
+      const conhecida = reescritas.get(chaveReescrita(mig.file, fnKey));
       // reescrita ANTERIOR ao último CREATE: aquele CREATE é a última definição, Parte A ok.
       if (mention && mig.file.localeCompare(mention.file) <= 0) {
         // …mas a ENTRADA da baseline não caduca junto, e é isso que a torna perigosa: aqui o gate

@@ -154,18 +154,14 @@ export interface SitioConhecido {
   motivo: string;
 }
 
-const DATA_CICLO = 'compara com pedido_compra_sugerido.data_ciclo, que a edge gerar-pedidos-diario grava em UTC '
-  + '(`new Date().toISOString().slice(0, 10)`): UTC contra UTC; trocar só este lado criaria a divergência';
-
 // Os sítios da classe nos corpos VIVOS em 2026-09-29, cada um com veredito lido no corpo e medido na
 // prod (varredura de 398 funções + chamadores, horários de cron e leitores). A lista só ENCOLHE.
+// (Os "UTC contra UTC" da família data_ciclo eram falsos: a medição da fase 2 mostrou data_ciclo = dia de SP
+// em 19 de 20 noites, e desde a 20261001023000 o edge também o grava assim. atualizar_parametros_numericos_skus
+// e reposicao_pos_candidatos saíram com ela; _data_health_compute ficou com a #2698, que recria a função.)
 export const CONHECIDOS: readonly SitioConhecido[] = [
-  { alvo: '_data_health_compute()', trecho: 'current_date', n: 2, veredito: 'utc-consistente',
-    motivo: `${DATA_CICLO} (o mesmo sítio da baseline de scripts/fuso-da-sessao-gate.ts, que lê o corpo com SP)` },
   { alvo: 'analytics_outbox_purgar()', trecho: 'r.ocorrido_em::date', n: 1, veredito: 'latente',
     motivo: 'o dia é só chave de agrupamento de analytics_outbox_perda, que não tem leitor; cron 04:20 UTC' },
-  { alvo: 'atualizar_parametros_numericos_skus(text,uuid)', trecho: 'current_date', n: 1, veredito: 'utc-consistente',
-    motivo: DATA_CICLO },
   { alvo: 'converter_sugestao_em_campanha_flat(bigint,numeric,numeric,text,date,text,text,text)', trecho: 'current_date', n: 2,
     veredito: 'afetado',
     motivo: 'RPC quebrada na prod por outro defeito (INSERT em promocao_item com 4 colunas que a tabela não tem → '
@@ -180,7 +176,6 @@ export const CONHECIDOS: readonly SitioConhecido[] = [
     motivo: 'relê o próprio carimbo (reposicao_param_fila_log.medido_em = CURRENT_DATE); cron 11:45 UTC' },
   { alvo: 'reposicao_param_limbo_watchdog()', trecho: 'current_date', n: 2, veredito: 'utc-consistente',
     motivo: 'relê o próprio carimbo (reposicao_param_limbo_log.medido_em = CURRENT_DATE); cron 11:30 UTC' },
-  { alvo: 'reposicao_pos_candidatos(text)', trecho: 'now()::date', n: 1, veredito: 'utc-consistente', motivo: DATA_CICLO },
   { alvo: 'sugerir_negociacao_paralela_hoje(text,integer)', trecho: 'current_date', n: 4, veredito: 'latente',
     motivo: 'sem chamador desde a 20260606230000 (o cron saiu); os 3 valido_ate comparam com o próprio CURRENT_DATE' },
 ];

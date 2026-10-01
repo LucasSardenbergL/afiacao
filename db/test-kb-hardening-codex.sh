@@ -60,7 +60,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=en_US.UTF-8 >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l /tmp/pg-kb-hard.log -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres kbhard_verify
-P() { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d kbhard_verify "$@"; }
+P() { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d kbhard_verify "$@"; }
 
 # ───────────────────────────────────────────────────────────────────────────────
 echo "→ stubs do Supabase (roles, auth, app_role, user_roles, has_role, storage, omie_products)…"

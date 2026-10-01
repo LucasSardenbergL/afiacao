@@ -2,6 +2,7 @@ import { useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { addDias, hojeSP } from "@/lib/time/sp-day";
 import { toast } from "sonner";
 import { Sparkles, RefreshCw, PlayCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -135,8 +136,10 @@ export default function AdminReposicaoOportunidades() {
   const { data: cicloHoje = 0 } = useQuery({
     queryKey: ["ciclo-hoje", EMPRESA],
     queryFn: async () => {
-      const today = new Date().toISOString().slice(0, 10);
-      const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+      // O mesmo "hoje" do DEFAULT de ciclo_oportunidade_do_dia (dia de SP desde a 20261001023000): com
+      // o toISOString, das 21h BRT em diante esta faixa contava o corte de AMANHÃ.
+      const today = hojeSP();
+      const tomorrow = addDias(today, 1);
 
       const [promo, aumento] = await Promise.all([
         supabase

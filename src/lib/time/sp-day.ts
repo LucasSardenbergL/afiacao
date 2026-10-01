@@ -39,6 +39,22 @@ export function spBusinessDate(instant: Date | string): string {
   return SP_DATE_FMT.format(typeof instant === 'string' ? new Date(instant) : instant);
 }
 
+/** Hoje em São Paulo ('YYYY-MM-DD') — o dia de negócio, e não o UTC de `toISOString()`. */
+export function hojeSP(agora: Date = new Date()): string {
+  return spBusinessDate(agora);
+}
+
+/**
+ * Soma `n` dias (pode ser negativo) a uma data 'YYYY-MM-DD' — aritmética de CALENDÁRIO, sem relógio e sem
+ * fuso (o dia é contado em UTC puro, onde não há DST). Data inválida LANÇA, como sempre lançou.
+ */
+export function addDias(iso: string, n: number): string {
+  const d = new Date(`${iso.slice(0, 10)}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) throw new RangeError(`addDias: data inválida (${iso})`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+}
+
 /** Offset de America/Sao_Paulo em `date`, em ms (SP − UTC; negativo p/ UTC-3). */
 function spOffsetMs(date: Date): number {
   const dtf = new Intl.DateTimeFormat('en-US', {

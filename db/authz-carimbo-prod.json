@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-10-01T01:09:45.115Z",
-  "sourceHead": "89cb0c8bb0db18fc8fe2fb3cb0a2803e200c71d6",
+  "medidoEm": "2026-10-01T04:23:33.918Z",
+  "sourceHead": "f6febeb7ec2907c861f752443e59c27b6157527c",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -30,9 +30,9 @@
     "audit": {
       "script": "authz:audit:prod",
       "exit": 0,
-      "resumo": "✅ gate do manifest vale no corpo VIVO das 23 funções, e as 1 reescritas baselinadas batem no md5 de prod.",
+      "resumo": "✅ gate do manifest vale no corpo VIVO das 23 funções, e as 0 reescritas baselinadas batem no md5 de prod.",
       "denominador": "🔎 authz:audit:prod — 24 definição(ões) lida(s) para 23 chave(s) do manifest.",
-      "contratoFingerprint": "2bff8345b7ec5c55e6d1dffb7c55aeba14da5170791da92b5e5b08b7ea9b42bb",
+      "contratoFingerprint": "7318749018a7457ca3ab6fc4f2cc72c1eb61b848d059be188f5e51fa11363e10",
       "auditorFingerprint": "8243bb07ec22b02ca36694989777a7859c086994435fe38f9e48b649907e8909",
       "achados": []
     },
@@ -57,10 +57,10 @@
     "corpo": {
       "script": "deriva:corpo:prod",
       "exit": 0,
-      "resumo": "✅ deriva-corpo — 317 identidade(s) batem com o repo (238 em dia, 72 só cosméticas, 6 aceitas na baseline) e 15 aposentada(s) estão ausentes",
-      "denominador": "🔎 deriva-corpo — 317 identidade(s) conferida(s) · 15 aposentada(s) · ref origin/main@f56be1634 (fetch ok) · prod 2026-10-01 01:10:12.481269Z",
-      "contratoFingerprint": "4dcd8bddc86285d5ecf0931e73ffd06ffb0470c6419b6bd9c8de0cd33dc8ddd4",
-      "auditorFingerprint": "7697dadeea273a69dd499490b0b68d4cef37cf1cc49eefcbe1ae940445932b29",
+      "resumo": "✅ deriva-corpo — 317 identidade(s) batem com o repo (240 em dia, 71 só cosméticas, 5 aceitas na baseline) e 15 aposentada(s) estão ausentes",
+      "denominador": "🔎 deriva-corpo — 317 identidade(s) conferida(s) · 15 aposentada(s) · ref origin/main@f6febeb7e (fetch ok) · prod 2026-10-01 04:24:00.496997Z",
+      "contratoFingerprint": "32a2595ef0ef81acdabb5e41facdb8aac4468ad4c499f11a0e841721d94af68b",
+      "auditorFingerprint": "a07989df9ed0fa552abd2963788287214d21003755b18ed15a9ea88f97c9d3aa",
       "achados": []
     }
   }

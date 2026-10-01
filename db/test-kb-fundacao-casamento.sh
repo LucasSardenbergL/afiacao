@@ -45,7 +45,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l /tmp/pg-kb.log -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres kb_verify
-P() { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d kb_verify "$@"; }
+P() { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d kb_verify "$@"; }
 
 echo "→ stubs mínimos do Supabase (roles, auth, app_role, user_roles, has_role, storage)…"
 P -v ON_ERROR_STOP=1 -q <<'SQL'

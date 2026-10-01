@@ -4,17 +4,10 @@
  * testáveis; só `hojeSP` depende do relógio.
  */
 
-/** Data de hoje em SP, 'YYYY-MM-DD'. */
-export function hojeSP(): string {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
-}
-
-/** Soma `n` dias (pode ser negativo) a uma data 'YYYY-MM-DD'. Puro. */
-export function addDias(iso: string, n: number): string {
-  const d = new Date(`${iso.slice(0, 10)}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + n);
-  return d.toISOString().slice(0, 10);
-}
+// `hojeSP` e `addDias` moram na PLATAFORMA (`@/lib/time/sp-day`) desde 2026-10-01: as telas de reposição
+// precisam deles, e importá-los daqui era vazamento de fronteira (reposicao → farmer-inteligencia).
+import { addDias } from '@/lib/time/sp-day';
+export { addDias, hojeSP } from '@/lib/time/sp-day';
 
 /** Primeiro dia do mês de `iso` ('YYYY-MM-01'). Puro. */
 export function inicioMes(iso: string): string {

@@ -199,6 +199,14 @@ db/test-tint-promote-dedup-itens.sh        11
 # (o CI é vitest; ninguém os roda). Autocontida: initdb + db/stubs-data-health-trio.sql + a
 # migration do repo. Sem psql-ro, sem deno, sem dado de fora.
 db/test-data-health-sync-reprocess.sh      31  falsificar=13
+# A venda que o app empurra ao Omie e cujo gêmeo o importador nunca traz fica fora da positivação ao
+# vivo E do mês congelado — e ninguém fica sabendo (incidente 4c19af2a, 1 em 26). O check
+# vendas_empurradas_sem_gemeo (20261001011500) é provado pela SAÍDA do compute real: universo, gêmeo,
+# âncora de idade (orçamento convertido não acusa cedo; linha tocada não rejuvenesce), bordas de 6 h e
+# 6 dias, message estável sob relógio/fuso/lc_numeric, as 3 pernas do trio, o fecho de ACL (42501 sob
+# authenticated), re-apply e a PRE. Mínimo 43, não 44: o A29 (lc_numeric pt_BR) é NÃO MEDIDO — e não
+# conta — num servidor sem o locale.
+db/test-data-health-vendas-empurradas.sh   43  falsificar=18
 # Tintométrico: corante impagável EM USO alerta (fora de uso ou desativada, não), agravamento
 # re-emite e o dead-man dispara com a camada B parada.
 db/test-tint-watchdog-corante.sh           11
@@ -314,4 +322,14 @@ db/test-expandir-promocao-item.sh          41  falsificar=18
 # removida. Autocontida: initdb + stubs + schema-snapshot + a fixture
 # db/fixtures/hoje-sp-views-defaults-predecessoras-prod-20260930.sql (o snapshot perdeu as barras dos
 # literais de regex — as predecessoras vêm da fixture) + a migration.
-db/test-hoje-sp-views-defaults.sh          129  falsificar=33
+db/test-hoje-sp-views-defaults.sh          129  falsificar=fora-do-ci  # TETO do provas-sql: o --falsificar (33 sabotagens) custava 274 s de 1.040 numa run verde (26%, o maior do job; 2026-10-01) e 16 de 25 runs de PR foram canceladas a 20,2 min em 01/10 02:20–05:00 — a prova crua (129 asserts, 8 s) segue aqui; o --falsificar roda local (verde nos 2 locales no PR da fase 2)
+
+# Eixo 7 (fuso), fase 3 da classe (ii) — a família data_ciclo (20261001023000_hoje_sp_familia_data_ciclo.sql):
+# as 2 views "_hoje", o DEFAULT de p_data_ciclo das 4 RPCs de ciclo, o corte em HORA DE SP e 2 leitores de
+# data_ciclo (o 3º, _data_health_compute, ficou com a #2698), com as RPCs EXECUTADAS (o motor sem data não expira os pendentes de hoje às 21h; a
+# promoção que termina hoje entra no ciclo de hoje; o corte das 10:00 grava 10:00 de SP sob sessão UTC).
+# P01-P10 (predecessoras e as 18 dependências = md5 da prod), K1-K4 (a trava e a ordem dos leitores), Z0,
+# G1-G7. Autocontida: initdb + stubs + schema-snapshot + db/fixtures/hoje-sp-data-ciclo-prod-20261001.sql
+# (a deriva de 14 colunas do snapshot + o texto vivo) + a migration. O `--falsificar` (17 sabotagens, todas
+# vermelhas no assert certo, matriz UTC/SP × C/pt_BR verde) roda FORA do CI pelo motivo da linha abaixo.
+db/test-hoje-sp-data-ciclo.sh               57  falsificar=fora-do-ci  # o job provas-sql mediu 19,6–19,9 min de 20 em 3 PRs de 30/09–01/10 (mediana 17,9 em 8): +17 sabotagens (~3 min) o cancelaria no teto; o comentário do ci.yml pede paralelizar o runner, não subir o teto

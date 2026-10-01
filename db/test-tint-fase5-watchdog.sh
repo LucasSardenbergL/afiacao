@@ -55,7 +55,7 @@ trap cleanup EXIT
 # estatística, cada varredura fica em ~0,03s nas 7 suítes. Não muda o que a varredura DEVOLVE.
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp -c autovacuum=off" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }
 
 PASS=0; FAIL=0; FALHAS=()
@@ -366,7 +366,7 @@ roda_suite() {
   # palpite: a sessão que levasse mais de 2s para pegar o lock deixava o B14 medir o watchdog SEM
   # contenção.
   P -q -c "DELETE FROM public.sync_state WHERE entity_type='tint_watchdog_fase5';"
-  PGAPPNAME=f5wd_lock "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -q -c \
+  PGAPPNAME=f5wd_lock "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -q -c \
     "BEGIN; SELECT pg_advisory_xact_lock(hashtext('tint_watchdog_fase5')); SELECT pg_sleep(60); COMMIT;" \
     >/dev/null 2>&1 &
   local lockpid=$!

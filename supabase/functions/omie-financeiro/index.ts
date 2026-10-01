@@ -8,6 +8,8 @@ import { fetchAll } from "../_shared/paginate.ts";
 // antes, com gate próprio (ver versao.ts, lista GATE_PROPRIO do gate de contrato).
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
+import { hojeSP, paraDataOmie } from "../_shared/hoje-sp.ts";
+import { somarMeses } from "../_shared/meses-sp.ts";
 // Guards do total declarado pelo Omie (PISO, não verdade — docs/agent/sync.md):
 // proximoTotalPaginas mantém o piso monotônico entre respostas (uma intermediária sem o
 // campo NÃO encolhe o teto), avaliarPagina separa "fim real" de "página vazia antes do
@@ -643,8 +645,10 @@ async function syncContasCorrentes(
 
     // Saldo atual vem de financas/extrato/ (ListarExtrato), NÃO de geral/contacorrente/.
     // dPeriodoInicial/Final são obrigatórios (DD/MM/AAAA); pra saldo "hoje" usamos a data atual nos dois.
-    const hoje = new Date();
-    const dataBR = `${String(hoje.getDate()).padStart(2, "0")}/${String(hoje.getMonth() + 1).padStart(2, "0")}/${hoje.getFullYear()}`;
+    // O dia de SP: no servidor UTC, getDate() das 21h BRT em diante é amanhã — o saldo pedido ao Omie e o
+    // saldo_data gravado iam juntos para D+1 no sync noturno da tela.
+    const hoje = hojeSP();
+    const dataBR = paraDataOmie(hoje);
 
     for (const c of contas) {
       // Busca saldo real via ListarExtrato (cExibirApenasSaldo=S => só os saldos, sem movimentos).
@@ -665,7 +669,7 @@ async function syncContasCorrentes(
         )) as OmieExtratoResponse | null;
         if (saldoResult && (saldoResult.nSaldoAtual != null || saldoResult.nSaldoDisponivel != null)) {
           saldoAtual = saldoResult.nSaldoAtual ?? saldoResult.nSaldoDisponivel ?? null;
-          saldoData = new Date().toISOString().split("T")[0];
+          saldoData = hoje;
           saldoOk = true;
         }
       } catch (e) {
@@ -1922,12 +1926,6 @@ function parseOmieDate(dateStr: string | null | undefined): string | null {
   return null;
 }
 
-function formatOmieDate(d: Date): string {
-  return `${String(d.getDate()).padStart(2, "0")}/${String(
-    d.getMonth() + 1
-  ).padStart(2, "0")}/${d.getFullYear()}`;
-}
-
 // ═══════════════ AUTH HELPER ═══════════════
 async function validateCaller(
   req: Request,
@@ -2350,8 +2348,8 @@ Deno.serve(async (req) => {
 
             const dataInicio =
               filtro_data_de ||
-              formatOmieDate(new Date(new Date().setMonth(new Date().getMonth() - 6)));
-            const dataFim = filtro_data_ate || formatOmieDate(new Date());
+              paraDataOmie(somarMeses(hojeSP(), -6));
+            const dataFim = filtro_data_ate || paraDataOmie(hojeSP());
 
             const cp = await syncContasPagar(supabase, co, dataInicio, dataFim, maxPages || 500);
             const cr = await syncContasReceber(supabase, co, dataInicio, dataFim, maxPages || 500);
@@ -2359,7 +2357,7 @@ Deno.serve(async (req) => {
             // Movimentações: últimos 3 meses (mais recente, volume menor)
             const dataInicioMov =
               filtro_data_de ||
-              formatOmieDate(new Date(new Date().setMonth(new Date().getMonth() - 3)));
+              paraDataOmie(somarMeses(hojeSP(), -3));
             const mov = await syncMovimentacoes(supabase, co, dataInicioMov, dataFim, maxPages || 500);
 
             return {
@@ -2391,8 +2389,8 @@ Deno.serve(async (req) => {
       case "sync_contas_pagar": {
         const dataInicio =
           filtro_data_de ||
-          formatOmieDate(new Date(new Date().setMonth(new Date().getMonth() - 6)));
-        const dataFim = filtro_data_ate || formatOmieDate(new Date());
+          paraDataOmie(somarMeses(hojeSP(), -6));
+        const dataFim = filtro_data_ate || paraDataOmie(hojeSP());
         for (const co of targetCompanies) {
           result[co] = await runLeasedCompanySync(supabase, action, co, auth.userId || "unknown", async () => {
             const startPage = (await readCursorStartPage(supabase, co, "contas_pagar")) ?? 1;
@@ -2407,8 +2405,8 @@ Deno.serve(async (req) => {
       case "sync_contas_receber": {
         const dataInicio =
           filtro_data_de ||
-          formatOmieDate(new Date(new Date().setMonth(new Date().getMonth() - 6)));
-        const dataFim = filtro_data_ate || formatOmieDate(new Date());
+          paraDataOmie(somarMeses(hojeSP(), -6));
+        const dataFim = filtro_data_ate || paraDataOmie(hojeSP());
         for (const co of targetCompanies) {
           result[co] = await runLeasedCompanySync(supabase, action, co, auth.userId || "unknown", async () => {
             const startPage = (await readCursorStartPage(supabase, co, "contas_receber")) ?? 1;
@@ -2421,8 +2419,8 @@ Deno.serve(async (req) => {
       }
 
       case "sync_movimentacoes": {
-        const dataFim = filtro_data_ate || formatOmieDate(new Date());
-        const incrementalDe = formatOmieDate(new Date(new Date().setMonth(new Date().getMonth() - 3)));
+        const dataFim = filtro_data_ate || paraDataOmie(hojeSP());
+        const incrementalDe = paraDataOmie(somarMeses(hojeSP(), -3));
         for (const co of targetCompanies) {
           result[co] = await runLeasedCompanySync(supabase, action, co, auth.userId || "unknown", async () => {
             // mov: undefined = fresh (começa da última página/mais recente); int = resume
@@ -2447,13 +2445,13 @@ Deno.serve(async (req) => {
       // Phase 3 (Fundação): calcula ambos regimes (caixa + competência) por padrão.
       // Aceita `regime` opcional ('caixa' | 'competencia' | 'ambos'). Default 'ambos'.
       case "calcular_dre": {
-        const nowDre = new Date();
+        const [anoDre, mesDre] = hojeSP().split("-").map(Number); // o mês de SP, não o do servidor UTC
         const { ano: targetAno, meses: targetMeses } = resolveDrePeriod({
           ano,
           mes,
           meses,
-          defaultAno: nowDre.getFullYear(),
-          defaultMes: nowDre.getMonth() + 1,
+          defaultAno: anoDre,
+          defaultMes: mesDre,
         });
         const regimesToRun: Regime[] = requestedRegime === "caixa"
           ? ["caixa"]
@@ -2475,8 +2473,11 @@ Deno.serve(async (req) => {
 
       // Ponto 8: calcular_dre_year = todos os meses até o mês atual
       case "calcular_dre_year": {
-        const targetAno = ano == null ? new Date().getFullYear() : validateAno(ano);
-        const currentMonth = new Date().getFullYear() === targetAno ? new Date().getMonth() + 1 : 12;
+        // O ano e o mês de SP: na noite do último dia do mês o servidor UTC já está no seguinte, e o snapshot
+        // do mês que nem começou saía zerado.
+        const [anoSp, mesSp] = hojeSP().split("-").map(Number);
+        const targetAno = ano == null ? anoSp : validateAno(ano);
+        const currentMonth = anoSp === targetAno ? mesSp : 12;
         const regimesYear: Regime[] = ["caixa", "competencia"];
         for (const co of targetCompanies) {
           result[co] = {};
@@ -2492,8 +2493,7 @@ Deno.serve(async (req) => {
 
       // Debug: retorna JSON raw do Omie sem transformação (para validação Onda 1)
       case "debug_raw": {
-        const _hoje = new Date();
-        const _hojeBR = `${String(_hoje.getDate()).padStart(2, "0")}/${String(_hoje.getMonth() + 1).padStart(2, "0")}/${_hoje.getFullYear()}`;
+        const _hojeBR = paraDataOmie(hojeSP());
         const endpoints: Record<string, { endpoint: string; call: string; params: Record<string, unknown> }> = {
           categorias: { endpoint: "geral/categorias/", call: "ListarCategorias", params: { pagina: 1, registros_por_pagina: 2 } },
           contas_correntes: { endpoint: "geral/contacorrente/", call: "ListarContasCorrentes", params: { pagina: 1, registros_por_pagina: 2 } },

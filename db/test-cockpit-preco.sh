@@ -47,7 +47,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l /tmp/pg-cockpit.log -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres cockpit_verify
-P() { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d cockpit_verify "$@"; }
+P() { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d cockpit_verify "$@"; }
 
 echo "→ stubs mínimos do Supabase (roles, auth, app_role, has_role, pode_ver_carteira_completa, tabelas)…"
 P -v ON_ERROR_STOP=1 -q <<'SQL'

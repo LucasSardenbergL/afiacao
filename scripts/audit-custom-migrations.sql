@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 569
+-- Total de custom migrations: 571
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -610,7 +610,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260929001651', 'hoje_sp_sessao_utc_sete_funcoes', '20260929001651_hoje_sp_sessao_utc_sete_funcoes.sql'),
   ('20260929002059', 'des_desconto_total_maximo_por_faixa', '20260929002059_des_desconto_total_maximo_por_faixa.sql'),
   ('20260929003006', 'reposicao_v_sku_fora_do_motor', '20260929003006_reposicao_v_sku_fora_do_motor.sql'),
-  ('20260930220148', 'expandir_promocao_item_overload_similarity_volume', '20260930220148_expandir_promocao_item_overload_similarity_volume.sql')
+  ('20260930220148', 'expandir_promocao_item_overload_similarity_volume', '20260930220148_expandir_promocao_item_overload_similarity_volume.sql'),
+  ('20260930230623', 'hoje_sp_views_defaults_classe_ii', '20260930230623_hoje_sp_views_defaults_classe_ii.sql'),
+  ('20261001011500', 'data_health_vendas_empurradas_sem_gemeo', '20261001011500_data_health_vendas_empurradas_sem_gemeo.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2461,7 +2463,28 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('hoje_sp_sessao_utc_sete_funcoes', 'function', 'public', 'vendas_sync_semear_janela', ''),
   ('des_desconto_total_maximo_por_faixa', 'view', 'public', 'v_des_desconto_por_checkin', ''),
   ('reposicao_v_sku_fora_do_motor', 'view', 'public', 'v_reposicao_sku_fora_do_motor', ''),
-  ('expandir_promocao_item_overload_similarity_volume', 'function', 'public', 'expandir_promocao_item', '')
+  ('expandir_promocao_item_overload_similarity_volume', 'function', 'public', 'expandir_promocao_item', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'fin_aging_pagar', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'fin_aging_receber', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'fin_fluxo_caixa_diario', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_caca_candidatos', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_caca_compradores', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_desconto_flat_condicional_ativo', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_fornecedor_lt_logistica_total', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_grupo_comercial', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_grupo_contas_receber', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_grupo_contas_receber_por_doc', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_sku_aumento_vigente', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_sku_candidatos_primeira_compra', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_sku_demanda_estatisticas', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_sku_demanda_rajada', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_sku_leadtime_estatisticas', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_sku_parametros_sugeridos', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_sku_sigma_demanda', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_sugestao_negociacao_ativa', ''),
+  ('data_health_vendas_empurradas_sem_gemeo', 'function', 'public', '_data_health_compute', ''),
+  ('data_health_vendas_empurradas_sem_gemeo', 'function', 'public', 'data_health_watchdog', ''),
+  ('data_health_vendas_empurradas_sem_gemeo', 'function', 'public', 'fin_sync_heartbeat', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4360,7 +4383,28 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('hoje_sp_sessao_utc_sete_funcoes', 'function', 'public', 'vendas_sync_semear_janela', ''),
   ('des_desconto_total_maximo_por_faixa', 'view', 'public', 'v_des_desconto_por_checkin', ''),
   ('reposicao_v_sku_fora_do_motor', 'view', 'public', 'v_reposicao_sku_fora_do_motor', ''),
-  ('expandir_promocao_item_overload_similarity_volume', 'function', 'public', 'expandir_promocao_item', '')
+  ('expandir_promocao_item_overload_similarity_volume', 'function', 'public', 'expandir_promocao_item', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'fin_aging_pagar', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'fin_aging_receber', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'fin_fluxo_caixa_diario', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_caca_candidatos', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_caca_compradores', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_desconto_flat_condicional_ativo', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_fornecedor_lt_logistica_total', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_grupo_comercial', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_grupo_contas_receber', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_grupo_contas_receber_por_doc', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_sku_aumento_vigente', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_sku_candidatos_primeira_compra', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_sku_demanda_estatisticas', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_sku_demanda_rajada', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_sku_leadtime_estatisticas', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_sku_parametros_sugeridos', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_sku_sigma_demanda', ''),
+  ('hoje_sp_views_defaults_classe_ii', 'view', 'public', 'v_sugestao_negociacao_ativa', ''),
+  ('data_health_vendas_empurradas_sem_gemeo', 'function', 'public', '_data_health_compute', ''),
+  ('data_health_vendas_empurradas_sem_gemeo', 'function', 'public', 'data_health_watchdog', ''),
+  ('data_health_vendas_empurradas_sem_gemeo', 'function', 'public', 'fin_sync_heartbeat', '')
 )
 SELECT
   e.migration,
@@ -4547,6 +4591,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'fin_sync_heartbeat', 20, '20260829012000_analytics_outbox_perda_visivel.sql', '6fa73714252830c5aa3d8ee6cdf96220'),
   ('public', 'fin_sync_heartbeat', 21, '20260829041500_analytics_outbox_trigger_sensor.sql', '4665b298aaa4c4cbc49c78c5ddfcc2ec'),
   ('public', 'fin_sync_heartbeat', 22, '20260918200000_data_health_sync_reprocess_saude.sql', '0df60fab6586dd63777082691be69778'),
+  ('public', 'fin_sync_heartbeat', 23, '20261001011500_data_health_vendas_empurradas_sem_gemeo.sql', '619986fe0010f64f50b58d5922eff7d2'),
   ('public', '_carteira_mixgap_for_owner', 1, '20260525210000_viewas_rpcs_for.sql', '45590516afa887e06b1f6b6c7e9440b5'),
   ('public', '_carteira_mixgap_for_owner', 2, '20260526230000_mixgap_feedback.sql', '09b8ada4bb8fa3cdb389d6f8257a95f2'),
   ('public', '_carteira_positivacao_for_owner', 1, '20260525210000_viewas_rpcs_for.sql', '93a9d455cf68c1d47b589849b505909f'),
@@ -4598,6 +4643,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', '_data_health_compute', 31, '20260920210000_sync_reprocess_retry_nao_liquida_erro.sql', '282eae5b933019e2e9f806b1f67a224b'),
   ('public', '_data_health_compute', 32, '20260920233000_sync_reprocess_degradado_so_das_vigiadas.sql', '5eae2f124f63fba7cb27914e9610e5d8'),
   ('public', '_data_health_compute', 33, '20260922225500_data_health_portal_humano_critico_apos_24h.sql', 'aa3cac116f66f5bfdcfdf549dbe9afb1'),
+  ('public', '_data_health_compute', 34, '20261001011500_data_health_vendas_empurradas_sem_gemeo.sql', 'aa94df19bd609e91a8264e88eea4d2d2'),
   ('public', 'data_health_watchdog', 1, '20260527220000_data_health_watchdog.sql', '4d210b1cab0b10bcf589746005859c4b'),
   ('public', 'data_health_watchdog', 2, '20260527250000_data_health_checks_high.sql', '936015f396af02ab4229e4e20f656803'),
   ('public', 'data_health_watchdog', 3, '20260530190000_data_health_portal_push.sql', '0e436fed51baecafdfbccbe3191e5bfa'),
@@ -4620,6 +4666,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'data_health_watchdog', 20, '20260829012000_analytics_outbox_perda_visivel.sql', '6e32c4c211884e6fe340acd6b41bb411'),
   ('public', 'data_health_watchdog', 21, '20260829041500_analytics_outbox_trigger_sensor.sql', '2113e2acea46c34631f5c177145617dc'),
   ('public', 'data_health_watchdog', 22, '20260918200000_data_health_sync_reprocess_saude.sql', 'd972036c52c2a54c0da21fcbef783c63'),
+  ('public', 'data_health_watchdog', 23, '20261001011500_data_health_vendas_empurradas_sem_gemeo.sql', 'b35c43d55f1e7688b913ce6fe0cb2a5b'),
   ('public', 'tarefas_matcher_tick', 1, '20260528133000_tarefas_bloco_d.sql', '1d22a8a6cebe7a7ac1329fc8f98fe20d'),
   ('public', 'tarefas_matcher_tick', 2, '20260528135000_tarefas_matcher_created_at_floor.sql', '99785df6ed7189c49aad580f09b24a1c'),
   ('public', 'tarefas_matcher_tick', 3, '20260615194500_fix_tarefas_matcher_enum.sql', '0bc8eb0402988ad408b80add2df00e56'),

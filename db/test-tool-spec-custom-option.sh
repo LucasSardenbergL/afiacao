@@ -16,7 +16,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l /tmp/pg-toolspec.log -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres toolspec_verify
-PSQL=("$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d toolspec_verify)
+PSQL=("$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d toolspec_verify)
 P() { "${PSQL[@]}" "$@"; }
 
 echo "→ fundação (stubs auth + enum + has_role + tool_specifications + seeds)…"
@@ -216,7 +216,7 @@ SELECT 'ASSERTS SEQUENCIAIS OK ✓' AS resultado;
 SQL
 
 echo "→ concorrência: 10 inserts paralelos da MESMA medida → 1 entrada (prova FOR UPDATE)…"
-seq 1 10 | xargs -P 10 -I{} "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d toolspec_verify -q -c \
+seq 1 10 | xargs -P 10 -I{} "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d toolspec_verify -q -c \
   "SELECT set_config('test.role','employee',false); SELECT set_config('test.uid','00000000-0000-0000-0000-000000000001',false); SELECT public.adicionar_opcao_tool_spec('44444444-4444-4444-4444-444444444444','PARALELO');" >/dev/null 2>&1
 CNT="$(P -tAc "SELECT count(*) FROM jsonb_array_elements_text((SELECT options FROM public.tool_specifications WHERE id='44444444-4444-4444-4444-444444444444')) e WHERE e='PARALELO';")"
 [ "$CNT" = "1" ] || { echo "CONC FALHOU: PARALELO apareceu $CNT vezes (esperado 1)"; exit 1; }

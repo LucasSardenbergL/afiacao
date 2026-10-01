@@ -38,7 +38,7 @@ trap cleanup EXIT
 "${PGC[@]}" "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "${PGC[@]}" "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "${PGC[@]}" "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }
 
 P -q -f "$REPO_ROOT/db/stubs-supabase.sql"
@@ -314,7 +314,7 @@ eq "A23 cron de purga registrado" "$V" "1"
 # Uma 2a conexão segura o MESMO lock; a RPC tem de BLOQUEAR (55P03 sob
 # lock_timeout). Sem o lock, duas requisições simultâneas do mesmo usuário leem
 # o mesmo contador e ambas passam — a corrida que a cota existe para fechar.
-"$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -q -c \
+"$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -q -c \
   "BEGIN; SELECT pg_advisory_xact_lock(hashtextextended('${U1}:trava-teste', 0)); SELECT pg_sleep(8);" \
   >/dev/null 2>&1 &
 LOCK_PID=$!
@@ -395,7 +395,7 @@ restaurar
 
 # ── F4 mira A24b: advisory lock removido ────────────────────────────────
 if sabotar 's/^  PERFORM pg_advisory_xact_lock/  -- PERFORM pg_advisory_xact_lock/'; then
-  "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -q -c \
+  "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -q -c \
     "BEGIN; SELECT pg_advisory_xact_lock(hashtextextended('${U2}:trava-teste', 0)); SELECT pg_sleep(8);" \
     >/dev/null 2>&1 &
   LOCK_PID=$!
