@@ -265,7 +265,7 @@ lock no meio da transação (já aplicada, sem incidente; a lição está regist
   baixa nela, e o da 00:30 de D+1 dá (é o controle positivo);
 - G1-G3.
 
-O `--falsificar` teve 8 sabotagens, todas vermelhas no assert declarado, nos dois ambientes (`TZ=UTC` + `C`, e
+A prova fica fora do núcleo do CI e roda local: o `provas-sql` cancelou 16 de 25 runs a 20,2 min em 01/10, e o motivo está registrado em `db/nucleo-ci.txt`. O `--falsificar` teve 8 sabotagens, todas vermelhas no assert declarado, nos dois ambientes (`TZ=UTC` + `C`, e
 sem TZ + `pt_BR.UTF-8`):
 - o gêmeo da sessão;
 - o fuso escrito errado (UTC);
