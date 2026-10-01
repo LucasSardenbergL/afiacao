@@ -4,11 +4,17 @@ import typography from "@tailwindcss/typography";
 
 export default {
   darkMode: ["class"],
+  // Testes fora do CSS: o Tailwind lê cada arquivo do content como texto, e uma classe citada só num
+  // teste nascia no CSS servido. As 3 negações espelham a classe TESTE do classify.sh da skill
+  // lovable-deploy-verify, e são as únicas formas que a prova do monitor de deploy entende.
   content: [
     "./pages/**/*.{ts,tsx}",
     "./components/**/*.{ts,tsx}",
     "./app/**/*.{ts,tsx}",
     "./src/**/*.{ts,tsx}",
+    "!./src/**/*.{test,spec}.{ts,tsx}",
+    "!./src/**/__tests__/**",
+    "!./src/test/**",
   ],
   prefix: "",
   theme: {

@@ -135,7 +135,25 @@ G "$A" checkout -q -B t12 "$C5"
 escreve "$A/src/__tests__/gate.test.ts" "$(mapa 3 4 4 3)
 // bg-cor-nova"
 C12=$(commit "$A" "teste com palavra nova")
-for s in "$C0" "$C1" "$C2" "$C3" "$C4" "$C5" "$C8" "$C9" "$C10" "$C11" "$C12" "$H1"; do
+# (d2') NEGAÇÃO no content (2026-10-01): a MESMA palavra nova do #12, sobre uma história cujo content
+# nega os testes — no #13 nas 3 formas EXATAS do tailwind.config.ts real, no #14 numa forma que o
+# fast-glob honraria mas a prova não entende. O lockfile das duas trava o fast-glob auditado.
+LOCK_FG='{ "packages": { "tailwindcss": ["tailwindcss@3.4.17", "", {}, "sha512-fx"], "fast-glob": ["fast-glob@3.3.2", "", {}, "sha512-fx"] } }'
+G "$A" checkout -q -B n13 "$C5"
+escreve "$A/tailwind.config.ts" 'export default { content: ["./src/**/*.{ts,tsx}", "!./src/**/*.{test,spec}.{ts,tsx}", "!./src/**/__tests__/**", "!./src/test/**"] };'
+escreve "$A/bun.lock" "$LOCK_FG"
+C13B=$(commit "$A" "content nega os testes nas 3 formas exatas")
+escreve "$A/src/__tests__/gate.test.ts" "$(mapa 3 4 4 3)
+// bg-cor-nova"
+C13=$(commit "$A" "teste com palavra nova, sob a negação")
+G "$A" checkout -q -B n14 "$C5"
+escreve "$A/tailwind.config.ts" 'export default { content: ["./src/**/*.{ts,tsx}", "!./src/**/*.test.{ts,tsx}"] };'
+escreve "$A/bun.lock" "$LOCK_FG"
+C14B=$(commit "$A" "content com negação que a prova não entende")
+escreve "$A/src/__tests__/gate.test.ts" "$(mapa 3 4 4 3)
+// bg-cor-nova"
+C14=$(commit "$A" "teste com palavra nova, sob a negação estranha")
+for s in "$C0" "$C1" "$C2" "$C3" "$C4" "$C5" "$C8" "$C9" "$C10" "$C11" "$C12" "$C13B" "$C13" "$C14B" "$C14" "$H1"; do
   case "$s" in [0-9a-f]*) ;; *) via_caiu "a história do fixture não subiu" ;; esac
 done
 
@@ -146,7 +164,7 @@ origem() { # nome refspec…
   fi
 }
 origem origin "$C5:refs/heads/main" "$H1:refs/heads/feat" "refs/tags/pr1" "$C8:refs/heads/build-alt" \
-  "$C10:refs/heads/t10" "$C11:refs/heads/t11" "$C12:refs/heads/t12"
+  "$C10:refs/heads/t10" "$C11:refs/heads/t11" "$C12:refs/heads/t12" "$C13:refs/heads/t13" "$C14:refs/heads/t14"
 origem origin-rev "$C9:refs/heads/main"
 origem origin-velho "$C2:refs/heads/main" "$C5:refs/heads/adiante"
 
@@ -264,6 +282,8 @@ pr_json 8 MERGED "$C8" main
 pr_json 10 MERGED "$C10" main
 pr_json 11 MERGED "$C11" main
 pr_json 12 MERGED "$C12" main
+pr_json 13 MERGED "$C13" main
+pr_json 14 MERGED "$C14" main
 # (o #5 não tem arquivo: o gh-stub responde como o GraphQL a um PR inexistente, exit 1)
 
 # O monitor sob teste mora num layout IGUAL ao da skill: ele chama "$SELF_DIR/verify-frontend.sh"
@@ -368,6 +388,11 @@ suite() {
   caso prtestetw "palavra nova num teste que ninguém importa: o Tailwind a lê — continua ALCANCA" "$CLONE" 3 \
        "PR_FORA_DO_AR;PR_TOCA_O_BUNDLE;src/__tests__/gate.test.ts;TESTE_ALCANCA TAILWIND" \
        "PR_SEM_ALCANCE_NO_BUNDLE;PR_ALCANCE_NAO_PROVADO" --pr 12 "$(U "$C5")"
+  caso prtesteneg "a mesma palavra nova, num teste que o content NEGA (as 3 formas exatas): sem alcance" "$CLONE" 3 \
+       "PR_FORA_DO_AR;PR_SEM_ALCANCE_NO_BUNDLE" "PR_TOCA_O_BUNDLE;PR_ALCANCE_NAO_PROVADO" --pr 13 "$(U "$C5")"
+  caso prtestenegx "a mesma palavra sob uma negação que a prova não entende: continua ALCANCA" "$CLONE" 3 \
+       "PR_FORA_DO_AR;PR_TOCA_O_BUNDLE;src/__tests__/gate.test.ts;TESTE_ALCANCA TAILWIND;nao entende" \
+       "PR_SEM_ALCANCE_NO_BUNDLE;PR_ALCANCE_NAO_PROVADO" --pr 14 "$(U "$C5")"
   CASO_PY_MUDO=1
   caso prtestepy "prova sem resposta (python mudo): o teste continua ALCANCA, nunca 'sem alcance'" "$CLONE" 3 \
        "PR_FORA_DO_AR;PR_TOCA_O_BUNDLE;sem prova positiva" "PR_SEM_ALCANCE_NO_BUNDLE;PR_ALCANCE_NAO_PROVADO" \
@@ -611,6 +636,14 @@ sabota_prev scripts/monitor-deploy.sh "teste refutado deixa de continuar ALCANCA
 sabota_prev scripts/monitor-deploy.sh "o monitor deixa de contar TESTE: sem prova, o teste some da linha" prtestepy \
   3 "PR_ALCANCE_NAO_PROVADO;sem prova positiva" "PR_TOCA_O_BUNDLE;PR_SEM_ALCANCE_NO_BUNDLE" \
   "  nt=\$(printf '%s\\n' \"\$classes\" | awk -F '\\t' '\$1 == \"TESTE\" { n++ } END { print n + 0 }')" '  nt=0'
+# (d2') NEGAÇÃO (2026-10-01): o "sem alcance" do #13 sai PELA isenção (sem ela, a palavra nova volta a
+# pedir Publish), e a negação estranha do #14 não isenta (lida como a da pasta, isentaria)
+sabota_prev scripts/alcance-bundle.py "a negação do content deixa de isentar: o teste negado volta a pedir Publish" prtesteneg \
+  3 "PR_TOCA_O_BUNDLE;src/__tests__/gate.test.ts;TESTE_ALCANCA TAILWIND" "PR_SEM_ALCANCE_NO_BUNDLE" \
+  '    negados = [t for t in lidos if regular(t) and any(r.fullmatch(t) for r in entendidas)]' '    negados = []'
+sabota_prev scripts/alcance-bundle.py "negação estranha lida como a da pasta: a palavra nova vira 'sem alcance'" prtestenegx \
+  3 "PR_SEM_ALCANCE_NO_BUNDLE" "PR_TOCA_O_BUNDLE;TESTE_ALCANCA" \
+  'NEGACOES_ENTENDIDAS.get(s)' 'NEGACOES_ENTENDIDAS.get(s, NEGACOES_ENTENDIDAS["!./src/**/__tests__/**"])'
 }
 sabotagens
 
@@ -653,5 +686,5 @@ if ! cmp -s "$SCRIPT_ABS" "$FIX/monitor-original.sh"; then
   exit 1
 fi
 echo ""
-echo "--falsify: $PEGAS pega(s), $CEGAS cegueira(s) (esperado: 0 cegueiras em 24)"
-[ "$CEGAS" -eq 0 ] && [ "$PEGAS" -ge 24 ]
+echo "--falsify: $PEGAS pega(s), $CEGAS cegueira(s) (esperado: 0 cegueiras em 26)"
+[ "$CEGAS" -eq 0 ] && [ "$PEGAS" -ge 26 ]

@@ -76,7 +76,17 @@ parte_de() { g checkout -q --detach "$1"; }
 mapa() { printf 'export const MAPA = new Map([\n  ["a.ts", %s],\n  ["b.ts", %s],\n  ["c.ts", %s],\n  ["d.ts", %s],\n]);\n' "$@"; }
 VITE_ALIAS='resolve: { alias: { "@": path.resolve(__dirname, "./src") } }'
 TW_CONTENT='content: ["./pages/**/*.{ts,tsx}", "./src/**/*.{ts,tsx}"]'
-lock_tw() { printf '{ "packages": { "tailwindcss": ["tailwindcss@%s", "", {}, "sha512-fx"] } }\n' "$1"; }
+# (d2') as 3 negações na forma EXATA do tailwind.config.ts real — as que a prova entende
+NEG_ARQ='"!./src/**/*.{test,spec}.{ts,tsx}"' NEG_PASTA='"!./src/**/__tests__/**"' NEG_SETUP='"!./src/test/**"'
+# forma que o fast-glob honraria, mas não é uma das 3 strings exatas. Em VARIÁVEL de propósito: aspas
+# simples com `"` dentro de "$(…)" o bash 3.2 do macOS analisa errado — o {ts,tsx} sai sem aspas, é
+# expandido, e o fixture grava só `*.test.ts` (medido 2026-10-01; no bash 5 do CI sairia certo)
+NEG_ESTRANHA_FORMA='"!./src/**/*.test.{ts,tsx}"'
+tw_com() { printf 'export default { content: ["./pages/**/*.{ts,tsx}", "./src/**/*.{ts,tsx}"%s] };\n' "$1"; }
+lock_tw() { # $1 = tailwindcss · $2 = fast-glob (default: o auditado pela negação)
+  printf '{ "packages": { "tailwindcss": ["tailwindcss@%s", "", {}, "sha512-fx"], "fast-glob": ["fast-glob@%s", "", {}, "sha512-fx"] } }\n' \
+    "$1" "${2:-3.3.2}"
+}
 pkg() { # $1 = scripts extras (JSON com vírgula inicial) · $2 = versão do react · $3 = script build
   printf '{ "name": "fixture", "private": true, "type": "module",\n'
   printf '  "scripts": { "build": "%s", "build:dev": "vite build --mode development", "lint": "eslint ."%s },\n' \
@@ -177,13 +187,45 @@ TMIX=$(teste_sobre t-mix tailwind.config.ts "export default { $TW_CONTENT, theme
 # teste-SYMLINK para docs/: o content do Tailwind segue o link — docs/ vira parte do CSS
 parte_de "$BASE"; ln -s ../../../docs/b.md "$R/src/lib/__tests__/link.test.ts"
 commit t-link-base > /dev/null && escreve docs/b.md 'b-link' && LINK=$(commit t-link)
+# ── (d2') NEGAÇÃO no content (2026-10-01): teste que uma negação ENTENDIDA tira da leitura não precisa
+# das palavras de (d2). Todo delta daqui põe palavra NOVA — sem a isenção, todos seriam ALCANCA —, e é
+# a BASE (o content, o lockfile, quem lê o teste) que decide.
+acrescenta() { local a; for a in "$@"; do printf '// bg-cor-nova\n' >> "$R/$a"; done; }
+parte_de "$BASE"; escreve tailwind.config.ts "$(tw_com ", $NEG_ARQ, $NEG_PASTA, $NEG_SETUP")"
+# um teste de cada forma: dados.ts só casa a da pasta, y.test.ts só a do nome, setup.ts só a do setup
+escreve src/lib/y.test.ts 'test("y", () => 1);'; escreve src/test/setup.ts 'export const s = 1;'
+NEG_BASE=$(commit neg-base)
+acrescenta src/lib/__tests__/dados.ts src/lib/y.test.ts src/test/setup.ts; NEG=$(commit neg)
+parte_de "$NEG_BASE"; escreve src/lib/usa-dados.ts 'import { MAPA } from "./__tests__/dados"; export const u = MAPA;'
+commit neg-imp-base > /dev/null && acrescenta src/lib/__tests__/dados.ts && NEG_IMP=$(commit neg-imp)
+parte_de "$BASE"; escreve tailwind.config.ts "$(tw_com ", $NEG_ESTRANHA_FORMA")"
+commit neg-estranha-base > /dev/null && acrescenta src/lib/__tests__/janela.test.ts && NEG_ESTRANHA=$(commit neg-estranha)
+# UMA forma só no content, e o teste mudado é da classe de OUTRA
+parte_de "$BASE"; escreve tailwind.config.ts "$(tw_com ", $NEG_ARQ")"
+commit neg-so-arq-base > /dev/null && acrescenta src/lib/__tests__/dados.ts && NEG_SO_ARQ=$(commit neg-so-arq)
+parte_de "$BASE"; escreve tailwind.config.ts "$(tw_com ", $NEG_PASTA")"; escreve src/test/setup.ts 'export const s = 1;'
+commit neg-so-pasta-base > /dev/null && acrescenta src/test/setup.ts && NEG_SO_PASTA=$(commit neg-so-pasta)
+parte_de "$BASE"; escreve tailwind.config.ts "$(tw_com ", $NEG_SETUP")"
+commit neg-so-setup-base > /dev/null && acrescenta src/lib/__tests__/dados.ts && NEG_SO_SETUP=$(commit neg-so-setup)
+parte_de "$NEG_BASE"; escreve bun.lock "$(lock_tw 3.4.17 3.3.3)"
+commit neg-fg-base > /dev/null && acrescenta src/lib/__tests__/janela.test.ts && NEG_FG=$(commit neg-fg)
+parte_de "$NEG_BASE"; escreve bun.lock "$(lock_tw 3.4.18)"
+commit neg-tw-base > /dev/null && acrescenta src/lib/__tests__/janela.test.ts && NEG_TW=$(commit neg-tw)
+# symlink com NOME de teste apontando para PASTA fora do content: o Tailwind lê os arquivos do alvo
+# pelo link (src/lib/pasta.test.ts/x.ts — a forma do nome não poda diretório), e mudar o alvo muda o
+# texto lido. O fechamento aceita (public/ é ALCANCA); só o "arquivo regular" da negação segura.
+parte_de "$NEG_BASE"; escreve public/a/x.ts 'export const a = "texto-a";'; escreve public/b/y.ts 'export const b = "texto-b";'
+ln -s ../../public/a "$R/src/lib/pasta.test.ts"
+commit neg-link-base > /dev/null && rm "$R/src/lib/pasta.test.ts" && ln -s ../../public/b "$R/src/lib/pasta.test.ts" \
+  && NEG_LINK=$(commit neg-link)
 g branch deadbee1 "$BASE"   # ref com cara de SHA: `deadbee1^{commit}` resolve o BRANCH
 g branch deadbee3 "$SO_DOCS"   # a mesma ref, apontando para a MAIN: resolvia no atalho do exit 0
 if ! { g remote add origin "$O" && g push -q origin 'refs/tags/*:refs/tags/*'; }; then
   echo "❌ push do fixture falhou"; exit 2
 fi
 for v in BASE SO_DOCS C2445 SRC PKG_DEPS PKG_SCRIPTS PKG_BUILD PKG_FMT LATERAL RENAME DESC EDGE VAZA_BASE VAZA SUJO_BASE SUJO ALIAS_BASE ALIAS \
-         TNUM TPAL TIMP TCOM TJS TURL TCAT TTPL TGLOB TVIA TLEI TALI TAPI TSEP TLCK TMIX LINK; do
+         TNUM TPAL TIMP TCOM TJS TURL TCAT TTPL TGLOB TVIA TLEI TALI TAPI TSEP TLCK TMIX LINK \
+         NEG_BASE NEG NEG_IMP NEG_ESTRANHA NEG_SO_ARQ NEG_SO_PASTA NEG_SO_SETUP NEG_FG NEG_TW NEG_LINK; do
   val=${!v:-}
   [ "${#val}" -eq 40 ] || [ "${#val}" -eq 64 ] || { echo "❌ fixture incompleto: $v='$val'"; exit 2; }
 done
@@ -251,6 +293,16 @@ cenario() {
     teste_lockfile)   echo "$(tag_de t-lck) $TLCK -" ;;
     teste_content_misto) echo "$(tag_de t-mix) $TMIX -" ;;
     link_teste)       echo "$(tag_de t-link) $LINK -" ;;
+    # (d2') NEGAÇÃO: a base traz o content (e o lockfile) da pergunta; o delta põe palavra NOVA
+    teste_negado)     echo "$(tag_de neg) $NEG -" ;;
+    teste_negado_importado) echo "$(tag_de neg-imp) $NEG_IMP -" ;;
+    teste_negacao_estranha) echo "$(tag_de neg-estranha) $NEG_ESTRANHA -" ;;
+    negacao_so_nome)  echo "$(tag_de neg-so-arq) $NEG_SO_ARQ -" ;;
+    negacao_so_pasta) echo "$(tag_de neg-so-pasta) $NEG_SO_PASTA -" ;;
+    negacao_so_setup) echo "$(tag_de neg-so-setup) $NEG_SO_SETUP -" ;;
+    teste_negacao_fastglob) echo "$(tag_de neg-fg) $NEG_FG -" ;;
+    teste_negacao_extrator) echo "$(tag_de neg-tw) $NEG_TW -" ;;
+    teste_negado_link_pasta) echo "$(tag_de neg-link) $NEG_LINK -" ;;
   esac
 }
 
@@ -303,7 +355,16 @@ teste_api_config|3|motivo: ALCANCA_BUNDLE;TESTE_ALCANCA LEITOR src/lib/__tests__
 teste_extrator|3|motivo: ALCANCA_BUNDLE;TESTE_ALCANCA EXTRATOR;separator
 teste_lockfile|3|motivo: ALCANCA_BUNDLE;TESTE_ALCANCA EXTRATOR;travado em 3.4.18
 teste_content_misto|3|motivo: ALCANCA_BUNDLE;TESTE_ALCANCA LEITOR src/lib/__tests__/dados.ts e lido por tailwind.config.ts
-link_teste|3|motivo: ALCANCE_VAZA;src/lib/__tests__/link.test.ts -> docs/b.md'
+link_teste|3|motivo: ALCANCE_VAZA;src/lib/__tests__/link.test.ts -> docs/b.md
+teste_negado|5|SINCRONIZADO_EM_BUNDLE;testes: 3 mudado(s) fora do grafo de modulos, 0 lido(s) pelo Tailwind com as mesmas palavras, 3 fora do content por negacao
+teste_negado_importado|3|motivo: ALCANCA_BUNDLE;TESTE_ALCANCA MODULO src/lib/__tests__/dados.ts entra no grafo do bundle por src/lib/usa-dados.ts
+teste_negacao_estranha|3|motivo: ALCANCA_BUNDLE;TESTE_ALCANCA TAILWIND src/lib/__tests__/janela.test.ts;negacao que a prova nao entende, ignorada: "!./src/**/*.test.{ts,tsx}"
+negacao_so_nome|3|motivo: ALCANCA_BUNDLE;TESTE_ALCANCA TAILWIND src/lib/__tests__/dados.ts
+negacao_so_pasta|3|motivo: ALCANCA_BUNDLE;TESTE_ALCANCA TAILWIND src/test/setup.ts
+negacao_so_setup|3|motivo: ALCANCA_BUNDLE;TESTE_ALCANCA TAILWIND src/lib/__tests__/dados.ts
+teste_negacao_fastglob|3|motivo: ALCANCA_BUNDLE;TESTE_ALCANCA TAILWIND src/lib/__tests__/janela.test.ts;nao isenta teste nenhum: fast-glob travado em 3.3.3
+teste_negacao_extrator|3|motivo: ALCANCA_BUNDLE;TESTE_ALCANCA EXTRATOR;tailwindcss travado em 3.4.18
+teste_negado_link_pasta|3|motivo: ALCANCA_BUNDLE;TESTE_ALCANCA TAILWIND src/lib/pasta.test.ts e symlink'
 
 esperado_de() { printf '%s\n' "$CASOS" | awk -F'|' -v c="$1" '$1 == c { print $2 "|" $3; achou = 1 } END { exit !achou }'; }
 
@@ -448,7 +509,7 @@ while IFS='|' read -r nome esp marca; do
   fi
 done <<< "$CASOS"
 echo "$n_ok/$n_tot cenários passaram"
-[ "$n_tot" -ge 49 ] || { echo "  [XX ] só $n_tot cenário(s) rodaram — a rede encolheu"; rc=1; }
+[ "$n_tot" -ge 58 ] || { echo "  [XX ] só $n_tot cenário(s) rodaram — a rede encolheu"; rc=1; }
 
 # ── falsificação ────────────────────────────────────────────────────────────────────────────────
 if [ "$FALSIFY" = 1 ]; then
@@ -606,12 +667,42 @@ PY
             raise Refutado("TESTE_ALCANCA EXTRATOR' '        if False:
             raise Refutado("TESTE_ALCANCA EXTRATOR'
     sab versao-auditada scripts/alcance-bundle.py teste_lockfile "$VERDE_INDEVIDO" \
-      '    if not lidos or versoes != {TAILWIND_AUDITADO}:' '    if not lidos:'
+      '    if not lidos or versoes != {auditada}:' '    if not lidos:'
     # symlink de TESTE segue no fechamento: o content do Tailwind lê o ALVO
     sab link-de-teste scripts/alcance-bundle.py link_teste "$VERDE_INDEVIDO" \
       'if classes[p] in ("ALCANCA", "TESTE"))' 'if classes[p] == "ALCANCA")'
     sab nome-no-config scripts/alcance-bundle.py alias_inerte "$VERDE_INDEVIDO" \
       '        return nome_no_config(spec, uniao, dirs_uniao)' '        return None'
+    # ── (d2') NEGAÇÃO no content (2026-10-01). A isenção é o que faz o verde do teste_negado (direção
+    #    OPOSTA: sem ela, o primeiro dos 3 testes com palavra nova volta a ALCANCA)
+    sab negacao-isenta scripts/alcance-bundle.py teste_negado \
+      '3|motivo: ALCANCA_BUNDLE;TESTE_ALCANCA TAILWIND src/lib/__tests__/dados.ts' \
+      '    negados = [t for t in lidos if regular(t) and any(r.fullmatch(t) for r in entendidas)]' '    negados = []'
+    # (d1) continua valendo inteiro: com a negação no content, o grafo de módulos é o ÚNICO elo que
+    # segura o teste IMPORTADO — arrancado, a negação o isentaria
+    sab negacao-nao-dispensa-modulo scripts/alcance-bundle.py teste_negado_importado "$VERDE_INDEVIDO" \
+      '    if no_grafo:' '    if False:'
+    # fail-CLOSED: só a string EXATA conta — a forma estranha lida como a da pasta isenta o teste
+    sab negacao-forma-exata scripts/alcance-bundle.py teste_negacao_estranha "$VERDE_INDEVIDO" \
+      'NEGACOES_ENTENDIDAS.get(s)' 'NEGACOES_ENTENDIDAS.get(s, NEGACOES_ENTENDIDAS["!./src/**/__tests__/**"])'
+    # cada forma exclui SÓ a sua classe: alargada, ela isenta o teste da classe vizinha
+    sab forma-do-nome scripts/alcance-bundle.py negacao_so_nome "$VERDE_INDEVIDO" \
+      'r"src/(?:[^/]+/)*[^/]*\.(?:test|spec)\.tsx?"' 'r"src/.+"'
+    sab forma-da-pasta scripts/alcance-bundle.py negacao_so_pasta "$VERDE_INDEVIDO" \
+      'r"src/(?:[^/]+/)*__tests__/.+"' 'r"src/.+"'
+    sab forma-do-setup scripts/alcance-bundle.py negacao_so_setup "$VERDE_INDEVIDO" \
+      'r"src/test/.+"' 'r"src/.+"'
+    # a semântica é a do fast-glob LIDO: outra versão no lockfile não isenta teste nenhum
+    sab fast-glob-auditado scripts/alcance-bundle.py teste_negacao_fastglob "$VERDE_INDEVIDO" \
+      '    motivo = versao_nao_auditada(arvore, texto_de, "fast-glob", FAST_GLOB_AUDITADO)' '    motivo = None'
+    # a negação vale pela config que o extrator AUDITADO lê: sem a auditoria, outro Tailwind isentaria
+    sab negacao-sob-extrator scripts/alcance-bundle.py teste_negacao_extrator "$VERDE_INDEVIDO" \
+      '        if motivo:
+            raise Refutado("TESTE_ALCANCA EXTRATOR' '        if False:
+            raise Refutado("TESTE_ALCANCA EXTRATOR'
+    # só arquivo REGULAR ganha a isenção: o symlink-pasta com nome de teste é lido por dentro
+    sab negacao-so-regular scripts/alcance-bundle.py teste_negado_link_pasta "$VERDE_INDEVIDO" \
+      'regular(t) and ' ''
     sab carimbo-ambiguo scripts/monitor-deploy.sh carimbo_duplo "$VERDE_INDEVIDO" \
       '[ "${N_CARIMBOS:-0}" -le 1 ] || atrasado CARIMBO_AMBIGUO' '[ "${N_CARIMBOS:-0}" -ge 0 ] || atrasado CARIMBO_AMBIGUO'
   }
@@ -679,7 +770,7 @@ PY
     fi
   done
   echo "  falsificações que pegaram: $fals/$total"
-  [ "$total" -ge 44 ] && [ "$fals" -eq "$total" ] || rc=1
+  [ "$total" -ge 53 ] && [ "$fals" -eq "$total" ] || rc=1
 
   # (C) CONTROLE DE SAÍDA — pelo CONTEÚDO: o laço nunca mutou o versionado.
   # shellcheck disable=SC2086
