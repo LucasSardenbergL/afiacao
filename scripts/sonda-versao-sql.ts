@@ -596,9 +596,13 @@ export function awkDoPasso(passo: number): string {
   );
 }
 
-/** O comando que o cabeçalho manda rodar: o passo `n` do log, direto no read-only. */
+/**
+ * O comando que o cabeçalho manda rodar: o passo `n` do log, direto no read-only. Com
+ * `ON_ERROR_STOP`, que o `psqlrc-ro` não liga: sem ele, um passo que falhe imprime ERROR e o psql
+ * sai 0 (docs/historico/psql-ro-exit-zero-em-sql-que-falhou.md).
+ */
 export function comandoDeExtracao(passo: number): string {
-  return `awk '${awkDoPasso(passo)}' <log> | ~/.config/afiacao/psql-ro`;
+  return `awk '${awkDoPasso(passo)}' <log> | ~/.config/afiacao/psql-ro -v ON_ERROR_STOP=1`;
 }
 
 /**
@@ -608,8 +612,12 @@ export function comandoDeExtracao(passo: number): string {
  * mesmo arquivo, pelo db:aplicar) pode trazer os dois.
  *
  * O `CASE` põe a quebra antes do FIM só quando o texto não termina em uma: o recorte devolve o texto
- * byte a byte, sem a linha em branco que um `\n` incondicional acrescentaria. E o corpo não tem
- * `BEGIN;` com ponto e vírgula — o `db-aplicar.sh` recusa controle de transação no arquivo.
+ * byte a byte, sem a linha em branco que um `\n` incondicional acrescentaria.
+ *
+ * O corpo abre e fecha NA LINHA do `$notice$`: linha `BEGIN`/`END` sozinha se lê como moldura ou
+ * controle de transação para ferramenta de linha — a sabotagem (g2) de db/test-canaria-veredito.sh
+ * apaga `^BEGIN$`/`^END$` no arquivo inteiro para tirar o envelope, e levava o corpo junto (medido
+ * 2026-09-27: o disparo morria e a sentinela deixava de ver "DISPAROU").
  */
 function declaracaoDaFuncaoDoNotice(): string {
   return (
@@ -618,12 +626,10 @@ function declaracaoDaFuncaoDoNotice(): string {
     '-- texto INTACTO (é ele a célula) e o repete num NOTICE entre marcadores. Temporária: some com a\n' +
     '-- sessão e não deixa nada no banco.\n' +
     `CREATE OR REPLACE FUNCTION ${FUNCAO_DO_NOTICE}(p_inicio text, p_fim text, p_texto text)\n` +
-    'RETURNS text LANGUAGE plpgsql AS $notice$\n' +
-    'BEGIN\n' +
+    'RETURNS text LANGUAGE plpgsql AS $notice$ BEGIN\n' +
     "  RAISE NOTICE '%', p_inicio || E'\\n' || p_texto || CASE WHEN right(p_texto, 1) = E'\\n' THEN '' ELSE E'\\n' END || p_fim;\n" +
     '  RETURN p_texto;\n' +
-    'END\n' +
-    '$notice$;\n'
+    'END $notice$;\n'
   );
 }
 

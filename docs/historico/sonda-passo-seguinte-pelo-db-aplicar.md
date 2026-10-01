@@ -65,7 +65,24 @@ CREATE OR REPLACE FUNCTION pg_temp.eco_da_sonda(t text) RETURNS text LANGUAGE pl
 SELECT pg_temp.eco_da_sonda('SE ESTA FRASE APARECE NA CELULA, O EDITOR MOSTRA O SELECT FINAL') AS celula;
 ```
 
+## O que a prova da canária pegou no caminho
+
+A 1ª versão da função tinha `BEGIN` e `END` sozinhos na linha. A sabotagem (g2) de
+`db/test-canaria-veredito.sh` tira o envelope inerte apagando `^BEGIN$`/`^END$` **no arquivo
+inteiro** — e levava junto o corpo da função: o disparo morria antes de sair, a sentinela não via
+"DISPAROU" e a g2 falhava (`17 vermelhas / 1 falha`). Linha `BEGIN`/`END` isolada se lê como moldura
+ou controle de transação para qualquer ferramenta de linha; a função passou a abrir e fechar na linha
+do `$notice$`, e um teste pina que nenhuma linha emitida é `BEGIN`/`END`/`DECLARE` sozinha.
+
+E o comando de extração ganhou `-v ON_ERROR_STOP=1`: o `psqlrc-ro` liga read-only, timeout e QUIET,
+mas não o ON_ERROR_STOP — sem ele, um passo extraído que falhe imprime ERROR e o `psql` sai 0.
+
 ## Evidência
 
-- `db/test-sonda-passo-pelo-db-aplicar.sh` — (preencher)
-- `scripts/sonda-versao-sql.test.ts` — (preencher)
+- `db/test-sonda-passo-pelo-db-aplicar.sh` — antes da correção `6 ok / 21 fail` (o defeito, com o
+  executor real); depois `RESULTADO: 27 ok / 0 fail`; `--falsificar`: controle verde (27) nos dois
+  idiomas do servidor e `SABOTAGENS: 14 vermelhas / 0 falhas` (44 s no laptop). No núcleo de CI.
+- `scripts/sonda-versao-sql.test.ts` — vermelho de ASSERÇÃO antes da implementação
+  (`11 failed | 207 passed`), verde depois (`218 passed`).
+- mutcheck: as 8 mutações novas, `8 pegas · 0 sobreviventes`; `--seco` com os 39 contratos cirúrgicos.
+- eval `sonda-veredito-401`: 11 vereditos + cardinalidade; typecheck, eslint e shellcheck verdes.

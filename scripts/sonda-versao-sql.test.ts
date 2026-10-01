@@ -762,8 +762,12 @@ describe('o passo seguinte volta pelas DUAS vias — célula no SQL Editor, NOTI
     expect(new Set([dois.inicio, dois.fim, quatro.inicio, quatro.fim]).size).toBe(4);
   });
 
-  it('o comando é awk sobre o log, lido no read-only', () => {
-    expect(comandoDeExtracao(2)).toBe(`awk '${awkDoPasso(2)}' <log> | ~/.config/afiacao/psql-ro`);
+  it('o comando é awk sobre o log, lido no read-only — com ON_ERROR_STOP', () => {
+    // O `psqlrc-ro` liga read-only, timeout e QUIET, mas NÃO o ON_ERROR_STOP: sem ele, um passo
+    // extraído que falhe imprime ERROR e o psql sai 0 (docs/historico/psql-ro-exit-zero-em-sql-que-falhou.md).
+    expect(comandoDeExtracao(2)).toBe(
+      `awk '${awkDoPasso(2)}' <log> | ~/.config/afiacao/psql-ro -v ON_ERROR_STOP=1`,
+    );
     // Aspa simples dentro do programa fecharia a do shell — o comando colado sairia quebrado.
     expect(awkDoPasso(2)).not.toContain("'");
   });
