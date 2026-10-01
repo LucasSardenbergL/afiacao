@@ -84,8 +84,13 @@ export const respostaSonda = criarRespostaSonda("sync-reprocess");
 // v1.11 (2026-09-27) — só TIPO: `omie_pedido_id` segue CRU para a RPC (que só o ecoa no registro de
 // falha), agora tipado `string | number` por um tipo local — o `deno check` do preview deixa de acusar
 // a linha que o bot "consertava" com `Number()`. JS emitido byte-idêntico ao da v1.10.
+// v1.13 (2026-10-01) — o dia de SP nas datas mandadas ao Omie (classe ii do fuso, fase 3): a janela do
+// ListarPedidos (`./janela-omie.ts`) e o `dDataPosicao` do ListarPosEstoque saíam do `getDate()` do servidor
+// UTC — AMANHÃ nos crons das 21:15, 23:15 e 23:30 BRT. O Omie aceitava a data futura e devolvia o mesmo
+// saldo (38 de 38 rodadas noturnas sem divergência em 30 dias, medido em 2026-10-01); na janela de pedidos
+// a noite deixa de pedir o dia futuro e volta a cobrir o dia mais antigo. Nenhuma pré-condição de banco.
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.12-metadata-no-abort";
+export const VERSAO = "v1.13-hoje-sp-datas-omie";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO = // v1.12 (2026-09-27, P2 Codex): run de pedidos que ABORTA grava o metadata apurado até o abort (não apurado = null, nunca 0) — ./apuracao-pedidos.ts. Nota aqui e não na linha do VERSAO: `scripts/sonda-versao-sql.ts` exige aquela linha limpa até o fim.

@@ -11,6 +11,7 @@ import { deltaEdicaoOben } from "../_shared/atp-edicao.ts";
 import { aplicarCorPreservandoItens, apurarSubtotalPedido, precoUnitarioOmie } from "../_shared/omie-pedido.ts";
 import { descontoNaLeituraDoOmie } from "../_shared/edicao-desconto-omie.ts";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
+import { hojeSP, paraDataOmie } from "../_shared/hoje-sp.ts";
 import { avaliarAssinaturaA2, CONTRATO_A2 } from "./assinatura-a2.ts";
 import type { BancoPostgrest } from "../_shared/paginate.ts";
 import { avaliarPagina, MAX_PAGINAS_LISTAGEM, MAX_PAGINAS_PEDIDOS, MAX_PAGINAS_POS_ESTOQUE, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
@@ -454,7 +455,7 @@ async function syncEstoque(supabase: SupabaseClient, startPage = 1, maxPages = 3
       {
         nPagina: pagina,
         nRegPorPagina: 100,
-        dDataPosicao: new Date().toLocaleDateString("pt-BR"),
+        dDataPosicao: paraDataOmie(hojeSP()), // a posição de HOJE em SP (toLocaleDateString sem fuso = dia UTC às 21h+)
       },
       account,
       // throwOnTransient: mesmo achado C do syncProducts — `null` ambíguo num resume fechava
@@ -2156,7 +2157,9 @@ async function criarPedidoVenda(
   const cabecalho: Record<string, unknown> = {
     codigo_pedido_integracao: cCodIntPed,
     codigo_cliente: codigoCliente,
-    data_previsao: new Date().toISOString().split("T")[0].split("-").reverse().join("/"),
+    // HOJE em SP: sem dInc, a data_previsao vira o order_date_kpi — o dia UTC punha a venda das 21h+ BRT
+    // no dia seguinte (e, no último dia do mês, no mês seguinte).
+    data_previsao: paraDataOmie(hojeSP()),
     etapa: "10",
     codigo_parcela: codigoParcela || "999",
   };
@@ -3498,7 +3501,7 @@ Deno.serve(async (req) => {
         // Step 4: Update header (payment, freight, obs) without det
         const editCabecalho: Record<string, unknown> = {
           codigo_pedido: codigoPedido,
-          data_previsao: new Date().toISOString().split("T")[0].split("-").reverse().join("/"),
+          data_previsao: paraDataOmie(hojeSP()),
           etapa: "10",
           codigo_parcela: editParcela || "999",
         };
@@ -4178,7 +4181,7 @@ Deno.serve(async (req) => {
             cCodIntOP: `OP_${opSalesId.slice(-12)}_${opItem.omie_codigo_produto}`,
             nCodProd: opItem.omie_codigo_produto,
             nQtde: opItem.quantidade,
-            dDtPrevisao: new Date().toISOString().split("T")[0].split("-").reverse().join("/"),
+            dDtPrevisao: paraDataOmie(hojeSP()),
             cObservacao: `Gerado automaticamente via App - Pedido ${opSalesId.substring(0, 8)}`,
           };
 

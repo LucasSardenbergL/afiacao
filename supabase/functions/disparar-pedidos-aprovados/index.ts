@@ -6,6 +6,8 @@
 // o resumo quando algo exige ação — a régua mora em ./email-politica.ts.
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
+import { hojeSP } from "../_shared/hoje-sp.ts";
+import { dataPrevisaoOmie } from "./previsao.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import {
   assuntoImplantado,
@@ -138,20 +140,6 @@ function getEmailAprovador(empresa: string): string | null {
     Deno.env.get("OMIE_EMAIL_APROVADOR");
   const trimmed = email?.trim();
   return trimmed ? trimmed : null;
-}
-
-function diasUteisFromHoje(diasUteis: number): string {
-  // soma dias úteis (seg-sex) ao dia de hoje, retorna DD/MM/YYYY
-  const d = new Date();
-  let added = 0;
-  while (added < diasUteis) {
-    d.setDate(d.getDate() + 1);
-    const dow = d.getDay();
-    if (dow !== 0 && dow !== 6) added++;
-  }
-  return `${String(d.getDate()).padStart(2, "0")}/${
-    String(d.getMonth() + 1).padStart(2, "0")
-  }/${d.getFullYear()}`;
 }
 
 async function omieCall(
@@ -1068,11 +1056,8 @@ async function processarPedido(
       .maybeSingle();
     const ltDias = Number(fhRow?.lt_logistica_dias ?? 7);
 
-    // d. Numero pedido (max 15 chars Omie)
-    const ts = new Date()
-      .toISOString()
-      .slice(2, 10)
-      .replace(/-/g, "");
+    // d. Numero pedido (max 15 chars Omie) — yymmdd do dia de SP (o toISOString dava o dia UTC às 21h+)
+    const ts = hojeSP().slice(2).replace(/-/g, "");
     const numeroPedido = `AFI${ts}${String(pedido.id).slice(-4)}`.slice(0, 15);
 
     // d.1 Sayerlack/OBEN: o portal é lento e precisa rodar em background.
@@ -1158,23 +1143,12 @@ async function processarPedido(
     // + 2 dias ÚTEIS como dDtPrevisao do Omie (pula sábado/domingo). Cai no
     // fallback de lead time logístico se não capturamos a data do portal
     // (ex.: caminho PR1.5 do recorder fallback, ou pedidos antigos antes da
-    // coluna existir).
-    const dDtPrevisao = (() => {
-      const portalDate = pedido.portal_data_entrega;
-      if (typeof portalDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(portalDate)) {
-        const d = new Date(`${portalDate}T00:00:00Z`);
-        let adicionados = 0;
-        while (adicionados < 2) {
-          d.setUTCDate(d.getUTCDate() + 1);
-          const dow = d.getUTCDay(); // 0=domingo, 6=sábado
-          if (dow !== 0 && dow !== 6) adicionados++;
-        }
-        return `${String(d.getUTCDate()).padStart(2, "0")}/${
-          String(d.getUTCMonth() + 1).padStart(2, "0")
-        }/${d.getUTCFullYear()}`;
-      }
-      return diasUteisFromHoje(ltDias);
-    })();
+    // coluna existir). O fallback conta a partir de HOJE em SP (`./previsao.ts`).
+    const dDtPrevisao = dataPrevisaoOmie({
+      portalDataEntrega: pedido.portal_data_entrega,
+      ltDias,
+      agora: new Date(),
+    });
 
     const cabecalho_incluir: Record<string, unknown> = {
       cCodIntPed: `AFI-${pedido.id}`,
@@ -1743,7 +1717,7 @@ Deno.serve(async (req: Request) => {
   const windowStart = new Date().toISOString();
 
   let empresa = "OBEN";
-  let dataCiclo = new Date().toISOString().slice(0, 10);
+  let dataCiclo = hojeSP(); // sem data_ciclo no corpo, o ciclo é HOJE em SP (só o cron das 13:00 UTC chega aqui)
   let pedidoId: number | null = null;
   let ignorarMinimo = false;
 
