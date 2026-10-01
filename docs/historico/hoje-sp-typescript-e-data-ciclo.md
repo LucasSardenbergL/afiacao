@@ -125,7 +125,17 @@ número (14 → 18).
 (`CODEX_ASYNC_TETO_SALDO=97`): **exit 75**, o servidor recusou — cota esgotada, reabre em 03/10 19:11; o
 plano declarado no token é `prolite`, o de sempre. **Caminho B** (`sem-codex:` no PR), com as 6 perguntas do
 prompt respondidas por verificação (trava, corte, janela de deploy, espelhos, a prova, leitores). **REVISÃO
-INDEPENDENTE PENDENTE** — o prompt está em `docs/historico/` (este arquivo, abaixo) para o retroativo.
+INDEPENDENTE PENDENTE** — o retroativo (`scripts/codex-async.sh -r max`) roda depois de 03/10 19:11 com o
+contexto do PR #2705 e estas perguntas:
+
+1. Deadlock/lock: a ordem da trava abre ciclo com algum leitor real? ACCESS EXCLUSIVE em pcs durante a transação inteira é problema (o executor tem lock_timeout 15s)?
+2. A troca do corte: (date + time) AT TIME ZONE 'America/Sao_Paulo' faz o que se espera para `time` de cadastro? Algum consumidor de horario_corte_planejado decide algo (disparo, expiração, alerta) que mudaria de comportamento?
+3. Janela de deploy: migration primeiro, edge depois. Que estado intermediário (migration nova + edge velha, ou o inverso) pode gerar pedido/expiração errada, e quando?
+4. O espelho omie-sync-estoque × atualizar_parametros_numericos_skus × gerar_pedidos_sugeridos_ciclo (em_transito): os três agora concordam? Há outro espelho da janela de 7 dias que ficou em UTC?
+5. A prova: algum assert passa por vacuidade? A prova põe search_path public,pg_catalog nos corpos (para o now() controlado) e derruba public.set_config — isso pode esconder um defeito que a prod teria?
+6. Algo no front/edge que eu não trouxe e que lê data_ciclo/vigência de campanha com o hoje UTC e que agora divergiria do banco (pior que antes)?
+Diga explicitamente o que você NÃO conseguiu verificar.
+
 
 ## Deploy — quem faz cada camada
 
