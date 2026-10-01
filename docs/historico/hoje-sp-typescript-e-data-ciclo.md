@@ -125,7 +125,17 @@ número (14 → 18).
 (`CODEX_ASYNC_TETO_SALDO=97`): **exit 75**, o servidor recusou — cota esgotada, reabre em 03/10 19:11; o
 plano declarado no token é `prolite`, o de sempre. **Caminho B** (`sem-codex:` no PR), com as 6 perguntas do
 prompt respondidas por verificação (trava, corte, janela de deploy, espelhos, a prova, leitores). **REVISÃO
-INDEPENDENTE PENDENTE** — o prompt está em `docs/historico/` (este arquivo, abaixo) para o retroativo.
+INDEPENDENTE PENDENTE** — o retroativo (`scripts/codex-async.sh -r max`) roda depois de 03/10 19:11 com o
+contexto do PR #2705 e estas perguntas:
+
+1. Deadlock/lock: a ordem da trava abre ciclo com algum leitor real? ACCESS EXCLUSIVE em pcs durante a transação inteira é problema (o executor tem lock_timeout 15s)?
+2. A troca do corte: (date + time) AT TIME ZONE 'America/Sao_Paulo' faz o que se espera para `time` de cadastro? Algum consumidor de horario_corte_planejado decide algo (disparo, expiração, alerta) que mudaria de comportamento?
+3. Janela de deploy: migration primeiro, edge depois. Que estado intermediário (migration nova + edge velha, ou o inverso) pode gerar pedido/expiração errada, e quando?
+4. O espelho omie-sync-estoque × atualizar_parametros_numericos_skus × gerar_pedidos_sugeridos_ciclo (em_transito): os três agora concordam? Há outro espelho da janela de 7 dias que ficou em UTC?
+5. A prova: algum assert passa por vacuidade? A prova põe search_path public,pg_catalog nos corpos (para o now() controlado) e derruba public.set_config — isso pode esconder um defeito que a prod teria?
+6. Algo no front/edge que eu não trouxe e que lê data_ciclo/vigência de campanha com o hoje UTC e que agora divergiria do banco (pior que antes)?
+Diga explicitamente o que você NÃO conseguiu verificar.
+
 
 ## Deploy — quem faz cada camada
 
@@ -167,8 +177,16 @@ oportunidade não vê `disparado_simulado`.)
 
 ## Fora, com dono
 
-- **O gate de TS** (a forma `toISOString` fatiada no front e nas edges, e a forma B nas edges, com baseline
-  por veredito e mutação) — PR seguinte desta sessão.
+- **O gate de TS** — FEITO no PR seguinte: `src/__tests__/hoje-utc-gate.test.ts` + `src/lib/gates/hoje-utc.ts`
+  (AST, com 3 formas: o ISO fatiado no front e nas edges, também quando guardado numa variável e fatiado
+  depois; o calendário local e o locale sem fuso, só nas edges).
+  - Baseline `src/lib/gates/hoje-utc-baseline.ts`, com veredito e DONO por sítio: 137 entradas, 163 sítios.
+  - `scripts/mutcheck.d/hoje-utc.mut`: 18/18 pegas.
+  - É ele que dirige as fases seguintes: `[fase …]` no motivo.
+  - A forma "ISO numa variável" entrou depois de a fase visitas achar um leitor de `visit_date` que a 1ª
+    versão não via: `const cutoff = ….toISOString()` e depois `cutoff.slice(0, 10)`, no
+    `visit-score-recalc-batch`. É latente: só roda no cron das 04:00 BRT, quando o dia UTC é o de SP.
+  - Varredura dessa forma: 1 caso no repo inteiro.
 - **As fases de TS por domínio**: financeiro (`fin-cashflow-engine` — o domingo à noite pula a semana, a
   mesma classe que a 20260927202603 consertou no SQL —, `fin-funding`, `fin-valor-cockpit`, os eventos de
   caixa persistidos com a data UTC); visitas (`hojeISO()` e os 6 consumidores, o planner, e
