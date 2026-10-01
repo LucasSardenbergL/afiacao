@@ -14,8 +14,8 @@
 # As provas do canal WhatsApp re-aplicavam as migrations da SUA fase (07-13) sobre o snapshot. O re-dump
 # que as absorveu matou as três no setup (`CREATE POLICY` não é idempotente), e uma delas nasceu morta.
 # Pior que morrer: elas davam `GRANT ALL ON ALL TABLES` a anon/authenticated, um ACL que prod não tem — e
-# foi esse ACL de mentira que escondeu, por 2,5 meses, que o funil do canal dá `permission denied` para
-# todo staff em prod (docs/historico/provas-canal-revividas.md).
+# com esse ACL de mentira nenhuma delas podia ver que o funil do canal dá `permission denied` para todo
+# staff em prod (medido em 2026-09-30; docs/historico/provas-canal-revividas.md).
 #
 # ## O que "versão viva" quer dizer aqui — MEDIDO, não presumido
 #

@@ -56,7 +56,9 @@ adm() { "$PGBIN/psql" -X -p "$PORT" -h "$TMPD" -U postgres -d postgres -v ON_ERR
 adm -c "CREATE DATABASE base;"
 
 # Os objetos que esta prova assevera: a migration nova que fizer DDL sobre eles entra na cadeia sozinha.
+# shellcheck disable=SC2034  # consumida pelo db/lib/corpo-vivo.sh, que o shellcheck sem -x não segue
 CV_FUNCOES=(get_whatsapp_funil)
+# shellcheck disable=SC2034  # consumida pelo db/lib/corpo-vivo.sh, que o shellcheck sem -x não segue
 CV_TABELAS=(whatsapp_template_sends whatsapp_messages whatsapp_conversations)
 # shellcheck disable=SC1091  # idem: versionado ao lado, em db/lib/
 . "$REPO_ROOT/db/lib/corpo-vivo.sh"

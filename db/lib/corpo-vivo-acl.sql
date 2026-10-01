@@ -4,8 +4,8 @@
 -- MEDIDO em 2026-09-30 via psql-ro: o default do Supabase (todo objeto novo nasce com ALL para anon,
 -- authenticated e service_role) + as 546 EXCEÇÕES que prod tem — tabelas (81), colunas e funções (297) cujo
 -- ACL foge do default. Sem isto, sob `SET ROLE authenticated` a prova veria "permission denied" no lugar
--- da RLS, ou o contrário: veria passar o que prod nega. Foi um `GRANT ALL ON ALL TABLES` de mentira que
--- escondeu o funil do canal quebrado em prod (docs/historico/provas-canal-revividas.md).
+-- da RLS, ou o contrário: veria passar o que prod nega. Com um `GRANT ALL ON ALL TABLES` de mentira, as
+-- provas de julho não podiam ver o funil do canal quebrado em prod (docs/historico/provas-canal-revividas.md).
 --
 -- Só os papéis que o stub cria (anon, authenticated, service_role, e PUBLIC). Objeto de prod ausente do
 -- snapshot é PULADO e CONTADO (o NOTICE no fim) — não pode estar sob teste, porque não existe no banco
