@@ -160,7 +160,7 @@ BEGIN
   END IF;
   v_def := pg_get_functiondef(v_oid);
   SELECT count(*) INTO v_ocorr FROM regexp_matches(v_def, c_re_antigo, 'g');
-  IF v_ocorr <> 1 THEN
+  IF v_ocorr IS DISTINCT FROM 1 THEN
     RAISE EXCEPTION 'E2/harness: esperava 1 chamada do gate antigo, encontrei % — corpo divergente do medido', v_ocorr;
   END IF;
   v_novo := regexp_replace(
@@ -298,13 +298,13 @@ BEGIN
   SET LOCAL test.uid = '00000000-0000-0000-0000-00000000000a';  -- master
   SELECT (public.get_defasagem_cliente('[{"empresa":"oben","codigo":1001,"preco":100}]'::jsonb,
           '11111111-1111-1111-1111-111111111111'::uuid))->0 INTO r;
-  IF r->>'status_defasagem' <> 'defasado' THEN
+  IF r->>'status_defasagem' IS DISTINCT FROM 'defasado' THEN
     RAISE EXCEPTION 'D1 FALHOU: status=% motivo=% (esperado defasado)', r->>'status_defasagem', r->>'motivo';
   END IF;
-  IF (r->>'p_req')::numeric <> 120 THEN
+  IF (r->>'p_req')::numeric IS DISTINCT FROM 120 THEN
     RAISE EXCEPTION 'D1b FALHOU: p_req=% (esperado 120 = 100*72/60)', r->>'p_req';
   END IF;
-  IF r->>'data_ancora' <> '03/2026' THEN
+  IF r->>'data_ancora' IS DISTINCT FROM '03/2026' THEN
     RAISE EXCEPTION 'D1c FALHOU: data_ancora=% (esperado 03/2026 via dInc)', r->>'data_ancora';
   END IF;
   RAISE NOTICE 'OK D1 — defasado, p_req 120, âncora 03/2026';
@@ -319,7 +319,7 @@ BEGIN
   SET LOCAL test.uid = '00000000-0000-0000-0000-00000000000a';
   SELECT (public.get_defasagem_cliente('[{"empresa":"oben","codigo":1002,"preco":100}]'::jsonb,
           '11111111-1111-1111-1111-111111111111'::uuid))->0 INTO r;
-  IF r->>'status_defasagem' <> 'neutro' OR r->>'motivo' <> 'sem_custo_historico' THEN
+  IF r->>'status_defasagem' IS DISTINCT FROM 'neutro' OR r->>'motivo' IS DISTINCT FROM 'sem_custo_historico' THEN
     RAISE EXCEPTION 'D2 FALHOU: status=% motivo=% (esperado neutro/sem_custo_historico — snapshot a 20d da âncora)', r->>'status_defasagem', r->>'motivo';
   END IF;
   RAISE NOTICE 'OK D2 — snapshot fora de ±7d → neutro (não fabricou alta-fantasma)';
@@ -334,7 +334,7 @@ BEGIN
   SET LOCAL test.uid = '00000000-0000-0000-0000-00000000000a';
   SELECT (public.get_defasagem_cliente('[{"empresa":"oben","codigo":1003,"preco":100}]'::jsonb,
           '11111111-1111-1111-1111-111111111111'::uuid))->0 INTO r;
-  IF r->>'status_defasagem' <> 'neutro' OR r->>'motivo' <> 'desconto_nao_provado' THEN
+  IF r->>'status_defasagem' IS DISTINCT FROM 'neutro' OR r->>'motivo' IS DISTINCT FROM 'desconto_nao_provado' THEN
     RAISE EXCEPTION 'D3 FALHOU: status=% motivo=% (esperado neutro/desconto_nao_provado)', r->>'status_defasagem', r->>'motivo';
   END IF;
   RAISE NOTICE 'OK D3 — desconto → neutro/desconto_nao_provado';
@@ -349,7 +349,7 @@ BEGIN
   SET LOCAL test.uid = '00000000-0000-0000-0000-00000000000a';
   SELECT (public.get_defasagem_cliente('[{"empresa":"oben","codigo":1004,"preco":109.96}]'::jsonb,
           '11111111-1111-1111-1111-111111111111'::uuid))->0 INTO r;
-  IF r->>'status_defasagem' <> 'em_dia' THEN
+  IF r->>'status_defasagem' IS DISTINCT FROM 'em_dia' THEN
     RAISE EXCEPTION 'D4 FALHOU: status=% (esperado em_dia — gap 0,04pp < TOL 3pp)', r->>'status_defasagem';
   END IF;
   RAISE NOTICE 'OK D4 — fronteira da tolerância → em_dia';
@@ -364,7 +364,7 @@ BEGIN
   SET LOCAL test.uid = '00000000-0000-0000-0000-00000000000a';
   SELECT (public.get_defasagem_cliente('[{"empresa":"oben","codigo":1005,"preco":100}]'::jsonb,
           '11111111-1111-1111-1111-111111111111'::uuid))->0 INTO r;
-  IF r->>'status_defasagem' <> 'sem_custo_atual_fresco' THEN
+  IF r->>'status_defasagem' IS DISTINCT FROM 'sem_custo_atual_fresco' THEN
     RAISE EXCEPTION 'D5 FALHOU: status=% (esperado sem_custo_atual_fresco — synced há 72h > 48h)', r->>'status_defasagem';
   END IF;
   RAISE NOTICE 'OK D5 — C_now stale → sem_custo_atual_fresco';
@@ -379,11 +379,11 @@ BEGIN
   SET LOCAL test.uid = '00000000-0000-0000-0000-00000000000a';  -- master (vê p_last)
   SELECT (public.get_defasagem_cliente('[{"empresa":"oben","codigo":1006,"preco":92}]'::jsonb,
           '11111111-1111-1111-1111-111111111111'::uuid))->0 INTO r;
-  IF (r->>'p_last')::numeric <> 92 THEN
+  IF (r->>'p_last')::numeric IS DISTINCT FROM 92 THEN
     RAISE EXCEPTION 'D6 FALHOU: p_last=% (esperado 92 = (2*100+8*90)/10 — média ponderada)', r->>'p_last';
   END IF;
   -- p_req = 92 * (80/60) = 122,666… → 122,67
-  IF (r->>'p_req')::numeric <> 122.67 THEN
+  IF (r->>'p_req')::numeric IS DISTINCT FROM 122.67 THEN
     RAISE EXCEPTION 'D6b FALHOU: p_req=% (esperado 122.67)', r->>'p_req';
   END IF;
   RAISE NOTICE 'OK D6 — média ponderada por quantity (p_last 92, p_req 122,67)';
@@ -398,7 +398,7 @@ BEGIN
   SET LOCAL test.uid = '00000000-0000-0000-0000-00000000000a';
   SELECT (public.get_defasagem_cliente('[{"empresa":"oben","codigo":1007,"preco":100}]'::jsonb,
           '11111111-1111-1111-1111-111111111111'::uuid))->0 INTO r;
-  IF r->>'status_defasagem' <> 'sem_historico' THEN
+  IF r->>'status_defasagem' IS DISTINCT FROM 'sem_historico' THEN
     RAISE EXCEPTION 'D7 FALHOU: status=% (esperado sem_historico — único pedido é orcamento)', r->>'status_defasagem';
   END IF;
   RAISE NOTICE 'OK D7 — orcamento excluído da âncora → sem_historico';
@@ -413,10 +413,10 @@ BEGIN
   -- consultado como 'colacor' (ponte → colacor_vendas): deve ver pLast 200, c_last 100, defasado.
   SELECT (public.get_defasagem_cliente('[{"empresa":"colacor","codigo":2080,"preco":200}]'::jsonb,
           '11111111-1111-1111-1111-111111111111'::uuid))->0 INTO r;
-  IF r->>'status_defasagem' <> 'defasado' THEN
+  IF r->>'status_defasagem' IS DISTINCT FROM 'defasado' THEN
     RAISE EXCEPTION 'D8 FALHOU: status=% (esperado defasado na conta colacor)', r->>'status_defasagem';
   END IF;
-  IF (r->>'c_last')::numeric <> 100 OR (r->>'p_last')::numeric <> 200 THEN
+  IF (r->>'c_last')::numeric IS DISTINCT FROM 100 OR (r->>'p_last')::numeric IS DISTINCT FROM 200 THEN
     RAISE EXCEPTION 'D8b FALHOU: c_last=% p_last=% (esperado 100/200 — conta colacor; se 40/50 vazou de vendas)', r->>'c_last', r->>'p_last';
   END IF;
   RAISE NOTICE 'OK D8 — âncora da conta colacor (c_last 100, p_last 200), não vazou de vendas';
@@ -480,7 +480,8 @@ BEGIN
   SET LOCAL test.uid = '00000000-0000-0000-0000-00000000000a';
   SELECT (public.get_defasagem_cliente('[{"empresa":"oben","codigo":1001,"preco":100}]'::jsonb,
           '11111111-1111-1111-1111-111111111111'::uuid))->0 INTO r;
-  IF r->'c_last' = 'null'::jsonb OR r->'c_now' = 'null'::jsonb OR r->'p_last' = 'null'::jsonb THEN
+  IF r->'c_last' IS NULL OR r->'c_last' = 'null'::jsonb OR r->'c_now' IS NULL OR r->'c_now' = 'null'::jsonb
+     OR r->'p_last' IS NULL OR r->'p_last' = 'null'::jsonb THEN
     RAISE EXCEPTION 'D9a FALHOU: gestor não viu c_last/c_now/p_last';
   END IF;
 
@@ -488,11 +489,11 @@ BEGIN
   SET LOCAL test.uid = '00000000-0000-0000-0000-00000000000b';
   SELECT (public.get_defasagem_cliente('[{"empresa":"oben","codigo":1001,"preco":100}]'::jsonb,
           '11111111-1111-1111-1111-111111111111'::uuid))->0 INTO r;
-  IF r->'c_last' <> 'null'::jsonb OR r->'c_now' <> 'null'::jsonb
-     OR r->'p_last' <> 'null'::jsonb OR r->'markup_anterior' <> 'null'::jsonb THEN
+  IF r->'c_last' IS DISTINCT FROM 'null'::jsonb OR r->'c_now' IS DISTINCT FROM 'null'::jsonb
+     OR r->'p_last' IS DISTINCT FROM 'null'::jsonb OR r->'markup_anterior' IS DISTINCT FROM 'null'::jsonb THEN
     RAISE EXCEPTION 'D9b FALHOU: vendedora viu absoluto (c_last=% c_now=% p_last=%)', r->>'c_last', r->>'c_now', r->>'p_last';
   END IF;
-  IF r->>'status_defasagem' <> 'defasado' OR (r->>'p_req')::numeric <> 120 THEN
+  IF r->>'status_defasagem' IS DISTINCT FROM 'defasado' OR (r->>'p_req')::numeric IS DISTINCT FROM 120 THEN
     RAISE EXCEPTION 'D9c FALHOU: vendedora não viu status/p_req (=%/%)', r->>'status_defasagem', r->>'p_req';
   END IF;
   RAISE NOTICE 'OK D9 — gestor vê c_*; vendedora vê só status/p_req (120), absolutos null';
@@ -549,12 +550,12 @@ BEGIN
   SET LOCAL test.uid = '00000000-0000-0000-0000-00000000000d';  -- employee GERENCIAL
   SELECT (public.get_defasagem_cliente('[{"empresa":"oben","codigo":1001,"preco":100}]'::jsonb,
           '11111111-1111-1111-1111-111111111111'::uuid))->0 INTO r;
-  IF r->'c_last' <> 'null'::jsonb OR r->'c_now' <> 'null'::jsonb
-     OR r->'p_last' <> 'null'::jsonb OR r->'markup_anterior' <> 'null'::jsonb THEN
+  IF r->'c_last' IS DISTINCT FROM 'null'::jsonb OR r->'c_now' IS DISTINCT FROM 'null'::jsonb
+     OR r->'p_last' IS DISTINCT FROM 'null'::jsonb OR r->'markup_anterior' IS DISTINCT FROM 'null'::jsonb THEN
     RAISE EXCEPTION 'D11 FALHOU: gerencial VIU os absolutos (c_last=% c_now=% p_last=%) — o gate voltou ao anterior',
       r->>'c_last', r->>'c_now', r->>'p_last';
   END IF;
-  IF r->>'status_defasagem' <> 'defasado' OR (r->>'p_req')::numeric <> 120 THEN
+  IF r->>'status_defasagem' IS DISTINCT FROM 'defasado' OR (r->>'p_req')::numeric IS DISTINCT FROM 120 THEN
     RAISE EXCEPTION 'D11b FALHOU: gerencial perdeu status/p_req (=%/%) — o corte foi longe demais',
       r->>'status_defasagem', r->>'p_req';
   END IF;
@@ -571,7 +572,8 @@ BEGIN
   SET LOCAL test.uid = '00000000-0000-0000-0000-00000000000e';  -- employee ESTRATÉGICO
   SELECT (public.get_defasagem_cliente('[{"empresa":"oben","codigo":1001,"preco":100}]'::jsonb,
           '11111111-1111-1111-1111-111111111111'::uuid))->0 INTO r;
-  IF r->'c_last' = 'null'::jsonb OR r->'c_now' = 'null'::jsonb OR r->'p_last' = 'null'::jsonb THEN
+  IF r->'c_last' IS NULL OR r->'c_last' = 'null'::jsonb OR r->'c_now' IS NULL OR r->'c_now' = 'null'::jsonb
+     OR r->'p_last' IS NULL OR r->'p_last' = 'null'::jsonb THEN
     RAISE EXCEPTION 'D13 FALHOU: estrategico NAO viu os absolutos — cap_custo_ler degenerou a master-only';
   END IF;
   RAISE NOTICE 'OK D13 — estrategico ve c_last/c_now/p_last (cap_custo_ler nao virou master-only)';
@@ -606,7 +608,7 @@ BEGIN
       END IF;
     END IF;
   END LOOP;
-  IF divergiu <> 1 THEN
+  IF divergiu IS DISTINCT FROM 1 THEN
     RAISE EXCEPTION 'D12c FALHOU: nenhuma persona separou os 2 gates — o bloco de authz nao prova politica';
   END IF;
   RAISE NOTICE 'OK D12 — gerencial e o UNICO discriminante (custo=false, carteira=true); demais concordam';

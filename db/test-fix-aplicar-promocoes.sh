@@ -99,9 +99,9 @@ DECLARE r record; ret record;
 BEGIN
   SELECT * INTO ret FROM r1;
   -- economia = sku111(5) + sku222(90) + sku333(200) + sku444(10) = 305
-  IF ret.itens_flat_aplicados <> 2 OR ret.itens_forward_buying_aplicados <> 2
-     OR ret.pedidos_afetados <> 3 OR ret.economia_total_estimada <> 305
-     OR ret.pedidos_bloqueados_por_delta <> 1 THEN
+  IF ret.itens_flat_aplicados IS DISTINCT FROM 2 OR ret.itens_forward_buying_aplicados IS DISTINCT FROM 2
+     OR ret.pedidos_afetados IS DISTINCT FROM 3 OR ret.economia_total_estimada IS DISTINCT FROM 305
+     OR ret.pedidos_bloqueados_por_delta IS DISTINCT FROM 1 THEN
     RAISE EXCEPTION 'RETORNO errado: flat=% fb=% ped=% econ=% bloq=%',
       ret.itens_flat_aplicados, ret.itens_forward_buying_aplicados, ret.pedidos_afetados,
       ret.economia_total_estimada, ret.pedidos_bloqueados_por_delta;
@@ -109,21 +109,21 @@ BEGIN
 
   -- flat (sku111): preço 10->9, qtde inalterada, vl 45, econ 5
   SELECT * INTO r FROM pedido_compra_item WHERE id=10;
-  IF r.modo_promocao<>'flat' OR r.qtde_final<>5 OR r.preco_unitario<>9 OR r.valor_linha<>45 OR r.economia_estimada_valor<>5 THEN
+  IF r.modo_promocao IS DISTINCT FROM 'flat' OR r.qtde_final IS DISTINCT FROM 5 OR r.preco_unitario IS DISTINCT FROM 9 OR r.valor_linha IS DISTINCT FROM 45 OR r.economia_estimada_valor IS DISTINCT FROM 5 THEN
     RAISE EXCEPTION 'FLAT sku111 errado: % q% p% vl% e%', r.modo_promocao,r.qtde_final,r.preco_unitario,r.valor_linha,r.economia_estimada_valor; END IF;
   -- forward (sku222): qtde 5->50, preço 19, vl 950, econ 90
   SELECT * INTO r FROM pedido_compra_item WHERE id=20;
-  IF r.modo_promocao<>'forward_buying' OR r.qtde_final<>50 OR r.preco_unitario<>19 OR r.valor_linha<>950 OR r.economia_estimada_valor<>90 THEN
+  IF r.modo_promocao IS DISTINCT FROM 'forward_buying' OR r.qtde_final IS DISTINCT FROM 50 OR r.preco_unitario IS DISTINCT FROM 19 OR r.valor_linha IS DISTINCT FROM 950 OR r.economia_estimada_valor IS DISTINCT FROM 90 THEN
     RAISE EXCEPTION 'FORWARD sku222 errado: % q% p% vl% e%', r.modo_promocao,r.qtde_final,r.preco_unitario,r.valor_linha,r.economia_estimada_valor; END IF;
   -- pedido 1: NAO bloqueado (995/5000 << 1.5)
   SELECT * INTO r FROM pedido_compra_sugerido WHERE id=1;
-  IF r.status<>'pendente_aprovacao' OR r.valor_total<>995 THEN RAISE EXCEPTION 'pedido1 errado: % vt%', r.status, r.valor_total; END IF;
+  IF r.status IS DISTINCT FROM 'pendente_aprovacao' OR r.valor_total IS DISTINCT FROM 995 THEN RAISE EXCEPTION 'pedido1 errado: % vt%', r.status, r.valor_total; END IF;
   -- pedido 2: BLOQUEADO (1900/100=19 > 1.5)
   SELECT * INTO r FROM pedido_compra_sugerido WHERE id=2;
-  IF r.status<>'bloqueado_guardrail' OR r.valor_total<>1900 THEN RAISE EXCEPTION 'pedido2 deveria bloquear: % vt%', r.status, r.valor_total; END IF;
+  IF r.status IS DISTINCT FROM 'bloqueado_guardrail' OR r.valor_total IS DISTINCT FROM 1900 THEN RAISE EXCEPTION 'pedido2 deveria bloquear: % vt%', r.status, r.valor_total; END IF;
   -- pedido 3: so flat (sku444 q10 p5 desc20% -> preco 4, vl 40) -> NAO entra na reavaliacao de guardrail
   SELECT * INTO r FROM pedido_compra_sugerido WHERE id=3;
-  IF r.status<>'pendente_aprovacao' OR r.valor_total<>40 OR r.delta_vs_anterior_perc IS NOT NULL THEN
+  IF r.status IS DISTINCT FROM 'pendente_aprovacao' OR r.valor_total IS DISTINCT FROM 40 OR r.delta_vs_anterior_perc IS NOT NULL THEN
     RAISE EXCEPTION 'pedido3 (so flat) nao deveria ser tocado pelo guardrail: % vt% delta%', r.status, r.valor_total, r.delta_vs_anterior_perc; END IF;
   RAISE NOTICE 'C2/C4/C5 OK: flat+forward aplicados; guardrail bloqueia inflado; so-flat intacto.';
 END $$;
@@ -134,10 +134,10 @@ DO $$
 DECLARE r record; ret record;
 BEGIN
   SELECT * INTO ret FROM r2;
-  IF ret.itens_flat_aplicados<>0 OR ret.itens_forward_buying_aplicados<>0 THEN
+  IF ret.itens_flat_aplicados IS DISTINCT FROM 0 OR ret.itens_forward_buying_aplicados IS DISTINCT FROM 0 THEN
     RAISE EXCEPTION 'IDEMPOTENCIA falhou: 2a passada aplicou flat=% fb=%', ret.itens_flat_aplicados, ret.itens_forward_buying_aplicados; END IF;
   SELECT * INTO r FROM pedido_compra_item WHERE id=10;
-  IF r.preco_unitario<>9 THEN RAISE EXCEPTION 'IDEMPOTENCIA falhou: sku111 re-descontado -> preco %', r.preco_unitario; END IF;
+  IF r.preco_unitario IS DISTINCT FROM 9 THEN RAISE EXCEPTION 'IDEMPOTENCIA falhou: sku111 re-descontado -> preco %', r.preco_unitario; END IF;
   RAISE NOTICE 'C3 OK: idempotente (2a passada nao reaplica).';
 END $$;
 SQL

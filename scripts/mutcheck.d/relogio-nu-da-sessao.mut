@@ -25,6 +25,7 @@ PEGA | identidade do trecho sem normalizar (CURRENT_DATE ≠ current_date)      
 PEGA | forma: o dia da sessão (current_date/localtimestamp) some              | s/current_date\|localtimestamp\|localtime\|current_time/NUNCA_CASA/
 PEGA | forma: min/max(instante)::date some                                    | s/\\b\(\?:min\|max\)/\\bNUNCA_CASA(?:min|max)/
 PEGA | forma: to_char(relógio, …) some                                        | s/\\bto_char\\s\*\\\(\\s\*\$\{RELOGIO\}/NUNCA_CASA/
+PEGA | forma: (relógio ± intervalo)::date some (a da fase 2, v_caca_candidatos) | s/\[-\+\]/NUNCA_CASA/
 PEGA | exclusão: ::timestamp with time zone passa a reprovar                   | s/\(\?!\\s\*with\\b\)//
 PEGA | exclusão: os 3 *_em que são date passam a reprovar                      | s/\(\?!\(\?:inicio_em\|medido_em\|suspensa_em\)\\b\)//
 

@@ -466,7 +466,7 @@ BEGIN
   -- (SL canônica + personalizada com CSV, sem geração '1' na chave) e +1 item.
   SELECT count(*) INTO nf FROM public.tint_formulas;
   SELECT count(*) INTO ni FROM public.tint_formula_itens;
-  IF nf <> 47 OR ni <> 31 THEN
+  IF nf IS DISTINCT FROM 47 OR ni IS DISTINCT FROM 31 THEN
     RAISE EXCEPTION 'C0 FALHOU: seed incompleto (formulas=% esperado 47, itens=% esperado 31)', nf, ni; END IF;
 
   -- C8 não-desaparecimento GLOBAL primeiro (cardinalidade pega duplicata E omissão
@@ -476,17 +476,17 @@ BEGIN
     WHERE desativada_em IS NULL AND sku_id IS NOT NULL
     EXCEPT
     SELECT account, sku_id, cor_id FROM public.v_tint_formula_canonica) x;
-  IF n <> 0 THEN falhas := falhas || format('C8 FALHOU: %s chaves ativas AUSENTES da view', n); END IF;
+  IF n IS DISTINCT FROM 0 THEN falhas := falhas || format('C8 FALHOU: %s chaves ativas AUSENTES da view', n); END IF;
   SELECT count(*) INTO n FROM (
     SELECT account, sku_id, cor_id FROM public.v_tint_formula_canonica
     EXCEPT
     SELECT account, sku_id, cor_id FROM public.tint_formulas
     WHERE desativada_em IS NULL AND sku_id IS NOT NULL) x;
-  IF n <> 0 THEN falhas := falhas || format('C8 FALHOU: %s chaves na view SEM lastro na tabela', n); END IF;
+  IF n IS DISTINCT FROM 0 THEN falhas := falhas || format('C8 FALHOU: %s chaves na view SEM lastro na tabela', n); END IF;
   SELECT count(*) INTO n FROM (
     SELECT account, sku_id, cor_id FROM public.v_tint_formula_canonica
     GROUP BY 1,2,3 HAVING count(*) <> 1) x;
-  IF n <> 0 THEN falhas := falhas || format('C8 FALHOU: %s chaves com != 1 linha na view (duplicata)', n); END IF;
+  IF n IS DISTINCT FROM 0 THEN falhas := falhas || format('C8 FALHOU: %s chaves com != 1 linha na view (duplicata)', n); END IF;
 
   -- C1 preferência: canônica de K1 = a SL (IS DISTINCT FROM: linha ausente = vermelho)
   SELECT id::text, is_sl, receita_valida INTO r FROM public.v_tint_formula_canonica WHERE cor_id='K1';
@@ -770,7 +770,7 @@ BEGIN
   -- teste de NULL da 14ª). Se as cópias divergirem, I1 quebra aqui na hora.
   SELECT count(*) INTO n FROM public.v_tint_formula_canonica
    WHERE (preco_csv_legado IS NULL) <> (preco_piso_legado IS NULL);
-  IF n <> 0 THEN
+  IF n IS DISTINCT FROM 0 THEN
     falhas := falhas || format('C28 FALHOU: %s linha(s) violam I1 (csv IS NULL) <=> (piso IS NULL) — as 2 copias da subquery do csv driftaram', n);
   END IF;
 
@@ -780,7 +780,7 @@ BEGIN
   SELECT count(*) INTO n FROM public.v_tint_formula_canonica
    WHERE preco_csv_legado IS NOT NULL AND preco_piso_legado IS NOT NULL
      AND preco_piso_legado < preco_csv_legado;
-  IF n <> 0 THEN
+  IF n IS DISTINCT FROM 0 THEN
     falhas := falhas || format('C29 FALHOU: %s linha(s) com piso < csv — o piso tem de ser o max de um SUPERconjunto (senao o gate afrouxa)', n);
   END IF;
 
