@@ -298,8 +298,8 @@ export async function main(
 
     if (recusados.length > 0) {
       saida(
-        `❌ edges:sintaxe — ${recusados.length} de ${modulos.length} módulo(s) o V8 RECUSA: a edge não boota e ` +
-          'responde BOOT_ERROR 503 a toda chamada até o redeploy (#2720).',
+        `❌ edges:sintaxe — ${recusados.length} de ${modulos.length} módulo(s) RECUSADO(s): o Edge Runtime não ` +
+          'carrega o módulo, a edge não boota e responde BOOT_ERROR 503 a toda chamada até o redeploy (#2720).',
       );
       for (const r of recusados) saida(r.linha);
       if (naoChecados.length > 0) saida(`   + ${naoChecados.length} módulo(s) NAO_CHECADO:\n${naoChecados.join('\n')}`);
