@@ -83,6 +83,11 @@ mas não o ON_ERROR_STOP — sem ele, um passo extraído que falhe imprime ERROR
   executor real); depois `RESULTADO: 27 ok / 0 fail`; `--falsificar`: controle verde (27) nos dois
   idiomas do servidor e `SABOTAGENS: 14 vermelhas / 0 falhas` (44 s no laptop). No núcleo de CI.
 - `scripts/sonda-versao-sql.test.ts` — vermelho de ASSERÇÃO antes da implementação
-  (`11 failed | 207 passed`), verde depois (`218 passed`).
-- mutcheck: as 8 mutações novas, `8 pegas · 0 sobreviventes`; `--seco` com os 39 contratos cirúrgicos.
-- eval `sonda-veredito-401`: 11 vereditos + cardinalidade; typecheck, eslint e shellcheck verdes.
+  (`11 failed | 207 passed`); o `BEGIN`/`END` e o `ON_ERROR_STOP` também nasceram vermelhos
+  (`3 failed`); verde no fim (`220 passed`).
+- `db/test-canaria-veredito.sh` — normal verde e `--falsificar` `18 vermelhas / 0 falhas` (era
+  `17 / 1` com a g2 levando a função junto).
+- mutcheck: as 8 mutações novas, `8 pegas · 0 sobreviventes` (baseline verde); `--seco` com os 47
+  contratos cirúrgicos.
+- eval `sonda-veredito-401`: 11 vereditos + cardinalidade; typecheck, eslint, shellcheck e os gates
+  `psql-local-X`, `psql:errorstop` e fuso-da-sessão verdes.
