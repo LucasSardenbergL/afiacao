@@ -175,7 +175,7 @@ describe('o que NÃO é a classe', () => {
       'done',
     ].join('\n');
     expect(detectar('x.sh', viaApelido).violacoes).toEqual([]);
-    expect(detectar(ALVO, real(ALVO))).toMatchObject({ listas: 1, entradas: 13, lacos: 1, violacoes: [] });
+    expect(detectar(ALVO, real(ALVO))).toMatchObject({ listas: 1, entradas: 15, lacos: 1, violacoes: [] });
   });
 
   it('o idioma do #2606 passa: nome:VERMELHOS:VERDES, ID!MARCA e a cadeia de 3 elos até o grep', () => {

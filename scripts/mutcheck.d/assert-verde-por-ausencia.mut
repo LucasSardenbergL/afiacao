@@ -1,0 +1,59 @@
+# Invariantes do fiscal do assert de prova que PASSA com o valor AUSENTE (`<>` em condição de assert).
+# @src: scripts/assert-verde-por-ausencia-gate.ts
+# @test: scripts/assert-verde-por-ausencia-gate.test.ts
+#
+# A classe (docs/historico/assert-verde-por-ausencia.md): `IF v <> x THEN RAISE` com v NULL (a linha
+# sumiu, a chave JSON faltou) avalia NULL e o RAISE não dispara — o assert aprova sem medir. O fiscal é
+# TEXTUAL, então cada camada dele é uma aposta que pode apodrecer sem vermelho nenhum: o que é um IF
+# de ASSERT (a palavra, o THEN, o rabo), o nível booleano (string, comentário, subconsulta, argumento
+# de função), o bloco (DO/pg_temp sim, função pública não), a isenção de comentário de shell (stripper
+# compartilhado, nunca regex local), a linha reportada, o denominador de asserts (o sensor de
+# cegueira), os alarmes herdados, o universo, os pisos e o código de saída. Cada PEGA quebra UMA camada
+# e exige a suíte vermelha.
+#
+# ⚠️ No lado da SUBSTITUIÇÃO o perl interpola: `$x` vira vazio e `@x` também. Escreva `\$`. O `#`
+# da regex local vai como `\x23`, para a linha do contrato não carregar um `#` cru.
+
+# CONTROLE+ : o detector cego. Se isto sobreviver, nenhum outro veredito deste arquivo vale.
+PEGA | controle+: detector cego (a palavra IF nunca casa)                   | s/const PALAVRA_IF = \/\\b\(ELSIF\|IF\)\\b\/gi;/const PALAVRA_IF = \/\\bNUNCA_CASA\\b\/gi;/
+
+# O que é um IF de ASSERT: o rabo depois do THEN.
+PEGA | RAISE EXCEPTION deixa de ser rabo de assert (a origem escapa)         | s/\^\\s\*\(\?:RAISE\\s\+EXCEPTION\\b\|/^\\s*(?:NUNCA_CASA\\b|/
+PEGA | qualquer RAISE vira assert (o NOTICE da falsificação vira site)      | s/RAISE\\s\+EXCEPTION\\b\|\(\[A-Za-z_\]/RAISE\\b|([A-Za-z_]/
+PEGA | acumulador por array_append escapa (o V1 da canônica)                | s/\|array_append\\s\*\\\(\\s\*\\1\\b\)/|NUNCA_CASA)/
+PEGA | registro de falha por INSERT escapa                                  | s/\|INSERT\\s\+INTO\\b\)\/i;/|NUNCA_CASA)\/i;/
+
+# O nível booleano, dos dois lados.
+PEGA | subconsulta vira nível booleano (o filtro WHERE a <> b vira site)    | s/pilha\.push\('subconsulta'\)/pilha.push('booleano')/
+PEGA | argumento de função vira nível booleano (coalesce(a <> b, true))     | s/else if \(colado && !\['NOT'/else if (false && !['NOT'/
+PEGA | string SQL deixa de ser pulada ('<>' vira site)                      | s/if \(c === "'"\) \{/if (false) {/
+PEGA | comentário SQL deixa de ser pulado (-- v <> 1 vira site)             | s/if \(c === '-' && s\[i \+ 1\] === '-'\) \{/if (false) {/
+PEGA | `!=` escapa                                                          | s/\|\| \(c === '!' && s\[i \+ 1\] === '='\)\)/|| false)/
+
+# O bloco: DO e pg_temp sim; corpo de função pública (fixture/código sob teste) não.
+PEGA | função pública vira assert                                           | s/ehAssert: funcao === undefined \|\| \/\^pg_temp/ehAssert: true || \/^pg_temp/
+PEGA | helper pg_temp vira fixture                                          | s/\|\| \/\^pg_temp\\\.\/i\.test\(funcao\)/|| false/
+PEGA | DO com dólar ESCAPADO (heredoc não citado) não é bloco               | s/\(\\\\\?\\\$\[A-Za-z_0-9\]\*\\\\\?\\\$\)/(\\\$[A-Za-z_0-9]*\\\$)/
+
+# A isenção de comentário de shell. A 2ª é a versão INGÊNUA que a regra da casa proíbe: ela apaga o
+# `#>>` do jsonb que mora dentro do heredoc — verde por cegueira.
+PEGA | stripper ignorado: comentário de shell vira código                   | s/const limpo = removerComentariosShell\(fonte\);/const limpo = fonte; void removerComentariosShell;/
+PEGA | regex LOCAL no lugar do stripper compartilhado                        | s/const limpo = removerComentariosShell\(fonte\);/const limpo = fonte.replace(\/\x23.*\$\/gm, ''); void removerComentariosShell;/
+
+# O que o fiscal reporta e o denominador que ele mede.
+PEGA | linha reportada deixa de ser a da FONTE                               | s/linha: limpo\.slice\(0, a\.kw\)\.split\('\\n'\)\.length,/linha: limpo.slice(0, a.kw).split('\\n').length - 1,/
+PEGA | asserts reconhecidos deixam de ser contados (o sensor de cegueira)   | s/return \{ sitios, asserts: as\.length, linhasDeCodigo \};/return { sitios, asserts: 0, linhasDeCodigo };/
+
+# Os alarmes do stripper (herdados) e o universo.
+PEGA | analisar deixa de consultar o stripper                               | s/r\.alarmes\.push\(\.\.\.alarmesDoStripper\(a\.caminho, diagnosticarShell\(a\.fonte\)\)\);/void diagnosticarShell; void alarmesDoStripper;/
+PEGA | universo perde as provas (só `db/lib/`)                              | s/export const RAIZES_PADRAO = \['db'\];/export const RAIZES_PADRAO = ['db\/lib'];/
+PEGA | todo shell de db/ conta como prova no piso                           | s/const PROVA = \/\^db\\\/test-\[\^\/\]\*\\\.sh\$\/;/const PROVA = \/^db\\\/.*\/;/
+
+# O veredito: 2 nunca é "passou", violação nunca é 0, e a mensagem aponta o conserto.
+PEGA | nenhum arquivo lido vira "limpo"                                     | s/if \(r\.caminhos\.length === 0\) furos/if (false) furos/
+PEGA | piso de provas desligado                                             | s/if \(provas < PISOS\.provas\) furos/if (false) furos/
+PEGA | piso de linhas de código desligado                                   | s/if \(r\.linhasDeCodigo < PISOS\.linhasDeCodigo\) \{/if (false) {/
+PEGA | piso de asserts desligado (o detector cego passaria)                 | s/if \(r\.asserts < PISOS\.asserts\) \{/if (false) {/
+PEGA | alarme/piso furado deixa de bloquear o veredito                      | s/if \(furos\.length > 0\) \{/if (false) {/
+PEGA | violação sai 0                                                       | s/codigo: 1,/codigo: 0,/
+PEGA | a mensagem perde o conserto (IS DISTINCT FROM)                       | s/Conserto: `IF v IS DISTINCT FROM x THEN RAISE`/Conserto: `X`/

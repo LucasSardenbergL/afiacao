@@ -1,39 +1,17 @@
 /**
- * Helper money-path: resolve o "último preço praticado por produto" que o edge
- * `analyze-unified-order` injeta nas sugestões de pedido do vendedor.
+ * Guard money-path de preço unitário: finito e > 0 (pega 0, negativo, NaN, ±Infinity e não-número).
+ * Consumidores: a proposta de cotação do WhatsApp (`src/lib/whatsapp/proposta-cotacao.ts`,
+ * `src/services/whatsappProposta/enviarProposta.ts`).
  *
- * Regra (NÃO reverter — já foi revertida 1× pelo deploy do Lovable, 08431871):
- *   - order_items (local) é a FONTE DE VERDADE → VENCE;
- *   - o Omie só PREENCHE GAPS (produtos sem preço local);
- *   - preço inválido (≤0, NaN, ±Infinity, não-numérico) é IGNORADO em ambos os lados
- *     (money-path: ausente ≠ zero — nunca sugerir R$0 como "praticado").
- *
- * O bloco entre os marcadores MIRROR-START/END é ESPELHADO VERBATIM no edge (Deno não
- * importa de src/). A paridade src×edge e o uso real são vigiados por
- * src/__tests__/edge-money-path-invariants.test.ts; a canária {canary:true} prova o
- * comportamento DEPLOYADO via probe HTTP. Ver docs/agent/money-path.md (§ "Helper espelhado").
+ * HISTÓRICO (o nome do arquivo ficou): até 2026-09-30 este módulo também tinha `mergeCustomerPrices`
+ * — o merge "order_items vence, Omie preenche gap" que a edge `analyze-unified-order` aplicava aos
+ * itens da IA, espelhado VERBATIM nela (bloco MIRROR) e atestado pela canária
+ * `praticado-vence-omie-v1`. A edge deixou de precificar (a IA só IDENTIFICA; o item nasce pelo
+ * `precoPartida` do front, ver `src/hooks/unifiedOrder/nascimento-item.ts`), o merge ficou sem
+ * nenhum chamador e foi APOSENTADO — não migrado: um merge de preço vivo e sem consumidor é um 2º
+ * decisor à espera de alguém religá-lo. O arquivo não foi renomeado porque os imports do WhatsApp
+ * e a baseline de fronteiras de módulo (`src/lib/modulos/fronteiras-baseline.ts`) o citam pelo caminho.
  */
-
-/** Conveniência de tipo para os testes/edge (uma linha de order_items). */
-export type LocalPriceRow = { product_id?: string | null; unit_price?: number | null };
-
-// MIRROR-START mergeCustomerPrices — manter IDÊNTICO no edge analyze-unified-order/index.ts (sem `export`)
 export function isValidUnitPrice(p: unknown): p is number {
   return typeof p === "number" && Number.isFinite(p) && p > 0;
 }
-export function mergeCustomerPrices(
-  localPrices: ReadonlyArray<{ product_id?: string | null; unit_price?: number | null }>,
-  omiePrices: Record<string, number>,
-): Record<string, number> {
-  const priceMap: Record<string, number> = {};
-  for (const row of localPrices) {
-    const id = row?.product_id;
-    const price = row?.unit_price;
-    if (id && isValidUnitPrice(price) && !(id in priceMap)) priceMap[id] = price;
-  }
-  for (const [productId, price] of Object.entries(omiePrices)) {
-    if (productId && isValidUnitPrice(price) && !(productId in priceMap)) priceMap[productId] = price;
-  }
-  return priceMap;
-}
-// MIRROR-END mergeCustomerPrices

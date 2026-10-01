@@ -48,7 +48,8 @@ if [ "${1:-}" = "--falsificar" ]; then
               orfa_nunca_dispara:A10 stale_nunca_dispara:A12 nunca_executou_vira_ok:A2
               retry_liquida_erro:A15 degradado_conta_dispensada:A18 message_com_idade:A23
               message_com_data_do_relogio:A23 message_com_hora_de_parede:A23 message_constante:A24
-              fora_do_v_sources:A28,A30"
+              fora_do_v_sources:A28,A30 migracao_nova_retry_liquida_erro:A15
+              migracao_nova_drop_create:A32"
   LOGDIR="$(mktemp -d "/tmp/falsifica-${SLUG}.XXXXXX")"
   porta=$PORT
   # asserts EXECUTADOS numa rodada = PASS+FAIL do recibo final; vazio se ela abortou antes dele
@@ -88,7 +89,7 @@ if [ "${1:-}" = "--falsificar" ]; then
     done
     if ! grep -q 'SABOTAGEM ATIVA em ' "$log"; then
       echo "  ❌ $sab — vermelha SEM a sabotagem aplicada (padrão derivou? nome sem ramo?): nenhum assert acusou nada"
-      { grep -m3 -E 'SABOTAGEM|padrão ocorre|ERROR' "$log" || true; } | sed 's/^/       /'
+      { grep -m3 -E 'SABOTAGEM|reescrita_na_cadeia|ERROR' "$log" || true; } | sed 's/^/       /'
       falhas=$((falhas+1))
     elif [ "$(executados "$log")" != "$asserts_controle" ]; then
       echo "  ❌ $sab — a suíte NÃO rodou inteira ($(executados "$log") de $asserts_controle asserts): vermelho de aborto, não de assert"
@@ -133,46 +134,71 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
-P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+# `P` fala com o banco $DB: `prove` na rodada. Só a pré-fase das sabotagens migracao_nova_* (abaixo)
+# monta um 2º banco, `pre`, no mesmo cluster. As funções da lib (dhv_*) também falam por `P`.
+DB=prove
+P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d "$DB" -v ON_ERROR_STOP=1 "$@"; }   # -X: o ~/.psqlrc não entra (#2696)
 Pq() { P -tA "$@"; }   # tuples-only, unaligned (pra capturar 1 valor)
-
-# ── base mínima do Supabase: roles, schema auth, auth.uid()/role() via GUC (impersonação de RLS) ──
-P -q -f "$REPO_ROOT/db/stubs-supabase.sql"
-P -q <<'SQL'
-CREATE OR REPLACE FUNCTION auth.uid()  RETURNS uuid LANGUAGE sql STABLE AS $f$ SELECT nullif(current_setting('test.uid',  true), '')::uuid $f$;
-CREATE OR REPLACE FUNCTION auth.role() RETURNS text LANGUAGE sql STABLE AS $f$ SELECT nullif(current_setting('test.role', true), '') $f$;
-ALTER ROLE service_role BYPASSRLS;
-SQL
 
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); echo "  ✅ $1"; }
 bad() { FAIL=$((FAIL+1)); echo "  ❌ $1"; }
 eq()  { if [ "$2" = "$3" ]; then ok "$1 (=$2)"; else bad "$1 — esperado [$3], veio [$2]"; fi; }
 
-# DUAS migrations, na ORDEM real de produção: a 1ª cria o check e registra o source nas duas
-# pontas (watchdog + heartbeat); a 2ª recria só o compute para o conserto do E.1. Aplicar só a 2ª
-# num PG limpo faz a postcondição dela falhar — corretamente, porque as outras pernas não existem.
-MIG_BASE="$REPO_ROOT/supabase/migrations/20260918200000_data_health_sync_reprocess_saude.sql"
-MIG_RETRY="$REPO_ROOT/supabase/migrations/20260920210000_sync_reprocess_retry_nao_liquida_erro.sql"
-MIG="$REPO_ROOT/supabase/migrations/20260920233000_sync_reprocess_degradado_so_das_vigiadas.sql"
-for m in "$MIG_BASE" "$MIG_RETRY" "$MIG"; do [ -f "$m" ] || { echo "❌ migration ausente: $m"; exit 1; }; done
+# A CADEIA VIVA do trio, não uma lista fixa (docs/historico/sync-reprocess-cadeia-viva.md). Até
+# 2026-09-30 esta prova aplicava 0918 → 0920a → 0920b e parava — e o sabotar() dizia que a 0920b era
+# "a última a recriar o compute, que é o que vale em prod". A 20260922225500 (portal humano) o recriou
+# de novo, e a prova seguiu VERDE medindo o compute anterior (md5 f0eecc… no harness; prod 4cc51b…):
+# VERSÃO COBERTA ≠ VERSÃO ENTREGUE, dentro do núcleo. Agora a seleção é a de db/lib/data-health-vivo.sh
+# — toda migration ≥ DHV_INICIO que redefine função guardada, em ordem de versão —, e a próxima
+# reescrita do trio entra sozinha. Quem prova isso são as sabotagens migracao_nova_*, que põem a
+# próxima reescrita no diretório que o SETUP lê (pré-fase, abaixo).
+#
+# ESTREITADA às 3 funções que esta prova EXECUTA de verdade. Das outras guardadas da lib, o
+# _data_health_episodio (o ESPIÃO do A28) e os 2 helpers de lista são stubs aqui
+# (db/stubs-data-health-trio.sql), e o get_data_health esta prova nem monta. Uma migration que
+# redefine uma das 3 E lê tabela fora do stub reprova: o compute (LANGUAGE sql) já no CREATE; o
+# watchdog e o heartbeat (plpgsql) quando a prova os EXECUTA (A26–A29). É o sinal que o stub pede —
+# a versão nova ficou sem cobertura; estenda o stub, nunca volte a fixar a lista.
+# shellcheck disable=SC1091  # o gate roda sem -x; o helper é versionado ao lado, em db/lib/
+. "$REPO_ROOT/db/lib/data-health-vivo.sh"
+# shellcheck disable=SC2034  # lida por dhv_cadeia, na lib
+DHV_GUARDADAS=(_data_health_compute data_health_watchdog fin_sync_heartbeat)
+# O início também é DESTA prova, não da lib: é a 0918 que monta watchdog e heartbeat inteiros sobre
+# os stubs. A lib o move junto com o snapshot das irmãs; aqui, movê-lo tiraria a base da cadeia.
+# shellcheck disable=SC2034  # lida por dhv_cadeia, na lib
+DHV_INICIO=20260918200000
 
-echo "═══ setup PG17 :$PORT ═══"
-
 # ══════════════════════════════════════════════════════════════════════════════
-# ZONA 1 — pré-requisitos mínimos (formas MEDIDAS em prod, sem schema-snapshot)
+# ZONAS 1+2 — o banco de UMA rodada, em $DB: base do Supabase + stubs do trio + o ACL de prod + a
+# cadeia viva lida de $1 (Lei #1: as migrations REAIS, nunca um stub da lógica)
 # ══════════════════════════════════════════════════════════════════════════════
-P -q -f "$REPO_ROOT/db/stubs-data-health-trio.sql"
-
-# ══════════════════════════════════════════════════════════════════════════════
-# ZONA 2 — a migration REAL (Lei #1: nunca um stub da lógica)
-# ══════════════════════════════════════════════════════════════════════════════
-# O PG17 limpo daria EXECUTE a PUBLIC por default; PROD tem o REVOKE (medido: o compute e
-# executavel so por postgres/service_role/sandbox_exec — nem `authenticated`). Reproduzimos esse
-# estado ANTES do apply com um stub de assinatura identica: assim a postcondicao de ACL nao mede o
-# default do harness, e sim o que a migration faz com ele — provando que `CREATE OR REPLACE`
-# PRESERVA o ACL (so DROP+CREATE o resetaria, CLAUDE.md/database.md §4).
-P -q <<'SQL'
+# As funções que esta prova STUBA: se uma migration da cadeia também redefinir uma delas, o A27/A28
+# cairia com o diagnóstico errado ("não roteou"). O setup confere que a cadeia não as tocou.
+STUBADAS="'_data_health_episodio','_tint_cobertura_bases_lista_email','_vendas_familia_ausente_lista_email','refresh_customer_metrics','tint_marcar_bases_mixmachine'"
+assinatura_stubadas() {
+  Pq -c "SELECT string_agg(p.proname || ':' || md5(pg_get_functiondef(p.oid)), ' ' ORDER BY p.proname, p.oid)
+           FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+          WHERE n.nspname = 'public' AND p.proname IN ($STUBADAS);"
+}
+montar_banco() {
+  local stubadas
+  # base mínima do Supabase: roles, schema auth, auth.uid()/role() via GUC (impersonação de RLS)
+  P -q -f "$REPO_ROOT/db/stubs-supabase.sql"
+  P -q <<'SQL'
+CREATE OR REPLACE FUNCTION auth.uid()  RETURNS uuid LANGUAGE sql STABLE AS $f$ SELECT nullif(current_setting('test.uid',  true), '')::uuid $f$;
+CREATE OR REPLACE FUNCTION auth.role() RETURNS text LANGUAGE sql STABLE AS $f$ SELECT nullif(current_setting('test.role', true), '') $f$;
+ALTER ROLE service_role BYPASSRLS;
+SQL
+  # ZONA 1 — pré-requisitos mínimos (formas MEDIDAS em prod, sem schema-snapshot)
+  P -q -f "$REPO_ROOT/db/stubs-data-health-trio.sql"
+  # ZONA 2 — O PG17 limpo daria EXECUTE a PUBLIC por default; PROD tem o REVOKE (medido: o compute e
+  # executavel so por postgres/service_role/sandbox_exec — nem `authenticated`). Reproduzimos esse
+  # estado ANTES do apply com um stub de assinatura identica: assim a postcondicao de ACL nao mede o
+  # default do harness, e sim o que a migration faz com ele — provando que `CREATE OR REPLACE`
+  # PRESERVA o ACL (so DROP+CREATE o resetaria, CLAUDE.md/database.md §4). Só a 0918 o confere; o
+  # A32 o confere no FIM da cadeia.
+  P -q <<'SQL'
 CREATE OR REPLACE FUNCTION public._data_health_compute()
  RETURNS TABLE(source text, domain text, status text, age_seconds bigint, expected_max_age_seconds bigint,
                freshness_basis text, message text, last_error text, probable_cause text,
@@ -183,40 +209,104 @@ AS $stub$ SELECT NULL::text, NULL::text, NULL::text, NULL::bigint, NULL::bigint,
 REVOKE ALL ON FUNCTION public._data_health_compute() FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public._data_health_compute() TO service_role;
 SQL
-
-aplicar_real() { P -q -f "$MIG_BASE" >/dev/null; P -q -f "$MIG_RETRY" >/dev/null; P -q -f "$MIG" >/dev/null; }
-aplicar_real
-echo "═══ migration real aplicada (postcondição passou) ═══"
+  stubadas="$(assinatura_stubadas)"
+  echo "  → cadeia viva (≥ $DHV_INICIO que redefine ${DHV_GUARDADAS[*]}), de $1:"
+  dhv_aplicar_cadeia "$1" || { echo "❌ a cadeia viva do trio NÃO aplicou sobre os stubs"; return 1; }
+  [ "$(assinatura_stubadas)" = "$stubadas" ] \
+    || { echo "❌ a cadeia redefiniu uma função que esta prova STUBA ($STUBADAS) — re-stube-a depois da cadeia"; return 1; }
+}
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SABOTAGEM (dirigida por $SABOTAGEM; o laço --falsificar no fim do arquivo a usa)
-# Sabota no BANCO, recriando a função com o trecho trocado — o repo NUNCA é tocado, então não há
-# `git checkout --` para restaurar (que é onde a falsificação costuma comer trabalho não commitado).
-# Cada sabotagem EXIGE que o padrão ocorra exatamente 1× no corpo: uma substituição que não pegou
-# deixaria a suíte verde e faria a falsificação aprovar tudo — teatro. O `exit 9` abaixo NÃO é o
-# vermelho que a falsificação procura: o laço exige a linha "SABOTAGEM ATIVA em" e o assert declarado,
-# e conta este exit como FALHA (era contado como dente até 2026-09-27).
+# PRÉ-FASE das sabotagens migracao_nova_*: a PRÓXIMA reescrita do compute, no diretório que o SETUP lê
+# ══════════════════════════════════════════════════════════════════════════════
+# O incidente desta prova (22–30/09) foi o SETUP não seguir a cadeia. Uma sabotagem que trouxesse a
+# PRÓPRIA cadeia (o dhv_migracao_nova reaplica a dele) ficaria vermelha com o setup re-fixado à mão —
+# medido na revisão de 2026-09-30: lista fixa de volta, normal 31/0 e falsificação 14/0. Aqui a
+# reescrita vai para um ESPELHO de supabase/migrations, e a rodada monta o banco pela MESMA chamada de
+# sempre, lendo $MIGDIR: setup que não segue a cadeia não a aplica, o case da SABOTAGEM sai 9 e o juiz
+# conta FALHA. O corpo da reescrita vem de um 2º banco (`pre`) montado do jeito normal — é o corpo
+# VIVO + uma troca, nunca o texto de um arquivo.
+MIGDIR="$REPO_ROOT/supabase/migrations"
+# reescrita_na_cadeia <prefixo> <âncora> <troca> — no banco $DB, escreve <prefixo> + o corpo vivo do
+# compute com a âncora trocada, como migration nova (29991231235959) num espelho de
+# supabase/migrations, e imprime o diretório. Fail-closed: âncora não única, troca que não muda o
+# corpo e seleção que não pega a migration nova → return 1.
+reescrita_na_cadeia() {
+  local dir nova corpo lista
+  dir="$(mktemp -d "${TMPDIR:-/tmp}/reescrita-${SLUG}.XXXXXX")"
+  ln -s "$REPO_ROOT"/supabase/migrations/*.sql "$dir"/
+  nova="$dir/29991231235959_reescrita_do_compute.sql"
+  corpo="$(Pq -X -v ancora="$2" -v troca="$3" <<'SQL'
+SELECT CASE WHEN (length(d) - length(replace(d, :'ancora', ''))) / length(:'ancora') = 1
+             AND replace(d, :'ancora', :'troca') <> d
+            THEN replace(d, :'ancora', :'troca') ELSE 'SEM ANCORA UNICA' END
+  FROM (SELECT pg_get_functiondef('public._data_health_compute()'::regprocedure) AS d) s;
+SQL
+)" || return 1
+  case "$corpo" in
+    ''|'SEM ANCORA UNICA') echo "reescrita_na_cadeia: a âncora não ocorre 1× no corpo vivo (ou a troca não o muda)" >&2; return 1 ;;
+  esac
+  printf '%s%s;\n' "$1" "$corpo" > "$nova"
+  lista="$(dhv_cadeia "$dir")" || return 1
+  case "$lista" in
+    *"$nova"*) ;;
+    *) echo "reescrita_na_cadeia: a seleção dinâmica NÃO pegou a migration nova" >&2; return 1 ;;
+  esac
+  printf '%s\n' "$dir"
+}
+case "${SABOTAGEM:-}" in
+  migracao_nova_*)
+    case "$SABOTAGEM" in
+      migracao_nova_retry_liquida_erro)
+        # o furo E.1 (A15) chegando pela próxima reescrita
+        prefixo=""
+        ancora="             AND l.status IS DISTINCT FROM 'running'
+           -- desempate EXPLICITO por id"
+        troca="           -- desempate EXPLICITO por id" ;;
+      migracao_nova_drop_create)
+        # a armadilha do CLAUDE.md: DROP+CREATE reseta o ACL, e o compute SECURITY DEFINER volta a
+        # executar para PUBLIC/anon (A32) com o md5 do pg_get_functiondef intocado. A troca no
+        # comentário só existe para o md5 provar que a reescrita chegou; a lógica segue a viva.
+        prefixo="DROP FUNCTION public._data_health_compute();
+"
+        ancora="-- desempate EXPLICITO por id"
+        troca="-- desempate EXPLICITO por id (reescrita por DROP+CREATE)" ;;
+      *) echo "❌ SABOTAGEM desconhecida: ${SABOTAGEM}"; exit 9 ;;
+    esac
+    echo "── pré-fase: o banco \`pre\`, montado do jeito normal, dá o corpo vivo para a reescrita ──"
+    "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres pre
+    DB=pre montar_banco "$MIGDIR"
+    MIGDIR="$(DB=pre reescrita_na_cadeia "$prefixo" "$ancora" "$troca")" \
+      || { echo "❌ SABOTAGEM NÃO APLICÁVEL — a reescrita não foi escrita (âncora) ou a seleção dinâmica não a pegou."; exit 9; }
+    MD5_REESCRITA="$(DB=pre Pq -X -v ancora="$ancora" -v troca="$troca" <<'SQL'
+SELECT md5(replace(pg_get_functiondef('public._data_health_compute()'::regprocedure), :'ancora', :'troca'));
+SQL
+)" ;;
+esac
+
+echo "═══ setup PG17 :$PORT ═══"
+montar_banco "$MIGDIR"   # ← O SETUP: a mesma chamada em toda rodada, sabotada ou não
+# A versão COBERTA, legível no log do CI — para conferir contra a ENTREGUE (psql-ro):
+#   SELECT md5(pg_get_functiondef('public._data_health_compute()'::regprocedure));
+echo "  compute exercitado: md5 $(Pq -c "SELECT md5(pg_get_functiondef('public._data_health_compute()'::regprocedure));")"
+echo "═══ cadeia real aplicada (cada postcondição passou) ═══"
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SABOTAGEM (dirigida por $SABOTAGEM; o laço --falsificar no topo do arquivo a usa)
+# Sabota no BANCO, trocando UM trecho do corpo VIVO da função — o que a cadeia acabou de instalar,
+# lido por pg_get_functiondef (dhv_sabotar, da lib) — e recriando-a. Até 2026-09-30 o corpo vinha do
+# ARQUIVO de uma migration fixa: com a cadeia viva, isso recriaria a versão VELHA + a sabotagem, e a
+# rodada sabotada mediria duas mudanças (a 0922 revertida em silêncio), não uma. O repo NUNCA é
+# tocado, então não há `git checkout --` para restaurar (que é onde a falsificação costuma comer
+# trabalho não commitado). A âncora tem de ocorrer exatamente 1× no corpo e o md5 tem de mudar: uma
+# substituição que não pegou deixaria a suíte verde e faria a falsificação aprovar tudo — teatro. O
+# `exit 9` abaixo NÃO é o vermelho que a falsificação procura: o laço exige a linha "SABOTAGEM ATIVA
+# em" e o assert declarado, e conta este exit como FALHA (era contado como dente até 2026-09-27).
 # ══════════════════════════════════════════════════════════════════════════════
 sabotar() {
   local fn="$1" de="$2" para="$3"
-  # de qual arquivo extrair: o compute vem da migration do conserto (a última a recriá-lo, que é o
-  # que vale em prod); watchdog e heartbeat só existem na base.
-  local src="$MIG"; [ "$fn" = "_data_health_compute" ] || src="$MIG_BASE"
-  local tmp; tmp="$(mktemp "/tmp/sab-${SLUG}.XXXXXX")"
-  awk -v fn="CREATE OR REPLACE FUNCTION public.${fn}(" \
-      'index($0,fn)==1{f=1} f{print} f && /^\$function\$;$/{exit}' "$src" > "$tmp"
-  python3 - "$tmp" "$de" "$para" <<'PYSAB' || { echo "❌ SABOTAGEM NÃO APLICÁVEL — o padrão não ocorre exatamente 1× no corpo de $fn. Sem isto a suíte ficaria verde e a falsificação aprovaria tudo."; exit 9; }
-import sys
-p, de, para = sys.argv[1], sys.argv[2], sys.argv[3]
-s = open(p).read()
-n = s.count(de)
-if n != 1:
-    print(f"   padrão ocorre {n}x, esperado 1: {de[:70]!r}", file=sys.stderr)
-    sys.exit(1)
-open(p, "w").write(s.replace(de, para))
-PYSAB
-  P -q -f "$tmp" >/dev/null
-  rm -f "$tmp"
+  dhv_sabotar "public.${fn}()" "$de" "$para" \
+    || { echo "❌ SABOTAGEM NÃO APLICÁVEL — a âncora não ocorre exatamente 1× no corpo VIVO de $fn (ou não o mudou). Sem isto a suíte ficaria verde e a falsificação aprovaria tudo."; exit 9; }
   echo "⚠️  SABOTAGEM ATIVA em $fn — a suíte abaixo DEVE ficar vermelha"
 }
 
@@ -271,7 +361,17 @@ case "${SABOTAGEM:-}" in
       sabotar _data_health_compute "WHEN sr.n_broken > 0 THEN 'Reprocesso Omie PARADO: ' || sr.resumo" \
                                    "WHEN sr.n_broken > 0 THEN 'Reprocesso Omie PARADO'" ;;
   fora_do_v_sources)
-      sabotar data_health_watchdog "    'sync_reprocess_saude'];" "    'nao_existe_este_source'];" ;;
+      # Âncora só entre ASPAS, sem a pontuação do array: até 2026-10-01 era "'sync_reprocess_saude'];"
+      # (o fim do array), e a 20261001011500 acrescentou uma fonte depois dela. O nome entre aspas
+      # ocorre 1× no watchdog vivo (o comentário o cita sem aspas) — o dhv_sabotar exige isso.
+      sabotar data_health_watchdog "'sync_reprocess_saude'" "'nao_existe_este_source'" ;;
+  migracao_nova_*)
+      # O dente da CADEIA DINÂMICA (a reescrita foi posta no diretório da cadeia pela pré-fase). Se o
+      # compute instalado não é ela, o SETUP não segue a cadeia — o incidente de 22–30/09 — e a rodada
+      # sai 9 sem a linha ATIVA: o juiz conta FALHA, nunca dente.
+      [ "$(Pq -c "SELECT md5(pg_get_functiondef('public._data_health_compute()'::regprocedure));")" = "$MD5_REESCRITA" ] \
+        || { echo "❌ SABOTAGEM NÃO APLICÁVEL — a reescrita nova estava no diretório da cadeia e o SETUP não a aplicou: o setup não segue a cadeia viva."; exit 9; }
+      echo "⚠️  SABOTAGEM ATIVA em _data_health_compute (pela PRÓXIMA reescrita, aplicada pelo setup) — a suíte abaixo DEVE ficar vermelha" ;;
   *)  echo "❌ SABOTAGEM desconhecida: ${SABOTAGEM}"; exit 9 ;;
 esac
 
@@ -311,8 +411,11 @@ eq "A2 tabela VAZIA ⇒ broken (chave vigiada que nunca executou é falha, não 
 semear_saudavel
 eq "A3 1 linha por source no compute INTEIRO" \
    "$(Pq -c "SELECT (count(*) = count(DISTINCT source))::text FROM public._data_health_compute();")" "true"
-eq "A4 o compute tem 30 sources (29 de prod + o novo)" \
-   "$(Pq -c "SELECT count(DISTINCT source)::text FROM public._data_health_compute();")" "30"
+# Contagem da VERSÃO VIVA (cadeia dinâmica): a 0918 levou o compute a 30 (29 + este) e a
+# 20261001011500 (vendas_empurradas_sem_gemeo) a 31. Fonte nova no trio muda este número — no PR que
+# a acrescenta, que é onde o vermelho tem de aparecer.
+eq "A4 o compute tem 31 sources (a 0918 trouxe este; a 20261001011500, o 31º)" \
+   "$(Pq -c "SELECT count(DISTINCT source)::text FROM public._data_health_compute();")" "31"
 eq "A5 status dentro do vocabulário que o watchdog aceita" \
    "$(Pq -c "SELECT (status IN ('ok','stale','broken','unknown'))::text FROM public._data_health_compute() WHERE source='sync_reprocess_saude';")" "true"
 
@@ -419,12 +522,19 @@ echo "── message estável (senão re-emaila a cada 30 min) ──"
 # semeado às 23:00 BRT e relido às 02:00 BRT do dia seguinte — o relógio cruza a meia-noite local com o
 # mesmo problema aberto, que é exatamente onde uma data tirada do relógio se trairia.
 cfg_compute="$(Pq -c "SELECT array_to_string(proconfig, '|') FROM pg_proc WHERE oid = 'public._data_health_compute()'::regprocedure;")"
+# O search_path que a CADEIA deixou — não um literal: a próxima reescrita pode mudá-lo, e o literal
+# faria o desligamento abaixo acusar "relógio não desligado" sem defeito nenhum. pg_catalog entra logo
+# DEPOIS de public, o lugar em que public.now() vence o embutido.
+sp_compute="$(Pq -c "SELECT substring(c FROM '^search_path=(.*)\$') FROM pg_proc p, unnest(p.proconfig) c WHERE p.oid = 'public._data_health_compute()'::regprocedure AND c LIKE 'search_path=%';")"
+sp_relogio="$(printf '%s' "$sp_compute" | sed -E 's/(^|, )public(,|$)/\1public, pg_catalog\2/')"
+[ -n "$sp_compute" ] && [ "$sp_relogio" != "$sp_compute" ] \
+  || { echo "❌ relógio controlado: o compute não tem public no search_path [$sp_compute] — public.now() não teria onde vencer o embutido"; exit 1; }
 P -q <<'SQL'
 CREATE OR REPLACE FUNCTION public.now() RETURNS timestamptz LANGUAGE sql STABLE AS $f$
   SELECT COALESCE(nullif(current_setting('test.agora', true), '')::timestamptz, pg_catalog.now())
 $f$;
-ALTER FUNCTION public._data_health_compute() SET search_path = public, pg_catalog, pg_temp;
 SQL
+P -q -c "ALTER FUNCTION public._data_health_compute() SET search_path = $sp_relogio;"
 T0='2026-09-15 23:00:00-03'   # 23:00 BRT
 T1='2026-09-16 02:00:00-03'   # +3h, do OUTRO lado da meia-noite local
 
@@ -466,10 +576,8 @@ eq "A25 resumo com 2 problemas é estável entre leituras (string_agg ordenado)"
 
 # Desliga o relógio controlado: o resto da prova (watchdog/heartbeat) roda no compute EXATAMENTE como a
 # migration o deixou — conferido, não suposto.
-P -q <<'SQL'
-ALTER FUNCTION public._data_health_compute() SET search_path = public, pg_temp;
-DROP FUNCTION public.now();
-SQL
+P -q -c "ALTER FUNCTION public._data_health_compute() SET search_path = $sp_compute;"
+P -q -c "DROP FUNCTION public.now();"
 [ "$(Pq -c "SELECT array_to_string(proconfig, '|') FROM pg_proc WHERE oid = 'public._data_health_compute()'::regprocedure;")" = "$cfg_compute" ] \
   || { echo "❌ o relógio controlado NÃO foi desligado: o search_path do compute diverge do da migration [$cfg_compute]"; exit 1; }
 
@@ -477,10 +585,11 @@ echo "── as outras 2 pernas do trio EXECUTAM (late-bound: CREATE não prova 
 semear_saudavel
 P -q -c "UPDATE public.sync_reprocess_log SET status='error' WHERE reprocess_type='operational' AND entity_type='orders';"
 P -q -c "SELECT public.data_health_watchdog();" >/dev/null
-# 22 = tamanho do v_sources (21 + o novo). O compute produz 30 sources; o watchdog avalia os do
-# array e ignora o resto — por isso os dois números são diferentes DE PROPÓSITO.
-eq "A26 watchdog avalia 22 checks (o v_sources, não os 30 do compute)" \
-   "$(Pq -c "SELECT checks_avaliados::text FROM public.data_health_watchdog_estado WHERE id;")" "22"
+# 23 = tamanho do v_sources na versão viva (a 0918 levou a 22; a 20261001011500, a 23). O compute
+# produz 31 sources; o watchdog avalia os do array e ignora o resto — por isso os dois números são
+# diferentes DE PROPÓSITO.
+eq "A26 watchdog avalia 23 checks (o v_sources, não os 31 do compute)" \
+   "$(Pq -c "SELECT checks_avaliados::text FROM public.data_health_watchdog_estado WHERE id;")" "23"
 # ⚠️ checks_falhos conta EXCECAO DE EXECUCAO do check, nunca status de negocio: o laco so o
 # incrementa no EXCEPTION. Com o check novo em `broken`, o certo e ZERO — ele avaliou bem, o
 # resultado e que e ruim. Foi por isso que o estado de 14/09 (checks_avaliados=21, checks_falhos=0)
@@ -497,6 +606,18 @@ eq "A30 sync_reprocess_saude no v_sources do watchdog" \
    "$(Pq -c "SELECT (pg_get_functiondef(p.oid) LIKE '%''sync_reprocess_saude''%')::text FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname='data_health_watchdog';")" "true"
 eq "A31 sync_reprocess_saude na IN-list do heartbeat" \
    "$(Pq -c "SELECT (pg_get_functiondef(p.oid) LIKE '%''sync_reprocess_saude''%')::text FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname='fin_sync_heartbeat';")" "true"
+
+echo "── o compute SECURITY DEFINER segue FECHADO no fim da cadeia (o ACL não está no md5) ──"
+# Medido em prod (psql-ro, 2026-09-30): anon/authenticated/PUBLIC sem EXECUTE, service_role com. O
+# setup reproduz esse ACL ANTES da cadeia, e só a postcondição da 0918 o confere: uma reescrita
+# posterior por DROP+CREATE o reseta (EXECUTE volta a PUBLIC) sem mudar uma letra do md5 que esta
+# prova imprime — md5 igual não é função igual. Por isso o ACL é conferido aqui, na versão viva.
+eq "A32 compute fechado a anon, authenticated e PUBLIC (só service_role executa)" \
+   "$(Pq -c "SELECT 'anon=' || has_function_privilege('anon', 'public._data_health_compute()', 'EXECUTE')
+              || ' authenticated=' || has_function_privilege('authenticated', 'public._data_health_compute()', 'EXECUTE')
+              || ' public=' || has_function_privilege('public', 'public._data_health_compute()', 'EXECUTE')
+              || ' service_role=' || has_function_privilege('service_role', 'public._data_health_compute()', 'EXECUTE');")" \
+   "anon=false authenticated=false public=false service_role=true"
 
 echo
 # Recibo no formato do runner (db/roda-nucleo-ci.sh): sem uma linha de contagem que ele saiba ler,
