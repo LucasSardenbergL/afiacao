@@ -88,8 +88,11 @@ acidente, agora explícita, a cada 2 h, com guardas.
 - Gates: `edges:typecheck` (0 crash; `deno check` direto nos 4 arquivos, 0 erro), `sonda:bump`,
   `sonda:fingerprint`, os 10 vitest que leem a edge como texto e a suíte completa.
 - Codex: **desenho não consultado** — o `codex-async.sh` barrou por `SALDO_ALTO` (cota em 86%, teto 85%,
-  janela reabre 03/10 19:11); Caminho B do desenho = RÉGUA própria + decisão do founder. **Código: PR em
-  DRAFT até a janela reabrir** (decisão do founder).
+  janela reabre 03/10 19:11); Caminho B do desenho = RÉGUA própria + decisão do founder. **Código:
+  mergeado em 2026-10-01 21:35 UTC (#2744) por ordem do founder, pelo Caminho B** (`sem-codex` no corpo
+  do PR; auto-revisão adversarial + falsificação 13/13). **REVISÃO INDEPENDENTE PENDENTE — gatilho: a
+  janela do Codex reabre em 03/10 19:11**: rodar o adversarial RETROATIVO sobre o diff do #2744
+  (`gh pr diff 2744`) via `scripts/codex-async.sh -r max`, e um P0/P1 que ele achar vira PR de conserto.
 
 ## Como conferir depois do deploy
 
