@@ -29,7 +29,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l /tmp/pg-tintpromote.log -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres tintpromote_verify
-P() { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d tintpromote_verify "$@"; }
+P() { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d tintpromote_verify "$@"; }
 # Recibo para o db/roda-nucleo-ci.sh. A prova é FAIL-FAST (asserção em SQL = RAISE sob ON_ERROR_STOP;
 # em bash = exit 1), então FAIL é 0 por construção e o que se conta são os checkpoints ✓ ALCANÇADOS:
 # truncar a prova — ou um `exit 0` no meio — derruba a contagem abaixo do mínimo do manifesto.

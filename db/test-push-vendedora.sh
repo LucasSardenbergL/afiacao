@@ -91,7 +91,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l /tmp/pg-push.log -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres push_test
-P() { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d push_test "$@"; }
+P() { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d push_test "$@"; }
 
 # ── 1) Stubs (roles, auth, vault, net com captura, cron) + schema mínimo ──
 P -v ON_ERROR_STOP=1 -q <<'SQL'

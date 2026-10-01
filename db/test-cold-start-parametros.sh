@@ -24,7 +24,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l /tmp/pg-coldstart.log -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres coldstart_verify
-P() { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d coldstart_verify "$@"; }
+P() { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d coldstart_verify "$@"; }
 
 RR="$(mktemp "${TMPDIR:-/tmp}/snap-coldstart.XXXXXX")"
 sed -E 's/^(CREATE SCHEMA public;)/-- \1/' "$REPO_ROOT/supabase/schema-snapshot.sql" | grep -vE '^\\(un)?restrict ' > "$RR"
