@@ -360,7 +360,9 @@ o experimento é o que a prod já roda: as rodadas noturnas mandam D+1 três vez
   manda o mesmo D+1 e dá 0. Quem as produz é o passo de produtos, que roda antes do estoque no strategic e
   grava `estoque: prod.quantidade_estoque || 0` (`sync-reprocess/products-lote.ts:190`); o passo de estoque
   desfaz em seguida, a cada noite. A janela errada dura o passo de produtos (63–116 s em 28–30/09), e se o
-  estoque falhar ela vai até a operational das 01:15. A linha de cima tem a mesma forma, sem passo que a
+  estoque falhar ela vai até a operational das 01:15. → Medido depois: a janela é de **~5 s** (o upsert só
+  acontece após a paginação), e o `|| 0` era também o único reset de quem esgota — conserto e números em
+  [estoque-dono-unico.md](estoque-dono-unico.md). A linha de cima tem a mesma forma, sem passo que a
   desfaça: `valor_unitario: prod.valor_unitario || 0` (ausente ≠ zero).
 
 ### A prova
