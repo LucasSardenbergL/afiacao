@@ -15,7 +15,9 @@
 //
 // AS FORMAS (por AST — comentário e string não são código para o parser; nenhum stripper aqui):
 //   · iso-fatiado (front e edges): `X.toISOString().slice|substring|substr(...)` e
-//     `X.toISOString().split('T')[0]` (e o mesmo com `toJSON()`), com qualquer receptor;
+//     `X.toISOString().split('T')[0]` (e o mesmo com `toJSON()`), com qualquer receptor — e o ISO
+//     guardado numa variável e fatiado depois (`const corte = d.toISOString(); … corte.slice(0, 10)`,
+//     o leitor de `visit_date` do `visit-score-recalc-batch` que a 1ª versão deste gate não via);
 //   · calendario-local-no-servidor (só edges): `.getDate()`, `.getDay()`, `.getMonth()`, `.getFullYear()`,
 //     `.getHours()`, `.setDate(...)`, `.setHours(...)`, `.setMonth(...)`, `.setFullYear(...)` — as
 //     variantes `getUTC*`/`setUTC*` passam: UTC escrito é intenção;
@@ -23,12 +25,14 @@
 //     `new Intl.DateTimeFormat(...)` sem um objeto literal com `timeZone`; e `new Date(...).toLocaleString(...)`
 //     sem `timeZone` (o `toLocaleString` de NÚMERO é a maioria — só o receptor `new Date` é data sem dúvida).
 //
-// O CERTO: no front, `hojeSP()`/`addDias()` (`@/lib/dashboard/sp-date`) e `spBusinessDate()`/
-// `spDayRangeUtc()` (`@/lib/time/sp-day`); nas edges, `hojeSP()`/`diaSP()`/`somarDias()`/`paraDataOmie()`
+// O CERTO: no front, `hojeSP()`/`addDias()`/`spBusinessDate()`/`spDayRangeUtc()` (`@/lib/time/sp-day`,
+// a plataforma); nas edges, `hojeSP()`/`diaSP()`/`somarDias()`/`paraDataOmie()`
 // (`supabase/functions/_shared/hoje-sp.ts`). UTC de propósito: `getUTC*()`/`Date.UTC` montando a string.
 //
-// LIMITES DECLARADOS (o que o AST sem tipos não vê): o ISO guardado numa variável e fatiado depois
-// (`const iso = d.toISOString(); iso.slice(0, 10)` — 0 casos em `src/` na varredura de 2026-10-01);
+// LIMITES DECLARADOS (o que o AST sem tipos não vê): a variável com o ISO é seguida pelo NOME, dentro
+// do arquivo e sem escopo — outra variável de mesmo nome no arquivo que não guarda ISO e é fatiada cai
+// na baseline como falso-positivo; o ISO que passa por parâmetro, retorno ou propriedade não é visto
+// (varredura de 2026-10-01: 1 caso de variável no repo, 0 dos outros dois);
 // `date-fns` `format(...)` numa edge (0 imports de date-fns em `supabase/functions/`); opções de locale
 // passadas por variável (o `timeZone` não está no literal → reprova; ponha na baseline com o motivo);
 // `getDate()` de um objeto que não é Date (sem tipos não se distingue — baseline).
@@ -93,12 +97,20 @@ export function detectar(arquivo: string, fonte: string): Sitio[] {
     linha: sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1,
   });
 
+  // As variáveis declaradas com o ISO no inicializador (`const corte = d.toISOString()`), pelo nome. A
+  // visita é em ordem de fonte: a declaração entra aqui antes do uso que vem depois dela.
+  const variaveisIso = new Set<string>();
+  const ehIso = (e: ts.Expression): boolean =>
+    chamadaDe(e, ISO) || (ts.isIdentifier(e) && variaveisIso.has(e.text));
+
   const visita = (n: ts.Node): void => {
+    if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.initializer !== undefined
+        && chamadaDe(n.initializer, ISO)) variaveisIso.add(n.name.text);
     // X.toISOString().slice(...) — qualquer fatia do ISO é o calendário UTC
-    if (chamadaDe(n, FATIA) && chamadaDe(n.expression.expression, ISO)) marca(n, "iso-fatiado");
+    if (chamadaDe(n, FATIA) && ehIso(n.expression.expression)) marca(n, "iso-fatiado");
     // X.toISOString().split('T')[0]
     if (ts.isElementAccessExpression(n) && ts.isNumericLiteral(n.argumentExpression) && n.argumentExpression.text === "0"
-        && chamadaDe(n.expression, SPLIT) && chamadaDe(n.expression.expression.expression, ISO)) {
+        && chamadaDe(n.expression, SPLIT) && ehIso(n.expression.expression.expression)) {
       const a = n.expression.arguments[0];
       if (a !== undefined && ts.isStringLiteralLike(a) && a.text === "T") marca(n, "iso-fatiado");
     }

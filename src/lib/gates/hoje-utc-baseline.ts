@@ -278,4 +278,6 @@ export const CONHECIDOS: readonly SitioConhecido[] = [
     motivo: '[fase datas-omie-e-edges] formatOmieDate: dDataPosicao D+1 toda noite (cron 21:15/23:15/23:30 BRT) + janela ±1' },
   { arquivo: 'supabase/functions/sync-reprocess/index.ts', trecho: 'd.getFullYear()', n: 1, veredito: 'afetado-alto',
     motivo: '[fase datas-omie-e-edges] formatOmieDate: dDataPosicao D+1 toda noite (cron 21:15/23:15/23:30 BRT) + janela ±1' },
+  { arquivo: 'supabase/functions/visit-score-recalc-batch/index.ts', trecho: 'cutoff.slice(0, 10)', n: 1, veredito: 'latente',
+    motivo: '[fase datas-omie-e-edges] .gte(visit_date) janela 30d; só cron 07:00 UTC = 04:00 BRT (o dia UTC = o de SP nessa hora), 0 chamadas do front' },
 ];

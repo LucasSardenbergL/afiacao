@@ -15,7 +15,9 @@
 PEGA | controle+: detector cego (nenhum arquivo é analisado)                 | s/if \(!PODE_TER\.test\(fonte\)\) return \[\];/return [];/
 
 # As formas.
-PEGA | forma: a fatia do ISO some                                             | s/if \(chamadaDe\(n, FATIA\) && chamadaDe\(n\.expression\.expression, ISO\)\) marca/if (false) marca/
+PEGA | forma: a fatia do ISO some                                             | s/if \(chamadaDe\(n, FATIA\) && ehIso\(n\.expression\.expression\)\) marca/if (false) marca/
+PEGA | forma: a declaração com o ISO deixa de registrar a variável            | s/&& chamadaDe\(n\.initializer, ISO\)\) variaveisIso\.add/&& false) variaveisIso.add/
+PEGA | forma: o nome da variável com o ISO deixa de contar (só a chamada)     | s/chamadaDe\(e, ISO\) \|\| \(ts\.isIdentifier\(e\) && variaveisIso\.has\(e\.text\)\)/chamadaDe(e, ISO)/
 PEGA | forma: split('T')[0] — o índice errado                                | s/n\.argumentExpression\.text === "0"/n.argumentExpression.text === "9"/
 PEGA | forma: split('T')[0] — o separador errado                             | s/a\.text === "T"\) marca/a.text === "Z") marca/
 PEGA | forma: o calendário local da edge some                                 | s/if \(chamadaDe\(n, CALENDARIO_LOCAL\)\) marca/if (false) marca/

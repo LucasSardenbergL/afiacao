@@ -55,6 +55,9 @@ describe('gate: o "hoje" UTC no TypeScript (classe ii do fuso, fase 3)', () => {
       'const c = new Date(t)\n  .toISOString()\n  .slice(2, 10);',
       'const e = new Date().toISOString().split("T")[0];',
       "const f = x.toISOString().split('T')[0];",
+      'const corte = new Date(Date.now() - 30 * 864e5).toISOString();',   // o ISO numa variável...
+      "q.gte('visit_date', corte.slice(0, 10));",                          // ...fatiado depois
+      'const js = y.toJSON(); const l = js.split("T")[0];',
       'const g = new Date().getDate();',
       'h.setHours(0, 0, 0, 0);',
       'const i = new Date().toLocaleDateString("pt-BR");',
@@ -66,6 +69,8 @@ describe('gate: o "hoje" UTC no TypeScript (classe ii do fuso, fase 3)', () => {
       'iso-fatiado: new Date(t) .toISOString() .slice(2, 10)',
       'iso-fatiado: new Date().toISOString().split("T")[0]',
       "iso-fatiado: x.toISOString().split('T')[0]",
+      'iso-fatiado: corte.slice(0, 10)',
+      'iso-fatiado: js.split("T")[0]',
       'calendario-local-no-servidor: new Date().getDate()',
       'calendario-local-no-servidor: h.setHours(0, 0, 0, 0)',
       'locale-sem-fuso-no-servidor: new Date().toLocaleDateString("pt-BR")',
@@ -84,7 +89,8 @@ describe('gate: o "hoje" UTC no TypeScript (classe ii do fuso, fase 3)', () => {
       'const v = new Date().toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" });',
       'const w = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" });',
       'const y = (1234.5).toLocaleString("pt-BR");',               // número, não data
-      'const z = iso.slice(0, 10);',                               // limite declarado: o ISO numa variável
+      'const z = iso.slice(0, 10);',                               // nome que não foi declarado com o ISO
+      'const nome = s.toUpperCase(); const p = nome.slice(0, 10);', // variável que não guarda ISO
     ].join('\n'))).toEqual([]);
     // no navegador o "local" é o fuso do usuário (SP): get* e toLocale* estão certos lá
     expect(detectar('src/x.ts', 'const a = new Date().getDate(); const b = new Date().toLocaleDateString("pt-BR");')).toEqual([]);
