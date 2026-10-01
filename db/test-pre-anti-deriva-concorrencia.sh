@@ -250,17 +250,20 @@ abre_A() { # sessão A da migration, alimentada por FIFO (fd 7)
   PID_A=$!
   exec 7> "$WORK/a.in"
 }
-manda_A() { printf '%s\n' "$@" >&7 2>/dev/null || true; }
+# `env printf` (o EXTERNO), nunca o builtin: escrita no FIFO de uma sessão que já morreu fica no buffer
+# do builtin e VAZA depois na saída capturada do cenário (medido: o veredito chegava com 'ROLLBACK;'
+# na frente). No processo externo, o buffer morre com ele.
+manda_A() { env printf '%s\n' "$@" >&7 2>/dev/null || true; }
 fecha_A() { exec 7>&- 2>/dev/null || true; wait "$PID_A" 2>/dev/null || true; }
 abre_H() { # <sql> — o SEGURADOR: toma uma chave numa transação aberta (fd 8) e a mantém
   rm -f "$WORK/h.in" "$WORK/h.out" "$WORK/h.pronta"; mkfifo "$WORK/h.in"
   ( PVAPP prova_H < "$WORK/h.in" > "$WORK/h.out" 2>&1; echo "RC_H=$?" >> "$WORK/h.out" ) &
   PID_H=$!
   exec 8> "$WORK/h.in"
-  printf '%s\n' "BEGIN;" "$1" "\\! touch $WORK/h.pronta" >&8 2>/dev/null || true
+  env printf '%s\n' "BEGIN;" "$1" "\\! touch $WORK/h.pronta" >&8 2>/dev/null || true
   espera_arquivo "$WORK/h.pronta" "$PID_H"
 }
-solta_H() { printf '%s\n' "COMMIT;" >&8 2>/dev/null || true; exec 8>&- 2>/dev/null || true; wait "$PID_H" 2>/dev/null || true; }
+solta_H() { env printf '%s\n' "COMMIT;" >&8 2>/dev/null || true; exec 8>&- 2>/dev/null || true; wait "$PID_H" 2>/dev/null || true; }
 roda_B() { # <arquivo sql> — B em fundo, application_name prova_B; RC_B=<rc> no fim da saída
   rm -f "$WORK/b.out"
   ( PVAPP prova_B -f "$1" > "$WORK/b.out" 2>&1; echo "RC_B=$?" >> "$WORK/b.out" ) &
@@ -367,7 +370,8 @@ cenario_m4() {
   abre_A
   manda_A "BEGIN;" "\\i $PARTE1_COM" "\\! touch $WORK/a.pronta"
   local r=0; espera_arquivo "$WORK/a.pronta" "$PID_A" || r=$?
-  manda_A "ROLLBACK;"
+  # Só fala com A se A passou da PRE (o desfecho ERRADO aqui): a sessão que recusou já morreu.
+  [ "$r" = "0" ] && manda_A "ROLLBACK;"
   fecha_A
   local st; st="$(sqlstate_de "$WORK/a.out")"
   local marca=""; grep -q 'PRE FALHOU' "$WORK/a.out" && marca="PRE_FALHOU"
