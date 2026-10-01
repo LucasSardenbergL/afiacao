@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-10-01T09:26:33.422Z",
-  "sourceHead": "7c6344f49d2ee3be884e0a9011a1d4cd91b9e3a2",
+  "medidoEm": "2026-10-01T13:45:54.215Z",
+  "sourceHead": "ebc8a7c6e24f5a12e7f28cda4fb67bb611f5e31c",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -14,7 +14,7 @@
       "exit": 0,
       "resumo": "✅ o EXECUTE de prod bate com o contrato nas 59 função(ões) da allowlist. ⚠️ 1 delas têm o fecho FORA do repo (fechadaPor=null) e portanto NÃO são vigiadas pelo CI: public.aplicar_sql.",
       "denominador": "🔎 authz:funcoes:prod — 60 definição(ões) lida(s) para 59 chave(s) da allowlist.",
-      "contratoFingerprint": "dbd5285c2f0099d957c331de7fbd5b9c22c3c09005db28ceb79f007acd66525f",
+      "contratoFingerprint": "5dfdb5579ea3037a0c09318b8a2bc06796d9d0e188c92f461d901d13cccaffee",
       "auditorFingerprint": "8971003ee5ae2343ff6129fe9569b7afb3b5cfd5bab5abed86c6e27520c8358f",
       "achados": []
     },
@@ -39,10 +39,10 @@
     "claudeRo": {
       "script": "authz:claude-ro:prod",
       "exit": 0,
-      "resumo": "✅ 38 asserções batem. O endurecimento continua de pé.",
+      "resumo": "✅ 39 asserções batem. O endurecimento continua de pé.",
       "denominador": null,
-      "contratoFingerprint": "96d72b6e231ea5f6ff2e99f2def99b9f3237de1a5be8b14f024621c7bf057396",
-      "auditorFingerprint": "de53cb9e346dd1b39f9b427a1df1ffca800b0877ba6c325ff1fb0a825578a11b",
+      "contratoFingerprint": "04316fe60798236f918838351936ac2a6fccac22b321cdc671b2e61784f34864",
+      "auditorFingerprint": "ac629e0219497568c48abfe3fcbca62ae5f13b62bdf6833b443df5ffcebf8993",
       "achados": []
     },
     "rls": {
@@ -57,10 +57,10 @@
     "corpo": {
       "script": "deriva:corpo:prod",
       "exit": 0,
-      "resumo": "✅ deriva-corpo — 317 identidade(s) batem com o repo (240 em dia, 71 só cosméticas, 5 aceitas na baseline) e 15 aposentada(s) estão ausentes",
-      "denominador": "🔎 deriva-corpo — 317 identidade(s) conferida(s) · 15 aposentada(s) · ref origin/main@a7ed65c69 (fetch ok) · prod 2026-10-01 09:27:00.06253Z",
-      "contratoFingerprint": "32a2595ef0ef81acdabb5e41facdb8aac4468ad4c499f11a0e841721d94af68b",
-      "auditorFingerprint": "a07989df9ed0fa552abd2963788287214d21003755b18ed15a9ea88f97c9d3aa",
+      "resumo": "✅ deriva-corpo — 317 identidade(s) batem com o repo (241 em dia, 70 só cosméticas, 5 aceitas na baseline) e 16 aposentada(s) estão ausentes",
+      "denominador": "🔎 deriva-corpo — 317 identidade(s) conferida(s) · 16 aposentada(s) · ref origin/main@8c3426020 (fetch ok) · prod 2026-10-01 13:46:19.973697Z",
+      "contratoFingerprint": "576cba55e30c00a415fbeffdf3aeb900ba545c3b1ddf198d4b4955d9f40c1d61",
+      "auditorFingerprint": "84cbf3f189bbc3c6bd78f5c712f614ddc110d7d6b1f0d0787833fe128b44f903",
       "achados": []
     }
   }

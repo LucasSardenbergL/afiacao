@@ -34,6 +34,16 @@ Em paralelo, o #2712 (decisão do founder, com todo PR bloqueado) subiu o teto p
 - **O `validate` não mudou:** ele lê `needs.provas-sql.result`, que a matriz agrega (success só se TODAS as partes passarem). A proteção da `main` exige só o check `validate`, então os nomes novos `provas-sql (1)`, `(2)` e `(3)` não travam nada.
 - **A autofalsificação do runner roda só na 1ª parte** (`if: strategy.job-index == 0`). Ela exercita o RUNNER, que é o mesmo nas N partes.
 
+## Complemento — o recibo de cada parte e a UNIÃO a cada run (01/10)
+
+A partição estava provada no harness, mas a EXECUÇÃO de cada run não estava: a matriz agrega `success` também quando o step do núcleo de uma parte é PULADO (um `if:` novo, uma condição que muda de tipo) — a parte some e as outras saem verdes.
+
+- **Recibo:** com `NUCLEO_RECIBO`, cada parte grava — só depois do próprio conjunto conferido — o sha256 do manifesto, `parte i/N` e cada unidade (arquivo, modo) concluída. Sobe como artefato (`upload-artifact@v7`, `if-no-files-found: error`).
+- **União:** o job `provas-sql-uniao` (no `needs` do `validate`, que passou a esperar 6 jobs e guarda o nome dele como já guardava o `provas-sql`) não sobe banco: baixa os recibos e roda `db/roda-nucleo-ci.sh --uniao`, que refaz a partição k mod N sobre o manifesto INTEIRO e exige N recibos, as partes 0..N-1 uma vez cada, o mesmo manifesto, cada unidade uma vez e na sua parte; nada fora do formato é ignorado. Exige também o recibo do harness da 1ª parte. Roda com `!cancelled()`: com uma parte vermelha, ele reprova com a mensagem própria ("alguma parte não fechou… veja o job dela") em vez de virar um `skipped` mudo. Quem diz QUAL parte, nesse caso, é o check dela. A união nomeia a parte que falta no caso para que existe: todas verdes, e uma que não rodou. Visto no CI do próprio PR (run 36854834023), quando a `main` vermelha derrubou as partes (1) e (3).
+- **Argumentos estritos:** o runner só lia o 1º argumento e ignorava os outros; com o `--uniao` no mundo, erro de digitação rodaria o núcleo inteiro no job sem banco.
+- **Harness:** +20 casos (piso 45 → 65) — controle positivo (2 partes e a união verdes), um vermelho por regra da união, os argumentos, e a ponta a ponta: a seleção sabotada PERDE uma prova, as duas partes saem verdes e só a união pega.
+- **As 2 falsificações voltam:** `hoje-sp-views-defaults` (`falsificar=33`) e `hoje-sp-data-ciclo` (`falsificar=17`; local: `SABOTAGENS: 17 vermelhas / 0 falhas`, exit 0) — 50 sabotagens de volta ao caminho obrigatório. Simulado com os tempos da run verde `36815770229`, a parte mais pesada vai a ~636 s com N=3: as duas são vizinhas no manifesto e caem sempre em partes diferentes, mas o rodízio por prova não equilibra por duração. Fica abaixo do teto do job e fora do caminho crítico (o `gates-e-falsificacao`); se encostar no teto, vale a regra de "O que fica para depois": mais uma parte.
+
 ## O dente
 
 `db/falsifica-nucleo-ci.sh` ganhou 6 casos (piso 39 → 45). Rodada local: `FALSIFICACAO: OK=45 XX=0`, em 49 s.

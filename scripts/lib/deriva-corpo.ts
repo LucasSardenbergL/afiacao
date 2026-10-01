@@ -622,6 +622,16 @@ const IDENTIDADE_AMOSTRA = 'integer,text,timestamp with time zone,character vary
  * precisa, e que o parser só aceita se reproduzir aquele md5.
  */
 export function montarSondaDeriva(nomes: readonly string[]): string {
+  const { sonda, detalhe } = consultasDeriva(nomes);
+  return ['BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;', sonda, detalhe, 'COMMIT;'].join('\n');
+}
+
+/**
+ * As DUAS consultas da sonda, cada uma um `SELECT` só — o pacote do transporte da nuvem
+ * (`--sql-nuvem`). Lá elas viajam num statement ÚNICO, que tem um retrato só: a garantia do
+ * `REPEATABLE READ` do caminho local vem de graça. `montarSondaDeriva` é o envelope das mesmas duas.
+ */
+export function consultasDeriva(nomes: readonly string[]): { sonda: string; detalhe: string } {
   const sonda = montarSondaPrecondicao(nomes); // valida os nomes (alfabeto `[a-z0-9_]`) antes de interpolar
   const valores = [...new Set(nomes)].sort((a, b) => a.localeCompare(b, 'en')).map((n) => `('${n}')`).join(', ');
   const semCorpo = "p.prosqlbody IS NOT NULL OR p.prosrc IS NULL OR p.prosrc = '' OR l.lanname IN ('c', 'internal')";
@@ -650,7 +660,7 @@ export function montarSondaDeriva(nomes: readonly string[]): string {
     `  UNION ALL SELECT 3, 'fim-deriva', '${FORMATO_DERIVA}', '', '', '', ''`,
     `) x ORDER BY ord, a, b;`,
   ].join('\n');
-  return ['BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;', sonda, detalhe, 'COMMIT;'].join('\n');
+  return { sonda, detalhe };
 }
 
 /** Um overload VIVO em prod. */

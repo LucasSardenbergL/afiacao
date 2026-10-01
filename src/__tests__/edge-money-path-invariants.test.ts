@@ -4407,3 +4407,63 @@ describe('guardrail money-path: omie-financeiro não fabrica desconto/juros/mult
     }
   });
 });
+
+describe('guardrail: omie-nfe-recebimento-sync não conta NF-e como importada quando os itens falham', () => {
+  // Medido em 2026-09-26: 47 cabeçalhos e 0 itens em prod. O NCM pontuado do Omie estourava
+  // `varchar(8)` (22001 no lote inteiro) e a edge só fazia console.error, contava a NF-e como
+  // importada e respondia success:true — a run "verde" escondia 100% de falha.
+  // Desde a importação por chave (PR 3/3) o insert de itens mora num helper só, e cada CAMINHO
+  // decide o que fazer quando ele falha: o cron registra e segue; o manual desfaz o cabeçalho.
+  const bruto = read('supabase/functions/omie-nfe-recebimento-sync/index.ts');
+  const src = removerComentarios(bruto);
+  const fatia = (de: string, ate: string) => {
+    const i = src.indexOf(de);
+    const f = i >= 0 ? src.indexOf(ate, i) : -1;
+    return i >= 0 && f > i ? src.slice(i, f) : '';
+  };
+  const helper = fatia('async function inserirItens(', '\n}\n');
+  const manual = fatia('async function importarPorChave(', '\n}\n');
+  const handler = fatia('Deno.serve(', '\n});');
+  const cron = fatia('Deno.serve(', 'totalImported++');
+
+  it('sentinela: leu a edge real, e o stripper não comeu nem deixou de limpar o arquivo', () => {
+    expect(bruto.length, 'arquivo vazio/inexistente').toBeGreaterThan(5_000);
+    expect(src).toContain('ConsultarRecebimento');
+    expect(src.length).toBeGreaterThan(bruto.length * 0.5);
+    expect(src.length).toBeLessThan(bruto.length);
+  });
+
+  it('controle positivo: um único insert de itens, no helper, chamado pelos dois caminhos', () => {
+    expect(count(src, '.from("nfe_recebimento_itens")'), 'o insert de itens sumiu ou duplicou').toBe(1);
+    expect(helper).toContain('.from("nfe_recebimento_itens")');
+    expect(helper, 'o NCM tem de passar pelo mapeamento que o normaliza').toContain('mapearItensRecebimento(');
+    expect(cron).toContain('inserirItens(');
+    expect(manual).toContain('inserirItens(');
+  });
+
+  it('cron: a falha de itens sai em errors[] e pula a contagem de importada', () => {
+    const depois = cron.slice(cron.indexOf('inserirItens('));
+    expect(depois, 'console.error sozinho é success:true sobre NF-e sem itens').toContain('errors.push(');
+    expect(depois, 'sem o continue a NF-e sem itens conta como importada').toContain('continue;');
+  });
+
+  it('manual: a falha de itens desfaz o cabeçalho e responde erro — nunca "importada"', () => {
+    const depois = manual.slice(manual.indexOf('inserirItens('));
+    const ateSucesso = depois.slice(0, depois.indexOf('status: "importada"'));
+    expect(ateSucesso.length, 'o sucesso veio antes do tratamento da falha').toBeGreaterThan(0);
+    expect(ateSucesso).toContain('.delete()');
+    expect(ateSucesso).toContain('500');
+  });
+
+  it('o caminho por chave só roda DEPOIS do gate de staff/cron', () => {
+    // O botão é do browser: sem o gate na frente, qualquer anon importaria NF-e via service role.
+    const gate = handler.indexOf('authorizeCronOrStaff(req)');
+    const despacho = handler.indexOf('importarPorChave(');
+    expect(gate, 'o gate sumiu do handler').toBeGreaterThan(-1);
+    expect(despacho, 'o despacho por chave veio antes do gate').toBeGreaterThan(gate);
+  });
+
+  it('o NCM cru não volta ao index.ts', () => {
+    expect(src).not.toMatch(/ncm:\s*iCabec\.cNCM/);
+  });
+});

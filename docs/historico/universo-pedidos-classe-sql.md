@@ -69,8 +69,9 @@ ago −R$ 767): é a mesma correção, vista de outro objeto.
 - **Feeds/operacionais:** divergência de propósito, declarada no registro do gate.
 - **Aplicação:** comigo, via `db:aplicar` (ensaio → apply → validação por fora) — inclusive o
   `DROP` da MV antiga, que o envelope deixa com o founder: autorizado na rodada de decisões.
-- **Codex:** cota em 86% (teto 85%) até 03/10 19:11 → **PRs em DRAFT** até a janela reabrir; aí
-  desenho + adversarial por domínio, e só então o apply.
+- **Codex:** cota em 86% (teto 85%) até 03/10 19:11 → o PR ficou em DRAFT; no mesmo dia o founder
+  pediu o merge sem esperar a janela → **Caminho B** (`sem-codex` registrado no #2726), merge e apply
+  em 2026-10-01. Os desenhos de cada domínio (`RÉGUA:`) seguem no corpo do PR para uma revisão posterior.
 
 ## Ordem e coordenação (o que a sessão encontrou no caminho)
 
@@ -145,6 +146,38 @@ dente falso.
 **Fora do CI:** o job `provas-sql` já leva 15–16 min de um teto de 20 na `main`; 18 rodadas com o
 snapshot somariam ~3 min. Entra no núcleo o controle (118 asserts, ~29 s no laptop) e o
 `--falsificar` fica `fora-do-ci` com o motivo na linha — o recibo é este parágrafo e o do PR.
+
+## Aplicação e validação (2026-10-01, 12:31–12:45 UTC)
+
+- **Pré-voo** (`psql-ro`, 12:31): os 14 objetos em prod no corpo PREDECESSOR exato que a PRE espera;
+  ledger sem nenhuma destas migrations.
+- **Ensaio → apply**, uma por vez, pelo `db:aplicar` (executor real, transação única), com a POS
+  confirmada no log do executor em cada ensaio e em cada apply: preço **#227**, proposta **#229**,
+  recência **#231** (`POS OK` ×2 + `POS MV OK`), caça **#233** — todas `aplicada`.
+- **Validação por fora** (`psql-ro`, outra conexão, depois de cada commit):
+  - funções: as 9 no corpo novo (md5 exato); volatilidade, `SECURITY DEFINER/INVOKER`, dono,
+    `search_path` e ACL idênticos aos de antes;
+  - MV: recriada populada, dono `postgres`, ACL IGUAL ao da antiga (5 entradas), índice único de pé,
+    nenhuma `_antiga` sobrando; a view-gate com o mesmo texto, `security_invoker=off` +
+    `security_barrier=true` e o mesmo ACL. **A definição nova recalculada em SQL puro bate com a MV
+    em todos os 5.665 clientes; a antiga diverge em exatamente 3; Δ 90 d −R$ 767,00 e Δ 90–180 d
+    −R$ 5.239,10** — os números previstos às 01:20 UTC;
+  - caça: as 2 views no corpo novo, `security_invoker=on` e ACL preservados; contra o retrato de
+    antes, **exatamente 3 grupos mudaram: −4 pedidos, −R$ 6.006,10** — o previsto;
+  - `deriva:corpo:prod`: nenhuma das 9 funções diverge. Ficou obsoleta a entrada de PATCH da
+    `get_regua_preco_customer360` no `db/deriva-corpo-baseline.json` (a vigente passou a ser a
+    `…014210`) — removida.
+- **Não exercitado por mim:** o caminho autenticado das funções de preço (o `claude_ro` não passa no
+  gate de staff); provado no harness e no catálogo. O smoke é abrir a régua num pedido de cliente com
+  cancelado na janela.
+
+**O merge deixou a `main` vermelha por ~1 h.** O #2727 (mergeado às 11:10, depois do CI deste PR)
+pôs no núcleo duas provas de cadeia viva (carteira e melhorias) que puxam a `…014100` — que aplicava
+só em transação única e tinha predecessor fora daquelas cadeias. A dona da `corpo-vivo` consertou no
+#2733 (cada migration numa transação, predecessor do `v_grupo_comercial` lido do fixture desta
+entrega). ⇒ CI verde é verde contra a `main` DO INSTANTE do CI; o auto-merge não re-testa contra a
+`main` que mudou depois — e migration que redefine objeto guardado por cadeia viva entra nas provas
+dos OUTROS.
 
 ## O gate
 

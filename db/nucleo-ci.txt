@@ -65,14 +65,14 @@ db/test-whatsapp-funil.sh                  12  falsificar=18
 # UPDATE só do master (calado para os outros), papel founder só do master. Corpo vivo + ACL de prod + a cadeia
 # das RPCs (0929000234) e das tabelas lidas; as policies sabotadas pelo texto VIVO de pg_policies. Morreu duas
 # vezes fora do núcleo (07-21 e 08-28) re-aplicando a migration de junho (docs/historico/provas-carteira-revividas.md).
-db/test-melhorias-rpcs.sh                  39  falsificar=55
+db/test-melhorias-rpcs.sh                  39  falsificar=57
 # Fornecedor fora da carteira: a régua A (sem venda real sai; exceção vence; cancelado/rascunho/pendente/
 # orçamento não são venda), a limpeza que o cron chama (re-classifica, desliga o eligible, apaga os scores só
 # dos excluídos), a reversão com o gate INTERNO do master (authenticated tem EXECUTE em prod) e a porta dos
 # fundos fechada (o employee não escreve a exceção direto), o ACL de prod (classificar/aplicar só do
 # service_role) e o trigger que deriva is_fornecedor sem decidir a exclusão. Morreu no seed em 06-25: o gatilho
 # da carteira CRIA o score de farmer e o seed o reinseria (docs/historico/provas-carteira-revividas.md).
-db/test-fornecedores-classificacao.sh      26  falsificar=53
+db/test-fornecedores-classificacao.sh      26  falsificar=55
 
 # ── Eixo 2 — FINITUDE MONETÁRIA ───────────────────────────────────────────────────
 # `ausente ≠ zero`: preço que o Omie não mandou não vira R$ 0,00; custo sem cmc
@@ -198,8 +198,11 @@ db/test-canaria-veredito.sh                24  falsificar=18
 # passa a depender de o transporte ser FIEL ao psql e de recusar leitura destravada, SQL alterado
 # (inclusive statement antes da trava e o SQL em dobro no lote) e payload adulterado. Gera o SQL
 # pela lib real (`scripts/lib/transporte-nuvem.ts`, só builtins — o runtime bun do job basta),
-# como a canária. As 10 sabotagens rodam num worktree do HEAD.
-db/test-transporte-nuvem.sh                18  falsificar=10
+# como a canária. As sabotagens rodam num worktree do HEAD.
+# 2026-10-01: 18 → 25 asserts e 10 → 14 sabotagens — as SONDAS EXECUTIVAS (o preâmbulo que roda
+# cada sonda COMO outro papel, para a sentinela do `claude_ro` medir pela nuvem). T13 é o falso
+# verde que o desenho existe para matar: o SET ROLE negado sai 42501, a mesma SQLSTATE da negação.
+db/test-transporte-nuvem.sh                25  falsificar=14
 # O TRANSPORTE do passo seguinte (2026-09-27): pelo `db:aplicar` a célula que o disparo devolve
 # morre no EXECUTE do `aplicar_sql()`, e o passo vem por NOTICE no log. Roda o `db-aplicar.sh` e o
 # bootstrap REAIS contra stubs de pg_net/vault, com o SQL do gerador deste disco (bun, como a
@@ -351,7 +354,7 @@ db/test-expandir-promocao-item.sh          41  falsificar=18
 # removida. Autocontida: initdb + stubs + schema-snapshot + a fixture
 # db/fixtures/hoje-sp-views-defaults-predecessoras-prod-20260930.sql (o snapshot perdeu as barras dos
 # literais de regex — as predecessoras vêm da fixture) + a migration.
-db/test-hoje-sp-views-defaults.sh          129  falsificar=fora-do-ci  # TETO do provas-sql: o --falsificar (33 sabotagens) custava 274 s de 1.040 numa run verde (26%, o maior do job; 2026-10-01) e 16 de 25 runs de PR foram canceladas a 20,2 min em 01/10 02:20–05:00 — a prova crua (129 asserts, 8 s) segue aqui; o --falsificar roda local (verde nos 2 locales no PR da fase 2)
+db/test-hoje-sp-views-defaults.sh          129  falsificar=33
 
 # Eixo 7 (fuso), fase 3 da classe (ii) — a família data_ciclo (20261001023000_hoje_sp_familia_data_ciclo.sql):
 # as 2 views "_hoje", o DEFAULT de p_data_ciclo das 4 RPCs de ciclo, o corte em HORA DE SP e 2 leitores de
@@ -360,12 +363,22 @@ db/test-hoje-sp-views-defaults.sh          129  falsificar=fora-do-ci  # TETO do
 # P01-P10 (predecessoras e as 18 dependências = md5 da prod), K1-K4 (a trava e a ordem dos leitores), Z0,
 # G1-G7. Autocontida: initdb + stubs + schema-snapshot + db/fixtures/hoje-sp-data-ciclo-prod-20261001.sql
 # (a deriva de 14 colunas do snapshot + o texto vivo) + a migration. O `--falsificar` (17 sabotagens, todas
-# vermelhas no assert certo, matriz UTC/SP × C/pt_BR verde) roda FORA do CI pelo motivo da linha abaixo.
-db/test-hoje-sp-data-ciclo.sh               57  falsificar=fora-do-ci  # o job provas-sql mediu 19,6–19,9 min de 20 em 3 PRs de 30/09–01/10 (mediana 17,9 em 8): +17 sabotagens (~3 min) o cancelaria no teto; o comentário do ci.yml pede paralelizar o runner, não subir o teto
+# vermelhas no assert certo, matriz UTC/SP × C/pt_BR verde) roda no CI desde que o provas-sql foi dividido
+# em partes (2026-10-01); antes ficava fora pelo teto de 20 min do job serial.
+db/test-hoje-sp-data-ciclo.sh               57  falsificar=17
 # FORA do núcleo (de propósito): db/test-hoje-sp-visitas.sh — o DEFAULT de route_visits.visit_date no dia de SP
 # (15 asserts, 8 sabotagens, matriz UTC/SP × C/pt_BR verde; roda local). O job provas-sql está no TETO: em 01/10
 # 02:20–05:00, 16 de 25 runs de PR foram canceladas a 20,2 min (as verdes: 16,9–19,9) — +20 s aqui faria
 # todo PR esbarrar mais. Entra quando o runner for paralelizado (o comentário do ci.yml), não subindo o teto.
+
+# converter_sugestao_em_campanha_flat (#2668): P0 EXECUTA o predecessor de prod e exige o 42703 (o
+# defeito: INSERT em 4 colunas que promocao_item não tem); X — a deriva aborta a PRE, a função nasce
+# com a porta PORTA_GATE (sem e com o default ACL do Supabase), re-aplicar passa; O1/A1 a assinatura
+# antiga saiu e a porta; P1-P3 campanha/item/sugestão; N1-N7+NZ os portões sem gravar; B — D =
+# 28/02/2025, 4 instantes cruzando 21:00 BRT sob sessão UTC e SP, convertendo com data fim = hoje; W
+# como authenticated no relógio real. Autocontida: initdb + stubs + a fixture
+# db/fixtures/converter-campanha-flat-predecessora-prod-20261001.sql + o gatilho de campanha vivo + a migration.
+db/test-converter-campanha-flat.sh          25  falsificar=19
 
 # ── Eixo 9 — UNIVERSO DE PEDIDOS (o que conta como VENDA) ──────────────────────────────────
 # A autoridade: status NOT IN ('cancelado','rascunho','pendente','orcamento') + deleted_at IS NULL

@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# O par positivo do `viola-l`: o MESMO pipe com ON_ERROR_STOP passa, e `||` NÃO é cano. O
+# `"$PSQL" --version` depois do `||` não lê SQL de lugar nenhum — se o fiscal lesse `||` como pipe,
+# ele viraria falso positivo, e é esta linha que separa "ver o cano" de "ver qualquer barra".
+PSQL="$HOME/.config/afiacao/psql-ro"
+SQL="SELECT 1"
+printf '%s\n' "$SQL" | "$PSQL" -v ON_ERROR_STOP=1 -tA
+[ -x "$PSQL" ] || "$PSQL" --version

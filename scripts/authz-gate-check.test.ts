@@ -341,7 +341,7 @@ const COMPRAS_MANIFEST: Array<{ nome: string; gate: string; arquivo: string; de:
   {
     nome: 'converter_sugestao_em_campanha_flat',
     gate: 'has_role',
-    arquivo: '20260512101121_a96fa007-f688-4c3a-8cd9-43f9d88e5505.sql',
+    arquivo: '20261001083000_converter_campanha_flat_colunas_reais.sql',
     de: "IF auth.uid() IS NULL OR NOT (public.has_role(auth.uid(), 'employee'::app_role) OR public.has_role(auth.uid(), 'master'::app_role)) THEN",
   },
   {

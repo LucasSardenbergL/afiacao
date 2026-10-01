@@ -321,6 +321,103 @@ Mutcheck de novo: 18/18.
 Depois desta fase, os afetados que sobram na baseline são só os `[fase datas-omie-e-edges]`: 16 edges e 54
 sítios. Deploy desta fase: só o Publish (founder).
 
+## Fase datas-omie-e-edges — as 5 de maior dano (as datas que vão ao Omie)
+
+São 22 sítios em 18 entradas: os 21 `[fase datas-omie-e-edges]` das 5 edges e o `dataCiclo` padrão da
+`disparar-pedidos-aprovados` (`latente`, sem dono; vai junto porque a edge já é redeployada). A baseline cai
+de 85 para 67 entradas. Na fase sobram 29 entradas, 33 sítios e 11 edges, todos `afetado-baixo` (32) e 1
+`latente`: nenhum `afetado-alto`.
+
+| Edge | O que ia ao Omie | Conserto |
+|---|---|---|
+| `sync-reprocess` | a janela do `ListarPedidos` e o `dDataPosicao` do `ListarPosEstoque`, montados com `getDate()`: AMANHÃ nos crons das 21:15 e 23:15 (operational) e das 23:30 (strategic) | `janela-omie.ts` (`janelaPedidosOmie`, dentro do `try`: `windowDays` malformado vai ao log da run); a posição é `paraDataOmie(hojeSP())`, uma vez por run |
+| `disparar-pedidos-aprovados` | o `dDtPrevisao` do `IncluirPedCompra` sem data do portal (hoje + lead time em dias úteis); o yymmdd do número do pedido; o `dataCiclo` padrão | `previsao.ts` (`somarDiasUteis`, `dataPrevisaoOmie`); o ramo do portal (entrega + 2 dias úteis) já era calendário puro e não muda |
+| `omie-sync` | o `dDtVenc` das parcelas da OS: a criada às 21h+ vencia tudo um dia adiante (a à vista, amanhã) | `parcelas-os.ts` (`montarParcelasOS`); prazos e percentuais iguais |
+| `omie-vendas-sync` | o `data_previsao` do `IncluirPedido` e do `AlterarPedidoVenda`, o `dDtPrevisao` do `IncluirOrdemProducao` e o `dDataPosicao` do `syncEstoque`. Sem `dInc`, o `data_previsao` vira o `order_date_kpi` (l.1371–1378): a venda das 21h+ caía no dia seguinte | `paraDataOmie(hojeSP())` |
+| `omie-analytics-sync` | o `dDataPosicao` dos dois `ListarPosEstoque` (`toLocaleDateString` sem fuso) | `paraDataOmie(hojeSP())` |
+
+### A medição antes de mudar (`sync-reprocess`, psql-ro, 2026-10-01)
+
+O briefing pedia medir o que o Omie devolve para data futura antes de mexer. Sem credencial do Omie no Mac,
+o experimento é o que a prod já roda: as rodadas noturnas mandam D+1 três vezes por noite. 30 dias de
+`sync_reprocess_log` (`entity_type = 'inventory'`), por faixa de hora de SP:
+
+| Rodada | Rodadas | Completas | Com divergência | Posições |
+|---|---|---|---|---|
+| operational, noite (manda D+1) | 38 | 38 | 0 | 760–779 |
+| operational, madrugada (D) | 80 | 80 | 0 | 760–779 |
+| operational, dia (D) | 118 | 118 | 22 (movimento real) | 756–779 |
+| strategic, noite (D+1) | 19 | 19 | 19 (~682 cada) | 760–779 |
+
+- O Omie ACEITA `dDataPosicao` futura: nenhuma das 57 rodadas noturnas deu `faultstring`.
+- O saldo de D+1 é o de D: a rodada das 21:15 compara contra o que a das 19:15 gravou com D, e deu 0 em 38
+  de 38.
+- A data não é gravada: `inventory_position` leva saldo, CMC e o instante `synced_at`.
+- Logo, no estoque o conserto é por CONSTRUÇÃO, não por número. Na janela de pedidos há efeito, embora
+  pequeno: à noite ela deixa de consultar o dia futuro e volta a cobrir D−w. No strategic (que só roda às
+  23:30), a janela era sempre `[D−29, D+1]` e passa a `[D−30, D]`.
+- **Anotado, fora da classe:** as ~682 divergências do strategic não são da data. A `operational` das 23:15
+  manda o mesmo D+1 e dá 0. Quem as produz é o passo de produtos, que roda antes do estoque no strategic e
+  grava `estoque: prod.quantidade_estoque || 0` (`sync-reprocess/products-lote.ts:190`); o passo de estoque
+  desfaz em seguida, a cada noite. A janela errada dura o passo de produtos (63–116 s em 28–30/09), e se o
+  estoque falhar ela vai até a operational das 01:15. A linha de cima tem a mesma forma, sem passo que a
+  desfaça: `valor_unitario: prod.valor_unitario || 0` (ausente ≠ zero).
+
+### A prova
+
+- **Relógio injetado** nos 3 módulos puros. As bordas vêm em pares de 1 s (20:59:59 → 21:00:00 e
+  23:59:59 → 00:00:00 BRT), com controle POSITIVO na meia-noite de SP; mais o réveillon, o domingo à noite
+  dos dias úteis e o ramo do portal sem relógio.
+- **O INVARIANTE como teste**, nos 3 módulos: hora a hora de 2026 a 2027 (17.520 horas), novo(t) = o código
+  velho como rodava no servidor (`getUTC*`) às t−3h. O oráculo não usa nada de `hoje-sp.ts`, e UTC−3 fixo
+  vale porque SP não tem horário de verão desde 2019. O denominador é conferido (a varredura não encolhe), e
+  o controle exige que só a noite mude, e que mude: exatamente 730 × 3 vezes onde o valor é "hoje".
+- **O RED, medido nos dois fusos**, com a lógica velha extraída verbatim para os módulos:
+  - em `TZ=UTC` (o servidor): vermelho só nos casos de noite e na varredura, com o valor D+1 na mensagem
+    (`veio 24/09/2026 → 01/10/2026`; `veio "06/10/2026"`); os casos de dia, o controle e o portal ficaram
+    verdes na MESMA execução;
+  - em `TZ=America/Sao_Paulo` (o Mac): a lógica velha PASSA todos os asserts de hora, porque lá `getDate()` já
+    é SP. Só o CI (UTC) veria a regressão; quem pega a FORMA em qualquer fuso é o gate `hoje-utc` (AST).
+- O RED dos sítios triviais (`paraDataOmie(hojeSP())`) veio do gate: as 18 entradas saíram da baseline
+  ANTES do código, e o `hoje-utc-gate` nomeou exatamente os 22 sítios como novos.
+- `test:edges` 1279/1279 em `TZ=UTC` e no fuso do Mac. No `edges:typecheck`, o `deno check` das 5 edges no
+  HEAD e na base dá o mesmo conjunto de erros, mensagem a mensagem (as 7 conhecidas da
+  `omie-analytics-sync`; as outras 4 com 0).
+
+### Armadilha de passagem: o `versao.ts` no piso de prosa
+
+O sentinela `limpeza-fonte.test.ts` reprova arquivo com ≥60 linhas não vazias que preserva menos de 10% depois
+de tirar os comentários. Ele existe para pegar stripper que engole código. O `sync-reprocess/versao.ts` já
+estava EXATAMENTE no piso (9 de 90), e as 5 linhas de histórico da v1.13 o derrubaram (9/95): o vitest
+inteiro ficou vermelho só por isso. A 2ª tentativa, um ponteiro como comentário NA linha do `VERSAO` (não
+muda a fração), caiu noutra trava: o `sonda-versao-sql` lê aquela linha com um padrão que termina no `;`, e
+a `sync-reprocess` virou "Edge não sondável" (`scripts/sonda-versao-sql.test.ts`, contra o repo real). O
+deploy travaria na prova do ledger. Então o histórico da v1.13 mora só aqui, e a linha do `VERSAO` fica pura,
+como a v1.12 já tinha feito. O próximo bump ali tem os dois limites: linha nova de comentário é vermelho, e
+comentário na linha do `VERSAO` também.
+
+### Deploy
+
+São 5 edges, sem pré-condição de banco e sem ordem entre elas. `hoje-sp.ts` ficou intocado, então as 6 edges
+já deployadas não mudam de fingerprint (o `sonda:fingerprint` acusou só as 5). Não há front, logo não há
+Publish desta fase.
+
+### Codex
+
+Cota esgotada até 03/10 19:11, então **REVISÃO INDEPENDENTE PENDENTE** (Caminho B). Perguntas para o
+retroativo (`scripts/codex-async.sh -r max`):
+
+1. `sync-reprocess`: algum consumidor contava com a janela de pedidos incluindo "amanhã", ou com o
+   strategic NÃO cobrindo D−30?
+2. `dDataPosicao` uma vez por run (antes, por página): algum caminho em que a run cruza a meia-noite de SP e
+   a data por página importava?
+3. `disparar-pedidos-aprovados`: o modo lote (sem `pedido_id`) roda em algum caminho das 21:00 às 23:59 BRT
+   que dependia do dia UTC no `.eq`/`.lt`/`.lte` de `data_ciclo`?
+4. `omie-vendas-sync`: algum leitor compara o `data_previsao` do Omie com um dia UTC (reconciliação,
+   `created_at`)?
+5. `somarDiasUteis`: a paridade com o laço velho para `n ≤ 0`, `NaN` e não inteiro, e o ramo do portal byte
+   a byte.
+
 ## Fora, com dono
 
 - **O gate de TS** — FEITO no PR seguinte: `src/__tests__/hoje-utc-gate.test.ts` + `src/lib/gates/hoje-utc.ts`
@@ -333,10 +430,12 @@ sítios. Deploy desta fase: só o Publish (founder).
     versão não via: `const cutoff = ….toISOString()` e depois `cutoff.slice(0, 10)`, no
     `visit-score-recalc-batch`. É latente: só roda no cron das 04:00 BRT, quando o dia UTC é o de SP.
   - Varredura dessa forma: 1 caso no repo inteiro.
-- **As fases de TS por domínio**: financeiro, visitas, reposição e resto — FEITAS (as seções acima). Falta
-  `[fase datas-omie-e-edges]`: 16 edges e 54 sítios, entre eles o `dDataPosicao` do `sync-reprocess` em D+1
-  toda noite (cron 21:15/23:15/23:30 BRT). Pede 16 deploys do founder e tem trecho money-path (estoque,
-  vendas): fica para uma sessão própria, com o Codex de volta.
+- **As fases de TS por domínio**: financeiro, visitas, reposição e resto — FEITAS (as seções acima). Da
+  `[fase datas-omie-e-edges]`, as 5 de maior dano também (seção acima). Sobram 11 edges e 33 sítios, todos
+  `afetado-baixo` (rótulos, botões noturnos, relatórios) e 1 `latente`: `ai-ops-agent`, `algorithm-a-audit`,
+  `monthly-report`, `omie-desconto-backfill`, `omie-nfe-recebimento-sync`, `omie-sync-ctes-recebidos`,
+  `omie-sync-nfes-recebidas`, `omie-sync-pedidos-compra`, `omie-sync-vendas-items`,
+  `promocao-extrair-via-vision` e `visit-score-recalc-batch`. Cada uma pede um deploy, então vão em fatias.
 - **Anotado, fora da classe:** `_data_health_compute` converte `saldo_data` (date) em instante no fuso da
   sessão (a idade do saldo sai 3h maior; limiar de 36h); as 4 RPCs de ciclo têm EXECUTE para PUBLIC/anon
   (SECURITY INVOKER: a RLS das tabelas é quem barra).

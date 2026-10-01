@@ -21,6 +21,8 @@ import {
 import { acumularPosicoesDaPagina, type PosicaoEstoque } from "../_shared/pos-estoque.ts";
 import { carregarProductMap } from "../_shared/mapas-paginados.ts";
 import type { BancoPostgrest } from "../_shared/paginate.ts";
+import { hojeSP, paraDataOmie } from "../_shared/hoje-sp.ts";
+import { janelaPedidosOmie } from "./janela-omie.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import {
   chunked,
@@ -174,10 +176,6 @@ async function callOmie(account: Account, endpoint: string, call: string, params
   return result;
 }
 
-function formatOmieDate(d: Date): string {
-  return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;
-}
-
 // ======== LOAD CONFIG ========
 
 async function loadReprocessConfig(db: SupabaseClient): Promise<Record<string, number>> {
@@ -262,6 +260,11 @@ async function reprocessOrders(
     // registra em `error_message` do log de reprocess (docs/agent/money-path.md §6).
     const productMap = await carregarProductMap(db as unknown as BancoPostgrest, account);
 
+    // As DATAS da janela no dia de SP (`./janela-omie.ts`): o `getDate()` do servidor UTC pedia a janela
+    // até AMANHÃ nos crons das 21:15, 23:15 e 23:30 BRT. `windowStart`/`windowEnd` seguem só como os
+    // instantes do log. Dentro do `try`: `windowDays` malformado lança e vai para o log da run.
+    const janela = janelaPedidosOmie(windowEnd, windowDays);
+
     let pagina = 1;
     let totalPaginas = 1;
 
@@ -271,8 +274,8 @@ async function reprocessOrders(
         pagina,
         registros_por_pagina: 100,
         filtrar_apenas_inclusao: "N",
-        filtrar_por_data_de: formatOmieDate(windowStart),
-        filtrar_por_data_ate: formatOmieDate(windowEnd),
+        filtrar_por_data_de: janela.de,
+        filtrar_por_data_ate: janela.ate,
       })) as unknown as OmieListarPedidosResponse;
 
       // Mesmos guards dos irmãos products/inventory abaixo (piso monotônico + teto fail-fast):
@@ -632,12 +635,17 @@ async function reprocessInventory(
     const posicoes = new Map<number, PosicaoEstoque>();
     let pagina = 1;
     let totalPaginas = 1;
+    // A posição de HOJE em SP, uma vez por run (todas as páginas do retrato na MESMA data). O
+    // `getDate()` do servidor UTC mandava AMANHÃ nos crons das 21:15, 23:15 e 23:30 BRT — o Omie
+    // aceitava e devolvia o mesmo saldo (38 de 38 rodadas noturnas sem divergência em 30 dias,
+    // medido em 2026-10-01): o conserto aqui é por construção, não por número.
+    const dataPosicao = paraDataOmie(hojeSP());
 
     while (pagina <= totalPaginas) {
       const result = (await callOmie(account, "estoque/consulta/", "ListarPosEstoque", {
         nPagina: pagina,
         nRegPorPagina: 100,
-        dDataPosicao: formatOmieDate(new Date()),
+        dDataPosicao: dataPosicao,
       })) as unknown as OmieListarPosEstoqueResponse;
 
       // Teto anti-runaway fail-FAST sobre o total DECLARADO (Codex P1): descobrir o runaway

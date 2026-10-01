@@ -824,3 +824,58 @@ que responde quantos são. Ao mexer em edge instrumentada, o mínimo é:
 bun run test:edges && bun run edges:typecheck && heavy bun run test \
   && bun run sonda:fingerprint && bun run sonda:bump <edge>
 ```
+
+# Sequela (2026-10-01): o V8 recusava o módulo e os 5 gates ficavam verdes — `edges:sintaxe`
+
+**Incidente #2720.** O #2700 passou VERDE no CI com `resposta` declarada duas vezes no mesmo escopo do
+handler da `analyze-unified-order`. Redeclaração é *early error*: o V8 recusa o módulo inteiro antes de
+executar uma linha, e a edge respondeu BOOT_ERROR 503 a toda chamada de ~08:41Z a ~09:56Z
+([ia-nao-precifica.md](ia-nao-precifica.md)). Cada perna tinha o seu motivo para não ver: o `test:edges`
+não importa `index.ts`; o `edges:typecheck` tolera TS2451/TS2393 por ser de precisão; o vitest e as duas
+sondas leem texto e bytes. **Recorrência:** a prova da sonda por cron (#2404/#2415, classe `NAO_COMPILA`)
+já tinha achado a classe em 3 commits da main — `omie-cliente@a0596c33f` e `@cbe2c488c`
+(`upsertAddressFromOmie` declarada 2×) e `omie-sync-nfes-recebidas@b880daeb1` (arquivo truncado).
+
+**O gate** (`bun run edges:sintaxe`, job `edges-e-build`, `scripts/edges-sintaxe-gate.ts`): os 244 módulos
+não-teste de `supabase/functions/` (97 edges) passam por duas camadas, e cada uma pega um caso REAL que a
+outra deixa passar — medido nos 4 commits, montados sobre a árvore de HEAD:
+
+| commit | parser do TS (`transpileModule`) | `node --check` no JS emitido |
+|---|---|---|
+| `analyze-unified-order@471e5245a` | 0 diagnóstico | **recusa** — `resposta`, linhas 880 e 1436 |
+| `omie-cliente@a0596c33f` e `@cbe2c488c` | 0 diagnóstico | **recusa** — `upsertAddressFromOmie`, linhas 245 e 378 |
+| `omie-sync-nfes-recebidas@b880daeb1` | **`'}' expected.`** (659:1) | aceita — o transpile CONSERTOU o arquivo |
+
+Daí a regra que parece excesso e não é: diagnóstico do transpile reprova SOZINHO, porque o JS que o V8
+leria não é o arquivo que vai para o ar. O `--check` só compila (não resolve import), então o gate roda
+offline, sem Deno, em ~5 s. Fail-closed: antes do repo ele calibra as duas camadas na mesma invocação
+(truncado → diagnóstico; redeclaração → recusa; limpo com import remoto e top-level await → aceita), e
+node ausente, quebrado ou shim que sempre sai 0 vira `NAO_CHECADO` (exit 2), nunca OK.
+
+**Falsificação** (controle verde na mesma invocação, sob `LC_ALL=C` e `pt_BR.UTF-8`, idêntica nos dois): o
+corpus dos 4 commits sai com exatamente 4 `RECUSADO` (3 `[v8]` + 1 `[ts-parse]`); sem a camada TS o corpus
+cai para 3 (o truncado passa); sem a camada V8, para 1 (os 3 duplicados passam). Sem a calibração, com a
+classificação frouxa (exit ≠ 0 sem `SyntaxError` virando veredito) e com o gate sem alvo aprovando, cada
+sabotagem fica VERMELHA no teste certo.
+
+**Por que não "TS2451 bloqueante" no `edges:typecheck`.** Hoje há ZERO TS2451/TS2393/TS2300 entre os 100
+erros que ele tolera (os 2 TS2451 do incidente ERAM o par `resposta`), então seria verde sem allowlist.
+Mas o `deno check` precisa de Deno e rede e responde o que o *TypeScript* acha do módulo; o `node --check`
+pergunta ao mesmo motor que dá o BOOT_ERROR.
+
+**Exclusividade** (`scripts/exclusividade.d/edges-sintaxe.def`): a redeclaração no handler da
+`analyze-unified-order` nos dois autores — o descuidado (os gates de bytes também pegam) e o diligente
+(bump do `VERSAO` + mapa regenerado, como o #2700 fez). Na rodada fatiada `--gates edges:sintaxe` ele
+reprova as 2 linhas do eixo e nenhuma das outras 18, e o `exclusividade` relata
+`EXCLUSIVIDADE_INCONCLUSIVA`: os outros gates não rodaram nessas 2 linhas, e a medição completa custa
+~2 h só de baseline na M2 (pelos tempos da matriz anterior). A linha completa do autor diligente existe
+por fora do motor: o CI REAL do #2700
+([run 36833064458](https://github.com/LucasSardenbergL/afiacao/actions/runs/36833064458)) passou os 5 jobs
+com o head `e35c655e3`, que tem o par `resposta`.
+
+Ao mexer em edge, o mínimo passa a ser:
+
+```bash
+bun run test:edges && bun run edges:sintaxe && bun run edges:typecheck && heavy bun run test \
+  && bun run sonda:fingerprint && bun run sonda:bump <edge>
+```
