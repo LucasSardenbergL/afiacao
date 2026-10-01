@@ -757,7 +757,7 @@ function corpoDoPassoDeLeitura(
   const texto =
     `-- PASSO ${passoLeitura} — lê e julga. O mapa edge→id já está EMBUTIDO aqui, escrito pelo passo\n` +
     `--          ${passoDisparo}: nada a colar. Espere ~10s pela resposta HTTP. É SELECT puro —\n` +
-    `--          roda no read-only: cole no chat, ou em ~/.config/afiacao/psql-ro\n` +
+    `--          roda no read-only: cole no chat, ou em ~/.config/afiacao/psql-ro -v ON_ERROR_STOP=1\n` +
     blocoLeitura(leva, janelaMin, {
       modo: 'embutido',
       expr: SENTINELA_MAPA,
@@ -1336,7 +1336,7 @@ export function gerarSqlDaLeva(opts: OpcoesLeva): string {
       partes.push(
         `-- PASSO 2 — lê e julga SEM mapa nenhum: a resposta da sonda ecoa o próprio slug, e o bloco\n` +
           `--          a encontra na janela de ${janelaMin} min. É SELECT puro — roda no read-only:\n` +
-          `--          bun run sonda:sql --so-leitura <edge>… | ~/.config/afiacao/psql-ro\n` +
+          `--          bun run sonda:sql --so-leitura <edge>… | ~/.config/afiacao/psql-ro -v ON_ERROR_STOP=1\n` +
           `-- ⚠️ Esta é a versão do ECO. A que o passo 1 devolve — célula no SQL Editor, NOTICE no log do\n` +
           `--    db:aplicar — é ESTRITAMENTE melhor: com o mapa embutido, PRE-SENSOR e recusa HTTP (que não\n` +
           `--    ecoam) saem determinados, e o 401 também.\n` +
@@ -1827,7 +1827,7 @@ function corpoDoPassoDeLeituraCanaria(
   const texto =
     `-- PASSO ${passoLeitura} — lê e julga a CANÁRIA. O mapa nome→id já está EMBUTIDO aqui, escrito\n` +
     `--          pelo passo ${passoDisparo}: nada a colar. Espere ~10s pela resposta HTTP. É SELECT\n` +
-    '--          puro — roda no read-only: cole no chat, ou em ~/.config/afiacao/psql-ro\n' +
+    '--          puro — roda no read-only: cole no chat, ou em ~/.config/afiacao/psql-ro -v ON_ERROR_STOP=1\n' +
     blocoLeituraCanaria(leva, janelaMin, passoDisparo);
   return escaparParaFormat(texto);
 }

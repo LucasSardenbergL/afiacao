@@ -104,3 +104,6 @@ para `corpoResposta` (`v1.4-boot-resposta-unica`), validado com transpilar→`no
 do V8 acusa a classe (controle: a versão da main fica VERMELHA). Fora do ar: ~08:41Z → ~09:56Z
 (redeploy de `b12ba6107`; sonda request 99601 → DEPLOY CONFIRMADO; `pendencias:deploy` exit 0). Publish
 de 10:05Z (entry `index-D_btcRSX.js`; sentinela `ia-nao-precifica-v1` no chunk `GovernanceAudit`).
+
+A classe virou gate de CI: `edges:sintaxe` (`scripts/edges-sintaxe-gate.ts`) reprova no PR o módulo que o
+V8 recusaria no boot — ver a sequela de 2026-10-01 em [ci-testes-edge-deno.md](ci-testes-edge-deno.md).

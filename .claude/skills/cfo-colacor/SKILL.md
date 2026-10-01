@@ -84,7 +84,7 @@ Você tem **leitura direta** do Postgres de produção via `~/.config/afiacao/ps
 `docs/agent/database.md §1`). O fluxo:
 
 1. Pegue o `SELECT` read-only de `assets/sql/`, adapte período/empresa, e RODE você mesmo:
-   `~/.config/afiacao/psql-ro -f .claude/skills/cfo-colacor/assets/sql/00-sanity-status.sql`
+   `~/.config/afiacao/psql-ro -v ON_ERROR_STOP=1 -f .claude/skills/cfo-colacor/assets/sql/00-sanity-status.sql`
    (ou `-c "SELECT ..."`).
 2. Leia o resultado, aplique os thresholds, e avance no ritual.
 3. **Só peça algo ao founder quando for ESCRITA** (aplicar correção, classificar categoria em

@@ -184,6 +184,21 @@ depende da branch (os `git diff … origin/main...HEAD` dos Passos 2 e 3); depoi
 bun run authz:claude-ro:prod; echo "exit=$?"
 ```
 
+**Na NUVEM** (sem `psql-ro`), a MESMA vigília vai pelo transporte, com os MESMOS vereditos e exits
+([deploy.md](../../../docs/agent/deploy.md) §"Conferência de prod pela NUVEM"). O modelo TRANSPORTA,
+nunca redige: o SQL vai VERBATIM, e a resposta vai sem edição (ou o arquivo que o harness gravou):
+
+```bash
+SQL=$(mktemp "${TMPDIR:-/tmp}/sqlnuvem.XXXXXX"); RESP=$(mktemp "${TMPDIR:-/tmp}/respnuvem.XXXXXX")
+bun run authz:claude-ro:prod --sql-nuvem > "$SQL"
+#   query_database(project_id = "8f005805-000a-42b7-88a1-9683f785fab6", sql = <conteúdo de $SQL>) → "$RESP"
+bun run authz:claude-ro:prod --dados-nuvem="$RESP"; echo "exit=$?"
+```
+
+As 4 sondas executivas rodam COMO o `claude_ro` dentro do próprio SQL (o conector entra como
+`postgres`, que tem SET no papel desde 2026-10-01). `exit=2` com `TRANSPORTE_SONDA_PAPEL` = essa
+aresta sumiu: as sondas NÃO rodaram, e a mensagem traz o `GRANT` que o founder cola de volta.
+
 O endurecimento do papel de leitura (2026-08-25) é **estado colado à mão**: não existe migration
 que o defenda, e não pode existir. Ninguém mais olha para ele — nem o CI (não tem `psql-ro`), nem o
 Sentinela de cron. Este passo é a vigília inteira.
@@ -192,17 +207,32 @@ Sentinela de cron. Este passo é a vigília inteira.
 - `exit=1` → ❌ **regrediu ou drifou.** O relatório nomeia a asserção. Se a divergência for só no
   ACL do schema `net` **e** a linha `versão do pg_net` também divergir, a causa é um upgrade da
   extensão feito pelo Supabase — reavalie o novo ACL e atualize o baseline em
-  `db/audit-claude-ro-hardening.ts`; **não** afrouxe a comparação.
-- `exit=2` → ⚠️ **não consegui medir** (psql-ro fora, sem rede, credencial revogada). Isso é
-  ausência de dado, não aprovação — **não feche a sessão anotando "ok"**. Diga que não mediu.
+  `db/audit-claude-ro-hardening.ts`; **não** afrouxe a comparação. `membros de claude_ro` com
+  `+` é alguém NOVO podendo virar o papel (leitura com BYPASSRLS): relate ao founder na hora.
+- `exit=2` → ⚠️ **não consegui medir** (psql-ro fora, sem rede, credencial revogada; na nuvem,
+  `TRANSPORTE_*`). Isso é ausência de dado, não aprovação — **não feche a sessão anotando "ok"**.
+  Diga que não mediu.
 
-Contexto: `docs/agent/database.md` §1 · `docs/historico/revoke-que-nao-revoga.md`.
+Contexto: `docs/agent/database.md` §1 · `docs/historico/revoke-que-nao-revoga.md` ·
+`docs/historico/vigilias-do-fecho-pela-nuvem.md`.
 
 ### Passo 2c — Deriva de CORPO das funções `public` (o vigia de "a última a recriar vence")
 
 ```bash
 bun run deriva:corpo:prod; echo "exit=$?"
 ```
+
+**Na NUVEM**, as duas metades do transporte, com os MESMOS `$SQL`/`$RESP` do 2b:
+
+```bash
+bun run deriva:corpo:prod --sql-nuvem > "$SQL"
+#   query_database(…, sql = <conteúdo de $SQL>) → a resposta tem ~2 MB: o harness a grava em
+#   arquivo — passe ESSE arquivo ao --dados-nuvem, nunca o transcreva
+bun run deriva:corpo:prod --dados-nuvem="$RESP"; echo "exit=$?"
+```
+
+As duas rodadas fazem o `git fetch`: se a main mudar o CONJUNTO de funções entre elas, o SQL
+refeito não é o executado e sai `exit=2` com `TRANSPORTE_SQL_DIVERGENTE` — rode as duas de novo.
 
 Toda função `public` que alguma migration define, conferida contra o `prosrc` de prod
 (identidade por assinatura, cosmético por tokens, baseline em `db/deriva-corpo-baseline.json`).
@@ -223,8 +253,8 @@ rodou 18 dias o corpo de uma migration ANTERIOR (`docs/historico/deriva-corpo-se
     migrations das branches abertas antes de chamar de edição (2026-09-26: era o #2573).
   - `PATCH_AUSENTE` · `AUSENTE` · `RESSUSCITADA` · `OVERLOAD_FORA_DO_REPO` · `SEM_CORPO_TEXTUAL` →
     relate ao founder com a linha colada.
-- `exit=2` → ⚠️ **não consegui medir** (psql-ro fora, sem rede para o `git fetch`, saída truncada).
-  Ausência de dado, não aprovação — diga que não mediu.
+- `exit=2` → ⚠️ **não consegui medir** (psql-ro fora, sem rede para o `git fetch`, saída truncada;
+  na nuvem, `TRANSPORTE_*`). Ausência de dado, não aprovação — diga que não mediu.
 
 ### Passo 3 — Edges
 

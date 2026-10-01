@@ -1,0 +1,5 @@
+// CAMADA: o caminho SOZINHO no fim da linha emitida — alvo de colagem. Sem `|`, sem `<`, sem `-f`:
+// o único fator é a regra "invocação emitida sem `-c` lê o SQL de algum lugar" (colar num psql é
+// stdin). É a forma do cabeçalho de `corpoDoPassoDeLeitura` (sonda-versao-sql.ts) até 2026-10-01.
+export const CABECALHO =
+  '-- PASSO 3 — lê e julga. É SELECT puro — roda no read-only: cole no chat, ou em ~/.config/afiacao/psql-ro\n';

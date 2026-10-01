@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-10-01T12:58:51.507Z",
-  "sourceHead": "cb6c800cff4ae5a7c8c79b146473979ac98736d6",
+  "medidoEm": "2026-10-01T13:45:54.215Z",
+  "sourceHead": "ebc8a7c6e24f5a12e7f28cda4fb67bb611f5e31c",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -39,10 +39,10 @@
     "claudeRo": {
       "script": "authz:claude-ro:prod",
       "exit": 0,
-      "resumo": "✅ 38 asserções batem. O endurecimento continua de pé.",
+      "resumo": "✅ 39 asserções batem. O endurecimento continua de pé.",
       "denominador": null,
-      "contratoFingerprint": "96d72b6e231ea5f6ff2e99f2def99b9f3237de1a5be8b14f024621c7bf057396",
-      "auditorFingerprint": "de53cb9e346dd1b39f9b427a1df1ffca800b0877ba6c325ff1fb0a825578a11b",
+      "contratoFingerprint": "04316fe60798236f918838351936ac2a6fccac22b321cdc671b2e61784f34864",
+      "auditorFingerprint": "ac629e0219497568c48abfe3fcbca62ae5f13b62bdf6833b443df5ffcebf8993",
       "achados": []
     },
     "rls": {
@@ -58,9 +58,9 @@
       "script": "deriva:corpo:prod",
       "exit": 0,
       "resumo": "✅ deriva-corpo — 317 identidade(s) batem com o repo (241 em dia, 70 só cosméticas, 5 aceitas na baseline) e 16 aposentada(s) estão ausentes",
-      "denominador": "🔎 deriva-corpo — 317 identidade(s) conferida(s) · 16 aposentada(s) · ref origin/main@14d672da2 (fetch ok) · prod 2026-10-01 12:59:17.58545Z",
-      "contratoFingerprint": "eb9224da5a9aca94cd135996662d66f2d1994c8c558ac3227df452940da65d97",
-      "auditorFingerprint": "69c1d81ade7136cfb5c6e68b6b81a8325842588d31d6a592f308395af573bd8c",
+      "denominador": "🔎 deriva-corpo — 317 identidade(s) conferida(s) · 16 aposentada(s) · ref origin/main@8c3426020 (fetch ok) · prod 2026-10-01 13:46:19.973697Z",
+      "contratoFingerprint": "576cba55e30c00a415fbeffdf3aeb900ba545c3b1ddf198d4b4955d9f40c1d61",
+      "auditorFingerprint": "84cbf3f189bbc3c6bd78f5c712f614ddc110d7d6b1f0d0787833fe128b44f903",
       "achados": []
     }
   }

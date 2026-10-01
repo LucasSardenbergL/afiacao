@@ -1,0 +1,23 @@
+# Defeito do eixo de `edges:sintaxe` — "todo modulo de edge PARSEIA no V8".
+#
+# POR QUE ESTE EIXO PRECISA DE GATE. Modulo que o V8 recusa e edge que NAO BOOTA: o Edge Runtime
+# responde BOOT_ERROR 503 a toda chamada ate o redeploy. Redeclaracao no mesmo escopo e EARLY ERROR
+# (o V8 recusa o modulo inteiro), mas o `edges:typecheck` a tolera por desenho (TS2451/TS2393 nao
+# estao nas classes-crash), o `test:edges` nao importa `index.ts` e o vitest le a edge como texto.
+#
+# POR QUE E PLAUSIVEL, e nao sabotagem de laboratorio: e o incidente #2720 — o #2700 declarou
+# `resposta` 2x no handler da analyze-unified-order e a edge ficou ~75 min em BOOT_ERROR em prod — e
+# a classe NAO_COMPILA que a sonda por cron ja tinha achado em 3 commits da main (#2415). A forma
+# abaixo, a MESMA declaracao duas vezes no mesmo bloco, e a sobra tipica de conflito resolvido por
+# UNIAO (os dois lados mantidos). Perturbacao de UMA linha: a declaracao duplicada.
+#
+# OS DOIS AUTORES: o DESCUIDADO (1a linha) so toca o index.ts, e os gates de BYTES (`sonda:bump`,
+# `sonda:fingerprint`) o pegam por qualquer mudanca numa edge instrumentada. O DILIGENTE (2a linha)
+# faz o dever de casa que eles prescrevem — bump do VERSAO + mapa regenerado —, exatamente como o
+# #2700 fez: e o cenario em que so a sintaxe sobra.
+# @origem:   docs/historico/ia-nao-precifica.md (incidente BOOT_ERROR, hotfix #2720)
+# @suspeito: edges:sintaxe
+edges-redeclaracao-no-handler | supabase/functions/analyze-unified-order/index.ts | $feito = 1 if !$feito && s/^(\s+const avisoFotos = avisoImagensRejeitadas\(imagensRejeitadas\);\n)/$1$1/
+# @dever-de-casa: bump-versao analyze-unified-order
+# @dever-de-casa: regenerar-fingerprints
+edges-redeclaracao-no-handler-diligente | supabase/functions/analyze-unified-order/index.ts | $feito = 1 if !$feito && s/^(\s+const avisoFotos = avisoImagensRejeitadas\(imagensRejeitadas\);\n)/$1$1/

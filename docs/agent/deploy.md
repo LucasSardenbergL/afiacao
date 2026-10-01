@@ -31,7 +31,7 @@ tinham no repo inteiro. Não edite o bloco à mão sem rodar o gate: ele confere
 
 <!--gates:frescura inicio-->
 
-**Gates do CI — reprovam o PR** (31): `authz:carimbo` · `authz:check` · `build` · `bunpin:check` · `canaria:bump` · `claude:size` · `docs:citacoes` · `docs:indice` · `docs:links` · `edges:typecheck` · `evals:deploy-verify` · `evals:deploy-verify:falsificacao` · `exclusividade` · `gate:ambiente` · `gate:senha-bootstrap` · `gates:frescura` · `knip` · `lint` · `lint:shell` · `scripts:typecheck` · `sonda:autentica` · `sonda:bump` · `sonda:cron-prova` · `sonda:fingerprint` · `sonda:nova` · `test` · `test:edges` · `test:falsificacao` · `test:hooks` · `test:sonda-rollback` · `tsc`.
+**Gates do CI — reprovam o PR** (32): `authz:carimbo` · `authz:check` · `build` · `bunpin:check` · `canaria:bump` · `claude:size` · `docs:citacoes` · `docs:indice` · `docs:links` · `edges:sintaxe` · `edges:typecheck` · `evals:deploy-verify` · `evals:deploy-verify:falsificacao` · `exclusividade` · `gate:ambiente` · `gate:senha-bootstrap` · `gates:frescura` · `knip` · `lint` · `lint:shell` · `scripts:typecheck` · `sonda:autentica` · `sonda:bump` · `sonda:cron-prova` · `sonda:fingerprint` · `sonda:nova` · `test` · `test:edges` · `test:falsificacao` · `test:hooks` · `test:sonda-rollback` · `tsc`.
 
 **Rodam no CI mas NÃO reprovam** (2, informativos por desenho): `mutcheck` · `mutcheck:selftest`.
 
@@ -289,10 +289,26 @@ bun run pendencias:pacote - --dados-nuvem="$RESP" < "$PEND"  # a MESMA entrada n
 | `TRANSPORTE_SOMENTE_LEITURA` | `transaction_read_only = off`: a trava não pegou (statements enviados separados?) | **não** contorne — leitura sem trava é recusada por desenho |
 | `TRANSPORTE_VELHO` / `_FUTURO` | resposta de outra rodada (> 30 min) ou relógio incoerente | rode o SQL de novo |
 | `TRANSPORTE_FORMATO` / `_CONSULTAS` | arquivo de outro CLI ou formato (`transporte-nuvem/1` é recusado), consulta faltando, `medido_em` ilegível | confira o arquivo gravado |
+| `TRANSPORTE_SONDA_PAPEL` | uma sonda executiva NÃO rodou como o papel: o canal (`postgres`) não tem SET nele | o founder cola o `GRANT` que a mensagem traz ([database.md](database.md) §1). **Nunca** leia como "negado" |
+| `TRANSPORTE_SONDA` | a sonda não deixou desfecho: o preâmbulo não rodou no lote | rode o `--sql-nuvem` de novo e cole SEM tocar |
 
 Se o próprio `query_database` devolver ERRO, não há resposta a gravar: é mecânica, nunca "nada
 pendente". `relation … does not exist` nomeia o objeto cuja migration não está em prod (o ledger, a
 sonda por cron); a leitura inteira falha junto, onde o `psql-ro` degradaria só a seção da sonda.
+
+**As vigílias 2b/2c do `/fecho` também vão por aqui (2026-10-01)** — `authz:claude-ro:prod` e
+`deriva:corpo:prod`, com as mesmas duas flags e os MESMOS vereditos e exits do `psql-ro` (a skill
+`/fecho` traz os comandos). A 2c refaz o `git fetch` nas duas rodadas, e se a main mudar o conjunto
+de funções entre elas o `sql_md5` recusa: rode de novo. A resposta dela tem ~2 MB, e o harness a
+grava em arquivo: medido, 2,5 MB atravessam o conector íntegros. A 2b precisou de uma peça nova, as
+**sondas executivas** (`gerarSqlNuvem(…, sondas)`): consulta que só prova alcance rodando COMO outro
+papel, com um erro como resposta esperada. Um preâmbulo `DO` fixo, entre a trava e o `WITH`, roda
+cada sonda num sub-bloco com `SET LOCAL ROLE` (sempre desfeito por exceção) e devolve o desfecho por
+GUC de transação. As consultas reservadas `sonda__<nome>` o leem, e sem `devolverValor` o desfecho é
+só `RODOU`, nunca o dado. O canal precisa de SET no papel: o `postgres` tem SET em `claude_ro`
+desde 2026-10-01 ([database.md](database.md) §1). Sem ele, o `SET ROLE` sai 42501, a mesma SQLSTATE
+da negação esperada, e por isso o leitor recusa (`TRANSPORTE_SONDA_PAPEL`) em vez de ler "negado".
+Prova PG: T13–T17 de `db/test-transporte-nuvem.sh`.
 
 **Só metadado viaja por aqui.** A resposta passa pela transcrição da sessão, que fica em disco: as
 consultas destes CLIs leem ledger, catálogo e respostas de sonda — nunca dado de cliente. Não use o
@@ -535,8 +551,8 @@ colagem continua existindo.
 e a numeração dos passos é **absoluta** nos dois lados, para founder e agente nomearem a mesma coisa:
 
 ```bash
-bun run sonda:sql --so-disparo <edge>…                        # cole ISTO no SQL Editor do Lovable
-bun run sonda:sql --so-leitura <edge>… | ~/.config/afiacao/psql-ro   # e leia o veredito você mesmo
+bun run sonda:sql --so-disparo <edge>…                                           # cole ISTO no SQL Editor do Lovable
+bun run sonda:sql --so-leitura <edge>… | ~/.config/afiacao/psql-ro -v ON_ERROR_STOP=1   # e leia o veredito você mesmo
 ```
 
 **Não digite esse SQL: gere-o.** `bun run sonda:sql <edge>… [--caro=<edge>,…]` lê o `VERSAO` de cada
@@ -971,7 +987,7 @@ sem gate executa o fluxo real para qualquer POST (medido). Detalhe:
 - **Fix que é uma AUSÊNCIA não se prova por bytes.** Remover um `|| 0`, um fallback ou um default não deixa assinatura: no bundle minificado o nome da variável sumiu, e `x.get(a)||0` legítimo (contador, onde 0 é a resposta certa) é indistinguível do que você tirou. Ou você grepa o **par positivo** que entrou junto (no #1471, o `.order("product_id"` da paginação, que só existe pós-fix), ou aceita que a prova é **comportamental** — e vai para a tela.
 - **QA visual pós-Publish** (renderização/comportamento na tela, refactor visual sem texto novo): os bytes não bastam e o `/browse` headless **não monta** a SPA. O padrão é **Claude-in-Chrome na sessão logada do founder** (ele abre o app 1×; o agente confere as telas) — detalhado no Passo 4b da skill `lovable-deploy-verify`.
 - O acesso **read-only** ao banco (`psql-ro`, ver `docs/agent/database.md`) confirma migration aplicada sem depender do founder.
-- ⚠️ **A pendência escrita no corpo do PR ("falta deploy/Publish") é RECADO, não medição — MEÇA imediatamente antes de PEDIR (2026-09-06, chip do #2201).** Entre o PR e o chip, founder ou outra sessão já podem ter agido: o ledger foi de ⚪ NUNCA atestada a ✅ confere em **4 min** (sondas 70349/70352, `v1.1` + `fonte` da main), e o Publish já estava no ar (`verify-frontend.sh` exit 0). Edge: re-rode `bun run pendencias:deploy` (ou `bun run sonda:sql --so-leitura <edge> | psql-ro`) na hora de ENTREGAR, não só ao começar. Front: rode `verify-frontend.sh --pai <pai-do-PR> '<sentinela>'` ANTES de listar "Publish pendente" — exit 0 cancela a linha; só exit 1 com `CONTROLE_POSITIVO_OK` a mantém. Dois atores sondaram a mesma edge em 2,5 min: inócuo com sensor no ar, **uma execução real por colagem** numa edge cara pré-sensor → `docs/historico/pendencia-do-pr-nao-e-medicao.md`.
+- ⚠️ **A pendência escrita no corpo do PR ("falta deploy/Publish") é RECADO, não medição — MEÇA imediatamente antes de PEDIR (2026-09-06, chip do #2201).** Entre o PR e o chip, founder ou outra sessão já podem ter agido: o ledger foi de ⚪ NUNCA atestada a ✅ confere em **4 min** (sondas 70349/70352, `v1.1` + `fonte` da main), e o Publish já estava no ar (`verify-frontend.sh` exit 0). Edge: re-rode `bun run pendencias:deploy` (ou `bun run sonda:sql --so-leitura <edge> | psql-ro -v ON_ERROR_STOP=1`) na hora de ENTREGAR, não só ao começar. Front: rode `verify-frontend.sh --pai <pai-do-PR> '<sentinela>'` ANTES de listar "Publish pendente" — exit 0 cancela a linha; só exit 1 com `CONTROLE_POSITIVO_OK` a mantém. Dois atores sondaram a mesma edge em 2,5 min: inócuo com sensor no ar, **uma execução real por colagem** numa edge cara pré-sensor → `docs/historico/pendencia-do-pr-nao-e-medicao.md`.
 
 ## Atualização do PWA — modelo `prompt` (offline-first; #1169)
 

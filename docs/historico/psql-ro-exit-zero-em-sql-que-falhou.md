@@ -154,3 +154,39 @@ O critério do harness é "ficou vermelho em ALGUM lugar" (fixture **ou** o corp
 
 O gate rodado contra a versão PRÉ-#2167 de `db/audit-anon-dml-bypass.sh` (`git show <sha>^`) sai 1 e
 aponta a linha 34. O fiscal pega o bug que o originou — que é o mínimo que se pede de um.
+
+---
+
+## O comando que o gerador IMPRIME (2026-10-01, achado no #2718)
+
+O fiscal via quem EXECUTA o wrapper (shell, `execFileSync`). A classe também chega ao operador por
+TEXTO: um gerador imprime o comando, alguém o copia, e o exit 0 com ERROR vai junto. Quatro
+emissores saíam sem a flag — `scripts/sonda-versao-sql.ts` (o PASSO 2 por eco, `… | psql-ro`; o
+passo de leitura da sonda e o da canária, "cole … em psql-ro") e `scripts/lib/edge-rpcs.ts`
+(`psql-ro -f -`) —, mais cinco em Markdown vivo (`deploy.md` ×2; `database.md`, cujo comando existe
+para provar que a postcondição FALHA contra o estado antigo; as skills `cfo-colacor`/`bi-colacor`).
+
+**O eixo novo lê o literal TS.** A âncora é o CAMINHO (`~/.config/afiacao/psql-ro` — o que se
+digita), não o NOME (prosa). A regra é mais dura que a do shell: instrução emitida sem `-c` lê SQL
+de algum lugar (cano, `<`, `-f`, colagem — e colar num psql é stdin). Três exceções, cada uma com
+fixture positiva: vínculo (`PSQL="…"`), referência que é SÓ o caminho entre parênteses, e âncora
+sem prefixo (agulha de busca).
+
+**Duas máquinas, cada uma medida por fora pela outra.** O parser do TypeScript lê o valor COZIDO
+de cada literal (nada de tokenizador local que teria de concordar com o stripper); o
+`removerComentarios` conta onde a âncora mora no código sem comentário. Contagens divergentes =
+INDETERMINADO (exit 2), nunca limpo. Sabotar o stripper (parar de limpar `//`) ou o parser deixa o
+corpo real INDETERMINADO — e o alarme pegou um limite REAL do contrato do stripper: comentário
+dentro de `${…}` sobrevive à limpeza (`indeterminado-a`).
+
+**Dois furos achados na própria entrega.** (1) Lado shell: `… | "$PSQL"` não contava como stdin (só
+`<`/heredoc) — 0 ocorrências reais, medido pelo próprio gate. (2) O harness destruía o que dizia
+proteger: o `trap … git checkout` era armado ANTES da checagem de alteração não commitada — dizia
+"commite antes", saía 70, e o trap apagava a edição (medido: sumiu). E restaurava até no modo (A),
+que roda em todo `test:hooks`. Agora a restauração só é armada depois da checagem, e só com
+`--falsificar`.
+
+Recibo: 31 fixtures × 2 locales; **28/28 camadas vermelhas no veredito declarado**, com o controle
+(A) verde na mesma invocação. Limites declarados: Markdown não é lido pelo gate (os cinco foram à
+mão); variável dentro de trecho de shell EMITIDO não é seguida; os `db/sonda-*.sql` já aplicados
+guardam o cabeçalho antigo — são registro, não instrução viva.

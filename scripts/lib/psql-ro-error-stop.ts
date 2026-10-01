@@ -21,7 +21,14 @@
  * NÃO CONFUNDIR com o psql LOCAL de PG17 dos harnesses (`"$PGBIN/psql"`): é outro binário, já
  * passa `ON_ERROR_STOP=1`, e nenhum vínculo dele aponta para `psql-ro`. A discriminação é provada
  * como caso POSITIVO no dente, não deixada por sorte.
+ *
+ * DOIS EIXOS (o segundo desde 2026-10-01): quem EXECUTA o wrapper (shell, `execFileSync`) e quem
+ * IMPRIME o comando para o operador rodar — o literal TS de um gerador. Ver "instrução EMITIDA".
  */
+
+import { createRequire } from 'node:module';
+
+import type * as TS from 'typescript';
 
 import { removerComentarios } from '@/lib/gates/limpeza-fonte';
 import { fatiarPalavras, mascaraContexto, removerComentariosShell } from '@/lib/gates/limpeza-shell';
@@ -37,6 +44,9 @@ const MARCA_WRAPPER = /psql-ro/;
 export interface Sitio {
   arquivo: string;
   linha: number;
+  /** `execucao`: o arquivo RODA o wrapper. `emissao`: o arquivo IMPRIME o comando que alguém roda. */
+  origem: 'execucao' | 'emissao';
+  /** A variável que aponta para o wrapper; na emissão, o caminho como foi impresso. */
   variavel: string;
   /** O comando inteiro, das aspas da variável até o terminador — é o que foi classificado. */
   trecho: string;
@@ -48,9 +58,19 @@ export interface Sitio {
   viola: boolean;
 }
 
+/** O fiscal não conseguiu medir o arquivo — e isso nunca é "limpo". */
+interface Indeterminado {
+  arquivo: string;
+  motivo: string;
+}
+
 export interface Resultado {
+  /** Quem EXECUTA o wrapper — o censo do #2167. */
   sitios: Sitio[];
+  /** Quem IMPRIME o comando para o operador — o eixo de 2026-10-01. */
+  emitidos: Sitio[];
   violacoes: Sitio[];
+  indeterminados: Indeterminado[];
   arquivosLidos: number;
   arquivosComVinculo: number;
 }
@@ -173,6 +193,17 @@ function fimDoComando(s: string, ini: number): number {
   return n;
 }
 
+/**
+ * O SQL chega por CANO? `… | "$PSQL"` lê o stdin do pipe — e é a forma de toda instrução que um
+ * gerador imprime (`bun run sonda:sql … | ~/.config/afiacao/psql-ro`). Até 2026-10-01 o fiscal só
+ * via `<`/heredoc, e o pipe passava sem ON_ERROR_STOP. `||` é OU lógico, não cano; `|&` (bash) é
+ * cano com o stderr junto. A quebra de linha depois do `|` continua o pipeline, então sai junto.
+ */
+function recebeDoCano(antes: string): boolean {
+  const t = antes.replace(/(?:\s|\\\n)+$/, '');
+  return /(?:^|[^|])\|&?$/.test(t);
+}
+
 /** Há leitura de stdin (`<`, `<<`, `<<<`) FORA de aspas neste trecho? */
 function leDeStdin(trecho: string): boolean {
   let i = 0;
@@ -261,12 +292,13 @@ function analisarShell(arquivo: string, fonte: string): Sitio[] {
       const trecho = limpo.slice(ini, fim);
       const palavras = fatiarPalavras(trecho);
       const { temC, temF, temErrorStop } = classificarArgumentos(palavras.slice(1));
-      const temStdin = leDeStdin(trecho.slice(palavras[0]?.cru.length ?? 0));
+      const temStdin = recebeDoCano(limpo.slice(0, ini)) || leDeStdin(trecho.slice(palavras[0]?.cru.length ?? 0));
       const opaco = repassaArgumentosOpacos(palavras.slice(1));
       const precisaErrorStop = temF || ((temStdin || opaco) && !temC);
       sitios.push({
         arquivo,
         linha: limpo.slice(0, ini).split('\n').length,
+        origem: 'execucao',
         variavel: nome,
         trecho: trecho.trim(),
         temC,
@@ -344,8 +376,7 @@ function descobrirVinculosTs(limpo: string): Set<string> {
   return vinculados;
 }
 
-function analisarTs(arquivo: string, fonte: string): Sitio[] {
-  const limpo = removerComentarios(fonte);
+function analisarTs(arquivo: string, limpo: string): Sitio[] {
   const vinculados = descobrirVinculosTs(limpo);
   const sitios: Sitio[] = [];
   if (vinculados.size === 0) return sitios;
@@ -364,6 +395,7 @@ function analisarTs(arquivo: string, fonte: string): Sitio[] {
     sitios.push({
       arquivo,
       linha: limpo.slice(0, m.index).split('\n').length,
+      origem: 'execucao',
       variavel: nome,
       trecho: trecho.replace(/\s+/g, ' ').slice(0, 200),
       temC,
@@ -377,22 +409,195 @@ function analisarTs(arquivo: string, fonte: string): Sitio[] {
   return sitios.sort((a, b) => a.linha - b.linha);
 }
 
+// ─────────────────────────────── instrução EMITIDA (TypeScript) ───────────────────────────────
+//
+// O eixo que faltava (2026-10-01, achado no #2718): o gerador que NÃO executa o wrapper, mas
+// IMPRIME o comando que o operador vai rodar — `bun run sonda:sql --so-leitura <edge>… |
+// ~/.config/afiacao/psql-ro`. O fiscal lia `execFileSync`, nunca o valor de um literal, e quem
+// copiava a instrução herdava o exit 0 com ERROR.
+
+/**
+ * A âncora: o CAMINHO do wrapper, que é o que o operador DIGITA para rodá-lo. Prosa usa o NOME
+ * (`psql-ro`, 200+ menções no repo) — o mesmo princípio do lado shell: o alvo é o que executa, não
+ * a menção. `psql-ro-fake` NÃO casa: é dublê de teste, nunca instrução para operador.
+ */
+const ANCORA_CAMINHO = /\/\.config\/afiacao\/psql-ro(?![\w-])/g;
+
+/**
+ * O PREFIXO que torna a âncora um caminho rodável (`~`, `$HOME`, `${HOME}`, `/Users/…`, uma
+ * interpolação), lido para trás a partir dela. Âncora sem prefixo (`'/.config/afiacao/psql-ro'`,
+ * agulha de busca) não é caminho de ninguém. O que vem ANTES do prefixo decide vínculo, referência
+ * ou comando — por isso `=`, `(`, `|` e aspas ficam fora dele.
+ */
+const PREFIXO_RODAVEL = /[^\s'"`()|;&<>=,:]+$/;
+
+/** `${…}` de um template, no texto COZIDO: opaco — o fiscal não conhece o valor. */
+const INTERPOLACAO_OPACA = '${…}';
+
+/** `PSQL="…/psql-ro"`: o caminho é VÍNCULO; a invocação é a variável, e quem a lê é o lado shell. */
+const VINCULO = /[A-Za-z_][A-Za-z0-9_]*=$/;
+
+/** `(caminho)` — o parêntese contém SÓ o caminho: diz onde o wrapper mora, não manda rodá-lo.
+ *  `$(`, `<(` e `>(` são substituição de comando/processo, e ali o caminho RODA. */
+const ABRE_REFERENCIA = /(?:^|[^$<>])\($/;
+
+interface LiteralLido {
+  /** O valor que o programa imprime, com cada interpolação opaca. */
+  cozido: string;
+  /** A linha (1-based) de cada âncora no texto CRU, em ordem — é onde se acha o literal. */
+  linhasDasAncoras: number[];
+}
+
+let parserCarregado: typeof TS | undefined;
+
+/**
+ * O parser do TypeScript, carregado só quando a fonte traz a âncora: o import custa ~0,65 s por
+ * processo, e o harness de falsificação roda este CLI dezenas de vezes por locale — quase sempre
+ * sobre fixture shell, que não precisa dele.
+ */
+function parserTs(): typeof TS {
+  parserCarregado ??= createRequire(import.meta.url)('typescript') as typeof TS;
+  return parserCarregado;
+}
+
+/**
+ * Os literais de string e template da fonte, lidos pelo PARSER do TypeScript — e não por um
+ * tokenizador local, que teria de concordar com o `removerComentarios` sobre o que é string,
+ * template e regex (duas máquinas obrigadas a concordar divergem; aqui elas são CONFERIDAS uma
+ * contra a outra, em `analisarEmissoes`). O parser devolve o valor COZIDO: o texto que o operador lê.
+ */
+function literaisDaFonte(caminho: string, fonte: string): LiteralLido[] {
+  const ts = parserTs();
+  const tipo = /x$/.test(caminho) ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
+  const sf = ts.createSourceFile(caminho, fonte, ts.ScriptTarget.Latest, true, tipo);
+  const lidos: LiteralLido[] = [];
+
+  const linhasDasAncoras = (partes: TS.Node[]): number[] =>
+    partes.flatMap((p) =>
+      [...p.getText(sf).matchAll(ANCORA_CAMINHO)].map(
+        (m) => sf.getLineAndCharacterOfPosition(p.getStart(sf) + m.index).line + 1,
+      ),
+    );
+
+  const visitar = (n: TS.Node): void => {
+    if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) {
+      lidos.push({ cozido: n.text, linhasDasAncoras: linhasDasAncoras([n]) });
+    } else if (ts.isTemplateExpression(n)) {
+      lidos.push({
+        cozido: n.head.text + n.templateSpans.map((s) => INTERPOLACAO_OPACA + s.literal.text).join(''),
+        linhasDasAncoras: linhasDasAncoras([n.head, ...n.templateSpans.map((s) => s.literal)]),
+      });
+    }
+    ts.forEachChild(n, visitar);
+  };
+  visitar(sf);
+  return lidos;
+}
+
+/**
+ * Classifica cada caminho rodável que um literal IMPRIME. A regra é mais dura que a do shell, e de
+ * propósito: instrução emitida sem `-c` lê o SQL de ALGUM lugar — cano, `<`, `-f` ou colagem, e
+ * colar num psql é stdin. Num script, `"$PSQL" -tA` sem nada lê o stdin herdado; num texto para o
+ * operador, o caminho sem `-c` é o convite a alimentá-lo de SQL.
+ */
+function analisarEmissoes(
+  arquivo: string,
+  fonte: string,
+  limpo: string,
+): { sitios: Sitio[]; indeterminado?: Indeterminado } {
+  // Sem a âncora em lugar nenhum da fonte não há o que ler — e o parser nem é carregado.
+  if (fonte.match(ANCORA_CAMINHO) === null) return { sitios: [] };
+
+  const literais = literaisDaFonte(arquivo, fonte);
+
+  // CONTAGEM CRUZADA — o alarme de DOIS lados, cada máquina medida POR FORA pela outra. O
+  // `removerComentarios` diz quantas âncoras sobram no código sem comentário; o parser diz quantas
+  // moram em literal. Se o stripper deixa um comentário (sub-limpeza) ou come uma string
+  // (sobre-limpeza), ou se o parser perde um literal, os números divergem — e o fiscal não sabe o
+  // que julgou. Divergência é INDETERMINADO, nunca "limpo".
+  const noCodigo = limpo.match(ANCORA_CAMINHO)?.length ?? 0;
+  const nosLiterais = literais.reduce((t, l) => t + l.linhasDasAncoras.length, 0);
+  if (noCodigo !== nosLiterais) {
+    return {
+      sitios: [],
+      indeterminado: {
+        arquivo,
+        motivo:
+          `o caminho do wrapper aparece ${noCodigo}× no código sem comentário (removerComentarios) e ` +
+          `${nosLiterais}× em literal (parser do TS) — as duas máquinas discordam sobre onde ele mora`,
+      },
+    };
+  }
+
+  const sitios: Sitio[] = [];
+  for (const literal of literais) {
+    if (literal.linhasDasAncoras.length === 0) continue;
+    let k = 0;
+    for (const linhaEmitida of literal.cozido.split('\n')) {
+      for (const m of linhaEmitida.matchAll(ANCORA_CAMINHO)) {
+        const linha = literal.linhasDasAncoras[Math.min(k++, literal.linhasDasAncoras.length - 1)];
+        const prefixo = PREFIXO_RODAVEL.exec(linhaEmitida.slice(0, m.index))?.[0] ?? '';
+        if (prefixo === '') continue;
+        let antes = linhaEmitida.slice(0, m.index - prefixo.length);
+        let depois = linhaEmitida.slice(m.index + m[0].length);
+        // `"$HOME/.config/afiacao/psql-ro" -c …` — as aspas são do caminho, não da frase.
+        const aspas = antes.at(-1);
+        if ((aspas === '"' || aspas === "'") && depois.startsWith(aspas)) {
+          antes = antes.slice(0, -1);
+          depois = depois.slice(1);
+        }
+        if (VINCULO.test(antes)) continue;
+        if (ABRE_REFERENCIA.test(antes) && depois.startsWith(')')) continue;
+
+        const comando = depois.slice(0, fimDoComando(depois, 0));
+        const { temC, temF, temErrorStop } = classificarArgumentos(fatiarPalavras(comando));
+        const precisaErrorStop = temF || !temC;
+        const violaEmitida = precisaErrorStop && !temErrorStop;
+        sitios.push({
+          arquivo,
+          linha,
+          origem: 'emissao',
+          variavel: prefixo + m[0],
+          trecho: linhaEmitida.trim().slice(0, 200),
+          temC,
+          temF,
+          temStdin: !temC && !temF,
+          temErrorStop,
+          precisaErrorStop,
+          viola: violaEmitida,
+        });
+      }
+    }
+  }
+  return { sitios };
+}
+
 // ──────────────────────────────────────── fachada ────────────────────────────────────────
 
 export function analisar(arquivos: { caminho: string; fonte: string }[]): Resultado {
   const sitios: Sitio[] = [];
+  const emitidos: Sitio[] = [];
+  const indeterminados: Indeterminado[] = [];
   let arquivosComVinculo = 0;
 
   for (const { caminho, fonte } of arquivos) {
     const ehTs = /\.[cm]?tsx?$/.test(caminho);
-    const achados = ehTs ? analisarTs(caminho, fonte) : analisarShell(caminho, fonte);
+    const limpo = ehTs ? removerComentarios(fonte) : '';
+    const achados = ehTs ? analisarTs(caminho, limpo) : analisarShell(caminho, fonte);
     if (achados.length > 0) arquivosComVinculo++;
     sitios.push(...achados);
+    if (!ehTs) continue;
+
+    const emissao = analisarEmissoes(caminho, fonte, limpo);
+    emitidos.push(...emissao.sitios);
+    if (emissao.indeterminado) indeterminados.push(emissao.indeterminado);
   }
 
   return {
     sitios,
-    violacoes: sitios.filter((s) => s.viola),
+    emitidos,
+    violacoes: [...sitios, ...emitidos].filter((s) => s.viola),
+    indeterminados,
     arquivosLidos: arquivos.length,
     arquivosComVinculo,
   };

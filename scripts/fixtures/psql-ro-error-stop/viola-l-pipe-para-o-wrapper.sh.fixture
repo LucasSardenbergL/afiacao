@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# CAMADA: stdin por PIPE. `… | "$PSQL"` lê o SQL do cano — e é a forma de toda instrução que um
+# gerador imprime (`bun run sonda:sql --so-leitura <edge>… | ~/.config/afiacao/psql-ro`). Sem
+# ON_ERROR_STOP, o SQL que falha imprime ERROR e o psql sai 0. O fiscal só via `<`/heredoc.
+PSQL="$HOME/.config/afiacao/psql-ro"
+SQL="SELECT 1"
+printf '%s\n' "$SQL" |
+  "$PSQL" -tA
