@@ -12,6 +12,7 @@ import {
   registroParaLinha,
   TETO_TRANSPORTE,
 } from './transporte-nuvem';
+import { registroDoBanco, respostaDoBanco as fixtureResposta } from './transporte-nuvem-fixture';
 
 const md5 = (s: string): string => createHash('md5').update(s, 'utf8').digest('hex');
 /** O trecho que o banco hasheia: do 1º caractere até o fim da marca final (o rastro do MCP fica fora). */
@@ -248,5 +249,115 @@ describe('leitorNuvem', () => {
     const lerSql = leitorNuvem(ler(respostaDoBanco(LINHAS)), CONSULTAS);
     expect(lerSql(CONSULTAS.saude)).toBe('12.5');
     expect(() => lerSql('SELECT 1')).toThrow(/TRANSPORTE_FORA_DO_PACOTE/);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// SONDAS EXECUTIVAS (2026-10-01): a leitura que só prova algo RODANDO COMO outro papel
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// A prova contra um Postgres de verdade é `db/test-transporte-nuvem.sh` (T13-T17); aqui, a forma
+// do SQL e o leitor do desfecho — com o payload montado à parte (`transporte-nuvem-fixture.ts`).
+describe('sondas executivas — o preâmbulo', () => {
+  const SONDAS = {
+    papel: 'alvo_ro',
+    sondas: {
+      negada: { sql: 'SELECT segredo FROM t_secreta' },
+      permitida: { sql: 'SELECT count(*) FROM t_aberta', devolverValor: true },
+    },
+  };
+  const sql = gerarSqlNuvem(CONSULTAS, CONSUMIDOR, SONDAS);
+  const linhas = sql.split('\n');
+
+  it('sem sondas não há preâmbulo: o WITH vem logo depois da trava', () => {
+    expect(gerarSqlNuvem(CONSULTAS, CONSUMIDOR).split('\n')[1]).toMatch(/^WITH __sql_nuvem_marca__/);
+  });
+
+  it('o preâmbulo fica ENTRE a trava e o WITH — sob READ ONLY e dentro do trecho do sql_md5', () => {
+    expect(linhas[0]).toBe("SET TRANSACTION READ ONLY; SET LOCAL statement_timeout = '30s';");
+    expect(linhas[1]).toBe('DO $__sql_nuvem_sondas__$');
+    const fimDoDo = linhas.indexOf('END $__sql_nuvem_sondas__$;');
+    expect(fimDoDo).toBeGreaterThan(1);
+    expect(linhas[fimDoDo + 1]).toMatch(/^WITH __sql_nuvem_marca__/);
+    expect(trechoDoBanco(sql)).toContain('SET LOCAL ROLE alvo_ro;');
+  });
+
+  it('cada sonda: SET LOCAL ROLE, conferência do papel, EXECUTE do SQL inteiro e a exceção que desfaz o papel', () => {
+    expect(sql.split('SET LOCAL ROLE alvo_ro;').length - 1).toBe(2);
+    expect(sql.split("RAISE EXCEPTION 'desfaz o papel';").length - 1).toBe(2);
+    expect(sql).toContain("IF current_user <> 'alvo_ro' THEN RAISE EXCEPTION 'o papel nao trocou'; END IF;");
+    expect(sql).toContain('EXECUTE $__sql_nuvem_q__$\nSELECT segredo FROM t_secreta\n$__sql_nuvem_q__$;');
+    // o valor só volta de quem o pediu: a negada nunca traz o dado
+    expect(sql).toContain('EXECUTE $__sql_nuvem_q__$\nSELECT count(*) FROM t_aberta\n$__sql_nuvem_q__$ INTO __sql_nuvem_valor__;');
+    expect(sql.split('INTO __sql_nuvem_valor__').length - 1).toBe(1);
+  });
+
+  it('o desfecho de cada sonda é lido por uma consulta reservada sonda__<nome>', () => {
+    expect(sql).toContain("SELECT current_setting('nuvem_sonda.negada', true) AS desfecho");
+    expect(sql).toContain('AS c_sonda__permitida');
+  });
+
+  it('recusa papel, nome e SQL de sonda fora das regras — e o prefixo reservado numa consulta do CLI', () => {
+    const com = (s: object) => () => gerarSqlNuvem(CONSULTAS, CONSUMIDOR, s as never);
+    expect(com({ papel: 'Alvo-RO', sondas: SONDAS.sondas })).toThrow(/TRANSPORTE_CONSULTA_INVALIDA: papel/);
+    expect(com({ papel: 'alvo_ro', sondas: {} })).toThrow(/sem sonda nenhuma/);
+    expect(com({ papel: 'alvo_ro', sondas: { Ruim: { sql: 'SELECT 1' } } })).toThrow(/nome\(s\) de sonda/);
+    expect(com({ papel: 'alvo_ro', sondas: { x: { sql: 'SELECT 1; SELECT 2' } } })).toThrow(/';' no meio/);
+    expect(com({ papel: 'alvo_ro', sondas: { x: { sql: 'SELECT $__sql_nuvem_q__$' } } })).toThrow(/namespace interno/);
+    expect(com({ papel: 'alvo_ro', sondas: { x: { sql: "SELECT 'sql-nuvem:fim'" } } })).toThrow(/a marca do transporte/);
+    expect(() => gerarSqlNuvem({ ...CONSULTAS, sonda__x: 'SELECT 1' }, CONSUMIDOR)).toThrow(/prefixo 'sonda__'/);
+    expect(() => gerarSqlNuvem({ ...CONSULTAS, sonda__x: 'SELECT 1' }, CONSUMIDOR, SONDAS)).toThrow(/prefixo 'sonda__'/);
+  });
+});
+
+describe('sondas executivas — o desfecho, e o que NUNCA vira desfecho', () => {
+  const SONDAS = {
+    papel: 'alvo_ro',
+    sondas: { negada: { sql: 'SELECT 1 FROM t' }, permitida: { sql: 'SELECT count(*) FROM u', devolverValor: true } },
+  };
+  const sqlExecutado = gerarSqlNuvem(CONSULTAS, CONSUMIDOR, SONDAS);
+  const ESPERADO = { consultas: CONSULTAS, consumidor: CONSUMIDOR, sondas: SONDAS };
+  const resposta = (negada: string, permitida = 'RODOU|404', sql = sqlExecutado) =>
+    fixtureResposta({
+      sqlExecutado: sql,
+      consumidor: CONSUMIDOR,
+      medidoEm: '2026-09-27T11:58:00Z',
+      registros: {
+        observacoes: LINHAS.observacoes,
+        saude: LINHAS.saude,
+        sonda__negada: [registroDoBanco([negada === '' ? null : negada])],
+        sonda__permitida: [registroDoBanco([permitida])],
+      },
+    });
+  const lerSondas = (bruto: string) => lerDadosNuvem(bruto, ESPERADO, AGORA);
+
+  it('RODOU e ERRO viram desfecho — e as consultas reservadas não aparecem como saída do CLI', () => {
+    const d = lerSondas(resposta('ERRO|42501|permission denied for table t'));
+    expect(d.sondas.get('negada')).toEqual({ tipo: 'erro', sqlstate: '42501', mensagem: 'permission denied for table t' });
+    expect(d.sondas.get('permitida')).toEqual({ tipo: 'rodou', valor: '404' });
+    expect([...d.saidas.keys()].sort()).toEqual(['observacoes', 'saude']);
+  });
+
+  it('TRANSPORTE_SONDA_PAPEL: o SET ROLE negado (42501) NÃO vira a negação esperada da sonda', () => {
+    // A MESMA SQLSTATE: um leitor que olhasse só o número daria "negado com 42501" a uma sonda que
+    // nem rodou como o papel — o falso verde perfeito.
+    expect(() => lerSondas(resposta('PAPEL|42501|permission denied to set role "alvo_ro"'))).toThrow(
+      /TRANSPORTE_SONDA_PAPEL: a sonda 'negada' NÃO rodou como alvo_ro/,
+    );
+  });
+
+  it('sem desfecho (o preâmbulo não rodou) e desfecho ilegível nunca viram resultado', () => {
+    expect(() => lerSondas(resposta(''))).toThrow(/TRANSPORTE_SONDA: a sonda 'negada' não deixou desfecho/);
+    expect(() => lerSondas(resposta('ERRO|4250|curto'))).toThrow(/TRANSPORTE_FORMATO: desfecho ilegível/);
+    expect(() => lerSondas(resposta('OK'))).toThrow(/TRANSPORTE_FORMATO: desfecho ilegível/);
+  });
+
+  it('o preâmbulo alterado no caminho não fecha o sql_md5 (TRANSPORTE_SQL_DIVERGENTE)', () => {
+    const trocado = sqlExecutado.replace('SET LOCAL ROLE alvo_ro;', 'SET LOCAL ROLE postgres;');
+    expect(trocado).not.toBe(sqlExecutado);
+    expect(() => lerSondas(resposta('ERRO|42501|x', 'RODOU|1', trocado))).toThrow(/TRANSPORTE_SQL_DIVERGENTE/);
+  });
+
+  it('a resposta de uma leitura SEM sondas não serve à leitura COM sondas (TRANSPORTE_CONSULTAS)', () => {
+    expect(() => lerSondas(JSON.stringify(respostaDoBanco(LINHAS)))).toThrow(/TRANSPORTE_CONSULTAS/);
   });
 });

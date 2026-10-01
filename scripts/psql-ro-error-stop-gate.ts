@@ -38,6 +38,12 @@ export const PISOS = {
   arquivosComVinculo: 11, // medido: 14 (o censo do histórico bate: 14 consumidores)
   sitios: 18,             // medido: 24
   /**
+   * Instruções EMITIDAS com o caminho do wrapper — o eixo de 2026-10-01. Medido: 8, em 4 arquivos.
+   * Sem piso, o leitor de literais quebrado devolveria 0 emitidas e "nenhuma sem a flag" — verde por
+   * cegueira, justo no eixo que nasceu porque o fiscal não lia literal nenhum.
+   */
+  emitidos: 6,
+  /**
    * Alarmes do stripper shell, CALIBRADOS no corpo real (373 `.sh`, medido 2026-09-05):
    *  · fração: o menor legítimo é 0,336 (`prove-sql-money-path/references/harness-template.sh`,
    *    quase todo prosa). Piso 0,25 fica abaixo dele e ainda 4× acima do desabamento Sayerlack
@@ -91,6 +97,10 @@ export function enumerar(raizes: string[], base: string): string[] {
 }
 
 function formatar(s: Sitio): string {
+  if (s.origem === 'emissao') {
+    const fonte = s.temF ? '-f' : 'stdin (cano ou colagem)';
+    return `  ${s.arquivo}:${s.linha}  instrução EMITIDA manda rodar o wrapper lendo de ${fonte} SEM -v ON_ERROR_STOP=1\n      ${s.trecho.slice(0, 140)}`;
+  }
   const fonte = s.temF ? '-f' : s.temStdin ? 'stdin/heredoc' : '?';
   return `  ${s.arquivo}:${s.linha}  $${s.variavel} lê de ${fonte} SEM -v ON_ERROR_STOP=1\n      ${s.trecho.split('\n')[0].slice(0, 140)}`;
 }
@@ -128,19 +138,24 @@ function main(): number {
 
   const r = analisar(arquivos);
 
+  // A contagem cruzada stripper × parser vale em QUALQUER corpo, fixture ou repo: é medição exata,
+  // não piso calibrado — quando as duas máquinas discordam, o fiscal não sabe o que julgou.
+  const furos = r.indeterminados.map((i) => `${i.arquivo}: ${i.motivo}`);
   if (usaPadrao) {
-    const furos: string[] = [];
     if (r.arquivosLidos < PISOS.arquivos) furos.push(`arquivos lidos ${r.arquivosLidos} < piso ${PISOS.arquivos}`);
     if (r.arquivosComVinculo < PISOS.arquivosComVinculo) {
       furos.push(`arquivos com vínculo ao wrapper ${r.arquivosComVinculo} < piso ${PISOS.arquivosComVinculo}`);
     }
     if (r.sitios.length < PISOS.sitios) furos.push(`sítios de invocação ${r.sitios.length} < piso ${PISOS.sitios}`);
-    if (desabando.length > 0) furos.push(`stripper shell desabando em: ${desabando.join(', ')}`);
-    if (furos.length > 0) {
-      console.error('❌ INDETERMINADO — o fiscal não conseguiu medir (isto NÃO é "limpo"):');
-      for (const f of furos) console.error(`  · ${f}`);
-      return 2;
+    if (r.emitidos.length < PISOS.emitidos) {
+      furos.push(`instruções emitidas com o caminho do wrapper ${r.emitidos.length} < piso ${PISOS.emitidos}`);
     }
+    if (desabando.length > 0) furos.push(`stripper shell desabando em: ${desabando.join(', ')}`);
+  }
+  if (furos.length > 0) {
+    console.error('❌ INDETERMINADO — o fiscal não conseguiu medir (isto NÃO é "limpo"):');
+    for (const f of furos) console.error(`  · ${f}`);
+    return 2;
   }
 
   if (r.violacoes.length > 0) {
@@ -150,13 +165,17 @@ function main(): number {
     console.error('  O wrapper NÃO passa -v ON_ERROR_STOP=1 e o psql, lido de -f/stdin, sai 0 MESMO COM ERROR.');
     console.error('  A query não roda, o script recebe SUCESSO e o zero-resultado vira veredito.');
     console.error('  Conserto: acrescente `-v ON_ERROR_STOP=1` à invocação (e um marcador de fim na query).');
+    if (r.violacoes.some((s) => s.origem === 'emissao')) {
+      console.error('  Instrução EMITIDA: quem copia o comando herda o exit 0 — a flag vai no TEXTO que o gerador imprime.');
+    }
     console.error('  docs/historico/psql-ro-exit-zero-em-sql-que-falhou.md');
     return 1;
   }
 
   console.log(
-    `✅ psql-ro/ON_ERROR_STOP: ${r.sitios.length} invocação(ões) em ${r.arquivosComVinculo} arquivo(s), ` +
-      `${r.arquivosLidos} fontes lidas. Nenhuma lê de -f/stdin sem ON_ERROR_STOP.`,
+    `✅ psql-ro/ON_ERROR_STOP: ${r.sitios.length} invocação(ões) em ${r.arquivosComVinculo} arquivo(s) e ` +
+      `${r.emitidos.length} instrução(ões) emitida(s), ${r.arquivosLidos} fontes lidas. ` +
+      'Nenhuma lê de -f/stdin sem ON_ERROR_STOP.',
   );
   return 0;
 }

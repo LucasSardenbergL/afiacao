@@ -179,6 +179,11 @@ db/test-desconto-backfill-aplicar.sh       30
 # a próxima prova que estourar levar a PARALELIZAR o runner, não a subir o teto — enquanto isso não
 # vier, a falsificação roda no laptop (recibo: 8 vermelhas / 0 falhas, 189 s) a cada mudança na prova.
 db/test-pre-anti-deriva-concorrencia.sh    56  falsificar=fora-do-ci  # custo: estoura o teto de 20 min do job (run 36806101676); falsificação local até o runner paralelizar
+# Fecho da porta aplicar_sql e do ledger por ALLOWLIST (2026-10-01): service_role e sandbox_exec_<ref>
+# tinham EXECUTE na porta (SECDEF=postgres) e INSERT no ledger — SQL arbitrário como postgres. O delta
+# db/aplicar-sql-acl-allowlist.sql tira todo GRANT fora do dono e do claude_rw; a PÓS aborta se um
+# sobra (provado com o apply numa transação, como o executor). Deriva de prod recriada na fixture.
+db/test-aplicar-sql-acl.sh                 18  falsificar=2
 
 # ── Eixo 5 — VEREDITO DE DEPLOY ──────────────────────────
 # O SQL que responde "a edge está REALMENTE no ar?". O dano aqui é acreditar num
@@ -198,8 +203,11 @@ db/test-canaria-veredito.sh                24  falsificar=18
 # passa a depender de o transporte ser FIEL ao psql e de recusar leitura destravada, SQL alterado
 # (inclusive statement antes da trava e o SQL em dobro no lote) e payload adulterado. Gera o SQL
 # pela lib real (`scripts/lib/transporte-nuvem.ts`, só builtins — o runtime bun do job basta),
-# como a canária. As 10 sabotagens rodam num worktree do HEAD.
-db/test-transporte-nuvem.sh                18  falsificar=10
+# como a canária. As sabotagens rodam num worktree do HEAD.
+# 2026-10-01: 18 → 25 asserts e 10 → 14 sabotagens — as SONDAS EXECUTIVAS (o preâmbulo que roda
+# cada sonda COMO outro papel, para a sentinela do `claude_ro` medir pela nuvem). T13 é o falso
+# verde que o desenho existe para matar: o SET ROLE negado sai 42501, a mesma SQLSTATE da negação.
+db/test-transporte-nuvem.sh                25  falsificar=14
 # O TRANSPORTE do passo seguinte (2026-09-27): pelo `db:aplicar` a célula que o disparo devolve
 # morre no EXECUTE do `aplicar_sql()`, e o passo vem por NOTICE no log. Roda o `db-aplicar.sh` e o
 # bootstrap REAIS contra stubs de pg_net/vault, com o SQL do gerador deste disco (bun, como a
@@ -354,7 +362,7 @@ db/test-expandir-promocao-item.sh          41  falsificar=18
 # removida. Autocontida: initdb + stubs + schema-snapshot + a fixture
 # db/fixtures/hoje-sp-views-defaults-predecessoras-prod-20260930.sql (o snapshot perdeu as barras dos
 # literais de regex — as predecessoras vêm da fixture) + a migration.
-db/test-hoje-sp-views-defaults.sh          129  falsificar=fora-do-ci  # TETO do provas-sql: o --falsificar (33 sabotagens) custava 274 s de 1.040 numa run verde (26%, o maior do job; 2026-10-01) e 16 de 25 runs de PR foram canceladas a 20,2 min em 01/10 02:20–05:00 — a prova crua (129 asserts, 8 s) segue aqui; o --falsificar roda local (verde nos 2 locales no PR da fase 2)
+db/test-hoje-sp-views-defaults.sh          129  falsificar=33
 
 # Eixo 7 (fuso), fase 3 da classe (ii) — a família data_ciclo (20261001023000_hoje_sp_familia_data_ciclo.sql):
 # as 2 views "_hoje", o DEFAULT de p_data_ciclo das 4 RPCs de ciclo, o corte em HORA DE SP e 2 leitores de
@@ -363,8 +371,9 @@ db/test-hoje-sp-views-defaults.sh          129  falsificar=fora-do-ci  # TETO do
 # P01-P10 (predecessoras e as 18 dependências = md5 da prod), K1-K4 (a trava e a ordem dos leitores), Z0,
 # G1-G7. Autocontida: initdb + stubs + schema-snapshot + db/fixtures/hoje-sp-data-ciclo-prod-20261001.sql
 # (a deriva de 14 colunas do snapshot + o texto vivo) + a migration. O `--falsificar` (17 sabotagens, todas
-# vermelhas no assert certo, matriz UTC/SP × C/pt_BR verde) roda FORA do CI pelo motivo da linha abaixo.
-db/test-hoje-sp-data-ciclo.sh               57  falsificar=fora-do-ci  # o job provas-sql mediu 19,6–19,9 min de 20 em 3 PRs de 30/09–01/10 (mediana 17,9 em 8): +17 sabotagens (~3 min) o cancelaria no teto; o comentário do ci.yml pede paralelizar o runner, não subir o teto
+# vermelhas no assert certo, matriz UTC/SP × C/pt_BR verde) roda no CI desde que o provas-sql foi dividido
+# em partes (2026-10-01); antes ficava fora pelo teto de 20 min do job serial.
+db/test-hoje-sp-data-ciclo.sh               57  falsificar=17
 # FORA do núcleo (de propósito): db/test-hoje-sp-visitas.sh — o DEFAULT de route_visits.visit_date no dia de SP
 # (15 asserts, 8 sabotagens, matriz UTC/SP × C/pt_BR verde; roda local). O job provas-sql está no TETO: em 01/10
 # 02:20–05:00, 16 de 25 runs de PR foram canceladas a 20,2 min (as verdes: 16,9–19,9) — +20 s aqui faria

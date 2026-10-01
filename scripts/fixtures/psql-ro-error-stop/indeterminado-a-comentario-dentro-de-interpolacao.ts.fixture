@@ -1,0 +1,5 @@
+// CAMADA: a contagem CRUZADA stripper × parser. O `removerComentarios` deixa intacto o interior de
+// `${…}` (é o contrato dele), então o comentário abaixo SOBREVIVE à limpeza — e o parser do TS o lê
+// como comentário, não como literal. As duas máquinas discordam sobre onde mora o caminho do
+// wrapper: o fiscal não sabe julgar e diz INDETERMINADO (exit 2), nunca LIMPO.
+export const linha = (x: string): string => `rode: ${/* ~/.config/afiacao/psql-ro -f q.sql */ x}`;

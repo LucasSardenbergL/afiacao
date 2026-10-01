@@ -21,13 +21,19 @@ import {
 import { acumularPosicoesDaPagina, type PosicaoEstoque } from "../_shared/pos-estoque.ts";
 import { carregarProductMap } from "../_shared/mapas-paginados.ts";
 import type { BancoPostgrest } from "../_shared/paginate.ts";
+import { hojeSP, paraDataOmie } from "../_shared/hoje-sp.ts";
+import { janelaPedidosOmie } from "./janela-omie.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import {
+  avaliarCompletudeListagem,
   chunked,
   particionarCustos,
   planejarEscritaInventario,
+  planejarZeramentoForaDaLista,
   type LinhaProdutoLocal,
 } from "./inventory-lote.ts";
+import { carregarEstoqueLocalNaoZero } from "./estoque-local.ts";
+import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import {
   acumularProdutosDaPagina,
   MAX_PAGINAS_PRODUTOS,
@@ -174,10 +180,6 @@ async function callOmie(account: Account, endpoint: string, call: string, params
   return result;
 }
 
-function formatOmieDate(d: Date): string {
-  return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;
-}
-
 // ======== LOAD CONFIG ========
 
 async function loadReprocessConfig(db: SupabaseClient): Promise<Record<string, number>> {
@@ -262,6 +264,11 @@ async function reprocessOrders(
     // registra em `error_message` do log de reprocess (docs/agent/money-path.md §6).
     const productMap = await carregarProductMap(db as unknown as BancoPostgrest, account);
 
+    // As DATAS da janela no dia de SP (`./janela-omie.ts`): o `getDate()` do servidor UTC pedia a janela
+    // até AMANHÃ nos crons das 21:15, 23:15 e 23:30 BRT. `windowStart`/`windowEnd` seguem só como os
+    // instantes do log. Dentro do `try`: `windowDays` malformado lança e vai para o log da run.
+    const janela = janelaPedidosOmie(windowEnd, windowDays);
+
     let pagina = 1;
     let totalPaginas = 1;
 
@@ -271,8 +278,8 @@ async function reprocessOrders(
         pagina,
         registros_por_pagina: 100,
         filtrar_apenas_inclusao: "N",
-        filtrar_por_data_de: formatOmieDate(windowStart),
-        filtrar_por_data_ate: formatOmieDate(windowEnd),
+        filtrar_por_data_de: janela.de,
+        filtrar_por_data_ate: janela.ate,
       })) as unknown as OmieListarPedidosResponse;
 
       // Mesmos guards dos irmãos products/inventory abaixo (piso monotônico + teto fail-fast):
@@ -585,6 +592,12 @@ async function reprocessProducts(
         pages: totalPaginas,
         produtos_vistos: vistos,
         produtos_elegiveis: catalogo.size,
+        // Elegível sem valor_unitario (obrigatório no Omie) ficou de fora — o local intacto. Zero
+        // aqui, noite após noite, é a prova de que o caminho é morto (contrato respeitado).
+        itens_sem_valor_unitario: plano.semValorUnitario.length,
+        ...(plano.semValorUnitario.length > 0
+          ? { amostra_sem_valor_unitario: plano.semValorUnitario.slice(0, 10) }
+          : {}),
         ...(falhasChunk > 0 ? { falhas_chunk: falhasChunk } : {}),
       },
       ...(falhasChunk > 0
@@ -612,6 +625,12 @@ async function reprocessProducts(
 // WORKER_RESOURCE_LIMIT no cron operational, morte SEM exceção (o catch não roda) e órfã
 // `running` em sync_reprocess_log. Espelha o syncInventory do omie-analytics-sync (a MESMA
 // operação ListarPosEstoque, em lote). Decisão pura + testes: ./inventory-lote.ts.
+// Desde 2026-10-01 é o ÚNICO dono de omie_products.estoque nesta edge, inclusive do zero de
+// quem saiu da lista padrão (passo 4b) — o passo de produtos parou de gravar a coluna.
+
+// Usado no pedido E na checagem de completude: página "cheia" só significa algo contra o
+// tamanho que foi de fato pedido.
+const POR_PAGINA_POS_ESTOQUE = 100;
 
 async function reprocessInventory(
   db: SupabaseClient,
@@ -630,14 +649,21 @@ async function reprocessInventory(
     // 1) COLETA todas as páginas do Omie em memória (dedupe last-wins por código — duplicata
     //    no MESMO statement de upsert daria 21000 "cannot affect row a second time").
     const posicoes = new Map<number, PosicaoEstoque>();
+    const tamanhosPaginas: number[] = []; // itens CRUS por página — a completude que autoriza zerar
+    let itensIlegiveis = 0; // recusados pelo parser: sem eles a listagem não está inteira compreendida
     let pagina = 1;
     let totalPaginas = 1;
+    // A posição de HOJE em SP, uma vez por run (todas as páginas do retrato na MESMA data). O
+    // `getDate()` do servidor UTC mandava AMANHÃ nos crons das 21:15, 23:15 e 23:30 BRT — o Omie
+    // aceitava e devolvia o mesmo saldo (38 de 38 rodadas noturnas sem divergência em 30 dias,
+    // medido em 2026-10-01): o conserto aqui é por construção, não por número.
+    const dataPosicao = paraDataOmie(hojeSP());
 
     while (pagina <= totalPaginas) {
       const result = (await callOmie(account, "estoque/consulta/", "ListarPosEstoque", {
         nPagina: pagina,
-        nRegPorPagina: 100,
-        dDataPosicao: formatOmieDate(new Date()),
+        nRegPorPagina: POR_PAGINA_POS_ESTOQUE,
+        dDataPosicao: dataPosicao,
       })) as unknown as OmieListarPosEstoqueResponse;
 
       // Teto anti-runaway fail-FAST sobre o total DECLARADO (Codex P1): descobrir o runaway
@@ -653,7 +679,8 @@ async function reprocessInventory(
         throw new Error(`página ${pagina}/${totalPaginas} do ListarPosEstoque veio vazia antes do fim declarado — abortando (retrato parcial)`);
       }
       if (veredicto === "fim") break;
-      acumularPosicoesDaPagina(posicoes, produtos);
+      tamanhosPaginas.push(produtos.length);
+      itensIlegiveis += produtos.length - acumularPosicoesDaPagina(posicoes, produtos);
 
       console.log(`[Reprocess][${account}] Inventory page ${pagina}/${totalPaginas}`);
       pagina++;
@@ -674,6 +701,11 @@ async function reprocessInventory(
     // regressão de updated_at contra writers concorrentes (computeCosts/analytics-sync).
     const nowIso = new Date().toISOString();
     let falhasChunk = 0;
+    // null = o passo 4b não chegou a apurar (não "zerou 0") — mesmo contrato do metadata de pedidos.
+    let zerados: number | null = null;
+    let zeramentoCandidatos: number | null = null;
+    let zeramentoPulado: string | null = null;
+    let erroZeramento: string | null = null;
 
     {
       // 2) Resolve omie_products em LOTE (.in() chunked ≤300 fica sob o cap silencioso de
@@ -735,6 +767,39 @@ async function reprocessInventory(
         }
       }
 
+      // 4b) Zero de quem SAIU da lista padrão (saldo ≠ 0): estoque local ≠ 0 e ausente de uma
+      //     listagem COMPLETA vira 0 — antes era o `quantidade_estoque || 0` do passo de produtos
+      //     que fazia isso, de carona e com janela de zero para os posicionados. Guardas e teto
+      //     de raio em ./inventory-lote.ts. Leitura que falha NÃO zera ninguém e surfaça no log.
+      try {
+        const locaisComEstoque = await carregarEstoqueLocalNaoZero(db as unknown as BancoPostgrest, account);
+        const zeramento = planejarZeramentoForaDaLista(
+          posicoes,
+          locaisComEstoque,
+          avaliarCompletudeListagem(tamanhosPaginas, POR_PAGINA_POS_ESTOQUE, itensIlegiveis),
+          account,
+          nowIso,
+        );
+        zeramentoCandidatos = zeramento.candidatos;
+        zeramentoPulado = zeramento.pulado;
+        let zeradosAgora = 0;
+        for (const chunk of chunked(zeramento.rows, 500)) {
+          const { error } = await db
+            .from("omie_products")
+            .upsert(chunk, { onConflict: "omie_codigo_produto,account" });
+          if (error) {
+            falhasChunk++;
+            console.error(`[Reprocess][${account}] upsert zero de estoque omie_products: ${error.message}`);
+          } else {
+            zeradosAgora += chunk.length;
+          }
+        }
+        zerados = zeradosAgora;
+      } catch (e) {
+        erroZeramento = mensagemDeErro(e) ?? "erro sem mensagem utilizável";
+        console.error(`[Reprocess][${account}] zeramento de quem saiu da lista não rodou: ${erroZeramento}`);
+      }
+
       // 5) product_costs em LOTE: 1 SELECT .in() por chunk → partição update × insert
       //    (particionarCustos). SELECT falho degrada: os candidatos do chunk caem no insert
       //    e o ignoreDuplicates (ON CONFLICT DO NOTHING) pula os que já existem — custo
@@ -779,10 +844,18 @@ async function reprocessInventory(
       metadata: {
         pages: totalPaginas,
         total_posicoes: codProds.length,
+        zerados_fora_da_lista: zerados,
+        zeramento_candidatos: zeramentoCandidatos,
+        ...(zeramentoPulado ? { zeramento_pulado: zeramentoPulado } : {}),
         ...(falhasChunk > 0 ? { falhas_chunk: falhasChunk } : {}),
       },
-      ...(falhasChunk > 0
-        ? { error_message: `${falhasChunk} chunk(s) com erro de escrita (lote parcial — próximo ciclo reconcilia)` }
+      ...(falhasChunk > 0 || erroZeramento
+        ? {
+          error_message: [
+            ...(falhasChunk > 0 ? [`${falhasChunk} chunk(s) com erro de escrita (lote parcial — próximo ciclo reconcilia)`] : []),
+            ...(erroZeramento ? [`zeramento de quem saiu da lista não rodou: ${erroZeramento}`] : []),
+          ].join(" · "),
+        }
         : {}),
     });
 

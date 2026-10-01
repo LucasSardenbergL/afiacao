@@ -1,0 +1,9 @@
+// CAMADA: instrução EMITIDA. O gerador não EXECUTA o wrapper — IMPRIME o comando que o operador
+// (humano ou agente) vai copiar e rodar, e quem roda herda o exit 0 com ERROR. É a forma do
+// cabeçalho do PASSO 2 por eco de `scripts/sonda-versao-sql.ts` até 2026-10-01.
+export function cabecalhoDaLeitura(janelaMin: number): string {
+  return (
+    `-- PASSO 2 — lê e julga na janela de ${janelaMin} min. É SELECT puro — roda no read-only:\n` +
+    `--          bun run sonda:sql --so-leitura <edge>… | ~/.config/afiacao/psql-ro\n`
+  );
+}

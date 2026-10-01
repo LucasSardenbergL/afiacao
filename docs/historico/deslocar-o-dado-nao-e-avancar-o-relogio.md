@@ -132,3 +132,20 @@ do piloto foi relida por mim, e nenhuma foi falsificada.
   - `test-push-vendedora.sh` (T11): expediente `< 23:59` BRT, falha **02:59 UTC, 1 min/dia**;
   - `test-data-health-estoque-fonte-dado.sh` (N9): esperado calculado com `date` do bash contra
     `now()` do banco — dois relógios, segundos em torno de 11:00 e 21:00 UTC.
+
+### Adendo (2026-10-01): as 5 janelas acima estão FECHADAS — não reabra a caça
+
+A lista acima é o retrato de 26/09. Todas foram fechadas por PRs seguintes, cada um com o próprio
+diário; conferido em `origin/main` (`e570a1f4b`) lendo o arquivo, não o título do PR:
+
+| Prova | Conserto | Diário |
+|---|---|---|
+| `test-auto-aprovacao-piloto.sh` (B1) | #2588 — relógio controlado + sabotagens de janela | [provas-janela-de-relogio-fora-do-nucleo.md](provas-janela-de-relogio-fora-do-nucleo.md) |
+| `test-push-vendedora.sh` (T11) | #2588 — tick em instante fixo (quarta 12:00 BRT) | idem |
+| `test-data-health-estoque-fonte-dado.sh` (N9) | #2588 — `test.agora` nas bordas N9a–N9d, 1 relógio só | idem |
+| `test-positivacao-eligible-consumo.sh` | #2606 — relógio TRIPWIRE (`now()` sem `test.agora` levanta) + `TimeZone` UTC **e** SP; **entrou no núcleo** com falsificação | [positivacao-mes-sp-sob-sessao-utc.md](positivacao-mes-sp-sob-sessao-utc.md) |
+| `test-cfo-caixa-90d-otica.sh` (borda dos 90 d, núcleo) | #2657 — retrato no "hoje" de SP, não no `CURRENT_DATE` da sessão | — |
+
+A lição de processo: uma lista de "janelas latentes" num diário **apodrece no dia em que alguém conserta
+uma delas** — quem a relê depois caça fantasma. Ao fechar um item listado num diário alheio, deixe o
+ponteiro no diário de ORIGEM, não só no seu.

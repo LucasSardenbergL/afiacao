@@ -93,16 +93,54 @@
  * resultado é a SQLSTATE `42501` — ASCII, invariante a locale. A mensagem em texto NÃO entra no
  * veredito: o servidor pode mudar `lc_messages` e "permission denied" viraria "permissão negada",
  * quebrando uma asserção que não tem nada a ver com privilégio (é a lição de locale do #1483).
+ *
+ * ── Quem pode VIRAR o papel (2026-10-01) ──────────────────────────────────────────────────────
+ *
+ * `memberships` é o que o `claude_ro` HERDA. O sentido contrário não tinha asserção: os MEMBROS
+ * dele — quem pode `SET ROLE claude_ro`. Um `GRANT claude_ro TO authenticated` daria a qualquer
+ * usuário logado a leitura do papel, com BYPASSRLS, e todas as outras asserções sairiam verdes.
+ * `membros` é o conjunto EXATO das arestas (membro, opções, quem concedeu). Nasceu junto com a
+ * aresta que a nuvem precisa: o `postgres` (o papel do conector Lovable) com SET e sem INHERIT,
+ * para rodar as sondas executivas como o `claude_ro` — e sem herdar nada dele.
+ *
+ * ── Pela NUVEM (2026-10-01): `--sql-nuvem` / `--dados-nuvem=<arquivo>` ─────────────────────────
+ *
+ * A sessão da nuvem não tem `psql-ro` (a credencial não sai do Mac — `docs/agent/database.md` §1).
+ * A MESMA medição vai pelo transporte de `scripts/lib/transporte-nuvem.ts`, em UMA rodada: o
+ * catálogo é uma consulta do pacote (papel-parametrizada: `has_*_privilege('claude_ro', …)` e o
+ * catálogo cru dão a mesma resposta lidos pelo `postgres`), e as 4 sondas executivas viajam no
+ * PREÂMBULO do transporte, que roda cada uma COMO o `claude_ro` (`SET LOCAL ROLE`) e devolve só a
+ * SQLSTATE — a da vault, se um dia voltar a ler, devolve `RODOU`, nunca o segredo. Sem SET do
+ * `postgres` em `claude_ro`, as sondas NÃO viram resultado: o transporte recusa
+ * (`TRANSPORTE_SONDA_PAPEL`) e a sentinela sai 2 — o SET ROLE negado sai com a MESMA 42501 da
+ * negação esperada, e lê-lo como "negado" seria o falso verde perfeito.
  */
 import { execFileSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+
+import {
+  type Consultas,
+  type DadosNuvem,
+  gerarSqlNuvem,
+  lerArquivoDadosNuvem,
+  lerDadosNuvem,
+  type ResultadoSonda,
+  separarFlagsNuvem,
+  type SondaExecutiva,
+  type SondasExecutivas,
+} from '../scripts/lib/transporte-nuvem';
 
 const PSQL = process.env.PSQL_RO ?? join(homedir(), '.config', 'afiacao', 'psql-ro');
 
 /** O papel é sempre `claude_ro` — inclusive no PG17 do dente, que o cria com este nome. Nada de
  *  parametrizar: um audit que aceita apontar para outro papel pode passar verde medindo o errado. */
 const PAPEL = 'claude_ro';
+
+/** Quem consome a resposta da nuvem: a gerada para outro CLI é recusada como "arquivo de outra leitura". */
+export const CONSUMIDOR_NUVEM = 'claude-ro-hardening';
+
+const USO = 'Uso: bun run authz:claude-ro:prod [--sql-nuvem | --dados-nuvem=<arquivo>]';
 
 type Baseline = {
   /** Atributos do papel, em string única — qualquer mudança de um deles acusa. */
@@ -139,13 +177,15 @@ type Baseline = {
   /** ACL por COLUNA da tabela-fonte, como fingerprint `coluna|attacl`. Acusa nos dois sentidos:
    *  `token`/`parent` GANHANDO ACL e qualquer uma das 7 de telemetria PERDENDO o dela. */
   authColAcl: { schema: string; tabela: string; entradas: string[] };
+  /** Os MEMBROS do papel — quem pode virar o `claude_ro` — como `membro|admin=…,inherit=…,set=…|grantor`. */
+  membros: string[];
 };
 
 /**
  * O estado medido em 2026-08-25, depois de o founder colar os blocos. Cada linha aqui é uma
  * afirmação verificada naquele dia, não uma intenção de projeto.
  */
-const BASELINE_PROD: Baseline = {
+export const BASELINE_PROD: Baseline = {
   rolattrs: 'super=f bypassrls=t createrole=f createdb=f login=t',
   memberships: 0,
   guc: 'default_transaction_read_only=on',
@@ -226,24 +266,36 @@ const BASELINE_PROD: Baseline = {
       'user_id|{claude_ro=r/postgres}',
     ],
   },
+  membros: [
+    // A aresta original: o `postgres` criou o papel e ficou com ADMIN (sem herdar, sem virar).
+    'postgres|admin=sim,inherit=nao,set=nao|supabase_admin',
+    // A da NUVEM (2026-10-01): o conector entra como `postgres`, e as sondas executivas rodam
+    // como o `claude_ro` por `SET LOCAL ROLE`. SET sim, INHERIT não: virar, nunca herdar.
+    'postgres|admin=nao,inherit=nao,set=sim|postgres',
+  ],
 };
 
-/** Erro de EXECUÇÃO, não de contrato: exit 2. Um audit que não conseguiu medir não pode sair 0 —
- *  ausência de dado não é aprovação (docs/historico/evidencia-positiva-shell.md). */
+/** "Não consegui medir" (exit 2), de qualquer ponto — convertido UMA vez, em `executar`. Um audit
+ *  que não conseguiu medir não pode sair 0: ausência de dado não é aprovação
+ *  (docs/historico/evidencia-positiva-shell.md). */
+class MedicaoIncompleta extends Error {}
+
 function erroFatal(msg: string): never {
-  console.error(`❌ ${msg}`);
-  process.exit(2);
+  throw new MedicaoIncompleta(msg);
 }
 
-function carregarBaseline(): Baseline {
-  const raw = process.env.CLAUDE_RO_BASELINE_TEST_JSON;
+function carregarBaseline(raw: string | undefined, aviso: (linha: string) => void): Baseline {
   if (!raw) return BASELINE_PROD;
-  console.log('⚠️  baseline de TESTE (CLAUDE_RO_BASELINE_TEST_JSON) — não é o contrato real do repo.');
+  aviso('⚠️  baseline de TESTE (CLAUDE_RO_BASELINE_TEST_JSON) — não é o contrato real do repo.');
+  let b: Baseline;
   try {
-    return JSON.parse(raw) as Baseline;
+    b = JSON.parse(raw) as Baseline;
   } catch (e) {
     erroFatal(`CLAUDE_RO_BASELINE_TEST_JSON não é JSON válido: ${(e as Error).message}`);
   }
+  // Campo que o baseline de teste não traz é contrato incompleto, não "nada a conferir".
+  if (!Array.isArray(b.membros)) erroFatal("CLAUDE_RO_BASELINE_TEST_JSON sem o campo 'membros' (lista)");
+  return b;
 }
 
 const lit = (s: string) => `'${s.replace(/'/g, "''")}'`;
@@ -259,8 +311,11 @@ const arr = (xs: readonly string[]) => `ARRAY[${xs.map(lit).join(',')}]::text[]`
  * descarta 100% das linhas — medição vazia, nenhuma divergência, "✅ tudo bate". O formato do
  * dado é responsabilidade desta query, não do default de impressão do psql (que psqlrc e `\pset`
  * podem mudar por baixo).
+ *
+ * Ela também é a consulta `catalogo` do transporte da nuvem: por isso nenhum `;` no meio, nem em
+ * comentário (o transporte embute cada consulta num statement só e recusa o texto que o tenha).
  */
-function montarQuery(b: Baseline): string {
+export function montarQuery(b: Baseline): string {
   return `
 SELECT 'ROW|PAPEL|existe|'||(CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname=${lit(PAPEL)}) THEN 'SIM' ELSE 'NAO' END)
 UNION ALL
@@ -271,7 +326,7 @@ UNION ALL
 SELECT 'ROW|PAPEL|memberships|'||(SELECT count(*)::text FROM pg_auth_members m
        JOIN pg_roles r ON r.oid=m.member WHERE r.rolname=${lit(PAPEL)})
 UNION ALL
--- UNIÃO das duas fontes do GUC. "ALTER ROLE … SET" grava em pg_roles.rolconfig; a MESMA ordem
+-- UNIÃO das duas fontes do GUC. "ALTER ROLE … SET" grava em pg_roles.rolconfig, e a MESMA ordem
 -- com "IN DATABASE" grava em pg_db_role_setting e deixa rolconfig NULL. Ler uma só é falso-vermelho.
 SELECT 'ROW|PAPEL|guc|'||coalesce((
          SELECT string_agg(DISTINCT cfg, ',' ORDER BY cfg) FROM (
@@ -310,7 +365,7 @@ SELECT 'ROW|TABELA|'||t||'|'||(CASE
 UNION ALL
 -- "0 sem SELECT", não "413": ver decisão (2) no cabeçalho. O total viaja junto só como contexto
 -- para o humano — quem decide o veredito é o segundo número. O LATERAL com agregado devolve
--- SEMPRE 1 linha por schema (inclusive 0 objetos), então o piso de linhas segue determinístico;
+-- SEMPRE 1 linha por schema (inclusive 0 objetos), então o piso de linhas segue determinístico,
 -- e schema AUSENTE sai rotulado, porque "0 objetos, 0 sem SELECT" num schema que sumiu é o
 -- falso-verde da decisão (3) na sua forma mais discreta.
 SELECT 'ROW|COBERTURA|'||s||'|'||(CASE
@@ -354,6 +409,18 @@ SELECT 'ROW|AUTHCOL|'||a.attname||'|'||coalesce(a.attacl::text,'SEM_ACL')
  WHERE n.nspname=${lit(b.authColAcl.schema)} AND c.relname=${lit(b.authColAcl.tabela)}
    AND a.attnum>0 AND NOT a.attisdropped
 UNION ALL
+-- QUEM PODE VIRAR o papel: os MEMBROS dele, o sentido contrário das 'memberships' acima. Um
+-- 'GRANT claude_ro TO authenticated' daria a qualquer usuário logado a leitura do papel, com
+-- BYPASSRLS. Zero linhas é divergência legítima (a aresta da nuvem sumiu), por isso fora do piso.
+SELECT 'ROW|MEMBRO|'||u.rolname||'|admin='||(CASE WHEN m.admin_option THEN 'sim' ELSE 'nao' END)
+       ||',inherit='||(CASE WHEN m.inherit_option THEN 'sim' ELSE 'nao' END)
+       ||',set='||(CASE WHEN m.set_option THEN 'sim' ELSE 'nao' END)||'|'||g.rolname
+  FROM pg_auth_members m
+  JOIN pg_roles r ON r.oid=m.roleid
+  JOIN pg_roles u ON u.oid=m.member
+  JOIN pg_roles g ON g.oid=m.grantor
+ WHERE r.rolname=${lit(PAPEL)}
+UNION ALL
 SELECT 'ROW|NETACL|'||p.proname||'('||pg_get_function_identity_arguments(p.oid)||')|'
        ||coalesce(p.proacl::text,'DEFAULT')||'|F'
   FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='net'
@@ -370,6 +437,27 @@ SELECT 'ROW|PGNET|version|'||coalesce((SELECT extversion FROM pg_extension WHERE
 ;`;
 }
 
+/** As leituras de catálogo, como consultas do transporte: a mesma query, numa consulta só. */
+export function consultasNuvem(b: Baseline): Consultas {
+  return { catalogo: montarQuery(b) };
+}
+
+/**
+ * As sondas executivas no formato do transporte — rodam COMO o `claude_ro` no preâmbulo. Só a
+ * permitida devolve o valor (uma contagem, o que o caminho local imprime em `alcançável (N)`); as
+ * negadas devolvem só o desfecho, então a da vault nunca traz o segredo, nem se um dia ler.
+ */
+export function sondasNuvem(b: Baseline): SondasExecutivas {
+  const sondas: Record<string, SondaExecutiva> = {};
+  b.sondasNegadas.forEach((s, i) => {
+    sondas[`negada_${i + 1}`] = { sql: s.sql };
+  });
+  b.sondasPermitidas.forEach((s, i) => {
+    sondas[`permitida_${i + 1}`] = { sql: s.sql, devolverValor: true };
+  });
+  return { papel: PAPEL, sondas };
+}
+
 type Medicao = {
   papel: Record<string, string>;
   schemas: Record<string, string>;
@@ -380,19 +468,14 @@ type Medicao = {
   ponteReloptions: string | null;
   ponteColunas: string[];
   authColAcl: string[];
+  membros: string[];
 };
 
-function medir(b: Baseline): Medicao {
-  let saida: string;
-  try {
-    saida = execFileSync(PSQL, ['-tA', '-c', montarQuery(b)], { encoding: 'utf8' });
-  } catch (e) {
-    // psql-ro ausente, sem rede, credencial revogada e SQL inválido caem todos aqui.
-    erroFatal(`falha ao consultar o banco via psql-ro (${PSQL}): ${(e as Error).message}`);
-  }
+/** Lê a saída do catálogo — a do `psql -tA` ou as linhas da nuvem, que são as mesmas. */
+function lerMedicao(saida: string, b: Baseline): Medicao {
   const m: Medicao = {
     papel: {}, schemas: {}, tabelas: {}, cobertura: {}, netAcl: [], pgNet: null,
-    ponteReloptions: null, ponteColunas: [], authColAcl: [],
+    ponteReloptions: null, ponteColunas: [], authColAcl: [], membros: [],
   };
   let lidas = 0;
   for (const linha of saida.split('\n')) {
@@ -408,6 +491,7 @@ function medir(b: Baseline): Medicao {
     else if (grupo === 'PONTE') m.ponteReloptions = campos[3];
     else if (grupo === 'PONTECOL') m.ponteColunas.push(campos[2]);
     else if (grupo === 'AUTHCOL') m.authColAcl.push(`${campos[2]}|${campos.slice(3).join('|')}`);
+    else if (grupo === 'MEMBRO') m.membros.push(campos.slice(2).join('|'));
     else if (grupo === 'NETACL') {
       // O discriminador (F/R/N) vai no FIM, não no começo: as três formas têm número de campos
       // diferente (função = nome+acl, relação = nome+kind+acl, schema = nome+nspacl), e um
@@ -421,9 +505,9 @@ function medir(b: Baseline): Medicao {
   // Vir menos que o piso significa medição quebrada (parser, psqlrc, saída truncada), e medição
   // quebrada lida como "nada divergente" é o falso-verde perfeito: um audit silencioso é
   // indistinguível de um audit que aprovou.
-  // PONTECOL e AUTHCOL ficam FORA do piso: zero linha ali é regressão de verdade (view apagada,
-  // tabela-fonte sumida) e o comparador de conjunto a reporta como exit 1. Entrassem no piso, a
-  // mesma regressão sairia como exit 2 — severidade errada e mensagem enganosa.
+  // PONTECOL, AUTHCOL e MEMBRO ficam FORA do piso: zero linha ali é regressão de verdade (view
+  // apagada, tabela-fonte sumida, aresta removida) e o comparador de conjunto a reporta como exit 1.
+  // Entrassem no piso, a mesma regressão sairia como exit 2 — severidade errada e mensagem enganosa.
   const pisoFixo =
     5 + b.schemasComAlcance.length + b.schemasSemAlcance.length + b.tabelasLegiveis.length +
     b.schemasCobertura.length + 1 /* PGNET */ + 1 /* PONTE|reloptions */;
@@ -438,35 +522,38 @@ function medir(b: Baseline): Medicao {
 }
 
 /**
- * A sonda executiva: RODA a consulta e exige que ela falhe com 42501. Um psql por sonda, de
- * propósito — a asserção é sobre o statement chegar ao fim, e um `UNION ALL` com as outras
- * abortaria a query inteira no primeiro erro, levando junto a medição de catálogo.
+ * O erro que o `psql -v VERBOSITY=verbose` imprime (`ERROR:  42501: permission denied…`, ou
+ * `ERRO:` num servidor em pt_BR): a SQLSTATE e a mensagem. A severidade varia com o locale; a
+ * SQLSTATE não. Sem SQLSTATE (o cliente falando — conexão caída), fica o texto cru e SQLSTATE vazia.
  */
-function sondar(sondas: Baseline['sondasNegadas']): { rotulo: string; ok: boolean; obs: string }[] {
-  return sondas.map(({ rotulo, sql, sqlstate }) => {
-    const esperada = sqlstate ?? '42501';
-    try {
-      execFileSync(PSQL, ['-v', 'VERBOSITY=verbose', '-tA', '-c', sql], {
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-      // exit 0 = a consulta PASSOU. O alcance voltou.
-      return { rotulo, ok: false, obs: 'consulta teve SUCESSO — o alcance foi restaurado' };
-    } catch (e) {
-      const err = e as { stderr?: Buffer | string; stdout?: Buffer | string };
-      const texto = `${err.stderr ?? ''}${err.stdout ?? ''}`;
-      // A SQLSTATE é ASCII e invariante a locale: é o único pedaço da mensagem que sobrevive a uma
-      // troca de `lc_messages` no servidor (medido: esta prod fala pt_BR — "LINHA"/"DICA").
-      const negado = texto.includes(esperada);
-      return {
-        rotulo,
-        ok: negado,
-        obs: negado
-          ? `negado com ${esperada}`
-          : `falhou SEM ${esperada} (outro erro): ${texto.replace(/\s+/g, ' ').trim().slice(0, 160)}`,
-      };
-    }
-  });
+export function erroDoPsql(texto: string): { sqlstate: string; mensagem: string } {
+  const m = /(?:^|\s)[A-Z]+:\s+([0-9A-Z]{5}):\s+(.*)$/m.exec(texto);
+  if (m) return { sqlstate: m[1], mensagem: m[2].trim() };
+  return { sqlstate: '', mensagem: texto.replace(/\s+/g, ' ').trim() };
+}
+
+/** O erro de uma sonda como sai no relatório — a MESMA forma pelo psql e pela nuvem. */
+function detalheDoErro(r: { sqlstate: string; mensagem: string }): string {
+  return `${r.sqlstate === '' ? '' : `${r.sqlstate}: `}${r.mensagem}`.replace(/\s+/g, ' ').trim().slice(0, 160);
+}
+
+type VereditoSonda = { rotulo: string; ok: boolean; obs: string };
+
+/**
+ * A sonda executiva negada: a consulta, RODADA como o papel, tem de falhar com a SQLSTATE dela.
+ * A SQLSTATE é ASCII e invariante a locale: é o único pedaço do erro que sobrevive a uma troca de
+ * `lc_messages` no servidor (medido: esta prod fala pt_BR — "LINHA"/"DICA").
+ */
+function julgarNegada(s: Baseline['sondasNegadas'][number], r: ResultadoSonda): VereditoSonda {
+  const esperada = s.sqlstate ?? '42501';
+  // A consulta PASSOU. O alcance voltou.
+  if (r.tipo === 'rodou') return { rotulo: s.rotulo, ok: false, obs: 'consulta teve SUCESSO — o alcance foi restaurado' };
+  const negado = r.sqlstate === esperada;
+  return {
+    rotulo: s.rotulo,
+    ok: negado,
+    obs: negado ? `negado com ${esperada}` : `falhou SEM ${esperada} (outro erro): ${detalheDoErro(r)}`,
+  };
 }
 
 /**
@@ -475,166 +562,291 @@ function sondar(sondas: Baseline['sondasNegadas']): { rotulo: string; ok: boolea
  * "alcançável" são estados diferentes, e só o executor sabe qual é qual. Se a ponte cair, esta
  * sonda é a que percebe; nenhuma asserção de catálogo perceberia.
  */
-function sondarPermitidas(
-  sondas: Baseline['sondasPermitidas'],
-): { rotulo: string; ok: boolean; obs: string }[] {
-  return sondas.map(({ rotulo, sql }) => {
-    try {
-      const saida = execFileSync(PSQL, ['-v', 'VERBOSITY=verbose', '-tA', '-c', sql], {
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-      return { rotulo, ok: true, obs: `alcançável (${saida.trim().split('\n').pop() ?? ''})` };
-    } catch (e) {
-      const err = e as { stderr?: Buffer | string; stdout?: Buffer | string };
-      const texto = `${err.stderr ?? ''}${err.stdout ?? ''}`.replace(/\s+/g, ' ').trim();
-      return { rotulo, ok: false, obs: `consulta FALHOU — o alcance caiu: ${texto.slice(0, 160)}` };
-    }
+function julgarPermitida(s: Baseline['sondasPermitidas'][number], r: ResultadoSonda): VereditoSonda {
+  if (r.tipo === 'rodou') return { rotulo: s.rotulo, ok: true, obs: `alcançável (${r.valor})` };
+  return { rotulo: s.rotulo, ok: false, obs: `consulta FALHOU — o alcance caiu: ${detalheDoErro(r)}` };
+}
+
+/** O que o mundo dá à sentinela — injetado para o teste medir os dois caminhos com a MESMA prod. */
+export interface Dependencias {
+  /** O `CLAUDE_RO_BASELINE_TEST_JSON` (só o harness o define). */
+  baselineDeTeste: string | undefined;
+  /** O catálogo pelo `psql-ro` (`-tA -c`): SQL → stdout. Falha LANÇA. */
+  psql: (sql: string) => string;
+  /** UMA sonda executiva pelo `psql-ro`, que conecta COMO o `claude_ro`. */
+  sonda: (sql: string) => ResultadoSonda;
+  /** O conteúdo do arquivo do `--dados-nuvem`. */
+  lerArquivo: (caminho: string) => string;
+  agora: () => Date;
+}
+
+export interface Execucao {
+  exit: 0 | 1 | 2;
+  saida: string[];
+  erro: string[];
+}
+
+/** O desfecho de cada sonda, na ordem do baseline, pela nuvem — sonda sem desfecho é "não medi". */
+function desfechosDaNuvem(dados: DadosNuvem, prefixo: string, n: number): ResultadoSonda[] {
+  return Array.from({ length: n }, (_, i) => {
+    const r = dados.sondas.get(`${prefixo}_${i + 1}`);
+    if (r === undefined) erroFatal(`transporte da nuvem: a sonda '${prefixo}_${i + 1}' voltou sem desfecho`);
+    return r;
   });
 }
 
-// ── veredito ──────────────────────────────────────────────────────────────────────────────────
+function medirEJulgar(argv: readonly string[], deps: Dependencias, saida: string[], erro: string[]): 0 | 1 {
+  let nuvem: ReturnType<typeof separarFlagsNuvem>;
+  try {
+    nuvem = separarFlagsNuvem(argv);
+  } catch (e) {
+    erroFatal(`${(e as Error).message}. ${USO}`);
+  }
+  if (nuvem.resto.length > 0) erroFatal(`argumento desconhecido: ${nuvem.resto.join(' ')}. ${USO}`);
 
-const b = carregarBaseline();
-const m = medir(b);
-const div: string[] = [];
-const ok: string[] = [];
+  // Na 1ª rodada da nuvem o stdout É o SQL que o modelo copia verbatim: aviso nenhum pode cair nele.
+  const b = carregarBaseline(deps.baselineDeTeste, nuvem.sqlNuvem ? (l) => erro.push(l) : (l) => saida.push(l));
 
-const cmp = (rotulo: string, esperado: string, medido: string) =>
-  esperado === medido
-    ? ok.push(`${rotulo}: ${medido}`)
-    : div.push(`${rotulo}\n      esperado: ${esperado}\n      medido:   ${medido}`);
+  // A 1ª metade do transporte: só o texto — quem o executa é o modelo, pelo `query_database`.
+  if (nuvem.sqlNuvem) {
+    saida.push(gerarSqlNuvem(consultasNuvem(b), CONSUMIDOR_NUVEM, sondasNuvem(b)));
+    return 0;
+  }
 
-cmp('papel existe', 'SIM', m.papel.existe ?? '(sem linha)');
-cmp('atributos do papel', b.rolattrs, m.papel.rolattrs ?? '(sem linha)');
-cmp('memberships herdadas', String(b.memberships), m.papel.memberships ?? '(sem linha)');
-cmp('GUC read-only preso ao papel', b.guc, m.papel.guc ?? '(sem linha)');
-// Informativo, NÃO asserção: qual das duas fontes carrega o GUC pode mudar sem que a garantia
-// mude. Congelar a fonte transformaria um re-apply legítimo em vermelho.
-ok.push(`GUC vem de: ${m.papel.guc_fonte || '(nenhuma)'}`);
+  // A leitura de prod: o `psql-ro` no Mac, ou a resposta da nuvem já validada. O catálogo vem
+  // ANTES das sondas nos dois caminhos — medição de catálogo quebrada é exit 2 sem sonda nenhuma.
+  let m: Medicao;
+  let negadas: ResultadoSonda[];
+  let permitidas: ResultadoSonda[];
+  if (nuvem.dadosNuvem === null) {
+    let catalogo: string;
+    try {
+      catalogo = deps.psql(montarQuery(b));
+    } catch (e) {
+      // psql-ro ausente, sem rede, credencial revogada e SQL inválido caem todos aqui.
+      erroFatal(`falha ao consultar o banco via psql-ro (${PSQL}): ${(e as Error).message}`);
+    }
+    m = lerMedicao(catalogo, b);
+    // Um psql por sonda, de propósito — a asserção é sobre o statement chegar ao fim, e um
+    // `UNION ALL` com as outras abortaria a query inteira no primeiro erro.
+    negadas = b.sondasNegadas.map((s) => deps.sonda(s.sql));
+    permitidas = b.sondasPermitidas.map((s) => deps.sonda(s.sql));
+  } else {
+    let dados: DadosNuvem;
+    try {
+      dados = lerDadosNuvem(
+        deps.lerArquivo(nuvem.dadosNuvem),
+        { consultas: consultasNuvem(b), consumidor: CONSUMIDOR_NUVEM, sondas: sondasNuvem(b) },
+        deps.agora(),
+      );
+    } catch (e) {
+      const msg = (e as Error).message;
+      erroFatal(
+        `transporte da nuvem: ${msg}` +
+          (msg.includes('TRANSPORTE_SONDA_PAPEL')
+            ? `\n   → o conector entra como postgres: no SQL Editor, GRANT ${PAPEL} TO postgres WITH INHERIT FALSE, SET TRUE;` +
+              ' (docs/agent/database.md §1)'
+            : ''),
+      );
+    }
+    m = lerMedicao(dados.saidas.get('catalogo') ?? '', b);
+    negadas = desfechosDaNuvem(dados, 'negada', b.sondasNegadas.length);
+    permitidas = desfechosDaNuvem(dados, 'permitida', b.sondasPermitidas.length);
+  }
 
-for (const s of b.schemasComAlcance) cmp(`schema ${s} alcançável`, 'SIM', m.schemas[s] ?? '(sem linha)');
-for (const s of b.schemasSemAlcance) cmp(`schema ${s} FORA de alcance`, 'NAO', m.schemas[s] ?? '(sem linha)');
-for (const t of b.tabelasLegiveis) cmp(`SELECT em ${t}`, 'SIM', m.tabelas[t] ?? '(sem linha)');
+  // ── veredito ────────────────────────────────────────────────────────────────────────────────
+  // Daqui para baixo o juízo não sabe de onde veio a linha — é o ponto: o transporte não pode
+  // virar outro juiz.
+  const div: string[] = [];
+  const ok: string[] = [];
 
-for (const s of b.schemasCobertura) {
-  const c = m.cobertura[s];
-  if (!c) div.push(`cobertura de ${s}: linha ausente na medição`);
-  else {
-    cmp(`objetos de ${s} SEM SELECT`, '0', c.semSelect);
-    if (c.semSelect === '0') ok.push(`cobertura de ${s}: ${c.total} objetos (r/p/v/m), todos com SELECT`);
+  const cmp = (rotulo: string, esperado: string, medido: string) =>
+    esperado === medido
+      ? ok.push(`${rotulo}: ${medido}`)
+      : div.push(`${rotulo}\n      esperado: ${esperado}\n      medido:   ${medido}`);
+
+  cmp('papel existe', 'SIM', m.papel.existe ?? '(sem linha)');
+  cmp('atributos do papel', b.rolattrs, m.papel.rolattrs ?? '(sem linha)');
+  cmp('memberships herdadas', String(b.memberships), m.papel.memberships ?? '(sem linha)');
+  cmp('GUC read-only preso ao papel', b.guc, m.papel.guc ?? '(sem linha)');
+  // Informativo, NÃO asserção: qual das duas fontes carrega o GUC pode mudar sem que a garantia
+  // mude. Congelar a fonte transformaria um re-apply legítimo em vermelho.
+  ok.push(`GUC vem de: ${m.papel.guc_fonte || '(nenhuma)'}`);
+
+  for (const s of b.schemasComAlcance) cmp(`schema ${s} alcançável`, 'SIM', m.schemas[s] ?? '(sem linha)');
+  for (const s of b.schemasSemAlcance) cmp(`schema ${s} FORA de alcance`, 'NAO', m.schemas[s] ?? '(sem linha)');
+  for (const t of b.tabelasLegiveis) cmp(`SELECT em ${t}`, 'SIM', m.tabelas[t] ?? '(sem linha)');
+
+  for (const s of b.schemasCobertura) {
+    const c = m.cobertura[s];
+    if (!c) div.push(`cobertura de ${s}: linha ausente na medição`);
+    else {
+      cmp(`objetos de ${s} SEM SELECT`, '0', c.semSelect);
+      if (c.semSelect === '0') ok.push(`cobertura de ${s}: ${c.total} objetos (r/p/v/m), todos com SELECT`);
+    }
+  }
+
+  cmp('versão do pg_net', b.pgNetVersion, m.pgNet ?? '(sem linha)');
+
+  /** Conjunto contra conjunto, para acusar nos DOIS sentidos — fechou, abriu e apareceu novo. */
+  const cmpConjunto = (
+    rotulo: string,
+    esperadosArr: readonly string[],
+    medidosArr: readonly string[],
+    okFmt: (n: number) => string,
+  ) => {
+    const esperados = new Set(esperadosArr);
+    const medidos = new Set(medidosArr);
+    const sumiram = [...esperados].filter((x) => !medidos.has(x)).sort();
+    const surgiram = [...medidos].filter((x) => !esperados.has(x)).sort();
+    if (sumiram.length === 0 && surgiram.length === 0) {
+      ok.push(okFmt(medidos.size));
+      return;
+    }
+    div.push(
+      `${rotulo} mudou (${sumiram.length} sumiram, ${surgiram.length} surgiram)` +
+        sumiram.map((x) => `\n      − ${x}`).join('') +
+        surgiram.map((x) => `\n      + ${x}`).join(''),
+    );
+  };
+
+  cmpConjunto(
+    'ACL do schema net',
+    b.netAcl,
+    m.netAcl,
+    (n) => `ACL do schema net: ${n} entradas, idênticas ao baseline`,
+  );
+
+  // Quem pode VIRAR o papel. Um membro novo (`authenticated`, um papel de app) é leitura com
+  // BYPASSRLS para quem o tiver; a aresta da nuvem sumindo deixa as sondas sem papel na nuvem.
+  cmpConjunto(
+    `membros de ${PAPEL} (quem pode virar o papel)`,
+    b.membros,
+    m.membros,
+    (n) => `membros de ${PAPEL}: ${n} aresta(s), idênticas ao baseline (quem pode virar o papel)`,
+  );
+
+  // ── a ponte de view (#2275) ──────────────────────────────────────────────────────────────────
+  // O invoker vem PRIMEIRO: com ele resetado, o ACL por coluna deixa de ser barreira e as duas
+  // asserções seguintes passariam a medir um mundo onde `token` já é legível pelo OWNER.
+  const ponteNome = `${b.ponte.schema}.${b.ponte.relacao}`;
+  const reloptions = m.ponteReloptions ?? '(sem linha)';
+  if (reloptions === 'AUSENTE') {
+    div.push(
+      `ponte ${ponteNome} NÃO EXISTE — a telemetria de login morreu\n` +
+        `      recrie com o bloco de db/reconciliacao-claude-ro-private-auth.sql`,
+    );
+  } else if (reloptions === 'SEM_RELOPTIONS') {
+    div.push(
+      `ponte ${ponteNome} perdeu o security_invoker\n` +
+        `      um CREATE OR REPLACE VIEW sem o WITH RESETA a opção (database.md §4): a view voltou\n` +
+        `      a ler como o OWNER e o ACL por coluna DEIXOU de ser barreira`,
+    );
+  } else if (b.ponte.invokerAceitos.some((v) => reloptions.split(',').includes(v))) {
+    ok.push(`ponte ${ponteNome}: ${reloptions} (lê como o CALLER — o ACL por coluna segue barreira)`);
+  } else {
+    div.push(
+      `ponte ${ponteNome} com reloptions inesperado\n` +
+        `      esperado: um de ${b.ponte.invokerAceitos.join(' | ')}\n` +
+        `      medido:   ${reloptions}`,
+    );
+  }
+
+  // A asserção de SEGURANÇA, separada do drift: presença de `token`/`parent` na projeção é P0.
+  const proibidasNaPonte = b.ponte.colunasProibidas.filter((c) => m.ponteColunas.includes(c));
+  if (proibidasNaPonte.length > 0) {
+    div.push(
+      `🚨 ponte ${ponteNome} projeta ${proibidasNaPonte.join('/')}\n` +
+        `      isto REABRE a escalada: refresh token vivo troca-se por JWT de master em\n` +
+        `      POST /auth/v1/token?grant_type=refresh_token, que só pede a anon key (pública)`,
+    );
+  } else if (m.ponteColunas.length > 0) {
+    ok.push(`ponte ${ponteNome} não projeta ${b.ponte.colunasProibidas.join('/')}`);
+  }
+
+  // E o drift da projeção, nas duas direções: coluna que SAI mata metade da telemetria em silêncio.
+  cmpConjunto(
+    `projeção da ponte ${ponteNome}`,
+    b.ponte.colunas,
+    m.ponteColunas,
+    (n) => `projeção da ponte ${ponteNome}: ${n} colunas, idênticas ao baseline`,
+  );
+
+  // ── ACL por COLUNA da tabela-fonte (a 2ª barreira, lida de pg_attribute.attacl) ─────────────
+  const fonteNome = `${b.authColAcl.schema}.${b.authColAcl.tabela}`;
+  cmpConjunto(
+    `ACL por coluna de ${fonteNome}`,
+    b.authColAcl.entradas,
+    m.authColAcl,
+    (n) =>
+      `ACL por coluna de ${fonteNome}: ${n} colunas, idênticas ao baseline ` +
+      `(${b.ponte.colunasProibidas.join('/')} SEM ACL próprio)`,
+  );
+
+  for (const s of b.sondasNegadas.map((sonda, i) => julgarNegada(sonda, negadas[i]))) {
+    if (s.ok) ok.push(`sonda ${s.rotulo}: ${s.obs}`);
+    else div.push(`sonda ${s.rotulo}\n      ${s.obs}`);
+  }
+  for (const s of b.sondasPermitidas.map((sonda, i) => julgarPermitida(sonda, permitidas[i]))) {
+    if (s.ok) ok.push(`sonda + ${s.rotulo}: ${s.obs}`);
+    else div.push(`sonda + ${s.rotulo}\n      ${s.obs}`);
+  }
+
+  saida.push(`\n🔒 sentinela do endurecimento de \`${PAPEL}\` — baseline de 2026-08-25\n`);
+  for (const l of ok) saida.push(`  ✅ ${l}`);
+  if (div.length === 0) {
+    saida.push(`\n✅ ${ok.length} asserções batem. O endurecimento continua de pé.\n`);
+    return 0;
+  }
+  saida.push('');
+  for (const l of div) erro.push(`  ❌ ${l}`);
+  erro.push(
+    `\n❌ ${div.length} divergência(s). O endurecimento de \`${PAPEL}\` REGREDIU ou drifou.\n` +
+      `   Contexto: docs/historico/revoke-que-nao-revoga.md · docs/agent/database.md §1\n` +
+      `   Se a divergência for só no ACL do net e a versão do pg_net mudou, a causa é um upgrade\n` +
+      `   da extensão feito pelo Supabase — reavalie e atualize o baseline com o novo estado.\n`,
+  );
+  return 1;
+}
+
+/** A execução inteira, com o mundo injetado. Nunca lança: falha de medição vira exit 2 com o motivo. */
+export function executar(argv: readonly string[], deps: Dependencias): Execucao {
+  const saida: string[] = [];
+  const erro: string[] = [];
+  let exit: 0 | 1 | 2;
+  try {
+    exit = medirEJulgar(argv, deps, saida, erro);
+  } catch (e) {
+    // Exceção INESPERADA também é "não medi" (2): o exit 1 cru do bun seria lido como divergência.
+    erro.push(`❌ ${e instanceof MedicaoIncompleta ? e.message : `exceção inesperada: ${(e as Error).message}`}`);
+    exit = 2;
+  }
+  return { exit, saida, erro };
+}
+
+function sondaReal(sql: string): ResultadoSonda {
+  try {
+    const saida = execFileSync(PSQL, ['-v', 'VERBOSITY=verbose', '-tA', '-c', sql], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    // exit 0 = a consulta PASSOU; o valor é a última linha (o psqlrc ecoa dois `SET` antes).
+    return { tipo: 'rodou', valor: saida.trim().split('\n').pop() ?? '' };
+  } catch (e) {
+    const err = e as { stderr?: Buffer | string; stdout?: Buffer | string };
+    return { tipo: 'erro', ...erroDoPsql(`${err.stderr ?? ''}${err.stdout ?? ''}`) };
   }
 }
 
-cmp('versão do pg_net', b.pgNetVersion, m.pgNet ?? '(sem linha)');
-
-/** Conjunto contra conjunto, para acusar nos DOIS sentidos — fechou, abriu e apareceu novo. */
-const cmpConjunto = (
-  rotulo: string,
-  esperadosArr: readonly string[],
-  medidosArr: readonly string[],
-  okFmt: (n: number) => string,
-) => {
-  const esperados = new Set(esperadosArr);
-  const medidos = new Set(medidosArr);
-  const sumiram = [...esperados].filter((x) => !medidos.has(x)).sort();
-  const surgiram = [...medidos].filter((x) => !esperados.has(x)).sort();
-  if (sumiram.length === 0 && surgiram.length === 0) {
-    ok.push(okFmt(medidos.size));
-    return;
-  }
-  div.push(
-    `${rotulo} mudou (${sumiram.length} sumiram, ${surgiram.length} surgiram)` +
-      sumiram.map((x) => `\n      − ${x}`).join('') +
-      surgiram.map((x) => `\n      + ${x}`).join(''),
-  );
-};
-
-cmpConjunto(
-  'ACL do schema net',
-  b.netAcl,
-  m.netAcl,
-  (n) => `ACL do schema net: ${n} entradas, idênticas ao baseline`,
-);
-
-// ── a ponte de view (#2275) ────────────────────────────────────────────────────────────────────
-// O invoker vem PRIMEIRO: com ele resetado, o ACL por coluna deixa de ser barreira e as duas
-// asserções seguintes passariam a medir um mundo onde `token` já é legível pelo OWNER.
-const ponteNome = `${b.ponte.schema}.${b.ponte.relacao}`;
-const reloptions = m.ponteReloptions ?? '(sem linha)';
-if (reloptions === 'AUSENTE') {
-  div.push(
-    `ponte ${ponteNome} NÃO EXISTE — a telemetria de login morreu\n` +
-      `      recrie com o bloco de db/reconciliacao-claude-ro-private-auth.sql`,
-  );
-} else if (reloptions === 'SEM_RELOPTIONS') {
-  div.push(
-    `ponte ${ponteNome} perdeu o security_invoker\n` +
-      `      um CREATE OR REPLACE VIEW sem o WITH RESETA a opção (database.md §4): a view voltou\n` +
-      `      a ler como o OWNER e o ACL por coluna DEIXOU de ser barreira`,
-  );
-} else if (b.ponte.invokerAceitos.some((v) => reloptions.split(',').includes(v))) {
-  ok.push(`ponte ${ponteNome}: ${reloptions} (lê como o CALLER — o ACL por coluna segue barreira)`);
-} else {
-  div.push(
-    `ponte ${ponteNome} com reloptions inesperado\n` +
-      `      esperado: um de ${b.ponte.invokerAceitos.join(' | ')}\n` +
-      `      medido:   ${reloptions}`,
-  );
+if (import.meta.main) {
+  const r = executar(process.argv.slice(2), {
+    baselineDeTeste: process.env.CLAUDE_RO_BASELINE_TEST_JSON,
+    psql: (sql) => execFileSync(PSQL, ['-tA', '-c', sql], { encoding: 'utf8' }),
+    sonda: sondaReal,
+    lerArquivo: lerArquivoDadosNuvem,
+    agora: () => new Date(),
+  });
+  for (const l of r.saida) console.log(l);
+  for (const l of r.erro) console.error(l);
+  process.exit(r.exit);
 }
-
-// A asserção de SEGURANÇA, separada do drift: presença de `token`/`parent` na projeção é P0.
-const proibidasNaPonte = b.ponte.colunasProibidas.filter((c) => m.ponteColunas.includes(c));
-if (proibidasNaPonte.length > 0) {
-  div.push(
-    `🚨 ponte ${ponteNome} projeta ${proibidasNaPonte.join('/')}\n` +
-      `      isto REABRE a escalada: refresh token vivo troca-se por JWT de master em\n` +
-      `      POST /auth/v1/token?grant_type=refresh_token, que só pede a anon key (pública)`,
-  );
-} else if (m.ponteColunas.length > 0) {
-  ok.push(`ponte ${ponteNome} não projeta ${b.ponte.colunasProibidas.join('/')}`);
-}
-
-// E o drift da projeção, nas duas direções: coluna que SAI mata metade da telemetria em silêncio.
-cmpConjunto(
-  `projeção da ponte ${ponteNome}`,
-  b.ponte.colunas,
-  m.ponteColunas,
-  (n) => `projeção da ponte ${ponteNome}: ${n} colunas, idênticas ao baseline`,
-);
-
-// ── ACL por COLUNA da tabela-fonte (a 2ª barreira, lida de pg_attribute.attacl) ───────────────
-const fonteNome = `${b.authColAcl.schema}.${b.authColAcl.tabela}`;
-cmpConjunto(
-  `ACL por coluna de ${fonteNome}`,
-  b.authColAcl.entradas,
-  m.authColAcl,
-  (n) =>
-    `ACL por coluna de ${fonteNome}: ${n} colunas, idênticas ao baseline ` +
-    `(${b.ponte.colunasProibidas.join('/')} SEM ACL próprio)`,
-);
-
-for (const s of sondar(b.sondasNegadas)) {
-  if (s.ok) ok.push(`sonda ${s.rotulo}: ${s.obs}`);
-  else div.push(`sonda ${s.rotulo}\n      ${s.obs}`);
-}
-for (const s of sondarPermitidas(b.sondasPermitidas)) {
-  if (s.ok) ok.push(`sonda + ${s.rotulo}: ${s.obs}`);
-  else div.push(`sonda + ${s.rotulo}\n      ${s.obs}`);
-}
-
-console.log(`\n🔒 sentinela do endurecimento de \`${PAPEL}\` — baseline de 2026-08-25\n`);
-for (const l of ok) console.log(`  ✅ ${l}`);
-if (div.length === 0) {
-  console.log(`\n✅ ${ok.length} asserções batem. O endurecimento continua de pé.\n`);
-  process.exit(0);
-}
-console.log('');
-for (const l of div) console.error(`  ❌ ${l}`);
-console.error(
-  `\n❌ ${div.length} divergência(s). O endurecimento de \`${PAPEL}\` REGREDIU ou drifou.\n` +
-    `   Contexto: docs/historico/revoke-que-nao-revoga.md · docs/agent/database.md §1\n` +
-    `   Se a divergência for só no ACL do net e a versão do pg_net mudou, a causa é um upgrade\n` +
-    `   da extensão feito pelo Supabase — reavalie e atualize o baseline com o novo estado.\n`,
-);
-process.exit(1);

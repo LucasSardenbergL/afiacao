@@ -30,6 +30,19 @@
  * `--sem-rede` mede sem `git fetch` — e o denominador DIZ isso. `AUTHZ_DERIVA_CORPO_TEST_JSON`
  * (arquivo `{ migrations, baseline }`) troca o repo por uma fixture: é o que o harness usa, e é
  * por casar `AUTHZ_*_TEST_JSON` que o carimbo se recusa a gravar com ele setado.
+ *
+ * ## Pela NUVEM (2026-10-01): `--sql-nuvem` / `--dados-nuvem=<arquivo>`
+ *
+ * A sessão da nuvem não tem `psql-ro` (a credencial não sai do Mac — `docs/agent/database.md` §1).
+ * A MESMA medição vai pelo transporte de `scripts/lib/transporte-nuvem.ts`, em duas rodadas que leem
+ * o repo do mesmo jeito — a sonda depende dele, os nomes vêm das migrations da `origin/main`:
+ *   1. `--sql-nuvem` faz o fetch, modela o repo e imprime UM SQL: as duas consultas da sonda
+ *      (`consultasDeriva`) num statement só, que tem UM retrato (a garantia do REPEATABLE READ);
+ *   2. o modelo o roda VERBATIM pelo `query_database` do conector Lovable e grava a resposta;
+ *   3. `--dados-nuvem=<arquivo>` refaz o fetch e o SQL, valida a resposta (md5, `sql_md5`, trava,
+ *      frescor) e entrega ao MESMO juízo o texto que o psql imprimiria (`saidaComoPsql`).
+ * Se a main mudar o conjunto de funções entre as rodadas, o SQL refeito não é o executado e o
+ * transporte recusa (`TRANSPORTE_SQL_DIVERGENTE`, exit 2): rode as duas de novo.
  */
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
@@ -40,6 +53,7 @@ import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 import { historicoDeCorpos, type MigrationLida } from '../scripts/lib/corpo-esperado';
 import {
+  consultasDeriva,
   type EntradaBaseline,
   julgarDeriva,
   lerBaseline,
@@ -50,30 +64,152 @@ import {
 } from '../scripts/lib/deriva-corpo';
 import { migrationsDaRef } from '../scripts/lib/migrations-da-ref';
 import { alvosDeCorpo, julgarPrecondicao } from '../scripts/lib/precondicao-banco';
+import {
+  type DadosNuvem,
+  gerarSqlNuvem,
+  lerArquivoDadosNuvem,
+  lerDadosNuvem,
+  separarFlagsNuvem,
+} from '../scripts/lib/transporte-nuvem';
 import { gitBytes } from '../scripts/pendencias-prompt';
 
 const PSQL = process.env.PSQL_RO ?? join(homedir(), '.config', 'afiacao', 'psql-ro');
 const RAIZ = join(import.meta.dirname, '..');
 const BASELINE = join(RAIZ, 'db', 'deriva-corpo-baseline.json');
 
+/** Quem consome a resposta da nuvem: a gerada para outro CLI é recusada como "arquivo de outra leitura". */
+export const CONSUMIDOR_NUVEM = 'deriva-corpo';
+
+const USO = 'Uso: bun run deriva:corpo:prod [--sem-rede] [--sql-nuvem | --dados-nuvem=<arquivo>]';
+
+/** "Não medi" (exit 2), lançado de qualquer ponto e convertido UMA vez, em `executar`. */
+class MedicaoIncompleta extends Error {}
+
 /** Erro de EXECUÇÃO: exit 2. Sem nenhum `✅` — "não medi" não pode virar resumo verde no carimbo. */
 function erroFatal(msg: string): never {
-  console.error(`⛔ [INCERTO] ${msg}`);
-  console.error('⛔ deriva-corpo — medição INCOMPLETA: nada acima é veredito sobre prod');
-  process.exit(2);
+  throw new MedicaoIncompleta(msg);
 }
 
-interface Entrada {
+export interface Entrada {
   lidas: MigrationLida[];
   baseline: EntradaBaseline[];
   sha: string;
   fetch: boolean;
 }
 
-function carregarEntrada(semRede: boolean): Entrada {
+/** O que o mundo dá ao audit — injetado para o teste medir os dois caminhos com a MESMA prod. */
+export interface Dependencias {
+  /** O repo (git ou fixture). `aviso` recebe o que sai antes do veredito. */
+  carregarEntrada: (semRede: boolean, aviso: (linha: string) => void) => Entrada;
+  /** O `psql-ro` (`-q -v ON_ERROR_STOP=1 -tA -F '|' -c`): SQL → stdout. Falha LANÇA. */
+  psql: (sql: string) => string;
+  /** O conteúdo do arquivo do `--dados-nuvem`. */
+  lerArquivo: (caminho: string) => string;
+  agora: () => Date;
+}
+
+export interface Execucao {
+  exit: 0 | 1 | 2;
+  saida: string[];
+  erro: string[];
+}
+
+/**
+ * O texto que o `psql -q -tA -F '|'` imprime para `BEGIN; <sonda>; <detalhe>; COMMIT;` — medido no
+ * psql 17: os result sets em sequência, cada linha terminada em `\n`, e NADA para result set vazio
+ * (nem separador, nem rodapé). É o que o parser do caminho local recebe; o da nuvem recebe o mesmo.
+ */
+export function saidaComoPsql(dados: DadosNuvem): string {
+  return ['sonda', 'detalhe']
+    .flatMap((nome) => {
+      const linhas = dados.linhas.get(nome);
+      if (linhas === undefined) throw new MedicaoIncompleta(`transporte da nuvem: a resposta não trouxe a consulta '${nome}'`);
+      return linhas.map((l) => `${l}\n`);
+    })
+    .join('');
+}
+
+function medir(argv: readonly string[], deps: Dependencias, saida: string[], erro: string[]): 0 | 1 | 2 {
+  let nuvem: ReturnType<typeof separarFlagsNuvem>;
+  try {
+    nuvem = separarFlagsNuvem(argv);
+  } catch (e) {
+    erroFatal(`${mensagemDeErro(e) ?? 'flags da nuvem ilegíveis'}. ${USO}`);
+  }
+  const desconhecidos = nuvem.resto.filter((a) => a !== '--sem-rede');
+  if (desconhecidos.length > 0) erroFatal(`argumento desconhecido: ${desconhecidos.join(' ')}. ${USO}`);
+
+  // Na 1ª rodada da nuvem o stdout É o SQL que o modelo copia verbatim: aviso nenhum pode cair nele.
+  const aviso = nuvem.sqlNuvem ? (l: string) => erro.push(l) : (l: string) => saida.push(l);
+  const { lidas, baseline, sha, fetch } = deps.carregarEntrada(nuvem.resto.includes('--sem-rede'), aviso);
+
+  const modelo = modelarRepo(lidas);
+  const historico = historicoDeCorpos(lidas);
+  const alvos = [...modelo.nomes].sort((a, b) => a.localeCompare(b, 'en')).map((rpc) => ({ rpc, edges: [] as string[] }));
+  if (alvos.length === 0) erroFatal('o repo não define função `public` nenhuma — é leitura quebrada, não universo vazio');
+  const nomes = [...new Set([...alvosDeCorpo(alvos, historico), ...modelo.nomes])];
+  // A sonda recusa nome fora do alfabeto `[a-z0-9_]` em vez de escapar — e isso é "não medi".
+  const consultas = consultasDeriva(nomes);
+
+  // A 1ª metade do transporte: só o texto — quem o executa é o modelo, pelo `query_database`.
+  if (nuvem.sqlNuvem) {
+    saida.push(gerarSqlNuvem(consultas, CONSUMIDOR_NUVEM));
+    return 0;
+  }
+
+  let bruta: string;
+  if (nuvem.dadosNuvem === null) {
+    bruta = deps.psql(montarSondaDeriva(nomes));
+  } else {
+    let dados: DadosNuvem;
+    try {
+      dados = lerDadosNuvem(deps.lerArquivo(nuvem.dadosNuvem), { consultas, consumidor: CONSUMIDOR_NUVEM }, deps.agora());
+    } catch (e) {
+      erroFatal(`transporte da nuvem: ${mensagemDeErro(e) ?? 'resposta ilegível'}`);
+    }
+    bruta = saidaComoPsql(dados);
+  }
+
+  // Daqui para baixo o juízo não sabe de onde veio a linha — é o ponto: o transporte não pode
+  // virar outro juiz.
+  const leitura = parsearSondaDeriva(bruta);
+  // O veredito do gate do pacote sobre a MESMA sonda: os controles fail-closed dele (marcador,
+  // controle positivo, dialeto, inventário) valem aqui sem reimplementação.
+  const controles = julgarPrecondicao(alvos, leitura.sonda, 0, {
+    historico,
+    inventarioDaRef: lidas.length,
+    migrationsLidas: lidas.length,
+    funcoesConhecidas: historico.size,
+  });
+  const resultado = julgarDeriva({ modelo, leitura, baseline, controles });
+  const relatorio = relatarDeriva(resultado, { sha, fetch, agora: leitura.agora });
+  saida.push(...relatorio.saida);
+  erro.push(...relatorio.erro);
+  return resultado.exit;
+}
+
+/** A execução inteira, com o mundo injetado. Nunca lança: toda falha vira exit 2 com o motivo. */
+export function executar(argv: readonly string[], deps: Dependencias): Execucao {
+  const saida: string[] = [];
+  const erro: string[] = [];
+  let exit: 0 | 1 | 2;
+  try {
+    exit = medir(argv, deps, saida, erro);
+  } catch (e) {
+    // Exceção INESPERADA em qualquer ponto é "não medi" (2). Deixá-la escapar daria o exit 1 cru do
+    // bun — e o carimbo leria 1 como "prod divergiu", um achado inventado.
+    const motivo =
+      e instanceof MedicaoIncompleta ? e.message : `exceção inesperada: ${mensagemDeErro(e) ?? 'erro desconhecido'}`;
+    erro.push(`⛔ [INCERTO] ${motivo}`, '⛔ deriva-corpo — medição INCOMPLETA: nada acima é veredito sobre prod');
+    exit = 2;
+  }
+  return { exit, saida, erro };
+}
+
+function carregarEntradaReal(semRede: boolean, aviso: (linha: string) => void): Entrada {
   const teste = process.env.AUTHZ_DERIVA_CORPO_TEST_JSON;
   if (teste) {
-    console.log('⚠️  entrada de TESTE (AUTHZ_DERIVA_CORPO_TEST_JSON) — não é o repo real.');
+    aviso('⚠️  entrada de TESTE (AUTHZ_DERIVA_CORPO_TEST_JSON) — não é o repo real.');
     const obj = JSON.parse(readFileSync(teste, 'utf8')) as { migrations: MigrationLida[]; baseline: unknown };
     // A MESMA ordem do caminho real (`migrationsDaRef`: lexical do nome) — a fixture não impõe outra.
     const lidas = [...obj.migrations].sort((a, b) => a.nome.localeCompare(b.nome, 'en'));
@@ -100,21 +236,10 @@ function carregarEntrada(semRede: boolean): Entrada {
   };
 }
 
-function medir(semRede: boolean): 0 | 1 | 2 {
-  const { lidas, baseline, sha, fetch } = carregarEntrada(semRede);
-
-  const modelo = modelarRepo(lidas);
-  const historico = historicoDeCorpos(lidas);
-  const alvos = [...modelo.nomes].sort((a, b) => a.localeCompare(b, 'en')).map((rpc) => ({ rpc, edges: [] as string[] }));
-  if (alvos.length === 0) erroFatal('o repo não define função `public` nenhuma — é leitura quebrada, não universo vazio');
-  const nomes = [...new Set([...alvosDeCorpo(alvos, historico), ...modelo.nomes])];
-  // A sonda recusa nome fora do alfabeto `[a-z0-9_]` em vez de escapar — e isso é "não medi".
-  const sql = montarSondaDeriva(nomes);
-
-  let saida: string;
+function psqlReal(sql: string): string {
   try {
     // `-c` (não `-f`): só `-c` sai ≠ 0 em ERROR pelo wrapper; `-q` cala os `SET` do psqlrc.
-    saida = execFileSync(PSQL, ['-q', '-v', 'ON_ERROR_STOP=1', '-tA', '-F', '|', '-c', sql], {
+    return execFileSync(PSQL, ['-q', '-v', 'ON_ERROR_STOP=1', '-tA', '-F', '|', '-c', sql], {
       encoding: 'utf8',
       maxBuffer: 256 * 1024 * 1024,
       timeout: 180_000,
@@ -123,33 +248,16 @@ function medir(semRede: boolean): 0 | 1 | 2 {
     const err = e as { status?: number | null; stderr?: string };
     erroFatal(`psql-ro saiu ${err.status ?? '?'}: ${(err.stderr ?? mensagemDeErro(e) ?? '').trim().slice(0, 300)}`);
   }
+}
 
-  const leitura = parsearSondaDeriva(saida);
-  // O veredito do gate do pacote sobre a MESMA sonda: os controles fail-closed dele (marcador,
-  // controle positivo, dialeto, inventário) valem aqui sem reimplementação.
-  const controles = julgarPrecondicao(alvos, leitura.sonda, 0, {
-    historico,
-    inventarioDaRef: lidas.length,
-    migrationsLidas: lidas.length,
-    funcoesConhecidas: historico.size,
+if (import.meta.main) {
+  const r = executar(process.argv.slice(2), {
+    carregarEntrada: carregarEntradaReal,
+    psql: psqlReal,
+    lerArquivo: lerArquivoDadosNuvem,
+    agora: () => new Date(),
   });
-  const resultado = julgarDeriva({ modelo, leitura, baseline, controles });
-  const { saida: linhas, erro } = relatarDeriva(resultado, { sha, fetch, agora: leitura.agora });
-  for (const l of linhas) console.log(l);
-  for (const l of erro) console.error(l);
-  return resultado.exit;
+  for (const l of r.saida) console.log(l);
+  for (const l of r.erro) console.error(l);
+  process.exit(r.exit);
 }
-
-function main(): void {
-  let exit: 0 | 1 | 2;
-  try {
-    exit = medir(process.argv.includes('--sem-rede'));
-  } catch (e) {
-    // Exceção INESPERADA em qualquer ponto é "não medi" (2). Deixá-la escapar daria o exit 1 cru do
-    // bun — e o carimbo leria 1 como "prod divergiu", um achado inventado.
-    erroFatal(`exceção inesperada: ${mensagemDeErro(e) ?? 'erro desconhecido'}`);
-  }
-  process.exit(exit);
-}
-
-main();

@@ -16,6 +16,7 @@ import { buildProductIdMap, montarCatalogoPorCod } from "../_shared/product-idma
 import { avaliarPagina, MAX_PAGINAS_LISTAGEM, MAX_PAGINAS_POS_ESTOQUE, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
 import { acumularPosicoesDaPagina, type PosicaoEstoque } from "../_shared/pos-estoque.ts";
 import { atenderSondaOptions } from '../_shared/sonda-cron.ts';
+import { hojeSP, paraDataOmie } from "../_shared/hoje-sp.ts";
 import {
   decidirRetentativaOmie,
   MAX_TENTATIVAS_OMIE,
@@ -1433,7 +1434,7 @@ async function syncInventory(db: SupabaseClient, account: OmieAccount) {
       const result = (await callOmie(account, "estoque/consulta/", "ListarPosEstoque", {
         nPagina: pagina,
         nRegPorPagina: 100,
-        dDataPosicao: new Date().toLocaleDateString("pt-BR"),
+        dDataPosicao: paraDataOmie(hojeSP()), // a posição de HOJE em SP (toLocaleDateString sem fuso = dia UTC às 21h+)
       })) as unknown as OmieListarPosEstoqueResponse;
 
       // Piso MONOTÔNICO + teto fail-fast (_shared/omie-paginacao.ts, Codex P1 #1341/#1353):
@@ -1719,7 +1720,7 @@ async function syncInventoryFull(db: SupabaseClient, account: OmieAccount) {
       const result = (await callOmie(account, "estoque/consulta/", "ListarPosEstoque", {
         nPagina: pagina,
         nRegPorPagina: 100,
-        dDataPosicao: new Date().toLocaleDateString("pt-BR"),
+        dDataPosicao: paraDataOmie(hojeSP()), // a posição de HOJE em SP (toLocaleDateString sem fuso = dia UTC às 21h+)
         cExibeTodos: "S",
       })) as unknown as OmieListarPosEstoqueResponse;
 

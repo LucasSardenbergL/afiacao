@@ -39,8 +39,13 @@ export const respostaSonda = criarRespostaSonda("disparar-pedidos-aprovados");
  *
  * ⚠️ O sensor só prova versões a partir de si mesmo: um bundle que tenha o marco causal mas seja
  * ANTERIOR ao #1747 não responde `versao` nenhuma. Ausência do campo = bundle pré-sensor.
+ *
+ * v1.4 (2026-10-01) — o dia de SP (classe ii do fuso, fase 3): o dDtPrevisao do IncluirPedCompra sem data
+ * do portal (hoje + lead time em dias úteis, `./previsao.ts`), o yymmdd do número do pedido e o
+ * `dataCiclo` padrão saíam do dia UTC do servidor — o pedido aprovado (= disparado) das 21:00 às 23:59 BRT
+ * ia ao Omie com a previsão um dia útil adiante. O ramo do portal não muda. Nenhuma pré-condição de banco.
  */
-export const VERSAO = "v1.3-email-implantado-sayerlack";
+export const VERSAO = "v1.4-hoje-sp-previsao";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO = "esta edge cria pedido de compra REAL no Omie, inclusive em dry_run";
