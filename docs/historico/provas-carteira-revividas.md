@@ -20,9 +20,11 @@ Melhorias (`619fdf35…`, `7be92ff8…`), o `private.padrao_like_contem` (`b34a1
 `reconcile_score_owner_from_carteira`). O ACL delas também é igual; a diferença são só os papéis de sandbox
 do Lovable e o `claude_ro`, que existem apenas em prod.
 
-A cadeia viva de Melhorias pega 5 migrations: a `20260929000234` (as 2 RPCs com o escape de curinga) e as
-4 de `order_items`/`sales_orders`. A de fornecedores pega 1, o trigger de coerência de `sales_orders`.
-As 4 funções de fornecedores são as do snapshot, e a cadeia vazia para elas é legítima.
+A cadeia viva de Melhorias pega 6 migrations: a `20260929000234` (as 2 RPCs com o escape de curinga), as
+4 de `order_items`/`sales_orders` e a `20261001100000`, o GRANT por coluna do funil do canal (#2715), que
+mergeou com este PR aberto e entrou sozinha nas duas cadeias porque elas guardam `sales_orders`. É a
+cadeia dinâmica fazendo o que promete. A de fornecedores pega 2: o trigger de coerência de `sales_orders`
+e o mesmo GRANT. As 4 funções de fornecedores são as do snapshot, e a cadeia vazia para elas é legítima.
 
 Comparei também o catálogo das 16 tabelas que as provas leem ou escrevem: colunas, constraints, índices,
 gatilhos, o corpo de cada função de gatilho e o ACL. São 368 linhas de prod contra 369 do banco montado.

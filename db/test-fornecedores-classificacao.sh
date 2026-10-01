@@ -5,8 +5,8 @@
 # (db/lib/corpo-vivo.sh: snapshot + ACL medido em prod + a cadeia viva das 4 funções, dos triggers que o
 # seed e a limpeza disparam — o da carteira, o guard e os de coerência de sales_orders no seed, o
 # farmer_expirar_pendentes_do_dono_anterior no DELETE da aplicar — e das tabelas que elas leem e escrevem;
-# hoje 1 migration, o trigger de coerência
-# de sales_orders). As 4 funções são IGUAIS às do snapshot (md5 = o de prod, medido em 2026-10-01).
+# hoje 2 migrations sobre sales_orders, o trigger de coerência e o GRANT por coluna do funil). As 4 funções
+# são IGUAIS às do snapshot (md5 = o de prod, medido em 2026-10-01).
 #
 # O que ela assevera (cada regra com sabotagem própria; os positivos são as pré-condições que as
 # sabotagens exigem verdes):

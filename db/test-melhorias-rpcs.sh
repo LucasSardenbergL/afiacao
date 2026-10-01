@@ -2,9 +2,10 @@
 # Prova PG17 do canal Melhorias — as 2 RPCs de dados (melhoria_clientes_por_produto e
 # melhoria_produtos_relacionados, SECURITY DEFINER) e a RLS de melhoria_itens / melhoria_mensagens —
 # contra o schema que PRODUÇÃO executa (db/lib/corpo-vivo.sh: snapshot + ACL medido em prod + a cadeia
-# viva das RPCs, dos helpers que elas e as policies chamam e das tabelas que elas leem — hoje 5
-# migrations: a 20260929000234, que reescreve as 2 RPCs com o escape de curinga, e as 4 de
-# order_items/sales_orders que o snapshot não tem). md5 das 2 RPCs = o de prod (619fdf35…, 7be92ff8…;
+# viva das RPCs, dos helpers que elas e as policies chamam e das tabelas que elas leem — hoje 6
+# migrations: a 20260929000234, que reescreve as 2 RPCs com o escape de curinga, as 4 de
+# order_items/sales_orders que o snapshot não tem e o GRANT por coluna do funil em sales_orders, a
+# 20261001100000). md5 das 2 RPCs = o de prod (619fdf35…, 7be92ff8…;
 # medido em 2026-10-01).
 #
 # O que ela assevera (o que SÓ a versão morta provava — as irmãs cobrem o resto, sem duplicar):
