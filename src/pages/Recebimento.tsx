@@ -23,6 +23,7 @@ import {
 import type { Tables } from '@/integrations/supabase/types';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { interpretarRespostaEfetivacao } from '@/lib/recebimento/efetivacao-resposta';
+import { interpretarImportacaoPorChave } from '@/lib/recebimento/importacao-resposta';
 
 type NfeStatus = 'pendente' | 'em_conferencia' | 'divergencia' | 'conferido' | 'efetivado' | 'falha_efetivacao' | 'efetivacao_parcial';
 
@@ -40,10 +41,6 @@ type NfeWithRelations = NfeRecebimento & {
 };
 
 type NfePendingRow = Pick<NfeRecebimento, 'warehouse_id' | 'status'>;
-
-interface ImportWebhookResponse {
-  message?: string;
-}
 
 const STATUS_CONFIG: Record<NfeStatus, { label: string; className: string }> = {
   pendente: { label: 'Pendente', className: 'bg-status-warning-bg text-status-warning-foreground' },
@@ -213,29 +210,35 @@ export default function Recebimento({ statusFilter }: { statusFilter?: string[] 
       toast.error('A chave de acesso deve ter 44 dígitos');
       return;
     }
+    if (!selectedWarehouse) {
+      toast.error('Selecione o armazém da NF-e antes de importar');
+      return;
+    }
     setImporting(true);
     try {
-      const res = await supabase.functions.invoke('omie-nfe-webhook', {
-        body: { chave_acesso: clean },
+      // Pela sync (gate de staff), que consulta a NF-e no Omie do armazém escolhido — não pelo
+      // `omie-nfe-webhook`, que exige o segredo do Omie e dava 401 sempre no browser.
+      const res = await supabase.functions.invoke('omie-nfe-recebimento-sync', {
+        body: { chave_acesso: clean, warehouse_id: selectedWarehouse },
       });
-      if (res.error) throw res.error;
-      const responseData = res.data as ImportWebhookResponse | null;
-      if (responseData?.message === 'já importada') {
-        toast.info('Esta NF-e já foi importada');
-      } else {
-        toast.success('NF-e importada com sucesso!');
+      const veredito = await interpretarImportacaoPorChave(res);
+      if (veredito.tipo === 'sucesso') toast.success(veredito.mensagem);
+      else if (veredito.tipo === 'info') toast.info(veredito.mensagem);
+      else if (veredito.tipo === 'aviso') toast.warning(veredito.mensagem);
+      else toast.error('Erro ao importar: ' + veredito.mensagem);
+      if (veredito.fecharDialogo) {
+        setImportOpen(false);
+        setChaveAcesso('');
+        queryClient.invalidateQueries({ queryKey: ['nfe_recebimentos'] });
+        queryClient.invalidateQueries({ queryKey: ['nfe_pending_counts'] });
       }
-      setImportOpen(false);
-      setChaveAcesso('');
-      queryClient.invalidateQueries({ queryKey: ['nfe_recebimentos'] });
-      queryClient.invalidateQueries({ queryKey: ['nfe_pending_counts'] });
-    } catch (err) {
-      const message = mensagemDeErro(err) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.';
-      toast.error('Erro ao importar: ' + (message || 'Verifique a chave'));
     } finally {
       setImporting(false);
     }
   };
+
+  // A chave da NF-e não identifica o destinatário: a importação consulta o Omie do armazém selecionado.
+  const armazemSelecionado = (warehouses ?? []).find((wh: Warehouse) => wh.id === selectedWarehouse);
 
   return (
     <div className="max-w-4xl mx-auto space-y-4">
@@ -491,6 +494,11 @@ export default function Recebimento({ statusFilter }: { statusFilter?: string[] 
             />
             <p className="text-xs text-muted-foreground">
               {chaveAcesso.length}/44 dígitos
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {armazemSelecionado
+                ? `A NF-e é buscada no Omie de ${armazemSelecionado.name} (${armazemSelecionado.code}) — o armazém selecionado.`
+                : 'Selecione o armazém da NF-e: a busca é feita no Omie dele.'}
             </p>
           </div>
           <DialogFooter>
