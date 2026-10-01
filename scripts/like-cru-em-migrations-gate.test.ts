@@ -29,7 +29,10 @@ const fixture = (fonte: string, caminho = 'fixture/x.sql'): Arquivo => ({ caminh
 
 describe('calibração — o pré-fix acusa e a correção passa (arquivos REAIS)', () => {
   it('sem a 20260929000234, os 5 corpos vivos do repo voltam a ser os crus e acusam os 9 sítios', () => {
-    const sem = REPO.arquivos.filter((a) => a.caminho !== FIX);
+    // A 20261001014100 (universo de pedidos) recria melhoria_clientes_por_produto POR CIMA da FIX e herda o
+    // escape: no contrafactual ela sai junto, senão a melhoria não volta a ser a crua (a última a recriar vence).
+    const SUCESSORAS = ['supabase/migrations/20261001014100_universo_pedidos_recencia.sql'];
+    const sem = REPO.arquivos.filter((a) => a.caminho !== FIX && !SUCESSORAS.includes(a.caminho));
     const r = analisar(sem, corposVivosDe(sem), VIVOS_PERMITIDOS);
     const porFuncao = new Map<string, number>();
     for (const c of r.corposVivosComSitio) {

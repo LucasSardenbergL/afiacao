@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 574
+-- Total de custom migrations: 579
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -613,9 +613,14 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20260930220148', 'expandir_promocao_item_overload_similarity_volume', '20260930220148_expandir_promocao_item_overload_similarity_volume.sql'),
   ('20260930230623', 'hoje_sp_views_defaults_classe_ii', '20260930230623_hoje_sp_views_defaults_classe_ii.sql'),
   ('20261001011500', 'data_health_vendas_empurradas_sem_gemeo', '20261001011500_data_health_vendas_empurradas_sem_gemeo.sql'),
+  ('20261001014000', 'universo_pedidos_caca', '20261001014000_universo_pedidos_caca.sql'),
+  ('20261001014100', 'universo_pedidos_recencia', '20261001014100_universo_pedidos_recencia.sql'),
+  ('20261001014210', 'universo_pedidos_preco', '20261001014210_universo_pedidos_preco.sql'),
+  ('20261001014220', 'universo_pedidos_proposta_whatsapp', '20261001014220_universo_pedidos_proposta_whatsapp.sql'),
   ('20261001023000', 'hoje_sp_familia_data_ciclo', '20261001023000_hoje_sp_familia_data_ciclo.sql'),
   ('20261001043717', 'hoje_sp_route_visits_visit_date', '20261001043717_hoje_sp_route_visits_visit_date.sql'),
-  ('20261001083000', 'converter_campanha_flat_colunas_reais', '20261001083000_converter_campanha_flat_colunas_reais.sql')
+  ('20261001083000', 'converter_campanha_flat_colunas_reais', '20261001083000_converter_campanha_flat_colunas_reais.sql'),
+  ('20261001100000', 'sales_orders_colunas_whatsapp_select', '20261001100000_sales_orders_colunas_whatsapp_select.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2488,6 +2493,21 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('data_health_vendas_empurradas_sem_gemeo', 'function', 'public', '_data_health_compute', ''),
   ('data_health_vendas_empurradas_sem_gemeo', 'function', 'public', 'data_health_watchdog', ''),
   ('data_health_vendas_empurradas_sem_gemeo', 'function', 'public', 'fin_sync_heartbeat', ''),
+  ('universo_pedidos_caca', 'view', 'public', 'v_caca_compradores', ''),
+  ('universo_pedidos_caca', 'view', 'public', 'v_caca_candidatos', ''),
+  ('universo_pedidos_recencia', 'function', 'public', 'melhoria_clientes_por_produto', ''),
+  ('universo_pedidos_recencia', 'function', 'public', 'classificar_clientes_fornecedores', ''),
+  ('universo_pedidos_recencia', 'view', 'private', 'customer_metrics_mv', ''),
+  ('universo_pedidos_recencia', 'view', 'public', 'customer_metrics_mv', ''),
+  ('universo_pedidos_recencia', 'view', 'public', 'v_grupo_comercial', ''),
+  ('universo_pedidos_recencia', 'index', 'private', 'idx_customer_metrics_mv_uid', 'customer_metrics_mv'),
+  ('universo_pedidos_preco', 'function', 'public', 'get_regua_preco', ''),
+  ('universo_pedidos_preco', 'function', 'public', 'get_regua_preco_customer360', ''),
+  ('universo_pedidos_preco', 'function', 'public', 'get_ultimos_precos_cliente', ''),
+  ('universo_pedidos_preco', 'function', 'public', 'medir_abaixo_piso_tier', ''),
+  ('universo_pedidos_preco', 'function', 'public', 'get_defasagem_cliente', ''),
+  ('universo_pedidos_preco', 'function', 'public', 'tint_ultimo_preco_cliente', ''),
+  ('universo_pedidos_proposta_whatsapp', 'function', 'public', 'get_whatsapp_proposta_cotacao', ''),
   ('hoje_sp_familia_data_ciclo', 'function', 'public', 'aplicar_promocoes_no_ciclo', ''),
   ('hoje_sp_familia_data_ciclo', 'function', 'public', 'ciclo_oportunidade_do_dia', ''),
   ('hoje_sp_familia_data_ciclo', 'function', 'public', 'gerar_pedidos_oportunidade_ciclo', ''),
@@ -4417,6 +4437,21 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('data_health_vendas_empurradas_sem_gemeo', 'function', 'public', '_data_health_compute', ''),
   ('data_health_vendas_empurradas_sem_gemeo', 'function', 'public', 'data_health_watchdog', ''),
   ('data_health_vendas_empurradas_sem_gemeo', 'function', 'public', 'fin_sync_heartbeat', ''),
+  ('universo_pedidos_caca', 'view', 'public', 'v_caca_compradores', ''),
+  ('universo_pedidos_caca', 'view', 'public', 'v_caca_candidatos', ''),
+  ('universo_pedidos_recencia', 'function', 'public', 'melhoria_clientes_por_produto', ''),
+  ('universo_pedidos_recencia', 'function', 'public', 'classificar_clientes_fornecedores', ''),
+  ('universo_pedidos_recencia', 'view', 'private', 'customer_metrics_mv', ''),
+  ('universo_pedidos_recencia', 'view', 'public', 'customer_metrics_mv', ''),
+  ('universo_pedidos_recencia', 'view', 'public', 'v_grupo_comercial', ''),
+  ('universo_pedidos_recencia', 'index', 'private', 'idx_customer_metrics_mv_uid', 'customer_metrics_mv'),
+  ('universo_pedidos_preco', 'function', 'public', 'get_regua_preco', ''),
+  ('universo_pedidos_preco', 'function', 'public', 'get_regua_preco_customer360', ''),
+  ('universo_pedidos_preco', 'function', 'public', 'get_ultimos_precos_cliente', ''),
+  ('universo_pedidos_preco', 'function', 'public', 'medir_abaixo_piso_tier', ''),
+  ('universo_pedidos_preco', 'function', 'public', 'get_defasagem_cliente', ''),
+  ('universo_pedidos_preco', 'function', 'public', 'tint_ultimo_preco_cliente', ''),
+  ('universo_pedidos_proposta_whatsapp', 'function', 'public', 'get_whatsapp_proposta_cotacao', ''),
   ('hoje_sp_familia_data_ciclo', 'function', 'public', 'aplicar_promocoes_no_ciclo', ''),
   ('hoje_sp_familia_data_ciclo', 'function', 'public', 'ciclo_oportunidade_do_dia', ''),
   ('hoje_sp_familia_data_ciclo', 'function', 'public', 'gerar_pedidos_oportunidade_ciclo', ''),
@@ -4453,7 +4488,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 123.
+-- Funções redefinidas com corpo extraível: 125.
 
 WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (VALUES
   ('public', 'has_role', 1, '20260207192203_1ed442e5-a224-456e-9d94-cfe50e88c670.sql', 'c63a92e3cfa92e6aab8cb894ad505e30'),
@@ -4731,6 +4766,8 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'aplicar_promocoes_no_ciclo', 3, '20260606200000_reposicao_promo_forward_buying_min.sql', 'f31bcba5fecc035004a42a7e4c4a102d'),
   ('public', 'aplicar_promocoes_no_ciclo', 4, '20260830214547_reposicao_aplicar_promocoes_captura_corpo_vivo.sql', 'b48783701e1a5987cffc04da2965d719'),
   ('public', 'aplicar_promocoes_no_ciclo', 5, '20261001023000_hoje_sp_familia_data_ciclo.sql', 'b48783701e1a5987cffc04da2965d719'),
+  ('public', 'classificar_clientes_fornecedores', 1, '20260606170100_fornecedores_classificacao_rpcs.sql', '06f0c47571100d53b2319ceb5864e211'),
+  ('public', 'classificar_clientes_fornecedores', 2, '20261001014100_universo_pedidos_recencia.sql', 'fd67b3f971e5683438aadbdb8d439d84'),
   ('public', 'reposicao_alerta_pedido_minimo_tick', 1, '20260609150000_reposicao_alerta_pedido_minimo.sql', '149d7d577c0ca6dc0faff56269f31bb1'),
   ('public', 'reposicao_alerta_pedido_minimo_tick', 2, '20260610150000_reposicao_auto_aprovacao_piloto.sql', 'cf138b87a62881c13c5ce6154a4af3f6'),
   ('public', 'reposicao_alerta_pedido_minimo_tick', 3, '20260611120000_reposicao_fixes_codex_711.sql', '69d6c5fcfac5db26eaee12e912ab676c'),
@@ -4757,6 +4794,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'melhoria_clientes_por_produto', 1, '20260610130000_melhorias_canal.sql', 'e5602e92c3623e426e2461f782ee712e'),
   ('public', 'melhoria_clientes_por_produto', 2, '20260905225613_preco_ausente_nao_e_zero.sql', '128cc895c0826dfb03e79223f5c93c8e'),
   ('public', 'melhoria_clientes_por_produto', 3, '20260929000234_padrao_like_contem_escapa_curinga.sql', 'c50978d0ad66d3357f89a7b60f9a55e3'),
+  ('public', 'melhoria_clientes_por_produto', 4, '20261001014100_universo_pedidos_recencia.sql', '1201e848cadae429265255ae5b6f4004'),
   ('public', 'melhoria_produtos_relacionados', 1, '20260610130000_melhorias_canal.sql', 'ad55a3cb8e7ef3aa8cc4d09d48e00133'),
   ('public', 'melhoria_produtos_relacionados', 2, '20260929000234_padrao_like_contem_escapa_curinga.sql', '77dbd55fc1077fd0b6bb3b4b9d6fcf37'),
   ('public', 'reposicao_pedido_auto_aprovavel', 1, '20260610150000_reposicao_auto_aprovacao_piloto.sql', 'a169166d1b33f40a5c7a82e1ad45e297'),
@@ -4798,8 +4836,10 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'get_regua_preco', 1, '20260616120000_regua_preco.sql', 'f618d27140e81536da49804768dc408b'),
   ('public', 'get_regua_preco', 2, '20260723150000_authz_custo_fu4f_fase2_regua.sql', 'd5c7e56d8a41a0bb08f0b1cfe8d3c081'),
   ('public', 'get_regua_preco', 3, '20260929001651_hoje_sp_sessao_utc_sete_funcoes.sql', '0e923377f866736c52f233e34c42c0c6'),
+  ('public', 'get_regua_preco', 4, '20261001014210_universo_pedidos_preco.sql', '2e946f7f679fd191e4ba96316ff67712'),
   ('public', 'get_regua_preco_customer360', 1, '20260616120001_regua_preco_customer360.sql', '0f31a54ccf34b366d0dba606dc3b6c19'),
   ('public', 'get_regua_preco_customer360', 2, '20260723150000_authz_custo_fu4f_fase2_regua.sql', '17a6d9cf6af6e9e3117d103b9ed9d242'),
+  ('public', 'get_regua_preco_customer360', 3, '20261001014210_universo_pedidos_preco.sql', 'bc8f6c27e13c345514bfb2fa4b63e29f'),
   ('public', 'enqueue_score_recalc_from_sinais', 1, '20260616140941_fatia2_sinais_ligacao.sql', 'dfc85730eaa1d60a5272a400074541db'),
   ('public', 'enqueue_score_recalc_from_sinais', 2, '20260618230000_fix_enqueue_sinais_owner_e_reconcile_fila.sql', '178166dc2c3e943e78ab5f7b3ceeebdb'),
   ('public', 'criar_pedidos_com_itens', 1, '20260617160000_criar_pedidos_com_itens.sql', 'd94bc895f6edcbad2fe3dad29f0b774f'),
@@ -4831,18 +4871,22 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'get_ultimos_precos_cliente', 1, '20260625120000_get_ultimos_precos_cliente.sql', '31e656cabe303377266ac4f1dca141b1'),
   ('public', 'get_ultimos_precos_cliente', 2, '20260704120000_preco_por_tier.sql', '2428b7471db5fccecfc45d923dcbf355'),
   ('public', 'get_ultimos_precos_cliente', 3, '20260927172443_hoje_sp_sessao_utc_precos_piso.sql', 'fd1733a96c8c5d5344941684dae4c2e7'),
+  ('public', 'get_ultimos_precos_cliente', 4, '20261001014210_universo_pedidos_preco.sql', 'edd886f7e3c0e1fba06190fbdf321d60'),
   ('public', 'reposicao_cold_start_parametros', 1, '20260626210000_reposicao_cold_start_parametros.sql', 'd5f00b40b7ac6c5a06bf8306a9e1ad67'),
   ('public', 'reposicao_cold_start_parametros', 2, '20260627130000_reposicao_cold_start_fix_gate_cron.sql', '7452b0fd4a5354e176b29464e5ed0208'),
   ('public', 'reposicao_cold_start_parametros', 3, '20260826021000_reposicao_cold_start_fusivel_graduacao.sql', '4e60a2f241446e15287ccec01947f537'),
   ('public', 'get_defasagem_cliente', 1, '20260627180100_get_defasagem_cliente.sql', '1a06e51e5eae154d94216eee56471734'),
   ('public', 'get_defasagem_cliente', 2, '20260905225613_preco_ausente_nao_e_zero.sql', '7856c3052596d66a6f5ac8eb0a06c1c0'),
+  ('public', 'get_defasagem_cliente', 3, '20261001014210_universo_pedidos_preco.sql', 'fbe6a5aa78a32deed6860218a9b68d7c'),
   ('public', 'venda_gate_credito', 1, '20260702233000_trava_credito_fase2.sql', '72e6d3ff4dd4a438d5ca84cb9d214ec8'),
   ('public', 'venda_gate_credito', 2, '20260703140000_trava_credito_gate_excecao_por_par.sql', '1fb9610a4c6f70fb2a67d5d01396c767'),
   ('public', 'medir_abaixo_piso_tier', 1, '20260704120000_preco_por_tier.sql', '0e2c798dc7098adb3c67cb923087cefa'),
   ('public', 'medir_abaixo_piso_tier', 2, '20260718190000_authz_capability_matrix_e2.sql', 'cae48dfdd1ecb9b983b065f06edfdbbf'),
   ('public', 'medir_abaixo_piso_tier', 3, '20260927172443_hoje_sp_sessao_utc_precos_piso.sql', '7044b253b88286338d34cabb8ce9461b'),
+  ('public', 'medir_abaixo_piso_tier', 4, '20261001014210_universo_pedidos_preco.sql', 'a4ff61cbcb392b5b7d150b318a59aed6'),
   ('public', 'get_whatsapp_proposta_cotacao', 1, '20260713040000_whatsapp_proposta_cotacao.sql', 'a6808315bb23d377f76b75f7f417f89b'),
   ('public', 'get_whatsapp_proposta_cotacao', 2, '20260713050000_whatsapp_proposta_cotacao_v2.sql', '10fd7be817823288fde96eaa690e9b88'),
+  ('public', 'get_whatsapp_proposta_cotacao', 3, '20261001014220_universo_pedidos_proposta_whatsapp.sql', '3693644e6f517eba2145c03d6f34a859'),
   ('public', 'register_carteira_member', 1, '20260718170000_register_carteira_member.sql', 'a7b3a3e50c6b0a9d8a2b2ebfca67f6f2'),
   ('public', 'register_carteira_member', 2, '20260718200000_register_carteira_member_source_rpc.sql', 'ced1bd8ab62e689b15717373704766c8'),
   ('public', 'register_carteira_member', 3, '20260821192817_omie_identidade_a2_client_to_user.sql', '2c2c11ead396e4538cae5126111ff951'),
@@ -4853,6 +4897,8 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'reposicao_pos_candidatos', 2, '20260813195914_reposicao_pos_candidatos_guard_temporal.sql', '6bc3427923bd40d7f4974fc24f49e01f'),
   ('public', 'reposicao_pos_candidatos', 3, '20260814000125_reposicao_pos_frescor_marcador.sql', '2439966a9d06019c0a21bb3d4792fbbb'),
   ('public', 'reposicao_pos_candidatos', 4, '20261001023000_hoje_sp_familia_data_ciclo.sql', '0478257110616de8ce8c3499cccc7f2f'),
+  ('public', 'tint_ultimo_preco_cliente', 1, '20260722100001_tint_gate_revalida_submit.sql', 'e6bef849389e35c2a7bde49e6270be4c'),
+  ('public', 'tint_ultimo_preco_cliente', 2, '20261001014210_universo_pedidos_preco.sql', '0c7e130232ec818b66a2c0827e55b54c'),
   ('public', 'tint_gate_revalida', 1, '20260722100001_tint_gate_revalida_submit.sql', 'b46bd0dc7e83094a608ed8554a4c9bfb'),
   ('public', 'tint_gate_revalida', 2, '20260726160000_tint_canonica_piso_legado.sql', '67947c3b37e874638ebe013d90bdfcb4'),
   ('public', 'ciclo_oportunidade_do_dia', 1, '20260722110000_ciclo_oportunidade_registra_execucao.sql', 'e9b625fa0078e96ecae422debbe16dab'),

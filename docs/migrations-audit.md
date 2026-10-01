@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **574** custom migrations totais
-- **1892** objetos esperados (criados por estas migrations)
+- **579** custom migrations totais
+- **1907** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 631
+  - `function`: 640
   - `rls_policy`: 462
-  - `index`: 261
+  - `index`: 262
   - `cron_job`: 174
   - `table`: 166
-  - `view`: 102
+  - `view`: 107
   - `trigger`: 92
   - `enum_value`: 4
 
@@ -4697,6 +4697,41 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.data_health_watchdog` | — |
 | `function` | `public.fin_sync_heartbeat` | — |
 
+### `20261001014000_universo_pedidos_caca.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.v_caca_compradores` | — |
+| `view` | `public.v_caca_candidatos` | — |
+
+### `20261001014100_universo_pedidos_recencia.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.melhoria_clientes_por_produto` | — |
+| `function` | `public.classificar_clientes_fornecedores` | — |
+| `view` | `private.customer_metrics_mv` | — |
+| `view` | `public.customer_metrics_mv` | — |
+| `view` | `public.v_grupo_comercial` | — |
+| `index` | `private.idx_customer_metrics_mv_uid` | `customer_metrics_mv` |
+
+### `20261001014210_universo_pedidos_preco.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_regua_preco` | — |
+| `function` | `public.get_regua_preco_customer360` | — |
+| `function` | `public.get_ultimos_precos_cliente` | — |
+| `function` | `public.medir_abaixo_piso_tier` | — |
+| `function` | `public.get_defasagem_cliente` | — |
+| `function` | `public.tint_ultimo_preco_cliente` | — |
+
+### `20261001014220_universo_pedidos_proposta_whatsapp.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_whatsapp_proposta_cotacao` | — |
+
 ### `20261001023000_hoje_sp_familia_data_ciclo.sql`
 
 | Tipo | Objeto | Parent |
@@ -4719,6 +4754,10 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.converter_sugestao_em_campanha_flat` | — |
+
+### `20261001100000_sales_orders_colunas_whatsapp_select.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ## Próximos passos por status
 
