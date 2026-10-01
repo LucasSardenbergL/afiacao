@@ -2,6 +2,61 @@
   "disableClaudeAiConnectors": true,
   "skillListingMaxDescChars": 220,
   "skillListingBudgetFraction": 0.004,
+  "skillOverrides": {
+    "context-restore": "name-only",
+    "frontend-design": "name-only",
+    "ab-testing": "user-invocable-only",
+    "ad-creative": "user-invocable-only",
+    "adobe-batch-edit-photos": "user-invocable-only",
+    "adobe-create-social-variations": "user-invocable-only",
+    "adobe-design-from-template": "user-invocable-only",
+    "adobe-edit-quick-cut": "user-invocable-only",
+    "adobe-resize-photos-and-videos": "user-invocable-only",
+    "adobe-retouch-portraits": "user-invocable-only",
+    "ads": "user-invocable-only",
+    "ai-seo": "user-invocable-only",
+    "analytics": "user-invocable-only",
+    "aso": "user-invocable-only",
+    "churn-prevention": "user-invocable-only",
+    "co-marketing": "user-invocable-only",
+    "cold-email": "user-invocable-only",
+    "community-marketing": "user-invocable-only",
+    "competitor-profiling": "user-invocable-only",
+    "competitors": "user-invocable-only",
+    "copy-editing": "user-invocable-only",
+    "copywriting": "user-invocable-only",
+    "cro": "user-invocable-only",
+    "customer-research": "user-invocable-only",
+    "directory-submissions": "user-invocable-only",
+    "emails": "user-invocable-only",
+    "free-tools": "user-invocable-only",
+    "grill-me": "user-invocable-only",
+    "image": "user-invocable-only",
+    "launch": "user-invocable-only",
+    "lead-magnets": "user-invocable-only",
+    "marketing-ideas": "user-invocable-only",
+    "marketing-psychology": "user-invocable-only",
+    "onboarding": "user-invocable-only",
+    "paywalls": "user-invocable-only",
+    "playwright": "user-invocable-only",
+    "popups": "user-invocable-only",
+    "pricing": "user-invocable-only",
+    "programmatic-seo": "user-invocable-only",
+    "referrals": "user-invocable-only",
+    "remotion": "user-invocable-only",
+    "revops": "user-invocable-only",
+    "sales-enablement": "user-invocable-only",
+    "schema": "user-invocable-only",
+    "sentry-code-review": "user-invocable-only",
+    "sentry-fix-issues": "user-invocable-only",
+    "seo-audit": "user-invocable-only",
+    "signup": "user-invocable-only",
+    "site-architecture": "user-invocable-only",
+    "social": "user-invocable-only",
+    "video": "user-invocable-only",
+    "video-use": "user-invocable-only",
+    "youtube-clipper": "user-invocable-only"
+  },
   "env": {
     "BASH_MAX_OUTPUT_LENGTH": "4000"
   },
@@ -77,15 +132,6 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Skill",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/check-gstack.sh\""
-          }
-        ]
-      },
-      {
         "matcher": "spawn_task",
         "hooks": [
           {
@@ -116,6 +162,10 @@
           },
           {
             "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/word-split-zsh-guard.sh\""
+          },
+          {
+            "type": "command",
             "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/branch-pos-squash-guard.sh\""
           },
           {
@@ -125,6 +175,10 @@
           {
             "type": "command",
             "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/pr-duplicata-guard.sh\""
+          },
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/push-gates-guard.sh\""
           }
         ]
       },
@@ -191,6 +245,16 @@
             "type": "command",
             "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/vigia-worktree.sh\"",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/vigia-gstack.sh\"",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/vigia-nuvem.sh\"",
+            "timeout": 5
           }
         ]
       }

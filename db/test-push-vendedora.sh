@@ -12,14 +12,72 @@
 # wa_is_stop_keyword/wa_owner_efetivo são as definições REAIS (verbatim da 20260604130000).
 #
 # Pré-requisitos: brew install postgresql@17   (mesmo boilerplate de db/verify-snapshot-replay.sh)
+#
+# ⏰ Relógio: o gate de EXPEDIENTE do push_sla_tick roda num relógio CONTROLADO (`test.agora`), nunca
+# no de parede. Antes, o T11 abria o expediente com '00:00'–'23:59' como "o dia todo" — só que o gate
+# é semiaberto (hora < hora_fim, por desenho), então às 23:59 BRT (02:59Z) o tick saía cedo e o T11
+# reprovava 1 min/dia (reproduzido em relógio simulado, servidor SP e UTC). E a borda do expediente
+# não tinha teste nenhum: é o bloco E, que a cruza de propósito. Diário:
+# docs/historico/provas-janela-de-relogio-fora-do-nucleo.md
+#
+# Modo `--falsificar`: sabota o gate na função (e o próprio relógio) e exige vermelho NO assert certo —
+# `bash db/test-push-vendedora.sh --falsificar > /tmp/f.log 2>&1; echo "exit=$?"`.
 set -euo pipefail
 
 PGVER=17
 PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
-PORT=5441
+PORT="${PGPORT_TEST:-5441}"   # o laço --falsificar sobe 1 PG por sabotagem, cada um na sua porta
 DATA="$(mktemp -d /tmp/pgtest-push.XXXXXX)/data"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export LC_ALL=C LANG=C
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MODO --falsificar: prova que os asserts do expediente têm DENTE.
+# O controle roda PRIMEIRO, na mesma invocação: uma suíte que já falha sozinha aprovaria todas as
+# sabotagens por vermelhidão constante. E cada sabotagem declara QUAL assert tem de acusá-la: ficar
+# vermelha por OUTRO motivo (sabotagem que não aplicou, erro de sintaxe) não conta como dente.
+# ══════════════════════════════════════════════════════════════════════════════
+if [ "${1:-}" = "--falsificar" ]; then
+  # <sabotagem>:<regex dos asserts que TÊM de acusá-la>
+  SABOTAGENS="expediente_em_utc:E2 fim_inclusivo:E4 inicio_exclusivo:E1 dia_ignorado:T11b
+              expediente_do_relogio_de_parede:E1|E2|E3|E4 relogio_desligado:E1|E2|E3|E4"
+  LOGDIR="$(mktemp -d /tmp/falsifica-push.XXXXXX)"
+  porta=$PORT
+
+  echo "══ CONTROLE (migration real, sem sabotagem) — tem de ficar VERDE ══"
+  if PGPORT_TEST=$porta SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
+    echo "  ✅ controle VERDE ($(grep -c 'NOTICE:  [TE][0-9a-z]* OK' "$LOGDIR/controle.log" || true) asserts) — a suíte sabe passar"
+  else
+    echo "  ❌ CONTROLE VERMELHO — abortando ANTES de sabotar (uma suíte que já falha aprovaria tudo)"
+    tail -25 "$LOGDIR/controle.log"; exit 1
+  fi
+
+  falhas=0
+  for item in $SABOTAGENS; do
+    sab="${item%%:*}"; esperado="${item#*:}"
+    porta=$((porta+1))
+    if PGPORT_TEST=$porta SABOTAGEM="$sab" bash "$0" > "$LOGDIR/$sab.log" 2>&1; then
+      echo "  ❌ $sab — suíte ficou VERDE com a sabotagem ativa: o assert NÃO tem dente"
+      falhas=$((falhas+1))
+    elif grep -Eq "^ERROR:  ($esperado): " "$LOGDIR/$sab.log"; then
+      echo "  ✅ $sab — vermelha no assert certo: $(grep -Eo "^ERROR:  ($esperado): " "$LOGDIR/$sab.log" | head -1 | cut -c9-)"
+    else
+      echo "  ❌ $sab — vermelha, mas NÃO em $esperado: quebrou outra coisa (sabotagem que não aplicou conta aqui)"
+      grep -E 'ERROR|SABOTAGEM' "$LOGDIR/$sab.log" | head -3 | sed 's/^/       /'
+      falhas=$((falhas+1))
+    fi
+  done
+
+  total="$(wc -w <<<"$SABOTAGENS" | tr -d ' ')"
+  echo "SABOTAGENS: $((total - falhas)) vermelhas / $falhas falhas"
+  if [ "$falhas" -eq 0 ]; then
+    echo "═══ falsificação OK: controle verde + $total sabotagens vermelhas no assert certo ═══"
+    rm -rf "$LOGDIR"; exit 0
+  fi
+  echo "═══ falsificação REPROVOU: $falhas sabotagem(ns) sem dente (logs em $LOGDIR) ═══"
+  exit 1
+fi
+SABOTAGEM="${SABOTAGEM:-}"
 
 [ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER}"; exit 1; }
 CELLAR="$(brew --prefix postgresql@${PGVER})"
@@ -33,7 +91,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l /tmp/pg-push.log -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres push_test
-P() { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d push_test "$@"; }
+P() { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d push_test "$@"; }
 
 # ── 1) Stubs (roles, auth, vault, net com captura, cron) + schema mínimo ──
 P -v ON_ERROR_STOP=1 -q <<'SQL'
@@ -165,8 +223,127 @@ SQL
 P -v ON_ERROR_STOP=1 -q -f "$REPO_ROOT/supabase/migrations/20260610200000_push_vendedora.sql"
 echo "OK: migration aplicou limpa"
 
+# ── SABOTAGEM (só no modo --falsificar) — no BANCO, recriando o tick com o trecho trocado; o repo nunca
+# é tocado. O padrão tem de ocorrer exatamente 1× no corpo: uma troca que não pegou deixaria a suíte
+# verde (e o laço, que exige vermelho NO assert certo, acusa em vez de aprovar).
+MIG="$REPO_ROOT/supabase/migrations/20260610200000_push_vendedora.sql"
+sabotar() {
+  local de="$1" para="$2" tmp
+  tmp="$(mktemp /tmp/sab-push.XXXXXX)"
+  awk 'index($0,"CREATE OR REPLACE FUNCTION public.push_sla_tick(")==1{f=1} f{print} f && /^\$\$;$/{exit}' "$MIG" > "$tmp"
+  python3 - "$tmp" "$de" "$para" <<'PYSAB' || { echo "❌ SABOTAGEM NÃO APLICÁVEL ($SABOTAGEM): o padrão não ocorre 1× no tick"; exit 9; }
+import sys
+p, de, para = sys.argv[1], sys.argv[2], sys.argv[3]
+s = open(p).read()
+if s.count(de) != 1:
+    print(f"   padrão ocorre {s.count(de)}x, esperado 1: {de!r}", file=sys.stderr)
+    sys.exit(1)
+open(p, "w").write(s.replace(de, para))
+PYSAB
+  P -v ON_ERROR_STOP=1 -q -f "$tmp" >/dev/null
+  rm -f "$tmp"
+  echo "→ SABOTAGEM ativa: $SABOTAGEM"
+}
+case "$SABOTAGEM" in
+  "") ;;
+  # expediente contado em UTC: 07:29:59 BRT são 10:29:59Z, "dentro"
+  expediente_em_utc) sabotar "v_agora_sp := now() AT TIME ZONE 'America/Sao_Paulo';" "v_agora_sp := now() AT TIME ZONE 'UTC';" ;;
+  # fim fechado: 17:30:00 BRT entraria
+  fim_inclusivo) sabotar "v_agora_sp::time < v_fim" "v_agora_sp::time <= v_fim" ;;
+  # início aberto: 07:30:00 BRT ficaria de fora
+  inicio_exclusivo) sabotar "v_agora_sp::time >= v_ini" "v_agora_sp::time > v_ini" ;;
+  # sem o gate de dia útil: o T11b (quarta, dias = só segunda) enviaria
+  dia_ignorado) sabotar "EXTRACT(isodow FROM v_agora_sp)::int = ANY(v_dias)" "true" ;;
+  # hora corrida tirada do relógio de parede, que o controlado não intercepta
+  expediente_do_relogio_de_parede) sabotar "v_agora_sp := now() AT TIME ZONE" "v_agora_sp := clock_timestamp() AT TIME ZONE" ;;
+  relogio_desligado) ;;   # não sabota a função: pula o ALTER do search_path abaixo
+  *) echo "❌ SABOTAGEM desconhecida: $SABOTAGEM"; exit 9 ;;
+esac
+
+# ── RELÓGIO CONTROLADO — `public.now()` lê a GUC `test.agora`, e o push_sla_tick (corpo REAL da
+# migration, intocado) ganha `pg_catalog` DEPOIS de `public` no search_path: é a única forma de um nome
+# de usuário vencer um embutido (sem pg_catalog explícito ele é buscado PRIMEIRO). SÓ o tick: os
+# triggers de throttle seguem no relógio da transação, o mesmo do `DEFAULT now()` das tabelas (que foi
+# resolvido no CREATE TABLE e escapa do relógio controlado) — misturar os dois quebraria o T2/T3.
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+CREATE OR REPLACE FUNCTION public.now() RETURNS timestamptz LANGUAGE sql STABLE AS $f$
+  SELECT COALESCE(nullif(current_setting('test.agora', true), '')::timestamptz, pg_catalog.now())
+$f$;
+SQL
+if [ "$SABOTAGEM" != relogio_desligado ]; then
+  P -v ON_ERROR_STOP=1 -q -c "ALTER FUNCTION public.push_sla_tick() SET search_path = public, pg_catalog;"
+fi
+# `public` antes de `pg_catalog` não troca só o now(): TODA função de `public` com a MESMA assinatura de
+# um embutido passa a vencê-lo. O tick não pode chamar nome sombreado — senão a prova rodaria outra
+# semântica sem avisar. Controle POSITIVO da própria guarda: ela tem de enxergar o nosso now().
+sombra="$(P -At -c "SELECT COALESCE(string_agg(s.proname, ',') FILTER (WHERE s.proname = 'now'), '') || '|' ||
+    COALESCE(string_agg(s.proname, ',') FILTER (WHERE s.proname <> 'now' AND EXISTS (
+      SELECT 1 FROM pg_proc f WHERE f.oid = 'public.push_sla_tick()'::regprocedure
+        AND f.prosrc ~ ('\m' || s.proname || '\s*\('))), '')
+  FROM (SELECT DISTINCT p.proname FROM pg_proc p
+         WHERE p.pronamespace = 'public'::regnamespace
+           AND EXISTS (SELECT 1 FROM pg_proc c WHERE c.pronamespace = 'pg_catalog'::regnamespace
+                        AND c.proname = p.proname AND c.proargtypes = p.proargtypes)) s;")"
+case "$sombra" in
+  'now|') ;;
+  now\|*) echo "❌ o relógio controlado mudaria mais que o now(): o tick chama [${sombra#*|}], sombreado por public"; exit 1 ;;
+  *) echo "❌ guarda cega: não enxergou nem o public.now() que acabou de ser criado [$sombra]"; exit 1 ;;
+esac
+
+# ── E — EXPEDIENTE: o relógio CRUZA as duas bordas de propósito ──
+# Gate do tick: dia útil (isodow ∈ dias) E hora_inicio <= hora_SP < hora_fim, em America/Sao_Paulo.
+# Config de prod (07:30–17:30, seg–sex) numa quarta, 4 instantes em pares de 1 s nas duas bordas:
+# 07:30:00 DENTRO (início inclusivo) · 07:29:59 fora · 17:29:59 DENTRO · 17:30:00 FORA (fim exclusivo).
+# O padrão dentro/fora/dentro/fora é também o controle POSITIVO de que o tick leu o relógio controlado:
+# preso no de parede, as 4 chamadas (ms de distância) dariam o MESMO resultado. E separa SP de UTC:
+# 07:29:59 BRT são 10:29:59Z, "dentro" para um gate contado em UTC. Roda ANTES dos T* (o T12 apaga o
+# secret do Vault, e depois dele nenhum push sai — um bloco ali passaria por cegueira) e numa
+# transação DESFEITA: nenhuma captura/config/fixture sobra para eles.
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+BEGIN;
+DO $$
+DECLARE
+  dona uuid := 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+  n0 int; n int;
+BEGIN
+  INSERT INTO public.company_config(key, value) VALUES
+    ('whatsapp_sla_hora_inicio', '07:30'), ('whatsapp_sla_hora_fim', '17:30'), ('whatsapp_sla_dias', '1,2,3,4,5');
+  INSERT INTO public._sla_fixture(owner_user_id, contact_name, phone_e164, nivel, minutos_uteis_aguardando)
+  VALUES (dona, 'Borda', '+559', 'vermelho', 35);   -- 1 conversa na janela [30,50) → 1 push por tick aberto
+  SELECT count(*) INTO n0 FROM net._captura;
+
+  PERFORM pg_catalog.set_config('test.agora', '2026-09-16 07:30:00-03', true);   -- quarta
+  PERFORM public.push_sla_tick();
+  SELECT count(*) INTO n FROM net._captura;
+  ASSERT n = n0 + 1, format('E1: quarta 07:30:00 BRT (início, inclusivo) devia enviar — capturas %s→%s', n0, n);
+  RAISE NOTICE 'E1 OK: 07:30:00 BRT, abre o expediente (início inclusivo): envia';
+
+  PERFORM pg_catalog.set_config('test.agora', '2026-09-16 07:29:59-03', true);
+  PERFORM public.push_sla_tick();
+  SELECT count(*) INTO n FROM net._captura;
+  ASSERT n = n0 + 1, format('E2: quarta 07:29:59 BRT (10:29:59Z) é antes do expediente e enviou — capturas %s→%s', n0, n);
+  RAISE NOTICE 'E2 OK: 07:29:59 BRT, 1 s antes: não envia (o gate é em SP, não em UTC)';
+
+  PERFORM pg_catalog.set_config('test.agora', '2026-09-16 17:29:59-03', true);
+  PERFORM public.push_sla_tick();
+  SELECT count(*) INTO n FROM net._captura;
+  ASSERT n = n0 + 2, format('E3: quarta 17:29:59 BRT (último segundo) devia enviar — capturas %s→%s', n0, n);
+  RAISE NOTICE 'E3 OK: 17:29:59 BRT, último segundo do expediente: envia';
+
+  PERFORM pg_catalog.set_config('test.agora', '2026-09-16 17:30:00-03', true);
+  PERFORM public.push_sla_tick();
+  SELECT count(*) INTO n FROM net._captura;
+  ASSERT n = n0 + 2, format('E4: quarta 17:30:00 BRT (fim, exclusivo) enviou — capturas %s→%s', n0, n);
+  RAISE NOTICE 'E4 OK: 17:30:00 BRT, fecha o expediente (fim exclusivo): não envia';
+END $$;
+ROLLBACK;
+SQL
+
 # ── 3) Asserts ──
 P -v ON_ERROR_STOP=1 -q <<'SQL'
+-- O tick (T11/T11b) roda num instante FIXO: quarta 12:00 BRT, dentro de qualquer expediente que o T11
+-- configure. O que ele prova é a agregação/janela de SLA, não a borda — essa é do bloco E, acima.
+SET test.agora = '2026-09-16 12:00:00-03';
 -- Seeds: vendedoras A e B, cliente C1 (carteira de A), C2 (sem carteira), coberta C3.
 DO $$
 DECLARE
@@ -279,7 +456,7 @@ BEGIN
   RAISE NOTICE 'T10 OK: auto-atribuída fora';
 
   -- T11: SLA tick — A com 2 vermelhas na janela, B com 1 velha (55min) e 1 amarela.
-  -- Config de expediente ABERTO agora (o gate é testado no T11b).
+  -- Config de expediente aberto no instante fixo (o gate de dia é o T11b; o de hora, o bloco E).
   INSERT INTO public.company_config(key, value) VALUES
     ('whatsapp_sla_hora_inicio', '00:00'),
     ('whatsapp_sla_hora_fim',    '23:59'),
@@ -302,7 +479,7 @@ BEGIN
   -- T11b: fora do expediente (dias sem hoje) → tick early-return, 0 push
   -- (mata o re-push overnight: minutos congelam fora do expediente).
   UPDATE public.company_config SET value =
-    (SELECT CASE WHEN EXTRACT(isodow FROM now() AT TIME ZONE 'America/Sao_Paulo')::int = 1
+    (SELECT CASE WHEN EXTRACT(isodow FROM public.now() AT TIME ZONE 'America/Sao_Paulo')::int = 1   -- o relógio do TICK
                  THEN '2' ELSE '1' END)
   WHERE key = 'whatsapp_sla_dias';
   PERFORM public.push_sla_tick();

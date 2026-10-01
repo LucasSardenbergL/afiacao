@@ -18222,6 +18222,16 @@ export type Database = {
         }
         Relationships: []
       }
+      v_reposicao_sku_fora_do_motor: {
+        Row: {
+          empresa: string | null
+          fornecedor_nome: string | null
+          reativado_omie_pendente: boolean | null
+          sku_codigo_omie: number | null
+          sku_descricao: string | null
+        }
+        Relationships: []
+      }
       v_reposicao_sku_sem_fornecedor: {
         Row: {
           empresa: string | null
@@ -19437,6 +19447,7 @@ export type Database = {
           p_desconto_perc: number
           p_observacoes?: string
           p_responsavel_nome?: string
+          p_sku_codigo_fornecedor: string
           p_sugestao_id: number
           p_volume_minimo: number
           p_volume_unidade: string
@@ -19580,12 +19591,10 @@ export type Database = {
           status_envio_portal: string
         }[]
       }
-      expandir_promocao_item:
-        | { Args: { p_item_id: number }; Returns: Json }
-        | {
-            Args: { p_item_id: number; p_threshold_similaridade?: number }
-            Returns: Json
-          }
+      expandir_promocao_item: {
+        Args: { p_item_id: number; p_threshold_similaridade?: number }
+        Returns: Json
+      }
       expirar_planos_taticos: { Args: { _dias?: number }; Returns: number }
       expirar_reservas_vencidas: { Args: never; Returns: Json }
       farmer_association_rules_substituir: {

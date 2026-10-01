@@ -26,7 +26,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }
 
 P -q -f "$REPO_ROOT/db/stubs-supabase.sql"
@@ -126,7 +126,16 @@ eq "A9 continua existindo UMA unica policy de SELECT" \
    "$(Pq -c "SELECT count(*) FROM pg_policy pol JOIN pg_class c ON c.oid=pol.polrelid WHERE c.relname='margin_audit_log' AND pol.polcmd='r';")" "1"
 
 echo "-- ZONA 4: FALSIFICACAO (sabota -> exige VERMELHO -> restaura) --"
-falsificou() { if [ "$1" = "$2" ]; then bad "F$3 sabotagem NAO foi pega - o assert e teatro"; else ok "F$3 $4"; fi; }
+# A medição do juiz roda com `set -e` e o rc capturado fora de ||/&&: no ARGUMENTO do juiz o status se
+# perdia. Falha vira ERRO_rc=<n>, que nenhum declarado casa.
+medir() { local v rc; set +e; v="$(set -e; "$@")"; rc=$?; set -e; if [ "$rc" -eq 0 ]; then printf '%s\n' "$v"; else printf 'ERRO_rc=%s\n' "$rc"; fi; }
+# Vermelho = o valor sob sabotagem e o que a sabotagem DECLARA ($5) -- nao so "!= verde". O "!=" aceitava
+# a leitura que ERRA (a medicao vai como argumento, sem errexit, e sai vazia). O vermelho tem de ser
+# do SEU assert: docs/historico/falsificacao-exit-nao-e-dente.md.
+falsificou() { # $1=medido $2=verde $3=n $4=descricao $5=o que a sabotagem DECLARA
+  if [ "$1" = "$2" ]; then bad "F$3 sabotagem NAO foi pega - o assert e teatro"
+  elif [ "$1" = "$5" ]; then ok "F$3 $4"
+  else bad "F$3 -- vermelha, mas NAO no valor que a sabotagem declara: esperado [$5], veio [$1] (verde [$2])"; fi; }
 
 # F1 - devolve a policy de ORIGEM (sem o ramo de master). A1 tem de mudar de valor.
 P -q <<'SQL'
@@ -136,7 +145,10 @@ CREATE POLICY "Strategic+ can view margin audit" ON public.margin_audit_log
   USING (private.is_super_admin(auth.uid())
       OR ((SELECT cr.commercial_role FROM public.commercial_roles cr WHERE cr.user_id = auth.uid()) = 'estrategico'::public.commercial_role));
 SQL
-falsificou "$(le $UM)" "7" 1 "policy de origem de volta faz o master parar de ler"
+# O "0" do master sozinho saia tambem de DROP POLICY sem recriar (a RLS nega tudo por padrao): a
+# medicao e a assinatura POR PAPEL -- a policy de ORIGEM tira so o master; o legado segue lendo.
+F1M="master=$(medir le $UM)|estrategico=$(medir le $UE)|super_admin=$(medir le $US)"
+falsificou "$F1M" "master=7|estrategico=7|super_admin=7" 1 "policy de origem de volta faz o master parar de ler (o legado segue)" "master=0|estrategico=7|super_admin=7"
 P -q -f "$MIG" >/dev/null
 eq "F1b restaurado: master volta a ler" "$(le $UM)" "7"
 
@@ -151,7 +163,7 @@ CREATE POLICY "Strategic+ can view margin audit" ON public.margin_audit_log
       OR ((SELECT cr.commercial_role FROM public.commercial_roles cr WHERE cr.user_id = auth.uid()) = 'estrategico'::public.commercial_role));
 SQL
 eq "F2a controle: o COMPORTAMENTO do master nao muda com a omissao de TO" "$(le $UM)" "7"
-falsificou "$(roles_da_policy)" "authenticated" 2 "omitir TO authenticated abre a policy para PUBLIC"
+falsificou "$(medir roles_da_policy)" "authenticated" 2 "omitir TO authenticated abre a policy para PUBLIC" "PUBLIC"
 P -q -f "$MIG" >/dev/null
 eq "F2b restaurado: policy volta a TO authenticated" "$(roles_da_policy)" "authenticated"
 

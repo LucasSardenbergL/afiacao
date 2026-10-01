@@ -3,7 +3,20 @@
 # =====================================================================================
 #   bash db/roda-nucleo-ci.sh                 # roda o núcleo
 #   bash db/roda-nucleo-ci.sh --lista         # só imprime o que rodaria
+#   NUCLEO_PARTE=i/N NUCLEO_RECIBO=arq bash db/roda-nucleo-ci.sh   # a parte i (0 ≤ i < N) e o recibo dela
+#   bash db/roda-nucleo-ci.sh --uniao dir/    # confere os recibos parte-*.txt das N partes (sem Postgres)
 #   PGH_MIN_VERSION_NUM=170006 bash db/...    # piso da versão do servidor
+#
+# ## Recibo e UNIÃO das partes (2026-10-01)
+#
+# Em N partes paralelas, a parte que NÃO roda não reprova nada: o step dela pulado (um `if:` novo,
+# uma condição que mudou de tipo) sai verde, e a matriz agrega `success`. A partição está provada no
+# harness, mas a EXECUÇÃO de cada run não estava. Com `NUCLEO_RECIBO`, a parte grava — só depois do
+# próprio conjunto conferido — o sha256 do manifesto, `parte i/N` e cada unidade (arquivo, modo)
+# concluída. O `--uniao` refaz a partição sobre o manifesto INTEIRO e exige: N recibos, as partes
+# 0..N-1 uma vez cada, o mesmo manifesto em todos, e cada unidade concluída exatamente uma vez e na
+# parte que a partição lhe dá. Unidade sem recibo reprova, como no serial; linha que o recibo não
+# prevê também — nada é ignorado.
 #
 # ## O que este runner existe para impedir
 #
@@ -67,8 +80,40 @@ PORTA_BASE="${PORTA_BASE:-5810}"
 # algo sobre um Postgres que ninguém usa.
 PGH_MIN_VERSION_NUM="${PGH_MIN_VERSION_NUM:-170006}"
 
-so_lista=0
-[ "${1:-}" = "--lista" ] && so_lista=1
+# Argumentos ESTRITOS: até 2026-10-01 só o 1º era lido e qualquer outro era ignorado — com o
+# `--uniao` no mundo, um erro de digitação rodaria o núcleo inteiro no job que nem sobe banco.
+uso() {
+  echo "::error::$1"
+  echo "  uso: bash db/roda-nucleo-ci.sh [--lista] | [--uniao <dir>]  (a parte vem de NUCLEO_PARTE/NUCLEO_RECIBO)"
+  exit 1
+}
+so_lista=0; dir_uniao=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --lista) so_lista=1 ;;
+    --uniao) [ $# -ge 2 ] || uso "--uniao sem diretório"; dir_uniao="$2"; shift ;;
+    *) uso "argumento desconhecido '$1'" ;;
+  esac
+  shift
+done
+if [ -n "$dir_uniao" ] && { [ "$so_lista" -eq 1 ] || [ -n "${NUCLEO_PARTE:-}" ]; }; then
+  uso "--uniao confere TODAS as partes: não se combina com --lista nem com NUCLEO_PARTE"
+fi
+if [ -n "${NUCLEO_RECIBO:-}" ] && [ -z "${NUCLEO_PARTE:-}" ]; then
+  uso "NUCLEO_RECIBO só vale com NUCLEO_PARTE — o recibo é de uma parte, e a execução inteira não é parte nenhuma"
+fi
+
+# sha256 do manifesto: o recibo da parte leva o do manifesto que ELA leu, e a união exige o mesmo.
+# Erro no stderr: aqui dentro o stdout é o valor capturado pelo chamador.
+sha_manifesto() {
+  local s
+  if command -v sha256sum > /dev/null 2>&1; then s="$(sha256sum "$MANIFESTO")"; else s="$(shasum -a 256 "$MANIFESTO")"; fi
+  s="${s%% *}"
+  if ! printf '%s' "$s" | grep -qE '^[0-9a-f]{64}$'; then
+    echo "::error::não consegui calcular o sha256 do manifesto (veio '$s')" >&2; exit 1
+  fi
+  printf '%s' "$s"
+}
 
 # ── 1. Manifesto ────────────────────────────────────────────────────────────────
 [ -f "$MANIFESTO" ] || { echo "::error::manifesto ausente: $MANIFESTO"; exit 1; }
@@ -161,6 +206,156 @@ if [ "$esperados" -lt 1 ]; then
   echo "::error::manifesto sem nenhuma prova — um gate que não executa nada não pode afirmar nada"; exit 1
 fi
 
+# ── 1a. A UNIÃO dos recibos das partes (sem Postgres; o manifesto INTEIRO) ─────────────────────
+# O job que junta as partes não sobe banco: confere que o CONJUNTO das unidades concluídas é o do
+# manifesto, pela mesma partição da 1b (prova de posição k → parte k mod N). Regras no cabeçalho
+# (§Recibo e UNIÃO); cada uma tem caso no db/falsifica-nucleo-ci.sh.
+if [ -n "$dir_uniao" ]; then
+  [ -d "$dir_uniao" ] || { echo "::error::diretório de recibos não existe: $dir_uniao"; exit 1; }
+  sha="$(sha_manifesto)"
+  id_cam=(); id_modo=(); id_k=(); n_falsif_u=0; n_fora_u=0
+  for k in "${!scripts[@]}"; do
+    id_cam+=("${scripts[$k]}"); id_modo+=(normal); id_k+=("$k")
+    case "${falsifs[$k]}" in
+      '') ;;
+      fora) n_fora_u=$((n_fora_u + 1)) ;;
+      *) id_cam+=("${scripts[$k]}"); id_modo+=(falsificar); id_k+=("$k"); n_falsif_u=$((n_falsif_u + 1)) ;;
+    esac
+  done
+  recibos=()
+  while IFS= read -r f; do recibos+=("$f"); done < <(find "$dir_uniao" -maxdepth 1 -type f -name 'parte-*.txt' | LC_ALL=C sort)
+  if [ ${#recibos[@]} -lt 1 ]; then
+    echo "::error::nenhum recibo parte-*.txt em $dir_uniao — união vazia não prova nada"; exit 1
+  fi
+
+  # 1ª passada: o FORMATO de cada recibo e o N. Sem N não há partição contra a qual conferir.
+  n_uniao=""; rec_parte=()
+  for f in "${recibos[@]}"; do
+    n_l=0; n_sha=0; n_par=0; n_fim=0; n_un=0; fim_n=""; ultima=""; r_i=""
+    while IFS= read -r l || [ -n "$l" ]; do
+      n_l=$((n_l + 1)); ultima="$l"
+      if [ "$n_l" -eq 1 ]; then
+        [ "$l" = NUCLEO_RECIBO_V1 ] || { echo "::error::$f: 1ª linha '$l', esperava NUCLEO_RECIBO_V1"; exit 1; }
+        continue
+      fi
+      case "$l" in
+        'manifesto_sha256 '*)
+          n_sha=$((n_sha + 1))
+          if [ "${l#manifesto_sha256 }" != "$sha" ]; then
+            echo "::error::$f: recibo de OUTRO manifesto (${l#manifesto_sha256 }) — este é $sha"; exit 1
+          fi ;;
+        'parte '*)
+          n_par=$((n_par + 1)); v="${l#parte }"
+          printf '%s' "$v" | grep -qE '^(0|[1-9][0-9]?)/[1-9][0-9]?$' || { echo "::error::$f: linha de parte malformada: '$l'"; exit 1; }
+          r_i="${v%/*}"; r_n="${v#*/}"
+          if [ -z "$n_uniao" ]; then n_uniao="$r_n"; fi
+          if [ "$r_n" -ne "$n_uniao" ]; then echo "::error::$f: parte $v, mas outro recibo diz N=$n_uniao — partes de partições diferentes"; exit 1; fi
+          if [ "$r_i" -ge "$r_n" ]; then echo "::error::$f: parte $v não existe (i ≥ N)"; exit 1; fi ;;
+        'unidade '*) n_un=$((n_un + 1)) ;;
+        'fim '*) n_fim=$((n_fim + 1)); fim_n="${l#fim }" ;;
+        *) echo "::error::$f: linha não reconhecida no recibo: '$l'"; exit 1 ;;
+      esac
+    done < "$f"
+    if [ "$n_sha" -ne 1 ] || [ "$n_par" -ne 1 ] || [ "$n_fim" -ne 1 ]; then
+      echo "::error::$f: recibo exige UMA linha de cada (manifesto_sha256=$n_sha parte=$n_par fim=$n_fim)"; exit 1
+    fi
+    if [ "$ultima" != "fim $fim_n" ] || [ "$fim_n" != "$n_un" ]; then
+      echo "::error::$f: recibo TRUNCADO ou adulterado — 'fim $fim_n' com $n_un unidade(s), e o fim tem de ser a última linha"; exit 1
+    fi
+    rec_parte+=("$r_i")
+  done
+
+  # As partes 0..N-1, uma vez cada. Duas vezes a mesma = recibo copiado; faltando = parte que não rodou.
+  for ((i = 0; i < n_uniao; i++)); do
+    vezes=0
+    for a in "${rec_parte[@]}"; do if [ "$a" -eq "$i" ]; then vezes=$((vezes + 1)); fi; done
+    if [ "$vezes" -eq 0 ]; then echo "::error::falta o recibo da parte $i/$n_uniao — parte que não rodou não reprova nada"; exit 1; fi
+    if [ "$vezes" -gt 1 ]; then echo "::error::a parte $i/$n_uniao apareceu $vezes vezes"; exit 1; fi
+  done
+
+  # 2ª passada: cada unidade do recibo existe no manifesto, cai NESTA parte pela partição e não foi
+  # vista antes. Depois, toda unidade do manifesto tem de ter sido vista — o conjunto, não a contagem.
+  visto=()
+  for j in "${!id_cam[@]}"; do visto[j]=0; done
+  idx=0
+  for f in "${recibos[@]}"; do
+    r_i="${rec_parte[$idx]}"; idx=$((idx + 1))
+    while IFS= read -r l || [ -n "$l" ]; do
+      case "$l" in 'unidade '*) ;; *) continue ;; esac
+      read -r _ u_cam u_modo u_sobra <<< "$l"
+      if [ -n "${u_sobra:-}" ] || [ -z "${u_modo:-}" ]; then echo "::error::$f: unidade malformada: '$l'"; exit 1; fi
+      achou=""
+      for j in "${!id_cam[@]}"; do
+        if [ "${id_cam[$j]}" = "$u_cam" ] && [ "${id_modo[$j]}" = "$u_modo" ]; then achou="$j"; break; fi
+      done
+      if [ -z "$achou" ]; then echo "::error::$f: unidade fora do manifesto: $u_cam $u_modo"; exit 1; fi
+      if [ "${visto[achou]}" -ne 0 ]; then echo "::error::$f: unidade concluída DUAS vezes: $u_cam $u_modo"; exit 1; fi
+      if [ $(( id_k[achou] % n_uniao )) -ne "$r_i" ]; then
+        echo "::error::$f: $u_cam $u_modo está no recibo da parte $r_i, mas a partição a põe na $(( id_k[achou] % n_uniao )) — a parte rodou OUTRO conjunto"; exit 1
+      fi
+      visto[achou]=1
+    done < "$f"
+  done
+  faltando=()
+  for j in "${!id_cam[@]}"; do
+    if [ "${visto[j]}" -eq 0 ]; then faltando+=("${id_cam[$j]} ${id_modo[$j]} (parte $(( id_k[j] % n_uniao )))"); fi
+  done
+  if [ ${#faltando[@]} -ne 0 ]; then
+    echo "=================================================="
+    for u in "${faltando[@]}"; do echo "  ❌ sem recibo de conclusão: $u"; done
+    echo "PROVAS-SQL REPROVADO — ${#faltando[@]} unidade(s) do manifesto sem conclusão em parte nenhuma"
+    exit 1
+  fi
+  # A exceção fora-do-ci é impressa aqui, onde o veredito é sobre o núcleo INTEIRO — nunca calada.
+  for k in "${!scripts[@]}"; do
+    if [ "${falsifs[$k]}" = fora ]; then
+      printf '  ⚠️  %-44s --falsificar FORA DO CI — ausência de dado, não aprovação: %s\n' \
+        "$(basename "${scripts[$k]}" .sh)" "${motivos_fora[$k]}"
+    fi
+  done
+  echo "=================================================="
+  echo "SQL_PROOF_OK uniao=$n_uniao/$n_uniao provas=$esperados/$esperados falsificacoes=$n_falsif_u/$n_falsif_u fora_do_ci=$n_fora_u unidades=${#id_cam[@]} manifesto_sha256=$sha"
+  exit 0
+fi
+
+# ── 1b. A PARTE deste runner (NUCLEO_PARTE="i/N", 0 ≤ i < N) ─────────────────────────────────
+# O job `provas-sql` roda em N partes paralelas (matriz do ci.yml): serial, o núcleo passou do teto de
+# 20 min quando o #2685 entrou (runs 36799444473 e 36802018807, `main` vermelha) — e o ci.yml já dizia
+# que a próxima prova a estourar pedia PARALELIZAR, não subir o teto de novo.
+#   · Partição round-robin sobre a ordem do manifesto: a prova de posição k vai para a parte k mod N.
+#     Nenhuma prova em duas partes e nenhuma fora de todas, DESDE QUE as N partes rodem — e quem diz
+#     i e N é o próprio GitHub (`strategy.job-index`/`job-total`), contados pela matriz real: mexer na
+#     lista da matriz não abre buraco nem repete parte.
+#   · O manifesto INTEIRO já foi validado acima, em toda parte: linha podre reprova as N.
+#   · Malformada ou fora da faixa ABORTA. Rodar tudo estouraria o teto em silêncio; rodar nada seria o
+#     verde vazio. Parte sem prova nenhuma (N maior que o manifesto) também aborta.
+#   · Sem NUCLEO_PARTE, roda o manifesto inteiro — é como o laptop e o harness usam o runner.
+parte=""
+if [ -n "${NUCLEO_PARTE:-}" ]; then
+  if ! printf '%s' "$NUCLEO_PARTE" | grep -qE '^[0-9]{1,2}/[0-9]{1,2}$'; then
+    echo "::error::NUCLEO_PARTE inválida: '$NUCLEO_PARTE' (formato i/N, com 0 ≤ i < N)"; exit 1
+  fi
+  p_i=$((10#${NUCLEO_PARTE%/*})); p_n=$((10#${NUCLEO_PARTE#*/}))
+  if [ "$p_n" -lt 1 ] || [ "$p_i" -ge "$p_n" ]; then
+    echo "::error::NUCLEO_PARTE inválida: '$NUCLEO_PARTE' (formato i/N, com 0 ≤ i < N)"; exit 1
+  fi
+  sel_s=(); sel_m=(); sel_f=(); sel_mf=()
+  for k in "${!scripts[@]}"; do
+    if [ $((k % p_n)) -eq "$p_i" ]; then
+      sel_s+=("${scripts[$k]}"); sel_m+=("${minimos[$k]}"); sel_f+=("${falsifs[$k]}"); sel_mf+=("${motivos_fora[$k]}")
+    fi
+  done
+  if [ "${#sel_s[@]}" -lt 1 ]; then
+    echo "::error::NUCLEO_PARTE $NUCLEO_PARTE: parte sem nenhuma prova ($esperados no manifesto) — reduza N"; exit 1
+  fi
+  parte="parte $((p_i + 1)) de $p_n: ${#sel_s[@]} de $esperados provas"
+  scripts=("${sel_s[@]}"); minimos=("${sel_m[@]}"); falsifs=("${sel_f[@]}"); motivos_fora=("${sel_mf[@]}")
+  esperados=${#scripts[@]}
+fi
+# O sha do manifesto que ESTA parte leu, tomado agora — não no fim, depois de minutos de provas.
+sha_parte=""
+if [ -n "${NUCLEO_RECIBO:-}" ]; then sha_parte="$(sha_manifesto)"; fi
+
 # Identidades que o recibo final exige: toda prova no modo normal, e cada `falsificar=<n>` como
 # identidade PRÓPRIA — a canária verde no modo normal não vale como falsificação concluída.
 n_falsif=0; n_fora=0
@@ -169,7 +364,7 @@ for f in ${falsifs[@]+"${falsifs[@]}"}; do
 done
 
 if [ "$so_lista" -eq 1 ]; then
-  printf '%s\n' "manifesto=$MANIFESTO provas=$esperados falsificacoes=$n_falsif fora_do_ci=$n_fora"
+  printf '%s\n' "manifesto=$MANIFESTO provas=$esperados falsificacoes=$n_falsif fora_do_ci=$n_fora${parte:+ ($parte)}"
   for i in "${!scripts[@]}"; do
     case "${falsifs[$i]}" in
       '')   extra="" ;;
@@ -312,7 +507,7 @@ executa() {
 }
 
 echo
-echo "=== núcleo: $esperados prova(s) + $n_falsif falsificação(ões), serial ==="
+echo "=== núcleo: $esperados prova(s) + $n_falsif falsificação(ões), serial${parte:+ — $parte} ==="
 for i in "${!scripts[@]}"; do
   executa "${scripts[$i]}" normal "${minimos[$i]}"
   case "${falsifs[$i]}" in
@@ -352,5 +547,19 @@ ok_normal=0; ok_falsif=0
 for feito in "${concluidas[@]}"; do
   case "$feito" in *' normal') ok_normal=$((ok_normal + 1)) ;; *' falsificar') ok_falsif=$((ok_falsif + 1)) ;; esac
 done
-echo "SQL_PROOF_OK provas=$ok_normal/$esperados falsificacoes=$ok_falsif/$n_falsif fora_do_ci=$n_fora server_version_num=$versao_num pgbin=$PGBIN"
+echo "SQL_PROOF_OK provas=$ok_normal/$esperados falsificacoes=$ok_falsif/$n_falsif fora_do_ci=$n_fora server_version_num=$versao_num pgbin=$PGBIN${parte:+ parte=$NUCLEO_PARTE}"
+# O recibo só nasce aqui, DEPOIS do conjunto da parte conferido: parte vermelha não deixa recibo, e a
+# união reprova pela falta dele mesmo que ninguém olhe o job vermelho. A parte vai normalizada (p_i/p_n
+# da 1b), que é como a união a lê.
+if [ -n "${NUCLEO_RECIBO:-}" ]; then
+  mkdir -p "$(dirname "$NUCLEO_RECIBO")"
+  { echo NUCLEO_RECIBO_V1
+    echo "manifesto_sha256 $sha_parte"
+    echo "parte $p_i/$p_n"
+    for feito in "${concluidas[@]}"; do echo "unidade $feito"; done
+    echo "fim ${#concluidas[@]}"
+  } > "$NUCLEO_RECIBO.tmp"
+  mv "$NUCLEO_RECIBO.tmp" "$NUCLEO_RECIBO"
+  echo "RECIBO_DA_PARTE $p_i/$p_n unidades=${#concluidas[@]} arquivo=$NUCLEO_RECIBO"
+fi
 rm -rf "$LOGS"

@@ -6,7 +6,12 @@ import {
   type ImagemRejeitada,
   prepararImagens,
 } from "./imagem-helpers.ts";
-import { extrairToolUseUnico, sanitizarListaIA } from "./saida-ia.ts";
+import {
+  canariaSemPreco,
+  extrairToolUseUnico,
+  montarRespostaAnalise,
+  sanitizarListaIA,
+} from "./saida-ia.ts";
 import { classificarFlag, erroFlagAmbigua } from "../_shared/sonda-versao.ts";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
@@ -31,43 +36,25 @@ function stripAccents(str: string): string {
   return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 }
 
-/**
- * Sanitiza input para interpolar com segurança numa string de `.or()` do PostgREST.
- * Remove caracteres especiais do parser PostgREST: vírgula, parênteses, barra
- * invertida, aspas duplas e wildcards do ILIKE (% _).
- */
+// MIRROR-START postgrest-or — manter IDÊNTICO ao bloco de src/lib/postgrest.ts (Deno não importa de src/).
+// Sanitiza o termo para o `.or()` do PostgREST: tira vírgula, parênteses, barra, aspas e os curingas
+// `% _ *` (o `*` é alias de `%` em like/ilike). `isSearchablePostgrestTerm` é o gate do termo DEGENERADO:
+// só-metacaracteres (`***` de negrito do WhatsApp, `%%%`) sanitiza para vazio, e `col.ilike.%%` casaria
+// TODA linha — o caller não consulta. A paridade deste bloco × src é vigiada pelo CI
+// (edge-money-path-invariants): esta cópia ficou sem o `*` quando o #1051 o pôs só na fonte (B1).
 function sanitizeForPostgrestOr(input: string): string {
-  return input.replace(/[%_,()\\"]/g, "");
+  return input.replace(/[%_,()\\"*]/g, '');
 }
+function isSearchablePostgrestTerm(term: string): boolean {
+  return sanitizeForPostgrestOr(term) !== '';
+}
+// MIRROR-END postgrest-or
 
 /** Constrói cláusula .or() segura para múltiplas colunas ILIKE. */
 function ilikeOr(term: string, ...cols: string[]): string {
   const safe = sanitizeForPostgrestOr(term);
   return cols.map((c) => `${c}.ilike.%${safe}%`).join(",");
 }
-
-// MIRROR-START mergeCustomerPrices — manter IDÊNTICO ao helper de src/lib/pricing/mergeCustomerPrices.ts
-// (Deno não importa de src/). MONEY-PATH: order_items VENCE, Omie só preenche gap, preço inválido
-// (≤0/NaN/Infinity) ignorado. A paridade deste bloco × src é vigiada pelo CI (edge-money-path-invariants).
-function isValidUnitPrice(p: unknown): p is number {
-  return typeof p === "number" && Number.isFinite(p) && p > 0;
-}
-function mergeCustomerPrices(
-  localPrices: ReadonlyArray<{ product_id?: string | null; unit_price?: number | null }>,
-  omiePrices: Record<string, number>,
-): Record<string, number> {
-  const priceMap: Record<string, number> = {};
-  for (const row of localPrices) {
-    const id = row?.product_id;
-    const price = row?.unit_price;
-    if (id && isValidUnitPrice(price) && !(id in priceMap)) priceMap[id] = price;
-  }
-  for (const [productId, price] of Object.entries(omiePrices)) {
-    if (productId && isValidUnitPrice(price) && !(productId in priceMap)) priceMap[productId] = price;
-  }
-  return priceMap;
-}
-// MIRROR-END mergeCustomerPrices
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -103,13 +90,15 @@ interface UserToolRow {
   tool_categories?: { name?: string | null } | null;
 }
 
+// Sem `unit_price` nos dois tipos abaixo: a IA não precifica (fronteira em
+// `montarRespostaAnalise`, saida-ia.ts). Tirar do TIPO faz o compilador recusar quem tentar
+// voltar a atribuí-lo aqui dentro.
 interface AIProduct {
   product_id?: string;
   codigo?: string;
   descricao?: string;
   quantity?: number;
   account?: string;
-  unit_price?: number;
   notes?: string;
 }
 
@@ -128,7 +117,6 @@ interface AISuggestion {
   descricao: string;
   quantity?: number;
   account?: string;
-  unit_price?: number;
   reason: string;
   userToolId?: string;
   omie_codigo_servico?: number;
@@ -182,18 +170,6 @@ interface ToolPropertySchema {
   enum?: string[];
 }
 
-interface OmieProdutoPedidoItem {
-  produto?: { codigo_produto?: number; valor_unitario?: number };
-}
-
-interface OmiePedidoVendaProduto {
-  det?: OmieProdutoPedidoItem[];
-}
-
-interface OmieListarPedidosResponse {
-  pedido_venda_produto?: OmiePedidoVendaProduto[];
-}
-
 interface OmieClienteCadastroResponse {
   clientes_cadastro?: Array<{
     codigo_cliente_omie?: number;
@@ -215,8 +191,8 @@ Deno.serve(async (req) => {
   // NÃO conhece `x-cron-secret`, então uma sonda colocada depois dele seria inalcançável pelo
   // caminho documentado (SQL Editor via net.http_post) — exatamente o defeito que o #1882 corrigiu
   // na `recommend`. É também o que separa esta sonda da CANÁRIA de preço logo abaixo: aquela vive
-  // depois do gate de staff, então só o app logado a alcança, e o `contrato` dela nomeia a fatia
-  // do MERGE DE PREÇO, não a do prompt.
+  // depois do gate de staff, então só o app logado a alcança, e o `contrato` dela nomeia o
+  // contrato de PREÇO (hoje: a IA não precifica), não a fatia do prompt.
   //
   // O parse subiu para cá porque `req.json()` é one-shot: o corpo lido aqui é reaproveitado como
   // `body` pelo fluxo real. JSON inválido passa a responder 400 em vez de 500 pelo catch geral
@@ -302,10 +278,16 @@ Deno.serve(async (req) => {
     const body: CorpoRequisicao = (typeof corpoBruto === "object" && corpoBruto !== null ? corpoBruto : {});
     const { text, imageBase64, imagesBase64, products, userTools, customerUserId, searchCustomer } = body;
 
-    // CANÁRIA COMPORTAMENTAL (staff-gated — já passou pelo gate de auth+staff acima). Prova que o
-    // merge de preço REALMENTE DEPLOYADO honra "order_items vence o Omie": local=123 deve vencer
-    // Omie=999. Probe HTTP = única evidência de que o deploy do Lovable não reverteu a lógica.
-    // Roda o helper REAL (não uma cópia do teste) e não toca LLM/Omie/DB. Ver edge-money-path-invariants.
+    // CANÁRIA COMPORTAMENTAL (staff-gated — já passou pelo gate de auth+staff acima). Prova que a
+    // edge REALMENTE DEPLOYADA não precifica: roda a MESMA `montarRespostaAnalise` do fluxo real
+    // sobre uma fixture cujos itens trazem preço (o `unit_price` que o LLM devolvia e um `preco`
+    // alucinado) e exige que nenhum saia — e que o item SAIA (uma fronteira que devolvesse lista
+    // vazia teria "zero preços" e seria sempre-verde). Probe HTTP = única evidência de que o deploy
+    // do Lovable não reverteu a lógica. Não toca LLM/Omie/DB. Ver edge-money-path-invariants.
+    //
+    // HISTÓRICO: até `v1.3` esta canária atestava o merge "praticado vence Omie" (contrato
+    // `praticado-vence-omie-v1`, #1089). O merge saiu da edge junto com o enriquecimento de preço
+    // — o objeto que ela atestava deixou de existir, então o contrato MUDA (não é bump de fatia).
     //
     // CLASSIFICADOR ROBUSTO (não `canary === true` cru): quem invoca é o founder pelo SQL Editor, e
     // `jsonb_build_object('canary', true)` vira a STRING "true" com facilidade. Sob a comparação
@@ -327,24 +309,16 @@ Deno.serve(async (req) => {
       );
     }
     if (decisaoCanaria.tipo === "sonda") {
-      const resolved = mergeCustomerPrices(
-        [{ product_id: "CANARY", unit_price: 123 }],
-        { CANARY: 999 },
-      ).CANARY;
-      const expected = 123;
-      // `contrato` é o VERSION MARKER exigido por docs/agent/deploy.md §Canárias: sem ele um deploy
-      // INTEGRALMENTE VELHO carrega o `expected` VELHO junto, compara velho×velho e responde
-      // ok:true mentindo verde. O `ok` sozinho separa "a função respondeu" de nada — o marcador é o
-      // que separa "respondeu" de "é a versão que eu deployei". O nome NOMEIA a fatia (a canária é
-      // pré-existente, do #1089, então `v1.0-sensor-inicial` seria desonesto aqui). ⚠️ BUMP
-      // obrigatório a cada fatia que mude o contrato desta canária.
+      // A MEDIÇÃO (fixture, contagem pelo nome literal, controle do sempre-verde) mora em
+      // `canariaSemPreco` (saida-ia.ts), para o teste Deno rodar a MESMA conta que esta edge serve. O
+      // `contrato` fica LITERAL aqui: é por ele que o `canaria-contrato-bump-gate` acha esta canária, e
+      // quem o exige é o card de Governança (`CONTRATO_ESPERADO`, código do FRONT) — a troca só
+      // discrimina com o Publish E o deploy. ⚠️ BUMP a cada fatia que mude o que ela atesta.
       return new Response(
         JSON.stringify({
           canary: true,
-          contrato: "praticado-vence-omie-v1",
-          resolved,
-          expected,
-          ok: resolved === expected,
+          contrato: "ia-nao-precifica-v1",
+          ...canariaSemPreco(),
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
@@ -417,8 +391,9 @@ Deno.serve(async (req) => {
           console.error("Error loading all profiles for image mode:", e);
         }
       } else {
-        // Search in profiles for name matches (text mode)
-        for (const term of nameTerms.slice(0, 5)) {
+        // Search in profiles for name matches (text mode). Termo DEGENERADO fica fora ANTES do corte
+        // de 5: `***` vira `name.ilike.%%` = 20 perfis arbitrários como "cliente sugerido" (B1).
+        for (const term of nameTerms.filter(isSearchablePostgrestTerm).slice(0, 5)) {
           try {
             const { data: profiles } = await supabase
               .from("profiles")
@@ -537,7 +512,9 @@ Deno.serve(async (req) => {
       .filter((t: string) => t.length >= 3);
 
     if (searchTerms.length > 0) {
-      for (const term of searchTerms.slice(0, 5)) {
+      // Termo DEGENERADO fica fora antes do corte de 5 (senão `descricao.ilike.%%` = 20 produtos
+      // arbitrários). Só-metacaractere não tem dígito nem letra: nenhuma busca abaixo o aproveitaria.
+      for (const term of searchTerms.filter(isSearchablePostgrestTerm).slice(0, 5)) {
         try {
           const { data: dbProducts } = await supabase
             .from("omie_products")
@@ -603,7 +580,8 @@ Deno.serve(async (req) => {
         // Also try alphanumeric-stripped version (e.g., "FO56717" → search without dots)
         try {
           const stripped = term.replace(/[.\-\s]/g, '');
-          if (stripped.length >= 4) {
+          // Gate PRÓPRIO: o termo passou no filtro acima, mas `..**..**` vira `****` aqui — degenerado.
+          if (stripped.length >= 4 && isSearchablePostgrestTerm(stripped)) {
             const { data: strippedProducts } = await supabase
               .from("omie_products")
               .select("id, codigo, descricao, account, valor_unitario, estoque")
@@ -674,7 +652,9 @@ Deno.serve(async (req) => {
     console.log(`[analyze-unified-order] Total products: ${prodList.length}, customer candidates: ${customerCandidates.length}, searchCustomer: ${searchCustomer}`);
 
     const produtosLista = prodList.map((p) =>
-      `- ID:${p.id} | Código:${p.codigo} | ${p.descricao} | Conta:${p.account || 'oben'} | Preço:${p.valor_unitario} | Estoque:${p.estoque ?? 0}`
+      // Sem `Preço:` — a IA não precifica. Era a ÚNICA fonte de preço do modelo (a TABELA), e ele
+      // a ecoava no `unit_price` do item e na prosa da `message` como se fosse o preço do cliente.
+      `- ID:${p.id} | Código:${p.codigo} | ${p.descricao} | Conta:${p.account || 'oben'} | Estoque:${p.estoque ?? 0}`
     ).join("\n");
 
     // Format user tools
@@ -692,7 +672,7 @@ Deno.serve(async (req) => {
       try {
         const { data: recentItems } = await supabase
           .from("order_items")
-          .select("product_id, quantity, unit_price, omie_products(descricao, codigo, account)")
+          .select("product_id, quantity, omie_products(descricao, codigo, account)")
           .eq("customer_user_id", customerUserId)
           .order("created_at", { ascending: false })
           .limit(50);
@@ -832,7 +812,6 @@ Deno.serve(async (req) => {
             descricao: { type: "string", description: "Descrição do produto" },
             quantity: { type: "number", description: "Quantidade (padrão 1)" },
             account: { type: "string", description: "Conta: oben ou colacor" },
-            unit_price: { type: "number", description: "Preço unitário do produto" },
             notes: { type: "string", description: "Observações" },
           },
           required: ["product_id", "quantity", "account"],
@@ -865,7 +844,6 @@ Deno.serve(async (req) => {
             descricao: { type: "string", description: "Descrição do item sugerido" },
             quantity: { type: "number", description: "Quantidade sugerida" },
             account: { type: "string", description: "Conta: oben ou colacor" },
-            unit_price: { type: "number", description: "Último preço praticado para o cliente" },
             reason: { type: "string", description: "Motivo da sugestão" },
             userToolId: { type: "string", description: "ID da ferramenta (se type=service)" },
             omie_codigo_servico: { type: "number", description: "Código do serviço (se type=service)" },
@@ -1096,7 +1074,7 @@ Deno.serve(async (req) => {
           });
           if (match) {
             console.log(`[analyze-unified-order] Rescued by codigo: ${ap.codigo} → ${match.descricao} (${match.id})`);
-            validProducts.push({ ...ap, product_id: match.id, codigo: match.codigo, descricao: match.descricao, account: match.account, unit_price: ap.unit_price || match.valor_unitario });
+            validProducts.push({ ...ap, product_id: match.id, codigo: match.codigo, descricao: match.descricao, account: match.account });
             rescued = true;
           }
         }
@@ -1116,7 +1094,7 @@ Deno.serve(async (req) => {
               });
               if (bestMatch) {
                 console.log(`[analyze-unified-order] Rescued by prefix+numeric+suffix: ${ap.codigo}/${ap.descricao} → ${bestMatch.descricao}`);
-                validProducts.push({ ...ap, product_id: bestMatch.id, codigo: bestMatch.codigo, descricao: bestMatch.descricao, account: bestMatch.account, unit_price: ap.unit_price || bestMatch.valor_unitario });
+                validProducts.push({ ...ap, product_id: bestMatch.id, codigo: bestMatch.codigo, descricao: bestMatch.descricao, account: bestMatch.account });
                 rescued = true;
                 break;
               }
@@ -1126,7 +1104,7 @@ Deno.serve(async (req) => {
               const prefixMatch = candidates.find((p) => p.descricao.toUpperCase().includes(alphaPrefix));
               if (prefixMatch) {
                 console.log(`[analyze-unified-order] Rescued by prefix+numeric: ${ap.codigo}/${ap.descricao} → ${prefixMatch.descricao}`);
-                validProducts.push({ ...ap, product_id: prefixMatch.id, codigo: prefixMatch.codigo, descricao: prefixMatch.descricao, account: prefixMatch.account, unit_price: ap.unit_price || prefixMatch.valor_unitario });
+                validProducts.push({ ...ap, product_id: prefixMatch.id, codigo: prefixMatch.codigo, descricao: prefixMatch.descricao, account: prefixMatch.account });
                 rescued = true;
                 break;
               }
@@ -1136,7 +1114,7 @@ Deno.serve(async (req) => {
               const suffMatch = candidates.find((p) => p.descricao.toUpperCase().includes(packSuffix));
               if (suffMatch) {
                 console.log(`[analyze-unified-order] Rescued by numeric+suffix: ${ap.codigo}/${ap.descricao} → ${suffMatch.descricao}`);
-                validProducts.push({ ...ap, product_id: suffMatch.id, codigo: suffMatch.codigo, descricao: suffMatch.descricao, account: suffMatch.account, unit_price: ap.unit_price || suffMatch.valor_unitario });
+                validProducts.push({ ...ap, product_id: suffMatch.id, codigo: suffMatch.codigo, descricao: suffMatch.descricao, account: suffMatch.account });
                 rescued = true;
                 break;
               }
@@ -1147,7 +1125,7 @@ Deno.serve(async (req) => {
               if (candidates.length === 1) {
                 const match = candidates[0];
                 console.log(`[analyze-unified-order] Rescued by numeric (single match): ${ap.codigo}/${ap.descricao} → ${match.descricao}`);
-                validProducts.push({ ...ap, product_id: match.id, codigo: match.codigo, descricao: match.descricao, account: match.account, unit_price: ap.unit_price || match.valor_unitario });
+                validProducts.push({ ...ap, product_id: match.id, codigo: match.codigo, descricao: match.descricao, account: match.account });
                 rescued = true;
               } else {
                 console.log(`[analyze-unified-order] Multiple candidates for ${nc}, not auto-picking. Moving to suggestions.`);
@@ -1172,7 +1150,7 @@ Deno.serve(async (req) => {
               if (dbRescue && dbRescue.length > 0) {
                 const best = dbRescue[0];
                 console.log(`[analyze-unified-order] Rescued from DB: ${ap.codigo}/${ap.descricao} → ${best.descricao}`);
-                validProducts.push({ ...ap, product_id: best.id, codigo: best.codigo, descricao: best.descricao, account: best.account, unit_price: ap.unit_price || best.valor_unitario });
+                validProducts.push({ ...ap, product_id: best.id, codigo: best.codigo, descricao: best.descricao, account: best.account });
                 rescued = true;
                 break;
               }
@@ -1425,182 +1403,14 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Enrich products and suggestions with customer-specific last practiced prices
-    if (validCustomer?.user_id || validCustomer?.codigo_cliente) {
-      try {
-        // FONTE DE VERDADE: order_items (último praticado). `sales_price_history` REMOVIDO daqui — o
-        // writer legado omie-analytics-sync (aposentado) poluiu a sph com created_at de CARGA, e a
-        // leitura por created_at DESC mascarava o preço (3.995 duplicatas com-pedido; 854 com
-        // unit_price divergente = ambíguo, intocável sem identidade de linha Omie). order_items
-        // cobre 99,84% dos pares (cliente,produto) da sph; o resto cai no fallback Omie abaixo.
-        // Espelha o Caminho B já feito no hook (RPC get_ultimos_precos_cliente). created_at de
-        // order_items = data real do pedido (trigger #1047), não data de carga.
-        const localPrices: Array<{ product_id?: string | null; unit_price?: number | null }> = [];
-        // Omie (fallback) colapsado p/ Record<productId, price>; o MERGE final passa pelo helper.
-        const omiePricesByProductId: Record<string, number> = {};
-
-        if (validCustomer?.user_id) {
-          const { data: orderItemsData } = await supabase
-            .from("order_items")
-            .select("product_id, unit_price")
-            .eq("customer_user_id", validCustomer.user_id)
-            .order("created_at", { ascending: false })
-            .limit(200);
-
-          if (orderItemsData) {
-            for (const ph of orderItemsData) {
-              localPrices.push({ product_id: ph.product_id, unit_price: ph.unit_price });
-            }
-          }
-        }
-
-        // 2) Omie ERP: fetch last practiced prices from Omie orders (same as manual flow)
-        if (validCustomer?.codigo_cliente && Number(validCustomer.codigo_cliente) > 0) {
-          try {
-            // Collect all product IDs we need prices for
-            const allProductIds = [
-              ...validProducts.map((vp) => vp.product_id),
-              ...validSuggestions.filter((vs) => vs.product_id).map((vs) => vs.product_id),
-            ].filter(Boolean);
-
-            // Get omie_codigo_produto mapping for identified products
-            const omieCodeMap: Record<number, string> = {}; // omie_codigo_produto → product_id
-            if (allProductIds.length > 0) {
-              const { data: productMappings } = await supabase
-                .from("omie_products")
-                .select("id, omie_codigo_produto")
-                .in("id", allProductIds);
-              if (productMappings) {
-                for (const pm of productMappings) {
-                  omieCodeMap[pm.omie_codigo_produto] = pm.id;
-                }
-              }
-            }
-
-            // Fetch prices from Omie for both accounts
-            const OMIE_OBEN_KEY = Deno.env.get("OMIE_OBEN_APP_KEY");
-            const OMIE_OBEN_SECRET = Deno.env.get("OMIE_OBEN_APP_SECRET");
-            const OMIE_COLACOR_KEY = Deno.env.get("OMIE_COLACOR_APP_KEY");
-            const OMIE_COLACOR_SECRET = Deno.env.get("OMIE_COLACOR_APP_SECRET");
-
-            const fetchOmiePrices = async (appKey: string, appSecret: string, codigoCliente: number): Promise<Record<number, number>> => {
-              try {
-                const omieRes = await fetch("https://app.omie.com.br/api/v1/produtos/pedido/", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({
-                    call: "ListarPedidos",
-                    app_key: appKey,
-                    app_secret: appSecret,
-                    param: [{
-                      pagina: 1,
-                      registros_por_pagina: 50,
-                      filtrar_por_cliente: codigoCliente,
-                      filtrar_apenas_inclusao: "N",
-                    }],
-                  }),
-                });
-                // `fetch` NÃO lança em HTTP não-2xx: um 429/5xx cujo corpo parseia limpo devolvia
-                // `pedido_venda_produto` ausente → `|| []` → zero preços, indistinguível de "este
-                // cliente nunca comprou". Aqui o efeito é RECALL, não fabricação de número (o
-                // histórico do Omie só PREENCHE GAP — `mergeCustomerPrices` faz order_items vencer,
-                // e `isValidUnitPrice` barra valor inválido), então o desfecho continua sendo o
-                // best-effort que este caminho sempre foi: o catch abaixo devolve `{}`. O que muda
-                // é o motivo deixar de ser invisível — "0 preços" e "o Omie respondeu 503" tinham
-                // exatamente o mesmo log, e só o segundo explica um orçamento sem preço praticado.
-                if (!omieRes.ok) {
-                  throw new Error(`Omie HTTP ${omieRes.status} em ListarPedidos (preços do cliente)`);
-                }
-                const data = await omieRes.json();
-                const precos: Record<number, number> = {};
-                const pedidos = data.pedido_venda_produto || [];
-                for (const pedido of pedidos) {
-                  const itens = pedido.det || [];
-                  for (const item of itens) {
-                    const codigoProduto = item.produto?.codigo_produto;
-                    const valorUnit = item.produto?.valor_unitario;
-                    if (codigoProduto && valorUnit && !precos[codigoProduto]) {
-                      precos[codigoProduto] = valorUnit;
-                    }
-                  }
-                }
-                return precos;
-              } catch (e) {
-                console.error("Error fetching Omie prices:", e);
-                return {};
-              }
-            };
-
-            // Fetch from both accounts in parallel
-            const omiePricePromises: Promise<Record<number, number>>[] = [];
-            if (OMIE_OBEN_KEY && OMIE_OBEN_SECRET) {
-              omiePricePromises.push(fetchOmiePrices(OMIE_OBEN_KEY, OMIE_OBEN_SECRET, validCustomer.codigo_cliente));
-            }
-            if (OMIE_COLACOR_KEY && OMIE_COLACOR_SECRET) {
-              // For colacor, we might need a different codigo_cliente; try the same one
-              omiePricePromises.push(fetchOmiePrices(OMIE_COLACOR_KEY, OMIE_COLACOR_SECRET, validCustomer.codigo_cliente));
-            }
-
-            const omieResults = await Promise.all(omiePricePromises);
-
-            // Resolve mappings faltantes (omieCode→productId) ANTES de colapsar — antes isto era um
-            // 2º "re-apply" incremental; agora resolvemos tudo e colapsamos UMA vez (mesmo resultado).
-            const allOmieCodes = omieResults.flatMap((r) => Object.keys(r).map(Number));
-            const missingCodes = allOmieCodes.filter((c) => !omieCodeMap[c]);
-            if (missingCodes.length > 0) {
-              const { data: extraMappings } = await supabase
-                .from("omie_products")
-                .select("id, omie_codigo_produto")
-                .in("omie_codigo_produto", missingCodes);
-              if (extraMappings) {
-                for (const pm of extraMappings) {
-                  omieCodeMap[pm.omie_codigo_produto] = pm.id;
-                }
-              }
-            }
-
-            // Colapsa omieResults → Record<productId, price> (first-wins por produto, só preços
-            // válidos). fetchOmiePrices pega o "primeiro encontrado" do ListarPedidos (ordem NÃO
-            // garantida); por isso o MERGE com order_items é FALLBACK — o helper espelhado abaixo faz
-            // order_items VENCER e o Omie só preencher gap. ⚠️ NÃO reverter p/ override no deploy do
-            // Lovable (já foi revertido 1× — 08431871 pós-#1077; alinhado ao hook #1065).
-            // Resolver o omieCodeMap completo e colapsar 1× é equivalente ao re-apply incremental
-            // anterior: omie_products.id é PK e omie_codigo_produto↔id é bijeção (0 colisões —
-            // conferido via psql-ro), logo cada productId tem 1 código Omie e a ordem é irrelevante.
-            for (const omiePrices of omieResults) {
-              for (const [omieCode, price] of Object.entries(omiePrices)) {
-                const productId = omieCodeMap[Number(omieCode)];
-                if (productId && isValidUnitPrice(price) && !(productId in omiePricesByProductId)) {
-                  omiePricesByProductId[productId] = price;
-                }
-              }
-            }
-          } catch (omieErr) {
-            console.error("Error fetching Omie prices for AI response:", omieErr);
-          }
-        }
-
-        // MERGE money-path (helper espelhado): order_items VENCE, Omie só preenche gap, ≤0 ignorado.
-        const priceMap = mergeCustomerPrices(localPrices, omiePricesByProductId);
-        console.log(`[analyze-unified-order] Price enrichment: ${Object.keys(priceMap).length} prices (order_items vence; Omie preenche gap)`);
-
-        // Apply prices to products
-        for (const vp of validProducts) {
-          if (priceMap[vp.product_id]) {
-            vp.unit_price = priceMap[vp.product_id];
-          }
-        }
-
-        // Apply prices to suggestions
-        for (const vs of validSuggestions) {
-          if (vs.product_id && priceMap[vs.product_id]) {
-            vs.unit_price = priceMap[vs.product_id];
-          }
-        }
-      } catch (e) {
-        console.error("Error fetching customer prices for AI response:", e);
-      }
-    }
+    // SEM enriquecimento de preço. Até a v1.3 este ponto lia `order_items` cru (service_role, sem
+    // JOIN em sales_orders, LIMIT 200 por created_at) + `ListarPedidos` do Omie e aplicava o
+    // "último praticado" em products/suggestions — um 2º decisor de preço, divergente do único que
+    // o carrinho reconhece (`precoPartida`, que lê a RPC `get_ultimos_precos_cliente` para o cliente
+    // SELECIONADO). Medido em prod (2026-09-30): além de só existir quando a IA identificava o
+    // cliente, a leitura crua divergia da RPC em 11 pares (pedido cancelado), 4.315 (teto de 200
+    // itens, 77 clientes) e 162 (empate de created_at, escolha não-determinística). A edge agora
+    // só IDENTIFICA; o preço nasce no front. Ver `montarRespostaAnalise` (saida-ia.ts).
 
     // SECURITY: strip PII (cnpj_cpf/email/phone/document) from response payload.
     const safeCustomer = validCustomer
@@ -1620,14 +1430,22 @@ Deno.serve(async (req) => {
     const mensagemBase = result.message ||
       `Identificado ${validProducts.length} produto(s) e ${validServices.length} serviço(s).`;
 
-    return new Response(JSON.stringify({
+    // FRONTEIRA DE SAÍDA (money-path): todo item sai pela lista fechada de `montarRespostaAnalise`
+    // — nenhum `unit_price`/preço atravessa, venha do LLM ou de quem for. O vitest
+    // (edge-money-path-invariants) exige que o `JSON.stringify` do fluxo real consuma ESTA chamada.
+    // `corpoResposta`, não `resposta`: o handler já tem `let resposta` (a resposta da Anthropic, l.~880) no
+    // MESMO escopo — redeclarar é early error do V8 e a edge não BOOTA (incidente 2026-10-01, BOOT_ERROR 503).
+    const corpoResposta = montarRespostaAnalise({
       products: validProducts,
       services: validServices,
       suggestions: validSuggestions,
       customer: safeCustomer,
       imagens_rejeitadas: imagensRejeitadas,
       message: avisoFotos ? `${mensagemBase} ⚠️ ${avisoFotos}` : mensagemBase,
-    }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    });
+    return new Response(JSON.stringify(corpoResposta), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
 
   } catch (error) {
     console.error("analyze-unified-order error:", error);

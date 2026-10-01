@@ -111,23 +111,18 @@ MIGRATION2="$REPO_ROOT/supabase/migrations/20260718233000_tint_canonica_preco_cs
 MIGRATION3="$REPO_ROOT/supabase/migrations/20260722100002_tint_canonica_csv_legado_semantico.sql"
 MIGRATION4="$REPO_ROOT/supabase/migrations/20260724130000_tint_canonica_csv_legado_allowlist.sql"
 MIGRATION5="$REPO_ROOT/supabase/migrations/20260726160000_tint_canonica_piso_legado.sql"
-PGVER=17
-PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
-PORT=5447
+export PGVER=17   # consumido pelo db/lib/pg-harness.sh via source
+# shellcheck disable=SC1091  # o gate roda sem -x; o helper e versionado ao lado, em db/lib/
+. "$REPO_ROOT/db/lib/pg-harness.sh"   # exporta PGBIN — fail-CLOSED, confere a major POSITIVAMENTE
+PORT="${PGPORT_TEST:-5447}"
 DATA="$(mktemp -d /tmp/pgtest-tintcanonica.XXXXXX)/data"
 export LC_ALL=C LANG=C
 
-[ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER} pgvector"; exit 1; }
 [ -f "$MIGRATION" ] || { echo "migration ausente: $MIGRATION"; exit 1; }
 [ -f "$MIGRATION2" ] || { echo "migration ausente: $MIGRATION2"; exit 1; }
 [ -f "$MIGRATION3" ] || { echo "migration ausente: $MIGRATION3"; exit 1; }
 [ -f "$MIGRATION4" ] || { echo "migration ausente: $MIGRATION4"; exit 1; }
 [ -f "$MIGRATION5" ] || { echo "migration ausente: $MIGRATION5"; exit 1; }
-
-CELLAR="$(brew --prefix postgresql@${PGVER})"
-cp -Rn "$CELLAR"/share/postgresql/. "/opt/homebrew/share/postgresql@${PGVER}/" 2>/dev/null || true
-mkdir -p "/opt/homebrew/lib/postgresql@${PGVER}"
-cp -Rn "$CELLAR"/lib/postgresql/. "/opt/homebrew/lib/postgresql@${PGVER}/" 2>/dev/null || true
 
 cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$(dirname "$DATA")"; rm -f "${RR:-}"; }
 trap cleanup EXIT
@@ -135,7 +130,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-tintcanonica.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres canonica_verify
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d canonica_verify -v ON_ERROR_STOP=1 "$@"; }
+P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d canonica_verify -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }
 
 PASS=0; FAIL=0
@@ -471,7 +466,7 @@ BEGIN
   -- (SL canônica + personalizada com CSV, sem geração '1' na chave) e +1 item.
   SELECT count(*) INTO nf FROM public.tint_formulas;
   SELECT count(*) INTO ni FROM public.tint_formula_itens;
-  IF nf <> 47 OR ni <> 31 THEN
+  IF nf IS DISTINCT FROM 47 OR ni IS DISTINCT FROM 31 THEN
     RAISE EXCEPTION 'C0 FALHOU: seed incompleto (formulas=% esperado 47, itens=% esperado 31)', nf, ni; END IF;
 
   -- C8 não-desaparecimento GLOBAL primeiro (cardinalidade pega duplicata E omissão
@@ -481,17 +476,17 @@ BEGIN
     WHERE desativada_em IS NULL AND sku_id IS NOT NULL
     EXCEPT
     SELECT account, sku_id, cor_id FROM public.v_tint_formula_canonica) x;
-  IF n <> 0 THEN falhas := falhas || format('C8 FALHOU: %s chaves ativas AUSENTES da view', n); END IF;
+  IF n IS DISTINCT FROM 0 THEN falhas := falhas || format('C8 FALHOU: %s chaves ativas AUSENTES da view', n); END IF;
   SELECT count(*) INTO n FROM (
     SELECT account, sku_id, cor_id FROM public.v_tint_formula_canonica
     EXCEPT
     SELECT account, sku_id, cor_id FROM public.tint_formulas
     WHERE desativada_em IS NULL AND sku_id IS NOT NULL) x;
-  IF n <> 0 THEN falhas := falhas || format('C8 FALHOU: %s chaves na view SEM lastro na tabela', n); END IF;
+  IF n IS DISTINCT FROM 0 THEN falhas := falhas || format('C8 FALHOU: %s chaves na view SEM lastro na tabela', n); END IF;
   SELECT count(*) INTO n FROM (
     SELECT account, sku_id, cor_id FROM public.v_tint_formula_canonica
     GROUP BY 1,2,3 HAVING count(*) <> 1) x;
-  IF n <> 0 THEN falhas := falhas || format('C8 FALHOU: %s chaves com != 1 linha na view (duplicata)', n); END IF;
+  IF n IS DISTINCT FROM 0 THEN falhas := falhas || format('C8 FALHOU: %s chaves com != 1 linha na view (duplicata)', n); END IF;
 
   -- C1 preferência: canônica de K1 = a SL (IS DISTINCT FROM: linha ausente = vermelho)
   SELECT id::text, is_sl, receita_valida INTO r FROM public.v_tint_formula_canonica WHERE cor_id='K1';
@@ -775,7 +770,7 @@ BEGIN
   -- teste de NULL da 14ª). Se as cópias divergirem, I1 quebra aqui na hora.
   SELECT count(*) INTO n FROM public.v_tint_formula_canonica
    WHERE (preco_csv_legado IS NULL) <> (preco_piso_legado IS NULL);
-  IF n <> 0 THEN
+  IF n IS DISTINCT FROM 0 THEN
     falhas := falhas || format('C28 FALHOU: %s linha(s) violam I1 (csv IS NULL) <=> (piso IS NULL) — as 2 copias da subquery do csv driftaram', n);
   END IF;
 
@@ -785,7 +780,7 @@ BEGIN
   SELECT count(*) INTO n FROM public.v_tint_formula_canonica
    WHERE preco_csv_legado IS NOT NULL AND preco_piso_legado IS NOT NULL
      AND preco_piso_legado < preco_csv_legado;
-  IF n <> 0 THEN
+  IF n IS DISTINCT FROM 0 THEN
     falhas := falhas || format('C29 FALHOU: %s linha(s) com piso < csv — o piso tem de ser o max de um SUPERconjunto (senao o gate afrouxa)', n);
   END IF;
 
@@ -1546,5 +1541,6 @@ esac
 echo ""
 echo "═══════════════════════════════════════════"
 echo "RESULTADO: $PASS ✅ · $FAIL ❌"
+echo "PASS=$PASS  FAIL=$FAIL"   # recibo lido pelo db/roda-nucleo-ci.sh (o formato acima ele não reconhece)
 [ "$FAIL" -eq 0 ] || exit 1
 echo "test-tint-canonica: OK"

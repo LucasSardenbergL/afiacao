@@ -3,8 +3,15 @@
 Fonte de verdade: `src/integrations/supabase/types.ts` (ache as seções com `grep -n '    Tables: {'`
 e `'    Views: {'` — o arquivo cresce a cada migration; não confie em nº de linha fixo).
 Os tipos do Supabase tipam **todas** as datas como `string` — em SQL elas são `date`/`timestamptz`
-reais, então comparações com `current_date` / `date_trunc` funcionam normalmente. Quando uma
-coluna for `text` de fato (ex.: status), trate como texto.
+reais, então comparar com data funciona. Quando uma coluna for `text` de fato (ex.: status), trate
+como texto. **Mas "hoje" é o de SÃO PAULO, não o da sessão:** a prod roda sessão UTC, e das 21:00
+às 23:59 BRT `current_date` e `date_trunc('month'|'week'|…, now())` já estão no dia (mês, semana)
+seguinte. Parta de `now() at time zone 'America/Sao_Paulo'` — `::date` para comparar com coluna
+`date`; para `timestamptz`, a borda é o INSTANTE da meia-noite de SP
+(`date_trunc('month', now() at time zone 'America/Sao_Paulo') at time zone 'America/Sao_Paulo'`).
+O instante que vira DATA segue a mesma regra: `created_at::date` é a data da SESSÃO (o pedido das
+22h BRT cai no dia seguinte) — escreva `(created_at at time zone 'America/Sao_Paulo')::date`.
+Modelos: queries #1 (date) e #15 (timestamptz) de `queries-vendas.md`.
 
 ## 1. Empresa — 4 grafias (resumo na SKILL.md; aqui o detalhe operacional)
 

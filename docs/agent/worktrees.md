@@ -110,7 +110,8 @@ equivalente já estava mergeado havia ~1h, sob o nome `carteira_com_historico_ut
 (#1786). Zero hit não significou "ninguém fez"; significou "ninguém fez com o MEU nome".
 
 ⇒ O invariante não é o símbolo, é o **ARQUIVO**: `git log origin/main -- <path>` (ou
-`--since=<data>`) lista quem mexeu ali seja qual for o vocabulário. Use os dois eixos — símbolo
+`--since='<data> 00:00'`, COM a hora: com a data sozinha, o git completa o corte com a hora ATUAL e
+cega tudo o que veio mais cedo no dia, ver [§23](../historico/evidencia-positiva-shell.md)) lista quem mexeu ali seja qual for o vocabulário. Use os dois eixos — símbolo
 para achar o artefato exato, arquivo para achar o CONCORRENTE. Regra prática: rode o `git log`
 pelo arquivo que você está prestes a editar, **não** pelo conceito que você está prestes a criar.
 
@@ -297,6 +298,60 @@ rode `git stash` com merge em curso** — mexe no estado do merge; para salvar, 
 para fora da árvore. O guard de `git reset --hard` pagou-se aqui: barrou o reset que teria
 destruído o merge por causa desse diagnóstico errado.
 
+## Do push ao merge: gates antes do push e vigia local × cloud (2026-09-26)
+
+**Antes do push**, o hook `push-gates-guard.sh` roda os três gates baratos que mais
+reprovavam PR no CI: `docs:indice`, `docs:citacoes` e `sonda:fingerprint` (~2,4 s juntos). Com a
+árvore limpa e evidência positiva (exit 1 + a marca de falha do gate), ele **nega** o push: o
+vermelho que o CI só mostraria ~30 min depois sai na hora. Com a árvore suja, inclusive no
+`git add && git commit && git push` de um comando só, que o hook vê antes do commit, ele só
+**avisa**, porque os gates leem o disco e o disco pode não ser o que vai no push. `git push
+--no-verify` é a válvula para quando o GATE estiver errado; use e diga ao founder. Contrato
+completo no cabeçalho do hook; medição e motivo em `docs/historico/gates-no-push.md`.
+
+**Depois do push**, quem vigia depende de onde a sessão roda:
+
+- **App desktop (aba Code), o caso comum:** logo depois do `gh pr create`, ligue o **Auto-fix**:
+  `ccd_pr` `set_monitor` com `auto_fix` e `address_comments` = true. É preferência do founder
+  (2026-09-27) e vale **por PR**: o app não tem preferência global para isso. O app acorda a
+  sessão com `<ci-monitor-event>` em CI vermelho, **conflito com a main** e comentário de review,
+  e o evento já autoriza consertar → verificar → commitar → push, sem perguntar. Ele **substitui**
+  o `pr-watch` nesse PR (o app pede para não fazer polling, e dois vigias acordariam a sessão duas
+  vezes); o que ele não avisa é o MERGE, que aparece na barra do PR no app. Conflito: primeiro
+  `ccd_host sync_with_base_branch`; se ele recusar porque a fusão traria arquivo protegido
+  (`.claude/hooks`, `.claude/skills`, `settings.json`) e a origem ainda não foi confirmada no app
+  (Help → Troubleshooting → Review Pinned Git Origins), faça `git fetch origin main` +
+  `git merge FETCH_HEAD` — nunca cópia local velha, rebase ou force-push. O conflito típico
+  (#2587, duas vezes no mesmo dia) é a linha ÚNICA do `test:hooks`, que todo PR de hook edita:
+  parta da versão da main e reaplique só a sua palavra, conferindo que o resto da linha é idêntico.
+- **CLI no terminal (sem o app):** `scripts/pr-watch.sh <nº>` em background. Os exit codes estão no cabeçalho do
+  script. A janela conta **vigília**, não relógio de parede: no suspend o tempo dormido volta ao
+  prazo.
+- **Cloud (claude.ai/code):** não há `gh`, e o `pr-watch.sh` sai 64 (dependência ausente). O
+  equivalente é `subscribe_pr_activity`, **sem perguntar** ao founder, que autorizou em
+  2026-09-26. É o auto-fix nativo: CI vermelho e comentário de review chegam como evento, e a
+  sessão conserta. Conflito com a main não gera evento, então arme também um `send_later` de ~1 h
+  como check-in e re-arme até o merge.
+- ⚠️ **PR que mexe em `.github/workflows/` pode ficar verde e PARADO.** Se a `main` muda um workflow
+  enquanto o CI do PR roda, o GitHub recusa o squash do auto-merge e o DESLIGA: `auto_merge_disabled`,
+  `reasonCode` `workflow_policy_update_error` ("Tried to create or update workflow without `workflows`
+  permission"). O `auto-merge.yml` liga o auto-merge com o `GITHUB_TOKEN`, e esse token não tem
+  essa permissão.
+  - **Explicação provável:** o squash geraria um workflow que nenhum push autorizado criou. O #2713
+    e o #2712 também mexiam no `ci.yml` e entraram pelo mesmo token, mas sem a `main` mudar um
+    workflow no meio do CI deles.
+  - **Nada avisa.** Não é CI vermelho nem conflito, então o Auto-fix não dispara. O PR fica verde,
+    `CLEAN` e aberto.
+  - **Conserto:** `git fetch origin main` + `git merge FETCH_HEAD` + push. O `synchronize` religa o
+    auto-merge, e o CI valida a combinação.
+  - **Não mergeie na mão:** a combinação do PR com o workflow novo da `main` nunca passou pelo CI.
+  - **Ver o motivo:** na timeline do PR, `gh api graphql` com `AutoMergeDisabledEvent { reason reasonCode }`.
+  - **Dois PRs de workflow abertos ao mesmo tempo:** o que entra primeiro trava o outro, em silêncio.
+    O que ficou para trás traz a `main` e dá push.
+  - **Casos:** no #2725, duas vezes no mesmo dia, cada uma minutos depois de outro PR mudar um
+    workflow durante o CI dele. O #2721 mudou o `ci.yml` às 09:43Z, e a recusa veio às 10:15Z. O
+    #2731 entrou às 13:19Z, e a recusa veio às 13:33Z.
+
 ## Higiene de RAM/Node (M2 8GB satura; **swap em uso = RAM cheia**)
 
 | Comando | O quê (todos DRY-RUN por padrão; `--yes` executa) |
@@ -340,6 +395,7 @@ list` mostra `WIP on <seu-branch>`), mas o susto é evitável.
 - **`bunx vitest` também passa pelo `heavy`** (o hook reescreve): tirar o prefixo não tira da fila. Idem `./node_modules/.bin/vitest` — o hook nega com a mensagem do §2, então **não existe atalho local**: quando a fila trava, o oráculo é o **CI**, não um bypass.
 - ⚠️ **O `heavy` ABORTA por timeout de fila (1800s) — e num comando composto a notificação de background reporta SUCESSO** (medido 2026-08-06, fila com 18 sessões vivas e swap em 6,5GB). O semáforo desiste com `heavy: timeout (1800s) esperando vaga — abortando. (posição 1 na fila)` e sai **1**; mas em `heavy … > log 2>&1; echo "exit=$?"` o exit do COMPOSTO é o do `echo` (**0**), e é esse que o harness anuncia como *"completed (exit code 0)"*. Quem lê só a notificação conclui que o teste **passou**, quando ele **nunca rodou** — a família do `| tail` que engole o exit, agora no anúncio do background. ⇒ **o denominador é o juiz**: log sem a linha `Tests N passed (N)` é ausência de dado, jamais aprovação (§"validação só conta com EVIDÊNCIA POSITIVA"). Note também que a posição na fila **anda para trás** (5º→6º) quando outras sessões entram — "está andando" não prevê conclusão. Com a fila saturada, arme o PR (draft) e deixe o **CI** validar: roda em nuvem, não disputa a RAM da M2, e cobre typecheck+lint+knip+manifesto de uma vez. Prove que o SEU teste rodou lá procurando a linha `✓ <caminho do arquivo> (N tests)` no log do job — `validate` verde sozinho **não** diz que o arquivo novo entrou na suíte.
 - ⚠️ **`/tmp/<nome-genérico>.log` é COMPARTILHADO entre as sessões — e o log que você lê pode ser de OUTRA** (mordido 2026-08-07, 31 sessões vivas). Redirecionar para `/tmp/test.log` e depois lê-lo parece inocente; com dezenas de worktrees escrevendo no mesmo caminho, o `tail` traz o resultado alheio. O sintoma é **cruel porque é bonito**: li `Test Files 656 passed | Tests 6036 passed` e quase reportei a entrega como validada — o meu comando ainda estava **na fila do `heavy`**, sem ter aberto o arquivo. O que denunciou foi o **carimbo de hora** (`Start at 22:10:55`, anterior ao meu disparo), não o conteúdo. ⇒ **escreva log no diretório de scratchpad da SESSÃO** (o harness fornece um, isolado por sessão), nunca em `/tmp/<nome-óbvio>.log`; e desconfie de log cujo horário não bate com o seu disparo. Mesma família do `| tail` que engole o exit: a evidência existe, mas é de outro experimento.
+- ⚠️ **Prova em `db/*.sh`: temporário mora no dir da RODADA** (`RODADA="$(dirname "$DATA")"`, que o trap já apaga) — nunca `/tmp/<nome-fixo>`, `/tmp/x-${SLUG}` (único por PROVA, não por rodada) nem `mktemp /tmp/x.XXXXXX.sql` (no BSD só os X FINAIS trocam: nome literal, `File exists`). Duas rodadas simultâneas liam o arquivo uma da outra e a reprovação acusava o código ("C14.2 é fraco"). Assinaturas falsificadas, exceções (log do `pg_ctl -l`, socket, `$$`) e a classe irmã da PORTA fixa: [temporario-nao-unico-por-rodada.md](../historico/temporario-nao-unico-por-rodada.md).
 - ⚠️ **Watcher com `grep` do próprio marcador casa o ECO do comando e declara conclusão falsa.** `grep -qE "TEST_EXIT"` sobre a saída de um job enfileirado casou com a **mensagem da fila do `heavy`**, que imprime o comando inteiro (`… echo "TEST_EXIT=$?"`) — o watcher anunciou "HEAVY TERMINOU" com o job em 9º lugar e o log inexistente. É o §"case string exclusiva do ramo certo" aplicado a si mesmo: o marcador que você inventa para detectar o fim **está dentro do comando** e portanto dentro de qualquer eco dele. ⇒ ancore em **início de linha** (`grep "^TEST_EXIT="`), ou espere pela **existência do arquivo de log**, ou consulte o estado real (`gh pr checks`) em vez de raspar texto.
 - ⚠️ **`git checkout -b <nova> origin/main` seguido de `git checkout <antiga> -- <arquivo>` APAGA o edit uncommitted daquele arquivo** (mordido 2026-08-06, ao mover uma lição de doc para branch própria depois do merge). O `checkout -- <path>` restaura a versão **commitada** da branch citada; a edição que só existia no working tree não está em commit nenhum e **some sem aviso** — `git status` fica limpo e parece que nada havia. É o mesmo mecanismo do §9 do money-path ("restaurar sabotagem com `git checkout --` destrói fix uncommitted"), aqui no fluxo inocente de *"vou levar esta mudança para um PR separado"*. ⇒ **commite ANTES de trocar de branch** (ou `git stash` / `cp` do arquivo), nunca conte com o working tree para atravessar um checkout.
 - ⚠️ **Log em `/private/tmp` não atravessa REBOOT — e o scratchpad da sessão mora lá dentro.** Mordido 2026-08-20: armei `pr-watch.sh 1811 > /tmp/prwatch-1811.log`, o PR mergeou 10min depois e, horas mais tarde, o log **não existia**. Apliquei a regra do CLAUDE.md ("saída VAZIA de job verde = não rodou"), concluí que o watcher nunca rodou e **reportei isso ao founder** — errado. A máquina havia reiniciado (`sysctl -n kern.boottime` = 21:54; o merge foi 12:53) e o boot limpa `/private/tmp` INTEIRO: sumiram os 8 logs da sessão **e** o `fn.mjs` do scratchpad, que é `/private/tmp/claude-501/<sessão>/scratchpad` — ou seja, a bullet acima ("escreva no scratchpad") resolve a COLISÃO entre sessões, não a DURABILIDADE. ⇒ dentro de uma janela contínua, log ausente é sinal de "não rodou"; **atravessando pausa longa ele não distingue "não rodou" de "foi limpo"** e vira ausência de dado — o que aconteceu de fato é **indecidível**, porque a evidência foi destruída. Evidência que precisa sobreviver a uma pausa vai para o **worktree** (commit), não para `/tmp`. E desfecho de PR se confirma com `gh pr view`/`gh pr checks`, NUNCA com a presença do log do watcher — é o que a regra do **exit 6** já manda.

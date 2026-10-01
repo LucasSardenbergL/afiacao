@@ -25,8 +25,9 @@ import { waPhoneCandidates } from '@/lib/whatsapp/inbound';
 import { enviarProposta, TEMPLATE_PROPOSTA, type SupabaseWhatsappProposta } from '@/services/whatsappProposta';
 import { track } from '@/lib/analytics';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
+import { hojeSP } from '@/lib/time/sp-day';
 
-function todayIso(): string { return new Date().toISOString().slice(0, 10); }
+function todayIso(): string { return hojeSP(); } // o dia de SP (o UTC vira às 21h BRT)
 function fmtBRL(v: number): string { return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }); }
 
 /** Idade máxima da revisão: depois disso a vendedora RECOTA (preço/estoque/prazo podem

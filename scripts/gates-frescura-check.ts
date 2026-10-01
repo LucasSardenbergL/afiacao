@@ -61,15 +61,50 @@
  * como gate faria o sentido 2 acusar ruído — e gate que acusa ruído é gate que se desliga. Então:
  *
  *   - step de CI com `run`, SEM `continue-on-error: true`, que invoca um script → conta;
- *   - hook do `settings.json` que emite `permissionDecision: "deny"` → conta;
+ *   - hook do `settings.json` que emite `permissionDecision: "deny"` DENTRO do envelope que o
+ *     harness honra (`hookSpecificOutput` com `hookEventName: "PreToolUse"`) → conta;
  *   - hook que só imprime aviso (`pipestatus-zsh-guard.sh` se declara *"AVISO, não um bloqueio"*)
  *     → NÃO conta como gate. Segue listado no resumo, à parte: é orientação, não bloqueio.
+ *
+ * O deny FORA desse envelope é vermelho próprio (`DENY-SEM-ENVELOPE`), não "hook de aviso": é um
+ * hook que o autor ACHA que nega e o harness ignora. Foi o `check-gstack.sh` — de 2026-05-14 a
+ * 2026-09-27 no censo como "hook que NEGA", contado por uma regex que casava o TOKEN
+ * `permissionDecision…deny` em qualquer lugar do fonte, enquanto ele emitia a decisão no topo do
+ * JSON e deixava toda skill carregar. Medido em 2026-09-27 (Claude Code 2.1.281, sonda PreToolUse
+ * sobre `Skill`): no topo, ou em `hookSpecificOutput` SEM `hookEventName`, a skill carrega; só o
+ * envelope completo nega (`docs/historico/gate-gstack-fail-open.md`).
  *
  * A classificação do hook lê o fonte com `removerComentariosShell` do stripper COMPARTILHADO, e
  * não por acaso. `read-contexto-nudge.sh` menciona `"deny"` três vezes — todas em COMENTÁRIO,
  * explicando por que ele decidiu NÃO negar. Uma varredura crua o promove a bloqueio (falso
  * positivo medido ao desenhar este gate). É a lição de `docs/historico/gates-textuais-cegos.md`
  * cobrada na prática, e a razão de nenhuma limpeza aqui ser regex local.
+ *
+ * ## Hook ligado sem suíte que o EXECUTE — o outro achado sobre a MÁQUINA
+ *
+ * O `check-gstack.sh` não era só o deny fora do envelope: era o ÚNICO hook ligado sem teste. O
+ * `hooks-guard-cobertura.test.ts` cobra uma ponta — toda suíte `scripts/test-*.sh` roda num laço
+ * do `test:hooks` — e ninguém cobrava a outra: todo hook ligado tem uma suíte que roda. Medido em
+ * 2026-09-27, ao ligar este eixo: 21 hooks ligados, 20 cobertos, e o que faltava era o sensor do
+ * InstructionsLoaded (`instrucoes-carregadas.sh`). Vermelho próprio: `HOOK-SEM-TESTE`.
+ *
+ * Três leituras, nenhuma de prosa:
+ *   - o que o `test:hooks` executa sai do `package.json` (fonte POR FORA das suítes), expandido pelo
+ *     MESMO parser do `hooks-guard-cobertura.test.ts` (`scripts/lib/lacos-test-hooks.ts`) — os DOIS
+ *     laços, o `test-$t-guard.sh` inclusive. Suíte no disco e fora do laço não conta;
+ *   - "executa" é a suíte citar o hook como CAMINHO (`…/<hook>`) numa linha limpa pelo stripper
+ *     compartilhado: citar em comentário não é rodar, e o comentário no FIM da linha é o que um
+ *     filtro local de `^#` deixaria passar. Rótulo também não conta — medido: a 1ª citação
+ *     não-comentada do `pos-compact-ptbr.sh` no `test-hooks-sessionstart.sh` é um `echo "── … ──"`;
+ *   - hook sem arquivo (comando inline) é achado, não isenção: não há nome que uma suíte cite.
+ *
+ * Não saber medir é rc=2, nunca veredito: `test:hooks` que não expande para nenhuma suíte
+ * (`LACO-ILEGIVEL`) e os quatro alarmes do stripper sobre as suítes lidas (`STRIPPER-ALARME`). Aqui
+ * a SUB-limpeza é a direção que APROVA — comentário que sobrevive à limpeza vira citação.
+ *
+ * Limite conhecido: citar o caminho num `echo` ou num corpo de heredoc conta como execução. O
+ * critério aproxima "roda"; a prova de que roda é a própria suíte, que o `test:hooks` executa. O que
+ * este eixo mata é o estado do `check-gstack.sh`: hook ligado sem suíte NENHUMA.
  *
  * ## O eixo POR FORA
  *
@@ -89,8 +124,10 @@
 import { parse } from 'yaml';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
+import { arquivosExecutados } from './lib/lacos-test-hooks';
 import { removerCercas } from './lib/markdown-codigo';
-import { removerComentariosShell } from '@/lib/gates/limpeza-shell';
+import { alarmesDoStripper } from './shell-variavel-colada-gate';
+import { diagnosticarShell, removerComentariosShell } from '@/lib/gates/limpeza-shell';
 
 /** Marcadores ASCII, caixa fixa — o que a falsificação casa nos dois locales. */
 const MARCA_OK = 'FRESCURA-OK';
@@ -101,6 +138,10 @@ const MARCA_CENSO_OBSOLETO = 'CENSO-OBSOLETO';
 const MARCA_CENSO_REPETIDO = 'CENSO-REPETIDO';
 const MARCA_CENSO_CONTAGEM = 'CENSO-CONTAGEM';
 const MARCA_CENSO_SEM_CONTAGEM = 'CENSO-SEM-CONTAGEM';
+const MARCA_DENY_SEM_ENVELOPE = 'DENY-SEM-ENVELOPE';
+const MARCA_HOOK_SEM_TESTE = 'HOOK-SEM-TESTE';
+const MARCA_LACO_ILEGIVEL = 'LACO-ILEGIVEL';
+const MARCA_STRIPPER_ALARME = 'STRIPPER-ALARME';
 const MARCA_VACUO = 'FRESCURA-VACUO';
 
 export const CENSO_INICIO = '<!--gates:frescura inicio-->';
@@ -263,35 +304,128 @@ export interface GateHook {
   arquivo: string;
   evento: string;
   bloqueia: boolean;
+  /** Emite o deny FORA do envelope que o harness honra: o autor acha que nega, e nada é negado. */
+  denySemEnvelope: boolean;
+}
+
+/** O token do deny, onde quer que esteja — era SÓ isto que a classificação antiga exigia. */
+const RE_DENY = /permissionDecision"?\s*:\s*"?deny/;
+/**
+ * Um objeto `hookSpecificOutput`, do `{` ao primeiro `}`. O corpo precisa trazer o evento E o deny.
+ * Limite conhecido: um `${var}` de shell no meio do objeto encerra o corpo antes do deny e acusa
+ * `DENY-SEM-ENVELOPE` num hook sadio — falha FECHADA e barulhenta (reordene os campos), nunca o
+ * verde por cegueira que esta classificação existe para matar.
+ */
+const RE_ENVELOPE = /hookSpecificOutput"?\s*:\s*\{([^}]*)\}/g;
+const RE_EVENTO_PRETOOLUSE = /hookEventName"?\s*:\s*"?PreToolUse/;
+
+/** Quantos deny o fonte emite, e quantos deles estão dentro do envelope completo. */
+function contarDenies(fonte: string): { total: number; envelopados: number } {
+  const total = fonte.match(new RegExp(RE_DENY.source, 'g'))?.length ?? 0;
+  let envelopados = 0;
+  for (const m of fonte.matchAll(RE_ENVELOPE)) {
+    if (RE_EVENTO_PRETOOLUSE.test(m[1]) && RE_DENY.test(m[1])) envelopados++;
+  }
+  return { total, envelopados };
+}
+
+export interface HookLigado {
+  evento: string;
+  /** O comando cru do `settings.json` — é o que o achado mostra quando não há arquivo. */
+  comando: string;
+  /** O script que o comando roda (`heavy-guard.sh`), ou `null` quando o comando não aponta arquivo. */
+  arquivo: string | null;
 }
 
 /**
- * Hooks do `settings.json`, separados em bloqueio e aviso. A leitura do fonte passa pelo stripper
- * COMPARTILHADO de shell: `read-contexto-nudge.sh` cita `"deny"` só em comentário, explicando por
- * que NÃO nega — regex crua o promove a bloqueio.
+ * TODO hook do `settings.json`, um por arquivo (no primeiro evento em que aparece) — e o comando
+ * que não aponta arquivo NÃO some: vem com `arquivo: null`. É a única leitura do `settings.json`
+ * neste gate: o censo de deny (`inventarioHooks`) e a cobertura (`coberturaDeHooks`) partem dela, e
+ * cada um decide o que fazer com o hook sem arquivo — o censo o ignora (não há fonte para ler), a
+ * cobertura o acusa (não há nome que uma suíte cite).
+ */
+export function hooksLigados(settingsJson: string): HookLigado[] {
+  const s = JSON.parse(settingsJson) as {
+    hooks?: Record<string, { hooks?: { command?: string; type?: string }[] }[]>;
+  };
+  const achados = new Map<string, HookLigado>();
+
+  for (const [evento, grupos] of Object.entries(s.hooks ?? {})) {
+    for (const g of grupos ?? []) {
+      for (const h of g.hooks ?? []) {
+        const comando = h.command ?? `<hook ${h.type ?? 'sem type'} sem command>`;
+        const arquivo = comando.match(/([\w.-]+\.(?:sh|ts|js))/)?.[1] ?? null;
+        const chave = arquivo ?? comando;
+        if (!achados.has(chave)) achados.set(chave, { evento, comando, arquivo });
+      }
+    }
+  }
+  const ordem = (h: HookLigado) => h.arquivo ?? h.comando;
+  return [...achados.values()].sort((a, b) => (ordem(a) < ordem(b) ? -1 : ordem(a) > ordem(b) ? 1 : 0));
+}
+
+/**
+ * Hooks do `settings.json`, separados em bloqueio, aviso e deny sem envelope. A leitura do fonte
+ * passa pelo stripper COMPARTILHADO de shell: `read-contexto-nudge.sh` cita `"deny"` só em
+ * comentário, explicando por que NÃO nega — regex crua o promove a bloqueio.
  */
 export function inventarioHooks(
   settingsJson: string,
   lerHook: (arquivo: string) => string | null,
 ): GateHook[] {
-  const s = JSON.parse(settingsJson) as { hooks?: Record<string, { hooks?: { command?: string }[] }[]> };
-  const achados = new Map<string, GateHook>();
+  return hooksLigados(settingsJson)
+    .flatMap(({ arquivo, evento }) => (arquivo === null ? [] : [{ arquivo, evento }]))
+    .map(({ arquivo, evento }) => {
+      const fonte = lerHook(arquivo);
+      const { total, envelopados } =
+        fonte === null ? { total: 0, envelopados: 0 } : contarDenies(removerComentariosShell(fonte));
+      return { arquivo, evento, bloqueia: envelopados > 0, denySemEnvelope: total > envelopados };
+    })
+    .sort((a, b) => a.arquivo.localeCompare(b.arquivo));
+}
 
-  for (const [evento, grupos] of Object.entries(s.hooks ?? {})) {
-    for (const g of grupos ?? []) {
-      for (const h of g.hooks ?? []) {
-        const m = (h.command ?? '').match(/([\w.-]+\.(?:sh|ts|js))/);
-        if (!m) continue;
-        const arquivo = m[1];
-        if (achados.has(arquivo)) continue;
-        const fonte = lerHook(arquivo);
-        const bloqueia =
-          fonte !== null && /permissionDecision"?\s*:\s*"?deny/.test(removerComentariosShell(fonte));
-        achados.set(arquivo, { arquivo, evento, bloqueia });
-      }
+export interface HookSemTeste {
+  hook: HookLigado;
+  motivo: string;
+}
+
+/** `/<arquivo>` seguido de algo que não continua o nome: caminho — não rótulo, não prefixo de outro. */
+function citacaoComoCaminho(arquivo: string): RegExp {
+  const esc = arquivo.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`/${esc}(?![\\w.-])`);
+}
+
+/**
+ * Hooks ligados que NENHUMA suíte do `test:hooks` executa. "Executa" é a suíte citar o hook como
+ * CAMINHO (`…/<arquivo>`) numa linha que sobrevive ao stripper compartilhado — citar em comentário
+ * não é rodar, e rótulo (`echo "── x.sh ──"`) não é caminho. Suíte ilegível (`fonte: null`) não
+ * cobre ninguém. Hook sem arquivo é achado, com o motivo próprio.
+ */
+export function coberturaDeHooks(
+  hooks: HookLigado[],
+  suites: { arquivo: string; fonte: string | null }[],
+): HookSemTeste[] {
+  const limpas = suites.flatMap((s) => (s.fonte === null ? [] : [removerComentariosShell(s.fonte)]));
+  const saida: HookSemTeste[] = [];
+  for (const hook of hooks) {
+    if (hook.arquivo === null) {
+      saida.push({
+        hook,
+        motivo: 'comando sem arquivo .sh/.ts/.js — nao ha nome que uma suite possa citar; mova para .claude/hooks/<nome>.sh',
+      });
+      continue;
+    }
+    const citacao = citacaoComoCaminho(hook.arquivo);
+    if (!limpas.some((f) => citacao.test(f))) {
+      saida.push({
+        hook,
+        motivo:
+          `nenhuma das ${limpas.length} suite(s) que o test:hooks executa o cita como caminho ` +
+          `(.../${hook.arquivo}) fora de comentario`,
+      });
     }
   }
-  return [...achados.values()].sort((a, b) => a.arquivo.localeCompare(b.arquivo));
+  return saida;
 }
 
 /**
@@ -541,11 +675,12 @@ function main(): number {
 
   const settingsPath = join(raiz, '.claude/settings.json');
   let hooks: GateHook[] = [];
+  let ligados: HookLigado[] = [];
   if (existsSync(settingsPath)) {
     try {
-      hooks = inventarioHooks(readFileSync(settingsPath, 'utf8'), (arq) =>
-        lerSeExistir(join(raiz, '.claude/hooks', arq)),
-      );
+      const settingsFonte = readFileSync(settingsPath, 'utf8');
+      ligados = hooksLigados(settingsFonte);
+      hooks = inventarioHooks(settingsFonte, (arq) => lerSeExistir(join(raiz, '.claude/hooks', arq)));
     } catch (e) {
       console.error(`${MARCA_FALHA}: settings.json ilegivel: ${(e as Error).message}`);
       return 2;
@@ -557,6 +692,37 @@ function main(): number {
     console.error(`${MARCA_FALHA}: bloco do censo ausente em ${ARQUIVO_CENSO} (${CENSO_INICIO})`);
     return 2;
   }
+
+  // ---- Hook ligado: que suítes o `test:hooks` executa? -------------------------------------------
+  // As duas formas de "não consegui medir" saem aqui, ANTES de qualquer veredito, como as de cima:
+  // sem saber o que o `test:hooks` roda, ou com o stripper perdido numa suíte, a resposta é rc=2 —
+  // nunca "nenhum hook tem teste" (rc=1 pelo motivo errado), e muito menos verde.
+  let suites: { arquivo: string; fonte: string | null }[] = [];
+  if (ligados.length > 0) {
+    const doLaco = arquivosExecutados(scripts['test:hooks'] ?? '');
+    if (doLaco.length === 0) {
+      console.error(
+        `${MARCA_LACO_ILEGIVEL}: o "test:hooks" do package.json nao expande para nenhum scripts/test-*.sh ` +
+          `(esperado: for t in ...; do bash scripts/test-$t.sh ...; done) — sem saber o que ele roda, ` +
+          `nao ha como dizer que hook tem suite.`,
+      );
+      console.error(`${MARCA_FALHA}: ${ligados.length} hook(s) ligado(s) e nenhuma suite conhecida — nao consegui avaliar.`);
+      return 2;
+    }
+    suites = doLaco.map((a) => ({ arquivo: `scripts/${a}`, fonte: lerSeExistir(join(raiz, 'scripts', a)) }));
+    const alarmes = suites.flatMap((s) =>
+      s.fonte === null ? [] : alarmesDoStripper(s.arquivo, diagnosticarShell(s.fonte)),
+    );
+    if (alarmes.length > 0) {
+      for (const a of alarmes) console.error(`${MARCA_STRIPPER_ALARME}: ${a}`);
+      console.error(
+        `${MARCA_FALHA}: o stripper de shell nao leu ${alarmes.length === 1 ? 'uma suite' : 'suites'} do test:hooks ` +
+          `direito — a citacao que ele ve (ou deixa de ver) ali nao vale como veredito.`,
+      );
+      return 2;
+    }
+  }
+  const semTeste = coberturaDeHooks(ligados, suites);
 
   // ---- Sentido 1 -----------------------------------------------------------------------------
   const citacoes = extrairCitacoes(claude);
@@ -584,11 +750,20 @@ function main(): number {
     (l) => l.declarado !== null && l.declarado !== l.contados,
   );
 
+  // ---- Deny que não nega -----------------------------------------------------------------------
+  // Fica FORA do sentido 2 de propósito: um hook desses não é gate, então não entra em `bloqueiam`
+  // — mas também não pode cair calado entre os "hooks de aviso", onde o `check-gstack.sh` teria
+  // passado mais 136 dias. Com o hook sem suíte (`semTeste`, acima), são os dois achados deste gate
+  // sobre a MÁQUINA, não sobre o manual.
+  const semEnvelope = hooks.filter((h) => h.denySemEnvelope);
+
   // ---- Relatório -----------------------------------------------------------------------------
-  const avisos = hooks.filter((h) => !h.bloqueia);
+  const avisos = hooks.filter((h) => !h.bloqueia && !h.denySemEnvelope);
   console.log(
     `frescura: ${citacoes.length} citacoes no CLAUDE.md | ${gatesCI.length} gates do ci.yml | ` +
       `${hooks.filter((h) => h.bloqueia).length} hooks deny | ${avisos.length} hooks de aviso (nao sao gate) | ` +
+      `${semEnvelope.length} deny sem envelope | ` +
+      `${ligados.length - semTeste.length}/${ligados.length} hooks ligados com suite no test:hooks (${suites.length} suites lidas) | ` +
       `${censo.nomes.length} nomes no censo (${censo.ocorrencias} ocorrencias, ${censo.listas.length} lista(s)) | allowlist: ${Object.keys(ALLOWLIST_CITACAO).length} citacao + ${Object.keys(ALLOWLIST_CENSO).length} censo`,
   );
   const opacos = bloqueantesSemScript(ciFonte);
@@ -658,6 +833,24 @@ function main(): number {
         `sem declarar "**rotulo** (N):" — sem o numero nao ha o que conferir, e a conferencia morre calada.`,
     );
   }
+  for (const h of semEnvelope) {
+    console.error(
+      `${MARCA_DENY_SEM_ENVELOPE}: \`${h.arquivo}\` (.claude/settings.json:${h.evento}) emite permissionDecision deny ` +
+        `FORA de hookSpecificOutput com hookEventName "PreToolUse" — o harness ignora e a chamada PASSA (fail-open). ` +
+        `Use {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"..."}}.`,
+    );
+  }
+  for (const s of semTeste) {
+    console.error(
+      `${MARCA_HOOK_SEM_TESTE}: \`${s.hook.arquivo ?? s.hook.comando}\` (.claude/settings.json:${s.hook.evento}) — ${s.motivo}`,
+    );
+  }
+  if (semTeste.length > 0) {
+    console.error(
+      `  Hook ligado precisa de suite que o EXECUTE: crie scripts/test-<x>.sh que rode o hook pelo caminho e ponha <x> ` +
+        `num laco do "test:hooks" — o check-gstack.sh passou 136 dias ligado sem nenhuma (docs/historico/vigia-de-cobertura-parcial.md).`,
+    );
+  }
 
   const total =
     orfaos.length +
@@ -665,15 +858,18 @@ function main(): number {
     obsoletos.length +
     censo.repetidos.length +
     contagemErrada.length +
-    semContagem.length;
+    semContagem.length +
+    semEnvelope.length +
+    semTeste.length;
   if (total > 0) {
     console.error(
       `${MARCA_FALHA}: ${orfaos.length} orfao(s) + ${naoCitados.length} nao-citado(s) + ${obsoletos.length} obsoleto(s)` +
-        ` + ${censo.repetidos.length} repetido(s) + ${contagemErrada.length} contagem(ns) errada(s) + ${semContagem.length} lista(s) sem contagem`,
+        ` + ${censo.repetidos.length} repetido(s) + ${contagemErrada.length} contagem(ns) errada(s) + ${semContagem.length} lista(s) sem contagem` +
+        ` + ${semEnvelope.length} deny sem envelope + ${semTeste.length} hook(s) sem suite`,
     );
     return 1;
   }
-  console.log(`${MARCA_OK}: manual e maquina conferem nos dois sentidos`);
+  console.log(`${MARCA_OK}: manual e maquina conferem nos dois sentidos, e todo hook ligado tem suite no test:hooks`);
   return 0;
 }
 

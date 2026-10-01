@@ -185,6 +185,7 @@ Assim que tiver conversa encaminhada (mesmo antes de fechar), marque a sugestão
 
 Quando tiver acordo confirmado por escrito (email ou WhatsApp), clique "Registrar desconto fechado". Dialog pede:
 
+- **Código Sayerlack**: o código do produto no catálogo da Sayerlack (ex: FO5.6717.00GL). Vem preenchido com o código que aparece no fim da descrição do SKU; confira antes de converter, porque é ele que identifica o item na campanha
 - **Desconto percentual**: o que ficou acordado (ex: 8%)
 - **Volume mínimo condicional**: quanto precisa fechar (ex: 20 unidades)
 - **Unidade**: unidades, reais, kg ou litros
@@ -224,15 +225,19 @@ A função SQL `converter_sugestao_em_campanha_flat` executa transação atômic
    - `tipo_origem = 'desconto_flat_condicional'`
    - `estado = 'negociando'` (não ativa ainda, você decide quando ativar)
    - `nome = 'Desconto Flat Condicional - {SKU}'`
-   - Datas preenchidas a partir do dialog
+   - `data_inicio` e `data_oferta` = hoje (o dia de São Paulo, mesmo à noite); `data_fim` e o corte de pedido vêm do dialog
    - Campos específicos do flat: `responsavel_oferta_nome`, `canal_oferta`, `data_oferta`, `volume_minimo_condicional`, `volume_minimo_unidade`, `status_aceite = 'aceita'`, observações
    - `permite_pedido_oportunidade = false` (explicação acima)
 
 2. Cria linha em `promocao_item` com:
+   - `sku_codigo_fornecedor` = o código Sayerlack do dialog
+   - `descricao_produto_fornecedor` = a descrição do SKU
    - `sku_codigo_omie` da sugestão
-   - `desconto_base_perc` preenchido
-   - `mapeamento_origem = 'sugestao_sistema'` e `mapeamento_confianca = 1.0`
+   - `desconto_perc` = o desconto acordado
+   - `mapeamento_qualidade = 'manual_confirmado'` e `confirmado = true` (quem converte conferiu o SKU e o código)
    - `ativo = true`
+
+   A conversão é recusada, com a mensagem na tela, quando o código está vazio, a data fim é anterior a hoje ou a sugestão já foi convertida.
 
 3. Atualiza sugestão:
    - `status = 'fechada_desconto'`

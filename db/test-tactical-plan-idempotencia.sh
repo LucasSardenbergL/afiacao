@@ -35,7 +35,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }   # tuples-only, unaligned (pra capturar 1 valor)
 
 # ── base mínima do Supabase: roles, schema auth, auth.uid()/role() via GUC (impersonação de RLS) ──
@@ -213,36 +213,42 @@ echo "── asserts ──"
 # Sentinelas ASCII e EXCLUSIVAS — nenhuma contém o texto que a RPC emite (anti-teatro).
 p1_recusa_com_mensagem() {
   local r
-  r=$(P -tA 2>&1 <<SQL
-DO \$\$
+  r=$(P -tA 2>&1 <<SQL; echo "PSQL_RC=$?"
+DO \$\$ DECLARE c text; n int;
 BEGIN
   PERFORM set_config('test.role','service_role',true);
   PERFORM public.criar_plano_tatico('$CLI_A'::uuid, '$FARMER'::uuid, '$PAYLOAD_EST'::jsonb);
-  RAISE NOTICE 'SENTINELA_DUPLICATA_PASSOU';
+  -- "passou" só vale com a duplicata GRAVADA: a RPC que volta sem inserir também chegaria aqui
+  SELECT count(*) INTO n FROM public.farmer_tactical_plans
+   WHERE customer_user_id='$CLI_A'::uuid AND plan_type='estrategico' AND status='gerado';
+  RAISE NOTICE 'SENTINELA_DUPLICATA_PASSOU n=%;', n;
 EXCEPTION
   WHEN unique_violation THEN
+    GET STACKED DIAGNOSTICS c = CONSTRAINT_NAME;
     IF SQLERRM ILIKE '%gerado hoje para este cliente%' THEN
       RAISE NOTICE 'SENTINELA_RECUSA_CORRETA';
     ELSE
-      RAISE NOTICE 'SENTINELA_MENSAGEM_ERRADA';
+      -- a constraint que barrou: "outro 23505" (de outra chave) não é a mensagem crua do ÍNDICE
+      RAISE NOTICE 'SENTINELA_MENSAGEM_ERRADA c=%;', c;
     END IF;
   WHEN OTHERS THEN RAISE;
 END \$\$;
 SQL
 )
   MOTIVO_P1="$r"
-  case "$r" in *SENTINELA_RECUSA_CORRETA*) return 0;; *) return 1;; esac
+  case "$r" in *SENTINELA_RECUSA_CORRETA*PSQL_RC=0) return 0;; *) return 1;; esac
 }
 
 # P2 — o ÍNDICE barra o INSERT que contorna a RPC (invariante do banco, não de um IF).
 p2_indice_barra_insert_cru() {
   local r
-  r=$(P -tA 2>&1 <<SQL
-DO \$\$
+  r=$(P -tA 2>&1 <<SQL; echo "PSQL_RC=$?"
+DO \$\$ DECLARE n int;
 BEGIN
   INSERT INTO public.farmer_tactical_plans (farmer_id, customer_user_id, status, plan_type)
   VALUES ('$FARMER'::uuid, '$CLI_A'::uuid, 'gerado', 'estrategico');
-  RAISE NOTICE 'SENTINELA_INSERT_CRU_PASSOU';
+  GET DIAGNOSTICS n = ROW_COUNT;
+  RAISE NOTICE 'SENTINELA_INSERT_CRU_PASSOU n=%;', n;
 EXCEPTION
   WHEN unique_violation THEN RAISE NOTICE 'SENTINELA_INDICE_MORDEU';
   WHEN OTHERS THEN RAISE;
@@ -250,14 +256,31 @@ END \$\$;
 SQL
 )
   MOTIVO_P2="$r"
-  case "$r" in *SENTINELA_INDICE_MORDEU*) return 0;; *) return 1;; esac
+  case "$r" in *SENTINELA_INDICE_MORDEU*PSQL_RC=0) return 0;; *) return 1;; esac
 }
 
 # P3 — plan_type DIFERENTE no mesmo dia continua PERMITIDO (a trava não vira cadeado).
+# Pela condição NOMEADA: o `cria` lia a ÚLTIMA linha da saída com stderr (`2>&1 | tail -1`) — na
+# recusa, um DETAIL/CONTEXTO, que muda com o locale e não diz qual índice barrou.
 p3_outro_plan_type_permitido() {
-  local id; id=$(cria "$CLI_A" "$FARMER" "$PAYLOAD_ESS")
-  MOTIVO_P3="$id"
-  case "$id" in ????????-????-????-????-????????????) return 0;; *) return 1;; esac
+  local r
+  r=$(P -tA 2>&1 <<SQL; echo "PSQL_RC=$?"
+DO \$\$ DECLARE c text; v uuid; n int;
+BEGIN
+  PERFORM set_config('test.role','service_role',true);
+  -- o contrato devolve o id do plano (o A7 de antes casava um UUID): sem ele, "criou" é a RPC que
+  -- volta NULL; e a linha com esse id tem de existir — o efeito, não só a ausência de erro
+  v := public.criar_plano_tatico('$CLI_A'::uuid, '$FARMER'::uuid, '$PAYLOAD_ESS'::jsonb);
+  SELECT count(*) INTO n FROM public.farmer_tactical_plans WHERE id = v AND plan_type = 'essencial';
+  RAISE NOTICE 'SENTINELA_CRIOU id=% linha=%;', v IS NOT NULL, n;
+EXCEPTION WHEN unique_violation THEN
+  GET STACKED DIAGNOSTICS c = CONSTRAINT_NAME;
+  RAISE NOTICE 'SENTINELA_BARRADO c=%;', c;
+END \$\$;
+SQL
+)
+  MOTIVO_P3="$r"
+  case "$r" in *"SENTINELA_CRIOU id=t linha=1;"*PSQL_RC=0) return 0;; *) return 1;; esac
 }
 
 # P4 — nenhuma das 4 colunas de bundle carrega DEFAULT constante.
@@ -384,9 +407,19 @@ eq "A18 as 60 linhas do incidente de 21/07 seguem intactas" "$PASSIVO" "60"
 # nada" devolve verde de código intacto, que se lê como "o assert não tem dente"). O
 # veredito distingue os TRÊS desfechos: pegou / não pegou / sabotagem inválida.
 FALS_OK=0; FALS_BAD=0
-falsifica() { # $1=nome  $2=fn da propriedade  ($2 tem de FALHAR sob sabotagem)
-  if "$2"; then FALS_BAD=$((FALS_BAD+1)); echo "  ❌ FALSIFICAÇÃO $1 — assert seguiu VERDE sob sabotagem (sem dente)";
-  else FALS_OK=$((FALS_OK+1)); echo "  ✅ FALSIFICAÇÃO $1 — vermelho como esperado"; fi
+# Vermelho = a propriedade cai PELO MOTIVO que a sabotagem DECLARA ($4, padrão casado contra o MOTIVO
+# que a propriedade grava) — não por "devolveu ≠0". O ≠0 aceitava qualquer queda: o Pq que erra ("" ≠
+# 0), a criação que falha por outro motivo, a RPC que erra por outra via. Os discriminadores do F2/F3
+# já declaravam a sentinela — mas só imprimiam. O vermelho tem de ser do SEU assert:
+# docs/historico/falsificacao-exit-nao-e-dente.md.
+falsifica() { # $1=nome  $2=fn da propriedade (tem de FALHAR sob sabotagem)  $3=var do MOTIVO  $4=padrão (glob) do que a sabotagem DECLARA
+  if "$2"; then FALS_BAD=$((FALS_BAD+1)); echo "  ❌ FALSIFICAÇÃO $1 — assert seguiu VERDE sob sabotagem (sem dente)"; return; fi
+  local m="${!3}"
+  # shellcheck disable=SC2254  # o padrão é glob de propósito: a sentinela no meio da saída do psql
+  case "$m" in
+    $4) FALS_OK=$((FALS_OK+1)); echo "  ✅ FALSIFICAÇÃO $1 — vermelho como esperado";;
+    *) FALS_BAD=$((FALS_BAD+1)); echo "  ❌ FALSIFICAÇÃO $1 — vermelha, mas NÃO pelo que a sabotagem declara [$4]: $(printf '%s' "$m" | tr '\n' ' ' | head -c 200)";;
+  esac
 }
 # Estado limpo para a bateria: um único plano 'gerado' de hoje para CLI_A/estrategico.
 reset_cli_a() {
@@ -432,7 +465,7 @@ if [ -z "$(Pq -c "SELECT indexname FROM pg_indexes WHERE indexname='ux_farmer_ta
 else
   echo "  ⚠️  F1 NÃO aplicou — falsificação inválida"; FALS_BAD=$((FALS_BAD+1))
 fi
-falsifica "F1 índice ausente → A10" p2_indice_barra_insert_cru
+falsifica "F1 índice ausente → A10" p2_indice_barra_insert_cru MOTIVO_P2 '*SENTINELA_INSERT_CRU_PASSOU n=1;*PSQL_RC=0'
 if p1_recusa_com_mensagem; then echo "  ✅ CONTROLE F1 — a RPC continua segurando sem o índice (P1 e P2 são independentes)"; else echo "  ❌ CONTROLE F1 — P1 caiu junto: os asserts não são independentes"; FALS_BAD=$((FALS_BAD+1)); fi
 restaura_tudo
 
@@ -442,8 +475,7 @@ restaura_tudo
 reset_cli_a
 rpc_sem_exists
 echo "  · sabotagem F2 aplicada (re-check removido do corpo em vigor)"
-falsifica "F2 sem re-check → A5 (mensagem do contrato)" p1_recusa_com_mensagem
-case "$MOTIVO_P1" in *SENTINELA_MENSAGEM_ERRADA*) echo "  · discriminador F2 correto: barrou, mas com mensagem fora do contrato";; *) echo "  ⚠️  F2 caiu por outro motivo: $MOTIVO_P1";; esac
+falsifica "F2 sem re-check → A5 (mensagem do contrato)" p1_recusa_com_mensagem MOTIVO_P1 '*SENTINELA_MENSAGEM_ERRADA c=ux_farmer_tactical_plans_dia_operacional;*PSQL_RC=0'
 restaura_tudo
 
 # F3 — as DUAS defesas fora: a duplicata REALMENTE entra (o bug original, reproduzido).
@@ -451,8 +483,7 @@ reset_cli_a
 P -q -c "DROP INDEX public.ux_farmer_tactical_plans_dia_operacional;"
 rpc_sem_exists
 echo "  · sabotagem F3 aplicada (índice + re-check fora)"
-falsifica "F3 bug original reproduzido → A5" p1_recusa_com_mensagem
-case "$MOTIVO_P1" in *SENTINELA_DUPLICATA_PASSOU*) echo "  · discriminador F3 correto: o 2º plano do dia foi GRAVADO";; *) echo "  ⚠️  F3 caiu por outro motivo: $MOTIVO_P1";; esac
+falsifica "F3 bug original reproduzido → A5" p1_recusa_com_mensagem MOTIVO_P1 '*SENTINELA_DUPLICATA_PASSOU n=2;*PSQL_RC=0'
 restaura_tudo
 
 # F4 — o RECORTE `>= 2026-07-22` não é código morto: sem ele o índice NÃO NASCE, porque as
@@ -484,13 +515,13 @@ case "$(Pq -c "SELECT column_default FROM information_schema.columns WHERE table
   0) echo "  · sabotagem F5 aplicada (DEFAULT 0 recolocado)";;
   *) echo "  ⚠️  F5 NÃO aplicou — falsificação inválida"; FALS_BAD=$((FALS_BAD+1));;
 esac
-falsifica "F5 DEFAULT 0 de volta → A14" p4_sem_default_constante
+falsifica "F5 DEFAULT 0 de volta → A14" p4_sem_default_constante MOTIVO_P4 'colunas com default=1'
 P -q -c "ALTER TABLE public.farmer_tactical_plans ALTER COLUMN bundle_lie DROP DEFAULT;"
 
 # F6 — o assert do backfill discrimina: uma linha fabricada nova o derruba.
 P -q -c "INSERT INTO public.farmer_tactical_plans (farmer_id, customer_user_id, status, plan_type, bundle_lie, bundle_probability, bundle_incremental_margin) VALUES ('$FARMER'::uuid, '50000000-0000-0000-0000-0000000000ff'::uuid, 'concluido', 'essencial', 0, 0, 0);"
 echo "  · sabotagem F6 aplicada (linha com zero fabricado inserida)"
-falsifica "F6 zero fabricado novo → A15" p5_sem_zero_fabricado
+falsifica "F6 zero fabricado novo → A15" p5_sem_zero_fabricado MOTIVO_P5 'linhas fabricadas=1'
 P -q -c "DELETE FROM public.farmer_tactical_plans WHERE customer_user_id='50000000-0000-0000-0000-0000000000ff';"
 
 # F7 — plan_type FORA da chave: a trava viraria cadeado e barraria o essencial legítimo.
@@ -499,7 +530,7 @@ P -q -c "DROP INDEX public.ux_farmer_tactical_plans_dia_operacional;"
 P -q -c "CREATE UNIQUE INDEX ux_farmer_tactical_plans_dia_operacional ON public.farmer_tactical_plans (farmer_id, customer_user_id, (((created_at AT TIME ZONE 'UTC') - interval '3 hours')::date)) WHERE status = 'gerado' AND (((created_at AT TIME ZONE 'UTC') - interval '3 hours')::date) >= DATE '2026-07-22';"
 rpc_sem_exists   # sem o re-check, quem decide é só o índice — isola a CHAVE
 echo "  · sabotagem F7 aplicada (chave sem plan_type)"
-falsifica "F7 chave sem plan_type → A7 (essencial legítimo barrado)" p3_outro_plan_type_permitido
+falsifica "F7 chave sem plan_type → A7 (essencial legítimo barrado)" p3_outro_plan_type_permitido MOTIVO_P3 '*SENTINELA_BARRADO c=ux_farmer_tactical_plans_dia_operacional;*PSQL_RC=0'
 P -q -c "DROP INDEX public.ux_farmer_tactical_plans_dia_operacional;"
 restaura_tudo
 

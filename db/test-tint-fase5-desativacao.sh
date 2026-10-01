@@ -101,17 +101,15 @@ MIGRATION3="$REPO_ROOT/supabase/migrations/20260722100002_tint_canonica_csv_lega
 MIGRATION4="$REPO_ROOT/supabase/migrations/20260724130000_tint_canonica_csv_legado_allowlist.sql"
 MIGRATION5="$REPO_ROOT/supabase/migrations/20260726160000_tint_canonica_piso_legado.sql"
 MIGRATION6="$REPO_ROOT/supabase/migrations/20260727120000_tint_fase5_desativa_geracao_legada.sql"
-PGVER=17
-PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
-PORT=5449
+export PGVER=17   # consumido pelo db/lib/pg-harness.sh via source
+# shellcheck disable=SC1091  # o gate roda sem -x; o helper e versionado ao lado, em db/lib/
+. "$REPO_ROOT/db/lib/pg-harness.sh"   # exporta PGBIN — fail-CLOSED, confere a major POSITIVAMENTE
+PORT="${PGPORT_TEST:-5449}"
 export LC_ALL=C LANG=C
 
 for m in "$MIGRATION" "$MIGRATION2" "$MIGRATION3" "$MIGRATION4" "$MIGRATION5" "$MIGRATION6"; do
   [ -f "$m" ] || { echo "migration ausente: $m"; exit 1; }
 done
-
-CELLAR="$(brew --prefix postgresql@${PGVER})"
-cp -Rn "$CELLAR"/share/postgresql/. "/opt/homebrew/share/postgresql@${PGVER}/" 2>/dev/null || true
 
 DATA="$(mktemp -d "${TMPDIR:-/tmp}/pgfase5.XXXXXX")"
 cleanup() { "$PGBIN/pg_ctl" -D "$DATA" -m immediate stop >/dev/null 2>&1 || true; rm -rf "$DATA"; }
@@ -120,7 +118,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "$DATA/pg.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres fase5_verify
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d fase5_verify -v ON_ERROR_STOP=1 "$@"; }
+P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d fase5_verify -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }
 
 PASS=0; FAIL=0
@@ -497,23 +495,23 @@ roda_asserts_sql() {
 DO $$
 DECLARE f text[] := '{}';
 BEGIN
-  IF (SELECT COALESCE(preco_csv_legado::text,'-') FROM public.v_tint_formula_canonica WHERE cor_id='K1') <> '300'
+  IF (SELECT COALESCE(preco_csv_legado::text,'-') FROM public.v_tint_formula_canonica WHERE cor_id='K1') IS DISTINCT FROM '300'
     THEN f := array_append(f, 'V1'); END IF;
-  IF (SELECT COALESCE(preco_csv_legado::text,'-') FROM public.v_tint_formula_canonica WHERE cor_id='K5') <> '-'
+  IF (SELECT COALESCE(preco_csv_legado::text,'-') FROM public.v_tint_formula_canonica WHERE cor_id='K5') IS DISTINCT FROM '-'
     THEN f := array_append(f, 'V2'); END IF;
-  IF (SELECT count(*) FROM public.v_tint_formula_canonica WHERE (preco_csv_legado IS NULL) <> (preco_piso_legado IS NULL)) <> 0
+  IF (SELECT count(*) FROM public.v_tint_formula_canonica WHERE (preco_csv_legado IS NULL) <> (preco_piso_legado IS NULL)) IS DISTINCT FROM 0
     THEN f := array_append(f, 'V3'); END IF;
-  IF (SELECT count(*) FROM public.v_tint_formula_canonica WHERE preco_csv_legado IS NOT NULL AND preco_piso_legado < preco_csv_legado) <> 0
+  IF (SELECT count(*) FROM public.v_tint_formula_canonica WHERE preco_csv_legado IS NOT NULL AND preco_piso_legado < preco_csv_legado) IS DISTINCT FROM 0
     THEN f := array_append(f, 'V4'); END IF;
-  IF (SELECT count(*) FROM public.v_tint_formula_canonica WHERE id='f0010000-0000-0000-0000-000000000011') <> 0
+  IF (SELECT count(*) FROM public.v_tint_formula_canonica WHERE id='f0010000-0000-0000-0000-000000000011') IS DISTINCT FROM 0
     THEN f := array_append(f, 'V5'); END IF;
-  IF (SELECT COALESCE(preco_csv_legado::text,'-') FROM public.v_tint_formula_canonica WHERE cor_id='K6') <> '700'
+  IF (SELECT COALESCE(preco_csv_legado::text,'-') FROM public.v_tint_formula_canonica WHERE cor_id='K6') IS DISTINCT FROM '700'
     THEN f := array_append(f, 'V6'); END IF;
   -- V5c ISOLA O FILTRO DE CANDIDATA DO RANK. K10 tem a '1' carimbada e a SL
   -- desativada DEPOIS ⇒ nenhuma linha ativa ⇒ a chave some da canônica.
   -- Sob F1 (filtro relaxado) a '1' carimbada volta, porque aqui o rank NÃO
   -- protege: não há gêmea ativa melhor para excluí-la.
-  IF (SELECT count(*) FROM public.v_tint_formula_canonica WHERE cor_id='K10') <> 0
+  IF (SELECT count(*) FROM public.v_tint_formula_canonica WHERE cor_id='K10') IS DISTINCT FROM 0
     THEN f := array_append(f, 'V5c'); END IF;
   IF array_length(f,1) IS NULL THEN RAISE NOTICE 'TODOS_OK';
   ELSE RAISE NOTICE 'FALHAS[%]: %', array_length(f,1),
@@ -630,4 +628,5 @@ echo
 echo "════════════════════════════════════════════"
 echo "  ✅ $PASS   ❌ $FAIL"
 echo "════════════════════════════════════════════"
+echo "PASS=$PASS  FAIL=$FAIL"   # recibo lido pelo db/roda-nucleo-ci.sh (o formato acima ele não reconhece)
 [ "$FAIL" -eq 0 ] || exit 1

@@ -84,7 +84,7 @@ Você tem **leitura direta** do Postgres de produção via `~/.config/afiacao/ps
 `docs/agent/database.md §1`). O fluxo:
 
 1. Pegue o `SELECT` read-only de `assets/sql/`, adapte período/empresa, e RODE você mesmo:
-   `~/.config/afiacao/psql-ro -f .claude/skills/cfo-colacor/assets/sql/00-sanity-status.sql`
+   `~/.config/afiacao/psql-ro -v ON_ERROR_STOP=1 -f .claude/skills/cfo-colacor/assets/sql/00-sanity-status.sql`
    (ou `-c "SELECT ..."`).
 2. Leia o resultado, aplique os thresholds, e avance no ritual.
 3. **Só peça algo ao founder quando for ESCRITA** (aplicar correção, classificar categoria em
@@ -183,7 +183,8 @@ mas a ação é graduada por faixa de aging:
 > A faixa **>90d** é a que alimenta a *taxa de inadimplência* da projeção de caixa (engine).
 > Não confunda "vencido há 2 dias" (recuperável, não vira provisão) com "inadimplência dura".
 > Aging: pegue o CONJUNTO de vencidos por `status_titulo IN ('ATRASADO','VENCE HOJE')` e a FAIXA
-> por **data** (`CURRENT_DATE − data_vencimento`). **NUNCA** use `saldo > 0`/`data_recebimento` pra
+> por **data** (hoje de SP `− data_vencimento`, com o hoje = `(now() AT TIME ZONE 'America/Sao_Paulo')::date`:
+> o `CURRENT_DATE` é o dia da sessão UTC, que das 21:00 às 23:59 BRT já é amanhã). **NUNCA** use `saldo > 0`/`data_recebimento` pra
 > definir aberto/vencido — o `saldo` não zera na baixa (armadilha 1 do schema) e conta quitado como vencido.
 - Também mostre **concentração**: top 1 cliente vencido vs total vencido. Acima do threshold
   `concentracao_top1_max_pct` = risco de concentração.
@@ -263,6 +264,8 @@ ressalva explícita. Prefira "não sei, confirmar com contador" a um número fal
   regime no DRE, estoque=0). **Leia antes de adaptar SQL.**
 - `references/regimes-tributarios.md` — Presumido vs Simples, o que é hardcoded no front, o
   que sempre vai pro contador, escopo das simulações conservadoras.
+- `references/openaccountants-brasil.md` — ponteiro PINADO para 3 guias externos (reforma
+  CBS/IBS 2026, Simples, NF-e): rascunho **sem revisão de CRC**, lido sob demanda, sem split payment.
 - `assets/sql/00..08` — templates read-only canônicos pra colar no Lovable.
 - `assets/templates/fechamento-mensal.md` — estrutura do relatório mensal.
 - `assets/templates/perguntas-contador.md` — estrutura da lista de perguntas.

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-09-26T03:51:04.843Z",
-  "sourceHead": "1a3a916439b3161516b73be2702c1dbc6eeb5737",
+  "medidoEm": "2026-10-01T13:45:54.215Z",
+  "sourceHead": "ebc8a7c6e24f5a12e7f28cda4fb67bb611f5e31c",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -14,7 +14,7 @@
       "exit": 0,
       "resumo": "✅ o EXECUTE de prod bate com o contrato nas 59 função(ões) da allowlist. ⚠️ 1 delas têm o fecho FORA do repo (fechadaPor=null) e portanto NÃO são vigiadas pelo CI: public.aplicar_sql.",
       "denominador": "🔎 authz:funcoes:prod — 60 definição(ões) lida(s) para 59 chave(s) da allowlist.",
-      "contratoFingerprint": "dbd5285c2f0099d957c331de7fbd5b9c22c3c09005db28ceb79f007acd66525f",
+      "contratoFingerprint": "5dfdb5579ea3037a0c09318b8a2bc06796d9d0e188c92f461d901d13cccaffee",
       "auditorFingerprint": "8971003ee5ae2343ff6129fe9569b7afb3b5cfd5bab5abed86c6e27520c8358f",
       "achados": []
     },
@@ -23,26 +23,26 @@
       "exit": 0,
       "resumo": "✅ audit-grants — 4 tabela(s) conferida(s); prod bate com o contrato.",
       "denominador": null,
-      "contratoFingerprint": "425e2679ab4937247a6b71d022befabefa73ed790af4591e96a4283f82fbc537",
-      "auditorFingerprint": "82ff69a32c6fe5cfb3989d417e6ba943f58ec4ed06339ec5e38647118cf0280c",
+      "contratoFingerprint": "fea3c8f56957f7d875ad92d3239b14cc1c4a5f5212ed0aa65ebd3b483afe0ae0",
+      "auditorFingerprint": "b55db338c6c26db92938511d5e8f118e5013c3bffcb770401655e1b7aecac3fe",
       "achados": []
     },
     "audit": {
       "script": "authz:audit:prod",
       "exit": 0,
-      "resumo": "✅ gate do manifest vale no corpo VIVO das 23 funções, e as 1 reescritas baselinadas batem no md5 de prod.",
+      "resumo": "✅ gate do manifest vale no corpo VIVO das 23 funções, e as 0 reescritas baselinadas batem no md5 de prod.",
       "denominador": "🔎 authz:audit:prod — 24 definição(ões) lida(s) para 23 chave(s) do manifest.",
-      "contratoFingerprint": "2bff8345b7ec5c55e6d1dffb7c55aeba14da5170791da92b5e5b08b7ea9b42bb",
+      "contratoFingerprint": "7318749018a7457ca3ab6fc4f2cc72c1eb61b848d059be188f5e51fa11363e10",
       "auditorFingerprint": "8243bb07ec22b02ca36694989777a7859c086994435fe38f9e48b649907e8909",
       "achados": []
     },
     "claudeRo": {
       "script": "authz:claude-ro:prod",
       "exit": 0,
-      "resumo": "✅ 38 asserções batem. O endurecimento continua de pé.",
+      "resumo": "✅ 39 asserções batem. O endurecimento continua de pé.",
       "denominador": null,
-      "contratoFingerprint": "96d72b6e231ea5f6ff2e99f2def99b9f3237de1a5be8b14f024621c7bf057396",
-      "auditorFingerprint": "de53cb9e346dd1b39f9b427a1df1ffca800b0877ba6c325ff1fb0a825578a11b",
+      "contratoFingerprint": "04316fe60798236f918838351936ac2a6fccac22b321cdc671b2e61784f34864",
+      "auditorFingerprint": "ac629e0219497568c48abfe3fcbca62ae5f13b62bdf6833b443df5ffcebf8993",
       "achados": []
     },
     "rls": {
@@ -56,25 +56,12 @@
     },
     "corpo": {
       "script": "deriva:corpo:prod",
-      "exit": 1,
-      "resumo": "deriva-corpo — 2 divergência(s) em prod (2 SEM_PAR) — ver as linhas ❌",
-      "denominador": "🔎 deriva-corpo — 313 identidade(s) conferida(s) · 15 aposentada(s) · ref origin/main@d65247058 (fetch ok) · prod 2026-09-26 03:51:28.306498Z",
-      "contratoFingerprint": "bb341105b593b89a9608acc048d3b8412cfb5c4b0f574af7ae6cb973bb703402",
-      "auditorFingerprint": "12455e2b4124ae98932a63d644d6e4ed15e270267130f07c1c7c27fbb356dc4f",
-      "achados": [
-        {
-          "id": "2021f7353ac34cf8",
-          "linha": "❌ [SEM_PAR] gerar_pedidos_sugeridos_ciclo(text,date): corpo que nenhuma das 28 versão(ões) commitadas explica — edição manual, ou DDL aplicada ANTES do merge (compare com as migrations das branches abertas) — último CREATE: 20260925210332_reposicao_em_transito_guarda_fantasma_null_safe.sql (xmin 10598692)",
-          "primeiraVez": "2026-09-26",
-          "ultimaVez": "2026-09-26"
-        },
-        {
-          "id": "06c5485021ad70e9",
-          "linha": "❌ [SEM_PAR] atualizar_parametros_numericos_skus(text,uuid): corpo que nenhuma das 3 versão(ões) commitadas explica — edição manual, ou DDL aplicada ANTES do merge (compare com as migrations das branches abertas) — último CREATE: 20260712140000_param_auto_log_valor_barrado_fusivel.sql (xmin 10598741)",
-          "primeiraVez": "2026-09-26",
-          "ultimaVez": "2026-09-26"
-        }
-      ]
+      "exit": 0,
+      "resumo": "✅ deriva-corpo — 317 identidade(s) batem com o repo (241 em dia, 70 só cosméticas, 5 aceitas na baseline) e 16 aposentada(s) estão ausentes",
+      "denominador": "🔎 deriva-corpo — 317 identidade(s) conferida(s) · 16 aposentada(s) · ref origin/main@8c3426020 (fetch ok) · prod 2026-10-01 13:46:19.973697Z",
+      "contratoFingerprint": "576cba55e30c00a415fbeffdf3aeb900ba545c3b1ddf198d4b4955d9f40c1d61",
+      "auditorFingerprint": "84cbf3f189bbc3c6bd78f5c712f614ddc110d7d6b1f0d0787833fe128b44f903",
+      "achados": []
     }
   }
 }

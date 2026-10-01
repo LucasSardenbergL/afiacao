@@ -47,7 +47,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -q -tA "$@"; }
 
 P -q -f "$REPO_ROOT/db/stubs-supabase.sql"
@@ -83,7 +83,7 @@ guard_role() { # $1=uid
 escreve() { # $1=uid  $2=valor
   local out
   guard_role "$1"
-  out="$("$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 -q -tA \
+  out="$("$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 -q -tA \
         -c "SET test.uid='$1'; SET ROLE authenticated;
             WITH u AS (UPDATE public.omie_products SET valor_unitario=$2 WHERE codigo='P1' RETURNING 1)
             SELECT count(*)::text FROM u;" 2>&1)" || true
@@ -101,7 +101,7 @@ escreve() { # $1=uid  $2=valor
 le() { # $1=uid
   local out
   guard_role "$1"
-  out="$("$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 -q -tA \
+  out="$("$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 -q -tA \
         -c "SET test.uid='$1'; SET ROLE authenticated;
             SELECT count(*)::text FROM public.omie_products;" 2>&1)" || true
   case "$out" in
@@ -115,7 +115,7 @@ le() { # $1=uid
 # se der outra coisa, a negacao do farmer nao prova gate, prova ambiente quebrado.
 escreve_service() { # $1=valor
   local out
-  out="$("$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 -q -tA \
+  out="$("$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 -q -tA \
         -c "SET ROLE service_role;
             WITH u AS (UPDATE public.omie_products SET valor_unitario=$1 WHERE codigo='P1' RETURNING 1)
             SELECT count(*)::text FROM u;" 2>&1)" || true

@@ -3,13 +3,16 @@ import {
   ALLOWLIST_CITACAO,
   CENSO_FIM,
   CENSO_INICIO,
+  coberturaDeHooks,
   conferirCitacoes,
   extrairCitacoes,
   bloqueantesSemScript,
+  hooksLigados,
   inventarioCI,
   inventarioHooks,
   lerCenso,
   padraoInvocacao,
+  type HookLigado,
 } from './gates-frescura-check';
 
 /**
@@ -116,7 +119,7 @@ describe('inventarioHooks — deny de verdade x "deny" em comentário', () => {
   // O caso REAL que este teste congela: `read-contexto-nudge.sh` cita "deny" três vezes, todas em
   // comentário explicando por que ele decidiu NÃO negar. Uma varredura crua o promove a bloqueio.
   const fontes: Record<string, string> = {
-    'bloqueia.sh': 'jq -n \'{hookSpecificOutput:{permissionDecision:"deny"}}\'\n',
+    'bloqueia.sh': 'jq -n \'{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny"}}\'\n',
     'so-avisa.sh': '# permissionDecision:"deny" quebraria investigação — por isso NÃO uso\necho aviso\n',
   };
 
@@ -124,10 +127,153 @@ describe('inventarioHooks — deny de verdade x "deny" em comentário', () => {
     const hooks = inventarioHooks(settings, (a) => fontes[a] ?? null);
     expect(hooks.find((h) => h.arquivo === 'bloqueia.sh')?.bloqueia).toBe(true);
     expect(hooks.find((h) => h.arquivo === 'so-avisa.sh')?.bloqueia).toBe(false);
+    expect(hooks.some((h) => h.denySemEnvelope)).toBe(false);
   });
 
   it('hook ilegível não vira gate (fail-safe: não inventa bloqueio)', () => {
-    expect(inventarioHooks(settings, () => null).every((h) => !h.bloqueia)).toBe(true);
+    const hooks = inventarioHooks(settings, () => null);
+    expect(hooks.every((h) => !h.bloqueia && !h.denySemEnvelope)).toBe(true);
+  });
+});
+
+describe('inventarioHooks — o deny só conta DENTRO do envelope que o harness honra', () => {
+  const um = JSON.stringify({
+    hooks: { PreToolUse: [{ hooks: [{ command: '"$CLAUDE_PROJECT_DIR/.claude/hooks/alvo.sh"' }] }] },
+  });
+  const classificar = (fonte: string) => inventarioHooks(um, () => fonte)[0];
+
+  // Medido em 2026-09-27 (Claude Code 2.1.281, sonda PreToolUse sobre `Skill`, log provando que o
+  // hook RODOU nas três chamadas): só o envelope completo negou; as outras duas deixaram a skill
+  // carregar. As duas primeiras abaixo são essas formas, e é por elas que o censo mentiu 136 dias.
+  it('deny no TOPO do JSON (o check-gstack.sh) não bloqueia — e é acusado', () => {
+    const h = classificar(`echo '{"permissionDecision":"deny","message":"gstack ausente"}'\n`);
+    expect(h.bloqueia).toBe(false);
+    expect(h.denySemEnvelope).toBe(true);
+  });
+
+  it('hookSpecificOutput SEM hookEventName também não bloqueia — e é acusado', () => {
+    const h = classificar(`jq -n '{hookSpecificOutput:{permissionDecision:"deny",permissionDecisionReason:$r}}'\n`);
+    expect(h.bloqueia).toBe(false);
+    expect(h.denySemEnvelope).toBe(true);
+  });
+
+  it('envelope completo bloqueia, nas duas grafias do repo (jq e printf) e em qualquer ordem', () => {
+    const jq = `jq -n --arg r "$m" '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:$r}}'\n`;
+    const printf = `printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\\n' "$m"\n`;
+    const invertido = `jq -n '{hookSpecificOutput:{permissionDecision:"deny",hookEventName:"PreToolUse"}}'\n`;
+    for (const fonte of [jq, printf, invertido]) {
+      expect(classificar(fonte)).toMatchObject({ bloqueia: true, denySemEnvelope: false });
+    }
+  });
+
+  it('hookEventName de OUTRO evento não arma o deny de PreToolUse', () => {
+    const h = classificar(`jq -n '{hookSpecificOutput:{hookEventName:"PostToolUse",permissionDecision:"deny"}}'\n`);
+    expect(h).toMatchObject({ bloqueia: false, denySemEnvelope: true });
+  });
+
+  it('um ramo certo NÃO absolve o ramo errado do mesmo hook', () => {
+    const h = classificar(
+      `jq -n '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny"}}'\n` +
+        `echo '{"permissionDecision":"deny"}'\n`,
+    );
+    expect(h).toMatchObject({ bloqueia: true, denySemEnvelope: true });
+  });
+});
+
+describe('hooksLigados — TODO hook do settings.json, com ou sem arquivo', () => {
+  const settings = JSON.stringify({
+    hooks: {
+      PreToolUse: [
+        {
+          matcher: 'Bash',
+          hooks: [
+            { type: 'command', command: '"$CLAUDE_PROJECT_DIR/.claude/hooks/b.sh"' },
+            { type: 'command', command: '"$CLAUDE_PROJECT_DIR/.claude/hooks/a.sh"' },
+          ],
+        },
+      ],
+      PostToolUse: [{ hooks: [{ type: 'command', command: '"$CLAUDE_PROJECT_DIR/.claude/hooks/a.sh"' }] }],
+      Stop: [{ hooks: [{ type: 'command', command: 'echo tchau' }] }],
+    },
+  });
+
+  it('um por arquivo, no PRIMEIRO evento em que aparece', () => {
+    const comArquivo = hooksLigados(settings).filter((h) => h.arquivo !== null);
+    expect(comArquivo.map((h) => [h.arquivo, h.evento])).toEqual([
+      ['a.sh', 'PreToolUse'],
+      ['b.sh', 'PreToolUse'],
+    ]);
+  });
+
+  // O `inventarioHooks` PULA o comando que não aponta arquivo (`if (!m) continue`): para o censo de
+  // deny é o certo, para a cobertura é o buraco — um hook inline some do inventário e fica verde
+  // por não existir. Aqui ele vem com `arquivo: null`, e quem decide o que fazer é o chamador.
+  it('comando SEM arquivo não some: vem com arquivo null', () => {
+    expect(hooksLigados(settings).find((h) => h.arquivo === null)).toMatchObject({
+      evento: 'Stop',
+      comando: 'echo tchau',
+    });
+  });
+
+  it('settings.json sem hooks devolve vazio, não explode', () => {
+    expect(hooksLigados('{}')).toEqual([]);
+  });
+});
+
+describe('coberturaDeHooks — hook ligado precisa de suíte do test:hooks que o EXECUTE', () => {
+  const hook = (arquivo: string): HookLigado => ({
+    evento: 'PreToolUse',
+    comando: `"$CLAUDE_PROJECT_DIR/.claude/hooks/${arquivo}"`,
+    arquivo,
+  });
+  const suite = (fonte: string | null) => ({ arquivo: 'scripts/test-x.sh', fonte });
+
+  it('coberto: a suíte cita o hook como CAMINHO numa linha de código', () => {
+    expect(coberturaDeHooks([hook('x.sh')], [suite('HOOK="$here/../.claude/hooks/x.sh"\nbash "$HOOK"\n')])).toEqual([]);
+  });
+
+  it('o caminho pode vir de variável — `"$HOOKS/x.sh"` é a forma do test-hooks-sessionstart.sh', () => {
+    expect(coberturaDeHooks([hook('x.sh')], [suite('out="$(bash "$HOOKS/x.sh")"\n')])).toEqual([]);
+  });
+
+  // Citar não é executar: é a lição da classe (docs/historico/gates-textuais-cegos.md). O comentário
+  // no FIM da linha é o caso que um filtro local de `^#` deixaria passar — só o stripper sabe.
+  it('citação só em COMENTÁRIO não cobre — nem no começo, nem no fim da linha', () => {
+    const fontes = ['# roda .claude/hooks/x.sh\necho ok\n', 'echo ok  # roda .claude/hooks/x.sh\n'];
+    for (const f of fontes) {
+      expect(coberturaDeHooks([hook('x.sh')], [suite(f)]).map((s) => s.hook.arquivo)).toEqual(['x.sh']);
+    }
+  });
+
+  // Medido em 2026-09-27: a PRIMEIRA linha não-comentada do test-hooks-sessionstart.sh que cita o
+  // pos-compact-ptbr.sh é `echo "── pos-compact-ptbr.sh ──"` — rótulo. Ela sozinha não pode cobrir.
+  it('citação como RÓTULO (nome sem `/` antes) não é caminho — não cobre', () => {
+    expect(coberturaDeHooks([hook('x.sh')], [suite('echo "── x.sh ──"\n')]).length).toBe(1);
+  });
+
+  it('o `#` que NÃO abre comentário (`${d#./}`) não esconde a citação — regex local esconderia', () => {
+    expect(coberturaDeHooks([hook('x.sh')], [suite('bash "${d#./}/.claude/hooks/x.sh"\n')])).toEqual([]);
+  });
+
+  it('prefixo ou sufixo de OUTRO nome não cobre (`/nao-x.sh`, `/x.sh.bak`)', () => {
+    const r = coberturaDeHooks([hook('x.sh')], [suite('bash "$R/hooks/nao-x.sh"\ncp "$R/hooks/x.sh.bak" .\n')]);
+    expect(r.length).toBe(1);
+  });
+
+  it('suíte que não pôde ser lida (fonte null) não cobre ninguém', () => {
+    expect(coberturaDeHooks([hook('x.sh')], [suite(null)]).length).toBe(1);
+  });
+
+  it('hook sem arquivo é achado — não há nome que uma suíte possa citar', () => {
+    const inline: HookLigado = { evento: 'Stop', comando: 'echo tchau', arquivo: null };
+    const r = coberturaDeHooks([inline], [suite('echo tchau\n')]);
+    expect(r.map((s) => s.hook.comando)).toEqual(['echo tchau']);
+    expect(r[0].motivo).toMatch(/sem arquivo/);
+  });
+
+  it('cada hook responde por si: o coberto não absolve o vizinho', () => {
+    const r = coberturaDeHooks([hook('x.sh'), hook('y.sh')], [suite('bash "$R/.claude/hooks/x.sh"\n')]);
+    expect(r.map((s) => s.hook.arquivo)).toEqual(['y.sh']);
   });
 });
 

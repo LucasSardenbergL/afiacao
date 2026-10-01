@@ -12,6 +12,7 @@ PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
 PORT="${PGPORT_TEST:-5463}"
 SLUG="pedidos-programados"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
+RODADA="$(dirname "$DATA")"   # dir ÚNICO desta rodada (o trap apaga): temporário mora aqui, nunca em /tmp/<nome-fixo>
 export LC_ALL=C LANG=C
 
 [ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER}"; exit 1; }
@@ -27,7 +28,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -qtA "$@"; }
 
 P -q -f "$REPO_ROOT/db/stubs-supabase.sql"
@@ -308,7 +309,7 @@ P -q -c "RESET ROLE;" >/dev/null
 # SEPARADO ("sabota"), aplicando a migration REAL (sabotada via sed) do zero.
 echo "── falsificação ──"
 
-SB()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d sabota -v ON_ERROR_STOP=1 "$@"; }
+SB()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d sabota -v ON_ERROR_STOP=1 "$@"; }
 SBq() { SB -qtA "$@"; }
 
 # Recria o banco "sabota" do zero com a base idêntica à zona 1-2 (stubs + pré-requisitos),
@@ -354,15 +355,18 @@ preparar_sabota
 
 # F1 — RLS é o que barra o customer (R2). Sabota comentando o ENABLE ROW LEVEL SECURITY
 #      de pedidos_programados: sem RLS, customer passa a ver o header (count>0, não 0).
-sed 's/^ALTER TABLE public\.pedidos_programados        ENABLE ROW LEVEL SECURITY;/-- SABOTADO: &/' "$MIG" > /tmp/sab-pp-rls.sql
-SB -q -f /tmp/sab-pp-rls.sql
+sed 's/^ALTER TABLE public\.pedidos_programados        ENABLE ROW LEVEL SECURITY;/-- SABOTADO: &/' "$MIG" > "$RODADA/sab-pp-rls.sql"
+SB -q -f "$RODADA/sab-pp-rls.sql"
 SB -q <<SQL
 INSERT INTO public.pedidos_programados (cliente_ref, arquivo_path, status, created_by)
 VALUES ('lider', 'x.pdf', 'ativo', '$STAFF');
 SQL
 RLS_SABOTADO=$(SBq -c "SET ROLE authenticated; SET test.uid='$CUST'; SELECT count(*) FROM public.pedidos_programados;")
 SB -q -c "RESET ROLE;" >/dev/null
-if [ "$RLS_SABOTADO" != "0" ]; then ok "F1 RLS sabotado (comentado) → customer PASSA A VER o header (R2 tem dente, count=$RLS_SABOTADO)"; else bad "F1 sabotagem não mudou a visibilidade → R2 é teatro [veio $RLS_SABOTADO]"; fi
+# o que a sabotagem DECLARA: sem RLS, o customer vê EXATAMENTE o header inserido (1) — "≠ 0" aceitava
+# qualquer outra contagem. O vermelho tem de ser do SEU assert: docs/historico/falsificacao-exit-nao-e-dente.md.
+if [ "$RLS_SABOTADO" = "0" ]; then bad "F1 sabotagem não mudou a visibilidade (count=0) → R2 não tem dente"
+elif [ "$RLS_SABOTADO" = "1" ]; then ok "F1 RLS sabotado (comentado) → customer PASSA A VER o header (R2 tem dente, count=$RLS_SABOTADO)"; else bad "F1 — NÃO é o que a sabotagem declara (1: o header inserido): veio [$RLS_SABOTADO]"; fi
 SB -q -c "DROP DATABASE sabota" 2>/dev/null || true
 P -q -c "DROP DATABASE IF EXISTS sabota;" >/dev/null
 
@@ -378,8 +382,8 @@ P -q -c "RESET ROLE;" >/dev/null
 #      migration insere 2 linhas; sem RLS o customer passa a vê-las (S4 tem dente).
 #      O "restaurado" desta falsificação é o S4 do banco prove (migration real → count=0).
 preparar_sabota
-sed 's/^ALTER TABLE public\.pedidos_programados_config[[:space:]]*ENABLE ROW LEVEL SECURITY;/-- SABOTADO: &/' "$MIG" > /tmp/sab-pp-config.sql
-SB -q -f /tmp/sab-pp-config.sql
+sed 's/^ALTER TABLE public\.pedidos_programados_config[[:space:]]*ENABLE ROW LEVEL SECURITY;/-- SABOTADO: &/' "$MIG" > "$RODADA/sab-pp-config.sql"
+SB -q -f "$RODADA/sab-pp-config.sql"
 CONF_SABOTADO=$(SBq -c "SET ROLE authenticated; SET test.uid='$CUST'; SELECT count(*) FROM public.pedidos_programados_config;")
 SB -q -c "RESET ROLE;" >/dev/null
 if [ "$CONF_SABOTADO" = "2" ]; then ok "F2 RLS da config sabotado → customer VÊ as 2 linhas do seed (S4 tem dente)"; else bad "F2 sabotagem da config não mudou a visibilidade → S4 é teatro [veio $CONF_SABOTADO]"; fi

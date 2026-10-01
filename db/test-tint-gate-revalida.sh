@@ -80,21 +80,17 @@ MIG_F2C="$REPO_ROOT/supabase/migrations/20260722100002_tint_canonica_csv_legado_
 MIG_F2D="$REPO_ROOT/supabase/migrations/20260724130000_tint_canonica_csv_legado_allowlist.sql"
 MIGRATION="$REPO_ROOT/supabase/migrations/20260722100001_tint_gate_revalida_submit.sql"
 MIG_PISO="$REPO_ROOT/supabase/migrations/20260726160000_tint_canonica_piso_legado.sql"
-PGVER=17
-PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
-PORT=5449
+export PGVER=17   # consumido pelo db/lib/pg-harness.sh via source
+# shellcheck disable=SC1091  # o gate roda sem -x; o helper e versionado ao lado, em db/lib/
+. "$REPO_ROOT/db/lib/pg-harness.sh"   # exporta PGBIN — fail-CLOSED, confere a major POSITIVAMENTE
+PORT="${PGPORT_TEST:-5449}"
 DATA="$(mktemp -d /tmp/pgtest-tintgate.XXXXXX)/data"
+RODADA="$(dirname "$DATA")"   # dir ÚNICO desta rodada (o trap apaga): temporário mora aqui, nunca em /tmp/<nome-fixo>
 export LC_ALL=C LANG=C
 
-[ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER} pgvector"; exit 1; }
 for f in "$MIG_F2" "$MIG_F2B" "$MIG_F2C" "$MIG_F2D" "$MIGRATION" "$MIG_PISO"; do
   [ -f "$f" ] || { echo "migration ausente: $f"; exit 1; }
 done
-
-CELLAR="$(brew --prefix postgresql@${PGVER})"
-cp -Rn "$CELLAR"/share/postgresql/. "/opt/homebrew/share/postgresql@${PGVER}/" 2>/dev/null || true
-mkdir -p "/opt/homebrew/lib/postgresql@${PGVER}"
-cp -Rn "$CELLAR"/lib/postgresql/. "/opt/homebrew/lib/postgresql@${PGVER}/" 2>/dev/null || true
 
 cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$(dirname "$DATA")"; rm -f "${RR:-}"; }
 trap cleanup EXIT
@@ -102,7 +98,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-tintgate.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres gate_verify
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d gate_verify -v ON_ERROR_STOP=1 "$@"; }
+P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d gate_verify -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }
 
 PASS=0; FAIL=0
@@ -423,8 +419,8 @@ BEGIN
     '[{"omie_codigo_produto":900001,"tint_cor_id":"K1","tint_formula_id":"f1000000-0000-0000-0000-00000000005a","valor_unitario":102.5,"tint_price_source":"calculado"},
       {"omie_codigo_produto":900001,"tint_cor_id":"K1","tint_formula_id":"f1000000-0000-0000-0000-00000000005a","valor_unitario":90,"tint_price_source":"calculado"}]');
   IF (r->>'ok')::boolean IS DISTINCT FROM false
-     OR jsonb_array_length(r->'bloqueios') <> 1
-     OR (r->'bloqueios'->0->>'index')::int <> 1 THEN
+     OR jsonb_array_length(r->'bloqueios') IS DISTINCT FROM 1
+     OR (r->'bloqueios'->0->>'index')::int IS DISTINCT FROM 1 THEN
     RAISE EXCEPTION 'G19 FALHOU: só o item 1 deveria bloquear: %', r; END IF;
 
   -- G20 criação: BASE tint sem cor → bloqueia (classificação pelo produto)
@@ -587,7 +583,7 @@ BEGIN
               - length(replace(pg_get_functiondef(p.oid), 'COALESCE(v_piso, v_calc)', '')))
              / length('COALESCE(v_piso, v_calc)')
         FROM pg_proc p JOIN pg_namespace nsp ON nsp.oid = p.pronamespace
-       WHERE nsp.nspname = 'public' AND p.proname = 'tint_gate_revalida') <> 2 THEN
+       WHERE nsp.nspname = 'public' AND p.proname = 'tint_gate_revalida') IS DISTINCT FROM 2 THEN
     RAISE EXCEPTION 'G35 FALHOU: v_floor nao usa o piso nos 2 ramos (manual + legado) — um deles regrediu para v_tab';
   END IF;
 
@@ -743,7 +739,7 @@ restore_gate
 
 echo ""
 echo "════════ F2 — sabotagem: formula_morta vira passe silencioso ════════"
-TMP_SAB="$(mktemp "${TMPDIR:-/tmp}/sab-f2.XXXXXX.sql")"
+TMP_SAB="$(mktemp "$RODADA/sab-f2.XXXXXX")"
 # migration real com o bloqueio de canônica-ausente trocado por CONTINUE
 sed "s/'motivo', 'formula_morta',/'motivo', 'formula_morta_DESLIGADA',/" "$MIGRATION" > "$TMP_SAB"
 P -q -f "$TMP_SAB" >/dev/null
@@ -761,7 +757,7 @@ restore_gate
 echo ""
 echo "════════ F3 — sabotagem: fonte 'tabela' pula o gate do motor ════════"
 # migration real com o check do motor condicionado a fonte ≠ tabela
-TMP_SAB="$(mktemp "${TMPDIR:-/tmp}/sab-f3.XXXXXX.sql")"
+TMP_SAB="$(mktemp "$RODADA/sab-f3.XXXXXX")"
 sed "s/IF v_calc_raw IS NULL THEN/IF v_calc_raw IS NULL AND COALESCE(v_item->>'tint_price_source','') <> 'tabela' THEN/" "$MIGRATION" > "$TMP_SAB"
 P -q -f "$TMP_SAB" >/dev/null
 rm -f "$TMP_SAB"
@@ -812,7 +808,7 @@ restore_gate
 
 echo ""
 echo "════════ F6 — sabotagem: ultimo_preco vira SECURITY DEFINER (fura a RLS) ════════"
-TMP_SAB="$(mktemp "${TMPDIR:-/tmp}/sab-f6.XXXXXX.sql")"
+TMP_SAB="$(mktemp "$RODADA/sab-f6.XXXXXX")"
 sed "s/^STABLE$/STABLE SECURITY DEFINER/" "$MIGRATION" > "$TMP_SAB"
 P -q -f "$TMP_SAB" >/dev/null
 rm -f "$TMP_SAB"
@@ -826,7 +822,7 @@ restore_gate
 
 echo ""
 echo "════════ F7 — sabotagem: sem o exclude anti-autovalidação ════════"
-TMP_SAB="$(mktemp "${TMPDIR:-/tmp}/sab-f7.XXXXXX.sql")"
+TMP_SAB="$(mktemp "$RODADA/sab-f7.XXXXXX")"
 sed "s/AND (p_exclude_sales_order_id IS NULL OR so.id <> p_exclude_sales_order_id)/AND true/" "$MIGRATION" > "$TMP_SAB"
 P -q -f "$TMP_SAB" >/dev/null
 rm -f "$TMP_SAB"
@@ -841,7 +837,7 @@ restore_gate
 
 echo ""
 echo "════════ F8 — sabotagem: item sem cor ignorado SEM classificar o produto ════════"
-TMP_SAB="$(mktemp "${TMPDIR:-/tmp}/sab-f8.XXXXXX.sql")"
+TMP_SAB="$(mktemp "$RODADA/sab-f8.XXXXXX")"
 sed "s/CONTINUE WHEN NOT v_is_base_tint;/CONTINUE;/" "$MIGRATION" > "$TMP_SAB"
 P -q -f "$TMP_SAB" >/dev/null
 rm -f "$TMP_SAB"
@@ -856,7 +852,7 @@ restore_gate
 
 echo ""
 echo "════════ F9 — sabotagem: coerência de fórmula sempre-true (anti-adulteração morre) ════════"
-TMP_SAB="$(mktemp "${TMPDIR:-/tmp}/sab-f9.XXXXXX.sql")"
+TMP_SAB="$(mktemp "$RODADA/sab-f9.XXXXXX")"
 sed "s/v_declarada_coerente := false;/v_declarada_coerente := true;/" "$MIGRATION" > "$TMP_SAB"
 P -q -f "$TMP_SAB" >/dev/null
 rm -f "$TMP_SAB"
@@ -876,7 +872,7 @@ echo "════════ F10 — sabotagem: o PISO volta a ler o RÓTULO (
 # É o estado da main antes de 2026-07-21 — e o que o challenge do Codex apontou:
 # encolher o max para dar precisão de proveniência ao rótulo AFROUXAVA o piso.
 # Se G32/G33 seguissem verdes aqui, eles não teriam dente nenhum.
-TMP_SAB="$(mktemp "${TMPDIR:-/tmp}/sab-f10.XXXXXX.sql")"
+TMP_SAB="$(mktemp "$RODADA/sab-f10.XXXXXX")"
 sed 's/COALESCE(v_piso, v_calc)/COALESCE(v_tab, v_calc)/' "$MIG_PISO" > "$TMP_SAB"
 P -q -f "$TMP_SAB" >/dev/null
 rm -f "$TMP_SAB"
@@ -903,7 +899,7 @@ echo "════════ F11 — DEFESA EM PROFUNDIDADE: view sabotada, ga
 # falsificação do spec ingênuo continua existindo e VERMELHA, no harness certo:
 # db/test-tint-canonica.sh, F14 → derruba {C26,C28}. Aqui a afirmação é outra,
 # e verdadeira: as duas camadas são independentes, e uma cobre a queda da outra.
-TMP_SAB="$(mktemp "${TMPDIR:-/tmp}/sab-f11.XXXXXX.sql")"
+TMP_SAB="$(mktemp "$RODADA/sab-f11.XXXXXX")"
 sed 's/))) IS NULL/))) IS NULL AND false/' "$MIG_PISO" > "$TMP_SAB"
 P -q -f "$TMP_SAB" >/dev/null
 rm -f "$TMP_SAB"
@@ -922,7 +918,7 @@ echo "════════ F12 — sabotagem: v_piso SEM o acoplamento a v_t
 # VERDES (K32 tem csv=0, que não é NULL), mas o guard `> 0` do gate derruba
 # v_tab e deixa v_piso=90 de pé — o piso efetivo cai de 102.5 para 90 e o
 # manual 95 passa. Falha ABERTA por um caminho que os invariantes não enxergam.
-TMP_SAB="$(mktemp "${TMPDIR:-/tmp}/sab-f12.XXXXXX.sql")"
+TMP_SAB="$(mktemp "$RODADA/sab-f12.XXXXXX")"
 sed 's/CASE WHEN v_tab IS NOT NULL AND v_can_piso IS NOT NULL/CASE WHEN v_can_piso IS NOT NULL/' "$MIG_PISO" > "$TMP_SAB"
 P -q -f "$TMP_SAB" >/dev/null
 rm -f "$TMP_SAB"
@@ -943,7 +939,7 @@ echo "════════ F13 — sabotagem: SÓ o ramo LEGADO volta a v_ta
 # SEGUINTE (`n;s///`) — o ramo 'manual' fica intacto. Sem o G35 estrutural,
 # esta sabotagem passaria VERDE (nenhum assert comportamental cobre o legado
 # com piso divergente hoje).
-TMP_SAB="$(mktemp "${TMPDIR:-/tmp}/sab-f13.XXXXXX.sql")"
+TMP_SAB="$(mktemp "$RODADA/sab-f13.XXXXXX")"
 sed '/mesmo piso conservador da fonte/{n;s/COALESCE(v_piso, v_calc)/COALESCE(v_tab, v_calc)/;}' "$MIG_PISO" > "$TMP_SAB"
 P -q -f "$TMP_SAB" >/dev/null
 rm -f "$TMP_SAB"
@@ -962,7 +958,7 @@ echo "════════ F14 — sabotagem: piso SEM o ceil10 (usa o valor
 # O contador de ✅ é do nível bash e o G36 vive DENTRO do run_central — então o
 # número não prova que ele rodou. Esta sabotagem prova. Só K33 (piso 90.01)
 # distingue: para pisos inteiros ceil10(x)=x e nada muda.
-TMP_SAB="$(mktemp "${TMPDIR:-/tmp}/sab-f14.XXXXXX.sql")"
+TMP_SAB="$(mktemp "$RODADA/sab-f14.XXXXXX")"
 sed 's|ceil((v_can_piso)::float8 \* 10) / 10|(v_can_piso)::float8|' "$MIG_PISO" > "$TMP_SAB"
 P -q -f "$TMP_SAB" >/dev/null
 rm -f "$TMP_SAB"
@@ -989,5 +985,6 @@ eq "R2 ultimo_preco restaurado (95 com exclude do SO-EDIT)" "$OUT" "95"
 echo ""
 echo "═══════════════════════════════════════════"
 echo "RESULTADO: $PASS ✅ · $FAIL ❌"
+echo "PASS=$PASS  FAIL=$FAIL"   # recibo lido pelo db/roda-nucleo-ci.sh (o formato acima ele não reconhece)
 [ "$FAIL" -eq 0 ] || exit 1
 echo "test-tint-gate-revalida: OK"

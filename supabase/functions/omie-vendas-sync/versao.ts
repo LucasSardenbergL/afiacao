@@ -85,8 +85,13 @@ export const respostaSonda = criarRespostaSonda("omie-vendas-sync");
  * ERP — em CONFIRMAÇÕES, não em dano afirmado: transitório é ambíguo quanto ao efeito, a chamada
  * que falhou pode ter valido — e com a instrução de não re-salvar sem recarregar. Não toca
  * `_shared/` e não muda contrato: nenhuma pré-condição de banco, nenhuma ordem de deploy.
+ *
+ * v1.10 (2026-10-01) — o dia de SP (classe ii do fuso, fase 3) no `data_previsao` do IncluirPedido e do
+ * AlterarPedidoVenda, no `dDtPrevisao` do IncluirOrdemProducao e no `dDataPosicao` do syncEstoque: saíam do
+ * dia UTC do servidor, AMANHÃ das 21:00 às 23:59 BRT — e, sem dInc, o data_previsao vira o order_date_kpi.
+ * Nenhuma pré-condição de banco, nenhuma ordem de deploy.
  */
-export const VERSAO = "v1.9-edicao-transitorio-esgotado-lanca";
+export const VERSAO = "v1.10-hoje-sp-data-previsao";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

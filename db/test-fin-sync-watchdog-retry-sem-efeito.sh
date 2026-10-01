@@ -38,13 +38,22 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+# -X: sem ~/.psqlrc — ele mudaria o formato da linha ERROR que os juízes do F1/G1/G2 leem; e nada abaixo de ERROR
+# chega ao cliente (NOTICE/WARNING são o canal por onde se forja uma linha "ERROR:")
+P()  { PGOPTIONS='-c client_min_messages=error' "$PGBIN/psql" -X -v VERBOSITY=default -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }
 
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); echo "  ✅ $1"; }
 bad() { FAIL=$((FAIL+1)); echo "  ❌ $1"; }
 eq()  { if [ "$2" = "$3" ]; then ok "$1 (=$2)"; else bad "$1 — esperado [$3], veio [$2]"; fi; }
+# As linhas que INTERROMPEM, num stderr capturado: ERROR/FATAL/PANIC com a severidade ANCORADA no
+# início (um NOTICE que cite "ERROR:" não conta) e todo erro do cliente psql (conexão que cai), sem o
+# prefixo "psql:<arquivo>:<linha>: ", várias unidas por " ;; ". O juiz compara o resultado INTEIRO:
+# uma linha só, e a do ramo. As conexões nem recebem NOTICE (client_min_messages=error, em P) — por
+# ali se forjaria uma linha "ERROR:" inteira, e um FATAL depois dela esconderia que o erro real não
+# veio (Codex, 2026-09-27).
+linhas_error() { grep -E '^(psql:[^ ]*: )?(ERROR|FATAL|PANIC):  |^psql: error: |server closed the connection|connection to server was lost' "$1" | sed -E 's/^psql:[^ ]*: //' | awk 'NR > 1 { printf " ;; " } { printf "%s", $0 }' || true; }
 
 echo "═══ setup PG17 :$PORT ═══"
 
@@ -304,7 +313,11 @@ eq "P7 log de outro resource não mascara" "$(at sync_retry_sem_efeito oben)" "1
 # FALSIFICAÇÃO — sabota a migration (sed âncora única) → exige VERMELHO → restaura
 # ══════════════════════════════════════════════════════════════════════════════
 echo "── falsificação (cada guard/predicado tem dente?) ──"
-MUT="/tmp/mig-mut-${SLUG}.sql"
+# A migration mutada e os stderr que os juízes leem moram no tmpdir desta execução: nome fixo em
+# /tmp é compartilhado com as outras worktrees (uma rodada paralela trocaria a mutação desta).
+MUT="$(dirname "$DATA")/mig-mut.sql"
+F1_ERR="$(dirname "$DATA")/f1.err"
+GUARD_ERR="$(dirname "$DATA")/guard.err"
 aplica_mut() {  # $1 = expr sed; garante que a mutação REALMENTE alterou o arquivo (anti-teatro)
   sed "$1" "$MIG" > "$MUT"
   if diff -q "$MIG" "$MUT" >/dev/null; then bad "SABOTAGEM NÃO CASOU (âncora mudou?): $1"; return 1; fi
@@ -317,10 +330,18 @@ cria_tabela() { P -q -c "CREATE TABLE IF NOT EXISTS public.fin_sync_kick_retry (
 reset2
 aplica_mut "s@IF to_regclass('public.fin_sync_kick_retry') IS NOT NULL THEN@IF true THEN@"
 P -q -c "DROP TABLE public.fin_sync_kick_retry;"
-if Pq -c "SELECT public.fin_sync_watchdog_check();" >/dev/null 2>/tmp/f1.err; then
+# O erro que prova o guard é o da TABELA AUSENTE, lido na linha ERROR da chamada. O watchdog que
+# quebra por outro motivo — ou o nome da tabela num NOTICE antes de outro erro — não prova nada:
+# até 2026-09-27 qualquer erro contava (docs/historico/falsificacao-exit-nao-e-dente.md).
+if Pq -c "SELECT public.fin_sync_watchdog_check();" >/dev/null 2>"$F1_ERR"; then
   bad "F1 sabotei o to_regclass e sem a tabela NÃO quebrou → guard não provado"
 else
-  ok "F1 sem to_regclass + sem tabela → watchdog erra (guard de ordem tem dente)"
+  F1_ERRO="$(linhas_error "$F1_ERR")"
+  if [ "$F1_ERRO" = 'ERROR:  relation "fin_sync_kick_retry" does not exist' ]; then
+    ok "F1 sem to_regclass + sem tabela → watchdog erra PELA tabela ausente (guard de ordem tem dente)"
+  else
+    bad "F1 ERRO ALHEIO à tabela ausente — a linha ERROR tinha de ser a da relação, veio [${F1_ERRO:-<nenhuma linha ERROR>}]"
+  fi
 fi
 cria_tabela; restaura
 
@@ -358,7 +379,22 @@ eq "F5 pós-restore a lógica real voltou (P2 de novo sem alerta)" "$(at sync_re
 echo "── guard: anti-drift + anti-rollback por marca versionada ──"
 # corpo alienígena/sucessora mínimo (md5 != base); parametriza o comentário-marca
 falsa_funcao() { P -q -c "CREATE OR REPLACE FUNCTION public.fin_sync_watchdog_check() RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public','pg_temp' AS \$fn\$ BEGIN /* $1 */ PERFORM 1; END \$fn\$;"; }
-aplica_espera_abort() { if P -q -f "$MIG" >/dev/null 2>/tmp/guarderr-${SLUG}.log; then bad "$1 — guard NÃO abortou (aplicou sobre estado errado!)"; else ok "$1 — guard abortou (exit≠0)"; fi; }
+# O aborto que conta é o do PRE-FLIGHT, lido na UMA linha ERROR do apply e comparado INTEIRO — a
+# única parte variável é o md5 do corpo vivo, normalizado para <md5> (prefixo só aceitaria o
+# PRE-FLIGHT seguido de qualquer outro ramo; Codex, 2026-09-27). Aborto por outro erro — ex.: a
+# função sumiu e o ::regprocedure do guard erra antes dele — dizia "guard abortou (exit≠0)" até
+# 2026-09-27 (falsificacao-exit-nao-e-dente.md).
+PREFLIGHT="ERROR:  PRE-FLIGHT ABORTOU: fin_sync_watchdog_check vivo (md5 <md5>) não é a base esperada (dump 2026-07-04, md5 7d0eccbd0a9764476da50b0952a2f9e3) nem contém o marcador 'retry_sem_efeito guard v1'. Outra migration recriou a função depois que esta foi gerada (se for uma SUCESSORA legítima, é ela que deve rodar — NÃO re-aplique esta). Rebasear sobre pg_get_functiondef atual (rito docs/agent/sync.md §Sentinela) e re-gerar."
+aplica_espera_abort() {
+  local erro
+  if P -q -f "$MIG" >/dev/null 2>"$GUARD_ERR"; then bad "$1 — guard NÃO abortou (aplicou sobre estado errado!)"; return 0; fi
+  erro="$(linhas_error "$GUARD_ERR" | sed -E 's/^(ERROR:  PRE-FLIGHT ABORTOU: fin_sync_watchdog_check vivo \(md5 )[0-9a-f]{32}\)/\1<md5>)/')"
+  if [ "$erro" = "$PREFLIGHT" ]; then
+    ok "$1 — guard abortou pelo PRE-FLIGHT"
+  else
+    bad "$1 — ERRO ALHEIO ao guard: a linha ERROR tinha de ser a do PRE-FLIGHT, veio [${erro:-<nenhuma linha ERROR>}]"
+  fi
+}
 
 # G3 idempotência: função já é a minha (F5 deixou 'guard v1') → re-aplicar PASSA
 if P -q -f "$MIG" >/dev/null 2>&1; then ok "G3 re-run idempotente (marca v1 presente → guard passa)"; else bad "G3 re-run abortou indevidamente"; fi

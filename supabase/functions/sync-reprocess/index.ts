@@ -21,13 +21,19 @@ import {
 import { acumularPosicoesDaPagina, type PosicaoEstoque } from "../_shared/pos-estoque.ts";
 import { carregarProductMap } from "../_shared/mapas-paginados.ts";
 import type { BancoPostgrest } from "../_shared/paginate.ts";
+import { hojeSP, paraDataOmie } from "../_shared/hoje-sp.ts";
+import { janelaPedidosOmie } from "./janela-omie.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import {
+  avaliarCompletudeListagem,
   chunked,
   particionarCustos,
   planejarEscritaInventario,
+  planejarZeramentoForaDaLista,
   type LinhaProdutoLocal,
 } from "./inventory-lote.ts";
+import { carregarEstoqueLocalNaoZero } from "./estoque-local.ts";
+import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import {
   acumularProdutosDaPagina,
   MAX_PAGINAS_PRODUTOS,
@@ -35,6 +41,16 @@ import {
   type LinhaProdutoCatalogo,
   type ProdutoCadastroOmie,
 } from "./products-lote.ts";
+import {
+  consolidarMontagem,
+  contagensDoLog,
+  metadataPedidos,
+  novaApuracaoPedidos,
+  novaMontagemPagina,
+  reconciliarPagina,
+  registrarDescontoIlegivel,
+  registrarItemSemCodigo,
+} from "./apuracao-pedidos.ts";
 
 const OMIE_API_URL = "https://app.omie.com.br/api/v1";
 
@@ -100,6 +116,16 @@ interface OmieListarPedidosResponse {
   pedido_venda_produto?: OmiePedidoVenda[];
 }
 
+// `omie_pedido_id` vai à RPC CRU, como o Omie o mandou (`string | number`). A RPC não o grava em
+// coluna nenhuma — o pai é achado por (account, hash_payload) — e só o ECOA (`v_pedido->'omie_pedido_id'`,
+// tipo jsonb preservado) no registro de falha. O `number` de `PedidoReconciliar` é mais estreito que
+// esse contrato; o `Number(codigoPedido)` que o agente do Lovable pôs aqui (#2579, #2595) mudaria o
+// eco justo no caso anômalo que ele existe para mostrar (string não numérica → NaN → null; > 2^53
+// perde dígito). O tipo acompanha o dado, não o contrário.
+type PedidoReconciliarReprocess = Omit<PedidoReconciliar, "omie_pedido_id"> & {
+  omie_pedido_id: string | number;
+};
+
 // Shape do produto do ListarProdutos: ProdutoCadastroOmie (products-lote.ts, fonte única).
 interface OmieListarProdutosResponse {
   total_de_paginas?: number;
@@ -154,10 +180,6 @@ async function callOmie(account: Account, endpoint: string, call: string, params
   return result;
 }
 
-function formatOmieDate(d: Date): string {
-  return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;
-}
-
 // ======== LOAD CONFIG ========
 
 async function loadReprocessConfig(db: SupabaseClient): Promise<Record<string, number>> {
@@ -193,9 +215,10 @@ async function completeReprocessLog(
   db: SupabaseClient,
   logId: string,
   stats: {
-    upserts_count: number;
-    divergences_found: number;
-    corrections_applied: number;
+    // `null` = não apurado (run abortada antes de reconciliar qualquer página) — ausente ≠ zero.
+    upserts_count: number | null;
+    divergences_found: number | null;
+    corrections_applied: number | null;
     duration_ms: number;
     metadata?: Record<string, unknown>;
     error_message?: string;
@@ -226,43 +249,12 @@ async function reprocessOrders(
   const logId = await createReprocessLog(db, "orders", account, reprocessType, windowStart, windowEnd);
   const startTime = Date.now();
 
-  let upserts = 0;
-  let divergences = 0;
-  let corrections = 0;
-  let falhas = 0;      // pedidos com erro de escrita (não engole — surfaça no log)
-  let skuRepetido = 0; // SKU repetido no payload do Omie
-  let ambiguos = 0;    // pedidos NÃO tocados por duplicidade (payload OU banco) — sem identidade de linha
-  let stale = 0;       // pedidos pulados pelo compare-and-set (leitura mais velha que a publicada)
-  // Pedidos NÃO reconciliados porque o líquido é desconhecido: algum item com preço tem desconto que
-  // a régua não sabe ler (`subtotalPedidoComDesconto` → null). Ficam na revisão anterior completa —
-  // publicar só os itens daria "filhos novos + cabeçalho velho", e publicar um total parcial ou
-  // bruto fabricaria o número. A amostra de ids vai ao `metadata` do log da run.
-  let descontoIlegivel = 0;
-  const descontoIlegivelAmostra: Array<number | string> = [];
-  // Pedidos NÃO reconciliados porque algum item do `det` não tem código de produto utilizável. O
-  // items-jsonb carregaria o item e `order_items` não — e o banco recusa esse agregado (trigger de
-  // coerência). Mesma régua do desconto ilegível: o pedido fica na revisão anterior e é REGISTRADO.
-  let itemSemCodigo = 0;
-  const itemSemCodigoAmostra: Array<number | string> = [];
-  // Falhas por pedido que a RPC isolou (revertido inteiro, o lote seguiu). A amostra vai ao
-  // `metadata`: antes ficava só no console, que não sobrevive à retenção dos logs da edge.
-  const falhasAmostra: Array<Record<string, unknown>> = [];
-  // SENSORES do desconto da linha, vindos da RPC (migration 20260914180104). `null` = alguma página
-  // voltou SEM a chave, isto é, a RPC no ar é a anterior — ausente não é zero, e é por este `null`
-  // que o log mostra a edge nova rodando sobre a migration velha.
-  let descontoApurado: number | null = 0;
-  let descontoCorrigido: number | null = 0;
-  // ── SENSOR da identidade de linha, COM DENOMINADOR. Não existe payload de `ListarPedidos`
-  //    persistido em lugar nenhum do banco (`omie_webhook_events` tem 192 linhas e ZERO com
-  //    `det`), então até aqui não havia como responder "o ListarPedidos devolve
-  //    `det.ide.codigo_item`?" senão pela doc — que nesta API já se provou insuficiente uma vez.
-  //    Estes dois contadores respondem na PRIMEIRA run, e contam TODO item da página, não só o
-  //    dos pedidos reconciliados: um numerador sem denominador não distingue "o campo não vem"
-  //    de "não houve pedido para reconciliar hoje".
-  let itensLidos = 0;
-  let itensComIdentidade = 0;
-  let identidadeAdotada = 0;   // linhas que GANHARAM omie_codigo_item (vem da RPC)
-  let identidadeUsada = 0;     // pedidos diffados por identidade de linha (vem da RPC)
+  // Contadores, amostras e denominadores da run (`./apuracao-pedidos.ts`). Ficam FORA do `try`
+  // porque o catch também os grava: a run que aborta é a que mais precisa do que foi apurado.
+  // Pedidos NÃO reconciliados por desconto ilegível ou por item sem código de produto, falhas por
+  // pedido que a RPC isolou, sensores do desconto da linha e da identidade de linha — o significado
+  // de cada um está documentado lá.
+  const ap = novaApuracaoPedidos();
 
   try {
     // Preload codigo_produto -> product_id (1x por run; evita N+1 por item, igual ao repararOrfaos).
@@ -272,21 +264,28 @@ async function reprocessOrders(
     // registra em `error_message` do log de reprocess (docs/agent/money-path.md §6).
     const productMap = await carregarProductMap(db as unknown as BancoPostgrest, account);
 
+    // As DATAS da janela no dia de SP (`./janela-omie.ts`): o `getDate()` do servidor UTC pedia a janela
+    // até AMANHÃ nos crons das 21:15, 23:15 e 23:30 BRT. `windowStart`/`windowEnd` seguem só como os
+    // instantes do log. Dentro do `try`: `windowDays` malformado lança e vai para o log da run.
+    const janela = janelaPedidosOmie(windowEnd, windowDays);
+
     let pagina = 1;
     let totalPaginas = 1;
 
     while (pagina <= totalPaginas) {
+      ap.paginaEmCurso = pagina;
       const result = (await callOmie(account, "produtos/pedido/", "ListarPedidos", {
         pagina,
         registros_por_pagina: 100,
         filtrar_apenas_inclusao: "N",
-        filtrar_por_data_de: formatOmieDate(windowStart),
-        filtrar_por_data_ate: formatOmieDate(windowEnd),
+        filtrar_por_data_de: janela.de,
+        filtrar_por_data_ate: janela.ate,
       })) as unknown as OmieListarPedidosResponse;
 
       // Mesmos guards dos irmãos products/inventory abaixo (piso monotônico + teto fail-fast):
       // o `|| 1` por resposta encolhia o teto e o reconcile completava retrato PARCIAL.
       totalPaginas = proximoTotalPaginas(totalPaginas, result.total_de_paginas, MAX_PAGINAS_PEDIDOS);
+      ap.totalPaginasDeclarado = totalPaginas;
       const pedidos = result.pedido_venda_produto || [];
       const veredicto = avaliarPagina(pedidos.length, pagina, totalPaginas);
       if (veredicto === "anomalia") {
@@ -302,7 +301,10 @@ async function reprocessOrders(
       // página e não por run: uma run longa não pode fazer a última página parecer tão fresca
       // quanto a primeira.
       const lidoEm = new Date().toISOString();
-      const pedidosRpc: PedidoReconciliar[] = [];
+      const pedidosRpc: PedidoReconciliarReprocess[] = [];
+      // Contadores da montagem DESTA página: só entram na apuração quando ela termina inteira
+      // (`consolidarMontagem`), para `paginas_montadas` descrever exatamente o que os números cobrem.
+      const pg = novaMontagemPagina();
       for (const pedido of pedidos) {
         const cab = pedido.cabecalho || {};
         const codigoPedido = cab.codigo_pedido;
@@ -325,8 +327,7 @@ async function reprocessOrders(
         //      soma código verdadeiro (parecer Codex, 2026-09-14). A régua é a do `codigo_item`:
         //      inteiro positivo. Precisão > recall — o pedido fica na revisão anterior, REGISTRADO.
         if (itens.some((it) => normalizarCodigoItemOmie(it.produto?.codigo_produto) === null)) {
-          itemSemCodigo++;
-          if (itemSemCodigoAmostra.length < 20) itemSemCodigoAmostra.push(codigoPedido);
+          registrarItemSemCodigo(pg, codigoPedido);
           continue;
         }
 
@@ -336,8 +337,7 @@ async function reprocessOrders(
         // desconhecido ⇒ não reconcilia NADA deste pedido (ver `descontoIlegivel`).
         const total = subtotalPedidoComDesconto(itens);
         if (total === null) {
-          descontoIlegivel++;
-          if (descontoIlegivelAmostra.length < 20) descontoIlegivelAmostra.push(codigoPedido);
+          registrarDescontoIlegivel(pg, codigoPedido);
           continue;
         }
 
@@ -349,8 +349,8 @@ async function reprocessOrders(
           // para o casamento por SKU, que é conhecido e guardado; um número fabricado casaria a
           // linha ERRADA dentro do pedido, em silêncio, no caminho do dinheiro.
           const codItem = normalizarCodigoItemOmie(it.ide?.codigo_item);
-          if (codItem !== null) itensComIdentidade++;
-          itensLidos++;
+          if (codItem !== null) pg.itensComIdentidade++;
+          pg.itensLidos++;
           // A base do desconto é a MESMA qty·preço que vai para a linha e que `apurarSubtotalPedido`
           // soma no cabeçalho, na mesma forma da ingestão (omie-vendas-sync). Bases diferentes dariam
           // números diferentes para o mesmo desconto.
@@ -383,7 +383,7 @@ async function reprocessOrders(
           // omie_numero_pedido, que pegaria a linha errada (causa-raiz #B). Ela também NUNCA
           // reescreve o hash_payload do pai.
           hash_payload: hashPayload,
-          omie_pedido_id: Number(codigoPedido),
+          omie_pedido_id: codigoPedido,
           // [A4] só reconcilia status com etapa CONHECIDA. `null` = "não sei", e a RPC mantém o
           // status atual. Quem decide se o status LOCAL ainda é gerido pelo Omie é a RPC, dentro
           // da transação: decidir isso aqui exigiria ler o status antes de escrever, e é
@@ -395,6 +395,7 @@ async function reprocessOrders(
           itens: itensRpc,
         });
       }
+      consolidarMontagem(ap, pg);
 
       // ── Escrita ATÔMICA por pedido via RPC. Substitui as N+M+2 escritas PostgREST soltas
       //    (insert por item, update por item, delete dos removidos, update do cabeçalho), entre as
@@ -402,110 +403,25 @@ async function reprocessOrders(
       //    da nova — visível para `omie-analytics-sync` (regra de associação publicada) e
       //    `fin-valor-cockpit` (margem/EVP). Ver migration 20260830190000 +
       //    db/test-reconciliar-pedidos-omie.sh (T1 prova; F1 mostra o writer antigo rasgando). ──
-      if (pedidosRpc.length > 0) {
-        const { data: rpcRes, error: rpcErr } = await db.rpc("reconciliar_pedidos_omie", {
+      // Chamada, LANÇAMENTO no erro da RPC, soma da resposta e decisão de abortar (página inteira
+      // falhou ⇒ falha sistêmica) moram em `reconciliarPagina` (./apuracao-pedidos.ts), que o teste
+      // Deno EXECUTA com a RPC simulada. Página sem pedido elegível não chama a RPC.
+      await reconciliarPagina(ap, pedidosRpc.length, () =>
+        db.rpc("reconciliar_pedidos_omie", {
           p_pedidos: pedidosRpc,
           p_status_gerido_omie: STATUS_GERIDO_OMIE,
           p_lido_em: lidoEm,
-        });
-        if (rpcErr) {
-          // Money-path: a RPC é o ÚNICO caminho de escrita agora. Se ela falha (migration não
-          // aplicada, grant, lista de status divergente da canônica), LANÇAR — senão a run fica
-          // verde sem reconciliar nada e o log marca 'complete' mascarando perda total. Mesma
-          // decisão que o `criar_pedidos_com_itens` do omie-vendas-sync tomou (achado /codex).
-          throw new Error(`[Reprocess][${account}] RPC reconciliar_pedidos_omie falhou pág ${pagina}: ${rpcErr.message}`);
-        }
-        const r = (rpcRes ?? {}) as {
-          upserts?: number; divergences?: number; corrections?: number;
-          sku_repetido?: number; ambiguo?: number; stale?: number;
-          sem_item?: number; sem_pai?: number;
-          identidade_adotada?: number; identidade_usada?: number;
-          desconto_apurado?: number; desconto_corrigido?: number;
-          falhas?: Array<Record<string, unknown>>;
-        };
-        upserts += r.upserts || 0;
-        divergences += r.divergences || 0;
-        corrections += r.corrections || 0;
-        skuRepetido += r.sku_repetido || 0;
-        const fails = r.falhas || [];
-        falhas += fails.length;
-        if (fails.length > 0) {
-          console.error(`[Reprocess][${account}] ${fails.length} pedido(s) FALHARAM na RPC pág ${pagina}:`, JSON.stringify(fails.slice(0, 5)));
-          for (const f of fails) {
-            if (falhasAmostra.length >= 20) break;
-            // Só metadado, com a mensagem cortada — é o que sobrevive à retenção dos logs da edge.
-            falhasAmostra.push({
-              omie_pedido_id: f.omie_pedido_id ?? null,
-              sqlstate: f.sqlstate ?? null,
-              erro: typeof f.erro === "string" ? f.erro.slice(0, 160) : null,
-            });
-          }
-        }
-        // Sensor AUSENTE não é zero: uma página sem a chave (RPC anterior à 20260914180104) torna o
-        // total null para o resto da run — somar `|| 0` afirmaria "nada apurado" sobre o que não se mediu.
-        descontoApurado = descontoApurado !== null && typeof r.desconto_apurado === "number"
-          ? descontoApurado + r.desconto_apurado
-          : null;
-        descontoCorrigido = descontoCorrigido !== null && typeof r.desconto_corrigido === "number"
-          ? descontoCorrigido + r.desconto_corrigido
-          : null;
-        ambiguos += r.ambiguo || 0;
-        stale += r.stale || 0;
-        identidadeAdotada += r.identidade_adotada || 0;
-        identidadeUsada += r.identidade_usada || 0;
-        if (r.ambiguo) {
-          console.warn(`[Reprocess][${account}] ${r.ambiguo} pedido(s) NÃO reconciliados por ambiguidade sem identidade de linha (${r.sku_repetido || 0} por SKU repetido no payload do Omie; o resto por duplicidade já gravada no banco) — seguem na revisão anterior COMPLETA`);
-        }
-        if (r.stale) {
-          console.warn(`[Reprocess][${account}] ${r.stale} pedido(s) pulados por leitura mais VELHA que a já publicada (compare-and-set)`);
-        }
-        // [P1-4] Se a página INTEIRA falhou, isto não é "alguns pedidos ruins" — é sinal de que
-        // algo sistêmico passou pela allowlist da RPC. Lançar, em vez de somar e seguir para a
-        // página seguinte acumulando o mesmo erro 100 vezes.
-        // Com UM pedido só na página, "todos falharam" não separa falha sistêmica de um pedido ruim —
-        // e um pedido ruim sozinho na última página derrubaria toda run que o alcançasse (parecer
-        // Codex, 2026-09-14). Ele segue em `falhas`; a falha sistêmica reprova as outras páginas.
-        if (fails.length > 0 && fails.length === pedidosRpc.length && pedidosRpc.length > 1) {
-          throw new Error(`[Reprocess][${account}] TODOS os ${fails.length} pedidos da pág ${pagina} falharam na RPC — falha sistêmica, não dado sujo: ${JSON.stringify(fails[0])}`);
-        }
-        console.log(`[Reprocess][${account}] RPC pág ${pagina}: upserts=${r.upserts || 0} corrections=${r.corrections || 0} divergences=${r.divergences || 0} sem_pai=${r.sem_pai || 0} sem_item=${r.sem_item || 0} identidade_adotada=${r.identidade_adotada || 0} identidade_usada=${r.identidade_usada || 0}`);
-      }
+        }), account, pagina);
 
       console.log(`[Reprocess][${account}] Orders page ${pagina}/${totalPaginas}`);
       pagina++;
     }
 
+    const { falhas, ambiguos, skuRepetido, descontoIlegivel, itemSemCodigo } = ap;
     await completeReprocessLog(db, logId, {
-      upserts_count: upserts,
-      divergences_found: divergences,
-      corrections_applied: corrections,
+      ...contagensDoLog(ap, { tipo: "completa" }),
       duration_ms: Date.now() - startTime,
-      metadata: {
-        pages: totalPaginas, window_days: windowDays, falhas, sku_repetido: skuRepetido, ambiguos, stale,
-        // SENSOR da identidade de linha, com DENOMINADOR (`itens_lidos`). É por esta chave que se
-        // responde, contra a PROD e sem depender da doc do Omie, se o `ListarPedidos` devolve
-        // `det.ide.codigo_item`:
-        //   itens_com_codigo_item = 0 e itens_lidos > 0  → o campo NÃO vem; tudo segue no SKU
-        //   itens_com_codigo_item > 0                    → vem, e a adoção já está acontecendo
-        //   itens_lidos = 0                              → não houve item na janela: SEM DADO,
-        //                                                  e é isso que o denominador impede de
-        //                                                  ler como "o campo não vem"
-        itens_lidos: itensLidos,
-        itens_com_codigo_item: itensComIdentidade,
-        identidade_adotada: identidadeAdotada,
-        identidade_usada: identidadeUsada,
-        // Pedidos NÃO reconciliados por desconto ilegível — o registro que sobrevive à janela.
-        desconto_ilegivel: descontoIlegivel,
-        desconto_ilegivel_amostra: descontoIlegivelAmostra,
-        // Pedidos NÃO reconciliados por item sem código de produto utilizável — idem, sobrevive à janela.
-        item_sem_codigo: itemSemCodigo,
-        item_sem_codigo_amostra: itemSemCodigoAmostra,
-        // Falhas por pedido que a RPC isolou (revertidas inteiras) — antes, só no console.
-        falhas_amostra: falhasAmostra,
-        // SENSORES do desconto da linha (RPC 20260914180104). `null` = a RPC no ar é a anterior.
-        desconto_apurado: descontoApurado,
-        desconto_corrigido: descontoCorrigido,
-      },
+      metadata: metadataPedidos(ap, windowDays, { tipo: "completa" }),
       // Pedido que falhou na RPC ou SKU repetido (itens não reconciliados por ambiguidade) NÃO
       // derruba a run (idempotente: próximo ciclo reconcilia), mas NÃO mente 'complete' limpo —
       // surfaça em error_message p/ o watchdog/health (achado Codex).
@@ -531,13 +447,15 @@ async function reprocessOrders(
         : {}),
     });
 
-    return { upserts, divergences, corrections, falhas, sku_repetido: skuRepetido, desconto_ilegivel: descontoIlegivel, item_sem_codigo: itemSemCodigo, duration_ms: Date.now() - startTime };
+    return { upserts: ap.upserts, divergences: ap.divergences, corrections: ap.corrections, falhas, sku_repetido: skuRepetido, desconto_ilegivel: descontoIlegivel, item_sem_codigo: itemSemCodigo, duration_ms: Date.now() - startTime };
   } catch (error) {
+    // A decisão de abortar não muda — muda o que o log GUARDA dela. Sem o `metadata`, a run que
+    // aborta gravava `{}` e a `falhas_amostra` da página que abortou se perdia (só a 1ª falha
+    // sobrevivia no `error_message`). Fase não apurada até o abort vai `null`, nunca `0`.
     await completeReprocessLog(db, logId, {
-      upserts_count: upserts,
-      divergences_found: divergences,
-      corrections_applied: corrections,
+      ...contagensDoLog(ap, { tipo: "abortada" }),
       duration_ms: Date.now() - startTime,
+      metadata: metadataPedidos(ap, windowDays, { tipo: "abortada" }),
       error_message: error instanceof Error ? error.message : String(error),
       status: "error",
     });
@@ -674,6 +592,12 @@ async function reprocessProducts(
         pages: totalPaginas,
         produtos_vistos: vistos,
         produtos_elegiveis: catalogo.size,
+        // Elegível sem valor_unitario (obrigatório no Omie) ficou de fora — o local intacto. Zero
+        // aqui, noite após noite, é a prova de que o caminho é morto (contrato respeitado).
+        itens_sem_valor_unitario: plano.semValorUnitario.length,
+        ...(plano.semValorUnitario.length > 0
+          ? { amostra_sem_valor_unitario: plano.semValorUnitario.slice(0, 10) }
+          : {}),
         ...(falhasChunk > 0 ? { falhas_chunk: falhasChunk } : {}),
       },
       ...(falhasChunk > 0
@@ -701,6 +625,12 @@ async function reprocessProducts(
 // WORKER_RESOURCE_LIMIT no cron operational, morte SEM exceção (o catch não roda) e órfã
 // `running` em sync_reprocess_log. Espelha o syncInventory do omie-analytics-sync (a MESMA
 // operação ListarPosEstoque, em lote). Decisão pura + testes: ./inventory-lote.ts.
+// Desde 2026-10-01 é o ÚNICO dono de omie_products.estoque nesta edge, inclusive do zero de
+// quem saiu da lista padrão (passo 4b) — o passo de produtos parou de gravar a coluna.
+
+// Usado no pedido E na checagem de completude: página "cheia" só significa algo contra o
+// tamanho que foi de fato pedido.
+const POR_PAGINA_POS_ESTOQUE = 100;
 
 async function reprocessInventory(
   db: SupabaseClient,
@@ -719,14 +649,21 @@ async function reprocessInventory(
     // 1) COLETA todas as páginas do Omie em memória (dedupe last-wins por código — duplicata
     //    no MESMO statement de upsert daria 21000 "cannot affect row a second time").
     const posicoes = new Map<number, PosicaoEstoque>();
+    const tamanhosPaginas: number[] = []; // itens CRUS por página — a completude que autoriza zerar
+    let itensIlegiveis = 0; // recusados pelo parser: sem eles a listagem não está inteira compreendida
     let pagina = 1;
     let totalPaginas = 1;
+    // A posição de HOJE em SP, uma vez por run (todas as páginas do retrato na MESMA data). O
+    // `getDate()` do servidor UTC mandava AMANHÃ nos crons das 21:15, 23:15 e 23:30 BRT — o Omie
+    // aceitava e devolvia o mesmo saldo (38 de 38 rodadas noturnas sem divergência em 30 dias,
+    // medido em 2026-10-01): o conserto aqui é por construção, não por número.
+    const dataPosicao = paraDataOmie(hojeSP());
 
     while (pagina <= totalPaginas) {
       const result = (await callOmie(account, "estoque/consulta/", "ListarPosEstoque", {
         nPagina: pagina,
-        nRegPorPagina: 100,
-        dDataPosicao: formatOmieDate(new Date()),
+        nRegPorPagina: POR_PAGINA_POS_ESTOQUE,
+        dDataPosicao: dataPosicao,
       })) as unknown as OmieListarPosEstoqueResponse;
 
       // Teto anti-runaway fail-FAST sobre o total DECLARADO (Codex P1): descobrir o runaway
@@ -742,7 +679,8 @@ async function reprocessInventory(
         throw new Error(`página ${pagina}/${totalPaginas} do ListarPosEstoque veio vazia antes do fim declarado — abortando (retrato parcial)`);
       }
       if (veredicto === "fim") break;
-      acumularPosicoesDaPagina(posicoes, produtos);
+      tamanhosPaginas.push(produtos.length);
+      itensIlegiveis += produtos.length - acumularPosicoesDaPagina(posicoes, produtos);
 
       console.log(`[Reprocess][${account}] Inventory page ${pagina}/${totalPaginas}`);
       pagina++;
@@ -763,6 +701,11 @@ async function reprocessInventory(
     // regressão de updated_at contra writers concorrentes (computeCosts/analytics-sync).
     const nowIso = new Date().toISOString();
     let falhasChunk = 0;
+    // null = o passo 4b não chegou a apurar (não "zerou 0") — mesmo contrato do metadata de pedidos.
+    let zerados: number | null = null;
+    let zeramentoCandidatos: number | null = null;
+    let zeramentoPulado: string | null = null;
+    let erroZeramento: string | null = null;
 
     {
       // 2) Resolve omie_products em LOTE (.in() chunked ≤300 fica sob o cap silencioso de
@@ -824,6 +767,39 @@ async function reprocessInventory(
         }
       }
 
+      // 4b) Zero de quem SAIU da lista padrão (saldo ≠ 0): estoque local ≠ 0 e ausente de uma
+      //     listagem COMPLETA vira 0 — antes era o `quantidade_estoque || 0` do passo de produtos
+      //     que fazia isso, de carona e com janela de zero para os posicionados. Guardas e teto
+      //     de raio em ./inventory-lote.ts. Leitura que falha NÃO zera ninguém e surfaça no log.
+      try {
+        const locaisComEstoque = await carregarEstoqueLocalNaoZero(db as unknown as BancoPostgrest, account);
+        const zeramento = planejarZeramentoForaDaLista(
+          posicoes,
+          locaisComEstoque,
+          avaliarCompletudeListagem(tamanhosPaginas, POR_PAGINA_POS_ESTOQUE, itensIlegiveis),
+          account,
+          nowIso,
+        );
+        zeramentoCandidatos = zeramento.candidatos;
+        zeramentoPulado = zeramento.pulado;
+        let zeradosAgora = 0;
+        for (const chunk of chunked(zeramento.rows, 500)) {
+          const { error } = await db
+            .from("omie_products")
+            .upsert(chunk, { onConflict: "omie_codigo_produto,account" });
+          if (error) {
+            falhasChunk++;
+            console.error(`[Reprocess][${account}] upsert zero de estoque omie_products: ${error.message}`);
+          } else {
+            zeradosAgora += chunk.length;
+          }
+        }
+        zerados = zeradosAgora;
+      } catch (e) {
+        erroZeramento = mensagemDeErro(e) ?? "erro sem mensagem utilizável";
+        console.error(`[Reprocess][${account}] zeramento de quem saiu da lista não rodou: ${erroZeramento}`);
+      }
+
       // 5) product_costs em LOTE: 1 SELECT .in() por chunk → partição update × insert
       //    (particionarCustos). SELECT falho degrada: os candidatos do chunk caem no insert
       //    e o ignoreDuplicates (ON CONFLICT DO NOTHING) pula os que já existem — custo
@@ -868,10 +844,18 @@ async function reprocessInventory(
       metadata: {
         pages: totalPaginas,
         total_posicoes: codProds.length,
+        zerados_fora_da_lista: zerados,
+        zeramento_candidatos: zeramentoCandidatos,
+        ...(zeramentoPulado ? { zeramento_pulado: zeramentoPulado } : {}),
         ...(falhasChunk > 0 ? { falhas_chunk: falhasChunk } : {}),
       },
-      ...(falhasChunk > 0
-        ? { error_message: `${falhasChunk} chunk(s) com erro de escrita (lote parcial — próximo ciclo reconcilia)` }
+      ...(falhasChunk > 0 || erroZeramento
+        ? {
+          error_message: [
+            ...(falhasChunk > 0 ? [`${falhasChunk} chunk(s) com erro de escrita (lote parcial — próximo ciclo reconcilia)`] : []),
+            ...(erroZeramento ? [`zeramento de quem saiu da lista não rodou: ${erroZeramento}`] : []),
+          ].join(" · "),
+        }
         : {}),
     });
 

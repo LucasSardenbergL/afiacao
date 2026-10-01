@@ -18,6 +18,7 @@ PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
 PORT="${PGPORT_TEST:-5471}"
 SLUG="ia-uso-cota"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
+RODADA="$(dirname "$DATA")"   # dir ÚNICO desta rodada (o trap apaga): temporário mora aqui, nunca em /tmp/<nome-fixo>
 
 # O SHELL herda o locale sob teste; o POSTGRES roda sempre em C (via `env` inline).
 export LC_ALL="${HARNESS_LOCALE:-C}" LANG="${HARNESS_LOCALE:-C}"
@@ -37,7 +38,7 @@ trap cleanup EXIT
 "${PGC[@]}" "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "${PGC[@]}" "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "${PGC[@]}" "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }
 
 P -q -f "$REPO_ROOT/db/stubs-supabase.sql"
@@ -313,7 +314,7 @@ eq "A23 cron de purga registrado" "$V" "1"
 # Uma 2a conexão segura o MESMO lock; a RPC tem de BLOQUEAR (55P03 sob
 # lock_timeout). Sem o lock, duas requisições simultâneas do mesmo usuário leem
 # o mesmo contador e ambas passam — a corrida que a cota existe para fechar.
-"$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -q -c \
+"$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -q -c \
   "BEGIN; SELECT pg_advisory_xact_lock(hashtextextended('${U1}:trava-teste', 0)); SELECT pg_sleep(8);" \
   >/dev/null 2>&1 &
 LOCK_PID=$!
@@ -362,7 +363,7 @@ P -q -c "UPDATE public.ia_uso_limite SET limite_hora=20, limite_dia=60 WHERE fun
 # ══════════════════════════════════════════════════════════════════════════════
 echo "── falsificação (cada sabotagem tem de matar o assert que ela mira) ──"
 
-SAB="$(mktemp "/tmp/sabotagem-${SLUG}.XXXXXX.sql")"
+SAB="$(mktemp "$RODADA/sabotagem-${SLUG}.XXXXXX")"
 # Sabota via sed SOBRE A MIGRATION REAL: garante que só o trecho mirado muda.
 sabotar()   { sed -E "$1" "$MIG" > "$SAB"; cmp -s "$SAB" "$MIG" && { echo "  ❌ sed NAO casou nada — sabotagem inerte"; FAIL=$((FAIL+1)); return 1; }; P -q -f "$SAB" >/dev/null; }
 restaurar() { P -q -f "$MIG" >/dev/null; }
@@ -394,7 +395,7 @@ restaurar
 
 # ── F4 mira A24b: advisory lock removido ────────────────────────────────
 if sabotar 's/^  PERFORM pg_advisory_xact_lock/  -- PERFORM pg_advisory_xact_lock/'; then
-  "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -q -c \
+  "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -q -c \
     "BEGIN; SELECT pg_advisory_xact_lock(hashtextextended('${U2}:trava-teste', 0)); SELECT pg_sleep(8);" \
     >/dev/null 2>&1 &
   LOCK_PID=$!

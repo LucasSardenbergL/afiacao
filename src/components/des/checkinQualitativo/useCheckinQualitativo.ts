@@ -5,6 +5,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
+import { hojeSP } from "@/lib/time/sp-day";
 import {
   type Props,
   type Criterio,
@@ -16,6 +17,7 @@ import {
   type CheckinQualitativoRow,
   type Resposta,
 } from "./types";
+import { coresDoDesconto, numeroOuNulo } from "./format";
 
 export function useCheckinQualitativo({ empresa, ano, trimestre }: Props) {
   const { user } = useAuth();
@@ -160,17 +162,11 @@ export function useCheckinQualitativo({ empresa, ano, trimestre }: Props) {
   }, [percentuaisQuery.data]);
 
   const desconto = descontoQuery.data;
-  const max = Number(desconto?.desconto_total_maximo ?? 0);
-  const total = Number(desconto?.desconto_total_projetado ?? 0);
-  const ratio = max > 0 ? total / max : 0;
-  const cardColor =
-    ratio >= 1
-      ? "bg-status-success/5 border-status-success/30"
-      : ratio >= 0.5
-        ? "bg-status-warning/5 border-status-warning/30"
-        : "bg-status-error/5 border-status-error/30";
-  const totalColor =
-    ratio >= 1 ? "text-status-success-foreground" : ratio >= 0.5 ? "text-status-warning-foreground" : "text-status-error-foreground";
+  // Ausente ≠ zero: sem check-in no trimestre (ou faixa sem percentual) o máximo e o projetado são
+  // null — a tela mostra "—" com o card neutro, em vez de "0,00%" em vermelho.
+  const max = numeroOuNulo(desconto?.desconto_total_maximo);
+  const total = numeroOuNulo(desconto?.desconto_total_projetado);
+  const { cardColor, totalColor } = coresDoDesconto(total, max);
 
   async function salvarCheckin(tipo: "projecao" | "confirmacao_andre") {
     if (!user) {
@@ -179,7 +175,7 @@ export function useCheckinQualitativo({ empresa, ano, trimestre }: Props) {
     }
     setSaving(true);
     try {
-      const hoje = new Date().toISOString().slice(0, 10);
+      const hoje = hojeSP(); // data_avaliacao é o dia de SP (às 22h o UTC já é amanhã)
       const avaliadoCom = tipo === "confirmacao_andre" ? "André (Sayerlack)" : null;
       const avaliadoPor = user.email ?? user.id;
 

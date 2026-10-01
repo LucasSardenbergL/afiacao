@@ -31,6 +31,7 @@ PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
 PORT="${PGPORT_TEST:-5462}"     # distinto dos outros harnesses (worktrees em paralelo)
 SLUG="preco-medio-lt-efetivo"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
+RODADA="$(dirname "$DATA")"   # dir ÚNICO desta rodada (o trap apaga): temporário mora aqui, nunca em /tmp/<nome-fixo>
 export LC_ALL=C LANG=C
 
 [ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER} pgvector"; exit 1; }
@@ -46,7 +47,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }
 
 P -q -f "$REPO_ROOT/db/stubs-supabase.sql"
@@ -71,7 +72,7 @@ echo "═══ setup pronto (PG17 :$PORT) ═══"
 # ⚠️ O snapshot está STALE p/ 2 objetos (conferido 2026-07-16): v_sku_leadtime_efetivo
 #    (nasce em #1343) e reposicao_motor_run. Aplico as migrations REAIS que os criam —
 #    Lei #1 vale p/ os pré-requisitos também: migration de verdade, não CREATE TABLE à mão.
-RR="$(mktemp /tmp/snap-rr-lt.XXXXXX.sql)"
+RR="$(mktemp "$RODADA/snap-rr-lt.XXXXXX")"
 sed -E 's/^(CREATE SCHEMA public;)/-- \1/' "$REPO_ROOT/supabase/schema-snapshot.sql" \
   | grep -vE '^\\(un)?restrict ' > "$RR"
 P -q -f "$REPO_ROOT/supabase/schema-extensions-prelude.sql"
@@ -217,20 +218,28 @@ eq "A7 GUARD: SKU comprado cujo PREÇO é incognoscível NÃO é primeira compra
 # A sabotagem é a mudança que esta migration faz, INVERTIDA: volta o FROM pra tabela crua.
 # Se os asserts continuarem verdes com o defeito de volta, eles não têm dente.
 echo "── falsificação (sabota a migração → os asserts TÊM que ficar vermelhos) ──"
-SAB="$(mktemp /tmp/sabota-lt.XXXXXX.sql)"
+SAB="$(mktemp "$RODADA/sabota-lt.XXXXXX")"
 sed 's|^    FROM v_sku_leadtime_efetivo slh.*$|    FROM sku_leadtime_history slh|' "$MIG" > "$SAB"
 grep -q 'FROM sku_leadtime_history slh' "$SAB" || { echo "❌ a sabotagem não pegou — sed não casou"; exit 1; }
 P -q -f "$SAB"
 P -q -c "DELETE FROM pedido_compra_item; DELETE FROM pedido_compra_sugerido;"
 roda_motor
 
-falsifica() { # $1=rótulo  $2=valor_observado  $3=valor_do_assert_verdadeiro
+# A medição do juiz roda com `set -e` e o rc capturado fora de ||/&&: no ARGUMENTO do juiz o status se
+# perdia, e uma leitura que imprime o valor e DEPOIS falha passava (Codex, 2026-09-27). Falha vira
+# ERRO_rc=<n>, que nenhum declarado casa.
+medir() { local v rc; set +e; v="$(set -e; "$@")"; rc=$?; set -e; if [ "$rc" -eq 0 ]; then printf '%s\n' "$v"; else printf 'ERRO_rc=%s\n' "$rc"; fi; }
+# Vermelho = o valor sob sabotagem é o que a sabotagem DECLARA ($4) — o número enviesado que a fonte
+# crua produz, não só "≠ verdadeiro". O "≠" aceitava a leitura que ERRA (o motor que falha deixa o
+# preço vazio, e vazio ≠ NULL). O vermelho tem de ser do SEU assert: docs/historico/falsificacao-exit-nao-e-dente.md.
+falsifica() { # $1=rótulo  $2=valor_observado  $3=valor_do_assert_verdadeiro  $4=o que a sabotagem DECLARA
   if [ "$2" = "$3" ]; then bad "FALS $1 — sabotado e AINDA verde ⇒ assert SEM DENTE"
-  else ok "FALS $1 — sabotado ⇒ virou [$2] (≠ [$3]) ⇒ o assert morde"; fi
+  elif [ "$2" = "$4" ]; then ok "FALS $1 — sabotado ⇒ virou [$2] (≠ [$3]) ⇒ o assert morde"
+  else bad "FALS $1 — vermelha, mas NÃO no valor que a sabotagem declara: esperado [$4], veio [$2] (verdadeiro [$3])"; fi
 }
-falsifica "A1 (dedup)"      "$(preco_de 1001)" "150.0000"   # crua ⇒ 125 (AVG ponderado)
-falsifica "A3 (quantidade)" "$(preco_de 1003)" "NULL"       # crua ⇒ 75  (número fabricado)
-falsifica "A4 (valor)"      "$(preco_de 1004)" "NULL"       # crua ⇒ 200 (número fabricado)
+falsifica "A1 (dedup)"      "$(medir preco_de 1001)" "150.0000" "125.0000"   # crua ⇒ 125 (AVG ponderado)
+falsifica "A3 (quantidade)" "$(medir preco_de 1003)" "NULL" "75.0000"        # crua ⇒ 75  (número fabricado)
+falsifica "A4 (valor)"      "$(medir preco_de 1004)" "NULL" "200.0000"       # crua ⇒ 200 (número fabricado)
 
 # Contraprova da falsificação: o valor enviesado exato que a fonte crua produz. Ancora o
 # "vermelho" num número previsto, não em "mudou alguma coisa".
@@ -254,7 +263,7 @@ eq "RESTAURA: migration verdadeira de volta ⇒ A1 volta ao correto" "$(preco_de
 # "0 casos" no pré-flight e teria mentido em 2 SKUs ativos horas depois. Sem este par
 # assert+falsificação, nada impediria alguém de "simplificar" o FILTER de volta pro WHERE.
 echo "── falsificação 2 (mata o guard do primeira_compra) ──"
-SAB2="$(mktemp /tmp/sabota-guard.XXXXXX.sql)"
+SAB2="$(mktemp "$RODADA/sabota-guard.XXXXXX")"
 sed -e 's|^             FILTER (WHERE slh.quantidade_recebida > 0 AND slh.valor_total > 0) AS preco_unitario,$|             AS preco_unitario,|' \
     -e 's|^    GROUP BY slh.empresa, slh.sku_codigo_omie$|    WHERE slh.quantidade_recebida > 0 AND slh.valor_total > 0\n    GROUP BY slh.empresa, slh.sku_codigo_omie|' \
     "$MIG" > "$SAB2"
@@ -267,7 +276,7 @@ fi
 P -q -f "$SAB2"
 P -q -c "DELETE FROM pedido_compra_item; DELETE FROM pedido_compra_sugerido;"
 roda_motor
-falsifica "A7 (guard)" "$(primeira_de 1003)" "false"   # sem o guard ⇒ vira 'true' (a mentira)
+falsifica "A7 (guard)" "$(medir primeira_de 1003)" "false" "true"   # sem o guard ⇒ vira 'true' (a mentira)
 # Controle: matar o guard NÃO pode mexer no preço — se mexesse, a sabotagem teria efeito
 # colateral e o veredito do A7 estaria contaminado.
 eq "FALS A7b (controle): matar o guard não move o preço (A1 segue correto)" \

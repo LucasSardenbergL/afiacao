@@ -1,71 +1,65 @@
 #!/usr/bin/env bash
-# Teste PG17 do VIGIA da cobertura tint no Sentinela (_data_health_compute + watchdog + heartbeat).
-# Aplica schema-snapshot + patches + STUB de _vendas_familia_ausente_lista_email (chamada pelo watchdog
-# da base) + a BASE 20260611210000 (def viva presumida, 18 checks) + a migration nova 20260615130000
-# (CREATE OR REPLACE → 20 checks). Semeia cenários de cobertura (família × marca × tint_type × ativo ×
-# account × created_at) e de vínculo (tint_skus → omie inativo / produto em >1 sku), e asserta:
-#  • a função COMPILA e retorna 20 checks (nenhum dos 18 anteriores some) — pega typo no UNION ALL;
-#  • Check A (tint_cobertura_bases): NASCE ok com cobertura limpa; stale/warning com drift>30h;
-#    TOLERÂNCIA temporal — base elegível não-marcada HÁ <30h (created_at) NÃO conta (anti-falso-positivo);
-#  • Check B (tint_vinculo_omie): conta SKU ativa→omie inativo/divergente + produto Omie em >1 sku ativa;
-#  • PUSH SELETIVO: data_health_watchdog() promove SÓ o A (fin_alertas + fornecedor_alerta); o B é
-#    DASHBOARD-ONLY → NÃO entra em fin_alertas nem no resumo do heartbeat (fora dos IN-lists);
-#  • dismiss do A quando volta a ok; heartbeat inclui A no resumo e NÃO inclui B.
-# Base: db/test-data-health-familia-ausente.sh. Pré-req: brew install postgresql@17 pgvector.
+# Teste PG17 do VIGIA da cobertura tint no Sentinela (_data_health_compute + watchdog + heartbeat),
+# contra a VERSÃO QUE PRODUÇÃO EXECUTA (db/lib/data-health-vivo.sh: snapshot + cadeia viva do trio).
+# Semeia cenários de cobertura (família × conta × ativo × tint_type × created_at) e de vínculo
+# (tint_skus → Omie inativo / produto em >1 SKU) e asserta:
+#  • Check A (tint_cobertura_bases): NASCE ok; stale/warning com drift >30h; conta só oben × ativo ×
+#    família MixMachine × classificação divergente, com TOLERÂNCIA de 30h (anti-falso-positivo);
+#  • Check B (tint_vinculo_omie): conta SKU ativa→Omie inativo e produto Omie em >1 SKU ativa;
+#  • PUSH SELETIVO: o watchdog promove SÓ o A (fin_alertas + e-mail); o B é DASHBOARD-ONLY;
+#  • o alerta do A fecha quando ele volta a ok; o heartbeat traz o A no resumo e NÃO traz o B;
+#  • a rodada do watchdog é COMPLETA (todas as fontes do v_sources avaliadas, sem falha) — sem esta
+#    pré-condição os asserts negativos ("B não entra") passariam por vacuidade, porque o watchdog vivo
+#    ENGOLE a falha do compute e só deixa de avaliar.
+#
+# Até 2026-09-27 esta prova aplicava a base 20260611210000 + a 20260615130000 por cima do snapshot de
+# setembro e asseverava "20 checks": media a versão de JUNHO do trio, que as migrations seguintes
+# reescreveram ~10 vezes (VERSÃO COBERTA ≠ VERSÃO ENTREGUE, money-path.md). Morreu no stub de
+# _vendas_familia_ausente_lista_email, que colidia com a função real já no snapshot. Histórico:
+# docs/historico/provas-tint-apodrecidas.md.
+#
+# MODOS
+#   bash db/test-tint-vigia-cobertura.sh               # cenário na versão viva → PASS=<n>  FAIL=<m>
+#   bash db/test-tint-vigia-cobertura.sh --falsificar  # controle VERDE + sabotagens → SABOTAGENS: …
+# O banco-base (snapshot + cadeia) sobe UMA vez; cada rodada roda num clone dele (CREATE DATABASE …
+# TEMPLATE), então controle e sabotagens partem do mesmo estado e nenhuma herda o histórico da outra.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PGVER=17
-PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
-PORT=5443
-DATA="$(mktemp -d /tmp/pgtest-tintvigia.XXXXXX)/data"
+export PGVER=17   # consumido pelo db/lib/pg-harness.sh via source
+# shellcheck disable=SC1091  # o gate roda sem -x; o helper e versionado ao lado, em db/lib/
+. "$REPO_ROOT/db/lib/pg-harness.sh"   # exporta PGBIN — fail-CLOSED, confere a major POSITIVAMENTE
+PORT="${PGPORT_TEST:-5443}"
+TMPD="$(mktemp -d /tmp/pgtest-tintvigia.XXXXXX)"
+DATA="$TMPD/data"
 export LC_ALL=C LANG=C
 
-[ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER} pgvector"; exit 1; }
+MODO=normal
+case "${1:-}" in
+  '') ;;
+  --falsificar) MODO=falsificar ;;
+  *) echo "uso: $0 [--falsificar]" >&2; exit 2 ;;
+esac
 
-CELLAR="$(brew --prefix postgresql@${PGVER})"
-cp -Rn "$CELLAR"/share/postgresql/. "/opt/homebrew/share/postgresql@${PGVER}/" 2>/dev/null || true
-mkdir -p "/opt/homebrew/lib/postgresql@${PGVER}"
-cp -Rn "$CELLAR"/lib/postgresql/. "/opt/homebrew/lib/postgresql@${PGVER}/" 2>/dev/null || true
-
-cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$(dirname "$DATA")"; rm -f "${RR:-}"; }
+cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$TMPD"; }
 trap cleanup EXIT
 
+# Socket num diretório exclusivo e sem TCP: a porta deixa de ser recurso disputado entre provas.
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
-"$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l /tmp/pg-tintvigia.log -w start >/dev/null
-"$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres tintvigia_verify
-P() { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d tintvigia_verify "$@"; }
+"$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k $TMPD -c listen_addresses='' -c autovacuum=off" \
+  -l "$TMPD/pg.log" -w start >/dev/null
+DB=base
+P()   { "$PGBIN/psql" -X -p "$PORT" -h "$TMPD" -U postgres -d "$DB" "$@"; }
+adm() { "$PGBIN/psql" -X -p "$PORT" -h "$TMPD" -U postgres -d postgres -v ON_ERROR_STOP=1 -q "$@"; }
+adm -c "CREATE DATABASE base;"
 
-RR="$(mktemp "${TMPDIR:-/tmp}/snap-tintvigia.XXXXXX")"
-sed -E 's/^(CREATE SCHEMA public;)/-- \1/' "$REPO_ROOT/supabase/schema-snapshot.sql" \
-  | grep -vE '^\\(un)?restrict ' > "$RR"
+# shellcheck disable=SC1091  # idem: versionado ao lado, em db/lib/
+. "$REPO_ROOT/db/lib/data-health-vivo.sh"
+echo "→ banco-base: stubs + prelude + snapshot + MV + ACL de prod + cadeia viva do trio…"
+dhv_montar
 
-echo "→ stubs + prelude + snapshot…"
-P -v ON_ERROR_STOP=1 -q -f "$REPO_ROOT/db/stubs-supabase.sql"
-P -v ON_ERROR_STOP=1 -q -f "$REPO_ROOT/supabase/schema-extensions-prelude.sql"
-P --single-transaction -v ON_ERROR_STOP=1 -q -f "$RR"
-rm -f "$RR"
-
-echo "→ patch: omie_products.tipo_produto (stale no snapshot)…"
-P -v ON_ERROR_STOP=1 -q -c "ALTER TABLE public.omie_products ADD COLUMN IF NOT EXISTS tipo_produto text;"
-
-# O snapshot traz a versão ANTIGA buggy do fin_audit_trigger — neutralizo (no-op) p/ testar o push.
-echo "→ patch: neutraliza fin_audit_trigger buggy do snapshot (no-op)…"
-P -v ON_ERROR_STOP=1 -q -c "CREATE OR REPLACE FUNCTION public.fin_audit_trigger() RETURNS trigger LANGUAGE plpgsql AS \$f\$ BEGIN RETURN COALESCE(NEW, OLD); END; \$f\$;"
-
-# A base 20260611210000 (watchdog) chama public._vendas_familia_ausente_lista_email(int) — definida na
-# 20260611180000, fora desta cadeia. STUB (retorna NULL; o watchdog faz COALESCE) p/ não arrastar a cadeia.
-echo "→ stub: _vendas_familia_ausente_lista_email(int)…"
-P -v ON_ERROR_STOP=1 -q -c "CREATE OR REPLACE FUNCTION public._vendas_familia_ausente_lista_email(int) RETURNS text LANGUAGE sql AS \$f\$ SELECT NULL::text \$f\$;"
-
-echo "→ base: 20260611210000 (def viva presumida, 18 checks)…"
-P -v ON_ERROR_STOP=1 -q -f "$REPO_ROOT/supabase/migrations/20260611210000_data_health_estoque_via_marcador.sql" >/dev/null
-
-echo "→ migration nova: 20260615130000 (CREATE OR REPLACE → 20 checks)…"
-P -v ON_ERROR_STOP=1 -q -f "$REPO_ROOT/supabase/migrations/20260615130000_tint_vigia_cobertura_sentinela.sql" >/dev/null
-
-# Pais p/ as FKs de tint_skus (produto_id/base_id/embalagem_id NOT NULL + FK).
-echo "→ seed: pais tint (produto/base/embalagem) + estado LIMPO (cobertura ok)…"
+# Pais p/ as FKs de tint_skus (produto_id/base_id/embalagem_id NOT NULL + FK) e o estado LIMPO.
+echo "→ seed-base: pais tint + estado LIMPO (cobertura ok)…"
 P -v ON_ERROR_STOP=1 -q <<'SQL'
 INSERT INTO public.tint_produtos (id, account, cod_produto, descricao) VALUES
   ('11111111-1111-1111-1111-111111111111','oben','P1','Produto teste');
@@ -79,36 +73,12 @@ INSERT INTO public.tint_embalagens (id, account, id_embalagem_sayersystem, volum
   ('33333333-3333-3333-3333-333333333333','oben','E3',810,'810ML'),
   ('33333333-3333-3333-3333-333333333334','oben','E4',900,'QT'),
   ('33333333-3333-3333-3333-333333333335','oben','E5',100,'BH');
--- Estado LIMPO: só produtos tint classificados corretamente (A deve nascer ok).
 INSERT INTO public.omie_products (omie_codigo_produto, codigo, descricao, account, familia, ativo, is_tintometric, tint_type, created_at) VALUES
   (5004,'5004','Base correta',       'oben','Bases MixMachine',       true,  true, 'base',        now()-interval '60 hours'),
   (5005,'5005','Concentrado correto','oben','Concentrados MixMachine',true,  true, 'concentrado', now()-interval '60 hours');
 SQL
 
-PASS=0; FAIL=0
-chk() { if [ "$2" = "$3" ]; then echo "  ✓ $1"; PASS=$((PASS+1)); else echo "  ✗ $1 — got[$2] exp[$3]"; FAIL=$((FAIL+1)); fi; }
-
-echo "→ asserts FASE 1 (estado limpo — vigia nasce verde)…"
-chk "A1 total de checks = 20 (18 + 2)" \
-  "$(P -tAc "SELECT count(*) FROM public._data_health_compute();")" "20"
-chk "A2 tint_cobertura_bases aparece 1x" \
-  "$(P -tAc "SELECT count(*) FROM public._data_health_compute() WHERE source='tint_cobertura_bases';")" "1"
-chk "A2 tint_vinculo_omie aparece 1x" \
-  "$(P -tAc "SELECT count(*) FROM public._data_health_compute() WHERE source='tint_vinculo_omie';")" "1"
-chk "A3 os 18 checks anteriores seguem presentes" \
-  "$(P -tAc "SELECT count(*) FROM public._data_health_compute() WHERE source IN ('saldo_bancario','contas_receber','contas_pagar','omie_sync_financeiro','vendas_pedidos','estoque_inventario','reposicao_sugestoes','carteira_scores','custos_produtos','vendas_cadastros','reposicao_disparo','reposicao_portal_pipeline','reposicao_portal_humano','reposicao_sayerlack_fabricado','omie_tipo_produto_oben','vendas_familia_ausente','estoque_reposicao','alert_channel');")" "18"
-chk "A4 Check A NASCE ok (cobertura limpa)" \
-  "$(P -tAc "SELECT status FROM public._data_health_compute() WHERE source='tint_cobertura_bases';")" "ok"
-chk "A4 Check A severity info quando ok" \
-  "$(P -tAc "SELECT severity FROM public._data_health_compute() WHERE source='tint_cobertura_bases';")" "info"
-chk "A4 Check B NASCE ok (vínculo íntegro)" \
-  "$(P -tAc "SELECT status FROM public._data_health_compute() WHERE source='tint_vinculo_omie';")" "ok"
-P -tAc "SELECT public.data_health_watchdog();" >/dev/null
-chk "A5 watchdog NÃO insere alerta com tudo ok" \
-  "$(P -tAc "SELECT count(*) FROM public.fin_alertas WHERE tipo IN ('data_health_tint_cobertura_bases','data_health_tint_vinculo_omie') AND dismissed_at IS NULL;")" "0"
-
-echo "→ mutação: injeta DRIFT (cobertura + vínculo)…"
-P -v ON_ERROR_STOP=1 -q <<'SQL'
+SQL_DRIFT="$(cat <<'SQL'
 -- Check A — drift de cobertura:
 INSERT INTO public.omie_products (omie_codigo_produto, codigo, descricao, account, familia, ativo, is_tintometric, tint_type, created_at) VALUES
   (5001,'5001','Base nao marcada velha','oben','Bases MixMachine',       true,  false, NULL,         now()-interval '40 hours'), -- CONTA (não-marcada, >30h)
@@ -139,49 +109,193 @@ INSERT INTO public.tint_skus (account, produto_id, base_id, embalagem_id, omie_p
 SELECT 'oben','11111111-1111-1111-1111-111111111111','22222222-2222-2222-2222-222222222222','33333333-3333-3333-3333-333333333335', op.id, false
   FROM public.omie_products op WHERE op.omie_codigo_produto = 6001;
 SQL
+)"
 
-echo "→ asserts FASE 2 (drift — A conta 2 com tolerância, B conta morto+ambíguo)…"
-chk "B1 Check A vira stale" \
-  "$(P -tAc "SELECT status FROM public._data_health_compute() WHERE source='tint_cobertura_bases';")" "stale"
-chk "B1 Check A severity warning" \
-  "$(P -tAc "SELECT severity FROM public._data_health_compute() WHERE source='tint_cobertura_bases';")" "warning"
-chk "B2 Check A conta 2 (5001+5003; TOLERÂNCIA: 5002 <30h NÃO conta)" \
-  "$(P -tAc "SELECT (message LIKE 'Cobertura tint: 2 %')::text FROM public._data_health_compute() WHERE source='tint_cobertura_bases';")" "true"
-chk "B2 Check A age_seconds > 30h (drift mais antigo = 5003, 50h)" \
-  "$(P -tAc "SELECT (age_seconds > 30*3600)::text FROM public._data_health_compute() WHERE source='tint_cobertura_bases';")" "true"
-chk "B3 Check B vira stale" \
-  "$(P -tAc "SELECT status FROM public._data_health_compute() WHERE source='tint_vinculo_omie';")" "stale"
-chk "B3 Check B = 1 morto + 1 ambíguo" \
-  "$(P -tAc "SELECT (message LIKE '%1 SKU(s)%' AND message LIKE '%1 produto(s)%')::text FROM public._data_health_compute() WHERE source='tint_vinculo_omie';")" "true"
+# A rodada que ACABOU de rodar foi completa e sem falha: o marcador de sucesso só avança assim, e ele
+# é gravado DEPOIS do last_run_at da mesma rodada. `ultimo_erro` vai no valor para o log dizer o porquê.
+SQL_RODADA="SELECT CASE WHEN last_success_at >= last_run_at AND checks_falhos = 0 AND ultimo_erro IS NULL
+                        THEN 'completa'
+                        ELSE 'incompleta: avaliados=' || COALESCE(checks_avaliados::text, '?') || ' falhos='
+                             || COALESCE(checks_falhos::text, '?') || ' erro=' || COALESCE(ultimo_erro, '') END
+              FROM public.data_health_watchdog_estado WHERE id;"
 
-echo "→ asserts FASE 2 (push SELETIVO: A emaila, B é dashboard-only)…"
-P -tAc "SELECT public.data_health_watchdog();" >/dev/null
-chk "B4 PUSH do A: fin_alertas tem data_health_tint_cobertura_bases ativo" \
-  "$(P -tAc "SELECT count(*) FROM public.fin_alertas WHERE company='oben' AND tipo='data_health_tint_cobertura_bases' AND dismissed_at IS NULL;")" "1"
-chk "B4 PUSH do A: fornecedor_alerta enfileirou e-mail do A" \
-  "$(P -tAc "SELECT (count(*) > 0)::text FROM public.fornecedor_alerta WHERE titulo LIKE '%tint_cobertura_bases%' AND status='pendente_notificacao';")" "true"
-chk "B5 B é DASHBOARD-ONLY: NÃO entra em fin_alertas (fora do IN-list do watchdog)" \
-  "$(P -tAc "SELECT count(*) FROM public.fin_alertas WHERE tipo='data_health_tint_vinculo_omie';")" "0"
-chk "B5 B é DASHBOARD-ONLY: NÃO enfileira e-mail" \
-  "$(P -tAc "SELECT count(*) FROM public.fornecedor_alerta WHERE titulo LIKE '%tint_vinculo_omie%';")" "0"
+PASS=0; FAIL=0; FALHOS=" "
+chk() {  # <id> <descrição> <obtido> <esperado>
+  if [ "$3" = "$4" ]; then echo "  ✓ $1 $2"; PASS=$((PASS+1))
+  else echo "  ✗ $1 $2 — got[$3] exp[$4]"; FAIL=$((FAIL+1)); FALHOS="$FALHOS$1 "; fi
+}
+# Valor da consulta (só SELECT). O stderr fica FORA do valor: um NOTICE do compute poluiria todo assert.
+# Na falha, o valor é o erro (re-executa a leitura para capturá-lo) — assert vermelho com o porquê.
+q() {
+  local out
+  if out="$(P -tA -c "$1" 2>/dev/null)"; then printf '%s' "$out" | tr '\n' ' ' | sed 's/ *$//'
+  else printf 'ERRO: %s' "$(P -tA -c "$1" 2>&1 >/dev/null | tr '\n' ' ' | cut -c1-300)"; fi
+}
+# O PASSO também é assert: SQL que erra fica vermelho (com o erro no log) em vez de derrubar a rodada.
+roda() {  # <id> <descrição> <sql>
+  local saida
+  if saida="$(P -v ON_ERROR_STOP=1 -q -c "$3" 2>&1 >/dev/null)"; then chk "$1" "$2" "ok" "ok"
+  else chk "$1" "$2" "ERRO: $(printf '%s' "$saida" | tr '\n' ' ' | cut -c1-300)" "ok"; fi
+}
+qa() { q "SELECT $1 FROM public._data_health_compute() WHERE source='tint_cobertura_bases';"; }
+qb() { q "SELECT $1 FROM public._data_health_compute() WHERE source='tint_vinculo_omie';"; }
 
-echo "→ assert heartbeat (inclui A no resumo, NÃO inclui B)…"
-P -tAc "SELECT public.fin_sync_heartbeat();" >/dev/null
-chk "B6 heartbeat menciona tint_cobertura_bases no resumo" \
-  "$(P -tAc "SELECT (count(*) > 0)::text FROM public.fornecedor_alerta WHERE titulo LIKE '[Watchdog%' AND mensagem LIKE '%tint_cobertura_bases%';")" "true"
-chk "B6 heartbeat NÃO menciona tint_vinculo_omie (dashboard-only)" \
-  "$(P -tAc "SELECT (count(*) = 0)::text FROM public.fornecedor_alerta WHERE titulo LIKE '[Watchdog%' AND mensagem LIKE '%tint_vinculo_omie%';")" "true"
+cenario() {
+  PASS=0; FAIL=0; FALHOS=" "
+  echo "→ FASE 1 — estado limpo: o vigia nasce verde"
+  chk V1  "compute: 1 linha por source (source duplicado faz o watchdog abortar o laço)" \
+    "$(q "SELECT (count(*) = count(DISTINCT source))::text FROM public._data_health_compute();")" "true"
+  chk V2a "tint_cobertura_bases aparece 1x" "$(qa "count(*)")" "1"
+  chk V2b "tint_vinculo_omie aparece 1x"    "$(qb "count(*)")" "1"
+  chk V3a "Check A NASCE ok"                "$(qa "status")"   "ok"
+  chk V3b "Check A severity info quando ok" "$(qa "severity")" "info"
+  chk V3c "Check B NASCE ok"                "$(qb "status")"   "ok"
+  roda E1 "watchdog (estado limpo) executou" "SELECT public.data_health_watchdog();"
+  chk V4  "rodada COMPLETA e sem falha (pré-condição dos negativos)" "$(q "$SQL_RODADA")" "completa"
+  chk V5  "nenhum alerta tint aberto com tudo ok" \
+    "$(q "SELECT count(*) FROM public.fin_alertas WHERE tipo IN ('data_health_tint_cobertura_bases','data_health_tint_vinculo_omie') AND dismissed_at IS NULL;")" "0"
 
-echo "→ mutação: corrige a cobertura (marca 5001/5003) → A volta a ok…"
-P -v ON_ERROR_STOP=1 -q -c "UPDATE public.omie_products SET is_tintometric=true, tint_type='base' WHERE omie_codigo_produto IN (5001,5003);"
-chk "C1 Check A volta a ok" \
-  "$(P -tAc "SELECT status FROM public._data_health_compute() WHERE source='tint_cobertura_bases';")" "ok"
-P -tAc "SELECT public.data_health_watchdog();" >/dev/null
-chk "C1 watchdog dismissou o alerta do A (0 ativos)" \
-  "$(P -tAc "SELECT count(*) FROM public.fin_alertas WHERE tipo='data_health_tint_cobertura_bases' AND dismissed_at IS NULL;")" "0"
+  echo "→ mutação: drift de cobertura + vínculo quebrado"
+  roda M1 "semeia o drift" "$SQL_DRIFT"
+  echo "→ FASE 2 — drift"
+  chk V6a "Check A vira stale"       "$(qa "status")"   "stale"
+  chk V6b "Check A severity warning" "$(qa "severity")" "warning"
+  chk V7  "Check A conta 2 (5001+5003); 5002 <30h, 5006 inativo, 5007 outra família, 5008 outra conta NÃO" \
+    "$(qa "substring(message from '^Cobertura tint: ([0-9]+) ')")" "2"
+  chk V8  "Check A age_seconds > 30h (o drift mais velho é a 5003, 50h)" "$(qa "(age_seconds > 30*3600)::text")" "true"
+  chk V9a "Check B vira stale" "$(qb "status")" "stale"
+  chk V9b "Check B: 1 SKU ativa → Omie inativo (a SKU inativa NÃO conta)" \
+    "$(qb "substring(message from ': ([0-9]+) SKU')")" "1"
+  chk V9c "Check B: 1 produto Omie em >1 SKU ativa" "$(qb "substring(message from ', ([0-9]+) produto')")" "1"
+  roda E2 "watchdog (drift) executou" "SELECT public.data_health_watchdog();"
+  chk V10  "rodada COMPLETA e sem falha (pré-condição dos negativos V12)" "$(q "$SQL_RODADA")" "completa"
+  chk V11a "PUSH do A: alerta ativo em fin_alertas" \
+    "$(q "SELECT count(*) FROM public.fin_alertas WHERE company='oben' AND tipo='data_health_tint_cobertura_bases' AND dismissed_at IS NULL;")" "1"
+  chk V11b "PUSH do A: e-mail enfileirado" \
+    "$(q "SELECT count(*) FROM public.fornecedor_alerta WHERE titulo='[Saúde de dados] tint_cobertura_bases' AND status='pendente_notificacao';")" "1"
+  chk V12a "B é DASHBOARD-ONLY: nada em fin_alertas" \
+    "$(q "SELECT count(*) FROM public.fin_alertas WHERE tipo='data_health_tint_vinculo_omie';")" "0"
+  chk V12b "B é DASHBOARD-ONLY: nenhum e-mail" \
+    "$(q "SELECT count(*) FROM public.fornecedor_alerta WHERE titulo LIKE '%tint_vinculo_omie%';")" "0"
+  roda E3 "heartbeat executou" "SELECT public.fin_sync_heartbeat();"
+  chk V13a "heartbeat: o resumo traz o A com o status" \
+    "$(q "SELECT count(*) FROM public.fornecedor_alerta WHERE titulo LIKE '[Watchdog%' AND mensagem LIKE '%tint_cobertura_bases: stale%';")" "1"
+  chk V13b "heartbeat: o resumo NÃO traz o B (dashboard-only)" \
+    "$(q "SELECT count(*) FROM public.fornecedor_alerta WHERE titulo LIKE '[Watchdog%' AND mensagem LIKE '%tint_vinculo_omie%';")" "0"
 
-echo ""
-echo "════════════════════════════════════════"
-echo "  PASS=$PASS  FAIL=$FAIL"
-echo "════════════════════════════════════════"
-[ "$FAIL" -eq 0 ]
+  echo "→ mutação: corrige a cobertura (marca 5001/5003)"
+  roda M2 "marca 5001/5003" "UPDATE public.omie_products SET is_tintometric=true, tint_type='base' WHERE omie_codigo_produto IN (5001,5003);"
+  echo "→ FASE 3 — o A volta a ok e o alerta fecha"
+  chk V14 "Check A volta a ok" "$(qa "status")" "ok"
+  roda E4 "watchdog (corrigido) executou" "SELECT public.data_health_watchdog();"
+  chk V15 "watchdog dispensou o alerta do A (0 ativos)" \
+    "$(q "SELECT count(*) FROM public.fin_alertas WHERE tipo='data_health_tint_cobertura_bases' AND dismissed_at IS NULL;")" "0"
+  return 0
+}
+
+# SABOTAGENS: <nome>:<VERMELHOS>[:<VERDES>] — os asserts que TÊM de acusar a sabotagem e as
+# pré-condições que TÊM de seguir verdes (`,` = E; `|` = OU). Vermelho em outra camada (setup
+# quebrado, rodada incompleta, erro de execução) é quebra, não dente.
+SABOTAGENS="push_sem_A:V11a,V11b:V4,V10 push_com_B:V12a,V12b:V4,V10,V11a
+            resumo_sem_A:V13a:E3,V11a resumo_com_B:V13b:E3,V13a
+            A_sem_tolerancia:V7:V1,V4,V6a A_ignora_tint_type:V7:V1,V4,V6a A_outra_conta:V7:V1,V4,V6a
+            A_inativo:V7:V1,V4,V6a A_outra_familia:V7:V1,V4,V6a
+            B_ignora_omie_inativo:V9b:V1,V9a,V9c B_ignora_ambiguo:V9c:V1,V9a,V9b
+            nao_dispensa:V15:V4,V11a migracao_nova_sem_A:V11a,V11b:V4,V10"
+
+# sabotagem <nome> — troca UM trecho do corpo VIVO no banco da rodada (âncora única, conferida pelo
+# dhv_sabotar). Status ≠0 = não aplicou.
+sabotagem() {
+  local wd='public.data_health_watchdog()' hb='public.fin_sync_heartbeat()' cp='public._data_health_compute()'
+  local conta="WHERE op.account = 'oben' AND op.ativo = true"
+  case "$1" in
+    push_sem_A)            dhv_sabotar "$wd" "'tint_cobertura_bases'," "" ;;
+    push_com_B)            dhv_sabotar "$wd" "'tint_cobertura_bases'," "'tint_cobertura_bases','tint_vinculo_omie'," ;;
+    resumo_sem_A)          dhv_sabotar "$hb" "'tint_cobertura_bases'," "" ;;
+    resumo_com_B)          dhv_sabotar "$hb" "'tint_cobertura_bases'," "'tint_cobertura_bases','tint_vinculo_omie'," ;;
+    A_sem_tolerancia)      dhv_sabotar "$cp" "AND op.created_at < now() - interval '30 hours'" "AND op.created_at < now() - interval '0 hours'" ;;
+    A_ignora_tint_type)    dhv_sabotar "$cp" "OR op.tint_type IS DISTINCT FROM CASE lower(btrim(op.familia))" "OR false AND op.tint_type IS DISTINCT FROM CASE lower(btrim(op.familia))" ;;
+    A_outra_conta)         dhv_sabotar "$cp" "$conta" "WHERE op.ativo = true" ;;
+    A_inativo)             dhv_sabotar "$cp" "$conta" "WHERE op.account = 'oben'" ;;
+    A_outra_familia)       dhv_sabotar "$cp" "AND lower(btrim(op.familia)) IN ('bases mixmachine','concentrados mixmachine')" "AND true" ;;
+    B_ignora_omie_inativo) dhv_sabotar "$cp" "(op.ativo IS NOT TRUE OR op.account IS DISTINCT FROM ts.account)" "(op.account IS DISTINCT FROM ts.account)" ;;
+    B_ignora_ambiguo)      dhv_sabotar "$cp" "GROUP BY ts.omie_product_id HAVING count(*) > 1" "GROUP BY ts.omie_product_id HAVING count(*) > 2" ;;
+    nao_dispensa)          dhv_sabotar "$wd" "WHERE company = 'oben' AND tipo = 'data_health_' || r.source AND dismissed_at IS NULL;" "WHERE false;" ;;
+    migracao_nova_sem_A)   dhv_migracao_nova "$wd" "'tint_cobertura_bases'," "" ;;
+    *) echo "sabotagem desconhecida: $1" >&2; return 1 ;;
+  esac
+}
+
+# rodada <sabotagem|""> — clona o banco-base e roda o cenário no clone. Exit 3 = a sabotagem não
+# aplicou (âncora sumiu do corpo vivo): isso é FALHA da falsificação, nunca dente.
+rodada() {
+  adm -c "DROP DATABASE IF EXISTS rodada;" -c "CREATE DATABASE rodada TEMPLATE base;"
+  DB=rodada
+  if [ -n "$1" ]; then sabotagem "$1" || return 3; fi
+  cenario
+}
+
+if [ "$MODO" = normal ]; then
+  rodada ""
+  echo ""
+  echo "════════════════════════════════════════"
+  echo "  PASS=$PASS  FAIL=$FAIL"
+  echo "════════════════════════════════════════"
+  [ "$FAIL" -eq 0 ]
+  exit $?
+fi
+
+# ── --falsificar ───────────────────────────────────────────────────────────────────────────────
+# Sabotar sem CONTROLE verde na MESMA invocação é teatro: uma suíte sempre-vermelha (ambiente
+# quebrado, snapshot que não sobe) aprovaria todas as sabotagens. O controle roda primeiro, aqui, e
+# um controle vermelho aborta ANTES da primeira sabotagem.
+echo "══ CONTROLE (versão viva, sem sabotagem) — tem de ficar VERDE ══"
+rodada "" > "$TMPD/controle.log" 2>&1
+executados_controle=$((PASS + FAIL))
+if [ "$FAIL" -ne 0 ] || [ "$PASS" -lt 1 ]; then
+  echo "  ❌ CONTROLE VERMELHO (PASS=$PASS FAIL=$FAIL) — abortando antes de sabotar"
+  tail -30 "$TMPD/controle.log"
+  exit 1
+fi
+echo "  ✅ controle verde: $PASS asserts"
+
+# O vermelho que conta é o do assert DECLARADO, verde no controle e vermelho na rodada; os verdes
+# declarados seguem verdes; a rodada executa tantos asserts quanto o controle; e vermelho com ERRO
+# de execução não é dente (docs/historico/falsificacao-exit-nao-e-dente.md).
+falhas=0
+for item in $SABOTAGENS; do
+  sab="${item%%:*}"; resto="${item#*:}"
+  verm="${resto%%:*}"; verdes=""
+  [ "$resto" = "$verm" ] || verdes="${resto#*:}"
+  log="$TMPD/sab-$sab.log"
+  rc=0; rodada "$sab" > "$log" 2>&1 || rc=$?
+  motivo=""
+  if [ "$rc" -ne 0 ]; then
+    motivo=" sabotagem não aplicou (exit $rc): $({ grep -m1 -E 'ERRO|ERROR|dhv_' "$log" || true; } | cut -c1-200)"
+  elif [ "$((PASS + FAIL))" -ne "$executados_controle" ]; then
+    motivo=" a rodada executou $((PASS + FAIL)) asserts e o controle $executados_controle: vermelho de aborto, não de assert"
+  elif grep -Eq '^  ✗ .*got\[ERRO: ' "$log"; then
+    motivo=" vermelho com ERRO de execução: a medição que erra cai pelo erro, não pelo valor"
+  else
+    for id in ${verm//,/ }; do
+      if ! grep -Eq "^  ✓ ($id) " "$TMPD/controle.log" || ! grep -Eq "^  ✗ ($id) " "$log"; then
+        motivo="$motivo $id não virou (verde no controle → vermelho aqui);"
+      fi
+    done
+    for id in ${verdes//,/ }; do
+      grep -Eq "^  ✓ ($id) " "$log" || motivo="$motivo $id ficou VERMELHO (pré-condição: a sabotagem quebrou outra camada);"
+    done
+  fi
+  if [ -z "$motivo" ]; then
+    echo "  ✅ $sab — vermelho no assert declarado ($verm)"
+  else
+    falhas=$((falhas+1)); echo "  ❌ $sab —$motivo"
+    { grep -E '^  ✗ ' "$log" || true; } | head -8 | sed 's/^/       /'
+  fi
+done
+
+# Recibo EXCLUSIVO deste modo (o normal nunca o emite): é como o runner confere que a flag não foi
+# ignorada.
+total="$(wc -w <<<"$SABOTAGENS" | tr -d ' ')"
+echo "SABOTAGENS: $((total - falhas)) vermelhas / $falhas falhas"
+[ "$falhas" -eq 0 ]

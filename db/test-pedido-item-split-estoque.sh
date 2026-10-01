@@ -15,6 +15,7 @@ PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
 PORT="${PGPORT_TEST:-5466}"
 SLUG="pedido-item-split-estoque"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
+RODADA="$(dirname "$DATA")"   # dir ÚNICO desta rodada (o trap apaga): temporário mora aqui, nunca em /tmp/<nome-fixo>
 export LC_ALL=C LANG=C
 
 [ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER} pgvector"; exit 1; }
@@ -30,7 +31,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }
 
 PASS=0; FAIL=0
@@ -131,7 +132,7 @@ eq "A5 SKU1 qtde de compra inalterada" "$Q1" "2/2"
 
 # ── ZONA 5 — FALSIFICAÇÃO: sabota esquecendo o em_transito → invariante deve QUEBRAR no SKU2 ──
 echo "── falsificação ──"
-SAB=$(mktemp /tmp/sab-${SLUG}.XXXXXX.sql)
+SAB=$(mktemp "$RODADA/sab-${SLUG}.XXXXXX")
 # troca (sn.estoque_pendente + sn.qtde_em_transito_recente) por só sn.estoque_pendente
 sed 's/(sn.estoque_pendente + sn.qtde_em_transito_recente)/sn.estoque_pendente/' "$MIG" > "$SAB"
 GREP_OK=$(grep -c 'sn.estoque_fisico, sn.estoque_pendente$' "$SAB" || true)

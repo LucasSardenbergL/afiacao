@@ -144,8 +144,8 @@ prova "S3 '|| true' na chamada do curl (mascara a falha)" \
 # S4 — uma camada perde o retry. E' o teste de ALCANCE: se C3 seguisse verde sem o `tentar`,
 # a assercao dele nao estaria olhando para o install.
 prova "S4 apt-get install volta a ser chamado sem 'tentar' (camada sem retry)" \
-  '            tentar "apt-get install postgresql-17" sudo apt-get install -y -qq postgresql-17' \
-  '            sudo apt-get install -y -qq postgresql-17' \
+  '            tentar "apt-get install postgresql-17 + pgvector" sudo apt-get install -y -qq postgresql-17 postgresql-17-pgvector' \
+  '            sudo apt-get install -y -qq postgresql-17 postgresql-17-pgvector' \
   "C3 C7"
 
 # S5 — some o `|| rc=$?`, o unico ponto onde o `set -e` fica suspenso de proposito. Sem ele o

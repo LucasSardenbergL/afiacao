@@ -555,13 +555,133 @@ export const SENTINELA_MAPA = '\u0001mapa\u0001';
 const TAG_SONDA = '$sonda$';
 
 /**
- * Fecha o `format()` e batiza a célula que o operador copia. Verdade ÚNICA para os dois blocos de
- * disparo (sonda e canária): o nome da coluna é o que diz ao operador que ali mora um SQL pronto,
- * e não um blob de ids para transportar à mão — duas cópias divergiriam, e a que diverge é a que
- * devolve o operador ao round-trip que `docs/historico/sonda-request-id-a-mao.md` fechou.
+ * A função TEMPORÁRIA que devolve o passo de leitura intacto e o repete num NOTICE.
+ *
+ * Existe por causa do `db:aplicar`: ele roda o arquivo DENTRO do `public.aplicar_sql()`, por
+ * `EXECUTE`, e o EXECUTE descarta o resultado do SELECT — a célula nunca chegava ao log, e o
+ * cabeçalho mandava copiá-la de lá (medido duas vezes, #2578 e #2593). NOTICE atravessa o EXECUTE,
+ * o pooler e o `psql -f` do executor (medido 2026-09-27: 15,7 KB em 300 linhas, inteiros, pelo mesmo
+ * host do `psql-rw`). O SQL Editor faz o inverso — mostra a célula e esconde o NOTICE —, então os
+ * dois canais levam o MESMO texto e cada via lê o seu.
+ *
+ * Função, e não `DO`: o texto só existe DENTRO do SELECT que dispara (o `format()` precisa do mapa
+ * que o disparo acabou de produzir). Um `DO` antes não o conhece, e um `DO` depois tiraria a célula
+ * do último statement do lote. Em `pg_temp` porque o `sonda:sql` não cria objeto em produção.
+ */
+export const FUNCAO_DO_NOTICE = 'pg_temp.sonda_passo_tambem_por_notice';
+
+/**
+ * Os marcadores que cercam o passo `n` no NOTICE. ASCII e caixa fixa: o recorte casa sem `-i` e sem
+ * depender de locale (#1483) — e a palavra da severidade (NOTICE/NOTA) nem entra no casamento.
+ */
+export function marcadoresDoPasso(passo: number): { inicio: string; fim: string } {
+  return { inicio: `SONDA_PASSO_${passo}_INICIO`, fim: `SONDA_PASSO_${passo}_FIM` };
+}
+
+/**
+ * O programa awk que tira o passo `n` do log do `db:aplicar`.
+ *
+ * Âncoras dos dois lados: o INICIO só abre no FIM da linha (a do NOTICE termina nele; o prefixo
+ * `psql:<arq>:<linha>: NOTICE:` fica antes) e o FIM só fecha na linha INTEIRA — então o corpo ecoado
+ * num CONTEXT de erro, que cita os dois marcadores no meio de linhas, não abre recorte nenhum. E o
+ * buffer só sai no END, depois de abertura E fechamento — e o `ok` é do bloco aberto por ÚLTIMO
+ * (zera a cada abertura): recorte truncado emite ZERO byte, e sai 3 DIZENDO que o passo não veio (a
+ * lição do `extrai_leitura` de db/test-canaria-veredito.sh).
+ */
+export function awkDoPasso(passo: number): string {
+  const { inicio, fim } = marcadoresDoPasso(passo);
+  return (
+    `/^${fim}$/{if(f){ok=1;f=0}} f{b=b $0 "\\n"} /${inicio}$/{f=1;b="";ok=0} ` +
+    `END{if(!ok){print "sonda: o PASSO ${passo} NAO veio inteiro neste log" > "/dev/stderr"; exit 3} printf "%s", b}`
+  );
+}
+
+/**
+ * O comando que o cabeçalho manda rodar: o passo `n` do log, direto no read-only. Com
+ * `ON_ERROR_STOP`, que o `psqlrc-ro` não liga: sem ele, um passo que falhe imprime ERROR e o psql
+ * sai 0 (docs/historico/psql-ro-exit-zero-em-sql-que-falhou.md).
+ */
+export function comandoDeExtracao(passo: number): string {
+  return `awk '${awkDoPasso(passo)}' <log> | ~/.config/afiacao/psql-ro -v ON_ERROR_STOP=1`;
+}
+
+/**
+ * A declaração da função, que ABRE cada bloco de disparo — antes do `WITH`, porque o SELECT que a
+ * chama é o mesmo statement que dispara. Cada bloco declara a SUA: o founder cola UM bloco por Run,
+ * e o do passo 3 não pode depender do Run do passo 1. `CREATE OR REPLACE` porque o mesmo Run (ou o
+ * mesmo arquivo, pelo db:aplicar) pode trazer os dois.
+ *
+ * O `CASE` põe a quebra antes do FIM só quando o texto não termina em uma: o recorte devolve o texto
+ * byte a byte, sem a linha em branco que um `\n` incondicional acrescentaria.
+ *
+ * O corpo abre e fecha NA LINHA do `$notice$`: linha `BEGIN`/`END` sozinha se lê como moldura ou
+ * controle de transação para ferramenta de linha — a sabotagem (g2) de db/test-canaria-veredito.sh
+ * apaga `^BEGIN$`/`^END$` no arquivo inteiro para tirar o envelope, e levava o corpo junto (medido
+ * 2026-09-27: o disparo morria e a sentinela deixava de ver "DISPAROU").
+ */
+function declaracaoDaFuncaoDoNotice(): string {
+  return (
+    '-- Por que esta função: o db:aplicar roda este arquivo DENTRO do aplicar_sql(), por EXECUTE, e o\n' +
+    '-- EXECUTE descarta o resultado do SELECT — a célula não chega ao log. NOTICE chega. Ela devolve o\n' +
+    '-- texto INTACTO (é ele a célula) e o repete num NOTICE entre marcadores. Temporária: some com a\n' +
+    '-- sessão e não deixa nada no banco.\n' +
+    `CREATE OR REPLACE FUNCTION ${FUNCAO_DO_NOTICE}(p_inicio text, p_fim text, p_texto text)\n` +
+    'RETURNS text LANGUAGE plpgsql AS $notice$ BEGIN\n' +
+    "  RAISE NOTICE '%', p_inicio || E'\\n' || p_texto || CASE WHEN right(p_texto, 1) = E'\\n' THEN '' ELSE E'\\n' END || p_fim;\n" +
+    '  RETURN p_texto;\n' +
+    'END $notice$;\n'
+  );
+}
+
+/**
+ * O FECHO dos dois blocos de disparo (sonda e canária): o comentário da célula e o SELECT que a
+ * devolve — o `format()` inteiro, como subconsulta, passando pela função do NOTICE. Era copiado nos
+ * dois blocos, e a cópia que diverge é a que devolve o operador ao round-trip. As linhas
+ * `SELECT format($sonda$` e `$sonda$, m.ids)` ficam intactas de propósito: são as âncoras do recorte
+ * de db/test-canaria-veredito.sh.
+ */
+function celulaDoPasso(passoLeitura: number, corpoDoPasso: string): string {
+  const { inicio, fim } = marcadoresDoPasso(passoLeitura);
+  return (
+    `-- O PASSO ${passoLeitura} sai ESCRITO na célula abaixo — e, pela função do topo, também num\n` +
+    `-- NOTICE com o MESMO texto. Copie a célula (ou o trecho do log) INTEIRA e rode/entregue como\n` +
+    `-- está: não há número a anotar nem campo a preencher.\n` +
+    `SELECT ${FUNCAO_DO_NOTICE}('${inicio}', '${fim}', (\n` +
+    `SELECT format(${TAG_SONDA}\n` +
+    corpoDoPasso +
+    rodapeDoFormat(passoLeitura)
+  );
+}
+
+/**
+ * Como o passo de leitura VOLTA a quem disparou — um canal por via, porque cada uma só enxerga um.
+ * Verdade única para os QUATRO cabeçalhos de disparo (sonda e canária, passos 1 e 3). Até
+ * 2026-09-27 os dois de passo 1 mandavam copiar a célula "do log que o db:aplicar aponta no fim", e
+ * esse log nunca a teve (#2578, #2593).
+ */
+function comoOPassoVolta(passoLeitura: number, tambem = ''): string {
+  const { inicio, fim } = marcadoresDoPasso(passoLeitura);
+  return (
+    `-- Ele ${tambem}DEVOLVE o passo ${passoLeitura} já escrito, com o mapa dentro — por um canal em cada via:\n` +
+    `--   · SQL Editor: a CÉLULA \`passo_${passoLeitura}_copie_esta_celula\`. Copie-a inteira (NOTICE ali não aparece).\n` +
+    '--   · db:aplicar: a célula NÃO volta — o aplicar_sql() roda o arquivo por EXECUTE, que descarta o\n' +
+    `--     resultado do SELECT. O passo ${passoLeitura} vem por NOTICE, no log que ele aponta no fim (\`log: …\`),\n` +
+    `--     entre ${inicio} e ${fim}. Leia direto do log, no read-only:\n` +
+    `--       ${comandoDeExtracao(passoLeitura)}\n` +
+    '--     Só o log do apply de VERDADE (✅ APLICADO) serve: no do --ensaio o ROLLBACK desfez o disparo,\n' +
+    `--     e o passo ${passoLeitura} dele fica em AGUARDE para sempre.\n`
+  );
+}
+
+/**
+ * Fecha o `format()` — e a subconsulta e a chamada da função do NOTICE que o envolvem — e batiza a
+ * célula que o operador copia. Verdade ÚNICA para os dois blocos de disparo (sonda e canária): o
+ * nome da coluna é o que diz ao operador que ali mora um SQL pronto, e não um blob de ids para
+ * transportar à mão — duas cópias divergiriam, e a que diverge é a que devolve o operador ao
+ * round-trip que `docs/historico/sonda-request-id-a-mao.md` fechou.
  */
 function rodapeDoFormat(passoLeitura: number): string {
-  return `${TAG_SONDA}, m.ids) AS passo_${passoLeitura}_copie_esta_celula\nFROM mapa m;\n`;
+  return `${TAG_SONDA}, m.ids)\n)) AS passo_${passoLeitura}_copie_esta_celula\nFROM mapa m;\n`;
 }
 
 /**
@@ -574,7 +694,8 @@ function rodapeDoFormat(passoLeitura: number): string {
  * seguinte, que sai pronto numa célula única. O que se copia é a célula, não o número — é a mesma
  * correção que o bloco de UMA edge recebeu, pela mesma razão (docs/historico/sonda-request-id-a-mao.md):
  * identificador transportado à mão troca o alvo em silêncio, e a resposta de cron que ele acerta por
- * acidente tem exatamente a assinatura de "bundle velho".
+ * acidente tem exatamente a assinatura de "bundle velho". Desde 2026-09-27 o mesmo texto sai também
+ * por NOTICE (`FUNCAO_DO_NOTICE`): pelo `db:aplicar` a célula não volta, e o NOTICE volta.
  *
  * São DOIS blocos por imposição do pg_net, não por ergonomia: o `http_post` só ENFILEIRA, e o worker
  * de fundo enxerga apenas linha COMMITADA — dentro do mesmo batch (o SQL Editor roda tudo como UMA
@@ -599,6 +720,7 @@ function blocoDisparo(
       `  FROM alvos a CROSS JOIN guard g\n`
     : `         ${httpPost(ref, '         ', ALVO_SONDA)} AS request_id\n` + `  FROM alvos a\n`;
   return (
+    declaracaoDaFuncaoDoNotice() +
     cabeca +
     `disparos AS (\n` +
     `  SELECT a.edge,\n` +
@@ -609,11 +731,7 @@ function blocoDisparo(
     `  -- solto, e por isso não há como colá-lo na linha da edge errada.\n` +
     `  SELECT jsonb_object_agg(edge, request_id)::text AS ids FROM disparos\n` +
     `)\n` +
-    `-- O PASSO ${passoLeitura} sai ESCRITO na célula abaixo, com o mapa já dentro. Copie a célula\n` +
-    `-- INTEIRA e rode/entregue como está: não há número a anotar nem campo a preencher.\n` +
-    `SELECT format(${TAG_SONDA}\n` +
-    corpoDoPassoDeLeitura(leva, janelaMin, passoDisparo) +
-rodapeDoFormat(passoLeitura)
+    celulaDoPasso(passoLeitura, corpoDoPassoDeLeitura(leva, janelaMin, passoDisparo))
   );
 }
 
@@ -639,7 +757,7 @@ function corpoDoPassoDeLeitura(
   const texto =
     `-- PASSO ${passoLeitura} — lê e julga. O mapa edge→id já está EMBUTIDO aqui, escrito pelo passo\n` +
     `--          ${passoDisparo}: nada a colar. Espere ~10s pela resposta HTTP. É SELECT puro —\n` +
-    `--          roda no read-only: cole no chat, ou em ~/.config/afiacao/psql-ro\n` +
+    `--          roda no read-only: cole no chat, ou em ~/.config/afiacao/psql-ro -v ON_ERROR_STOP=1\n` +
     blocoLeitura(leva, janelaMin, {
       modo: 'embutido',
       expr: SENTINELA_MAPA,
@@ -1210,8 +1328,7 @@ export function gerarSqlDaLeva(opts: OpcoesLeva): string {
           '--          `bun run db:aplicar db/<arquivo>.sql` (`--ensaio` antes) — o envelope, com\n' +
           '--          sha256, ledger e marcador de fim. Colar no SQL Editor do Lovable é o\n' +
           '--          FALLBACK: de quem só tem o psql-ro (docs/agent/database.md §"o ENVELOPE").\n' +
-          '-- Ele DEVOLVE o passo 2 já escrito, com o mapa edge→id dentro: copie a saída inteira — a\n' +
-          '-- célula do SQL Editor, ou o log que o db:aplicar aponta no fim.\n' +
+          comoOPassoVolta(2) +
           blocoDisparo(ref, leva, 1, janelaMin),
       );
     }
@@ -1219,9 +1336,10 @@ export function gerarSqlDaLeva(opts: OpcoesLeva): string {
       partes.push(
         `-- PASSO 2 — lê e julga SEM mapa nenhum: a resposta da sonda ecoa o próprio slug, e o bloco\n` +
           `--          a encontra na janela de ${janelaMin} min. É SELECT puro — roda no read-only:\n` +
-          `--          bun run sonda:sql --so-leitura <edge>… | ~/.config/afiacao/psql-ro\n` +
-          `-- ⚠️ Esta é a versão do ECO. A que o passo 1 devolve é ESTRITAMENTE melhor: com o mapa\n` +
-          `--    embutido, PRE-SENSOR e recusa HTTP (que não ecoam) saem determinados, e o 401 também.\n` +
+          `--          bun run sonda:sql --so-leitura <edge>… | ~/.config/afiacao/psql-ro -v ON_ERROR_STOP=1\n` +
+          `-- ⚠️ Esta é a versão do ECO. A que o passo 1 devolve — célula no SQL Editor, NOTICE no log do\n` +
+          `--    db:aplicar — é ESTRITAMENTE melhor: com o mapa embutido, PRE-SENSOR e recusa HTTP (que não\n` +
+          `--    ecoam) saem determinados, e o 401 também.\n` +
           blocoLeitura(leva, janelaMin),
       );
     }
@@ -1241,7 +1359,7 @@ export function gerarSqlDaLeva(opts: OpcoesLeva): string {
           `--    forma, agregada, que ele falha. Trava fechada devolve {"edge": null} e NADA sai —\n` +
           `--    o passo seguinte não acha eco na janela, e o mapa que ele recebe embutido vem com\n` +
           `--    id nulo — as duas coisas dizem INDETERMINADO, que é o honesto: nada foi disparado.\n` +
-          `-- Ele também DEVOLVE o passo 4 já escrito, com o mapa dentro: copie a célula inteira.\n` +
+          comoOPassoVolta(4, 'também ') +
           blocoDisparo(ref, leva, 3, janelaMin, true),
       );
     }
@@ -1660,8 +1778,9 @@ function valuesEsperadoCanaria(leva: CanariaResolvida[]): string {
  * `vault.decrypted_secrets` e faz INSERT via `net.http_post`, e o wrapper read-only recusa os dois.
  *
  * Ele DEVOLVE o passo de leitura já escrito, com o mapa `nome → request_id` interpolado por
- * `format()`. Aqui isso não é conveniência, é REQUISITO: a resposta da canária não ecoa o slug, e
- * sem o mapa nenhuma linha seria atribuível. Continuam sendo DOIS blocos pela imposição do pg_net
+ * `format()` — na célula e num NOTICE (`FUNCAO_DO_NOTICE`), o canal que sobrevive ao `db:aplicar`.
+ * Aqui isso não é conveniência, é REQUISITO: a resposta da canária não ecoa o slug, e sem o mapa
+ * nenhuma linha seria atribuível. Continuam sendo DOIS blocos pela imposição do pg_net
  * (o `http_post` só ENFILEIRA; o worker de fundo só enxerga linha COMMITADA).
  */
 function blocoDisparoCanaria(
@@ -1683,6 +1802,7 @@ function blocoDisparoCanaria(
       '  FROM alvos a CROSS JOIN guard g\n'
     : `         ${httpPost(ref, '         ', ALVO_CANARIA)} AS request_id\n` + '  FROM alvos a\n';
   return (
+    declaracaoDaFuncaoDoNotice() +
     cabeca +
     'disparos AS (\n' +
     '  SELECT a.nome,\n' +
@@ -1693,11 +1813,7 @@ function blocoDisparoCanaria(
     '  -- solto, e por isso não há como colá-lo na linha da canária errada.\n' +
     '  SELECT jsonb_object_agg(nome, request_id)::text AS ids FROM disparos\n' +
     ')\n' +
-    `-- O PASSO ${passoLeitura} sai ESCRITO na célula abaixo, com o mapa já dentro. Copie a célula\n` +
-    '-- INTEIRA e rode/entregue como está: não há número a anotar nem campo a preencher.\n' +
-    `SELECT format(${TAG_SONDA}\n` +
-    corpoDoPassoDeLeituraCanaria(leva, janelaMin, passoDisparo) +
-rodapeDoFormat(passoLeitura)
+    celulaDoPasso(passoLeitura, corpoDoPassoDeLeituraCanaria(leva, janelaMin, passoDisparo))
   );
 }
 
@@ -1711,7 +1827,7 @@ function corpoDoPassoDeLeituraCanaria(
   const texto =
     `-- PASSO ${passoLeitura} — lê e julga a CANÁRIA. O mapa nome→id já está EMBUTIDO aqui, escrito\n` +
     `--          pelo passo ${passoDisparo}: nada a colar. Espere ~10s pela resposta HTTP. É SELECT\n` +
-    '--          puro — roda no read-only: cole no chat, ou em ~/.config/afiacao/psql-ro\n' +
+    '--          puro — roda no read-only: cole no chat, ou em ~/.config/afiacao/psql-ro -v ON_ERROR_STOP=1\n' +
     blocoLeituraCanaria(leva, janelaMin, passoDisparo);
   return escaparParaFormat(texto);
 }
@@ -1958,8 +2074,7 @@ export function gerarSqlDeCanariasResolvidas(
         '--          .sql em db/ e rode `bun run db:aplicar db/<arquivo>.sql` (`--ensaio` antes) —\n' +
         '--          o envelope, com sha256, ledger e marcador de fim. Colar no SQL Editor é o\n' +
         '--          FALLBACK: de quem só tem o psql-ro (docs/agent/database.md §"o ENVELOPE").\n' +
-        '-- Ele DEVOLVE o passo 2 já escrito, com o mapa nome→id dentro: copie a saída inteira — a\n' +
-        '-- célula do SQL Editor, ou o log que o db:aplicar aponta no fim.\n' +
+        comoOPassoVolta(2) +
         blocoDisparoCanaria(ref, baratas, 1, janelaMin),
     );
   }
@@ -1973,7 +2088,7 @@ export function gerarSqlDeCanariasResolvidas(
         '--    edge, `bun run sonda:sql <edge>`, responde antes de qualquer I/O e não tem efeito).\n' +
         '-- ⚠️ A trava é CASE e NÃO um filtro: o Postgres avalia a projeção mesmo descartando todas\n' +
         '--    as linhas, então travar por filtro deixa o http_post sair igual.\n' +
-        '-- Ele também DEVOLVE o passo 4 já escrito, com o mapa dentro: copie a célula inteira.\n' +
+        comoOPassoVolta(4, 'também ') +
         blocoDisparoCanaria(ref, caras, 3, janelaMin, true),
     );
   }
@@ -2082,13 +2197,14 @@ export function parsearArgs(argv: string[]): ArgsCli {
       proibidas.push(
         '--so-leitura: a resposta da canária NÃO ecoa o slug da edge, então um bloco de leitura ' +
           'sem o mapa `nome → request_id` sairia INDETERMINADO em toda linha. Aqui a leitura já ' +
-          'vem escrita DENTRO da célula que o passo de disparo devolve — é ela que roda no psql-ro',
+          'vem escrita DENTRO do que o passo de disparo devolve — a célula no SQL Editor, o NOTICE ' +
+          'no log do db:aplicar (o cabeçalho traz o comando) — e é ela que roda no psql-ro',
       );
     }
     if (soDisparo === true) {
       proibidas.push(
         '--so-disparo: em modo canária TUDO o que se emite já é disparo (a leitura sai embutida ' +
-          'na célula de resposta dele), então o recorte não recorta nada',
+          'na resposta dele — célula e NOTICE), então o recorte não recorta nada',
       );
     }
     if (caras.length > 0) {

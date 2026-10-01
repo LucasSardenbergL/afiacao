@@ -16,6 +16,7 @@ PGVER=17
 PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
 PORT="${PGPORT_TEST:-5474}"
 DATA="$(mktemp -d "/tmp/pgtest-preflight-func.XXXXXX")/data"
+RODADA="$(dirname "$DATA")"   # dir ÚNICO desta rodada (o trap apaga): temporário mora aqui, nunca em /tmp/<nome-fixo>
 export LC_ALL=C LANG=C
 
 [ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente"; exit 1; }
@@ -25,7 +26,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l /tmp/pg-preflight-func.log -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
-P() { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+P() { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); echo "  ✅ $1"; }
@@ -149,7 +150,7 @@ echo ""
 echo "── FALSIFICAÇÃO ──"
 
 # F1: troca o word-boundary por ILIKE (o bug do P0-B-bis) ⇒ C1 tem de quebrar
-SAB="$(mktemp /tmp/sab-XXXX.sql)"
+SAB="$(mktemp "$RODADA/sab-XXXX")"
 # ⚠️ ILIKE, não `~*`: em regex o `%` é literal, então `~* '%nome%'` não casa NADA e a
 # sabotagem sairia inócua — "F1 verde" provando o nada. Mordido ao escrever este harness.
 sed "s/~ :'alvo_re'/ilike ('%'||:'alvo'||'%')/g; s/~ :'alvo_qual'/ilike ('%'||:'alvo'||'%')/g; s/~ :'alvo_nu'/ilike ('%'||:'alvo'||'%')/g" \
@@ -163,7 +164,7 @@ fi
 rm -f "$SAB"
 
 # F2: remove o filtro de agregado ⇒ D2 tem de quebrar
-SAB2="$(mktemp /tmp/sab2-XXXX.sql)"
+SAB2="$(mktemp "$RODADA/sab2-XXXX")"
 # ⚠️ a defesa PRIMÁRIA é `prokind in ('f','p')` — agregado é prokind='a'. Sabotar só o
 # filtro pg_aggregate (redundante, defesa em profundidade) deixa o teste verde por engano.
 sed "s/and p.oid not in (select aggfnoid from pg_aggregate)//g; s/and p.prokind in ('f','p')//g" \

@@ -12,6 +12,7 @@ PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
 PORT="${PGPORT_TEST:-5466}"
 SLUG="embalagem-motor"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
+RODADA="$(dirname "$DATA")"   # dir ÚNICO desta rodada (o trap apaga): temporário mora aqui, nunca em /tmp/<nome-fixo>
 export LC_ALL=C LANG=C
 MIG="$REPO_ROOT/db/embalagem-motor-rpc.sql"   # fonte versionada da função (aplicada manual em prod 26/06)
 
@@ -25,7 +26,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }
 
 PASS=0; FAIL=0
@@ -285,8 +286,8 @@ eq "l5 FRESH valor_total=0"      "$(Pq -c "SELECT valor_total FROM pedido_compra
 # ── ZONA 5: FALSIFICAÇÃO (sabota → exige que o assert vire VERMELHO → restaura) ──
 echo "── falsificação ──"
 falsify() { # $1 desc | $2 sed-expr | $3 SQL-valor | $4 valor_são (deve MUDAR após sabotar)
-  sed "$2" "$MIG" > /tmp/mig-sab.sql
-  P -q -f /tmp/mig-sab.sql >/dev/null
+  sed "$2" "$MIG" > "$RODADA/mig-sab.sql"
+  P -q -f "$RODADA/mig-sab.sql" >/dev/null
   run_ciclo
   local got; got="$(eval "$3")"
   if [ "$got" != "$4" ]; then ok "FALSIFY $1 (são=$4 → furado=$got)"; else bad "FALSIFY $1 — assert SEM DENTE (seguiu $4)"; fi

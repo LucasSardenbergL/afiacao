@@ -176,6 +176,35 @@ sobe para o espaço liberado não pode ser mais caro que o que saiu. As duas med
 a mesma história por lados opostos: **mexer em QUEM está na lista não resolve (e pode
 piorar); mexer no TAMANHO de cada entrada resolve.**
 
+### 2026-09-27 — a nº 3 re-medida COM o teto: esconder não piora mais, mas custa só ~100 tok a menos — o que muda é o roteamento
+
+Refeito sobre a config atual (`220` / `0.004`), isolando só o `skillOverrides` (51 skills em
+`user-invocable-only`). As duas réguas discordam na ORDEM DE GRANDEZA:
+
+| régua | sem overrides | com overrides | efeito |
+|---|---|---|---|
+| `/skill-doctor` headless (soma da coluna `context` — estimativa do harness) | ~4.415 tok | ~3.920 tok | −495 |
+| **sonda** `scripts/piso-contexto.sh` (±6; 2 pares A/B em ordem inversa) | 37.548 · 37.547 | 37.497 · 37.428 | **−51 / −119** |
+
+Vale a sonda: o piso real caiu **~50–120 tokens (0,1–0,3%)**, 4 a 10× menos que a estimativa — o
+orçamento se reabastece, a mesma lição de 2026-07. ⇒ **somar a coluna `context` do `/skill-doctor`
+NÃO mede o piso**; para custo, só a sonda. (O "com" oscilou ~70 tok entre os pares — deriva do conteúdo
+dos hooks entre sessões; dentro de cada par, ±1.) O sinal, esse sim, inverteu em relação aos +141 de
+2026-07: com teto de 220 por descrição, o que sobe para o espaço liberado não pode ser mais caro que o
+que saiu — o mecanismo que a CORREÇÃO acima previa.
+
+O ganho que importa é de ROTEAMENTO: 190 → 142 skills listadas, 5 ganharam descrição, **0** perderam.
+Mas o espaço vai para as skills MAIS USADAS: as 6 proprietárias sem descrição
+(`bi-colacor`, `cfo-colacor`, `reposicao-caixa`, `goal`, `doc2md`, `farmer-industrial`)
+continuaram sem. Reescrever os 220 primeiros caracteres delas não muda nada enquanto o orçamento
+corta a descrição INTEIRA — a alavanca é o orçamento total ou menos concorrentes. Duas que o
+roteamento manda evitar ganharam descrição (`frontend-design`, `context-restore`) e voltaram
+para `name-only`. **APLICADO** no `.claude/settings.json` (critério em `docs/agent/skills.md`).
+
+No app desktop a pressão é maior: os 19 plugins da conta claude.ai (~170 skills, fora do alcance
+de `skillOverrides`) deixam 12 das 14 proprietárias só com o nome — segue a pendência do founder
+em "Pendente de medição", abaixo.
+
 ## ✅ O que REALMENTE move o ponteiro: desabilitar o PLUGIN inteiro
 
 O ganho não vem da lista — vem do payload que o plugin injeta por conta própria (system
@@ -276,6 +305,26 @@ já tinha sido seguido.
 O guard é PostToolUse, não Pre, porque no Pre só existe o comando — e prever volume pela
 cara dele é fraco: 46,5% das chamadas medidas caíram em "outros" (compostos, heredoc,
 script inline). Só depois de rodar se sabe o tamanho.
+
+### 2026-09-27 — dividir skill grande em "núcleo + referências": medido, NÃO compensa pelo custo
+
+Pergunta: vale dividir `lovable-deploy-verify` (~30k tok) e `fecho` (~9,6k tok)? Régua: ocupação =
+tokens da injeção × requests seguintes da mesma sessão (até a compactação), nos transcripts locais
+de 14 dias. Os requests são deduplicados por `requestId`, e a âncora é a mensagem injetada ("Base
+directory for this skill:"), não o `tool_use` — 2/3 das injeções do `fecho` vêm do `/fecho`
+digitado, que não passa por `tool_use`.
+
+| skill | injeções | tok/injeção (med.) | requests seguintes (med / p90) | ocupação | % do contexto |
+|---|---|---|---|---|---|
+| `lovable-deploy-verify` | 14 | 29,6k | 17 / 117 | 16,0M | 0,45% |
+| `fecho` | 59 | 8,9k | 18 / 41 | 12,5M | 0,35% |
+
+Denominador: 3,52 bi de tokens de contexto em 14 dias (98% `cache_read`). Com núcleo de 6k / 3k e
+a referência NUNCA lida, a economia máxima é −22,5M = **0,64%**; com a referência lida em toda
+invocação, dividir PIORA (+4,2% / +2,4% — o prefixo de linha do Read custa mais do que se tira).
+Veredito: **não dividir por custo.** O que sobra é atenção por sessão — a `lovable-deploy-verify`
+ocupa 5,9% da janela viva no request seguinte (mediana, contexto de 475k; seria ~15% numa janela de
+200k) — e isso só justifica a divisão com sinal de degradação MEDIDO, não como otimização.
 
 ## 🎚️ Calibração dos avisos (2026-08-06) — as DUAS premissas eram falsas
 

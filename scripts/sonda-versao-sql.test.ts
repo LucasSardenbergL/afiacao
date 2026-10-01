@@ -8,15 +8,19 @@ import { spawnSync } from 'node:child_process';
 import { lerCanariasDoRepo } from './canaria-leitor-do-repo';
 
 import {
+  awkDoPasso,
   CANARIAS,
+  comandoDeExtracao,
   conferirSincronia,
   escaparParaFormat,
+  FUNCAO_DO_NOTICE,
   fontesDoEsperado,
   gerarSqlDaLeva,
   gerarSqlDasCanarias,
   gitReal,
   guardEfeitoLegado,
   main,
+  marcadoresDoPasso,
   parsearArgs,
   PISO_CONTROLE_CREDENCIAL,
   resolverCanarias,
@@ -550,7 +554,9 @@ describe('o PASSO 1 ESCREVE o passo 2 — o mapa edge→id não passa pela mão 
   it('o disparo termina devolvendo o passo 2 escrito, numa célula única', () => {
     const sql = gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a'] });
     expect(sql).toContain('SELECT format($sonda$');
-    expect(sql).toContain('$sonda$, m.ids) AS passo_2_copie_esta_celula');
+    // O `format()` vai inteiro, como subconsulta, para a função que o devolve INTACTO e o repete
+    // por NOTICE — ver o describe das DUAS vias, logo abaixo.
+    expect(sql).toContain('$sonda$, m.ids)\n)) AS passo_2_copie_esta_celula');
     expect(sql).toMatch(/mapa AS \(/);
   });
 
@@ -660,6 +666,183 @@ describe('escaparParaFormat — as duas armadilhas do format() que o corpus não
 
   it('corpo que contenha a tag de dollar-quoting falha ALTO — sairia truncado', () => {
     expect(() => escaparParaFormat('antes $sonda$ depois')).toThrow(/TRUNCADO/);
+  });
+});
+
+describe('o passo seguinte volta pelas DUAS vias — célula no SQL Editor, NOTICE no log do db:aplicar', () => {
+  // O `db:aplicar` roda o arquivo DENTRO do `aplicar_sql()`, por EXECUTE, e o EXECUTE descarta o
+  // resultado do SELECT: a célula nunca chegava ao log — e o cabeçalho mandava copiá-la de lá.
+  // Medido duas vezes (#2578, #2593; docs/historico/ledger-diverge-com-deploy-no-trace.md, Lição 3).
+  // O NOTICE é o canal que o EXECUTE não engole. Que ele CHEGA ao log é prova EXECUTADA contra o
+  // `db-aplicar.sh` real (db/test-sonda-passo-pelo-db-aplicar.sh); aqui se pina o que o operador LÊ
+  // e a forma de que a prova depende.
+  const raiz = () => fixture({ 'edge-a': 'v1.0-alfa', 'edge-b': 'v2.0-beta' });
+  const modos = [
+    {
+      modo: 'sonda',
+      sql: () =>
+        gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a', 'edge-b'], caras: ['edge-b'], soDisparo: true }),
+    },
+    { modo: 'canária', sql: () => gerarSqlDasCanarias({ raiz: RAIZ_REPO, nomes: [], ler: lerCanariasReal }) },
+  ];
+
+  /** Os blocos de DISPARO, cada um com o número do passo de leitura que ele devolve. */
+  function blocosDeDisparo(sql: string): { passo: number; texto: string }[] {
+    return sql
+      .split(/^(?=-- PASSO [13] — dispara)/m)
+      .filter((p) => p.startsWith('-- PASSO'))
+      .map((texto) => ({ passo: Number(/^-- PASSO (\d)/.exec(texto)![1]) + 1, texto }));
+  }
+
+  it.each(modos)('$modo: um bloco devolve o passo 2 e outro o 4 — os dois pelos dois canais', ({ sql }) => {
+    expect(blocosDeDisparo(sql()).map((b) => b.passo)).toEqual([2, 4]);
+  });
+
+  it.each(modos)('$modo: cada bloco declara a função do NOTICE ANTES do WITH que dispara', ({ sql }) => {
+    // Depois não serve: o SELECT que a chama é o mesmo statement que dispara. E cada bloco declara a
+    // sua, porque o founder cola UM bloco por Run — o do passo 3 não pode depender do Run do passo 1.
+    for (const { passo, texto } of blocosDeDisparo(sql())) {
+      const iFuncao = texto.indexOf(`CREATE OR REPLACE FUNCTION ${FUNCAO_DO_NOTICE}(`);
+      expect(iFuncao, `passo ${passo}: bloco sem a função`).toBeGreaterThan(-1);
+      expect(iFuncao, `passo ${passo}: função depois do disparo`).toBeLessThan(texto.indexOf('\nWITH '));
+    }
+  });
+
+  it.each(modos)('$modo: a célula É o que a função devolve — o format() inteiro, com os marcadores do passo', ({ sql }) => {
+    for (const { passo, texto } of blocosDeDisparo(sql())) {
+      const { inicio, fim } = marcadoresDoPasso(passo);
+      // A linha `SELECT format($sonda$` e a que COMEÇA com `$sonda$, m.ids)` ficam intactas de
+      // propósito: é por elas que db/test-canaria-veredito.sh recorta o passo que julga.
+      expect(texto).toContain(`SELECT ${FUNCAO_DO_NOTICE}('${inicio}', '${fim}', (\nSELECT format($sonda$\n`);
+      expect(texto).toContain(`\n$sonda$, m.ids)\n)) AS passo_${passo}_copie_esta_celula\nFROM mapa m;`);
+    }
+  });
+
+  it('a função devolve o texto INTACTO e o repete num NOTICE, com o FIM sempre na sua linha', () => {
+    const sql = modos[0].sql();
+    expect(sql).toContain('RETURN p_texto;');
+    // Uma linha só, e sem acrescentar byte ao texto: o `CASE` põe a quebra antes do FIM só quando o
+    // texto não termina em uma — senão o recorte devolveria uma linha em branco a mais que a célula.
+    expect(sql).toMatch(
+      /\n {2}RAISE NOTICE '%', p_inicio \|\| E'\\n' \|\| p_texto \|\| CASE WHEN right\(p_texto, 1\) = E'\\n' THEN '' ELSE E'\\n' END \|\| p_fim;\n/,
+    );
+  });
+
+  it.each(modos)('$modo: nenhuma linha é BEGIN/END/DECLARE sozinha — a função não se lê como moldura', ({ sql }) => {
+    // Linha `BEGIN`/`END` isolada é lida como controle de transação ou moldura por ferramenta de
+    // LINHA. Medido 2026-09-27: a sabotagem (g2) de db/test-canaria-veredito.sh apaga `^BEGIN$` e
+    // `^END$` no arquivo inteiro para tirar o envelope inerte — e levava junto o corpo da função, o
+    // disparo morria antes de sair, e a sentinela deixava de ver "DISPAROU" (a g2 falhava).
+    expect(sql()).not.toMatch(/^(BEGIN|END|DECLARE)$/m);
+  });
+
+  it.each(modos)('$modo: o cabeçalho diz o canal de CADA via, com o comando do passo certo', ({ sql }) => {
+    for (const { passo, texto } of blocosDeDisparo(sql())) {
+      const cabecalho = texto.slice(0, texto.indexOf('CREATE OR REPLACE FUNCTION'));
+      expect(cabecalho).toContain(`SQL Editor: a CÉLULA \`passo_${passo}_copie_esta_celula\``);
+      expect(cabecalho).toMatch(/db:aplicar: a célula NÃO volta/);
+      expect(cabecalho).toContain(`O passo ${passo} vem por NOTICE`);
+      expect(cabecalho).toContain(comandoDeExtracao(passo));
+      // O log do `--ensaio` também traz o NOTICE (ele sai antes do ROLLBACK), mas nada foi
+      // disparado: o passo dele fica em AGUARDE para sempre — medido na prova, E4.
+      expect(cabecalho).toMatch(/--ensaio[\s\S]*AGUARDE para sempre/);
+    }
+  });
+
+  it.each(modos)('$modo: não promete mais a célula no log do db:aplicar', ({ sql }) => {
+    // A frase que as duas sessões seguiram até o log vazio (#2578, #2593).
+    expect(sql()).not.toContain('o log que o db:aplicar aponta no fim');
+  });
+
+  it('os marcadores são ASCII em caixa fixa, e cada passo tem o seu', () => {
+    // ASCII e caixa fixa: o recorte casa sem `-i` e sem depender de locale (#1483).
+    const dois = marcadoresDoPasso(2);
+    const quatro = marcadoresDoPasso(4);
+    for (const m of [dois.inicio, dois.fim, quatro.inicio, quatro.fim]) expect(m).toMatch(/^[A-Z0-9_]+$/);
+    expect(new Set([dois.inicio, dois.fim, quatro.inicio, quatro.fim]).size).toBe(4);
+  });
+
+  it('o comando é awk sobre o log, lido no read-only — com ON_ERROR_STOP', () => {
+    // O `psqlrc-ro` liga read-only, timeout e QUIET, mas NÃO o ON_ERROR_STOP: sem ele, um passo
+    // extraído que falhe imprime ERROR e o psql sai 0 (docs/historico/psql-ro-exit-zero-em-sql-que-falhou.md).
+    expect(comandoDeExtracao(2)).toBe(
+      `awk '${awkDoPasso(2)}' <log> | ~/.config/afiacao/psql-ro -v ON_ERROR_STOP=1`,
+    );
+    // Aspa simples dentro do programa fecharia a do shell — o comando colado sairia quebrado.
+    expect(awkDoPasso(2)).not.toContain("'");
+  });
+
+  // ── o recorte EXECUTADO: awk de verdade sobre um log na forma que o psql escreve ──
+  const PASSO_2 = '-- PASSO 2 — lê e julga\nSELECT 1 AS veredito;\n';
+  const PASSO_4 = '-- PASSO 4 — lê e julga\nSELECT 4 AS veredito;\n';
+  const bloco = (passo: number, texto: string) => {
+    const { inicio, fim } = marcadoresDoPasso(passo);
+    return `psql:/tmp/db-aplicar-corpo.7.sql:12: NOTICE:  ${inicio}\n${texto}${fim}\n`;
+  };
+  const moldura = (miolo: string) =>
+    `BEGIN\nSET\nSET\n${miolo}     controle     \n------------------\n FIM_APLICACAO_OK\n(1 row)\n\nCOMMIT\n`;
+  const awk = (passo: number, log: string) => {
+    const r = spawnSync('awk', [awkDoPasso(passo)], { input: log, encoding: 'utf8' });
+    return { status: r.status, stdout: r.stdout, stderr: r.stderr };
+  };
+
+  it('o awk do cabeçalho devolve o passo EXATO, byte a byte', () => {
+    const r = awk(2, moldura(bloco(2, PASSO_2)));
+    expect(r.status).toBe(0);
+    expect(r.stdout).toBe(PASSO_2);
+  });
+
+  it('com os passos 2 e 4 no mesmo log, cada awk leva só o seu', () => {
+    const log = moldura(bloco(2, PASSO_2) + bloco(4, PASSO_4));
+    expect(awk(2, log).stdout).toBe(PASSO_2);
+    expect(awk(4, log).stdout).toBe(PASSO_4);
+  });
+
+  it('log sem o bloco sai ≠ 0 e DIZ que o passo não veio — ausência não vira silêncio', () => {
+    // É o log do defeito: o envelope inteiro, e nada do passo.
+    const r = awk(2, moldura(''));
+    expect(r.status).toBe(3);
+    expect(r.stdout).toBe('');
+    expect(r.stderr).toMatch(/o PASSO 2 NAO veio inteiro neste log/);
+  });
+
+  it('bloco TRUNCADO (sem o FIM) emite ZERO byte — meio SQL não chega ao psql-ro', () => {
+    const { inicio } = marcadoresDoPasso(2);
+    const r = awk(2, `psql:x.sql:3: NOTICE:  ${inicio}\n-- PASSO 2 — lê e julga\nSELECT 1 AS`);
+    expect(r.status).toBe(3);
+    expect(r.stdout).toBe('');
+  });
+
+  it('bloco que se ABRE de novo e não fecha anula o anterior — o END não imprime recorte pela metade', () => {
+    // O `ok` é do bloco aberto por ÚLTIMO: um bloco completo seguido de outra abertura sem fechamento
+    // deixa no buffer só a metade da segunda, e a resposta honesta é "não veio inteiro".
+    const { inicio } = marcadoresDoPasso(2);
+    const reaberto = `psql:x.sql:9: NOTICE:  ${inicio}\n-- PASSO 2 — pela metade\n`;
+    const r = awk(2, moldura(bloco(2, PASSO_2) + reaberto));
+    expect(r.status).toBe(3);
+    expect(r.stdout).toBe('');
+  });
+
+  it('o corpo ecoado num CONTEXT DEPOIS do bloco não reabre o recorte (as âncoras seguram)', () => {
+    const { inicio, fim } = marcadoresDoPasso(2);
+    const eco =
+      `CONTEXT:  SQL statement "--       ${comandoDeExtracao(2)}\n` +
+      `SELECT ${FUNCAO_DO_NOTICE}('${inicio}', '${fim}', (\n`;
+    const r = awk(2, moldura(bloco(2, PASSO_2) + eco));
+    expect(r.status).toBe(0);
+    expect(r.stdout).toBe(PASSO_2);
+  });
+
+  it('marcador citado FORA do NOTICE não abre o recorte (o corpo ecoado num CONTEXT de erro)', () => {
+    // Num apply que FALHA, o psql ecoa o corpo inteiro no CONTEXT — cabeçalho e chamada inclusos.
+    // As âncoras (INICIO no fim da linha, FIM na linha inteira) não casam essas menções.
+    const { inicio, fim } = marcadoresDoPasso(2);
+    const eco =
+      `CONTEXT:  SQL statement "--       ${comandoDeExtracao(2)}\n` +
+      `SELECT ${FUNCAO_DO_NOTICE}('${inicio}', '${fim}', (\n`;
+    const r = awk(2, moldura(eco));
+    expect(r.status).toBe(3);
+    expect(r.stdout).toBe('');
   });
 });
 
@@ -902,6 +1085,33 @@ describe('divisão de trabalho — o founder dispara, o agente lê', () => {
     expect(parsearArgs(['edge-a', '--so-disparo']).soDisparo).toBe(true);
     expect(parsearArgs(['edge-a', '--so-leitura']).soLeitura).toBe(true);
     expect(parsearArgs(['edge-a']).soDisparo).toBeUndefined();
+  });
+});
+
+describe('toda linha que manda RODAR o wrapper leva ON_ERROR_STOP — na SAÍDA, não na fonte', () => {
+  // O `psqlrc-ro` liga read-only, timeout e QUIET, mas NÃO o ON_ERROR_STOP: lido de stdin — e colar
+  // num psql é stdin —, um SQL que falha imprime ERROR e o psql sai 0
+  // (docs/historico/psql-ro-exit-zero-em-sql-que-falhou.md). Até 2026-10-01 o cabeçalho do PASSO 2
+  // por eco e o do passo de leitura escrito pelo disparo mandavam rodar o wrapper SEM a flag. Este
+  // teste lê o que o gerador IMPRIME — o eixo por fora do fiscal estático (`bun run psql:errorstop`),
+  // que lê os literais da fonte e não vê texto montado em tempo de execução.
+  const raiz = () => fixture({ 'edge-a': 'v1.0-alfa', 'edge-b': 'v2.0-beta' });
+  const saidas = [
+    { modo: 'sonda inteira', sql: () => gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a', 'edge-b'], caras: ['edge-b'] }) },
+    {
+      modo: 'sonda --so-leitura',
+      sql: () => gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a', 'edge-b'], caras: ['edge-b'], soLeitura: true }),
+    },
+    { modo: 'canária', sql: () => gerarSqlDasCanarias({ raiz: RAIZ_REPO, nomes: [], ler: lerCanariasReal }) },
+  ];
+
+  it.each(saidas)('$modo', ({ sql }) => {
+    const linhas = sql()
+      .split('\n')
+      .filter((l) => l.includes('afiacao/psql-ro'));
+    // Controle POSITIVO: sem ele a negativa abaixo passaria medindo zero linhas.
+    expect(linhas.length).toBeGreaterThan(0);
+    expect(linhas.filter((l) => !l.includes('psql-ro -v ON_ERROR_STOP=1'))).toEqual([]);
   });
 });
 

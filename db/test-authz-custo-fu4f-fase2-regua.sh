@@ -25,6 +25,7 @@ PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
 PORT="${PGPORT_TEST:-5462}"
 SLUG="fu4f2regua"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
+RODADA="$(dirname "$DATA")"   # dir ÚNICO desta rodada (o trap apaga): temporário mora aqui, nunca em /tmp/<nome-fixo>
 export LC_ALL=C LANG=C
 
 [ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER} pgvector"; exit 1; }
@@ -40,7 +41,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }
 
 P -q -f "$REPO_ROOT/db/stubs-supabase.sql"
@@ -620,7 +621,7 @@ P -q -c "DROP FUNCTION public.get_regua_preco(uuid,uuid,numeric);"
 #      O A1 tem de ABORTAR a transação inteira. F8 provou que o predicado enxerga; este prova que
 #      o assert MORDE. Sem ele, "o predicado funciona" e "o assert protege" seriam duas crenças
 #      diferentes — e foi justamente a segunda que estava falsa antes.
-MIG_SABOTADA="$(mktemp /tmp/mig-sem-drop.XXXXXX.sql)"
+MIG_SABOTADA="$(mktemp "$RODADA/mig-sem-drop.XXXXXX")"
 grep -v "^DROP FUNCTION IF EXISTS public.get_regua_preco(uuid, uuid, numeric);$" "$MIG" > "$MIG_SABOTADA"
 P -q <<'SQL'
 CREATE FUNCTION public.get_regua_preco(p_customer uuid, p_product uuid, p_qty numeric)

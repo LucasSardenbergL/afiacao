@@ -37,12 +37,12 @@ ok() { printf 'ok   — %s\n' "$1"; }
 falhou() { printf 'FALHA — %s\n' "$1"; falhas=$((falhas + 1)); }
 
 # ------------------------------------------------------------------------------------------------
-# Raiz sintética: um repo em miniatura com as 5 superfícies que o gate lê.
+# Raiz sintética: um repo em miniatura com as 6 superfícies que o gate lê.
 # ------------------------------------------------------------------------------------------------
 montar() {
   local r="$TMP/raiz"
   rm -rf "$r"
-  mkdir -p "$r/.github/workflows" "$r/.claude/hooks" "$r/docs/agent"
+  mkdir -p "$r/.github/workflows" "$r/.claude/hooks" "$r/docs/agent" "$r/scripts"
 
   cat > "$r/CLAUDE.md" <<'EOF'
 # Manual de fixture
@@ -55,8 +55,29 @@ bun run so-exemplo-dentro-da-cerca
 ```
 EOF
 
+  # O `test:hooks` tem os DOIS laços do real (`test-$t-guard.sh` e `test-$t.sh`): o controle verde
+  # só sai se o gate expandir os dois. `extra` existe para nenhum laço esvaziar quando uma
+  # sabotagem tira dele o seu alvo — o laço segue de pé, só sem aquela suíte.
   cat > "$r/package.json" <<'EOF'
-{ "scripts": { "gate:um": "bun um.ts", "gate:dois": "bun dois.ts" } }
+{ "scripts": { "gate:um": "bun um.ts", "gate:dois": "bun dois.ts",
+  "test:hooks": "for t in bloqueia extra; do bash scripts/test-$t-guard.sh || exit 1; done; for t in avisa extra; do bash scripts/test-$t.sh || exit 1; done" } }
+EOF
+
+  # Cada hook ligado é citado como CAMINHO numa linha de código por uma suíte de algum laço.
+  # `test-extra.sh` já cita os hooks que S5/S14/S15 ligam: assim cada uma daquelas sabotagens
+  # acende só a SUA lâmpada, e não também a de hook sem teste.
+  cat > "$r/scripts/test-bloqueia-guard.sh" <<'EOF'
+HOOK="$RAIZ/.claude/hooks/bloqueia.sh"
+bash "$HOOK"
+EOF
+  cat > "$r/scripts/test-avisa.sh" <<'EOF'
+bash "$RAIZ/.claude/hooks/avisa.sh"
+EOF
+  printf '%s\n' 'echo extra-guard' > "$r/scripts/test-extra-guard.sh"
+  cat > "$r/scripts/test-extra.sh" <<'EOF'
+bash "$RAIZ/.claude/hooks/novo.sh"
+bash "$RAIZ/.claude/hooks/velho.sh"
+bash "$RAIZ/.claude/hooks/meio.sh"
 EOF
 
   cat > "$r/.github/workflows/ci.yml" <<'EOF'
@@ -80,7 +101,7 @@ EOF
 
   # `bloqueia.sh` nega de verdade; `avisa.sh` só CITA "deny" em comentário — é o caso real do
   # `read-contexto-nudge.sh`, e o censo abaixo não o lista de propósito.
-  printf '%s\n' 'jq -n '\''{hookSpecificOutput:{permissionDecision:"deny"}}'\''' > "$r/.claude/hooks/bloqueia.sh"
+  printf '%s\n' 'jq -n '\''{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny"}}'\''' > "$r/.claude/hooks/bloqueia.sh"
   printf '%s\n' '# permissionDecision:"deny" quebraria a investigacao — por isso NAO nego' 'echo aviso' > "$r/.claude/hooks/avisa.sh"
 
   cat > "$r/docs/agent/deploy.md" <<'EOF'
@@ -193,8 +214,11 @@ modo_falsificar() {
   sabotagem 'S4 sentido 2: censo lista nome que nao reprova mais' 'CENSO-OBSOLETO' 1 \
     "sed -i.bak 's|\`gate:dois\`|\`gate:dois\` · \`gate:fantasma\`|; s|\*\*Gates do CI\*\* (2)|**Gates do CI** (3)|' docs/agent/deploy.md"
 
+  # Até 2026-09-27 o "hook deny novo" desta sabotagem era `{permissionDecision:"deny"}` no topo — a
+  # forma EXATA do check-gstack.sh, que o harness ignora. A fixture carimbava como bloqueio um hook
+  # que não bloqueia; S14/S15 abaixo são agora as sabotagens dessa forma.
   sabotagem 'S5 sentido 2: hook deny novo nao entra no censo' 'NAO-CITADO' 1 \
-    "printf '%s\n' 'jq -n {permissionDecision:\"deny\"}' > .claude/hooks/novo.sh && sed -i.bak 's|{ \"command\": \"\$CLAUDE_PROJECT_DIR/.claude/hooks/avisa.sh\" }|{ \"command\": \"\$CLAUDE_PROJECT_DIR/.claude/hooks/avisa.sh\" } ] }, { \"hooks\": [ { \"command\": \"\$CLAUDE_PROJECT_DIR/.claude/hooks/novo.sh\" }|' .claude/settings.json"
+    "printf '%s\n' 'jq -n {hookSpecificOutput:{hookEventName:\"PreToolUse\",permissionDecision:\"deny\"}}' > .claude/hooks/novo.sh && sed -i.bak 's|{ \"command\": \"\$CLAUDE_PROJECT_DIR/.claude/hooks/avisa.sh\" }|{ \"command\": \"\$CLAUDE_PROJECT_DIR/.claude/hooks/avisa.sh\" } ] }, { \"hooks\": [ { \"command\": \"\$CLAUDE_PROJECT_DIR/.claude/hooks/novo.sh\" }|' .claude/settings.json"
 
   # --- Fail-closed -----------------------------------------------------------------------------
   # Bloco ausente é "nao consegui avaliar" (rc=2), nunca "esta tudo certo" (rc=0).
@@ -231,6 +255,54 @@ modo_falsificar() {
   # morre calada. Ausência de número é ACHADO, não isenção.
   sabotagem 'S12 sentido 3: lista de nomes sem declarar (N)' 'CENSO-SEM-CONTAGEM' 1 \
     "sed -i.bak 's|\*\*Gates do CI\*\* (2)|**Gates do CI**|' docs/agent/deploy.md"
+
+  # --- Deny que o harness ignora ---------------------------------------------------------------
+  # As duas formas que a sonda de 2026-09-27 (Claude Code 2.1.281) viu deixarem a skill CARREGAR.
+  # Uma por sabotagem: S14 cai mesmo sem a exigência do hookEventName (não há envelope nenhum), e
+  # só S15 fica vermelha se alguém a tirar — é a que dá dente a essa exigência.
+  sabotagem 'S14 deny no TOPO do JSON (o check-gstack.sh)' 'DENY-SEM-ENVELOPE' 1 \
+    "printf '%s\n' 'echo {\"permissionDecision\":\"deny\",\"message\":\"x\"}' > .claude/hooks/velho.sh && sed -i.bak 's|{ \"command\": \"\$CLAUDE_PROJECT_DIR/.claude/hooks/avisa.sh\" }|{ \"command\": \"\$CLAUDE_PROJECT_DIR/.claude/hooks/avisa.sh\" } ] }, { \"hooks\": [ { \"command\": \"\$CLAUDE_PROJECT_DIR/.claude/hooks/velho.sh\" }|' .claude/settings.json"
+
+  sabotagem 'S15 hookSpecificOutput SEM hookEventName' 'DENY-SEM-ENVELOPE' 1 \
+    "printf '%s\n' 'jq -n {hookSpecificOutput:{permissionDecision:\"deny\"}}' > .claude/hooks/meio.sh && sed -i.bak 's|{ \"command\": \"\$CLAUDE_PROJECT_DIR/.claude/hooks/avisa.sh\" }|{ \"command\": \"\$CLAUDE_PROJECT_DIR/.claude/hooks/avisa.sh\" } ] }, { \"hooks\": [ { \"command\": \"\$CLAUDE_PROJECT_DIR/.claude/hooks/meio.sh\" }|' .claude/settings.json"
+
+  # --- Hook ligado sem suite que o execute -------------------------------------------------------
+  # O check-gstack.sh passou 136 dias ligado sem UM teste: era o unico hook fora do `test:hooks`, e
+  # nada exigia que hook ligado tivesse suite (docs/historico/vigia-de-cobertura-parcial.md). Uma
+  # sabotagem por camada: o pertencimento lido do package.json (nos DOIS lacos), o inventario do
+  # settings.json (com e sem arquivo), a limpeza de comentario, o criterio de CAMINHO, e as duas
+  # formas de "nao consegui medir" (laco ilegivel, stripper perdendo o fio).
+  sabotagem 'S16 hook sem teste: a suite sai do laco sem sufixo (o arquivo fica no disco)' 'HOOK-SEM-TESTE' 1 \
+    "sed -i.bak 's|for t in avisa extra;|for t in extra;|' package.json"
+
+  sabotagem 'S17 hook sem teste: a suite sai do laco -guard' 'HOOK-SEM-TESTE' 1 \
+    "sed -i.bak 's|for t in bloqueia extra;|for t in extra;|' package.json"
+
+  # O hook novo e de AVISO de proposito: um deny novo acenderia tambem o NAO-CITADO do censo (S5).
+  sabotagem 'S18 hook novo ligado sem teste nenhum' 'HOOK-SEM-TESTE' 1 \
+    "printf '%s\n' 'echo novo' > .claude/hooks/novo-aviso.sh && sed -i.bak 's|{ \"command\": \"\$CLAUDE_PROJECT_DIR/.claude/hooks/avisa.sh\" }|{ \"command\": \"\$CLAUDE_PROJECT_DIR/.claude/hooks/avisa.sh\" } ] }, { \"hooks\": [ { \"command\": \"\$CLAUDE_PROJECT_DIR/.claude/hooks/novo-aviso.sh\" }|' .claude/settings.json"
+
+  # O comentario no FIM da linha e o que um filtro local de `^#` deixaria passar: so o stripper
+  # compartilhado (removerComentariosShell) o limpa.
+  sabotagem 'S19 a suite cita o hook so em COMENTARIO' 'HOOK-SEM-TESTE' 1 \
+    "printf '%s\n' 'echo ok  # roda .claude/hooks/avisa.sh' > scripts/test-avisa.sh"
+
+  # Rotulo nao e caminho: e a forma do echo "── pos-compact-ptbr.sh ──" do test-hooks-sessionstart.sh.
+  sabotagem 'S20 a suite cita o hook so como ROTULO, nao como caminho' 'HOOK-SEM-TESTE' 1 \
+    "printf '%s\n' 'echo \"== avisa.sh ==\"' > scripts/test-avisa.sh"
+
+  sabotagem 'S21 hook inline, sem arquivo que uma suite possa citar' 'HOOK-SEM-TESTE' 1 \
+    "sed -i.bak 's|{ \"command\": \"\$CLAUDE_PROJECT_DIR/.claude/hooks/avisa.sh\" }|{ \"command\": \"\$CLAUDE_PROJECT_DIR/.claude/hooks/avisa.sh\" } ] }, { \"hooks\": [ { \"command\": \"echo inline\" }|' .claude/settings.json"
+
+  # Nao saber o que o `test:hooks` roda e "nao consegui avaliar" (rc=2), nunca "nenhum hook tem
+  # teste" (rc=1 pelo motivo errado) — e muito menos verde.
+  sabotagem 'S22 test:hooks sem laco legivel' 'LACO-ILEGIVEL' 2 \
+    "sed -i.bak 's|\"test:hooks\": \"[^\"]*\"|\"test:hooks\": \"bash scripts/roda-todas.sh\"|' package.json"
+
+  # O eixo POR FORA do stripper: shell bem-formado nao termina com heredoc aberto. Se a maquina se
+  # perde numa suite, a citacao que ela ve (ou deixa de ver) nao vale nada — rc=2, nao veredito.
+  sabotagem 'S23 o stripper perde o fio numa suite do laco (heredoc aberto ate o EOF)' 'STRIPPER-ALARME' 2 \
+    "printf '%s\n' 'cat <<FIM' 'texto sem o delimitador de fim' >> scripts/test-extra.sh"
 
 
   # --- O step sumindo do proprio ci.yml ---------------------------------------------------------

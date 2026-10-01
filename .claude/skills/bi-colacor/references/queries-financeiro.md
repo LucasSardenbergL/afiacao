@@ -6,6 +6,10 @@ Read-only. Financeiro usa coluna `company`. Vocabulário de status é Omie:
 (filtram o vocabulário morto `ABERTO`/`VENCIDO`/`PARCIAL` → voltam vazias/zeradas — confirmado jun/2026).
 Por isso #10a/#11a computam o aging direto do cru. **`data_recebimento`/`data_pagamento` são NULL até
 em títulos RECEBIDO/PAGO** → "em aberto" só se infere por `status_titulo`, nunca por `data_*-null`.
+**"Hoje" é o de SÃO PAULO:** a sessão da prod é UTC, e das 21:00 às 23:59 BRT o `current_date` já é
+amanhã — o título que vence hoje entraria como vencido. As bordas partem de `now()` com o fuso
+escrito: DATA de SP (`h.hoje`) contra as colunas `date` (vencimento, `data`), e o INSTANTE da
+meia-noite de SP contra `timestamptz` (`sales_orders.created_at`).
 
 ---
 
@@ -14,14 +18,17 @@ Confiabilidade: **alta**. Fonte: `fin_contas_receber` cru (a view `fin_aging_rec
 — ver topo). Aging por **data de vencimento**, em aberto por **status** (`saldo = valor_documento −
 valor_recebido`, pois a coluna `saldo` é nullable).
 ```sql
+with h as (
+  select (now() at time zone 'America/Sao_Paulo')::date as hoje   -- "hoje" de SP (a sessão é UTC)
+)
 select
   company as empresa,
-  round(coalesce(sum(valor_documento - coalesce(valor_recebido,0)) filter (where data_vencimento::date >= current_date), 0), 2)                       as a_vencer,
-  round(coalesce(sum(valor_documento - coalesce(valor_recebido,0)) filter (where current_date - data_vencimento::date between 1 and 30), 0), 2)        as venc_1_30,
-  round(coalesce(sum(valor_documento - coalesce(valor_recebido,0)) filter (where current_date - data_vencimento::date between 31 and 60), 0), 2)       as venc_31_60,
-  round(coalesce(sum(valor_documento - coalesce(valor_recebido,0)) filter (where current_date - data_vencimento::date between 61 and 90), 0), 2)       as venc_61_90,
-  round(coalesce(sum(valor_documento - coalesce(valor_recebido,0)) filter (where current_date - data_vencimento::date > 90), 0), 2)                    as venc_90_mais
-from fin_contas_receber
+  round(coalesce(sum(valor_documento - coalesce(valor_recebido,0)) filter (where data_vencimento::date >= h.hoje), 0), 2)                       as a_vencer,
+  round(coalesce(sum(valor_documento - coalesce(valor_recebido,0)) filter (where h.hoje - data_vencimento::date between 1 and 30), 0), 2)        as venc_1_30,
+  round(coalesce(sum(valor_documento - coalesce(valor_recebido,0)) filter (where h.hoje - data_vencimento::date between 31 and 60), 0), 2)       as venc_31_60,
+  round(coalesce(sum(valor_documento - coalesce(valor_recebido,0)) filter (where h.hoje - data_vencimento::date between 61 and 90), 0), 2)       as venc_61_90,
+  round(coalesce(sum(valor_documento - coalesce(valor_recebido,0)) filter (where h.hoje - data_vencimento::date > 90), 0), 2)                    as venc_90_mais
+from fin_contas_receber cross join h
 where status_titulo not in ('RECEBIDO','CANCELADO')   -- "aberto" por status; data_recebimento é NULL até em recebidos
 group by company
 order by venc_90_mais desc nulls last;
@@ -38,7 +45,7 @@ select
   cr.numero_pedido, cr.data_vencimento,
   round(cr.valor_documento, 2)                                  as valor_documento,
   round(cr.valor_documento - coalesce(cr.valor_recebido,0), 2)  as saldo_aberto,
-  (current_date - cr.data_vencimento::date)                     as dias_atraso
+  ((now() at time zone 'America/Sao_Paulo')::date - cr.data_vencimento::date) as dias_atraso
 from fin_contas_receber cr
 left join omie_clientes oc on oc.omie_codigo_cliente = cr.omie_codigo_cliente
 left join profiles p       on p.user_id = oc.user_id
@@ -53,14 +60,17 @@ limit 30;
 Confiabilidade: **alta**. Fonte: `fin_contas_pagar` cru (a view `fin_aging_pagar` está quebrada — ver
 topo). `saldo = valor_documento − valor_pago`.
 ```sql
+with h as (
+  select (now() at time zone 'America/Sao_Paulo')::date as hoje   -- "hoje" de SP (a sessão é UTC)
+)
 select
   company as empresa,
-  round(coalesce(sum(valor_documento - coalesce(valor_pago,0)) filter (where data_vencimento::date >= current_date), 0), 2)                    as a_vencer,
-  round(coalesce(sum(valor_documento - coalesce(valor_pago,0)) filter (where current_date - data_vencimento::date between 1 and 30), 0), 2)     as venc_1_30,
-  round(coalesce(sum(valor_documento - coalesce(valor_pago,0)) filter (where current_date - data_vencimento::date between 31 and 60), 0), 2)    as venc_31_60,
-  round(coalesce(sum(valor_documento - coalesce(valor_pago,0)) filter (where current_date - data_vencimento::date between 61 and 90), 0), 2)    as venc_61_90,
-  round(coalesce(sum(valor_documento - coalesce(valor_pago,0)) filter (where current_date - data_vencimento::date > 90), 0), 2)                 as venc_90_mais
-from fin_contas_pagar
+  round(coalesce(sum(valor_documento - coalesce(valor_pago,0)) filter (where data_vencimento::date >= h.hoje), 0), 2)                    as a_vencer,
+  round(coalesce(sum(valor_documento - coalesce(valor_pago,0)) filter (where h.hoje - data_vencimento::date between 1 and 30), 0), 2)     as venc_1_30,
+  round(coalesce(sum(valor_documento - coalesce(valor_pago,0)) filter (where h.hoje - data_vencimento::date between 31 and 60), 0), 2)    as venc_31_60,
+  round(coalesce(sum(valor_documento - coalesce(valor_pago,0)) filter (where h.hoje - data_vencimento::date between 61 and 90), 0), 2)    as venc_61_90,
+  round(coalesce(sum(valor_documento - coalesce(valor_pago,0)) filter (where h.hoje - data_vencimento::date > 90), 0), 2)                 as venc_90_mais
+from fin_contas_pagar cross join h
 where status_titulo not in ('PAGO','CANCELADO')
 group by company
 order by company;
@@ -70,13 +80,16 @@ order by company;
 Confiabilidade: **alta**. Fonte: `fin_contas_pagar`. Em aberto por **status** (`data_pagamento` é NULL
 até em títulos PAGO — não usar como filtro).
 ```sql
+with h as (
+  select (now() at time zone 'America/Sao_Paulo')::date as hoje   -- "hoje" de SP (a sessão é UTC)
+)
 select
   company as empresa, nome_fornecedor, data_vencimento,
   round(valor_documento, 2)                                 as valor_documento,
   round(valor_documento - coalesce(valor_pago,0), 2)        as saldo_a_pagar
-from fin_contas_pagar
+from fin_contas_pagar cross join h
 where status_titulo not in ('PAGO','CANCELADO')
-  and data_vencimento::date between current_date and current_date + interval '7 days'
+  and data_vencimento::date between h.hoje and h.hoje + 7
 order by data_vencimento asc, saldo_a_pagar desc
 limit 50;
 ```
@@ -89,6 +102,9 @@ de status morto (`ABERTO`/`PARCIAL`/`VENCIDO` + `RECEBIDO`/`LIQUIDADO`/`PAGO`) �
 data×empresa mas com **tudo 0,00**. Até a view ser corrigida em prod, o fluxo NÃO é confiável; use
 #10a (entradas a vencer) e #11a (saídas a vencer) como proxy. A query abaixo só vale após o fix.
 ```sql
+with h as (
+  select (now() at time zone 'America/Sao_Paulo')::date as hoje   -- "hoje" de SP (a sessão é UTC)
+)
 select
   data,
   round(entradas_previstas, 2)  as entradas_previstas,
@@ -96,8 +112,8 @@ select
   round(saidas_previstas, 2)    as saidas_previstas,
   round(saidas_realizadas, 2)   as saidas_realizadas,
   round(entradas_previstas - saidas_previstas, 2) as saldo_previsto_dia
-from fin_fluxo_caixa_diario
-where data between current_date and current_date + interval '30 days'
+from fin_fluxo_caixa_diario cross join h
+where data between h.hoje and h.hoje + 30
 order by data;
 ```
 Nota: se a view tiver coluna `company`, adicione-a ao select e ao `order by` para separar por
@@ -108,6 +124,9 @@ empresa. Confira em `types.ts` se precisar.
 ## #13a — Margem top-down (DRE) por empresa, mês atual
 Confiabilidade: **alta** (consolidado contábil). Fonte: `fin_dre_snapshots`.
 ```sql
+with h as (
+  select (now() at time zone 'America/Sao_Paulo')::date as hoje   -- o mês é o de SP (a sessão é UTC)
+)
 select
   company as empresa, ano, mes,
   round(receita_liquida, 2) as receita_liquida,
@@ -115,27 +134,30 @@ select
   round(lucro_bruto, 2)     as lucro_bruto,
   round(100.0 * lucro_bruto / nullif(receita_liquida,0), 1) as margem_bruta_pct,
   round(resultado_liquido, 2) as resultado_liquido, regime
-from fin_dre_snapshots
-where ano = extract(year  from current_date)::int
-  and mes = extract(month from current_date)::int
+from fin_dre_snapshots cross join h
+where ano = extract(year  from h.hoje)::int
+  and mes = extract(month from h.hoje)::int
 order by company;
 ```
 Se vier vazio, o mês ainda não foi snapshotado — troque para o mês anterior
-(`mes = extract(month from current_date - interval '1 month')::int` e ajuste `ano`).
+(`mes = extract(month from h.hoje - interval '1 month')::int` e ajuste `ano`).
 
 ## #13b — Margem por produto (ESTIMADA), últimos 30 dias
 Confiabilidade: **acompanha a cobertura (#13c)** — observado **98,3%** em jun/2026, ou seja **alta**
 na prática (revisado: o custo NÃO é esparso como se temia). Ainda assim rode #13c junto p/ confirmar a
 cobertura do período antes de precificar. Fontes: `order_items` × `sales_orders` (empresa) × `product_costs`.
 ```sql
-with itens as (
+with h as (
+  select now() at time zone 'America/Sao_Paulo' as agora_sp   -- relógio de parede de SP (a sessão é UTC)
+), itens as (
   select
     so.account as empresa, oi.product_id, oi.omie_codigo_produto,
     sum(oi.quantity)                                            as qtd,
     sum(oi.quantity * oi.unit_price - coalesce(oi.discount,0))  as receita
   from order_items oi
   join sales_orders so on so.id = oi.sales_order_id
-  where so.created_at >= current_date - interval '30 days'
+  cross join h
+  where so.created_at >= (date_trunc('day', h.agora_sp) - interval '30 days') at time zone 'America/Sao_Paulo'
     and so.status not in ('cancelado','rascunho')
     and so.deleted_at is null
   group by so.account, oi.product_id, oi.omie_codigo_produto
@@ -155,12 +177,15 @@ limit 50;
 ## #13c — Cobertura de custo (gate de confiabilidade da #13b)
 Diz qual fatia da receita tem custo conhecido. Sem isso, a margem por produto é ficção.
 ```sql
-with itens as (
+with h as (
+  select now() at time zone 'America/Sao_Paulo' as agora_sp   -- relógio de parede de SP (a sessão é UTC)
+), itens as (
   select oi.product_id,
          oi.quantity * oi.unit_price - coalesce(oi.discount,0) as receita
   from order_items oi
   join sales_orders so on so.id = oi.sales_order_id
-  where so.created_at >= current_date - interval '30 days'
+  cross join h
+  where so.created_at >= (date_trunc('day', h.agora_sp) - interval '30 days') at time zone 'America/Sao_Paulo'
     and so.status not in ('cancelado','rascunho')
     and so.deleted_at is null
 )

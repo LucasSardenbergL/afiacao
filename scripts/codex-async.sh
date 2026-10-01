@@ -29,7 +29,12 @@
 #   - modelo recusado pela conta (400) → exit 78, instruindo CONFIG (≠ cota, ≠ retry);
 #   - mktemp XXXXXX (sem colisão de tmp entre execuções paralelas);
 #   - sandbox read-only (consulta nunca escreve no repo);
-#   - CUSTO no cabeçalho (segundos da tentativa vencedora + tokens), pro registro no PR.
+#   - CUSTO no cabeçalho (segundos da tentativa vencedora + tokens), pro registro no PR;
+#   - sessão CLOUD (CLAUDE_CODE_REMOTE=true): o container nasce sem codex → instala via npm (1x
+#     por container, e só na nuvem) e SONDA A REDE antes de gastar: host negado pelo proxy → exit
+#     68 na hora. CONNECT 403 no meio da consulta também é 68, nunca transitório: com a rede
+#     negada o codex não falha, trava em "Reconnecting..." até o hard-stop (suíte própria:
+#     scripts/test-codex-async-nuvem.sh).
 set -u
 
 # gpt-6-astra exige codex-cli ≥ 0.153.1 (lançado 2026-09-03; o cask `codex` do brew subiu
@@ -79,6 +84,28 @@ if [ "$prompt" = "-" ] || [ -z "$prompt" ]; then prompt="$(cat)"; fi
 [ -n "$prompt" ] || { echo "ERRO: prompt vazio" >&2; exit 64; }
 
 # --- preflight (barato, ANTES de gastar contexto/quota) -----------------------
+# Sessão cloud do Claude Code (CLAUDE_CODE_REMOTE=true): o container nasce do zero a cada sessão
+# e NÃO traz o codex do Mac — medido 2026-09-27: sem binário e sem ~/.codex. Lá o wrapper se
+# provisiona com `npm install -g`: o registry do npm passa por FORA do proxy do container (o
+# download pelo GitHub Releases dá 403) e o binário linux vem num pacote-alias do próprio npm;
+# 7s medidos. No Mac nada muda: o brew é o dono da instalação, e instalar por baixo dele poria
+# um 2º codex no PATH. `flock` (quando existe) serializa dois consults paralelos num container
+# novo, e o 2º RE-CONFERE antes de instalar. Quem decide é o `command -v` logo abaixo, não o
+# exit do npm: prova POSITIVA de que o binário está no PATH.
+if [ "${CLAUDE_CODE_REMOTE:-}" = "true" ] && ! command -v codex >/dev/null 2>&1 \
+   && command -v npm >/dev/null 2>&1; then
+  echo "codex ausente nesta sessão cloud — instalando via npm (uma vez por container)…" >&2
+  (
+    command -v flock >/dev/null 2>&1 && flock 9
+    command -v codex >/dev/null 2>&1 && exit 0
+    if command -v timeout >/dev/null 2>&1; then
+      timeout 300 npm install -g @openai/codex --no-fund --no-audit --loglevel=error
+    else
+      npm install -g @openai/codex --no-fund --no-audit --loglevel=error
+    fi
+  ) 9>"${TMPDIR:-/tmp}/codex-async-npm.lock" >&2
+  hash -r 2>/dev/null
+fi
 command -v codex >/dev/null 2>&1 || {
   echo "PREFLIGHT_FAIL: codex CLI não encontrado. Instale: npm install -g @openai/codex" >&2
   exit 69
@@ -104,7 +131,58 @@ fi
 
 if [ -z "${CODEX_API_KEY:-}${OPENAI_API_KEY:-}" ] && [ ! -f "${CODEX_HOME:-$HOME/.codex}/auth.json" ]; then
   echo "PREFLIGHT_FAIL: sem auth do Codex. Rode 'codex login' (ou exporte CODEX_API_KEY/OPENAI_API_KEY) e re-rode." >&2
+  if [ "${CLAUDE_CODE_REMOTE:-}" = "true" ]; then
+    echo "  Sessão cloud: por decisão (2026-09-27) o Codex roda só no Mac, na cota do plano. Reabra a" >&2
+    echo "  sessão como Local no app desktop, ou siga pelo Caminho B (docs/agent/money-path.md). Chave" >&2
+    echo "  de API na nuvem cobra por token à parte do plano: docs/historico/codex-em-sessao-cloud.md." >&2
+  fi
   exit 77
+fi
+
+# --- pré-voo de REDE (só na sessão cloud) -------------------------------------
+# Na nuvem a saída passa por um proxy que responde 403 ao `CONNECT` de host fora da allowlist do
+# ambiente. O codex NÃO falha com isso: loga "HTTP CONNECT failed with status 403", cai do
+# WebSocket para HTTPS e fica em "Reconnecting... waiting for network" até alguém matá-lo (medido
+# 2026-09-27, codex-cli 0.157.1: 90s até o `timeout` externo, sem desistir). Aqui quem mata é o
+# watchdog (20min no default) — e até 2026-09-27 o classificador lia isso como transitório: 3
+# tentativas, ~1h em background por um erro de CONFIGURAÇÃO que nenhuma espera conserta. O
+# classificador agora para na 1ª (ramo REDE_BLOQUEADA, abaixo), mas 1 hard-stop ainda são 20min
+# perdidos; sondar o túnel custa <1s.
+# Host pelo modo de auth: chave em env → api.openai.com (onde o codex bateu no teste); só o
+# auth.json (login ChatGPT) → chatgpt.com (modelo, /backend-api/codex) + auth.openai.com (refresh).
+# Bloqueio só com resposta POSITIVA do proxy: exit 56 do curl E a frase do 403 no CONNECT (a do
+# curl 8.x e a do 7.x). Qualquer outro desfecho segue — é sensor que poupa tempo, não guard que
+# apaga —, mas o que não deu para medir é DITO, nunca engolido. `CODEX_ASYNC_CURL` só existe para
+# a suíte simular curl ausente.
+if [ "${CLAUDE_CODE_REMOTE:-}" = "true" ]; then
+  if [ -n "${CODEX_API_KEY:-}${OPENAI_API_KEY:-}" ]; then hosts_rede=(api.openai.com)
+  else hosts_rede=(chatgpt.com auth.openai.com); fi
+  curl_bin="${CODEX_ASYNC_CURL:-curl}"
+  # here-string, não `printf | grep -q`: sem pipe não há SIGPIPE para um `pipefail` futuro
+  # transformar em "não achei" (docs/historico/evidencia-positiva-shell.md).
+  bloqueio_do_proxy() { # rc saída-do-curl → 0 só com PROVA POSITIVA de 403 do proxy no CONNECT
+    [ "$1" -eq 56 ] && grep -qE 'CONNECT tunnel failed, response 403|Received HTTP code 403 from proxy after CONNECT' <<< "$2"
+  }
+  if ! command -v "$curl_bin" >/dev/null 2>&1; then
+    echo "REDE_NAO_MEDIDA: sem curl para sondar ${hosts_rede[*]} — sigo sem o pré-voo de rede." >&2
+  else
+    for host_rede in "${hosts_rede[@]}"; do
+      sonda_rede="$("$curl_bin" -sS -o /dev/null --max-time 15 "https://$host_rede/" 2>&1)"; rc_rede=$?
+      if bloqueio_do_proxy "$rc_rede" "$sonda_rede"; then
+        echo "REDE_BLOQUEADA: a rede deste ambiente nega $host_rede (o proxy respondeu 403 ao CONNECT)." >&2
+        echo "  Não gastei a chamada: com o host negado o codex não falha — trava em 'Reconnecting..." >&2
+        echo "  waiting for network' até o hard-stop (${timeout_s}s) sem produzir parecer." >&2
+        echo "  Conserto (fora do repo): menu do ambiente na barra de título da sessão → Edit →" >&2
+        echo "  Network access → domínios permitidos: ${hosts_rede[*]}. Só vale para sessão NOVA." >&2
+        echo "  (chave de API em env → api.openai.com · login ChatGPT → chatgpt.com + auth.openai.com)" >&2
+        echo "  → Até lá: Caminho B (docs/agent/money-path.md)." >&2
+        exit 68
+      elif [ "$rc_rede" -ne 0 ]; then
+        echo "REDE_NAO_MEDIDA: a sonda de $host_rede não deu resposta clara (curl exit $rc_rede) — sigo;" >&2
+        echo "  se o codex ficar em 'Reconnecting... waiting for network', é a rede." >&2
+      fi
+    done
+  fi
 fi
 
 # Plano DECLARADO no claim do token (não é a assinatura viva — é o que o servidor
@@ -457,6 +535,18 @@ for backoff in "${backoffs[@]}"; do
     echo "ERRO_PERMANENTE: o servidor recusou o pedido (HTTP 400). Não é cota nem falha" >&2
     echo "  transitória — repetir manda exatamente o mesmo request. Ajuste o pedido (modelo," >&2
     echo "  reasoning, tamanho do prompt) e re-rode. Motivo cru abaixo." >&2
+    break
+  fi
+  # rede NEGADA pelo proxy (CONNECT 403) = CONFIGURAÇÃO do ambiente, não transitório. Tem de vir
+  # ANTES do ramo transitório: "Proxy connection failed" casa `connection`, e o kill do watchdog
+  # (o codex não desiste sozinho: fica em "Reconnecting... waiting for network") dá rc≥124 — os
+  # dois mandariam repetir o mesmo bloqueio. Medido 2026-09-27, codex-cli 0.157.1. Na nuvem o
+  # pré-voo de rede pega isto antes; aqui é a 2ª camada (bloqueio no meio, ou fora da nuvem).
+  if classifica 'HTTP CONNECT failed with status 403|CONNECT tunnel failed, response 403'; then
+    echo "REDE_BLOQUEADA: a rede deste ambiente negou o host do codex no meio da consulta (proxy: 403 no CONNECT)." >&2
+    echo "  Não é transitório: repetir encontra o mesmo bloqueio. Na sessão cloud, libere o domínio em" >&2
+    echo "  menu do ambiente → Edit → Network access (só vale para sessão NOVA). Linha crua abaixo." >&2
+    rc=68
     break
   fi
   # transitório (rede/limite/kill do watchdog) → tenta de novo.

@@ -35,6 +35,10 @@
 #   `index.ts` é importado por teste algum. Até 2026-07-21 erro de tipo em edge passava VERDE em
 #   todos os gates e só quebrava em RUNTIME na produção (#1498). Único step do job que precisa de
 #   REDE; o porquê disso ser inevitável aqui está no próprio step.
+# - edges:sintaxe (node --check): blocking — todo módulo de edge (index.ts, helpers, _shared)
+#   PARSEIA no V8. Os dois acima não cobrem: `deno test` não importa `index.ts`, e o
+#   edges:typecheck tolera a redeclaração (TS2451/TS2393) por precisão — mas redeclaração é early
+#   error, o V8 recusa o módulo inteiro e a edge responde BOOT_ERROR 503 (#2720). Offline, sem Deno.
 # - build (vite build): blocking — pega Tailwind quebrado + import errors + PWA setup
 # - lint (eslint): blocking em ERRORS — a dívida de `no-explicit-any` foi zerada
 #   (era ~1300 errors, hoje 0; ver CLAUDE.md §10/§13), então o lint virou gate
@@ -296,6 +300,18 @@ jobs:
 
       - name: Tests (edge functions — Deno, offline)
         run: bun run test:edges
+
+      # SINTAXE das edges no V8 — blocking. Módulo que o V8 recusa é edge que NÃO BOOTA: BOOT_ERROR 503
+      # a toda chamada até o redeploy. Nenhum outro gate pega: o `test:edges` acima não importa
+      # `index.ts`, o `edges:typecheck` abaixo tolera a redeclaração (TS2451/TS2393) por desenho e o
+      # vitest lê a edge como texto. Incidente #2720: o #2700 passou VERDE em todos os gates com
+      # `resposta` declarada 2× no handler da `analyze-unified-order`, ~75 min fora do ar em prod.
+      # Recorrência: 3 commits da main na mesma classe (NAO_COMPILA da sonda por cron, #2415).
+      # Duas camadas — parser do TS (o transpile CONSERTA arquivo truncado, então o diagnóstico
+      # reprova sozinho) + `node --check` no JS transpilado —, calibradas na mesma invocação
+      # (fail-closed). Offline, sem Deno, ~5s. Números e porquê: cabeçalho de scripts/edges-sintaxe-gate.ts.
+      - name: Sintaxe das edges — o V8 aceita todo módulo (node --check, offline)
+        run: bun run edges:sintaxe
 
       # TESTE DECISIVO da sonda por cron (spec 2026-09-05-sonda-por-cron-fail-closed-design.md §5):
       # materializa bundles históricos REAIS por `git archive` — inclusive os que NÃO autenticavam
@@ -790,8 +806,12 @@ jobs:
       # caminho obrigatório (leia o comentário dele, mais abaixo).
       # NÃO substitui o `mutation-check`: aqui a suíte não roda, então isto não afirma NADA
       # sobre cobertura. Só afirma que os padrões ainda são cirúrgicos.
+      # A base entra por `env:`, nunca `${{ }}` cru no `run:`: a expressão é colada no texto do
+      # script ANTES do bash (script injection). A2 de docs/historico/varredura-semgrep-2026-09-27.md.
       - name: Contratos de mutação ainda cirúrgicos (mutcheck --seco, introduzidos por ESTE diff)
-        run: bash scripts/mutcheck-seco-gate.sh origin/${{ github.base_ref || 'main' }}
+        env:
+          BASE_REF: ${{ github.base_ref || 'main' }}
+        run: bash scripts/mutcheck-seco-gate.sh "origin/${BASE_REF}"
 
   # ─── Agregador — É ESTE o required status check ─────────────────────────────
   # `validate` não roda trabalho nenhum: ele só AFIRMA que os 4 jobs acima terminaram em
@@ -838,13 +858,59 @@ jobs:
   # ## Custo
   #
   # Job próprio e PARALELO, entrando no `needs:` do `validate` — de propósito fora do
-  # `gates-e-falsificacao`, que é o gargalo atual (mediana 357s). Carrega o RUNTIME bun
+  # `gates-e-falsificacao`, que é o gargalo (mediana 357s em 2026-09-07; 955s em 2026-09-27,
+  # 34 runs de PR, contra p50 205s deste job). Carrega o RUNTIME bun
   # (só o runtime, sem `bun install`) desde que `db/test-canaria-veredito.sh` entrou no
   # núcleo: essa prova gera o SQL pelo próprio gerador em vez de conferir um retrato
   # commitado. Não precisa de deno, então o preâmbulo segue mais barato que o dos outros quatro.
+  #
+  # E o pgvector desde 2026-09-27, quando as provas tint entraram no núcleo: 13 delas carregam
+  # o schema-snapshot inteiro, cujo prelude faz `CREATE EXTENSION vector`. Medido no runner, 2
+  # rodadas: +2–3s de install (na MESMA chamada do apt-get), +1–2s de sonda; as 16 provas no
+  # modo normal somam 48–58s e o `--falsificar` da promoção assíncrona 71–86s. Projeção: ~6 min
+  # de job, com folga no teto de 12 e longe do caminho crítico do `validate`
+  # (docs/historico/provas-tint-no-nucleo.md).
+  #
+  # A folga acabou em 2026-09-29: o job da main levava 8,5–10 min (5 runs), e no PR que pôs no
+  # núcleo a prova das 7 funções do fuso (41 asserts em 3 s + `--falsificar` com 18 sabotagens em
+  # 52 s) o passo do núcleo sozinho foi a 11 min 35 s — o job foi CANCELADO no teto de 12 com
+  # `SQL_PROOF_OK 46/46` já impresso, e a autofalsificação do runner nem rodou. No mesmo dia entrou
+  # a do LIKE (`--falsificar` com 19 sobre o schema-snapshot), e PRs SEM a prova do fuso também
+  # passaram a cair no teto (12 min 10 s, dois de outras sessões). Teto 20: o cancelamento no teto não
+  # diz QUAL prova custou, então ele tem de ficar acima do custo, e a mediana medida é o sinal de
+  # quando a próxima prova pedir paralelizar o runner em vez de subir o teto de novo
+  # (docs/historico/hoje-da-sessao-nu-funcoes-e-skills.md).
+  #
+  # O teto de 20 estourou em 2026-09-30/10-01: em 22 runs, o passo do núcleo foi a 1100–1192 s e 11
+  # foram CANCELADOS no teto — de vários PRs e do `workflow_dispatch` da main —, primeiro com o núcleo
+  # verde e a autofalsificação do runner cortada, depois com o próprio núcleo cortado aos 1187 s. O
+  # salto veio de UMA prova: `test-hoje-sp-views-defaults --falsificar`, 304 s (26% do núcleo, #2685);
+  # as 2 do WhatsApp (#2703) passaram o núcleo do teto sozinho. Teto 30 é STOPGAP DECLARADO, contra a
+  # nota acima e por decisão do founder (todo PR bloqueado): o próximo passo é PARALELIZAR o runner
+  # (shards do manifesto) ou baratear a prova de 304 s — não subir o teto uma 3ª vez.
+  #
+  # Paralelizado em 2026-10-01 — o passo que a nota acima pede. O job é uma MATRIZ: cada parte roda
+  # as provas de posição k com k mod N = parte, em runner próprio (portas não colidem: são máquinas
+  # separadas). Quem diz a parte e o total ao runner é o GitHub (`strategy.job-index`/`job-total`),
+  # contados pela matriz REAL — acrescentar ou tirar uma parte da lista não abre buraco nem repete
+  # prova. Toda parte valida o manifesto INTEIRO antes de rodar a sua fatia. O `validate` lê
+  # `needs.provas-sql.result`, que a matriz agrega: success só se TODAS as partes passarem. Simulado
+  # com as durações medidas: 3 partes de ~5,5–6 min, contra 16,7 serial. Para mais folga, acrescente
+  # um número à lista `parte` — nada mais muda.
+  #
+  # Teto de volta a 20 em 2026-10-01 (decisão do founder, com as partes MEDIDAS): nos 2 runs completos
+  # da matriz (36831464837 e 36833933356), o JOB de cada parte — setup, núcleo e, na 1ª, a
+  # autofalsificação do runner — levou de 4m36s a 6m52s (mediana ~5m38s): folga de ~2,9× sobre a
+  # maior. A espera por runner NÃO conta no teto: na 36831464837 as partes 2 e 3 ficaram 30m31s e
+  # 31m39s na fila, sob teto 20, e passaram. Antes de devolver ao CI uma falsificação `fora-do-ci`,
+  # veja em que parte ela cai (`NUCLEO_PARTE=i/3 bash db/roda-nucleo-ci.sh --lista`) e meça de novo.
   provas-sql:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        parte: [1, 2, 3]
     permissions:
       contents: read
 
@@ -881,7 +947,7 @@ jobs:
       # e um pin assim viraria vermelho por AMBIENTE — o que ensinaria a tratar este job
       # como flaky, que é como um gate morre. O piso + o registro da versão dão o
       # determinismo que importa sem essa fragilidade.
-      - name: PostgreSQL 17 (PGDG) — instala e confere a versão
+      - name: PostgreSQL 17 (PGDG) + pgvector — instala e confere a versão
         run: |
           set -euo pipefail
           # ── Retry das TRÊS chamadas de rede deste step ────────────────────────────────────────
@@ -967,12 +1033,46 @@ jobs:
             sudo rm -f /etc/apt/sources.list.d/*google* /etc/apt/sources.list.d/*chrome* \
                        /etc/apt/sources.list.d/*microsoft* /etc/apt/sources.list.d/*msprod* || true
             tentar "apt-get update" sudo apt-get update -qq
-            tentar "apt-get install postgresql-17" sudo apt-get install -y -qq postgresql-17
+            # O pgvector vai na MESMA chamada, de propósito: continua sendo uma camada de rede só,
+            # coberta pelo mesmo retry, e o pacote do PG17 só existe no PGDG (o repo do Ubuntu não
+            # o tem). Quem confere que ele CARREGA é o step seguinte — este texto roda no lab do
+            # retry (scripts/lab-retry-pgdg/) com dublês, onde não há servidor para perguntar.
+            tentar "apt-get install postgresql-17 + pgvector" sudo apt-get install -y -qq postgresql-17 postgresql-17-pgvector
           fi
           instalada="$(/usr/lib/postgresql/17/bin/initdb --version)"
           echo "  $instalada"
           printf '%s' "$instalada" | grep -qE '\(PostgreSQL\) 17\.' || {
             echo "::error::initdb não é PostgreSQL 17: $instalada"; exit 1; }
+
+      # O pgvector do step acima, conferido POSITIVAMENTE e por fora das provas: o arquivo de
+      # controle existe E o servidor carrega a extensão e responde com uma distância. As provas tint
+      # carregam o schema-snapshot (prelude: `CREATE EXTENSION vector`) e reprovariam sem ele de
+      # qualquer jeito — mas no meio do log de UMA prova, com o motivo enterrado; aqui a ausência
+      # tem nome e a versão vai para o log de todo run. Separado do step acima porque aquele texto
+      # roda no lab do retry com dublês (não há servidor para perguntar). Porta 5808 só em socket:
+      # o locale usa a 5809 e a sonda do runner a 5810.
+      - name: pgvector — o servidor carrega a extensão (provas tint sobre o schema-snapshot)
+        run: |
+          set -euo pipefail
+          bin=/usr/lib/postgresql/17/bin
+          ctl=/usr/share/postgresql/17/extension/vector.control
+          [ -f "$ctl" ] || { echo "::error::pgvector ausente: $ctl não existe"; exit 1; }
+          d="$(mktemp -d)"
+          "$bin/initdb" -D "$d/data" -U postgres -E UTF8 --locale=C > "$d/initdb.log" 2>&1 \
+            || { tail -c 600 "$d/initdb.log"; echo "::error::initdb falhou na sonda do pgvector"; exit 1; }
+          "$bin/pg_ctl" -D "$d/data" -l "$d/pg.log" -w start -o "-p 5808 -k $d -c listen_addresses=''" > /dev/null \
+            || { tail -c 800 "$d/pg.log"; echo "::error::o cluster da sonda do pgvector não subiu"; exit 1; }
+          saida="$("$bin/psql" -X -q -h "$d" -p 5808 -U postgres -d postgres -v ON_ERROR_STOP=1 -tA \
+            -c 'CREATE EXTENSION vector' \
+            -c "SELECT extversion || '|' || ('[1,2,3]'::vector(3) <-> '[1,2,4]'::vector(3)) FROM pg_extension WHERE extname = 'vector'" \
+            2>&1)" && rc=0 || rc=$?
+          "$bin/pg_ctl" -D "$d/data" -m immediate stop > /dev/null
+          # A distância L2 entre os dois vetores é exatamente 1: só um servidor que CARREGOU a
+          # extensão responde isso — o arquivo de controle sozinho não prova o `.so`.
+          case "$rc|$saida" in
+            0\|*\|1) echo "PGVECTOR_OK versao=${saida%%|*} pacote=$(dpkg-query -W -f='${Version}' postgresql-17-pgvector)" ;;
+            *) echo "::error::o servidor não carregou o pgvector (rc=$rc): $saida"; exit 1 ;;
+          esac
 
       # O 2º idioma da falsificação do `db/test-db-aplicar.sh` (3º campo `falsificar=<n>` do
       # manifesto). O executor de SQL em produção (`scripts/db-aplicar.sh`) separa falha-limpa (4)
@@ -1030,7 +1130,11 @@ jobs:
       # Ele também exige, por prova, o mínimo de asserts declarado em `db/nucleo-ci.txt`:
       # o fechamento das provas é `[ "$FAIL" -eq 0 ]`, que TAMBÉM aceita PASS=0, e uma
       # prova truncada sairia 0. Falsificação: o step seguinte.
+      # O RECIBO da parte nasce só se o conjunto dela fechou; o artefato o leva ao `provas-sql-uniao`.
       - name: Núcleo de provas SQL executadas (db/nucleo-ci.txt)
+        env:
+          NUCLEO_PARTE: ${{ strategy.job-index }}/${{ strategy.job-total }}
+          NUCLEO_RECIBO: ${{ runner.temp }}/nucleo-recibo/parte-${{ strategy.job-index }}.txt
         run: bash db/roda-nucleo-ci.sh
 
       # O dente do RUNNER, provado onde o runner vale. `db/falsifica-nucleo-ci.sh` restaura
@@ -1045,10 +1149,12 @@ jobs:
       # rodapé do arquivo só pega caso removido com o fechamento intacto — um harness TRUNCADO
       # perde o piso junto com os casos e sai 0. Quem confere o recibo é o chamador, como o
       # runner faz com as provas (o mínimo no manifesto, fora da prova).
-      # Serial DEPOIS do núcleo, de propósito: os dois sobem a sonda na porta TCP 5810.
+      # Serial DEPOIS do núcleo, de propósito: os dois sobem a sonda na porta TCP 5810. Roda numa
+      # parte só (a 1ª): o harness exercita o RUNNER, que é o mesmo nas N partes.
       - name: Falsificação do núcleo — o runner reprova pelo motivo certo?
+        if: ${{ strategy.job-index == 0 }}
         env:
-          HARNESS_OK_MINIMO: "39"
+          HARNESS_OK_MINIMO: "65"
         run: |
           log="$RUNNER_TEMP/falsifica-nucleo.log"
           bash db/falsifica-nucleo-ci.sh > "$log" 2>&1 && rc=0 || rc=$?
@@ -1060,10 +1166,73 @@ jobs:
             exit 1
           fi
           echo "HARNESS_NUCLEO_OK casos=$casos (piso $HARNESS_OK_MINIMO)"
+          # O recibo do harness vai no artefato da 1ª parte: a união o exige — step pulado não reprova nada.
+          mkdir -p "$RUNNER_TEMP/nucleo-recibo"
+          echo "HARNESS_NUCLEO_OK casos=$casos piso=$HARNESS_OK_MINIMO" > "$RUNNER_TEMP/nucleo-recibo/harness.txt"
+
+      # `if-no-files-found: error`: parte verde sem recibo é contradição, e vira vermelho aqui.
+      - name: Recibo da parte → artefato da união
+        uses: actions/upload-artifact@v7
+        with:
+          name: nucleo-recibo-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/nucleo-recibo/
+          if-no-files-found: error
+          retention-days: 3
+
+  # A UNIÃO das partes (2026-10-01). A matriz do `provas-sql` agrega `success` quando as N partes
+  # saem verdes — inclusive a parte cujo step do núcleo foi PULADO (um `if:` novo, uma condição que
+  # mudou de tipo). Este job não sobe banco: baixa o recibo de cada parte e exige o CONJUNTO contra o
+  # manifesto (`db/roda-nucleo-ci.sh --uniao`; cada regra tem caso no db/falsifica-nucleo-ci.sh), e o
+  # recibo do harness da 1ª parte. `!cancelled()` em vez do default: com uma parte vermelha ele roda
+  # mesmo assim e diz o porquê — o default o pularia, e o `validate` só leria "skipped".
+  provas-sql-uniao:
+    needs: [provas-sql]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v5
+
+      # Antes de qualquer recibo: a matriz inteira terminou em success? Parte vermelha, cancelada no
+      # teto ou que nem começou deixa os recibos das OUTRAS — e eles não bastam.
+      - name: As partes terminaram em success?
+        env:
+          RESULTADO_PARTES: ${{ needs.provas-sql.result }}
+        run: |
+          if [ "$RESULTADO_PARTES" != success ]; then
+            echo "::error::provas-sql terminou '${RESULTADO_PARTES:-<vazio>}' — alguma parte não fechou (vermelha, estourou o teto ou não rodou); veja o job dela"
+            exit 1
+          fi
+          echo "PARTES_OK resultado=$RESULTADO_PARTES"
+
+      - name: Recibos das partes
+        uses: actions/download-artifact@v8
+        with:
+          pattern: nucleo-recibo-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/recibos
+
+      - name: União das partes — cada unidade do núcleo concluída exatamente uma vez?
+        run: |
+          set -euo pipefail
+          bash db/roda-nucleo-ci.sh --uniao "$RUNNER_TEMP/recibos"
+          # O dente do runner rodou na 1ª parte? Sem o recibo dele, "não reprovou" é ausência de dado.
+          h="$RUNNER_TEMP/recibos/harness.txt"
+          [ -f "$h" ] || { echo "::error::sem recibo do harness do núcleo (1ª parte): o dente do runner não rodou"; exit 1; }
+          linha="$(cat "$h")"
+          printf '%s' "$linha" | grep -qxE 'HARNESS_NUCLEO_OK casos=[0-9]+ piso=[0-9]+' \
+            || { echo "::error::recibo do harness malformado: $(printf '%s' "$linha" | head -c 200)"; exit 1; }
+          casos="$(printf '%s' "$linha" | sed -E 's/.* casos=([0-9]+) .*/\1/')"
+          piso="$(printf '%s' "$linha" | sed -E 's/.* piso=([0-9]+)$/\1/')"
+          [ "$casos" -ge "$piso" ] || { echo "::error::harness com $casos caso(s), abaixo do piso $piso"; exit 1; }
+          echo "$linha"
 
   validate:
     if: always()
-    needs: [typecheck, testes, edges-e-build, gates-e-falsificacao, provas-sql]
+    needs: [typecheck, testes, edges-e-build, gates-e-falsificacao, provas-sql, provas-sql-uniao]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     # issues:write p/ o alerta de main-vermelha (abaixo) abrir Issue.
@@ -1077,11 +1246,12 @@ jobs:
           RESULTADOS: ${{ toJSON(needs) }}
         run: |
           set -euo pipefail
-          esperados=5
-          total=0; falhou=0; viu_provas_sql=0
+          esperados=6
+          total=0; falhou=0; viu_provas_sql=0; viu_uniao=0
           while IFS="$(printf '\t')" read -r job resultado; do
             total=$((total + 1))
             [ "$job" = "provas-sql" ] && viu_provas_sql=1
+            [ "$job" = "provas-sql-uniao" ] && viu_uniao=1
             if [ "$resultado" = "success" ]; then
               echo "  ✅ $job: success"
             else
@@ -1103,6 +1273,12 @@ jobs:
           # outro job — manteria total=5 e o agregador seguiria dizendo ✅ com o SQL fora do merge.
           if [ "$viu_provas_sql" -ne 1 ]; then
             echo "::error::o job 'provas-sql' não está entre os $total lidos — as provas SQL saíram do caminho obrigatório."
+            exit 1
+          fi
+          # A mesma guarda para a UNIÃO das partes (2026-10-01): sem ela, tirar `provas-sql-uniao` do
+          # `needs` e baixar o `esperados` deixaria a parte que não rodou de novo invisível.
+          if [ "$viu_uniao" -ne 1 ]; then
+            echo "::error::o job 'provas-sql-uniao' não está entre os $total lidos — ninguém confere que as partes somaram o núcleo inteiro."
             exit 1
           fi
           if [ "$falhou" -ne 0 ]; then
@@ -1282,7 +1458,14 @@ jobs:
     # com os 44s do contrato novo; sem folga, todo PR seguinte perderia o sinal. Quem pesa é
     # `sonda-versao-sql.mut` (103 mutações, 7m26s ≈ metade do job). 25min volta a ~60% de uso; o
     # conserto de fundo é o fan-out por contrato, como o `validate` fez no #2346.
-    timeout-minutes: 25
+    # 2026-09-30: o teto virou a regra, não a exceção. 12 dos últimos 20 runs foram CANCELADOS, todos
+    # aos 25,2min (e 41 de 56 numa janela de 60 runs). Os contratos rodam em SÉRIE, e o carimbo de
+    # cada bloco `mutcheck:` do log marca o FIM do contrato: a duração é o delta entre blocos. No
+    # mesmo commit c85a19c92, um run fechou em 20,9min e o outro foi cancelado aos 25,2min. No runner
+    # lento cada contrato leva 1,6 a 1,8× mais (sonda-versao-sql 299→~510s; like-cru-em-migrations,
+    # #2653, 129→238s), e o job inteiro pede ~34min. 45min ≈ 75% no lento. O memo do `lerSql` corta a
+    # parte do like-cru. O conserto de fundo segue sendo o fan-out por contrato.
+    timeout-minutes: 45
     # issues:write p/ o sensor abaixo abrir/fechar a Issue `mutcheck-cobertura`; contents:read p/ checkout.
     permissions:
       contents: read

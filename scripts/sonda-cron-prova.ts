@@ -490,11 +490,18 @@ export function main(argv: string[], raiz = process.cwd()): number {
         ], { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
         const linhas = (r.stdout || '').trim().split('\n').filter((l) => l.startsWith('{'));
         if (linhas.length === 0) throw new Mecanica(`sintético ${nome}: runner sem veredito`);
-        const cls = classificarVeredito(JSON.parse(linhas[linhas.length - 1]), false);
-        const exata = classeExata.get(nome);
-        const esperado = exata ?? (devemPassar.has(nome) ? 'PASSA' : 'FALHA/INVERIFICAVEL');
-        const ok = exata ? cls === exata : (devemPassar.has(nome) ? cls === 'PASSA' : cls !== 'PASSA');
-        log(`  sintético ${nome}: ${cls} (esperado ${esperado}) ${ok ? '✅' : '❌'}`);
+        const v = JSON.parse(linhas[linhas.length - 1]) as Veredito;
+        const cls = classificarVeredito(v, false);
+        // Todo sintético DECLARA a classe exata. Até 2026-09-29 os seis defeituosos aceitavam
+        // "qualquer coisa ≠ PASSA": um sintético que o harness não conseguisse medir (INVERIFICAVEL)
+        // ou que deixasse de compilar contava como defeito PEGO — o "≠ verde" da classe
+        // docs/historico/falsificacao-exit-nao-e-dente.md. Medido: os seis dão FALHA.
+        const esperado: Classe = classeExata.get(nome) ?? (devemPassar.has(nome) ? 'PASSA' : 'FALHA');
+        // E a FALHA que conta é a do DEFEITO (efeito, fetch, divergência, ramo): o handler que LANÇA
+        // fica com status -1 e cai na faixa de status do classificador — crash não é detecção.
+        const lancou = esperado === 'FALHA' && [v.a, ...(v.b ?? [])].some((x) => x?.status === -1);
+        const ok = cls === esperado && !lancou;
+        log(`  sintético ${nome}: ${cls}${lancou ? ' (o handler LANÇOU: status -1)' : ''} (esperado ${esperado}) ${ok ? '✅' : '❌'}`);
         if (!ok) vermelhos++;
       }
       return vermelhos === 0 ? 0 : 1;

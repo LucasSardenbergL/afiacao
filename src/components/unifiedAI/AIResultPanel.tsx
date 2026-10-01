@@ -32,6 +32,10 @@ interface AIResultPanelProps {
   onConfirmItems: () => void;
   suggestions: AISuggestion[];
   onAcceptSuggestion: (suggestion: AISuggestion) => void;
+  /** Preço com que o item VAI nascer no carrinho (getProductPrice) — o único que o painel exibe. */
+  precoNascimentoPorId: (productId: string) => number | null;
+  /** Preço de partida não firme: sem número e ADD de PRODUTO bloqueado (mesmo gate da lista). */
+  precoLoading?: boolean;
 }
 
 export function AIResultPanel({
@@ -52,6 +56,8 @@ export function AIResultPanel({
   onConfirmItems,
   suggestions,
   onAcceptSuggestion,
+  precoNascimentoPorId,
+  precoLoading = false,
 }: AIResultPanelProps) {
   return (
     <div className="bg-primary/5 border border-primary/20 rounded-lg p-4 space-y-3">
@@ -82,7 +88,13 @@ export function AIResultPanel({
 
       {/* Products */}
       {identifiedProducts.length > 0 && (
-        <IdentifiedProductsList items={identifiedProducts} catalog={catalog} onRemove={onRemoveProduct} />
+        <IdentifiedProductsList
+          items={identifiedProducts}
+          catalog={catalog}
+          onRemove={onRemoveProduct}
+          precoNascimentoPorId={precoNascimentoPorId}
+          precoLoading={precoLoading}
+        />
       )}
 
       {/* Services */}
@@ -91,7 +103,14 @@ export function AIResultPanel({
       )}
 
       {(identifiedProducts.length > 0 || identifiedServices.length > 0) && hasCustomerSelected && (
-        <Button onClick={onConfirmItems} className="w-full" disabled={isLoading}>
+        <Button
+          onClick={onConfirmItems}
+          className="w-full"
+          // Produto não nasce antes do preço de partida firmar (mesmo gate do ADD da lista); serviço
+          // não depende dele.
+          disabled={isLoading || (precoLoading && identifiedProducts.length > 0)}
+          title={precoLoading && identifiedProducts.length > 0 ? 'Aguardando o preço de partida do cliente…' : undefined}
+        >
           <Check className="w-4 h-4 mr-2" />
           Adicionar {identifiedProducts.length + identifiedServices.length} item(ns) ao Pedido
         </Button>
@@ -117,6 +136,8 @@ export function AIResultPanel({
           userTools={userTools}
           hasCustomerSelected={hasCustomerSelected}
           onAccept={onAcceptSuggestion}
+          precoNascimentoPorId={precoNascimentoPorId}
+          precoLoading={precoLoading}
         />
       )}
     </div>

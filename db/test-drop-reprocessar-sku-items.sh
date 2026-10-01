@@ -24,6 +24,7 @@ PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
 PORT="${PGPORT_TEST:-5471}"
 SLUG="drop-reproc-sku"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
+RODADA="$(dirname "$DATA")"   # dir ÚNICO desta rodada (o trap apaga): temporário mora aqui, nunca em /tmp/<nome-fixo>
 export LC_ALL=C LANG=C
 
 [ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER} pgvector"; exit 1; }
@@ -39,7 +40,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }
 
 PASS=0; FAIL=0
@@ -157,7 +158,7 @@ SQL
 
 # ── a FUNÇÃO SOB CARACTERIZAÇÃO: corpo VERBATIM da prod (pg_get_functiondef, 2026-07-16) ──
 # Guardada em arquivo porque as falsificações a recriam CONSERTADA e depois restauram esta.
-FUNC_REAL="$(mktemp "/tmp/func-real-${SLUG}.XXXXXX.sql")"
+FUNC_REAL="$(mktemp "$RODADA/func-real-${SLUG}.XXXXXX")"
 cat > "$FUNC_REAL" <<'SQL'
 CREATE OR REPLACE FUNCTION public.reprocessar_sku_items_via_raw_data(p_empresa text)
  RETURNS TABLE(etapa text, valor bigint)
@@ -274,7 +275,7 @@ P -q -f "$FUNC_REAL"
 # ══════════════════════════════════════════════════════════════════════════════
 # SEED — o cenário de prod em miniatura. Re-semeável (cada falsificação re-semeia).
 # ══════════════════════════════════════════════════════════════════════════════
-SEED="$(mktemp "/tmp/seed-${SLUG}.XXXXXX.sql")"
+SEED="$(mktemp "$RODADA/seed-${SLUG}.XXXXXX")"
 cat > "$SEED" <<'SQL'
 TRUNCATE public.sku_leadtime_history, public.purchase_orders_tracking CASCADE;
 
@@ -503,7 +504,7 @@ P -q -c "DROP FUNCTION IF EXISTS public.reprocessar_sku_items_via_raw_data(text,
 echo
 echo "═══ FASE D — falsificação do C2 ═══"
 P -q -f "$FUNC_REAL"   # ressuscita a função
-NOOP="$(mktemp "/tmp/noop-${SLUG}.XXXXXX.sql")"
+NOOP="$(mktemp "$RODADA/noop-${SLUG}.XXXXXX")"
 echo "COMMENT ON FUNCTION public.reprocessar_sku_items_via_raw_data(text) IS 'migration sabotada: nao dropa';" > "$NOOP"
 P -q -f "$NOOP"
 F1="$(Pq -c "SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname='reprocessar_sku_items_via_raw_data';")"

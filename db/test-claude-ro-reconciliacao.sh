@@ -35,7 +35,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }   # tuples-only, unaligned (pra capturar 1 valor)
 
 # ── base mínima do Supabase: roles, schema auth, auth.uid()/role() via GUC (impersonação de RLS) ──
@@ -112,9 +112,9 @@ REVOKE ALL ON SCHEMA vault FROM PUBLIC;
 RESET ROLE;
 SQL
 
-CRO() { "$PGBIN/psql" -p "$PORT" -h /tmp -U claude_ro -d prove -tA "$@"; }
+CRO() { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U claude_ro -d prove -tA "$@"; }
 CRO_STATE() {
-  "$PGBIN/psql" -p "$PORT" -h /tmp -U claude_ro -d prove -tA \
+  "$PGBIN/psql" -X -p "$PORT" -h /tmp -U claude_ro -d prove -tA \
     -c "$1" -c "\\echo SQLSTATE=:LAST_ERROR_SQLSTATE" 2>/dev/null \
     | grep '^SQLSTATE=' | tail -1 | cut -d= -f2
 }

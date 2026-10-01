@@ -286,3 +286,16 @@ PEGA      | canaria: fallback do 401 deixa de ser INDETERMINADO (fail-open) | s/
 # com a CLI QUEBRADA emitindo zero bytes. Quem pega isto e a igualdade byte-a-byte, nao o PG17.
 # Desenho e sabotagem sao do parecer Codex de 2026-09-09.
 PEGA      | canaria: default da janela 20->21 SO na CLI (fixture segue 20) | s/validarJanela\(janelaMin\)/validarJanela(janelaMin ?? 21)/
+
+# O passo seguinte volta pelas DUAS vias (2026-09-27): a CÉLULA no SQL Editor e um NOTICE com o mesmo
+# texto no log do db:aplicar — o EXECUTE do aplicar_sql() descarta a célula, e duas sessões seguiram o
+# cabeçalho antigo até um log vazio (#2578, #2593). Estas guardam o que o operador LÊ e a forma que a
+# prova PG17 executa (db/test-sonda-passo-pelo-db-aplicar.sh); que o NOTICE CHEGA ao log só ela mede.
+PEGA      | cabeçalho volta a dizer célula pelo log         | s/O passo \$\{passoLeitura\} vem por NOTICE/O passo \${passoLeitura} vem na célula/
+PEGA      | cabeçalho perde o comando de extração           | s/\$\{comandoDeExtracao\(passoLeitura\)\}/\${awkDoPasso(passoLeitura)}/
+PEGA      | aviso do --ensaio perde o AGUARDE para sempre   | s/fica em AGUARDE para sempre/fica em AGUARDE/
+PEGA      | função devolve OUTRO texto que o do NOTICE      | s/  RETURN p_texto;/  RETURN left(p_texto, 200);/
+PEGA      | NOTICE rebaixado a DEBUG (não sai da sessão)    | s/RAISE NOTICE '%'/RAISE DEBUG '%'/
+PEGA      | declaração com outro nome (a chamada fica órfã) | s/CREATE OR REPLACE FUNCTION \$\{FUNCAO_DO_NOTICE\}\(/CREATE OR REPLACE FUNCTION pg_temp.outra(/
+PEGA      | INICIO sem âncora (CONTEXT ecoado reabre)       | s/\/\$\{inicio\}\$\/\{/\/\${inicio}\/{/
+PEGA      | ok não zera ao reabrir (END imprime a metade)   | s/\{f=1;b="";ok=0\}/{f=1;b=""}/

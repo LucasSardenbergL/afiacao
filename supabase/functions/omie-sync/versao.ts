@@ -23,8 +23,11 @@ import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
 /** Resposta da sonda desta edge, com a identidade embutida (ver `criarRespostaSonda`). */
 export const respostaSonda = criarRespostaSonda("omie-sync");
 
+// v1.1 (2026-10-01) — o dia de SP no vencimento das parcelas da OS (`./parcelas-os.ts`, classe ii do fuso,
+// fase 3): o `getDate()` do servidor UTC fazia a OS criada das 21:00 às 23:59 BRT vencer tudo um dia
+// adiante (a à vista, amanhã). Prazos e percentuais iguais; nenhuma pré-condição de banco.
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.0-sensor-inicial";
+export const VERSAO = "v1.1-hoje-sp-parcelas-os";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

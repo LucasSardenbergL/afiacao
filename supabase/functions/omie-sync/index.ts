@@ -1,6 +1,7 @@
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { classificarFaultstring, redigirSegredo } from "../_shared/omie-falha.ts";
+import { montarParcelasOS } from "./parcelas-os.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 // Resend usado via fetch direto à REST API (https://api.resend.com/emails) para evitar dep npm
 
@@ -499,40 +500,10 @@ async function criarOrdemServicoOmie(
 
   // Calcular parcelas com base no método de pagamento
   const paymentMethod = order.payment_method || 'a_vista';
-  
-  const buildParcelas = (method: string): { parcelas: Array<Record<string, unknown>>; nQtdeParc: number } => {
-    const hoje = new Date();
-    const formatDate = (d: Date) => `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
-    const addDays = (d: Date, days: number) => { const r = new Date(d); r.setDate(r.getDate() + days); return r; };
-    
-    const configs: Record<string, number[]> = {
-      'a_vista': [0],
-      '30dd': [30],
-      '30_60dd': [30, 60],
-      '30_60_90dd': [30, 60, 90],
-      '28dd': [28],
-      '28_56dd': [28, 56],
-      '28_56_84dd': [28, 56, 84],
-    };
-    
-    const dias = configs[method] || [0];
-    const percentual = Math.round((100 / dias.length) * 100) / 100;
-    
-    return {
-      nQtdeParc: dias.length,
-      parcelas: dias.map((d, i) => {
-        const parc: Record<string, unknown> = {
-          nParcela: i + 1,
-          dDtVenc: formatDate(addDays(hoje, d)),
-          nPercentual: i === dias.length - 1 ? Math.round((100 - percentual * (dias.length - 1)) * 100) / 100 : percentual,
-        };
-        // Omie exige nValor > 0 se presente; omitir quando total é 0 (preço ainda não definido)
-        return parc;
-      }),
-    };
-  };
-  
-  const { parcelas, nQtdeParc } = buildParcelas(paymentMethod);
+
+  // Vencimentos a partir de HOJE em SP (`./parcelas-os.ts`): o `getDate()` do servidor UTC fazia a OS
+  // criada às 21h+ BRT vencer tudo um dia adiante (a à vista, amanhã).
+  const { parcelas, nQtdeParc } = montarParcelasOS(paymentMethod, new Date());
   console.log(`[Omie] Pagamento: ${paymentMethod}, ${nQtdeParc} parcela(s)`);
 
   // Montar cabeçalho com vendedor se existir

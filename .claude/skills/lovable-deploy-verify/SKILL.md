@@ -141,6 +141,11 @@ bun scripts/pendencias-pacote.ts - < "$PEND"               # gate de ordem: banc
 #   (projeto `steu`, 8f005805-000a-42b7-88a1-9683f785fab6)
 ```
 
+☁️ **Na NUVEM** (sem `psql-ro`), os dois CLIs leem prod pelo transporte do conector Lovable, em duas
+rodadas cada: `--sql-nuvem` imprime o SQL, o `query_database` o roda VERBATIM, `--dados-nuvem=<resposta>`
+julga — mesmo veredito, mesmos exits (`docs/agent/deploy.md` §"Conferência de prod pela NUVEM"). Sem o
+conector, peça ao founder para conectá-lo; não chipe para uma sessão local.
+
 O gerador já resolve o closure ∪ {mapa} lendo de `origin/main` (**nunca** do working tree — #2123), já
 emite UMA colagem por ONDA — a leva inteira quando não há ordem declarada entre edges — e já carrega o
 `sha256` de cada arquivo com a ordem de conferir ANTES de deployar (#2362). **`pacote` em exit 4 = onda
@@ -152,6 +157,11 @@ em exit 0 na medição seguinte.
 ⚠️ **`pacote` em exit 3 = BLOQUEADO**: a DDL de que a edge depende não está em prod. Não contorne
 mandando a colagem assim mesmo — aplicar migration continua sendo do founder (SQL Editor), e é ESSE
 o caso em que a pendência vira chip.
+
+⚠️ **`pacote`/`prompt` em exit 5 = RECUSADO**: o mapa de fingerprints da `origin/main` não descreve a
+fonte dela (commit do bot que editou corpo sem regravar o mapa, #2611). Não cole nada e não rode o
+`--write` só para destravar: leia o que o commit mudou (`git log` que a mensagem imprime) e abra o PR
+de revert (edição não pedida) ou de mapa regravado (legítima). → `docs/agent/deploy.md`, exit 5.
 
 O resto deste passo é o que o gerador faz por dentro — leia quando precisar auditá-lo, ou quando a
 edge estiver fora do que ele cobre. Ele decide o **conteúdo** do prompt; ele NÃO decide *se* a edge
@@ -639,7 +649,7 @@ Passo 4b** — o maior sinal sem o founder continua sendo este, pelos bytes.
        `fin-valor-cockpit` (738 linhas) se provou BARATA: zero `.upsert/.insert/.update/.rpc`, os
        três `fetch` são GETs de `/auth/v1/user` + `user_roles` + `commercial_roles`, e o único
        `.delete(` é
-       `supabase/functions/fin-valor-cockpit/index.ts:609`<!--cita: custoBaixaConfianca.delete(-->,
+       `supabase/functions/fin-valor-cockpit/index.ts:611`<!--cita: custoBaixaConfianca.delete(-->,
        um `Set` de JS. Pior caso de sondá-la com bundle pré-sensor: **computar e devolver** — NULO.
     2. **Se escreve: o efeito é REVERSÍVEL, e qual o ALCANCE?** "Cara" não é binário, e o que a trava
        compra varia em ordens de grandeza. `carteira-positivacao-snapshot` faz **UM upsert

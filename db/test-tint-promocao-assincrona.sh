@@ -26,10 +26,10 @@
 # Falsificações (F*) na MESMA invocação do controle verde: cada sabotagem exige o CONJUNTO EXATO
 # de asserts vermelhos. Controle não-verde aborta antes da 1ª sabotagem.
 #
-# ⚠️ FORA do núcleo de CI (db/nucleo-ci.txt) — esta prova roda LOCAL: carrega o schema-snapshot
-#    inteiro, que exige pgvector (`public.vector(1536)`), e o job `provas-sql` instala só
-#    `postgresql-17`. Entrar no núcleo = instalar o pgvector no job e caber no teto de 12 min
-#    (aqui: controle ~35s; --falsificar 3–7 min por locale).
+# No núcleo de CI (db/nucleo-ci.txt) desde 2026-09-27, nos DOIS modos: carrega o schema-snapshot
+#    inteiro, que exige pgvector (`public.vector(1536)`), e o job `provas-sql` instala o pgvector
+#    junto com o `postgresql-17`. Medido no runner (2 rodadas): controle 9–11s; --falsificar 71–86s
+#    (C e pt_BR.UTF-8, 12/12 nos dois). No laptop em swap: controle ~35s; --falsificar 3–7 min.
 # Uso (o contrato do núcleo — db/roda-nucleo-ci.sh — já é seguido, para entrar sem reescrever):
 #   db/test-tint-promocao-assincrona.sh               → controle; imprime `PASS=<n>  FAIL=<m>`
 #   db/test-tint-promocao-assincrona.sh --falsificar  → controle + sabotagens NA MESMA invocação;
@@ -67,7 +67,7 @@ trap cleanup EXIT
 # inteiro no WAL, e com a máquina em swap a suíte passava de 1h. Não muda NADA do que é provado.
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k $SOCK -c lc_messages=$LOC -c fsync=off -c full_page_writes=off -c synchronous_commit=off" \
   -l "$TMP/pg.log" -w start >/dev/null
-PA() { "$PGBIN/psql" -p "$PORT" -h "$SOCK" -U postgres -X -v ON_ERROR_STOP=1 "$@"; }
+PA() { "$PGBIN/psql" -X -p "$PORT" -h "$SOCK" -U postgres -v ON_ERROR_STOP=1 "$@"; }
 echo "PG: $("$PGBIN/postgres" --version) · locale=$LOC"
 
 # ── X1: premissa (ANTES de tudo) ─────────────────────────────────────────────────────────────

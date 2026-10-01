@@ -95,15 +95,15 @@ echo "── setup: PG${PGVER} em :$PORT · locale do shell LC_ALL=$LC_ALL ─�
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "$TMPD/pg.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 -q "$@"; }
-PT() { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 -tA "$@"; }
+P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 -q "$@"; }
+PT() { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 -tA "$@"; }
 
 # Wrapper que o audit invoca como se fosse o psql-ro de prod. Ecoa `SET` de propósito: o psqlrc do
 # psql-ro real ecoa, e o parser precisa sobreviver a linhas que não são dado.
 cat > "$WRAP" <<WRAPEOF
 #!/usr/bin/env bash
 echo "SET"
-exec "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove "\$@"
+exec "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove "\$@"
 WRAPEOF
 chmod +x "$WRAP"
 

@@ -18,7 +18,7 @@ cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true
 trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l /tmp/pg-promohard.log -w start >/dev/null
-PSQL=("$PGBIN/psql" -h /tmp -p "$PORT" -U postgres -d postgres -v ON_ERROR_STOP=1 -q)
+PSQL=("$PGBIN/psql" -X -h /tmp -p "$PORT" -U postgres -d postgres -v ON_ERROR_STOP=1 -q)
 
 # ── Stubs (colunas novas: view tem campanha_id/qtde_base/fornecedor_nome; item tem ajustado_humano; sugerido tem tipo_ciclo) ──
 "${PSQL[@]}" <<'SQL'
@@ -110,25 +110,25 @@ DECLARE r record; ret record;
 BEGIN
   SELECT * INTO ret FROM rA;
   -- retorno agregado: 1 flat + 1 forward; pedidos_afetados=1 (so o normal, NAO o de oportunidade); economia=5+200=205
-  IF ret.itens_flat_aplicados <> 1 OR ret.itens_forward_buying_aplicados <> 1
-     OR ret.pedidos_afetados <> 1 OR ret.economia_total_estimada <> 205 THEN
+  IF ret.itens_flat_aplicados IS DISTINCT FROM 1 OR ret.itens_forward_buying_aplicados IS DISTINCT FROM 1
+     OR ret.pedidos_afetados IS DISTINCT FROM 1 OR ret.economia_total_estimada IS DISTINCT FROM 205 THEN
     RAISE EXCEPTION 'A retorno errado: flat=% fb=% ped=% econ=% (esperado 1/1/1/205)',
       ret.itens_flat_aplicados, ret.itens_forward_buying_aplicados, ret.pedidos_afetados, ret.economia_total_estimada; END IF;
   -- happy flat (sku111): preco 10->9, valor_linha 45, economia 5
   SELECT * INTO r FROM pedido_compra_item WHERE id=1;
-  IF r.modo_promocao<>'flat' OR r.preco_unitario<>9 OR r.valor_linha<>45 OR r.economia_estimada_valor<>5 THEN
+  IF r.modo_promocao IS DISTINCT FROM 'flat' OR r.preco_unitario IS DISTINCT FROM 9 OR r.valor_linha IS DISTINCT FROM 45 OR r.economia_estimada_valor IS DISTINCT FROM 5 THEN
     RAISE EXCEPTION 'happy flat falhou: % p% vl% e%', r.modo_promocao,r.preco_unitario,r.valor_linha,r.economia_estimada_valor; END IF;
   -- H6 forward nao-rebaixa (sku222): GREATEST(100,200)=200; preco 19; valor_linha 200*19=3800; economia 200*20*5/100=200
   SELECT * INTO r FROM pedido_compra_item WHERE id=2;
-  IF r.modo_promocao<>'forward_buying' OR r.qtde_final<>200 OR r.qtde_sem_promocao<>200
-     OR r.preco_unitario<>19 OR r.valor_linha<>3800 OR r.economia_estimada_valor<>200 THEN
+  IF r.modo_promocao IS DISTINCT FROM 'forward_buying' OR r.qtde_final IS DISTINCT FROM 200 OR r.qtde_sem_promocao IS DISTINCT FROM 200
+     OR r.preco_unitario IS DISTINCT FROM 19 OR r.valor_linha IS DISTINCT FROM 3800 OR r.economia_estimada_valor IS DISTINCT FROM 200 THEN
     RAISE EXCEPTION 'H6 forward errado: qtde=% sem_promo=% preco=% vl=% e=%',
       r.qtde_final,r.qtde_sem_promocao,r.preco_unitario,r.valor_linha,r.economia_estimada_valor; END IF;
   -- pedido 1 (normal): valor_total recalculado = 45 + 3800 = 3845
-  IF (SELECT valor_total FROM pedido_compra_sugerido WHERE id=1) <> 3845 THEN
+  IF (SELECT valor_total FROM pedido_compra_sugerido WHERE id=1) IS DISTINCT FROM 3845 THEN
     RAISE EXCEPTION 'pedido1 valor_total errado: %', (SELECT valor_total FROM pedido_compra_sugerido WHERE id=1); END IF;
   -- P2#1 oportunidade (pedido 90): valor_total NAO recalculado (continua 777)
-  IF (SELECT valor_total FROM pedido_compra_sugerido WHERE id=90) <> 777 THEN
+  IF (SELECT valor_total FROM pedido_compra_sugerido WHERE id=90) IS DISTINCT FROM 777 THEN
     RAISE EXCEPTION 'P2#1 oportunidade tocada: valor_total=%', (SELECT valor_total FROM pedido_compra_sugerido WHERE id=90); END IF;
   -- H1/H4/H5/H7(qtde_base)/H3 + H7b(qtde 0, item 11): NAO aplicados
   PERFORM 1 FROM pedido_compra_item WHERE id IN (3,4,5,6,7,11) AND modo_promocao IS NOT NULL;
@@ -142,10 +142,10 @@ DO $$
 DECLARE r record; ret record;
 BEGIN
   SELECT * INTO ret FROM rB;
-  IF ret.itens_flat_aplicados <> 1 THEN RAISE EXCEPTION 'B retorno errado: flat=% (esperado 1)', ret.itens_flat_aplicados; END IF;
+  IF ret.itens_flat_aplicados IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'B retorno errado: flat=% (esperado 1)', ret.itens_flat_aplicados; END IF;
   -- controle: sku888 aplica (vigente em CT-5)
   SELECT * INTO r FROM pedido_compra_item WHERE id=9;
-  IF r.modo_promocao<>'flat' THEN RAISE EXCEPTION 'controle B falhou: sku888 deveria aplicar'; END IF;
+  IF r.modo_promocao IS DISTINCT FROM 'flat' THEN RAISE EXCEPTION 'controle B falhou: sku888 deveria aplicar'; END IF;
   -- H2: sku777 NAO aplica (campanha CT-2 nao vigia em CT-5)
   SELECT * INTO r FROM pedido_compra_item WHERE id=8;
   IF r.modo_promocao IS NOT NULL THEN RAISE EXCEPTION 'H2 vigencia falhou: sku777 aplicou fora da vigencia'; END IF;
@@ -158,10 +158,10 @@ DO $$
 DECLARE r record; ret record;
 BEGIN
   SELECT * INTO ret FROM rA2;
-  IF ret.itens_flat_aplicados<>0 OR ret.itens_forward_buying_aplicados<>0 THEN
+  IF ret.itens_flat_aplicados IS DISTINCT FROM 0 OR ret.itens_forward_buying_aplicados IS DISTINCT FROM 0 THEN
     RAISE EXCEPTION 'idempotencia falhou: flat=% fb=%', ret.itens_flat_aplicados, ret.itens_forward_buying_aplicados; END IF;
   SELECT * INTO r FROM pedido_compra_item WHERE id=1;
-  IF r.preco_unitario<>9 THEN RAISE EXCEPTION 'idempotencia: sku111 re-descontado -> %', r.preco_unitario; END IF;
+  IF r.preco_unitario IS DISTINCT FROM 9 THEN RAISE EXCEPTION 'idempotencia: sku111 re-descontado -> %', r.preco_unitario; END IF;
   RAISE NOTICE 'IDEMPOTENCIA OK';
 END $$;
 SQL

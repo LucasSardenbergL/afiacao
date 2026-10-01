@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { removerComentarios } from '@/lib/gates/limpeza-fonte';
+import { maiorBlocoDescartado, removerComentarios } from '@/lib/gates/limpeza-fonte';
 import { vereditoFronteira } from '@/lib/gates/retorno-consumido';
 
 // repo root: src/__tests__ → src → repo (2 níveis).
@@ -26,21 +26,6 @@ const count = (hay: string, needle: string) => hay.split(needle).length - 1;
 
 const ANALYZE = 'supabase/functions/analyze-unified-order/index.ts';
 const AUDIT = 'supabase/functions/algorithm-a-audit/index.ts';
-const HELPER = 'src/lib/pricing/mergeCustomerPrices.ts';
-
-// Extrai o bloco espelhado entre os marcadores-COMENTÁRIO `// MIRROR-START`/`// MIRROR-END` e
-// normaliza (remove `export `, comentários e whitespace) para comparar o helper de src/ × a cópia
-// no edge. O `// ` ancora no comentário-marcador real (a prosa de JSDoc menciona o token sem `//`).
-function mirrorBlock(s: string): string {
-  const m = s.match(/\/\/ MIRROR-START[^\n]*\n([\s\S]*?)\n[^\n]*\/\/ MIRROR-END/);
-  if (!m) throw new Error('bloco // MIRROR-START.../END não encontrado');
-  return m[1]
-    .replace(/\bexport\s+/g, '')
-    .split('\n')
-    .map((l) => l.trim())
-    .filter((l) => l.length > 0 && !l.startsWith('//'))
-    .join('\n');
-}
 
 // Recortes do edge de vendas para vigiar o WIRING da criação de PV (e não só a presença de tokens):
 // o corpo do `case "criar_pedido"` (até o próximo `case` na mesma indentação) e a função de derivação
@@ -76,59 +61,275 @@ function mirrorBlockNamed(s: string, label: string): string {
     .join('\n');
 }
 
-// O merge de preço (order_items vence, Omie só preenche gap) foi extraído para um helper puro
-// (src/lib/pricing/mergeCustomerPrices.ts, testado por vitest) e ESPELHADO verbatim no edge,
-// porque o Deno do edge não importa de src/. Estes testes provam que o edge USA o helper (não
-// só que tem os gates) e que a cópia NÃO divergiu — a canária {canary:true} fecha o ciclo
-// provando o comportamento DEPLOYADO. Ver docs/agent/money-path.md (§ "Helper espelhado").
-describe('guardrail money-path: analyze-unified-order USA o helper de merge de preço', () => {
+// A IA NÃO PRECIFICA (2026-09-30). Até a v1.3 a edge enriquecia products/suggestions com o "último
+// praticado" (order_items cru + ListarPedidos do Omie + merge espelhado de src/) e o carrinho aplicava
+// esse `unit_price` VERBATIM — um 2º decisor de preço, divergente do `precoPartida` (medido em prod:
+// até 2.571 pares em que a edge mandava a TABELA onde o manual aplicaria o praticado ≤180d; 16.840 em
+// que mandava praticado velho onde o manual aplicaria a tabela). Agora a edge só IDENTIFICA, a resposta
+// sai por lista fechada (`montarRespostaAnalise`) e o item nasce pela MESMA `nascerItemProduto` da lista.
+// Estes pins são TEXTUAIS porque a edge roda no Lovable Cloud (fora do vitest), e o deploy pelo chat já
+// reverteu esta edge 1× (08431871); a canária {canary:true} fecha o ciclo provando o bundle SERVIDO.
+const SAIDA_IA = 'supabase/functions/analyze-unified-order/saida-ia.ts';
+const TIPOS_IA_FRONT = 'src/components/unifiedAI/types.ts';
+const USE_UNIFIED_ORDER = 'src/hooks/useUnifiedOrder.ts';
+const USE_CART = 'src/hooks/unifiedOrder/useCart.ts';
+
+// Campos declarados numa `export interface X { … }` (1º nível do bloco).
+function camposDaInterface(fonte: string, nome: string): string[] {
+  const m = fonte.match(new RegExp(`export interface ${nome} \\{([\\s\\S]*?)\\n\\}`));
+  if (!m) throw new Error(`interface ${nome} não encontrada`);
+  return [...m[1].matchAll(/^\s{2}(\w+)\??:/gm)].map((x) => x[1]).sort();
+}
+// Strings de um `export const X = [ … ] as const`.
+function camposDaLista(fonte: string, nome: string): string[] {
+  const m = fonte.match(new RegExp(`export const ${nome} = \\[([\\s\\S]*?)\\] as const`));
+  if (!m) throw new Error(`lista ${nome} não encontrada`);
+  return [...m[1].matchAll(/"(\w+)"/g)].map((x) => x[1]).sort();
+}
+
+describe('guardrail money-path: analyze-unified-order NÃO precifica (a IA só identifica)', () => {
   const src = read(ANALYZE);
-  const helper = read(HELPER);
+  const codigo = removerComentarios(src);
+  const saida = read(SAIDA_IA);
 
-  it('sentinela: leu os arquivos reais (edge + helper)', () => {
-    expect(src).toContain('priceMap');
-    expect(src).toContain('mergeCustomerPrices');
-    expect(helper).toContain('mergeCustomerPrices');
+  it('sentinela: leu os arquivos reais (edge + fronteira de saída)', () => {
+    expect(src).toContain('montarRespostaAnalise');
+    expect(saida).toContain('export function montarRespostaAnalise');
   });
 
-  it('o helper puro existe e exporta mergeCustomerPrices + isValidUnitPrice', () => {
-    expect(helper).toMatch(/export function mergeCustomerPrices/);
-    expect(helper).toMatch(/export function isValidUnitPrice/);
+  it('a edge não PRODUZ, LÊ nem BUSCA preço: sem unit_price, merge, priceMap nem ListarPedidos no código', () => {
+    // Medido SEM comentários: a prosa que explica a remoção cita esses nomes de propósito.
+    for (const proibido of ['unit_price', 'mergeCustomerPrices', 'priceMap', 'ListarPedidos', 'localPrices']) {
+      expect(codigo, `REGRESSÃO: \`${proibido}\` voltou ao código da analyze-unified-order — a edge volta a ser um 2º decisor de preço`).not.toContain(proibido);
+    }
   });
 
-  it('o edge USA o helper: define o espelho E o chama (não só define)', () => {
-    expect(src, 'edge não define mais o helper espelhado').toMatch(/function mergeCustomerPrices/);
-    expect(src, 'REGRESSÃO: edge não chama mais mergeCustomerPrices — voltou à lógica inline?')
-      .toMatch(/priceMap\s*=\s*mergeCustomerPrices\(/);
-    expect(
-      count(src, 'mergeCustomerPrices'),
-      'helper deve ser DEFINIDO e CHAMADO (≥2 menções)',
-    ).toBeGreaterThanOrEqual(2);
+  it('o prompt não dá preço ao modelo: a lista de produtos não tem `Preço:` (o LLM ecoava a TABELA)', () => {
+    expect(codigo, 'a linha de produto do prompt voltou a levar `Preço:`').not.toMatch(/Preço:\$\{/);
   });
 
-  it('PARIDADE: o bloco espelhado no edge é IDÊNTICO ao helper de src/ (pega reversão do Lovable)', () => {
-    expect(
-      mirrorBlock(src),
-      'edge divergiu do helper de src/ — o Lovable reescreveu o merge no deploy?',
-    ).toBe(mirrorBlock(helper));
+  it('a resposta do fluxo real CONSOME a fronteira de saída (não basta definir/importar)', () => {
+    expect(vereditoFronteira(codigo, 'montarRespostaAnalise')).toBe('ok');
+    expect(codigo, 'a Response do fluxo real não serializa o retorno da fronteira').toMatch(
+      /const corpoResposta = montarRespostaAnalise\(\{[\s\S]*?\}\);\s*return new Response\(JSON\.stringify\(corpoResposta\)/,
+    );
   });
 
-  it('Omie é FALLBACK, não override: o helper preserva o gate de gap `!(… in priceMap)`', () => {
-    expect(
-      mirrorBlock(helper),
-      'sumiu o gate de gap — Omie voltaria a sobrescrever order_items (override)',
-    ).toMatch(/!\(\s*\w+\s+in\s+priceMap\s*\)/);
-    expect(src).not.toContain('// Omie overrides local');
+  it('nenhum JSON de resposta monta `products:` À MÃO com conteúdo (só pela fronteira) — um literal cru reabriria o preço', () => {
+    // `products: []` é legítimo: a resposta 400 de "nenhuma foto legível" não tem item, logo não tem preço.
+    // O `\s*` vai DENTRO do lookahead: fora dele o backtracking encolhe o espaço e `products: []` casa.
+    const CRU = /JSON\.stringify\(\{[^)]*\bproducts\s*:(?!\s*\[\s*\])/;
+    expect(codigo).not.toMatch(CRU);
+    // CALIBRAÇÃO: a forma velha da resposta do fluxo real CASA, e a vazia legítima não.
+    expect('return new Response(JSON.stringify({\n      products: validProducts,\n').toMatch(CRU);
+    expect('return new Response(JSON.stringify({\n          products: [], services: [],').not.toMatch(CRU);
   });
 
-  it('NÃO lê sales_price_history no price path (lê order_items, fonte de verdade)', () => {
+  it('CONTRATO edge×front: as listas fechadas de saída batem campo a campo com os tipos que o front lê', () => {
+    // Nos dois sentidos: o front ganhar `unit_price` de volta (ou qualquer campo) sem a edge mandá-lo
+    // fica vermelho aqui — e a lista da edge ganhar um campo que o front não declara também.
+    const front = read(TIPOS_IA_FRONT);
+    expect(camposDaLista(saida, 'CAMPOS_SAIDA_PRODUTO')).toEqual(camposDaInterface(front, 'AIProduct'));
+    expect(camposDaLista(saida, 'CAMPOS_SAIDA_SERVICO')).toEqual(camposDaInterface(front, 'AIService'));
+    expect(camposDaLista(saida, 'CAMPOS_SAIDA_SUGESTAO')).toEqual(camposDaInterface(front, 'AISuggestion'));
+    for (const nome of ['AIProduct', 'AISuggestion']) {
+      expect(camposDaInterface(front, nome), `o tipo ${nome} do front voltou a ter preço`).not.toContain('unit_price');
+    }
+  });
+
+  it('o item da IA NASCE pela MESMA função da lista do catálogo (um decisor de preço só)', () => {
+    const uuo = removerComentarios(read(USE_UNIFIED_ORDER));
+    const bloco = uuo.match(/const handleUnifiedAIResult = useCallback\(([\s\S]*?)\n {2}\}, \[/)?.[1] ?? '';
+    expect(bloco, 'âncora: não achei o handleUnifiedAIResult').not.toBe('');
+    expect(bloco, 'o handler voltou a ler um preço da IA').not.toMatch(/unit_price|aiPrice|usouTabela/);
+    expect(vereditoFronteira(bloco, 'nascerItemProduto')).toBe('ok');
+    expect(vereditoFronteira(removerComentarios(read(USE_CART)), 'nascerItemProduto')).toBe('ok');
+  });
+
+  it('NÃO lê sales_price_history (a sph poluída pelo writer legado)', () => {
     expect(src).not.toContain('from("sales_price_history")');
     expect(src).not.toContain("from('sales_price_history')");
   });
+});
 
-  it('canária comportamental {canary:true} prova o merge DEPLOYADO (123 local vence 999 Omie)', () => {
-    expect(src, 'canária {canary:true} ausente — sem prova do comportamento deployado').toContain('canary');
-    expect(src, 'canária sem o valor esperado 123 — não prova local-vence-Omie').toMatch(/expected[^0-9]*123/);
+// ── Sanitizador do `.or()` do PostgREST: TODO espelho é IDÊNTICO à fonte (classe B1) ──
+// `sanitizeForPostgrestOr`/`isSearchablePostgrestTerm` moram em src/lib/postgrest.ts, mas quem não resolve
+// `@/` — as edges Deno e o tool MCP que o @lovable.dev/mcp-js bundla para Deno — carrega CÓPIA. O B1 da
+// varredura semgrep de 2026-09-27 foi a deriva de UMA cópia: o #1051 pôs o `*` (alias de `%` em like/ilike)
+// só na fonte, e a analyze-unified-order seguiu montando `name.ilike.%***%` = match-all em `profiles`.
+// Paridade de um espelho só não fecha a classe: a cópia seguinte nasce fora dela. Por isso a DESCOBERTA —
+// todo literal de regex com os dois curingas do LIKE na mesma classe (`%` e `_`), em código de src/ ou de
+// edge, é a fonte ou mora num bloco `postgrest-or`, e todo bloco desses é comparado com o da fonte. O
+// bundle GERADO perde os comentários no esbuild (os marcadores somem): ali se confere o literal da regex,
+// que pega o bundle velho (a fonte mudou e ninguém regenerou). Prefixo ASCII `B1-*` nas mensagens: é por
+// ele que a falsificação casa o vermelho do assert certo, e não um exit≠0 qualquer.
+describe('guardrail (classe B1): sanitizador .or() do PostgREST — todo espelho IDÊNTICO a src/lib/postgrest.ts', () => {
+  const FONTE = 'src/lib/postgrest.ts';
+  const MCP_TOOL = 'src/lib/mcp/tools/search-customers.ts';
+  const MCP_BUNDLE = 'supabase/functions/mcp/index.ts';
+  const BANNER_GERADO = '// AUTO-GENERATED by @lovable.dev/mcp-js';
+  // Literal de regex cuja classe tem `%` E `_`, com grupo e quantificador opcionais (`/([%_])+/g`).
+  // Calibrada na varredura de 2026-09-27 (6 ocorrências): casa o site pré-fix (`/[%_,()\\"]/g`), os
+  // espelhos em dia e os 2 helpers da fonte; não casa o `pattern.replace(/%/g, "")` do disparo-gate
+  // (pattern de config) nem `replace('_', ' ')` de rótulo. LIMITE declarado: alternância (`/%|_/`),
+  // `new RegExp(…)`, escape hex e `.replace` separado por curinga escapam — o Codex procurou essas formas
+  // por AST no mesmo dia e não achou nenhuma; a cobertura futura é a da FORMA de classe, a que se copia.
+  const CURINGA_LIKE = /\/\(?\[(?=[^\]\n]*%)(?=[^\]\n]*_)[^\]\n]*\]\)?[+*?]?\/[dgimsuyv]*/g;
+  // Rótulo EXATO nas duas pontas: `postgrest-or-v2` não abre, e `MIRROR-END <outro>` não fecha (o bloco
+  // fica aberto até o fim e reprova como "sem MIRROR-END").
+  const INICIO = /^\s*\/\/ MIRROR-START postgrest-or(?=\s|$)/;
+  const FIM = /^\s*\/\/ MIRROR-END(?: postgrest-or)?\s*$/;
+  // O gate do termo degenerado COM o retorno antecipado: trocar o `return` por um log deixava o `if` de pé
+  // e a consulta ampla passava (Codex, B1). Serve ao tool e ao bundle gerado dele.
+  const GATE_MCP = /if\s*\(\s*!isSearchablePostgrestTerm\(query\)\s*\)\s*(?:\{[^}]*)?\breturn\b/;
+
+  type Bloco = { inicio: number; fim: number | null; corpo: string };
+  // Blocos `postgrest-or` do texto CRU (os marcadores são comentário), com linhas 1-based e o corpo
+  // normalizado como no `mirrorBlockNamed`: sem `export`, sem linha `//`, sem espaço de borda.
+  const blocos = (cru: string): Bloco[] => {
+    const linhas = cru.split('\n');
+    const achados: Bloco[] = [];
+    for (let i = 0; i < linhas.length; i++) {
+      if (!INICIO.test(linhas[i])) continue;
+      let j = i + 1;
+      while (j < linhas.length && !FIM.test(linhas[j])) j++;
+      const corpo = linhas
+        .slice(i + 1, j)
+        .join('\n')
+        .replace(/\bexport\s+/g, '')
+        .split('\n')
+        .map((l) => l.trim())
+        .filter((l) => l.length > 0 && !l.startsWith('//'))
+        .join('\n');
+      achados.push({ inicio: i + 1, fim: j < linhas.length ? j + 1 : null, corpo });
+      i = j;
+    }
+    return achados;
+  };
+  // Linha (1-based) de cada literal de curinga no código SEM comentário: prosa que cita a regex não é
+  // cópia executável, e o stripper compartilhado preserva a contagem de linhas.
+  const hits = (cru: string) =>
+    removerComentarios(cru)
+      .split('\n')
+      .flatMap((l, i) => [...l.matchAll(CURINGA_LIKE)].map((m) => ({ linha: i + 1, literal: m[0] })));
+  // Código onde um espelho pode nascer: src/ e as edges, menos teste (vitest e Deno) e a própria fonte.
+  // Toda extensão de JS/TS, não só `.ts`/`.tsx`: um `.js` com a cópia passava (Codex, B1).
+  const CODIGO = /\.(?:[cm]?[jt]s|[jt]sx)$/;
+  const TESTE = /(?:\.test|\.spec|_test)\.(?:[cm]?[jt]s|[jt]sx)$/;
+  const listar = (dir: string): string[] =>
+    readdirSync(resolve(CWD, dir), { withFileTypes: true }).flatMap((e) => {
+      const rel = `${dir}/${e.name}`;
+      if (e.isDirectory()) return e.name === 'node_modules' || e.name === '__tests__' ? [] : listar(rel);
+      return CODIGO.test(e.name) && !TESTE.test(e.name) ? [rel] : [];
+    });
+
+  const fonte = read(FONTE);
+  const [blocoFonte] = blocos(fonte);
+  const codigos = ['src', 'supabase/functions']
+    .flatMap(listar)
+    .filter((f) => f !== FONTE)
+    .map((f) => ({ f, cru: read(f) }));
+  const comCuringa = codigos.filter(({ cru }) => cru.match(CURINGA_LIKE) !== null);
+  const escritos = comCuringa.filter(({ cru }) => !cru.startsWith(BANNER_GERADO));
+  const gerados = comCuringa.filter(({ cru }) => cru.startsWith(BANNER_GERADO));
+  const espelhos = codigos.filter(({ cru }) => cru.includes('// MIRROR-START postgrest-or') && blocos(cru).length > 0);
+
+  it('B1-SENTINELA: a fonte tem UM bloco fechado com os 2 helpers, o walker anda e os espelhos conhecidos aparecem', () => {
+    expect(blocos(fonte), 'B1-SENTINELA: a fonte deve ter exatamente 1 bloco postgrest-or').toHaveLength(1);
+    expect(blocoFonte.fim, 'B1-SENTINELA: bloco da fonte sem MIRROR-END').not.toBeNull();
+    expect(blocoFonte.corpo).toContain('function sanitizeForPostgrestOr(input: string): string {');
+    expect(blocoFonte.corpo).toContain('function isSearchablePostgrestTerm(term: string): boolean {');
+    expect(blocoFonte.corpo.match(CURINGA_LIKE), 'B1-SENTINELA: a assinatura não casa a regex da fonte').toHaveLength(1);
+    expect(codigos.length, 'B1-SENTINELA: o walker não andou').toBeGreaterThan(1000);
+    expect(espelhos.map((e) => e.f)).toEqual(expect.arrayContaining([ANALYZE, MCP_TOOL]));
+    expect(gerados.map((e) => e.f)).toEqual(expect.arrayContaining([MCP_BUNDLE]));
+    // Herda o alarme de sobre-limpeza (limpeza-fonte.test.ts, teto 150): stripper que come código lê a
+    // cópia como comentário, e a DESCOBERTA fica verde por cegueira.
+    const comidos = comCuringa.filter(({ cru }) => maiorBlocoDescartado(cru) > 150).map(({ f }) => f);
+    expect(comidos, 'B1-SENTINELA: o stripper descartou bloco grande demais para ser comentário').toEqual([]);
+  });
+
+  it('B1-DESCOBERTA: todo literal de curinga fora da fonte mora num bloco postgrest-or (a cópia nova nasce vigiada)', () => {
+    const fora = escritos.flatMap(({ f, cru }) => {
+      const dentro = blocos(cru);
+      return hits(cru)
+        .filter(({ linha }) => !dentro.some((b) => b.fim !== null && linha > b.inicio && linha < b.fim))
+        .map(({ linha, literal }) => `${f}:${linha} ${literal}`);
+    });
+    expect(
+      fora,
+      'B1-DESCOBERTA: sanitizador de curinga fora de bloco postgrest-or. Em src/, importe de @/lib/postgrest; em ' +
+        'edge/MCP (sem `@/`), espelhe o bloco da fonte, que é o que o B1-PARIDADE compara. Helper da fonte ainda ' +
+        'sem bloco (ex.: sanitizeIlikeTerm) → crie o bloco lá primeiro.',
+    ).toEqual([]);
+  });
+
+  it.each(espelhos.map(({ f }) => f))('B1-PARIDADE: o bloco postgrest-or de %s é IDÊNTICO ao da fonte', (f) => {
+    for (const b of blocos(read(f))) {
+      expect(b.fim, `B1-PARIDADE: bloco sem MIRROR-END em ${f}:${b.inicio}`).not.toBeNull();
+      expect(b.corpo, `B1-PARIDADE: ${f} divergiu de src/lib/postgrest.ts (a deriva do #1051)`).toBe(blocoFonte.corpo);
+    }
+  });
+
+  it('B1-BUNDLE: o bundle gerado da mcp carrega a MESMA regex da fonte e o gate (pega o bundle velho)', () => {
+    const [regex] = blocoFonte.corpo.match(CURINGA_LIKE) ?? [];
+    const bundle = removerComentarios(read(MCP_BUNDLE));
+    expect(hits(read(MCP_BUNDLE)).length, 'B1-BUNDLE: o bundle da mcp não tem mais o sanitizador').toBeGreaterThan(0);
+    // A regex certa não basta: sem o `if`, o bundle monta `name.ilike.%%,document.ilike.%%,…` (Codex, B1).
+    const gate = bundle.search(GATE_MCP);
+    expect(gate, 'B1-BUNDLE: o bundle perdeu o gate do termo degenerado (com retorno antecipado)').toBeGreaterThan(-1);
+    expect(gate, 'B1-BUNDLE: no bundle o gate vem DEPOIS da consulta').toBeLessThan(bundle.indexOf('.or(predicado)'));
+    const velhos = gerados.flatMap(({ f, cru }) =>
+      hits(cru)
+        .filter(({ literal }) => literal !== regex)
+        .map(({ linha, literal }) => `${f}:${linha} ${literal}`),
+    );
+    expect(
+      velhos,
+      'B1-BUNDLE: bundle gerado com regex diferente da fonte — regenere-o (o plugin do @lovable.dev/mcp-js roda no ' +
+        'configResolved do Vite) e commite junto da fonte',
+    ).toEqual([]);
+  });
+
+  it('B1-GATE-EDGE: a analyze-unified-order gateia o termo DEGENERADO antes de todo .or() com termo do texto', () => {
+    const codigo = removerComentarios(read(ANALYZE));
+    expect(codigo, 'B1-GATE-EDGE: busca de clientes sem o gate — `***` traz 20 perfis arbitrários').toMatch(
+      /nameTerms\.filter\(isSearchablePostgrestTerm\)\.slice\(0,\s*5\)/,
+    );
+    expect(codigo, 'B1-GATE-EDGE: busca de produtos sem o gate').toMatch(
+      /searchTerms\.filter\(isSearchablePostgrestTerm\)\.slice\(0,\s*5\)/,
+    );
+    expect(codigo, 'B1-GATE-EDGE: `stripped` sem gate próprio — `..**..**` vira `****`').toMatch(
+      /stripped\.length\s*>=\s*4\s*&&\s*isSearchablePostgrestTerm\(stripped\)/,
+    );
+    // Censo: 5 `.or(` com veredito, TODOS via `ilikeOr` — 3 gateados acima; `numericPart`/`shortNumeric` são
+    // só-dígito por construção. Contagem tolerante a espaço: `.or( ilikeOr(` escapava da grafia exata (Codex,
+    // B1). Um 6º `.or(`, de qualquer forma, reprova até alguém decidir se o termo dele precisa do gate.
+    expect(
+      codigo.match(/\.or\s*\(/g)?.length ?? 0,
+      'B1-GATE-EDGE: mudou o censo de .or( — gateie o termo novo com isSearchablePostgrestTerm e atualize',
+    ).toBe(5);
+    expect(
+      codigo.match(/\.or\s*\(\s*ilikeOr\s*\(/g)?.length ?? 0,
+      'B1-GATE-EDGE: .or( que não passa pelo ilikeOr — predicado montado sem o sanitizador',
+    ).toBe(5);
+    // O `ilikeOr` da edge fica FORA do bloco (a assinatura `(term, ...cols)` difere da de src), então o elo
+    // com o sanitizador é conferido aqui: `const safe = term` passava a paridade inteira (Codex, B1).
+    const corpoIlikeOr = codigo.match(/function ilikeOr\([^)]*\)[^{]*\{([\s\S]*?)\n\}/)?.[1] ?? '';
+    expect(corpoIlikeOr, 'B1-GATE-EDGE: sentinela — o ilikeOr da edge sumiu').not.toBe('');
+    expect(corpoIlikeOr, 'B1-GATE-EDGE: o ilikeOr da edge não interpola o termo SANITIZADO').toMatch(
+      /const (\w+) = sanitizeForPostgrestOr\(term\);[\s\S]*\$\{\1\}/,
+    );
+    expect(corpoIlikeOr, 'B1-GATE-EDGE: o ilikeOr da edge interpola o termo CRU').not.toMatch(/\$\{term\}/);
+  });
+
+  it('B1-GATE-MCP: o tool search_customers gateia o termo degenerado, com retorno, ANTES do .or()', () => {
+    const codigo = removerComentarios(read(MCP_TOOL));
+    const gate = codigo.search(GATE_MCP);
+    const consulta = codigo.indexOf('.or(predicado)');
+    expect(consulta, 'B1-GATE-MCP: sentinela — o .or(predicado) sumiu').toBeGreaterThan(-1);
+    expect(gate, 'B1-GATE-MCP: sem o gate do termo degenerado (com retorno antecipado)').toBeGreaterThan(-1);
+    expect(gate, 'B1-GATE-MCP: o gate vem DEPOIS da consulta').toBeLessThan(consulta);
   });
 });
 
@@ -3482,30 +3683,44 @@ const DEPLOY_DOC = 'docs/agent/deploy.md';
 const linhaDaTabela = (edge: string, contrato: string) =>
   new RegExp(`\\|\\s*\`${edge}\`\\s*\\|[^|]*\\|\\s*\`${contrato}\`\\s*\\|`);
 
-describe('canária VERSIONADA: analyze-unified-order (praticado vence Omie)', () => {
+describe('canária VERSIONADA: analyze-unified-order (a IA não precifica)', () => {
   const src = read(ANALYZE);
+  const saida = read(SAIDA_IA);
   const deployDoc = read(DEPLOY_DOC);
-  const CONTRATO = 'praticado-vence-omie-v1';
+  const CONTRATO = 'ia-nao-precifica-v1';
 
-  it('a canária emite o VERSION MARKER `contrato`', () => {
+  it('a canária emite o VERSION MARKER `contrato` LITERAL no fonte da edge — e CONSOME a medição de saida-ia.ts', () => {
+    // LITERAL e no index.ts: é por ele que o `canaria-contrato-bump-gate` localiza a canária. Numa
+    // constante importada ela some do gate (o vermelho do CI do #2700 que pegou isso).
     expect(
       src,
-      'sumiu o marcador `contrato` da canária de preço — um deploy integralmente velho responderia ok:true comparando velho×velho',
-    ).toMatch(/contrato: ['"]praticado-vence-omie-v1['"]/);
+      'sumiu o marcador `contrato` literal da canária de preço — o gate de bump fica cego e um deploy velho responderia a canária velha',
+    ).toMatch(/contrato: ['"]ia-nao-precifica-v1['"]/);
+    expect(removerComentarios(saida), 'a medição não pode carregar o contrato (ele é do envelope, no index.ts)').not.toMatch(/\bcontrato\s*:/);
+    expect(removerComentarios(src), 'o ramo da canária não espalha a medição de canariaSemPreco()').toMatch(
+      /decisaoCanaria\.tipo === ['"]sonda['"][\s\S]{0,600}\.\.\.canariaSemPreco\(\)/,
+    );
+  });
+
+  it('o CONSUMIDOR (card de Governança, código do FRONT) exige o MESMO contrato que a edge emite', () => {
+    // Sem esta ponta o card seguiria exigindo o contrato velho: vermelho para a edge nova e — pior — verde
+    // para a edge que ainda precifica. A troca só discrimina com o Publish E o deploy (deploy.md §Canárias).
+    const card = read('src/lib/governanca/canaria-preco.ts');
+    expect(card).toMatch(/const CONTRATO_ESPERADO = ['"]ia-nao-precifica-v1['"]/);
   });
 
   it('a LINHA da tabela do deploy.md fixa o MESMO marcador (senão o verificador não sabe o que exigir)', () => {
     expect(
       deployDoc,
-      'a linha do `analyze-unified-order` na tabela de canárias não fixa `praticado-vence-omie-v1` — o founder leria `—` e aceitaria `ok` sozinho',
+      'a linha do `analyze-unified-order` na tabela de canárias não fixa `ia-nao-precifica-v1` — o founder leria `—` e aceitaria `ok` sozinho',
     ).toMatch(linhaDaTabela('analyze-unified-order', CONTRATO));
   });
 
-  it('o marcador NOMEIA a fatia — nada de `v1.0-sensor-inicial` genérico numa canária pré-existente', () => {
-    // Regra 1 de deploy.md: `v1.0-sensor-inicial` só é honesto quando o sensor NASCE ali. Esta
-    // canária existe desde o #1089; o marcador tem de nomear o contrato que ela verifica hoje.
+  it('o marcador NOMEIA o que a canária atesta — nada de `v1.0-sensor-inicial` genérico', () => {
+    // Regra 1 de deploy.md: `v1.0-sensor-inicial` só é honesto quando o sensor NASCE ali. Esta canária
+    // existe desde o #1089 e mudou de OBJETO (o merge saiu da edge): o marcador nomeia o novo.
     expect(CONTRATO).not.toMatch(/sensor-inicial/);
-    expect(CONTRATO, 'marcador genérico não discrimina fatia').toMatch(/praticado|preco|omie/);
+    expect(CONTRATO, 'marcador genérico não discrimina fatia').toMatch(/precifica|preco/);
   });
 
   it('decide a canária pelo classificador ROBUSTO — `canary === true` cru manda a string do SQL Editor pro LLM', () => {
@@ -3529,8 +3744,12 @@ describe('canária VERSIONADA: analyze-unified-order (praticado vence Omie)', ()
   });
 
   it('a canária continua PURA (não toca LLM/Omie/DB) — é o que a torna barata de sondar', () => {
-    const bloco = removerComentarios(src).match(/tipo === ['"]sonda['"][\s\S]*?\n {4}\}/)?.[0] ?? '';
+    // Âncora no `decisaoCanaria`: o 1º `tipo === "sonda"` do arquivo é a SONDA DE VERSÃO (antes do gate
+    // de staff), e até 2026-09-30 este teste casava ELA — a canária nunca foi de fato inspecionada aqui.
+    const bloco = removerComentarios(src).match(/decisaoCanaria\.tipo === ['"]sonda['"][\s\S]*?\n {4}\}/)?.[0] ?? '';
     expect(bloco, 'âncora: não achei o bloco da canária').not.toBe('');
+    expect(bloco, 'âncora casou outro bloco: o da canária serializa canariaSemPreco()').toContain('canariaSemPreco()');
+    expect(bloco, 'canária faz I/O (Omie/DB) — deixaria de ser dry-run barato').not.toMatch(/\bfetch\(|\bsupabase\./);
     expect(bloco, 'canária faz escrita no DB — deve ser dry-run puro').not.toMatch(/\.(upsert|insert|update|delete)\(/);
     expect(bloco, 'canária chama a Anthropic — deixaria de ser barata e gastaria token').not.toMatch(/anthropic|messages\.create/i);
   });
@@ -3896,8 +4115,9 @@ describe('guardrail money-path: reconciliação do pedido é ATÔMICA e a lista 
   it('o carimbo de leitura é por PÁGINA, não por run', () => {
     // Uma run longa com o carimbo tirado uma vez só faria a última página parecer tão fresca
     // quanto a primeira, e o compare-and-set perderia resolução exatamente onde ele importa.
-    const iPag = src.indexOf('const pedidosRpc: PedidoReconciliar[] = []');
+    const iPag = src.indexOf('const pedidosRpc: PedidoReconciliarReprocess[] = []');
     const iLido = src.indexOf('const lidoEm = new Date().toISOString()');
+    expect(iPag, 'acumulador pedidosRpc não encontrado').toBeGreaterThan(-1);
     expect(iLido, 'lidoEm não encontrado').toBeGreaterThan(-1);
     // ambos dentro do laço de páginas: lidoEm imediatamente antes do acumulador da página
     expect(iLido).toBeLessThan(iPag);
@@ -3905,16 +4125,27 @@ describe('guardrail money-path: reconciliação do pedido é ATÔMICA e a lista 
   });
 
   it('página inteira falhando LANÇA — falha sistêmica não sai como run verde', () => {
-    expect(src).toContain('fails.length === pedidosRpc.length');
-    const i = src.indexOf('fails.length === pedidosRpc.length');
-    expect(src.slice(i, i + 400)).toContain('throw new Error(');
+    // A decisão e o throw moram em `reconciliarPagina` (./apuracao-pedidos.ts — P2 Codex
+    // 2026-09-27: o catch passou a gravar o metadata apurado, e a apuração saiu para um módulo
+    // EXECUTADO pelo teste Deno). O index passa a cardinalidade REAL da página (`pedidosRpc.length`).
+    const apuracao = removerComentarios(read('supabase/functions/sync-reprocess/apuracao-pedidos.ts'));
+    expect(apuracao).toContain('nFalhas > 0 && nFalhas === nPedidos && nPedidos > 1');
+    const i = apuracao.indexOf('if (paginaInteiraFalhou(fails.length, nPedidos))');
+    expect(i, 'decisão de abortar não encontrada em reconciliarPagina').toBeGreaterThan(-1);
+    expect(apuracao.slice(i, i + 400)).toContain('throw new Error(');
+    expect(src).toContain('await reconciliarPagina(ap, pedidosRpc.length,');
   });
 
   it('erro da RPC LANÇA — run verde sem reconciliar nada mascararia perda total', () => {
-    const i = src.indexOf('reconciliar_pedidos_omie');
+    // A chamada é injetada em `reconciliarPagina` (./apuracao-pedidos.ts), que lança no `error`.
+    const i = src.indexOf('db.rpc("reconciliar_pedidos_omie"');
     expect(i, 'chamada da RPC não encontrada').toBeGreaterThan(-1);
-    const bloco = src.slice(i, i + 1200);
-    expect(bloco).toContain('if (rpcErr)');
+    expect(src.slice(Math.max(0, i - 200), i)).toContain('reconciliarPagina(');
+    const apuracao = removerComentarios(read('supabase/functions/sync-reprocess/apuracao-pedidos.ts'));
+    const j = apuracao.indexOf('const { data, error } = await chamarRpc();');
+    expect(j, 'chamada injetada não encontrada').toBeGreaterThan(-1);
+    const bloco = apuracao.slice(j, j + 400);
+    expect(bloco).toContain('if (error)');
     expect(bloco).toContain('throw new Error(');
   });
 
@@ -4086,13 +4317,17 @@ describe('reconciliação carrega o desconto da linha — sync-reprocess × migr
   });
 
   it('o sensor AUSENTE da RPC vira null, nunca 0 — e chega ao metadata do log', () => {
-    const fonte = removerComentarios(read(REPROCESS));
-    expect(count(fonte, 'r.desconto_apurado || 0')).toBe(0);
-    expect(count(fonte, 'r.desconto_corrigido || 0')).toBe(0);
+    // A soma e o metadata moram em `./apuracao-pedidos.ts` (P2 Codex 2026-09-27); o index só os usa.
+    const fonte = removerComentarios(read('supabase/functions/sync-reprocess/apuracao-pedidos.ts'));
+    const index = removerComentarios(read(REPROCESS));
+    expect(count(index + fonte, 'r.desconto_apurado || 0')).toBe(0);
+    expect(count(index + fonte, 'r.desconto_corrigido || 0')).toBe(0);
     expect(fonte).toContain('typeof r.desconto_apurado === "number"');
     expect(fonte).toContain('typeof r.desconto_corrigido === "number"');
-    expect(fonte).toContain('desconto_apurado: descontoApurado,');
-    expect(fonte).toContain('desconto_corrigido: descontoCorrigido,');
+    expect(fonte).toContain('desconto_apurado: f2(ap.descontoApurado),');
+    expect(fonte).toContain('desconto_corrigido: f2(ap.descontoCorrigido),');
+    expect(fonte).toContain('const fails = somarRespostaRpc(ap, r);');
+    expect(index).toContain('await reconciliarPagina(ap, pedidosRpc.length,');
   });
 
   it('a migration carrega as defesas (o efeito é provado executando, no PG17)', () => {
@@ -4170,5 +4405,65 @@ describe('guardrail money-path: omie-financeiro não fabrica desconto/juros/mult
       expect(src, `${campo} voltou ao tipo de entrada do Omie`).not.toContain(`${campo}?: number`);
       expect(src, `${campo} voltou a ser lido do payload do Omie`).not.toContain(`t.${campo}`);
     }
+  });
+});
+
+describe('guardrail: omie-nfe-recebimento-sync não conta NF-e como importada quando os itens falham', () => {
+  // Medido em 2026-09-26: 47 cabeçalhos e 0 itens em prod. O NCM pontuado do Omie estourava
+  // `varchar(8)` (22001 no lote inteiro) e a edge só fazia console.error, contava a NF-e como
+  // importada e respondia success:true — a run "verde" escondia 100% de falha.
+  // Desde a importação por chave (PR 3/3) o insert de itens mora num helper só, e cada CAMINHO
+  // decide o que fazer quando ele falha: o cron registra e segue; o manual desfaz o cabeçalho.
+  const bruto = read('supabase/functions/omie-nfe-recebimento-sync/index.ts');
+  const src = removerComentarios(bruto);
+  const fatia = (de: string, ate: string) => {
+    const i = src.indexOf(de);
+    const f = i >= 0 ? src.indexOf(ate, i) : -1;
+    return i >= 0 && f > i ? src.slice(i, f) : '';
+  };
+  const helper = fatia('async function inserirItens(', '\n}\n');
+  const manual = fatia('async function importarPorChave(', '\n}\n');
+  const handler = fatia('Deno.serve(', '\n});');
+  const cron = fatia('Deno.serve(', 'totalImported++');
+
+  it('sentinela: leu a edge real, e o stripper não comeu nem deixou de limpar o arquivo', () => {
+    expect(bruto.length, 'arquivo vazio/inexistente').toBeGreaterThan(5_000);
+    expect(src).toContain('ConsultarRecebimento');
+    expect(src.length).toBeGreaterThan(bruto.length * 0.5);
+    expect(src.length).toBeLessThan(bruto.length);
+  });
+
+  it('controle positivo: um único insert de itens, no helper, chamado pelos dois caminhos', () => {
+    expect(count(src, '.from("nfe_recebimento_itens")'), 'o insert de itens sumiu ou duplicou').toBe(1);
+    expect(helper).toContain('.from("nfe_recebimento_itens")');
+    expect(helper, 'o NCM tem de passar pelo mapeamento que o normaliza').toContain('mapearItensRecebimento(');
+    expect(cron).toContain('inserirItens(');
+    expect(manual).toContain('inserirItens(');
+  });
+
+  it('cron: a falha de itens sai em errors[] e pula a contagem de importada', () => {
+    const depois = cron.slice(cron.indexOf('inserirItens('));
+    expect(depois, 'console.error sozinho é success:true sobre NF-e sem itens').toContain('errors.push(');
+    expect(depois, 'sem o continue a NF-e sem itens conta como importada').toContain('continue;');
+  });
+
+  it('manual: a falha de itens desfaz o cabeçalho e responde erro — nunca "importada"', () => {
+    const depois = manual.slice(manual.indexOf('inserirItens('));
+    const ateSucesso = depois.slice(0, depois.indexOf('status: "importada"'));
+    expect(ateSucesso.length, 'o sucesso veio antes do tratamento da falha').toBeGreaterThan(0);
+    expect(ateSucesso).toContain('.delete()');
+    expect(ateSucesso).toContain('500');
+  });
+
+  it('o caminho por chave só roda DEPOIS do gate de staff/cron', () => {
+    // O botão é do browser: sem o gate na frente, qualquer anon importaria NF-e via service role.
+    const gate = handler.indexOf('authorizeCronOrStaff(req)');
+    const despacho = handler.indexOf('importarPorChave(');
+    expect(gate, 'o gate sumiu do handler').toBeGreaterThan(-1);
+    expect(despacho, 'o despacho por chave veio antes do gate').toBeGreaterThan(gate);
+  });
+
+  it('o NCM cru não volta ao index.ts', () => {
+    expect(src).not.toMatch(/ncm:\s*iCabec\.cNCM/);
   });
 });

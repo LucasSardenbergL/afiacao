@@ -1,0 +1,6 @@
+// O caminho como REFERÊNCIA: o parêntese contém SÓ o caminho — diz onde o wrapper mora, não manda
+// rodá-lo. Forma real da justificativa da allowlist de `scripts/gates-frescura-check.ts`. O par
+// negativo é o `viola-o`, em que o parêntese traz `-f -`.
+export const ALLOWLIST: Record<string, string> = {
+  'psql-ro': 'wrapper fora do repo (~/.config/afiacao/psql-ro), por desenho',
+};

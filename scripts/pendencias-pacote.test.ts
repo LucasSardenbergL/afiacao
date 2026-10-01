@@ -1,10 +1,12 @@
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { md5Exato } from './lib/corpo-esperado';
+import { FORMATO_TRANSPORTE, gerarSqlNuvem, TETO_TRANSPORTE } from './lib/transporte-nuvem';
 import {
   AMOSTRA_CORPO_JS,
   FORMATO_SONDA,
@@ -12,9 +14,9 @@ import {
   TOKEN_SEM_CORPO,
   TOKEN_SIM,
 } from './lib/precondicao-banco';
-import { lerRelatorio, main, separarSaida } from './pendencias-pacote';
+import { CONSUMIDOR_NUVEM, lerRelatorio, main, separarSaida } from './pendencias-pacote';
 import { type ExecutorGitBytes } from './pendencias-prompt';
-import { ARQ_MAPA, RAIZ_EDGES } from './sonda-fingerprint';
+import { ARQ_MAPA, fingerprintDaEdge, RAIZ_EDGES, renderizarMapa } from './sonda-fingerprint';
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════
 // Por que este arquivo existe
@@ -374,6 +376,139 @@ describe('pendencias:pacote — a leitura da edge sai da REF, não do disco', ()
 
     expect(main([EDGE, '--saida', saida, '--sem-rede'], raiz, git, sondaFalsa(['rpc_velha']))).toBe(2);
   });
+
+  // ── pela NUVEM (2026-09-27): as duas rodadas do transporte chegam ao MESMO pacote ──────────
+  // Sem `psql-ro`, a sonda de pré-condição sai por `--sql-nuvem` e volta por `--dados-nuvem`. O
+  // que se prova aqui é a FIAÇÃO: o SQL emitido é o da sonda local, a resposta validada chega ao
+  // mesmo juízo, e o bloqueio do #2285 sobrevive ao transporte.
+  describe('pela nuvem (--sql-nuvem / --dados-nuvem)', () => {
+    const AGORA = new Date('2026-09-27T12:00:00Z');
+    const agora = () => AGORA;
+    const semEntrada = () => '';
+    const psqlProibido = (sql: string): string => {
+      throw new Error(`o psql não pode ser chamado pela nuvem: ${sql.slice(0, 40)}`);
+    };
+
+    /**
+     * A resposta como o BANCO a montaria — a conta de `lib/transporte-nuvem.test.ts`, refeita à
+     * parte. Cada linha do psql vira literal de registro; campo vazio sai sem aspas (NULL, que o
+     * psql imprime vazio), os outros entre aspas com `"` e `\` dobrados, como o `record_out`.
+     */
+    function respostaDoBanco(sqlSonda: string, saidaDaSonda: string): string {
+      const md5 = (s: string) => createHash('md5').update(s, 'utf8').digest('hex');
+      const sql = gerarSqlNuvem({ precondicao: sqlSonda }, CONSUMIDOR_NUVEM);
+      const campo = (c: string) => (c === '' ? '' : `"${c.replace(/["\\]/g, (x) => x + x)}"`);
+      const linhas = saidaDaSonda.split('\n').map((l) => `(${l.split('|').map(campo).join(',')})`);
+      const sqlMd5 = md5(sql.slice(0, sql.indexOf('sql-nuvem:fim') + 'sql-nuvem:fim'.length));
+      const medidoEm = '2026-09-27T11:59:00Z';
+      const canonico = [
+        FORMATO_TRANSPORTE, CONSUMIDOR_NUVEM, medidoEm, 'on', TETO_TRANSPORTE, sqlMd5, '1/1',
+        'precondicao', String(linhas.length), linhas.join('\n'),
+      ];
+      const dados = {
+        formato: FORMATO_TRANSPORTE,
+        consumidor: CONSUMIDOR_NUVEM,
+        medido_em: medidoEm,
+        somente_leitura: 'on',
+        teto: TETO_TRANSPORTE,
+        sql_md5: sqlMd5,
+        marcas: '1/1',
+        consultas: { precondicao: linhas },
+        md5: md5(canonico.join('\n')),
+      };
+      return JSON.stringify({ rows: [{ dados_nuvem: dados }] });
+    }
+
+    it('--sql-nuvem imprime o SQL da sonda, não chama o psql e não escreve pacote', () => {
+      const { raiz, git, saida } = montarRepo(CHAMA_VELHA, CHAMA_VELHA);
+      const escrito: string[] = [];
+      const espiao = vi.spyOn(process.stdout, 'write').mockImplementation((t) => {
+        escrito.push(String(t));
+        return true;
+      });
+      let codigo: number;
+      try {
+        codigo = main([EDGE, '--saida', saida, '--sem-rede', '--sql-nuvem'], raiz, git, psqlProibido, semEntrada, agora);
+      } finally {
+        espiao.mockRestore();
+      }
+      expect(codigo).toBe(0);
+      expect(escrito.join('')).toContain('SET TRANSACTION READ ONLY;');
+      expect(escrito.join('')).toContain("('rpc_velha')");
+      expect(existsSync(saida)).toBe(false);
+    });
+
+    it('--dados-nuvem chega ao MESMO pacote que a sonda local — e o bloqueio sobrevive', () => {
+      // A rodada LOCAL, com a sonda gravando o SQL que recebeu: é ele que a nuvem executaria.
+      const local = montarRepo(CHAMA_VELHA, CHAMA_AS_DUAS);
+      const sonda = sondaFalsa(['rpc_velha']);
+      let sqlSonda = '';
+      const codigoLocal = main([EDGE, '--saida', local.saida, '--sem-rede'], local.raiz, local.git, (sql) => {
+        sqlSonda = sql;
+        return sonda(sql);
+      }, semEntrada, agora);
+
+      const nuvem = montarRepo(CHAMA_VELHA, CHAMA_AS_DUAS);
+      const arquivo = join(nuvem.raiz, 'resposta-nuvem.json');
+      writeFileSync(arquivo, respostaDoBanco(sqlSonda, sonda(sqlSonda)), 'utf8');
+      const codigoNuvem = main(
+        [EDGE, '--saida', nuvem.saida, '--sem-rede', `--dados-nuvem=${arquivo}`],
+        nuvem.raiz,
+        nuvem.git,
+        psqlProibido,
+        semEntrada,
+        agora,
+      );
+
+      expect(codigoLocal).toBe(3); // a RPC nova não está em prod
+      expect(codigoNuvem).toBe(codigoLocal);
+      expect(readFileSync(nuvem.saida, 'utf8')).toBe(readFileSync(local.saida, 'utf8'));
+    });
+
+    it('MECÂNICA (2) quando a resposta é de OUTRA leva — o sql_md5 não fecha', () => {
+      const { raiz, git, saida } = montarRepo(CHAMA_VELHA, CHAMA_VELHA);
+      const arquivo = join(raiz, 'resposta-nuvem.json');
+      writeFileSync(arquivo, respostaDoBanco("SELECT 'rpc|rpc_outra|x|0'", 'rpc|rpc_outra|x|0'), 'utf8');
+      const erros: string[] = [];
+      const espiao = vi.spyOn(process.stderr, 'write').mockImplementation((t) => {
+        erros.push(String(t));
+        return true;
+      });
+      let codigo: number;
+      try {
+        codigo = main([EDGE, '--saida', saida, '--sem-rede', `--dados-nuvem=${arquivo}`], raiz, git, psqlProibido, semEntrada, agora);
+      } finally {
+        espiao.mockRestore();
+      }
+      expect(codigo).toBe(2);
+      expect(erros.join('')).toContain('TRANSPORTE_SQL_DIVERGENTE');
+    });
+
+    it('leva sem RPC: o --dados-nuvem não é lido, e isso é DITO (arquivo calado parece conferido)', () => {
+      const SEM_RPC = 'export const x = 1;\n';
+      const semFlag = montarRepo(SEM_RPC, SEM_RPC);
+      const codigoSemFlag = main([EDGE, '--saida', semFlag.saida, '--sem-rede'], semFlag.raiz, semFlag.git, psqlProibido, semEntrada, agora);
+
+      const { raiz, git, saida } = montarRepo(SEM_RPC, SEM_RPC);
+      const arquivo = join(raiz, 'resposta-nuvem.json');
+      writeFileSync(arquivo, '{}', 'utf8');
+      const erros: string[] = [];
+      const espiao = vi.spyOn(process.stderr, 'write').mockImplementation((t) => {
+        erros.push(String(t));
+        return true;
+      });
+      let codigo: number;
+      try {
+        codigo = main([EDGE, '--saida', saida, '--sem-rede', `--dados-nuvem=${arquivo}`], raiz, git, psqlProibido, semEntrada, agora);
+      } finally {
+        espiao.mockRestore();
+      }
+      expect(codigoSemFlag).toBe(0);
+      expect(codigo).toBe(codigoSemFlag);
+      expect(erros.join('')).toContain('--dados-nuvem ignorado');
+      expect(readFileSync(saida, 'utf8')).toBe(readFileSync(semFlag.saida, 'utf8'));
+    });
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════
@@ -387,14 +522,20 @@ describe('pendencias:pacote — a ordem entre edges vira ONDA', () => {
   const SHA = 'feedface1234567890feedface1234567890feed';
   const A = 'edge-a';
   const B = 'edge-b';
-  const FONTE_A = 'a'.repeat(64);
-  const FONTE_B = 'b'.repeat(64);
   const VERSAO_A = 'v2.0-a';
-  const MAPA_COM_AS_DUAS =
-    'export const FONTE_SHA256: Record<string, string> = {\n' +
-    `  "${A}": "${FONTE_A}",\n` +
-    `  "${B}": "${FONTE_B}",\n` +
-    '};\n';
+  const INDEX_A = 'import "./versao.ts";\nexport default {};\n';
+  const VERSAO_TS_A = `export const VERSAO = "${VERSAO_A}";\n`;
+  // A é instrumentada, então o mapa TEM de descrever a fonte dela (#2611: senão o pacote recusa com
+  // exit 5). B não tem `versao.ts` e fica FORA do mapa — listada sem marcador, o pacote recusaria
+  // (regra do marcador) — e o mapa sai do `renderizarMapa`, a forma byte a byte que o `--write` grava.
+  const FONTE_A = fingerprintDaEdge(A, '/fixture', {
+    rotulo: 'fixture',
+    ler: (rel) =>
+      rel === `${RAIZ_EDGES}/${A}/index.ts` ? Buffer.from(INDEX_A)
+        : rel === `${RAIZ_EDGES}/${A}/versao.ts` ? Buffer.from(VERSAO_TS_A)
+          : null,
+  });
+  const MAPA_DA_REF = renderizarMapa({ [A]: FONTE_A });
   const MANIFESTO_B = JSON.stringify({
     formato: 'deploy-ordem/1',
     depoisDe: [{ edge: A, motivo: 'na ordem inversa a predecessora velha desfaz o que a nova grava', pr: 2469 }],
@@ -411,9 +552,9 @@ describe('pendencias:pacote — a ordem entre edges vira ONDA', () => {
   function repo(opcoes: { manifesto?: string | null; quebrar?: 'show-manifesto' | 'ls-tree-cego' } = {}) {
     const raiz = mkdtempSync(join(tmpdir(), 'pacote-ordem-'));
     const arvore = new Map<string, string>([
-      [ARQ_MAPA, MAPA_COM_AS_DUAS],
-      [`${RAIZ_EDGES}/${A}/index.ts`, 'import "./versao.ts";\nexport default {};\n'],
-      [`${RAIZ_EDGES}/${A}/versao.ts`, `export const VERSAO = "${VERSAO_A}";\n`],
+      [ARQ_MAPA, MAPA_DA_REF],
+      [`${RAIZ_EDGES}/${A}/index.ts`, INDEX_A],
+      [`${RAIZ_EDGES}/${A}/versao.ts`, VERSAO_TS_A],
       [`${RAIZ_EDGES}/${B}/index.ts`, 'export default {};\n'],
     ]);
     const manifesto = opcoes.manifesto === undefined ? MANIFESTO_B : opcoes.manifesto;

@@ -24,7 +24,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l /tmp/pg-leitura.log -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres leitura_test
-P() { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d leitura_test "$@"; }
+P() { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d leitura_test "$@"; }
 
 # 1) Schema mínimo que a migration referencia (estado PRÉ-UI3: tarefas SEM leitura_*)
 P -v ON_ERROR_STOP=1 -q <<'SQL'

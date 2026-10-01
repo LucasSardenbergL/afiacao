@@ -1,0 +1,40 @@
+# Invariantes do fiscal do relógio da SESSÃO truncado ao calendário em migrations e skills.
+# @src: scripts/fuso-da-sessao-em-migrations-e-skills-gate.ts
+# @test: scripts/fuso-da-sessao-em-migrations-e-skills-gate.test.ts
+#
+# A classe (docs/historico/relogio-da-sessao-truncado-rpcs-e-views-des.md): `date_trunc` de calendário
+# sobre o relógio da sessão sem o fuso escrito — UTC na prod, das 21:00 às 23:59 BRT o dia/semana/mês/
+# trimestre já é o seguinte. A LEITURA da chamada e o veredito (unidade, relógio, fuso) moram no irmão
+# das provas e têm as mutações de lá (`fuso-da-sessao-em-provas.mut`); aqui se prova que ESTE fiscal os
+# consulta, e cada camada que é só dele: a limpeza de SQL, o código das cercas (e só ele), a baseline
+# nos dois sentidos, os corpos vivos, cada piso SOZINHO, os alarmes e a identidade do trecho.
+# Cada PEGA quebra UMA camada e exige a suíte vermelha.
+#
+# ⚠️ No lado da SUBSTITUIÇÃO o perl interpola: `$x` vira vazio e `@x` também. Escreva `\$`.
+
+# CONTROLE+ : o detector cego. Se isto sobreviver, nenhum outro veredito deste arquivo vale.
+PEGA | controle+: detector cego (nenhuma chamada é achada)                   | s/for \(const m of limpo\.matchAll\(CHAMADA\)\) \{/for (const m of limpo.matchAll(\/NUNCA_CASA\/g)) {/
+
+# As camadas de leitura.
+PEGA | sem a limpeza de SQL: a forma antiga citada num `--` vira violação     | s/const limpo = removerComentariosSql\(sqlCru\);/const limpo = removerComentariosSql('') + sqlCru;/
+PEGA | .md lido INTEIRO: a prosa que explica a forma errada vira violação     | s/const \{ texto, cercaAberta \} = somenteCercas\(a\.fonte\);/const { cercaAberta } = somenteCercas(a.fonte); const texto = a.fonte;/
+PEGA | identidade do trecho sem caixa fixa: a baseline deixa de casar         | s/\.trim\(\)\.toLowerCase\(\);/.trim();/
+
+# A baseline, nos dois sentidos, e o 3º universo.
+PEGA | sítio NOVO passa calado                                               | s/< n\) novos\.push\(/< n && false) novos.push(/
+PEGA | entrada QUITADA fica na baseline sem reprovar                         | s/< n\) quitados\.push\(/< n && false) quitados.push(/
+PEGA | corpos vivos não medidos: a definição morta ressuscita calada         | s/for \(const s of detectarNoSql\(alvo, corpo\)\.sitios\) r\.corposVivosComSitio/for (const s of detectarNoSql(alvo, corpo.slice(0, 0)).sitios) r.corposVivosComSitio/
+PEGA | corpos vivos de NENHUMA migration: o modelo não lê o repo              | s/\.filter\(\(a\) => a\.caminho\.startsWith\('supabase\/migrations\/'\)\)/.filter(() => false)/
+PEGA | em modo fixture (sem baseline) nada reprova                          | s/: \{ novos: r\.violacoes\.map\(/: { novos: [] as string[], x: r.violacoes.map(/
+
+# Cada piso sozinho — um piso que só cai junto com outro é decoração.
+PEGA | nenhum arquivo lido vira "limpo"                                     | s/if \(r\.arquivos === 0\) furos\.push/if (r.arquivos < 0) furos.push/
+PEGA | piso de migrations desligado                                         | s/if \(r\.migrations < PISOS\.migrations\) furos\.push/if (r.migrations < 0) furos.push/
+PEGA | piso de arquivos de skill desligado                                  | s/if \(r\.arquivosDeSkill < PISOS\.arquivosDeSkill\) furos\.push/if (r.arquivosDeSkill < 0) furos.push/
+PEGA | piso de linhas de código de skill desligado                          | s/if \(r\.linhasDeCodigoDeSkill < PISOS\.linhasDeCodigoDeSkill\) \{/if (r.linhasDeCodigoDeSkill < 0) {/
+PEGA | piso de corpos vivos desligado                                       | s/if \(r\.corposVivos < PISOS\.corposVivos\) furos\.push/if (r.corposVivos < 0) furos.push/
+
+# Os alarmes: o que o fiscal não conseguiu ler nunca é "limpo".
+PEGA | stripper que come código passa calado                                | s/if \(bloco > teto\) r\.alarmes\.push/if (bloco > teto * 1000) r.alarmes.push/
+PEGA | cerca de markdown que não fecha passa calada                         | s/alarme: cercaAberta \?/alarme: cercaAberta && false ?/
+PEGA | chamada que não fecha passa calada                                   | s/      ilegiveis\.push\(`/      void (`/

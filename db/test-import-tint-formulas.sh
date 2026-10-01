@@ -30,6 +30,7 @@ PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
 PORT="${PGPORT_TEST:-5471}"
 SLUG="import-tint-formulas"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
+RODADA="$(dirname "$DATA")"   # dir ÚNICO desta rodada (o trap apaga): temporário mora aqui, nunca em /tmp/<nome-fixo>
 export LC_ALL=C LANG=C
 
 # md5 do prosrc medido em PRODUÇÃO via psql-ro em 2026-08-06. O A0 compara o corpo
@@ -50,7 +51,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres --locale=C --encoding=UTF8 >/dev/null 2>&1
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -c listen_addresses=localhost" -l "$DATA/log" -w start >/dev/null 2>&1
 
-P()  { "$PGBIN/psql" -h localhost -p "$PORT" -U postgres -d postgres -v ON_ERROR_STOP=1 "$@"; }
+P()  { "$PGBIN/psql" -X -h localhost -p "$PORT" -U postgres -d postgres -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }
 
 PASS=0; FAIL=0
@@ -113,7 +114,7 @@ SQL
 # ZONA 2 — A FUNÇÃO REAL (Lei #1) — extraída verbatim da migration, sem reescrever
 # ══════════════════════════════════════════════════════════════════════════════
 MIG="$REPO_ROOT/supabase/migrations/20260512101346_632761fc-2bd6-4caa-9c61-d35f872c2489.sql"
-FN="$(mktemp "/tmp/itf-fn.XXXXXX.sql")"
+FN="$(mktemp "$RODADA/itf-fn.XXXXXX")"
 sed -n '1,128p' "$MIG" > "$FN"          # linhas 1-128 = o CREATE OR REPLACE de import_tint_formulas
 P -q -f "$FN"
 rm -f "$FN"
@@ -262,19 +263,37 @@ SQL
 
 # re-roda A1/A2/A3 contra a versão GUARDADA
 chamar_g() { Pq -c "SET test.uid='11111111-1111-1111-1111-111111111111'; SELECT public.import_tint_formulas_guardada('oben', false, '$1'::jsonb);"; }
+# A medição leva o que o GUARD fez — quantas linhas ele rejeitou (o retorno da versão guardada). Só a
+# contagem de itens aceitava o guard que não faz nada: F-PARCIAL e F-NAN já nascem com 0 itens.
+rej_g() { Pq -c "SET test.uid='11111111-1111-1111-1111-111111111111'; SELECT public.import_tint_formulas_guardada('oben', false, '$1'::jsonb)->>'rejeitadas';" | tail -1; }
 
-chamar_g '[{"cod_produto":"P1","id_base":"B1","id_embalagem":"E1","cor_id":"F-PARCIAL","nome_cor":"AZUL","volume_finalml":"900","preco_final":"100","corante1":"C1","qtd1ml":"10","corante2":"C2","qtd2ml":"0","corante3":"C3","qtd3ml":"30"}]' >/dev/null
-F1=$(n_itens F-PARCIAL)
-if [ "$F1" = "2" ]; then bad "F1 INVÁLIDA — o guard não mudou A1 (ainda gravou receita parcial)"; else ok "F1 A1 caiu sob o guard (parcial não gravou: itens=$F1)"; fi
+RJ1=$(rej_g '[{"cod_produto":"P1","id_base":"B1","id_embalagem":"E1","cor_id":"F-PARCIAL","nome_cor":"AZUL","volume_finalml":"900","preco_final":"100","corante1":"C1","qtd1ml":"10","corante2":"C2","qtd2ml":"0","corante3":"C3","qtd3ml":"30"}]')
+# Cada guard DECLARA o que produz (itens|linhas rejeitadas: F1 0|1, F2 3|1, F3 0|1) — "≠ o valor do
+# defeito" aceitava qualquer outra contagem (um guard que apaga tudo, que duplica, ou que NÃO FAZ
+# NADA). O vermelho tem de ser do SEU assert: docs/historico/falsificacao-exit-nao-e-dente.md.
+F1="$(n_itens F-PARCIAL)|rej=$RJ1"
+case "$F1" in
+  "0|rej=1") ok "F1 A1 caiu sob o guard (parcial rejeitada, não gravou: $F1)" ;;
+  "2|rej=0") bad "F1 INVÁLIDA — o guard não mudou A1 (ainda gravou receita parcial)" ;;
+  *) bad "F1 — NÃO é o que o guard declara (0 itens, 1 linha rejeitada): veio [$F1]" ;;
+esac
 
 chamar_g '[{"cod_produto":"P1","id_base":"B1","id_embalagem":"E1","cor_id":"COR-ZERA","nome_cor":"PRETA","volume_finalml":"900","preco_final":"100","corante1":"C1","qtd1ml":"5","corante2":"C2","qtd2ml":"6","corante3":"C3","qtd3ml":"7"}]' >/dev/null
-chamar_g '[{"cod_produto":"P1","id_base":"B1","id_embalagem":"E1","cor_id":"COR-ZERA","nome_cor":"PRETA","volume_finalml":"900","preco_final":"100","corante1":"C1","qtd1ml":"0","corante2":"C2","qtd2ml":"","corante3":"C3","qtd3ml":"-5"}]' >/dev/null
-F2=$(n_itens COR-ZERA)
-if [ "$F2" = "0" ]; then bad "F2 INVÁLIDA — o guard não mudou A2 (receita ainda foi apagada)"; else ok "F2 A2 caiu sob o guard (receita PRESERVADA: itens=$F2)"; fi
+RJ2=$(rej_g '[{"cod_produto":"P1","id_base":"B1","id_embalagem":"E1","cor_id":"COR-ZERA","nome_cor":"PRETA","volume_finalml":"900","preco_final":"100","corante1":"C1","qtd1ml":"0","corante2":"C2","qtd2ml":"0","corante3":"C3","qtd3ml":"-5"}]')
+F2="$(n_itens COR-ZERA)|rej=$RJ2"
+case "$F2" in
+  "3|rej=1") ok "F2 A2 caiu sob o guard (re-import rejeitado, receita PRESERVADA: $F2)" ;;
+  "0|rej=0") bad "F2 INVÁLIDA — o guard não mudou A2 (receita ainda foi apagada)" ;;
+  *) bad "F2 — NÃO é o que o guard declara (os 3 itens preservados, 1 linha rejeitada): veio [$F2]" ;;
+esac
 
-chamar_g '[{"cod_produto":"P1","id_base":"B1","id_embalagem":"E1","cor_id":"F-NAN","nome_cor":"VERDE","volume_finalml":"900","preco_final":"100","corante1":"C1","qtd1ml":"NaN"}]' >/dev/null
-F3=$(Pq -c "SELECT count(*) FROM public.tint_formula_itens i JOIN public.tint_formulas f ON f.id=i.formula_id WHERE f.cor_id='F-NAN';")
-if [ "$F3" = "1" ]; then bad "F3 INVÁLIDA — o guard não mudou A3 (NaN ainda entrou)"; else ok "F3 A3 caiu sob o guard (NaN barrado: itens=$F3)"; fi
+RJ3=$(rej_g '[{"cod_produto":"P1","id_base":"B1","id_embalagem":"E1","cor_id":"F-NAN","nome_cor":"VERDE","volume_finalml":"900","preco_final":"100","corante1":"C1","qtd1ml":"NaN"}]')
+F3="$(n_itens F-NAN)|rej=$RJ3"
+case "$F3" in
+  "0|rej=1") ok "F3 A3 caiu sob o guard (NaN rejeitado: $F3)" ;;
+  "1|rej=0") bad "F3 INVÁLIDA — o guard não mudou A3 (NaN ainda entrou)" ;;
+  *) bad "F3 — NÃO é o que o guard declara (0 itens, 1 linha rejeitada): veio [$F3]" ;;
+esac
 
 # o conserto NÃO pode ter apagado a defesa que já existia
 R5G=$(P -tA 2>&1 <<'SQL'

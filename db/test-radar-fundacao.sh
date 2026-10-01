@@ -12,7 +12,7 @@ DB_DIR="$(mktemp -d)"; PORT=55436
 "$PGBIN/initdb" -D "$DB_DIR" -U postgres -A trust -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DB_DIR" -o "-p $PORT -k $DB_DIR" -l "$DB_DIR/log" start >/dev/null
 trap '"$PGBIN/pg_ctl" -D "$DB_DIR" stop -m immediate >/dev/null 2>&1; rm -rf "$DB_DIR"' EXIT
-PSQL=("$PGBIN/psql" -h "$DB_DIR" -p "$PORT" -U postgres -d postgres -v ON_ERROR_STOP=1 -q)
+PSQL=("$PGBIN/psql" -X -h "$DB_DIR" -p "$PORT" -U postgres -d postgres -v ON_ERROR_STOP=1 -q)
 
 # Stubs mínimos (auth.uid override por GUC + tabelas/funções de prod que a migration referencia)
 "${PSQL[@]}" <<'SQL'
@@ -48,14 +48,14 @@ DO $$
 DECLARE v_marcados integer;
 BEGIN
   SELECT public.radar_recruzar_ja_cliente() INTO v_marcados;
-  IF v_marcados <> 2 THEN RAISE EXCEPTION 'A1 FALHOU: marcados=%', v_marcados; END IF;
+  IF v_marcados IS DISTINCT FROM 2 THEN RAISE EXCEPTION 'A1 FALHOU: marcados=%', v_marcados; END IF;
   RAISE NOTICE 'A1 OK';
 END $$;
 
 -- A2: lead livre permanece ja_cliente=false
 DO $$
 BEGIN
-  IF (SELECT ja_cliente FROM public.radar_empresas WHERE cnpj='99888777000166') <> false THEN
+  IF (SELECT ja_cliente FROM public.radar_empresas WHERE cnpj='99888777000166') IS DISTINCT FROM false THEN
     RAISE EXCEPTION 'A2 FALHOU: lead livre foi marcado como ja_cliente';
   END IF;
   RAISE NOTICE 'A2 OK';
@@ -79,16 +79,16 @@ DO $$
 DECLARE r public.radar_empresas%ROWTYPE;
 BEGIN
   SELECT * INTO r FROM public.radar_empresas WHERE cnpj='99888777000166';
-  IF r.prospeccao_status <> 'em_conversa' THEN
+  IF r.prospeccao_status IS DISTINCT FROM 'em_conversa' THEN
     RAISE EXCEPTION 'A3 FALHOU: prospeccao_status sobrescrito (=%)', r.prospeccao_status;
   END IF;
-  IF r.primeira_vista_em <> (SELECT pv FROM t_pv) THEN
+  IF r.primeira_vista_em IS DISTINCT FROM (SELECT pv FROM t_pv) THEN
     RAISE EXCEPTION 'A3 FALHOU: primeira_vista_em alterada';
   END IF;
-  IF r.ultimo_lote <> '2026-06' THEN
+  IF r.ultimo_lote IS DISTINCT FROM '2026-06' THEN
     RAISE EXCEPTION 'A3 FALHOU: ultimo_lote não atualizado (=%)', r.ultimo_lote;
   END IF;
-  IF r.razao_social <> 'LEAD LIVRE RENOMEADO' THEN
+  IF r.razao_social IS DISTINCT FROM 'LEAD LIVRE RENOMEADO' THEN
     RAISE EXCEPTION 'A3 FALHOU: razao_social não atualizada (=%)', r.razao_social;
   END IF;
   RAISE NOTICE 'A3 OK';
@@ -100,7 +100,7 @@ DO $$
 DECLARE v_count integer;
 BEGIN
   SELECT count(*) INTO v_count FROM public.radar_empresas;
-  IF v_count <> 3 THEN RAISE EXCEPTION 'A4a FALHOU: gestor viu % linhas (esperado 3)', v_count; END IF;
+  IF v_count IS DISTINCT FROM 3 THEN RAISE EXCEPTION 'A4a FALHOU: gestor viu % linhas (esperado 3)', v_count; END IF;
   RAISE NOTICE 'A4a OK';
 END $$;
 
@@ -110,7 +110,7 @@ DO $$
 DECLARE v_count integer;
 BEGIN
   SELECT count(*) INTO v_count FROM public.radar_empresas;
-  IF v_count <> 0 THEN RAISE EXCEPTION 'A4b FALHOU: não-gestor viu % linhas (esperado 0)', v_count; END IF;
+  IF v_count IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'A4b FALHOU: não-gestor viu % linhas (esperado 0)', v_count; END IF;
   RAISE NOTICE 'A4b OK';
 END $$;
 RESET ROLE; SET test.uid = '';

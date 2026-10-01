@@ -1,7 +1,12 @@
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
+import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
+import { redigirSegredo } from "../_shared/omie-falha.ts";
 import { avaliarPagina, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
+import { mapearItensRecebimento, type OmieRecebimentoItem } from "./itens.ts";
+import { mapearCabecalho } from "./cabecalho.ts";
+import { avaliarDetalhePorChave, classificarConsultaPorChave, normalizarChaveAcesso } from "./chave.ts";
 
 // Teto anti-runaway do total DECLARADO pelo Omie (o teto de LEITURA por rodada continua
 // maxPages=3, deliberado: cron horário com MAX_DETAIL_CALLS=1 — amostra retomável, não truncagem).
@@ -53,24 +58,6 @@ interface OmieListarRecebimentosResponse {
   nTotalPaginas?: number;
 }
 
-interface OmieItemCabec {
-  nSequencia?: number;
-  cCodigoProduto?: string | null;
-  cDescricaoProduto?: string | null;
-  cNCM?: string | null;
-  cEAN?: string | null;
-  cUnidadeNfe?: string | null;
-  nQtdeNFe?: number | string | null;
-  nPrecoUnit?: number | string | null;
-  vTotalItem?: number | string | null;
-  nIdProduto?: number | string | null;
-}
-
-interface OmieRecebimentoItem {
-  itensCabec?: OmieItemCabec;
-  [key: string]: unknown;
-}
-
 interface OmieConsultarRecebimentoResponse {
   cabec?: OmieRecebimentoCabec;
   itensRecebimento?: OmieRecebimentoItem[];
@@ -85,26 +72,11 @@ interface NfeRecebimentoExistingRow {
   omie_id_receb: number | null;
 }
 
-function jsonResponse(body: Record<string, unknown>, status = 200) {
+function jsonResponse(body: Record<string, unknown>, status = 200, headersExtra: Record<string, string> = {}) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { ...corsHeaders, "Content-Type": "application/json" },
+    headers: { ...corsHeaders, ...headersExtra, "Content-Type": "application/json" },
   });
-}
-
-function smartRound(qty: number): number {
-  const rounded = Math.round(qty);
-  return Math.abs(qty - rounded) < 0.05 ? rounded : Math.ceil(qty);
-}
-
-/** Convert "DD/MM/YYYY" to "YYYY-MM-DD" for Postgres */
-function parseOmieDate(d: string | null | undefined): string | null {
-  if (!d) return null;
-  const parts = d.split("/");
-  if (parts.length === 3) {
-    return `${parts[2]}-${parts[1]}-${parts[0]}`;
-  }
-  return d;
 }
 
 interface OmieCredentials {
@@ -153,6 +125,164 @@ async function omieCall(
   return await res.json();
 }
 
+/** Teto da consulta por chave: quem espera é o operador, com o diálogo aberto. */
+const OMIE_TIMEOUT_POR_CHAVE_MS = 25_000;
+
+/**
+ * Grava os itens de UMA NF-e. Devolve a mensagem do erro, ou `null`. O que fazer com o cabeçalho
+ * quando os itens falham é decisão do CHAMADOR, e ela difere entre os dois caminhos — ver o laço
+ * do cron e `importarPorChave`.
+ */
+async function inserirItens(
+  supabase: SupabaseClient,
+  rawItems: OmieRecebimentoItem[],
+  nfeRecebimentoId: string,
+): Promise<string | null> {
+  if (rawItems.length === 0) return null;
+  const { error } = await supabase
+    .from("nfe_recebimento_itens")
+    .insert(mapearItensRecebimento(rawItems, nfeRecebimentoId));
+  return error ? error.message : null;
+}
+
+type NfePorChave =
+  | { tipo: "existe"; id: string; itens: number }
+  | { tipo: "nenhuma" }
+  | { tipo: "erro"; mensagem: string };
+
+/** A NF-e já gravada com esta chave e quantos itens ela tem. Contagem ilegível é ERRO, não zero. */
+async function buscarPorChave(supabase: SupabaseClient, chave: string): Promise<NfePorChave> {
+  const { data, error } = await supabase
+    .from("nfe_recebimentos")
+    .select("id, nfe_recebimento_itens(count)")
+    .eq("chave_acesso", chave)
+    .maybeSingle();
+  if (error) return { tipo: "erro", mensagem: `ler nfe_recebimentos: ${error.message}` };
+  if (!data) return { tipo: "nenhuma" };
+  const linha = data as { id: string; nfe_recebimento_itens?: Array<{ count?: unknown }> };
+  const itens = linha.nfe_recebimento_itens?.[0]?.count;
+  if (typeof itens !== "number") return { tipo: "erro", mensagem: "contagem de itens da NF-e indisponível" };
+  return { tipo: "existe", id: linha.id, itens };
+}
+
+/**
+ * Importa UMA NF-e pela chave de acesso — o botão "Importar NF-e" de /recebimento.
+ *
+ * O botão chamava `omie-nfe-webhook`, que exige o segredo do webhook do Omie: 401 sempre no
+ * browser, que não tem (nem deve ter) esse segredo; e com só a chave aquela edge não teria o que
+ * gravar. Aqui o gate é o do topo do handler (`authorizeCronOrStaff`: staff ou cron) e a NF-e vem
+ * do Omie, por `ConsultarRecebimento({ cChaveNFe })` na conta do armazém escolhido. Cada desfecho
+ * responde `status` + `error` legível; o front lê em `src/lib/recebimento/importacao-resposta.ts`.
+ */
+async function importarPorChave(supabase: SupabaseClient, corpo: Record<string, unknown>): Promise<Response> {
+  const responder = (body: Record<string, unknown>, status: number, headersExtra: Record<string, string> = {}) =>
+    jsonResponse({ ...body, versao: VERSAO }, status, headersExtra);
+
+  const chave = normalizarChaveAcesso(corpo.chave_acesso);
+  if (!chave) return responder({ status: "entrada_invalida", error: "chave de acesso inválida — são 44 dígitos" }, 400);
+  const warehouseId = typeof corpo.warehouse_id === "string" && corpo.warehouse_id ? corpo.warehouse_id : null;
+  if (!warehouseId) return responder({ status: "entrada_invalida", error: "armazém (warehouse_id) não informado" }, 400);
+
+  // Dedupe ANTES de gastar a consulta ao Omie (e de arriscar o "consumo redundante" dele).
+  const existente = await buscarPorChave(supabase, chave);
+  if (existente.tipo === "erro") return responder({ status: "erro_gravacao", error: existente.mensagem }, 500);
+  if (existente.tipo === "existe") {
+    return responder({ status: "ja_importada", nfe_recebimento_id: existente.id, itens: existente.itens }, 200);
+  }
+
+  const { data: wh, error: whErr } = await supabase
+    .from("warehouses")
+    .select("id, code")
+    .eq("id", warehouseId)
+    .maybeSingle();
+  if (whErr) return responder({ status: "erro_gravacao", error: `ler warehouses: ${whErr.message}` }, 500);
+  if (!wh) return responder({ status: "entrada_invalida", error: "armazém não encontrado" }, 400);
+  const cred = getCredentials().find((c) => c.warehouseCode === wh.code);
+  if (!cred) {
+    return responder({ status: "sem_credencial", error: `sem credencial Omie configurada para o armazém ${wh.code}` }, 500);
+  }
+
+  let httpStatus: number;
+  let corpoOmie: unknown;
+  try {
+    const res = await fetch("https://app.omie.com.br/api/v1/produtos/recebimentonfe/", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        call: "ConsultarRecebimento",
+        app_key: cred.appKey,
+        app_secret: cred.appSecret,
+        param: [{ cChaveNFe: chave }],
+      }),
+      signal: AbortSignal.timeout(OMIE_TIMEOUT_POR_CHAVE_MS),
+    });
+    httpStatus = res.status;
+    const texto = await res.text();
+    try {
+      corpoOmie = JSON.parse(texto);
+    } catch {
+      corpoOmie = texto;
+    }
+  } catch (e) {
+    const motivo = redigirSegredo(mensagemDeErro(e) ?? "falha de rede sem mensagem");
+    return responder({ status: "erro_omie", error: `não consegui consultar o Omie: ${motivo}` }, 502);
+  }
+
+  const consulta = classificarConsultaPorChave(httpStatus, corpoOmie);
+  if (consulta.tipo === "aguardar") {
+    const espera = consulta.segundos ? ` ${consulta.segundos} s` : "";
+    return responder(
+      { status: "omie_ocupado", error: `O Omie pediu para aguardar${espera} antes de consultar esta NF-e de novo.` },
+      429,
+      consulta.segundos ? { "Retry-After": String(consulta.segundos) } : {},
+    );
+  }
+  if (consulta.tipo === "recusada") {
+    return responder({
+      status: "omie_recusou",
+      error: `O Omie recusou a consulta (${consulta.mensagem}) — confira a chave e o armazém selecionado.`,
+    }, 409);
+  }
+  if (consulta.tipo === "erro") return responder({ status: "erro_omie", error: consulta.mensagem }, 502);
+
+  const avaliacao = avaliarDetalhePorChave(consulta.detalhe, chave);
+  if (avaliacao.tipo === "recusada") {
+    const anomalia = avaliacao.status === "chave_divergente" || avaliacao.status === "sem_id_recebimento";
+    return responder({ status: avaliacao.status, error: avaliacao.mensagem }, anomalia ? 502 : 409);
+  }
+
+  const detalhe = consulta.detalhe as OmieConsultarRecebimentoResponse;
+  const { data: nova, error: insErr } = await supabase
+    .from("nfe_recebimentos")
+    .insert(mapearCabecalho(detalhe.cabec ?? {}, wh.id, chave, avaliacao.nIdReceb))
+    .select("id")
+    .single();
+  if (insErr?.code === "23505") {
+    // Outro escritor (o cron, ou um 2º clique) gravou esta chave entre o dedupe e o insert.
+    const vencedora = await buscarPorChave(supabase, chave);
+    if (vencedora.tipo === "existe") {
+      return responder({ status: "ja_importada", nfe_recebimento_id: vencedora.id, itens: vencedora.itens }, 200);
+    }
+    return responder({ status: "erro_gravacao", error: "outro processo gravou esta NF-e agora, e não consegui relê-la" }, 500);
+  }
+  if (insErr || !nova) {
+    return responder({ status: "erro_gravacao", error: `cabeçalho não gravado: ${insErr?.message ?? "insert sem id"}` }, 500);
+  }
+
+  const rawItems: OmieRecebimentoItem[] = detalhe.itensRecebimento ?? [];
+  const erroItens = await inserirItens(supabase, rawItems, nova.id);
+  if (erroItens) {
+    // Caminho MANUAL: não há fila para travar (é UMA NF-e, pedida por alguém), então o cabeçalho é
+    // desfeito — de pé, ele faria o dedupe acima responder "já importada" a toda nova tentativa,
+    // com a NF-e pela metade. (O cron mantém o cabeçalho por outro motivo; ver o laço.)
+    const { error: delErr } = await supabase.from("nfe_recebimentos").delete().eq("id", nova.id);
+    const sobra = delErr ? ` — e o cabeçalho ${nova.id} FICOU gravado (${delErr.message})` : " — nada ficou gravado";
+    return responder({ status: "erro_gravacao", error: `itens não gravados (${erroItens})${sobra}` }, 500);
+  }
+
+  return responder({ status: "importada", nfe_recebimento_id: nova.id, itens: rawItems.length }, 200);
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -182,6 +312,11 @@ Deno.serve(async (req) => {
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
+
+  // Importação de UMA NF-e pela chave (botão "Importar NF-e"): mesmo gate do topo, outro fluxo.
+  if (corpoBruto !== null && typeof corpoBruto === "object" && !Array.isArray(corpoBruto) && "chave_acesso" in corpoBruto) {
+    return await importarPorChave(supabase, corpoBruto as Record<string, unknown>);
+  }
 
   const allCreds = getCredentials();
   if (allCreds.length === 0) {
@@ -351,27 +486,10 @@ Deno.serve(async (req) => {
         }
 
         const numeroNfe = String(detCabec.cNumeroNFe ?? "");
-        const serieNfe = detCabec.cSerieNFe ?? null;
-        const cnpjEmitente = (detCabec.cCNPJ_CPF ?? "").replace(/\D/g, "");
-        const razaoSocial = detCabec.cRazaoSocial ?? detCabec.cNome ?? null;
-        const dataEmissao = parseOmieDate(detCabec.dEmissaoNFe);
-        const valorTotal = detCabec.nValorNFe ?? null;
 
         const { data: newNfe, error: insErr } = await supabase
           .from("nfe_recebimentos")
-          .insert({
-            warehouse_id: warehouse.id,
-            numero_nfe: numeroNfe,
-            serie_nfe: serieNfe,
-            chave_acesso: chaveAcesso,
-            cnpj_emitente: cnpjEmitente,
-            razao_social_emitente: razaoSocial,
-            data_emissao: dataEmissao,
-            valor_total: valorTotal ? parseFloat(String(valorTotal)) : null,
-            status: "pendente",
-            omie_nfe_id: detCabec.nIdNfe ? parseInt(String(detCabec.nIdNfe)) : null,
-            omie_id_receb: parseInt(String(nIdReceb)),
-          })
+          .insert(mapearCabecalho(detCabec, warehouse.id, chaveAcesso, nIdReceb))
           .select("id")
           .single();
 
@@ -382,38 +500,17 @@ Deno.serve(async (req) => {
         }
 
         // Parse items from itensRecebimento
-        const rawItems = detail.itensRecebimento ?? [];
-        if (rawItems.length > 0) {
-          const itens = rawItems.map((item: OmieRecebimentoItem, idx: number) => {
-            const iCabec: OmieItemCabec = item.itensCabec ?? (item as unknown as OmieItemCabec);
-            const quantidadeNfe = parseFloat(String(iCabec.nQtdeNFe ?? 0));
-            return {
-              nfe_recebimento_id: newNfe.id,
-              sequencia: iCabec.nSequencia ?? idx + 1,
-              codigo_produto: iCabec.cCodigoProduto ?? null,
-              descricao: iCabec.cDescricaoProduto ?? "Item",
-              ncm: iCabec.cNCM ?? null,
-              ean: iCabec.cEAN ?? null,
-              unidade_nfe: iCabec.cUnidadeNfe ?? "UN",
-              quantidade_nfe: quantidadeNfe,
-              valor_unitario: iCabec.nPrecoUnit ? parseFloat(String(iCabec.nPrecoUnit)) : null,
-              valor_total: iCabec.vTotalItem ? parseFloat(String(iCabec.vTotalItem)) : null,
-              unidade_estoque: null,
-              quantidade_convertida: null,
-              quantidade_conferida: 0,
-              quantidade_esperada: smartRound(quantidadeNfe),
-              status_item: "pendente",
-              produto_omie_id: iCabec.nIdProduto ? parseInt(String(iCabec.nIdProduto)) : null,
-            };
-          });
-
-          const { error: itensErr } = await supabase
-            .from("nfe_recebimento_itens")
-            .insert(itens);
-
-          if (itensErr) {
-            console.error(`[sync] Erro ao inserir itens da NF-e ${numeroNfe}:`, itensErr);
-          }
+        const rawItems: OmieRecebimentoItem[] = detail.itensRecebimento ?? [];
+        const erroItens = await inserirItens(supabase, rawItems, newNfe.id);
+        if (erroItens) {
+          // A NF-e ficou SÓ com o cabeçalho e a retentativa a pula (`existingIds`): o erro tem de
+          // sair em errors[] — com o console.error sozinho ela contava como importada e a run
+          // dizia success:true (foi assim que o NCM pontuado zerou os itens de prod em silêncio).
+          // O cabeçalho NÃO é apagado: com MAX_DETAIL_CALLS=1, uma falha determinística re-tentada
+          // a cada run travaria a fila inteira atrás dela.
+          console.error(`[sync] Erro ao inserir itens da NF-e ${numeroNfe}: ${erroItens}`);
+          errors.push(`NF-e ${numeroNfe}: cabeçalho gravado SEM itens — ${erroItens}`);
+          continue;
         }
 
         totalImported++;

@@ -254,7 +254,8 @@ export const AUTHZ_FUNCOES_FECHADAS: Record<string, FuncaoFechada> = {
     motivo: 'marcador de frescor do detector de PO; mesmo cap_compras_ler da irmã',
   },
   'public.converter_sugestao_em_campanha_flat': {
-    fechadaPor: '20260510235956_a5ace125-5cbf-43df-940b-0d517b819a49.sql',
+    // a 20261001083000 é DROP + CREATE (assinatura nova) + REVOKE de PUBLIC/anon: a âncora vigente
+    fechadaPor: '20261001083000_converter_campanha_flat_colunas_reais.sql',
     permitido: PORTA_GATE,
     motivo: 'converte sugestão em campanha de desconto flat — staff no browser',
   },

@@ -3,6 +3,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { removerComentarios } from '@/lib/gates/limpeza-fonte';
 import { SUITES_FORA_DO_CI } from './hooks-suites-baseline';
+import { arquivosExecutados } from './lib/lacos-test-hooks';
 
 /**
  * Vigia de FORMA, em DOIS eixos — toda suíte que existe tem de ser EXECUTADA por alguém:
@@ -28,26 +29,9 @@ import { SUITES_FORA_DO_CI } from './hooks-suites-baseline';
 
 const RAIZ = join(import.meta.dirname, '..');
 
-/**
- * Expande os `for VAR in a b c; do ... scripts/test-$VAR....sh ... done` de um comando de shell
- * para a lista de ARQUIVOS que ele de fato executa. Lê TODOS os laços, e tira o molde do nome do
- * corpo de cada um — não presume sufixo.
- */
-export function arquivosExecutados(cmd: string): string[] {
-  const encontrados: string[] = [];
-  const laco = /for\s+(\w+)\s+in\s+([^;]+);\s*do\b([\s\S]*?)\bdone\b/g;
-  for (const [, variavel, lista, corpo] of cmd.matchAll(laco)) {
-    const alvos = lista.trim().split(/\s+/).filter(Boolean);
-    const cifra = `\\$\\{?${variavel}\\}?`;
-    const molde = new RegExp(`scripts/([A-Za-z0-9_.-]*${cifra}[A-Za-z0-9_.-]*\\.sh)`, 'g');
-    for (const [, template] of corpo.matchAll(molde)) {
-      for (const alvo of alvos) {
-        encontrados.push(template.replace(new RegExp(cifra), alvo));
-      }
-    }
-  }
-  return [...new Set(encontrados)].sort();
-}
+// O parser dos laços (`arquivosExecutados`) mora em `scripts/lib/lacos-test-hooks.ts` desde
+// 2026-09-27: o `gates:frescura` faz a pergunta do outro lado — todo hook ligado tem uma suíte que
+// estes laços executam? — e precisa da MESMA expansão. Os testes do parser continuam aqui.
 
 /** Toda suíte de shell presente no diretório `scripts/`. */
 export function suitesNoDisco(arquivos: string[]): string[] {

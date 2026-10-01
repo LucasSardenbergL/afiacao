@@ -33,6 +33,10 @@
 # ║   (R) GRANT SELECT (token) em auth.refresh_tokens→ exit 1   ← a 2ª barreira caindo            ║
 # ║   (S) DROP da ponte                              → exit 1   ← telemetria morta ≠ "tudo bem"   ║
 # ║   (T) REVOKE SELECT na ponte                     → exit 1   ← só a sonda EXECUTIVA percebe    ║
+# ║  ── quem pode VIRAR o papel, e a NUVEM (2026-10-01) ──────────────────────────────────────    ║
+# ║   (U) GRANT claude_ro TO <papel de app>          → exit 1   ← leitura c/ BYPASSRLS p/ quem o tem║
+# ║   (V) o transporte da nuvem, rodado pelo CANAL   → MESMO stdout, stderr e exit do psql-ro     ║
+# ║   (W) canal SEM SET em claude_ro                 → exit 2   ← SET negado (42501) ≠ "negado"   ║
 # ╚══════════════════════════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
 PGBIN="/opt/homebrew/opt/postgresql@17/bin"
@@ -60,7 +64,7 @@ trap cleanup EXIT
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
 
 # Sabotagem/restauração rodam como superuser; a MEDIÇÃO nunca (senão o audit veria tudo).
-S(){ "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 -q "$@"; }
+S(){ "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 -q "$@"; }
 
 # ── o mundo prod-like ─────────────────────────────────────────────────────────────────────────
 S <<'SQL'
@@ -130,6 +134,11 @@ CREATE TABLE net._http_response(id bigint, status_code integer, content text);
 GRANT ALL ON net.http_request_queue, net._http_response TO PUBLIC;
 GRANT ALL ON SEQUENCE net.http_request_queue_id_seq TO PUBLIC;
 RESET ROLE;
+
+-- O CANAL da nuvem: o `postgres` de prod, que o conector Lovable usa. Membro de `claude_ro` com SET
+-- e sem INHERIT — VIRA o papel para as sondas executivas, não herda nada dele.
+CREATE ROLE canal LOGIN;
+GRANT claude_ro TO canal WITH ADMIN TRUE, INHERIT FALSE, SET TRUE;
 SQL
 
 # ── o wrapper fake ────────────────────────────────────────────────────────────────────────────
@@ -204,7 +213,8 @@ BASELINE_OK=$(cat <<'JSON'
   ],
   "sondasPermitidas": [
     { "rotulo": "ponte de telemetria", "sql": "SELECT count(*) FROM private.auth_refresh_tokens_diag" }
-  ]
+  ],
+  "membros": ["canal|admin=sim,inherit=nao,set=sim|postgres"]
 }
 JSON
 )
@@ -385,6 +395,86 @@ S -c "REVOKE SELECT ON private.auth_refresh_tokens_diag FROM claude_ro;"
 roda "SELECT revogado: a sonda positiva acusa" 1 "o alcance caiu"
 S -c "GRANT SELECT ON private.auth_refresh_tokens_diag TO claude_ro;"
 roda "SELECT devolvido (a acusação SOME)" 0
+
+echo; echo "── (U) quem pode VIRAR o papel: um membro novo de claude_ro ──────────────────"
+# `memberships` é o que o papel HERDA; aqui é o sentido contrário. `GRANT claude_ro TO <papel de
+# app>` daria a quem o tiver a leitura do claude_ro, com BYPASSRLS — e todo o resto segue verde.
+S -c "CREATE ROLE app_logado NOLOGIN; GRANT claude_ro TO app_logado;"
+roda "membro novo de claude_ro" 1 "+ app_logado|"
+S -c "REVOKE claude_ro FROM app_logado; DROP ROLE app_logado;"
+roda "membro removido (a acusação SOME)" 0
+
+# ╔═ a NUVEM (2026-10-01): o MESMO veredito pelo transporte, sem psql-ro ═════════════════════════╗
+# O SQL do `--sql-nuvem` roda como o CANAL (o `postgres` do conector), numa string só — como o
+# `query_database` roda —, e o `--dados-nuvem` tem de devolver o MESMO stdout, o MESMO stderr e o
+# MESMO exit do caminho local, byte a byte (`cmp`, os dois fluxos separados: a ordem entre eles num
+# pipe compartilhado não é garantida). PSQL_RO aponta para lugar nenhum: a nuvem não o tem.
+C(){ "$PGBIN/psql" -X -p "$PORT" -h /tmp -U canal -d prove "$@"; }
+pela_nuvem(){ # roda as duas metades; deixa $TMP/nuvem.{out,err} e devolve o exit da 2ª
+  CLAUDE_RO_BASELINE_TEST_JSON="$BASELINE_OK" PSQL_RO=/nao/existe bun "$AUDIT" --sql-nuvem \
+    >"$TMP/nuvem.sql" 2>"$TMP/nuvem-sql.err" || return 9
+  C -v ON_ERROR_STOP=1 -A -t -c "$(cat "$TMP/nuvem.sql")" 2>"$TMP/canal.err" | grep '^{' >"$TMP/nuvem.json"
+  CLAUDE_RO_BASELINE_TEST_JSON="$BASELINE_OK" PSQL_RO=/nao/existe bun "$AUDIT" --dados-nuvem="$TMP/nuvem.json" \
+    >"$TMP/nuvem.out" 2>"$TMP/nuvem.err"
+}
+nuvem_igual(){ # $1=rótulo  $2=exit esperado (dos DOIS caminhos)
+  local rotulo="$1" esperado="$2" rl rn falhas=""
+  set +e
+  CLAUDE_RO_BASELINE_TEST_JSON="$BASELINE_OK" PSQL_RO="$TMP/psql-ro-fake" bun "$AUDIT" >"$TMP/local.out" 2>"$TMP/local.err"
+  rl=$?
+  pela_nuvem
+  rn=$?
+  set -e
+  [ "$rl" = "$esperado" ] || falhas="$falhas local exit $rl (esperado $esperado);"
+  [ "$rn" = "$rl" ] || falhas="$falhas nuvem exit $rn ≠ local $rl;"
+  cmp -s "$TMP/local.out" "$TMP/nuvem.out" || falhas="$falhas stdout DIFERENTE;"
+  cmp -s "$TMP/local.err" "$TMP/nuvem.err" || falhas="$falhas stderr DIFERENTE;"
+  if [ -z "$falhas" ]; then
+    printf '  ✅ %-52s exit=%s nos dois\n' "$rotulo" "$rl"
+  else
+    printf '  ❌ %-52s%s\n' "$rotulo" "$falhas"
+    diff "$TMP/local.out" "$TMP/nuvem.out" | head -12 | sed 's/^/        out /'
+    diff "$TMP/local.err" "$TMP/nuvem.err" | head -12 | sed 's/^/        err /'
+    head -c 400 "$TMP/canal.err" "$TMP/nuvem-sql.err" 2>/dev/null | sed 's/^/        /'
+    FALHAS=$((FALHAS+1))
+  fi
+}
+
+echo; echo "── (V) o transporte da nuvem dá o MESMO veredito do psql-ro ──────────────────"
+nuvem_igual "estado bom" 0
+S -c "GRANT USAGE ON SCHEMA auth TO claude_ro; GRANT SELECT ON auth.refresh_tokens TO claude_ro;"
+nuvem_igual "auth reaberto (catálogo E sonda negada)" 1
+S -c "REVOKE ALL ON auth.refresh_tokens FROM claude_ro; REVOKE USAGE ON SCHEMA auth FROM claude_ro;
+      GRANT SELECT (created_at, id, instance_id, revoked, session_id, updated_at, user_id)
+        ON auth.refresh_tokens TO claude_ro;"
+S -c "REVOKE SELECT ON private.auth_refresh_tokens_diag FROM claude_ro;"
+nuvem_igual "SELECT revogado na ponte (sonda permitida)" 1
+S -c "GRANT SELECT ON private.auth_refresh_tokens_diag TO claude_ro;"
+S -c "DROP VIEW private.auth_refresh_tokens_diag;
+      CREATE VIEW private.auth_refresh_tokens_diag WITH (security_invoker = on) AS
+        SELECT instance_id, id, user_id, revoked, created_at, updated_at, session_id, token
+          FROM auth.refresh_tokens;
+      GRANT SELECT ON private.auth_refresh_tokens_diag TO claude_ro;"
+nuvem_igual "ponte com token (sonda 42703 vira 'outro erro')" 1
+S -c "DROP VIEW private.auth_refresh_tokens_diag;
+      CREATE VIEW private.auth_refresh_tokens_diag WITH (security_invoker = on) AS $VDEF;
+      GRANT SELECT ON private.auth_refresh_tokens_diag TO claude_ro;"
+nuvem_igual "ponte restaurada (de volta ao verde)" 0
+
+echo; echo "── (W) o canal SEM SET em claude_ro: a sonda não vira resultado ──────────────"
+# O SET ROLE negado sai 42501 — a MESMA SQLSTATE que as sondas 1 e 2 esperam. Lido como desfecho,
+# daria "negado com 42501" a sondas que nem rodaram: o falso verde perfeito. Tem de sair 2.
+S -c "GRANT claude_ro TO canal WITH SET FALSE;"
+set +e; pela_nuvem; rw=$?; set -e
+if [ "$rw" = 2 ] && grep -qF 'TRANSPORTE_SONDA_PAPEL' "$TMP/nuvem.err"; then
+  printf '  ✅ %-52s exit=%s\n' "canal sem SET: recusa, nunca 'negado'" "$rw"
+else
+  printf '  ❌ %-52s exit=%s (esperado 2 com TRANSPORTE_SONDA_PAPEL)\n' "canal sem SET: recusa, nunca 'negado'" "$rw"
+  head -c 600 "$TMP/nuvem.err" "$TMP/nuvem.out" | sed 's/^/        /'
+  FALHAS=$((FALHAS+1))
+fi
+S -c "GRANT claude_ro TO canal WITH SET TRUE;"
+roda "SET devolvido ao canal (o local segue verde)" 0
 
 echo
 if [ "$FALHAS" -eq 0 ]; then

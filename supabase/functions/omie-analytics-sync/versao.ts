@@ -65,8 +65,12 @@ export const respostaSonda = criarRespostaSonda("omie-analytics-sync");
  * products/colacor_vendas: `complete`, 4297, last_page 43 — mas o bundle VELHO também gravava
  * `last_page` com o total DECLARADO pelo Omie, então 43 > 10 não prova travessia), e a sonda
  * responde a MESMA string nos dois casos. O bump é o que devolve essa resposta.
+ *
+ * v1.6 (2026-10-01) — o `dDataPosicao` dos dois ListarPosEstoque no dia de SP (classe ii do fuso, fase 3):
+ * o `toLocaleDateString` sem fuso dava o dia UTC do servidor, AMANHÃ das 21:00 às 23:59 BRT. Nenhuma
+ * pré-condição de banco.
  */
-export const VERSAO = "v1.5-sonda-cron-onda3";
+export const VERSAO = "v1.6-hoje-sp-data-posicao";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

@@ -17,18 +17,19 @@
 #   F1 — FALSIFICAÇÃO: migration espelhada com o filtro neutralizado (em tmp, nunca no repo) →
 #        a suíte TEM de reprovar. Roda na MESMA invocação que o controle verde (T1).
 #
-# Uso: db/test-tint-promote-tombstone-fase5.sh   (PGBIN=<dir> para outro PG; default Homebrew 17)
+# Uso: db/test-tint-promote-tombstone-fase5.sh   (PGBIN_OVERRIDE=<dir> para outro PG — a major 17 é
+#      conferida; PGPORT_TEST=<porta>)
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PGBIN="${PGBIN:-/opt/homebrew/opt/postgresql@17/bin}"
-PORT="${PORT:-5446}"
+# shellcheck disable=SC1091  # o gate roda sem -x; o helper e versionado ao lado, em db/lib/
+. "$REPO_ROOT/db/lib/pg-harness.sh"   # exporta PGBIN — fail-CLOSED, confere a major POSITIVAMENTE
+PORT="${PGPORT_TEST:-${PORT:-5446}}"
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/pgtest-tombstone5.XXXXXX")"
 DATA="$TMP/data"
 MIG="$REPO_ROOT/supabase/migrations/20260924120000_tint_promote_tombstone_fase5.sql"
 export LC_ALL=C LANG=C
 
-[ -x "$PGBIN/initdb" ] || { echo "PG ausente em $PGBIN (defina PGBIN)"; exit 1; }
 [ -f "$MIG" ] || { echo "migration ausente: $MIG"; exit 1; }
 
 cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$TMP"; }
@@ -36,7 +37,7 @@ trap cleanup EXIT
 
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k $TMP" -l "$TMP/pg.log" -w start >/dev/null
-PA() { "$PGBIN/psql" -p "$PORT" -h "$TMP" -U postgres -X -v ON_ERROR_STOP=1 "$@"; }
+PA() { "$PGBIN/psql" -X -p "$PORT" -h "$TMP" -U postgres -v ON_ERROR_STOP=1 "$@"; }
 
 # ── template: stubs + prelude + snapshot + seed (a Fase 5 já carimbou a '1') ─────────────────
 PA -q -d postgres -c "CREATE DATABASE tpl_tombstone" >/dev/null
@@ -103,8 +104,8 @@ SQL
 SEED_OK="$(T -tA -c "SELECT count(*) FILTER (WHERE desativada_motivo = 'fase5_geracao_legada')::text || '/' || count(*)::text FROM tint_formulas")"
 [ "$SEED_OK" = "1/3" ] || { echo "✗ seed: esperado 1 carimbada de 3 fórmulas, veio $SEED_OK"; exit 1; }
 
-FALHAS=0
-ok()  { echo "  ✓ $*"; }
+FALHAS=0; PASSOU=0
+ok()  { echo "  ✓ $*"; PASSOU=$((PASSOU + 1)); }
 bad() { echo "  ✗ $*"; FALHAS=$((FALHAS + 1)); }
 novo_db() { PA -q -d postgres -c "DROP DATABASE IF EXISTS $1" -c "CREATE DATABASE $1 TEMPLATE tpl_tombstone" >/dev/null 2>&1; }
 
@@ -146,7 +147,7 @@ BEGIN
     INTO r
     FROM tint_formulas f JOIN tint_subcolecoes s ON s.id = f.subcolecao_id
    WHERE f.cor_id = 'COR1' AND s.id_subcolecao_sayersystem = '1';
-  IF NOT r.inativa                                   THEN n := n+1; msg := msg || ' [A1 tombstone reativado]'; END IF;
+  IF r.inativa IS NOT TRUE                           THEN n := n+1; msg := msg || ' [A1 tombstone reativado]'; END IF;
   IF r.desativada_motivo IS DISTINCT FROM 'fase5_geracao_legada' THEN n := n+1; msg := msg || ' [A2 carimbo perdido]'; END IF;
   IF r.preco_final_sayersystem IS DISTINCT FROM 123.45 THEN n := n+1; msg := msg || ' [A3 preço do tombstone mudou]'; END IF;
   IF r.itens IS DISTINCT FROM 'AX=7'                 THEN n := n+1; msg := msg || ' [A4 itens do tombstone: ' || COALESCE(r.itens,'∅') || ']'; END IF;
@@ -220,6 +221,7 @@ else
 fi
 
 echo ""
+echo "PASS=$PASSOU  FAIL=$FALHAS"   # recibo lido pelo db/roda-nucleo-ci.sh
 if [ "$FALHAS" -eq 0 ]; then
   echo "TOMBSTONE_FASE5_PROVA_OK"
 else
