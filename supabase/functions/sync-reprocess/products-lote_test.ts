@@ -22,6 +22,7 @@ import {
   MAX_PAGINAS_PRODUTOS,
   planejarEscritaProdutos,
   type ProdutoCadastroOmie,
+  SemValorUnitarioError,
 } from "./products-lote.ts";
 
 function assertEquals(a: unknown, b: unknown, msg?: string) {
@@ -197,9 +198,9 @@ Deno.test("acumular — versão INATIVA posterior não remove a elegível anteri
 
 // ════════ planejarEscritaProdutos — row de upsert + divergência ════════
 
-Deno.test("planejar — row com TODOS os fallbacks do N+1 (produto mínimo, só codigo_produto)", () => {
+Deno.test("planejar — row com os fallbacks do N+1 (produto mínimo: codigo_produto + preço)", () => {
   const cat = new Map<number, ProdutoCadastroOmie>();
-  acumularProdutosDaPagina(cat, [{ codigo_produto: 42 }]);
+  acumularProdutosDaPagina(cat, [{ codigo_produto: 42, valor_unitario: 0 }]);
   const plano = planejarEscritaProdutos(cat, [], "oben", NOW);
   assertEquals(plano.rows, [{
     omie_codigo_produto: 42,
@@ -209,7 +210,6 @@ Deno.test("planejar — row com TODOS os fallbacks do N+1 (produto mínimo, só 
     unidade: "UN",
     ncm: null,
     valor_unitario: 0,
-    estoque: 0,
     ativo: true,
     familia: null,
     imagem_url: null,
@@ -247,7 +247,6 @@ Deno.test("planejar — row com campos preenchidos (imagem = primeira do array; 
     unidade: "PC",
     ncm: "6805.20.00",
     valor_unitario: 12.5,
-    estoque: 30,
     ativo: true,
     familia: "Abrasivos",
     imagem_url: "https://a/1.png",
@@ -267,8 +266,8 @@ Deno.test("planejar — row com campos preenchidos (imagem = primeira do array; 
 Deno.test("planejar — rows cobrem TODOS os códigos acumulados (com e sem linha local)", () => {
   const cat = new Map<number, ProdutoCadastroOmie>();
   acumularProdutosDaPagina(cat, [
-    { codigo_produto: 1, descricao: "A" },
-    { codigo_produto: 2, descricao: "B" },
+    { codigo_produto: 1, descricao: "A", valor_unitario: 0 },
+    { codigo_produto: 2, descricao: "B", valor_unitario: 4 },
   ]);
   const plano = planejarEscritaProdutos(
     cat,
@@ -277,6 +276,94 @@ Deno.test("planejar — rows cobrem TODOS os códigos acumulados (com e sem linh
     NOW,
   );
   assertEquals(plano.rows.map((r) => r.omie_codigo_produto), [1, 2]);
+});
+
+// 2026-10-01: `quantidade_estoque` é "DEPRECATED." na doc do Omie e chega como 0 — gravá-lo
+// zerava o estoque de ~694 produtos posicionados até o passo de estoque, toda noite (a
+// strategic contava 677–694 divergências em 19/19 noites; a operational, ≤13). O dono da
+// coluna é o passo de estoque (ListarPosEstoque), inclusive o zero de quem saiu da lista.
+Deno.test("planejar — a row NUNCA carrega a chave estoque (quantidade_estoque 30, 0 ou ausente)", () => {
+  const cat = new Map<number, ProdutoCadastroOmie>();
+  acumularProdutosDaPagina(cat, [
+    { codigo_produto: 1, valor_unitario: 5, quantidade_estoque: 30 },
+    { codigo_produto: 2, valor_unitario: 5, quantidade_estoque: 0 },
+    { codigo_produto: 3, valor_unitario: 5 },
+  ]);
+  const plano = planejarEscritaProdutos(cat, [], "oben", NOW);
+  assertEquals(plano.rows.length, 3);
+  assertEquals(plano.rows.filter((r) => Object.hasOwn(r, "estoque")).length, 0);
+});
+
+// O supabase-js manda `columns` = UNIÃO das chaves do lote e grava NULL na linha que não tem
+// a chave (postgrest-js 2.110.7, upsert com defaultToNull=true). Omitir uma coluna só em
+// ALGUMAS linhas apagaria o valor real (estoque) ou derrubaria o chunk (valor_unitario NOT
+// NULL → 23502). Pino de forma: nasce verde, falsificado à parte.
+Deno.test("planejar — todas as rows têm o MESMO conjunto de chaves (lote homogêneo para o upsert)", () => {
+  const cat = new Map<number, ProdutoCadastroOmie>();
+  acumularProdutosDaPagina(cat, [
+    { codigo_produto: 1, valor_unitario: 0 },
+    {
+      codigo_produto: 2,
+      codigo_produto_integracao: "INT-2",
+      codigo: "SKU-2",
+      descricao: "Lixa",
+      unidade: "PC",
+      ncm: "6805.20.00",
+      valor_unitario: 3,
+      quantidade_estoque: 7,
+      descricao_familia: "Abrasivos",
+      imagens: [{ url_imagem: "https://a/1.png" }],
+      marca: "M",
+    },
+  ]);
+  const plano = planejarEscritaProdutos(cat, [], "oben", NOW);
+  const formas = new Set(plano.rows.map((r) => Object.keys(r).sort().join(",")));
+  assertEquals(plano.rows.length, 2);
+  assertEquals(formas.size, 1);
+});
+
+// valor_unitario é obrigatório no cadastro do Omie; ausente é contrato quebrado, não preço 0.
+// Fabricar 0 sobrescreveria o preço local; omitir só a coluna cairia no NULL do lote acima.
+// O item inteiro fica de fora (o local é preservado) e o código é reportado.
+Deno.test("planejar — valor_unitario AUSENTE: não vira row nem divergência e vai para semValorUnitario", () => {
+  const cat = new Map<number, ProdutoCadastroOmie>();
+  acumularProdutosDaPagina(cat, [
+    { codigo_produto: 1, descricao: "Nova" },
+    { codigo_produto: 2, descricao: "B", valor_unitario: 3 },
+  ]);
+  const plano = planejarEscritaProdutos(
+    cat,
+    [{ id: "u1", omie_codigo_produto: 1, descricao: "Antiga", valor_unitario: 12.5 }],
+    "oben",
+    NOW,
+  );
+  assertEquals(plano.rows.map((r) => r.omie_codigo_produto), [2]);
+  assertEquals(plano.divergences, 0);
+  assertEquals(plano.codigosDivergentes, []);
+  assertEquals(plano.semValorUnitario, [1]);
+});
+
+// Todos sem preço = o contrato do ListarProdutos mudou. Nada é escrito de qualquer jeito; lançar
+// é o que faz o run terminar `error` (o sensor sync_reprocess_saude lê status, não metadata).
+Deno.test("planejar — TODOS os elegíveis sem valor_unitario: lança SemValorUnitarioError (nada escrito, run vira error)", () => {
+  const cat = new Map<number, ProdutoCadastroOmie>();
+  acumularProdutosDaPagina(cat, [{ codigo_produto: 1 }, { codigo_produto: 2 }]);
+  let capturado: unknown = null;
+  try {
+    planejarEscritaProdutos(cat, [], "oben", NOW);
+  } catch (e) {
+    capturado = e;
+  }
+  assertEquals(capturado instanceof SemValorUnitarioError, true);
+  assertEquals((capturado as SemValorUnitarioError).elegiveis, 2);
+});
+
+Deno.test("planejar — valor_unitario 0 PRESENTE (cadastro Omie sem preço) é dado, não ausência: grava 0", () => {
+  const cat = new Map<number, ProdutoCadastroOmie>();
+  acumularProdutosDaPagina(cat, [{ codigo_produto: 1, descricao: "A", valor_unitario: 0 }]);
+  const plano = planejarEscritaProdutos(cat, [], "oben", NOW);
+  assertEquals(plano.rows.map((r) => r.valor_unitario), [0]);
+  assertEquals(plano.semValorUnitario, []);
 });
 
 Deno.test("planejar — divergência por DESCRIÇÃO diferente na linha local", () => {
@@ -334,9 +421,9 @@ Deno.test("planejar — FIEL ao N+1: Omie sem descrição vs local 'Sem descriç
   assertEquals(plano.divergences, 1);
 });
 
-Deno.test("planejar — valor_unitario local NULL vs Omie ausente (→0) DIVERGE (comparação estrita, fiel ao N+1)", () => {
+Deno.test("planejar — valor_unitario local NULL vs Omie 0 PRESENTE DIVERGE (comparação estrita, fiel ao N+1)", () => {
   const cat = new Map<number, ProdutoCadastroOmie>();
-  acumularProdutosDaPagina(cat, [{ codigo_produto: 1, descricao: "A" }]);
+  acumularProdutosDaPagina(cat, [{ codigo_produto: 1, descricao: "A", valor_unitario: 0 }]);
   const plano = planejarEscritaProdutos(
     cat,
     [{ id: "u1", omie_codigo_produto: 1, descricao: "A", valor_unitario: null }],
