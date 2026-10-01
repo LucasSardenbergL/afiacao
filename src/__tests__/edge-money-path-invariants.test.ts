@@ -4407,3 +4407,38 @@ describe('guardrail money-path: omie-financeiro não fabrica desconto/juros/mult
     }
   });
 });
+
+describe('guardrail: omie-nfe-recebimento-sync não conta NF-e como importada quando os itens falham', () => {
+  // Medido em 2026-09-26: 47 cabeçalhos e 0 itens em prod. O NCM pontuado do Omie estourava
+  // `varchar(8)` (22001 no lote inteiro) e a edge só fazia console.error, contava a NF-e como
+  // importada e respondia success:true — a run "verde" escondia 100% de falha.
+  const bruto = read('supabase/functions/omie-nfe-recebimento-sync/index.ts');
+  const src = removerComentarios(bruto);
+  // O trecho entre o insert de itens e a contagem de importada: é ali que a falha tem de sair.
+  const ini = src.indexOf('.from("nfe_recebimento_itens")');
+  const fim = src.indexOf('totalImported++', ini);
+  const trecho = ini >= 0 && fim > ini ? src.slice(ini, fim) : '';
+
+  it('sentinela: leu a edge real, e o stripper não comeu nem deixou de limpar o arquivo', () => {
+    expect(bruto.length, 'arquivo vazio/inexistente').toBeGreaterThan(5_000);
+    expect(src).toContain('ConsultarRecebimento');
+    expect(src.length).toBeGreaterThan(bruto.length * 0.5);
+    expect(src.length).toBeLessThan(bruto.length);
+  });
+
+  it('controle positivo: o insert de itens existe uma vez e vem antes da contagem de importada', () => {
+    expect(count(src, '.from("nfe_recebimento_itens")'), 'o insert de itens sumiu ou duplicou').toBe(1);
+    expect(trecho.length, 'insert de itens ausente ou depois do totalImported++').toBeGreaterThan(0);
+  });
+
+  it('a falha do insert de itens sai em errors[] e pula a contagem de importada', () => {
+    expect(trecho).toContain('if (itensErr)');
+    expect(trecho, 'console.error sozinho é success:true sobre NF-e sem itens').toContain('errors.push(');
+    expect(trecho, 'sem o continue a NF-e sem itens conta como importada').toContain('continue;');
+  });
+
+  it('os itens passam pelo mapeamento que normaliza o NCM — nunca o cNCM cru', () => {
+    expect(trecho).toContain('mapearItensRecebimento(');
+    expect(src, 'o NCM cru voltou ao index.ts').not.toMatch(/ncm:\s*iCabec\.cNCM/);
+  });
+});
