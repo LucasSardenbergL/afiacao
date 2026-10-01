@@ -67,7 +67,7 @@ if [ "${1:-}" = "--falsificar" ]; then
               sessao_data_health:F5a,F5b,F5c:F5d
               sessao_pos_candidatos:F6a,F6b,F6c:F6d
               sessao_param_auto:F7a,F7b,F7c:F7d
-              default_sessao_coluna_data_ciclo:DEFa,DEFb:DEFc,DEFd
+              default_sessao_coluna_data_ciclo:DEFa,DEFb,DEFc:DEFd
               sem_pin:Z0!TRIPWIRE:V1a,F1a
               sem_trava:K1,K2,K3:P01,P02
               trava_na_ordem_errada:K4:K1,K2,K3
@@ -402,6 +402,18 @@ case "$sombra" in
   now\|*) echo "❌ views/DEFAULTs amarraram mais que o now() a public: [${sombra#*|}] — a prova rodaria outra semântica"; exit 1 ;;
   *) echo "❌ guarda cega: views e DEFAULTs não dependem do public.now() — não leem o relógio controlado [$sombra]"; exit 1 ;;
 esac
+# A guarda acima vê o que views e DEFAULTs AMARRARAM (pg_depend). Os CORPOS das funções resolvem nomes ao
+# executar e não deixam rastro lá — e a prova põe `public` antes de `pg_catalog` neles (abaixo). Daí a 2ª
+# pergunta, ao catálogo inteiro: que função de `public` tem a MESMA assinatura de um embutido? Só o now()
+# (o snapshot trazia set_config, derrubado acima; os avg/sum de `public` são do pgvector, outra assinatura).
+sombra_corpo="$(Pq -c "SELECT COALESCE(string_agg(p.proname, ',' ORDER BY p.proname), '') FROM pg_proc p
+  WHERE p.pronamespace = 'public'::regnamespace AND EXISTS (SELECT 1 FROM pg_proc c
+    WHERE c.pronamespace = 'pg_catalog'::regnamespace AND c.proname = p.proname AND c.proargtypes = p.proargtypes)")"
+if [ "$sombra_corpo" != now ]; then
+  echo "❌ guarda de sombra dos corpos: public sombreia [$sombra_corpo] — com public na frente, os corpos rodariam outra semântica"
+  exit 1
+fi
+echo "guarda de sombra dos corpos: em public, só o now() tem a assinatura de um embutido"
 
 # Os G rodam AQUI, sobre o estado limpo pós-migration e ANTES de qualquer sabotagem: eles re-executam a
 # migration, e um objeto sabotado faria a PRÉ acusar (com razão) predecessor divergente.
