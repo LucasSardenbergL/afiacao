@@ -63,7 +63,7 @@ todas verdes.
 | `familia-ausente-lista-email` | MORTA no setup (idem) | `9c9aae173` (controle) | 07-21 | 69 | **fundida** na `data-health-familia-ausente` ([fatia 1](provas-data-health-revividas.md)) |
 | `melhorias-rpcs` | MORTA: em 07-21 no 1º assert (o corpo de junho da RPC chama `carteira_visivel_para(uuid, uuid)`, que o fu7 moveu para o schema privado); desde `39ec9e31e` (08-28), já no seed (CHECK `cluster_segment`) | `9c9aae173` (bisect) | 07-21 | 69 | reviver |
 | `whatsapp-hsm` | MORTA no setup: `policy "wt_staff_read" … already exists` | `9c9aae173` (controle) | 07-21 | 69 | **revivida** (2026-09-30, [fatia 2](provas-canal-revividas.md)) |
-| `whatsapp-funil` | MORTA no setup (idem) | `9c9aae173` (controle) | 07-21 | 69 | **revivida e vermelha**: achou o funil quebrado para o staff em prod ([fatia 2](provas-canal-revividas.md)) |
+| `whatsapp-funil` | MORTA no setup (idem) | `9c9aae173` (controle) | 07-21 | 69 | **revivida** — achou o funil quebrado para o staff em prod, consertado pela `20261001100000` ([fatia 2](provas-canal-revividas.md)) |
 | `whatsapp-proposta` | MORTA no setup (idem) | **nasceu morta**: no próprio merge (`250754cdf`) já morria sobre o snapshot de 07-21 | 08-06 | 53 | **revivida** (2026-09-30, [fatia 2](provas-canal-revividas.md)) |
 | `data-health-carteira-rebuild` | VERMELHA: A5 "+1 check" esperado 30, veio 25 | `e3d500327` #1675, re-dump (bisect) | 08-06 | 53 | **revivida** (2026-09-30, [fatia 1](provas-data-health-revividas.md)) |
 | `preco-tier` | VERMELHA: P12/P13/F6 `veio [SET]` (a medição voltou vazia) | o **calendário**: seed com `order_date_kpi = '2026-06-15'` contra `current_date - 90` | 09-14 | 14 | reviver |
@@ -226,9 +226,9 @@ Reconciliado no fecho (2026-09-30) com a regra de chips do #2651 — no máximo 
   falsificação e achados em [provas-data-health-revividas.md](provas-data-health-revividas.md).
 - ✅ **Fatia 2a — canal** (2026-09-30): `whatsapp-hsm` e `-proposta` revividas pela lib nova
   `db/lib/corpo-vivo.sh` (snapshot + ACL MEDIDO em prod + cadeia dinâmica) e no núcleo. A `-funil`
-  revivida fica VERMELHA contra o ACL de prod — achou o funil do canal dando `permission denied` para
-  todo staff (coluna nova não herda o GRANT por coluna) — e entra no núcleo quando o conserto (1 GRANT,
-  decisão do founder) chegar a prod. Detalhe em [provas-canal-revividas.md](provas-canal-revividas.md).
+  revivida achou o funil do canal dando `permission denied` para todo staff (coluna nova não herda o
+  GRANT por coluna); o conserto (1 GRANT, aprovado pelo founder em 2026-10-01) é a `20261001100000`, e
+  com ele a `-funil` entrou no núcleo. Detalhe em [provas-canal-revividas.md](provas-canal-revividas.md).
 - 📌 **Fatia 2b — carteira** (`melhorias-rpcs`, `fornecedores-classificacao`): próxima sessão, pela
   mesma lib. O alvo de Melhorias já está medido: snapshot + ACL de prod + `20260905225613` →
   `20260929000234` reproduz o md5 de prod das duas RPCs. O diagnóstico de cada uma segue na tabela e em

@@ -111,7 +111,7 @@ describe('guardrail money-path: analyze-unified-order NÃO precifica (a IA só i
   it('a resposta do fluxo real CONSOME a fronteira de saída (não basta definir/importar)', () => {
     expect(vereditoFronteira(codigo, 'montarRespostaAnalise')).toBe('ok');
     expect(codigo, 'a Response do fluxo real não serializa o retorno da fronteira').toMatch(
-      /const resposta = montarRespostaAnalise\(\{[\s\S]*?\}\);\s*return new Response\(JSON\.stringify\(resposta\)/,
+      /const corpoResposta = montarRespostaAnalise\(\{[\s\S]*?\}\);\s*return new Response\(JSON\.stringify\(corpoResposta\)/,
     );
   });
 

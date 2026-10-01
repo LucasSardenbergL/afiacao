@@ -30,6 +30,7 @@ import {
   type ViewStats,
 } from '@/lib/reposicao/sku-param';
 import { ConsolidarDemandaDialog } from '@/components/reposicao/ConsolidarDemandaDialog';
+import { addDias, hojeSP } from '@/lib/time/sp-day';
 
 type BadgeVariant =
   | 'default'
@@ -117,12 +118,10 @@ function SkuDetailSheetImpl({
         .order('data_emissao', { ascending: true });
       if (error) return [];
       const buckets: Record<string, number> = {};
-      for (let i = 0; i < 90; i++) {
-        const d = new Date();
-        d.setDate(d.getDate() - (89 - i));
-        const k = d.toISOString().slice(0, 10);
-        buckets[k] = 0;
-      }
+      // Os buckets são dias de SP, como data_emissao: o ISO fatiado era o dia UTC (das 21h BRT em diante
+      // o gráfico perdia o dia mais antigo e ganhava um "amanhã" vazio).
+      const hoje = hojeSP();
+      for (let i = 0; i < 90; i++) buckets[addDias(hoje, -(89 - i))] = 0;
       (data ?? []).forEach((row: DemandaRow) => {
         const k = String(row.data_emissao).slice(0, 10);
         if (k in buckets) buckets[k] += Number(row.quantidade ?? 0);
