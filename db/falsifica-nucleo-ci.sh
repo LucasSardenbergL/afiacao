@@ -401,6 +401,71 @@ else
 fi
 rm -f "$ESPELHO/$FALSO" "$ESPELHO/db/test-fake-falsificavel-2.sh" "$ESPELHO/db/roda-nucleo-ci-pula.sh"
 
+# ── AS PARTES: o núcleo dividido em N runners paralelos (2026-10-01) ─────────────────────────────
+# A matriz do `provas-sql` passa NUCLEO_PARTE="i/N" ao runner. O risco novo é o de PARTIÇÃO: uma prova
+# que não cai em parte nenhuma (buraco) ou que cai em duas — os dois dão verde em todas as partes. Por
+# isso a cobertura é julgada sobre a UNIÃO das N listas, e o juiz tem a própria falsificação: um runner
+# sabotado que entrega sempre a mesma fatia tem de ser pego.
+echo
+echo "=== o EXECUTOR divide o núcleo em PARTES sem perder nem repetir prova? ==="
+for n in 1 2 3 4 5; do
+  printf '#!/usr/bin/env bash\necho "RESULTADO: 5 ok / 0 fail"\n' > "$ESPELHO/db/test-fake-parte-$n.sh"
+done
+MP="$ESPELHO/manifesto-partes.txt"
+: > "$MP"; for n in 1 2 3 4 5; do printf 'db/test-fake-parte-%s.sh 5\n' "$n" >> "$MP"; done
+
+exec_exige "NUCLEO_PARTE malformada ABORTA (nunca roda tudo, nem nada, em silêncio)" "NUCLEO_PARTE inválida" \
+  env MANIFESTO="$MP" NUCLEO_PARTE=abc bash "$ESPELHO/db/roda-nucleo-ci.sh"
+exec_exige "NUCLEO_PARTE fora da faixa (i = N) ABORTA" "NUCLEO_PARTE inválida" \
+  env MANIFESTO="$MP" NUCLEO_PARTE=3/3 bash "$ESPELHO/db/roda-nucleo-ci.sh"
+printf 'db/test-fake-parte-1.sh 5\n' > "$ESPELHO/manifesto-parte-vazia.txt"
+exec_exige "parte VAZIA (N maior que o manifesto) ABORTA" "parte sem nenhuma prova" \
+  env MANIFESTO="$ESPELHO/manifesto-parte-vazia.txt" NUCLEO_PARTE=1/2 bash "$ESPELHO/db/roda-nucleo-ci.sh"
+
+# particao <runner> <N> — "COBRE" se a união das N listas é o manifesto e nenhuma prova repete.
+particao() {
+  local runner="$1" n="$2" i todas="$LOGS/partes.todas" uniao="$LOGS/partes.uniao"
+  : > "$uniao"
+  for i in $(seq 0 $((n - 1))); do
+    env MANIFESTO="$MP" NUCLEO_PARTE="$i/$n" bash "$runner" --lista > "$LOGS/parte.$i.lst" 2>&1 \
+      || { echo "LISTA_FALHOU:$i"; return; }
+    tail -n +2 "$LOGS/parte.$i.lst" | awk '{print $1}' >> "$uniao"
+  done
+  awk '{print $1}' "$MP" | sort > "$todas"
+  if [ -n "$(sort "$uniao" | uniq -d)" ]; then echo "REPETE"
+  elif ! sort "$uniao" | cmp -s - "$todas"; then echo "BURACO"
+  else echo "COBRE"; fi
+}
+v="$(particao "$ESPELHO/db/roda-nucleo-ci.sh" 3)"
+if [ "$v" = COBRE ]; then ok "as 3 partes cobrem o manifesto, sem repetir prova"
+else bad "partição em 3 não cobre o manifesto: $v"; fi
+
+if python3 - "$ESPELHO/db/roda-nucleo-ci.sh" "$ESPELHO/db/roda-nucleo-ci-torto.sh" > "$LOGS/sabotagem-parte.log" 2>&1 <<'PY'
+import sys, pathlib
+t = pathlib.Path(sys.argv[1]).read_text()
+a = 'if [ $((k % p_n)) -eq "$p_i" ]; then'
+assert t.count(a) == 1, f"esperava 1 filtro de parte, achei {t.count(a)}"
+pathlib.Path(sys.argv[2]).write_text(t.replace(a, 'if [ $((k % p_n)) -eq 0 ]; then', 1))
+PY
+then
+  v="$(particao "$ESPELHO/db/roda-nucleo-ci-torto.sh" 3)"
+  if [ "$v" = REPETE ] || [ "$v" = BURACO ]; then ok "runner que entrega sempre a mesma fatia é PEGO pela união ($v)"
+  else bad "runner torto passou pela conferência da partição: $v"; fi
+else
+  bad "runner de partição torta — SABOTAGEM NÃO APLICOU: $(tail -1 "$LOGS/sabotagem-parte.log")"
+fi
+
+# CONTROLE POSITIVO: uma parte EXECUTA só a fatia dela e fecha o recibo da parte — sem ele, um runner
+# que recusasse toda NUCLEO_PARTE passaria nos três casos de recusa acima.
+log="$LOGS/parte-verde.log"
+env MANIFESTO="$MP" NUCLEO_PARTE=0/3 bash "$ESPELHO/db/roda-nucleo-ci.sh" > "$log" 2>&1 && rc=0 || rc=$?
+if [ "$rc" -eq 0 ] && grep -qF 'SQL_PROOF_OK provas=2/2 falsificacoes=0/0' "$log" && grep -qE ' parte=0/3$' "$log"; then
+  ok "CONTROLE: a parte 1 de 3 roda as 2 provas dela e fecha o recibo da parte"
+else
+  bad "a parte 1 de 3 não fechou o recibo da parte (exit $rc)"; tail -4 "$log" | sed 's/^/       /'
+fi
+rm -f "$ESPELHO"/db/test-fake-parte-*.sh "$ESPELHO/db/roda-nucleo-ci-torto.sh" "$MP" "$ESPELHO/manifesto-parte-vazia.txt"
+
 # ── CONTROLE FINAL ──────────────────────────────────────────────────────────────
 echo
 echo "=== controle final — o verde voltou? ==="
@@ -419,7 +484,7 @@ echo "FALSIFICACAO: OK=$OK XX=$XX"
 # Mas este piso mora no arquivo que ele vigia: um harness TRUNCADO perde o piso junto e sai 0
 # (parecer Codex 2026-09-14). No CI quem decide é o step do `provas-sql`, que confere o recibo
 # acima com o piso FORA daqui — `HARNESS_OK_MINIMO` no ci.yml; mude os dois juntos.
-OK_MINIMO=39
+OK_MINIMO=45
 if [ "$OK" -lt "$OK_MINIMO" ]; then
   echo "❌ só $OK caso(s) ok, o piso é $OK_MINIMO — o harness encolheu (ou parou no meio)"; exit 1
 fi
