@@ -57,6 +57,13 @@ A erradicação é estritamente mecânica: `"$PGBIN/psql" ` → `"$PGBIN/psql" -
 (só as linhas da varredura), conferida por comando — cada linha `+` do diff é a `-` com ` -X`
 inserido depois do binário (378/378), `bash -n` limpo nos arquivos tocados.
 
+**A classe reincidiu DURANTE o PR.** Enquanto ele rodava, entraram na `main` três provas novas do
+núcleo, todas copiadas do template antigo: `test-des-desconto-total-maximo` (3 chamadas),
+`test-expandir-promocao-item` (2) e `test-hoje-sp-sete-funcoes` (2, do #2659). O gate as acusou no 1º
+rodar pós-rebase; mesma troca mecânica (7/7). Os conflitos do rebase foram re-derivados, não editados
+à mão: pega-se a versão da `main` e re-aplica-se a troca (as 2 provas de data-health reescritas no
+`bf449e5c8` já não tinham chamada sem `-X`; a 3ª, `test-familia-ausente-lista-email`, a `main` apagou).
+
 ## O gate — `scripts/psql-local-X-gate.ts`
 
 Teste que lê fonte (vitest, `psql-local-X-gate.test.ts`), sobre o stripper COMPARTILHADO
@@ -65,7 +72,7 @@ raízes `db`·`scripts`·`.claude`·`connector`, os quatro alarmes do stripper e
 importados): todo token que termina em `/psql` seguido de fronteira — `"$PGBIN/psql"`,
 `${PGBIN}/psql`, `"$PGBIN"/psql`, caminho absoluto — exige ` -X` logo depois, na mesma linha. A
 única isenção é `PSQLRC=` no MESMO comando (o fake que lê um psqlrc de propósito). Piso: a forma
-certa vista em `db/` (≥350; medido 408), porque se o detector cegar as violações zeram junto.
+certa vista em `db/` (≥350; medido 416), porque se o detector cegar as violações zeram junto.
 A falsificação é permanente no teste: um arquivo REAL do núcleo com o `-X` tirado em memória tem de
 virar violação na linha do `P()`, e só nela.
 
