@@ -137,6 +137,11 @@ db/test-tint-promote-reexpand.sh            6
 # que a contagem somava as escritas da própria chamada e que esta prova CONFIRMAVA o número errado
 # (o esperado fora transcrito da saída). Até então rodava só no laptop.
 db/test-desconto-backfill-aplicar.sh       30
+# A PRE anti-deriva × CREATE OR REPLACE concorrente (2026-09-30): a PRE lê num comando e o CREATE
+# grava em outro — sem trava, outra sessão commita no meio e é apagada com a PÓS aprovando. Nos
+# dois níveis, com baseline VERMELHO: o template TRAVA→PRE→CREATE→PÓS (duas sessões psql) e a
+# fila de `aplicar_sql` (dois db-aplicar.sh REAIS; o corpo antigo é o de prod, md5 âncora). 2 idiomas.
+db/test-pre-anti-deriva-concorrencia.sh    50  falsificar=6
 
 # ── Eixo 5 — VEREDITO DE DEPLOY ──────────────────────────
 # O SQL que responde "a edge está REALMENTE no ar?". O dano aqui é acreditar num

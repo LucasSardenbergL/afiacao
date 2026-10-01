@@ -65,6 +65,84 @@ $$;
 
 > `SECURITY DEFINER` sem `SET search_path` é vulnerabilidade — sempre pin o search_path. Funções expostas como RPC pro frontend precisam de `GRANT EXECUTE ON FUNCTION public.<funcao> TO authenticated;`.
 
+## Recriar objeto VIVO (função/view): TRAVA → PRE → CREATE → PÓS
+
+`CREATE OR REPLACE` de algo que já existe em prod apaga o que estiver lá, inclusive a mudança que outra sessão aplicou depois do seu pré-voo. A PRE anti-deriva (md5 do corpo vivo ∈ {predecessor revisado, este}) só protege se o objeto estiver **preso desde antes da leitura**. Sem trava, em READ COMMITTED, B troca e commita entre a sua PRE e o seu CREATE, você apaga B e a sua PÓS aprova. Isso foi medido em PG17 (`db/test-pre-anti-deriva-concorrencia.sh`, M0/V0). Instância provada deste template: `db/fixtures/pre-trava-template.sql`.
+
+```sql
+-- TRAVA, antes de ler: ALTER sem efeito em CADA objeto que a PRE guarda E que este arquivo recria.
+DO $trava$
+BEGIN
+  IF to_regprocedure('public.<funcao>(<tipos>)') IS NOT NULL THEN
+    ALTER FUNCTION public.<funcao>(<tipos>) <VOLATILE|STABLE|IMMUTABLE>;   -- a volatilidade VIVA
+  END IF;
+  IF to_regclass('public.<view>') IS NOT NULL THEN
+    ALTER VIEW public.<view> SET (security_invoker = <on|off>);            -- o valor VIVO
+  END IF;
+END
+$trava$;
+
+-- PRE: md5 EXATO do corpo vivo ∈ {predecessor revisado, este}. Ausente ABORTA.
+DO $pre$
+DECLARE
+  r record;
+BEGIN
+  FOR r IN
+    SELECT x.alvo, x.vivo, x.predecessor, x.este
+      FROM (VALUES
+        ('<funcao>(<tipos>)',
+         (SELECT md5(p.prosrc) FROM pg_catalog.pg_proc p
+           WHERE p.oid = to_regprocedure('public.<funcao>(<tipos>)')),
+         '<md5 do prosrc de PROD>', '<md5 do prosrc deste arquivo>'),
+        ('<view>',
+         (SELECT md5(pg_catalog.pg_get_viewdef(c.oid, true)) FROM pg_catalog.pg_class c
+           WHERE c.oid = to_regclass('public.<view>')),
+         '<md5 do viewdef de PROD>', '<md5 do viewdef deste arquivo>')
+      ) AS x(alvo, vivo, predecessor, este)
+  LOOP
+    IF r.vivo IS NULL OR r.vivo NOT IN (r.predecessor, r.este) THEN
+      RAISE EXCEPTION 'PRE FALHOU: % vivo (md5 %) não é o predecessor revisado nem este', r.alvo, r.vivo;
+    END IF;
+  END LOOP;
+END
+$pre$;
+
+CREATE OR REPLACE FUNCTION public.<funcao>(<args>) … ;
+CREATE OR REPLACE VIEW public.<view> WITH (security_invoker = on) AS … ;   -- repita o WITH em todo replace
+
+-- PÓS: o corpo vivo é ESTE (a mesma régua da PRE).
+DO $pos$
+BEGIN
+  IF (SELECT md5(p.prosrc) FROM pg_catalog.pg_proc p
+       WHERE p.oid = to_regprocedure('public.<funcao>(<tipos>)')) IS DISTINCT FROM '<md5 deste>' THEN
+    RAISE EXCEPTION 'POS FALHOU: <funcao>';
+  END IF;
+END
+$pos$;
+```
+
+Cada regra abaixo foi medida em PG17; nenhuma é preferência de estilo.
+
+- **A trava vem antes da PRE, na mesma transação.** No `db:aplicar` a transação é do executor, e o arquivo vai sem `BEGIN;`. No SQL Editor ou no MCP, o arquivo leva `BEGIN;` no topo e `COMMIT;` no fim. Ler primeiro e travar depois deixa a janela aberta: é o "guard fora da escrita" de `docs/agent/money-path.md`.
+- **Trave cada objeto que a PRE guarda, e só objeto que o arquivo recria.** O ALTER muda o valor durante a transação, e quem fixa o valor final é o `CREATE OR REPLACE`. Uma trava sem CREATE num view-gate `security_invoker = off` (os `selfservice_*`) o deixaria `on` e zeraria o customer.
+- **Função:** use `ALTER FUNCTION … <volatilidade viva>`, lida em `pg_proc.provolatile` (`v`/`s`/`i`). Também serve `SET search_path = <o mesmo>` com assert de `proconfig` antes = depois (forma da `20260927195430`).
+  - Quem chega depois espera e falha alto com `XX000 tuple concurrently updated` (M1/M2).
+  - A trava não impede **chamar** a função.
+  - `OWNER TO <o mesmo dono>` **não** trava: é no-op que nem toca a linha.
+  - `SELECT … FOR UPDATE` em `pg_proc` não serve: o `postgres` da prod não tem `UPDATE` no catálogo.
+- **View:** use `ALTER VIEW … SET (security_invoker = <valor vivo>)`. Ele prende a view em ACCESS EXCLUSIVE até o COMMIT.
+  - Quem lê a view espera enquanto a migration roda. O próprio `CREATE OR REPLACE VIEW` já faria isso, só que mais tarde.
+  - A tabela-base fica livre.
+  - Nunca use `LOCK TABLE` numa view: ele trava as tabelas-base também, e aí todo o app espera.
+  - ⚠️ Medido em V1/V2: quem chega depois **espera e, se não tiver PRE, aplica por cima** de você quando você termina. Ele não falha. Isso é o regime sequencial ("a última a recriar vence"), não esta corrida.
+  - A trava garante que **você** não apaga ninguém. Quem vem depois sem protocolo depende do pré-voo dele e do `deriva:corpo:prod`. Com PRE e trava dos dois lados, o segundo é recusado (V3).
+- **Objeto ausente aborta.** Sem objeto não há linha para travar, e um CREATE concorrente que commitasse antes do seu seria apagado.
+  - Objeto NOVO não leva PRE: use `CREATE FUNCTION` sem `OR REPLACE`, e a duplicata falha alto.
+  - Exceção consciente: objeto que pode faltar num ambiente reconstruído, porque viveu só na prod. Aí use `IS NOT NULL AND NOT IN`, sabendo que nesse ambiente a trava não prende nada.
+- **O md5 é EXATO e calculado no banco:** `md5(prosrc)` ou `md5(pg_get_viewdef(oid, true))`, via `~/.config/afiacao/psql-ro -q`. Normalizar espaço ou comentário apaga diferença dentro de literal (`docs/agent/database.md` §2).
+- **O `db:aplicar` já serializa por conta própria.** A fila em `aplicar_sql` (advisory `(20260909,1)`) impede que dois `db:aplicar` se cruzem, com ou sem trava no arquivo (E5/E6). A trava continua obrigatória porque a fila **não alcança** quem não passa pela porta: SQL Editor, `query_database` do MCP e o builder do Lovable.
+- **Rode em READ COMMITTED,** que é o default da prod: cada comando depois da trava tira um snapshot novo. Em REPEATABLE READ o snapshot nasce no 1º comando e a PRE leria o mundo de antes. O `aplicar_sql` recusa esse caso (E9/E10); no SQL Editor, não mude o isolamento.
+
 ## Trigger (função + attach)
 
 ```sql

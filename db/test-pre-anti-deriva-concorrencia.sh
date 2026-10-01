@@ -28,6 +28,9 @@
 # NÍVEL EXECUTOR — a fila de public.aplicar_sql (db/claude-rw-bootstrap.sql) com o db-aplicar.sh
 # REAL em dois processos (fixtures db-aplicar-corrida-a/-b: A tem uma BARREIRA de teste entre a PRE
 # e o CREATE; nenhuma das duas tem trava de arquivo — o que se prova é a porta):
+#   R0 baseline do isolamento, sem porta nenhuma: em REPEATABLE READ a leitura feita DEPOIS de B
+#      commitar ainda vê o predecessor, e o CREATE OR REPLACE apaga B sem erro — é por isso que a
+#      porta EXIGE READ COMMITTED (o catálogo chega a mostrar as duas versões do mesmo OID)
 #   E1 baseline com o corpo REAL de prod (db/fixtures/aplicar-sql-v1-prod.sql, md5 âncora da prod):
 #      B aplica inteiro com A parado e A o apaga — os dois saem 0 e o recibo de B mente
 #   E2 o delta db/aplicar-executor-serializa.sql aplica pelo PRÓPRIO executor (auto-substituição)
@@ -45,7 +48,8 @@
 #   E14 o delta com a porta nova QUEBRADA (late-bound) aborta na PÓS e a porta antiga fica
 #
 # Tudo nos DOIS idiomas do servidor (C e pt_BR — o veredito do executor lê ERROR/ERRO), que aqui é
-# também a 2ª amostra de escalonamento. IDs: C<id> e P<id>.
+# também a 2ª amostra de escalonamento. IDs: C<id> e P<id>. `NIVEIS` (default os dois) escolhe o que
+# roda: a falsificação roda só o nível que cada sabotagem ataca, com o denominador do recorte.
 set -euo pipefail
 # Escrever num FIFO cujo leitor morreu (sessão que abortou) mata o script MUDO com SIGPIPE.
 trap '' PIPE
@@ -63,8 +67,16 @@ FIX_A="db/fixtures/db-aplicar-corrida-a.sql"
 FIX_B="db/fixtures/db-aplicar-corrida-b.sql"
 TEMPLATE="db/fixtures/pre-trava-template.sql"
 SABOTAGEM="${SABOTAGEM:-}"
-# Denominador: (M0-M4 · V0-V3 · C1 · E1-E14) × 2 idiomas.
-TOTAL_ESPERADO=48
+NIVEIS="${NIVEIS:-migration executor}"
+# Denominador por idioma: migration = M0-M4 · V0-V3 · C1 (10) · executor = R0 · E1-E14 (15).
+TOTAL_ESPERADO=0
+for n in $NIVEIS; do
+  case "$n" in
+    migration) TOTAL_ESPERADO=$((TOTAL_ESPERADO + 2 * 10)) ;;
+    executor)  TOTAL_ESPERADO=$((TOTAL_ESPERADO + 2 * 15)) ;;
+    *) echo "NIVEIS desconhecido: $n"; exit 3 ;;
+  esac
+done
 
 # md5 EXATOS (prosrc / pg_get_viewdef(…, true)), medidos em PG17 — a prova os confere ao montar.
 MD5_V1_PROD=ac51b3cea53fa87492e6956ed7a56586     # aplicar_sql de prod, 2026-09-30 (psql-ro)
@@ -87,15 +99,15 @@ unset LANGUAGE
 if [ "${1:-}" = "--falsificar" ]; then
   SABOTAGENS="template_sem_trava:CM1,CM2,CM3,CV1,CV2,CV3,PM1,PM2,PM3,PV1,PV2,PV3:CM0,CM4,CV0,CC1,PM0,PM4,PV0,PC1
               sem_fila:CE5,CE6,CE8,PE5,PE6,PE8:CE1,CE9,CE10,CE11,PE1,PE9,PE10,PE11
-              sem_guarda_isolamento:CE9,CE10,PE9,PE10:CE5,CE6,CE8,PE5,PE6,PE8
+              sem_guarda_isolamento:CE9,CE10,PE9,PE10:CE5,CE6,CE8,PE5,PE6,PE8,CR0,PR0
               espera_generica:CE8,PE8:CE5,CE6,CE9,PE5,PE6,PE9
               delta_pre_aceita_tudo:CE13,PE13:CE12,CE14,PE12,PE14
               delta_sem_sonda:CE14,PE14:CE12,CE13,PE12,PE13"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-${SLUG}.XXXXXX")"
   porta=$PORT_BASE
 
-  echo "══ CONTROLE (sem sabotagem) — tem de ficar VERDE, com os $TOTAL_ESPERADO asserts ══"
-  if PGPORT_TEST=$porta SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
+  echo "══ CONTROLE (sem sabotagem, os dois níveis) — tem de ficar VERDE, com os $TOTAL_ESPERADO asserts ══"
+  if PGPORT_TEST=$porta SABOTAGEM="" NIVEIS="migration executor" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
     echo "  ✅ controle VERDE ($(grep -c ' OK — ' "$LOGDIR/controle.log" || true) asserts) — a suíte sabe passar"
   else
     echo "  ❌ CONTROLE VERMELHO — abortando ANTES de sabotar (uma suíte que já falha aprovaria tudo)"
@@ -108,7 +120,9 @@ if [ "${1:-}" = "--falsificar" ]; then
     [ "$resto" != "$verm" ] && verdes="${resto#*:}"
     porta=$((porta + 2))     # cada execução sobe DOIS clusters (C e pt_BR)
     log="$LOGDIR/$sab.log"
-    if PGPORT_TEST=$porta SABOTAGEM="$sab" bash "$0" > "$log" 2>&1; then
+    # Só o nível que a sabotagem ataca (as verdes declaradas moram nele).
+    niv=executor; [ "$sab" = template_sem_trava ] && niv=migration
+    if PGPORT_TEST=$porta SABOTAGEM="$sab" NIVEIS="$niv" bash "$0" > "$log" 2>&1; then
       echo "  ❌ $sab — suíte ficou VERDE com a sabotagem ativa: o assert NÃO tem dente"
       falhas=$((falhas + 1)); continue
     fi
@@ -475,7 +489,15 @@ cenario_e() { # [VAR=valor…] — ambiente extra para B (ex.: PGOPTIONS de isol
   rca="$(espera_rc ea)"; rcb="$(espera_rc eb)"
   final="$(qual_alvo)"
   led="$(Q "SELECT estado FROM public.db_aplicacoes WHERE arquivo LIKE '%db-aplicar-corrida-b.sql' ORDER BY id DESC LIMIT 1")"
-  motivo="$(grep -oE 'PRE_RECUSOU|ISOLAMENTO_ERRADO|VEZ_OCUPADA' "$WORK/eb.log" | head -1 || true)"
+  # O motivo vem SÓ da 1ª linha de severidade do servidor: o CONTEXT de qualquer erro dentro do
+  # EXECUTE ecoa o corpo INTEIRO da fixture, e o literal 'PRE_RECUSOU' dela casaria em todo erro.
+  # O executor roda o psql sem VERBOSITY=verbose: a linha não traz SQLSTATE, só a mensagem. Sem
+  # marcador conhecido, o veredito carrega o começo da mensagem — erro desconhecido não vira "-".
+  local linha; linha="$(grep -E '(ERROR|ERRO): ' "$WORK/eb.log" | head -1 || true)"
+  motivo="$(grep -oE 'PRE_RECUSOU|ISOLAMENTO_ERRADO|VEZ_OCUPADA' <<<"$linha" | head -1 || true)"
+  if [ -z "$motivo" ] && [ -n "$linha" ]; then
+    motivo="outro:$(sed -E 's/^.*(ERROR|ERRO): +//' <<<"$linha" | cut -c1-70)"
+  fi
   echo "$obs|a_parado=$a_parado|A=$rca|B=$rcb|final=$final|ledgerB=$led|motivoB=${motivo:--}"
 }
 # Chamada DIRETA à porta, como claude_rw, numa transação montada aqui. Ecoa:
@@ -494,7 +516,7 @@ porta_direta() { # <rótulo> <corpo (cria public.<rótulo>_t)> <abertura da tran
   RWV -f "$WORK/porta-$rot.sql" > "$WORK/porta-$rot.out" 2>&1 || true
   st="$(sqlstate_de "$WORK/porta-$rot.out")"
   grep -q 'FIM_APLICACAO_OK' "$WORK/porta-$rot.out" && st=FIM_APLICACAO_OK
-  marca="$(grep -oE 'VEZ_OCUPADA|ISOLAMENTO_ERRADO' "$WORK/porta-$rot.out" | head -1 || true)"
+  marca="$(grep -E '(ERROR|ERRO): ' "$WORK/porta-$rot.out" | head -1 | grep -oE 'VEZ_OCUPADA|ISOLAMENTO_ERRADO' || true)"
   echo "${st:-sem_erro}|${marca:--}|efeito=$(Q "SELECT to_regclass('public.${rot}_t') IS NOT NULL")|tentativa=$(Q "SELECT estado FROM public.db_aplicacoes WHERE id = $id")"
 }
 # O bloco CREATE OR REPLACE FUNCTION public.aplicar_sql … $funcao$; de um arquivo.
@@ -525,9 +547,31 @@ open(arq, "w", encoding="utf-8").write(s[:i] + s[j + len(fim):])
 PY
 }
 
+# R0: a sessão S abre REPEATABLE READ e tira o snapshot; W troca a função e commita; S lê e recria.
+cenario_r0() {
+  reset_m
+  abre_A
+  manda_A "BEGIN ISOLATION LEVEL REPEATABLE READ;" "SELECT count(*) FROM pg_class;" "\\! touch $WORK/a.pronta"
+  if ! espera_arquivo "$WORK/a.pronta" "$PID_A"; then
+    fecha_A; echo "NAO_PAROU:$(tr '\n' ' ' < "$WORK/a.out" | head -c 200)"; return
+  fi
+  Q "CREATE OR REPLACE FUNCTION public.trava_alvo_f() RETURNS text LANGUAGE sql STABLE AS \$\$SELECT 'B'\$\$" > /dev/null
+  manda_A "SELECT 'LEU=' || CASE md5(prosrc) WHEN '$F_PRED' THEN 'pred' WHEN '$F_B' THEN 'B' ELSE 'outro' END
+             FROM pg_proc WHERE oid = to_regprocedure('public.trava_alvo_f()') LIMIT 1;" \
+          "CREATE OR REPLACE FUNCTION public.trava_alvo_f() RETURNS text LANGUAGE sql STABLE AS \$\$SELECT 'este'\$\$;" \
+          "COMMIT;" "SELECT 'A_FIM_OK';"
+  fecha_A
+  local leu a=ERRO
+  leu="$(sed -n 's/^LEU=//p' "$WORK/a.out" | head -1)"
+  grep -q '^A_FIM_OK$' "$WORK/a.out" && a=OK
+  echo "leu=${leu:-nada}|S=$a|final=$(qual_f)"
+}
+
 roda_nivel_executor() { # <C|P>
   local L="$1" v
   echo "── nível EXECUTOR ($L) ──"
+  eq "${L}R0" "REPEATABLE READ sem porta: lê o predecessor DEPOIS de B commitar e apaga B sem erro" \
+    "$(cenario_r0)" "leu=pred|S=OK|final=este"
   # Âncoras (não são asserts: se falham, não há o que julgar).
   P -f "$REPO_ROOT/$BOOT" > "$CDIR/boot.log" 2>&1 || { echo "ABORTA: bootstrap falhou"; tail -c 400 "$CDIR/boot.log"; exit 3; }
   grep -q 'BOOTSTRAP_OK' "$CDIR/boot.log" || { echo "ABORTA: bootstrap sem BOOTSTRAP_OK"; tail -c 400 "$CDIR/boot.log"; exit 3; }
@@ -636,8 +680,8 @@ roda_nivel_executor() { # <C|P>
 for L in C P; do
   sobe_cluster "$L"
   echo "═══ cluster $L (lc_messages=$LOC_SRV, porta $PORT) ═══"
-  roda_nivel_migration "$L"
-  roda_nivel_executor "$L"
+  case " $NIVEIS " in *" migration "*) roda_nivel_migration "$L" ;; esac
+  case " $NIVEIS " in *" executor "*)  roda_nivel_executor "$L" ;; esac
 done
 
 echo "PASS=$PASS FAIL=$FAIL (esperados $TOTAL_ESPERADO)"
