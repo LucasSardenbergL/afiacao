@@ -6,7 +6,9 @@ export default {
   darkMode: ["class"],
   // Testes fora do CSS: o Tailwind lê cada arquivo do content como texto, e uma classe citada só num
   // teste nascia no CSS servido. As 3 negações espelham a classe TESTE do classify.sh da skill
-  // lovable-deploy-verify, e são as únicas formas que a prova do monitor de deploy entende.
+  // lovable-deploy-verify e são as únicas formas que a prova do monitor de deploy entende — sem
+  // ponto final aqui: ponto seguido de content é o guard de mutação da prova (docs/historico/
+  // testes-fora-do-content-do-tailwind)
   content: [
     "./pages/**/*.{ts,tsx}",
     "./components/**/*.{ts,tsx}",

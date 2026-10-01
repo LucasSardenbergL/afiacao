@@ -218,6 +218,19 @@ parte_de "$NEG_BASE"; escreve public/a/x.ts 'export const a = "texto-a";'; escre
 ln -s ../../public/a "$R/src/lib/pasta.test.ts"
 commit neg-link-base > /dev/null && rm "$R/src/lib/pasta.test.ts" && ln -s ../../public/b "$R/src/lib/pasta.test.ts" \
   && NEG_LINK=$(commit neg-link)
+# o PostCSS que o Vite roda é o 1º que o postcss-load-config acha, e .postcssrc* e package.json#postcss
+# vêm ANTES do postcss.config.js auditado — com um deles presente, a auditoria olharia o arquivo errado
+parte_de "$NEG_BASE"; escreve .postcssrc.json '{ "plugins": { "tailwindcss": { "config": "./outro.config.js" } } }'
+commit neg-rc-base > /dev/null && acrescenta src/lib/__tests__/janela.test.ts && NEG_RC=$(commit neg-rc)
+parte_de "$NEG_BASE"
+escreve package.json "$(pkg | "$PY" -c 'import json,sys; d=json.load(sys.stdin); d["postcss"]={"plugins":{"tailwindcss":{"config":"./outro.config.js"}}}; print(json.dumps(d, indent=2))')"
+commit neg-pkgcss-base > /dev/null && acrescenta src/lib/__tests__/janela.test.ts && NEG_PKGCSS=$(commit neg-pkgcss)
+# o tailwind.config.ts REAL do repo como config do fixture: edição que tire a forma auditada — um
+# comentário terminando em ponto logo acima do `content:` casa o guard de mutação, e foi o que
+# aconteceu ao escrever as negações (2026-10-01) — fica vermelha aqui, e não em silêncio na prova
+REAL_TW="$SKILL/../../../tailwind.config.ts"
+parte_de "$BASE"; cp "$REAL_TW" "$R/tailwind.config.ts" || { echo "❌ sem o tailwind.config.ts real ($REAL_TW)"; exit 2; }
+commit neg-real-base > /dev/null && acrescenta src/lib/__tests__/janela.test.ts && NEG_REAL=$(commit neg-real)
 g branch deadbee1 "$BASE"   # ref com cara de SHA: `deadbee1^{commit}` resolve o BRANCH
 g branch deadbee3 "$SO_DOCS"   # a mesma ref, apontando para a MAIN: resolvia no atalho do exit 0
 if ! { g remote add origin "$O" && g push -q origin 'refs/tags/*:refs/tags/*'; }; then
@@ -225,7 +238,8 @@ if ! { g remote add origin "$O" && g push -q origin 'refs/tags/*:refs/tags/*'; }
 fi
 for v in BASE SO_DOCS C2445 SRC PKG_DEPS PKG_SCRIPTS PKG_BUILD PKG_FMT LATERAL RENAME DESC EDGE VAZA_BASE VAZA SUJO_BASE SUJO ALIAS_BASE ALIAS \
          TNUM TPAL TIMP TCOM TJS TURL TCAT TTPL TGLOB TVIA TLEI TALI TAPI TSEP TLCK TMIX LINK \
-         NEG_BASE NEG NEG_IMP NEG_ESTRANHA NEG_SO_ARQ NEG_SO_PASTA NEG_SO_SETUP NEG_FG NEG_TW NEG_LINK; do
+         NEG_BASE NEG NEG_IMP NEG_ESTRANHA NEG_SO_ARQ NEG_SO_PASTA NEG_SO_SETUP NEG_FG NEG_TW NEG_LINK \
+         NEG_RC NEG_PKGCSS NEG_REAL; do
   val=${!v:-}
   [ "${#val}" -eq 40 ] || [ "${#val}" -eq 64 ] || { echo "❌ fixture incompleto: $v='$val'"; exit 2; }
 done
@@ -303,6 +317,9 @@ cenario() {
     teste_negacao_fastglob) echo "$(tag_de neg-fg) $NEG_FG -" ;;
     teste_negacao_extrator) echo "$(tag_de neg-tw) $NEG_TW -" ;;
     teste_negado_link_pasta) echo "$(tag_de neg-link) $NEG_LINK -" ;;
+    teste_negado_postcssrc) echo "$(tag_de neg-rc) $NEG_RC -" ;;
+    teste_negado_pkg_postcss) echo "$(tag_de neg-pkgcss) $NEG_PKGCSS -" ;;
+    teste_negado_config_real) echo "$(tag_de neg-real) $NEG_REAL -" ;;
   esac
 }
 
@@ -364,7 +381,10 @@ negacao_so_pasta|3|motivo: ALCANCA_BUNDLE;TESTE_ALCANCA TAILWIND src/test/setup.
 negacao_so_setup|3|motivo: ALCANCA_BUNDLE;TESTE_ALCANCA TAILWIND src/lib/__tests__/dados.ts
 teste_negacao_fastglob|3|motivo: ALCANCA_BUNDLE;TESTE_ALCANCA TAILWIND src/lib/__tests__/janela.test.ts;nao isenta teste nenhum: fast-glob travado em 3.3.3
 teste_negacao_extrator|3|motivo: ALCANCA_BUNDLE;TESTE_ALCANCA EXTRATOR;tailwindcss travado em 3.4.18
-teste_negado_link_pasta|3|motivo: ALCANCA_BUNDLE;TESTE_ALCANCA TAILWIND src/lib/pasta.test.ts e symlink'
+teste_negado_link_pasta|3|motivo: ALCANCA_BUNDLE;TESTE_ALCANCA TAILWIND src/lib/pasta.test.ts e symlink
+teste_negado_postcssrc|3|motivo: ALCANCA_BUNDLE;TESTE_ALCANCA EXTRATOR;.postcssrc.json: config de PostCSS que o Vite le ANTES do postcss.config.js
+teste_negado_pkg_postcss|3|motivo: ALCANCA_BUNDLE;TESTE_ALCANCA EXTRATOR;package.json#postcss: config de PostCSS que o Vite le ANTES do postcss.config.js
+teste_negado_config_real|5|SINCRONIZADO_EM_BUNDLE;testes: 1 mudado(s) fora do grafo de modulos, 0 lido(s) pelo Tailwind com as mesmas palavras, 1 fora do content por negacao'
 
 esperado_de() { printf '%s\n' "$CASOS" | awk -F'|' -v c="$1" '$1 == c { print $2 "|" $3; achou = 1 } END { exit !achou }'; }
 
@@ -509,7 +529,7 @@ while IFS='|' read -r nome esp marca; do
   fi
 done <<< "$CASOS"
 echo "$n_ok/$n_tot cenários passaram"
-[ "$n_tot" -ge 58 ] || { echo "  [XX ] só $n_tot cenário(s) rodaram — a rede encolheu"; rc=1; }
+[ "$n_tot" -ge 61 ] || { echo "  [XX ] só $n_tot cenário(s) rodaram — a rede encolheu"; rc=1; }
 
 # ── falsificação ────────────────────────────────────────────────────────────────────────────────
 if [ "$FALSIFY" = 1 ]; then
@@ -703,6 +723,12 @@ PY
     # só arquivo REGULAR ganha a isenção: o symlink-pasta com nome de teste é lido por dentro
     sab negacao-so-regular scripts/alcance-bundle.py teste_negado_link_pasta "$VERDE_INDEVIDO" \
       'regular(t) and ' ''
+    # o PostCSS do Vite é o 1º que o postcss-load-config acha (Caminho B, 2026-10-01): cada fonte que
+    # vem ANTES do postcss.config.js auditado, arrancada do guard, reabre o verde da negação
+    sab postcssrc-antes scripts/alcance-bundle.py teste_negado_postcssrc "$VERDE_INDEVIDO" \
+      '    if rc or "postcss" in pkg:' '    if "postcss" in pkg:'
+    sab pkg-postcss-antes scripts/alcance-bundle.py teste_negado_pkg_postcss "$VERDE_INDEVIDO" \
+      '    if rc or "postcss" in pkg:' '    if rc:'
     sab carimbo-ambiguo scripts/monitor-deploy.sh carimbo_duplo "$VERDE_INDEVIDO" \
       '[ "${N_CARIMBOS:-0}" -le 1 ] || atrasado CARIMBO_AMBIGUO' '[ "${N_CARIMBOS:-0}" -ge 0 ] || atrasado CARIMBO_AMBIGUO'
   }
@@ -770,7 +796,7 @@ PY
     fi
   done
   echo "  falsificações que pegaram: $fals/$total"
-  [ "$total" -ge 53 ] && [ "$fals" -eq "$total" ] || rc=1
+  [ "$total" -ge 55 ] && [ "$fals" -eq "$total" ] || rc=1
 
   # (C) CONTROLE DE SAÍDA — pelo CONTEÚDO: o laço nunca mutou o versionado.
   # shellcheck disable=SC2086

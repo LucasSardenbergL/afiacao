@@ -499,8 +499,9 @@ def extrator_nao_auditado(arvore, css_bundle, texto_de):
     if strings_do_content(t) is None:
         return "%s: content nao e UM array so de strings literais" % configs[0]
     m = RE_TW_PROIBIDO.search(t)
-    if m:
-        return "%s: '%s' pode trocar o que o extrator ve" % (configs[0], m.group(0))
+    if m:   # json: o `\.\s*content` casa ATRAVÉS de linhas (um comentário que acaba em ponto logo acima
+            # do `content:`), e a quebra crua viraria um ponto solto na mensagem de uma linha só
+        return "%s: %s pode trocar o que o extrator ve" % (configs[0], json.dumps(m.group(0)))
     if len(RE_TW_TRANSFORM.findall(t)) != len(RE_TW_TRANSFORM_CSS.findall(t)):
         return "%s: transform que nao e a propriedade CSS" % configs[0]
     locais = [s for s, modo in specs_de("", t) if modo == "qualquer" and s.startswith((".", "/", "@/"))]
@@ -512,6 +513,19 @@ def extrator_nao_auditado(arvore, css_bundle, texto_de):
     postcss = [p for p in raiz if p.startswith("postcss.config.")]
     if len(postcss) != 1:
         return "%d postcss.config na raiz (o auditado e UM, com tailwindcss: {})" % len(postcss)
+    # O Vite acha o PostCSS pelo postcss-load-config (4.0.2), que consulta package.json#postcss e
+    # .postcssrc* ANTES do postcss.config.* — com um deles presente, o auditado abaixo não é o que roda
+    # (Caminho B, 2026-10-01)
+    rc = [p for p in raiz if p.startswith(".postcssrc")]
+    try:
+        pkg = json.loads(texto_de("package.json")) if "package.json" in arvore else {}
+    except ValueError:
+        pkg = None
+    if not isinstance(pkg, dict):
+        return "package.json nao e um objeto JSON: nao sei se ele carrega config de PostCSS"
+    if rc or "postcss" in pkg:
+        return "%s: config de PostCSS que o Vite le ANTES do %s" % (
+            rc[0] if rc else "package.json#postcss", postcss[0])
     t = texto_de(postcss[0])
     m = RE_POSTCSS_PROIBIDO.search(t)
     if not RE_POSTCSS_TW_PADRAO.search(t) or m:
