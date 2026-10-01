@@ -419,8 +419,8 @@ BEGIN
     '[{"omie_codigo_produto":900001,"tint_cor_id":"K1","tint_formula_id":"f1000000-0000-0000-0000-00000000005a","valor_unitario":102.5,"tint_price_source":"calculado"},
       {"omie_codigo_produto":900001,"tint_cor_id":"K1","tint_formula_id":"f1000000-0000-0000-0000-00000000005a","valor_unitario":90,"tint_price_source":"calculado"}]');
   IF (r->>'ok')::boolean IS DISTINCT FROM false
-     OR jsonb_array_length(r->'bloqueios') <> 1
-     OR (r->'bloqueios'->0->>'index')::int <> 1 THEN
+     OR jsonb_array_length(r->'bloqueios') IS DISTINCT FROM 1
+     OR (r->'bloqueios'->0->>'index')::int IS DISTINCT FROM 1 THEN
     RAISE EXCEPTION 'G19 FALHOU: só o item 1 deveria bloquear: %', r; END IF;
 
   -- G20 criação: BASE tint sem cor → bloqueia (classificação pelo produto)
@@ -583,7 +583,7 @@ BEGIN
               - length(replace(pg_get_functiondef(p.oid), 'COALESCE(v_piso, v_calc)', '')))
              / length('COALESCE(v_piso, v_calc)')
         FROM pg_proc p JOIN pg_namespace nsp ON nsp.oid = p.pronamespace
-       WHERE nsp.nspname = 'public' AND p.proname = 'tint_gate_revalida') <> 2 THEN
+       WHERE nsp.nspname = 'public' AND p.proname = 'tint_gate_revalida') IS DISTINCT FROM 2 THEN
     RAISE EXCEPTION 'G35 FALHOU: v_floor nao usa o piso nos 2 ramos (manual + legado) — um deles regrediu para v_tab';
   END IF;
 
