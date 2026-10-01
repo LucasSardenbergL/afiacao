@@ -88,5 +88,7 @@ bucket de empate é contado à parte). Roda em ~5 s no `psql-ro` (sessão READ O
 3. Verificação: card "Canária de preço" verde (só discrimina com OS DOIS deploys — com só um, vermelho
    com motivo próprio: "a edge no ar ainda PRECIFICA"); sonda `v1.3-ia-nao-precifica` via `bun run sonda:sql`.
 
-Codex: desenho=? (exit 79, `SALDO_ALTO` 86% > teto 85%, janela reabre 03/10 19:11) · código=PENDENTE —
-PR em DRAFT até o adversarial do código. **REVISÃO INDEPENDENTE PENDENTE.**
+Codex: desenho=? · código=? — `sem-codex`: o wrapper recusou com a cota em 86% (teto 85%; janela reabre
+03/10 19:11) e o founder autorizou o merge sem Codex em 2026-10-01 (**Caminho B**: falsificação Deno 4/4 e
+vitest 10/10 sob `LC_ALL=C` e `pt_BR.UTF-8`, controle verde na mesma invocação, + auto-revisão).
+**REVISÃO INDEPENDENTE PENDENTE** — rodar o Codex RETROATIVO no diff do #2700 quando a cota reabrir.
