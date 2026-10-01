@@ -289,10 +289,26 @@ bun run pendencias:pacote - --dados-nuvem="$RESP" < "$PEND"  # a MESMA entrada n
 | `TRANSPORTE_SOMENTE_LEITURA` | `transaction_read_only = off`: a trava não pegou (statements enviados separados?) | **não** contorne — leitura sem trava é recusada por desenho |
 | `TRANSPORTE_VELHO` / `_FUTURO` | resposta de outra rodada (> 30 min) ou relógio incoerente | rode o SQL de novo |
 | `TRANSPORTE_FORMATO` / `_CONSULTAS` | arquivo de outro CLI ou formato (`transporte-nuvem/1` é recusado), consulta faltando, `medido_em` ilegível | confira o arquivo gravado |
+| `TRANSPORTE_SONDA_PAPEL` | uma sonda executiva NÃO rodou como o papel: o canal (`postgres`) não tem SET nele | o founder cola o `GRANT` que a mensagem traz ([database.md](database.md) §1). **Nunca** leia como "negado" |
+| `TRANSPORTE_SONDA` | a sonda não deixou desfecho: o preâmbulo não rodou no lote | rode o `--sql-nuvem` de novo e cole SEM tocar |
 
 Se o próprio `query_database` devolver ERRO, não há resposta a gravar: é mecânica, nunca "nada
 pendente". `relation … does not exist` nomeia o objeto cuja migration não está em prod (o ledger, a
 sonda por cron); a leitura inteira falha junto, onde o `psql-ro` degradaria só a seção da sonda.
+
+**As vigílias 2b/2c do `/fecho` também vão por aqui (2026-10-01)** — `authz:claude-ro:prod` e
+`deriva:corpo:prod`, com as mesmas duas flags e os MESMOS vereditos e exits do `psql-ro` (a skill
+`/fecho` traz os comandos). A 2c refaz o `git fetch` nas duas rodadas, e se a main mudar o conjunto
+de funções entre elas o `sql_md5` recusa: rode de novo. A resposta dela tem ~2 MB, e o harness a
+grava em arquivo: medido, 2,5 MB atravessam o conector íntegros. A 2b precisou de uma peça nova, as
+**sondas executivas** (`gerarSqlNuvem(…, sondas)`): consulta que só prova alcance rodando COMO outro
+papel, com um erro como resposta esperada. Um preâmbulo `DO` fixo, entre a trava e o `WITH`, roda
+cada sonda num sub-bloco com `SET LOCAL ROLE` (sempre desfeito por exceção) e devolve o desfecho por
+GUC de transação. As consultas reservadas `sonda__<nome>` o leem, e sem `devolverValor` o desfecho é
+só `RODOU`, nunca o dado. O canal precisa de SET no papel: o `postgres` tem SET em `claude_ro`
+desde 2026-10-01 ([database.md](database.md) §1). Sem ele, o `SET ROLE` sai 42501, a mesma SQLSTATE
+da negação esperada, e por isso o leitor recusa (`TRANSPORTE_SONDA_PAPEL`) em vez de ler "negado".
+Prova PG: T13–T17 de `db/test-transporte-nuvem.sh`.
 
 **Só metadado viaja por aqui.** A resposta passa pela transcrição da sessão, que fica em disco: as
 consultas destes CLIs leem ledger, catálogo e respostas de sonda — nunca dado de cliente. Não use o

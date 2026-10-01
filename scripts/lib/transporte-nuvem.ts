@@ -46,6 +46,23 @@
  * mudava o SQL em caso-limite (aspa em comentário, `$tag$`), e comentário `--` no fim engoliria o
  * fecha-parêntese. Os nomes internos vivem no prefixo `__sql_nuvem_` para não sombrear tabela ou
  * coluna da consulta. A prova contra um Postgres de verdade é `db/test-transporte-nuvem.sh`.
+ *
+ * SONDAS EXECUTIVAS (2026-10-01) — a leitura que só prova alguma coisa RODANDO COMO outro papel, e
+ * cujo resultado esperado pode ser um ERRO (a sentinela do `claude_ro`: "catálogo não prova
+ * alcance"). Nenhuma das duas coisas cabe numa consulta do pacote: o canal entra como `postgres`, e
+ * um erro aborta o lote inteiro. Então o SQL ganha um PREÂMBULO fixo, gerado aqui, entre a trava e o
+ * `WITH`: um `DO` que roda cada sonda num sub-bloco com `SET LOCAL ROLE`, por `EXECUTE` (statement de
+ * topo, como o psql a mandaria: sem embrulho, o planner não poda coluna) e guarda o desfecho num GUC
+ * de transação; as consultas reservadas `sonda__<nome>` o leem. O que o desenho garante, e o porquê:
+ *   - o preâmbulo fica DEPOIS da trava e DENTRO do trecho do `sql_md5`: roda sob READ ONLY, e
+ *     qualquer byte trocado nele recusa a leitura;
+ *   - o sub-bloco termina SEMPRE em exceção (a da sonda, ou uma forçada depois dela): o rollback da
+ *     subtransação desfaz o `SET LOCAL ROLE`, e o `WITH` roda de volta como o canal;
+ *   - a ETAPA separa "não virou o papel" de "a sonda falhou como o papel". Sem ela, o `SET ROLE`
+ *     negado (SQLSTATE 42501) seria lido como a negação ESPERADA de uma sonda que nem rodou — o
+ *     falso verde perfeito. Desfecho sem o papel nunca vira resultado: `TRANSPORTE_SONDA_PAPEL`;
+ *   - sonda que RODA devolve só `RODOU`, nunca o dado — salvo `devolverValor` (a 1ª coluna da 1ª
+ *     linha, para uma contagem). Se a sonda do vault um dia voltar a ler, o segredo não sai do banco.
  */
 
 import { createHash } from 'node:crypto';
@@ -76,8 +93,36 @@ const MAX_CONSULTAS = 30;
 const NOME_CONSULTA = /^[a-z][a-z0-9_]{0,40}$/;
 const NOME_CONSUMIDOR = /^[a-z][a-z0-9-]{0,60}$/;
 
+/** O papel de uma sonda executiva: identificador sem aspas, como o `SET ROLE` o recebe. */
+const NOME_PAPEL = /^[a-z_][a-z0-9_]{0,62}$/;
+/** Cabe no `NOME_CONSULTA` depois do prefixo da consulta que lê o desfecho. */
+const NOME_SONDA = /^[a-z][a-z0-9_]{0,33}$/;
+/** As consultas que leem o desfecho das sondas — prefixo RESERVADO: consulta do CLI com ele é recusada. */
+const PREFIXO_LEITURA_SONDA = 'sonda__';
+/** O namespace dos GUCs de transação onde o preâmbulo deixa o desfecho de cada sonda. */
+const GUC_SONDA = 'nuvem_sonda';
+
 /** Nome curto → SQL de UMA consulta, exatamente como o CLI a passaria ao `psql -c`. */
 export type Consultas = Readonly<Record<string, string>>;
+
+/** Uma sonda executiva: o SQL, como o CLI o passaria ao `psql -c`, rodado COMO o papel. */
+export interface SondaExecutiva {
+  sql: string;
+  /** Traz de volta a 1ª coluna da 1ª linha quando a sonda RODA — só para o que pode ir à transcrição
+   *  (uma contagem). Sem isto, sonda que roda devolve só `RODOU`: nunca o dado. */
+  devolverValor?: boolean;
+}
+
+/** As sondas de uma leitura e o papel sob o qual TODAS rodam. */
+export interface SondasExecutivas {
+  papel: string;
+  sondas: Readonly<Record<string, SondaExecutiva>>;
+}
+
+/** O desfecho de uma sonda que rodou COMO o papel. "Não virou o papel" não é desfecho: LANÇA. */
+export type ResultadoSonda =
+  | { tipo: 'rodou'; valor: string }
+  | { tipo: 'erro'; sqlstate: string; mensagem: string };
 
 export interface DadosNuvem {
   /** O `now()` do banco na transação da leitura — a idade de cada linha é relativa a ele. */
@@ -87,6 +132,8 @@ export interface DadosNuvem {
   saidas: ReadonlyMap<string, string>;
   /** As mesmas linhas, uma por registro — preserva "1 linha vazia" ≠ "0 linhas", que `saidas` funde. */
   linhas: ReadonlyMap<string, readonly string[]>;
+  /** Por nome de SONDA, o desfecho dela rodando como o papel (vazio sem sondas). */
+  sondas: ReadonlyMap<string, ResultadoSonda>;
 }
 
 function md5(texto: string): string {
@@ -133,6 +180,90 @@ function validarNomes(consultas: Consultas, consumidor: string): string[] {
   return nomes;
 }
 
+/**
+ * As consultas do CLI mais as que leem o desfecho de cada sonda (`sonda__<nome>`). O prefixo é
+ * reservado SEMPRE — com ou sem sondas — para que uma consulta do CLI nunca se passe por desfecho.
+ */
+function comLeituraDasSondas(consultas: Consultas, sondas: SondasExecutivas | undefined): Consultas {
+  const recusa = (motivo: string) => new Error(`TRANSPORTE_CONSULTA_INVALIDA: ${motivo}`);
+  const reservadas = Object.keys(consultas).filter((n) => n.startsWith(PREFIXO_LEITURA_SONDA));
+  if (reservadas.length > 0) {
+    throw recusa(`o prefixo '${PREFIXO_LEITURA_SONDA}' é do desfecho das sondas: ${reservadas.join(', ')}`);
+  }
+  if (sondas === undefined) return consultas;
+  if (!NOME_PAPEL.test(sondas.papel)) throw recusa(`papel das sondas fora do formato: ${JSON.stringify(sondas.papel)}`);
+  const nomes = Object.keys(sondas.sondas);
+  if (nomes.length === 0) throw recusa('sondas executivas declaradas sem sonda nenhuma');
+  const ruins = nomes.filter((n) => !NOME_SONDA.test(n));
+  if (ruins.length > 0) throw recusa(`nome(s) de sonda fora do formato: ${ruins.join(', ')}`);
+  const leitura: Record<string, string> = {};
+  for (const n of nomes) {
+    normalizarConsulta(n, sondas.sondas[n].sql); // as MESMAS recusas de uma consulta — antes de embutir
+    leitura[`${PREFIXO_LEITURA_SONDA}${n}`] = `SELECT current_setting('${GUC_SONDA}.${n}', true) AS desfecho`;
+  }
+  return { ...consultas, ...leitura };
+}
+
+/**
+ * O `DO` que roda cada sonda COMO o papel e deixa o desfecho num GUC de transação — o porquê de cada
+ * linha está no cabeçalho. Desfechos: `RODOU|<valor>` (a sonda chegou ao fim), `ERRO|<sqlstate>|<msg>`
+ * (falhou JÁ como o papel), `PAPEL|<sqlstate>|<msg>` (não virou o papel: a sonda não rodou).
+ */
+function preambuloDasSondas(s: SondasExecutivas): string {
+  const linhas = [
+    'DO $__sql_nuvem_sondas__$',
+    'DECLARE __sql_nuvem_etapa__ text; __sql_nuvem_valor__ text;',
+    'BEGIN',
+  ];
+  for (const n of Object.keys(s.sondas).sort()) {
+    const { sql, devolverValor } = s.sondas[n];
+    linhas.push(
+      `__sql_nuvem_etapa__ := 'papel'; __sql_nuvem_valor__ := NULL;`,
+      'BEGIN',
+      `SET LOCAL ROLE ${s.papel};`,
+      `IF current_user <> '${s.papel}' THEN RAISE EXCEPTION 'o papel nao trocou'; END IF;`,
+      `__sql_nuvem_etapa__ := 'sonda';`,
+      `EXECUTE $__sql_nuvem_q__$\n${normalizarConsulta(n, sql)}\n$__sql_nuvem_q__$${devolverValor === true ? ' INTO __sql_nuvem_valor__' : ''};`,
+      `__sql_nuvem_etapa__ := 'rodou';`,
+      // Sempre termina em exceção: o rollback do sub-bloco é o que desfaz o SET LOCAL ROLE.
+      `RAISE EXCEPTION 'desfaz o papel';`,
+      'EXCEPTION WHEN OTHERS THEN',
+      `PERFORM set_config('${GUC_SONDA}.${n}', CASE __sql_nuvem_etapa__` +
+        ` WHEN 'rodou' THEN 'RODOU|' || coalesce(__sql_nuvem_valor__, '')` +
+        ` WHEN 'sonda' THEN 'ERRO|' || SQLSTATE || '|' || SQLERRM` +
+        ` ELSE 'PAPEL|' || SQLSTATE || '|' || SQLERRM END, true);`,
+      'END;',
+    );
+  }
+  linhas.push('END $__sql_nuvem_sondas__$;');
+  return linhas.join('\n');
+}
+
+/**
+ * O desfecho que o preâmbulo deixou para a sonda `nome` (a linha da consulta `sonda__<nome>`).
+ * LANÇA no que não é desfecho de sonda que rodou como o papel — nunca vira resultado.
+ */
+function lerDesfecho(nome: string, papel: string, linhas: readonly string[]): ResultadoSonda {
+  if (linhas.length !== 1) {
+    throw new Error(`TRANSPORTE_SONDA: o desfecho da sonda '${nome}' veio com ${linhas.length} linha(s), esperado 1`);
+  }
+  const [tipo, ...resto] = linhas[0].split('|');
+  if (tipo === 'RODOU') return { tipo: 'rodou', valor: resto.join('|') };
+  if (tipo === 'ERRO' && /^[0-9A-Z]{5}$/.test(resto[0] ?? '')) {
+    return { tipo: 'erro', sqlstate: resto[0], mensagem: resto.slice(1).join('|') };
+  }
+  if (tipo === 'PAPEL') {
+    throw new Error(
+      `TRANSPORTE_SONDA_PAPEL: a sonda '${nome}' NÃO rodou como ${papel} (${resto.join(': ')}) — o canal não ` +
+        `conseguiu virar o papel, e sem ele nenhuma resposta da sonda é veredito. O canal precisa de SET em ${papel}`,
+    );
+  }
+  if (linhas[0] === '') {
+    throw new Error(`TRANSPORTE_SONDA: a sonda '${nome}' não deixou desfecho — o preâmbulo não rodou no lote`);
+  }
+  throw new Error(`TRANSPORTE_FORMATO: desfecho ilegível da sonda '${nome}': ${linhas[0].slice(0, 80)}`);
+}
+
 /** A marca montada em duas metades: o texto contíguo dela só existe UMA vez no SQL emitido. */
 function marcaPartida(marca: string): string {
   return `'${PREFIXO_MARCA}' || '${marca.slice(PREFIXO_MARCA.length)}'`;
@@ -150,9 +281,10 @@ function ocorrencias(marca: string): string {
  * O SQL que o modelo roda pelo `query_database`. Determinístico: mesmas consultas → mesmo texto
  * (é o que deixa o `--dados-nuvem` refazê-lo e conferir o `sql_md5`).
  */
-export function gerarSqlNuvem(consultas: Consultas, consumidor: string): string {
-  const nomes = validarNomes(consultas, consumidor);
-  const corpos = nomes.map((n) => normalizarConsulta(n, consultas[n]));
+export function gerarSqlNuvem(consultas: Consultas, consumidor: string, sondas?: SondasExecutivas): string {
+  const todas = comLeituraDasSondas(consultas, sondas);
+  const nomes = validarNomes(todas, consumidor);
+  const corpos = nomes.map((n) => normalizarConsulta(n, todas[n]));
   const fimDoTrecho = `position(${marcaPartida(MARCA_FIM)} IN current_query()) + ${MARCA_FIM.length - 1}`;
 
   const colunas = nomes.map(
@@ -175,6 +307,7 @@ export function gerarSqlNuvem(consultas: Consultas, consumidor: string): string 
 
   const sql = [
     TRAVA,
+    ...(sondas === undefined ? [] : [preambuloDasSondas(sondas)]),
     `WITH __sql_nuvem_marca__ AS (SELECT '${MARCA_INICIO}'::text AS inicio),`,
     `__sql_nuvem_meta__ AS (SELECT to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS medido_em,`,
     `current_setting('transaction_read_only') AS somente_leitura, current_setting('statement_timeout') AS teto,`,
@@ -305,7 +438,7 @@ export function registroParaLinha(registro: string): string {
  */
 export function lerDadosNuvem(
   bruto: string,
-  esperado: { consultas: Consultas; consumidor: string },
+  esperado: { consultas: Consultas; consumidor: string; sondas?: SondasExecutivas },
   agora: Date,
 ): DadosNuvem {
   let valor: unknown;
@@ -330,7 +463,7 @@ export function lerDadosNuvem(
   }
   const s = p as Record<(typeof campos)[number], string> & { consultas?: unknown };
 
-  const nomes = validarNomes(esperado.consultas, esperado.consumidor);
+  const nomes = validarNomes(comLeituraDasSondas(esperado.consultas, esperado.sondas), esperado.consumidor);
   const recebidas = s.consultas;
   if (recebidas === null || typeof recebidas !== 'object' || Array.isArray(recebidas)) {
     throw new Error("TRANSPORTE_CONSULTAS: campo 'consultas' ausente");
@@ -377,7 +510,7 @@ export function lerDadosNuvem(
     );
   }
 
-  const emitido = gerarSqlNuvem(esperado.consultas, esperado.consumidor);
+  const emitido = gerarSqlNuvem(esperado.consultas, esperado.consumidor, esperado.sondas);
   if (md5(trechoMarcado(emitido)) !== s.sql_md5) {
     throw new Error(
       'TRANSPORTE_SQL_DIVERGENTE: o SQL que o banco executou não é o que o CLI emite agora — cópia não ' +
@@ -404,12 +537,18 @@ export function lerDadosNuvem(
 
   const saidas = new Map<string, string>();
   const linhas = new Map<string, readonly string[]>();
+  const sondas = new Map<string, ResultadoSonda>();
   for (const n of nomes) {
     const convertidas = (linhasPor.get(n) as string[]).map(registroParaLinha);
+    if (esperado.sondas !== undefined && n.startsWith(PREFIXO_LEITURA_SONDA)) {
+      const sonda = n.slice(PREFIXO_LEITURA_SONDA.length);
+      sondas.set(sonda, lerDesfecho(sonda, esperado.sondas.papel, convertidas));
+      continue;
+    }
     linhas.set(n, convertidas);
     saidas.set(n, convertidas.join('\n'));
   }
-  return { medidoEm, saidas, linhas };
+  return { medidoEm, saidas, linhas, sondas };
 }
 
 /**
