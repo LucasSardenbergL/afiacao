@@ -160,8 +160,6 @@ const DATA_CICLO = 'compara com pedido_compra_sugerido.data_ciclo, que a edge ge
 // Os sítios da classe nos corpos VIVOS em 2026-09-29, cada um com veredito lido no corpo e medido na
 // prod (varredura de 398 funções + chamadores, horários de cron e leitores). A lista só ENCOLHE.
 export const CONHECIDOS: readonly SitioConhecido[] = [
-  { alvo: '_data_health_compute()', trecho: 'current_date', n: 2, veredito: 'utc-consistente',
-    motivo: `${DATA_CICLO} (o mesmo sítio da baseline de scripts/fuso-da-sessao-gate.ts, que lê o corpo com SP)` },
   { alvo: 'analytics_outbox_purgar()', trecho: 'r.ocorrido_em::date', n: 1, veredito: 'latente',
     motivo: 'o dia é só chave de agrupamento de analytics_outbox_perda, que não tem leitor; cron 04:20 UTC' },
   { alvo: 'atualizar_parametros_numericos_skus(text,uuid)', trecho: 'current_date', n: 1, veredito: 'utc-consistente',
