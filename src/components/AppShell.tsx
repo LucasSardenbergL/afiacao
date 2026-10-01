@@ -7,6 +7,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { AppShellProvider } from '@/contexts/AppShellContext';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { hojeSP } from '@/lib/dashboard/sp-date';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -431,7 +432,8 @@ const AppSidebar = React.memo(function AppSidebar({ collapsed, onToggle }: { col
   const { data: pedidosPendentes } = useQuery({
     queryKey: ['pedidos-pendentes-count'],
     queryFn: async () => {
-      const today = new Date().toISOString().slice(0, 10);
+      // data_ciclo é o dia de SP (gerar-pedidos-diario e o "recalcular"): com o dia UTC o badge zerava às 21h.
+      const today = hojeSP();
       const { count } = await supabase
         .from('pedido_compra_sugerido')
         .select('*', { count: 'exact', head: true })

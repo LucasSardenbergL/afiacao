@@ -2,6 +2,7 @@ import { lazy, Suspense, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { addDias, hojeSP } from "@/lib/dashboard/sp-date";
 import { Database, ShoppingCart, Network, Layers, Send, Building2, AlertTriangle, Link2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -264,13 +265,10 @@ function statusVariant(status: string | null): "success" | "warning" | "destruct
 
 function HistoricoPedidosCiclos() {
   const { empresa } = useReposicaoEmpresa();
-  const today = new Date();
-  const past = new Date();
-  past.setDate(today.getDate() - 30);
-  const fmt = (d: Date) => d.toISOString().slice(0, 10);
-
-  const [de, setDe] = useState(fmt(past));
-  const [ate, setAte] = useState(fmt(today));
+  // A janela padrão do histórico de ciclos em dias de SP — o dia de data_ciclo.
+  const hoje = hojeSP();
+  const [de, setDe] = useState(addDias(hoje, -30));
+  const [ate, setAte] = useState(hoje);
   const [page, setPage] = useState(0);
   const pageSize = 20;
 

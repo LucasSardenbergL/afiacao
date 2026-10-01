@@ -2,6 +2,7 @@ import { lazy, Suspense, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { addDias, hojeSP } from "@/lib/dashboard/sp-date";
 import { TrendingUp, Tag, ArrowUpRight, Handshake, Sparkles, Building2 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -55,7 +56,7 @@ function KpiCards() {
   const { data: promocoes } = useQuery({
     queryKey: ["mercado-promocoes-vigentes"],
     queryFn: async () => {
-      const today = new Date().toISOString().slice(0, 10);
+      const today = hojeSP(); // o "hoje" de v_oportunidade_economica_hoje (dia de SP)
       const { count, error } = await supabase
         .from("promocao_campanha")
         .select("*", { count: "exact", head: true })
@@ -74,10 +75,8 @@ function KpiCards() {
     queryKey: ["mercado-aumentos-30d"],
     queryFn: async () => {
       try {
-        const today = new Date();
-        const in30 = new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000);
-        const todayISO = today.toISOString().slice(0, 10);
-        const in30ISO = in30.toISOString().slice(0, 10);
+        const todayISO = hojeSP();
+        const in30ISO = addDias(todayISO, 30);
         const { count, error } = await supabase
           .from("fornecedor_aumento_anunciado")
           .select("*", { count: "exact", head: true })

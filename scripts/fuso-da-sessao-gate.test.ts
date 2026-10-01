@@ -4,7 +4,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { CONHECIDOS, PISOS, confrontar, detectarFusoDaSessao, varrerMigrations } from './fuso-da-sessao-gate';
+import { CONHECIDOS, PISOS, type SitioConhecido, confrontar, detectarFusoDaSessao, varrerMigrations } from './fuso-da-sessao-gate';
 import { modelarRepo } from './lib/deriva-corpo';
 import { maiorBlocoDescartadoSql } from './lib/sql-comentarios';
 
@@ -125,6 +125,18 @@ describe('o corpo VIVO do repo (a última definição de cada função)', () => 
 
   it('nenhuma entrada QUITADA esquecida na baseline (a lista só encolhe)', () => {
     expect(confrontar(v, CONHECIDOS).quitados).toEqual([]);
+  });
+
+  it('a detecção de QUITADO tem dente mesmo com a baseline vazia: a entrada que saiu reprovaria se voltasse', () => {
+    // A baseline zerou em 2026-10-01 (a família data_ciclo, 20261001023000) — sem este teste, desligar o
+    // laço de quitados não deixaria nada vermelho, porque não sobrou entrada real para exercitá-lo.
+    const antiga: SitioConhecido = {
+      alvo: '_data_health_compute()', familia: 'C', trecho: 'current_date', n: 2, veredito: 'falso-positivo',
+      motivo: 'a entrada que saiu com a 20261001023000 (current_date contra pedido_compra_sugerido.data_ciclo)',
+    };
+    expect(confrontar(v, [...CONHECIDOS, antiga]).quitados).toEqual([
+      '_data_health_compute() · C · current_date (baseline 2, corpo vivo 0)',
+    ]);
   });
 
   it('toda entrada da baseline diz o porquê — dívida sem motivo vira lista que ninguém lê', () => {

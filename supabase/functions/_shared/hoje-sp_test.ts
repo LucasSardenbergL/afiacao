@@ -4,7 +4,7 @@
 // O relógio é INJETADO: teste de fuso com o relógio de parede passa ou falha conforme a hora em que
 // roda. Cada borda vem em par de 1 s, e o controle POSITIVO (o dia muda à meia-noite de SP) é o que
 // impede os asserts de "não mudou às 21h" de passarem por vacuidade.
-import { diaSP, hojeSP, somarDias } from "./hoje-sp.ts";
+import { diaSP, hojeSP, paraDataOmie, somarDias } from "./hoje-sp.ts";
 
 function assertEquals(a: unknown, b: unknown, msg?: string) {
   if (a !== b) throw new Error(msg ?? `esperava ${JSON.stringify(b)}, veio ${JSON.stringify(a)}`);
@@ -70,4 +70,14 @@ Deno.test("somarDias: aritmética de calendário nas bordas", () => {
 Deno.test("somarDias: data malformada ou deslocamento não inteiro lança", () => {
   assertLancaRange(() => somarDias("30/09/2026", 1), "inválido");
   assertLancaRange(() => somarDias("2026-09-30", 1.5), "inválido");
+});
+
+Deno.test("paraDataOmie: reordena o dia de SP para DD/MM/AAAA — às 22:00 BRT é o dia de SP, não o de amanhã", () => {
+  assertEquals(paraDataOmie(hojeSP(new Date("2026-10-01T01:00:00Z"))), "30/09/2026");
+  assertEquals(paraDataOmie("2027-01-05"), "05/01/2027");
+});
+
+Deno.test("paraDataOmie: entrada fora de YYYY-MM-DD lança", () => {
+  assertLancaRange(() => paraDataOmie("30/09/2026"), "data inválida");
+  assertLancaRange(() => paraDataOmie("2026-9-30"), "data inválida");
 });

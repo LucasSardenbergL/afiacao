@@ -2,6 +2,8 @@ import { useState, useMemo, useEffect } from "react";
 import { useNavigate, useParams, useSearchParams, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { format } from "date-fns";
+import { hojeSP } from "@/lib/dashboard/sp-date";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 import { estadoDeRegistro, naoConsegui } from "@/lib/leitura/estado-de-leitura";
@@ -125,7 +127,7 @@ export default function AdminReposicaoPromocaoDetail() {
       setFormFim(campanha.data_fim);
       setFormObs(campanha.observacoes || "");
     } else if (isNew) {
-      const today = new Date().toISOString().slice(0, 10);
+      const today = hojeSP(); // a vigência é dia de SP (v_promocao_avaliacao_hoje / v_oportunidade_economica_hoje)
       setFormNome("");
       setFormInicio(today);
       setFormFim(today);
@@ -246,7 +248,9 @@ export default function AdminReposicaoPromocaoDetail() {
         atualizado_por: userEmail,
       };
       if (novoEstado === "encerrada") {
-        updates.data_fim = new Date().toISOString().slice(0, 10);
+        // Encerrar hoje é data_fim = HOJE em SP; o toISOString gravava amanhã das 21h em diante, e a
+        // campanha seguia "ativa" nas views por mais um dia.
+        updates.data_fim = hojeSP();
       }
       const { error } = await supabase
         .from("promocao_campanha")
@@ -328,7 +332,9 @@ export default function AdminReposicaoPromocaoDetail() {
     tipo_evento: "nota",
     desconto_perc_proposto: "",
     volume_minimo_proposto: "",
-    data_evento: new Date().toISOString().slice(0, 16),
+    // datetime-local é hora LOCAL: o toISOString punha a hora UTC no campo, e o submit (new Date(local))
+    // gravava o instante 3h à frente, sempre.
+    data_evento: format(new Date(), "yyyy-MM-dd'T'HH:mm"),
     email_referencia: "",
     conteudo: "",
   });
@@ -367,7 +373,7 @@ export default function AdminReposicaoPromocaoDetail() {
         tipo_evento: "nota",
         desconto_perc_proposto: "",
         volume_minimo_proposto: "",
-        data_evento: new Date().toISOString().slice(0, 16),
+        data_evento: format(new Date(), "yyyy-MM-dd'T'HH:mm"),
         email_referencia: "",
         conteudo: "",
       });

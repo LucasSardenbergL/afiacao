@@ -51,3 +51,13 @@ export function somarDias(dia: string, n: number): string {
   const dd = String(d.getUTCDate()).padStart(2, "0");
   return `${d.getUTCFullYear()}-${mm}-${dd}`;
 }
+
+/**
+ * Uma data `YYYY-MM-DD` no formato que a API do Omie pede (`DD/MM/AAAA`). Só reordena — o DIA vem de
+ * quem chama (`hojeSP()`, `somarDias(...)`); montá-lo com `getDate()` no servidor é o dia UTC.
+ */
+export function paraDataOmie(dia: string): string {
+  const m = DIA_ISO.exec(dia);
+  if (!m) throw new RangeError(`paraDataOmie: data inválida (${dia})`);
+  return `${m[3]}/${m[2]}/${m[1]}`;
+}
