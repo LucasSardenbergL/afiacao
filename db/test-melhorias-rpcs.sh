@@ -194,6 +194,7 @@ rpc() { q_como authenticated "$1" "SELECT $4 FROM (SELECT public.$2('$3') AS r) 
 # codigos <chave> — os códigos de uma lista do jsonb, ordenados; vazio vira '-' (ausente não some).
 codigos() { printf "coalesce((SELECT string_agg(e->>'codigo', ',' ORDER BY e->>'codigo') FROM jsonb_array_elements(r->'%s') e), '-')" "$1"; }
 CLIENTES="coalesce((SELECT string_agg((c->>'cliente') || ':' || (c->>'n_pedidos') || ':' || (c->>'valor_12m'), ',' ORDER BY c->>'cliente') FROM jsonb_array_elements(r->'clientes') c), '-')"
+NOMES="coalesce((SELECT string_agg(c->>'cliente', ',' ORDER BY c->>'cliente') FROM jsonb_array_elements(r->'clientes') c), '-')"
 JUNTOS="coalesce((SELECT string_agg((e->>'codigo') || ':' || (e->>'confidence') || ':' || (e->>'lift'), ',' ORDER BY e->>'codigo') FROM jsonb_array_elements(r->'comprados_juntos') e), '-')"
 item() {  # <autor> [colunas extras] [valores extras] — o INSERT de item como o app o faz
   printf "INSERT INTO public.melhoria_itens (autor_user_id, empresa, tipo, titulo%s) VALUES ('%s', 'oben', 'problema', 'Item de teste'%s)" "${2:-}" "$1" "${3:-}"
@@ -224,9 +225,9 @@ cenario() {
     "$(rpc "$MASTER" melhoria_clientes_por_produto 'LIXA GR80' "(r->>'escopo') || '|' || (r->>'total_clientes_visiveis')")" "todos|2"
   chk D2 "só pedido válido na janela de 12 meses conta (cliente:n_pedidos:valor_12m)" \
     "$(rpc "$MASTER" melhoria_clientes_por_produto 'LIXA GR80' "$CLIENTES")" "Cliente Dois:1:10.00,Cliente Um:1:50.00"
-  chk D3 "a vendedora vê só a carteira dela (escopo|total|clientes)" \
-    "$(rpc "$VEND" melhoria_clientes_por_produto 'LIXA GR80' "(r->>'escopo') || '|' || (r->>'total_clientes_visiveis') || '|' || $CLIENTES")" \
-    "minha_carteira|1|Cliente Um:1:50.00"
+  chk D3 "a vendedora vê só a carteira dela (escopo|total|clientes — QUEM, os valores são o D2)" \
+    "$(rpc "$VEND" melhoria_clientes_por_produto 'LIXA GR80' "(r->>'escopo') || '|' || (r->>'total_clientes_visiveis') || '|' || $NOMES")" \
+    "minha_carteira|1|Cliente Um"
   chk D4 "venda de produto inativo não conta ('GR240': o único que casa é inativo)" \
     "$(rpc "$MASTER" melhoria_clientes_por_produto 'GR240' "(r->>'total_clientes_visiveis')")" "0"
 
@@ -331,8 +332,8 @@ SABOTAGENS="produtos_sem_gate_staff:G1:G2,R1 produtos_sem_teto_termo:G2:G1,R1
             clientes_sem_teto_termo:G3:D1 clientes_termo_sem_trim:G3:D1
             anon_executa_clientes:G5:G6,D1 anon_executa_produtos:G6:G5,R1
             migracao_nova_drop_create_clientes:G5:D1,G6 migracao_nova_drop_create_sem_anon_produtos:G6:R1,G5
-            janela_aberta:D2:D1,D3 cancelado_conta:D2:D1,D3 rascunho_conta:D2:D1 pendente_conta:D2:D1
-            apagado_conta:D2:D1 vendedora_ve_tudo:D3:D1,D2 inativo_conta:D4:D2
+            janela_aberta:D2:D1,D3 cancelado_conta:D2:D1,D3 rascunho_conta:D2:D1,D3 pendente_conta:D2:D1,D3
+            apagado_conta:D2:D1,D3 vendedora_ve_tudo:D3:D1,D2 inativo_conta:D4:D2
             migracao_nova_vendedora_ve_tudo:D3:D1,D2
             familia_inclui_inativo:R1:R2 familia_atravessa_conta:R1:R2 familia_inclui_alvo:R1:R2
             juntos_inclui_inativo:R2:R1 juntos_inclui_alvo:R2:R1 juntos_outro_antecedente:R2:R1
