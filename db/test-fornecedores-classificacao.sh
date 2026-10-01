@@ -140,7 +140,7 @@ BEGIN
 
   -- classificar (RPC) deve restaurar tudo conforme a RÉGUA A
   SELECT classificar_clientes_fornecedores() INTO res;
-  IF (res->>'excluidos')::int <> 4 THEN RAISE EXCEPTION 'RPC excluidos=% (esperado 4: c1,c4,c5,c8 — c6 tem venda, fica)', res->>'excluidos'; END IF;
+  IF (res->>'excluidos')::int IS DISTINCT FROM 4 THEN RAISE EXCEPTION 'RPC excluidos=% (esperado 4: c1,c4,c5,c8 — c6 tem venda, fica)', res->>'excluidos'; END IF;
   RAISE NOTICE 'OK RPC classificar → %', res;
 
   -- A1: c1 fornecedor SEM venda (só cancelada) → exclui
