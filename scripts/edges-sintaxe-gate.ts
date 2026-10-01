@@ -53,6 +53,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSy
 import { cpus, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import ts from 'typescript';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 export const RAIZ_EDGES = 'supabase/functions';
 
@@ -326,7 +327,7 @@ if (import.meta.main) {
   main(process.argv.slice(2)).then(
     (codigo) => process.exit(codigo),
     (e: unknown) => {
-      console.log(`❌ NAO_CHECADO edges:sintaxe — erro interno: ${e instanceof Error ? e.stack : String(e)}`);
+      console.log(`❌ NAO_CHECADO edges:sintaxe — erro interno: ${mensagemDeErro(e) ?? 'erro sem mensagem'}`);
       process.exit(2);
     },
   );
