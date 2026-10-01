@@ -373,7 +373,7 @@ DO \$u\$
 DECLARE v jsonb;
 BEGIN
   v := public.reposicao_claim_disparo($1, 'producao@A');
-  IF v IS NULL OR (v ->> 'claimed') <> 'true' THEN
+  IF v IS NULL OR (v ->> 'claimed') IS DISTINCT FROM 'true' THEN
     RAISE EXCEPTION 'BLOQUEADOR: o claim nao pegou a linha % (%) -- a corrida nao mediria nada', $1, v;
   END IF;
   PERFORM pg_advisory_xact_lock(918273646);

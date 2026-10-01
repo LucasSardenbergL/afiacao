@@ -260,10 +260,10 @@ BEGIN
   SELECT count(*) INTO n_master   FROM public.user_roles WHERE user_id = u AND role = 'master';
   SELECT count(*) INTO n_customer FROM public.user_roles WHERE user_id = u AND role = 'customer';
 
-  IF n_master <> 0 THEN
+  IF n_master IS DISTINCT FROM 0 THEN
     RAISE EXCEPTION 'B1 FALHOU: trigger concedeu master por CNPJ (n_master=% — o fix não removeu o ramo)', n_master;
   END IF;
-  IF n_customer <> 1 THEN
+  IF n_customer IS DISTINCT FROM 1 THEN
     RAISE EXCEPTION 'B1 FALHOU: esperado customer=1, obteve % (ramo customer quebrado pelo fix)', n_customer;
   END IF;
   RAISE NOTICE 'OK B1 — sem master (n_master=0), caiu em customer (n_customer=1)';
@@ -430,7 +430,7 @@ BEGIN
   SELECT count(*), max(product_code) INTO spec_cnt, spec_code
     FROM public.kb_product_specs
    WHERE supplier = 'sayerlack' AND product_code_normalized = 'FO20.6827.00GL';
-  IF spec_cnt <> 1 THEN RAISE EXCEPTION 'C1 FALHOU: % linhas em kb_product_specs (esperado 1 — UPDATE, não INSERT)', spec_cnt; END IF;
+  IF spec_cnt IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'C1 FALHOU: % linhas em kb_product_specs (esperado 1 — UPDATE, não INSERT)', spec_cnt; END IF;
   IF spec_code IS DISTINCT FROM 'fo20.6827.00 gl' THEN
     RAISE EXCEPTION 'C1 FALHOU: product_code da linha = % (esperado a variação fo20.6827.00 gl = prova do UPDATE)', spec_code;
   END IF;
@@ -439,12 +439,12 @@ BEGIN
   SELECT max(version_number) INTO vmax
     FROM public.kb_product_spec_versions
    WHERE supplier='sayerlack' AND product_code_normalized='FO20.6827.00GL';
-  IF vmax <> 2 THEN RAISE EXCEPTION 'C1 FALHOU: max version_number=% (esperado 2)', vmax; END IF;
+  IF vmax IS DISTINCT FROM 2 THEN RAISE EXCEPTION 'C1 FALHOU: max version_number=% (esperado 2)', vmax; END IF;
 
   SELECT count(*) INTO live
     FROM public.kb_product_spec_versions
    WHERE supplier='sayerlack' AND product_code_normalized='FO20.6827.00GL' AND superseded_at IS NULL;
-  IF live <> 1 THEN RAISE EXCEPTION 'C1 FALHOU: % versões vivas (esperado 1)', live; END IF;
+  IF live IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'C1 FALHOU: % versões vivas (esperado 1)', live; END IF;
 
   RAISE NOTICE 'OK C1 — variação caixa/espaço fez UPDATE da mesma linha (product_code=%) + v2 (1 viva)', spec_code;
 END \$\$;
@@ -502,7 +502,7 @@ BEGIN
 
   -- Prova de não-sobrescrita: a linha base (rendimento 7.0, fornecedor sayerlack) está intacta; nada criado.
   SELECT count(*) INTO cnt_after FROM public.kb_product_specs;
-  IF cnt_after <> cnt_before THEN
+  IF cnt_after IS DISTINCT FROM cnt_before THEN
     RAISE EXCEPTION 'C2 FALHOU: contagem de specs mudou de % p/ % (criou linha indevida)', cnt_before, cnt_after;
   END IF;
   SELECT rendimento_m2_por_litro INTO rend_after
@@ -596,7 +596,7 @@ BEGIN
   SET LOCAL test.uid = '${EMP_UID}';   -- employee: a RLS de SELECT é staff (employee/master)
   SELECT count(*) INTO c FROM public.kb_product_specs WHERE id = '${SPEC_D}';
   RESET ROLE;
-  IF c <> 1 THEN RAISE EXCEPTION 'Dd FALHOU: SELECT não enxergou a linha (c=% — SELECT foi revogado/quebrado)', c; END IF;
+  IF c IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'Dd FALHOU: SELECT não enxergou a linha (c=% — SELECT foi revogado/quebrado)', c; END IF;
   RAISE NOTICE 'OK Dd — SELECT segue permitido (staff lê): c=1';
 END \$\$;
 SQL

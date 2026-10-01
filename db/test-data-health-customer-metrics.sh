@@ -108,6 +108,10 @@ echo "função de teste criada (aridade/tipo validados pelo CREATE)"
 seed_empty() { P -q -c "TRUNCATE private.customer_metrics_mv;"; }
 seed_age()   { P -q -c "TRUNCATE private.customer_metrics_mv; INSERT INTO private.customer_metrics_mv(customer_user_id, calculated_at) VALUES (gen_random_uuid(), now() - interval '$1');"; }
 f() { Pq -c "SELECT $1 FROM public._test_cm_data_health();"; }
+# Campo NULL vira "(null)"; "" fica só para a linha AUSENTE — e a leitura que ERRA vira ERRO_rc=<n>:
+# com f os três davam "" e o assert "NULL" passava sem medir (assert verde por ausência).
+fnulo() { Pq -c "SELECT coalesce(($1)::text, '(null)') FROM public._test_cm_data_health();"; }
+medir() { local v rc; set +e; v="$(set -e; "$@")"; rc=$?; set -e; if [ "$rc" -eq 0 ]; then printf '%s\n' "$v"; else printf 'ERRO_rc=%s\n' "$rc"; fi; }
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ZONA 4 — ASSERTS (positivo / limites / constantes)
@@ -121,7 +125,7 @@ eq "A0 emite 1 linha (âncora não polui)" "$(f 'count(*)')" "1"
 # A1 — MV vazia → broken (max NULL)
 seed_empty
 eq       "A1 broken.status"          "$(f status)"         "broken"
-eq       "A1 broken.age_seconds NULL" "$(f age_seconds)"   ""
+eq       "A1 broken.age_seconds NULL" "$(medir fnulo age_seconds)"   "(null)"
 contains "A1 broken.message"          "$(f message)"        "nunca"
 eq       "A1 broken.probable_cause"   "$(f probable_cause)" "refresh_customer_metrics nunca rodou"
 eq       "A1 broken.severity"         "$(f severity)"       "warning"
@@ -133,9 +137,9 @@ eq "A2 ok.source"                "$(f source)"                     "customer_met
 eq "A2 ok.domain"                "$(f domain)"                     "vendas"
 eq "A2 ok.freshness_basis"       "$(f freshness_basis)"            "max_calculated_at"
 eq "A2 ok.expected_max_age(8h)"  "$(f expected_max_age_seconds)"   "28800"
-eq "A2 ok.probable_cause NULADO" "$(f probable_cause)"             ""
-eq "A2 ok.how_to_fix NULADO"     "$(f how_to_fix)"                 ""
-eq "A2 ok.last_error NULADO"     "$(f last_error)"                 ""
+eq "A2 ok.probable_cause NULADO" "$(medir fnulo probable_cause)"             "(null)"
+eq "A2 ok.how_to_fix NULADO"     "$(medir fnulo how_to_fix)"                 "(null)"
+eq "A2 ok.last_error NULADO"     "$(medir fnulo last_error)"                 "(null)"
 
 # A3 — velho (9h > 8h) → stale, com how_to_fix/probable_cause PRESENTES
 seed_age '9 hours'
