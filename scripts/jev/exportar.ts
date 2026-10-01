@@ -19,6 +19,7 @@ import { baseDoCodigo, montarTermosBusca, type SkuCandidato } from '@/lib/knowle
 import {
   montarItemDre,
   montarItensBoletim,
+  montarNegativosCruzados,
   type DreLinha,
   type ItemBacktest,
   type SpecExportada,
@@ -165,17 +166,24 @@ function main(): void {
     const porSpec = new Map(cands.map((c) => [c.spec_id, c]));
 
     const itensA: ItemBacktest[] = [];
-    const recuperacao = { specs: specs.length, sem_candidato: 0, truncadas_no_limit100: 0, com_familia_exata: 0, residuo: 0 };
+    const recuperacao = {
+      specs: specs.length, sem_candidato: 0, truncadas_no_limit100: 0, com_familia_exata: 0, residuo: 0, negativos_cruzados: 0,
+    };
+    const entradas: Array<{ spec: SpecExportada; candidatos: SkuCandidato[] }> = [];
     for (const s of specs) {
       const c = porSpec.get(s.spec_id);
       if (!c) throw new Error(`spec ${s.spec_id} sem linha de candidatos (a consulta perdeu uma spec)`);
       if (c.n_total > 100) recuperacao.truncadas_no_limit100++;
+      entradas.push({ spec: s, candidatos: c.candidatos });
       const itens = montarItensBoletim(s, c.candidatos);
       if (itens.length === 0) recuperacao.sem_candidato++;
       else if (itens[0].tipoGabarito === 'prata') recuperacao.com_familia_exata++;
       else recuperacao.residuo++;
       itensA.push(...itens);
     }
+    const cruzados = montarNegativosCruzados(entradas);
+    recuperacao.negativos_cruzados = cruzados.length;
+    itensA.push(...cruzados);
 
     const [cats] = rodarSql(SQL_DRE, dirTmp, 'dre') as [LinhaDre[]];
     const itensC = cats.map((c) => montarItemDre(c, c.seed_linha));

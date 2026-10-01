@@ -8,6 +8,7 @@ import {
   mascararCodigos,
   montarItemDre,
   montarItensBoletim,
+  montarNegativosCruzados,
   NENHUM,
   NENHUMA,
   particao,
@@ -103,6 +104,50 @@ describe('montarItensBoletim — prata + negativo sintético + prata mascarada',
 
   it('sem candidatos ⇒ nenhum item (falha de RECUPERAÇÃO, contada à parte — não vai ao modelo)', () => {
     expect(montarItensBoletim(SPEC, [])).toEqual([]);
+  });
+});
+
+describe('montarNegativosCruzados — o boletim A contra as famílias da ficha B mais PARECIDA', () => {
+  const A = { ...SPEC, spec_id: 'A', product_code: 'FO20.6827.00', product_name: 'VERNIZ PU BRILHANTE' };
+  const B = { ...SPEC, spec_id: 'B', product_code: 'FO20.7000.00', product_name: 'VERNIZ PU FOSCO' };
+  const C = { ...SPEC, spec_id: 'C', product_code: 'FL.5000.00', product_name: 'FUNDO PU' };
+  const cand = {
+    A: [{ account: 'oben', omie_codigo_produto: 1, codigo: 'x', descricao: 'VERNIZ PU BRILHANTE FO20.6827.00GL' }],
+    // a busca de B também trouxe uma embalagem de A: ela NÃO pode virar distrator de A
+    B: [
+      { account: 'oben', omie_codigo_produto: 2, codigo: 'y', descricao: 'VERNIZ PU FOSCO FO20.7000.00GL' },
+      { account: 'oben', omie_codigo_produto: 3, codigo: 'z', descricao: 'VERNIZ PU BRILHANTE FO20.6827.00QT' },
+    ],
+    C: [{ account: 'oben', omie_codigo_produto: 4, codigo: 'w', descricao: 'FUNDO PU FL.5000.00GL' }],
+  };
+  const itens = montarNegativosCruzados([
+    { spec: A, candidatos: cand.A },
+    { spec: B, candidatos: cand.B },
+    { spec: C, candidatos: cand.C },
+  ]);
+  const deA = itens.find((i) => i.id === 'a:A:cruzado')!;
+
+  it('um negativo por ficha com família exata; gabarito "nenhum"; baseline abstém', () => {
+    expect(itens.map((i) => i.id)).toEqual(['a:A:cruzado', 'a:B:cruzado', 'a:C:cruzado']);
+    for (const i of itens) {
+      expect(i.tipoGabarito).toBe('negativo_cruzado');
+      expect(i.gabarito).toEqual([NENHUM]);
+      expect(i.baseline).toBeNull();
+    }
+  });
+
+  it('A recebe as famílias de B (o vizinho de nome), SEM a família do próprio A', () => {
+    expect(deA.opcoes.map((o) => o.chave)).toEqual(['VERNIZ PU FOSCO FO20.7000.00GL', NENHUM]);
+    expect(deA.grupo).toBe('B:FO20.6827.00');
+    expect(JSON.stringify(deA.state)).toContain('FO20.6827.00'); // o boletim é o de A
+  });
+
+  it('doador sem nenhuma família que sobre ⇒ nenhum item (Choice de uma opção só é trivial)', () => {
+    const r = montarNegativosCruzados([
+      { spec: A, candidatos: cand.A },
+      { spec: { ...A, spec_id: 'A2' }, candidatos: cand.A },
+    ]);
+    expect(r).toEqual([]);
   });
 });
 

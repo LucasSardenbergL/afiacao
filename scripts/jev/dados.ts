@@ -25,7 +25,13 @@ export interface Opcao {
   descricao: string | null;
 }
 
-export type TipoGabarito = 'prata' | 'sintetico_negativo' | 'prata_mascarada' | 'seed' | 'sem_gabarito';
+export type TipoGabarito =
+  | 'prata'
+  | 'sintetico_negativo'
+  | 'negativo_cruzado'
+  | 'prata_mascarada'
+  | 'seed'
+  | 'sem_gabarito';
 export type Dominio = 'boletim_sku' | 'categoria_dre';
 
 export interface ItemBacktest {
@@ -132,6 +138,11 @@ function opcoesDasFamilias(fams: readonly Familia[], mascarar: (s: string) => st
 
 const semGrupo = (o: Opcao & { grupoChave: string }): Opcao => ({ chave: o.chave, descricao: o.descricao });
 
+function stateDoBoletim(spec: SpecExportada): { boletim: { titulo: string; produto: string; texto: string } } {
+  const texto = spec.doc_texto.length > LIMITE_TEXTO ? spec.doc_texto.slice(0, LIMITE_TEXTO) : spec.doc_texto;
+  return { boletim: { titulo: spec.doc_title ?? '', produto: spec.product_name ?? '', texto } };
+}
+
 /**
  * Até 3 itens por boletim: prata + negativo sintético + prata mascarada quando há família exata;
  * 1 item sem gabarito (resíduo) quando não há; nenhum quando a busca não trouxe candidato
@@ -141,8 +152,8 @@ export function montarItensBoletim(spec: SpecExportada, candidatos: readonly Sku
   if (candidatos.length === 0) return [];
   const familias = agruparFamilias(spec.product_code, candidatos);
   const grupo = `B:${baseDoCodigo(spec.product_code)}`;
-  const texto = spec.doc_texto.length > LIMITE_TEXTO ? spec.doc_texto.slice(0, LIMITE_TEXTO) : spec.doc_texto;
-  const state = { boletim: { titulo: spec.doc_title ?? '', produto: spec.product_name ?? '', texto } };
+  const state = stateDoBoletim(spec);
+  const texto = state.boletim.texto;
   const nenhum: Opcao = { chave: NENHUM, descricao: DESC_NENHUM };
   const comum = { dominio: 'boletim_sku' as const, grupo, instrucoes: INSTRUCOES_BOLETIM };
   const identidade = (s: string) => s;
@@ -180,6 +191,70 @@ export function montarItensBoletim(spec: SpecExportada, candidatos: readonly Sku
     state: { boletim: { titulo: m(spec.doc_title ?? ''), produto: m(spec.product_name ?? ''), texto: m(texto) } },
     opcoes: [...mascaradas.map(semGrupo), nenhum], gabarito: [chaveExataMascarada], baseline: null,
   });
+  return itens;
+}
+
+/** Palavras do NOME do produto para medir vizinhança (sem números: o código não conta). */
+const palavrasNome = (s: string | null) =>
+  new Set(
+    (s ?? '')
+      .normalize('NFKC')
+      .toUpperCase()
+      .split(/[^A-Z0-9ÁÉÍÓÚÂÊÔÃÕÇ]+/)
+      .filter((w) => w.length >= 2 && !/\d/.test(w)),
+  );
+
+function jaccard(a: ReadonlySet<string>, b: ReadonlySet<string>): number {
+  let inter = 0;
+  for (const w of a) if (b.has(w)) inter++;
+  const uniao = a.size + b.size - inter;
+  return uniao === 0 ? 0 : inter / uniao;
+}
+
+/**
+ * Negativo CRUZADO (sintético): o boletim de A contra as famílias da ficha B de nome mais parecido
+ * (base diferente), retirada qualquer família que contenha a base de A ⇒ a resposta certa é
+ * "nenhum". Existe porque o negativo "tirar a família certa" só é possível quando a busca de A
+ * trouxe distratores — e isso é raro no catálogo real. Empate de vizinhança: o 1º na ordem.
+ */
+export function montarNegativosCruzados(
+  entradas: ReadonlyArray<{ spec: SpecExportada; candidatos: readonly SkuCandidato[] }>,
+): ItemBacktest[] {
+  const comExata = entradas
+    .map((e) => ({
+      spec: e.spec,
+      base: baseDoCodigo(e.spec.product_code),
+      nome: palavrasNome(e.spec.product_name),
+      familias: agruparFamilias(e.spec.product_code, e.candidatos),
+    }))
+    .filter((e) => e.familias.some((f) => f.exata));
+  const itens: ItemBacktest[] = [];
+  for (const a of comExata) {
+    let doador: (typeof comExata)[number] | null = null;
+    let melhor = -1;
+    for (const b of comExata) {
+      if (b.base === a.base) continue;
+      const sim = jaccard(a.nome, b.nome);
+      if (sim > melhor) {
+        melhor = sim;
+        doador = b;
+      }
+    }
+    if (!doador) continue;
+    const distratores = doador.familias.filter((f) => !f.bases.includes(a.base));
+    if (distratores.length === 0) continue;
+    itens.push({
+      id: `a:${a.spec.spec_id}:cruzado`,
+      dominio: 'boletim_sku',
+      grupo: `B:${a.base}`,
+      tipoGabarito: 'negativo_cruzado',
+      state: stateDoBoletim(a.spec),
+      instrucoes: INSTRUCOES_BOLETIM,
+      opcoes: [...opcoesDasFamilias(distratores, (s) => s).map(semGrupo), { chave: NENHUM, descricao: DESC_NENHUM }],
+      gabarito: [NENHUM],
+      baseline: null,
+    });
+  }
   return itens;
 }
 
