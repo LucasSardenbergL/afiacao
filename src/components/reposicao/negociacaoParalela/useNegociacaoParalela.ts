@@ -10,6 +10,7 @@ import { EMPRESA, type Sugestao, type ConvertForm, type LinhaViewSugeridos, type
 import { lastDayOfNextMonth } from "./helpers";
 import { avaliarNegociacao, clampDesconto, DESCONTO_PADRAO } from "@/lib/reposicao/negociacao-valor-helpers";
 import { mensagemDeErro } from '@/lib/erro-mensagem';
+import { extrairCodigoSayerlack } from "./helpers";
 
 const TOP_N = 3;
 
@@ -21,7 +22,7 @@ export function useNegociacaoParalela() {
   const [descontoPorSku, setDescontoPorSku] = useState<Record<string, number>>({});
   const [convertTarget, setConvertTarget] = useState<Sugestao | null>(null);
   const [convertForm, setConvertForm] = useState<ConvertForm>({
-    desconto_perc: 8, volume_minimo: 0, volume_unidade: "unidades",
+    sku_codigo_fornecedor: "", desconto_perc: 8, volume_minimo: 0, volume_unidade: "unidades",
     data_fim: lastDayOfNextMonth(), responsavel: "", canal: "ligacao", observacoes: "",
   });
   const [convertSubmitting, setConvertSubmitting] = useState(false);
@@ -129,6 +130,7 @@ export function useNegociacaoParalela() {
   const openConvertDialog = (s: Sugestao) => {
     setConvertTarget(s);
     setConvertForm({
+      sku_codigo_fornecedor: extrairCodigoSayerlack(s.sku_descricao),
       desconto_perc: 8, volume_minimo: 0, volume_unidade: "unidades",
       data_fim: lastDayOfNextMonth(), responsavel: "", canal: "ligacao", observacoes: "",
     });
@@ -136,6 +138,8 @@ export function useNegociacaoParalela() {
 
   const handleConverterConfirm = async () => {
     if (!convertTarget) return;
+    const codigoFornecedor = convertForm.sku_codigo_fornecedor.trim();
+    if (!codigoFornecedor) { toast.error("Informe o código Sayerlack do produto."); return; }
     if (convertForm.desconto_perc < 1 || convertForm.desconto_perc > 50) {
       toast.error("Desconto deve estar entre 1 e 50%."); return;
     }
@@ -148,6 +152,7 @@ export function useNegociacaoParalela() {
         p_volume_minimo: convertForm.volume_minimo,
         p_volume_unidade: convertForm.volume_unidade,
         p_data_fim: convertForm.data_fim,
+        p_sku_codigo_fornecedor: codigoFornecedor,
         p_responsavel_nome: convertForm.responsavel || null,
         p_canal: convertForm.canal,
         p_observacoes: convertForm.observacoes || null,

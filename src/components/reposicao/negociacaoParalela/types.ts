@@ -83,6 +83,7 @@ type VolumeUnidade = "unidades" | "reais" | "kg" | "litros";
 type CanalNegociacao = "email" | "whatsapp" | "ligacao" | "visita_presencial" | "outro";
 
 export interface ConvertForm {
+  sku_codigo_fornecedor: string;
   desconto_perc: number;
   volume_minimo: number;
   volume_unidade: VolumeUnidade;
