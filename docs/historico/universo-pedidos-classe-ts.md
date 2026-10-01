@@ -1,0 +1,98 @@
+# Universo de pedidos: a classe no TypeScript e nas edges
+
+> Metade TS da classe cuja metade SQL está em [universo-pedidos-classe-sql.md](universo-pedidos-classe-sql.md)
+> (#2726). Sessão de 2026-10-01, skill `matar-classe`.
+
+## A classe
+
+Ler `public.sales_orders` como VENDA aplicando outro universo que não o da autoridade —
+`status NOT IN ('cancelado','rascunho','pendente','orcamento')` + `deleted_at IS NULL`
+(`src/lib/farmer/universo-pedidos.ts`, espelho Deno em `supabase/functions/_shared/universo-pedidos.ts`).
+No TS a classe tem formas que o SQL não tem: o filtro **depois** da query (com o `.limit()` já
+aplicado — a janela encolhe), e a **constante paralela** que copia a lista (`ORDER_STATUS_INVALIDOS`,
+`STATUS_INVALIDOS` duas vezes, `STATUS_NAO_FATURAVEL` em src e edge, o literal do audit,
+`STATUS_CANCELAMENTO` em caixa alta). Cada cópia nasceu certa para o seu dia e envelheceu sozinha: a
+do cockpit dizia espelhar "VERBATIM" a régua do `v_caca`, que o #2726 trocou por baixo dela.
+
+## A medição (psql-ro, 2026-10-01 13:00 UTC)
+
+**Denominador:** 29 `cancelado` (oben, todos com kpi e `omie_pedido_id`; um deles com total de
+**R$ 615 mi** — o erro de digitação que já tinha inflado o TTM do cockpit), 1 `orcamento` e 1
+`rascunho` (criados pelo app, sem kpi, **sem `order_items`**), 0 `pendente`, 0 apagados. `status` é
+NOT NULL; `authenticated` tem SELECT em `status` e `deleted_at` (o filtro no cliente não dá 42501).
+
+**Assinatura × denominador (cru × casado):** 258 linhas mencionam `sales_orders` no código varrido (comentários inclusive);
+60 `.from(…'sales_orders')` no grep e **60 no AST** (o teste "cru × casado" exige a igualdade), mais
+1 embed real (`sales_orders!inner(…)` no `omie-desconto-backfill`). O resto, lido literal a literal:
+mensagens e rótulos de erro (36), tipos `Tables<'sales_orders'>` (4), rótulos de leitura
+(`exigirLeitura(…, 'sales_orders')`, 2), uma assinatura realtime que só invalida cache
+(`useVendasZone`), e os próprios gates. Os 61 sítios: **4 canônicos · 17 escritas · 1 complemento ·
+39 fora** — dos 40 fora (o complemento sem par conta como fora), 22 são de propósito (lookup,
+sincronização, sensor) e 18 eram dívida.
+
+**Efeito vivo, no grão e na janela de cada site:**
+
+| Domínio | Efeito medido |
+|---|---|
+| Dashboard/receita + cockpit | **0** — orçamento/rascunho não têm kpi. Vira vivo no dia em que o app gravar `order_date_kpi` (o passo que o #2730 destrava) |
+| Customer 360 "Faturamento 12m" | universo: 19 clientes, +R$ 34,8 mil (máx R$ 7.560, mediana R$ 595), nº de pedidos inflado nos 19. **E o `limit(200)` escondia 55–72% do faturamento 12m dos 3 maiores clientes** (R$ 904.595 aparecia como R$ 248.916) |
+| Ligação (preço praticado, munição) | universo efetivo já canônico (pendente = 0), mas filtrado **depois** do `limit`: 11 clientes perdiam ≥1 pedido válido do top-50 do histórico de preço |
+| Proposta (cesta enviada por WhatsApp) | **0** (orçamento/rascunho sem itens) — mas a cesta saía de um universo e o preço (`get_whatsapp_proposta_cotacao`, canônico desde #2726) de outro |
+| Auditoria de margem | **0** (rascunho sem itens) — o conjunto de exclusão deixava rascunho/pendente contarem como praticado |
+| Operacionais | última compra: 1 cliente via cancelado; já-comprou: 19 clientes/29 pedidos cancelados no corte; cores: 3 de 2.191 pares; roteirizador: 1; visit-score: 0 |
+
+Achados fora da classe, decididos junto: `sales_orders.discount` é **0 em 31.678/31.678** (DEFAULT 0)
+— a "sensibilidade a desconto" da Inteligência era um 0% fabricado; o roteirizador lia pedidos sem
+limit (capa silenciosa de 1.000) e engolia o erro.
+
+## As decisões (founder, 2026-10-01)
+
+- **Customer 360:** KPI numa query própria — universo canônico, janela 12m por `order_date_kpi` (o
+  mesmo eixo e universo do tile "90d", que vem do `customer_metrics_mv`), paginada sem teto; a lista
+  "Pedidos recentes" (badge de status, vermelho para cancelado) vira feed separado com `deleted_at`;
+  erro → "indisponível", nunca R$ 0.
+- **Dashboard, cockpit, ligação, proposta, auditoria:** todos canônicos.
+- **Operacionais:** os quatro grupos são pergunta de COMPRA — última compra + já-comprou, cores do
+  cliente, roteirizador + visit-score, impressão do dia. Os feeds que sobram (admin, brief, sistema,
+  atividade, orçamentos, busca) ficam no registro como propósito, com `deleted_at`.
+- **Inteligência:** canônico + "indisponível" no lugar do 0%. **Roteirizador:** a capa e o erro
+  consertados junto.
+- **Codex:** cota em 86% (teto 85%) até 03/10 19:11 → os PRs money-path ficam **DRAFT** até a janela
+  reabrir, com desenho (`RÉGUA:`) + adversarial por domínio antes do merge.
+
+## O gate
+
+`src/__tests__/universo-pedidos-ts-gate.test.ts`, com o detector em `src/lib/gates/universo-pedidos-ts.ts`
+(AST do compilador TS, padrão do `hoje-utc`) e o registro em `src/lib/gates/universo-pedidos-ts-registro.ts`.
+
+- **G1** — toda leitura fora do par canônico está no registro (arquivo + forma + n).
+- **G2** — o registro só encolhe: entrada sem sítio (quitada, sumida ou com a forma mudada) reprova.
+- **G3** — feed de propósito tem `.is('deleted_at', null)` ou diz no registro por que não.
+- **G4** — a dívida tem teto (18) e cada entrada nomeia o domínio que a quita.
+- **G5/G6** — nenhuma cópia da lista (array ou string PostgREST com ≥2 membros da autoridade) fora
+  das duas autoridades; o G6 prova no código real que o detector ainda acha as autoridades.
+- **Calibração** — fixtures transcritos: o pré-fix real do `useFarmerScoring` (`2025c0808~1`, a
+  allowlist que escondia 10.281 pedidos) casa e o pós-fix não; cast, genérico, quebra de linha,
+  variável reatribuída, filtro pós-query, embed, complemento com e sem o par.
+- **Falsificação** — `bun run falsificar:universo-pedidos-ts [LOCALE]`: 11 sabotagens em arquivos
+  reais, no detector, no walker e no registro, cada uma exigindo o vermelho do assert certo E o
+  arquivo nomeado; controle verde antes e depois na mesma invocação; `LC_ALL=C` e `pt_BR.UTF-8`.
+
+**Limites declarados:** cadeia que atravessa retorno de função ou parâmetro é julgada pelo que se vê
+no site (sai fora → registro, o lado seguro); a variável é seguida por nome no escopo da função, sem
+fluxo (filtro num `if` conta como sempre); SQL cru em string não é PostgREST; cópia da lista com UM
+membro só (`['CANCELADO']`) não se distingue de vocabulário de outro domínio — havia uma
+(`STATUS_CANCELAMENTO`), erradicada na mesma leva.
+
+## Lições
+
+1. **O corte pode ser maior que a classe.** O `limit(200)` do Customer 360 escondia 55–72% do
+   faturamento dos maiores clientes — ~30× o efeito do universo errado na mesma query (R$ 1,06 mi escondidos contra R$ 34,8 mil inflados). Medir o site
+   no SEU grão e janela, e não só o predicado, é o que achou isso.
+2. **Filtro depois do limit é a forma TS da classe**, e ela não aparece como "universo errado": a
+   lista já era a certa, só que aplicada a uma janela que já tinha perdido linhas válidas.
+3. **O detector achou o próprio registro.** A primeira versão guardava os membros das constantes
+   em arrays — que são, eles mesmos, a cópia que o G5 procura. A representação mudou para string; a
+   alternativa (excluir o registro do scan) seria um ponto cego com nome.
+4. **Vermelho que não diz o arquivo não é marca.** Lista longa no `toEqual([])` sai truncada
+   (`[ …(6) ]`); a falsificação pegou isso, e o gate passou a comparar strings.
