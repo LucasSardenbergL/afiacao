@@ -81,8 +81,8 @@ export const REGISTRO: readonly EntradaRegistro[] = [
 ];
 
 /**
- * Teto da dívida: o número de entradas `divida` na criação do gate. Só desce — subir é reabrir a
- * classe, e o diff que mexer aqui é a conversa.
+ * Teto da dívida: IGUAL ao número de entradas `divida` (o G4 exige a igualdade). Só desce — quem
+ * quita uma entrada baixa o teto no mesmo diff; subir é reabrir a classe, e o diff é a conversa.
  */
 export const TETO_DIVIDA = 8;
 
