@@ -465,7 +465,7 @@ const FarmerCalls = () => {
           {positivacao && (
             <>
               <PositivacaoHero kpis={positivacao} isHunter={isHunter} />
-              <ClientesAPositivarCard clientes={positivacao.aPositivar} />
+              <ClientesAPositivarCard clientes={positivacao.aPositivar} total={positivacao.aPositivarTotal} />
             </>
           )}
           {/* FORA do `&&`: o card já distingue erro, zero e sem-acesso sozinho (#1859), e
