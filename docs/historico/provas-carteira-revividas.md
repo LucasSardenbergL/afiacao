@@ -35,7 +35,8 @@ As diferenças, todas fora do que as provas acionam:
 3. `sincronizar_ativo_omie_para_reposicao`, o gatilho de `omie_products`, diverge, mas só dispara em
    `UPDATE OF ativo` e nenhuma das duas provas o aciona;
 4. o gatilho `trg_auto_commercial_super_admin` de `profiles`, que a retardatária `20260830122702` tirou de
-   prod (já registrado na fatia 2a). Ele só dispara para employee com o CPF do master.
+   prod (já registrado na fatia 2a). O seed de Melhorias o dispara (INSERT de profiles de clientes), mas ele
+   só age para employee com o CPF do master: sem efeito aqui.
 
 A pendência do funil (#2715) também foi conferida: em prod,
 `has_column_privilege('authenticated', 'public.sales_orders', 'whatsapp_conversation_id', 'SELECT')` = t,

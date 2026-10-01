@@ -11,20 +11,24 @@
 #  • os guards das 2 RPCs: o termo curto (< 3 depois do trim) é recusado nas duas, o não-staff é
 #    barrado na produtos_relacionados e o anon não executa nenhuma (nega o EXECUTE, camada nomeada);
 #  • quem vê quais clientes na clientes_por_produto: o master vê todos ('todos'), a vendedora só a
-#    carteira dela ('minha_carteira') — e só pedido válido conta: janela de 12 meses, cancelado,
-#    rascunho, pendente e apagado (deleted_at) fora, produto inativo fora;
+#    carteira dela ('minha_carteira') — nem o cliente de OUTRA vendedora nem o da carteira dela que
+#    está inelegível (as 2 conjunções do helper de carteira têm dente) — e só pedido válido conta:
+#    janela de 12 meses, cancelado, rascunho, pendente e apagado (deleted_at) fora, produto inativo fora;
 #  • a produtos_relacionados: mesma família (ativo, mesma conta, sem o alvo) e comprados juntos (regra
 #    cujo antecedente é o alvo, máximo de confiança/lift por consequente, sem inativo nem o alvo); o
 #    produto inativo não é alvo;
 #  • a RLS de melhoria_itens e melhoria_mensagens como o app a vê (SET ROLE + JWT na mesma sessão): a
 #    autoria e o gate de staff no INSERT, os campos do founder e o status nascendo fechados, a leitura
-#    (autor ou master), o UPDATE só do master (calado — 0 linhas — para os outros), a mensagem só no
-#    item próprio aberto, o papel founder só do master, `dados` só da edge; o anon não lê nem escreve.
+#    (autor ou master), o UPDATE só do master — inclusive no item ALHEIO, que é a triagem (calado, 0
+#    linhas, para os outros) —, a mensagem só no item próprio aberto ou em andamento, o papel founder só
+#    do master, `dados` só da edge; o anon não lê nem escreve item nem mensagem.
 # Fora daqui, de propósito: o gate de staff da clientes_por_produto e o escape do termo
 # (db/test-padrao-like-contem.sh, F18–F22, núcleo), o ranking com receita NULL
 # (db/test-preco-ausente-nao-e-zero.sh, núcleo) e os helpers no schema privado
 # (db/test-fu7-helpers-schema-privado.sh). A cobertura por carteira (carteira_coverage) e o papel
-# comercial gerencial são semântica dos helpers, não da RPC.
+# comercial gerencial são semântica dos helpers, não da RPC: ficam fora dos asserts, mas DENTRO da cadeia
+# (CV_FUNCOES/CV_TABELAS) — a vendedora "sem papel gerencial" é premissa do D3, e uma migration que mude
+# o get_commercial_role ou a cobertura entra na prova sozinha.
 #
 # Os 2 guards das RPCs dão a MESMA SQLSTATE (P0001: RAISE EXCEPTION sem ERRCODE). Cada assert de guard
 # usa uma entrada que só UM deles pode barrar (o não-staff com termo longo; o master com termo curto),
@@ -81,10 +85,10 @@ adm -c "CREATE DATABASE base;"
 # tabelas que elas leem e escrevem: a migration nova que fizer DDL sobre eles entra na cadeia sozinha.
 # shellcheck disable=SC2034  # consumida pelo db/lib/corpo-vivo.sh, que o shellcheck sem -x não segue
 CV_FUNCOES=(melhoria_clientes_por_produto melhoria_produtos_relacionados padrao_like_contem
-            carteira_visivel_para pode_ver_carteira_completa has_role)
+            carteira_visivel_para pode_ver_carteira_completa get_commercial_role has_role)
 # shellcheck disable=SC2034  # consumida pelo db/lib/corpo-vivo.sh, que o shellcheck sem -x não segue
 CV_TABELAS=(melhoria_itens melhoria_mensagens omie_products order_items sales_orders profiles
-            farmer_association_rules carteira_assignments user_roles)
+            farmer_association_rules carteira_assignments carteira_coverage commercial_roles user_roles)
 # shellcheck disable=SC1091  # idem: versionado ao lado, em db/lib/
 . "$REPO_ROOT/db/lib/corpo-vivo.sh"
 echo "→ banco-base: stubs + prelude + snapshot + ACL de prod + cadeia viva…"
@@ -92,12 +96,16 @@ cv_montar
 
 MASTER='00000000-0000-0000-0000-0000000aaaa1'    # master: vê toda a base e todo item
 VEND='00000000-0000-0000-0000-0000000aaaa2'      # employee sem papel comercial gerencial: só a carteira dela
+VEND2='00000000-0000-0000-0000-0000000aaaa4'     # outra vendedora: a carteira dela não é da VEND
 CLI='00000000-0000-0000-0000-0000000cccc3'       # customer: não é staff
 C1='00000000-0000-0000-0000-0000000c0001'        # comprador na carteira da VEND
 C2='00000000-0000-0000-0000-0000000c0002'        # comprador sem dono
+C3='00000000-0000-0000-0000-0000000c0003'        # comprador na carteira da VEND2
+C4='00000000-0000-0000-0000-0000000c0004'        # comprador na carteira da VEND, INELEGÍVEL (ex.: fornecedor excluído)
 ITEM_V='00000000-0000-0000-0000-00000000e0a1'    # item aberto da VEND
 ITEM_R='00000000-0000-0000-0000-00000000e0a2'    # item resolvido da VEND
 ITEM_M='00000000-0000-0000-0000-00000000e0a3'    # item aberto do MASTER
+ITEM_A='00000000-0000-0000-0000-00000000e0a4'    # item da VEND em andamento (a mensagem também entra)
 so() { printf '00000000-0000-0000-0000-00000000d00%s' "$1"; }
 pr() { printf '00000000-0000-0000-0000-00000000f00%s' "$1"; }
 # A data comercial é o dia de São Paulo (a RPC compara no fuso escrito, não no da sessão) e fica longe
@@ -109,12 +117,14 @@ dia() { printf "((now() AT TIME ZONE 'America/Sao_Paulo')::date - %s)" "$1"; }
 echo "→ seed-base: papéis, carteira, catálogo, pedidos coerentes, regras de associação, itens e mensagens…"
 P -v ON_ERROR_STOP=1 -q <<SQL
 BEGIN;
-INSERT INTO auth.users (id) VALUES ('$MASTER'), ('$VEND'), ('$CLI'), ('$C1'), ('$C2');
+INSERT INTO auth.users (id) VALUES ('$MASTER'), ('$VEND'), ('$VEND2'), ('$CLI'), ('$C1'), ('$C2'), ('$C3'), ('$C4');
 INSERT INTO public.user_roles (user_id, role) VALUES
-  ('$MASTER', 'master'), ('$VEND', 'employee'), ('$CLI', 'customer'), ('$C1', 'customer'), ('$C2', 'customer');
-INSERT INTO public.profiles (user_id, name) VALUES ('$C1', 'Cliente Um'), ('$C2', 'Cliente Dois');
-INSERT INTO public.carteira_assignments (customer_user_id, owner_user_id, source, eligible)
-VALUES ('$C1', '$VEND', 'omie', true);
+  ('$MASTER', 'master'), ('$VEND', 'employee'), ('$VEND2', 'employee'), ('$CLI', 'customer'),
+  ('$C1', 'customer'), ('$C2', 'customer'), ('$C3', 'customer'), ('$C4', 'customer');
+INSERT INTO public.profiles (user_id, name) VALUES
+  ('$C1', 'Cliente Um'), ('$C2', 'Cliente Dois'), ('$C3', 'Cliente Tres'), ('$C4', 'Cliente Quatro');
+INSERT INTO public.carteira_assignments (customer_user_id, owner_user_id, source, eligible) VALUES
+  ('$C1', '$VEND', 'omie', true), ('$C3', '$VEND2', 'omie', true), ('$C4', '$VEND', 'omie', false);
 -- P1 é o alvo de 'LIXA GR80'. P2 é a mesma família ativa; P4 a mesma família INATIVA; P5 a mesma família
 -- na OUTRA conta; P3 e P6 são de outra família (consequentes de regras).
 INSERT INTO public.omie_products (id, omie_codigo_produto, codigo, descricao, account, ativo, familia) VALUES
@@ -124,7 +134,8 @@ INSERT INTO public.omie_products (id, omie_codigo_produto, codigo, descricao, ac
   ('$(pr 4)', 1004, 'P004', 'LIXA GR240 TESTE',   'oben',    false, 'ABRASIVOS TESTE'),
   ('$(pr 5)', 1005, 'K005', 'LIXA COLACOR TESTE', 'colacor', true,  'ABRASIVOS TESTE'),
   ('$(pr 6)', 1006, 'P006', 'MASSA TESTE',        'oben',    true,  'QUIMICOS TESTE');
--- Só SO1 (C1, 50.00) e SO2 (C2, 10.00) contam para 'LIXA GR80'. Cada pedido que NÃO conta tem uma
+-- SO1 (C1, 50.00), SO2 (C2, 10.00), SO9 (C3, 20.00) e SO10 (C4, 30.00) contam para 'LIXA GR80' — o
+-- master vê os 4, a VEND só o C1 (o C3 é da VEND2; o C4 é dela, mas inelegível). Cada pedido que NÃO conta tem uma
 -- quantidade própria, então qualquer um que vaze muda o valor de um jeito reconhecível: fora da janela
 -- (+500), cancelado (+500), rascunho (+5000), pendente (+15000), apagado (+35). SO8 é de produto
 -- inativo (só a busca 'GR240' o alcança).
@@ -136,7 +147,9 @@ INSERT INTO public.sales_orders (id, customer_user_id, created_by, account, stat
   ('$(so 5)', '$C1', '$VEND', 'oben', 'rascunho',  $(dia 20),  NULL),
   ('$(so 6)', '$C2', '$VEND', 'oben', 'pendente',  $(dia 25),  NULL),
   ('$(so 7)', '$C1', '$VEND', 'oben', 'faturado',  $(dia 10),  now()),
-  ('$(so 8)', '$C2', '$VEND', 'oben', 'faturado',  $(dia 15),  NULL);
+  ('$(so 8)', '$C2', '$VEND', 'oben', 'faturado',  $(dia 15),  NULL),
+  ('$(so a)', '$C3', '$VEND2', 'oben', 'faturado', $(dia 40),  NULL),
+  ('$(so b)', '$C4', '$VEND', 'oben', 'faturado',  $(dia 50),  NULL);
 INSERT INTO public.order_items (sales_order_id, customer_user_id, product_id, omie_codigo_produto, quantity, unit_price) VALUES
   ('$(so 1)', '$C1', '$(pr 1)', 1001, 10,   5.00),
   ('$(so 2)', '$C2', '$(pr 1)', 1001, 2,    5.00),
@@ -145,7 +158,9 @@ INSERT INTO public.order_items (sales_order_id, customer_user_id, product_id, om
   ('$(so 5)', '$C1', '$(pr 1)', 1001, 1000, 5.00),
   ('$(so 6)', '$C2', '$(pr 1)', 1001, 3000, 5.00),
   ('$(so 7)', '$C1', '$(pr 1)', 1001, 7,    5.00),
-  ('$(so 8)', '$C2', '$(pr 4)', 1004, 1,    99.00);
+  ('$(so 8)', '$C2', '$(pr 4)', 1004, 1,    99.00),
+  ('$(so a)', '$C3', '$(pr 1)', 1001, 4,    5.00),
+  ('$(so b)', '$C4', '$(pr 1)', 1001, 6,    5.00);
 UPDATE public.sales_orders so
    SET items = (SELECT jsonb_agg(jsonb_build_object('omie_codigo_produto', oi.omie_codigo_produto,
                                                     'quantidade', oi.quantity,
@@ -163,7 +178,8 @@ INSERT INTO public.farmer_association_rules (antecedent_product_ids, consequent_
 INSERT INTO public.melhoria_itens (id, autor_user_id, empresa, tipo, urgencia, titulo, status, resolvido_em) VALUES
   ('$ITEM_V', '$VEND',   'oben', 'problema', 'alta',  'Bug no picking',   'aberto',    NULL),
   ('$ITEM_R', '$VEND',   'oben', 'pergunta', 'baixa', 'Duvida resolvida', 'resolvido', now()),
-  ('$ITEM_M', '$MASTER', 'oben', 'sugestao', 'media', 'Ideia do master',  'aberto',    NULL);
+  ('$ITEM_M', '$MASTER', 'oben', 'sugestao', 'media', 'Ideia do master',  'aberto',    NULL),
+  ('$ITEM_A', '$VEND',   'oben', 'problema', 'media', 'Em andamento',     'em_andamento', NULL);
 INSERT INTO public.melhoria_mensagens (item_id, autor_user_id, papel, conteudo) VALUES
   ('$ITEM_V', '$VEND',   'funcionario', 'Detalhe do bug'),
   ('$ITEM_R', '$VEND',   'funcionario', 'Pergunta original'),
@@ -211,8 +227,8 @@ cenario() {
   echo "→ os guards das RPCs (P0001 é dos dois: cada entrada só pode tropeçar em UM) e o ACL"
   chk G1 "não-staff é barrado na produtos_relacionados (termo longo: só o gate de staff morde)" \
     "$(st_como authenticated "$CLI" "SELECT public.melhoria_produtos_relacionados('LIXA GR80')")" "P0001"
-  chk G2 "termo curto é recusado na produtos_relacionados (o master passa o gate de staff)" \
-    "$(st_como authenticated "$MASTER" "SELECT public.melhoria_produtos_relacionados('ab')")" "P0001"
+  chk G2 "termo curto DEPOIS do trim é recusado na produtos_relacionados (o master passa o gate de staff)" \
+    "$(st_como authenticated "$MASTER" "SELECT public.melhoria_produtos_relacionados('  ab  ')")" "P0001"
   chk G3 "termo curto DEPOIS do trim é recusado na clientes_por_produto ('  ab  ')" \
     "$(st_como authenticated "$MASTER" "SELECT public.melhoria_clientes_por_produto('  ab  ')")" "P0001"
   chk G5 "anon não executa a clientes_por_produto — nega o EXECUTE da RPC" \
@@ -222,10 +238,11 @@ cenario() {
 
   echo "→ clientes_por_produto: quem vê quem, e só o pedido válido conta"
   chk D1 "o master vê a base toda (escopo|total)" \
-    "$(rpc "$MASTER" melhoria_clientes_por_produto 'LIXA GR80' "(r->>'escopo') || '|' || (r->>'total_clientes_visiveis')")" "todos|2"
+    "$(rpc "$MASTER" melhoria_clientes_por_produto 'LIXA GR80' "(r->>'escopo') || '|' || (r->>'total_clientes_visiveis')")" "todos|4"
   chk D2 "só pedido válido na janela de 12 meses conta (cliente:n_pedidos:valor_12m)" \
-    "$(rpc "$MASTER" melhoria_clientes_por_produto 'LIXA GR80' "$CLIENTES")" "Cliente Dois:1:10.00,Cliente Um:1:50.00"
-  chk D3 "a vendedora vê só a carteira dela (escopo|total|clientes — QUEM, os valores são o D2)" \
+    "$(rpc "$MASTER" melhoria_clientes_por_produto 'LIXA GR80' "$CLIENTES")" \
+    "Cliente Dois:1:10.00,Cliente Quatro:1:30.00,Cliente Tres:1:20.00,Cliente Um:1:50.00"
+  chk D3 "a vendedora vê só a carteira dela, elegível — não a da VEND2 nem o inelegível (escopo|total|QUEM)" \
     "$(rpc "$VEND" melhoria_clientes_por_produto 'LIXA GR80' "(r->>'escopo') || '|' || (r->>'total_clientes_visiveis') || '|' || $NOMES")" \
     "minha_carteira|1|Cliente Um"
   chk D4 "venda de produto inativo não conta ('GR240': o único que casa é inativo)" \
@@ -240,18 +257,18 @@ cenario() {
     "$(rpc "$MASTER" melhoria_produtos_relacionados 'GR240' "$(codigos produtos_casados)")" "-"
 
   echo "→ RLS de leitura (itens|mensagens) como o app a vê"
-  chk S1 "a vendedora lê os itens dela (2), não o do master" "$(q_como authenticated "$VEND" "SELECT count(*) FROM public.melhoria_itens;")" "2"
-  chk S2 "o master lê todos os itens" "$(q_como authenticated "$MASTER" "SELECT count(*) FROM public.melhoria_itens;")" "3"
+  chk S1 "a vendedora lê os itens dela (3), não o do master" "$(q_como authenticated "$VEND" "SELECT count(*) FROM public.melhoria_itens;")" "3"
+  chk S2 "o master lê todos os itens" "$(q_como authenticated "$MASTER" "SELECT count(*) FROM public.melhoria_itens;")" "4"
   chk S3 "o cliente não lê item nem mensagem" "$(q_como authenticated "$CLI" "$CONTA_ITENS")" "0|0"
   chk S4 "o anon não lê item nem mensagem" "$(q_como anon '' "$CONTA_ITENS")" "0|0"
   chk S5 "a vendedora lê só as mensagens dos itens dela" "$(q_como authenticated "$VEND" "SELECT count(*) FROM public.melhoria_mensagens;")" "2"
   chk S6 "o master lê todas as mensagens" "$(q_como authenticated "$MASTER" "SELECT count(*) FROM public.melhoria_mensagens;")" "3"
 
-  echo "→ UPDATE de item: só o master; para os outros a policy CALA (0 linhas, sem erro)"
+  echo "→ UPDATE de item: só o master, inclusive no item ALHEIO (a triagem); para os outros a policy CALA"
   chk U1 "a vendedora não muda o status do próprio item (linhas afetadas)" \
     "$(q_como authenticated "$VEND" "WITH u AS (UPDATE public.melhoria_itens SET status = 'resolvido' WHERE id = '$ITEM_V' RETURNING 1) SELECT count(*) FROM u;")" "0"
-  chk U2 "o master muda o status (linhas afetadas)" \
-    "$(q_como authenticated "$MASTER" "WITH u AS (UPDATE public.melhoria_itens SET status = 'em_andamento' WHERE id = '$ITEM_M' RETURNING 1) SELECT count(*) FROM u;")" "1"
+  chk U2 "o master tria o item da vendedora (linhas afetadas; muda a urgência, o status segue aberto)" \
+    "$(q_como authenticated "$MASTER" "WITH u AS (UPDATE public.melhoria_itens SET urgencia = 'baixa' WHERE id = '$ITEM_V' RETURNING 1) SELECT count(*) FROM u;")" "1"
 
   echo "→ INSERT de item: autor = quem insere, só staff, e nasce aberto, pendente e sem campo do founder"
   chk I1 "a vendedora abre item próprio" "$(st_como authenticated "$VEND" "$(item "$VEND")")" "OK"
@@ -264,8 +281,9 @@ cenario() {
     "$NEGA_ITEM|$NEGA_ITEM|$NEGA_ITEM"
   chk I7 "o master abre item próprio" "$(st_como authenticated "$MASTER" "$(item "$MASTER")")" "OK"
   chk W1 "o anon não abre item" "$(st_como anon '' "$(item "$VEND")")" "$NEGA_ITEM"
+  chk W2 "o anon não escreve mensagem" "$(st_como anon '' "$(msg "$ITEM_V" "$VEND" funcionario)")" "$NEGA_MSG"
 
-  echo "→ INSERT de mensagem: no item próprio aberto, papel founder só do master, dados só da edge"
+  echo "→ INSERT de mensagem: no item próprio aberto ou em andamento, papel founder só do master, dados só da edge"
   chk M1 "a vendedora escreve no próprio item aberto" "$(st_como authenticated "$VEND" "$(msg "$ITEM_V" "$VEND" funcionario)")" "OK"
   chk M2 "a vendedora não escreve no item do master" "$(st_como authenticated "$VEND" "$(msg "$ITEM_M" "$VEND" funcionario)")" "$NEGA_MSG"
   chk M3 "papel founder por quem não é master é barrado" "$(st_como authenticated "$VEND" "$(msg "$ITEM_V" "$VEND" founder)")" "$NEGA_MSG"
@@ -275,6 +293,7 @@ cenario() {
   chk M7 "mensagem com autor alheio é barrada" "$(st_como authenticated "$VEND" "$(msg "$ITEM_V" "$MASTER" funcionario)")" "$NEGA_MSG"
   chk M8 "papel 'ia' (o da edge) é barrado para quem está logado" "$(st_como authenticated "$VEND" "$(msg "$ITEM_V" "$VEND" ia)")" "$NEGA_MSG"
   chk M9 "o master não posta como 'funcionario' no item alheio" "$(st_como authenticated "$MASTER" "$(msg "$ITEM_V" "$MASTER" funcionario)")" "$NEGA_MSG"
+  chk M10 "a vendedora escreve no próprio item em andamento" "$(st_como authenticated "$VEND" "$(msg "$ITEM_A" "$VEND" funcionario)")" "OK"
   return 0
 }
 
@@ -328,23 +347,26 @@ SQL
 # drop_create são a armadilha do CLAUDE.md — DROP+CREATE devolve o EXECUTE ao default de prod, que o dá
 # ao anon EXPLÍCITO, e o `REVOKE … FROM PUBLIC` não o tira: só G5/G6 distinguem, porque nomeiam a
 # camada e o objeto.
-SABOTAGENS="produtos_sem_gate_staff:G1:G2,R1 produtos_sem_teto_termo:G2:G1,R1
+SABOTAGENS="produtos_sem_gate_staff:G1:G2,R1 produtos_sem_teto_termo:G2:G1,R1 produtos_termo_sem_trim:G2:G1
             clientes_sem_teto_termo:G3:D1 clientes_termo_sem_trim:G3:D1
             anon_executa_clientes:G5:G6,D1 anon_executa_produtos:G6:G5,R1
             migracao_nova_drop_create_clientes:G5:D1,G6 migracao_nova_drop_create_sem_anon_produtos:G6:R1,G5
             janela_aberta:D2:D1,D3 cancelado_conta:D2:D1,D3 rascunho_conta:D2:D1,D3 pendente_conta:D2:D1,D3
             apagado_conta:D2:D1,D3 vendedora_ve_tudo:D3:D1,D2 inativo_conta:D4:D2
+            helper_sem_dono:D3:D1,D2 helper_sem_eligible:D3:D1,D2 escopo_sempre_carteira:D1:D2,D3
             migracao_nova_vendedora_ve_tudo:D3:D1,D2
             familia_inclui_inativo:R1:R2 familia_atravessa_conta:R1:R2 familia_inclui_alvo:R1:R2
             juntos_inclui_inativo:R2:R1 juntos_inclui_alvo:R2:R1 juntos_outro_antecedente:R2:R1
-            juntos_min_confianca:R2:R1 alvo_inclui_inativo:R3:R1
+            juntos_min_confianca:R2:R1 juntos_min_lift:R2:R1 alvo_inclui_inativo:R3:R1
             item_insert_sem_autor:I2:I1,I4 item_insert_sem_staff:I4:I1,I2 item_insert_triagem_livre:I3:I1
             item_insert_status_livre:I5:I1 item_insert_avaliacao_livre:I6:I1 item_insert_resposta_livre:I6:I1
             item_insert_resolvido_livre:I6:I1 item_select_aberto:S1,S3:S2,S5 item_select_sem_master:S2,S6:S1
-            item_update_aberto:U1:U2 msg_insert_sem_autor:M7:M1 msg_insert_dados_livre:M4:M1
+            item_update_aberto:U1:U2 item_update_so_proprio:U2:U1 msg_insert_sem_autor:M7:M1 msg_insert_dados_livre:M4:M1
+            msg_qualquer_item:M2:M1 msg_insert_so_aberto:M10:M1
             msg_insert_item_alheio:M9:M1,M2,M5 msg_insert_item_resolvido:M6:M1 msg_insert_founder_livre:M3:M5
             msg_insert_papel_ia:M8:M1 msg_select_aberto:S5,S3:S6 msg_select_sem_master:S6:S5
-            anon_le_itens:S4:S3 anon_escreve_itens:W1:I1 migracao_nova_item_select_aberto:S1:S2"
+            anon_le_itens:S4:S3 anon_le_mensagens:S4:S3 anon_escreve_itens:W1:I1 anon_escreve_mensagens:W2:M1
+            migracao_nova_item_select_aberto:S1:S2"
 
 # sabotagem <nome> — troca UMA camada do schema vivo no banco da rodada. Status ≠0 = não aplicou.
 sabotagem() {
@@ -352,10 +374,12 @@ sabotagem() {
   local gate="if v_uid is null or not (has_role(v_uid,'employee'::app_role) or has_role(v_uid,'master'::app_role)) then"
   local teto="if length(trim(coalesce(p_termo,''))) < 3 then" status="where so.status not in ('cancelado','rascunho','pendente')"
   local visivel='where v_full or carteira_visivel_para(c.customer_user_id, v_uid)'
+  local helper='private.carteira_visivel_para(uuid,uuid)' dono='AND a.owner_user_id = _uid'
   local uid='( SELECT auth.uid() AS uid)'
   case "$1" in
     produtos_sem_gate_staff)  cv_sabotar "$rel" "$gate" "if false then" ;;
     produtos_sem_teto_termo)  cv_sabotar "$rel" "$teto" "if false then" ;;
+    produtos_termo_sem_trim)  cv_sabotar "$rel" "length(trim(coalesce(p_termo,'')))" "length(coalesce(p_termo,''))" ;;
     clientes_sem_teto_termo)  cv_sabotar "$cli" "$teto" "if false then" ;;
     clientes_termo_sem_trim)  cv_sabotar "$cli" "length(trim(coalesce(p_termo,'')))" "length(coalesce(p_termo,''))" ;;
     anon_executa_clientes)    P -v ON_ERROR_STOP=1 -q -c "GRANT EXECUTE ON FUNCTION $cli TO anon;" ;;
@@ -374,6 +398,11 @@ sabotagem() {
     apagado_conta)            cv_sabotar "$cli" "and so.deleted_at is null" "" ;;
     vendedora_ve_tudo)        cv_sabotar "$cli" "$visivel" "where true" ;;
     inativo_conta)            cv_sabotar "$cli" "coalesce(ativo, true) = true" "true" ;;
+    # o helper de carteira, conjunção a conjunção: sem o dono, a VEND vê o C3 (da VEND2); sem o eligible,
+    # o C4 (dela, inelegível). A 2ª conjunção se repete no ramo da cobertura: âncora com a linha do dono.
+    helper_sem_dono)          cv_sabotar "$helper" "$dono" "" ;;
+    helper_sem_eligible)      cv_sabotar "$helper" $'AND a.owner_user_id = _uid\n          AND a.eligible IS TRUE' "$dono" ;;
+    escopo_sempre_carteira)   cv_sabotar "$cli" "v_full := pode_ver_carteira_completa(v_uid);" "v_full := false;" ;;
     migracao_nova_vendedora_ve_tudo)
                               cv_migracao_nova "$cli" "$visivel" "where true" ;;
     familia_inclui_inativo)   cv_sabotar "$rel" $'op.account = a.account\n    where coalesce(op.ativo, true) = true' $'op.account = a.account\n    where true' ;;
@@ -383,6 +412,7 @@ sabotagem() {
     juntos_inclui_alvo)       cv_sabotar "$rel" $'and op.id not in (select id from alvo)\n  )\n  select' $'\n  )\n  select' ;;
     juntos_outro_antecedente) cv_sabotar "$rel" "where exists (select 1 from alvo a where a.id::text = any(r.antecedent_product_ids::text[]))" "where true" ;;
     juntos_min_confianca)     cv_sabotar "$rel" "max(r.confidence) as confidence" "min(r.confidence) as confidence" ;;
+    juntos_min_lift)          cv_sabotar "$rel" "max(r.lift) as lift" "min(r.lift) as lift" ;;
     alvo_inclui_inativo)      cv_sabotar "$rel" "where coalesce(ativo, true) = true" "where true" ;;
     item_insert_sem_autor)    sabotar_policy melhoria_itens melhoria_itens_insert with_check "(autor_user_id = $uid) AND " "" ;;
     item_insert_sem_staff)    sabotar_policy melhoria_itens melhoria_itens_insert with_check \
@@ -395,8 +425,13 @@ sabotagem() {
     item_select_aberto)       P -v ON_ERROR_STOP=1 -q -c "ALTER POLICY melhoria_itens_select ON public.melhoria_itens USING (true);" ;;
     item_select_sem_master)   sabotar_policy melhoria_itens melhoria_itens_select qual " OR has_role($uid, 'master'::app_role)" "" ;;
     item_update_aberto)       P -v ON_ERROR_STOP=1 -q -c "ALTER POLICY melhoria_itens_update ON public.melhoria_itens USING (true) WITH CHECK (true);" ;;
+    item_update_so_proprio)   sabotar_policy melhoria_itens melhoria_itens_update qual \
+                                "has_role($uid, 'master'::app_role)" "(has_role($uid, 'master'::app_role) AND (autor_user_id = $uid))" ;;
     msg_insert_sem_autor)     sabotar_policy melhoria_mensagens melhoria_mensagens_insert with_check "(autor_user_id = $uid) AND (dados IS NULL)" "(dados IS NULL)" ;;
     msg_insert_dados_livre)   sabotar_policy melhoria_mensagens melhoria_mensagens_insert with_check " AND (dados IS NULL)" "" ;;
+    msg_qualquer_item)        sabotar_policy melhoria_mensagens melhoria_mensagens_insert with_check "(i.id = melhoria_mensagens.item_id) AND " "" ;;
+    msg_insert_so_aberto)     sabotar_policy melhoria_mensagens melhoria_mensagens_insert with_check \
+                                "ARRAY['aberto'::text, 'em_andamento'::text]" "ARRAY['aberto'::text]" ;;
     msg_insert_item_alheio)   sabotar_policy melhoria_mensagens melhoria_mensagens_insert with_check " AND (i.autor_user_id = $uid)" "" ;;
     msg_insert_item_resolvido) sabotar_policy melhoria_mensagens melhoria_mensagens_insert with_check \
                                 " AND (i.status = ANY (ARRAY['aberto'::text, 'em_andamento'::text]))" "" ;;
@@ -407,7 +442,9 @@ sabotagem() {
     msg_select_aberto)        P -v ON_ERROR_STOP=1 -q -c "ALTER POLICY melhoria_mensagens_select ON public.melhoria_mensagens USING (true);" ;;
     msg_select_sem_master)    sabotar_policy melhoria_mensagens melhoria_mensagens_select qual " OR has_role($uid, 'master'::app_role)" "" ;;
     anon_le_itens)            P -v ON_ERROR_STOP=1 -q -c "CREATE POLICY sabotagem_anon_le ON public.melhoria_itens FOR SELECT TO anon USING (true);" ;;
+    anon_le_mensagens)        P -v ON_ERROR_STOP=1 -q -c "CREATE POLICY sabotagem_anon_le ON public.melhoria_mensagens FOR SELECT TO anon USING (true);" ;;
     anon_escreve_itens)       P -v ON_ERROR_STOP=1 -q -c "CREATE POLICY sabotagem_anon_escreve ON public.melhoria_itens FOR INSERT TO anon WITH CHECK (true);" ;;
+    anon_escreve_mensagens)   P -v ON_ERROR_STOP=1 -q -c "CREATE POLICY sabotagem_anon_escreve ON public.melhoria_mensagens FOR INSERT TO anon WITH CHECK (true);" ;;
     migracao_nova_item_select_aberto)
                               cv_migracao_nova_sql "DROP POLICY melhoria_itens_select ON public.melhoria_itens;
 CREATE POLICY melhoria_itens_select ON public.melhoria_itens FOR SELECT TO authenticated USING (true);" ;;
@@ -451,7 +488,8 @@ echo "  ✅ controle verde: $PASS asserts"
 
 # O vermelho que conta é o do assert DECLARADO, verde no controle e vermelho na rodada; os verdes
 # declarados seguem verdes; a rodada executa tantos asserts quanto o controle; e vermelho com ERRO
-# de execução não é dente (docs/historico/falsificacao-exit-nao-e-dente.md).
+# de execução não é dente (docs/historico/falsificacao-exit-nao-e-dente.md) — em QUALQUER parte do got: os
+# asserts compostos (I6) juntam medições com '|', e um ERRO na 2ª valeria "vermelho por valor".
 falhas=0
 for item in $SABOTAGENS; do
   sab="${item%%:*}"; resto="${item#*:}"
@@ -464,7 +502,7 @@ for item in $SABOTAGENS; do
     motivo=" sabotagem não aplicou (exit $rc): $({ grep -m1 -E 'ERRO|ERROR|cv_' "$log" || true; } | cut -c1-200)"
   elif [ "$((PASS + FAIL))" -ne "$executados_controle" ]; then
     motivo=" a rodada executou $((PASS + FAIL)) asserts e o controle $executados_controle: vermelho de aborto, não de assert"
-  elif grep -Eq '^  ✗ .*got\[ERRO: ' "$log"; then
+  elif grep -Eq '^  ✗ .*got\[.*ERRO: ' "$log"; then
     motivo=" vermelho com ERRO de execução: a medição que erra cai pelo erro, não pelo valor"
   else
     for id in ${verm//,/ }; do

@@ -5,7 +5,8 @@
 # ================================================================================================
 # NÃO é executável: é `source`-ado pela prova DEPOIS de ela definir REPO_ROOT, `P` (psql no banco que vai
 # receber o schema) e as listas CV_FUNCOES / CV_TABELAS (os objetos que ELA assevera). Usado por
-# db/test-whatsapp-hsm.sh, db/test-whatsapp-funil.sh e db/test-whatsapp-proposta.sh. O trio de
+# db/test-whatsapp-hsm.sh, db/test-whatsapp-funil.sh, db/test-whatsapp-proposta.sh,
+# db/test-melhorias-rpcs.sh e db/test-fornecedores-classificacao.sh. O trio de
 # data-health tem a lib dele (db/lib/data-health-vivo.sh: MV, ACL e cadeia do trio); o cv_sabotar abaixo é
 # o mesmo idioma do dhv_sabotar.
 #
