@@ -152,6 +152,22 @@ describe('universo de pedidos — canários de reintrodução', () => {
     expect(violacoesDe(apagada, 'public.order_feed').join(' ')).toMatch(/registro órfão/);
   });
 
+  it('isenção por ALIAS: só o alias registrado sai; o outro do mesmo objeto segue julgado, e o isento tem de existir', () => {
+    const reg = { ...REGISTRO_UNIVERSO_PEDIDOS, 'public.canario_alias': { tipo: 'lookup' as const, aliases: ['t'], motivo: 'canário' } };
+    const corpo = (principal: string) =>
+      fn('canario_alias', `SELECT count(*) FROM sales_orders a WHERE ${principal}
+        AND EXISTS (SELECT 1 FROM sales_orders t WHERE t.omie_pedido_id = a.omie_pedido_id)`);
+    const doCanario = (m: ReturnType<typeof modelar>) =>
+      julgar(m, reg, AUT).violacoes.filter((v) => v.objeto === 'public.canario_alias').map((v) => v.motivo).join(' ');
+    // controle: principal canônico + o gêmeo isento → limpo
+    expect(doCanario(comMigration(corpo(`a.status NOT IN ${DENY} AND a.deleted_at IS NULL`)))).toBe('');
+    // o principal regride: a isenção do `t` NÃO o cobre
+    expect(doCanario(comMigration(corpo(`a.deleted_at IS NULL`)))).toMatch(/alias a, 0 com a denylist canônica/);
+    // o alias isento sumiu: o registro mente e reprova
+    expect(doCanario(comMigration(fn('canario_alias', `SELECT count(*) FROM sales_orders a WHERE a.status NOT IN ${DENY} AND a.deleted_at IS NULL`))))
+      .toMatch(/alias 't'.*registro órfão/);
+  });
+
   it('a autoridade manda: um 5º status no TS deixa os canônicos de hoje em violação', () => {
     const aut5 = new Set([...AUT, 'devolvido']);
     const r = julgar(modelar(lerMigrations(RAIZ)), REGISTRO_UNIVERSO_PEDIDOS, aut5);

@@ -36,6 +36,8 @@ type TipoRegistro = 'lookup' | 'escritor' | 'proposito' | 'canonico_por_parametr
 export interface EntradaRegistro {
   tipo: TipoRegistro;
   motivo: string;
+  /** Só estas leituras (por alias) ficam fora; as demais do objeto seguem julgadas. Ausente = o objeto todo. */
+  aliases?: readonly string[];
 }
 interface Definicao {
   objeto: string;
@@ -272,22 +274,27 @@ function predicadosPorAlias(toks: readonly string[], aliases: readonly string[],
   return m;
 }
 
-/** O julgamento de UMA definição: [] se canônica, senão os motivos. */
-export function julgarDefinicao(def: Definicao, autoridade: ReadonlySet<string>): string[] {
-  const leituras = leiturasDeSalesOrders(def.tokens);
-  if (leituras.length === 0) return [];
+/** Os motivos por ALIAS de leitura (todo alias que lê sales_orders aparece, mesmo sem motivo). */
+function motivosPorAlias(def: Definicao, autoridade: ReadonlySet<string>): Map<string, string[]> {
   const porAlias = new Map<string, number>();
-  for (const l of leituras) porAlias.set(l.alias, (porAlias.get(l.alias) ?? 0) + 1);
+  for (const l of leiturasDeSalesOrders(def.tokens)) porAlias.set(l.alias, (porAlias.get(l.alias) ?? 0) + 1);
   const contagem = predicadosPorAlias(def.tokens, [...porAlias.keys()], autoridade);
-  const motivos: string[] = [];
+  const saida = new Map<string, string[]>();
   for (const [alias, n] of porAlias) {
     const c = contagem.get(alias)!;
     const rotulo = alias || '(sem alias)';
-    if (c.canonicoStatus < n) motivos.push(`${n} leitura(s) de sales_orders com alias ${rotulo}, ${c.canonicoStatus} com a denylist canônica de status`);
-    if (c.deletedAt < n) motivos.push(`${n} leitura(s) de sales_orders com alias ${rotulo}, ${c.deletedAt} com deleted_at IS NULL`);
-    if (c.outrasComparacoes.length) motivos.push(`outra comparação de status no alias ${rotulo}: ${c.outrasComparacoes.join(' | ')}`);
+    const m: string[] = [];
+    if (c.canonicoStatus < n) m.push(`${n} leitura(s) de sales_orders com alias ${rotulo}, ${c.canonicoStatus} com a denylist canônica de status`);
+    if (c.deletedAt < n) m.push(`${n} leitura(s) de sales_orders com alias ${rotulo}, ${c.deletedAt} com deleted_at IS NULL`);
+    if (c.outrasComparacoes.length) m.push(`outra comparação de status no alias ${rotulo}: ${c.outrasComparacoes.join(' | ')}`);
+    saida.set(alias, m);
   }
-  return motivos;
+  return saida;
+}
+
+/** O julgamento de UMA definição: [] se canônica, senão os motivos. */
+export function julgarDefinicao(def: Definicao, autoridade: ReadonlySet<string>): string[] {
+  return [...motivosPorAlias(def, autoridade).values()].flat();
 }
 
 export function julgar(
@@ -298,17 +305,25 @@ export function julgar(
   const violacoes: Violacao[] = [];
   const leitores: string[] = [];
   for (const [objeto, def] of modelo) {
-    if (leiturasDeSalesOrders(def.tokens).length === 0) continue;
+    const porAlias = motivosPorAlias(def, autoridade);
+    if (porAlias.size === 0) continue;
     leitores.push(objeto);
-    const motivos = julgarDefinicao(def, autoridade);
     const reg = registro[objeto];
-    if (reg) {
-      if (motivos.length === 0) {
-        violacoes.push({ objeto, migration: def.migration, motivo: `registrado como '${reg.tipo}' mas a definição viva é CANÔNICA — tire do registro (a lista só encolhe)` });
+    const v = (motivo: string) => violacoes.push({ objeto, migration: def.migration, motivo });
+    if (reg && !reg.aliases) {
+      if ([...porAlias.values()].every((m) => m.length === 0)) {
+        v(`registrado como '${reg.tipo}' mas a definição viva é CANÔNICA — tire do registro (a lista só encolhe)`);
       }
       continue;
     }
-    for (const motivo of motivos) violacoes.push({ objeto, migration: def.migration, motivo });
+    // Isenção por ALIAS: só aquelas leituras saem do julgamento; as outras do MESMO objeto seguem
+    // julgadas (o sensor de gêmeos lê canônico no alias principal e busca o gêmeo por identidade).
+    const isentos = new Set(reg?.aliases ?? []);
+    for (const a of isentos) {
+      if (!porAlias.has(a)) v(`alias '${a}' registrado como '${reg!.tipo}' não lê mais sales_orders — registro órfão`);
+      else if (porAlias.get(a)!.length === 0) v(`alias '${a}' registrado como '${reg!.tipo}' mas é CANÔNICO — tire do registro (a lista só encolhe)`);
+    }
+    for (const [a, motivos] of porAlias) if (!isentos.has(a)) for (const m of motivos) v(m);
   }
   for (const objeto of Object.keys(registro)) {
     if (!leitores.includes(objeto)) {

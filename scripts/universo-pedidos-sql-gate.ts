@@ -40,6 +40,11 @@ export const REGISTRO_UNIVERSO_PEDIDOS: Readonly<Record<string, EntradaRegistro>
   'public.pedido_venda_exigir_coerencia': { tipo: 'lookup', motivo: 'coerência itens×payload de UM pedido (por id)' },
   'public.staff_get_sales_order_payload': { tipo: 'lookup', motivo: 'payload de pedidos pedidos por ids' },
   'public.tint_gate_revalida': { tipo: 'lookup', motivo: 'tint: revalida o preço de UM pedido no submit (por id)' },
+  'public._data_health_compute': {
+    tipo: 'lookup',
+    aliases: ['t'],
+    motivo: 'sensor de gêmeos push/pull (20261001011500): o EXISTS busca o gêmeo IMPORTADO por (conta, omie_pedido_id) — identidade, não venda; a leitura principal (alias a) segue julgada e é canônica',
+  },
   // ── escritor ────────────────────────────────────────────────────────────────────────────────
   'public.aplicar_edicao_pedido_omie': { tipo: 'escritor', motivo: 'edição de UM pedido (lê e regrava por id)' },
   'public.criar_pedidos_com_itens': { tipo: 'escritor', motivo: 'importador Omie: insere/deduplica por hash' },
