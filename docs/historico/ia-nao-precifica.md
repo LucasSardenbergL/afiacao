@@ -101,4 +101,6 @@ montarRespostaAnalise(…)` foi declarada no MESMO escopo do `let resposta` da c
 `transpileModule` (só erro SINTÁTICO do TS; redeclaração é do binder, TS2451), o `edges:typecheck` do CI
 (que TOLERA TS2451 como "dívida conhecida") e os testes (nenhum importa o `index.ts`). Hotfix: renomear
 para `corpoResposta` (`v1.4-boot-resposta-unica`), validado com transpilar→`node --check` — o parser
-do V8 acusa a classe (controle: a versão da main fica VERMELHA). Fora do ar: ~08:41Z até o redeploy.
+do V8 acusa a classe (controle: a versão da main fica VERMELHA). Fora do ar: ~08:41Z → ~09:56Z
+(redeploy de `b12ba6107`; sonda request 99601 → DEPLOY CONFIRMADO; `pendencias:deploy` exit 0). Publish
+de 10:05Z (entry `index-D_btcRSX.js`; sentinela `ia-nao-precifica-v1` no chunk `GovernanceAudit`).
