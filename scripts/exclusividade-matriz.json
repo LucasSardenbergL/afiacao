@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "medidoEm": "2026-10-01T11:48:58.491Z",
-  "sourceHead": "b9ab970ba8f2ec514b5ae341fa6377bbf0c22855",
+  "medidoEm": "2026-10-01T11:59:49.182Z",
+  "sourceHead": "9543cfaba6d8e8af239a0868312eaa10be9bb3a1",
   "dispensados": [
     {
       "gate": "authz:carimbo",
@@ -153,7 +153,7 @@
     {
       "gate": "edges:sintaxe",
       "verde": true,
-      "ms": 5451
+      "ms": 5238
     },
     {
       "gate": "edges:typecheck",
@@ -349,8 +349,8 @@
         {
           "gate": "edges:sintaxe",
           "reprovou": false,
-          "ms": 6419,
-          "fingerprint": "66c9704d522ce1ec",
+          "ms": 5239,
+          "fingerprint": "2dff583b68b72716",
           "fonteResolvida": true,
           "invocacao": "bun run edges:sintaxe"
         },
@@ -600,8 +600,8 @@
         {
           "gate": "edges:sintaxe",
           "reprovou": false,
-          "ms": 8215,
-          "fingerprint": "66c9704d522ce1ec",
+          "ms": 5870,
+          "fingerprint": "2dff583b68b72716",
           "fonteResolvida": true,
           "invocacao": "bun run edges:sintaxe"
         },
@@ -867,8 +867,8 @@
         {
           "gate": "edges:sintaxe",
           "reprovou": false,
-          "ms": 8150,
-          "fingerprint": "66c9704d522ce1ec",
+          "ms": 5445,
+          "fingerprint": "2dff583b68b72716",
           "fonteResolvida": true,
           "invocacao": "bun run edges:sintaxe"
         },
@@ -1102,8 +1102,8 @@
         {
           "gate": "edges:sintaxe",
           "reprovou": false,
-          "ms": 4711,
-          "fingerprint": "66c9704d522ce1ec",
+          "ms": 4957,
+          "fingerprint": "2dff583b68b72716",
           "fonteResolvida": true,
           "invocacao": "bun run edges:sintaxe"
         },
@@ -1265,8 +1265,8 @@
         {
           "gate": "edges:sintaxe",
           "reprovou": false,
-          "ms": 7245,
-          "fingerprint": "66c9704d522ce1ec",
+          "ms": 5124,
+          "fingerprint": "2dff583b68b72716",
           "fonteResolvida": true,
           "invocacao": "bun run edges:sintaxe"
         },
@@ -1470,8 +1470,8 @@
         {
           "gate": "edges:sintaxe",
           "reprovou": true,
-          "ms": 7213,
-          "fingerprint": "66c9704d522ce1ec",
+          "ms": 4903,
+          "fingerprint": "2dff583b68b72716",
           "fonteResolvida": true,
           "invocacao": "bun run edges:sintaxe"
         }
@@ -1497,8 +1497,8 @@
         {
           "gate": "edges:sintaxe",
           "reprovou": true,
-          "ms": 7025,
-          "fingerprint": "66c9704d522ce1ec",
+          "ms": 5180,
+          "fingerprint": "2dff583b68b72716",
           "fonteResolvida": true,
           "invocacao": "bun run edges:sintaxe"
         }
@@ -1588,8 +1588,8 @@
         {
           "gate": "edges:sintaxe",
           "reprovou": false,
-          "ms": 6484,
-          "fingerprint": "66c9704d522ce1ec",
+          "ms": 4885,
+          "fingerprint": "2dff583b68b72716",
           "fonteResolvida": true,
           "invocacao": "bun run edges:sintaxe"
         },
@@ -1811,8 +1811,8 @@
         {
           "gate": "edges:sintaxe",
           "reprovou": false,
-          "ms": 8373,
-          "fingerprint": "66c9704d522ce1ec",
+          "ms": 5566,
+          "fingerprint": "2dff583b68b72716",
           "fonteResolvida": true,
           "invocacao": "bun run edges:sintaxe"
         },
@@ -1923,8 +1923,8 @@
         {
           "gate": "edges:sintaxe",
           "reprovou": false,
-          "ms": 8801,
-          "fingerprint": "66c9704d522ce1ec",
+          "ms": 5257,
+          "fingerprint": "2dff583b68b72716",
           "fonteResolvida": true,
           "invocacao": "bun run edges:sintaxe"
         },
@@ -2132,8 +2132,8 @@
         {
           "gate": "edges:sintaxe",
           "reprovou": false,
-          "ms": 4545,
-          "fingerprint": "66c9704d522ce1ec",
+          "ms": 5442,
+          "fingerprint": "2dff583b68b72716",
           "fonteResolvida": true,
           "invocacao": "bun run edges:sintaxe"
         },
@@ -2251,8 +2251,8 @@
         {
           "gate": "edges:sintaxe",
           "reprovou": false,
-          "ms": 5181,
-          "fingerprint": "66c9704d522ce1ec",
+          "ms": 4834,
+          "fingerprint": "2dff583b68b72716",
           "fonteResolvida": true,
           "invocacao": "bun run edges:sintaxe"
         },
@@ -2518,8 +2518,8 @@
         {
           "gate": "edges:sintaxe",
           "reprovou": false,
-          "ms": 8303,
-          "fingerprint": "66c9704d522ce1ec",
+          "ms": 4975,
+          "fingerprint": "2dff583b68b72716",
           "fonteResolvida": true,
           "invocacao": "bun run edges:sintaxe"
         },
@@ -2697,8 +2697,8 @@
         {
           "gate": "edges:sintaxe",
           "reprovou": false,
-          "ms": 6594,
-          "fingerprint": "66c9704d522ce1ec",
+          "ms": 4946,
+          "fingerprint": "2dff583b68b72716",
           "fonteResolvida": true,
           "invocacao": "bun run edges:sintaxe"
         }
@@ -2779,8 +2779,8 @@
         {
           "gate": "edges:sintaxe",
           "reprovou": false,
-          "ms": 7747,
-          "fingerprint": "66c9704d522ce1ec",
+          "ms": 5055,
+          "fingerprint": "2dff583b68b72716",
           "fonteResolvida": true,
           "invocacao": "bun run edges:sintaxe"
         },
@@ -2941,8 +2941,8 @@
         {
           "gate": "edges:sintaxe",
           "reprovou": false,
-          "ms": 8794,
-          "fingerprint": "66c9704d522ce1ec",
+          "ms": 5036,
+          "fingerprint": "2dff583b68b72716",
           "fonteResolvida": true,
           "invocacao": "bun run edges:sintaxe"
         },
@@ -3064,8 +3064,8 @@
         {
           "gate": "edges:sintaxe",
           "reprovou": false,
-          "ms": 11874,
-          "fingerprint": "66c9704d522ce1ec",
+          "ms": 4799,
+          "fingerprint": "2dff583b68b72716",
           "fonteResolvida": true,
           "invocacao": "bun run edges:sintaxe"
         },
@@ -3211,8 +3211,8 @@
         {
           "gate": "edges:sintaxe",
           "reprovou": false,
-          "ms": 10840,
-          "fingerprint": "66c9704d522ce1ec",
+          "ms": 4766,
+          "fingerprint": "2dff583b68b72716",
           "fonteResolvida": true,
           "invocacao": "bun run edges:sintaxe"
         },
@@ -3334,8 +3334,8 @@
         {
           "gate": "edges:sintaxe",
           "reprovou": false,
-          "ms": 10331,
-          "fingerprint": "66c9704d522ce1ec",
+          "ms": 5717,
+          "fingerprint": "2dff583b68b72716",
           "fonteResolvida": true,
           "invocacao": "bun run edges:sintaxe"
         },
