@@ -132,7 +132,13 @@ vermelho por valor e é dente. Com `erro_no_meio` (`got[ok|ERRO: …]`), ele dá
 exit 1, nas duas provas. A MESMA cópia com o regex do juiz do molde (`got\[ERRO: `) dá `2 vermelhas / 0
 falhas`, exit 0: aceita o erro como dente. É o ponto cego, reproduzido.
 
-**Custo:** PENDENTE.
+**Custo**, medido no M2 pelo runner do núcleo, na mesma invocação do CI (`MANIFESTO=` com as 2 linhas, com a
+máquina já fora do pico de carga): Melhorias 4 s + 68 s (`--falsificar`), fornecedores 4 s + 53 s. **No CI é
+projeção, não medida:** os moldes da fatia 2a fazem 26 s → 11 s (HSM) e 38 s → 14 s (proposta) do M2 para o
+runner, uma razão de ~0,4. Aplicada aqui, dá ~25–30 s + ~20–22 s de `--falsificar` e ~2–3 s de modo normal
+por prova, ~50 s no total. As 2 linhas são consecutivas no manifesto, e a partição é round-robin
+(#2713): caem em partes diferentes das 3 paralelas, que medem 4m36s–6m52s contra o teto de 20 min (#2721).
+O número real fica no log do job `provas-sql` do PR.
 
 ## Revisão independente (Caminho B)
 
