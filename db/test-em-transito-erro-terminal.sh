@@ -211,6 +211,13 @@ eq "funcao viva tem a guarda NULL-safe" \
    "$(Pq -c "SELECT (pg_get_functiondef(oid) LIKE '%status_envio_portal IS NOT DISTINCT FROM ''erro_nao_retentavel''%')::text FROM pg_proc WHERE proname='gerar_pedidos_sugeridos_ciclo'")" "true"
 MD5_NOVA="$(fdef)"
 echo "  md5 da funcao nova (esperado na trava do apply manual): $MD5_NOVA"
+# A fixture viva (db/embalagem-motor-rpc.sql) segue a ULTIMA migration que recria o motor — desde 2026-10-01 a
+# 20261001023000 (dia de SP no DEFAULT e corte em hora de SP), posterior a esta. "Restaurar a funcao REAL" e
+# carregar a fixture: o md5 de referencia das restauracoes e dos rollbacks (falsifica_post, RST0) e o DELA. O
+# que esta prova mede — o em_transito — e o mesmo texto nas duas.
+P -q -f "$FIXTURE" >/dev/null 2>&1
+MD5_FIXTURE="$(fdef)"
+echo "  md5 da funcao da fixture viva (referencia das restauracoes): $MD5_FIXTURE"
 
 echo "=== R1: ciclo com a correcao aplicada ==="
 run_ciclo OBEN 2026-07-03
@@ -320,7 +327,7 @@ falsifica_post() {  # $1=nome  $2=sed-expr  $3=sentinela (trecho ASCII da mensag
   else
     bad "FALSIF $nome postcondicao NAO barrou ($4, rc=$rc): $(head -c 300 "$SAB_DIR/$nome.log")"
   fi
-  eq "$nome rollback: funcao viva intacta apos o abort (md5 da nova)" "$(fdef)" "$MD5_NOVA"
+  eq "$nome rollback: funcao viva intacta apos o abort (md5 da fixture viva)" "$(fdef)" "$MD5_FIXTURE"
 }
 
 # F6: o "=" de volta na guarda [FANTASMA]
@@ -392,7 +399,7 @@ fi
 
 # controle pos-falsificacao: a funcao restaurada e a REAL (md5) e volta a segurar S7/S8/S9 (a restauracao nao e teatro)
 P -q -f "$FIXTURE" >/dev/null 2>&1
-eq "RST0 funcao restaurada pela fixture = a da migration nova (md5)" "$(fdef)" "$MD5_NOVA"
+eq "RST0 funcao restaurada pela fixture = a da fixture viva (md5)" "$(fdef)" "$MD5_FIXTURE"
 P -q -c "DELETE FROM pedido_compra_item WHERE pedido_id > 100; DELETE FROM pedido_compra_sugerido WHERE id > 100;" >/dev/null
 run_ciclo OBEN 2026-07-05
 eq "RST funcao restaurada segura o S7 de novo" "$(qf OBEN 2026-07-05 9207)" "AUSENTE"
