@@ -299,7 +299,6 @@ export function useUnifiedAIAssistant({
         descricao: suggestion.descricao,
         quantity: suggestion.quantity || 1,
         account: (suggestion.account || 'oben') as 'oben' | 'colacor',
-        unit_price: suggestion.unit_price,
       };
       onItemsIdentified({ products: [prod], services: [] });
       toast.success('Produto adicionado!', { description: suggestion.descricao });
@@ -316,7 +315,6 @@ export function useUnifiedAIAssistant({
           descricao: matchProd.descricao,
           quantity: suggestion.quantity || 1,
           account: (matchProd.account || suggestion.account || 'oben') as 'oben' | 'colacor',
-          unit_price: suggestion.unit_price,
         };
         onItemsIdentified({ products: [prod], services: [] });
         toast.success('Produto adicionado!', { description: matchProd.descricao });

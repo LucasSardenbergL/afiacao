@@ -20,9 +20,9 @@
 // buraco dando a ela um `contrato`. As duas continuam respondendo perguntas DIFERENTES, e é a
 // diferença que justifica as duas coexistirem:
 //
-//   canária ... `contrato: "praticado-vence-omie-v1"` nomeia a fatia do MERGE DE PREÇO, e prova
-//               que o deploy não reverteu "order_items vence o Omie". O #1622 não toca esse
-//               comportamento — a canária responde igual antes e depois dele.
+//   canária ... `contrato` nomeia o contrato de PREÇO (hoje `ia-nao-precifica-v1`: nenhum preço
+//               sai da edge; até a v1.3, `praticado-vence-omie-v1`, o merge que saiu dela). O #1622
+//               não tocou esse comportamento — a canária respondia igual antes e depois dele.
 //   sonda ..... `versao` nomeia a fatia do PROMPT. É o que discrimina o #1622.
 //
 // E há a diferença de ALCANCE, que importa mais na prática: a canária vive DEPOIS do gate de staff
@@ -80,8 +80,10 @@ export const respostaSonda = criarRespostaSonda("analyze-unified-order");
  *
  * O gate que impede o retorno ao valor congelado: `_shared/sonda-versao-contrato_test.ts`,
  * "bump v1.1-corpo-tipado". Um `git revert` deste bump devolveria a sonda a "responde verde sem provar nada".
+ * `v1.3-ia-nao-precifica`: a edge deixou de decidir preço (fronteira `montarRespostaAnalise`, canária
+ * `ia-nao-precifica-v1`). O que saiu e por quê: docs/historico/ia-nao-precifica.md.
  */
-export const VERSAO = "v1.2-b1-termo-degenerado";
+export const VERSAO = "v1.3-ia-nao-precifica";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

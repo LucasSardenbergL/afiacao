@@ -11,7 +11,10 @@ export type {
 } from './unifiedAI/types';
 
 export function UnifiedAIAssistant(props: UnifiedAIAssistantProps) {
-  const { products, userTools, hasCustomerSelected = false, isLoading = false } = props;
+  const {
+    products, userTools, hasCustomerSelected = false, isLoading = false,
+    precoNascimentoPorId, precoLoading = false,
+  } = props;
   const ai = useUnifiedAIAssistant(props);
 
   return (
@@ -57,6 +60,8 @@ export function UnifiedAIAssistant(props: UnifiedAIAssistantProps) {
           onConfirmItems={ai.confirmItems}
           suggestions={ai.suggestions}
           onAcceptSuggestion={ai.acceptSuggestion}
+          precoNascimentoPorId={precoNascimentoPorId}
+          precoLoading={precoLoading}
         />
       )}
 

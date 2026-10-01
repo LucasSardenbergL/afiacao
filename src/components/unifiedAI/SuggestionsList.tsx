@@ -4,7 +4,8 @@ import { Package, Wrench, Lightbulb, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { type AISuggestion, type Product, type UserTool } from './types';
-import { fmt, getToolName } from './helpers';
+import { getToolName } from './helpers';
+import { PrecoNascimentoIA } from './PrecoNascimentoIA';
 
 interface SuggestionsListProps {
   suggestions: AISuggestion[];
@@ -12,6 +13,10 @@ interface SuggestionsListProps {
   userTools: UserTool[];
   hasCustomerSelected: boolean;
   onAccept: (suggestion: AISuggestion) => void;
+  /** Preço com que o item VAI nascer no carrinho (getProductPrice) — o único que o painel exibe. */
+  precoNascimentoPorId: (productId: string) => number | null;
+  /** Preço de partida não firme: sem número e com o ADD bloqueado (mesmo gate da lista). */
+  precoLoading?: boolean;
 }
 
 export function SuggestionsList({
@@ -20,6 +25,8 @@ export function SuggestionsList({
   userTools,
   hasCustomerSelected,
   onAccept,
+  precoNascimentoPorId,
+  precoLoading = false,
 }: SuggestionsListProps) {
   return (
     <div className="space-y-2 pt-2 border-t border-border">
@@ -49,14 +56,14 @@ export function SuggestionsList({
                 <p className="text-xs text-status-warning mt-1 italic">
                   💡 {sug.reason}
                 </p>
-                {sug.type === 'product' && (prod || sug.unit_price) && (
+                {sug.type === 'product' && prod && (
                   <div className="flex items-center gap-2 mt-1">
                     <Badge variant="outline" className="text-[10px]">{sug.account === 'colacor' ? 'Colacor' : 'Oben'}</Badge>
-                    {sug.unit_price ? (
-                      <span className="text-[10px] text-muted-foreground">
-                        {fmt(sug.unit_price)}/un <Badge variant="secondary" className="text-[9px] ml-1">Preço cliente</Badge>
-                      </span>
-                    ) : prod && <span className="text-[10px] text-muted-foreground">{fmt(prod.valor_unitario)}/un</span>}
+                    <PrecoNascimentoIA
+                      productId={sug.product_id}
+                      precoNascimentoPorId={precoNascimentoPorId}
+                      precoLoading={precoLoading}
+                    />
                   </div>
                 )}
                 {sug.type === 'service' && sug.servico_descricao && (
@@ -69,6 +76,9 @@ export function SuggestionsList({
                   variant="outline"
                   className="flex-shrink-0 text-xs border-status-warning/40 hover:bg-status-warning/10"
                   onClick={() => onAccept(sug)}
+                  // Mesmo gate do ADD da lista: nascer antes do preço de partida firmar não é determinístico.
+                  disabled={precoLoading}
+                  title={precoLoading ? 'Aguardando o preço de partida do cliente…' : undefined}
                 >
                   <Plus className="w-3 h-3 mr-1" />
                   Adicionar
