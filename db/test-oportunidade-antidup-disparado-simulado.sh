@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ╔═════════════════════════════════════════════════════════════════════════════════════════════╗
 # ║  Oportunidade: o anti-compra-dupla [SIMETRIA-NORMAL] ve 'disparado_simulado' — prova PG17.   ║
-# ║  Migration: 20260926115128_oportunidade_antidup_conta_disparado_simulado.sql                 ║
+# ║  Migration: 20261001204054_oportunidade_antidup_conta_disparado_simulado.sql                 ║
 # ║                                                                                             ║
 # ║  bash db/test-oportunidade-antidup-disparado-simulado.sh   (NAO pipe pra tail — engole o rc) ║
 # ║  2o locale:  HARNESS_LC=pt_BR.UTF-8 bash db/test-oportunidade-antidup-disparado-simulado.sh  ║
@@ -16,7 +16,7 @@
 # ║   Z  restore    — depois das sabotagens, o corpo real volta e fica verde                    ║
 # ║                                                                                             ║
 # ║  A falsificacao roda SEMPRE (nao ha modo): controle verde e sabotagem na mesma invocacao.   ║
-# ║  Tabelas-stub com os TIPOS da PROD (psql-ro 2026-09-26); a view v_oportunidade_economica_hoje║
+# ║  Tabelas-stub com os TIPOS da PROD (psql-ro 2026-09-26/10-01); a view v_oportunidade_economica_hoje║
 # ║  vira TABELA-fixture (plpgsql resolve o nome em runtime). Triggers de INSERT da PROD         ║
 # ║  (outbox de analytics, po_inexistente) ficam fora: nao tocam o NOT EXISTS sob prova.         ║
 # ╚═════════════════════════════════════════════════════════════════════════════════════════════╝
@@ -29,11 +29,13 @@ SLUG="oport-antidup-simulado"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
 export LC_ALL=C LANG=C
 
-MIG_PROD="$REPO_ROOT/supabase/migrations/20260922225449_oportunidade_erro_terminal_nao_bloqueia_oferta.sql"
-MIG_NOVA="$REPO_ROOT/supabase/migrations/20260926115128_oportunidade_antidup_conta_disparado_simulado.sql"
-# md5(pg_get_functiondef) da PROD em 2026-09-26 (psql-ro). Se a PROD mudar, este numero muda —
+# A versao da PROD vive DENTRO da 20261001023000 (fuso SP, 1.900 linhas, dezenas de objetos): o
+# controle aplica SO o bloco desta funcao, extraido do arquivo, e o M1 prova que e o da PROD.
+MIG_PROD="$REPO_ROOT/supabase/migrations/20261001023000_hoje_sp_familia_data_ciclo.sql"
+MIG_NOVA="$REPO_ROOT/supabase/migrations/20261001204054_oportunidade_antidup_conta_disparado_simulado.sql"
+# md5(pg_get_functiondef) da PROD em 2026-10-01 (psql-ro). Se a PROD mudar, este numero muda —
 # e o controle deixa de ser "a versao da PROD": o M1 fica vermelho de proposito.
-MD5_PROD="614ee7e01b9e58008b9841b40585bacb"
+MD5_PROD="2cae069c6b23cf7f566e58fa425a2084"
 
 [ -f "$MIG_PROD" ] || { echo "INFRA: migration base ausente: $MIG_PROD"; exit 1; }
 [ -f "$MIG_NOVA" ] || { echo "INFRA: migration nova ausente: $MIG_NOVA"; exit 1; }
@@ -207,8 +209,16 @@ N_SIMULADO_VIVO() {
 # ═════════════════════════════════════════════════════════════════════════════════════════════
 # GRUPO M + B — CONTROLE: a versao da PROD, com o defeito visivel
 # ═════════════════════════════════════════════════════════════════════════════════════════════
-echo "-> aplica a 20260922225449 (a versao que a PROD roda)..."
-P -q -f "$MIG_PROD" >/dev/null
+echo "-> aplica o bloco da funcao da 20261001023000 (a versao que a PROD roda)..."
+python3 - "$MIG_PROD" "$TMPW/prod.sql" <<'PY'
+import sys
+t = open(sys.argv[1]).read()
+abre = "CREATE OR REPLACE FUNCTION public.gerar_pedidos_oportunidade_ciclo("
+assert t.count(abre) == 1, f"esperava 1 bloco da funcao, achei {t.count(abre)}"
+i = t.index(abre); f = t.index("$function$;", i) + len("$function$;")
+open(sys.argv[2], "w").write(t[i:f] + "\n")
+PY
+APLICA_CORPO "$TMPW/prod.sql" || { echo "INFRA: o bloco da PROD nao aplicou"; exit 1; }
 eq "M1 CONTROLE e a PROD: md5(pg_get_functiondef) local == md5 medido na PROD" \
   "$(Pq -c "SELECT md5(pg_get_functiondef('public.gerar_pedidos_oportunidade_ciclo'::regproc));")" "$MD5_PROD"
 

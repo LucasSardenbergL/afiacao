@@ -218,6 +218,11 @@ db/test-sonda-passo-pelo-db-aplicar.sh     32  falsificar=14
 # só fica vermelho aqui. Entrou em 2026-09-10, quando a dobra já tinha inflado a tendência de
 # caixa publicada no fechamento de abril (docs/cfo/2026-04-fechamento.md, errata).
 db/test-cfo-caixa-90d-otica.sh             30
+# O mesmo PO sob duas óticas de compra: o `em_transito` do motor e o anti-compra-dupla da oportunidade
+# ([SIMETRIA-NORMAL]). `disparado_simulado` (PO REAL do dry_run) entrou na 1ª e ficou fora da 2ª — o SKU
+# voltava a ser ofertado = compra antecipada em dobro. Controle = versão da PROD por md5; falsificação
+# sempre ligada, uma lista por vez. Entrou em 2026-10-01 (migration 20261001204054).
+db/test-oportunidade-antidup-disparado-simulado.sh  17
 # Tintométrico: item repetido (fórmula, corante) na promoção fica com a quantidade de maior ordem —
 # SOMAR dobraria a dose do corante sem erro nenhum.
 db/test-tint-promote-dedup-itens.sh        11

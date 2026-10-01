@@ -1,8 +1,8 @@
 -- ============================================================
 -- Oportunidade — anti-compra-dupla [SIMETRIA-NORMAL] passa a ver 'disparado_simulado'
 -- Money-path (compras). Recria gerar_pedidos_oportunidade_ciclo. ⚠️ NÃO auto-aplica (nome custom).
--- Pré-flight: md5(pg_get_functiondef) da PROD em 2026-09-26 = 614ee7e01b9e58008b9841b40585bacb =
--- o corpo da 20260922225449 (base deste arquivo; md5 reproduzido no PG17 local pelo harness).
+-- Pré-flight: md5(pg_get_functiondef) da PROD em 2026-10-01 = 2cae069c6b23cf7f566e58fa425a2084 =
+-- o corpo da 20261001023000 (fuso SP; base deste arquivo; md5 reproduzido no PG17 local pelo harness).
 -- ACL preservado por CREATE OR REPLACE. Provada em PG17: db/test-oportunidade-antidup-disparado-simulado.sh
 -- (controle = versão da PROD oferece o SKU; conserto bloqueia; falsificação por lista).
 --
@@ -20,16 +20,16 @@
 -- A janela conta do data_ciclo, não do disparo nem do recebimento: PO aberto há mais de 7 dias não
 -- protege — limite PRÉ-EXISTENTE, fora do escopo (Codex desenho P2). Nada mais do corpo muda.
 --
--- ⚠️ SINAL (PROD, psql-ro 2026-09-26): 0 linhas com status 'disparado_simulado' no histórico inteiro e
+-- ⚠️ SINAL (PROD, psql-ro 2026-10-01): 0 linhas com status 'disparado_simulado' no histórico inteiro e
 -- 0 pedidos de oportunidade já gerados — latente, não incidente; não recupera caixa hoje.
 -- Guard permanente: edges-onorder-guardrail.test.ts passa a exigir em_transito do motor ⊆ cada lista
 -- anti-dup daqui (status novo que vira "a caminho" tem de bloquear a oferta também).
 --
--- Rollback: reaplicar a 20260922225449 (a anterior a recriar esta função).
+-- Rollback: reaplicar o bloco gerar_pedidos_oportunidade_ciclo da 20261001023000 (a anterior a recriá-la).
 
 BEGIN;
 
-CREATE OR REPLACE FUNCTION public.gerar_pedidos_oportunidade_ciclo(p_empresa text DEFAULT 'OBEN'::text, p_data_ciclo date DEFAULT CURRENT_DATE, p_cenarios text[] DEFAULT ARRAY['promo_flat'::text, 'promo_volume'::text, 'promo_e_aumento'::text, 'aumento_apenas'::text])
+CREATE OR REPLACE FUNCTION public.gerar_pedidos_oportunidade_ciclo(p_empresa text DEFAULT 'OBEN'::text, p_data_ciclo date DEFAULT ((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date, p_cenarios text[] DEFAULT ARRAY['promo_flat'::text, 'promo_volume'::text, 'promo_e_aumento'::text, 'aumento_apenas'::text])
  RETURNS TABLE(pedidos_gerados integer, skus_incluidos integer, valor_total numeric, economia_bruta numeric, cenarios_cobertos text[])
  LANGUAGE plpgsql
  SET search_path TO 'public', 'pg_temp'
@@ -122,7 +122,7 @@ BEGIN
       o.fornecedor_nome,
       NULL,  -- oportunidade não respeita grupo; é um pedido único por fornecedor
       p_data_ciclo,
-      (p_data_ciclo + TIME '18:00')::timestamptz,
+      ((p_data_ciclo + TIME '18:00') AT TIME ZONE 'America/Sao_Paulo'),
       SUM(o.qtde_oportunidade * o.preco_item_eoq),
       COUNT(*),
       'pendente_aprovacao',
@@ -237,7 +237,7 @@ END;
 $function$;
 
 -- Postcondição: 'disparado_simulado' nas DUAS listas (header e itens divergiriam com uma só) e a
--- guarda [FANTASMA] da 20260922225449 intacta nos dois blocos.
+-- guarda [FANTASMA] (20260922225449) intacta nos dois blocos.
 DO $post$
 DECLARE v_def text; v_n int;
   c_lista constant text := '''disparado'',''disparado_simulado'',''concluido_recebido''';

@@ -149,7 +149,7 @@ describe("paridade money-path: status do em_transito (RPCs) = status excluídos 
 
   // O anti-compra-dupla da oportunidade ([SIMETRIA-NORMAL], 2 NOT EXISTS: header e itens) é uma 4ª
   // lista, MAIS larga de propósito (também barra pendente/bloqueado/falha_envio). Ficou sem
-  // 'disparado_simulado' quando as três de cima o ganharam (migration 20260926115128) — o SKU de um PO
+  // 'disparado_simulado' quando as três de cima o ganharam (migration 20261001204054) — o SKU de um PO
   // real do dry_run voltava a ser ofertado = compra dupla antecipada. Guarda o VOCABULÁRIO do 1º ramo
   // da em_transito, não o predicado inteiro (janela, escopo e o 2º ramo do portal ficam fora).
   it("o que o motor conta como 'a caminho' também bloqueia a oferta de oportunidade (header = itens)", () => {
