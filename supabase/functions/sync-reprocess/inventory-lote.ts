@@ -130,8 +130,17 @@ export type CompletudeListagem = { completa: true } | { completa: false; motivo:
 
 // `tamanhos` = itens CRUS de cada página não-vazia, na ordem. Página intermediária curta é buraco;
 // última página CHEIA é evidência de continuação (o total declarado pode ter subestimado).
-export function avaliarCompletudeListagem(tamanhos: number[], porPagina: number): CompletudeListagem {
+// `itensIlegiveis` = itens que o parser recusou: podem ser produtos COM saldo, e a ausência deles
+// no snapshot não prova zero.
+export function avaliarCompletudeListagem(
+  tamanhos: number[],
+  porPagina: number,
+  itensIlegiveis = 0,
+): CompletudeListagem {
   if (tamanhos.length === 0) return { completa: false, motivo: "nenhuma página lida" };
+  if (itensIlegiveis > 0) {
+    return { completa: false, motivo: `${itensIlegiveis} item(ns) ilegível(is) na listagem — a ausência deles não prova saldo 0` };
+  }
   for (let i = 0; i < tamanhos.length - 1; i++) {
     if (tamanhos[i] < porPagina) {
       return { completa: false, motivo: `página ${i + 1} veio com ${tamanhos[i]} de ${porPagina} antes da última` };

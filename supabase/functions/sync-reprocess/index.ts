@@ -650,6 +650,7 @@ async function reprocessInventory(
     //    no MESMO statement de upsert daria 21000 "cannot affect row a second time").
     const posicoes = new Map<number, PosicaoEstoque>();
     const tamanhosPaginas: number[] = []; // itens CRUS por página — a completude que autoriza zerar
+    let itensIlegiveis = 0; // recusados pelo parser: sem eles a listagem não está inteira compreendida
     let pagina = 1;
     let totalPaginas = 1;
     // A posição de HOJE em SP, uma vez por run (todas as páginas do retrato na MESMA data). O
@@ -679,7 +680,7 @@ async function reprocessInventory(
       }
       if (veredicto === "fim") break;
       tamanhosPaginas.push(produtos.length);
-      acumularPosicoesDaPagina(posicoes, produtos);
+      itensIlegiveis += produtos.length - acumularPosicoesDaPagina(posicoes, produtos);
 
       console.log(`[Reprocess][${account}] Inventory page ${pagina}/${totalPaginas}`);
       pagina++;
@@ -775,7 +776,7 @@ async function reprocessInventory(
         const zeramento = planejarZeramentoForaDaLista(
           posicoes,
           locaisComEstoque,
-          avaliarCompletudeListagem(tamanhosPaginas, POR_PAGINA_POS_ESTOQUE),
+          avaliarCompletudeListagem(tamanhosPaginas, POR_PAGINA_POS_ESTOQUE, itensIlegiveis),
           account,
           nowIso,
         );

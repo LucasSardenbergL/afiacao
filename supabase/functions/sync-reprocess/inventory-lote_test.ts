@@ -179,6 +179,15 @@ Deno.test("completude — ÚLTIMA página cheia: incompleta (página cheia é ev
   assertEquals(!r.completa && r.motivo.includes("última página cheia"), true);
 });
 
+// Item que o parser recusa (nCodProd inválido, número não-finito) some do snapshot — pode ser
+// um produto COM saldo. Listagem com item ilegível não é "inteiramente compreendida".
+Deno.test("completude — item ILEGÍVEL na listagem: incompleta (a ausência dele não prova saldo 0)", () => {
+  const r = avaliarCompletudeListagem([100, 79], 100, 1);
+  assertEquals(r.completa, false);
+  assertEquals(!r.completa && r.motivo.includes("1 item(ns) ileg"), true);
+  assertEquals(avaliarCompletudeListagem([100, 79], 100, 0), { completa: true });
+});
+
 Deno.test("completude — nenhuma página: incompleta", () => {
   const r = avaliarCompletudeListagem([], 100);
   assertEquals(r.completa, false);
