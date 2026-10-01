@@ -194,3 +194,15 @@ fi
 # restaura re-aplicando a migração
 P -q -f "$REPO_ROOT/supabase/migrations/[[seu_slug]].sql"
 ```
+
+## 5. Concorrência — duas sessões, ordem OBSERVADA
+
+Guard que decide num comando e grava em outro (PRE → CREATE OR REPLACE, `SELECT … INTO` → `UPDATE`) só se prova com **duas conexões**: o teste sequencial passa no código velho também. Implementação de referência: `db/test-pre-anti-deriva-concorrencia.sh`.
+
+- **Baseline VERMELHO primeiro**, com o código REAL antigo (fixture com md5 âncora de prod). Sem ele, o verde pode ser só "a corrida não aconteceu".
+- **A sessão que para no meio é um `psql` lendo de um FIFO.** Mande até o ponto de parada, termine com `\! touch <arquivo>` e espere o arquivo com teto e com o ramo "a sessão morreu antes".
+- **Barreira é estado OBSERVADO, nunca `sleep`.** Dê um `PGAPPNAME` a cada sessão e polle `pg_blocking_pids(pid)` para "B está preso em A", ou `pg_locks` + `pg_stat_activity.application_name` para "B espera a chave X". Casar texto da query pega o próprio orquestrador.
+- **Escreva no FIFO com `env printf`, nunca com o `printf` builtin, e ponha `trap '' PIPE` no topo.** Quando a sessão do outro lado já morreu, o builtin guarda a escrita falha no buffer e ela **vaza depois na saída capturada do cenário**: o veredito chegava com `ROLLBACK;` na frente. Sem o trap, a escrita no FIFO órfão mata o script MUDO com SIGPIPE.
+- **Defina a propriedade, não o sintoma.** "Nenhuma mudança COMMITADA de B sumiu" é: B falhou, ou o corpo final é o de B. "B ficou bloqueado" é testemunho da ordem, não a propriedade.
+- **Controle inócuo:** a trava de A não prende OUTRO objeto, e uma chave de mesmos números em OUTRA forma não colide.
+- **Rode nos dois `lc_messages`** (C e pt_BR). Isso também dá uma 2ª amostra de escalonamento. Case a SQLSTATE com `-v VERBOSITY=verbose`, nunca o texto traduzido.
