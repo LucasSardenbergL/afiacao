@@ -46,6 +46,23 @@
 # guardado; a 0830122702 tira de profiles um trigger que o snapshot ainda tem. No re-dump, meça o
 # início contra prod em vez de presumi-lo pela data.
 #
+# ## Uma migration = uma transação (como o envelope e o SQL Editor aplicam)
+#
+# A cadeia aplica cada arquivo com --single-transaction. Migration nova escrita para o envelope
+# (`bun run db:aplicar`) supõe a transação inteira: a 20261001014100 (#2726) cria a tabela de retrato da
+# PRE com `CREATE TEMP TABLE … ON COMMIT DROP` e a lê nos blocos seguintes — em autocommit a tabela morre
+# no fim do próprio CREATE, e a cadeia reprovava a migration que a prod aplica sem erro (a main ficou
+# vermelha em 2026-10-01). Os arquivos que já trazem BEGIN/COMMIT seguem iguais (o psql só avisa da
+# transação aninhada; o aviso fica preso e só aparece se a migration falhar).
+#
+# ## O predecessor que a cadeia não alcança: cv_antes_da_cadeia
+#
+# Migration grande com PRE estrito (md5 do predecessor de prod) exige TODOS os seus alvos na versão de
+# prod — inclusive os que a prova não guarda. Quando o alvo só chega lá por migrations cujo PRE o snapshot
+# reprova (ele perdeu barras de literais de regex), a cadeia não tem como levá-lo: a prova define
+# `cv_antes_da_cadeia` e carrega o predecessor de um fixture VERBATIM de prod (cv_predecessora_view, com
+# o md5 conferido), entre o ACL e a cadeia.
+#
 # ## O que o snapshot não carrega e produção tem: o ACL
 #
 # O dump é `--no-privileges`: sem fixture, toda tabela nasce sem GRANT nenhum (authenticated levaria
@@ -99,21 +116,25 @@ cv_cadeia() {
 
 # cv_aplicar_cadeia <dir de migrations> — aplica a cadeia no banco de `P`, em ordem, e conta.
 cv_aplicar_cadeia() {
-  local dir="$1" lista f n=0
+  local dir="$1" lista f n=0 err
   lista="$(cv_cadeia "$dir")" || return 1
   if [ -z "$lista" ]; then
     echo "    (nenhuma migration ≥ $CV_INICIO toca os objetos guardados — o snapshot já é a versão viva)"
     return 0
   fi
+  err="$(mktemp "${TMPDIR:-/tmp}/cv-cadeia-err.XXXXXX")"
   while IFS= read -r f; do
-    P -v ON_ERROR_STOP=1 -q -f "$f" > /dev/null || {
+    P --single-transaction -v ON_ERROR_STOP=1 -q -f "$f" > /dev/null 2> "$err" || {
+      cat "$err" >&2; rm -f "$err"
       echo "cv_aplicar_cadeia: não aplicou $(basename "$f") — se o snapshot já a absorveu, avance CV_INICIO;" \
-           "se a pós-condição dela exige ACL, meça-o em prod e acrescente a db/lib/corpo-vivo-acl.sql" >&2
+           "se a pós-condição dela exige ACL, meça-o em prod e acrescente a db/lib/corpo-vivo-acl.sql;" \
+           "se o PRE dela exige o predecessor de um objeto que a cadeia não alcança, carregue-o em cv_antes_da_cadeia" >&2
       return 1
     }
     echo "    · $(basename "$f")"
     n=$((n + 1))
   done <<< "$lista"
+  rm -f "$err"
   echo "    ($n migration(s) — a versão viva dos objetos guardados)"
 }
 
@@ -169,8 +190,34 @@ EXCEPTION WHEN OTHERS THEN
     ELSE '/?' END;
 END $f$;
 SQL
+  if declare -F cv_antes_da_cadeia > /dev/null; then
+    echo "  → predecessores que a cadeia não alcança (cv_antes_da_cadeia):"
+    cv_antes_da_cadeia || { echo "cv_montar: cv_antes_da_cadeia falhou" >&2; return 1; }
+  fi
   echo "  → cadeia viva (≥ $CV_INICIO que toca objeto guardado):"
   cv_aplicar_cadeia "$REPO_ROOT/supabase/migrations"
+}
+
+# cv_predecessora_view <fixture relativo ao repo> <schema.view> <md5> — carrega, de um fixture VERBATIM de
+# prod (db/fixtures/*-predecessoras-prod-*.sql), o `CREATE OR REPLACE VIEW <schema.view> …` até a 1ª linha
+# terminada em ';', e confere md5(pg_get_viewdef(oid, true)) = <md5> (o anotado no fixture, medido em prod).
+# Fail-CLOSED: bloco não achado, não aplicado ou md5 diferente → exit ≠ 0. Por arquivo temporário, não -c:
+# o texto de prod tem barras invertidas (regex) que não podem passar por interpolação nenhuma.
+cv_predecessora_view() {
+  local fix="$REPO_ROOT/$1" obj="$2" md5="$3" sql tmp obtido
+  [ -f "$fix" ] || { echo "cv_predecessora_view: fixture ausente: $1" >&2; return 1; }
+  sql="$(awk -v cab="CREATE OR REPLACE VIEW $obj " 'index($0, cab) == 1 { p = 1 } p { print } p && /;[[:space:]]*$/ { exit }' "$fix")"
+  case "$sql" in
+    "CREATE OR REPLACE VIEW $obj "*';') ;;
+    *) echo "cv_predecessora_view: $obj não extraído de $1" >&2; return 1 ;;
+  esac
+  tmp="$(mktemp "${TMPDIR:-/tmp}/cv-pred.XXXXXX")"
+  printf '%s\n' "$sql" > "$tmp"
+  if ! P -v ON_ERROR_STOP=1 -q -f "$tmp" > /dev/null; then rm -f "$tmp"; echo "cv_predecessora_view: $obj não aplicou" >&2; return 1; fi
+  rm -f "$tmp"
+  obtido="$(P -tA -v ON_ERROR_STOP=1 -c "SELECT md5(pg_get_viewdef('$obj'::regclass, true))")" || return 1
+  [ "$obtido" = "$md5" ] || { echo "cv_predecessora_view: md5 de $obj = $obtido, o fixture diz $md5" >&2; return 1; }
+  echo "    · $obj = prod ($(printf '%s' "$md5" | cut -c1-8)…, de $1)"
 }
 
 # cv_sabotar <regprocedure> <âncora> <troca> — troca a âncora por <troca> no corpo VIVO da função e o
@@ -216,7 +263,7 @@ cv_migracao_nova_sql() {
   esac
   # A rodada é clone da base, que JÁ tem a cadeia: aplica só a nova. Re-aplicar a cadeia inteira
   # derrubaria a sabotagem no 1º DDL não-idempotente dela (CREATE POLICY), não no assert.
-  if ! P -v ON_ERROR_STOP=1 -q -f "$nova" > /dev/null; then
+  if ! P --single-transaction -v ON_ERROR_STOP=1 -q -f "$nova" > /dev/null; then
     echo "cv_migracao_nova_sql: a migration nova não aplicou" >&2; rm -rf "$dir"; return 1
   fi
   rm -rf "$dir"

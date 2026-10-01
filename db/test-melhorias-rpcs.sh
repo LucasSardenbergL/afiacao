@@ -5,8 +5,10 @@
 # viva das RPCs, dos helpers que elas e as policies chamam e das tabelas que elas leem — hoje 6
 # migrations: a 20260929000234, que reescreve as 2 RPCs com o escape de curinga, as 4 de
 # order_items/sales_orders que o snapshot não tem e o GRANT por coluna do funil em sales_orders, a
-# 20261001100000). md5 das 2 RPCs = o de prod (619fdf35…, 7be92ff8…;
-# medido em 2026-10-01).
+# 20261001100000). A produtos_relacionados = a de prod (7be92ff8…, medido em 2026-10-01). A
+# clientes_por_produto é a PRÓXIMA: a 20261001014100 (#2726, o universo canônico de pedidos — orçamento
+# fora, a data é só order_date_kpi), que a prod recebe quando a migration for aplicada; o PRE dela exige o
+# predecessor de prod de v_grupo_comercial, que a cadeia não alcança (cv_antes_da_cadeia, abaixo).
 #
 # O que ela assevera (o que SÓ a versão morta provava — as irmãs cobrem o resto, sem duplicar):
 #  • os guards das 2 RPCs: o termo curto (< 3 depois do trim) é recusado nas duas, o não-staff é
@@ -14,7 +16,8 @@
 #  • quem vê quais clientes na clientes_por_produto: o master vê todos ('todos'), a vendedora só a
 #    carteira dela ('minha_carteira') — nem o cliente de OUTRA vendedora nem o da carteira dela que
 #    está inelegível (as 2 conjunções do helper de carteira têm dente) — e só pedido válido conta:
-#    janela de 12 meses, cancelado, rascunho, pendente e apagado (deleted_at) fora, produto inativo fora;
+#    janela de 12 meses pela data comercial (order_date_kpi; sem ela o pedido não entra), cancelado,
+#    rascunho, pendente, orçamento e apagado (deleted_at) fora, produto inativo fora;
 #  • a produtos_relacionados: mesma família (ativo, mesma conta, sem o alvo) e comprados juntos (regra
 #    cujo antecedente é o alvo, máximo de confiança/lift por consequente, sem inativo nem o alvo); o
 #    produto inativo não é alvo;
@@ -93,6 +96,15 @@ CV_FUNCOES=(melhoria_clientes_por_produto melhoria_produtos_relacionados padrao_
 # shellcheck disable=SC2034  # consumida pelo db/lib/corpo-vivo.sh, que o shellcheck sem -x não segue
 CV_TABELAS=(melhoria_itens melhoria_mensagens omie_products order_items sales_orders profiles
             farmer_association_rules carteira_assignments carteira_coverage commercial_roles user_roles)
+# A 20261001014100 (#2726), que a cadeia pega pela clientes_por_produto, confere no PRE o predecessor de
+# PROD de todos os seus alvos — e v_grupo_comercial só chega a ele por migrations cujo PRE o snapshot
+# reprova (0914193000, 0930230623: o dump perdeu barras de literais de regex). Vem do fixture verbatim da
+# prova do #2726, conferido pelo md5 anotado lá.
+# shellcheck disable=SC2329  # chamada pelo cv_montar (db/lib/corpo-vivo.sh), que o shellcheck sem -x não segue
+cv_antes_da_cadeia() {
+  cv_predecessora_view db/fixtures/universo-pedidos-predecessoras-prod-20261001.sql public.v_grupo_comercial \
+    73de52bd7737a62d2828589f97661e9a
+}
 # shellcheck disable=SC1091  # idem: versionado ao lado, em db/lib/
 . "$REPO_ROOT/db/lib/corpo-vivo.sh"
 echo "→ banco-base: stubs + prelude + snapshot + ACL de prod + cadeia viva…"
@@ -141,8 +153,9 @@ INSERT INTO public.omie_products (id, omie_codigo_produto, codigo, descricao, ac
 -- SO1 (C1, 50.00), SO2 (C2, 10.00), SO9 (C3, 20.00) e SO10 (C4, 30.00) contam para 'LIXA GR80' — o
 -- master vê os 4, a VEND só o C1 (o C3 é da VEND2; o C4 é dela, mas inelegível). Cada pedido que NÃO conta tem uma
 -- quantidade própria, então qualquer um que vaze muda o valor de um jeito reconhecível: fora da janela
--- (+500), cancelado (+500), rascunho (+5000), pendente (+15000), apagado (+35). SO8 é de produto
--- inativo (só a busca 'GR240' o alcança).
+-- (+500), cancelado (+500), rascunho (+5000), pendente (+15000), apagado (+35), orçamento (+1500), sem
+-- order_date_kpi (+45: criado há 5 dias, contaria pela data de criação). SO8 é de produto inativo (só a
+-- busca 'GR240' o alcança).
 INSERT INTO public.sales_orders (id, customer_user_id, created_by, account, status, order_date_kpi, deleted_at) VALUES
   ('$(so 1)', '$C1', '$VEND', 'oben', 'faturado',  $(dia 60),  NULL),
   ('$(so 2)', '$C2', '$VEND', 'oben', 'enviado',   $(dia 90),  NULL),
@@ -153,7 +166,10 @@ INSERT INTO public.sales_orders (id, customer_user_id, created_by, account, stat
   ('$(so 7)', '$C1', '$VEND', 'oben', 'faturado',  $(dia 10),  now()),
   ('$(so 8)', '$C2', '$VEND', 'oben', 'faturado',  $(dia 15),  NULL),
   ('$(so a)', '$C3', '$VEND2', 'oben', 'faturado', $(dia 40),  NULL),
-  ('$(so b)', '$C4', '$VEND', 'oben', 'faturado',  $(dia 50),  NULL);
+  ('$(so b)', '$C4', '$VEND', 'oben', 'faturado',  $(dia 50),  NULL),
+  ('$(so c)', '$C2', '$VEND', 'oben', 'orcamento', $(dia 35),  NULL);
+INSERT INTO public.sales_orders (id, customer_user_id, created_by, account, status, order_date_kpi, created_at) VALUES
+  ('$(so d)', '$C1', '$VEND', 'oben', 'faturado', NULL, now() - interval '5 days');
 INSERT INTO public.order_items (sales_order_id, customer_user_id, product_id, omie_codigo_produto, quantity, unit_price) VALUES
   ('$(so 1)', '$C1', '$(pr 1)', 1001, 10,   5.00),
   ('$(so 2)', '$C2', '$(pr 1)', 1001, 2,    5.00),
@@ -164,7 +180,9 @@ INSERT INTO public.order_items (sales_order_id, customer_user_id, product_id, om
   ('$(so 7)', '$C1', '$(pr 1)', 1001, 7,    5.00),
   ('$(so 8)', '$C2', '$(pr 4)', 1004, 1,    99.00),
   ('$(so a)', '$C3', '$(pr 1)', 1001, 4,    5.00),
-  ('$(so b)', '$C4', '$(pr 1)', 1001, 6,    5.00);
+  ('$(so b)', '$C4', '$(pr 1)', 1001, 6,    5.00),
+  ('$(so c)', '$C2', '$(pr 1)', 1001, 300,  5.00),
+  ('$(so d)', '$C1', '$(pr 1)', 1001, 9,    5.00);
 UPDATE public.sales_orders so
    SET items = (SELECT jsonb_agg(jsonb_build_object('omie_codigo_produto', oi.omie_codigo_produto,
                                                     'quantidade', oi.quantity,
@@ -356,6 +374,7 @@ SABOTAGENS="produtos_sem_gate_staff:G1:G2,R1 produtos_sem_teto_termo:G2:G1,R1 pr
             anon_executa_clientes:G5:G6,D1 anon_executa_produtos:G6:G5,R1
             migracao_nova_drop_create_clientes:G5:D1,G6 migracao_nova_drop_create_sem_anon_produtos:G6:R1,G5
             janela_aberta:D2:D1,D3 cancelado_conta:D2:D1,D3 rascunho_conta:D2:D1,D3 pendente_conta:D2:D1,D3
+            orcamento_conta:D2:D1,D3 kpi_nulo_conta:D2:D1,D3
             apagado_conta:D2:D1,D3 vendedora_ve_tudo:D3:D1,D2 inativo_conta:D4:D2
             helper_sem_dono:D3:D1,D2 helper_sem_eligible:D3:D1,D2 escopo_sempre_carteira:D1:D2,D3
             migracao_nova_vendedora_ve_tudo:D3:D1,D2
@@ -376,7 +395,8 @@ SABOTAGENS="produtos_sem_gate_staff:G1:G2,R1 produtos_sem_teto_termo:G2:G1,R1 pr
 sabotagem() {
   local cli='public.melhoria_clientes_por_produto(text)' rel='public.melhoria_produtos_relacionados(text)'
   local gate="if v_uid is null or not (has_role(v_uid,'employee'::app_role) or has_role(v_uid,'master'::app_role)) then"
-  local teto="if length(trim(coalesce(p_termo,''))) < 3 then" status="where so.status not in ('cancelado','rascunho','pendente')"
+  local teto="if length(trim(coalesce(p_termo,''))) < 3 then" status="where so.status not in ('cancelado','rascunho','pendente','orcamento')"
+  local janela="and so.order_date_kpi >= (now() at time zone 'America/Sao_Paulo')::date - interval '12 months'"
   local visivel='where v_full or carteira_visivel_para(c.customer_user_id, v_uid)'
   local helper='private.carteira_visivel_para(uuid,uuid)' dono='AND a.owner_user_id = _uid'
   local uid='( SELECT auth.uid() AS uid)'
@@ -396,9 +416,13 @@ sabotagem() {
                                 $'DROP FUNCTION public.melhoria_produtos_relacionados(text);\nCREATE FUNCTION public.melhoria_produtos_relacionados(' \
                                 "REVOKE ALL ON FUNCTION $rel FROM PUBLIC; GRANT EXECUTE ON FUNCTION $rel TO authenticated, service_role;" ;;
     janela_aberta)            cv_sabotar "$cli" "- interval '12 months'" "- interval '1200 months'" ;;
-    cancelado_conta)          cv_sabotar "$cli" "$status" "where so.status not in ('rascunho','pendente')" ;;
-    rascunho_conta)           cv_sabotar "$cli" "$status" "where so.status not in ('cancelado','pendente')" ;;
-    pendente_conta)           cv_sabotar "$cli" "$status" "where so.status not in ('cancelado','rascunho')" ;;
+    cancelado_conta)          cv_sabotar "$cli" "$status" "where so.status not in ('rascunho','pendente','orcamento')" ;;
+    rascunho_conta)           cv_sabotar "$cli" "$status" "where so.status not in ('cancelado','pendente','orcamento')" ;;
+    pendente_conta)           cv_sabotar "$cli" "$status" "where so.status not in ('cancelado','rascunho','orcamento')" ;;
+    orcamento_conta)          cv_sabotar "$cli" "$status" "where so.status not in ('cancelado','rascunho','pendente')" ;;
+    # a data comercial é só order_date_kpi (#2726): o fallback pela data de criação faz o pedido sem kpi contar
+    kpi_nulo_conta)           cv_sabotar "$cli" "$janela" \
+                                "and coalesce(so.order_date_kpi, (so.created_at at time zone 'America/Sao_Paulo')::date) >= (now() at time zone 'America/Sao_Paulo')::date - interval '12 months'" ;;
     apagado_conta)            cv_sabotar "$cli" "and so.deleted_at is null" "" ;;
     vendedora_ve_tudo)        cv_sabotar "$cli" "$visivel" "where true" ;;
     inativo_conta)            cv_sabotar "$cli" "coalesce(ativo, true) = true" "true" ;;
