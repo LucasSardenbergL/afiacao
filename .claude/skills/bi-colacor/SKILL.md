@@ -40,7 +40,7 @@ que erra coluna ou fabrica zero.
 ```
 1. ENTENDER  → traduza a pergunta de negócio para a(s) query(ies) canônica(s) do catálogo.
 2. RODAR     → execute o SELECT read-only VOCÊ MESMO via psql-ro (não peça pro founder):
-               ~/.config/afiacao/psql-ro -c "SELECT ..."   (ou -f caminho/da/query.sql)
+               ~/.config/afiacao/psql-ro -c "SELECT ..."   (ou -v ON_ERROR_STOP=1 -f caminho/da/query.sql)
                Diga o que cada query responde e o nível de confiabilidade do dado.
 3. LER       → leia o resultado LITERALMENTE. Se vazio, diga "sem linhas" — não fabrique.
 4. INTERPRETAR → traduza em achados, ordene por impacto, marque confiabilidade e ressalvas.

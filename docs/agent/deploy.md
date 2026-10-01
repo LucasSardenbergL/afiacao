@@ -535,8 +535,8 @@ colagem continua existindo.
 e a numeração dos passos é **absoluta** nos dois lados, para founder e agente nomearem a mesma coisa:
 
 ```bash
-bun run sonda:sql --so-disparo <edge>…                        # cole ISTO no SQL Editor do Lovable
-bun run sonda:sql --so-leitura <edge>… | ~/.config/afiacao/psql-ro   # e leia o veredito você mesmo
+bun run sonda:sql --so-disparo <edge>…                                           # cole ISTO no SQL Editor do Lovable
+bun run sonda:sql --so-leitura <edge>… | ~/.config/afiacao/psql-ro -v ON_ERROR_STOP=1   # e leia o veredito você mesmo
 ```
 
 **Não digite esse SQL: gere-o.** `bun run sonda:sql <edge>… [--caro=<edge>,…]` lê o `VERSAO` de cada
@@ -971,7 +971,7 @@ sem gate executa o fluxo real para qualquer POST (medido). Detalhe:
 - **Fix que é uma AUSÊNCIA não se prova por bytes.** Remover um `|| 0`, um fallback ou um default não deixa assinatura: no bundle minificado o nome da variável sumiu, e `x.get(a)||0` legítimo (contador, onde 0 é a resposta certa) é indistinguível do que você tirou. Ou você grepa o **par positivo** que entrou junto (no #1471, o `.order("product_id"` da paginação, que só existe pós-fix), ou aceita que a prova é **comportamental** — e vai para a tela.
 - **QA visual pós-Publish** (renderização/comportamento na tela, refactor visual sem texto novo): os bytes não bastam e o `/browse` headless **não monta** a SPA. O padrão é **Claude-in-Chrome na sessão logada do founder** (ele abre o app 1×; o agente confere as telas) — detalhado no Passo 4b da skill `lovable-deploy-verify`.
 - O acesso **read-only** ao banco (`psql-ro`, ver `docs/agent/database.md`) confirma migration aplicada sem depender do founder.
-- ⚠️ **A pendência escrita no corpo do PR ("falta deploy/Publish") é RECADO, não medição — MEÇA imediatamente antes de PEDIR (2026-09-06, chip do #2201).** Entre o PR e o chip, founder ou outra sessão já podem ter agido: o ledger foi de ⚪ NUNCA atestada a ✅ confere em **4 min** (sondas 70349/70352, `v1.1` + `fonte` da main), e o Publish já estava no ar (`verify-frontend.sh` exit 0). Edge: re-rode `bun run pendencias:deploy` (ou `bun run sonda:sql --so-leitura <edge> | psql-ro`) na hora de ENTREGAR, não só ao começar. Front: rode `verify-frontend.sh --pai <pai-do-PR> '<sentinela>'` ANTES de listar "Publish pendente" — exit 0 cancela a linha; só exit 1 com `CONTROLE_POSITIVO_OK` a mantém. Dois atores sondaram a mesma edge em 2,5 min: inócuo com sensor no ar, **uma execução real por colagem** numa edge cara pré-sensor → `docs/historico/pendencia-do-pr-nao-e-medicao.md`.
+- ⚠️ **A pendência escrita no corpo do PR ("falta deploy/Publish") é RECADO, não medição — MEÇA imediatamente antes de PEDIR (2026-09-06, chip do #2201).** Entre o PR e o chip, founder ou outra sessão já podem ter agido: o ledger foi de ⚪ NUNCA atestada a ✅ confere em **4 min** (sondas 70349/70352, `v1.1` + `fonte` da main), e o Publish já estava no ar (`verify-frontend.sh` exit 0). Edge: re-rode `bun run pendencias:deploy` (ou `bun run sonda:sql --so-leitura <edge> | psql-ro -v ON_ERROR_STOP=1`) na hora de ENTREGAR, não só ao começar. Front: rode `verify-frontend.sh --pai <pai-do-PR> '<sentinela>'` ANTES de listar "Publish pendente" — exit 0 cancela a linha; só exit 1 com `CONTROLE_POSITIVO_OK` a mantém. Dois atores sondaram a mesma edge em 2,5 min: inócuo com sensor no ar, **uma execução real por colagem** numa edge cara pré-sensor → `docs/historico/pendencia-do-pr-nao-e-medicao.md`.
 
 ## Atualização do PWA — modelo `prompt` (offline-first; #1169)
 
