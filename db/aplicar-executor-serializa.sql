@@ -13,8 +13,9 @@
 --            bun run db:aplicar db/aplicar-executor-serializa.sql
 -- O executor se substitui: a chamada que aplica ESTE arquivo ainda roda o corpo antigo (que já
 -- está compilado na sessão); a fila vale da próxima chamada em diante. A PÓS chama a porta nova
--- ANTES do commit — corpo novo quebrado (PL/pgSQL é late-bound) aborta tudo e a porta antiga
--- continua de pé, em vez de virar uma porta que nem o próprio conserto consegue atravessar.
+-- ANTES do commit, do começo ao recibo — corpo novo quebrado (PL/pgSQL é late-bound) aborta tudo e
+-- a porta antiga continua de pé, em vez de virar uma porta que nem o próprio conserto atravessa.
+-- O único trecho que a sonda não percorre é o ramo de ESPERA da fila (precisa de outro apply).
 -- Sem BEGIN/COMMIT: a transação é do executor.
 
 -- Trava ANTES da pré-condição: o ALTER sem efeito (aplicar_sql já é VOLATILE) prende a linha de
@@ -146,6 +147,9 @@ COMMENT ON FUNCTION public.aplicar_sql(text, text, bigint) IS
 DO $pos$
 DECLARE
   v_oid oid := to_regprocedure('public.aplicar_sql(text,text,bigint)');
+  v_sha text := encode(sha256(convert_to('SELECT 1', 'UTF8')), 'hex');
+  v_id  bigint;
+  v_ret text;
 BEGIN
   IF v_oid IS NULL THEN
     RAISE EXCEPTION 'POS FALHOU: aplicar_sql sumiu';
@@ -168,16 +172,22 @@ BEGIN
     RAISE EXCEPTION 'POS FALHOU: a porta abriu para PUBLIC/anon';
   END IF;
 
-  -- A porta NOVA executa (criar não é rodar). Tentativa NULL nunca casa uma linha do ledger: a
-  -- chamada percorre o trecho novo inteiro (isolamento + fila) e para na conferência da tentativa,
-  -- sem executar corpo nenhum e sem escrever no ledger. Qualquer outro desfecho aborta o arquivo.
+  -- A porta NOVA executa (criar não é rodar), do começo ao fim: uma tentativa de ENSAIO criada aqui
+  -- percorre isolamento, fila, conferência da tentativa, EXECUTE e recibo, e o RAISE com SQLSTATE
+  -- próprio desfaz as duas (tentativa e recibo) — nada fica no ledger. Só o ramo de ESPERA da fila
+  -- não roda aqui: ele exige outro apply em curso (é o E8 da prova). Qualquer outro desfecho aborta
+  -- este arquivo, e a porta antiga continua de pé.
   BEGIN
-    PERFORM public.aplicar_sql('SELECT 1', encode(sha256(convert_to('SELECT 1', 'UTF8')), 'hex'), NULL);
-    RAISE EXCEPTION 'POS FALHOU: a porta nova aceitou tentativa NULL';
-  EXCEPTION WHEN invalid_parameter_value THEN
-    IF SQLERRM NOT LIKE 'APLICAR_SQL: tentativa % inexistente%' THEN
-      RAISE;
+    INSERT INTO public.db_aplicacoes (arquivo, sha256, estado)
+    VALUES ('db/aplicar-executor-serializa.sql#sonda', 'ensaio:' || v_sha, 'tentativa')
+    RETURNING id INTO v_id;
+    v_ret := public.aplicar_sql('SELECT 1', v_sha, v_id);
+    IF v_ret IS DISTINCT FROM 'FIM_APLICACAO_OK' THEN
+      RAISE EXCEPTION 'POS FALHOU: a porta nova devolveu %', v_ret;
     END IF;
+    RAISE EXCEPTION 'SONDA_OK' USING ERRCODE = 'P0S01';
+  EXCEPTION WHEN SQLSTATE 'P0S01' THEN
+    NULL;
   END;
 END
 $pos$;

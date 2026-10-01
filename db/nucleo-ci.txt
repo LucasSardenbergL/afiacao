@@ -141,7 +141,7 @@ db/test-desconto-backfill-aplicar.sh       30
 # grava em outro — sem trava, outra sessão commita no meio e é apagada com a PÓS aprovando. Nos
 # dois níveis, com baseline VERMELHO: o template TRAVA→PRE→CREATE→PÓS (duas sessões psql) e a
 # fila de `aplicar_sql` (dois db-aplicar.sh REAIS; o corpo antigo é o de prod, md5 âncora). 2 idiomas.
-db/test-pre-anti-deriva-concorrencia.sh    50  falsificar=6
+db/test-pre-anti-deriva-concorrencia.sh    56  falsificar=8
 
 # ── Eixo 5 — VEREDITO DE DEPLOY ──────────────────────────
 # O SQL que responde "a edge está REALMENTE no ar?". O dano aqui é acreditar num

@@ -18,6 +18,7 @@
 #   M2 ... e falha alto (XX000) quando A commita
 #   M3 ... e P vale, com o corpo de A no ar
 #   M4 B que commitou ANTES de A aparece na PRE de A (recusa; o corpo de B fica)
+#   M5 função COM trava e B também no molde: B fica preso no PRÓPRIO ALTER e falha alto (XX000)
 #   V0 view SEM trava: a corrida existe (baseline)
 #   V1 view COM trava: B (CREATE OR REPLACE VIEW) fica preso em A
 #   V2 ... e, sem PRE, aplica DEPOIS de A e vence — o atrasado sem protocolo é o regime sequencial
@@ -38,14 +39,17 @@
 #   E4 a porta continua fechada: claude_rw executa; PUBLIC e anon não
 #   E5 com a fila: B é visto ESPERANDO a vez (advisory (20260909,1)) enquanto A está parado
 #   E6 ... A sai 0, B sai 4 recusado pela PRE, o corpo final é o de A e o recibo de B é 'falhou'
-#   E7 a fila é solta no fim (nenhum advisory (20260909,_) sobra)
-#   E8 vez ocupada além do lock_timeout: 55P03 com VEZ_OCUPADA, corpo NÃO executado
+#   E7 a fila é da TRANSAÇÃO: na mesma sessão, depois do COMMIT, a chave já está solta
+#   E8 vez ocupada além do lock_timeout: 55P03 com VEZ_OCUPADA, corpo NÃO executado (chamada direta
+#      à porta; o caminho servidor-ERROR → exit 4 do executor é o mesmo de E6/E10)
 #   E9 isolamento ≠ READ COMMITTED é recusado antes do corpo (25000, ISOLAMENTO_ERRADO)
 #   E10 o mesmo pelo executor real: B em REPEATABLE READ é recusado e o corpo final é o de A
 #   E11 controle: a chave bigint de mesmos números NÃO prende a fila (forma (int4,int4) é outra)
 #   E12 o delta re-ensaiado sobre si mesmo passa (PRE aceita "já este"; a sonda da PÓS também)
 #   E13 o delta sobre um corpo ESTRANHO é recusado pela PRE e o estranho fica
-#   E14 o delta com a porta nova QUEBRADA (late-bound) aborta na PÓS e a porta antiga fica
+#   E14 o delta com a porta nova QUEBRADA no começo (late-bound) aborta na PÓS e a porta antiga fica
+#   E14b ... e quebrada no FIM (o recibo): a sonda da PÓS percorre a porta inteira
+#   E15 a TRAVA do próprio delta: com ele parado depois da PRE, recriar a porta fica preso
 #
 # Tudo nos DOIS idiomas do servidor (C e pt_BR — o veredito do executor lê ERROR/ERRO), que aqui é
 # também a 2ª amostra de escalonamento. IDs: C<id> e P<id>. `NIVEIS` (default os dois) escolhe o que
@@ -68,12 +72,12 @@ FIX_B="db/fixtures/db-aplicar-corrida-b.sql"
 TEMPLATE="db/fixtures/pre-trava-template.sql"
 SABOTAGEM="${SABOTAGEM:-}"
 NIVEIS="${NIVEIS:-migration executor}"
-# Denominador por idioma: migration = M0-M4 · V0-V3 · C1 (10) · executor = R0 · E1-E14 (15).
+# Denominador por idioma: migration = M0-M5 · V0-V3 · C1 (11) · executor = R0 · E1-E14 · E14b · E15 (17).
 TOTAL_ESPERADO=0
 for n in $NIVEIS; do
   case "$n" in
-    migration) TOTAL_ESPERADO=$((TOTAL_ESPERADO + 2 * 10)) ;;
-    executor)  TOTAL_ESPERADO=$((TOTAL_ESPERADO + 2 * 15)) ;;
+    migration) TOTAL_ESPERADO=$((TOTAL_ESPERADO + 2 * 11)) ;;
+    executor)  TOTAL_ESPERADO=$((TOTAL_ESPERADO + 2 * 17)) ;;
     *) echo "NIVEIS desconhecido: $n"; exit 3 ;;
   esac
 done
@@ -97,12 +101,14 @@ unset LANGUAGE
 # RESULTADO e os que TÊM de continuar verdes. Formato: <sabotagem>:<vermelhos>:<verdes>.
 # ════════════════════════════════════════════════════════════════════════════════════════════
 if [ "${1:-}" = "--falsificar" ]; then
-  SABOTAGENS="template_sem_trava:CM1,CM2,CM3,CV1,CV2,CV3,PM1,PM2,PM3,PV1,PV2,PV3:CM0,CM4,CV0,CC1,PM0,PM4,PV0,PC1
+  SABOTAGENS="template_sem_trava:CM1,CM2,CM3,CM5,CV1,CV2,CV3,PM1,PM2,PM3,PM5,PV1,PV2,PV3:CM0,CM4,CV0,CC1,PM0,PM4,PV0,PC1
               sem_fila:CE5,CE6,CE8,PE5,PE6,PE8:CE1,CE9,CE10,CE11,PE1,PE9,PE10,PE11
               sem_guarda_isolamento:CE9,CE10,PE9,PE10:CE5,CE6,CE8,PE5,PE6,PE8,CR0,PR0
               espera_generica:CE8,PE8:CE5,CE6,CE9,PE5,PE6,PE9
-              delta_pre_aceita_tudo:CE13,PE13:CE12,CE14,PE12,PE14
-              delta_sem_sonda:CE14,PE14:CE12,CE13,PE12,PE13"
+              fila_de_sessao:CE7,PE7:CE5,CE6,CE8,PE5,PE6,PE8
+              delta_pre_aceita_tudo:CE13,PE13:CE12,CE14,CE15,PE12,PE14,PE15
+              delta_sem_sonda:CE14,CE14b,PE14,PE14b:CE12,CE13,CE15,PE12,PE13,PE15
+              delta_sem_trava:CE15,PE15:CE12,CE13,CE14,PE12,PE13,PE14"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-${SLUG}.XXXXXX")"
   porta=$PORT_BASE
 
@@ -166,7 +172,7 @@ fi
 # Infra
 # ════════════════════════════════════════════════════════════════════════════════════════════
 case "$SABOTAGEM" in
-  ""|template_sem_trava|sem_fila|sem_guarda_isolamento|espera_generica|delta_pre_aceita_tudo|delta_sem_sonda) ;;
+  ""|template_sem_trava|sem_fila|sem_guarda_isolamento|espera_generica|fila_de_sessao|delta_pre_aceita_tudo|delta_sem_sonda|delta_sem_trava) ;;
   *) echo "SABOTAGEM desconhecida: $SABOTAGEM"; exit 3 ;;
 esac
 for f in "$BOOT" "$APLICAR" "$DELTA" "$FIX_V1" "$FIX_A" "$FIX_B" "$TEMPLATE"; do
@@ -324,7 +330,7 @@ qual_f() { Q "SELECT CASE md5(prosrc) WHEN '$F_PRED' THEN 'pred' WHEN '$F_ESTE' 
                 ELSE 'outro' END FROM pg_proc WHERE oid = to_regprocedure('public.trava_alvo_f()')"; }
 qual_v() { Q "SELECT CASE md5(pg_get_viewdef(oid, true)) WHEN '$V_PRED' THEN 'pred' WHEN '$V_ESTE' THEN 'este'
                 WHEN '$V_B' THEN 'B' ELSE 'outro' END FROM pg_class WHERE oid = to_regclass('public.trava_alvo_v')"; }
-B_F="$WORK/b-funcao.sql"; B_V="$WORK/b-view.sql"; B_V_PADRAO="$WORK/b-view-padrao.sql"
+B_F="$WORK/b-funcao.sql"; B_V="$WORK/b-view.sql"; B_V_PADRAO="$WORK/b-view-padrao.sql"; B_F_PADRAO="$WORK/b-funcao-padrao.sql"
 echo "CREATE OR REPLACE FUNCTION public.trava_alvo_f() RETURNS text LANGUAGE sql STABLE AS \$\$SELECT 'B'\$\$;" > "$B_F"
 echo "CREATE OR REPLACE VIEW public.trava_alvo_v WITH (security_invoker = on) AS SELECT 'B'::text AS x;" > "$B_V"
 cat > "$B_V_PADRAO" <<SQL
@@ -341,6 +347,22 @@ BEGIN
 END
 \$pb\$;
 CREATE OR REPLACE VIEW public.trava_alvo_v WITH (security_invoker = on) AS SELECT 'B'::text AS x;
+COMMIT;
+SQL
+cat > "$B_F_PADRAO" <<SQL
+BEGIN;
+ALTER FUNCTION public.trava_alvo_f() STABLE;
+DO \$pb\$
+DECLARE v text;
+BEGIN
+  SELECT md5(p.prosrc) INTO v FROM pg_catalog.pg_proc p
+   WHERE p.oid = to_regprocedure('public.trava_alvo_f()');
+  IF v IS NULL OR v NOT IN ('$F_PRED', '$F_B') THEN
+    RAISE EXCEPTION 'PRE FALHOU em B: vivo %', v;
+  END IF;
+END
+\$pb\$;
+CREATE OR REPLACE FUNCTION public.trava_alvo_f() RETURNS text LANGUAGE sql STABLE AS \$\$SELECT 'B'\$\$;
 COMMIT;
 SQL
 
@@ -408,6 +430,10 @@ roda_nivel_migration() { # <C|P>
 
   eq "${L}M4" "B que commitou ANTES aparece na PRE de A (recusa; fica o corpo de B)" \
     "$(cenario_m4)" "P0001|PRE_FALHOU|final=B"
+
+  v="$(cenario_m "$PARTE1_COM" "$B_F_PADRAO" f)"
+  eq "${L}M5" "função COM trava e B também no molde: B fica preso no PRÓPRIO ALTER e falha alto" \
+    "$v" "obs=BLOQUEADO|rcB=3|B=XX000|A=OK|final=este|P=VALE"
 
   v="$(cenario_m "$PARTE1_SEM" "$B_V" v)"
   eq "${L}V0" "view SEM trava: a corrida existe" "$v" "obs=TERMINOU|rcB=0|B=sem_erro|A=OK|final=este|P=VIOLADA"
@@ -519,6 +545,70 @@ porta_direta() { # <rótulo> <corpo (cria public.<rótulo>_t)> <abertura da tran
   marca="$(grep -E '(ERROR|ERRO): ' "$WORK/porta-$rot.out" | head -1 | grep -oE 'VEZ_OCUPADA|ISOLAMENTO_ERRADO' || true)"
   echo "${st:-sem_erro}|${marca:--}|efeito=$(Q "SELECT to_regclass('public.${rot}_t') IS NOT NULL")|tentativa=$(Q "SELECT estado FROM public.db_aplicacoes WHERE id = $id")"
 }
+# E7: lock de SESSÃO (pg_advisory_lock) passaria em qualquer teste que só olhasse depois de a conexão
+# fechar. Aqui a mesma sessão aplica, commita e pergunta — e tem de não segurar mais nada.
+fila_apos_commit() {
+  local id fim=ERRO locks
+  id="$(RWV -c "INSERT INTO public.db_aplicacoes (arquivo, sha256, estado)
+                VALUES ('prova:fila-commit', encode(sha256(convert_to('SELECT 7', 'UTF8')), 'hex'), 'tentativa') RETURNING id" 2>&1 || true)"
+  case "$id" in ''|*[!0-9]*) echo "SEM_VEREDITO:tentativa:$id"; return ;; esac
+  printf '%s\n' "BEGIN;" \
+    "SELECT public.aplicar_sql('SELECT 7', encode(sha256(convert_to('SELECT 7', 'UTF8')), 'hex'), $id);" \
+    "COMMIT;" \
+    "SELECT 'LOCKS=' || count(*) FROM pg_locks WHERE locktype = 'advisory' AND classid = 20260909 AND pid = pg_backend_pid();" \
+    > "$WORK/fila-commit.sql"
+  RWV -f "$WORK/fila-commit.sql" > "$WORK/fila-commit.out" 2>&1 || true
+  grep -q 'FIM_APLICACAO_OK' "$WORK/fila-commit.out" && fim=FIM_APLICACAO_OK
+  locks="$(sed -n 's/^LOCKS=//p' "$WORK/fila-commit.out" | head -1)"
+  echo "$fim|locks=${locks:-?}"
+}
+# E14/E14b: o delta com a porta nova QUEBRADA num trecho que só roda ao EXECUTAR (late-bound),
+# aplicado como postgres numa transação sobre a v1. O md5 literal do delta é trocado pelo da porta
+# quebrada (calculado NO BANCO, numa cópia com outro nome) para que quem barre seja a SONDA, não a régua.
+delta_quebrado() { # <rótulo> <de> <para> — ecoa <sqlstate>|vivo=<v1|nova|outro…>
+  local rot="$1" d="$WORK/delta-$1.sql" sonda="$WORK/sonda-md5-$1.sql" md5_q
+  P -f "$REPO_ROOT/$FIX_V1" > /dev/null 2>&1 || { echo "SEM_VEREDITO:v1"; return; }
+  cp "$REPO_ROOT/$DELTA" "$d"
+  troca "$d" "$2" "$3" 1 || { echo "SEM_VEREDITO:troca"; return; }
+  bloco_porta "$d" > "$sonda"
+  troca "$sonda" "CREATE OR REPLACE FUNCTION public.aplicar_sql(" "CREATE OR REPLACE FUNCTION public.aplicar_sql_md5_sonda(" 1 \
+    || { echo "SEM_VEREDITO:renome"; return; }
+  P -f "$sonda" > /dev/null 2>&1 || { echo "SEM_VEREDITO:a porta quebrada nao compila (tem de compilar: late-bound)"; return; }
+  md5_q="$(Q "SELECT md5(prosrc) FROM pg_proc WHERE proname = 'aplicar_sql_md5_sonda'")"
+  Q "DROP FUNCTION public.aplicar_sql_md5_sonda(text, text, bigint)" > /dev/null
+  troca "$d" "$MD5_BOOT" "$md5_q" 2 || { echo "SEM_VEREDITO:md5"; return; }
+  if [ "$SABOTAGEM" = delta_sem_sonda ]; then
+    corta "$d" "  BEGIN
+    INSERT INTO public.db_aplicacoes" "  END;
+" || { echo "SEM_VEREDITO:sabotagem"; return; }
+  fi
+  printf 'BEGIN;\n\\i %s\nCOMMIT;\n' "$d" | PV -f - > "$WORK/$rot.out" 2>&1 || true
+  echo "$(sqlstate_de "$WORK/$rot.out")|vivo=$(qual_porta)"
+}
+# E15: a TRAVA do próprio delta. A roda o delta até o fim da PRE e para; B tenta recriar a porta.
+cenario_e15() {
+  local p1="$WORK/delta-parte1.sql" bsql="$WORK/b-porta-v1.sql" obs apid
+  awk 'BEGIN{p=1} p{print} /^\$pre\$;$/{p=0}' "$REPO_ROOT/$DELTA" > "$p1"
+  if [ "$SABOTAGEM" = delta_sem_trava ]; then
+    awk '/^DO \$trava\$$/{s=1} !s{print} /^\$trava\$;$/{s=0}' "$p1" > "$p1.sem" && mv "$p1.sem" "$p1"
+  fi
+  # shellcheck disable=SC2016  # o $ é LITERAL (rótulo de dollar-quote do PL/pgSQL), não expansão
+  grep -q '^\$pre\$;$' "$p1" || { echo "SEM_VEREDITO:parte1"; return; }
+  bloco_porta "$REPO_ROOT/$FIX_V1" > "$bsql"
+  P -f "$REPO_ROOT/$FIX_V1" > /dev/null 2>&1 || { echo "SEM_VEREDITO:v1"; return; }
+  abre_A
+  manda_A "SELECT 'A_PID=' || pg_backend_pid();" "BEGIN;" "\\i $p1" "\\! touch $WORK/a.pronta"
+  if ! espera_arquivo "$WORK/a.pronta" "$PID_A"; then
+    fecha_A; echo "NAO_PAROU:$(tr '\n' ' ' < "$WORK/a.out" | head -c 200)"; return
+  fi
+  apid="$(sed -n 's/^A_PID=//p' "$WORK/a.out" | head -1)"
+  roda_B "$bsql"
+  obs="$(observa_B "$apid")"
+  manda_A "ROLLBACK;"
+  fecha_A
+  wait "$PID_B" 2>/dev/null || true
+  echo "obs=$obs|rcB=$(rc_B)"
+}
 # O bloco CREATE OR REPLACE FUNCTION public.aplicar_sql … $funcao$; de um arquivo.
 bloco_porta() { awk '/^CREATE OR REPLACE FUNCTION public.aplicar_sql\(/{f=1} f{print} /^\$funcao\$;$/{if(f){exit}}' "$1"; }
 # Troca um trecho EXATO num arquivo, exigindo N ocorrências (sabotagem que não casa não sabota).
@@ -593,7 +683,8 @@ roda_nivel_executor() { # <C|P>
               || '|' || has_function_privilege('anon', 'public.aplicar_sql(text,text,bigint)', 'EXECUTE')")" "true|false|false"
 
   # Sabotagens da PORTA: recria a função na versão furada, nesta sessão de teste.
-  if [ "$SABOTAGEM" = sem_fila ] || [ "$SABOTAGEM" = sem_guarda_isolamento ] || [ "$SABOTAGEM" = espera_generica ]; then
+  if [ "$SABOTAGEM" = sem_fila ] || [ "$SABOTAGEM" = sem_guarda_isolamento ] || [ "$SABOTAGEM" = espera_generica ] \
+     || [ "$SABOTAGEM" = fila_de_sessao ]; then
     local sab="$WORK/porta-sabotada.sql"
     bloco_porta "$REPO_ROOT/$BOOT" > "$sab"
     case "$SABOTAGEM" in
@@ -604,6 +695,8 @@ roda_nivel_executor() { # <C|P>
 " || exit 3 ;;
       espera_generica) corta "$sab" "    EXCEPTION WHEN lock_not_available THEN" "        USING ERRCODE = '55P03';
 " || exit 3 ;;
+      fila_de_sessao) { troca "$sab" "pg_try_advisory_xact_lock(20260909, 1)" "pg_try_advisory_lock(20260909, 1)" 1 \
+                        && troca "$sab" "PERFORM pg_advisory_xact_lock(20260909, 1);" "PERFORM pg_advisory_lock(20260909, 1);" 1; } || exit 3 ;;
     esac
     P -f "$sab" > /dev/null 2>&1 || { echo "ABORTA: a porta sabotada não compila"; exit 3; }
     [ "$(qual_porta)" != "nova" ] || { echo "ABORTA: a sabotagem não mudou a porta"; exit 3; }
@@ -613,7 +706,8 @@ roda_nivel_executor() { # <C|P>
   eq "${L}E5" "com a fila: B é visto ESPERANDO a vez enquanto A está parado" "$(cut -d'|' -f1,2 <<<"$v")" "B_NA_FILA|a_parado=1"
   eq "${L}E6" "... A sai 0, B sai 4 pela PRE, o corpo final é o de A e o recibo de B é 'falhou'" \
     "$(cut -d'|' -f3- <<<"$v")" "A=0|B=4|final=A|ledgerB=falhou|motivoB=PRE_RECUSOU"
-  eq "${L}E7" "a fila é solta no fim" "$(Q "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND classid = 20260909")" "0"
+  eq "${L}E7" "a fila é da TRANSAÇÃO: depois do COMMIT, na mesma sessão viva, a chave já está solta" \
+    "$(fila_apos_commit)" "FIM_APLICACAO_OK|locks=0"
 
   abre_H "SELECT pg_advisory_xact_lock(20260909, 1);" || { echo "ABORTA: segurador da fila não travou"; exit 3; }
   v="$(porta_direta vez_ocupada "CREATE TABLE public.vez_ocupada_t (x int)" "BEGIN;" "1s")"
@@ -656,23 +750,12 @@ roda_nivel_executor() { # <C|P>
   eq "${L}E13" "o delta sobre um corpo ESTRANHO é recusado pela PRE e o estranho fica" \
     "$(sqlstate_de "$WORK/d13.out")|$marca13|vivo=$vivo13" "P0001|PRE_FALHOU|vivo=estranho"
 
-  # E14: a porta nova QUEBRADA (função inexistente no caminho que só roda ao EXECUTAR).
-  P -f "$REPO_ROOT/$FIX_V1" > /dev/null 2>&1 || { echo "ABORTA: não consegui reinstalar a v1"; exit 3; }
-  local d14="$WORK/delta-14.sql" sonda="$WORK/sonda-md5.sql" md5_quebrada
-  cp "$REPO_ROOT/$DELTA" "$d14"
-  troca "$d14" "pg_try_advisory_xact_lock(20260909, 1)" "pg_try_advisory_xact_lock_quebrada(20260909, 1)" 1 || exit 3
-  bloco_porta "$d14" > "$sonda"
-  troca "$sonda" "CREATE OR REPLACE FUNCTION public.aplicar_sql(" "CREATE OR REPLACE FUNCTION public.aplicar_sql_md5_sonda(" 1 || exit 3
-  P -f "$sonda" > /dev/null 2>&1 || { echo "ABORTA: a porta quebrada não compila (ela TEM de compilar: late-bound)"; exit 3; }
-  md5_quebrada="$(Q "SELECT md5(prosrc) FROM pg_proc WHERE proname = 'aplicar_sql_md5_sonda'")"
-  Q "DROP FUNCTION public.aplicar_sql_md5_sonda(text, text, bigint)" > /dev/null
-  troca "$d14" "$MD5_BOOT" "$md5_quebrada" 2 || exit 3
-  [ "$SABOTAGEM" = delta_sem_sonda ] && { corta "$d14" "  BEGIN
-    PERFORM public.aplicar_sql('SELECT 1'" "  END;
-" || exit 3; }
-  printf 'BEGIN;\n\\i %s\nCOMMIT;\n' "$d14" | PV -f - > "$WORK/d14.out" 2>&1 || true
-  eq "${L}E14" "o delta com a porta nova QUEBRADA aborta na PÓS e a porta antiga fica" \
-    "$(sqlstate_de "$WORK/d14.out")|vivo=$(qual_porta)" "42883|vivo=v1"
+  eq "${L}E14" "o delta com a porta nova QUEBRADA no começo aborta na PÓS e a porta antiga fica" \
+    "$(delta_quebrado e14 "pg_try_advisory_xact_lock(20260909, 1)" "pg_try_advisory_xact_lock_quebrada(20260909, 1)")" "42883|vivo=v1"
+  eq "${L}E14b" "... e quebrada no FIM (o recibo): a sonda da PÓS percorre a porta inteira" \
+    "$(delta_quebrado e14b "concluido_em = now()" "concluido_em = now_quebrada()")" "42883|vivo=v1"
+  eq "${L}E15" "a trava do próprio delta: parado depois da PRE, recriar a porta fica preso" \
+    "$(cenario_e15)" "obs=BLOQUEADO|rcB=0"
 }
 
 # ════════════════════════════════════════════════════════════════════════════════════════════
