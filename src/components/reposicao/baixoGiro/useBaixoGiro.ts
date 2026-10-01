@@ -5,8 +5,9 @@ import { supabase } from "@/integrations/supabase/client";
 import { useReposicaoEmpresa } from "@/contexts/ReposicaoEmpresaContext";
 import { BAIXO_GIRO_OR_FILTER, classificarSituacao, diasSemVender, ehCandidatoSobEncomenda, ehGiroMorto, somarCapitalMorto, somarCapitalParado } from "@/lib/reposicao/baixo-giro-helpers";
 import type { RowBaixoGiro } from "./types";
+import { hojeSP } from "@/lib/time/sp-day";
 
-const HOJE_ISO = () => new Date().toISOString().slice(0, 10);
+const HOJE_ISO = () => hojeSP(); // o dia de SP: com o UTC, dias sem vender ganhava +1 das 21h às 24h BRT
 
 export function useBaixoGiro() {
   const { empresa } = useReposicaoEmpresa();
