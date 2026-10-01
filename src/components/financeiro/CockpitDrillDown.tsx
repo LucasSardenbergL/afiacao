@@ -6,8 +6,8 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { supabase } from '@/integrations/supabase/client';
 import { BAIXA_OMIE_LIST, baixaOuIndisponivel } from '@/lib/financeiro/procedencia-baixa';
-import type {
 import { addDias, hojeSP } from '@/lib/time/sp-day';
+import type {
   FinContaCorrenteRow,
   FinContaPagarRow,
   FinContaReceberRow,
