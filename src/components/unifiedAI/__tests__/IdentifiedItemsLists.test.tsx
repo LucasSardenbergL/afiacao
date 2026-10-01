@@ -4,6 +4,11 @@ import { IdentifiedProductsList, IdentifiedServicesList } from '../IdentifiedIte
 import { type AIProduct, type AIService, type Product, type UserTool } from '../types';
 import { fmt } from '../helpers';
 
+// O `fmt` (toLocaleString pt-BR) põe um espaço NÃO-SEPARÁVEL depois de "R$", e o getByText compara com o
+// texto NORMALIZADO (espaços em sequência, NBSP incluso, viram 1 espaço). Comparar com o `fmt` cru nunca
+// casa — e aí todo `queryByText(...).toBeNull()` passaria por CEGUEIRA. Normaliza do mesmo jeito.
+const txt = (v: number) => `${fmt(v)}/un`.replace(/\s+/g, ' ');
+
 const catalog: Product[] = [
   { id: 'p1', codigo: 'C1', descricao: 'Disco de corte 7"', valor_unitario: 25, estoque: 10, account: 'oben' },
 ];
@@ -48,16 +53,16 @@ describe('IdentifiedProductsList', () => {
 
   it('exibe o preço de NASCIMENTO (getProductPrice) — não a tabela do catálogo nem o selo "Preço cliente"', () => {
     render(<IdentifiedProductsList items={p1} catalog={catalog} onRemove={() => {}} precoNascimentoPorId={precoNascimentoPorId} />);
-    expect(screen.getByText(`${fmt(18.5)}/un`)).toBeTruthy();
-    expect(screen.queryByText(`${fmt(25)}/un`)).toBeNull();
+    expect(screen.getByText(txt(18.5))).toBeTruthy();
+    expect(screen.queryByText(txt(25))).toBeNull();
     expect(screen.queryByText('Preço cliente')).toBeNull();
   });
 
   it('um unit_price vindo da IA (edge VELHA ainda deployada) NÃO é exibido: o número é o de nascimento', () => {
     const daEdgeVelha = [{ ...p1[0], unit_price: 999 }] as unknown as AIProduct[];
     render(<IdentifiedProductsList items={daEdgeVelha} catalog={catalog} onRemove={() => {}} precoNascimentoPorId={precoNascimentoPorId} />);
-    expect(screen.queryByText(`${fmt(999)}/un`)).toBeNull();
-    expect(screen.getByText(`${fmt(18.5)}/un`)).toBeTruthy();
+    expect(screen.queryByText(txt(999))).toBeNull();
+    expect(screen.getByText(txt(18.5))).toBeTruthy();
   });
 
   it('preço de partida não firme (precoLoading): NÃO exibe número algum', () => {
@@ -74,7 +79,7 @@ describe('IdentifiedProductsList', () => {
 
   it('preço de nascimento 0 é EXIBIDO como 0 (o painel mostra o que o carrinho grava; quem barra ≤0 é o submit)', () => {
     render(<IdentifiedProductsList items={p1} catalog={catalog} onRemove={() => {}} precoNascimentoPorId={() => 0} />);
-    expect(screen.getByText(`${fmt(0)}/un`)).toBeTruthy();
+    expect(screen.getByText(txt(0))).toBeTruthy();
   });
 });
 

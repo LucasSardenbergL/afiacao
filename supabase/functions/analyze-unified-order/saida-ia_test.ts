@@ -11,7 +11,6 @@ import {
   CAMPOS_SAIDA_SERVICO,
   CAMPOS_SAIDA_SUGESTAO,
   canariaSemPreco,
-  CONTRATO_CANARIA_PRECO,
   extrairToolUseUnico,
   montarRespostaAnalise,
   numeroFinito,
@@ -225,15 +224,9 @@ Deno.test("listas de saída: nenhuma contém campo de preço (sabotar a lista te
   }
 });
 
-Deno.test("canariaSemPreco: verde com a fronteira real — contrato da fatia, 0 preços, 2 itens", () => {
-  assertEquals(canariaSemPreco(), {
-    canary: true,
-    contrato: CONTRATO_CANARIA_PRECO,
-    precos_na_saida: 0,
-    itens_na_saida: 2,
-    ok: true,
-  });
-  assertEquals(CONTRATO_CANARIA_PRECO, "ia-nao-precifica-v1");
+Deno.test("canariaSemPreco: verde com a fronteira real — 0 preços e os 2 itens na saída", () => {
+  // O envelope (`canary`, `contrato` literal) é do bloco da canária em index.ts — pinado pelo vitest.
+  assertEquals(canariaSemPreco(), { precos_na_saida: 0, itens_na_saida: 2, ok: true });
 });
 
 Deno.test("canariaSemPreco: CONTROLE — com a forma velha a canária fica VERMELHA (os 3 preços da fixture saem)", () => {

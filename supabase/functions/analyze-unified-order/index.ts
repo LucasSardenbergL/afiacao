@@ -309,12 +309,19 @@ Deno.serve(async (req) => {
       );
     }
     if (decisaoCanaria.tipo === "sonda") {
-      // A conta inteira (fixture, contagem pelo nome literal, controle do sempre-verde, `contrato`)
-      // mora em `canariaSemPreco` (saida-ia.ts) para o teste Deno rodar a MESMA conta que esta edge
-      // serve. ⚠️ BUMP do `contrato` a cada fatia que mude o que ela atesta (`bun run canaria:bump`).
-      return new Response(JSON.stringify(canariaSemPreco()), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      // A MEDIÇÃO (fixture, contagem pelo nome literal, controle do sempre-verde) mora em
+      // `canariaSemPreco` (saida-ia.ts), para o teste Deno rodar a MESMA conta que esta edge serve. O
+      // `contrato` fica LITERAL aqui: é por ele que o `canaria-contrato-bump-gate` acha esta canária, e
+      // quem o exige é o card de Governança (`CONTRATO_ESPERADO`, código do FRONT) — a troca só
+      // discrimina com o Publish E o deploy. ⚠️ BUMP a cada fatia que mude o que ela atesta.
+      return new Response(
+        JSON.stringify({
+          canary: true,
+          contrato: "ia-nao-precifica-v1",
+          ...canariaSemPreco(),
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
     }
 
     // Support single image (imageBase64) or multiple images (imagesBase64)

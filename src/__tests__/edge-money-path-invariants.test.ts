@@ -115,8 +115,14 @@ describe('guardrail money-path: analyze-unified-order NÃO precifica (a IA só i
     );
   });
 
-  it('nenhum JSON de resposta monta `products:` À MÃO (só pela fronteira) — um literal cru reabriria o preço', () => {
-    expect(codigo).not.toMatch(/JSON\.stringify\(\{[^)]*\bproducts\s*:/);
+  it('nenhum JSON de resposta monta `products:` À MÃO com conteúdo (só pela fronteira) — um literal cru reabriria o preço', () => {
+    // `products: []` é legítimo: a resposta 400 de "nenhuma foto legível" não tem item, logo não tem preço.
+    // O `\s*` vai DENTRO do lookahead: fora dele o backtracking encolhe o espaço e `products: []` casa.
+    const CRU = /JSON\.stringify\(\{[^)]*\bproducts\s*:(?!\s*\[\s*\])/;
+    expect(codigo).not.toMatch(CRU);
+    // CALIBRAÇÃO: a forma velha da resposta do fluxo real CASA, e a vazia legítima não.
+    expect('return new Response(JSON.stringify({\n      products: validProducts,\n')).toMatch(CRU);
+    expect('return new Response(JSON.stringify({\n          products: [], services: [],')).not.toMatch(CRU);
   });
 
   it('CONTRATO edge×front: as listas fechadas de saída batem campo a campo com os tipos que o front lê', () => {
@@ -3683,13 +3689,16 @@ describe('canária VERSIONADA: analyze-unified-order (a IA não precifica)', () 
   const deployDoc = read(DEPLOY_DOC);
   const CONTRATO = 'ia-nao-precifica-v1';
 
-  it('a canária emite o VERSION MARKER `contrato` — e o fluxo da canária CONSOME a conta de saida-ia.ts', () => {
+  it('a canária emite o VERSION MARKER `contrato` LITERAL no fonte da edge — e CONSOME a medição de saida-ia.ts', () => {
+    // LITERAL e no index.ts: é por ele que o `canaria-contrato-bump-gate` localiza a canária. Numa
+    // constante importada ela some do gate (o vermelho do CI do #2700 que pegou isso).
     expect(
-      saida,
-      'sumiu o marcador da canária de preço — um deploy integralmente velho responderia a canária velha',
-    ).toMatch(/export const CONTRATO_CANARIA_PRECO = ['"]ia-nao-precifica-v1['"]/);
-    expect(removerComentarios(src), 'o ramo da canária não serializa canariaSemPreco()').toMatch(
-      /decisaoCanaria\.tipo === ['"]sonda['"][\s\S]{0,400}JSON\.stringify\(canariaSemPreco\(\)\)/,
+      src,
+      'sumiu o marcador `contrato` literal da canária de preço — o gate de bump fica cego e um deploy velho responderia a canária velha',
+    ).toMatch(/contrato: ['"]ia-nao-precifica-v1['"]/);
+    expect(removerComentarios(saida), 'a medição não pode carregar o contrato (ele é do envelope, no index.ts)').not.toMatch(/\bcontrato\s*:/);
+    expect(removerComentarios(src), 'o ramo da canária não espalha a medição de canariaSemPreco()').toMatch(
+      /decisaoCanaria\.tipo === ['"]sonda['"][\s\S]{0,600}\.\.\.canariaSemPreco\(\)/,
     );
   });
 

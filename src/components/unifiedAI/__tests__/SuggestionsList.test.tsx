@@ -4,6 +4,11 @@ import { SuggestionsList } from '../SuggestionsList';
 import { type AISuggestion, type Product } from '../types';
 import { fmt } from '../helpers';
 
+// O `fmt` (toLocaleString pt-BR) põe um espaço NÃO-SEPARÁVEL depois de "R$", e o getByText compara com o
+// texto NORMALIZADO (espaços em sequência, NBSP incluso, viram 1 espaço). Comparar com o `fmt` cru nunca
+// casa — e aí todo `queryByText(...).toBeNull()` passaria por CEGUEIRA. Normaliza do mesmo jeito.
+const txt = (v: number) => `${fmt(v)}/un`.replace(/\s+/g, ' ');
+
 const catalog: Product[] = [
   { id: 'p1', codigo: 'C1', descricao: 'Disco', valor_unitario: 25, estoque: 5, account: 'oben' },
 ];
@@ -74,9 +79,9 @@ describe('SuggestionsList', () => {
         precoNascimentoPorId={precoNascimentoPorId}
       />,
     );
-    expect(screen.getByText(`${fmt(18.5)}/un`)).toBeTruthy();
-    expect(screen.queryByText(`${fmt(25)}/un`)).toBeNull();
-    expect(screen.queryByText(`${fmt(999)}/un`)).toBeNull();
+    expect(screen.getByText(txt(18.5))).toBeTruthy();
+    expect(screen.queryByText(txt(25))).toBeNull();
+    expect(screen.queryByText(txt(999))).toBeNull();
     expect(screen.queryByText('Preço cliente')).toBeNull();
   });
 

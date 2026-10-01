@@ -285,7 +285,12 @@ function sabotar(fontes: Map<string, string>, simbolo: string): Map<string, stri
 // daquela canária promete sobre o bundle. Se uma canária deixar de exercitar a sua, o pin quebra —
 // e quebrar é o desfecho certo, porque o marcador passou a nomear outra coisa.
 const SOB_TESTE: Array<{ edge: string; chave: string; simbolo: string }> = [
-  { edge: 'analyze-unified-order', chave: 'if:1', simbolo: 'mergeCustomerPrices' },
+  // A canária de preço mudou de OBJETO em 2026-09-30 (`praticado-vence-omie-v1` → `ia-nao-precifica-v1`):
+  // o merge saiu da edge. Dois símbolos, como a 8ª abaixo: `canariaSemPreco` é o que o bloco chama
+  // DIRETO, e `montarRespostaAnalise` (um salto adiante, em saida-ia.ts) é a fronteira de saída que o
+  // fluxo REAL também usa — é ela que o contrato promete.
+  { edge: 'analyze-unified-order', chave: 'if:1', simbolo: 'canariaSemPreco' },
+  { edge: 'analyze-unified-order', chave: 'if:1', simbolo: 'montarRespostaAnalise' },
   { edge: 'carteira-rebuild', chave: 'if:1', simbolo: 'computeCarteira' },
   { edge: 'omie-analytics-sync', chave: 'case:doc_ambiguo_probe', simbolo: 'docsComCodigoAmbiguoNoOmie' },
   { edge: 'omie-analytics-sync', chave: 'case:transferencia_probe', simbolo: 'classificarLoteProof' },

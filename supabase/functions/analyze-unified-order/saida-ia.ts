@@ -150,17 +150,11 @@ export function montarRespostaAnalise(entrada: {
 }
 
 /**
- * VERSION MARKER da canária de preço (docs/agent/deploy.md §Canárias). Quem o exige é o card de
- * Governança — `CONTRATO_ESPERADO` em `src/lib/governanca/canaria-preco.ts`, código do FRONT —, então
- * a troca só discrimina com o Publish E o deploy desta edge. Até a v1.3 o contrato era
- * `praticado-vence-omie-v1` (o merge saiu da edge; o objeto atestado mudou, não é bump de fatia).
- * ⚠️ Bump a cada fatia que mude o que a canária atesta (`bun run canaria:bump`).
+ * A MEDIÇÃO da canária de preço. O envelope (`canary: true` e o `contrato` LITERAL) mora no bloco da
+ * canária em index.ts, e não aqui: o `canaria-contrato-bump-gate` localiza cada canária pelo literal
+ * `contrato: "…"` no fonte da edge — uma constante importada a deixaria INVISÍVEL para o gate.
  */
-export const CONTRATO_CANARIA_PRECO = "ia-nao-precifica-v1";
-
-export interface RespostaCanariaPreco {
-  canary: true;
-  contrato: string;
+export interface MedicaoCanariaPreco {
   precos_na_saida: number;
   itens_na_saida: number;
   ok: boolean;
@@ -179,7 +173,7 @@ export interface RespostaCanariaPreco {
  */
 export function canariaSemPreco(
   montar: typeof montarRespostaAnalise = montarRespostaAnalise,
-): RespostaCanariaPreco {
+): MedicaoCanariaPreco {
   const saida = montar({
     products: [{ product_id: "CANARY", quantity: 1, account: "oben", unit_price: 999, preco: 999 }],
     services: [],
@@ -197,8 +191,6 @@ export function canariaSemPreco(
   );
   const itensNaSaida = itens.filter((item) => item.product_id === "CANARY").length;
   return {
-    canary: true,
-    contrato: CONTRATO_CANARIA_PRECO,
     precos_na_saida: precosNaSaida,
     itens_na_saida: itensNaSaida,
     ok: precosNaSaida === 0 && itensNaSaida === 2,
