@@ -56,12 +56,12 @@ todas verdes.
 
 | prova | veredito | o que a matou (medido executando) | desde | dias | decisão |
 |---|---|---|---|---|---|
-| `fornecedores-classificacao` | MORTA no seed: `unique farmer_client_scores_customer_unique` | `1c05aa8e3` "Dumped schema" (bisect) | 06-25 | 95 | reviver |
+| `fornecedores-classificacao` | MORTA no seed: `unique farmer_client_scores_customer_unique` | `1c05aa8e3` "Dumped schema" (bisect) | 06-25 | 95 | **revivida** (2026-10-01, [fatia 2b](provas-carteira-revividas.md)) |
 | `reposicao-demanda-insumos-bom` | VERMELHA (fail-fast em H1: `obtido=''`) | `7bf5c4637` #1315 (bisect): a allowlist de CFOP no SQL sob teste; o PR atualizou a prova IRMÃ (`reposicao-religamento`), não esta | 07-12 | 78 | reviver |
 | `data-health-estoque-marcador` | MORTA no setup: `relation "public.omie_clientes" does not exist` | `9c9aae173` #1509, re-dump (controle) | 07-21 | 69 | **aposentada** |
 | `data-health-familia-ausente` | MORTA no setup (idem) | `9c9aae173` (controle) | 07-21 | 69 | **revivida** (2026-09-30, [fatia 1](provas-data-health-revividas.md)) |
 | `familia-ausente-lista-email` | MORTA no setup (idem) | `9c9aae173` (controle) | 07-21 | 69 | **fundida** na `data-health-familia-ausente` ([fatia 1](provas-data-health-revividas.md)) |
-| `melhorias-rpcs` | MORTA: em 07-21 no 1º assert (o corpo de junho da RPC chama `carteira_visivel_para(uuid, uuid)`, que o fu7 moveu para o schema privado); desde `39ec9e31e` (08-28), já no seed (CHECK `cluster_segment`) | `9c9aae173` (bisect) | 07-21 | 69 | reviver |
+| `melhorias-rpcs` | MORTA: em 07-21 no 1º assert (o corpo de junho da RPC chama `carteira_visivel_para(uuid, uuid)`, que o fu7 moveu para o schema privado); desde `39ec9e31e` (08-28), já no seed (CHECK `cluster_segment`) | `9c9aae173` (bisect) | 07-21 | 69 | **revivida** (2026-10-01, [fatia 2b](provas-carteira-revividas.md)) |
 | `whatsapp-hsm` | MORTA no setup: `policy "wt_staff_read" … already exists` | `9c9aae173` (controle) | 07-21 | 69 | **revivida** (2026-09-30, [fatia 2](provas-canal-revividas.md)) |
 | `whatsapp-funil` | MORTA no setup (idem) | `9c9aae173` (controle) | 07-21 | 69 | **revivida e vermelha**: achou o funil quebrado para o staff em prod ([fatia 2](provas-canal-revividas.md)) |
 | `whatsapp-proposta` | MORTA no setup (idem) | **nasceu morta**: no próprio merge (`250754cdf`) já morria sobre o snapshot de 07-21 | 08-06 | 53 | **revivida** (2026-09-30, [fatia 2](provas-canal-revividas.md)) |
@@ -229,10 +229,10 @@ Reconciliado no fecho (2026-09-30) com a regra de chips do #2651 — no máximo 
   revivida fica VERMELHA contra o ACL de prod — achou o funil do canal dando `permission denied` para
   todo staff (coluna nova não herda o GRANT por coluna) — e entra no núcleo quando o conserto (1 GRANT,
   decisão do founder) chegar a prod. Detalhe em [provas-canal-revividas.md](provas-canal-revividas.md).
-- 📌 **Fatia 2b — carteira** (`melhorias-rpcs`, `fornecedores-classificacao`): próxima sessão, pela
-  mesma lib. O alvo de Melhorias já está medido: snapshot + ACL de prod + `20260905225613` →
-  `20260929000234` reproduz o md5 de prod das duas RPCs. O diagnóstico de cada uma segue na tabela e em
-  "Decisões por prova", acima.
+- ✅ **Fatia 2b — carteira** (2026-10-01): `melhorias-rpcs` e `fornecedores-classificacao` revividas pela
+  `db/lib/corpo-vivo.sh` e no núcleo (md5 13/13 = prod). A morte de fornecedores foi medida executando: o
+  gatilho da carteira cria o score de farmer, e o seed o reinseria. Detalhe, falsificação e revisão em
+  [provas-carteira-revividas.md](provas-carteira-revividas.md).
 - 📌 **Fatia 3 — money-path** (`reposicao-demanda-insumos-bom`, `preco-tier`): a partir de 03/10,
   quando a cota do Codex reabre, ou antes por Caminho B com `sem-codex:` no corpo.
 - 📌 **O sensor** — decisão de custo do founder (as opções A e C, acima). Sem ela, nada de A é
