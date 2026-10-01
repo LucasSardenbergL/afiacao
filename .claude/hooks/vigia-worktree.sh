@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 # vigia-worktree.sh — SessionStart(startup): worktree pronto-pra-uso + sinais de RAM.
 #
-# 1) node_modules ausente → dispara `bun install` em BACKGROUND e avisa a sessão
-#    (senão o 1º typecheck dá "Cannot find module" — FALSO vermelho; o CI real
-#    se confere com `gh pr checks`). Já custou 3× bun install manual + falso
-#    alarme de CI (diagnóstico 2026-07).
+# 1) deps SEM resposta positiva (node_modules AUSENTE, VAZIO ou PARCIAL) → delega
+#    `bun install` ao BACKGROUND — que não dispara se já houver outro EM VOO nesta
+#    worktree — e avisa a sessão nomeando o estado (senão o 1º typecheck dá
+#    "Cannot find module" — FALSO vermelho —, ou pior: teste VERDE com as deps do
+#    checkout principal; o CI real se confere com `gh pr checks`). Já custou 3×
+#    bun install manual + falso alarme de CI (diagnóstico 2026-07) e, com o
+#    `node_modules` VAZIO que o teste antigo de existência não via, 5 h de
+#    baseline medindo outro ambiente (2026-09-25).
 # 2) swap alto / muitas sessões Claude vivas → aviso de higiene (a alavanca real
 #    de RAM na M2 8GB é FECHAR sessões — wt:status mostra as ociosas).
 # 4) semáforo `heavy` divergente do repo → aviso (nunca instala sozinho).
@@ -20,10 +24,121 @@ set -u
 avisos=""
 
 # --- 1) deps da worktree ------------------------------------------------------
-if [ -f package.json ] && [ ! -d node_modules ] && command -v bun >/dev/null 2>&1; then
-  log="${TMPDIR:-/tmp}/bun-install-wt-$$.log"
-  (bun install >"$log" 2>&1 &)
-  avisos="${avisos}node_modules AUSENTE → 'bun install' já disparado em background (log: $log). Aguarde-o antes de test/typecheck — com o install EM VOO a árvore fica PARCIAL, e o falso vermelho tem DOIS sintomas: 'Cannot find module' (óbvio) e erro de RUNTIME do React — tipicamente 'Cannot read properties of null (reading ...)' vindo de dentro de um componente, que parece bug do SEU código. Discriminador: 'bun install --frozen-lockfile'; se ficar verde em segundos com o lockfile intacto, era a árvore. (CI real: gh pr checks). "
+# A pergunta é "as deps RESPONDEM?", não "o diretório existe?". Em 2026-09-25 a
+# worktree tinha o `node_modules` EXISTENTE e VAZIO: o teste antigo (`! -d`)
+# calou — nenhum install, nenhum aviso —, a resolução de módulos SUBIU ao
+# checkout principal (`yaml` de afiacao/node_modules, `tsc` 5.8.3: teste verde
+# com as deps de OUTRA árvore) e o `exclusividade:medir` gastou 5 h de baseline
+# medindo outro ambiente (docs/historico/exclusividade-media-outra-coisa.md).
+# Presente-porém-vazio esvazia o guard igual à ausência
+# (docs/historico/sonda-ausente-em-script-que-apaga.md).
+#
+# Sinal positivo POR CONTEÚDO, sem rodar binário: para cada um dos 4 binários de
+# BINARIOS_DAS_DEPS (scripts/lib/exclusividade.ts — os do `Unlisted binaries` do
+# incidente), `.bin/<b>` tem de RESOLVER num executável (link pendurado falha) e
+# o manifesto do pacote dono tem de DECLARAR versão semver (vazio ou truncado
+# falha). Pelo CAMINHO LOCAL, nunca pelo nome: pelo nome a resolução sobe a
+# árvore e responde pelo checkout principal. Custo medido: ~20 ms os 4. O
+# `--version` (a sonda do motor, que tem teto de 60 s) custou 150-800 ms quente
+# para 1 e 4 binários, e mais sob swap: seria o 1º subprocess BLOQUEANTE deste
+# hook, e um teto curto que o mata vira "sem dado" — que não decide se dispara
+# install. Limite: não prova que o binário RODA nem que bate com o lockfile; o
+# critério é o do `bun install` para "instalado", o mesmo que o remédio conserta.
+DEPS_SONDA="eslint:eslint tsc:typescript vite:vite vitest:vitest"
+
+# ecoa OK | AUSENTE | VAZIO | PARCIAL <binários sem resposta>
+estado_deps() {
+  local par b p faltas=""
+  [ -d node_modules ] || { echo AUSENTE; return; }
+  # VAZIO = nenhum PACOTE: entrada oculta (.bin, .vite, .cache) não conta — o vite
+  # cria `node_modules/.vite` mesmo resolvendo as deps do checkout de cima.
+  set -- node_modules/*
+  if [ ! -e "$1" ] && [ ! -L "$1" ]; then echo VAZIO; return; fi
+  for par in $DEPS_SONDA; do
+    b="${par%%:*}"; p="${par#*:}"
+    [ -x "node_modules/.bin/$b" ] \
+      && grep -Eq '"version"[[:space:]]*:[[:space:]]*"[0-9]+\.[0-9]+\.[0-9]+' "node_modules/$p/package.json" 2>/dev/null \
+      && continue
+    faltas="$faltas $b"
+  done
+  if [ -n "$faltas" ]; then echo "PARCIAL$faltas"; else echo OK; fi
+}
+
+# Há `bun install` EM VOO nesta worktree? Pergunta à TABELA DE PROCESSOS, não a um
+# arquivo de trava — a trava apodrece quando o install morre, e só veria os
+# installs deste hook: processo `bun install|i|add` cuja cwd é ESTA worktree.
+# Cobre o install de outra sessão (o do hook dela ou à mão) e o do founder no
+# terminal. Ecoa o pid e sai 0 se há; sai 1 se não há; 2 se NÃO CONSEGUI CONFERIR.
+# Limite: dois hooks no MESMO instante, antes de qualquer um ter o bun de pé, não
+# se veem (janela de dezenas de ms entre a sonda e o exec).
+install_em_voo() {
+  local aqui pids rc linha pid="" respondeu=0
+  aqui="$(pwd -P)"   # físico: é o caminho que o lsof devolve
+  # Casa o PROCESSO do bun (`bun install`, `/caminho/bun i ...`) — não o texto de
+  # um wrapper `zsh -c "... bun install"` nem `bun run` (medido no macOS).
+  pids="$(pgrep -f '(^|/)bun (install|i|add)( |$)' 2>/dev/null)"; rc=$?
+  case "$rc" in
+    0) ;;
+    1) return 1 ;;   # o pgrep respondeu: nenhum install na máquina
+    *) return 2 ;;   # pgrep ausente ou quebrado
+  esac
+  # Lista vazia NUNCA chega ao lsof: `lsof -p ""` ignora o filtro e devolve a cwd
+  # de TODOS os processos — inclusive os desta sessão, que moram nesta worktree
+  # (medido): seria "em voo" sempre.
+  [ -n "$pids" ] || return 2
+  while IFS= read -r linha; do
+    case "$linha" in
+      p*) pid="${linha#p}" ;;
+      n*) respondeu=1
+          if [ "${linha#n}" = "$aqui" ]; then echo "$pid"; return 0; fi ;;
+    esac
+  done <<EOF
+$(lsof -nP -a -p "$(printf '%s' "$pids" | tr '\n' ',')" -d cwd -Fpn 2>/dev/null)
+EOF
+  # lsof que não devolveu cwd nenhuma (ausente, quebrado, ou os pids sumiram no
+  # meio) não prova "ninguém aqui": é falta de dado.
+  [ "$respondeu" -eq 1 ] && return 1
+  return 2
+}
+
+# Roda em BACKGROUND, com a saída no log: o bloco 1 só LÊ arquivos — a sonda de
+# voo (pgrep+lsof: 25-470 ms medidos, mais sob swap) e o install nunca entram no
+# timeout:10 do SessionStart. O log FECHA com uma marca ASCII de caixa fixa.
+disparar_install() {
+  local pid rc
+  pid="$(install_em_voo)"; rc=$?
+  case "$rc" in
+    0) echo "VIGIA-EM-VOO: ja ha 'bun install' nesta worktree (pid $pid) -- NAO disparei outro. Espere esse pid sair; se as deps ainda faltarem, rode 'bun install'."
+       return ;;
+    1) ;;
+    *) echo "VIGIA-NAO-CONFERI: nao consegui conferir se ha 'bun install' em voo nesta worktree (pgrep/lsof sem resposta) -- NAO disparei, para nao correr 2 installs na mesma arvore. Confira e rode 'bun install'."
+       return ;;
+  esac
+  bun install; rc=$?
+  echo "VIGIA-FIM: bun install saiu rc=$rc"
+}
+
+# Marcas do aviso em ASCII de caixa fixa (casáveis sem -i, em qualquer locale):
+# AUSENTE / VAZIO / PARCIAL nomeiam o estado; VAZIO é o formato do incidente.
+if [ -f package.json ]; then
+  estado="$(estado_deps)"
+  if [ "$estado" != OK ]; then
+    case "$estado" in
+      AUSENTE) desc="node_modules AUSENTE" ;;
+      VAZIO)   desc="node_modules VAZIO (o diretorio existe sem NENHUM pacote -- o formato do incidente de 2026-09-25: a resolucao SOBE ao checkout principal e o teste pode ficar VERDE com as deps de OUTRA arvore)" ;;
+      *)       desc="node_modules PARCIAL (sem resposta pelo caminho local:${estado#PARCIAL})" ;;
+    esac
+    log="${TMPDIR:-/tmp}/bun-install-wt-$$.log"
+    if ! command -v bun >/dev/null 2>&1; then
+      avisos="${avisos}${desc} -> bun FORA DO PATH deste hook: NAO disparei install. Rode 'bun install' antes de test/typecheck. "
+    elif ! printf 'vigia-worktree: %s em %s -- conferindo install EM VOO antes de disparar\n' "$estado" "$(pwd -P)" 2>/dev/null >"$log"; then
+      # "delegado" só com o log aberto: é ele que fecha com a marca do desfecho.
+      avisos="${avisos}${desc} -> NAO ABRI O LOG em $log: NAO disparei install. Rode 'bun install' antes de test/typecheck. "
+    else
+      (disparar_install >>"$log" 2>&1 </dev/null &)
+      avisos="${avisos}${desc} -> 'bun install' delegado ao background (log: $log), que NAO dispara se ja houver outro EM VOO nesta worktree; o log fecha com VIGIA-FIM, VIGIA-EM-VOO ou VIGIA-NAO-CONFERI. NAO rode outro 'bun install' em paralelo (dois na mesma arvore a deixam PARCIAL) e espere o log fechar antes de test/typecheck. Com a arvore parcial o falso vermelho tem DOIS sintomas: 'Cannot find module' (obvio) e erro de RUNTIME do React -- tipicamente 'Cannot read properties of null (reading ...)' de dentro de um componente, que parece bug do SEU codigo. Discriminador, DEPOIS do log fechar: 'bun install --frozen-lockfile' verde em segundos com o lockfile intacto = era a arvore. (CI real: gh pr checks). "
+    fi
+  fi
 fi
 
 # --- 2) swap (macOS: "total = 10240.00M  used = 9100.00M  ...") ---------------
@@ -54,8 +169,9 @@ fi
 # Script ausente (worktree antiga) → silêncio.
 #
 # Teto de 3s no --status: este é o PRIMEIRO subprocess BLOQUEANTE deste hook —
-# os blocos 1)/2)/3) acima nunca bloqueiam (o `bun install` do bloco 1 é
-# explicitamente backgrounded; `sysctl`/`pgrep` sempre retornam na hora). Este
+# os blocos 1)/2)/3) acima nunca bloqueiam (o bloco 1 só LÊ arquivos — a sonda
+# de install em voo e o `bun install` vão juntos ao background;
+# `sysctl`/`pgrep` sempre retornam na hora). Este
 # bloqueia em I/O DE DISCO (git show), justo sob a pressão de swap que o bloco 2
 # existe para reportar — isto NÃO é "o mesmo risco de sempre", é risco NOVO.
 # Sem teto, um `git show` lento pode consumir o timeout:10 do SessionStart
