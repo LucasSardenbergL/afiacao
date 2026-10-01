@@ -1,0 +1,36 @@
+# Invariantes do gate do "hoje" UTC no TypeScript (classe ii do fuso, fase 3).
+# @src: src/lib/gates/hoje-utc.ts
+# @test: src/__tests__/hoje-utc-gate.test.ts
+# Rode: scripts/mutcheck.sh src/lib/gates/hoje-utc.ts src/__tests__/hoje-utc-gate.test.ts scripts/mutcheck.d/hoje-utc.mut
+#
+# A classe (docs/historico/hoje-sp-typescript-e-data-ciclo.md): `toISOString()` fatiado é o dia UTC — das
+# 21:00 às 23:59 BRT já é amanhã —, no navegador e na edge; e na edge (servidor UTC) também `getDate()` &c. e o
+# locale sem `timeZone`. Cada PEGA quebra UMA camada e exige a suíte vermelha: cada forma, cada exclusão que a
+# torna precisa (UTC escrito, fuso escrito, número, navegador), e a baseline nos três sentidos (novo, quitado,
+# contagem).
+#
+# ⚠️ No lado da SUBSTITUIÇÃO o perl interpola: `$x` vira vazio e `@x` também. Escreva `\$`.
+
+# CONTROLE+ : o detector cego. Se isto sobreviver, nenhum outro veredito deste arquivo vale.
+PEGA | controle+: detector cego (nenhum arquivo é analisado)                 | s/if \(!PODE_TER\.test\(fonte\)\) return \[\];/return [];/
+
+# As formas.
+PEGA | forma: a fatia do ISO some                                             | s/if \(chamadaDe\(n, FATIA\) && chamadaDe\(n\.expression\.expression, ISO\)\) marca/if (false) marca/
+PEGA | forma: split('T')[0] — o índice errado                                | s/n\.argumentExpression\.text === "0"/n.argumentExpression.text === "9"/
+PEGA | forma: split('T')[0] — o separador errado                             | s/a\.text === "T"\) marca/a.text === "Z") marca/
+PEGA | forma: o calendário local da edge some                                 | s/if \(chamadaDe\(n, CALENDARIO_LOCAL\)\) marca/if (false) marca/
+PEGA | forma: getDate sai do conjunto                                         | s/"getDate", "getDay"/"getDay"/
+PEGA | forma: new Intl.DateTimeFormat sem fuso some                           | s/name\.text === "DateTimeFormat"/name.text === "NUNCA"/
+
+# As exclusões que tornam a assinatura precisa.
+PEGA | exclusão: getUTC* (UTC escrito) passa a reprovar                       | s/"getDate", "getDay"/"getDate", "getUTCDate", "getDay"/
+PEGA | exclusão: o timeZone escrito deixa de valer                            | s/nome\.text === "timeZone"/nome.text === "NUNCA"/
+PEGA | exclusão: toLocaleDateString com fuso passa a reprovar                 | s/if \(chamadaDe\(n, LOCALE_DE_DATA\) && !temTimeZone\(n\.arguments\)\)/if (chamadaDe(n, LOCALE_DE_DATA))/
+PEGA | exclusão: toLocaleString de NÚMERO passa a reprovar                    | s/&& ehNewDate\(n\.expression\.expression\) //
+PEGA | exclusão: o navegador vira servidor (get* do front reprova)            | s/const servidor = ehEdge\(arquivo\);/const servidor = true;/
+PEGA | exclusão invertida: a edge vira navegador (as formas do servidor somem)| s/const servidor = ehEdge\(arquivo\);/const servidor = false;/
+
+# A baseline: novo, quitado, contagem.
+PEGA | sítio novo passa calado                                                | s/for \(const \[k, n\] of achado\) if/if (false) for (const [k, n] of achado) if/
+PEGA | entrada quitada que fica passa calada                                  | s/for \(const \[k, n\] of esperado\) if/if (false) for (const [k, n] of esperado) if/
+PEGA | a contagem vira presença (o mesmo trecho a mais passa)                 | s/if \(\(esperado\.get\(k\) \?\? 0\) < n\) novos/if (!esperado.has(k)) novos/

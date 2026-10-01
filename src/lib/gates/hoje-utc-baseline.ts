@@ -58,8 +58,6 @@ export const CONHECIDOS: readonly SitioConhecido[] = [
     motivo: '[fase visitas] .eq(scheduled_date) planner carrega amanhã' },
   { arquivo: 'src/lib/analytics-ledger.ts', trecho: 'new Date().toISOString().slice(0, 10)', n: 1, veredito: 'utc-consistente',
     motivo: 'espelha v_dia UTC da RPC analytics_ledger_registrar (chave_dedup)' },
-  { arquivo: 'src/lib/dashboard/sp-date.ts', trecho: 'd.toISOString().slice(0, 10)', n: 1, veredito: 'falso-positivo',
-    motivo: 'addDias, o helper certo: aritmética sobre YYYY-MM-DD ancorada em T00:00:00Z (UTC puro, sem relógio)' },
   { arquivo: 'src/lib/financeiro/aging-helpers.ts', trecho: 'd.toISOString().slice(0, 10)', n: 1, veredito: 'falso-positivo',
     motivo: 'addDays: aritmética sobre YYYY-MM-DD ancorada em UTC (sem relógio); o hoje vem de quem chama' },
   { arquivo: 'src/lib/financeiro/cashflow-format.ts', trecho: 'd.toISOString().slice(0, 10)', n: 1, veredito: 'falso-positivo',
