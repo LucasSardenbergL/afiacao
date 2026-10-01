@@ -65,14 +65,14 @@ db/test-whatsapp-funil.sh                  12  falsificar=18
 # UPDATE só do master (calado para os outros), papel founder só do master. Corpo vivo + ACL de prod + a cadeia
 # das RPCs (0929000234) e das tabelas lidas; as policies sabotadas pelo texto VIVO de pg_policies. Morreu duas
 # vezes fora do núcleo (07-21 e 08-28) re-aplicando a migration de junho (docs/historico/provas-carteira-revividas.md).
-db/test-melhorias-rpcs.sh                  39  falsificar=55
+db/test-melhorias-rpcs.sh                  39  falsificar=57
 # Fornecedor fora da carteira: a régua A (sem venda real sai; exceção vence; cancelado/rascunho/pendente/
 # orçamento não são venda), a limpeza que o cron chama (re-classifica, desliga o eligible, apaga os scores só
 # dos excluídos), a reversão com o gate INTERNO do master (authenticated tem EXECUTE em prod) e a porta dos
 # fundos fechada (o employee não escreve a exceção direto), o ACL de prod (classificar/aplicar só do
 # service_role) e o trigger que deriva is_fornecedor sem decidir a exclusão. Morreu no seed em 06-25: o gatilho
 # da carteira CRIA o score de farmer e o seed o reinseria (docs/historico/provas-carteira-revividas.md).
-db/test-fornecedores-classificacao.sh      26  falsificar=53
+db/test-fornecedores-classificacao.sh      26  falsificar=55
 
 # ── Eixo 2 — FINITUDE MONETÁRIA ───────────────────────────────────────────────────
 # `ausente ≠ zero`: preço que o Omie não mandou não vira R$ 0,00; custo sem cmc
@@ -367,3 +367,15 @@ db/test-hoje-sp-data-ciclo.sh               57  falsificar=17
 # (15 asserts, 8 sabotagens, matriz UTC/SP × C/pt_BR verde; roda local). O job provas-sql está no TETO: em 01/10
 # 02:20–05:00, 16 de 25 runs de PR foram canceladas a 20,2 min (as verdes: 16,9–19,9) — +20 s aqui faria
 # todo PR esbarrar mais. Entra quando o runner for paralelizado (o comentário do ci.yml), não subindo o teto.
+
+# ── Eixo 9 — UNIVERSO DE PEDIDOS (o que conta como VENDA) ──────────────────────────────────
+# A autoridade: status NOT IN ('cancelado','rascunho','pendente','orcamento') + deleted_at IS NULL
+# (src/lib/farmer/universo-pedidos.ts). As 4 migrations de 2026-10-01 (caça, recência, preço e a proposta, sozinha) levam
+# 13 objetos a ela; a prova sobe o schema-snapshot + os predecessores EXATOS da prod (fixture
+# db/fixtures/universo-pedidos-predecessoras-prod-20261001.sql, H01–H15) e, no bloco U, um
+# cliente-sonda por objeto e predicado cujo pedido excluído SÓ por ele tem data DENTRO da janela;
+# mais admissão dos 4 status de venda, gêmeo push/pull, status desconhecido, view-gate sob
+# authenticated, o REFRESH do cron e o bloco M (a PRE aborta e preserva). Irmão estático:
+# scripts/universo-pedidos-sql-gate.ts (vitest). O --falsificar (controle + 17 sabotagens, verde nos
+# DOIS locales em 2026-10-01) fica fora do CI pelo CUSTO: o job provas-sql já leva 15–16 min de 20.
+db/test-universo-pedidos-classe.sh         118  falsificar=fora-do-ci  # 18 rodadas com o snapshot ≈ +3 min num job que já leva 15–16 de 20 (medido 2026-10-01); a falsificação roda local nos 2 locales e o recibo vai no PR
