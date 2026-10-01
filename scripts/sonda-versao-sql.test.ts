@@ -1088,6 +1088,33 @@ describe('divisão de trabalho — o founder dispara, o agente lê', () => {
   });
 });
 
+describe('toda linha que manda RODAR o wrapper leva ON_ERROR_STOP — na SAÍDA, não na fonte', () => {
+  // O `psqlrc-ro` liga read-only, timeout e QUIET, mas NÃO o ON_ERROR_STOP: lido de stdin — e colar
+  // num psql é stdin —, um SQL que falha imprime ERROR e o psql sai 0
+  // (docs/historico/psql-ro-exit-zero-em-sql-que-falhou.md). Até 2026-10-01 o cabeçalho do PASSO 2
+  // por eco e o do passo de leitura escrito pelo disparo mandavam rodar o wrapper SEM a flag. Este
+  // teste lê o que o gerador IMPRIME — o eixo por fora do fiscal estático (`bun run psql:errorstop`),
+  // que lê os literais da fonte e não vê texto montado em tempo de execução.
+  const raiz = () => fixture({ 'edge-a': 'v1.0-alfa', 'edge-b': 'v2.0-beta' });
+  const saidas = [
+    { modo: 'sonda inteira', sql: () => gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a', 'edge-b'], caras: ['edge-b'] }) },
+    {
+      modo: 'sonda --so-leitura',
+      sql: () => gerarSqlDaLeva({ raiz: raiz(), edges: ['edge-a', 'edge-b'], caras: ['edge-b'], soLeitura: true }),
+    },
+    { modo: 'canária', sql: () => gerarSqlDasCanarias({ raiz: RAIZ_REPO, nomes: [], ler: lerCanariasReal }) },
+  ];
+
+  it.each(saidas)('$modo', ({ sql }) => {
+    const linhas = sql()
+      .split('\n')
+      .filter((l) => l.includes('afiacao/psql-ro'));
+    // Controle POSITIVO: sem ele a negativa abaixo passaria medindo zero linhas.
+    expect(linhas.length).toBeGreaterThan(0);
+    expect(linhas.filter((l) => !l.includes('psql-ro -v ON_ERROR_STOP=1'))).toEqual([]);
+  });
+});
+
 describe('subconjunto CARO — a trava é CASE, nunca WHERE', () => {
   const raiz = () => fixture({ barata: 'v1.0-alfa', cara: 'v2.0-beta' });
   const blocoCaro = (sql: string) => sql.slice(sql.indexOf('-- PASSO 3'));

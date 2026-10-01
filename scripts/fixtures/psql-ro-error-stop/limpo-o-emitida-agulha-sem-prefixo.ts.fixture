@@ -1,0 +1,6 @@
+// A âncora SEM prefixo não é caminho de ninguém: é agulha de busca (`linha.includes(...)`), forma
+// comum em teste e em filtro de log. Só o PREFIXO (`~`, `$HOME`, `/Users/…`, interpolação) torna o
+// texto um caminho rodável — sem esta fixture, ler a âncora sozinha como comando passaria batido.
+export function linhasDoWrapper(saida: string): string[] {
+  return saida.split('\n').filter((l) => l.includes('/.config/afiacao/psql-ro'));
+}

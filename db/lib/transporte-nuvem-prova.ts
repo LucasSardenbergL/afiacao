@@ -10,6 +10,8 @@
  *   bun db/lib/transporte-nuvem-prova.ts consultas <dir>   # grava <dir>/<nome>.sql
  *   bun db/lib/transporte-nuvem-prova.ts sql               # o SQL do transporte (a 1ª linha é a trava)
  *   bun db/lib/transporte-nuvem-prova.ts ler <arq> <dir>   # valida; grava <dir>/<nome>.nuvem
+ *   bun db/lib/transporte-nuvem-prova.ts sql-sondas        # o SQL com o preâmbulo das sondas executivas
+ *   bun db/lib/transporte-nuvem-prova.ts ler-sondas <arq>  # valida; imprime `<nome>|<desfecho>` por linha
  *
  * O `.nuvem` sai no formato exato do `psql -A -F '|' -t` (cada linha terminada em `\n`, nada para
  * zero linhas), para a prova comparar com `cmp`. Recusa do transporte: exit 3 + a marca no stderr.
@@ -22,9 +24,33 @@ import {
   gerarSqlNuvem,
   lerArquivoDadosNuvem,
   lerDadosNuvem,
+  type SondasExecutivas,
 } from '../../scripts/lib/transporte-nuvem';
 
 const CONSUMIDOR = 'prova-transporte';
+const CONSUMIDOR_SONDAS = 'prova-sondas';
+
+/**
+ * As sondas rodam COMO `prova_alvo` pelo canal `prova_canal` — o desenho de prod (`postgres` membro
+ * de `claude_ro`). O canal LÊ `prova_secreta` e o alvo não: sonda que rodasse como o canal "passaria".
+ */
+const SONDAS: SondasExecutivas = {
+  papel: 'prova_alvo',
+  sondas: {
+    // a negação esperada, rodando como o alvo — a mesma SQLSTATE do SET ROLE negado (o falso verde)
+    negada: { sql: 'SELECT segredo FROM prova_secreta' },
+    // o alcance que tem de existir, com o valor de volta (uma contagem)
+    permitida: { sql: 'SELECT count(*) FROM prova_aberta', devolverValor: true },
+    // quem roda a sonda: tem de ser o alvo, não o canal
+    quem: { sql: 'SELECT current_user', devolverValor: true },
+    // RODA e lê um segredo que o alvo alcança — sem `devolverValor`, o dado não pode sair do banco
+    sem_valor: { sql: 'SELECT segredo FROM prova_segredo_do_alvo' },
+    // escrita dentro da sonda: a trava (READ ONLY) barra, e nada persiste
+    escrita: { sql: 'INSERT INTO prova_escrita VALUES (77)' },
+  },
+};
+/** Depois do preâmbulo, o `WITH` tem de rodar de volta como o canal. */
+const CONSULTAS_SONDAS: Consultas = { depois: 'SELECT current_user' };
 
 const CONSULTAS: Consultas = {
   // aspas, barra, parênteses, vírgula, espaço, vazio × NULL, quebra de linha DENTRO do campo,
@@ -78,7 +104,32 @@ function main(argv: string[]): number {
     }
     return 0;
   }
-  process.stderr.write('uso: transporte-nuvem-prova.ts consultas <dir> | sql | ler <arquivo> <dir>\n');
+  if (modo === 'sql-sondas') {
+    process.stdout.write(`${gerarSqlNuvem(CONSULTAS_SONDAS, CONSUMIDOR_SONDAS, SONDAS)}\n`);
+    return 0;
+  }
+  if (modo === 'ler-sondas' && a) {
+    let dados: ReturnType<typeof lerDadosNuvem>;
+    try {
+      dados = lerDadosNuvem(
+        lerArquivoDadosNuvem(a),
+        { consultas: CONSULTAS_SONDAS, consumidor: CONSUMIDOR_SONDAS, sondas: SONDAS },
+        new Date(),
+      );
+    } catch (e) {
+      process.stderr.write(`${(e as Error).message}\n`);
+      return 3;
+    }
+    const linhas = [...dados.sondas].map(([nome, r]) =>
+      r.tipo === 'rodou' ? `${nome}|rodou|${r.valor}` : `${nome}|erro|${r.sqlstate}`,
+    );
+    linhas.push(`depois|${dados.saidas.get('depois') ?? '(sem linha)'}`);
+    process.stdout.write(`${linhas.sort().join('\n')}\n`);
+    return 0;
+  }
+  process.stderr.write(
+    'uso: transporte-nuvem-prova.ts consultas <dir> | sql | ler <arquivo> <dir> | sql-sondas | ler-sondas <arquivo>\n',
+  );
   return 2;
 }
 
