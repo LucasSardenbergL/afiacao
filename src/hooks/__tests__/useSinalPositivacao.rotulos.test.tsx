@@ -459,3 +459,17 @@ describe('o alfabeto do evento não muda por refactor', () => {
     conferirAlfabeto(eventos()[0]);
   });
 });
+
+describe('a_positivar — a CONTAGEM da carteira, não o tamanho da lista que a RPC corta em 200', () => {
+  it('a_positivar = total_eligible − positivados, mesmo com a lista vazia', async () => {
+    // O `length` da lista levava 200 à série com 1.179–2.388 clientes sem pedido (medido em
+    // 2026-09-30). Aqui a lista vem VAZIA e a conta é 40 − 22: o `length` daria 0, e a
+    // asserção separa os dois. Ver docs/historico/positivacao-win-back-era-novos.md.
+    resolverPapel({ data: { commercial_role: 'farmer' }, error: null });
+
+    montar();
+
+    await waitFor(() => expect(eventos()).toHaveLength(1));
+    expect(eventos()[0].a_positivar).toBe(18);
+  });
+});

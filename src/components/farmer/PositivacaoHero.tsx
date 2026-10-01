@@ -27,6 +27,23 @@ function KpiCard({ label, value, sub, info }: { label: string; value: string; su
 }
 
 /**
+ * `novos_clientes_positivados` conta o cliente cuja 1ª compra DA VIDA cai no mês: cliente novo.
+ * O placar do farmer exibia esse número como "Recuperados (win-back) — voltaram a comprar no
+ * mês", e o retorno de quem sumiu nunca existiu na RPC. Um card só para os dois placares: o
+ * mesmo número com o mesmo nome. Ver docs/historico/positivacao-win-back-era-novos.md.
+ */
+function NovosNaCarteiraCard({ novos }: { novos: number }) {
+  return (
+    <KpiCard
+      label="Novos na carteira (MTD)"
+      value={String(novos)}
+      sub="1ª compra neste mês"
+      info="Proxy de aquisição: clientes ATUALMENTE atribuídos a você cuja 1ª compra (de toda a história) caiu neste mês. Pode mudar se a carteira for reatribuída — ainda não é base de comissão."
+    />
+  );
+}
+
+/**
  * Só a APRESENTAÇÃO do placar. O `carteira.positivacao_vista` morava aqui e, por isso, só existia
  * no ramo de sucesso: quem não recebia `kpis` (leitura falhou, sem rede) não emitia nada e a série
  * de adoção ficava sem denominador. O evento passou para `useSinalPositivacao`, que enxerga os
@@ -46,12 +63,7 @@ export function PositivacaoHero({ kpis, isHunter }: { kpis: PositivacaoKpis; isH
     const partNovos = `${pctNovos(kpis.novosPositivados, kpis.positivados)}%`;
     return (
       <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
-        <KpiCard
-          label="Novos na carteira (MTD)"
-          value={String(kpis.novosPositivados)}
-          sub="1ª compra neste mês"
-          info="Proxy de aquisição: clientes ATUALMENTE atribuídos a você cuja 1ª compra (de toda a história) caiu neste mês. Pode mudar se a carteira for reatribuída — ainda não é base de comissão."
-        />
+        <NovosNaCarteiraCard novos={kpis.novosPositivados} />
         <KpiCard label="Receita da carteira (MTD)" value={receita} sub="faturamento total da sua carteira no mês" />
         <KpiCard label="Participação de novos" value={partNovos} sub="dos seus compradores do mês" />
       </div>
@@ -65,12 +77,13 @@ export function PositivacaoHero({ kpis, isHunter }: { kpis: PositivacaoKpis; isH
       <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
         <KpiCard label="Positivação MTD" value={`${kpis.pctPositivacao}%`} sub={`${kpis.positivados}/${kpis.totalEligible} da carteira`} />
         <KpiCard label="Receita MTD" value={receita} sub="faturamento da carteira no mês" />
-        <KpiCard label="Clientes a positivar" value={String(kpis.aPositivar.length)} sub="sem pedido no mês" />
+        {/* O total, não `aPositivar.length`: a RPC corta a lista em 200. */}
+        <KpiCard label="Clientes a positivar" value={String(kpis.aPositivarTotal)} sub="sem pedido no mês" />
       </div>
       {/* Linha secundária (KPIs de apoio) */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <KpiCard label="Cobertura de contato" value={`${kpis.pctCobertura}%`} sub="contatados no mês" />
-        <KpiCard label="Recuperados (win-back)" value={String(kpis.novosPositivados)} sub="voltaram a comprar no mês" />
+        <NovosNaCarteiraCard novos={kpis.novosPositivados} />
         <KpiCard label="Recência crítica" value={String(kpis.recenciaCritica)} sub="risco alto / atrasados" />
         <KpiCard label="Ticket médio MTD" value={ticket} sub="receita ÷ compradores no mês" />
       </div>

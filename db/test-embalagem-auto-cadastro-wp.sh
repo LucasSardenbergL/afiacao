@@ -66,16 +66,16 @@ DO $$
 DECLARE n_grupos int; n_wp04_grupo uuid; n_wp99 int; n_wp98 int; n_col int;
 BEGIN
   SELECT count(DISTINCT grupo_id) INTO n_grupos FROM sku_embalagem_equivalencia WHERE empresa='oben' AND ativo;
-  IF n_grupos <> 3 THEN RAISE EXCEPTION 'FAIL A1: esperava 3 grupos (WP01,WP04,WP12), veio %', n_grupos; END IF;
+  IF n_grupos IS DISTINCT FROM 3 THEN RAISE EXCEPTION 'FAIL A1: esperava 3 grupos (WP01,WP04,WP12), veio %', n_grupos; END IF;
   -- REUSO: WP04 mantém o grupo original
   SELECT grupo_id INTO n_wp04_grupo FROM sku_embalagem_equivalencia WHERE sku_codigo_omie='1041';
-  IF n_wp04_grupo <> 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' THEN RAISE EXCEPTION 'FAIL A2: WP04 trocou de grupo %', n_wp04_grupo; END IF;
+  IF n_wp04_grupo IS DISTINCT FROM 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' THEN RAISE EXCEPTION 'FAIL A2: WP04 trocou de grupo %', n_wp04_grupo; END IF;
   SELECT count(*) INTO n_wp99 FROM sku_embalagem_equivalencia WHERE sku_codigo_omie IN ('1991','1992');
-  IF n_wp99 <> 0 THEN RAISE EXCEPTION 'FAIL A3: WP99 (GL inativo) entrou (%)', n_wp99; END IF;
+  IF n_wp99 IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'FAIL A3: WP99 (GL inativo) entrou (%)', n_wp99; END IF;
   SELECT count(*) INTO n_wp98 FROM sku_embalagem_equivalencia WHERE sku_codigo_omie='1981';
-  IF n_wp98 <> 0 THEN RAISE EXCEPTION 'FAIL A4: WP98 (só QT) entrou'; END IF;
+  IF n_wp98 IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'FAIL A4: WP98 (só QT) entrou'; END IF;
   SELECT count(*) INTO n_col FROM sku_embalagem_equivalencia WHERE sku_codigo_omie='1123';
-  IF n_col <> 0 THEN RAISE EXCEPTION 'FAIL A5: par colacor entrou'; END IF;
+  IF n_col IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'FAIL A5: par colacor entrou'; END IF;
 END $$;
 SQL
 echo "   ✓ A"
@@ -87,7 +87,7 @@ DECLARE f_qt numeric; f_gl numeric; u text;
 BEGIN
   SELECT fator_para_base, unidade_base INTO f_qt, u FROM sku_embalagem_equivalencia WHERE sku_codigo_omie='1001';
   SELECT fator_para_base INTO f_gl FROM sku_embalagem_equivalencia WHERE sku_codigo_omie='1002';
-  IF f_qt <> 1 OR f_gl <> 4 OR u <> 'QT' THEN RAISE EXCEPTION 'FAIL B: WP01 QT=% GL=% u=%', f_qt, f_gl, u; END IF;
+  IF f_qt IS DISTINCT FROM 1 OR f_gl IS DISTINCT FROM 4 OR u IS DISTINCT FROM 'QT' THEN RAISE EXCEPTION 'FAIL B: WP01 QT=% GL=% u=%', f_qt, f_gl, u; END IF;
 END $$;
 SQL
 echo "   ✓ B"
@@ -98,7 +98,7 @@ DO $$
 DECLARE r jsonb;
 BEGIN
   r := reposicao_sincronizar_embalagem_wp('oben');
-  IF (r->>'linhas_inseridas')::int <> 0 THEN RAISE EXCEPTION 'FAIL C: 2ª run inseriu % (esperado 0)', r->>'linhas_inseridas'; END IF;
+  IF (r->>'linhas_inseridas')::int IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'FAIL C: 2ª run inseriu % (esperado 0)', r->>'linhas_inseridas'; END IF;
 END $$;
 SQL
 echo "   ✓ C"
