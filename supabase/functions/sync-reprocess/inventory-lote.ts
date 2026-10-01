@@ -114,6 +114,81 @@ export function planejarEscritaInventario(
   return plano;
 }
 
+// ════════ Zeramento de quem SAIU da lista (2026-10-01) ════════
+// A lista padrão do ListarPosEstoque (cExibeTodos "N", "sem movimento" fica de fora) traz quem
+// tem saldo ≠ 0 — medido: 405/405 SKUs com leitura fresca do modo "S" batem (311 com físico ≠ 0,
+// todos na lista; 94 com físico 0, todos fora). Quem esgota SAI da lista e nenhum writer de
+// posição grava o zero; até aqui quem zerava era o `quantidade_estoque || 0` do passo de
+// produtos (77 das 78 posições fora da lista estavam zeradas só por ele). O zero agora é do
+// dono, e só com listagem COMPLETA: ausência numa listagem parcial não prova nada.
+
+/** Teto de raio: acima de max(MIN, FRACAO × posições) a zerar, nada é zerado (fail-closed). */
+export const TETO_ZERAMENTO_MIN = 20;
+export const TETO_ZERAMENTO_FRACAO = 0.05;
+
+export type CompletudeListagem = { completa: true } | { completa: false; motivo: string };
+
+// `tamanhos` = itens CRUS de cada página não-vazia, na ordem. Página intermediária curta é buraco;
+// última página CHEIA é evidência de continuação (o total declarado pode ter subestimado).
+// `itensIlegiveis` = itens que o parser recusou: podem ser produtos COM saldo, e a ausência deles
+// no snapshot não prova zero.
+export function avaliarCompletudeListagem(
+  tamanhos: number[],
+  porPagina: number,
+  itensIlegiveis = 0,
+): CompletudeListagem {
+  if (tamanhos.length === 0) return { completa: false, motivo: "nenhuma página lida" };
+  if (itensIlegiveis > 0) {
+    return { completa: false, motivo: `${itensIlegiveis} item(ns) ilegível(is) na listagem — a ausência deles não prova saldo 0` };
+  }
+  for (let i = 0; i < tamanhos.length - 1; i++) {
+    if (tamanhos[i] < porPagina) {
+      return { completa: false, motivo: `página ${i + 1} veio com ${tamanhos[i]} de ${porPagina} antes da última` };
+    }
+  }
+  if (tamanhos[tamanhos.length - 1] >= porPagina) {
+    return { completa: false, motivo: `última página cheia (${porPagina}) — pode haver continuação` };
+  }
+  return { completa: true };
+}
+
+// Linhas de estoque 0 (mesma forma das stockRows — vão no mesmo upsert) para quem tem estoque
+// local ≠ 0, está resolvido sem ambiguidade e NÃO veio na listagem. Pulado inteiro (rows vazias +
+// motivo) se a listagem não é completa, se o snapshot veio vazio ou se o raio passa do teto.
+export function planejarZeramentoForaDaLista(
+  posicoes: Map<number, PosicaoEstoque>,
+  locaisComEstoque: LinhaProdutoLocal[],
+  completude: CompletudeListagem,
+  account: string,
+  nowIso: string,
+): { rows: PlanoEscritaInventario["stockRows"]; candidatos: number; pulado: string | null } {
+  const idByCod = buildProductIdMap(locaisComEstoque);
+  const catalogoPorCod = montarCatalogoPorCod(locaisComEstoque, idByCod);
+  const rows: PlanoEscritaInventario["stockRows"] = [];
+  const vistos = new Set<number>(); // duplicata no mesmo upsert = 21000 no chunk inteiro
+  for (const l of locaisComEstoque) {
+    if (l.omie_codigo_produto == null || l.id == null || l.estoque == null) continue;
+    const cod = Number(l.omie_codigo_produto);
+    if (idByCod.get(cod) !== String(l.id)) continue; // ambíguo (null) ou linha não-vencedora
+    if (Number(l.estoque) === 0 || posicoes.has(cod) || vistos.has(cod)) continue;
+    vistos.add(cod);
+    const cat = catalogoPorCod.get(cod);
+    if (!cat) continue; // sem codigo/descricao: nunca propõe NULL em NOT NULL
+    rows.push({ omie_codigo_produto: cod, account, codigo: cat.codigo, descricao: cat.descricao, estoque: 0, updated_at: nowIso });
+  }
+
+  const candidatos = rows.length;
+  if (posicoes.size === 0) {
+    return { rows: [], candidatos, pulado: "snapshot de posição vazio — ausência de tudo não é zero de tudo" };
+  }
+  if (!completude.completa) return { rows: [], candidatos, pulado: `listagem incompleta: ${completude.motivo}` };
+  const teto = Math.max(TETO_ZERAMENTO_MIN, Math.ceil(posicoes.size * TETO_ZERAMENTO_FRACAO));
+  if (candidatos > teto) {
+    return { rows: [], candidatos, pulado: `${candidatos} a zerar passa do teto de ${teto} — nada zerado` };
+  }
+  return { rows, candidatos, pulado: null };
+}
+
 // Partição dos candidatos a product_costs contra o conjunto que JÁ tem linha:
 // - existente → UPDATE de payload MÍNIMO {product_id, cmc, updated_at} (upsert onConflict
 //   product_id) — NUNCA carrega cost_price/cost_source/cost_confidence (não promove proveniência);

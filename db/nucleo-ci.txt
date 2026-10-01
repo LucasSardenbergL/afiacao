@@ -179,6 +179,11 @@ db/test-desconto-backfill-aplicar.sh       30
 # paralelizado (#2713, 3 partes; teto 20 de novo no #2721, com as partes medidas): a volta é medida no
 # CI do PR que a fez, na parte em que a prova cai (`NUCLEO_PARTE=i/3 bash db/roda-nucleo-ci.sh --lista`).
 db/test-pre-anti-deriva-concorrencia.sh    56  falsificar=8
+# Fecho da porta aplicar_sql e do ledger por ALLOWLIST (2026-10-01): service_role e sandbox_exec_<ref>
+# tinham EXECUTE na porta (SECDEF=postgres) e INSERT no ledger — SQL arbitrário como postgres. O delta
+# db/aplicar-sql-acl-allowlist.sql tira todo GRANT fora do dono e do claude_rw; a PÓS aborta se um
+# sobra (provado com o apply numa transação, como o executor). Deriva de prod recriada na fixture.
+db/test-aplicar-sql-acl.sh                 18  falsificar=2
 
 # ── Eixo 5 — VEREDITO DE DEPLOY ──────────────────────────
 # O SQL que responde "a edge está REALMENTE no ar?". O dano aqui é acreditar num
