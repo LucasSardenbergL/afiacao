@@ -288,7 +288,11 @@ describe('o repo', () => {
   const skills = REPO.arquivos.filter((a) => a.caminho.startsWith('.claude/skills/'));
 
   it('10 migrations não são o repo → INDETERMINADO só pelo piso de migrations', () => {
-    soPorEste([...novas, ...velhas.slice(0, 10 - novas.length), ...skills], REPO.corpos, 'migrations');
+    // Math.max: com mais de 10 migrations a partir do corte, `slice(0, negativo)` devolvia quase TODAS as
+    // velhas, o total passava do piso e o teste reprovava — a main tinha exatamente 10 (2026-10-01), e a
+    // 1ª migration nova de qualquer PR o quebrava. Poucas migrations (todas as do corte, nenhuma velha)
+    // seguem abaixo do piso de 700.
+    soPorEste([...novas, ...velhas.slice(0, Math.max(0, 10 - novas.length)), ...skills], REPO.corpos, 'migrations');
   });
 
   it('as migrations do corte não lidas → INDETERMINADO só pelo piso do corte', () => {
