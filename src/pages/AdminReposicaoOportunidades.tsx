@@ -2,7 +2,7 @@ import { useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { addDias, hojeSP } from "@/lib/dashboard/sp-date";
+import { addDias, hojeSP } from "@/lib/time/sp-day";
 import { toast } from "sonner";
 import { Sparkles, RefreshCw, PlayCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";

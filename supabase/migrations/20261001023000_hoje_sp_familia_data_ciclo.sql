@@ -933,6 +933,426 @@ BEGIN
 END;
 $function$;
 
+CREATE OR REPLACE FUNCTION public.atualizar_parametros_numericos_skus(p_empresa text, p_run_id uuid DEFAULT NULL::uuid)
+ RETURNS integer
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+DECLARE
+  atualizados int := 0;
+  v_mult numeric := COALESCE((SELECT value::numeric FROM public.company_config WHERE key='param_auto_fusivel_mult'), 3);
+BEGIN
+  PERFORM set_config('app.param_auto', CASE WHEN p_run_id IS NULL THEN 'manual' ELSE 'auto' END, true);
+
+  DROP TABLE IF EXISTS tmp_param_decidido;
+  CREATE TEMP TABLE tmp_param_decidido ON COMMIT DROP AS
+  WITH base AS (
+    SELECT sp.id, sp.empresa, sp.sku_codigo_omie,
+           sp.ponto_pedido AS pp_antes, sp.estoque_minimo AS min_antes, sp.estoque_maximo AS max_antes,
+           sp.estoque_seguranca AS ss_antes, sp.cobertura_alvo_dias AS cob_antes,
+           sp.habilitado_reposicao_automatica AS habilitado,
+           COALESCE(sp.tipo_reposicao,'automatica') AS tipo,
+           v.sku_descricao, v.fornecedor_nome,
+           v.estoque_minimo_sugerido AS min_sug, v.ponto_pedido_sugerido AS pp_sug,
+           v.estoque_maximo_sugerido AS max_sug, v.estoque_seguranca_sugerido AS ss_sug,
+           v.cobertura_alvo_dias AS cob_sug,
+           v.demanda_media_diaria, v.demanda_sigma_diario, v.coef_variacao_ordem, v.num_ordens,
+           v.valor_total_90d, v.lead_time_medio, v.lead_time_desvio, v.lt_p95_dias, v.fonte_leadtime,
+           v.z_aplicado, v.classe_consolidada,
+           pin.ponto_pedido_rejeitado, pin.estoque_maximo_rejeitado
+    FROM public.sku_parametros sp
+    JOIN public.v_sku_parametros_sugeridos v
+      ON v.empresa = sp.empresa AND v.sku_codigo_omie = sp.sku_codigo_omie
+    LEFT JOIN public.reposicao_param_pin pin
+      ON pin.empresa = sp.empresa AND pin.sku_codigo_omie = sp.sku_codigo_omie::text
+    WHERE sp.empresa = p_empresa
+  )
+  SELECT b.*,
+    CASE
+      WHEN b.pp_sug IS NULL OR b.max_sug IS NULL OR b.min_sug IS NULL
+           OR b.ss_sug IS NULL OR b.cob_sug IS NULL THEN 'sem_mudanca'
+      WHEN b.pp_sug = 'NaN'::numeric OR b.max_sug = 'NaN'::numeric OR b.min_sug = 'NaN'::numeric
+           OR b.ss_sug = 'NaN'::numeric OR b.cob_sug = 'NaN'::numeric
+           OR b.min_sug < 0 OR b.pp_sug < 0 OR b.max_sug < 0 OR b.ss_sug < 0
+           OR b.max_sug < b.pp_sug OR b.pp_sug < b.min_sug OR b.cob_sug <= 0 THEN 'bloqueado_validacao'
+      WHEN b.max_antes IS NULL OR b.max_antes <= 0 THEN 'bloqueado_validacao'
+      WHEN b.ponto_pedido_rejeitado IS NOT NULL
+           AND round(b.pp_sug) = round(b.ponto_pedido_rejeitado)
+           AND round(b.max_sug) = round(b.estoque_maximo_rejeitado) THEN 'pinado'
+      WHEN round(b.pp_sug) = round(b.pp_antes) AND round(b.max_sug) = round(b.max_antes) THEN 'sem_mudanca'
+      WHEN b.max_antes > 0 AND round(b.max_sug) > v_mult * round(b.max_antes) THEN 'segurado'
+      ELSE 'aplicado'
+    END AS status
+  FROM base b;
+
+  UPDATE public.sku_parametros sp SET
+    sku_descricao = COALESCE(d.sku_descricao, sp.sku_descricao),
+    fornecedor_nome = COALESCE(d.fornecedor_nome, sp.fornecedor_nome),
+    demanda_media_diaria = d.demanda_media_diaria,
+    demanda_desvio_padrao = d.demanda_sigma_diario,
+    demanda_coef_variacao = d.coef_variacao_ordem,
+    demanda_dias_com_movimento = d.num_ordens,
+    valor_vendido_90d = d.valor_total_90d,
+    lt_medio_dias_uteis = d.lead_time_medio,
+    lt_desvio_padrao_dias = d.lead_time_desvio,
+    lt_p95_dias = d.lt_p95_dias,
+    fonte_leadtime = d.fonte_leadtime,
+    z_score = d.z_aplicado,
+    estoque_seguranca   = CASE WHEN d.status='aplicado' THEN d.ss_sug  ELSE sp.estoque_seguranca END,
+    ponto_pedido        = CASE WHEN d.status='aplicado' THEN d.pp_sug  ELSE sp.ponto_pedido END,
+    estoque_minimo      = CASE WHEN d.status='aplicado' THEN d.min_sug ELSE sp.estoque_minimo END,
+    cobertura_alvo_dias = CASE WHEN d.status='aplicado' THEN d.cob_sug ELSE sp.cobertura_alvo_dias END,
+    estoque_maximo      = CASE WHEN d.status='aplicado' THEN d.max_sug ELSE sp.estoque_maximo END,
+    ultima_atualizacao_calculo = NOW()
+  FROM tmp_param_decidido d WHERE sp.id = d.id;
+
+  SELECT count(*) FILTER (WHERE status='aplicado') INTO atualizados FROM tmp_param_decidido;
+
+  DELETE FROM public.reposicao_param_pin p
+  USING tmp_param_decidido d
+  WHERE p.empresa = d.empresa AND p.sku_codigo_omie = d.sku_codigo_omie::text
+    AND d.status = 'aplicado' AND d.ponto_pedido_rejeitado IS NOT NULL;
+
+  IF p_run_id IS NOT NULL THEN
+    INSERT INTO public.reposicao_param_auto_log (
+      run_id, empresa, sku_codigo_omie, sku_descricao, status,
+      ponto_pedido_antes, ponto_pedido_depois, estoque_minimo_antes, estoque_minimo_depois,
+      estoque_maximo_antes, estoque_maximo_depois, estoque_seguranca_antes, estoque_seguranca_depois,
+      cobertura_antes, cobertura_depois,
+      ponto_pedido_sugerido, estoque_maximo_sugerido,   -- NOVO: o que o cálculo propôs (p/ segurado = o barrado)
+      demanda_media_diaria, lt_medio_dias_uteis, classe_consolidada, z_score
+    )
+    SELECT p_run_id, d.empresa, d.sku_codigo_omie::text, d.sku_descricao, d.status,
+      d.pp_antes,  CASE WHEN d.status='aplicado' THEN d.pp_sug  ELSE d.pp_antes END,
+      d.min_antes, CASE WHEN d.status='aplicado' THEN d.min_sug ELSE d.min_antes END,
+      d.max_antes, CASE WHEN d.status='aplicado' THEN d.max_sug ELSE d.max_antes END,
+      d.ss_antes,  CASE WHEN d.status='aplicado' THEN d.ss_sug  ELSE d.ss_antes END,
+      d.cob_antes, CASE WHEN d.status='aplicado' THEN d.cob_sug ELSE d.cob_antes END,
+      d.pp_sug, d.max_sug,   -- NOVO: sugerido cru (independe do status; p/ segurado NÃO é depois=antes)
+      d.demanda_media_diaria, d.lead_time_medio, d.classe_consolidada, d.z_aplicado
+    FROM tmp_param_decidido d
+    WHERE d.status IN ('aplicado','segurado','pinado','bloqueado_validacao')
+      AND d.habilitado = true AND d.tipo = 'automatica';
+
+    WITH em_transito AS (
+      SELECT pcs2.empresa, pci.sku_codigo_omie::text AS sku_codigo_omie, SUM(pci.qtde_final) AS qtde
+      FROM public.pedido_compra_item pci
+      JOIN public.pedido_compra_sugerido pcs2 ON pcs2.id = pci.pedido_id
+      WHERE pcs2.empresa = p_empresa
+        AND pcs2.status IN ('aprovado_aguardando_disparo','disparado','disparado_simulado','concluido_recebido')  -- [SIMULADO] PO real do dry_run
+        AND pcs2.data_ciclo >= ((now() AT TIME ZONE 'America/Sao_Paulo')::date - INTERVAL '7 days')
+      GROUP BY pcs2.empresa, pci.sku_codigo_omie
+    ),
+    posicao AS (
+      SELECT l.id AS log_id,
+             (COALESCE(sea.estoque_fisico,0) + COALESCE(sea.estoque_pendente_entrada,0)
+                + COALESCE(et.qtde,0)) AS pos,
+             ip.custo, ip.custo_fonte
+      FROM public.reposicao_param_auto_log l
+      LEFT JOIN public.sku_estoque_atual sea
+        ON sea.empresa = l.empresa AND sea.sku_codigo_omie = l.sku_codigo_omie
+      LEFT JOIN em_transito et
+        ON et.empresa = l.empresa AND et.sku_codigo_omie = l.sku_codigo_omie
+      LEFT JOIN LATERAL (
+        SELECT CASE WHEN ip0.cmc > 0 THEN ip0.cmc
+                    WHEN ip0.preco_medio > 0 THEN ip0.preco_medio
+                    ELSE NULL END AS custo,
+               CASE WHEN ip0.cmc > 0 THEN 'cmc'
+                    WHEN ip0.preco_medio > 0 THEN 'preco_medio'
+                    ELSE NULL END AS custo_fonte
+        FROM public.inventory_position ip0
+        WHERE ip0.omie_codigo_produto::text = l.sku_codigo_omie
+          AND ip0.account = lower(p_empresa)
+        LIMIT 1
+      ) ip ON true
+      WHERE l.run_id = p_run_id
+        AND l.status IN ('aplicado','segurado')
+    )
+    UPDATE public.reposicao_param_auto_log l SET
+      custo_unitario   = p.custo,
+      custo_fonte      = p.custo_fonte,
+      qtde_compra_antes  = CASE WHEN p.pos <= l.ponto_pedido_antes  THEN GREATEST(0, l.estoque_maximo_antes  - p.pos) ELSE 0 END,
+      qtde_compra_depois = CASE WHEN p.pos <= l.ponto_pedido_depois THEN GREATEST(0, l.estoque_maximo_depois - p.pos) ELSE 0 END,
+      impacto_rs = CASE WHEN p.custo IS NULL THEN NULL ELSE
+        ( (CASE WHEN p.pos <= l.ponto_pedido_depois THEN GREATEST(0, l.estoque_maximo_depois - p.pos) ELSE 0 END)
+        - (CASE WHEN p.pos <= l.ponto_pedido_antes  THEN GREATEST(0, l.estoque_maximo_antes  - p.pos) ELSE 0 END)
+        ) * p.custo END
+    FROM posicao p
+    WHERE l.id = p.log_id;
+  END IF;
+
+  RETURN atualizados;
+END;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.reposicao_pos_candidatos(p_empresa text)
+ RETURNS TABLE(pedido_id bigint, omie_codigo_pedido text, data_ciclo date, idade_dias integer, na_janela_7d boolean, valor_total numeric, itens_sem_valor integer, visto_status text, po_no_espelho boolean, fornecedor_nome text, canal_usado text, portal_protocolo text, status_envio_portal text, resposta_canal jsonb, tem_protocolo boolean, tem_status_portal boolean, tem_resposta_canal boolean, tem_canal boolean, algum_sinal_de_canal boolean, marcador_run_id uuid, marcador_seq bigint, marcador_finalizado_em timestamp with time zone, apurado_em timestamp with time zone)
+ LANGUAGE plpgsql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+DECLARE
+  v_empresa public.empresa_reposicao := upper(btrim(p_empresa))::public.empresa_reposicao;
+BEGIN
+  -- Gate cron-or-staff NULL-aware: uid presente exige staff; uid NULL (service_role/cron SQL-local) passa.
+  -- ⚠️ NUNCA gatear por auth.role()='service_role' — o pg_cron roda como postgres SEM JWT (auth.role()=NULL)
+  -- e o gate mataria o cron em SILÊNCIO (reposicao.md: mordido 2x, migrations 20260627130000/20260627200000).
+  IF (SELECT auth.uid()) IS NOT NULL
+     -- ⚠️ IS NOT TRUE, não NOT(...): pode_ver_carteira_completa() era TRI-STATE (o gate ANTERIOR;
+     -- private.cap_compras_ler faz COALESCE e nunca devolve NULL, entao IS NOT TRUE fica como defesa em
+     -- profundidade). Para um `employee` SEM linha em commercial_roles ela retornava NULL, e `NOT NULL` =
+     -- NULL — o IF não entrava e a SECURITY DEFINER ENTREGAVA TUDO (protocolo, fornecedor, JSON cru).
+     -- Bypass real (Codex v11), e viola o fail-closed do CLAUDE.md. IS NOT TRUE trata NULL como negado e
+     -- preserva o uid NULL do cron, que é barrado antes pelo primeiro AND.
+     AND (SELECT private.cap_compras_ler((SELECT auth.uid()))) IS NOT TRUE THEN
+    RAISE EXCEPTION 'reposicao_pos_candidatos: acesso negado' USING ERRCODE = '42501';
+  END IF;
+
+  RETURN QUERY
+  WITH marcador AS (
+    -- "último completo válido" = maior fencing seq com volume_ok TRUE. Sem marcador → CROSS JOIN vazio →
+    -- retorna VAZIO. Fail-closed: sem base de verdade não se classifica ninguém como ausente.
+    -- `finalizado_em` entra aqui para o guard temporal do WHERE (ver abaixo).
+    -- ⚠️ SEM LIMITE DE FRESCOR, DE PROPÓSITO: filtrar marcador velho aqui trocaria a lista incompleta
+    -- por uma lista VAZIA — o mesmo silêncio, com menos informação. O frescor vira DADO EXPOSTO
+    -- (marcador_finalizado_em/apurado_em) e quem julga é o consumidor, que pode dizer "cego há Xh".
+    SELECT r.run_id, r.seq, r.finalizado_em
+    FROM public.reposicao_pedidos_compra_run r
+    WHERE r.empresa = v_empresa AND r.status = 'ok' AND r.volume_ok IS TRUE
+    ORDER BY r.seq DESC
+    LIMIT 1
+  ),
+  base AS (
+    SELECT
+      p.id AS pedido_id,
+      p.omie_pedido_compra_id AS omie_codigo_pedido,
+      p.data_ciclo::date AS data_ciclo,
+      ((now() AT TIME ZONE 'America/Sao_Paulo')::date - p.data_ciclo::date)::integer AS idade_dias,
+      p.fornecedor_nome,
+      p.canal_usado,
+      p.portal_protocolo,
+      p.status_envio_portal,
+      p.resposta_canal,
+      m.run_id AS marcador_run_id,
+      m.seq AS marcador_seq,
+      ls.run_id AS visto_run_id,
+      -- O carimbo do marcador QUE PRODUZIU ESTA LINHA. Vem daqui, e não de uma segunda consulta, para
+      -- que a idade seja a da apuração que gerou a lista: entre duas leituras independentes um run
+      -- pode ser promovido, e o consumidor diria "fresco" sobre uma lista velha — falso-negativo de
+      -- frescor, exatamente o lado errado para errar num alerta de money-path.
+      m.finalizado_em AS marcador_finalizado_em,
+      -- ⚠️ sum() IGNORA NULL: itens (100.00, NULL) davam 100.00, apresentando SUBTOTAL como total apurado —
+      -- fabricação de número, o que o money-path.md proíbe ("ausente ≠ zero"). Agora o total só existe se
+      -- TODOS os itens têm valor; senão NULL, e itens_sem_valor diz por quê (Codex v8).
+      (SELECT CASE WHEN count(*) FILTER (WHERE i.valor_linha IS NULL) = 0
+                   THEN sum(i.valor_linha) END
+         FROM public.pedido_compra_item i WHERE i.pedido_id = p.id) AS valor_total,
+      (SELECT count(*) FILTER (WHERE i.valor_linha IS NULL)
+         FROM public.pedido_compra_item i WHERE i.pedido_id = p.id)::integer AS itens_sem_valor,
+      -- ⚠️ NULL (não FALSE) quando a identidade é ILEGÍVEL: `EXISTS(... = NULL)` retorna false, e a RPC
+      -- estaria AFIRMANDO ausência no espelho sem sequer conseguir identificar o PO (Codex v7).
+      -- "Não apurei" ≠ "não há" — a mesma distinção de visto_status='identidade_nao_interpretavel'.
+      CASE WHEN public.reposicao__po_id(p.omie_pedido_compra_id) IS NULL THEN NULL ELSE EXISTS (
+        SELECT 1 FROM public.purchase_orders_tracking t
+        WHERE t.empresa = v_empresa
+          -- identidade NUMÉRICA canônica (reposicao__po_id): '00101' e '101' são o MESMO PO; whitespace de
+          -- borda tolerado, interno invalida; fora do range de bigint → NULL em vez de derrubar a RPC.
+          AND t.omie_codigo_pedido = public.reposicao__po_id(p.omie_pedido_compra_id)
+      ) END AS po_no_espelho
+    FROM public.pedido_compra_sugerido p
+    CROSS JOIN marcador m
+    LEFT JOIN public.reposicao_po_last_seen ls
+           ON ls.empresa = v_empresa
+          AND ls.omie_codigo_pedido = public.reposicao__po_id(p.omie_pedido_compra_id)
+    -- ⚠️ `pedido_compra_sugerido.empresa` é **text** ('OBEN'); as outras tabelas usam o ENUM empresa_reposicao.
+    -- text = enum direto é erro de TIPO em runtime (PL/pgSQL late-bound: o CREATE passa, quebra ao EXECUTAR).
+    WHERE upper(btrim(p.empresa)) = v_empresa::text
+      AND p.status IN ('disparado', 'aprovado_aguardando_disparo')
+      AND p.omie_pedido_compra_id IS NOT NULL
+      AND btrim(p.omie_pedido_compra_id) <> ''
+      -- CANDIDATO = o PO não foi visto no marcador atual (carimbado por run ANTERIOR ou NUNCA carimbado).
+      AND (ls.run_id IS NULL OR ls.run_id <> m.run_id)
+      -- ⚠️ GUARD TEMPORAL: um run que TERMINOU antes de o PO existir não testemunha NADA sobre ele.
+      -- O carimbo de `last_seen` só sai no run COMPLETO (1×/dia); todo PO criado depois dele ficava
+      -- "não visto" por até ~22h e virava alerta de conferência manual (prod 13/08: 4 de 4 candidatos,
+      -- média histórica de 11,0h por pedido). Sem este guard o detector acusa o próprio atraso.
+      --
+      -- Deliberadamente CONSERVADOR nos dois lados:
+      --   • `IS NULL` → segue candidato: sem data de registro não dá para provar impossibilidade, e a
+      --     comparação devolveria NULL, que o AND descartaria em SILÊNCIO (supressão acidental).
+      --   • `<=` (não `<`) mantém candidato o PO registrado DURANTE a coleta — ele pode legitimamente
+      --     não ter entrado na varredura. Suprime-se o impossível, nunca o duvidoso.
+      --
+      -- ⚠️ O CUSTO DESTE GUARD, agora VISÍVEL em vez de silencioso: se o marcador congelar, este mesmo
+      -- predicado esconde todo PO nascido depois dele — indefinidamente. Não dá para consertar aqui
+      -- (afrouxar reintroduz os 11,0h/pedido de alerta falso). Conserta-se EXPONDO a idade do marcador,
+      -- que é o que as colunas novas fazem.
+      -- ⚠️ 14/08/2026: este predicado passou a ler o limite CAUSAL. Os comentários ACIMA que citam
+      -- omie_registrado_em descrevem a versão ANTERIOR (#1718) e ficaram para contexto.
+      -- Migration 20260814022626 · prova db/test-po-inexistente-antes-de.sh
+      AND (p.omie_po_inexistente_antes_de IS NULL OR p.omie_po_inexistente_antes_de <= m.finalizado_em)
+  )
+  SELECT
+    b.pedido_id,
+    b.omie_codigo_pedido,
+    b.data_ciclo,
+    b.idade_dias,
+    -- DANO ATIVO = a CTE em_transito só soma disparados dos últimos 7d. Idade = PRIORIDADE, não verdade.
+    -- NOME FACTUAL: a RPC apura a JANELA, nao o dano (um aprovado_aguardando_disparo de 3 dias sem canal
+    -- nenhum recebia dano_ativo=true so pela idade — Codex v9). Quem decide se ha dano e o consumidor.
+    (b.idade_dias BETWEEN 0 AND 7) AS na_janela_7d,
+    b.valor_total,
+    b.itens_sem_valor,
+    -- ⚠️ identidade ILEGÍVEL não é "nunca visto": o LEFT JOIN não pôde nem comparar. Afirmar ausência aqui
+    -- era falha ABERTA (Codex v6 P1) — e o assert J3 chegava a FIXAR esse falso-positivo como esperado.
+    CASE
+      WHEN public.reposicao__po_id(b.omie_codigo_pedido) IS NULL THEN 'identidade_nao_interpretavel'
+      -- 'sem_registro_last_seen', não 'nunca_carimbado': a RPC prova a ausência ATUAL da linha, não que o PO
+      -- nunca foi visto — a linha pode ter sido apagada/reconstruída (Codex v10). "Nunca" é afirmação de
+      -- histórico, e histórico esta RPC não consulta.
+      WHEN b.visto_run_id IS NULL                                THEN 'sem_registro_last_seen'
+      -- 'outro_run', não 'anterior': a RPC só prova `run_id <> marcador`. O outro run pode ser POSTERIOR
+      -- (seq maior, ainda não promovido a marcador) ou um UUID sem linha na tabela de runs (Codex v11).
+      -- Afirmar "anterior" seria temporalidade não apurada.
+      ELSE 'visto_em_outro_run'
+    END AS visto_status,
+    -- SINAL FRACO: o sync do tracking é upsert-only (nunca remove) → ausência do espelho NÃO prova exclusão.
+    b.po_no_espelho,
+    b.fornecedor_nome,
+    b.canal_usado,
+    -- 🔑 SEM REGEX SEMÂNTICA (Codex v9). Quatro rodadas seguidas acharam um valor que enganava o rótulo:
+    -- 'su cesso' virava sucesso por coerção de whitespace; 'sem sucesso' casava a regex; e a guarda de
+    -- negação criou falso-NEGATIVO ('login: sucesso' — o `in` casa no fim de "log-IN") e falso-POSITIVO
+    -- ('não houve sucesso' — o [^a-z]* não atravessa "houve"). Interpretar texto LIVRE de terceiro por regex
+    -- não converge, e o rótulo não decide nada desde que a coluna `rota` morreu na v4.
+    -- Ficam só FATOS BINÁRIOS incontestáveis. O humano/PR3 lê os campos crus (portal_protocolo,
+    -- status_envio_portal, resposta_canal, canal_usado) e interpreta com o contexto que a RPC não tem.
+    b.portal_protocolo,
+    b.status_envio_portal,
+    b.resposta_canal,
+    (public.reposicao__trim(b.portal_protocolo) <> '')    AS tem_protocolo,
+    (public.reposicao__trim(b.status_envio_portal) <> '') AS tem_status_portal,
+    -- ⚠️ JSON null ('null'::jsonb) NÃO é SQL NULL: `IS NOT NULL` dava true e a RPC afirmava resposta
+    -- existente onde não há nenhuma (Codex v10).
+    (b.resposta_canal IS NOT NULL AND jsonb_typeof(b.resposta_canal) <> 'null') AS tem_resposta_canal,
+    (public.reposicao__trim(b.canal_usado) <> '')         AS tem_canal,
+    -- "há algum indício de que o fornecedor foi acionado?" — OR simples, sem inferência.
+    (public.reposicao__trim(b.portal_protocolo) <> ''
+      OR public.reposicao__trim(b.status_envio_portal) <> ''
+      OR (b.resposta_canal IS NOT NULL AND jsonb_typeof(b.resposta_canal) <> 'null')
+      OR public.reposicao__trim(b.canal_usado) <> '')     AS algum_sinal_de_canal,
+    b.marcador_run_id,
+    b.marcador_seq,
+    b.marcador_finalizado_em,
+    -- O "agora" do BANCO, para que a idade do marcador seja uma subtração entre dois pontos do MESMO
+    -- relógio. Ver o cabeçalho: ancorar um dos lados no relógio do cliente entrega o alerta ao skew da
+    -- máquina do usuário. `now()` é STABLE (o timestamp da transação) — legítimo aqui, e a RPC já o usa
+    -- acima em `idade_dias`.
+    now() AS apurado_em
+  FROM base b
+  ORDER BY (b.idade_dias BETWEEN 0 AND 7) DESC, b.valor_total DESC NULLS LAST, b.pedido_id;
+END;
+$function$;
+
+-- O DEFAULT da coluna (nunca exercido: todo escritor passa data_ciclo; vai junto para não sobrar o dia da
+-- sessão na família).
+ALTER TABLE public.pedido_compra_sugerido ALTER COLUMN data_ciclo SET DEFAULT ((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date;
+
+-- Pós-condição (o motor tem a dele, logo abaixo): o que ficou instalado é ESTE texto, com o fuso de SP
+-- escrito e sem o dia da sessão; as views com security_invoker; as funções com os mesmos atributos; dono
+-- postgres e ACL idênticos aos de antes do replace.
+DO $post$
+DECLARE
+  r record;
+  v_oid oid;
+  v_src text;
+BEGIN
+  FOR r IN
+    SELECT * FROM (VALUES
+      ('v_promocao_avaliacao_hoje', '613173aab13dfd59cb9dec3b8e901085', 2),
+      ('v_oportunidade_economica_hoje', '626fc0a0fbc800fbf997830d66fe6a64', 5)
+    ) AS x(alvo, este, trocas)
+  LOOP
+    v_oid := to_regclass('public.' || r.alvo);
+    IF v_oid IS NULL THEN
+      RAISE EXCEPTION 'POS1 FALHOU: a view % não existe — quem a lê quebraria', r.alvo;
+    END IF;
+    v_src := pg_catalog.pg_get_viewdef(v_oid, true);
+    IF md5(v_src) <> r.este THEN
+      RAISE EXCEPTION 'POS2 FALHOU: a definição instalada de % (md5 %) não é a desta migration', r.alvo, md5(v_src);
+    END IF;
+    -- As agulhas vão partidas: o gate textual lê a migration inteira, literal incluso.
+    IF position(upper('current' || '_date') IN upper(v_src)) > 0
+       OR (length(v_src) - length(replace(v_src, 'America/Sao_Paulo', ''))) / length('America/Sao_Paulo') <> r.trocas THEN
+      RAISE EXCEPTION 'POS3 FALHOU: % ainda lê o dia da sessão, ou o fuso de SP não está nas % trocas', r.alvo, r.trocas;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_class c, unnest(c.reloptions) o
+                    WHERE c.oid = v_oid AND lower(o) IN ('security_invoker=on', 'security_invoker=true')) THEN
+      RAISE EXCEPTION 'POS4 FALHOU: % perdeu security_invoker — passaria a ler como dono, sem RLS', r.alvo;
+    END IF;
+    IF (SELECT pg_catalog.pg_get_userbyid(c.relowner) FROM pg_catalog.pg_class c WHERE c.oid = v_oid) <> 'postgres' THEN
+      RAISE EXCEPTION 'POS5 FALHOU: % mudou de dono', r.alvo;
+    END IF;
+  END LOOP;
+  FOR r IN
+    SELECT * FROM (VALUES
+      ('aplicar_promocoes_no_ciclo(text,date)', 'f2a876ac1f0e05994931f55ae04d7bfa', '27bd7c84c6235fdc1817854344876972', 'v', false, 'search_path=public, pg_temp'),
+      ('ciclo_oportunidade_do_dia(text,date)', 'f2a876ac1f0e05994931f55ae04d7bfa', '7cdcfdb9161482ff739cfcd4468e8a3c', 'v', false, 'search_path=public, pg_temp'),
+      ('gerar_pedidos_oportunidade_ciclo(text,date,text[])', 'f2421d91e5db95f85974a9326e1867b0', 'c15ca22a601de31f05d926939e16f5c8', 'v', false, 'search_path=public, pg_temp'),
+      ('atualizar_parametros_numericos_skus(text,uuid)', 'c2f2e23354fbab735c9539a5775904f2', 'efcc4251ff6bf4a9480ac6a22f726918', 'v', false, 'search_path=public, pg_temp'),
+      ('reposicao_pos_candidatos(text)', '12d784009ff4c40b62383656a968dcc8', 'b6a30e901fa6797d371ece6e9f5e4fd0', 's', true, 'search_path=public, pg_temp')
+    ) AS x(alvo, args_novo, src_novo, volatilidade, secdef, config)
+  LOOP
+    v_oid := to_regprocedure('public.' || r.alvo);
+    IF v_oid IS NULL THEN
+      RAISE EXCEPTION 'POS1 FALHOU: % não existe — quem a chama quebraria', r.alvo;
+    END IF;
+    SELECT pg_catalog.pg_get_function_arguments(p.oid) || ' ' || p.prosrc INTO v_src FROM pg_catalog.pg_proc p WHERE p.oid = v_oid;
+    IF (SELECT md5(pg_catalog.pg_get_function_arguments(p.oid)) || md5(p.prosrc) FROM pg_catalog.pg_proc p WHERE p.oid = v_oid)
+       <> r.args_novo || r.src_novo THEN
+      RAISE EXCEPTION 'POS2 FALHOU: a função instalada % não é a desta migration (argumentos ou corpo)', r.alvo;
+    END IF;
+    IF position(upper('current' || '_date') IN upper(v_src)) > 0
+       OR position('now()' || '::date' IN v_src) > 0
+       OR position('America/Sao_Paulo' IN v_src) = 0 THEN
+      RAISE EXCEPTION 'POS3 FALHOU: % ainda lê o dia da sessão, ou perdeu o fuso de SP', r.alvo;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_proc p
+                    WHERE p.oid = v_oid AND p.provolatile::text = r.volatilidade AND p.prosecdef = r.secdef
+                      AND array_to_string(p.proconfig, ';') = r.config
+                      AND pg_catalog.pg_get_userbyid(p.proowner) = 'postgres') THEN
+      RAISE EXCEPTION 'POS4 FALHOU: % mudou de atributo — esperado volatilidade %, SECURITY DEFINER %, config [%], dono postgres', r.alvo, r.volatilidade, r.secdef, r.config;
+    END IF;
+  END LOOP;
+  IF (SELECT count(*) FROM hoje_sp_data_ciclo_acl_antes) <> 8 THEN
+    RAISE EXCEPTION 'POS6 FALHOU: a foto do ACL tem % objetos, esperados 8', (SELECT count(*) FROM hoje_sp_data_ciclo_acl_antes);
+  END IF;
+  IF EXISTS (SELECT 1 FROM hoje_sp_data_ciclo_acl_antes a
+              WHERE a.alvo <> 'f:gerar_pedidos_sugeridos_ciclo(text,date)'
+                AND a.acl IS DISTINCT FROM (
+                CASE WHEN a.alvo LIKE 'v:%'
+                     THEN (SELECT c.relacl::text FROM pg_catalog.pg_class c
+                            WHERE c.relnamespace = 'public'::regnamespace AND c.relname = substr(a.alvo, 3))
+                     ELSE (SELECT p.proacl::text FROM pg_catalog.pg_proc p WHERE p.oid = to_regprocedure(substr(a.alvo, 3)))
+                END)) THEN
+    RAISE EXCEPTION 'POS6 FALHOU: o ACL de algum objeto mudou no replace';
+  END IF;
+  IF (SELECT pg_catalog.pg_get_expr(d.adbin, d.adrelid)
+        FROM pg_catalog.pg_attrdef d
+        JOIN pg_catalog.pg_attribute a ON a.attrelid = d.adrelid AND a.attnum = d.adnum
+       WHERE d.adrelid = 'public.pedido_compra_sugerido'::regclass AND a.attname = 'data_ciclo')
+     IS DISTINCT FROM '((now() AT TIME ZONE ''America/Sao_Paulo''::text))::date' THEN
+    RAISE EXCEPTION 'POS7 FALHOU: o DEFAULT de pedido_compra_sugerido.data_ciclo não é o desta migration';
+  END IF;
+END
+$post$;
+
+-- O motor por ÚLTIMO, com a pós-condição DELE: daqui até o fim do arquivo é a fixture viva
+-- db/embalagem-motor-rpc.sql (guard src/lib/reposicao/__tests__/embalagem-motor-paridade.test.ts), carregada
+-- também por db/test-embalagem-motor.sh, db/test-em-transito-erro-terminal.sh e
+-- db/test-gate-estoque-nao-confirmado.sh — por isso o trecho é autocontido: a foto do ACL da PRÉ só é
+-- conferida quando existe (a migration rodando inteira).
+
 CREATE OR REPLACE FUNCTION public.gerar_pedidos_sugeridos_ciclo(p_empresa text DEFAULT 'OBEN'::text, p_data_ciclo date DEFAULT ((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date)
  RETURNS TABLE(pedidos_gerados integer, skus_incluidos integer, valor_total_ciclo numeric, bloqueados integer)
  LANGUAGE plpgsql
@@ -1441,416 +1861,40 @@ BEGIN
 END;
 $function$;
 
-CREATE OR REPLACE FUNCTION public.atualizar_parametros_numericos_skus(p_empresa text, p_run_id uuid DEFAULT NULL::uuid)
- RETURNS integer
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_temp'
-AS $function$
+DO $pos_motor$
 DECLARE
-  atualizados int := 0;
-  v_mult numeric := COALESCE((SELECT value::numeric FROM public.company_config WHERE key='param_auto_fusivel_mult'), 3);
+  v_oid oid := to_regprocedure('public.gerar_pedidos_sugeridos_ciclo(text, date)');
+  v_txt text;
 BEGIN
-  PERFORM set_config('app.param_auto', CASE WHEN p_run_id IS NULL THEN 'manual' ELSE 'auto' END, true);
-
-  DROP TABLE IF EXISTS tmp_param_decidido;
-  CREATE TEMP TABLE tmp_param_decidido ON COMMIT DROP AS
-  WITH base AS (
-    SELECT sp.id, sp.empresa, sp.sku_codigo_omie,
-           sp.ponto_pedido AS pp_antes, sp.estoque_minimo AS min_antes, sp.estoque_maximo AS max_antes,
-           sp.estoque_seguranca AS ss_antes, sp.cobertura_alvo_dias AS cob_antes,
-           sp.habilitado_reposicao_automatica AS habilitado,
-           COALESCE(sp.tipo_reposicao,'automatica') AS tipo,
-           v.sku_descricao, v.fornecedor_nome,
-           v.estoque_minimo_sugerido AS min_sug, v.ponto_pedido_sugerido AS pp_sug,
-           v.estoque_maximo_sugerido AS max_sug, v.estoque_seguranca_sugerido AS ss_sug,
-           v.cobertura_alvo_dias AS cob_sug,
-           v.demanda_media_diaria, v.demanda_sigma_diario, v.coef_variacao_ordem, v.num_ordens,
-           v.valor_total_90d, v.lead_time_medio, v.lead_time_desvio, v.lt_p95_dias, v.fonte_leadtime,
-           v.z_aplicado, v.classe_consolidada,
-           pin.ponto_pedido_rejeitado, pin.estoque_maximo_rejeitado
-    FROM public.sku_parametros sp
-    JOIN public.v_sku_parametros_sugeridos v
-      ON v.empresa = sp.empresa AND v.sku_codigo_omie = sp.sku_codigo_omie
-    LEFT JOIN public.reposicao_param_pin pin
-      ON pin.empresa = sp.empresa AND pin.sku_codigo_omie = sp.sku_codigo_omie::text
-    WHERE sp.empresa = p_empresa
-  )
-  SELECT b.*,
-    CASE
-      WHEN b.pp_sug IS NULL OR b.max_sug IS NULL OR b.min_sug IS NULL
-           OR b.ss_sug IS NULL OR b.cob_sug IS NULL THEN 'sem_mudanca'
-      WHEN b.pp_sug = 'NaN'::numeric OR b.max_sug = 'NaN'::numeric OR b.min_sug = 'NaN'::numeric
-           OR b.ss_sug = 'NaN'::numeric OR b.cob_sug = 'NaN'::numeric
-           OR b.min_sug < 0 OR b.pp_sug < 0 OR b.max_sug < 0 OR b.ss_sug < 0
-           OR b.max_sug < b.pp_sug OR b.pp_sug < b.min_sug OR b.cob_sug <= 0 THEN 'bloqueado_validacao'
-      WHEN b.max_antes IS NULL OR b.max_antes <= 0 THEN 'bloqueado_validacao'
-      WHEN b.ponto_pedido_rejeitado IS NOT NULL
-           AND round(b.pp_sug) = round(b.ponto_pedido_rejeitado)
-           AND round(b.max_sug) = round(b.estoque_maximo_rejeitado) THEN 'pinado'
-      WHEN round(b.pp_sug) = round(b.pp_antes) AND round(b.max_sug) = round(b.max_antes) THEN 'sem_mudanca'
-      WHEN b.max_antes > 0 AND round(b.max_sug) > v_mult * round(b.max_antes) THEN 'segurado'
-      ELSE 'aplicado'
-    END AS status
-  FROM base b;
-
-  UPDATE public.sku_parametros sp SET
-    sku_descricao = COALESCE(d.sku_descricao, sp.sku_descricao),
-    fornecedor_nome = COALESCE(d.fornecedor_nome, sp.fornecedor_nome),
-    demanda_media_diaria = d.demanda_media_diaria,
-    demanda_desvio_padrao = d.demanda_sigma_diario,
-    demanda_coef_variacao = d.coef_variacao_ordem,
-    demanda_dias_com_movimento = d.num_ordens,
-    valor_vendido_90d = d.valor_total_90d,
-    lt_medio_dias_uteis = d.lead_time_medio,
-    lt_desvio_padrao_dias = d.lead_time_desvio,
-    lt_p95_dias = d.lt_p95_dias,
-    fonte_leadtime = d.fonte_leadtime,
-    z_score = d.z_aplicado,
-    estoque_seguranca   = CASE WHEN d.status='aplicado' THEN d.ss_sug  ELSE sp.estoque_seguranca END,
-    ponto_pedido        = CASE WHEN d.status='aplicado' THEN d.pp_sug  ELSE sp.ponto_pedido END,
-    estoque_minimo      = CASE WHEN d.status='aplicado' THEN d.min_sug ELSE sp.estoque_minimo END,
-    cobertura_alvo_dias = CASE WHEN d.status='aplicado' THEN d.cob_sug ELSE sp.cobertura_alvo_dias END,
-    estoque_maximo      = CASE WHEN d.status='aplicado' THEN d.max_sug ELSE sp.estoque_maximo END,
-    ultima_atualizacao_calculo = NOW()
-  FROM tmp_param_decidido d WHERE sp.id = d.id;
-
-  SELECT count(*) FILTER (WHERE status='aplicado') INTO atualizados FROM tmp_param_decidido;
-
-  DELETE FROM public.reposicao_param_pin p
-  USING tmp_param_decidido d
-  WHERE p.empresa = d.empresa AND p.sku_codigo_omie = d.sku_codigo_omie::text
-    AND d.status = 'aplicado' AND d.ponto_pedido_rejeitado IS NOT NULL;
-
-  IF p_run_id IS NOT NULL THEN
-    INSERT INTO public.reposicao_param_auto_log (
-      run_id, empresa, sku_codigo_omie, sku_descricao, status,
-      ponto_pedido_antes, ponto_pedido_depois, estoque_minimo_antes, estoque_minimo_depois,
-      estoque_maximo_antes, estoque_maximo_depois, estoque_seguranca_antes, estoque_seguranca_depois,
-      cobertura_antes, cobertura_depois,
-      ponto_pedido_sugerido, estoque_maximo_sugerido,   -- NOVO: o que o cálculo propôs (p/ segurado = o barrado)
-      demanda_media_diaria, lt_medio_dias_uteis, classe_consolidada, z_score
-    )
-    SELECT p_run_id, d.empresa, d.sku_codigo_omie::text, d.sku_descricao, d.status,
-      d.pp_antes,  CASE WHEN d.status='aplicado' THEN d.pp_sug  ELSE d.pp_antes END,
-      d.min_antes, CASE WHEN d.status='aplicado' THEN d.min_sug ELSE d.min_antes END,
-      d.max_antes, CASE WHEN d.status='aplicado' THEN d.max_sug ELSE d.max_antes END,
-      d.ss_antes,  CASE WHEN d.status='aplicado' THEN d.ss_sug  ELSE d.ss_antes END,
-      d.cob_antes, CASE WHEN d.status='aplicado' THEN d.cob_sug ELSE d.cob_antes END,
-      d.pp_sug, d.max_sug,   -- NOVO: sugerido cru (independe do status; p/ segurado NÃO é depois=antes)
-      d.demanda_media_diaria, d.lead_time_medio, d.classe_consolidada, d.z_aplicado
-    FROM tmp_param_decidido d
-    WHERE d.status IN ('aplicado','segurado','pinado','bloqueado_validacao')
-      AND d.habilitado = true AND d.tipo = 'automatica';
-
-    WITH em_transito AS (
-      SELECT pcs2.empresa, pci.sku_codigo_omie::text AS sku_codigo_omie, SUM(pci.qtde_final) AS qtde
-      FROM public.pedido_compra_item pci
-      JOIN public.pedido_compra_sugerido pcs2 ON pcs2.id = pci.pedido_id
-      WHERE pcs2.empresa = p_empresa
-        AND pcs2.status IN ('aprovado_aguardando_disparo','disparado','disparado_simulado','concluido_recebido')  -- [SIMULADO] PO real do dry_run
-        AND pcs2.data_ciclo >= ((now() AT TIME ZONE 'America/Sao_Paulo')::date - INTERVAL '7 days')
-      GROUP BY pcs2.empresa, pci.sku_codigo_omie
-    ),
-    posicao AS (
-      SELECT l.id AS log_id,
-             (COALESCE(sea.estoque_fisico,0) + COALESCE(sea.estoque_pendente_entrada,0)
-                + COALESCE(et.qtde,0)) AS pos,
-             ip.custo, ip.custo_fonte
-      FROM public.reposicao_param_auto_log l
-      LEFT JOIN public.sku_estoque_atual sea
-        ON sea.empresa = l.empresa AND sea.sku_codigo_omie = l.sku_codigo_omie
-      LEFT JOIN em_transito et
-        ON et.empresa = l.empresa AND et.sku_codigo_omie = l.sku_codigo_omie
-      LEFT JOIN LATERAL (
-        SELECT CASE WHEN ip0.cmc > 0 THEN ip0.cmc
-                    WHEN ip0.preco_medio > 0 THEN ip0.preco_medio
-                    ELSE NULL END AS custo,
-               CASE WHEN ip0.cmc > 0 THEN 'cmc'
-                    WHEN ip0.preco_medio > 0 THEN 'preco_medio'
-                    ELSE NULL END AS custo_fonte
-        FROM public.inventory_position ip0
-        WHERE ip0.omie_codigo_produto::text = l.sku_codigo_omie
-          AND ip0.account = lower(p_empresa)
-        LIMIT 1
-      ) ip ON true
-      WHERE l.run_id = p_run_id
-        AND l.status IN ('aplicado','segurado')
-    )
-    UPDATE public.reposicao_param_auto_log l SET
-      custo_unitario   = p.custo,
-      custo_fonte      = p.custo_fonte,
-      qtde_compra_antes  = CASE WHEN p.pos <= l.ponto_pedido_antes  THEN GREATEST(0, l.estoque_maximo_antes  - p.pos) ELSE 0 END,
-      qtde_compra_depois = CASE WHEN p.pos <= l.ponto_pedido_depois THEN GREATEST(0, l.estoque_maximo_depois - p.pos) ELSE 0 END,
-      impacto_rs = CASE WHEN p.custo IS NULL THEN NULL ELSE
-        ( (CASE WHEN p.pos <= l.ponto_pedido_depois THEN GREATEST(0, l.estoque_maximo_depois - p.pos) ELSE 0 END)
-        - (CASE WHEN p.pos <= l.ponto_pedido_antes  THEN GREATEST(0, l.estoque_maximo_antes  - p.pos) ELSE 0 END)
-        ) * p.custo END
-    FROM posicao p
-    WHERE l.id = p.log_id;
+  IF v_oid IS NULL THEN
+    RAISE EXCEPTION 'POS-M1 FALHOU: gerar_pedidos_sugeridos_ciclo não existe — o motor e o Cockpit quebrariam';
   END IF;
-
-  RETURN atualizados;
-END;
-$function$;
-
-CREATE OR REPLACE FUNCTION public.reposicao_pos_candidatos(p_empresa text)
- RETURNS TABLE(pedido_id bigint, omie_codigo_pedido text, data_ciclo date, idade_dias integer, na_janela_7d boolean, valor_total numeric, itens_sem_valor integer, visto_status text, po_no_espelho boolean, fornecedor_nome text, canal_usado text, portal_protocolo text, status_envio_portal text, resposta_canal jsonb, tem_protocolo boolean, tem_status_portal boolean, tem_resposta_canal boolean, tem_canal boolean, algum_sinal_de_canal boolean, marcador_run_id uuid, marcador_seq bigint, marcador_finalizado_em timestamp with time zone, apurado_em timestamp with time zone)
- LANGUAGE plpgsql
- STABLE SECURITY DEFINER
- SET search_path TO 'public', 'pg_temp'
-AS $function$
-DECLARE
-  v_empresa public.empresa_reposicao := upper(btrim(p_empresa))::public.empresa_reposicao;
-BEGIN
-  -- Gate cron-or-staff NULL-aware: uid presente exige staff; uid NULL (service_role/cron SQL-local) passa.
-  -- ⚠️ NUNCA gatear por auth.role()='service_role' — o pg_cron roda como postgres SEM JWT (auth.role()=NULL)
-  -- e o gate mataria o cron em SILÊNCIO (reposicao.md: mordido 2x, migrations 20260627130000/20260627200000).
-  IF (SELECT auth.uid()) IS NOT NULL
-     -- ⚠️ IS NOT TRUE, não NOT(...): pode_ver_carteira_completa() era TRI-STATE (o gate ANTERIOR;
-     -- private.cap_compras_ler faz COALESCE e nunca devolve NULL, entao IS NOT TRUE fica como defesa em
-     -- profundidade). Para um `employee` SEM linha em commercial_roles ela retornava NULL, e `NOT NULL` =
-     -- NULL — o IF não entrava e a SECURITY DEFINER ENTREGAVA TUDO (protocolo, fornecedor, JSON cru).
-     -- Bypass real (Codex v11), e viola o fail-closed do CLAUDE.md. IS NOT TRUE trata NULL como negado e
-     -- preserva o uid NULL do cron, que é barrado antes pelo primeiro AND.
-     AND (SELECT private.cap_compras_ler((SELECT auth.uid()))) IS NOT TRUE THEN
-    RAISE EXCEPTION 'reposicao_pos_candidatos: acesso negado' USING ERRCODE = '42501';
+  SELECT pg_catalog.pg_get_function_arguments(p.oid) || ' ' || p.prosrc INTO v_txt FROM pg_catalog.pg_proc p WHERE p.oid = v_oid;
+  -- As agulhas vão partidas: o gate textual lê a migration inteira, literal incluso.
+  IF position(upper('current' || '_date') IN upper(v_txt)) > 0
+     OR position('::timestamp' || 'tz,' IN v_txt) > 0
+     OR (length(v_txt) - length(replace(v_txt, 'America/Sao_Paulo', ''))) / length('America/Sao_Paulo') <> 2 THEN
+    RAISE EXCEPTION 'POS-M3 FALHOU: o motor ainda lê o dia da sessão, ou o corte voltou ao fuso da sessão';
   END IF;
-
-  RETURN QUERY
-  WITH marcador AS (
-    -- "último completo válido" = maior fencing seq com volume_ok TRUE. Sem marcador → CROSS JOIN vazio →
-    -- retorna VAZIO. Fail-closed: sem base de verdade não se classifica ninguém como ausente.
-    -- `finalizado_em` entra aqui para o guard temporal do WHERE (ver abaixo).
-    -- ⚠️ SEM LIMITE DE FRESCOR, DE PROPÓSITO: filtrar marcador velho aqui trocaria a lista incompleta
-    -- por uma lista VAZIA — o mesmo silêncio, com menos informação. O frescor vira DADO EXPOSTO
-    -- (marcador_finalizado_em/apurado_em) e quem julga é o consumidor, que pode dizer "cego há Xh".
-    SELECT r.run_id, r.seq, r.finalizado_em
-    FROM public.reposicao_pedidos_compra_run r
-    WHERE r.empresa = v_empresa AND r.status = 'ok' AND r.volume_ok IS TRUE
-    ORDER BY r.seq DESC
-    LIMIT 1
-  ),
-  base AS (
-    SELECT
-      p.id AS pedido_id,
-      p.omie_pedido_compra_id AS omie_codigo_pedido,
-      p.data_ciclo::date AS data_ciclo,
-      ((now() AT TIME ZONE 'America/Sao_Paulo')::date - p.data_ciclo::date)::integer AS idade_dias,
-      p.fornecedor_nome,
-      p.canal_usado,
-      p.portal_protocolo,
-      p.status_envio_portal,
-      p.resposta_canal,
-      m.run_id AS marcador_run_id,
-      m.seq AS marcador_seq,
-      ls.run_id AS visto_run_id,
-      -- O carimbo do marcador QUE PRODUZIU ESTA LINHA. Vem daqui, e não de uma segunda consulta, para
-      -- que a idade seja a da apuração que gerou a lista: entre duas leituras independentes um run
-      -- pode ser promovido, e o consumidor diria "fresco" sobre uma lista velha — falso-negativo de
-      -- frescor, exatamente o lado errado para errar num alerta de money-path.
-      m.finalizado_em AS marcador_finalizado_em,
-      -- ⚠️ sum() IGNORA NULL: itens (100.00, NULL) davam 100.00, apresentando SUBTOTAL como total apurado —
-      -- fabricação de número, o que o money-path.md proíbe ("ausente ≠ zero"). Agora o total só existe se
-      -- TODOS os itens têm valor; senão NULL, e itens_sem_valor diz por quê (Codex v8).
-      (SELECT CASE WHEN count(*) FILTER (WHERE i.valor_linha IS NULL) = 0
-                   THEN sum(i.valor_linha) END
-         FROM public.pedido_compra_item i WHERE i.pedido_id = p.id) AS valor_total,
-      (SELECT count(*) FILTER (WHERE i.valor_linha IS NULL)
-         FROM public.pedido_compra_item i WHERE i.pedido_id = p.id)::integer AS itens_sem_valor,
-      -- ⚠️ NULL (não FALSE) quando a identidade é ILEGÍVEL: `EXISTS(... = NULL)` retorna false, e a RPC
-      -- estaria AFIRMANDO ausência no espelho sem sequer conseguir identificar o PO (Codex v7).
-      -- "Não apurei" ≠ "não há" — a mesma distinção de visto_status='identidade_nao_interpretavel'.
-      CASE WHEN public.reposicao__po_id(p.omie_pedido_compra_id) IS NULL THEN NULL ELSE EXISTS (
-        SELECT 1 FROM public.purchase_orders_tracking t
-        WHERE t.empresa = v_empresa
-          -- identidade NUMÉRICA canônica (reposicao__po_id): '00101' e '101' são o MESMO PO; whitespace de
-          -- borda tolerado, interno invalida; fora do range de bigint → NULL em vez de derrubar a RPC.
-          AND t.omie_codigo_pedido = public.reposicao__po_id(p.omie_pedido_compra_id)
-      ) END AS po_no_espelho
-    FROM public.pedido_compra_sugerido p
-    CROSS JOIN marcador m
-    LEFT JOIN public.reposicao_po_last_seen ls
-           ON ls.empresa = v_empresa
-          AND ls.omie_codigo_pedido = public.reposicao__po_id(p.omie_pedido_compra_id)
-    -- ⚠️ `pedido_compra_sugerido.empresa` é **text** ('OBEN'); as outras tabelas usam o ENUM empresa_reposicao.
-    -- text = enum direto é erro de TIPO em runtime (PL/pgSQL late-bound: o CREATE passa, quebra ao EXECUTAR).
-    WHERE upper(btrim(p.empresa)) = v_empresa::text
-      AND p.status IN ('disparado', 'aprovado_aguardando_disparo')
-      AND p.omie_pedido_compra_id IS NOT NULL
-      AND btrim(p.omie_pedido_compra_id) <> ''
-      -- CANDIDATO = o PO não foi visto no marcador atual (carimbado por run ANTERIOR ou NUNCA carimbado).
-      AND (ls.run_id IS NULL OR ls.run_id <> m.run_id)
-      -- ⚠️ GUARD TEMPORAL: um run que TERMINOU antes de o PO existir não testemunha NADA sobre ele.
-      -- O carimbo de `last_seen` só sai no run COMPLETO (1×/dia); todo PO criado depois dele ficava
-      -- "não visto" por até ~22h e virava alerta de conferência manual (prod 13/08: 4 de 4 candidatos,
-      -- média histórica de 11,0h por pedido). Sem este guard o detector acusa o próprio atraso.
-      --
-      -- Deliberadamente CONSERVADOR nos dois lados:
-      --   • `IS NULL` → segue candidato: sem data de registro não dá para provar impossibilidade, e a
-      --     comparação devolveria NULL, que o AND descartaria em SILÊNCIO (supressão acidental).
-      --   • `<=` (não `<`) mantém candidato o PO registrado DURANTE a coleta — ele pode legitimamente
-      --     não ter entrado na varredura. Suprime-se o impossível, nunca o duvidoso.
-      --
-      -- ⚠️ O CUSTO DESTE GUARD, agora VISÍVEL em vez de silencioso: se o marcador congelar, este mesmo
-      -- predicado esconde todo PO nascido depois dele — indefinidamente. Não dá para consertar aqui
-      -- (afrouxar reintroduz os 11,0h/pedido de alerta falso). Conserta-se EXPONDO a idade do marcador,
-      -- que é o que as colunas novas fazem.
-      -- ⚠️ 14/08/2026: este predicado passou a ler o limite CAUSAL. Os comentários ACIMA que citam
-      -- omie_registrado_em descrevem a versão ANTERIOR (#1718) e ficaram para contexto.
-      -- Migration 20260814022626 · prova db/test-po-inexistente-antes-de.sh
-      AND (p.omie_po_inexistente_antes_de IS NULL OR p.omie_po_inexistente_antes_de <= m.finalizado_em)
-  )
-  SELECT
-    b.pedido_id,
-    b.omie_codigo_pedido,
-    b.data_ciclo,
-    b.idade_dias,
-    -- DANO ATIVO = a CTE em_transito só soma disparados dos últimos 7d. Idade = PRIORIDADE, não verdade.
-    -- NOME FACTUAL: a RPC apura a JANELA, nao o dano (um aprovado_aguardando_disparo de 3 dias sem canal
-    -- nenhum recebia dano_ativo=true so pela idade — Codex v9). Quem decide se ha dano e o consumidor.
-    (b.idade_dias BETWEEN 0 AND 7) AS na_janela_7d,
-    b.valor_total,
-    b.itens_sem_valor,
-    -- ⚠️ identidade ILEGÍVEL não é "nunca visto": o LEFT JOIN não pôde nem comparar. Afirmar ausência aqui
-    -- era falha ABERTA (Codex v6 P1) — e o assert J3 chegava a FIXAR esse falso-positivo como esperado.
-    CASE
-      WHEN public.reposicao__po_id(b.omie_codigo_pedido) IS NULL THEN 'identidade_nao_interpretavel'
-      -- 'sem_registro_last_seen', não 'nunca_carimbado': a RPC prova a ausência ATUAL da linha, não que o PO
-      -- nunca foi visto — a linha pode ter sido apagada/reconstruída (Codex v10). "Nunca" é afirmação de
-      -- histórico, e histórico esta RPC não consulta.
-      WHEN b.visto_run_id IS NULL                                THEN 'sem_registro_last_seen'
-      -- 'outro_run', não 'anterior': a RPC só prova `run_id <> marcador`. O outro run pode ser POSTERIOR
-      -- (seq maior, ainda não promovido a marcador) ou um UUID sem linha na tabela de runs (Codex v11).
-      -- Afirmar "anterior" seria temporalidade não apurada.
-      ELSE 'visto_em_outro_run'
-    END AS visto_status,
-    -- SINAL FRACO: o sync do tracking é upsert-only (nunca remove) → ausência do espelho NÃO prova exclusão.
-    b.po_no_espelho,
-    b.fornecedor_nome,
-    b.canal_usado,
-    -- 🔑 SEM REGEX SEMÂNTICA (Codex v9). Quatro rodadas seguidas acharam um valor que enganava o rótulo:
-    -- 'su cesso' virava sucesso por coerção de whitespace; 'sem sucesso' casava a regex; e a guarda de
-    -- negação criou falso-NEGATIVO ('login: sucesso' — o `in` casa no fim de "log-IN") e falso-POSITIVO
-    -- ('não houve sucesso' — o [^a-z]* não atravessa "houve"). Interpretar texto LIVRE de terceiro por regex
-    -- não converge, e o rótulo não decide nada desde que a coluna `rota` morreu na v4.
-    -- Ficam só FATOS BINÁRIOS incontestáveis. O humano/PR3 lê os campos crus (portal_protocolo,
-    -- status_envio_portal, resposta_canal, canal_usado) e interpreta com o contexto que a RPC não tem.
-    b.portal_protocolo,
-    b.status_envio_portal,
-    b.resposta_canal,
-    (public.reposicao__trim(b.portal_protocolo) <> '')    AS tem_protocolo,
-    (public.reposicao__trim(b.status_envio_portal) <> '') AS tem_status_portal,
-    -- ⚠️ JSON null ('null'::jsonb) NÃO é SQL NULL: `IS NOT NULL` dava true e a RPC afirmava resposta
-    -- existente onde não há nenhuma (Codex v10).
-    (b.resposta_canal IS NOT NULL AND jsonb_typeof(b.resposta_canal) <> 'null') AS tem_resposta_canal,
-    (public.reposicao__trim(b.canal_usado) <> '')         AS tem_canal,
-    -- "há algum indício de que o fornecedor foi acionado?" — OR simples, sem inferência.
-    (public.reposicao__trim(b.portal_protocolo) <> ''
-      OR public.reposicao__trim(b.status_envio_portal) <> ''
-      OR (b.resposta_canal IS NOT NULL AND jsonb_typeof(b.resposta_canal) <> 'null')
-      OR public.reposicao__trim(b.canal_usado) <> '')     AS algum_sinal_de_canal,
-    b.marcador_run_id,
-    b.marcador_seq,
-    b.marcador_finalizado_em,
-    -- O "agora" do BANCO, para que a idade do marcador seja uma subtração entre dois pontos do MESMO
-    -- relógio. Ver o cabeçalho: ancorar um dos lados no relógio do cliente entrega o alerta ao skew da
-    -- máquina do usuário. `now()` é STABLE (o timestamp da transação) — legítimo aqui, e a RPC já o usa
-    -- acima em `idade_dias`.
-    now() AS apurado_em
-  FROM base b
-  ORDER BY (b.idade_dias BETWEEN 0 AND 7) DESC, b.valor_total DESC NULLS LAST, b.pedido_id;
-END;
-$function$;
-
--- O DEFAULT da coluna (nunca exercido: todo escritor passa data_ciclo; vai junto para não sobrar o dia da
--- sessão na família).
-ALTER TABLE public.pedido_compra_sugerido ALTER COLUMN data_ciclo SET DEFAULT ((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date;
-
--- Pós-condição: o que ficou instalado é ESTE texto, com o fuso de SP escrito e sem o dia da sessão; as
--- views com security_invoker; as funções com os mesmos atributos; dono postgres e ACL idênticos aos de
--- antes do replace.
-DO $post$
-DECLARE
-  r record;
-  v_oid oid;
-  v_src text;
-BEGIN
-  FOR r IN
-    SELECT * FROM (VALUES
-      ('v_promocao_avaliacao_hoje', '613173aab13dfd59cb9dec3b8e901085', 2),
-      ('v_oportunidade_economica_hoje', '626fc0a0fbc800fbf997830d66fe6a64', 5)
-    ) AS x(alvo, este, trocas)
-  LOOP
-    v_oid := to_regclass('public.' || r.alvo);
-    IF v_oid IS NULL THEN
-      RAISE EXCEPTION 'POS1 FALHOU: a view % não existe — quem a lê quebraria', r.alvo;
-    END IF;
-    v_src := pg_catalog.pg_get_viewdef(v_oid, true);
-    IF md5(v_src) <> r.este THEN
-      RAISE EXCEPTION 'POS2 FALHOU: a definição instalada de % (md5 %) não é a desta migration', r.alvo, md5(v_src);
-    END IF;
-    -- As agulhas vão partidas: o gate textual lê a migration inteira, literal incluso.
-    IF position(upper('current' || '_date') IN upper(v_src)) > 0
-       OR (length(v_src) - length(replace(v_src, 'America/Sao_Paulo', ''))) / length('America/Sao_Paulo') <> r.trocas THEN
-      RAISE EXCEPTION 'POS3 FALHOU: % ainda lê o dia da sessão, ou o fuso de SP não está nas % trocas', r.alvo, r.trocas;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_class c, unnest(c.reloptions) o
-                    WHERE c.oid = v_oid AND lower(o) IN ('security_invoker=on', 'security_invoker=true')) THEN
-      RAISE EXCEPTION 'POS4 FALHOU: % perdeu security_invoker — passaria a ler como dono, sem RLS', r.alvo;
-    END IF;
-    IF (SELECT pg_catalog.pg_get_userbyid(c.relowner) FROM pg_catalog.pg_class c WHERE c.oid = v_oid) <> 'postgres' THEN
-      RAISE EXCEPTION 'POS5 FALHOU: % mudou de dono', r.alvo;
-    END IF;
-  END LOOP;
-  FOR r IN
-    SELECT * FROM (VALUES
-      ('aplicar_promocoes_no_ciclo(text,date)', 'f2a876ac1f0e05994931f55ae04d7bfa', '27bd7c84c6235fdc1817854344876972', 'v', false, 'search_path=public, pg_temp'),
-      ('ciclo_oportunidade_do_dia(text,date)', 'f2a876ac1f0e05994931f55ae04d7bfa', '7cdcfdb9161482ff739cfcd4468e8a3c', 'v', false, 'search_path=public, pg_temp'),
-      ('gerar_pedidos_oportunidade_ciclo(text,date,text[])', 'f2421d91e5db95f85974a9326e1867b0', 'c15ca22a601de31f05d926939e16f5c8', 'v', false, 'search_path=public, pg_temp'),
-      ('gerar_pedidos_sugeridos_ciclo(text,date)', 'f2a876ac1f0e05994931f55ae04d7bfa', '7a15485d16c2a88c2de88cc80f87756b', 'v', false, 'search_path=public, pg_temp;statement_timeout=120s'),
-      ('atualizar_parametros_numericos_skus(text,uuid)', 'c2f2e23354fbab735c9539a5775904f2', 'efcc4251ff6bf4a9480ac6a22f726918', 'v', false, 'search_path=public, pg_temp'),
-      ('reposicao_pos_candidatos(text)', '12d784009ff4c40b62383656a968dcc8', 'b6a30e901fa6797d371ece6e9f5e4fd0', 's', true, 'search_path=public, pg_temp')
-    ) AS x(alvo, args_novo, src_novo, volatilidade, secdef, config)
-  LOOP
-    v_oid := to_regprocedure('public.' || r.alvo);
-    IF v_oid IS NULL THEN
-      RAISE EXCEPTION 'POS1 FALHOU: % não existe — quem a chama quebraria', r.alvo;
-    END IF;
-    SELECT pg_catalog.pg_get_function_arguments(p.oid) || ' ' || p.prosrc INTO v_src FROM pg_catalog.pg_proc p WHERE p.oid = v_oid;
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_proc p
+                  WHERE p.oid = v_oid AND p.provolatile = 'v' AND NOT p.prosecdef
+                    AND array_to_string(p.proconfig, ';') = 'search_path=public, pg_temp;statement_timeout=120s'
+                    AND pg_catalog.pg_get_userbyid(p.proowner) = 'postgres') THEN
+    RAISE EXCEPTION 'POS-M4 FALHOU: o motor mudou de atributo — esperado VOLATILE, INVOKER, config [search_path=public, pg_temp;statement_timeout=120s], dono postgres';
+  END IF;
+  -- Com a migration rodando INTEIRA (a foto da PRÉ existe): o motor instalado é ESTE texto (md5 de argumentos e
+  -- corpo) e o ACL é o de antes. Fora dela — as provas vizinhas carregam este trecho como fixture e SABOTAM o
+  -- corpo para provar o dente delas — valem só os invariantes acima. IF aninhado, não AND: a condição de um IF
+  -- é planejada inteira, e a foto ausente faria a referência à tabela temporária errar antes do to_regclass.
+  IF to_regclass('pg_temp.hoje_sp_data_ciclo_acl_antes') IS NOT NULL THEN
     IF (SELECT md5(pg_catalog.pg_get_function_arguments(p.oid)) || md5(p.prosrc) FROM pg_catalog.pg_proc p WHERE p.oid = v_oid)
-       <> r.args_novo || r.src_novo THEN
-      RAISE EXCEPTION 'POS2 FALHOU: a função instalada % não é a desta migration (argumentos ou corpo)', r.alvo;
+       <> 'f2a876ac1f0e05994931f55ae04d7bfa' || '7a15485d16c2a88c2de88cc80f87756b' THEN
+      RAISE EXCEPTION 'POS-M2 FALHOU: o motor instalado não é o desta migration (argumentos ou corpo)';
     END IF;
-    IF position(upper('current' || '_date') IN upper(v_src)) > 0
-       OR position('now()' || '::date' IN v_src) > 0
-       OR position('America/Sao_Paulo' IN v_src) = 0 THEN
-      RAISE EXCEPTION 'POS3 FALHOU: % ainda lê o dia da sessão, ou perdeu o fuso de SP', r.alvo;
+    IF (SELECT a.acl FROM hoje_sp_data_ciclo_acl_antes a WHERE a.alvo = 'f:gerar_pedidos_sugeridos_ciclo(text,date)')
+       IS DISTINCT FROM (SELECT p.proacl::text FROM pg_catalog.pg_proc p WHERE p.oid = v_oid) THEN
+      RAISE EXCEPTION 'POS-M6 FALHOU: o ACL do motor mudou no replace';
     END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_proc p
-                    WHERE p.oid = v_oid AND p.provolatile::text = r.volatilidade AND p.prosecdef = r.secdef
-                      AND array_to_string(p.proconfig, ';') = r.config
-                      AND pg_catalog.pg_get_userbyid(p.proowner) = 'postgres') THEN
-      RAISE EXCEPTION 'POS4 FALHOU: % mudou de atributo — esperado volatilidade %, SECURITY DEFINER %, config [%], dono postgres', r.alvo, r.volatilidade, r.secdef, r.config;
-    END IF;
-  END LOOP;
-  IF (SELECT count(*) FROM hoje_sp_data_ciclo_acl_antes) <> 8 THEN
-    RAISE EXCEPTION 'POS6 FALHOU: a foto do ACL tem % objetos, esperados 8', (SELECT count(*) FROM hoje_sp_data_ciclo_acl_antes);
-  END IF;
-  IF EXISTS (SELECT 1 FROM hoje_sp_data_ciclo_acl_antes a
-              WHERE a.acl IS DISTINCT FROM (
-                CASE WHEN a.alvo LIKE 'v:%'
-                     THEN (SELECT c.relacl::text FROM pg_catalog.pg_class c
-                            WHERE c.relnamespace = 'public'::regnamespace AND c.relname = substr(a.alvo, 3))
-                     ELSE (SELECT p.proacl::text FROM pg_catalog.pg_proc p WHERE p.oid = to_regprocedure(substr(a.alvo, 3)))
-                END)) THEN
-    RAISE EXCEPTION 'POS6 FALHOU: o ACL de algum objeto mudou no replace';
-  END IF;
-  IF (SELECT pg_catalog.pg_get_expr(d.adbin, d.adrelid)
-        FROM pg_catalog.pg_attrdef d
-        JOIN pg_catalog.pg_attribute a ON a.attrelid = d.adrelid AND a.attnum = d.adnum
-       WHERE d.adrelid = 'public.pedido_compra_sugerido'::regclass AND a.attname = 'data_ciclo')
-     IS DISTINCT FROM '((now() AT TIME ZONE ''America/Sao_Paulo''::text))::date' THEN
-    RAISE EXCEPTION 'POS7 FALHOU: o DEFAULT de pedido_compra_sugerido.data_ciclo não é o desta migration';
   END IF;
 END
-$post$;
+$pos_motor$;

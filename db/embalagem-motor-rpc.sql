@@ -1,83 +1,15 @@
--- Migration: embalagem econômica DENTRO do motor de pedidos (QT↔GL) + consolidação de estoque de grupo
--- ⚠️ APLICADA MANUALMENTE no SQL Editor do Lovable em 2026-06-26 (NÃO vai em supabase/migrations/ — CLAUDE.md §5;
---     é CREATE OR REPLACE de função existente). Este arquivo é a FONTE versionada + fixture da regressão db/test-embalagem-motor.sh.
--- Spec: docs/superpowers/specs/2026-06-26-reposicao-embalagem-no-motor-spec.md
--- Money-path. Recria gerar_pedidos_sugeridos_ciclo (pré-flight pg_get_functiondef feito; base = prod 26/06).
+-- gerar_pedidos_sugeridos_ciclo — a FONTE versionada viva do motor de reposição (money-path) e a fixture das
+-- provas db/test-embalagem-motor.sh, db/test-em-transito-erro-terminal.sh e db/test-gate-estoque-nao-confirmado.sh.
 --
--- DUAS mudanças cirúrgicas, tudo o mais PRESERVADO:
---   1) CONSOLIDA o estoque no nível do grupo de equivalência (Σ membros: GREATEST(inv,sea) físico + pendente + trânsito).
---      O gatilho passa a olhar o estoque do GRUPO → para de comprar quando há galão parado.
---   2) ESCOLHE a embalagem mais barata por unidade-base (galão), ESTRITO: só troca o quartinho pelo galão
---      quando AMBOS têm preço-app fresco (≤ N dias) + portal-map + catálogo OK, e o galão é estritamente mais barato/base.
---      Senão mantém o quartinho. Custo da linha do galão = preço-app (R$/embalagem), nunca 0.
---
--- Unidade (cravada em prod): qtde_final = nº de EMBALAGENS do SKU; preco_unitario = R$/embalagem; o disparo
--- consome ceil(qtde_final) direto (fator_conversao=1). Quartinho NÃO é tocado (mantém cmc cru).
--- ⚠️ Case: equivalencia/preço_capturado = lower(empresa); parametros/estoque/fornecedor_externo = empresa (upper).
---
--- Revisão pós-Codex (xhigh) — 6 correções vs. o 1º rascunho:
---   P0-a GREATEST(inventory_position.saldo, sku_estoque_atual): galão parado vive em fontes DIFERENTES por SKU.
---   P0-b em_transito do galão × fator_para_base (2 galões em voo = 8 unidades-base, não 2) → anti double-buy.
---   P1-c âncora NÃO pode ser membro fator>1 (galão) de um grupo → impede 2 linhas do mesmo GL.
---   P1-d anti-duplicidade de oportunidade cobre a âncora E o SKU escolhido (galão).
---   P1-e minimo_forcado_manual respeitado também na troca p/ galão (piso aplicado ANTES de dividir pelo fator).
---   P1-f filtros de catálogo (ativo/tipo 04/família/status omie) aplicados ao MEMBRO escolhido, não só à âncora.
--- Granularidade (P2 Codex, aceito): nº_galões = ceil(necessidade / fator) na escala "unidades-âncora" — NUNCA
---   compra menos que o legado QT (herda o descasamento litros↔embalagem pré-existente, fora de escopo).
---
--- ➕ 2026-06-27 — GATE de estoque-NÃO-CONFIRMADO (money-path; spec 2026-06-27-reposicao-gate-estoque-nao-confirmado).
---   Bug provado: cold-start semeia sku_estoque_atual de omie_products.estoque (82% zerado na OBEN), fonte_sync=
---   'cold_start_seed'. Se o motor roda na janela cold-start→ListarPosEstoque, lê o seed=0 e compra por cima de
---   estoque existente. FIX (Codex consult 019f0968 + ausente≠zero): estoque cuja ÚNICA fonte é cold_start_seed (sem
---   inventory_position) é DESCONHECIDO → o motor SUPRIME a sugestão (nível LINHA e GRUPO) + LOGA em
---   reposicao_estoque_nao_confirmado_log. Zero CONFIRMADO (ListarPosEstoque/0) segue comprando — auto-liberante.
---   ⚠️ Esta fixture é SÓ a função; a tabela de log + RLS vivem na migration formal (e nos harnesses de teste).
---   Migration: supabase/migrations/20260627180000_reposicao_gate_estoque_nao_confirmado.sql (corpo da função idêntico).
---
--- ➕ 2026-07-08 — MARCADOR DE RUN (reposicao_motor_run) — a fila da tela ancora no ÚLTIMO recálculo, NÃO no último
---   recálculo QUE TEVE supressão. Bug: run limpo não grava no log de suprimidos → a mensagem "N fora da compra"
---   grudava por até 24h após o sync já ter confirmado o estoque (Codex 2026-07-08 → Opção 2: fonte-de-verdade, não
---   render). A RPC carimba TODO run (limpo ou não) ao fim; a tela lê o último marker (some quando suprimidos_n=0).
---   Tabela reposicao_motor_run + RLS na migration *_reposicao_motor_run_marker.sql (mesmo padrão do log; corpo idêntico).
---
--- ➕ 2026-07-29 — TETO DE COBERTURA pós-compra (B/C) — spec 2026-07-29-reposicao-teto-cobertura-motor-spec.md.
---   Medido em prod: B/C com R$90k acima do alvo; ~R$25k/tri de compras criando cobertura >90d(B)/60d(C); dente de
---   serra 1↔2 nos CZ. CAP só-reduz no lote do ciclo NORMAL: qtde_final ≤ max(floor(teto·d − estoque_efetivo),
---   piso_de_serviço ceil(pp − estoque_efetivo)) — o cap corta o "encher até o máximo" ACIMA do ponto de pedido,
---   nunca a proteção (pp/ss intactos; a recalibração global de jun/2026 segue enterrada). Pós-Codex xhigh:
---   grupos de embalagem FICAM FORA do cap (estoque consolidado QT+GL ÷ demanda só da âncora = subcompra) · config
---   POR EMPRESA (reposicao_teto_cobertura_<empresa>_{ativa,dias_b,dias_c}; flag nasce false, parse regex-blindado
---   fail-off) · classe efetiva = classe_forcada→classe_abc · minimo_forcado_manual vence o teto · linha capada a
---   ZERO sai do pedido (filtro qtde_final>0 centralizado em skus_inseriveis p/ os DOIS INSERTs) e LOGA em
---   reposicao_teto_cobertura_log · rastro no item (qtde_sem_teto, teto_cobertura_aplicado — forward_buying pode
---   sobrescrever qtde_final DEPOIS: exceção documentada à invariante) · capados_n no marker do run.
---   Tabela do log + colunas novas + config na migration *_reposicao_teto_cobertura_motor.sql (corpo idêntico).
+-- O guard src/lib/reposicao/__tests__/embalagem-motor-paridade.test.ts exige que este arquivo, do CREATE OR
+-- REPLACE até o FIM, seja IGUAL ao trecho da ÚLTIMA migration que recria a função (a que vence em prod).
+-- Desde 2026-10-01 essa migration é a 20261001023000_hoje_sp_familia_data_ciclo.sql (fase 3 da classe ii do fuso:
+-- o DEFAULT de p_data_ciclo é o dia de SP, e o corte gravado é (data + hora) AT TIME ZONE 'America/Sao_Paulo');
+-- o que vem depois do $function$; é a pós-condição do motor, autocontida (a foto do ACL da PRÉ só é conferida
+-- quando a migration roda inteira). Histórico das versões anteriores: git log deste arquivo.
+-- Spec original (embalagem no motor, 2026-06-26): docs/superpowers/specs/2026-06-26-reposicao-embalagem-no-motor-spec.md
 
--- ➕ 2026-09-04 — MÚLTIPLO DA EMBALAGEM DO PORTAL (litro → balde) — o motor grava qtde_final já na compra FÍSICA.
---   3 SKUs Sayerlack em LITRO no Omie comprados em BALDE de 5 L (sku_fornecedor_externo.fator_conversao=0,2). A edge
---   de envio já normalizava no envio (#2149: 36 L → 8 BB → 40 L); o comprador aprovava 36 e via 40 depois. Agora:
---   CTE portal_fator (ativo, >0, <>1, <1e9; join por fornecedor_nome = o da linha — precisão>recall) → só SKU SEM
---   grupo de equivalência → qtde_final e qtde_sem_teto = trim_scale(round(ceil(round(q×f,6))/f,6)) (espelho de
---   qtdeFisicaOmie(qtdePortal())). qtde_sugerida fica em L (rastro); fator gravado em pedido_compra_item.
---   fator_embalagem_portal (coluna nova; a tela troca "mínimo forçado" por "N embalagens"). Prova PG17
---   db/test-qtde-multiplo-embalagem.sh. Coluna + corpo na migration *_reposicao_qtde_multiplo_embalagem_portal.sql.
-
--- ➕ 2026-09-25 — guarda [FANTASMA] da em_transito NULL-safe: "=" → IS NOT DISTINCT FROM em
---   status_envio_portal. Com "=" e a coluna NULL, NOT(NULL) tirava pedido SAUDÁVEL do em_transito (compra
---   dupla). Latente (0 NULL na PROD, mas nullable). Prova PG17 db/test-em-transito-erro-terminal.sh (S7+F5).
---   Migration *_reposicao_em_transito_guarda_fantasma_null_safe.sql (corpo + postcondição idênticos).
-
--- ➕ 2026-09-25 — follow-up Codex do #2549: (1) em_transito conta 'disparado_simulado' (o dry_run CRIA pedido
---   real no Omie; fora da lista ele sumia do "a caminho" → compra dupla); (2) JOIN item↔cabeçalho por
---   grupo_codigo IS NOT DISTINCT FROM (COALESCE(...,'') fundia NULL com '' e cruzava itens entre 2 cabeçalhos).
---   Ambos latentes na PROD. Prova PG17 db/test-em-transito-erro-terminal.sh (S8/S9 + F7..F11).
---   Migration *_reposicao_em_transito_simulado_e_join_grupo_null_safe.sql (corpo + postcondição idênticos).
---   + BEGIN; aqui (achado Codex, pré-existente): sem ele, o restauro via psql -f commitava o CREATE ANTES
---   do DO $post$ — postcondição reprovada deixava a função reprovada instalada. Agora é atômico como a migration.
-
-BEGIN;
-
-CREATE OR REPLACE FUNCTION public.gerar_pedidos_sugeridos_ciclo(p_empresa text DEFAULT 'OBEN'::text, p_data_ciclo date DEFAULT CURRENT_DATE)
+CREATE OR REPLACE FUNCTION public.gerar_pedidos_sugeridos_ciclo(p_empresa text DEFAULT 'OBEN'::text, p_data_ciclo date DEFAULT ((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date)
  RETURNS TABLE(pedidos_gerados integer, skus_incluidos integer, valor_total_ciclo numeric, bloqueados integer)
  LANGUAGE plpgsql
  SET search_path TO 'public', 'pg_temp'
@@ -543,7 +475,7 @@ BEGIN
       num_parcelas, dias_parcelas, condicao_origem
     )
     SELECT sn.empresa, sn.fornecedor_nome, sn.grupo_codigo, p_data_ciclo,
-           (p_data_ciclo + MAX(sn.horario_corte_pedido))::timestamptz,
+           ((p_data_ciclo + MAX(sn.horario_corte_pedido)) AT TIME ZONE 'America/Sao_Paulo'),
            COALESCE(SUM(sn.qtde_final * sn.preco_unitario), 0), COUNT(*),   -- [PRECO-AUSENTE] valor_total é NOT NULL; item.valor_linha segue NULL (honesto)
            'pendente_aprovacao', '000', 'À Vista', 1, NULL, 'default_a_vista'
     FROM skus_inseriveis sn
@@ -585,34 +517,40 @@ BEGIN
 END;
 $function$;
 
-DO $post$
-DECLARE v_def text;
+DO $pos_motor$
+DECLARE
+  v_oid oid := to_regprocedure('public.gerar_pedidos_sugeridos_ciclo(text, date)');
+  v_txt text;
 BEGIN
-  SELECT pg_get_functiondef(p.oid) INTO v_def
-  FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-  WHERE n.nspname = 'public' AND p.proname = 'gerar_pedidos_sugeridos_ciclo';
-
-  IF v_def IS NULL THEN
-    RAISE EXCEPTION 'POST FALHOU: gerar_pedidos_sugeridos_ciclo nao existe apos o replace';
+  IF v_oid IS NULL THEN
+    RAISE EXCEPTION 'POS-M1 FALHOU: gerar_pedidos_sugeridos_ciclo não existe — o motor e o Cockpit quebrariam';
   END IF;
-  -- Os LIKE medem o CODIGO: comentario de linha sai antes (senao o predicado esperado sobrevivendo so num
-  -- comentario daria verde com o codigo revertido — achado Codex). Nenhum literal da funcao contem "--".
-  v_def := regexp_replace(v_def, '--[^' || chr(10) || ']*', '', 'g');
-  IF v_def NOT LIKE '%pcs2.status_envio_portal IS NOT DISTINCT FROM ''erro_nao_retentavel''%' THEN
-    RAISE EXCEPTION 'POST FALHOU: guarda [FANTASMA] sem IS NOT DISTINCT FROM — status_envio_portal NULL tiraria pedido saudavel do em_transito (compra dupla)';
+  SELECT pg_catalog.pg_get_function_arguments(p.oid) || ' ' || p.prosrc INTO v_txt FROM pg_catalog.pg_proc p WHERE p.oid = v_oid;
+  -- As agulhas vão partidas: o gate textual lê a migration inteira, literal incluso.
+  IF position(upper('current' || '_date') IN upper(v_txt)) > 0
+     OR position('::timestamp' || 'tz,' IN v_txt) > 0
+     OR (length(v_txt) - length(replace(v_txt, 'America/Sao_Paulo', ''))) / length('America/Sao_Paulo') <> 2 THEN
+    RAISE EXCEPTION 'POS-M3 FALHOU: o motor ainda lê o dia da sessão, ou o corte voltou ao fuso da sessão';
   END IF;
-  IF v_def NOT LIKE '%fator_embalagem_portal%' THEN
-    RAISE EXCEPTION 'POST FALHOU: a funcao viva perdeu o multiplo de embalagem do portal (20260904232555) — o replace partiu da base errada';
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_proc p
+                  WHERE p.oid = v_oid AND p.provolatile = 'v' AND NOT p.prosecdef
+                    AND array_to_string(p.proconfig, ';') = 'search_path=public, pg_temp;statement_timeout=120s'
+                    AND pg_catalog.pg_get_userbyid(p.proowner) = 'postgres') THEN
+    RAISE EXCEPTION 'POS-M4 FALHOU: o motor mudou de atributo — esperado VOLATILE, INVOKER, config [search_path=public, pg_temp;statement_timeout=120s], dono postgres';
   END IF;
-  IF v_def NOT LIKE '%pcs2.status IN (''aprovado_aguardando_disparo'',''disparado'',''disparado_simulado'',''concluido_recebido'')%' THEN
-    RAISE EXCEPTION 'POST FALHOU: em_transito nao conta disparado_simulado — pedido real criado no Omie pelo dry_run sumiria do a-caminho (compra dupla)';
+  -- Com a migration rodando INTEIRA (a foto da PRÉ existe): o motor instalado é ESTE texto (md5 de argumentos e
+  -- corpo) e o ACL é o de antes. Fora dela — as provas vizinhas carregam este trecho como fixture e SABOTAM o
+  -- corpo para provar o dente delas — valem só os invariantes acima. IF aninhado, não AND: a condição de um IF
+  -- é planejada inteira, e a foto ausente faria a referência à tabela temporária errar antes do to_regclass.
+  IF to_regclass('pg_temp.hoje_sp_data_ciclo_acl_antes') IS NOT NULL THEN
+    IF (SELECT md5(pg_catalog.pg_get_function_arguments(p.oid)) || md5(p.prosrc) FROM pg_catalog.pg_proc p WHERE p.oid = v_oid)
+       <> 'f2a876ac1f0e05994931f55ae04d7bfa' || '7a15485d16c2a88c2de88cc80f87756b' THEN
+      RAISE EXCEPTION 'POS-M2 FALHOU: o motor instalado não é o desta migration (argumentos ou corpo)';
+    END IF;
+    IF (SELECT a.acl FROM hoje_sp_data_ciclo_acl_antes a WHERE a.alvo = 'f:gerar_pedidos_sugeridos_ciclo(text,date)')
+       IS DISTINCT FROM (SELECT p.proacl::text FROM pg_catalog.pg_proc p WHERE p.oid = v_oid) THEN
+      RAISE EXCEPTION 'POS-M6 FALHOU: o ACL do motor mudou no replace';
+    END IF;
   END IF;
-  IF v_def NOT LIKE '%pfg.grupo_codigo IS NOT DISTINCT FROM sn.grupo_codigo%'
-     OR v_def LIKE '%COALESCE(pfg.grupo_codigo%' THEN
-    RAISE EXCEPTION 'POST FALHOU: JOIN item-cabecalho nao usa IS NOT DISTINCT FROM no grupo — grupo NULL e vazio cruzariam itens entre pedidos';
-  END IF;
-  RAISE NOTICE 'OK: guarda [FANTASMA] NULL-safe + multiplo de embalagem + disparado_simulado a caminho + JOIN de grupo NULL-safe';
 END
-$post$;
-
-COMMIT;
+$pos_motor$;

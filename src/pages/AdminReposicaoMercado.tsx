@@ -2,7 +2,7 @@ import { lazy, Suspense, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { addDias, hojeSP } from "@/lib/dashboard/sp-date";
+import { addDias, hojeSP } from "@/lib/time/sp-day";
 import { TrendingUp, Tag, ArrowUpRight, Handshake, Sparkles, Building2 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";

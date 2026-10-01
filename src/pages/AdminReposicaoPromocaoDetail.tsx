@@ -3,7 +3,7 @@ import { useNavigate, useParams, useSearchParams, Link } from "react-router-dom"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { format } from "date-fns";
-import { hojeSP } from "@/lib/dashboard/sp-date";
+import { hojeSP } from "@/lib/time/sp-day";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 import { estadoDeRegistro, naoConsegui } from "@/lib/leitura/estado-de-leitura";

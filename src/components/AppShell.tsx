@@ -7,7 +7,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { AppShellProvider } from '@/contexts/AppShellContext';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
-import { hojeSP } from '@/lib/dashboard/sp-date';
+import { hojeSP } from '@/lib/time/sp-day';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
