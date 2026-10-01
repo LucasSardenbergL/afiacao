@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **571** custom migrations totais
-- **1883** objetos esperados (criados por estas migrations)
+- **573** custom migrations totais
+- **1892** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 624
+  - `function`: 631
   - `rls_policy`: 462
   - `index`: 261
   - `cron_job`: 174
   - `table`: 166
-  - `view`: 100
+  - `view`: 102
   - `trigger`: 92
   - `enum_value`: 4
 
@@ -4696,6 +4696,25 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public._data_health_compute` | — |
 | `function` | `public.data_health_watchdog` | — |
 | `function` | `public.fin_sync_heartbeat` | — |
+
+### `20261001023000_hoje_sp_familia_data_ciclo.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.aplicar_promocoes_no_ciclo` | — |
+| `function` | `public.ciclo_oportunidade_do_dia` | — |
+| `function` | `public.gerar_pedidos_oportunidade_ciclo` | — |
+| `function` | `public.atualizar_parametros_numericos_skus` | — |
+| `function` | `public.reposicao_pos_candidatos` | — |
+| `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
+| `view` | `public.v_promocao_avaliacao_hoje` | — |
+| `view` | `public.v_oportunidade_economica_hoje` | — |
+
+### `20261001083000_converter_campanha_flat_colunas_reais.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.converter_sugestao_em_campanha_flat` | — |
 
 ## Próximos passos por status
 

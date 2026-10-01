@@ -324,3 +324,12 @@ db/test-hoje-sp-views-defaults.sh          129  falsificar=fora-do-ci  # TETO do
 # (a deriva de 14 colunas do snapshot + o texto vivo) + a migration. O `--falsificar` (17 sabotagens, todas
 # vermelhas no assert certo, matriz UTC/SP × C/pt_BR verde) roda FORA do CI pelo motivo da linha abaixo.
 db/test-hoje-sp-data-ciclo.sh               57  falsificar=fora-do-ci  # o job provas-sql mediu 19,6–19,9 min de 20 em 3 PRs de 30/09–01/10 (mediana 17,9 em 8): +17 sabotagens (~3 min) o cancelaria no teto; o comentário do ci.yml pede paralelizar o runner, não subir o teto
+
+# converter_sugestao_em_campanha_flat (#2668): P0 EXECUTA o predecessor de prod e exige o 42703 (o
+# defeito: INSERT em 4 colunas que promocao_item não tem); X — a deriva aborta a PRE, a função nasce
+# com a porta PORTA_GATE (sem e com o default ACL do Supabase), re-aplicar passa; O1/A1 a assinatura
+# antiga saiu e a porta; P1-P3 campanha/item/sugestão; N1-N7+NZ os portões sem gravar; B — D =
+# 28/02/2025, 4 instantes cruzando 21:00 BRT sob sessão UTC e SP, convertendo com data fim = hoje; W
+# como authenticated no relógio real. Autocontida: initdb + stubs + a fixture
+# db/fixtures/converter-campanha-flat-predecessora-prod-20261001.sql + o gatilho de campanha vivo + a migration.
+db/test-converter-campanha-flat.sh          25  falsificar=fora-do-ci  # TETO do provas-sql: 30 min é stopgap declarado e o ci.yml pede paralelizar antes de crescer o job (16,8–17,3 min em 01/10) — a prova crua (25 asserts, 8 s) segue aqui; o --falsificar (19 sabotagens, 208 s para as 3 células rodadas em paralelo) roda à mão: matriz UTC/SP × C/pt_BR verde em 01/10
