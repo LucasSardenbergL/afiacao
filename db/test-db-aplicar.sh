@@ -991,7 +991,7 @@ echo "▶ SONDAS do ambiente — ausencia ABORTA, nunca pula"
 v_psql="$("$PGBIN/psql" -X --version 2>/dev/null || true)"
 case "$v_psql" in
   *"(PostgreSQL) $PGVER."*) nota "o psql do shim e do executor e PostgreSQL $PGVER ($v_psql)" ;;
-  *) aborta PSQL_DE_OUTRA_MAJOR "o psql que o shim usa ($PGBIN/psql) respondeu '$v_psql'; esperado PostgreSQL $PGVER" ;;
+  *) aborta PSQL_DE_OUTRA_MAJOR "o psql que o shim usa (o de $PGBIN) respondeu '$v_psql'; esperado PostgreSQL $PGVER" ;;
 esac
 # O locale existe e resolve para UTF-8. Sem ele o glibc cai para ANSI_X3.4-1968 e só AVISA no stderr.
 charmap="$(LC_ALL=pt_BR.UTF-8 locale charmap 2>/dev/null || true)"
