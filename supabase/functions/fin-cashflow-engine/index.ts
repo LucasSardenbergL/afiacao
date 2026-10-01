@@ -24,6 +24,7 @@ import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } fro
 // só considera stale após 45 dias. Medido: em 2026-07-28 faltou 1 dos 9 combos e o rastro
 // HTTP (net._http_response) já havia sido purgado quando fui investigar.
 import { comRegistro, type DbRegistro } from "../_shared/registro-execucao.ts";
+import { hojeSP, somarDias } from "../_shared/hoje-sp.ts";
 
 // =============================================================
 // Helper de autorização inlineado (de _shared/auth.ts)
@@ -468,8 +469,9 @@ async function carregarDados(
   const estoque_data_ref = estoqueRow?.data_ref ?? null;
 
   // CMV TTM: soma dos últimos 12 meses de DRE competência
-  const _hojeTtm = new Date();
-  const _cutoffMesIdx = (_hojeTtm.getFullYear() * 12 + (_hojeTtm.getMonth() + 1)) - 12;
+  // O MÊS de SP: no servidor UTC, getMonth() da noite do último dia do mês já é o mês seguinte.
+  const [_anoTtm, _mesTtm] = hojeSP().split('-').map(Number);
+  const _cutoffMesIdx = (_anoTtm * 12 + _mesTtm) - 12;
   const cmv_ttm = ((exigirLeitura(dreRes, 'fin_dre_snapshots') ?? []) as Array<{ cmv?: number; ano: number; mes: number }>)
     .filter((d) => (d.ano * 12 + d.mes) > _cutoffMesIdx)
     .reduce((s, d) => s + Number(d.cmv ?? 0), 0);
@@ -562,7 +564,7 @@ async function carregarDados(
 
   // Onda 2: curvas de cobrança por aging, calibradas POR EXPOSIÇÃO sobre todos os
   // títulos (não só liquidados — corrige o viés otimista). Uma vez por empresa.
-  const hojeIso = new Date().toISOString().slice(0, 10);
+  const hojeIso = hojeSP(); // o dia de SP (no servidor UTC, toISOString é amanhã das 21h BRT em diante)
   const curvas_aging = calibrarCurvas(
     crs.map((c) => ({
       valor_documento: c.valor_documento,
@@ -607,7 +609,7 @@ type TaxasHistoricas = {
 function calcularTaxasHistoricas(crs: CR[]): TaxasHistoricas {
   const agora = Date.now();
   const noventa = 90 * 24 * 60 * 60 * 1000;
-  const cutoff = new Date(agora - 12 * 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const cutoff = somarDias(hojeSP(), -12 * 30); // a borda da janela em dia de SP (data_vencimento é date)
 
   const recentes = crs.filter(c =>
     c.data_vencimento && c.data_vencimento >= cutoff
@@ -913,7 +915,9 @@ function gerarSemanas(
   premissas: PremissasAplicadas,
   horizon: number,
 ): ResultadoSemanas {
-  const hoje = new Date().toISOString().slice(0, 10);
+  // O dia de SP: com o UTC, domingo das 21h BRT em diante a semana corrente sumia do horizonte (a mesma classe
+  // que a 20260927202603 consertou em fin_projecao_13_semanas, no SQL).
+  const hoje = hojeSP();
   const semanaInicio = inicioSemanaUTC(hoje);
   const horizonFim = addDays(semanaInicio, horizon * 7); // exclusivo: 1º dia FORA do horizonte
 
@@ -1057,7 +1061,7 @@ function calcularNCG(dados: DadosBase): NCG {
   // janela saem de cp_fornecedor (contados uma vez, em folha_30d). Sem categorias de
   // folha configuradas → guard inerte: cp_fornecedor inalterado, folha = recorrente.
   const folhaCats = dados.config.folha_categorias_codigos ?? [];
-  const hojeNcg = new Date().toISOString().slice(0, 10);
+  const hojeNcg = hojeSP();
   const limite30 = addDays(hojeNcg, 30);
   const isFolhaCPJanela = (c: CP): boolean =>
     folhaCats.length > 0 &&
@@ -1099,12 +1103,13 @@ function calcularNCG(dados: DadosBase): NCG {
 
   const valor = aco.total - pco.total;
 
-  const hoje = new Date();
+  // Os rótulos partem do MÊS de SP (no servidor UTC, getMonth() da noite do último dia já é o seguinte).
+  const [anoSp, mesSp] = hojeSP().split('-').map(Number);
   const projecao_12m: Array<{ mes: string; valor: number }> = [];
   for (let i = 0; i < 12; i++) {
-    const d = new Date(hoje.getFullYear(), hoje.getMonth() + i, 1);
+    const idx = anoSp * 12 + (mesSp - 1) + i;
     projecao_12m.push({
-      mes: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`,
+      mes: `${Math.floor(idx / 12)}-${String((idx % 12) + 1).padStart(2, '0')}`,
       valor,
     });
   }
@@ -1134,7 +1139,7 @@ function calcularIndicadores(
   horizonWeeks: number,
   company?: string,
 ): Indicadores {
-  const hoje = new Date().toISOString().slice(0, 10);
+  const hoje = hojeSP();
   // Fase 3 (B2): dias_cobertura do CAIXA OPERACIONAL PROJETADO, não da coluna base
   // data_pagamento (sempre NULL → dava 999 "infinito" e desligava o alerta). Saída
   // diária = Σ total_saidas do horizonte / (horizon*7) = CP por vencimento + folha/
