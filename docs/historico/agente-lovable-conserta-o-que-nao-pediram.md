@@ -186,3 +186,31 @@ não a intenção.
   medida e **rejeitada**: a sonda devolve o `fonte` do mapa compilado, e o bot não regenera o mapa ⇒
   corpo do bot deployado responderia o par canônico — o redeploy forçado pelo bump é a única prova
   de que prod voltou. Ver [sonda-bump-retorno-ao-canonico.md](sonda-bump-retorno-ao-canonico.md).
+- **O eixo da RESPOSTA acusa a regeneração de tipos (medido em 2026-10-01).** No deploy de 6 edges
+  das 08:09Z, a plataforma regenerou o `src/integrations/supabase/types.ts` 20 s depois do pedido
+  (`01126cee`, merge `f23ccab5`, +14/−6). A resposta veio com `edit_id`/`commit_sha` e o transcript
+  não tem nenhuma tool de escrita do agente. O sensor dá `EDICAO_DETECTADA` com qualquer sinal na
+  resposta (a tolerância ao `types.ts` só existe no eixo dos commits), então acusaria um deploy puro.
+  Antes de reverter, leia os arquivos do `commit_sha`: se for só o `types.ts`, é o efeito colateral
+  conhecido e não há o que reverter.
+
+## 7. A segunda fonte da colagem — os moldes à mão da skill (2026-10-01)
+
+- **O briefing era de 26/09, e o artefato já estava na `main`.** O pedido (pôr no prompt gerado a
+  proibição de editar qualquer arquivo) foi escrito antes do #2596. O `git grep -niE "do not edit any
+  file"` dava 0 porque a frase entregue é `Do NOT edit, create, rename or delete ANY file`. Grep pela
+  redação ESPERADA é cego ao artefato: procure o SÍMBOLO (`blocoDeEscopo`).
+- **O que faltava era a 2ª fonte.** O `pendencias:prompt` e o Passo 2 do `pendencias:pacote` passam
+  pelo `montarPrompt`, mas o Passo 3 da `lovable-deploy-verify` ainda ensinava 3 moldes à mão (1 edge
+  com 1 arquivo, 1 edge com N, a leva). O de 1 edge vinha como "o que você usa quando a leva tem uma
+  só", e nenhum dos três tinha escopo nem conferência. Os moldes saíram e entrou o ponteiro ao
+  gerador, que aceita qualquer edge pelo nome. O `[COLAGEM_SO_DO_GERADOR]` (`prompt-deploy.test.ts`)
+  varre skills, `docs/agent`, runbooks e `CLAUDE.md` pela assinatura da família do prompt, com o `> `
+  e as quebras de linha desfeitos. Dois controles impedem que ele aprove por vacuidade: a assinatura
+  casa a saída do gerador, e a varredura lê uma testemunha de cada lugar.
+- **O efeito do #2596, com denominador.** A fonte é o `list_messages` + `list_edits` do `steu`, de
+  27/09 18:20Z a 01/10 21:39Z, com a janela coberta inteira. Foram 11 pedidos de deploy, todos com a
+  frase de escopo, e **0 edições de edge**. O único `edit_id` é a regeneração de tipos (§6). A rodada
+  que a plataforma reacordou (27/09 19:35Z, "Fix them") só leu e recusou. No git, nenhum commit do
+  `gpt-engineer-app[bot]` em `supabase/functions/` desde o merge (o filtro casa `eec8598d7` e
+  `f84d7772e`, os do #2579).

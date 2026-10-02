@@ -163,23 +163,28 @@ fonte dela (commit do bot que editou corpo sem regravar o mapa, #2611). Não col
 `--write` só para destravar: leia o que o commit mudou (`git log` que a mensagem imprime) e abra o PR
 de revert (edição não pedida) ou de mapa regravado (legítima). → `docs/agent/deploy.md`, exit 5.
 
-O resto deste passo é o que o gerador faz por dentro — leia quando precisar auditá-lo, ou quando a
-edge estiver fora do que ele cobre. Ele decide o **conteúdo** do prompt; ele NÃO decide *se* a edge
-precisa de deploy, e o mapa ter mudado depois do PR não é motivo (ver Passo 2).
+O resto deste passo é o que o gerador faz por dentro: leia para AUDITÁ-LO, nunca como molde. Não há
+edge "fora do que ele cobre": `bun run pendencias:prompt <edge> [edge…]` emite a colagem de qualquer
+edge da `origin/main` pelo nome, e o exit 2 dele quer dizer "não cole nada", não "monte à mão". Ele
+decide o **conteúdo** do prompt; ele NÃO decide *se* a edge precisa de deploy, e o mapa ter mudado
+depois do PR não é motivo (ver Passo 2).
+
+**A colagem só sai do `montarPrompt` (`scripts/lib/prompt-deploy.ts`) — fonte única (2026-10-01).**
+Esta skill trazia três moldes para montar à mão (1 edge com 1 arquivo, 1 edge com N arquivos, a leva),
+e o de 1 edge vinha como "o que você usa quando a leva tem uma só". Nenhum dos três tinha o bloco de
+conferência (`sha256`, #2362) nem o de escopo (`blocoDeEscopo`, #2596). Sem o escopo, o agente volta a
+poder "consertar" o `build-errors.log` depois do deploy, que é a classe do #2541/#2579/#2595. Molde que
+volte a uma instrução viva (skills, `docs/agent`, runbooks, `CLAUDE.md`) deixa vermelho o
+`[COLAGEM_SO_DO_GERADOR]` do `prompt-deploy.test.ts`.
 
 **UMA colagem por LEVA, não por edge (medido 2026-09-06, e a transição observada em 2026-09-08).**
-Com 2+ edges pendentes, monte um prompt único numerando-as, cada uma com a SUA lista de arquivos — a
-forma exata está no fim deste passo, e as duas medições (8 edges / 70 arquivos → 54/54; depois 2 edges
-com o ANTES **medido** no ledger, `DIVERGE_P1` → `CONFERE` → 59/59) no §Estado. O prompt de 1 edge abaixo continua sendo a
-unidade de construção, e é o que você usa quando a leva tem uma só:
-
-> Edit the existing edge function `<nome>` and replace its code with the current contents of
-> `supabase/functions/<nome>/index.ts` from the `main` branch. Deploy it **verbatim** — do NOT modify,
-> reinterpret, "improve", or reformat the code. After deploying, confirm it shows **Active**.
+Com 2+ edges pendentes, o gerador emite um prompt único numerando-as, cada uma com a SUA lista de
+arquivos — as duas medições (8 edges / 70 arquivos → 54/54; depois 2 edges com o ANTES **medido** no
+ledger, `DIVERGE_P1` → `CONFERE` → 59/59) estão no §Estado.
 
 ⚠️ Só depois do PR **mergeado** na main (Lei de Ferro #3).
 
-⚠️ **O prompt acima nomeia UM arquivo — e a fatia que instrumenta a edge tem mais de um.** Um arquivo
+⚠️ **O molde antigo de 1 edge nomeava UM arquivo — e a fatia que instrumenta a edge tem mais de um.** Um arquivo
 basta enquanto a mudança é interna ao `index.ts`; deixa de bastar exatamente onde a verificação de
 deploy nasce. **Edge que ganha sonda nasce com `versao.ts` NOVO**, importado pelo `index.ts` — pedir só
 o `index.ts` manda o Lovable subir uma função cujo import não resolve, e o modo de falha é o pior
@@ -270,15 +275,9 @@ lista **vazia** para as edges que usam `'…'` — 3 das 7 aqui. Vazio de regex 
 vazio de "não importa nada": case `from ['\"]`, e trate contagem 0/1 como **enumeração quebrada**,
 nunca como resposta.
 
-E nomeie cada um, marcando o novo (teste e doc ficam de fora — não vão pro bundle):
-
-> Edit the edge function `<nome>` and update it from the `main` branch using the current contents of
-> these files. Deploy them **verbatim** — do NOT modify, reinterpret, "improve", or reformat the code:
-> - `supabase/functions/<nome>/index.ts` (modified)
-> - `supabase/functions/<nome>/versao.ts` (**NEW file** — `index.ts` imports it; without it the function will not boot)
-> - `supabase/functions/_shared/<módulo>.ts` (modified — shared module this function bundles)
->
-> After deploying, confirm it shows **Active**.
+O gerador nomeia cada arquivo do closure com o seu `sha256` (teste e doc ficam de fora — não vão pro
+bundle). Arquivo NOVO não precisa de rótulo: está no closure, e o agente que não o achar no sandbox
+cai no ramo "cannot compute" da conferência e não deploya.
 
 Exercitado no #2009 (`carteira-rebuild`, 3 arquivos de código, 1 deles novo): a sonda pós-deploy voltou
 `probe:true · versao:v1.0-sensor-inicial · edge:carteira-rebuild · fonte:8d2589d0…`, e o `fonte` bateu
@@ -292,21 +291,8 @@ Mesmo conteúdo por edge, uma colagem só. O cabeçalho pede o total e proíbe p
 dá ao founder o relato para comparar com a sonda. Medido em 2026-09-06 com **8 edges / 70 arquivos**
 (as 8 responderam `versao` + `fonte` da main, `pendencias:deploy` 54/54) e de novo em **2026-09-08**,
 desta vez com o ANTES conhecido — 2 edges, uma delas em `DIVERGE_P1` medido, que transitou para
-`CONFERE` depois do prompt único (§Estado):
-
-> Edit the following **eight** existing edge functions and update **each** of them from the `main`
-> branch using the current contents of the files listed under it. Deploy all of them **verbatim** —
-> do NOT modify, reinterpret, "improve", or reformat any code. Deploy every function listed; do not
-> skip any.
->
-> **1. `<nome-1>`**
-> - `supabase/functions/<nome-1>/index.ts`
-> - … (o closure ∪ {mapa} desta edge, um arquivo por linha)
->
-> **2. `<nome-2>`**
-> - …
->
-> After deploying, list the eight function names and confirm that **each one** shows **Active**.
+`CONFERE` depois do prompt único (§Estado). O texto exato é o ramo de N edges do `montarPrompt`: rode
+`bun run pendencias:prompt <e1> <e2> …` (ou o `pacote`, se houver ordem declarada) e leia a saída.
 
 ⚠️ **O relato do chat não substitui a sonda — ele diz o que perguntar a ela.** Se o Lovable disser que
 pulou alguma, tire-a do bloco de sonda antes de rodar; se disser que deployou todas, a sonda é quem
