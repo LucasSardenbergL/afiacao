@@ -248,13 +248,16 @@ cand() { Pq -c "SELECT string_agg(pedido_id::text, ',' ORDER BY pedido_id) FROM 
 campo() { Pq -c "SELECT $2 FROM public.reposicao_pos_candidatos('OBEN') WHERE pedido_id=$1;" | tail -1; }
 
 echo "── Bloco E: TIPO (text × enum) — só EXECUTAR pega (PL/pgSQL é late-bound) ──"
+# "Executa" é POSITIVO: a marca de fim só sai se a RPC rodou (ON_ERROR_STOP). Casar o texto inglês do erro
+# deixava a quebra em pt ("ERRO: operador não existe") — e qualquer outra falha — aprovar.
 R=$(P -tA 2>&1 <<'SQL' || true
 SELECT count(*) FROM public.reposicao_pos_candidatos('OBEN');
+SELECT 'EXECUTOU';
 SQL
 )
 case "$R" in
-  *"operator does not exist"*|*"does not exist"*|*ERROR*) bad "E1 a RPC QUEBROU em runtime: $R";;
-  *) ok "E1 a RPC EXECUTA com empresa TEXT × ENUM (comparação com cast explícito)";;
+  *EXECUTOU) ok "E1 a RPC EXECUTA com empresa TEXT × ENUM (comparação com cast explícito)";;
+  *) bad "E1 a RPC QUEBROU em runtime (sem a marca de fim): $R";;
 esac
 eq "E2 aceita a empresa em caixa/espaço divergentes (upper+btrim)" "$(Pq -c "SELECT count(*) FROM public.reposicao_pos_candidatos('  oben ');" | tail -1)" "52"
 

@@ -45,6 +45,18 @@ PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); echo "  ✅ $1"; }
 bad() { FAIL=$((FAIL+1)); echo "  ❌ $1"; }
 eq()  { if [ "$2" = "$3" ]; then ok "$1 (=$2)"; else bad "$1 — esperado [$3], veio [$2]"; fi; }
+# executa <sql> → 'EXECUTOU' | 'SQLSTATE-<código>': marca POSITIVA de fim (ON_ERROR_STOP) e a SQLSTATE, que
+# não muda com o locale — o idioma do acl_probe de test-aprovar-pedido-guard.sh.
+executa() {
+  local out
+  if out=$(P -tA 2>&1 <<SQL
+\set VERBOSITY verbose
+$1
+SELECT 'EXECUTOU';
+SQL
+  ); then printf '%s\n' "$out" | tail -1
+  else echo "SQLSTATE-$(printf '%s\n' "$out" | sed -nE 's/.*[[:space:]]([0-9][0-9A-Z]{4}):.*/\1/p' | head -1)"; fi
+}
 
 MASTER='11111111-1111-1111-1111-111111111111'
 EMP='22222222-2222-2222-2222-222222222222'
@@ -132,8 +144,9 @@ eq "A3 zero divergências de count" "$PAR" "0"
 eq "A3 OBEN=12 na MV" "$(Pq -c "select oportunidade_count from private.mv_oportunidade_badge where empresa='OBEN';")" "12"
 
 echo "── A4 CRON-CONTEXT: refresh roda sob auth.uid()=NULL (NÃO dá 42501) ──"
-R=$(P -tA 2>&1 -c "SET test.uid=''; SET test.role=''; SELECT public.refresh_oportunidade_badge();" || true)
-case "$R" in *42501*|*"Acesso negado"*|*denied*) bad "A4 refresh DEU erro de acesso sob NULL: $R";; *) ok "A4 refresh rodou sob auth.uid()=NULL (cron não morre)";; esac
+# "não achei erro de acesso" aprovava qualquer OUTRO erro (e a negação em pt): só a marca de fim aprova.
+eq "A4 refresh rodou sob auth.uid()=NULL (cron não morre)" \
+   "$(executa "SET test.uid=''; SET test.role=''; SELECT public.refresh_oportunidade_badge();")" "EXECUTOU"
 
 echo "── A5 REFRESH CONCURRENTLY funciona (muda refreshed_at) ──"
 Pq -c "INSERT INTO public._oport_base VALUES ('OBEN','SKU_NOVO');" >/dev/null
@@ -144,8 +157,8 @@ eq "A5 refresh recomputou OBEN (12→13)" "$N" "13"
 echo "── A6 GRANTS do refresh: authenticated NÃO executa; service_role executa ──"
 R=$(P -tA 2>&1 -c "SET test.uid=''; SET ROLE authenticated; SELECT public.refresh_oportunidade_badge();" || true)
 case "$R" in *denied*|*permission*|*42501*) ok "A6 authenticated barrado de executar o refresh (REVOKE EXECUTE)";; *) bad "A6 authenticated executou o refresh? $R";; esac
-R=$(P -tA 2>&1 -c "SET test.uid=''; SET ROLE service_role; SELECT public.refresh_oportunidade_badge();" || true)
-case "$R" in *denied*|*permission*) bad "A6 service_role NÃO executou (grant faltando): $R";; *) ok "A6 service_role executa o refresh (GRANT EXECUTE)";; esac
+eq "A6 service_role executa o refresh (GRANT EXECUTE)" \
+   "$(executa "SET test.uid=''; SET ROLE service_role; SELECT public.refresh_oportunidade_badge();")" "EXECUTOU"
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ZONA 4 — FALSIFICAÇÃO
