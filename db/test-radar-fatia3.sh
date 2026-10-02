@@ -81,11 +81,12 @@ SET ROLE authenticated; SET test.uid = '00000000-0000-0000-0000-0000000000a1';
 
 -- A1: contagem por município — BH default (exclui descartada + já-cliente) = 2 total, 1 com telefone, 2 a_contatar.
 DO $$
-DECLARE r record; n int := 0;
+DECLARE r record; n int := 0; nbh int := 0;
 BEGIN
   FOR r IN SELECT * FROM public.radar_contagem_por_municipio() LOOP
     n := n + 1;
     IF r.municipio_codigo = '3106200' THEN
+      nbh := nbh + 1;
       IF r.total IS DISTINCT FROM 2 THEN RAISE EXCEPTION 'A1 FALHOU: BH total=% (esperado 2)', r.total; END IF;
       IF r.com_telefone IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'A1 FALHOU: BH com_telefone=% (esperado 1)', r.com_telefone; END IF;
       IF r.a_contatar IS DISTINCT FROM 2 THEN RAISE EXCEPTION 'A1 FALHOU: BH a_contatar=% (esperado 2)', r.a_contatar; END IF;
@@ -93,6 +94,8 @@ BEGIN
     END IF;
   END LOOP;
   IF n IS DISTINCT FROM 2 THEN RAISE EXCEPTION 'A1 FALHOU: % municípios (esperado 2: BH+SP)', n; END IF;
+  -- sem esta contagem, BH sumida (e outro município no lugar) passava sem medir os asserts de BH
+  IF nbh IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'A1 FALHOU: BH veio % vez(es) (esperado 1)', nbh; END IF;
   RAISE NOTICE 'A1 OK';
 END $$;
 
@@ -119,9 +122,9 @@ DO $$
 DECLARE r jsonb; t record;
 BEGIN
   r := public.radar_atribuir_tarefa('11111111000111', 7);
-  IF (r->>'deduped')::boolean THEN RAISE EXCEPTION 'A4 FALHOU: não deveria deduplicar 1ª vez'; END IF;
+  IF (r->>'deduped')::boolean IS NOT FALSE THEN RAISE EXCEPTION 'A4 FALHOU: não deveria deduplicar 1ª vez (deduped=%)', r->>'deduped'; END IF;
   SELECT * INTO t FROM public.tarefas WHERE id=(r->>'id')::uuid;
-  IF t.customer_user_id IS NOT NULL THEN RAISE EXCEPTION 'A4 FALHOU: customer_user_id deveria ser NULL'; END IF;
+  IF NOT FOUND OR t.customer_user_id IS NOT NULL THEN RAISE EXCEPTION 'A4 FALHOU: customer_user_id deveria ser NULL (tarefa achada=%, customer=%)', FOUND, t.customer_user_id; END IF;
   IF t.assigned_to IS DISTINCT FROM '00000000-0000-0000-0000-0000000000a1' THEN RAISE EXCEPTION 'A4 FALHOU: assigned_to'; END IF;
   IF t.empresa IS DISTINCT FROM 'oben' OR t.categoria IS DISTINCT FROM 'ligar' OR t.modo IS DISTINCT FROM 'data' THEN RAISE EXCEPTION 'A4 FALHOU: campos'; END IF;
   IF t.due_date IS DISTINCT FROM current_date + 7 THEN RAISE EXCEPTION 'A4 FALHOU: due_date'; END IF;

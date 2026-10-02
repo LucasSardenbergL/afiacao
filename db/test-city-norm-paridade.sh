@@ -149,8 +149,9 @@ BEGIN
   -- 4. city NULL / vazia → city_norm NULL (fica fora do índice parcial e do .in())
   INSERT INTO public.customer_visit_scores (customer_user_id, farmer_id, city)
   VALUES (gen_random_uuid(), gen_random_uuid(), '   ');
-  IF (SELECT city_norm FROM public.customer_visit_scores WHERE city = '   ') IS NOT NULL THEN
-    RAISE EXCEPTION 'FAIL: city só-espaços deveria dar city_norm NULL';
+  -- '(null)' = city_norm NULL com a linha PRESENTE; a linha que não casa o WHERE dá NULL e reprova
+  IF (SELECT coalesce(city_norm, '(null)') FROM public.customer_visit_scores WHERE city = '   ') IS DISTINCT FROM '(null)' THEN
+    RAISE EXCEPTION 'FAIL: city só-espaços deveria dar city_norm NULL (e a linha existir)';
   END IF;
 
   RAISE NOTICE 'asserts generated column: OK';
