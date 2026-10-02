@@ -1589,7 +1589,16 @@ jobs:
     # lento cada contrato leva 1,6 a 1,8× mais (sonda-versao-sql 299→~510s; like-cru-em-migrations,
     # #2653, 129→238s), e o job inteiro pede ~34min. 45min ≈ 75% no lento. O memo do `lerSql` corta a
     # parte do like-cru. O conserto de fundo segue sendo o fan-out por contrato.
-    timeout-minutes: 45
+    # 2026-10-02 (stopgap declarado): desde o #2747 a main é o ÚNICO lugar que roda TODOS os
+    # contratos — a rede do que escapa do escopo dos PRs. Em 10 runs da main de 01/10 o job levou
+    # 28,7 a 43,9 min: o pior a 98% do teto de 45. Cancelar aqui custa em dobro: o `/fecho` lê
+    # `cancelled` (sem veredito), e o sensor da Issue `mutcheck-cobertura` nem roda — ele só escuta
+    # `failure()`, então a rede some calada. Dois contratos são 40% do tempo (sonda-versao-sql 8,5 min,
+    # falsificar-exige-assert-gate 8,3 min; os outros 46 somam ~25). 60 deixa o pior observado a 73%.
+    # Compra pouco: o job foi de 7 para 43 min em 24 dias (~1,5 min/dia). O conserto de fundo segue
+    # sendo o fan-out por contrato — e ele precisa de agregador para o sensor (cada parte abriria e
+    # fecharia a MESMA Issue), por isso é decisão à parte.
+    timeout-minutes: 60
     # issues:write p/ o sensor abaixo abrir/fechar a Issue `mutcheck-cobertura`; contents:read p/ checkout.
     permissions:
       contents: read
