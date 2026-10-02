@@ -28,6 +28,8 @@ import {
   parsearSondaDeriva,
   relatarDeriva,
   remocoesDe,
+  saidaDerivaComoPsql,
+  textosDaLeitura,
   tokensSql,
 } from './deriva-corpo';
 
@@ -405,8 +407,41 @@ describe('parsearSondaDeriva — o detalhe por overload, fail-closed', () => {
   });
 });
 
+describe('textosDaLeitura — o canal de TEXTO que o eixo 5 do gate do pacote re-testa por tokens', () => {
+  it('traz, por nome, o prosrc que reproduziu o md5 do banco — canal íntegro, nenhuma falha', () => {
+    const t = textosDaLeitura(parsearSondaDeriva(saidaValida()));
+    expect(t.porNome.get('f')).toEqual([' SELECT 1 ']);
+    expect(t.falhas).toEqual([]);
+  });
+
+  it('texto que NÃO reproduz o md5 não entra — e a incoerência vira falha DITA do canal', () => {
+    const t = textosDaLeitura(parsearSondaDeriva(saidaValida().replace(hex(' SELECT 1 '), hex(' SELECT 2 '))));
+    expect(t.porNome.get('f') ?? []).toEqual([]);
+    expect(t.falhas.join()).toMatch(/não reproduz o md5/);
+  });
+
+  it('detalhe truncado (sem `fim-deriva`) e autoteste hex quebrado são falhas DITAS, não silêncio', () => {
+    const truncado = textosDaLeitura(parsearSondaDeriva(saidaValida().replace(/\nfim-deriva.*$/, '')));
+    expect(truncado.falhas.join()).toMatch(/marcador `deriva-corpo\/1`/);
+    const semHex = textosDaLeitura(parsearSondaDeriva(saidaValida().replace(`autoteste-hex|${HEX_AMOSTRA}`, 'autoteste-hex|00')));
+    expect(semHex.falhas.join()).toMatch(/autoteste do canal hex/);
+  });
+});
+
+describe('saidaDerivaComoPsql — a resposta da nuvem na forma do psql, UMA receita para o audit e o pacote', () => {
+  it('as duas consultas em sequência, cada linha com `\\n`, e nada para consulta vazia', () => {
+    const linhas = new Map([['sonda', ['a|1', 'b|2']], ['detalhe', []]]);
+    expect(saidaDerivaComoPsql(linhas)).toBe('a|1\nb|2\n');
+    expect(saidaDerivaComoPsql(new Map([['sonda', ['a']], ['detalhe', ['d']]]))).toBe('a\nd\n');
+  });
+
+  it('consulta AUSENTE na resposta LANÇA — não medi, nunca saída vazia', () => {
+    expect(() => saidaDerivaComoPsql(new Map([['sonda', ['a']]]))).toThrow(/não trouxe a consulta 'detalhe'/);
+  });
+});
+
 // ── julgamento ────────────────────────────────────────────────────────────────────────────────
-const LIBERADA: VereditoPrecondicao = { estado: 'LIBERADA', ausentes: [], naoMedidos: [], motivos: [], desatualizadas: [], naoConferidas: [] };
+const LIBERADA: VereditoPrecondicao = { estado: 'LIBERADA', ausentes: [], naoMedidos: [], motivos: [], desatualizadas: [], cosmeticas: [], naoConferidas: [] };
 /** Uma leitura de prod íntegra com os overloads dados (texto sempre coerente com o md5). */
 const leituraCom = (vivos: { nome: string; identidade: string; corpo?: string; xmin?: number }[]) => ({
   sonda: { medicoes: [], corpos: new Map(), funcoesPublic: 489, fim: true, dialetoOk: true },

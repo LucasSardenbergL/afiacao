@@ -64,7 +64,7 @@
   parallel, leakproof, custo, `prosecdef` e todo `proconfig`, além de usar `lock_timeout` curto e ensaio
   com `RAISE` rotulado. A validação lê o catálogo, sem chamar a rotina sobre pedidos vivos.
 
-## Desenho de C (o que o parecer propôs, ainda não implementado)
+## Desenho de C (o que o parecer propôs — implementado em 2026-10-01, ver abaixo)
 
 Depois das checagens EXATAS, que não mudam, o que hoje é `DERIVA` é re-testado contra um hash adicional
 da **variante segura** do corpo cru do repo: só linhas inteiras de comentário em contexto de código,
@@ -79,6 +79,47 @@ O relatório mostra método, migration e hashes. O lado de prod continua sendo o
 normalizar os dois lados. A prova é controle verde e mais duas mutações que têm de ficar vermelhas
 (remover código real; antecipar o reconhecimento às checagens exatas).
 
+## C implementado sobre `mesmosTokens` (2026-10-01)
+
+O founder escolheu C, sem escrita em prod. A 1ª implementação (branch de referência
+`claude/gate-corpo-variante-sem-comentarios`, sem PR) seguia o desenho acima ao pé da letra, com um
+léxico PRÓPRIO de linhas inteiras de `--` — e o Codex a reprovou com 3 P1 reproduzíveis nesse léxico:
+`\r` isolado encerra comentário no Postgres (`BEGIN\n-- c\rRETURN 1;…` perdia o `RETURN 1`), a
+continuação de `E''` herda o modo de escape (o `-- desconto=90` está DENTRO do literal), e tag de
+dollar-quote com mais de 126 caracteres escapava da janela de 128. O scanner do #2576 (`tokensSql`)
+responde DIFERENTES nos três: o léxico da 1ª versão foi descartado, não corrigido.
+
+- **Uma verdade só.** O léxico mudou de casa, não de conteúdo: `scripts/lib/tokens-sql.ts`, movido byte
+  a byte de `deriva-corpo.ts` (que reexporta), porque o gate não pode importar do sensor — o sensor
+  importa `precondicao-banco.ts`, e seria ciclo.
+- **O exato não muda.** `classificarCorpo` está intocado; `classificarComTokens` (`corpo-esperado.ts`)
+  delega a ele e só re-testa o que sai `DERIVA`, a ÚLTIMA versão primeiro. Tokens da última ⇒
+  `VARIANTE_COSMETICA` (lista `cosmeticas`, não bloqueia; o relatório mostra método, migration e os md5
+  de prod, do repo e dos tokens). Tokens de uma anterior ⇒ `CORPO_ANTERIOR` com `casouPor: 'tokens'`
+  (bloqueia — o P1 latente). Sem texto de prod que reproduza o md5 medido ⇒ `INCERTA`.
+- **Exceção conservadora, documentada:** se a última só acrescentou comentário e prod = a anterior
+  EXATA, a precedência exata segue bloqueando. Caso vivo: `kb_documents_set_updated_at`.
+- **O texto de prod** vem da sonda de detalhe do #2576 (`montarSondaDeriva`, uma transação
+  `REPEATABLE READ`; pela nuvem, as duas consultas de `consultasDeriva` num statement só, juntadas pela
+  receita única `saidaDerivaComoPsql`, que o audit também passou a usar).
+- **Ressalva de DML** no "⇒ APLIQUE essa migration": reaplicar o ARQUIVO re-executa o que mais ele traz
+  (a `20260606190000` roda um backfill one-time sobre pedidos vivos).
+
+### Evidência
+
+- **Censo de prod** com o código do branch (`psql-ro -q -v ON_ERROR_STOP=1`; canal íntegro: marcadores,
+  dialeto, autoteste hex, zero incoerência; `origin/main@1163a1225`, 757 migrations, 316 funções vivas):
+  239 `EM_DIA` · **69 `DERIVA` → `VARIANTE_COSMETICA`** · 5 `DERIVA` restantes (os 4 patches por âncora e a
+  edição manual aceita de [`deriva-corpo-sem-sensor.md`](deriva-corpo-sem-sensor.md)) · 1 `CORPO_ANTERIOR`
+  exato (a exceção conservadora) · 2 `INDECIDIVEL` · **0 `CORPO_ANTERIOR` novo pela via de tokens** · 0 sem
+  texto.
+- **Execução real:** `bun scripts/pendencias-pacote.ts disparar-pedidos-aprovados` → exit 0, com
+  `reposicao_persistir_qtde_inteira` em `VARIANTE_COSMETICA` (prod `0f1d1cd2…` ≠ repo `fcc3048e…`, md5 dos
+  tokens `9c309ece…`). Na main, a mesma leva dizia "edição manual".
+- **Testes:** os 3 P1 e os 3 P2 do Codex (empate de variantes; propagação SQL → extração → histórico →
+  bloqueio, com o caso real lido da migration e os md5 medidos no banco; `DECLARE a$q$ int`) viraram
+  regressão do caminho por tokens em `precondicao-banco.test.ts`, com controles positivos na mesma suíte.
+
 ## Estado
 
-Nenhuma escrita em prod. A decisão entre C, D e A é do founder.
+Nenhuma escrita em prod. C entregue.

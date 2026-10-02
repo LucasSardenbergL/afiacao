@@ -18,6 +18,7 @@ import {
   type LeituraSonda,
   montarSondaPrecondicao,
   parsearSondaPrecondicao,
+  type TextosVivos,
   TOKEN_SEM_CORPO,
   type VereditoPrecondicao,
 } from './precondicao-banco';
@@ -553,6 +554,43 @@ export function parsearSondaDeriva(saida: string): LeituraDeriva {
     if (a !== b) incoerencias.push(`${nome}: md5 da sonda e do detalhe divergem`);
   }
   return { sonda, overloads, fim, autotesteHex, autotesteIdentidade, agora, incoerencias };
+}
+
+/**
+ * O canal de TEXTO desta sonda, no formato que o eixo 5 do gate do pacote consome (`TextosVivos`):
+ * o `prosrc` de cada overload que REPRODUZIU o md5 do banco, e por que o canal não é íntegro quando
+ * não é. Só transporta — o julgamento confere de novo cada texto contra o md5 que a SONDA mediu.
+ * O autoteste de identidade fica de fora de propósito: `format_type` não toca o texto, e uma falha
+ * dele aqui viraria INCERTA por um dado que o re-teste por tokens nem lê.
+ */
+export function textosDaLeitura(leitura: LeituraDeriva): TextosVivos {
+  const porNome = new Map<string, string[]>();
+  for (const o of leitura.overloads) {
+    if (o.texto !== undefined) porNome.set(o.nome, [...(porNome.get(o.nome) ?? []), o.texto]);
+  }
+  const falhas = [
+    ...(leitura.fim ? [] : [`o detalhe não trouxe o marcador \`${FORMATO_DERIVA}\` — saída truncada`]),
+    ...(leitura.autotesteHex ? [] : ['autoteste do canal hex falhou — o texto dos corpos não é confiável']),
+    ...leitura.incoerencias,
+  ];
+  return { porNome, falhas };
+}
+
+/**
+ * O texto que o `psql -q -tA -F '|'` imprime para `montarSondaDeriva` — medido no psql 17: os result
+ * sets em sequência, cada linha terminada em `\n`, e NADA para result set vazio. O transporte da
+ * nuvem devolve as duas consultas de `consultasDeriva` separadas (`DadosNuvem.linhas`); esta função
+ * as junta na MESMA forma que o caminho local entrega a `parsearSondaDeriva`. Uma receita só, para o
+ * audit e para o pacote. Consulta ausente LANÇA: é "não medi", nunca saída vazia.
+ */
+export function saidaDerivaComoPsql(linhas: ReadonlyMap<string, readonly string[]>): string {
+  return ['sonda', 'detalhe']
+    .flatMap((nome) => {
+      const l = linhas.get(nome);
+      if (l === undefined) throw new Error(`transporte da nuvem: a resposta não trouxe a consulta '${nome}'`);
+      return l.map((x) => `${x}\n`);
+    })
+    .join('');
 }
 
 // ── baseline de deriva ACEITA ───────────────────────────────────────────────────────────────────
