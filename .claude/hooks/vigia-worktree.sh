@@ -75,7 +75,9 @@ install_em_voo() {
   local aqui pids rc linha pid="" respondeu=0
   aqui="$(pwd -P)"   # físico: é o caminho que o lsof devolve
   # Casa o PROCESSO do bun (`bun install`, `/caminho/bun i ...`) — não o texto de
-  # um wrapper `zsh -c "... bun install"` nem `bun run` (medido no macOS).
+  # um wrapper `zsh -c "... bun install"` nem `bun run` (medido no macOS). O
+  # padrão identifica um COMANDO, e a tabela é da MÁQUINA: quem diz que é ESTA
+  # worktree é a cwd (docs/historico/evidencia-positiva-shell.md §13).
   pids="$(pgrep -f '(^|/)bun (install|i|add)( |$)' 2>/dev/null)"; rc=$?
   case "$rc" in
     0) ;;

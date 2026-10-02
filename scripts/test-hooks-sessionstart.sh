@@ -97,7 +97,7 @@ if [ "${1:-}" = "--falsificar" ]; then
     sabotar S4 D5 'manifesto: basta existir, versao nao importa' \
       '"version"[[:space:]]*:[[:space:]]*"[0-9]+\.[0-9]+\.[0-9]+' '"name"'
     sabotar S5 D6 '.bin nao conferido (link pendurado passa)' \
-      '[ -x "node_modules/.bin/$b" ] \' 'true \'
+      '[ -x "node_modules/.bin/$b" ]' 'true'
     sabotar S6 D2 'avisa e NAO dispara o install' \
       '(disparar_install >>"$log" 2>&1 </dev/null &)' ': SABOTADO-sem-disparo'
     sabotar S7 D7 'dispara install com deps OK' \
@@ -109,7 +109,7 @@ if [ "${1:-}" = "--falsificar" ]; then
     sabotar S10 D10 'pgrep quebrado vira "ninguem instalando"' \
       '*) return 2 ;;   # pgrep ausente ou quebrado' '*) return 1 ;;   # SABOTADO'
     sabotar S11 D11 'lsof mudo vira "ninguem aqui"' \
-      '[ "$respondeu" -eq 1 ] && return 1' 'return 1'
+      '[ "$respondeu" -eq 1 ] && return 1' 'return 1  # SABOTADO-lsof-mudo'
     sabotar S12 D12 'bun fora do PATH cala (o ramo antigo)' \
       'avisos="${avisos}${desc} -> bun FORA DO PATH' ': "${avisos}${desc} -> bun FORA DO PATH'
     sabotar S13 D13 'log que nao abre e dispara assim mesmo' \
