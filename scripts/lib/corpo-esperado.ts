@@ -197,8 +197,11 @@ export function historicoDeCorpos(migrations: readonly MigrationLida[]): Map<str
  * 🔴 **Lista de corpos VAZIA não é "em dia"**: é prod sem corpo textual (`LANGUAGE c`, cujo
  * `prosrc` é um símbolo e não o código; `LANGUAGE sql` com `prosqlbody`, cujo `prosrc` é vazio) ou
  * a sonda não ter trazido a linha. Nos dois casos, `INDECIDIVEL` — nunca verde.
+ *
+ * Interna desde 2026-10-01 (o corpo não mudou): o gate chama `classificarComTokens`, que delega a
+ * ela — exportá-la sem consumidor externo reprova no gate de dead-code (`knip`), que só roda no CI.
  */
-export function classificarCorpo(
+function classificarCorpo(
   versoes: readonly VersaoDeCorpo[] | undefined,
   vivo: CorpoVivo,
 ): VereditoDeCorpo {
