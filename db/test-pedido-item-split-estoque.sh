@@ -123,8 +123,9 @@ S2=$(Pq -c "SELECT i.estoque_fisico||'/'||i.estoque_a_caminho||'/'||i.estoque_at
 eq "A3 SKU2 a_caminho capta em_transito" "$S2" "0/4/4"
 
 # A4 — invariante money-path: fisico + a_caminho = estoque_atual (efetivo) p/ TODOS os itens novos
-VIOL=$(Pq -c "SELECT count(*) FROM pedido_compra_item i JOIN pedido_compra_sugerido p ON p.id=i.pedido_id WHERE p.status='pendente_aprovacao' AND i.estoque_fisico IS NOT NULL AND (i.estoque_fisico + i.estoque_a_caminho) <> i.estoque_atual;")
-eq "A4 invariante fis+caminho=efetivo (0 violações)" "$VIOL" "0"
+#    IS NOT TRUE conta o a_caminho/efetivo NULL (o `<>` o deixava fora); "|t" = havia itens a medir.
+VIOL=$(Pq -c "SELECT count(*) FILTER (WHERE ((i.estoque_fisico + i.estoque_a_caminho) = i.estoque_atual) IS NOT TRUE), count(*) > 0 FROM pedido_compra_item i JOIN pedido_compra_sugerido p ON p.id=i.pedido_id WHERE p.status='pendente_aprovacao' AND i.estoque_fisico IS NOT NULL;")
+eq "A4 invariante fis+caminho=efetivo (0 violações)" "$VIOL" "0|t"
 
 # A5 — cálculo de compra INALTERADO (SKU1 qtde_sugerida=ceil(5-3)=2, qtde_final=2)
 Q1=$(Pq -c "SELECT i.qtde_sugerida||'/'||i.qtde_final FROM pedido_compra_item i JOIN pedido_compra_sugerido p ON p.id=i.pedido_id WHERE p.status='pendente_aprovacao' AND i.sku_codigo_omie='8689723601';")
@@ -147,8 +148,8 @@ fi
 # restaura a versão verdadeira
 P -q -f "$MIG"
 P -q -c "SELECT gerar_pedidos_sugeridos_ciclo('OBEN', CURRENT_DATE);" >/dev/null
-VIOL_REST=$(Pq -c "SELECT count(*) FROM pedido_compra_item i JOIN pedido_compra_sugerido p ON p.id=i.pedido_id WHERE p.status='pendente_aprovacao' AND i.estoque_fisico IS NOT NULL AND (i.estoque_fisico + i.estoque_a_caminho) <> i.estoque_atual;")
-eq "A6 restaurado: invariante volta a fechar (0 violações)" "$VIOL_REST" "0"
+VIOL_REST=$(Pq -c "SELECT count(*) FILTER (WHERE ((i.estoque_fisico + i.estoque_a_caminho) = i.estoque_atual) IS NOT TRUE), count(*) > 0 FROM pedido_compra_item i JOIN pedido_compra_sugerido p ON p.id=i.pedido_id WHERE p.status='pendente_aprovacao' AND i.estoque_fisico IS NOT NULL;")
+eq "A6 restaurado: invariante volta a fechar (0 violações)" "$VIOL_REST" "0|t"
 rm -f "$SAB"
 
 echo "──────────────────────────────"
