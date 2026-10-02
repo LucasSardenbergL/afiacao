@@ -181,8 +181,9 @@ fi
 echo "=== ZONA 4: pode_ler_custo() ==="
 eq "A1 existe com assinatura EXATA (0 args, via to_regprocedure)" \
    "$(Pq -c "SELECT to_regprocedure('public.pode_ler_custo()') IS NOT NULL;")" "t"
+# Os colchetes fazem o vazio ser MEDIDO: "[]" = 0 args; a função sumida dá "[AUSENTE]" e o erro, "".
 eq "A2 sem parametro (o desenho anti-oraculo depende disso)" \
-   "$(Pq -c "SELECT pg_get_function_identity_arguments(to_regprocedure('public.pode_ler_custo()'));")" ""
+   "$(Pq -c "SELECT '[' || coalesce(pg_get_function_identity_arguments(to_regprocedure('public.pode_ler_custo()')), 'AUSENTE') || ']';")" "[]"
 eq "A3 master TEM a capability"                "$(as_user "$M" "SELECT public.pode_ler_custo();")" "t"
 eq "A4 farmer NAO tem (o vazamento fecha aqui)" "$(as_user "$F" "SELECT public.pode_ler_custo();")" "f"
 eq "A5 estrategico TEM (controle positivo: nao e 'negado para todos')" \
