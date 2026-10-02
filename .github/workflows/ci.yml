@@ -290,9 +290,10 @@ jobs:
       # — a saída é extrair a lógica PURA e testar ela (o que os 11 arquivos já fazem), não afrouxar
       # o flag.
       #
-      # O pin do deno tem 3 ocorrências (esta, o job `gates-e-falsificacao` — cujo
-      # `test:falsificacao` chama `sonda-cron-prova.ts`, que faz `spawnSync('deno')` — e o
-      # `mutation-check`, que roda contrato .mut de edge) — bump alinha as três.
+      # O pin do deno tem 4 ocorrências (esta; o job `falsificacao` — cujo `test:falsificacao`
+      # chama `sonda-cron-prova.ts`, que faz `spawnSync('deno')`; o `gates-e-falsificacao`, de onde
+      # a falsificação saiu em 2026-10-02; e o `mutation-check`, que roda contrato .mut de edge) —
+      # bump alinha as quatro.
       - name: Setup Deno
         uses: denoland/setup-deno@v2
         with:
@@ -461,7 +462,7 @@ jobs:
       - name: Lint
         run: bun lint
 
-  # ─── Job 4/4 — gates textuais + falsificação (medido: ~332s) ────────────────
+  # ─── Job 4/4 — gates textuais (+ a falsificação até 2026-10-02) (medido: ~332s) ─
   # O 2º maior bloco do CI, e o que MAIS cresceu (Falsificação: 46s→201s em 11 dias, 4,4×)
   # — porque sabota UMA REGRA POR VEZ e exige vermelho em cada, então o custo é linear no
   # nº de regras. Fica em job próprio para que esse crescimento não some com o do vitest.
@@ -470,9 +471,12 @@ jobs:
   #   · shellcheck 0.11.0 — `test:hooks` roda `test-shellcheck-gate.sh`, que exige resposta
   #     POSITIVA de `shellcheck --version` e ABORTA sem ela (fail-closed de propósito:
   #     docs/historico/sonda-ausente-em-script-que-apaga.md). É o 1º step abaixo.
-  #   · deno — `test:falsificacao` termina em `sonda-cron-prova.ts --falsificar`, que faz
-  #     `spawnSync('deno')` e lança `Mecanica('deno ausente')`. Sem o setup, o job reprova
-  #     com erro de mecânica, não de conteúdo.
+  #   · deno — era do `test:falsificacao` (`sonda-cron-prova.ts --falsificar` faz
+  #     `spawnSync('deno')`), que em 2026-10-02 foi para o job `falsificacao`. O setup FICA aqui
+  #     até alguém medir que nenhum outro passo o usa: tirar economiza ~2s, e errar custa um
+  #     vermelho de mecânica em todo PR.
+  # O nome do job ficou por compatibilidade (é citado em docs/ e nos gates); a falsificação mora no
+  # job `falsificacao`, logo abaixo.
   gates-e-falsificacao:
     runs-on: ubuntu-latest
     # 15 → 25 (2026-09-25): em 58 runs, p50 707s · p90 808s · pior 841s = 93% do teto ANTES das
@@ -497,7 +501,7 @@ jobs:
       - name: Install deps
         run: bun install --frozen-lockfile
 
-      # Ver o ⚠️ do cabeçalho: `test:falsificacao` → `sonda-cron-prova.ts` → `spawnSync('deno')`.
+      # Ver o ⚠️ do cabeçalho (o deno era do `test:falsificacao`, hoje no job `falsificacao`).
       - name: Setup Deno
         uses: denoland/setup-deno@v2
         with:
@@ -589,25 +593,6 @@ jobs:
       - name: Hooks guard tests
         # sem `heavy` aqui: o semáforo de RAM é da M2 local e nao existe no runner (exit 127).
         run: bun run test:hooks
-
-      # Falsificação das suítes acima — blocking. O step anterior prova que os hooks fazem o que a
-      # suíte diz; ESTE prova que a suíte SABE FICAR VERMELHA. Cada alvo é sabotado com `sed`, uma
-      # regra por vez, e a suíte tem de reprovar em cada sabotagem; se ficar verde, aquela asserção
-      # era teatro. Sem ele, um PR pode afrouxar as asserções e o `test:hooks` continua verde.
-      #
-      # Nasceu como job separado no #1947, com a justificativa de que não caberia aqui — e o
-      # primeiro run REFUTOU a própria justificativa: **0,9min** contra `validate` em 8,15min e
-      # timeout de 15. A estimativa vinha da M2 do founder (swap, ~30 worktrees, fila do `heavy`),
-      # onde o mesmo comando varia ~3x entre execuções e o `test:hooks` leva 24min — medição local
-      # não projeta runner. Com o número real, a escolha se inverte: dentro do `validate` ele BARRA
-      # (é o único check required, e o auto-merge só espera os required), enquanto em job próprio
-      # o merge acontecia ANTES de ele terminar — vermelho depois do merge que ninguém lê, a mesma
-      # classe do gate de dead-code medida no #1212.
-      #
-      # Custo: ~11% no wall-clock do job, ~6min de folga ainda no timeout. Se um dia apertar, o
-      # corte certo é a fixture da suíte (foi de onde vinha o custo), não a cobertura.
-      - name: Falsificação — sabota o alvo e EXIGE vermelho em cada regra
-        run: bun run test:falsificacao
 
       # Evals da skill lovable-deploy-verify — blocking. A skill decide se um Publish está NO AR
       # (Passo 4, verify-frontend.sh) e quais das 3 camadas de deploy um diff exige (Passo 1,
@@ -812,6 +797,78 @@ jobs:
         env:
           BASE_REF: ${{ github.base_ref || 'main' }}
         run: bash scripts/mutcheck-seco-gate.sh "origin/${BASE_REF}"
+
+  # ─── Falsificação em job próprio (2026-10-02) ───────────────────────────────
+  # O step "Falsificação" levava ~16 dos ~23 min do `gates-e-falsificacao` em 01/10 — o caminho
+  # crítico do `validate` — e o job chegou a 24,2 min contra o teto de 25. Mudou para cá SEM mudar a
+  # invocação (`bun run test:falsificacao`, sem env em nenhum nível): a matriz do `exclusividade`
+  # assina argv+env de cada gate, e um nome ou env novo faria o `test:falsificacao` virar "gate novo"
+  # (REPROVA). Os dois jobs agora correm em paralelo: o caminho crítico passa a ser o MAIOR deles, e
+  # não a soma. É job próprio DENTRO do `validate.needs` — o que o #1947 não tinha (ver o step).
+  #
+  # Preâmbulo igual ao do `gates-e-falsificacao`, de propósito — o ambiente dos alvos não muda:
+  # fetch-depth 0, bun, deno (`sonda-cron-prova.ts --falsificar` faz `spawnSync('deno')`) e o
+  # MESMO shellcheck pinado que eles tinham lá.
+  falsificacao:
+    runs-on: ubuntu-latest
+    # ~17 min medidos (16 do step + preâmbulo), e o custo cresce a cada regra nova: 30 deixa ~45%
+    # de folga. Timeout é ausência de dado (docs/historico/timeout-de-job-e-ausencia-de-dado.md).
+    timeout-minutes: 30
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      # Semver estrito, mesmo motivo do job `validate` (o `bunpin:check` cobra a convergência).
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Install deps
+        run: bun install --frozen-lockfile
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: 2.9.2
+
+      # O porquê do pin está no mesmo passo do `gates-e-falsificacao`.
+      - name: shellcheck pinado 0.11.0 (o runner traz 0.9.0)
+        run: |
+          set -euo pipefail
+          ver=v0.11.0
+          curl -fsSL "https://github.com/koalaman/shellcheck/releases/download/${ver}/shellcheck-${ver}.linux.x86_64.tar.xz" | tar -xJ
+          sudo install -m 0755 "shellcheck-${ver}/shellcheck" /usr/local/bin/shellcheck
+          rm -rf "shellcheck-${ver}"
+          instalada=$(shellcheck --version | awk '/^version:/{print $2}')
+          [ "$instalada" = "0.11.0" ] || { echo "::error::shellcheck instalado=$instalada, esperado 0.11.0"; exit 1; }
+          echo "shellcheck pinado e conferido: $instalada"
+
+      # Falsificação das suítes acima — blocking. O step anterior prova que os hooks fazem o que a
+      # suíte diz; ESTE prova que a suíte SABE FICAR VERMELHA. Cada alvo é sabotado com `sed`, uma
+      # regra por vez, e a suíte tem de reprovar em cada sabotagem; se ficar verde, aquela asserção
+      # era teatro. Sem ele, um PR pode afrouxar as asserções e o `test:hooks` continua verde.
+      #
+      # Nasceu como job separado no #1947, com a justificativa de que não caberia aqui — e o
+      # primeiro run REFUTOU a própria justificativa: **0,9min** contra `validate` em 8,15min e
+      # timeout de 15. A estimativa vinha da M2 do founder (swap, ~30 worktrees, fila do `heavy`),
+      # onde o mesmo comando varia ~3x entre execuções e o `test:hooks` leva 24min — medição local
+      # não projeta runner. Com o número real, a escolha se inverte: dentro do `validate` ele BARRA
+      # (é o único check required, e o auto-merge só espera os required), enquanto em job próprio
+      # o merge acontecia ANTES de ele terminar — vermelho depois do merge que ninguém lê, a mesma
+      # classe do gate de dead-code medida no #1212.
+      #
+      # Custo: ~11% no wall-clock do job, ~6min de folga ainda no timeout. Se um dia apertar, o
+      # corte certo é a fixture da suíte (foi de onde vinha o custo), não a cobertura.
+      #
+      # 2026-10-02: voltou a ser job próprio — agora DENTRO do `validate.needs`, então ele BARRA como
+      # barrava no job de gates (o agregador não existia no #1947). Ver o cabeçalho do job.
+      - name: Falsificação — sabota o alvo e EXIGE vermelho em cada regra
+        run: bun run test:falsificacao
 
   # ─── Agregador — É ESTE o required status check ─────────────────────────────
   # `validate` não roda trabalho nenhum: ele só AFIRMA que os 4 jobs acima terminaram em
@@ -1232,7 +1289,7 @@ jobs:
 
   validate:
     if: always()
-    needs: [typecheck, testes, edges-e-build, gates-e-falsificacao, provas-sql, provas-sql-uniao]
+    needs: [typecheck, testes, edges-e-build, gates-e-falsificacao, falsificacao, provas-sql, provas-sql-uniao]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     # issues:write p/ o alerta de main-vermelha (abaixo) abrir Issue.
@@ -1246,12 +1303,13 @@ jobs:
           RESULTADOS: ${{ toJSON(needs) }}
         run: |
           set -euo pipefail
-          esperados=6
-          total=0; falhou=0; viu_provas_sql=0; viu_uniao=0
+          esperados=7
+          total=0; falhou=0; viu_provas_sql=0; viu_uniao=0; viu_falsificacao=0
           while IFS="$(printf '\t')" read -r job resultado; do
             total=$((total + 1))
             [ "$job" = "provas-sql" ] && viu_provas_sql=1
             [ "$job" = "provas-sql-uniao" ] && viu_uniao=1
+            [ "$job" = "falsificacao" ] && viu_falsificacao=1
             if [ "$resultado" = "success" ]; then
               echo "  ✅ $job: success"
             else
@@ -1279,6 +1337,12 @@ jobs:
           # `needs` e baixar o `esperados` deixaria a parte que não rodou de novo invisível.
           if [ "$viu_uniao" -ne 1 ]; then
             echo "::error::o job 'provas-sql-uniao' não está entre os $total lidos — ninguém confere que as partes somaram o núcleo inteiro."
+            exit 1
+          fi
+          # A mesma guarda para a falsificação, desde que ela virou job próprio (2026-10-02): sem ela,
+          # tirar `falsificacao` do `needs` e baixar o `esperados` faria o merge parar de esperar por ela.
+          if [ "$viu_falsificacao" -ne 1 ]; then
+            echo "::error::o job 'falsificacao' não está entre os $total lidos — a falsificação saiu do caminho obrigatório."
             exit 1
           fi
           if [ "$falhou" -ne 0 ]; then
