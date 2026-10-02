@@ -1,4 +1,5 @@
 import { supabase } from '@/integrations/supabase/client';
+import { STATUS_NAO_VENDA_POSTGREST } from '@/lib/farmer/universo-pedidos';
 import type { CompanySelection } from '@/contexts/CompanyContext';
 
 export interface PedidoMTDRow {
@@ -25,6 +26,9 @@ export async function fetchPedidosMTD(
     let q = supabase
       .from('sales_orders')
       .select('total, status, created_by, order_date_kpi')
+      // O universo de VENDA na query (era só o deleted_at, e o status vinha do isPedidoValido em
+      // memória com uma cópia de 2 status — orçamento e pendente contariam como receita).
+      .not('status', 'in', STATUS_NAO_VENDA_POSTGREST)
       .is('deleted_at', null)
       .gte('order_date_kpi', deISO)
       .lt('order_date_kpi', ateISO)

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { margemContribuicao, arMedioTTM, statusLiquidadoAR, montarCelulasComboEVP, recomendarAcaoComercial, scoreConfiancaCockpit, resolverHurdleCockpit, pedidoContaNoFaturamento, tituloFaturavelAR, coberturaBidirecional } from '../valor-cockpit-helpers';
+import { STATUS_NAO_VENDA } from '@/lib/farmer/universo-pedidos';
 
 // helper de fixture: TituloAR completo com defaults (reduz ruído nos casos)
 function tit(p: Partial<Parameters<typeof arMedioTTM>[0]['titulos'][number]>) {
@@ -454,7 +455,7 @@ describe('recomendarAcaoComercial — hurdle_indisponivel', () => {
 // Régua de faturabilidade do pedido pai, espelhada VERBATIM de v_caca_candidatos/v_caca_compradores
 // (positivação/comissão): WHERE deleted_at IS NULL AND status <> ALL(ARRAY['cancelado','rascunho']).
 // É o guard do bug do cockpit de valor (contava cancelado como faturamento → R$615M de inflação).
-describe('pedidoContaNoFaturamento (espelha a régua de v_caca)', () => {
+describe('pedidoContaNoFaturamento (o universo de venda da autoridade — o mesmo do v_caca desde o #2726)', () => {
   it('pedido vivo e faturado → conta', () => {
     expect(pedidoContaNoFaturamento('faturado', null)).toBe(true);
   });
@@ -475,6 +476,13 @@ describe('pedidoContaNoFaturamento (espelha a régua de v_caca)', () => {
   });
   it('status undefined → NÃO conta', () => {
     expect(pedidoContaNoFaturamento(undefined, null)).toBe(false);
+  });
+  it('orçamento e pendente → NÃO contam (a cópia [cancelado, rascunho] os deixava entrar no TTM)', () => {
+    expect(pedidoContaNoFaturamento('orcamento', null)).toBe(false);
+    expect(pedidoContaNoFaturamento('pendente', null)).toBe(false);
+  });
+  it('a lista é a da autoridade, membro a membro (cópia paralela reprova aqui e no gate do universo)', () => {
+    for (const s of STATUS_NAO_VENDA) expect(pedidoContaNoFaturamento(s, null), s).toBe(false);
   });
 });
 

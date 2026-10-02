@@ -25,6 +25,7 @@ import { valorMedido } from "../_shared/score-ponderado.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { atenderSondaOptions } from '../_shared/sonda-cron.ts';
 import { hojeSP, somarDias } from '../_shared/hoje-sp.ts';
+import { STATUS_NAO_VENDA } from '../_shared/universo-pedidos.ts';
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -93,13 +94,14 @@ const STATUS_LIQUIDADO_AR = ['RECEBIDO', 'LIQUIDADO', 'PAGO'];
 function statusLiquidadoAR(status: string | null | undefined): boolean {
   return !!status && STATUS_LIQUIDADO_AR.includes(status);
 }
-// Faturabilidade do pedido pai — espelha v_caca (deleted_at IS NULL AND status <> ALL(['cancelado','rascunho'])).
-// Blocklist semântica: status conhecido novo CONTA por default; cancelado/rascunho/soft-deletado/NULL não.
-const STATUS_NAO_FATURAVEL = ['cancelado', 'rascunho'];
+// Faturabilidade do pedido pai — o universo de VENDA da autoridade (`STATUS_NAO_VENDA` + deleted_at),
+// o mesmo do v_caca desde o #2726. A cópia `['cancelado','rascunho']` que morava aqui deixava orçamento
+// e pendente contarem no TTM. Blocklist semântica: status conhecido novo CONTA por default;
+// não-venda/soft-deletado/NULL não.
 function pedidoContaNoFaturamento(status: string | null | undefined, deletedAt: string | null | undefined): boolean {
   if (deletedAt != null) return false;
   if (status == null) return false;
-  return !STATUS_NAO_FATURAVEL.includes(status);
+  return !STATUS_NAO_VENDA.includes(status);
 }
 // Faturabilidade do TÍTULO de AR (denominador de cobertura_receita) — contraparte de
 // pedidoContaNoFaturamento. Exclui só status_titulo='CANCELADO' (2,66% do arTotal Oben; estorno/dup/

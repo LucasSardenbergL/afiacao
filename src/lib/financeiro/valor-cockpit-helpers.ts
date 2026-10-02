@@ -1,6 +1,8 @@
 // A3 — Inteligência de Valor (Cockpit cliente/produto). Módulo puro, espelhado verbatim
 // na edge function Deno supabase/functions/fin-valor-cockpit/index.ts.
 
+import { STATUS_NAO_VENDA } from '@/lib/farmer/universo-pedidos';
+
 export function margemContribuicao(input: { receita_liquida: number; custo_unitario: number | null; quantidade: number }): number | null {
   if (input.custo_unitario == null || !Number.isFinite(input.custo_unitario)) return null;
   if (!Number.isFinite(input.receita_liquida) || !Number.isFinite(input.quantidade)) return null;
@@ -45,17 +47,17 @@ export function statusLiquidadoAR(status: string | null | undefined): boolean {
   return !!status && STATUS_LIQUIDADO_AR.includes(status);
 }
 
-// Faturabilidade do pedido pai — espelha VERBATIM a régua de v_caca_candidatos/v_caca_compradores
-// (positivação/comissão): WHERE deleted_at IS NULL AND status <> ALL(ARRAY['cancelado','rascunho']).
-// Blocklist semântica: status conhecido NOVO (ex.: 'entregue') CONTA por default — não subconta
-// silenciosamente (Codex 2026-06-18); cancelado/rascunho, soft-deletado (deleted_at) ou status NULL
-// NÃO contam. Sem este guard, o cockpit de valor somava pedidos cancelados como faturamento (um
-// outlier de R$615M inflava o TTM da Oben de ~R$5M para ~R$621M).
-const STATUS_NAO_FATURAVEL = ['cancelado', 'rascunho'];
+// Faturabilidade do pedido pai — o universo de VENDA da autoridade (`STATUS_NAO_VENDA` +
+// `deleted_at`), o mesmo que o v_caca passou a aplicar no #2726. Esta régua dizia espelhar "VERBATIM"
+// o v_caca com a lista `['cancelado','rascunho']` — e envelheceu sozinha quando ele mudou por baixo
+// dela (orçamento e pendente contariam como faturamento). Blocklist semântica: status conhecido NOVO
+// (ex.: 'entregue') CONTA por default — não subconta silenciosamente (Codex 2026-06-18); não-venda,
+// soft-deletado (deleted_at) ou status NULL NÃO contam. Sem este guard, o cockpit de valor somava
+// pedidos cancelados como faturamento (um outlier de R$615M inflava o TTM da Oben de ~R$5M para ~R$621M).
 export function pedidoContaNoFaturamento(status: string | null | undefined, deletedAt: string | null | undefined): boolean {
   if (deletedAt != null) return false;            // soft-deletado nunca conta
-  if (status == null) return false;               // espelha o NULL <> ALL do v_caca (NULL não passa o WHERE)
-  return !STATUS_NAO_FATURAVEL.includes(status);  // default-inclui status conhecido novo
+  if (status == null) return false;               // espelha o NULL NOT IN da autoridade (NULL não passa o WHERE)
+  return !STATUS_NAO_VENDA.includes(status);      // default-inclui status conhecido novo
 }
 
 // Faturabilidade do TÍTULO de AR (denominador de cobertura_receita) — contraparte de
