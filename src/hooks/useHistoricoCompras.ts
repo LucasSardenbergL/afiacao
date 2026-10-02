@@ -2,12 +2,11 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { derivarHistorico, type Historico, type HistoricoItemInput, type HistoricoPedidoInput } from '@/lib/call/historico';
 import { precoUtilizavel } from '@/lib/format';
+import { STATUS_NAO_VENDA_POSTGREST } from '@/lib/farmer/universo-pedidos';
 
-/** Status que NÃO representam venda concluída (espelha useMunicaoLigacao). */
-const STATUS_INVALIDOS = new Set(['rascunho', 'orcamento', 'cancelado', 'cancelado_humano']);
 const MAX_PEDIDOS = 50;
 
-interface PedidoRow { id: string; order_date_kpi: string | null; created_at: string; total: number | null; status: string | null; }
+interface PedidoRow { id: string; order_date_kpi: string | null; created_at: string; total: number | null; }
 interface ItemRow { sales_order_id: string; omie_codigo_produto: number | null; quantity: number | null; unit_price: number | null; }
 interface ProdutoRow { omie_codigo_produto: number; descricao: string | null; }
 
@@ -22,16 +21,20 @@ export function useHistoricoCompras(customerUserId: string | null): { historico:
     enabled: !!customerUserId,
     staleTime: 60_000,
     queryFn: async (): Promise<Historico> => {
-      // 1) pedidos válidos do cliente (status inválido filtrado no client — padrão do projeto)
+      // 1) pedidos de VENDA do cliente — o universo filtrado na query (abaixo), antes do limit
       const { data: pedidosRaw, error: e1 } = await supabase
         .from('sales_orders')
-        .select('id, order_date_kpi, created_at, total, status')
+        .select('id, order_date_kpi, created_at, total')
         .eq('customer_user_id', customerUserId!)
+        // O universo de VENDA na QUERY, antes do limit. Filtrar depois (com uma cópia da lista que
+        // não tinha `pendente`) encolhia a janela: cada cancelado entre os 50 mais recentes tirava um
+        // pedido válido do histórico de preço — 11 clientes em 2026-10-01.
+        .not('status', 'in', STATUS_NAO_VENDA_POSTGREST)
         .is('deleted_at', null)
         .order('order_date_kpi', { ascending: false, nullsFirst: false })
         .limit(MAX_PEDIDOS);
       if (e1) throw e1;
-      const pedidos = ((pedidosRaw ?? []) as PedidoRow[]).filter((p) => !STATUS_INVALIDOS.has(p.status ?? ''));
+      const pedidos = (pedidosRaw ?? []) as PedidoRow[];
       if (pedidos.length === 0) return { topProdutos: [], ultimosPedidos: [] };
 
       const dataDoPedido = new Map(pedidos.map((p) => [p.id, p.order_date_kpi ?? p.created_at]));
