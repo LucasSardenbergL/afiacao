@@ -82,7 +82,7 @@ INSERT INTO public.sku_estoque_atual (empresa, sku_codigo_omie, estoque_fisico, 
   ('COLACOR','9001',     7,  7, 13, '2026-06-11 09:00:00+00', 'ListarSaldoPendente');
 
 DO $$
-DECLARE r jsonb; v numeric; f numeric; ts timestamptz; fonte text; st text; n int; meta jsonb; err_state text;
+DECLARE r jsonb; v numeric; f numeric; ts timestamptz; fonte text; st text; n int; tot int; meta jsonb; err_state text;
 BEGIN
   PERFORM set_config('test.uid', '', false);  -- service_role
 
@@ -160,7 +160,7 @@ BEGIN
     FROM public.sku_estoque_atual WHERE empresa='OBEN' AND sku_codigo_omie='2002';
   ASSERT f = 0, format('A7 linha nova físico esperava 0, veio %s', f);
   ASSERT v = 5, format('A7 linha nova pendente esperava 5, veio %s', v);
-  ASSERT ts IS NULL, format('A7 linha nova ultima_sincronizacao esperava NULL, veio %s', ts);
+  ASSERT FOUND AND ts IS NULL, format('A7 linha nova ultima_sincronizacao esperava NULL com a linha presente, veio %s (achada=%s)', ts, FOUND);
   ASSERT fonte = 'snapshot_pendente_sem_fisico', format('A7 fonte_sync esperava snapshot_pendente_sem_fisico, veio %s', fonte);
   ASSERT (r->>'skus_sem_linha_criados')::int = 1, format('A7 skus_sem_linha_criados esperava 1, veio %s', r->>'skus_sem_linha_criados');
 
@@ -197,8 +197,12 @@ BEGIN
   r := public.aplicar_snapshot_pendente('OBEN', '{}'::jsonb, ARRAY[]::text[], ARRAY[]::text[], 1004::bigint,
             '2026-06-11 12:20:00+00'::timestamptz, '{"empty_page_reached":"true"}'::jsonb);
   ASSERT (r->>'applied')::boolean, 'A10 payload vazio legítimo deveria aplicar';
-  SELECT count(*) INTO n FROM public.sku_estoque_atual WHERE empresa='OBEN' AND COALESCE(estoque_pendente_entrada,0) <> 0;
-  ASSERT n = 0, format('A10 payload vazio legítimo deveria zerar todo OBEN, ainda há %s com pendente', n);
+  -- A RPC zera as linhas com pendente CONHECIDO (o NULL desconhecido ela mantém) e neste seed nenhuma
+  -- linha OBEN é NULL aqui: todas têm de ficar 0 EXATO — o COALESCE(…,0) lia como zerada a linha que a
+  -- RPC gravasse NULL. tot = o universo OBEN, que tem de existir.
+  SELECT count(*) FILTER (WHERE estoque_pendente_entrada IS DISTINCT FROM 0), count(*) INTO n, tot
+    FROM public.sku_estoque_atual WHERE empresa='OBEN';
+  ASSERT tot > 0 AND n = 0, format('A10 payload vazio legítimo deveria zerar todo OBEN (0, não NULL), ainda há %s fora de 0 de %s', n, tot);
 
   RAISE NOTICE 'A10 OK: 0 POs aprovadas legítimo → zera todo o a-caminho';
 

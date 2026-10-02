@@ -192,7 +192,7 @@ BEGIN
   SELECT status INTO r FROM public.reposicao_param_auto_log WHERE sku_codigo_omie='1011';
   ASSERT r.status='bloqueado_validacao', format('K FALHOU: status=% (esperado bloqueado_validacao: base NULL = cold-start)', r.status);
   SELECT estoque_maximo INTO r FROM public.sku_parametros WHERE sku_codigo_omie=1011;
-  ASSERT r.estoque_maximo IS NULL, format('K preservou FALHOU: max=% (esperado NULL — não aplica cold-start)', r.estoque_maximo);
+  ASSERT FOUND AND r.estoque_maximo IS NULL, format('K preservou FALHOU: max=%s achado=%s (esperado NULL com o parâmetro presente — não aplica cold-start)', r.estoque_maximo, FOUND);
 
   -- L: QUEDA do máximo 120→4 (pp 50→2) → APLICADO (fusível é upward-only; queda nunca segura).
   SELECT status INTO r FROM public.reposicao_param_auto_log WHERE sku_codigo_omie='1012';
@@ -211,7 +211,7 @@ BEGIN
   ASSERT r.impacto_rs=0, format('B impacto FALHOU: % (esperado 0; segurado não muda a compra)', r.impacto_rs);
   -- L: aplicado sem inventory_position/estoque → custo ausente → impacto_rs NULL (desconhecido, não 0)
   SELECT impacto_rs INTO r FROM public.reposicao_param_auto_log WHERE sku_codigo_omie='1012';
-  ASSERT r.impacto_rs IS NULL, format('L impacto FALHOU: % (esperado NULL — custo ausente = desconhecido)', r.impacto_rs);
+  ASSERT FOUND AND r.impacto_rs IS NULL, format('L impacto FALHOU: %s achado=%s (esperado NULL com o log presente — custo ausente = desconhecido)', r.impacto_rs, FOUND);
 
   -- M: REDUÇÃO do máximo (120→90) com estoque 30 abaixo do ponto → aplicado com impacto NEGATIVO
   --    (qtde_antes 120-30=90, qtde_depois 90-30=60, Δ-30 × cmc10 = -300). É o caso do resumo "reduções".

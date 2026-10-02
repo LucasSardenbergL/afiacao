@@ -102,7 +102,7 @@ BEGIN
 
   -- A2: portal_erro zerado ao reivindicar
   SELECT portal_erro INTO err FROM public.pedido_compra_sugerido WHERE id = 901;
-  ASSERT err IS NULL, format('A2 esperava portal_erro NULL, veio %L', err);
+  ASSERT FOUND AND err IS NULL, format('A2 esperava portal_erro NULL com o pedido 901 presente, veio %L (achado=%s)', err, FOUND);
 
   -- A3: já em voo (enviando_portal) → 0, status inalterado
   SELECT count(*) INTO n FROM public.envio_portal_claim_ids(ARRAY[904]::bigint[]);

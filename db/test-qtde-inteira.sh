@@ -121,7 +121,7 @@ echo ""
 echo "→ ASSERTS:"
 P -v ON_ERROR_STOP=1 -q <<'SQL'
 DO $$
-DECLARE d int; fdef text;
+DECLARE d int; n int; fdef text;
 BEGIN
   -- 0. SANIDADE: o teste é significativo? ANTES deve ter qtde FRACIONÁRIA (senão não prova nada).
   SELECT count(*) INTO d FROM scratch_antes WHERE qtde_final <> trunc(qtde_final) OR qtde_sugerida <> trunc(qtde_sugerida);
@@ -138,14 +138,16 @@ BEGIN
   RAISE NOTICE 'OK 0b — frações exatas ANTES (8001=9,99996; 8004=7,5; 8007=0,00004)';
 
   -- A. DEPOIS: NENHUMA fração — toda qtde_sugerida e qtde_final é inteira.
-  SELECT count(*) INTO d FROM scratch_depois WHERE qtde_final <> trunc(qtde_final) OR qtde_sugerida <> trunc(qtde_sugerida);
-  IF d IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'A FALHOU: DEPOIS ainda tem % linha(s) fracionária(s)', d; END IF;
+  --    IS NOT TRUE conta a qtde NULL (o `<>` a deixava fora); n = o universo, que tem de existir.
+  SELECT count(*) FILTER (WHERE (qtde_final = trunc(qtde_final) AND qtde_sugerida = trunc(qtde_sugerida)) IS NOT TRUE), count(*)
+    INTO d, n FROM scratch_depois;
+  IF n = 0 OR d IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'A FALHOU: DEPOIS ainda tem % linha(s) fracionária(s) ou sem qtde (de %)', d, n; END IF;
   RAISE NOTICE 'OK A — DEPOIS: zero fração (toda qtde inteira)';
 
   -- B. DEPOIS = ceil(ANTES) em ambas as colunas (valor exato, item a item).
-  SELECT count(*) INTO d FROM scratch_antes a JOIN scratch_depois p ON p.sku = a.sku
-   WHERE p.qtde_final <> ceil(a.qtde_final) OR p.qtde_sugerida <> ceil(a.qtde_sugerida);
-  IF d IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'B FALHOU: % linha(s) DEPOIS != ceil(ANTES)', d; END IF;
+  SELECT count(*) FILTER (WHERE (p.qtde_final = ceil(a.qtde_final) AND p.qtde_sugerida = ceil(a.qtde_sugerida)) IS NOT TRUE), count(*)
+    INTO d, n FROM scratch_antes a JOIN scratch_depois p ON p.sku = a.sku;
+  IF n = 0 OR d IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'B FALHOU: % linha(s) DEPOIS != ceil(ANTES) (de % pareadas)', d, n; END IF;
   RAISE NOTICE 'OK B — DEPOIS = ceil(ANTES) em qtde_sugerida e qtde_final (item a item)';
 
   -- B2. casos pontuais DEPOIS
@@ -178,8 +180,9 @@ BEGIN
   RAISE NOTICE 'OK C [Q5] — conjunto idêntico (6 itens; 8006 fora dos dois; 8007 dentro dos dois)';
 
   -- D. valor_linha DEPOIS = qtde_final(inteira) × cmc(10); valor_total do header = Σ valor_linha.
-  SELECT count(*) INTO d FROM scratch_depois WHERE valor_linha <> qtde_final * 10;
-  IF d IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'D FALHOU: % valor_linha != qtde_final*cmc', d; END IF;
+  --    o valor_linha NULL (preço sumido) escapava do `<>`; aqui ele é violação, e o universo tem de existir.
+  SELECT count(*) FILTER (WHERE (valor_linha = qtde_final * 10) IS NOT TRUE), count(*) INTO d, n FROM scratch_depois;
+  IF n = 0 OR d IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'D FALHOU: % valor_linha != qtde_final*cmc (de %)', d, n; END IF;
   SELECT count(*) INTO d FROM (
     SELECT pcs.id FROM pedido_compra_sugerido pcs JOIN pedido_compra_item pci ON pci.pedido_id=pcs.id
     WHERE pcs.data_ciclo=CURRENT_DATE AND pcs.status='pendente_aprovacao'
