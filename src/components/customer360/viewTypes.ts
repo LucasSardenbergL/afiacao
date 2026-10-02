@@ -16,8 +16,10 @@ export type InteractionsQuery = ReturnType<typeof useCustomerInteractions>;
 export type ContactsQuery = ReturnType<typeof useCustomerContacts>;
 
 export type RevenueDerived = {
-  lifetime: number;
-  last12: number;
-  orderCount12m: number;
-  lastOrderAt: string | null;
+  /** Faturamento 12m no universo canônico; null = ainda não lido OU indisponível — nunca R$ 0 por falha. */
+  last12: number | null;
+  orderCount12m: number | null;
+  faturamentoIndisponivel: boolean;
+  /** A leitura do `customer_metrics_mv` (90d, ticket, última compra) falhou. */
+  metricasIndisponiveis: boolean;
 };
