@@ -119,6 +119,19 @@ responde DIFERENTES nos três: o léxico da 1ª versão foi descartado, não cor
 - **Testes:** os 3 P1 e os 3 P2 do Codex (empate de variantes; propagação SQL → extração → histórico →
   bloqueio, com o caso real lido da migration e os md5 medidos no banco; `DECLARE a$q$ int`) viraram
   regressão do caminho por tokens em `precondicao-banco.test.ts`, com controles positivos na mesma suíte.
+- **Mutcheck:** 4 contratos (`scripts/mutcheck.d/*tokens*.mut`), controle+ em todos, inclusive "variante
+  antes do exato" e "tokens iguais aceitam diferença de literal"; o do léxico é medido pela suíte do
+  GATE, não só pela do sensor. Harness PG17 do audit: 28/28 em `C` e em `pt_BR.UTF-8`.
+
+### 2ª opinião: Codex de código NÃO consultado ainda — Caminho B
+
+`codex-async.sh` saiu 79 (`SALDO_ALTO`: cota em 86%, teto 85%, janela reabre 03/10 19:11), sem gastar a
+chamada. Por `money-path.md`, isso é gatilho de DRAFT, não de pular. No intervalo, auto-challenge com
+prova executada, que achou um desvio no léxico ÚNICO: o `\s` do JS ≠ o `space` do scan.l. Um NBSP, BOM
+ou U+2028 que abria token era engolido, e `SELECT <NBSP>x` igualava `SELECT x`. Medido em prod:
+`column " x" does not exist`, enquanto `SELECT\f1`/`SELECT\v1` devolvem 1. Corrigido em `tokens-sql.ts`
+(vale para o gate e para o sensor), sem efeito no censo (0 corpos em prod e 0 migrations com esses
+caracteres). **REVISÃO INDEPENDENTE PENDENTE** até o Codex rodar no diff.
 
 ## Estado
 
