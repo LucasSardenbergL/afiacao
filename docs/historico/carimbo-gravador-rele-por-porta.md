@@ -122,6 +122,7 @@ negativos (futura, sem alvo, ilegível, `null`) provam exit 2 com o código; nen
 | `scripts/authz-carimbo-gate.ts` | já-correto: `avaliarCarimbo` confere `schemaVersion` antes de ler campo; desvio de forma na mesma versão vira exit 2 ou vermelho, nunca verde |
 | `scripts/sonda-cron-prova.ts:493` | fora da classe: veredito da saída de um processo filho, não artefato commitado |
 | `scripts/lib/exclusividade.ts:866` | falso-positivo: é COMENTÁRIO (o cabeçalho do `lerMatriz`) |
+| `scripts/lib/authz-carimbo.ts` (o cabeçalho de `lerCarimboAnterior`, depois do conserto) | falso-positivo: é COMENTÁRIO — o casamento do gravador "muda" para cá; a contagem segue 33 |
 | `scripts/falsificar-exige-assert-gate.ts:863` | falso-positivo: string literal (fonte sintética de um falsificador) |
 | `db/audit-grants-funcoes-fechadas.ts`, `db/audit-grants-tabelas-fechadas.ts`, `db/audit-claude-ro-hardening.ts` | fora da classe: JSON de env de TESTE (e o do `claudeRo` confere a forma logo depois) — foi aqui que o achado adjacente apareceu |
 | `src/` ×15 (offline-queue, impersonation, route-tracker, useGlobalSearch, NfeReceipt, useTintRecentsFavorites, useDashboardLayout, useUnifiedOrder, useOrderDraft, useCustomerSegments, ColumnConfig, TintReconciliation ×4) | fora da classe: `localStorage` ou coluna do banco, não artefato commitado |
