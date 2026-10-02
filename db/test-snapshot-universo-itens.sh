@@ -137,7 +137,7 @@ eq "A1 Apriori: total do universo" \
 eq "A2 Apriori: 'total' bate com o tamanho REAL do array (guard de transporte)" \
    "$(Pq -c "SELECT (public.apriori_universo_snapshot($DENY)->>'total')::int = jsonb_array_length(public.apriori_universo_snapshot($DENY)->'itens');")" "t"
 eq "A3 Apriori: pai cancelado/soft-deletado e item sem product_id ficam FORA" \
-   "$(Pq -c "SELECT count(*) FROM jsonb_array_elements(public.apriori_universo_snapshot($DENY)->'itens') e WHERE e->'sales_orders'->>'account' <> 'oben';")" "0"
+   "$(Pq -c "SELECT count(*) FILTER (WHERE e->'sales_orders'->>'account' IS DISTINCT FROM 'oben'), count(*) > 0 FROM jsonb_array_elements(public.apriori_universo_snapshot($DENY)->'itens') e;")" "0|t"
 eq "A4 Apriori: ordem DETERMINÍSTICA (duas chamadas, mesmo array)" \
    "$(Pq -c "SELECT public.apriori_universo_snapshot($DENY)->'itens' = public.apriori_universo_snapshot($DENY)->'itens';")" "t"
 eq "A5 cockpit: prefiltro de carga exclui o item antigo (6 itens na tabela, 5 na janela)" \
