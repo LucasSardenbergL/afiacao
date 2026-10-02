@@ -134,6 +134,25 @@ on:
 # trata a primeira, e por isso os 25min do #2338 saíram daqui: com o caminho crítico em ~395s,
 # cada job carrega teto próprio com folga MAIOR do que aquele número comprava no job serial.
 # └────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+# ─── Run de commit SUPERADO é cancelado — só em PR (2026-10-02) ──────────────────────────────────
+# Um push novo no PR cancela o run anterior do MESMO PR: o veredito que importa é o do commit mais
+# recente (o rollup do PR e o auto-merge só leem o head). Medido de 25/09 a 01/10: 20% de todo o
+# tempo de runner foi em job de commit que JÁ tinha push mais novo no mesmo PR — e o plano Free roda
+# 20 jobs simultâneos, então esse tempo era fila para o commit que de fato ia mergear. Mesmo padrão do
+# `ordem-entre-edges.yml`.
+#
+# Fora de PR (push/schedule/dispatch na main), cada run é o SEU grupo (`run_id`): nada é cancelado
+# nem enfileirado. É o que o ci-validate-timeout-15min.md descartou — `cancel-in-progress` na main
+# cancelaria o run legítimo do `/fecho` — e continua descartado. A deduplicação dos disparos da main
+# mora no próprio `/fecho` (reaproveita o run do mesmo SHA em vez de disparar outro).
+#
+# O `validate` (`if: always()`) ainda roda no run cancelado e reprova o commit SUPERADO — inócuo: o
+# PR só olha o head.
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('ci-pr-{0}', github.event.pull_request.number) || format('ci-{0}-{1}', github.event_name, github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   # ─── Job 1/4 — typecheck (medido: ~53s) ─────────────────────────────────────
   typecheck:
