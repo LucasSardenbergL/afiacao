@@ -194,6 +194,16 @@ describe('idFinding — estabilidade da dívida', () => {
   it('cai para a linha inteira quando a forma não parseia (fail-safe, sem colisão)', () => {
     expect(idFinding('grants', 'sem forma nenhuma A')).not.toBe(idFinding('grants', 'sem forma nenhuma B'));
   });
+
+  // DOURADO e não-circular: o único achado já gravado num carimbo COMMITADO (f1154aa75, schema 2,
+  // 2026-09-05), com o `id` que o gravador DAQUELA época escreveu. Se o algoritmo mudar, todo `id`
+  // commitado deixa de casar e a próxima gravação regride TODA `primeiraVez` para hoje — sem mudar
+  // forma nem versão, invisível à porta de releitura. Mudar `idFinding` exige migrar os ids junto.
+  it('DOURADO: reproduz o id que o gravador escreveu num carimbo commitado (a herança depende disso)', () => {
+    const linha =
+      '❌ public.sayerlack_aplicar_custo_portal — [FUNCAO_AUSENTE_EM_PROD] public.sayerlack_aplicar_custo_portal está na allowlist e NÃO existe no banco — foi removida, renomeada, ou a allowlist ficou obsoleta.';
+    expect(idFinding('funcoes', linha)).toBe('ef43258a5a7946e8');
+  });
 });
 
 // ══════════════════════════════════════════════════════════════════════════════════════════════
