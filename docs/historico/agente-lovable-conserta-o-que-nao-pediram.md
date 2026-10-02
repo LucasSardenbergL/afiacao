@@ -207,7 +207,10 @@ não a intenção.
   gerador, que aceita qualquer edge pelo nome. O `[COLAGEM_SO_DO_GERADOR]` (`prompt-deploy.test.ts`)
   varre skills, `docs/agent`, runbooks e `CLAUDE.md` pela assinatura da família do prompt, com o `> `
   e as quebras de linha desfeitos. Dois controles impedem que ele aprove por vacuidade: a assinatura
-  casa a saída do gerador, e a varredura lê uma testemunha de cada lugar.
+  casa a saída do gerador, e a varredura lê uma testemunha de cada lugar. Falsificado no
+  `falsificar:prompt-escopo` com 4 sabotagens novas: molde na skill (S13), molde quebrado entre
+  linhas no `docs/agent` (S14), assinatura cega (S15) e varredura sem as skills (S16). Deu 32/32 nos 2
+  locales, contando as 12 que já existiam.
 - **O efeito do #2596, com denominador.** A fonte é o `list_messages` + `list_edits` do `steu`, de
   27/09 18:20Z a 01/10 21:39Z, com a janela coberta inteira. Foram 11 pedidos de deploy, todos com a
   frase de escopo, e **0 edições de edge**. O único `edit_id` é a regeneração de tipos (§6). A rodada
