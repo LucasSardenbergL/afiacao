@@ -16,9 +16,13 @@
 // (não sobrescreve cost_price/cost_source/cost_confidence — proveniência é do computeCosts).
 import type { PosicaoEstoque } from "../_shared/pos-estoque.ts";
 import {
+  avaliarCompletudeListagem,
   chunked,
   particionarCustos,
   planejarEscritaInventario,
+  planejarZeramentoForaDaLista,
+  TETO_ZERAMENTO_FRACAO,
+  TETO_ZERAMENTO_MIN,
 } from "./inventory-lote.ts";
 
 function assertEquals(a: unknown, b: unknown, msg?: string) {
@@ -151,4 +155,183 @@ Deno.test("particionar — novo vira INSERT completo (cost_price=cmc, source CMC
   assertEquals(r.inserir, [
     { product_id: "b", cost_price: 3, cmc: 3, cost_source: "CMC", cost_confidence: 0.7 },
   ]);
+});
+
+// ════════ avaliarCompletudeListagem — só listagem COMPLETA autoriza zerar por ausência ════════
+// A lista padrão do ListarPosEstoque (cExibeTodos "N") traz quem tem saldo ≠ 0: medido em
+// 2026-10-01, 405/405 SKUs com leitura fresca do modo "S" batem (311 com físico ≠ 0, todos na
+// lista; 94 com físico 0, todos fora). Ausência numa listagem PARCIAL não prova nada.
+
+Deno.test("completude — páginas cheias e a última curta: completa", () => {
+  assertEquals(avaliarCompletudeListagem([100, 100, 79], 100), { completa: true });
+  assertEquals(avaliarCompletudeListagem([50], 100), { completa: true });
+});
+
+Deno.test("completude — página INTERMEDIÁRIA curta: incompleta, o motivo nomeia a página", () => {
+  const r = avaliarCompletudeListagem([100, 60, 100, 79], 100);
+  assertEquals(r.completa, false);
+  assertEquals(!r.completa && r.motivo.includes("página 2"), true);
+});
+
+Deno.test("completude — ÚLTIMA página cheia: incompleta (página cheia é evidência de continuação)", () => {
+  const r = avaliarCompletudeListagem([100, 100], 100);
+  assertEquals(r.completa, false);
+  assertEquals(!r.completa && r.motivo.includes("última página cheia"), true);
+});
+
+// Item que o parser recusa (nCodProd inválido, número não-finito) some do snapshot — pode ser
+// um produto COM saldo. Listagem com item ilegível não é "inteiramente compreendida".
+Deno.test("completude — item ILEGÍVEL na listagem: incompleta (a ausência dele não prova saldo 0)", () => {
+  const r = avaliarCompletudeListagem([100, 79], 100, 1);
+  assertEquals(r.completa, false);
+  assertEquals(!r.completa && r.motivo.includes("1 item(ns) ileg"), true);
+  assertEquals(avaliarCompletudeListagem([100, 79], 100, 0), { completa: true });
+});
+
+Deno.test("completude — nenhuma página: incompleta", () => {
+  const r = avaliarCompletudeListagem([], 100);
+  assertEquals(r.completa, false);
+  assertEquals(!r.completa && r.motivo.includes("nenhuma página"), true);
+});
+
+// ════════ planejarZeramentoForaDaLista — o DONO do estoque zera quem saiu da lista ════════
+// Antes, quem zerava produto esgotado era o `quantidade_estoque || 0` do passo de produtos
+// (77 das 78 posições que saíram da lista estavam zeradas só por ele) — com a janela de zero
+// de ~694 posicionados como efeito colateral. O zero passa para cá, explícito e com guardas.
+
+const COMPLETA = { completa: true } as const;
+
+function posicoesDe(...cods: number[]): Map<number, PosicaoEstoque> {
+  const pos = new Map<number, PosicaoEstoque>();
+  for (const c of cods) pos.set(c, { saldo: 1, cmc: 1, precoMedio: 1 });
+  return pos;
+}
+
+Deno.test("zeramento — local com estoque ≠ 0 FORA da lista completa vira row com estoque 0", () => {
+  const z = planejarZeramentoForaDaLista(
+    posicoesDe(10),
+    [
+      { id: "a", omie_codigo_produto: 10, estoque: 5, codigo: "SKU-A", descricao: "Produto A" },
+      { id: "b", omie_codigo_produto: 20, estoque: 3, codigo: "SKU-B", descricao: "Produto B" },
+      { id: "c", omie_codigo_produto: 30, estoque: -2, codigo: "SKU-C", descricao: "Produto C" },
+    ],
+    COMPLETA,
+    "oben",
+    NOW,
+  );
+  // cod 10 está na lista: o saldo dele vem do plano de posição, não daqui.
+  assertEquals(z.rows, [
+    { omie_codigo_produto: 20, account: "oben", codigo: "SKU-B", descricao: "Produto B", estoque: 0, updated_at: NOW },
+    { omie_codigo_produto: 30, account: "oben", codigo: "SKU-C", descricao: "Produto C", estoque: 0, updated_at: NOW },
+  ]);
+  assertEquals(z.candidatos, 2);
+  assertEquals(z.pulado, null);
+});
+
+Deno.test("zeramento — local com estoque 0 ou null não é candidato", () => {
+  const z = planejarZeramentoForaDaLista(
+    posicoesDe(10),
+    [
+      { id: "b", omie_codigo_produto: 20, estoque: 0, codigo: "SKU-B", descricao: "B" },
+      { id: "c", omie_codigo_produto: 30, estoque: null, codigo: "SKU-C", descricao: "C" },
+    ],
+    COMPLETA,
+    "oben",
+    NOW,
+  );
+  assertEquals(z.rows, []);
+  assertEquals(z.candidatos, 0);
+});
+
+Deno.test("zeramento — código AMBÍGUO (2 ids distintos) não é zerado (precisão > recall)", () => {
+  const z = planejarZeramentoForaDaLista(
+    posicoesDe(10),
+    [
+      { id: "b1", omie_codigo_produto: 20, estoque: 3, codigo: "SKU-B", descricao: "B" },
+      { id: "b2", omie_codigo_produto: 20, estoque: 4, codigo: "SKU-B2", descricao: "B2" },
+    ],
+    COMPLETA,
+    "oben",
+    NOW,
+  );
+  assertEquals(z.rows, []);
+});
+
+// Duplicata no MESMO statement de upsert dá 21000 ("cannot affect row a second time") e derruba
+// o chunk inteiro. O loader é keyset (não relê), mas o planejador não confia nisso.
+Deno.test("zeramento — a MESMA linha lida 2× vira UMA row (sem 21000 no upsert)", () => {
+  const linha = { id: "b", omie_codigo_produto: 20, estoque: 3, codigo: "SKU-B", descricao: "B" };
+  const z = planejarZeramentoForaDaLista(posicoesDe(10), [linha, { ...linha }], COMPLETA, "oben", NOW);
+  assertEquals(z.rows.map((r) => r.omie_codigo_produto), [20]);
+  assertEquals(z.candidatos, 1);
+});
+
+Deno.test("zeramento — sem codigo/descricao (NOT NULL do upsert) a linha fica de fora, nunca placeholder", () => {
+  const z = planejarZeramentoForaDaLista(
+    posicoesDe(10),
+    [{ id: "b", omie_codigo_produto: 20, estoque: 3, codigo: null, descricao: "B" }],
+    COMPLETA,
+    "oben",
+    NOW,
+  );
+  assertEquals(z.rows, []);
+});
+
+Deno.test("zeramento — listagem INCOMPLETA: nada é zerado e o motivo sai em `pulado`", () => {
+  const z = planejarZeramentoForaDaLista(
+    posicoesDe(10),
+    [{ id: "b", omie_codigo_produto: 20, estoque: 3, codigo: "SKU-B", descricao: "B" }],
+    { completa: false, motivo: "página 2 veio com 60 de 100" },
+    "oben",
+    NOW,
+  );
+  assertEquals(z.rows, []);
+  assertEquals(z.candidatos, 1);
+  assertEquals((z.pulado ?? "").includes("página 2 veio com 60 de 100"), true);
+});
+
+Deno.test("zeramento — snapshot de posição VAZIO: nada é zerado (ausência de tudo não é zero de tudo)", () => {
+  const z = planejarZeramentoForaDaLista(
+    new Map(),
+    [{ id: "b", omie_codigo_produto: 20, estoque: 3, codigo: "SKU-B", descricao: "B" }],
+    COMPLETA,
+    "oben",
+    NOW,
+  );
+  assertEquals(z.rows, []);
+  assertEquals(z.pulado !== null, true);
+});
+
+function locaisForaDaLista(n: number) {
+  return Array.from({ length: n }, (_, i) => ({
+    id: `x${i}`,
+    omie_codigo_produto: 1000 + i,
+    estoque: 2,
+    codigo: `SKU-${i}`,
+    descricao: `P${i}`,
+  }));
+}
+
+Deno.test("zeramento — no TETO de raio zera; um acima do teto não zera NADA e diz quantos (fail-closed)", () => {
+  const posicoes = posicoesDe(...Array.from({ length: 100 }, (_, i) => i + 1));
+  const teto = Math.max(TETO_ZERAMENTO_MIN, Math.ceil(100 * TETO_ZERAMENTO_FRACAO));
+  const noTeto = planejarZeramentoForaDaLista(posicoes, locaisForaDaLista(teto), COMPLETA, "oben", NOW);
+  assertEquals(noTeto.rows.length, teto);
+  assertEquals(noTeto.pulado, null);
+  const acima = planejarZeramentoForaDaLista(posicoes, locaisForaDaLista(teto + 1), COMPLETA, "oben", NOW);
+  assertEquals(acima.rows, []);
+  assertEquals(acima.candidatos, teto + 1);
+  assertEquals((acima.pulado ?? "").includes(String(teto + 1)), true);
+});
+
+Deno.test("zeramento — a row tem o MESMO conjunto de chaves da stockRow de posição (mesmo upsert)", () => {
+  const plano = planejarEscritaInventario(posicoesBase(), LOCAIS_BASE, "oben", NOW);
+  const z = planejarZeramentoForaDaLista(
+    posicoesDe(10),
+    [{ id: "b", omie_codigo_produto: 20, estoque: 3, codigo: "SKU-B", descricao: "B" }],
+    COMPLETA,
+    "oben",
+    NOW,
+  );
+  assertEquals(Object.keys(z.rows[0]).sort(), Object.keys(plano.stockRows[0]).sort());
 });

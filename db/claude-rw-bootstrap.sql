@@ -223,6 +223,47 @@ CREATE POLICY db_aplicacoes_rw ON public.db_aplicacoes
   FOR ALL TO claude_rw
   USING (true) WITH CHECK (true);
 
+-- ALLOWLIST (2026-10-01): os REVOKEs acima nomeiam PUBLIC, anon e authenticated, mas o DEFAULT ACL
+-- do schema `public` dá a toda função nova EXECUTE para service_role e sandbox_exec_<ref>, e a toda
+-- tabela nova escrita para service_role e INSERT para os sandbox_exec — todos com BYPASSRLS. Com
+-- EXECUTE na porta e INSERT no ledger, qualquer um deles roda SQL arbitrário como `postgres`
+-- (medido em prod; docs/historico/aplicar-sql-acl-allowlist.md). Por isso o fecho é por allowlist,
+-- não por nome: na porta, sai todo GRANT que não é do dono nem do claude_rw; no ledger, toda
+-- escrita fora deles (o SELECT fica: o staff lê a trilha pela policy). O mesmo bloco vive em
+-- db/aplicar-sql-acl-allowlist.sql, que fechou a prod sem recolar este arquivo.
+DO $allowlist$
+DECLARE
+  r record;
+BEGIN
+  FOR r IN
+    SELECT DISTINCT a.grantee::regrole AS papel
+      FROM pg_proc p
+     CROSS JOIN LATERAL aclexplode(p.proacl) a
+     WHERE p.oid = 'public.aplicar_sql(text,text,bigint)'::regprocedure
+       AND a.grantee <> 0
+       AND a.grantee <> p.proowner
+       AND a.grantee <> 'claude_rw'::regrole
+  LOOP
+    EXECUTE format('REVOKE ALL ON FUNCTION public.aplicar_sql(text, text, bigint) FROM %s', r.papel);
+  END LOOP;
+
+  FOR r IN
+    SELECT a.grantee::regrole AS papel,
+           string_agg(a.privilege_type, ', ' ORDER BY a.privilege_type) AS privs
+      FROM pg_class c
+     CROSS JOIN LATERAL aclexplode(c.relacl) a
+     WHERE c.oid = 'public.db_aplicacoes'::regclass
+       AND a.grantee <> 0
+       AND a.grantee <> c.relowner
+       AND a.grantee <> 'claude_rw'::regrole
+       AND a.privilege_type <> 'SELECT'
+     GROUP BY a.grantee
+  LOOP
+    EXECUTE format('REVOKE %s ON public.db_aplicacoes FROM %s', r.privs, r.papel);
+  END LOOP;
+END
+$allowlist$;
+
 COMMIT;
 
 -- ════════════════════════════════════════════════════════════════════════════════════════
@@ -242,6 +283,20 @@ SELECT
             FROM pg_proc WHERE oid = 'public.aplicar_sql(text,text,bigint)'::regprocedure)
      AND NOT has_function_privilege('anon',   'public.aplicar_sql(text,text,bigint)', 'EXECUTE')
      AND NOT has_function_privilege('public', 'public.aplicar_sql(text,text,bigint)', 'EXECUTE')
+     -- a allowlist: fora o dono e o claude_rw, ninguém executa a porta nem escreve no ledger
+     -- (superusuário ignora ACL; os papéis embutidos `pg_*` não contam — quem os usasse herdaria
+     -- deles e apareceria pelo próprio nome)
+     AND NOT EXISTS (
+           SELECT 1 FROM pg_roles r
+            WHERE NOT r.rolsuper AND r.rolname NOT LIKE 'pg\_%' AND r.rolname <> 'claude_rw'
+              AND r.oid <> (SELECT proowner FROM pg_proc WHERE oid = 'public.aplicar_sql(text,text,bigint)'::regprocedure)
+              AND has_function_privilege(r.oid, 'public.aplicar_sql(text,text,bigint)'::regprocedure, 'EXECUTE'))
+     AND NOT EXISTS (
+           SELECT 1 FROM pg_roles r
+            CROSS JOIN unnest(ARRAY['INSERT', 'UPDATE', 'DELETE', 'TRUNCATE']) AS p(priv)
+            WHERE NOT r.rolsuper AND r.rolname NOT LIKE 'pg\_%' AND r.rolname <> 'claude_rw'
+              AND r.oid <> (SELECT relowner FROM pg_class WHERE oid = 'public.db_aplicacoes'::regclass)
+              AND has_table_privilege(r.oid, 'public.db_aplicacoes'::regclass, p.priv))
     THEN 'BOOTSTRAP_OK'
     ELSE 'BOOTSTRAP_FALHOU — não prossiga; me mande esta linha'
   END AS resultado;

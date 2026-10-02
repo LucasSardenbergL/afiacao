@@ -10,9 +10,15 @@
 //
 // Money-path (omie_products é o catálogo/preço que alimenta vendas e reposição):
 // - filtros de exclusão FIÉIS ao N+1 (inativo, tipo K, famílias excluídas, jumbo, 810ml);
-// - divergência = comparação ESTRITA do N+1: descricao com fallback "" e valor_unitario com
-//   fallback 0 — assimetria com o row (que grava "Sem descrição") PRESERVADA de propósito,
-//   senão mudaria o sinal divergences_found monitorado do strategic;
+// - divergência = comparação ESTRITA do N+1: descricao com fallback "" — assimetria com o row
+//   (que grava "Sem descrição") PRESERVADA de propósito, senão mudaria o sinal
+//   divergences_found monitorado do strategic;
+// - `estoque` NÃO é deste passo (2026-10-01): `quantidade_estoque` é "DEPRECATED." no Omie e
+//   chega 0 — gravá-lo zerava ~694 posicionados até o passo de estoque, que é o dono da coluna
+//   (inclusive do zero de quem saiu da lista — inventory-lote.ts);
+// - valor_unitario AUSENTE tira o item (o local fica intacto): é campo obrigatório no Omie, e
+//   nem o 0 fabricado nem a coluna omitida só nesta linha servem (o upsert em lote grava NULL
+//   na linha sem a chave);
 // - código ambíguo (2+ ids distintos) NÃO conta divergência (fiel ao maybeSingle→PGRST116→
 //   existing null) — impossível pelo UNIQUE(omie_codigo_produto,account), defense-in-depth;
 // - item com código inválido é descartado SOZINHO: em lote, um único item malformado
@@ -53,7 +59,6 @@ interface RowUpsertProduto {
   unidade: string;
   ncm: string | null;
   valor_unitario: number;
-  estoque: number;
   ativo: boolean;
   familia: string | null;
   imagem_url: string | null;
@@ -69,6 +74,20 @@ export interface PlanoEscritaProdutos {
   // soma corrections_applied só dos chunks que ESCREVERAM — sob falha parcial,
   // corrections=divergences afirmaria correção que nunca aconteceu (Codex P2 do #1353).
   codigosDivergentes: number[];
+  // Elegíveis que ficaram FORA do plano por virem sem valor_unitario (o caller reporta).
+  semValorUnitario: number[];
+}
+
+/** Nenhum elegível trouxe valor_unitario: contrato do ListarProdutos quebrado, não catálogo sem preço. */
+export class SemValorUnitarioError extends Error {
+  readonly elegiveis: number;
+  constructor(elegiveis: number) {
+    super(
+      `nenhum dos ${elegiveis} produto(s) elegível(is) do ListarProdutos trouxe valor_unitario (campo obrigatório no Omie) — fail-closed, nada escrito`,
+    );
+    this.name = "SemValorUnitarioError";
+    this.elegiveis = elegiveis;
+  }
 }
 
 // Famílias fora do catálogo vendável (fiel ao N+1 — matching por INCLUDES na família
@@ -85,8 +104,8 @@ export const EXCLUDED_FAMILIES = [
 // 500 páginas × 100 = 50k produtos ≈ ordens de grandeza acima do catálogo real.
 export const MAX_PAGINAS_PRODUTOS = 500;
 
-// Campo numérico OPCIONAL de escrita (vai em coluna numeric): ausente passa (o fallback || 0
-// é do planejar), number finito passa, string numérica coage (o N+1 mandava a string crua e o
+// Campo numérico OPCIONAL (valor_unitario e quantidade_estoque): ausente passa (quem decide é o
+// planejar), number finito passa, string numérica coage (o N+1 mandava a string crua e o
 // Postgres coagia — funcionava; coagir AQUI preserva o efeito e mata o falso-positivo perpétuo
 // de divergência local-number vs omie-string). Lixo (NaN/±Inf/boolean/string não-numérica)
 // invalida o ITEM: em chunk de 500 um único valor malformado derruba o statement inteiro
@@ -140,7 +159,7 @@ export function acumularProdutosDaPagina(
 // Rows de upsert (payload COMPLETO — carrega as NOT NULL sem default codigo/descricao com os
 // fallbacks do N+1, então não existe o 23502 do #1344 aqui) + divergências contra as linhas
 // locais de omie_products. O upsert é INCONDICIONAL como no N+1 (divergência é métrica, nunca
-// gate de escrita).
+// gate de escrita) — a única exceção é o item sem valor_unitario, que fica fora do plano.
 export function planejarEscritaProdutos(
   catalogo: Map<number, ProdutoCadastroOmie>,
   locais: LinhaProdutoCatalogo[],
@@ -162,8 +181,13 @@ export function planejarEscritaProdutos(
     }
   }
 
-  const plano: PlanoEscritaProdutos = { rows: [], divergences: 0, codigosDivergentes: [] };
+  const plano: PlanoEscritaProdutos = { rows: [], divergences: 0, codigosDivergentes: [], semValorUnitario: [] };
   for (const [cod, prod] of catalogo) {
+    const valorUnitario = prod.valor_unitario;
+    if (valorUnitario === undefined) {
+      plano.semValorUnitario.push(cod);
+      continue;
+    }
     const local = localPorCod.get(cod);
     if (local != null) {
       // Comparação ESTRITA fiel ao N+1 (fallback "" ≠ o "Sem descrição" do row — deliberado;
@@ -173,7 +197,7 @@ export function planejarEscritaProdutos(
       // igualmente incoerente; o estado FINAL escrito é idêntico (Codex P2 do #1353, registrado).
       if (
         local.descricao !== (prod.descricao || "") ||
-        local.valor_unitario !== (prod.valor_unitario || 0)
+        local.valor_unitario !== valorUnitario
       ) {
         plano.divergences++;
         plano.codigosDivergentes.push(cod);
@@ -186,8 +210,7 @@ export function planejarEscritaProdutos(
       descricao: prod.descricao || "Sem descrição",
       unidade: prod.unidade || "UN",
       ncm: prod.ncm || null,
-      valor_unitario: prod.valor_unitario || 0,
-      estoque: prod.quantidade_estoque || 0,
+      valor_unitario: valorUnitario,
       ativo: true,
       familia: prod.descricao_familia || null,
       imagem_url: prod.imagens?.[0]?.url_imagem || null,
@@ -202,6 +225,9 @@ export function planejarEscritaProdutos(
       account,
       updated_at: nowIso,
     });
+  }
+  if (plano.rows.length === 0 && plano.semValorUnitario.length > 0) {
+    throw new SemValorUnitarioError(plano.semValorUnitario.length);
   }
   return plano;
 }
