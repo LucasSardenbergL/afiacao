@@ -62,6 +62,7 @@ const SalesQuotes = () => {
         .from('sales_orders')
         .select('id, customer_user_id, account, items, total, notes, created_at, status')
         .eq('status', 'orcamento')
+        .is('deleted_at', null)
         .order('created_at', { ascending: false });
       if (error) throw error;
       return (data ?? []) as unknown as SalesOrder[];

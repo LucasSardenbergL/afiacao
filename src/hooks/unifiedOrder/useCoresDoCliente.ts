@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { STATUS_NAO_VENDA_POSTGREST } from '@/lib/farmer/universo-pedidos';
 import {
   extrairCoresDoHistorico,
   filtrarCores,
@@ -28,6 +29,10 @@ export function useCoresDoCliente(customerUserId: string | null | undefined) {
         .from('sales_orders')
         .select('id, omie_pedido_id, omie_numero_pedido, created_at, account, items')
         .eq('customer_user_id', customerUserId!)
+        // Cor do cliente = cor que ele COMPROU: o universo canônico, antes do limit(400) (orçamento
+        // e cancelado não contam — decisão do founder, 2026-10-01).
+        .not('status', 'in', STATUS_NAO_VENDA_POSTGREST)
+        .is('deleted_at', null)
         .order('created_at', { ascending: false })
         .limit(400);
       if (error) throw error;

@@ -23,6 +23,7 @@ import type {
   CityOption,
 } from '@/components/rota/planner/types';
 import { enrichWithPriority } from '@/components/rota/planner/priority';
+import { semCompraHa30Dias } from '@/components/rota/planner/renderHelpers';
 import { STOP_DURATION_MIN } from '@/components/rota/planner/constants';
 import type { Tables } from '@/integrations/supabase/types';
 import { visitasAgendadasTable } from '@/integrations/supabase/visitasAgendadas';
@@ -77,6 +78,9 @@ type RawAddress = {
   zip_code?: string;
   complement?: string;
 };
+
+// Projeção de customer_metrics_mv usada em loadManualCustomers (a última compra canônica).
+type UltimaCompraRow = { customer_user_id: string; ultima_compra_data: string | null };
 
 // Projeção de user_tools + embed tool_categories(name) usada em loadCommercialStops.
 type OverdueToolRow = {
@@ -354,12 +358,27 @@ export function useRoutePlanner() {
         .not('check_in_at', 'is', null)
         .order('check_in_at', { ascending: false });
 
-      // Load last order dates
-      const { data: lastOrders } = await supabase
-        .from('sales_orders')
-        .select('customer_user_id, created_at')
-        .in('customer_user_id', userIds)
-        .order('created_at', { ascending: false });
+      // Última COMPRA por cliente: o universo canônico já agregado em `customer_metrics_mv`
+      // (denylist + deleted_at, datada por order_date_kpi; refresh 6/6h; staff vê todas as linhas).
+      // Antes: `sales_orders` de TODO status, sem limit — a capa silenciosa de 1.000 cortava a lista
+      // de ~1.000 clientes e quem ficava fora do corte virava "nunca comprou" — e com o erro
+      // engolido. Agora a falha é DECLARADA (`compraIndisponivel`) e o resto da lista segue.
+      let ultimaCompra: Map<string, string | null> | null = null;
+      try {
+        const linhas = await fetchAllPages<UltimaCompraRow>(
+          (de, ate) =>
+            supabase
+              .from('customer_metrics_mv')
+              .select('customer_user_id, ultima_compra_data')
+              .order('customer_user_id', { ascending: true })
+              .range(de, ate) as unknown as PromiseLike<{ data: UltimaCompraRow[] | null; error: unknown }>,
+          'customer_metrics_mv/roteirizador',
+        );
+        ultimaCompra = new Map(linhas.map((l) => [l.customer_user_id, l.ultima_compra_data]));
+      } catch (error) {
+        console.error('Error loading last purchases:', error);
+        toast.error('Última compra dos clientes indisponível — o filtro "sem compra há 30 dias" não inclui ninguém');
+      }
 
       // Build customer list — ALL profiles, address is optional
       const now = new Date();
@@ -367,10 +386,8 @@ export function useRoutePlanner() {
         const addr = addresses?.find(a => a.user_id === profile.user_id);
 
         const lastVisit = lastVisits?.find(v => v.customer_user_id === profile.user_id);
-        const lastOrder = lastOrders?.find(o => o.customer_user_id === profile.user_id);
-
         const lastVisitDate = lastVisit?.check_in_at || null;
-        const lastOrderDate = lastOrder?.created_at || null;
+        const lastOrderDate = ultimaCompra?.get(profile.user_id) ?? null;
 
         const daysSinceLastVisit = lastVisitDate
           ? Math.floor((now.getTime() - new Date(lastVisitDate).getTime()) / (1000 * 60 * 60 * 24))
@@ -400,6 +417,7 @@ export function useRoutePlanner() {
           lastOrderDate,
           daysSinceLastVisit,
           daysSinceLastOrder,
+          compraIndisponivel: ultimaCompra === null,
         };
       });
 
@@ -1315,7 +1333,7 @@ export function useRoutePlanner() {
     if (manualFilter === 'nunca_visitados') {
       filtered = filtered.filter(c => c.daysSinceLastVisit === null);
     } else if (manualFilter === 'sem_compra_30d') {
-      filtered = filtered.filter(c => c.daysSinceLastOrder === null || c.daysSinceLastOrder > 30);
+      filtered = filtered.filter(semCompraHa30Dias);
     }
 
     // Apply search
