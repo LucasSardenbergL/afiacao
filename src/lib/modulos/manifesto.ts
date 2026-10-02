@@ -658,6 +658,7 @@ export const MODULOS: ModuloApp[] = [
       "src/pages/__tests__/WhatsappInbox.sla-leitura-falhou.test.tsx",
       "src/contexts/__tests__/webrtc-context-split.test.ts",
       "src/hooks/__tests__/useCallBackend.test.tsx",
+      "src/queries/usePropostaPreview.universo.test.tsx",
       "src/hooks/__tests__/useCatalisadorLink.erro-honesto.test.tsx",
       "src/hooks/__tests__/useCustomerCalls.test.tsx",
       "src/hooks/__tests__/useIsTelefoniaManager.test.tsx",

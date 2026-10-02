@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { STATUS_NAO_VENDA, STATUS_NAO_VENDA_POSTGREST } from '@/lib/farmer/universo-pedidos';
 import { montarCestaRecompra } from '@/lib/whatsapp/cesta-recompra';
 import type { CestaResult } from '@/lib/whatsapp/cesta-recompra';
 import { filtrarCestaPorAtivos } from '@/lib/whatsapp/cesta-ativos';
@@ -13,7 +14,12 @@ import type { PreviewOrder, PreviewItem, PreviewRec, PreviewProdById } from '@/l
 
 // Status do Omie que NUNCA contam como compra válida. Permissivo no PREVIEW — a whitelist EXATA é
 // decisão do founder no lançamento (surfaçamos os status vistos pra ele definir).
-const STATUS_CANCELAMENTO = new Set(['CANCELADO', 'CANCELADA', 'EXCLUIDO', 'EXCLUÍDO', 'CANCELED']);
+/**
+ * A régua em memória do core (`assembleLinesEContexto` compara em caixa alta) DERIVADA da autoridade —
+ * não uma cópia. A que morava aqui (`STATUS_CANCELAMENTO`: sinônimos de cancelado em caixa alta) só
+ * tirava o cancelado: orçamento e rascunho podiam pôr SKU na cesta que vai ao cliente.
+ */
+const STATUS_NAO_VENDA_CAIXA_ALTA = new Set(STATUS_NAO_VENDA.map((s) => s.toUpperCase()));
 const JANELA_FETCH_DIAS = 365;
 const MAX_CROSS_SELL = 2;
 
@@ -62,6 +68,10 @@ export function usePropostaPreview(customerUserId: string | undefined, opts?: { 
         .from('sales_orders')
         .select('id, account, order_date_kpi, created_at, status')
         .eq('customer_user_id', customerUserId!)
+        // A cesta sai do universo de VENDA — o mesmo do preço que a cota (`get_whatsapp_proposta_cotacao`,
+        // canônico desde o #2726). Antes, a cesta de um universo e o preço de outro.
+        .not('status', 'in', STATUS_NAO_VENDA_POSTGREST)
+        .is('deleted_at', null)
         .gte('created_at', desde);
       if (oErr) throw oErr;
       const orders = (ordersData ?? []) as PreviewOrder[];
@@ -74,7 +84,7 @@ export function usePropostaPreview(customerUserId: string | undefined, opts?: { 
       if (iErr) throw iErr;
 
       // 2) composição PURA (join + account predominante + status) — testada
-      const ctx = assembleLinesEContexto(orders, (itemsData ?? []) as PreviewItem[], STATUS_CANCELAMENTO);
+      const ctx = assembleLinesEContexto(orders, (itemsData ?? []) as PreviewItem[], STATUS_NAO_VENDA_CAIXA_ALTA);
       if (!ctx.account) return VAZIO;
       const { lines, account, statusesVistos, statusValidos } = ctx;
 
