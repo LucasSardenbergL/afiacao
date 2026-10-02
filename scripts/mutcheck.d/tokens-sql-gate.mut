@@ -12,3 +12,6 @@ PEGA | P1: tag de dollar-quote presa numa janela de 128 | s/const tag = casarEm\
 PEGA | literal perde espaco interno ('a  b' = 'a b')    | s/      emitir\(s\.slice\(i, fim\), true\);/      emitir(s.slice(i, fim).replace(\/\\s+\/g, ' '), true);/
 PEGA | dollar-quote deixa de ser opaco (=90 = =10)      | s/        emitir\(s\.slice\(i, ate\)\);/        emitir(s.slice(i, ate).replace(\/--[^\\n]*\/g, ''));/
 PEGA | P2: identificador com $ abre dollar-quote        | s/const CONT_IDENT = \/\[A-Za-z_0-9\$/const CONT_IDENT = \/[A-Za-z_0-9/
+# Auto-challenge (2026-10-02, medido em prod): NBSP/BOM/U+2028 são caractere de IDENTIFICADOR para o
+# scan.l — o `\s` do JS os engolia quando abriam token, e `SELECT <NBSP>x` igualava `SELECT x`.
+PEGA | espaco do JS (\s) no lugar do space do scan.l    | s/    if \(ESPACO_PG\.has\(c\)\) \{/    if (\/\\s\/.test(c)) {/

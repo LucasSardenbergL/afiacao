@@ -17,6 +17,14 @@
  */
 import { md5Exato } from './migration-objects';
 
+/**
+ * O `space` do `scan.l` — `[ \t\n\r\f\v]` — e só ele. O `\s` do JS casa também NBSP, BOM, U+2028 e
+ * afins, que para o PG são caracteres de IDENTIFICADOR: medido em prod (2026-10-02),
+ * `SELECT <NBSP>x FROM (SELECT 1 AS x) s` → `column " x" does not exist`, e `SELECT\f1`/`SELECT\v1`
+ * devolvem 1. Com o `\s`, um NBSP que ABRIA token era engolido e `SELECT <NBSP>x` igualava
+ * `SELECT x` — falso "mesmo programa" (achado no auto-challenge do gate do pacote, Caminho B).
+ */
+const ESPACO_PG = new Set([' ', '\t', '\n', '\r', '\f', '\v']);
 /** Os caracteres de operador do PG (`op_chars` do `scan.l`). */
 const OP_CHARS = new Set('~!@#^&|`?+-*/%<>=');
 /** Com um destes num operador composto, ele PODE terminar em `+`/`-` (regra do `scan.l`). */
@@ -87,7 +95,7 @@ export function tokensSql(corpo: string): string[] {
   };
   while (i < s.length) {
     const c = s[i];
-    if (/\s/.test(c)) {
+    if (ESPACO_PG.has(c)) {
       if (c === '\n' || c === '\r') quebraDesdeUltimo = true;
       i++;
       continue;

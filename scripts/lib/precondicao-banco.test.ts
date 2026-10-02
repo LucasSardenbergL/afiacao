@@ -719,7 +719,10 @@ describe('eixo 5 — o que o md5 exato chama de DERIVA é re-testado por TOKENS'
       ['P1: tag de dollar-quote com 130 letras — o conteúdo é literal', `SELECT ${TAG} -- desconto=90 ${TAG};`, `SELECT ${TAG} -- desconto=10 ${TAG};`],
       ["espaço DENTRO de literal: 'a  b' × 'a b'", "SELECT 'a  b';", "SELECT 'a b';"],
       ['comentário DENTRO de dollar-quote é conteúdo: =90 × =10', 'EXECUTE $q$ SELECT 1 -- desconto=90\n$q$;', 'EXECUTE $q$ SELECT 1 -- desconto=10\n$q$;'],
-      ['P2: `a$q$` é identificador, não abre dollar-quote — o literal mudou', 'DECLARE a$q$ int := 1;\nBEGIN\nRETURN a$q$;\nEND;', 'DECLARE a$q$ int := 2;\nBEGIN\nRETURN a$q$;\nEND;'],
+      ['P2: `a$q$` é identificador, não abre dollar-quote — o literal mudou', 'DECLARE a$q$ int := 1;\nBEGIN\nRETURN a$q$;\nEND;', 'DECLARE a$q$ int := 2;\nBEGIN\nRETURN a$q$;\nEND;'],      // Auto-challenge (Caminho B, 2026-10-02), MEDIDO em prod: `SELECT <NBSP>x FROM (SELECT 1 AS x) s`
+      // → ERROR column " x" does not exist. Para o scan.l, NBSP/BOM/U+2028 são caractere de IDENTIFICADOR;
+      // o `\s` do JS os engolia como espaço quando ABRIAM um token.
+      ['espaço Unicode (NBSP) abrindo token é IDENTIFICADOR para o scan.l, não espaço', 'SELECT x FROM t;', 'SELECT \u00a0x FROM t;'],
     ];
     for (const [rotulo, repo, prodTxt] of naoCosmeticos) {
       it(`NÃO é cosmético — ${rotulo}`, () => {
@@ -734,7 +737,8 @@ describe('eixo 5 — o que o md5 exato chama de DERIVA é re-testado por TOKENS'
     const cosmeticos: [string, string, string][] = [
       ['`\\r` encerra o comentário e só ELE some', 'BEGIN\n-- c\rRETURN 1;\nRETURN 2;\nEND;', 'BEGIN\nRETURN 1;\nRETURN 2;\nEND;'],
       ['P2: `a$q$` é identificador e o `-- $q$` é comentário', 'DECLARE a$q$ int := 1;\nBEGIN\n-- $q$\nRETURN a$q$;\nEND;', 'DECLARE a$q$ int := 1;\nBEGIN\nRETURN a$q$;\nEND;'],
-      ['comentário de bloco e espaço FORA de literal', "SELECT /* nota */ 'a  b',\n   1;", "SELECT 'a  b', 1;"],
+      ['comentário de bloco e espaço FORA de literal', "SELECT /* nota */ 'a  b',\n   1;", "SELECT 'a  b', 1;"],      // E o outro lado, também medido em prod: `SELECT\f1` e `SELECT\v1` devolvem 1 — \f e \v SÃO espaço.
+      ['\\f e \\v SÃO espaço para o scan.l', 'SELECT 1;', 'SELECT\f1\v;'],
     ];
     for (const [rotulo, repo, prodTxt] of cosmeticos) {
       it(`É cosmético (controle) — ${rotulo}`, () => {

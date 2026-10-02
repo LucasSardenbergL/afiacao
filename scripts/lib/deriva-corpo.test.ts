@@ -90,6 +90,16 @@ describe('tokensSql — "cosmético" é mesma sequência de tokens, nunca "mesmo
 });
 
 describe('tokensSql — o contrato léxico do PG17 (os casos do parecer Codex de 2026-09-26)', () => {
+  it('espaço é o `space` do scan.l — [ \\t\\n\\r\\f\\v] —, não o `\\s` do JS (medido em prod, 2026-10-02)', () => {
+    // `SELECT <NBSP>x FROM (SELECT 1 AS x) s` → ERROR: column " x" does not exist: o NBSP abre um
+    // IDENTIFICADOR. Idem BOM e U+2028. Já `SELECT\f1` e `SELECT\v1` devolvem 1.
+    expect(tokensSql('SELECT \u00a0x')).toEqual(['select', '\u00a0x']);
+    expect(mesmosTokens('SELECT \u00a0x FROM t;', 'SELECT x FROM t;')).toBe(false);
+    expect(mesmosTokens('SELECT 1 +\ufeff2;', 'SELECT 1 + 2;')).toBe(false);
+    expect(mesmosTokens('SELECT 1 +\u20282;', 'SELECT 1 + 2;')).toBe(false);
+    expect(mesmosTokens('SELECT\f1\v;', 'SELECT 1;')).toBe(true);
+  });
+
   it('dollar-quote é OPACO: `--` dentro dele é conteúdo (o stripper compartilhado mascara os dois iguais)', () => {
     expect(mesmosTokens('BEGIN RETURN $q$a--x$q$; END;', 'BEGIN RETURN $q$a--y$q$; END;')).toBe(false);
   });
