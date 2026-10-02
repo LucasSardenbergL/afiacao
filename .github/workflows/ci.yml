@@ -1438,6 +1438,47 @@ jobs:
               await github.rest.issues.create({ owner, repo, title: '🔴 Evidência de authz de produção', body: corpo, labels: [label] });
             }
 
+  # ─── Escopo do mutation-check (2026-10-01) ──────────────────────────
+  # O `mutation-check` abaixo rodava os 48 contratos `.mut` em SÉRIE a cada push de PR: 30 a
+  # 43 min por push em 01/10, num job que não é required. De 25/09 a 01/10 ele ocupou 39% de todo
+  # o tempo de runner do repo — e o plano Free roda 20 jobs simultâneos, então esse tempo virava
+  # FILA para os jobs que barram o merge. Só 27% dos 300 PRs mais recentes tocaram algum arquivo
+  # que um contrato mede. Este job decide, em segundos e sem `bun install`, quais contratos ESTE
+  # diff alcança (`bun run mutcheck:escopo` → `scripts/mutcheck-escopo.ts`, pelas diretivas `# @src:`/`# @test:` de cada
+  # `.mut`): nenhum → o `mutation-check` fica SKIPPED; alguns → roda só esses; gatilho global
+  # (a ferramenta, este ci.yml, bun.lock, config do vitest) → todos. Fora de PR (push/dispatch
+  # na main) segue rodando TODOS: é a rede do que escapar do escopo, e o sensor de lá abre a
+  # Issue `mutcheck-cobertura`. Fail-closed: o script nunca sai ≠ 0, e o `mutation-check` só pula
+  # com `roda` EXPLICITAMENTE 'false' — saída ausente (job de escopo quebrado) roda.
+  mutcheck-escopo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.event_name != 'schedule'
+    permissions:
+      contents: read
+    outputs:
+      roda: ${{ steps.escopo.outputs.roda }}
+    steps:
+      # fetch-depth 2: no `pull_request` o checkout é o merge commit (refs/pull/N/merge); com os
+      # dois pais na árvore, `pai 1 → HEAD` é exatamente o que o PR muda na main.
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 2
+
+      # Semver estrito, mesmo motivo do job `validate` (o `bunpin:check` cobra a convergência).
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      # O evento entra por `env:`, nunca `${{ }}` cru no `run:` (script injection — A2 de
+      # docs/historico/varredura-semgrep-2026-09-27.md).
+      - name: Quais contratos ESTE diff alcança
+        id: escopo
+        env:
+          EVENTO: ${{ github.event_name }}
+        run: bun run mutcheck:escopo --evento "$EVENTO" --github-output
+
   # ─── Job NÃO-bloqueante (informativo, sinal próprio) ────────────────
   # Gate de regressão de COBERTURA money-path (≠ os checks do `validate`, que
   # cobrem tipos/comportamento/build/lint). Roda os contratos scripts/mutcheck.d/*.mut
@@ -1474,10 +1515,17 @@ jobs:
     # BLOQUEANTES; este job é informativo, não-required, e pode ficar INVÁLIDO por refactor legítimo
     # (ver o comentário acima). Rodando diário ele falharia sem abrir Issue nenhuma — os dois steps
     # de alerta vivem no job `validate` —, virando exatamente o sinal vermelho que ninguém lê. Além
-    # de somar ~2m41s por dia sem leitor. Nos eventos de PR/push segue rodando igual.
-    if: github.event_name != 'schedule'
+    # de somar ~2m41s por dia sem leitor. Em push/dispatch roda TODOS os contratos; em PR, só os
+    # que o diff alcança (job `mutcheck-escopo`, acima).
+    # Só pula com `roda` EXPLICITAMENTE 'false'. O `!cancelled()` troca o `success()` implícito do
+    # `needs:`: se o job de escopo FALHAR, este roda mesmo assim, com todos os contratos.
+    needs: mutcheck-escopo
+    if: ${{ !cancelled() && github.event_name != 'schedule' && needs.mutcheck-escopo.outputs.roda != 'false' }}
     steps:
+      # fetch-depth 2: o step "Contratos no escopo" refaz o diff do merge commit (pai 1 → HEAD).
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 2
 
       # Semver estrito, mesmo motivo do job `validate` acima (manter as duas em sincronia).
       - name: Setup Bun
@@ -1501,6 +1549,14 @@ jobs:
 
       - name: mutcheck — selftest (mecânica da ferramenta, sem vitest)
         run: bun run mutcheck:selftest
+
+      # Refaz a MESMA seleção do job `mutcheck-escopo` (mesmo merge commit, mesmo script) e aponta
+      # o MUTCHECK_DIR do `mutcheck-all.sh` para um diretório só com os contratos alcançados. Fora
+      # de PR, com gatilho global ou em qualquer incerteza, não define nada: o default (todos) vale.
+      - name: Contratos no escopo deste diff
+        env:
+          EVENTO: ${{ github.event_name }}
+        run: bun run mutcheck:escopo --evento "$EVENTO" --materializar "$RUNNER_TEMP/mutcheck-escopo"
 
       - name: mutcheck — contratos de cobertura money-path (.mut)
         env:
