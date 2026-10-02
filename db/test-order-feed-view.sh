@@ -116,7 +116,7 @@ begin
 
   -- 4. sem profile → customer_name null (mas pedido aparece)
   select * into r from public.order_feed where id='a0000004-0000-0000-0000-000000000004';
-  if r.customer_name is not null then raise exception 'FALHOU: sem profile deveria ser null (got %)', r.customer_name; end if;
+  if not found or r.customer_name is not null then raise exception 'FALHOU: sem profile deveria ser null e o pedido aparecer (achado=%, got %)', found, r.customer_name; end if;
   if r.item_quantity is distinct from 5 then raise exception 'FALHOU: sem profile qty (got %)', r.item_quantity; end if;
 
   -- 5. items não-array → '{}' e 0
@@ -128,8 +128,8 @@ begin
   select * into r from public.order_feed where id='b0000001-0000-0000-0000-000000000001';
   if r.origin is distinct from 'afiacao' then raise exception 'FALHOU: origin afiacao (got %)', r.origin; end if;
   if r.account is distinct from 'colacor_sc' then raise exception 'FALHOU: afiacao account colacor_sc (got %)', r.account; end if;
-  if r.order_number is not null then raise exception 'FALHOU: afiacao order_number null (got %)', r.order_number; end if;
-  if r.omie_pedido_id is not null then raise exception 'FALHOU: afiacao omie_pedido_id null (got %)', r.omie_pedido_id; end if;
+  if not found or r.order_number is not null then raise exception 'FALHOU: afiacao order_number null (achado=%, got %)', found, r.order_number; end if;
+  if not found or r.omie_pedido_id is not null then raise exception 'FALHOU: afiacao omie_pedido_id null (achado=%, got %)', found, r.omie_pedido_id; end if;
   if r.customer_name is distinct from 'ALICE LTDA' then raise exception 'FALHOU: afiacao nome via join (got %)', r.customer_name; end if;
   if r.item_quantity is distinct from 3 then raise exception 'FALHOU: afiacao qty (got %)', r.item_quantity; end if;
   if r.item_names is distinct from array['Afiacao Serra']::text[] then raise exception 'FALHOU: afiacao names (got %)', r.item_names; end if;
