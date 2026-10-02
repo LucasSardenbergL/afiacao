@@ -33,7 +33,7 @@ tinham no repo inteiro. Não edite o bloco à mão sem rodar o gate: ele confere
 
 **Gates do CI — reprovam o PR** (32): `authz:carimbo` · `authz:check` · `build` · `bunpin:check` · `canaria:bump` · `claude:size` · `docs:citacoes` · `docs:indice` · `docs:links` · `edges:sintaxe` · `edges:typecheck` · `evals:deploy-verify` · `evals:deploy-verify:falsificacao` · `exclusividade` · `gate:ambiente` · `gate:senha-bootstrap` · `gates:frescura` · `knip` · `lint` · `lint:shell` · `scripts:typecheck` · `sonda:autentica` · `sonda:bump` · `sonda:cron-prova` · `sonda:fingerprint` · `sonda:nova` · `test` · `test:edges` · `test:falsificacao` · `test:hooks` · `test:sonda-rollback` · `tsc`.
 
-**Rodam no CI mas NÃO reprovam** (2, informativos por desenho): `mutcheck` · `mutcheck:selftest`.
+**Rodam no CI mas NÃO reprovam** (3, informativos por desenho): `mutcheck` · `mutcheck:escopo` · `mutcheck:selftest`.
 
 **Hooks que NEGAM a chamada de ferramenta** (5, deny dentro de hookSpecificOutput com hookEventName): `destructive-bash-guard.sh` · `heavy-guard.sh` · `migration-collision-guard.sh` · `migration-immutability-guard.sh` · `push-gates-guard.sh`.
 

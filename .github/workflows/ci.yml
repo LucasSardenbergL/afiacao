@@ -1444,7 +1444,7 @@ jobs:
   # o tempo de runner do repo — e o plano Free roda 20 jobs simultâneos, então esse tempo virava
   # FILA para os jobs que barram o merge. Só 27% dos 300 PRs mais recentes tocaram algum arquivo
   # que um contrato mede. Este job decide, em segundos e sem `bun install`, quais contratos ESTE
-  # diff alcança (`scripts/mutcheck-escopo.ts`, pelas diretivas `# @src:`/`# @test:` de cada
+  # diff alcança (`bun run mutcheck:escopo` → `scripts/mutcheck-escopo.ts`, pelas diretivas `# @src:`/`# @test:` de cada
   # `.mut`): nenhum → o `mutation-check` fica SKIPPED; alguns → roda só esses; gatilho global
   # (a ferramenta, este ci.yml, bun.lock, config do vitest) → todos. Fora de PR (push/dispatch
   # na main) segue rodando TODOS: é a rede do que escapar do escopo, e o sensor de lá abre a
@@ -1477,7 +1477,7 @@ jobs:
         id: escopo
         env:
           EVENTO: ${{ github.event_name }}
-        run: bun scripts/mutcheck-escopo.ts --evento "$EVENTO" --github-output
+        run: bun run mutcheck:escopo --evento "$EVENTO" --github-output
 
   # ─── Job NÃO-bloqueante (informativo, sinal próprio) ────────────────
   # Gate de regressão de COBERTURA money-path (≠ os checks do `validate`, que
@@ -1556,7 +1556,7 @@ jobs:
       - name: Contratos no escopo deste diff
         env:
           EVENTO: ${{ github.event_name }}
-        run: bun scripts/mutcheck-escopo.ts --evento "$EVENTO" --materializar "$RUNNER_TEMP/mutcheck-escopo"
+        run: bun run mutcheck:escopo --evento "$EVENTO" --materializar "$RUNNER_TEMP/mutcheck-escopo"
 
       - name: mutcheck — contratos de cobertura money-path (.mut)
         env:

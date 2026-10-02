@@ -47,7 +47,7 @@ continua sendo a rede (regra de máquina meta do `CLAUDE.md`).
 ## Como re-medir
 
 ```bash
-bun scripts/mutcheck-escopo.ts --base origin/main --head HEAD   # o que este branch rodaria
+bun run mutcheck:escopo --base origin/main --head HEAD   # o que este branch rodaria
 gh run list --workflow CI --event pull_request --limit 30 --json databaseId,conclusion
 ```
 

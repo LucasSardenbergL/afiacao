@@ -26,16 +26,17 @@
  * ausência de dado. Pelo mesmo motivo o script NUNCA sai ≠ 0 — erro vira "roda TODOS".
  *
  * Uso (CI, ver ci.yml):
- *   bun scripts/mutcheck-escopo.ts --evento "$EVENTO" --github-output        # job mutcheck-escopo
- *   bun scripts/mutcheck-escopo.ts --evento "$EVENTO" --materializar <dir>   # job mutation-check
+ *   bun run mutcheck:escopo --evento "$EVENTO" --github-output        # job mutcheck-escopo
+ *   bun run mutcheck:escopo --evento "$EVENTO" --materializar <dir>   # job mutation-check
  * Local (o que um PR desta branch rodaria):
- *   bun scripts/mutcheck-escopo.ts --base origin/main --head HEAD
+ *   bun run mutcheck:escopo --base origin/main --head HEAD
  *
- * Só builtins: o job de escopo não paga `bun install`.
+ * Só builtins + `@/lib/erro-mensagem` (sem import de pacote): o job de escopo não paga `bun install`.
  */
 import { appendFileSync, mkdirSync, readdirSync, readFileSync, symlinkSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 export const DIR_CONTRATOS = 'scripts/mutcheck.d';
 
@@ -252,7 +253,7 @@ if (import.meta.main) {
     // Fail-closed: o job de escopo tenta registrar "roda TODOS"; se nem isso der, a condição do
     // `mutation-check` (`roda != 'false'`) roda mesmo assim. No modo materializar, não definir o
     // MUTCHECK_DIR JÁ é rodar todos.
-    console.log(`::warning::mutcheck-escopo não decidiu (${e instanceof Error ? e.message : String(e)}) — roda TODOS os contratos.`);
+    console.log(`::warning::mutcheck-escopo não decidiu (${mensagemDeErro(e) ?? 'erro desconhecido'}) — roda TODOS os contratos.`);
     if (querSaida && process.env.GITHUB_OUTPUT) {
       try {
         appendFileSync(process.env.GITHUB_OUTPUT, 'roda=true\ntodos=true\ncontratos=\n');
