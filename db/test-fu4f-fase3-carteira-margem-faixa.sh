@@ -164,8 +164,9 @@ eq "E5b fail-closed morde mesmo com cap_carteira_ler permissiva" \
 echo "-- F. gate de PROJEÇÃO do número --"
 eq "F1 com cap_custo_ler, margem_pct é o valor EXATO" \
    "$(como $A true false "SELECT margem_pct FROM public.get_carteira_margem_faixa() WHERE customer_user_id='c2000000-0000-0000-0000-000000000002';")" "20.00"
+# '(null)' = coluna NULL com a linha PRESENTE; a linha sumida (ou a leitura que erra) dá "".
 eq "F2 SEM cap_custo_ler, margem_pct é NULL" \
-   "$(como $A false false "SELECT coalesce(margem_pct::text,'') FROM public.get_carteira_margem_faixa() WHERE customer_user_id='c2000000-0000-0000-0000-000000000002';")" ""
+   "$(como $A false false "SELECT coalesce(margem_pct::text,'(null)') FROM public.get_carteira_margem_faixa() WHERE customer_user_id='c2000000-0000-0000-0000-000000000002';")" "(null)"
 eq "F3 a FAIXA sai mesmo sem cap_custo_ler (o sinal fica)" \
    "$(como $A false false "SELECT faixa FROM public.get_carteira_margem_faixa() WHERE customer_user_id='c2000000-0000-0000-0000-000000000002';")" "amarelo"
 # ⚠️ REVISTO na fase 3c (2026-08-13). Este assert afirmava "o MOTIVO sai mesmo sem cap_custo_ler",
@@ -176,7 +177,7 @@ eq "F3 a FAIXA sai mesmo sem cap_custo_ler (o sinal fica)" \
 # O par de asserts fica: sem cap NÃO sai, com cap SAI — provar só um dos lados deixaria um gate
 # que nega todo mundo passar por correto.
 eq "F4 SEM cap_custo_ler, o MOTIVO é NULL (fase 3c: a âncora some)" \
-   "$(como $A false false "SELECT coalesce(motivo,'') FROM public.get_carteira_margem_faixa() WHERE customer_user_id='c2000000-0000-0000-0000-000000000002';")" ""
+   "$(como $A false false "SELECT coalesce(motivo,'(null)') FROM public.get_carteira_margem_faixa() WHERE customer_user_id='c2000000-0000-0000-0000-000000000002';")" "(null)"
 eq "F4b COM cap_custo_ler, o MOTIVO continua saindo" \
    "$(como $A true false "SELECT motivo FROM public.get_carteira_margem_faixa() WHERE customer_user_id='c2000000-0000-0000-0000-000000000002';")" "abaixo_do_piso"
 eq "F5 o campo g sai mesmo sem cap_custo_ler (é ele que preserva o score)" \

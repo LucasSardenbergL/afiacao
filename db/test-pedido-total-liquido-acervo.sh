@@ -381,7 +381,7 @@ eq "C8 bruto a 1 centavo (float legado) COM desconto é convertível"      "$(cl
 eq "C9 cabeçalho reescrito depois do corte: não se confia no desconto"   "$(classe "$A10")" "tocado_pos_corte"
 eq "C10 controle do C9: sem corte, o mesmo pedido seria convertível"     "$(Pq -c "SELECT classe FROM public.pedido_total_liquido_classificar(NULL, ARRAY['$A10'::uuid])")" "convertivel"
 eq "C11 pai Omie sem linha"                                               "$(classe "$A12")" "sem_linha"
-eq "C12 pedido do app (sem omie_pedido_id) nem entra na classificação"    "$(classe "$A13")" ""
+eq "C12 pedido do app (sem omie_pedido_id) nem entra na classificação"    "$(Pq -c "SELECT so.id IS NOT NULL, (SELECT count(*) FROM public.pedido_total_liquido_classificar('$CORTE', ARRAY[so.id])) FROM public.sales_orders so WHERE so.id = '$A13'")" "t|0"
 eq "C13 uma linha com desconto NÃO apurado"                               "$(classe "$B2")"  "nao_apurado"
 eq "C14 líquido −0,01 (desconto de ½ centavo sobre base de ½ centavo)"   "$(classe "$D1")"  "linha_invalida"
 eq "C15 preço ausente"                                                    "$(classe "$D2")"  "linha_invalida"
