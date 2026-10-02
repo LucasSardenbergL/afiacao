@@ -137,7 +137,9 @@ if [ -f package.json ]; then
       # "delegado" só com o log aberto: é ele que fecha com a marca do desfecho.
       avisos="${avisos}${desc} -> NAO ABRI O LOG em $log: NAO disparei install. Rode 'bun install' antes de test/typecheck. "
     else
-      (disparar_install >>"$log" 2>&1 </dev/null &)
+      # O pid do job vai ao log: quem precisa saber se ele ACABOU espera o pid
+      # sair, não um prazo — sob swap, o job leva o que levar.
+      (disparar_install >>"$log" 2>&1 </dev/null & echo "vigia-worktree: job pid $!" >>"$log")
       avisos="${avisos}${desc} -> 'bun install' delegado ao background (log: $log), que NAO dispara se ja houver outro EM VOO nesta worktree; o log fecha com VIGIA-FIM, VIGIA-EM-VOO ou VIGIA-NAO-CONFERI. NAO rode outro 'bun install' em paralelo (dois na mesma arvore a deixam PARCIAL) e espere o log fechar antes de test/typecheck. Com a arvore parcial o falso vermelho tem DOIS sintomas: 'Cannot find module' (obvio) e erro de RUNTIME do React -- tipicamente 'Cannot read properties of null (reading ...)' de dentro de um componente, que parece bug do SEU codigo. Discriminador, DEPOIS do log fechar: 'bun install --frozen-lockfile' verde em segundos com o lockfile intacto = era a arvore. (CI real: gh pr checks). "
     fi
   fi

@@ -581,6 +581,37 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
     ],
 
   },
+  // Entrou no roteiro com a sonda positiva de deps do vigia-worktree (o node_modules VAZIO de
+  // 2026-09-25) — o R4 a acusou no 1º vitest, antes de registrada. O molde do vigia-gstack, com a
+  // integridade da cópia mais estrita que o `cmp`: âncora única, 1x -> 0x e o texto novo +1x.
+  'scripts/test-hooks-sessionstart.sh': {
+    motivo:
+      'o molde do vigia-gstack: controle verde por locale (aborta sem ele, e exige o PASS do bloco de deps), cópia com troca LITERAL de âncora única (1x -> 0x, texto novo +1x), exit EXATO 1 + `FAIL [<caso>]` do caso-alvo',
+    mede: ['saida', 'rc'],
+    ancoras: [
+      [
+        'saida="$(TESTE_SO_DEPS=1 LC_ALL="$1" VIGIA_WORKTREE_HOOK="$VW" bash "$0" 2>&1)"; rc=$?',
+        String.raw`if [ "$rc" -ne 0 ] || ! printf '%s\n' "$saida" | grep -qF 'PASS — deps'; then`,
+        `printf '…' "$1" "$rc" "$saida"`,
+        'exit 1',
+        'fi',
+      ],
+      [
+        'if [ "$(conta "$de" "$copia")" != 0 ] \\',
+        '|| [ "$(conta "$para" "$copia")" != "$(( $(conta "$para" "$VW") + 1 ))" ]; then',
+        `printf '…' "$id"`,
+        'falhas=$((falhas + 1)); return',
+        'fi',
+        'saida="$(TESTE_SO_DEPS=1 LC_ALL="$LOC" VIGIA_WORKTREE_HOOK="$copia" bash "$0" 2>&1)"; rc=$?',
+        String.raw`if [ "$rc" -eq 1 ] && printf '%s\n' "$saida" | grep -qF "FAIL [$alvo]"; then`,
+        `printf '…' "$id" "$desc" "$alvo" "$LOC"`,
+        'else',
+        `printf '…' "$id" "$desc" "$alvo" "$rc" "$saida"`,
+        'falhas=$((falhas + 1))',
+        'fi',
+      ],
+    ],
+  },
   // Entrou no roteiro com o #2655 DURANTE este PR — e o R4 o acusou no rebase, antes de registrado:
   // exatamente o caso que o R4 existe para pegar. Relido: o molde do vigia-gstack, recortado ao caso.
   'scripts/test-gstack-auto-upgrade.sh': {
@@ -1099,6 +1130,7 @@ export const REGISTRO_FECHADO: readonly string[] = [
   'scripts/test-gates-frescura.sh',
   'scripts/test-gstack-auto-upgrade.sh',
   'scripts/test-guard-noop-sabotagem.sh',
+  'scripts/test-hooks-sessionstart.sh',
   'scripts/test-idioma-errexit-leitura.sh',
   'scripts/test-instrucoes-carregadas.sh',
   'scripts/test-lovable-revert-scan.sh',

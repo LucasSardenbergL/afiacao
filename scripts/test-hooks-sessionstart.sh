@@ -99,7 +99,7 @@ if [ "${1:-}" = "--falsificar" ]; then
     sabotar S5 D6 '.bin nao conferido (link pendurado passa)' \
       '[ -x "node_modules/.bin/$b" ]' 'true'
     sabotar S6 D2 'avisa e NAO dispara o install' \
-      '(disparar_install >>"$log" 2>&1 </dev/null &)' ': SABOTADO-sem-disparo'
+      '(disparar_install >>"$log" 2>&1 </dev/null & echo "vigia-worktree: job pid $!" >>"$log")' ': SABOTADO-sem-disparo'
     sabotar S7 D7 'dispara install com deps OK' \
       'if [ "$estado" != OK ]; then' 'if true; then'
     sabotar S8 D8 'sonda de install em voo desligada' \
@@ -187,17 +187,24 @@ tem()     { printf '%s' "$ctx" | grep -qF -- "$1"; }
 # log_de <dir> — o log do install que o hook abriu na fixture ("" se não abriu)
 log_de() { local l; for l in "$1"/.tmp/bun-install-wt-*.log; do [ -e "$l" ] && printf '%s' "$l"; return; done; }
 
-# esperar <arquivo> <texto> — até ~2 s pelo texto no arquivo (o stub responde em
-# dezenas de ms). O install vai ao background: a prova de que ele rodou é o
-# registro do stub, não o aviso.
-esperar() {
-  local i=0
-  while [ "$i" -lt 20 ]; do
-    grep -qF -- "$2" "$1" 2>/dev/null && return 0
+# esperar_job <dir> — espera SAIR o job que o hook pôs em background (o hook
+# grava o pid no log). Prazo fixo é flake: sob load 153 o job levou mais de 2 s
+# (medido), sem decisão errada nenhuma. Sem pid no log não houve job, e volta na
+# hora; o teto de 60 s é só contra job pendurado. Depois dele, o que o job fez
+# está em disco: o registro do stub (a prova de que o install RODOU, não o aviso)
+# e a marca de desfecho do log.
+esperar_job() {
+  local lg pid i=0
+  lg="$(log_de "$1")"
+  [ -n "$lg" ] || return 0
+  pid="$(sed -n 's/^vigia-worktree: job pid \([0-9][0-9]*\)$/\1/p' "$lg" | head -1)"
+  [ -n "$pid" ] || return 0
+  while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 600 ]; do
     sleep 0.1; i=$((i + 1))
   done
-  return 1
 }
+chamou() { grep -qF -- install "$1/.bun-chamadas" 2>/dev/null; }   # o stub do bun rodou `install`
+no_log() { grep -qF -- "$2" "$(log_de "$1")" 2>/dev/null; }        # a marca está no log da fixture
 
 # [D0] a lista que o hook pergunta existe e só tem pacote que o repo DECLARA: um
 # pacote largado pelo repo viraria PARCIAL eterno, com install a cada sessão.
@@ -219,39 +226,39 @@ else ruim D1 "sem package.json deveria calar sobre deps: $out"; fi
 
 # [D2] AUSENTE: avisa, dispara o install e o log fecha com VIGIA-FIM
 f="$(fixture d2)"
-rodar_vw "$f"
-if json_ok && tem 'node_modules AUSENTE' && esperar "$f/.bun-chamadas" install \
-   && esperar "$(log_de "$f")" 'VIGIA-FIM'; then ok D2 "AUSENTE -> avisa + bun install disparado + log fecha com VIGIA-FIM"
+rodar_vw "$f"; esperar_job "$f"
+if json_ok && tem 'node_modules AUSENTE' && chamou "$f" && no_log "$f" 'VIGIA-FIM'; then
+  ok D2 "AUSENTE -> avisa + bun install disparado + log fecha com VIGIA-FIM"
 else ruim D2 "AUSENTE deveria avisar e disparar o install: $out"; fi
 
 # [D3] VAZIO — o incidente de 2026-09-25, literal: o diretório existe, zero entradas
 f="$(fixture d3)"; mkdir -p "$f/node_modules"
-rodar_vw "$f"
-if json_ok && tem 'node_modules VAZIO' && ! tem 'node_modules AUSENTE' \
-   && esperar "$f/.bun-chamadas" install; then ok D3 "VAZIO (o incidente) -> avisa com a marca VAZIO + install disparado"
+rodar_vw "$f"; esperar_job "$f"
+if json_ok && tem 'node_modules VAZIO' && ! tem 'node_modules AUSENTE' && chamou "$f"; then
+  ok D3 "VAZIO (o incidente) -> avisa com a marca VAZIO + install disparado"
 else ruim D3 "node_modules VAZIO deveria avisar VAZIO (nao AUSENTE) e disparar install: $out"; fi
 
 # [D4] VAZIO também com só entrada OCULTA: cache não é pacote (o vite cria o
 # `.vite` mesmo resolvendo as deps do checkout de cima)
 f="$(fixture d4)"; mkdir -p "$f/node_modules/.vite/deps" "$f/node_modules/.bin"
-rodar_vw "$f"
-if json_ok && tem 'node_modules VAZIO' && esperar "$f/.bun-chamadas" install; then
+rodar_vw "$f"; esperar_job "$f"
+if json_ok && tem 'node_modules VAZIO' && chamou "$f"; then
   ok D4 "so .vite/.bin (nenhum pacote) -> VAZIO + install disparado"
 else ruim D4 "node_modules so com entrada oculta deveria ser VAZIO: $out"; fi
 
 # [D5] PARCIAL: o manifesto existe mas não DECLARA versão (truncado) — existência não basta
 f="$(fixture d5)"; deps_completas "$f"
 printf '{ "name": "typescript" }\n' > "$f/node_modules/typescript/package.json"
-rodar_vw "$f"
-if json_ok && tem 'node_modules PARCIAL' && tem 'caminho local: tsc)' \
-   && esperar "$f/.bun-chamadas" install; then ok D5 "manifesto sem versao -> PARCIAL nomeando tsc + install disparado"
+rodar_vw "$f"; esperar_job "$f"
+if json_ok && tem 'node_modules PARCIAL' && tem 'caminho local: tsc)' && chamou "$f"; then
+  ok D5 "manifesto sem versao -> PARCIAL nomeando tsc + install disparado"
 else ruim D5 "manifesto sem versao deveria dar PARCIAL (tsc): $out"; fi
 
 # [D6] PARCIAL: `.bin/vite` pendurado (o alvo sumiu) — o link existir não basta
 f="$(fixture d6)"; deps_completas "$f"; rm -f "$f/node_modules/vite/bin/vite"
-rodar_vw "$f"
-if json_ok && tem 'node_modules PARCIAL' && tem 'caminho local: vite)' \
-   && esperar "$f/.bun-chamadas" install; then ok D6 ".bin pendurado -> PARCIAL nomeando vite + install disparado"
+rodar_vw "$f"; esperar_job "$f"
+if json_ok && tem 'node_modules PARCIAL' && tem 'caminho local: vite)' && chamou "$f"; then
+  ok D6 ".bin pendurado -> PARCIAL nomeando vite + install disparado"
 else ruim D6 ".bin pendurado deveria dar PARCIAL (vite): $out"; fi
 
 # [D7] CONTROLE: deps que respondem -> silêncio, nenhum log, nenhum install
@@ -263,34 +270,34 @@ else ruim D7 "deps completas NAO deveriam disparar nada: $out"; fi
 
 # [D8] install EM VOO nesta worktree (outra sessão/hook): não dispara o 2º
 f="$(fixture d8)"; mkdir -p "$f/node_modules"
-rodar_vw "$f" STUB_PGREP=achou STUB_LSOF_CWD="$(cd "$f" && pwd -P)"
+rodar_vw "$f" STUB_PGREP=achou STUB_LSOF_CWD="$(cd "$f" && pwd -P)"; esperar_job "$f"
 lg="$(log_de "$f")"
-if json_ok && tem 'node_modules VAZIO' && esperar "$lg" 'VIGIA-EM-VOO' && grep -qF 'pid 4242' "$lg" \
-   && [ ! -e "$f/.bun-chamadas" ]; then ok D8 "install EM VOO aqui -> log VIGIA-EM-VOO (pid 4242), nenhum 2o install"
+if json_ok && tem 'node_modules VAZIO' && no_log "$f" 'VIGIA-EM-VOO' && no_log "$f" '(pid 4242)' \
+   && ! chamou "$f"; then ok D8 "install EM VOO aqui -> log VIGIA-EM-VOO (pid 4242), nenhum 2o install"
 else ruim D8 "com install em voo nesta worktree NAO pode disparar outro: $out | log: $(cat "$lg" 2>/dev/null)"; fi
 
 # [D9] install em voo noutra worktree NÃO conta: o daqui dispara
 f="$(fixture d9)"; mkdir -p "$f/node_modules"
-rodar_vw "$f" STUB_PGREP=achou STUB_LSOF_CWD=/outra/worktree/qualquer
+rodar_vw "$f" STUB_PGREP=achou STUB_LSOF_CWD=/outra/worktree/qualquer; esperar_job "$f"
 lg="$(log_de "$f")"
-if json_ok && esperar "$f/.bun-chamadas" install && esperar "$lg" 'VIGIA-FIM' \
-   && ! grep -qF 'VIGIA-EM-VOO' "$lg"; then ok D9 "install em voo NOUTRA worktree -> dispara o daqui"
+if json_ok && chamou "$f" && no_log "$f" 'VIGIA-FIM' && ! no_log "$f" 'VIGIA-EM-VOO'; then
+  ok D9 "install em voo NOUTRA worktree -> dispara o daqui"
 else ruim D9 "install de outra worktree nao deveria segurar este: $out | log: $(cat "$lg" 2>/dev/null)"; fi
 
 # [D10] a sonda de voo QUEBRADA (pgrep sai 3) é falta de dado, não "ninguém
 # instalando": não dispara (2 installs na mesma árvore a deixam PARCIAL)
 f="$(fixture d10)"; mkdir -p "$f/node_modules"
-rodar_vw "$f" STUB_PGREP=quebrado
+rodar_vw "$f" STUB_PGREP=quebrado; esperar_job "$f"
 lg="$(log_de "$f")"
-if json_ok && esperar "$lg" 'VIGIA-NAO-CONFERI' && [ ! -e "$f/.bun-chamadas" ]; then
+if json_ok && no_log "$f" 'VIGIA-NAO-CONFERI' && ! chamou "$f"; then
   ok D10 "pgrep quebrado -> log VIGIA-NAO-CONFERI, nenhum install"
 else ruim D10 "sonda de voo quebrada nao pode virar 'ninguem instalando': $out | log: $(cat "$lg" 2>/dev/null)"; fi
 
 # [D11] lsof MUDO (achou candidato e não devolveu cwd nenhuma) também é falta de dado
 f="$(fixture d11)"; mkdir -p "$f/node_modules"
-rodar_vw "$f" STUB_PGREP=achou STUB_LSOF=mudo
+rodar_vw "$f" STUB_PGREP=achou STUB_LSOF=mudo; esperar_job "$f"
 lg="$(log_de "$f")"
-if json_ok && esperar "$lg" 'VIGIA-NAO-CONFERI' && [ ! -e "$f/.bun-chamadas" ]; then
+if json_ok && no_log "$f" 'VIGIA-NAO-CONFERI' && ! chamou "$f"; then
   ok D11 "lsof mudo -> log VIGIA-NAO-CONFERI, nenhum install"
 else ruim D11 "lsof mudo nao pode virar 'ninguem aqui': $out | log: $(cat "$lg" 2>/dev/null)"; fi
 
