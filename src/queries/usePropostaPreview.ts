@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { fetchAllPages } from '@/lib/postgrest';
 import { STATUS_NAO_VENDA, STATUS_NAO_VENDA_POSTGREST } from '@/lib/farmer/universo-pedidos';
 import { montarCestaRecompra } from '@/lib/whatsapp/cesta-recompra';
 import type { CestaResult } from '@/lib/whatsapp/cesta-recompra';
@@ -63,28 +64,40 @@ export function usePropostaPreview(customerUserId: string | undefined, opts?: { 
       const hoje = hojeIso();
       const desde = addDays(hoje, -JANELA_FETCH_DIAS);
 
-      // 1) pedidos + itens recentes do cliente
-      const { data: ordersData, error: oErr } = await supabase
-        .from('sales_orders')
-        .select('id, account, order_date_kpi, created_at, status')
-        .eq('customer_user_id', customerUserId!)
-        // A cesta sai do universo de VENDA — o mesmo do preço que a cota (`get_whatsapp_proposta_cotacao`,
-        // canônico desde o #2726). Antes, a cesta de um universo e o preço de outro.
-        .not('status', 'in', STATUS_NAO_VENDA_POSTGREST)
-        .is('deleted_at', null)
-        .gte('created_at', desde);
-      if (oErr) throw oErr;
-      const orders = (ordersData ?? []) as PreviewOrder[];
+      // 1) pedidos + itens recentes do cliente — PAGINADOS. O PostgREST capa em 1.000 linhas em silêncio, e
+      //    os itens são lidos por CLIENTE (o histórico inteiro; o recorte da janela é o join em memória).
+      //    Medido em prod (2026-10-03): 8 clientes passam de 1.000 itens (máx. 2.914), e nos 2 maiores a
+      //    cesta perdia 18–23% dos SKUs da janela — saía de uma amostra arbitrária do histórico.
+      const orders = await fetchAllPages<PreviewOrder>(
+        (de, ate) =>
+          supabase
+            .from('sales_orders')
+            .select('id, account, order_date_kpi, created_at, status')
+            .eq('customer_user_id', customerUserId!)
+            // A cesta sai do universo de VENDA — o mesmo do preço que a cota (`get_whatsapp_proposta_cotacao`,
+            // canônico desde o #2726). Antes, a cesta de um universo e o preço de outro.
+            .not('status', 'in', STATUS_NAO_VENDA_POSTGREST)
+            .is('deleted_at', null)
+            .gte('created_at', desde)
+            .order('id', { ascending: true })
+            .range(de, ate) as unknown as PromiseLike<{ data: PreviewOrder[] | null; error: unknown }>,
+        'sales_orders/proposta-preview',
+      );
       if (orders.length === 0) return VAZIO;
 
-      const { data: itemsData, error: iErr } = await supabase
-        .from('order_items')
-        .select('omie_codigo_produto, quantity, unit_price, sales_order_id')
-        .eq('customer_user_id', customerUserId!);
-      if (iErr) throw iErr;
+      const itens = await fetchAllPages<PreviewItem>(
+        (de, ate) =>
+          supabase
+            .from('order_items')
+            .select('omie_codigo_produto, quantity, unit_price, sales_order_id')
+            .eq('customer_user_id', customerUserId!)
+            .order('id', { ascending: true })
+            .range(de, ate) as unknown as PromiseLike<{ data: PreviewItem[] | null; error: unknown }>,
+        'order_items/proposta-preview',
+      );
 
       // 2) composição PURA (join + account predominante + status) — testada
-      const ctx = assembleLinesEContexto(orders, (itemsData ?? []) as PreviewItem[], STATUS_NAO_VENDA_CAIXA_ALTA);
+      const ctx = assembleLinesEContexto(orders, itens, STATUS_NAO_VENDA_CAIXA_ALTA);
       if (!ctx.account) return VAZIO;
       const { lines, account, statusesVistos, statusValidos } = ctx;
 
