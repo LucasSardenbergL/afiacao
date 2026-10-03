@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { STATUS_NAO_VENDA_POSTGREST } from '@/lib/farmer/universo-pedidos';
 import { toast } from 'sonner';
 import { logger } from '@/lib/logger';
 import { maskDocument } from '@/lib/format';
@@ -147,7 +148,11 @@ export function useCustomerSelection({
         ? supabase.from('sales_orders')
             .select('items, created_at')
             .eq('customer_user_id', customerUserId)
-            .neq('status', 'orcamento')
+            // "Já comprou" é pergunta de venda: o universo canônico. O `.neq('orcamento')` que
+            // estava aqui deixava cancelado/rascunho marcarem o produto (19 clientes, 29 pedidos
+            // cancelados dentro do corte de 100 — medido 2026-10-01).
+            .not('status', 'in', STATUS_NAO_VENDA_POSTGREST)
+            .is('deleted_at', null)
             .order('created_at', { ascending: false })
             .limit(100)
         : Promise.resolve({ data: null });

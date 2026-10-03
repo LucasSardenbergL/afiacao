@@ -45,7 +45,9 @@ export function useBriefDeltas(_persona: Persona): { deltas: BriefDelta[]; isLoa
         const q = supabase
           .from('sales_orders')
           .select('id', { count: 'exact', head: true })
-          .gte('created_at', since);
+          .gte('created_at', since)
+          // Conta o que o feed (/sales) mostra: todo status, sem o pedido apagado.
+          .is('deleted_at', null);
         const { count } = await q;
         if ((count ?? 0) > 0) {
           results.push({

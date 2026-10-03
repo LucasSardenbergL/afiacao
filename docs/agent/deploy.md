@@ -33,7 +33,7 @@ tinham no repo inteiro. Não edite o bloco à mão sem rodar o gate: ele confere
 
 **Gates do CI — reprovam o PR** (32): `authz:carimbo` · `authz:check` · `build` · `bunpin:check` · `canaria:bump` · `claude:size` · `docs:citacoes` · `docs:indice` · `docs:links` · `edges:sintaxe` · `edges:typecheck` · `evals:deploy-verify` · `evals:deploy-verify:falsificacao` · `exclusividade` · `gate:ambiente` · `gate:senha-bootstrap` · `gates:frescura` · `knip` · `lint` · `lint:shell` · `scripts:typecheck` · `sonda:autentica` · `sonda:bump` · `sonda:cron-prova` · `sonda:fingerprint` · `sonda:nova` · `test` · `test:edges` · `test:falsificacao` · `test:hooks` · `test:sonda-rollback` · `tsc`.
 
-**Rodam no CI mas NÃO reprovam** (2, informativos por desenho): `mutcheck` · `mutcheck:selftest`.
+**Rodam no CI mas NÃO reprovam** (3, informativos por desenho): `mutcheck` · `mutcheck:escopo` · `mutcheck:selftest`.
 
 **Hooks que NEGAM a chamada de ferramenta** (5, deny dentro de hookSpecificOutput com hookEventName): `destructive-bash-guard.sh` · `heavy-guard.sh` · `migration-collision-guard.sh` · `migration-immutability-guard.sh` · `push-gates-guard.sh`.
 
@@ -178,6 +178,8 @@ DEPOIS edita OUTRAS edges pelo `build-errors.log`; o sync empurra "Changes" na `
 proíbe (`blocoDeEscopo`: nenhum arquivo, erro de log só reportado, fecho `No files were edited.`) —
 e **≥5 min após o envio** rode `bun scripts/lovable-sensor-edicao.ts --desde <ISO> <resposta>` (exit 1 =
 editou → revert por PR com bump de `VERSAO`). [Narrativa](../historico/agente-lovable-conserta-o-que-nao-pediram.md).
+**A colagem só sai do `montarPrompt`** (`pendencias:prompt <edge>` aceita qualquer edge pelo nome). A
+skill de deploy ensinava 3 moldes à mão, sem escopo nem conferência, e o `[COLAGEM_SO_DO_GERADOR]` barra a volta deles.
 **Quem reacorda o agente depois do fecho pode ser a PLATAFORMA** (medido em 2026-09-27 19:37Z).
 Com erro no `build-errors.log`, o Lovable injeta *"Fix them … including the ones that predate your
 changes. Don't ask first"* e insiste se ele só reporta. O Knowledge segurou, mas o turno custou 3,2

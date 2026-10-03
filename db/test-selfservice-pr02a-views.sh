@@ -181,7 +181,8 @@ P -q -f "$MIG"  # restaura
 
 # F2 — poisoned-row / cross-account não deve causar ERRO: A consulta disponibilidade com a linha saldo NULL de colacor presente → 0 linhas, sem erro
 DERR=$(P -tA -c "$A SELECT count(*) FROM public.selfservice_disponibilidade;" 2>&1 | tail -1 || true)
-case "$DERR" in *ERROR*|*error*) bad "F2 disponibilidade de A ERROU com linha NULL de outra conta: $DERR" ;; *) ok "F2 linha saldo NULL de colacor não quebra a view de A (=$DERR, sem erro)" ;; esac
+# Só uma CONTAGEM aprova: "não achei ERROR/error" deixava o "ERRO:" do pt (e a linha que o tail cortou) aprovar.
+case "$DERR" in ''|*[!0-9]*) bad "F2 disponibilidade de A ERROU com linha NULL de outra conta: [$DERR]" ;; *) ok "F2 linha saldo NULL de colacor não quebra a view de A (=$DERR, sem erro)" ;; esac
 
 # F3 — remover `account = ANY(accounts)` de meus_pedidos → A vê o PRÓPRIO pedido de colacor (dente de A5b/Codex#5)
 P -q <<'SQL'

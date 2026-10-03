@@ -82,8 +82,9 @@ BEGIN
   IF r.prospeccao_status IS DISTINCT FROM 'em_conversa' THEN
     RAISE EXCEPTION 'A3 FALHOU: prospeccao_status sobrescrito (=%)', r.prospeccao_status;
   END IF;
-  IF r.primeira_vista_em IS DISTINCT FROM (SELECT pv FROM t_pv) THEN
-    RAISE EXCEPTION 'A3 FALHOU: primeira_vista_em alterada';
+  -- pv é NOT NULL na tabela: NULL aqui = o lead não existia antes (NULL × NULL não é "não alterou")
+  IF (SELECT pv FROM t_pv) IS NULL OR r.primeira_vista_em IS DISTINCT FROM (SELECT pv FROM t_pv) THEN
+    RAISE EXCEPTION 'A3 FALHOU: primeira_vista_em alterada ou nunca medida (antes=%, depois=%)', (SELECT pv FROM t_pv), r.primeira_vista_em;
   END IF;
   IF r.ultimo_lote IS DISTINCT FROM '2026-06' THEN
     RAISE EXCEPTION 'A3 FALHOU: ultimo_lote não atualizado (=%)', r.ultimo_lote;

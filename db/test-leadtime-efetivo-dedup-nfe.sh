@@ -240,7 +240,9 @@ eq "A4c SKU 1002 (3 NFes REAIS) mantém o gate → fonte SKU" "$V" "SKU"
 V=$(Pq -c "SELECT coalesce(stddev(lt_bruto_dias_uteis)::text,'NULL') FROM public.sku_leadtime_history WHERE sku_codigo_omie=1001;")
 eq "A5 baseline: na tabela crua o desvio do SKU 1001 é 0 (fabricado)" "$V" "0"
 V=$(Pq -c "SELECT coalesce(lt_desvio_padrao_dias::text,'NULL') FROM public.v_sku_leadtime_estatisticas WHERE sku_codigo_omie=1001;")
-if [ "$V" = "0" ] || [ "$V" = "0.00" ]; then bad "A5b desvio fabricado 0 vazou pra estatística — veio [$V]"; else ok "A5b desvio 0 fabricado NÃO chega à estatística (=$V, do fornecedor)"; fi
+# O 1001 cai no fallback do FORNECEDOR (LT 5,4,6,8,4,4 → desvio 1.60). "Não é 0" aprovava também a
+# estatística SUMIDA: o 'NULL' do JOIN do fallback quebrado e o "" do SKU ausente da view.
+eq "A5b desvio 0 fabricado NÃO chega à estatística: vem o do FORNECEDOR" "$V" "1.60"
 
 # --- A6: preço — a NFe de 3 pedidos deixa de pesar 3× ---
 V=$(Pq -c "SELECT round(avg(valor_total/nullif(quantidade_recebida,0)),2) FROM public.sku_leadtime_history WHERE sku_codigo_omie=1004;")

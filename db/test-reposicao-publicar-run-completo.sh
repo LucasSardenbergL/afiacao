@@ -314,15 +314,18 @@ esac
 # COMPLETA em <100ms com timeout CURTO (1.5s ≪ 6s do locker). Se o key fosse GLOBAL, COLACOR esperaria os ~4.5s
 # restantes → timeout (o timeout curto GARANTE que "esperar o lock global" seria pego). Qualquer ERROR também
 # reprova (não basta "não deu timeout" — antes o ramo ok engolia erros).
+# "Completou" é POSITIVO: a marca de fim só sai se a RPC terminou (ON_ERROR_STOP) — "não achei timeout nem
+# ERROR" aprovava a conexão caída, o FATAL e a saída vazia.
 RC=$(P -tA 2>&1 <<'SQL'
 SET statement_timeout='1500';
 SELECT public.pub('COLACOR', gen_random_uuid(), DATE '2025-07-01', DATE '2026-10-29', ARRAY[2099]::bigint[]);
+SELECT 'EXECUTOU';
 SQL
 ) || true
 case "$RC" in
+  *EXECUTOU) ok "C3 RPC p/ COLACOR completa (<timeout, sem erro) com OBEN tomado (serializa POR EMPRESA, não global)";;
   *timeout*|*canceling*) bad "C3 — RPC p/ COLACOR travou com OBEN tomado (lock NÃO é por empresa): $RC";;
-  *ERROR*|*erro*|*ERRO*) bad "C3 — RPC p/ COLACOR deu erro em vez de completar: $RC";;
-  *) ok "C3 RPC p/ COLACOR completa (<timeout, sem erro) com OBEN tomado (serializa POR EMPRESA, não global)";;
+  *) bad "C3 — RPC p/ COLACOR não completou (erro, ou nem rodou): $RC";;
 esac
 wait "$LOCKER" 2>/dev/null || true
 P -q -c "DELETE FROM public.reposicao_pedidos_compra_run; DELETE FROM public.reposicao_po_last_seen;" >/dev/null

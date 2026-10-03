@@ -174,11 +174,16 @@ db/test-desconto-backfill-aplicar.sh       30
 # grava em outro — sem trava, outra sessão commita no meio e é apagada com a PÓS aprovando. Nos
 # dois níveis, com baseline VERMELHO: o template TRAVA→PRE→CREATE→PÓS (duas sessões psql) e a
 # fila de `aplicar_sql` (dois db-aplicar.sh REAIS; o corpo antigo é o de prod, md5 âncora). 2 idiomas.
-# O `--falsificar` (8 sabotagens × 2 idiomas) NÃO roda aqui: no PR #2702 ele levou o passo do núcleo
-# de ~13m50s (mediana da main, 3 runs) ao teto de 20 min, CANCELADO (run 36806101676). O ci.yml manda
-# a próxima prova que estourar levar a PARALELIZAR o runner, não a subir o teto — enquanto isso não
-# vier, a falsificação roda no laptop (recibo: 8 vermelhas / 0 falhas, 189 s) a cada mudança na prova.
-db/test-pre-anti-deriva-concorrencia.sh    56  falsificar=fora-do-ci  # custo: estoura o teto de 20 min do job (run 36806101676); falsificação local até o runner paralelizar
+# O `--falsificar` (8 sabotagens × 2 idiomas) saiu do CI no #2702: com o núcleo SERIAL, ele levou o
+# passo de ~13m50s ao teto de 20 min, CANCELADO (run 36806101676). Voltou quando o runner foi
+# paralelizado (#2713, 3 partes; teto 20 de novo no #2721, com as partes medidas): a volta é medida no
+# CI do PR que a fez, na parte em que a prova cai (`NUCLEO_PARTE=i/3 bash db/roda-nucleo-ci.sh --lista`).
+db/test-pre-anti-deriva-concorrencia.sh    56  falsificar=8
+# Fecho da porta aplicar_sql e do ledger por ALLOWLIST (2026-10-01): service_role e sandbox_exec_<ref>
+# tinham EXECUTE na porta (SECDEF=postgres) e INSERT no ledger — SQL arbitrário como postgres. O delta
+# db/aplicar-sql-acl-allowlist.sql tira todo GRANT fora do dono e do claude_rw; a PÓS aborta se um
+# sobra (provado com o apply numa transação, como o executor). Deriva de prod recriada na fixture.
+db/test-aplicar-sql-acl.sh                 18  falsificar=2
 
 # ── Eixo 5 — VEREDITO DE DEPLOY ──────────────────────────
 # O SQL que responde "a edge está REALMENTE no ar?". O dano aqui é acreditar num
