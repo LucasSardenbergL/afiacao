@@ -136,48 +136,94 @@ negativos (futura, sem alvo, ilegível, `null`) provam exit 2 com o código; nen
 que o scan enxerga o gravador e o gate, e de que a exceção do gate é real (se ele deixar de fazer cast,
 a exceção vira letra morta e o teste manda tirá-la). Irmão do bloco de `scripts/exclusividade-gate.test.ts`.
 
+## A revisão adversarial (2026-10-03): dois furos que o próprio desenho abriu
+
+A 1ª revisão independente (subagente read-only) travou no watchdog sem entregar — a suspeita é a fila
+do `heavy`; a 2ª, proibida de rodar comando pesado, entregou 4 achados. Todos procedentes, todos
+consertados aqui:
+
+| achado | o que era | conserto |
+|---|---|---|
+| **A (alta)** arquivo ausente = nascimento | eu tinha escrito "o único caso sem trava, porque não há evidência a proteger" — falso desde o 1º commit (36 versões no git). Apagar o arquivo e regravar pulava a trava E zerava a dívida; e o conserto, por recusar mais, dava mais motivo para apagar | o carimbo da **origin/main** vira a REFERÊNCIA, relido pela mesma porta (`lerReferenciaDaMain`, git injetado). Local ausente + main presente ⇒ a trava compara com a MAIN. Nascimento só com a main confirmando que não há carimbo (`ls-tree` vazio, rc 0). Git sem resposta ⇒ `CARIMBO_ANTERIOR_SEM_REFERENCIA`: ausência de resposta não é ausência de carimbo |
+| **B (média)** anterior velho aceito | a janela {N-1, N} vale a vida toda da versão N: um local velho (conflito resolvido com `--ours`) regredia a `primeiraVez` do que a main já tinha visto | a herança fica com a data MAIS ANTIGA entre o local e o da main (`montarAchados` recebe a lista) |
+| **C (baixa)** scan cego a cast implícito | `const c: Carimbo = JSON.parse(t)` compila (`JSON.parse` devolve `any`) e a regex `as Carimbo` não vê | quem nomeia o carimbo não chama `JSON.parse` — só a porta (o núcleo) e o gate |
+| **D (baixa)** exit 1 em erro de leitura | `readFileSync` sem tratamento: EISDIR, EACCES ou a corrida viravam exceção solta, fora do contrato 0/2 | `lerArquivoDoCarimbo` ⇒ `CARIMBO_ANTERIOR_ILEGIVEL`, exit 2 |
+
+**Por que a trava compara com o LOCAL quando ele existe** (e não com a main também): é o local que
+será sobrescrito, e é nele que mora a saída CONSCIENTE para uma troca legítima de cluster (restore ou
+upgrade do projeto): trocar `alvo.projetoHash` no carimbo local, o que fica no diff do PR. A mensagem
+de `OUTRO_CLUSTER` agora diz isso; antes não oferecia saída nenhuma — e a única saída era, justamente,
+apagar o arquivo.
+
+**Ramo inalcançável também falha fechado.** `referenciaDoTexto` com texto não nulo nunca recebe
+anterior nulo da porta; o ramo existe pelo tipo, e a 1ª redação dele devolvia `ausente` — o que
+liberaria o nascimento se um dia ele fosse alcançado. Devolve `nao-consultada`.
+
+**Lição de processo:** limite declarado que é consequência do PRÓPRIO desenho não é limite, é furo
+com nome. O B estava escrito nos limites abaixo como "fora desta classe" — e a janela que o abria era
+minha.
+
 ## Falsificação
 
 Laço com CONTROLE verde na mesma invocação (aborta se não for), uma camada por vez, restauração por
 `git checkout --` sobre o commit, vermelho exigido NOS TESTES CERTOS (pelo nome, reporter JSON do
-vitest), nos dois locales:
+vitest), nos dois locales. Duas rodadas: a do 1º conserto (10 sabotagens + 2 do dourado, controle
+97/97 e 98/98) e a da versão final, depois da revisão adversarial:
 
-| sabotagem | vermelho exigido em | `LC_ALL=C` | `pt_BR.UTF-8` |
+| sabotagem (versão final) | vermelho exigido em | `LC_ALL=C` | `pt_BR.UTF-8` |
 |---|---|---|---|
-| S1 porta aceita anterior sem `projetoHash` | SEM_ALVO (porta) + binário "sem alvo" | 3 falhos | 3 falhos |
-| S2 porta não confere a versão (cai nas chaves de hoje) | SCHEMA_INCOMPATIVEL + ordem versão→forma + binário "futura" | 4 | 4 |
-| S3 gravador volta ao cast | scan da classe + sentinela + binário | 7 | 7 |
-| S4 gravador lê o anterior DEPOIS da guarda de env | binário "futura" e "null" | 4 | 4 |
-| S5 herança ignora o anterior | herança na migração + anterior vence a semente | 2 | 2 |
-| S6 trava sempre passa | OUTRO_CLUSTER + ponta a ponta | 2 | 2 |
+| S1 porta aceita anterior sem `projetoHash` | SEM_ALVO (porta) + binário "sem alvo" | 4 falhos | 4 falhos |
+| S2 porta não confere a versão (cai nas chaves de hoje) | SCHEMA_INCOMPATIVEL + ordem versão→forma + binário "futura" | 6 | 6 |
+| S3 gravador volta ao cast | os dois scans da classe + sentinela + binário | 8 | 8 |
+| S4 gravador lê os anteriores DEPOIS da guarda de env | binário "futura", "null" e "main futura" | 6 | 6 |
+| S5 herança ignora os anteriores | migração + anterior vence a semente + local velho | 3 | 3 |
+| S6 trava sempre passa | OUTRO_CLUSTER + ponta a ponta + local apagado | 3 | 3 |
 | S7 env volta ao prefixo `AUTHZ_` | env do `claudeRo` + nomes da fonte | 2 | 2 |
 | S8 forma aceita chave faltando/sobrando | FALTANDO ou SOBRANDO | 2 | 2 |
-| S9 `null` vira nascimento | raiz não-objeto + binário "null" | 3 | 3 |
-| S10 leitor novo do carimbo sem porta | "todo arquivo que nomeia o carimbo" | 1 | 1 |
+| S9 `null` vira nascimento | raiz não-objeto + binário "null" | 4 | 4 |
+| S10 leitor novo do carimbo sem porta | porta ausente + `JSON.parse` proibido | 2 | 2 |
+| S11 **(A)** local apagado: a trava não cai na main | "local AUSENTE e main presente" | 1 | 1 |
+| S12 **(B)** herança só do 1º anterior | "local VELHO e main mais nova" | 1 | 1 |
+| S13 **(B)** herança fica com a data mais NOVA | "local VELHO e main mais nova" | 1 | 1 |
+| S14 git que falha vira `ausente` | "git que FALHA" | 1 | 1 |
+| S15 main não consultada vira nascimento | "main NÃO CONSULTADA" | 1 | 1 |
+| S16 gravador não lê a main | binário "main futura" e "main sem alvo" | 2 | 2 |
+| S17 **(D)** leitura do arquivo lança | "(EISDIR)" | 1 | 1 |
+| S18 **(C)** leitor com anotação `: Carimbo` em vez de cast | `JSON.parse` proibido | 2 | 2 |
+| G1/G2 `idFinding` com 15 hex / outra ordem | DOURADO | 1 / 1 | 1 / 1 |
 
-`FALSIFICACAO-OK 20 sabotagens (10 x 2 locales)`, controle 97/97 verde em cada locale, árvore restaurada.
-O dourado do `idFinding` foi falsificado à parte (ver o PR).
+`FALSIFICACAO-OK 40 sabotagens (20 x 2 locales)`, controle 113/113 verde em cada locale, árvore
+restaurada. Cada sabotagem nova da revisão derruba EXATAMENTE os testes que a cobrem — nenhuma camada
+ficou verde (redundante ou inalcançada).
 
 ## Codex: não rodou (Caminho B)
 
 `scripts/codex-async.sh -r max` saiu **79** sem gastar a chamada: cota em 86% (teto 85%), janela de 7
-dias reabre em 2026-10-03 19:11. Seguiu por Caminho B — a RÉGUA acima, falsificação nos dois locales
-e revisão adversarial independente (subagente read-only). **REVISÃO INDEPENDENTE PENDENTE**: rodar o
-Codex retroativo com as perguntas abaixo quando a janela reabrir.
+dias reabre em 2026-10-03 19:11. Seguiu por Caminho B — a RÉGUA acima, falsificação nos dois locales,
+auto-challenge no binário real e a revisão adversarial independente (subagente read-only), cujos 4
+achados estão consertados. **REVISÃO INDEPENDENTE PENDENTE** (o Codex): rodar retroativo, quando a
+janela reabrir, com:
 
-1. Janela explícita {N-1, N} vs "1..N" vs estrito + flag: há modo de falha não visto?
+1. Janela {N-1, N} + a origin/main como referência: há modo de falha não visto?
 2. Exigir EXATAMENTE as chaves da versão lida é certo, ou rígido demais?
-3. A costura `AUTHZ_CARIMBO_ANTERIOR_TEST_JSON` no escritor de evidência de prod abre alguma superfície?
-4. Outra via pela qual a trava seria pulada ou a `primeiraVez` regrediria calada depois deste desenho?
-5. O gate fica com o cast (já-correto, exceção de 1 arquivo no scan) ou passa pela mesma porta?
+3. As costuras `AUTHZ_CARIMBO_ANTERIOR_TEST_JSON` e `AUTHZ_CARIMBO_MAIN_TEST_JSON` no escritor de
+   evidência de prod abrem alguma superfície?
+4. A trava no LOCAL (não na main) quando ele existe — a saída consciente de troca de cluster — é o
+   desenho certo, ou o hash de prod deveria ser fixado no código e no gate?
+5. Outra via pela qual a trava seria pulada ou a `primeiraVez` regrediria calada?
 
 ## Limites declarados
 
-- **Anterior desatualizado na mesma versão** (ou em N-1, restaurado de um commit velho) passa pela
-  porta: a forma está certa, a dívida é que está incompleta. A versão não distingue isso — é outra
-  falha (anterior que não é o último), fora desta classe.
+- **A referência é a origin/main LOCAL.** Sem `git fetch` recente, a comparação é com uma main velha —
+  a herança segue conservadora (fica com a data mais antiga do que conhece), mas não enxerga o que a
+  main ganhou depois do último fetch.
+- **Carimbo LOCAL de outro cluster copiado à mão** passa pela trava se a sessão também estiver nesse
+  cluster: é adulteração consciente, fora do modelo de ameaça do carimbo (erro, não fraude). Fixar o
+  hash de prod no código e cobrá-lo no gate fecharia — ao custo de trocar o desenho de "confiar no
+  primeiro uso" e de uma constante a manter. Fica como endurecimento possível (pergunta 4 do Codex).
+- **Herança conservadora:** um achado que fechou e reabriu herda a data velha (dívida maior, nunca menor).
 - **`primeiraVez` no futuro** passa pela porta (ela confere forma, não calendário — não tem relógio).
   O teste do artefato commitado (`primeiraVez ≤ ultimaVez`) pega depois da gravação.
-- O `heavy` estava travado durante a entrega (o slot único preso num lote de falsificação de outra
-  sessão; fila de 6, a cabeça esperando há 15 h): a suíte local rodou 1 arquivo com 1 worker, sem o
-  semáforo, com 35% de RAM livre. O CI é a prova autoritativa.
+- O `heavy` estava travado durante a 1ª rodada (o slot único preso num lote de falsificação de outra
+  sessão; fila de 6, a cabeça esperando há 15 h): aquela suíte rodou 1 arquivo com 1 worker, sem o
+  semáforo, com 35% de RAM livre. A versão final rodou sob o `heavy`.

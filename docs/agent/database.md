@@ -51,7 +51,9 @@ a credencial é local. A ponte é o carimbo `db/authz-carimbo-prod.json`.
   SUFIXO desde 2026-10-01: o `claudeRo` lê `CLAUDE_RO_BASELINE_TEST_JSON`, fora do antigo prefixo `AUTHZ_`) e `PSQL_RO`
   alternativo, e pina o cluster pelo hash do `system_identifier`. Relê o carimbo anterior por `lerCarimboAnterior`
   (janela: a versão de hoje e a anterior — a migração do PR do bump), nunca por cast: anterior recusado é exit 2 com
-  `CARIMBO-ANTERIOR-RECUSADO <CODIGO>`, e a trava de cluster nunca é pulada por campo ausente
+  `CARIMBO-ANTERIOR-RECUSADO <CODIGO>`, e a trava de cluster nunca é pulada por campo ausente. A
+  **origin/main é a referência**: apagar o carimbo local não vira nascimento (a trava cai na main), a
+  `primeiraVez` herdada é a mais antiga entre local e main, e git sem resposta é recusa
   ([base](../historico/carimbo-gravador-rele-por-porta.md)).
 - 🔎 **Deriva de CORPO — `bun run deriva:corpo:prod` (6ª chave, desde 2026-09-26):** toda função
   `public` que alguma migration define, contra o `prosrc` de prod — o único vigia de "a última a
