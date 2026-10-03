@@ -31,8 +31,9 @@ NOMES. O que ela sozinha não prova, e este script prova ou recusa:
            arquivo por API (fs, glob, processo além do `git rev-parse` do carimbo): caminho MONTADO
            em tempo de execução escapa da varredura de strings (Codex, 2026-09-26).
       (d2) TAILWIND — o `content` do tailwind.config lê src/**/*.{ts,tsx} como TEXTO: um teste com
-           palavra nova (um `toHaveClass('x')`) pode criar classe no CSS sem ser importado — medido:
-           hoje `.m-1` e `.overscroll-contain` estão no CSS de produção SÓ porque testes as citam.
+           palavra nova (um `toHaveClass('x')`) pode criar classe no CSS sem ser importado — medido
+           em 2026-09-26: `.m-1` e `.overscroll-contain` estavam no CSS de produção SÓ porque testes
+           as citavam (até o content ganhar as negações de (d2')).
            No tailwindcss 3.4.17 (lido em node_modules): expandTailwindAtRules.getClassCandidates
            extrai POR LINHA e ORDENA os candidatos antes do generateRules; nenhum padrão do
            defaultExtractor casa `\\s`, não há lookbehind e os lookaheads não atravessam `\\s` ⇒ o
@@ -46,6 +47,18 @@ NOMES. O que ela sozinha não prova, e este script prova ou recusa:
            das 11 mudanças só-de-teste em src/ dos últimos 300 commits da main, 1 (o #2547, um `4` →
            `3` num mapa) tem as mesmas palavras; as outras acrescentam palavra e seguem ALCANCA — a
            regra erra para MAIS.
+      (d2') NEGAÇÃO — teste que uma negação ENTENDIDA do mesmo array tira da leitura não precisa de
+           (d2): o Tailwind nunca lê o texto dele. No 3.4.17 toda string `!x` do content vira padrão
+           NEGATIVO do fast-glob (lib/lib/content.js: generateTasks → task.negative → `!<base>/<glob>`
+           no fastGlob.sync); no fast-glob 3.3.2 (managers/tasks.js, providers/filters/entry.js e
+           deep.js) a negativa vale para TODA task, em qualquer posição do array — positiva nenhuma a
+           desfaz —, só SUBTRAI (o filtro de profundidade poda, nunca acrescenta) e casa com
+           dot:true. A prova entende EXATAMENTE as 3 strings de NEGACOES_ENTENDIDAS — as da classe
+           TESTE do classify.sh —, cada uma pela regex do que ela exclui; qualquer outra `!x` não
+           exclui nada (fail-CLOSED: o teste segue exigindo (d2)). Vale só com o extrator auditado
+           (a mesma config, o mesmo 3.4.17), o lockfile travando o fast-glob 3.3.2, e para teste
+           arquivo REGULAR nas duas pontas: symlink de nome `x.test.ts` que aponta para PASTA é lido
+           por dentro (a forma do nome não poda diretório). (d1) continua valendo inteiro.
 
 Saída: UMA linha. `PROVA_INERCIA_OK ...` com exit 0 é a ÚNICA forma de verde. Refutação = marca
 (BUILD_NAO_RECONHECIDO | PACKAGE_JSON_ALCANCA | TESTE_ALCANCA | ALCANCE_VAZA) + exit 1. Qualquer
@@ -115,6 +128,19 @@ RE_ESPACO_JS = re.compile("[\t\n\v\f\r    -     　﻿]+")
 # a evidência da versão (o build do Lovable não é nosso); versão nova recusa até alguém reler o
 # defaultExtractor.js e atualizar esta constante.
 TAILWIND_AUDITADO = "3.4.17"
+# (d2') A semântica da negação é a do fast-glob que o 3.4.17 chama — lida no 3.3.2; versão nova não
+# isenta teste nenhum (volta a exigir (d2)) até alguém reler os filtros e atualizar a constante.
+FAST_GLOB_AUDITADO = "3.3.2"
+# As 3 negações que a prova ENTENDE, pela string EXATA (`!src/...`, chaves em outra ordem ou forma
+# mais estreita não contam — fail-CLOSED), cada uma com o que ela exclui sob o fast-glob: `**` = zero
+# ou mais pastas, `*` = qualquer coisa sem `/`, e dot:true nas negativas (pasta/arquivo com ponto
+# também sai). São as mesmas três classes do teste() do classify.sh.
+NEGACOES_ENTENDIDAS = {
+    "!./src/**/*.{test,spec}.{ts,tsx}": re.compile(r"src/(?:[^/]+/)*[^/]*\.(?:test|spec)\.tsx?"),
+    "!./src/**/__tests__/**": re.compile(r"src/(?:[^/]+/)*__tests__/.+"),
+    "!./src/test/**": re.compile(r"src/test/.+"),
+}
+MODO_REGULAR = ("100644", "100755")
 RE_TW_CONTENT_ARRAY = re.compile(r"\bcontent\s*:\s*\[")
 RE_ITEM_CONTENT = re.compile(r"""\s*(?:(['"`])([^'"`\n]*)\1\s*(,?)|(\]))""")
 RE_FIM_ARRAY = re.compile(r"\s*\]")
@@ -405,41 +431,64 @@ def strings_do_content(texto):
     return set(res)
 
 
-def versoes_no_lockfile(p, texto):
-    """Versões do tailwindcss que o lockfile trava — None se o formato não é um que eu sei ler."""
+def versoes_no_lockfile(p, texto, pacote):
+    """TODAS as versões de `pacote` que o lockfile trava, inclusive aninhadas (uma cópia própria do
+    tailwindcss não pode se esconder atrás da do topo) — None se o formato não é um que eu sei ler.
+    Versão que não é string vira "?" e nunca casa a auditada."""
     if p == "bun.lock":
-        return set(re.findall(r'"tailwindcss@([^"]+)"', texto))
+        return set(re.findall(r'"%s@([^"]+)"' % re.escape(pacote), texto))
     if p in ("package-lock.json", "npm-shrinkwrap.json"):
         try:
             d = json.loads(texto)
         except ValueError:
             return None
-        pacotes = d.get("packages") if isinstance(d, dict) else None
+        if not isinstance(d, dict):
+            return set()
+        achadas = []
+        pacotes = d.get("packages")
         if isinstance(pacotes, dict):
-            e = pacotes.get("node_modules/tailwindcss")
+            achadas = [e for k, e in pacotes.items()
+                       if k == "node_modules/" + pacote or k.endswith("/node_modules/" + pacote)]
         else:
-            deps = d.get("dependencies") if isinstance(d, dict) else None
-            e = deps.get("tailwindcss") if isinstance(deps, dict) else None
-        v = e.get("version") if isinstance(e, dict) else None
-        return {v} if isinstance(v, str) else set()
+            fila = [d.get("dependencies")]
+            while fila:
+                deps = fila.pop()
+                for nome, e in (deps.items() if isinstance(deps, dict) else ()):
+                    if nome == pacote:
+                        achadas.append(e)
+                    if isinstance(e, dict):
+                        fila.append(e.get("dependencies"))
+        vs = [e.get("version") if isinstance(e, dict) else None for e in achadas]
+        return {v if isinstance(v, str) else "?" for v in vs}
+    return None
+
+
+def versao_nao_auditada(arvore, texto_de, pacote, auditada):
+    """None se TODO lockfile da raiz trava `pacote` exatamente na versão `auditada`; senão o MOTIVO.
+    O lockfile é a evidência da versão: o build do Lovable não é nosso."""
+    versoes, lidos = set(), 0
+    for p in ("bun.lock", "package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml"):
+        if p not in arvore:
+            continue
+        v = versoes_no_lockfile(p, texto_de(p), pacote)
+        if v is None:
+            return "%s: lockfile que a prova nao sabe ler" % p
+        versoes |= v
+        lidos += 1
+    if not lidos or versoes != {auditada}:
+        return "%s travado em %s nos lockfiles, e a versao auditada e a %s" % (
+            pacote, ",".join(sorted(versoes)) or "nenhuma versao", auditada)
     return None
 
 
 def extrator_nao_auditado(arvore, css_bundle, texto_de):
     """None se o Tailwind da main é o que a prova (d2) auditou, lido pela config da raiz na forma
-    auditada; senão o MOTIVO. Cada item existe porque, sem ele, as MESMAS palavras dariam outro CSS."""
-    versoes, lidos = set(), 0
-    for p in ("bun.lock", "package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml"):
-        if p not in arvore:
-            continue
-        v = versoes_no_lockfile(p, texto_de(p))
-        if v is None:
-            return "%s: lockfile que a prova nao sabe ler" % p
-        versoes |= v
-        lidos += 1
-    if not lidos or versoes != {TAILWIND_AUDITADO}:
-        return "tailwindcss travado em %s nos lockfiles, e o extrator auditado e o %s" % (
-            ",".join(sorted(versoes)) or "nenhuma versao", TAILWIND_AUDITADO)
+    auditada; senão o MOTIVO. Cada item existe porque, sem ele, as MESMAS palavras dariam outro CSS
+    — e é também o que faz a negação de (d2') valer: outra config, outro postcss ou outro Tailwind
+    leriam outro content."""
+    motivo = versao_nao_auditada(arvore, texto_de, "tailwindcss", TAILWIND_AUDITADO)
+    if motivo:
+        return motivo
     raiz = [p for p in arvore if "/" not in p]
     configs = [p for p in raiz if p.startswith("tailwind.config.")]
     if len(configs) != 1:
@@ -450,8 +499,9 @@ def extrator_nao_auditado(arvore, css_bundle, texto_de):
     if strings_do_content(t) is None:
         return "%s: content nao e UM array so de strings literais" % configs[0]
     m = RE_TW_PROIBIDO.search(t)
-    if m:
-        return "%s: '%s' pode trocar o que o extrator ve" % (configs[0], m.group(0))
+    if m:   # json: o `\.\s*content` casa ATRAVÉS de linhas (um comentário que acaba em ponto logo acima
+            # do `content:`), e a quebra crua viraria um ponto solto na mensagem de uma linha só
+        return "%s: %s pode trocar o que o extrator ve" % (configs[0], json.dumps(m.group(0)))
     if len(RE_TW_TRANSFORM.findall(t)) != len(RE_TW_TRANSFORM_CSS.findall(t)):
         return "%s: transform que nao e a propriedade CSS" % configs[0]
     locais = [s for s, modo in specs_de("", t) if modo == "qualquer" and s.startswith((".", "/", "@/"))]
@@ -463,6 +513,19 @@ def extrator_nao_auditado(arvore, css_bundle, texto_de):
     postcss = [p for p in raiz if p.startswith("postcss.config.")]
     if len(postcss) != 1:
         return "%d postcss.config na raiz (o auditado e UM, com tailwindcss: {})" % len(postcss)
+    # O Vite acha o PostCSS pelo postcss-load-config (4.0.2), que consulta package.json#postcss e
+    # .postcssrc* ANTES do postcss.config.* — com um deles presente, o auditado abaixo não é o que roda
+    # (Caminho B, 2026-10-01)
+    rc = [p for p in raiz if p.startswith(".postcssrc")]
+    try:
+        pkg = json.loads(texto_de("package.json")) if "package.json" in arvore else {}
+    except ValueError:
+        pkg = None
+    if not isinstance(pkg, dict):
+        return "package.json nao e um objeto JSON: nao sei se ele carrega config de PostCSS"
+    if rc or "postcss" in pkg:
+        return "%s: config de PostCSS que o Vite le ANTES do %s" % (
+            rc[0] if rc else "package.json#postcss", postcss[0])
     t = texto_de(postcss[0])
     m = RE_POSTCSS_PROIBIDO.search(t)
     if not RE_POSTCSS_TW_PADRAO.search(t) or m:
@@ -474,6 +537,28 @@ def extrator_nao_auditado(arvore, css_bundle, texto_de):
         if RE_AT_CONFIG.search(texto_de(p)):
             return "%s: @config aponta outra config do Tailwind" % p
     return None
+
+
+def fora_do_content(lidos, config, arvore, ent_ar, ent_main, texto_de):
+    """(d2') (testes de `lidos` que uma negação ENTENDIDA do content de `config` tira da leitura do
+    Tailwind, nota para a refutação dos que sobram). Só é chamada com o extrator já auditado."""
+    negacoes = sorted(s for s in (strings_do_content(texto_de(config)) or ()) if s.startswith("!"))
+    if not negacoes:
+        return [], ""
+    motivo = versao_nao_auditada(arvore, texto_de, "fast-glob", FAST_GLOB_AUDITADO)
+    if motivo:
+        return [], "; a negacao do content nao isenta teste nenhum: %s" % motivo
+    regras = [NEGACOES_ENTENDIDAS.get(s) for s in negacoes]
+    entendidas = [r for r in regras if r is not None]
+    estranhas = [s for s, r in zip(negacoes, regras) if r is None]
+
+    def regular(t):   # nas pontas em que existe: symlink/submódulo, o Tailwind lê o que ele aponta
+        return all(e[t][0] in MODO_REGULAR for e in (ent_ar, ent_main) if t in e)
+
+    negados = [t for t in lidos if regular(t) and any(r.fullmatch(t) for r in entendidas)]
+    nota = ("; negacao que a prova nao entende, ignorada: %s" % json.dumps(estranhas[0])
+            if estranhas else "")
+    return negados, nota
 
 
 def palavras(cru):
@@ -641,15 +726,20 @@ def provar_testes(ar, main, arvore, css_bundle, conteudo, ent_ar, ent_main, muda
                            "caminho montado escapa da varredura de strings" % (
                                mudados[0], p, m.group(0) if m else "processo alem do git rev-parse"))
     lidos = [t for t in mudados if t in pelo_tailwind]
+    negados = []
     if lidos:
         motivo = extrator_nao_auditado(arvore, css_bundle, texto_de)
         if motivo:
             raise Refutado("TESTE_ALCANCA EXTRATOR %s: o content do Tailwind o le como texto, e %s"
                            % (lidos[0], motivo))
+        # (d2') DEPOIS do (d1) e do extrator: a negação dispensa as palavras, não o grafo de módulos
+        negados, nota = fora_do_content(lidos, pelo_tailwind[lidos[0]], arvore, ent_ar, ent_main,
+                                        texto_de)
+        lidos = [t for t in lidos if t not in negados]
         link = [t for t in lidos if "120000" in (ent_ar.get(t, ("",))[0], ent_main.get(t, ("",))[0])]
         if link:
             raise Refutado("TESTE_ALCANCA TAILWIND %s e symlink: o Tailwind le o ALVO, e a prova "
-                           "so enxerga o texto do link" % link[0])
+                           "so enxerga o texto do link%s" % (link[0], nota))
         cru_ar = ler_blobs(ar, [t for t in lidos if t in ent_ar], cru=True)
         cru_main = ler_blobs(main, [t for t in lidos if t in ent_main], cru=True)
         for t in lidos:
@@ -657,16 +747,16 @@ def provar_testes(ar, main, arvore, css_bundle, conteudo, ent_ar, ent_main, muda
             pm = palavras(cru_main[t]) if t in cru_main else set()
             if pa is None or pm is None:
                 raise Refutado("TESTE_ALCANCA TAILWIND %s nao e UTF-8 valido: sem o texto exato "
-                               "nao ha conjunto de palavras a comparar" % t)
+                               "nao ha conjunto de palavras a comparar%s" % (t, nota))
             if pa != pm:
                 novas, sumidas = sorted(pm - pa), sorted(pa - pm)
                 raise Refutado("TESTE_ALCANCA TAILWIND %s: o content de %s le o teste como texto, "
                                "e o conjunto de palavras mudou (+%d/-%d, ex.: %s) — palavra nova "
-                               "pode virar classe no CSS" % (
+                               "pode virar classe no CSS%s" % (
                                    t, pelo_tailwind[t], len(novas), len(sumidas),
-                                   json.dumps((novas + sumidas)[:3], ensure_ascii=True)[:120]))
+                                   json.dumps((novas + sumidas)[:3], ensure_ascii=True)[:120], nota))
     return "; testes: %d mudado(s) fora do grafo de modulos, %d lido(s) pelo Tailwind com as " \
-           "mesmas palavras" % (len(mudados), len(lidos))
+           "mesmas palavras, %d fora do content por negacao" % (len(mudados), len(lidos), len(negados))
 
 
 def main(argv):

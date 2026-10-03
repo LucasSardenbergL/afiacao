@@ -1109,10 +1109,17 @@ Quatro escolhas que não são óbvias e têm caso na rede (`evals/monitor-deploy
   mudado tem o MESMO conjunto de palavras no ar e na main (o extrator do tailwindcss **3.4.17**, lido em
   `node_modules`, é local à palavra e ordena os candidatos; versão travada no lockfile, `content` em array
   só de strings — senão recusa). Sem a prova, **continua ALCANCA** (`ALCANCA_BUNDLE`/`PR_TOCA_O_BUNDLE`),
-  nunca "sem alcance". Mede-se o custo: cobre **1 de 11** PRs só-de-teste dos últimos 300 commits (os
-  outros põem palavra nova). Tirar os testes do `content` cobriria todos, mas é decisão de BUILD (pede
-  Publish, e classe que só existe porque um teste a cita some) — em
+  nunca "sem alcance". Mede-se o custo: (d2) sozinha cobria **1 de 11** PRs só-de-teste dos últimos 300
+  commits (os outros põem palavra nova) — em
   [`docs/historico/teste-inerte-e-o-leitor-que-nao-importa.md`](../../../docs/historico/teste-inerte-e-o-leitor-que-nao-importa.md).
+  **Desde 2026-10-01 o `content` NEGA os testes** (as 3 formas da classe `TESTE`), e a prova entende
+  isso como **(d2')**: teste excluído por uma negação ENTENDIDA — a string EXATA, pela regex do que o
+  fast-glob 3.3.2 exclui — dispensa as palavras; (d1) segue inteiro. Forma estranha, fast-glob ou
+  Tailwind fora do auditado, symlink (pasta com nome de teste é lida POR DENTRO) ou PostCSS achado antes
+  do `postcss.config` (`.postcssrc*`, `package.json#postcss`) ⇒ volta a exigir (d2). Medido nos 300
+  últimos commits da main: dos 13 só-de-teste, a prova isentava 1 (o #2547); com o content negando,
+  **13/13** — em
+  [`docs/historico/testes-fora-do-content-do-tailwind.md`](../../../docs/historico/testes-fora-do-content-do-tailwind.md).
 - **`scripts` do `package.json` NÃO é toda inerte.** `build`, `pre/post*` e os ganchos de install
   são executados pelo pipeline: mudou um deles ⇒ alcança. E se o build da main não for `vite build`
   puro (`vite build && node scripts/gera.js`), `scripts/` deixa de ser inerte e o monitor recusa.
@@ -1393,4 +1400,16 @@ aconteceu continua sendo a mudança do `ar=`/entry, não a transição de exit.
   intacto; no pr-eval, 34 casos verdes por locale no controle e 19 pegas, 0 cegueiras. A tag
   `arquivo/monitor-reescrita-2026-09-10` (a reescrita abandonada) cobria os mesmos 3 estados, já em
   `VERSAO_INDETERMINADA`, e nenhum caso dela ficou fora desta rede.
+- [x] **Testes fora do `content` do Tailwind — e a prova entende a negação (2026-10-01, (d2')).** A
+  alavanca que o #2574 deixou registrada: o `content` nega as 3 formas da classe `TESTE`. Medido
+  antes (duas vezes): só `.m-1` e `.overscroll-contain` saem do CSS (82 bytes), zero uso no app, e o
+  config editado gera CSS byte a byte igual à medição. A prova isenta o teste excluído por negação
+  ENTENDIDA — string exata, fast-glob 3.3.2 e Tailwind 3.4.17 auditados, arquivo regular — e o
+  oráculo com o Tailwind real deu 19/19 sem fail-open (e mostrou o symlink-PASTA lido por dentro).
+  O que só o repo REAL pegou: o comentário novo, terminando em ponto acima do `content:`, fazia a
+  auditoria recusar 13/13 — agora um cenário usa o `tailwind.config.ts` real. Caminho B (Codex sem
+  cota): `.postcssrc*`/`package.json#postcss` vêm antes do `postcss.config` no Vite — recusa.
+  Denominador: 13/13 PRs só-de-teste isentos (antes 1/13). **Revisão independente do Codex
+  pendente.** Detalhe em
+  [`docs/historico/testes-fora-do-content-do-tailwind.md`](../../../docs/historico/testes-fora-do-content-do-tailwind.md).
 - [ ] (menor) Confirmar se há ambiente de **preview** distinto do publicado a checar.
