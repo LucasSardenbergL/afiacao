@@ -80,12 +80,23 @@
  *
  * O que continua descoberto, agora com nome: uma edição MANUAL em prod que também ignore o campo
  * novo é indistinguível de uma edição manual legítima. Fecha-se commitando a DDL, não aqui.
+ *
+ * ## O eixo 5 re-testa por TOKENS o que o md5 exato chama de DERIVA (2026-09-26)
+ *
+ * `reposicao_persistir_qtde_inteira` saía "edição manual" a cada leva da `disparar-pedidos-aprovados`
+ * sendo o corpo commitado MENOS 3 linhas de comentário (md5 provado no banco). O eixo agora pede o
+ * TEXTO do `prosrc` (`TextosVivos`, da sonda de detalhe `montarSondaDeriva`) e o re-testa com
+ * `mesmosTokens` contra as versões commitadas: tokens da ÚLTIMA ⇒ `cosmeticas` (afirmado, não
+ * bloqueia); tokens de uma ANTERIOR ⇒ `desatualizadas` com `casouPor: 'tokens'` (BLOQUEIA); sem texto
+ * para o re-teste ⇒ `INCERTA`. As checagens exatas vêm antes e não mudam — taxonomia e a exceção
+ * conservadora em `corpo-esperado.ts`.
  */
 import {
-  classificarCorpo,
+  classificarComTokens,
   type CorpoVivo,
   irmasDaMigration,
   md5Exato,
+  type ProvaPorTokens,
   type VersaoDeCorpo,
 } from './corpo-esperado';
 
@@ -331,7 +342,7 @@ interface RpcAusente {
 }
 
 /** Uma função cujo corpo em prod é um corpo que o repo commitou ANTES do atual — o eixo 5. */
-interface RpcDesatualizada {
+type RpcDesatualizada = {
   rpc: string;
   /** Quem depende dela. Vazio quando a função entrou pelo conjunto acoplado da migration. */
   edges: string[];
@@ -339,6 +350,36 @@ interface RpcDesatualizada {
   esperada: string;
   /** A migration cujo corpo prod está de fato rodando. */
   emProd: string;
+} & (
+  | { casouPor: 'md5-exato' }
+  /** Só por tokens: comentário/espaço à parte, a lógica é a da `emProd` — com os hashes do relatório. */
+  | { casouPor: 'tokens'; prova: ProvaPorTokens }
+);
+
+/**
+ * Uma função cujo corpo em prod tem os MESMOS tokens da ÚLTIMA versão commitada — só comentário e
+ * espaço diferem (`VARIANTE_COSMETICA`). Lógica idêntica: não bloqueia. Lista PRÓPRIA — nem em dia
+ * (não é byte a byte) nem "fora do alcance" (o gate afirmou algo, e o relatório diz o quê e com que
+ * hash, para a correspondência ser conferível).
+ */
+interface RpcCosmetica {
+  rpc: string;
+  /** A última migration que define a função — prod roda o corpo dela a menos de comentário/espaço. */
+  esperada: string;
+  prova: ProvaPorTokens;
+}
+
+/**
+ * O TEXTO do `prosrc` de prod, para o re-teste por tokens do eixo 5 — lido da sonda de detalhe
+ * (`textosDaLeitura` em `deriva-corpo.ts`). O julgamento só usa, de cada função, o texto que
+ * REPRODUZ o md5 que o eixo exato mediu; o resto não conta. Um canal quebrado só pesa onde o
+ * re-teste é preciso (o que o exato chamou de DERIVA) — ali vira `INCERTA`, nunca "edição manual".
+ */
+export interface TextosVivos {
+  /** Os `prosrc` de cada função, por nome (overload: um por assinatura). */
+  porNome: ReadonlyMap<string, readonly string[]>;
+  /** Por que o canal de texto não é íntegro (marcador, autoteste hex, incoerências). Explica o "não sei". */
+  falhas: readonly string[];
 }
 
 /** Uma função da leva sobre a qual o eixo 5 NÃO conseguiu afirmar nada. Reportada, não bloqueante. */
@@ -357,6 +398,8 @@ export interface VereditoPrecondicao {
   motivos: string[];
   /** Eixo 5: prod roda um corpo ANTERIOR ao commitado ⇒ a migration da leva não foi aplicada. */
   desatualizadas: RpcDesatualizada[];
+  /** Eixo 5: prod roda a última versão a menos de comentário/espaço (mesmos tokens). Afirmado, não bloqueia. */
+  cosmeticas: RpcCosmetica[];
   /**
    * Eixo 5, o outro lado: a COBERTURA declarada. Deriva, overload, corpo não textual, função sem
    * `CREATE` commitado. Não bloqueiam — mas ficam escritas, porque um gate que só mostra o que
@@ -399,6 +442,7 @@ export function julgarPrecondicao(
   leitura: LeituraSonda,
   indirecoes: number,
   corpos: CorposEsperados,
+  textos: TextosVivos,
 ): VereditoPrecondicao {
   const motivos: string[] = [];
   if (!leitura.fim) {
@@ -459,34 +503,55 @@ export function julgarPrecondicao(
   const ausenteOuNaoMedida = new Set([...ausentes.map((a) => a.rpc), ...naoMedidos]);
   const edgesPorRpc = new Map(alvos.map((a) => [a.rpc, a.edges]));
   const desatualizadas: RpcDesatualizada[] = [];
+  const cosmeticas: RpcCosmetica[] = [];
   const naoConferidas: RpcNaoConferida[] = [];
+  const semTexto: string[] = [];
   for (const rpc of alvosDeCorpo(alvos, corpos.historico)) {
     if (ausenteOuNaoMedida.has(rpc)) continue;
-    const v = classificarCorpo(
+    // O exato primeiro, intocado; o re-teste por tokens só no que ele chamou de DERIVA.
+    const v = classificarComTokens(
       corpos.historico.get(`public.${rpc}`),
       leitura.corpos.get(rpc) ?? { md5s: [], overloads: 0 },
+      textos.porNome.get(rpc) ?? [],
     );
     if (v.classificacao === 'EM_DIA') continue;
     if (v.classificacao === 'CORPO_ANTERIOR' && v.esperada !== undefined && v.emProd !== undefined) {
-      desatualizadas.push({
-        rpc,
-        edges: edgesPorRpc.get(rpc) ?? [],
-        esperada: v.esperada,
-        emProd: v.emProd,
-      });
+      const base = { rpc, edges: edgesPorRpc.get(rpc) ?? [], esperada: v.esperada, emProd: v.emProd };
+      desatualizadas.push(
+        v.tokens === undefined ? { ...base, casouPor: 'md5-exato' } : { ...base, casouPor: 'tokens', prova: v.tokens },
+      );
+      continue;
+    }
+    if (v.classificacao === 'VARIANTE_COSMETICA' && v.esperada !== undefined && v.tokens !== undefined) {
+      cosmeticas.push({ rpc, esperada: v.esperada, prova: v.tokens });
+      continue;
+    }
+    if (v.classificacao === 'SEM_TEXTO') {
+      semTexto.push(rpc);
       continue;
     }
     naoConferidas.push({
       rpc,
       motivo:
         v.classificacao === 'DERIVA'
-          ? `corpo em prod não bate com nenhuma das ${v.versoes} versão(ões) commitadas — edição manual (não é "falta colar")`
+          ? `corpo em prod não bate com nenhuma das ${v.versoes} versão(ões) commitadas — nem byte a byte, nem por tokens (comentário/espaço fora): edição manual (não é "falta colar")`
           : (v.motivo ?? 'sem corpo comparável'),
     });
   }
+  // Sem o texto, o que o exato chamou de DERIVA pode ser o `CORPO_ANTERIOR` por tokens, que bloqueia:
+  // "não consegui re-testar" é ausência de dado — INCERTA, nunca o "edição manual" que liberava.
+  if (semTexto.length > 0) {
+    motivos.push(
+      `eixo de corpo sem o TEXTO de prod para ${semTexto.map((r) => `\`${r}\``).join(', ')}: o md5 exato deu ` +
+        'DERIVA, e só o re-teste por TOKENS separa "edição manual" de "corpo ANTERIOR sem comentário" (que ' +
+        `bloqueia) — canal de texto: ${
+          textos.falhas.length > 0 ? textos.falhas.join('; ') : 'íntegro, mas o texto não veio ou não reproduz o md5 medido'
+        }`,
+    );
+  }
 
   if (motivos.length > 0 || naoMedidos.length > 0) {
-    return { estado: 'INCERTA', ausentes, naoMedidos, motivos, desatualizadas, naoConferidas };
+    return { estado: 'INCERTA', ausentes, naoMedidos, motivos, desatualizadas, cosmeticas, naoConferidas };
   }
   return {
     estado: ausentes.length > 0 || desatualizadas.length > 0 ? 'BLOQUEADA' : 'LIBERADA',
@@ -494,6 +559,7 @@ export function julgarPrecondicao(
     naoMedidos,
     motivos,
     desatualizadas,
+    cosmeticas,
     naoConferidas,
   };
 }
@@ -534,14 +600,28 @@ export function relatarPrecondicao(v: VereditoPrecondicao): string {
   // A cobertura vai junto do VERDE também: o texto antigo dizia "todas as RPCs da leva existem em
   // prod", e existir era tudo o que ele media — foi essa frase que absolveu a leva do #2428.
   // Dizer sobre o que NÃO se afirmou é o que impede o verde de ser lido como mais largo do que é.
-  const rodape = v.naoConferidas.length === 0 ? [] : [
-    `ℹ️  ${v.naoConferidas.length} função(ões) fora do alcance do eixo de corpo — o gate NÃO afirma sobre elas:`,
-    ...v.naoConferidas.map((n) => `  · \`${n.rpc}\`: ${n.motivo}`),
+  // A variante cosmética é AFIRMAÇÃO do gate (não "fora do alcance"): diz o método, a migration e os
+  // hashes, para a correspondência ser conferível — e não afirma o canal que tirou os comentários,
+  // que é hipótese (deriva-so-de-comentario-no-corpo.md).
+  const rodape = [
+    ...(v.cosmeticas.length === 0 ? [] : [
+      `🔵 ${v.cosmeticas.length} função(ões) em VARIANTE_COSMETICA — prod roda a ÚLTIMA versão commitada a menos de comentário/espaço (mesmos tokens); lógica idêntica, sem ação:`,
+      ...v.cosmeticas.flatMap((c) => [
+        `  · \`${c.rpc}\` = \`${c.esperada}\` — método: tokens (\`mesmosTokens\`, o léxico do scan.l)`,
+        `    md5 exato prod ${c.prova.md5Prod} ≠ repo ${c.prova.md5Repo} · md5 dos tokens ${c.prova.md5Tokens} (o mesmo nos dois)`,
+      ]),
+    ]),
+    ...(v.naoConferidas.length === 0 ? [] : [
+      `ℹ️  ${v.naoConferidas.length} função(ões) fora do alcance do eixo de corpo — o gate NÃO afirma sobre elas:`,
+      ...v.naoConferidas.map((n) => `  · \`${n.rpc}\`: ${n.motivo}`),
+    ]),
   ];
   if (v.estado === 'LIBERADA') {
     return [
       '✅ pré-condição de banco satisfeita — as RPCs da leva existem em prod E rodam o corpo da',
-      '   última migration que este repo commitou para elas',
+      v.cosmeticas.length === 0
+        ? '   última migration que este repo commitou para elas'
+        : '   última migration que este repo commitou para elas (ou esse corpo a menos de comentário/espaço — abaixo)',
       ...rodape,
     ].join('\n');
   }
@@ -558,8 +638,18 @@ export function relatarPrecondicao(v: VereditoPrecondicao): string {
       ? d.edges.map((e) => `\`${e}\``).join(', ')
       : '(nenhuma edge da leva a chama — ela entrou pelo conjunto ACOPLADO da mesma migration)';
     linhas.push(`  · \`${d.rpc}\` ← ${quem}`);
-    linhas.push(`    EXISTE em prod, mas rodando o corpo de \`${d.emProd}\``);
+    linhas.push(
+      d.casouPor === 'tokens'
+        ? `    EXISTE em prod, mas rodando o corpo de \`${d.emProd}\` — casou por TOKENS: md5 exato prod ${d.prova.md5Prod} ≠ repo ${d.prova.md5Repo}, mesmos tokens (${d.prova.md5Tokens}); a lógica é a dessa versão, comentário à parte`
+        : `    EXISTE em prod, mas rodando o corpo de \`${d.emProd}\` (casou byte a byte: md5 exato)`,
+    );
     linhas.push(`    o repo já commitou \`${d.esperada}\` depois dela ⇒ APLIQUE essa migration`);
+    // "APLIQUE" sozinho manda colar o ARQUIVO — e migration traz DML além da DDL (achado do Codex,
+    // 2026-09-26): a `20260606190000` roda um backfill sobre pedidos vivos, que o selo de aprovação
+    // (#2187/#2258) não espera ver reescritos depois de aprovados.
+    linhas.push(
+      '    ⚠️  reaplicar o ARQUIVO inteiro re-executa o que mais ele traz: se houver DML/backfill (UPDATE/INSERT/DELETE, ou SELECT de função que escreve), cole só o CREATE OR REPLACE da função — ex.: a `20260606190000` (qtde inteira) traz um backfill one-time sobre pedidos vivos',
+    );
     linhas.push(
       '    ⚠️  não espere erro: a RPC velha aceita o payload novo e DESCARTA o campo em silêncio',
     );

@@ -75,6 +75,10 @@
  * roda VERBATIM pelo `query_database` do conector Lovable; `--dados-nuvem=<arquivo>` entrega a
  * resposta validada ao mesmo `julgarPrecondicao`. Leva sem RPC literal não consulta o banco: o
  * `--sql-nuvem` diz isso no stderr e sai 0 com o stdout VAZIO — rode então sem as flags.
+ *
+ * As consultas são as DUAS de `consultasDeriva`, as mesmas do `deriva:corpo:prod`: a de pré-condição
+ * e o detalhe com o `prosrc` em hex, que o eixo 5 re-testa por TOKENS no que o md5 exato chama de
+ * DERIVA (`docs/historico/deriva-so-de-comentario-no-corpo.md`). Local, numa transação só.
  */
 
 import { execFileSync } from 'node:child_process';
@@ -92,8 +96,6 @@ import {
   alvosDeCorpo,
   type CorposEsperados,
   julgarPrecondicao,
-  montarSondaPrecondicao,
-  parsearSondaPrecondicao,
   relatarPrecondicao,
   type VereditoPrecondicao,
 } from './lib/precondicao-banco';
@@ -110,13 +112,19 @@ import {
   sincronizarRef,
 } from './pendencias-prompt';
 import { type ConferenciaMapa, recusa, relatarForaDoRegime, relatarRecusa } from './lib/mapa-coerente-na-ref';
+import {
+  consultasDeriva,
+  montarSondaDeriva,
+  parsearSondaDeriva,
+  saidaDerivaComoPsql,
+  textosDaLeitura,
+} from './lib/deriva-corpo';
 import { montarPacote, type PacoteFonte } from './lib/pacote-entrega';
 import { type ParAlvo, planejarOndas, type PlanoDeOndas } from './lib/ordem-entre-edges';
 import { ARQ_MAPA, parsearMapa, RAIZ_EDGES } from './sonda-fingerprint';
 import { extrairVersao } from './sonda-versao-sql';
 import {
   gerarSqlNuvem,
-  leitorNuvem,
   lerArquivoDadosNuvem,
   lerDadosNuvem,
   separarFlagsNuvem,
@@ -167,11 +175,17 @@ export function lerRelatorio(bruto: string): RelatorioLido {
   return { nomes: selecionarParaDeploy(rel.vereditos), vereditos: rel.vereditos, geradoEm };
 }
 
-/** Roda a sonda pelo wrapper read-only. `-c` (não `-f`) porque só `-c` sai 1 em ERROR. */
+/**
+ * Roda a sonda pelo wrapper read-only. `-c` (não `-f`) porque só `-c` sai 1 em ERROR; `-q` cala o
+ * `BEGIN`/`COMMIT` e os `SET` do psqlrc. As flags são as do `deriva:corpo:prod`, que roda a MESMA
+ * sonda. O `maxBuffer` explícito é do detalhe: o `prosrc` em hex dobra o tamanho de cada corpo, e
+ * estourar o buffer seria "a sonda não rodou" (exit 2) numa leva legítima.
+ */
 export function medirEmProd(sql: string): string {
-  return execFileSync(PSQL_RO, ['-A', '-F', '|', '-t', '-c', sql], {
+  return execFileSync(PSQL_RO, ['-q', '-v', 'ON_ERROR_STOP=1', '-tA', '-F', '|', '-c', sql], {
     encoding: 'utf8',
     timeout: 60_000,
+    maxBuffer: 64 * 1024 * 1024,
   });
 }
 
@@ -249,21 +263,21 @@ export function main(
     );
     return 2;
   }
-  // A 2ª metade do transporte substitui o `medir`: a resposta é validada CONTRA o SQL que esta
-  // execução montou — se a leva mudou entre as rodadas, o `sql_md5` não fecha e a sonda "não rodou".
+  // A sonda é a de DETALHE (`consultasDeriva`, a mesma do `deriva:corpo:prod`): a de pré-condição
+  // e o `prosrc` em hex, que o eixo 5 re-testa por tokens no que o md5 exato chama de DERIVA. Local:
+  // as duas numa transação REPEATABLE READ (`montarSondaDeriva`). Nuvem: a 2ª metade do transporte
+  // substitui o `medir`, e a resposta é validada CONTRA as consultas que esta execução montou — se a
+  // leva mudou entre as rodadas, o `sql_md5` não fecha e a sonda "não rodou".
   const caminhoNuvem = nuvem.dadosNuvem;
-  const medirSonda =
-    caminhoNuvem === null
-      ? medir
-      : (sql: string): string => {
-          const consultas = { precondicao: sql };
-          const dados = lerDadosNuvem(
-            lerArquivoDadosNuvem(caminhoNuvem),
-            { consultas, consumidor: CONSUMIDOR_NUVEM },
-            agora(),
-          );
-          return leitorNuvem(dados, consultas)(sql);
-        };
+  const medirSonda = (nomesSonda: readonly string[]): string => {
+    if (caminhoNuvem === null) return medir(montarSondaDeriva(nomesSonda));
+    const dados = lerDadosNuvem(
+      lerArquivoDadosNuvem(caminhoNuvem),
+      { consultas: consultasDeriva(nomesSonda), consumidor: CONSUMIDOR_NUVEM },
+      agora(),
+    );
+    return saidaDerivaComoPsql(dados.linhas);
+  };
 
   const { nomes: nomesArg, saida: saidaExplicita } = separarSaida(args);
   if (args.includes('--saida') && saidaExplicita === undefined) {
@@ -405,7 +419,7 @@ export function main(
       return 0;
     }
     try {
-      process.stdout.write(`${gerarSqlNuvem({ precondicao: montarSondaPrecondicao(nomesParaSonda) }, CONSUMIDOR_NUVEM)}\n`);
+      process.stdout.write(`${gerarSqlNuvem(consultasDeriva(nomesParaSonda), CONSUMIDOR_NUVEM)}\n`);
     } catch (e) {
       process.stderr.write(`⛔ mecânica: ${mensagemDeErro(e) ?? 'SQL da nuvem não montou'}\n`);
       return 2;
@@ -423,7 +437,7 @@ export function main(
     }
     // Nenhuma RPC literal na leva. Isso NÃO é "pré-condição satisfeita" quando há indireção:
     // o extrator já disse que não enxerga tudo, e uma lista vazia por cegueira é o falso verde.
-    const vazio = { ausentes: [], naoMedidos: [], desatualizadas: [], naoConferidas: [] };
+    const vazio = { ausentes: [], naoMedidos: [], desatualizadas: [], cosmeticas: [], naoConferidas: [] };
     veredito =
       indirecoes > 0
         ? { ...vazio, estado: 'INCERTA', motivos: [
@@ -434,7 +448,7 @@ export function main(
   } else {
     let saida: string;
     try {
-      saida = medirSonda(montarSondaPrecondicao(nomesParaSonda));
+      saida = medirSonda(nomesParaSonda);
     } catch (e) {
       process.stderr.write(
         `⛔ mecânica: a sonda de pré-condição não rodou (${mensagemDeErro(e) ?? 'psql falhou'})\n` +
@@ -442,7 +456,8 @@ export function main(
       );
       return 2;
     }
-    veredito = julgarPrecondicao(alvos, parsearSondaPrecondicao(saida), indirecoes, corpos);
+    const leitura = parsearSondaDeriva(saida);
+    veredito = julgarPrecondicao(alvos, leitura.sonda, indirecoes, corpos, textosDaLeitura(leitura));
   }
 
   // ── camada 3: emitir o pacote NA ORDEM, com o gate aplicado ────────────────────────────────

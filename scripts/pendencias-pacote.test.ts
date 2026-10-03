@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
 import { md5Exato } from './lib/corpo-esperado';
+import { consultasDeriva } from './lib/deriva-corpo';
 import { FORMATO_TRANSPORTE, gerarSqlNuvem, TETO_TRANSPORTE } from './lib/transporte-nuvem';
 import {
   AMOSTRA_CORPO_JS,
@@ -229,37 +230,55 @@ describe('pendencias:pacote — a leitura da edge sai da REF, não do disco', ()
     return { raiz, git, saida: join(raiz, 'pacote.md') };
   }
 
+  /** Os nomes que o SQL da sonda PEDE — cada um aparece nas duas consultas, então sem repetição. */
+  const pedidasNo = (sql: string) => [...new Set([...sql.matchAll(/\('([a-z0-9_]+)'\)/g)].map((m) => m[1]))];
+  const hex = (t: string) => Buffer.from(t, 'utf8').toString('hex');
+
   /**
-   * Sonda falsa que responde ao que foi PEDIDO, com os tokens do PRÓPRIO módulo.
+   * O BANCO falso: responde às DUAS consultas da sonda (`consultasDeriva` — a de pré-condição e o
+   * detalhe com o `prosrc` em hex) para os nomes PEDIDOS, com os tokens do PRÓPRIO módulo.
    *
    * O formato não sai da memória: `TOKEN_SIM`/`TOKEN_NAO`/`FORMATO_SONDA` são importados, que é a
    * regra que o `precondicao-de-banco-como-gate.md` §3 fixou depois de um fixture inventado de
-   * cabeça custar um ciclo inteiro.
+   * cabeça custar um ciclo inteiro. `corposEmProd` é o TEXTO do `prosrc`: o md5 sai dele pela
+   * receita do banco (`md5Exato`), como o Postgres calcularia — o valor digitado à mão fica em
+   * `precondicao-banco.test.ts`, que é onde a paridade com prod é a asserção.
    */
-  function sondaFalsa(
-    existentesEmProd: readonly string[],
-    corposEmProd: Record<string, string> = {},
-  ) {
-    return (sql: string): string => {
-      const pedidas = [...sql.matchAll(/\('([a-z0-9_]+)'\)/g)].map((m) => m[1]);
-      return [
-        ...pedidas.map((r) =>
-          existentesEmProd.includes(r)
-            ? `rpc|${r}|${TOKEN_SIM}|7`
-            : `rpc|${r}|${TOKEN_NAO}|0`,
-        ),
-        ...pedidas
-          .filter((r) => existentesEmProd.includes(r))
-          .map((r) => `corpo|${r}|${corposEmProd[r] ?? TOKEN_SEM_CORPO}|1`),
+  function bancoFalso(existentesEmProd: readonly string[], corposEmProd: Record<string, string> = {}) {
+    return (pedidas: readonly string[]) => {
+      const vivas = pedidas.filter((r) => existentesEmProd.includes(r));
+      const corpo = (r: string) => corposEmProd[r];
+      const sonda = [
+        ...pedidas.map((r) => (vivas.includes(r) ? `rpc|${r}|${TOKEN_SIM}|7` : `rpc|${r}|${TOKEN_NAO}|0`)),
+        ...vivas.map((r) => `corpo|${r}|${corpo(r) === undefined ? TOKEN_SEM_CORPO : md5Exato(corpo(r))}|1`),
         'controle|funcoes_public|479|',
         `autoteste|presente|${TOKEN_SIM}|`,
         `autoteste|ausente|${TOKEN_NAO}|`,
-        // O md5 da amostra do módulo — o laço TS↔SQL. Vem de `md5Exato` da lib porque aqui ele
-        // simula o BANCO; o valor digitado à mão fica em `precondicao-banco.test.ts`, que é onde a
-        // paridade com prod é a asserção.
         `autoteste|md5corpo|${md5Exato(AMOSTRA_CORPO_JS)}|`,
         `fim|${FORMATO_SONDA}||`,
-      ].join('\n');
+      ];
+      const detalhe = [
+        ...pedidas.map((r) => `n|${r}|${vivas.includes(r) ? 1 : 0}|||`),
+        ...vivas.map((r) =>
+          corpo(r) === undefined
+            ? `fn|${r}||9106714|${TOKEN_SEM_CORPO}|`
+            : `fn|${r}||9106714|${md5Exato(corpo(r))}|${hex(corpo(r))}`,
+        ),
+        `autoteste-hex|${hex(AMOSTRA_CORPO_JS)}||||`,
+        'autoteste-id|integer,text,timestamp with time zone,character varying||||',
+        'agora|2026-09-27 11:59:00||||',
+        'fim-deriva|deriva-corpo/1||||',
+      ];
+      return { sonda, detalhe };
+    };
+  }
+
+  /** A sonda LOCAL: o SQL de `montarSondaDeriva` → o que o psql imprime (as duas consultas em sequência). */
+  function sondaFalsa(existentesEmProd: readonly string[], corposEmProd: Record<string, string> = {}) {
+    const banco = bancoFalso(existentesEmProd, corposEmProd);
+    return (sql: string): string => {
+      const { sonda, detalhe } = banco(pedidasNo(sql));
+      return [...sonda, ...detalhe].join('\n');
     };
   }
 
@@ -334,7 +353,7 @@ describe('pendencias:pacote — a leitura da edge sai da REF, não do disco', ()
 
     const codigo = main([EDGE, '--saida', saida, '--sem-rede'], raiz, git, sondaFalsa(
       ['rpc_velha'],
-      { rpc_velha: md5Exato(CORPO_VELHO) }, // prod ficou na PRIMEIRA versão
+      { rpc_velha: CORPO_VELHO }, // prod ficou na PRIMEIRA versão
     ));
 
     expect(codigo).toBe(3);
@@ -352,7 +371,7 @@ describe('pendencias:pacote — a leitura da edge sai da REF, não do disco', ()
 
     const codigo = main([EDGE, '--saida', saida, '--sem-rede'], raiz, git, sondaFalsa(
       ['rpc_velha'],
-      { rpc_velha: md5Exato(CORPO_NOVO) },
+      { rpc_velha: CORPO_NOVO },
     ));
 
     expect(codigo).toBe(0);
@@ -363,12 +382,84 @@ describe('pendencias:pacote — a leitura da edge sai da REF, não do disco', ()
 
     const codigo = main([EDGE, '--saida', saida, '--sem-rede'], raiz, git, sondaFalsa(
       ['rpc_velha'],
-      { rpc_velha: 'd'.repeat(32) },
+      { rpc_velha: ' SELECT 3; ' }, // corpo que migration nenhuma commitou
     ));
 
     expect(codigo).toBe(0);
     // Mas o pacote DECLARA que não afirmou sobre ela — verde estreito, não verde largo.
     expect(readFileSync(saida, 'utf8')).toContain('fora do alcance do eixo de corpo');
+  });
+
+  // ── eixo 5, 2ª pergunta: o que o md5 exato chama de DERIVA é re-testado por TOKENS ─────────
+  // (deriva-so-de-comentario-no-corpo.md) — o caso da `reposicao_persistir_qtde_inteira`, que saía
+  // "edição manual" a cada leva da `disparar-pedidos-aprovados` sendo o corpo commitado menos 3
+  // linhas de comentário.
+  const MIGRATION_COMENTADA = {
+    nome: '20260303000000_comenta.sql',
+    sql: 'CREATE OR REPLACE FUNCTION public.rpc_velha() RETURNS int LANGUAGE sql AS $$\n  -- nota\n  SELECT 2;\n$$;\n',
+  };
+
+  it('a sonda LOCAL é a de detalhe, numa transação só — o texto do prosrc vem no MESMO retrato', () => {
+    const { raiz, git, saida } = montarRepo(CHAMA_VELHA, CHAMA_VELHA, [MIGRATION_BASE, MIGRATION_NOVA]);
+    const pedidos: string[] = [];
+    const sonda = sondaFalsa(['rpc_velha'], { rpc_velha: CORPO_NOVO });
+    main([EDGE, '--saida', saida, '--sem-rede'], raiz, git, (sql) => {
+      pedidos.push(sql);
+      return sonda(sql);
+    });
+    expect(pedidos).toHaveLength(1);
+    expect(pedidos[0].startsWith('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;')).toBe(true);
+    expect(pedidos[0]).toContain("encode(convert_to(p.prosrc, 'UTF8'), 'hex')");
+    expect(pedidos[0]).toContain('deriva-corpo/1');
+  });
+
+  it('LIBERA (0) e diz VARIANTE_COSMETICA quando prod roda a última versão a menos de comentário — não "edição manual"', () => {
+    const { raiz, git, saida } = montarRepo(CHAMA_VELHA, CHAMA_VELHA, [MIGRATION_BASE, MIGRATION_COMENTADA]);
+
+    const codigo = main([EDGE, '--saida', saida, '--sem-rede'], raiz, git, sondaFalsa(
+      ['rpc_velha'],
+      { rpc_velha: '\n  SELECT 2;\n' }, // o corpo da COMENTADA sem a linha `-- nota`
+    ));
+
+    expect(codigo).toBe(0);
+    const pacote = readFileSync(saida, 'utf8');
+    expect(pacote).toContain('VARIANTE_COSMETICA');
+    expect(pacote).toContain('20260303000000_comenta.sql');
+    expect(pacote).not.toContain('edição manual');
+  });
+
+  it('BLOQUEIA (3) quando prod roda a versão ANTERIOR a menos de comentário — CORPO_ANTERIOR por tokens', () => {
+    const anteriorComentada = {
+      nome: '20260101000000_base.sql',
+      sql: 'CREATE OR REPLACE FUNCTION public.rpc_velha() RETURNS int LANGUAGE sql AS $$\n  -- antes\n  SELECT 1;\n$$;\n',
+    };
+    const { raiz, git, saida } = montarRepo(CHAMA_VELHA, CHAMA_VELHA, [anteriorComentada, MIGRATION_NOVA]);
+
+    const codigo = main([EDGE, '--saida', saida, '--sem-rede'], raiz, git, sondaFalsa(
+      ['rpc_velha'],
+      { rpc_velha: '\n  SELECT 1;\n' }, // a ANTERIOR sem a linha `-- antes`
+    ));
+
+    expect(codigo).toBe(3);
+    const pacote = readFileSync(saida, 'utf8');
+    expect(pacote).toContain('casou por TOKENS');
+    expect(pacote).toContain('reaplicar o ARQUIVO inteiro re-executa');
+    expect(pacote).not.toContain('Cole no chat do Lovable');
+  });
+
+  it('INCERTA (3) quando o detalhe não traz o texto para a DERIVA — nem "edição manual", nem cosmética', () => {
+    const { raiz, git, saida } = montarRepo(CHAMA_VELHA, CHAMA_VELHA, [MIGRATION_BASE, MIGRATION_COMENTADA]);
+    const banco = bancoFalso(['rpc_velha'], { rpc_velha: '\n  SELECT 2;\n' });
+    // O psql devolveu só o 1º result set: a sonda inteira, e o detalhe nenhum.
+    const soASonda = (sql: string) => banco(pedidasNo(sql)).sonda.join('\n');
+
+    const codigo = main([EDGE, '--saida', saida, '--sem-rede'], raiz, git, soASonda);
+
+    expect(codigo).toBe(3);
+    const pacote = readFileSync(saida, 'utf8');
+    expect(pacote).toContain('re-teste por TOKENS');
+    expect(pacote).not.toContain('VARIANTE_COSMETICA');
+    expect(pacote).not.toContain('Cole no chat do Lovable');
   });
 
   it('MECÂNICA (2) quando a ref não tem migration nenhuma — inventário vazio é git quebrado', () => {
@@ -394,17 +485,23 @@ describe('pendencias:pacote — a leitura da edge sai da REF, não do disco', ()
      * parte. Cada linha do psql vira literal de registro; campo vazio sai sem aspas (NULL, que o
      * psql imprime vazio), os outros entre aspas com `"` e `\` dobrados, como o `record_out`.
      */
-    function respostaDoBanco(sqlSonda: string, saidaDaSonda: string): string {
+    function respostaDoBanco(
+      consultas: Record<string, string>,
+      linhasPorConsulta: Record<string, readonly string[]>,
+    ): string {
       const md5 = (s: string) => createHash('md5').update(s, 'utf8').digest('hex');
-      const sql = gerarSqlNuvem({ precondicao: sqlSonda }, CONSUMIDOR_NUVEM);
+      const sql = gerarSqlNuvem(consultas, CONSUMIDOR_NUVEM);
       const campo = (c: string) => (c === '' ? '' : `"${c.replace(/["\\]/g, (x) => x + x)}"`);
-      const linhas = saidaDaSonda.split('\n').map((l) => `(${l.split('|').map(campo).join(',')})`);
+      const registros = (ls: readonly string[]) => ls.map((l) => `(${l.split('|').map(campo).join(',')})`);
       const sqlMd5 = md5(sql.slice(0, sql.indexOf('sql-nuvem:fim') + 'sql-nuvem:fim'.length));
       const medidoEm = '2026-09-27T11:59:00Z';
-      const canonico = [
-        FORMATO_TRANSPORTE, CONSUMIDOR_NUVEM, medidoEm, 'on', TETO_TRANSPORTE, sqlMd5, '1/1',
-        'precondicao', String(linhas.length), linhas.join('\n'),
-      ];
+      // O transporte valida as consultas por nome ORDENADO (`validarNomes`): o canônico segue a ordem.
+      const nomes = Object.keys(consultas).sort();
+      const canonico = [FORMATO_TRANSPORTE, CONSUMIDOR_NUVEM, medidoEm, 'on', TETO_TRANSPORTE, sqlMd5, '1/1'];
+      for (const n of nomes) {
+        const r = registros(linhasPorConsulta[n] ?? []);
+        canonico.push(n, String(r.length), r.join('\n'));
+      }
       const dados = {
         formato: FORMATO_TRANSPORTE,
         consumidor: CONSUMIDOR_NUVEM,
@@ -413,10 +510,17 @@ describe('pendencias:pacote — a leitura da edge sai da REF, não do disco', ()
         teto: TETO_TRANSPORTE,
         sql_md5: sqlMd5,
         marcas: '1/1',
-        consultas: { precondicao: linhas },
+        consultas: Object.fromEntries(nomes.map((n) => [n, registros(linhasPorConsulta[n] ?? [])])),
         md5: md5(canonico.join('\n')),
       };
       return JSON.stringify({ rows: [{ dados_nuvem: dados }] });
+    }
+
+    /** A resposta da nuvem para o que a rodada local pediu: as MESMAS duas consultas, o MESMO banco. */
+    function respostaPara(sqlLocal: string, banco: ReturnType<typeof bancoFalso>): string {
+      const nomes = pedidasNo(sqlLocal);
+      const { sonda, detalhe } = banco(nomes);
+      return respostaDoBanco(consultasDeriva(nomes), { sonda, detalhe });
     }
 
     it('--sql-nuvem imprime o SQL da sonda, não chama o psql e não escreve pacote', () => {
@@ -435,6 +539,8 @@ describe('pendencias:pacote — a leitura da edge sai da REF, não do disco', ()
       expect(codigo).toBe(0);
       expect(escrito.join('')).toContain('SET TRANSACTION READ ONLY;');
       expect(escrito.join('')).toContain("('rpc_velha')");
+      // O detalhe vai junto: sem o texto do prosrc, o re-teste por tokens do eixo 5 não roda.
+      expect(escrito.join('')).toContain('deriva-corpo/1');
       expect(existsSync(saida)).toBe(false);
     });
 
@@ -450,7 +556,7 @@ describe('pendencias:pacote — a leitura da edge sai da REF, não do disco', ()
 
       const nuvem = montarRepo(CHAMA_VELHA, CHAMA_AS_DUAS);
       const arquivo = join(nuvem.raiz, 'resposta-nuvem.json');
-      writeFileSync(arquivo, respostaDoBanco(sqlSonda, sonda(sqlSonda)), 'utf8');
+      writeFileSync(arquivo, respostaPara(sqlSonda, bancoFalso(['rpc_velha'])), 'utf8');
       const codigoNuvem = main(
         [EDGE, '--saida', nuvem.saida, '--sem-rede', `--dados-nuvem=${arquivo}`],
         nuvem.raiz,
@@ -465,10 +571,47 @@ describe('pendencias:pacote — a leitura da edge sai da REF, não do disco', ()
       expect(readFileSync(nuvem.saida, 'utf8')).toBe(readFileSync(local.saida, 'utf8'));
     });
 
+    it('--dados-nuvem leva o TEXTO do prosrc: a variante cosmética chega ao MESMO pacote que a local', () => {
+      const migrations = [MIGRATION_BASE, MIGRATION_COMENTADA];
+      const prod = { rpc_velha: '\n  SELECT 2;\n' };
+      const local = montarRepo(CHAMA_VELHA, CHAMA_VELHA, migrations);
+      const sonda = sondaFalsa(['rpc_velha'], prod);
+      let sqlSonda = '';
+      const codigoLocal = main([EDGE, '--saida', local.saida, '--sem-rede'], local.raiz, local.git, (sql) => {
+        sqlSonda = sql;
+        return sonda(sql);
+      }, semEntrada, agora);
+
+      const nuvem = montarRepo(CHAMA_VELHA, CHAMA_VELHA, migrations);
+      const arquivo = join(nuvem.raiz, 'resposta-nuvem.json');
+      writeFileSync(arquivo, respostaPara(sqlSonda, bancoFalso(['rpc_velha'], prod)), 'utf8');
+      const codigoNuvem = main(
+        [EDGE, '--saida', nuvem.saida, '--sem-rede', `--dados-nuvem=${arquivo}`],
+        nuvem.raiz,
+        nuvem.git,
+        psqlProibido,
+        semEntrada,
+        agora,
+      );
+
+      expect(codigoLocal).toBe(0);
+      expect(codigoNuvem).toBe(codigoLocal);
+      const pacote = readFileSync(nuvem.saida, 'utf8');
+      expect(pacote).toBe(readFileSync(local.saida, 'utf8'));
+      expect(pacote).toContain('VARIANTE_COSMETICA');
+    });
+
     it('MECÂNICA (2) quando a resposta é de OUTRA leva — o sql_md5 não fecha', () => {
       const { raiz, git, saida } = montarRepo(CHAMA_VELHA, CHAMA_VELHA);
       const arquivo = join(raiz, 'resposta-nuvem.json');
-      writeFileSync(arquivo, respostaDoBanco("SELECT 'rpc|rpc_outra|x|0'", 'rpc|rpc_outra|x|0'), 'utf8');
+      writeFileSync(
+        arquivo,
+        respostaDoBanco(
+          { sonda: "SELECT 'rpc|rpc_outra|x|0'", detalhe: "SELECT 'n|rpc_outra|0|||'" },
+          { sonda: ['rpc|rpc_outra|x|0'], detalhe: ['n|rpc_outra|0|||'] },
+        ),
+        'utf8',
+      );
       const erros: string[] = [];
       const espiao = vi.spyOn(process.stderr, 'write').mockImplementation((t) => {
         erros.push(String(t));

@@ -1,0 +1,10 @@
+# Invariantes da FIAÇÃO do re-teste por TOKENS no pacote (scripts/pendencias-pacote.ts).
+# @src: scripts/pendencias-pacote.ts
+# @test: scripts/pendencias-pacote.test.ts
+#
+# O pacote é quem mede prod: se a sonda deixar de trazer o texto do `prosrc`, ou se o texto não chegar
+# ao gate, o re-teste não roda — e a variante cosmética vira INCERTA (exit 3) numa leva legítima.
+
+# CONTROLE+ : o texto da sonda não chega ao gate.
+PEGA | controle+: o pacote nao entrega o texto ao gate  | s/julgarPrecondicao\(alvos, leitura\.sonda, indirecoes, corpos, textosDaLeitura\(leitura\)\);/julgarPrecondicao(alvos, leitura.sonda, indirecoes, corpos, { porNome: new Map(), falhas: [] });/
+PEGA | a sonda local volta a ser so a de pre-condicao   | s/return medir\(montarSondaDeriva\(nomesSonda\)\);/return medir(consultasDeriva(nomesSonda).sonda);/
