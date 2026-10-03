@@ -29,33 +29,41 @@
  * `lerCarimboAnterior`, que confere a versão ANTES da forma e RECUSA com código, nunca por cast. Com
  * cast, um anterior de outro formato pulava a trava calado e a `primeiraVez` regredia para hoje
  * (docs/historico/carimbo-gravador-rele-por-porta.md). Anterior recusado: exit 2, carimbo intocado.
+ * E o anterior local não basta sozinho: o da `origin/main` (a cópia que o CI lê) é a REFERÊNCIA —
+ * apagar o arquivo não vira nascimento, e um local velho não regride a dívida (`combinarAnteriores`).
  */
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { readFileSync, writeFileSync, renameSync, existsSync } from 'node:fs';
+import { writeFileSync, renameSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 
 import {
   AUDITS,
   CARIMBO_PATH,
   RAIZ,
   SCHEMA_VERSION,
+  combinarAnteriores,
   conferirCluster,
   fingerprintAuditor,
   escolherResumo,
   fingerprintContrato,
   envDeTesteSetadas,
   idFinding,
+  lerArquivoDoCarimbo,
   lerCarimboAnterior,
+  lerReferenciaDaMain,
   montarAchados,
+  referenciaDoTexto,
   type Carimbo,
   type CarimboAnterior,
+  type ReferenciaDaMain,
   type ChaveAudit,
   type ResultadoAudit,
 } from '../scripts/lib/authz-carimbo';
 
 const PSQL_PADRAO = join(homedir(), '.config', 'afiacao', 'psql-ro');
+const CARIMBO_REL = relative(RAIZ, CARIMBO_PATH);
 
 function abortar(msg: string): never {
   console.error(`❌ ${msg}`);
@@ -77,20 +85,35 @@ const SEMENTE_PRIMEIRA_VEZ: Record<string, string> = {
 };
 
 /**
- * O carimbo ANTERIOR, pela porta — nunca por cast. Lido ANTES de tudo que toca prod: anterior
+ * O carimbo ANTERIOR local, pela porta — nunca por cast. Lido ANTES de tudo que toca prod: anterior
  * recusado significa que nada será gravado, então nem se sonda o alvo.
  *
- * 🧪 Costura de TESTE: `AUTHZ_CARIMBO_ANTERIOR_TEST_JSON` troca o arquivo pelo texto dela. Ela casa
- * `envDeTesteSetadas`, então `recusarEnvDeTeste()` — a guarda SEGUINTE — aborta o runner: a costura
- * nunca chega à sonda nem à escrita, por construção. É o que deixa o teste do BINÁRIO exercer esta
- * porta sem caminho até prod (scripts/authz-carimbo.test.ts).
+ * 🧪 Costuras de TESTE: `AUTHZ_CARIMBO_ANTERIOR_TEST_JSON` (o local) e `AUTHZ_CARIMBO_MAIN_TEST_JSON`
+ * (a referência) trocam o arquivo e o git pelo texto delas. As duas casam `envDeTesteSetadas`, então
+ * `recusarEnvDeTeste()` — a guarda SEGUINTE às leituras — aborta o runner: costura nunca chega à
+ * sonda nem à escrita, por construção. É o que deixa o teste do BINÁRIO exercer as portas sem
+ * caminho até prod (scripts/authz-carimbo.test.ts).
  */
 function lerAnteriorOuAbortar(): CarimboAnterior | null {
   const injetado = process.env.AUTHZ_CARIMBO_ANTERIOR_TEST_JSON;
-  const texto = injetado ? injetado : existsSync(CARIMBO_PATH) ? readFileSync(CARIMBO_PATH, 'utf8') : null;
-  const leitura = lerCarimboAnterior(texto);
+  const arquivo = injetado ? { ok: true as const, texto: injetado } : lerArquivoDoCarimbo(CARIMBO_PATH);
+  if (!arquivo.ok) abortar(`CARIMBO-ANTERIOR-RECUSADO ${arquivo.codigo} - ${arquivo.motivo}`);
+  const leitura = lerCarimboAnterior(arquivo.texto);
   if (!leitura.ok) abortar(`CARIMBO-ANTERIOR-RECUSADO ${leitura.codigo} - ${leitura.motivo}`);
   return leitura.anterior;
+}
+
+function gitReal(args: readonly string[]): string {
+  return execFileSync('git', [...args], { cwd: RAIZ, encoding: 'utf8', maxBuffer: 8 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
+}
+
+/** O carimbo da `origin/main` — a referência (ver `combinarAnteriores`): sem ele, apagar o arquivo
+ *  local pularia a trava, e um local velho regrediria a `primeiraVez` do que a main já viu. */
+function lerReferenciaOuAbortar(): ReferenciaDaMain {
+  const injetado = process.env.AUTHZ_CARIMBO_MAIN_TEST_JSON;
+  const leitura = injetado ? referenciaDoTexto(injetado) : lerReferenciaDaMain(gitReal, CARIMBO_REL);
+  if (!leitura.ok) abortar(`CARIMBO-ANTERIOR-RECUSADO ${leitura.codigo} - ${leitura.motivo}`);
+  return leitura.referencia;
 }
 
 function recusarEnvDeTeste(): void {
@@ -155,12 +178,14 @@ function rodarAudit(chave: ChaveAudit): Execucao {
 }
 
 function main(): void {
-  const anterior = lerAnteriorOuAbortar();
+  const combinados = combinarAnteriores(lerAnteriorOuAbortar(), lerReferenciaOuAbortar());
+  if (!combinados.ok) abortar(`CARIMBO-ANTERIOR-RECUSADO ${combinados.codigo} - ${combinados.motivo}`);
+  const { trava, heranca } = combinados.anteriores;
   recusarEnvDeTeste();
   const alvo = sondarAlvo();
   console.log(`🎯 alvo: ${alvo.usuario}@${alvo.servidor} · read-only=${alvo.somenteLeitura} · projeto ${alvo.projetoHash}`);
 
-  const outroCluster = conferirCluster(anterior, alvo.projetoHash);
+  const outroCluster = conferirCluster(trava?.carimbo ?? null, alvo.projetoHash, trava?.origem);
   if (outroCluster) abortar(`CARIMBO-ANTERIOR-RECUSADO ${outroCluster.codigo} - ${outroCluster.motivo}`);
 
   const agora = new Date().toISOString();
@@ -176,7 +201,7 @@ function main(): void {
     if (exit === 1 && achadosBrutos.length === 0) {
       abortar(`\`${AUDITS[chave].script}\` saiu 1 mas não emitiu linha \`❌\` — não sei o que carimbar. Saída: ${linhas.join(' | ').slice(0, 400)}`);
     }
-    const achados = montarAchados(chave, achadosBrutos, anterior, hoje, SEMENTE_PRIMEIRA_VEZ);
+    const achados = montarAchados(chave, achadosBrutos, heranca, hoje, SEMENTE_PRIMEIRA_VEZ);
     audits[chave] = {
       script: AUDITS[chave].script,
       exit,

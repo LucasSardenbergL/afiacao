@@ -46,7 +46,7 @@
  * escrever o comando. Declarar o não-medido impede o verde de mentir; não fecha o buraco.
  */
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { AUTHZ_FUNCOES_FECHADAS } from '../authz-funcoes-fechadas';
@@ -540,11 +540,13 @@ export interface RecusaDoAnterior {
     | 'CARIMBO_ANTERIOR_SCHEMA_INCOMPATIVEL'
     | 'CARIMBO_ANTERIOR_SEM_ALVO'
     | 'CARIMBO_ANTERIOR_MALFORMADO'
-    | 'CARIMBO_ANTERIOR_OUTRO_CLUSTER';
+    | 'CARIMBO_ANTERIOR_OUTRO_CLUSTER'
+    | 'CARIMBO_ANTERIOR_SEM_REFERENCIA';
   motivo: string;
 }
 
-/** O que sai de `lerCarimboAnterior`: a projeção (ou `null`, o nascimento), ou a recusa com o porquê. */
+/** O que sai de `lerCarimboAnterior`: a projeção (ou `null`, não há texto), ou a recusa com o porquê.
+ *  `null` NÃO é nascimento por si: quem decide é `combinarAnteriores`, com a referência da main. */
 export type LeituraDoAnterior = { ok: true; anterior: CarimboAnterior | null } | ({ ok: false } & RecusaDoAnterior);
 
 const ehObjeto = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -579,7 +581,8 @@ const RESTAURAR = 'restaure o carimbo da main (`git checkout origin/main -- db/a
  * `-i`, em `LC_ALL=C` e em `pt_BR.UTF-8`. Por isso ele nomeia o TIPO do que veio, nunca o valor.
  */
 export function lerCarimboAnterior(texto: string | null): LeituraDoAnterior {
-  // Ausente é o NASCIMENTO — o único caso sem trava, porque não há evidência a proteger.
+  // Sem texto não há anterior — e isso NÃO é, por si, nascimento: a evidência pode estar no git.
+  // Quem decide é `combinarAnteriores`, com a referência da origin/main (revisão de 2026-10-03).
   if (texto === null) return { ok: true, anterior: null };
   let doc: unknown;
   try {
@@ -671,34 +674,150 @@ export function lerCarimboAnterior(texto: string | null): LeituraDoAnterior {
  * A TRAVA de cluster: não sobrescrever a evidência de prod com a medição de outro banco. `null` = segue.
  *
  * Sem o curto-circuito antigo (`anterior.alvo?.projetoHash && …`), que lia "campo ausente" como "sem
- * trava": aqui o anterior vem da porta, que garante `projetoHash` não vazio — ou não vem (nascimento).
+ * trava": aqui o anterior vem da porta, que garante `projetoHash` não vazio. Quem é "o anterior" —
+ * o local, ou o da origin/main quando o local sumiu — decide `combinarAnteriores`; `origem` só nomeia.
  */
-export function conferirCluster(anterior: CarimboAnterior | null, projetoHashAtual: string): RecusaDoAnterior | null {
+export function conferirCluster(
+  anterior: CarimboAnterior | null,
+  projetoHashAtual: string,
+  origem = 'o carimbo anterior',
+): RecusaDoAnterior | null {
   if (anterior === null || anterior.projetoHash === projetoHashAtual) return null;
   return {
     codigo: 'CARIMBO_ANTERIOR_OUTRO_CLUSTER',
     motivo:
-      `o carimbo anterior foi medido no cluster ${ascii(anterior.projetoHash)} e esta sessao esta em ` +
-      `${ascii(projetoHashAtual)}: alvo diferente, o gravador nao sobrescreve a evidencia de prod.`,
+      `${origem} foi medido no cluster ${ascii(anterior.projetoHash)} e esta sessao esta em ` +
+      `${ascii(projetoHashAtual)}: alvo diferente, o gravador nao sobrescreve a evidencia de prod. Se o cluster ` +
+      `de prod mudou DE VERDADE (restore ou upgrade do projeto), troque alvo.projetoHash no carimbo local pelo ` +
+      `novo e grave de novo: a troca fica no diff do PR, revisavel.`,
   };
 }
 
 /**
+ * O carimbo da `origin/main` — a REFERÊNCIA do gravador (revisão adversarial de 2026-10-03).
+ *
+ * Reler só o arquivo LOCAL deixava dois buracos: (A) apagar o arquivo virava "nascimento" — sem trava
+ * e com a dívida zerada, embora a evidência siga no git; e o próprio conserto, por recusar mais, dava
+ * mais motivo para apagá-lo. (B) um anterior VELHO (conflito de merge resolvido com `--ours`, branch
+ * antiga) passava pela porta — a forma está certa, o frescor é que não — e a `primeiraVez` do que a
+ * main já tinha visto regredia. A main é a cópia autoritativa: é dela que o CI lê.
+ */
+export type ReferenciaDaMain =
+  | { estado: 'presente'; carimbo: CarimboAnterior }
+  | { estado: 'ausente' }
+  | { estado: 'nao-consultada'; motivo: string };
+
+export type LeituraDaReferencia = { ok: true; referencia: ReferenciaDaMain } | ({ ok: false } & RecusaDoAnterior);
+
+/** O texto do carimbo da main, pela MESMA porta do local. Recusado = recusa, com a origem no motivo:
+ *  uma main de versão mais nova que este código é a worktree desatualizada — e não se grava por cima. */
+export function referenciaDoTexto(texto: string): LeituraDaReferencia {
+  const l = lerCarimboAnterior(texto);
+  if (!l.ok) return { ok: false, codigo: l.codigo, motivo: `(o carimbo da origin/main) ${l.motivo}` };
+  // Inalcançável (texto não nulo nunca dá anterior nulo) — e, por isso mesmo, FECHADO: jamais `ausente`,
+  // que liberaria o nascimento.
+  if (l.anterior === null) return { ok: true, referencia: { estado: 'nao-consultada', motivo: 'porta devolveu anterior nulo para texto nao nulo' } };
+  return { ok: true, referencia: { estado: 'presente', carimbo: l.anterior } };
+}
+
+/**
+ * Lê a referência pelo git. `git` é injetado (o gravador passa o real; os testes, um falso).
+ *
+ * `ls-tree` distingue o que `cat-file -e` confunde: ref válida SEM o arquivo (saída vazia, rc 0) é
+ * `ausente`; ref inexistente ou git quebrado (lança) é `nao-consultada` — ausência de resposta não é
+ * ausência de carimbo.
+ */
+export function lerReferenciaDaMain(git: (args: readonly string[]) => string, rel: string): LeituraDaReferencia {
+  const naoConsultada = (passo: string, e: unknown): LeituraDaReferencia => ({
+    ok: true,
+    referencia: { estado: 'nao-consultada', motivo: `git ${passo} falhou: ${ascii(String((e as Error)?.message ?? e)).slice(0, 160)}` },
+  });
+  let lista: string;
+  try {
+    lista = git(['ls-tree', '--name-only', 'origin/main', '--', rel]);
+  } catch (e) {
+    return naoConsultada('ls-tree origin/main', e);
+  }
+  if (lista.trim() === '') return { ok: true, referencia: { estado: 'ausente' } };
+  let texto: string;
+  try {
+    texto = git(['show', `origin/main:${rel}`]);
+  } catch (e) {
+    return naoConsultada('show origin/main', e);
+  }
+  return referenciaDoTexto(texto);
+}
+
+/** Contra quem a trava compara, e de quem a dívida é herdada. */
+export interface Anteriores {
+  trava: { carimbo: CarimboAnterior; origem: string } | null;
+  heranca: readonly CarimboAnterior[];
+}
+
+/**
+ * O anterior LOCAL e o da MAIN, combinados. A regra, por caso:
+ *   · main não consultada                 → RECUSA: sem ela, a ausência não prova nascimento;
+ *   · local ausente, main ausente          → nascimento (o único caso sem trava);
+ *   · local ausente, main presente         → a trava compara com a MAIN (apagar o arquivo não a pula);
+ *   · local presente                       → a trava compara com o LOCAL (é ele que será sobrescrito,
+ *                                            e é nele que mora a saída consciente da troca de cluster);
+ *   · a herança vem dos DOIS: `montarAchados` fica com a `primeiraVez` mais antiga.
+ */
+export function combinarAnteriores(
+  local: CarimboAnterior | null,
+  main: ReferenciaDaMain,
+): { ok: true; anteriores: Anteriores } | ({ ok: false } & RecusaDoAnterior) {
+  if (main.estado === 'nao-consultada') {
+    return {
+      ok: false,
+      codigo: 'CARIMBO_ANTERIOR_SEM_REFERENCIA',
+      motivo:
+        `nao consegui ler o carimbo da origin/main (${ascii(main.motivo)}). Sem a referencia, a ausencia do ` +
+        `arquivo local nao prova nascimento e a heranca nao confere o que a main ja viu - rode ` +
+        `\`git fetch origin main\` e grave de novo.`,
+    };
+  }
+  const daMain = main.estado === 'presente' ? main.carimbo : null;
+  const trava = local !== null ? { carimbo: local, origem: 'o carimbo local' } : daMain !== null ? { carimbo: daMain, origem: 'o carimbo da origin/main' } : null;
+  return { ok: true, anteriores: { trava, heranca: [local, daMain].filter((a): a is CarimboAnterior => a !== null) } };
+}
+
+/**
  * Os achados de UM audit, com a `primeiraVez` herdada por `id`. Re-executar NUNCA reseta a idade —
- * senão a renovação lava a dívida. Ordem: o anterior, a semente (dívida de antes do carimbo existir),
- * hoje. Chave que a versão do anterior não tinha (audit novo no bump) nasce hoje: é a primeira
- * medição dela, não dívida lavada — a porta já conferiu que o anterior tem EXATAMENTE as chaves dele.
+ * senão a renovação lava a dívida. Ordem: a MAIS ANTIGA entre os anteriores (o local e o da main —
+ * um local velho não apaga o que a main já viu), a semente (dívida de antes do carimbo existir), hoje.
+ * Chave que nenhum anterior tem (audit novo no bump) nasce hoje: é a primeira medição dela, não dívida
+ * lavada — a porta já conferiu que cada anterior tem EXATAMENTE as chaves da versão dele.
+ * Mais antiga é o lado conservador: um achado que fechou e reabriu herda a data velha (dívida maior,
+ * nunca menor).
  */
 export function montarAchados(
   chave: ChaveAudit,
   linhas: string[],
-  anterior: CarimboAnterior | null,
+  anteriores: readonly CarimboAnterior[],
   hoje: string,
   semente: Readonly<Record<string, string>>,
 ): Achado[] {
   return linhas.map((linha) => {
     const id = idFinding(chave, linha);
-    const antes = anterior?.achados[chave]?.find((a) => a.id === id);
-    return { id, linha, primeiraVez: antes?.primeiraVez ?? semente[id] ?? hoje, ultimaVez: hoje };
+    // `AAAA-MM-DD` validado pela porta: a ordem lexicográfica é a cronológica.
+    const datas = anteriores.flatMap((a) => (a.achados[chave] ?? []).filter((x) => x.id === id).map((x) => x.primeiraVez));
+    const herdada = datas.length > 0 ? datas.reduce((m, d) => (d < m ? d : m)) : undefined;
+    return { id, linha, primeiraVez: herdada ?? semente[id] ?? hoje, ultimaVez: hoje };
   });
+}
+
+/**
+ * O texto do arquivo LOCAL, sem exceção solta: `null` = não existe; erro de leitura (EISDIR, EACCES,
+ * o arquivo sumindo entre a checagem e a leitura) é RECUSA — senão saía exit 1, fora do contrato
+ * 0 gravou · 2 não gravou que este módulo existe para manter.
+ */
+export function lerArquivoDoCarimbo(caminho: string): { ok: true; texto: string | null } | ({ ok: false } & RecusaDoAnterior) {
+  if (!existsSync(caminho)) return { ok: true, texto: null };
+  try {
+    return { ok: true, texto: readFileSync(caminho, 'utf8') };
+  } catch (e) {
+    const codigo = ascii(String((e as NodeJS.ErrnoException)?.code ?? 'erro'));
+    return { ok: false, codigo: 'CARIMBO_ANTERIOR_ILEGIVEL', motivo: `nao consegui ler o carimbo local (${codigo}) - ${RESTAURAR}.` };
+  }
 }
