@@ -158,7 +158,8 @@ export function useCustomerOrders(customerId: string | undefined) {
   });
 }
 
-/** Janela do "Faturamento 12m", em dias — a mesma régua de dias do tile "90d" (`customer_metrics_mv`). */
+/** Janela do "Faturamento 12m", em dias — a mesma régua do tile "90d" (`customer_metrics_mv`):
+ * `hoje − N ≤ order_date_kpi ≤ hoje`, com o teto em HOJE (um kpi no futuro não é faturamento passado). */
 const JANELA_12M_DIAS = 365;
 
 /** `total` é NOT NULL (default 0) em `sales_orders`. */
@@ -177,7 +178,8 @@ export function useCustomerFaturamento12m(customerId: string | undefined) {
     enabled: !!customerId,
     staleTime: 60_000,
     queryFn: async () => {
-      const desde = addDias(hojeSP(), -JANELA_12M_DIAS);
+      const hoje = hojeSP();
+      const desde = addDias(hoje, -JANELA_12M_DIAS);
       const linhas = await fetchAllPages<LinhaFaturamento>(
         (de, ate) =>
           supabase
@@ -187,6 +189,7 @@ export function useCustomerFaturamento12m(customerId: string | undefined) {
             .not('status', 'in', STATUS_NAO_VENDA_POSTGREST)
             .is('deleted_at', null)
             .gte('order_date_kpi', desde)
+            .lte('order_date_kpi', hoje)
             .order('id', { ascending: true })
             .range(de, ate) as unknown as PromiseLike<{ data: LinhaFaturamento[] | null; error: unknown }>,
         'sales_orders/c360-faturamento-12m',

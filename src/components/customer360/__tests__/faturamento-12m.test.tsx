@@ -17,7 +17,7 @@ function chain(table: string): unknown {
   const registro: Chamada = { table, metodos: [] };
   chamadas.push(registro);
   const c: Record<string, unknown> = {};
-  for (const m of ['select', 'eq', 'gte', 'not', 'is', 'order', 'range', 'limit', 'maybeSingle']) {
+  for (const m of ['select', 'eq', 'gte', 'lte', 'not', 'is', 'order', 'range', 'limit', 'maybeSingle']) {
     c[m] = (...args: unknown[]) => {
       registro.metodos.push([m, args]);
       return c;
@@ -46,7 +46,7 @@ describe('useCustomerFaturamento12m', () => {
     chamadas = [];
   });
 
-  it('lê o universo de VENDA na janela de 365 dias por order_date_kpi, paginado com ordem estável', async () => {
+  it('lê o universo de VENDA na janela [hoje−365, hoje] por order_date_kpi, paginado com ordem estável', async () => {
     linhas = [{ total: 1000 }, { total: 500.5 }];
     const { result } = montar(() => useCustomerFaturamento12m('c1'));
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
@@ -56,6 +56,8 @@ describe('useCustomerFaturamento12m', () => {
     expect(m).toContainEqual(['not', ['status', 'in', STATUS_NAO_VENDA_POSTGREST]]);
     expect(m).toContainEqual(['is', ['deleted_at', null]]);
     expect(m).toContainEqual(['gte', ['order_date_kpi', addDias(hojeSP(), -365)]]);
+    // teto em HOJE, como o tile 90d da MV (`d <= hoje SP`): kpi no futuro não é faturamento passado
+    expect(m).toContainEqual(['lte', ['order_date_kpi', hojeSP()]]);
     expect(m).toContainEqual(['order', ['id', { ascending: true }]]);
     expect(m.map(([nome]) => nome)).toContain('range');
     // e NÃO o corte antigo: nada de limit sobre a janela
