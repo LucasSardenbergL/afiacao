@@ -116,10 +116,12 @@ devolveria o próprio seed). As regex respondem 110/393; uma delas tem falso pos
 
 ## 5. Resultados da rodada real
 
-> 🚧 **Pendente da `TYPESAFE_API_KEY`** (criada só em `console.typesafe.ai`; exportada no shell). As tabelas
-> abaixo são geradas por `scripts/jev/relatorio.ts` — acerto e cobertura nos limiares 0,80/0,90/0,95 (prob e
-> `confidence`), ECE + confiabilidade, limiar dev → teste, ordem e repetição, resíduo, latência p50/p95 e
-> custo — e entram aqui sem edição manual.
+> ⏭️ **Fica para um PR de continuação.** Decisão do founder em 2026-10-03: mergear o instrumento e o
+> diagnóstico já, porque o veredito acima não depende da rodada, e rodar quando existir a `TYPESAFE_API_KEY`
+> (criada só em `console.typesafe.ai`, exportada no shell — nunca no chat). Nesse PR, as tabelas geradas por
+> `scripts/jev/relatorio.ts` — acerto e cobertura nos limiares 0,80/0,90/0,95 (prob e `confidence`), ECE +
+> confiabilidade, limiar dev → teste, ordem e repetição, resíduo, latência p50/p95 e custo — entram aqui sem
+> edição manual, e o veredito de TECNOLOGIA (vale continuar com o Jev em pt-BR?) é escrito em cima delas.
 
 ## 6. Parecer do Codex — a revisão independente que faltava
 
@@ -160,7 +162,7 @@ Custo estimado da rodada completa: 470 itens × 3 chamadas ≈ 1,2 M tokens de e
 
 ## 8. Pendências
 
-- 🔑 `TYPESAFE_API_KEY` → rodada real → seção 5 preenchida.
+- 🔑 `TYPESAFE_API_KEY` → rodada real (comandos da seção 7, a partir de um export novo) → seção 5 preenchida num PR de continuação.
 - 🧭 Adjudicação cega das 32 fichas endereçáveis (formulário entregue na sessão; o mapa de respostas vive em
   `scripts/jev/.dados/adjudicacao-mapa.json`, fora do git) — transforma a prata em ouro e dá gabarito ao
   resíduo.
