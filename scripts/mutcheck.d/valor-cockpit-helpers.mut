@@ -14,7 +14,7 @@ PEGA | gate evpConhecivel (remove o ! da negação)        | s/= !input\.hurdle_
 # falsificações provadas à mão: "conta tudo" (guards invertidos) e "allowlist" (remove a negação).
 PEGA | pedidoContaNoFaturamento: guard soft-delete (!=->==)  | s/if \(deletedAt != null\) return false/if (deletedAt == null) return false/
 PEGA | pedidoContaNoFaturamento: status NULL exclui (==->!=) | s/if \(status == null\) return false/if (status != null) return false/
-PEGA | pedidoContaNoFaturamento: blocklist→allowlist (tira !)| s/return !STATUS_NAO_FATURAVEL\.includes/return STATUS_NAO_FATURAVEL.includes/
+PEGA | pedidoContaNoFaturamento: blocklist→allowlist (tira !)| s/return !STATUS_NAO_VENDA\.includes/return STATUS_NAO_VENDA.includes/
 # Omissão honesta do EVP otimista (#1024, sucede #961): teto>0 omitido (evp=null); teto≤0 mantido SE a perna
 # AUSENTE alocaria ≥0 (numerador receita/qtd≥0 E denominador rc/qs>0); agregado decomposto que não finge
 # total. Institucionaliza as falsificações provadas (F1 sinal, F2 anti-piso, F3 denominador) + a agregação (Codex 2026-06-23).
