@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "medidoEm": "2026-10-03T12:50:10.008Z",
-  "sourceHead": "f830b8c8a3e65968973e1e7fea55689921700463",
+  "medidoEm": "2026-10-03T12:57:32.772Z",
+  "sourceHead": "20f78abcd6a45fd768ddab9ac0d8776e3af2c19c",
   "dispensados": [
     {
       "gate": "authz:carimbo",
@@ -163,12 +163,12 @@
     {
       "gate": "evals:deploy-verify",
       "verde": true,
-      "ms": 109703
+      "ms": 47483
     },
     {
       "gate": "evals:deploy-verify:falsificacao",
       "verde": true,
-      "ms": 402647
+      "ms": 161510
     },
     {
       "gate": "exclusividade",
@@ -2781,6 +2781,22 @@
           "fingerprint": "ec81d1125b24e47b",
           "fonteResolvida": true,
           "invocacao": "bun run edges:typecheck"
+        },
+        {
+          "gate": "evals:deploy-verify",
+          "reprovou": false,
+          "ms": 44973,
+          "fingerprint": "93d4c88613ce45e0",
+          "fonteResolvida": true,
+          "invocacao": "bun run evals:deploy-verify"
+        },
+        {
+          "gate": "evals:deploy-verify:falsificacao",
+          "reprovou": false,
+          "ms": 161855,
+          "fingerprint": "c75731bf836eba0e",
+          "fonteResolvida": true,
+          "invocacao": "bun run evals:deploy-verify:falsificacao"
         },
         {
           "gate": "exclusividade",
