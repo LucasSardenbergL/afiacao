@@ -1,5 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { STATUS_NAO_VENDA_POSTGREST } from '@/lib/farmer/universo-pedidos';
+import { fetchAllPages } from '@/lib/postgrest';
+import { addDias, hojeSP } from '@/lib/time/sp-day';
 import { canalToKind, canalToLabel, canalToTone, type CanalInteracao } from '@/lib/carteira/interacoes';
 
 export function useCustomerCore(customerId: string | undefined) {
@@ -41,11 +44,13 @@ export function useCustomerMetrics(customerId: string | undefined) {
     enabled: !!customerId,
     staleTime: 60_000,
     queryFn: async () => {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('customer_metrics_mv')
         .select('faturamento_90d, faturamento_prev_90d, ticket_medio_90d, pedidos_90d, dias_desde_ultima_compra, intervalo_medio_dias, ultima_compra_data, is_cold_start')
         .eq('customer_user_id', customerId!)
         .maybeSingle();
+      // Falha LANÇA: o erro descartado virava `data` null e a faixa mostrava "R$ 0" nos tiles de 90d.
+      if (error) throw error;
       return data;
     },
   });
@@ -130,20 +135,69 @@ export function useCustomerPreferredItems(customerId: string | undefined) {
   });
 }
 
-/** Pedidos pra computar faturamento lifetime + 12m (cliente médio: poucos pedidos, OK no client). */
+/**
+ * "Pedidos recentes" — FEED: todo status de propósito (o card pinta o cancelado de vermelho), sem o
+ * pedido apagado. NÃO é fonte de faturamento: o número vem de `useCustomerFaturamento12m`.
+ */
 export function useCustomerOrders(customerId: string | undefined) {
   return useQuery({
     queryKey: ['c360-orders', customerId],
     enabled: !!customerId,
     staleTime: 60_000,
     queryFn: async () => {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('sales_orders')
         .select('id, total, created_at, status, omie_numero_pedido, account')
         .eq('customer_user_id', customerId!)
+        .is('deleted_at', null)
         .order('created_at', { ascending: false })
         .limit(200);
+      if (error) throw error;
       return data ?? [];
+    },
+  });
+}
+
+/** Janela do "Faturamento 12m", em dias — a mesma régua do tile "90d" (`customer_metrics_mv`):
+ * `hoje − N ≤ order_date_kpi ≤ hoje`, com o teto em HOJE (um kpi no futuro não é faturamento passado). */
+const JANELA_12M_DIAS = 365;
+
+/** `total` é NOT NULL (default 0) em `sales_orders`. */
+type LinhaFaturamento = { total: number };
+
+/**
+ * Faturamento dos últimos 12 meses no universo de VENDA da autoridade, datado por `order_date_kpi` —
+ * o mesmo universo e o mesmo eixo do tile "90d" ao lado. Antes ele saía da lista de pedidos recentes:
+ * todo status (R$ 34,8 mil a mais em 19 clientes) e um `limit(200)` por `created_at` que escondia
+ * 55–72% do faturamento dos 3 maiores clientes (2026-10-01). Paginado SEM teto; a falha LANÇA — a
+ * tela mostra "indisponível", nunca R$ 0.
+ */
+export function useCustomerFaturamento12m(customerId: string | undefined) {
+  return useQuery({
+    queryKey: ['c360-faturamento-12m', customerId],
+    enabled: !!customerId,
+    staleTime: 60_000,
+    queryFn: async () => {
+      const hoje = hojeSP();
+      const desde = addDias(hoje, -JANELA_12M_DIAS);
+      const linhas = await fetchAllPages<LinhaFaturamento>(
+        (de, ate) =>
+          supabase
+            .from('sales_orders')
+            .select('total')
+            .eq('customer_user_id', customerId!)
+            .not('status', 'in', STATUS_NAO_VENDA_POSTGREST)
+            .is('deleted_at', null)
+            .gte('order_date_kpi', desde)
+            .lte('order_date_kpi', hoje)
+            .order('id', { ascending: true })
+            .range(de, ate) as unknown as PromiseLike<{ data: LinhaFaturamento[] | null; error: unknown }>,
+        'sales_orders/c360-faturamento-12m',
+      );
+      return {
+        total: linhas.reduce((s, l) => s + Number(l.total), 0),
+        pedidos: linhas.length,
+      };
     },
   });
 }

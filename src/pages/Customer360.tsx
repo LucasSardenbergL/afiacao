@@ -1,6 +1,5 @@
 import { useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { parseISO, subMonths } from 'date-fns';
 import { AlertCircle } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
@@ -18,10 +17,12 @@ import {
   useCustomerScore,
   useCustomerPreferredItems,
   useCustomerOrders,
+  useCustomerFaturamento12m,
   useCustomerInteractions,
 } from '@/components/customer360/hooks';
 import { CustomerHero } from '@/components/customer360/CustomerHero';
 import { CustomerKpiStrip } from '@/components/customer360/CustomerKpiStrip';
+import type { RevenueDerived } from '@/components/customer360/viewTypes';
 import { IdentityColumn } from '@/components/customer360/IdentityColumn';
 import { ActivityColumn } from '@/components/customer360/ActivityColumn';
 import { VozTarefaDialog } from '@/components/tarefas/VozTarefaDialog';
@@ -38,6 +39,7 @@ export default function Customer360() {
   const score = useCustomerScore(customerId, user?.id);
   const preferred = useCustomerPreferredItems(customerId);
   const orders = useCustomerOrders(customerId);
+  const faturamento12m = useCustomerFaturamento12m(customerId);
   const interactions = useCustomerInteractions(customerId);
 
   // Régua de Preço (readonly) nos itens preferidos — só Oben, só staff, atrás de flag (off).
@@ -58,18 +60,14 @@ export default function Customer360() {
   // empresa="oben" da tela (Oben-cêntrica); derivar da view fresca seria ambíguo p/ cliente multi-conta
   // (precisão>recall: não fabricar a conta). Ver design §4 #9.
 
-  // Lifetime + 12m derivados dos pedidos
-  const revenueDerived = useMemo(() => {
-    const list = orders.data ?? [];
-    const lifetime = list.reduce((s, o) => s + Number(o.total ?? 0), 0);
-    const cutoff = subMonths(new Date(), 12);
-    const last12 = list
-      .filter((o) => parseISO(o.created_at) >= cutoff)
-      .reduce((s, o) => s + Number(o.total ?? 0), 0);
-    const orderCount12m = list.filter((o) => parseISO(o.created_at) >= cutoff).length;
-    const lastOrder = list[0];
-    return { lifetime, last12, orderCount12m, lastOrderAt: lastOrder?.created_at ?? null };
-  }, [orders.data]);
+  // Faturamento 12m: query PRÓPRIA no universo de venda (ver useCustomerFaturamento12m). A lista
+  // `orders` é só o feed "Pedidos recentes" — todo status, de propósito — e não é fonte de número.
+  const revenueDerived: RevenueDerived = {
+    last12: faturamento12m.data?.total ?? null,
+    orderCount12m: faturamento12m.data?.pedidos ?? null,
+    faturamentoIndisponivel: faturamento12m.isError && !faturamento12m.data,
+    metricasIndisponiveis: metrics.isError && !metrics.data,
+  };
 
   if (core.isLoading || (core.isFetching && !core.data)) {
     return <PageSkeleton variant="detail" />;

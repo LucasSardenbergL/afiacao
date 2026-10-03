@@ -69,10 +69,10 @@ export const REGISTRO: readonly EntradaRegistro[] = [
   { arquivo: 'src/hooks/dashboard/useBriefDeltas.ts', forma: 'select·gte(created_at)·is(deleted_at)', categoria: 'proposito', motivo: 'conta os pedidos novos que o feed (/sales) mostra: todo status, sem o apagado' },
   { arquivo: 'src/components/adminCustomers/useAdminCustomers.ts', forma: 'select·eq(customer_user_id)·is(deleted_at)·order(created_at)·limit', categoria: 'proposito', motivo: 'feed de pedidos do cliente no admin, com badge de status' },
   { arquivo: 'src/pages/SalesQuotes.tsx', forma: 'select·eq(status)·is(deleted_at)·order(created_at)', categoria: 'proposito', motivo: 'a lista de ORÇAMENTOS (`eq(status,orcamento)`): o complemento do universo, de propósito' },
+  { arquivo: 'src/components/customer360/hooks.ts', forma: 'select·eq(customer_user_id)·is(deleted_at)·order(created_at)·limit', categoria: 'proposito', motivo: '"Pedidos recentes" do Customer 360: feed com badge de status (o faturamento sai de useCustomerFaturamento12m, canônico)' },
   // ── dívida (2026-10-01) — cada PR de domínio quita as suas ──────────────────────────────────
   { arquivo: 'src/lib/dashboard/fetch-pedidos-mtd.ts', forma: 'select·is(deleted_at)·gte(order_date_kpi)·lt(order_date_kpi)·order(id)·range·eq(account)', categoria: 'divida', dominio: 'dashboard', motivo: 'receita MTD e ranking: universo de team-kpis (NOT IN cancelado,rascunho) aplicado em memória' },
   { arquivo: 'src/hooks/dashboard/useVendasZone.ts', forma: 'select·is(deleted_at)·gte(order_date_kpi)·lt(order_date_kpi)', categoria: 'divida', dominio: 'dashboard', motivo: 'faturado hoje/ontem: mesmo isPedidoValido; erro engolido vira R$ 0' },
-  { arquivo: 'src/components/customer360/hooks.ts', forma: 'select·eq(customer_user_id)·order(created_at)·limit', categoria: 'divida', dominio: 'customer360', motivo: 'faturamento 12m sem status nem deleted_at, e o limit(200) esconde 55–72% nos 3 maiores clientes' },
   { arquivo: 'src/queries/usePropostaPreview.ts', forma: 'select·eq(customer_user_id)·gte(created_at)', categoria: 'divida', dominio: 'proposta', motivo: 'cesta da proposta: só cancelado fora (STATUS_CANCELAMENTO em caixa alta), sem deleted_at' },
   { arquivo: 'src/hooks/useHistoricoCompras.ts', forma: 'select·eq(customer_user_id)·is(deleted_at)·order(order_date_kpi)·limit', categoria: 'divida', dominio: 'ligacao', motivo: 'preço praticado: filtra status DEPOIS do limit(50) — 11 clientes perdem pedido válido' },
   { arquivo: 'src/hooks/useMunicaoLigacao.ts', forma: 'select·eq(customer_user_id)·is(deleted_at)·order(created_at)·limit', categoria: 'divida', dominio: 'ligacao', motivo: 'munição: filtra status DEPOIS do limit(16)' },
@@ -84,7 +84,7 @@ export const REGISTRO: readonly EntradaRegistro[] = [
  * Teto da dívida: IGUAL ao número de entradas `divida` (o G4 exige a igualdade). Só desce — quem
  * quita uma entrada baixa o teto no mesmo diff; subir é reabrir a classe, e o diff é a conversa.
  */
-export const TETO_DIVIDA = 8;
+export const TETO_DIVIDA = 7;
 
 interface ConstanteDivida {
   arquivo: string;
