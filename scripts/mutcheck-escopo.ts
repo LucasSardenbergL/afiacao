@@ -443,9 +443,15 @@ export function lerParte(texto: string | undefined): Parte {
   return { i: Number(m[1]), n: Number(m[2]) };
 }
 
-/** `--partes '[1,2,3]'` (o vetor da matriz) → 3. Ilegível lança. */
+/** `--partes '[1,2,3]'` (o vetor da matriz) → 3. Ilegível lança — sempre com a marca do guard,
+ *  inclusive quando é o `JSON.parse` que falha (ausente, não-JSON), para o log nomear a flag. */
 export function contarPartes(texto: string | undefined): number {
-  const v: unknown = JSON.parse(texto ?? '');
+  let v: unknown;
+  try {
+    v = JSON.parse(texto ?? '');
+  } catch (e) {
+    throw new Error(`--partes ilegível: '${texto}' (${mensagemDeErro(e) ?? 'JSON inválido'})`);
+  }
   if (!Array.isArray(v) || v.length === 0) throw new Error(`--partes ilegível: '${texto}'`);
   return v.length;
 }

@@ -313,10 +313,11 @@ describe('leitura do CLI', () => {
     expect(() => lerParte('2-3')).toThrow(/malformado/);
   });
 
-  it('contarPartes: o vetor da matriz; vazio ou ilegível lança', () => {
+  it('contarPartes: o vetor da matriz; vazio, ausente ou não-JSON lança o erro do PRÓPRIO guard', () => {
     expect(contarPartes('[1,2,3]')).toBe(3);
-    expect(() => contarPartes('[]')).toThrow();
-    expect(() => contarPartes(undefined)).toThrow();
+    expect(() => contarPartes('[]')).toThrow(/--partes ilegível: '\[\]'/);
+    expect(() => contarPartes(undefined)).toThrow(/--partes ilegível: 'undefined'/);
+    expect(() => contarPartes('x')).toThrow(/--partes ilegível: 'x'/);
   });
 
   it('lerResumos: lê parte-<k>.json e trata JSON ilegível como ausente', () => {
