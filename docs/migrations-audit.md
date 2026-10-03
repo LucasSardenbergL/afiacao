@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **579** custom migrations totais
-- **1907** objetos esperados (criados por estas migrations)
+- **580** custom migrations totais
+- **1915** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 640
+  - `function`: 643
   - `rls_policy`: 462
-  - `index`: 262
+  - `index`: 264
   - `cron_job`: 174
   - `table`: 166
   - `view`: 107
-  - `trigger`: 92
+  - `trigger`: 95
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -4758,6 +4758,19 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20261001100000_sales_orders_colunas_whatsapp_select.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20261001100001_sales_orders_gemeo_importado_contagem_unica.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.sales_orders_gemeo_app_derivar` | — |
+| `function` | `public.sales_orders_gemeo_importada_antes` | — |
+| `function` | `public.sales_orders_gemeo_importada_depois` | — |
+| `index` | `public.idx_sales_orders_app_pedido_omie` | `sales_orders` |
+| `index` | `public.uniq_sales_orders_kpi_por_pedido_omie` | `sales_orders` |
+| `trigger` | `public.trg_sales_orders_gemeo_app` | `sales_orders` |
+| `trigger` | `public.trg_sales_orders_gemeo_importada_antes` | `sales_orders` |
+| `trigger` | `public.trg_sales_orders_gemeo_importada_depois` | `sales_orders` |
 
 ## Próximos passos por status
 
