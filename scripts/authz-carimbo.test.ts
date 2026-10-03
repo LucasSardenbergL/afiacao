@@ -1,6 +1,10 @@
-import { describe, it, expect } from 'vitest';
-import { existsSync, readFileSync } from 'node:fs';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { spawn } from 'node:child_process';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+
+import { removerComentarios } from '@/lib/gates/limpeza-fonte';
 
 import { AUTHZ_MANIFEST } from './authz-manifest';
 import { AUTHZ_TABELAS_FECHADAS } from './authz-tabelas-fechadas';
@@ -16,18 +20,27 @@ import {
   AVISO_DIAS,
   AUDITS,
   CARIMBO_PATH,
+  CHAVES_RELIDAS_POR_VERSAO,
   SCHEMA_VERSION,
   VENCIDO_DIAS,
   RAIZ,
   avaliarCarimbo,
   escolherResumo,
   canonicalizar,
+  combinarAnteriores,
+  conferirCluster,
   fingerprintContrato,
   fingerprintAuditor,
   dadoDoContrato,
   envDeTesteSetadas,
   idFinding,
+  lerArquivoDoCarimbo,
+  lerCarimboAnterior,
+  lerReferenciaDaMain,
+  montarAchados,
+  referenciaDoTexto,
   type Carimbo,
+  type CarimboAnterior,
   type ChaveAudit,
 } from './lib/authz-carimbo';
 
@@ -65,6 +78,20 @@ function carimboBom(medidoEm: string, over: Partial<Record<ChaveAudit, { exit: n
 const AGORA = new Date('2026-08-26T00:00:00.000Z');
 const diasAtras = (d: number) => new Date(AGORA.getTime() - d * 86_400_000).toISOString();
 const codigos = (v: { codigo: string }[]) => v.map((x) => x.codigo);
+
+/** As envs que os arquivos de AUDITOR de `AUDITS` leem — medidas na fonte, sem comentários. */
+function envsLidasPelosAuditores(): string[] {
+  const nomes = new Set<string>();
+  for (const k of CHAVES) {
+    for (const rel of AUDITS[k].auditorFiles.filter((f) => f.endsWith('.ts'))) {
+      const fonte = removerComentarios(readFileSync(join(RAIZ, rel), 'utf8'));
+      for (const m of fonte.matchAll(/process\.env(?:\.([A-Z0-9_]+)|\[\s*['"]([A-Z0-9_]+)['"]\s*\])/g)) {
+        nomes.add(m[1] ?? m[2]);
+      }
+    }
+  }
+  return [...nomes].sort();
+}
 
 // ══════════════════════════════════════════════════════════════════════════════════════════════
 // canonicalizar — o serializador é a fundação do fingerprint. Se ele for cego, TODO o resto é
@@ -171,6 +198,16 @@ describe('idFinding — estabilidade da dívida', () => {
   it('cai para a linha inteira quando a forma não parseia (fail-safe, sem colisão)', () => {
     expect(idFinding('grants', 'sem forma nenhuma A')).not.toBe(idFinding('grants', 'sem forma nenhuma B'));
   });
+
+  // DOURADO e não-circular: o único achado já gravado num carimbo COMMITADO (f1154aa75, schema 2,
+  // 2026-09-05), com o `id` que o gravador DAQUELA época escreveu. Se o algoritmo mudar, todo `id`
+  // commitado deixa de casar e a próxima gravação regride TODA `primeiraVez` para hoje — sem mudar
+  // forma nem versão, invisível à porta de releitura. Mudar `idFinding` exige migrar os ids junto.
+  it('DOURADO: reproduz o id que o gravador escreveu num carimbo commitado (a herança depende disso)', () => {
+    const linha =
+      '❌ public.sayerlack_aplicar_custo_portal — [FUNCAO_AUSENTE_EM_PROD] public.sayerlack_aplicar_custo_portal está na allowlist e NÃO existe no banco — foi removida, renomeada, ou a allowlist ficou obsoleta.';
+    expect(idFinding('funcoes', linha)).toBe('ef43258a5a7946e8');
+  });
 });
 
 // ══════════════════════════════════════════════════════════════════════════════════════════════
@@ -272,6 +309,17 @@ describe('db/authz-carimbo-prod.json — o artefato commitado', () => {
       expect(c.audits[k].contratoFingerprint).toMatch(/^[0-9a-f]{64}$/);
       expect(c.audits[k].auditorFingerprint).toMatch(/^[0-9a-f]{64}$/);
     }
+  });
+
+  // A próxima renovação relê ESTE arquivo: se a porta o recusasse, o founder descobriria só ao gravar.
+  it('o GRAVADOR o relê pela porta, e a projeção bate com o arquivo (alvo e toda primeiraVez)', () => {
+    const texto = readFileSync(CARIMBO_PATH, 'utf8');
+    const cru = JSON.parse(texto) as Carimbo;
+    expect(relido(texto)).toEqual({
+      schemaVersion: cru.schemaVersion,
+      projetoHash: cru.alvo.projetoHash,
+      achados: Object.fromEntries(CHAVES.map((k) => [k, cru.audits[k].achados.map((a) => ({ id: a.id, primeiraVez: a.primeiraVez }))])),
+    });
   });
 
   it('todo achado registrado tem primeiraVez ≤ ultimaVez (a dívida não pode nascer do futuro)', () => {
@@ -542,9 +590,21 @@ describe('envDeTesteSetadas — a guarda que a lista literal já tinha deixado p
     expect(envDeTesteSetadas({ AUTHZ_QUALQUER_COISA_TEST_JSON: '{}' })).toEqual(['AUTHZ_QUALQUER_COISA_TEST_JSON']);
   });
 
-  it('TODO audit de AUDITS teria sua env de teste canônica recusada', () => {
-    for (const k of CHAVES) {
-      const nome = `AUTHZ_${k.replace(/([a-z])([A-Z])/g, '$1_$2').toUpperCase()}_TEST_JSON`;
+  it('pega a env do `claudeRo`, que NÃO tem o prefixo AUTHZ_ (o furo de 2026-10-01)', () => {
+    expect(envDeTesteSetadas({ CLAUDE_RO_BASELINE_TEST_JSON: '{}' })).toEqual(['CLAUDE_RO_BASELINE_TEST_JSON']);
+  });
+
+  // 🔴 O teste que estava aqui calculava o nome "canônico" de cada chave (`AUTHZ_CLAUDE_RO_TEST_JSON`) e
+  // provava que ELE era recusado — um nome que auditor nenhum lê. O do `claudeRo` é
+  // `CLAUDE_RO_BASELINE_TEST_JSON`, fora do prefixo `AUTHZ_`: o runner o deixava passar e carimbaria a
+  // baseline de TESTE como se fosse prod, com este teste verde. Os nomes agora saem da FONTE do auditor.
+  it('TODA env que um auditor de AUDITS lê (medida na fonte) é recusada — exceto PSQL_RO, que tem guarda própria', () => {
+    const lidas = envsLidasPelosAuditores();
+    // SENTINELA contra cegueira: um scan que parasse de casar devolveria [] e aprovaria tudo.
+    expect(lidas).toContain('CLAUDE_RO_BASELINE_TEST_JSON');
+    expect(lidas).toContain('AUTHZ_GRANTS_TEST_JSON');
+    expect(lidas).toContain('PSQL_RO');
+    for (const nome of lidas.filter((n) => n !== 'PSQL_RO')) {
       expect(envDeTesteSetadas({ [nome]: '{}' }), nome).toEqual([nome]);
     }
   });
@@ -580,5 +640,480 @@ describe('a contagem de fatias NÃO pode voltar a ser escrita à mão', () => {
     const doc = readFileSync(join(RAIZ, 'docs', 'agent', 'database.md'), 'utf8');
     expect(doc).toMatch(/FATIAS CURADAS enumeradas em `AUDITS`/);
     expect(doc).not.toMatch(/atesta (TR[ÊE]S|QUATRO|CINCO) FATIAS/i);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+// A RELEITURA do carimbo ANTERIOR pelo gravador (2026-10-01). O gravador relia o anterior com
+// `JSON.parse(...) as Carimbo` e usava dois campos dele: `alvo.projetoHash` (a TRAVA de cluster) e
+// `audits[chave].achados[].primeiraVez` (a idade da dívida). Num carimbo de outro formato — ou com o
+// campo fora do lugar — a trava era PULADA calada (`anterior.alvo?.projetoHash && …`) e a
+// `primeiraVez` regredia para hoje. Narrativa: docs/historico/carimbo-gravador-rele-por-porta.md.
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+
+/**
+ * A forma REAL da versão imediatamente anterior, escrita à mão DE PROPÓSITO: derivá-la da tabela que
+ * está sob teste tornaria o teste circular. Medida nas 24 versões v2 commitadas do carimbo. No bump,
+ * ela passa a ser a forma da versão que acabou de deixar de ser a de hoje (a janela abaixo cobra).
+ */
+const ANTERIOR_A_DE_HOJE: { versao: number; chaves: readonly string[] } = {
+  versao: 2,
+  chaves: ['audit', 'claudeRo', 'funcoes', 'grants', 'rls'],
+};
+
+/** Um carimbo em `versao` com exatamente `chaves` em `audits` — a forma que o gravador daquela versão grava. */
+function carimboNaForma(versao: number, chaves: readonly string[], achados: Record<string, unknown[]> = {}): Record<string, unknown> {
+  const audits: Record<string, unknown> = {};
+  for (const k of chaves) {
+    const lista = achados[k] ?? [];
+    audits[k] = { script: `s-${k}`, exit: lista.length ? 1 : 0, resumo: 'ok', denominador: null, contratoFingerprint: `ct-${k}`, auditorFingerprint: `au-${k}`, achados: lista };
+  }
+  return {
+    schemaVersion: versao,
+    medidoEm: diasAtras(1),
+    sourceHead: 'deadbeef',
+    alvo: { usuario: 'claude_ro', servidor: 'PostgreSQL 17.6', somenteLeitura: true, projetoHash: 'abc' },
+    audits,
+  };
+}
+
+const LINHA_GRANTS = '❌ [DRIFT_PROD] public.sales_orders: anon tem INSERT,DELETE fora do permitido';
+const achadoAntigo = (chave: ChaveAudit, linha: string, primeiraVez: string) => ({ id: idFinding(chave, linha), linha, primeiraVez, ultimaVez: '2026-09-30' });
+/** O carimbo de HOJE com um achado vivo em `grants` — a dívida que a releitura não pode lavar. */
+const comDivida = (primeiraVez = '2026-08-13') => carimboBom(diasAtras(1), { grants: { exit: 1, achados: [achadoAntigo('grants', LINHA_GRANTS, primeiraVez)] } });
+const comoDoc = (c: unknown) => structuredClone(c) as Record<string, unknown>;
+const sem = (doc: Record<string, unknown>, campo: string) => Object.fromEntries(Object.entries(doc).filter(([k]) => k !== campo));
+/** O carimbo de hoje com `audits` mexido por `mut` — para as formas inválidas no fundo. */
+function comAudits(mut: (audits: Record<string, Record<string, unknown>>) => void): string {
+  const d = structuredClone(comDivida()) as unknown as { audits: Record<string, Record<string, unknown>> };
+  mut(d.audits);
+  return JSON.stringify(d);
+}
+
+/** A projeção relida, ou LANÇA com o código da recusa — nenhum `toEqual` de aceitação passa por uma recusa. */
+function relido(texto: string | null): CarimboAnterior | null {
+  const l = lerCarimboAnterior(texto);
+  if (!l.ok) throw new Error(`RECUSOU ${l.codigo}: ${l.motivo}`);
+  return l.anterior;
+}
+/** Como `relido`, mas exige o anterior: texto não nulo nunca dá `null`. */
+function lido(texto: string): CarimboAnterior {
+  const a = relido(texto);
+  if (a === null) throw new Error('a porta devolveu null para texto nao nulo');
+  return a;
+}
+/** `{codigo, motivo}` da recusa, ou `ACEITOU` — nenhuma asserção de recusa casa isso. */
+function recusa(texto: string | null): { codigo: string; motivo: string } {
+  const l = lerCarimboAnterior(texto);
+  return l.ok ? { codigo: 'ACEITOU', motivo: '' } : { codigo: l.codigo, motivo: l.motivo };
+}
+
+describe('lerCarimboAnterior — o gravador relê o anterior por uma porta que confere versão e forma', () => {
+  // O CONTROLE, na mesma execução das recusas: uma porta que recusasse TUDO aprovaria todas elas.
+  it('CONTROLE: o carimbo de HOJE é relido, e a projeção é a do arquivo (alvo + toda primeiraVez)', () => {
+    expect(relido(`${JSON.stringify(comDivida(), null, 2)}\n`)).toEqual({
+      schemaVersion: SCHEMA_VERSION,
+      projetoHash: 'abc',
+      achados: Object.fromEntries(
+        CHAVES.map((k) => [k, k === 'grants' ? [{ id: idFinding('grants', LINHA_GRANTS), primeiraVez: '2026-08-13' }] : []]),
+      ),
+    });
+  });
+
+  it('a versão IMEDIATAMENTE ANTERIOR é relida — é a migração legítima do PR que faz o bump', () => {
+    const doc = carimboNaForma(ANTERIOR_A_DE_HOJE.versao, ANTERIOR_A_DE_HOJE.chaves, {
+      grants: [achadoAntigo('grants', LINHA_GRANTS, '2026-08-13')],
+    });
+    const a = relido(JSON.stringify(doc));
+    expect(a?.schemaVersion).toBe(ANTERIOR_A_DE_HOJE.versao);
+    expect(a?.projetoHash).toBe('abc');
+    expect(a?.achados.grants).toEqual([{ id: idFinding('grants', LINHA_GRANTS), primeiraVez: '2026-08-13' }]);
+  });
+
+  // `null` = não há texto local. NÃO é nascimento por si — a evidência pode estar no git: quem decide
+  // é `combinarAnteriores`, com a origin/main (revisão adversarial de 2026-10-03, achado A).
+  it('sem texto local, a porta devolve anterior null — e só isso (o nascimento se decide com a main)', () => {
+    expect(relido(null)).toBeNull();
+  });
+
+  it('versão FUTURA, antiga demais, ausente ou não inteira => CARIMBO_ANTERIOR_SCHEMA_INCOMPATIVEL', () => {
+    for (const v of [SCHEMA_VERSION + 1, ANTERIOR_A_DE_HOJE.versao - 1, 0]) {
+      const r = recusa(JSON.stringify({ ...comDivida(), schemaVersion: v }));
+      expect(r.codigo, `schemaVersion ${v}`).toBe('CARIMBO_ANTERIOR_SCHEMA_INCOMPATIVEL');
+      expect(r.motivo, `schemaVersion ${v}`).toContain(`schemaVersion ${v};`);
+    }
+    const ausente = recusa(JSON.stringify(sem(comoDoc(comDivida()), 'schemaVersion')));
+    expect(ausente.codigo).toBe('CARIMBO_ANTERIOR_SCHEMA_INCOMPATIVEL');
+    expect(ausente.motivo).toContain('schemaVersion ausente');
+    for (const v of [String(SCHEMA_VERSION), SCHEMA_VERSION + 0.5, null]) {
+      expect(recusa(JSON.stringify({ ...comDivida(), schemaVersion: v })).codigo, String(v)).toBe('CARIMBO_ANTERIOR_SCHEMA_INCOMPATIVEL');
+    }
+  });
+
+  // Versão ANTES da forma: um carimbo de outro schema tem, legitimamente, outra forma — chamá-lo de
+  // SEM_ALVO ou MALFORMADO mandaria o operador consertar o arquivo em vez de atualizar o código.
+  it('a versão é conferida ANTES da forma: futura e sem `alvo` é SCHEMA_INCOMPATIVEL, não SEM_ALVO', () => {
+    const futura = sem(comoDoc({ ...comDivida(), schemaVersion: SCHEMA_VERSION + 1 }), 'alvo');
+    expect(recusa(JSON.stringify(futura)).codigo).toBe('CARIMBO_ANTERIOR_SCHEMA_INCOMPATIVEL');
+  });
+
+  // O defeito do achado: com o campo fora do lugar, `anterior.alvo?.projetoHash && …` era falso e a
+  // trava de cluster era PULADA — uma medição de outro cluster sobrescreveria a evidência de prod.
+  it('sem `alvo.projetoHash` utilizável => CARIMBO_ANTERIOR_SEM_ALVO — a trava NUNCA é pulada por ausência', () => {
+    const base = () => comoDoc(comDivida());
+    const alvoSem = (extra: Record<string, unknown>) => ({ ...base(), alvo: { usuario: 'claude_ro', servidor: 'x', somenteLeitura: true, ...extra } });
+    const casos: [string, Record<string, unknown>, string][] = [
+      ['alvo ausente', sem(base(), 'alvo'), 'alvo ausente'],
+      ['alvo renomeado (o campo mudou de lugar)', { ...sem(base(), 'alvo'), destino: { projetoHash: 'abc' } }, 'alvo ausente'],
+      ['alvo null', { ...base(), alvo: null }, 'alvo deveria ser objeto (veio null)'],
+      ['projetoHash ausente', alvoSem({}), 'alvo.projetoHash ausente'],
+      ['projetoHash vazio', alvoSem({ projetoHash: '' }), 'alvo.projetoHash deveria ser texto nao vazio (veio texto vazio)'],
+      ['projetoHash numérico', alvoSem({ projetoHash: 123 }), 'alvo.projetoHash deveria ser texto nao vazio (veio numero)'],
+    ];
+    for (const [rot, doc, trecho] of casos) {
+      const r = recusa(JSON.stringify(doc));
+      expect(r.codigo, rot).toBe('CARIMBO_ANTERIOR_SEM_ALVO');
+      expect(r.motivo, rot).toContain(trecho);
+    }
+  });
+
+  // A outra metade do achado: com os achados fora do lugar, a `primeiraVez` regredia para hoje calada
+  // e a sentinela passava a dizer "aberto desde" errado.
+  it('chave de audit FALTANDO ou SOBRANDO, ou achado fora da forma => CARIMBO_ANTERIOR_MALFORMADO nomeando o caminho', () => {
+    const casos: [string, (a: Record<string, Record<string, unknown>>) => void, string][] = [
+      ['chave faltando', (a) => { delete a.funcoes; }, 'audits.funcoes ausente'],
+      ['chave sobrando', (a) => { a.inventada = a.grants; }, 'audits.inventada nao pertence ao schema'],
+      ['audit que não é objeto', (a) => { a.rls = 'x' as never; }, 'audits.rls deveria ser objeto (veio texto)'],
+      ['achados ausente', (a) => { delete a.grants.achados; }, 'audits.grants.achados ausente'],
+      ['achados que não é lista', (a) => { a.grants.achados = 'x'; }, 'audits.grants.achados deveria ser lista (veio texto)'],
+      ['achado sem id', (a) => { (a.grants.achados as Record<string, unknown>[])[0].id = undefined; }, 'audits.grants.achados[0].id'],
+      ['primeiraVez fora da data', (a) => { (a.grants.achados as Record<string, unknown>[])[0].primeiraVez = '13/08/2026'; }, 'audits.grants.achados[0].primeiraVez'],
+    ];
+    for (const [rot, mut, trecho] of casos) {
+      const r = recusa(comAudits(mut));
+      expect(r.codigo, rot).toBe('CARIMBO_ANTERIOR_MALFORMADO');
+      expect(r.motivo, rot).toContain(trecho);
+    }
+    expect(recusa(JSON.stringify(sem(comoDoc(comDivida()), 'audits'))).motivo).toContain('audits ausente');
+    expect(recusa(JSON.stringify({ ...comDivida(), audits: [] })).motivo).toContain('audits deveria ser objeto (veio lista)');
+  });
+
+  it('raiz que não é objeto => MALFORMADO — `null` NUNCA é lido como nascimento', () => {
+    for (const t of ['null', '[]', '42', '"x"']) expect(recusa(t).codigo, t).toBe('CARIMBO_ANTERIOR_MALFORMADO');
+  });
+
+  it('JSON ilegível => CARIMBO_ANTERIOR_ILEGIVEL (era SyntaxError cru, exit 1)', () => {
+    expect(recusa('{ nao e json').codigo).toBe('CARIMBO_ANTERIOR_ILEGIVEL');
+  });
+
+  // O motivo é o que o operador e a suíte do binário casam: ASCII imprimível — sem acento, sem
+  // travessão —, casável sem `-i` em `LC_ALL=C` e em `pt_BR.UTF-8`. Por isso nomeia o TIPO do que
+  // veio, nunca o valor; e a chave que veio do arquivo é saneada.
+  it('todo motivo de recusa é ASCII imprimível — inclusive com chave acentuada vinda do arquivo', () => {
+    const casos = [
+      '{ nao e json',
+      'null',
+      JSON.stringify({ ...comDivida(), schemaVersion: SCHEMA_VERSION + 1 }),
+      JSON.stringify(sem(comoDoc(comDivida()), 'alvo')),
+      comAudits((a) => { a['ação'] = a.grants; }),
+      comAudits((a) => { a.grants.achados = 'x'; }),
+    ];
+    for (const t of casos) {
+      const r = recusa(t);
+      expect(r.codigo, t.slice(0, 60)).not.toBe('ACEITOU');
+      expect(r.motivo, r.codigo).toMatch(/^[\x20-\x7e]+$/);
+    }
+  });
+});
+
+describe('conferirCluster — a trava que não sobrescreve a evidência de prod com a de outro cluster', () => {
+  const anterior = (projetoHash: string): CarimboAnterior => ({ schemaVersion: SCHEMA_VERSION, projetoHash, achados: {} });
+
+  it('CONTROLE: mesmo cluster passa, e o nascimento (sem anterior) passa', () => {
+    expect(conferirCluster(anterior('abc'), 'abc')).toBeNull();
+    expect(conferirCluster(null, 'abc')).toBeNull();
+  });
+
+  it('outro cluster => CARIMBO_ANTERIOR_OUTRO_CLUSTER, nomeando os dois, em ASCII', () => {
+    const r = conferirCluster(anterior('abc'), 'def');
+    expect(r?.codigo).toBe('CARIMBO_ANTERIOR_OUTRO_CLUSTER');
+    expect(r?.motivo).toContain('cluster abc');
+    expect(r?.motivo).toContain('em def');
+    expect(r?.motivo).toMatch(/^[\x20-\x7e]+$/);
+  });
+
+  it('ponta a ponta: o anterior que a porta devolve SEMPRE tem com o que comparar — a trava dispara', () => {
+    expect(conferirCluster(relido(JSON.stringify(comDivida())), 'outro-cluster')?.codigo).toBe('CARIMBO_ANTERIOR_OUTRO_CLUSTER');
+  });
+});
+
+describe('montarAchados — a primeiraVez herdada nunca regride, nem na migração de versão', () => {
+  const HOJE = '2026-10-01';
+  const ID = idFinding('grants', LINHA_GRANTS);
+
+  it('herda a primeiraVez de um anterior da versão ANTERIOR — a migração não lava a dívida', () => {
+    const a = lido(JSON.stringify(carimboNaForma(ANTERIOR_A_DE_HOJE.versao, ANTERIOR_A_DE_HOJE.chaves, {
+      grants: [achadoAntigo('grants', LINHA_GRANTS, '2026-08-13')],
+    })));
+    expect(montarAchados('grants', [LINHA_GRANTS], [a], HOJE, {})).toEqual([
+      { id: ID, linha: LINHA_GRANTS, primeiraVez: '2026-08-13', ultimaVez: HOJE },
+    ]);
+  });
+
+  it('a chave que a versão anterior não tinha nasce HOJE — é a primeira medição dela, não dívida lavada', () => {
+    const novas = CHAVES.filter((k) => !ANTERIOR_A_DE_HOJE.chaves.includes(k));
+    expect(novas.length, 'o bump acrescentou ao menos uma chave').toBeGreaterThan(0);
+    const a = lido(JSON.stringify(carimboNaForma(ANTERIOR_A_DE_HOJE.versao, ANTERIOR_A_DE_HOJE.chaves)));
+    for (const k of novas) expect(montarAchados(k, ['❌ [X] public.f: novo'], [a], HOJE, {})[0].primeiraVez, k).toBe(HOJE);
+  });
+
+  it('a semente vale só quando o anterior não conhece o achado — o anterior vence a semente', () => {
+    expect(montarAchados('grants', [LINHA_GRANTS], [], HOJE, { [ID]: '2026-08-13' })[0].primeiraVez).toBe('2026-08-13');
+    const a = lido(JSON.stringify(comDivida('2026-07-01')));
+    expect(montarAchados('grants', [LINHA_GRANTS], [a], HOJE, { [ID]: '2026-08-13' })[0].primeiraVez).toBe('2026-07-01');
+  });
+
+  it('achado novo, sem anterior que o conheça nem semente, nasce hoje', () => {
+    const a = lido(JSON.stringify(comDivida()));
+    expect(montarAchados('grants', ['❌ [DRIFT_PROD] public.outra: x'], [a], HOJE, {})[0].primeiraVez).toBe(HOJE);
+  });
+
+  // O achado B da revisão adversarial: um local VELHO (conflito de merge resolvido com `--ours`) passava
+  // pela porta — a forma está certa, o frescor não — e regredia a data do que a main já tinha visto.
+  it('local VELHO e main mais nova: fica a primeiraVez MAIS ANTIGA dos dois, inclusive em chave que o local nem tem', () => {
+    const novas = CHAVES.filter((k) => !ANTERIOR_A_DE_HOJE.chaves.includes(k));
+    const nova = novas[0];
+    expect(nova, 'o bump acrescentou ao menos uma chave').toBeDefined();
+    const LINHA_NOVA = '❌ [DERIVA] public.f_nova: corpo diverge';
+    const localVelho = lido(JSON.stringify(carimboNaForma(ANTERIOR_A_DE_HOJE.versao, ANTERIOR_A_DE_HOJE.chaves, {
+      grants: [achadoAntigo('grants', LINHA_GRANTS, '2026-09-20')],
+    })));
+    const daMain = lido(JSON.stringify(carimboBom(diasAtras(1), {
+      grants: { exit: 1, achados: [achadoAntigo('grants', LINHA_GRANTS, '2026-08-13')] },
+      [nova]: { exit: 1, achados: [achadoAntigo(nova, LINHA_NOVA, '2026-09-26')] },
+    })));
+    expect(montarAchados('grants', [LINHA_GRANTS], [localVelho, daMain], HOJE, {})[0].primeiraVez).toBe('2026-08-13');
+    expect(montarAchados(nova, [LINHA_NOVA], [localVelho, daMain], HOJE, {})[0].primeiraVez).toBe('2026-09-26');
+    // e a ordem dos anteriores não importa
+    expect(montarAchados('grants', [LINHA_GRANTS], [daMain, localVelho], HOJE, {})[0].primeiraVez).toBe('2026-08-13');
+  });
+});
+
+describe('combinarAnteriores — a origin/main é a REFERÊNCIA: apagar o local não pula a trava nem zera a dívida', () => {
+  const local = () => lido(JSON.stringify(comDivida('2026-09-01')));
+  const main = () => lido(JSON.stringify({ ...comDivida('2026-08-13'), alvo: { ...comDivida().alvo, projetoHash: 'hash-da-main' } }));
+
+  // O CONTROLE da matriz: os dois presentes, a trava no LOCAL (é ele que será sobrescrito).
+  it('CONTROLE: local e main presentes — a trava compara com o LOCAL e a herança vem dos DOIS', () => {
+    const r = combinarAnteriores(local(), { estado: 'presente', carimbo: main() });
+    expect(r.ok ? r.anteriores.trava?.origem : 'RECUSOU').toBe('o carimbo local');
+    expect(r.ok ? r.anteriores.trava?.carimbo.projetoHash : '').toBe('abc');
+    expect(r.ok ? r.anteriores.heranca.map((a) => a.projetoHash) : []).toEqual(['abc', 'hash-da-main']);
+  });
+
+  // O achado A: `rm db/authz-carimbo-prod.json` virava nascimento — sem trava e com a dívida zerada.
+  it('local AUSENTE e main presente: NÃO é nascimento — a trava compara com a MAIN e a dívida vem dela', () => {
+    const r = combinarAnteriores(null, { estado: 'presente', carimbo: main() });
+    expect(r.ok ? r.anteriores.trava?.origem : 'RECUSOU').toBe('o carimbo da origin/main');
+    expect(r.ok ? r.anteriores.trava?.carimbo.projetoHash : '').toBe('hash-da-main');
+    expect(r.ok ? r.anteriores.heranca.length : -1).toBe(1);
+    expect(conferirCluster(r.ok ? (r.anteriores.trava?.carimbo ?? null) : null, 'outro', 'o carimbo da origin/main')?.motivo).toContain('o carimbo da origin/main foi medido no cluster hash-da-main');
+  });
+
+  it('local ausente e main ausente: o nascimento — o único caso sem trava', () => {
+    expect(combinarAnteriores(null, { estado: 'ausente' })).toEqual({ ok: true, anteriores: { trava: null, heranca: [] } });
+  });
+
+  it('local presente e main ausente: a trava no local (o PR que cria o carimbo antes de ele chegar à main)', () => {
+    const r = combinarAnteriores(local(), { estado: 'ausente' });
+    expect(r.ok ? r.anteriores.trava?.origem : 'RECUSOU').toBe('o carimbo local');
+  });
+
+  // Ausência de RESPOSTA não é ausência de carimbo: sem a main, não se prova nascimento nem frescor.
+  it('main NÃO CONSULTADA => CARIMBO_ANTERIOR_SEM_REFERENCIA — com ou sem local, em ASCII', () => {
+    for (const l of [null, local()]) {
+      const r = combinarAnteriores(l, { estado: 'nao-consultada', motivo: 'git ls-tree origin/main falhou: fatal' });
+      expect(r.ok ? 'ACEITOU' : r.codigo).toBe('CARIMBO_ANTERIOR_SEM_REFERENCIA');
+      expect(r.ok ? '' : r.motivo).toMatch(/^[\x20-\x7e]+$/);
+    }
+  });
+});
+
+describe('lerReferenciaDaMain — o git responde, ou a referência é NÃO CONSULTADA (nunca "ausente")', () => {
+  const REL = 'db/authz-carimbo-prod.json';
+  /** Um git falso: cada subcomando devolve o texto dado, ou LANÇA quando o valor é um Error. */
+  const gitFalso = (resp: Record<string, string | Error>) => (args: readonly string[]) => {
+    const r = resp[args[0]];
+    if (r === undefined) throw new Error(`git falso sem resposta para ${args[0]}`);
+    if (r instanceof Error) throw r;
+    return r;
+  };
+
+  it('CONTROLE: ref com o arquivo => presente, relido pela MESMA porta', () => {
+    const l = lerReferenciaDaMain(gitFalso({ 'ls-tree': `${REL}\n`, show: JSON.stringify(comDivida()) }), REL);
+    expect(l.ok && l.referencia.estado === 'presente' ? l.referencia.carimbo.projetoHash : 'NAO').toBe('abc');
+  });
+
+  it('ref válida SEM o arquivo (ls-tree vazio, rc 0) => ausente', () => {
+    expect(lerReferenciaDaMain(gitFalso({ 'ls-tree': '' }), REL)).toEqual({ ok: true, referencia: { estado: 'ausente' } });
+  });
+
+  it('git que FALHA (ref inexistente, repo quebrado) => nao-consultada — jamais ausente, que liberaria o nascimento', () => {
+    const falhas: Record<string, string | Error>[] = [
+      { 'ls-tree': new Error('fatal: Not a valid object name origin/main') },
+      { 'ls-tree': `${REL}\n`, show: new Error('fatal: bad revision') },
+    ];
+    for (const resp of falhas) {
+      const l = lerReferenciaDaMain(gitFalso(resp), REL);
+      expect(l.ok ? l.referencia.estado : 'RECUSOU').toBe('nao-consultada');
+    }
+  });
+
+  // Main mais NOVA que este código = worktree desatualizada: gravar por cima seria o downgrade.
+  it('carimbo da main recusado pela porta => a recusa SOBE, com a origem no motivo', () => {
+    const l = lerReferenciaDaMain(gitFalso({ 'ls-tree': `${REL}\n`, show: JSON.stringify({ ...comDivida(), schemaVersion: SCHEMA_VERSION + 1 }) }), REL);
+    expect(l.ok ? 'ACEITOU' : l.codigo).toBe('CARIMBO_ANTERIOR_SCHEMA_INCOMPATIVEL');
+    expect(l.ok ? '' : l.motivo).toContain('(o carimbo da origin/main)');
+    expect(referenciaDoTexto('null').ok).toBe(false);
+  });
+});
+
+describe('lerArquivoDoCarimbo — erro de leitura é recusa, nunca exceção solta (exit 1)', () => {
+  it('CONTROLE: arquivo que existe devolve o texto; arquivo que não existe devolve null', () => {
+    const r = lerArquivoDoCarimbo(CARIMBO_PATH);
+    expect(r.ok && typeof r.texto === 'string' && r.texto.length > 0).toBe(true);
+    expect(lerArquivoDoCarimbo(join(RAIZ, 'db', 'nao-existe-carimbo.json'))).toEqual({ ok: true, texto: null });
+  });
+
+  it('caminho que é DIRETÓRIO (EISDIR) => CARIMBO_ANTERIOR_ILEGIVEL com o código do erro', () => {
+    const r = lerArquivoDoCarimbo(join(RAIZ, 'db'));
+    expect(r.ok ? 'ACEITOU' : r.codigo).toBe('CARIMBO_ANTERIOR_ILEGIVEL');
+    expect(r.ok ? '' : r.motivo).toContain('(EISDIR)');
+  });
+});
+
+describe('CHAVES_RELIDAS_POR_VERSAO — a janela que o gravador relê acompanha o bump', () => {
+  it('é a versão de HOJE e a IMEDIATAMENTE ANTERIOR — nem uma a mais, nem uma a menos', () => {
+    expect(Object.keys(CHAVES_RELIDAS_POR_VERSAO).map(Number).sort((a, b) => a - b)).toEqual([SCHEMA_VERSION - 1, SCHEMA_VERSION]);
+  });
+
+  it('as chaves da versão de HOJE são exatamente as de AUDITS — audit novo sem bump fica vermelho aqui', () => {
+    expect([...CHAVES_RELIDAS_POR_VERSAO[SCHEMA_VERSION]].sort()).toEqual([...CHAVES].sort());
+  });
+
+  it('a fixture da versão anterior é a da tabela — e ela anda junto com o bump', () => {
+    expect(ANTERIOR_A_DE_HOJE.versao, 'no bump, a fixture passa a ser a forma REAL da versão que deixou de ser a de hoje').toBe(SCHEMA_VERSION - 1);
+    expect([...CHAVES_RELIDAS_POR_VERSAO[SCHEMA_VERSION - 1]].sort()).toEqual([...ANTERIOR_A_DE_HOJE.chaves].sort());
+  });
+});
+
+describe('o BINÁRIO do gravador contra anterior recusado — exit 2 com o código, antes de qualquer sonda de prod', () => {
+  // HERMÉTICO e sem caminho até prod, por DOIS cintos independentes:
+  //  1. a costura `AUTHZ_CARIMBO_ANTERIOR_TEST_JSON` casa `envDeTesteSetadas`: a guarda SEGUINTE à
+  //     leitura do anterior aborta o runner, que nunca chega à sonda nem à escrita;
+  //  2. HOME de mentira: o `psql-ro` de prod mora em `~/.config/afiacao/` — com HOME num tmp, nem existe.
+  let home = '';
+  beforeAll(() => {
+    home = mkdtempSync(join(tmpdir(), 'carimbo-gravar-'));
+  });
+  afterAll(() => rmSync(home, { recursive: true, force: true }));
+
+  /** `spawn` ASSÍNCRONO: `spawnSync` seguraria o event loop do worker pelo tempo do filho. */
+  const gravadorCom = (anterior: string, main: string = JSON.stringify(comDivida())): Promise<{ status: number | null; saida: string }> => {
+    const env: Record<string, string> = {};
+    for (const [k, v] of Object.entries(process.env)) {
+      if (v !== undefined && k !== 'PSQL_RO' && !/_TEST_JSON$/.test(k)) env[k] = v;
+    }
+    env.HOME = home;
+    env.AUTHZ_CARIMBO_ANTERIOR_TEST_JSON = anterior;
+    env.AUTHZ_CARIMBO_MAIN_TEST_JSON = main;
+    return new Promise((ok, falha) => {
+      const filho = spawn('bun', [join(RAIZ, 'db', 'authz-carimbo-gravar.ts')], { cwd: RAIZ, env, stdio: ['ignore', 'pipe', 'pipe'] });
+      let saida = '';
+      filho.stdout.setEncoding('utf8').on('data', (d: string) => (saida += d));
+      filho.stderr.setEncoding('utf8').on('data', (d: string) => (saida += d));
+      filho.on('error', falha);
+      filho.on('close', (status) => ok({ status, saida }));
+    });
+  };
+  /** O que o gravador imprime ao TENTAR a sonda (falha) ou depois dela (alvo). Nenhum caso aqui chega lá. */
+  const CHEGOU_NA_SONDA = /sonda de alvo|read-only=/;
+
+  // O CONTROLE, na MESMA execução dos vermelhos: um runner que recusasse todo anterior aprovaria todos eles.
+  it('CONTROLE: anterior válido passa pela porta e o runner para na guarda SEGUINTE (a env de teste)', async () => {
+    const r = await gravadorCom(JSON.stringify(comDivida()));
+    expect(r.status, r.saida.slice(-1500)).toBe(2);
+    expect(r.saida).toContain('AUTHZ_CARIMBO_ANTERIOR_TEST_JSON');
+    expect(r.saida).not.toContain('CARIMBO-ANTERIOR-RECUSADO');
+    expect(r.saida).not.toMatch(CHEGOU_NA_SONDA);
+  }, 60_000);
+
+  it.each([
+    ['versão futura', () => JSON.stringify({ ...comDivida(), schemaVersion: SCHEMA_VERSION + 1 }), 'CARIMBO_ANTERIOR_SCHEMA_INCOMPATIVEL'],
+    ['sem alvo.projetoHash', () => JSON.stringify({ ...comDivida(), alvo: { usuario: 'claude_ro' } }), 'CARIMBO_ANTERIOR_SEM_ALVO'],
+    ['JSON ilegível', () => '{ nao e json', 'CARIMBO_ANTERIOR_ILEGIVEL'],
+    ['raiz null', () => 'null', 'CARIMBO_ANTERIOR_MALFORMADO'],
+  ])('%s: exit 2 com CARIMBO-ANTERIOR-RECUSADO e o código — antes da sonda', async (_rot, texto, codigo) => {
+    const r = await gravadorCom(texto());
+    expect(r.status, r.saida.slice(-1500)).toBe(2);
+    expect(r.saida).toContain(`CARIMBO-ANTERIOR-RECUSADO ${codigo} `);
+    expect(r.saida).not.toMatch(CHEGOU_NA_SONDA);
+  }, 60_000);
+
+  // A referência também é lida ANTES da sonda, pela mesma porta: main mais nova que o código é a
+  // worktree desatualizada, e gravar por cima seria o downgrade.
+  it.each([
+    ['main de versão futura', () => JSON.stringify({ ...comDivida(), schemaVersion: SCHEMA_VERSION + 1 }), 'CARIMBO_ANTERIOR_SCHEMA_INCOMPATIVEL'],
+    ['main sem alvo', () => JSON.stringify({ ...comDivida(), alvo: null }), 'CARIMBO_ANTERIOR_SEM_ALVO'],
+  ])('%s: exit 2 com o código e a ORIGEM no motivo — antes da sonda', async (_rot, main, codigo) => {
+    const r = await gravadorCom(JSON.stringify(comDivida()), main());
+    expect(r.status, r.saida.slice(-1500)).toBe(2);
+    expect(r.saida).toContain(`CARIMBO-ANTERIOR-RECUSADO ${codigo} - (o carimbo da origin/main)`);
+    expect(r.saida).not.toMatch(CHEGOU_NA_SONDA);
+  }, 60_000);
+});
+
+describe('a CLASSE — o carimbo commitado só é relido por porta que confere a versão', () => {
+  // `JSON.parse(...) as Carimbo` lê um carimbo de outro formato como o de hoje: o defeito do gravador
+  // (2026-10-01), irmão do da matriz do `exclusividade` (#2575). Os testes de comportamento acima só
+  // vigiam os leitores que existem; um leitor novo com cast reabriria a classe calado.
+  const GATE = 'scripts/authz-carimbo-gate.ts';
+  const GRAVADOR = 'db/authz-carimbo-gravar.ts';
+  const fontes = () =>
+    ['scripts', 'db'].flatMap((dir) =>
+      readdirSync(join(RAIZ, dir), { recursive: true, encoding: 'utf8' })
+        .filter((f) => f.endsWith('.ts') && !f.endsWith('.test.ts'))
+        .map((f) => `${dir}/${f}`),
+    );
+  const limpa = (rel: string) => removerComentarios(readFileSync(join(RAIZ, rel), 'utf8'));
+
+  it('nenhum leitor faz cast para `Carimbo`, exceto o gate — que confere a versão em avaliarCarimbo antes de ler campo', () => {
+    expect(fontes().filter((f) => f !== GATE && /\bas\s+Carimbo\b/.test(limpa(f)))).toEqual([]);
+  });
+
+  // `as Carimbo` não é a única forma do cast: `const c: Carimbo = JSON.parse(t)` e `(): Carimbo => JSON.parse(t)`
+  // compilam igual (`JSON.parse` devolve `any`) e a regex acima não os vê (revisão adversarial, achado C).
+  // Toda forma passa por `JSON.parse` — então quem nomeia o carimbo não o chama: só a porta (o núcleo) e o gate.
+  it('nenhum arquivo que nomeia o carimbo commitado faz JSON.parse, exceto o gate', () => {
+    const nomeiam = fontes().filter((f) => f !== 'scripts/lib/authz-carimbo.ts' && /CARIMBO_PATH|authz-carimbo-prod\.json/.test(limpa(f)));
+    expect(nomeiam.filter((f) => f !== GATE && /\bJSON\.parse\(/.test(limpa(f)))).toEqual([]);
+  });
+
+  it('todo arquivo que nomeia o carimbo commitado passa o texto por uma porta (lerCarimboAnterior | avaliarCarimbo)', () => {
+    const leitores = fontes().filter((f) => f !== 'scripts/lib/authz-carimbo.ts' && /CARIMBO_PATH|authz-carimbo-prod\.json/.test(limpa(f)));
+    expect(leitores.filter((f) => !/\b(lerCarimboAnterior|avaliarCarimbo)\(/.test(limpa(f)))).toEqual([]);
+  });
+
+  // Sem este, os scans acima passariam por CEGUEIRA: glob que parou de casar, ou limpeza que comeu o código.
+  it('SENTINELA: o scan enxerga o gravador e o gate, cada um passa pela sua porta, e a exceção do gate é real', () => {
+    const lista = fontes();
+    expect(lista).toContain(GRAVADOR);
+    expect(lista).toContain(GATE);
+    expect(limpa(GRAVADOR)).toMatch(/\blerCarimboAnterior\(/);
+    expect(limpa(GATE)).toMatch(/\bavaliarCarimbo\(/);
+    // Se o gate deixar de fazer cast, a exceção acima vira letra morta: tire-a junto.
+    expect(limpa(GATE)).toMatch(/\bas\s+Carimbo\b/);
+    expect(limpa(GATE)).toMatch(/\bJSON\.parse\(/);
+    expect(limpa(GRAVADOR)).not.toMatch(/\bJSON\.parse\(/);
   });
 });
