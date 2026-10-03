@@ -89,7 +89,12 @@ voltar.
 `monitor-deploy-eval.sh`: 61 cenários (+12) e 55 sabotagens (+11), cada uma com desfecho PREVISTO;
 `monitor-deploy-pr-eval.sh`: `prtesteneg` (o #12 com a mesma palavra nova, mas sob as 3 negações:
 `PR_SEM_ALCANCE_NO_BUNDLE`) e `prtestenegx` (forma estranha: `PR_TOCA_O_BUNDLE`), +2 sabotagens (26).
-⟪PENDENTE⟫
+`run.sh` verde (rc 0: classify 19/19, verify-frontend 28/28, monitor-deploy 61/61, `--pr` 80/80) e
+`run.sh --falsify` verde (rc 0): no monitor-deploy, 110 execuções de CONTROLE verdes nos 2 locales
+antes da 1ª sabotagem e 55/55 pegas pela marca prevista, versionados intactos; no `--pr`, 26 pegas e
+0 cegueiras. `lint:shell` (shellcheck 0.11.0, o pinado no CI): 0 achados em 479 arquivos. Uma 1ª
+rodada de falsificação saiu com 1 cegueira — eu tinha editado a prova, que o pr-eval lê por symlink,
+no meio dela; refeita do zero sem edição em voo, 0.
 
 ## Limites
 
