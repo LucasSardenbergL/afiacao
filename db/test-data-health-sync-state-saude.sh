@@ -79,7 +79,8 @@ nlin() { Pq -c "SELECT count(*)::int FROM public._data_health_compute() WHERE so
 # ocorrencias de um par no resumo — o DISTINCT ON protege a CONTAGEM/listagem, nao o nº de linhas
 ndup() { msg | grep -o "$1" | wc -l | tr -d ' '; }
 has()   { case "$2" in *"$3"*) ok "$1";; *) bad "$1 — nao achei [$3] em [$2]";; esac; }
-hasnt() { case "$2" in *"$3"*) bad "$1 — achei [$3] e NAO devia";; *) ok "$1";; esac; }
+# Medição VAZIA não é "não contém": é a linha da fonte que sumiu (ou a leitura que errou).
+hasnt() { case "$2" in '') bad "$1 — medicao VAZIA (a linha sumiu ou a leitura errou)";; *"$3"*) bad "$1 — achei [$3] e NAO devia";; *) ok "$1";; esac; }
 
 # ── seed: os 8 pares vigiados FRESCOS + 6 dormentes/orquestrados fora da lista ──
 seed_base() { P -q <<'SQL'

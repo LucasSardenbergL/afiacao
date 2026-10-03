@@ -34,6 +34,9 @@ export const getVisitBadge = (customer: ManualCustomer) => {
 };
 
 export const getOrderBadge = (customer: ManualCustomer) => {
+  if (customer.compraIndisponivel) {
+    return <Badge variant="outline" className="text-xs">Compra indisponível</Badge>;
+  }
   if (customer.daysSinceLastOrder === null) {
     return null;
   }
@@ -48,6 +51,13 @@ export const getOrderBadge = (customer: ManualCustomer) => {
   }
   return null;
 };
+
+/**
+ * Filtro "sem compra há 30 dias": nunca comprou OU comprou há mais de 30 dias. Quem está com a compra
+ * INDISPONÍVEL fica de fora (fail-closed) — sem isso a falha de leitura punha a base inteira no filtro.
+ */
+export const semCompraHa30Dias = (customer: ManualCustomer): boolean =>
+  !customer.compraIndisponivel && (customer.daysSinceLastOrder === null || customer.daysSinceLastOrder > 30);
 
 export const getCTALabel = (stop: RouteStop) => {
   if (stop.orderId) return 'Ver pedido';

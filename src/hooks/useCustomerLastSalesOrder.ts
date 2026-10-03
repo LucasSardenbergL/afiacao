@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { STATUS_NAO_VENDA_POSTGREST } from '@/lib/farmer/universo-pedidos';
 
 export interface CustomerLastOrder {
   date: string | null;
@@ -24,6 +25,10 @@ export function useCustomerLastSalesOrder(customerId: string | null) {
         .from('sales_orders')
         .select('order_date_kpi, created_at, total')
         .eq('customer_user_id', customerId)
+        // "Última COMPRA" é pergunta de venda: o universo canônico, ANTES do limit(1) — sem ele o
+        // topo podia ser um pedido cancelado (medido 2026-10-01: 1 cliente).
+        .not('status', 'in', STATUS_NAO_VENDA_POSTGREST)
+        .is('deleted_at', null)
         .order('order_date_kpi', { ascending: false, nullsFirst: false })
         .limit(1);
       if (error) throw new Error(error.message);

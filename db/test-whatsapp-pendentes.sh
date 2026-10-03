@@ -102,7 +102,7 @@ DO $$ DECLARE t timestamptz; BEGIN
   IF t IS NULL OR abs(extract(epoch FROM (t - (now() - interval '5 hours')))) > 60
     THEN RAISE EXCEPTION 'FALHA backfill: B esperava out de ~5h atrás, veio %', t; END IF;
   SELECT last_outbound_at INTO t FROM public.whatsapp_conversations WHERE id='00000000-0000-0000-0000-00000000aa0a';
-  IF t IS NOT NULL THEN RAISE EXCEPTION 'FALHA backfill: A nunca teve out, veio %', t; END IF;
+  IF NOT FOUND OR t IS NOT NULL THEN RAISE EXCEPTION 'FALHA backfill: A nunca teve out, veio % (conversa achada=%)', t, FOUND; END IF;
 END $$;
 
 -- trigger avança com out novo
@@ -129,7 +129,8 @@ DO $$ DECLARE antes timestamptz; depois timestamptz; BEGIN
   INSERT INTO public.whatsapp_messages (conversation_id, direction, body, created_at)
   VALUES ('00000000-0000-0000-0000-00000000aa0a', 'in', 'cliente de novo', now());
   SELECT last_outbound_at INTO depois FROM public.whatsapp_conversations WHERE id='00000000-0000-0000-0000-00000000aa0a';
-  IF depois IS DISTINCT FROM antes THEN RAISE EXCEPTION 'FALHA trigger: IN mexeu em last_outbound_at (% → %)', antes, depois; END IF;
+  -- antes e depois são NULL de verdade (A nunca teve out): só o FOUND separa isso da conversa sumida
+  IF NOT FOUND OR depois IS DISTINCT FROM antes THEN RAISE EXCEPTION 'FALHA trigger: IN mexeu em last_outbound_at (% → %) ou a conversa sumiu (achada=%)', antes, depois, FOUND; END IF;
 END $$;
 SQL
 

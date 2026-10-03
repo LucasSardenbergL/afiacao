@@ -84,6 +84,8 @@ export function useAdminCustomers() {
         .from('sales_orders')
         .select('id, total, status, created_at, items')
         .eq('customer_user_id', userId)
+        // Feed com badge de status (todo status de propósito), sem o pedido apagado.
+        .is('deleted_at', null)
         .order('created_at', { ascending: false })
         .limit(20);
       setOrders((data || []) as SalesOrder[]);

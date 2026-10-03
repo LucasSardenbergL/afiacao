@@ -37,6 +37,11 @@ export interface ManualCustomer {
   lastOrderDate: string | null;
   daysSinceLastVisit: number | null;
   daysSinceLastOrder: number | null;
+  /**
+   * A leitura da última compra FALHOU: `daysSinceLastOrder` null aqui é "não sei", não "nunca
+   * comprou" — o badge diz que está indisponível e o filtro "sem compra 30d" não inclui o cliente.
+   */
+  compraIndisponivel: boolean;
 }
 
 export interface VisitStatus {

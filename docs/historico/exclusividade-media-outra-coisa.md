@@ -953,6 +953,19 @@ dois locales). Limites: sem NENHUM `node_modules` acima, o motor cai no `import 
 (rápido, mas sem a marca); e versão ≠ lockfile passa — a sonda pergunta se o binário responde, não se
 é o do lockfile.
 
+**O hook de boot tinha o mesmo ponto cego — consertado em 2026-10-01.** O `vigia-worktree.sh`
+(SessionStart) só disparava `bun install` com o `node_modules` AUSENTE (`! -d`); no formato do
+incidente — diretório existente e vazio — calava, sem install nem aviso. Agora pergunta pelo conteúdo
+(os 4 de `BINARIOS_DAS_DEPS`: `.bin/<b>` executável + manifesto com versão, ~20 ms; o `--version` do
+motor custou 150-800 ms medidos e seria o 1º subprocess bloqueante do boot), nomeia AUSENTE / VAZIO /
+PARCIAL e delega o install ao background, que não dispara um 2º se já houver `bun install` em voo
+NESTA worktree — tabela de processos (`pgrep` ancorado no argv do bun) + cwd via `lsof`, não trava em
+arquivo, que apodrece quando o install morre. Achado medido no caminho: **`lsof -p ""` ignora o
+filtro** e devolve a cwd de TODOS os processos; como os da própria sessão moram na worktree, uma sonda
+de "em voo" sem guarda de lista vazia daria positivo SEMPRE. Casos [D0]-[D13] e 14 sabotagens nos 2
+locales em `scripts/test-hooks-sessionstart.sh`; ponta-a-ponta com `pgrep`/`lsof` reais: o job achou o
+pid exato do install de fora e não disparou o seu.
+
 **O write-guard é da árvore INTEIRA e culpa o gate pela escrita do operador.** Editar este doc enquanto
 o baseline rodava fez o motor abortar com `GATE-ESCREVEU: bun run sonda:cron-prova -- --gate ... alterou
 a arvore versionada` e **restaurar o arquivo** pelo snapshot — a edição foi desfeita. Certo no espírito

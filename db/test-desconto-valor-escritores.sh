@@ -721,8 +721,9 @@ if diff "$TMPF.i-antiga" "$TMPF.i-nova" > "$TMPF.i-diff"; then
 else
   bad "I1 a nova DIVERGE da antiga sem a chave: $(head -c 400 "$TMPF.i-diff" | tr '\n' ' ')"
 fi
+# "|t" = havia saídas a medir; IS NOT TRUE conta a saída SEM o sensor (chave ausente) como violação.
 eq "I2 e os sensores novos ficam em ZERO sem a chave — nenhuma apuração/correção fabricada" \
-  "$(Q "SELECT count(*) FROM teste.saidas WHERE (r->>'desconto_apurado')::int <> 0 OR (r->>'desconto_corrigido')::int <> 0")" "0"
+  "$(Q "SELECT count(*) FILTER (WHERE ((r->>'desconto_apurado')::int = 0 AND (r->>'desconto_corrigido')::int = 0) IS NOT TRUE), count(*) > 0 FROM teste.saidas")" "0|t"
 
 echo "═══ FG/FH/FI/FP · FALSIFICAÇÃO (Lei #3): cada assert acima tem de ficar VERMELHO sob a sua sabotagem ═══"
 # O CONTROLE verde de cada uma é o assert correspondente acima, na MESMA invocação, com a função

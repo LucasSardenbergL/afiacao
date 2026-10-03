@@ -11,6 +11,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { authorizeCronOrStaff, corsHeaders } from '../_shared/auth.ts';
 import { exigirLeitura, FalhaLeituraCritica } from '../_shared/leitura-critica.ts';
+import { STATUS_NAO_VENDA_POSTGREST } from '../_shared/universo-pedidos.ts';
 
 // =====================================================
 // --- Inline helpers ---
@@ -307,7 +308,10 @@ async function recalcOne(
     // Opção A (carteira-Omie): 1 linha de score por cliente → lê por customer_user_id só.
     supabase.from('farmer_client_scores').select('churn_risk, expansion_score, health_score, recover_score, revenue_potential, avg_monthly_spend_180d, days_since_last_purchase, signal_modifiers').eq('customer_user_id', customer_user_id).maybeSingle(),
     supabase.from('route_visits').select('check_in_at').eq('customer_user_id', customer_user_id).order('check_in_at', { ascending: false }).limit(1),
-    supabase.from('sales_orders').select('id').eq('customer_user_id', customer_user_id),
+    // Prospect = quem NUNCA COMPROU: conta só pedido de venda (o universo canônico). Orçamento,
+    // rascunho e cancelado não tiram ninguém de prospect (0 clientes afetados em 2026-10-01).
+    supabase.from('sales_orders').select('id').eq('customer_user_id', customer_user_id)
+      .not('status', 'in', STATUS_NAO_VENDA_POSTGREST).is('deleted_at', null),
     supabase.from('addresses').select('city, neighborhood, state').eq('user_id', customer_user_id).eq('is_default', true).maybeSingle(),
     supabase.from('profiles').select('created_at, is_prospect').eq('user_id', customer_user_id).maybeSingle(),
     // FA4 (shadow-mode): classes de sinal ATIVADAS. Leitura na mesma rodada paralela (1 query,

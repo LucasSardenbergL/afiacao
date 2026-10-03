@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
@@ -407,5 +409,65 @@ describe('recusas — o gerador não emite colagem que aprova por vacuidade', ()
     expect(() => montarPrompt([fatia('x')], { ref: '', sha: '84a115a43' })).toThrow(
       /procedência inválida/,
     );
+  });
+});
+
+/**
+ * Fonte ÚNICA da colagem (#2579). O `montarPrompt` é o único emissor — `pendencias:prompt` e o Passo 2
+ * do `pendencias:pacote` passam por ele —, mas a `lovable-deploy-verify` ensinava a montar a colagem À
+ * MÃO, com três moldes ("é o que você usa quando a leva tem uma só") sem o bloco de escopo e sem o de
+ * conferência. Colar um deles devolve ao agente a licença de "consertar" o `build-errors.log`, que é a
+ * classe do #2541/#2579/#2595. A assinatura é o imperativo da família do prompt, casado no texto com o
+ * `> ` de citação e as quebras de linha desfeitos: molde quebrado em duas linhas continua sendo molde.
+ * Histórico (docs/historico) fica de fora de propósito: registro do que foi colado não é instrução.
+ */
+const RAIZ = join(import.meta.dirname, '..', '..');
+const INSTRUCOES_VIVAS = ['.claude/skills', 'docs/agent', 'docs/runbooks'];
+const SKILL_DE_DEPLOY = '.claude/skills/lovable-deploy-verify/SKILL.md';
+const ASSINATURA_DE_COLAGEM = /Deploy (?:it|them|all of them) (?:\*\*)?verbatim/;
+
+function markdownsVivos(): string[] {
+  const arquivos = ['CLAUDE.md'];
+  for (const dir of INSTRUCOES_VIVAS) {
+    for (const rel of readdirSync(join(RAIZ, dir), { recursive: true, encoding: 'utf8' })) {
+      if (rel.endsWith('.md')) arquivos.push(join(dir, rel));
+    }
+  }
+  return arquivos;
+}
+
+function moldesDeColagem(arquivos: readonly string[]): string[] {
+  return arquivos.flatMap((arquivo) => {
+    const texto = readFileSync(join(RAIZ, arquivo), 'utf8')
+      .replace(/^>[ \t]?/gm, '')
+      .replace(/\s+/g, ' ');
+    return [...texto.matchAll(new RegExp(ASSINATURA_DE_COLAGEM.source, 'g'))].map(
+      (m) => `${arquivo}: "${texto.slice(m.index, m.index + 70)}"`,
+    );
+  });
+}
+
+describe('fonte unica da colagem — nenhum molde a mao nas instrucoes do agente (#2579)', () => {
+  it('[COLAGEM_SO_DO_GERADOR] skills, docs/agent, runbooks e CLAUDE.md nao trazem prompt de deploy para copiar', () => {
+    expect(
+      moldesDeColagem(markdownsVivos()),
+      'a colagem sai do montarPrompt (bun run pendencias:prompt <edge>), nunca de um molde escrito a mao',
+    ).toEqual([]);
+  });
+
+  it('[COLAGEM_ASSINATURA_CASA_O_GERADOR] CONTROLE: a assinatura casa a saida do proprio montarPrompt', () => {
+    expect(montarPrompt([fatia('minha-edge')], PROC)).toMatch(ASSINATURA_DE_COLAGEM);
+    expect(montarPrompt(['a', 'b'].map(fatia), PROC)).toMatch(ASSINATURA_DE_COLAGEM);
+  });
+
+  it('[COLAGEM_VARREDURA_VE_AS_INSTRUCOES] CONTROLE: a varredura le uma testemunha de cada lugar varrido', () => {
+    const lidos = markdownsVivos();
+    const testemunhas = [
+      SKILL_DE_DEPLOY,
+      'docs/agent/deploy.md',
+      'docs/runbooks/lovable-supabase.md',
+      'CLAUDE.md',
+    ];
+    for (const testemunha of testemunhas) expect(lidos).toContain(testemunha);
   });
 });

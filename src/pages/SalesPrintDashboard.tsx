@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
+import { STATUS_NAO_VENDA_POSTGREST } from '@/lib/farmer/universo-pedidos';
 import { useQuery } from '@tanstack/react-query';
 import { Printer, ArrowLeft } from 'lucide-react';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
@@ -91,7 +92,10 @@ const SalesPrintDashboard = () => {
         .select('id, customer_user_id, account, omie_numero_pedido, created_at, items, subtotal, total, discount, notes, status, customer_address, customer_phone, customer_document, order_date_kpi')
         .gte('created_at', dayStart)
         .lte('created_at', dayEnd)
-        .neq('status', 'cancelado')
+        // Imprime o que foi VENDIDO no dia: o universo canônico. O `.neq('cancelado')` deixava
+        // orçamento e rascunho saírem na folha, e o pedido apagado também.
+        .not('status', 'in', STATUS_NAO_VENDA_POSTGREST)
+        .is('deleted_at', null)
         .order('created_at', { ascending: true });
       if (error) throw error;
       const rows = (data ?? []) as unknown as SalesOrderRow[];

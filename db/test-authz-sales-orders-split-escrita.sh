@@ -324,8 +324,10 @@ eq "D3 nenhuma policy alargou o role (TO public/anon)" "$D3" "0"
 
 # §4: o detector é ILIKE '%select%' (com espaço) — '%(select%' dá falso-0 porque
 # o pg_get_expr renderiza o sublink como "( SELECT"
-D4=$(Pq -c "SELECT count(*) FROM pg_policies WHERE schemaname='public' AND tablename IN ('sales_orders','order_items','sales_price_history') AND COALESCE(qual,with_check) NOT ILIKE '%select%';")
-eq "D4 todas as policies wrapped em InitPlan" "$D4" "0"
+# A policy sem USING e sem WITH CHECK dá NULL e escapava do NOT ILIKE (sem expressão, não segue o padrão:
+# conta como violação, para alguém olhar); "|t" = havia policies.
+D4=$(Pq -c "SELECT count(*) FILTER (WHERE COALESCE(qual,with_check) IS NULL OR COALESCE(qual,with_check) NOT ILIKE '%select%'), count(*) > 0 FROM pg_policies WHERE schemaname='public' AND tablename IN ('sales_orders','order_items','sales_price_history');")
+eq "D4 todas as policies wrapped em InitPlan" "$D4" "0|t"
 
 # valores, não sintaxe (pg_get_expr re-serializa — §4)
 D5=$(Pq -c "SELECT (qual ~ 'omie_pedido_id' AND qual ~ 'orcamento')::text FROM pg_policies WHERE tablename='sales_orders' AND cmd='DELETE';")

@@ -140,7 +140,10 @@ describe('gate: universo de pedidos de venda no TypeScript e nas edges', () => {
 
   it('G4: a dívida só desce, e toda entrada de dívida nomeia o domínio que a quita', () => {
     const divida = REGISTRO.filter((e) => e.categoria === 'divida');
-    expect(divida.length, 'dívida acima do teto: a classe reabriu').toBeLessThanOrEqual(TETO_DIVIDA);
+    // IGUALDADE, não ≤: quitar sem baixar o teto deixaria folga para a dívida voltar em silêncio.
+    expect(divida.length, 'a dívida e o teto andam juntos — quitou, baixe TETO_DIVIDA; cresceu, a classe reabriu').toBe(
+      TETO_DIVIDA,
+    );
     expect(divida.filter((e) => !e.dominio).map((e) => e.arquivo)).toEqual([]);
     expect(REGISTRO.filter((e) => e.categoria !== 'divida' && e.dominio).map((e) => e.arquivo)).toEqual([]);
   });
@@ -161,7 +164,7 @@ describe('gate: universo de pedidos de venda no TypeScript e nas edges', () => {
       CONSTANTES_DIVIDA.filter((c) => !vistas.has(k(c.arquivo, c.membros))).map((c) => k(c.arquivo, c.membros)),
       'constante quitada: remova-a de CONSTANTES_DIVIDA',
     ).toEqual([]);
-    expect(CONSTANTES_DIVIDA.length).toBeLessThanOrEqual(TETO_CONSTANTES_DIVIDA);
+    expect(CONSTANTES_DIVIDA.length, 'quitou uma constante, baixe TETO_CONSTANTES_DIVIDA').toBe(TETO_CONSTANTES_DIVIDA);
   });
 
   it('G6: as duas autoridades seguem sendo achadas pelo detector de cópia (senão o G5 é cego)', () => {

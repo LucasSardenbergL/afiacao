@@ -54,7 +54,7 @@ DO $$
 DECLARE r jsonb;
 BEGIN
   r := public.registrar_contato_radar('11111111000111','em_conversa','falei com o dono');
-  IF (r->>'deduped')::boolean THEN RAISE EXCEPTION 'A1 FALHOU: não deveria deduplicar 1ª vez'; END IF;
+  IF (r->>'deduped')::boolean IS NOT FALSE THEN RAISE EXCEPTION 'A1 FALHOU: não deveria deduplicar 1ª vez (deduped=%)', r->>'deduped'; END IF;
   IF (SELECT prospeccao_status FROM public.radar_empresas WHERE cnpj='11111111000111') IS DISTINCT FROM 'em_conversa'
     THEN RAISE EXCEPTION 'A1 FALHOU: status não mudou'; END IF;
   IF (SELECT status_anterior FROM public.radar_contatos WHERE id=(r->>'id')::uuid) IS DISTINCT FROM 'a_contatar'
@@ -119,14 +119,15 @@ END $$;
 
 -- A8: descarte_motivo NÃO fica stale — ao descartar grava o motivo, e ao mudar
 --     pra outra ação (em_conversa) o motivo é LIMPO (não vaza pra status não-descartado).
+--     '(null)' = coluna NULL com a empresa PRESENTE; a empresa sumida dá NULL e reprova.
 DO $$
 BEGIN
   PERFORM public.registrar_contato_radar('22222222000122','descartado','fora do ramo');
   IF (SELECT descarte_motivo FROM public.radar_empresas WHERE cnpj='22222222000122') IS DISTINCT FROM 'fora do ramo'
     THEN RAISE EXCEPTION 'A8 FALHOU: motivo não gravou no descarte'; END IF;
   PERFORM public.registrar_contato_radar('22222222000122','em_conversa',NULL);
-  IF (SELECT descarte_motivo FROM public.radar_empresas WHERE cnpj='22222222000122') IS NOT NULL
-    THEN RAISE EXCEPTION 'A8 FALHOU: motivo ficou stale ao sair de descartado'; END IF;
+  IF (SELECT coalesce(descarte_motivo, '(null)') FROM public.radar_empresas WHERE cnpj='22222222000122') IS DISTINCT FROM '(null)'
+    THEN RAISE EXCEPTION 'A8 FALHOU: motivo ficou stale ao sair de descartado (ou a empresa sumiu)'; END IF;
   RAISE NOTICE 'A8 OK';
 END $$;
 

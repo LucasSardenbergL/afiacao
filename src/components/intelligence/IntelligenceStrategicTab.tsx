@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { STATUS_NAO_VENDA_POSTGREST } from '@/lib/farmer/universo-pedidos';
+import { kpisDesconto } from './desconto-kpis';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
@@ -56,7 +58,15 @@ export function IntelligenceStrategicTab() {
   const { data: salesOrders } = useQuery({
     queryKey: ['intel-sales-orders-strategic'],
     queryFn: async () => {
-      const { data, error } = await supabase.from('sales_orders').select('total, discount, created_at, customer_user_id').limit(500);
+      // Amostra dos 500 pedidos de VENDA mais recentes (universo canônico, ordem estável). Antes:
+      // 500 linhas sem ordem nem universo — qualquer status, qualquer época.
+      const { data, error } = await supabase
+        .from('sales_orders')
+        .select('total, discount, created_at, customer_user_id')
+        .not('status', 'in', STATUS_NAO_VENDA_POSTGREST)
+        .is('deleted_at', null)
+        .order('created_at', { ascending: false })
+        .limit(500);
       if (error) throw error;
       return data || [];
     },
@@ -117,16 +127,8 @@ export function IntelligenceStrategicTab() {
   // de leitura; aqui a leitura foi OK e o dado é que não existe.)
   const concentracaoIndisponivel = totalRevenue === 0;
 
-  const discountedItems = orderItems?.filter(i => Number(i.discount || 0) > 0) || [];
-  const avgDiscountQty = discountedItems.length > 0
-    ? discountedItems.reduce((a, i) => a + Number(i.quantity), 0) / discountedItems.length : 0;
-  const nonDiscountedItems = orderItems?.filter(i => Number(i.discount || 0) === 0) || [];
-  const avgNonDiscountQty = nonDiscountedItems.length > 0
-    ? nonDiscountedItems.reduce((a, i) => a + Number(i.quantity), 0) / nonDiscountedItems.length : 0;
-  const priceElasticity = avgNonDiscountQty > 0 ? ((avgDiscountQty - avgNonDiscountQty) / avgNonDiscountQty * 100) : 0;
-
-  const ordersWithDiscount = salesOrders?.filter(o => Number(o.discount || 0) > 0).length || 0;
-  const discountSensitivity = salesOrders?.length ? (ordersWithDiscount / salesOrders.length * 100) : 0;
+  // Desconto: as duas colunas são 0 em 100% das linhas — sem desconto > 0 na amostra, "—" (ver desconto-kpis).
+  const desconto = kpisDesconto(salesOrders, orderItems);
 
   const uniqueCustomers = new Set(allScores?.map(c => c.customer_user_id)).size;
   const estimatedMarket = Math.max(uniqueCustomers * 3, 100);
@@ -243,8 +245,22 @@ export function IntelligenceStrategicTab() {
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <KpiCard title="Elasticidade de Preço" value={`${priceElasticity.toFixed(1)}%`} icon={TrendingUp} subtitle="Δ qty c/ desconto" />
-        <KpiCard title="Sensibilidade a Desconto" value={`${discountSensitivity.toFixed(1)}%`} icon={Percent} subtitle={`${ordersWithDiscount} de ${salesOrders?.length || 0} pedidos`} />
+        <KpiCard
+          title="Elasticidade de Preço"
+          value={desconto.elasticidade === null ? '—' : `${desconto.elasticidade.toFixed(1)}%`}
+          icon={TrendingUp}
+          subtitle={desconto.elasticidade === null ? 'desconto não registrado nos itens' : 'Δ qty c/ desconto'}
+        />
+        <KpiCard
+          title="Sensibilidade a Desconto"
+          value={desconto.sensibilidade === null ? '—' : `${desconto.sensibilidade.toFixed(1)}%`}
+          icon={Percent}
+          subtitle={
+            desconto.sensibilidade !== null
+              ? `${desconto.pedidosComDesconto} de ${desconto.pedidos} pedidos recentes`
+              : salesOrders ? 'desconto não registrado no pedido' : 'pedidos indisponíveis'
+          }
+        />
         <KpiCard title="Market Share Est." value={ou(`${marketSharePct.toFixed(1)}%`)} icon={Target} subtitle={scoresIndisponivel ? 'base indisponível' : `${uniqueCustomers} de ~${estimatedMarket} clientes`} />
         <KpiCard title="Margem Global" value={ouAudit(`R$ ${totalMarginReal.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`)} icon={DollarSign} subtitle={auditoriaIndisponivel ? 'auditoria indisponível' : `parcial — ${auditComCusto}/${auditTotal} c/ custo`} />
       </div>

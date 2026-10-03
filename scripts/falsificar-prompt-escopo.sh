@@ -6,6 +6,9 @@
 # por fora (`lovable-sensor-edicao`). Este harness instala, UM de cada vez, os defeitos que cada
 # metade existe para impedir — frase amputada, bloco fora de um dos ramos, cobertura cega ao escopo,
 # sensor que aceita "cedo demais" ou tolera `src/` inteiro — e exige vermelho PELO TESTE CERTO.
+# Desde 2026-10-01, também a FONTE ÚNICA da colagem: molde à mão de volta a uma instrução viva
+# (S13 na skill, S14 quebrado entre linhas no docs/agent) e os dois controles que impedem o teste
+# de aprovar por vacuidade — assinatura cega (S15) e varredura que não lê as skills (S16).
 #
 # Regras (CLAUDE.md §Armadilhas, "Teste SQL negativo"; docs/historico/falsificacao-sem-linha-de-base.md):
 # 1. COMMIT antes: a restauração é `git checkout --`; alvo sujo aborta.
@@ -49,6 +52,9 @@ const LOCALES = ['C', 'pt_BR.UTF-8'];
 const PROMPT = 'scripts/lib/prompt-deploy.ts';
 const PACOTE = 'scripts/lib/pacote-entrega.ts';
 const SENSOR = 'scripts/lib/lovable-sensor-edicao.ts';
+const SKILL = '.claude/skills/lovable-deploy-verify/SKILL.md';
+const DEPLOY_MD = 'docs/agent/deploy.md';
+const TESTE_PROMPT = 'scripts/lib/prompt-deploy.test.ts';
 
 interface Sabotagem { id: string; arquivo: string; defeito: string; velho: string; novo: string; marca: string }
 
@@ -98,6 +104,28 @@ const SABOTAGENS: Sabotagem[] = [
     velho: "  return t !== '' && t.toLowerCase() !== 'null' && t.toLowerCase() !== 'none';",
     novo: "  return true;",
     marca: '[SENSOR_NULO_NAO_E_SINAL]' },
+  // ── a fonte única da colagem (nenhum molde à mão nas instruções vivas) ─────────
+  { id: 'S13', arquivo: SKILL, defeito: 'o molde de 1 edge a mao volta a skill de deploy',
+    velho: '`[COLAGEM_SO_DO_GERADOR]` do `prompt-deploy.test.ts`.\n',
+    novo: '`[COLAGEM_SO_DO_GERADOR]` do `prompt-deploy.test.ts`.\n\n' +
+      '> Edit the existing edge function `<nome>` and replace its code with the current contents of\n' +
+      '> `supabase/functions/<nome>/index.ts` from the `main` branch. Deploy it **verbatim** — do NOT modify,\n' +
+      '> reinterpret, "improve", or reformat the code. After deploying, confirm it shows **Active**.\n',
+    marca: '[COLAGEM_SO_DO_GERADOR]' },
+  { id: 'S14', arquivo: DEPLOY_MD, defeito: 'molde da leva, com a assinatura quebrada entre linhas, aparece no docs/agent',
+    velho: '`8f005805-000a-42b7-88a1-9683f785fab6`). O prompt carrega o `sha256` de cada arquivo do closure e\n',
+    novo: '`8f005805-000a-42b7-88a1-9683f785fab6`). O prompt carrega o `sha256` de cada arquivo do closure e\n\n' +
+      '> Edit the following **two** existing edge functions and update **each** of them. Deploy all of them\n' +
+      '> **verbatim** — do NOT modify, reinterpret, "improve", or reformat any code.\n\n',
+    marca: '[COLAGEM_SO_DO_GERADOR]' },
+  { id: 'S15', arquivo: TESTE_PROMPT, defeito: 'a assinatura fica cega e a varredura aprova por vacuidade',
+    velho: 'const ASSINATURA_DE_COLAGEM = /Deploy (?:it|them|all of them) (?:\\*\\*)?verbatim/;',
+    novo: 'const ASSINATURA_DE_COLAGEM = /Deploy (?:it|them|all of them) (?:\\*\\*)?verbatin/;',
+    marca: '[COLAGEM_ASSINATURA_CASA_O_GERADOR]' },
+  { id: 'S16', arquivo: TESTE_PROMPT, defeito: 'a varredura deixa de ler as skills',
+    velho: "const INSTRUCOES_VIVAS = ['.claude/skills', 'docs/agent', 'docs/runbooks'];",
+    novo: "const INSTRUCOES_VIVAS = ['docs/agent', 'docs/runbooks'];",
+    marca: '[COLAGEM_VARREDURA_VE_AS_INSTRUCOES]' },
 ];
 
 const ALVOS = [...new Set(SABOTAGENS.map((s) => s.arquivo))];
