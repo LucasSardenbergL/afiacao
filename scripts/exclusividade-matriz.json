@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "medidoEm": "2026-10-03T12:57:32.772Z",
-  "sourceHead": "20f78abcd6a45fd768ddab9ac0d8776e3af2c19c",
+  "medidoEm": "2026-10-03T13:16:54.581Z",
+  "sourceHead": "6766e6eb88d7ff01b38738336e3efaba9fad089e",
   "dispensados": [
     {
       "gate": "authz:carimbo",
@@ -223,7 +223,7 @@
     {
       "gate": "sonda:cron-prova",
       "verde": true,
-      "ms": 842152
+      "ms": 336880
     },
     {
       "gate": "sonda:fingerprint",
@@ -253,7 +253,7 @@
     {
       "gate": "test:hooks",
       "verde": true,
-      "ms": 333233
+      "ms": 221079
     },
     {
       "gate": "test:sonda-rollback",
@@ -2879,6 +2879,14 @@
           "invocacao": "bun run sonda:bump"
         },
         {
+          "gate": "sonda:cron-prova",
+          "reprovou": false,
+          "ms": 362568,
+          "fingerprint": "0c7b02b5f4661936",
+          "fonteResolvida": true,
+          "invocacao": "bun run sonda:cron-prova -- --gate"
+        },
+        {
           "gate": "sonda:fingerprint",
           "reprovou": false,
           "ms": 96,
@@ -2909,6 +2917,14 @@
           "fingerprint": "b4dbbfe49b60c31a",
           "fonteResolvida": false,
           "invocacao": "bun run test:edges"
+        },
+        {
+          "gate": "test:hooks",
+          "reprovou": false,
+          "ms": 214354,
+          "fingerprint": "e5fbedda66c4e47b",
+          "fonteResolvida": true,
+          "invocacao": "bun run test:hooks"
         },
         {
           "gate": "test:sonda-rollback",
