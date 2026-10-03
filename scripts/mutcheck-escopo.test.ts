@@ -1,15 +1,26 @@
 import { describe, it, expect } from 'vitest';
-import { existsSync, mkdtempSync, readdirSync, readlinkSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import {
   GATILHOS_GLOBAIS,
+  PARTES_TODOS,
+  SEGUNDOS_POR_RODADA,
+  contarPartes,
   decidir,
+  estimarCusto,
+  juntar,
   lerContrato,
+  lerParte,
+  lerResumos,
   linhasDeSaida,
   materializar,
+  repartir,
   roda,
   selecionar,
+  universo,
+  type Contrato,
+  type Resumo,
 } from './mutcheck-escopo';
 
 const A = lerContrato(
@@ -117,8 +128,12 @@ describe('saídas para o workflow', () => {
       'roda=true',
       'todos=false',
       'contratos=scripts/mutcheck.d/a.mut scripts/mutcheck.d/c.mut',
+      'partes=[1]',
     ]);
     expect(linhasDeSaida(selecionar(['docs/x.md'], CONTRATOS))[0]).toBe('roda=false');
+    // matriz vazia não sobe nem para ficar SKIPPED: o vetor nunca é vazio
+    expect(linhasDeSaida(selecionar(['docs/x.md'], CONTRATOS))[3]).toBe('partes=[1]');
+    expect(linhasDeSaida(decidir('push', null, CONTRATOS))[3]).toBe(`partes=[${Array.from({ length: PARTES_TODOS }, (_, i) => i + 1).join(',')}]`);
   });
 
   it('materializar cria um symlink por contrato selecionado, apontando para o .mut', () => {
@@ -135,5 +150,181 @@ describe('saídas para o workflow', () => {
     expect(materializar({ todos: true, contratos: ['scripts/mutcheck.d/a.mut'], motivos: [] }, destino)).toBeNull();
     expect(materializar({ todos: false, contratos: [], motivos: [] }, destino)).toBeNull();
     expect(existsSync(destino)).toBe(false);
+  });
+});
+
+/** Contrato sintético com custo dado — o que importa para repartir é só o custo e o nome. */
+const k = (nome: string, custo: number): Contrato => ({ mut: `scripts/mutcheck.d/${nome}.mut`, alvos: ['x'], custo });
+
+describe('estimarCusto — (mutações + baseline) × custo de uma rodada do runner', () => {
+  const muts = (n: number) => Array.from({ length: n }, (_, i) => `PEGA | m${i} | s/a${i}/b/`).join('\n');
+
+  it('conta PEGA e SOBREVIVE (cada linha é uma rodada) e soma a do baseline', () => {
+    const txt = `# @src: src/a.ts\n# @test: src/a.test.ts\n${muts(3)}\nSOBREVIVE | x | s/y/z/\n# PEGA | comentado não conta`;
+    expect(estimarCusto(txt)).toBeCloseTo(5 * SEGUNDOS_POR_RODADA.vitestSrc);
+  });
+
+  it.each([
+    ['# @test_cmd: bash', '# @test: scripts/test-x.sh', SEGUNDOS_POR_RODADA.bash],
+    ['# @test_cmd: deno test --no-remote', '# @test: supabase/functions/_shared/x_test.ts', SEGUNDOS_POR_RODADA.deno],
+    ['', '# @test: scripts/x-gate.test.ts', SEGUNDOS_POR_RODADA.vitestScripts],
+    ['', '# @test: src/lib/x.test.ts', SEGUNDOS_POR_RODADA.vitestSrc],
+  ])('peso do runner (%s %s)', (cmd, teste, peso) => {
+    expect(estimarCusto(`# @src: x\n${teste}\n${cmd}\n${muts(9)}`)).toBeCloseTo(10 * peso);
+  });
+
+  it('lerContrato carrega o custo (o fixture A não tem linha PEGA|…: só o baseline)', () => {
+    expect(A.custo).toBeCloseTo(SEGUNDOS_POR_RODADA.vitestSrc);
+  });
+});
+
+describe('repartir — LPT determinístico', () => {
+  const pool = [k('a', 10), k('b', 9), k('c', 8), k('d', 1), k('e', 1), k('f', 1)];
+
+  it('cada contrato cai em EXATAMENTE uma parte', () => {
+    const partes = repartir(pool, 3);
+    const todos = partes.flat().map((c) => c.mut).sort();
+    expect(todos).toEqual(pool.map((c) => c.mut).sort());
+  });
+
+  it('o mais caro primeiro, sempre na parte mais leve', () => {
+    const somas = repartir(pool, 3).map((p) => p.reduce((s, c) => s + c.custo, 0));
+    // 10|9|8, e cada 1 vai para a mais leve: 8→9, (empate 9×9 → menor índice) 9→10, 9→10
+    expect(somas).toEqual([10, 10, 10]);
+  });
+
+  it('é determinístico e não depende da ordem de entrada (as partes e o agregador recalculam sozinhos)', () => {
+    const a = repartir(pool, 3).map((p) => p.map((c) => c.mut));
+    const b = repartir([...pool].reverse(), 3).map((p) => p.map((c) => c.mut));
+    expect(b).toEqual(a);
+  });
+
+  it('empate de custo decide pelo nome', () => {
+    expect(repartir([k('z', 5), k('y', 5)], 2).map((p) => p.map((c) => c.mut))).toEqual([
+      ['scripts/mutcheck.d/y.mut'],
+      ['scripts/mutcheck.d/z.mut'],
+    ]);
+  });
+
+  it('n=1 põe tudo numa parte; n<1 vira 1', () => {
+    expect(repartir(pool, 1)).toHaveLength(1);
+    expect(repartir(pool, 0)[0]).toHaveLength(pool.length);
+  });
+});
+
+describe('universo e materializar por parte', () => {
+  const todos = decidir('push', null, CONTRATOS);
+
+  it('universo: TODOS = todos os contratos; escopo = só os escolhidos', () => {
+    expect(universo(todos, CONTRATOS)).toHaveLength(CONTRATOS.length);
+    expect(universo(selecionar(['scripts/test-b.sh'], CONTRATOS), CONTRATOS).map((c) => c.mut)).toEqual(['scripts/mutcheck.d/b.mut']);
+  });
+
+  it('em TODOS, as N partes materializam fatias disjuntas que somam o universo', () => {
+    const base = mkdtempSync(join(tmpdir(), 'mutcheck-partes-'));
+    const vistos: string[] = [];
+    for (let i = 1; i <= 3; i++) {
+      const dir = materializar(todos, join(base, `p${i}`), { i, n: 3 }, CONTRATOS);
+      expect(dir).not.toBeNull();
+      vistos.push(...readdirSync(dir!));
+    }
+    expect(vistos.sort()).toEqual(['a.mut', 'b.mut', 'c.mut']);
+  });
+
+  it('parte única mantém o comportamento de antes: TODOS ⇒ null (o default roda todos)', () => {
+    expect(materializar(todos, join(mkdtempSync(join(tmpdir(), 'mc-')), 'x'), { i: 1, n: 1 }, CONTRATOS)).toBeNull();
+  });
+
+  it('sem contratos legíveis não há como repartir ⇒ null (a parte roda todos: caro, mas mede)', () => {
+    expect(materializar(todos, join(mkdtempSync(join(tmpdir(), 'mc-')), 'x'), { i: 2, n: 3 }, [])).toBeNull();
+  });
+
+  it.each([
+    [{ i: 0, n: 3 }],
+    [{ i: 4, n: 3 }],
+    [{ i: 1.5, n: 3 }],
+  ])('parte inválida %j lança (o catch do CLI cai no lado seguro)', (parte) => {
+    expect(() => materializar(todos, '/nao/usado', parte, CONTRATOS)).toThrow(/parte inválida/);
+  });
+});
+
+describe('juntar — a UNIÃO das partes', () => {
+  const p1 = [k('a', 10), k('d', 1)];
+  const p2 = [k('b', 9)];
+  const p3 = [k('c', 8)];
+  const esperado = [p1, p2, p3];
+  const linha = (nome: string, problema = false) => ({
+    mut: `/runner/_temp/mutcheck-escopo/${nome}.mut`,
+    exit: problema ? 1 : 0,
+    invalidas: 0,
+    divergencias: problema ? 1 : 0,
+    abortou: false,
+    sumario: '',
+  });
+  const resumo = (...nomes: string[]): Resumo => ({ total: nomes.length, com_problema: 0, contratos: nomes.map((n) => linha(n)) });
+
+  it('união completa: soma, normaliza o caminho e NÃO é incompleta', () => {
+    const j = juntar(esperado, new Map([[1, resumo('a', 'd')], [2, resumo('b')], [3, resumo('c')]]));
+    expect(j.incompleto).toBe(false);
+    expect(j.resumo.total).toBe(4);
+    expect(j.resumo.contratos.map((c) => c.mut).sort()).toEqual([
+      'scripts/mutcheck.d/a.mut',
+      'scripts/mutcheck.d/b.mut',
+      'scripts/mutcheck.d/c.mut',
+      'scripts/mutcheck.d/d.mut',
+    ]);
+  });
+
+  it('parte com fatia e SEM resumo ⇒ incompleto, e o motivo nomeia a parte', () => {
+    const j = juntar(esperado, new Map([[1, resumo('a', 'd')], [3, resumo('c')]]));
+    expect(j.incompleto).toBe(true);
+    expect(j.resumo.partes_sem_resumo).toEqual([2]);
+    expect(j.resumo.faltando).toEqual([]);
+    expect(j.motivos.join('\n')).toContain('parte 2/3');
+  });
+
+  it('parte de fatia VAZIA sem resumo não acusa nada', () => {
+    const j = juntar([p1, []], new Map([[1, resumo('a', 'd')]]));
+    expect(j.incompleto).toBe(false);
+  });
+
+  it('contrato que a parte devia medir e não mediu ⇒ faltando', () => {
+    const j = juntar(esperado, new Map([[1, resumo('a')], [2, resumo('b')], [3, resumo('c')]]));
+    expect(j.incompleto).toBe(true);
+    expect(j.resumo.faltando).toEqual(['d.mut']);
+  });
+
+  it('contrato medido duas vezes ⇒ duplicado (e fora da fatia de quem o mediu)', () => {
+    const j = juntar(esperado, new Map([[1, resumo('a', 'd')], [2, resumo('b', 'a')], [3, resumo('c')]]));
+    expect(j.incompleto).toBe(true);
+    expect(j.resumo.duplicados).toEqual(['a.mut']);
+    expect(j.resumo.inesperados).toEqual(['a.mut (parte 2)']);
+  });
+
+  it('nenhum resumo ⇒ incompleto (ausência de dado nunca fecha a Issue)', () => {
+    expect(juntar(esperado, new Map()).incompleto).toBe(true);
+  });
+});
+
+describe('leitura do CLI', () => {
+  it('lerParte: "2/3" → {2,3}; ausente → parte única; malformado lança', () => {
+    expect(lerParte('2/3')).toEqual({ i: 2, n: 3 });
+    expect(lerParte(undefined)).toEqual({ i: 1, n: 1 });
+    expect(() => lerParte('2-3')).toThrow(/malformado/);
+  });
+
+  it('contarPartes: o vetor da matriz; vazio ou ilegível lança', () => {
+    expect(contarPartes('[1,2,3]')).toBe(3);
+    expect(() => contarPartes('[]')).toThrow();
+    expect(() => contarPartes(undefined)).toThrow();
+  });
+
+  it('lerResumos: lê parte-<k>.json e trata JSON ilegível como ausente', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mutcheck-resumos-'));
+    writeFileSync(join(dir, 'parte-1.json'), JSON.stringify({ total: 1, com_problema: 0, contratos: [] }));
+    writeFileSync(join(dir, 'parte-2.json'), '{quebrado');
+    writeFileSync(join(dir, 'outro.json'), '{}');
+    expect([...lerResumos(dir).keys()]).toEqual([1]);
+    expect(lerResumos(join(dir, 'nao-existe')).size).toBe(0);
   });
 });
