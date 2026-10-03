@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "medidoEm": "2026-10-03T12:08:41.752Z",
-  "sourceHead": "26cd8c0b7d46a462308cc224b16c01356f043d35",
+  "medidoEm": "2026-10-03T12:50:10.008Z",
+  "sourceHead": "f830b8c8a3e65968973e1e7fea55689921700463",
   "dispensados": [
     {
       "gate": "authz:carimbo",
@@ -238,7 +238,7 @@
     {
       "gate": "test",
       "verde": true,
-      "ms": 227754
+      "ms": 95650
     },
     {
       "gate": "test:edges",
@@ -2880,8 +2880,8 @@
         },
         {
           "gate": "test",
-          "reprovou": true,
-          "ms": 430303,
+          "reprovou": false,
+          "ms": 106471,
           "fingerprint": "ad6cd6b8acf39571",
           "fonteResolvida": false,
           "invocacao": "bun run test"
