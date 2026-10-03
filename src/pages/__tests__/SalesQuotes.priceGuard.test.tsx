@@ -29,6 +29,8 @@ vi.mock('@/integrations/supabase/client', () => {
     const api: Record<string, unknown> = {
       select: () => api,
       eq: () => api,
+      // a lista de orçamentos esconde o apagado (`.is('deleted_at', null)`) — passa adiante
+      is: () => api,
       in: () => Promise.resolve({ data: [], error: null }),
       order: () => Promise.resolve({ data: table === 'sales_orders' ? h.quotes : [], error: null }),
       // omie_clientes lookup (só alcançado se o guard de preço NÃO bloquear).

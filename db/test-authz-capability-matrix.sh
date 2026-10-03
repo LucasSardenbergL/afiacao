@@ -421,8 +421,10 @@ eq "V5 authenticated COM execute em cap_carteira_ler" \
    "$(Pq -c "SELECT has_function_privilege('authenticated','private.cap_carteira_ler(uuid)','EXECUTE');")" "t"
 eq "V6 uid inexistente não recebe capability (fail-closed)" \
    "$(Pq -c "SELECT private.cap_custo_ler('99999999-9999-9999-9999-999999999999');")" "f"
-eq "V7 uid NULL não recebe capability" \
-   "$(Pq -c "SELECT COALESCE(private.cap_preco_escrever(NULL), false);")" "f"
+# A capability tem de devolver false, nunca NULL (`IF NOT cap(...)` com NULL não nega) — o COALESCE
+# para false fabricava o esperado; o 'ERA_NULL' é o idioma de test-cap-carteira-escrever-master-only.
+eq "V7 uid NULL não recebe capability (false, não NULL)" \
+   "$(Pq -c "SELECT coalesce(private.cap_preco_escrever(NULL)::text,'ERA_NULL');")" "false"
 
 echo ""
 echo "── ZONA 4f: as 2 RPCs SECDEF de custo executam (bug late-bound) ──"

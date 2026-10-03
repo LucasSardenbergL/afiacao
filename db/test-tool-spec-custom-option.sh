@@ -171,7 +171,7 @@ EXCEPTION WHEN sqlstate '42501' THEN RAISE NOTICE 'OK M — customer bloqueado';
 SELECT set_config('test.role','employee',false);
 DO $$ DECLARE opts jsonb; BEGIN
   SELECT options INTO opts FROM public.tool_specifications WHERE id='11111111-1111-1111-1111-111111111111';
-  IF opts @> '["999mm"]'::jsonb THEN RAISE EXCEPTION 'M2 FALHOU: customer escreveu'; END IF;
+  IF NOT FOUND OR opts @> '["999mm"]'::jsonb THEN RAISE EXCEPTION 'M2 FALHOU: customer escreveu (ou a spec sumiu: achada=%)', FOUND; END IF;
   RAISE NOTICE 'OK M2 — nada escrito pelo customer';
 END $$;
 

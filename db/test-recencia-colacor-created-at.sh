@@ -100,8 +100,9 @@ V=$(Pq -c "SELECT (created_at AT TIME ZONE 'UTC')::date::text FROM public.sales_
 eq "P2 SO1 (pai) consertado" "$V" "2025-09-15"
 V=$(Pq -c "SELECT (created_at AT TIME ZONE 'America/Sao_Paulo')::date::text FROM public.order_items WHERE id='a1a1a1a1-0000-0000-0000-000000000001';")
 eq "P3 OI1a data civil em BRT tbm bate (timezone-safe)" "$V" "2025-09-15"
-V=$(Pq -c "SELECT count(*) FROM public.order_items oi JOIN public.sales_orders so ON so.id=oi.sales_order_id WHERE so.account='colacor' AND so.hash_payload LIKE 'omie\_%' AND so.order_date_kpi IS NOT NULL AND (oi.created_at AT TIME ZONE 'UTC')::date <> so.order_date_kpi;")
-eq "P4 cobertura: 0 colacor-omie ainda divergente" "$V" "0"
+# o created_at NULL escapava do `<>` (não divergia, nem batia); "|t" = havia itens colacor-omie a medir.
+V=$(Pq -c "SELECT count(*) FILTER (WHERE (oi.created_at AT TIME ZONE 'UTC')::date IS DISTINCT FROM so.order_date_kpi), count(*) > 0 FROM public.order_items oi JOIN public.sales_orders so ON so.id=oi.sales_order_id WHERE so.account='colacor' AND so.hash_payload LIKE 'omie\_%' AND so.order_date_kpi IS NOT NULL;")
+eq "P4 cobertura: 0 colacor-omie ainda divergente" "$V" "0|t"
 
 echo "── asserts não-toca (escopo morde) ──"
 V=$(Pq -c "SELECT (created_at AT TIME ZONE 'UTC')::date::text FROM public.order_items WHERE id='a4a4a4a4-0000-0000-0000-000000000001';")

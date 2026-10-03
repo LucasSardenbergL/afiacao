@@ -42,6 +42,18 @@ SQL
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); echo "  ✅ $1"; }
 bad() { FAIL=$((FAIL+1)); echo "  ❌ $1"; }
+# executa <sql> → 'EXECUTOU' | 'SQLSTATE-<código>': marca POSITIVA de fim (ON_ERROR_STOP) e a SQLSTATE, que
+# não muda com o locale — o idioma do acl_probe de test-aprovar-pedido-guard.sh.
+executa() {
+  local out
+  if out=$(P -tA 2>&1 <<SQL
+\set VERBOSITY verbose
+$1
+SELECT 'EXECUTOU';
+SQL
+  ); then printf '%s\n' "$out" | tail -1
+  else echo "SQLSTATE-$(printf '%s\n' "$out" | sed -nE 's/.*[[:space:]]([0-9][0-9A-Z]{4}):.*/\1/p' | head -1)"; fi
+}
 
 echo "═══ setup (PG17 :$PORT) ═══"
 # ZONA 1 — pré-requisitos: app_role/has_role, schema private, MV stub (o alvo do refresh)
@@ -66,16 +78,18 @@ echo "migration aplicada: $(basename "$MIG")"
 
 # ZONA 3 — asserts
 echo "── A1 CRON-CONTEXT: auth.uid()=NULL refresca (NÃO dá 42501) ──"
-R=$(P -tA 2>&1 -c "SET test.uid=''; SET test.role=''; SELECT skus_ranqueados FROM public.refresh_sku_ranking_negociacao();" || true)
-case "$R" in *42501*|*"Acesso negado"*) bad "A1 cron AINDA morre sob NULL: $R";; *5*) ok "A1 refresca sob auth.uid()=NULL (cron recuperado; retornou skus=$R)";; *) bad "A1 retorno inesperado: $R";; esac
+R=$(P -tA 2>&1 -c "SET test.uid=''; SET test.role=''; SELECT 'SKUS=' || skus_ranqueados FROM public.refresh_sku_ranking_negociacao();" || true)
+# marca ancorada no FIM: SKUS=5 (as 5 linhas da MV stub). O `*5*` aprovava qualquer erro que tivesse um 5.
+case "$R" in *42501*|*"Acesso negado"*) bad "A1 cron AINDA morre sob NULL: $R";; *SKUS=5) ok "A1 refresca sob auth.uid()=NULL (cron recuperado; retornou $R)";; *) bad "A1 retorno inesperado: $R";; esac
 
 echo "── A2 authenticated NÃO executa o refresh (REVOKE) ──"
 R=$(P -tA 2>&1 -c "SET test.uid=''; SET ROLE authenticated; SELECT public.refresh_sku_ranking_negociacao();" || true)
 case "$R" in *denied*|*permission*) ok "A2 authenticated barrado (REVOKE EXECUTE)";; *) bad "A2 authenticated executou? $R";; esac
 
 echo "── A3 service_role executa (GRANT) ──"
-R=$(P -tA 2>&1 -c "SET test.uid=''; SET ROLE service_role; SELECT public.refresh_sku_ranking_negociacao();" || true)
-case "$R" in *denied*|*permission*) bad "A3 service_role barrado (grant faltando): $R";; *) ok "A3 service_role executa (GRANT EXECUTE)";; esac
+R=$(executa "SET test.uid=''; SET ROLE service_role; SELECT public.refresh_sku_ranking_negociacao();")
+# "não achei denied" aprovava qualquer OUTRO erro (e a negação em pt): só a marca de fim aprova.
+case "$R" in EXECUTOU) ok "A3 service_role executa (GRANT EXECUTE)";; *) bad "A3 service_role NÃO executou ($R)";; esac
 
 # ZONA 4 — falsificação
 echo "── F1: a versão COM o gate auth.uid() falha sob NULL (= o bug que consertamos) ──"

@@ -591,10 +591,16 @@ echo "── W: O VALIDADOR PÓS-APPLY TEM DENTE? (lição #1490/#1501) ──"
 VALIDA="$REPO_ROOT/db/valida-tint-fase5.sql"
 reset_estado; aplica_fase5 "$MIGRATION6" || true
 
-W_OK="$(P -tA -f "$VALIDA" 2>&1 || true)"
+W_RC=0; W_OK="$(P -tA -f "$VALIDA" 2>&1)" || W_RC=$?
+# A aprovação é POSITIVA: o psql sai 0 (o P tem ON_ERROR_STOP) e as 10 checagens de linha única
+# (estrutura c1–c6, efeito e1–e2, invariantes i1–i2) dão veredito — ✅, ou ⚠️ (aviso, não reprovação).
+# A seção 4 devolve uma linha POR cor ACR MAX, e este banco não as tem: um erro nela não mudaria a
+# contagem, só o rc. "Nenhum ❌" sozinho aprovava o validador que nem rodou ou que abortou.
+W_NOK="$(printf '%s' "$W_OK" | { command grep -oE '✅|⚠' || true; } | wc -l | tr -d ' ')"  # sem veredito o grep sai 1 (pipefail)
 case "$W_OK" in
   *"❌"*) bad "W1 o validador REPROVOU um banco CORRETO (falso negativo — pior que não validar): $(printf '%s' "$W_OK" | command grep -o '❌[^|]\{0,90\}' | head -1)" ;;
-  *)      ok  "W1 o validador aprova o banco BOM (nenhum ❌)" ;;
+  *) if [ "$W_RC" = 0 ] && [ "$W_NOK" = 10 ]; then ok "W1 o validador aprova o banco BOM (rc=0, 10/10 checagens com veredito, nenhum ❌)"
+     else bad "W1 o validador NÃO aprovou limpo (rc=$W_RC, $W_NOK/10 vereditos) — erro ou aborto não é aprovação: $(printf '%s' "$W_OK" | tr '\n' ' ' | cut -c1-220)"; fi ;;
 esac
 
 # W2 — view SEM o relaxamento do carimbo: o c5_relax tem de acusar.

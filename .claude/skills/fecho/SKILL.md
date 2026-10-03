@@ -510,12 +510,25 @@ linha no índice) mergearam com **135 segundos** de diferença e derrubaram a ma
 ⚠️ **`gh run list --branch main` NÃO serve para isso.** O `auto-merge.yml` usa
 `secrets.GITHUB_TOKEN` e, pela proteção anti-loop do GitHub, o push dele **não aciona
 workflow nenhum** — o último run de `push` na main costuma ser de semanas atrás (só a via do
-bot do Lovable cai ali). Consultar isso dá "verde por ausência de dado". Dispare de verdade:
+bot do Lovable cai ali). Consultar isso dá "verde por ausência de dado". O que vale é um run do CI
+**no commit de AGORA da main**, que contém os merges desta sessão.
+
+**Antes de disparar, reaproveite.** Outra sessão (ou o `schedule`) pode já ter disparado para o
+MESMO commit: de 25/09 a 01/10, 31 dos 76 disparos (41%) caíram num SHA que já tinha outro run, e
+cada run da main soma ~1h45 de runner (medido no #2752) que vira fila para os PRs. Só dispare se a
+lista vier VAZIA:
 
 ```bash
-gh workflow run CI --ref main            # o botão "validar a main agora" (~6 min)
-sleep 60 && gh run list --branch main --workflow CI --limit 1 --json databaseId,status,conclusion
+sha=$(git ls-remote origin refs/heads/main | cut -f1)   # a main de AGORA, não a cópia local
+gh run list --workflow CI --branch main --commit "$sha" --json databaseId,status,conclusion,event
+gh workflow run CI --ref main            # SÓ com a lista acima vazia: o botão "validar a main agora"
+sleep 30 && gh run list --workflow CI --branch main --commit "$sha" --json databaseId,status,conclusion
 ```
+
+Lista vazia DEPOIS do disparo = a main andou entre o `sha=` e o disparo (outro merge): refaça a
+partir do `sha=`. O run do commit mais novo também contém os seus merges. Tempo: o `validate` sai
+em ~20 min; o run inteiro só conclui depois do `mutation-check`, que na main roda todos os
+contratos (até ~45 min).
 
 - `success` → ✅ pode fechar.
 - `failure` → ❌ **investigue antes de fechar.**

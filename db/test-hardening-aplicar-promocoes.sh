@@ -148,7 +148,7 @@ BEGIN
   IF r.modo_promocao IS DISTINCT FROM 'flat' THEN RAISE EXCEPTION 'controle B falhou: sku888 deveria aplicar'; END IF;
   -- H2: sku777 NAO aplica (campanha CT-2 nao vigia em CT-5)
   SELECT * INTO r FROM pedido_compra_item WHERE id=8;
-  IF r.modo_promocao IS NOT NULL THEN RAISE EXCEPTION 'H2 vigencia falhou: sku777 aplicou fora da vigencia'; END IF;
+  IF NOT FOUND OR r.modo_promocao IS NOT NULL THEN RAISE EXCEPTION 'H2 vigencia falhou: sku777 aplicou fora da vigencia (modo=%, item achado=%)', r.modo_promocao, FOUND; END IF;
   RAISE NOTICE 'B OK: H2(vigencia na data do pedido) + controle vigente';
 END $$;
 

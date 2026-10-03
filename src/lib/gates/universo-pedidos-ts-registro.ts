@@ -11,7 +11,8 @@
 // PERGUNTA muda (um lookup que perde o `.eq('id')` vira outra pergunta e tem de ser reclassificado).
 //
 // Medido em 2026-10-01 (docs/historico/universo-pedidos-classe-ts.md): 61 sítios — 4 canônicos,
-// 17 escritas, 1 complemento e 39 fora; destes, 21 de propósito e 18 de dívida.
+// 17 escritas, 1 complemento e 39 fora; destes, 22 de propósito (lookup, sincronização, feed) e 18
+// de dívida. A dívida dos operacionais (10) foi quitada no PR seguinte ao do gate.
 
 type Categoria =
   /** Lê UM pedido (ou os de uma chave) pela identidade: a pergunta é "qual é este pedido?", não "foi venda?". */
@@ -65,6 +66,9 @@ export const REGISTRO: readonly EntradaRegistro[] = [
   { arquivo: 'src/hooks/useTeamKpis.ts', forma: 'select·is(deleted_at)·gte(created_at)·eq(account)', categoria: 'proposito', motivo: 'atividade de vendedor (quem CRIOU pedido em 7d): orçamento é atividade; a receita do mesmo hook vem de fetchPedidosMTD' },
   { arquivo: 'supabase/functions/omie-analytics-sync/index.ts', forma: 'select·is(status)·is(deleted_at)', categoria: 'proposito', motivo: 'sensor de qualidade, pré-condição do Apriori: conta pedido com status NULO' },
   { arquivo: 'supabase/functions/omie-analytics-sync/index.ts', forma: 'select·is(account)·is(deleted_at)', categoria: 'proposito', motivo: 'sensor de qualidade, pré-condição do Apriori: conta pedido com conta NULA' },
+  { arquivo: 'src/hooks/dashboard/useBriefDeltas.ts', forma: 'select·gte(created_at)·is(deleted_at)', categoria: 'proposito', motivo: 'conta os pedidos novos que o feed (/sales) mostra: todo status, sem o apagado' },
+  { arquivo: 'src/components/adminCustomers/useAdminCustomers.ts', forma: 'select·eq(customer_user_id)·is(deleted_at)·order(created_at)·limit', categoria: 'proposito', motivo: 'feed de pedidos do cliente no admin, com badge de status' },
+  { arquivo: 'src/pages/SalesQuotes.tsx', forma: 'select·eq(status)·is(deleted_at)·order(created_at)', categoria: 'proposito', motivo: 'a lista de ORÇAMENTOS (`eq(status,orcamento)`): o complemento do universo, de propósito' },
   // ── dívida (2026-10-01) — cada PR de domínio quita as suas ──────────────────────────────────
   { arquivo: 'src/lib/dashboard/fetch-pedidos-mtd.ts', forma: 'select·is(deleted_at)·gte(order_date_kpi)·lt(order_date_kpi)·order(id)·range·eq(account)', categoria: 'divida', dominio: 'dashboard', motivo: 'receita MTD e ranking: universo de team-kpis (NOT IN cancelado,rascunho) aplicado em memória' },
   { arquivo: 'src/hooks/dashboard/useVendasZone.ts', forma: 'select·is(deleted_at)·gte(order_date_kpi)·lt(order_date_kpi)', categoria: 'divida', dominio: 'dashboard', motivo: 'faturado hoje/ontem: mesmo isPedidoValido; erro engolido vira R$ 0' },
@@ -74,23 +78,13 @@ export const REGISTRO: readonly EntradaRegistro[] = [
   { arquivo: 'src/hooks/useMunicaoLigacao.ts', forma: 'select·eq(customer_user_id)·is(deleted_at)·order(created_at)·limit', categoria: 'divida', dominio: 'ligacao', motivo: 'munição: filtra status DEPOIS do limit(16)' },
   { arquivo: 'supabase/functions/algorithm-a-audit/index.ts', forma: 'select·not(deleted_at)·order(id)·range', categoria: 'divida', dominio: 'auditoria', motivo: 'complemento sem o par: a leitura de status é literal (cancelado,orcamento)' },
   { arquivo: 'supabase/functions/algorithm-a-audit/index.ts', forma: 'select·in(status)·order(id)·range', categoria: 'divida', dominio: 'auditoria', motivo: 'exclui só cancelado/orcamento: rascunho e pendente contam como praticado' },
-  { arquivo: 'src/hooks/useCustomerLastSalesOrder.ts', forma: 'select·eq(customer_user_id)·order(order_date_kpi)·limit', categoria: 'divida', dominio: 'operacionais', motivo: 'última compra sem status nem deleted_at (1 cliente vê pedido cancelado)' },
-  { arquivo: 'src/hooks/unifiedOrder/useCustomerSelection.ts', forma: 'select·eq(customer_user_id)·neq(status)·order(created_at)·limit', categoria: 'divida', dominio: 'operacionais', motivo: 'já-comprou: só orçamento fora (19 clientes, 29 pedidos cancelados no corte)' },
-  { arquivo: 'src/hooks/unifiedOrder/useCoresDoCliente.ts', forma: 'select·eq(customer_user_id)·order(created_at)·limit', categoria: 'divida', dominio: 'operacionais', motivo: 'cores do cliente sem status nem deleted_at' },
-  { arquivo: 'src/hooks/useRoutePlanner.ts', forma: 'select·in(customer_user_id)·order(created_at)', categoria: 'divida', dominio: 'operacionais', motivo: 'dias desde o último pedido: sem status, sem limit (capa de 1.000) e erro engolido' },
-  { arquivo: 'supabase/functions/visit-score-recalc-client/index.ts', forma: 'select·eq(customer_user_id)', categoria: 'divida', dominio: 'operacionais', motivo: 'prospect se 0 pedidos: conta pedido de qualquer status' },
-  { arquivo: 'src/pages/SalesPrintDashboard.tsx', forma: 'select·gte(created_at)·lte(created_at)·neq(status)·order(created_at)', categoria: 'divida', dominio: 'operacionais', motivo: 'impressão do dia: só cancelado fora (imprime orçamento/rascunho)' },
-  { arquivo: 'src/components/intelligence/IntelligenceStrategicTab.tsx', forma: 'select·limit', categoria: 'divida', dominio: 'operacionais', motivo: 'sensibilidade a desconto: 500 linhas sem ordem nem universo (e discount é 0 em 100% das linhas)' },
-  { arquivo: 'src/hooks/dashboard/useBriefDeltas.ts', forma: 'select·gte(created_at)', categoria: 'divida', dominio: 'operacionais', motivo: 'contagem do feed sem deleted_at (vira propósito com o filtro)' },
-  { arquivo: 'src/components/adminCustomers/useAdminCustomers.ts', forma: 'select·eq(customer_user_id)·order(created_at)·limit', categoria: 'divida', dominio: 'operacionais', motivo: 'feed de pedidos do cliente sem deleted_at (vira propósito com o filtro)' },
-  { arquivo: 'src/pages/SalesQuotes.tsx', forma: 'select·eq(status)·order(created_at)', categoria: 'divida', dominio: 'operacionais', motivo: 'lista de orçamentos sem deleted_at (vira propósito com o filtro)' },
 ];
 
 /**
- * Teto da dívida: o número de entradas `divida` na criação do gate. Só desce — subir é reabrir a
- * classe, e o diff que mexer aqui é a conversa.
+ * Teto da dívida: IGUAL ao número de entradas `divida` (o G4 exige a igualdade). Só desce — quem
+ * quita uma entrada baixa o teto no mesmo diff; subir é reabrir a classe, e o diff é a conversa.
  */
-export const TETO_DIVIDA = 18;
+export const TETO_DIVIDA = 8;
 
 interface ConstanteDivida {
   arquivo: string;

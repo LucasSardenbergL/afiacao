@@ -49,6 +49,8 @@ vi.mock('@/integrations/supabase/client', () => {
         return api;
       },
       in: () => Promise.resolve({ data: [], error: null }),
+      // a lista de orçamentos esconde o apagado (`.is('deleted_at', null)`) — passa adiante
+      is: () => api,
       order: () =>
         Promise.resolve({ data: table === 'sales_orders' ? h.quotes : [], error: null }),
       maybeSingle: () => {

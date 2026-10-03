@@ -373,6 +373,12 @@ campo() { # <cliente> <campo>
            public.farmer_melhores_individuais_por_cliente('$D')) j
           WHERE j->>'customer_user_id'='$1';"
 }
+# campo_n: como campo(), mas o JSON null/ausente vira '(null)' — o cliente SUMIDO (ou a leitura que erra) dá "".
+campo_n() { # <cliente> <campo>
+  Pq -c "SELECT coalesce(j->>'$2','(null)') FROM jsonb_array_elements(
+           public.farmer_melhores_individuais_por_cliente('$D')) j
+          WHERE j->>'customer_user_id'='$1';"
+}
 nprod() { # <cliente> — quantos SKUs a tela vai NOMEAR
   Pq -c "SELECT jsonb_array_length(j->'produtos') FROM jsonb_array_elements(
            public.farmer_melhores_individuais_por_cliente('$D')) j
@@ -396,10 +402,11 @@ eq "O9 candidatos conta o GRUPO, não o topo"            "$(campo "$CT" candidat
 eq "O10 ordem_indisponivel nomeia o grupo INTEIRO"      "$(nprod "$CP")" "3"
 eq "O11 eleito nomeia UM"                               "$(nprod "$CE")" "1"
 eq "O12 produto_eleito é o do rank mínimo"              "$(campo "$CE" produto_eleito)" "$PROD"
+# a situacao AUSENTE dava NULL e escapava do `<>`; "|t" = a carteira tem elementos a medir.
 eq "O13 produto_eleito não-nulo ⟺ eleito, na carteira inteira" \
-   "$(Pq -c "SELECT count(*) FROM jsonb_array_elements(
-               public.farmer_melhores_individuais_por_cliente('$D')) j
-              WHERE (j->>'produto_eleito' IS NOT NULL) <> (j->>'situacao'='eleito');")" "0"
+   "$(Pq -c "SELECT count(*) FILTER (WHERE (j->>'produto_eleito' IS NOT NULL) IS DISTINCT FROM (j->>'situacao'='eleito')), count(*) > 0
+             FROM jsonb_array_elements(
+               public.farmer_melhores_individuais_por_cliente('$D')) j;")" "0|t"
 eq "O14 produtos NUNCA é vazio ou nulo" \
    "$(Pq -c "SELECT count(*) FROM jsonb_array_elements(
                public.farmer_melhores_individuais_por_cliente('$D')) j
@@ -500,7 +507,7 @@ VALUES
 SQL
 # Rank de G1 contra rank de G2 são universos diferentes: `ordem 1` não venceu de ninguém.
 eq "O26 geração MISTURADA no grupo não elege"      "$(campo "$CG" situacao)" "ordem_indisponivel"
-eq "O27 grupo incoerente não transporta run_id"    "$(campo "$CG" run_id)"   ""
+eq "O27 grupo incoerente não transporta run_id"    "$(campo_n "$CG" run_id)" "(null)"
 eq "O28 grupo coerente TRANSPORTA o run_id"        "$(campo "$CE" run_id)"   "$RUND"
 
 # O cast NÃO recusa representação textual — `boolean_in` aceita "false"/"off"/"0" e `int2in`

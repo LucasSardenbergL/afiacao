@@ -178,6 +178,8 @@ DEPOIS edita OUTRAS edges pelo `build-errors.log`; o sync empurra "Changes" na `
 proíbe (`blocoDeEscopo`: nenhum arquivo, erro de log só reportado, fecho `No files were edited.`) —
 e **≥5 min após o envio** rode `bun scripts/lovable-sensor-edicao.ts --desde <ISO> <resposta>` (exit 1 =
 editou → revert por PR com bump de `VERSAO`). [Narrativa](../historico/agente-lovable-conserta-o-que-nao-pediram.md).
+**A colagem só sai do `montarPrompt`** (`pendencias:prompt <edge>` aceita qualquer edge pelo nome). A
+skill de deploy ensinava 3 moldes à mão, sem escopo nem conferência, e o `[COLAGEM_SO_DO_GERADOR]` barra a volta deles.
 **Quem reacorda o agente depois do fecho pode ser a PLATAFORMA** (medido em 2026-09-27 19:37Z).
 Com erro no `build-errors.log`, o Lovable injeta *"Fix them … including the ones that predate your
 changes. Don't ask first"* e insiste se ele só reporta. O Knowledge segurou, mas o turno custou 3,2

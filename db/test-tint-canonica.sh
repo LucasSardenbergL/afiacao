@@ -556,8 +556,9 @@ BEGIN
   IF r.preco_csv_legado IS DISTINCT FROM '160' THEN
     falhas := falhas || format('C13 FALHOU: K2 (fallback SAYERLACK) preco_csv_legado=%s — esperado 160 (próprio)', r.preco_csv_legado); END IF;
   SELECT preco_csv_legado::text INTO r FROM public.v_tint_formula_canonica WHERE cor_id='K9';
-  IF r.preco_csv_legado IS NOT NULL THEN
-    falhas := falhas || format('C13 FALHOU: K9 (só SL, sem CSV na chave) preco_csv_legado=%s — esperado NULL', r.preco_csv_legado); END IF;
+  -- K9 é SERVIDA (só SL válida): sem o FOUND, a canônica SUMIDA também lia "NULL"
+  IF NOT FOUND OR r.preco_csv_legado IS NOT NULL THEN
+    falhas := falhas || format('C13 FALHOU: K9 (só SL, sem CSV na chave) preco_csv_legado=%s achada=%s — esperado NULL com a canônica presente', r.preco_csv_legado, FOUND); END IF;
   SELECT preco_csv_legado::text INTO r FROM public.v_tint_formula_canonica WHERE cor_id='K11';
   IF r.preco_csv_legado IS DISTINCT FROM '220' THEN
     falhas := falhas || format('C13 FALHOU: K11 preco_csv_legado=%s — esperado 220', r.preco_csv_legado); END IF;
@@ -635,7 +636,8 @@ BEGIN
   -- C9 determinismo: duas leituras idênticas (ids ordenados)
   SELECT string_agg(id::text, ',' ORDER BY id) INTO a FROM public.v_tint_formula_canonica;
   SELECT string_agg(id::text, ',' ORDER BY id) INTO b FROM public.v_tint_formula_canonica;
-  IF a IS DISTINCT FROM b THEN falhas := falhas || 'C9 FALHOU: leituras divergem'; END IF;
+  -- string_agg de zero linhas é NULL: a view VAZIA dava NULL × NULL e passava "determinística"
+  IF a IS NULL OR a IS DISTINCT FROM b THEN falhas := falhas || format('C9 FALHOU: leituras divergem ou a view veio vazia (a nula=%s)', a IS NULL); END IF;
 
   -- C10 paridade do espelho: p/ cada canônica, receita_valida ∧ base_disponivel
   --     ⟺ precoFinal da RPC REAL (get_tint_prices) não-nulo

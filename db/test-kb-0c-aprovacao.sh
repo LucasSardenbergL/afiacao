@@ -204,7 +204,7 @@ DO \$\$
 DECLARE v numeric;
 BEGIN
   SELECT rendimento_m2_por_litro INTO v FROM public.kb_product_specs WHERE id = '$SPEC2';
-  IF v IS NOT NULL THEN RAISE EXCEPTION 'B2b FALHOU: rendimento mudou pra % (esperado NULL — UPDATE do employee era no-op)', v; END IF;
+  IF NOT FOUND OR v IS NOT NULL THEN RAISE EXCEPTION 'B2b FALHOU: rendimento mudou pra % ou a spec sumiu (achada=%) (esperado NULL — UPDATE do employee era no-op)', v, FOUND; END IF;
   RAISE NOTICE 'OK B2b — rendimento continua NULL (employee não conseguiu gravar)';
 END \$\$;
 SQL
