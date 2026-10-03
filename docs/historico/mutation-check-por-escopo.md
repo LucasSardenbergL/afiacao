@@ -54,3 +54,27 @@ gh run list --workflow CI --event pull_request --limit 30 --json databaseId,conc
 Na lista de jobs de cada run, o `mutation-check` deve aparecer **skipped** nos PRs fora do
 escopo. Nos PRs no escopo, o log do step "Contratos no escopo deste diff" lista cada contrato e o
 arquivo que o alcançou.
+
+## Partes e união (2026-10-03)
+
+Com o escopo, a `main` virou o único lugar que roda TODOS os contratos: 28,7–43,9 min em 10 runs
+de 01/10, contra o teto de 45 (o #2762 subiu para 60 como stopgap). Dois contratos eram 40% do
+tempo: `sonda-versao-sql` 8,5 min e `falsificar-exige-assert-gate` 8,3. Por decisão do founder,
+TODOS virou **3 partes** da matriz do `mutation-check`, e o escopo de um PR continua numa parte só.
+
+- **Equilíbrio pelo custo ESTIMADO** (`estimarCusto`): (mutações + baseline) × segundos por rodada
+  do runner — medianas do log de 01/10: bash 0,7 · deno 1,7 · vitest com `@test` em `scripts/`
+  2,7 · em `src/` 1,2. O nº de mutações sozinho já correlaciona 0,90 com a duração. Simulado contra
+  os tempos reais, a maior parte fica em ~15,6 min (ótimo 14,1). O peso só equilibra; nunca tira
+  contrato da medição.
+- **Repartição determinística** (`repartir`, LPT com empate por nome): cada parte recalcula sozinha
+  a mesma divisão, e o agregador também.
+- **União no `mutcheck-sensor`** (main, padrão do `provas-sql-uniao`): as partes sobem o resumo como
+  artefato; `bun run mutcheck:escopo --juntar` confere que cada contrato foi medido **exatamente uma
+  vez**. Parte sem resumo, contrato sem medição, duplicado ou fora da fatia ⇒ `incompleto` ⇒ a
+  Issue `mutcheck-cobertura` abre como ausência de dado e não fecha. Antes, parte cancelada era
+  silêncio: o alarme só escutava `failure()`.
+
+Provado local em modo `--seco` (fatias de 15/16/17 contratos, união completa com os 48) e com quatro
+sabotagens da união — parte sem resumo, contrato duplicado, contrato sumido, nenhum artefato —
+todas `incompleto=true`, com o controle intacto em `false`.
