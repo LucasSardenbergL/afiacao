@@ -1003,3 +1003,11 @@ PROD `614ee7e0`) e a entrega, a `20261001023000` (fuso SP) recriou a função. A
 REVERTIDO o fuso em silêncio ("a última a recriar vence"); o que pegou foi re-medir o md5 da PROD antes de
 aplicar, não o diff do PR. (3) A sabotagem pela migration inteira é barrada pela própria `$post$` — por isso a
 falsificação COMPORTAMENTAL aplica só o corpo (Codex desenho P1); o abort da `$post$` é prova à parte.
+
+**Aplicação (2026-10-03).** Pela sessão, no ENVELOPE (MCP, `BEGIN/COMMIT` + `$post$` + trava `md5(prosrc)=79f6881b…`),
+após ensaio `ENSAIO_OK` e re-medição da PROD (`2cae069c…`) imediatamente antes. 2ª testemunha `psql-ro`: corpo
+`79f6881b…`, 2 listas, fuso SP preservado, ACL idêntico, 1 overload. Revisão adversarial de código pelo **Fable**
+(Codex sem cota até 03/10 19:11 — decisão do founder): aprovado, 0 P0/P1. P2 registrado:
+`reposicao_pedido_auto_aprovavel` (`20260629140000`) lista só `('disparado','concluido_recebido')` e cobre o PO do
+dry_run por COINCIDÊNCIA de coluna (`omie_pedido_compra_numero IS NOT NULL`, gravado no mesmo UPDATE do status —
+`disparar-pedidos-aprovados/index.ts`), não por vocabulário.
