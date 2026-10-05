@@ -70,7 +70,7 @@ export const respostaSonda = criarRespostaSonda("omie-analytics-sync");
  * o `toLocaleDateString` sem fuso dava o dia UTC do servidor, AMANHÃ das 21:00 às 23:59 BRT. Nenhuma
  * pré-condição de banco.
  */
-export const VERSAO = "v1.6-hoje-sp-data-posicao";
+export const VERSAO = "v1.7-zero-confirmado";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
