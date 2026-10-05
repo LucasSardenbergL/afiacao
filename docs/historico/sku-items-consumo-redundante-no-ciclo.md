@@ -155,7 +155,7 @@ forma real do fault SOAP da Omie. Teste que passa por duas camadas não prova ne
   seguido de runs `complete` de 2h, que não enxergam NFes de mais de 3 dias ⇒ nunca há dois `error`
   seguidos, e o Sentinela não pagina. O `error` fica no `fin_sync_log`. Fechar isso pede um sensor
   por fora da edge (SQL sobre a fila), não mais regra dentro dela.
-- **A família Sayerlack série 1 responde 0 itens.** Nos 30 runs das 07:00 o total gravado foi ZERO
+- **A família Sayerlack série 1 responde 0 itens.** ✅ Resolvido em 2026-10-05: era CT-e (modelo 57, o frete), não NF-e — ver [sku-items-cte-fora-da-fila.md](sku-items-cte-fora-da-fila.md). Nos 30 runs das 07:00 o total gravado foi ZERO
   itens, com ~19 NFes pendentes por dia girando no backoff. O motivo novo vai dizer se é chave
   `itensRecebimento` ausente ou lista vazia — evidência antes de mudar comportamento.
 - **HTTP 500 com fault de negócio conta como falha** (comportamento anterior, mantido).

@@ -755,7 +755,8 @@ SIGTERM no prazo mas **espera o filho sair de verdade**: o decorrido foi 4.774.8
 de 2.400.000: **quase o dobro**. Um teto que não vincula é a família de
 [espera-sem-desistencia.md](espera-sem-desistencia.md) — o `estourou` marcou certo (ausência de
 dado, fail-closed), mas o custo não foi contido. Fica como pendência separada: o teto precisa de
-`SIGKILL` depois de uma carência, ou de `spawn` assíncrono com o próprio relógio.
+`SIGKILL` depois de uma carência, ou de `spawn` assíncrono com o próprio relógio. **Fechada em
+2026-10-05** — seção «O teto que vincula», abaixo: o `SIGKILL` de uma linha não bastava.
 
 **O segundo é que a máquina não estava medível**, e isso não se lê pelo relógio de parede: `load
 average 216,63` com swap em 5.554 de 6.144 MB e **seis `vitest` de outras sessões** moendo a CPU.
@@ -1343,6 +1344,76 @@ dele o commit passou pelo gancho normal, sem `--no-verify`).
 - **A re-medição INTEIRA do corpus** (o custo acima). Só ela tira o `LINHA_PODRE` (AVISA) do
   `gates:frescura` — ele compara com a 1ª execução do gate em ordem de defeito, que é de uma linha
   antiga — e renova as linhas DEFASADAS `bun-despinado` e `censo-sem-o-gate`.
+
+## O teto que vincula (2026-10-05) — o GRUPO, não o filho
+
+A pendência da re-medição de 2026-09-25 (`VERMELHO sonda:cron-prova 4774853ms (ESTOUROU 2400000ms)`)
+fechou. Antes do conserto, a causa foi medida num fixture descartável (Bun 1.3.14):
+
+| caso | teto | decorrido | o que acontece |
+|---|---|---|---|
+| `sh` com `trap '' TERM` | 1 s | 6.423 ms | o `spawnSync` manda o TERM no prazo e ESPERA o filho sair de verdade |
+| `bun run` → script que ignora o TERM | 3 s | 8.255 ms | o `bun run` REPASSA o TERM ao script e o espera — e o motor espera junto |
+| `bun run` → script sem handler | 3 s | 3.198 ms | o script morre no TERM: o teto vincula por sorte do gate, não do motor |
+| o mesmo, com `killSignal: 'SIGKILL'` | 3 s | 3.532 ms | o motor volta no prazo — e o script segue VIVO, órfão, 4 s depois |
+
+A última linha derruba o conserto de uma linha. O KILL mata o `bun run` antes de ele repassar qualquer
+coisa, e o gate de verdade continua rodando: o custo não foi contido, só deixou de ser contado. E o órfão
+ainda pode escrever na árvore DEPOIS do snapshot do write-guard (guarda 7), na conta do gate seguinte.
+O `sonda-cron-prova.ts` não trata sinal, mas segura `spawnSync('deno', …)`: qualquer elo da cadeia que
+demore no TERM — sob load 216, até o teardown — segura o motor.
+
+**O conserto (guarda 15, `executarComTeto`).** O gate roda como líder de um grupo de processos próprio
+(`detached`). No teto, TERM ao GRUPO; `EXCL_CARENCIA_MS` (30 s) para quem trata o sinal restaurar o que
+estava escrevendo — o write-guard confere depois, como sempre —; KILL no que sobrar. O líder sair não
+encerra a espera enquanto o grupo tiver gente: o neto que ignora o TERM é o órfão clássico. A espera é
+uma vigia (a cada 25 ms, até a carência), não uma checagem única no instante em que o líder sai — quem
+ainda está terminando de sair não cobra a carência inteira do gate que obedeceu. A
+receita `regenerar-fingerprints` usa a mesma captura — mesma cadeia `bun run`, mesmo teto. Sem estouro,
+nada muda. O `ms` registrado segue o DECORRIDO, agora limitado a teto + carência: gravar o teto no lugar
+fabricaria o número, e o decorrido de um estouro é cota inferior do custo, nunca o custo.
+
+**O achado de passagem: a guarda 2 não valia com gate em voo.** O teste do Ctrl-C, rodado contra o motor
+antigo, saiu **0, não 130**, aos 31,7 s: com `main()` síncrono, o handler de SIGINT fica na fila até o
+fim da rodada, e o `process.exit` roda antes dele. O motor assíncrono o atende na hora. Mas com
+`detached` o gate sai do grupo do terminal — o Ctrl-C não chega mais nele —, então abortar (SIGINT,
+SIGTERM, SIGHUP, exceção, rejeição) mata o grupo em voo ANTES de restaurar. Sem isso, o conserto CRIARIA
+o órfão que existe para matar. De quebra, o SIGTERM externo da 1ª fatia E (o `heavy` repassando ao grupo
+do executor) deixa de virar `estourou o tempo` numa linha — o motor o atende e aborta com 130, sem gravar.
+
+**Os testes** (`motor — o TETO vincula`), com gates de árvore em `sh` (`arvore.sh` do fixture): o surdo
+(`trap '' TERM`, herdado pelo neto), o obediente (trata o TERM e registra que limpou), o neto-surdo (o
+filho morre no TERM e deixa um neto surdo), o Ctrl-C com o gate travado sob o defeito, a receita que trava
+numa árvore surda e o teto inválido. Rodados contra o motor ANTES do conserto: o surdo cortado em
+**30.082 ms** (teto 4.000), **2 processos vivos** depois do motor no par obediente/neto-surdo, e o Ctrl-C
+saindo 0.
+
+**A falsificação.** Uma camada por vez, restaurada por `git checkout --` (o conserto commitado antes), com
+o CONTROLE — o bloco do teto sem sabotagem, 5 de 5 verdes — no começo e no fim da MESMA invocação, em
+`LC_ALL=C` e em `pt_BR.UTF-8`. Saiu `FIM-FALSIFICACAO falhas=0`: as 9 sabotagens vermelhas nos dois
+locales, cada uma por uma assertiva da camada que ela tira:
+
+| sabotagem | o que caiu |
+|---|---|
+| o motor ORIGINAL (`spawnSync` + `timeout`) | os 5: surdo em 30.024 ms; 2 órfãos; Ctrl-C saindo 0; a receita; teto inválido aceito |
+| o original + `killSignal: 'SIGKILL'` — o conserto de uma linha | surdo NO PRAZO, mas com os 2 processos vivos; o obediente não limpou; Ctrl-C; receita; teto |
+| TERM/KILL só no líder (sem o `-pgid`) | órfãos no surdo, no Ctrl-C e na receita; o obediente pagou a carência (7.004 ms) |
+| sem o KILL ao fim da carência | surdo em 30.042 ms; o neto-surdo órfão; a receita |
+| KILL direto no teto, sem carência | o obediente não limpou; a receita rotula `corte por SIGTERM` um corte que foi KILL |
+| o líder sair encerra a espera | o neto-surdo órfão; a receita sai `corte por SIGTERM`, antes do KILL |
+| abortar sem matar o grupo em voo | o Ctrl-C deixa os 2 processos do gate vivos |
+| sem grupo próprio (`detached: false`) | surdo em 30.057 ms; o obediente nem recebe o TERM; Ctrl-C com órfãos |
+| sem validar o teto | o `--dry` aceita `EXCL_TIMEOUT_MS=40min` e sai 0 |
+
+A 2ª linha é a que decide entre os dois consertos do relato: o de uma linha passa no relógio e reprova na
+árvore. E nenhuma camada ficou verde sob a própria sabotagem — nenhuma é redundante.
+
+**Por que não virou `.mut`.** Cada mutação do bloco custa de 35 a 90 s, e o `mutation-check` já viveu a 98%
+do teto de 45 min (2026-09-30). Os testes ficam — e ficam vermelhos contra o código antigo.
+
+**O que NÃO muda: o relógio.** O `ms` é `Date.now()` e conta o sono da máquina (o `tsc` de 4,9 h de
+2026-10-01, tampa fechada) — este conserto não mexe nisso. Nem a sonda das deps (guarda 13), que segue no
+`spawnSync`: binário único, `--version`, teto de 60 s.
 
 ## A regra
 

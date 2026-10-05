@@ -17,7 +17,7 @@
 -- diria "medido e completo" para as 144 linhas históricas — dado fabricado (ausente ≠ zero) — e a
 -- regra nova tiraria da fila as irmãs sem linha delas, que a regra antiga ainda reconsulta.
 --
--- ORDEM: aplicar ANTES do deploy da edge v1.3-pendencia-por-item — ela lê a coluna e, sem ela, a
+-- ORDEM: aplicar ANTES do deploy da edge v1.4-pendencia-por-item — ela lê a coluna e, sem ela, a
 -- leitura do controle falha FECHADA (todo run vira 'error'). A edge velha não lê nem escreve a coluna:
 -- aplicar antes é inócuo.
 --

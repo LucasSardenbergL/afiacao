@@ -65,7 +65,7 @@ Acréscimo meu, não pedido pelo Codex: a fila deixou de ser monotônica para o 
 da fila a irmã sem linha). Com o dono estável, reconsultar pela irmã sem linha nunca grava nada nela — a
 regra antiga a deixaria como poison eterno.
 
-## 4. O conserto (`v1.3-pendencia-por-item`)
+## 4. O conserto (`v1.4-pendencia-por-item`)
 
 - [`recebimento.ts`](../../supabase/functions/omie-sync-sku-items/recebimento.ts): `classificarItem`,
   `pendenteNaFila`, `donoDoRecebimento` e `gravarRecebimento` com o banco injetado — a edge passa o
@@ -122,7 +122,7 @@ aplicada; a suíte tem de ficar VERMELHA no teste esperado (marcador ASCII); o g
    ```
    Esperado: `integer`, default nulo, `YES`; `true`.
 2. **Deploy da edge** `omie-sync-sku-items` (`pendencias:deploy` decide). Prova passiva: o eco
-   `v1.3-pendencia-por-item` no `net._http_response` do cron 186 (:35) e o ledger no run das 07:00.
+   `v1.4-pendencia-por-item` no `net._http_response` do cron 186 (:35) e o ledger no run das 07:00.
 3. **Reabrir o resíduo** (escrita pontual; os dois recebimentos têm UMA irmã — o dono é ela, a
    reconsulta grava sob a mesma chave):
    ```sql

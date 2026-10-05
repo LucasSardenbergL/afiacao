@@ -14,11 +14,13 @@
 //      Os itens já estão gravados; só as DATAS faltavam — a Omie não tem o que acrescentar.
 //   1) Lê NFes da empresa no período com t2_data_faturamento e nfe_chave_acesso.
 //   2) Fila = trackings PENDENTES (recebimento.ts, `pendenteNaFila`: com a pendência medida, decide
-//      `itens_pendentes` > 0; sem medida — legado —, "sem linha em sku_leadtime_history") ELEGÍVEIS
-//      pelo controle de tentativas (sku_items_sync_controle + backoff 6h/24h/72h), nunca-tentadas
-//      primeiro — NFe cuja consulta retorna 0 itens não upserta e não sairia nunca da fila (poison
-//      que consumia o guard de 50s a cada run; OBEN 2026-07-14). Até 2026-10-05 a fila era só "sem
-//      linha": UMA linha gravada tirava o recebimento da fila com item faltando, para sempre.
+//      `itens_pendentes` > 0; sem medida — legado —, "sem linha em sku_leadtime_history"), MENOS o
+//      CT-e (modelo 57 pela chave de acesso: o frete não tem item de produto — escopo.ts, contado em
+//      `ctes_fora_da_fila`), ELEGÍVEIS pelo controle de tentativas (sku_items_sync_controle + backoff
+//      6h/24h/72h), nunca-tentadas primeiro — NFe cuja consulta retorna 0 itens não upserta e não
+//      sairia nunca da fila (poison que consumia o guard de 50s a cada run; OBEN 2026-07-14). Até
+//      2026-10-05 a fila era só "sem linha": UMA linha gravada tirava o recebimento da fila com item
+//      faltando, para sempre.
 //   3) Para cada NFe → ConsultarRecebimento(nIdReceb) → itera itensRecebimento[]; TODA
 //      consulta que a Omie RESPONDEU (sucesso, 0 itens, fault de negócio) ou que FALHOU de
 //      verdade (HTTP/socket) marca tentativa no controle. Limite do RUN (REDUNDANT/rate-limit
@@ -43,6 +45,7 @@ import {
   type PedidoCasado,
   pendenteNaFila,
 } from "./recebimento.ts";
+import { separarCtes } from "./escopo.ts";
 import { classificarSonda, EDGE, EFEITO, erroSondaAmbigua, FONTE, respostaSonda, VERSAO } from "./versao.ts";
 
 // Tipos da resposta do Omie: consulta.ts (junto da chamada que os produz).
@@ -79,6 +82,9 @@ interface EmpresaSummary {
    *  (NFe órfã ou fallback provado da edge) — mentira que subestimava o leadtime. */
   recompute_anuladas: number;
   recompute_erro: string | null;
+  /** Linhas PENDENTES na janela (`pendenteNaFila`: sem linha no legado; pendência medida > 0 — ver
+   *  `fila_incompleta`) que são CONSULTÁVEIS por desenho (o CT-e já saiu: ver `ctes_fora_da_fila`).
+   *  Inclui as em backoff, as irmãs de um mesmo recebimento e as sem nIdReceb. */
   fila_pendente: number;
   fila_em_backoff: number;
   /** Trackings pendentes COM linha gravada — só entram porque a pendência medida é > 0. */
@@ -86,6 +92,10 @@ interface EmpresaSummary {
   /** Trackings SEM linha que a pendência medida (0) tira da fila: irmã a quem nenhum item foi
    *  roteado, recebimento só de itens ignorados. Pela regra antiga seriam reconsultados para sempre. */
   fila_concluida_sem_linha: number;
+  /** Linhas pendentes de modelo 57 (CT-e, o frete) tiradas da fila ANTES do backoff, sem consulta à
+   *  Omie e sem escrita no controle: CT-e não tem item de produto (escopo.ts). Pendentes brutos =
+   *  `fila_pendente` + `ctes_fora_da_fila`. Conta linhas, não requests economizados. */
+  ctes_fora_da_fila: number;
   /** Linhas tiradas da fila por dividirem o nIdReceb com uma já eleita (NFe que fatura
    *  N pedidos). = chamadas Omie economizadas E duplicatas de leadtime não criadas. */
   recebimentos_deduplicados: number;
@@ -684,7 +694,13 @@ Deno.serve(async (req) => {
     // Pendente = pela pendência MEDIDA quando há (k>0 volta mesmo com linha; k=0 sai mesmo sem); pela
     // regra antiga ("sem linha") no legado — recebimento.ts, `pendenteNaFila`.
     const todas = (nfes ?? []) as NFeRow[];
-    const pendentes = todas.filter((n) => pendenteNaFila(controleMap.get(n.id), existingTrackingIds.has(n.id)));
+    const pendentesBrutos = todas.filter((n) => pendenteNaFila(controleMap.get(n.id), existingTrackingIds.has(n.id)));
+    // CT-e (modelo 57, o conhecimento de FRETE) sai aqui: a Omie o responde sem `itensRecebimento`,
+    // e o produto que ele transporta vira leadtime pela NF-e dele. Era 17 de 17 linhas da fila do
+    // diário das 07:00 (2026-10-05), girando no backoff para sempre. A posição é contrato
+    // (escopo.ts): ANTES do backoff, do sensor e do dedup. Sem escrita no controle: o motivo antigo
+    // fica como histórico.
+    const { consultaveis: pendentes, ctes: ctesForaDaFila } = separarCtes(pendentesBrutos);
     // Recebimentos que JÁ têm leadtime em alguma linha da janela. Com pendência eles voltam à fila, mas
     // não são "fila parada": o sensor que pagina segue medindo o recebimento SEM NENHUMA linha — a
     // semântica de antes, quando o recebimento com linha nem entrava na fila (ver o sensor no fim).
@@ -749,6 +765,7 @@ Deno.serve(async (req) => {
       fila_concluida_sem_linha: todas.filter((n) =>
         !existingTrackingIds.has(n.id) && !pendenteNaFila(controleMap.get(n.id), false)
       ).length,
+      ctes_fora_da_fila: ctesForaDaFila.length,
       recebimentos_deduplicados: recebimentosDeduplicados,
       nfes_processadas: 0,
       nfes_sem_nidreceb: 0,
