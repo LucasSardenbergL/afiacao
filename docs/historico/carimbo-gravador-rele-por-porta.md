@@ -260,7 +260,32 @@ saindo do arquivo para o artefato, consertando um verde-falso provado no própri
 com hash alheio → zero veredito). A catraca da `primeiraVez` contra a main ficou de fora justamente por
 ser máquina nova sem incidente.
 
-<!-- FALSIFICACAO-2026-10-05 -->
+### Falsificação do conserto (2026-10-05)
+
+Mesmo motor da entrega anterior, com as sabotagens reescritas no código final: commit antes, uma
+camada por vez, vermelho exigido nos testes certos PELO NOME (reporter JSON do vitest), controle verde
+na MESMA invocação. **`FALSIFICACAO-OK 64 sabotagens (32 x 2 locales)`**, controle 118/118 em
+`LC_ALL=C` e em `pt_BR.UTF-8`, árvore restaurada. Nenhuma camada ficou verde.
+
+| camada sabotada | vermelho exigido em |
+|---|---|
+| F1 o gate não confere o hash · F2 o gate lê ausente como prod | "alvo de OUTRO cluster, ou sem projetoHash" |
+| F3 a constante diverge da evidência commitada | "foi medido em PROD" |
+| S6 a trava da sonda sempre passa | `conferirCluster` e `montarCarimbo` |
+| F4 a montagem sem a trava | "sonda de OUTRO cluster" |
+| F13 a recusa volta a ensinar o contorno | `conferirCluster` (sem "carimbo local", com o psql-ro) |
+| F5 a montagem ignora a herança · F6 o gravador passa herança vazia | "a herança chega ao carimbo" · o tripwire do gravador |
+| F7 main sem o carimbo vira nascimento · S15 main não consultada segue gravando · S11 local apagado e a herança não cai na main | `combinarAnteriores` |
+| F8 a referência sem fetch · F9 o ref trocado por `HEAD` · S14 git que falha vira `ausente` | `lerReferenciaDaMain` (o git falso de argumentos exatos) |
+| F10 data sem calendário | a porta e o binário "primeiraVez fora do calendário" |
+| F11 leitor anotado DENTRO do núcleo · F12 leitor anotado com caminho montado · S10 leitor sem porta · S18 anotação em vez de cast · S3 gravador volta ao cast | o bloco "a CLASSE" |
+| S2 porta sem versão · S8 forma frouxa · S9 `null` vira nascimento · S17 leitura do arquivo lança | a porta |
+| S4 o gravador lê os anteriores depois da guarda de env | o binário |
+| S5 herança ignora os anteriores · S12 só do 1º · S13 fica com a mais NOVA | `montarAchados` e `montarCarimbo` |
+| S7 env volta ao prefixo `AUTHZ_` · G1/G2 `idFinding` alterado | a guarda de env · o DOURADO |
+
+Sem teste, declarado: os fingerprints antes da sonda e a escrita com `try` (achado A6) moram depois da
+guarda de env, que o binário de teste não atravessa por construção.
 
 ## Limites declarados (revistos em 2026-10-05)
 
