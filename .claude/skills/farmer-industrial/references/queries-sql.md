@@ -1,7 +1,7 @@
 # Queries SQL (read-only) — Lovable SQL Editor
 
-Todas são `SELECT`. Rode no **🟣 Lovable → SQL Editor → cola → Run** e cole o resultado de
-volta. **Nunca** proponha `INSERT/UPDATE/DELETE` nem `curl`/`psql`/CLI.
+Todas são `SELECT`. Rode você mesmo via `~/.config/afiacao/psql-ro` (fallback:
+**🟣 Lovable → SQL Editor → cola → Run**). **Nunca** proponha `INSERT/UPDATE/DELETE`.
 
 > **MODELO DE CARTEIRA = CIDADE (decidido na auditoria 2026-05-23).** A atribuição por vendedor
 > do Omie (`omie_clientes.omie_codigo_vendedor`) **está desconectada das vendas reais** — os

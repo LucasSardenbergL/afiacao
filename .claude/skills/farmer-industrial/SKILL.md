@@ -12,7 +12,7 @@ description: >-
   "clientes em queda / quem está sumindo", "cross-sell ou mix ausente da carteira", "roteiro
   de ligação pro vendedor por cidade/rota", ou mencionar o ritual semanal de televendas /
   farmer / customer success B2B industrial sobre a base de clientes que JÁ compram. Puxa
-  histórico de compra REAL via SQL read-only no Lovable; NUNCA envia mensagem nem liga sozinha
+  histórico de compra REAL via SQL read-only (psql-ro); NUNCA envia mensagem nem liga sozinha
   — só gera rascunho. NÃO use para: prospecção/cold outreach de clientes NOVOS, campanha de
   e-mail marketing, otimização de rota de ENTREGA/logística (diesel/quilometragem), relatórios
   financeiros/faturamento, tabela de preços, ou configuração de telefonia (Nvoip).
@@ -47,15 +47,16 @@ pessoa. O passo 1 (pré-flight) existe exatamente para checar isso antes de qual
   Colacor + Oben do mesmo cliente — é onde mora o cross-sell entre linhas.)
 - **Farmer = ligação** (modo principal desta v1). **Hunter = visita presencial** (modo
   secundário, mesma inteligência, saída diferente — ver `references/roteiros.md`).
-- Dados vêm do Supabase **somente via SQL read-only no Lovable SQL Editor** (o dono não tem
-  terminal/CLI/DB direto). Toda query de apoio está em `references/queries-sql.md`.
+- Dados vêm do Supabase **somente via SQL read-only**, que você mesmo roda pelo
+  `~/.config/afiacao/psql-ro` (`docs/agent/database.md` §1; fallback: bloco 🟣 SQL Editor se o
+  wrapper não existir nesta máquina). Toda query de apoio está em `references/queries-sql.md`.
 
 ## Guardrails (inegociáveis)
 
 1. **Rascunho, nunca envio.** Roteiros de ligação e mensagens de WhatsApp são para a Farmer
    **revisar e enviar/usar**. A skill não liga, não dispara WhatsApp, não muta nada no banco.
-2. **Somente leitura.** Todo SQL é `SELECT`. Nunca proponha `INSERT/UPDATE/DELETE`. Nunca
-   sugira `curl`, `psql` ou CLI — só "🟣 Lovable → SQL Editor → cola → Run".
+2. **Somente leitura.** Todo SQL é `SELECT`. Nunca proponha `INSERT/UPDATE/DELETE`. A leitura
+   vai pelo wrapper read-only `psql-ro` — nunca `curl`, `psql` cru ou CLI com credencial de escrita.
 3. **Dado real ou nada.** Sem histórico de compra, sem plano (ver premissa de valor).
 4. **Sem PII desnecessária no output.** Use nome do cliente + cidade. Não exponha CPF, e
    telefone só quando o output for o roteiro daquele cliente específico.
@@ -69,8 +70,8 @@ cidades da Farmer, peça — é o que define a carteira. A query 2 do pré-fligh
 com compradores para ajudar a montar/confirmar esse mapa.
 
 ### Passo 1 — Pré-flight de dados (a condição de valor)
-Abra `references/queries-sql.md` e peça que o usuário rode o **bloco de pré-flight** no Lovable
-e cole o resultado. Avalie:
+Abra `references/queries-sql.md` e rode você mesmo o **bloco de pré-flight** via `psql-ro`.
+Avalie:
 - Se `pedidos_total` (query 1) vier **zero** → **PARE**. Explique: "Sem histórico de compra
   real, este plano viraria adivinhação. Antes de seguir, precisamos de pedidos em
   `sales_orders`." Não invente um plano.

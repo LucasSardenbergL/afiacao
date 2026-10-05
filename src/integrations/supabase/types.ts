@@ -12321,6 +12321,104 @@ export type Database = {
         }
         Relationships: []
       }
+      reposicao_po_observado_item: {
+        Row: {
+          contribuicao: number
+          etapa: string | null
+          exclusao: string | null
+          id_item: number | null
+          numero_pedido: string | null
+          omie_codigo_pedido: number
+          quantidade: number | null
+          quantidade_recebida: number | null
+          run_id: string
+          seq_item: number
+          sku_codigo_omie: number | null
+        }
+        Insert: {
+          contribuicao: number
+          etapa?: string | null
+          exclusao?: string | null
+          id_item?: number | null
+          numero_pedido?: string | null
+          omie_codigo_pedido: number
+          quantidade?: number | null
+          quantidade_recebida?: number | null
+          run_id: string
+          seq_item: number
+          sku_codigo_omie?: number | null
+        }
+        Update: {
+          contribuicao?: number
+          etapa?: string | null
+          exclusao?: string | null
+          id_item?: number | null
+          numero_pedido?: string | null
+          omie_codigo_pedido?: number
+          quantidade?: number | null
+          quantidade_recebida?: number | null
+          run_id?: string
+          seq_item?: number
+          sku_codigo_omie?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "reposicao_po_observado_item_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "reposicao_po_observado_run"
+            referencedColumns: ["run_id"]
+          },
+        ]
+      }
+      reposicao_po_observado_run: {
+        Row: {
+          concluido_em: string
+          empresa: string
+          filtros: Json
+          gravado_em: string
+          iniciado_em: string
+          janela_ate: string
+          janela_de: string
+          pedidos_lidos: number
+          pendente_aplicado: boolean
+          run_id: string
+          skus_divergentes: number
+          varredura_completa: boolean
+          versao_edge: string
+        }
+        Insert: {
+          concluido_em: string
+          empresa: string
+          filtros: Json
+          gravado_em?: string
+          iniciado_em: string
+          janela_ate: string
+          janela_de: string
+          pedidos_lidos: number
+          pendente_aplicado: boolean
+          run_id: string
+          skus_divergentes: number
+          varredura_completa: boolean
+          versao_edge: string
+        }
+        Update: {
+          concluido_em?: string
+          empresa?: string
+          filtros?: Json
+          gravado_em?: string
+          iniciado_em?: string
+          janela_ate?: string
+          janela_de?: string
+          pedidos_lidos?: number
+          pendente_aplicado?: boolean
+          run_id?: string
+          skus_divergentes?: number
+          varredura_completa?: boolean
+          versao_edge?: string
+        }
+        Relationships: []
+      }
       reposicao_teto_cobertura_log: {
         Row: {
           cap_teto_ancora: number | null
@@ -12754,6 +12852,7 @@ export type Database = {
           customer_user_id: string
           deleted_at: string | null
           discount: number
+          gemeo_importado_id: string | null
           hash_payload: string | null
           id: string
           items: Json
@@ -12786,6 +12885,7 @@ export type Database = {
           customer_user_id: string
           deleted_at?: string | null
           discount?: number
+          gemeo_importado_id?: string | null
           hash_payload?: string | null
           id?: string
           items?: Json
@@ -12818,6 +12918,7 @@ export type Database = {
           customer_user_id?: string
           deleted_at?: string | null
           discount?: number
+          gemeo_importado_id?: string | null
           hash_payload?: string | null
           id?: string
           items?: Json
@@ -12839,6 +12940,20 @@ export type Database = {
           whatsapp_proposta_dedupe?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "sales_orders_gemeo_importado_id_fkey"
+            columns: ["gemeo_importado_id"]
+            isOneToOne: false
+            referencedRelation: "sales_orders"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sales_orders_gemeo_importado_id_fkey"
+            columns: ["gemeo_importado_id"]
+            isOneToOne: false
+            referencedRelation: "selfservice_meus_pedidos"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "sales_orders_pedido_programado_envio_id_fkey"
             columns: ["pedido_programado_envio_id"]
@@ -20657,6 +20772,10 @@ export type Database = {
       }
       reposicao_persistir_qtde_inteira: {
         Args: { p_pedido_id: number }
+        Returns: number
+      }
+      reposicao_po_observado_publicar: {
+        Args: { p_itens: Json; p_run: Json }
         Returns: number
       }
       reposicao_pos_candidatos: {

@@ -114,12 +114,12 @@ esteja configurado. Errar para mais custa uma linha de checklist; errar para men
 > - [ ] 💬 ~~chat do Lovable~~ → **A SESSÃO deploya** as edges X, Y pelo MCP (`send_message`), verbatim da main
 >       *(se tocou `supabase/functions/`)* — desde 2026-09-08 esta linha **não é mais pendência do founder**:
 >       veja o Passo 3, faça o deploy AQUI e reporte o resultado do ledger em vez de pedir a colagem a ele
->       — **QUAIS edges: as que `bun run pendencias:deploy` lista como `DIVERGE_P1`/`INCOERENTE`/`SEM_MAPA_NO_BUNDLE`**
+>       — **QUAIS edges: as que `bun run pendencias:deploy` lista como `DIVERGE_P1`/`INCOERENTE`/`SEM_MAPA_NO_BUNDLE`/`NUNCA_ATESTADA`** (esta última é a única que pede sonda humana — 1ª atestação)
 >       (2026-09-05). Não derive a lista do diff: "o mapa mudou"/"closure mudou" NÃO é motivo — só
 >       `(versao, fonte)` servido ≠ main. `DIVERGE_P2` (só `_shared/`) entra na leva agrupada, escala em 7 d.
 >       Após o deploy, **uma** colagem do `sonda:sql` da leva atesta no ledger `deploy_atestacoes` — e vale até
 >       o `fonte` da main mudar; nunca peça sonda "para conferir de novo" (`docs/agent/deploy.md` §Edge: o veredito é o ledger)
-> - [ ] 🖱️ **Publish** do frontend no editor do Lovable *(se o passo 1 deu frontend=SIM; por último — o build novo nasce contra banco/edge já atualizados)*
+> - [ ] 🖱️ **Publish** do frontend no editor do Lovable — ou pela SESSÃO via MCP `deploy_project` (`docs/historico/piloto-deploy-mcp-lovable.md`) *(se o passo 1 deu frontend=SIM; por último — o build novo nasce contra banco/edge já atualizados)*
 
 **O secret vem ANTES do deploy da edge, e a ordem não é estética.** Deployar primeiro sobe uma função
 que responde 500 no primeiro request — e como ela fica `Active` e o cron acusa `succeeded`, a verificação
@@ -180,7 +180,7 @@ volte a uma instrução viva (skills, `docs/agent`, runbooks, `CLAUDE.md`) deixa
 **UMA colagem por LEVA, não por edge (medido 2026-09-06, e a transição observada em 2026-09-08).**
 Com 2+ edges pendentes, o gerador emite um prompt único numerando-as, cada uma com a SUA lista de
 arquivos — as duas medições (8 edges / 70 arquivos → 54/54; depois 2 edges com o ANTES **medido** no
-ledger, `DIVERGE_P1` → `CONFERE` → 59/59) estão no §Estado.
+ledger, `DIVERGE_P1` → `CONFERE` → 59/59) estão em `docs/historico/deploy-redundante-ledger-e-cron-de-sonda.md`.
 
 ⚠️ Só depois do PR **mergeado** na main (Lei de Ferro #3).
 
@@ -291,7 +291,7 @@ Mesmo conteúdo por edge, uma colagem só. O cabeçalho pede o total e proíbe p
 dá ao founder o relato para comparar com a sonda. Medido em 2026-09-06 com **8 edges / 70 arquivos**
 (as 8 responderam `versao` + `fonte` da main, `pendencias:deploy` 54/54) e de novo em **2026-09-08**,
 desta vez com o ANTES conhecido — 2 edges, uma delas em `DIVERGE_P1` medido, que transitou para
-`CONFERE` depois do prompt único (§Estado). O texto exato é o ramo de N edges do `montarPrompt`: rode
+`CONFERE` depois do prompt único (`docs/historico/deploy-redundante-ledger-e-cron-de-sonda.md`). O texto exato é o ramo de N edges do `montarPrompt`: rode
 `bun run pendencias:prompt <e1> <e2> …` (ou o `pacote`, se houver ordem declarada) e leia a saída.
 
 ⚠️ **O relato do chat não substitui a sonda — ele diz o que perguntar a ela.** Se o Lovable disser que
@@ -987,6 +987,7 @@ O build **carimba o commit no bundle** (`vite.config` → `define __COMMIT_SHA__
 #      4 = VERSAO_INDETERMINADA (sem carimbo nem sentinela: PRIMEIRA_CHECAGEM · ENTRY_NOVO · ENTRY_IGUAL — nunca 0)
 #      2 = site/entry não respondeu · 6 = USO_INVALIDO
 #      git fetch da main falhou ⇒ 3 "motivo: FETCH_FALHOU" em QUALQUER caminho — nunca 0/5/4 (só o 2 e o 6 vêm antes)
+#      (fetch e leitura usam a ref COMPLETA `refs/remotes/origin/main` — `origin/main` curto é ambíguo e um clone --single-branch sai 0 sem mover a ref; docs/historico/teste-que-afirma-o-checkout.md)
 .claude/skills/lovable-deploy-verify/scripts/monitor-deploy.sh --pr <n> [url]   # "o PR n está no ar?"
 # exit 0 = PR_NO_AR · 3 = PR_FORA_DO_AR · 6 = NAO_CONSEGUI_MEDIR (nunca "fora do ar"; fetch falho aqui é 6) — ver o ⚠️ abaixo
 ```
@@ -994,7 +995,7 @@ O build **carimba o commit no bundle** (`vite.config` → `define __COMMIT_SHA__
 - **Determinístico** quando o ar tem `__BUILD_SHA__="<sha>"` — compara com `origin/main`, e se o SHA
   difere, PROVA (ou não) que o delta não alcança o bundle (bloco "SHA atrás ≠ bundle atrás" abaixo).
 - **Fallback**: se vier `"dev"` (Lovable sem `.git` no build) ou ausente (build pré-carimbo), passe uma
-  `sentinela` (string de UI única do HEAD) → o monitor cai pro `verify-frontend.sh`, que tem **quatro**
+  `sentinela` (string de UI única do HEAD; hoje `get_ultimos_precos_cliente`, validada ponta-a-ponta) → o monitor cai pro `verify-frontend.sh`, que tem **quatro**
   saídas, não duas: 0 presente · 1 ausente · 2 sonda não confiável · 3 recusa. Até 2026-09-10 todo ≠0
   virava "AUSENTE → Publish pendente"; agora o 2 e o 3 saem `motivo: SENTINELA_SEM_VEREDITO` (exit 3
   para o alarme não calar — não porque falte Publish), e as últimas linhas do verify-frontend vêm junto.
@@ -1133,284 +1134,8 @@ aconteceu continua sendo a mudança do `ar=`/entry, não a transição de exit.
 - Skill irmã `lovable-db-operator` (camada de banco)
 
 ## Estado / pendências
-- [x] Enumeração = **UNIÃO** (fechamento transitivo do Vite ∪ precache do Workbox) — nenhuma fonte sozinha é completa (closure 274 ⊃ precache 268; precache omite 6). Validado em prod + Codex; empacotado em `scripts/verify-frontend.sh`.
-- [x] **Controle negativo EMBUTIDO (2026-08-24):** deixou de ser 2º comando manual e passou a rodar
-  sozinho no ramo do hit — mesmo pipeline, mesmo chunk, string hex aleatória do processo; casou =
-  `SONDA_NAO_DISCRIMINA` + exit 2. Escolhido o controle de **1 chunk** sobre a 2ª varredura completa
-  com número, não opinião (prod, 334 chunks: **1 req / 0,14 s** contra **334 req / 18 s** ou **671 req
-  / 91 s**), porque discriminar é propriedade do par (padrão, `grep`) e não do chunk. Harness: +4 casos
-  e +2 sabotagens (grep degenerado → o controle acusa; controle trocado por string que DEVE casar →
-  prova que ele exercita a rede e não é enfeite). Detalhe no Passo 4.
-- [x] **Controle POSITIVO no ramo `exit 1` (2026-08-25):** a lacuna acima fechada — "ausente" só é
-  ENUNCIADO depois de o script provar que ainda enxerga, com uma agulha DERIVADA do corpo do entry
-  procurada pelo MESMO `varre()`; cega → `SONDA_CEGA` + exit 2, nunca exit 1. **+1 request / 0,14 s
-  sobre 91 s (+0,15%)**, porque o download do entry já acontecia no closure. Harness: +4 casos (2
-  fixtures novos — `site-cego` com `/assets/*` em 404 e `site-fallback` servindo HTML com 200) e +3
-  sabotagens. E um furo do PRÓPRIO harness saiu junto: `falsify_case` aceitava o `exit_normal`
-  **declarado**, então uma sabotagem escrita antes da feature ficava verde sem sabotar nada — agora
-  o normal é **medido** no script real antes de comparar. Detalhe no Passo 4.
-- [x] `evals/` = **gate dos 2 passos**: classificação de diff (8 casos, Passo 1) **+** verificação por bytes (harness local `verify-frontend-eval.sh`, Passo 4: 2º nível, precache, exit 0/1/2), ambos com `--falsify`. Um `bash evals/run.sh` cobre tudo.
-- [x] Domínio canônico `steu.lovable.app` confirmado (HTTP 200).
-- [x] **Edge:** verificação por escada — N1 existência (`verify-edge.sh`, OPTIONS, automático) · N2 versão (Management API — indisponível aqui: Supabase da org do Lovable, não peça PAT) · N3 comportamento (probe gated). Fecha a assimetria com o frontend.
-- [x] **N3 PASSIVO pela forma do JSON (2026-08-26, #1992 `omie-analytics-sync`):** a escada assumia N3
-  **ativo** — logo dependente do founder (bloco `net.http_post`) ou do cron secret. Para edge que **já é
-  chamada por cron** existe via passiva que dispensa as duas: o conjunto de chaves do corpo em
-  `net._http_response` é assinatura estrutural do bundle (`{products,…}` → `{…}` sem `products`), e ela
-  nomeia a AÇÃO, escapando do empate da `VERSAO` compartilhada (§7 de `verificar-sonda-versao.md`).
-  Vale **só dentro de `pg_net.ttl = 6 h`**; o response se acha por **janela de tempo**, nunca por id
-  chutado. Reprovados no mesmo ciclo, e registrados como anti-sinais: **duração da execução** (variância
-  maior que o efeito) e **`last_page` alto** (o cron 42 passa `max_pages` explícito, mascarando o default).
-  Detalhe no Passo 4.
-- [x] **Smoke E2E autônomo:** carimbo de SHA no build (`__BUILD_SHA__`) + `monitor-deploy.sh` (cron) compara o ar vs `origin/main`. O ar carimba SHA real (§Smoke E2E autônomo); a sentinela (`get_ultimos_precos_cliente`, validada ponta-a-ponta) é só o fallback quando o carimbo voltar a `"dev"`. Regra: no cron, **URL com `https://`** (ver ⚠️ acima).
-- [x] **Varredura PARALELA (2026-07-07):** `xargs -P 8` no crawl + halt-on-hit (`exit 255`) no grep do alvo. O bundle passou de 300 chunks (união medida 308–560) — sequencial estourava 600s (exit 124, não terminava); no mesmo bundle (308 ch, sentinela ausente) **299s → 61s (~4,9×), mesmo exit**. Enumeração/UNIÃO **inalterada** (worker-por-arquivo → sem intercalação). `PAR=<n>` overridável. Rede: harness local + gate `run.sh`.
-- [x] **QA visual pós-Publish (Passo 4b, 2026-07-07):** padrão documentado — **Claude-in-Chrome na sessão logada do founder** (ele abre 1×, o agente confere as telas). `/browse` headless não monta a SPA (3 falhas); Chrome MCP genérico deu timeout CDP de 45s. Caso de sucesso: config do PostHog feita pelo agente sozinho. **Exercitado 2026-07-08:** RENDER confirmado (a SPA monta no Chrome real; QA de tela pública `/auth` OK) — mas a aba do grupo MCP veio **sem sessão** (`Invalid Refresh Token`), então **telas gated dependem do founder logar NA aba MCP**; agente nunca digita credenciais. Detalhe no Passo 4b.
-- [x] **"404 fantasma" pós-Publish (2026-07-12, QA visual do #1300):** rota nova 404 com bytes VERDES = **SW do PWA servindo o build anterior** (assinatura: `NotFound-*.js` de hash velho logando "non-existent route"); hard-reload ativa o SW novo. Regra: bytes verdes + 404 → suspeitar do SW, nunca concluir "Publish falhou" sem hard-reload. Detalhe no Passo 4b.
-- [x] **O prompt do Passo 3 nomeia TODOS os arquivos da fatia (2026-08-25):** o de 1 arquivo (`index.ts`)
-  quebra justamente na fatia que instrumenta a edge — **`versao.ts` é arquivo NOVO** e o `index.ts` o
-  importa, então deployar só o `index.ts` sobe função que não boota, e quem descobre é a sonda que
-  existia para provar o deploy. A lista é o **closure de imports lido de `origin/main`** (`pendencias:pacote`
-  já o fecha; `--name-status` é cego ao import novo de arquivo pré-existente — Passo 3). Exercitado no #2009 (`carteira-rebuild`): 3 arquivos de código, e o `fonte` da sonda
-  pós-deploy batendo o `sonda:fingerprint` provou que o `_shared/` subiu junto (#2018).
-- [x] **3ª sonda — `SENTINELA_DELIMITADA` (2026-08-27):** o `--pai` mede a FONTE e a varredura mede o
-  BUNDLE MINIFICADO, e para o literal COM delimitadores as duas formas são **mutuamente exclusivas**
-  (medido no chunk servido: `'oculta'`=0, `"oculta"`=1) — `'oculta'` passa o guard e dá **exit 1
-  FALSO** ("Publish pendente" sobre fix JÁ no ar), `"oculta"` é recusada antes de varrer. Saiu com os
-  **três** guards verdes; o CONTROLE_POSITIVO não cobre por construção (prova que a rede/grep
-  funcionam, não que a sentinela seja REPRESENTÁVEL). Só as PONTAS disparam, então
-  `input[type="checkbox"]` — a sentinela que o Passo 4 recomenda — segue silenciosa. AVISA e nunca
-  recusa, como a sonda de lib. Rede: 3 casos bidirecionais + sabotagem `falsify_marca` (o fixture
-  nunca modelou isto — bundle fake não é minificado, sentinela idêntica nos dois universos).
-- [x] **GUARD TEMPORAL do N3 passivo (2026-08-28, verificando o #2079):** a skill cobria o TTL só no
-  sentido "run velho SUMIU ⇒ N3 ativo"; o inverso — **TTL cheio, mas só de ticks PRÉ-merge** — devolvia
-  linhas legíveis com o marcador velho e se lia como "deploy pendente" (falso NEGATIVO, que **encerra**
-  a verificação com um pedido caro ao founder). Virou `scripts/verify-edge-eco.sh`: sem tick posterior
-  ao corte ⇒ **exit 2 INDETERMINADO**, nunca 1; veredito pelo **tick mais recente** (o intermediário
-  entre merge e deploy é história); fail-closed inclusive na via presente-porém-quebrada. Rede:
-  `evals/verify-edge-eco-eval.sh` (12 casos + 4 sabotagens) no gate. A falsificação pagou DUAS vezes:
-  a sabotagem do ping saiu **inócua** e revelou que ele só tem dente contra a via MUDA (não contra a
-  morta, onde a contagem já recusa); e o `--esperado` único — que o script aceitava — reprovaria a
-  `nfes` (v1.2) como bundle velho num lote v1.1, então **valor único agora recusa** com >1 step útil.
-- [x] **N3 PASSIVO por ESCRITA DE APLICAÇÃO (2026-08-29, #2086 `elevenlabs-transcribe`):** as duas vias
-  passivas anteriores nascem do cron e morrem no `pg_net.ttl = 6 h` — edge chamada por **usuário** não
-  passa por nenhuma delas, e a escada caía no N3 ativo (que custa o founder logado). Quando a fatia nova
-  escreve em tabela de aplicação, a escrita é assinatura do bundle com janela de **7 dias**: o gate de cota insere em
-  `ia_uso_evento(user_id, funcao)` e o bundle velho, que nem importava `_shared/ia-cota.ts`, é **incapaz**
-  de produzir a linha — 4 delas 15 min após o merge provaram o deploy sem PAT, sem canária, sem invocar
-  nada. Vale só na direção **presença**: ausência é "ninguém usou", não "não subiu". O controle negativo
-  é o do `scripts/verify-edge-escrita.sh` (universo = limites ∪ alvo — item seguinte). Detalhe no Passo 4.
-- [x] **A via da ESCRITA virou SCRIPT, e a receita em prosa tinha 4 furos (2026-08-29):** ela
-  nasceu no #2086 e apodreceu em 3 dias — verificando as 3 edges do chip de 01:50Z, todos apareceram.
-  **(1)** O controle negativo prescrito (`GROUP BY funcao` sobre `ia_uso_evento`) **não
-  materializava**: `GROUP BY` não produz grupo vazio, então as vizinhas nunca saíam "em zero" e o
-  operador registrava "controle passou" sem observar nada — a seção se contradizia sozinha, com
-  `linha única` escrito no próprio comentário. **(2)** O join de proveniência usava `profiles.id`
-  quando a chave é `profiles.user_id` (a tabela tem as duas), devolvendo "sem profile" para usuário
-  legítimo — falso sinal de "`user_id` inventado" bem na condição (c). **(3)** A 2ª opinião (Codex,
-  `gpt-5.6-sol` xhigh) achou o furo maior: a escrita prova **passado**, não estado atual — redeploy
-  ou revert posterior deixa o rastro intacto, então o exit 0 é `BUNDLE_NOVO_OBSERVADO_EM_T` e nunca
-  "versão atual". **(4)** E o "**não expira**" era literalmente falso: o cron `ia-uso-evento-purga`
-  (`23 4 * * *`, `active=t` em prod) apaga acima de **7 dias**. Virou
-  `scripts/verify-edge-escrita.sh` (universo = limites ∪ alvo; `CONTROLE_CRUZADO_OK` /
-  `_NAO_OBSERVADO` / `CORRELACAO_SUSPEITA`; fail-closed na via; **nenhum** exit significa "bundle
-  velho"), com `evals/verify-edge-escrita-eval.sh` — 17 casos + 4 sabotagens — no gate. A
-  falsificação pagou de novo: a sabotagem do ping saiu **inócua** contra a via totalmente muda
-  (o guard do universo vazio recusa sozinho), e só mordeu no cenário `psql_mudo_parcial` — via que
-  cala no ping mas ainda devolve linhas, onde sem o ping o script leria via quebrada como "ninguém
-  usou a feature". Mesma lição que o eval do `verify-edge-eco` já tinha registrado, redescoberta
-  medindo.
-- [x] **O closure lê a REF, não o working tree (2026-09-04, `enviar-pedido-portal-sayerlack`):** as
-  regras de sincronizar antes de medir/entregar estavam sendo **obedecidas**, e ainda assim o closure
-  saiu curto — `git fetch` move `origin/main`, mas `grep`/`cat` leem os bytes do working tree, e a
-  worktree estava 1 commit atrás. **5 arquivos contra os 7 reais**, faltando justamente o `qtde-portal.ts`
-  (novo) e o `escrita-critica.ts` (import novo de arquivo pré-existente, o furo do #2101) — os dois sem os
-  quais a função não boota. `ausente ≠ zero` na dimensão **ÁRVORE**, irmão do eixo TEMPO do #2123. Junto,
-  o guard de contagem 0/1 estendido do regex para o **arnês**: um `declare -A` em bash 3.2 do macOS
-  imprimiu `0 arquivos`, saída idêntica à de uma edge que não importa nada. Detalhe no Passo 3.
-- [x] **O veredito de deploy de edge tem MEMÓRIA (2026-09-05):** ledger `public.deploy_atestacoes` +
-  cron `deploy-atestacoes-colher` copiam `net._http_response` antes do `pg_net.ttl` (6h) apagar, e
-  `bun run pendencias:deploy` julga a matriz `(versao, fonte)` contra a main — P1 (bump declarado, deploy
-  no PR) · P2 (só `_shared/`, leva agrupada, escala em 7 d) · INCOERENTE (deploy parcial) ·
-  NUNCA_ATESTADA (a única sonda humana; pendência, não aviso). Antes: 47/54 edges "sem sonda na janela"
-  a cada sessão e o founder colando o SQL de sonda toda vez. **Cron de sonda ativa derrubado pelo Codex**
-  (rollback pré-sensor dispararia o fluxo real — `monthly-report` = e-mail para a base). Prova:
-  `db/test-deploy-atestacoes.sh` (24/24 + 4 sabotagens vermelhas). Detalhe em
-  `docs/historico/deploy-redundante-ledger-e-cron-de-sonda.md`.
-- [x] **UM prompt por LEVA, não por edge (2026-09-06, medido em prod com 8 edges):** o Passo 3 dizia
-  "um por edge tocada" e isso custava N colagens no chat do Lovable. Medido numa leva real — as 8 caras
-  (`calculate-scores`, `carteira-positivacao-snapshot`, `fin-cashflow-engine`, `monthly-report`,
-  `omie-sync-status-produtos`, `scoring-recalc-batch`, `tactical-plans-batch`,
-  `visit-score-recalc-batch`), **70 arquivos** de closure, um único prompt numerando as 8 com a lista
-  de arquivos de cada uma: as 8 responderam a sonda com `versao` **e** `fonte` batendo a main
-  (request_id 70879–70886, lidos um a um), e o `pendencias:deploy` foi de 46/54 para **54/54, exit 0**.
-  **Zero deploy parcial** — nenhuma `SEM_MAPA_NO_BUNDLE` nem `INCOERENTE`, que é o modo de falha
-  temido (o prompt que nomeia poucos arquivos e a função não boota).
-  ⚠️ **O que a medição NÃO prova, e por que o teste era fraco nessa dimensão:** as 8 estavam
-  `NUNCA_ATESTADA` — estado ANTES **desconhecido** —, então "o Lovable deployou as 8" e "deployou
-  algumas e as outras já estavam idênticas à main" produzem o MESMO eco. O que ficou provado é o par
-  que importa para a decisão: o prompt em lote **não** deixa edge pela metade, e depois dele as 8
-  servem o bundle da main. Para fechar a outra metade era preciso uma leva com ≥1 edge em `DIVERGE_P1`
-  MEDIDA antes — **e ela apareceu em 2026-09-08: item abaixo.** Até lá a recomendação valia por
-  conveniência com risco medido; agora a metade do EVENTO está medida.
-  **Forma do prompt que funcionou** (Passo 3): cabeçalho pedindo as N funções + "Deploy every function
-  listed; do not skip any", uma seção **numerada** por edge com o closure ∪ {mapa} dela, e o fecho
-  "list the N function names and confirm that **each one** shows Active".
-- [x] **A metade do EVENTO, fechada — `DIVERGE_P1` → `CONFERE` num prompt em LOTE (2026-09-08):** a
-  leva prescrita acima apareceu, e não precisou ser fabricada. 2 edges, pacote `29258bf8ac3d` contra
-  `origin/main@5bc73bfac` (34 entradas, **24 arquivos únicos**), um prompt só, enviado por
-  `mcp__lovable__send_message` (canal do #2374) — 1,2 crédito. O ANTES saiu do ledger, não do relato:
-  `omie-vendas-sync` em **`DIVERGE_P1` medido** (prod `v1.2-preco-ausente-nao-e-zero` → main
-  `v1.3-edicao-write-back-atomico`, o fix money-path do #2370) e `sync-reprocess` em `DIVERGE_P2` com
-  **platô de 8 leituras do eco de cron em 13 h** no mesmo par. Depois do prompt: sonda de
-  `omie-vendas-sync` (`request_id` 72784, lido do mapa embutido pelo BANCO) com os quatro campos
-  batendo ⇒ `DEPLOY CONFIRMADO`; `sync-reprocess` atestada pelo relé; `pendencias:deploy` **exit 0,
-  59/59**. Um no-op teria deixado a `v1.2` no ar e o platô intacto — é isto que 2026-09-06 não podia
-  distinguir. **O que segue não provado:** N=2, não os 8 do lote grande; e o `sha256` que o agente
-  conferiu mede o REPO no sandbox, não os bytes servidos — a última ponte continua sendo o `fonte`
-  **declarado** pela sonda. Detalhe em
-  [`docs/historico/deploy-redundante-ledger-e-cron-de-sonda.md`](../../../docs/historico/deploy-redundante-ledger-e-cron-de-sonda.md) §7,
-  cruzado com o piloto do MCP (que mediu o CANAL com divergência FABRICADA e N=1).
-- [x] **O carimbo `__BUILD_SHA__` voltou a ser REAL (2026-09-08):** de junho a setembro a skill
-  registrava `"dev"` e declarava o caminho determinístico *inviável*, obrigando sentinela em todo
-  run. Medido no piloto da Camada 2: o ar carimbava `bb9d8d2e` (= #2357, ancestral da main), o
-  `monitor-deploy.sh` **sem sentinela** deu **exit 3** com o diagnóstico certo e, após o Publish,
-  **exit 0**. Verificação de frontend agora custa 2 requests e escapa das 3 armadilhas de sentinela
-  do Passo 4. Detalhe em [`docs/historico/piloto-deploy-mcp-lovable.md`](../../../docs/historico/piloto-deploy-mcp-lovable.md) §Camada 2.
-- [x] **O Publish (`deploy_project`) pelo MCP foi medido (2026-09-08), e as DUAS metades fecharam:**
-  canal (transição `monitor-deploy.sh` rc 3 → 0, zero colagem humana) **e** verbatim — este último
-  atestável aqui, ao contrário da edge, porque **o frontend serve o próprio código**: entry idêntico
-  módulo carimbo+hashes de nome (com sabotagem exigindo vermelho), 51/317 chunks byte-idênticos como
-  controle de determinismo, 12/12 amostrados idênticos. Cobertura honesta: **64 dos 317**. N=1 e o
-  diff era 100% docs — não fala por Publish que carrega mudança de `src/`.
-  **Medido em 2026-09-10 (N=2, o 1º com `src/`):** Publish do #2459 (`eee71c80f`, 11 arquivos de
-  runtime em `src/`) pelo mesmo `deploy_project` — sentinela exclusiva de **exit 1**
-  (+`CONTROLE_POSITIVO_OK`) a **exit 0** no chunk da página (`FinanceiroDashboard-*`,
-  +`CONTROLE_NEGATIVO_OK`), carimbo `895b93ee` → `eee71c80`. Prova o CANAL e o CONTEÚDO com `src/`
-  real; **não** o verbatim desse build (só a sentinela, sem diff contra build local) nem exclui um
-  clique humano no mesmo minuto. Rendeu a lição da ancestralidade (§Smoke E2E autônomo).
-- [x] **SHA atrás ≠ bundle atrás — o monitor parou de pedir Publish para delta sem efeito no frontend
-  (2026-09-10).** Medido na verificação do Publish do #2458: ar `eee71c80f`, main `70fc305f3`, o ar
-  ANCESTRAL da main, e o delta era 1 commit (#2445) em `.claude/skills/…/evals/*.sh`,
-  `.github/workflows/ci.yml`, `db/*.sh`, `docs/**`, `scripts/**` e `package.json` — neste, só
-  `+ "sonda:autentica"` em `scripts`. Bundle igual ao que um Publish geraria, e o monitor dava exit 3
-  "Publish pendente". O `git grep` do `git diff`/`name-only` no monitor dava 0: ele nunca olhava o
-  delta. **Medida de ruído:** dos 725 commits de 1º pai da main desde 2026-08-10, **552 (76%)** não
-  alcançam o bundle (496 só em inertes + 56 com `package.json` mudando só scripts fora do pipeline) e
-  0 caíram em DESCONHECIDO — com Publish logo após cada mudança de `src/`, o exit 3 cru estaria
-  ligado em ~3 de cada 4 commits. **Caso vivo pós-mudança, na mesma noite:** ar `70fc305f`, main
-  `95e93330` (#2462 + #2463, 3 arquivos de docs/skill) → **exit 5** em produção, onde o monitor antigo
-  pediria o 2º Publish desnecessário do dia. A armadilha da premissa: o `classify.sh` do Passo 1
-  marca QUALQUER `package.json` como frontend (certo lá), então usá-lo cru mantinha o alarme — virou
-  o modo `--bundle`, com a tabela ÚNICA (e ela trouxe para o Passo 1 `public/`, `.env`, tsconfig e os
-  lockfiles de texto, que faltavam). A premissa do pedido também tinha um furo, que a rede cobre: a
-  seção `scripts` não é toda inerte (`build` É o comando do build). Rede:
-  `evals/monitor-deploy-eval.sh` no gate `run.sh` (8) — tabela de 34 caminhos + 22 cenários com exit
-  E marca; `--falsify` com 15 sabotagens, cada uma exigindo o desfecho PREVISTO (não só "falhou") nos
-  2 locales, precedidas do controle verde (30 execuções) e seguidas do controle de saída por cksum.
-  Meta-prova (transitória): sabotagem que só quebra a sintaxe é reprovada como "vermelho pelo motivo
-  ERRADO", e a suíte incondicionalmente vermelha aborta no controle. Limite honesto: o fechamento lê
-  imports/refs de caminho por regex (relativo, `@/`, `/public`, glob, `new URL` relativo, `url()` de
-  CSS, strings `./` dos configs de build); leitura por nome COMPUTADO (`readFileSync(dir + x)`) no
-  `vite.config` escaparia — hoje o config não lê arquivo nenhum.
-- [x] **Dois caminhos para um exit 5 FALSO, fechados no mesmo dia (2026-09-10, pós-#2465).** A 2ª
-  opinião do Codex (`challenge` só sobre "exit 5 falso") voltou **exit 75 — cota esgotada**, plano
-  declarado no token `prolite`; consult não-money-path ⇒ adiado, e o intervalo coberto pelo
-  **Caminho B** (auto-challenge nos mesmos eixos). **REVISÃO INDEPENDENTE PENDENTE**: rodar o mesmo
-  prompt quando a cota voltar. O auto-challenge achou dois furos, e a sabotagem de cada conserto
-  devolve exatamente o exit 5 indevido — prova de que eram alcançáveis: **(1)** o fechamento só lia
-  strings `./` dos configs, e `"@edge": path.resolve(__dirname, "supabase/functions/_shared")`
-  passava (o import `@edge/x` parece pacote para quem só lê `src/`) — agora string sem `./` num config
-  conta quando NOMEIA caminho existente, o que cobre alias, `publicDir`, `envDir` e `root`, sem recusa
-  falsa no repo real; **(2)** o carimbo era "o primeiro" `__BUILD_SHA__="<hex>"` do entry, e um
-  literal desses no código viraria o SHA do ar — mais de um distinto ⇒ `CARIMBO_AMBIGUO`. Rede: 24
-  cenários, 17 sabotagens, 34 controles verdes nos 2 locales.
-- [x] **Sem fetch, NENHUM verde — o exit 0 comparava o ar com a main LOCAL velha (2026-09-10;
-  pré-existente, visto durante o #2465).** O guard `FETCH_FALHOU` morava no `analisar_delta`, depois
-  do atalho do SHA cheio, e só fechava a porta do exit 5. Com `git fetch origin main` falho sobravam
-  **três portas para o exit 0**, as três medidas vermelhas antes do conserto: a igualdade de string
-  do carimbo (8 chars), o atalho do SHA cheio (carimbo de 7 chars do mesmo commit) e o fallback sem
-  carimbo (`"dev"` + entry igual ao do estado → "nada a relatar"). Ar == main velha e a main real já
-  andou com `src/` ⇒ "sincronizado" — o cron lê o EXIT e recebia 0, com uma linha "(git fetch …
-  FALHOU)" que ninguém lê. Agora o guard é **único e vem antes de todo veredito**: `FETCH_OK=0` ⇒
-  exit 3 `motivo: FETCH_FALHOU`, nunca 0/5 (o 4 também vira 3; só o 2, site fora do ar, é medido
-  antes) — mesmo quando a resposta calharia de ser "sim": nos 2 cenários de carimbo a main real É o ar. O
-  guard interno saiu (ficaria inalcançável, e camada inalcançada não se falsifica). Rede: 27 cenários
-  (+3, um por porta) e 20 sabotagens (+3: a MESMA mutação do guard, cada uma exigindo o verde
-  PREVISTO da sua porta — `0|sincronizado: ar serve` ×2 e `0|nada a relatar`), 40 controles verdes
-  nos 2 locales. Fora da rede: o fallback de **sentinela** (exigiria o `verify-frontend.sh` com
-  rede) fica atrás do mesmo guard — coberto pela POSIÇÃO, não por um caso.
-- [x] **`FETCH_OK=1` agora prova que a main LIDA é a desta rodada — nas duas pontas (2026-09-14; era a
-  pendência latente do #2473).** `git fetch origin main` só move `refs/remotes/origin/main` se o
-  refspec configurado mapear `main`: num clone `--single-branch` de outro branch ele sai **0** e só o
-  `FETCH_HEAD` anda (medido em scratch em 2026-09-10: rc 0, `origin/main` parada em `010535f0`, remoto
-  em `0211030a`; re-medido em 2026-09-14 no git 2.54: rc 0, ref no commit velho, `FETCH_HEAD` no novo).
-  A medição do conserto achou o **irmão do lado da LEITURA**: com o fetch perfeito, `git rev-parse
-  origin/main` resolve `refs/heads/origin/main` ANTES de `refs/remotes/`, e um branch LOCAL com esse
-  nome devolvia o commit velho, com o aviso `refname 'origin/main' is ambiguous` descartado no
-  `2>/dev/null`. Conserto: a MESMA ref completa nas duas pontas. O fetch nomeia o destino
-  (`+refs/heads/main:refs/remotes/origin/main`): exit 0 ⇒ ela foi escrita nesta rodada; destino
-  travado sai 1 e remoto sem `main` sai 128 ⇒ `FETCH_FALHOU`; main recuada acompanha o remoto pelo `+`.
-  E as duas leituras (`MAIN_SHA` e `main_full`) usam `refs/remotes/origin/main`. **Antes do conserto,**
-  `fetch_refspec_estreito` e `ref_main_ambigua` saíram **exit 0 `sincronizado: ar serve 3075e8f1 ==
-  origin/main`** com a main real adiante com `src/` (27/29); **depois**, exit 3 `motivo:
-  ALCANCA_BUNDLE` (29/29). Rede: 29 cenários (+2) e 23 sabotagens (+3, todas exigindo o verde indevido
-  PREVISTO `0|sincronizado: ar serve`: o destino nomeado de volta ao `main` cru e o nome curto em cada
-  leitura — o mesmo cenário guarda as duas, cada uma por uma porta, a igualdade de string e o atalho do
-  SHA cheio), 46 controles verdes nos 2 locales, 23/23 pegas. O repo real segue no refspec padrão e
-  sem `refs/heads/origin/*` (medido em 2026-09-14): era latente, e agora está fechado.
-- [x] **`--pr <n>`: "o PR está no ar?" por ANCESTRALIDADE — e o `deploy-novo` passa a ser POR CHECKOUT
-  (2026-09-14; a receita manual do #2463 virou flag).** O squash (`gh pr view --json mergeCommit`,
-  nunca o head do branch) contra o commit servido, com os três ramos explícitos e todo "não sei" em
-  exit 6 `NAO_CONSEGUI_MEDIR`: rc≠0/1 do merge-base, PR não mergeado ou com base ≠ main, gh ou fetch
-  falho, clone RASO, carimbo ausente, ambíguo ou sem o prefixo conferido. O bloco vem ANTES do guard
-  global do #2473 — lá o fetch falho sai 3, aqui sai 6. `PR_FORA_DO_AR` traz a linha de alcance do
-  próprio PR pela MESMA tabela e a MESMA prova do exit 5; `PR_NO_AR` avisa revert posterior. Junto:
-  estado em `<git-dir>/deploy-monitor.state` com 1ª checagem `?` (o formato antigo num
-  `DEPLOY_MONITOR_STATE` apontado à mão segue valendo), sentinela com 4 saídas (2 e 3 saem
-  `SENTINELA_SEM_VEREDITO`, nunca "ausente"), entry que não baixa → exit 2, uso inválido → exit 6, e o
-  `lint:shell` passou a cobrir `.claude/skills/*/{scripts,evals}/*.sh` (0 achados em 428 arquivos).
-  Prod (ar `70fc305f`, 2026-09-10): `--pr 2459` → 0; `--pr 2468` → 3 + `PR_SEM_ALCANCE_NO_BUNDLE`;
-  `--pr 2469` (aberto) → 6. Rede: `evals/monitor-deploy-pr-eval.sh` (o (9) do `run.sh`), 34 casos × 2
-  locales e 19 sabotagens com controle verde antes — e o `monitor-deploy-eval.sh` irmão rodado E
-  falsificado sobre este branch: foi ele que achou o alvo de sabotagem duplicado (`--no-renames
-  --no-relative` repetido no alcance do PR) e o formato antigo do estado lido como "sem estado".
-- [x] **Sem carimbo, nenhum 0 — o entry IGUAL ao da última checagem saía "nada a relatar"
-  (2026-09-14, issue #2492; levantado pelo Codex na revisão do #2485).** No modo de igualdade, com o
-  ar sem carimbo útil e sem sentinela, o fallback tinha três ramos pelo `deploy-novo`: 1ª checagem → 4,
-  entry novo → 4, entry **igual → 0**. Num checkout persistente (cron) em que o carimbo some, o alarme
-  soava UMA vez, na troca, e da rodada seguinte em diante se calava no código de "sincronizado", com a
-  `main` andando e o Publish pendente. O cabeçalho ainda documentava `0 = … (ou nada a relatar)`. É
-  veredito fabricado de ausência: entry igual prova que nada mudou **no ar**, não que o ar ==
-  `origin/main`. No mesmo caso, o `--pr` já saía 6 `SEM_CARIMBO`. Conserto: os três ramos viram
-  **exit 4 `VERSAO_INDETERMINADA`** (`PRIMEIRA_CHECAGEM` · `ENTRY_NOVO` · `ENTRY_IGUAL`) por um helper
-  único que termina em `exit 4`, e nenhum sub-ramo consegue mais sair 0. A saída diz *indeterminada* e
-  nunca "Publish pendente": ausência de prova não autoriza pedir Publish. Com o mesmo exit nos três, só
-  a MARCA separa um estado do outro, e é ela que mantém o dente das sabotagens de estado do pr-eval
-  (1ª checagem × `SIM`, formato antigo × `?`). **Antes do conserto,** o cenário novo
-  `sem_carimbo_main_andou` (ar `"dev"`, main adiante com `src/`, estado no mesmo entry) saiu **exit 0
-  `nada a relatar`** (29/30), e os 4 casos `semcarimbo` do pr-eval deram 8/68 vermelhos nos 2 locales.
-  **Depois,** 30/30 e 68/68. Rede: 30 cenários (+1) e 24 sabotagens (+1: `fallback-entry-igual`
-  devolve o `exit 0` ao ramo e exige o `0|nada a relatar` PREVISTO). A `fetch-sem-carimbo` passou a
-  prever `4|VERSAO_INDETERMINADA (ENTRY_IGUAL)`: ali o guard do fetch não fecha mais uma porta do verde,
-  prova a ORDEM do cabeçalho ("nem o 4"). `bate()` ganhou a exclusividade do 4 (sem `ATRASADO`,
-  `SINCRONIZADO_EM_BUNDLE`, `sincronizado: ar serve` nem `nada a relatar`). Falsificação: 48 controles
-  verdes nos 2 locales antes da 1ª sabotagem, 24/24 pegas pela marca prevista e o controle de saída
-  intacto; no pr-eval, 34 casos verdes por locale no controle e 19 pegas, 0 cegueiras. A tag
-  `arquivo/monitor-reescrita-2026-09-10` (a reescrita abandonada) cobria os mesmos 3 estados, já em
-  `VERSAO_INDETERMINADA`, e nenhum caso dela ficou fora desta rede.
-- [x] **Testes fora do `content` do Tailwind — e a prova entende a negação (2026-10-01, (d2')).** A
-  alavanca que o #2574 deixou registrada: o `content` nega as 3 formas da classe `TESTE`. Medido
-  antes (duas vezes): só `.m-1` e `.overscroll-contain` saem do CSS (82 bytes), zero uso no app, e o
-  config editado gera CSS byte a byte igual à medição. A prova isenta o teste excluído por negação
-  ENTENDIDA — string exata, fast-glob 3.3.2 e Tailwind 3.4.17 auditados, árvore só de arquivos
-  regulares — e o
-  oráculo com o Tailwind real deu 19/19 sem fail-open (e mostrou o symlink-PASTA lido por dentro).
-  O que só o repo REAL pegou: o comentário novo, terminando em ponto acima do `content:`, fazia a
-  auditoria recusar 13/13 — agora um cenário usa o `tailwind.config.ts` real. Caminho B (Codex sem
-  cota): `.postcssrc*`/`package.json#postcss` vêm antes do `postcss.config` no Vite — recusa.
-  Denominador: 13/13 PRs só-de-teste isentos (antes 1/13). Publish de 03/10 provado pelos bytes (o
-  CSS servido perdeu exatamente as 2 regras). Revisão independente pelo Fable (05/10, no lugar do
-  Codex): 6 fail-open reproduzidos com o build real — pasta-symlink na raiz ou com nome de teste,
-  PostCSS/plugin vindo de módulo local do `vite.config`, `@config` em `.pcss` e em `<style>` do HTML —,
-  fechados por 4 travas fail-CLOSED; denominador depois delas, 18/18 nos últimos 400. Detalhe em
-  [`docs/historico/testes-fora-do-content-do-tailwind.md`](../../../docs/historico/testes-fora-do-content-do-tailwind.md).
-- [ ] (menor) Confirmar se há ambiente de **preview** distinto do publicado a checar.
+
+O histórico de medições desta skill vive no corpo acima e em `docs/historico/` (ledger, leva única, piloto MCP, carimbo SHA). Aqui só o que está em aberto:
+
+- [ ] Revisão independente (Codex) do conserto dos dois exit 5 falsos do `monitor-deploy.sh` (#2465: alias `@edge` e `CARIMBO_AMBIGUO`) — adiada por cota em 2026-09-10; cobertura até lá é o Caminho B (`docs/agent/money-path.md`).
+- [ ] (menor) Confirmar se há ambiente de **preview** distinto do publicado a checar (`preview--steu.lovable.app` respondia 401 em 2026-10-05: existe, atrás de auth).

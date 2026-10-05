@@ -28,8 +28,11 @@ import {
   parsearSondaDeriva,
   relatarDeriva,
   remocoesDe,
+  saidaDerivaComoPsql,
+  textosDaLeitura,
   tokensSql,
 } from './deriva-corpo';
+import { mesmosTokensNoModo } from './tokens-sql';
 
 describe('tokensSql — "cosmético" é mesma sequência de tokens, nunca "mesmo texto sem espaço"', () => {
   it('espaço, quebra de linha e comentário não contam', () => {
@@ -88,6 +91,48 @@ describe('tokensSql — "cosmético" é mesma sequência de tokens, nunca "mesmo
 });
 
 describe('tokensSql — o contrato léxico do PG17 (os casos do parecer Codex de 2026-09-26)', () => {
+  it("mesmosTokensNoModo: N'…' com scs=off processa barra (o literal comum); com scs=on, não", () => {
+    const a = "SELECT N'a\\'--desconto=10\n';";
+    const b = "SELECT N'a\\'--desconto=90\n';";
+    expect(mesmosTokensNoModo(a, b, false)).toBe(true);
+    expect(mesmosTokensNoModo(a, b, true)).toBe(false);
+  });
+
+  it('número segue o scan.l do PG17 (medido em prod, 2026-10-05): `_` no expoente é dígito; número colado em identificador é UM token', () => {
+    // SELECT 1e1_0 → 10000000000 · SELECT 1e1 _0 → 10 (alias _0) · SELECT 1abc / 1_ / 0x1Fg / 1e → trailing junk.
+    expect(tokensSql('SELECT 1e1_0;')).toEqual(['select', '1e1_0', ';']);
+    expect(mesmosTokens('SELECT 1e1_0;', 'SELECT 1e1 _0;')).toBe(false);
+    expect(mesmosTokens('SELECT 1abc;', 'SELECT 1 abc;')).toBe(false);
+    expect(mesmosTokens('SELECT 0x1Fg;', 'SELECT 0x1F g;')).toBe(false);
+    expect(mesmosTokens('SELECT 1_;', 'SELECT 1 _;')).toBe(false);
+    expect(mesmosTokens('SELECT 1e;', 'SELECT 1 e;')).toBe(false);
+    expect(tokensSql('SELECT 1.5e-1_0, 0X1F, 1_000, 2..3;')).toEqual(['select', '1.5e-1_0', ',', '0x1f', ',', '1_000', ',', '2', '..', '3', ';']);
+  });
+
+  it('comentário de BLOCO entre literais quebra a continuação (medido em prod: syntax error); o de LINHA não', () => {
+    expect(mesmosTokens("SELECT 'a'/*\n*/'b';", "SELECT 'a'\n'b';")).toBe(false);
+    expect(mesmosTokens("SELECT 'a' /* c */\n'b';", "SELECT 'a'\n'b';")).toBe(false);
+    expect(mesmosTokens("SELECT 'a' -- c\n'b';", "SELECT 'a'\n'b';")).toBe(true);
+  });
+
+  it('literal simples com barra depende de standard_conforming_strings — "mesmos tokens" vale nos DOIS modos', () => {
+    // Medido em prod: com `SET standard_conforming_strings = off`, 'a\'--desconto=10⏎' é UM literal
+    // (valor a'--desconto=10⏎); com `on` (o padrão de prod), é 'a\' + comentário.
+    expect(mesmosTokens("SELECT 'a\\'--desconto=10\n';", "SELECT 'a\\'--desconto=90\n';")).toBe(false);
+    // Sem barra que mude a FRONTEIRA do literal, os dois modos coincidem e os tokens não mudam:
+    expect(tokensSql("SELECT 'a\\nb';")).toEqual(['select', "'a\\nb'", ';']);
+  });
+
+  it('espaço é o `space` do scan.l — [ \\t\\n\\r\\f\\v] —, não o `\\s` do JS (medido em prod, 2026-10-02)', () => {
+    // `SELECT <NBSP>x FROM (SELECT 1 AS x) s` → ERROR: column " x" does not exist: o NBSP abre um
+    // IDENTIFICADOR. Idem BOM e U+2028. Já `SELECT\f1` e `SELECT\v1` devolvem 1.
+    expect(tokensSql('SELECT \u00a0x')).toEqual(['select', '\u00a0x']);
+    expect(mesmosTokens('SELECT \u00a0x FROM t;', 'SELECT x FROM t;')).toBe(false);
+    expect(mesmosTokens('SELECT 1 +\ufeff2;', 'SELECT 1 + 2;')).toBe(false);
+    expect(mesmosTokens('SELECT 1 +\u20282;', 'SELECT 1 + 2;')).toBe(false);
+    expect(mesmosTokens('SELECT\f1\v;', 'SELECT 1;')).toBe(true);
+  });
+
   it('dollar-quote é OPACO: `--` dentro dele é conteúdo (o stripper compartilhado mascara os dois iguais)', () => {
     expect(mesmosTokens('BEGIN RETURN $q$a--x$q$; END;', 'BEGIN RETURN $q$a--y$q$; END;')).toBe(false);
   });
@@ -399,14 +444,62 @@ describe('parsearSondaDeriva — o detalhe por overload, fail-closed', () => {
     expect(l.overloads[0].md5).toBeUndefined();
   });
 
+  it('o detalhe mede um nome e a sonda não trouxe NEM a linha `rpc`: incoerência (Codex, confirmação P1)', () => {
+    // A irmã da migration some inteira da sonda (rpc + corpo) e o detalhe ainda a conta: o universo é o
+    // das linhas `n`, não o das medições recebidas.
+    const comIrma = saidaValida(['n|g|1|||', `fn|g||9106714|${md5Exato(' SELECT 7 ')}|${hex(' SELECT 7 ')}`]);
+    expect(parsearSondaDeriva(comIrma).incoerencias.join()).toMatch(/g: o detalhe o mede e a sonda não trouxe a linha `rpc`/);
+  });
+
+  it('o banco conta overload e a sonda não trouxe a linha `corpo`: incoerência — linha perdida não vira "sem corpo" (Codex P1)', () => {
+    const semCorpo = saidaValida().replace(/\ncorpo\|f\|[^\n]*/, '');
+    expect(semCorpo).not.toContain('corpo|f|');
+    expect(parsearSondaDeriva(semCorpo).incoerencias.join()).toMatch(/f: o banco conta 1 overload\(s\) e a sonda não trouxe a linha `corpo`/);
+    // Controle: a saída íntegra não acusa nada.
+    expect(parsearSondaDeriva(saidaValida()).incoerencias).toEqual([]);
+  });
+
   it('o detalhe e a sonda reaproveitada têm de CONTAR os mesmos overloads por nome', () => {
     const l = parsearSondaDeriva(saidaValida([`fn|f|text|9106715|${md5Exato(' SELECT 9 ')}|${hex(' SELECT 9 ')}`]));
     expect(l.incoerencias.join()).toMatch(/f: a sonda contou 1 overload\(s\) e o detalhe trouxe 2/);
   });
 });
 
+describe('textosDaLeitura — o canal de TEXTO que o eixo 5 do gate do pacote re-testa por tokens', () => {
+  it('traz, por nome, o prosrc que reproduziu o md5 do banco — canal íntegro, nenhuma falha', () => {
+    const t = textosDaLeitura(parsearSondaDeriva(saidaValida()));
+    expect(t.porNome.get('f')).toEqual([' SELECT 1 ']);
+    expect(t.falhas).toEqual([]);
+  });
+
+  it('texto que NÃO reproduz o md5 não entra — e a incoerência vira falha DITA do canal', () => {
+    const t = textosDaLeitura(parsearSondaDeriva(saidaValida().replace(hex(' SELECT 1 '), hex(' SELECT 2 '))));
+    expect(t.porNome.get('f') ?? []).toEqual([]);
+    expect(t.falhas.join()).toMatch(/não reproduz o md5/);
+  });
+
+  it('detalhe truncado (sem `fim-deriva`) e autoteste hex quebrado são falhas DITAS, não silêncio', () => {
+    const truncado = textosDaLeitura(parsearSondaDeriva(saidaValida().replace(/\nfim-deriva.*$/, '')));
+    expect(truncado.falhas.join()).toMatch(/marcador `deriva-corpo\/1`/);
+    const semHex = textosDaLeitura(parsearSondaDeriva(saidaValida().replace(`autoteste-hex|${HEX_AMOSTRA}`, 'autoteste-hex|00')));
+    expect(semHex.falhas.join()).toMatch(/autoteste do canal hex/);
+  });
+});
+
+describe('saidaDerivaComoPsql — a resposta da nuvem na forma do psql, UMA receita para o audit e o pacote', () => {
+  it('as duas consultas em sequência, cada linha com `\\n`, e nada para consulta vazia', () => {
+    const linhas = new Map([['sonda', ['a|1', 'b|2']], ['detalhe', []]]);
+    expect(saidaDerivaComoPsql(linhas)).toBe('a|1\nb|2\n');
+    expect(saidaDerivaComoPsql(new Map([['sonda', ['a']], ['detalhe', ['d']]]))).toBe('a\nd\n');
+  });
+
+  it('consulta AUSENTE na resposta LANÇA — não medi, nunca saída vazia', () => {
+    expect(() => saidaDerivaComoPsql(new Map([['sonda', ['a']]]))).toThrow(/não trouxe a consulta 'detalhe'/);
+  });
+});
+
 // ── julgamento ────────────────────────────────────────────────────────────────────────────────
-const LIBERADA: VereditoPrecondicao = { estado: 'LIBERADA', ausentes: [], naoMedidos: [], motivos: [], desatualizadas: [], naoConferidas: [] };
+const LIBERADA: VereditoPrecondicao = { estado: 'LIBERADA', ausentes: [], naoMedidos: [], motivos: [], desatualizadas: [], cosmeticas: [], naoConferidas: [] };
 /** Uma leitura de prod íntegra com os overloads dados (texto sempre coerente com o md5). */
 const leituraCom = (vivos: { nome: string; identidade: string; corpo?: string; xmin?: number }[]) => ({
   sonda: { medicoes: [], corpos: new Map(), funcoesPublic: 489, fim: true, dialetoOk: true },

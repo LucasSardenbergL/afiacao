@@ -14,7 +14,7 @@
 
 export const FONTE_SHA256: Record<string, string> = {
   "ai-ops-agent": "e332594ddd54f4e42cd18281584d726b95afe11df751943d273b737567825f13",
-  "algorithm-a-audit": "82eb732cf0e5fa362e78708f646b6c15c0cf94c9f5382359ed3d63d6f67fe3f5",
+  "algorithm-a-audit": "9c830a537358902edc01e1c279ffaa7f52ece0cac4872ce2cdbcc6a68b105441",
   "analytics-outbox-drain": "b03bbf880f09d2f08d3320def1f7d617506869d063ca0023af65292511c9fded",
   "analyze-services": "fc9fe8712c43bb7f814c3d280c4709ffe7c10be6015bf1d80fafcbbd6d2fda4f",
   "analyze-unified-order": "c7e49a1682d24d22a69b483aaeb1fbf86335f8ed5e800311a83910acdc9f789a",
@@ -51,7 +51,7 @@ export const FONTE_SHA256: Record<string, string> = {
   "omie-nfe-webhook": "c2267dae835b18c9f4214a6c9621f530a384e150e345cbbcecb7b2eca0e5d319",
   "omie-sync": "0f675337b50a933d3cfbd87a42346e15c25d195d6ffcce2d546fd75d94945e87",
   "omie-sync-ctes-recebidos": "8516f13ecd80ccfcdb052fb19f07611d79ae7cc2cbf9e889087530e137b836c7",
-  "omie-sync-estoque": "e83a491f986ac584c3d0ce18baa23decfb8eacae6d865bfae39d00c1cba6c956",
+  "omie-sync-estoque": "d4a75e778a959347e47b740457a7f9388ec6651c5a2221d387ba48e4d94d7154",
   "omie-sync-metadados": "1f279e5cf99ad368d769d6bd74e295e19d1cfd1ce2ea160dcf14847bf8b8f122",
   "omie-sync-nfes-recebidas": "12f9838c4d7ccf68fb4bea2480ae79d8ebb414a1f24bff7607f474990ef213b7",
   "omie-sync-pedidos-compra": "43445982069bbdc6d4136aa24fe6969c675526a111bfb9eb24c659329c0d4feb",

@@ -1,0 +1,8 @@
+# O léxico compartilhado (scripts/lib/tokens-sql.ts) visto PELO SENSOR deriva:corpo:prod: o aceite
+# "cosmético" do sensor e da baseline usa `mesmosTokens`/`md5DeTokens`, que exigem os DOIS modos de
+# standard_conforming_strings (Codex, 2026-10-05). O gate usa o veredito por modo (tokens-sql-gate.mut).
+# @src: scripts/lib/tokens-sql.ts
+# @test: scripts/lib/deriva-corpo.test.ts
+
+# CONTROLE+ : só o modo scs=on — a leitura off some do "mesmos tokens".
+PEGA | controle+: so o modo scs=on no mesmosTokens         | s/  return on\.length === off\.length && on\.every\(\(t, k\) => t === off\[k\]\) \? on : \[\.\.\.on, MARCA_SCS_OFF, \.\.\.off\];/  return on;/

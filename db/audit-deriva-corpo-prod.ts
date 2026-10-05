@@ -61,6 +61,8 @@ import {
   montarSondaDeriva,
   parsearSondaDeriva,
   relatarDeriva,
+  saidaDerivaComoPsql,
+  textosDaLeitura,
 } from '../scripts/lib/deriva-corpo';
 import { migrationsDaRef } from '../scripts/lib/migrations-da-ref';
 import { alvosDeCorpo, julgarPrecondicao } from '../scripts/lib/precondicao-banco';
@@ -120,13 +122,13 @@ export interface Execucao {
  * (nem separador, nem rodapé). É o que o parser do caminho local recebe; o da nuvem recebe o mesmo.
  */
 export function saidaComoPsql(dados: DadosNuvem): string {
-  return ['sonda', 'detalhe']
-    .flatMap((nome) => {
-      const linhas = dados.linhas.get(nome);
-      if (linhas === undefined) throw new MedicaoIncompleta(`transporte da nuvem: a resposta não trouxe a consulta '${nome}'`);
-      return linhas.map((l) => `${l}\n`);
-    })
-    .join('');
+  // A receita mora na lib (`saidaDerivaComoPsql`) porque o pacote do gate de deploy também lê esta
+  // sonda pela nuvem; aqui só se mantém o "não medi" com a cara do audit (exit 2 com o motivo).
+  try {
+    return saidaDerivaComoPsql(dados.linhas);
+  } catch (e) {
+    throw new MedicaoIncompleta(mensagemDeErro(e) ?? 'transporte da nuvem: resposta incompleta');
+  }
 }
 
 function medir(argv: readonly string[], deps: Dependencias, saida: string[], erro: string[]): 0 | 1 | 2 {
@@ -175,12 +177,21 @@ function medir(argv: readonly string[], deps: Dependencias, saida: string[], err
   const leitura = parsearSondaDeriva(bruta);
   // O veredito do gate do pacote sobre a MESMA sonda: os controles fail-closed dele (marcador,
   // controle positivo, dialeto, inventário) valem aqui sem reimplementação.
-  const controles = julgarPrecondicao(alvos, leitura.sonda, 0, {
-    historico,
-    inventarioDaRef: lidas.length,
-    migrationsLidas: lidas.length,
-    funcoesConhecidas: historico.size,
-  });
+  // O canal de texto vai junto: o gate re-testa por tokens o que o md5 chama de DERIVA, e sem ele
+  // diria INCERTA. Para o audit nada muda — ele só lê o INCERTA dos controles, e um canal quebrado
+  // já é incerteza do próprio `julgarDeriva`.
+  const controles = julgarPrecondicao(
+    alvos,
+    leitura.sonda,
+    0,
+    {
+      historico,
+      inventarioDaRef: lidas.length,
+      migrationsLidas: lidas.length,
+      funcoesConhecidas: historico.size,
+    },
+    textosDaLeitura(leitura),
+  );
   const resultado = julgarDeriva({ modelo, leitura, baseline, controles });
   const relatorio = relatarDeriva(resultado, { sha, fetch, agora: leitura.agora });
   saida.push(...relatorio.saida);

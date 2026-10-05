@@ -1,0 +1,21 @@
+# Invariantes do re-teste por TOKENS em `classificarComTokens` (scripts/lib/corpo-esperado.ts).
+# @src: scripts/lib/corpo-esperado.ts
+# @test: scripts/lib/precondicao-banco.test.ts
+#
+# O que o md5 EXATO chama de DERIVA é re-testado por tokens em CADA modo de standard_conforming_strings
+# (docs/historico/deriva-so-de-comentario-no-corpo.md). A ordem é o que mantém o gate honesto: o exato
+# decide antes e não é reaberto; no re-teste, a ÚLTIMA versão primeiro; e só vale o veredito em que os
+# dois modos concordam. As duas mutações que a tarefa exige estão marcadas [exigida].
+
+# CONTROLE+ : o re-teste nunca casa a última — VARIANTE_COSMETICA some e o caso real volta a DERIVA.
+PEGA | controle+: o re-teste nunca casa a ultima         | s/if \(mesmosTokensNoModo\(texto, versoes\[n - 1\]\.corpo, scsOff\)\) return n - 1;/if (false) return n - 1;/
+# [exigida] "variante antes do exato": o re-teste passa a reabrir o EM_DIA e o CORPO_ANTERIOR exatos.
+PEGA | variante antes do exato                          | s/if \(exato\.classificacao !== 'DERIVA' \|\| versoes === undefined\) return exato;/if (exato.classificacao === 'INDECIDIVEL' || versoes === undefined) return exato;/
+# [exigida] "tokens iguais aceitam diferença de literal": a comparação fica cega ao CONTEÚDO dos literais.
+PEGA | tokens iguais aceitam diferenca de literal        | s/if \(mesmosTokensNoModo\(texto, versoes\[n - 1\]\.corpo, scsOff\)\) return n - 1;/if (mesmosTokensNoModo(texto.replace(\/'[^']*'\/g, "''"), versoes[n - 1].corpo.replace(\/'[^']*'\/g, "''"), scsOff)) return n - 1;/
+PEGA | anterior por tokens nao bloqueia (P1 latente)    | s/^  return \{ \.\.\.exato, classificacao: 'CORPO_ANTERIOR', emProd: versoes\[on\]\.migration, tokens: prova\(versoes\[on\]\) \};/  return exato;/
+PEGA | empate: as anteriores antes da ultima            | s/if \(mesmosTokensNoModo\(texto, versoes\[n - 1\]\.corpo, scsOff\)\) return n - 1;/if (mesmosTokensNoModo(texto, versoes[n - 1].corpo, scsOff) \&\& !versoes.slice(0, -1).some((x) => mesmosTokensNoModo(texto, x.corpo, scsOff))) return n - 1;/
+PEGA | texto nao conferido contra o md5 medido          | s/const texto = textos\.find\(\(t\) => vivo\.md5s\.includes\(md5Exato\(t\)\)\);/const texto = textos[0];/
+PEGA | prova com o hash do repo errado                  | s/    md5Repo: v\.md5,/    md5Repo: md5Exato(texto),/
+# Codex, confirmação (2026-10-05): o veredito de UM modo só não vale — divergência é INCERTA.
+PEGA | Codex P1: modos divergentes viram o veredito do on | s/^  if \(on !== off\) \{/  if (false) {/

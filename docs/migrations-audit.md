@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **581** custom migrations totais
-- **1917** objetos esperados (criados por estas migrations)
+- **582** custom migrations totais
+- **1924** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 644
-  - `rls_policy`: 462
-  - `index`: 265
+  - `function`: 645
+  - `rls_policy`: 464
+  - `index`: 267
   - `cron_job`: 174
-  - `table`: 166
+  - `table`: 168
   - `view`: 107
   - `trigger`: 95
   - `enum_value`: 4
@@ -4778,6 +4778,18 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.gerar_pedidos_oportunidade_ciclo` | — |
+
+### `20261005131331_reposicao_po_observado_pelo_motor.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.reposicao_po_observado_publicar` | — |
+| `table` | `public.reposicao_po_observado_run` | — |
+| `table` | `public.reposicao_po_observado_item` | — |
+| `index` | `public.idx_reposicao_po_observado_run_empresa` | `reposicao_po_observado_run` |
+| `index` | `public.idx_reposicao_po_observado_item_po` | `reposicao_po_observado_item` |
+| `rls_policy` | `public.reposicao_po_observado_run_select_staff` | `reposicao_po_observado_run` |
+| `rls_policy` | `public.reposicao_po_observado_item_select_staff` | `reposicao_po_observado_item` |
 
 ## Próximos passos por status
 

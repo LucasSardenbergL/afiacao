@@ -46,6 +46,7 @@ import {
   type CorposEsperados,
   julgarPrecondicao,
   type LeituraSonda,
+  type TextosVivos,
 } from './scripts/lib/precondicao-banco';
 
 const ALVO = [{ rpc: 'criar_pedidos_com_itens', edges: ['omie-vendas-sync'] }];
@@ -58,7 +59,7 @@ const ANTIGA = '20260908163659_pedido_nasce_com_identidade_de_linha.sql';
 const historico = (): CorposEsperados => ({
   historico: new Map([[
     'public.criar_pedidos_com_itens',
-    [{ migration: ANTIGA, md5: VELHO }, { migration: NOVA, md5: ATUAL }],
+    [{ migration: ANTIGA, md5: VELHO, corpo: 'b' }, { migration: NOVA, md5: ATUAL, corpo: 'a' }],
   ]]),
   inventarioDaRef: 721,
   migrationsLidas: 721,
@@ -73,8 +74,25 @@ const sonda = (md5s: string[], overloads = 1): LeituraSonda => ({
   dialetoOk: true,
 });
 
-const estado = (l: LeituraSonda, c: CorposEsperados = historico()) =>
-  julgarPrecondicao(ALVO, l, 0, c).estado;
+// O canal de texto do re-teste por tokens (eixo 5, 2026-09-26): íntegro e vazio por default — só o
+// que o md5 exato chama de DERIVA chega ao re-teste, e esses cenários declaram o texto de prod.
+const SEM_TEXTOS: TextosVivos = { porNome: new Map(), falhas: [] };
+const comTexto = (texto: string): TextosVivos => ({ porNome: new Map([['criar_pedidos_com_itens', [texto]]]), falhas: [] });
+
+const estado = (l: LeituraSonda, c: CorposEsperados = historico(), t: TextosVivos = SEM_TEXTOS) =>
+  julgarPrecondicao(ALVO, l, 0, c, t).estado;
+
+// Versões com corpo DE VERDADE para o re-teste por tokens. md5 digitados (`printf '<corpo>' | md5`).
+const comComentario = (): CorposEsperados => ({
+  ...historico(),
+  historico: new Map([[
+    'public.criar_pedidos_com_itens',
+    [
+      { migration: ANTIGA, md5: 'c6b49a509097b9e565d43c5ba230b6a4', corpo: 'BEGIN\n  -- antes\n  RETURN 1;\nEND;' },
+      { migration: NOVA, md5: 'fe3976797851ba140c7b15d5a25ace6e', corpo: 'BEGIN\n  -- nota\n  RETURN 2;\nEND;' },
+    ],
+  ]]),
+});
 
 let falhas = 0;
 const exigir = (rotulo: string, obtido: string, esperado: string) => {
@@ -109,19 +127,29 @@ exigir('arquivos lidos, ZERO funções extraídas', estado(sonda([ATUAL]), {
   migrationsLidas: 721,
   funcoesConhecidas: 0,
 }), 'INCERTA');
+// O P1 latente do Codex: a ANTERIOR menos os comentários é a lógica velha em prod — até 2026-09-26
+// caía em DERIVA e liberava.
+exigir('prod roda a ANTERIOR a menos de comentário (tokens)',
+  estado(sonda(['67f373071560ba94845995105c614eb8']), comComentario(), comTexto('BEGIN\n  RETURN 1;\nEND;')), 'BLOQUEADA');
+// Sem o texto de prod, a DERIVA pode ser a anterior sem comentário — "não re-testei" não libera.
+exigir('DERIVA sem o texto de prod para o re-teste',
+  estado(sonda(['67f373071560ba94845995105c614eb8']), comComentario()), 'INCERTA');
 
 // ── NÃO-SABOTAGENS: têm de continuar VERDES, senão o gate trava todo deploy ─────────────────────
 // Este bloco é o que separa "o gate discrimina" de "o gate reprova tudo que não é idêntico".
 console.log('\nNÃO-SABOTAGENS (deriva histórica e afins — têm de seguir LIBERADA):');
-exigir('DERIVA: corpo que nenhuma migration declara', estado(sonda(['f'.repeat(32)])), 'LIBERADA');
+exigir('DERIVA: corpo que nenhuma migration declara (nem por tokens)',
+  estado(sonda(['fbade9e36a3f36d3d676c1b808451dd7']), historico(), comTexto('z')), 'LIBERADA');
 exigir('overload em prod (indecidível, não atraso)', estado(sonda([VELHO, ATUAL], 2)), 'LIBERADA');
 exigir('prod sem corpo textual (prosqlbody / C)', estado(sonda([])), 'LIBERADA');
 exigir('função sem CREATE commitado', estado(sonda([ATUAL]), {
-  historico: new Map([['public.outra', [{ migration: 'm.sql', md5: ATUAL }]]]),
+  historico: new Map([['public.outra', [{ migration: 'm.sql', md5: ATUAL, corpo: 'a' }]]]),
   inventarioDaRef: 721,
   migrationsLidas: 721,
   funcoesConhecidas: 1,
 }), 'LIBERADA');
+exigir('VARIANTE_COSMETICA: prod = a última a menos de comentário',
+  estado(sonda(['ce4ddd2bf00f6904e90f235dd4c43b88']), comComentario(), comTexto('BEGIN\n  RETURN 2;\nEND;')), 'LIBERADA');
 
 console.log(
   falhas === 0

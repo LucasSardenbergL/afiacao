@@ -6,8 +6,8 @@
 > 0 P0 · 6 P1 · 2 P2; código 473s/196.060 tokens — 0 P0 · 10 P1 · 2 P2. Todos os achados adotados.
 > Censo irmão, da mesma madrugada e só de documentação:
 > [`deriva-so-de-comentario-no-corpo.md`](deriva-so-de-comentario-no-corpo.md) (mesma datação do GRANT
-> em massa; propõe refinar o gate do pacote — a "opção C", ainda não implementada, pode reusar o
-> `tokensSql` daqui).
+> em massa; propôs refinar o gate do pacote — a "opção C", implementada em 2026-10-01 sobre o
+> `tokensSql` daqui, que mudou para `scripts/lib/tokens-sql.ts` para os dois o usarem).
 
 ## O buraco
 
