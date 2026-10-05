@@ -131,7 +131,26 @@ individual na RPC `criar_pedidos_com_itens`), e os três casos só viram **conta
   repo; está em `db/fixtures/get-data-health-predecessora-prod-20261005.sql`.
   - Na prod, o resultado de HOJE não muda: 26/26 linhas com payload têm hash nulo, 31.688/31.688 importadas
     têm hash canônico, e há 0 envios desde a v1.10.
-  - Prova: 50 asserts, 24 sabotagens.
+  - Prova: 52 asserts (51 no CI, sem o locale pt_BR) e 28 sabotagens, verdes em SP e em `TZ=UTC`.
+- **A revisão do PR da v2 (Codex, 2026-10-05):** `-r max`, 712 s, 165.473 tokens, rollout `01a10ce3`, cota de
+  69% para 73%. Quatro achados P2. As 4 sabotagens novas são o código ANTERIOR à revisão: o assert vermelho
+  é a execução que confirma cada defeito.
+
+  | # | Achado | Veredito | Destino |
+  |---|---|---|---|
+  | C9 | "hash não nulo" não é proveniência: o `reenvio-pedido` admite enviar checkout com hash próprio (`checkout_<x>`), e a v2 o tirava do sensor. O índice único parcial ainda barraria o gêmeo | confirmado por execução (A51 sob `app_hash_nulo` e `gemeo_qualquer_hash`); prod com 0 hoje | app = hash nulo OU não-omie; gêmeo = payload nulo OU o hash CANÔNICO dela |
+  | C10 | a edge monta a data ANTES do `IncluirPedido`: um envio que cruza a meia-noite é acusado antes das 6 h | confirmado por execução: envio às 00:02, payload de 04/10, sai `stale` às 06:00 com 5h58 reais | LIMITE ACEITO e documentado no ramo. São segundos a minutos, e só na virada do dia; fechar exige carimbo do envio no write-back |
+  | C11 | o rótulo "fora da janela de 5 dias" contava só as de mais de 6 dias (o resto do C8) | confirmado por execução (A5 sob `rotulo_janela`) | "com mais de 6 dias" |
+  | C12 | a `ref` em 8 hex colide: os ids `…013442` e `…043537` dão `e8b1896d` | confirmado por execução (md5 dos dois ids; A52 sob `ref_8hex`) | md5 completo |
+
+  - A revisão do conserto não foi re-rodada no Codex (cota 73%, teto 85%). Os 3 consertos são os mínimos que
+    ele próprio propôs, e cada um tem a sabotagem que reverte para a versão anterior.
+  - O CI pegou o que a prova isolada não via: 3 provas irmãs da cadeia viva (`db/lib/data-health-vivo.sh`)
+    aplicam a v2.
+    - O `auth.uid()` do stub compartilhado devolvia NULL sempre. A POS que simula a sessão logada recebia
+      "não autenticado" e falhava fechada, como deve. O stub agora lê o JWT como o do Supabase.
+    - O `carteira-rebuild` lia o wrapper como um vendedor sem papel; o vendedor virou `employee`.
+    - O `sync-reprocess` monta a cadeia sobre stubs sem o wrapper; agora monta o wrapper vivo.
 
 ## O desfecho (2026-10-01)
 
@@ -184,6 +203,25 @@ de 5 dias do importador) - oben: 1 (R$ 314,40, a mais antiga de 06/04/2026)"), c
 08:00:02Z. O reparo entrou às 08:02Z, e a rodada das 08:30Z fechou o episódio sozinha: alerta resolvido às 08:30:00Z,
 23 avaliados e 0 falhos, nenhum alerta novo. É o 1º sinal positivo do
 sensor em prod: na 1ª rodada, achou a órfã real que já conhecíamos.
+
+### A v2 (2026-10-05)
+
+- **Quem aplicou:** eu, pelo `db:aplicar`, combinado com o founder antes (lição 8).
+- **Pré-voo:** o md5 vivo foi re-medido logo antes e batia com a PRE: compute `79362363…`, wrapper
+  `17adb51b…`, watchdog `633a9b71…`, heartbeat `6be719aa…`. O `wt:preflight` deu 0 colisões em voo.
+- **Ensaio:** rodou a migration inteira na PROD e fez ROLLBACK. A POS chegou ao fim (`POS OK: 31 sources;
+  vendas_empurradas_sem_gemeo=ok … (25 empurradas; 0 aguardando…)`). Isso inclui o gate do wrapper
+  EXECUTADO contra o `has_role` e o `auth.uid()` reais: uma sessão logada sem papel recebeu 42501.
+- **Apply real:** ~17:18Z, tentativa **#244 → recibo**, sha256 `682898bb…`, commit `6b93106cd`.
+- **Validação por fora (psql-ro):**
+  - compute `5ae67f7e…` e wrapper `a5021353…` = a v2; watchdog e heartbeat intactos; `search_path` =
+    `public, pg_temp` nos 4;
+  - `has_function_privilege`: compute, watchdog e heartbeat fechados para anon, authenticated e PUBLIC;
+    wrapper fechado para anon e PUBLIC e aberto para authenticated (o staff o chama por /rpc; o gate barra
+    o resto).
+- **O watchdog sobre a v2:** rodou às 17:30:00Z, com sucesso às 17:30:01Z, 23 avaliados, 0 falhos e 0
+  alertas abertos do sensor. O sensor segue `ok` com 25 empurradas: o resultado de hoje não mudou, como a
+  medição do hash previa.
 
 ## Sinal (fase-sem-sinal)
 
