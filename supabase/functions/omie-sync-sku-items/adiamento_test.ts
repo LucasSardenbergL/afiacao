@@ -211,6 +211,20 @@ Deno.test("avaliarFilaParada: conta RECEBIMENTO com nIdReceb, elegível há mais
   assertEquals(avaliarFilaParada(fila, SEM_CONTROLE, new Set(["4"]), agora, backoffFalso, 100 * HORA), 0, "limite maior que a fila inteira");
 });
 
+Deno.test("avaliarFilaParada: recebimento que JÁ TEM linha (incompleto) não é fila parada — o sensor guarda a semântica de antes", () => {
+  // Desde a pendência por item (2026-10-05) o recebimento com linha e itens pendentes VOLTA à fila. O
+  // sensor que pagina continua medindo o que media: recebimento SEM NENHUMA linha que o run não
+  // alcança. Sem a exclusão, a retentativa de item que talvez nunca seja associado (etapa 40 há
+  // meses) disputaria os ~8 slots do diário das 07:00 e fabricaria `error` "fila não anda".
+  const agora = T0 + 1_000 * HORA;
+  const fila = [
+    linha("A", "1", 60, 60, agora), // sem linha, parado → conta
+    linha("G", "7", 90, 90, agora), // incompleto (já tem linha), parado → NÃO conta aqui
+  ];
+  assertEquals(avaliarFilaParada(fila, SEM_CONTROLE, new Set(), agora, backoffFalso, ELEGIVEL_HA_MUITO_MS, new Set(["7"])), 1);
+  assertEquals(avaliarFilaParada(fila, SEM_CONTROLE, new Set(), agora, backoffFalso), 2, "sem a exclusão, os dois contam (o comportamento de antes, quando o incompleto nem estava na fila)");
+});
+
 Deno.test("avaliarFilaParada: irmãs do mesmo recebimento — vale a MAIS ANTIGA, e o recebimento conta UMA vez (achado do Codex)", () => {
   // A fila deduplicada elegeria a irmã nunca tentada (2h) e esconderia a irmã tentada, parada há
   // 60h. O sensor recebe a fila ANTES do dedup e leva a menor "elegível desde" do recebimento.

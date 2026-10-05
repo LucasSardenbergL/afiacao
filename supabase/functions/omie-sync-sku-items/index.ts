@@ -32,7 +32,7 @@
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import { cabeEspera } from "../_shared/omie-deadline.ts";
-import { avaliarFilaParada, decidirErroDoRun, saidaDoLaco } from "./adiamento.ts";
+import { avaliarFilaParada, decidirErroDoRun, ELEGIVEL_HA_MUITO_MS, saidaDoLaco } from "./adiamento.ts";
 import { consultarNfe, type ContadorRequisicoes, DEPS_REAIS } from "./consulta.ts";
 import {
   type ControleFila,
@@ -113,6 +113,10 @@ interface EmpresaSummary {
    *  `null` = NÃO AVALIADO: chamada via orquestrador (o :15 do jobid 52), onde o adiamento por
    *  REDUNDANT é esperado enquanto o sku-items for step dele — ausente, nunca zero. */
   fila_parada_48h: number | null;
+  /** O mesmo sensor sobre os INCOMPLETOS (recebimento com linha e pendência > 0, elegível há >48h, não
+   *  tratado): fica no results e NÃO vira `error` — a retentativa de item que talvez nunca seja associado
+   *  não pode fabricar "fila não anda". `null` = não avaliado (via orquestrador). */
+  fila_incompleta_parada_48h: number | null;
   itens_processados: number;
   /** Itens crus fundidos por SKU repetido na mesma NFe (Σ n_itens_agregados − 1). >0 = o
    *  bug de sobrescrita item-a-item teria mordido aqui; agora são somados, não perdidos. */
@@ -278,6 +282,15 @@ interface NFeRow {
  *  pedido e apaga o nIdReceb), então lê-lo UMA vez por run evita depender de um campo
  *  que pode mudar debaixo do loop. */
 type NFeFilaRow = NFeRow & { nIdReceb: string | null };
+
+/** O nIdReceb da linha. Dual-read: a coluna dedicada VENCE; o jsonb fica como fallback da transição.
+ *  Quando o backfill do sync de NFes convergir, ele para de re-consultar a Omie e portanto para de
+ *  regravar o raw_data — um leitor só-jsonb regrediria em silêncio. */
+function nIdRecebDe(n: NFeRow): string | null {
+  return n.nid_receb != null
+    ? String(n.nid_receb)
+    : (n.raw_data?.cabec?.nIdReceb != null ? String(n.raw_data.cabec.nIdReceb) : null);
+}
 
 /** As irmãs lidas por nid_receb, com a ELEITA garantida entre elas (se o nIdReceb dela veio do jsonb,
  *  a coluna não a achou — ela vai sozinha, e o dono é ela, como antes). */
@@ -672,18 +685,14 @@ Deno.serve(async (req) => {
     // regra antiga ("sem linha") no legado — recebimento.ts, `pendenteNaFila`.
     const todas = (nfes ?? []) as NFeRow[];
     const pendentes = todas.filter((n) => pendenteNaFila(controleMap.get(n.id), existingTrackingIds.has(n.id)));
+    // Recebimentos que JÁ têm leadtime em alguma linha da janela. Com pendência eles voltam à fila, mas
+    // não são "fila parada": o sensor que pagina segue medindo o recebimento SEM NENHUMA linha — a
+    // semântica de antes, quando o recebimento com linha nem entrava na fila (ver o sensor no fim).
+    const recebimentosComLinha = new Set(
+      todas.filter((n) => existingTrackingIds.has(n.id)).map(nIdRecebDe).filter((r): r is string => r !== null),
+    );
     const filaOrdenada: NFeFilaRow[] = pendentes
-      .map((n) => ({
-        ...n,
-        // Dual-read: a coluna dedicada VENCE; o jsonb fica como fallback da transição.
-        // Quando o backfill do sync de NFes convergir, ele para de re-consultar a Omie e
-        // portanto para de regravar o raw_data — um leitor só-jsonb regrediria em silêncio.
-        nIdReceb: n.nid_receb != null
-          ? String(n.nid_receb)
-          : (n.raw_data?.cabec?.nIdReceb != null
-            ? String(n.raw_data.cabec.nIdReceb)
-            : null),
-      }))
+      .map((n) => ({ ...n, nIdReceb: nIdRecebDe(n) }))
       .filter((n) => skuItemsElegivel(controleMap.get(n.id), agoraMs))
       .sort((a, b) =>
         skuItemsCompararFila(
@@ -750,6 +759,7 @@ Deno.serve(async (req) => {
       consultas_adiadas_por_limite: 0,
       consultas_falhas: 0,
       fila_parada_48h: 0,
+      fila_incompleta_parada_48h: 0,
       itens_processados: 0,
       itens_fundidos_sku_repetido: 0,
       grupos_t1_ambiguo: 0,
@@ -912,8 +922,21 @@ Deno.serve(async (req) => {
     // Sensor pelo DADO (medido DEPOIS do laço, sobre a fila elegível ANTES do dedup — entram as não
     // alcançadas pelo guard e as irmãs, cada recebimento com a sua linha mais antiga): recebimento
     // consultável, elegível há mais de 48h, que o run não tratou. Via orquestrador: não avaliado.
+    // Só recebimento SEM NENHUMA linha conta (`recebimentosComLinha` fica de fora): a retentativa de um
+    // item que talvez nunca seja associado (etapa 40 há meses) disputaria os ~8 slots do diário das
+    // 07:00 e fabricaria `error` "fila não anda" — o sensor de antes nunca o via.
     summary.fila_parada_48h = viaOrquestrador ? null : avaliarFilaParada(
       filaOrdenada,
+      controleMap,
+      recebimentosTratados,
+      Date.now(),
+      skuItemsBackoffMs,
+      ELEGIVEL_HA_MUITO_MS,
+      recebimentosComLinha,
+    );
+    // Os INCOMPLETOS parados: à vista no results, sem página.
+    summary.fila_incompleta_parada_48h = viaOrquestrador ? null : avaliarFilaParada(
+      filaOrdenada.filter((l) => l.nIdReceb !== null && recebimentosComLinha.has(l.nIdReceb)),
       controleMap,
       recebimentosTratados,
       Date.now(),

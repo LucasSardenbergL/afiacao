@@ -2252,42 +2252,62 @@ describe('guardrail money-path: omie-sync-sku-items (fila de leadtime)', () => {
   // ── Pendência por item (2026-10-05): o recebimento só sai da fila com evidência de completude ──
   // O comportamento é provado em Deno (recebimento_test.ts, banco falso). Aqui se vigia a BORDA que o
   // Deno não vê: o index.ts lê a pendência, decide a fila por ela e consome o desfecho da gravação.
+  // Todo pino daqui mede o CÓDIGO sem comentários (`removerComentarios`): o 1º lote de falsificação
+  // achou um pino destes VERMELHO no código íntegro porque o comentário explicativo do ramo citava a
+  // coluna — o "ALVO mente" (money-path §9). Prosa não pode nem reprovar nem aprovar a borda.
   it('a fila LÊ a pendência medida — sem a coluna no select a correção é INERTE (tudo cai na regra antiga)', () => {
-    const ini = src.indexOf('.from("sku_items_sync_controle")\n        .select(');
+    const codigo = removerComentarios(src);
+    const ini = codigo.indexOf('.from("sku_items_sync_controle")\n        .select(');
     expect(ini, 'sentinela: a leitura do controle').toBeGreaterThan(-1);
-    const select = src.slice(ini, src.indexOf(')', src.indexOf('.select(', ini)));
+    const select = codigo.slice(ini, codigo.indexOf(')', codigo.indexOf('.select(', ini)));
     expect(select, 'REGRESSÃO: a leitura do controle não traz itens_pendentes').toContain('itens_pendentes');
-    expect(src, 'o mapa do controle carrega a pendência lida').toMatch(/itens_pendentes:\s*row\.itens_pendentes\s*\?\?\s*null/);
+    expect(codigo, 'o mapa do controle carrega a pendência lida').toMatch(/itens_pendentes:\s*row\.itens_pendentes\s*\?\?\s*null/);
     expect(
       vereditoFronteira(src, 'pendenteNaFila'),
       'REGRESSÃO: o predicado da fila é avaliado e DESCARTADO',
     ).toBe('ok');
-    expect(src, 'REGRESSÃO: a fila voltou a ser só "sem linha"')
+    expect(codigo, 'REGRESSÃO: a fila voltou a ser só "sem linha"')
       .not.toMatch(/\.filter\(\(n\) => !existingTrackingIds\.has\(n\.id\)\)/);
   });
 
   it('o desfecho da gravação é CONSUMIDO — e só conta como tratado com o controle persistido', () => {
+    const codigo = removerComentarios(src);
     expect(vereditoFronteira(src, 'gravarRecebimento'), 'REGRESSÃO: a gravação roda e o desfecho é descartado').toBe('ok');
-    expect(src, 'REGRESSÃO: recebimento sem controle persistido conta como tratado (some do sensor)')
+    expect(codigo, 'REGRESSÃO: recebimento sem controle persistido conta como tratado (some do sensor)')
       .toMatch(/if \(gravado\.controle === "persistiu"\) recebimentosTratados\.add\(nIdReceb\);/);
     // Fora do ramo da falha, a ÚNICA entrada nos tratados é a condicionada ao controle.
-    expect(src.match(/recebimentosTratados\.add\(/g)?.length ?? 0, 'falha + respondida, ambas condicionais').toBe(2);
+    expect(codigo.match(/recebimentosTratados\.add\(/g)?.length ?? 0, 'falha + respondida, ambas condicionais').toBe(2);
   });
 
   it('o fechamento é CAS no carimbo e a falha da consulta NÃO toca a pendência', () => {
-    expect(src, 'REGRESSÃO: o fechamento perdeu o CAS — resposta antiga sobrescreve a nova')
+    const codigo = removerComentarios(src);
+    expect(codigo, 'REGRESSÃO: o fechamento perdeu o CAS — resposta antiga sobrescreve a nova')
       .toMatch(/\.update\(\{ itens_pendentes: final\.itens_pendentes[\s\S]{0,200}?\.eq\("ultima_tentativa", carimbo\)/);
-    const iniFalha = src.indexOf('if (resultado.tipo === "falhou")');
-    const ramoFalha = src.slice(iniFalha, src.indexOf('continue;', iniFalha));
+    const iniFalha = codigo.indexOf('if (resultado.tipo === "falhou")');
+    expect(iniFalha, 'sentinela: o ramo da falha').toBeGreaterThan(-1);
+    const ramoFalha = codigo.slice(iniFalha, codigo.indexOf('continue;', iniFalha));
     expect(ramoFalha, 'REGRESSÃO: a falha da consulta passou a escrever a pendência').not.toContain('itens_pendentes');
-    expect(src, 'sem itens_pendentes no estado, a coluna fica FORA do payload (o upsert não a toca)')
+    expect(codigo, 'sem itens_pendentes no estado, a coluna fica FORA do payload (o upsert não a toca)')
       .toMatch(/estado\.itens_pendentes !== undefined \? \{ itens_pendentes: estado\.itens_pendentes \} : \{\}/);
   });
 
+  it('o sensor que PAGINA ignora os incompletos — e o conjunto deles nasce das linhas gravadas', () => {
+    // Recebimento com linha e pendência volta à fila; se o sensor de página o contasse, a retentativa de
+    // item que nunca é associado fabricaria `error` "fila não anda" no diário das 07:00 (achado do
+    // auto-adversarial, 2026-10-05). Os incompletos parados vão para `fila_incompleta_parada_48h`.
+    const codigo = removerComentarios(src);
+    expect(codigo, 'REGRESSÃO: o sensor de página voltou a contar recebimento com linha')
+      .toMatch(/fila_parada_48h = viaOrquestrador \? null : avaliarFilaParada\(\s*filaOrdenada,\s*controleMap,\s*recebimentosTratados,\s*Date\.now\(\),\s*skuItemsBackoffMs,\s*ELEGIVEL_HA_MUITO_MS,\s*recebimentosComLinha,?\s*\)/);
+    expect(codigo, 'o conjunto dos com-linha nasce das linhas de leadtime da janela')
+      .toMatch(/const recebimentosComLinha = new Set\(\s*todas\.filter\(\(n\) => existingTrackingIds\.has\(n\.id\)\)/);
+    expect(vereditoFronteira(src, 'avaliarFilaParada'), 'os dois sensores são consumidos').toBe('ok');
+  });
+
   it('as irmãs vêm de leitura FAIL-CLOSED e com ordem total; o lookup do pedido também ordena', () => {
-    expect(src, 'REGRESSÃO: erro na leitura das irmãs não grita').toMatch(/if \(irmasErr\) throw new Error\(/);
-    expect(src, 'a leitura das irmãs bate no teto do PostgREST e lança').toMatch(/linhasIrmas\.length >= 1000\) \{\s*throw/);
-    expect(src, 'REGRESSÃO: lookup do pedido sem ordem total — a rota muda entre runs')
+    const codigo = removerComentarios(src);
+    expect(codigo, 'REGRESSÃO: erro na leitura das irmãs não grita').toMatch(/if \(irmasErr\) throw new Error\(/);
+    expect(codigo, 'a leitura das irmãs bate no teto do PostgREST e lança').toMatch(/linhasIrmas\.length >= 1000\) \{\s*throw/);
+    expect(codigo, 'REGRESSÃO: lookup do pedido sem ordem total — a rota muda entre runs')
       .toMatch(/\.eq\("numero_contrato_fornecedor", numero\)\s*\.order\("id"\)\s*\.limit\(1\)/);
   });
 

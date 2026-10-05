@@ -269,10 +269,13 @@ export function avaliarFilaParada(
   agoraMs: number,
   backoffMs: (tentativas: number) => number,
   limiteMs: number = ELEGIVEL_HA_MUITO_MS,
+  /** Recebimentos que JÁ têm linha de leadtime — incompletos, não parados: ficam fora (ver o teste). */
+  recebimentosComLinha: ReadonlySet<string> = new Set(),
 ): number {
   const maisAntigaPorRecebimento = new Map<string, number>();
   for (const linha of filaElegivel) {
     if (!linha.nIdReceb || recebimentosTratados.has(linha.nIdReceb)) continue;
+    if (recebimentosComLinha.has(linha.nIdReceb)) continue;
     const desde = elegivelDesdeMs(controlePorId.get(linha.id), linha.created_at, linha.t2_data_faturamento, backoffMs);
     if (desde === null || !Number.isFinite(desde)) continue;
     const atual = maisAntigaPorRecebimento.get(linha.nIdReceb);
