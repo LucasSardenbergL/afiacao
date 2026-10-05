@@ -25,14 +25,18 @@ import { hojeSP, paraDataOmie } from "../_shared/hoje-sp.ts";
 import { janelaPedidosOmie } from "./janela-omie.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import {
-  avaliarCompletudeListagem,
   chunked,
   particionarCustos,
   planejarEscritaInventario,
-  planejarZeramentoForaDaLista,
   type LinhaProdutoLocal,
 } from "./inventory-lote.ts";
-import { carregarEstoqueLocalNaoZero } from "./estoque-local.ts";
+import { avaliarCompletudeListagem } from "../_shared/zeramento-estoque.ts";
+import {
+  type EscritorPostgrest,
+  metadataDoZeramento,
+  type ResultadoZeramento,
+  zerarConfirmadosForaDaLista,
+} from "../_shared/zeramento-estoque-io.ts";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import {
   acumularProdutosDaPagina,
@@ -626,7 +630,9 @@ async function reprocessProducts(
 // `running` em sync_reprocess_log. Espelha o syncInventory do omie-analytics-sync (a MESMA
 // operação ListarPosEstoque, em lote). Decisão pura + testes: ./inventory-lote.ts.
 // Desde 2026-10-01 é o ÚNICO dono de omie_products.estoque nesta edge, inclusive do zero de
-// quem saiu da lista padrão (passo 4b) — o passo de produtos parou de gravar a coluna.
+// quem saiu da lista padrão (passo 4b) — o passo de produtos parou de gravar a coluna. Desde
+// 2026-10-05 o zero é CONFIRMADO no Omie antes de escrito, e vale também para inventory_position
+// 'oben' (_shared/zeramento-estoque*.ts).
 
 // Usado no pedido E na checagem de completude: página "cheia" só significa algo contra o
 // tamanho que foi de fato pedido.
@@ -649,8 +655,8 @@ async function reprocessInventory(
     // 1) COLETA todas as páginas do Omie em memória (dedupe last-wins por código — duplicata
     //    no MESMO statement de upsert daria 21000 "cannot affect row a second time").
     const posicoes = new Map<number, PosicaoEstoque>();
-    const tamanhosPaginas: number[] = []; // itens CRUS por página — a completude que autoriza zerar
-    let itensIlegiveis = 0; // recusados pelo parser: sem eles a listagem não está inteira compreendida
+    const tamanhosPaginas: number[] = []; // itens CRUS por página — a completude que libera a confirmação
+    let itensIlegiveis = 0; // recusados pelo parser (código inválido, saldo não explícito) — telemetria
     let pagina = 1;
     let totalPaginas = 1;
     // A posição de HOJE em SP, uma vez por run (todas as páginas do retrato na MESMA data). O
@@ -702,9 +708,7 @@ async function reprocessInventory(
     const nowIso = new Date().toISOString();
     let falhasChunk = 0;
     // null = o passo 4b não chegou a apurar (não "zerou 0") — mesmo contrato do metadata de pedidos.
-    let zerados: number | null = null;
-    let zeramentoCandidatos: number | null = null;
-    let zeramentoPulado: string | null = null;
+    let zeramento: ResultadoZeramento | null = null;
     let erroZeramento: string | null = null;
 
     {
@@ -767,34 +771,23 @@ async function reprocessInventory(
         }
       }
 
-      // 4b) Zero de quem SAIU da lista padrão (saldo ≠ 0): estoque local ≠ 0 e ausente de uma
-      //     listagem COMPLETA vira 0 — antes era o `quantidade_estoque || 0` do passo de produtos
-      //     que fazia isso, de carona e com janela de zero para os posicionados. Guardas e teto
-      //     de raio em ./inventory-lote.ts. Leitura que falha NÃO zera ninguém e surfaça no log.
+      // 4b) Zero de quem SAIU da lista padrão (saldo ≠ 0): posição 'oben' e estoque da empresa
+      //     ≠ 0 ausentes de uma listagem COMPLETA viram candidatos; o zero só é escrito depois de
+      //     CONFIRMADO no Omie (cExibeTodos "S" + lista_produtos), com CAS no valor lido — a
+      //     paginação desliza e a ausência sozinha não prova zero. Leitura que falha NÃO zera
+      //     ninguém e surfaça no log. Regra e guardas: _shared/zeramento-estoque.ts.
       try {
-        const locaisComEstoque = await carregarEstoqueLocalNaoZero(db as unknown as BancoPostgrest, account);
-        const zeramento = planejarZeramentoForaDaLista(
-          posicoes,
-          locaisComEstoque,
-          avaliarCompletudeListagem(tamanhosPaginas, POR_PAGINA_POS_ESTOQUE, itensIlegiveis),
+        zeramento = await zerarConfirmadosForaDaLista({
+          leitor: db as unknown as BancoPostgrest,
+          escritor: db as unknown as EscritorPostgrest,
+          chamarOmie: (params) => callOmie(account, "estoque/consulta/", "ListarPosEstoque", params),
           account,
+          empresa: account,
+          listados: new Set(posicoes.keys()),
+          completude: avaliarCompletudeListagem(tamanhosPaginas, POR_PAGINA_POS_ESTOQUE),
+          dataPosicao,
           nowIso,
-        );
-        zeramentoCandidatos = zeramento.candidatos;
-        zeramentoPulado = zeramento.pulado;
-        let zeradosAgora = 0;
-        for (const chunk of chunked(zeramento.rows, 500)) {
-          const { error } = await db
-            .from("omie_products")
-            .upsert(chunk, { onConflict: "omie_codigo_produto,account" });
-          if (error) {
-            falhasChunk++;
-            console.error(`[Reprocess][${account}] upsert zero de estoque omie_products: ${error.message}`);
-          } else {
-            zeradosAgora += chunk.length;
-          }
-        }
-        zerados = zeradosAgora;
+        });
       } catch (e) {
         erroZeramento = mensagemDeErro(e) ?? "erro sem mensagem utilizável";
         console.error(`[Reprocess][${account}] zeramento de quem saiu da lista não rodou: ${erroZeramento}`);
@@ -844,16 +837,18 @@ async function reprocessInventory(
       metadata: {
         pages: totalPaginas,
         total_posicoes: codProds.length,
-        zerados_fora_da_lista: zerados,
-        zeramento_candidatos: zeramentoCandidatos,
-        ...(zeramentoPulado ? { zeramento_pulado: zeramentoPulado } : {}),
+        ...(itensIlegiveis > 0 ? { itens_ilegiveis: itensIlegiveis } : {}),
+        ...metadataDoZeramento(zeramento, erroZeramento),
         ...(falhasChunk > 0 ? { falhas_chunk: falhasChunk } : {}),
       },
-      ...(falhasChunk > 0 || erroZeramento
+      ...(falhasChunk > 0 || erroZeramento || (zeramento?.falhas.length ?? 0) > 0
         ? {
           error_message: [
             ...(falhasChunk > 0 ? [`${falhasChunk} chunk(s) com erro de escrita (lote parcial — próximo ciclo reconcilia)`] : []),
             ...(erroZeramento ? [`zeramento de quem saiu da lista não rodou: ${erroZeramento}`] : []),
+            ...(zeramento && zeramento.falhas.length > 0
+              ? [`zeramento: ${zeramento.falhas.length} falha(s) de confirmação/escrita — os códigos afetados ficaram como estavam`]
+              : []),
           ].join(" · "),
         }
         : {}),

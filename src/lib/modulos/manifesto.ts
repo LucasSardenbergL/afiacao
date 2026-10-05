@@ -818,6 +818,7 @@ export const MODULOS: ModuloApp[] = [
       "src/__tests__/ia-paga-sem-cota-gate.test.ts",
       "src/__tests__/hoje-utc-gate.test.ts",
       "src/__tests__/universo-pedidos-ts-gate.test.ts",
+      "src/__tests__/estoque-escritores-gate.test.ts",
       "src/lib/gates/__tests__/**",
       "src/lib/escape-html.test.ts",
       "src/lib/invoke-function.test.ts",
