@@ -24,9 +24,9 @@ import { fetchAllPages } from '@/lib/postgrest';
 /** Tamanho do lote do insert no edge — espelho de `algorithm-a-audit` (um guardrail lê o edge). */
 export const TAMANHO_LOTE_AUDITORIA = 500;
 /** Intervalo máximo entre lotes da MESMA execução no formato antigo (medido: 67–237 ms; distintas ≥ 7,9 s). */
-export const INTERVALO_MAX_ENTRE_LOTES_MS = 1000;
+const INTERVALO_MAX_ENTRE_LOTES_MS = 1000;
 /** Janela de leitura antes do carimbo mais recente (cobre os lotes do formato antigo com folga). */
-export const JANELA_LEITURA_MS = 30_000;
+const JANELA_LEITURA_MS = 30_000;
 /** Quantos clientes a tabela da aba mostra (os maiores gaps). */
 export const MAIORES_GAPS = 20;
 
