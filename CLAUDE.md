@@ -97,7 +97,7 @@ Tokens em `src/index.css` (paleta quase-neutra low-fatigue; `--status-*` dessatu
 
 ## Convenções de código
 
-Pages PascalCase; hooks `useX` camelCase; rotas **e** código em **pt-BR** (`/recebimento`, `agruparPorMes`); imports absolutos `@/`; tabelas Supabase `snake_case` PT. **LLM em edge:** código novo → Anthropic direto (`ANTHROPIC_API_KEY` + `claude-sonnet-4-6` + prompt caching + forced tool-use + gate `authorizeCronOrStaff`); legado usa o gateway Lovable/Gemini. Roteamento de skills (qual usar por tarefa): `docs/agent/skills.md`.
+Pages PascalCase; hooks `useX` camelCase; rotas **e** código em **pt-BR** (`/recebimento`, `agruparPorMes`); imports absolutos `@/`; tabelas Supabase `snake_case` PT. **LLM em edge:** código novo → Anthropic direto (`ANTHROPIC_API_KEY` + `MODELO_PADRAO` + prompt caching + tool-use não-forçado + gate `authorizeCronOrStaff`); legado usa o gateway Lovable/Gemini. Roteamento de skills (qual usar por tarefa): `docs/agent/skills.md`.
 
 ## gstack (REQUIRED)
 

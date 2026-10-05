@@ -15,11 +15,11 @@
 # da regex local vai como `\x23`, para a linha do contrato não carregar um `#` cru.
 
 # CONTROLE+ : o detector cego. Se isto sobreviver, nenhum outro veredito deste arquivo vale.
-PEGA | controle+: detector cego (a palavra IF nunca casa)                   | s/const PALAVRA_IF = \/\\b\(ELSIF\|IF\)\\b\/gi;/const PALAVRA_IF = \/\\bNUNCA_CASA\\b\/gi;/
+PEGA | controle+: detector cego (a palavra IF nunca casa)                   | s/const PALAVRA_IF = \/\\b\(ELSIF\|ELSEIF\|IF\)\\b\/gi;/const PALAVRA_IF = \/\\bNUNCA_CASA\\b\/gi;/
 
 # O que é um IF de ASSERT: o rabo depois do THEN.
 PEGA | RAISE EXCEPTION deixa de ser rabo de assert (a origem escapa)         | s/\^\\s\*\(\?:RAISE\\s\+EXCEPTION\\b\|/^\\s*(?:NUNCA_CASA\\b|/
-PEGA | qualquer RAISE vira assert (o NOTICE da falsificação vira site)      | s/RAISE\\s\+EXCEPTION\\b\|\(\[A-Za-z_\]/RAISE\\b|([A-Za-z_]/
+PEGA | qualquer RAISE vira assert (o NOTICE da falsificação vira site)      | s/RAISE\\s\+EXCEPTION\\b\|RAISE\\s\+\(\?:/RAISE\\b|RAISE\\s+(?:/
 PEGA | acumulador por array_append escapa (o V1 da canônica)                | s/\|array_append\\s\*\\\(\\s\*\\1\\b\)/|NUNCA_CASA)/
 PEGA | registro de falha por INSERT escapa                                  | s/\|INSERT\\s\+INTO\\b\)\/i;/|NUNCA_CASA)\/i;/
 
@@ -57,3 +57,36 @@ PEGA | piso de asserts desligado (o detector cego passaria)                 | s/
 PEGA | alarme/piso furado deixa de bloquear o veredito                      | s/if \(furos\.length > 0\) \{/if (false) {/
 PEGA | violação sai 0                                                       | s/codigo: 1,/codigo: 0,/
 PEGA | a mensagem perde o conserto (IS DISTINCT FROM)                       | s/Conserto: `IF v IS DISTINCT FROM x THEN RAISE`/Conserto: `X`/
+
+# ── v2 (fase 2, 2026-10-01) — o extrator: as formas que escondiam o `<>` do v1.
+PEGA | v2: ELSEIF escapa do extrator                                          | s/\(ELSIF\|ELSEIF\|IF\)\\b\/gi;/(ELSIF|IF)\\b\/gi;/
+PEGA | v2: comentário SQL entre o THEN e o RAISE esconde o assert             | s/RABO_ASSERT\.test\(rabo\.replace\(COMENTARIO_INICIAL, ''\)\)/RABO_ASSERT.test(rabo)/
+PEGA | v2: RAISE 'msg' (o nível padrão) escapa                               | s/RAISE\\s\+\(\?:'\|USING/RAISE\\s+(?:USING/
+PEGA | v2: RAISE USING escapa                                                | s/\(\?:'\|USING\\b\|SQLSTATE/(?:'|SQLSTATE/
+PEGA | v2: RAISE SQLSTATE escapa                                             | s/USING\\b\|SQLSTATE\\b\|/USING\\b|/
+PEGA | v2: RAISE <condição>; escapa                                          | s/\[A-Za-z_\]\\w\*\\s\*\(\?:;\|USING\\b\)\)/NUNCA_CASA)/
+PEGA | v2: acumulador escrito com = escapa                                   | s/\\s\*:\?=\\s\*\(\?:\\1/\\s*:=\\s*(?:\\1/
+
+# ── v2 — a regra json-bool (o espelho de chave JSON).
+PEGA | v2: regra json-bool desligada                                         | s/\['json-bool', espelhosDeChaveJson\(limpo, a\.ini, a\.fim\)\.length\]/['json-bool', 0]/
+PEGA | v2: json-bool deixa de tirar o NOT                                    | s/if \(not\) t = semParentesesDeFora/if (false) t = semParentesesDeFora/
+PEGA | v2: json-bool ignora IS TRUE, IS FALSE e = true                       | s/\(\?:\\s\+IS\\s\+\(\?:TRUE\|FALSE\)\|\\s\*=\\s\*\(\?:TRUE\|FALSE\)\)\?\$/\$/
+PEGA | v2: json-bool não tira os parênteses de fora                          | s/if \(!t\.startsWith\('\('\) \|\| !t\.endsWith\('\)'\)\) return t;/return t;/
+
+# ── v2 — a regra coalesce (o default é o próprio esperado).
+PEGA | v2: regra coalesce desligada                                          | s/\['coalesce', coalescesQueFabricam\(limpo, a\.ini, a\.fim\)\.length\]/['coalesce', 0]/
+PEGA | v2: coalesce acusa qualquer literal (não compara com o default)       | s/resto !== null && literal\(resto\[1\]\) === padrao;/resto !== null;/
+
+# ── v2 — db/*.sql: o limpador SQL, os pisos, o universo e a catraca.
+PEGA | v2: limpador SQL deixa de pular o comentário --                       | s/if \(c === '-' && fonte\[i \+ 1\] === '-'\) \{/if (false) {/
+PEGA | v2: limpador SQL deixa de pular o comentário de bloco                 | s/if \(c === '\/' && fonte\[i \+ 1\] === '\*'\) \{/if (false) {/
+PEGA | v2: o limpador SQL que não fechou deixa de alarmar                    | s/if \(!d\.fechou\) r\.alarmes\.push/if (false) r.alarmes.push/
+PEGA | v2: piso de .sql lidos desligado                                      | s/if \(r\.caminhosSql\.length < PISOS\.arquivosSql\) furos/if (false) furos/
+PEGA | v2: piso de asserts dos .sql desligado                                | s/if \(r\.assertsSql < PISOS\.assertsSql\) \{/if (false) {/
+PEGA | v2: universo SQL perde as subpastas de db/                            | s/if \(statSync\(p\)\.isDirectory\(\)\) andar\(p\);/if (statSync(p).isDirectory()) void 0;/
+PEGA | v2: catraca desligada                                                 | s/const catraca = comPisos \? confrontarCatraca\(r\.sitiosSql, r\.caminhosSql, catracaSql\) : \[\];/const catraca: string[] = [];/
+PEGA | v2: catraca aceita o que subiu (e o .sql novo)                        | s/if \(n > teto\) \{/if (false) {/
+PEGA | v2: catraca aceita o que baixou (a folga esconderia o próximo)        | s/else if \(n < teto\) furos\.push/else if (false) furos.push/
+PEGA | v2: catraca aceita a entrada órfã                                     | s/if \(!caminhosSql\.includes\(arq\)\) furos\.push/if (false) furos.push/
+PEGA | v2: sem pisos, sítio de .sql deixa de ser violação                    | s/const violacoes = comPisos \? r\.violacoes : \[\.\.\.r\.violacoes, \.\.\.r\.sitiosSql\];/const violacoes = r.violacoes;/
+PEGA | v2: a mensagem perde o conserto do json-bool                          | s/`IS NOT FALSE` \(esperado false\) ou/X/

@@ -168,18 +168,103 @@ continuação (abaixo).
 
 ## O que ficou de fora, com dono
 
-- **Formas residuais da classe** (revisão adversarial, com sítios): o ESPELHO `IF flag THEN RAISE` com
-  esperado false sobre linha que deveria existir (`whatsapp-proposta:175`, `radar-rpcs:57`,
-  `radar-fatia3:122`); contagem universal com filtro NULL-cego (`count(*) … WHERE col <> x` = 0 —
-  `qtde-inteira:181`, money-path; `COALESCE(col,0) <> 0` = 0 em `aplicar-snapshot-pendente:200`);
-  "ok por omissão" em bash (`case "$R" in *denied*) bad;; *) ok` — `refresh-ranking-gate-cron:77`,
-  `reposicao-fase2-badge-mv:135/147`); esperado NULL lido de record sem prova de que a linha existe
-  (`tint-canonica:558` K9, `hardening-aplicar-promocoes:150`, `whatsapp-proposta:159/165`); coalesce que
-  FABRICA o esperado (`authz-capability-matrix:424`); `IS DISTINCT FROM` entre dois valores medidos
-  (`radar-fundacao:85`). → continuação, com o gate v2 (espelho, `count … WHERE <>` = 0, `ELSEIF`,
-  `RAISE 'msg'`, comentário entre THEN e RAISE, `db/*.sql`).
-- **As 5 provas quebradas na main** e o **acoplamento ao texto inglês** (21 provas) — achados de passagem,
-  registrados aqui; não são esta classe.
+- **Formas residuais da classe** — feitas na fase 2 (abaixo), com o gate v2.
+- **As 5 provas quebradas na main** — revividas em 2026-10-01 por outras sessões (#2703, #2727, #2733),
+  que reescreveram os asserts (o espelho do `whatsapp-proposta:175` e os 103/104 deixaram de existir).
+  O **acoplamento ao texto inglês** (21 provas) segue registrado aqui; não é esta classe.
 - `HAS_EXT` do `seg-onda2e5`: o C4 é PULADO (verde) quando o `pg_trgm` falta — "pular = passar", vizinha.
 - `<>` NULL-cego em corpo de FUNÇÃO sob teste (`criar_plano_tatico`: `_owner <> _expected_owner`) — é
   código de produto copiado na prova; se a cópia espelha a função real, a pergunta é da função, não da prova.
+
+## Fase 2 — as formas residuais (2026-10-01)
+
+**Passo 0 — instância única ou classe? Classe** (continuação: as formas que a fase 1 e o gate v1 não viam).
+O handoff listava ~20 sítios de uma revisão adversarial; a varredura de `db/` inteiro pelos detectores
+por forma (extrator do gate + procedência por operando da fase 1, ferramentas fora do repo) achou mais.
+
+| forma | o que passa com a ausência | candidatos → afetados | conserto (idioma) |
+|---|---|---|---|
+| (a) espelho | `IF (r->>'deduped')::boolean THEN RAISE` (esperado false) | 13 átomos nus → 2 + 1 de contenção (`opts @> …`) | `IS NOT FALSE` · `NOT FOUND OR` |
+| (b) contagem universal | `count(*) … WHERE col <> x` = 0: a linha com col NULL sai do filtro; o universo vazio também dá 0 | 125 → 16 (subagente) − 1 revertido por leitura | `(col = x) IS NOT TRUE` no FILTER + denominador (bash `"0\|t"`) |
+| (c) ok por omissão | `case "$R" in *denied*) bad;; *) ok` — todo outro erro (e a negação em pt) "executou" | 23 `*) ok` + ~40 `else ok` → 9 + `hasnt()` ×2 | marca POSITIVA: `executa()` (EXECUTOU no fim + ON_ERROR_STOP + SQLSTATE, o idioma do `acl_probe`) |
+| (d) esperado NULL sem a linha | `SELECT … INTO r; IF r.x IS NOT NULL THEN RAISE` | 15 `IS NOT NULL` + 6 `ASSERT … IS NULL` → 14 | `IF NOT FOUND OR …` · `ASSERT FOUND AND …` · `coalesce(col,'(null)')` DENTRO da subconsulta |
+| (e) coalesce fabrica o esperado | `COALESCE(cap(NULL), false)` = 'f' | 69 → 2 (o resto é o sentinela correto da fase 1) | `'ERA_NULL'` · denominador |
+| (f) dois medidos | `IS DISTINCT FROM` com NULL × NULL; seletor dentro de laço | 28 → 3 + 1 seletor | guarda do lado de referência · `NOT FOUND OR` · contagem de acertos |
+| bash `""` (fase 1) | `eq … "$(como … "SELECT …")" ""` | parser: 6 resíduos que a assinatura grep NÃO via (aspas aninhadas no `$(…)`) → 5 | sentinela `'(null)'` · colchetes `'[' \|\| … \|\| ']'` · `count(*)` = "0" |
+
+Critério, como na fase 1: **por assert** — conserta mesmo quando um vizinho já pegaria. Ficaram fora, lidos:
+negativos legítimos (fila `= ANY(ids)`, privacidade "não devolve", `hasnt` com controle positivo na MESMA
+medição), `has_*_privilege`/`EXISTS`/`pg_get_functiondef(…::regprocedure)` (nunca NULL), o `COALESCE(Σ,0)`
+do `rpc-account-aware` E (é o CONTRATO do SUT: `valor_total NOT NULL`, preço ausente vira 0 no cabeçalho),
+corpo de CREATE FUNCTION pública e maquinaria de falsificação.
+
+**Fases (≤10 arquivos, por domínio), 33 provas:** F1 radar/whatsapp/kb/CRM (8) · F2 tint 💰 (2) · F3
+preço/authz/desconto/pedido 💰 (7) · F4 reposição/compras 💰 (6 — o J2 do `demanda-insumos-bom` saiu) · F5 "ok por omissão" (7) · F6
+farmer/universo/recência (3 — o `reparo` saiu, abaixo).
+
+**Fora da entrega, com o conserto registrado (não executável):**
+- `db/test-reparo-passivo-coerencia.sh` (C6/C8/F8/F13, forma b): exige `FIXTURE=` com dados REAIS de prod.
+- `db/test-reposicao-demanda-insumos-bom.sh` J2 (forma e): a prova está **vermelha na main** — o H1
+  (`explosao sem fan-out`) falha antes, e o `assert_eq` aborta. Achado pela linha de base do lote 0.
+- `db/*.sql` (36 sítios `<>` em 11 arquivos): scripts APLICADOS pelo `db:aplicar`, que guarda o sha256 dos
+  bytes no ledger — reescrevê-los quebraria "recibo = bytes do repo". Congelados pela catraca do gate v2.
+
+**A meta (juiz v4 → v5, cópias imutáveis do v3).** v4 = v3 + as marcas de `bad()` `XX ` e `FALHA—` (o v3 só
+lia ✗/❌/FAIL), o `prepara.py` aceitando porta dinâmica (`PGPORT_TEST`), `export LC_ALL` sem `LANG` e o
+`PORT=` citado em comentário. O lote 0 (controle do ANTES, 2 locales) usou o v4: 56 OK; as falhas eram
+todas pré-existentes e explicadas — acoplamento ao inglês em pt (viraram CONHECIDAS com prova), o
+`city-norm` reprovado pela SOMBRA (roda `bun scripts/city-norm-print.ts`, e a sombra só trazia `db/` e
+`supabase/`), o fixture do `reparo` e o H1 do `demanda-insumos-bom`. v5 = v4 + sombra com `scripts/` e
+`src/`. Reproduções (52): ausência real no nível da consulta (chave trocada para inexistente) quando
+nenhum vizinho a pega primeiro; quando pega, isolamento — `PERFORM 1 WHERE false` antes do assert
+(FOUND falso, campos intactos) ou anular só a leitura (`r := r - 'deduped'`); na forma bash, a leitura que
+ERRA com o erro DECLARADO no plano. Lote 1 (278 rodadas): 248 OK; os 17 FAIL foram 4 defeitos MEUS que o
+controle pegou antes de julgar a reprodução — F2 do self-service esperava 0 (no caminho feliz A vê 1
+linha), o W1 contava 11 checagens (a seção 4 do validador devolve uma linha POR cor e o fixture não as
+tem: são 10), o W1 abortava sob `pipefail` antes do próprio `bad`, e o D4a nem era cego (com `set -euo
+pipefail` a leitura que erra ABORTA a prova: o ANTES também ficou vermelho; hunk revertido) — mais 3 do
+harness/plano (cache, erro injetado, cascata declarada). Lotes 1b/1c/1d refeitos só nesses arquivos:
+todas as 33 provas com controle verde e cada reprodução vermelha no depois pelo rótulo, verde no antes.
+Resultado por fase no corpo de cada PR (F1 LucasSardenbergL/afiacao#2754 · F5 LucasSardenbergL/afiacao#2755 ·
+F6 LucasSardenbergL/afiacao#2753 · F2 LucasSardenbergL/afiacao#2759 · F3 LucasSardenbergL/afiacao#2760 ·
+F4 LucasSardenbergL/afiacao#2761 — as três 💰 por Caminho B: Codex sem cota (86% > 85% até 03/10 19:11),
+revisor independente só-leitura, REVISÃO INDEPENDENTE PENDENTE = Codex retroativo quando a janela reabrir).
+
+## O gate v2
+
+Só o que tem forma canônica MECÂNICA (`scripts/assert-verde-por-ausencia-gate.ts`):
+1. **o extrator** passa a ver `ELSEIF`, comentário SQL entre o THEN e o RAISE, `RAISE 'msg'`/`USING`/
+   `SQLSTATE`/`<condição>;` e o acumulador com `=` — formas que escondiam um `<>` do v1 (0 hoje);
+2. **`json-bool`**: átomo `(r->>'k')::boolean` nu, com NOT, `IS TRUE`/`IS FALSE`/`= bool` — calibrado:
+   casa os 2 sítios do radar na main e nada depois do conserto;
+3. **`coalesce`**: `coalesce(v, L) IS DISTINCT FROM L` (ou `<>` L) — o remédio do v1 aplicado a
+   `coalesce(v,L) <> L` aprovaria um assert ainda cego (0 hoje);
+4. **`db/*.sql`** lidos (limpador SQL próprio: não há stripper SQL compartilhado) com CATRACA por arquivo —
+   `.sql` novo nasce limpo; a contagem de um listado não sobe nem desce sem atualizar a catraca.
+Pisos novos: `.sql` lidos (110 → 90) e asserts reconhecidos nos `.sql` (136 → 100). Mutações: 52, todas
+cirúrgicas no `mutcheck --seco`. Sem forma canônica, seguem manuais (assinaturas acima): (b), (c), (d), (f)
+e a forma bash `""`.
+
+## Lições da fase 2
+
+- **A assinatura grep da forma bash era cega a aspas aninhadas** (`"$(como $A … "SELECT …")"` quebra o
+  `[^"]*`): 6 resíduos que só um parser de argumentos achou. Assinatura de varredura também se calibra
+  com controle que tenha a forma mais feia, não a mais comum.
+- **`IS DISTINCT FROM` não salva quando os dois lados vêm do MESMO NULL** (`qtde <> trunc(qtde)`,
+  `valor <> qtde * 10`): `NULL IS DISTINCT FROM NULL` é falso. Ali o idioma é `(x = y) IS NOT TRUE`.
+- **"Não achei o erro" não é "executou"**: o positivo se mede com marca de FIM que só sai se tudo rodou
+  (`SELECT 'EXECUTOU'` + `ON_ERROR_STOP`), e o negativo pela SQLSTATE — os dois à prova de locale.
+- **Linha de base do ANTES antes da meta**: o lote 0 achou uma prova vermelha na main, duas que não rodam
+  autocontidas e uma que o próprio juiz não sabia montar — sem ele, cada uma viraria um FAIL "meu".
+- **O juiz tem de ler a marca de falha de CADA prova** (`XX`, `FALHA—`): o plano do v3 recusaria as
+  duas — melhor que julgá-las verdes por não reconhecer o vermelho.
+- **Cache do juiz por SHA não basta quando o CONJUNTO de árvores muda**: o v5 passou a arquivar
+  `scripts/` e `src/`, mas o cache do ANTES vinha do v4 (só `db/`+`supabase/`) e o `city-norm` reprovou
+  no antes por ambiente. A chave do cache é (SHA, árvores), ou o cache se apaga ao trocar de versão.
+- **A revisão independente acha a ausência que a reprodução não imaginou.** A meta reproduz a ausência
+  que EU modelei; o revisor (Caminho B, Codex sem cota) achou outras duas lendo o seed: o A5b aprovava
+  `'NULL'` — que ali não é "NULL honesto", é o JOIN do fallback do fornecedor quebrado (o valor certo é
+  1.60) — e o C12 aprovava com o pedido INEXISTENTE. Os dois viraram assert exato, com reprodução própria.
+- **Marca positiva que conta saída tem de saber o que o fixture imprime**: "11 checagens ✅" era o
+  número do validador de PROD; no banco da prova uma seção devolve zero linhas. E o `grep -o | wc -l`
+  numa atribuição sob `pipefail` ABORTA quando não há casamento — o vermelho deixa de ser do assert.

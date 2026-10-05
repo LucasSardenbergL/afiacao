@@ -91,7 +91,7 @@ Crie estes todos (TodoWrite) e siga em ordem:
 4. **Publish** — frontend publicado (ou pendente)?
 5. **A MAIN está verde?** — PR verde ≠ main verde (só se a sessão mergeou algo)
 6. **Chip** — no máximo um, título exato; sugestão, não gate
-7. **Resumo de fecho** — formato padrão do CLAUDE.md
+7. **Resumo de fecho** — formato do Passo 7
 8. **wt:status** — higiene de RAM + oferta de limpeza
 
 ---
@@ -123,7 +123,7 @@ que termina em EXCLUSÃO. (2ª reincidência da classe nesta skill: o #1677 já 
 'pode excluir' sem nunca olhar se a `main` está verde".)
 
 - `MERGED` → ✅
-- `OPEN` + CI rodando → ⏳ **arme o watcher antes de fechar**: `scripts/pr-watch.sh <N>` via
+- `OPEN` + CI rodando → ⏳ **arme o watcher antes de fechar**: no app, `set_monitor` (Auto-fix); sem o app, `scripts/pr-watch.sh <N>` via
   Bash `run_in_background:true` (no desfecho, PushNotification pro founder — CLAUDE.md §Merge).
   A sessão PODE ser excluída com watcher armado? **Não** — o watcher morre com a sessão.
   Nesse caso o veredito é "espere o merge" OU entregue ao founder o link pra conferir depois.
@@ -329,13 +329,11 @@ enterra o chip que importava. O script troca isso pela evidência que já existe
 | `SEM_PROVA` | fora do mapa de sondas, sem sonda na janela, ou mecânica quebrada | sim (fail-closed) |
 | `INERTE` | edge **aposentada**: o `index.ts` na REF (`origin/main`) carrega `// EDGE-APOSENTADA:` — o handler responde 410 antes de qualquer lógica, bundle novo e velho se comportam igual | **não** — deploy não muda comportamento; não pedir ao founder |
 
-🧾 **O ledger `deploy_atestacoes` é consultado ANTES de qualquer `SEM_PROVA` (2026-09-06).** A
-janela viva de `net._http_response` morre no `pg_net.ttl` (6 h), e até ontem o Passo 3 só olhava
-para ela: edge deployada e **atestada** há mais de 6 h saía `SEM_PROVA` → chip → sessão nova que
-rodava `bun run pendencias:deploy` e descobria que já estava `✅ confere`. Cada chip falso custa uma
-sessão, e o remédio impresso (`sonda:sql`) convidava a re-sondar — que em edge cara com bundle
-pré-sensor **executa o fluxo real**. O ledger existe desde o #2199 para isso; o script não o lia.
-Agora lê, pelo `bun run pendencias:deploy --json`, e três coisas importam:
+🧾 **O ledger `deploy_atestacoes` é consultado ANTES de qualquer `SEM_PROVA`.** A janela viva de
+`net._http_response` morre no `pg_net.ttl` (6 h); sem o ledger, edge deployada e **atestada** há mais
+de 6 h sairia `SEM_PROVA` → chip falso, e o remédio (`sonda:sql`) re-sondaria uma edge cara que, com
+bundle pré-sensor, **executa o fluxo real**. O script o lê pelo `bun run pendencias:deploy --json`
+(`docs/historico/fecho-nao-lia-o-ledger.md`), e três coisas importam:
 
 - **onde entra:** só na edge **do mapa** e **sem resposta na janela viva**. Quem respondeu na janela
   é julgado por ela — é a evidência mais fresca, e um `CONFERE` histórico **não** apaga um
@@ -382,7 +380,7 @@ pendência PROVADA que o diagnóstico anterior escondia.
 
 🔴 **A direção é uma só: presença PROVA, ausência NÃO reprova** (#2086/#2095). O script só sabe
 SUPRIMIR pendência com evidência POSITIVA; ele é o lado que APAGA pendência, então na dúvida é chip.
-O mapa cobre ~40 das ~95 edges — as outras seguem virando chip como sempre, nada regride.
+O mapa (`_shared/sonda-fingerprints.ts`) não cobre todas as edges — as de fora seguem como pendência fail-closed, nada regride.
 Medido em 2026-08-28 numa janela real de 24h: 7 edges na janela, 3 provadas no ar, **4 chips em
 vez de 7**. E não é só corte: o `DESATUALIZADA` é sinal que o gatilho velho nunca teve — ele
 mostra bundle velho SERVINDO, que é a falha silenciosa que este passo existe para pegar.

@@ -51,9 +51,10 @@ Monte com evidência fresca (rode os comandos, não cite de memória):
 
 ## 5. Validações a rodar (a prova da entrega)
 - <heavy bun run test …> · <psql-ro: query> · <prove-sql / paridade / canária se money-path>
-- Tocou `supabase/functions/`? São **QUATRO** comandos, não três: `test:edges` · `edges:typecheck` ·
-  `bun lint` · **`bun run test`** — o vitest lê edge como TEXTO em 20 guardrails de FORMA, então
-  refactor sintático reprova lá com os outros três verdes (#1772). Ver `docs/agent/deploy.md`.
+- Tocou `supabase/functions/`? São **SEIS** gates e nenhum cobre o outro: `test:edges` · `edges:typecheck` ·
+  `edges:sintaxe` · **`bun run test`** (o vitest lê a edge como TEXTO — refactor sintático reprova lá
+  com os outros verdes) · `sonda:bump` · `sonda:fingerprint` (`-- --write`). Ver
+  `docs/historico/ci-testes-edge-deno.md`; e `bun lint` como sempre.
 
 ## 6. Pendências do founder (se houver)
 - 🟣 SQL Editor: <migration pendente> · 💬 chat Lovable: <edge> · 🖱️ Publish
