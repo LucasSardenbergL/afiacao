@@ -67,3 +67,42 @@ O gate reabriu (pacote `094b3f2a844e`, exit 0) e a leva foi ao ar. Outra sessão
 Nota: o mesmo gate apontou `reposicao_persistir_qtde_inteira` como "corpo que não bate com nenhuma
 versão commitada". Medido: a diferença são **3 linhas de comentário** ausentes em prod; a lógica é
 idêntica. Cosmético, sem ação.
+
+## Epílogo — 2026-10-05: re-verificado, e o dano agora MEDIDO (não deduzido)
+
+Um briefing montado com os fatos das **00:55Z de 26/09** — 1 min ANTES do conserto acima — chegou a
+outra sessão **9 dias depois**, pedindo o ritual inteiro de novo (provar, medir, restaurar, deployar).
+Re-medido antes de agir (`psql-ro`, `ON_ERROR_STOP=1` + marcador de fim, exit 0 em todos):
+
+- **Nada a restaurar.** Corpo vivo = 07/09 (md5 normalizado `80edef4c…`, cru `8f49cbaf…`), `xmin`
+  10593775 = a transação do conserto, intocada; ACL sem `PUBLIC`/`anon`; trigger habilitado.
+  `deriva:corpo:prod` exit 0 (321 identidades; nenhuma das funções do caso na baseline de aceitas).
+- **Nada a deployar.** `pendencias:deploy`: as 2 edges da leva CONFERE (`disparar-pedidos-aprovados`
+  já em v1.4). O bot do Lovable, desde 25/09, só tocou `whatsapp-inbound`/`sync-reprocess` (revertidos).
+- **Dano MEDIDO = 0, por duas réguas.** O "nenhum dinheiro exposto" acima foi DEDUZIDO (trigger
+  ativo + "0 em `disparado_simulado` hoje"). (1) **Local:** `status LIKE 'cancelad%' AND
+  omie_pedido_compra_id IS NOT NULL`, em qualquer data → exatamente os 5 pré-guard (ids 33, 281, 286,
+  409, 1046; mai–jul/2026); na janela, 1 cancelamento (23/09) sem PO nem rastro de disparo. (2)
+  **Externa** — o challenge Codex (P1) mostrou que a régua local é cega ao PO ÓRFÃO: a edge antiga
+  criava o PO e podia perder o UPDATE inteiro (`disparar-pedidos-aprovados/index.ts:890`), e o claim
+  que fecha isso entrou em 07/09 20:27Z (merge não prova deploy). Fechado pelo espelho do Omie: dos
+  **159** POs `AFI-<id>` em `purchase_orders_tracking` (atualizado no dia), **0** sem vínculo, 0
+  divergentes e 0 com a linha do app apagada; só 3 dos históricos têm o pedido cancelado. Isso cobre
+  também o que o trigger NÃO barra (ele veta só a transição DIRETA: `disparado → falha_envio →
+  cancelado` passa, e há GRANT + policy de DELETE) — medido pelo efeito, não pela guarda.
+- **Lição de medição:** contar o estado de ORIGEM hoje não mede a transição proibida — a linha
+  cancelada já saiu dele. O dano é o estado FINAL junto da evidência do efeito EXTERNO, e quando a
+  escrita local pode ter se perdido, a evidência se lê no espelho do sistema externo, não na linha.
+- **Resíduo pré-guard, decisão do founder:** o PO 984 (pedido 33, R$ 5.720, 1 item) está ABERTO no
+  Omie — `CRIADO`, sem faturamento, recebimento nem NF-e — desde 20/04, e o app o dá como cancelado
+  desde 29/05; visto no run válido do dia (seq 113). Os outros 4 não aparecem nesse run, cuja janela
+  (2025-10-05 → 2027-02-02) cobre as datas deles: consistente com exclusão no Omie, NÃO provado (o
+  filtro de etapa da listagem não foi medido).
+- **Proveniência (Codex P2):** provado que as 11 funções da `20260906170000` foram reescritas numa
+  transação POSTERIOR à da 07/09; o canal (SQL Editor), o autor e o horário exato são inferidos —
+  `xmin` data a versão da linha, não o comando.
+- `reposicao_persistir_qtde_inteira` **não tem relação** com o incidente: `xmin` 9106714, anterior às
+  duas transações do caso (9923079 e 9924256); só a `20260606190000` a define.
+
+Codex: 1 consulta (challenge da conclusão, sem diff de código) — `gpt-6-astra` · max · 268 s ·
+66.606 tokens. Concordou com não restaurar e não deployar; os 4 achados P1/P2 entraram acima.
