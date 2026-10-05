@@ -149,7 +149,6 @@ const BASELINE = new Map<string, number>([
   ["src/pages/FinanceiroMapping.tsx", 1],
   ["src/pages/GovernanceMathParams.tsx", 1],
   ["src/pages/GovernancePermissions.tsx", 1],
-  ["src/pages/RotaPropostas.tsx", 1],
   ["src/pages/SalesPrintDashboard.tsx", 6],
   ["src/pages/Training.tsx", 2],
 ]);

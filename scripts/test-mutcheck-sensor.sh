@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# test-mutcheck-sensor.sh — TDD do SENSOR do job `mutation-check` (#2316 → sensor).
+# test-mutcheck-sensor.sh — TDD do SENSOR do `mutation-check` (#2316 → sensor; desde 2026-10-03 o
+# alarme vive no agregador `mutcheck-sensor`, que confere a UNIÃO das partes).
 #
 # O que se prova aqui, e por que cada peça existe:
 #   1. o resumo JSON do mutcheck-all classifica os QUATRO estados — honrado, DIVERGE (a suíte

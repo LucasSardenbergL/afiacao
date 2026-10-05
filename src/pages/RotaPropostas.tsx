@@ -9,6 +9,8 @@ import type { RouteContactItem } from '@/queries/useRouteContactList';
 import { usePropostaPreview } from '@/queries/usePropostaPreview';
 import type { PropostaPreview } from '@/queries/usePropostaPreview';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
+import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
+import { estadoDeLeitura, naoConsegui } from '@/lib/leitura/estado-de-leitura';
 import { EmptyState } from '@/components/EmptyState';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -206,7 +208,9 @@ function PainelRevisao({ rev, onEnviar, enviando, jaEnviada }: {
 
 function PropostaRow({ cliente, prazo }: { cliente: RouteContactItem; prazo: PrazoEntrega }) {
   const [aberto, setAberto] = useState(false);
-  const { data, isLoading } = usePropostaPreview(cliente.customerUserId, { enabled: aberto });
+  const { data, isLoading, status, fetchStatus, refetch } = usePropostaPreview(cliente.customerUserId, { enabled: aberto });
+  // Falha (ou sem rede) não pode deixar o card aberto e em BRANCO — indistinguível de "nada a propor".
+  const estadoPreview = estadoDeLeitura({ status, fetchStatus });
   const { user } = useAuth();
   const { isImpersonating } = useImpersonation();
   const [rev, setRev] = useState<Revisao | null>(null);
@@ -215,7 +219,8 @@ function PropostaRow({ cliente, prazo }: { cliente: RouteContactItem; prazo: Pra
   const [enviada, setEnviada] = useState(false);
 
   const cotar = async () => {
-    if (!data) return;
+    // só sobre uma leitura PRONTA: com o refetch em falha, `data` é a cesta ANTIGA
+    if (!data || estadoPreview !== 'pronta') return;
     setCotando(true);
     try {
       const r = await cotarProposta(data, cliente, prazo);
@@ -233,7 +238,7 @@ function PropostaRow({ cliente, prazo }: { cliente: RouteContactItem; prazo: Pra
   };
 
   const enviar = async () => {
-    if (!rev?.envio || !user) return;
+    if (!rev?.envio || !user || estadoPreview !== 'pronta') return;
     // revisão envelheceu → recotar (preço/estoque/prazo podem ter mudado)
     if (Date.now() - rev.cotadaEm > TTL_REVISAO_MS) {
       setRev(null);
@@ -286,7 +291,15 @@ function PropostaRow({ cliente, prazo }: { cliente: RouteContactItem; prazo: Pra
       {aberto && (
         <div className="mt-3 border-t pt-3">
           {isLoading && <div className="text-xs text-muted-foreground">Gerando proposta…</div>}
-          {!isLoading && data && (
+          {naoConsegui(estadoPreview) && (
+            <div>
+              <AvisoLeituraFalhou oque="o histórico de compras deste cliente — nenhuma proposta foi montada" estado={estadoPreview} />
+              <Button variant="outline" size="sm" onClick={() => refetch()}>Tentar de novo</Button>
+            </div>
+          )}
+          {/* Só com a leitura PRONTA: se o refetch falha, o React Query mantém `data` (a cesta antiga) —
+              mostrá-la sob o aviso "nenhuma proposta foi montada" seria contradição, e o "Cotar" a recotaria. */}
+          {estadoPreview === 'pronta' && data && (
             data.proposta.vazia ? (
               <div className="text-xs text-muted-foreground">
                 {data.semHistorico ? 'Sem histórico de pedidos recentes.' : 'Sem cesta de recompra confiável (histórico fino ou só SKUs inativos).'}

@@ -32,7 +32,7 @@ description: >-
 
 ## Por que esta skill existe (leia antes de qualquer coisa)
 
-Este repo roda em **Lovable Cloud**. Há uma armadilha operacional documentada na §5/§"Deploy do FRONTEND" do CLAUDE.md:
+Este repo roda em **Lovable Cloud**. Há uma armadilha operacional documentada em `docs/agent/deploy.md` (resumo na §Armadilhas do CLAUDE.md: "3 deploys fora do merge"):
 
 > **O Lovable NÃO auto-deploya o frontend a partir de push no GitHub.** Mergear PR na `main` deixa o
 > código na main, mas o app em `steu.lovable.app` **continua servindo o build anterior** até alguém
@@ -45,12 +45,12 @@ As **três** coisas são deploy manual e **independente**, e NENHUMA acontece so
 | Camada | Como sobe | Skill dona |
 | --- | --- | --- |
 | **Frontend** (app React) | **Publish** no editor do Lovable (pode precisar sincronizar com o GitHub antes — senão publica estado velho dele) | esta skill |
-| **Edge functions** (`supabase/functions/`) | **chat do Lovable** (ler do repo, deploy **verbatim**) | esta skill |
+| **Edge functions** (`supabase/functions/`) | **a SESSÃO deploya** pelo MCP, colagem de `pendencias:pacote`, verbatim da main; pendência decidida pelo ledger (`bun run pendencias:deploy`) | esta skill (Passo 3) |
 | **Migrations** (`supabase/migrations/`) | **SQL Editor** (colar → Run) | `lovable-db-operator` |
 
 ## A Lei de Ferro (guardrail inegociável)
 
-1. **Você nunca diz "está no ar" sem prova.** Mergear na main **não publica nada**. Frontend: os **bytes do bundle** confirmam (string-alvo nos chunks — Passo 4). Edge **não serve seu código**, logo não há prova por bytes — a prova é a **escada** existência (`verify-edge.sh`) → versão (Management API/painel) → comportamento (probe); `Active` sozinho prova existência, **não** que a versão nova subiu. Até lá: "mergeado na main; **falta Publish/deploy** pra ir ao ar".
+1. **Você nunca diz "está no ar" sem prova.** Mergear na main **não publica nada**. Frontend: os **bytes do bundle** confirmam (string-alvo nos chunks — Passo 4). Edge **não serve seu código**, logo não há prova por bytes — a prova é o **ledger** `deploy_atestacoes` (`pendencias:deploy` exit 0) alimentado pela sonda (`versao` + `fonte` iguais à main), e o probe de comportamento quando houver; `Active` sozinho prova existência, **não** que a versão nova subiu. Até lá: "mergeado na main; **falta Publish/deploy** pra ir ao ar".
 2. **As camadas de deploy são independentes — sempre diga QUAIS se aplicam.** Um diff só-frontend não precisa de deploy de edge; um diff de edge precisa de deploy via chat *e* (se mexeu em UI) Publish — e, se a edge lê um `Deno.env.get` que nenhuma outra lê, o **secret** antes do deploy. Liste só o que o diff realmente toca.
 3. **Edge deploy SÓ DEPOIS do merge, e VERBATIM.** Deployar "da main" antes do merge faz o Lovable ler a main **velha** (já mordeu em #383/#252 — a action nova não existia no binário → `400 "Ação desconhecida"`). E o Lovable tende a "melhorar" o código — o prompt deve mandar **não modificar/reinterpretar**, ler de `supabase/functions/<nome>/index.ts` e deployar idêntico.
 4. **Verificar frontend varre TODOS os chunks, e enumerá-los é a UNIÃO de duas fontes.** Nenhuma sozinha é completa (validado em prod 2026-06-18 + Codex): (a) o **fechamento transitivo** do grafo lazy do Vite — o entry lista só o 1º nível via `__vite__mapDeps(["assets/x.js"])` (sem barra, aspas), e um lazy-dentro-de-página guarda o mapDeps no chunk DELE (entry=260, closure=274); (b) o **precache do Workbox** (`/sw.js`), que omite chunks grandes (globIgnores/maxFileSize — faltavam 6). Use a UNIÃO. Grep de literais `/assets/...` dá 0 (o bug original). Contagem 0/1 = enumeração quebrada — conserte antes de concluir.
@@ -579,7 +579,7 @@ Passo 4b** — o maior sinal sem o founder continua sendo este, pelos bytes.
     E confira também o repo (`git grep`): a mesma `Token inválido` sai de **10** arquivos, então nem
     a unicidade global se sustentava. Detalhe:
     [`docs/historico/escrita-de-aplicacao-como-sensor-de-deploy.md`](../../../docs/historico/escrita-de-aplicacao-como-sensor-de-deploy.md).
-  - **5 edges já nascem com canária** (#1772): `fin-cashflow-engine`, `omie-cliente`, `omie-nfe-webhook`, `omie-sync-estoque`, `omie-sync-nfes-recebidas` respondem `{"probe":true}` com `{ok,probe:true,versao}` (contrato em `supabase/functions/_shared/sonda-versao.ts`). O eco `probe:true` é **obrigatório** na leitura: bundle ANTERIOR à sonda **ignora o parâmetro e executa o fluxo real** (sync Omie de verdade) — por isso **só sonde DEPOIS do deploy**, e resposta sem o eco já é o veredito "bundle velho, e ele rodou o efeito caro". Invocação sem terminal: bloco `net.http_post` no 🟣 SQL Editor + leitura de `net._http_response` — receita canônica em `docs/agent/deploy.md` §Sonda de versão. **Use o bloco de lá verbatim**: são dois passos por imposição do `pg_net` (só despacha após o COMMIT, e o SQL Editor roda o batch como UMA transação), e o passo 1 **escreve o passo 2 com o `request_id` já embutido** justamente para que ninguém transporte o número à mão — foi assim que resposta de CRON passou por sonda em 2026-08-24 (`docs/historico/sonda-request-id-a-mao.md`). Nunca `ORDER BY id DESC LIMIT 1`.
+  - **As edges do mapa (`_shared/sonda-fingerprints.ts` — conte lá, não de cabeça) nascem com canária:** respondem `{"probe":true}` com `{ok,probe:true,versao,edge,fonte}` (contrato em `supabase/functions/_shared/sonda-versao.ts`). O eco `probe:true` é **obrigatório** na leitura: bundle ANTERIOR à sonda **ignora o parâmetro e executa o fluxo real** (sync Omie de verdade) — por isso **só sonde DEPOIS do deploy**, e resposta sem o eco já é o veredito "bundle velho, e ele rodou o efeito caro". Invocação sem terminal: bloco `net.http_post` no 🟣 SQL Editor + leitura de `net._http_response` — receita canônica em `docs/agent/deploy.md` §Sonda de versão. **Use o bloco de lá verbatim**: são dois passos por imposição do `pg_net` (só despacha após o COMMIT, e o SQL Editor roda o batch como UMA transação), e o passo 1 **escreve o passo 2 com o `request_id` já embutido** justamente para que ninguém transporte o número à mão — foi assim que resposta de CRON passou por sonda em 2026-08-24 (`docs/historico/sonda-request-id-a-mao.md`). Nunca `ORDER BY id DESC LIMIT 1`.
     🔴 **HTTP 401 na sonda NÃO é veredito — é ambiguidade, e o bloco agora a fecha sozinho
     (2026-08-30).** Um 401 tem DUAS causas que o dado não separa: (a) bundle **pré-sonda**, que
     ignorou o `{"probe":true}`, caiu no gate JWT e recusou; ou (b) **`CRON_SECRET` ausente/errado no
@@ -970,7 +970,7 @@ non-existent route` vindo de um chunk `NotFound-*.js` de hash VELHO (a assinatur
 ### Passo 5 — Confirmar honestamente
 
 - Frontend: "✅ no ar — `ALVO` presente em `<chunk>`, entry hash `<novo>`" **ou** "❌ ainda o build velho (hash inalterado / alvo ausente) — Publish pendente".
-- Edge: nunca "Active = no ar" (Active só prova existência). Diga o NÍVEL provado: "✅ N2 — version subiu + updated agora" / "✅ N3 — probe `<assinatura>` confere" **ou** "só N1 (existe); versão não confirmada — falta PAT/founder".
+- Edge: nunca "Active = no ar" (Active só prova existência). Diga o NÍVEL provado: "✅ ledger — `pendencias:deploy` exit 0 / sonda `versao`+`fonte` batem a main" / "✅ N3 — probe `<assinatura>` confere" **ou** "só N1 (existe); versão não confirmada — sondar após o deploy". N2 (Management API) não existe neste projeto — nunca escreva "falta PAT".
 - Nunca um "pronto!" genérico sem uma dessas evidências por camada tocada.
 
 ---
@@ -1020,12 +1020,9 @@ O build **carimba o commit no bundle** (`vite.config` → `define __COMMIT_SHA__
   checkout persistente, o carimbo sumido calava o cron com a `main` andando e o Publish pendente. O 4
   persistente se desliga devolvendo o carimbo ao ar — não tirando o 4 do `case`.
 
-✅ **MUDOU — o carimbo determinístico FUNCIONA (medido em prod 2026-09-08).** De 2026-06-26 até
-2026-09-07 esta seção dizia que o ar servia `__BUILD_SHA__="dev"` (o build do Lovable roda sem `.git`),
-que o caminho determinístico era *"inviável neste host"* e que o monitor *"depende SEMPRE da sentinela"*.
-**Não depende mais.** O `resolveCommitSha()` do `vite.config.ts` varre 14 env de SHA de várias
-plataformas ANTES de cair em `git rev-parse` e só então em `"dev"` — alguma delas passou a existir no
-host de build, e o ar hoje carimba SHA real:
+✅ **O carimbo determinístico FUNCIONA (medido em prod 2026-09-08).** O `resolveCommitSha()` do
+`vite.config.ts` varre 14 env de SHA de várias plataformas ANTES de cair em `git rev-parse` e só então
+em `"dev"` — uma delas existe no host de build do Lovable, e o ar carimba SHA real:
 
 ```console
 $ curl -s https://steu.lovable.app/assets/index-<hash>.js | grep -o '__BUILD_SHA__="[^"]*"'
@@ -1109,10 +1106,19 @@ Quatro escolhas que não são óbvias e têm caso na rede (`evals/monitor-deploy
   mudado tem o MESMO conjunto de palavras no ar e na main (o extrator do tailwindcss **3.4.17**, lido em
   `node_modules`, é local à palavra e ordena os candidatos; versão travada no lockfile, `content` em array
   só de strings — senão recusa). Sem a prova, **continua ALCANCA** (`ALCANCA_BUNDLE`/`PR_TOCA_O_BUNDLE`),
-  nunca "sem alcance". Mede-se o custo: cobre **1 de 11** PRs só-de-teste dos últimos 300 commits (os
-  outros põem palavra nova). Tirar os testes do `content` cobriria todos, mas é decisão de BUILD (pede
-  Publish, e classe que só existe porque um teste a cita some) — em
+  nunca "sem alcance". Mede-se o custo: (d2) sozinha cobria **1 de 11** PRs só-de-teste dos últimos 300
+  commits (os outros põem palavra nova) — em
   [`docs/historico/teste-inerte-e-o-leitor-que-nao-importa.md`](../../../docs/historico/teste-inerte-e-o-leitor-que-nao-importa.md).
+  **Desde 2026-10-01 o `content` NEGA os testes** (as 3 formas da classe `TESTE`), e a prova entende
+  isso como **(d2')**: teste excluído por uma negação ENTENDIDA — a string EXATA, pela regex do que o
+  fast-glob 3.3.2 exclui — dispensa as palavras; (d1) segue inteiro. Forma estranha, fast-glob ou
+  Tailwind fora do auditado, symlink ou submódulo em QUALQUER lugar da árvore (a negação casa a STRING
+  do caminho: `app → src/lib/__tests__` e pasta-link com nome de teste entregam o mesmo texto por outro
+  caminho) ou PostCSS achado antes do `postcss.config` (`.postcssrc*`, `package.json#postcss`) ⇒ volta a
+  exigir (d2); config da raiz importando módulo local, folha `.pcss`/`.scss`/… ou `@config` no HTML ⇒
+  recusa. Medido nos 300 últimos commits da main: dos 13 só-de-teste, a prova isentava 1 (o #2547); com
+  o content negando, **13/13** (e 18/18 nos últimos 400, depois da revisão do Fable) — em
+  [`docs/historico/testes-fora-do-content-do-tailwind.md`](../../../docs/historico/testes-fora-do-content-do-tailwind.md).
 - **`scripts` do `package.json` NÃO é toda inerte.** `build`, `pre/post*` e os ganchos de install
   são executados pelo pipeline: mudou um deles ⇒ alcança. E se o build da main não for `vite build`
   puro (`vite build && node scripts/gera.js`), `scripts/` deixa de ser inerte e o monitor recusa.
@@ -1122,9 +1128,8 @@ O exit 5 **não** responde "o PR X está no ar?" (é o `--pr` acima), e a prova 
 aconteceu continua sendo a mudança do `ar=`/entry, não a transição de exit.
 
 ## Referências
-- CLAUDE.md §"Deploy do FRONTEND (app) — Publish MANUAL no Lovable" (a técnica dos bytes; armadilha do chunk de nome inesperado)
-- CLAUDE.md §"Edge functions — caminho oficial Lovable" (deploy via chat, ler do repo, verbatim)
-- CLAUDE.md §5 lições #383/#252 (deployar edge só após merge), #608 (verificação por bytes usada com sucesso)
+- `docs/agent/deploy.md` — as 3 camadas manuais, a técnica dos bytes (armadilha do chunk de nome inesperado), deploy de edge pela sessão, sonda de versão e ledger
+- `docs/agent/database.md` §6 — edge functions: ler do repo, verbatim, só após o merge
 - Skill irmã `lovable-db-operator` (camada de banco)
 
 ## Estado / pendências
@@ -1156,15 +1161,15 @@ aconteceu continua sendo a mudança do `ar=`/entry, não a transição de exit.
   chutado. Reprovados no mesmo ciclo, e registrados como anti-sinais: **duração da execução** (variância
   maior que o efeito) e **`last_page` alto** (o cron 42 passa `max_pages` explícito, mascarando o default).
   Detalhe no Passo 4.
-- [x] **Smoke E2E autônomo:** carimbo de SHA no build (`__BUILD_SHA__`) + `monitor-deploy.sh` (cron) compara o ar vs `origin/main`. **Exercido em prod 2026-06-26** (pós-Publish do #1065): o carimbo está no ar mas vem `"dev"` (Lovable builda sem `.git`) ⇒ SHA determinístico inviável neste host; **fallback de sentinela validado ponta-a-ponta** (`get_ultimos_precos_cliente` PRESENTE → exit 0). Regra firmada: no cron, **sentinela obrigatória + URL com `https://`** (ver ⚠️ acima).
+- [x] **Smoke E2E autônomo:** carimbo de SHA no build (`__BUILD_SHA__`) + `monitor-deploy.sh` (cron) compara o ar vs `origin/main`. O ar carimba SHA real (§Smoke E2E autônomo); a sentinela (`get_ultimos_precos_cliente`, validada ponta-a-ponta) é só o fallback quando o carimbo voltar a `"dev"`. Regra: no cron, **URL com `https://`** (ver ⚠️ acima).
 - [x] **Varredura PARALELA (2026-07-07):** `xargs -P 8` no crawl + halt-on-hit (`exit 255`) no grep do alvo. O bundle passou de 300 chunks (união medida 308–560) — sequencial estourava 600s (exit 124, não terminava); no mesmo bundle (308 ch, sentinela ausente) **299s → 61s (~4,9×), mesmo exit**. Enumeração/UNIÃO **inalterada** (worker-por-arquivo → sem intercalação). `PAR=<n>` overridável. Rede: harness local + gate `run.sh`.
 - [x] **QA visual pós-Publish (Passo 4b, 2026-07-07):** padrão documentado — **Claude-in-Chrome na sessão logada do founder** (ele abre 1×, o agente confere as telas). `/browse` headless não monta a SPA (3 falhas); Chrome MCP genérico deu timeout CDP de 45s. Caso de sucesso: config do PostHog feita pelo agente sozinho. **Exercitado 2026-07-08:** RENDER confirmado (a SPA monta no Chrome real; QA de tela pública `/auth` OK) — mas a aba do grupo MCP veio **sem sessão** (`Invalid Refresh Token`), então **telas gated dependem do founder logar NA aba MCP**; agente nunca digita credenciais. Detalhe no Passo 4b.
 - [x] **"404 fantasma" pós-Publish (2026-07-12, QA visual do #1300):** rota nova 404 com bytes VERDES = **SW do PWA servindo o build anterior** (assinatura: `NotFound-*.js` de hash velho logando "non-existent route"); hard-reload ativa o SW novo. Regra: bytes verdes + 404 → suspeitar do SW, nunca concluir "Publish falhou" sem hard-reload. Detalhe no Passo 4b.
 - [x] **O prompt do Passo 3 nomeia TODOS os arquivos da fatia (2026-08-25):** o de 1 arquivo (`index.ts`)
   quebra justamente na fatia que instrumenta a edge — **`versao.ts` é arquivo NOVO** e o `index.ts` o
   importa, então deployar só o `index.ts` sobe função que não boota, e quem descobre é a sonda que
-  existia para provar o deploy. A lista sai do `git show --name-status` do merge (`A` = novo), não da
-  memória. Exercitado no #2009 (`carteira-rebuild`): 3 arquivos de código, e o `fonte` da sonda
+  existia para provar o deploy. A lista é o **closure de imports lido de `origin/main`** (`pendencias:pacote`
+  já o fecha; `--name-status` é cego ao import novo de arquivo pré-existente — Passo 3). Exercitado no #2009 (`carteira-rebuild`): 3 arquivos de código, e o `fonte` da sonda
   pós-deploy batendo o `sonda:fingerprint` provou que o `_shared/` subiu junto (#2018).
 - [x] **3ª sonda — `SENTINELA_DELIMITADA` (2026-08-27):** o `--pai` mede a FONTE e a varredura mede o
   BUNDLE MINIFICADO, e para o literal COM delimitadores as duas formas são **mutuamente exclusivas**
@@ -1191,9 +1196,8 @@ aconteceu continua sendo a mudança do `ar=`/entry, não a transição de exit.
   escreve em tabela de aplicação, a escrita é assinatura do bundle com janela de **7 dias**: o gate de cota insere em
   `ia_uso_evento(user_id, funcao)` e o bundle velho, que nem importava `_shared/ia-cota.ts`, é **incapaz**
   de produzir a linha — 4 delas 15 min após o merge provaram o deploy sem PAT, sem canária, sem invocar
-  nada. Vale só na direção **presença**: ausência é "ninguém usou", não "não subiu". Controle negativo de
-  graça (as vizinhas com limite configurado saem em zero na mesma query), desde que o `GROUP BY` não seja
-  filtrado pela edge. Detalhe no Passo 4.
+  nada. Vale só na direção **presença**: ausência é "ninguém usou", não "não subiu". O controle negativo
+  é o do `scripts/verify-edge-escrita.sh` (universo = limites ∪ alvo — item seguinte). Detalhe no Passo 4.
 - [x] **A via da ESCRITA virou SCRIPT, e a receita em prosa tinha 4 furos (2026-08-29):** ela
   nasceu no #2086 e apodreceu em 3 dias — verificando as 3 edges do chip de 01:50Z, todos apareceram.
   **(1)** O controle negativo prescrito (`GROUP BY funcao` sobre `ia_uso_evento`) **não
@@ -1393,4 +1397,20 @@ aconteceu continua sendo a mudança do `ar=`/entry, não a transição de exit.
   intacto; no pr-eval, 34 casos verdes por locale no controle e 19 pegas, 0 cegueiras. A tag
   `arquivo/monitor-reescrita-2026-09-10` (a reescrita abandonada) cobria os mesmos 3 estados, já em
   `VERSAO_INDETERMINADA`, e nenhum caso dela ficou fora desta rede.
+- [x] **Testes fora do `content` do Tailwind — e a prova entende a negação (2026-10-01, (d2')).** A
+  alavanca que o #2574 deixou registrada: o `content` nega as 3 formas da classe `TESTE`. Medido
+  antes (duas vezes): só `.m-1` e `.overscroll-contain` saem do CSS (82 bytes), zero uso no app, e o
+  config editado gera CSS byte a byte igual à medição. A prova isenta o teste excluído por negação
+  ENTENDIDA — string exata, fast-glob 3.3.2 e Tailwind 3.4.17 auditados, árvore só de arquivos
+  regulares — e o
+  oráculo com o Tailwind real deu 19/19 sem fail-open (e mostrou o symlink-PASTA lido por dentro).
+  O que só o repo REAL pegou: o comentário novo, terminando em ponto acima do `content:`, fazia a
+  auditoria recusar 13/13 — agora um cenário usa o `tailwind.config.ts` real. Caminho B (Codex sem
+  cota): `.postcssrc*`/`package.json#postcss` vêm antes do `postcss.config` no Vite — recusa.
+  Denominador: 13/13 PRs só-de-teste isentos (antes 1/13). Publish de 03/10 provado pelos bytes (o
+  CSS servido perdeu exatamente as 2 regras). Revisão independente pelo Fable (05/10, no lugar do
+  Codex): 6 fail-open reproduzidos com o build real — pasta-symlink na raiz ou com nome de teste,
+  PostCSS/plugin vindo de módulo local do `vite.config`, `@config` em `.pcss` e em `<style>` do HTML —,
+  fechados por 4 travas fail-CLOSED; denominador depois delas, 18/18 nos últimos 400. Detalhe em
+  [`docs/historico/testes-fora-do-content-do-tailwind.md`](../../../docs/historico/testes-fora-do-content-do-tailwind.md).
 - [ ] (menor) Confirmar se há ambiente de **preview** distinto do publicado a checar.
