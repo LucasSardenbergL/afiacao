@@ -9,6 +9,9 @@
 # Desde 2026-10-01, também a FONTE ÚNICA da colagem: molde à mão de volta a uma instrução viva
 # (S13 na skill, S14 quebrado entre linhas no docs/agent) e os dois controles que impedem o teste
 # de aprovar por vacuidade — assinatura cega (S15) e varredura que não lê as skills (S16).
+# Desde 2026-10-05, a instrução pós-envio (`INSTRUCAO_POS_ENVIO`) nos DOIS emissores, uma camada por
+# sabotagem: a chamada no pacote (S07), a chamada no `pendencias:prompt` (S17), o texto compartilhado
+# sem o comando do sensor (S18) e a instrução vazando para DENTRO da colagem (S19).
 #
 # Regras (CLAUDE.md §Armadilhas, "Teste SQL negativo"; docs/historico/falsificacao-sem-linha-de-base.md):
 # 1. COMMIT antes: a restauração é `git checkout --`; alvo sujo aborta.
@@ -47,10 +50,12 @@ const SUITES = [
   'scripts/lib/prompt-deploy.test.ts',
   'scripts/lib/pacote-entrega.test.ts',
   'scripts/lib/lovable-sensor-edicao.test.ts',
+  'scripts/pendencias-prompt.test.ts',
 ];
 const LOCALES = ['C', 'pt_BR.UTF-8'];
 const PROMPT = 'scripts/lib/prompt-deploy.ts';
 const PACOTE = 'scripts/lib/pacote-entrega.ts';
+const PROMPT_CLI = 'scripts/pendencias-prompt.ts';
 const SENSOR = 'scripts/lib/lovable-sensor-edicao.ts';
 const SKILL = '.claude/skills/lovable-deploy-verify/SKILL.md';
 const DEPLOY_MD = 'docs/agent/deploy.md';
@@ -83,8 +88,7 @@ const SABOTAGENS: Sabotagem[] = [
     novo: "    void marca;",
     marca: '[ESCOPO_COBERTURA_ACUSA_MARCA_AMPUTADA]' },
   { id: 'S07', arquivo: PACOTE, defeito: 'o pacote para de mandar rodar o sensor pos-envio',
-    velho: "        '`bun scripts/lovable-sensor-edicao.ts --desde <ISO do envio> <arquivo>` — ele lê `edit_id`/`commit_sha` ' +",
-    novo: "        'confira a resposta — ele lê `edit_id`/`commit_sha` ' +",
+    velho: '    L.push(INSTRUCAO_POS_ENVIO);\n', novo: '',
     marca: '[PACOTE_COLAGEM_PROIBE_EDITAR]' },
   // ── o sensor por fora ─────────────────────────────────────────────────────────────────────
   { id: 'S08', arquivo: SENSOR, defeito: 'main lida cedo demais vira limpa',
@@ -126,6 +130,18 @@ const SABOTAGENS: Sabotagem[] = [
     velho: "const INSTRUCOES_VIVAS = ['.claude/skills', 'docs/agent', 'docs/runbooks'];",
     novo: "const INSTRUCOES_VIVAS = ['docs/agent', 'docs/runbooks'];",
     marca: '[COLAGEM_VARREDURA_VE_AS_INSTRUCOES]' },
+  // ── a instrução pós-envio nos DOIS emissores (2026-10-05) — o S07 acima é a chamada no pacote ──
+  { id: 'S17', arquivo: PROMPT_CLI, defeito: 'o pendencias:prompt volta a mandar so a sonda',
+    velho: "      `  ${INSTRUCAO_POS_ENVIO}\\n\\n`,", novo: '      `\\n`,',
+    marca: '[PROMPT_MANDA_RODAR_O_SENSOR]' },
+  { id: 'S18', arquivo: PROMPT, defeito: 'a instrucao pos-envio compartilhada perde o comando do sensor',
+    velho: "  '`bun scripts/lovable-sensor-edicao.ts --desde <ISO do envio> <arquivo>` — ele lê `edit_id`/`commit_sha` ' +",
+    novo: "  'confira a resposta — ele lê `edit_id`/`commit_sha` ' +",
+    marca: '[PACOTE_COLAGEM_PROIBE_EDITAR]' },
+  { id: 'S19', arquivo: PROMPT_CLI, defeito: 'a instrucao pos-envio vaza para dentro da colagem',
+    velho: '  process.stdout.write(`${prompt}\\n`);',
+    novo: '  process.stdout.write(`${prompt}\\n\\n${INSTRUCAO_POS_ENVIO}\\n`);',
+    marca: '[PROMPT_MANDA_RODAR_O_SENSOR]' },
 ];
 
 const ALVOS = [...new Set(SABOTAGENS.map((s) => s.arquivo))];

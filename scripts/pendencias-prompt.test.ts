@@ -268,13 +268,18 @@ describe('gitBytes — spawn que não respondeu NÃO é sucesso', () => {
 
 describe('main — nunca imprime colagem num caminho de erro', () => {
   let saida: string;
+  let erro: string;
   beforeEach(() => {
     saida = '';
+    erro = '';
     vi.spyOn(process.stdout, 'write').mockImplementation((c) => {
       saida += String(c);
       return true;
     });
-    vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    vi.spyOn(process.stderr, 'write').mockImplementation((c) => {
+      erro += String(c);
+      return true;
+    });
   });
   afterEach(() => vi.restoreAllMocks());
 
@@ -308,6 +313,15 @@ describe('main — nunca imprime colagem num caminho de erro', () => {
     montarRepo();
     expect(main(['edge-e', '--sem-rede'], raiz)).toBe(0);
     expect(saida).toContain('supabase/functions/edge-e/index.ts');
+  });
+
+  // #2541/#2579: o agente deployou certo e DEPOIS editou outras edges. O Passo 2 do pacote já mandava
+  // rodar o sensor; este emissor (o de "qualquer edge pelo nome") só mandava a sonda.
+  it('[PROMPT_MANDA_RODAR_O_SENSOR] a conferência pós-envio sai para a SESSÃO (stderr), fora da colagem', () => {
+    montarRepo();
+    expect(main(['edge-e', '--sem-rede'], raiz)).toBe(0);
+    expect(erro).toContain('bun scripts/lovable-sensor-edicao.ts --desde');
+    expect(saida).not.toContain('lovable-sensor-edicao');
   });
 
   it('sem argumento nenhum: exit 2, uso no stderr, nada no stdout', () => {

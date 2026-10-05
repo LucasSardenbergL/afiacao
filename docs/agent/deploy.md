@@ -177,7 +177,11 @@ linhas), porque é por esse mesmo caminho que o sync já reverteu fix mergeado.
 DEPOIS edita OUTRAS edges pelo `build-errors.log`; o sync empurra "Changes" na `main`. A colagem já
 proíbe (`blocoDeEscopo`: nenhum arquivo, erro de log só reportado, fecho `No files were edited.`) —
 e **≥5 min após o envio** rode `bun scripts/lovable-sensor-edicao.ts --desde <ISO> <resposta>` (exit 1 =
-editou → revert por PR com bump de `VERSAO`). [Narrativa](../historico/agente-lovable-conserta-o-que-nao-pediram.md).
+editou → revert por PR com bump de `VERSAO`). O sensor É o `git log origin/main --author=gpt-engineer-app
+--since=<envio>` (só o `types.ts` regenerado é tolerado), e os DOIS emissores mandam rodá-lo
+(`INSTRUCAO_POS_ENVIO`: Passo 2 do pacote e stderr do `pendencias:prompt`). O `bun lint` dos arquivos
+tocados já roda sozinho: o push do bot dispara o CI, e o vermelho abre a Issue `ci-main-red` (no #2541,
+14 min depois do push). [Narrativa](../historico/agente-lovable-conserta-o-que-nao-pediram.md).
 **A colagem só sai do `montarPrompt`** (`pendencias:prompt <edge>` aceita qualquer edge pelo nome). A
 skill de deploy ensinava 3 moldes à mão, sem escopo nem conferência, e o `[COLAGEM_SO_DO_GERADOR]` barra a volta deles.
 **Quem reacorda o agente depois do fecho pode ser a PLATAFORMA** (medido em 2026-09-27 19:37Z).
