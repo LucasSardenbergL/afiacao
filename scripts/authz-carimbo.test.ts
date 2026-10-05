@@ -21,6 +21,7 @@ import {
   AUDITS,
   CARIMBO_PATH,
   CHAVES_RELIDAS_POR_VERSAO,
+  PROJETO_HASH_PROD,
   SCHEMA_VERSION,
   VENCIDO_DIAS,
   RAIZ,
@@ -38,10 +39,12 @@ import {
   lerCarimboAnterior,
   lerReferenciaDaMain,
   montarAchados,
+  montarCarimbo,
   referenciaDoTexto,
   type Carimbo,
   type CarimboAnterior,
   type ChaveAudit,
+  type ExecucaoDeAudit,
 } from './lib/authz-carimbo';
 
 const CHAVES = Object.keys(AUDITS) as ChaveAudit[];
@@ -70,7 +73,7 @@ function carimboBom(medidoEm: string, over: Partial<Record<ChaveAudit, { exit: n
     schemaVersion: SCHEMA_VERSION,
     medidoEm,
     sourceHead: 'deadbeef',
-    alvo: { usuario: 'claude_ro', servidor: 'PostgreSQL 17.6', somenteLeitura: true, projetoHash: 'abc' },
+    alvo: { usuario: 'claude_ro', servidor: 'PostgreSQL 17.6', somenteLeitura: true, projetoHash: PROJETO_HASH_PROD },
     audits,
   };
 }
@@ -291,6 +294,26 @@ describe('avaliarCarimbo — os eixos e suas severidades', () => {
     // A idade da DÍVIDA tem de aparecer — senão o achado vira "conhecido e fresco" para sempre.
     expect(v[0].mensagem).toContain('2026-08-13');
   });
+
+  // A TRAVA de cluster no ARTEFATO (revisão independente de 2026-10-05): o gate não lia `alvo`, e um
+  // carimbo medido em OUTRO banco passava verde — num repo que auto-mergeia sem revisão humana, venha
+  // do gravador, de edição à mão ou de conflito resolvido com `--ours`/`--theirs`. Ausente ≠ prod.
+  it('alvo de OUTRO cluster, ou sem projetoHash ⇒ [CARIMBO_OUTRO_CLUSTER] e BLOQUEIA', () => {
+    const casos: [string, (c: Carimbo) => void][] = [
+      ['outro hash', (c) => { c.alvo.projetoHash = 'deadbeefdeadbeef'; }],
+      ['o de prod com espaço', (c) => { c.alvo.projetoHash = ` ${PROJETO_HASH_PROD}`; }],
+      ['projetoHash ausente', (c) => { delete (c.alvo as Partial<Carimbo['alvo']>).projetoHash; }],
+      ['alvo ausente', (c) => { delete (c as Partial<Carimbo>).alvo; }],
+    ];
+    for (const [rot, mut] of casos) {
+      const c = carimboBom(diasAtras(1));
+      mut(c);
+      const v = avaliarCarimbo(c, AGORA, fpsBons());
+      expect(codigos(v), rot).toEqual(['CARIMBO_OUTRO_CLUSTER']);
+      expect(v[0].bloqueiaPR, rot).toBe(true);
+      expect(v[0].mensagem, rot).toContain(PROJETO_HASH_PROD);
+    }
+  });
 });
 
 // ══════════════════════════════════════════════════════════════════════════════════════════════
@@ -312,14 +335,21 @@ describe('db/authz-carimbo-prod.json — o artefato commitado', () => {
   });
 
   // A próxima renovação relê ESTE arquivo: se a porta o recusasse, o founder descobriria só ao gravar.
-  it('o GRAVADOR o relê pela porta, e a projeção bate com o arquivo (alvo e toda primeiraVez)', () => {
+  it('o GRAVADOR o relê pela porta, e a projeção bate com o arquivo (toda primeiraVez)', () => {
     const texto = readFileSync(CARIMBO_PATH, 'utf8');
     const cru = JSON.parse(texto) as Carimbo;
     expect(relido(texto)).toEqual({
       schemaVersion: cru.schemaVersion,
-      projetoHash: cru.alvo.projetoHash,
       achados: Object.fromEntries(CHAVES.map((k) => [k, cru.audits[k].achados.map((a) => ({ id: a.id, primeiraVez: a.primeiraVez }))])),
     });
+  });
+
+  // A constante não é palpite: é o cluster em que a evidência de prod foi medida (as 36 versões
+  // commitadas até 2026-10-01 têm este valor). Se divergir, o gate barra todo PR — e é aqui que se vê.
+  it('foi medido em PROD: alvo.projetoHash é PROJETO_HASH_PROD, a trava que o gate cobra', () => {
+    const c = JSON.parse(readFileSync(CARIMBO_PATH, 'utf8')) as Carimbo;
+    expect(c.alvo.projetoHash).toBe(PROJETO_HASH_PROD);
+    expect(PROJETO_HASH_PROD).toMatch(/^[0-9a-f]{16}$/);
   });
 
   it('todo achado registrado tem primeiraVez ≤ ultimaVez (a dívida não pode nascer do futuro)', () => {
@@ -672,7 +702,7 @@ function carimboNaForma(versao: number, chaves: readonly string[], achados: Reco
     schemaVersion: versao,
     medidoEm: diasAtras(1),
     sourceHead: 'deadbeef',
-    alvo: { usuario: 'claude_ro', servidor: 'PostgreSQL 17.6', somenteLeitura: true, projetoHash: 'abc' },
+    alvo: { usuario: 'claude_ro', servidor: 'PostgreSQL 17.6', somenteLeitura: true, projetoHash: PROJETO_HASH_PROD },
     audits,
   };
 }
@@ -710,10 +740,9 @@ function recusa(texto: string | null): { codigo: string; motivo: string } {
 
 describe('lerCarimboAnterior — o gravador relê o anterior por uma porta que confere versão e forma', () => {
   // O CONTROLE, na mesma execução das recusas: uma porta que recusasse TUDO aprovaria todas elas.
-  it('CONTROLE: o carimbo de HOJE é relido, e a projeção é a do arquivo (alvo + toda primeiraVez)', () => {
+  it('CONTROLE: o carimbo de HOJE é relido, e a projeção é a do arquivo (toda primeiraVez)', () => {
     expect(relido(`${JSON.stringify(comDivida(), null, 2)}\n`)).toEqual({
       schemaVersion: SCHEMA_VERSION,
-      projetoHash: 'abc',
       achados: Object.fromEntries(
         CHAVES.map((k) => [k, k === 'grants' ? [{ id: idFinding('grants', LINHA_GRANTS), primeiraVez: '2026-08-13' }] : []]),
       ),
@@ -726,7 +755,6 @@ describe('lerCarimboAnterior — o gravador relê o anterior por uma porta que c
     });
     const a = relido(JSON.stringify(doc));
     expect(a?.schemaVersion).toBe(ANTERIOR_A_DE_HOJE.versao);
-    expect(a?.projetoHash).toBe('abc');
     expect(a?.achados.grants).toEqual([{ id: idFinding('grants', LINHA_GRANTS), primeiraVez: '2026-08-13' }]);
   });
 
@@ -751,30 +779,25 @@ describe('lerCarimboAnterior — o gravador relê o anterior por uma porta que c
   });
 
   // Versão ANTES da forma: um carimbo de outro schema tem, legitimamente, outra forma — chamá-lo de
-  // SEM_ALVO ou MALFORMADO mandaria o operador consertar o arquivo em vez de atualizar o código.
-  it('a versão é conferida ANTES da forma: futura e sem `alvo` é SCHEMA_INCOMPATIVEL, não SEM_ALVO', () => {
-    const futura = sem(comoDoc({ ...comDivida(), schemaVersion: SCHEMA_VERSION + 1 }), 'alvo');
+  // MALFORMADO mandaria o operador consertar o arquivo em vez de atualizar o código.
+  it('a versão é conferida ANTES da forma: futura e sem `audits` é SCHEMA_INCOMPATIVEL, não MALFORMADO', () => {
+    const futura = sem(comoDoc({ ...comDivida(), schemaVersion: SCHEMA_VERSION + 1 }), 'audits');
     expect(recusa(JSON.stringify(futura)).codigo).toBe('CARIMBO_ANTERIOR_SCHEMA_INCOMPATIVEL');
   });
 
-  // O defeito do achado: com o campo fora do lugar, `anterior.alvo?.projetoHash && …` era falso e a
-  // trava de cluster era PULADA — uma medição de outro cluster sobrescreveria a evidência de prod.
-  it('sem `alvo.projetoHash` utilizável => CARIMBO_ANTERIOR_SEM_ALVO — a trava NUNCA é pulada por ausência', () => {
+  // Até 2026-10-05 a trava comparava a sonda com o `alvo` DESTE arquivo — que o operador edita, e cuja
+  // recusa ensinava a editar. A trava agora é a sonda contra PROJETO_HASH_PROD (e o gate cobra o mesmo no
+  // artefato): o anterior só empresta a HERANÇA, e a porta não exige o que ninguém mais lê. Um anterior
+  // sem `alvo`, ou de outro cluster, empresta datas — e a herança fica com a mais antiga (dívida maior).
+  it('o `alvo` do anterior NÃO é lido: sem ele, ou de outro cluster, a projeção é a mesma — a trava não mora aqui', () => {
     const base = () => comoDoc(comDivida());
-    const alvoSem = (extra: Record<string, unknown>) => ({ ...base(), alvo: { usuario: 'claude_ro', servidor: 'x', somenteLeitura: true, ...extra } });
-    const casos: [string, Record<string, unknown>, string][] = [
-      ['alvo ausente', sem(base(), 'alvo'), 'alvo ausente'],
-      ['alvo renomeado (o campo mudou de lugar)', { ...sem(base(), 'alvo'), destino: { projetoHash: 'abc' } }, 'alvo ausente'],
-      ['alvo null', { ...base(), alvo: null }, 'alvo deveria ser objeto (veio null)'],
-      ['projetoHash ausente', alvoSem({}), 'alvo.projetoHash ausente'],
-      ['projetoHash vazio', alvoSem({ projetoHash: '' }), 'alvo.projetoHash deveria ser texto nao vazio (veio texto vazio)'],
-      ['projetoHash numérico', alvoSem({ projetoHash: 123 }), 'alvo.projetoHash deveria ser texto nao vazio (veio numero)'],
+    const esperado = lido(JSON.stringify(base()));
+    const casos: [string, Record<string, unknown>][] = [
+      ['alvo ausente', sem(base(), 'alvo')],
+      ['alvo null', { ...base(), alvo: null }],
+      ['projetoHash de outro cluster', { ...base(), alvo: { usuario: 'claude_ro', servidor: 'x', somenteLeitura: true, projetoHash: 'deadbeefdeadbeef' } }],
     ];
-    for (const [rot, doc, trecho] of casos) {
-      const r = recusa(JSON.stringify(doc));
-      expect(r.codigo, rot).toBe('CARIMBO_ANTERIOR_SEM_ALVO');
-      expect(r.motivo, rot).toContain(trecho);
-    }
+    for (const [rot, doc] of casos) expect(lido(JSON.stringify(doc)), rot).toEqual(esperado);
   });
 
   // A outra metade do achado: com os achados fora do lugar, a `primeiraVez` regredia para hoje calada
@@ -788,6 +811,11 @@ describe('lerCarimboAnterior — o gravador relê o anterior por uma porta que c
       ['achados que não é lista', (a) => { a.grants.achados = 'x'; }, 'audits.grants.achados deveria ser lista (veio texto)'],
       ['achado sem id', (a) => { (a.grants.achados as Record<string, unknown>[])[0].id = undefined; }, 'audits.grants.achados[0].id'],
       ['primeiraVez fora da data', (a) => { (a.grants.achados as Record<string, unknown>[])[0].primeiraVez = '13/08/2026'; }, 'audits.grants.achados[0].primeiraVez'],
+      // O FORMATO casa e o CALENDÁRIO não: a herança fica com a mais antiga, e propagaria o lixo para o
+      // carimbo novo (`0000-00-00` venceria toda data real). Revisão independente de 2026-10-05.
+      ['mês 13', (a) => { (a.grants.achados as Record<string, unknown>[])[0].primeiraVez = '2026-13-45'; }, 'audits.grants.achados[0].primeiraVez'],
+      ['data zero', (a) => { (a.grants.achados as Record<string, unknown>[])[0].primeiraVez = '0000-00-00'; }, 'audits.grants.achados[0].primeiraVez'],
+      ['30 de fevereiro', (a) => { (a.grants.achados as Record<string, unknown>[])[0].primeiraVez = '2026-02-30'; }, 'audits.grants.achados[0].primeiraVez'],
     ];
     for (const [rot, mut, trecho] of casos) {
       const r = recusa(comAudits(mut));
@@ -814,7 +842,7 @@ describe('lerCarimboAnterior — o gravador relê o anterior por uma porta que c
       '{ nao e json',
       'null',
       JSON.stringify({ ...comDivida(), schemaVersion: SCHEMA_VERSION + 1 }),
-      JSON.stringify(sem(comoDoc(comDivida()), 'alvo')),
+      JSON.stringify(sem(comoDoc(comDivida()), 'audits')),
       comAudits((a) => { a['ação'] = a.grants; }),
       comAudits((a) => { a.grants.achados = 'x'; }),
     ];
@@ -826,24 +854,25 @@ describe('lerCarimboAnterior — o gravador relê o anterior por uma porta que c
   });
 });
 
-describe('conferirCluster — a trava que não sobrescreve a evidência de prod com a de outro cluster', () => {
-  const anterior = (projetoHash: string): CarimboAnterior => ({ schemaVersion: SCHEMA_VERSION, projetoHash, achados: {} });
-
-  it('CONTROLE: mesmo cluster passa, e o nascimento (sem anterior) passa', () => {
-    expect(conferirCluster(anterior('abc'), 'abc')).toBeNull();
-    expect(conferirCluster(null, 'abc')).toBeNull();
+describe('conferirCluster — a sonda contra PROJETO_HASH_PROD: o gravador não grava evidência de outro banco', () => {
+  it('CONTROLE: a sonda de prod passa', () => {
+    expect(conferirCluster(PROJETO_HASH_PROD)).toBeNull();
   });
 
-  it('outro cluster => CARIMBO_ANTERIOR_OUTRO_CLUSTER, nomeando os dois, em ASCII', () => {
-    const r = conferirCluster(anterior('abc'), 'def');
-    expect(r?.codigo).toBe('CARIMBO_ANTERIOR_OUTRO_CLUSTER');
-    expect(r?.motivo).toContain('cluster abc');
-    expect(r?.motivo).toContain('em def');
-    expect(r?.motivo).toMatch(/^[\x20-\x7e]+$/);
-  });
-
-  it('ponta a ponta: o anterior que a porta devolve SEMPRE tem com o que comparar — a trava dispara', () => {
-    expect(conferirCluster(relido(JSON.stringify(comDivida())), 'outro-cluster')?.codigo).toBe('CARIMBO_ANTERIOR_OUTRO_CLUSTER');
+  // A trava comparava com o carimbo anterior, e a recusa mandava "trocar alvo.projetoHash no carimbo
+  // local" — a receita do erro honesto numa sessão no banco errado, que o gate (que não lia `alvo`)
+  // deixava mergear. Revisão independente de 2026-10-05: a trava é a constante, e a mensagem não ensina
+  // contorno — manda conferir o psql-ro.
+  it('outro cluster => CARIMBO_OUTRO_CLUSTER nomeando os dois, em ASCII, sem receita de contorno', () => {
+    for (const h of ['deadbeefdeadbeef', PROJETO_HASH_PROD.toUpperCase(), ` ${PROJETO_HASH_PROD}`, '']) {
+      const r = conferirCluster(h);
+      expect(r?.codigo, JSON.stringify(h)).toBe('CARIMBO_OUTRO_CLUSTER');
+      expect(r?.motivo).toContain(`prod e ${PROJETO_HASH_PROD}`);
+      expect(r?.motivo).toContain('psql-ro');
+      expect(r?.motivo).toMatch(/^[\x20-\x7e]+$/);
+      expect(r?.motivo).not.toMatch(/carimbo local/);
+    }
+    expect(conferirCluster('deadbeefdeadbeef')?.motivo).toContain('mede o cluster "deadbeefdeadbeef"');
   });
 });
 
@@ -899,41 +928,40 @@ describe('montarAchados — a primeiraVez herdada nunca regride, nem na migraç�
   });
 });
 
-describe('combinarAnteriores — a origin/main é a REFERÊNCIA: apagar o local não pula a trava nem zera a dívida', () => {
+describe('combinarAnteriores — a origin/main é a REFERÊNCIA da herança: sem ela, não se grava', () => {
   const local = () => lido(JSON.stringify(comDivida('2026-09-01')));
-  const main = () => lido(JSON.stringify({ ...comDivida('2026-08-13'), alvo: { ...comDivida().alvo, projetoHash: 'hash-da-main' } }));
+  const main = () => lido(JSON.stringify(comDivida('2026-08-13')));
 
-  // O CONTROLE da matriz: os dois presentes, a trava no LOCAL (é ele que será sobrescrito).
-  it('CONTROLE: local e main presentes — a trava compara com o LOCAL e a herança vem dos DOIS', () => {
+  // O CONTROLE da matriz: os dois presentes, a herança dos DOIS (`montarAchados` fica com a mais antiga).
+  it('CONTROLE: local e main presentes — a herança vem dos DOIS', () => {
     const r = combinarAnteriores(local(), { estado: 'presente', carimbo: main() });
-    expect(r.ok ? r.anteriores.trava?.origem : 'RECUSOU').toBe('o carimbo local');
-    expect(r.ok ? r.anteriores.trava?.carimbo.projetoHash : '').toBe('abc');
-    expect(r.ok ? r.anteriores.heranca.map((a) => a.projetoHash) : []).toEqual(['abc', 'hash-da-main']);
+    expect(r.ok ? r.heranca : 'RECUSOU').toEqual([local(), main()]);
   });
 
-  // O achado A: `rm db/authz-carimbo-prod.json` virava nascimento — sem trava e com a dívida zerada.
-  it('local AUSENTE e main presente: NÃO é nascimento — a trava compara com a MAIN e a dívida vem dela', () => {
+  // O achado A de 2026-10-03: `rm db/authz-carimbo-prod.json` zerava a dívida.
+  it('local AUSENTE e main presente: a herança vem da MAIN — apagar o arquivo não zera a dívida', () => {
     const r = combinarAnteriores(null, { estado: 'presente', carimbo: main() });
-    expect(r.ok ? r.anteriores.trava?.origem : 'RECUSOU').toBe('o carimbo da origin/main');
-    expect(r.ok ? r.anteriores.trava?.carimbo.projetoHash : '').toBe('hash-da-main');
-    expect(r.ok ? r.anteriores.heranca.length : -1).toBe(1);
-    expect(conferirCluster(r.ok ? (r.anteriores.trava?.carimbo ?? null) : null, 'outro', 'o carimbo da origin/main')?.motivo).toContain('o carimbo da origin/main foi medido no cluster hash-da-main');
+    expect(r.ok ? r.heranca : 'RECUSOU').toEqual([main()]);
   });
 
-  it('local ausente e main ausente: o nascimento — o único caso sem trava', () => {
-    expect(combinarAnteriores(null, { estado: 'ausente' })).toEqual({ ok: true, anteriores: { trava: null, heranca: [] } });
+  // O nascimento foi em 2026-08-27 (8962f213c) e não se repete: main SEM o carimbo é worktree ou remote
+  // errado (rename, fork), nunca "primeira medição" — que gravaria a dívida zerada, calada. Revisão
+  // independente de 2026-10-05: o ramo `ausente` era o último pelo qual a ausência de ARQUIVO passava.
+  it('main SEM o carimbo => CARIMBO_ANTERIOR_SEM_REFERENCIA — com ou sem local: o nascimento não se repete', () => {
+    for (const l of [null, local()]) {
+      const r = combinarAnteriores(l, { estado: 'ausente' });
+      expect(r.ok ? 'ACEITOU' : r.codigo).toBe('CARIMBO_ANTERIOR_SEM_REFERENCIA');
+      expect(r.ok ? '' : r.motivo).toContain('desde 2026-08-27');
+      expect(r.ok ? '' : r.motivo).toMatch(/^[\x20-\x7e]+$/);
+    }
   });
 
-  it('local presente e main ausente: a trava no local (o PR que cria o carimbo antes de ele chegar à main)', () => {
-    const r = combinarAnteriores(local(), { estado: 'ausente' });
-    expect(r.ok ? r.anteriores.trava?.origem : 'RECUSOU').toBe('o carimbo local');
-  });
-
-  // Ausência de RESPOSTA não é ausência de carimbo: sem a main, não se prova nascimento nem frescor.
+  // Ausência de RESPOSTA não é ausência de carimbo: sem a main, a herança não confere o que ela já viu.
   it('main NÃO CONSULTADA => CARIMBO_ANTERIOR_SEM_REFERENCIA — com ou sem local, em ASCII', () => {
     for (const l of [null, local()]) {
       const r = combinarAnteriores(l, { estado: 'nao-consultada', motivo: 'git ls-tree origin/main falhou: fatal' });
       expect(r.ok ? 'ACEITOU' : r.codigo).toBe('CARIMBO_ANTERIOR_SEM_REFERENCIA');
+      expect(r.ok ? '' : r.motivo).toContain('nao consegui ler o carimbo da origin/main');
       expect(r.ok ? '' : r.motivo).toMatch(/^[\x20-\x7e]+$/);
     }
   });
@@ -941,31 +969,49 @@ describe('combinarAnteriores — a origin/main é a REFERÊNCIA: apagar o local 
 
 describe('lerReferenciaDaMain — o git responde, ou a referência é NÃO CONSULTADA (nunca "ausente")', () => {
   const REL = 'db/authz-carimbo-prod.json';
-  /** Um git falso: cada subcomando devolve o texto dado, ou LANÇA quando o valor é um Error. */
-  const gitFalso = (resp: Record<string, string | Error>) => (args: readonly string[]) => {
-    const r = resp[args[0]];
+  /**
+   * Os argumentos EXATOS de cada subcomando. O falso de antes indexava só pelo subcomando: um refactor
+   * que trocasse `origin/main` por `main` ou `HEAD` passava verde — e, com `HEAD`, apagar e commitar o
+   * arquivo virava nascimento de novo (revisão independente de 2026-10-05). Argumento inesperado LANÇA.
+   */
+  const ESPERADOS: Record<string, readonly string[]> = {
+    fetch: ['fetch', 'origin', 'main', '--quiet'],
+    'ls-tree': ['ls-tree', '--name-only', 'origin/main', '--', REL],
+    show: ['show', `origin/main:${REL}`],
+  };
+  /** Um git falso: confere os argumentos, anota a chamada e devolve o texto dado — ou LANÇA o Error dado. */
+  const gitFalso = (resp: Record<string, string | Error>, chamadas: string[][] = []) => (args: readonly string[]) => {
+    chamadas.push([...args]);
+    if (JSON.stringify(args) !== JSON.stringify(ESPERADOS[args[0]])) throw new Error(`git falso: argumentos inesperados ${JSON.stringify(args)}`);
+    const r = { fetch: '', ...resp }[args[0]];
     if (r === undefined) throw new Error(`git falso sem resposta para ${args[0]}`);
     if (r instanceof Error) throw r;
     return r;
   };
 
-  it('CONTROLE: ref com o arquivo => presente, relido pela MESMA porta', () => {
-    const l = lerReferenciaDaMain(gitFalso({ 'ls-tree': `${REL}\n`, show: JSON.stringify(comDivida()) }), REL);
-    expect(l.ok && l.referencia.estado === 'presente' ? l.referencia.carimbo.projetoHash : 'NAO').toBe('abc');
+  it('CONTROLE: fetch, ls-tree e show da origin/main, nessa ordem e com esses argumentos => presente, pela MESMA porta', () => {
+    const chamadas: string[][] = [];
+    const l = lerReferenciaDaMain(gitFalso({ 'ls-tree': `${REL}\n`, show: JSON.stringify(comDivida()) }, chamadas), REL);
+    expect(l.ok && l.referencia.estado === 'presente' ? l.referencia.carimbo : 'NAO').toEqual(lido(JSON.stringify(comDivida())));
+    expect(chamadas).toEqual([ESPERADOS.fetch, ESPERADOS['ls-tree'], ESPERADOS.show]);
   });
 
-  it('ref válida SEM o arquivo (ls-tree vazio, rc 0) => ausente', () => {
+  it('ref válida SEM o arquivo (ls-tree vazio, rc 0) => ausente (e quem recusa é combinarAnteriores)', () => {
     expect(lerReferenciaDaMain(gitFalso({ 'ls-tree': '' }), REL)).toEqual({ ok: true, referencia: { estado: 'ausente' } });
   });
 
-  it('git que FALHA (ref inexistente, repo quebrado) => nao-consultada — jamais ausente, que liberaria o nascimento', () => {
-    const falhas: Record<string, string | Error>[] = [
-      { 'ls-tree': new Error('fatal: Not a valid object name origin/main') },
-      { 'ls-tree': `${REL}\n`, show: new Error('fatal: bad revision') },
+  // A referência era a origin/main do ÚLTIMO fetch da worktree — e o audit `corpo`, que o mesmo gravador
+  // roda logo depois, faz o fetch e grava "ref origin/main@<outro sha>" no MESMO carimbo: duas mains num
+  // artefato só (revisão independente de 2026-10-05). Sem rede não há referência — recusa, não main velha.
+  it('git que FALHA (sem rede, ref inexistente, repo quebrado) => nao-consultada — jamais ausente', () => {
+    const falhas: [string, Record<string, string | Error>][] = [
+      ['fetch', { fetch: new Error('fatal: unable to access github.com') }],
+      ['ls-tree', { 'ls-tree': new Error('fatal: Not a valid object name origin/main') }],
+      ['show', { 'ls-tree': `${REL}\n`, show: new Error('fatal: bad revision') }],
     ];
-    for (const resp of falhas) {
+    for (const [passo, resp] of falhas) {
       const l = lerReferenciaDaMain(gitFalso(resp), REL);
-      expect(l.ok ? l.referencia.estado : 'RECUSOU').toBe('nao-consultada');
+      expect(l.ok && l.referencia.estado === 'nao-consultada' ? l.referencia.motivo : 'OUTRO', passo).toContain(`git ${passo}`);
     }
   });
 
@@ -975,6 +1021,42 @@ describe('lerReferenciaDaMain — o git responde, ou a referência é NÃO CONSU
     expect(l.ok ? 'ACEITOU' : l.codigo).toBe('CARIMBO_ANTERIOR_SCHEMA_INCOMPATIVEL');
     expect(l.ok ? '' : l.motivo).toContain('(o carimbo da origin/main)');
     expect(referenciaDoTexto('null').ok).toBe(false);
+  });
+});
+
+describe('montarCarimbo — a trava e a herança fora do binário (que para na guarda de env por construção)', () => {
+  const AGORA_ISO = '2026-10-05T12:00:00.000Z';
+  const ALVO_PROD: Carimbo['alvo'] = { usuario: 'claude_ro', servidor: 'PostgreSQL 17.6', somenteLeitura: true, projetoHash: PROJETO_HASH_PROD };
+  const limpas = () => Object.fromEntries(CHAVES.map((k) => [k, { exit: 0, linhas: [`✅ ${k}: limpo`] }])) as Record<ChaveAudit, ExecucaoDeAudit>;
+  const montar = (over: Partial<Parameters<typeof montarCarimbo>[0]> = {}) =>
+    montarCarimbo({ alvo: ALVO_PROD, execucoes: limpas(), heranca: [], fps: fpsBons(), agora: AGORA_ISO, sourceHead: 'cafe', semente: {}, ...over });
+  const montado = (over: Partial<Parameters<typeof montarCarimbo>[0]> = {}): Carimbo => {
+    const r = montar(over);
+    if (!r.ok) throw new Error(`RECUSOU ${r.codigo}: ${r.motivo}`);
+    return r.carimbo;
+  };
+
+  // CONTROLE e IDA E VOLTA: o que o gravador monta, a porta relê e o gate aprova — o contrato entre os três.
+  it('CONTROLE: medição limpa de prod vira carimbo que a porta relê e o gate aprova sem veredito', () => {
+    const c = montado();
+    expect(avaliarCarimbo(c, new Date(AGORA_ISO), fpsBons())).toEqual([]);
+    expect(lido(JSON.stringify(c))).toEqual({ schemaVersion: SCHEMA_VERSION, achados: Object.fromEntries(CHAVES.map((k) => [k, []])) });
+  });
+
+  // A fiação que o binário não alcança: sem a trava aqui, a montagem gravaria evidência de outro banco, e
+  // o gate só a barraria depois do commit (revisão independente de 2026-10-05).
+  it('sonda de OUTRO cluster => CARIMBO_OUTRO_CLUSTER, e nenhum carimbo', () => {
+    const r = montar({ alvo: { ...ALVO_PROD, projetoHash: 'deadbeefdeadbeef' } });
+    expect(r.ok ? 'MONTOU' : r.codigo).toBe('CARIMBO_OUTRO_CLUSTER');
+  });
+
+  it('a herança chega ao carimbo: o achado vivo fica com a primeiraVez da main — e a ida e volta a preserva', () => {
+    const ID = idFinding('grants', LINHA_GRANTS);
+    const execucoes = { ...limpas(), grants: { exit: 1, linhas: ['🔎 denominador', LINHA_GRANTS] } };
+    const c = montado({ execucoes, heranca: [lido(JSON.stringify(comDivida('2026-08-13')))] });
+    expect(c.audits.grants.achados).toEqual([{ id: ID, linha: LINHA_GRANTS, primeiraVez: '2026-08-13', ultimaVez: '2026-10-05' }]);
+    expect(lido(JSON.stringify(c)).achados.grants).toEqual([{ id: ID, primeiraVez: '2026-08-13' }]);
+    expect(avaliarCarimbo(c, new Date(AGORA_ISO), fpsBons()).map((v) => v.mensagem).join(' ')).toContain('aberto desde 2026-08-13');
   });
 });
 
@@ -1050,7 +1132,7 @@ describe('o BINÁRIO do gravador contra anterior recusado — exit 2 com o códi
 
   it.each([
     ['versão futura', () => JSON.stringify({ ...comDivida(), schemaVersion: SCHEMA_VERSION + 1 }), 'CARIMBO_ANTERIOR_SCHEMA_INCOMPATIVEL'],
-    ['sem alvo.projetoHash', () => JSON.stringify({ ...comDivida(), alvo: { usuario: 'claude_ro' } }), 'CARIMBO_ANTERIOR_SEM_ALVO'],
+    ['primeiraVez fora do calendário', () => comAudits((a) => { (a.grants.achados as Record<string, unknown>[])[0].primeiraVez = '2026-13-45'; }), 'CARIMBO_ANTERIOR_MALFORMADO'],
     ['JSON ilegível', () => '{ nao e json', 'CARIMBO_ANTERIOR_ILEGIVEL'],
     ['raiz null', () => 'null', 'CARIMBO_ANTERIOR_MALFORMADO'],
   ])('%s: exit 2 com CARIMBO-ANTERIOR-RECUSADO e o código — antes da sonda', async (_rot, texto, codigo) => {
@@ -1064,7 +1146,7 @@ describe('o BINÁRIO do gravador contra anterior recusado — exit 2 com o códi
   // worktree desatualizada, e gravar por cima seria o downgrade.
   it.each([
     ['main de versão futura', () => JSON.stringify({ ...comDivida(), schemaVersion: SCHEMA_VERSION + 1 }), 'CARIMBO_ANTERIOR_SCHEMA_INCOMPATIVEL'],
-    ['main sem alvo', () => JSON.stringify({ ...comDivida(), alvo: null }), 'CARIMBO_ANTERIOR_SEM_ALVO'],
+    ['main fora da forma', () => JSON.stringify({ ...comDivida(), audits: [] }), 'CARIMBO_ANTERIOR_MALFORMADO'],
   ])('%s: exit 2 com o código e a ORIGEM no motivo — antes da sonda', async (_rot, main, codigo) => {
     const r = await gravadorCom(JSON.stringify(comDivida()), main());
     expect(r.status, r.saida.slice(-1500)).toBe(2);
@@ -1079,6 +1161,7 @@ describe('a CLASSE — o carimbo commitado só é relido por porta que confere a
   // vigiam os leitores que existem; um leitor novo com cast reabriria a classe calado.
   const GATE = 'scripts/authz-carimbo-gate.ts';
   const GRAVADOR = 'db/authz-carimbo-gravar.ts';
+  const NUCLEO = 'scripts/lib/authz-carimbo.ts';
   const fontes = () =>
     ['scripts', 'db'].flatMap((dir) =>
       readdirSync(join(RAIZ, dir), { recursive: true, encoding: 'utf8' })
@@ -1086,22 +1169,44 @@ describe('a CLASSE — o carimbo commitado só é relido por porta que confere a
         .map((f) => `${dir}/${f}`),
     );
   const limpa = (rel: string) => removerComentarios(readFileSync(join(RAIZ, rel), 'utf8'));
+  /** O cast, e a ANOTAÇÃO que faz o mesmo sobre o `any` do `JSON.parse` — esta vale para todo arquivo,
+   *  inclusive o que monta o caminho sem nomear o carimbo (revisão independente de 2026-10-05). */
+  const CAST = /\bas\s+Carimbo\b|:\s*Carimbo\b\s*(?:=|=>)\s*(?:JSON\.parse|await|require\(|Bun\.file)/;
 
-  it('nenhum leitor faz cast para `Carimbo`, exceto o gate — que confere a versão em avaliarCarimbo antes de ler campo', () => {
-    expect(fontes().filter((f) => f !== GATE && /\bas\s+Carimbo\b/.test(limpa(f)))).toEqual([]);
+  it('nenhum leitor faz cast para `Carimbo` (nem por anotação), exceto o gate — que confere a versão em avaliarCarimbo antes de ler campo', () => {
+    expect(fontes().filter((f) => f !== GATE && CAST.test(limpa(f)))).toEqual([]);
+    // a regex enxerga as duas formas — senão o scan acima passaria por cegueira
+    for (const t of ['const c = JSON.parse(t) as Carimbo;', 'const c: Carimbo = JSON.parse(t);', 'const f = (): Carimbo => JSON.parse(t);']) expect(CAST.test(t), t).toBe(true);
+  });
+
+  // O núcleo ficava FORA dos scans de baixo (é onde mora a porta): um leitor novo escrito DENTRO dele, com
+  // anotação em vez de cast, passava (revisão independente de 2026-10-05). JSON.parse novo no núcleo: se lê
+  // o carimbo, passe pela porta; se não, ajuste a contagem com o porquê.
+  it('o núcleo faz JSON.parse num lugar só — a porta', () => {
+    expect(limpa(NUCLEO).match(/\bJSON\.parse\(/g) ?? []).toHaveLength(1);
+    expect(limpa(NUCLEO)).toMatch(/export function lerCarimboAnterior\([\s\S]*?\bJSON\.parse\(texto\)/);
   });
 
   // `as Carimbo` não é a única forma do cast: `const c: Carimbo = JSON.parse(t)` e `(): Carimbo => JSON.parse(t)`
   // compilam igual (`JSON.parse` devolve `any`) e a regex acima não os vê (revisão adversarial, achado C).
   // Toda forma passa por `JSON.parse` — então quem nomeia o carimbo não o chama: só a porta (o núcleo) e o gate.
   it('nenhum arquivo que nomeia o carimbo commitado faz JSON.parse, exceto o gate', () => {
-    const nomeiam = fontes().filter((f) => f !== 'scripts/lib/authz-carimbo.ts' && /CARIMBO_PATH|authz-carimbo-prod\.json/.test(limpa(f)));
+    const nomeiam = fontes().filter((f) => f !== NUCLEO && /CARIMBO_PATH|authz-carimbo-prod\.json/.test(limpa(f)));
     expect(nomeiam.filter((f) => f !== GATE && /\bJSON\.parse\(/.test(limpa(f)))).toEqual([]);
   });
 
   it('todo arquivo que nomeia o carimbo commitado passa o texto por uma porta (lerCarimboAnterior | avaliarCarimbo)', () => {
-    const leitores = fontes().filter((f) => f !== 'scripts/lib/authz-carimbo.ts' && /CARIMBO_PATH|authz-carimbo-prod\.json/.test(limpa(f)));
+    const leitores = fontes().filter((f) => f !== NUCLEO && /CARIMBO_PATH|authz-carimbo-prod\.json/.test(limpa(f)));
     expect(leitores.filter((f) => !/\b(lerCarimboAnterior|avaliarCarimbo)\(/.test(limpa(f)))).toEqual([]);
+  });
+
+  // A fiação do gravador que nenhum teste de comportamento alcança (o binário para na guarda de env): a
+  // herança COMBINADA tem de chegar à montagem. TRIPWIRE de texto — prova presença, não controle: pega o
+  // refactor honesto que troca a herança por `[]`; o comportamento é provado em montarCarimbo, acima.
+  it('o gravador monta o carimbo por montarCarimbo, com a herança que combinarAnteriores devolveu', () => {
+    const g = limpa(GRAVADOR);
+    expect(g).toMatch(/\bconst combinados = combinarAnteriores\(/);
+    expect(g).toMatch(/\bmontarCarimbo\(\{[^}]*\bheranca: combinados\.heranca\b/);
   });
 
   // Sem este, os scans acima passariam por CEGUEIRA: glob que parou de casar, ou limpeza que comeu o código.
