@@ -47,4 +47,23 @@ verde na mesma invocação, os três teriam virado "falsificação OK".
 
 ## Medição do run real (Task 0.4 Step 3)
 
-(preencher: run, versao_edge, pedidos_lidos, itens por motivo, varredura_completa, pendente_aplicado, skus_divergentes)
+Run do cron de 2026-10-05 **19:40Z** (job 124), `run_id 396daec0…`, `v1.4-observa-conjunto-aberto`: HTTP 200 em 53,1 s
+(v1.3: 49,5 s nos 2 runs retidos), 399/399 SKUs, `observacao_publicada: true`.
+
+| campo | valor |
+|---|---|
+| `varredura_completa` · `pendente_aplicado` · `skus_divergentes` | `t` · `t` · **0** |
+| janela | 2025-10-05 → 2027-02-02 |
+| POs lidos | 21 (1 página do `PesquisarPedCompra`) |
+| itens contados | 27 em 12 POs = **164 un.** = soma do pendente gravado dos 399 habilitados |
+| `dedup_app` | 46 itens em 8 POs |
+| `sku_nao_habilitado` | 3 itens em 2 POs |
+| custo da publicação | ~130 ms (`concluido_em` 19:40:56,377 → fim do sync 19:40:56,506) |
+
+**O 1º run da v1.4 (17:40Z) não publicou — o sync inteiro caiu por prazo** (HTTP 500 `PesquisarPedCompra: deadline do
+run atingido antes da chamada`, 73,3 s de 75 s; estoque OBEN sem regravar até as 19:40). Não foi a v1.4: a fase do PO
+são 2 chamadas (21 POs) e só ganhou o coletor síncrono O(1); quem come o prazo é o `ListarPosEstoque` (75 páginas, ≈45 s
+por diferença num run normal), que a v1.4 não tocou; o tombo do run inteiro em erro de varredura do PO é desenho
+anterior; e o mesmo código fechou em 53,1 s às 19:40. Leitura: o sync OBEN roda a 66–71% do prazo, e um Omie ~1,5× mais
+lento derruba o run (17:40Z = 14:40 BRT, no lote concorrente do pg_net). **Para a 0.5:** run que caiu não publica — o denominador é o run do cron (`net._http_response`/`sync_state`),
+não só `reposicao_po_observado_run`; ausência de run publicado não é "PO fechado" (spec §16).
