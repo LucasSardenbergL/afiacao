@@ -421,14 +421,29 @@ describe('guardrail money-path: algorithm-a-audit (margem)', () => {
     expect(
       src,
       'o filtro de praticados sumiu do bestPriceMap — orçamento de preço absurdo voltaria a inflar margin_potential',
-    ).toContain('excludedOrderIds.has(sp.sales_order_id)');
+    ).toContain('if (excludedOrderIds.has(sp.sales_order_id)) return;');
   });
 
   it('margem real só de pedidos praticados: filtra excludedOrderIds no agrupamento', () => {
     expect(
       src,
       'o filtro de praticados sumiu do recentOrders — orçamento absurdo voltaria a inflar margin_real',
-    ).toContain('excludedOrderIds.has(oi.sales_order_id)');
+    ).toContain('if (excludedOrderIds.has(oi.sales_order_id)) return;');
+  });
+
+  it('excludedOrderIds compõe as DUAS metades do complemento (apagados + não-venda)', () => {
+    // Revisão Codex (#2770): o gate AST prende as duas LEITURAS, não que os resultados entrem no Set —
+    // descartar `...naoPraticados.map(...)` deixava gate e guardrails verdes com rascunho/pendente de volta.
+    // (E os dois asserts acima casam o ENUNCIADO inteiro: `if (false && excludedOrderIds.has(…))` não passa.)
+    const m = src.match(/const excludedOrderIds = new Set<string>\(\[([\s\S]*?)\]\);/);
+    expect(m, 'a construção de excludedOrderIds mudou de forma — reveja este guardrail').not.toBeNull();
+    const corpo = (m?.[1] ?? '').replace(/\/\/.*$/gm, '');
+    expect(corpo, 'a metade NÃO-VENDA saiu do Set — rascunho/pendente/orçamento voltariam ao potencial').toContain(
+      '...naoPraticados.map((o) => o.id)',
+    );
+    expect(corpo, 'a metade APAGADA saiu do Set — pedido apagado voltaria ao potencial').toContain(
+      '...deletedOrders.map((o) => o.id)',
+    );
   });
 
   it('bestPriceMap lê order_items (não a sph poluída)', () => {

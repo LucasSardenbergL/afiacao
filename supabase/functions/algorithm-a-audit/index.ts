@@ -1,6 +1,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { fetchAll } from "../_shared/paginate.ts";
+import { STATUS_NAO_VENDA } from "../_shared/universo-pedidos.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 // ======== COST CONTRACT (espelho VERBATIM de src/lib/custos/cost-source.ts — manter idêntico) ========
@@ -212,7 +213,9 @@ Deno.serve(async (req) => {
     // pelo writer legado aposentado). DOIS filtros importam:
     //  (a) fonte = order_items, não sph: as duplicatas divergentes da sph inflavam o MAX (medido
     //      psql-ro: 5 produtos com MAX(sph) > MAX(order_items)).
-    //  (b) só pedidos PRATICADOS (exclui cancelado/orcamento/deletado; espelha get_ultimos_precos_cliente):
+    //  (b) só pedidos PRATICADOS — fora o NÃO-venda da autoridade (`STATUS_NAO_VENDA`) e o deletado,
+    //      o mesmo universo de get_ultimos_precos_cliente (canônico desde o #2726). A lista literal que
+    //      estava aqui (cancelado, orcamento) deixava rascunho e pendente contarem como praticado:
     //      sem isso, um order_item de orçamento com preço absurdo (medido: 1 produto em 822.326× o
     //      praticado = erro de digitação num não-pedido) destruiria margin_potential/margin_gap.
     // Só ~16 pedidos excluídos no total → Set client-side é trivial (evita .or()/embedded frágil; o
@@ -231,7 +234,8 @@ Deno.serve(async (req) => {
         (from, to) => supabase
           .from('sales_orders')
           .select('id')
-          .in('status', ['cancelado', 'orcamento'])
+          // O COMPLEMENTO do universo pela lista da autoridade — par da leitura dos deletados acima.
+          .in('status', [...STATUS_NAO_VENDA])
           .order('id', { ascending: true })
           .range(from, to),
         'sales_orders não-praticados (exclusão do audit)',
@@ -259,12 +263,12 @@ Deno.serve(async (req) => {
         .range(from, to),
       'order_items preços praticados (bestPrice do audit)',
     );
-    console.log(`[algorithm-a-audit] Found ${allSalesPrices.length} order_items price records (${excludedOrderIds.size} pedidos excluídos: cancelado/orcamento/deletado)`);
+    console.log(`[algorithm-a-audit] Found ${allSalesPrices.length} order_items price records (${excludedOrderIds.size} pedidos excluídos: não-venda/deletado)`);
 
     // Build best price map (highest PRACTICED price per product = potential)
     const bestPriceMap: Record<string, number> = {};
     allSalesPrices.forEach(sp => {
-      if (excludedOrderIds.has(sp.sales_order_id)) return;   // não-praticado (cancelado/orcamento/deletado)
+      if (excludedOrderIds.has(sp.sales_order_id)) return;   // não-praticado (não-venda/deletado)
       if (sp.unit_price == null) return;
       if (!bestPriceMap[sp.product_id] || sp.unit_price > bestPriceMap[sp.product_id]) {
         bestPriceMap[sp.product_id] = Number(sp.unit_price);

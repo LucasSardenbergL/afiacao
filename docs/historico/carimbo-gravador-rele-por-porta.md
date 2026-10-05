@@ -5,6 +5,11 @@
 > ([base](exclusividade-media-outra-coisa.md), #2575). Esta entrega fecha o último site afetado que
 > aquela varredura deixou em chip: o GRAVADOR do carimbo de authz (`db/authz-carimbo-gravar.ts`).
 > Domínio: [`carimbo-evidencia-authz-prod.md`](carimbo-evidencia-authz-prod.md) · `docs/agent/database.md` §1.
+>
+> **Atualização de 2026-10-05:** a revisão independente (Fable, no lugar do Codex) achou que a trava
+> morava no arquivo que ela protege. Ela passou para o CÓDIGO (`PROJETO_HASH_PROD`), cobrada no gravador
+> e no gate. Até §"Codex" este registro descreve o desenho de 2026-10-01/03; o que mudou está em
+> §"Revisão independente".
 
 ## O defeito
 
@@ -201,8 +206,8 @@ ficou verde (redundante ou inalcançada).
 `scripts/codex-async.sh -r max` saiu **79** sem gastar a chamada: cota em 86% (teto 85%), janela de 7
 dias reabre em 2026-10-03 19:11. Seguiu por Caminho B — a RÉGUA acima, falsificação nos dois locales,
 auto-challenge no binário real e a revisão adversarial independente (subagente read-only), cujos 4
-achados estão consertados. **REVISÃO INDEPENDENTE PENDENTE** (o Codex): rodar retroativo, quando a
-janela reabrir, com:
+achados estão consertados. A revisão independente ficou PENDENTE, com as 5 perguntas abaixo — e foi
+feita em 2026-10-05 por Fable, no lugar do Codex, por decisão do founder (seção seguinte):
 
 1. Janela {N-1, N} + a origin/main como referência: há modo de falha não visto?
 2. Exigir EXATAMENTE as chaves da versão lida é certo, ou rígido demais?
@@ -212,18 +217,93 @@ janela reabrir, com:
    desenho certo, ou o hash de prod deveria ser fixado no código e no gate?
 5. Outra via pela qual a trava seria pulada ou a `primeiraVez` regrediria calada?
 
-## Limites declarados
+## Revisão independente (2026-10-05): Fable, no lugar do Codex
 
-- **A referência é a origin/main LOCAL.** Sem `git fetch` recente, a comparação é com uma main velha —
-  a herança segue conservadora (fica com a data mais antiga do que conhece), mas não enxerga o que a
-  main ganhou depois do último fetch.
-- **Carimbo LOCAL de outro cluster copiado à mão** passa pela trava se a sessão também estiver nesse
-  cluster: é adulteração consciente, fora do modelo de ameaça do carimbo (erro, não fraude). Fixar o
-  hash de prod no código e cobrá-lo no gate fecharia — ao custo de trocar o desenho de "confiar no
-  primeiro uso" e de uma constante a manter. Fica como endurecimento possível (pergunta 4 do Codex).
-- **Herança conservadora:** um achado que fechou e reabriu herda a data velha (dívida maior, nunca menor).
-- **`primeiraVez` no futuro** passa pela porta (ela confere forma, não calendário — não tem relógio).
-  O teste do artefato commitado (`primeiraVez ≤ ultimaVez`) pega depois da gravação.
-- O `heavy` estava travado durante a 1ª rodada (o slot único preso num lote de falsificação de outra
-  sessão; fila de 6, a cabeça esperando há 15 h): aquela suíte rodou 1 arquivo com 1 worker, sem o
-  semáforo, com 35% de RAM livre. A versão final rodou sob o `heavy`.
+Decisão do founder (2026-10-03): a revisão independente com Fable, não com o Codex retroativo. Dois
+revisores em paralelo, somente leitura, sobre o squash `18affb758` (#2765): um no DESENHO (perguntas 1,
+2 e 4, mais os limites declarados), outro no CÓDIGO e nos TESTES (3 e 5, ramo a ramo, com sondas `bun`
+sobre o núcleo puro). O conserto é o PR seguinte, que traz este registro.
+
+**O furo que os dois acharam, cada um por conta própria: a trava morava no arquivo que ela protege.**
+A trava comparava a sonda com o carimbo ANTERIOR — o arquivo que o operador edita —, a recusa
+`OUTRO_CLUSTER` ensinava a editá-lo ("troque `alvo.projetoHash` no carimbo local … a troca fica no diff
+do PR, revisável"), e `avaliarCarimbo` nunca lia `alvo` (provado: carimbo com hash `deadbeef` → zero
+veredito). Num repo que auto-mergeia sem revisão humana, "fica no diff" não protege nada: sessão no
+banco errado → recusa → o agente obedece à mensagem → grava → `validate` verde → a main atesta prod
+com a evidência de outro banco. O meu limite declarado de "local de outro cluster copiado à mão =
+adulteração, fora do modelo de ameaça" era furo com nome: a própria mensagem tornava o contorno um ERRO
+honesto. As 36 versões commitadas têm o mesmo hash (`a0010e4a9b3b3e6b`): fixá-lo custa uma constante.
+
+| achado | revisor · sev. | disposição |
+|---|---|---|
+| trava no arquivo editável, gate cego ao `alvo`, recusa = receita do contorno | desenho A1 (+ nota do código) · **alta** | **consertado**: `PROJETO_HASH_PROD` no código. O gravador compara a SONDA com ela (`conferirCluster`, de novo em `montarCarimbo`), e o gate bloqueia com `CARIMBO_OUTRO_CLUSTER` (ausente ≠ prod). A recusa manda conferir o psql-ro; trocar a constante é decisão do founder |
+| referência lida ANTES do fetch que o `corpo` faz logo depois — duas mains no mesmo carimbo (o limite "origin/main LOCAL" era consequência da ORDEM) | desenho A3 · média | **consertado**: `git fetch origin main` é o passo 0 de `lerReferenciaDaMain`; sem rede → recusa |
+| main SEM o carimbo (`ausente`) ainda liberava nascimento: o último caminho da ausência de ARQUIVO | desenho A4 · média | **consertado**: recusa `SEM_REFERENCIA` — o nascimento foi em 2026-08-27 e não se repete |
+| git falso indexado só pelo subcomando: trocar `origin/main` por `HEAD` passava verde e reabria o achado A | código A1 · média | **consertado**: o falso confere os argumentos exatos, e o CONTROLE cobra a sequência fetch → ls-tree → show |
+| fiação do `main()` sem teste: passar `null` à trava ou `[]` à herança no call site ficava verde | código A2 · média | **consertado**: `montarCarimbo` puro (trava + herança + montagem), com teste de IDA E VOLTA (gravador → porta → gate) e tripwire de texto para a herança chegar à montagem |
+| gate da classe: o núcleo fora dos scans; anotação com caminho montado sem o literal | código A3 · baixa→média | **consertado**: o núcleo tem UM `JSON.parse` (o da porta); o scan 1 vê `: Carimbo = JSON.parse` e `=> JSON.parse` em qualquer arquivo |
+| data que casa o regex e não é calendário (`2026-13-45`, `0000-00-00`), propagada pela herança | código A4 · baixa | **consertado**: ida e volta de calendário na porta |
+| exit 1 ainda alcançável depois da sonda (fingerprint que lança; escrita sem `try`) | código A6 · baixa | **consertado**: fingerprints ANTES da sonda; escrita com `try` → exit 2 e `.tmp` removido |
+| a recusa com trava vinda da main mandava editar um carimbo local inexistente | desenho A5 · baixa | **consertado** junto com a trava (a mensagem nova não fala do arquivo) |
+| `projetoHash` sem forma: `' abc'` caía em `OUTRO_CLUSTER` com espaço invisível | código A5 · baixa | **consertado de outro jeito**: o `alvo` do anterior não é mais lido; na sonda, a recusa cita o hash com `JSON.stringify` |
+| `--ours` num conflito leva `primeiraVez` regredida à main sem passar pelo gravador; o gate não tem catraca contra a main | desenho A2 · média | **declarado + procedimento**: a `primeiraVez` é INFORMATIVA (só aparece em `CARIMBO_ACHADO`, que não bloqueia; nenhum outro consumidor no repo), o cenário é plausível e não observado, e uma catraca nova no gate (ler a main no CI) é máquina sem incidente. Procedimento em `database.md` |
+
+Respostas às 5 perguntas: **(1)** furo — o fetch e o `ausente`, consertados; o bump em si ficou fechado
+em todas as combinações atacadas. **(2)** ok — chave nova já exigia bump desde a v2; "sobrando" é a
+dívida jogada fora que a rigidez protege. **(3)** ok — costura `''` é ausente nos dois pontos, a guarda
+casa os dois nomes e nada tem efeito antes dela. **(4)** furo (alta) — o hash fixado no código e no gate.
+**(5)** ressalva — nenhuma via de PULAR a trava; a `primeiraVez` aceitava lixo de calendário (consertado)
+e o `id` muda se o texto do auditor mudar (limite abaixo).
+
+**Máquina meta: nenhuma nova.** O gate existente ganha o veredito `CARIMBO_OUTRO_CLUSTER`: é a trava
+saindo do arquivo para o artefato, consertando um verde-falso provado no próprio gate (`avaliarCarimbo`
+com hash alheio → zero veredito). A catraca da `primeiraVez` contra a main ficou de fora justamente por
+ser máquina nova sem incidente.
+
+### Falsificação do conserto (2026-10-05)
+
+Mesmo motor da entrega anterior, com as sabotagens reescritas no código final: commit antes, uma
+camada por vez, vermelho exigido nos testes certos PELO NOME (reporter JSON do vitest), controle verde
+na MESMA invocação. **`FALSIFICACAO-OK 64 sabotagens (32 x 2 locales)`**, controle 118/118 em
+`LC_ALL=C` e em `pt_BR.UTF-8`, árvore restaurada. Nenhuma camada ficou verde.
+
+| camada sabotada | vermelho exigido em |
+|---|---|
+| F1 o gate não confere o hash · F2 o gate lê ausente como prod | "alvo de OUTRO cluster, ou sem projetoHash" |
+| F3 a constante diverge da evidência commitada | "foi medido em PROD" |
+| S6 a trava da sonda sempre passa | `conferirCluster` e `montarCarimbo` |
+| F4 a montagem sem a trava | "sonda de OUTRO cluster" |
+| F13 a recusa volta a ensinar o contorno | `conferirCluster` (sem "carimbo local", com o psql-ro) |
+| F5 a montagem ignora a herança · F6 o gravador passa herança vazia | "a herança chega ao carimbo" · o tripwire do gravador |
+| F7 main sem o carimbo vira nascimento · S15 main não consultada segue gravando · S11 local apagado e a herança não cai na main | `combinarAnteriores` |
+| F8 a referência sem fetch · F9 o ref trocado por `HEAD` · S14 git que falha vira `ausente` | `lerReferenciaDaMain` (o git falso de argumentos exatos) |
+| F10 data sem calendário | a porta e o binário "primeiraVez fora do calendário" |
+| F11 leitor anotado DENTRO do núcleo · F12 leitor anotado com caminho montado · S10 leitor sem porta · S18 anotação em vez de cast · S3 gravador volta ao cast | o bloco "a CLASSE" |
+| S2 porta sem versão · S8 forma frouxa · S9 `null` vira nascimento · S17 leitura do arquivo lança | a porta |
+| S4 o gravador lê os anteriores depois da guarda de env | o binário |
+| S5 herança ignora os anteriores · S12 só do 1º · S13 fica com a mais NOVA | `montarAchados` e `montarCarimbo` |
+| S7 env volta ao prefixo `AUTHZ_` · G1/G2 `idFinding` alterado | a guarda de env · o DOURADO |
+
+Sem teste, declarado: os fingerprints antes da sonda e a escrita com `try` (achado A6) moram depois da
+guarda de env, que o binário de teste não atravessa por construção.
+
+## Limites declarados (revistos em 2026-10-05)
+
+- **A `primeiraVez` não tem catraca no gate.** O gravador a preserva (porta + herança da main); um
+  conflito resolvido com o lado da branch sem regravar, ou uma edição à mão, a regride sem o CI ver. Ela
+  é informativa. Procedimento: conflito no JSON → fique com a versão da main e regrave.
+- **O `id` do achado depende do TEXTO da linha do auditor** (`[CODE] objeto:`). Mudar esse texto num
+  auditor — justamente quando o `auditorFingerprint` força a regravação — dá `id` novo e `primeiraVez` de
+  hoje. O dourado pina o algoritmo, não o texto dos auditores. Hoje há zero achados vivos.
+- **Troca legítima de cluster** (restore ou upgrade com `system_identifier` novo): o gravador recusa até
+  um PR trocar `PROJETO_HASH_PROD` — atrito de propósito. Nada impede um agente de trocar a constante;
+  por isso a recusa diz que a troca é do founder, com evidência.
+- **A fiação herança → montagem** é vigiada por tripwire de TEXTO (prova presença, não controle); o
+  comportamento está em `montarCarimbo`. A trava não depende do tripwire: o gate a cobra no artefato.
+- **Herança conservadora:** um achado que fechou e reabriu herda a data velha; e um anterior LOCAL de
+  outro cluster (a porta não lê mais o `alvo`) empresta datas — sempre para mais antiga, nunca mais nova.
+- **`primeiraVez` no futuro** passa pela porta (ela confere calendário, não relógio). O teste do artefato
+  commitado (`primeiraVez ≤ ultimaVez`) pega depois da gravação.
+- O `heavy` estava travado durante a 1ª rodada de 2026-10-01 (o slot único preso num lote de falsificação
+  de outra sessão; fila de 6, a cabeça esperando há 15 h): aquela suíte rodou 1 arquivo com 1 worker, sem
+  o semáforo, com 35% de RAM livre. A versão final rodou sob o `heavy`.
