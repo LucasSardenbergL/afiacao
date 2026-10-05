@@ -85,7 +85,8 @@ com RPC literal, a única com irmã ausente (`tint-sync-agent`) tem as duas irm�
   `$1`, delimitador sem fecho, CRLF, tag unicode aninhada, ordem da volta no arquivo e entre arquivos, CREATE
   depois da volta, RENAME de outro schema): 16 certos de primeira; o 17º — `RENAME TO "G"`, citado com
   maiúscula, é OUTRO nome — marcava um retorno falso de `g` (INDETERMINADA, o lado seguro). Corrigido com teste e
-  mutação próprios. ⟪GREEN3⟫
+  mutação próprios. Com ele: GREEN **271/271**; vitest de `scripts/` 79 arquivos, **3051/3051**; typecheck, knip,
+  eslint, `docs:indice`/`links`/`citacoes` e o harness, todos 0 — e só então o commit.
 - **O modelo não mudou no repo real**: `vigenciaPorNome` do commit anterior × do novo sobre as 760 migrations —
   327 nomes, 320 VIGENTE + 7 APOSENTADA nos dois, **0 diferenças**; aposentadas (identidade@migration),
   ilegíveis e perdidas idênticas. O endurecimento fecha os caminhos reproduzidos sem mexer no que prod tem hoje
@@ -95,8 +96,12 @@ com RPC literal, a única com irmã ausente (`tint-sync-agent`) tem as duas irm�
   `DROP` posterior) sai 0 com a colagem.
 - **Harness de mão** (`bun run falsificar:gate-corpo`): 14/14, com o controle verde antes das sabotagens e
   o par novo (VIGENTE ausente ⇒ BLOQUEADA; INDETERMINADA ⇒ INCERTA; APOSENTADA ⇒ LIBERADA).
-- **Gates** (um job sob o `heavy`, exit de cada um capturado à parte): vitest de `scripts/` **79 arquivos, 3039/3039** · `typecheck` (app + scripts/db) 0 · `knip` 0 · eslint 0 · `lint:shell` 0 achados em 484 arquivos.
-- ⟪mutcheck · PG17 do sensor⟫
+- **Gates da 1ª rodada** (um job sob o `heavy`, exit de cada um capturado à parte): vitest de `scripts/` **79 arquivos, 3039/3039** · `typecheck` (app + scripts/db) 0 · `knip` 0 · eslint 0 · `lint:shell` 0 achados em 484 arquivos.
+- **mutcheck** (com a árvore commitada; `MUTCHECK_DIR` com os 9 contratos que o diff alcança): **60/60 mutações
+  pegas**, 0 sobreviventes, 0 inválidas, controle+ em todos; os 3 novos — `precondicao-irma-vigencia` 9/9,
+  `vigencia-por-nome` 15/15, `pendencias-pacote-vigencia` 1/1. Árvore limpa depois da sabotagem.
+- **PG17 do sensor** (`db/test-audit-deriva-corpo-prod.sh`): **28 ok · 0 falhas** em `C` e em `pt_BR.UTF-8` — o
+  mesmo total de antes; o sensor, que usa o mesmo modelo, não mudou de comportamento.
 
 ## 2ª opinião (Codex)
 
