@@ -380,7 +380,7 @@ export function escolherResumo(linhas: string[]): string {
   return (ultimoOk ?? linhas[linhas.length - 1] ?? '').slice(0, 300);
 }
 
-export interface ResultadoAudit {
+interface ResultadoAudit {
   script: string;
   exit: number;
   resumo: string;
