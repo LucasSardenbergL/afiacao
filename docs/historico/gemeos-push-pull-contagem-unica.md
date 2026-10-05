@@ -6,9 +6,9 @@
 > Migration: `supabase/migrations/20261001100001_sales_orders_gemeo_importado_contagem_unica.sql` ·
 > Prova: `db/test-gemeos-push-pull-contagem-unica.sh` (núcleo do CI).
 >
-> **Estado: NÃO aplicada.** Ensaio na prod verde em 2026-10-01 (`db:aplicar --ensaio`, sha256
-> `4b2f9014…`, ROLLBACK). O apply vem depois do Codex adversarial no diff (cota em `SALDO_ALTO` até
-> 03/10 19:11); o PR fica em DRAFT até lá.
+> **Estado: NÃO aplicada.** Ensaio na prod verde em 2026-10-05 com a versão final, pós-Codex e
+> pós-revisão (`db:aplicar --ensaio`, sha256 `b7df9f5c…`, commit `b6f9ecbce`, ROLLBACK). O apply vem
+> logo depois do merge.
 
 ## O que se mediu (prod, `psql-ro`, 2026-09-30)
 
