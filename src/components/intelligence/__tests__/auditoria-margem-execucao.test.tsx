@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { ReactElement } from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider, onlineManager } from '@tanstack/react-query';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 // "Margem Global" (e Margem Real/Potencial/Gap) somavam as 100 linhas mais recentes de um log que
 // ACRESCENTA ~508 por execução — 5–7% da carteira auditada (medido em prod, 2026-10-05). O mock abaixo é
@@ -357,5 +359,26 @@ describe('IntelligenceStrategicTab — a última execução inteira', () => {
     for (const titulo of ['Margem Real', 'Margem Potencial', 'Gap de Margem', 'Clientes auditados', 'Margem Global']) {
       expect(cardDo(titulo), `${titulo} sem leitura`).toMatch(/—/);
     }
+  });
+});
+
+// ── acoplamento com o escritor ─────────────────────────────────────────────────────────────────────
+describe('acoplamento com o edge algorithm-a-audit', () => {
+  // O reconhecimento depende de DUAS coisas do escritor: o carimbo único (formato novo) e o tamanho do
+  // lote (reconstrução do formato antigo). Lido como TEXTO, sem comentários (a prosa não conta).
+  const fonte = readFileSync(resolve(__dirname, '../../../../supabase/functions/algorithm-a-audit/index.ts'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:])\/\/.*$/gm, '$1');
+
+  it('um carimbo por EXECUÇÃO: declarado uma vez, antes do laço por cliente, e gravado em toda linha', () => {
+    const declaracoes = fonte.match(/const calculadoEm = new Date\(\)\.toISOString\(\);/g) ?? [];
+    expect(declaracoes).toHaveLength(1);
+    expect(fonte.indexOf('const calculadoEm = ')).toBeLessThan(fonte.indexOf('for (const client of clients)'));
+    expect(fonte).toContain('calculated_at: calculadoEm,');
+  });
+
+  it(`o lote do insert é ${TAMANHO_LOTE_AUDITORIA} — o mesmo que a reconstrução do formato antigo assume`, () => {
+    expect(fonte).toContain(`i += ${TAMANHO_LOTE_AUDITORIA}`);
+    expect(fonte).toContain(`slice(i, i + ${TAMANHO_LOTE_AUDITORIA})`);
   });
 });

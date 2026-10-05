@@ -121,6 +121,8 @@ interface AuditRecord {
   margin_gap: number;
   gap_pct: number | null;
   top_gap_products: { product_id: string; gap: number }[];
+  /** O carimbo da EXECUÇÃO (igual em todas as linhas dela) — ver `calculadoEm`. */
+  calculated_at: string;
 }
 
 // Paginação: `fetchAll` de _shared/paginate.ts. O helper LOCAL que vivia aqui
@@ -294,6 +296,11 @@ Deno.serve(async (req) => {
     const periodStart = periodStartDate.toISOString().split('T')[0];
     const periodEnd = now.toISOString().split('T')[0];
 
+    // UM carimbo por EXECUÇÃO, gerado uma vez e reaproveitado em todas as linhas: a "Margem Global" da
+    // Inteligência reconhece a execução por IGUALDADE de `calculated_at` (e `calculated_at ≠ created_at`
+    // marca este formato). Sem ele, cada lote de 500 ganhava o seu `now()` e a aba precisava inferir a
+    // execução pelos lotes — `src/components/intelligence/auditoria-margem-execucao.ts`.
+    const calculadoEm = new Date().toISOString();
     const auditRecords: AuditRecord[] = [];
 
     for (const client of clients) {
@@ -316,6 +323,7 @@ Deno.serve(async (req) => {
         margin_gap: aud.margin_gap,
         gap_pct: aud.gap_pct,
         top_gap_products: aud.top_gap_products,
+        calculated_at: calculadoEm,
       });
     }
 
@@ -337,6 +345,7 @@ Deno.serve(async (req) => {
     return new Response(JSON.stringify({
       message: `Algorithm A processed ${auditRecords.length} clients`,
       records: auditRecords.length,
+      calculado_em: calculadoEm,
       totalClients: clients.length,
       clientsWithOrders: auditRecords.length,
     }), {
