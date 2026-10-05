@@ -1012,25 +1012,34 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
     ],
 
   },
-  // 2026-10-05: os 2 locales de cada sabotagem correm JUNTOS, e a medição se parte em dois blocos — o
-  // DISPARO (cópia e embrulho por locale, a suíte em fundo, o pid guardado) e o JUÍZO, que mede o exit
-  // pelo `wait` do pid DAQUELA rodada, colado no veredito; pid ausente ou não numérico é FALHA, preso
-  // aqui. docs/historico/falsificacao-fecho-em-paralelo.md
+  // 2026-10-05: os 2 locales de cada sabotagem correm JUNTOS. Disparo (cópia re-criada e conferida,
+  // embrulho por locale, a suíte em fundo, o pid guardado) e juízo (exit pelo `wait` do pid DAQUELA
+  // rodada, colado no veredito) são UM bloco, do `aplica` ao 1º veredito: em dois blocos, um
+  // `continue 2` entre eles pulava o juiz com `falhou=0` e o R4 aceitava (parecer Codex, 2026-10-05).
+  // Rodada não disparada ou sem pid é FALHA no próprio juízo. docs/historico/falsificacao-fecho-em-paralelo.md
   'scripts/test-fecho-edges-pendentes.sh': {
     motivo: MOTIVO_CAMADA4,
     mede: ['log', 'rc', 'emb_alvo', 'novas'],
     ancoras: [
       [
+        'aplica || continue',
+        'n=0',
+        'for loc in C "$utf8"; do',
+        'n=$((n + 1)); log="$logs/sabotada-$sab.$loc.log"; alvo_loc="$DIR_COPIA/sabotado.$loc.sh"',
+        `printf -v "pid_$n" '%s' ''`,
+        'rm -f "$alvo_loc" "$alvo_loc.embrulho.sh"',
+        `{ cp -p "$copia" "$alvo_loc" && cmp -s "$copia" "$alvo_loc"; } || { printf -v "pid_$n" '%s' -copia; continue; }`,
         ': > "$log.stderr"',
-        `emb_alvo="$(embrulha_alvo "$alvo_loc" "$log.stderr")" || { printf '…' "$loc" "$desc"; falhou=1; printf -v "pid_$n" '%s' -; continue; }`,
+        `emb_alvo="$(embrulha_alvo "$alvo_loc" "$log.stderr")" || { printf -v "pid_$n" '%s' -embrulho; continue; }`,
         '( export LC_ALL="$loc"; ALVO="$emb_alvo"; fail=0; suite; [ "$fail" -eq 0 ] ) > "$log.cru" 2>&1 &',
         `printf -v "pid_$n" '%s' "$!"`,
-      ],
-      [
+        'done',
+        'n=0',
+        'for loc in C "$utf8"; do',
         'n=$((n + 1)); ctl="$logs/controle.$loc.log"; log="$logs/sabotada-$sab.$loc.log"; alvo_loc="$DIR_COPIA/sabotado.$loc.sh"',
         'v="pid_$n"; pid="${!v-}"',
         'case "$pid" in',
-        '-) continue ;;',
+        '-*) printf \'…\' "$loc" "$desc" "${pid#-}"; falhou=1; continue ;;',
         `''|*[!0-9]*) printf '…' "$loc" "$desc"; falhou=1; continue ;;`,
         'esac',
         'wait "$pid"; rc=$?',

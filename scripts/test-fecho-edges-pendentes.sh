@@ -1477,14 +1477,20 @@ if [ "${1:-}" = "--falsificar" ]; then
     # para os dois locales é a cópia e o EMBRULHO que `embrulha_alvo` escreve ao lado dela — com um
     # embrulho só, o stderr de um locale cairia no arquivo do outro. Cada locale ganha os seus.
     # O juiz abaixo não muda: espera a rodada DELE (`wait`) e lê o exit dela, na ordem de sempre.
+    # Disparo e juízo são UM bloco contíguo, preso inteiro pelo R4: um `continue 2` entre os dois
+    # pularia o juiz com `falhou=0` e a falsificação aprovaria tudo (parecer Codex, 2026-10-05).
     # docs/historico/falsificacao-fecho-em-paralelo.md
     n=0
     for loc in C "$utf8"; do
       n=$((n + 1)); log="$logs/sabotada-$sab.$loc.log"; alvo_loc="$DIR_COPIA/sabotado.$loc.sh"
-      cp -p "$copia" "$alvo_loc"
+      printf -v "pid_$n" '%s' ''
+      # A cópia é RE-criada e conferida: um `cp` que falhasse deixando a da sabotagem ANTERIOR rodaria
+      # a mutação errada, e um assert compartilhado (o E12b de duas vizinhas) a aprovaria (Codex).
+      rm -f "$alvo_loc" "$alvo_loc.embrulho.sh"
+      { cp -p "$copia" "$alvo_loc" && cmp -s "$copia" "$alvo_loc"; } || { printf -v "pid_$n" '%s' -copia; continue; }
       # subshell de proposito: a sabotagem e o locale morrem com ela, e o ALVO global fica intacto
       : > "$log.stderr"
-      emb_alvo="$(embrulha_alvo "$alvo_loc" "$log.stderr")" || { printf '  FALHA [%s] "%s": nao consegui embrulhar a copia\n' "$loc" "$desc"; falhou=1; printf -v "pid_$n" '%s' -; continue; }
+      emb_alvo="$(embrulha_alvo "$alvo_loc" "$log.stderr")" || { printf -v "pid_$n" '%s' -embrulho; continue; }
       # shellcheck disable=SC2030,SC2031
       ( export LC_ALL="$loc"; ALVO="$emb_alvo"; fail=0; suite; [ "$fail" -eq 0 ] ) > "$log.cru" 2>&1 &
       printf -v "pid_$n" '%s' "$!"
@@ -1494,7 +1500,7 @@ if [ "${1:-}" = "--falsificar" ]; then
       n=$((n + 1)); ctl="$logs/controle.$loc.log"; log="$logs/sabotada-$sab.$loc.log"; alvo_loc="$DIR_COPIA/sabotado.$loc.sh"
       v="pid_$n"; pid="${!v-}"
       case "$pid" in
-        -) continue ;;
+        -*) printf '  \033[31mFALHA\033[0m [%s] "%s": rodada NAO disparada (%s) — nada foi medido\n' "$loc" "$desc" "${pid#-}"; falhou=1; continue ;;
         ''|*[!0-9]*) printf '  \033[31mFALHA\033[0m [%s] "%s": rodada SEM pid — ausente nao e zero\n' "$loc" "$desc"; falhou=1; continue ;;
       esac
       wait "$pid"; rc=$?
