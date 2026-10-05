@@ -242,6 +242,19 @@ function blocoDeEscopo(): string {
 }
 
 /**
+ * O que a SESSÃO faz depois de colar — a metade por fora do `blocoDeEscopo`. Fica FORA da colagem (é
+ * para quem cola, não para o agente) e sai dos DOIS emissores: o Passo 2 do `pendencias:pacote` e o
+ * stderr do `pendencias:prompt`. Até 2026-10-05 só o pacote a imprimia, e quem colava pelo emissor de
+ * "qualquer edge pelo nome" ouvia só "Depois: sonda:sql" — os commits do bot na `main` ficavam sem
+ * conferência nesse caminho.
+ */
+export const INSTRUCAO_POS_ENVIO =
+  'Anote o instante (UTC) ANTES de enviar. Salve a resposta do agente em arquivo e, ≥5 min depois do envio, rode ' +
+  '`bun scripts/lovable-sensor-edicao.ts --desde <ISO do envio> <arquivo>` — ele lê `edit_id`/`commit_sha` ' +
+  'na resposta e os commits `gpt-engineer-app` na `origin/main`. **Exit 1 = o agente editou**: reverta por PR ' +
+  'antes de seguir. Exit 3/4/5 não são "sem edição" (sem confirmação / cedo demais / resposta vazia).';
+
+/**
  * Monta a colagem. UMA por LEVA, nunca uma por edge — o cabeçalho declara o total e proíbe pular,
  * cada edge é uma seção numerada com a SUA fatia (cada arquivo com o sha256 esperado), e o fecho
  * pede confirmação item a item (que é o relato que a sessão compara com a sonda depois).
