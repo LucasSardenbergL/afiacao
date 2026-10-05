@@ -17,6 +17,8 @@ import {
 } from "../_shared/omie-paginacao.ts";
 import { cabeEspera, timeoutRequestMs } from "../_shared/omie-deadline.ts";
 import { hojeSP, paraDataOmie, somarDias } from "../_shared/hoje-sp.ts";
+import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
+import { criarColetorObservacao, type LinhaObservada, observacaoBateComPendente } from "./observacao-po.ts";
 
 const corsHeaders = {
   ...sharedCors,
@@ -189,6 +191,20 @@ const PEDIDOS_JANELA_PASSADO_DIAS = 365; // previsão atrasada: PO aberto não-r
 const PEDIDOS_JANELA_FUTURO_DIAS = 120;  // previsão à frente: pedido em trânsito dentro do lead time
 const ETAPAS_APROVADO_ABERTO = new Set<string>(["15"]); // OBEN: 15=Aprovado (confirmado 2026-06-11)
 const ETAPAS_CONHECIDAS = new Set<string>(["15", "10"]); // 10=Em Aprovação; loga qualquer outra p/ pegar surpresa
+// Filtros de situação do PesquisarPedCompra do "a caminho": inclui todos os estados potencialmente ABERTOS e
+// exclui o que claramente fechou (o filtro fino de aprovado/saldo é em memória, robusto à incerteza do nome do
+// flag). UMA constante para a chamada e para reposicao_po_observado_run.filtros — quem lê o conjunto observado
+// precisa saber exatamente o que ele exclui (spec 2026-09-26 §15 item 2).
+const FILTROS_PENDENTE = {
+  lApenasImportadoApi: "F",
+  lExibirPedidosPendentes: "T",
+  lExibirPedidosFaturados: "T",
+  lExibirPedidosRecParciais: "T",
+  lExibirPedidosFatParciais: "T",
+  lExibirPedidosRecebidos: "F",
+  lExibirPedidosCancelados: "F",
+  lExibirPedidosEncerrados: "F",
+} as const;
 
 interface OmiePedItem { nCodProd?: number | string; nQtde?: number; nQtdeRec?: number; [k: string]: unknown; }
 interface OmiePedCab { nCodPed?: number | string; cNumero?: string; cCodIntPed?: string; cEtapa?: string; [k: string]: unknown; }
@@ -256,19 +272,10 @@ async function callOmiePedidos(
         call: "PesquisarPedCompra",
         app_key: appKey,
         app_secret: appSecret,
-        // Inclui todos os estados potencialmente ABERTOS; exclui o que claramente fechou.
-        // (o filtro fino de aprovado/saldo é em memória, robusto à incerteza do nome do flag).
         param: [{
           nPagina: pagina,
           nRegsPorPagina: 100, // MÁXIMO do PesquisarPedCompra — o Omie rejeita >100 (HTTP 500 "valor máximo de registros por página é [100]"); 100 > 50 da edge antiga → ainda corta as páginas pela metade
-          lApenasImportadoApi: "F",
-          lExibirPedidosPendentes: "T",
-          lExibirPedidosFaturados: "T",
-          lExibirPedidosRecParciais: "T",
-          lExibirPedidosFatParciais: "T",
-          lExibirPedidosRecebidos: "F",
-          lExibirPedidosCancelados: "F",
-          lExibirPedidosEncerrados: "F",
+          ...FILTROS_PENDENTE,
           dDataInicial: dataDe,
           dDataFinal: dataAte,
         }],
@@ -355,7 +362,10 @@ async function computePendenteViaPedidosCompra(
   habilitadoMap: Map<string, string | null>,
   supabase: SupabaseClient,
   deadline: number,
-): Promise<{ pendente: Map<string, number>; confiavel: boolean; problemas: string[] }> {
+): Promise<{
+  pendente: Map<string, number>; confiavel: boolean; problemas: string[];
+  observados: LinhaObservada[]; janelaDe: string; janelaAte: string; varreduraCompleta: boolean;
+}> {
   const { numeros: emTransitoNumeros, codInts: emTransitoCodInts } = await fetchEmTransitoKeys(supabase);
 
   // A janela parte do dia de SP (o servidor é UTC: das 21h BRT em diante `new Date()` já é amanhã).
@@ -374,6 +384,9 @@ async function computePendenteViaPedidosCompra(
   const posComoManual = new Set<string>(); // POs contadas como manual (pendente Omie) — de-dup + detectar divergência app↔manual
   const problemas: string[] = [];          // [Codex P1] fail-closed: dado torto → NÃO grava pendente (preserva anterior)
   let pedidosVistos = 0, pedidosApp = 0, paginasLidas = 0, fim = false;
+  // Observação do conjunto que o motor contou (PR0 da baixa de PO): anotada nos MESMOS pontos de decisão abaixo,
+  // sem mudar o que conta. 1 registro por PO (coletor) — a reaparição colidiria na PK. O handler publica.
+  const coletor = criarColetorObservacao((sku) => habilitadoMap.has(sku), { parseQtd, parseRecebido });
 
   for (let pagina = 1; pagina <= MAX_PAGINAS_PED; pagina++) {
     const resp = await callOmiePedidos(appKey, appSecret, pagina, dataDe, dataAte, deadline);
@@ -406,6 +419,8 @@ async function computePendenteViaPedidosCompra(
       if (nCodPed) aliases.push(`id:${nCodPed}`);
       if (cNumero) aliases.push(`num:${cNumero}`);
       if (cCodIntPed) aliases.push(`cod:${cCodIntPed}`);
+      const cabObs = { nCodPed: Number(nCodPed), cNumero: cNumero || null, cEtapa: etapa || null };
+      const itensObs = ped?.produtos_consulta ?? [];
       // De-dup vs em_transito: PO do app já é contada pelo em_transito da RPC → NÃO entra no pendente Omie. Pula CEDO
       // (não exige nCodPed: uma PO app não pode congelar o snapshot — [Codex P2 round3]). Registra TODAS as aliases
       // como app; se a MESMA PO já foi contada como manual (qualquer alias) → app+manual = double-count → fail-closed.
@@ -415,11 +430,15 @@ async function computePendenteViaPedidosCompra(
           problemas.push(`PO app↔manual divergente entre páginas (${aliases.join(",")}) — double-count`);
         }
         for (const a of aliases) posComoApp.add(a);
+        coletor.registrar(cabObs, itensObs, "dedup_app");
         continue;
       }
       // Só etapa APROVADA-ABERTA (15) contribui pro pendente. Em-aprovação (10)/desconhecida não conta → ignora
       // sem exigir nCodPed nem de-dup (uma PO irrelevante não pode congelar o snapshot — [Codex P2 round3]).
-      if (!ETAPAS_APROVADO_ABERTO.has(etapa)) continue;
+      if (!ETAPAS_APROVADO_ABERTO.has(etapa)) {
+        coletor.registrar(cabObs, itensObs, "etapa_nao_aberta");
+        continue;
+      }
       // [Codex P1.a] PO MANUAL etapa-aprovada que CONTA → exige nCodPed canônico (sempre presente → chave comum entre
       // páginas garantida p/ o de-dup manual-manual). Sem ele a MESMA PO somaria 2× → overcount → ruptura. Fail-closed.
       if (!nCodPed) {
@@ -432,7 +451,10 @@ async function computePendenteViaPedidosCompra(
         continue;
       }
       // de-dup manual-manual: MESMA PO já contada (qualquer alias) reaparecendo (shift de paginação) → não soma 2×.
-      if (aliases.some((a) => posComoManual.has(a))) continue;
+      if (aliases.some((a) => posComoManual.has(a))) {
+        coletor.registrar(cabObs, itensObs, "repetido_na_varredura");
+        continue;
+      }
       for (const a of aliases) posComoManual.add(a);
       // [Codex P1-novo] fail-closed contra resposta truncada no NÍVEL DO ITEM (espelho do helper coletarDaPagina):
       // item sem nCodProd COM saldo>0/qtde inválida, ou PO aprovada SEM nenhum item com SKU = resposta anômala →
@@ -460,6 +482,7 @@ async function computePendenteViaPedidosCompra(
       if (itensComSku === 0) {
         problemas.push(`PO aprovada sem item com SKU (po=${cNumero || nCodPed} etapa=${etapa})`);
       }
+      coletor.registrar(cabObs, itensObs, null);
     }
     await new Promise((r) => setTimeout(r, 1100));   // rate-limit Omie entre páginas
   }
@@ -479,7 +502,11 @@ async function computePendenteViaPedidosCompra(
     (problemas.length ? ` ⚠️ ${problemas.length} problema(s) → pendente PRESERVADO: ${problemas.slice(0, 3).join(" | ")}` : "") +
     (etapasInesperadas.size ? ` ⚠️ etapas fora de {15,10}: ${[...etapasInesperadas].join(",")}` : ""),
   );
-  return { pendente, confiavel, problemas };
+  return {
+    pendente, confiavel, problemas,
+    observados: coletor.linhas, janelaDe: inicioJanela, janelaAte: fimJanela,
+    varreduraCompleta: fim && problemas.length === 0,
+  };
 }
 
 // ===== Marcadores do Sentinela (sync_state) — writer que faltava ao check estoque_reposicao =====
@@ -735,11 +762,14 @@ Deno.serve(async (req) => {
     let pendenteEntrada = new Map<string, number>();
     let pendenteConfiavel = true; // COLACOR (ListarSaldoPendente) sempre aplica; OBEN é gated pela confiabilidade
     let pendenteProblemas: string[] = [];
+    // Só o ramo OBEN observa o conjunto aberto (o COLACOR lê o ListarSaldoPendente, que não tem PO).
+    let observacaoPo: { observados: LinhaObservada[]; janelaDe: string; janelaAte: string; varreduraCompleta: boolean } | null = null;
     if (empresa === "OBEN") {
       const r = await computePendenteViaPedidosCompra(appKey, appSecret, habilitadoMap, supabase, deadline);
       pendenteEntrada = r.pendente;
       pendenteConfiavel = r.confiavel;
       pendenteProblemas = r.problemas;
+      observacaoPo = r;
     } else {
       try {
         pendenteEntrada = await computePendenteViaSaldoPendente(appKey, appSecret, habilitadoMap, deadline);
@@ -812,6 +842,46 @@ Deno.serve(async (req) => {
     // 'complete' lá embaixo mentiria frescor pro Sentinela com nada escrito).
     if (upsertRows.length > 0 && sincronizados === 0) {
       throw new Error(`todos os ${upsertRows.length} upserts de sku_estoque_atual falharam — nada escrito`);
+    }
+
+    // 4.b) Observação do conjunto aberto (PR0 da baixa de PO) — DEPOIS do upsert do pendente e NUNCA fatal: sem a
+    // RPC, ou com a observação divergindo do pendente calculado, a evidência fica indisponível neste run e o sync
+    // segue igual. Só publica o que bate com o que o motor contou (senão mediria outra coisa); ausência de um PO
+    // aqui nunca vira "fechado" — quem lê decide, e só dentro da janela de um run com varredura_completa.
+    let observacaoPublicada = false;
+    let observacaoMotivo: string | null = null;
+    if (observacaoPo) {
+      if (!pendenteConfiavel) {
+        observacaoMotivo = "pendente_nao_confiavel";
+      } else if (!observacaoBateComPendente(observacaoPo.observados, pendenteEntrada)) {
+        observacaoMotivo = "observacao_diverge_do_pendente";
+        console.error(`[omie-sync-estoque] observação do conjunto aberto NÃO bate com o pendente — não publicada`);
+      } else {
+        try {
+          const { error } = await supabase.rpc("reposicao_po_observado_publicar", {
+            p_run: {
+              run_id: crypto.randomUUID(),
+              empresa,
+              iniciado_em: startedAt.toISOString(),
+              concluido_em: new Date().toISOString(),
+              janela_de: observacaoPo.janelaDe,
+              janela_ate: observacaoPo.janelaAte,
+              filtros: FILTROS_PENDENTE,
+              varredura_completa: observacaoPo.varreduraCompleta,
+              // aplicado = o pendente que a observação reconcilia foi gravado em TODO SKU (upsert sem erro)
+              pendente_aplicado: pendenteConfiavel && errosUpsert.length === 0,
+              pedidos_lidos: new Set(observacaoPo.observados.map((o) => o.omie_codigo_pedido)).size,
+              versao_edge: VERSAO,
+            },
+            p_itens: observacaoPo.observados,
+          });
+          if (error) observacaoMotivo = `rpc: ${mensagemDeErro(error) ?? "sem mensagem"}`;
+          else observacaoPublicada = true;
+        } catch (err) {
+          observacaoMotivo = mensagemDeErro(err) ?? "falha sem mensagem";
+        }
+        if (!observacaoPublicada) console.error(`[omie-sync-estoque] observação não publicada: ${observacaoMotivo}`);
+      }
     }
 
     // 5) SKUs habilitados que não apareceram → marca inativo + alerta
@@ -940,6 +1010,8 @@ Deno.serve(async (req) => {
       alertas_novos: alertasNovos,
       pendente_confiavel: pendenteConfiavel,
       pendente_problemas: pendenteProblemas.length,
+      observacao_publicada: observacaoPublicada,
+      observacao_motivo: observacaoMotivo,
       paginas_omie: totalPaginas,
       total_produtos_omie: totalRegistros,
       registros_lidos: registrosLidos,

@@ -35,7 +35,14 @@ export const respostaSonda = criarRespostaSonda("omie-sync-estoque");
  * em_transito de `gerar_pedidos_sugeridos_ciclo` (migration 20260925225004). As duas listas são UMA
  * fonte: status que a RPC conta e este sync não exclui do pendente vira dupla contagem.
  */
-export const VERSAO = "v1.3-datas-dia-sp";
+/**
+ * BUMP v1.4 (PR0 da baixa de PO, spec 2026-09-26 §15 item 2): a varredura do "a caminho" ANOTA o conjunto
+ * aberto que o motor contou (coletor de `observacao-po.ts`, 1 registro por PO) e o handler o publica em
+ * `reposicao_po_observado_run/_item` (RPC `reposicao_po_observado_publicar`, migration 20261005131331) —
+ * DEPOIS do upsert do pendente, só se a soma das contribuições bater com o pendente calculado, e nunca fatal.
+ * O cálculo do pendente não muda; a resposta ganha `observacao_publicada`/`observacao_motivo`.
+ */
+export const VERSAO = "v1.4-observa-conjunto-aberto";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
