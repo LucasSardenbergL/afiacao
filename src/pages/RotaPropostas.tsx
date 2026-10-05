@@ -9,6 +9,8 @@ import type { RouteContactItem } from '@/queries/useRouteContactList';
 import { usePropostaPreview } from '@/queries/usePropostaPreview';
 import type { PropostaPreview } from '@/queries/usePropostaPreview';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
+import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
+import { estadoDeLeitura, naoConsegui } from '@/lib/leitura/estado-de-leitura';
 import { EmptyState } from '@/components/EmptyState';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -206,7 +208,9 @@ function PainelRevisao({ rev, onEnviar, enviando, jaEnviada }: {
 
 function PropostaRow({ cliente, prazo }: { cliente: RouteContactItem; prazo: PrazoEntrega }) {
   const [aberto, setAberto] = useState(false);
-  const { data, isLoading } = usePropostaPreview(cliente.customerUserId, { enabled: aberto });
+  const { data, isLoading, status, fetchStatus, refetch } = usePropostaPreview(cliente.customerUserId, { enabled: aberto });
+  // Falha (ou sem rede) não pode deixar o card aberto e em BRANCO — indistinguível de "nada a propor".
+  const estadoPreview = estadoDeLeitura({ status, fetchStatus });
   const { user } = useAuth();
   const { isImpersonating } = useImpersonation();
   const [rev, setRev] = useState<Revisao | null>(null);
@@ -286,6 +290,12 @@ function PropostaRow({ cliente, prazo }: { cliente: RouteContactItem; prazo: Pra
       {aberto && (
         <div className="mt-3 border-t pt-3">
           {isLoading && <div className="text-xs text-muted-foreground">Gerando proposta…</div>}
+          {naoConsegui(estadoPreview) && (
+            <div>
+              <AvisoLeituraFalhou oque="o histórico de compras deste cliente — nenhuma proposta foi montada" estado={estadoPreview} />
+              <Button variant="outline" size="sm" onClick={() => refetch()}>Tentar de novo</Button>
+            </div>
+          )}
           {!isLoading && data && (
             data.proposta.vazia ? (
               <div className="text-xs text-muted-foreground">

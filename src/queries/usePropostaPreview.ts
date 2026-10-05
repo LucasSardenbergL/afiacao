@@ -13,8 +13,6 @@ import { assembleLinesEContexto, buildCrossSellCandidatos } from '@/lib/whatsapp
 import { hojeSP } from '@/lib/time/sp-day';
 import type { PreviewOrder, PreviewItem, PreviewRec, PreviewProdById } from '@/lib/whatsapp/proposta-preview-core';
 
-// Status do Omie que NUNCA contam como compra válida. Permissivo no PREVIEW — a whitelist EXATA é
-// decisão do founder no lançamento (surfaçamos os status vistos pra ele definir).
 /**
  * A régua em memória do core (`assembleLinesEContexto` compara em caixa alta) DERIVADA da autoridade —
  * não uma cópia. A que morava aqui (`STATUS_CANCELAMENTO`: sinônimos de cancelado em caixa alta) só
@@ -109,11 +107,14 @@ export function usePropostaPreview(customerUserId: string | undefined, opts?: { 
       const nomesPorSku: Record<number, string> = {};
       const ativos = new Set<number>();
       if (skus.length > 0) {
-        const { data: prodData } = await supabase
+        const { data: prodData, error: prodErr } = await supabase
           .from('omie_products')
           .select('omie_codigo_produto, descricao, ativo')
           .eq('account', account)
           .in('omie_codigo_produto', skus);
+        // Falha aqui NÃO é "todo SKU inativo": sem o lance, `ativos` vazio tirava a cesta inteira e a
+        // tela dizia "só SKUs inativos" — causa fabricada, e o vendedor pulava o cliente.
+        if (prodErr) throw prodErr;
         for (const p of (prodData ?? []) as ProdRow[]) {
           nomesPorSku[p.omie_codigo_produto] = p.descricao;
           if (p.ativo) ativos.add(p.omie_codigo_produto);
@@ -121,11 +122,12 @@ export function usePropostaPreview(customerUserId: string | undefined, opts?: { 
       }
       const { cesta: cestaFiltrada, removidos } = filtrarCestaPorAtivos(cesta, ativos);
 
-      // 4b) cross-sell ("experimente também") — só com cesta-base; degrada honesto (vazio sem rec)
+      // 4b) cross-sell ("experimente também") — só com cesta-base; vazio quando não há rec, mas a FALHA
+      //     de leitura lança (a proposta não sai com a seção omitida em silêncio)
       let crossSell: CrossSellCand[] = [];
       if (cestaFiltrada.principal.length > 0) {
         const cestaSkus = new Set([...cestaFiltrada.principal, ...cestaFiltrada.secundarios].map(i => i.omie_codigo_produto));
-        const { data: recData } = await supabase
+        const { data: recData, error: recErr } = await supabase
           .from('farmer_recommendations')
           .select('product_id, affinity_score, status, recommendation_type')
           .eq('customer_user_id', customerUserId!)
@@ -141,22 +143,26 @@ export function usePropostaPreview(customerUserId: string | undefined, opts?: { 
           // ⚠️ O `.eq()` NÃO projeta a coluna — ela precisa estar no `.select()` acima, senão o
           // helper recebe `undefined` e a seção vai a ZERO. Os dois andam juntos.
           .eq('recommendation_type', 'cross_sell');
+        if (recErr) throw recErr;
         const recs = (recData ?? []) as PreviewRec[];
         const recIds = [...new Set(recs.map(r => r.product_id).filter((x): x is string => !!x))];
         if (recIds.length > 0) {
-          const { data: prodById } = await supabase
+          const { data: prodById, error: prodByIdErr } = await supabase
             .from('omie_products')
             .select('id, omie_codigo_produto, descricao, ativo')
             .eq('account', account)
             .in('id', recIds);
+          if (prodByIdErr) throw prodByIdErr;
           const candidatos = buildCrossSellCandidatos(recs, (prodById ?? []) as PreviewProdById[]);
           crossSell = selecionarCrossSell(cestaSkus, candidatos, MAX_CROSS_SELL);
         }
       }
 
       // 5) nome + documento do cliente + formata
-      const { data: prof } = await supabase
+      const { data: prof, error: profErr } = await supabase
         .from('profiles').select('name, razao_social, cnpj, document').eq('user_id', customerUserId!).maybeSingle();
+      // nome e documento vão no ENVIO (`documento` do payload): falha não pode virar "cliente sem documento"
+      if (profErr) throw profErr;
       const p = (prof ?? null) as ProfileRow | null;
       const nomeCliente = p?.razao_social || p?.name || null;
       const documentoCliente = p?.cnpj || p?.document || null;

@@ -665,6 +665,7 @@ export const MODULOS: ModuloApp[] = [
       "src/hooks/__tests__/useTranscription.test.tsx",
       "src/hooks/__tests__/useWebRTCCall.test.tsx",
       "src/pages/__tests__/RotaPainelLigacoes.erro-honesto.test.tsx",
+      "src/pages/__tests__/RotaPropostas.erro-honesto.test.tsx",
       "src/pages/__tests__/Telefonia.test.tsx",
       "src/utils/__tests__/whatsappShare.test.ts",
     ],
