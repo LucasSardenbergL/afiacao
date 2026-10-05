@@ -105,8 +105,33 @@ individual na RPC `criar_pedidos_com_itens`), e os três casos só viram **conta
 - **Desenho:** exit 79 (`SALDO_ALTO`, 86% da cota semanal, janela reabre em 03/10 19:11). Foi pelo
   Caminho B, com a seção `RÉGUA:` escrita e conferida por mim (no prompt preservado do consult).
 - **Adversarial de código:** o founder mergeou o #2698 sem ele em 2026-10-01 07:21Z (Caminho B, `sem-codex`
-  no corpo do PR). Ele roda RETROATIVO sobre o código mergeado quando a janela reabrir (03/10 19:11), e
-  achado vira PR novo.
+  no corpo do PR). Ele rodou RETROATIVO em 2026-10-05, porque o agendamento de 03/10 era da sessão e se perdeu.
+  - Execução: `-r max` sobre a main `72e2cecf5`, `gpt-6-astra`, 805 s, 230.551 tokens, rollout `01a10c0e`,
+    cota de 19% para 26%.
+  - O que o prompt levava: o delta real do trio por md5, a prova executada (44 asserts + 18/18 sabotagens
+    em SP e em `TZ=UTC`), os fatos de schema da prod e o reparo #2717 com o porquê.
+  - Antes de disparar, a main tinha mudado o ESCRITOR da previsão (#2736), e o prompt foi corrigido com o
+    fato (lição 9).
+  - O Codex trouxe 8 achados. A calibração, separada do parecer, EXECUTOU cada contraexemplo: no PG17, com
+    a cadeia real e o corpo vivo do wrapper, ou na prod, pelo psql-ro.
+
+  | # | Achado | Veredito | Destino |
+  |---|---|---|---|
+  | C1 | `get_data_health()` (SECURITY DEFINER, EXECUTE para authenticated) entrega a message a qualquer sessão logada, cliente inclusive | confirmado por execução: o corpo vivo devolve `colacor: 1 (R$ 314,40…)` a um logado sem papel | gate de staff no wrapper (v2) |
+  | C2 | o "Faturamento 12m" do Customer 360 soma qualquer status e conta os gêmeos 2× | confirmado por execução (prod): um cancelado de R$ 615.100.434,63 infla um cliente; 31 não-vendas de 20 clientes; 25 gêmeos 2×. ANTERIOR ao #2717 | chip "Corrigir Faturamento 12m do Customer 360" (o único da sessão) |
+  | C3 | a previsão no dia de SP (edge v1.10, #2736) põe a âncora até 3 h ANTES do envio noturno | confirmado por execução: alerta com 5 h e com 4 h reais; a era v1.9 dá correto | âncora = último instante do dia de SP (v2) |
+  | C4 | a importada editada pelo app (payload + hash canônico) vira "linha do app" e deixa de ser gêmeo | confirmado por execução: ok→stale, 2 órfãs com a linha do app. Prod: 10.534 importadas editáveis, 0 editadas | proveniência pelo hash (v2) |
+  | C5 | o `FOR UPDATE` do reparo não trava a AUSÊNCIA do gêmeo | mecanismo confirmado com o arquivo real (fica `cancelado` com gêmeo presente). Ocorrência REFUTADA: em 05/10 o 12070343474 segue sem gêmeo | lição 10 (reparo one-shot, já aplicado) |
+  | C6 | uma órfã que substitui outra de mesma conta, valor e dia não muda o fingerprint | confirmado por execução: message e fp iguais, órfã diferente | `ref` do conjunto na message (v2) |
+  | C7 | a POS não confere authenticated no compute; o REVOKE não sobrevive a um DROP+CREATE | confirmado por execução: re-apply com GRANT passa; o DROP+CREATE reabre | REVOKE nomeado e POS completa (v2). O comentário da 20261001011500 que prometia o contrário fica corrigido AQUI, porque migration aplicada não se edita |
+  | C8 | "até 6 dias o incremental ainda alcança" é falso: a janela é por dia de calendário | confirmado por execução (`5 days 00:15:00 \| f \| f`) | texto corrigido na v2; o limiar (decisão do founder) fica |
+
+- **A v2:** `20261005150000_data_health_vendas_empurradas_v2.sql` recria o compute e o wrapper a partir da
+  PROD: compute `79362363…`, wrapper `17adb51b…`. O corpo vivo do wrapper não está em migration nenhuma do
+  repo; está em `db/fixtures/get-data-health-predecessora-prod-20261005.sql`.
+  - Na prod, o resultado de HOJE não muda: 26/26 linhas com payload têm hash nulo, 31.688/31.688 importadas
+    têm hash canônico, e há 0 envios desde a v1.10.
+  - Prova: 50 asserts, 24 sabotagens.
 
 ## O desfecho (2026-10-01)
 
@@ -189,6 +214,10 @@ aberto há semanas = o alerta virou ruído.
    arquivo.** A baseline valia para a definição antiga; a nova é "migration nova" e reprova inteira. Antes
    de copiar um corpo para uma migration nova, rode os gates de fuso pela CLI
    (`bun scripts/relogio-nu-da-sessao-gate.ts`) e escreva o fuso nos sítios herdados.
+   Exceção: o `fuso-da-sessao-gate.ts` é o único dos 19 `scripts/*-gate.ts` SEM CLI. Ele é biblioteca, e
+   `bun scripts/fuso-da-sessao-gate.ts` sai 0 com 0 bytes, sem medir nada. Esse exit 0 é ausência de dado,
+   não aprovação. A prova dele é o vitest:
+   `heavy bunx vitest run scripts/fuso-da-sessao-gate.test.ts scripts/relogio-nu-da-sessao-gate.test.ts`.
 6. **O motivo escrito numa baseline é hipótese até alguém medir o ESCRITOR.** "UTC contra UTC" estava
    documentado nas duas baselines de fuso e era falso em 645 de 646 linhas. Antes de herdar o veredito de uma
    baseline num conserto, meça quem grava o dado.
@@ -202,3 +231,26 @@ aberto há semanas = o alerta virou ruído.
    o founder aplicou pelo SQL Editor antes do reparo, e o sensor nasceu vermelho e com e-mail. Combine QUEM
    aplica e re-meça o md5 vivo imediatamente antes de aplicar. Quando a ordem importa, a PRE da migration pode
    exigir a pré-condição (aqui, "0 órfãs") e recusar o apply cedo demais em qualquer caminho.
+9. **"Sincronize antes de medir" vale também para o ESCRITOR do dado que o sensor lê.**
+   - O que aconteceu: o #2736 mudou a data que a edge grava (UTC → SP) um dia depois do #2698, sem tocar
+     arquivo nenhum do sensor. Em 03/10, o meu filtro de "domínio" (só os arquivos do sensor) não o viu, e eu
+     li a edge no worktree parado na base, não na `origin/main`.
+   - O efeito: o sensor ficou com uma premissa falsa ("a edge grava a data UTC") e com alerta latente com
+     ~3 h (C3).
+   - A regra: o filtro de domínio inclui os escritores das colunas lidas (aqui, `omie-vendas-sync`:
+     `criarPedidoVenda` e `alterar_pedido`), e a premissa vira teste. O A45 e o A46 semeiam as duas eras do
+     escritor.
+10. **`FOR UPDATE` trava a LINHA que existe, não a AUSÊNCIA de outra.**
+   - O que aconteceu: a PRE do reparo #2717 conferia "gêmeo ausente" com `FOR UPDATE` na linha do app, e o
+     comentário dizia "serializa contra o importador". Falso: o importador INSERE outra linha, e nada a
+     bloqueia. Executado: termina `cancelado` com o gêmeo presente.
+   - A regra, para travar uma ausência, é uma destas: um advisory lock que o escritor também tome (o #2730
+     criou `sales_orders.gemeo:<account>:<id>`), `LOCK TABLE` com timeout curto, ou o predicado num índice
+     único que faça o INSERT concorrente esperar.
+11. **Num wrapper SECURITY DEFINER, o gate de quem vê o retorno tem de estar no próprio wrapper.**
+   - O que aconteceu: o REVOKE no compute não protegia nada, porque o `get_data_health()` (EXECUTE para
+     authenticated) entregava a message a qualquer sessão logada.
+   - O que mudou: quando o ramo novo pôs conta e valor na message, a exposição mudou sem que nenhum ACL
+     mudasse.
+   - A regra: ao enriquecer o que um wrapper devolve, re-julgue QUEM o chama. Aqui o gate de papel entrou no
+     servidor; o filtro do front (`useDataHealth`) era só UI.
