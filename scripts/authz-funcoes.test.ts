@@ -1,6 +1,7 @@
 import { describe, it, expect, onTestFailed } from 'vitest';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { cederAoLoop, contarPulsos, descreverPulsos } from '@/test/loop-livre';
 import { AUTHZ_FUNCOES_FECHADAS, type FuncaoFechada } from './authz-funcoes-fechadas';
 import { AUTHZ_MANIFEST, ACKNOWLEDGED_SENSITIVE, ACL_ONLY_INTERNAL } from './authz-manifest';
 import {
@@ -673,7 +674,11 @@ describe('auditGrantsFuncoes — contra o repo REAL', () => {
   // O repo TEM 5 DROP+CREATE de função do contrato (medido 2026-08-15) e as 5 restauram o fecho.
   // Sem este teste, o verde acima seria indistinguível de "o detector não olhou nada". Estas 4 são
   // as que recriam DENTRO da própria migration-âncora — a forma que motivou a âncora inclusiva.
-  it('o detector ENXERGA os DROP+CREATE que moram na âncora (não está inerte)', () => {
+  // Uma varredura do repo por função sabotada, CEDENDO o loop entre elas: as 4 seguidas, sem
+  // cessão, eram UM bloqueio síncrono — 13,6s sob carga em 2026-10-05, o 2º maior da suíte —, e sob
+  // thrashing ele passa dos 60s do RPC do vitest: `test` rc=1 sem teste falhando
+  // (src/test/loop-livre.ts). O pulso prova a cessão no laço REAL: reverter a síncrono bate zero.
+  it('o detector ENXERGA os DROP+CREATE que moram na âncora (não está inerte)', async () => {
     armarDiagnosticoDeVarredura();
     const alvo = [
       'public.get_ultimos_precos_cliente',
@@ -681,12 +686,16 @@ describe('auditGrantsFuncoes — contra o repo REAL', () => {
       'public.tint_calc_preco_final',
       'public.tint_recalc_preco_oficial',
     ];
-    for (const fn of alvo) {
-      const r = auditGrantsFuncoes(semRevokeNaMigrationDoDrop(fn), AUTHZ_FUNCOES_FECHADAS).filter(
-        (f) => f.codigo === 'FUNCAO_RECRIADA_SEM_FECHO' && f.funcao === fn,
-      );
-      expect(r.length, fn).toBeGreaterThan(0);
-    }
+    const p = await contarPulsos(async () => {
+      for (const fn of alvo) {
+        const r = auditGrantsFuncoes(semRevokeNaMigrationDoDrop(fn), AUTHZ_FUNCOES_FECHADAS).filter(
+          (f) => f.codigo === 'FUNCAO_RECRIADA_SEM_FECHO' && f.funcao === fn,
+        );
+        expect(r.length, fn).toBeGreaterThan(0);
+        await cederAoLoop();
+      }
+    });
+    expect(p.batidas, descreverPulsos(p)).toBeGreaterThanOrEqual(alvo.length - 1);
   }, ORCAMENTO_VARREDURA_MS);
 
   /** Reescreve o `DROP FUNCTION <fn>(args)` REAL para a grafia SEM parêntese, e tira o REVOKE da
@@ -708,7 +717,8 @@ describe('auditGrantsFuncoes — contra o repo REAL', () => {
 
   // Anti-inércia da grafia NOVA, contra o repo REAL — não contra fixture. Sem isto, os casos
   // sintéticos acima seriam compatíveis com "o detector novo nunca roda no pipeline de verdade".
-  it('a grafia SEM parêntese é enxergada no repo REAL (não só em fixture)', () => {
+  // Cede o loop entre as varreduras pelo mesmo motivo do `it` "ENXERGA" acima (9,9s sob carga).
+  it('a grafia SEM parêntese é enxergada no repo REAL (não só em fixture)', async () => {
     armarDiagnosticoDeVarredura();
     const alvo = [
       'public.get_ultimos_precos_cliente',
@@ -716,23 +726,27 @@ describe('auditGrantsFuncoes — contra o repo REAL', () => {
       'public.tint_calc_preco_final',
       'public.tint_recalc_preco_oficial',
     ];
-    for (const fn of alvo) {
-      const mutadas = semParenteseNoDropReal(fn);
-      // SENTINELA: a reescrita tem de ter MUDADO alguma migration. Regex que não casa devolveria o
-      // repo intacto — zero achados — e o `toBeGreaterThan(0)` abaixo falharia por motivo errado,
-      // ou pior, um dia passaria por acidente. O controle é a mutação, não o achado.
-      const mudou = mutadas.filter((m, i) => m.sql !== migrations[i].sql);
-      expect(mudou.length, `a sabotagem de ${fn} não alterou nenhuma migration`).toBeGreaterThan(0);
-      expect(
-        mudou.some((m) => new RegExp(`DROP FUNCTION IF EXISTS ${fn}\\s*;`).test(m.sql)),
-        `${fn}: a reescrita não produziu a grafia sem parêntese`,
-      ).toBe(true);
+    const p = await contarPulsos(async () => {
+      for (const fn of alvo) {
+        const mutadas = semParenteseNoDropReal(fn);
+        // SENTINELA: a reescrita tem de ter MUDADO alguma migration. Regex que não casa devolveria o
+        // repo intacto — zero achados — e o `toBeGreaterThan(0)` abaixo falharia por motivo errado,
+        // ou pior, um dia passaria por acidente. O controle é a mutação, não o achado.
+        const mudou = mutadas.filter((m, i) => m.sql !== migrations[i].sql);
+        expect(mudou.length, `a sabotagem de ${fn} não alterou nenhuma migration`).toBeGreaterThan(0);
+        expect(
+          mudou.some((m) => new RegExp(`DROP FUNCTION IF EXISTS ${fn}\\s*;`).test(m.sql)),
+          `${fn}: a reescrita não produziu a grafia sem parêntese`,
+        ).toBe(true);
 
-      const r = auditGrantsFuncoes(mutadas, AUTHZ_FUNCOES_FECHADAS).filter(
-        (f) => f.codigo === 'FUNCAO_RECRIADA_SEM_FECHO' && f.funcao === fn,
-      );
-      expect(r.length, fn).toBeGreaterThan(0);
-    }
+        const r = auditGrantsFuncoes(mutadas, AUTHZ_FUNCOES_FECHADAS).filter(
+          (f) => f.codigo === 'FUNCAO_RECRIADA_SEM_FECHO' && f.funcao === fn,
+        );
+        expect(r.length, fn).toBeGreaterThan(0);
+        await cederAoLoop();
+      }
+    });
+    expect(p.batidas, descreverPulsos(p)).toBeGreaterThanOrEqual(alvo.length - 1);
   }, ORCAMENTO_VARREDURA_MS);
 
   // A 5ª recriação do contrato, e ela documenta o MODELO em vez de escondê-lo: o DROP+CREATE de

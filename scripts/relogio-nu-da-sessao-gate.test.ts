@@ -11,15 +11,28 @@ import {
   PISOS,
   analisar,
   confrontar,
-  corposVivosDe,
+  corposVivosDePassos,
   detectarNoSql,
   lerRepo,
   veredito,
 } from './relogio-nu-da-sessao-gate';
+import { contarPulsos, descreverPulsos, drenarCedendo } from '@/test/loop-livre';
 import { removerComentariosSql } from './lib/sql-comentarios';
 
 const RAIZ = resolve(fileURLToPath(import.meta.url), '../..');
 const REPO = lerRepo(RAIZ);
+
+/**
+ * O fold dos corpos vivos DENTRO do `it`, drenado CEDENDO o event loop do worker: de uma vez, ele
+ * era o bloqueio síncrono deste arquivo (5,2s sob carga em 2026-10-05, junto da análise), e acima de
+ * 60s o RPC do vitest estoura — `test` rc=1 sem teste falhando (src/test/loop-livre.ts). A análise
+ * em si fica síncrona: nenhum `it` dela passou de 0,6s. Confere o pulso.
+ */
+async function corposCedendo(arquivos: readonly Arquivo[]) {
+  const p = await contarPulsos(() => drenarCedendo(corposVivosDePassos(arquivos)));
+  expect(p.batidas, descreverPulsos(p)).toBeGreaterThanOrEqual(2);
+  return p.resultado;
+}
 const RADAR = 'supabase/migrations/20260613190000_radar_fatia3.sql';
 const PICKING = 'supabase/migrations/20260604120000_picking_bridge.sql';
 const FINANCEIRO = '.claude/skills/bi-colacor/references/queries-financeiro.md';
@@ -237,12 +250,12 @@ describe('o repo', () => {
     expect(v.codigo).toBe(0);
   });
 
-  it('sem a 20260929001651, os 5 corpos que ela conserta (e têm CREATE antigo no repo) voltam como NOVOS', () => {
+  it('sem a 20260929001651, os 5 corpos que ela conserta (e têm CREATE antigo no repo) voltam como NOVOS', async () => {
     // A 20261001014210 (universo de pedidos) recria get_regua_preco POR CIMA da FIX e herda o hoje de SP: no
     // contrafactual ela sai junto, senão a régua não volta crua (a última a recriar vence).
     const SUCESSORAS = ['supabase/migrations/20261001014210_universo_pedidos_preco.sql'];
     const semFix = REPO.arquivos.filter((a) => a.caminho !== FIX && !SUCESSORAS.includes(a.caminho));
-    const v = veredito(analisar(semFix, corposVivosDe(semFix)), true);
+    const v = veredito(analisar(semFix, await corposCedendo(semFix)), true);
     expect(v.codigo).toBe(1);
     const txt = v.linhas.join('\n');
     for (const f of ['fin_period_lock_trigger()', 'get_regua_preco(uuid,uuid,numeric,numeric,numeric[])', 'listar_pedidos_a_separar(text)',

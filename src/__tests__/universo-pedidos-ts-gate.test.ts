@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { removerComentarios } from '@/lib/gates/limpeza-fonte';
+import { contarPulsos, descreverPulsos, emFatias } from '@/test/loop-livre';
 import {
   classificar,
   detectarConstantesParalelas,
@@ -148,10 +149,17 @@ describe('gate: universo de pedidos de venda no TypeScript e nas edges', () => {
     expect(REGISTRO.filter((e) => e.categoria !== 'divida' && e.dominio).map((e) => e.arquivo)).toEqual([]);
   });
 
-  it('G5: nenhuma cópia da lista de status fora das autoridades (a dívida só encolhe)', () => {
-    const achadas = FONTES.filter(({ arquivo }) => !AUTORIDADES.has(arquivo)).flatMap(({ arquivo, fonte }) =>
-      detectarConstantesParalelas(arquivo, fonte, STATUS_NAO_VENDA),
-    );
+  // O detector de cópia CEDE o event loop entre as fontes: síncrono, ele era UM bloqueio (5,2s sob
+  // carga em 2026-10-05), e acima de 60s o RPC do vitest estoura — `test` rc=1 sem teste falhando
+  // (src/test/loop-livre.ts). A leitura das FONTES fica na coleta, onde o bloqueio não estoura nada.
+  it('G5: nenhuma cópia da lista de status fora das autoridades (a dívida só encolhe)', async () => {
+    const achadas: ReturnType<typeof detectarConstantesParalelas> = [];
+    const p = await contarPulsos(async () => {
+      for await (const { arquivo, fonte } of emFatias(FONTES)) {
+        if (!AUTORIDADES.has(arquivo)) achadas.push(...detectarConstantesParalelas(arquivo, fonte, STATUS_NAO_VENDA));
+      }
+    });
+    expect(p.batidas, descreverPulsos(p)).toBeGreaterThanOrEqual(2);
     const k = (arquivo: string, membros: string) => `${arquivo} · [${membros}]`;
     const conhecidas = new Set(CONSTANTES_DIVIDA.map((c) => k(c.arquivo, c.membros)));
     const vistas = new Set(achadas.map((c) => k(c.arquivo, c.membros.join(','))));

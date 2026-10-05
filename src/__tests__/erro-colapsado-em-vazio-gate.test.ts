@@ -1,6 +1,7 @@
 import { describe, it, expect, onTestFailed } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { resolve, join } from 'node:path';
+import { contarPulsos, descreverPulsos, emFatias, type Pulsos } from '@/test/loop-livre';
 import { acharColapsos, contarAutoOcultacao, contarAutoOcultacaoEm, contarRetornoAfirmativo, contarRetornoAfirmativoEm, type SitioColapso } from '@/lib/gates/erro-colapsado-em-vazio';
 
 // GATE — "erro colapsado em vazio": a leitura que falha e vira silêncio afirmativo.
@@ -250,6 +251,17 @@ describe('gate: erro colapsado em vazio', () => {
     return sitios;
   }
 
+  // O parse enche o memo CEDENDO o event loop entre as fontes. Num `it` síncrono ele era UM
+  // bloqueio — 3,5s sob carga em 2026-10-05, 63–70s sob thrashing em 2026-09-25 (antes do memo e do
+  // atalho) —, e acima de 60s o RPC do vitest estoura: `test` rc=1 sem teste falhando
+  // (src/test/loop-livre.ts). Memoizado como PROMISE: o primeiro `it` que chegar dispara, os outros
+  // esperam a mesma — e o pulso dela é o que a guarda lê, seja qual for a ordem.
+  let varredura: Promise<Pulsos<void>> | undefined;
+  const varrerFontes = () =>
+    (varredura ??= contarPulsos(async () => {
+      for await (const rel of emFatias(fontes)) sitiosDe(rel);
+    }));
+
   // `Test timed out in Nms` não nomeia causa nenhuma — e teto maior só ajuda se PRESERVA o
   // diagnóstico (mesma lição do doc acima). Isto imprime, na falha, o discriminante das três
   // hipóteses que a #2311 deixou abertas: carga, crescimento do repo, ou custo do detector.
@@ -290,8 +302,14 @@ describe('gate: erro colapsado em vazio', () => {
     expect(fontes, 'a raiz de páginas sumiu da varredura').toContain('src/pages/FarmerCalls.tsx');
   });
 
-  it('nenhum sítio NOVO de auto-ocultação, e a baseline não encolhe sem registro', () => {
+  it('a varredura cede o event loop do worker — o pulso bate DURANTE o parse das fontes', async () => {
+    const p = await varrerFontes();
+    expect(p.batidas, descreverPulsos(p)).toBeGreaterThanOrEqual(2);
+  }, ORCAMENTO_VARREDURA_MS);
+
+  it('nenhum sítio NOVO de auto-ocultação, e a baseline não encolhe sem registro', async () => {
     armarDiagnosticoDeVarredura();
+    await varrerFontes();
     const medido = new Map<string, number>();
     for (const rel of fontes) {
       const n = contarAutoOcultacaoEm(sitiosDe(rel));
@@ -434,8 +452,9 @@ describe('gate: erro colapsado em vazio', () => {
   // 2ª FORMA GATEADA: `return-afirmativo` — o colapso que MENTE em vez de sumir.
   // ─────────────────────────────────────────────────────────────────────────────────────
 
-  it('nenhum sítio NOVO de `return` afirmativo, e a baseline não encolhe sem registro', () => {
+  it('nenhum sítio NOVO de `return` afirmativo, e a baseline não encolhe sem registro', async () => {
     armarDiagnosticoDeVarredura();
+    await varrerFontes();
     const medido = new Map<string, number>();
     for (const rel of fontes) {
       const n = contarRetornoAfirmativoEm(sitiosDe(rel));

@@ -1,4 +1,3 @@
-import { execFileSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -9,6 +8,7 @@ import { main as mainPacote } from '../pendencias-pacote';
 import { main as mainPrompt } from '../pendencias-prompt';
 import { ARQ_MAPA, type ArvoreDeFonte, calcularTodos, parsearMapa, RAIZ_EDGES, renderizarMapa } from '../sonda-fingerprint';
 import { conferirMapaNaRef } from './mapa-coerente-na-ref';
+import { contarPulsos, descreverPulsos, rodarOk } from '@/test/loop-livre';
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════
 // O furo (#2611, docs/historico/sonda-bump-retorno-ao-canonico.md §2)
@@ -44,11 +44,15 @@ let lovable: string;
 let stderr: string;
 let stdout: string;
 
-function git(dir: string, autor: { nome: string; email: string }, ...args: string[]): string {
-  return execFileSync(
-    'git',
-    ['-C', dir, '-c', `user.email=${autor.email}`, '-c', `user.name=${autor.nome}`, '-c', 'commit.gpgsign=false', ...args],
-    { encoding: 'utf8' },
+// O `git` dos repos de mentira é ASSÍNCRONO (`rodarOk`): síncronos, os forks deles (11–19 por `it`)
+// colavam nos do código sob teste num bloco só que segurava o event loop do worker — 4,0s sob carga
+// em 2026-10-05, o maior do arquivo —, e acima de 60s o RPC do vitest estoura: `test` rc=1 sem teste
+// falhando (src/test/loop-livre.ts).
+async function git(dir: string, autor: { nome: string; email: string }, ...args: string[]): Promise<string> {
+  return (
+    await rodarOk('git', [
+      '-C', dir, '-c', `user.email=${autor.email}`, '-c', `user.name=${autor.nome}`, '-c', 'commit.gpgsign=false', ...args,
+    ])
   ).trim();
 }
 
@@ -64,18 +68,18 @@ function regravarMapa(dir: string): void {
 }
 
 /** Commit em `lovable` + push; a worktree `local` só VÊ via fetch (o disco dela não muda). */
-function commitRemoto(autor: typeof BOT, mudar: (dir: string) => void, msg = 'Changes'): void {
+async function commitRemoto(autor: typeof BOT, mudar: (dir: string) => void, msg = 'Changes'): Promise<void> {
   mudar(lovable);
-  git(lovable, autor, 'add', '-A');
-  git(lovable, autor, 'commit', '-q', '-m', msg);
-  git(lovable, autor, 'push', '-q', 'origin', 'main');
-  git(local, HUMANO, 'fetch', '-q', 'origin');
+  await git(lovable, autor, 'add', '-A');
+  await git(lovable, autor, 'commit', '-q', '-m', msg);
+  await git(lovable, autor, 'push', '-q', 'origin', 'main');
+  await git(local, HUMANO, 'fetch', '-q', 'origin');
 }
 
-function montarRepo(opcoes: { dependente?: boolean } = {}): void {
-  execFileSync('git', ['init', '--bare', '-q', '-b', 'main', remoto]);
-  git(local, HUMANO, 'init', '-q', '-b', 'main');
-  git(local, HUMANO, 'remote', 'add', 'origin', remoto);
+async function montarRepo(opcoes: { dependente?: boolean } = {}): Promise<void> {
+  await rodarOk('git', ['init', '--bare', '-q', '-b', 'main', remoto]);
+  await git(local, HUMANO, 'init', '-q', '-b', 'main');
+  await git(local, HUMANO, 'remote', 'add', 'origin', remoto);
   escrever(local, `${RAIZ_EDGES}/${EDGE}/index.ts`, INDEX);
   escrever(local, `${RAIZ_EDGES}/${EDGE}/versao.ts`, 'export const VERSAO = "v1.9";\n');
   escrever(local, `${RAIZ_EDGES}/_shared/calc.ts`, CALC);
@@ -90,10 +94,10 @@ function montarRepo(opcoes: { dependente?: boolean } = {}): void {
     );
   }
   regravarMapa(local);
-  git(local, HUMANO, 'add', '-A');
-  git(local, HUMANO, 'commit', '-q', '-m', 'base');
-  git(local, HUMANO, 'push', '-q', '-u', 'origin', 'main');
-  execFileSync('git', ['clone', '-q', remoto, lovable]);
+  await git(local, HUMANO, 'add', '-A');
+  await git(local, HUMANO, 'commit', '-q', '-m', 'base');
+  await git(local, HUMANO, 'push', '-q', '-u', 'origin', 'main');
+  await rodarOk('git', ['clone', '-q', remoto, lovable]);
 }
 
 const medirProibido = (sql: string): string => {
@@ -164,18 +168,26 @@ afterEach(() => {
   rmSync(base, { recursive: true, force: true });
 });
 
+// A guarda do `git` — o que o repo de mentira usa: um git que DORME 200ms (alias `!sleep`),
+// duração determinística, para o pulso ter o que contar em qualquer máquina (6 forks de git no Linux
+// do CI somam menos que um pulso). Síncrono, ele bate zero.
+it('o git dos repos de mentira NÃO prende o event loop do worker — o pulso bate com o filho vivo', async () => {
+  const p = await contarPulsos(() => git(local, HUMANO, '-c', 'alias.dorme=!sleep 0.2', 'dorme'));
+  expect(p.batidas, descreverPulsos(p)).toBeGreaterThanOrEqual(2);
+});
+
 describe('pendencias:pacote — mapa da REF tem de descrever a fonte da REF', () => {
-  it('[MAPA_CONTROLE_COERENTE_LIBERA] controle: main coerente sai com pacote (exit 0)', () => {
-    montarRepo();
+  it('[MAPA_CONTROLE_COERENTE_LIBERA] controle: main coerente sai com pacote (exit 0)', async () => {
+    await montarRepo();
     const { codigo, saida } = pacote([EDGE]);
     expect(codigo).toBe(0);
     expect(existsSync(saida)).toBe(true);
     expect(stderr).not.toContain('RECUSADO');
   });
 
-  it('[MAPA_BOT_EDITA_INDEX_RECUSA] commit do bot no index.ts sem regravar o mapa: exit 5, pacote nenhum', () => {
-    montarRepo();
-    commitRemoto(BOT, (d) => escrever(d, `${RAIZ_EDGES}/${EDGE}/index.ts`, INDEX_DO_BOT));
+  it('[MAPA_BOT_EDITA_INDEX_RECUSA] commit do bot no index.ts sem regravar o mapa: exit 5, pacote nenhum', async () => {
+    await montarRepo();
+    await commitRemoto(BOT, (d) => escrever(d, `${RAIZ_EDGES}/${EDGE}/index.ts`, INDEX_DO_BOT));
 
     const { codigo, saida } = pacote([EDGE]);
 
@@ -189,57 +201,57 @@ describe('pendencias:pacote — mapa da REF tem de descrever a fonte da REF', ()
     expect(stderr).toContain('sonda:fingerprint -- --write');
   });
 
-  it('[MAPA_BOT_EDITA_SHARED_RECUSA] o bot mexe só em _shared/ do fecho: exit 5', () => {
-    montarRepo();
-    commitRemoto(BOT, (d) => escrever(d, `${RAIZ_EDGES}/_shared/calc.ts`, CALC_DO_BOT));
+  it('[MAPA_BOT_EDITA_SHARED_RECUSA] o bot mexe só em _shared/ do fecho: exit 5', async () => {
+    await montarRepo();
+    await commitRemoto(BOT, (d) => escrever(d, `${RAIZ_EDGES}/_shared/calc.ts`, CALC_DO_BOT));
     expect(pacote([EDGE]).codigo).toBe(5);
   });
 
-  it('[MAPA_REMEDIO_WRITE_LIBERA] controle: depois do --write commitado por PR, o mesmo corpo sai (exit 0)', () => {
-    montarRepo();
-    commitRemoto(BOT, (d) => escrever(d, `${RAIZ_EDGES}/${EDGE}/index.ts`, INDEX_DO_BOT));
-    commitRemoto(HUMANO, (d) => regravarMapa(d), 'chore(sonda): regrava o mapa');
+  it('[MAPA_REMEDIO_WRITE_LIBERA] controle: depois do --write commitado por PR, o mesmo corpo sai (exit 0)', async () => {
+    await montarRepo();
+    await commitRemoto(BOT, (d) => escrever(d, `${RAIZ_EDGES}/${EDGE}/index.ts`, INDEX_DO_BOT));
+    await commitRemoto(HUMANO, (d) => regravarMapa(d), 'chore(sonda): regrava o mapa');
     expect(pacote([EDGE]).codigo).toBe(0);
   });
 
-  it('[MAPA_EDGE_FORA_DO_MAPA_RECUSA] edge instrumentada que o mapa não lista: exit 5', () => {
-    montarRepo();
-    commitRemoto(BOT, (d) => escrever(d, `${RAIZ_EDGES}/${SEM_SONDA}/versao.ts`, 'export const VERSAO = "v1";\n'));
+  it('[MAPA_EDGE_FORA_DO_MAPA_RECUSA] edge instrumentada que o mapa não lista: exit 5', async () => {
+    await montarRepo();
+    await commitRemoto(BOT, (d) => escrever(d, `${RAIZ_EDGES}/${SEM_SONDA}/versao.ts`, 'export const VERSAO = "v1";\n'));
     expect(pacote([SEM_SONDA]).codigo).toBe(5);
     expect(stderr).toContain(`${SEM_SONDA}: mapa SEM a edge`);
   });
 
-  it('[MAPA_SEM_SONDA_FORA_DO_REGIME] controle: edge sem versao.ts não serve fonte — editar não recusa', () => {
-    montarRepo();
-    commitRemoto(BOT, (d) => escrever(d, `${RAIZ_EDGES}/${SEM_SONDA}/index.ts`, 'export default { bot: 1 };\n'));
+  it('[MAPA_SEM_SONDA_FORA_DO_REGIME] controle: edge sem versao.ts não serve fonte — editar não recusa', async () => {
+    await montarRepo();
+    await commitRemoto(BOT, (d) => escrever(d, `${RAIZ_EDGES}/${SEM_SONDA}/index.ts`, 'export default { bot: 1 };\n'));
     expect(pacote([SEM_SONDA]).codigo).toBe(0);
   });
 
-  it('[MAPA_PREDECESSORA_INCOERENTE_RECUSA] predecessora com mapa incoerente não prova a ordem, nem com o ledger dizendo CONFERE (exit 5)', () => {
-    montarRepo({ dependente: true });
-    commitRemoto(BOT, (d) => escrever(d, `${RAIZ_EDGES}/${EDGE}/index.ts`, INDEX_DO_BOT));
+  it('[MAPA_PREDECESSORA_INCOERENTE_RECUSA] predecessora com mapa incoerente não prova a ordem, nem com o ledger dizendo CONFERE (exit 5)', async () => {
+    await montarRepo({ dependente: true });
+    await commitRemoto(BOT, (d) => escrever(d, `${RAIZ_EDGES}/${EDGE}/index.ts`, INDEX_DO_BOT));
     // O ledger mostra a sync-x servindo o par do mapa — o MESMO par com o corpo do bot no ar. Sem a
     // conferência, a edge-b sairia liberada (exit 0) sobre uma prova que não distingue os dois mundos.
     expect(pacote(['-'], { entrada: ledgerComPredecessoraProvada() }).codigo).toBe(5);
     expect(stderr).toContain(`${EDGE}: mapa `);
   });
 
-  it('[MAPA_PREDECESSORA_CONTROLE_LIBERA] controle: predecessora coerente e provada libera a dependente (exit 0)', () => {
-    montarRepo({ dependente: true });
+  it('[MAPA_PREDECESSORA_CONTROLE_LIBERA] controle: predecessora coerente e provada libera a dependente (exit 0)', async () => {
+    await montarRepo({ dependente: true });
     expect(pacote(['-'], { entrada: ledgerComPredecessoraProvada() }).codigo).toBe(0);
     expect(stderr).not.toContain('RECUSADO');
   });
 
-  it('[MAPA_FORA_DA_FORMA_RECUSA] o bot acrescenta código ao mapa, com as entradas intactas: exit 5', () => {
-    montarRepo();
-    commitRemoto(BOT, (d) => appendFileSync(join(d, ARQ_MAPA), '(globalThis as any).Number = () => 0;\n'));
+  it('[MAPA_FORA_DA_FORMA_RECUSA] o bot acrescenta código ao mapa, com as entradas intactas: exit 5', async () => {
+    await montarRepo();
+    await commitRemoto(BOT, (d) => appendFileSync(join(d, ARQ_MAPA), '(globalThis as any).Number = () => 0;\n'));
     expect(pacote([EDGE]).codigo).toBe(5);
     expect(stderr).toContain('texto a mais no mapa');
   });
 
-  it('[MAPA_SEM_MARCADOR_NO_MAPA_RECUSA] o bot tira o versao.ts e leva a VERSAO para o index, mapa intacto: exit 5', () => {
-    montarRepo();
-    commitRemoto(BOT, (d) => {
+  it('[MAPA_SEM_MARCADOR_NO_MAPA_RECUSA] o bot tira o versao.ts e leva a VERSAO para o index, mapa intacto: exit 5', async () => {
+    await montarRepo();
+    await commitRemoto(BOT, (d) => {
       unlinkSync(join(d, RAIZ_EDGES, EDGE, 'versao.ts'));
       escrever(d, `${RAIZ_EDGES}/${EDGE}/index.ts`, INDEX.replace('import { VERSAO } from "./versao.ts";\n', 'const VERSAO = "v1.9";\n'));
     });
@@ -247,31 +259,31 @@ describe('pendencias:pacote — mapa da REF tem de descrever a fonte da REF', ()
     expect(stderr).toContain(`${EDGE}: está no mapa`);
   });
 
-  it('[MAPA_SQL_NUVEM_RECUSA] pela nuvem, a 1ª rodada também recusa — stdout VAZIO e exit 5, não o 0 de "sem RPC"', () => {
-    montarRepo();
-    commitRemoto(BOT, (d) => escrever(d, `${RAIZ_EDGES}/${EDGE}/index.ts`, INDEX_DO_BOT));
+  it('[MAPA_SQL_NUVEM_RECUSA] pela nuvem, a 1ª rodada também recusa — stdout VAZIO e exit 5, não o 0 de "sem RPC"', async () => {
+    await montarRepo();
+    await commitRemoto(BOT, (d) => escrever(d, `${RAIZ_EDGES}/${EDGE}/index.ts`, INDEX_DO_BOT));
     expect(pacote([EDGE], { flags: ['--sql-nuvem'] }).codigo).toBe(5);
     expect(stdout).toBe('');
   });
 
-  it('controle: pela nuvem com main coerente e leva sem RPC, o 0 de sempre', () => {
-    montarRepo();
+  it('controle: pela nuvem com main coerente e leva sem RPC, o 0 de sempre', async () => {
+    await montarRepo();
     expect(pacote([EDGE], { flags: ['--sql-nuvem'] }).codigo).toBe(0);
     expect(stdout).toBe('');
   });
 });
 
 describe('pendencias:prompt — o irmão que também emite colagem', () => {
-  it('[MAPA_PROMPT_BOT_RECUSA] commit do bot: exit 5 e stdout VAZIO', () => {
-    montarRepo();
-    commitRemoto(BOT, (d) => escrever(d, `${RAIZ_EDGES}/${EDGE}/index.ts`, INDEX_DO_BOT));
+  it('[MAPA_PROMPT_BOT_RECUSA] commit do bot: exit 5 e stdout VAZIO', async () => {
+    await montarRepo();
+    await commitRemoto(BOT, (d) => escrever(d, `${RAIZ_EDGES}/${EDGE}/index.ts`, INDEX_DO_BOT));
     expect(mainPrompt([EDGE, '--sem-rede'], local)).toBe(5);
     expect(stdout).toBe('');
     expect(stderr).toContain('RECUSADO');
   });
 
-  it('[MAPA_PROMPT_CONTROLE_LIBERA] controle: main coerente emite a colagem (exit 0)', () => {
-    montarRepo();
+  it('[MAPA_PROMPT_CONTROLE_LIBERA] controle: main coerente emite a colagem (exit 0)', async () => {
+    await montarRepo();
     expect(mainPrompt([EDGE, '--sem-rede'], local)).toBe(0);
     expect(stdout).toContain(EDGE);
   });

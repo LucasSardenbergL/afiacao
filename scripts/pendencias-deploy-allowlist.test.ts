@@ -16,12 +16,13 @@
  * isso as edges do cenário saem de `DO_DISCO`. A allowlist de C1 só vira "a da main" se o fetch
  * for pulado: é ela que faz o fetch pulado reprovar.
  */
-import { spawnSync } from 'node:child_process';
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
+
+import { contarPulsos, descreverPulsos, rodar } from '@/test/loop-livre';
 
 import { SONDA_CRON_ALVOS } from '../supabase/functions/_shared/sonda-cron-alvos';
 import {
@@ -50,12 +51,12 @@ afterEach(() => {
   for (const d of criados.splice(0)) rmSync(d, { recursive: true, force: true });
 });
 
-function git(cwd: string, ...args: string[]): string {
-  const r = spawnSync(
-    'git',
-    ['-c', 'user.email=t@t', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...args],
-    { cwd, encoding: 'utf8' },
-  );
+// Subprocesso ASSÍNCRONO (`rodar`), no git do cenário E na CLI: síncronos, os ~7 forks de cada `it`
+// (um deles a CLI inteira, com teto de 60s) seguravam o event loop do worker — 3,4s sob carga em
+// 2026-10-05 —, e acima de 60s o RPC do vitest estoura: `test` rc=1 sem teste falhando
+// (src/test/loop-livre.ts).
+async function git(cwd: string, ...args: string[]): Promise<string> {
+  const r = await rodar('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...args], { cwd });
   if (r.status !== 0) throw new Error(`git ${args.join(' ')} falhou: ${r.stderr}`);
   return r.stdout.trim();
 }
@@ -118,43 +119,45 @@ function psqlFalso(dir: string, ativosNoBanco: string[]): string {
  * `remoto` é o GitHub: a main dele anda para C2 DEPOIS do clone. `local` é a worktree defasada,
  * clonada em C1 e nunca mais buscada — até o CLI buscar.
  */
-function montarCenario(opts: {
+async function montarCenario(opts: {
   allowlistC1: string[];
   allowlistMain: string | string[];
   ativosNoBanco: string[];
-}): { local: string; psql: string } {
+}): Promise<{ local: string; psql: string }> {
   const base = mkdtempSync(join(tmpdir(), 'pendencias-allowlist-'));
   criados.push(base);
   const remoto = join(base, 'remoto');
   mkdirSync(remoto);
-  git(remoto, 'init', '-q');
-  git(remoto, 'symbolic-ref', 'HEAD', 'refs/heads/main');
+  await git(remoto, 'init', '-q');
+  await git(remoto, 'symbolic-ref', 'HEAD', 'refs/heads/main');
   escrever(remoto, {
     'supabase/functions/_shared/sonda-fingerprints.ts':
       `export const SONDA_FINGERPRINTS: Record<string, string> = {\n  "edge-a": "${FP}",\n};\n`,
     'supabase/functions/edge-a/versao.ts': 'export const VERSAO = "v1.0-a";\n',
     'supabase/functions/_shared/sonda-cron-alvos.ts': allowlistTs(opts.allowlistC1),
   });
-  git(remoto, 'add', '-A');
-  git(remoto, 'commit', '-q', '-m', 'C1: onde o clone para');
+  await git(remoto, 'add', '-A');
+  await git(remoto, 'commit', '-q', '-m', 'C1: onde o clone para');
 
   const local = join(base, 'local');
-  git(base, 'clone', '-q', remoto, local);
+  await git(base, 'clone', '-q', remoto, local);
 
   escrever(remoto, {
     'supabase/functions/_shared/sonda-cron-alvos.ts':
       typeof opts.allowlistMain === 'string' ? opts.allowlistMain : allowlistTs(opts.allowlistMain),
   });
-  git(remoto, 'commit', '-q', '--allow-empty', '-am', 'C2: a main anda depois do clone');
+  await git(remoto, 'commit', '-q', '--allow-empty', '-am', 'C2: a main anda depois do clone');
 
   return { local, psql: psqlFalso(base, opts.ativosNoBanco) };
 }
 
-function rodarCli(local: string, psql: string): { status: number | null; stdout: string; stderr: string } {
+/** A CLI num filho ASSÍNCRONO — e o pulso de toda execução conferido: a CLI é o fork mais longo. */
+async function rodarCli(local: string, psql: string): Promise<{ status: number | null; stdout: string; stderr: string }> {
   const env: NodeJS.ProcessEnv = { ...process.env, PSQL_RO: psql };
   delete env.PENDENCIAS_TOLERAR_NUNCA_ATESTADA;
-  const r = spawnSync('bun', [CLI], { cwd: local, encoding: 'utf8', env, timeout: 60_000 });
-  return { status: r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
+  const p = await contarPulsos(() => rodar('bun', [CLI], { cwd: local, env, timeoutMs: 60_000 }));
+  expect(p.batidas, descreverPulsos(p)).toBeGreaterThanOrEqual(2);
+  return { status: p.resultado.status, stdout: p.resultado.stdout, stderr: p.resultado.stderr };
 }
 
 describe('pendencias:deploy ponta a ponta — a allowlist que julga é a da main RECÉM-BUSCADA', () => {
@@ -164,13 +167,21 @@ describe('pendencias:deploy ponta a ponta — a allowlist que julga é a da main
     expect(DO_DISCO).not.toContain('edge-intrusa');
   });
 
-  it('o incidente: edge que a main e o banco têm, e o disco não conhece, NÃO vira intrusa', () => {
-    const { local, psql } = montarCenario({
+  // A guarda do `git` do cenário: um git que DORME 200ms (alias `!sleep`), duração determinística —
+  // os forks do cenário no Linux do CI somam menos que um pulso. Síncrono, ele bate zero. A CLI tem
+  // a guarda dela dentro de `rodarCli`.
+  it('o git do cenário NÃO prende o event loop do worker — o pulso bate com o filho vivo', async () => {
+    const p = await contarPulsos(() => git(tmpdir(), '-c', 'alias.dorme=!sleep 0.2', 'dorme'));
+    expect(p.batidas, descreverPulsos(p)).toBeGreaterThanOrEqual(2);
+  });
+
+  it('o incidente: edge que a main e o banco têm, e o disco não conhece, NÃO vira intrusa', async () => {
+    const { local, psql } = await montarCenario({
       allowlistC1: [LEGITIMA],
       allowlistMain: [LEGITIMA, EDGE_NOVA],
       ativosNoBanco: [LEGITIMA, EDGE_NOVA],
     });
-    const r = rodarCli(local, psql);
+    const r = await rodarCli(local, psql);
     // Evidência POSITIVA de que o CLI chegou à seção e passou pelo ramo certo: sem ela, um crash
     // anterior também "não emitiria o UPDATE" e o teste passaria por cegueira. ASCII (lição #1483).
     expect(r.stdout).toContain('2 edge(s) ativa(s), 0 tick(s) recente(s)');
@@ -180,32 +191,32 @@ describe('pendencias:deploy ponta a ponta — a allowlist que julga é a da main
     expect(r.status).toBe(0);
   }, 60_000);
 
-  it('o espelho: edge que SÓ o disco aprova e o banco ativou → exit 2 SEM a ordem de escrita', () => {
-    const { local, psql } = montarCenario({
+  it('o espelho: edge que SÓ o disco aprova e o banco ativou → exit 2 SEM a ordem de escrita', async () => {
+    const { local, psql } = await montarCenario({
       allowlistC1: [LEGITIMA, SO_NO_DISCO],
       allowlistMain: [LEGITIMA],
       ativosNoBanco: [LEGITIMA, SO_NO_DISCO],
     });
-    const r = rodarCli(local, psql);
+    const r = await rodarCli(local, psql);
     expect(r.stderr).toContain('ALVO_SO_NO_WORKTREE');
     expect(r.stderr).toContain(SO_NO_DISCO);
     expect(`${r.stdout}${r.stderr}`).not.toContain(ORDEM_DE_ESCRITA);
     expect(r.status).toBe(2);
   }, 60_000);
 
-  it('controle positivo: intrusa de verdade (nem main, nem disco) sai COM a ordem — o harness enxerga o UPDATE', () => {
-    const { local, psql } = montarCenario({
+  it('controle positivo: intrusa de verdade (nem main, nem disco) sai COM a ordem — o harness enxerga o UPDATE', async () => {
+    const { local, psql } = await montarCenario({
       allowlistC1: [LEGITIMA],
       allowlistMain: [LEGITIMA, EDGE_NOVA],
       ativosNoBanco: [LEGITIMA, 'edge-intrusa'],
     });
-    const r = rodarCli(local, psql);
+    const r = await rodarCli(local, psql);
     expect(r.stderr).toContain('ALVO_SEM_APROVACAO');
     expect(r.stderr).toContain(`${ORDEM_DE_ESCRITA} SET ativo = false WHERE edge IN ('edge-intrusa');`);
     expect(r.status).toBe(2);
   }, 60_000);
 
-  it('allowlist da main ILEGÍVEL: exit 2 de mecânica, e NENHUMA ordem de escrita', () => {
+  it('allowlist da main ILEGÍVEL: exit 2 de mecânica, e NENHUMA ordem de escrita', async () => {
     // Spread é a forma de um refactor futuro que o leitor não segue. Sem lista confiável não há
     // intruso a julgar — e ordem de escrita em prod a partir de leitura parcial é o defeito.
     const ilegivel = [
@@ -213,12 +224,12 @@ describe('pendencias:deploy ponta a ponta — a allowlist que julga é a da main
       'export const SONDA_CRON_ALVOS = [...ONDA_1];',
       '',
     ].join('\n');
-    const { local, psql } = montarCenario({
+    const { local, psql } = await montarCenario({
       allowlistC1: [LEGITIMA],
       allowlistMain: ilegivel,
       ativosNoBanco: [LEGITIMA, EDGE_NOVA],
     });
-    const r = rodarCli(local, psql);
+    const r = await rodarCli(local, psql);
     expect(r.stderr).toContain('ALLOWLIST_ILEGIVEL');
     expect(`${r.stdout}${r.stderr}`).not.toContain(ORDEM_DE_ESCRITA);
     expect(r.status).toBe(2);

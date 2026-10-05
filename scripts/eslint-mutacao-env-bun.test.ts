@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { ESLint } from 'eslint';
 import { join } from 'node:path';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 /**
@@ -19,6 +20,16 @@ import { fileURLToPath } from 'node:url';
 const MARCA = 'bun-filho-sem-env-herda-a-partida';
 const RAIZ = fileURLToPath(new URL('..', import.meta.url));
 const eslint = new ESLint({ cwd: RAIZ });
+
+// O 1º `lintText` carrega o config e o parser TS — a avaliação SÍNCRONA do módulo `typescript`, o
+// único bloqueio relevante deste arquivo (3,1s sob carga em 2026-10-05, dentro do 1º `it`). Não dá
+// para fatiar (é import de módulo), então ele acontece AQUI, na COLETA (top-level await): sem chamada
+// RPC em voo, bloqueio na coleta não estoura o `onTaskUpdate` do vitest (medido em 2026-10-05:
+// `sleep 65` no topo → rc=0; no `it` → rc=1). src/test/loop-livre.ts
+await eslint.lintText('', { filePath: join(RAIZ, 'scripts/aquecimento-do-parser.ts') });
+const PARSER_TS_CARREGADO_NA_COLETA = Object.keys(createRequire(import.meta.url).cache).some((k) =>
+  /[\\/]node_modules[\\/]typescript[\\/]lib[\\/]typescript\.js$/.test(k),
+);
 
 async function linhasPegas(codigo: string, relativo: string): Promise<number[]> {
   const [resultado] = await eslint.lintText(codigo, { filePath: join(RAIZ, relativo) });
@@ -64,6 +75,10 @@ const LEITURAS_E_COPIAS = [
 ].join('\n');
 
 describe('eslint: mutar process.env no código que roda sob bun', () => {
+  it('o parser TS foi carregado na COLETA — o 1º lint de um `it` não paga a inicialização', () => {
+    expect(PARSER_TS_CARREGADO_NA_COLETA, 'o aquecimento saiu da coleta: o 1º `it` volta a bloquear o worker').toBe(true);
+  });
+
   it('pega cada forma de mutação, linha a linha, pela marca da regra', async () => {
     expect(await linhasPegas(MUTACOES, 'scripts/fixture-bun-env.ts')).toEqual(TODAS_AS_LINHAS);
   });

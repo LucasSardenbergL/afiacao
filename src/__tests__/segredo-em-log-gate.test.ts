@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { removerComentarios } from '@/lib/gates/limpeza-fonte';
+import { contarPulsos, descreverPulsos, emFatias } from '@/test/loop-livre';
 
 // ── GATE ESTRUTURAL da classe "segredo publicado em log" ────────────────────────────────
 //
@@ -231,16 +232,17 @@ function sitesS3(fonte: string): string[] {
 //    `fetch({ body: JSON.stringify({ app_key … }) })` não tem nome — mas também não tem como
 //    ser logado por nome, e se for montado dentro do console o S2 o pega.
 
-function medir(detector: (fonte: string) => string[]): Map<string, string[]> {
+// CEDE o event loop entre os arquivos: síncrona, cada varredura era UM bloqueio (até 4,0s sob carga
+// em 2026-10-05), e acima de 60s o RPC do vitest estoura — `test` rc=1 sem teste falhando
+// (src/test/loop-livre.ts). Quem chama confere o pulso.
+async function medir(detector: (fonte: string) => string[]): Promise<Map<string, string[]>> {
   const mapa = new Map<string, string[]>();
-  for (const dir of DIRS) {
-    for (const arquivo of listarFontes(dir)) {
-      const bruto = removerComentarios(readFileSync(resolve(RAIZ, arquivo), 'utf8'));
-      // S3 precisa das strings; S1/S2 precisam delas apagadas. O detector recebe a fonte já
-      // preparada por ele mesmo — aqui passamos a versão com strings, e S1/S2 apagam.
-      const achados = detector(bruto);
-      if (achados.length > 0) mapa.set(arquivo, achados);
-    }
+  for await (const arquivo of emFatias(DIRS.flatMap((d) => listarFontes(d)))) {
+    const bruto = removerComentarios(readFileSync(resolve(RAIZ, arquivo), 'utf8'));
+    // S3 precisa das strings; S1/S2 precisam delas apagadas. O detector recebe a fonte já
+    // preparada por ele mesmo — aqui passamos a versão com strings, e S1/S2 apagam.
+    const achados = detector(bruto);
+    if (achados.length > 0) mapa.set(arquivo, achados);
   }
   return mapa;
 }
@@ -259,15 +261,19 @@ describe('gate estrutural: segredo publicado em log (classe do omie-sync, achada
     expect(fontes, 'a edge do webhook sumiu da varredura').toContain('supabase/functions/omie-webhook/index.ts');
   });
 
-  it('sentinela de COBERTURA: o detector ENXERGA as edges que carregam credencial', () => {
+  it('sentinela de COBERTURA: o detector ENXERGA as edges que carregam credencial', async () => {
     // O jeito deste gate mentir não é ficar vermelho à toa — é medir ZERO por cegueira e passar
     // por auditoria (§"O DETECTOR mente"). Um zero de S1 só significa "ninguém loga o objeto" se
     // o detector de fato reconhece o objeto: 19 edges montam `const body = { …app_key… }`
     // (medido 2026-07-30) e só o omie-sync o mandava ao console. Se este piso cair, o zero de S1
     // virou vácuo e a varredura precisa ser refeita ANTES de confiar no verde.
-    const comCredencial = DIRS.flatMap((d) => listarFontes(d)).filter(
-      (a) => varsComCredencial(semStrings(removerComentarios(readFileSync(resolve(RAIZ, a), 'utf8')))).size > 0,
-    );
+    const comCredencial: string[] = [];
+    const p = await contarPulsos(async () => {
+      for await (const a of emFatias(DIRS.flatMap((d) => listarFontes(d)))) {
+        const fonte = semStrings(removerComentarios(readFileSync(resolve(RAIZ, a), 'utf8')));
+        if (varsComCredencial(fonte).size > 0) comCredencial.push(a);
+      }
+    });
     expect(
       comCredencial.length,
       'o detector deixou de reconhecer o objeto-com-credencial — o zero de S1 passou a ser cegueira, não limpeza',
@@ -283,34 +289,38 @@ describe('gate estrutural: segredo publicado em log (classe do omie-sync, achada
     ]) {
       expect(comCredencial, `o detector parou de enxergar a credencial em ${irma}`).toContain(irma);
     }
+    expect(p.batidas, descreverPulsos(p)).toBeGreaterThanOrEqual(2);
   });
 
-  it('S1: nenhum objeto com credencial vai inteiro para console.*', () => {
-    const medido = medir((f) => sitesS1(semStrings(f)));
+  it('S1: nenhum objeto com credencial vai inteiro para console.*', async () => {
+    const p = await contarPulsos(() => medir((f) => sitesS1(semStrings(f))));
     expect(
-      formatar(medido),
+      formatar(p.resultado),
       'VAZAMENTO: objeto que carrega app_key/app_secret indo INTEIRO para o log da edge — o log ' +
         'fica retido e visível no painel. Logue os campos não-sensíveis (`call`, `endpoint`, ' +
         '`body.param`) ou passe por `redigirSegredo` (_shared/omie-falha.ts). Arquivos:',
     ).toEqual([]);
+    expect(p.batidas, descreverPulsos(p)).toBeGreaterThanOrEqual(2);
   });
 
-  it('S2: nenhum campo de credencial na expressão de um console.*', () => {
-    const medido = medir((f) => sitesS2(semStrings(f)));
+  it('S2: nenhum campo de credencial na expressão de um console.*', async () => {
+    const p = await contarPulsos(() => medir((f) => sitesS2(semStrings(f))));
     expect(
-      formatar(medido),
+      formatar(p.resultado),
       'VAZAMENTO: campo de credencial avaliado dentro de um log (o rótulo em string é permitido; ' +
         'o VALOR não). Passe por `redigirSegredo` (_shared/omie-falha.ts). Arquivos:',
     ).toEqual([]);
+    expect(p.batidas, descreverPulsos(p)).toBeGreaterThanOrEqual(2);
   });
 
-  it('S3: nenhum valor de env sensível lido dentro de um console.*', () => {
-    const medido = medir(sitesS3);
+  it('S3: nenhum valor de env sensível lido dentro de um console.*', async () => {
+    const p = await contarPulsos(() => medir(sitesS3));
     expect(
-      formatar(medido),
+      formatar(p.resultado),
       'VAZAMENTO: `Deno.env.get("…KEY/SECRET/TOKEN")` avaliado dentro de um log. Logue a ' +
         'PRESENÇA (`!!Deno.env.get(...)`), nunca o valor. Arquivos:',
     ).toEqual([]);
+    expect(p.batidas, descreverPulsos(p)).toBeGreaterThanOrEqual(2);
   });
 
   it('S1 (controle de calibração): a forma pré-fix do omie-sync é detectada; a pós-fix não', () => {

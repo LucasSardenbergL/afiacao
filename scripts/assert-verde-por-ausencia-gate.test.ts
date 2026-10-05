@@ -8,9 +8,10 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { enumerar } from './shell-variavel-colada-gate';
 import {
-  CATRACA_SQL, PISOS, RAIZES_PADRAO, analisar, confrontarCatraca, detectar, detectarSql, enumerarSql, limparSql, veredito,
+  CATRACA_SQL, PISOS, RAIZES_PADRAO, analisar, analisarPassos, confrontarCatraca, detectar, detectarSql, enumerarSql, limparSql, veredito,
   type Analise,
 } from './assert-verde-por-ausencia-gate';
+import { contarPulsos, descreverPulsos, drenarCedendo } from '@/test/loop-livre';
 
 /**
  * Dente do fiscal do assert de prova que passa com o valor AUSENTE (docs/historico/assert-verde-por-
@@ -374,23 +375,33 @@ describe('veredito — 2 nunca é "passou"', () => {
 describe('o corpo REAL do repo', () => {
   let arquivos: { caminho: string; fonte: string }[];
 
+  // Cada análise do repo CEDE o event loop entre os arquivos (`analisarPassos` + `drenarCedendo`): de
+  // uma vez, ela era UM bloqueio síncrono (até 6,5s sob carga em 2026-10-05, cinco `it` deste bloco
+  // acima de 3s), e acima de 60s o RPC do vitest estoura — `test` rc=1 sem teste falhando
+  // (src/test/loop-livre.ts). Confere o pulso de toda análise que faz.
+  async function analisarCedendo(xs: { caminho: string; fonte: string }[]) {
+    const p = await contarPulsos(() => drenarCedendo(analisarPassos(xs)));
+    expect(p.batidas, descreverPulsos(p)).toBeGreaterThanOrEqual(2);
+    return p.resultado;
+  }
+
   beforeAll(() => {
     arquivos = [...enumerar(RAIZES_PADRAO, RAIZ), ...enumerarSql(RAIZES_PADRAO, RAIZ)].map((c) => ({
       caminho: relative(RAIZ, c), fonte: readFileSync(c, 'utf8'),
     }));
   });
 
-  it('nenhum assert de prova compara com `<>`/`!=`', () => {
-    expect(analisar(arquivos).violacoes).toEqual([]);
+  it('nenhum assert de prova compara com `<>`/`!=`', async () => {
+    expect((await analisarCedendo(arquivos)).violacoes).toEqual([]);
   });
 
-  it('os .sql de db/ batem EXATAMENTE com a catraca (nem sítio novo, nem folga)', () => {
-    const r = analisar(arquivos);
+  it('os .sql de db/ batem EXATAMENTE com a catraca (nem sítio novo, nem folga)', async () => {
+    const r = await analisarCedendo(arquivos);
     expect(r.caminhosSql.length).toBeGreaterThanOrEqual(PISOS.arquivosSql);
     expect(confrontarCatraca(r.sitiosSql, r.caminhosSql, CATRACA_SQL)).toEqual([]);
   });
 
-  it('falsificação da regra json-bool: devolver o espelho ao A1 do radar acusa exatamente ele', () => {
+  it('falsificação da regra json-bool: devolver o espelho ao A1 do radar acusa exatamente ele', async () => {
     const alvo = 'db/test-radar-rpcs.sh';
     const real = arquivos.find((a) => a.caminho === alvo);
     expect(real).toBeDefined();
@@ -399,18 +410,18 @@ describe('o corpo REAL do repo', () => {
     expect(fonte.split(convertido)).toHaveLength(2);
     const sabotado = fonte.replace(convertido, "IF (r->>'deduped')::boolean THEN RAISE EXCEPTION 'A1 FALHOU");
     const linha = fonte.slice(0, fonte.indexOf(convertido)).split('\n').length;
-    const rs = analisar(arquivos.map((a) => (a.caminho === alvo ? { ...a, fonte: sabotado } : a)));
+    const rs = await analisarCedendo(arquivos.map((a) => (a.caminho === alvo ? { ...a, fonte: sabotado } : a)));
     expect(rs.violacoes.map((v) => `${v.arquivo}:${v.linha}:${v.regra}`)).toEqual([`${alvo}:${linha}:json-bool`]);
   });
 
-  it('o fiscal MEDIU e o stripper não desabou: com pisos, o veredito é 0 — não 2', () => {
-    const r = analisar(arquivos);
+  it('o fiscal MEDIU e o stripper não desabou: com pisos, o veredito é 0 — não 2', async () => {
+    const r = await analisarCedendo(arquivos);
     expect(r.alarmes).toEqual([]);
     expect(r.asserts).toBeGreaterThanOrEqual(PISOS.asserts);
     expect(veredito(r, true).codigo).toBe(0);
   });
 
-  it('falsificação: devolver o `<>` ao C1.2 do arquivo real acusa exatamente ele (e o corpo intocado, não)', () => {
+  it('falsificação: devolver o `<>` ao C1.2 do arquivo real acusa exatamente ele (e o corpo intocado, não)', async () => {
     const real = arquivos.find((a) => a.caminho === ARQUIVO_DO_C1_2);
     expect(real).toBeDefined();
     const fonte = (real as { fonte: string }).fonte;
@@ -418,7 +429,7 @@ describe('o corpo REAL do repo', () => {
     expect(fonte.split(convertido)).toHaveLength(2); // a âncora existe e é única
     const sabotado = fonte.replace(convertido, 'IF q900 <> 12.5 THEN');
     const linha = fonte.slice(0, fonte.indexOf(convertido)).split('\n').length;
-    const rs = analisar(arquivos.map((a) => (a.caminho === ARQUIVO_DO_C1_2 ? { ...a, fonte: sabotado } : a)));
+    const rs = await analisarCedendo(arquivos.map((a) => (a.caminho === ARQUIVO_DO_C1_2 ? { ...a, fonte: sabotado } : a)));
     expect(rs.violacoes.map((v) => `${v.arquivo}:${v.linha}`)).toEqual([`${ARQUIVO_DO_C1_2}:${linha}`]);
   });
 

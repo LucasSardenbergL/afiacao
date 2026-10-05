@@ -8,15 +8,31 @@ import {
   CONHECIDOS,
   PISOS,
   analisar,
+  analisarPassos,
   confrontar,
-  corposVivosDe,
+  corposVivosDePassos,
   detectarNoSql,
   lerRepo,
   veredito,
 } from './fuso-da-sessao-em-migrations-e-skills-gate';
+import { contarPulsos, descreverPulsos, drenarCedendo } from '@/test/loop-livre';
 
 const RAIZ = resolve(fileURLToPath(import.meta.url), '../..');
 const REPO = lerRepo(RAIZ);
+
+/**
+ * O repo inteiro DENTRO do `it`, drenado CEDENDO o event loop do worker: de uma vez, cada análise
+ * era um bloqueio síncrono (4,2s sob carga em 2026-10-05), e acima de 60s o RPC do vitest estoura —
+ * `test` rc=1 sem teste falhando (src/test/loop-livre.ts). Sem `corpos`, usa os corpos vivos DESTES
+ * arquivos (o fold, também cedendo). Confere o pulso de toda análise que faz.
+ */
+async function analisarCedendo(arquivos: readonly Arquivo[], corpos?: ReadonlyMap<string, string>) {
+  const p = await contarPulsos(async () =>
+    drenarCedendo(analisarPassos(arquivos, corpos ?? (await drenarCedendo(corposVivosDePassos(arquivos))))),
+  );
+  expect(p.batidas, descreverPulsos(p)).toBeGreaterThanOrEqual(2);
+  return p.resultado;
+}
 const FIX = 'supabase/migrations/20260927202603_fuso_sp_relogio_da_sessao_rpcs_views_des.sql';
 const RADAR = 'supabase/migrations/20260612130000_radar_rpcs_contato.sql';
 const VENDAS = '.claude/skills/bi-colacor/references/queries-vendas.md';
@@ -147,28 +163,28 @@ describe('o repo', () => {
     expect(r.violacoes).toHaveLength(CONHECIDOS.reduce((t, c) => t + c.n, 0));
   });
 
-  it('sem a migration que as supera, as definições mortas RESSUSCITAM nos corpos vivos', () => {
+  it('sem a migration que as supera, as definições mortas RESSUSCITAM nos corpos vivos', async () => {
     const semFix = REPO.arquivos.filter((a) => a.caminho !== FIX);
-    const ressuscitou = analisar(semFix, corposVivosDe(semFix));
+    const ressuscitou = await analisarCedendo(semFix);
     expect(veredito(ressuscitou, true).codigo).toBe(1);
     const vivos = ressuscitou.corposVivosComSitio.join('\n');
     expect(vivos).toContain('fin_projecao_13_semanas(text,numeric)');
     expect(vivos).toContain('radar_kpis()');
   });
 
-  it('sítio novo numa migration nova reprova — view inclusive, que o irmão de funções não lê', () => {
+  it('sítio novo numa migration nova reprova — view inclusive, que o irmão de funções não lê', async () => {
     const nova: Arquivo = {
       caminho: 'supabase/migrations/29990101000000_view_nova.sql',
       fonte: "CREATE VIEW public.v_x AS SELECT date_trunc('quarter', CURRENT_DATE)::date AS ini;",
     };
-    const v = veredito(analisar([...REPO.arquivos, nova], REPO.corpos), true);
+    const v = veredito(await analisarCedendo([...REPO.arquivos, nova], REPO.corpos), true);
     expect(v.codigo).toBe(1);
     expect(v.linhas.join('\n')).toContain("NOVO supabase/migrations/29990101000000_view_nova.sql · date_trunc('quarter', current_date)");
   });
 
-  it('entrada da baseline que some do texto reprova (arquivo apagado ou editado)', () => {
+  it('entrada da baseline que some do texto reprova (arquivo apagado ou editado)', async () => {
     const semRadar = REPO.arquivos.filter((a) => a.caminho !== RADAR);
-    const v = veredito(analisar(semRadar, REPO.corpos), true);
+    const v = veredito(await analisarCedendo(semRadar, REPO.corpos), true);
     expect(v.codigo).toBe(1);
     expect(v.linhas.join('\n')).toContain(`QUITADO (tire da baseline CONHECIDOS) ${RADAR}`);
   });
