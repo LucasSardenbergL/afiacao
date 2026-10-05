@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-10-05T14:28:03.234Z",
-  "sourceHead": "d8bd540789b764bb0a209e9e371503cc044fed92",
+  "medidoEm": "2026-10-05T14:55:01.508Z",
+  "sourceHead": "c7de6bef937d3cebadcdf70727e9fbd2ee0b74e0",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -48,7 +48,7 @@
     "rls": {
       "script": "authz:rls:prod",
       "exit": 0,
-      "resumo": "✅ audit-rls — 343 tabela(s) em public com RLS ligada (0 desligada); 21 tabela(s) curada(s), 54 policy(ies) e 13 funcao(oes)-predicado batem com o contrato (fecho transitivo, profundidade 1; 0 alcancada(s) so por outra funcao); 4 grupo(s) de lacuna conferido(s) — 78 tabela(s) distinta(s) no grafo, 7 ",
+      "resumo": "✅ audit-rls — 345 tabela(s) em public com RLS ligada (0 desligada); 21 tabela(s) curada(s), 54 policy(ies) e 13 funcao(oes)-predicado batem com o contrato (fecho transitivo, profundidade 1; 0 alcancada(s) so por outra funcao); 4 grupo(s) de lacuna conferido(s) — 78 tabela(s) distinta(s) no grafo, 7 ",
       "denominador": null,
       "contratoFingerprint": "ce96802013da952d933f8d71cf54dfa102d20a8199c7deca924d10989be47649",
       "auditorFingerprint": "a4ea65f8adfba4cc6e1589c97961807a3781e4b15bfcdae90fab8cd17a865d0f",
@@ -56,12 +56,31 @@
     },
     "corpo": {
       "script": "deriva:corpo:prod",
-      "exit": 0,
-      "resumo": "✅ deriva-corpo — 317 identidade(s) batem com o repo (241 em dia, 70 só cosméticas, 5 aceitas na baseline) e 16 aposentada(s) estão ausentes",
-      "denominador": "🔎 deriva-corpo — 317 identidade(s) conferida(s) · 16 aposentada(s) · ref origin/main@817e1788c (fetch ok) · prod 2026-10-05 14:28:26.92577Z",
-      "contratoFingerprint": "2368865167e9a45dac05e2dcb15a87ff321ef132ea3364e7f18ae8405c718076",
-      "auditorFingerprint": "8e1b9b67d97de70304537bce5dc6cfc5ecfd2ac84fe4db18f18214c525e6c19e",
-      "achados": []
+      "exit": 1,
+      "resumo": "deriva-corpo — 3 divergência(s) em prod (3 AUSENTE) — ver as linhas ❌",
+      "denominador": "🔎 deriva-corpo — 320 identidade(s) conferida(s) · 16 aposentada(s) · ref origin/main@df5d73117 (fetch ok) · prod 2026-10-05 14:55:24.677193Z",
+      "contratoFingerprint": "a3ca2170bc686d60b0f503593e53b066815610ad25e196b200c158aea15152ab",
+      "auditorFingerprint": "6cf9b8ae065fcf1234c4744916e2dfb1e099be201c4bab502c2ed2add3fc380e",
+      "achados": [
+        {
+          "id": "a8915b9581dc8f38",
+          "linha": "❌ [AUSENTE] sales_orders_gemeo_app_derivar(): viva no repo (último CREATE: 20261001100001_sales_orders_gemeo_importado_contagem_unica.sql) e ausente em prod — migration não aplicada ou DROP manual",
+          "primeiraVez": "2026-10-05",
+          "ultimaVez": "2026-10-05"
+        },
+        {
+          "id": "7f12d13791b5c2b1",
+          "linha": "❌ [AUSENTE] sales_orders_gemeo_importada_antes(): viva no repo (último CREATE: 20261001100001_sales_orders_gemeo_importado_contagem_unica.sql) e ausente em prod — migration não aplicada ou DROP manual",
+          "primeiraVez": "2026-10-05",
+          "ultimaVez": "2026-10-05"
+        },
+        {
+          "id": "b79712762dedffbc",
+          "linha": "❌ [AUSENTE] sales_orders_gemeo_importada_depois(): viva no repo (último CREATE: 20261001100001_sales_orders_gemeo_importado_contagem_unica.sql) e ausente em prod — migration não aplicada ou DROP manual",
+          "primeiraVez": "2026-10-05",
+          "ultimaVez": "2026-10-05"
+        }
+      ]
     }
   }
 }
