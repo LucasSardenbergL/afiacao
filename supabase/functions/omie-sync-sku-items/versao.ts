@@ -64,8 +64,13 @@ export const EDGE = "omie-sync-sku-items";
  * v1.2 (2026-09-23): limite do RUN (REDUNDANT/rate-limit que não cabe no deadline) virou
  * ADIAMENTO — não marca tentativa, não vira `error`; `results` ganha `consultas_adiadas_por_limite`,
  * `consultas_falhas` e o sensor `fila_atrasada_24h_nao_consultada` ("fila não anda"). Ver adiamento.ts.
+ *
+ * v1.3 (2026-10-05): a fila exige evidência de COMPLETUDE do recebimento — `itens_pendentes` no
+ * controle (item sem nIdProduto, lookup de pedido com erro, upsert falho), gravado em todas as irmãs
+ * com write-ahead e fechamento por CAS; dono estável do fallback; lt_bruto/lt_faturamento só com t1
+ * de pedido. Ver recebimento.ts. Exige a migration 20261005170000 ANTES do deploy.
  */
-export const VERSAO = "v1.2-adiamento-por-limite-do-run";
+export const VERSAO = "v1.3-pendencia-por-item";
 
 /**
  * O fingerprint da FONTE, para o ECO carregá-lo também — não só a sonda.

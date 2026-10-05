@@ -13,41 +13,42 @@
 //      lt_bruto morria NULL para sempre (1103 linhas, ~30% do histórico OBEN em 2026-07-16).
 //      Os itens já estão gravados; só as DATAS faltavam — a Omie não tem o que acrescentar.
 //   1) Lê NFes da empresa no período com t2_data_faturamento e nfe_chave_acesso.
-//   2) Fila = pendentes (sem linha em sku_leadtime_history) ELEGÍVEIS pelo controle de
-//      tentativas (sku_items_sync_controle + backoff 6h/24h/72h), nunca-tentadas primeiro —
-//      NFe cuja consulta retorna 0 itens não upserta e não sairia nunca da fila (poison que
-//      consumia o guard de 50s a cada run e deixava as antigas inalcançáveis; OBEN 2026-07-14).
+//   2) Fila = trackings PENDENTES (recebimento.ts, `pendenteNaFila`: com a pendência medida, decide
+//      `itens_pendentes` > 0; sem medida — legado —, "sem linha em sku_leadtime_history") ELEGÍVEIS
+//      pelo controle de tentativas (sku_items_sync_controle + backoff 6h/24h/72h), nunca-tentadas
+//      primeiro — NFe cuja consulta retorna 0 itens não upserta e não sairia nunca da fila (poison
+//      que consumia o guard de 50s a cada run; OBEN 2026-07-14). Até 2026-10-05 a fila era só "sem
+//      linha": UMA linha gravada tirava o recebimento da fila com item faltando, para sempre.
 //   3) Para cada NFe → ConsultarRecebimento(nIdReceb) → itera itensRecebimento[]; TODA
 //      consulta que a Omie RESPONDEU (sucesso, 0 itens, fault de negócio) ou que FALHOU de
 //      verdade (HTTP/socket) marca tentativa no controle. Limite do RUN (REDUNDANT/rate-limit
 //      que não cabe no deadline, deadline vencido) é ADIAMENTO: não marca, não vira `error` —
 //      ver adiamento.ts (incidente OBEN 2026-08-27..09-23: 46 runs `error` falsos no ciclo :15).
-//   4) Para cada item, tenta achar o pedido específico via numero_contrato_fornecedor = nNumPedCompra.
-//   5) UPSERT em sku_leadtime_history (tracking_id, sku_codigo_omie).
+//   4) Gravação do RECEBIMENTO (recebimento.ts, `gravarRecebimento`): controle em TODAS as irmãs
+//      (mesma nid_receb), write-ahead da pendência, rota de cada item ao pedido dele
+//      (numero_contrato_fornecedor = nNumPedCompra; sem casamento, o DONO do recebimento), UPSERT em
+//      sku_leadtime_history (tracking_id, sku_codigo_omie) e fechamento da pendência com CAS.
 
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
+import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import { cabeEspera } from "../_shared/omie-deadline.ts";
+import { avaliarFilaParada, decidirErroDoRun, saidaDoLaco } from "./adiamento.ts";
+import { consultarNfe, type ContadorRequisicoes, DEPS_REAIS } from "./consulta.ts";
 import {
-  avaliarFilaParada,
-  decidirErroDoRun,
-  motivoDaTentativa,
-  saidaDoLaco,
-} from "./adiamento.ts";
-import { consultarNfe, type ContadorRequisicoes, DEPS_REAIS, type OmieRecebimentoItem } from "./consulta.ts";
+  type ControleFila,
+  type DepsGravacao,
+  type EstadoControle,
+  gravarRecebimento,
+  type Irma,
+  type PedidoCasado,
+  pendenteNaFila,
+} from "./recebimento.ts";
 import { classificarSonda, EDGE, EFEITO, erroSondaAmbigua, FONTE, respostaSonda, VERSAO } from "./versao.ts";
 
 // Tipos da resposta do Omie: consulta.ts (junto da chamada que os produz).
 
 interface NFeRawData {
   cabec?: { nIdReceb?: number | string };
-}
-
-interface PedidoTrackingMatchRow {
-  id: string;
-  t1_data_pedido: string;
-  numero_pedido: string | null;
-  grupo_leadtime: string | null;
-  fornecedor_nome: string | null;
 }
 
 const corsHeaders = {
@@ -80,6 +81,11 @@ interface EmpresaSummary {
   recompute_erro: string | null;
   fila_pendente: number;
   fila_em_backoff: number;
+  /** Trackings pendentes COM linha gravada — só entram porque a pendência medida é > 0. */
+  fila_incompleta: number;
+  /** Trackings SEM linha que a pendência medida (0) tira da fila: irmã a quem nenhum item foi
+   *  roteado, recebimento só de itens ignorados. Pela regra antiga seriam reconsultados para sempre. */
+  fila_concluida_sem_linha: number;
   /** Linhas tiradas da fila por dividirem o nIdReceb com uma já eleita (NFe que fatura
    *  N pedidos). = chamadas Omie economizadas E duplicatas de leadtime não criadas. */
   recebimentos_deduplicados: number;
@@ -117,11 +123,28 @@ interface EmpresaSummary {
   grupos_t1_ambiguo: number;
   itens_com_pedido_mapeado: number;
   itens_sem_pedido: number;
+  /** Itens SEM nIdProduto e não ignorados (associação pendente no recebimento da Omie) — pendência. */
+  itens_aguardando_associacao: number;
+  /** Itens sem nIdProduto com cIgnorarItem = "S": nunca viram SKU (terminais, fora da pendência). */
+  itens_ignorados: number;
+  /** Itens cujo lookup de pedido deu ERRO de banco (≠ "não casou"): pendência, nunca o fallback. */
+  itens_sem_rota_pedido: number;
+  /** Itens retidos por dividirem o SKU com um item sem rota — gravar o resto seria subtotal. */
+  itens_retidos_sku_sem_rota: number;
+  /** Recebimentos que terminaram o run com pendência > 0: voltam à fila depois do backoff. */
+  recebimentos_incompletos: number;
   skus_distintos: number;
   erros: number;
-  /** Chamadas a marcarTentativa feitas no run (1 por NFe respondida ou com falha real). */
+  /** Recebimentos cujo controle o run tentou marcar (1 por NFe respondida ou com falha real),
+   *  em todas as irmãs de uma vez. */
   controle_marcacoes: number;
   controle_falhas: number;
+  /** Fechamentos da pendência (UPDATE com CAS no carimbo, depois dos upserts — recebimento.ts). */
+  controle_fechamentos: number;
+  /** Fechamentos com ERRO: fica a pendência conservadora do write-ahead (volta à fila, não some). */
+  controle_fechamentos_falhos: number;
+  /** Fechamentos PRETERIDOS pelo CAS: outro run gravou o controle depois do nosso carimbo. */
+  controle_fechamentos_preteridos: number;
   interrompido_por_timeout: boolean;
 }
 
@@ -216,118 +239,6 @@ function skuItemsDedupPorRecebimento<T extends { id: string; nIdReceb: string | 
 }
 // MIRROR-END
 
-// ─── Agregação de itens de NFe por (tracking, sku) antes do upsert (espelho verbatim de
-//     src/lib/reposicao/sku-items-fila-helpers.ts; paridade em edge-money-path-invariants.test.ts) ───
-// MIRROR-START sku-items-agregacao
-interface ItemRecebimentoResolvido {
-  tracking_id: string;
-  sku_codigo_omie: number;
-  sku_codigo: string | null;
-  sku_descricao: string | null;
-  sku_unidade: string | null;
-  sku_ncm: string | null;
-  fornecedor_codigo_omie: number | null;
-  fornecedor_nome: string | null;
-  grupo_leadtime: string | null;
-  quantidade_pedida: number | null;
-  quantidade_recebida: number | null;
-  valor_unitario: number | null;
-  valor_total: number | null;
-  t1_data_pedido: string;
-  /** Proveniência do t1: true = veio do PEDIDO casado (nNumPedCompra → tracking do pedido);
-   *  false = fallback para o t2 da própria NFe. Sem isto, dois itens do mesmo SKU com
-   *  proveniências distintas caem no mesmo bucket e o t1 emitido dependeria da ORDEM da
-   *  resposta da Omie. */
-  t1_de_pedido: boolean;
-  t2_data_faturamento: string;
-  t3_data_cte: string | null;
-  t4_data_recebimento: string | null;
-}
-
-interface ItemRecebimentoAgregado extends ItemRecebimentoResolvido {
-  /** Quantos itens crus da NFe foram fundidos neste (tracking, sku). 1 = caso comum. */
-  n_itens_agregados: number;
-  /** true = o bucket mistura itens com t1 DIFERENTE (proveniências distintas). Não dá para
-   *  saber qual t1 vale, e leadtime derivado de t1 errado é exatamente o defeito que o #1365
-   *  matou → o chamador grava lt_* = NULL em vez de escolher. Medido em prod (psql-ro
-   *  2026-07-18): 40 itens / 12 trackings casam o PRÓPRIO tracking e podem produzir bucket
-   *  misto. [Codex xhigh, bloqueador] */
-  t1_ambiguo: boolean;
-}
-
-/** Soma COMPLETO-ou-NULL para campo aditivo money-path: qualquer parcela ausente anula o
- *  total. Somar só o que existe faria o total representar um SUBCONJUNTO e o consumidor
- *  (AVG(valor_total/NULLIF(quantidade_recebida,0)) com filtro qr>0 AND vt>0) o aceitaria
- *  como se fosse a compra inteira — fabricando um preço que nenhum item real teve
- *  (vt=100/qr=null + vt=null/qr=10 → par (100,10), preço 10). [Codex xhigh, bloqueador] */
-function somaCompletaOuNull(valores: readonly (number | null)[]): number | null {
-  if (valores.length === 0) return null;
-  let soma = 0;
-  for (const v of valores) {
-    if (v === null) return null;
-    soma += v;
-  }
-  return soma;
-}
-
-/** valor_unitario agregado = média PONDERADA por quantidade_pedida (não AVG simples — o
- *  achado de 2ª ordem da função dropada #1373), FAIL-CLOSED: só pondera se TODO item do
- *  grupo tiver vu presente e qp > 0. Peso ausente, zero ou negativo → null, nunca um preço
- *  derivado de peso inválido (vu=100/qp=-1 + vu=10/qp=2 daria -80) nem média de subconjunto
- *  apresentada como média do grupo. [Codex xhigh] */
-function valorUnitarioPonderado(itens: readonly ItemRecebimentoResolvido[]): number | null {
-  if (itens.length === 0) return null;
-  let numerador = 0;
-  let pesoTotal = 0;
-  for (const i of itens) {
-    if (i.valor_unitario === null) return null;
-    if (i.quantidade_pedida === null || !(i.quantidade_pedida > 0)) return null;
-    numerador += i.valor_unitario * i.quantidade_pedida;
-    pesoTotal += i.quantidade_pedida;
-  }
-  if (!(pesoTotal > 0)) return null;
-  return numerador / pesoTotal;
-}
-
-/** Agrega os itens de UMA NFe por (tracking_id, sku_codigo_omie): soma quantidade_pedida,
- *  quantidade_recebida e valor_total; deriva valor_unitario como média ponderada por qtd;
- *  toma descritivos e datas do 1º item do grupo (iguais entre itens do mesmo tracking).
- *
- *  POR QUE existe: o writer fazia 1 upsert por item com onConflict (tracking_id,
- *  sku_codigo_omie). SKU repetido na NFe caindo no mesmo tracking → o 2º upsert
- *  SOBRESCREVIA o 1º (valor_total virava o do ÚLTIMO item, não o total). Medido em prod
- *  (psql-ro 2026-07-17): PRD02377 gravou R$139,90 de R$1.214,37; PRD03594 R$1.190,98 de
- *  R$1.984,96; 10,9% das NFes recentes têm SKU repetido. */
-function agregarItensRecebimento(
-  itens: readonly ItemRecebimentoResolvido[],
-): ItemRecebimentoAgregado[] {
-  const buckets = new Map<string, ItemRecebimentoResolvido[]>();
-  for (const item of itens) {
-    const chave = `${item.tracking_id}::${item.sku_codigo_omie}`;
-    const bucket = buckets.get(chave);
-    if (bucket) bucket.push(item);
-    else buckets.set(chave, [item]);
-  }
-  const out: ItemRecebimentoAgregado[] = [];
-  for (const bucket of buckets.values()) {
-    // Base DETERMINÍSTICA: prefere o item cujo t1 veio de PEDIDO real (mais informativo para
-    // auditoria) em vez do 1º da resposta da Omie — assim o t1 emitido não depende da ordem.
-    const base = bucket.find((i) => i.t1_de_pedido) ?? bucket[0];
-    const t1Ambiguo = new Set(bucket.map((i) => i.t1_data_pedido)).size > 1;
-    out.push({
-      ...base,
-      quantidade_pedida: somaCompletaOuNull(bucket.map((i) => i.quantidade_pedida)),
-      quantidade_recebida: somaCompletaOuNull(bucket.map((i) => i.quantidade_recebida)),
-      valor_unitario: valorUnitarioPonderado(bucket),
-      valor_total: somaCompletaOuNull(bucket.map((i) => i.valor_total)),
-      n_itens_agregados: bucket.length,
-      t1_ambiguo: t1Ambiguo,
-    });
-  }
-  return out;
-}
-// MIRROR-END
-
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 function getCredentials(
@@ -343,42 +254,6 @@ function getCredentials(
   const app_secret = Deno.env.get("OMIE_COLACOR_APP_SECRET");
   if (!app_key || !app_secret) throw new Error("Credenciais COLACOR ausentes");
   return { app_key, app_secret };
-}
-
-function toNum(v: unknown): number | null {
-  if (v === null || v === undefined || v === "") return null;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : null;
-}
-
-function toStr(v: unknown): string | null {
-  if (v === null || v === undefined) return null;
-  const s = String(v).trim();
-  return s === "" ? null : s;
-}
-
-/** Dias úteis entre duas datas ISO (segunda..sexta). Convenção: lead time exclui o dia inicial. */
-function diasUteisEntre(
-  inicioIso: string | null,
-  fimIso: string | null,
-): number | null {
-  if (!inicioIso || !fimIso) return null;
-  const ini = new Date(inicioIso);
-  const fim = new Date(fimIso);
-  if (isNaN(ini.getTime()) || isNaN(fim.getTime()) || fim < ini) return null;
-  let total = 0;
-  const cursor = new Date(
-    Date.UTC(ini.getUTCFullYear(), ini.getUTCMonth(), ini.getUTCDate()),
-  );
-  const last = new Date(
-    Date.UTC(fim.getUTCFullYear(), fim.getUTCMonth(), fim.getUTCDate()),
-  );
-  while (cursor <= last) {
-    const dow = cursor.getUTCDay();
-    if (dow !== 0 && dow !== 6) total++;
-    cursor.setUTCDate(cursor.getUTCDate() + 1);
-  }
-  return Math.max(total - 1, 0);
 }
 
 interface NFeRow {
@@ -403,6 +278,24 @@ interface NFeRow {
  *  pedido e apaga o nIdReceb), então lê-lo UMA vez por run evita depender de um campo
  *  que pode mudar debaixo do loop. */
 type NFeFilaRow = NFeRow & { nIdReceb: string | null };
+
+/** As irmãs lidas por nid_receb, com a ELEITA garantida entre elas (se o nIdReceb dela veio do jsonb,
+ *  a coluna não a achou — ela vai sozinha, e o dono é ela, como antes). */
+function irmasDoRecebimento(lidas: readonly Irma[] | undefined, eleita: NFeFilaRow): Irma[] {
+  const irmas = [...(lidas ?? [])];
+  if (!irmas.some((i) => i.id === eleita.id)) {
+    irmas.push({
+      id: eleita.id,
+      t1_data_pedido: eleita.t1_data_pedido,
+      t2_data_faturamento: eleita.t2_data_faturamento,
+      t3_data_cte: eleita.t3_data_cte,
+      t4_data_recebimento: eleita.t4_data_recebimento,
+      fornecedor_codigo_omie: eleita.fornecedor_codigo_omie,
+      fornecedor_nome: eleita.fornecedor_nome,
+    });
+  }
+  return irmas;
+}
 
 async function authorizeCronOrStaff(req: Request): Promise<boolean> {
   const SUPA_URL = Deno.env.get("SUPABASE_URL")!;
@@ -495,41 +388,91 @@ async function completeSync(
   }
 }
 
-// Marca tentativa de consulta no controle da fila (writer único desta tabela é esta edge).
-// Não derruba o run (o leadtime já upsertado continua válido), mas devolve `false` para
-// o chamador contar: se NENHUMA marcação persistir, o backoff está inoperante e o run
-// termina 'error' — sem isso o fix falharia em silêncio, que é o defeito original.
-// Corrida (cron × manual): dois runs podem ler `tentativas` e gravar o mesmo valor,
-// perdendo um incremento. Custo = uma consulta Omie a mais lá na frente (backoff mais
-// curto), nunca dado errado — o upsert do leadtime é idempotente por (tracking, sku).
+// Marca a tentativa do RECEBIMENTO no controle de TODAS as irmãs, num statement só (writer único
+// desta tabela é esta edge). Sem `itens_pendentes` no estado, a pendência medida antes NÃO é tocada:
+// o upsert do PostgREST atualiza só as colunas do payload. Não derruba o run, mas devolve `false`
+// para o chamador contar: se NENHUMA marcação persistir, o backoff está inoperante e o run termina
+// 'error' — sem isso o fix falharia em silêncio, que é o defeito original.
+// Corrida (cron × manual): dois runs podem ler `tentativas` e gravar o mesmo valor, perdendo um
+// incremento — custo de uma consulta Omie a mais, nunca dado errado. A PENDÊNCIA não corre esse
+// risco: o fechamento só a reduz onde `ultima_tentativa` ainda é o carimbo deste run (CAS).
 async function marcarTentativa(
   db: SupabaseClient,
-  trackingId: string,
-  tentativas: number,
-  motivo: string,
+  trackingIds: readonly string[],
+  estado: EstadoControle,
 ): Promise<boolean> {
   try {
-    const { error } = await db.from("sku_items_sync_controle").upsert(
-      {
-        tracking_id: trackingId,
-        tentativas,
-        ultima_tentativa: new Date().toISOString(),
-        motivo: motivo.slice(0, 300),
-      },
-      { onConflict: "tracking_id" },
-    );
+    const linhas = trackingIds.map((tracking_id) => ({
+      tracking_id,
+      tentativas: estado.tentativas,
+      ultima_tentativa: estado.ultima_tentativa,
+      motivo: estado.motivo.slice(0, 300),
+      ...(estado.itens_pendentes !== undefined ? { itens_pendentes: estado.itens_pendentes } : {}),
+    }));
+    const { error } = await db.from("sku_items_sync_controle").upsert(linhas, { onConflict: "tracking_id" });
     if (error) {
       console.warn("[sync-sku-items] marcarTentativa falhou (segue):", error.message);
       return false;
     }
     return true;
   } catch (e) {
-    console.warn(
-      "[sync-sku-items] marcarTentativa exceção (segue):",
-      e instanceof Error ? e.message : e,
-    );
+    console.warn("[sync-sku-items] marcarTentativa exceção (segue):", mensagemDeErro(e) ?? "sem mensagem");
     return false;
   }
+}
+
+// O banco que `gravarRecebimento` usa (recebimento.ts): nenhum método lança — erro volta no
+// retorno, e o módulo o transforma em pendência ou desfecho.
+function depsDeGravacao(db: SupabaseClient, empresa: Empresa): DepsGravacao {
+  return {
+    async buscarPedido(fornecedor, numero) {
+      // Sem fornecedor não há como escopar o pedido — casar por número entre fornecedores seria
+      // chute. "Não casou" (o fallback de sempre), não erro.
+      if (fornecedor === null) return { ok: true, pedido: null };
+      try {
+        // Ordem TOTAL (.order("id")): o mesmo número de pedido pode casar mais de uma linha, e sem
+        // ordem o item caía ora numa, ora noutra entre runs — a reconsulta criava chave nova.
+        const { data, error } = await db
+          .from("purchase_orders_tracking")
+          .select("id, t1_data_pedido, grupo_leadtime, fornecedor_nome")
+          .eq("empresa", empresa)
+          .eq("fornecedor_codigo_omie", fornecedor)
+          .eq("numero_contrato_fornecedor", numero)
+          .order("id")
+          .limit(1);
+        if (error) return { ok: false, erro: error.message };
+        return { ok: true, pedido: ((data ?? []) as PedidoCasado[])[0] ?? null };
+      } catch (e) {
+        return { ok: false, erro: mensagemDeErro(e) ?? "lookup do pedido lançou sem mensagem" };
+      }
+    },
+    async gravarLinha(linha) {
+      try {
+        const { error } = await db
+          .from("sku_leadtime_history")
+          .upsert(linha, { onConflict: "tracking_id,sku_codigo_omie" });
+        return error ? error.message : null;
+      } catch (e) {
+        return mensagemDeErro(e) ?? "upsert lançou sem mensagem";
+      }
+    },
+    marcarControle: (ids, estado) => marcarTentativa(db, ids, estado),
+    async fecharControle(ids, carimbo, final) {
+      try {
+        const { data, error } = await db
+          .from("sku_items_sync_controle")
+          .update({ itens_pendentes: final.itens_pendentes, motivo: final.motivo.slice(0, 300) })
+          .in("tracking_id", [...ids])
+          .eq("ultima_tentativa", carimbo)
+          .select("tracking_id");
+        if (error) return { ok: false, erro: error.message };
+        return { ok: true, atualizadas: (data ?? []).length };
+      } catch (e) {
+        return { ok: false, erro: mensagemDeErro(e) ?? "fechamento lançou sem mensagem" };
+      }
+    },
+    agora: () => new Date().toISOString(),
+  };
 }
 
 interface RecomputeEtapa {
@@ -692,11 +635,13 @@ Deno.serve(async (req) => {
     // sempre e consome o guard de 50s (o incidente que esta edge conserta). Degradar
     // aqui reviveria o poison EM SILÊNCIO, então a ausência da tabela (deploy fora de
     // ordem: edge antes da migration) tem de gritar — 'error' acionável no Sentinela.
-    const controleMap = new Map<string, SkuItemsFilaControle>();
+    // `itens_pendentes` vem desde 2026-10-05 (migration 20261005170000): sem a coluna esta leitura
+    // FALHA e o run grita aqui — edge nova antes da migration não roda a regra velha em silêncio.
+    const controleMap = new Map<string, ControleFila>();
     if (trackingIds.length > 0) {
       const { data: controleRows, error: controleErr } = await supabase
         .from("sku_items_sync_controle")
-        .select("tracking_id, tentativas, ultima_tentativa")
+        .select("tracking_id, tentativas, ultima_tentativa, itens_pendentes")
         .in("tracking_id", trackingIds);
       if (controleErr) {
         throw new Error(
@@ -705,19 +650,28 @@ Deno.serve(async (req) => {
       }
       for (
         const row of (controleRows ?? []) as Array<
-          { tracking_id: string; tentativas: number | null; ultima_tentativa: string | null }
+          {
+            tracking_id: string;
+            tentativas: number | null;
+            ultima_tentativa: string | null;
+            itens_pendentes: number | null;
+          }
         >
       ) {
         if (!row?.tracking_id) continue;
         controleMap.set(row.tracking_id, {
           tentativas: row.tentativas ?? 0,
           ultima_tentativa: row.ultima_tentativa,
+          itens_pendentes: row.itens_pendentes ?? null,
         });
       }
     }
 
     const agoraMs = Date.now();
-    const pendentes = ((nfes ?? []) as NFeRow[]).filter((n) => !existingTrackingIds.has(n.id));
+    // Pendente = pela pendência MEDIDA quando há (k>0 volta mesmo com linha; k=0 sai mesmo sem); pela
+    // regra antiga ("sem linha") no legado — recebimento.ts, `pendenteNaFila`.
+    const todas = (nfes ?? []) as NFeRow[];
+    const pendentes = todas.filter((n) => pendenteNaFila(controleMap.get(n.id), existingTrackingIds.has(n.id)));
     const filaOrdenada: NFeFilaRow[] = pendentes
       .map((n) => ({
         ...n,
@@ -740,9 +694,40 @@ Deno.serve(async (req) => {
     // Uma NFe que fatura N pedidos deixa N linhas com o MESMO nIdReceb (o backfill do
     // sync de NFes o grava em todas). Sem isto, cada uma consulta o MESMO recebimento e
     // regrava os MESMOS itens sob o seu tracking_id — peso N× na estatística de leadtime.
-    // A eleita só faz a CHAMADA; o destino de cada item é o pedido dele (ver upsert).
+    // A eleita só faz a CHAMADA; o destino de cada item é o pedido dele, ou o DONO (recebimento.ts).
     const fila = skuItemsDedupPorRecebimento(filaOrdenada);
     const recebimentosDeduplicados = filaOrdenada.length - fila.length;
+
+    // IRMÃS de cada recebimento da fila: TODAS as linhas com a mesma nid_receb, dentro ou fora da
+    // janela de `dias` (cobertura da coluna: 548/548 em 2026-10-05). O recebimento é a unidade: o
+    // controle é gravado em todas, e o DONO (menor t2) recebe os itens sem pedido — sem isso o
+    // destino dependia da eleita do run, que muda entre runs. FAIL-CLOSED antes de qualquer chamada
+    // Omie: sem as irmãs o run não sabe onde gravar.
+    const recebimentosDaFila = [...new Set(fila.map((n) => n.nIdReceb).filter((r): r is string => r !== null))];
+    const irmasPorRecebimento = new Map<string, Irma[]>();
+    if (recebimentosDaFila.length > 0) {
+      const { data: irmasRows, error: irmasErr } = await supabase
+        .from("purchase_orders_tracking")
+        .select(
+          "id, nid_receb, t1_data_pedido, t2_data_faturamento, t3_data_cte, t4_data_recebimento, fornecedor_codigo_omie, fornecedor_nome",
+        )
+        .eq("empresa", empresa)
+        .in("nid_receb", recebimentosDaFila)
+        .order("id");
+      if (irmasErr) throw new Error(`irmãs do recebimento ilegíveis (purchase_orders_tracking): ${irmasErr.message}`);
+      const linhasIrmas = (irmasRows ?? []) as Array<Irma & { nid_receb: number | string | null }>;
+      // O PostgREST corta em 1.000 linhas EM SILÊNCIO: chegar no teto é leitura possivelmente parcial.
+      if (linhasIrmas.length >= 1000) {
+        throw new Error(`irmãs do recebimento: ${linhasIrmas.length} linhas — teto do PostgREST, leitura possivelmente parcial`);
+      }
+      for (const linha of linhasIrmas) {
+        if (linha.nid_receb === null || linha.nid_receb === undefined) continue;
+        const chave = String(linha.nid_receb);
+        const lista = irmasPorRecebimento.get(chave) ?? [];
+        lista.push(linha);
+        irmasPorRecebimento.set(chave, lista);
+      }
+    }
 
     const summary: EmpresaSummary = {
       empresa,
@@ -751,6 +736,10 @@ Deno.serve(async (req) => {
       recompute_erro: recompute.erro,
       fila_pendente: pendentes.length,
       fila_em_backoff: pendentes.length - filaOrdenada.length,
+      fila_incompleta: pendentes.filter((n) => existingTrackingIds.has(n.id)).length,
+      fila_concluida_sem_linha: todas.filter((n) =>
+        !existingTrackingIds.has(n.id) && !pendenteNaFila(controleMap.get(n.id), false)
+      ).length,
       recebimentos_deduplicados: recebimentosDeduplicados,
       nfes_processadas: 0,
       nfes_sem_nidreceb: 0,
@@ -766,12 +755,21 @@ Deno.serve(async (req) => {
       grupos_t1_ambiguo: 0,
       itens_com_pedido_mapeado: 0,
       itens_sem_pedido: 0,
+      itens_aguardando_associacao: 0,
+      itens_ignorados: 0,
+      itens_sem_rota_pedido: 0,
+      itens_retidos_sku_sem_rota: 0,
+      recebimentos_incompletos: 0,
       skus_distintos: 0,
       erros: 0,
       controle_marcacoes: 0,
       controle_falhas: 0,
+      controle_fechamentos: 0,
+      controle_fechamentos_falhos: 0,
+      controle_fechamentos_preteridos: 0,
       interrompido_por_timeout: false,
     };
+    const deps = depsDeGravacao(supabase, empresa);
 
     const skusVistos = new Set<number>();
     // RECEBIMENTOS (nIdReceb) que o run TRATOU: a Omie respondeu, ou a falha foi MARCADA no controle.
@@ -793,7 +791,6 @@ Deno.serve(async (req) => {
       }
 
       summary.nfes_processadas++;
-      const tentativasPrevias = controleMap.get(nfeRaw.id)?.tentativas ?? 0;
 
       const nIdReceb = nfeRaw.nIdReceb;
       if (!nIdReceb) {
@@ -814,6 +811,14 @@ Deno.serve(async (req) => {
         console.warn(`[sync-sku-items] NFe ${nfeRaw.id} sem nIdReceb (${idadeDias}d)`);
         continue;
       }
+
+      // O recebimento é a unidade: as irmãs dividem o controle (recebimento.ts). A eleita está entre
+      // elas por construção (mesma nid_receb); se o nIdReceb dela veio do jsonb, ela vai sozinha.
+      const irmas = irmasDoRecebimento(irmasPorRecebimento.get(nIdReceb), nfeRaw);
+      const idsIrmas = irmas.map((i) => i.id);
+      // Tentativas do RECEBIMENTO = a maior entre as irmãs lidas: backoff conservador na transição,
+      // enquanto o legado ainda tem contagens diferentes por irmã.
+      const tentativasPrevias = Math.max(0, ...idsIrmas.map((id) => controleMap.get(id)?.tentativas ?? 0));
 
       // Deadline ANTES do sleep de cadência (5s), e não só a cada 5 NFes como o guard do topo:
       // dormir 5s para a consulta adiar em seguida gasta 10% do run à toa. (Até 2026-09-24 havia
@@ -852,12 +857,12 @@ Deno.serve(async (req) => {
       if (resultado.tipo === "falhou") {
         summary.consultas_falhas++;
         summary.controle_marcacoes++;
-        const marcou = await marcarTentativa(
-          supabase,
-          nfeRaw.id,
-          tentativasPrevias + 1,
-          `consulta_falhou: ${resultado.mensagem}`,
-        );
+        // Sem `itens_pendentes`: a falha não mede nada, e a pendência de antes fica como está.
+        const marcou = await marcarTentativa(supabase, idsIrmas, {
+          tentativas: tentativasPrevias + 1,
+          ultima_tentativa: new Date().toISOString(),
+          motivo: `consulta_falhou: ${resultado.mensagem}`,
+        });
         // Falha só conta como TRATADA se a marcação persistiu: sem ela a NFe não ganhou backoff nem
         // progresso, e chamá-la de tratada escondia do sensor a NFe parada (achado do Codex).
         if (marcou) recebimentosTratados.add(nIdReceb);
@@ -866,172 +871,35 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      const detalhe = resultado.detalhe;
       summary.consultas_detalhadas++;
-      recebimentosTratados.add(nIdReceb);
-
-      const itensEhLista = Array.isArray(detalhe?.itensRecebimento);
-      const itens: OmieRecebimentoItem[] = Array.isArray(detalhe?.itensRecebimento)
-        ? detalhe.itensRecebimento
-        : [];
-      const faultstring = typeof detalhe?.faultstring === "string" && detalhe.faultstring
-        ? detalhe.faultstring
-        : null;
-      let itensDaNfe = 0;
-      let ultimoErroUpsert: string | null = null;
-
-      // ── Passada 1: RESOLVER cada item ao seu tracking destino (lookup de pedido por item).
-      // NÃO upserta aqui: o mesmo SKU pode se repetir na NFe e cair no mesmo tracking; upsert
-      // item-a-item com onConflict (tracking_id, sku_codigo_omie) faria o 2º SOBRESCREVER o 1º
-      // em vez de somar (bug medido em prod 2026-07-17 — ver agregarItensRecebimento).
-      const resolvidos: ItemRecebimentoResolvido[] = [];
-      for (const item of itens) {
-        const cab = item?.itensCabec ?? {};
-        const adic = item?.itensInfoAdic ?? {};
-        const ajustes = item?.itensAjustes ?? {};
-
-        const skuCodigoOmie = toNum(cab?.nIdProduto);
-        if (!skuCodigoOmie) {
-          continue;
-        }
-
-        const nNumPedCompra = toStr(adic?.nNumPedCompra);
-
-        // Tentar mapear o pedido específico via numero_contrato_fornecedor
-        let pedidoMatch: PedidoTrackingMatchRow | null = null;
-        if (nNumPedCompra && nNumPedCompra !== "0") {
-          const { data: pedidoRows, error: pedErr } = await supabase
-            .from("purchase_orders_tracking")
-            .select(
-              "id, t1_data_pedido, numero_pedido, grupo_leadtime, fornecedor_nome",
-            )
-            .eq("empresa", empresa)
-            .eq("fornecedor_codigo_omie", nfeRaw.fornecedor_codigo_omie)
-            .eq("numero_contrato_fornecedor", nNumPedCompra)
-            .limit(1);
-          if (!pedErr && pedidoRows && pedidoRows.length > 0) {
-            pedidoMatch = pedidoRows[0] as unknown as PedidoTrackingMatchRow;
-          }
-        }
-
-        if (pedidoMatch) summary.itens_com_pedido_mapeado++;
-        else summary.itens_sem_pedido++;
-
-        // O item vai pro tracking do SEU pedido, não pro da linha que estava iterando.
-        // Era ESTE o defeito histórico: gravar sob `nfeRaw.id` fazia cada uma das N linhas
-        // da NFe regravar a NFe inteira. Com o dedup da fila (1 linha por nIdReceb) + este
-        // destino, as N linhas ganham só os SEUS itens, da MESMA chamada Omie.
-        //
-        // ⚠️ Sem pedido casado o item cai na linha eleita (fallback). NÃO é o dono
-        // correto — é um pouso determinístico (a eleição é estável: a fila tem ordem
-        // total, com id de desempate). O destino honesto seria tracking_id=NULL +
-        // match_status, mas a coluna é NOT NULL: o modelo atual não sabe dizer "não sei"
-        // (por isso o receipt-first ledger é a fase seguinte, não este patch).
-        resolvidos.push({
-          tracking_id: pedidoMatch?.id ?? nfeRaw.id,
-          sku_codigo_omie: skuCodigoOmie,
-          sku_codigo: toStr(cab?.cCodigoProduto),
-          sku_descricao: toStr(cab?.cDescricaoProduto),
-          sku_unidade: toStr(cab?.cUnidadeNfe),
-          sku_ncm: toStr(cab?.cNCM),
-          fornecedor_codigo_omie: nfeRaw.fornecedor_codigo_omie,
-          fornecedor_nome: pedidoMatch?.fornecedor_nome ?? nfeRaw.fornecedor_nome,
-          grupo_leadtime: pedidoMatch?.grupo_leadtime ?? "OUTRO",
-          quantidade_pedida: toNum(cab?.nQtdeNFe),
-          quantidade_recebida: toNum(ajustes?.nQtdeRecebida),
-          valor_unitario: toNum(cab?.nPrecoUnit),
-          valor_total: toNum(cab?.vTotalItem),
-          t1_data_pedido: pedidoMatch?.t1_data_pedido ?? nfeRaw.t2_data_faturamento,
-          // Proveniência do t1 — sem ela, itens do MESMO sku com origens distintas (um casando
-          // o pedido, outro no fallback) caem no mesmo bucket e o t1 emitido dependeria da
-          // ordem da resposta da Omie. Em prod há 40 itens / 12 trackings capazes disso.
-          t1_de_pedido: pedidoMatch !== null,
-          t2_data_faturamento: nfeRaw.t2_data_faturamento,
-          t3_data_cte: nfeRaw.t3_data_cte,
-          t4_data_recebimento: nfeRaw.t4_data_recebimento,
-        });
-      }
-
-      // ── Passada 2: AGREGAR por (tracking, sku) e upsertar 1 linha por grupo. O lt_* é
-      // derivado das datas do AGREGADO (iguais entre itens do mesmo tracking).
-      const agregados = agregarItensRecebimento(resolvidos);
-      summary.itens_fundidos_sku_repetido += resolvidos.length - agregados.length;
-      for (const ag of agregados) {
-        // Bucket com t1 AMBÍGUO (itens do mesmo sku com proveniências/t1 distintos): não dá
-        // para saber qual t1 é a data de pedido, e leadtime derivado de t1 errado é o defeito
-        // que o #1365 matou (subestima e faz pedir tarde). Fail-closed: grava as datas mas
-        // NÃO emite lt_bruto/lt_faturamento. O lt_logistica (t2→t4) não depende do t1 e segue.
-        const t1Confiavel = !ag.t1_ambiguo;
-        if (ag.t1_ambiguo) summary.grupos_t1_ambiguo++;
-        const upsertRow = {
-          tracking_id: ag.tracking_id,
-          empresa,
-          sku_codigo_omie: ag.sku_codigo_omie,
-          sku_codigo: ag.sku_codigo,
-          sku_descricao: ag.sku_descricao,
-          sku_unidade: ag.sku_unidade,
-          sku_ncm: ag.sku_ncm,
-          fornecedor_codigo_omie: ag.fornecedor_codigo_omie,
-          fornecedor_nome: ag.fornecedor_nome,
-          grupo_leadtime: ag.grupo_leadtime,
-          quantidade_pedida: ag.quantidade_pedida,
-          quantidade_recebida: ag.quantidade_recebida,
-          valor_unitario: ag.valor_unitario,
-          valor_total: ag.valor_total,
-          t1_data_pedido: ag.t1_data_pedido,
-          t2_data_faturamento: ag.t2_data_faturamento,
-          t3_data_cte: ag.t3_data_cte,
-          t4_data_recebimento: ag.t4_data_recebimento,
-          // t1 ambíguo ⇒ lt que DEPENDE do t1 não é emitido (degradação honesta: "não sei"
-          // vale mais que um leadtime derivado do t1 errado — o #1365 mostrou que o lt
-          // subestimado faz pedir TARDE). O lt_logistica (t2→t4) não usa t1 e segue válido.
-          lt_bruto_dias_uteis: t1Confiavel
-            ? diasUteisEntre(ag.t1_data_pedido, ag.t4_data_recebimento)
-            : null,
-          lt_faturamento_dias_uteis: t1Confiavel
-            ? diasUteisEntre(ag.t1_data_pedido, ag.t2_data_faturamento)
-            : null,
-          lt_logistica_dias_uteis: diasUteisEntre(ag.t2_data_faturamento, ag.t4_data_recebimento),
-          updated_at: new Date().toISOString(),
-        };
-
-        const { error: upErr } = await supabase
-          .from("sku_leadtime_history")
-          .upsert(upsertRow, { onConflict: "tracking_id,sku_codigo_omie" });
-        if (upErr) {
-          summary.erros++;
-          ultimoErroUpsert = upErr.message;
-          console.error(
-            `[sync-sku-items] upsert NFe ${nfeRaw.id} sku ${ag.sku_codigo_omie} falhou:`,
-            upErr.message,
-          );
-          continue;
-        }
-        summary.itens_processados++;
-        itensDaNfe++;
-        skusVistos.add(ag.sku_codigo_omie);
-      }
-
-      // Consulta RESPONDIDA → marca tentativa SEMPRE. Sem isto, NFe com 0 itens upsertados
-      // nunca sai da fila (não ganha linha em sku_leadtime_history) e vira poison
-      // re-consultado a cada run — o backoff só funciona se a tentativa for registrada.
-      // O motivo diz o que ACONTECEU (adiamento.ts, motivoDaTentativa): upsert morto não vira
-      // "NFe sem itens", e chave `itensRecebimento` ausente não vira "lista vazia".
       summary.controle_marcacoes++;
-      const marcou = await marcarTentativa(
-        supabase,
-        nfeRaw.id,
-        tentativasPrevias + 1,
-        motivoDaTentativa({
-          faultstring,
-          itensEhLista,
-          itensRecebidos: itens.length,
-          itensResolvidos: agregados.length,
-          itensGravados: itensDaNfe,
-          ultimoErroUpsert,
-        }),
+      // A gravação do recebimento inteira mora em recebimento.ts (testada em Deno contra banco falso):
+      // classificação do item, rota do pedido, write-ahead da pendência, upserts e fechamento com CAS.
+      const gravado = await gravarRecebimento(
+        deps,
+        { empresa, irmas, tentativas: tentativasPrevias + 1 },
+        resultado.detalhe,
       );
-      if (!marcou) summary.controle_falhas++;
+      // Tratado = o controle persistiu (com ele vão a pendência e o backoff). Sem ele nada foi gravado,
+      // e chamar de tratado esconderia do sensor o recebimento parado — a regra do ramo da falha.
+      if (gravado.controle === "persistiu") recebimentosTratados.add(nIdReceb);
+      else summary.controle_falhas++;
+      if (gravado.fechamento !== "nao_se_aplica") summary.controle_fechamentos++;
+      if (gravado.fechamento === "falhou") summary.controle_fechamentos_falhos++;
+      if (gravado.fechamento === "preterido") summary.controle_fechamentos_preteridos++;
+      if ((gravado.itensPendentes ?? 0) > 0) summary.recebimentos_incompletos++;
+      summary.itens_processados += gravado.gruposGravados;
+      summary.erros += gravado.gruposFalhos;
+      summary.itens_fundidos_sku_repetido += gravado.itensFundidos;
+      summary.grupos_t1_ambiguo += gravado.gruposT1Ambiguo;
+      summary.itens_com_pedido_mapeado += gravado.itensComPedido;
+      summary.itens_sem_pedido += gravado.itensSemPedido;
+      summary.itens_aguardando_associacao += gravado.itensAguardando;
+      summary.itens_ignorados += gravado.itensIgnorados;
+      summary.itens_sem_rota_pedido += gravado.itensSemRota;
+      summary.itens_retidos_sku_sem_rota += gravado.itensContaminados;
+      for (const sku of gravado.skusGravados) skusVistos.add(sku);
+      if (gravado.ultimoErro) console.error(`[sync-sku-items] recebimento ${nIdReceb}: ${gravado.motivo}`);
 
       if (Date.now() - startedAt > TIMEOUT_GUARD_MS) {
         summary.interrompido_por_timeout = true;

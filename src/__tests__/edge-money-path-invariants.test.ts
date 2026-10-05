@@ -2249,6 +2249,48 @@ describe('guardrail money-path: omie-sync-sku-items (fila de leadtime)', () => {
     ).toMatch(/throw new Error\(\s*\n?\s*`sku_items_sync_controle ilegível/);
   });
 
+  // ── Pendência por item (2026-10-05): o recebimento só sai da fila com evidência de completude ──
+  // O comportamento é provado em Deno (recebimento_test.ts, banco falso). Aqui se vigia a BORDA que o
+  // Deno não vê: o index.ts lê a pendência, decide a fila por ela e consome o desfecho da gravação.
+  it('a fila LÊ a pendência medida — sem a coluna no select a correção é INERTE (tudo cai na regra antiga)', () => {
+    const ini = src.indexOf('.from("sku_items_sync_controle")\n        .select(');
+    expect(ini, 'sentinela: a leitura do controle').toBeGreaterThan(-1);
+    const select = src.slice(ini, src.indexOf(')', src.indexOf('.select(', ini)));
+    expect(select, 'REGRESSÃO: a leitura do controle não traz itens_pendentes').toContain('itens_pendentes');
+    expect(src, 'o mapa do controle carrega a pendência lida').toMatch(/itens_pendentes:\s*row\.itens_pendentes\s*\?\?\s*null/);
+    expect(
+      vereditoFronteira(src, 'pendenteNaFila'),
+      'REGRESSÃO: o predicado da fila é avaliado e DESCARTADO',
+    ).toBe('ok');
+    expect(src, 'REGRESSÃO: a fila voltou a ser só "sem linha"')
+      .not.toMatch(/\.filter\(\(n\) => !existingTrackingIds\.has\(n\.id\)\)/);
+  });
+
+  it('o desfecho da gravação é CONSUMIDO — e só conta como tratado com o controle persistido', () => {
+    expect(vereditoFronteira(src, 'gravarRecebimento'), 'REGRESSÃO: a gravação roda e o desfecho é descartado').toBe('ok');
+    expect(src, 'REGRESSÃO: recebimento sem controle persistido conta como tratado (some do sensor)')
+      .toMatch(/if \(gravado\.controle === "persistiu"\) recebimentosTratados\.add\(nIdReceb\);/);
+    // Fora do ramo da falha, a ÚNICA entrada nos tratados é a condicionada ao controle.
+    expect(src.match(/recebimentosTratados\.add\(/g)?.length ?? 0, 'falha + respondida, ambas condicionais').toBe(2);
+  });
+
+  it('o fechamento é CAS no carimbo e a falha da consulta NÃO toca a pendência', () => {
+    expect(src, 'REGRESSÃO: o fechamento perdeu o CAS — resposta antiga sobrescreve a nova')
+      .toMatch(/\.update\(\{ itens_pendentes: final\.itens_pendentes[\s\S]{0,200}?\.eq\("ultima_tentativa", carimbo\)/);
+    const iniFalha = src.indexOf('if (resultado.tipo === "falhou")');
+    const ramoFalha = src.slice(iniFalha, src.indexOf('continue;', iniFalha));
+    expect(ramoFalha, 'REGRESSÃO: a falha da consulta passou a escrever a pendência').not.toContain('itens_pendentes');
+    expect(src, 'sem itens_pendentes no estado, a coluna fica FORA do payload (o upsert não a toca)')
+      .toMatch(/estado\.itens_pendentes !== undefined \? \{ itens_pendentes: estado\.itens_pendentes \} : \{\}/);
+  });
+
+  it('as irmãs vêm de leitura FAIL-CLOSED e com ordem total; o lookup do pedido também ordena', () => {
+    expect(src, 'REGRESSÃO: erro na leitura das irmãs não grita').toMatch(/if \(irmasErr\) throw new Error\(/);
+    expect(src, 'a leitura das irmãs bate no teto do PostgREST e lança').toMatch(/linhasIrmas\.length >= 1000\) \{\s*throw/);
+    expect(src, 'REGRESSÃO: lookup do pedido sem ordem total — a rota muda entre runs')
+      .toMatch(/\.eq\("numero_contrato_fornecedor", numero\)\s*\.order\("id"\)\s*\.limit\(1\)/);
+  });
+
   // O recompute derivado (RPC recomputar_leadtime_derivado) conserta o leadtime que nasce
   // NULL no faturamento e nunca volta à fila quando o t4 chega. Ele é LOCAL — não gasta Omie.
   it('o recompute derivado roda ANTES do loop da Omie, não depois', () => {
@@ -2846,7 +2888,9 @@ describe('guardrail money-path: omie-cliente não fabrica identidade (hardening 
 // rebaixa o SKU no score_volume (peso 1.0) do ranking de negociação. Fix: helper puro
 // agregarItensRecebimento agrega por (tracking, sku) ANTES do upsert, espelhado MIRROR no edge.
 // A paridade textual aqui pega a reversão do deploy do Lovable (mesma armadilha do resto do arquivo).
-const SYNC_SKU_ITEMS = 'supabase/functions/omie-sync-sku-items/index.ts';
+// Desde 2026-10-05 a gravação do recebimento (com a agregação e o espelho) mora em recebimento.ts —
+// o index.ts só a chama; os pinos seguem o código para onde ele foi.
+const SYNC_SKU_ITEMS = 'supabase/functions/omie-sync-sku-items/recebimento.ts';
 const SKU_ITEMS_HELPER = 'src/lib/reposicao/sku-items-fila-helpers.ts';
 
 describe('guardrail money-path: omie-sync-sku-items agrega itens por (tracking, sku) antes do upsert', () => {
@@ -2877,14 +2921,15 @@ describe('guardrail money-path: omie-sync-sku-items agrega itens por (tracking, 
   it('WIRING: o upsert de sku_leadtime_history itera sobre os AGREGADOS, não sobre os itens crus', () => {
     // O bug era upsertar dentro de `for (const item of itens)`. Anti-regressão: a agregação
     // acontece, o upsert itera os agregados, e a passada 1 (itens crus) NÃO toca a tabela.
-    expect(src, 'sumiu a agregação dos itens resolvidos').toMatch(/agregarItensRecebimento\(resolvidos\)/);
+    expect(src, 'sumiu a agregação dos itens roteáveis').toMatch(/agregarItensRecebimento\(roteaveis\)/);
     expect(src, 'REGRESSÃO: o upsert não itera mais sobre os agregados').toMatch(/for \(const ag of agregados\)/);
-    const passada1 = src.match(/for \(const item of itens\)[\s\S]*?const agregados = agregarItensRecebimento\(resolvidos\)/)?.[0] ?? '';
+    const passada1 = src.match(/for \(const it of itens\)[\s\S]*?const agregados = agregarItensRecebimento\(roteaveis\)/)?.[0] ?? '';
     expect(passada1, 'não achei a passada 1 (âncora quebrada)').not.toBe('');
+    // A gravação é `deps.gravarLinha` (o upsert de sku_leadtime_history injetado pelo index.ts).
     expect(
       passada1,
       'REGRESSÃO: o upsert de sku_leadtime_history voltou para dentro do loop de itens crus — sobrescrita de novo',
-    ).not.toMatch(/from\("sku_leadtime_history"\)\s*\.upsert/);
+    ).not.toMatch(/gravarLinha\(|from\("sku_leadtime_history"\)\s*\.upsert/);
   });
 
   it('PARIDADE: o bloco espelhado no edge é IDÊNTICO ao helper de src/ (pega reversão do Lovable)', () => {
