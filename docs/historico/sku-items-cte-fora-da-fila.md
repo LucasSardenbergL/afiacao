@@ -99,6 +99,13 @@ independente, **sem P0/P1**, com 4 achados P3, todos incorporados.
 | retorno do filtro descartado | vermelho (vitest, fronteira) |
 | filtro DEPOIS do dedup (texto todo presente, só a ordem muda) | vermelho na asserção de ORDEM: `"separarCtes" tem de vir ANTES de "backoff"` |
 | contador some do `results` | vermelho (vitest) |
+| fila ordenada = `pendentes.concat(ctesForaDaFila)` (achado do revisor) | vermelho (vitest, âncora `.map(`) |
+| fila ordenada = `pendentes && pendentesBrutos` (achado do revisor) | vermelho (vitest) |
+| a linha certa COMENTADA, brutos no lugar (achado do revisor) | vermelho (vitest sobre o código sem comentários) |
+| modelo por `chave.includes("57")` em vez da posição (achado do revisor) | vermelho (Deno, NF-e com 57 no nNF) |
+
+Os 4 últimos passavam VERDES na 1ª versão dos testes. O controle ficou verde no início e no fim da
+mesma invocação (10 de 10 vermelhos, worktree limpo depois).
 
 ## 7. O que fica descoberto
 
