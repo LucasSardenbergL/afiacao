@@ -131,7 +131,35 @@ rm -f "$fx/lixo.log"
 # ── AVISA: árvore suja (o veredito do disco pode não ser o do push) ────────────────────────────
 printf 'mudou\n' >>"$fx/docs/historico/README.md"
 expect_warn "rastreado modificado"                 "STUB_INDICE=falha" "git push" "docs:indice"
-expect_warn "add+commit+push num comando só"       "STUB_INDICE=falha" "git add -A && git commit -m x && git push" "docs:indice"
+expect_warn "add -p não prova o que entra"         "STUB_INDICE=falha" "git add -p && git commit -m x && git push" "docs:indice"
+expect_warn "add por glob não prova"               "STUB_INDICE=falha" "git add docs/* && git commit -m x && git push" "docs:indice"
+expect_warn "commit <caminho> ignora o staged"     "STUB_INDICE=falha" "git commit -m x docs/historico/README.md && git push" "docs:indice"
+expect_warn "add . fora da raiz"                   "STUB_INDICE=falha" "cd docs && git add . && git commit -m x && git push" "docs:indice"
+expect_warn "commit DEPOIS do push não conta"      "STUB_INDICE=falha" "git add -A && git push && git commit -m x" "docs:indice"
+
+# ── NEGA também: o próprio comando commita TODA a sujeira antes do push (disco vira o HEAD) ────
+expect_deny "add -A + commit + push"               "STUB_INDICE=falha" "git add -A && git commit -m x && git push" "docs:indice"
+expect_deny "add . na raiz"                        "STUB_INDICE=falha" "git add . && git commit -m \"x y\" && git push -u origin claude/teste" "docs:indice"
+expect_deny "add <caminho exato>"                  "STUB_INDICE=falha" "git add docs/historico/README.md && git commit -m x && git push" "docs:indice"
+expect_deny "add <diretório pai>"                  "STUB_INDICE=falha" "git add docs/ && git commit -m x && git push" "docs:indice"
+expect_deny "commit -am"                           "STUB_INDICE=falha" "git commit -am x && git push" "docs:indice"
+expect_deny "add -u + commit"                      "STUB_INDICE=falha" "git add -u && git commit -m x && git push" "docs:indice"
+expect_deny "a razão diz que o commit entra"       "STUB_INDICE=falha" "git add -A && git commit -m x && git push" "commita tudo antes do push"
+git -C "$fx" add docs/historico/README.md
+expect_deny "já staged por inteiro"                "STUB_INDICE=falha" "git commit -m x && git push" "docs:indice"
+printf 'de novo\n' >>"$fx/docs/historico/README.md"
+expect_warn "staged E modificado depois (MM)"      "STUB_INDICE=falha" "git commit -m x && git push" "docs:indice"
+git -C "$fx" reset -q -- docs/historico/README.md
+git -C "$fx" checkout -q -- docs/historico/README.md
+
+# sujeira em dois lugares: o add que cobre só um deles não prova nada
+printf 'mudou\n' >>"$fx/docs/historico/README.md"
+: >"$fx/supabase/functions/x/novo.ts"
+expect_warn "add cobre só parte da sujeira"        "STUB_FINGERPRINT=falha" "git add docs/historico/README.md && git commit -m x && git push" "sonda:fingerprint"
+expect_warn "add -A <caminho> fica no caminho"     "STUB_FINGERPRINT=falha" "git add -A docs && git commit -m x && git push" "sonda:fingerprint"
+expect_warn "commit -a não pega o não rastreado"   "STUB_FINGERPRINT=falha" "git commit -am x && git push" "sonda:fingerprint"
+expect_deny "add dos dois caminhos"                "STUB_FINGERPRINT=falha" "git add docs/historico/README.md supabase/functions/x/novo.ts && git commit -m x && git push" "sonda:fingerprint"
+rm -f "$fx/supabase/functions/x/novo.ts"
 git -C "$fx" checkout -q -- docs/historico/README.md
 : >"$fx/docs/historico/novo.md"
 expect_warn "doc novo não rastreado em docs/"      "STUB_INDICE=falha" "git push" "docs:indice"
@@ -141,14 +169,33 @@ expect_warn "arquivo novo em supabase/functions/"  "STUB_FINGERPRINT=falha" "git
 rm -f "$fx/supabase/functions/x/novo.ts"
 [ -z "$(git -C "$fx" status --porcelain)" ] || { echo "✗ fixture ficou suja após os casos de aviso"; exit 1; }
 
-# ── MUDO: gate que não deu veredito (fail-open) ────────────────────────────────────────────────
-expect_mudo "exit 1 sem a marca = crash"       "STUB_INDICE=crash"       "git push" 3
-expect_mudo "marca com exit 2 não é veredito"  "STUB_INDICE=marca-exit2" "git push" 3
-expect_mudo "bun ausente"                      "STUB_INDICE=falha PGG_BUN=/nao/existe/bun" "git push" 0
+# ── AVISA sem bloquear: gate que não deu veredito (não bloqueia, mas não fica CALADO) ──────────
+expect_warn "exit 1 sem a marca = crash"       "STUB_INDICE=crash"       "git push" "docs:indice (exit 1 sem a marca)"
+expect_warn "marca com exit 2 não é veredito"  "STUB_INDICE=marca-exit2" "git push" "docs:indice (exit 2)"
+expect_warn "bun ausente"                      "STUB_INDICE=falha PGG_BUN=/nao/existe/bun" "git push" "bun não encontrado"
+[ "$(_gates)" = 0 ] && _ok || _ko "bun ausente: nenhum gate deveria ter rodado — rodaram $(_gates)"
+expect_deny "crash num gate não salva o outro" "STUB_INDICE=crash STUB_CITACOES=falha" "git push" "Sem veredito"
 if command -v timeout >/dev/null 2>&1 || command -v gtimeout >/dev/null 2>&1; then
-  expect_mudo "gate lento estoura o timeout"   "STUB_INDICE=lento PGG_TIMEOUT=1" "git push" 3
+  expect_warn "gate lento estoura o timeout"   "STUB_INDICE=lento PGG_TIMEOUT=1" "git push" "docs:indice (exit 124)"
 else
   echo "· PULADO: gate lento (sem timeout/gtimeout nesta máquina)"
+fi
+
+# ── bun FORA do PATH do hook (o app aberto pelo Dock não lê o ~/.zshrc): acha em ~/.bun/bin ─────
+binmin="$tmp/binmin"; mkdir -p "$binmin"
+for t in bash env git jq perl awk sed cat head timeout sh sleep; do
+  p="$(command -v "$t" 2>/dev/null)" && ln -s "$p" "$binmin/$t"
+done
+home_bun="$tmp/home-bun"; mkdir -p "$home_bun/.bun/bin"; ln -s "$(command -v bun)" "$home_bun/.bun/bin/bun"
+if PATH="$binmin" command -v bun >/dev/null 2>&1; then
+  _ko "PATH mínimo ainda acha o bun — o caso abaixo não mede a busca em ~/.bun/bin"
+else
+  expect_deny "bun só em ~/.bun/bin ainda nega" "STUB_INDICE=falha PATH=$binmin HOME=$home_bun" "git push" "docs:indice"
+  if [ ! -x /opt/homebrew/bin/bun ] && [ ! -x /usr/local/bin/bun ]; then
+    expect_warn "sem bun em lugar nenhum avisa" "STUB_INDICE=falha PATH=$binmin HOME=$tmp/sem-home" "git push" "bun não encontrado"
+  else
+    echo "· PULADO: sem-bun-em-lugar-nenhum (há bun no Homebrew desta máquina)"
+  fi
 fi
 
 # ── MUDO sem rodar gate nenhum: não é push do HEAD ─────────────────────────────────────────────

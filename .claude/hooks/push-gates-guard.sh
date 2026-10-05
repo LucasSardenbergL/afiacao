@@ -15,14 +15,17 @@
 #     --delete, --all, --mirror, --tags, --dry-run, opção que não conheço, alvo entre aspas ou
 #     com expansão, GIT_DIR/--git-dir) → não interfere;
 #   · os gates leem o DISCO, não o HEAD. Árvore limpa → os dois coincidem e o veredito é o do push
-#     → NEGA. Mudança não commitada em arquivo rastreado (inclusive o `git add && git commit &&
-#     git push` num comando só, que o hook vê ANTES do commit), ou arquivo novo não rastreado em
-#     `docs/` ou `supabase/functions/` → o veredito pode não ser o do push → só AVISA;
+#     → NEGA. Idem quando o PRÓPRIO comando commita antes do push (`git add … && git commit … &&
+#     git push`) e o que ele commita cobre TODA a sujeira (add -A/., add -u/commit -a, caminho
+#     literal, ou já staged). Sujeira que o commit não cobre com prova (rastreado fora do add,
+#     novo em `docs/`/`supabase/functions/`, glob, add -p, commit <caminho>) → só AVISA;
 #   · reprovação só com EVIDÊNCIA POSITIVA: exit 1 **e** a marca de falha do gate na saída. Gate
-#     que não rodou (bun ausente, crash, timeout, marca que mudou de texto) → fail-open: o CI julga;
+#     que não deu veredito (bun ausente, crash, timeout, marca que mudou de texto) → não bloqueia,
+#     mas AVISA que não checou (até 2026-10 era calado — e "calado" não se distingue de "passou");
 #   · `--no-verify` é a válvula explícita (a mesma do hook pre-push do git): pula tudo.
 #
-# Fail-open TOTAL em infra: sem jq/git/bun, fora de um repo com os 3 gates, ou erro → exit 0.
+# Fail-open TOTAL em infra: sem jq/git, fora de um repo com os 3 gates, ou erro → exit 0. Sem bun
+# (procurado também em ~/.bun/bin e no Homebrew — o PATH do hook não é o do zsh) → AVISA.
 # Roda no bash 3.2 do macOS: sem array associativo, sem `${x,,}`, `${var}` com chave antes de
 # não-ASCII (docs/historico/shell-variavel-colada-em-nao-ascii.md).
 # Testes: scripts/test-push-gates-guard.sh (o teste também confere que as marcas abaixo ainda
@@ -68,6 +71,8 @@ resolver() {
 }
 
 dir="$cwd"; achou_push=""; alvo_dir=""; refspec=""
+commitou=""; commit_a=""; commit_incerto=""
+add_dir=""; add_tudo=""; add_ponto=""; add_upd=""; add_incerto=""; add_paths=""
 while IFS= read -r seg; do
   set -f
   # shellcheck disable=SC2086  # tokenizar o segmento É o objetivo (glob desligado acima)
@@ -99,6 +104,48 @@ while IFS= read -r seg; do
       *) break ;;
     esac
   done
+  # `git add`/`git commit` ANTES do push no mesmo comando: anoto o que vai entrar no commit, para
+  # saber se o disco que os gates leem vira o HEAD que o push publica (ver "Árvore limpa?").
+  case "${1:-}" in
+    add)
+      shift
+      if [ -z "$gdir" ] || { [ -n "$add_dir" ] && [ "$add_dir" != "$gdir" ]; }; then add_incerto=1; fi
+      add_dir="$gdir"; f_tudo=""; f_upd=""; n_paths=0
+      for a in "$@"; do
+        case "$a" in
+          -A|--all) f_tudo=1 ;;
+          -u|--update) f_upd=1 ;;
+          -p|--patch|-i|--interactive|-N|--intent-to-add|-n|--dry-run|-e|--edit) add_incerto=1 ;;
+          -*) ;;
+          .|./) add_ponto=1; n_paths=$((n_paths + 1)) ;;   # "tudo" só se o add rodou na raiz
+          *) n_paths=$((n_paths + 1)); add_paths="${add_paths}
+${a}" ;;
+        esac
+      done
+      # -A/-u com caminho ficam restritos ao caminho (`git add -A docs/`): só sem caminho valem tudo
+      if [ "$n_paths" -eq 0 ]; then
+        [ -z "$f_tudo" ] || add_tudo=1
+        [ -z "$f_upd" ] || add_upd=1
+      elif [ -n "$f_upd" ]; then
+        add_incerto=1                   # -u <caminho> não pega o não rastreado do caminho: não sei
+      fi
+      continue ;;
+    commit)
+      shift; commitou=1; pula=""
+      for a in "$@"; do
+        if [ -n "$pula" ]; then pula=""; continue; fi
+        case "$a" in
+          --author|--date|--fixup|--squash|--file|--message|--template|--cleanup) pula=1 ;;
+          --all) commit_a=1 ;;
+          --*) ;;
+          -*)                           # curtas, combináveis: -a, -m x, -am x, -sam x
+            case "$a" in -*a*) commit_a=1 ;; esac
+            case "$a" in *m|*F|*C|*c|*t) pula=1 ;; esac ;;
+          *) commit_incerto=1 ;;        # `git commit <caminho>` commita SÓ o caminho, não o staged
+        esac
+      done
+      continue ;;
+  esac
   [ "${1:-}" = push ] || continue
   shift
 
@@ -148,21 +195,77 @@ if [ -n "$refspec" ]; then
 fi
 
 # Árvore limpa? (os gates leem o disco; só com o disco == HEAD o veredito é o do push)
+# Exceção: o MESMO comando commita antes do push (`git add … && git commit … && git push`) e o
+# que ele commita cobre TODA a sujeira → depois do commit o disco é o HEAD, e o veredito do disco
+# é o do push. Cobertura só com prova: `add -A`/`add .` na raiz, `add -u`/`commit -a` (rastreado),
+# caminho literal que contém o arquivo, ou já staged por inteiro. Glob, aspas, expansão, `add -p`,
+# `commit <caminho>`, add fora da raiz → incerto → continua só AVISANDO.
+add_dir_real=""
+[ -z "$add_dir" ] || add_dir_real="$(cd "$add_dir" 2>/dev/null && pwd -P)"
+root_real="$(cd "$root" 2>/dev/null && pwd -P)"
+na_raiz=""; [ -n "$add_dir_real" ] && [ "$add_dir_real" = "$root_real" ] && na_raiz=1
+pode_cobrir=""
+[ -n "$commitou" ] && [ -z "$commit_incerto" ] && [ -z "$add_incerto" ] && pode_cobrir=1
+[ -n "$na_raiz" ] && [ -n "$add_ponto" ] && add_tudo=1
+coberto_por_add() {  # <caminho relativo à raiz> → 0 se um `git add <caminho>` deste comando o inclui
+  [ -n "$na_raiz" ] && [ -n "$add_paths" ] || return 1
+  while IFS= read -r t; do
+    [ -n "$t" ] || continue
+    case "$t" in *"$Q"*|*'$'*|*'`'*|*'*'*|*'?'*|*'['*) return 1 ;; esac
+    t="${t#./}"; t="${t%/}"
+    case "$1" in "$t"|"$t"/*) return 0 ;; esac
+  done <<EOF
+$add_paths
+EOF
+  return 1
+}
+
 st="$(git -C "$root" status --porcelain --untracked-files=all 2>/dev/null)" || exit 0
-sujo=""
+sujo=""; cobriu=""
 while IFS= read -r l; do
   [ -n "$l" ] || continue
+  x="${l:0:1}"; y="${l:1:1}"; p="${l:3}"
   case "$l" in
-    '?? docs/'*|'?? "docs/'*|'?? supabase/functions/'*|'?? "supabase/functions/'*) sujo=1 ;;
-    '?? '*) ;;                  # não rastreado fora do alcance dos 3 gates: irrelevante
-    *) sujo=1 ;;                # rastreado com mudança (staged ou não)
+    '?? docs/'*|'?? "docs/'*|'?? supabase/functions/'*|'?? "supabase/functions/'*) ;;
+    '?? '*) continue ;;         # não rastreado fora do alcance dos 3 gates: irrelevante
   esac
+  # daqui em diante: mudança que os gates enxergam (rastreado, ou novo em docs/ ou edges)
+  c=""
+  if [ -n "$pode_cobrir" ]; then
+    case "$p" in '"'*|*' -> '*) ;;  # nome com escape ou rename: não julgo
+      *)
+        if [ -n "$add_tudo" ]; then c=1
+        elif coberto_por_add "$p"; then c=1
+        elif [ "$x" != '?' ]; then
+          { [ "$y" = ' ' ] || [ -n "$commit_a" ] || [ -n "$add_upd" ]; } && c=1
+        fi ;;
+    esac
+  fi
+  if [ -n "$c" ]; then cobriu=1; else sujo=1; fi
 done <<EOF
 $st
 EOF
 
-bun_bin="${PGG_BUN:-bun}"
-command -v "$bun_bin" >/dev/null 2>&1 || exit 0
+# Achar o bun: o hook herda o PATH do PROCESSO do Claude Code, não o do shell interativo — o app
+# aberto pelo Dock não lê o ~/.zshrc, e o bun mora em ~/.bun/bin. Sem isto, "sem bun" era um
+# fail-open CALADO (medição de 2026-10-03, docs/historico/gates-no-push.md).
+avisar() {  # <texto> → allow + additionalContext (nunca bloqueia)
+  jq -n --arg m "$1" \
+    '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"allow",additionalContext:$m}}'
+  exit 0
+}
+if [ -n "${PGG_BUN:-}" ]; then
+  bun_bin="$PGG_BUN"
+  command -v "$bun_bin" >/dev/null 2>&1 || bun_bin=""
+else
+  bun_bin="$(command -v bun 2>/dev/null)"
+  if [ -z "$bun_bin" ]; then
+    for cand in "${HOME:-/nao-existe}/.bun/bin/bun" /opt/homebrew/bin/bun /usr/local/bin/bun; do
+      [ -x "$cand" ] && { bun_bin="$cand"; break; }
+    done
+  fi
+fi
+[ -n "$bun_bin" ] || avisar "⚠️ push-gates-guard: NÃO rodei os gates (docs:indice, docs:citacoes, sonda:fingerprint) — bun não encontrado no PATH do hook nem em ~/.bun/bin, /opt/homebrew/bin, /usr/local/bin. Este push NÃO foi checado (ausência de verificação, não aprovação). Rode os 3 à mão antes de empurrar."
 limite="${PGG_TIMEOUT:-15}"   # por gate; 3×15 s < 60 s, o timeout padrão de hook do host
 tmo_bin=""
 if command -v timeout >/dev/null 2>&1; then tmo_bin="timeout"
@@ -178,20 +281,33 @@ rodar() {  # rodar <script do package.json> → saída (stdout+stderr) e exit do
 }
 
 # gate|marca de falha (texto ASCII fixo, caixa fixa — casado sem locale)
-reprovados=""; relato=""
+reprovados=""; relato=""; sem_veredito=""
 for par in 'docs:indice|problema(s)' 'docs:citacoes|quebrada(s)' 'sonda:fingerprint|sonda-fingerprint: o mapa'; do
   nome="${par%%|*}"; marca="${par#*|}"
   saida="$(rodar "$nome")"
   rc=$?
-  [ "$rc" -eq 1 ] || continue                           # 0 = passou; outro = não rodou → fail-open
-  case "$saida" in *"$marca"*) ;; *) continue ;; esac   # exit 1 sem a marca = crash, não veredito
+  [ "$rc" -eq 0 ] && continue                           # passou
+  # exit ≠ 1, ou 1 sem a marca = crash/timeout, não veredito → não bloqueia, mas DIZ que não mediu
+  if [ "$rc" -ne 1 ]; then sem_veredito="${sem_veredito:+${sem_veredito}, }${nome} (exit ${rc})"; continue; fi
+  case "$saida" in *"$marca"*) ;; *) sem_veredito="${sem_veredito:+${sem_veredito}, }${nome} (exit 1 sem a marca)"; continue ;; esac
   reprovados="${reprovados:+${reprovados}, }${nome}"
   relato="${relato}
 
 == bun run ${nome} ==
 $(printf '%s' "$saida" | head -c 1500)"
 done
-[ -n "$reprovados" ] || exit 0
+nota_sv=""
+[ -z "$sem_veredito" ] || nota_sv="
+
+(Sem veredito — não checado, o CI julga: ${sem_veredito}.)"
+if [ -z "$reprovados" ]; then
+  [ -z "$sem_veredito" ] || avisar "⚠️ push-gates-guard: gate(s) sem veredito — ${sem_veredito}. O push segue, mas esse gate NÃO foi checado (crash ou timeout não é aprovação); rode-o à mão: bun run <gate>."
+  exit 0
+fi
+[ -z "$cobriu" ] || [ -n "$sujo" ] || relato="${relato}
+
+(A árvore estava suja, mas o próprio comando commita tudo antes do push — o disco é o que vai no push.)"
+relato="${relato}${nota_sv}"
 
 if [ -n "$sujo" ]; then
   msg="⚠️ push-gates-guard: reprovou no DISCO (${reprovados}), mas a árvore tem mudança não commitada ou arquivo novo em docs/ ou supabase/functions/ — o veredito pode não ser o do push, por isso não bloqueei. Se o que vai no push é o que está no disco, o CI vai reprovar igual: conserte e empurre de novo.${relato}"
