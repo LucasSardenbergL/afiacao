@@ -75,9 +75,8 @@ if [ "${1:-}" = "--falsificar" ]; then
               post_cega_tab_authenticated:P3:I0,I1,P8
               post_cega_md5:P4:I0,I1,P1
               post_cega_rls:P5:I0,I1,P6
-              post_cega_check:P6:I0,I1,P5
               post_cega_tab_anon:P8:I0,I1,P3
-              post_cega_checkdef:P9:I0,I1,P6
+              post_cega_checkdef:P6,P9:I0,I1,P5
               post_cega_policies:P10,P12:I0,I1,P5
               post_cega_config:P11:I0,I1,P1
               post_cega_service_role:P13:I0,I1,P3"
@@ -217,7 +216,6 @@ case "$SABOTAGEM" in
   post_cega_tab_anon)          sabotar_arquivo "IF has_table_privilege('anon', v_tab, v_priv) THEN" "IF false THEN" 1 ;;
   post_cega_md5)               sabotar_arquivo "FROM pg_proc p WHERE p.oid = v_fn) IS DISTINCT FROM '" "FROM pg_proc p WHERE p.oid = v_fn) IS NULL AND 'x' <> '" 1 ;;
   post_cega_rls)               sabotar_arquivo "AND c.relrowsecurity" "" 1 ;;
-  post_cega_check)             sabotar_arquivo ")) <> 3 THEN" ")) < 0 THEN" 1 ;;
   post_cega_checkdef)          sabotar_arquivo "AND k.contype = 'c') IS DISTINCT FROM '" "AND k.contype = 'c') IS NULL AND 'x' <> '" 1 ;;
   post_cega_policies)          sabotar_arquivo "IS DISTINCT FROM '7c26732332bf0eed21921bf88944e4b9'" "IS NULL" 1 ;;
   post_cega_config)            sabotar_arquivo "= ANY (p.proconfig) FROM pg_proc p WHERE p.oid = v_fn) IS DISTINCT FROM true THEN" "= ANY (p.proconfig) FROM pg_proc p WHERE p.oid = v_fn) = false THEN" 1 ;;
@@ -569,7 +567,7 @@ postcond_recusa P4 "corpo da RPC com 1 byte a mais (transcrição) → aborta" "
   "  RETURN v_n;"$'\n' "  RETURN v_n ;"$'\n'
 postcond_recusa P5 "sem RLS na tabela de itens → aborta" "sem RLS" \
   "ALTER TABLE public.reposicao_po_observado_item ENABLE ROW LEVEL SECURITY;"$'\n' ""
-postcond_recusa P6 "CHECK do contado com outro nome (tabela de outra forma) → aborta" "CHECKs do item" \
+postcond_recusa P6 "CHECK do contado com outro nome (tabela de outra forma) → aborta" "definicao dos CHECKs difere" \
   "CONSTRAINT reposicao_po_observado_item_contado_tem_sku"$'\n' "CONSTRAINT reposicao_po_observado_item_contado_outro"$'\n'
 postcond_recusa P7 "sem o REVOKE de PUBLIC na RPC → aborta" "EXECUTE da RPC fora" \
   "REVOKE ALL ON FUNCTION public.reposicao_po_observado_publicar(jsonb, jsonb) FROM PUBLIC;"$'\n' ""

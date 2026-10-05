@@ -167,19 +167,12 @@ BEGIN
          AND c.relname IN ('reposicao_po_observado_run', 'reposicao_po_observado_item')) <> 2 THEN
     RAISE EXCEPTION 'POSTCONDICAO FALHOU: tabelas de observação ausentes ou sem RLS';
   END IF;
-  IF (SELECT count(*) FROM pg_constraint
-       WHERE conrelid = 'public.reposicao_po_observado_item'::regclass AND contype = 'c' AND convalidated
-         AND conname IN ('reposicao_po_observado_item_exclusao_conhecida',
-                         'reposicao_po_observado_item_excluido_nao_contribui',
-                         'reposicao_po_observado_item_contado_tem_sku')) <> 3 THEN
-    RAISE EXCEPTION 'POSTCONDICAO FALHOU: CHECKs do item ausentes (tabela pré-existente com outra forma?)';
-  END IF;
   IF (SELECT md5(string_agg(c.relname || '.' || k.conname || '=' || pg_get_constraintdef(k.oid), ';'
                             ORDER BY c.relname COLLATE "C", k.conname COLLATE "C"))
         FROM pg_constraint k JOIN pg_class c ON c.oid = k.conrelid
        WHERE k.conrelid IN ('public.reposicao_po_observado_run'::regclass, 'public.reposicao_po_observado_item'::regclass)
-         AND k.contype = 'c') IS DISTINCT FROM 'd96b3af5ad32cab4a588029faa390246' THEN
-    RAISE EXCEPTION 'POSTCONDICAO FALHOU: definicao dos CHECKs difere do arquivo (CHECK trocado ou tabela de outra forma)';
+         AND k.contype = 'c' AND k.convalidated) IS DISTINCT FROM 'd96b3af5ad32cab4a588029faa390246' THEN
+    RAISE EXCEPTION 'POSTCONDICAO FALHOU: definicao dos CHECKs difere do arquivo (CHECK trocado, renomeado, NOT VALID ou tabela de outra forma)';
   END IF;
   IF (SELECT md5(string_agg(c.relname || '.' || p.polname || '|' || p.polcmd::text || '|' || p.polpermissive::text || '|'
                             || p.polroles::text || '|' || coalesce(pg_get_expr(p.polqual, p.polrelid), '-') || '|'
