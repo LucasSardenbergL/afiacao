@@ -56,12 +56,27 @@ veredito, do processo que rodou a suíte. Pid ausente ou não numérico é FALHA
 versão rodava TODAS as ~102 rodadas numa fila de 4 e passava o exit por arquivo `.rc` — e dois gates
 recusaram, com razão: o R2 do `falsificar-exige-assert` acusa um 2º `for … in $SABOTAGENS` que não leva
 a declaração ao `grep` (a forma do laço que julga por exit), e o R4 exige a medição colada no veredito,
-que o arquivo intermediário rompia (um `echo 1 > .rc` em outro ponto passaria sem o gate ver). O R4
-deste arquivo agora prende DOIS blocos — o disparo e o juízo, com o `case` do pid — e a escrita do
-`log` no laço do juízo. Ganho de ~2x neste alvo, não ~4x: o preço de continuar auditável.
+que o arquivo intermediário rompia (um `echo 1 > .rc` em outro ponto passaria sem o gate ver).
+Ganho de ~2x neste alvo, não ~4x: o preço de continuar auditável.
 
-**Falsificado** (controle verde na mesma invocação): o disparo sem guardar o pid → vermelho; o juiz
-sem o `wait` (julgando antes do fim da rodada) → vermelho.
+**O parecer do Codex (gpt-6-astra, max, 460 s) achou dois furos na 2ª versão — os dois reais:**
+1. **O R4 ficou mais fraco que antes.** Com a medição em DOIS blocos de âncora (disparo e juízo), um
+   `continue 2` logo depois de guardar o pid pulava o juiz com `falhou=0`, e a falsificação anunciava
+   "todas detectadas" (num recorte do laço: controle 1, variante 0). No bloco único de antes a mesma
+   inserção o rompia. Agora o R4 prende UM bloco contíguo, do `aplica` ao 1º veredito.
+2. **O `cp` sem status.** A cópia por locale é reaproveitada entre sabotagens: um `cp` que falhasse
+   deixando a da sabotagem ANTERIOR rodaria a mutação errada, e `sql_descarta_sem_fonte` e
+   `segunda_classe_sem_probe` (vizinhas, as duas exigem E12b) aprovariam a 2ª sem ela ter rodado.
+   Agora a cópia é re-criada (`rm -f`) e conferida (`cmp`); rodada não disparada (cópia ou embrulho)
+   ou sem pid é FALHA no próprio juízo, na ordem de sempre — e o slot do pid é zerado a cada disparo.
+
+O que o parecer confirmou: sem estado compartilhado entre os locales (o alvo e o auxiliar usam
+temporário próprio; o git dos fixtures usa `--no-optional-locks`), e `wait "$pid"` fiel no bash 3.2 e
+5.x (um `wait` repetido devolve o status guardado; o PID descartado por `wait` sem argumento dá 127).
+
+**Falsificado** (controle na mesma invocação). No TEXTO, contra o R4 (controle 0 achados): o
+`continue 2` do parecer, o pid sobrescrito entre disparo e juízo, a cópia sem conferência e a rodada
+não disparada pulada sem FALHA — as 4 reprovam.
 
 **Por que não o `codex-async` (o 2º mais lento, 212 s).** A suíte dele procura `sleep 977` vazado
 na MÁQUINA inteira (`pids_sleep`): duas rodadas simultâneas veriam o processo uma da outra.
