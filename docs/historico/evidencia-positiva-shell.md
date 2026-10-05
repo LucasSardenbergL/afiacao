@@ -988,7 +988,32 @@ mediu mais três coisas da família:
 - **Furo residual:** `27/09/2026`, `Sep 27 2026`, `2026.09.27` e `20260927` também pegam a hora
   atual e não passam por guard nenhum, porque o guard só reconhece `AAAA-MM-DD`/`AAAA/MM/DD`.
 
-## O padrão por trás das vinte e três
+### 24. No zsh, erro de EXPANSÃO aborta a linha — glob sem casamento e até um `echo ===`
+
+`rm -f "$SCR"/mg-*.txt && bunx vitest run …` não roda o vitest quando nenhum `mg-*.txt` existe: o zsh
+(opção `NOMATCH`, ligada por padrão) recusa o glob vazio com `no matches found`, sai **1** sem executar o
+`rm`, e o `&&` corta o resto. No bash o mesmo `rm -f` é no-op e a cadeia segue. Medido (2026-10-05):
+
+| shell | `rm -f <dir>/nao-existe-*.xyz && echo depois` |
+|---|---|
+| zsh | `no matches found` · exit 1 · **sem `depois`** |
+| bash | `depois` · exit 0 |
+| zsh com `(N)` | `depois` · exit 0 |
+
+O custo real não foi o erro — foi o que eu li no lugar dele: a saída terminava num `Terminated: 15` de um
+job que eu mesmo tinha parado, e por minutos aquilo pareceu o veredito da suíte. ⇒ nomes explícitos, ou o
+qualificador `(N)` (`rm -f "$SCR"/mg-*.txt(N)`), ou `find "$SCR" -name 'mg-*.txt' -delete`; e confirme
+que o comando autoritativo **rodou** (a linha de resumo dele na saída) antes de ler qualquer exit.
+
+O mesmo mecanismo, pelo avesso, no mesmo dia: `…; echo ===; cat "$S/saida-BR.txt"` no fim de um job em
+background. Com `===` sem aspas, a opção `EQUALS` do zsh tenta expandir `=<comando>` para o caminho do
+comando `==`, falha com `== not found` e **aborta o resto da linha** (`zsh -c 'echo ===; echo depois'` →
+exit 1, sem `depois`; com aspas, ou no bash, imprime os dois). O harness marcou como **failed** uma
+falsificação que tinha passado nos dois locales — o veredito estava no arquivo, e foi lá que eu o li.
+⇒ separador entre aspas (`echo '==='`), e o veredito vem do arquivo da ferramenta, não do status do
+embrulho.
+
+## O padrão por trás das vinte e quatro
 
 Seis produzem **verde por construção**, não por mérito; a sétima mostra que o mesmo defeito
 fabrica **vermelho** com a mesma facilidade; a oitava, que o veredito certo pode existir e ainda
