@@ -250,7 +250,7 @@ function toStr(v: unknown): string | null {
 }
 
 /** Dias úteis entre duas datas ISO (segunda..sexta). Convenção: lead time exclui o dia inicial. */
-export function diasUteisEntre(
+function diasUteisEntre(
   inicioIso: string | null,
   fimIso: string | null,
 ): number | null {
@@ -317,8 +317,8 @@ export interface EstadoControle {
   itens_pendentes?: number;
 }
 
-export type BuscaPedido = { ok: true; pedido: PedidoCasado | null } | { ok: false; erro: string };
-export type Fechamento = { ok: true; atualizadas: number } | { ok: false; erro: string };
+type BuscaPedido = { ok: true; pedido: PedidoCasado | null } | { ok: false; erro: string };
+type Fechamento = { ok: true; atualizadas: number } | { ok: false; erro: string };
 
 /** O banco, injetado. Nenhum método lança: falha volta no retorno (o contrato que a edge implementa). */
 export interface DepsGravacao {
