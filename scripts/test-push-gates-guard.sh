@@ -133,7 +133,9 @@ printf 'mudou\n' >>"$fx/docs/historico/README.md"
 expect_warn "rastreado modificado"                 "STUB_INDICE=falha" "git push" "docs:indice"
 expect_warn "add -p não prova o que entra"         "STUB_INDICE=falha" "git add -p && git commit -m x && git push" "docs:indice"
 expect_warn "add por glob não prova"               "STUB_INDICE=falha" "git add docs/* && git commit -m x && git push" "docs:indice"
-expect_warn "commit <caminho> ignora o staged"     "STUB_INDICE=falha" "git commit -m x docs/historico/README.md && git push" "docs:indice"
+git -C "$fx" add docs/historico/README.md
+expect_warn "commit <caminho> deixa o staged fora" "STUB_INDICE=falha" "git commit -m x stub.sh && git push" "docs:indice"
+git -C "$fx" reset -q -- docs/historico/README.md
 expect_warn "add . fora da raiz"                   "STUB_INDICE=falha" "cd docs && git add . && git commit -m x && git push" "docs:indice"
 expect_warn "commit DEPOIS do push não conta"      "STUB_INDICE=falha" "git add -A && git push && git commit -m x" "docs:indice"
 
@@ -186,11 +188,17 @@ binmin="$tmp/binmin"; mkdir -p "$binmin"
 for t in bash env git jq perl awk sed cat head timeout sh sleep; do
   p="$(command -v "$t" 2>/dev/null)" && ln -s "$p" "$binmin/$t"
 done
-home_bun="$tmp/home-bun"; mkdir -p "$home_bun/.bun/bin"; ln -s "$(command -v bun)" "$home_bun/.bun/bin/bun"
+# o bun de ~/.bun/bin deixa MARCA de que foi ele: sem ela, um bun em /usr/local/bin (existe em
+# muita máquina) faria o caso passar com a busca em ~/.bun/bin quebrada (falsificado)
+home_bun="$tmp/home-bun"; mkdir -p "$home_bun/.bun/bin"; marca_bun="$tmp/bun-de-home-usado"
+printf '#!/bin/sh\n: >"%s"\nexec "%s" "$@"\n' "$marca_bun" "$(command -v bun)" >"$home_bun/.bun/bin/bun"
+chmod +x "$home_bun/.bun/bin/bun"
 if PATH="$binmin" command -v bun >/dev/null 2>&1; then
   _ko "PATH mínimo ainda acha o bun — o caso abaixo não mede a busca em ~/.bun/bin"
 else
+  rm -f "$marca_bun"
   expect_deny "bun só em ~/.bun/bin ainda nega" "STUB_INDICE=falha PATH=$binmin HOME=$home_bun" "git push" "docs:indice"
+  [ -f "$marca_bun" ] && _ok || _ko "bun de ~/.bun/bin não foi o usado — a busca nele não está sendo medida"
   if [ ! -x /opt/homebrew/bin/bun ] && [ ! -x /usr/local/bin/bun ]; then
     expect_warn "sem bun em lugar nenhum avisa" "STUB_INDICE=falha PATH=$binmin HOME=$tmp/sem-home" "git push" "bun não encontrado"
   else

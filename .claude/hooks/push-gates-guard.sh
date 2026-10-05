@@ -211,7 +211,8 @@ coberto_por_add() {  # <caminho relativo à raiz> → 0 se um `git add <caminho>
   [ -n "$na_raiz" ] && [ -n "$add_paths" ] || return 1
   while IFS= read -r t; do
     [ -n "$t" ] || continue
-    case "$t" in *"$Q"*|*'$'*|*'`'*|*'*'*|*'?'*|*'['*) return 1 ;; esac
+    # glob/aspas/expansão não precisam de guarda: o casamento abaixo é LITERAL ("$t" entre aspas),
+    # então `docs/*` ou `$X` nunca cobrem um caminho real → incerto → só avisa (falsificado)
     t="${t#./}"; t="${t%/}"
     case "$1" in "$t"|"$t"/*) return 0 ;; esac
   done <<EOF
