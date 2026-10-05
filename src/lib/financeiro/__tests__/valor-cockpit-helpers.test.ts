@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { margemContribuicao, arMedioTTM, statusLiquidadoAR, montarCelulasComboEVP, recomendarAcaoComercial, scoreConfiancaCockpit, resolverHurdleCockpit, pedidoContaNoFaturamento, tituloFaturavelAR, coberturaBidirecional } from '../valor-cockpit-helpers';
+import { readFileSync } from 'node:fs';
+import { margemContribuicao, arMedioTTM, statusLiquidadoAR, montarCelulasComboEVP, recomendarAcaoComercial, scoreConfiancaCockpit, resolverHurdleCockpit, tituloFaturavelAR, coberturaBidirecional } from '../valor-cockpit-helpers';
+// A faturabilidade do pedido roda SÓ na edge — testada direto do módulo que ela executa (sem cópia em src/).
+import { pedidoContaNoFaturamento, pedidoEntraNoTTM } from '../../../../supabase/functions/fin-valor-cockpit/faturabilidade';
 import { STATUS_NAO_VENDA } from '@/lib/farmer/universo-pedidos';
 
 // helper de fixture: TituloAR completo com defaults (reduz ruído nos casos)
@@ -452,37 +455,72 @@ describe('recomendarAcaoComercial — hurdle_indisponivel', () => {
   });
 });
 
-// Régua de faturabilidade do pedido pai, espelhada VERBATIM de v_caca_candidatos/v_caca_compradores
-// (positivação/comissão): WHERE deleted_at IS NULL AND status <> ALL(ARRAY['cancelado','rascunho']).
-// É o guard do bug do cockpit de valor (contava cancelado como faturamento → R$615M de inflação).
+// Régua de faturabilidade do pedido pai — a que a edge EXECUTA (`fin-valor-cockpit/faturabilidade.ts`).
+// É o guard do bug do cockpit de valor (contava cancelado como faturamento → R$615M de inflação). Os
+// status são os de prod (psql-ro 2026-10-05): de venda, faturado 21.131 · importado 5.649 · separacao
+// 2.901 · enviado 2.009; de não-venda, cancelado 29 · orcamento 1 · rascunho 1 · pendente 0. Nenhum
+// apagado, nenhum status nulo — os casos abaixo que os exercitam são o contrato, não o acervo.
+const STATUS_DE_VENDA_EM_PROD = ['faturado', 'importado', 'separacao', 'enviado'];
+const STATUS_NAO_VENDA_LITERAIS = ['cancelado', 'rascunho', 'pendente', 'orcamento'];
+
 describe('pedidoContaNoFaturamento (o universo de venda da autoridade — o mesmo do v_caca desde o #2726)', () => {
-  it('pedido vivo e faturado → conta', () => {
-    expect(pedidoContaNoFaturamento('faturado', null)).toBe(true);
+  it.each(STATUS_DE_VENDA_EM_PROD)('%s, vivo → conta', (s) => {
+    expect(pedidoContaNoFaturamento(s, null)).toBe(true);
   });
-  it('cancelado → NÃO conta (cerne do bug: pedido cancelado não é faturamento)', () => {
-    expect(pedidoContaNoFaturamento('cancelado', null)).toBe(false);
+  it.each(STATUS_DE_VENDA_EM_PROD)('%s, soft-deletado → NÃO conta', (s) => {
+    expect(pedidoContaNoFaturamento(s, '2026-02-10T00:00:00Z')).toBe(false);
   });
-  it('rascunho → NÃO conta (pedido não-firme; alinhado a v_caca)', () => {
-    expect(pedidoContaNoFaturamento('rascunho', null)).toBe(false);
+  it.each(STATUS_NAO_VENDA_LITERAIS)('%s → NÃO conta (orçamento e pendente entravam pela cópia [cancelado, rascunho])', (s) => {
+    expect(pedidoContaNoFaturamento(s, null)).toBe(false);
   });
   it('status NOVO desconhecido (ex.: "entregue") → CONTA por default (blocklist semântica — NÃO subconta silenciosamente; Codex 2026-06-18)', () => {
     expect(pedidoContaNoFaturamento('entregue', null)).toBe(true);
   });
-  it('soft-deletado (deleted_at preenchido) → NÃO conta, mesmo com status faturado', () => {
-    expect(pedidoContaNoFaturamento('faturado', '2026-02-10T00:00:00Z')).toBe(false);
-  });
-  it('status NULL → NÃO conta (espelha o NULL <> ALL do WHERE de v_caca, que não passa em NULL)', () => {
+  it('status NULL ou undefined → NÃO conta (espelha o NULL NOT IN da autoridade, que não passa no WHERE)', () => {
     expect(pedidoContaNoFaturamento(null, null)).toBe(false);
-  });
-  it('status undefined → NÃO conta', () => {
     expect(pedidoContaNoFaturamento(undefined, null)).toBe(false);
-  });
-  it('orçamento e pendente → NÃO contam (a cópia [cancelado, rascunho] os deixava entrar no TTM)', () => {
-    expect(pedidoContaNoFaturamento('orcamento', null)).toBe(false);
-    expect(pedidoContaNoFaturamento('pendente', null)).toBe(false);
   });
   it('a lista é a da autoridade, membro a membro (cópia paralela reprova aqui e no gate do universo)', () => {
     for (const s of STATUS_NAO_VENDA) expect(pedidoContaNoFaturamento(s, null), s).toBe(false);
+  });
+});
+
+describe('pedidoEntraNoTTM — faturável E order_date_kpi dentro de [inicio, fim]', () => {
+  const INICIO = '2025-10-05';
+  const FIM = '2026-10-04';
+  const pedido = (p: Partial<{ status: string | null; deleted_at: string | null; order_date_kpi: string | null }>) =>
+    ({ status: 'faturado', deleted_at: null, order_date_kpi: '2026-03-15', ...p });
+
+  it('os dois extremos da janela entram', () => {
+    expect(pedidoEntraNoTTM(pedido({ order_date_kpi: INICIO }), INICIO, FIM)).toBe(true);
+    expect(pedidoEntraNoTTM(pedido({ order_date_kpi: FIM }), INICIO, FIM)).toBe(true);
+  });
+  it('a véspera do início e o dia seguinte ao fim ficam fora', () => {
+    expect(pedidoEntraNoTTM(pedido({ order_date_kpi: '2025-10-04' }), INICIO, FIM)).toBe(false);
+    expect(pedidoEntraNoTTM(pedido({ order_date_kpi: '2026-10-05' }), INICIO, FIM)).toBe(false);
+  });
+  it('sem data KPI não entra', () => {
+    expect(pedidoEntraNoTTM(pedido({ order_date_kpi: null }), INICIO, FIM)).toBe(false);
+  });
+  it('dentro da janela, a faturabilidade decide: venda entra; não-venda, apagado e status nulo ficam fora', () => {
+    for (const s of STATUS_DE_VENDA_EM_PROD) expect(pedidoEntraNoTTM(pedido({ status: s }), INICIO, FIM), s).toBe(true);
+    for (const s of STATUS_NAO_VENDA_LITERAIS) expect(pedidoEntraNoTTM(pedido({ status: s }), INICIO, FIM), s).toBe(false);
+    expect(pedidoEntraNoTTM(pedido({ deleted_at: '2026-02-10T00:00:00Z' }), INICIO, FIM)).toBe(false);
+    expect(pedidoEntraNoTTM(pedido({ status: null }), INICIO, FIM)).toBe(false);
+  });
+});
+
+// A edge USA esta régua no corte dos itens — não uma cópia local. Sem isto, os testes acima provariam
+// um módulo que ninguém chama: era o buraco que o Codex achou no #2766 (a cópia de `src/` testada, a
+// da edge não). Lido como TEXTO porque o handler da edge não roda no vitest.
+describe('fin-valor-cockpit corta os itens do TTM por pedidoEntraNoTTM', () => {
+  const edge = readFileSync('supabase/functions/fin-valor-cockpit/index.ts', 'utf8');
+  it('importa a régua do módulo testado e descarta o item cujo pai não entra no TTM', () => {
+    expect(edge).toContain("import { pedidoEntraNoTTM } from './faturabilidade.ts';");
+    expect(edge).toContain('if (!pedidoEntraNoTTM(so, ttm_inicio, ttm_fim)) return [];');
+  });
+  it('não redefine a régua nem a lista localmente', () => {
+    expect(edge).not.toMatch(/function\s+pedidoContaNoFaturamento|function\s+pedidoEntraNoTTM|STATUS_NAO_VENDA|STATUS_NAO_FATURAVEL/);
   });
 });
 
