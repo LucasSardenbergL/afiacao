@@ -6,8 +6,8 @@
 # ║  I  a migration aplica com a postcondição OK (I0) e re-aplicar é seguro (I1)    ║
 # ║  A  a RPC grava run + itens (A1); o banco recusa excluído que contribui (A2) e  ║
 # ║     contado sem SKU (A3); p_itens NULL / objeto e run_id ausente → 22023        ║
-# ║     (A6 A6o A7); a retenção de 14 d apaga o velho (A4) e preserva o recente e   ║
-# ║     a outra empresa (A5)                                                       ║
+# ║     (A6 A6o A7); a retenção de 14 d apaga os de 20 e 15 d COM os itens, em      ║
+# ║     cascata (A4), e preserva o de 13 d e a outra empresa (A5)                  ║
 # ║  R  RLS: authenticated sem papel e customer veem 0 (R1 R3); employee e master   ║
 # ║     veem tudo (R2 R2m); anon é negado no GRANT (R4)                             ║
 # ║  V  a RPC confere NO BANCO o pendente gravado × o contado: bate → aplicado (V1);║
@@ -38,9 +38,9 @@ HARNESS_LC="${HARNESS_LC:-C}"
 export LC_ALL=C LANG=C
 
 MIG="$REPO_ROOT/supabase/migrations/20261005131331_reposicao_po_observado_pelo_motor.sql"
-# Denominador: I0 I1 · A1 V1 A2 A3 A6 A6o A7 · R1 R2 R2m R3 R4 · W1 W2 · X1 X2 X3 · V2 V3 V4 · A4 A5 · P1-P13.
+# Denominador: I0 I1 · A1 V1 A2 A3 A6 A6o A7 · R1 R2 R2m R3 R4 · W1 W2 · X1 X2 X3 · V2 V3 V4 · A4 A5 · P1-P15.
 # Asserts a menos — um bloco que não rodou — é vermelho.
-TOTAL_ESPERADO=37
+TOTAL_ESPERADO=39
 
 # ══════════════════════════════════════════════════════════════════════════════
 # MODO --falsificar: prova que os asserts têm DENTE (o contrato de
@@ -58,6 +58,8 @@ if [ "${1:-}" = "--falsificar" ]; then
               sem_guarda_run_id:A7:A6,A6o
               retencao_fora:A4:A5
               retencao_apaga_tudo:A5:A4
+              retencao_16_dias:A4:A5
+              cascata_fora:A4:A5
               rls_desligada:R1,R3:R2,R2m,R4
               policy_aberta:R1,R3:R2,R2m,R4
               policy_sem_employee:R2:R2m,R1,R3
@@ -79,7 +81,9 @@ if [ "${1:-}" = "--falsificar" ]; then
               post_cega_checkdef:P6,P9:I0,I1,P5
               post_cega_policies:P10,P12:I0,I1,P5
               post_cega_config:P11:I0,I1,P1
-              post_cega_service_role:P13:I0,I1,P3"
+              post_cega_service_role:P13:I0,I1,P3
+              post_cega_definer:P14:I0,I1,P11
+              post_cega_select_staff:P15:I0,I1,P3"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-${SLUG}.XXXXXX")"
   porta=$PORT
 
@@ -220,6 +224,8 @@ case "$SABOTAGEM" in
   post_cega_policies)          sabotar_arquivo "IS DISTINCT FROM '7c26732332bf0eed21921bf88944e4b9'" "IS NULL" 1 ;;
   post_cega_config)            sabotar_arquivo "= ANY (p.proconfig) FROM pg_proc p WHERE p.oid = v_fn) IS DISTINCT FROM true THEN" "= ANY (p.proconfig) FROM pg_proc p WHERE p.oid = v_fn) = false THEN" 1 ;;
   post_cega_service_role)      sabotar_arquivo "IF v_priv <> 'SELECT' AND has_table_privilege('service_role', v_tab, v_priv) THEN" "IF false THEN" 1 ;;
+  post_cega_definer)           sabotar_arquivo "(SELECT p.prosecdef FROM pg_proc p WHERE p.oid = v_fn) IS DISTINCT FROM true" "false" 1 ;;
+  post_cega_select_staff)      sabotar_arquivo "IF NOT has_table_privilege('authenticated', v_tab, 'SELECT') THEN" "IF false THEN" 1 ;;
 esac
 
 PASS=0; FAIL=0
@@ -356,6 +362,8 @@ case "$SABOTAGEM" in
   sem_guarda_run_id)    sabotar_corpo "IF v_run_id IS NULL THEN" "IF false THEN" 1 ;;
   retencao_fora)        sabotar_corpo "concluido_em < now() - interval '14 days'" "false" 1 ;;
   retencao_apaga_tudo)  sabotar_corpo "concluido_em < now() - interval '14 days'" "true" 1 ;;
+  retencao_16_dias)     sabotar_corpo "interval '14 days'" "interval '16 days'" 1 ;;
+  cascata_fora)         sabotar_sql "ALTER TABLE public.reposicao_po_observado_item DROP CONSTRAINT reposicao_po_observado_item_run_id_fkey; ALTER TABLE public.reposicao_po_observado_item ADD CONSTRAINT reposicao_po_observado_item_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.reposicao_po_observado_run (run_id)" ;;
   rls_desligada)        sabotar_sql "ALTER TABLE public.reposicao_po_observado_run DISABLE ROW LEVEL SECURITY; ALTER TABLE public.reposicao_po_observado_item DISABLE ROW LEVEL SECURITY" ;;
   policy_aberta)        sabotar_sql "DROP POLICY $POL_RUN; CREATE POLICY $POL_RUN FOR SELECT USING (true); DROP POLICY $POL_ITEM; CREATE POLICY $POL_ITEM FOR SELECT USING (true)" ;;
   policy_sem_employee)  sabotar_sql "DROP POLICY $POL_RUN; CREATE POLICY $POL_RUN FOR SELECT USING (public.has_role((SELECT auth.uid()), 'master'::public.app_role)); DROP POLICY $POL_ITEM; CREATE POLICY $POL_ITEM FOR SELECT USING (public.has_role((SELECT auth.uid()), 'master'::public.app_role))" ;;
@@ -519,17 +527,23 @@ Pdb prove -q <<'SQL'
 INSERT INTO public.reposicao_po_observado_run (run_id, empresa, iniciado_em, concluido_em, janela_de, janela_ate,
   filtros, varredura_completa, pendente_aplicado, skus_divergentes, pedidos_lidos, versao_edge) VALUES
   ('22222222-2222-2222-2222-222222222222', 'OBEN',    now() - interval '20 days', now() - interval '20 days', current_date - 400, current_date - 20, '{}'::jsonb, true, true, 0, 0, 'v1.4-teste'),
+  ('99999999-9999-9999-9999-999999999999', 'OBEN',    now() - interval '15 days', now() - interval '15 days', current_date - 400, current_date - 15, '{}'::jsonb, true, true, 0, 0, 'v1.4-teste'),
   ('44444444-4444-4444-4444-444444444444', 'OBEN',    now() - interval '13 days', now() - interval '13 days', current_date - 400, current_date - 13, '{}'::jsonb, true, true, 0, 0, 'v1.4-teste'),
   ('55555555-5555-5555-5555-555555555555', 'COLACOR', now() - interval '20 days', now() - interval '20 days', current_date - 400, current_date - 20, '{}'::jsonb, true, true, 0, 0, 'v1.4-teste');
+-- o run velho TEM item: sem o ON DELETE CASCADE, a retenção falharia (23503) e toda publicação depois do 14º dia junto
+INSERT INTO public.reposicao_po_observado_item (run_id, omie_codigo_pedido, seq_item, contribuicao, exclusao)
+VALUES ('22222222-2222-2222-2222-222222222222', 12000000099, 0, 0, 'dedup_app');
 SQL
 v="$(val <<SQL
 SET ROLE service_role;
 SELECT public._prova_valor(\$q\$SELECT public.reposicao_po_observado_publicar($(run_json "'33333333-3333-3333-3333-333333333333'::uuid"), '[]'::jsonb)\$q\$);
 RESET ROLE;
-SELECT count(*) FROM public.reposicao_po_observado_run WHERE run_id = '22222222-2222-2222-2222-222222222222';
+SELECT count(*) FROM public.reposicao_po_observado_run
+ WHERE run_id IN ('22222222-2222-2222-2222-222222222222', '99999999-9999-9999-9999-999999999999');
+SELECT count(*) FROM public.reposicao_po_observado_item WHERE run_id = '22222222-2222-2222-2222-222222222222';
 SQL
 )"
-eq A4 "a publicação apaga o run OBEN de 20 dias (devolvido + restantes)" "$(printf '%s' "$v" | tr '\n' '|')" "0|0"
+eq A4 "a publicação apaga os runs OBEN de 20 e 15 dias, com os itens (devolvido|runs velhos|itens velhos)" "$(printf '%s' "$v" | tr '\n' '|')" "0|0|0"
 v="$(val <<'SQL'
 SELECT count(*) FROM public.reposicao_po_observado_run
  WHERE run_id IN ('44444444-4444-4444-4444-444444444444', '55555555-5555-5555-5555-555555555555',
@@ -583,6 +597,10 @@ postcond_recusa P12 "policy permissiva EXTRA na tabela de itens → aborta" "pol
   "-- Sem policy de INSERT/UPDATE/DELETE de propósito" "CREATE POLICY \"extra_aberta\" ON public.reposicao_po_observado_item FOR SELECT USING (true);"$'\n'"-- Sem policy de INSERT/UPDATE/DELETE de propósito"
 postcond_recusa P13 "sem o REVOKE de service_role na tabela de itens → aborta" "service_role tem" \
   "REVOKE ALL ON public.reposicao_po_observado_item FROM service_role;"$'\n' ""
+postcond_recusa P14 "RPC SECURITY INVOKER (com o search_path) → aborta" "sem SECURITY DEFINER ou sem search_path fixo" \
+  "SECURITY DEFINER"$'\n'"SET search_path" "SECURITY INVOKER"$'\n'"SET search_path"
+postcond_recusa P15 "staff sem SELECT na tabela de itens → aborta" "authenticated sem SELECT" \
+  "GRANT SELECT ON public.reposicao_po_observado_item TO authenticated, service_role;" "GRANT SELECT ON public.reposicao_po_observado_item TO service_role;"
 
 echo "RESULTADO: $PASS ok / $FAIL fail"
 [ $((PASS + FAIL)) -eq "$TOTAL_ESPERADO" ] || { echo "❌ executou $((PASS + FAIL)) asserts, esperado $TOTAL_ESPERADO"; exit 1; }

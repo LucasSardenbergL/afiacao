@@ -19,9 +19,16 @@ describe('omie-sync-estoque — observação do conjunto aberto', () => {
   });
 
   it('a publicação é não-fatal: chamada dentro de try/catch e nunca antes do upsert do pendente', () => {
-    const trecho = fonte.slice(fonte.lastIndexOf('try {', fonte.indexOf('"reposicao_po_observado_publicar"')));
-    expect(trecho.indexOf('} catch')).toBeGreaterThan(0);
-    expect(fonte.indexOf('"reposicao_po_observado_publicar"')).toBeGreaterThan(fonte.indexOf('from("sku_estoque_atual")'));
+    // O try tem de abrir DENTRO do bloco da observação (um `lastIndexOf('try {')` solto acharia o try do ramo COLACOR
+    // se este sumisse — revisão final do PR0) e o catch fechar antes do passo seguinte do run.
+    const iBloco = fonte.indexOf('if (observacaoPo) {');
+    const iRpc = fonte.indexOf('"reposicao_po_observado_publicar"');
+    const iDepois = fonte.indexOf('detectarVarreduraTruncada(', iRpc);
+    expect(iBloco).toBeGreaterThan(0);
+    expect(iDepois).toBeGreaterThan(iRpc);
+    expect(fonte.slice(iBloco, iRpc)).toContain('try {');
+    expect(fonte.slice(iRpc, iDepois)).toContain('} catch');
+    expect(iRpc).toBeGreaterThan(fonte.indexOf('from("sku_estoque_atual")'));
   });
 
   it('cada ponto de decisão da varredura registra o motivo', () => {
