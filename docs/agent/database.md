@@ -49,12 +49,15 @@ a credencial é local. A ponte é o carimbo `db/authz-carimbo-prod.json`.
 - **Escrever:** `bun run authz:carimbo:gravar` (só na máquina com `psql-ro`) → roda TODOS os de
   `AUDITS` e grava a evidência. **Commite o JSON** — é ele que o CI lê. Recusa toda env `*_TEST_JSON` (por
   SUFIXO desde 2026-10-01: o `claudeRo` lê `CLAUDE_RO_BASELINE_TEST_JSON`, fora do antigo prefixo `AUTHZ_`) e `PSQL_RO`
-  alternativo, e pina o cluster pelo hash do `system_identifier`. Relê o carimbo anterior por `lerCarimboAnterior`
-  (janela: a versão de hoje e a anterior — a migração do PR do bump), nunca por cast: anterior recusado é exit 2 com
-  `CARIMBO-ANTERIOR-RECUSADO <CODIGO>`, e a trava de cluster nunca é pulada por campo ausente. A
-  **origin/main é a referência**: apagar o carimbo local não vira nascimento (a trava cai na main), a
-  `primeiraVez` herdada é a mais antiga entre local e main, e git sem resposta é recusa
-  ([base](../historico/carimbo-gravador-rele-por-porta.md)).
+  alternativo, e **pina o cluster numa CONSTANTE do código**: o hash do `system_identifier` da sonda tem de ser
+  `PROJETO_HASH_PROD` (`scripts/lib/authz-carimbo.ts`), e o gate cobra o mesmo no artefato (`CARIMBO_OUTRO_CLUSTER`,
+  bloqueia PR). Prod re-inicializado (restore/upgrade: `system_identifier` novo) → o gravador recusa; trocar a
+  constante é decisão do founder, num PR com a evidência — nunca para "fazer passar". Relê o carimbo anterior por
+  `lerCarimboAnterior` (janela: a versão de hoje e a anterior — a migração do PR do bump), só para a HERANÇA e nunca
+  por cast: anterior recusado é exit 2 com `CARIMBO-ANTERIOR-RECUSADO <CODIGO>`. A **origin/main é a referência**
+  (com `git fetch` antes): a `primeiraVez` herdada é a mais antiga entre local e main, e main sem o carimbo ou git
+  sem resposta é recusa. **Conflito no JSON: fique com a versão da main e REGRAVE** — o gate não tem catraca da
+  `primeiraVez` contra a main ([base](../historico/carimbo-gravador-rele-por-porta.md)).
 - 🔎 **Deriva de CORPO — `bun run deriva:corpo:prod` (6ª chave, desde 2026-09-26):** toda função
   `public` que alguma migration define, contra o `prosrc` de prod — o único vigia de "a última a
   recriar vence" fora das levas de deploy. Identidade por assinatura (`format_type`), cosmético por
