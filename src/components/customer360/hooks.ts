@@ -4,6 +4,7 @@ import { STATUS_NAO_VENDA_POSTGREST } from '@/lib/farmer/universo-pedidos';
 import { fetchAllPages } from '@/lib/postgrest';
 import { addDias, hojeSP } from '@/lib/time/sp-day';
 import { canalToKind, canalToLabel, canalToTone, type CanalInteracao } from '@/lib/carteira/interacoes';
+import { LIMITE_FEED_PEDIDOS } from './format';
 
 export function useCustomerCore(customerId: string | undefined) {
   return useQuery({
@@ -46,7 +47,7 @@ export function useCustomerMetrics(customerId: string | undefined) {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('customer_metrics_mv')
-        .select('faturamento_90d, faturamento_prev_90d, ticket_medio_90d, pedidos_90d, dias_desde_ultima_compra, intervalo_medio_dias, ultima_compra_data, is_cold_start')
+        .select('faturamento_90d, faturamento_prev_90d, ticket_medio_90d, pedidos_90d, dias_desde_ultima_compra, intervalo_medio_dias, ultima_compra_data, is_cold_start, calculated_at')
         .eq('customer_user_id', customerId!)
         .maybeSingle();
       // Falha LANÇA: o erro descartado virava `data` null e a faixa mostrava "R$ 0" nos tiles de 90d.
@@ -151,7 +152,7 @@ export function useCustomerOrders(customerId: string | undefined) {
         .eq('customer_user_id', customerId!)
         .is('deleted_at', null)
         .order('created_at', { ascending: false })
-        .limit(200);
+        .limit(LIMITE_FEED_PEDIDOS);
       if (error) throw error;
       return data ?? [];
     },

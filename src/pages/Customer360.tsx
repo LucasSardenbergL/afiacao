@@ -22,7 +22,7 @@ import {
 } from '@/components/customer360/hooks';
 import { CustomerHero } from '@/components/customer360/CustomerHero';
 import { CustomerKpiStrip } from '@/components/customer360/CustomerKpiStrip';
-import type { RevenueDerived } from '@/components/customer360/viewTypes';
+import { leituraDaQuery } from '@/components/customer360/kpi-rotulos';
 import { IdentityColumn } from '@/components/customer360/IdentityColumn';
 import { ActivityColumn } from '@/components/customer360/ActivityColumn';
 import { VozTarefaDialog } from '@/components/tarefas/VozTarefaDialog';
@@ -62,12 +62,10 @@ export default function Customer360() {
 
   // Faturamento 12m: query PRÓPRIA no universo de venda (ver useCustomerFaturamento12m). A lista
   // `orders` é só o feed "Pedidos recentes" — todo status, de propósito — e não é fonte de número.
-  const revenueDerived: RevenueDerived = {
-    last12: faturamento12m.data?.total ?? null,
-    orderCount12m: faturamento12m.data?.pedidos ?? null,
-    faturamentoIndisponivel: faturamento12m.isError && !faturamento12m.data,
-    metricasIndisponiveis: metrics.isError && !metrics.data,
-  };
+  // As duas fontes da faixa passam pela MESMA ponte de estado: sem valor → o motivo; valor em mãos
+  // cujo refetch falhou → o valor FICA, declarando a idade (nunca como recém-lido).
+  const leitura12m = leituraDaQuery(faturamento12m);
+  const leituraMetricas = leituraDaQuery(metrics);
 
   if (core.isLoading || (core.isFetching && !core.data)) {
     return <PageSkeleton variant="detail" />;
@@ -87,7 +85,6 @@ export default function Customer360() {
   }
 
   const customer = core.data;
-  const m = metrics.data;
   const s = score.data;
   const isPj = (customer.document ?? '').replace(/\D/g, '').length === 14;
   const podeCriarTarefaPorVoz = isMaster || isGestorComercial;
@@ -117,7 +114,7 @@ export default function Customer360() {
           )}
         </div>
 
-        <CustomerKpiStrip revenueDerived={revenueDerived} metrics={m} score={s} />
+        <CustomerKpiStrip faturamento12m={leitura12m} metricas={leituraMetricas} score={s} />
 
         {/* ─── Grid principal ─── */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
