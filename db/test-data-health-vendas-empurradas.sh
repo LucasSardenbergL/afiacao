@@ -1,21 +1,25 @@
 #!/usr/bin/env bash
 # ╔═══════════════════════════════════════════════════════════════════════════════════════════════
-# ║  PROVA PG17 — check `vendas_empurradas_sem_gemeo` do Sentinela (20261001011500), com FALSIFICAÇÃO
+# ║  PROVA PG17 — check `vendas_empurradas_sem_gemeo` do Sentinela (20261001011500 + a v2,
+# ║  20261005150000), com FALSIFICAÇÃO
 # ║      bash db/test-data-health-vendas-empurradas.sh > /tmp/t.log 2>&1; echo "exit=$?"
 # ║      bash db/test-data-health-vendas-empurradas.sh --falsificar > /tmp/f.log 2>&1; echo "exit=$?"
 # ║  (NÃO pipe pra tail — engole o exit≠0.)
 # ║
 # ║  O que se prova, sempre pela SAÍDA do compute REAL (nunca por uma cópia da lógica):
-# ║   · o universo: linha do app = omie_payload + omie_pedido_id, status canônico de venda, não
-# ║     apagada; gêmeo = mesma (account, omie_pedido_id) com omie_payload nulo, em QUALQUER status;
-# ║   · a âncora: menor(updated_at, fim do dia UTC da data_previsao), só com previsão válida e
-# ║     coerente com a criação — o orçamento convertido não acusa antes de 6 h do envio, e a linha
-# ║     tocada depois do envio não rejuvenesce;
+# ║   · o universo: linha do app = omie_payload + omie_pedido_id + hash nulo, status canônico de
+# ║     venda, não apagada; gêmeo = mesma (account, omie_pedido_id) com omie_payload nulo OU hash
+# ║     canônico, em QUALQUER status — a importada editada pelo app segue gêmeo (v2, C4);
+# ║   · a âncora: menor(updated_at, ÚLTIMO INSTANTE do dia de SP da data_previsao), só com previsão
+# ║     válida e coerente com a criação — o envio noturno não acusa antes de 6 h nas duas eras do
+# ║     escritor (v1.10 dia de SP, v1.9 dia UTC; v2, C3), o orçamento convertido também não, e a
+# ║     linha tocada depois do envio não rejuvenesce;
 # ║   · os níveis e as bordas (6 h, 6 dias), a message estável (relógio cruzando a meia-noite de SP,
-# ║     fuso e lc_numeric da sessão) e o contrato do trio (31 sources, watchdog avalia 23, o push e o
-# ║     resumo enxergam o source novo);
-# ║   · o fecho de ACL: authenticated recebe 42501 no watchdog e no heartbeat;
-# ║   · a migration: re-aplicar é inócuo e a PRE recusa um corpo estranho (sem revertê-lo).
+# ║     fuso e lc_numeric da sessão) e com a REF do conjunto de órfãs (v2, C6), e o contrato do trio
+# ║     (31 sources, watchdog avalia 23, o push e o resumo enxergam o source novo);
+# ║   · o fecho de ACL: authenticated recebe 42501 no compute, no watchdog e no heartbeat, e o
+# ║     wrapper get_data_health() barra quem não é staff (v2, C1/C7);
+# ║   · a migration v2: re-aplicar é inócuo e a PRE recusa um corpo estranho (sem revertê-lo).
 # ║  Diário: docs/historico/venda-empurrada-sem-gemeo.md
 # ╚═══════════════════════════════════════════════════════════════════════════════════════════════
 set -euo pipefail
@@ -40,7 +44,8 @@ if [ "${1:-}" = "--falsificar" ]; then
               ancora_created_at:A20 ancora_so_updated_at:A21 previsao_sem_coerencia:A22
               previsao_parse_lanca:A23 previsao_fuso_sessao:A28 limiar_zero:A9 limiar_7h:A8
               sem_nivel_broken:A3 message_com_idade:A35 fora_do_v_sources:A38,A40
-              fora_do_resumo:A41 acl_authenticated:A44"
+              fora_do_resumo:A41 acl_authenticated:A44 ancora_utc:A45 app_sem_hash:A47
+              gemeo_so_payload:A47 ref_fora:A48 wrapper_sem_gate:A49 acl_compute_authenticated:A50"
   LOGDIR="$(mktemp -d "/tmp/falsifica-${SLUG}.XXXXXX")"
   porta=$PORT
   executados() { sed -n 's/^PASS=\([0-9][0-9]*\)  FAIL=\([0-9][0-9]*\)$/\1 \2/p' "$1" | awk '{ print $1 + $2 }'; }
@@ -120,9 +125,23 @@ Pq() { P -tA "$@"; }
 
 P -q -f "$REPO_ROOT/db/stubs-supabase.sql"
 P -q <<'SQL'
-CREATE OR REPLACE FUNCTION auth.uid()  RETURNS uuid LANGUAGE sql STABLE AS $f$ SELECT nullif(current_setting('test.uid',  true), '')::uuid $f$;
+-- auth.uid() lê test.uid e, sem ele, o `sub` de request.jwt.claims (como o do Supabase): a POS (4) da v2
+-- simula uma sessão logada sem papel por request.jwt.claims, e tem de valer igual aqui e na prod.
+CREATE OR REPLACE FUNCTION auth.uid()  RETURNS uuid LANGUAGE sql STABLE AS $f$
+  SELECT COALESCE(nullif(current_setting('test.uid', true), ''),
+                  nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')::uuid $f$;
 CREATE OR REPLACE FUNCTION auth.role() RETURNS text LANGUAGE sql STABLE AS $f$ SELECT nullif(current_setting('test.role', true), '') $f$;
 ALTER ROLE service_role BYPASSRLS;
+-- O que o wrapper get_data_health() da prod chama (papel e carteira), como nas outras provas
+-- (db/test-acoes-execucoes.sh): enum + user_roles + has_role; master vê a carteira completa.
+DO $$ BEGIN CREATE TYPE public.app_role AS ENUM ('master','employee','customer'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+CREATE TABLE IF NOT EXISTS public.user_roles (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id uuid NOT NULL, role public.app_role NOT NULL);
+CREATE OR REPLACE FUNCTION public.has_role(_user_id uuid, _role public.app_role)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER AS $f$
+  SELECT EXISTS (SELECT 1 FROM public.user_roles WHERE user_id = _user_id AND role = _role)
+$f$;
+CREATE OR REPLACE FUNCTION public.pode_ver_carteira_completa(_user_id uuid)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER AS $f$ SELECT public.has_role(_user_id, 'master') $f$;
 SQL
 
 PASS=0; FAIL=0
@@ -132,16 +151,21 @@ eq()  { if [ "$2" = "$3" ]; then ok "$1 (=$2)"; else bad "$1 — esperado [$3], 
 
 # A cadeia REAL que prod executou até aqui, na ordem: a base cria o check do reprocesso e registra o
 # source nas duas pontas; as duas seguintes recriam o compute; a 20260922225500 é o compute vivo em
-# 2026-09-30 (md5 a136ea53…, = prod); a última é a desta entrega. Aplicadas com `-1` (transação
-# única), como o `db:aplicar` aplica.
+# 2026-09-30 (md5 a136ea53…); a 20261001011500 cria o sensor e recria o TRIO (compute vivo 79362363…,
+# watchdog e heartbeat vivos até hoje); a última (v2) é a desta entrega. Aplicadas com `-1` (transação
+# única), como o `db:aplicar` aplica. O get_data_health() vivo NÃO está em nenhuma migration do repo:
+# vem do fixture db/fixtures/get-data-health-predecessora-prod-20261005.sql (md5 17adb51b…, = prod).
+MIG_TRIO="$REPO_ROOT/supabase/migrations/20261001011500_data_health_vendas_empurradas_sem_gemeo.sql"
 MIGS=(
   "$REPO_ROOT/supabase/migrations/20260918200000_data_health_sync_reprocess_saude.sql"
   "$REPO_ROOT/supabase/migrations/20260920210000_sync_reprocess_retry_nao_liquida_erro.sql"
   "$REPO_ROOT/supabase/migrations/20260920233000_sync_reprocess_degradado_so_das_vigiadas.sql"
   "$REPO_ROOT/supabase/migrations/20260922225500_data_health_portal_humano_critico_apos_24h.sql"
+  "$MIG_TRIO"
 )
-MIG="$REPO_ROOT/supabase/migrations/20261001011500_data_health_vendas_empurradas_sem_gemeo.sql"
-for m in "${MIGS[@]}" "$MIG"; do [ -f "$m" ] || { echo "❌ migration ausente: $m"; exit 1; }; done
+MIG="$REPO_ROOT/supabase/migrations/20261005150000_data_health_vendas_empurradas_v2.sql"
+WRAPPER_PROD="$REPO_ROOT/db/fixtures/get-data-health-predecessora-prod-20261005.sql"
+for m in "${MIGS[@]}" "$MIG" "$WRAPPER_PROD"; do [ -f "$m" ] || { echo "❌ arquivo ausente: $m"; exit 1; }; done
 
 echo "═══ setup PG17 :$PORT ═══"
 P -q -f "$REPO_ROOT/db/stubs-data-health-trio.sql"
@@ -159,18 +183,21 @@ REVOKE ALL ON FUNCTION public._data_health_compute() FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public._data_health_compute() TO service_role;
 SQL
 for m in "${MIGS[@]}"; do P -q -1 -f "$m" >/dev/null; done
+P -q -1 -f "$WRAPPER_PROD" >/dev/null
 P -q -1 -f "$MIG" >/dev/null
-echo "═══ cadeia real + migration nova aplicadas (PRE e POS passaram) ═══"
+echo "═══ cadeia real + wrapper vivo + migration v2 aplicados (PRE e POS passaram) ═══"
 
 # ════════════════════════════════════════════════════════════════════════════════════════════════
 # SABOTAGEM — no BANCO, recriando a função com UM trecho trocado; o repo nunca é tocado. O padrão
 # tem de ocorrer exatamente 1× no corpo (substituição que não pega deixaria a suíte verde).
 # ════════════════════════════════════════════════════════════════════════════════════════════════
 sabotar() {
-  local fn="$1" de="$2" para="$3" tmp
+  # $4 = o arquivo que DEFINE a função (default: a v2). watchdog e heartbeat não mudam na v2: o corpo
+  # deles vem da 20261001011500.
+  local fn="$1" de="$2" para="$3" fonte="${4:-$MIG}" tmp
   tmp="$(mktemp "/tmp/sab-${SLUG}.XXXXXX")"
   awk -v fn="CREATE OR REPLACE FUNCTION public.${fn}(" \
-      'index($0,fn)==1{f=1} f{print} f && /^\$function\$;$/{exit}' "$MIG" > "$tmp"
+      'index($0,fn)==1{f=1} f{print} f && /^\$function\$;$/{exit}' "$fonte" > "$tmp"
   python3 - "$tmp" "$de" "$para" <<'PYSAB' || { echo "❌ SABOTAGEM NÃO APLICÁVEL — o padrão não ocorre exatamente 1× em $fn"; rm -f "$tmp"; exit 9; }
 import sys
 p, de, para = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -198,20 +225,38 @@ case "${SABOTAGEM:-}" in
   gemeo_qualquer_conta)
     sabotar $C "WHERE t.account = a.account" "WHERE true" ;;
   gemeo_so_valido)
-    sabotar $C "AND t.omie_payload IS NULL) AS tem_gemeo" \
-               "AND t.omie_payload IS NULL AND t.status <> 'cancelado' AND t.deleted_at IS NULL) AS tem_gemeo" ;;
+    sabotar $C "AND (t.omie_payload IS NULL OR t.hash_payload IS NOT NULL)) AS tem_gemeo" \
+               "AND (t.omie_payload IS NULL OR t.hash_payload IS NOT NULL) AND t.status <> 'cancelado' AND t.deleted_at IS NULL) AS tem_gemeo" ;;
   gemeo_inclui_app)
-    sabotar $C "AND t.omie_payload IS NULL) AS tem_gemeo" ") AS tem_gemeo" ;;
+    sabotar $C "AND (t.omie_payload IS NULL OR t.hash_payload IS NOT NULL)) AS tem_gemeo" ") AS tem_gemeo" ;;
   ancora_created_at)
     sabotar $C "LEAST(prev.updated_at," "LEAST(prev.created_at," ;;
   ancora_so_updated_at)
-    sabotar $C "CASE WHEN ((prev.prev_dia + 1)::timestamp AT TIME ZONE 'UTC') >= prev.created_at" "CASE WHEN false" ;;
+    sabotar $C "CASE WHEN ((prev.prev_dia + time '23:59:59.999999') AT TIME ZONE 'America/Sao_Paulo') >= prev.created_at" "CASE WHEN false" ;;
   previsao_sem_coerencia)
-    sabotar $C "CASE WHEN ((prev.prev_dia + 1)::timestamp AT TIME ZONE 'UTC') >= prev.created_at" "CASE WHEN prev.prev_dia IS NOT NULL" ;;
+    sabotar $C "CASE WHEN ((prev.prev_dia + time '23:59:59.999999') AT TIME ZONE 'America/Sao_Paulo') >= prev.created_at" "CASE WHEN prev.prev_dia IS NOT NULL" ;;
   previsao_parse_lanca)
     sabotar $C "CASE WHEN app.prev_txt ~ '^[0-9]{2}/[0-9]{2}/[0-9]{4}\$' THEN" "CASE WHEN app.prev_txt IS NOT NULL THEN" ;;
   previsao_fuso_sessao)
-    sabotar $C "THEN (prev.prev_dia + 1)::timestamp AT TIME ZONE 'UTC' END) AS ancora" "THEN (prev.prev_dia + 1)::timestamptz END) AS ancora" ;;
+    sabotar $C "THEN (prev.prev_dia + time '23:59:59.999999') AT TIME ZONE 'America/Sao_Paulo' END) AS ancora" \
+               "THEN (prev.prev_dia + time '23:59:59.999999')::timestamptz END) AS ancora" ;;
+  ancora_utc)   # a v1: fim do dia UTC (cai até 3 h ANTES do envio noturno da edge v1.10)
+    sabotar $C "CASE WHEN ((prev.prev_dia + time '23:59:59.999999') AT TIME ZONE 'America/Sao_Paulo') >= prev.created_at
+                          THEN (prev.prev_dia + time '23:59:59.999999') AT TIME ZONE 'America/Sao_Paulo' END) AS ancora" \
+               "CASE WHEN ((prev.prev_dia + 1)::timestamp AT TIME ZONE 'UTC') >= prev.created_at
+                          THEN (prev.prev_dia + 1)::timestamp AT TIME ZONE 'UTC' END) AS ancora" ;;
+  app_sem_hash)   # a v1: a importada editada (payload + hash) vira "linha do app"
+    sabotar $C "           AND a.hash_payload IS NULL" "           AND true" ;;
+  gemeo_so_payload)   # a v1: gêmeo só por payload nulo (a importada editada deixa de ser gêmeo)
+    sabotar $C "AND (t.omie_payload IS NULL OR t.hash_payload IS NOT NULL)) AS tem_gemeo" "AND t.omie_payload IS NULL) AS tem_gemeo" ;;
+  ref_fora)   # a v1: sem a identidade do conjunto, a órfã que substitui outra não muda o fingerprint
+    sabotar $C "|| ' - ' || ve.resumo || ' (ref ' || ve.ref || ')' END," "|| ' - ' || ve.resumo END," ;;
+  wrapper_sem_gate)   # o wrapper vivo: qualquer sessão logada lê a message
+    sabotar get_data_health "  IF NOT (public.has_role(auth.uid(), 'employee'::public.app_role)
+          OR public.has_role(auth.uid(), 'master'::public.app_role)) THEN" "  IF false THEN" ;;
+  acl_compute_authenticated)
+    P -q -c "GRANT EXECUTE ON FUNCTION public._data_health_compute() TO authenticated;"
+    echo "⚠️  SABOTAGEM ATIVA em _data_health_compute (ACL: EXECUTE para authenticated) — a suíte abaixo DEVE ficar vermelha" ;;
   limiar_zero)
     sabotar $C "anc.ancora < now() - interval '6 hours'" "anc.ancora < now() - interval '0 hours'" ;;
   limiar_7h)
@@ -221,9 +266,9 @@ case "${SABOTAGEM:-}" in
   message_com_idade)
     sabotar $C "|| ' ao Omie sem gemeo do importador ha mais de 6 h'" "|| ' ao Omie sem gemeo do importador ha ' || (ve.pior_idade_s / 3600)::text || ' h'" ;;
   fora_do_v_sources)
-    sabotar data_health_watchdog "'vendas_empurradas_sem_gemeo'];" "'vendas_empurradas_fora'];" ;;
+    sabotar data_health_watchdog "'vendas_empurradas_sem_gemeo'];" "'vendas_empurradas_fora'];" "$MIG_TRIO" ;;
   fora_do_resumo)
-    sabotar fin_sync_heartbeat "'vendas_empurradas_sem_gemeo');" "'vendas_empurradas_fora');" ;;
+    sabotar fin_sync_heartbeat "'vendas_empurradas_sem_gemeo');" "'vendas_empurradas_fora');" "$MIG_TRIO" ;;
   acl_authenticated)
     P -q -c "GRANT EXECUTE ON FUNCTION public.fin_sync_heartbeat() TO authenticated;"
     echo "⚠️  SABOTAGEM ATIVA em fin_sync_heartbeat (ACL: EXECUTE de volta a authenticated) — a suíte abaixo DEVE ficar vermelha" ;;
@@ -256,8 +301,10 @@ EXCEPTION WHEN OTHERS THEN
   RETURN 'ERRO:' || SQLSTATE;
 END $f$;
 
--- Semeia UMA linha do app (e o gêmeo pedido). p_envio = o UPDATE do envio; a previsão default é a
--- data UTC do envio (o que a edge grava). Código = rótulo do cenário no número do pedido.
+-- Semeia UMA linha do app (e o gêmeo pedido). p_envio = o UPDATE do envio; a previsão default é o
+-- DIA DE SP do envio (o que a edge grava desde a v1.10, #2736; a era v1.9, dia UTC, é cenário explícito
+-- no A46). Código = rótulo do cenário no número do pedido E no id (determinístico: a REF da message,
+-- md5 dos ids das órfãs, entra exata nos asserts). Linha do app ...-8000-<cod>; gêmeo ...-9000-<cod>.
 CREATE OR REPLACE FUNCTION public._semear_venda(
   p_cod int, p_conta text, p_status text, p_envio timestamptz,
   p_criado timestamptz DEFAULT NULL, p_atualizado timestamptz DEFAULT NULL, p_prev text DEFAULT NULL,
@@ -266,21 +313,23 @@ CREATE OR REPLACE FUNCTION public._semear_venda(
 RETURNS void LANGUAGE plpgsql AS $f$
 DECLARE
   v_id    bigint := 900000000000 + p_cod;
+  v_uid   uuid   := ('00000000-0000-4000-8000-' || lpad(p_cod::text, 12, '0'))::uuid;
+  v_uid_g uuid   := ('00000000-0000-4000-9000-' || lpad(p_cod::text, 12, '0'))::uuid;
   v_conta text   := CASE WHEN p_gemeo = 'outra_conta' THEN CASE WHEN p_conta = 'oben' THEN 'colacor' ELSE 'oben' END
                          ELSE p_conta END;
 BEGIN
-  INSERT INTO public.sales_orders (account, omie_pedido_id, omie_numero_pedido, omie_payload, hash_payload,
+  INSERT INTO public.sales_orders (id, account, omie_pedido_id, omie_numero_pedido, omie_payload, hash_payload,
                                    status, total, deleted_at, created_at, updated_at)
-  VALUES (p_conta, CASE WHEN NOT p_sem_id THEN v_id END, lpad(p_cod::text, 15, '0'),
+  VALUES (v_uid, p_conta, CASE WHEN NOT p_sem_id THEN v_id END, lpad(p_cod::text, 15, '0'),
           CASE WHEN NOT p_sem_payload THEN
             COALESCE(p_payload, jsonb_build_object('cabecalho', jsonb_build_object('data_previsao',
-                     COALESCE(p_prev, to_char(p_envio AT TIME ZONE 'UTC', 'DD/MM/YYYY'))))) END,
+                     COALESCE(p_prev, to_char(p_envio AT TIME ZONE 'America/Sao_Paulo', 'DD/MM/YYYY'))))) END,
           NULL, p_status, p_total, CASE WHEN p_apagado THEN p_envio END,
           COALESCE(p_criado, p_envio), COALESCE(p_atualizado, p_envio));
   IF p_gemeo <> 'nenhum' THEN
-    INSERT INTO public.sales_orders (account, omie_pedido_id, omie_numero_pedido, omie_payload, hash_payload,
+    INSERT INTO public.sales_orders (id, account, omie_pedido_id, omie_numero_pedido, omie_payload, hash_payload,
                                      status, total, order_date_kpi, deleted_at, created_at, updated_at)
-    VALUES (v_conta, v_id, lpad(p_cod::text, 15, '0'), NULL, 'omie_' || v_conta || '_' || v_id,
+    VALUES (v_uid_g, v_conta, v_id, lpad(p_cod::text, 15, '0'), NULL, 'omie_' || v_conta || '_' || v_id,
             CASE WHEN p_gemeo = 'cancelado' THEN 'cancelado' ELSE 'faturado' END, p_total,
             (p_envio AT TIME ZONE 'America/Sao_Paulo')::date,
             CASE WHEN p_gemeo = 'apagado' THEN p_envio END,
@@ -344,8 +393,9 @@ echo "── a mesa (10 órfãs, 2 fora da janela de 5 dias) ──"
 eq "A3 status da mesa = broken (há órfã com mais de 6 dias)" "$(ler status "$T")" "broken"
 eq "A4 severity fixa warning" "$(ler severity "$T")" "warning"
 eq "A5 message da mesa, exata (contas em ordem, valor BR, data congelada)" "$(ler message "$T")" \
-   "10 vendas empurradas ao Omie sem gemeo do importador ha mais de 6 h (2 fora da janela de 5 dias do importador) - colacor: 1 (R\$ 1.234,50, a mais antiga de 30/09/2026); oben: 9 (R\$ 900,00, a mais antiga de 20/09/2026)"
-eq "A6 age_seconds = idade da órfã mais antiga (fim do dia UTC 20/09 → T)" "$(ler age "$T")" "842400"
+   "10 vendas empurradas ao Omie sem gemeo do importador ha mais de 6 h (2 fora da janela de 5 dias do importador) - colacor: 1 (R\$ 1.234,50, a mais antiga de 30/09/2026); oben: 9 (R\$ 900,00, a mais antiga de 20/09/2026) (ref 87a73154)"
+# 118: tocada há 10 min, previsão 20/09 (dia de SP do envio) → âncora = 20/09 23:59:59.999999 BRT
+eq "A6 age_seconds = idade da órfã mais antiga (último instante de 20/09 em SP → T)" "$(ler age "$T")" "831600"
 eq "A7 expected_max_age_seconds = 6 h" "$(ler max_age "$T")" "21600"
 eq "A8 órfã de 7 h (103) listada" "$(listada 103)" "sim"
 eq "A9 órfã de 2 h (102) ainda NÃO listada" "$(listada 102)" "nao"
@@ -369,8 +419,11 @@ eq "A26 payload sem cabecalho (123, 2 h) não listado" "$(listada 123)" "nao"
 eq "A27 sem omie_pedido_id (125) e sem payload (126) fora" "$(listada 125)$(listada 126)" "naonao"
 
 echo "── a message não depende da SESSÃO ──"
-eq "A28 fuso da sessão (UTC × São Paulo) não muda a message" \
-   "$(ler_tz message "$T" UTC)" "$(ler_tz message "$T" America/Sao_Paulo)"
+# message, lista (last_error: "desde … BRT") e idade: com a âncora no dia de SP, a data da message sozinha
+# não muda entre os fusos nem sob a sabotagem — a hora da lista e a idade mudam.
+eq "A28 fuso da sessão (UTC × São Paulo) não muda message, lista nem idade" \
+   "$(ler_tz message "$T" UTC) | $(ler_tz last_error "$T" UTC) | $(ler_tz age "$T" UTC)" \
+   "$(ler_tz message "$T" America/Sao_Paulo) | $(ler_tz last_error "$T" America/Sao_Paulo) | $(ler_tz age "$T" America/Sao_Paulo)"
 saida_ln="$(Pq -q -c "SET lc_numeric = 'pt_BR.UTF-8'" -c "SET test.agora = '$T'" -c "SELECT public._ler_vesg('message');" 2>&1)" && rc_ln=0 || rc_ln=$?
 if [ "$rc_ln" -eq 0 ]; then
   eq "A29 lc_numeric pt_BR não muda a message" "$saida_ln" "$(ler message "$T")"
@@ -382,7 +435,7 @@ echo "── níveis ──"
 P -q -c "DELETE FROM public.sales_orders WHERE omie_numero_pedido IN (lpad('104',15,'0'), lpad('118',15,'0'));"
 eq "A30 sem as órfãs de mais de 6 dias → stale" "$(ler status "$T")" "stale"
 eq "A31 message stale exata" "$(ler message "$T")" \
-   "8 vendas empurradas ao Omie sem gemeo do importador ha mais de 6 h - colacor: 1 (R\$ 1.234,50, a mais antiga de 30/09/2026); oben: 7 (R\$ 700,00, a mais antiga de 30/09/2026)"
+   "8 vendas empurradas ao Omie sem gemeo do importador ha mais de 6 h - colacor: 1 (R\$ 1.234,50, a mais antiga de 30/09/2026); oben: 7 (R\$ 700,00, a mais antiga de 30/09/2026) (ref 5f3f3797)"
 P -q -v T="$T" >/dev/null <<'SQL'
 TRUNCATE public.sales_orders;
 SELECT public._semear_venda(101, 'oben', 'enviado', :'T'::timestamptz - interval '30 hours', p_gemeo => 'mesma_conta');
@@ -426,6 +479,48 @@ SELECT public._semear_venda(141, 'oben', 'enviado', :'T'::timestamptz - interval
 SQL
 if [ "$(ler message "$T1")" != "$m1" ]; then ok "A37 órfã NOVA muda a message (o fato mudou → e-mail pode re-emitir)"; else bad "A37 órfã nova NÃO mudou a message"; fi
 
+echo "── C3 (v2): envio NOTURNO — previsão no dia de SP (edge v1.10) e no dia UTC (v1.9) ──"
+# 22:30 BRT de 29/09 = 01:30Z de 30/09: o dia de SP (29) ≠ o dia UTC (30). Orçamento de 2 dias antes,
+# então a guarda contra created_at aceita a previsão nas duas eras.
+PN='2026-09-29 22:30:00-03'
+P -q -v E="$PN" >/dev/null <<'SQL'
+TRUNCATE public.sales_orders;
+SELECT public._semear_venda(150, 'oben', 'enviado', :'E'::timestamptz, p_criado => :'E'::timestamptz - interval '2 days',
+                            p_prev => to_char(:'E'::timestamptz AT TIME ZONE 'America/Sao_Paulo', 'DD/MM/YYYY'));
+SELECT public._semear_venda(151, 'oben', 'enviado', :'E'::timestamptz, p_criado => :'E'::timestamptz - interval '2 days',
+                            p_prev => to_char(:'E'::timestamptz AT TIME ZONE 'UTC', 'DD/MM/YYYY'));
+SQL
+listada_em() { case "$(ler last_error "$2")" in *"pedido $1 "*) echo sim ;; *) echo nao ;; esac; }
+eq "A45 envio às 22:30 BRT, previsão no dia de SP (v1.10): com 5 h não acusa; com 7 h acusa" \
+   "$(listada_em 150 '2026-09-30 03:30:00-03')$(listada_em 150 '2026-09-30 05:30:00-03')" "naosim"
+eq "A46 o mesmo envio, previsão no dia UTC (v1.9): com 5 h não acusa; com 7 h acusa" \
+   "$(listada_em 151 '2026-09-30 03:30:00-03')$(listada_em 151 '2026-09-30 05:30:00-03')" "naosim"
+
+echo "── C4 (v2): pedido IMPORTADO editado pelo app (o payload chega; o hash canônico fica) ──"
+P -q -v T="$T" >/dev/null <<'SQL'
+TRUNCATE public.sales_orders;
+SELECT public._semear_venda(152, 'oben', 'enviado', :'T'::timestamptz - interval '10 hours', p_gemeo => 'mesma_conta');
+UPDATE public.sales_orders SET omie_payload = '{"cabecalho":{"data_previsao":"30/09/2026"}}', status = 'separacao'
+ WHERE hash_payload IS NOT NULL;
+SQL
+eq "A47 a importada editada segue GÊMEO e não vira linha do app" \
+   "$(ler status "$T") | $(listada 152) | $(ler message "$T")" \
+   "ok | nao | Vendas empurradas ao Omie: todas voltaram pelo importador (1 empurradas; 0 aguardando o proximo ciclo)"
+
+echo "── C6 (v2): uma órfã que SUBSTITUI outra (mesma conta, valor e dia) muda a message ──"
+P -q -v T="$T" >/dev/null <<'SQL'
+TRUNCATE public.sales_orders;
+SELECT public._semear_venda(153, 'oben', 'enviado', :'T'::timestamptz - interval '7 hours 30 minutes');
+SELECT public._semear_venda(154, 'oben', 'enviado', :'T'::timestamptz - interval '5 hours 50 minutes');
+SQL
+m_a="$(ler message "$T")"
+P -q -c "UPDATE public.sales_orders SET status = 'cancelado' WHERE omie_numero_pedido = lpad('153', 15, '0');"
+m_b="$(ler message '2026-09-30 15:30:00-03')"
+if [ "$m_a" != "$m_b" ]; then troca=mudou; else troca=igual; fi
+eq "A48 a troca de órfã muda a message (só a ref: contagem, valor e dia iguais)" \
+   "$troca | ${m_b% (ref *}" \
+   "mudou | 1 venda empurrada ao Omie sem gemeo do importador ha mais de 6 h - oben: 1 (R\$ 100,00, a mais antiga de 30/09/2026)"
+
 # Desliga o relógio controlado: watchdog/heartbeat rodam no compute EXATAMENTE como a migration o deixou.
 cfg_compute='search_path=public, pg_temp'
 P -q <<'SQL'
@@ -463,22 +558,37 @@ como_authenticated() {
 eq "A44 authenticated recebe 42501 no watchdog e no heartbeat" \
    "$(como_authenticated data_health_watchdog) $(como_authenticated fin_sync_heartbeat)" "42501 42501"
 
+echo "── C1 (v2): o wrapper get_data_health() é só do staff — o cliente logado recebe 42501 do gate ──"
+CUST='00000000-0000-4000-a000-000000000001'
+STAFF='00000000-0000-4000-a000-000000000002'
+P -q -c "INSERT INTO public.user_roles (user_id, role) VALUES ('$STAFF', 'employee');"
+como_uid() {
+  local out
+  if out="$(P -q -tA -v VERBOSITY=verbose -c "SET test.uid = '$1'" -c "SET ROLE authenticated" \
+             -c "SELECT count(*) FROM public.get_data_health() WHERE source = 'vendas_empurradas_sem_gemeo';" 2>&1)"; then
+    echo "linhas=$out"
+  else case "$out" in *42501*"requer perfil staff"*) echo 42501-staff ;; *) echo OUTRO_ERRO ;; esac; fi
+}
+eq "A49 cliente logado: 42501 do gate; staff: lê o source" "$(como_uid "$CUST") $(como_uid "$STAFF")" "42501-staff linhas=1"
+eq "A50 authenticated recebe 42501 no compute (REVOKE nomeado da v2)" "$(como_authenticated _data_health_compute)" "42501"
+
 echo "── a migration: re-aplicar é inócuo; a PRE recusa corpo estranho ──"
-md5s() { Pq -c "SELECT string_agg(md5(prosrc), ',' ORDER BY proname) FROM pg_proc WHERE oid IN ('public._data_health_compute()'::regprocedure, 'public.data_health_watchdog()'::regprocedure, 'public.fin_sync_heartbeat()'::regprocedure);"; }
+md5s() { Pq -c "SELECT string_agg(md5(prosrc), ',' ORDER BY proname) FROM pg_proc WHERE oid IN ('public._data_health_compute()'::regprocedure, 'public.data_health_watchdog()'::regprocedure, 'public.fin_sync_heartbeat()'::regprocedure, 'public.get_data_health()'::regprocedure);"; }
 antes="$(md5s)"
 P -q -1 -f "$MIG" >/dev/null 2>&1 && rc_re=0 || rc_re=$?
-eq "A42 re-aplicar a migration passa e nenhum corpo muda" "$rc_re | $(md5s)" "0 | $antes"
+eq "A42 re-aplicar a migration v2 passa e nenhum corpo muda" "$rc_re | $(md5s)" "0 | $antes"
+# A v2 trava e confere o compute e o wrapper (os que ela recria): o corpo estranho vai no compute.
 P -q <<'SQL'
 DO $x$ DECLARE d text; BEGIN
-  SELECT pg_get_functiondef('public.data_health_watchdog()'::regprocedure) INTO d;
-  EXECUTE replace(d, 'v_deadman_h int := 3;', 'v_deadman_h int := 3; -- corpo estranho (prova da PRE)');
+  SELECT pg_get_functiondef('public._data_health_compute()'::regprocedure) INTO d;
+  EXECUTE replace(d, 'v2 (Codex retroativo do #2698', 'v2 (Codex retroativo do #2698; corpo estranho, prova da PRE');
 END $x$;
 SQL
-md5_estranho="$(Pq -c "SELECT md5(prosrc) FROM pg_proc WHERE oid = 'public.data_health_watchdog()'::regprocedure;")"
+md5_estranho="$(Pq -c "SELECT md5(prosrc) FROM pg_proc WHERE oid = 'public._data_health_compute()'::regprocedure;")"
 saida_pre="$(P -q -1 -v VERBOSITY=verbose -f "$MIG" 2>&1)" && rc_pre=0 || rc_pre=$?
-case "$saida_pre" in *"P0001"*"PRE FALHOU: public.data_health_watchdog()"*) marca_pre=sim ;; *) marca_pre=nao ;; esac
+case "$saida_pre" in *"P0001"*"PRE FALHOU: public._data_health_compute()"*) marca_pre=sim ;; *) marca_pre=nao ;; esac
 eq "A43 PRE recusa o corpo estranho (P0001, nomeando a função) e o preserva" \
-   "$rc_pre | $marca_pre | $(Pq -c "SELECT md5(prosrc) FROM pg_proc WHERE oid = 'public.data_health_watchdog()'::regprocedure;")" \
+   "$rc_pre | $marca_pre | $(Pq -c "SELECT md5(prosrc) FROM pg_proc WHERE oid = 'public._data_health_compute()'::regprocedure;")" \
    "3 | sim | $md5_estranho"
 
 echo
