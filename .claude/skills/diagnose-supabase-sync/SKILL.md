@@ -18,7 +18,7 @@ description: >-
 
 ## Por que esta skill existe
 
-Neste repo, sync de dados quebra **em silêncio** e o founder descobre dias depois (um incidente ficou 8 dias invisível). A causa é uma armadilha de observabilidade documentada no §5 do CLAUDE.md:
+Neste repo, sync de dados quebra **em silêncio** e o founder descobre dias depois (um incidente ficou 8 dias invisível). A causa é uma armadilha de observabilidade documentada em `docs/agent/sync.md` (resumo na §Armadilhas do CLAUDE.md):
 
 > **`cron.job_run_details` reporta `succeeded` mesmo quando a edge respondeu 401/503 ou nem bootou.** Ele só registra que o `net.http_post` foi **enfileirado**, não o resultado HTTP. A verdade está em **`net._http_response`** (`status_code`/`content`/`error_msg`/`timed_out`) cruzada com **`fin_sync_log`** (iniciou/completou/órfã) e o **efeito real no dado**.
 

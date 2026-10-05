@@ -27,7 +27,7 @@ description: >-
 
 Duas verdades deste repo se combinam num risco silencioso:
 
-1. **plpgsql é *late-bound*** (regra-base no CLAUDE.md; aqui mora o *porquê* de provar EXECUTANDO). SQL inválido — coluna ambígua, JOIN que referencia a tabela-alvo, `SUM` que colide com coluna OUT do `RETURNS TABLE` — **passa no `CREATE OR REPLACE`** e só falha ao **EXECUTAR**; atrás de cron/`try-catch` best-effort, **silenciosamente por tempo indefinido**. Já aconteceu ≥3× aqui (`aplicar_promocoes_no_ciclo` por JOIN inválido; `gerar_pedidos_oportunidade_ciclo` por `SUM` ambíguo — histórico no §10 do CLAUDE.md).
+1. **plpgsql é *late-bound*** (regra-base no CLAUDE.md; aqui mora o *porquê* de provar EXECUTANDO). SQL inválido — coluna ambígua, JOIN que referencia a tabela-alvo, `SUM` que colide com coluna OUT do `RETURNS TABLE` — **passa no `CREATE OR REPLACE`** e só falha ao **EXECUTAR**; atrás de cron/`try-catch` best-effort, **silenciosamente por tempo indefinido**. Já aconteceu ≥3× aqui (`aplicar_promocoes_no_ciclo` por JOIN inválido; `gerar_pedidos_oportunidade_ciclo` por `SUM` ambíguo — histórico em `docs/agent/money-path.md` e `docs/historico/bugs-resolvidos.md`).
 
 2. **O founder não tem terminal pro backend.** Ele aplica SQL colando no SQL Editor do Lovable. Não há staging. O **único** teste possível **antes** de o SQL tocar produção é o que **eu** rodo num PostgreSQL 17 local descartável.
 
@@ -43,7 +43,7 @@ Quebrar qualquer uma recria o bug que esta skill previne.
 
 2. **Todo assert negativo captura a `SQLSTATE`/condição ESPERADA e re-lança o resto.** Um gate que deve dar `RAISE EXCEPTION`, um CHECK que deve rejeitar, um REVOKE que deve dar `permission denied` — o teste prova que o erro **certo** acontece. `WHEN OTHERS THEN 'OK'` é **teatro**: engole qualquer erro (inclusive um erro de digitação no seu próprio teste) e pinta verde. Capture a SQLSTATE esperada; no `WHEN OTHERS`, **`RAISE`** (relança). Ver `references/assert-patterns.md`.
 
-3. **Falsificação obrigatória no que importa.** Pra cada invariante que o money-path/gate depende: **sabota a migração de propósito** (recria a policy furada, dropa o trigger, troca o gate por `IF false`) e **exija que o assert correspondente fique VERMELHO**. Se sabotar e o teste seguir verde, o assert não tem dente — conserte o assert. Depois **restaure** a versão verdadeira. Regra anti-teatro: a **sentinela** do teste (a string que você procura pra decidir pass/fail num caminho negativo) **nunca pode conter o texto que o próprio código emite** — senão um `ILIKE`/`position()` casa a própria sentinela e o assert mente. (Isto já mordeu: ver a lição do `test-melhorias-rpcs.sh` no §10.)
+3. **Falsificação obrigatória no que importa.** Pra cada invariante que o money-path/gate depende: **sabota a migração de propósito** (recria a policy furada, dropa o trigger, troca o gate por `IF false`) e **exija que o assert correspondente fique VERMELHO**. Se sabotar e o teste seguir verde, o assert não tem dente — conserte o assert. Depois **restaure** a versão verdadeira. Regra anti-teatro: a **sentinela** do teste (a string que você procura pra decidir pass/fail num caminho negativo) **nunca pode conter o texto que o próprio código emite** — senão um `ILIKE`/`position()` casa a própria sentinela e o assert mente. (Isto já mordeu: ver a lição do `test-melhorias-rpcs.sh` em `docs/agent/money-path.md`.)
 
 ## Quando NÃO usar
 
@@ -85,9 +85,9 @@ O template já resolve: PG17 descartável (initdb em tmpdir + trap cleanup), con
 Na **ZONA 1**, crie o que a migração **lê/altera mas não cria**. Dois caminhos:
 
 - **Mínimo (rápido):** `CREATE TABLE` stub só das tabelas que a migração toca, com as colunas que ela usa. Bom quando a migração é auto-contida.
-- **Fiel (mais lento):** aplique o `supabase/schema-snapshot.sql` inteiro (o template tem o `sed`/`grep` de restore-ready comentado). Use quando a migração depende de muitas tabelas/funções reais. ⚠️ O snapshot pode estar **stale** (ver §5/§6 do CLAUDE.md — já faltou `order_date_kpi`, `tipo_produto`, `minimo_forcado_manual`); se faltar uma coluna recente, adicione um `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` antes de aplicar a migração.
+- **Fiel (mais lento):** aplique o `supabase/schema-snapshot.sql` inteiro (o template tem o `sed`/`grep` de restore-ready comentado). Use quando a migração depende de muitas tabelas/funções reais. ⚠️ O snapshot pode estar **stale** (ver `docs/agent/database.md` §3 — já faltou `order_date_kpi`, `tipo_produto`, `minimo_forcado_manual`); se faltar uma coluna recente, adicione um `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` antes de aplicar a migração.
 
-Na **ZONA 2**, aplique a migração real. Se a função recriada também existe em prod, faça o **pré-flight** mental do §10: o corpo que você testa deve ser o corpo que vai pra prod (cuidado com drift repo×prod em `CREATE OR REPLACE`).
+Na **ZONA 2**, aplique a migração real. Se a função recriada também existe em prod, faça o **pré-flight** de `pg_get_functiondef` (`docs/agent/database.md` §4): o corpo que você testa deve ser o corpo que vai pra prod (cuidado com drift repo×prod em `CREATE OR REPLACE`).
 
 ### Passo 4 — Asserts positivos, negativos e RLS (Lei #2)
 
@@ -103,18 +103,18 @@ Pra cada assert que protege dinheiro/autorização: sabota a migração na sess�
 ### Passo 6 — Rodar até verde-real, reportar e commitar
 
 ```bash
-bash db/test-<slug>.sh   # NÃO pipe pra tail — engole o exit code (§2 do CLAUDE.md); redirecione e cheque $?
+bash db/test-<slug>.sh   # NÃO pipe pra tail — engole o exit code (docs/historico/evidencia-positiva-shell.md); redirecione e cheque $?
 echo "exit=$?"
 ```
 
 Itere até: **verde com a migração real** E **vermelho com cada sabotagem** (durante o desenvolvimento da falsificação). Reporte ao usuário: quantos asserts, o que cada um prova (1 linha), e que a falsificação confirmou o dente. Commite o `db/test-<slug>.sh` junto com a migração — vira regressão executável e evidência pro PR.
 
-> ⚠️ **`bash db/test-*.sh | tail -N` ENGOLE o exit≠0** (o pipe retorna o status do `tail`). Já mordeu (§10, fixes-codex-711). Quando o exit importa: `> /tmp/log 2>&1; echo $?` e leia o log.
+> ⚠️ **`bash db/test-*.sh | tail -N` ENGOLE o exit≠0** (o pipe retorna o status do `tail`). Já mordeu (`docs/historico/evidencia-positiva-shell.md`). Quando o exit importa: `> /tmp/log 2>&1; echo $?` e leia o log.
 
 ## Relação com as outras skills
 
 - **`lovable-db-operator`** — composição. Fluxo money-path: desenhar SQL → **`prove-sql-money-path`** (testa local, falsifica) → **`lovable-db-operator`** (empacota o handoff "cole no SQL Editor" + a query de validação pós-apply) → founder aplica. A `db-operator` valida que o objeto **existe** após o Run; esta prova que ele **funciona** antes.
-- **`/codex` (challenge/consult)** — o adversarial do Codex e o PG17 são complementares. Quando o Codex está fora (cota do Plus esgota em janela rolante de 7d), o PG17 falsificável é o **"Caminho B"** registrado no §5/§10: o oráculo que substitui a 2ª opinião no caminho do dinheiro. Marque `REVISÃO INDEPENDENTE PENDENTE` e rode o Codex retroativo quando a cota voltar — auto-prova não substitui revisão independente, só cobre o intervalo.
+- **`/codex` (challenge/consult)** — o adversarial do Codex e o PG17 são complementares. Quando o Codex está fora (cota do Plus esgota em janela rolante de 7d), o PG17 falsificável é o **"Caminho B"** registrado em `docs/agent/money-path.md`: o oráculo que substitui a 2ª opinião no caminho do dinheiro. Marque `REVISÃO INDEPENDENTE PENDENTE` e rode o Codex retroativo quando a cota voltar — auto-prova não substitui revisão independente, só cobre o intervalo.
 
 ## Arquivos de apoio desta skill
 
