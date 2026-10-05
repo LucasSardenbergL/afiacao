@@ -103,6 +103,43 @@ Achados fora da classe, registrados nos PRs e não consertados: a lista manual d
 `profiles` sem limit (mostra os primeiros 1.000 de 5.665 clientes); nenhuma zona do cockpit aplica o
 recorte de empresa (`companies` está na `queryKey` e não na query).
 
+## Fatia Customer 360 (#2767): o fechamento (2026-10-05)
+
+Assumida pela sessão "Corrigir Faturamento 12m do Customer 360" por decisão do founder. Ela chegou com o
+achado **C2** do Codex retroativo do sensor `vendas_empurradas_sem_gemeo` (#2698/#2717): não-venda e
+gêmeos push/pull na soma do 12m. Esta fatia já fechava os dois.
+
+**Medido (`psql-ro`, 2026-10-05).** O C2 mediu SEM o teto: 31 linhas de não-venda em 20 clientes,
+R$ 615,1 mi, quase tudo de UM pedido importado cancelado de R$ 615.100.434,63. No grão da tela (com o
+`limit(200)`) a soma era outra: 30 linhas, 19 clientes, R$ 34.835,70. O cancelado é o 315º pedido do
+cliente e ficava FORA do teto: a tela mostrava R$ 152,1–152,5 mil / 200 pedidos (4 empatados no corte), e
+o canônico é R$ 367.014,23 / 553. Os 25 recibos de gêmeo (R$ 14.186,56, 15 clientes) entravam na soma
+antiga; no eixo `order_date_kpi` eles saem por construção (CHECK `sales_orders_gemeo_e_recibo` e índice
+único do #2730: 0 recibos com kpi, 0 pedidos Omie com 2 linhas com kpi). Resíduo do eixo: 0 vendas
+empurradas vivas sem gêmeo e sem kpi. Escala: 508 clientes com venda na janela, no máximo 710 pedidos (0
+acima de 1.000), 0 subcentavos, e a soma em `Number` bate ao centavo nos 508 (erro máximo 1,34e-7 centavo).
+
+**Codex.** Desenho (gpt-6-astra · max · 478s · 130.688 tokens): 0 P0 / 3 P1 / 2 P2, todos tratados. O
+refetch que falha com cache declara a idade (`leituraDaQuery` = `estadoDeLeitura` + `desatualizado`); o
+9999 vira "Sem compra no consolidado", com os dois relógios da faixa declarados; e a prova de paginação
+ganhou mock fiel (o `range` fatia, capa de 1.000). Código (gpt-6-astra · max · 269s · 101.163 tokens):
+0 P0 / 0 P1. Dos P2, o refetch do feed que falhava mudo (inclusive com a lista vazia em cache) foi
+consertado, e o controle positivo do R$ 0 entrou. A soma paginada por offset não é um retrato (venda que
+entra entre páginas relê a fronteira) e ficou como LIMITE CONHECIDO no hook: só existe acima de 1.000
+pedidos do cliente na janela, e o máximo medido é 710. Fora do escopo, preexistente: offline e sem cache,
+a página diz "Cliente não encontrado" antes de montar a faixa (`core` em `pending`/`paused`).
+
+**Lições desta fatia.**
+
+- **Um teto esconde nos DOIS sentidos.** O `limit(200)` escondia venda (55–72% nos maiores clientes) e
+  escondia também a não-venda mais cara do banco. Tirar o teto sem o filtro de status faria um cliente
+  pular para R$ 615 mi: os dois consertos vão JUNTOS. E o retrato de um achado se mede no grão da tela,
+  com o corte, senão afirma um número que ninguém viu.
+- **R$ formatado em consulta do Testing Library é cego.** O `formatBRL` usa U+00A0, e o normalizador troca
+  o `\s+` do NÓ, não o da consulta. `queryByText(formatBRL(0))).toBeNull()` aprovava com R$ 0 na tela; foi
+  o positivo vermelho que denunciou. Consulte o R$ como o DOM o expõe, e prove a negativa com uma
+  sabotagem que ACENDE o R$ 0.
+
 ## Lições
 
 1. **O corte pode ser maior que a classe.** O `limit(200)` do Customer 360 escondia 55–72% do
