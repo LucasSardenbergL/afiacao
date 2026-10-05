@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-10-05T14:55:01.508Z",
-  "sourceHead": "c7de6bef937d3cebadcdf70727e9fbd2ee0b74e0",
+  "medidoEm": "2026-10-05T16:03:36.576Z",
+  "sourceHead": "d23fa04ba22afc86ca0d22ab5c651920bf17a645",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -12,9 +12,9 @@
     "funcoes": {
       "script": "authz:funcoes:prod",
       "exit": 0,
-      "resumo": "✅ o EXECUTE de prod bate com o contrato nas 59 função(ões) da allowlist. ⚠️ 1 delas têm o fecho FORA do repo (fechadaPor=null) e portanto NÃO são vigiadas pelo CI: public.aplicar_sql.",
-      "denominador": "🔎 authz:funcoes:prod — 60 definição(ões) lida(s) para 59 chave(s) da allowlist.",
-      "contratoFingerprint": "5dfdb5579ea3037a0c09318b8a2bc06796d9d0e188c92f461d901d13cccaffee",
+      "resumo": "✅ o EXECUTE de prod bate com o contrato nas 60 função(ões) da allowlist. ⚠️ 1 delas têm o fecho FORA do repo (fechadaPor=null) e portanto NÃO são vigiadas pelo CI: public.aplicar_sql.",
+      "denominador": "🔎 authz:funcoes:prod — 61 definição(ões) lida(s) para 60 chave(s) da allowlist.",
+      "contratoFingerprint": "b8ebaf0bc9e56560caea2cac58d19e20776fa0286c1f7f3b0bca3a14e3c298d6",
       "auditorFingerprint": "8971003ee5ae2343ff6129fe9569b7afb3b5cfd5bab5abed86c6e27520c8358f",
       "achados": []
     },
@@ -56,31 +56,12 @@
     },
     "corpo": {
       "script": "deriva:corpo:prod",
-      "exit": 1,
-      "resumo": "deriva-corpo — 3 divergência(s) em prod (3 AUSENTE) — ver as linhas ❌",
-      "denominador": "🔎 deriva-corpo — 320 identidade(s) conferida(s) · 16 aposentada(s) · ref origin/main@df5d73117 (fetch ok) · prod 2026-10-05 14:55:24.677193Z",
+      "exit": 0,
+      "resumo": "✅ deriva-corpo — 321 identidade(s) batem com o repo (245 em dia, 70 só cosméticas, 5 aceitas na baseline) e 16 aposentada(s) estão ausentes",
+      "denominador": "🔎 deriva-corpo — 321 identidade(s) conferida(s) · 16 aposentada(s) · ref origin/main@00af063e4 (fetch ok) · prod 2026-10-05 16:04:03.8351Z",
       "contratoFingerprint": "a3ca2170bc686d60b0f503593e53b066815610ad25e196b200c158aea15152ab",
       "auditorFingerprint": "6cf9b8ae065fcf1234c4744916e2dfb1e099be201c4bab502c2ed2add3fc380e",
-      "achados": [
-        {
-          "id": "a8915b9581dc8f38",
-          "linha": "❌ [AUSENTE] sales_orders_gemeo_app_derivar(): viva no repo (último CREATE: 20261001100001_sales_orders_gemeo_importado_contagem_unica.sql) e ausente em prod — migration não aplicada ou DROP manual",
-          "primeiraVez": "2026-10-05",
-          "ultimaVez": "2026-10-05"
-        },
-        {
-          "id": "7f12d13791b5c2b1",
-          "linha": "❌ [AUSENTE] sales_orders_gemeo_importada_antes(): viva no repo (último CREATE: 20261001100001_sales_orders_gemeo_importado_contagem_unica.sql) e ausente em prod — migration não aplicada ou DROP manual",
-          "primeiraVez": "2026-10-05",
-          "ultimaVez": "2026-10-05"
-        },
-        {
-          "id": "b79712762dedffbc",
-          "linha": "❌ [AUSENTE] sales_orders_gemeo_importada_depois(): viva no repo (último CREATE: 20261001100001_sales_orders_gemeo_importado_contagem_unica.sql) e ausente em prod — migration não aplicada ou DROP manual",
-          "primeiraVez": "2026-10-05",
-          "ultimaVez": "2026-10-05"
-        }
-      ]
+      "achados": []
     }
   }
 }

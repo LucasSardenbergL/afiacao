@@ -20,7 +20,7 @@ import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
 export const respostaSonda = criarRespostaSonda("algorithm-a-audit");
 
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.1-universo-canonico";
+export const VERSAO = "v1.2-carimbo-execucao";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
