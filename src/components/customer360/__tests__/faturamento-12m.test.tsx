@@ -182,7 +182,8 @@ describe('useCustomerFaturamento12m', () => {
     const leitura = leituraDaQuery(result.current);
     expect(leitura).toMatchObject({ emMaos: true, desatualizado: 'erro' });
     render(<CustomerKpiStrip faturamento12m={leitura} metricas={{ emMaos: false, motivo: 'carregando' }} score={undefined} />);
-    expect(screen.getByText(formatBRL(1000))).toBeTruthy();
+    // o R$ como o DOM o expõe: o U+00A0 do formatBRL vira espaço comum no normalizador do Testing Library
+    expect(screen.getByText(formatBRL(1000).replace(/\s+/g, ' '))).toBeTruthy();
     expect(screen.getByTestId('aviso-c360-faturamento-12m').getAttribute('data-estado')).toBe('erro');
   });
 });

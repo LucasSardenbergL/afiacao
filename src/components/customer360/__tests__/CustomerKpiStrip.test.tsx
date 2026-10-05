@@ -7,6 +7,14 @@ import type { CustomerMetrics, CustomerScore, Faturamento12m, LeituraKpi } from 
 
 const LIDO_EM = Date.UTC(2026, 9, 5, 17, 32);
 
+/**
+ * O R$ como o Testing Library o LÊ no DOM. O `formatBRL` separa "R$" do número com espaço
+ * não-separável (U+00A0), e o normalizador padrão troca todo `\s+` do NÓ por um espaço comum — mas
+ * não a string da consulta. Consultar `formatBRL(x)` cru nunca casa: o positivo falha, e o
+ * NEGATIVO (`queryByText(...)).toBeNull()`) passa verde por cegueira, com o R$ 0 na tela.
+ */
+const brlNaTela = (v: number) => formatBRL(v).replace(/\s+/g, ' ');
+
 const lido = <T,>(valor: T, desatualizado: 'erro' | 'sem-rede' | null = null): LeituraKpi<T> => ({
   emMaos: true,
   valor,
@@ -40,7 +48,7 @@ describe('CustomerKpiStrip', () => {
     expect(screen.getByText('Faturamento 90d')).toBeTruthy();
     expect(screen.getByText('Ticket médio (90d)')).toBeTruthy();
     expect(screen.getByText('Última compra')).toBeTruthy();
-    expect(screen.getByText(formatBRL(12000))).toBeTruthy();
+    expect(screen.getByText(brlNaTela(12000))).toBeTruthy();
     expect(screen.getByText('8 pedidos')).toBeTruthy();
     expect(screen.getByText('5d')).toBeTruthy();
     expect(screen.getByText(/consolidado em/)).toBeTruthy();
@@ -52,7 +60,7 @@ describe('CustomerKpiStrip', () => {
     montar(semValor('erro'), lido<CustomerMetrics>(linhaMv));
     expect(screen.getByText('indisponível')).toBeTruthy();
     expect(screen.queryByText('0 pedidos')).toBeNull();
-    expect(screen.queryByText(formatBRL(0))).toBeNull();
+    expect(screen.queryByText(brlNaTela(0))).toBeNull();
   });
 
   it('12m sem rede na 1ª carga: "sem rede", não "carregando…" para sempre', () => {
@@ -63,7 +71,7 @@ describe('CustomerKpiStrip', () => {
 
   it('12m lido e o refetch falhou: o número FICA com a hora da leitura, e o aviso de desatualizado aparece (P1-1)', () => {
     montar(lido<Faturamento12m>({ total: 12000, pedidos: 8 }, 'erro'), lido<CustomerMetrics>(linhaMv));
-    expect(screen.getByText(formatBRL(12000))).toBeTruthy();
+    expect(screen.getByText(brlNaTela(12000))).toBeTruthy();
     expect(screen.getByText(`8 pedidos · lido às ${horaDaLeitura(LIDO_EM)}`)).toBeTruthy();
     expect(screen.getByTestId('aviso-c360-faturamento-12m').getAttribute('data-estado')).toBe('erro');
     expect(screen.queryByTestId('aviso-c360-consolidado')).toBeNull();
@@ -80,7 +88,7 @@ describe('CustomerKpiStrip', () => {
     montar(fat12, lido<CustomerMetrics>(null));
     expect(screen.getAllByText('—')).toHaveLength(3);
     expect(screen.getAllByText('fora do consolidado')).toHaveLength(3);
-    expect(screen.queryByText(formatBRL(0))).toBeNull();
+    expect(screen.queryByText(brlNaTela(0))).toBeNull();
     expect(screen.queryByText('Sem compra')).toBeNull();
   });
 
