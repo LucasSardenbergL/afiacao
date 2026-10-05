@@ -45,18 +45,9 @@ export function statusLiquidadoAR(status: string | null | undefined): boolean {
   return !!status && STATUS_LIQUIDADO_AR.includes(status);
 }
 
-// Faturabilidade do pedido pai — espelha VERBATIM a régua de v_caca_candidatos/v_caca_compradores
-// (positivação/comissão): WHERE deleted_at IS NULL AND status <> ALL(ARRAY['cancelado','rascunho']).
-// Blocklist semântica: status conhecido NOVO (ex.: 'entregue') CONTA por default — não subconta
-// silenciosamente (Codex 2026-06-18); cancelado/rascunho, soft-deletado (deleted_at) ou status NULL
-// NÃO contam. Sem este guard, o cockpit de valor somava pedidos cancelados como faturamento (um
-// outlier de R$615M inflava o TTM da Oben de ~R$5M para ~R$621M).
-const STATUS_NAO_FATURAVEL = ['cancelado', 'rascunho'];
-export function pedidoContaNoFaturamento(status: string | null | undefined, deletedAt: string | null | undefined): boolean {
-  if (deletedAt != null) return false;            // soft-deletado nunca conta
-  if (status == null) return false;               // espelha o NULL <> ALL do v_caca (NULL não passa o WHERE)
-  return !STATUS_NAO_FATURAVEL.includes(status);  // default-inclui status conhecido novo
-}
+// A faturabilidade do PEDIDO pai (`pedidoContaNoFaturamento`) não mora aqui: ela roda só na edge e
+// vive em `supabase/functions/fin-valor-cockpit/faturabilidade.ts`, testada direto de lá — a cópia
+// que havia neste arquivo tinha os testes, e a da edge, a que somava a receita, nenhum (#2766).
 
 // Faturabilidade do TÍTULO de AR (denominador de cobertura_receita) — contraparte de
 // pedidoContaNoFaturamento (numerador). Exclui só status_titulo='CANCELADO' (medido = 2,66% do

@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { FileText } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
+import { STATUS_NAO_VENDA_POSTGREST } from '@/lib/farmer/universo-pedidos';
 import { useDashboardCompany } from '@/hooks/useDashboardCompany';
 import { useCockpitChannel } from '@/hooks/dashboard/useCockpitChannel';
 import { variantFromScore, type PriorityCandidate } from '@/lib/dashboard/priority-rules';
@@ -27,36 +28,31 @@ export function useVendasZone() {
     queryKeys: [queryKey],
   });
 
-  const { data, isLoading, isError, refetch } = useQuery({
+  const { data, isLoading, isError, refetch, status, fetchStatus } = useQuery({
     queryKey,
     queryFn: async () => {
       const hoje = hojeSP();
       const ontem = addDias(hoje, -1);
       const amanha = addDias(hoje, 1);
 
-      let faturadoHoje = 0;
-      let faturadoOntem = 0;
-      let pedidosHoje = 0;
       let orcamentosAguardando = 0;
 
-      try {
-        // Fonte do dia = order_date_kpi (date puro, 'YYYY-MM-DD') + filtro de validade,
-        // espelhando o dashboard Master (useTeamKpis): faturado conta só pedido válido
-        // (status ∉ {cancelado,rascunho}), exclui soft-deletados. order_date_kpi é
-        // imune a fuso por construção — pedidos do sync Omie deixam de cair no dia errado.
-        const { data: pedidos } = await supabase
-          .from('sales_orders')
-          .select('total, status, order_date_kpi')
-          .is('deleted_at', null)
-          .gte('order_date_kpi', ontem)
-          .lt('order_date_kpi', amanha);
-        if (pedidos) {
-          const agg = agregarVendasDiaKpi(pedidos as PedidoVendasKpi[], hoje);
-          faturadoHoje = agg.faturadoHoje;
-          pedidosHoje = agg.pedidosHoje;
-          faturadoOntem = agg.faturadoOntem;
-        }
-      } catch { /* tabela ausente — devolve 0 */ }
+      // Fonte do dia = order_date_kpi (date puro, 'YYYY-MM-DD') no universo de VENDA da
+      // autoridade (`STATUS_NAO_VENDA` + deleted_at), o mesmo do dashboard Master. order_date_kpi
+      // é imune a fuso por construção — pedidos do sync Omie deixam de cair no dia errado.
+      // ⚠️ A falha LANÇA (money-path §7): antes o erro era descartado e o `catch` devolvia R$ 0 —
+      // "não consegui ler" virava "não vendemos nada hoje". Agora a zona mostra o card de erro com
+      // retry (`CockpitCardError`), nunca um faturado zero fabricado.
+      const { data: pedidos, error: erroPedidos } = await supabase
+        .from('sales_orders')
+        .select('total, status, order_date_kpi')
+        .not('status', 'in', STATUS_NAO_VENDA_POSTGREST)
+        .is('deleted_at', null)
+        .gte('order_date_kpi', ontem)
+        .lt('order_date_kpi', amanha);
+      if (erroPedidos) throw new Error(`sales_orders (vendas do dia): ${erroPedidos.message}`);
+      if (pedidos == null) throw new Error('sales_orders (vendas do dia): data null sem error — malformada');
+      const { faturadoHoje, pedidosHoje, faturadoOntem } = agregarVendasDiaKpi(pedidos as PedidoVendasKpi[], hoje);
 
       try {
         const { count } = await supabase
@@ -151,5 +147,7 @@ export function useVendasZone() {
     };
   }, [data]);
 
-  return { kpis, topItems: data?.topItems ?? [], priority, isLoading, isError, refetch, isLive };
+  // `status`/`fetchStatus` saem para a TELA dizer "sem conexão": offline, a query fica `paused` com
+  // `isError` falso — com cache, o número velho ficaria na tela como se fosse de agora.
+  return { kpis, topItems: data?.topItems ?? [], priority, isLoading, isError, refetch, isLive, status, fetchStatus };
 }

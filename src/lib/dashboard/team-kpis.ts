@@ -1,17 +1,22 @@
 /**
  * KPIs agregados de time pro dashboard Master (CEO). Puros e testáveis.
  * Definições validadas com codex (ver spec):
- *  - pedido válido = status ∉ {cancelado, rascunho};
+ *  - pedido válido = status ∉ STATUS_NAO_VENDA (a autoridade do universo de venda; era
+ *    {cancelado, rascunho} — uma cópia que deixava orçamento e pendente contarem como receita);
  *  - receita = Σ total de válidos com order_date_kpi na janela (escopo de account/data feito na query);
  *  - vendedores ativos = distinct de quem teve atividade desde um instante UTC.
  * Spec: docs/superpowers/specs/2026-06-04-master-visao-time-design.md
  */
 
-/** Status que NÃO contam como receita realizada (rascunho = draft; cancelado = anulado). */
-const ORDER_STATUS_INVALIDOS: string[] = ['cancelado', 'rascunho'];
+import { STATUS_NAO_VENDA } from '@/lib/farmer/universo-pedidos';
 
+/**
+ * Pedido que conta como receita: status fora de `STATUS_NAO_VENDA`. A query já filtra o mesmo
+ * universo (fetchPedidosMTD, useVendasZone); este filtro em memória é a defesa do agregador PURO, que
+ * também recebe linhas de teste — e lê a MESMA lista, então as duas camadas não podem divergir.
+ */
 export function isPedidoValido(status: string | null | undefined): boolean {
-  return status != null && !ORDER_STATUS_INVALIDOS.includes(status);
+  return status != null && !STATUS_NAO_VENDA.includes(status);
 }
 
 export interface OrderRow {

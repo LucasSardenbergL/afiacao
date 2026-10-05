@@ -1,0 +1,13 @@
+# @src: supabase/functions/fin-valor-cockpit/faturabilidade.ts
+# @test: src/lib/financeiro/__tests__/valor-cockpit-helpers.test.ts
+# Faturabilidade e JANELA do TTM do Cockpit de Valor — a régua que a edge EXECUTA para decidir quais itens
+# entram na receita. Sucede as 3 linhas de faturabilidade de valor-cockpit-helpers.mut, que mutavam a cópia
+# de src/ (testada, mas que a edge não chamava — achado do Codex no #2766). Guard do bug do cancelado
+# (R$615M no TTM da Oben) e do universo de venda da autoridade (orçamento/pendente entravam pela cópia velha).
+PEGA | guard soft-delete (!= vira ==)              | s/if \(deletedAt != null\) return false/if (deletedAt == null) return false/
+PEGA | status NULL exclui (== vira !=)             | s/if \(status == null\) return false/if (status != null) return false/
+PEGA | blocklist vira allowlist (tira o !)         | s/return !STATUS_NAO_VENDA\.includes/return STATUS_NAO_VENDA.includes/
+PEGA | TTM ignora a faturabilidade (só a janela)   | s/return pedidoContaNoFaturamento\(pedido\.status, pedido\.deleted_at\)/return true/
+PEGA | TTM ignora a janela (só a faturabilidade)   | s/&& pedido\.order_date_kpi != null && .*<= fim;/;/
+PEGA | início da janela exclusivo (>= vira >)      | s/order_date_kpi >= inicio/order_date_kpi > inicio/
+PEGA | fim da janela exclusivo (<= vira <)         | s/order_date_kpi <= fim/order_date_kpi < fim/
