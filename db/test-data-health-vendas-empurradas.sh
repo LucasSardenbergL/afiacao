@@ -45,7 +45,8 @@ if [ "${1:-}" = "--falsificar" ]; then
               previsao_parse_lanca:A23 previsao_fuso_sessao:A28 limiar_zero:A9 limiar_7h:A8
               sem_nivel_broken:A3 message_com_idade:A35 fora_do_v_sources:A38,A40
               fora_do_resumo:A41 acl_authenticated:A44 ancora_utc:A45 app_sem_hash:A47
-              gemeo_so_payload:A47 ref_fora:A48 wrapper_sem_gate:A49 acl_compute_authenticated:A50"
+              gemeo_so_payload:A47 ref_fora:A48 wrapper_sem_gate:A49 acl_compute_authenticated:A50
+              app_hash_nulo:A51 gemeo_qualquer_hash:A51 ref_8hex:A52 rotulo_janela:A5"
   LOGDIR="$(mktemp -d "/tmp/falsifica-${SLUG}.XXXXXX")"
   porta=$PORT
   executados() { sed -n 's/^PASS=\([0-9][0-9]*\)  FAIL=\([0-9][0-9]*\)$/\1 \2/p' "$1" | awk '{ print $1 + $2 }'; }
@@ -225,10 +226,11 @@ case "${SABOTAGEM:-}" in
   gemeo_qualquer_conta)
     sabotar $C "WHERE t.account = a.account" "WHERE true" ;;
   gemeo_so_valido)
-    sabotar $C "AND (t.omie_payload IS NULL OR t.hash_payload IS NOT NULL)) AS tem_gemeo" \
-               "AND (t.omie_payload IS NULL OR t.hash_payload IS NOT NULL) AND t.status <> 'cancelado' AND t.deleted_at IS NULL) AS tem_gemeo" ;;
+    sabotar $C "OR t.hash_payload = 'omie_' || a.account || '_' || a.omie_pedido_id::text)) AS tem_gemeo" \
+               "OR t.hash_payload = 'omie_' || a.account || '_' || a.omie_pedido_id::text) AND t.status <> 'cancelado' AND t.deleted_at IS NULL) AS tem_gemeo" ;;
   gemeo_inclui_app)
-    sabotar $C "AND (t.omie_payload IS NULL OR t.hash_payload IS NOT NULL)) AS tem_gemeo" ") AS tem_gemeo" ;;
+    sabotar $C "AND (t.omie_payload IS NULL
+                               OR t.hash_payload = 'omie_' || a.account || '_' || a.omie_pedido_id::text)) AS tem_gemeo" ") AS tem_gemeo" ;;
   ancora_created_at)
     sabotar $C "LEAST(prev.updated_at," "LEAST(prev.created_at," ;;
   ancora_so_updated_at)
@@ -246,11 +248,23 @@ case "${SABOTAGEM:-}" in
                "CASE WHEN ((prev.prev_dia + 1)::timestamp AT TIME ZONE 'UTC') >= prev.created_at
                           THEN (prev.prev_dia + 1)::timestamp AT TIME ZONE 'UTC' END) AS ancora" ;;
   app_sem_hash)   # a v1: a importada editada (payload + hash) vira "linha do app"
-    sabotar $C "           AND a.hash_payload IS NULL" "           AND true" ;;
+    sabotar $C "           AND (a.hash_payload IS NULL OR a.hash_payload NOT LIKE 'omie\\_%')" "           AND true" ;;
   gemeo_so_payload)   # a v1: gêmeo só por payload nulo (a importada editada deixa de ser gêmeo)
-    sabotar $C "AND (t.omie_payload IS NULL OR t.hash_payload IS NOT NULL)) AS tem_gemeo" "AND t.omie_payload IS NULL) AS tem_gemeo" ;;
+    sabotar $C "AND (t.omie_payload IS NULL
+                               OR t.hash_payload = 'omie_' || a.account || '_' || a.omie_pedido_id::text)) AS tem_gemeo" \
+               "AND t.omie_payload IS NULL) AS tem_gemeo" ;;
+  app_hash_nulo)   # a v2 antes da revisão do PR: só hash nulo é app (o checkout enviado some do sensor)
+    sabotar $C "           AND (a.hash_payload IS NULL OR a.hash_payload NOT LIKE 'omie\\_%')" "           AND a.hash_payload IS NULL" ;;
+  gemeo_qualquer_hash)   # a v2 antes da revisão do PR: qualquer hash é proveniência importada
+    sabotar $C "OR t.hash_payload = 'omie_' || a.account || '_' || a.omie_pedido_id::text)) AS tem_gemeo" \
+               "OR t.hash_payload IS NOT NULL)) AS tem_gemeo" ;;
   ref_fora)   # a v1: sem a identidade do conjunto, a órfã que substitui outra não muda o fingerprint
     sabotar $C "|| ' - ' || ve.resumo || ' (ref ' || ve.ref || ')' END," "|| ' - ' || ve.resumo END," ;;
+  ref_8hex)   # a v2 antes da revisão do PR: ref truncada em 8 hex (colide por aniversário)
+    sabotar $C "        md5(string_agg(c.id::text, ',' ORDER BY c.id) FILTER (WHERE c.orfa))            AS ref," \
+               "        left(md5(string_agg(c.id::text, ',' ORDER BY c.id) FILTER (WHERE c.orfa)), 8)   AS ref," ;;
+  rotulo_janela)   # a v1: chamava de "fora da janela" só as de mais de 6 dias
+    sabotar $C "' com mais de 6 dias)'" "' fora da janela de 5 dias do importador)'" ;;
   wrapper_sem_gate)   # o wrapper vivo: qualquer sessão logada lê a message
     sabotar get_data_health "  IF NOT (public.has_role(auth.uid(), 'employee'::public.app_role)
           OR public.has_role(auth.uid(), 'master'::public.app_role)) THEN" "  IF false THEN" ;;
@@ -393,7 +407,7 @@ echo "── a mesa (10 órfãs, 2 fora da janela de 5 dias) ──"
 eq "A3 status da mesa = broken (há órfã com mais de 6 dias)" "$(ler status "$T")" "broken"
 eq "A4 severity fixa warning" "$(ler severity "$T")" "warning"
 eq "A5 message da mesa, exata (contas em ordem, valor BR, data congelada)" "$(ler message "$T")" \
-   "10 vendas empurradas ao Omie sem gemeo do importador ha mais de 6 h (2 fora da janela de 5 dias do importador) - colacor: 1 (R\$ 1.234,50, a mais antiga de 30/09/2026); oben: 9 (R\$ 900,00, a mais antiga de 20/09/2026) (ref 87a73154)"
+   "10 vendas empurradas ao Omie sem gemeo do importador ha mais de 6 h (2 com mais de 6 dias) - colacor: 1 (R\$ 1.234,50, a mais antiga de 30/09/2026); oben: 9 (R\$ 900,00, a mais antiga de 20/09/2026) (ref 87a73154e1d9551e5cc9a45db2358b77)"
 # 118: tocada há 10 min, previsão 20/09 (dia de SP do envio) → âncora = 20/09 23:59:59.999999 BRT
 eq "A6 age_seconds = idade da órfã mais antiga (último instante de 20/09 em SP → T)" "$(ler age "$T")" "831600"
 eq "A7 expected_max_age_seconds = 6 h" "$(ler max_age "$T")" "21600"
@@ -435,7 +449,7 @@ echo "── níveis ──"
 P -q -c "DELETE FROM public.sales_orders WHERE omie_numero_pedido IN (lpad('104',15,'0'), lpad('118',15,'0'));"
 eq "A30 sem as órfãs de mais de 6 dias → stale" "$(ler status "$T")" "stale"
 eq "A31 message stale exata" "$(ler message "$T")" \
-   "8 vendas empurradas ao Omie sem gemeo do importador ha mais de 6 h - colacor: 1 (R\$ 1.234,50, a mais antiga de 30/09/2026); oben: 7 (R\$ 700,00, a mais antiga de 30/09/2026) (ref 5f3f3797)"
+   "8 vendas empurradas ao Omie sem gemeo do importador ha mais de 6 h - colacor: 1 (R\$ 1.234,50, a mais antiga de 30/09/2026); oben: 7 (R\$ 700,00, a mais antiga de 30/09/2026) (ref 5f3f379781f75fa829d692df9b7bede8)"
 P -q -v T="$T" >/dev/null <<'SQL'
 TRUNCATE public.sales_orders;
 SELECT public._semear_venda(101, 'oben', 'enviado', :'T'::timestamptz - interval '30 hours', p_gemeo => 'mesma_conta');
@@ -520,6 +534,33 @@ if [ "$m_a" != "$m_b" ]; then troca=mudou; else troca=igual; fi
 eq "A48 a troca de órfã muda a message (só a ref: contagem, valor e dia iguais)" \
    "$troca | ${m_b% (ref *}" \
    "mudou | 1 venda empurrada ao Omie sem gemeo do importador ha mais de 6 h - oben: 1 (R\$ 100,00, a mais antiga de 30/09/2026)"
+
+echo "── C9 (revisão do PR): a venda enviada com hash PRÓPRIO (checkout) segue no sensor ──"
+# reenvio-pedido admite enviar orçamento/checkout com hash não-omie, e o write-back o mantém
+P -q -v T="$T" >/dev/null <<'SQL'
+TRUNCATE public.sales_orders;
+SELECT public._semear_venda(155, 'oben', 'enviado', :'T'::timestamptz - interval '7 hours');
+UPDATE public.sales_orders SET hash_payload = 'checkout_abc123' WHERE omie_numero_pedido = lpad('155', 15, '0');
+SQL
+eq "A51 a enviada com hash de checkout conta como linha do app e, sem importada, é órfã" \
+   "$(ler status "$T") | $(listada 155)" "stale | sim"
+
+echo "── C12 (revisão do PR): conjuntos cujo md5 colide nos 8 primeiros hex dão messages DISTINTAS ──"
+# o par do Codex: md5 dos ids …-000000013442 e …-000000043537 começa com e8b1896d nos dois
+P -q -v T="$T" >/dev/null <<'SQL'
+TRUNCATE public.sales_orders;
+SELECT public._semear_venda(13442, 'oben', 'enviado', :'T'::timestamptz - interval '7 hours');
+SQL
+m_c1="$(ler message "$T")"
+P -q -v T="$T" >/dev/null <<'SQL'
+TRUNCATE public.sales_orders;
+SELECT public._semear_venda(43537, 'oben', 'enviado', :'T'::timestamptz - interval '7 hours');
+SQL
+m_c2="$(ler message "$T")"
+if [ "$m_c1" != "$m_c2" ]; then colisao=distintas; else colisao=iguais; fi
+eq "A52 o par que colide em 8 hex dá messages distintas (ref = md5 completo)" \
+   "$colisao | ${m_c2% (ref *}" \
+   "distintas | 1 venda empurrada ao Omie sem gemeo do importador ha mais de 6 h - oben: 1 (R\$ 100,00, a mais antiga de 30/09/2026)"
 
 # Desliga o relógio controlado: watchdog/heartbeat rodam no compute EXATAMENTE como a migration o deixou.
 cfg_compute='search_path=public, pg_temp'

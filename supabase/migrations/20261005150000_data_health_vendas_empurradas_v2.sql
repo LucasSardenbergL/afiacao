@@ -2,21 +2,28 @@
 -- 20261005150000 · data health: vendas_empurradas_sem_gemeo v2 + get_data_health so para o staff
 -- ============================================================================================
 -- O QUE: o 2o round do sensor da venda empurrada sem gemeo (20261001011500, #2698), com os achados do
--- Codex adversarial RETROATIVO (2026-10-05, rollout 01a10c0e, -r max), cada um EXECUTADO em PG17 antes
+-- Codex adversarial RETROATIVO (2026-10-05, rollout 01a10c0e, -r max) e da revisao deste PR (rollout
+-- 01a10ce3, C9-C12), cada um EXECUTADO em PG17 antes
 -- deste conserto (docs/historico/venda-empurrada-sem-gemeo.md §O Codex):
 --  C3 ancora: a edge v1.10 (#2736, no ar desde 2026-10-01 ~20:37Z) grava data_previsao = DIA DE SP do
 --     envio; o fim do dia UTC dela caia ate 3 h ANTES do envio real nos envios das 21h-23h59 BRT, e a orfa
 --     era acusada com ~3 h. Agora: o ultimo instante do dia de SP, limite superior nas duas eras do escritor.
 --  C4 proveniencia: editar pelo app um pedido IMPORTADO (botao Editar em importado/separacao; alterar_pedido
 --     -> aplicar_edicao_pedido_omie grava omie_payload e MANTEM o hash canonico) o tirava de "gemeo" e o
---     punha em "linha do app": orfa falsa. Linha do app = payload + id + hash NULO; gemeo = mesma (account,
---     id) com payload nulo OU hash canonico, em qualquer status, apagado ou nao (decisao do founder intacta).
+--     punha em "linha do app": orfa falsa. Linha do app = payload + id + hash nulo OU fora do padrao omie_
+--     (checkout com hash proprio pode ser enviado); gemeo = mesma (account, id) com payload nulo OU o hash
+--     CANONICO dela, em qualquer status, apagado ou nao (decisao do founder intacta). "Qualquer hash" nao e
+--     proveniencia: deixaria um checkout enviado fora do sensor (Codex C9, revisao do PR).
 --     Prod 2026-10-05: 26/26 linhas com payload tem hash nulo e 31.688/31.688 importadas tem hash canonico,
 --     entao o resultado de HOJE nao muda.
 --  C6 fingerprint: uma orfa que substitui outra de mesma conta, valor e dia nao mudava a message (que e o
---     fingerprint do watchdog). A message ganha "ref" = 8 hex do md5 dos ids de TODAS as orfas.
+--     fingerprint do watchdog). A message ganha "ref" = md5 COMPLETO dos ids de TODAS as orfas (truncado em
+--     8 hex, dois conjuntos colidiam por busca de aniversario: Codex C12, revisao do PR).
 --  C8 texto: a janela incremental [hoje_SP-5, hoje_SP] e por dia de CALENDARIO; o texto prometia "ate 6
---     dias". O limiar (decisao do founder) fica; o comentario e o how_to_fix, corrigidos.
+--     dias". O limiar (decisao do founder) fica; o comentario, o how_to_fix e o rotulo da message ("com mais
+--     de 6 dias", nao "fora da janela": Codex C11, revisao do PR) corrigidos. LIMITE ACEITO (Codex C10): a
+--     edge monta a data antes do IncluirPedido, na mesma chamada; so um envio que cruza a meia-noite de SP e
+--     acusado esses segundos antes das 6 h.
 --  C1 wrapper: get_data_health() (SECURITY DEFINER, EXECUTE para authenticated) entregava a message dos 31
 --     checks a QUALQUER sessao logada, cliente inclusive, e esta message traz conta e valor. Gate de staff
 --     (employee/master) no servidor; todo consumidor do app ja e de staff (src/hooks/useDataHealth.ts).
@@ -45,7 +52,7 @@ BEGIN
   ALTER FUNCTION public.get_data_health()      SET search_path = public, pg_temp;
 
   FOR r IN SELECT * FROM (VALUES
-      ('_data_health_compute', '79362363ade2449dc494ed218a77dba4', 'b93bcf25ce86be72b7ad5ca8f99c3afb'),
+      ('_data_health_compute', '79362363ade2449dc494ed218a77dba4', '5ae67f7eec50058c67589a58081b7c7e'),
       ('get_data_health',      '17adb51b43860cd61a25a41742ce780c', 'a5021353cbf46c48191e42040a7fe162')
     ) AS v(fn, antes, depois)
   LOOP
@@ -1229,7 +1236,10 @@ AS $function$
     -- hash canonico 'omie_<account>_<id>'; a linha do app, hash NULO. Editar pelo app um pedido IMPORTADO
     -- (alterar_pedido -> aplicar_edicao_pedido_omie) grava omie_payload e MANTEM o hash: pelo payload ele
     -- viraria "linha do app" e deixaria de ser gemeo (orfa falsa). Linha do app = payload + id + hash
-    -- nulo; gemeo = mesma (account, id) com payload nulo OU hash canonico.
+    -- nulo OU fora do padrao omie_ (orcamento/checkout com hash proprio pode ser enviado: reenvio-pedido);
+    -- gemeo = mesma (account, id) com payload nulo OU o hash CANONICO dela. Qualquer hash nao e
+    -- proveniencia: um checkout_<x> enviado sairia do sensor, e o indice unico parcial de (account, id)
+    -- com hash ainda barraria o gemeo do importador (Codex C9).
     -- ANCORA DA IDADE = o instante mais cedo em que se pode AFIRMAR que o envio ja aconteceu (o envio nao
     -- grava carimbo). created_at mentiria no orcamento convertido, que reusa a linha (SalesQuotes). Os
     -- dois LIMITES SUPERIORES do envio: updated_at (o gatilho o renova no UPDATE do envio) e o fim do DIA
@@ -1238,7 +1248,9 @@ AS $function$
     -- limite superior nas DUAS eras (apertado na v1.10, 3 h folgado na v1.9); o fim do dia UTC caia ate
     -- 3 h ANTES do envio real nos envios das 21h-23h59 BRT da v1.10 (achado Codex C3). E o ULTIMO INSTANTE
     -- do dia (23:59:59.999999), nao a meia-noite seguinte: o envio e <= ele, e a data exibida ("a mais
-    -- antiga de", "desde") segue sendo a do envio, nao o dia seguinte.
+    -- antiga de", "desde") segue sendo a do envio, nao o dia seguinte. LIMITE ACEITO (Codex C10): a edge
+    -- monta a data ANTES do IncluirPedido, na mesma chamada (segundos); so um envio que cruza a meia-noite
+    -- de SP e acusado esse tanto antes das 6 h. Fechar exigiria carimbo do envio no write-back.
     -- LEAST dos dois nunca acusa antes de 6 h do envio real; o preco e uma orfa EDITADA reancorar. A
     -- previsao so vale como carimbo se for data valida e coerente com a criacao (>= created_at). O parse
     -- e por CASE aninhado e NUNCA lanca: erro aqui derrubaria os 31 checks (o watchdog engole o erro do
@@ -1250,8 +1262,8 @@ AS $function$
     -- gravidade e fura o ack; o lembrete de 72 h nao fura.
     -- 1 LINHA SEMPRE (agregado sem GROUP BY: com a tabela vazia sai exatamente 1 linha). MESSAGE nos
     -- ramos que ALERTAM so com fatos das orfas, por conta em ordem fixa, numero e data sem depender de
-    -- lc_numeric/fuso da sessao, data CONGELADA (a da orfa mais antiga), e a REF do conjunto (8 hex do md5
-    -- dos ids de TODAS as orfas): sem ela, uma orfa que substitui outra de mesma conta, valor e dia nao
+    -- lc_numeric/fuso da sessao, data CONGELADA (a da orfa mais antiga), e a REF do conjunto (md5 dos ids
+    -- de TODAS as orfas): sem ela, uma orfa que substitui outra de mesma conta, valor e dia nao
     -- mudava a message, que e o fingerprint (achado Codex C6). O denominador so entra no ramo ok, onde o
     -- watchdog dismissa e nao ha fingerprint.
     SELECT 'vendas_empurradas_sem_gemeo'::text, 'vendas'::text,
@@ -1259,7 +1271,7 @@ AS $function$
            WHEN ve.n_perdidas > 0 THEN 'broken'
            ELSE 'stale' END,
       ve.pior_idade_s, (6*3600)::bigint,
-      'sales_orders: linha do app (omie_payload + omie_pedido_id, hash nulo, venda no universo canonico) '
+      'sales_orders: linha do app (omie_payload + omie_pedido_id, hash nulo ou nao-omie, venda no universo canonico) '
         || 'sem gemeo importado (mesma account + omie_pedido_id, omie_payload nulo ou hash canonico); idade '
         || 'desde menor(updated_at, fim do dia de SP da data_previsao do envio)'::text,
       CASE WHEN ve.n_orfas = 0
@@ -1270,7 +1282,7 @@ AS $function$
                 || CASE WHEN ve.n_orfas = 1 THEN ' venda empurrada' ELSE ' vendas empurradas' END
                 || ' ao Omie sem gemeo do importador ha mais de 6 h'
                 || CASE WHEN ve.n_perdidas > 0
-                        THEN ' (' || ve.n_perdidas::text || ' fora da janela de 5 dias do importador)'
+                        THEN ' (' || ve.n_perdidas::text || ' com mais de 6 dias)'
                         ELSE '' END
                 || ' - ' || ve.resumo || ' (ref ' || ve.ref || ')' END,
       ve.lista,
@@ -1291,8 +1303,8 @@ AS $function$
                 || 'cancelado. NAO reconheca (ack) o alerta para aceitar uma orfa: sob ack, uma orfa NOVA no '
                 || 'mesmo nivel nao re-envia e-mail. A ref da mensagem muda quando o conjunto de orfas muda. '
                 || 'Lista: SELECT id, account, omie_numero_pedido, status, total, created_at, updated_at FROM '
-                || 'sales_orders WHERE omie_payload IS NOT NULL AND omie_pedido_id IS NOT NULL AND hash_payload '
-                || 'IS NULL ORDER BY created_at DESC;' END,
+                || 'sales_orders WHERE omie_payload IS NOT NULL AND omie_pedido_id IS NOT NULL AND (hash_payload '
+                || 'IS NULL OR hash_payload NOT LIKE ''omie\_%'') ORDER BY created_at DESC;' END,
       'warning'::text
     FROM (
       WITH app AS (
@@ -1301,11 +1313,12 @@ AS $function$
                EXISTS (SELECT 1 FROM public.sales_orders t
                         WHERE t.account = a.account
                           AND t.omie_pedido_id = a.omie_pedido_id
-                          AND (t.omie_payload IS NULL OR t.hash_payload IS NOT NULL)) AS tem_gemeo
+                          AND (t.omie_payload IS NULL
+                               OR t.hash_payload = 'omie_' || a.account || '_' || a.omie_pedido_id::text)) AS tem_gemeo
           FROM public.sales_orders a
          WHERE a.omie_payload IS NOT NULL
            AND a.omie_pedido_id IS NOT NULL
-           AND a.hash_payload IS NULL
+           AND (a.hash_payload IS NULL OR a.hash_payload NOT LIKE 'omie\_%')
            AND a.status NOT IN ('cancelado','rascunho','pendente','orcamento')
            AND a.deleted_at IS NULL
       ), prev AS (
@@ -1347,7 +1360,8 @@ AS $function$
         (count(*) FILTER (WHERE NOT c.tem_gemeo AND NOT c.orfa))::int                    AS n_aguardando,
         COALESCE(max(EXTRACT(EPOCH FROM now() - c.ancora)::bigint) FILTER (WHERE c.orfa), 0) AS pior_idade_s,
         -- identidade do CONJUNTO (todas as orfas, nao so as 20 listadas): entra na message = fingerprint.
-        left(md5(string_agg(c.id::text, ',' ORDER BY c.id) FILTER (WHERE c.orfa)), 8)   AS ref,
+        -- md5 COMPLETO: truncado em 8 hex, dois conjuntos colidiam por busca de aniversario (Codex C12).
+        md5(string_agg(c.id::text, ',' ORDER BY c.id) FILTER (WHERE c.orfa))            AS ref,
         -- ',' e '.' do to_char NAO dependem de lc_numeric (G e D dependeriam); o translate poe no formato BR.
         (SELECT string_agg(ct.account || ': ' || ct.n::text || ' (R$ '
                            || translate(to_char(round(ct.valor, 2), 'FM999,999,999,990.00'), ',.', '.,')
@@ -1490,7 +1504,7 @@ BEGIN
 
   -- (5) identidade EXATA e search_path: os dois corpos novos e os dois do trio que NAO mudam.
   FOR r IN SELECT * FROM (VALUES
-      ('_data_health_compute', 'b93bcf25ce86be72b7ad5ca8f99c3afb'),
+      ('_data_health_compute', '5ae67f7eec50058c67589a58081b7c7e'),
       ('get_data_health',      'a5021353cbf46c48191e42040a7fe162'),
       ('data_health_watchdog', '633a9b716ca9d2957816cd115fca304e'),
       ('fin_sync_heartbeat',   '6be719aafa51f2d569ab8c643ac29951')

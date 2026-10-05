@@ -4746,7 +4746,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', '_data_health_compute', 32, '20260920233000_sync_reprocess_degradado_so_das_vigiadas.sql', '5eae2f124f63fba7cb27914e9610e5d8'),
   ('public', '_data_health_compute', 33, '20260922225500_data_health_portal_humano_critico_apos_24h.sql', 'aa3cac116f66f5bfdcfdf549dbe9afb1'),
   ('public', '_data_health_compute', 34, '20261001011500_data_health_vendas_empurradas_sem_gemeo.sql', '04da1485a726ec5737464547eb8a886d'),
-  ('public', '_data_health_compute', 35, '20261005150000_data_health_vendas_empurradas_v2.sql', '0a81dcbc530459e84f605231424bd99a'),
+  ('public', '_data_health_compute', 35, '20261005150000_data_health_vendas_empurradas_v2.sql', '5a8d9ac5032ebba773f3a986d742bcc3'),
   ('public', 'data_health_watchdog', 1, '20260527220000_data_health_watchdog.sql', '4d210b1cab0b10bcf589746005859c4b'),
   ('public', 'data_health_watchdog', 2, '20260527250000_data_health_checks_high.sql', '936015f396af02ab4229e4e20f656803'),
   ('public', 'data_health_watchdog', 3, '20260530190000_data_health_portal_push.sql', '0e436fed51baecafdfbccbe3191e5bfa'),
