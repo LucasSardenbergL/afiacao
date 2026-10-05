@@ -8,6 +8,7 @@ Registro consultável de **PRs/bugs/programas/auditorias já entregues** — a n
 
 | Arquivo | O que tem |
 | --- | --- |
+| [baixa-po-pr0-conjunto-que-o-motor-contou.md](baixa-po-pr0-conjunto-que-o-motor-contou.md) | PR0 da baixa de PO (#2780, 2026-10-05): o `omie-sync-estoque` registra o conjunto aberto que o motor contou — coletor 1-por-PO, conferência do pendente NO BANCO, o que o plano não previa (Codex 6 P1 + revisão final) e a medição do 1º run |
 | [bugs-resolvidos.md](bugs-resolvidos.md) | (era §10) cada bug/contradição/débito resolvido, com PR + lição (multi-domínio: KB, Radar, reposição, sync…) |
 | [programas-vendas.md](programas-vendas.md) | WhatsApp + Motor de Rota; copiloto "Buddy" |
 | [reconciliacao-desconto-da-linha-e-coerencia-por-pedido.md](reconciliacao-desconto-da-linha-e-coerencia-por-pedido.md) | `reconciliar_pedidos_omie` passa a carregar `desconto_valor` (o desconto que mudava SÓ no Omie ficava velho sob o total líquido novo) — e o pré-flight achou o reprocesso de pedidos da oben PARADO há 6 dias: 79 runs em erro no MESMO pedido, porque o trigger DEFERRED de coerência checa no COMMIT da chamada, fora do `BEGIN … EXCEPTION` por pedido. Checagem explícita no bloco, escrita exata no que o trigger fiscaliza, contadores só depois da checagem; PG17 110 ok com 14 sabotagens |
