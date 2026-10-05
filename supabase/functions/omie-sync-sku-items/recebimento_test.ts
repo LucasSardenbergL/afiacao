@@ -61,9 +61,12 @@ class BancoFalso implements DepsGravacao {
   /** Gancho para intercalar OUTRO run no meio deste (a corrida do Codex). */
   aoGravar: (() => Promise<void>) | null = null;
   relogio = "2026-10-05T10:00:00.000Z";
+  private tique = 0;
 
+  /** O relógio ANDA a cada leitura (1 ms): com relógio parado, fechar com um carimbo NOVO em vez do
+   *  carimbo do write-ahead casaria por coincidência e o CAS sabotado passaria verde. */
   agora(): string {
-    return this.relogio;
+    return new Date(Date.parse(this.relogio) + this.tique++).toISOString();
   }
 
   buscarPedido(_fornecedor: number | null, numero: string) {
