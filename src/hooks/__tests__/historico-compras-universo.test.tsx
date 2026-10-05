@@ -50,6 +50,8 @@ describe('useHistoricoCompras — o universo de venda antes do limit', () => {
     const m = chamadas.find((c) => c.table === 'sales_orders')?.metodos ?? [];
     expect(m, 'falta o .not(status, in, STATUS_NAO_VENDA_POSTGREST) na query').toContainEqual(['not', ['status', 'in', STATUS_NAO_VENDA_POSTGREST]]);
     expect(m, 'falta o .is(deleted_at, null) na query').toContainEqual(['is', ['deleted_at', null]]);
+    // o CORTE é por recência: o eixo e a direção são parte da régua (inverter o ascending entregaria os mais antigos)
+    expect(m, 'critério de ordenação do corte mudou').toContainEqual(['order', ['order_date_kpi', { ascending: false, nullsFirst: false }]]);
     expect(m.filter(([nome]) => nome === 'limit')).toEqual([['limit', [50]]]);
   });
 });
