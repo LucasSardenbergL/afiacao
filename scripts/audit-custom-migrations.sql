@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 581
+-- Total de custom migrations: 582
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -622,7 +622,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261001083000', 'converter_campanha_flat_colunas_reais', '20261001083000_converter_campanha_flat_colunas_reais.sql'),
   ('20261001100000', 'sales_orders_colunas_whatsapp_select', '20261001100000_sales_orders_colunas_whatsapp_select.sql'),
   ('20261001100001', 'sales_orders_gemeo_importado_contagem_unica', '20261001100001_sales_orders_gemeo_importado_contagem_unica.sql'),
-  ('20261001204054', 'oportunidade_antidup_conta_disparado_simulado', '20261001204054_oportunidade_antidup_conta_disparado_simulado.sql')
+  ('20261001204054', 'oportunidade_antidup_conta_disparado_simulado', '20261001204054_oportunidade_antidup_conta_disparado_simulado.sql'),
+  ('20261005131331', 'reposicao_po_observado_pelo_motor', '20261005131331_reposicao_po_observado_pelo_motor.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2528,7 +2529,14 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('sales_orders_gemeo_importado_contagem_unica', 'trigger', 'public', 'trg_sales_orders_gemeo_app', 'sales_orders'),
   ('sales_orders_gemeo_importado_contagem_unica', 'trigger', 'public', 'trg_sales_orders_gemeo_importada_antes', 'sales_orders'),
   ('sales_orders_gemeo_importado_contagem_unica', 'trigger', 'public', 'trg_sales_orders_gemeo_importada_depois', 'sales_orders'),
-  ('oportunidade_antidup_conta_disparado_simulado', 'function', 'public', 'gerar_pedidos_oportunidade_ciclo', '')
+  ('oportunidade_antidup_conta_disparado_simulado', 'function', 'public', 'gerar_pedidos_oportunidade_ciclo', ''),
+  ('reposicao_po_observado_pelo_motor', 'function', 'public', 'reposicao_po_observado_publicar', ''),
+  ('reposicao_po_observado_pelo_motor', 'table', 'public', 'reposicao_po_observado_run', ''),
+  ('reposicao_po_observado_pelo_motor', 'table', 'public', 'reposicao_po_observado_item', ''),
+  ('reposicao_po_observado_pelo_motor', 'index', 'public', 'idx_reposicao_po_observado_run_empresa', 'reposicao_po_observado_run'),
+  ('reposicao_po_observado_pelo_motor', 'index', 'public', 'idx_reposicao_po_observado_item_po', 'reposicao_po_observado_item'),
+  ('reposicao_po_observado_pelo_motor', 'rls_policy', 'public', 'reposicao_po_observado_run_select_staff', 'reposicao_po_observado_run'),
+  ('reposicao_po_observado_pelo_motor', 'rls_policy', 'public', 'reposicao_po_observado_item_select_staff', 'reposicao_po_observado_item')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4482,7 +4490,14 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('sales_orders_gemeo_importado_contagem_unica', 'trigger', 'public', 'trg_sales_orders_gemeo_app', 'sales_orders'),
   ('sales_orders_gemeo_importado_contagem_unica', 'trigger', 'public', 'trg_sales_orders_gemeo_importada_antes', 'sales_orders'),
   ('sales_orders_gemeo_importado_contagem_unica', 'trigger', 'public', 'trg_sales_orders_gemeo_importada_depois', 'sales_orders'),
-  ('oportunidade_antidup_conta_disparado_simulado', 'function', 'public', 'gerar_pedidos_oportunidade_ciclo', '')
+  ('oportunidade_antidup_conta_disparado_simulado', 'function', 'public', 'gerar_pedidos_oportunidade_ciclo', ''),
+  ('reposicao_po_observado_pelo_motor', 'function', 'public', 'reposicao_po_observado_publicar', ''),
+  ('reposicao_po_observado_pelo_motor', 'table', 'public', 'reposicao_po_observado_run', ''),
+  ('reposicao_po_observado_pelo_motor', 'table', 'public', 'reposicao_po_observado_item', ''),
+  ('reposicao_po_observado_pelo_motor', 'index', 'public', 'idx_reposicao_po_observado_run_empresa', 'reposicao_po_observado_run'),
+  ('reposicao_po_observado_pelo_motor', 'index', 'public', 'idx_reposicao_po_observado_item_po', 'reposicao_po_observado_item'),
+  ('reposicao_po_observado_pelo_motor', 'rls_policy', 'public', 'reposicao_po_observado_run_select_staff', 'reposicao_po_observado_run'),
+  ('reposicao_po_observado_pelo_motor', 'rls_policy', 'public', 'reposicao_po_observado_item_select_staff', 'reposicao_po_observado_item')
 )
 SELECT
   e.migration,

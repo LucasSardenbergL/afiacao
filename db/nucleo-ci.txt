@@ -73,6 +73,14 @@ db/test-melhorias-rpcs.sh                  39  falsificar=57
 # service_role) e o trigger que deriva is_fornecedor sem decidir a exclusão. Morreu no seed em 06-25: o gatilho
 # da carteira CRIA o score de farmer e o seed o reinseria (docs/historico/provas-carteira-revividas.md).
 db/test-fornecedores-classificacao.sh      26  falsificar=55
+# Observação do conjunto aberto que o motor contou (PR0 da baixa de PO, 2026-10-05): só staff LÊ (RLS sob
+# SET ROLE + GUC; anon barrado no GRANT), só a RPC ESCREVE (nem service_role, que tem BYPASSRLS, escreve direto) e
+# só service_role a executa — com o ACL default de prod (ALL/EXECUTE para anon/authenticated) dando trabalho real
+# aos REVOKE por nome. A RPC confere NO BANCO o pendente gravado × o contado (pendente_aplicado/skus_divergentes);
+# CHECKs do invariante; retenção de 14 d no mesmo writer. Duas camadas falsificadas uma por vez: o comportamento
+# sabotado no BANCO depois da migration real, e a postcondição sabotada no ARQUIVO (cópias com 1 defeito cada têm
+# de abortar no predicado certo: ACL, md5 do corpo da RPC, RLS, definição dos CHECKs e das policies, search_path).
+db/test-reposicao-po-observado.sh          39  falsificar=33
 
 # ── Eixo 2 — FINITUDE MONETÁRIA ───────────────────────────────────────────────────
 # `ausente ≠ zero`: preço que o Omie não mandou não vira R$ 0,00; custo sem cmc
