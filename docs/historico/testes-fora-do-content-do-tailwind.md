@@ -81,8 +81,8 @@ auditoria recusa), outra config do Tailwind (o 3.4 só procura `./tailwind.confi
 submódulo, troca de classe entre ar e main, e a interação com (a)/(d1). **Achado:** o
 `postcss-load-config` 4.0.2 que o Vite usa consulta `package.json#postcss` e `.postcssrc*` ANTES do
 `postcss.config.*` auditado — presentes, a auditoria olharia o arquivo errado. Agora recusa, com um
-cenário e uma sabotagem por fonte. **REVISÃO INDEPENDENTE PENDENTE:** o mesmo prompt quando a cota
-voltar.
+cenário e uma sabotagem por fonte. A revisão independente veio depois, pelo Fable — e achou
+o que este auto-challenge não achou (abaixo).
 
 ## Rede
 
@@ -96,6 +96,51 @@ antes da 1ª sabotagem e 55/55 pegas pela marca prevista, versionados intactos; 
 rodada de falsificação saiu com 1 cegueira — eu tinha editado a prova, que o pr-eval lê por symlink,
 no meio dela; refeita do zero sem edição em voo, 0.
 
+## Revisão independente — o Fable no lugar do Codex (05/10)
+
+Com o Codex sem cota, o founder pediu a revisão pelo Fable: subagente só-leitura, experimentos num
+rascunho, o mesmo prompt do Codex (com o Publish já medido, para não gastar nessa pergunta). Ele montou
+um repo de cenários e mediu os DOIS lados — a prova (exit) e o build real (`tailwindcss` 3.4.17 e
+`vite build` nas duas pontas) —, com os controles antes de tudo: `teste_negado` exit 0 e CSS igual; sem
+negação, a prova recusa e o CSS ganha as regras. Rodei de novo os scripts dele, com os mesmos
+controles: os 6 fail-open se reproduzem.
+
+| forma (residente na base; o delta só põe palavra nova num teste) | a prova | o build real |
+| --- | --- | --- |
+| pasta-symlink na raiz `app → src/lib/__tests__`, lida pelo `./app/**` | inerte | o CSS ganha `.m-1`/`.overscroll-contain` |
+| pasta-symlink com nome de teste `src/lib/x.test.ts → __tests__` | inerte | idem |
+| `vite.config` importa `./src/build/css`, que traz o `css.postcss` | inerte | idem (`vite build`) |
+| `@config` num `src/index.pcss` importado pelo `main.tsx` | inerte | idem |
+| `@config` num `<style>` do `index.html` | inerte | o `index.html` gerado ganha as regras |
+| plugin num módulo local do `vite.config` lendo o teste por `readFileSync` | inerte | o JS muda |
+
+Os dois primeiros são do próprio (d2'): a negação casa a STRING do caminho, o Tailwind segue symlink, e
+o mesmo texto chega por um caminho que negação nenhuma cobre — o "arquivo regular" olhava só o teste
+MUDADO, nunca quem aponta para ele. Os outros quatro são buracos da auditoria do extrator e de (d1) que o
+(d2') herdou e ALARGOU: com (d2), a mesma mudança (palavra nova) já era recusada.
+
+Consertos, todos fail-CLOSED:
+
+- (d2') só numa árvore **só de arquivos regulares**, nas duas pontas: symlink ou submódulo em qualquer
+  lugar ⇒ o teste volta a exigir (d2). Substitui o `regular()` do teste mudado.
+- Config da raiz (`vite`/`tailwind`/`postcss`) que importa módulo LOCAL (`./`, `/`, `@/`) ⇒
+  `TESTE_ALCANCA LEITOR`. A checagem existia só para o `tailwind.config`, dentro do extrator, e saiu de
+  lá (ficaria inalcançável).
+- Folha `.pcss`/`.postcss`/`.sss`/`.scss`/`.sass`/`.less`/`.styl`/`.stylus` na árvore ⇒ o extrator
+  recusa (o resto do `CSS_LANGS_RE` do Vite: mesmo PostCSS, e a prova só varria `.css`).
+- O HTML do bundle entra na varredura de `@config`, como o `.css`.
+
+O repo real não tem nenhuma das formas — 0 entradas fora de 100644/100755, `vite.config.ts` só com
+pacotes, 0 folha pré-processada, e o único `<style>` do `index.html` é o `@keyframes` do spinner (uma
+trava "recusa todo `<style>`" zeraria o denominador) —, e a medição repetida confirma: nos últimos 400
+commits de 1º pai da main, **18 de 18** só-de-teste isentos, os 13 de 01/10 entre eles.
+
+Rede: +5 cenários (`teste_negado_link_raiz`, `_link_nome`, `_vite_local`, `_pcss`, `_html_config`) e 4
+sabotagens novas no lugar da do `regular()`, cada uma com desfecho PREVISTO. `run.sh` verde (rc 0:
+classify 19/19, verify-frontend 28/28, monitor-deploy 66/66, `--pr` 80/80). `run.sh --falsify` verde (rc 0): no monitor-deploy, 116
+execuções de CONTROLE verdes nos 2 locales antes da 1ª sabotagem e 58/58 pegas pela marca
+prevista (as 4 novas inclusive), versionados intactos; no `--pr`, 26 pegas, 0 cegueiras.
+
 ## Limites
 
 - No `--pr`, a negação que vale é a do config **no squash** — um revert posterior dela é ele mesmo
@@ -104,9 +149,20 @@ no meio dela; refeita do zero sem edição em voo, 0.
   auditoria lê o `bun.lock`. Qual lockfile o build do Lovable honra é premissa anterior a este PR.
 - O oráculo rodou uma vez, aqui; o que o mantém válido são as travas de versão (`TAILWIND_AUDITADO`,
   `FAST_GLOB_AUDITADO`) — versão nova volta a exigir (d2) até alguém reler e atualizar.
+- Sobraram da revisão do Fable, sem conserto (o repo não tem nenhuma das formas): `@import url(…)`
+  num `<style>` do HTML não vira referência (o `@import "x"` vira), e um `.css` FORA da tabela com
+  `@config`, importado assim, escaparia; `patchedDependencies`/`patches/` trocando o tailwindcss ou o
+  fast-glob com a versão do lockfile intacta (não reproduzido); e plugin de PACOTE cujo `config()`
+  troque o `css.postcss` — pacote novo muda o lockfile (ALCANCA), o residente é premissa.
 
 ## Deploy
 
-`tailwind.config.ts` é ALCANCA: precisa de **Publish**. Prova pelos bytes: o CSS servido perde
-`.m-1{` e `.overscroll-contain{` — antes do Publish, `index-BiX2TAAH.css` (153.986 bytes) tinha os
-dois.
+`tailwind.config.ts` é ALCANCA: pediu **Publish**, feito pelo founder em 03/10 depois do merge
+(squash `0c373d066`). Prova pelos bytes, colhida por fora:
+
+- `monitor-deploy.sh --pr 2773` → exit 0 `PR_NO_AR` (o ar serve `18affb75`, que contém o squash).
+- O CSS servido trocou de `index-BiX2TAAH.css` (153.986 bytes) para `index-D_wObP2W.css` (153.922).
+  O de antes **sem** `.m-1{margin:4px}` e `.overscroll-contain{overscroll-behavior:contain}` é byte a
+  byte igual ao de depois (controle: sem só uma das duas, não é). No build real do Lovable as
+  negações valem, e o CSS não mudou em mais nada — a pergunta "o Vite real difere do CLI?" saiu
+  respondida pelos bytes servidos.

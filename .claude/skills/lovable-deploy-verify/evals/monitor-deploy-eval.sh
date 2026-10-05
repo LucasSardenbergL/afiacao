@@ -231,6 +231,24 @@ commit neg-pkgcss-base > /dev/null && acrescenta src/lib/__tests__/janela.test.t
 REAL_TW="$SKILL/../../../tailwind.config.ts"
 parte_de "$BASE"; cp "$REAL_TW" "$R/tailwind.config.ts" || { echo "❌ sem o tailwind.config.ts real ($REAL_TW)"; exit 2; }
 commit neg-real-base > /dev/null && acrescenta src/lib/__tests__/janela.test.ts && NEG_REAL=$(commit neg-real)
+# Revisão do Fable (2026-10-05): cada base abaixo dava PROVA_INERCIA_OK com o build REAL lendo o teste
+# (tailwindcss/vite build medidos por fora). A negação casa a STRING do caminho: pasta-symlink na raiz
+# que o content lê (`./app/**`) ou com NOME de teste entrega o mesmo texto por outro caminho
+parte_de "$NEG_BASE"; ln -s src/lib/__tests__ "$R/app"
+commit neg-raiz-base > /dev/null && acrescenta src/lib/__tests__/dados.ts && NEG_RAIZ=$(commit neg-raiz)
+parte_de "$NEG_BASE"; ln -s __tests__ "$R/src/lib/x.test.ts"
+commit neg-nome-base > /dev/null && acrescenta src/lib/__tests__/dados.ts && NEG_NOME=$(commit neg-nome)
+# o PostCSS do Vite vindo de módulo LOCAL, sem a palavra postcss no vite.config: outro content, sem negação
+parte_de "$NEG_BASE"
+escreve src/build/css.ts 'import tailwindcss from "tailwindcss"; export const css = { postcss: { plugins: [tailwindcss({ content: ["./src/**/*.{ts,tsx}"] })] } };'
+escreve vite.config.ts "import path from \"path\"; import { css } from \"./src/build/css\"; export default { css, $VITE_ALIAS };"
+commit neg-vlocal-base > /dev/null && acrescenta src/lib/__tests__/janela.test.ts && NEG_VLOCAL=$(commit neg-vlocal)
+# `@config` numa folha .pcss e num <style> do index.html: o Vite passa as duas pelo PostCSS
+parte_de "$NEG_BASE"; escreve src/tema.pcss '@tailwind utilities;
+@config "./tw2.config.js";'
+commit neg-pcss-base > /dev/null && acrescenta src/lib/__tests__/janela.test.ts && NEG_PCSS=$(commit neg-pcss)
+parte_de "$NEG_BASE"; escreve index.html '<!doctype html><html><head><link rel="icon" href="/favicon.ico"><link rel="manifest" href="/manifest.webmanifest"><style>@tailwind utilities; @config "./src/tw2.config.js";</style></head><body><script type="module" src="/src/main.tsx"></script></body></html>'
+commit neg-html-base > /dev/null && acrescenta src/lib/__tests__/janela.test.ts && NEG_HTML=$(commit neg-html)
 g branch deadbee1 "$BASE"   # ref com cara de SHA: `deadbee1^{commit}` resolve o BRANCH
 g branch deadbee3 "$SO_DOCS"   # a mesma ref, apontando para a MAIN: resolvia no atalho do exit 0
 if ! { g remote add origin "$O" && g push -q origin 'refs/tags/*:refs/tags/*'; }; then
@@ -239,7 +257,7 @@ fi
 for v in BASE SO_DOCS C2445 SRC PKG_DEPS PKG_SCRIPTS PKG_BUILD PKG_FMT LATERAL RENAME DESC EDGE VAZA_BASE VAZA SUJO_BASE SUJO ALIAS_BASE ALIAS \
          TNUM TPAL TIMP TCOM TJS TURL TCAT TTPL TGLOB TVIA TLEI TALI TAPI TSEP TLCK TMIX LINK \
          NEG_BASE NEG NEG_IMP NEG_ESTRANHA NEG_SO_ARQ NEG_SO_PASTA NEG_SO_SETUP NEG_FG NEG_TW NEG_LINK \
-         NEG_RC NEG_PKGCSS NEG_REAL; do
+         NEG_RC NEG_PKGCSS NEG_REAL NEG_RAIZ NEG_NOME NEG_VLOCAL NEG_PCSS NEG_HTML; do
   val=${!v:-}
   [ "${#val}" -eq 40 ] || [ "${#val}" -eq 64 ] || { echo "❌ fixture incompleto: $v='$val'"; exit 2; }
 done
@@ -320,6 +338,11 @@ cenario() {
     teste_negado_postcssrc) echo "$(tag_de neg-rc) $NEG_RC -" ;;
     teste_negado_pkg_postcss) echo "$(tag_de neg-pkgcss) $NEG_PKGCSS -" ;;
     teste_negado_config_real) echo "$(tag_de neg-real) $NEG_REAL -" ;;
+    teste_negado_link_raiz) echo "$(tag_de neg-raiz) $NEG_RAIZ -" ;;
+    teste_negado_link_nome) echo "$(tag_de neg-nome) $NEG_NOME -" ;;
+    teste_negado_vite_local) echo "$(tag_de neg-vlocal) $NEG_VLOCAL -" ;;
+    teste_negado_pcss) echo "$(tag_de neg-pcss) $NEG_PCSS -" ;;
+    teste_negado_html_config) echo "$(tag_de neg-html) $NEG_HTML -" ;;
   esac
 }
 
@@ -384,6 +407,11 @@ teste_negacao_extrator|3|motivo: ALCANCA_BUNDLE;TESTE_ALCANCA EXTRATOR;tailwindc
 teste_negado_link_pasta|3|motivo: ALCANCA_BUNDLE;TESTE_ALCANCA TAILWIND src/lib/pasta.test.ts e symlink
 teste_negado_postcssrc|3|motivo: ALCANCA_BUNDLE;TESTE_ALCANCA EXTRATOR;.postcssrc.json: config de PostCSS que o Vite le ANTES do postcss.config.js
 teste_negado_pkg_postcss|3|motivo: ALCANCA_BUNDLE;TESTE_ALCANCA EXTRATOR;package.json#postcss: config de PostCSS que o Vite le ANTES do postcss.config.js
+teste_negado_link_raiz|3|motivo: ALCANCA_BUNDLE;TESTE_ALCANCA TAILWIND src/lib/__tests__/dados.ts;nao isenta teste nenhum: app nao e arquivo regular
+teste_negado_link_nome|3|motivo: ALCANCA_BUNDLE;TESTE_ALCANCA TAILWIND src/lib/__tests__/dados.ts;nao isenta teste nenhum: src/lib/x.test.ts nao e arquivo regular
+teste_negado_vite_local|3|motivo: ALCANCA_BUNDLE;TESTE_ALCANCA LEITOR src/lib/__tests__/janela.test.ts: vite.config.ts importa modulo local (./src/build/css)
+teste_negado_pcss|3|motivo: ALCANCA_BUNDLE;TESTE_ALCANCA EXTRATOR;src/tema.pcss: folha que o Vite passa pelo PostCSS e a prova nao varre (so .css)
+teste_negado_html_config|3|motivo: ALCANCA_BUNDLE;TESTE_ALCANCA EXTRATOR;index.html: @config aponta outra config do Tailwind
 teste_negado_config_real|5|SINCRONIZADO_EM_BUNDLE;testes: 1 mudado(s) fora do grafo de modulos, 0 lido(s) pelo Tailwind com as mesmas palavras, 1 fora do content por negacao'
 
 esperado_de() { printf '%s\n' "$CASOS" | awk -F'|' -v c="$1" '$1 == c { print $2 "|" $3; achou = 1 } END { exit !achou }'; }
@@ -529,7 +557,7 @@ while IFS='|' read -r nome esp marca; do
   fi
 done <<< "$CASOS"
 echo "$n_ok/$n_tot cenários passaram"
-[ "$n_tot" -ge 61 ] || { echo "  [XX ] só $n_tot cenário(s) rodaram — a rede encolheu"; rc=1; }
+[ "$n_tot" -ge 66 ] || { echo "  [XX ] só $n_tot cenário(s) rodaram — a rede encolheu"; rc=1; }
 
 # ── falsificação ────────────────────────────────────────────────────────────────────────────────
 if [ "$FALSIFY" = 1 ]; then
@@ -697,7 +725,7 @@ PY
     #    OPOSTA: sem ela, o primeiro dos 3 testes com palavra nova volta a ALCANCA)
     sab negacao-isenta scripts/alcance-bundle.py teste_negado \
       '3|motivo: ALCANCA_BUNDLE;TESTE_ALCANCA TAILWIND src/lib/__tests__/dados.ts' \
-      '    negados = [t for t in lidos if regular(t) and any(r.fullmatch(t) for r in entendidas)]' '    negados = []'
+      '    negados = [t for t in lidos if any(r.fullmatch(t) for r in entendidas)]' '    negados = []'
     # (d1) continua valendo inteiro: com a negação no content, o grafo de módulos é o ÚNICO elo que
     # segura o teste IMPORTADO — arrancado, a negação o isentaria
     sab negacao-nao-dispensa-modulo scripts/alcance-bundle.py teste_negado_importado "$VERDE_INDEVIDO" \
@@ -720,9 +748,18 @@ PY
       '        if motivo:
             raise Refutado("TESTE_ALCANCA EXTRATOR' '        if False:
             raise Refutado("TESTE_ALCANCA EXTRATOR'
-    # só arquivo REGULAR ganha a isenção: o symlink-pasta com nome de teste é lido por dentro
-    sab negacao-so-regular scripts/alcance-bundle.py teste_negado_link_pasta "$VERDE_INDEVIDO" \
-      'regular(t) and ' ''
+    # só numa árvore de arquivos REGULARES a negação isenta (revisão do Fable, 2026-10-05): o teste
+    # mudado é regular, e o Tailwind o lê pela pasta-symlink `app` da raiz
+    sab arvore-so-regular scripts/alcance-bundle.py teste_negado_link_raiz "$VERDE_INDEVIDO" \
+      '    if estranho:' '    if False:'
+    # config da raiz que importa módulo LOCAL: o `css.postcss` dele troca o PostCSS que o Vite roda
+    sab config-sem-import-local scripts/alcance-bundle.py teste_negado_vite_local "$VERDE_INDEVIDO" \
+      '        if locais:' '        if False:'
+    # `@config` fora do .css: a folha .pcss e o <style> do HTML passam pelo mesmo PostCSS
+    sab folha-pre scripts/alcance-bundle.py teste_negado_pcss "$VERDE_INDEVIDO" \
+      '    if folhas:' '    if False:'
+    sab html-no-extrator scripts/alcance-bundle.py teste_negado_html_config "$VERDE_INDEVIDO" \
+      'p.endswith((".css", ".html"))' 'p.endswith(".css")'
     # o PostCSS do Vite é o 1º que o postcss-load-config acha (Caminho B, 2026-10-01): cada fonte que
     # vem ANTES do postcss.config.js auditado, arrancada do guard, reabre o verde da negação
     sab postcssrc-antes scripts/alcance-bundle.py teste_negado_postcssrc "$VERDE_INDEVIDO" \
@@ -796,7 +833,7 @@ PY
     fi
   done
   echo "  falsificações que pegaram: $fals/$total"
-  [ "$total" -ge 55 ] && [ "$fals" -eq "$total" ] || rc=1
+  [ "$total" -ge 58 ] && [ "$fals" -eq "$total" ] || rc=1
 
   # (C) CONTROLE DE SAÍDA — pelo CONTEÚDO: o laço nunca mutou o versionado.
   # shellcheck disable=SC2086

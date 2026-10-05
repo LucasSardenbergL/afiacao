@@ -1115,10 +1115,12 @@ Quatro escolhas que não são óbvias e têm caso na rede (`evals/monitor-deploy
   **Desde 2026-10-01 o `content` NEGA os testes** (as 3 formas da classe `TESTE`), e a prova entende
   isso como **(d2')**: teste excluído por uma negação ENTENDIDA — a string EXATA, pela regex do que o
   fast-glob 3.3.2 exclui — dispensa as palavras; (d1) segue inteiro. Forma estranha, fast-glob ou
-  Tailwind fora do auditado, symlink (pasta com nome de teste é lida POR DENTRO) ou PostCSS achado antes
-  do `postcss.config` (`.postcssrc*`, `package.json#postcss`) ⇒ volta a exigir (d2). Medido nos 300
-  últimos commits da main: dos 13 só-de-teste, a prova isentava 1 (o #2547); com o content negando,
-  **13/13** — em
+  Tailwind fora do auditado, symlink ou submódulo em QUALQUER lugar da árvore (a negação casa a STRING
+  do caminho: `app → src/lib/__tests__` e pasta-link com nome de teste entregam o mesmo texto por outro
+  caminho) ou PostCSS achado antes do `postcss.config` (`.postcssrc*`, `package.json#postcss`) ⇒ volta a
+  exigir (d2); config da raiz importando módulo local, folha `.pcss`/`.scss`/… ou `@config` no HTML ⇒
+  recusa. Medido nos 300 últimos commits da main: dos 13 só-de-teste, a prova isentava 1 (o #2547); com
+  o content negando, **13/13** (e 18/18 nos últimos 400, depois da revisão do Fable) — em
   [`docs/historico/testes-fora-do-content-do-tailwind.md`](../../../docs/historico/testes-fora-do-content-do-tailwind.md).
 - **`scripts` do `package.json` NÃO é toda inerte.** `build`, `pre/post*` e os ganchos de install
   são executados pelo pipeline: mudou um deles ⇒ alcança. E se o build da main não for `vite build`
@@ -1404,12 +1406,16 @@ aconteceu continua sendo a mudança do `ar=`/entry, não a transição de exit.
   alavanca que o #2574 deixou registrada: o `content` nega as 3 formas da classe `TESTE`. Medido
   antes (duas vezes): só `.m-1` e `.overscroll-contain` saem do CSS (82 bytes), zero uso no app, e o
   config editado gera CSS byte a byte igual à medição. A prova isenta o teste excluído por negação
-  ENTENDIDA — string exata, fast-glob 3.3.2 e Tailwind 3.4.17 auditados, arquivo regular — e o
+  ENTENDIDA — string exata, fast-glob 3.3.2 e Tailwind 3.4.17 auditados, árvore só de arquivos
+  regulares — e o
   oráculo com o Tailwind real deu 19/19 sem fail-open (e mostrou o symlink-PASTA lido por dentro).
   O que só o repo REAL pegou: o comentário novo, terminando em ponto acima do `content:`, fazia a
   auditoria recusar 13/13 — agora um cenário usa o `tailwind.config.ts` real. Caminho B (Codex sem
   cota): `.postcssrc*`/`package.json#postcss` vêm antes do `postcss.config` no Vite — recusa.
-  Denominador: 13/13 PRs só-de-teste isentos (antes 1/13). **Revisão independente do Codex
-  pendente.** Detalhe em
+  Denominador: 13/13 PRs só-de-teste isentos (antes 1/13). Publish de 03/10 provado pelos bytes (o
+  CSS servido perdeu exatamente as 2 regras). Revisão independente pelo Fable (05/10, no lugar do
+  Codex): 6 fail-open reproduzidos com o build real — pasta-symlink na raiz ou com nome de teste,
+  PostCSS/plugin vindo de módulo local do `vite.config`, `@config` em `.pcss` e em `<style>` do HTML —,
+  fechados por 4 travas fail-CLOSED; denominador depois delas, 18/18 nos últimos 400. Detalhe em
   [`docs/historico/testes-fora-do-content-do-tailwind.md`](../../../docs/historico/testes-fora-do-content-do-tailwind.md).
 - [ ] (menor) Confirmar se há ambiente de **preview** distinto do publicado a checar.
