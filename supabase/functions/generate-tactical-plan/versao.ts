@@ -46,7 +46,7 @@ import { MODELO, toolDoModo } from "./plano-helpers.ts";
  * (não mais página curta, #1889) e cursor comparado à PRIMEIRA linha da página (#1901). Um bundle
  * que responde esta string é necessariamente ≥ esta fatia — e, por transitividade, ≥ o #1520.
  */
-export const VERSAO = "v1.2-sonda-cron-onda2";
+export const VERSAO = "v1.3-400-nao-e-recusa";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

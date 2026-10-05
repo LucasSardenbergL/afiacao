@@ -108,7 +108,7 @@ Deno.serve(async (req) => {
       max_tokens: 3000,
       system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
       tools: [STRUCTURE_TOOL],
-      tool_choice: { type: "tool", name: "structure_process" },
+      tool_choice: { type: "tool", name: "structure_process", disable_parallel_tool_use: true },
       messages: [{
         role: "user",
         content: `Estruture este processo descrito pelo vendedor:\n\n${body.descricao_livre.slice(0, 20000)}\n\nUse a tool structure_process.`,

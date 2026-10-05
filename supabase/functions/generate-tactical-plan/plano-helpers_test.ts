@@ -383,6 +383,14 @@ Deno.test("statusDeErroIa: 402 continua sendo 402 (a falha que motivou a migraca
   assertEquals(statusDeErroIa(529)?.http, 503);
 });
 
+Deno.test("statusDeErroIa: 400 e requisicao invalida (defeito nosso), nunca 'a IA recusou'", () => {
+  // A recusa do modelo chega como 200 + stop_reason "refusal"; 400 e schema/parametro errado.
+  // Chamar 400 de recusa poe a culpa no contexto do cliente e esconde o bug.
+  const r = statusDeErroIa(400);
+  assertEquals(r?.http, 500);
+  assert(!/recusou/i.test(r?.msg ?? ""), `400 nao pode dizer recusa: ${r?.msg}`);
+});
+
 Deno.test("statusDeErroIa: status desconhecido ou ausente devolve null", () => {
   assertEquals(statusDeErroIa(418), null);
   assertEquals(statusDeErroIa(undefined), null);

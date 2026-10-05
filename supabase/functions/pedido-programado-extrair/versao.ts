@@ -22,7 +22,7 @@ import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
 export const respostaSonda = criarRespostaSonda("pedido-programado-extrair");
 
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.0-sensor-inicial";
+export const VERSAO = "v1.1-trava-stop-reason";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
