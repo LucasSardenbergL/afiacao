@@ -100,3 +100,27 @@ Um `FIM` sem identidade é história se passando por presente.
 
 **Sintoma:** o desfecho chega rápido demais para o trabalho que alega descrever, e os números
 batem **exatamente** com os da rodada anterior.
+
+## Variante: o teto que só vale para o filho (2026-10-05)
+
+O laço do começo não tinha teto. Esta variante TEM — e ele não vincula. `spawnSync(…, { timeout })`
+(e `execSync`/`execFileSync`) manda o `killSignal` ao filho DIRETO no prazo e depois espera ele sair
+de verdade. Quando o filho é uma árvore (`bun run` → script, `bunx vitest` → workers), o elo que segurar
+o TERM segura o chamador junto: no motor do `exclusividade`, teto de 40 min e 80 min decorridos. E o
+`killSignal: 'SIGKILL'` "resolve" voltando no prazo com o trabalho ainda rodando — órfão, fora da conta.
+
+**Regra:** teto sobre subprocesso é teto sobre o GRUPO. `spawn` com `detached` (grupo próprio),
+`process.kill(-pgid, …)`, TERM → carência → KILL, e a espera termina com o grupo vazio, não com o filho
+direto. Quem aborta o chamador mata o grupo em voo antes de sair — com grupo próprio, o Ctrl-C do
+terminal não chega mais no filho. Modelo: `executarComTeto` em `scripts/exclusividade-medir.ts`
+(guarda 15); medição e falsificação em [exclusividade-media-outra-coisa.md](exclusividade-media-outra-coisa.md).
+
+**Onde mais mora** (censo de 2026-10-05, 32 sítios): o desenho exato do defeito está nos 4
+`scripts/falsificar-*.sh` (`bunx vitest` sob `spawnSync` de 15 min); `scripts/codex-async.sh` faz
+`kill $pid` sem escalada; `codex-async.sh` e `piso-contexto.sh` usam `timeout 300` sem `-k` (o GNU
+`timeout` sinaliza o grupo, mas nada escala se alguém ignora o TERM). O resto é processo único (`git`,
+`psql-ro`, `deno`, `du`) ou teto de segundos. Ficaram como estão: o teto frouxo só custa quando algo
+na árvore segura o TERM — conserte ao tocar um deles.
+
+**Sintoma:** `ESTOUROU <teto>` com decorrido MUITO acima do teto; ou o chamador volta no prazo e o
+`ps` mostra o trabalho ainda vivo, reparentado.

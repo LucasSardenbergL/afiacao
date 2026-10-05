@@ -17,10 +17,13 @@
  *   bun run exclusividade:medir -- --sem-poda        # nao para no 2o vermelho: quer o conjunto COMPLETO
  *   EXCL_TIMEOUT_MS=2400000 bun run exclusividade:medir   # teto POR execucao (default 15 min). Numa M2
  *                                                         # carregada o `sonda:cron-prova -- --gate` leva ~19.
+ *   EXCL_CARENCIA_MS=30000                                # no estouro, TERM -> carencia -> KILL do grupo
+ *                                                         # (default 30 s). Guarda 15.
  *
  * Exit: 0 mediu - 1 abortou (arvore suja, DEPS-NAO-INSTALADAS, MATRIZ-ANTERIOR-RECUSADA, baseline vermelho,
  *       corpus vazio/invalido, invocacao nao reproduzivel, suspeito desconhecido, GATE-ESCREVEU,
- *       RESTAURACAO-INCOMPLETA, BASELINE-SEM-DADO) - 2 erro interno.
+ *       RESTAURACAO-INCOMPLETA, BASELINE-SEM-DADO, teto invalido) - 2 erro interno - 130 interrompido
+ *       (Ctrl-C/SIGTERM/SIGHUP: o gate em voo leva KILL e a sabotagem e desfeita).
  *
  * ## A disciplina (herdada do mutcheck.sh, onde ja foi pensada e ja achou buraco de verdade)
  *
@@ -85,6 +88,16 @@
  *     (MATRIZ-ANTERIOR-RECUSADA <codigo>); ausente e o nascimento, e passa. Na rodada FATIADA sem o
  *     `exclusividade` o classificador do baseline nem roda — esta e a unica leitura que confere.
  *
+ * 15. O TETO VINCULA O GRUPO, NAO O FILHO. O gate (e a receita) roda como lider de um grupo de processos
+ *     proprio; no teto, TERM ao GRUPO, a carencia para quem trata o sinal, KILL no que sobrar — e a
+ *     espera so termina com o grupo vazio. O `spawnSync` mandava o TERM so ao `bun run`, que o repassa e
+ *     ESPERA (2026-09-25: teto de 2.400.000 ms, 4.774.853 decorridos); o `killSignal: 'SIGKILL'` voltaria
+ *     no prazo deixando o script ORFAO. Por isso o motor e ASSINCRONO, e tem de continuar: com `spawnSync`
+ *     o handler de sinal ficava na fila ate o fim do `main()` (medido: SIGINT no motor com um gate em voo,
+ *     e ele terminou a rodada e saiu 0) — a guarda 2 nao valia ali. Abortar mata o grupo em voo ANTES de
+ *     restaurar. A sonda das deps (guarda 13) segue no `spawnSync`: binario unico, `--version`, teto de
+ *     60 s. Ver `executarComTeto`.
+ *
  * ## O que o write-guard NAO ve (limite declarado)
  *
  * Arquivo IGNORADO pelo git (`node_modules/`, `dist/`, caches) fica fora do snapshot: vigia-lo
@@ -94,7 +107,7 @@
  * segue existindo aqui como la.
  */
 import { createHash } from 'node:crypto';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync, type StdioOptions } from 'node:child_process';
 import {
   closeSync,
   copyFileSync,
@@ -164,7 +177,14 @@ const dry = args.includes('--dry');
  * poda o gate caro simplesmente nunca roda. Custa a lista inteira por defeito; use dirigido.
  */
 const semPoda = args.includes('--sem-poda');
+/** Teto POR execucao, do GRUPO de processos do gate — ver `executarComTeto`. */
 const TIMEOUT_MS = Number(process.env.EXCL_TIMEOUT_MS ?? 900_000);
+/**
+ * Depois do TERM do teto, quanto o grupo tem para sair sozinho antes do KILL: a janela de quem TRATA o
+ * sinal e restaura o que estava escrevendo (o write-guard confere depois, como sempre). Quem ignora o
+ * TERM so sai no KILL — e o custo total de um estouro fica em teto + carencia, nunca no que o gate quiser.
+ */
+const CARENCIA_MS = Number(process.env.EXCL_CARENCIA_MS ?? 30_000);
 
 const pkg = JSON.parse(readFileSync('package.json', 'utf8')) as { scripts: Record<string, string> };
 const fonteCI = readFileSync('.github/workflows/ci.yml', 'utf8');
@@ -198,17 +218,34 @@ function restaurarTudo(): void {
   }
   backups.clear();
 }
-for (const sig of ['SIGINT', 'SIGTERM'] as const) {
-  process.on(sig, () => {
-    restaurarTudo();
-    process.exit(130);
-  });
+
+/**
+ * Os grupos de processo em voo — no maximo um: o motor e sequencial. O gate roda em grupo PROPRIO
+ * (`executarComTeto`), entao o Ctrl-C do terminal nao chega mais nele: abortar o motor sem mata-lo
+ * deixaria o gate ORFAO, rodando sobre a arvore que acabou de ser restaurada.
+ */
+const gruposEmVoo = new Set<number>();
+
+function sinalizarGrupo(pgid: number, sinal: NodeJS.Signals): void {
+  try {
+    process.kill(-pgid, sinal);
+  } catch {
+    // ESRCH: o grupo ja esvaziou — que e o que o sinal queria.
+  }
 }
-process.on('uncaughtException', (e) => {
+
+/** Mata o gate em voo ANTES de restaurar — KILL direto: o motor sai agora, nao ha quem espere carencia. */
+function abortarMotor(codigo: number, erro?: unknown): never {
+  for (const pgid of gruposEmVoo) sinalizarGrupo(pgid, 'SIGKILL');
   restaurarTudo();
-  console.error(e);
-  process.exit(2);
-});
+  if (erro !== undefined) console.error(erro);
+  process.exit(codigo);
+}
+// O SIGHUP entra com o grupo proprio: fechar o terminal tambem deixou de alcancar o gate.
+for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) process.on(sig, () => abortarMotor(130));
+process.on('uncaughtException', (e) => abortarMotor(2, e));
+// Entra com o motor assincrono: sem ela, uma promise rejeitada sairia sem restaurar a sabotagem.
+process.on('unhandledRejection', (e) => abortarMotor(2, e));
 
 // ---------------------------------------------------------------------------------------------
 // Snapshot da arvore versionada — a evidencia POSITIVA de que ninguem escreveu
@@ -355,6 +392,8 @@ interface Execucao {
   reprovou: boolean;
   ms: number;
   estourou: boolean;
+  /** Como o teto cortou: o grupo saiu no TERM, ou alguem o segurou e levou o KILL. `null` sem corte do teto. */
+  corte: 'SIGTERM' | 'SIGKILL' | null;
   cauda: string;
   /** Exit BRUTO (`null` = sinal/erro): `reprovou` sozinho nao separa REPROVA (1) de erro do gate (2). */
   rc: number | null;
@@ -367,6 +406,89 @@ interface Execucao {
    * por contencao? `null` quando nao houve vermelho a classificar. Ver `lib/vitest-rpc.ts`.
    */
   classe: Classificacao | null;
+}
+
+interface Saida {
+  status: number | null;
+  signal: NodeJS.Signals | null;
+  /** O processo NEM NASCEU (ENOENT, EACCES): nao houve execucao, e nao havera `exit`. */
+  erro: Error | null;
+  /** O teto venceu. O que o grupo devolveu depois do TERM — ate o `exit 0` de quem o tratou — nao e veredito. */
+  estourou: boolean;
+  corte: Execucao['corte'];
+  ms: number;
+}
+
+/** `kill(-pgid, 0)` sonda sem sinalizar: ESRCH = ninguem mais no grupo. Outro erro (EPERM) = ainda tem gente. */
+function grupoVazio(pgid: number): boolean {
+  try {
+    process.kill(-pgid, 0);
+    return false;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === 'ESRCH';
+  }
+}
+
+/**
+ * O TETO QUE VINCULA: `argv` roda como LIDER de um grupo de processos proprio, e o teto vale para o GRUPO.
+ *
+ * O `timeout` do `spawnSync` mandava o TERM so ao filho DIRETO e depois esperava ele sair de verdade. O
+ * filho direto de um gate e o `bun run`, que REPASSA o TERM ao script e o espera: quem segurar o sinal em
+ * qualquer ponto da arvore segura o motor junto (2026-09-25: teto de 2.400.000 ms, 4.774.853 decorridos).
+ * E o `killSignal: 'SIGKILL'` de uma linha mata so o `bun run` — antes de ele repassar qualquer coisa —, e
+ * o script segue ORFAO: o motor volta no prazo, o custo nao, e o orfao ainda pode escrever na arvore
+ * DEPOIS do snapshot do write-guard, na conta do gate seguinte. Os dois medidos no Bun 1.3.14.
+ *
+ * Aqui: no teto, TERM ao grupo inteiro; a carencia para quem trata o sinal; KILL no que sobrar. O LIDER
+ * sair nao encerra a espera enquanto o grupo tiver gente — o neto que ignora o TERM e o orfao classico.
+ * Sem estouro nada muda: o gate termina sozinho e ninguem e sinalizado. O limite que sobra e do kernel:
+ * entre o KILL e a morte de fato so cabe a syscall que ja estava em curso.
+ */
+function executarComTeto(argv: readonly string[], env: NodeJS.ProcessEnv, stdio: StdioOptions, tetoMs: number): Promise<Saida> {
+  return new Promise((ok) => {
+    const t0 = Date.now();
+    const filho = spawn(argv[0], argv.slice(1), { detached: true, stdio, env });
+    // Sem `kill` pelo objeto, sem IPC e sem AbortSignal, o 'error' so chega quando o processo nem nasceu.
+    filho.once('error', (erro) => {
+      if (filho.pid === undefined) ok({ status: null, signal: null, erro, estourou: false, corte: null, ms: Date.now() - t0 });
+    });
+    const pgid = filho.pid;
+    if (pgid === undefined) return;
+    gruposEmVoo.add(pgid);
+
+    let estourou = false;
+    let corte: Saida['corte'] = null;
+    let lider: { status: number | null; signal: NodeJS.Signals | null } | null = null;
+    let tKill: ReturnType<typeof setTimeout> | undefined;
+    let vigia: ReturnType<typeof setInterval> | undefined;
+    const terminar = (l: { status: number | null; signal: NodeJS.Signals | null }): void => {
+      clearTimeout(tTerm);
+      clearTimeout(tKill);
+      clearInterval(vigia);
+      gruposEmVoo.delete(pgid);
+      ok({ ...l, erro: null, estourou, corte, ms: Date.now() - t0 });
+    };
+    const tTerm = setTimeout(() => {
+      estourou = true;
+      corte = 'SIGTERM';
+      sinalizarGrupo(pgid, 'SIGTERM');
+      tKill = setTimeout(() => {
+        corte = 'SIGKILL';
+        sinalizarGrupo(pgid, 'SIGKILL');
+        if (lider) terminar(lider);
+      }, CARENCIA_MS);
+    }, tetoMs);
+    filho.once('exit', (status, signal) => {
+      const l = { status, signal };
+      lider = l;
+      if (!estourou || corte === 'SIGKILL') return terminar(l);
+      // O lider saiu na carencia: espera o RESTO do grupo esvaziar, ate o KILL da carencia. Vigia, nao
+      // checagem unica: quem morreu no TERM pode estar zumbi por um instante, e pagaria a carencia inteira.
+      vigia = setInterval(() => {
+        if (grupoVazio(pgid)) terminar(l);
+      }, 25);
+    });
+  });
 }
 
 /**
@@ -390,11 +512,26 @@ interface Execucao {
  *
  * E o temporario vive FORA da arvore: o write-guard olha `git status --untracked-files=all`, entao
  * um arquivo de captura dentro do repo abortaria a propria rodada por GATE-ESCREVEU.
+ *
+ * Serve ao gate e a receita `regenerar-fingerprints`: a mesma cadeia (`bun run` -> script), o mesmo
+ * teto — e o mesmo corte de grupo (`executarComTeto`).
  */
-function rodarGate(g: GateMedivel): Execucao {
+async function capturar(argv: readonly string[], env: NodeJS.ProcessEnv, tetoMs: number): Promise<Captura> {
   const dir = mkdtempSync(join(tmpdir(), 'excl-captura-'));
   try {
-    return capturarEmArquivo(g, dir);
+    const pOut = join(dir, 'stdout');
+    const pErr = join(dir, 'stderr');
+    const fdOut = openSync(pOut, 'w');
+    const fdErr = openSync(pErr, 'w');
+    let s: Saida;
+    try {
+      s = await executarComTeto(argv, env, ['ignore', fdOut, fdErr], tetoMs);
+    } finally {
+      closeSync(fdOut);
+      closeSync(fdErr);
+    }
+    // O grupo ja saiu, ou levou o KILL: o que ele escreveu esta no arquivo, inclusive o que antecedeu o corte.
+    return { ...s, stdout: readFileSync(pOut, 'utf8'), stderr: readFileSync(pErr, 'utf8') };
   } finally {
     // Limpeza nao e veredito: se o temporario resistir, a medicao ja esta lida e vale.
     try {
@@ -405,38 +542,25 @@ function rodarGate(g: GateMedivel): Execucao {
   }
 }
 
-function capturarEmArquivo(g: GateMedivel, dir: string): Execucao {
-  const pOut = join(dir, 'stdout');
-  const pErr = join(dir, 'stderr');
-  const fdOut = openSync(pOut, 'w');
-  const fdErr = openSync(pErr, 'w');
-  try {
-    const t0 = Date.now();
-    const r = spawnSync(g.inv.argv[0], g.inv.argv.slice(1), {
-      timeout: TIMEOUT_MS,
-      stdio: ['ignore', fdOut, fdErr],
-      env: { ...process.env, ...ENV_DO_MOTOR, ...g.inv.env },
-    });
-    const ms = Date.now() - t0;
-    // O filho ja saiu: o que ele escreveu esta no arquivo, inclusive se foi morto pelo timeout.
-    const saida = readFileSync(pOut, 'utf8');
-    const erro = readFileSync(pErr, 'utf8');
-    // Timeout/kill nao e "passou": e ausencia de dado. Marcamos como estourou e a linha vira invalida.
-    const estourou = r.signal !== null || r.error !== undefined;
-    const cauda = `${saida}${erro}`.trim().slice(-600);
-    const reprovou = r.status !== 0;
-    // Classifica com os canais INTEIROS: a `cauda` de 600 bytes esconderia um 2o erro real.
-    const classe = reprovou && !estourou ? classificarVermelho(saida, erro) : null;
-    return { reprovou, ms, estourou, cauda, rc: r.status, stdout: saida, stderr: erro, classe };
-  } finally {
-    closeSync(fdOut);
-    closeSync(fdErr);
-  }
+interface Captura extends Saida {
+  stdout: string;
+  stderr: string;
 }
 
-function rodarGuardado(g: GateMedivel, fase: string): Execucao {
+async function rodarGate(g: GateMedivel): Promise<Execucao> {
+  const c = await capturar(g.inv.argv, { ...process.env, ...ENV_DO_MOTOR, ...g.inv.env }, TIMEOUT_MS);
+  // Teto/kill/erro de spawn nao e "passou": e ausencia de dado. Marcamos como estourou e a linha vira invalida.
+  const estourou = c.estourou || c.signal !== null || c.erro !== null;
+  const cauda = `${c.stdout}${c.stderr}`.trim().slice(-600);
+  const reprovou = c.status !== 0;
+  // Classifica com os canais INTEIROS: a `cauda` de 600 bytes esconderia um 2o erro real.
+  const classe = reprovou && !estourou ? classificarVermelho(c.stdout, c.stderr) : null;
+  return { reprovou, ms: c.ms, estourou, corte: c.corte, cauda, rc: c.status, stdout: c.stdout, stderr: c.stderr, classe };
+}
+
+async function rodarGuardado(g: GateMedivel, fase: string): Promise<Execucao> {
   const antes = tirarSnapshot();
-  const r = rodarGate(g);
+  const r = await rodarGate(g);
   const depois = tirarSnapshot();
   const dif = diferenca(antes, depois);
   if (!vazia(dif)) abortarPorEscrita('GATE-ESCREVEU', `\`${g.inv.argv.join(' ')}\` (${g.nome}, durante ${fase})`, antes, dif, depois);
@@ -472,8 +596,8 @@ interface Medicao {
  *    selecionaria a favor do verde — cache quente inclusive — e um verde falso APAGA uma deteccao.
  *    Entao suspeito vira linha INVALIDA na hora, que e ausencia de dado, jamais "ninguem pegou".
  */
-function rodarComReproducao(g: GateMedivel, fase: string, repetir: boolean): Medicao {
-  const r1 = rodarGuardado(g, fase);
+async function rodarComReproducao(g: GateMedivel, fase: string, repetir: boolean): Promise<Medicao> {
+  const r1 = await rodarGuardado(g, fase);
   if (r1.estourou || !r1.reprovou || r1.classe?.classe !== 'RPC-SEM-DADO') return { r: r1, semDado: null };
 
   const assinatura = `${g.nome}: rc=${r1.rc} sem teste falhando (${r1.classe.motivo})`;
@@ -482,7 +606,7 @@ function rodarComReproducao(g: GateMedivel, fase: string, repetir: boolean): Med
   }
 
   console.log(`  ${assinatura} — repetindo UMA vez`);
-  const r2 = rodarGuardado(g, `${fase} (repeticao unica)`);
+  const r2 = await rodarGuardado(g, `${fase} (repeticao unica)`);
   if (r2.estourou) return { r: r2, semDado: null }; // o estouro ja invalida pela guarda antiga
   if (r2.reprovou && r2.classe?.classe !== 'RPC-SEM-DADO') return { r: r2, semDado: null }; // vermelho de verdade
   if (r2.reprovou) return { r: r2, semDado: `${assinatura} — e o RPC estourou tambem na repeticao` };
@@ -537,7 +661,7 @@ function sabotar(d: Defeito): string | null {
 // Dever de casa — receitas do vocabulario fechado, com efeito EXATO conferido por snapshot
 // ---------------------------------------------------------------------------------------------
 
-function executarReceita(dv: DeverDeCasa): string | null {
+async function executarReceita(dv: DeverDeCasa): Promise<string | null> {
   if (dv.receita === 'bump-versao') {
     const [p] = saidasDoDever(dv);
     const r = aplicarBumpVersao(readFileSync(p, 'utf8'));
@@ -545,16 +669,10 @@ function executarReceita(dv: DeverDeCasa): string | null {
     writeFileSync(p, r.novo);
     return null;
   }
-  const [cmd, ...resto] = ARGV_REGENERAR_FINGERPRINTS;
-  const r = spawnSync(cmd, resto, {
-    encoding: 'utf8',
-    timeout: TIMEOUT_MS,
-    maxBuffer: 64 * 1024 * 1024,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, ...ENV_DO_MOTOR },
-  });
-  if (r.signal !== null || r.error) return `nao terminou (${r.signal ?? r.error?.message})`;
-  if (r.status !== 0) return `saiu ${r.status}: ${`${r.stdout ?? ''}${r.stderr ?? ''}`.trim().slice(-200)}`;
+  const r = await capturar(ARGV_REGENERAR_FINGERPRINTS, { ...process.env, ...ENV_DO_MOTOR }, TIMEOUT_MS);
+  if (r.estourou) return `nao terminou (estourou o teto de ${TIMEOUT_MS}ms; corte por ${r.corte})`;
+  if (r.signal !== null || r.erro) return `nao terminou (${r.signal ?? r.erro?.message})`;
+  if (r.status !== 0) return `saiu ${r.status}: ${`${r.stdout}${r.stderr}`.trim().slice(-200)}`;
   return null;
 }
 
@@ -563,7 +681,7 @@ function executarReceita(dv: DeverDeCasa): string | null {
  * alterou. Toda saida declarada entra no backup ANTES de a receita rodar — ela e restaurada junto
  * com o alvo, no fim do defeito.
  */
-function fazerDeverDeCasa(d: Defeito): { invalido: string | null; tocados: string[] } {
+async function fazerDeverDeCasa(d: Defeito): Promise<{ invalido: string | null; tocados: string[] }> {
   const inicio = tirarSnapshot();
   for (const s of new Set(d.deveres.flatMap(saidasDoDever))) {
     if (s === d.alvo) return { invalido: `a receita teria como saida o proprio alvo (${s})`, tocados: [] };
@@ -576,7 +694,7 @@ function fazerDeverDeCasa(d: Defeito): { invalido: string | null; tocados: strin
 
   for (const dv of d.deveres) {
     const antes = tirarSnapshot();
-    const falha = executarReceita(dv);
+    const falha = await executarReceita(dv);
     const depois = tirarSnapshot();
     const dif = diferenca(antes, depois);
     const permitidas = new Set(saidasDoDever(dv));
@@ -649,7 +767,16 @@ function sondarDeps(): string[] {
 // Main
 // ---------------------------------------------------------------------------------------------
 
-function main(): number {
+async function main(): Promise<number> {
+  // Os dois tetos sao ms inteiros positivos: `setTimeout(NaN)` dispara na hora, e um typo no
+  // EXCL_TIMEOUT_MS faria TODO gate "estourar" — um baseline inteiro vermelho que nao diz por que.
+  for (const [nome, v] of [['EXCL_TIMEOUT_MS', TIMEOUT_MS], ['EXCL_CARENCIA_MS', CARENCIA_MS]] as const) {
+    if (!Number.isSafeInteger(v) || v <= 0) {
+      console.error(`ABORTADO: ${nome}=${process.env[nome]} nao e um teto em ms (inteiro positivo).`);
+      return 1;
+    }
+  }
+
   // Guard 1a: arvore limpa. Sem isso, sujeira previa fica indistinguivel da sabotagem — e a
   // restauracao por copia devolveria o arquivo ao estado sujo achando que devolveu ao limpo.
   const inicial = tirarSnapshot();
@@ -747,6 +874,7 @@ function main(): number {
 
   console.log(`plano: ${defeitos.length} defeito(s) x ${gates.length} gate(s) bloqueante(s)`);
   console.log(`gates: ${gates.map((g) => g.nome).join(', ')}`);
+  console.log(`teto: ${TIMEOUT_MS}ms por execucao, do GRUPO de processos (+${CARENCIA_MS}ms de carencia entre o TERM e o KILL)`);
   const naoCru = gates.filter((g) => g.inv.argv.join(' ') !== `bun run ${g.nome}` || Object.keys(g.inv.env).length);
   if (naoCru.length) {
     console.log('invocacao do CI (≠ `bun run <nome>` cru):');
@@ -772,14 +900,15 @@ function main(): number {
   // de dado, e sai por uma porta propria (medir sobre isso seria medir sem saber a linha de base).
   const semDadoNoBaseline = new Map<string, string>();
   for (const g of gates) {
-    const m = rodarComReproducao(g, 'o baseline', true);
+    const m = await rodarComReproducao(g, 'o baseline', true);
     const r = m.r;
     if (m.semDado) semDadoNoBaseline.set(g.nome, m.semDado);
     const verde = !m.semDado && !r.reprovou && !r.estourou;
     baseline.push({ gate: g.nome, verde, ms: r.ms });
     noBaseline.set(g.nome, r);
     const rotulo = m.semDado ? 'SEM-DADO' : verde ? 'verde   ' : 'VERMELHO';
-    console.log(`  ${rotulo}  ${g.nome.padEnd(34)} ${r.ms}ms${r.estourou ? ` (ESTOUROU ${TIMEOUT_MS}ms)` : ''}`);
+    const estouro = `ESTOUROU ${TIMEOUT_MS}ms${r.corte === 'SIGKILL' ? `; segurou o TERM, KILL apos ${CARENCIA_MS}ms` : ''}`;
+    console.log(`  ${rotulo}  ${g.nome.padEnd(34)} ${r.ms}ms${r.estourou ? ` (${estouro})` : ''}`);
     if (!verde && r.cauda) console.log(r.cauda.split('\n').map((l) => `      | ${l}`).join('\n'));
   }
   const ignorarBaseline = args.includes('--ignorar-baseline');
@@ -803,7 +932,7 @@ function main(): number {
     } else {
       const base = noBaseline.get(excl.nome)!;
       const argv = [...excl.inv.argv, ...(excl.inv.argv.includes('--') ? [] : ['--']), '--json'];
-      const sonda = rodarGuardado({ ...excl, inv: { argv, env: excl.inv.env } }, 'a sonda --json do baseline');
+      const sonda = await rodarGuardado({ ...excl, inv: { argv, env: excl.inv.env } }, 'a sonda --json do baseline');
       const decisao = exclusividadeVermelhaSoPorGateNovo({
         rcBaseline: base.estourou ? null : base.rc,
         rcSonda: sonda.estourou ? null : sonda.rc,
@@ -867,7 +996,7 @@ function main(): number {
     let invalido = sabotar(d);
     let tocados: string[] = [];
     if (!invalido && d.deveres.length) {
-      const dc = fazerDeverDeCasa(d);
+      const dc = await fazerDeverDeCasa(d);
       invalido = dc.invalido;
       tocados = dc.tocados;
       if (!invalido) console.log(`  dever de casa: ${d.deveres.map(textoDoDever).join(' + ')} — tocou ${tocados.join(', ')}`);
@@ -891,7 +1020,7 @@ function main(): number {
     } else {
       let vermelhos = 0;
       for (const g of ordenados) {
-        const med = rodarComReproducao(g, `o defeito ${d.id}`, false);
+        const med = await rodarComReproducao(g, `o defeito ${d.id}`, false);
         const r = med.r;
         if (med.semDado) {
           // Guard 12 sob defeito: NAO se repete, e suspeito nao vira verde nem vermelho.
@@ -924,7 +1053,7 @@ function main(): number {
       // esta — a linha ja nao certifica exclusivo de ninguem, com ou sem esta execucao.
       const suspeito = ordenados.find((g) => g.nome === d.suspeito);
       if (!invalido && suspeito && !execucoes.some((e) => e.gate === suspeito.nome)) {
-        const med = rodarComReproducao(suspeito, `o suspeito de ${d.id}`, false);
+        const med = await rodarComReproducao(suspeito, `o suspeito de ${d.id}`, false);
         const r = med.r;
         if (med.semDado) {
           invalido = med.semDado;
@@ -1035,19 +1164,19 @@ function main(): number {
   return 0;
 }
 
-let codigo = 2;
-try {
-  codigo = main();
-} catch (e) {
-  restaurarTudo();
-  if (e instanceof Abortar) {
-    console.error(`\nABORTADO — ${e.message}`);
-    codigo = 1;
-  } else {
+async function rodar(): Promise<number> {
+  try {
+    return await main();
+  } catch (e) {
+    restaurarTudo();
+    if (e instanceof Abortar) {
+      console.error(`\nABORTADO — ${e.message}`);
+      return 1;
+    }
     console.error(e);
-    codigo = 2;
+    return 2;
+  } finally {
+    restaurarTudo();
   }
-} finally {
-  restaurarTudo();
 }
-process.exit(codigo);
+void rodar().then((codigo) => process.exit(codigo));
