@@ -10,10 +10,14 @@
 # ║     a outra empresa (A5)                                                       ║
 # ║  R  RLS: authenticated sem papel e customer veem 0 (R1 R3); employee e master   ║
 # ║     veem tudo (R2 R2m); anon é negado no GRANT (R4)                             ║
-# ║  W  ninguém além da RPC escreve: staff leva 42501 no INSERT direto (W1)         ║
+# ║  V  a RPC confere NO BANCO o pendente gravado × o contado: bate → aplicado (V1);║
+# ║     diverge (V2), a edge não afirmou (V3) ou SKU sem linha de estoque (V4) → não ║
+# ║  W  ninguém além da RPC escreve: staff (W1) e service_role (W2) levam 42501     ║
 # ║  X  EXECUTE da RPC: anon e staff levam 42501 (X1 X2); service_role publica (X3) ║
 # ║  P  a POSTCONDIÇÃO tem dente: cópias da migration com UM defeito cada abortam   ║
-# ║     no predicado certo (P1-P8). O predicado de PUBLIC é implicado pelo de anon  ║
+# ║     no predicado certo (P1-P13: ACL, md5 do corpo, RLS, CHECKs por nome E por   ║
+# ║     definição, policies por definição, search_path NULL-safe, service_role).   ║
+# ║     O predicado de PUBLIC é implicado pelo de anon                             ║
 # ║     (todo papel herda PUBLIC): P7 é pego pelos dois, e não há sabotagem dele.  ║
 # ║                                                                                ║
 # ║  Duas camadas, falsificadas uma por vez: o COMPORTAMENTO é sabotado no BANCO,   ║
@@ -34,9 +38,9 @@ HARNESS_LC="${HARNESS_LC:-C}"
 export LC_ALL=C LANG=C
 
 MIG="$REPO_ROOT/supabase/migrations/20261005131331_reposicao_po_observado_pelo_motor.sql"
-# Denominador: I0 I1 · A1 A2 A3 A6 A6o A7 · R1 R2 R2m R3 R4 · W1 · X1 X2 X3 · A4 A5 · P1-P8.
+# Denominador: I0 I1 · A1 V1 A2 A3 A6 A6o A7 · R1 R2 R2m R3 R4 · W1 W2 · X1 X2 X3 · V2 V3 V4 · A4 A5 · P1-P13.
 # Asserts a menos — um bloco que não rodou — é vermelho.
-TOTAL_ESPERADO=27
+TOTAL_ESPERADO=37
 
 # ══════════════════════════════════════════════════════════════════════════════
 # MODO --falsificar: prova que os asserts têm DENTE (o contrato de
@@ -63,13 +67,20 @@ if [ "${1:-}" = "--falsificar" ]; then
               rpc_aberta_anon:X1:X2,X3
               rpc_aberta_staff:X2:X1,X3
               rpc_sem_service_role:X3:X1,X2
+              escrita_service_role:W2:W1,X3
+              verificacao_cega:V2,V4:V1,V3
+              aplicado_ignora_claim:V3:V1,V2,V4
               post_cega_fn_authenticated:P1:I0,I1,P2,P7
               post_cega_fn_anon:P2:I0,I1,P1,P7
               post_cega_tab_authenticated:P3:I0,I1,P8
               post_cega_md5:P4:I0,I1,P1
               post_cega_rls:P5:I0,I1,P6
               post_cega_check:P6:I0,I1,P5
-              post_cega_tab_anon:P8:I0,I1,P3"
+              post_cega_tab_anon:P8:I0,I1,P3
+              post_cega_checkdef:P9:I0,I1,P6
+              post_cega_policies:P10,P12:I0,I1,P5
+              post_cega_config:P11:I0,I1,P1
+              post_cega_service_role:P13:I0,I1,P3"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-${SLUG}.XXXXXX")"
   porta=$PORT
 
@@ -207,6 +218,10 @@ case "$SABOTAGEM" in
   post_cega_md5)               sabotar_arquivo "FROM pg_proc p WHERE p.oid = v_fn) IS DISTINCT FROM '" "FROM pg_proc p WHERE p.oid = v_fn) IS NULL AND 'x' <> '" 1 ;;
   post_cega_rls)               sabotar_arquivo "AND c.relrowsecurity" "" 1 ;;
   post_cega_check)             sabotar_arquivo ")) <> 3 THEN" ")) < 0 THEN" 1 ;;
+  post_cega_checkdef)          sabotar_arquivo "AND k.contype = 'c') IS DISTINCT FROM '" "AND k.contype = 'c') IS NULL AND 'x' <> '" 1 ;;
+  post_cega_policies)          sabotar_arquivo "IS DISTINCT FROM '7c26732332bf0eed21921bf88944e4b9'" "IS NULL" 1 ;;
+  post_cega_config)            sabotar_arquivo "= ANY (p.proconfig) FROM pg_proc p WHERE p.oid = v_fn) IS DISTINCT FROM true THEN" "= ANY (p.proconfig) FROM pg_proc p WHERE p.oid = v_fn) = false THEN" 1 ;;
+  post_cega_service_role)      sabotar_arquivo "IF v_priv <> 'SELECT' AND has_table_privilege('service_role', v_tab, v_priv) THEN" "IF false THEN" 1 ;;
 esac
 
 PASS=0; FAIL=0
@@ -282,6 +297,11 @@ EXCEPTION WHEN OTHERS THEN
   RETURN 'SQLSTATE:' || SQLSTATE;
 END $f$;
 
+-- O que a RPC confere (a 2ª testemunha do pendente): só as colunas que ela lê, com os tipos de prod
+-- (sku_parametros.sku_codigo_omie bigint; sku_estoque_atual.sku_codigo_omie text — psql-ro, 2026-10-05).
+CREATE TABLE public.sku_parametros (empresa text NOT NULL, sku_codigo_omie bigint NOT NULL, habilitado_reposicao_automatica boolean NOT NULL);
+CREATE TABLE public.sku_estoque_atual (empresa text NOT NULL, sku_codigo_omie text NOT NULL, estoque_pendente_entrada numeric);
+
 -- ACL default do schema public em prod (pg_default_acl do postgres): tabela → ALL, função → EXECUTE.
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated, service_role;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO anon, authenticated, service_role;
@@ -293,6 +313,10 @@ SQL
 Pdb prove -q <<SQL
 INSERT INTO public.user_roles (user_id, role) VALUES
   ('$STAFF', 'employee'), ('$MASTER', 'master'), ('$CLIENTE', 'customer');
+-- coorte OBEN: 8689791246 com pendente gravado 6 (= o contado do A1) e 777 com 0; 555 não habilitado (ignorado);
+-- COLACOR: 999 habilitado SEM linha de estoque (pendente nunca aplicado → diverge)
+INSERT INTO public.sku_parametros VALUES ('OBEN', 8689791246, true), ('OBEN', 777, true), ('OBEN', 555, false), ('COLACOR', 999, true);
+INSERT INTO public.sku_estoque_atual VALUES ('OBEN', '8689791246', 6), ('OBEN', '777', 0), ('OBEN', '555', 9);
 SQL
 
 echo "═══ setup pronto (PG17 :$PORT, lc_messages=$HARNESS_LC) ═══"
@@ -343,6 +367,9 @@ case "$SABOTAGEM" in
   rpc_aberta_anon)      sabotar_sql "GRANT EXECUTE ON FUNCTION $FN TO anon" ;;
   rpc_aberta_staff)     sabotar_sql "GRANT EXECUTE ON FUNCTION $FN TO authenticated" ;;
   rpc_sem_service_role) sabotar_sql "REVOKE EXECUTE ON FUNCTION $FN FROM service_role" ;;
+  escrita_service_role) sabotar_sql "GRANT INSERT ON public.reposicao_po_observado_item TO service_role" ;;
+  verificacao_cega)     sabotar_corpo "AND (e.estoque_pendente_entrada IS NULL OR abs(coalesce(s.contribuicao, 0) - e.estoque_pendente_entrada) > 0.001);" "AND false;" 1 ;;
+  aplicado_ignora_claim) sabotar_corpo "coalesce((p_run->>'pendente_aplicado')::boolean, false) AND v_divergentes = 0," "v_divergentes = 0," 1 ;;
   *) echo "❌ SABOTAGEM desconhecida: $SABOTAGEM"; exit 9 ;;
 esac
 
@@ -373,6 +400,15 @@ SELECT coalesce(sum(contribuicao)::text, 'NULL') FROM public.reposicao_po_observ
 SQL
 )"
 eq A1 "a publicação grava run + itens e devolve a contagem (devolvido|runs|itens|contado)" "$(printf '%s' "$v" | tr '\n' '|')" "2|1|2|6"
+
+# V — a RPC confere NO BANCO, na mesma transação, o pendente GRAVADO × o que a observação contou, SKU a SKU da
+# coorte habilitada. Valor = "<pendente_aplicado>|<skus_divergentes>" (SEM_RUN se a publicação não gravou).
+aplicado_de() {
+  val <<SQL
+SELECT coalesce((SELECT pendente_aplicado::text || '|' || skus_divergentes FROM public.reposicao_po_observado_run WHERE run_id = '$1'), 'SEM_RUN');
+SQL
+}
+eq V1 "observação que bate com o pendente gravado vale como aplicada" "$(aplicado_de "$RUN_A1")" "true|0"
 
 v="$(val <<SQL
 SELECT public._prova_sqlstate(\$q\$INSERT INTO public.reposicao_po_observado_item (run_id, omie_codigo_pedido, seq_item, contribuicao, exclusao, sku_codigo_omie, quantidade, quantidade_recebida)
@@ -443,6 +479,14 @@ SQL
 )"
 eq W1 "staff não escreve direto na tabela (42501)" "$v" "SQLSTATE:42501"
 
+v="$(val <<SQL
+SET ROLE service_role;
+SELECT public._prova_sqlstate(\$q\$INSERT INTO public.reposicao_po_observado_item (run_id, omie_codigo_pedido, seq_item, contribuicao, exclusao, sku_codigo_omie, quantidade, quantidade_recebida)
+  VALUES ('$RUN_A1', 12000000014, 0, 1, NULL, 8689791246, 1, 0)\$q\$);
+SQL
+)"
+eq W2 "service_role (BYPASSRLS) não escreve direto: o ACL default ficaria aberto sem o REVOKE (42501)" "$v" "SQLSTATE:42501"
+
 publicar_como() {  # <papel> <uid|''>
   val <<SQL
 SET ROLE $1;
@@ -454,15 +498,31 @@ eq X1 "anon não executa a RPC (42501)"          "$(publicar_como anon "")"     
 eq X2 "staff não executa a RPC (42501)"         "$(publicar_como authenticated "$STAFF")"  "SQLSTATE:42501"
 eq X3 "service_role (a edge) publica"           "$(publicar_como service_role "")"         "OK"
 
+publicar_valor() {  # <expressão jsonb do run> <expressão jsonb dos itens> — como a edge (service_role)
+  val <<SQL >/dev/null
+SET ROLE service_role;
+SELECT public._prova_valor(\$q\$SELECT public.reposicao_po_observado_publicar($1, $2)\$q\$);
+SQL
+}
+RUN_V2='66666666-6666-6666-6666-666666666666'
+RUN_V3='77777777-7777-7777-7777-777777777777'
+RUN_V4='88888888-8888-8888-8888-888888888888'
+publicar_valor "$(run_json "'$RUN_V2'::uuid")" "jsonb_build_array(jsonb_build_object('omie_codigo_pedido', 12000000020, 'seq_item', 0, 'numero_pedido', '1400', 'etapa', '15', 'id_item', 12000000021, 'sku_codigo_omie', 8689791246, 'quantidade', 5, 'quantidade_recebida', 0, 'contribuicao', 5, 'exclusao', null))"
+eq V2 "contado (5) ≠ pendente gravado (6) → NÃO aplicado, 1 SKU divergente" "$(aplicado_de "$RUN_V2")" "false|1"
+publicar_valor "jsonb_set($(run_json "'$RUN_V3'::uuid"), '{pendente_aplicado}', 'false'::jsonb)" "$ITENS_A1"
+eq V3 "bate com o gravado, mas a edge não afirmou (upsert com erro) → NÃO aplicado" "$(aplicado_de "$RUN_V3")" "false|0"
+publicar_valor "jsonb_set($(run_json "'$RUN_V4'::uuid"), '{empresa}', '\"COLACOR\"'::jsonb)" "'[]'::jsonb"
+eq V4 "SKU habilitado sem linha em sku_estoque_atual (pendente nunca aplicado) → diverge" "$(aplicado_de "$RUN_V4")" "false|1"
+
 # ══════════════════════════════════════════════════════════════════════════════
 # A4/A5 — retenção de 14 dias no MESMO writer (por último: ela apaga runs)
 # ══════════════════════════════════════════════════════════════════════════════
 Pdb prove -q <<'SQL'
 INSERT INTO public.reposicao_po_observado_run (run_id, empresa, iniciado_em, concluido_em, janela_de, janela_ate,
-  filtros, varredura_completa, pendente_aplicado, pedidos_lidos, versao_edge) VALUES
-  ('22222222-2222-2222-2222-222222222222', 'OBEN',    now() - interval '20 days', now() - interval '20 days', current_date - 400, current_date - 20, '{}'::jsonb, true, true, 0, 'v1.4-teste'),
-  ('44444444-4444-4444-4444-444444444444', 'OBEN',    now() - interval '13 days', now() - interval '13 days', current_date - 400, current_date - 13, '{}'::jsonb, true, true, 0, 'v1.4-teste'),
-  ('55555555-5555-5555-5555-555555555555', 'COLACOR', now() - interval '20 days', now() - interval '20 days', current_date - 400, current_date - 20, '{}'::jsonb, true, true, 0, 'v1.4-teste');
+  filtros, varredura_completa, pendente_aplicado, skus_divergentes, pedidos_lidos, versao_edge) VALUES
+  ('22222222-2222-2222-2222-222222222222', 'OBEN',    now() - interval '20 days', now() - interval '20 days', current_date - 400, current_date - 20, '{}'::jsonb, true, true, 0, 0, 'v1.4-teste'),
+  ('44444444-4444-4444-4444-444444444444', 'OBEN',    now() - interval '13 days', now() - interval '13 days', current_date - 400, current_date - 13, '{}'::jsonb, true, true, 0, 0, 'v1.4-teste'),
+  ('55555555-5555-5555-5555-555555555555', 'COLACOR', now() - interval '20 days', now() - interval '20 days', current_date - 400, current_date - 20, '{}'::jsonb, true, true, 0, 0, 'v1.4-teste');
 SQL
 v="$(val <<SQL
 SET ROLE service_role;
@@ -515,6 +575,16 @@ postcond_recusa P7 "sem o REVOKE de PUBLIC na RPC → aborta" "EXECUTE da RPC fo
   "REVOKE ALL ON FUNCTION public.reposicao_po_observado_publicar(jsonb, jsonb) FROM PUBLIC;"$'\n' ""
 postcond_recusa P8 "sem o REVOKE de anon na tabela de runs → aborta" "anon tem" \
   "REVOKE ALL ON public.reposicao_po_observado_run FROM anon;"$'\n' ""
+postcond_recusa P9 "CHECK trocado por CHECK (true) com o MESMO nome → aborta" "definicao dos CHECKs difere" \
+  "CHECK (exclusao IS NULL OR contribuicao = 0)," "CHECK (true),"
+postcond_recusa P10 "policy de leitura aberta (USING true OR …) → aborta" "policies de leitura diferem" \
+  "ON public.reposicao_po_observado_item FOR SELECT"$'\n'"  USING (public.has_role(" "ON public.reposicao_po_observado_item FOR SELECT"$'\n'"  USING (true OR public.has_role("
+postcond_recusa P11 "RPC sem SET (proconfig NULL — o ANY(NULL) passaria calado) → aborta" "sem SECURITY DEFINER ou sem search_path fixo" \
+  "SET search_path = public, pg_temp"$'\n'"SET lock_timeout = '5s'"$'\n' ""
+postcond_recusa P12 "policy permissiva EXTRA na tabela de itens → aborta" "policies de leitura diferem" \
+  "-- Sem policy de INSERT/UPDATE/DELETE de propósito" "CREATE POLICY \"extra_aberta\" ON public.reposicao_po_observado_item FOR SELECT USING (true);"$'\n'"-- Sem policy de INSERT/UPDATE/DELETE de propósito"
+postcond_recusa P13 "sem o REVOKE de service_role na tabela de itens → aborta" "service_role tem" \
+  "REVOKE ALL ON public.reposicao_po_observado_item FROM service_role;"$'\n' ""
 
 echo "RESULTADO: $PASS ok / $FAIL fail"
 [ $((PASS + FAIL)) -eq "$TOTAL_ESPERADO" ] || { echo "❌ executou $((PASS + FAIL)) asserts, esperado $TOTAL_ESPERADO"; exit 1; }
