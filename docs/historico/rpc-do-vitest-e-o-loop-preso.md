@@ -5,7 +5,7 @@
 > outros testes como tarefa própria. Esta é ela.
 > Infra: `src/test/loop-livre.ts` (+ teste) · `src/lib/gates/passos.ts`.
 >
-> **Estado:** conserto no PR desta entrega; medição antes × depois na seção própria.
+> **Estado:** medido e falsificado (2026-10-05) — com o RPC escalado a 5s, a main sai rc=1 sem teste falhando (2/2) e o conserto, rc=0 (2/2); arquivos com bloqueio ≥3s fora da coleta, 21 → 0. PR #2802.
 
 ## O mecanismo, em uma linha
 
@@ -121,7 +121,47 @@ redundante nem inalcançada.
 
 ## Antes × depois
 
-(em medição — preenchido antes do merge)
+Com a máquina calma, antes e depois dão rc=0: nenhum bloqueio chega a 60s (3 rodadas na main, 05/10:
+rc=0, 0 RPC, 186–305s). Então a medida que DISCRIMINA escala o fenômeno em vez da carga: o
+`DEFAULT_TIMEOUT` do birpc foi a **5s só durante a rodada** (patch no `node_modules` local, aplicado e
+restaurado dentro da vaga do `heavy`, conferido `6e4` depois), o mesmo nos dois lados, alternando
+antes/depois, cada rodada partindo de pressão 1 (`CI=1 FORCE_COLOR=0 bun run test`):
+
+| rodada | RPC | rc | `Timeout calling` | resultado da suíte | load (início→fim) |
+|---|---|---|---|---|---|
+| antes #1 (main `e80fe16ec`) | 5s | **1** | **3** | 892/892 arquivos passando — ZERO teste falhando | 3 → 59 |
+| depois #1 | 5s | 0 | 0 | 893/893 | 43 → **136** |
+| antes #2 | 5s | **1** | **4** | 892/892 passando — ZERO falhando | 104 → 29 |
+| depois #2 | 5s | 0 | 0 | 893/893 | 22 → 24 |
+| depois #1–3 | 60s (normal) | 0 · 0 · 0 | 0 · 0 · 0 | 893/893, 10.788 testes | 22–28 → 30–38 |
+
+O "antes" reproduz o sintoma exato (rc=1 sem teste falhando) nas duas; o "depois" sai limpo nas duas —
+o #1 sob mais carga que os "antes".
+
+**O perfil** (o instrumento, maior bloqueio fora da coleta, por arquivo): arquivos com janela ≥3s, na
+suíte inteira, **21 → 0**; o maior entre os 24 convertidos, **14,8s → 1,3s**; 18 dos 24 abaixo de 250ms.
+
+| arquivo | antes | depois |
+|---|---|---|
+| `authz-gate-check` | 14.811 ms | 1.313 (uma parte do `auditCompleto`) |
+| `authz-funcoes` | 13.572 | 797 (uma passada) |
+| `fuso-da-sessao-gate` | 8.885 | <250 |
+| `psql-local-X-gate` | 6.939 | <250 |
+| `assert-verde-por-ausencia-gate` | 6.514 | <250 |
+| `relogio-nu-da-sessao-gate` | 5.224 | <250 |
+| `universo-pedidos-ts-gate` | 5.174 | 261 |
+| `mapa-coerente-na-ref` | 3.963 | 908 (o `git` síncrono do `main()` de produção) |
+| `pendencias-prompt` | 2.454 | 562 (idem) |
+| os outros 15 | 1.758–5.057 | <250 a 528 |
+
+Ressalva honesta: o perfil "antes" pegou carga mais alta no fim (load até 103) que o "depois" (21–31) — a
+tabela acelerada acima é a comparação robusta a isso.
+
+**Efeito colateral no CI:** o `deriva-corpo.ts` é arquivo do AUDITOR do eixo `corpo` do carimbo de authz
+— mudar o instrumento invalida a medição anterior, e o `authz:carimbo` reprovou
+(`CARIMBO_CONTRATO_MUDOU`/`CARIMBO_AUDITOR_MUDOU`). A saída foi a prevista pelo gate: `authz:carimbo:gravar`
+(as 6 auditorias de prod sob `psql-ro`, read-only, todas exit 0) e o carimbo novo commitado — não tirar a
+lógica do arquivo vigiado, que seria burlar o gate.
 
 ## O que fica de fora (medido)
 
