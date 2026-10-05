@@ -12852,6 +12852,7 @@ export type Database = {
           customer_user_id: string
           deleted_at: string | null
           discount: number
+          gemeo_importado_id: string | null
           hash_payload: string | null
           id: string
           items: Json
@@ -12884,6 +12885,7 @@ export type Database = {
           customer_user_id: string
           deleted_at?: string | null
           discount?: number
+          gemeo_importado_id?: string | null
           hash_payload?: string | null
           id?: string
           items?: Json
@@ -12916,6 +12918,7 @@ export type Database = {
           customer_user_id?: string
           deleted_at?: string | null
           discount?: number
+          gemeo_importado_id?: string | null
           hash_payload?: string | null
           id?: string
           items?: Json
@@ -12937,6 +12940,20 @@ export type Database = {
           whatsapp_proposta_dedupe?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "sales_orders_gemeo_importado_id_fkey"
+            columns: ["gemeo_importado_id"]
+            isOneToOne: false
+            referencedRelation: "sales_orders"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sales_orders_gemeo_importado_id_fkey"
+            columns: ["gemeo_importado_id"]
+            isOneToOne: false
+            referencedRelation: "selfservice_meus_pedidos"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "sales_orders_pedido_programado_envio_id_fkey"
             columns: ["pedido_programado_envio_id"]
