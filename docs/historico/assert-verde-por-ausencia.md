@@ -228,7 +228,7 @@ todas as 33 provas com controle verde e cada reprodução vermelha no depois pel
 Resultado por fase no corpo de cada PR (F1 LucasSardenbergL/afiacao#2754 · F5 LucasSardenbergL/afiacao#2755 ·
 F6 LucasSardenbergL/afiacao#2753 · F2 LucasSardenbergL/afiacao#2759 · F3 LucasSardenbergL/afiacao#2760 ·
 F4 LucasSardenbergL/afiacao#2761 — as três 💰 por Caminho B: Codex sem cota (86% > 85% até 03/10 19:11),
-revisor independente só-leitura, REVISÃO INDEPENDENTE PENDENTE = Codex retroativo quando a janela reabrir).
+revisor independente só-leitura; a revisão retroativa saiu pelo Fable em 05/10 — ver "Revisão retroativa").
 
 ## O gate v2
 
@@ -268,3 +268,62 @@ e a forma bash `""`.
 - **Marca positiva que conta saída tem de saber o que o fixture imprime**: "11 checagens ✅" era o
   número do validador de PROD; no banco da prova uma seção devolve zero linhas. E o `grep -o | wc -l`
   numa atribuição sob `pipefail` ABORTA quando não há casamento — o vermelho deixa de ser do assert.
+
+## Revisão retroativa — o Fable no lugar do Codex (2026-10-05)
+
+A revisão independente que ficou PENDENTE (as três 💰 da fase 2 e os 4 PRs de dinheiro da fase 1) saiu
+pelo **Fable**, por decisão do founder em 05/10, em vez de esperar a cota do Codex: subagente
+só-leitura, **outro modelo da mesma casa** — não é a 2ª opinião de outro fornecedor que o Codex dá, e o
+registro fica com esse nome. Mesmos briefings + diffs montados para o Codex, um revisor por PR, lendo a
+main já mergeada (`72e2cecf5`); cada achado foi verificado no código antes de virar conserto.
+
+| revisão | PRs | veredito | virou conserto |
+|---|---|---|---|
+| fase 2 💰 | LucasSardenbergL/afiacao#2759 · LucasSardenbergL/afiacao#2760 · LucasSardenbergL/afiacao#2761 | sem P0 | split de estoque A4/A6 |
+| fase 1 tint | LucasSardenbergL/afiacao#2681 | sem P0 | — |
+| fase 1 preço/promo | LucasSardenbergL/afiacao#2686 | sem P0 | — |
+| fase 1 compras | LucasSardenbergL/afiacao#2692 | sem P0 | — |
+| fase 1 reposição | LucasSardenbergL/afiacao#2693 | sem P0 | consolidação D |
+
+**O conserto da F4 tinha ficado pela metade num eixo.** No split de estoque, o `IS NOT TRUE` +
+denominador fechou o `a_caminho`/efetivo NULL, mas o recorte `AND i.estoque_fisico IS NOT NULL` ficou no
+WHERE: o item novo com físico NULL saía do universo e o `"0|t"` seguia verde. O motor grava
+`COALESCE(fisico,0)` em todo item novo — o NULL é regressão, não escopo. É uma subforma da (b): o
+**recorte NULL-cego no UNIVERSO, sobre a coluna medida** (o FILTER já era NULL-seguro). A varredura dela
+(12 candidatos de `count(*) … WHERE … IS NOT NULL`, classificados por um Fable e conferidos) achou 1
+irmão — o H3 de `padrao-like-contem`, cujo universo era `p IS NOT NULL`, o resultado do próprio helper:
+anular só os termos de barra deixava ~310 não-nulos, acima do piso de 250, e o H3 seguia verde —, 1
+já-correto (recência colacor: o recorte é a coluna FONTE, escopo da própria migration, e o seed tem o
+NULL de propósito) e 8 falso-positivos (função de referência, perf, predicado positivo). Sem gate:
+separar o recorte cego do escopo legítimo exige saber se o NULL é estado válido — é julgamento, não
+forma; fica a assinatura no `money-path.md`. O pulo com aviso também tinha uma ocorrência: o D da
+consolidação (`IF n = 0 THEN RAISE WARNING`), o único `RAISE WARNING` de assert positivo nas provas (o
+outro, no selo de aprovação, é marca positiva). Medido em 05/10: no seed o 4080 passa o filtro de
+`v_sku_parametros_sugeridos` e o WARNING nunca disparava — o pulo só aprovaria a cadeia quebrada nos
+sugeridos; virou `RAISE EXCEPTION`.
+
+Falsificação, com controle verde na MESMA invocação: split — o físico do SKU2 anulado logo antes da
+medição deixa o ANTES verde (o bug) e o DEPOIS vermelho, no A4 e no A6; H3 — o helper recriado tratando
+`\` como curinga (os 5 termos só de barra viram NULL) deixa o ANTES em `0`, verde, e o DEPOIS vermelho;
+D — `v_sku_parametros_sugeridos` trocada por uma view de mesmo nome sem o 4080 dá, no ANTES, só o
+WARNING e o `✓ D`, e no DEPOIS `FAIL D` (rc 3). Uma execução por variante — as três provas fixam
+`LC_ALL=C` por dentro, rodar de novo com o shell em pt repetiria a mesma execução — e o JUIZ (strings
+fixas) em C e em pt_BR.UTF-8, os dois sem falha.
+
+P2 registrados sem conserto (verificados; nenhum é verde por ausência):
+- régua customer360 A1c — `eq` com os dois lados lidos do banco: só empatam (`""` = `""`) com o banco
+  INTEIRO fora, e aí A1a/A1b (esperado literal) derrubam a prova; a chave sumida sozinha já dá vermelho.
+- tint gate G35 — um 2º overload de `tint_gate_revalida` daria "more than one row": vermelho por
+  infraestrutura, nunca verde.
+- cockpit/defasagem A5/A11/D9b/D11 e auto-aprovação (piloto/v2) — o vermelho é certo, a mensagem do
+  RAISE desvia ("viu o número" quando a resposta SUMIU; rótulo sem `%`).
+- régua A1g (`fnulo`) — chave omitida ≡ JSON null para o consumidor TS (`== null`); A5b/A10c/A10d
+  PRECISAM dessa equivalência.
+- po-inexistente A1 — negativo legítimo ("VAZIO"), com controle positivo no mesmo estado antes e depois.
+- fixes-codex-711 F2b — `SELECT INTO` sem `STRICT` com 2 cabeçalhos: seleção ambígua, outra classe.
+- rpc-account-aware E e qtde-inteira-persist E/F — cenário impossível no schema (`NOT NULL`) / coberto
+  no mesmo bloco por A/A2/C.
+- cobertura — dos 8 de compras, só o `claim-disparo-cenario-b` está no núcleo do CI.
+- `supabase/migrations/20260906190615_reposicao_claim_disparo_cenario_b.sql:344` — o autoteste da
+  migration compara `(v_ret ->> 'claimed') <> 'false'`, NULL-cego; corpo de migration, fora do escopo
+  (e `supabase/migrations/` não se toca).

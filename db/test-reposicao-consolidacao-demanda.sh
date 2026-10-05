@@ -289,6 +289,8 @@ echo "   ✓ C"
 # ── Cenário D: propagação end-to-end até v_sku_parametros_sugeridos ───────────
 # (a demanda do destino herda a soma via v_sku_classificacao_abc_xyz → não recriamos
 #  essa view; se a cadeia estiver certa, o 4080 sai com 3.5/dia nos sugeridos)
+# O 4080 AUSENTE é falha, não aviso: no seed ele passa o filtro da view (medido em 2026-10-05, o WARNING
+# nunca disparava) — o `RAISE WARNING` antigo aprovava com a cadeia quebrada só nos sugeridos.
 echo "→ D. v_sku_parametros_sugeridos: destino herda 3.5/dia; antigos ausentes…"
 P -v ON_ERROR_STOP=1 -qAt <<'SQL'
 DO $$
@@ -297,7 +299,7 @@ BEGIN
   SELECT count(*), max(demanda_media_diaria) INTO n, d
     FROM v_sku_parametros_sugeridos WHERE empresa='OBEN' AND sku_codigo_omie=4080;
   IF n = 0 THEN
-    RAISE WARNING 'D: 4080 não apareceu em v_sku_parametros_sugeridos (filtro de classificação/valor?) — propagação já provada em B; conferir em prod';
+    RAISE EXCEPTION 'FAIL D: 4080 sumiu de v_sku_parametros_sugeridos (a cadeia de views quebrou antes dos sugeridos)';
   ELSIF d IS DISTINCT FROM 3.5 THEN
     RAISE EXCEPTION 'FAIL D: demanda do destino nos sugeridos esperava 3.5, veio %', d;
   END IF;
