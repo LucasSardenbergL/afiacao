@@ -90,6 +90,17 @@
  * bloqueia); tokens de uma ANTERIOR ⇒ `desatualizadas` com `casouPor: 'tokens'` (BLOQUEIA); sem texto
  * para o re-teste ⇒ `INCERTA`. As checagens exatas vêm antes e não mudam — taxonomia e a exceção
  * conservadora em `corpo-esperado.ts`.
+ *
+ * ## A irmã AUSENTE: a vigência no repo separa "não aplicada" de "aposentada" (2026-10-05)
+ *
+ * O conjunto acoplado (`alvosDeCorpo`) tinha o CORPO conferido e a EXISTÊNCIA não: a irmã medida ausente
+ * (`rpc|g|NAO|…`) caía em "sem corpo comparável" e a leva saía LIBERADA — `f` no ar chamando `g`, que a
+ * migration não criou, e a falha só em runtime (Codex, rodada 3 do #2757, reproduzido). Bloquear toda irmã
+ * ausente seria o bloqueio falso: ausente também é a irmã que uma migration POSTERIOR aposentou (DROP, SET
+ * SCHEMA, RENAME), e o histórico de corpos só modela CREATE. Quem separa as duas é `CorposEsperados.vigencia`
+ * — o `modelarRepo` reduzido ao nome: VIGENTE e ausente ⇒ `ausentes` (BLOQUEADA, com a ação e a ressalva de
+ * DML); APOSENTADA ⇒ fora do conjunto, presente ou não; vigência INDETERMINADA, ou nome que o modelo não
+ * conhece, e ausente ⇒ INCERTA.
  */
 import {
   classificarComTokens,
@@ -339,6 +350,17 @@ interface RpcAusente {
   rpc: string;
   edges: string[];
   familia: number;
+  /**
+   * Presente quando a ausente é IRMÃ (o conjunto acoplado), não RPC da leva: nenhuma edge a chama, e a ação
+   * sai do repo — de onde ela veio e o último CREATE vivo dela —, não da família.
+   */
+  irma?: { de: readonly OrigemDaIrma[]; ultimosCreates: readonly string[] };
+}
+
+/** De onde uma irmã entrou no conjunto acoplado: a RPC da leva e a migration (a última dela) que as junta. */
+interface OrigemDaIrma {
+  alvo: string;
+  migration: string;
 }
 
 /** Uma função cujo corpo em prod é um corpo que o repo commitou ANTES do atual — o eixo 5. */
@@ -430,7 +452,42 @@ export interface CorposEsperados {
    * `funcoesPublic > 0` prova acesso ao catálogo e não prova comparação (achado do Codex).
    */
   funcoesConhecidas: number;
+  /**
+   * A vigência de cada nome `public` no repo (`vigenciaPorNome` sobre o `modelarRepo`). É ela que separa a
+   * irmã AUSENTE que a migration não criou (bloqueia) da que uma migration posterior aposentou (não conta)
+   * — o `historico` só modela CREATE, e as duas leem igual nele. Nome fora do mapa é INDETERMINADA:
+   * ausente ≠ vigente, e ausente ≠ aposentada.
+   */
+  vigencia: ReadonlyMap<string, VigenciaNoRepo>;
 }
+
+/**
+ * A vigência de um NOME `public` ao fim das migrations da ref: o estado TERMINAL que o `modelarRepo`
+ * (`deriva-corpo.ts`) modela por identidade, reduzido ao NOME porque é o nome que a sonda mede
+ * (`pg_proc.proname`). Este arquivo não pode importar `deriva-corpo.ts` (ele importa este — ciclo): quem
+ * monta o `CorposEsperados` traduz o modelo (`vigenciaPorNome`).
+ */
+export type VigenciaNoRepo =
+  /** Alguma identidade do nome segue viva; `ultimosCreates` = o último CREATE de cada identidade viva. */
+  | { estado: 'VIGENTE'; ultimosCreates: readonly string[] }
+  /** Toda identidade saiu de `public` (DROP, SET SCHEMA, RENAME TO) depois do último CREATE. */
+  | { estado: 'APOSENTADA'; por: readonly string[] }
+  /** O modelo não afirma: assinatura que não se resolve, CREATE que o extrator perdeu, nome sem identidade. */
+  | { estado: 'INDETERMINADA'; motivo: string };
+
+/** O nome que o modelo do repo não conhece: nem vigente nem aposentado — "não sei", que nunca libera ausência. */
+const NOME_FORA_DO_MODELO: VigenciaNoRepo = {
+  estado: 'INDETERMINADA',
+  motivo: 'o modelo do repo (`modelarRepo`) não conhece este nome',
+};
+
+/**
+ * "APLIQUE" sozinho manda colar o ARQUIVO — e migration traz DML além da DDL (achado do Codex, 2026-09-26):
+ * a `20260606190000` roda um backfill sobre pedidos vivos, que o selo de aprovação (#2187/#2258) não espera
+ * ver reescritos depois de aprovados. Uma linha só, para o corpo anterior e a irmã ausente dizerem o mesmo.
+ */
+const RESSALVA_DML =
+  '    ⚠️  reaplicar o ARQUIVO inteiro re-executa o que mais ele traz: se houver DML/backfill (UPDATE/INSERT/DELETE, ou SELECT de função que escreve), cole só o CREATE OR REPLACE da função — ex.: a `20260606190000` (qtde inteira) traz um backfill one-time sobre pedidos vivos';
 
 /**
  * O julgamento. Fail-closed nos três eixos do cabeçalho — e `INCERTA` é um estado SEPARADO de
@@ -500,18 +557,48 @@ export function julgarPrecondicao(
 
   // As irmãs da migration (o conjunto acoplado) também têm de ter sido MEDIDAS (Codex, confirmação P1): sem a
   // linha `rpc`, a irmã sumia da sonda e virava "indecidível" — liberando a anterior que ela podia rodar.
+  // E têm de EXISTIR (Codex, rodada 3 do #2757): medida ausente, ela caía em "sem corpo comparável" e a leva
+  // saía LIBERADA. A ausência só não conta quando o repo APOSENTOU a irmã — e aposentada não conta nem presente:
+  // mandar APLICAR o CREATE de uma função que uma migration posterior removeu é ordem errada, não cautela.
   const nomesAlvo = new Set(alvos.map((a) => a.rpc));
+  const origem = origemDasIrmas(alvos, corpos.historico);
+  const naoConferidas: RpcNaoConferida[] = [];
+  /** Irmãs que o eixo de corpo NÃO confere: as ausentes (o veredito é da existência) e as aposentadas. */
+  const foraDoCorpo = new Set<string>();
+  const irmasIndeterminadas: string[] = [];
   for (const rpc of alvosDeCorpo(alvos, corpos.historico)) {
-    if (!nomesAlvo.has(rpc) && !porNome.has(rpc)) naoMedidos.push(rpc);
+    if (nomesAlvo.has(rpc)) continue;
+    const m = porNome.get(rpc);
+    if (m === undefined) {
+      naoMedidos.push(rpc);
+      continue;
+    }
+    const vig = corpos.vigencia.get(rpc) ?? NOME_FORA_DO_MODELO;
+    // Presente e (vigente | indeterminada): o eixo de corpo a confere, como sempre.
+    if (vig.estado !== 'APOSENTADA' && m.existe) continue;
+    foraDoCorpo.add(rpc);
+    if (vig.estado === 'APOSENTADA') {
+      naoConferidas.push({ rpc, motivo: motivoAposentada(vig.por, m.existe) });
+    } else if (vig.estado === 'VIGENTE') {
+      ausentes.push({ rpc, edges: [], familia: m.familia, irma: { de: origem.get(rpc) ?? [], ultimosCreates: vig.ultimosCreates } });
+    } else {
+      irmasIndeterminadas.push(`\`${rpc}\` (${vig.motivo})`);
+    }
+  }
+  if (irmasIndeterminadas.length > 0) {
+    motivos.push(
+      `irmã(s) do conjunto acoplado AUSENTE(S) em prod com vigência INDETERMINADA no repo — ${irmasIndeterminadas.join('; ')}: ` +
+        'migration aplicada pela metade (bloqueia) e aposentadoria legítima (não conta) leem igual daqui — o "não sei" ' +
+        'é do modelo do REPO, não da sonda: leia à mão as migrations que a tocam antes de aplicar ou de liberar',
+    );
   }
 
-  // O eixo 5 propriamente. Só olha o que EXISTE: uma RPC ausente já é bloqueio pelo eixo antigo, e
-  // classificar corpo de função que não está lá seria ruído sobre um veredito já fechado.
-  const ausenteOuNaoMedida = new Set([...ausentes.map((a) => a.rpc), ...naoMedidos]);
+  // O eixo 5 propriamente. Só olha o que EXISTE e conta: a ausente já tem veredito pela existência, e
+  // classificar corpo de função que não está lá — ou que o repo aposentou — seria ruído sobre um veredito fechado.
+  const ausenteOuNaoMedida = new Set([...ausentes.map((a) => a.rpc), ...naoMedidos, ...foraDoCorpo]);
   const edgesPorRpc = new Map(alvos.map((a) => [a.rpc, a.edges]));
   const desatualizadas: RpcDesatualizada[] = [];
   const cosmeticas: RpcCosmetica[] = [];
-  const naoConferidas: RpcNaoConferida[] = [];
   const semTexto: string[] = [];
   const modoDivergente: string[] = [];
   // Canal de detalhe NÃO íntegro (marcador, autoteste hex, contagens/md5 que não fecham): o texto não é
@@ -609,15 +696,39 @@ export function alvosDeCorpo(
   alvos: readonly AlvoRpc[],
   historico: ReadonlyMap<string, readonly VersaoDeCorpo[]>,
 ): string[] {
-  const fora = new Set(alvos.map((a) => a.rpc));
+  const fora = new Set([...alvos.map((a) => a.rpc), ...origemDasIrmas(alvos, historico).keys()]);
+  return [...fora].sort((a, b) => a.localeCompare(b, 'en'));
+}
+
+/**
+ * O conjunto acoplado com a PROCEDÊNCIA de cada função: de qual RPC da leva e de qual migration ela veio.
+ * Uma verdade só — `alvosDeCorpo` é a projeção dos nomes; o julgamento usa a procedência para dizer ao
+ * operador QUAL migration não foi aplicada por inteiro.
+ */
+function origemDasIrmas(
+  alvos: readonly AlvoRpc[],
+  historico: ReadonlyMap<string, readonly VersaoDeCorpo[]>,
+): Map<string, OrigemDaIrma[]> {
+  const origem = new Map<string, OrigemDaIrma[]>();
   for (const alvo of alvos) {
     const versoes = historico.get(`public.${alvo.rpc}`);
     if (versoes === undefined || versoes.length === 0) continue;
-    for (const chave of irmasDaMigration(historico, versoes[versoes.length - 1].migration)) {
-      if (chave.startsWith('public.')) fora.add(chave.slice('public.'.length));
+    const migration = versoes[versoes.length - 1].migration;
+    for (const chave of irmasDaMigration(historico, migration)) {
+      if (!chave.startsWith('public.')) continue;
+      const rpc = chave.slice('public.'.length);
+      origem.set(rpc, [...(origem.get(rpc) ?? []), { alvo: alvo.rpc, migration }]);
     }
   }
-  return [...fora].sort((a, b) => a.localeCompare(b, 'en'));
+  return origem;
+}
+
+/** Por que a irmã aposentada não conta — e, se ela sobreviveu em prod, quem acusa isso (não é este gate). */
+function motivoAposentada(por: readonly string[], existeEmProd: boolean): string {
+  const quem = por.map((p) => `\`${p}\``).join(', ');
+  return existeEmProd
+    ? `APOSENTADA no repo (${quem}), mas EXISTE em prod — não conta para a leva; a sobrevivente é achado do \`deriva:corpo:prod\` (RESSUSCITADA)`
+    : `APOSENTADA no repo (${quem}) — a ausência em prod é a esperada; não conta para a leva`;
 }
 
 /**
@@ -673,12 +784,7 @@ export function relatarPrecondicao(v: VereditoPrecondicao): string {
     );
     if (v.estado === 'BLOQUEADA') {
       linhas.push(`    o repo já commitou \`${d.esperada}\` depois dela ⇒ APLIQUE essa migration`);
-      // "APLIQUE" sozinho manda colar o ARQUIVO — e migration traz DML além da DDL (achado do Codex,
-      // 2026-09-26): a `20260606190000` roda um backfill sobre pedidos vivos, que o selo de aprovação
-      // (#2187/#2258) não espera ver reescritos depois de aprovados.
-      linhas.push(
-        '    ⚠️  reaplicar o ARQUIVO inteiro re-executa o que mais ele traz: se houver DML/backfill (UPDATE/INSERT/DELETE, ou SELECT de função que escreve), cole só o CREATE OR REPLACE da função — ex.: a `20260606190000` (qtde inteira) traz um backfill one-time sobre pedidos vivos',
-      );
+      linhas.push(RESSALVA_DML);
       linhas.push(
         '    ⚠️  não espere erro: a RPC velha aceita o payload novo e DESCARTA o campo em silêncio',
       );
@@ -691,6 +797,10 @@ export function relatarPrecondicao(v: VereditoPrecondicao): string {
     }
   }
   for (const a of v.ausentes) {
+    if (a.irma !== undefined) {
+      linhas.push(...relatarIrmaAusente(a.rpc, a.irma, v.estado));
+      continue;
+    }
     const acao =
       a.familia > 0
         ? `família \`${familiaDe(a.rpc)}_*\` tem ${a.familia} função(ões) em prod ⇒ o domínio existe e falta ESTA migration`
@@ -699,4 +809,27 @@ export function relatarPrecondicao(v: VereditoPrecondicao): string {
     linhas.push(`    ${acao}`);
   }
   return [...linhas, ...rodape].join('\n');
+}
+
+/**
+ * A irmã AUSENTE no relatório. Nenhuma edge a chama, então a ação não sai da família — "diagnostique, não
+ * reaplique" é do ALVO de domínio vazio — e sim do repo: ela está VIVA lá, e o último CREATE é o que falta.
+ * INCERTA diagnostica sem dar ordem de aplicar, como o corpo anterior (Codex, confirmação P2).
+ */
+function relatarIrmaAusente(rpc: string, irma: NonNullable<RpcAusente['irma']>, estado: Estado): string[] {
+  const de = irma.de.map((o) => `\`${o.alvo}\` em \`${o.migration}\``).join('; ');
+  const ultimos = irma.ultimosCreates.map((m) => `\`${m}\``).join(', ');
+  const linhas = [
+    `  · \`${rpc}\` ← (nenhuma edge da leva a chama — irmã de ${de}: o conjunto ACOPLADO)`,
+    `    AUSENTE em prod e VIVA no repo (último CREATE: ${ultimos}) — a migration não foi aplicada por inteiro, ou houve DROP manual`,
+  ];
+  if (estado !== 'BLOQUEADA') {
+    return [...linhas, '    mas a medição é INCERTA: corrija a medição e rode de novo ANTES de aplicar qualquer migration'];
+  }
+  return [
+    ...linhas,
+    `    ⇒ APLIQUE essa migration (${ultimos})`,
+    RESSALVA_DML,
+    '    ⚠️  não espere erro no deploy: a edge sobe, e o que depende da irmã quebra só em RUNTIME',
+  ];
 }

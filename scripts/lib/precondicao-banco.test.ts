@@ -3,7 +3,7 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { historicoDeCorpos, md5Exato, type VersaoDeCorpo } from './corpo-esperado';
+import { type CorpoVivo, historicoDeCorpos, md5Exato, type VersaoDeCorpo } from './corpo-esperado';
 
 import {
   agruparAlvos,
@@ -21,6 +21,7 @@ import {
   parsearSondaPrecondicao,
   relatarPrecondicao,
   type TextosVivos,
+  type VigenciaNoRepo,
 } from './precondicao-banco';
 import { md5DeTokens } from './tokens-sql';
 
@@ -60,6 +61,8 @@ function corposCom(
     inventarioDaRef: 721,
     migrationsLidas: Math.max(versoes.length, 1),
     funcoesConhecidas: versoes.length === 0 ? 0 : 1,
+    // Vazia de propósito: estes cenários não têm irmã, e a vigência só decide sobre irmã.
+    vigencia: new Map(),
   };
 }
 
@@ -424,6 +427,7 @@ describe('eixo 5 — "existe" ≠ "está na versão que a edge espera" (#2428)',
       inventarioDaRef: 0,
       migrationsLidas: 0,
       funcoesConhecidas: 0,
+      vigencia: new Map(),
     });
     expect(v.estado).toBe('INCERTA');
     expect(v.motivos.join('\n')).toMatch(/CEGO/);
@@ -435,6 +439,7 @@ describe('eixo 5 — "existe" ≠ "está na versão que a edge espera" (#2428)',
       inventarioDaRef: 721,
       migrationsLidas: 33,
       funcoesConhecidas: 0,
+      vigencia: new Map(),
     });
     expect(v.estado).toBe('INCERTA');
     expect(v.motivos.join('\n')).toMatch(/NENHUMA função/);
@@ -446,6 +451,7 @@ describe('eixo 5 — "existe" ≠ "está na versão que a edge espera" (#2428)',
       inventarioDaRef: 721,
       migrationsLidas: 1,
       funcoesConhecidas: 1,
+      vigencia: new Map(),
     });
     expect(v.estado).toBe('LIBERADA');
     expect(v.naoConferidas[0].motivo).toMatch(/nenhuma migration commita/);
@@ -661,7 +667,7 @@ describe('eixo 5 — o que o md5 exato chama de DERIVA é re-testado por TOKENS'
         dialetoOk: true,
       },
       0,
-      { historico, inventarioDaRef: 721, migrationsLidas: 1, funcoesConhecidas: historico.size },
+      { historico, inventarioDaRef: 721, migrationsLidas: 1, funcoesConhecidas: historico.size, vigencia: new Map() },
       { porNome: new Map([[rpc, [prodTxt]]]), falhas: [] },
     );
     expect(v.estado).toBe('LIBERADA');
@@ -700,7 +706,7 @@ describe('eixo 5 — o que o md5 exato chama de DERIVA é re-testado por TOKENS'
         dialetoOk: true,
       },
       0,
-      { historico, inventarioDaRef: 2, migrationsLidas: 2, funcoesConhecidas: historico.size },
+      { historico, inventarioDaRef: 2, migrationsLidas: 2, funcoesConhecidas: historico.size, vigencia: new Map() },
       { porNome: new Map([['f', [prodTxt]]]), falhas: [] },
     );
     expect(v.estado).toBe('BLOQUEADA');
@@ -826,7 +832,7 @@ describe('eixo 5 — os modos de standard_conforming_strings têm de CONCORDAR n
       [{ rpc, edges: ['edge-x'] }],
       { medicoes: [{ rpc, existe: true, familia: 9 }], corpos: new Map([[rpc, { md5s: [md5Exato(prodTxt)], overloads: 1 }]]), funcoesPublic: 1200, fim: true, dialetoOk: true },
       0,
-      { historico, inventarioDaRef: 2, migrationsLidas: 2, funcoesConhecidas: historico.size },
+      { historico, inventarioDaRef: 2, migrationsLidas: 2, funcoesConhecidas: historico.size, vigencia: new Map() },
       { porNome: new Map([[rpc, [prodTxt]]]), falhas: [] },
     );
     expect(v.estado).not.toBe('LIBERADA');
@@ -870,7 +876,7 @@ describe('eixo 5 — os modos de standard_conforming_strings têm de CONCORDAR n
       [{ rpc: 'f_chamada', edges: ['edge-x'] }],
       { medicoes: [{ rpc: 'f_chamada', existe: true, familia: 2 }], corpos: new Map([['f_chamada', { md5s: [md5Exato('SELECT 1;')], overloads: 1 }]]), funcoesPublic: 1200, fim: true, dialetoOk: true },
       0,
-      { historico, inventarioDaRef: 2, migrationsLidas: 2, funcoesConhecidas: 2 },
+      { historico, inventarioDaRef: 2, migrationsLidas: 2, funcoesConhecidas: 2, vigencia: new Map() },
       { porNome: new Map([['f_chamada', ['SELECT 1;']]]), falhas: [] },
     );
     expect(v.estado).toBe('INCERTA');
@@ -882,6 +888,132 @@ describe('eixo 5 — os modos de standard_conforming_strings têm de CONCORDAR n
     expect(v.estado).toBe('INCERTA');
     expect(v.desatualizadas.map((d) => d.emProd)).toEqual([VELHA]);
     const t = relatarPrecondicao(v);
+    expect(t).not.toContain('APLIQUE essa migration');
+    expect(t).toContain('corrija a medição');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// Codex, rodada 3 do #2757 (P1 PREEXISTENTE, executado): a irmã da migration medida como AUSENTE
+// (`rpc|g|NAO|…`, `n|g|0`) caía em "sem corpo textual comparável" e a leva saía LIBERADA — `f` no ar
+// chamando `g`, que a migration não criou, e a falha só em runtime. Mas ausente também é a irmã que
+// uma migration POSTERIOR aposentou (DROP, SET SCHEMA, RENAME), e o histórico de corpos só modela
+// CREATE: quem separa as duas é a vigência no repo (`modelarRepo`, via `CorposEsperados.vigencia`).
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+describe('irmã AUSENTE em prod — a vigência no repo decide (Codex, rodada 3 do #2757)', () => {
+  const M = '20260908215704_desconto_valor_atravessa_os_escritores.sql';
+  const ANTERIOR = '20260908163659_pedido_nasce_com_identidade_de_linha.sql';
+  const DROP = '20260915000000_aposenta_g_irma.sql';
+  const corpo = (migration: string, c: string): VersaoDeCorpo => ({ migration, md5: md5Exato(c), corpo: c });
+  const CORPO_F = 'BEGIN RETURN public.g_irma(); END;';
+  const CORPO_G = 'BEGIN RETURN 7; END;';
+  const CORPO_G_ANTERIOR = 'BEGIN RETURN 6; END;';
+  const ALVO_F: AlvoRpc[] = [{ rpc: 'f_chama_g', edges: ['edge-x'] }];
+  const historico = new Map([
+    ['public.f_chama_g', [corpo(M, CORPO_F)]],
+    ['public.g_irma', [corpo(ANTERIOR, CORPO_G_ANTERIOR), corpo(M, CORPO_G)]],
+  ]);
+  const VIGENTE: VigenciaNoRepo = { estado: 'VIGENTE', ultimosCreates: [M] };
+  /** prod: `f` presente com o corpo da M (EM_DIA); `g` MEDIDA — ausente por default, sem linha de corpo. */
+  const leitura = (g: { existe: boolean; corpo?: string } = { existe: false }): LeituraSonda => {
+    const corpos = new Map<string, CorpoVivo>([['f_chama_g', { md5s: [md5Exato(CORPO_F)], overloads: 1 }]]);
+    if (g.corpo !== undefined) corpos.set('g_irma', { md5s: [md5Exato(g.corpo)], overloads: 1 });
+    return {
+      medicoes: [
+        { rpc: 'f_chama_g', existe: true, familia: 3 },
+        { rpc: 'g_irma', existe: g.existe, familia: 0 },
+      ],
+      corpos,
+      funcoesPublic: 1200,
+      fim: true,
+      dialetoOk: true,
+    };
+  };
+  const corposCom = (vigencia: ReadonlyMap<string, VigenciaNoRepo>): CorposEsperados => ({
+    historico,
+    inventarioDaRef: 2,
+    migrationsLidas: 2,
+    funcoesConhecidas: 2,
+    vigencia,
+  });
+  const julgar = (vigencia: ReadonlyMap<string, VigenciaNoRepo>, l = leitura(), indirecoes = 0) =>
+    julgarPrecondicao(ALVO_F, l, indirecoes, corposCom(vigencia), SEM_TEXTOS);
+  const com = (g: VigenciaNoRepo) => new Map<string, VigenciaNoRepo>([['f_chama_g', VIGENTE], ['g_irma', g]]);
+
+  it('P1 (reprodutor do Codex): irmã VIGENTE e AUSENTE ⇒ BLOQUEADA — a migration não foi aplicada por inteiro', () => {
+    const v = julgar(com(VIGENTE));
+    expect(v.estado).toBe('BLOQUEADA');
+    expect(v.ausentes).toEqual([
+      { rpc: 'g_irma', edges: [], familia: 0, irma: { de: [{ alvo: 'f_chama_g', migration: M }], ultimosCreates: [M] } },
+    ]);
+    // Deixou de ser "fora do alcance": o gate AFIRMOU a ausência.
+    expect(v.naoConferidas.map((n) => n.rpc)).not.toContain('g_irma');
+  });
+
+  it('controle (mesma invocação): a irmã PRESENTE com o corpo da última ⇒ LIBERADA — existir é o que a regra cobra', () => {
+    const v = julgar(com(VIGENTE), leitura({ existe: true, corpo: CORPO_G }));
+    expect(v.estado).toBe('LIBERADA');
+    expect(v.ausentes).toEqual([]);
+  });
+
+  it('controle: irmã VIGENTE presente com o corpo ANTERIOR segue BLOQUEADA pelo eixo de corpo (o que já valia)', () => {
+    const v = julgar(com(VIGENTE), leitura({ existe: true, corpo: CORPO_G_ANTERIOR }));
+    expect(v.estado).toBe('BLOQUEADA');
+    expect(v.desatualizadas.map((d) => [d.rpc, d.emProd])).toEqual([['g_irma', ANTERIOR]]);
+  });
+
+  it('irmã APOSENTADA (DROP/SET SCHEMA/RENAME posterior) e ausente ⇒ não conta: LIBERADA, e o relatório diz por quê', () => {
+    const v = julgar(com({ estado: 'APOSENTADA', por: [DROP] }));
+    expect(v.estado).toBe('LIBERADA');
+    expect(v.ausentes).toEqual([]);
+    const g = v.naoConferidas.find((n) => n.rpc === 'g_irma');
+    expect(g?.motivo).toContain('APOSENTADA');
+    expect(g?.motivo).toContain(DROP);
+  });
+
+  it('irmã APOSENTADA mas PRESENTE com o corpo ANTERIOR ⇒ não conta: o gate não manda APLICAR o CREATE de uma função que o repo removeu', () => {
+    const v = julgar(com({ estado: 'APOSENTADA', por: [DROP] }), leitura({ existe: true, corpo: CORPO_G_ANTERIOR }));
+    expect(v.estado).toBe('LIBERADA');
+    expect(v.desatualizadas).toEqual([]);
+    expect(v.naoConferidas.find((n) => n.rpc === 'g_irma')?.motivo).toContain('EXISTE em prod');
+  });
+
+  it('irmã com vigência INDETERMINADA e ausente ⇒ INCERTA, com o motivo do modelo', () => {
+    const v = julgar(com({ estado: 'INDETERMINADA', motivo: 'assinatura que não se resolve' }));
+    expect(v.estado).toBe('INCERTA');
+    expect(v.ausentes).toEqual([]);
+    expect(v.motivos.join('\n')).toMatch(/g_irma.*assinatura que não se resolve/);
+  });
+
+  it('irmã ausente que o modelo do repo NÃO conhece (fora do mapa) ⇒ INCERTA — ausente ≠ vigente, e ≠ aposentada', () => {
+    const v = julgar(new Map([['f_chama_g', VIGENTE]]));
+    expect(v.estado).toBe('INCERTA');
+    expect(v.ausentes).toEqual([]);
+    expect(v.motivos.join('\n')).toMatch(/g_irma/);
+  });
+
+  it('irmã que TAMBÉM é RPC da leva e está ausente: um alvo só, com as edges — sem segunda entrada de irmã', () => {
+    const v = julgarPrecondicao([...ALVO_F, { rpc: 'g_irma', edges: ['edge-y'] }], leitura(), 0, corposCom(com(VIGENTE)), SEM_TEXTOS);
+    expect(v.estado).toBe('BLOQUEADA');
+    expect(v.ausentes).toEqual([{ rpc: 'g_irma', edges: ['edge-y'], familia: 0 }]);
+  });
+
+  it('relatório BLOQUEADA: nomeia a irmã, de onde ela veio e o último CREATE, e manda APLICAR com a ressalva de DML — sem a ação de família', () => {
+    const t = relatarPrecondicao(julgar(com(VIGENTE)));
+    expect(t).toContain('`g_irma`');
+    expect(t).toContain('nenhuma edge da leva a chama');
+    expect(t).toContain(`\`f_chama_g\` em \`${M}\``);
+    expect(t).toContain('APLIQUE essa migration');
+    expect(t).toContain('reaplicar o ARQUIVO inteiro re-executa');
+    // "diagnostique, não reaplique" é a ação do ALVO ausente de família vazia — a irmã não a herda.
+    expect(t).not.toContain('diagnostique');
+  });
+
+  it('relatório INCERTA com irmã VIGENTE ausente: diagnostica, mas não manda aplicar — manda remedir', () => {
+    const v = julgar(com(VIGENTE), leitura(), 1);
+    expect(v.estado).toBe('INCERTA');
+    const t = relatarPrecondicao(v);
+    expect(t).toContain('`g_irma`');
     expect(t).not.toContain('APLIQUE essa migration');
     expect(t).toContain('corrija a medição');
   });

@@ -31,6 +31,7 @@ import {
   saidaDerivaComoPsql,
   textosDaLeitura,
   tokensSql,
+  vigenciaPorNome,
 } from './deriva-corpo';
 import { mesmosTokensNoModo } from './tokens-sql';
 
@@ -374,6 +375,78 @@ END $$;`;
   it('conta migrations e declarações — os controles positivos de que o repo foi lido', () => {
     const m = modelarRepo([mig('20260101_a.sql', fn('f', '', ' SELECT 1 ') + fn('g', '', ' SELECT 2 ')), mig('20260102_b.sql', 'SELECT 1;')]);
     expect([m.migrations, m.declaracoes]).toEqual([2, 2]);
+  });
+});
+
+// O gate do pacote mede a irmã da migration pelo NOME (`pg_proc.proname`) e não pode importar este
+// arquivo (ciclo): a vigência chega a ele reduzida ao nome, pelo `CorposEsperados` (Codex, rodada 3 do #2757).
+describe('vigenciaPorNome — o modelo do repo reduzido ao NOME que a sonda do gate mede', () => {
+  const vig = (...migs: { nome: string; sql: string }[]) => vigenciaPorNome(modelarRepo(migs));
+
+  it('criada e nunca removida ⇒ VIGENTE, com o ÚLTIMO CREATE', () => {
+    const v = vig(mig('20260101_a.sql', fn('g', '', ' SELECT 1 ')), mig('20260102_b.sql', fn('g', '', ' SELECT 2 ')));
+    expect(v.get('g')).toEqual({ estado: 'VIGENTE', ultimosCreates: ['20260102_b.sql'] });
+  });
+
+  it('DROP posterior ⇒ APOSENTADA, com quem a removeu; CREATE depois do DROP ⇒ VIGENTE de novo', () => {
+    const dois = [mig('20260101_a.sql', fn('g', '', ' SELECT 1 ')), mig('20260102_b.sql', 'DROP FUNCTION IF EXISTS public.g();')];
+    expect(vig(...dois).get('g')).toEqual({ estado: 'APOSENTADA', por: ['20260102_b.sql'] });
+    const tres = [...dois, mig('20260103_c.sql', fn('g', '', ' SELECT 3 '))];
+    expect(vig(...tres).get('g')).toEqual({ estado: 'VIGENTE', ultimosCreates: ['20260103_c.sql'] });
+  });
+
+  it('SET SCHEMA e RENAME TO também tiram de `public` ⇒ APOSENTADA', () => {
+    const cria = mig('20260101_a.sql', fn('g', '', ' SELECT 1 '));
+    expect(vig(cria, mig('20260102_b.sql', 'ALTER FUNCTION public.g() SET SCHEMA private;')).get('g')?.estado).toBe('APOSENTADA');
+    expect(vig(cria, mig('20260102_b.sql', 'ALTER FUNCTION public.g() RENAME TO h;')).get('g')?.estado).toBe('APOSENTADA');
+  });
+
+  it('overload: basta UMA identidade viva para o NOME estar VIGENTE — a sonda mede o nome', () => {
+    const v = vig(
+      mig('20260101_a.sql', fn('g', 'p int', ' SELECT 1 ') + fn('g', 'p text', ' SELECT 2 ')),
+      mig('20260102_b.sql', 'DROP FUNCTION public.g(int);'),
+    );
+    expect(v.get('g')).toEqual({ estado: 'VIGENTE', ultimosCreates: ['20260101_a.sql'] });
+  });
+
+  it('todas as identidades aposentadas, por migrations diferentes ⇒ APOSENTADA com as duas', () => {
+    const v = vig(
+      mig('20260101_a.sql', fn('g', 'p int', ' SELECT 1 ') + fn('g', 'p text', ' SELECT 2 ')),
+      mig('20260102_b.sql', 'DROP FUNCTION public.g(int);'),
+      mig('20260103_c.sql', 'DROP FUNCTION public.g(text);'),
+    );
+    expect(v.get('g')).toEqual({ estado: 'APOSENTADA', por: ['20260102_b.sql', '20260103_c.sql'] });
+  });
+
+  it('assinatura que não se resolve, no DROP ou no CREATE ⇒ INDETERMINADA — a lista ilegível pode ter aposentado OU poupado', () => {
+    const cria = mig('20260101_a.sql', fn('g', '', ' SELECT 1 '));
+    expect(vig(cria, mig('20260102_b.sql', 'DROP FUNCTION public.g(t.c%TYPE);')).get('g')?.estado).toBe('INDETERMINADA');
+    expect(vig(mig('20260101_a.sql', fn('g', 'p t.c%TYPE', ' SELECT 1 '))).get('g')?.estado).toBe('INDETERMINADA');
+  });
+
+  it('CREATE que o extrator PERDEU depois da aposentadoria ⇒ INDETERMINADA — a aposentada pode ter voltado', () => {
+    const v = vig(
+      mig('20260101_a.sql', fn('g', '', ' SELECT 1 ')),
+      mig('20260102_b.sql', 'DROP FUNCTION public.g();'),
+      mig('20260103_c.sql', 'CREATE OR REPLACE FUNCTION "public"."g"() RETURNS int LANGUAGE sql AS $$ SELECT 3 $$;'),
+    );
+    expect(v.get('g')?.estado).toBe('INDETERMINADA');
+  });
+
+  it('nome que só o controle SOLTO viu (o extrator estrito nunca) ⇒ INDETERMINADA, não ausente do mapa', () => {
+    const v = vig(mig('20260101_a.sql', 'CREATE OR REPLACE FUNCTION "public"."citada"() RETURNS int LANGUAGE sql AS $$ SELECT 2 $$;'));
+    expect(v.get('citada')?.estado).toBe('INDETERMINADA');
+  });
+
+  it('fora de `public` não entra — a sonda do gate só mede `public`', () => {
+    const v = vig(mig('20260101_a.sql', 'CREATE FUNCTION private.x() RETURNS int LANGUAGE sql AS $$ SELECT 1 $$;'));
+    expect(v.has('x')).toBe(false);
+  });
+
+  it('nome no universo SEM identidade modelada ⇒ INDETERMINADA, nunca APOSENTADA (o fail-closed não depende do modelarRepo de hoje)', () => {
+    // O `modelarRepo` atual não produz isso; o contrato de `vigenciaPorNome` vale para qualquer modelo.
+    const modelo = { identidades: new Map(), nomes: new Set(['g']), migrations: 1, declaracoes: 1, perdidas: [], ilegiveis: [] };
+    expect(vigenciaPorNome(modelo).get('g')?.estado).toBe('INDETERMINADA');
   });
 });
 

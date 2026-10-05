@@ -21,6 +21,7 @@ import {
   type TextosVivos,
   TOKEN_SEM_CORPO,
   type VereditoPrecondicao,
+  type VigenciaNoRepo,
 } from './precondicao-banco';
 import { removerComentariosSql } from './sql-comentarios';
 import { md5DeTokens, mesmosTokens, tokensSql } from './tokens-sql';
@@ -409,6 +410,59 @@ export function modelarRepo(migrations: readonly MigrationLida[]): ModeloDoRepo 
     perdidas,
     ilegiveis: [...ilegiveis].sort((a, b) => a.localeCompare(b, 'en')),
   };
+}
+
+/**
+ * A vigência de cada NOME `public` ao fim das migrations — o `modelarRepo` reduzido à granularidade da sonda
+ * do gate do pacote, que mede `pg_proc.proname`. É o que deixa o gate separar a irmã AUSENTE que a migration
+ * não criou (bloqueia) da que uma posterior aposentou (não conta); chega a ele pelo `CorposEsperados`, porque
+ * `precondicao-banco.ts` não pode importar este arquivo (ciclo).
+ *
+ * Fail-closed por nome — o que o modelo não sustenta vira INDETERMINADA, nunca palpite:
+ *   · basta UMA identidade viva para o nome estar VIGENTE (a sonda mede o nome, não a assinatura);
+ *   · assinatura ilegível, no CREATE ou no DROP ⇒ INDETERMINADA: a lista que não se resolve pode ter
+ *     aposentado OU poupado a identidade viva;
+ *   · CREATE que o extrator perdeu (`perdidas`) só derruba a APOSENTADA — um CREATE a mais só acrescenta
+ *     vigência, mas pode ter trazido a aposentada de volta; nome que só o controle solto viu ⇒ INDETERMINADA.
+ *
+ * O limite é o do sensor, declarado: DROP por DDL dinâmica (`EXECUTE format(…)`) não tem alvo legível, e a
+ * função segue VIGENTE no modelo — a ausência dela vira bloqueio, nunca "explicada" por palpite.
+ */
+export function vigenciaPorNome(modelo: ModeloDoRepo): Map<string, VigenciaNoRepo> {
+  const ordenadas = (xs: Iterable<string>) => [...new Set(xs)].sort((a, b) => a.localeCompare(b, 'en'));
+  const perdidas = new Map<string, string[]>();
+  for (const p of modelo.perdidas) {
+    const i = p.indexOf('@');
+    const nome = p.slice(0, i);
+    perdidas.set(nome, [...(perdidas.get(nome) ?? []), p.slice(i + 1)]);
+  }
+  const porNome = new Map<string, EstadoDeIdentidade[]>();
+  for (const e of modelo.identidades.values()) porNome.set(e.nome, [...(porNome.get(e.nome) ?? []), e]);
+  const fora = new Map<string, VigenciaNoRepo>();
+  for (const nome of ordenadas([...modelo.nomes, ...perdidas.keys()])) {
+    const ids = porNome.get(nome) ?? [];
+    const vivas = ids.filter((e) => e.aposentadaPor === undefined);
+    const perdidasDoNome = perdidas.get(nome) ?? [];
+    if (modelo.ilegiveis.includes(nome)) {
+      fora.set(nome, {
+        estado: 'INDETERMINADA',
+        motivo: 'assinatura que não se resolve estaticamente (no CREATE ou no DROP) — o modelo não afirma se ela foi aposentada',
+      });
+    } else if (vivas.length > 0) {
+      fora.set(nome, { estado: 'VIGENTE', ultimosCreates: ordenadas(vivas.map((e) => e.versoes[e.versoes.length - 1].migration)) });
+    } else if (ids.length > 0 && perdidasDoNome.length === 0) {
+      fora.set(nome, { estado: 'APOSENTADA', por: ordenadas(ids.flatMap((e) => (e.aposentadaPor === undefined ? [] : [e.aposentadaPor]))) });
+    } else {
+      fora.set(nome, {
+        estado: 'INDETERMINADA',
+        motivo:
+          perdidasDoNome.length > 0
+            ? `CREATE que o extrator não reconheceu (${perdidasDoNome.join(', ')}) — a aposentada pode ter voltado por ele`
+            : 'nenhuma identidade modelada para este nome',
+      });
+    }
+  }
+  return fora;
 }
 
 /** Marca de formato do detalhe; o parser recusa outra. */

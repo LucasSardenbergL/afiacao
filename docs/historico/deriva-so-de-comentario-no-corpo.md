@@ -150,7 +150,8 @@ achou o desvio do espaço: o `\s` do JS ≠ o `space` do scan.l, e `SELECT <NBSP
   sem P0 nem P1 novo. O Codex comparou antes × depois em 46.656 combinações, sem nenhum bloqueio que
   tenha virado verde.
   - Restou um P1 **preexistente**: uma irmã da migration medida como AUSENTE libera a colagem. Corrigir
-    exige distinguir aposentadoria legítima, que o histórico do gate não modela. Ficou para fora (chip).
+    exige distinguir aposentadoria legítima, que o histórico do gate não modela. Ficou para fora (chip) —
+    fechado depois, com a vigência do `modelarRepo`: [irma-ausente-libera-a-colagem.md](irma-ausente-libera-a-colagem.md).
   - E um P2 preexistente: os leitores de fluxo ignoram `SET standard_conforming_strings = off` declarado
     na função. Não há nenhum nas migrations hoje.
 

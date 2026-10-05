@@ -1,0 +1,16 @@
+# Invariantes da VIGÊNCIA por nome (scripts/lib/deriva-corpo.ts → `vigenciaPorNome`) — Codex, rodada 3 do #2757.
+# @src: scripts/lib/deriva-corpo.ts
+# @test: scripts/lib/deriva-corpo.test.ts
+#
+# O gate do pacote decide a irmã AUSENTE por esta redução do `modelarRepo` ao nome: VIGENTE bloqueia,
+# APOSENTADA não conta, INDETERMINADA é INCERTA. Cada mutação troca um "não sei" por uma afirmação — ou o
+# lado que libera a colagem sobre ausência de dado, ou o que trava uma leva legítima.
+
+# CONTROLE+ : a aposentadoria some — toda identidade conta como viva.
+PEGA | controle+: aposentada conta como viva            | s/const vivas = ids\.filter\(\(e\) => e\.aposentadaPor === undefined\);/const vivas = ids;/
+PEGA | overload: uma identidade viva nao basta          | s/^    \} else if \(vivas\.length > 0\) \{/    } else if (vivas.length > 0 && vivas.length === ids.length) {/
+PEGA | assinatura ilegivel vira afirmacao               | s/^    if \(modelo\.ilegiveis\.includes\(nome\)\) \{/    if (false) {/
+PEGA | CREATE perdido nao derruba a aposentada          | s/ids\.length > 0 && perdidasDoNome\.length === 0/ids.length > 0/
+PEGA | nome so do controle solto some do mapa           | s/ordenadas\(\[\.\.\.modelo\.nomes, \.\.\.perdidas\.keys\(\)\]\)/ordenadas(modelo.nomes)/
+PEGA | sem identidade modelada vira aposentada          | s/ids\.length > 0 && perdidasDoNome\.length === 0/perdidasDoNome.length === 0/
+PEGA | ultimo CREATE vira o primeiro                    | s/e\.versoes\[e\.versoes\.length - 1\]\.migration/e.versoes[0].migration/
