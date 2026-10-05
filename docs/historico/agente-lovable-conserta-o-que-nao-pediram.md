@@ -11,10 +11,12 @@
 | | #2541 (2026-09-24) | #2579 (2026-09-26) |
 |---|---|---|
 | pedido | deploy verbatim da `omie-sync-sku-items` | deploy verbatim da `omie-sync-estoque` v1.2 (sessão do #2573) |
-| o que o agente fez certo | conferiu os hashes e publicou | conferiu os 7 `sha256` e publicou |
+| o que o agente fez certo | conferiu os 8 `sha256` e publicou | conferiu os 7 `sha256` e publicou |
 | o que fez sem pedido | editou `whatsapp-inbound` (`SupabaseClient<any>`) | leu `/tmp/observability/build-errors.log` e "corrigiu" `whatsapp-inbound` (`SupabaseClient<any>`) e `sync-reprocess` (`omie_pedido_id: Number(codigoPedido)`) |
 | commits do bot na `main` | `de48dff0a`, `a20f2fe30`, `5c9ddaff2` | `f84d7772e`, `eec8598d7` ("Changes") |
 | sintoma | `bun lint` vermelho em todo PR (`no-explicit-any`) | `sonda:fingerprint` vermelho na `main` |
+| alarme automático (CI do `push` → Issue `ci-main-red`) | run de `5c9ddaff2` `failure` às 17:38Z → #2542 às 17:52Z | run de `eec8598d7` `failure` às 10:03Z → #2582 às 10:22Z |
+| custo do turno | 1,6 crédito (deploy puro: ~0,9) | não registrado |
 | reparo | revert `1460ea5e7` | revert #2579 — com bump de `VERSAO` (o `sonda:bump` compara contra a main COM os "Changes"): `whatsapp-inbound` v1.1-revert-changes-lovable, `sync-reprocess` v1.9-revert-changes-lovable |
 
 ### O 3º, no meio desta entrega (2026-09-27) — um experimento quase controlado
@@ -217,3 +219,29 @@ não a intenção.
   que a plataforma reacordou (27/09 19:35Z, "Fix them") só leu e recusou. No git, nenhum commit do
   `gpt-engineer-app[bot]` em `supabase/functions/` desde o merge (o filtro casa `eec8598d7` e
   `f84d7772e`, os do #2579).
+
+## 8. O 2º emissor sem o sensor (2026-10-05)
+
+- **Outro briefing anterior ao #2596.** O pedido partia do fato de 24/09 e chegou em 05/10: cláusula
+  de escopo no Passo 2 com teste, o caso no `deploy.md` com `git log` do bot e `bun lint` depois do
+  deploy, e o registro aqui. A busca pelo SÍMBOLO (§7) achou os três na `main` num comando:
+  `blocoDeEscopo` dentro do `montarPrompt` (logo, no Passo 2), `[PACOTE_COLAGEM_PROIBE_EDITAR]`, o
+  parágrafo do `deploy.md` e a linha deste doc no README.
+- **O que faltava era "onde mais".** O sensor É o `git log origin/main --author=gpt-engineer-app
+  --since=<envio>`, mas só o Passo 2 do pacote mandava rodá-lo. O `pendencias:prompt` (o emissor de
+  "qualquer edge pelo nome", §7) fechava com "Depois: bun run sonda:sql" e mais nada. A instrução virou
+  uma constante só (`INSTRUCAO_POS_ENVIO` em `scripts/lib/prompt-deploy.ts`, texto movido byte a byte
+  do pacote), e os dois emissores a imprimem FORA da colagem. O `[PROMPT_MANDA_RODAR_O_SENSOR]` nasceu
+  vermelho (o stderr `✓ leva de 1 edge(s)…` sem o comando) e ficou verde.
+- **O `bun lint` depois do deploy não entrou, porque ele já roda sozinho.** Todo push do bot na `main`
+  dispara o CI (`on: push`), e o vermelho abre a Issue `ci-main-red`. Nos dois incidentes ela abriu
+  14 e 19 min depois do push (§1). Um lint manual repetiria o gate que pegou este mesmo caso, sem
+  mudar a decisão: edição fora do `types.ts` é exit 1 do sensor e revert por PR, cujo CI roda o lint.
+- **Medido:** de 27/09 18:00Z (o #2596 no ar) a 05/10 16:05Z, os 6 commits do `gpt-engineer-app[bot]`
+  na `main` tocaram só `src/integrations/supabase/types.ts`. Nenhuma edição de edge.
+- **Evidência:** as 5 suítes (`pendencias-prompt`, `pacote-entrega`, `pendencias-pacote`,
+  `prompt-deploy`, `lovable-sensor-edicao`) deram 147/147 verdes. O `bun run falsificar:prompt-escopo`
+  deu **38/38** (19 × `C`/`pt_BR.UTF-8`), com controle verde nos dois locales na MESMA invocação. O S07
+  foi reescrito: o texto saiu do pacote, e o trecho velho daria `SABOTAGEM_NAO_APLICOU`. Entram S17 (a
+  chamada no `pendencias:prompt`), S18 (o texto compartilhado sem o comando) e S19 (a instrução
+  vazando para dentro da colagem, que prova a asserção negativa do teste).

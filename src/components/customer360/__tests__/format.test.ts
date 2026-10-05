@@ -1,5 +1,13 @@
 import { describe, it, expect } from 'vitest';
-import { formatarFracaoPct, churnTone } from '../format';
+import { formatarFracaoPct, churnTone, formatContagemComTeto } from '../format';
+
+describe('formatContagemComTeto — lista com teto não se apresenta como total', () => {
+  it('no teto, "N+" (a lista foi cortada); abaixo dele, o número', () => {
+    expect(formatContagemComTeto(200, 200)).toBe('200+');
+    expect(formatContagemComTeto(199, 200)).toBe('199');
+    expect(formatContagemComTeto(0, 200)).toBe('0');
+  });
+});
 
 /**
  * Estes dois formatadores nasceram de UMA função que adivinhava a unidade do valor

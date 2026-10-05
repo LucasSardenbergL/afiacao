@@ -13,7 +13,9 @@
 //      lt_bruto morria NULL para sempre (1103 linhas, ~30% do histórico OBEN em 2026-07-16).
 //      Os itens já estão gravados; só as DATAS faltavam — a Omie não tem o que acrescentar.
 //   1) Lê NFes da empresa no período com t2_data_faturamento e nfe_chave_acesso.
-//   2) Fila = pendentes (sem linha em sku_leadtime_history) ELEGÍVEIS pelo controle de
+//   2) Fila = pendentes (sem linha em sku_leadtime_history), MENOS o CT-e (modelo 57 pela chave
+//      de acesso: o frete não tem item de produto — escopo.ts, contado em `ctes_fora_da_fila`),
+//      ELEGÍVEIS pelo controle de
 //      tentativas (sku_items_sync_controle + backoff 6h/24h/72h), nunca-tentadas primeiro —
 //      NFe cuja consulta retorna 0 itens não upserta e não sairia nunca da fila (poison que
 //      consumia o guard de 50s a cada run e deixava as antigas inalcançáveis; OBEN 2026-07-14).
@@ -34,6 +36,7 @@ import {
   saidaDoLaco,
 } from "./adiamento.ts";
 import { consultarNfe, type ContadorRequisicoes, DEPS_REAIS, type OmieRecebimentoItem } from "./consulta.ts";
+import { separarCtes } from "./escopo.ts";
 import { classificarSonda, EDGE, EFEITO, erroSondaAmbigua, FONTE, respostaSonda, VERSAO } from "./versao.ts";
 
 // Tipos da resposta do Omie: consulta.ts (junto da chamada que os produz).
@@ -78,8 +81,14 @@ interface EmpresaSummary {
    *  (NFe órfã ou fallback provado da edge) — mentira que subestimava o leadtime. */
   recompute_anuladas: number;
   recompute_erro: string | null;
+  /** Linhas sem leadtime na janela que são CONSULTÁVEIS por desenho (o CT-e já saiu: ver
+   *  `ctes_fora_da_fila`). Inclui as em backoff, as irmãs de um mesmo recebimento e as sem nIdReceb. */
   fila_pendente: number;
   fila_em_backoff: number;
+  /** Linhas pendentes de modelo 57 (CT-e, o frete) tiradas da fila ANTES do backoff, sem consulta à
+   *  Omie e sem escrita no controle: CT-e não tem item de produto (escopo.ts). Pendentes brutos =
+   *  `fila_pendente` + `ctes_fora_da_fila`. Conta linhas, não requests economizados. */
+  ctes_fora_da_fila: number;
   /** Linhas tiradas da fila por dividirem o nIdReceb com uma já eleita (NFe que fatura
    *  N pedidos). = chamadas Omie economizadas E duplicatas de leadtime não criadas. */
   recebimentos_deduplicados: number;
@@ -717,7 +726,13 @@ Deno.serve(async (req) => {
     }
 
     const agoraMs = Date.now();
-    const pendentes = ((nfes ?? []) as NFeRow[]).filter((n) => !existingTrackingIds.has(n.id));
+    const pendentesBrutos = ((nfes ?? []) as NFeRow[]).filter((n) => !existingTrackingIds.has(n.id));
+    // CT-e (modelo 57, o conhecimento de FRETE) sai aqui: a Omie o responde sem `itensRecebimento`,
+    // e o produto que ele transporta vira leadtime pela NF-e dele. Era 17 de 17 linhas da fila do
+    // diário das 07:00 (2026-10-05), girando no backoff para sempre. A posição é contrato
+    // (escopo.ts): ANTES do backoff, do sensor e do dedup. Sem escrita no controle: o motivo antigo
+    // fica como histórico.
+    const { consultaveis: pendentes, ctes: ctesForaDaFila } = separarCtes(pendentesBrutos);
     const filaOrdenada: NFeFilaRow[] = pendentes
       .map((n) => ({
         ...n,
@@ -751,6 +766,7 @@ Deno.serve(async (req) => {
       recompute_erro: recompute.erro,
       fila_pendente: pendentes.length,
       fila_em_backoff: pendentes.length - filaOrdenada.length,
+      ctes_fora_da_fila: ctesForaDaFila.length,
       recebimentos_deduplicados: recebimentosDeduplicados,
       nfes_processadas: 0,
       nfes_sem_nidreceb: 0,

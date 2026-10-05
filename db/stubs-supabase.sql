@@ -21,7 +21,13 @@ CREATE TABLE IF NOT EXISTS auth.users (
   created_at         timestamptz DEFAULT now(),
   updated_at         timestamptz DEFAULT now()
 );
-CREATE OR REPLACE FUNCTION auth.uid()  RETURNS uuid  LANGUAGE sql STABLE AS $$ SELECT NULL::uuid $$;
+-- auth.uid() como o do Supabase: o GUC legado request.jwt.claim.sub e, sem ele, o `sub` de
+-- request.jwt.claims. Sem nenhum dos dois (o caso de toda prova que não simula sessão) é NULL, como
+-- antes. A POS de 20261005150000 simula uma sessão logada por esses GUCs, e o stub que devolvia NULL
+-- sempre a fazia falhar em toda prova que aplica a cadeia viva do data-health.
+CREATE OR REPLACE FUNCTION auth.uid()  RETURNS uuid  LANGUAGE sql STABLE AS $$
+  SELECT COALESCE(nullif(current_setting('request.jwt.claim.sub', true), ''),
+                  nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')::uuid $$;
 CREATE OR REPLACE FUNCTION auth.role() RETURNS text  LANGUAGE sql STABLE AS $$ SELECT NULL::text $$;
 CREATE OR REPLACE FUNCTION auth.jwt()  RETURNS jsonb LANGUAGE sql STABLE AS $$ SELECT NULL::jsonb $$;
 

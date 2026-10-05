@@ -42,6 +42,7 @@ import { readFileSync } from 'node:fs';
 import { relative, resolve } from 'node:path';
 
 import { diagnosticarShell, removerComentariosShell } from '@/lib/gates/limpeza-shell';
+import { drenar, type Passos } from '@/lib/gates/passos';
 import { alarmesDoStripper, enumerar } from './shell-variavel-colada-gate';
 
 /** `import.meta.dir` é do Bun e não existe sob o vitest — por isso preguiçosa, como no irmão. */
@@ -101,6 +102,13 @@ export function detectar(caminho: string, fonte: string): { sitios: Sitio[]; lin
 }
 
 export function analisar(arquivos: { caminho: string; fonte: string }[]): Analise {
+  return drenar(analisarPassos(arquivos));
+}
+
+/** A análise como gerador (`@/lib/gates/passos`): `yield` por arquivo — o teste que varre o repo
+ *  inteiro drena cedendo o event loop do worker do vitest (o RPC estoura com >60s de bloqueio:
+ *  docs/historico/rpc-do-vitest-e-o-loop-preso.md). */
+export function* analisarPassos(arquivos: { caminho: string; fonte: string }[]): Passos<Analise> {
   const r: Analise = { caminhos: [], linhasDeCodigo: 0, violacoes: [], alarmes: [] };
   for (const a of arquivos) {
     const d = detectar(a.caminho, a.fonte);
@@ -108,6 +116,7 @@ export function analisar(arquivos: { caminho: string; fonte: string }[]): Analis
     r.linhasDeCodigo += d.linhasDeCodigo;
     r.violacoes.push(...d.sitios);
     r.alarmes.push(...alarmesDoStripper(a.caminho, diagnosticarShell(a.fonte)));
+    yield;
   }
   return r;
 }

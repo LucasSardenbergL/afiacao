@@ -61,6 +61,8 @@ switch (modo) {
   case 'fingerprint': {
     if (process.argv.includes('--write')) {
       if (edge.includes('QUEBRA-GERADOR')) process.exit(7);
+      // O gerador que TRAVA numa arvore surda ao TERM: a receita sob o teto de grupo do motor (guarda 15).
+      if (edge.includes('SURDO-GERADOR')) spawnSync('sh', ['scripts/arvore.sh', 'surdo'], { stdio: 'ignore' });
       if (edge.includes('VAZA')) writeFileSync('escrito.txt', 'o gerador vazou\\n');
       if (edge.includes('MEXE-NO-ALVO')) writeFileSync('${EDGE}', edge + '// vira codigo morto\\n');
       writeFileSync('${MAPA}', impressao() + '\\n');
@@ -136,6 +138,31 @@ switch (modo) {
 process.exit(9);
 `;
 
+/**
+ * Gates de PROCESSO para o teto do motor — a forma do `sonda:cron-prova` real: `bun run` -> script -> filhos.
+ * Cada papel registra `<papel> <pid>` de todo processo que cria em `$PIDS_TETO` (FORA da arvore, como o
+ * contador do RPC), para o teste conferir que nenhum sobreviveu ao motor. Sem corte, duram 30s — muito
+ * mais que teto + carencia dos cenarios, e menos que o timeout do vitest.
+ *
+ *  - obediente: TRATA o TERM (registra que limpou e sai 0). O neto, sem trap, morre no TERM do grupo.
+ *  - surdo: `trap '' TERM`. O SIG_IGN e herdado no exec, entao o neto tambem e surdo: so o KILL encerra.
+ *  - neto-surdo: o filho morre no TERM, mas deixa um neto surdo para tras — o orfao que o
+ *    `killSignal: 'SIGKILL'` cria, porque mata o `bun run` antes de ele repassar qualquer sinal.
+ *  - surdo-sob-defeito: o surdo so com a edge SABOTADA — baseline verde, a rodada trava NO defeito.
+ */
+const ARVORE_SH = `#!/bin/sh
+papel=$1
+case "$papel" in
+  obediente) trap 'echo "limpou $$" >> "$PIDS_TETO"; exit 0' TERM ;;
+  surdo) trap '' TERM ;;
+  surdo-sob-defeito) grep -q SABOTADO ${EDGE} || exit 0; trap '' TERM ;;
+esac
+echo "$papel $$" >> "$PIDS_TETO"
+if [ "$papel" = neto-surdo ]; then sh -c "trap '' TERM; exec sleep 30" & else sleep 30 & fi
+echo "$papel $!" >> "$PIDS_TETO"
+wait
+`;
+
 const SCRIPTS: Record<string, string> = {
   'g:barato': 'bun scripts/g.ts barato',
   'g:lento': 'bun scripts/g.ts lento',
@@ -154,6 +181,10 @@ const SCRIPTS: Record<string, string> = {
   'g:rpc-sempre': 'bun scripts/g.ts rpc-sempre',
   'g:rpc-sob-defeito': 'bun scripts/g.ts rpc-sob-defeito',
   'g:rpc-com-falha': 'bun scripts/g.ts rpc-com-falha',
+  'g:obediente': 'sh scripts/arvore.sh obediente',
+  'g:surdo': 'sh scripts/arvore.sh surdo',
+  'g:neto-surdo': 'sh scripts/arvore.sh neto-surdo',
+  'g:surdo-sob-defeito': 'sh scripts/arvore.sh surdo-sob-defeito',
   // O gate REAL, lendo a matriz do fixture: a sonda `--json` que o motor interpreta e a do binario.
   exclusividade: `bun ${JSON.stringify(GATE_REAL)}`,
 };
@@ -177,6 +208,10 @@ const PASSO: Record<string, string> = {
   'g:rpc-sempre': 'run: bun run g:rpc-sempre',
   'g:rpc-sob-defeito': 'run: bun run g:rpc-sob-defeito',
   'g:rpc-com-falha': 'run: bun run g:rpc-com-falha',
+  'g:obediente': 'run: bun run g:obediente',
+  'g:surdo': 'run: bun run g:surdo',
+  'g:neto-surdo': 'run: bun run g:neto-surdo',
+  'g:surdo-sob-defeito': 'run: bun run g:surdo-sob-defeito',
   exclusividade: 'run: bun run exclusividade',
 };
 
@@ -293,6 +328,7 @@ async function montarFixture(gates: string[], defs: string, deps: (raiz: string)
   const arquivos: Record<string, string> = {
     'package.json': JSON.stringify({ name: 'fixture', private: true, scripts: SCRIPTS }, null, 2),
     'scripts/g.ts': GATES_TS,
+    'scripts/arvore.sh': ARVORE_SH,
     '.github/workflows/ci.yml': ciYml(gates),
     // A 2a ponta da ancora da raiz: sem ela o `exclusividade` REAL reprova por ANCORA em qualquer cenario.
     '.github/workflows/auto-merge.yml': '# mergeia quando o required check `validate` passa\n',
@@ -713,6 +749,158 @@ describe('motor — CAPTURA: o gate roda com a saida em ARQUIVO, nunca em pipe',
     expect(r.saida).toMatch(/verde\s+g:canal/);
     expect(r.saida, 'nenhuma das duas pontas da captura pode ser pipe').not.toContain('FIFO');
   }, 120_000);
+});
+
+describe('motor — o TETO vincula: o gate cortado nao sobrevive ao motor, nem a arvore dele', () => {
+  /**
+   * O incidente (2026-09-25): com `EXCL_TIMEOUT_MS=2400000`, o `sonda:cron-prova` levou 4.774.853 ms. O
+   * `spawnSync` manda o TERM SO ao filho direto — o `bun run` —, que o repassa ao script e ESPERA o que
+   * for preciso. O teto passa a ser do GRUPO: TERM no prazo, a carencia para quem trata o sinal, KILL no
+   * que sobrar. docs/historico/exclusividade-media-outra-coisa.md
+   */
+  const TETO = 4000;
+  const CARENCIA = 3000;
+  /** Folga para a carga da maquina — e ainda bem abaixo dos 30s que o gate dura sem corte. */
+  const FOLGA = 3000;
+  const arquivos: string[] = [];
+  afterAll(() => {
+    // Higiene sob falsificacao: um motor sabotado deixa orfaos, e eles nao vazam para o resto da suite.
+    for (const p of arquivos.flatMap(lerPids)) {
+      try {
+        process.kill(p.pid, 'SIGKILL');
+      } catch {
+        /* ja morreu */
+      }
+    }
+  });
+
+  const arquivoDePids = () => {
+    const dir = mkdtempSync(join(tmpdir(), 'excl-teto-'));
+    raizes.push(dir);
+    arquivos.push(join(dir, 'pids'));
+    return join(dir, 'pids');
+  };
+  /** `<papel> <pid>` de cada processo que o gate criou — e `limpou <pid>` de quem tratou o TERM. */
+  function lerPids(arq: string): { papel: string; pid: number }[] {
+    if (!existsSync(arq)) return [];
+    return readFileSync(arq, 'utf8')
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map((l) => ({ papel: l.split(' ')[0], pid: Number(l.split(' ')[1]) }));
+  }
+  const vivo = (pid: number) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  /** Os vivos depois de ate 2s: o KILL ja foi entregue, mas o reaper do orfao pode levar um instante. */
+  async function sobreviventes(pids: number[]): Promise<number[]> {
+    for (let i = 0; i < 20 && pids.some(vivo); i++) await new Promise((ok) => setTimeout(ok, 100));
+    return pids.filter(vivo);
+  }
+  const msDe = (saida: string, gate: string): number | null => {
+    const m = saida.match(new RegExp(`VERMELHO\\s+${gate}\\s+(\\d+)ms \\(ESTOUROU`));
+    return m ? Number(m[1]) : null;
+  };
+  const ambiente = (pids: string) => ({ EXCL_TIMEOUT_MS: String(TETO), EXCL_CARENCIA_MS: String(CARENCIA), PIDS_TETO: pids });
+  const defsDe = (suspeito: string) => `# @origem: f\n# @suspeito: ${suspeito}\nd | ${EDGE} | s/^original$/SABOTADO/\n`;
+
+  it('gate SURDO ao TERM, e o neto tambem: cortado em teto + carencia — o teto VINCULA', async () => {
+    const pids = arquivoDePids();
+    const raiz = await montarFixture(['g:surdo'], defsDe('g:surdo'));
+    const r = await medir(raiz, [], ambiente(pids));
+    const vistos = lerPids(pids);
+    expect(vistos.map((p) => p.papel), `o gate armou (o surdo e o neto):\n${r.saida.slice(-1500)}`).toEqual(['surdo', 'surdo']);
+    // O estouro no baseline segue ausencia de dado: a rodada aborta e nada e gravado.
+    expect(r.rc, r.saida.slice(-1500)).toBe(1);
+    const ms = msDe(r.saida, 'g:surdo');
+    expect(ms, r.saida.slice(-1500)).not.toBeNull();
+    expect(ms, `teto ${TETO} + carencia ${CARENCIA}`).toBeLessThanOrEqual(TETO + CARENCIA + FOLGA);
+    expect(await sobreviventes(vistos.map((p) => p.pid)), 'processos do gate VIVOS depois do motor').toEqual([]);
+    expect(r.status).toBe('');
+  }, 120_000);
+
+  it('o TERM vem ANTES do KILL e vai ao GRUPO: o obediente limpa no prazo, e o neto surdo nao vira orfao', async () => {
+    const pids = arquivoDePids();
+    const raiz = await montarFixture(['g:obediente', 'g:neto-surdo'], defsDe('g:obediente'));
+    const r = await medir(raiz, [], ambiente(pids));
+    const vistos = lerPids(pids);
+    expect(r.rc, r.saida.slice(-1500)).toBe(1);
+    // A carencia existe: o obediente recebeu o TERM, limpou e saiu — e por isso nao pagou a carencia.
+    expect(vistos.filter((p) => p.papel === 'limpou'), 'o obediente limpou no TERM').toHaveLength(1);
+    const obediente = msDe(r.saida, 'g:obediente');
+    expect(obediente, r.saida.slice(-1500)).not.toBeNull();
+    expect(obediente, 'quem sai no TERM nao paga a carencia').toBeLessThan(TETO + CARENCIA);
+    const neto = msDe(r.saida, 'g:neto-surdo');
+    expect(neto, r.saida.slice(-1500)).not.toBeNull();
+    expect(neto, `teto ${TETO} + carencia ${CARENCIA}`).toBeLessThanOrEqual(TETO + CARENCIA + FOLGA);
+    expect(vistos.filter((p) => p.papel === 'neto-surdo'), 'o filho e o neto armaram').toHaveLength(2);
+    expect(await sobreviventes(vistos.map((p) => p.pid)), 'processos do gate VIVOS depois do motor').toEqual([]);
+    expect(r.status).toBe('');
+  }, 120_000);
+
+  it('Ctrl-C com um gate em voo: o motor sai 130 na hora, mata a arvore do gate e desfaz a sabotagem', async () => {
+    const pids = arquivoDePids();
+    const raiz = await montarFixture(['g:barato', 'g:surdo-sob-defeito'], defsDe('g:surdo-sob-defeito'));
+    // Teto LONGO: quem tem de cortar aqui e o sinal no motor, nao o teto.
+    const env = { ...process.env, EXCL_TIMEOUT_MS: '60000', EXCL_CARENCIA_MS: String(CARENCIA), PIDS_TETO: pids };
+    const motor = spawn('bun', [MOTOR], { cwd: raiz, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    let saida = '';
+    motor.stdout.setEncoding('utf8').on('data', (d: string) => (saida += d));
+    motor.stderr.setEncoding('utf8').on('data', (d: string) => (saida += d));
+    const fim = new Promise<number | null>((ok) => motor.on('close', (status) => ok(status)));
+    // Espera COM teto e com o ramo que desiste: o gate armou (2 pids) sob o defeito, ou o teste diz por que nao.
+    const armou = () => lerPids(pids).filter((p) => p.papel === 'surdo-sob-defeito').length === 2;
+    for (let i = 0; i < 300 && !armou(); i++) await new Promise((ok) => setTimeout(ok, 100));
+    if (!armou()) {
+      motor.kill('SIGKILL');
+      throw new Error(`o gate nao armou em 30s:\n${saida.slice(-1500)}`);
+    }
+    const t0 = Date.now();
+    motor.kill('SIGINT');
+    const rc = await fim;
+    const ms = Date.now() - t0;
+    expect(rc, saida.slice(-1500)).toBe(130);
+    expect(ms, 'o motor saiu na hora, nao depois do gate').toBeLessThan(FOLGA);
+    expect(await sobreviventes(lerPids(pids).map((p) => p.pid)), 'processos do gate VIVOS depois do Ctrl-C').toEqual([]);
+    expect(readFileSync(join(raiz, EDGE), 'utf8'), 'a sabotagem foi desfeita').toBe('linha 1\noriginal\nlinha 3\n');
+    expect((await rodar('git', ['status', '--porcelain'], { cwd: raiz })).stdout).toBe('');
+  }, 120_000);
+
+  // A receita e a mesma cadeia de um gate (`bun run` -> script) sob o mesmo teto: sem este caso, voltar
+  // ela ao `spawnSync` ficaria verde em todo o resto.
+  it('a RECEITA roda sob o mesmo teto de grupo: o gerador que trava numa arvore surda e cortado, e a linha fica INVALIDA', async () => {
+    const pids = arquivoDePids();
+    const defs = `# @origem: f\n# @suspeito: g:pega\n# @dever-de-casa: regenerar-fingerprints\nsurdo-gerador | ${EDGE} | s/^original$/SURDO-GERADOR/\n`;
+    const raiz = await montarFixture([...ENXUTO, 'sonda:fingerprint'], defs);
+    // Teto maior que o dos outros casos: aqui os gates do baseline tem de passar VERDES dentro dele.
+    const r = await medir(raiz, [], { ...ambiente(pids), EXCL_TIMEOUT_MS: '8000' });
+    expect(r.rc, r.saida.slice(-1500)).toBe(0);
+    const linha = matrizGravada(raiz).linhas.find((l) => l.defeito === 'surdo-gerador');
+    expect(linha?.invalido, r.saida.slice(-1500)).toContain('estourou o teto de 8000ms; corte por SIGKILL');
+    const vistos = lerPids(pids);
+    expect(vistos.map((p) => p.papel), 'o gerador armou a arvore surda').toEqual(['surdo', 'surdo']);
+    expect(await sobreviventes(vistos.map((p) => p.pid)), 'processos da receita VIVOS depois do motor').toEqual([]);
+    expect(r.status.trim()).toBe('?? scripts/exclusividade-matriz.json');
+  }, 120_000);
+
+  // `setTimeout(NaN)` dispara na hora: um typo viraria "todo gate estourou" (ou carencia nenhuma), calado.
+  it('teto que nao e ms inteiro positivo ABORTA antes de tudo — o --dry o acusa; o CONTROLE com ms passa', async () => {
+    const raiz = await montarFixture(ENXUTO, DEFS_ENXUTO);
+    const ok = await medir(raiz, ['--dry'], { EXCL_TIMEOUT_MS: '2400000', EXCL_CARENCIA_MS: '30000' });
+    expect(ok.rc, ok.saida.slice(-800)).toBe(0);
+    expect(ok.saida).toContain('teto: 2400000ms por execucao, do GRUPO de processos (+30000ms de carencia');
+    for (const [nome, valor] of [['EXCL_TIMEOUT_MS', '40min'], ['EXCL_CARENCIA_MS', '0']]) {
+      const r = await medir(raiz, ['--dry'], { [nome]: valor });
+      expect(r.rc, r.saida.slice(-800)).toBe(1);
+      expect(r.saida).toContain(`ABORTADO: ${nome}=${valor} nao e um teto em ms`);
+      expect(r.saida, 'abortou antes do plano').not.toContain('plano:');
+    }
+  }, 60_000);
 });
 
 describe('[fora-da-rodada] motor — o `exclusividade` vermelho SO por GATE_NOVO desta rodada sai da rodada, e so ele', () => {

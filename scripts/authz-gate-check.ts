@@ -31,6 +31,7 @@ import { AUTHZ_TABELAS_FECHADAS } from './authz-tabelas-fechadas';
 import { auditGrantsFuncoes, auditRevokeSemPublic } from './lib/authz-funcoes';
 import { AUTHZ_FUNCOES_FECHADAS } from './authz-funcoes-fechadas';
 import { REVOKE_SEM_PUBLIC_BASELINE } from './authz-revoke-public-baseline';
+import { drenar, type Passos } from '@/lib/gates/passos';
 
 export interface Finding {
   level: 'error' | 'warn';
@@ -320,14 +321,32 @@ function auditRevokePublic(migrations: Migration[]): Finding[] {
   }));
 }
 
+/** As partes do `auditCompleto`, na ordem do relatório — os dois motoristas leem a MESMA lista. */
+const PARTES: ReadonlyArray<(migrations: Migration[]) => Finding[]> = [
+  auditAuthz,
+  auditGrants,
+  auditFuncoes,
+  auditRevokePublic,
+];
+
+/**
+ * O `auditCompleto` como gerador (`@/lib/gates/passos`): `yield` entre as partes, cada uma ~¼ do
+ * custo. A CLI drena de uma vez; o teste drena cedendo o event loop do worker do vitest — as 4
+ * partes seguidas eram o MAIOR bloqueio síncrono da suíte (14,8s sob carga em 2026-10-05), e acima
+ * de 60s o RPC do vitest estoura (docs/historico/rpc-do-vitest-e-o-loop-preso.md).
+ */
+export function* auditCompletoPassos(migrations: Migration[]): Passos<Finding[]> {
+  const findings: Finding[] = [];
+  for (const parte of PARTES) {
+    findings.push(...parte(migrations));
+    yield;
+  }
+  return findings;
+}
+
 /** O que o CI roda: A + B (gate no corpo), C (grants de tabela), E (EXECUTE de função) e F (PUBLIC). */
 export function auditCompleto(migrations: Migration[]): Finding[] {
-  return [
-    ...auditAuthz(migrations),
-    ...auditGrants(migrations),
-    ...auditFuncoes(migrations),
-    ...auditRevokePublic(migrations),
-  ];
+  return drenar(auditCompletoPassos(migrations));
 }
 
 function loadMigrations(dir: string): Migration[] {

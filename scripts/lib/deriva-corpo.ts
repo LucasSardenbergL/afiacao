@@ -25,6 +25,7 @@ import {
 } from './precondicao-banco';
 import { removerComentariosSql } from './sql-comentarios';
 import { md5DeTokens, mesmosTokens, tokensSql } from './tokens-sql';
+import { drenar, type Passos } from '@/lib/gates/passos';
 
 // O léxico mora numa folha própria (`tokens-sql.ts`) porque o gate do pacote (`corpo-esperado.ts`)
 // também o usa, e o gate não pode importar daqui: este arquivo importa `precondicao-banco.ts` — seria
@@ -423,6 +424,16 @@ const CREATE_SOLTO = /CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:"?(\w+)"?\s*\.\
  * assumir o posto de última (era o falso-verde reproduzido pelo Codex no `historicoDeCorpos`).
  */
 export function modelarRepo(migrations: readonly MigrationLida[]): ModeloDoRepo {
+  return drenar(modelarRepoPassos(migrations));
+}
+
+/**
+ * O `modelarRepo` como gerador (`@/lib/gates/passos`): `yield` depois de cada migration, onde está
+ * o custo (a extração das declarações). Um gate que varre o repo DENTRO do worker do vitest drena
+ * cedendo o event loop — o fold inteiro de uma vez passa dos 60s do RPC do vitest sob carga
+ * (docs/historico/rpc-do-vitest-e-o-loop-preso.md).
+ */
+export function* modelarRepoPassos(migrations: readonly MigrationLida[]): Passos<ModeloDoRepo> {
   const identidades = new Map<string, EstadoDeIdentidade>();
   const nomes = new Set<string>();
   const ilegiveis = new Set<string>();
@@ -516,6 +527,7 @@ export function modelarRepo(migrations: readonly MigrationLida[]): ModeloDoRepo 
       soltas.set(n, (soltas.get(n) ?? 0) + 1);
     }
     for (const [n, k] of soltas) if (k > (estritas.get(n) ?? 0)) perdidas.push(`${n}@${migration}`);
+    yield;
   }
   return {
     identidades,

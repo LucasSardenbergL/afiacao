@@ -25,6 +25,7 @@ import { valorMedido } from "../_shared/score-ponderado.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { atenderSondaOptions } from '../_shared/sonda-cron.ts';
 import { hojeSP, somarDias } from '../_shared/hoje-sp.ts';
+import { pedidoEntraNoTTM } from './faturabilidade.ts';
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -92,14 +93,6 @@ function minData(a: string, b: string): string { return a <= b ? a : b; }
 const STATUS_LIQUIDADO_AR = ['RECEBIDO', 'LIQUIDADO', 'PAGO'];
 function statusLiquidadoAR(status: string | null | undefined): boolean {
   return !!status && STATUS_LIQUIDADO_AR.includes(status);
-}
-// Faturabilidade do pedido pai — espelha v_caca (deleted_at IS NULL AND status <> ALL(['cancelado','rascunho'])).
-// Blocklist semântica: status conhecido novo CONTA por default; cancelado/rascunho/soft-deletado/NULL não.
-const STATUS_NAO_FATURAVEL = ['cancelado', 'rascunho'];
-function pedidoContaNoFaturamento(status: string | null | undefined, deletedAt: string | null | undefined): boolean {
-  if (deletedAt != null) return false;
-  if (status == null) return false;
-  return !STATUS_NAO_FATURAVEL.includes(status);
 }
 // Faturabilidade do TÍTULO de AR (denominador de cobertura_receita) — contraparte de
 // pedidoContaNoFaturamento. Exclui só status_titulo='CANCELADO' (2,66% do arTotal Oben; estorno/dup/
@@ -528,13 +521,12 @@ Deno.serve(async (req: Request) => {
     const itensAll = await carregarItensCockpit(db as unknown as BancoPostgrest, ttm_prefetch);
 
     // Oben por product_id OU (FK ausente → SKU resolve a produto Oben, Bug D). Normaliza ao
-    // product_id efetivo (recuperada ganha o id Oben → custo resolve). Faturabilidade (régua
-    // v_caca: exclui cancelado/rascunho/soft-deletado), JANELA por `order_date_kpi` e guard de
-    // conta da recuperação por SKU saem TODOS do pai embedado — os três eram `Set`s montados a
-    // partir de `salesOrdersAll`, e o item que não achasse seu pai era descartado em silêncio,
-    // sem distinguir "fora da janela" de "não consegui ler o pai".
-    // `order_date_kpi` é DATE → comparação de string 'YYYY-MM-DD' é cronológica (mesmo padrão de
-    // carteira-positivacao-snapshot). Reúsa a régua UTC que o cockpit já aplica ao AR.
+    // product_id efetivo (recuperada ganha o id Oben → custo resolve). Faturabilidade (universo
+    // de VENDA da autoridade) e JANELA por `order_date_kpi` — os dois em `pedidoEntraNoTTM`
+    // (`faturabilidade.ts`) — e guard de conta da recuperação por SKU saem TODOS do pai embedado —
+    // os três eram `Set`s montados a partir de `salesOrdersAll`, e o item que não achasse seu pai
+    // era descartado em silêncio, sem distinguir "fora da janela" de "não consegui ler o pai".
+    // A janela reúsa a régua UTC que o cockpit já aplica ao AR.
     // Sensor do descarte por pai ausente. O `!inner` torna isto impossível pelo servidor, e é
     // justamente por isso que ele é CONTADO em vez de ignorado: "não acontece" é a suposição
     // que este repo manda medir, e um `return []` mudo transformaria a quebra da garantia em
@@ -548,9 +540,7 @@ Deno.serve(async (req: Request) => {
       // que o PostgREST descreve um to-one embedado) e fingir não-nulo aqui seria a mentira
       // que se paga em runtime.
       if (so == null) { semPedidoPai++; return []; }
-      const naJanela = pedidoContaNoFaturamento(so.status, so.deleted_at)
-        && so.order_date_kpi != null && so.order_date_kpi >= ttm_inicio && so.order_date_kpi <= ttm_fim;
-      if (!naJanela) return [];
+      if (!pedidoEntraNoTTM(so, ttm_inicio, ttm_fim)) return [];
       const pid = l.product_id != null
         ? (obenProductIds.has(l.product_id) ? l.product_id : null)
         : (l.omie_codigo_produto != null && so.account === COMPANY ? (obenSkuToProductId.get(String(l.omie_codigo_produto)) ?? null) : null);

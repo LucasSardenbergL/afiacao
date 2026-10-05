@@ -12,6 +12,7 @@ import {
 } from './lib/psql-ro-error-stop';
 import { PISOS, RAIZES_PADRAO, enumerar } from './psql-ro-error-stop-gate';
 import { removerComentariosShell } from '@/lib/gates/limpeza-shell';
+import { contarPulsos, descreverPulsos, emFatias } from '@/test/loop-livre';
 
 /**
  * Dente do fiscal de `psql-ro` + `ON_ERROR_STOP` (docs/historico/psql-ro-exit-zero-em-sql-que-
@@ -180,19 +181,25 @@ describe('o corpo REAL do repo', () => {
     const sh = arquivos.filter((a) => /\.(sh|bash)$/.test(a.caminho));
     expect(sh.length).toBeGreaterThanOrEqual(300);
     const culpados: string[] = [];
-    for (const a of sh) {
-      const d = diagnosticarShell(a.fonte);
-      if (d.linhasOriginais >= 20 && d.fracaoPreservada < PISOS.preservacaoShell) {
-        culpados.push(`${a.caminho}: fração ${d.fracaoPreservada.toFixed(2)}`);
+    // CEDE o event loop entre os arquivos: síncrona, a varredura era UM bloqueio (3,5s sob carga em
+    // 2026-10-05), e acima de 60s o RPC do vitest estoura — `test` rc=1 sem teste falhando
+    // (src/test/loop-livre.ts).
+    const p = await contarPulsos(async () => {
+      for await (const a of emFatias(sh)) {
+        const d = diagnosticarShell(a.fonte);
+        if (d.linhasOriginais >= 20 && d.fracaoPreservada < PISOS.preservacaoShell) {
+          culpados.push(`${a.caminho}: fração ${d.fracaoPreservada.toFixed(2)}`);
+        }
+        if (d.maiorBlocoDescartado > PISOS.blocoDescartado) culpados.push(`${a.caminho}: bloco ${d.maiorBlocoDescartado}`);
+        if (d.comentariosSobreviventes !== PISOS.comentariosSobreviventes) {
+          culpados.push(`${a.caminho}: ${d.comentariosSobreviventes} comentário(s) não limpo(s)`);
+        }
+        // Eixo medido POR FORA da máquina: nenhum `.sh` do repo termina com heredoc aberto.
+        if (d.heredocsAbertos !== PISOS.heredocsAbertos) culpados.push(`${a.caminho}: ${d.heredocsAbertos} heredoc(s) aberto(s)`);
       }
-      if (d.maiorBlocoDescartado > PISOS.blocoDescartado) culpados.push(`${a.caminho}: bloco ${d.maiorBlocoDescartado}`);
-      if (d.comentariosSobreviventes !== PISOS.comentariosSobreviventes) {
-        culpados.push(`${a.caminho}: ${d.comentariosSobreviventes} comentário(s) não limpo(s)`);
-      }
-      // Eixo medido POR FORA da máquina: nenhum `.sh` do repo termina com heredoc aberto.
-      if (d.heredocsAbertos !== PISOS.heredocsAbertos) culpados.push(`${a.caminho}: ${d.heredocsAbertos} heredoc(s) aberto(s)`);
-    }
+    });
     expect(culpados).toEqual([]);
+    expect(p.batidas, descreverPulsos(p)).toBeGreaterThanOrEqual(2);
   }, 30_000);
 
   it('o gate mede o que documenta: as ~200 menções em prosa NÃO viram sítio', () => {

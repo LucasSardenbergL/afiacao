@@ -59,7 +59,8 @@ import { join, relative, resolve } from 'node:path';
 
 import { CHAMADA, classificar, JANELA, lerArgumentos, type Motivo } from './fuso-da-sessao-em-provas-gate';
 import type { MigrationLida } from './lib/corpo-esperado';
-import { modelarRepo } from './lib/deriva-corpo';
+import { modelarRepoPassos } from './lib/deriva-corpo';
+import { drenar, type Passos } from '@/lib/gates/passos';
 import { somenteCercas } from './lib/markdown-codigo';
 import { maiorBlocoDescartadoSql, removerComentariosSql } from './lib/sql-comentarios';
 
@@ -181,6 +182,16 @@ function codigoDe(a: Arquivo): { codigo: string; alarme?: string } {
 }
 
 export function analisar(arquivos: readonly Arquivo[], corpos: ReadonlyMap<string, string> = new Map()): Analise {
+  return drenar(analisarPassos(arquivos, corpos));
+}
+
+/** A análise como gerador (`@/lib/gates/passos`): `yield` por arquivo e por corpo vivo — o teste
+ *  que varre o repo inteiro drena cedendo o event loop do worker do vitest (o RPC estoura com >60s
+ *  de bloqueio: docs/historico/rpc-do-vitest-e-o-loop-preso.md). */
+export function* analisarPassos(
+  arquivos: readonly Arquivo[],
+  corpos: ReadonlyMap<string, string> = new Map(),
+): Passos<Analise> {
   const r: Analise = {
     arquivos: arquivos.length, migrations: 0, arquivosDeSkill: 0, linhasDeCodigoDeSkill: 0, corposVivos: corpos.size,
     violacoes: [], contagem: new Map(), corposVivosComSitio: [], alarmes: [], ilegiveis: [],
@@ -205,9 +216,11 @@ export function analisar(arquivos: readonly Arquivo[], corpos: ReadonlyMap<strin
       const k = `${s.arquivo} · ${s.trecho}`;
       r.contagem.set(k, (r.contagem.get(k) ?? 0) + 1);
     }
+    yield;
   }
   for (const [alvo, corpo] of corpos) {
     for (const s of detectarNoSql(alvo, corpo).sitios) r.corposVivosComSitio.push(`${alvo} — ${s.trecho} (${s.motivo})`);
+    yield;
   }
   return r;
 }
@@ -276,11 +289,17 @@ const ler = (base: string, p: string): Arquivo => ({ caminho: relative(base, p).
 
 /** A última definição viva de cada função que as migrations dão (o modelo "a última a recriar vence"). */
 export function corposVivosDe(arquivos: readonly Arquivo[]): Map<string, string> {
+  return drenar(corposVivosDePassos(arquivos));
+}
+
+/** O fold do repo como gerador: as cessões são as do `modelarRepoPassos`, uma por migration. */
+export function* corposVivosDePassos(arquivos: readonly Arquivo[]): Passos<Map<string, string>> {
   const lidas: MigrationLida[] = arquivos
     .filter((a) => a.caminho.startsWith('supabase/migrations/'))
     .map((a) => ({ nome: a.caminho.split('/').pop() ?? a.caminho, sql: a.fonte }));
   const corpos = new Map<string, string>();
-  for (const [alvo, estado] of modelarRepo(lidas).identidades) {
+  const modelo = yield* modelarRepoPassos(lidas);
+  for (const [alvo, estado] of modelo.identidades) {
     const ultima = estado.versoes[estado.versoes.length - 1];
     if (!estado.aposentadaPor && ultima?.corpo) corpos.set(alvo, ultima.corpo);
   }

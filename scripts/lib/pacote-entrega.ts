@@ -27,7 +27,7 @@
 import { createHash } from 'node:crypto';
 
 import { ASSENTAR_MIN, FRESCOR_MAX_H, type PlanoDeOndas } from './ordem-entre-edges';
-import { type EdgeParaDeploy, montarPrompt, type Procedencia } from './prompt-deploy';
+import { type EdgeParaDeploy, INSTRUCAO_POS_ENVIO, montarPrompt, type Procedencia } from './prompt-deploy';
 import type { AlvoRpc, VereditoPrecondicao } from './precondicao-banco';
 import { relatarPrecondicao } from './precondicao-banco';
 
@@ -189,12 +189,7 @@ export function montarPacote(f: PacoteFonte): { texto: string; sha: string } {
     L.push('');
     // #2541/#2579: o agente deployou certo e DEPOIS "consertou" outras edges — o sync empurrou na main.
     // A proibição está na colagem; a conferência não pode ser a palavra dele.
-    L.push(
-      'Anote o instante (UTC) ANTES de enviar. Salve a resposta do agente em arquivo e, ≥5 min depois do envio, rode ' +
-        '`bun scripts/lovable-sensor-edicao.ts --desde <ISO do envio> <arquivo>` — ele lê `edit_id`/`commit_sha` ' +
-        'na resposta e os commits `gpt-engineer-app` na `origin/main`. **Exit 1 = o agente editou**: reverta por PR ' +
-        'antes de seguir. Exit 3/4/5 não são "sem edição" (sem confirmação / cedo demais / resposta vazia).',
-    );
+    L.push(INSTRUCAO_POS_ENVIO);
   }
   L.push('');
   if (emOndas) {

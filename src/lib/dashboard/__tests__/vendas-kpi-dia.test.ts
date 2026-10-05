@@ -4,7 +4,7 @@ import { agregarVendasDiaKpi } from '../vendas-kpi-dia';
 // Alinhado ao dashboard Master (useTeamKpis/somarReceita): a verdade do dia é
 // `order_date_kpi` (coluna `date` pura, 'YYYY-MM-DD'), comparada por STRING — sem
 // Date local, logo TZ-agnóstico por construção. "Faturado" = só pedido VÁLIDO
-// (status ∉ {cancelado, rascunho}); soft-deletados já saem na query (deleted_at).
+// (status ∉ STATUS_NAO_VENDA, a autoridade); soft-deletados já saem na query (deleted_at).
 const HOJE = '2026-06-10';
 
 describe('agregarVendasDiaKpi', () => {
@@ -30,6 +30,17 @@ describe('agregarVendasDiaKpi', () => {
         { total: 999, status: 'cancelado', order_date_kpi: '2026-06-10' },
         { total: 999, status: 'rascunho', order_date_kpi: '2026-06-10' },
         { total: 999, status: 'cancelado', order_date_kpi: '2026-06-09' },
+      ],
+      HOJE,
+    );
+    expect(agg).toEqual({ faturadoHoje: 0, pedidosHoje: 0, faturadoOntem: 0 });
+  });
+
+  it('orçamento e pendente COM kpi de hoje não são faturado (o dia em que o app gravar order_date_kpi)', () => {
+    const agg = agregarVendasDiaKpi(
+      [
+        { total: 4660, status: 'orcamento', order_date_kpi: '2026-06-10' },
+        { total: 999, status: 'pendente', order_date_kpi: '2026-06-09' },
       ],
       HOJE,
     );

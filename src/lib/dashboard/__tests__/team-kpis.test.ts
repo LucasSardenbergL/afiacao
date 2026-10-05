@@ -9,8 +9,15 @@ import {
   type AtividadeRow,
   type OrderRankRow,
 } from '../team-kpis';
+import { STATUS_NAO_VENDA } from '@/lib/farmer/universo-pedidos';
 
 describe('team-kpis', () => {
+  it('isPedidoValido: o universo da autoridade — orçamento e pendente também não são receita', () => {
+    for (const s of STATUS_NAO_VENDA) expect(isPedidoValido(s), s).toBe(false);
+    expect(isPedidoValido('orcamento')).toBe(false);
+    expect(isPedidoValido('pendente')).toBe(false);
+  });
+
   it('isPedidoValido: cancelado/rascunho/null inválidos, resto válido', () => {
     expect(isPedidoValido('enviado')).toBe(true);
     expect(isPedidoValido('faturado')).toBe(true);

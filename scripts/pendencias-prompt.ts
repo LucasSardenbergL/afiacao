@@ -61,6 +61,7 @@ import {
   conferirCobertura,
   type EdgeParaDeploy,
   FORMATO_ACEITO,
+  INSTRUCAO_POS_ENVIO,
   montarPrompt,
   type Procedencia,
   selecionarParaDeploy,
@@ -376,7 +377,8 @@ export function main(argv: string[], raiz = process.cwd(), git = gitBytes(raiz))
     `✓ leva de ${leva.length} edge(s) · ${totalArquivos} arquivos · sha256 de ` +
       `${proc.ref}@${proc.sha.slice(0, 9)}${semRede ? ' (--sem-rede: ref NÃO buscada)' : ''} · ` +
       `cobertura conferida\n` +
-      `  Cole no chat do Lovable APÓS o merge na main. Depois: bun run sonda:sql ${nomes.join(' ')}\n\n`,
+      `  Cole no chat do Lovable APÓS o merge na main. Depois: bun run sonda:sql ${nomes.join(' ')}\n` +
+      `  ${INSTRUCAO_POS_ENVIO}\n\n`,
   );
   process.stdout.write(`${prompt}\n`);
   return 0;

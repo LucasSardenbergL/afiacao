@@ -3,6 +3,7 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { removerComentarios } from '@/lib/gates/limpeza-fonte';
+import { contarPulsos, descreverPulsos, emFatias } from '@/test/loop-livre';
 
 // Gate estrutural da classe "[object Object]" no tratamento de erro.
 //
@@ -88,14 +89,15 @@ function contar(re: RegExp, fonte: string): number {
   return [...removerComentarios(fonte).matchAll(re)].length;
 }
 
-function contarPorArquivo(re: RegExp): Map<string, number> {
+// CEDE o event loop entre os arquivos: síncrona, cada varredura era UM bloqueio (3,2s sob carga em
+// 2026-10-05), e acima de 60s o RPC do vitest estoura — `test` rc=1 sem teste falhando
+// (src/test/loop-livre.ts). Quem chama confere o pulso.
+async function contarPorArquivo(re: RegExp): Promise<Map<string, number>> {
   const mapa = new Map<string, number>();
-  for (const dir of DIRS) {
-    for (const arquivo of listarFontes(dir)) {
-      if (HELPERS.has(arquivo)) continue;
-      const n = contar(re, readFileSync(resolve(RAIZ, arquivo), 'utf8'));
-      if (n > 0) mapa.set(arquivo, n);
-    }
+  for await (const arquivo of emFatias(DIRS.flatMap((d) => listarFontes(d)))) {
+    if (HELPERS.has(arquivo)) continue;
+    const n = contar(re, readFileSync(resolve(RAIZ, arquivo), 'utf8'));
+    if (n > 0) mapa.set(arquivo, n);
   }
   return mapa;
 }
@@ -233,21 +235,27 @@ describe('gate estrutural: "[object Object]" no tratamento de erro (classe #1642
     expect(fontes.filter((f) => f.startsWith('supabase/functions/')).length).toBeGreaterThan(80);
   });
 
-  it('A: nenhum `instanceof Error ? … : String(…)` além da dívida baselinada', () => {
-    const { reintroducoes, quitacoes } = desvios(contarPorArquivo(A), A_DIVIDA);
+  it('A: nenhum `instanceof Error ? … : String(…)` além da dívida baselinada', async () => {
+    const p = await contarPulsos(() => contarPorArquivo(A));
+    const { reintroducoes, quitacoes } = desvios(p.resultado, A_DIVIDA);
     expect(reintroducoes, `idiom "[object Object]" reintroduzido — ${COMO_CORRIGIR}`).toEqual([]);
     expect(quitacoes, 'dívida quitada: ATUALIZE A_DIVIDA (a lista só encolhe, e encolhe registrada)').toEqual([]);
+    expect(p.batidas, descreverPulsos(p)).toBeGreaterThanOrEqual(2);
   });
 
-  it('C: nenhum `String(err)` cru além da dívida baselinada', () => {
-    const { reintroducoes, quitacoes } = desvios(contarPorArquivo(C), C_DIVIDA);
+  it('C: nenhum `String(err)` cru além da dívida baselinada', async () => {
+    const p = await contarPulsos(() => contarPorArquivo(C));
+    const { reintroducoes, quitacoes } = desvios(p.resultado, C_DIVIDA);
     expect(reintroducoes, `String() cru em erro — ${COMO_CORRIGIR}`).toEqual([]);
     expect(quitacoes, 'dívida quitada: ATUALIZE C_DIVIDA (a lista só encolhe, e encolhe registrada)').toEqual([]);
+    expect(p.batidas, descreverPulsos(p)).toBeGreaterThanOrEqual(2);
   });
 
-  it('src/ está em ZERO — a erradicação do front não pode regredir por arquivo novo', () => {
-    const sujos = [...contarPorArquivo(A), ...contarPorArquivo(C)].filter(([f]) => f.startsWith('src/'));
+  it('src/ está em ZERO — a erradicação do front não pode regredir por arquivo novo', async () => {
+    const p = await contarPulsos(async () => [...(await contarPorArquivo(A)), ...(await contarPorArquivo(C))]);
+    const sujos = p.resultado.filter(([f]) => f.startsWith('src/'));
     expect(sujos.map(([f, n]) => `${f} (${n})`), COMO_CORRIGIR).toEqual([]);
+    expect(p.batidas, descreverPulsos(p)).toBeGreaterThanOrEqual(2);
   });
 
   // Calibração: um detector precisa provar que enxerga a forma que ele deve barrar E que
@@ -281,8 +289,10 @@ describe('gate estrutural: "[object Object]" no tratamento de erro (classe #1642
   // define tier") serve melhor que `new row violates row-level security policy for …`.
   // Cada sítio é decisão de PRODUTO, não conversão mecânica; o teto só impede que a
   // dívida cresça enquanto a triagem não acontece (chip da fase 2).
-  it('B (porta de fuga): o fallback literal não cresce em src/', () => {
-    const total = [...contarPorArquivo(B)]
+  it('B (porta de fuga): o fallback literal não cresce em src/', async () => {
+    const p = await contarPulsos(() => contarPorArquivo(B));
+    expect(p.batidas, descreverPulsos(p)).toBeGreaterThanOrEqual(2);
+    const total = [...p.resultado]
       .filter(([f]) => f.startsWith('src/'))
       .reduce((s, [, n]) => s + n, 0);
     expect(

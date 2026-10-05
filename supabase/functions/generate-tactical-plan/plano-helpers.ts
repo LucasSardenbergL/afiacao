@@ -641,7 +641,9 @@ export function ehJaNaFilaDaRpc(mensagem: unknown): boolean {
 export function statusDeErroIa(status: number | undefined): { http: number; msg: string } | null {
   if (!status) return null;
   const porStatus: Record<number, { http: number; msg: string }> = {
-    400: { http: 400, msg: "A IA recusou o contexto enviado para este cliente." },
+    // 400 é REQUISIÇÃO INVÁLIDA (schema/parâmetro) — defeito nosso, não recusa: a recusa do
+    // modelo chega como 200 + stop_reason "refusal" (ver _shared/anthropic.ts).
+    400: { http: 500, msg: "Falha na requisição à IA — avise a equipe." },
     401: { http: 500, msg: "IA mal configurada — avise a equipe." },
     403: { http: 500, msg: "IA mal configurada — avise a equipe." },
     404: { http: 500, msg: "IA mal configurada — avise a equipe." },

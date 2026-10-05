@@ -173,7 +173,7 @@ Deno.serve(async (req) => {
       max_tokens: 8192,
       system: SYSTEM_PROMPT,
       tools: [TOOL],
-      tool_choice: { type: "tool", name: "registrar_pedido_compra" },
+      tool_choice: { type: "tool", name: "registrar_pedido_compra", disable_parallel_tool_use: true },
       messages: [{
         role: "user",
         content: [
@@ -182,6 +182,12 @@ Deno.serve(async (req) => {
         ],
       }],
     });
+    // money-path: com tool_choice forçado a parada normal é "tool_use". Qualquer outra
+    // (max_tokens, model_context_window_exceeded, refusal…) é resposta cortada/incompleta — uma
+    // lista de itens parcial viraria pedido "completo" (delete → insert → ativo). Allowlist, não denylist.
+    if (response.stop_reason !== "tool_use") {
+      throw new Error(`Extração incompleta (stop_reason=${response.stop_reason}) — PDF grande demais ou recusado; não gravado.`);
+    }
     const toolUse = response.content.find((b) => b.type === "tool_use");
     if (toolUse?.type !== "tool_use") throw new Error("LLM não retornou tool_use.");
 

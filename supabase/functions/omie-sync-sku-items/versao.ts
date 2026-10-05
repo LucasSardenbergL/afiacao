@@ -64,8 +64,12 @@ export const EDGE = "omie-sync-sku-items";
  * v1.2 (2026-09-23): limite do RUN (REDUNDANT/rate-limit que não cabe no deadline) virou
  * ADIAMENTO — não marca tentativa, não vira `error`; `results` ganha `consultas_adiadas_por_limite`,
  * `consultas_falhas` e o sensor `fila_atrasada_24h_nao_consultada` ("fila não anda"). Ver adiamento.ts.
+ *
+ * v1.3 (2026-10-05): o CT-e (modelo 57 pela chave de acesso, o conhecimento de frete) sai da fila
+ * ANTES do backoff e do dedup, sem consulta à Omie e sem escrita no controle; `results` ganha
+ * `ctes_fora_da_fila`. Era 17 de 17 linhas da fila do diário das 07:00. Ver escopo.ts.
  */
-export const VERSAO = "v1.2-adiamento-por-limite-do-run";
+export const VERSAO = "v1.3-cte-fora-da-fila";
 
 /**
  * O fingerprint da FONTE, para o ECO carregá-lo também — não só a sonda.

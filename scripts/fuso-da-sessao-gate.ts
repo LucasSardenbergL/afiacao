@@ -28,7 +28,8 @@
 //     `date_trunc` de calendário sobre o relógio da sessão, esse, é medido em TODO corpo vivo (e em
 //     view, cron e skill) por `fuso-da-sessao-em-migrations-e-skills-gate.ts`;
 //   · SQL dinâmico montado em string (`EXECUTE format(...)`).
-import { modelarRepo } from './lib/deriva-corpo';
+import { modelarRepoPassos, type ModeloDoRepo } from './lib/deriva-corpo';
+import { drenar, type Passos } from '@/lib/gates/passos';
 import type { MigrationLida } from './lib/corpo-esperado';
 import { removerComentariosSql } from './lib/sql-comentarios';
 
@@ -67,8 +68,16 @@ function variaveisEmSp(codigo: string): string[] {
   const atrib = /\b([a-z_][a-z0-9_]*)\s*(?:date|timestamp(?:\s+without\s+time\s+zone)?)?\s*(?::=|=|\bdefault\b)\s*([^;]*);/gi;
   for (const m of codigo.matchAll(atrib)) marcar(m[1], m[2]);
   // a outra forma de atribuir em PL/pgSQL: `SELECT <expr> INTO [STRICT] var`
+  // Por TRECHO entre `;`, e só nos que têm `into`: nenhuma parte da regex casa `;`, então todo match
+  // cabe num trecho e o recorte não muda o que casa. Corrida no corpo inteiro ela era QUADRÁTICA — para
+  // cada `select` sem INTO, o `[^;]*?` preguiçoso andava o comando todo até o `;` —, e o corpo vivo de
+  // ~100 KB do `_data_health_compute()` pagava ~0,7s só nesta linha (medido 2026-10-05): o maior passo
+  // síncrono da varredura, dentro do worker do vitest.
   const into = /\bselect\s+([^;]*?)\s+into\s+(?:strict\s+)?([a-z_][a-z0-9_]*)\b/gi;
-  for (const m of codigo.matchAll(into)) marcar(m[2], m[1]);
+  for (const trecho of codigo.split(';')) {
+    if (!/\binto\b/i.test(trecho)) continue;
+    for (const m of trecho.matchAll(into)) marcar(m[2], m[1]);
+  }
   return [...emSp];
 }
 
@@ -141,7 +150,7 @@ export const PISOS = {
 
 export interface Varredura {
   /** O modelo que a varredura construiu — quem precisa dele reaproveita em vez de remodelar 740 arquivos. */
-  modelo: ReturnType<typeof modelarRepo>;
+  modelo: ModeloDoRepo;
   migrations: number;
   identidadesVivas: number;
   identidadesComSp: string[];
@@ -150,11 +159,19 @@ export interface Varredura {
 }
 
 export function varrerMigrations(migrations: readonly MigrationLida[]): Varredura {
-  const modelo = modelarRepo(migrations);
+  return drenar(varrerMigrationsPassos(migrations));
+}
+
+/** A varredura como gerador (`@/lib/gates/passos`): cede uma vez por migration (o fold) e uma por
+ *  identidade (o detector sobre o corpo vivo) — o teste drena cedendo o event loop do worker do
+ *  vitest. */
+export function* varrerMigrationsPassos(migrations: readonly MigrationLida[]): Passos<Varredura> {
+  const modelo = yield* modelarRepoPassos(migrations);
   const achados = new Map<string, Achado[]>();
   const identidadesComSp: string[] = [];
   let vivas = 0;
   for (const [alvo, estado] of modelo.identidades) {
+    yield; // no TOPO: as saídas por `continue` também cedem
     if (estado.aposentadaPor) continue;
     const ultima = estado.versoes[estado.versoes.length - 1];
     if (!ultima?.corpo) continue;

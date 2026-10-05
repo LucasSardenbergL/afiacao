@@ -86,15 +86,16 @@ membro só (`['CANCELADO']`) não se distingue de vocabulário de outro domínio
 
 ## As fatias (PRs)
 
-| PR | Domínio | Estado em 2026-10-02 |
+| PR | Domínio | Estado em 2026-10-05 |
 |---|---|---|
 | #2743 | gate + registro + falsificação | mergeado |
-| #2748 | operacionais, feeds, Inteligência, roteirizador | mergeado — falta Publish e o deploy de `visit-score-recalc-client` (sem sonda: o ledger não a enxerga) |
-| #2766 | dashboard + cockpit de valor (`fin-valor-cockpit` v1.7) | DRAFT até o Codex |
-| #2767 | Customer 360 (faturamento 12m sem teto, sentinela 9999) | DRAFT até o Codex |
-| #2768 | ligação (preço praticado, munição) | DRAFT até o Codex |
-| #2769 | proposta (cesta enviada ao cliente) | DRAFT até o Codex |
-| #2770 | auditoria de margem (`algorithm-a-audit` v1.1) | DRAFT até o Codex |
+| #2748 | operacionais, feeds, Inteligência, roteirizador | mergeado e publicado (Publish de 05/10); o deploy de `visit-score-recalc-client` (sem sonda) não foi conferido nesta leva |
+| #2766 | dashboard + cockpit de valor (`fin-valor-cockpit` v1.7) | mergeado (05/10 17:57Z) — faltam o deploy da edge e o Publish |
+| #2767 | Customer 360 (faturamento 12m sem teto, sentinela 9999) | com a sessão "Corrigir Faturamento 12m do Customer 360", que registra o fechamento em seção própria neste arquivo |
+| #2768 | ligação (preço praticado, munição) | mergeado e publicado |
+| #2769 | proposta (cesta enviada ao cliente) | mergeado e publicado — com a capa de itens (lição 11) |
+| #2770 | auditoria de margem (`algorithm-a-audit` v1.1) | mergeado; a edge subiu já como v1.2 (com o #2781), atestada por sonda |
+| #2781 | Margem Global (achado da fatia da auditoria — lição 10) | mergeado, publicado; `algorithm-a-audit` v1.2 atestada |
 
 Os DRAFTs são irmãos sobre o #2748 e mexem no mesmo registro: quem mergear depois resolve o conflito do
 `TETO_DIVIDA`/`TETO_CONSTANTES_DIVIDA` como **teto atual − entradas que quita** (o G4 exige igualdade).
@@ -102,6 +103,43 @@ Os DRAFTs são irmãos sobre o #2748 e mexem no mesmo registro: quem mergear dep
 Achados fora da classe, registrados nos PRs e não consertados: a lista manual do roteirizador lê
 `profiles` sem limit (mostra os primeiros 1.000 de 5.665 clientes); nenhuma zona do cockpit aplica o
 recorte de empresa (`companies` está na `queryKey` e não na query).
+
+## Fatia Customer 360 (#2767): o fechamento (2026-10-05)
+
+Assumida pela sessão "Corrigir Faturamento 12m do Customer 360" por decisão do founder. Ela chegou com o
+achado **C2** do Codex retroativo do sensor `vendas_empurradas_sem_gemeo` (#2698/#2717): não-venda e
+gêmeos push/pull na soma do 12m. Esta fatia já fechava os dois.
+
+**Medido (`psql-ro`, 2026-10-05).** O C2 mediu SEM o teto: 31 linhas de não-venda em 20 clientes,
+R$ 615,1 mi, quase tudo de UM pedido importado cancelado de R$ 615.100.434,63. No grão da tela (com o
+`limit(200)`) a soma era outra: 30 linhas, 19 clientes, R$ 34.835,70. O cancelado é o 315º pedido do
+cliente e ficava FORA do teto: a tela mostrava R$ 152,1–152,5 mil / 200 pedidos (4 empatados no corte), e
+o canônico é R$ 367.014,23 / 553. Os 25 recibos de gêmeo (R$ 14.186,56, 15 clientes) entravam na soma
+antiga; no eixo `order_date_kpi` eles saem por construção (CHECK `sales_orders_gemeo_e_recibo` e índice
+único do #2730: 0 recibos com kpi, 0 pedidos Omie com 2 linhas com kpi). Resíduo do eixo: 0 vendas
+empurradas vivas sem gêmeo e sem kpi. Escala: 508 clientes com venda na janela, no máximo 710 pedidos (0
+acima de 1.000), 0 subcentavos, e a soma em `Number` bate ao centavo nos 508 (erro máximo 1,34e-7 centavo).
+
+**Codex.** Desenho (gpt-6-astra · max · 478s · 130.688 tokens): 0 P0 / 3 P1 / 2 P2, todos tratados. O
+refetch que falha com cache declara a idade (`leituraDaQuery` = `estadoDeLeitura` + `desatualizado`); o
+9999 vira "Sem compra no consolidado", com os dois relógios da faixa declarados; e a prova de paginação
+ganhou mock fiel (o `range` fatia, capa de 1.000). Código (gpt-6-astra · max · 269s · 101.163 tokens):
+0 P0 / 0 P1. Dos P2, o refetch do feed que falhava mudo (inclusive com a lista vazia em cache) foi
+consertado, e o controle positivo do R$ 0 entrou. A soma paginada por offset não é um retrato (venda que
+entra entre páginas relê a fronteira) e ficou como LIMITE CONHECIDO no hook: só existe acima de 1.000
+pedidos do cliente na janela, e o máximo medido é 710. Fora do escopo, preexistente: offline e sem cache,
+a página diz "Cliente não encontrado" antes de montar a faixa (`core` em `pending`/`paused`).
+
+**Lições desta fatia.**
+
+- **Um teto esconde nos DOIS sentidos.** O `limit(200)` escondia venda (55–72% nos maiores clientes) e
+  escondia também a não-venda mais cara do banco. Tirar o teto sem o filtro de status faria um cliente
+  pular para R$ 615 mi: os dois consertos vão JUNTOS. E o retrato de um achado se mede no grão da tela,
+  com o corte, senão afirma um número que ninguém viu.
+- **R$ formatado em consulta do Testing Library é cego.** O `formatBRL` usa U+00A0, e o normalizador troca
+  o `\s+` do NÓ, não o da consulta. `queryByText(formatBRL(0))).toBeNull()` aprovava com R$ 0 na tela; foi
+  o positivo vermelho que denunciou. Consulte o R$ como o DOM o expõe, e prove a negativa com uma
+  sabotagem que ACENDE o R$ 0.
 
 ## Lições
 
@@ -135,3 +173,41 @@ recorte de empresa (`companies` está na `queryKey` e não na query).
    para desenvolver em paralelo foi barrado pelo hook (escrita fora do worktree da sessão). Branches da
    mesma sessão andam em sequência — commit antes de trocar —, e o gargalo real era a fila do `heavy`
    (1 slot para ~30 sessões), não a árvore.
+10. **A fatia achou um defeito maior que a classe — de novo.** Medindo a auditoria de margem (efeito 0
+    do universo), a aba Estratégica somava as 100 linhas mais recentes de `margin_audit_log`, um log que
+    ACRESCENTA ~508 linhas por execução semanal, em lotes de 500: a Margem Global mostrava 5–7% da carteira
+    auditada (R$ 158.916 contra R$ 2.179.687 na execução de 04/10). Virou o #2781 — a edge carimba UM
+    `calculated_at` por execução (v1.2), e a tela soma a última execução INTEIRA (o formato antigo é
+    reconstruído pelos lotes de 500 a < 1 s, medido nas 54 transições do histórico) e diz de quando é o
+    número e o que o log não garante. "Somar um `.limit()` como se fosse a população" é família própria.
+11. **A capa de 1.000 também mora nos ITENS.** A cesta da proposta paginava por pedido, não por item: 8
+    clientes passam de 1.000 itens em 365 dias, e os 2 maiores perdiam 53 de 296 e 65 de 283 SKUs da cesta
+    enviada. `fetchAllPages` + erro marcado; a falha vira aviso com "Tentar de novo", e o refetch que falha
+    não deixa a cesta antiga na tela (o React Query mantém `data` quando a query cai em erro).
+12. **Teste verde pela causa errada: o mock sem a telemetria.** O `fetchAllPages` chama `captureException`
+    antes de lançar; sem mockar a telemetria, a exceção do PRÓPRIO mock acendia o aviso de falha e o teste
+    passava. O adversarial do Codex pegou. Afirme a MARCA do erro (`ehFalhaDePagina` + motivo/fonte/página +
+    `cause.code`), nunca só "apareceu o aviso".
+13. **A cópia testada não era a executada.** A faturabilidade do Cockpit de Valor tinha duas cópias: a de
+    `src/`, com a matriz de testes, e a da edge, a que soma a receita, sem nenhum — sabotar só a edge ficava
+    verde. A régua foi para `fin-valor-cockpit/faturabilidade.ts`, testada direto pelo vitest (o arranjo de
+    `_shared/janela-pedidos-compra.ts`); a cópia de `src/` saiu, um guardrail prende o corte dos itens a ela
+    e o contrato de mutação acompanhou o código. "Espelhado verbatim" num comentário não é teste. E o
+    guardrail textual da 1ª versão tinha dois furos que o adversarial mostrou: lia COMENTÁRIOS (a linha
+    comentada passava por presente) e não via um 2º filtro por status no handler. Agora lê sem comentários
+    e exige que só o módulo leia status, `deleted_at` e data KPI do pedido pai — o resto do agregado
+    (produto, preço) pede teste do handler, declarado como follow-up.
+14. **Teto por igualdade em PRs irmãos: o merge textual pode sair limpo e errado.** Com dois PRs baixando
+    o mesmo `TETO_DIVIDA`, o git às vezes funde sem conflito e fica o teto de um só. Resolver = aplicar
+    sobre o `MERGE_HEAD` as linhas que o PR removeu e acrescentou no registro, RECALCULAR os dois tetos pela
+    contagem real e rodar o vitest do gate antes do push.
+15. **Citação de linha em arquivo protegido acopla o PR de edge a ele.** O `SKILL.md` do
+    `lovable-deploy-verify` cita `fin-valor-cockpit/index.ts:<linha>`, e o `docs:citacoes` exige a linha
+    certa: cada linha que a edge ganha ou perde obriga a editar o skill — arquivo que o
+    `sync_with_base_branch` não funde quando a main também o mudou (fica para uma pessoa; o founder
+    escolheu atualizar a citação no próprio PR).
+16. **§7 também vale para a PAUSA.** Trocar o "R$ 0 sob falha" pelo card de erro não bastou: offline a query
+    PAUSA com `status: success` e o cache — inclusive quando a rede cai entre uma tentativa falha e a
+    próxima do `retry: 2` de produção —, `isError` fica falso e a zona de vendas mostrava o faturado velho
+    como atual (sem cache, o corpo vazio dizia "Sem orçamentos aguardando."). O adversarial pegou; o repo
+    já tinha `desatualizado()` + `<AvisoLeituraFalhou>` para isso — a zona só não os usava.

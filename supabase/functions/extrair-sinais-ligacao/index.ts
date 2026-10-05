@@ -162,7 +162,7 @@ Deno.serve(async (req) => {
       max_tokens: 2000,
       system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
       tools: [TOOL as unknown as Anthropic.Tool],
-      tool_choice: { type: "tool", name: "extrair_sinais" },
+      tool_choice: { type: "tool", name: "extrair_sinais", disable_parallel_tool_use: true },
       messages: [{ role: "user", content: `Transcrição:\n\n${transcriptText}` }],
     });
 
