@@ -212,12 +212,15 @@ Use a tool extract_product_specs.`;
       // Spec truncada não vira rascunho com cara de completa (ausente ≠ completo). Com tool_choice
       // forçado a parada normal é "tool_use"; qualquer outra (max_tokens, context window, refusal) falha.
       if (response.stop_reason !== "tool_use") {
-        await supabase
+        const { error: errMarcar } = await supabase
           .from("kb_extraction_drafts")
           .update({ status: "failed", last_error: `resposta incompleta (stop_reason=${response.stop_reason})` })
           .eq("document_id", documentId)
           .eq("claim_token", claimToken);
-        return new Response(JSON.stringify({ error: "Extração incompleta — boletim grande demais ou recusado." }), {
+        // A resposta já é falha (422); se nem o "failed" gravou, o draft fica preso em claim —
+        // registra para o diagnóstico em vez de descartar o error calado.
+        if (errMarcar) console.error("[kb-extract-specs] não marcou draft failed:", errMarcar.message);
+        return new Response(JSON.stringify({ error: "Extração incompleta — boletim grande demais ou recusado.", ...(errMarcar ? { draft_nao_marcado: errMarcar.message } : {}) }), {
           status: 422, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
