@@ -10,8 +10,8 @@ description: >-
   pena comprar isso agora ou seguro", "quanto comprar do SKU X esse ciclo", "o fornecedor
   vai aumentar, antecipo a compra?", "tem promoção, pego mais?", "esse pedido de R$ X aperta
   meu caixa?", "parcelo ou pago à vista pra pegar o desconto?", "o que comprar hoje sem furar
-  o caixa?", "vale estocar antes do reajuste?". Read-only: gera SQL pro Lovable (founder
-  cola/roda/cola de volta), nunca escreve no banco; sempre mostra premissas, confiabilidade
+  o caixa?", "vale estocar antes do reajuste?". Read-only: lê o banco via psql-ro (só a RPC
+  gated de caixa vem do founder), nunca escreve no banco; sempre mostra premissas, confiabilidade
   dos dados e o que mudaria a recomendação. NÃO use (cada uma é OUTRA skill): puxar
   números/relatório de negócio, "como estão as vendas", NCG/aging/fluxo de caixa/margem, ou
   consultar estoque/giro de um SKU SEM uma decisão de compra em jogo → bi-colacor;
@@ -43,15 +43,16 @@ Logo a compra **sai do caixa quase imediatamente** — o caixa é a restrição 
 Por isso o **gate de caixa é o veto #1**: uma compra economicamente atraente que cria uma
 semana de caixa fraca deve ser **rejeitada ou redimensionada**, não aprovada.
 
-## Restrição operacional inviolável: acesso ao banco só via Lovable
+## Acesso ao banco: leitura é sua, escrita nunca
 
-O Lucas **não tem terminal/CLI/psql/curl** para o banco. Todo dado vem do **SQL Editor
-dentro do Lovable** (read-only). Portanto:
-
-- **NUNCA** tente rodar SQL você mesmo (sem `psql`, `curl`, `supabase` CLI). Não há acesso.
-- O fluxo é: a skill **gera a query**, o usuário roda em **🟣 Lovable → SQL Editor → cola → Run**,
-  e **cola o resultado de volta** no chat. A skill interpreta e monta o memo.
-- Rotule toda query assim: `🟣 Lovable → SQL Editor → cola → Run`.
+- **Leitura: você roda.** As queries de apoio são `SELECT` e você as executa via
+  `~/.config/afiacao/psql-ro` (role `claude_ro`; detalhe e fallback de nuvem em
+  `docs/agent/database.md` §1) e já entrega o memo interpretado — não peça ao Lucas para colar
+  resultado do que o wrapper responde.
+- **Exceção:** `fin_projecao_13_semanas` é RPC gated a staff (`claude_ro` recebe
+  `permission denied`) — essa o Lucas roda em **🟣 Lovable → SQL Editor → cola → Run** e cola a
+  folga de volta. O mesmo vale como fallback se o wrapper não existir nesta máquina.
+- **Escrita: nunca.** A skill recomenda; não muta nada no banco.
 - As queries de apoio estão em [`references/sql-queries.md`](references/sql-queries.md). Os nomes de
   coluna foram inferidos do schema; se uma coluna não existir, peça ao usuário a lista de
   colunas da tabela (`SELECT * ... LIMIT 1`) e ajuste — não invente.
@@ -60,8 +61,8 @@ dentro do Lovable** (read-only). Portanto:
 
 ```dot
 digraph {
-  "1. Enquadrar a decisão" -> "2. Puxar dados (SQL via Lovable)";
-  "2. Puxar dados (SQL via Lovable)" -> "3. Fazer a conta";
+  "1. Enquadrar a decisão" -> "2. Puxar dados (SQL via psql-ro)";
+  "2. Puxar dados (SQL via psql-ro)" -> "3. Fazer a conta";
   "3. Fazer a conta" -> "4. Gate de caixa (VETO)";
   "4. Gate de caixa (VETO)" -> "5. Aplicar tetos (cobertura/FEFO/portfólio)";
   "5. Aplicar tetos (cobertura/FEFO/portfólio)" -> "6. Escrever o memorando";
@@ -89,8 +90,8 @@ Use as queries de [`references/sql-queries.md`](references/sql-queries.md). Mín
 - **Caso C**: + Query 5 (avaliação da promoção).
 - **Sanidade**: Query 7 (outliers de demanda) quando a recomendação depender muito da demanda.
 
-Entregue as queries que o caso exige **de uma vez**, peça pro usuário rodar no Lovable e colar
-os resultados. Não peça uma de cada vez se dá pra pedir todas juntas.
+Rode as queries que o caso exige **de uma vez** via `psql-ro`. Se o caso precisa da folga de caixa
+(`fin_projecao_13_semanas`), peça ao Lucas só essa, junto, no início — não uma de cada vez.
 
 ### 3. Fazer a conta
 Aplique o modelo financeiro de [`references/modelo-financeiro.md`](references/modelo-financeiro.md).
@@ -212,7 +213,7 @@ não fura o piso."}
 4. **Confiança baixa → recomendação mais conservadora.** Lead time com poucas observações,
    estoque desatualizado, demanda irregular (Z) ou outliers recentes puxam a decisão pro lado
    cauteloso e isso tem que aparecer no memo.
-5. **Não escreva no banco. Não rode SQL você mesmo.** Gere a query, o usuário roda no Lovable.
+5. **Não escreva no banco.** Leitura via `psql-ro` é sua; a única que depende do Lucas é a RPC gated `fin_projecao_13_semanas`.
 6. **Não recalcule o que o sistema já calcula** (ponto de pedido, EOQ, ABC). Leia e use; se
    discordar do número do sistema, registre como observação, não como fato.
 7. **Classe manda no apetite de risco** (decisão do dono): confie na ABC/XYZ do sistema; A nunca

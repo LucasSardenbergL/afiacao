@@ -1,7 +1,8 @@
 # Queries SQL read-only de apoio
 
-Todas são **read-only** e rodam no **🟣 Lovable → SQL Editor → cola → Run**. O Lucas cola o
-resultado de volta no chat. **Nunca** rode SQL você mesmo — não há acesso a terminal/CLI ao banco.
+Todas são **read-only**. Rode-as você mesmo via `~/.config/afiacao/psql-ro` (`docs/agent/database.md` §1).
+O rótulo `🟣 Lovable → SQL Editor` em cada bloco é o fallback — e o caminho obrigatório só para a RPC
+gated `fin_projecao_13_semanas`, que o `claude_ro` não executa.
 
 ## Lembretes de schema (pra não quebrar)
 - Reposição usa empresa **`'OBEN'`** (maiúsculo); financeiro usa **`'oben'`** (minúsculo).
