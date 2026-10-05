@@ -29,7 +29,9 @@ NOMES. O que ela sozinha não prova, e este script prova ou recusa:
            pasta ou arquivo dele (lê os BYTES; exceto o alias `@` → ./src, cujo `@/x` alvo_de já
            resolve, e as strings DO array `content`, que são (d2)), e nenhum config da raiz lê
            arquivo por API (fs, glob, processo além do `git rev-parse` do carimbo): caminho MONTADO
-           em tempo de execução escapa da varredura de strings (Codex, 2026-09-26).
+           em tempo de execução escapa da varredura de strings (Codex, 2026-09-26). Nem importa
+           módulo LOCAL: o que ele lê ou configura (um plugin com readFileSync, o `css.postcss` do
+           Vite) a varredura das strings do config não acompanha (revisão do Fable, 2026-10-05).
       (d2) TAILWIND — o `content` do tailwind.config lê src/**/*.{ts,tsx} como TEXTO: um teste com
            palavra nova (um `toHaveClass('x')`) pode criar classe no CSS sem ser importado — medido
            em 2026-09-26: `.m-1` e `.overscroll-contain` estavam no CSS de produção SÓ porque testes
@@ -41,9 +43,11 @@ NOMES. O que ela sozinha não prova, e este script prova ou recusa:
            do JS). Prova: cada teste mudado, arquivo regular nas duas pontas, tem o MESMO conjunto de
            palavras no ar e na main. Vale só para o extrator AUDITADO (extrator_nao_auditado): o
            lockfile trava o 3.4.17; UM tailwind.config exportando objeto literal, `content` = UM
-           array só de strings, sem purge/separator/extract/presets/spread/mutação/import local,
-           transform só como propriedade CSS, prefix sem espaço; UM postcss.config com
-           `tailwindcss: {}`; nada de PostCSS em linha no vite.config nem `@config` em CSS. Medido:
+           array só de strings, sem purge/separator/extract/presets/spread/mutação (import local é
+           (d1)), transform só como propriedade CSS, prefix sem espaço; UM postcss.config com
+           `tailwindcss: {}`; nada de PostCSS em linha no vite.config, `@config` no CSS ou no HTML do
+           bundle (o `<style>` em linha passa pelo PostCSS), nem folha .pcss/.scss/.less/… — o Vite
+           as processa com o mesmo PostCSS e a prova só varre .css. Medido:
            das 11 mudanças só-de-teste em src/ dos últimos 300 commits da main, 1 (o #2547, um `4` →
            `3` num mapa) tem as mesmas palavras; as outras acrescentam palavra e seguem ALCANCA — a
            regra erra para MAIS.
@@ -56,9 +60,12 @@ NOMES. O que ela sozinha não prova, e este script prova ou recusa:
            dot:true. A prova entende EXATAMENTE as 3 strings de NEGACOES_ENTENDIDAS — as da classe
            TESTE do classify.sh —, cada uma pela regex do que ela exclui; qualquer outra `!x` não
            exclui nada (fail-CLOSED: o teste segue exigindo (d2)). Vale só com o extrator auditado
-           (a mesma config, o mesmo 3.4.17), o lockfile travando o fast-glob 3.3.2, e para teste
-           arquivo REGULAR nas duas pontas: symlink de nome `x.test.ts` que aponta para PASTA é lido
-           por dentro (a forma do nome não poda diretório). (d1) continua valendo inteiro.
+           (a mesma config, o mesmo 3.4.17), o lockfile travando o fast-glob 3.3.2, e numa árvore SÓ
+           de arquivos regulares nas duas pontas: a negação casa a STRING do caminho, não o arquivo,
+           e um symlink ou submódulo em QUALQUER lugar dá ao Tailwind outro caminho para o mesmo
+           texto (`app → src/lib/__tests__` lido pelo `./app/**`; pasta-link `x.test.ts` lida por
+           dentro, porque a forma do nome não poda diretório — revisão do Fable, 2026-10-05).
+           (d1) continua valendo inteiro.
 
 Saída: UMA linha. `PROVA_INERCIA_OK ...` com exit 0 é a ÚNICA forma de verde. Refutação = marca
 (BUILD_NAO_RECONHECIDO | PACKAGE_JSON_ALCANCA | TESTE_ALCANCA | ALCANCE_VAZA) + exit 1. Qualquer
@@ -93,6 +100,9 @@ RE_BUILD_PURO = re.compile(r"vite build(?: --mode [A-Za-z0-9_-]+)?")
 
 # Fechamento: o que varrer e como achar referência a caminho.
 EXT_CODIGO = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts", ".css", ".html")
+# o resto do CSS_LANGS_RE do Vite 5: passa pelo MESMO PostCSS (e pode trazer `@config`), e a prova só
+# varre .css — presente na árvore, a auditoria do extrator recusa
+EXT_FOLHA_PRE = (".pcss", ".postcss", ".sss", ".scss", ".sass", ".less", ".styl", ".stylus")
 RE_CONFIG_RAIZ = re.compile(r"(vite|tailwind|postcss)\.config\.[^/]+")
 STR = r"""(['"`])([^'"`\n]*)\1"""
 RE_STR = re.compile(STR)
@@ -504,9 +514,6 @@ def extrator_nao_auditado(arvore, css_bundle, texto_de):
         return "%s: %s pode trocar o que o extrator ve" % (configs[0], json.dumps(m.group(0)))
     if len(RE_TW_TRANSFORM.findall(t)) != len(RE_TW_TRANSFORM_CSS.findall(t)):
         return "%s: transform que nao e a propriedade CSS" % configs[0]
-    locais = [s for s, modo in specs_de("", t) if modo == "qualquer" and s.startswith((".", "/", "@/"))]
-    if locais:
-        return "%s: importa arquivo local (%s) que a leitura textual nao acompanha" % (configs[0], locais[0])
     prefixos = [v for _, v in RE_TW_PREFIX.findall(t)]
     if len(prefixos) != len(RE_TW_PREFIX_CHAVE.findall(t)) or any(RE_ESPACO_JS.search(x) for x in prefixos):
         return "%s: prefix que nao e string sem espaco" % configs[0]
@@ -533,7 +540,10 @@ def extrator_nao_auditado(arvore, css_bundle, texto_de):
     for p in raiz:
         if p.startswith("vite.config.") and re.search(r"\bpostcss\b", texto_de(p)):
             return "%s: PostCSS em linha no vite.config (o postcss.config deixa de valer)" % p
-    for p in css_bundle:
+    folhas = [p for p in arvore if p.endswith(EXT_FOLHA_PRE)]
+    if folhas:
+        return "%s: folha que o Vite passa pelo PostCSS e a prova nao varre (so .css)" % folhas[0]
+    for p in css_bundle:   # .css e .html: o <style> em linha do HTML também passa pelo PostCSS
         if RE_AT_CONFIG.search(texto_de(p)):
             return "%s: @config aponta outra config do Tailwind" % p
     return None
@@ -548,14 +558,18 @@ def fora_do_content(lidos, config, arvore, ent_ar, ent_main, texto_de):
     motivo = versao_nao_auditada(arvore, texto_de, "fast-glob", FAST_GLOB_AUDITADO)
     if motivo:
         return [], "; a negacao do content nao isenta teste nenhum: %s" % motivo
+    # A negação casa a STRING do caminho, não o arquivo: um symlink ou submódulo em QUALQUER lugar
+    # dá ao Tailwind outro caminho para o mesmo texto (`app → src/lib/__tests__` pelo `./app/**`,
+    # pasta-link `x.test.ts` lida por dentro) — revisão do Fable, 2026-10-05
+    estranho = next((p for e in (ent_ar, ent_main) for p, (modo, _) in sorted(e.items())
+                     if modo not in MODO_REGULAR), None)
+    if estranho:
+        return [], ("; a negacao do content nao isenta teste nenhum: %s nao e arquivo regular, e o "
+                    "Tailwind le o mesmo texto por um caminho que a negacao nao cobre" % estranho)
     regras = [NEGACOES_ENTENDIDAS.get(s) for s in negacoes]
     entendidas = [r for r in regras if r is not None]
     estranhas = [s for s, r in zip(negacoes, regras) if r is None]
-
-    def regular(t):   # nas pontas em que existe: symlink/submódulo, o Tailwind lê o que ele aponta
-        return all(e[t][0] in MODO_REGULAR for e in (ent_ar, ent_main) if t in e)
-
-    negados = [t for t in lidos if regular(t) and any(r.fullmatch(t) for r in entendidas)]
+    negados = [t for t in lidos if any(r.fullmatch(t) for r in entendidas)]
     nota = ("; negacao que a prova nao entende, ignorada: %s" % json.dumps(estranhas[0])
             if estranhas else "")
     return negados, nota
@@ -656,7 +670,8 @@ def provar_fechamento(ar, main, classify):
         rodada, fila = fila, []
         conteudo.update(ler_blobs(main, rodada))
 
-    css_bundle = [p for p in varridos + sorted(no_bundle) if p.endswith(".css") and p in conteudo]
+    css_bundle = [p for p in varridos + sorted(no_bundle) if p.endswith((".css", ".html"))
+                  and p in conteudo]
     det_testes = provar_testes(ar, main, arvore, css_bundle, conteudo, ent_ar, ent_main, mudados,
                                no_bundle, por_leitor, pelo_tailwind)
 
@@ -725,6 +740,11 @@ def provar_testes(ar, main, arvore, css_bundle, conteudo, ent_ar, ent_main, muda
             raise Refutado("TESTE_ALCANCA LEITOR %s: %s le arquivo em tempo de execucao (%s) — "
                            "caminho montado escapa da varredura de strings" % (
                                mudados[0], p, m.group(0) if m else "processo alem do git rev-parse"))
+        locais = [s for s, modo in specs_de("", t) if modo == "qualquer" and s.startswith((".", "/", "@/"))]
+        if locais:
+            raise Refutado("TESTE_ALCANCA LEITOR %s: %s importa modulo local (%s) — o que ele le ou "
+                           "configura (plugin, PostCSS) a varredura de strings nao acompanha" % (
+                               mudados[0], p, locais[0]))
     lidos = [t for t in mudados if t in pelo_tailwind]
     negados = []
     if lidos:

@@ -640,7 +640,7 @@ sabota_prev scripts/monitor-deploy.sh "o monitor deixa de contar TESTE: sem prov
 # pedir Publish), e a negação estranha do #14 não isenta (lida como a da pasta, isentaria)
 sabota_prev scripts/alcance-bundle.py "a negação do content deixa de isentar: o teste negado volta a pedir Publish" prtesteneg \
   3 "PR_TOCA_O_BUNDLE;src/__tests__/gate.test.ts;TESTE_ALCANCA TAILWIND" "PR_SEM_ALCANCE_NO_BUNDLE" \
-  '    negados = [t for t in lidos if regular(t) and any(r.fullmatch(t) for r in entendidas)]' '    negados = []'
+  '    negados = [t for t in lidos if any(r.fullmatch(t) for r in entendidas)]' '    negados = []'
 sabota_prev scripts/alcance-bundle.py "negação estranha lida como a da pasta: a palavra nova vira 'sem alcance'" prtestenegx \
   3 "PR_SEM_ALCANCE_NO_BUNDLE" "PR_TOCA_O_BUNDLE;TESTE_ALCANCA" \
   'NEGACOES_ENTENDIDAS.get(s)' 'NEGACOES_ENTENDIDAS.get(s, NEGACOES_ENTENDIDAS["!./src/**/__tests__/**"])'

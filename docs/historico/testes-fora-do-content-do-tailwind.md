@@ -107,6 +107,12 @@ no meio dela; refeita do zero sem edição em voo, 0.
 
 ## Deploy
 
-`tailwind.config.ts` é ALCANCA: precisa de **Publish**. Prova pelos bytes: o CSS servido perde
-`.m-1{` e `.overscroll-contain{` — antes do Publish, `index-BiX2TAAH.css` (153.986 bytes) tinha os
-dois.
+`tailwind.config.ts` é ALCANCA: pediu **Publish**, feito pelo founder em 03/10 depois do merge
+(squash `0c373d066`). Prova pelos bytes, colhida por fora:
+
+- `monitor-deploy.sh --pr 2773` → exit 0 `PR_NO_AR` (o ar serve `18affb75`, que contém o squash).
+- O CSS servido trocou de `index-BiX2TAAH.css` (153.986 bytes) para `index-D_wObP2W.css` (153.922).
+  O de antes **sem** `.m-1{margin:4px}` e `.overscroll-contain{overscroll-behavior:contain}` é byte a
+  byte igual ao de depois (controle: sem só uma das duas, não é). No build real do Lovable as
+  negações valem, e o CSS não mudou em mais nada — a pergunta "o Vite real difere do CLI?" saiu
+  respondida pelos bytes servidos.
