@@ -786,6 +786,28 @@ concentração perto da ruptura — é o critério do gate (spec §16.2).
 
 ---
 
+### Adendo (2026-10-05) — o que o PR0 entregou diferente do texto acima (leia antes de PR(c1), PR(d) e Task 0.5)
+
+PR0 = #2780 (migration `20261005131331` aplicada em prod; edge `v1.4-observa-conjunto-aberto` no ar). Depois do
+adversarial do Codex (6 P1 + 4 P2) e da revisão final, a interface ficou assim — os consumidores abaixo contam com isto:
+
+- **1 registro por PO por run** (coletor `criarColetorObservacao`, 1ª aparição vence). Reaparição que o motor não conta
+  é ignorada; reaparição que ele CONTA (ex.: etapa 10 → 15 entre páginas) **impede a publicação** do run.
+- **PO lido sem itens entra com 1 linha de presença**: `seq_item = 0`, campos do item `NULL`, `contribuicao = 0`,
+  `exclusao` = a decisão do PO. Presença de um PO no conjunto = existir linha dele no run.
+- **Só publica com a coleta ÍNTEGRA** (todo PO lido anotado com `nCodPed` válido e itens bem formados). Logo, num run
+  publicado, **ausência de linha = "não devolvido por esta pesquisa"** — ainda NÃO "fechado no Omie": um PO cuja
+  previsão foi adiada para além de `janela_ate` também some (Codex, achado 7). O PR(c1) não pode inferir fechamento só
+  da ausência.
+- **`pendente_aplicado` é conferido no BANCO** pela RPC, na mesma transação: afirmação da edge (pendente confiável,
+  upsert sem erro) **E** pendente gravado de cada SKU habilitado = soma do contado. Coluna nova `skus_divergentes`.
+  O filtro `AND pendente_aplicado` dos consumidores (Task 0.5, PR(c1)) segue certo e agora tem dente.
+- `varredura_completa` é sempre `true` nas linhas publicadas (run incompleto não publica) — mantida pela interface.
+- PR(d) Task d.1: a soma de saldo por etapa usa `coalesce(quantidade, 0)`, então as linhas de presença entram com 0.
+- Motivos de não-publicação no resumo da edge (`observacao_motivo`, visível em `net._http_response` do cron):
+  `pendente_nao_confiavel` · `coleta_incompleta: <motivo>` · `observacao_diverge_do_pendente` · `sem_tempo_no_run` ·
+  `rpc: <erro>`.
+
 ## PR(b) — espelho versionado do recebimento (o `receipt`/`receipt_item` do ledger)
 
 > Estas tabelas **são** os blocos `receipt` e `receipt_item` do receipt-first ledger (spec 2026-08-13 §6), com nome
