@@ -74,15 +74,25 @@ function chain(table: string): unknown {
   const registro: Chamada = { table, metodos: [] };
   chamadas.push(registro);
   const c: Record<string, unknown> = {};
+  let cabeca = false;
   for (const m of [
     'select', 'eq', 'neq', 'gte', 'lt', 'lte', 'gt', 'is', 'not', 'in', 'order',
     'limit', 'range', 'or', 'filter', 'contains', 'single', 'maybeSingle',
-  ]) c[m] = () => { registro.metodos.push(m); return c; };
+  ]) c[m] = (...args: unknown[]) => {
+    registro.metodos.push(m);
+    if (m === 'select' && (args[1] as { head?: boolean } | undefined)?.head) cabeca = true;
+    return c;
+  };
   c.then = (resolve: (v: unknown) => void) => {
     // Promessa PENDENTE: nem resolve nem rejeita. É o estado "ainda em voo", distinto de
     // erro — e o que o gate do skeleton do StrategicTab não enxergava.
     if (table === 'farmer_client_scores' && scoresPendentes) return undefined;
-    return resolve(resposta(table));
+    const r = resposta(table);
+    if (r.error) return resolve(r);
+    // o PostgREST REAL: `maybeSingle` sobre 0 linhas é `null` (não `[]`), e `head` traz só o `count`
+    if (registro.metodos.includes('maybeSingle')) return resolve({ ...r, data: Array.isArray(r.data) ? (r.data[0] ?? null) : r.data });
+    if (cabeca) return resolve({ data: null, count: Array.isArray(r.data) ? r.data.length : 0, error: null });
+    return resolve(r);
   };
   return c;
 }
@@ -299,12 +309,12 @@ describe('IntelligenceStrategicTab — falha da auditoria de margem não vira R$
     }
   });
 
-  it('o contador de Registros não afirma "0" sob falha', async () => {
+  it('o contador de clientes auditados não afirma "0" sob falha', async () => {
     renderWithClient(<IntelligenceStrategicTab />);
     await screen.findAllByRole('alert');
 
-    // "Registros: 0" afirma que a auditoria rodou e não achou nada.
-    expect(cardDo('Registros'), 'Registros exibiu 0 fabricado').toMatch(/—/);
+    // "0" afirma que a auditoria rodou e não achou ninguém.
+    expect(cardDo('Clientes auditados'), 'Clientes auditados exibiu 0 fabricado').toMatch(/—/);
   });
 
   it('DETECTOR: com a auditoria lida os KPIs monetários aparecem sem alerta', async () => {
