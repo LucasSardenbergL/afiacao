@@ -34,6 +34,11 @@ const MAX_RETRIES = 3;
 // já existe — o deadline não inventa truncamento, converte kill BRUTO em saída controlada. Os 75s
 // deixam ~15s para o upsert final em chunks, que só roda DEPOIS da enumeração inteira.
 const MAX_DURACAO_MS = 75_000;
+// A publicação da observação (PR0 da baixa de PO) é ACESSÓRIA: roda depois do upsert e nunca pode comer o tempo
+// da inativação e dos marcadores. Prazo = o que sobra até deadline + 10s (os 90s do cron menos ~5s de reserva),
+// com teto de 8s; sem margem (timeoutRequestMs = 0), não publica.
+const FOLGA_PUBLICACAO_MS = 10_000;
+const TETO_PUBLICACAO_MS = 8_000;
 const FETCH_TIMEOUT_MS = 20_000;
 
 type Empresa = "OBEN" | "COLACOR";
@@ -365,6 +370,7 @@ async function computePendenteViaPedidosCompra(
 ): Promise<{
   pendente: Map<string, number>; confiavel: boolean; problemas: string[];
   observados: LinhaObservada[]; janelaDe: string; janelaAte: string; varreduraCompleta: boolean;
+  coletaIntegra: boolean; perdaColeta: string | null;
 }> {
   const { numeros: emTransitoNumeros, codInts: emTransitoCodInts } = await fetchEmTransitoKeys(supabase);
 
@@ -482,7 +488,10 @@ async function computePendenteViaPedidosCompra(
       if (itensComSku === 0) {
         problemas.push(`PO aprovada sem item com SKU (po=${cNumero || nCodPed} etapa=${etapa})`);
       }
-      coletor.registrar(cabObs, itensObs, null);
+      // A decisão FINAL do motor: o acumulador (computePendenteEntradaPorSku) ainda descarta por número o PO cujo
+      // cNumero está no em_transito — só alcançável com cNumero "" e um número vazio no app, mas aí a soma por SKU
+      // fecharia por compensação com outro PO se a observação o anotasse como contado.
+      coletor.registrar(cabObs, itensObs, emTransitoNumeros.has(cNumero) ? "dedup_app" : null);
     }
     await new Promise((r) => setTimeout(r, 1100));   // rate-limit Omie entre páginas
   }
@@ -506,6 +515,7 @@ async function computePendenteViaPedidosCompra(
     pendente, confiavel, problemas,
     observados: coletor.linhas, janelaDe: inicioJanela, janelaAte: fimJanela,
     varreduraCompleta: fim && problemas.length === 0,
+    coletaIntegra: coletor.integra, perdaColeta: coletor.perda,
   };
 }
 
@@ -763,7 +773,10 @@ Deno.serve(async (req) => {
     let pendenteConfiavel = true; // COLACOR (ListarSaldoPendente) sempre aplica; OBEN é gated pela confiabilidade
     let pendenteProblemas: string[] = [];
     // Só o ramo OBEN observa o conjunto aberto (o COLACOR lê o ListarSaldoPendente, que não tem PO).
-    let observacaoPo: { observados: LinhaObservada[]; janelaDe: string; janelaAte: string; varreduraCompleta: boolean } | null = null;
+    let observacaoPo: {
+      observados: LinhaObservada[]; janelaDe: string; janelaAte: string; varreduraCompleta: boolean;
+      coletaIntegra: boolean; perdaColeta: string | null;
+    } | null = null;
     if (empresa === "OBEN") {
       const r = await computePendenteViaPedidosCompra(appKey, appSecret, habilitadoMap, supabase, deadline);
       pendenteEntrada = r.pendente;
@@ -851,13 +864,17 @@ Deno.serve(async (req) => {
     let observacaoPublicada = false;
     let observacaoMotivo: string | null = null;
     if (observacaoPo) {
-      if (!pendenteConfiavel) {
-        observacaoMotivo = "pendente_nao_confiavel";
-      } else if (!observacaoBateComPendente(observacaoPo.observados, pendenteEntrada)) {
-        observacaoMotivo = "observacao_diverge_do_pendente";
-        console.error(`[omie-sync-estoque] observação do conjunto aberto NÃO bate com o pendente — não publicada`);
-      } else {
-        try {
+      try {
+        const prazoMs = timeoutRequestMs(Date.now(), deadline + FOLGA_PUBLICACAO_MS, TETO_PUBLICACAO_MS);
+        if (!pendenteConfiavel) {
+          observacaoMotivo = "pendente_nao_confiavel";
+        } else if (!observacaoPo.coletaIntegra) {
+          observacaoMotivo = `coleta_incompleta: ${observacaoPo.perdaColeta ?? "sem motivo"}`;
+        } else if (!observacaoBateComPendente(observacaoPo.observados, pendenteEntrada)) {
+          observacaoMotivo = "observacao_diverge_do_pendente";
+        } else if (prazoMs === 0) {
+          observacaoMotivo = "sem_tempo_no_run";
+        } else {
           const { error } = await supabase.rpc("reposicao_po_observado_publicar", {
             p_run: {
               run_id: crypto.randomUUID(),
@@ -868,19 +885,22 @@ Deno.serve(async (req) => {
               janela_ate: observacaoPo.janelaAte,
               filtros: FILTROS_PENDENTE,
               varredura_completa: observacaoPo.varreduraCompleta,
-              // aplicado = o pendente que a observação reconcilia foi gravado em TODO SKU (upsert sem erro)
+              // a AFIRMAÇÃO da edge (pendente confiável, upsert sem erro); a RPC confere no banco, SKU a SKU
               pendente_aplicado: pendenteConfiavel && errosUpsert.length === 0,
               pedidos_lidos: new Set(observacaoPo.observados.map((o) => o.omie_codigo_pedido)).size,
               versao_edge: VERSAO,
             },
             p_itens: observacaoPo.observados,
-          });
+          }).abortSignal(AbortSignal.timeout(prazoMs));
           if (error) observacaoMotivo = `rpc: ${mensagemDeErro(error) ?? "sem mensagem"}`;
           else observacaoPublicada = true;
-        } catch (err) {
-          observacaoMotivo = mensagemDeErro(err) ?? "falha sem mensagem";
         }
-        if (!observacaoPublicada) console.error(`[omie-sync-estoque] observação não publicada: ${observacaoMotivo}`);
+      } catch (err) {
+        observacaoMotivo = mensagemDeErro(err) ?? "falha sem mensagem";
+      }
+      // pendente não confiável já tem o próprio console.error acima; o resto é sinal desta fatia
+      if (!observacaoPublicada && observacaoMotivo !== "pendente_nao_confiavel") {
+        console.error(`[omie-sync-estoque] observação do conjunto aberto não publicada: ${observacaoMotivo}`);
       }
     }
 

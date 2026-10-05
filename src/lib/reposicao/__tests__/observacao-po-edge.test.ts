@@ -34,4 +34,17 @@ describe('omie-sync-estoque — observação do conjunto aberto', () => {
     expect(fonte).toContain('criarColetorObservacao(');
     expect(fonte).not.toContain('observarPedido(');
   });
+
+  it('o PO contado é anotado com a decisão FINAL do motor (o filtro poNumerosEmTransito do acumulador)', () => {
+    // Sem isto, um PO que o acumulador descarta por número (cNumero "" casando um número vazio do app) apareceria
+    // como contado, e a soma por SKU poderia fechar por compensação com outro PO (Codex, adversarial do PR0).
+    expect(fonte).toContain('coletor.registrar(cabObs, itensObs, emTransitoNumeros.has(cNumero) ? "dedup_app" : null)');
+  });
+
+  it('a publicação exige coleta íntegra e tem prazo: não come o tempo da inativação nem dos marcadores', () => {
+    const iRpc = fonte.indexOf('"reposicao_po_observado_publicar"');
+    expect(fonte.lastIndexOf('coletaIntegra', iRpc)).toBeGreaterThan(0);
+    expect(fonte.indexOf('.abortSignal(', iRpc)).toBeGreaterThan(iRpc);
+    expect(fonte.lastIndexOf('timeoutRequestMs(', iRpc)).toBeGreaterThan(fonte.indexOf('from("sku_estoque_atual")'));
+  });
 });
