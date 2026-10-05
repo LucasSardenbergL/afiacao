@@ -59,7 +59,7 @@ if [ "${1:-}" = "--falsificar" ]; then
               retencao_fora:A4:A5
               retencao_apaga_tudo:A5:A4
               retencao_16_dias:A4:A5
-              cascata_fora:A4:A5
+              cascata_fora:A4,A5
               rls_desligada:R1,R3:R2,R2m,R4
               policy_aberta:R1,R3:R2,R2m,R4
               policy_sem_employee:R2:R2m,R1,R3
