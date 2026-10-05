@@ -249,6 +249,10 @@ db/test-data-health-sync-reprocess.sh      32  falsificar=15
 # authenticated), re-apply e a PRE. Mínimo 43, não 44: o A29 (lc_numeric pt_BR) é NÃO MEDIDO — e não
 # conta — num servidor sem o locale.
 db/test-data-health-vendas-empurradas.sh   43  falsificar=18
+# gêmeos push/pull de sales_orders — contagem única na fonte (marca + triggers + índice único + CHECK
+# de data da importada + mesmo pid em contas diferentes), com a RPC real do importador e corrida
+# determinística. 11 sabotagens, uma camada por vez.
+db/test-gemeos-push-pull-contagem-unica.sh   37  falsificar=11
 # Tintométrico: corante impagável EM USO alerta (fora de uso ou desativada, não), agravamento
 # re-emite e o dead-man dispara com a camada B parada.
 db/test-tint-watchdog-corante.sh           11
