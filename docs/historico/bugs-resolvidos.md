@@ -974,3 +974,40 @@ contexto antes de acusar. (2) **O md5 do deparse não enxerga o `security_invoke
 `SET ROLE` (S2) pegaram — PÓS de view precisa das duas metades. (3) **A trava tem dente medido no PG17:**
 sem o `ALTER VIEW` sem efeito antes da PRÉ, uma 2ª sessão altera a view com a migration parada entre a
 PRÉ e o replace (o deparse solta o lock da própria view; só as relações lidas ficam presas).
+
+## O PO real do dry_run bloqueava o motor e NÃO bloqueava a oferta de oportunidade — a 4ª lista ficou para trás (2026-10-01)
+
+**Defeito (P1 latente — compra dupla antecipada).** `disparado_simulado` é PO REAL no Omie (o dry_run da
+`disparar-pedidos-aprovados` chama `IncluirPedCompra`). Ele entrou de uma vez nas TRÊS listas do
+`em_transito` (`20260925225004` + `20260926001425` + edge `omie-sync-estoque` v1.2, paridade vigiada), mas os
+dois `NOT EXISTS` [SIMETRIA-NORMAL] de `gerar_pedidos_oportunidade_ciclo` (CTE do header + INSERT de itens)
+ficaram sem ele: o SKU de um PO do dry_run voltava a ser ofertado no ciclo de promoção/aumento — compra
+ANTECIPADA em dobro. PROD 2026-10-01: 0 linhas no status, 0 pedidos de oportunidade na história, 0
+campanhas vigentes, OBEN em `producao` ⇒ latente, nenhum caixa recuperado.
+
+**Conserto.** Migration `20261001204054` — corpo = o bloco da `20261001023000` (fuso SP), que é o da PROD
+(`md5(pg_get_functiondef)=2cae069c…`, reproduzido no PG17), + o status nas duas listas; `BEGIN/COMMIT` + `$post$`
+(2 listas, guarda [FANTASMA] 2×, sinal do nº Omie). Prova `db/test-oportunidade-antidup-disparado-simulado.sh`
+(17 asserts nos 2 `lc_messages`, no núcleo do CI): CONTROLE = versão PROD oferece o SKU; conserto bloqueia
+D-0 e D-7, libera D-8 e outra empresa; header×itens por pedido; falsificação sempre ligada — corpo sabotado
+aplicado com rc=0 e RPC com rc=0, uma lista por vez, cada uma vermelha no assert DELA (header → A2, itens →
+A1) com controle verde na mesma sabotagem; a postcondição com uma lista só aborta e faz rollback. Guard
+vitest novo em `edges-onorder-guardrail.test.ts`: 2 listas anti-dup, header = itens, `em_transito ⊆ anti-dup`
+(falsificado: 1 lista → "header e itens divergem"; 2 → "conta como a caminho… NÃO bloqueia").
+
+**Lições.** (1) **A paridade vigiava as listas IGUAIS e esqueceu a lista MAIS LARGA.** A anti-dup da
+oportunidade não é cópia do `em_transito` (também barra pendente/bloqueado/falha_envio), então nenhum
+`toEqual` a pegaria — a relação certa é de INCLUSÃO, e só ela fecha a classe "status novo de automação
+entra em N lugares". (2) **A base mudou debaixo da entrega:** entre o 1º rascunho (base `20260922225449`,
+PROD `614ee7e0`) e a entrega, a `20261001023000` (fuso SP) recriou a função. Aplicar o rascunho teria
+REVERTIDO o fuso em silêncio ("a última a recriar vence"); o que pegou foi re-medir o md5 da PROD antes de
+aplicar, não o diff do PR. (3) A sabotagem pela migration inteira é barrada pela própria `$post$` — por isso a
+falsificação COMPORTAMENTAL aplica só o corpo (Codex desenho P1); o abort da `$post$` é prova à parte.
+
+**Aplicação (2026-10-03).** Pela sessão, no ENVELOPE (MCP, `BEGIN/COMMIT` + `$post$` + trava `md5(prosrc)=79f6881b…`),
+após ensaio `ENSAIO_OK` e re-medição da PROD (`2cae069c…`) imediatamente antes. 2ª testemunha `psql-ro`: corpo
+`79f6881b…`, 2 listas, fuso SP preservado, ACL idêntico, 1 overload. Revisão adversarial de código pelo **Fable**
+(Codex sem cota até 03/10 19:11 — decisão do founder): aprovado, 0 P0/P1. P2 registrado:
+`reposicao_pedido_auto_aprovavel` (`20260629140000`) lista só `('disparado','concluido_recebido')` e cobre o PO do
+dry_run por COINCIDÊNCIA de coluna (`omie_pedido_compra_numero IS NOT NULL`, gravado no mesmo UPDATE do status —
+`disparar-pedidos-aprovados/index.ts`), não por vocabulário.
