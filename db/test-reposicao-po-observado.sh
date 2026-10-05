@@ -216,7 +216,7 @@ case "$SABOTAGEM" in
   post_cega_tab_anon)          sabotar_arquivo "IF has_table_privilege('anon', v_tab, v_priv) THEN" "IF false THEN" 1 ;;
   post_cega_md5)               sabotar_arquivo "FROM pg_proc p WHERE p.oid = v_fn) IS DISTINCT FROM '" "FROM pg_proc p WHERE p.oid = v_fn) IS NULL AND 'x' <> '" 1 ;;
   post_cega_rls)               sabotar_arquivo "AND c.relrowsecurity" "" 1 ;;
-  post_cega_checkdef)          sabotar_arquivo "AND k.contype = 'c') IS DISTINCT FROM '" "AND k.contype = 'c') IS NULL AND 'x' <> '" 1 ;;
+  post_cega_checkdef)          sabotar_arquivo "AND k.convalidated) IS DISTINCT FROM '" "AND k.convalidated) IS NULL AND 'x' <> '" 1 ;;
   post_cega_policies)          sabotar_arquivo "IS DISTINCT FROM '7c26732332bf0eed21921bf88944e4b9'" "IS NULL" 1 ;;
   post_cega_config)            sabotar_arquivo "= ANY (p.proconfig) FROM pg_proc p WHERE p.oid = v_fn) IS DISTINCT FROM true THEN" "= ANY (p.proconfig) FROM pg_proc p WHERE p.oid = v_fn) = false THEN" 1 ;;
   post_cega_service_role)      sabotar_arquivo "IF v_priv <> 'SELECT' AND has_table_privilege('service_role', v_tab, v_priv) THEN" "IF false THEN" 1 ;;
