@@ -127,7 +127,7 @@ export type MotivoPulo = "sem_id" | "ja_importado" | "cancelado" | "recebido_no_
  * `listagem_magra` = sem estado utilizável (sem `infoCadastro`, ou sem os "N" explícitos);
  * `chave_na_listagem` = aberta, mas sem chave legível.
  */
-export type Incompleta = "listagem_magra" | "chave_na_listagem";
+type Incompleta = "listagem_magra" | "chave_na_listagem";
 
 export type Triagem =
   | { tipo: "pular"; motivo: MotivoPulo }

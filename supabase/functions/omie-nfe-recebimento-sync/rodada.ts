@@ -30,7 +30,7 @@ const MAX_PAGINAS_DECLARADAS = 500;
 /** Teto de LEITURA por rodada (50 por página): amostra que o cron horário retoma. */
 export const MAX_PAGINAS_POR_RODADA = 3;
 /** 1 consulta de detalhe por conta e rodada: a trava anti-redundância do Omie morde o método por conta (~60s). */
-export const MAX_CONSULTAS_POR_RODADA = 1;
+const MAX_CONSULTAS_POR_RODADA = 1;
 
 export interface DepsRodada {
   /** `ListarRecebimentos` com estes parâmetros. Devolve o corpo — inclusive o de falha; lança só em falha de transporte. */
@@ -45,7 +45,7 @@ export interface DepsRodada {
 }
 
 /** O que aconteceu com a NF-e que recebeu a consulta da rodada. */
-export type Desfecho =
+type Desfecho =
   | "importada"
   | "itens_falharam"
   | "recebido_no_omie"
@@ -57,7 +57,7 @@ export type Desfecho =
   | "falha_banco"
   | "falha_interna";
 
-export type Paginacao = "completa" | "truncada_no_teto" | "interrompida_por_erro";
+type Paginacao = "completa" | "truncada_no_teto" | "interrompida_por_erro";
 
 /** O sensor do cron, por conta: vai em `por_armazem` na resposta, que o `net._http_response` guarda. */
 export interface ResumoConta extends ContagemArmazem {
