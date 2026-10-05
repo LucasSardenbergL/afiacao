@@ -146,4 +146,22 @@ describe("paridade money-path: status do em_transito (RPCs) = status excluídos 
     expect(statusEdge(), "omie-sync-estoque diverge da em_transito — um status seria contado 2× ou 0×").toEqual(rpc);
     expect(statusParam(), "atualizar_parametros_numericos_skus diverge da em_transito do motor — impacto conta o PO 0× ou 2×").toEqual(rpc);
   });
+
+  // O anti-compra-dupla da oportunidade ([SIMETRIA-NORMAL], 2 NOT EXISTS: header e itens) é uma 4ª
+  // lista, MAIS larga de propósito (também barra pendente/bloqueado/falha_envio). Ficou sem
+  // 'disparado_simulado' quando as três de cima o ganharam (migration 20261001204054) — o SKU de um PO
+  // real do dry_run voltava a ser ofertado = compra dupla antecipada. Guarda o VOCABULÁRIO do 1º ramo
+  // da em_transito, não o predicado inteiro (janela, escopo e o 2º ramo do portal ficam fora).
+  it("o que o motor conta como 'a caminho' também bloqueia a oferta de oportunidade (header = itens)", () => {
+    const listas = [...sqlVivo("gerar_pedidos_oportunidade_ciclo").matchAll(/pcsn\.status IN \(([^)]*)\)/g)].map((m) =>
+      lista(m[1]),
+    );
+    expect(listas.length, "esperava EXATAMENTE 2 listas anti-dup (CTE do header + INSERT de itens)").toBe(2);
+    expect(listas[0], "header e itens divergem — um SKU barrado no header entraria como item (ou vice-versa)").toEqual(listas[1]);
+    const rpc = statusRpc();
+    expect(rpc.length, "lista da em_transito veio vazia — extração cega").toBeGreaterThan(0);
+    for (const status of rpc) {
+      expect(listas[0], `'${status}' conta como a caminho no motor mas NÃO bloqueia a oferta de oportunidade`).toContain(status);
+    }
+  });
 });

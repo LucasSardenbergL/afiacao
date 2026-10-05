@@ -84,6 +84,25 @@ fluxo (filtro num `if` conta como sempre); SQL cru em string não é PostgREST; 
 membro só (`['CANCELADO']`) não se distingue de vocabulário de outro domínio — havia uma
 (`STATUS_CANCELAMENTO`), erradicada na mesma leva.
 
+## As fatias (PRs)
+
+| PR | Domínio | Estado em 2026-10-02 |
+|---|---|---|
+| #2743 | gate + registro + falsificação | mergeado |
+| #2748 | operacionais, feeds, Inteligência, roteirizador | mergeado — falta Publish e o deploy de `visit-score-recalc-client` (sem sonda: o ledger não a enxerga) |
+| #2766 | dashboard + cockpit de valor (`fin-valor-cockpit` v1.7) | DRAFT até o Codex |
+| #2767 | Customer 360 (faturamento 12m sem teto, sentinela 9999) | DRAFT até o Codex |
+| #2768 | ligação (preço praticado, munição) | DRAFT até o Codex |
+| #2769 | proposta (cesta enviada ao cliente) | DRAFT até o Codex |
+| #2770 | auditoria de margem (`algorithm-a-audit` v1.1) | DRAFT até o Codex |
+
+Os DRAFTs são irmãos sobre o #2748 e mexem no mesmo registro: quem mergear depois resolve o conflito do
+`TETO_DIVIDA`/`TETO_CONSTANTES_DIVIDA` como **teto atual − entradas que quita** (o G4 exige igualdade).
+
+Achados fora da classe, registrados nos PRs e não consertados: a lista manual do roteirizador lê
+`profiles` sem limit (mostra os primeiros 1.000 de 5.665 clientes); nenhuma zona do cockpit aplica o
+recorte de empresa (`companies` está na `queryKey` e não na query).
+
 ## Lições
 
 1. **O corte pode ser maior que a classe.** O `limit(200)` do Customer 360 escondia 55–72% do
@@ -96,3 +115,23 @@ membro só (`['CANCELADO']`) não se distingue de vocabulário de outro domínio
    alternativa (excluir o registro do scan) seria um ponto cego com nome.
 4. **Vermelho que não diz o arquivo não é marca.** Lista longa no `toEqual([])` sai truncada
    (`[ …(6) ]`); a falsificação pegou isso, e o gate passou a comparar strings.
+
+
+5. **Mock de cadeia PostgREST é contrato implícito.** Acrescentar `.is('deleted_at', null)` à lista de
+   orçamentos derrubou 5 testes de OUTRA feature (`SalesQuotes.accountGuard`/`priceGuard`), cujos mocks não
+   tinham `.is` — a query morria antes do `.order()`. O CI pegou. Antes do push, procure os testes que
+   mockam a cadeia alterada (pelo arquivo E pela tabela) e rode-os; os testes do próprio domínio não bastam.
+6. **Ordem dos métodos na cadeia não é semântica.** No PostgREST, `.not().limit()` e `.limit().not()` viram
+   a mesma URL; afirmar "o filtro vem antes do limit" pela ordem das chamadas seria asserção cosmética. O
+   defeito era o filtro em MEMÓRIA depois do corte — o teste prende o par NA query e o `limit` como janela
+   final (a munição caiu de 16 para 8: o excesso só existia para compensar o refiltro).
+7. **A sabotagem tem de ser a regressão REAL, não a remoção da linha.** Tirar o `throw` da zona de vendas
+   deixou o teste verde: o `null` quebrava no `for…of` do agregador e a query caía em erro por acidente. A
+   sabotagem fiel é a forma antiga — `?? []` engolindo o erro — e essa ficou vermelha.
+8. **Camada redundante se mede, não se presume.** A régua em memória da proposta (derivada da autoridade)
+   fica verde sob sabotagem: a query já filtra, e o banco não devolve não-venda. Está declarada como defesa
+   com a MESMA fonte, e quem trava a query é o gate.
+9. **Isolamento de sessão vale também para o worktree que a própria sessão cria.** Um segundo worktree
+   para desenvolver em paralelo foi barrado pelo hook (escrita fora do worktree da sessão). Branches da
+   mesma sessão andam em sequência — commit antes de trocar —, e o gargalo real era a fila do `heavy`
+   (1 slot para ~30 sessões), não a árvore.

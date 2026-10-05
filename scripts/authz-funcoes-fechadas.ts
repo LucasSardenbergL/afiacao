@@ -456,6 +456,12 @@ export const AUTHZ_FUNCOES_FECHADAS: Record<string, FuncaoFechada> = {
     permitido: PORTA_FECHADA,
     motivo: 'arredonda/persiste qtde inteira do pedido — edge disparar-pedidos-aprovados',
   },
+  'public.reposicao_po_observado_publicar': {
+    fechadaPor: '20261005131331_reposicao_po_observado_pelo_motor.sql',
+    permitido: PORTA_FECHADA,
+    motivo:
+      'publica a observação do conjunto aberto que o motor contou (lê sku_estoque_atual só para conferir o pendente gravado) — edge omie-sync-estoque, service_role. Aberta a authenticated, qualquer sessão gravaria observação falsa que os PRs da baixa de PO leriam como "o que o motor contou".',
+  },
   'public.reposicao_claim_disparo': {
     fechadaPor: '20260906190615_reposicao_claim_disparo_cenario_b.sql',
     permitido: PORTA_FECHADA,

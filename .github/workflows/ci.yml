@@ -1541,6 +1541,7 @@ jobs:
       contents: read
     outputs:
       roda: ${{ steps.escopo.outputs.roda }}
+      partes: ${{ steps.escopo.outputs.partes }}
     steps:
       # fetch-depth 2: no `pull_request` o checkout é o merge commit (refs/pull/N/merge); com os
       # dois pais na árvore, `pai 1 → HEAD` é exatamente o que o PR muda na main.
@@ -1595,9 +1596,9 @@ jobs:
     # `cancelled` (sem veredito), e o sensor da Issue `mutcheck-cobertura` nem roda — ele só escuta
     # `failure()`, então a rede some calada. Dois contratos são 40% do tempo (sonda-versao-sql 8,5 min,
     # falsificar-exige-assert-gate 8,3 min; os outros 46 somam ~25). 60 deixa o pior observado a 73%.
-    # Compra pouco: o job foi de 7 para 43 min em 24 dias (~1,5 min/dia). O conserto de fundo segue
-    # sendo o fan-out por contrato — e ele precisa de agregador para o sensor (cada parte abriria e
-    # fecharia a MESMA Issue), por isso é decisão à parte.
+    # Compra pouco: o job foi de 7 para 43 min em 24 dias (~1,5 min/dia). O conserto de fundo veio
+    # em 2026-10-03: TODOS em 3 partes (~15 min cada, `strategy` abaixo) + o agregador
+    # `mutcheck-sensor`. Os 60 ficam para o caminho de 1 parte só com TODOS (escopo quebrado).
     timeout-minutes: 60
     # issues:write p/ o sensor abaixo abrir/fechar a Issue `mutcheck-cobertura`; contents:read p/ checkout.
     permissions:
@@ -1613,6 +1614,14 @@ jobs:
     # `needs:`: se o job de escopo FALHAR, este roda mesmo assim, com todos os contratos.
     needs: mutcheck-escopo
     if: ${{ !cancelled() && github.event_name != 'schedule' && needs.mutcheck-escopo.outputs.roda != 'false' }}
+    # PARTES (2026-10-03): TODOS (main, ou PR com gatilho global) vira 3 partes equilibradas pelo
+    # custo estimado de cada contrato — ~43 min em série viram ~15 por parte; o escopo de um PR cabe
+    # numa. O vetor vem do job de escopo; sem ele (escopo quebrado), 1 parte com todos, como antes.
+    # `fail-fast: false`: uma parte vermelha não cancela as outras — o sensor precisa de TODAS.
+    strategy:
+      fail-fast: false
+      matrix:
+        parte: ${{ fromJSON(needs.mutcheck-escopo.outputs.partes || '[1]') }}
     steps:
       # fetch-depth 2: o step "Contratos no escopo" refaz o diff do merge commit (pai 1 → HEAD).
       - uses: actions/checkout@v5
@@ -1643,17 +1652,32 @@ jobs:
         run: bun run mutcheck:selftest
 
       # Refaz a MESMA seleção do job `mutcheck-escopo` (mesmo merge commit, mesmo script) e aponta
-      # o MUTCHECK_DIR do `mutcheck-all.sh` para um diretório só com os contratos alcançados. Fora
-      # de PR, com gatilho global ou em qualquer incerteza, não define nada: o default (todos) vale.
-      - name: Contratos no escopo deste diff
+      # o MUTCHECK_DIR do `mutcheck-all.sh` para um diretório só com a FATIA desta parte: o escopo
+      # do diff, ou a repartição de TODOS. Em qualquer incerteza não define nada — o default (todos)
+      # vale, e o sensor acusa a união se isso duplicar contrato entre partes.
+      - name: Contratos desta parte (escopo do diff ou fatia de TODOS)
         env:
           EVENTO: ${{ github.event_name }}
-        run: bun run mutcheck:escopo --evento "$EVENTO" --materializar "$RUNNER_TEMP/mutcheck-escopo"
+          PARTE: ${{ matrix.parte }}
+          TOTAL: ${{ strategy.job-total }}
+        run: bun run mutcheck:escopo --evento "$EVENTO" --materializar "$RUNNER_TEMP/mutcheck-escopo" --parte "$PARTE/$TOTAL"
 
       - name: mutcheck — contratos de cobertura money-path (.mut)
         env:
-          MUTCHECK_RESUMO: /tmp/mutcheck-resumo.json
+          MUTCHECK_RESUMO: ${{ runner.temp }}/parte-${{ matrix.parte }}.json
         run: bun run mutcheck
+
+      # O resumo desta parte vai para o agregador (`mutcheck-sensor`), que só existe na main.
+      # `always()`: parte VERMELHA também sobe — é ela que o alarme precisa descrever. Sem arquivo
+      # (a parte morreu antes de escrever), nada sobe e o agregador acusa a parte sem resumo.
+      - name: Resumo da parte → artefato do sensor
+        if: ${{ always() && github.ref == 'refs/heads/main' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: mutcheck-resumo-${{ matrix.parte }}
+          path: ${{ runner.temp }}/parte-${{ matrix.parte }}.json
+          if-no-files-found: ignore
+          retention-days: 3
 
       # O `mutcheck` acima roda a suíte INTEIRA e reporta o AGREGADO. Desde que a mecânica do
       # `controle_credencial` virou uma função só (sonda + canária), "PEGA" passou a significar
@@ -1673,11 +1697,58 @@ jobs:
       # Custo MEDIDO 2026-09-08 na M2 do founder, sem `heavy`: 20s (4 rodadas de vitest filtradas
       # por `-t`). O job tem teto de 15min e o step acima consome ~10min — cabe com folga.
       - name: prova por consumidor — o mutante compartilhado morre nos DOIS modos
+        # Não é contrato da repartição: roda uma vez, na parte 1.
+        if: matrix.parte == 1
         run: |
           bash scripts/prova-consumidores-controle.sh --selftest
           bash scripts/prova-consumidores-controle.sh
 
-      # ─── Sensor (2026-09-07) ────────────────────────────────────────────────
+  # ─── Sensor do mutation-check — a UNIÃO das partes (2026-10-03) ─────────────────
+  # O alarme da Issue `mutcheck-cobertura` vivia DENTRO do `mutation-check`. Com o job em partes,
+  # cada uma abriria e fecharia a MESMA Issue sozinha — a parte verde fechando o alarme que a
+  # vermelha acabou de abrir. Por isso ele mudou para cá, no padrão do `provas-sql-uniao`: as
+  # partes sobem o resumo, este job recalcula a mesma repartição e confere que cada contrato foi
+  # medido EXATAMENTE uma vez (`bun run mutcheck:escopo --juntar`). Só na main, como antes.
+  #
+  # A diferença deliberada para o desenho antigo: parte cancelada, sem resumo ou com contrato
+  # faltando era silêncio (o step só escutava `failure()`), e a rede da main sumia calada. Agora é
+  # "união incompleta" — abre a Issue como ausência de dado e não deixa fechar.
+  mutcheck-sensor:
+    needs: [mutcheck-escopo, mutation-check]
+    if: ${{ always() && github.ref == 'refs/heads/main' && github.event_name != 'schedule' && needs.mutation-check.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+
+    steps:
+      - uses: actions/checkout@v5
+
+      # Semver estrito, mesmo motivo do job `validate` (o `bunpin:check` cobra a convergência).
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      # `continue-on-error`: nenhum artefato (todas as partes morreram) não pode derrubar o sensor
+      # antes de ele dizer isso — a união abaixo acusa as partes sem resumo.
+      - name: Resumos das partes
+        uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          pattern: mutcheck-resumo-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/resumos
+
+      - name: União das partes — cada contrato medido exatamente uma vez?
+        id: juntar
+        env:
+          EVENTO: ${{ github.event_name }}
+          PARTES: ${{ needs.mutcheck-escopo.outputs.partes || '[1]' }}
+        run: bun run mutcheck:escopo --evento "$EVENTO" --juntar "$RUNNER_TEMP/resumos" --partes "$PARTES" --saida /tmp/mutcheck-resumo.json --github-output
+
+      # ─── O sensor (2026-09-07), agora sobre a UNIÃO das partes ───────────────
       # Este job JÁ rodava na main a cada push — ele só não FALAVA. O vermelho do #2279 durou
       # ~10h e chegou ao founder por alguém abrir um run, não por um alarme; job vermelho sem
       # leitor treina a ignorar o sinal. Aqui ele ganha voz, SEM mudar quando roda (segue fora
@@ -1693,8 +1764,12 @@ jobs:
       # INVÁLIDA = o `.mut` envelheceu com o fonte (corrigir o padrão; ruído esperado num repo
       # multi-sessão) × DIVERGE = a suíte perdeu poder (regressão de cobertura, o sinal caro).
       - name: Alerta de cobertura na main → GitHub Issue
-        if: failure() && github.ref == 'refs/heads/main'
+        # Vermelho de qualquer parte OU união incompleta. `!= 'false'` de propósito: se o passo da
+        # união nem rodou, a saída vem vazia — e ausência de dado dispara, não silencia.
+        if: ${{ needs.mutation-check.result == 'failure' || steps.juntar.outputs.incompleto != 'false' }}
         uses: actions/github-script@v7
+        env:
+          RESULTADO: ${{ needs.mutation-check.result }}
         with:
           script: |
             const fs = require('fs');
@@ -1706,7 +1781,9 @@ jobs:
             // antes de escrevê-lo (bun ausente, timeout). O corpo diz isso em vez de afirmar zero.
             let r = null;
             try { r = JSON.parse(fs.readFileSync('/tmp/mutcheck-resumo.json', 'utf8')); } catch (e) { /* sem resumo */ }
-            const linhas = ['🧪 **O `mutation-check` falhou na `main`.**', '', `- Commit: \`${sha}\``, `- Run: ${runUrl}`, ''];
+            const resultado = process.env.RESULTADO || '<vazio>';
+            const titulo = resultado === 'failure' ? 'falhou' : `terminou \`${resultado}\` sem medir tudo`;
+            const linhas = [`🧪 **O \`mutation-check\` ${titulo} na \`main\`.**`, '', `- Commit: \`${sha}\``, `- Run: ${runUrl}`, ''];
             if (!r) {
               linhas.push('⚠️ **Sem resumo estruturado** — o step não chegou a escrevê-lo (harness/ambiente, não cobertura). Leia o run.');
             } else {
@@ -1718,6 +1795,13 @@ jobs:
               if (diver > 0) linhas.push('🔴 **DIVERGE = a suíte PERDEU PODER.** Regressão de cobertura: uma mutação que era pega passou a sobreviver. Remédio: devolver o dente ao teste — **não** afrouxar o `.mut`.');
               if (inval > 0) linhas.push('🟡 **INVÁLIDA = o `.mut` envelheceu junto com o fonte** (padrão não casa mais, ou casa >1 linha). Remédio: corrigir o PADRÃO de mutação. É manutenção do contrato, não regressão.');
               if (abortou.length > 0) linhas.push('⚫ **Baseline vermelho/harness quebrado** — o monitor não conseguiu medir. Nada se conclui sobre cobertura aqui.');
+              // A UNIÃO das partes: o que NÃO foi medido não pode virar "nenhum problema".
+              const furos = [];
+              if ((r.partes_sem_resumo || []).length) furos.push(`partes sem resumo (não chegaram a medir): ${r.partes_sem_resumo.join(', ')} de ${r.partes}`);
+              if ((r.faltando || []).length) furos.push(`contratos sem medição: ${r.faltando.join(', ')}`);
+              if ((r.duplicados || []).length) furos.push(`medidos mais de uma vez: ${r.duplicados.join(', ')}`);
+              if ((r.inesperados || []).length) furos.push(`fora da fatia de quem os mediu: ${r.inesperados.join(', ')}`);
+              if (furos.length) linhas.push('⚫ **União incompleta — ausência de dado, não aprovação.** ' + furos.join(' · '));
               linhas.push('', '| contrato | exit | diverge | inválidas | sumário |', '| --- | --- | --- | --- | --- |');
               for (const c of ruins) linhas.push(`| \`${c.mut}\` | ${c.exit} | ${c.divergencias} | ${c.invalidas} | ${c.sumario || '—'} |`);
             }
@@ -1737,7 +1821,8 @@ jobs:
       # a próxima pessoa aprende que a Issue aberta não quer dizer nada. Idempotente (no-op sem
       # Issue aberta). `success()` é false se qualquer step do job falhou.
       - name: cobertura voltou ao contrato → fecha Issue mutcheck-cobertura
-        if: success() && github.ref == 'refs/heads/main'
+        # Só com TODAS as partes verdes E a união completa: medição faltando não fecha Issue.
+        if: ${{ needs.mutation-check.result == 'success' && steps.juntar.outputs.incompleto == 'false' }}
         uses: actions/github-script@v7
         with:
           script: |
@@ -1749,4 +1834,3 @@ jobs:
               await github.rest.issues.createComment({ owner, repo, issue_number: issue.number, body: `✅ Todos os contratos honrados em \`${sha}\`. Fechando automaticamente.` });
               await github.rest.issues.update({ owner, repo, issue_number: issue.number, state: 'closed' });
             }
-

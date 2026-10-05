@@ -1,18 +1,18 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { derivarMunicao, type Municao } from '@/lib/call/municao';
+import { STATUS_NAO_VENDA_POSTGREST } from '@/lib/farmer/universo-pedidos';
 
-/** Status que NÃO representam venda concluída — excluídos da munição. */
-const STATUS_INVALIDOS = new Set(['rascunho', 'orcamento', 'cancelado', 'cancelado_humano']);
+const PEDIDOS_DA_MUNICAO = 8;
 
 /**
  * Munição READ-ONLY do co-piloto de ligação.
  * Retorna: dias desde última compra, última compra, ticket médio dos últimos 8 pedidos válidos.
  *
  * MANDATO: NUNCA chama selectCustomer (cria cadastro no Omie) nem monta catálogo.
- * Filtragem de status inválidos feita no client (padrão do projeto) para evitar
- * sintaxe PostgREST .not('status','in',...) que não é utilizada em nenhum outro
- * lugar do codebase e pode ser frágil com alguns PostgREST versions.
+ * O universo de VENDA vai na query (`STATUS_NAO_VENDA` + deleted_at, a autoridade), antes do
+ * limit: os 8 que chegam são os 8 pedidos válidos mais recentes. Antes a lista era uma cópia
+ * (sem `pendente`) aplicada em memória sobre 16 linhas, com a margem como esperança.
  */
 export function useMunicaoLigacao(
   customerUserId: string | null,
@@ -22,21 +22,19 @@ export function useMunicaoLigacao(
     enabled: !!customerUserId,
     staleTime: 60_000,
     queryFn: async (): Promise<Municao> => {
-      // Busca os últimos pedidos do cliente (limite generoso — filtramos inválidos depois)
+      // Os 8 pedidos de VENDA mais recentes: o universo vai na query, antes do limit.
       const { data: pedidos, error } = await supabase
         .from('sales_orders')
-        .select('order_date_kpi, created_at, total, status')
+        .select('order_date_kpi, created_at, total')
         .eq('customer_user_id', customerUserId!)
+        .not('status', 'in', STATUS_NAO_VENDA_POSTGREST)
         .is('deleted_at', null)
         .order('created_at', { ascending: false })
-        .limit(16); // 16 para ter margem ao excluir os inválidos e chegar em ~8 válidos
+        .limit(PEDIDOS_DA_MUNICAO);
 
       if (error) throw error;
 
-      // Filtrar status inválidos no client (padrão do projeto — ver useAdminCustomers/useCustomerOrders)
-      const validos = (pedidos ?? [])
-        .filter((p) => !STATUS_INVALIDOS.has(p.status as string))
-        .slice(0, 8); // limita a 8 pedidos válidos mais recentes
+      const validos = pedidos ?? [];
 
       return derivarMunicao({
         pedidos: validos.map((p) => ({

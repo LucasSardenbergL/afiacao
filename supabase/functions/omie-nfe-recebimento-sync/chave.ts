@@ -6,6 +6,7 @@
 // só a chave aquela edge gravaria um cabeçalho vazio, porque ela não consulta o Omie. Aqui a
 // chave vira um `ConsultarRecebimento({ cChaveNFe })` na conta do armazém escolhido.
 import { classificarFaultstring, redigirSegredo } from "../_shared/omie-falha.ts";
+import { estadoNoOmie } from "./estado.ts";
 
 interface CabecPorChave {
   nIdReceb?: number | string;
@@ -72,7 +73,7 @@ export type AvaliacaoDetalhe =
   | { tipo: "importavel"; nIdReceb: number }
   | {
     tipo: "recusada";
-    status: "chave_divergente" | "cancelada" | "ja_recebida_no_omie" | "sem_id_recebimento";
+    status: "chave_divergente" | "cancelada" | "ja_recebida_no_omie" | "estado_desconhecido" | "sem_id_recebimento";
     mensagem: string;
   };
 
@@ -91,14 +92,24 @@ export function avaliarDetalhePorChave(detalhe: DetalhePorChave, chave: string):
       mensagem: `o Omie devolveu outra NF-e (chave ${chaveOmie || "ausente"}) — nada foi gravado`,
     };
   }
-  if (detalhe.infoCadastro?.cCancelada === "S") {
+  // O MESMO critério do cron (estado.ts): "aberta" exige os dois "N" explícitos — sem eles não há
+  // evidência de nota aberta, e importar viraria pendência fantasma.
+  const estado = estadoNoOmie(detalhe.infoCadastro);
+  if (estado === "cancelado") {
     return { tipo: "recusada", status: "cancelada", mensagem: "a NF-e está cancelada no Omie" };
   }
-  if (detalhe.infoCadastro?.cRecebido === "S") {
+  if (estado === "recebido_no_omie") {
     return {
       tipo: "recusada",
       status: "ja_recebida_no_omie",
       mensagem: "a NF-e já foi recebida no Omie — não há conferência a fazer no app",
+    };
+  }
+  if (estado === "desconhecido") {
+    return {
+      tipo: "recusada",
+      status: "estado_desconhecido",
+      mensagem: "o Omie não informou se a NF-e está aberta (cRecebido/cCancelada) — nada foi gravado",
     };
   }
   // Sinal money-path (a efetivação consulta o recebimento por ele): só número. Ausente/ilegível

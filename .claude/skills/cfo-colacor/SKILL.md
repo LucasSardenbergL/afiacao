@@ -15,8 +15,8 @@ description: >-
   roda os SELECT direto via psql-ro (acesso read-only ao Postgres de prod) e interpreta o
   resultado — sem pedir ao founder pra colar; NÃO apura imposto final, NÃO substitui contador,
   NÃO faz planejamento fiscal agressivo.
-  NÃO use (são outras skills) para: debugar erro/falha de sync do Omie (→ investigate),
-  escrever no banco — migrations, cron, INSERT/UPDATE (→ supabase), refatorar código do
+  NÃO use (são outras skills) para: debugar erro/falha de sync do Omie (→ diagnose-supabase-sync),
+  escrever no banco — migrations, cron, INSERT/UPDATE (→ lovable-db-operator), refatorar código do
   módulo financeiro (.tsx), planilhas xlsx avulsas, comissão de vendedor, gráficos de vendas,
   métricas de anúncio, ou revisão de contrato.
 ---

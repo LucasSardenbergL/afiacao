@@ -38,6 +38,10 @@ export const REGISTRO_UNIVERSO_PEDIDOS: Readonly<Record<string, EntradaRegistro>
   'public.order_items_herdar_created_at_omie': { tipo: 'lookup', motivo: 'gatilho: o item herda a data do SEU pedido (por id)' },
   'public.pedido_total_liquido_classificar': { tipo: 'lookup', motivo: 'conversão de total líquido: classifica pedidos Omie por id' },
   'public.pedido_venda_exigir_coerencia': { tipo: 'lookup', motivo: 'coerência itens×payload de UM pedido (por id)' },
+  'public.sales_orders_gemeo_app_derivar': {
+    tipo: 'lookup',
+    motivo: 'gatilho dos gêmeos push/pull (20261001100001): acha a importada do MESMO pedido Omie por (conta, hash canônico), em QUALQUER status — a gêmea cancelada também tira a linha do app do universo',
+  },
   'public.staff_get_sales_order_payload': { tipo: 'lookup', motivo: 'payload de pedidos pedidos por ids' },
   'public.tint_gate_revalida': { tipo: 'lookup', motivo: 'tint: revalida o preço de UM pedido no submit (por id)' },
   'public._data_health_compute': {

@@ -1126,11 +1126,87 @@ Pré-voo, as duas metades na mesma invocação:
 
 Restauração por `git checkout`, conferida por hash (`RESTAURADO_IDENTICO=SIM`).
 
-**Medição do motor: PENDENTE, coordenada.** A sessão do selo mede agora o `matriz-ilegivel` (só `test` e
-`test:falsificacao`) e grava a matriz; medir em paralelo colidiria exatamente no JSON — o cenário do próprio
-`matriz-ilegivel`. Combinado entre as sessões: a linha nova é medida a partir de uma main que já tenha a
-matriz dela, com a máquina vazia (durante esta sessão, swap a 96% e load 40–60):
-`bun run exclusividade:medir -- --defeitos matriz-schema-futuro`.
+**Medição do motor (2026-10-03 → 05): 32 de 32, único vermelho `exclusividade` — `[SO ELE]`.** A
+coordenação acima não se cumpriu: a sessão do selo abortou fail-closed no próprio baseline (o
+`test:falsificacao` estourou o teto de 40 min), perguntou como seguir e foi arquivada sem resposta — nada
+gravado, nenhum PR. Sem rodada viva com quem colidir, a linha foi medida a partir da `main` (`aa5089450`), e
+o `matriz-ilegivel` segue sem `test` e `test:falsificacao` (30 de 32 — o #2731 pôs o `edges:sintaxe` no
+universo e o mediu nas 19 linhas válidas). Fatiada (`--defeitos matriz-schema-futuro --gates <fatia>`), cada
+fatia com o baseline dela verde na MESMA invocação e commitada antes da próxima; os commits entre fatias só
+tocam a matriz, então toda fatia mediu a árvore de `aa5089450`:
+
+| fatia | gates | baseline | sob a sabotagem |
+|---|---|---|---|
+| A | 26 leves/médios — o `edges:sintaxe`, já gravado verde pelo #2731, re-medido | 26 verdes (`tsc` 31 s) | **só `exclusividade` vermelho** (352 ms) |
+| D | `test` | verde (96 s) | verde (106 s) |
+| B | `evals:deploy-verify` + `:falsificacao` | verdes (47 s, 162 s) | verdes (45 s, 162 s) |
+| C | `test:hooks` + `sonda:cron-prova` | verdes (221 s, 337 s) | verdes (214 s, 363 s) |
+| E | `test:falsificacao` | verde (2.308 s) | verde (2.296 s) |
+
+O controle: além do baseline de cada fatia, o pré-voo numa CÓPIA da matriz, refeito na `main` do dia —
+controle `exclusividade --matriz <cópia>` rc 0; sabotada com a expressão como o `parseDefeitos` a entrega,
+`casou`, 2 linhas perturbadas, rc 1 `MATRIZ_SCHEMA_INCOMPATIVEL`.
+
+A linha tem **32 execuções**, uma por gate do universo (conferido por nome contra o plano do motor), sem
+poda (`parouCedo: false`), sem `invalido`, sem `defasados`, e **um** vermelho; as outras 19 linhas seguem
+idênticas às de `aa5089450` (por hash). `sourceHead` da última rodada: `5e2836738`, commit da branch do PR —
+só exibido; a árvore de código é a de `aa5089450`.
+
+| leitor | matriz da `main` | esta matriz |
+|---|---|---|
+| `bun run exclusividade -- --resumo` | `[inconcl] exclusividade exclusivos 0/20 - inconcl 1` | **`[SO ELE] exclusividade exclusivos 1/20 - inconcl 1`** |
+| `bun run exclusividade` (mesma árvore, as duas matrizes) | rc 0, 31 vereditos, um deles `RELATA exclusividade EXCLUSIVIDADE_INCONCLUSIVA` | rc 0, 30 vereditos — sem esse `RELATA`, a ÚNICA diferença |
+
+O `inconcl 1` que sobra é o `matriz-ilegivel`: completar aquele selo segue pedindo só as duas execuções
+(`--defeitos matriz-ilegivel --gates test,test:falsificacao`).
+
+Três tentativas não mediram, e nenhuma por causa do defeito.
+
+**A 1ª fatia A (2026-10-01) dormiu com a tampa fechada.** Saiu `VERMELHO tsc 17742152ms (ESTOUROU
+2400000ms)` no baseline — 4,9 h de relógio para um gate que leva 31 s. Não era carga: o `pmset -g log` mostra
+`Entering Sleep state due to 'Clamshell Sleep'` às 19:55:53, minuto e meio depois de o `tsc` começar, e dali
+em diante só DarkWakes de manutenção. O motor fez o certo (abortou, nada gravado), mas o relógio dele conta o
+sono como execução: o estouro no baseline não separa gate lento de máquina dormindo — e a espera de "7 h"
+na fila do `heavy`, na manhã seguinte, também contava o sono. `caffeinate -i` e o keep-awake do app seguram o
+sono OCIOSO; tampa fechada dorme mesmo assim.
+
+**A 1ª fatia D deu `test` VERMELHO — e era contenção, não detecção.** Sob a sabotagem, o `test` saiu
+vermelho (430 s, contra 228 s no baseline da mesma invocação), e o motor o gravou como REPROVA: a guarda 12
+só separa o vermelho de contenção pela assinatura do RPC (`[vitest-worker]: Timeout calling ...`), e esta
+não era ela. O motor não guarda a saída sob defeito; quem guardou foi o cache de resultados do próprio
+vitest (`node_modules/.vite/vitest/<hash>/results.json`, `failed`/`duration` por arquivo da ÚLTIMA rodada,
+gravado às 09:08, o fim da fase): 2 de 881 arquivos falharam, `fuso-da-sessao-gate.test.ts` (38,8 s) e
+`universo-pedidos-sql-gate.test.ts` (67,7 s) — nenhum do exclusividade, nenhum lê a matriz real (o único
+teste que a lê é o do binário da âncora, e o gate confere a âncora ANTES da matriz). Isolados, com o `heavy`
+pego uma vez e as rodadas intercaladas no mesmo slot:
+
+| rodada | matriz | testes | `fuso-da-sessao` | `universo-pedidos-sql` |
+|---|---|---|---|---|
+| r1 | controle | 54/54 | 2,6 s | 4,6 s |
+| r2 | sabotada | 54/54 | 2,6 s | 4,3 s |
+| r3 | controle | 54/54 | 2,5 s | 4,2 s |
+| r4 | sabotada | 54/54 | 2,6 s | 4,3 s |
+
+O defeito não derruba nenhum dos dois. Na fase do defeito eles rodaram ~15× mais devagar — o amostrador
+marcou load 36 e 43 no meio dela, contra 7 e 27 no baseline —, e o `testTimeout` é 20 s: o mecanismo provável
+é estouro de tempo por teste (a mensagem não existe mais para confirmar). A fatia D foi re-medida com a
+máquina calma (a linha D da tabela acima); o commit da medição descartada fica no histórico do PR. **O
+buraco fica registrado:** a guarda 12 cobre uma assinatura de contenção, não a classe — teste de CPU
+estourando o `testTimeout` sob carga entra como detecção, e detecção falsa fabrica a "segunda porta" que
+refuta a exclusividade de quem pegou de verdade.
+
+**A 1ª fatia E morreu por sinal externo — e o motor chamou isso de "estourou o tempo".** O baseline do
+`test:falsificacao` passou (2.286 s); 44 min depois de a fase do defeito começar, um SIGTERM atingiu o grupo
+do executor destacado (`setsid`, pai `launchd`): o `sleep` do amostrador saiu `Terminated: 15`, o executor
+morreu sem registrar o fim e o `heavy` repassou o sinal ao grupo do filho. Quem mandou não ficou provado —
+sem reinício (uptime de 7 dias), sem auto-arquivamento, e a sessão do Claude que o lançou já tinha acabado.
+O motor, preso no `spawnSync`, só viu o filho morrer e gravou `gate test:falsificacao estourou o tempo
+(9000000ms)`: a guarda é `estourou = r.signal !== null || r.error !== undefined`, então sinal externo e teto
+vencido saem com a MESMA mensagem — fail-closed, mas o motivo engana (44 min de um teto de 150). E o
+`fundirLinhas` fez o que este registro já descrevia: a linha nova inválida substitui a antiga, e a matriz da
+cópia de trabalho ficou com a linha em **0 execuções** — as 31 das fatias anteriores estavam commitadas e
+voltaram por `git checkout`. A 2ª E rodou numa aba do terminal do app, que não depende da sessão do Claude,
+e passou.
 
 ### A falsificação
 

@@ -469,6 +469,14 @@ export const ACKNOWLEDGED_SENSITIVE = new Set<string>([
   'public.iniciar_envio_portal_pre_claim', // pré-claim antes do disparo — edge `disparar-pedidos-aprovados`
   'public.reposicao_persistir_qtde_inteira', // arredonda/persiste qtde inteira do pedido — edge `disparar-pedidos-aprovados`
   'public.reposicao_claim_disparo', // claim antes do IncluirPedCompra (Cenário B do TOCTOU) — edge `disparar-pedidos-aprovados`, service_role
+  // Observação do conjunto aberto (PR0 da baixa de PO, migration 20261005131331): lê
+  // `sku_estoque_atual.estoque_pendente_entrada` só para CONFERIR, na mesma transação, que o pendente
+  // gravado bate com o que a observação contou (grava `skus_divergentes`); não projeta dado — devolve a
+  // contagem de itens. Fecha por PRIVILÉGIO (REVOKE de PUBLIC, anon e authenticated; GRANT só a
+  // service_role) e a postcondição do apply ABORTA medindo has_function_privilege. Quem chama: edge
+  // `omie-sync-estoque` (cron → edge, service_role; gate `authorizeCronOrStaff` na fronteira). Asserts
+  // espelho: X1-X3 e P1/P2/P7 de db/test-reposicao-po-observado.sh.
+  'public.reposicao_po_observado_publicar',
   // Esta é a única que não é nem RPC nem chamada por edge: `RETURNS trigger`, disparada por
   // `trg_set_status_envio_portal` em `pedido_compra_sugerido` (medido em pg_trigger). Função de
   // trigger não tem rota PostgREST — o fecho por privilégio é a segunda tranca, não a primeira.
