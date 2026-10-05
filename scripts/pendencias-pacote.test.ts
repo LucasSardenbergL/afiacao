@@ -493,6 +493,26 @@ describe('pendencias:pacote — a leitura da edge sai da REF, não do disco', ()
     expect(pacote).toContain('corrija a medição');
   });
 
+  it('leva MISTA (Codex, rodada 3): RPC ausente + corpo com veredito dependente de scs ⇒ exit 3, sem colagem, os dois diagnósticos', () => {
+    const v1 = {
+      nome: '20260101000000_base.sql',
+      sql: "CREATE OR REPLACE FUNCTION public.rpc_velha() RETURNS text LANGUAGE sql AS $$SELECT '\\'::text; -- anterior\n$$;\n",
+    };
+    const v2 = {
+      nome: '20260202000000_recria.sql',
+      sql: "CREATE OR REPLACE FUNCTION public.rpc_velha() RETURNS text LANGUAGE sql AS $$SELECT 'novo'::text;$$;\n",
+    };
+    const { raiz, git, saida } = montarRepo(CHAMA_AS_DUAS, CHAMA_AS_DUAS, [v1, v2]);
+    // rpc_nova_da_main ausente; rpc_velha = a v1 sem o comentário — casa a ANTERIOR em scs=on e nada em off.
+    const codigo = main([EDGE, '--saida', saida, '--sem-rede'], raiz, git, sondaFalsa(['rpc_velha'], { rpc_velha: "SELECT '\\'::text;" }));
+    expect(codigo).toBe(3);
+    const pacote = readFileSync(saida, 'utf8');
+    expect(pacote).toContain('rpc_nova_da_main');
+    expect(pacote).toContain('standard_conforming_strings');
+    expect(pacote).not.toContain('VARIANTE_COSMETICA');
+    expect(pacote).not.toContain('Cole no chat do Lovable');
+  });
+
   it('MECÂNICA (2) quando a ref não tem migration nenhuma — inventário vazio é git quebrado', () => {
     const { raiz, git, saida } = montarRepo(CHAMA_VELHA, CHAMA_VELHA, []);
 

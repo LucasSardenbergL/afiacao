@@ -123,15 +123,48 @@ responde DIFERENTES nos três: o léxico da 1ª versão foi descartado, não cor
   antes do exato" e "tokens iguais aceitam diferença de literal"; o do léxico é medido pela suíte do
   GATE, não só pela do sensor. Harness PG17 do audit: 28/28 em `C` e em `pt_BR.UTF-8`.
 
-### 2ª opinião: Codex de código NÃO consultado ainda — Caminho B
+### 2ª opinião: três rodadas do Codex no código
 
-`codex-async.sh` saiu 79 (`SALDO_ALTO`: cota em 86%, teto 85%, janela reabre 03/10 19:11), sem gastar a
-chamada. Por `money-path.md`, isso é gatilho de DRAFT, não de pular. No intervalo, auto-challenge com
-prova executada, que achou um desvio no léxico ÚNICO: o `\s` do JS ≠ o `space` do scan.l. Um NBSP, BOM
-ou U+2028 que abria token era engolido, e `SELECT <NBSP>x` igualava `SELECT x`. Medido em prod:
-`column " x" does not exist`, enquanto `SELECT\f1`/`SELECT\v1` devolvem 1. Corrigido em `tokens-sql.ts`
-(vale para o gate e para o sensor), sem efeito no censo (0 corpos em prod e 0 migrations com esses
-caracteres). **REVISÃO INDEPENDENTE PENDENTE** até o Codex rodar no diff.
+A 1ª tentativa saiu 79 (`SALDO_ALTO`, cota em 86%) e o PR ficou em DRAFT. No intervalo, o auto-challenge
+achou o desvio do espaço: o `\s` do JS ≠ o `space` do scan.l, e `SELECT <NBSP>x` igualava `SELECT x`.
+
+- **Rodada 1** (`gpt-6-astra`·max, 1000 s, 211.412 tokens): 0 P0 · 3 P1 · 2 P2. Todos aceitos, e quatro
+  confirmados no PG17 de prod antes de corrigir:
+  - número no scan.l: `1e1_0` = 10¹⁰ ≠ `1e1 _0`, e `1abc` é trailing junk;
+  - canal de detalhe incoerente aceito como íntegro;
+  - premissa `standard_conforming_strings=on` não provada;
+  - comentário de bloco entre literais quebra a continuação;
+  - `INCERTA` mandava "aplique a DDL".
+- **Rodada 2** (confirmação, 786 s, 170.861 tokens): 0 P0 · 3 P1 · 2 P2.
+  - O grave foi **regressão da minha correção**: a leitura dupla de `scs` exigia os dois modos também para
+    casar a versão ANTERIOR, e o bloqueio virava `DERIVA` liberada (reproduzido com o corpo real de
+    `melhoria_clientes_por_produto`). Agora o veredito é **por modo**: vale o que os dois concordam, e a
+    divergência é `INCERTA` (`MODO_DIVERGENTE`).
+  - Junto: irmã sem linha `rpc` passa a ser não medida, `N'…'` com `off`, a herança do `E''` volta a ter
+    teste com dente, e `INCERTA` não dá ordem de aplicar.
+- **O CI pegou o que nenhuma rodada viu:** `tokensSql` já era fluxo para outros leitores
+  (`like-cru-em-migrations-gate.ts`, `universo-pedidos-sql.ts`, posteriores ao #2576), e a leitura dupla
+  dentro dele duplicou sítios de LIKE. A comparação nos dois modos foi para as funções de comparação;
+  `tokensSql` voltou a ser o fluxo do modo `on`.
+- **Rodada 3** (confirmação do delta, 800 s, 212.320 tokens): os cinco reprodutores da rodada 2 fecharam,
+  sem P0 nem P1 novo. O Codex comparou antes × depois em 46.656 combinações, sem nenhum bloqueio que
+  tenha virado verde.
+  - Restou um P1 **preexistente**: uma irmã da migration medida como AUSENTE libera a colagem. Corrigir
+    exige distinguir aposentadoria legítima, que o histórico do gate não modela. Ficou para fora (chip).
+  - E um P2 preexistente: os leitores de fluxo ignoram `SET standard_conforming_strings = off` declarado
+    na função. Não há nenhum nas migrations hoje.
+
+**Evidência final:** vitest de `scripts/` com 79 arquivos e 3016 testes; mutcheck com 6 contratos, 35/35
+pegas e controle+ em todos; censo de prod idêntico em todas as rodadas (69 cosméticas, 0 anterior novo, 0
+sem texto, 0 `MODO_DIVERGENTE`).
+
+### Lições
+
+1. **Endurecer uma comparação usada pelos DOIS lados mexe nos dois.** Exigir os dois modos deixou o
+   "cosmético" mais preciso e tirou recall do "anterior", que é o que BLOQUEIA. Antes de apertar, avalie
+   a assimetria: o veredito que libera e o que bloqueia pedem regras diferentes.
+2. **A FORMA da saída de uma lib compartilhada é contrato com consumidores que ninguém lista.** Antes de
+   mudá-la, rode `git grep` dos consumidores. Aqui eram dois gates surgidos depois do #2576, e só o CI viu.
 
 ## Estado
 
