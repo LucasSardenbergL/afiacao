@@ -1,6 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, onlineManager } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import type { ReactNode } from 'react';
 
@@ -13,6 +13,10 @@ import type { ReactNode } from 'react';
 // errada e um teste que olhasse só `isError` seguiria verde. E com cache os `kpis` continuam
 // calculados do dado antigo: quem esconde o número velho é o `isError` na TELA, então é lá que a
 // falha-após-sucesso é provada.
+//
+// E a falha que NÃO vira erro (adversarial do Codex no #2766): offline a query PAUSA — `status`
+// segue 'success' com o cache, `isError` falso —, inclusive quando a rede cai entre uma tentativa
+// falha e a próxima (o `retry: 2` de produção). A tela tem de dizer que o número é da última leitura.
 
 type Resposta = { data: unknown; error: unknown; count?: number | null };
 type Chamada = { table: string; metodos: Array<[string, unknown[]]> };
@@ -63,9 +67,11 @@ import { hojeSP } from '@/lib/dashboard/sp-date';
 
 const novoQc = () => new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
+const estadoDaZona = (qc: QueryClient) => qc.getQueryCache().find({ queryKey: ['dashboard', 'vendas'], exact: false })?.state;
+
 /** O erro que pôs a zona em falha — é ele que diz QUAL ramo lançou. */
 function erroDaZona(qc: QueryClient): string | undefined {
-  const erro = qc.getQueryCache().find({ queryKey: ['dashboard', 'vendas'], exact: false })?.state.error;
+  const erro = estadoDaZona(qc)?.error;
   return erro instanceof Error ? erro.message : undefined;
 }
 
@@ -75,8 +81,7 @@ function montarHook() {
   return { qc, ...renderHook(() => useVendasZone(), { wrapper }) };
 }
 
-function montarZona() {
-  const qc = novoQc();
+function montarZona(qc = novoQc()) {
   render(
     <QueryClientProvider client={qc}>
       <MemoryRouter>
@@ -93,6 +98,9 @@ beforeEach(() => {
   leituraVendas = 'ok';
   vendas = [];
   chamadas = [];
+});
+afterEach(() => {
+  onlineManager.setOnline(true);
 });
 
 describe('useVendasZone — falha da leitura de vendas', () => {
@@ -154,8 +162,64 @@ describe('VendasZone — a falha aparece como card de erro com retry, nunca como
 
     expect(await screen.findByText('Erro ao carregar dados.')).toBeTruthy();
     expect(erroDaZona(qc)).toBe(MSG_ERRO_PG);
-    expect(qc.getQueryCache().find({ queryKey: ['dashboard', 'vendas'], exact: false })?.state.data).toBeDefined(); // o cache ainda existe…
+    expect(estadoDaZona(qc)?.data).toBeDefined(); // o cache ainda existe…
     expect(screen.queryByText('R$ 2k')).toBeNull(); // …mas o número velho não vai para a tela
     expect(screen.queryByText('Faturado hoje')).toBeNull();
+  });
+});
+
+describe('VendasZone — offline a query PAUSA (não é erro), e a tela diz isso', () => {
+  it('sem cache: aviso de sem conexão — nenhum número e nada de "Sem orçamentos aguardando."', async () => {
+    onlineManager.setOnline(false);
+    vendas = VENDA_DE_HOJE();
+    const qc = montarZona();
+
+    const aviso = await screen.findByTestId('aviso-leitura-falhou');
+    expect(aviso.getAttribute('data-estado')).toBe('sem-rede');
+    expect(aviso.textContent).toContain('as vendas de hoje');
+    expect(estadoDaZona(qc)).toMatchObject({ status: 'pending', fetchStatus: 'paused' });
+    expect(screen.queryByText('Faturado hoje')).toBeNull();
+    expect(screen.queryByText('Sem orçamentos aguardando.')).toBeNull();
+  });
+
+  it('com cache: o faturado antigo fica COM o aviso de que é da última leitura; a volta da rede o tira', async () => {
+    vendas = VENDA_DE_HOJE();
+    const qc = montarZona();
+    expect(await screen.findByText('R$ 2k')).toBeTruthy();
+    expect(screen.queryByTestId('aviso-leitura-falhou')).toBeNull();
+
+    onlineManager.setOnline(false);
+    act(() => {
+      void qc.refetchQueries({ queryKey: ['dashboard', 'vendas'] }); // pausada, não resolve — não aguardar
+    });
+    const aviso = await screen.findByTestId('aviso-leitura-falhou');
+    expect(aviso.getAttribute('data-estado')).toBe('sem-rede');
+    expect(aviso.textContent).toContain('os números acima são da última leitura');
+    expect(estadoDaZona(qc)).toMatchObject({ status: 'success', fetchStatus: 'paused' });
+    expect(screen.getByText('R$ 2k')).toBeTruthy();
+
+    act(() => onlineManager.setOnline(true));
+    await waitFor(() => expect(screen.queryByTestId('aviso-leitura-falhou')).toBeNull());
+    expect(screen.getByText('R$ 2k')).toBeTruthy();
+  });
+
+  it('a leitura falha e a rede cai ANTES da nova tentativa (retry de produção): o número velho vem com o aviso', async () => {
+    vendas = VENDA_DE_HOJE();
+    const qc = montarZona(new QueryClient({ defaultOptions: { queries: { retry: 2, retryDelay: 300 } } }));
+    expect(await screen.findByText('R$ 2k')).toBeTruthy();
+
+    leituraVendas = 'erro';
+    act(() => {
+      void qc.refetchQueries({ queryKey: ['dashboard', 'vendas'] });
+    });
+    // a 1ª tentativa falhou e o status segue 'success' — o retry ainda não desistiu…
+    await waitFor(() => expect(estadoDaZona(qc)?.fetchFailureCount).toBe(1));
+    expect(estadoDaZona(qc)?.status).toBe('success');
+    act(() => onlineManager.setOnline(false)); // …e a rede cai antes da 2ª
+
+    const aviso = await screen.findByTestId('aviso-leitura-falhou', {}, { timeout: 3000 });
+    expect(aviso.getAttribute('data-estado')).toBe('sem-rede');
+    expect(estadoDaZona(qc)).toMatchObject({ status: 'success', fetchStatus: 'paused', fetchFailureCount: 1 });
+    expect(screen.getByText('R$ 2k')).toBeTruthy();
   });
 });

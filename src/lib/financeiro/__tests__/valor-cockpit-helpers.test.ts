@@ -4,6 +4,7 @@ import { margemContribuicao, arMedioTTM, statusLiquidadoAR, montarCelulasComboEV
 // A faturabilidade do pedido roda SÓ na edge — testada direto do módulo que ela executa (sem cópia em src/).
 import { pedidoContaNoFaturamento, pedidoEntraNoTTM } from '../../../../supabase/functions/fin-valor-cockpit/faturabilidade';
 import { STATUS_NAO_VENDA } from '@/lib/farmer/universo-pedidos';
+import { removerComentarios } from '@/lib/gates/limpeza-fonte';
 
 // helper de fixture: TituloAR completo com defaults (reduz ruído nos casos)
 function tit(p: Partial<Parameters<typeof arMedioTTM>[0]['titulos'][number]>) {
@@ -512,15 +513,23 @@ describe('pedidoEntraNoTTM — faturável E order_date_kpi dentro de [inicio, fi
 
 // A edge USA esta régua no corte dos itens — não uma cópia local. Sem isto, os testes acima provariam
 // um módulo que ninguém chama: era o buraco que o Codex achou no #2766 (a cópia de `src/` testada, a
-// da edge não). Lido como TEXTO porque o handler da edge não roda no vitest.
+// da edge não). Lido como TEXTO, SEM comentários (uma linha comentada passaria por presente), porque
+// o handler da edge não roda no vitest. E o texto não prova o agregado inteiro — prova o que é DESTA
+// régua: a decisão de universo (status, apagado, data KPI do pedido pai) só é tomada pelo módulo;
+// um 2º filtro por status no handler (`if (so.status !== 'faturado') return [];`, o contraexemplo do
+// adversarial) reprova aqui. Filtro por OUTRO eixo (produto, preço) é outra régua.
 describe('fin-valor-cockpit corta os itens do TTM por pedidoEntraNoTTM', () => {
-  const edge = readFileSync('supabase/functions/fin-valor-cockpit/index.ts', 'utf8');
+  const edge = removerComentarios(readFileSync('supabase/functions/fin-valor-cockpit/index.ts', 'utf8'));
   it('importa a régua do módulo testado e descarta o item cujo pai não entra no TTM', () => {
     expect(edge).toContain("import { pedidoEntraNoTTM } from './faturabilidade.ts';");
     expect(edge).toContain('if (!pedidoEntraNoTTM(so, ttm_inicio, ttm_fim)) return [];');
   });
   it('não redefine a régua nem a lista localmente', () => {
     expect(edge).not.toMatch(/function\s+pedidoContaNoFaturamento|function\s+pedidoEntraNoTTM|STATUS_NAO_VENDA|STATUS_NAO_FATURAVEL/);
+  });
+  it('a decisão de universo do pedido pai é SÓ do módulo: o handler não lê status, deleted_at nem order_date_kpi', () => {
+    const leituras = edge.match(/\b(?:so|sales_orders)\s*[?!]?\.\s*(?:status|deleted_at|order_date_kpi)\b|\{[^}]*\b(?:status|deleted_at|order_date_kpi)\b[^}]*\}\s*=\s*(?:so|l\.sales_orders)\b/g);
+    expect(leituras).toBeNull();
   });
 });
 

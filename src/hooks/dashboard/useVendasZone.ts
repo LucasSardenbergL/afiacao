@@ -28,7 +28,7 @@ export function useVendasZone() {
     queryKeys: [queryKey],
   });
 
-  const { data, isLoading, isError, refetch } = useQuery({
+  const { data, isLoading, isError, refetch, status, fetchStatus } = useQuery({
     queryKey,
     queryFn: async () => {
       const hoje = hojeSP();
@@ -147,5 +147,7 @@ export function useVendasZone() {
     };
   }, [data]);
 
-  return { kpis, topItems: data?.topItems ?? [], priority, isLoading, isError, refetch, isLive };
+  // `status`/`fetchStatus` saem para a TELA dizer "sem conexão": offline, a query fica `paused` com
+  // `isError` falso — com cache, o número velho ficaria na tela como se fosse de agora.
+  return { kpis, topItems: data?.topItems ?? [], priority, isLoading, isError, refetch, isLive, status, fetchStatus };
 }
