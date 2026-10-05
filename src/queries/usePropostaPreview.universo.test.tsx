@@ -14,6 +14,8 @@ let chamadas: Chamada[] = [];
 let dados: Record<string, unknown[]> = {};
 /** Tabela → erro PostgREST: a leitura daquela tabela falha (as outras seguem normais). */
 let erros: Record<string, unknown> = {};
+/** Falha só numa PÁGINA (tabela + início da faixa) — as outras páginas respondem normalmente. */
+let falhaNaFaixa: { table: string; de: number } | null = null;
 
 /** O mock imita a capa do PostgREST: sem `.range()`, só as 1.000 primeiras linhas voltam. */
 const CAPA_POSTGREST = 1000;
@@ -32,6 +34,9 @@ function chain(table: string): unknown {
   }
   c.then = (resolve: (v: unknown) => void) => {
     if (erros[table]) return resolve({ data: null, error: erros[table] });
+    if (falhaNaFaixa && falhaNaFaixa.table === table && faixa?.[0] === falhaNaFaixa.de) {
+      return resolve({ data: null, error: { code: '57014', message: 'canceling statement due to statement timeout' } });
+    }
     const linhas = dados[table] ?? [];
     const pagina = faixa ? linhas.slice(faixa[0], faixa[1] + 1) : linhas.slice(0, CAPA_POSTGREST);
     resolve({ data: pagina, error: null });
@@ -44,6 +49,7 @@ vi.mock('@/integrations/supabase/client', () => ({ supabase: { from: (t: string)
 import { usePropostaPreview } from './usePropostaPreview';
 import { STATUS_NAO_VENDA_POSTGREST } from '@/lib/farmer/universo-pedidos';
 import { addDias, hojeSP } from '@/lib/time/sp-day';
+import { ehFalhaDePagina } from '@/lib/postgrest';
 
 function montar() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -56,6 +62,7 @@ describe('usePropostaPreview — a cesta no universo de venda', () => {
     chamadas = [];
     dados = {};
     erros = {};
+    falhaNaFaixa = null;
   });
 
   it('a leitura de pedidos carrega o par canônico', async () => {
@@ -100,6 +107,8 @@ describe('usePropostaPreview — a cesta no universo de venda', () => {
     // os DOIS pedidos chegam à cesta (só com a 1ª página, seria 1 pedido → cesta vazia)
     expect(result.current.data?.totalPedidos).toBe(2);
     expect(result.current.data?.cesta.principal.map((i) => i.omie_codigo_produto)).toEqual([111]);
+    // e a QUANTIDADE vem de todos os itens (1.000 no dia antigo + 1 no recente → média 500,5)
+    expect(result.current.data?.cesta.principal[0]?.qtdSugerida).toBe(500.5);
   });
 });
 
@@ -109,6 +118,7 @@ describe('usePropostaPreview — falha de leitura é ERRO, nunca uma cesta "vazi
   beforeEach(() => {
     chamadas = [];
     erros = {};
+    falhaNaFaixa = null;
     // cesta de 1 SKU ativo em 2 pedidos: passa por produtos, cross-sell e perfil
     const dia = (n: number) => addDias(hojeSP(), -n);
     dados = {
@@ -135,5 +145,51 @@ describe('usePropostaPreview — falha de leitura é ERRO, nunca uma cesta "vazi
     await waitFor(() => expect(result.current.isError).toBe(true));
     expect(result.current.data).toBeUndefined();
     expect(chamadas.some((c) => c.table === tabela)).toBe(true);
+  });
+});
+
+describe('usePropostaPreview — página perdida é ERRO marcado, nunca a cesta da 1ª página', () => {
+  // A 1ª página SOZINHA já monta cesta (999 itens do dia antigo + 1 do recente): publicar o
+  // acumulado parcial apareceria como sucesso. A 2ª página tem mais 1 item do pedido recente.
+  beforeEach(() => {
+    chamadas = [];
+    erros = {};
+    falhaNaFaixa = null;
+    const dia = (n: number) => addDias(hojeSP(), -n);
+    const item = (pedido: string) => ({ omie_codigo_produto: 111, quantity: 1, unit_price: 10, sales_order_id: pedido });
+    dados = {
+      sales_orders: [
+        { id: 'p1', account: 'oben', order_date_kpi: dia(40), created_at: `${dia(40)}T12:00:00Z`, status: 'faturado' },
+        { id: 'p2', account: 'oben', order_date_kpi: dia(10), created_at: `${dia(10)}T12:00:00Z`, status: 'faturado' },
+      ],
+      order_items: [...Array.from({ length: 999 }, () => item('p1')), item('p2'), item('p2')],
+      omie_products: [{ omie_codigo_produto: 111, descricao: 'Lixa 120', ativo: true }],
+    };
+  });
+
+  it('controle: sem falha, as duas páginas montam a cesta', async () => {
+    const { result } = montar();
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data?.cesta.principal.map((i) => i.omie_codigo_produto)).toEqual([111]);
+  });
+
+  it('a 2ª página de itens falha → erro do fetchAllPages (motivo/fonte/página), sem proposta', async () => {
+    falhaNaFaixa = { table: 'order_items', de: 1000 };
+    const { result } = montar();
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    const erro = result.current.error;
+    expect(ehFalhaDePagina(erro)).toBe(true);
+    if (!ehFalhaDePagina(erro)) return;
+    expect([erro.motivo, erro.fonte, erro.pagina]).toEqual(['pagina_falhou', 'order_items/proposta-preview', 1]);
+    expect(result.current.data).toBeUndefined();
+  });
+
+  it('produto REALMENTE inativo (catálogo lido) → proposta vazia por inativo, não erro', async () => {
+    dados.omie_products = [{ omie_codigo_produto: 111, descricao: 'Lixa 120', ativo: false }];
+    const { result } = montar();
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data?.proposta.vazia).toBe(true);
+    expect(result.current.data?.removidosInativos).toBe(1);
+    expect(result.current.data?.semHistorico).toBe(false);
   });
 });
