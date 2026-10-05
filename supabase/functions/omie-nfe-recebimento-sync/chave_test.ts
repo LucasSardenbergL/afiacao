@@ -58,16 +58,30 @@ Deno.test("classificarConsultaPorChave: sem faultstring, o status e o cabeçalho
   assertEquals(classificarConsultaPorChave(200, { cabec: { cChaveNFe: CHAVE } }).tipo, "ok");
 });
 
+const ABERTA = { cRecebido: "N", cCancelada: "N" };
+
 Deno.test("avaliarDetalhePorChave: a NF-e pedida, aberta e não recebida é importável", () => {
   assertEquals(
-    avaliarDetalhePorChave({ cabec: { cChaveNFe: CHAVE, nIdReceb: 1234567 }, infoCadastro: {} }, CHAVE),
+    avaliarDetalhePorChave({ cabec: { cChaveNFe: CHAVE, nIdReceb: 1234567 }, infoCadastro: ABERTA }, CHAVE),
     { tipo: "importavel", nIdReceb: 1234567 },
   );
   assertEquals(
-    avaliarDetalhePorChave({ cabec: { cChaveNfe: CHAVE, nIdReceb: "1234567" } }, CHAVE),
+    avaliarDetalhePorChave({ cabec: { cChaveNfe: CHAVE, nIdReceb: "1234567" }, infoCadastro: ABERTA }, CHAVE),
     { tipo: "importavel", nIdReceb: 1234567 },
     "a grafia cChaveNfe e o nIdReceb em string também valem",
   );
+});
+
+Deno.test("avaliarDetalhePorChave: sem os dois 'N' explícitos não há evidência de nota aberta — nada importa", () => {
+  // Revisão do Codex (2026-10-05): infoCadastro vazio importava. Em prod o Omie manda os dois campos.
+  const status = (info?: Record<string, string>) => {
+    const r = avaliarDetalhePorChave({ cabec: { cChaveNFe: CHAVE, nIdReceb: 1 }, ...(info ? { infoCadastro: info } : {}) }, CHAVE);
+    return r.tipo === "recusada" ? r.status : r.tipo;
+  };
+  assertEquals(status(), "estado_desconhecido", "sem infoCadastro");
+  assertEquals(status({}), "estado_desconhecido", "infoCadastro vazio");
+  assertEquals(status({ cRecebido: "N" }), "estado_desconhecido", "sem cCancelada");
+  assertEquals(status({ cRecebido: " n ", cCancelada: "n" }), "importavel", "caixa e espaço");
 });
 
 Deno.test("avaliarDetalhePorChave: outra NF-e, cancelada, já recebida ou sem nIdReceb — nada importa", () => {
@@ -79,6 +93,6 @@ Deno.test("avaliarDetalhePorChave: outra NF-e, cancelada, já recebida ou sem nI
   assertEquals(status({ cabec: { nIdReceb: 1 } }), "chave_divergente", "chave ausente no detalhe");
   assertEquals(status({ cabec: { cChaveNFe: CHAVE, nIdReceb: 1 }, infoCadastro: { cCancelada: "S" } }), "cancelada");
   assertEquals(status({ cabec: { cChaveNFe: CHAVE, nIdReceb: 1 }, infoCadastro: { cRecebido: "S" } }), "ja_recebida_no_omie");
-  assertEquals(status({ cabec: { cChaveNFe: CHAVE, nIdReceb: "12a" } }), "sem_id_recebimento");
-  assertEquals(status({ cabec: { cChaveNFe: CHAVE } }), "sem_id_recebimento");
+  assertEquals(status({ cabec: { cChaveNFe: CHAVE, nIdReceb: "12a" }, infoCadastro: ABERTA }), "sem_id_recebimento");
+  assertEquals(status({ cabec: { cChaveNFe: CHAVE }, infoCadastro: ABERTA }), "sem_id_recebimento");
 });

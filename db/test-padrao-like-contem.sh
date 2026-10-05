@@ -631,6 +631,9 @@ eq H2 "escape exato: \\ antes, depois % e _" "$(Pq -c "SELECT private.padrao_lik
 # Propriedade: todo termo com conteúdo casa A SI MESMO, por LIKE e ILIKE, dentro de um texto maior.
 # Corpus fixo de casos-limite + 300 strings aleatórias (semente fixa) sobre um alfabeto com os 3
 # metacaracteres. O piso de 250 não-degenerados impede o verde por vacuidade.
+# O universo é o termo útil pela SPEC (o critério do helper, calculado aqui), não o `p IS NOT NULL`:
+# um termo útil que o helper passe a anular CONTA como violação (LIKE NULL → IS NOT TRUE) em vez de
+# sair da conta — com o recorte pelo `p`, anular só os termos de barra ficava verde.
 eq H3 "auto-casamento: todo termo útil casa o próprio texto (LIKE e ILIKE)" "$(Pq <<'SQL' 2>&1 || true
 DO $semente$ BEGIN PERFORM setseed(0.42); END $semente$;
 WITH corpus AS (
@@ -638,10 +641,10 @@ WITH corpus AS (
   UNION ALL
   SELECT string_agg(substr('ab%_\ Xy', 1 + floor(random() * 8)::int, 1), '') FROM generate_series(1, 300) g, generate_series(1, 12) k GROUP BY g
 ), j AS (
-  SELECT s, private.padrao_like_contem(s) AS p FROM corpus
+  SELECT s, private.padrao_like_contem(s) AS p, btrim(translate(s, '%_', ''), E' \t\r\n') <> '' AS util FROM corpus
 )
-SELECT CASE WHEN count(*) FILTER (WHERE p IS NOT NULL) < 250 THEN 'VACUO:' || count(*) FILTER (WHERE p IS NOT NULL)
-            ELSE (count(*) FILTER (WHERE p IS NOT NULL AND NOT (('<' || s || '>') LIKE p ESCAPE '\' AND ('<' || upper(s) || '>') ILIKE p ESCAPE '\')))::text END
+SELECT CASE WHEN count(*) FILTER (WHERE util) < 250 THEN 'VACUO:' || count(*) FILTER (WHERE util)
+            ELSE (count(*) FILTER (WHERE util AND (('<' || s || '>') LIKE p ESCAPE '\' AND ('<' || upper(s) || '>') ILIKE p ESCAPE '\') IS NOT TRUE))::text END
   FROM j;
 SQL
 )" "0"

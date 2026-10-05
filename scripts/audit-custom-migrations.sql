@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 581
+-- Total de custom migrations: 582
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -621,6 +621,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261001043717', 'hoje_sp_route_visits_visit_date', '20261001043717_hoje_sp_route_visits_visit_date.sql'),
   ('20261001083000', 'converter_campanha_flat_colunas_reais', '20261001083000_converter_campanha_flat_colunas_reais.sql'),
   ('20261001100000', 'sales_orders_colunas_whatsapp_select', '20261001100000_sales_orders_colunas_whatsapp_select.sql'),
+  ('20261001100001', 'sales_orders_gemeo_importado_contagem_unica', '20261001100001_sales_orders_gemeo_importado_contagem_unica.sql'),
   ('20261001204054', 'oportunidade_antidup_conta_disparado_simulado', '20261001204054_oportunidade_antidup_conta_disparado_simulado.sql'),
   ('20261005131331', 'reposicao_po_observado_pelo_motor', '20261005131331_reposicao_po_observado_pelo_motor.sql')
 ),
@@ -2519,6 +2520,15 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('hoje_sp_familia_data_ciclo', 'view', 'public', 'v_promocao_avaliacao_hoje', ''),
   ('hoje_sp_familia_data_ciclo', 'view', 'public', 'v_oportunidade_economica_hoje', ''),
   ('converter_campanha_flat_colunas_reais', 'function', 'public', 'converter_sugestao_em_campanha_flat', ''),
+  ('sales_orders_gemeo_importado_contagem_unica', 'function', 'public', 'sales_orders_gemeo_app_derivar', ''),
+  ('sales_orders_gemeo_importado_contagem_unica', 'function', 'public', 'sales_orders_gemeo_importada_antes', ''),
+  ('sales_orders_gemeo_importado_contagem_unica', 'function', 'public', 'sales_orders_gemeo_importada_depois', ''),
+  ('sales_orders_gemeo_importado_contagem_unica', 'index', 'public', 'idx_sales_orders_app_pedido_omie', 'sales_orders'),
+  ('sales_orders_gemeo_importado_contagem_unica', 'index', 'public', 'idx_sales_orders_gemeo_importado_id', 'sales_orders'),
+  ('sales_orders_gemeo_importado_contagem_unica', 'index', 'public', 'uniq_sales_orders_kpi_por_pedido_omie', 'sales_orders'),
+  ('sales_orders_gemeo_importado_contagem_unica', 'trigger', 'public', 'trg_sales_orders_gemeo_app', 'sales_orders'),
+  ('sales_orders_gemeo_importado_contagem_unica', 'trigger', 'public', 'trg_sales_orders_gemeo_importada_antes', 'sales_orders'),
+  ('sales_orders_gemeo_importado_contagem_unica', 'trigger', 'public', 'trg_sales_orders_gemeo_importada_depois', 'sales_orders'),
   ('oportunidade_antidup_conta_disparado_simulado', 'function', 'public', 'gerar_pedidos_oportunidade_ciclo', ''),
   ('reposicao_po_observado_pelo_motor', 'function', 'public', 'reposicao_po_observado_publicar', ''),
   ('reposicao_po_observado_pelo_motor', 'table', 'public', 'reposicao_po_observado_run', ''),
@@ -4471,6 +4481,15 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('hoje_sp_familia_data_ciclo', 'view', 'public', 'v_promocao_avaliacao_hoje', ''),
   ('hoje_sp_familia_data_ciclo', 'view', 'public', 'v_oportunidade_economica_hoje', ''),
   ('converter_campanha_flat_colunas_reais', 'function', 'public', 'converter_sugestao_em_campanha_flat', ''),
+  ('sales_orders_gemeo_importado_contagem_unica', 'function', 'public', 'sales_orders_gemeo_app_derivar', ''),
+  ('sales_orders_gemeo_importado_contagem_unica', 'function', 'public', 'sales_orders_gemeo_importada_antes', ''),
+  ('sales_orders_gemeo_importado_contagem_unica', 'function', 'public', 'sales_orders_gemeo_importada_depois', ''),
+  ('sales_orders_gemeo_importado_contagem_unica', 'index', 'public', 'idx_sales_orders_app_pedido_omie', 'sales_orders'),
+  ('sales_orders_gemeo_importado_contagem_unica', 'index', 'public', 'idx_sales_orders_gemeo_importado_id', 'sales_orders'),
+  ('sales_orders_gemeo_importado_contagem_unica', 'index', 'public', 'uniq_sales_orders_kpi_por_pedido_omie', 'sales_orders'),
+  ('sales_orders_gemeo_importado_contagem_unica', 'trigger', 'public', 'trg_sales_orders_gemeo_app', 'sales_orders'),
+  ('sales_orders_gemeo_importado_contagem_unica', 'trigger', 'public', 'trg_sales_orders_gemeo_importada_antes', 'sales_orders'),
+  ('sales_orders_gemeo_importado_contagem_unica', 'trigger', 'public', 'trg_sales_orders_gemeo_importada_depois', 'sales_orders'),
   ('oportunidade_antidup_conta_disparado_simulado', 'function', 'public', 'gerar_pedidos_oportunidade_ciclo', ''),
   ('reposicao_po_observado_pelo_motor', 'function', 'public', 'reposicao_po_observado_publicar', ''),
   ('reposicao_po_observado_pelo_motor', 'table', 'public', 'reposicao_po_observado_run', ''),
