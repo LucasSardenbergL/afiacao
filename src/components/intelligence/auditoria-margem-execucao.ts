@@ -50,8 +50,10 @@ export type Execucao = {
   periodoInicio: string;
   periodoFim: string;
   formato: 'carimbo-unico' | 'reconstruida';
-  /** A reconstrução encostou no início da janela de leitura: a execução pode ter começado antes dela. */
+  /** Um lote compatível (< 1 s antes do mais antigo da cadeia) cairia ANTES do início da janela lida. */
   limiteDaJanela: boolean;
+  /** A âncora mistura formatos ou períodos: não é uma execução reconhecível — a tela não soma. */
+  inconsistente: boolean;
 };
 
 export type AgregadoExecucao = {
@@ -60,6 +62,8 @@ export type AgregadoExecucao = {
   /** linhas − clientes distintos. ≠ 0 invalida a soma (o escritor grava UMA linha por cliente). */
   duplicados: number;
   comMargemReal: number;
+  /** Clientes com `margin_gap` conhecido (o gap da tela é parcial quando < clientes). */
+  comGap: number;
   /** Σ das margens CONHECIDAS — `null` se nenhuma é (nunca R$ 0 fabricado). */
   margemReal: number | null;
   margemPotencial: number | null;
@@ -70,7 +74,12 @@ export type AgregadoExecucao = {
   suspeitaInterrompida: boolean;
 };
 
-const ms = (iso: string) => Date.parse(iso);
+/** Instante em MICROSSEGUNDOS: o `Date.parse` corta a fração em ms (999,499 ms viraria 1.000). */
+export function instanteUs(iso: string): number {
+  const m = /^(.*T\d\d:\d\d:\d\d)(?:\.(\d+))?(.*)$/.exec(iso);
+  if (!m) return Date.parse(iso) * 1000;
+  return Date.parse(m[1] + (m[3] || 'Z')) * 1000 + Number((m[2] ?? '').padEnd(6, '0').slice(0, 6));
+}
 const formatoAntigo = (l: LinhaAuditoria) => l.calculated_at === l.created_at;
 const periodo = (l: LinhaAuditoria) => `${l.period_start}|${l.period_end}`;
 
@@ -81,7 +90,7 @@ function numeroOuNull(v: number | string | null): number | null {
 }
 
 /** As linhas da execução que termina em `carimboMax`, dentre as lidas na janela. `null` se a âncora não veio. */
-export function reconhecerExecucao(linhas: LinhaAuditoria[], carimboMax: string): Execucao | null {
+export function reconhecerExecucao(linhas: LinhaAuditoria[], carimboMax: string, inicioJanela?: string): Execucao | null {
   const grupos = new Map<string, LinhaAuditoria[]>();
   for (const l of linhas) {
     const g = grupos.get(l.calculated_at);
@@ -91,23 +100,27 @@ export function reconhecerExecucao(linhas: LinhaAuditoria[], carimboMax: string)
   const ancora = grupos.get(carimboMax);
   if (!ancora || ancora.length === 0) return null;
 
-  const carimbos = [...grupos.keys()].sort((a, b) => ms(b) - ms(a));
+  const carimbos = [...grupos.keys()].sort((a, b) => instanteUs(b) - instanteUs(a));
   const escolhidos = [carimboMax];
   let limiteDaJanela = false;
   const antigo = ancora.every(formatoAntigo);
+  const inconsistente = new Set(ancora.map(formatoAntigo)).size > 1 || new Set(ancora.map(periodo)).size > 1;
   if (antigo) {
     const p0 = periodo(ancora[0]);
     let posterior = carimboMax;
     for (let i = carimbos.indexOf(carimboMax) + 1; ; i++) {
       if (i >= carimbos.length) {
-        // acabaram os carimbos da janela ainda dentro da cadeia: o início pode estar antes da janela
-        limiteDaJanela = escolhidos.length > 1;
+        // acabaram os carimbos lidos: um lote anterior compatível (< 1 s antes) só poderia existir
+        // se esse instante caísse ANTES do início da janela — aí a leitura não o teria visto
+        limiteDaJanela =
+          inicioJanela != null &&
+          instanteUs(posterior) - INTERVALO_MAX_ENTRE_LOTES_MS * 1000 < instanteUs(inicioJanela);
         break;
       }
       const anterior = grupos.get(carimbos[i]) ?? [];
       const continua =
         anterior.every(formatoAntigo) &&
-        ms(posterior) - ms(carimbos[i]) < INTERVALO_MAX_ENTRE_LOTES_MS &&
+        instanteUs(posterior) - instanteUs(carimbos[i]) < INTERVALO_MAX_ENTRE_LOTES_MS * 1000 &&
         anterior.length === TAMANHO_LOTE_AUDITORIA &&
         anterior.every((l) => periodo(l) === p0);
       if (!continua) break;
@@ -123,6 +136,7 @@ export function reconhecerExecucao(linhas: LinhaAuditoria[], carimboMax: string)
     periodoFim: ancora[0].period_end,
     formato: escolhidos.length > 1 || antigo ? 'reconstruida' : 'carimbo-unico',
     limiteDaJanela,
+    inconsistente,
   };
 }
 
@@ -141,6 +155,7 @@ export function agregarExecucao(linhas: LinhaAuditoria[]): AgregadoExecucao {
     return { soma: conhecidas > 0 ? soma : null, conhecidas };
   };
   const real = somar('margin_real');
+  const gap = somar('margin_gap');
   const maioresGaps = [...linhas]
     .sort(
       (a, b) =>
@@ -153,9 +168,10 @@ export function agregarExecucao(linhas: LinhaAuditoria[]): AgregadoExecucao {
     clientes,
     duplicados: linhas.length - clientes,
     comMargemReal: real.conhecidas,
+    comGap: gap.conhecidas,
     margemReal: real.soma,
     margemPotencial: somar('margin_potential').soma,
-    gap: somar('margin_gap').soma,
+    gap: gap.soma,
     maioresGaps,
     suspeitaInterrompida: linhas.length > 0 && linhas.length % TAMANHO_LOTE_AUDITORIA === 0,
   };
@@ -184,7 +200,7 @@ export async function lerUltimaExecucaoAuditoria(): Promise<LeituraExecucao | nu
   if (erroAncora) throw erroAncora;
   if (!ancora) return null;
   const carimboMax = (ancora as { calculated_at: string }).calculated_at;
-  const desde = new Date(ms(carimboMax) - JANELA_LEITURA_MS).toISOString();
+  const desde = new Date(Math.floor(instanteUs(carimboMax) / 1000) - JANELA_LEITURA_MS).toISOString();
 
   const contar = async () => {
     const { count, error } = await supabase
@@ -213,7 +229,7 @@ export async function lerUltimaExecucaoAuditoria(): Promise<LeituraExecucao | nu
     const depois = await contar();
     const estavel = antes === depois && linhas.length === depois && new Set(linhas.map((l) => l.id)).size === linhas.length;
     if (!estavel) continue;
-    const execucao = reconhecerExecucao(linhas, carimboMax);
+    const execucao = reconhecerExecucao(linhas, carimboMax, desde);
     if (!execucao) throw new Error('margin_audit_log: o carimbo mais recente não voltou na leitura');
     return { execucao, agregado: agregarExecucao(execucao.linhas) };
   }

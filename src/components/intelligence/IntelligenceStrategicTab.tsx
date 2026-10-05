@@ -3,8 +3,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { STATUS_NAO_VENDA_POSTGREST } from '@/lib/farmer/universo-pedidos';
 import { kpisDesconto } from './desconto-kpis';
-import { lerUltimaExecucaoAuditoria, rodapeExecucao, dataHoraExecucao, MAIORES_GAPS } from './auditoria-margem-execucao';
-import { estadoDeLeitura, naoConsegui } from '@/lib/leitura/estado-de-leitura';
+import { lerUltimaExecucaoAuditoria, rodapeExecucao, dataHoraExecucao, MAIORES_GAPS, type LeituraExecucao } from './auditoria-margem-execucao';
+import { estadoDeLeitura, naoConsegui, desatualizado } from '@/lib/leitura/estado-de-leitura';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
@@ -142,10 +142,26 @@ export function IntelligenceStrategicTab() {
   const runAlgoA = async () => {
     setRunningAlgoA(true);
     try {
-      const { error } = await supabase.functions.invoke('algorithm-a-audit');
+      const { data: resposta, error } = await supabase.functions.invoke('algorithm-a-audit');
       if (error) throw error;
-      // a tela promete a ÚLTIMA execução: sem invalidar, o gestor recalculava e seguia vendo a anterior
-      await queryClient.invalidateQueries({ queryKey: ['intel-margin-audit'] });
+      // A tela promete a ÚLTIMA execução: sem reler, o gestor recalculava e seguia vendo a anterior. E o
+      // sucesso da EXECUÇÃO não é o da RELEITURA — `invalidateQueries` resolve mesmo com a leitura em falha.
+      try {
+        await queryClient.invalidateQueries({ queryKey: ['intel-margin-audit'] }, { throwOnError: true });
+      } catch {
+        toast.warning('Algoritmo A executado, mas a releitura da auditoria falhou — a tela pode estar desatualizada.');
+        return;
+      }
+      if (queryClient.getQueryState(['intel-margin-audit'])?.fetchStatus === 'paused') {
+        toast.warning('Algoritmo A executado — sem conexão para reler a auditoria.');
+        return;
+      }
+      const calculadoEm = (resposta as { calculado_em?: string } | null)?.calculado_em;
+      const lido = queryClient.getQueryData<LeituraExecucao | null>(['intel-margin-audit'])?.execucao.carimbo;
+      if (calculadoEm && (!lido || Date.parse(lido) !== Date.parse(calculadoEm))) {
+        toast.warning('Algoritmo A executado, mas a releitura ainda não traz a execução nova — tente de novo em instantes.');
+        return;
+      }
       toast.success('Algoritmo A executado — auditoria atualizada');
     } catch (e) {
       toast.error('Erro: ' + (mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.'));
@@ -173,7 +189,8 @@ export function IntelligenceStrategicTab() {
   // os `|| 0` abaixo voltavam a fabricar LTV/CAC/Market Share em zero.
   const semLeituraScores = naoConsegui(estadoDeLeitura({ status: scoresStatus, fetchStatus: scoresFetch }));
   const scoresIndisponivel = semLeituraScores && !allScores;
-  const scoresDesatualizados = semLeituraScores && !!allScores;
+  // com cache, `paused` vem com status `success` (estado "pronta") — só o `desatualizado` enxerga
+  const scoresDesatualizados = desatualizado({ status: scoresStatus, fetchStatus: scoresFetch }, !!allScores) != null;
   const ou = (v: string) => (scoresIndisponivel ? '—' : v);
 
   // Mesmo par para a auditoria de margem — as duas queries falham de forma independente, e a
@@ -182,10 +199,11 @@ export function IntelligenceStrategicTab() {
   // `naoConsegui` cobre erro E sem-rede (offline sem cache: pending/paused, sem `isError`).
   const semLeituraAudit = naoConsegui(estadoAudit);
   const auditoriaIndisponivel = semLeituraAudit && leituraAudit === undefined;
-  const auditoriaDesatualizada = semLeituraAudit && leituraAudit !== undefined;
+  // offline COM cache é `success` + `paused` → "pronta"; `desatualizado` olha o `paused` (inclui o cache `null`)
+  const auditoriaDesatualizada = desatualizado(auditoriaQ, leituraAudit !== undefined) != null;
   const semAuditoria = leituraAudit === null;
   // o escritor grava UMA linha por cliente: cliente repetido = execução mal reconhecida → não somar
-  const auditoriaInvalida = (agregadoAudit?.duplicados ?? 0) > 0;
+  const auditoriaInvalida = (agregadoAudit?.duplicados ?? 0) > 0 || !!leituraAudit?.execucao.inconsistente;
   const semNumeroAudit = auditoriaIndisponivel || semAuditoria || auditoriaInvalida;
   const ouAudit = (v: string) => (semNumeroAudit ? '—' : v);
   const brl = (v: number | null) => (v == null ? '—' : `R$ ${v.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`);
@@ -194,7 +212,7 @@ export function IntelligenceStrategicTab() {
     : semAuditoria
       ? 'nenhuma execução gravada'
       : auditoriaInvalida
-        ? 'execução inválida — clientes duplicados'
+        ? 'execução inválida — carimbo ambíguo (clientes repetidos ou formatos/períodos misturados)'
         : `parcial — ${auditComCusto}/${auditTotal} clientes c/ custo`;
 
   return (
@@ -220,7 +238,7 @@ export function IntelligenceStrategicTab() {
       {auditoriaDesatualizada && (
         <div role="alert" className="rounded-lg border border-status-warning/30 bg-status-warning/5 p-3 text-xs text-status-warning">
           Exibindo a última leitura bem-sucedida da auditoria de margem — a atualização mais
-          recente falhou. Os valores do Algoritmo A podem estar desatualizados.
+          recente não chegou (falha ou sem conexão). Os valores do Algoritmo A podem estar desatualizados.
         </div>
       )}
       {/* Algoritmo A – Margin Gap */}
@@ -238,7 +256,7 @@ export function IntelligenceStrategicTab() {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <KpiCard title="Margem Real" value={ouAudit(brl(agregadoAudit?.margemReal ?? null))} icon={DollarSign} subtitle={legendaAudit} />
           <KpiCard title="Margem Potencial" value={ouAudit(brl(agregadoAudit?.margemPotencial ?? null))} icon={TrendingUp} subtitle={legendaAudit} />
-          <KpiCard title="Gap de Margem" value={ouAudit(brl(agregadoAudit?.gap ?? null))} icon={TrendingDown} subtitle={semNumeroAudit ? legendaAudit : 'vazamento de preço (todos os clientes auditados)'} />
+          <KpiCard title="Gap de Margem" value={ouAudit(brl(agregadoAudit?.gap ?? null))} icon={TrendingDown} subtitle={semNumeroAudit ? legendaAudit : agregadoAudit && agregadoAudit.comGap < agregadoAudit.clientes ? `parcial — ${agregadoAudit.comGap}/${agregadoAudit.clientes} clientes c/ gap` : 'vazamento de preço (todos os clientes auditados)'} />
           {/* "0" afirmaria que a auditoria rodou e não achou ninguém — a mesma troca de "não consegui
               ler" por "não existe" que os KPIs monetários ao lado fazem em R$. */}
           <KpiCard title="Clientes auditados" value={ouAudit(String(auditTotal))} icon={Eye} />
@@ -310,7 +328,7 @@ export function IntelligenceStrategicTab() {
                       <td className="py-2 font-mono">{clientNameMap[row.customer_user_id] ?? `${row.customer_user_id.slice(0, 8)}...`}</td>
                       <td className="text-center py-2">{row.margin_real == null ? '—' : `R$ ${Number(row.margin_real).toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`}</td>
                       <td className="text-center py-2">{row.margin_potential == null ? '—' : `R$ ${Number(row.margin_potential).toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`}</td>
-                      <td className="text-center py-2 text-destructive">R$ {Number(row.margin_gap).toLocaleString('pt-BR', { minimumFractionDigits: 0 })}</td>
+                      <td className="text-center py-2 text-destructive">{row.margin_gap == null ? '—' : `R$ ${Number(row.margin_gap).toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`}</td>
                       <td className="text-right py-2">{row.gap_pct == null ? '—' : `${Number(row.gap_pct).toFixed(1)}%`}</td>
                     </tr>
                   ))}

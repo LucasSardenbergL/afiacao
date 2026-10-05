@@ -31,6 +31,10 @@ let falharPagina: number | null = null;
 let aoContar: ((n: number) => void) | null = null;
 let contagens = 0;
 let faixasLidas: Array<[number, number]> = [];
+/** Toda leitura do log falha (o "Recalcular" executa, a RELEITURA não). */
+let falharLeitura = false;
+/** O que o edge devolve no invoke (ex.: `calculado_em`). */
+let respostaInvoke: unknown = null;
 const ERRO_TIMEOUT = { code: '57014', message: 'canceling statement due to statement timeout' };
 
 /** Instante em MICROSSEGUNDOS, preservando a fração que o `Date` cortaria. */
@@ -59,6 +63,7 @@ function chainLog(): unknown {
   c.range = (de: number, ate: number) => ((st.range = [de, ate]), c);
   c.maybeSingle = () => ((st.single = true), c);
   c.then = (resolve: (v: unknown) => void) => {
+    if (falharLeitura) return resolve({ data: null, error: ERRO_TIMEOUT });
     let rows = LOG.filter(
       (l) => (st.gte == null || us(l.calculated_at) >= us(st.gte)) && (st.lte == null || us(l.calculated_at) <= us(st.lte)),
     );
@@ -82,7 +87,10 @@ function chainLog(): unknown {
       rows = rows.slice(st.range[0], st.range[1] + 1);
     }
     if (st.limit != null) rows = rows.slice(0, st.limit);
-    if (st.single) return resolve({ data: rows[0] ?? null, error: null });
+    if (st.single) {
+      if (rows.length > 1) return resolve({ data: null, error: { code: 'PGRST116', message: 'JSON object requested, multiple (or no) rows returned' } });
+      return resolve({ data: rows[0] ?? null, error: null });
+    }
     return resolve({ data: rows, error: null });
   };
   return c;
@@ -108,12 +116,13 @@ vi.mock('@/integrations/supabase/client', () => ({
     functions: {
       invoke: vi.fn(async () => {
         aoRecalcular?.();
-        return { data: null, error: null };
+        return { data: respostaInvoke, error: null };
       }),
     },
   },
 }));
-vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
+const toastMock = vi.hoisted(() => ({ error: vi.fn(), success: vi.fn(), warning: vi.fn() }));
+vi.mock('sonner', () => ({ toast: toastMock }));
 vi.mock('@/lib/analytics', () => ({ captureException: vi.fn(), track: vi.fn() }));
 
 import {
@@ -121,6 +130,7 @@ import {
   lerUltimaExecucaoAuditoria,
   reconhecerExecucao,
   rodapeExecucao,
+  instanteUs,
   TAMANHO_LOTE_AUDITORIA,
   type LinhaAuditoria,
 } from '../auditoria-margem-execucao';
@@ -165,7 +175,7 @@ function cenarioAntigo() {
     ...lote(500, T2),
     ...lote(200, T3),
     // o MAIOR gap da execução é uma linha do último lote — chega na 2ª página da leitura por id
-    linha(T3, { margin_gap: 5000, customer_user_id: 'c-maior-gap' }),
+    linha(T3, { margin_gap: 5000, customer_user_id: 'c-maior-gap', id: 'ffffffff-999999' }),
   ];
 }
 
@@ -176,6 +186,10 @@ beforeEach(() => {
   contagens = 0;
   faixasLidas = [];
   aoRecalcular = null;
+  falharLeitura = false;
+  respostaInvoke = null;
+  toastMock.success.mockClear();
+  toastMock.warning.mockClear();
   seq = 0;
 });
 
@@ -202,9 +216,37 @@ describe('reconhecerExecucao', () => {
     expect(ex?.formato).toBe('carimbo-unico');
   });
 
-  it('a cadeia que encosta no início da janela é sinalizada', () => {
+  it('limite da janela: só quando um lote compatível (< 1 s antes) cairia ANTES do início lido', () => {
     LOG = [...lote(500, T1), ...lote(500, T2), ...lote(8, T3)];
-    expect(reconhecerExecucao(LOG as LinhaAuditoria[], T3)?.limiteDaJanela).toBe(true);
+    expect(reconhecerExecucao(LOG as LinhaAuditoria[], T3, '2026-10-04T03:00:24.500000+00:00')?.limiteDaJanela).toBe(true);
+    // a janela começa 30 s antes: um predecessor compatível estaria DENTRO dela — não há limite
+    expect(reconhecerExecucao(LOG as LinhaAuditoria[], T3, '2026-10-04T03:00:00.000000+00:00')?.limiteDaJanela).toBe(false);
+  });
+
+  it('fronteira de 1 s em MICROSSEGUNDOS (o Date.parse cortaria 999,499 ms em 1.000)', () => {
+    const anterior = '2026-10-04T03:00:24.975623+00:00';
+    const junta = (ancora: string) => {
+      LOG = [...lote(500, anterior), ...lote(8, ancora)];
+      return reconhecerExecucao(LOG as LinhaAuditoria[], ancora)?.linhas.length;
+    };
+    expect(instanteUs('2026-10-04T03:00:25.975122+00:00') - instanteUs(anterior)).toBe(999_499);
+    expect(junta('2026-10-04T03:00:25.975122+00:00')).toBe(508);
+    expect(junta('2026-10-04T03:00:25.975623+00:00')).toBe(8);
+    expect(junta('2026-10-04T03:00:25.975624+00:00')).toBe(8);
+  });
+
+  it('lote cheio de OUTRO período a < 1 s não é da mesma execução', () => {
+    LOG = [...lote(500, T2, { period_start: '2025-10-03', period_end: '2026-10-03' }), ...lote(8, T3)];
+    expect(reconhecerExecucao(LOG as LinhaAuditoria[], T3)?.linhas).toHaveLength(8);
+  });
+
+  it('âncora que mistura formatos ou períodos é INCONSISTENTE (a tela não soma)', () => {
+    LOG = [...lote(7, T3), linha(T3, {}, { novo: true })];
+    expect(reconhecerExecucao(LOG as LinhaAuditoria[], T3)?.inconsistente).toBe(true);
+    LOG = [...lote(7, T3), linha(T3, { period_end: '2026-10-03' })];
+    expect(reconhecerExecucao(LOG as LinhaAuditoria[], T3)?.inconsistente).toBe(true);
+    LOG = lote(8, T3);
+    expect(reconhecerExecucao(LOG as LinhaAuditoria[], T3)?.inconsistente).toBe(false);
   });
 
   it('âncora ausente das linhas lidas → null', () => {
@@ -223,6 +265,17 @@ describe('agregarExecucao', () => {
     expect(a.margemReal).toBe(-40);
     expect(a.comMargemReal).toBe(2);
     expect(agregarExecucao(lote(2, T3, { margin_real: null, margin_potential: null }) as LinhaAuditoria[]).margemReal).toBeNull();
+  });
+
+  it('numeric chega como STRING do PostgREST: somado como número; gap desconhecido conta à parte', () => {
+    const l = lote(3, T3) as unknown as Array<Record<string, unknown>>;
+    l[0].margin_real = '10.50';
+    l[1].margin_real = '-0.25';
+    l[2].margin_gap = null;
+    const a = agregarExecucao(l as unknown as LinhaAuditoria[]);
+    expect(a.margemReal).toBeCloseTo(20.25, 10);
+    expect(a.comGap).toBe(2);
+    expect(a.gap).toBe(40);
   });
 
   it('cliente repetido aparece em `duplicados` (invalida a soma na tela)', () => {
@@ -251,6 +304,8 @@ describe('lerUltimaExecucaoAuditoria', () => {
     expect(r?.agregado.gap).toBe(1200 * 20 + 5000);
     // o maior gap veio do fim da leitura e lidera o ranking
     expect(r?.agregado.maioresGaps[0].customer_user_id).toBe('c-maior-gap');
+    // e ele está mesmo na 2ª PÁGINA da leitura por id (a fixture não pode mentir sobre isso)
+    expect([...LOG].sort((a, b) => (a.id < b.id ? -1 : 1)).findIndex((l) => l.customer_user_id === 'c-maior-gap')).toBeGreaterThanOrEqual(1000);
     expect(rodapeExecucao(r!)).toContain('1201 clientes auditados');
     expect(rodapeExecucao(r!)).toContain('conclusão não confirmada');
   });
@@ -351,6 +406,57 @@ describe('IntelligenceStrategicTab — a última execução inteira', () => {
     expect(cardDo('Margem Real')).toContain('R$ 508');
   });
 
+  it('execução INVÁLIDA (cliente repetido) → "—" e o motivo, não a soma', async () => {
+    LOG = lote(508, T3, {}, { novo: true });
+    LOG[1].customer_user_id = LOG[0].customer_user_id;
+    renderAba();
+    await waitFor(() => expect(cardDo('Margem Real')).toMatch(/—/));
+    expect(cardDo('Margem Real')).toContain('execução inválida');
+    expect(screen.queryByTestId('rodape-execucao')).toBeNull();
+  });
+
+  it('gap desconhecido de um cliente → "—" na linha da tabela (não R$ 0) e o gap vira "parcial"', async () => {
+    LOG = [linha(T3, {}, { novo: true }), linha(T3, { margin_gap: null, customer_user_id: 'c-sem-gap' }, { novo: true })];
+    renderAba();
+    await screen.findByTestId('rodape-execucao');
+    expect(cardDo('Gap de Margem')).toContain('parcial — 1/2');
+    const linhaSemGap = screen.getByText('c-sem-ga...').closest('tr')?.textContent ?? '';
+    expect(linhaSemGap).toContain('—');
+    expect(linhaSemGap).not.toContain('R$ 0');
+  });
+
+  it('offline COM cache → o aviso de desatualizado aparece (o "pronta" do success+paused não basta)', async () => {
+    cenarioAntigo();
+    const qc = renderAba();
+    await screen.findByTestId('rodape-execucao');
+    onlineManager.setOnline(false);
+    // sem await: com a query PAUSADA a promessa só resolve quando a rede voltar
+    void qc.invalidateQueries({ queryKey: ['intel-margin-audit'] });
+    expect(await screen.findByText(/Exibindo a última leitura bem-sucedida da auditoria/)).toBeTruthy();
+  });
+
+  it('"Recalcular" com a RELEITURA em falha → aviso, nunca "auditoria atualizada"', async () => {
+    cenarioAntigo();
+    aoRecalcular = () => {
+      falharLeitura = true;
+    };
+    renderAba();
+    await screen.findByTestId('rodape-execucao');
+    fireEvent.click(screen.getByRole('button', { name: /Recalcular/ }));
+    await waitFor(() => expect(toastMock.warning).toHaveBeenCalled());
+    expect(toastMock.success).not.toHaveBeenCalled();
+  });
+
+  it('"Recalcular" cuja execução nova (calculado_em) não aparece na releitura → aviso, não sucesso', async () => {
+    cenarioAntigo();
+    respostaInvoke = { records: 508, calculado_em: '2026-10-04T15:00:00.000Z' };
+    renderAba();
+    await screen.findByTestId('rodape-execucao');
+    fireEvent.click(screen.getByRole('button', { name: /Recalcular/ }));
+    await waitFor(() => expect(toastMock.warning).toHaveBeenCalled());
+    expect(toastMock.success).not.toHaveBeenCalled();
+  });
+
   it('offline sem cache → "—" e o aviso, nunca KPIs zerados', async () => {
     cenarioAntigo();
     onlineManager.setOnline(false);
@@ -381,6 +487,8 @@ describe('acoplamento com o edge algorithm-a-audit', () => {
     const declaracoes = fonte.match(/const calculadoEm = new Date\(\)\.toISOString\(\);/g) ?? [];
     expect(declaracoes).toHaveLength(1);
     expect(fonte.indexOf('const calculadoEm = ')).toBeLessThan(fonte.indexOf('for (const client of clients)'));
+    // DENTRO do handler: no escopo do módulo, todas as invocações do mesmo worker dividiriam o carimbo
+    expect(fonte.indexOf('Deno.serve(')).toBeLessThan(fonte.indexOf('const calculadoEm = '));
     expect(fonte).toContain('calculated_at: calculadoEm,');
   });
 
