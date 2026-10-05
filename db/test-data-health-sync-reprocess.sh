@@ -186,12 +186,29 @@ montar_banco() {
   # base mínima do Supabase: roles, schema auth, auth.uid()/role() via GUC (impersonação de RLS)
   P -q -f "$REPO_ROOT/db/stubs-supabase.sql"
   P -q <<'SQL'
-CREATE OR REPLACE FUNCTION auth.uid()  RETURNS uuid LANGUAGE sql STABLE AS $f$ SELECT nullif(current_setting('test.uid',  true), '')::uuid $f$;
+CREATE OR REPLACE FUNCTION auth.uid()  RETURNS uuid LANGUAGE sql STABLE AS $f$
+  SELECT COALESCE(nullif(current_setting('test.uid', true), ''),
+                  nullif(current_setting('request.jwt.claim.sub', true), ''),
+                  nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')::uuid $f$;
 CREATE OR REPLACE FUNCTION auth.role() RETURNS text LANGUAGE sql STABLE AS $f$ SELECT nullif(current_setting('test.role', true), '') $f$;
 ALTER ROLE service_role BYPASSRLS;
 SQL
   # ZONA 1 — pré-requisitos mínimos (formas MEDIDAS em prod, sem schema-snapshot)
   P -q -f "$REPO_ROOT/db/stubs-data-health-trio.sql"
+  # O wrapper get_data_health() VIVO (fixture, md5 17adb51b… = prod) e o que o gate de papel dele lê:
+  # a 20261005150000 redefine o compute (entra nesta cadeia), TRAVA o wrapper na PRE e EXECUTA o gate
+  # na POS (sessão logada sem papel → 42501). Esta prova não exerce o wrapper; só não pode impedir a
+  # migration de aplicar.
+  P -q <<'SQL'
+DO $$ BEGIN CREATE TYPE public.app_role AS ENUM ('master','employee','customer'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+CREATE TABLE IF NOT EXISTS public.user_roles (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id uuid NOT NULL, role public.app_role NOT NULL);
+CREATE OR REPLACE FUNCTION public.has_role(_user_id uuid, _role public.app_role)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER AS $f$
+  SELECT EXISTS (SELECT 1 FROM public.user_roles WHERE user_id = _user_id AND role = _role) $f$;
+CREATE OR REPLACE FUNCTION public.pode_ver_carteira_completa(_user_id uuid)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER AS $f$ SELECT public.has_role(_user_id, 'master') $f$;
+SQL
+  P -q -1 -f "$REPO_ROOT/db/fixtures/get-data-health-predecessora-prod-20261005.sql" >/dev/null
   # ZONA 2 — O PG17 limpo daria EXECUTE a PUBLIC por default; PROD tem o REVOKE (medido: o compute e
   # executavel so por postgres/service_role/sandbox_exec — nem `authenticated`). Reproduzimos esse
   # estado ANTES do apply com um stub de assinatura identica: assim a postcondicao de ACL nao mede o

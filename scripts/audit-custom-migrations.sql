@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 582
+-- Total de custom migrations: 583
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -623,7 +623,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261001100000', 'sales_orders_colunas_whatsapp_select', '20261001100000_sales_orders_colunas_whatsapp_select.sql'),
   ('20261001100001', 'sales_orders_gemeo_importado_contagem_unica', '20261001100001_sales_orders_gemeo_importado_contagem_unica.sql'),
   ('20261001204054', 'oportunidade_antidup_conta_disparado_simulado', '20261001204054_oportunidade_antidup_conta_disparado_simulado.sql'),
-  ('20261005131331', 'reposicao_po_observado_pelo_motor', '20261005131331_reposicao_po_observado_pelo_motor.sql')
+  ('20261005131331', 'reposicao_po_observado_pelo_motor', '20261005131331_reposicao_po_observado_pelo_motor.sql'),
+  ('20261005150000', 'data_health_vendas_empurradas_v2', '20261005150000_data_health_vendas_empurradas_v2.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2536,7 +2537,9 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('reposicao_po_observado_pelo_motor', 'index', 'public', 'idx_reposicao_po_observado_run_empresa', 'reposicao_po_observado_run'),
   ('reposicao_po_observado_pelo_motor', 'index', 'public', 'idx_reposicao_po_observado_item_po', 'reposicao_po_observado_item'),
   ('reposicao_po_observado_pelo_motor', 'rls_policy', 'public', 'reposicao_po_observado_run_select_staff', 'reposicao_po_observado_run'),
-  ('reposicao_po_observado_pelo_motor', 'rls_policy', 'public', 'reposicao_po_observado_item_select_staff', 'reposicao_po_observado_item')
+  ('reposicao_po_observado_pelo_motor', 'rls_policy', 'public', 'reposicao_po_observado_item_select_staff', 'reposicao_po_observado_item'),
+  ('data_health_vendas_empurradas_v2', 'function', 'public', '_data_health_compute', ''),
+  ('data_health_vendas_empurradas_v2', 'function', 'public', 'get_data_health', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4497,7 +4500,9 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('reposicao_po_observado_pelo_motor', 'index', 'public', 'idx_reposicao_po_observado_run_empresa', 'reposicao_po_observado_run'),
   ('reposicao_po_observado_pelo_motor', 'index', 'public', 'idx_reposicao_po_observado_item_po', 'reposicao_po_observado_item'),
   ('reposicao_po_observado_pelo_motor', 'rls_policy', 'public', 'reposicao_po_observado_run_select_staff', 'reposicao_po_observado_run'),
-  ('reposicao_po_observado_pelo_motor', 'rls_policy', 'public', 'reposicao_po_observado_item_select_staff', 'reposicao_po_observado_item')
+  ('reposicao_po_observado_pelo_motor', 'rls_policy', 'public', 'reposicao_po_observado_item_select_staff', 'reposicao_po_observado_item'),
+  ('data_health_vendas_empurradas_v2', 'function', 'public', '_data_health_compute', ''),
+  ('data_health_vendas_empurradas_v2', 'function', 'public', 'get_data_health', '')
 )
 SELECT
   e.migration,
@@ -4701,6 +4706,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'get_data_health', 3, '20260527180000_data_health_add_vendas.sql', '03d5cc6a9da78d50f9efa12f3c540a27'),
   ('public', 'get_data_health', 4, '20260527200000_data_health_add_estoque_reposicao.sql', '51c144da0d0c07ca5afbf62fe5d57870'),
   ('public', 'get_data_health', 5, '20260527210000_data_health_compute_internal.sql', '16e1e71a715d101a2c0c0feebb59b442'),
+  ('public', 'get_data_health', 6, '20261005150000_data_health_vendas_empurradas_v2.sql', '480dfb19342204df3fc4cd3669cbbe6d'),
   ('public', 'get_tint_price', 1, '20260527180000_get_tint_price_rpc.sql', '3eb475948656777fa9745d51e4472163'),
   ('public', 'get_tint_price', 2, '20260615200000_tint_get_price_base.sql', 'cb4282e796372e64186ce228fe7ac153'),
   ('public', 'get_tint_price', 3, '20260616120000_tint_price_gate_ativo.sql', 'b4944edf365db0ec678382eb034e87df'),
@@ -4740,6 +4746,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', '_data_health_compute', 32, '20260920233000_sync_reprocess_degradado_so_das_vigiadas.sql', '5eae2f124f63fba7cb27914e9610e5d8'),
   ('public', '_data_health_compute', 33, '20260922225500_data_health_portal_humano_critico_apos_24h.sql', 'aa3cac116f66f5bfdcfdf549dbe9afb1'),
   ('public', '_data_health_compute', 34, '20261001011500_data_health_vendas_empurradas_sem_gemeo.sql', '04da1485a726ec5737464547eb8a886d'),
+  ('public', '_data_health_compute', 35, '20261005150000_data_health_vendas_empurradas_v2.sql', '5a8d9ac5032ebba773f3a986d742bcc3'),
   ('public', 'data_health_watchdog', 1, '20260527220000_data_health_watchdog.sql', '4d210b1cab0b10bcf589746005859c4b'),
   ('public', 'data_health_watchdog', 2, '20260527250000_data_health_checks_high.sql', '936015f396af02ab4229e4e20f656803'),
   ('public', 'data_health_watchdog', 3, '20260530190000_data_health_portal_push.sql', '0e436fed51baecafdfbccbe3191e5bfa'),

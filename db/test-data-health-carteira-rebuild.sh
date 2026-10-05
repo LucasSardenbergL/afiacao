@@ -75,11 +75,17 @@ dhv_montar
 # idioma da versão anterior desta prova) — nenhuma das funções do trio lê auth.uid().
 CLIENTE='11111111-1111-1111-1111-111111111111'
 VENDEDOR='22222222-2222-2222-2222-222222222222'
-echo "→ seed-base: auth.uid() pelo GUC test.uid + os dois usuários da carteira…"
+# Desde a 20261005150000 o get_data_health() só atende STAFF (o app que o lê é de staff): o vendedor
+# é employee, como na prod. O auth.uid() também lê o JWT (como o do Supabase): a POS daquela migration
+# simula uma sessão logada sem papel por request.jwt.claim.sub/claims.
+echo "→ seed-base: auth.uid() pelo GUC test.uid (ou o JWT) + os dois usuários da carteira (vendedor = employee)…"
 P -v ON_ERROR_STOP=1 -q <<SQL
 CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE
-  AS \$f\$ SELECT nullif(current_setting('test.uid', true), '')::uuid \$f\$;
+  AS \$f\$ SELECT COALESCE(nullif(current_setting('test.uid', true), ''),
+                         nullif(current_setting('request.jwt.claim.sub', true), ''),
+                         nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')::uuid \$f\$;
 INSERT INTO auth.users (id) VALUES ('$CLIENTE'), ('$VENDEDOR');
+INSERT INTO public.user_roles (user_id, role) VALUES ('$VENDEDOR', 'employee');
 SQL
 
 PASS=0; FAIL=0; FALHOS=" "

@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **582** custom migrations totais
-- **1924** objetos esperados (criados por estas migrations)
+- **583** custom migrations totais
+- **1926** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 645
+  - `function`: 647
   - `rls_policy`: 464
   - `index`: 267
   - `cron_job`: 174
@@ -4790,6 +4790,13 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `index` | `public.idx_reposicao_po_observado_item_po` | `reposicao_po_observado_item` |
 | `rls_policy` | `public.reposicao_po_observado_run_select_staff` | `reposicao_po_observado_run` |
 | `rls_policy` | `public.reposicao_po_observado_item_select_staff` | `reposicao_po_observado_item` |
+
+### `20261005150000_data_health_vendas_empurradas_v2.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+| `function` | `public.get_data_health` | — |
 
 ## Próximos passos por status
 
