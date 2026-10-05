@@ -7,10 +7,9 @@
 # CONTROLE+ : `--` deixa de ser comentário — nada mais é cosmético (o caso real inclusive).
 PEGA | controle+: comentario de linha vira codigo       | s/    if \(c === '-' && s\[i \+ 1\] === '-'\) \{/    if (false) {/
 PEGA | P1: \r isolado deixa de encerrar o comentario    | s/while \(i < s\.length && s\[i\] !== '\\n' && s\[i\] !== '\\r'\) i\+\+;/while (i < s.length \&\& s[i] !== '\\n') i++;/
-# Com a leitura dupla de standard_conforming_strings (Codex, 2026-10-05), a herança do E'' no modo `on`
-# virou defesa em profundidade PARA O GATE: a leitura `off` processa barra em todo literal simples e já
-# separa os corpos. A sequência exata de tokens segue pinada pela suíte do sensor (deriva-corpo.test.ts).
-SOBREVIVE | P1: continuacao de E'' sem heranca (a leitura off cobre) | s/const comBarra = scsOff \|\| \(ultimoFoiString && quebraDesdeUltimo && ultimaComBarra\);/const comBarra = scsOff;/
+# A herança do E'' no modo `on` NÃO é redundante com a leitura `off` (Codex, confirmação P2): um literal
+# simples com barra ANTES desalinha a leitura `off`, e só a herança separa o par.
+PEGA | P1: continuacao de E'' sem heranca no modo on        | s/const comBarra = scsOff \|\| \(ultimoFoiString && quebraDesdeUltimo && ultimaComBarra\);/const comBarra = scsOff;/
 PEGA | P1: tag de dollar-quote presa numa janela de 128 | s/const tag = casarEm\(TAG_DOLLAR, s, i\);/const tag = casarEm(TAG_DOLLAR, s.slice(0, i + 128), i);/
 PEGA | literal perde espaco interno ('a  b' = 'a b')    | s/      emitir\(s\.slice\(i, fim\), true\);/      emitir(s.slice(i, fim).replace(\/\\s+\/g, ' '), true);/
 PEGA | dollar-quote deixa de ser opaco (=90 = =10)      | s/        emitir\(s\.slice\(i, ate\)\);/        emitir(s.slice(i, ate).replace(\/--[^\\n]*\/g, ''));/
@@ -20,5 +19,5 @@ PEGA | P2: identificador com $ abre dollar-quote        | s/const CONT_IDENT = \
 PEGA | espaco do JS (\s) no lugar do space do scan.l    | s/    if \(ESPACO_PG\.has\(c\)\) \{/    if (\/\\s\/.test(c)) {/
 # Parecer de código do Codex (2026-10-05), cada defeito confirmado no PG17 de prod:
 PEGA | Codex P1: numero colado em identificador vira dois tokens | s/      if \(fim < s\.length && INICIO_IDENT\.test\(s\[fim\]\)\) \{/      if (false) {/
-PEGA | Codex P1: so o modo scs=on (standard_conforming_strings)   | s/  return on\.length === off\.length && on\.every\(\(t, k\) => t === off\[k\]\) \? on : \[\.\.\.on, MARCA_SCS_OFF, \.\.\.off\];/  return on;/
 PEGA | Codex P2: comentario de bloco mantem a continuacao        | s/^      ultimoFoiString = false;$/      void 0;/
+PEGA | Codex P1: N'' ignora scs=off                           | s/const comBarraPrefixo = p === 'E' \|\| \(p === 'N' && scsOff\);/const comBarraPrefixo = p === 'E';/

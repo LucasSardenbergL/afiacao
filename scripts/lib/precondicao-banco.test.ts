@@ -755,7 +755,6 @@ describe('eixo 5 — o que o md5 exato chama de DERIVA é re-testado por TOKENS'
       ['espaço Unicode (NBSP) abrindo token é IDENTIFICADOR para o scan.l, não espaço', 'SELECT x FROM t;', 'SELECT \u00a0x FROM t;'],      // Parecer de código do Codex (2026-10-05), confirmado no PG17 de prod:
       ['Codex P1: `_` no expoente (1e1_0 = 10¹⁰) × número + alias (1e1 _0 = 10)', 'SELECT 1e1_0;', 'SELECT 1e1 _0;'],
       ['Codex P1: número colado em identificador é trailing junk no PG17 — `1abc` não é `1 abc`', 'SELECT 1 abc;', 'SELECT 1abc;'],
-      ['Codex P1: com standard_conforming_strings=off o `-- desconto` é LITERAL', "SELECT 'a\\'--desconto=90\n';", "SELECT 'a\\'--desconto=10\n';"],
       ['Codex P2: comentário de BLOCO entre literais quebra a continuação', "SELECT 'a'\n'b';", "SELECT 'a'/*\n*/'b';"],
     ];
     for (const [rotulo, repo, prodTxt] of naoCosmeticos) {
@@ -781,5 +780,109 @@ describe('eixo 5 — o que o md5 exato chama de DERIVA é re-testado por TOKENS'
         expect(v.naoConferidas).toEqual([]);
       });
     }
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// Parecer de CONFIRMAÇÃO do Codex (2026-10-05): o veredito por tokens só vale se os DOIS modos de
+// standard_conforming_strings concordam — exigir os dois só para "cosmético" tirava o BLOQUEIO do
+// anterior que casa em `on` (regressão da 1ª correção, reproduzida com corpo real do repo).
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+describe('eixo 5 — os modos de standard_conforming_strings têm de CONCORDAR no veredito por tokens', () => {
+  const RPC = 'reposicao_claim_disparo';
+  const VELHA = '20260908163659_pedido_nasce_com_identidade_de_linha.sql';
+  const NOVA = '20260908215704_desconto_valor_atravessa_os_escritores.sql';
+  const corpo = (migration: string, c: string): VersaoDeCorpo => ({ migration, md5: md5Exato(c), corpo: c });
+  /** A sonda simulada: o md5 é o que o BANCO calcularia do prosrc (`md5Exato`, a receita do banco). */
+  const julgarCom = (hist: VersaoDeCorpo[], prodTxt: string, falhas: string[] = []) =>
+    julgarPrecondicao(
+      ALVO,
+      { ...leituraOk([RPC]), corpos: new Map([[RPC, { md5s: [md5Exato(prodTxt)], overloads: 1 }]]) },
+      0,
+      corposCom(hist),
+      { porNome: new Map([[RPC, [prodTxt]]]), falhas },
+    );
+
+  it('P1 (regressão da leitura dupla): anterior que só casa em `on` ⇒ INCERTA — nunca DERIVA liberada', () => {
+    const v = julgarCom([corpo(VELHA, "SELECT '\\'::text; -- anterior\n"), corpo(NOVA, "SELECT 'novo'::text;")], "SELECT '\\'::text;");
+    expect(v.estado).toBe('INCERTA');
+    expect(v.motivos.join('\n')).toMatch(/standard_conforming_strings/);
+    expect(v.cosmeticas).toEqual([]);
+    expect(v.naoConferidas).toEqual([]);
+  });
+
+  it('o mesmo P1 com o corpo REAL de `melhoria_clientes_por_produto` (prod = a 1ª versão sem uma linha de comentário)', () => {
+    const dir = join(import.meta.dirname, '..', '..', 'supabase', 'migrations');
+    const nomes = ['20260929000234_padrao_like_contem_escapa_curinga.sql', '20261001014100_universo_pedidos_recencia.sql'];
+    const historico = historicoDeCorpos(nomes.map((nome) => ({ nome, sql: readFileSync(join(dir, nome), 'utf8') })));
+    const versoes = historico.get('public.melhoria_clientes_por_produto') ?? [];
+    expect(versoes.map((x) => x.migration)).toEqual(nomes);
+    const linhas = versoes[0].corpo.split('\n');
+    const i = linhas.findIndex((l) => l.includes('-- NULLS LAST e OBRIGATORIO'));
+    expect(i).toBeGreaterThan(0);
+    const prodTxt = [...linhas.slice(0, i), ...linhas.slice(i + 1)].join('\n');
+    const rpc = 'melhoria_clientes_por_produto';
+    const v = julgarPrecondicao(
+      [{ rpc, edges: ['edge-x'] }],
+      { medicoes: [{ rpc, existe: true, familia: 9 }], corpos: new Map([[rpc, { md5s: [md5Exato(prodTxt)], overloads: 1 }]]), funcoesPublic: 1200, fim: true, dialetoOk: true },
+      0,
+      { historico, inventarioDaRef: 2, migrationsLidas: 2, funcoesConhecidas: historico.size },
+      { porNome: new Map([[rpc, [prodTxt]]]), falhas: [] },
+    );
+    expect(v.estado).not.toBe('LIBERADA');
+    expect(v.cosmeticas).toEqual([]);
+  });
+
+  it("P1 `N'…'` com scs=off processa barra como o literal comum: a cosmética que só vale em `on` não passa", () => {
+    const a = "SELECT N'a\\'--desconto=10\n';";
+    const b = "SELECT N'a\\'--desconto=90\n';";
+    const v = julgarCom([corpo(VELHA, `-- anterior\n${a}`), corpo(NOVA, b)], a);
+    expect(v.estado).not.toBe('LIBERADA');
+    expect(v.cosmeticas).toEqual([]);
+  });
+
+  it("P2 a herança do E'' no modo `on` separa um par que a leitura `off` não separa (ela se desalinha antes)", () => {
+    const a = "SELECT '\\', '/*';\nSELECT E'a'\n'b\\'--desconto=10\n';";
+    const b = "SELECT '\\', '/*';\nSELECT E'a'\n'b\\'--desconto=90\n';";
+    const v = julgarCom([corpo(VELHA, `-- anterior\n${a}`), corpo(NOVA, b)], a);
+    expect(v.estado).not.toBe('LIBERADA');
+    expect(v.cosmeticas).toEqual([]);
+  });
+
+  it('Codex P1 (rodada 1): literal simples com barra antes da aspa — em `on` é cosmético, em `off` o `-- desconto` é LITERAL ⇒ INCERTA', () => {
+    const v = julgarCom([corpo(NOVA, "SELECT 'a\\'--desconto=90\n';")], "SELECT 'a\\'--desconto=10\n';");
+    expect(v.estado).toBe('INCERTA');
+    expect(v.cosmeticas).toEqual([]);
+  });
+
+  it('controle: corpo sem barra que mude fronteira — os dois modos concordam e a cosmética segue valendo', () => {
+    const v = julgarCom([corpo(VELHA, 'SELECT 1;'), corpo(NOVA, 'BEGIN\n  -- nota\n  RETURN 2;\nEND;')], 'BEGIN\n  RETURN 2;\nEND;');
+    expect(v.estado).toBe('LIBERADA');
+    expect(v.cosmeticas.map((c) => c.esperada)).toEqual([NOVA]);
+  });
+
+  it('P1 irmã da migration sem NENHUMA linha na sonda (nem `rpc`) ⇒ não medida — INCERTA, não "indecidível"', () => {
+    const historico = new Map([
+      ['public.f_chamada', [corpo(NOVA, 'SELECT 1;')]],
+      ['public.g_irma', [corpo(VELHA, 'SELECT 7;'), corpo(NOVA, 'SELECT 8;')]],
+    ]);
+    const v = julgarPrecondicao(
+      [{ rpc: 'f_chamada', edges: ['edge-x'] }],
+      { medicoes: [{ rpc: 'f_chamada', existe: true, familia: 2 }], corpos: new Map([['f_chamada', { md5s: [md5Exato('SELECT 1;')], overloads: 1 }]]), funcoesPublic: 1200, fim: true, dialetoOk: true },
+      0,
+      { historico, inventarioDaRef: 2, migrationsLidas: 2, funcoesConhecidas: 2 },
+      { porNome: new Map([['f_chamada', ['SELECT 1;']]]), falhas: [] },
+    );
+    expect(v.estado).toBe('INCERTA');
+    expect(v.naoMedidos).toContain('g_irma');
+  });
+
+  it('P2 INCERTA com anterior EXATO: o relatório diagnostica, mas não manda aplicar — manda remedir', () => {
+    const v = julgarCom([corpo(VELHA, 'SELECT 7;'), corpo(NOVA, 'SELECT 8;')], 'SELECT 7;', ['o detalhe não trouxe o marcador `deriva-corpo/1` — saída truncada']);
+    expect(v.estado).toBe('INCERTA');
+    expect(v.desatualizadas.map((d) => d.emProd)).toEqual([VELHA]);
+    const t = relatarPrecondicao(v);
+    expect(t).not.toContain('APLIQUE essa migration');
+    expect(t).toContain('corrija a medição');
   });
 });

@@ -32,6 +32,7 @@ import {
   textosDaLeitura,
   tokensSql,
 } from './deriva-corpo';
+import { mesmosTokensNoModo } from './tokens-sql';
 
 describe('tokensSql — "cosmético" é mesma sequência de tokens, nunca "mesmo texto sem espaço"', () => {
   it('espaço, quebra de linha e comentário não contam', () => {
@@ -90,6 +91,13 @@ describe('tokensSql — "cosmético" é mesma sequência de tokens, nunca "mesmo
 });
 
 describe('tokensSql — o contrato léxico do PG17 (os casos do parecer Codex de 2026-09-26)', () => {
+  it("mesmosTokensNoModo: N'…' com scs=off processa barra (o literal comum); com scs=on, não", () => {
+    const a = "SELECT N'a\\'--desconto=10\n';";
+    const b = "SELECT N'a\\'--desconto=90\n';";
+    expect(mesmosTokensNoModo(a, b, false)).toBe(true);
+    expect(mesmosTokensNoModo(a, b, true)).toBe(false);
+  });
+
   it('número segue o scan.l do PG17 (medido em prod, 2026-10-05): `_` no expoente é dígito; número colado em identificador é UM token', () => {
     // SELECT 1e1_0 → 10000000000 · SELECT 1e1 _0 → 10 (alias _0) · SELECT 1abc / 1_ / 0x1Fg / 1e → trailing junk.
     expect(tokensSql('SELECT 1e1_0;')).toEqual(['select', '1e1_0', ';']);
@@ -434,6 +442,13 @@ describe('parsearSondaDeriva — o detalhe por overload, fail-closed', () => {
   it('SEM-CORPO vira md5 ausente, nunca md5 de string vazia', () => {
     const l = parsearSondaDeriva(saidaValida().replace(/fn\|f\|\|9106714\|[0-9a-f]{32}\|[0-9a-f]*/, 'fn|f||9106714|SEM-CORPO|'));
     expect(l.overloads[0].md5).toBeUndefined();
+  });
+
+  it('o detalhe mede um nome e a sonda não trouxe NEM a linha `rpc`: incoerência (Codex, confirmação P1)', () => {
+    // A irmã da migration some inteira da sonda (rpc + corpo) e o detalhe ainda a conta: o universo é o
+    // das linhas `n`, não o das medições recebidas.
+    const comIrma = saidaValida(['n|g|1|||', `fn|g||9106714|${md5Exato(' SELECT 7 ')}|${hex(' SELECT 7 ')}`]);
+    expect(parsearSondaDeriva(comIrma).incoerencias.join()).toMatch(/g: o detalhe o mede e a sonda não trouxe a linha `rpc`/);
   });
 
   it('o banco conta overload e a sonda não trouxe a linha `corpo`: incoerência — linha perdida não vira "sem corpo" (Codex P1)', () => {

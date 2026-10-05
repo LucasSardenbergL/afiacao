@@ -59,6 +59,11 @@
  *   ⚪ `SEM_TEXTO`      o exato deu `DERIVA` e o texto de prod para o re-teste não veio (ou não
  *                       reproduz o md5 medido). Sem ele, "edição manual" e "corpo anterior sem
  *                       comentário" são indistinguíveis — o gate diz que não mediu (`INCERTA`).
+ *   ⚪ `MODO_DIVERGENTE` o veredito por tokens com standard_conforming_strings=on difere do veredito com
+ *                       `off` (um literal simples com barra muda de fronteira). O modo de execução da RPC
+ *                       não é observável daqui por inteiro (o `proconfig` é; o default do papel que chama,
+ *                       não) ⇒ `INCERTA`, nunca o veredito de um modo só — exigir os dois só para
+ *                       "cosmético" tirava o BLOQUEIO do anterior que casa em `on` (Codex, confirmação).
  *
  * A ORDEM é o que mantém o gate honesto: as checagens EXATAS vêm antes e não mudam (`classificarCorpo`
  * está intocado; o re-teste só vê o que ele devolveu como `DERIVA`). Dentro do re-teste, a ÚLTIMA
@@ -92,7 +97,7 @@
  * `precondicao-banco.ts` já declarava.
  */
 import { extractObjects, md5Exato } from './migration-objects';
-import { md5DeTokens, mesmosTokens } from './tokens-sql';
+import { md5DeTokens, mesmosTokensNoModo } from './tokens-sql';
 
 export { md5Exato };
 
@@ -118,7 +123,14 @@ export interface MigrationLida {
   sql: string;
 }
 
-type Classificacao = 'EM_DIA' | 'CORPO_ANTERIOR' | 'VARIANTE_COSMETICA' | 'DERIVA' | 'INDECIDIVEL' | 'SEM_TEXTO';
+type Classificacao =
+  | 'EM_DIA'
+  | 'CORPO_ANTERIOR'
+  | 'VARIANTE_COSMETICA'
+  | 'DERIVA'
+  | 'INDECIDIVEL'
+  | 'SEM_TEXTO'
+  | 'MODO_DIVERGENTE';
 
 /** A evidência de um casamento por TOKENS — para o relatório ser conferível sem reexecutar nada. */
 export interface ProvaPorTokens {
@@ -263,17 +275,24 @@ export function classificarComTokens(
     md5Tokens: md5DeTokens(texto),
   });
   const n = versoes.length;
-  // A última PRIMEIRO — o desempate do exato: tokens iguais aos da última E aos de uma anterior não
-  // dizem qual das duas rodou, e bloquear pela ordem de varredura seria bloqueio inventado.
-  if (mesmosTokens(texto, versoes[n - 1].corpo)) {
-    return { ...exato, classificacao: 'VARIANTE_COSMETICA', tokens: prova(versoes[n - 1]) };
+  // O casamento em CADA modo de standard_conforming_strings. A última PRIMEIRO — o desempate do exato:
+  // tokens iguais aos da última E aos de uma anterior não dizem qual das duas rodou.
+  const casaNoModo = (scsOff: boolean): number => {
+    if (mesmosTokensNoModo(texto, versoes[n - 1].corpo, scsOff)) return n - 1;
+    for (let i = n - 2; i >= 0; i--) if (mesmosTokensNoModo(texto, versoes[i].corpo, scsOff)) return i;
+    return -1;
+  };
+  const on = casaNoModo(false);
+  const off = casaNoModo(true);
+  const descrever = (k: number): string =>
+    k < 0 ? 'não casa versão nenhuma' : `casa ${k === n - 1 ? 'a última' : 'a anterior'} \`${versoes[k].migration}\``;
+  // 🔴 Só vale o veredito em que os DOIS modos concordam (ver `MODO_DIVERGENTE` no cabeçalho).
+  if (on !== off) {
+    return { ...exato, classificacao: 'MODO_DIVERGENTE', motivo: `com scs=on ${descrever(on)}; com scs=off ${descrever(off)}` };
   }
-  for (let i = n - 2; i >= 0; i--) {
-    if (mesmosTokens(texto, versoes[i].corpo)) {
-      return { ...exato, classificacao: 'CORPO_ANTERIOR', emProd: versoes[i].migration, tokens: prova(versoes[i]) };
-    }
-  }
-  return exato;
+  if (on < 0) return exato;
+  if (on === n - 1) return { ...exato, classificacao: 'VARIANTE_COSMETICA', tokens: prova(versoes[on]) };
+  return { ...exato, classificacao: 'CORPO_ANTERIOR', emProd: versoes[on].migration, tokens: prova(versoes[on]) };
 }
 
 /**

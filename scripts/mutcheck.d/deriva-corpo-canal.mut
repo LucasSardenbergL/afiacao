@@ -7,3 +7,4 @@
 
 # CONTROLE+ : a conferência some.
 PEGA | controle+: linha corpo perdida nao e incoerencia      | s/    else if \(k > 0 && !sonda\.corpos\.has\(m\.rpc\)\) incoerencias\.push/    else if (false) incoerencias.push/
+PEGA | Codex P1: linha rpc perdida nao e incoerencia        | s/    if \(!medidos\.has\(nome\)\) incoerencias\.push/    if (false) incoerencias.push/

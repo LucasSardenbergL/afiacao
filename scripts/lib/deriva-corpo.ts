@@ -536,6 +536,12 @@ export function parsearSondaDeriva(saida: string): LeituraDeriva {
     }
   }
   const sonda = parsearSondaPrecondicao(saida);
+  // O universo é o PEDIDO — as linhas `n` do detalhe, uma por nome (inclusive zero) —, não só o que a sonda
+  // devolveu (Codex, confirmação P1): a irmã que sumia inteira da sonda (rpc + corpo) escapava da conferência.
+  const medidos = new Set(sonda.medicoes.map((m) => m.rpc));
+  for (const nome of contagem.keys()) {
+    if (!medidos.has(nome)) incoerencias.push(`${nome}: o detalhe o mede e a sonda não trouxe a linha \`rpc\``);
+  }
   for (const m of sonda.medicoes) {
     const k = contagem.get(m.rpc);
     const doDetalhe = overloads.filter((o) => o.nome === m.rpc).length;

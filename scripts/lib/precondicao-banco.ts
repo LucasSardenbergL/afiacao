@@ -498,6 +498,13 @@ export function julgarPrecondicao(
     }
   }
 
+  // As irmãs da migration (o conjunto acoplado) também têm de ter sido MEDIDAS (Codex, confirmação P1): sem a
+  // linha `rpc`, a irmã sumia da sonda e virava "indecidível" — liberando a anterior que ela podia rodar.
+  const nomesAlvo = new Set(alvos.map((a) => a.rpc));
+  for (const rpc of alvosDeCorpo(alvos, corpos.historico)) {
+    if (!nomesAlvo.has(rpc) && !porNome.has(rpc)) naoMedidos.push(rpc);
+  }
+
   // O eixo 5 propriamente. Só olha o que EXISTE: uma RPC ausente já é bloqueio pelo eixo antigo, e
   // classificar corpo de função que não está lá seria ruído sobre um veredito já fechado.
   const ausenteOuNaoMedida = new Set([...ausentes.map((a) => a.rpc), ...naoMedidos]);
@@ -506,6 +513,7 @@ export function julgarPrecondicao(
   const cosmeticas: RpcCosmetica[] = [];
   const naoConferidas: RpcNaoConferida[] = [];
   const semTexto: string[] = [];
+  const modoDivergente: string[] = [];
   // Canal de detalhe NÃO íntegro (marcador, autoteste hex, contagens/md5 que não fecham): o texto não é
   // acreditado — nenhum veredito POR TOKENS sai dele — e a leitura inteira vira INCERTA. Parecer de código do
   // Codex (2026-10-05): a sonda dizia 1 overload e o detalhe 2, e o gate liberava como cosmético o que podia
@@ -535,6 +543,10 @@ export function julgarPrecondicao(
       semTexto.push(rpc);
       continue;
     }
+    if (v.classificacao === 'MODO_DIVERGENTE') {
+      modoDivergente.push(`\`${rpc}\` (${v.motivo ?? 'os modos divergem'})`);
+      continue;
+    }
     naoConferidas.push({
       rpc,
       motivo:
@@ -556,6 +568,13 @@ export function julgarPrecondicao(
       `eixo de corpo sem o TEXTO de prod para ${suspensas}: o md5 exato deu DERIVA, e só o re-teste por TOKENS ` +
         'separa "edição manual" de "corpo ANTERIOR sem comentário" (que bloqueia) — o canal está íntegro, mas o ' +
         'texto não veio ou não reproduz o md5 medido',
+    );
+  }
+
+  if (modoDivergente.length > 0) {
+    motivos.push(
+      `o veredito por TOKENS depende de standard_conforming_strings, cujo modo de execução não é garantido ` +
+        `daqui — ${modoDivergente.join('; ')}: com um modo só, "anterior" (bloqueia) e "edição manual" se confundem`,
     );
   }
 
@@ -652,16 +671,24 @@ export function relatarPrecondicao(v: VereditoPrecondicao): string {
         ? `    EXISTE em prod, mas rodando o corpo de \`${d.emProd}\` — casou por TOKENS: md5 exato prod ${d.prova.md5Prod} ≠ repo ${d.prova.md5Repo}, mesmos tokens (${d.prova.md5Tokens}); a lógica é a dessa versão, comentário à parte`
         : `    EXISTE em prod, mas rodando o corpo de \`${d.emProd}\` (casou byte a byte: md5 exato)`,
     );
-    linhas.push(`    o repo já commitou \`${d.esperada}\` depois dela ⇒ APLIQUE essa migration`);
-    // "APLIQUE" sozinho manda colar o ARQUIVO — e migration traz DML além da DDL (achado do Codex,
-    // 2026-09-26): a `20260606190000` roda um backfill sobre pedidos vivos, que o selo de aprovação
-    // (#2187/#2258) não espera ver reescritos depois de aprovados.
-    linhas.push(
-      '    ⚠️  reaplicar o ARQUIVO inteiro re-executa o que mais ele traz: se houver DML/backfill (UPDATE/INSERT/DELETE, ou SELECT de função que escreve), cole só o CREATE OR REPLACE da função — ex.: a `20260606190000` (qtde inteira) traz um backfill one-time sobre pedidos vivos',
-    );
-    linhas.push(
-      '    ⚠️  não espere erro: a RPC velha aceita o payload novo e DESCARTA o campo em silêncio',
-    );
+    if (v.estado === 'BLOQUEADA') {
+      linhas.push(`    o repo já commitou \`${d.esperada}\` depois dela ⇒ APLIQUE essa migration`);
+      // "APLIQUE" sozinho manda colar o ARQUIVO — e migration traz DML além da DDL (achado do Codex,
+      // 2026-09-26): a `20260606190000` roda um backfill sobre pedidos vivos, que o selo de aprovação
+      // (#2187/#2258) não espera ver reescritos depois de aprovados.
+      linhas.push(
+        '    ⚠️  reaplicar o ARQUIVO inteiro re-executa o que mais ele traz: se houver DML/backfill (UPDATE/INSERT/DELETE, ou SELECT de função que escreve), cole só o CREATE OR REPLACE da função — ex.: a `20260606190000` (qtde inteira) traz um backfill one-time sobre pedidos vivos',
+      );
+      linhas.push(
+        '    ⚠️  não espere erro: a RPC velha aceita o payload novo e DESCARTA o campo em silêncio',
+      );
+    } else {
+      // INCERTA: diagnóstico, nunca ordem de aplicar sobre uma medição que o próprio gate não acredita
+      // (Codex, confirmação P2) — remedir primeiro.
+      linhas.push(
+        `    o repo já commitou \`${d.esperada}\` depois dela — mas a medição é INCERTA: corrija a medição e rode de novo ANTES de aplicar qualquer migration`,
+      );
+    }
   }
   for (const a of v.ausentes) {
     const acao =

@@ -136,9 +136,11 @@ function tokensNoModo(corpo: string, scsOff: boolean): string[] {
     const prefixo = casarEm(PREFIXO_STRING, s, i);
     if (prefixo !== null) {
       const p = prefixo[0].slice(0, -1).toUpperCase();
-      const fim = literal(i + p.length, p === 'E');
+      // `N'…'` é o literal comum com outro tipo: com scs=off ele também processa barra (Codex, confirmação).
+      const comBarraPrefixo = p === 'E' || (p === 'N' && scsOff);
+      const fim = literal(i + p.length, comBarraPrefixo);
       emitir(p + s.slice(i + p.length, fim), true);
-      ultimaComBarra = p === 'E';
+      ultimaComBarra = comBarraPrefixo;
       i = fim;
       continue;
     }
@@ -237,27 +239,47 @@ function tokensNoModo(corpo: string, scsOff: boolean): string[] {
 const MARCA_SCS_OFF = '\u2424scs-off';
 
 /**
- * Os tokens do corpo, válidos sob QUALQUER `standard_conforming_strings` (parecer de código do Codex,
- * 2026-10-05): com `off`, todo literal simples processa barra — `'a\'--desconto=10⏎'` é UM literal (medido
- * em prod com `SET`) —, e com `on` (o padrão de prod, sem função que o sobrescreva) é `'a\'` + comentário.
- * Em vez de supor o modo, lê nos dois: quando as fronteiras coincidem (o caso de quase todo corpo), a
- * saída é a de sempre e o `md5DeTokens` não muda; quando divergem, a leitura `off` vai junto, e "mesmos
- * tokens" passa a exigir os dois modos.
+ * O FLUXO de tokens do corpo, no modo `standard_conforming_strings=on` — o padrão de prod (medido: `on`,
+ * fonte `default`, nenhuma função o sobrescreve). É a API que outros leitores consomem como sequência
+ * (`like-cru-em-migrations-gate.ts`, `universo-pedidos-sql.ts`): ela não carrega a leitura `off`, que
+ * duplicaria sítios para eles. A comparação nos DOIS modos mora nas funções de comparação abaixo.
  */
 export function tokensSql(corpo: string): string[] {
+  return tokensNoModo(corpo, false);
+}
+
+/**
+ * A leitura nos DOIS modos, como sequência COMPARÁVEL (parecer de código do Codex, 2026-10-05): com `off`,
+ * todo literal simples processa barra — `'a\\'--desconto=10⏎'` é UM literal (medido em prod com `SET`) —,
+ * e com `on` é `'a\\'` + comentário. Quando as fronteiras coincidem (o caso de quase todo corpo), devolve a
+ * de `on` e o `md5DeTokens` não muda; quando divergem, a leitura `off` vai junto, e "mesmos tokens" passa a
+ * exigir os dois modos. Privada: só serve à comparação, nunca ao fluxo.
+ */
+function leituraDupla(corpo: string): string[] {
   const on = tokensNoModo(corpo, false);
   const off = tokensNoModo(corpo, true);
   return on.length === off.length && on.every((t, k) => t === off[k]) ? on : [...on, MARCA_SCS_OFF, ...off];
 }
 
-/** Os dois corpos são o MESMO programa (ver `tokensSql`)? */
+/**
+ * Os mesmos tokens NUM modo de standard_conforming_strings. O gate calcula o veredito em cada modo e só o
+ * aceita quando os dois concordam (`classificarComTokens`): exigir os dois apenas para "cosmético" tirava o
+ * BLOQUEIO do anterior que casa em `on` (parecer de confirmação do Codex, 2026-10-05).
+ */
+export function mesmosTokensNoModo(a: string, b: string, scsOff: boolean): boolean {
+  const x = tokensNoModo(a, scsOff);
+  const y = tokensNoModo(b, scsOff);
+  return x.length === y.length && x.every((t, k) => t === y[k]);
+}
+
+/** Os dois corpos são o MESMO programa nos DOIS modos de standard_conforming_strings (`leituraDupla`)? */
 export function mesmosTokens(a: string, b: string): boolean {
-  const x = tokensSql(a);
-  const y = tokensSql(b);
+  const x = leituraDupla(a);
+  const y = leituraDupla(b);
   return x.length === y.length && x.every((t, k) => t === y[k]);
 }
 
 /** md5 da sequência de tokens — o "mesmo programa" como hash (ver `tokensSql`). */
 export function md5DeTokens(texto: string): string {
-  return md5Exato(tokensSql(texto).join('\u0000'));
+  return md5Exato(leituraDupla(texto).join('\u0000'));
 }
