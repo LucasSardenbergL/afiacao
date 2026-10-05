@@ -983,7 +983,8 @@ describe('lerReferenciaDaMain — o git responde, ou a referência é NÃO CONSU
   const gitFalso = (resp: Record<string, string | Error>, chamadas: string[][] = []) => (args: readonly string[]) => {
     chamadas.push([...args]);
     if (JSON.stringify(args) !== JSON.stringify(ESPERADOS[args[0]])) throw new Error(`git falso: argumentos inesperados ${JSON.stringify(args)}`);
-    const r = { fetch: '', ...resp }[args[0]];
+    const respostas: Record<string, string | Error | undefined> = { fetch: '', ...resp };
+    const r = respostas[args[0]];
     if (r === undefined) throw new Error(`git falso sem resposta para ${args[0]}`);
     if (r instanceof Error) throw r;
     return r;
@@ -1027,7 +1028,11 @@ describe('lerReferenciaDaMain — o git responde, ou a referência é NÃO CONSU
 describe('montarCarimbo — a trava e a herança fora do binário (que para na guarda de env por construção)', () => {
   const AGORA_ISO = '2026-10-05T12:00:00.000Z';
   const ALVO_PROD: Carimbo['alvo'] = { usuario: 'claude_ro', servidor: 'PostgreSQL 17.6', somenteLeitura: true, projetoHash: PROJETO_HASH_PROD };
-  const limpas = () => Object.fromEntries(CHAVES.map((k) => [k, { exit: 0, linhas: [`✅ ${k}: limpo`] }])) as Record<ChaveAudit, ExecucaoDeAudit>;
+  const limpas = (): Record<ChaveAudit, ExecucaoDeAudit> => {
+    const o = {} as Record<ChaveAudit, ExecucaoDeAudit>;
+    for (const k of CHAVES) o[k] = { exit: 0, linhas: [`✅ ${k}: limpo`] };
+    return o;
+  };
   const montar = (over: Partial<Parameters<typeof montarCarimbo>[0]> = {}) =>
     montarCarimbo({ alvo: ALVO_PROD, execucoes: limpas(), heranca: [], fps: fpsBons(), agora: AGORA_ISO, sourceHead: 'cafe', semente: {}, ...over });
   const montado = (over: Partial<Parameters<typeof montarCarimbo>[0]> = {}): Carimbo => {

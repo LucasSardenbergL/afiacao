@@ -708,7 +708,7 @@ export function conferirCluster(projetoHashMedido: string): RecusaDoAnterior | n
     motivo:
       `esta sessao mede o cluster ${ascii(JSON.stringify(projetoHashMedido))}, e prod e ${PROJETO_HASH_PROD} ` +
       `(PROJETO_HASH_PROD em scripts/lib/authz-carimbo.ts): o gravador nao grava evidencia de outro banco. ` +
-      `Confira para onde aponta o ~/.config/afiacao/psql-ro. Se prod foi re-inicializado (restore ou upgrade: ` +
+      `Confira para qual banco aponta o wrapper psql-ro desta maquina. Se prod foi re-inicializado (restore ou upgrade: ` +
       `system_identifier novo), trocar a constante e decisao do founder, num PR com a evidencia - nunca para ` +
       `fazer o gravador passar.`,
   };
