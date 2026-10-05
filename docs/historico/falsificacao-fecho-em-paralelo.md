@@ -76,7 +76,28 @@ temporário próprio; o git dos fixtures usa `--no-optional-locks`), e `wait "$p
 
 **Falsificado** (controle na mesma invocação). No TEXTO, contra o R4 (controle 0 achados): o
 `continue 2` do parecer, o pid sobrescrito entre disparo e juízo, a cópia sem conferência e a rodada
-não disparada pulada sem FALHA — as 4 reprovam.
+não disparada pulada sem FALHA — as 4 reprovam. Na EXECUÇÃO (M2, sob o `heavy`; controle verde, 106
+linhas de veredito): o disparo sem guardar o pid (104 × "rodada SEM pid"), o juiz sem o `wait` (104
+FALHA) e a cópia que falha (104 × "rodada NAO disparada (copia)") — os 3 vermelhos, 104 = 52 × 2.
+
+**Medido** (mesmo recorte do log nos três runs; o `codex-async`, intocado, é a régua do runner):
+
+| run | `fecho-edges-pendentes` | `codex-async` | razão |
+|---|---:|---:|---:|
+| main, serial (03/10) | 313 s | 212 s | 1,48 |
+| PR, 1º commit | 215 s | 217 s | 0,99 |
+| PR, commit final | 264 s | 221 s | 1,19 |
+
+Ganho de 20–33% no alvo (~50–100 s no caminho crítico), não os 50% da conta de papel: o juízo de
+cada sabotagem segue em série, e as duas rodadas disputam CPU e disco. No step inteiro ele some no
+ruído — os outros alvos oscilam ±50 s de um run a outro.
+
+**De passagem — o locale do bash 3.2.** O controle local diferiu do CI numa linha: na sabotagem
+`slug_forasteiro_calado`, em pt_BR.UTF-8 vieram os colaterais E5f_6/E5f além do E5g declarado. Não é o
+paralelo (no CI, paralelo = serial nessa linha): no `/bin/bash` 3.2 do macOS, `[!a-z0-9_-]` ACEITA
+`EDGE` em pt_BR.UTF-8 e en_US.UTF-8 (intervalo por colação; no C e no bash 5 do runner, ASCII). Então
+o `edges-pendentes.sh:395` deixa slug com maiúscula passar no Mac, e quem barra é a checagem de slug
+fora da leva (exit 3 igual). Defeito latente do alvo, fora desta entrega.
 
 **Por que não o `codex-async` (o 2º mais lento, 212 s).** A suíte dele procura `sleep 977` vazado
 na MÁQUINA inteira (`pids_sleep`): duas rodadas simultâneas veriam o processo uma da outra.
