@@ -838,8 +838,8 @@ concentração perto da ruptura, os PRs (c1)/(c2) viram higiene de Omie de baixa
   do espelho, que é cego à situação (§13.4) — a maior parte dos 273 POs "com NF" já está fora do "a caminho".
 - **Quem faz:** a equipe de compras/recebimento encerra no Omie. A sessão **não** encerra PO: a ação é irreversível,
   só existe na interface e não tem API (§14 F1).
-- **Lote 1 — rodar assim que o PR0 publicar o 1º run completo** (provisório até a lista do PR(c2); a execução em PG17
-  contra o schema do PR0 está registrada no PR desta seção):
+- **Lote 1 — rodar assim que o PR0 publicar o 1º run completo** (provisório até a lista do PR(c2); executada em
+  2026-10-05 num PG17 com o snapshot e as migrations do PR0 — rc=0, sem erro de tipo):
 
 ```sql
 WITH ultimo AS (
