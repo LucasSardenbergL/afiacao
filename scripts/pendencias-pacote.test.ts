@@ -457,7 +457,8 @@ describe('pendencias:pacote — a leitura da edge sai da REF, não do disco', ()
 
     expect(codigo).toBe(3);
     const pacote = readFileSync(saida, 'utf8');
-    expect(pacote).toContain('re-teste por TOKENS');
+    // O detalhe não veio: o canal não é íntegro, e o recado nomeia a função cujo re-teste ficou suspenso.
+    expect(pacote).toContain('re-teste suspenso para `rpc_velha`');
     expect(pacote).not.toContain('VARIANTE_COSMETICA');
     expect(pacote).not.toContain('Cole no chat do Lovable');
   });
