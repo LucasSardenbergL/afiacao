@@ -918,7 +918,9 @@ Deno.serve(async (req) => {
       // Sem tratá-lo, a mesma falha que motivou esta migração voltaria como 500
       // genérico e ninguém saberia que o problema é saldo.
       const porStatus: Record<number, { http: number; msg: string }> = {
-        400: { http: 400, msg: "A IA recusou o conteúdo enviado. Tente outra foto ou descreva o pedido por texto." },
+        // 400 = requisição inválida (defeito nosso), não recusa — mandar trocar de foto esconderia
+        // o bug (ver _shared/anthropic.ts). A recusa do modelo chega como 200 + stop_reason "refusal".
+        400: { http: 500, msg: "Falha na requisição à IA — avise a equipe. Monte o pedido manualmente por enquanto." },
         402: { http: 402, msg: "Créditos da IA esgotados — avise a equipe. Monte o pedido manualmente por enquanto." },
         401: { http: 500, msg: "IA mal configurada — avise a equipe." },
         403: { http: 500, msg: "IA mal configurada — avise a equipe." },

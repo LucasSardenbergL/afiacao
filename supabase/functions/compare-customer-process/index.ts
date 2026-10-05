@@ -379,7 +379,7 @@ Use a tool comparison_analysis pra gerar a análise estruturada.`;
       max_tokens: 3000,
       system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
       tools: [TOOL],
-      tool_choice: { type: "tool", name: "comparison_analysis" },
+      tool_choice: { type: "tool", name: "comparison_analysis", disable_parallel_tool_use: true },
       messages: [{ role: "user", content: userMsg }],
     });
 

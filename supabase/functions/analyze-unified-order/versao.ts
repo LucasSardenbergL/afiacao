@@ -83,7 +83,7 @@ export const respostaSonda = criarRespostaSonda("analyze-unified-order");
  * `v1.3-ia-nao-precifica`: a edge deixou de decidir preço (fronteira `montarRespostaAnalise`, canária
  * `ia-nao-precifica-v1`); v1.4 = hotfix do BOOT_ERROR. Por quê: docs/historico/ia-nao-precifica.md.
  */
-export const VERSAO = "v1.4-boot-resposta-unica";
+export const VERSAO = "v1.5-400-nao-e-recusa";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

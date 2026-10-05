@@ -291,7 +291,7 @@ async function extrairViaTool(
     max_tokens: MAX_TOKENS,
     system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
     tools: [tool],
-    tool_choice: { type: "tool", name: tool.name },
+    tool_choice: { type: "tool", name: tool.name, disable_parallel_tool_use: true },
     messages: [
       {
         role: "user",
