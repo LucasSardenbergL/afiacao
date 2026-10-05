@@ -16,6 +16,8 @@ let dados: Record<string, unknown[]> = {};
 let erros: Record<string, unknown> = {};
 /** Falha só numa PÁGINA (tabela + início da faixa) — as outras páginas respondem normalmente. */
 let falhaNaFaixa: { table: string; de: number } | null = null;
+/** Falha só na leitura cujo `.in()` filtra ESTA coluna (as duas leituras de omie_products diferem só nisso). */
+let erroNoIn: { table: string; coluna: string; erro: unknown } | null = null;
 
 /** O mock imita a capa do PostgREST: sem `.range()`, só as 1.000 primeiras linhas voltam. */
 const CAPA_POSTGREST = 1000;
@@ -24,16 +26,19 @@ function chain(table: string): unknown {
   const registro: Chamada = { table, metodos: [] };
   chamadas.push(registro);
   let faixa: [number, number] | null = null;
+  let colunaDoIn: string | null = null;
   const c: Record<string, unknown> = {};
   for (const m of ['select', 'eq', 'is', 'not', 'in', 'gte', 'order', 'range', 'limit', 'maybeSingle']) {
     c[m] = (...args: unknown[]) => {
       registro.metodos.push([m, args]);
       if (m === 'range') faixa = [args[0] as number, args[1] as number];
+      if (m === 'in') colunaDoIn = args[0] as string;
       return c;
     };
   }
   c.then = (resolve: (v: unknown) => void) => {
     if (erros[table]) return resolve({ data: null, error: erros[table] });
+    if (erroNoIn && erroNoIn.table === table && colunaDoIn === erroNoIn.coluna) return resolve({ data: null, error: erroNoIn.erro });
     if (falhaNaFaixa && falhaNaFaixa.table === table && faixa?.[0] === falhaNaFaixa.de) {
       return resolve({ data: null, error: { code: '57014', message: 'canceling statement due to statement timeout' } });
     }
@@ -63,6 +68,7 @@ describe('usePropostaPreview — a cesta no universo de venda', () => {
     dados = {};
     erros = {};
     falhaNaFaixa = null;
+    erroNoIn = null;
   });
 
   it('a leitura de pedidos carrega o par canônico', async () => {
@@ -110,6 +116,28 @@ describe('usePropostaPreview — a cesta no universo de venda', () => {
     // e a QUANTIDADE vem de todos os itens (1.000 no dia antigo + 1 no recente → média 500,5)
     expect(result.current.data?.cesta.principal[0]?.qtdSugerida).toBe(500.5);
   });
+
+  it('pedidos paginados DE VERDADE: o pedido que só vem na 2ª página entra na cesta', async () => {
+    const ped = (i: number, n: number) => {
+      const d = addDias(hojeSP(), -n);
+      return { id: `p${i}`, account: 'oben', order_date_kpi: d, created_at: `${d}T12:00:00Z`, status: 'faturado' };
+    };
+    // 1.000 pedidos do dia antigo enchem a 1ª página; o único do dia recente só vem na 2ª
+    const pedidos = [...Array.from({ length: CAPA_POSTGREST }, (_, i) => ped(i, 40)), ped(CAPA_POSTGREST, 10)];
+    dados.sales_orders = pedidos;
+    dados.order_items = pedidos.map((o) => ({ omie_codigo_produto: 111, quantity: 1, unit_price: 10, sales_order_id: o.id }));
+    dados.omie_products = [{ omie_codigo_produto: 111, descricao: 'Lixa 120', ativo: true }];
+
+    const { result } = montar();
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    const faixas = chamadas.filter((c) => c.table === 'sales_orders').map((c) => c.metodos.find(([n]) => n === 'range')?.[1]);
+    expect(faixas).toEqual([
+      [0, 999],
+      [1000, 1999],
+    ]);
+    expect(result.current.data?.totalPedidos).toBe(2);
+    expect(result.current.data?.cesta.principal.map((i) => i.omie_codigo_produto)).toEqual([111]);
+  });
 });
 
 describe('usePropostaPreview — falha de leitura é ERRO, nunca uma cesta "vazia"', () => {
@@ -119,6 +147,7 @@ describe('usePropostaPreview — falha de leitura é ERRO, nunca uma cesta "vazi
     chamadas = [];
     erros = {};
     falhaNaFaixa = null;
+    erroNoIn = null;
     // cesta de 1 SKU ativo em 2 pedidos: passa por produtos, cross-sell e perfil
     const dia = (n: number) => addDias(hojeSP(), -n);
     dados = {
@@ -143,8 +172,18 @@ describe('usePropostaPreview — falha de leitura é ERRO, nunca uma cesta "vazi
     erros[tabela] = ERRO_TIMEOUT;
     const { result } = montar();
     await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(result.current.error).toBe(ERRO_TIMEOUT); // o erro INJETADO, não outro qualquer
     expect(result.current.data).toBeUndefined();
     expect(chamadas.some((c) => c.table === tabela)).toBe(true);
+  });
+
+  it('falha no catálogo do CROSS-SELL (omie_products por id) → ERRO, sem proposta', async () => {
+    dados.farmer_recommendations = [{ product_id: 'prod-x', affinity_score: 0.9, status: 'pendente', recommendation_type: 'cross_sell' }];
+    erroNoIn = { table: 'omie_products', coluna: 'id', erro: ERRO_TIMEOUT };
+    const { result } = montar();
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(result.current.error).toBe(ERRO_TIMEOUT);
+    expect(chamadas.some((c) => c.table === 'omie_products' && c.metodos.some(([n, a]) => n === 'in' && a[0] === 'id'))).toBe(true);
   });
 });
 
@@ -155,6 +194,7 @@ describe('usePropostaPreview — página perdida é ERRO marcado, nunca a cesta 
     chamadas = [];
     erros = {};
     falhaNaFaixa = null;
+    erroNoIn = null;
     const dia = (n: number) => addDias(hojeSP(), -n);
     const item = (pedido: string) => ({ omie_codigo_produto: 111, quantity: 1, unit_price: 10, sales_order_id: pedido });
     dados = {
