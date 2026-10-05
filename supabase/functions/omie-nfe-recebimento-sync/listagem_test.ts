@@ -109,6 +109,12 @@ Deno.test("interpretarPaginaListagem: outra faultstring é falha — e sai sem a
   assertEquals(interpretarPaginaListagem([registro(1)]).tipo, "falha");
 });
 
+Deno.test("corpo só com faultcode também é falha — não lista vazia nem detalhe sem chave", () => {
+  assertEquals(interpretarPaginaListagem({ faultcode: "SOAP-ENV:Server" }).tipo, "falha");
+  assertEquals(falhaNoCorpo({ faultcode: "SOAP-ENV:Server" }), "SOAP-ENV:Server");
+  assertEquals(corpoDeFalhaOmie('{"faultcode":"SOAP-ENV:Server"}') !== null, true);
+});
+
 Deno.test("corpoDeFalhaOmie: o HTTP 500 REAL do CC (2026-10-05) volta como corpo — e a listagem o lê como fim", () => {
   const real = '{"faultstring":"ERROR: N\\u00e3o existem registros para a p\\u00e1gina [1]!","faultcode":"SOAP-ENV:Client-5113"}';
   const corpo = corpoDeFalhaOmie(real);

@@ -30,10 +30,11 @@ export const respostaSonda = criarRespostaSonda("omie-nfe-recebimento-sync");
  * "Importar NF-e" — antes ele chamava o `omie-nfe-webhook`, que dá 401 sem o segredo do Omie.
  * v1.3: a listagem do cron pede `cExibirDetalhes:'S'` e a triagem pula já importada/recebida/
  * cancelada ANTES da única consulta de detalhe (a recebida no topo travava a fila da Oben desde
- * 14/08); o que a listagem não diz vai à consulta como incompleta, depois das completas; o detalhe
- * confere cancelada e recebida com o mesmo critério; o corpo de falha do Omie vale com HTTP 200 ou
- * 500 ("não existem registros" é fim); a resposta traz `por_armazem` com o desfecho da consulta (o
- * sensor do cron). O laço mora em rodada.ts, testado no Deno com o Omie e o banco falsos.
+ * 14/08); o que a listagem não diz vai à consulta como incompleta; a consulta gira em RODÍZIO pela
+ * hora (nenhuma candidata a prende para sempre); o detalhe confere cancelada e recebida com o mesmo
+ * critério e, sem `infoCadastro`, não grava; o corpo de falha do Omie vale com HTTP 200 ou 500 ("não
+ * existem registros" é fim); a resposta traz `por_armazem` com o desfecho da consulta (o sensor do
+ * cron), mesmo quando algo quebra no meio. O laço mora em rodada.ts, testado no Deno com falsos.
  */
 export const VERSAO = "v1.3-listagem-com-detalhes";
 

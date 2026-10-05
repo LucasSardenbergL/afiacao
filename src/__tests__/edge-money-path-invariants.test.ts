@@ -4493,6 +4493,22 @@ describe('guardrail: omie-nfe-recebimento-sync não conta NF-e como importada qu
     );
   });
 
+  it('cron: a fiação do index.ts — erros e somas da rodada propagam, a vez chega, a consulta vai ao id escolhido, o banco é lido por conta e em lotes', () => {
+    // Sabotagens que a 2ª rodada do Codex (2026-10-05) comprovou passarem com o Deno verde.
+    expect(handler, 'os erros da rodada não chegam ao success').toContain('errors.push(...rodada.erros)');
+    expect(handler).toContain('totalImported += rodada.importadas');
+    expect(handler).toContain('totalSkipped += rodada.puladas');
+    expect(handler, 'a vez do rodízio não chega à rodada').toMatch(/rodadaDaConta\([^;]*,\s*dtDe,\s*vez\)/);
+    expect(deps, 'a consulta tem de ir ao id que a rodada escolheu').toMatch(
+      /consultar:\s*\(nIdReceb\)\s*=>\s*omieCall\([^)]*"ConsultarRecebimento",\s*\{ nIdReceb \}\)/,
+    );
+    expect(deps, 'o id é por CONTA do Omie: sem o filtro de armazém, o de outra conta vira "já importada"').toContain(
+      '.eq("warehouse_id", warehouseId)',
+    );
+    expect(deps, 'o bigint pode vir como texto: sem Number(), o Set nunca casa').toContain('idsJa.add(Number(r.omie_id_receb))');
+    expect(deps, 'as chaves vão em lotes (URL)').toContain('chaves.slice(i, i + LOTE_CHAVES)');
+  });
+
   it('o Omie devolve o corpo de falha mesmo com HTTP 500 — quem classifica é o chamador', () => {
     // 2026-10-05, conta CC: "não existem registros para a página" vinha com HTTP 500, virava erro e
     // success:false em toda rodada de lista vazia.

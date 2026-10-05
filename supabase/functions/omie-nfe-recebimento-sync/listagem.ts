@@ -51,10 +51,15 @@ function comoRegistro(v: unknown): Record<string, unknown> | null {
   return v !== null && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
 }
 
-/** Texto da `faultstring` do corpo, ou `null` quando o corpo não traz uma. */
+/**
+ * Texto da falha do corpo — a `faultstring` ou, sem ela, o `faultcode` (um corpo só com `faultcode`
+ * passava como lista vazia: revisão do Codex, 2026-10-05) —, ou `null` quando o corpo não é falha.
+ */
 function textoDaFalha(corpo: Record<string, unknown>): string | null {
-  const fs = corpo.faultstring;
-  return typeof fs === "string" && fs.trim() !== "" ? fs : null;
+  for (const campo of [corpo.faultstring, corpo.faultcode]) {
+    if (typeof campo === "string" && campo.trim() !== "") return campo;
+  }
+  return null;
 }
 
 /**

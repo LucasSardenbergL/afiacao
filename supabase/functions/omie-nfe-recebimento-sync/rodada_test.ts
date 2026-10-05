@@ -3,12 +3,13 @@
 //
 // O incidente (2026-10-01): a Oben teve 70 recebimentos no Omie desde 14/08 e a sync importou zero —
 // a NF-e já recebida direto no Omie, no topo da listagem, gastava a única consulta de toda rodada.
-// Os demais casos são os que a revisão do Codex de 2026-10-05 reproduziu contra o laço: chave
-// ausente na listagem, cancelada no detalhe, duplicata só pela chave, HTTP 500 de lista vazia.
+// Os demais casos são os que as duas rodadas de revisão do Codex (2026-10-05) reproduziram contra o
+// laço: chave ausente na listagem, cancelada no detalhe, duplicata só pela chave, HTTP 500 de lista
+// vazia, prioridade sem progresso, exceção levando o resumo, e as sabotagens que passavam verdes.
 import type { CabecalhoRecebimentoRow } from "./cabecalho.ts";
 import type { OmieRecebimentoItem } from "./itens.ts";
 import type { RegistroListagem } from "./listagem.ts";
-import { type DepsRodada, MAX_PAGINAS_POR_RODADA, rodadaDaConta } from "./rodada.ts";
+import { type DepsRodada, escolherNaVez, MAX_PAGINAS_POR_RODADA, rodadaDaConta } from "./rodada.ts";
 
 function assertEquals(a: unknown, b: unknown, msg?: string) {
   if (JSON.stringify(a) !== JSON.stringify(b)) {
@@ -21,17 +22,17 @@ const WH = "wh-ob";
 /** Chave de 44 dígitos que termina no id — uma por NF-e do teste. */
 const chave = (id: number) => `3126091234567800019055001000012345${String(id).padStart(10, "0")}`;
 const SEM_REGISTROS = { faultstring: "ERROR: Não existem registros para a página [1]!", faultcode: "SOAP-ENV:Client-5113" };
-const ITENS = [{}, {}] as unknown as OmieRecebimentoItem[];
+const ITENS = [{}, {}, {}] as unknown as OmieRecebimentoItem[];
 
 function reg(id: number, info?: { cRecebido?: string; cCancelada?: string }, ch: string | null = chave(id)): RegistroListagem {
   return { cabec: { nIdReceb: id, cChaveNFe: ch }, ...(info ? { infoCadastro: info } : {}) };
 }
 const PENDENTE = { cRecebido: "N", cCancelada: "N" };
 const pagina = (recebimentos: RegistroListagem[], nTotalPaginas = 1) => ({ nTotalPaginas, recebimentos });
-function detalhe(id: number, info: Record<string, string> = PENDENTE, ch: string | null = chave(id)) {
+function detalhe(id: number, info: Record<string, string> | null = PENDENTE, ch: string | null = chave(id)) {
   return {
     cabec: { cNumeroNFe: String(id), cChaveNFe: ch, cCNPJ_CPF: "12.345.678/0001-90", dEmissaoNFe: "01/10/2026", nValorNFe: 100 },
-    infoCadastro: info,
+    ...(info ? { infoCadastro: info } : {}),
     itensRecebimento: ITENS,
   };
 }
@@ -43,8 +44,10 @@ interface Cenario {
   consultarLanca?: boolean;
   ids?: number[];
   chaves?: string[];
-  jaLanca?: boolean;
+  /** Lança a partir desta chamada de `jaImportados` (1 = a da listagem, 2 = a da checagem pós-detalhe). */
+  jaLancaNaChamada?: number;
   erroCabecalho?: string;
+  cabecalhoLanca?: boolean;
   erroItens?: string;
 }
 
@@ -54,7 +57,7 @@ function falsos(c: Cenario) {
     consultar: [] as number[],
     ja: 0,
     cabecalhos: [] as CabecalhoRecebimentoRow[],
-    itens: [] as string[],
+    itens: [] as [string, number][],
   };
   const deps: DepsRodada = {
     listar: (params) => {
@@ -69,7 +72,7 @@ function falsos(c: Cenario) {
     },
     jaImportados: (ids, chaves) => {
       chamadas.ja++;
-      if (c.jaLanca) return Promise.reject(new Error("PostgREST 503"));
+      if (c.jaLancaNaChamada !== undefined && chamadas.ja >= c.jaLancaNaChamada) return Promise.reject(new Error("PostgREST 503"));
       return Promise.resolve({
         ids: new Set((c.ids ?? []).filter((i) => ids.includes(i))),
         chaves: new Set((c.chaves ?? []).filter((k) => chaves.includes(k))),
@@ -77,19 +80,20 @@ function falsos(c: Cenario) {
     },
     inserirCabecalho: (row) => {
       chamadas.cabecalhos.push(row);
+      if (c.cabecalhoLanca) return Promise.reject(new Error("conexão encerrada"));
       return Promise.resolve(c.erroCabecalho ? { erro: c.erroCabecalho } : { id: `nfe-${row.omie_id_receb}` });
     },
-    inserirItens: (_itens, id) => {
-      chamadas.itens.push(id);
+    inserirItens: (itens, id) => {
+      chamadas.itens.push([id, itens.length]);
       return Promise.resolve(c.erroItens ?? null);
     },
   };
   return { deps, chamadas };
 }
 
-const rodar = (c: Cenario) => {
+const rodar = (c: Cenario, vez = 0) => {
   const f = falsos(c);
-  return rodadaDaConta(f.deps, "OB", WH, DT_DE).then((r) => ({ ...r, chamadas: f.chamadas }));
+  return rodadaDaConta(f.deps, "OB", WH, DT_DE, vez).then((r) => ({ ...r, chamadas: f.chamadas }));
 };
 
 Deno.test("o incidente: recebida, cancelada e incompleta no topo não gastam a consulta — a pendente de trás é importada", async () => {
@@ -99,7 +103,7 @@ Deno.test("o incidente: recebida, cancelada e incompleta no topo não gastam a c
   });
   assertEquals(r.chamadas.consultar, [104]);
   assertEquals(r.chamadas.cabecalhos.map((c) => [c.omie_id_receb, c.chave_acesso, c.status, c.warehouse_id]), [[104, chave(104), "pendente", WH]]);
-  assertEquals(r.chamadas.itens, ["nfe-104"]);
+  assertEquals(r.chamadas.itens, [["nfe-104", 3]], "os itens do detalhe têm de chegar ao insert");
   assertEquals([r.importadas, r.puladas, r.erros], [1, 1, []]);
   const s = r.resumo;
   assertEquals(
@@ -108,6 +112,27 @@ Deno.test("o incidente: recebida, cancelada e incompleta no topo não gastam a c
   );
   assertEquals(s.consulta, { nIdReceb: 104, desfecho: "importada" });
   assertEquals([s.janela_de, s.paginas_lidas, s.paginacao], [DT_DE, 1, "completa"]);
+});
+
+Deno.test("rodízio: a candidata que só pula no detalhe não prende a consulta — a seguinte entra na rodada seguinte", async () => {
+  // P1 da 2ª rodada do Codex: B completa, mas recebida segundo o detalhe; A magra e importável.
+  const cenario = {
+    paginas: [pagina([reg(1101, PENDENTE), reg(1102)])],
+    detalhes: { 1101: detalhe(1101, { cRecebido: "S" }), 1102: detalhe(1102) },
+  };
+  const primeira = await rodar(cenario, 0);
+  assertEquals([primeira.chamadas.consultar, primeira.resumo.consulta?.desfecho, primeira.importadas], [[1101], "recebido_no_omie", 0]);
+  const segunda = await rodar(cenario, 1);
+  assertEquals([segunda.chamadas.consultar, segunda.resumo.consulta?.desfecho, segunda.importadas], [[1102], "importada", 1]);
+});
+
+Deno.test("escolherNaVez: passo 1, dá a volta, aceita vez negativa e fila menor que a cota", () => {
+  assertEquals(escolherNaVez([7, 8, 9], 0, 1), [7]);
+  assertEquals(escolherNaVez([7, 8, 9], 4, 1), [8]);
+  assertEquals(escolherNaVez([7, 8, 9], -1, 1), [9]);
+  assertEquals(escolherNaVez([7, 8, 9], 2, 2), [9, 7]);
+  assertEquals(escolherNaVez([7], 5, 3), [7]);
+  assertEquals(escolherNaVez([], 5, 1), []);
 });
 
 Deno.test("a listagem pede os detalhes, com a janela da rodada, em toda página", async () => {
@@ -126,14 +151,12 @@ Deno.test("pulos não gastam a consulta: já importadas pelo id e pela chave, e 
   assertEquals([r.importadas, r.puladas, r.resumo.ja_importados], [1, 3, 3]);
 });
 
-Deno.test("a completa vem antes da incompleta; a incompleta sozinha ainda é consultada", async () => {
-  const antes = await rodar({ paginas: [pagina([reg(301), reg(302, PENDENTE)])], detalhes: { 302: detalhe(302) } });
-  assertEquals(antes.chamadas.consultar, [302]);
-  assertEquals([antes.resumo.listagem_magra, antes.resumo.aguardando], [1, 1]);
-
-  const sozinha = await rodar({ paginas: [pagina([reg(401)])], detalhes: { 401: detalhe(401) } });
-  assertEquals(sozinha.chamadas.consultar, [401]);
-  assertEquals(sozinha.resumo.consulta, { nIdReceb: 401, desfecho: "importada" });
+Deno.test("a completa vem à frente da incompleta; a incompleta também tem a sua vez", async () => {
+  const cenario = { paginas: [pagina([reg(301), reg(302, PENDENTE)])], detalhes: { 301: detalhe(301), 302: detalhe(302) } };
+  const vez0 = await rodar(cenario, 0);
+  assertEquals([vez0.chamadas.consultar, vez0.resumo.listagem_magra, vez0.resumo.aguardando], [[302], 1, 1]);
+  const vez1 = await rodar(cenario, 1);
+  assertEquals(vez1.resumo.consulta, { nIdReceb: 301, desfecho: "importada" });
 });
 
 Deno.test("chave ausente na listagem com infoCadastro não descarta: o detalhe traz a chave e a NF-e é importada", async () => {
@@ -149,9 +172,19 @@ Deno.test("incompleta + detalhe cancelado ou recebido (com caixa/espaço): nada 
   assertEquals([recebida.resumo.consulta, recebida.chamadas.cabecalhos.length, recebida.puladas], [{ nIdReceb: 602, desfecho: "recebido_no_omie" }, 0, 1]);
 });
 
+Deno.test("detalhe sem infoCadastro: estado desconhecido, nada gravado, erro visível", async () => {
+  const r = await rodar({ paginas: [pagina([reg(603)])], detalhes: { 603: detalhe(603, null) } });
+  assertEquals([r.resumo.consulta, r.chamadas.cabecalhos.length, r.erros.length], [{ nIdReceb: 603, desfecho: "estado_desconhecido" }, 0, 1]);
+});
+
 Deno.test("duplicata só pela chave, descoberta no detalhe: não grava de novo", async () => {
   const r = await rodar({ paginas: [pagina([reg(701, undefined, null)])], detalhes: { 701: detalhe(701) }, chaves: [chave(701)] });
   assertEquals([r.resumo.consulta, r.chamadas.cabecalhos.length, r.puladas], [{ nIdReceb: 701, desfecho: "duplicada_por_chave" }, 0, 1]);
+});
+
+Deno.test("checagem de duplicata pós-detalhe que falha: erro, nada gravado", async () => {
+  const r = await rodar({ paginas: [pagina([reg(703, PENDENTE)])], detalhes: { 703: detalhe(703) }, jaLancaNaChamada: 2 });
+  assertEquals([r.resumo.consulta, r.chamadas.cabecalhos.length, r.erros.length], [{ nIdReceb: 703, desfecho: "falha_banco" }, 0, 1]);
 });
 
 Deno.test("detalhe sem chave: desfecho sem_chave, nada gravado", async () => {
@@ -164,17 +197,32 @@ Deno.test("lista vazia (o HTTP 500 'não existem registros' do CC) não é erro 
   assertEquals([r.erros, r.resumo.listados, r.resumo.paginacao, r.chamadas.ja, r.chamadas.consultar], [[], 0, "completa", 0, []]);
 });
 
-Deno.test("falha da listagem (faultstring ou transporte) vai a erros e não gasta a consulta", async () => {
+Deno.test("falha da listagem (faultstring, só faultcode ou transporte) vai a erros e não gasta a consulta", async () => {
   const fault = await rodar({ paginas: [{ faultstring: "Consumo redundante detectado. Aguarde 30 segundos (REDUNDANT)" }] });
   assertEquals([fault.erros.length, fault.erros[0].startsWith("OB ListarRecebimentos página 1:"), fault.resumo.paginacao, fault.chamadas.consultar], [1, true, "interrompida_por_erro", []]);
+
+  const soCodigo = await rodar({ paginas: [{ faultcode: "SOAP-ENV:Server" }] });
+  assertEquals([soCodigo.erros.length, soCodigo.resumo.paginacao], [1, "interrompida_por_erro"]);
 
   const rede = await rodar({ listarLanca: true });
   assertEquals([rede.erros.length, rede.resumo.paginacao, rede.chamadas.consultar], [1, "interrompida_por_erro", []]);
 });
 
-Deno.test("falha da consulta (faultstring no corpo ou transporte) vai a erros e nada é gravado", async () => {
+Deno.test("página seguinte que quebra (total acima do teto, vazia antes do fim) mantém a anterior e a consulta", async () => {
+  const acimaDoTeto = await rodar({ paginas: [pagina([reg(1201, PENDENTE)], 2), pagina([reg(1202, PENDENTE)], 501)], detalhes: { 1201: detalhe(1201) } });
+  assertEquals([acimaDoTeto.resumo.listados, acimaDoTeto.resumo.paginacao, acimaDoTeto.erros.length, acimaDoTeto.importadas], [1, "interrompida_por_erro", 1, 1]);
+
+  const vazia = await rodar({ paginas: [pagina([reg(1301, PENDENTE)], 3), pagina([], 3)], detalhes: { 1301: detalhe(1301) } });
+  assertEquals([vazia.resumo.listados, vazia.resumo.paginacao, vazia.erros.length, vazia.importadas], [1, "interrompida_por_erro", 1, 1]);
+  assertEquals(vazia.erros[0].includes("veio vazia antes do fim declarado"), true);
+});
+
+Deno.test("falha da consulta (faultstring, só faultcode ou transporte) vai a erros e nada é gravado", async () => {
   const fault = await rodar({ paginas: [pagina([reg(801, PENDENTE)])], detalhes: { 801: { faultstring: "Recebimento não encontrado" } } });
   assertEquals([fault.erros, fault.resumo.consulta, fault.chamadas.cabecalhos.length], [["OB ConsultarRecebimento 801: Recebimento não encontrado"], { nIdReceb: 801, desfecho: "falha_omie" }, 0]);
+
+  const soCodigo = await rodar({ paginas: [pagina([reg(803, PENDENTE)])], detalhes: { 803: { faultcode: "SOAP-ENV:Server" } } });
+  assertEquals([soCodigo.resumo.consulta, soCodigo.chamadas.cabecalhos.length], [{ nIdReceb: 803, desfecho: "falha_omie" }, 0]);
 
   const rede = await rodar({ paginas: [pagina([reg(802, PENDENTE)])], consultarLanca: true });
   assertEquals([rede.erros.length, rede.resumo.consulta], [1, { nIdReceb: 802, desfecho: "falha_omie" }]);
@@ -191,9 +239,14 @@ Deno.test("cabeçalho que falha: erro, sem tentar os itens", async () => {
   assertEquals([r.importadas, r.chamadas.itens, r.erros, r.resumo.consulta], [0, [], ["NF-e 902: duplicate key value"], { nIdReceb: 902, desfecho: "falha_banco" }]);
 });
 
-Deno.test("sem conseguir ler o que já está no banco, nenhuma consulta é gasta", async () => {
-  const r = await rodar({ paginas: [pagina([reg(1001, PENDENTE)])], jaLanca: true, detalhes: { 1001: detalhe(1001) } });
-  assertEquals([r.erros.length, r.chamadas.consultar, r.resumo.consulta], [1, [], null]);
+Deno.test("exceção na gravação não leva o resumo nem os pulos já contados", async () => {
+  const r = await rodar({ paginas: [pagina([reg(904, { cRecebido: "S" }), reg(905, PENDENTE)])], detalhes: { 905: detalhe(905) }, cabecalhoLanca: true });
+  assertEquals([r.resumo.consulta, r.puladas, r.resumo.recebidos_no_omie, r.erros.length], [{ nIdReceb: 905, desfecho: "falha_interna" }, 1, 1, 1]);
+});
+
+Deno.test("sem conseguir ler o que já está no banco, nenhuma consulta é gasta — e o resumo volta", async () => {
+  const r = await rodar({ paginas: [pagina([reg(1001, PENDENTE)])], jaLancaNaChamada: 1, detalhes: { 1001: detalhe(1001) } });
+  assertEquals([r.erros.length, r.chamadas.consultar, r.resumo.consulta, r.resumo.listados], [1, [], null, 1]);
 });
 
 Deno.test("teto de leitura: páginas cheias além do teto ficam marcadas como truncadas", async () => {

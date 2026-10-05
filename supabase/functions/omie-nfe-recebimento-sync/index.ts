@@ -360,6 +360,9 @@ Deno.serve(async (req) => {
   // O sensor do cron: o `net._http_response` guarda esta resposta, e é por ela que se vê, conta a
   // conta, o que a listagem trouxe e por que cada NF-e não virou importação.
   const porArmazem: Record<string, ResumoConta> = {};
+  // A vez do rodízio da consulta (rodada.ts, `escolherNaVez`): a hora corrente — o cron é horário,
+  // então cada rodada avança uma candidata e nenhuma prende a consulta para sempre.
+  const vez = Math.floor(Date.now() / 3_600_000);
 
   for (const cred of allCreds) {
     try {
@@ -387,7 +390,7 @@ Deno.serve(async (req) => {
 
       // A rodada (listagem → triagem → a única consulta → gravação) mora em rodada.ts, com o Omie e o
       // banco injetados, para o laço REAL ser testado no Deno (rodada_test.ts).
-      const rodada = await rodadaDaConta(depsDaConta(supabase, cred, warehouse.id), cred.warehouseCode, warehouse.id, dtDe);
+      const rodada = await rodadaDaConta(depsDaConta(supabase, cred, warehouse.id), cred.warehouseCode, warehouse.id, dtDe, vez);
       porArmazem[cred.warehouseCode] = rodada.resumo;
       errors.push(...rodada.erros);
       totalImported += rodada.importadas;
