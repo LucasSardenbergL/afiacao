@@ -90,9 +90,48 @@ acidente, agora explícita, a cada 2 h, com guardas.
 - Codex: **desenho não consultado** — o `codex-async.sh` barrou por `SALDO_ALTO` (cota em 86%, teto 85%,
   janela reabre 03/10 19:11); Caminho B do desenho = RÉGUA própria + decisão do founder. **Código:
   mergeado em 2026-10-01 21:35 UTC (#2744) por ordem do founder, pelo Caminho B** (`sem-codex` no corpo
-  do PR; auto-revisão adversarial + falsificação 13/13). **REVISÃO INDEPENDENTE PENDENTE — gatilho: a
-  janela do Codex reabre em 03/10 19:11**: rodar o adversarial RETROATIVO sobre o diff do #2744
-  (`gh pr diff 2744`) via `scripts/codex-async.sh -r max`, e um P0/P1 que ele achar vira PR de conserto.
+  do PR; auto-revisão adversarial + falsificação 13/13). **Revisão independente RETROATIVA feita em
+  2026-10-05** (gpt-6-astra · max · 658 s · 160.290 tokens, já com o código no ar) — ver "O que o Codex
+  retroativo achou" abaixo: 2 P0 reproduzidos, raros e limitados, viram PR de conserto.
+
+## O deploy (2026-10-05)
+
+- Ledger antes: `sync-reprocess` prod `v1.13-hoje-sp-datas-omie` → main `v1.14-estoque-dono-unico`,
+  pendente há 3 d. Pacote `5405e4a6b1cd` contra `main@92e7201dd` (23 arquivos do fecho; só o mapa de
+  fingerprints mudara desde o merge; nenhum PR aberto tocando o fecho; pré-condição de banco ✅).
+- O chat do Lovable estava OCUPADO (deploy da `algorithm-a-audit` de outra sessão às 16:08:09Z): esperei a
+  resposta dela antes de enviar — mensagem por cima de agente pausado REJEITA a ação pendente.
+- Enviado pela sessão (MCP) às **16:12:55Z**; o agente conferiu os 23 `sha256` contra o commit, deployou
+  verbatim e fechou com `No files were edited.` (1,4 crédito). Sensor de edição 5,4 min depois:
+  **`SEM_EDICAO`** (0 commits do bot na `main`).
+- **Prova funcional, 1ª rodada no bundle novo** (operational 16:15Z): `{"pages": 8, "total_posicoes": 782,
+  "zeramento_candidatos": 1, "zerados_fora_da_lista": 1}`, 0 divergências. O produto zerado
+  (12034226322, CATALISADOR FCA.7090QT) tinha estoque 1 local e saíra da lista depois das 12:15; a
+  testemunha independente (`sku_estoque_atual`, modo "S", 15:42) diz **físico 0** — o zero estava certo, e
+  antes ele ficaria 1 fantasma até a strategic de 02:30. A `inventory_position` dele segue com o saldo 1
+  congelado (a classe do chip "Zerar estoque esgotado só pelo dono, fora do sync-reprocess").
+- Ledger depois: **`✅ confere`** — `sync-reprocess v1.14-estoque-dono-unico · visto via sonda` às 16:37:45Z (a sonda do cron `37 */2`, sem sonda humana).
+
+## O que o Codex retroativo achou (2026-10-05)
+
+- **P0-1 — listagem parcial por mudança ENTRE páginas.** O `ListarPosEstoque` pagina por offset sobre uma
+  lista viva: se um produto esgota e sai da lista depois da página k, as seguintes "andam" uma posição e o
+  item da fronteira é PULADO — com tamanhos de página normais, a guarda diz "completa" e o 4b zera um produto
+  que tem saldo. Formato de página não é retrato consistente.
+- **P0-2 — sobrescrita de saldo mais recente.** Se o `sync_inventory` de 30 min grava um saldo positivo entre
+  a listagem do 4b e a leitura/escrita dele, o 4b grava 0 por cima (o upsert não tem condição). Exige
+  sobreposição de execuções (a agenda `:15` × `:00/:30` não a produz; uma execução manual perto do `:30`,
+  sim).
+- **P2-3** — recusa do zeramento (teto, listagem incompleta) termina `complete` sem `error_message`, e o
+  `sync_reprocess_saude` não vê. **P2-4** — o parser compartilhado (`_shared/pos-estoque.ts`) aceita
+  `nCodProd: true` como código 1 (pré-existente; o contrato do Omie não produz isso).
+- Sem defeito: conta/account, aritmética do teto, keyset/21000, NULL/NaN, passo de produtos, fiação.
+- **Calibração:** os P0 são reais e raros (mudança de lista nos ~4 s de paginação; sobreposição de runs) e
+  LIMITADOS (o produto volta ao saldo certo no próximo `sync_inventory`, ≤ 30 min). Sem rollback: a v1.13
+  fazia uma versão mais ampla do mesmo dano toda noite (~694 zerados) e deixava fantasma de até 24 h.
+  Desenho proposto para o conserto: zerar só quem NENHUMA listagem viu recentemente (o `synced_at` do
+  `sync_inventory` de 30 min como testemunha independente — cobre os dois P0), gravar o zero com condição de
+  `updated_at` (compare-and-set) e levar a recusa ao `error_message`.
 
 ## Como conferir depois do deploy
 
