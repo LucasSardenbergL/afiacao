@@ -90,6 +90,31 @@ describe('tokensSql — "cosmético" é mesma sequência de tokens, nunca "mesmo
 });
 
 describe('tokensSql — o contrato léxico do PG17 (os casos do parecer Codex de 2026-09-26)', () => {
+  it('número segue o scan.l do PG17 (medido em prod, 2026-10-05): `_` no expoente é dígito; número colado em identificador é UM token', () => {
+    // SELECT 1e1_0 → 10000000000 · SELECT 1e1 _0 → 10 (alias _0) · SELECT 1abc / 1_ / 0x1Fg / 1e → trailing junk.
+    expect(tokensSql('SELECT 1e1_0;')).toEqual(['select', '1e1_0', ';']);
+    expect(mesmosTokens('SELECT 1e1_0;', 'SELECT 1e1 _0;')).toBe(false);
+    expect(mesmosTokens('SELECT 1abc;', 'SELECT 1 abc;')).toBe(false);
+    expect(mesmosTokens('SELECT 0x1Fg;', 'SELECT 0x1F g;')).toBe(false);
+    expect(mesmosTokens('SELECT 1_;', 'SELECT 1 _;')).toBe(false);
+    expect(mesmosTokens('SELECT 1e;', 'SELECT 1 e;')).toBe(false);
+    expect(tokensSql('SELECT 1.5e-1_0, 0X1F, 1_000, 2..3;')).toEqual(['select', '1.5e-1_0', ',', '0x1f', ',', '1_000', ',', '2', '..', '3', ';']);
+  });
+
+  it('comentário de BLOCO entre literais quebra a continuação (medido em prod: syntax error); o de LINHA não', () => {
+    expect(mesmosTokens("SELECT 'a'/*\n*/'b';", "SELECT 'a'\n'b';")).toBe(false);
+    expect(mesmosTokens("SELECT 'a' /* c */\n'b';", "SELECT 'a'\n'b';")).toBe(false);
+    expect(mesmosTokens("SELECT 'a' -- c\n'b';", "SELECT 'a'\n'b';")).toBe(true);
+  });
+
+  it('literal simples com barra depende de standard_conforming_strings — "mesmos tokens" vale nos DOIS modos', () => {
+    // Medido em prod: com `SET standard_conforming_strings = off`, 'a\'--desconto=10⏎' é UM literal
+    // (valor a'--desconto=10⏎); com `on` (o padrão de prod), é 'a\' + comentário.
+    expect(mesmosTokens("SELECT 'a\\'--desconto=10\n';", "SELECT 'a\\'--desconto=90\n';")).toBe(false);
+    // Sem barra que mude a FRONTEIRA do literal, os dois modos coincidem e os tokens não mudam:
+    expect(tokensSql("SELECT 'a\\nb';")).toEqual(['select', "'a\\nb'", ';']);
+  });
+
   it('espaço é o `space` do scan.l — [ \\t\\n\\r\\f\\v] —, não o `\\s` do JS (medido em prod, 2026-10-02)', () => {
     // `SELECT <NBSP>x FROM (SELECT 1 AS x) s` → ERROR: column " x" does not exist: o NBSP abre um
     // IDENTIFICADOR. Idem BOM e U+2028. Já `SELECT\f1` e `SELECT\v1` devolvem 1.
@@ -409,6 +434,14 @@ describe('parsearSondaDeriva — o detalhe por overload, fail-closed', () => {
   it('SEM-CORPO vira md5 ausente, nunca md5 de string vazia', () => {
     const l = parsearSondaDeriva(saidaValida().replace(/fn\|f\|\|9106714\|[0-9a-f]{32}\|[0-9a-f]*/, 'fn|f||9106714|SEM-CORPO|'));
     expect(l.overloads[0].md5).toBeUndefined();
+  });
+
+  it('o banco conta overload e a sonda não trouxe a linha `corpo`: incoerência — linha perdida não vira "sem corpo" (Codex P1)', () => {
+    const semCorpo = saidaValida().replace(/\ncorpo\|f\|[^\n]*/, '');
+    expect(semCorpo).not.toContain('corpo|f|');
+    expect(parsearSondaDeriva(semCorpo).incoerencias.join()).toMatch(/f: o banco conta 1 overload\(s\) e a sonda não trouxe a linha `corpo`/);
+    // Controle: a saída íntegra não acusa nada.
+    expect(parsearSondaDeriva(saidaValida()).incoerencias).toEqual([]);
   });
 
   it('o detalhe e a sonda reaproveitada têm de CONTAR os mesmos overloads por nome', () => {

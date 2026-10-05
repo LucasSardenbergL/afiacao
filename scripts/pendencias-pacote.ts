@@ -485,9 +485,14 @@ export function main(
   }
 
   if (veredito.estado !== 'LIBERADA') {
+    // INCERTA é "não medi", não "falta DDL" (Codex, parecer de código 2026-10-05): mandar aplicar migration
+    // sobre ausência de dado provocaria reaplicação — inclusive de backfill — sem razão.
     process.stderr.write(
-      '\n⛔ a colagem da edge NÃO foi emitida — o pacote traz só o passo de banco.\n' +
-        '   Aplique a DDL, depois rode este comando de novo: o gate reabre sozinho quando prod tiver as RPCs.\n',
+      veredito.estado === 'INCERTA'
+        ? '\n⛔ a colagem da edge NÃO foi emitida — a pré-condição NÃO foi medida (motivos acima).\n' +
+            '   Não aplique DDL sobre ausência de dado: corrija a medição (acesso, canal, sonda) e rode de novo.\n'
+        : '\n⛔ a colagem da edge NÃO foi emitida — o pacote traz só o passo de banco.\n' +
+            '   Aplique a DDL, depois rode este comando de novo: o gate reabre sozinho quando prod tiver as RPCs.\n',
     );
     return 3;
   }

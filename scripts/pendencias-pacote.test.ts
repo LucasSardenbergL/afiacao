@@ -462,6 +462,36 @@ describe('pendencias:pacote — a leitura da edge sai da REF, não do disco', ()
     expect(pacote).not.toContain('Cole no chat do Lovable');
   });
 
+  it('INCERTA (3) com o detalhe SEM marcador de fim, mesmo com o texto válido — e o recado é medir de novo, não aplicar DDL', () => {
+    const { raiz, git, saida } = montarRepo(CHAMA_VELHA, CHAMA_VELHA, [MIGRATION_BASE, MIGRATION_COMENTADA]);
+    const banco = bancoFalso(['rpc_velha'], { rpc_velha: '\n  SELECT 2;\n' });
+    const semFim = (sql: string) => {
+      const { sonda, detalhe } = banco(pedidasNo(sql));
+      return [...sonda, ...detalhe.filter((l) => !l.startsWith('fim-deriva|'))].join('\n');
+    };
+    const erros: string[] = [];
+    const espiao = vi.spyOn(process.stderr, 'write').mockImplementation((t) => {
+      erros.push(String(t));
+      return true;
+    });
+    let codigo: number;
+    try {
+      codigo = main([EDGE, '--saida', saida, '--sem-rede'], raiz, git, semFim);
+    } finally {
+      espiao.mockRestore();
+    }
+    expect(codigo).toBe(3);
+    const pacote = readFileSync(saida, 'utf8');
+    expect(pacote).not.toContain('VARIANTE_COSMETICA');
+    expect(pacote).not.toContain('Cole no chat do Lovable');
+    // Codex P2: "Aplique a DDL" sobre ausência de dado provocaria reaplicação desnecessária.
+    expect(erros.join('')).not.toContain('Aplique a DDL');
+    expect(erros.join('')).toContain('corrija a medição');
+    // E o pacote .md, que é o que o operador lê depois: nada de "aplique a migration" sobre ausência de dado.
+    expect(pacote).not.toContain('Aplique a migration');
+    expect(pacote).toContain('corrija a medição');
+  });
+
   it('MECÂNICA (2) quando a ref não tem migration nenhuma — inventário vazio é git quebrado', () => {
     const { raiz, git, saida } = montarRepo(CHAMA_VELHA, CHAMA_VELHA, []);
 
@@ -599,6 +629,45 @@ describe('pendencias:pacote — a leitura da edge sai da REF, não do disco', ()
       const pacote = readFileSync(nuvem.saida, 'utf8');
       expect(pacote).toBe(readFileSync(local.saida, 'utf8'));
       expect(pacote).toContain('VARIANTE_COSMETICA');
+    });
+
+    it('Codex P1 (código), nos DOIS transportes: prod = a anterior sem comentário (`1e1 _0` × `1e1_0`) BLOQUEIA (3), sem colagem', () => {
+      const v1 = {
+        nome: '20260101000000_base.sql',
+        sql: 'CREATE OR REPLACE FUNCTION public.rpc_velha() RETURNS numeric LANGUAGE sql AS $$\n-- anterior\nSELECT 1e1 _0;\n$$;\n',
+      };
+      const v2 = {
+        nome: '20260202000000_recria.sql',
+        sql: 'CREATE OR REPLACE FUNCTION public.rpc_velha() RETURNS numeric LANGUAGE sql AS $$\nSELECT 1e1_0;\n$$;\n',
+      };
+      const prod = { rpc_velha: '\nSELECT 1e1 _0;\n' }; // a v1 sem o comentário: 10, não 10¹⁰
+      const local = montarRepo(CHAMA_VELHA, CHAMA_VELHA, [v1, v2]);
+      const sonda = sondaFalsa(['rpc_velha'], prod);
+      let sqlSonda = '';
+      const codigoLocal = main([EDGE, '--saida', local.saida, '--sem-rede'], local.raiz, local.git, (sql) => {
+        sqlSonda = sql;
+        return sonda(sql);
+      }, semEntrada, agora);
+
+      const nuvem = montarRepo(CHAMA_VELHA, CHAMA_VELHA, [v1, v2]);
+      const arquivo = join(nuvem.raiz, 'resposta-nuvem.json');
+      writeFileSync(arquivo, respostaPara(sqlSonda, bancoFalso(['rpc_velha'], prod)), 'utf8');
+      const codigoNuvem = main(
+        [EDGE, '--saida', nuvem.saida, '--sem-rede', `--dados-nuvem=${arquivo}`],
+        nuvem.raiz,
+        nuvem.git,
+        psqlProibido,
+        semEntrada,
+        agora,
+      );
+
+      for (const [codigo, caminho] of [[codigoLocal, local.saida], [codigoNuvem, nuvem.saida]] as const) {
+        expect(codigo).toBe(3);
+        const pacote = readFileSync(caminho, 'utf8');
+        expect(pacote).toContain('casou por TOKENS');
+        expect(pacote).not.toContain('VARIANTE_COSMETICA');
+        expect(pacote).not.toContain('Cole no chat do Lovable');
+      }
     });
 
     it('MECÂNICA (2) quando a resposta é de OUTRA leva — o sql_md5 não fecha', () => {

@@ -541,6 +541,9 @@ export function parsearSondaDeriva(saida: string): LeituraDeriva {
     const doDetalhe = overloads.filter((o) => o.nome === m.rpc).length;
     if (k === undefined || Number.isNaN(k)) incoerencias.push(`${m.rpc}: sem linha de contagem no detalhe`);
     else if (k !== doDetalhe) incoerencias.push(`${m.rpc}: a contagem do banco diz ${k} overload(s) e o detalhe trouxe ${doDetalhe}`);
+    // Linha `corpo` PERDIDA não é "sem corpo comparável" (Codex, parecer de código 2026-10-05): sem esta
+    // conferência, a função sumia da sonda e o gate a liberava como indecidível.
+    else if (k > 0 && !sonda.corpos.has(m.rpc)) incoerencias.push(`${m.rpc}: o banco conta ${k} overload(s) e a sonda não trouxe a linha \`corpo\``);
   }
   // As duas leituras vêm do MESMO retrato: têm de concordar por nome em contagem e em md5.
   for (const [nome, vivo] of sonda.corpos) {

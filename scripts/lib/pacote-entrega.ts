@@ -149,9 +149,13 @@ export function montarPacote(f: PacoteFonte): { texto: string; sha: string } {
   L.push('');
   if (!liberada) {
     L.push(
-      '**Este pacote está BLOQUEADO no passo 1.** A colagem das edges não foi emitida de propósito — ' +
-        'não é esquecimento, é o gate. Aplique a migration que cria as RPCs acima pelo SQL Editor e ' +
-        'rode o comando de novo: o passo 2 aparece sozinho quando prod tiver o que a edge chama.',
+      f.veredito.estado === 'INCERTA'
+        ? '**Este pacote está BLOQUEADO no passo 1 — a pré-condição NÃO foi medida.** A colagem das edges ' +
+            'não foi emitida de propósito. Não aplique DDL sobre ausência de dado: corrija a medição ' +
+            '(acesso, canal, sonda — motivos acima) e rode o comando de novo.'
+        : '**Este pacote está BLOQUEADO no passo 1.** A colagem das edges não foi emitida de propósito — ' +
+            'não é esquecimento, é o gate. Aplique a migration que cria as RPCs acima pelo SQL Editor e ' +
+            'rode o comando de novo: o passo 2 aparece sozinho quando prod tiver o que a edge chama.',
     );
     L.push('');
   } else if (f.alvos.length > 0) {
@@ -230,7 +234,11 @@ export function montarPacote(f: PacoteFonte): { texto: string; sha: string } {
     L.push(`bun run pendencias:pacote ${f.edges.map((e) => e.edge).join(' ')}`);
     L.push(`~~~`);
     L.push('');
-    L.push('Depois de aplicar a DDL, este comando volta a medir prod e emite o pacote completo.');
+    L.push(
+      f.veredito.estado === 'INCERTA'
+        ? 'Depois de corrigir a medição, este comando volta a medir prod e emite o pacote completo.'
+        : 'Depois de aplicar a DDL, este comando volta a medir prod e emite o pacote completo.',
+    );
   } else if (emOndas) {
     // Onda ≠ entrega (P2 do Codex): o passo seguinte é o PACOTE de novo, não o "confere" do ledger.
     L.push(`~~~bash`);

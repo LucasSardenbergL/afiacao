@@ -33,7 +33,13 @@ const INICIO_IDENT = /[A-Za-z_\u0080-\uffff]/;
 const CONT_IDENT = /[A-Za-z_0-9$\u0080-\uffff]/;
 // Regex PEGAJOSAS (`y`, com `lastIndex`): casar numa fatia de N caracteres deixava uma tag de
 // dollar-quote de 130 letras escapar da janela e o conteúdo do literal ser tokenizado (Codex, P2).
-const NUMERO = /(?:0[xX][0-9A-Fa-f_]+|0[oO][0-7_]+|0[bB][01_]+|[0-9][0-9_]*(?:\.(?!\.)[0-9_]*)?|\.[0-9][0-9_]*)(?:[eE][+-]?[0-9]+)?/y;
+// Números como o `scan.l` do PG17 (medido em prod, 2026-10-05, parecer de código do Codex): `_` agrupa
+// dígitos, INCLUSIVE no expoente (`1e1_0` = 10¹⁰, ≠ `1e1 _0` = 10 com alias), e não em dobro nem no fim.
+const DEC = '[0-9](?:_?[0-9])*';
+const NUMERO = new RegExp(
+  `(?:0[xX](?:_?[0-9A-Fa-f])+|0[oO](?:_?[0-7])+|0[bB](?:_?[01])+|(?:${DEC}(?:\\.(?!\\.)(?:${DEC})?)?|\\.${DEC})(?:[eE][+-]?${DEC})?)`,
+  'y',
+);
 const TAG_DOLLAR = /\$(?:[A-Za-z_\u0080-\uffff][A-Za-z_0-9\u0080-\uffff]*)?\$/y;
 const PREFIXO_STRING = /(?:[EeBbXxNn]|[Uu]&)'/y;
 const PARAMETRO = /\$[0-9]+/y;
@@ -68,7 +74,7 @@ const CONCAT_ESPACO = '\u2423adjacente';
  * `1.0` × `1.00`, `E'x'` × `'x'`, `$a$x$a$` × `$b$x$b$`, e SQL dinâmico dentro de dollar-quote
  * aninhado, comparado como TEXTO do literal.
  */
-export function tokensSql(corpo: string): string[] {
+function tokensNoModo(corpo: string, scsOff: boolean): string[] {
   const s = corpo;
   const fora: string[] = [];
   let i = 0;
@@ -121,6 +127,9 @@ export function tokensSql(corpo: string): string[] {
           i++;
         }
       }
+      // Comentário de BLOCO não entra no `quotecontinue` do scan.l (só espaço e `--` entram): `'a'/*⏎*/'b'`
+      // é syntax error no PG17, não `'ab'` (medido em prod). Ele encerra a continuação — e a herança do E''.
+      ultimoFoiString = false;
       continue;
     }
     // Literal com prefixo: E'…' (barra escapa), B'…', X'…', N'…', U&'…'. O prefixo é caixa-insensível.
@@ -134,7 +143,8 @@ export function tokensSql(corpo: string): string[] {
       continue;
     }
     if (c === "'") {
-      const comBarra = ultimoFoiString && quebraDesdeUltimo && ultimaComBarra;
+      // Com standard_conforming_strings=off TODO literal simples é E'' (barra escapa); senão, só a continuação herda.
+      const comBarra = scsOff || (ultimoFoiString && quebraDesdeUltimo && ultimaComBarra);
       const fim = literal(i, comBarra);
       emitir(s.slice(i, fim), true);
       ultimaComBarra = comBarra;
@@ -185,8 +195,14 @@ export function tokensSql(corpo: string): string[] {
     }
     const numero = casarEm(NUMERO, s, i);
     if (numero !== null) {
-      emitir(numero[0].toLowerCase());
-      i += numero[0].length;
+      // `trailing junk` do scan.l (`1abc`, `1_`, `0x1Fg`, `1e`): identificador COLADO ao número é erro no
+      // PG17 — vira UM token, para nunca igualar o inválido `1abc` ao válido `1 abc` (alias).
+      let fim = i + numero[0].length;
+      if (fim < s.length && INICIO_IDENT.test(s[fim])) {
+        while (fim < s.length && CONT_IDENT.test(s[fim])) fim++;
+      }
+      emitir(s.slice(i, fim).replace(/[A-Z]/g, (l) => l.toLowerCase()));
+      i = fim;
       continue;
     }
     if (c === ':') {
@@ -215,6 +231,23 @@ export function tokensSql(corpo: string): string[] {
     i++;
   }
   return fora;
+}
+
+/** Separa a leitura com `standard_conforming_strings=on` da leitura com `off`, quando as duas divergem. */
+const MARCA_SCS_OFF = '\u2424scs-off';
+
+/**
+ * Os tokens do corpo, válidos sob QUALQUER `standard_conforming_strings` (parecer de código do Codex,
+ * 2026-10-05): com `off`, todo literal simples processa barra — `'a\'--desconto=10⏎'` é UM literal (medido
+ * em prod com `SET`) —, e com `on` (o padrão de prod, sem função que o sobrescreva) é `'a\'` + comentário.
+ * Em vez de supor o modo, lê nos dois: quando as fronteiras coincidem (o caso de quase todo corpo), a
+ * saída é a de sempre e o `md5DeTokens` não muda; quando divergem, a leitura `off` vai junto, e "mesmos
+ * tokens" passa a exigir os dois modos.
+ */
+export function tokensSql(corpo: string): string[] {
+  const on = tokensNoModo(corpo, false);
+  const off = tokensNoModo(corpo, true);
+  return on.length === off.length && on.every((t, k) => t === off[k]) ? on : [...on, MARCA_SCS_OFF, ...off];
 }
 
 /** Os dois corpos são o MESMO programa (ver `tokensSql`)? */

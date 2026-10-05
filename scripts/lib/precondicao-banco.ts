@@ -506,13 +506,18 @@ export function julgarPrecondicao(
   const cosmeticas: RpcCosmetica[] = [];
   const naoConferidas: RpcNaoConferida[] = [];
   const semTexto: string[] = [];
+  // Canal de detalhe NÃO íntegro (marcador, autoteste hex, contagens/md5 que não fecham): o texto não é
+  // acreditado — nenhum veredito POR TOKENS sai dele — e a leitura inteira vira INCERTA. Parecer de código do
+  // Codex (2026-10-05): a sonda dizia 1 overload e o detalhe 2, e o gate liberava como cosmético o que podia
+  // ser o overload errado.
+  const canalIntegro = textos.falhas.length === 0;
   for (const rpc of alvosDeCorpo(alvos, corpos.historico)) {
     if (ausenteOuNaoMedida.has(rpc)) continue;
     // O exato primeiro, intocado; o re-teste por tokens só no que ele chamou de DERIVA.
     const v = classificarComTokens(
       corpos.historico.get(`public.${rpc}`),
       leitura.corpos.get(rpc) ?? { md5s: [], overloads: 0 },
-      textos.porNome.get(rpc) ?? [],
+      canalIntegro ? (textos.porNome.get(rpc) ?? []) : [],
     );
     if (v.classificacao === 'EM_DIA') continue;
     if (v.classificacao === 'CORPO_ANTERIOR' && v.esperada !== undefined && v.emProd !== undefined) {
@@ -538,15 +543,19 @@ export function julgarPrecondicao(
           : (v.motivo ?? 'sem corpo comparável'),
     });
   }
-  // Sem o texto, o que o exato chamou de DERIVA pode ser o `CORPO_ANTERIOR` por tokens, que bloqueia:
-  // "não consegui re-testar" é ausência de dado — INCERTA, nunca o "edição manual" que liberava.
-  if (semTexto.length > 0) {
+  const suspensas = semTexto.map((r) => `\`${r}\``).join(', ');
+  if (!canalIntegro) {
     motivos.push(
-      `eixo de corpo sem o TEXTO de prod para ${semTexto.map((r) => `\`${r}\``).join(', ')}: o md5 exato deu ` +
-        'DERIVA, e só o re-teste por TOKENS separa "edição manual" de "corpo ANTERIOR sem comentário" (que ' +
-        `bloqueia) — canal de texto: ${
-          textos.falhas.length > 0 ? textos.falhas.join('; ') : 'íntegro, mas o texto não veio ou não reproduz o md5 medido'
-        }`,
+      'canal de detalhe da sonda NÃO íntegro — nenhum veredito por TOKENS se afirma sobre ele' +
+        `${semTexto.length > 0 ? ` (re-teste suspenso para ${suspensas})` : ''}: ${textos.falhas.join('; ')}`,
+    );
+  } else if (semTexto.length > 0) {
+    // Sem o texto, o que o exato chamou de DERIVA pode ser o `CORPO_ANTERIOR` por tokens, que bloqueia:
+    // "não consegui re-testar" é ausência de dado — INCERTA, nunca o "edição manual" que liberava.
+    motivos.push(
+      `eixo de corpo sem o TEXTO de prod para ${suspensas}: o md5 exato deu DERIVA, e só o re-teste por TOKENS ` +
+        'separa "edição manual" de "corpo ANTERIOR sem comentário" (que bloqueia) — o canal está íntegro, mas o ' +
+        'texto não veio ou não reproduz o md5 medido',
     );
   }
 

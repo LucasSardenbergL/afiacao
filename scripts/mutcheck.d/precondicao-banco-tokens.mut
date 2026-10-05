@@ -10,7 +10,9 @@
 # CONTROLE+ : a cosmética cai no balaio "fora do alcance" — a lista própria some.
 PEGA | controle+: cosmetica cai em naoConferidas        | s/      cosmeticas\.push\(\{ rpc, esperada: v\.esperada, prova: v\.tokens \}\);/      naoConferidas.push({ rpc, motivo: 'x' });/
 PEGA | anterior por tokens perde o metodo e a prova     | s/v\.tokens === undefined \? \{ \.\.\.base, casouPor: 'md5-exato' \} : \{ \.\.\.base, casouPor: 'tokens', prova: v\.tokens \},/{ ...base, casouPor: 'md5-exato' },/
-PEGA | sem texto vira silencio que libera (fail-open)   | s/^  if \(semTexto\.length > 0\) \{/  if (false) {/
-PEGA | o canal de texto nao chega ao re-teste           | s/      textos\.porNome\.get\(rpc\) \?\? \[\],/      [],/
+PEGA | sem texto vira silencio que libera (fail-open)   | s/^  \} else if \(semTexto\.length > 0\) \{/  } else if (false) {/
+PEGA | o canal de texto nao chega ao re-teste           | s/      canalIntegro \? \(textos\.porNome\.get\(rpc\) \?\? \[\]\) : \[\],/      [],/
 PEGA | APLIQUE sem a ressalva de DML                    | s/reaplicar o ARQUIVO inteiro re-executa/reaplique a vontade/
 PEGA | relatorio da cosmetica sem o md5 de prod         | s/prod \$\{c\.prova\.md5Prod\} ≠ repo/prod ? ≠ repo/
+# Parecer de código do Codex (2026-10-05): canal incoerente tem de derrubar o veredito inteiro.
+PEGA | Codex P1: canal de detalhe incoerente nao bloqueia        | s/^  const canalIntegro = textos\.falhas\.length === 0;/  const canalIntegro = true;/

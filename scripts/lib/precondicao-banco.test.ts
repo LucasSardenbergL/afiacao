@@ -609,10 +609,20 @@ describe('eixo 5 — o que o md5 exato chama de DERIVA é re-testado por TOKENS'
     expect(v.cosmeticas).toEqual([]);
   });
 
-  it('o canal de texto quebrado só pesa onde o re-teste é PRECISO: corpo em dia byte a byte segue LIBERADA', () => {
-    const v = julgar(prod(MD5.novo, null, ['autoteste do canal hex falhou — o texto dos corpos não é confiável']));
-    expect(v.estado).toBe('LIBERADA');
-    expect(v.motivos).toEqual([]);
+  it('Codex P1 (código): falha do canal com texto VÁLIDO ⇒ INCERTA — a leitura incoerente não sustenta "cosmética"', () => {
+    // Antes, o texto que reproduzia o md5 bastava, e a truncagem ficava só no relatório do canal.
+    const v = julgar(prod(MD5.prodNovo, PROD_NOVO, ['o detalhe não trouxe o marcador `deriva-corpo/1` — saída truncada']));
+    expect(v.estado).toBe('INCERTA');
+    expect(v.motivos.join('\n')).toContain('saída truncada');
+    // E nenhum veredito POR TOKENS sai de um canal em que o gate disse não acreditar.
+    expect(v.cosmeticas).toEqual([]);
+  });
+
+  it('canal incoerente ⇒ INCERTA mesmo com o corpo em dia byte a byte: a incoerência põe a leitura INTEIRA em dúvida', () => {
+    // O caso do Codex: sonda diz 1 overload, detalhe diz 2 — o "em dia" pode ser o overload errado.
+    const v = julgar(prod(MD5.novo, null, ['f: a sonda contou 1 overload(s) e o detalhe trouxe 2']));
+    expect(v.estado).toBe('INCERTA');
+    expect(v.motivos.join('\n')).toMatch(/canal/);
   });
 
   it('o "APLIQUE" vem com a ressalva de DML — reaplicar o ARQUIVO inteiro re-executa backfill (os dois métodos)', () => {
@@ -697,6 +707,26 @@ describe('eixo 5 — o que o md5 exato chama de DERIVA é re-testado por TOKENS'
     expect(v.desatualizadas.map((d) => [d.emProd, d.esperada, d.casouPor])).toEqual([[v1.nome, v2.nome, 'tokens']]);
   });
 
+  it('Codex P1 (código): `1e1 _0` × `1e1_0` — prod = a ANTERIOR sem comentário BLOQUEIA; e o inverso é DERIVA, não anterior', () => {
+    const julgarCom = (hist: VersaoDeCorpo[], prodTxt: string) =>
+      julgarPrecondicao(
+        ALVO,
+        { ...leituraOk([RPC]), corpos: new Map([[RPC, { md5s: [md5Exato(prodTxt)], overloads: 1 }]]) },
+        0,
+        corposCom(hist),
+        { porNome: new Map([[RPC, [prodTxt]]]), falhas: [] },
+      );
+    const corpo = (migration: string, c: string): VersaoDeCorpo => ({ migration, md5: md5Exato(c), corpo: c });
+    const bloqueia = julgarCom([corpo(VELHA, '-- anterior\nSELECT 1e1 _0;'), corpo(NOVA, 'SELECT 1e1_0;')], 'SELECT 1e1 _0;');
+    expect(bloqueia.estado).toBe('BLOQUEADA');
+    expect(bloqueia.desatualizadas.map((d) => [d.emProd, d.casouPor])).toEqual([[VELHA, 'tokens']]);
+    expect(bloqueia.cosmeticas).toEqual([]);
+    const inverso = julgarCom([corpo(VELHA, 'SELECT 1e1_0;'), corpo(NOVA, 'SELECT 7;')], 'SELECT 1e1 _0;');
+    expect(inverso.estado).toBe('LIBERADA');
+    expect(inverso.desatualizadas).toEqual([]);
+    expect(inverso.naoConferidas.map((n) => n.rpc)).toEqual([RPC]);
+  });
+
   describe('os reprodutores do Codex viram regressão do caminho por tokens', () => {
     const TAG = `$${'q'.repeat(130)}$`;
     /** Prod e repo com corpos que DIFEREM byte a byte (o exato não casa); quem decide é o re-teste. */
@@ -722,7 +752,11 @@ describe('eixo 5 — o que o md5 exato chama de DERIVA é re-testado por TOKENS'
       ['P2: `a$q$` é identificador, não abre dollar-quote — o literal mudou', 'DECLARE a$q$ int := 1;\nBEGIN\nRETURN a$q$;\nEND;', 'DECLARE a$q$ int := 2;\nBEGIN\nRETURN a$q$;\nEND;'],      // Auto-challenge (Caminho B, 2026-10-02), MEDIDO em prod: `SELECT <NBSP>x FROM (SELECT 1 AS x) s`
       // → ERROR column " x" does not exist. Para o scan.l, NBSP/BOM/U+2028 são caractere de IDENTIFICADOR;
       // o `\s` do JS os engolia como espaço quando ABRIAM um token.
-      ['espaço Unicode (NBSP) abrindo token é IDENTIFICADOR para o scan.l, não espaço', 'SELECT x FROM t;', 'SELECT \u00a0x FROM t;'],
+      ['espaço Unicode (NBSP) abrindo token é IDENTIFICADOR para o scan.l, não espaço', 'SELECT x FROM t;', 'SELECT \u00a0x FROM t;'],      // Parecer de código do Codex (2026-10-05), confirmado no PG17 de prod:
+      ['Codex P1: `_` no expoente (1e1_0 = 10¹⁰) × número + alias (1e1 _0 = 10)', 'SELECT 1e1_0;', 'SELECT 1e1 _0;'],
+      ['Codex P1: número colado em identificador é trailing junk no PG17 — `1abc` não é `1 abc`', 'SELECT 1 abc;', 'SELECT 1abc;'],
+      ['Codex P1: com standard_conforming_strings=off o `-- desconto` é LITERAL', "SELECT 'a\\'--desconto=90\n';", "SELECT 'a\\'--desconto=10\n';"],
+      ['Codex P2: comentário de BLOCO entre literais quebra a continuação', "SELECT 'a'\n'b';", "SELECT 'a'/*\n*/'b';"],
     ];
     for (const [rotulo, repo, prodTxt] of naoCosmeticos) {
       it(`NÃO é cosmético — ${rotulo}`, () => {

@@ -1,0 +1,9 @@
+# O parser da sonda de detalhe (scripts/lib/deriva-corpo.ts) acusa a linha `corpo` PERDIDA.
+# @src: scripts/lib/deriva-corpo.ts
+# @test: scripts/lib/deriva-corpo.test.ts
+#
+# Parecer de código do Codex (2026-10-05): sem esta conferência, a função cuja linha `corpo` sumia da
+# sonda virava "sem corpo comparável" (indecidível, LIBERADA) no gate do pacote — e no sensor.
+
+# CONTROLE+ : a conferência some.
+PEGA | controle+: linha corpo perdida nao e incoerencia      | s/    else if \(k > 0 && !sonda\.corpos\.has\(m\.rpc\)\) incoerencias\.push/    else if (false) incoerencias.push/
