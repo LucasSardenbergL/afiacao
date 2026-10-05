@@ -41,7 +41,7 @@ export function IntelligenceStrategicTab() {
   const estadoAudit = estadoDeLeitura(auditoriaQ);
   const auditCarregando = estadoAudit === 'carregando';
 
-  const { data: allScores, isError: scoresErro, isLoading: scoresCarregando } = useQuery({
+  const { data: allScores, isLoading: scoresCarregando, status: scoresStatus, fetchStatus: scoresFetch } = useQuery({
     queryKey: ['intel-strategic-scores'],
     // Base COMPLETA, paginada. Era `.limit(500)` de 6.632 e SEM `.order()` — o Postgres não
     // garante ordem sem ORDER BY, então as 500 eram um recorte não determinístico: dois
@@ -169,8 +169,11 @@ export function IntelligenceStrategicTab() {
   // `fetchAllPages` lançar não bastou: a exceção vira `allScores === undefined` e os `|| 0`
   // fabricam de novo. Nunca zero: "—" e o motivo. `retry` é global (App.tsx: 2 + backoff);
   // aqui só o estado final.
-  const scoresIndisponivel = scoresErro && !allScores;
-  const scoresDesatualizados = scoresErro && !!allScores;
+  // `naoConsegui` cobre erro E sem-rede: offline sem cache a query fica pending/paused, SEM `isError` — e
+  // os `|| 0` abaixo voltavam a fabricar LTV/CAC/Market Share em zero.
+  const semLeituraScores = naoConsegui(estadoDeLeitura({ status: scoresStatus, fetchStatus: scoresFetch }));
+  const scoresIndisponivel = semLeituraScores && !allScores;
+  const scoresDesatualizados = semLeituraScores && !!allScores;
   const ou = (v: string) => (scoresIndisponivel ? '—' : v);
 
   // Mesmo par para a auditoria de margem — as duas queries falham de forma independente, e a

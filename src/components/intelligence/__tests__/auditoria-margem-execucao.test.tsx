@@ -360,6 +360,13 @@ describe('IntelligenceStrategicTab — a última execução inteira', () => {
       expect(cardDo(titulo), `${titulo} sem leitura`).toMatch(/—/);
     }
   });
+
+  it('offline sem cache → os KPIs de CARTEIRA (scores) também ficam em "—", não em zero', async () => {
+    onlineManager.setOnline(false);
+    renderAba();
+    await screen.findByText(/Indicadores de carteira indisponíveis/);
+    expect(cardDo('Market Share Est.')).toMatch(/—/);
+  });
 });
 
 // ── acoplamento com o escritor ─────────────────────────────────────────────────────────────────────
