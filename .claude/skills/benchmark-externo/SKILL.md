@@ -11,7 +11,7 @@ description: >-
   "benchmark" e só com a fonte + intenção de comparar (colou um link da Prosus / PEGN /
   Pernambucanas / Panrotas / Brazil Journal / McKinsey / Endeavor, ou um print/PDF de um
   case, e disse "olha isso"). Por quê: o padrão se repete 7+ vezes e gerou 3 dos maiores
-  programas do mês, mas cada rodada REMONTA o processo à mão (browse + varredura de 119
+  programas do mês, mas cada rodada REMONTA o processo à mão (browse + varredura das
   rotas + priorização) — caro e frágil (fan-out ad-hoc que morre por contenção e não
   entrega). A skill fixa o processo e padroniza a saída no formato que o auto-merge do
   repo espera (fases-PR). NÃO use para: revisar um diff (`/review`); planejar UMA feature
@@ -36,7 +36,7 @@ A skill fixa **um** processo leve e entrega **sempre** os dois artefatos no form
 
 Quebrar qualquer um recria a dor que a skill existe pra matar:
 
-1. **Evidência, não memória.** "Já temos isso" só vale com **rota real + `arquivo:linha`** achados AGORA por grep — nunca "acho que tem". O app tem ~119 rotas lazy; ninguém (nem você) lembra de cabeça, e "feature que já existia virou pedido de reconstrução" é dor documentada. Memória fabrica tanto falso-tem quanto falso-gap.
+1. **Evidência, não memória.** "Já temos isso" só vale com **rota real + `arquivo:linha`** achados AGORA por grep — nunca "acho que tem". O app tem bem mais de cem rotas lazy; ninguém (nem você) lembra de cabeça, e "feature que já existia virou pedido de reconstrução" é dor documentada. Memória fabrica tanto falso-tem quanto falso-gap.
 2. **Três estados, não dois.** Cada prática é `tem` · **`tem-parcial`** · `gap`. O `tem-parcial` é a categoria que mais rende (é onde o programa **completa** o que já começou, barato) — o binário tem/não-tem esconde exatamente ela.
 3. **Classifique por PERSONA.** No Afiação a mesma capacidade quase sempre existe do lado **staff** e falta do lado **cliente** (self-service) — a maquinaria está construída mas **fenceada atrás de `RequireStaff` / `isCustomerMode`** (o padrão dominante do app). Marcar "tem" uma coisa que o comprador não acessa é o erro clássico — a coluna persona (cliente/staff) impede isso, e essa é justamente a categoria de gap mais barata de fechar (expor o que já existe, não construir do zero).
 4. **Varredura fixa e leve, não fan-out.** Uma passada estruturada: `grep` no `App.tsx` + grep dirigido por termo. **Não** dispare 5 sub-exploradores paralelos (caro e frágil na M2 — o baseline morreu assim). Um subagente `Explore` dirigido, se precisar, para um domínio específico — não um enxame.
@@ -58,7 +58,7 @@ Destile a fonte numa **lista de práticas concretas e enumeráveis** — o que a
 O mapa de rotas é a fonte da verdade do que existe. Extraia agora:
 
 ```bash
-grep -nE 'path=' src/App.tsx        # ~119 rotas; a verdade fresca do que existe
+grep -nE 'path=' src/App.tsx        # a verdade fresca do que existe (conte agora; o número muda a cada PR)
 ```
 
 Eixo que orienta a leitura (confirme no grep, não decore): rotas de **cliente** vivem no layout do comprador (`orders`, `new-order`, `tools`, `loyalty`, `recurring-schedules`, `savings`, `gamification`, `support`); rotas de **staff** são o grosso (`admin/*`, `sales/*`, `financeiro/*`, `farmer/*`, `admin/reposicao/*`, `tintometrico`, `producao`, `recebimento`, `governance/*`). Para cada prática do Passo 1, um grep dirigido pelo termo do domínio (nome de página, hook, rota) confirma tem/parcial/gap com `arquivo:linha`:
@@ -92,7 +92,7 @@ de épicos (fase multi-PR). Contexto e tabela: <cole a tabela do Passo 3 + 2 lin
 NÃO abra supabase/schema-snapshot.sql."
 ```
 
-Defaults do script: `-m gpt-6-astra -r max -t 1200` (20min hard-stop) — a fonte é o bloco de defaults, `scripts/codex-async.sh:71`<!--cita: modelo="gpt-6-astra"; reasoning="max"; timeout_s=1200-->, nunca só o comentário do cabeçalho (comentário deriva do código calado; a citação ancorada acima é vigiada pelo `docs:citacoes`, que reprova no dia em que o default mudar). **O `-r xhigh` acima é degrau econômico DELIBERADO, um abaixo do default** (`docs/agent/money-path.md`, bullet *Nível de reasoning*: `xhigh` cobre "metodologia FORA do money-path"): priorizar gaps produz uma FILA reversível — o próprio parecer entra "realocando a ordem" — e cada gap money-path ainda passa pelo seu Codex adversarial no Passo 5, então nenhum piso de `max` (irreversível · segurança · julgar a mecânica do dinheiro) é tocado. Não "corrija" para `max` sem mudar isso; **suba para o default quando o benchmark for do PRÓPRIO domínio money-path** (precificação, reposição/compras, financeiro) — aí o consult julga a mecânica, não a fila. ⚠️ O `-r high` que ficou aqui de 2026-07-07 a 2026-09-09 **não** era rebaixamento: era o default daquele dia (`-m gpt-5.5 -r high`, `codex-async.sh` em 1c461d818) copiado para dentro do exemplo, e `high` nem consta mais do catálogo de níveis. Se a cota do Codex estourar (não-transitório, o script avisa), siga pelo **Caminho B**: priorize você mesmo por impacto×esforço e grave `REVISÃO INDEPENDENTE PENDENTE` no roadmap (detalhe em `docs/agent/money-path.md`). Integre o parecer quando voltar — realoque a ordem, não ignore.
+Defaults do script: `-m gpt-6-astra -r max -t 1200` (20min hard-stop) — a fonte é o bloco de defaults, `scripts/codex-async.sh:71`<!--cita: modelo="gpt-6-astra"; reasoning="max"; timeout_s=1200-->, nunca só o comentário do cabeçalho (comentário deriva do código calado; a citação ancorada acima é vigiada pelo `docs:citacoes`, que reprova no dia em que o default mudar). **O `-r xhigh` acima é degrau econômico DELIBERADO, um abaixo do default** (`docs/agent/money-path.md`, bullet *Nível de reasoning*: `xhigh` cobre "metodologia FORA do money-path"): priorizar gaps produz uma FILA reversível — o próprio parecer entra "realocando a ordem" — e cada gap money-path ainda passa pelo seu Codex adversarial no Passo 5, então nenhum piso de `max` (irreversível · segurança · julgar a mecânica do dinheiro) é tocado. Não "corrija" para `max` sem mudar isso; **suba para o default quando o benchmark for do PRÓPRIO domínio money-path** (precificação, reposição/compras, financeiro) — aí o consult julga a mecânica, não a fila. Se a cota do Codex estourar (não-transitório, o script avisa), siga pelo **Caminho B**: priorize você mesmo por impacto×esforço e grave `REVISÃO INDEPENDENTE PENDENTE` no roadmap (detalhe em `docs/agent/money-path.md`). Integre o parecer quando voltar — realoque a ordem, não ignore.
 
 ### Passo 5 — Programa em fases-PR (artefato #2)
 
@@ -110,7 +110,7 @@ Marque em cada PR o que o founder terá de fazer à mão (§ armadilhas do Lovab
 ### Passo 6 — Persistir e (se o founder mandar atacar) começar
 
 - **Roadmap vivo no chat** (preferência do founder) — a tabela + o programa, re-renderizados quando mudam. Não crie arquivo de roadmap compartilhado (ímã de conflito multi-worktree).
-- Programa grande e aprovado → registre em `docs/historico/` ou abra spec em `docs/superpowers/specs/` (via `writing-plans`), e execute PR a PR. Ao abrir cada PR (não-draft), **arme `scripts/pr-watch.sh <nº>` em background** e avise no desfecho por PushNotification (CLAUDE.md §Merge).
+- Programa grande e aprovado → registre em `docs/historico/` ou abra spec em `docs/superpowers/specs/` (via `writing-plans`), e execute PR a PR. Ao abrir cada PR (não-draft): no app, ligue o Auto-fix (`set_monitor`); sem o app, **arme `scripts/pr-watch.sh <nº>` em background** e avise no desfecho por PushNotification (CLAUDE.md §Merge).
 
 ## Resumo do que entregar
 
