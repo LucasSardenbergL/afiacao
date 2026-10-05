@@ -68,6 +68,13 @@ Deno.test("invariante: soma por SKU bate com o pendente; diverge quando falta ou
   igual(observacaoBateComPendente(l, new Map()), false, "pendente vazio");
 });
 
+Deno.test("invariante: contribuições todas zero COM linhas observadas publicam; sem linha nenhuma, não", () => {
+  const zerado = observarPedido(cab, [{ nCodProd: 8689791246, nQtde: 6, nQtdeRec: 6 }], null, has, parse);
+  igual(observacaoBateComPendente(zerado, new Map()), true, "PO todo recebido: pendente legitimamente zero");
+  igual(observacaoBateComPendente(zerado, new Map([["8689791246", 0]])), true, "zero explícito no pendente");
+  igual(observacaoBateComPendente([], new Map()), false, "nada observado não prova nada");
+});
+
 // ── Coletor do run: a PK do banco é (run_id, omie_codigo_pedido, seq_item) — um PO entra UMA vez ──
 
 Deno.test("coletor: 1 registro por PO — a 1ª aparição vence (a reaparição colidiria na PK)", () => {
@@ -88,17 +95,47 @@ Deno.test("coletor: reaparição sob OUTRO nCodPed (alias por número/código) �
     [[12000000001, 6, null], [12000000077, 0, "repetido_na_varredura"]], "ids");
 });
 
-Deno.test("coletor: nCodPed inválido não é registrado (0 do Number(''), NaN, negativo, fracionário, inseguro)", () => {
-  const c = criarColetorObservacao(has, parse);
+Deno.test("coletor: nCodPed inválido não é registrado e a coleta perde a integridade (ausência não vira prova)", () => {
   for (const n of [0, NaN, -5, 1.5, Number.MAX_SAFE_INTEGER + 2]) {
-    igual(c.registrar({ ...cab, nCodPed: n }, [{ nCodProd: 8689791246, nQtde: 1 }], null), false, `nCodPed ${n}`);
+    const c = criarColetorObservacao(has, parse);
+    igual(c.registrar({ ...cab, nCodPed: n }, [{ nCodProd: 8689791246, nQtde: 1 }], "dedup_app"), false, `nCodPed ${n}`);
+    igual([c.linhas.length, c.integra, c.perda], [0, false, "pedido_sem_ncodped"], `perda com nCodPed ${n}`);
   }
-  igual(c.linhas.length, 0, "nada registrado");
 });
 
-Deno.test("coletor + invariante: PO visto 1º fora da etapa e depois contado não fecha com o pendente", () => {
+Deno.test("coletor: itens fora de array ou item que não é objeto perdem a integridade SEM lançar", () => {
+  for (const itens of [{}, null, "x", [null], [1], [{ nCodProd: 8689791246, nQtde: 1 }, null]]) {
+    const c = criarColetorObservacao(has, parse);
+    igual(c.registrar(cab, itens, "etapa_nao_aberta"), false, `itens ${JSON.stringify(itens)}`);
+    igual([c.linhas.length, c.integra, c.perda], [0, false, "itens_malformados:12000000001"], "perda");
+  }
+});
+
+Deno.test("coletor: PO NÃO contado sem itens entra com 1 linha de presença; contado sem itens perde a integridade", () => {
+  const c = criarColetorObservacao(has, parse);
+  igual(c.registrar({ ...cab, cEtapa: "10" }, [], "etapa_nao_aberta"), true, "presença");
+  igual(c.linhas, [{
+    omie_codigo_pedido: 12000000001, seq_item: 0, numero_pedido: "1205", etapa: "10", id_item: null,
+    sku_codigo_omie: null, quantidade: null, quantidade_recebida: null, contribuicao: 0, exclusao: "etapa_nao_aberta",
+  }], "linha de presença");
+  igual(c.integra, true, "presença não é perda");
+  const d = criarColetorObservacao(has, parse);
+  igual(d.registrar(cab, [], null), false, "contado sem itens");
+  igual([d.linhas.length, d.integra, d.perda], [0, false, "pedido_contado_sem_itens:12000000001"], "perda");
+});
+
+Deno.test("coletor: PO anotado 1º como NÃO contado e depois CONTADO perde a integridade (a soma poderia compensar)", () => {
   const c = criarColetorObservacao(has, parse);
   c.registrar({ ...cab, cEtapa: "10" }, [{ nCodProd: 8689791246, nQtde: 6 }], "etapa_nao_aberta");
-  c.registrar(cab, [{ nCodProd: 8689791246, nQtde: 6 }], null); // a aparição que o motor contou
-  igual(observacaoBateComPendente(c.linhas, new Map([["8689791246", 6]])), false, "não publica");
+  igual(c.registrar(cab, [{ nCodProd: 8689791246, nQtde: 6 }], null), false, "a aparição que o motor contou");
+  igual([c.integra, c.perda], [false, "decisao_mudou_na_varredura:12000000001"], "perda");
+  igual(observacaoBateComPendente(c.linhas, new Map([["8689791246", 6]])), false, "e a soma também não fecha");
+});
+
+Deno.test("coletor: reaparição NÃO contada de um PO já anotado é ignorada sem perder a integridade", () => {
+  const c = criarColetorObservacao(has, parse);
+  c.registrar(cab, [{ nCodProd: 8689791246, nQtde: 6 }], null);
+  igual(c.registrar(cab, [{ nCodProd: 8689791246, nQtde: 6 }], "repetido_na_varredura"), false, "repetido");
+  igual(c.registrar(cab, [{ nCodProd: 8689791246, nQtde: 6 }], "etapa_nao_aberta"), false, "mudou de etapa, não conta");
+  igual([c.linhas.length, c.integra], [1, true], "segue íntegra");
 });
