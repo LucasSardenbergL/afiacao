@@ -2,25 +2,12 @@ import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import { redigirSegredo } from "../_shared/omie-falha.ts";
-import { avaliarPagina, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { mapearItensRecebimento, type OmieRecebimentoItem } from "./itens.ts";
 import { mapearCabecalho } from "./cabecalho.ts";
 import { avaliarDetalhePorChave, classificarConsultaPorChave, normalizarChaveAcesso } from "./chave.ts";
-import {
-  type ContagemArmazem,
-  contagemVazia,
-  falhaNoCorpo,
-  interpretarPaginaListagem,
-  paramsListagem,
-  type RegistroListagem,
-  registrarPulo,
-  triarRegistro,
-} from "./listagem.ts";
-
-// Teto anti-runaway do total DECLARADO pelo Omie (o teto de LEITURA por rodada continua
-// maxPages=3, deliberado: cron horário com MAX_DETAIL_CALLS=1 — amostra retomável, não truncagem).
-const MAX_PAGINAS_RECEBIMENTOS = 500;
+import { corpoDeFalhaOmie } from "./listagem.ts";
+import { type DepsRodada, type ResumoConta, rodadaDaConta } from "./rodada.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -65,10 +52,6 @@ interface OmieConsultarRecebimentoResponse {
 
 interface WarehouseRow {
   id: string;
-}
-
-interface NfeRecebimentoExistingRow {
-  omie_id_receb: number | null;
 }
 
 function jsonResponse(body: Record<string, unknown>, status = 200, headersExtra: Record<string, string> = {}) {
@@ -119,9 +102,58 @@ async function omieCall(
   });
   if (!res.ok) {
     const txt = await res.text();
-    throw new Error(`Omie ${method} HTTP ${res.status}: ${txt.slice(0, 300)}`);
+    // O corpo decide antes do status: o Omie manda "não existem registros" e outras falhas de negócio
+    // com HTTP 500 (CC, 2026-10-05). Com `faultstring`, o corpo volta e o chamador classifica
+    // (interpretarPaginaListagem / falhaNoCorpo); sem ela, é falha de transporte.
+    const corpoDeFalha = corpoDeFalhaOmie(txt);
+    if (corpoDeFalha !== null) return corpoDeFalha;
+    throw new Error(`Omie ${method} HTTP ${res.status}: ${redigirSegredo(txt.slice(0, 300))}`);
   }
   return await res.json();
+}
+
+/** Lote de chaves por `.in()`: 44 dígitos cada — as ~150 de uma rodada numa URL só passariam do seguro. */
+const LOTE_CHAVES = 50;
+
+/** O Omie e o banco REAIS da rodada de uma conta (ver rodada.ts). */
+function depsDaConta(supabase: SupabaseClient, cred: OmieCredentials, warehouseId: string): DepsRodada {
+  return {
+    listar: (params) => omieCall(cred.appKey, cred.appSecret, "produtos/recebimentonfe/", "ListarRecebimentos", params),
+    consultar: (nIdReceb) =>
+      omieCall(cred.appKey, cred.appSecret, "produtos/recebimentonfe/", "ConsultarRecebimento", { nIdReceb }),
+    jaImportados: async (ids, chaves) => {
+      const idsJa = new Set<number>();
+      const chavesJa = new Set<string>();
+      if (ids.length > 0) {
+        const { data, error } = await supabase
+          .from("nfe_recebimentos")
+          .select("omie_id_receb")
+          .eq("warehouse_id", warehouseId)
+          .in("omie_id_receb", ids);
+        if (error) throw new Error(error.message);
+        for (const r of (data ?? []) as { omie_id_receb: number | string | null }[]) {
+          if (r.omie_id_receb !== null) idsJa.add(Number(r.omie_id_receb));
+        }
+      }
+      for (let i = 0; i < chaves.length; i += LOTE_CHAVES) {
+        const { data, error } = await supabase
+          .from("nfe_recebimentos")
+          .select("chave_acesso")
+          .in("chave_acesso", chaves.slice(i, i + LOTE_CHAVES));
+        if (error) throw new Error(error.message);
+        for (const r of (data ?? []) as { chave_acesso: string | null }[]) {
+          if (r.chave_acesso) chavesJa.add(r.chave_acesso);
+        }
+      }
+      return { ids: idsJa, chaves: chavesJa };
+    },
+    inserirCabecalho: async (row) => {
+      const { data, error } = await supabase.from("nfe_recebimentos").insert(row).select("id").single();
+      if (error || !data) return { erro: error?.message ?? "o insert do cabeçalho não devolveu o id" };
+      return { id: (data as { id: string }).id };
+    },
+    inserirItens: (itens, nfeRecebimentoId) => inserirItens(supabase, itens, nfeRecebimentoId),
+  };
 }
 
 /** Teto da consulta por chave: quem espera é o operador, com o diálogo aberto. */
@@ -327,7 +359,7 @@ Deno.serve(async (req) => {
   const errors: string[] = [];
   // O sensor do cron: o `net._http_response` guarda esta resposta, e é por ela que se vê, conta a
   // conta, o que a listagem trouxe e por que cada NF-e não virou importação.
-  const porArmazem: Record<string, ContagemArmazem> = {};
+  const porArmazem: Record<string, ResumoConta> = {};
 
   for (const cred of allCreds) {
     try {
@@ -348,193 +380,19 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      // Get existing omie_id_recebs to skip quickly
-      const { data: existingRecebimentos } = await supabase
-        .from("nfe_recebimentos")
-        .select("omie_id_receb")
-        .eq("warehouse_id", warehouse.id)
-        .not("omie_id_receb", "is", null);
-
-      const existingRecebRows = (existingRecebimentos ?? []) as unknown as NfeRecebimentoExistingRow[];
-      // Normaliza pra number: o Omie pode devolver nIdReceb como string na listagem — sem
-      // isso o has() nunca casa e as MAX_DETAIL_CALLS se esgotam re-consultando NFs já
-      // importadas (starvation: NF nova nunca chega a ser vista). (Codex P2)
-      const existingIds = new Set(
-        existingRecebRows.map((r) => Number(r.omie_id_receb))
-      );
-
       // Filter last 30 days to get recent NF-es with cChaveNfe
       const now = new Date();
       const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
       const dtDe = `${String(thirtyDaysAgo.getDate()).padStart(2,'0')}/${String(thirtyDaysAgo.getMonth()+1).padStart(2,'0')}/${thirtyDaysAgo.getFullYear()}`;
 
-      const allRecebimentos: RegistroListagem[] = [];
-      let page = 1;
-      const maxPages = 3;
-      let totalPages = 1; // piso monotônico do total declarado (guards de _shared/omie-paginacao.ts)
-      let hasMore = true;
-
-      while (hasMore && page <= maxPages) {
-        try {
-          // O corpo decide antes do status: falha com HTTP 200 vira erro visível (e "não existem
-          // registros" vira fim) — antes ela passava por listagem vazia, com success:true.
-          const pagina = interpretarPaginaListagem(await omieCall(
-            cred.appKey,
-            cred.appSecret,
-            "produtos/recebimentonfe/",
-            "ListarRecebimentos",
-            paramsListagem(page, dtDe),
-          ));
-          if (pagina.tipo === "falha") throw new Error(pagina.mensagem);
-          if (pagina.tipo === "fim") break;
-          totalPages = proximoTotalPaginas(totalPages, pagina.totalPaginas, MAX_PAGINAS_RECEBIMENTOS);
-          const recs = pagina.registros;
-          const veredicto = avaliarPagina(recs.length, page, totalPages);
-          if (veredicto === "anomalia") {
-            throw new Error(`página ${page}/${totalPages} veio vazia antes do fim declarado — acumulado parcial`);
-          }
-          if (veredicto === "fim") break;
-          allRecebimentos.push(...recs);
-          console.log(`[sync] Página ${page}/${totalPages}, ${recs.length} registros`);
-          hasMore = page < totalPages;
-          page++;
-        } catch (pgErr) {
-          const msg = pgErr instanceof Error ? pgErr.message : String(pgErr);
-          // REGISTRA em errors[] (surfaça no response) — o console.warn sozinho deixava o
-          // acumulado parcial seguir adiante com success:true e ninguém sabia da página perdida.
-          errors.push(`${cred.warehouseCode} ListarRecebimentos página ${page}: ${msg}`);
-          console.warn(`[sync] Erro na página ${page}: ${msg}`);
-          break;
-        }
-      }
-
-      console.log(`[sync] ${allRecebimentos.length} registros recentes (últimos 30 dias)`);
-
-      const contagem = contagemVazia();
-      porArmazem[cred.warehouseCode] = contagem;
-      contagem.listados = allRecebimentos.length;
-
-      let detailCalls = 0;
-      // 1 por conta/rodada: ConsultarRecebimento tem trava anti-redundância POR MÉTODO
-      // (~60s) no Omie — rajada de detalhes = "1 passa, resto REDUNDANT" (visto em prod
-      // 2026-07-16). Com o cron horário, 1/rodada importa 13/dia por conta. A consulta vai só
-      // para quem a TRIAGEM da listagem deixa passar (listagem.ts): sem ela, a NF-e recebida
-      // direto no Omie que estivesse no topo gastava a consulta de toda rodada.
-      const MAX_DETAIL_CALLS = 1;
-
-      for (const rec of allRecebimentos) {
-        const triagem = triarRegistro(rec, existingIds);
-        if (triagem.tipo === "pular") {
-          registrarPulo(contagem, triagem.motivo);
-          // `skipped` mantém o sentido de antes: já importada ou já recebida no Omie.
-          if (triagem.motivo === "ja_importado" || triagem.motivo === "recebido_no_omie") totalSkipped++;
-          continue;
-        }
-        if (triagem.listagemMagra) contagem.listagem_magra++;
-        // Sem `break` no teto: a listagem inteira passa pela triagem, para a contagem dizer o
-        // tamanho da fila (`aguardando`). Só a consulta de detalhe é que tem teto.
-        if (detailCalls >= MAX_DETAIL_CALLS) {
-          contagem.aguardando++;
-          continue;
-        }
-        const nIdReceb = triagem.nIdReceb;
-
-        detailCalls++;
-        contagem.consultados++;
-        let detail: OmieConsultarRecebimentoResponse;
-        try {
-          detail = (await omieCall(
-            cred.appKey,
-            cred.appSecret,
-            "produtos/recebimentonfe/",
-            "ConsultarRecebimento",
-            { nIdReceb },
-          )) as unknown as OmieConsultarRecebimentoResponse;
-        } catch (detErr) {
-          const msg = detErr instanceof Error ? detErr.message : String(detErr);
-          // REGISTRA: com MAX_DETAIL_CALLS=1, a MESMA NF falhando toda hora starva a fila
-          // inteira atrás dela com success:true — errors[] é o único sinal visível disso.
-          errors.push(`${cred.warehouseCode} ConsultarRecebimento ${nIdReceb}: ${msg}`);
-          console.warn(`[sync] Erro ao consultar recebimento ${nIdReceb}: ${msg}`);
-          continue;
-        }
-        // Falha com HTTP 200: o corpo é a `faultstring`, sem `cabec`. Antes caía no "sem chave",
-        // calada, e a mesma NF-e voltava a gastar a consulta na rodada seguinte.
-        const falhaDetalhe = falhaNoCorpo(detail);
-        if (falhaDetalhe !== null) {
-          errors.push(`${cred.warehouseCode} ConsultarRecebimento ${nIdReceb}: ${falhaDetalhe}`);
-          console.warn(`[sync] Falha do Omie no detalhe ${nIdReceb}: ${falhaDetalhe}`);
-          continue;
-        }
-
-        const detCabec = detail.cabec ?? {};
-        // Log first detail to understand structure
-        if (detailCalls <= 2) {
-          console.log(`[sync] Detail cabec keys for ${nIdReceb}: ${JSON.stringify(Object.keys(detCabec))}`);
-          console.log(`[sync] Detail cabec sample: ${JSON.stringify(detCabec).slice(0, 500)}`);
-        }
-
-        // NF que o Omie JÁ recebeu (cRecebido=S) não nasce 'pendente' no app — a entrada
-        // foi feita lá (humano); importá-la só criaria pendência fantasma no painel de
-        // conferência (a varredura omie-nfe-reconcile teria que baixá-la em seguida).
-        if (detail.infoCadastro?.cRecebido === "S") {
-          totalSkipped++;
-          console.log(`[sync] Recebimento ${nIdReceb} já recebido no Omie (cRecebido=S), pulando`);
-          continue;
-        }
-
-        const chaveAcesso = detCabec.cChaveNFe || detCabec.cChaveNfe || null;
-        if (!chaveAcesso || chaveAcesso.length < 44) {
-          console.log(`[sync] Recebimento ${nIdReceb} sem chave de acesso no detalhe, pulando`);
-          continue;
-        }
-
-        // Double check by chave_acesso
-        const { data: existByChave } = await supabase
-          .from("nfe_recebimentos")
-          .select("id")
-          .eq("chave_acesso", chaveAcesso)
-          .maybeSingle();
-
-        if (existByChave) {
-          totalSkipped++;
-          continue;
-        }
-
-        const numeroNfe = String(detCabec.cNumeroNFe ?? "");
-
-        const { data: newNfe, error: insErr } = await supabase
-          .from("nfe_recebimentos")
-          .insert(mapearCabecalho(detCabec, warehouse.id, chaveAcesso, nIdReceb))
-          .select("id")
-          .single();
-
-        if (insErr || !newNfe) {
-          console.error(`[sync] Erro ao inserir NF-e ${chaveAcesso}:`, insErr);
-          errors.push(`NF-e ${numeroNfe}: ${insErr?.message}`);
-          continue;
-        }
-
-        // Parse items from itensRecebimento
-        const rawItems: OmieRecebimentoItem[] = detail.itensRecebimento ?? [];
-        const erroItens = await inserirItens(supabase, rawItems, newNfe.id);
-        if (erroItens) {
-          // A NF-e ficou SÓ com o cabeçalho e a retentativa a pula (`existingIds`): o erro tem de
-          // sair em errors[] — com o console.error sozinho ela contava como importada e a run
-          // dizia success:true (foi assim que o NCM pontuado zerou os itens de prod em silêncio).
-          // O cabeçalho NÃO é apagado: com MAX_DETAIL_CALLS=1, uma falha determinística re-tentada
-          // a cada run travaria a fila inteira atrás dela.
-          console.error(`[sync] Erro ao inserir itens da NF-e ${numeroNfe}: ${erroItens}`);
-          errors.push(`NF-e ${numeroNfe}: cabeçalho gravado SEM itens — ${erroItens}`);
-          continue;
-        }
-
-        totalImported++;
-        contagem.importados++;
-        console.log(`[sync] NF-e ${numeroNfe} importada (${rawItems.length} itens)`);
-      }
-
-      console.log(`[sync] ${cred.warehouseCode} triagem: ${JSON.stringify(contagem)}`);
+      // A rodada (listagem → triagem → a única consulta → gravação) mora em rodada.ts, com o Omie e o
+      // banco injetados, para o laço REAL ser testado no Deno (rodada_test.ts).
+      const rodada = await rodadaDaConta(depsDaConta(supabase, cred, warehouse.id), cred.warehouseCode, warehouse.id, dtDe);
+      porArmazem[cred.warehouseCode] = rodada.resumo;
+      errors.push(...rodada.erros);
+      totalImported += rodada.importadas;
+      totalSkipped += rodada.puladas;
+      console.log(`[sync] ${cred.warehouseCode}: ${JSON.stringify(rodada.resumo)}`);
     } catch (credErr) {
       const msg = credErr instanceof Error ? credErr.message : String(credErr);
       console.error(`[sync] Erro na conta ${cred.warehouseCode}:`, credErr);

@@ -28,9 +28,12 @@ export const respostaSonda = criarRespostaSonda("omie-nfe-recebimento-sync");
  * TODA NF-e) e a falha do insert de itens sai em errors[] em vez de contar como importada.
  * v1.2: importação de UMA NF-e pela chave (`{ chave_acesso, warehouse_id }`), o caminho do botão
  * "Importar NF-e" — antes ele chamava o `omie-nfe-webhook`, que dá 401 sem o segredo do Omie.
- * v1.3: a listagem do cron pede `cExibirDetalhes:'S'` e a triagem pula recebida/cancelada/sem chave
- * ANTES da única consulta de detalhe (a recebida no topo travava a fila da Oben desde 14/08); falha
- * do Omie com HTTP 200 vira erro visível; a resposta traz `por_armazem` (o sensor do cron).
+ * v1.3: a listagem do cron pede `cExibirDetalhes:'S'` e a triagem pula já importada/recebida/
+ * cancelada ANTES da única consulta de detalhe (a recebida no topo travava a fila da Oben desde
+ * 14/08); o que a listagem não diz vai à consulta como incompleta, depois das completas; o detalhe
+ * confere cancelada e recebida com o mesmo critério; o corpo de falha do Omie vale com HTTP 200 ou
+ * 500 ("não existem registros" é fim); a resposta traz `por_armazem` com o desfecho da consulta (o
+ * sensor do cron). O laço mora em rodada.ts, testado no Deno com o Omie e o banco falsos.
  */
 export const VERSAO = "v1.3-listagem-com-detalhes";
 

@@ -4414,37 +4414,52 @@ describe('guardrail: omie-nfe-recebimento-sync não conta NF-e como importada qu
   // importada e respondia success:true — a run "verde" escondia 100% de falha.
   // Desde a importação por chave (PR 3/3) o insert de itens mora num helper só, e cada CAMINHO
   // decide o que fazer quando ele falha: o cron registra e segue; o manual desfaz o cabeçalho.
+  // Desde 2026-10-05 o laço do cron mora em rodada.ts, com o Omie e o banco injetados, e o
+  // COMPORTAMENTO dele é provado no Deno (rodada_test.ts); aqui fica a FIAÇÃO, que o Deno não vê.
   const bruto = read('supabase/functions/omie-nfe-recebimento-sync/index.ts');
   const src = removerComentarios(bruto);
-  const fatia = (de: string, ate: string) => {
-    const i = src.indexOf(de);
-    const f = i >= 0 ? src.indexOf(ate, i) : -1;
-    return i >= 0 && f > i ? src.slice(i, f) : '';
+  const rodadaBruta = read('supabase/functions/omie-nfe-recebimento-sync/rodada.ts');
+  const rodada = removerComentarios(rodadaBruta);
+  const fatiaDe = (texto: string, de: string, ate: string) => {
+    const i = texto.indexOf(de);
+    const f = i >= 0 ? texto.indexOf(ate, i) : -1;
+    return i >= 0 && f > i ? texto.slice(i, f) : '';
   };
+  const fatia = (de: string, ate: string) => fatiaDe(src, de, ate);
   const helper = fatia('async function inserirItens(', '\n}\n');
   const manual = fatia('async function importarPorChave(', '\n}\n');
   const handler = fatia('Deno.serve(', '\n});');
-  const cron = fatia('Deno.serve(', 'totalImported++');
+  const deps = fatia('function depsDaConta(', '\n}\n');
+  const omie = fatia('async function omieCall(', '\n}\n');
+  const gravacao = fatiaDe(rodada, 'async function consultarEGravar(', '\n}\n');
 
-  it('sentinela: leu a edge real, e o stripper não comeu nem deixou de limpar o arquivo', () => {
-    expect(bruto.length, 'arquivo vazio/inexistente').toBeGreaterThan(5_000);
+  it('sentinela: leu a edge real e a rodada, e o stripper não comeu nem deixou de limpar os arquivos', () => {
+    expect(bruto.length, 'index.ts vazio/inexistente').toBeGreaterThan(5_000);
+    expect(rodadaBruta.length, 'rodada.ts vazio/inexistente').toBeGreaterThan(3_000);
     expect(src).toContain('ConsultarRecebimento');
     expect(src.length).toBeGreaterThan(bruto.length * 0.5);
     expect(src.length).toBeLessThan(bruto.length);
+    expect(rodada.length).toBeLessThan(rodadaBruta.length);
+    for (const [nome, trecho] of Object.entries({ helper, manual, handler, deps, omie, gravacao })) {
+      expect(trecho.length, `fatia "${nome}" vazia — a função mudou de nome ou de forma`).toBeGreaterThan(0);
+    }
   });
 
   it('controle positivo: um único insert de itens, no helper, chamado pelos dois caminhos', () => {
     expect(count(src, '.from("nfe_recebimento_itens")'), 'o insert de itens sumiu ou duplicou').toBe(1);
+    expect(count(rodada, 'nfe_recebimento_itens'), 'a rodada não grava itens por conta própria').toBe(0);
     expect(helper).toContain('.from("nfe_recebimento_itens")');
     expect(helper, 'o NCM tem de passar pelo mapeamento que o normaliza').toContain('mapearItensRecebimento(');
-    expect(cron).toContain('inserirItens(');
+    expect(deps, 'o cron grava os itens pelo helper').toContain('inserirItens(supabase');
     expect(manual).toContain('inserirItens(');
   });
 
-  it('cron: a falha de itens sai em errors[] e pula a contagem de importada', () => {
-    const depois = cron.slice(cron.indexOf('inserirItens('));
-    expect(depois, 'console.error sozinho é success:true sobre NF-e sem itens').toContain('errors.push(');
-    expect(depois, 'sem o continue a NF-e sem itens conta como importada').toContain('continue;');
+  it('cron: a falha de itens sai em erros, mantém o cabeçalho e não conta como importada', () => {
+    const depois = gravacao.slice(gravacao.indexOf('deps.inserirItens('));
+    expect(depois, 'console.error sozinho é success:true sobre NF-e sem itens').toContain('erros.push(');
+    expect(depois.indexOf('"itens_falharam"'), 'a falha de itens tem de sair antes do "importada"').toBeLessThan(depois.indexOf('"importada"'));
+    expect(depois.indexOf('"itens_falharam"')).toBeGreaterThan(-1);
+    expect(rodada, 'a rodada do cron não apaga cabeçalho (a fila de 1 consulta travaria)').not.toMatch(/\.delete\(/);
   });
 
   it('manual: a falha de itens desfaz o cabeçalho e responde erro — nunca "importada"', () => {
@@ -4467,15 +4482,25 @@ describe('guardrail: omie-nfe-recebimento-sync não conta NF-e como importada qu
     expect(src).not.toMatch(/ncm:\s*iCabec\.cNCM/);
   });
 
-  it('cron: a única consulta de detalhe passa pela triagem da listagem com detalhes, e a falha com HTTP 200 não cala', () => {
+  it('cron: o handler entrega cada conta à rodada com o Omie e o banco REAIS, e a resposta leva o sensor', () => {
     // 2026-10-01: a Oben teve 70 recebimentos no Omie desde 14/08 e a sync importou 0 — a NF-e
     // recebida direto no Omie, no topo da listagem magra, gastava a consulta de TODA rodada.
-    expect(cron, 'a listagem voltou a ser magra (sem cExibirDetalhes)').toContain('paramsListagem(');
-    expect(cron, 'a faultstring com HTTP 200 voltou a virar listagem vazia').toContain('interpretarPaginaListagem(');
-    const triagem = cron.indexOf('triarRegistro(');
-    const consulta = cron.indexOf('"ConsultarRecebimento"');
-    expect(triagem, 'a triagem sumiu do laço do cron').toBeGreaterThan(-1);
-    expect(consulta, 'a consulta de detalhe veio antes da triagem').toBeGreaterThan(triagem);
-    expect(cron.slice(consulta), 'a falha no corpo do detalhe tem de ser lida').toContain('falhaNoCorpo(');
+    expect(handler, 'o cron deixou de passar pela rodada testada').toContain('rodadaDaConta(depsDaConta(');
+    expect(handler, 'o sensor saiu da resposta').toContain('por_armazem: porArmazem');
+    expect(handler).toContain('porArmazem[cred.warehouseCode] = rodada.resumo');
+    expect(deps, 'a listagem tem de repassar INTACTOS os parâmetros da rodada (cExibirDetalhes)').toMatch(
+      /listar:\s*\(params\)\s*=>\s*omieCall\([^)]*"ListarRecebimentos",\s*params\)/,
+    );
+  });
+
+  it('o Omie devolve o corpo de falha mesmo com HTTP 500 — quem classifica é o chamador', () => {
+    // 2026-10-05, conta CC: "não existem registros para a página" vinha com HTTP 500, virava erro e
+    // success:false em toda rodada de lista vazia.
+    const naoOk = omie.slice(omie.indexOf('if (!res.ok)'));
+    const leitura = naoOk.indexOf('corpoDeFalhaOmie(');
+    const lancamento = naoOk.indexOf('throw new Error(');
+    expect(leitura, 'o corpo de falha deixou de ser lido').toBeGreaterThan(-1);
+    expect(leitura, 'o throw voltou a vir antes de ler o corpo').toBeLessThan(lancamento);
+    expect(naoOk.slice(leitura, lancamento), 'o corpo de falha é lido mas não volta ao chamador').toMatch(/return corpoDeFalha;/);
   });
 });

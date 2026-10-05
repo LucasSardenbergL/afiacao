@@ -83,46 +83,93 @@ export function falhaNoCorpo(corpo: unknown): string | null {
   return falha === null ? null : redigirSegredo(falha);
 }
 
-export type MotivoPulo = "sem_id" | "ja_importado" | "cancelado" | "recebido_no_omie" | "sem_chave";
-
-export type Triagem =
-  | { tipo: "pular"; motivo: MotivoPulo }
-  /** `listagemMagra`: veio sem `infoCadastro` (o Omie ignorou `cExibirDetalhes`) — o detalhe decide. */
-  | { tipo: "consultar"; nIdReceb: number; listagemMagra: boolean };
+/**
+ * Corpo de uma resposta NÃO-2xx do Omie quando ele traz `faultstring`: o Omie manda o "não existem
+ * registros para a página" (fim de listagem) e falhas de negócio com HTTP 500 — visto em prod em
+ * 2026-10-05, conta CC, `faultcode` SOAP-ENV:Client-5113. Volta ao chamador, que classifica; `null`
+ * = não é corpo de falha do Omie (HTML de gateway, texto solto), e aí é falha de transporte.
+ */
+export function corpoDeFalhaOmie(texto: string): Record<string, unknown> | null {
+  try {
+    const c = comoRegistro(JSON.parse(texto));
+    return c !== null && textoDaFalha(c) !== null ? c : null;
+  } catch {
+    return null;
+  }
+}
 
 const sim = (v: unknown) => String(v ?? "").trim().toUpperCase() === "S";
 
 /**
- * Decide se o registro merece a consulta de detalhe da rodada. A listagem COM detalhes decide
- * tudo (cancelada, recebida no Omie, sem chave); a listagem MAGRA só sabe o id, e aí a consulta
- * confere o resto, como antes.
+ * O estado da NF-e no Omie pelo `infoCadastro` — o MESMO critério na listagem e no detalhe (a
+ * revisão do Codex de 2026-10-05 achou o detalhe olhando só `cRecebido === "S"`: a listagem magra
+ * importava a cancelada como pendente). Cancelada vence recebida.
  */
-export function triarRegistro(rec: RegistroListagem, jaImportados: ReadonlySet<number>): Triagem {
+export function estadoNoOmie(
+  info: { cCancelada?: unknown; cRecebido?: unknown } | null | undefined,
+): "cancelado" | "recebido_no_omie" | null {
+  if (!info) return null;
+  if (sim(info.cCancelada)) return "cancelado";
+  if (sim(info.cRecebido)) return "recebido_no_omie";
+  return null;
+}
+
+/** Id e chave de um registro da listagem; `null` onde o Omie não deu valor utilizável. */
+export function identidadeDoRegistro(rec: RegistroListagem): { id: number | null; chave: string | null } {
   const cabec = rec.cabec ?? {};
   const id = Number(cabec.nIdReceb ?? rec.nIdReceb);
-  if (!Number.isSafeInteger(id) || id <= 0) return { tipo: "pular", motivo: "sem_id" };
-  if (jaImportados.has(id)) return { tipo: "pular", motivo: "ja_importado" };
-  const info = rec.infoCadastro;
-  if (!info) return { tipo: "consultar", nIdReceb: id, listagemMagra: true };
-  if (sim(info.cCancelada)) return { tipo: "pular", motivo: "cancelado" };
-  if (sim(info.cRecebido)) return { tipo: "pular", motivo: "recebido_no_omie" };
-  if (normalizarChaveAcesso(cabec.cChaveNFe || cabec.cChaveNfe) === null) return { tipo: "pular", motivo: "sem_chave" };
-  return { tipo: "consultar", nIdReceb: id, listagemMagra: false };
+  return {
+    id: Number.isSafeInteger(id) && id > 0 ? id : null,
+    chave: normalizarChaveAcesso(cabec.cChaveNFe || cabec.cChaveNfe),
+  };
+}
+
+/** O que já está em `nfe_recebimentos`: ids desta conta e chaves (a chave é única no banco). */
+export interface JaImportados {
+  ids: ReadonlySet<number>;
+  chaves: ReadonlySet<string>;
+}
+
+export type MotivoPulo = "sem_id" | "ja_importado" | "cancelado" | "recebido_no_omie";
+
+/** Por que a candidata é INCOMPLETA: a listagem não deu o bastante para decidir sem a consulta. */
+export type Incompleta = "listagem_magra" | "chave_na_listagem";
+
+export type Triagem =
+  | { tipo: "pular"; motivo: MotivoPulo }
+  | { tipo: "consultar"; nIdReceb: number; incompleta: Incompleta | null };
+
+/**
+ * Decide se o registro merece a consulta de detalhe da rodada. Só PULA com evidência da própria
+ * listagem: já importada (pelo id ou pela chave), cancelada ou recebida no Omie. O que a listagem
+ * não diz não é descartado — vai à consulta como INCOMPLETA (sem `infoCadastro`, ou sem chave
+ * legível: a presença de `infoCadastro` não prova que o cabeçalho veio inteiro), e a rodada prefere
+ * as completas.
+ */
+export function triarRegistro(rec: RegistroListagem, ja: JaImportados): Triagem {
+  const { id, chave } = identidadeDoRegistro(rec);
+  if (id === null) return { tipo: "pular", motivo: "sem_id" };
+  if (ja.ids.has(id) || (chave !== null && ja.chaves.has(chave))) return { tipo: "pular", motivo: "ja_importado" };
+  if (!rec.infoCadastro) return { tipo: "consultar", nIdReceb: id, incompleta: "listagem_magra" };
+  const estado = estadoNoOmie(rec.infoCadastro);
+  if (estado !== null) return { tipo: "pular", motivo: estado };
+  if (chave === null) return { tipo: "consultar", nIdReceb: id, incompleta: "chave_na_listagem" };
+  return { tipo: "consultar", nIdReceb: id, incompleta: null };
 }
 
 /**
- * O que a rodada viu numa conta — vai na resposta (`por_armazem`), que o `net._http_response`
- * guarda: é o sensor do cron. `aguardando` = candidatas além da consulta da rodada, a fila que o
- * cron horário drena; `listagem_magra` > 0 = o Omie não trouxe `infoCadastro`.
+ * O que a triagem viu numa conta. `aguardando` = candidatas além da consulta da rodada (a fila que
+ * o cron horário drena); `listagem_magra` > 0 = o Omie não trouxe `infoCadastro`;
+ * `sem_chave_na_listagem` = candidatas que só a consulta resolve.
  */
 export interface ContagemArmazem {
   listados: number;
   ja_importados: number;
   cancelados: number;
   recebidos_no_omie: number;
-  sem_chave: number;
   sem_id: number;
   listagem_magra: number;
+  sem_chave_na_listagem: number;
   aguardando: number;
   consultados: number;
   importados: number;
@@ -134,9 +181,9 @@ export function contagemVazia(): ContagemArmazem {
     ja_importados: 0,
     cancelados: 0,
     recebidos_no_omie: 0,
-    sem_chave: 0,
     sem_id: 0,
     listagem_magra: 0,
+    sem_chave_na_listagem: 0,
     aguardando: 0,
     consultados: 0,
     importados: 0,
@@ -148,7 +195,6 @@ const CAMPO_DO_PULO: Record<MotivoPulo, keyof ContagemArmazem> = {
   ja_importado: "ja_importados",
   cancelado: "cancelados",
   recebido_no_omie: "recebidos_no_omie",
-  sem_chave: "sem_chave",
 };
 
 export function registrarPulo(contagem: ContagemArmazem, motivo: MotivoPulo): void {

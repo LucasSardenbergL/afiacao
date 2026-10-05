@@ -1,13 +1,15 @@
 // Testa o CÓDIGO REAL de listagem.ts no runtime real (Deno).
 // Roda com: deno test supabase/functions/omie-nfe-recebimento-sync/listagem_test.ts
 //
-// O incidente (2026-10-01): a Oben teve 70 recebimentos no Omie desde 14/08 e a sync importou zero.
-// A NF-e que o time já tinha recebido direto no Omie, no topo da listagem, gastava a única consulta
-// de detalhe de toda rodada. Os casos que importam: a triagem pula recebida/cancelada/sem chave
-// ANTES da consulta, e a falha que o Omie devolve com HTTP 200 deixa de passar por listagem vazia.
+// Os helpers puros da triagem. O laço REAL do cron (quem gasta a consulta, o que grava, o que vai
+// para a resposta) está em rodada_test.ts — a revisão do Codex de 2026-10-05 mostrou que testar só
+// estes helpers deixava o laço sabotável com tudo verde.
 import {
   contagemVazia,
+  corpoDeFalhaOmie,
+  estadoNoOmie,
   falhaNoCorpo,
+  identidadeDoRegistro,
   interpretarPaginaListagem,
   paramsListagem,
   type RegistroListagem,
@@ -22,29 +24,11 @@ function assertEquals(a: unknown, b: unknown, msg?: string) {
 }
 
 const CHAVE = "31260912345678000190550010000123451000123456";
+const NADA = { ids: new Set<number>(), chaves: new Set<string>() };
 
 function registro(id: number | string, info?: { cRecebido?: string; cCancelada?: string }, chave: string | null = CHAVE): RegistroListagem {
   return { cabec: { nIdReceb: id, cChaveNFe: chave }, ...(info ? { infoCadastro: info } : {}) };
 }
-
-/** A decisão do laço do cron: para quem vai a consulta de detalhe da rodada. */
-function primeiraConsulta(registros: RegistroListagem[], jaImportados: Set<number>): number | null {
-  for (const r of registros) {
-    const t = triarRegistro(r, jaImportados);
-    if (t.tipo === "consultar") return t.nIdReceb;
-  }
-  return null;
-}
-
-Deno.test("o incidente: a recebida no Omie no topo não gasta a consulta — ela vai para a pendente de trás", () => {
-  const listagem = [
-    registro(101, { cRecebido: "S", cCancelada: "N" }),
-    registro(102, { cRecebido: "N", cCancelada: "S" }),
-    registro(103, { cRecebido: "N", cCancelada: "N" }, null),
-    registro(104, { cRecebido: "N", cCancelada: "N" }),
-  ];
-  assertEquals(primeiraConsulta(listagem, new Set()), 104);
-});
 
 Deno.test("paramsListagem: pede infoCadastro e ordem estável — o que a leitura que enxerga a Oben pede", () => {
   const p = paramsListagem(2, "01/09/2026");
@@ -54,36 +38,48 @@ Deno.test("paramsListagem: pede infoCadastro e ordem estável — o que a leitur
   assertEquals(p.dtEmissaoDe, "01/09/2026");
 });
 
-Deno.test("triarRegistro: cada motivo de pulo, com a listagem trazendo infoCadastro", () => {
-  const ja = new Set([500]);
+Deno.test("triarRegistro: só pula com evidência da listagem — já importada (id ou chave), cancelada, recebida, sem id", () => {
+  const ja = { ids: new Set([500]), chaves: new Set([CHAVE.replace(/^31/, "35")]) };
   assertEquals(triarRegistro(registro("500", { cRecebido: "N" }), ja), { tipo: "pular", motivo: "ja_importado" }, "id em string casa o Set numérico");
+  assertEquals(triarRegistro(registro(510, { cRecebido: "N" }, CHAVE.replace(/^31/, "35")), ja), { tipo: "pular", motivo: "ja_importado" }, "pela chave");
   assertEquals(triarRegistro(registro(501, { cRecebido: " s " }), ja), { tipo: "pular", motivo: "recebido_no_omie" }, "caixa e espaço");
   assertEquals(triarRegistro(registro(502, { cCancelada: "S" }), ja), { tipo: "pular", motivo: "cancelado" });
-  assertEquals(triarRegistro(registro(503, { cRecebido: "N" }, "123"), ja), { tipo: "pular", motivo: "sem_chave" });
-  assertEquals(triarRegistro(registro(504, { cRecebido: "N" }, null), ja), { tipo: "pular", motivo: "sem_chave" });
   assertEquals(triarRegistro(registro("abc", { cRecebido: "N" }), ja), { tipo: "pular", motivo: "sem_id" });
   assertEquals(triarRegistro({ infoCadastro: { cRecebido: "N" } }, ja), { tipo: "pular", motivo: "sem_id" });
 });
 
 Deno.test("triarRegistro: já importada vence 'recebida no Omie' — a NF-e do app conferida e depois recebida", () => {
-  assertEquals(triarRegistro(registro(600, { cRecebido: "S" }), new Set([600])), { tipo: "pular", motivo: "ja_importado" });
+  assertEquals(triarRegistro(registro(600, { cRecebido: "S" }), { ids: new Set([600]), chaves: new Set() }), { tipo: "pular", motivo: "ja_importado" });
 });
 
-Deno.test("triarRegistro: pendente com chave vai à consulta, com o id numérico", () => {
+Deno.test("triarRegistro: pendente com chave vai à consulta como COMPLETA, com o id numérico", () => {
+  assertEquals(triarRegistro(registro("700", { cRecebido: "N", cCancelada: "N" }), NADA), { tipo: "consultar", nIdReceb: 700, incompleta: null });
   assertEquals(
-    triarRegistro(registro("700", { cRecebido: "N", cCancelada: "N" }), new Set()),
-    { tipo: "consultar", nIdReceb: 700, listagemMagra: false },
-  );
-  assertEquals(
-    triarRegistro({ cabec: { nIdReceb: 701, cChaveNfe: CHAVE }, infoCadastro: {} }, new Set()),
-    { tipo: "consultar", nIdReceb: 701, listagemMagra: false },
+    triarRegistro({ cabec: { nIdReceb: 701, cChaveNfe: CHAVE }, infoCadastro: {} }, NADA),
+    { tipo: "consultar", nIdReceb: 701, incompleta: null },
     "a chave também vem como cChaveNfe",
   );
 });
 
-Deno.test("triarRegistro: listagem magra (sem infoCadastro) não decide — o detalhe confere, como antes", () => {
-  assertEquals(triarRegistro(registro(800, undefined, null), new Set()), { tipo: "consultar", nIdReceb: 800, listagemMagra: true });
-  assertEquals(triarRegistro({ nIdReceb: 801 }, new Set()), { tipo: "consultar", nIdReceb: 801, listagemMagra: true }, "id fora do cabec");
+Deno.test("triarRegistro: o que a listagem não diz não é descartado — vai à consulta como INCOMPLETA", () => {
+  assertEquals(triarRegistro(registro(800, undefined, null), NADA), { tipo: "consultar", nIdReceb: 800, incompleta: "listagem_magra" });
+  assertEquals(triarRegistro({ nIdReceb: 801 }, NADA), { tipo: "consultar", nIdReceb: 801, incompleta: "listagem_magra" }, "id fora do cabec");
+  // Revisão do Codex (2026-10-05): infoCadastro presente não prova cabeçalho inteiro.
+  assertEquals(triarRegistro(registro(802, { cRecebido: "N" }, null), NADA), { tipo: "consultar", nIdReceb: 802, incompleta: "chave_na_listagem" });
+  assertEquals(triarRegistro(registro(803, { cRecebido: "N" }, "123"), NADA), { tipo: "consultar", nIdReceb: 803, incompleta: "chave_na_listagem" });
+});
+
+Deno.test("estadoNoOmie: o mesmo critério para listagem e detalhe — cancelada vence recebida", () => {
+  assertEquals(estadoNoOmie({ cCancelada: "S", cRecebido: "S" }), "cancelado");
+  assertEquals(estadoNoOmie({ cRecebido: " s " }), "recebido_no_omie");
+  assertEquals(estadoNoOmie({ cRecebido: "N", cCancelada: "N" }), null);
+  assertEquals(estadoNoOmie(undefined), null);
+});
+
+Deno.test("identidadeDoRegistro: id do cabec ou do registro; chave normalizada ou null", () => {
+  assertEquals(identidadeDoRegistro({ nIdReceb: "42" }), { id: 42, chave: null });
+  assertEquals(identidadeDoRegistro(registro(43, {}, CHAVE.replace(/(\d{4})/g, "$1 ").trim())), { id: 43, chave: CHAVE });
+  assertEquals(identidadeDoRegistro(registro(-1)), { id: null, chave: CHAVE });
 });
 
 Deno.test("interpretarPaginaListagem: registros e total declarado", () => {
@@ -96,7 +92,7 @@ Deno.test("interpretarPaginaListagem: registros e total declarado", () => {
   assertEquals(interpretarPaginaListagem({}), { tipo: "registros", registros: [], totalPaginas: undefined });
 });
 
-Deno.test("interpretarPaginaListagem: 'não existem registros' com HTTP 200 é fim, não falha", () => {
+Deno.test("interpretarPaginaListagem: 'não existem registros' é fim, não falha", () => {
   assertEquals(interpretarPaginaListagem({ faultstring: "ERROR: Não existem registros para a página [1]!" }), { tipo: "fim" });
 });
 
@@ -113,6 +109,20 @@ Deno.test("interpretarPaginaListagem: outra faultstring é falha — e sai sem a
   assertEquals(interpretarPaginaListagem([registro(1)]).tipo, "falha");
 });
 
+Deno.test("corpoDeFalhaOmie: o HTTP 500 REAL do CC (2026-10-05) volta como corpo — e a listagem o lê como fim", () => {
+  const real = '{"faultstring":"ERROR: N\\u00e3o existem registros para a p\\u00e1gina [1]!","faultcode":"SOAP-ENV:Client-5113"}';
+  const corpo = corpoDeFalhaOmie(real);
+  assertEquals(corpo !== null, true, "o corpo de falha do Omie foi descartado");
+  assertEquals(interpretarPaginaListagem(corpo), { tipo: "fim" });
+});
+
+Deno.test("corpoDeFalhaOmie: o que não é corpo de falha do Omie fica null (falha de transporte)", () => {
+  assertEquals(corpoDeFalhaOmie("<html>502 Bad Gateway</html>"), null);
+  assertEquals(corpoDeFalhaOmie('{"recebimentos":[]}'), null);
+  assertEquals(corpoDeFalhaOmie('[{"faultstring":"x"}]'), null);
+  assertEquals(corpoDeFalhaOmie(""), null);
+});
+
 Deno.test("falhaNoCorpo: detalhe com cabec passa; faultstring vira mensagem redigida", () => {
   assertEquals(falhaNoCorpo({ cabec: { cChaveNFe: CHAVE } }), null);
   assertEquals(falhaNoCorpo({ faultstring: "Recebimento não encontrado" }), "Recebimento não encontrado");
@@ -126,10 +136,6 @@ Deno.test("registrarPulo: cada motivo cai no seu contador", () => {
   registrarPulo(c, "recebido_no_omie");
   registrarPulo(c, "recebido_no_omie");
   registrarPulo(c, "cancelado");
-  registrarPulo(c, "sem_chave");
   registrarPulo(c, "sem_id");
-  assertEquals(
-    [c.ja_importados, c.recebidos_no_omie, c.cancelados, c.sem_chave, c.sem_id, c.consultados, c.importados],
-    [1, 2, 1, 1, 1, 0, 0],
-  );
+  assertEquals([c.ja_importados, c.recebidos_no_omie, c.cancelados, c.sem_id, c.consultados, c.importados], [1, 2, 1, 1, 0, 0]);
 });
