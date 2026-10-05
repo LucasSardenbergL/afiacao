@@ -2172,6 +2172,38 @@ describe('guardrail money-path: omie-sync-sku-items (fila de leadtime)', () => {
     ).toBe(mirrorBlockNamed(helper, 'sku-items-fila'));
   });
 
+  it('CT-e (modelo 57) sai da fila ANTES do backoff, do dedup e de qualquer consulta Omie (OBEN 2026-10-05)', () => {
+    // O frete não tem item de produto: era 17 de 17 linhas da fila do diário das 07:00, e ~51 das 55
+    // consultas desses runs. A decisão é pura (escopo.ts, testada em Deno); aqui se prova que ela
+    // CHEGA à fila, e no lugar certo.
+    expect(
+      vereditoFronteira(src, 'separarCtes'),
+      'REGRESSÃO: a separação do CT-e roda e é DESCARTADA — o frete volta a queimar a cota da Omie',
+    ).toBe('ok');
+    expect(src, 'REGRESSÃO: a fila voltou a nascer dos pendentes BRUTOS, com CT-e')
+      .toMatch(/const \{ consultaveis: pendentes, ctes: ctesForaDaFila \} = separarCtes\(pendentesBrutos\)/);
+    expect(src, 'REGRESSÃO: a fila ordenada não nasce mais da saída do filtro')
+      .toMatch(/const filaOrdenada: NFeFilaRow\[\] = pendentes\b/);
+    expect(src, 'o CT-e excluído tem de ficar VISÍVEL no results (ausente ≠ zero)')
+      .toMatch(/ctes_fora_da_fila: ctesForaDaFila\.length/);
+    // POSIÇÃO (achado do Codex no desenho): pendentes brutos → filtro → backoff/ordem → dedup →
+    // consulta. Depois do dedup, o CT-e podia ser eleito no lugar da NF-e; depois do backoff, contava
+    // em `fila_em_backoff` e no sensor `fila_parada_48h`.
+    const etapas: Array<[string, number]> = [
+      ['pendentes brutos', src.indexOf('.filter((n) => !existingTrackingIds.has(n.id))')],
+      ['separarCtes', src.indexOf('separarCtes(pendentesBrutos)')],
+      ['backoff', src.indexOf('.filter((n) => skuItemsElegivel(')],
+      ['dedup', src.indexOf('skuItemsDedupPorRecebimento(filaOrdenada)')],
+      ['consulta Omie', src.indexOf('await consultarNfe(')],
+    ];
+    for (const [nome, pos] of etapas) {
+      expect(pos, `etapa "${nome}" não encontrada na edge — renomeada? o assert de ordem ficaria cego`).toBeGreaterThan(-1);
+    }
+    for (let k = 1; k < etapas.length; k++) {
+      expect(etapas[k - 1][1], `"${etapas[k - 1][0]}" tem de vir ANTES de "${etapas[k][0]}"`).toBeLessThan(etapas[k][1]);
+    }
+  });
+
   it('toda consulta marca tentativa: sem isso a NFe de 0 itens nunca sai da fila', () => {
     expect(
       count(src, 'marcarTentativa('),
