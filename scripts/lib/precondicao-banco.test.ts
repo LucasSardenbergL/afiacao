@@ -969,13 +969,16 @@ describe('irmã AUSENTE em prod — a vigência no repo decide (Codex, rodada 3 
     const g = v.naoConferidas.find((n) => n.rpc === 'g_irma');
     expect(g?.motivo).toContain('APOSENTADA');
     expect(g?.motivo).toContain(DROP);
+    // UMA linha só: a ausente não vai ao eixo de corpo, que a diria "sem corpo textual comparável" — falso aqui.
+    expect(v.naoConferidas.filter((n) => n.rpc === 'g_irma')).toHaveLength(1);
   });
 
-  it('irmã APOSENTADA mas PRESENTE com o corpo ANTERIOR ⇒ não conta: o gate não manda APLICAR o CREATE de uma função que o repo removeu', () => {
+  it('Codex P1 (adversarial do fix): a aposentadoria NÃO dispensa o eixo de corpo — APOSENTADA mas PRESENTE com o corpo ANTERIOR segue BLOQUEADA', () => {
+    // A aposentadoria do modelo tem falso-positivo (DROP escrito como TEXTO, ida e volta por RENAME): usá-la para
+    // tirar a presente do eixo de corpo transformava bloqueio da main em colagem. Ela só decide sobre a AUSÊNCIA.
     const v = julgar(com({ estado: 'APOSENTADA', por: [DROP] }), leitura({ existe: true, corpo: CORPO_G_ANTERIOR }));
-    expect(v.estado).toBe('LIBERADA');
-    expect(v.desatualizadas).toEqual([]);
-    expect(v.naoConferidas.find((n) => n.rpc === 'g_irma')?.motivo).toContain('EXISTE em prod');
+    expect(v.estado).toBe('BLOQUEADA');
+    expect(v.desatualizadas.map((d) => [d.rpc, d.emProd])).toEqual([['g_irma', ANTERIOR]]);
   });
 
   it('irmã com vigência INDETERMINADA e ausente ⇒ INCERTA, com o motivo do modelo', () => {

@@ -10,7 +10,7 @@
 # CONTROLE+ : a irmã vigente e ausente deixa de ser ausente — o P1 inteiro.
 PEGA | controle+: irma VIGENTE ausente nao bloqueia      | s/^      ausentes\.push\(\{ rpc, edges: \[\], familia: m\.familia,/      [].push({ rpc, edges: [], familia: m.familia,/
 PEGA | aposentada vira indeterminada (INCERTA falso)     | s/^    if \(vig\.estado === 'APOSENTADA'\) \{/    if (false) {/
-PEGA | aposentada PRESENTE volta ao eixo de corpo        | s/^    if \(vig\.estado !== 'APOSENTADA' && m\.existe\) continue;/    if (m.existe) continue;/
+PEGA | aposentada PRESENTE sai do eixo de corpo (Codex)  | s/^    if \(m\.existe\) continue;/    if (m.existe && (corpos.vigencia.get(rpc) ?? NOME_FORA_DO_MODELO).estado !== 'APOSENTADA') continue;/
 PEGA | irma ausente ou aposentada segue ao eixo de corpo | s/^    foraDoCorpo\.add\(rpc\);/    void 0;/
 PEGA | vigencia INDETERMINADA e ausente libera           | s/^  if \(irmasIndeterminadas\.length > 0\) \{/  if (false) {/
 PEGA | nome fora do modelo vale como aposentado          | s/corpos\.vigencia\.get\(rpc\) \?\? NOME_FORA_DO_MODELO/corpos.vigencia.get(rpc) ?? { estado: 'APOSENTADA' as const, por: [] }/

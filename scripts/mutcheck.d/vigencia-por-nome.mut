@@ -14,3 +14,12 @@ PEGA | CREATE perdido nao derruba a aposentada          | s/ids\.length > 0 && p
 PEGA | nome so do controle solto some do mapa           | s/ordenadas\(\[\.\.\.modelo\.nomes, \.\.\.perdidas\.keys\(\)\]\)/ordenadas(modelo.nomes)/
 PEGA | sem identidade modelada vira aposentada          | s/ids\.length > 0 && perdidasDoNome\.length === 0/perdidasDoNome.length === 0/
 PEGA | ultimo CREATE vira o primeiro                    | s/e\.versoes\[e\.versoes\.length - 1\]\.migration/e.versoes[0].migration/
+# Adversarial do Codex sobre o fix (2026-10-05): o modelo aposentava por TEXTO, e ida e volta por RENAME/SET SCHEMA.
+PEGA | DROP como texto em dollar-quote volta a aposentar | s/mascararStrings\(mascararDollarQueNaoExecuta\(removerComentariosSql\(sql\)\)\)/mascararStrings(removerComentariosSql(sql))/
+PEGA | dollar-quote aninhado no DO fica visivel          | s/ehDo \? mascararDollarQueNaoExecuta\(conteudo, true\) :/ehDo ? conteudo :/
+PEGA | corpo de DO escondido (aposentadoria real some)   | s/const ehDo = !dentroDeDo && /const ehDo = false && !dentroDeDo && /
+PEGA | volta por RENAME/SET SCHEMA ignorada              | s/ && ids\.every\(\(e\) => e\.retornoPossivel === undefined\)//
+PEGA | DROP depois da volta nao reaposenta               | s/\(e\.aposentadaPor !== undefined && e\.retornoPossivel === undefined\)/e.aposentadaPor !== undefined/
+PEGA | tipo citado em minusculas nao canonizado          | s/t !== '"char"'\) t = t\.slice\(1, -1\);/t !== '"char"') t = t;/
+PEGA | "char" vira char                                  | s/ && t !== '"char"'\) t = t\.slice/) t = t.slice/
+PEGA | RENAME TO citado com caixa vira o mesmo nome   | s/\(renomeia\[1\] \?\? renomeia\[2\]\.toLowerCase\(\)\)/(renomeia[1] ?? renomeia[2]).toLowerCase()/

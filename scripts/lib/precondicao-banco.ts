@@ -99,8 +99,13 @@
  * ausente seria o bloqueio falso: ausente também é a irmã que uma migration POSTERIOR aposentou (DROP, SET
  * SCHEMA, RENAME), e o histórico de corpos só modela CREATE. Quem separa as duas é `CorposEsperados.vigencia`
  * — o `modelarRepo` reduzido ao nome: VIGENTE e ausente ⇒ `ausentes` (BLOQUEADA, com a ação e a ressalva de
- * DML); APOSENTADA ⇒ fora do conjunto, presente ou não; vigência INDETERMINADA, ou nome que o modelo não
- * conhece, e ausente ⇒ INCERTA.
+ * DML); APOSENTADA e ausente ⇒ não conta; vigência INDETERMINADA, ou nome que o modelo não conhece, e ausente
+ * ⇒ INCERTA.
+ *
+ * A vigência decide só sobre a AUSÊNCIA — onde a main liberava sempre. A irmã PRESENTE segue no eixo de corpo
+ * como antes, aposentada ou não (adversarial do Codex sobre este fix, executado): a aposentadoria do modelo pode
+ * ser falsa, e usá-la para DISPENSAR um bloqueio de corpo trocava bloqueio da main por colagem. Assim o diff é
+ * monotônico: não libera nada que a main bloqueava.
  */
 import {
   classificarComTokens,
@@ -558,12 +563,11 @@ export function julgarPrecondicao(
   // As irmãs da migration (o conjunto acoplado) também têm de ter sido MEDIDAS (Codex, confirmação P1): sem a
   // linha `rpc`, a irmã sumia da sonda e virava "indecidível" — liberando a anterior que ela podia rodar.
   // E têm de EXISTIR (Codex, rodada 3 do #2757): medida ausente, ela caía em "sem corpo comparável" e a leva
-  // saía LIBERADA. A ausência só não conta quando o repo APOSENTOU a irmã — e aposentada não conta nem presente:
-  // mandar APLICAR o CREATE de uma função que uma migration posterior removeu é ordem errada, não cautela.
+  // saía LIBERADA. A ausência só não conta quando o repo APOSENTOU a irmã.
   const nomesAlvo = new Set(alvos.map((a) => a.rpc));
   const origem = origemDasIrmas(alvos, corpos.historico);
   const naoConferidas: RpcNaoConferida[] = [];
-  /** Irmãs que o eixo de corpo NÃO confere: as ausentes (o veredito é da existência) e as aposentadas. */
+  /** Irmãs que o eixo de corpo NÃO confere: as AUSENTES — o veredito delas é da existência. */
   const foraDoCorpo = new Set<string>();
   const irmasIndeterminadas: string[] = [];
   for (const rpc of alvosDeCorpo(alvos, corpos.historico)) {
@@ -573,12 +577,13 @@ export function julgarPrecondicao(
       naoMedidos.push(rpc);
       continue;
     }
-    const vig = corpos.vigencia.get(rpc) ?? NOME_FORA_DO_MODELO;
-    // Presente e (vigente | indeterminada): o eixo de corpo a confere, como sempre.
-    if (vig.estado !== 'APOSENTADA' && m.existe) continue;
+    // PRESENTE: o eixo de corpo a confere, como sempre — aposentada inclusive (adversarial do Codex sobre este fix):
+    // a aposentadoria do modelo pode ser falsa, e dispensar com ela um bloqueio de corpo virava colagem.
+    if (m.existe) continue;
     foraDoCorpo.add(rpc);
+    const vig = corpos.vigencia.get(rpc) ?? NOME_FORA_DO_MODELO;
     if (vig.estado === 'APOSENTADA') {
-      naoConferidas.push({ rpc, motivo: motivoAposentada(vig.por, m.existe) });
+      naoConferidas.push({ rpc, motivo: motivoAposentada(vig.por) });
     } else if (vig.estado === 'VIGENTE') {
       ausentes.push({ rpc, edges: [], familia: m.familia, irma: { de: origem.get(rpc) ?? [], ultimosCreates: vig.ultimosCreates } });
     } else {
@@ -723,12 +728,9 @@ function origemDasIrmas(
   return origem;
 }
 
-/** Por que a irmã aposentada não conta — e, se ela sobreviveu em prod, quem acusa isso (não é este gate). */
-function motivoAposentada(por: readonly string[], existeEmProd: boolean): string {
-  const quem = por.map((p) => `\`${p}\``).join(', ');
-  return existeEmProd
-    ? `APOSENTADA no repo (${quem}), mas EXISTE em prod — não conta para a leva; a sobrevivente é achado do \`deriva:corpo:prod\` (RESSUSCITADA)`
-    : `APOSENTADA no repo (${quem}) — a ausência em prod é a esperada; não conta para a leva`;
+/** Por que a irmã AUSENTE e aposentada não conta: o repo a removeu depois, e a ausência é a esperada. */
+function motivoAposentada(por: readonly string[]): string {
+  return `APOSENTADA no repo (${por.map((p) => `\`${p}\``).join(', ')}) — a ausência em prod é a esperada; não conta para a leva`;
 }
 
 /**

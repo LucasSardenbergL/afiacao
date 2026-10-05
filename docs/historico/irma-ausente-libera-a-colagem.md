@@ -36,14 +36,20 @@ com RPC literal, a única com irmã ausente (`tint-sync-agent`) tem as duas irm�
   `proname` —, montada por `vigenciaPorNome(modelarRepo(lidas))` em `pendencias-pacote.ts` (e no sensor).
 - `vigenciaPorNome` é fail-closed: basta uma identidade viva para `VIGENTE`; assinatura ilegível (no
   `CREATE` ou no `DROP`) ⇒ `INDETERMINADA`; `CREATE` perdido pelo extrator derruba só a `APOSENTADA`; nome
-  que só o controle solto viu ⇒ `INDETERMINADA`.
+  que só o controle solto viu ⇒ `INDETERMINADA`; nome que VOLTOU a `public` por `RENAME TO`/`SET SCHEMA
+  public` depois de aposentado ⇒ `INDETERMINADA` (o modelo não reconstrói a identidade que entra).
+- O modelo só aposenta o que **executa no apply** (`ddlQueExecuta`): DDL de topo e comando estático direto
+  no corpo de `DO`. O texto de qualquer outro dollar-quote — literal de `SELECT`, argumento de `format()`,
+  corpo de função que o extrator perdeu, dollar-quote aninhado no `DO` — não remove nada. E `"int4"` (tipo
+  citado em minúsculas) é `integer`; `"char"` segue sendo o tipo interno, distinto de `char`.
 - No julgamento: irmã **VIGENTE e ausente** ⇒ `ausentes` com a marca `irma` (procedência e último
   `CREATE`) ⇒ BLOQUEADA, com "APLIQUE essa migration" e a mesma ressalva de DML do corpo anterior (agora
-  uma constante só); **APOSENTADA** ⇒ fora do conjunto, presente ou não, com o motivo no rodapé;
-  **INDETERMINADA ou fora do mapa, e ausente** ⇒ INCERTA, dizendo que o "não sei" é do modelo do repo.
-- Decisão de escopo, explícita: a aposentada **presente** também não conta. Mandar "APLIQUE" o `CREATE` de
-  uma função que o repo removeu é ordem errada; a sobrevivente é achado do `deriva:corpo:prod`
-  (RESSUSCITADA), não do gate de deploy. Censo: 0 casos hoje.
+  uma constante só); **APOSENTADA e ausente** ⇒ não conta, com o motivo no rodapé; **INDETERMINADA ou fora
+  do mapa, e ausente** ⇒ INCERTA, dizendo que o "não sei" é do modelo do repo.
+- **A vigência só decide sobre a AUSÊNCIA.** A irmã PRESENTE segue no eixo de corpo como sempre, aposentada
+  ou não. A 1ª versão deste fix tirava a aposentada presente do eixo de corpo — e o Codex mostrou, executando,
+  que a aposentadoria do modelo pode ser falsa: um bloqueio legítimo da main virava colagem. Com a vigência
+  restrita à ausência (onde a main liberava sempre), o diff é **monotônico**: não libera nada que a main bloqueava.
 
 ## Evidência
 
@@ -66,6 +72,24 @@ com RPC literal, a única com irmã ausente (`tint-sync-agent`) tem as duas irm�
   vermelhos — exatamente os novos**, cada um pelo motivo esperado (o reprodutor do Codex saindo LIBERADA e
   `exit 0` com colagem; a aposentada presente BLOQUEADA pelo eixo de corpo; `vigenciaPorNome is not a
   function`), e os 3 controles da lib verdes na mesma invocação. GREEN: **259/259** (os 258 + o teste que torna alcançável o guard "nome sem identidade modelada ⇒ INDETERMINADA").
+  2ª rodada (os achados do Codex): RED sobre o commit da 1ª, fonte intocado — **270 testes, 10 vermelhos,
+  exatamente os novos**, cada um pelo motivo esperado (texto em dollar-quote e ida e volta saindo APOSENTADA;
+  `"int4"` não aposentando; a aposentada presente LIBERADA; os 2 de ponta a ponta saindo 0), com os 2 controles
+  de aposentadoria legítima (DROP estático no `DO`, e a forma real da `fu7`) verdes. GREEN: **270/270**; vitest
+  de `scripts/` 79 arquivos, **3050/3050**; typecheck, knip, eslint, `lint:shell` e o harness, todos 0.
+- **Monotonicidade, por força bruta** (o gate da `origin/main` carregado ao lado do atual): 1.536 combinações de
+  alvo × irmã (sem linha, ausente, em dia, anterior, deriva, sem corpo, overload, cosmética) × vigência ×
+  histórico × indireção × canal × marcador. **0** casos em que a main bloqueava e o atual libera; **6** em que a
+  main liberava e o atual bloqueia — todos com a irmã AUSENTE e vigência VIGENTE, INDETERMINADA ou fora do mapa.
+- **Auto-desafio do modelo** (17 cantos: `DO LANGUAGE`, `UNDO`, `$` em identificador e em literal, barra no `E''`,
+  `$1`, delimitador sem fecho, CRLF, tag unicode aninhada, ordem da volta no arquivo e entre arquivos, CREATE
+  depois da volta, RENAME de outro schema): 16 certos de primeira; o 17º — `RENAME TO "G"`, citado com
+  maiúscula, é OUTRO nome — marcava um retorno falso de `g` (INDETERMINADA, o lado seguro). Corrigido com teste e
+  mutação próprios. ⟪GREEN3⟫
+- **O modelo não mudou no repo real**: `vigenciaPorNome` do commit anterior × do novo sobre as 760 migrations —
+  327 nomes, 320 VIGENTE + 7 APOSENTADA nos dois, **0 diferenças**; aposentadas (identidade@migration),
+  ilegíveis e perdidas idênticas. O endurecimento fecha os caminhos reproduzidos sem mexer no que prod tem hoje
+  (nem no sensor `deriva:corpo:prod`, que usa o mesmo modelo). O censo sobre a mesma sonda repetiu 36 · 0 · 2.
 - **Ponta a ponta** (`scripts/pendencias-pacote.test.ts`): o reprodutor sai **3, sem colagem, nos dois
   transportes** (sonda local e `--dados-nuvem`), com pacotes idênticos; o controle (irmã aposentada por
   `DROP` posterior) sai 0 com a colagem.
@@ -76,10 +100,46 @@ com RPC literal, a única com irmã ausente (`tint-sync-agent`) tem as duas irm�
 
 ## 2ª opinião (Codex)
 
-⟪parecer cru + calibração⟫
+Adversarial no diff da 1ª versão (`gpt-6-astra` · `max` · 733 s · 195.270 tokens). **O que o Codex disse**
+(cru, resumido): "seguraria o diff por dois P1"; nenhum P0. Reproduzidos com migrations e sondas sintéticas:
+
+1. **P1 novo** — aposentadoria FALSA removia um bloqueio válido do eixo de corpo: `SELECT $nota$DROP FUNCTION
+   public.g();$nota$;` (texto) aposentava `g`, e com `g` anterior em prod o veredito ia de BLOQUEADA para
+   LIBERADA (`main` 0 com colagem). O mesmo com `DROP` no corpo de uma função que o extrator perde.
+2. **P1 novo** — ida e volta por `RENAME` (ou `SET SCHEMA private` e de volta) deixava `g` aposentada para
+   sempre: BLOQUEADA → LIBERADA.
+3. **P2 novo** — `DROP FUNCTION public.g("int4")` não aposentava `g(p integer)`: bloqueio falso mandando recriar
+   uma função legitimamente removida.
+4. **P1 preexistente** — irmã sem corpo dollar-quoted (`RETURN 7`) não entra no conjunto acoplado: nem é sondada.
+5. **P2 preexistente** — overload aposentado segue fornecendo o "último corpo" do nome ao histórico.
+
+Sobre o desenho: concordou com a redução ao nome (para julgar AUSÊNCIA), com a ação apontar o último `CREATE`
+vivo, com a vigência obrigatória e o nome fora do mapa ⇒ INCERTA; concordou com dispensar a aposentada presente
+só "quando a aposentadoria estiver comprovada"; e mostrou que a política de DDL dinâmica não valia
+universalmente (`EXECUTE format($sql$DROP …$sql$)` sob `IF FALSE` aposentava). Concedeu: o reprodutor original
+bloqueia; ausência de linha `rpc` prevalece; irmã que é alvo não duplica; INCERTA não manda aplicar;
+`origemDasIrmas` preserva `alvosDeCorpo` nos 326 nomes das 760 migrations.
+
+**Minha calibração** (decisão minha, não do Codex): 1 e 2 aceitos — a regressão vinha de uma extensão MINHA
+(dispensar a aposentada presente). Corrigi nas duas camadas: a vigência deixou de decidir sobre a irmã presente
+(monotonicidade), e a causa no modelo foi fechada (só conta o que executa no apply; retorno por RENAME/SET SCHEMA
+⇒ INDETERMINADA). 3 aceito (canonização do tipo citado). 4 e 5 ficam declarados abaixo — preexistentes, com a
+exposição medida.
+
+**Rodada de confirmação: NÃO rodou.** O `codex-async.sh` recusou no preflight sem gastar a chamada
+(`SALDO_ALTO`: cota em 89% contra o teto de 85%; a janela de 7 dias reabre em 09/10 19:30). O delta seguiu pelo
+Caminho B — a monotonicidade por força bruta e o auto-desafio acima, mais o mutcheck — e fica registrado
+**REVISÃO INDEPENDENTE PENDENTE** para o delta da 2ª rodada.
 
 ## O que segue descoberto (declarado)
 
+- **Irmã sem corpo dollar-quoted fora do conjunto acoplado** (achado 4): o conjunto sai do `historicoDeCorpos`,
+  que só tem `CREATE` com corpo. Exposição medida: **1** identidade no repo inteiro
+  (`omie_sync_identity_snapshot`, na `20260821192817`), que o sensor `deriva:corpo:prod` já cobre por existência.
+- **Overload aposentado no histórico por nome** (achado 5): pode dar `CORPO_ANTERIOR` falso (bloqueio). 0 casos.
+- `DROP` estático no corpo de `DO` conta mesmo sob um `IF` que nunca rode — o modelo não avalia condição de
+  PL/pgSQL. A forma real do repo (`IF to_regprocedure(…) IS NOT NULL THEN … SET SCHEMA private`) é exatamente
+  a que precisa contar.
 - `DROP` por DDL dinâmica (`EXECUTE format('DROP FUNCTION …')`) não tem alvo legível: a função segue
   VIGENTE no modelo e a ausência dela vira BLOQUEADA — o mesmo limite, e a mesma escolha, do sensor
   (`remocoesDe`). Nenhum caso no censo.

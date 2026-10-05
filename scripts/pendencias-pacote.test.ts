@@ -551,6 +551,33 @@ describe('pendencias:pacote — a leitura da edge sai da REF, não do disco', ()
     expect(pacote).toContain(MIGRATION_APOSENTA_G.nome);
   });
 
+  // Adversarial do Codex sobre o fix: M1 cria `g` (1); a PAR cria `f`, que chama `g`, e redefine `g` (7); M3 só CITA o
+  // DROP num literal. O modelo aposentava `g` pelo TEXTO — e o gate dispensava a irmã: saía 0 COM a colagem.
+  const M1_G = {
+    nome: '20260101000000_cria_g.sql',
+    sql: 'CREATE OR REPLACE FUNCTION public.g_irma() RETURNS int LANGUAGE plpgsql AS $$ BEGIN RETURN 1; END; $$;\n',
+  };
+  const M3_NOTA = { nome: '20260505000000_so_cita.sql', sql: 'SELECT $nota$DROP FUNCTION public.g_irma();$nota$;\n' };
+
+  it('Codex P1 (adversarial do fix): DROP como TEXTO não aposenta — prod com o corpo ANTERIOR da irmã BLOQUEIA (3)', () => {
+    const { raiz, git, saida } = montarRepo(CHAMA_F, CHAMA_F, [M1_G, MIGRATION_PAR, M3_NOTA]);
+    const prod = { f_chama_g: CORPO_F, g_irma: ' BEGIN RETURN 1; END; ' };
+    const codigo = main([EDGE, '--saida', saida, '--sem-rede'], raiz, git, sondaFalsa(['f_chama_g', 'g_irma'], prod));
+    expect(codigo).toBe(3);
+    const pacote = readFileSync(saida, 'utf8');
+    expect(pacote).toContain(`EXISTE em prod, mas rodando o corpo de \`${M1_G.nome}\``);
+    expect(pacote).not.toContain('Cole no chat do Lovable');
+  });
+
+  it('Codex P1 (adversarial do fix): DROP como TEXTO não aposenta — a irmã AUSENTE segue VIGENTE e BLOQUEIA (3)', () => {
+    const { raiz, git, saida } = montarRepo(CHAMA_F, CHAMA_F, [M1_G, MIGRATION_PAR, M3_NOTA]);
+    const codigo = main([EDGE, '--saida', saida, '--sem-rede'], raiz, git, sondaFalsa(['f_chama_g'], { f_chama_g: CORPO_F }));
+    expect(codigo).toBe(3);
+    const pacote = readFileSync(saida, 'utf8');
+    expect(pacote).toContain('APLIQUE essa migration');
+    expect(pacote).not.toContain('Cole no chat do Lovable');
+  });
+
   // ── pela NUVEM (2026-09-27): as duas rodadas do transporte chegam ao MESMO pacote ──────────
   // Sem `psql-ro`, a sonda de pré-condição sai por `--sql-nuvem` e volta por `--dados-nuvem`. O
   // que se prova aqui é a FIAÇÃO: o SQL emitido é o da sonda local, a resposta validada chega ao

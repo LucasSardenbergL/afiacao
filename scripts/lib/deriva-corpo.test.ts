@@ -443,6 +443,75 @@ describe('vigenciaPorNome — o modelo do repo reduzido ao NOME que a sonda do g
     expect(v.has('x')).toBe(false);
   });
 
+  // Adversarial do Codex sobre o fix (2026-10-05): o modelo aposentava por TEXTO. Só é remoção o que EXECUTA no
+  // apply — DDL de topo, ou comando estático direto no corpo de um DO —, nunca o texto de outro dollar-quote.
+  describe('a aposentadoria só conta o que EXECUTA no apply', () => {
+    const cria = mig('20260101_a.sql', fn('g', '', ' SELECT 1 '));
+
+    it('Codex P1: DROP escrito como TEXTO num literal dollar-quoted não aposenta (`SELECT $nota$DROP …$nota$`)', () => {
+      expect(vig(cria, mig('20260102_b.sql', 'SELECT $nota$DROP FUNCTION public.g();$nota$;')).get('g')?.estado).toBe('VIGENTE');
+    });
+
+    it('Codex P1: DROP no corpo de uma função que o extrator PERDEU não aposenta — o corpo só roda quando alguém a chama', () => {
+      const limpar = 'CREATE FUNCTION "public"."limpar"()\nRETURNS void LANGUAGE plpgsql AS $$\nBEGIN\n  DROP FUNCTION public.g();\nEND $$;';
+      expect(vig(cria, mig('20260102_b.sql', limpar)).get('g')?.estado).toBe('VIGENTE');
+    });
+
+    it('Codex (e): DROP num dollar-quote ANINHADO no DO (o texto de um EXECUTE format) não aposenta — e aqui ainda sob IF FALSE', () => {
+      const doBloco = 'DO $$ BEGIN IF FALSE THEN EXECUTE format($sql$DROP FUNCTION public.g()$sql$); END IF; END $$;';
+      expect(vig(cria, mig('20260102_b.sql', doBloco)).get('g')?.estado).toBe('VIGENTE');
+    });
+
+    it('controle: DROP estático direto no corpo do DO aposenta (roda no apply)', () => {
+      expect(vig(cria, mig('20260102_b.sql', 'DO $d$ BEGIN DROP FUNCTION IF EXISTS public.g(); END $d$;')).get('g')?.estado).toBe('APOSENTADA');
+    });
+
+    it('controle com a forma REAL do repo (fu7): SET SCHEMA guardado por to_regprocedure dentro do DO aposenta', () => {
+      const fu7 = "DO $$\nBEGIN\n  IF to_regprocedure('public.g()') IS NOT NULL THEN\n    ALTER FUNCTION public.g() SET SCHEMA private;\n  END IF;\nEND $$;";
+      expect(vig(cria, mig('20260102_b.sql', fu7)).get('g')).toEqual({ estado: 'APOSENTADA', por: ['20260102_b.sql'] });
+    });
+  });
+
+  it('Codex P1: ida e volta por RENAME ⇒ INDETERMINADA — o modelo vê a saída e não reconstrói a volta', () => {
+    const v = vig(
+      mig('20260101_a.sql', fn('g', '', ' SELECT 1 ')),
+      mig('20260102_b.sql', 'ALTER FUNCTION public.g() RENAME TO h;\nALTER FUNCTION public.h() RENAME TO g;'),
+    );
+    expect(v.get('g')?.estado).toBe('INDETERMINADA');
+  });
+
+  it('Codex P1: ida e volta por SET SCHEMA ⇒ INDETERMINADA', () => {
+    const v = vig(
+      mig('20260101_a.sql', fn('g', '', ' SELECT 1 ')),
+      mig('20260102_b.sql', 'ALTER FUNCTION public.g() SET SCHEMA private;'),
+      mig('20260103_c.sql', 'ALTER FUNCTION private.g() SET SCHEMA public;'),
+    );
+    expect(v.get('g')?.estado).toBe('INDETERMINADA');
+  });
+
+  it('a volta seguida de um DROP de verdade ⇒ APOSENTADA de novo — o "pode ter voltado" não fica para sempre', () => {
+    const v = vig(
+      mig('20260101_a.sql', fn('g', '', ' SELECT 1 ')),
+      mig('20260102_b.sql', 'ALTER FUNCTION public.g() RENAME TO h;\nALTER FUNCTION public.h() RENAME TO g;'),
+      mig('20260103_c.sql', 'DROP FUNCTION public.g();'),
+    );
+    expect(v.get('g')).toEqual({ estado: 'APOSENTADA', por: ['20260103_c.sql'] });
+  });
+
+  it('`RENAME TO "G"` (citado, com maiúscula) cria OUTRO nome — não é a volta de `g` (auto-desafio do fix)', () => {
+    const v = vig(
+      mig('20260101_a.sql', fn('g', '', ' SELECT 1 ')),
+      mig('20260102_b.sql', 'DROP FUNCTION public.g();\nALTER FUNCTION public.h() RENAME TO "G";'),
+    );
+    expect(v.get('g')).toEqual({ estado: 'APOSENTADA', por: ['20260102_b.sql'] });
+  });
+
+  it('Codex P2: `DROP … g("int4")` aposenta `g(p integer)` — tipo citado em minúsculas é o mesmo tipo; `"char"` NÃO é `char`', () => {
+    const v = vig(mig('20260101_a.sql', fn('g', 'p integer', ' SELECT 1 ')), mig('20260102_b.sql', 'DROP FUNCTION public.g("int4");'));
+    expect(v.get('g')?.estado).toBe('APOSENTADA');
+    expect(identidadeDosArgumentos('a "int4", b "varchar"[], c "char", d "Int4"')).toBe('integer,character varying[],"char","Int4"');
+  });
+
   it('nome no universo SEM identidade modelada ⇒ INDETERMINADA, nunca APOSENTADA (o fail-closed não depende do modelarRepo de hoje)', () => {
     // O `modelarRepo` atual não produz isso; o contrato de `vigenciaPorNome` vale para qualquer modelo.
     const modelo = { identidades: new Map(), nomes: new Set(['g']), migrations: 1, declaracoes: 1, perdidas: [], ilegiveis: [] };
