@@ -92,7 +92,7 @@ acidente, agora explícita, a cada 2 h, com guardas.
   mergeado em 2026-10-01 21:35 UTC (#2744) por ordem do founder, pelo Caminho B** (`sem-codex` no corpo
   do PR; auto-revisão adversarial + falsificação 13/13). **Revisão independente RETROATIVA feita em
   2026-10-05** (gpt-6-astra · max · 658 s · 160.290 tokens, já com o código no ar) — ver "O que o Codex
-  retroativo achou" abaixo: 2 P0 reproduzidos, raros e limitados, viram PR de conserto.
+  retroativo achou" abaixo: 2 P0 reproduzidos, raros e limitados — consertados no #2788 (frente de classe).
 
 ## O deploy (2026-10-05)
 
@@ -129,9 +129,13 @@ acidente, agora explícita, a cada 2 h, com guardas.
 - **Calibração:** os P0 são reais e raros (mudança de lista nos ~4 s de paginação; sobreposição de runs) e
   LIMITADOS (o produto volta ao saldo certo no próximo `sync_inventory`, ≤ 30 min). Sem rollback: a v1.13
   fazia uma versão mais ampla do mesmo dano toda noite (~694 zerados) e deixava fantasma de até 24 h.
-  Desenho proposto para o conserto: zerar só quem NENHUMA listagem viu recentemente (o `synced_at` do
-  `sync_inventory` de 30 min como testemunha independente — cobre os dois P0), gravar o zero com condição de
-  `updated_at` (compare-and-set) e levar a recusa ao `error_message`.
+- **O conserto é o #2788** (frente de classe, `sync-reprocess` v1.15 + `omie-analytics-sync` v1.7): a ausência
+  na listagem só DESCOBRE candidatos, e o zero é AUTORIZADO por confirmação explícita no Omie
+  (`ListarPosEstoque` em modo "S" filtrado por produto — saldo 0 explícito em todas as entradas; ausente ou
+  ilegível = desconhecido, nunca zero); a escrita é `UPDATE` com compare-and-set na versão lida. O desenho que
+  eu tinha esboçado — usar o `synced_at` do `sync_inventory` de 30 min como testemunha — foi descartado: é
+  outra listagem em modo "N" da mesma conta, com a mesma paginação por offset sobre a lista viva, ou seja, mais
+  uma ausência, não uma confirmação.
 
 ## Como conferir depois do deploy
 
