@@ -4,7 +4,7 @@
 // outra coisa que não o que o motor contou.
 
 export type MotivoExclusaoPedido = "dedup_app" | "etapa_nao_aberta" | "repetido_na_varredura";
-export type MotivoExclusao = MotivoExclusaoPedido | "item_sem_sku" | "sku_nao_habilitado" | "quantidade_invalida";
+type MotivoExclusao = MotivoExclusaoPedido | "item_sem_sku" | "sku_nao_habilitado" | "quantidade_invalida";
 
 export interface LinhaObservada {
   omie_codigo_pedido: number;
