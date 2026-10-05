@@ -6,10 +6,11 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
   analisar,
+  analisarPassos,
   type Arquivo,
   CONHECIDOS,
   confrontar,
-  corposVivosDe,
+  corposVivosDePassos,
   lerRepo,
   lerSql,
   type Motivo,
@@ -19,21 +20,40 @@ import {
   veredito,
   VIVOS_PERMITIDOS,
 } from './like-cru-em-migrations-gate';
+import { contarPulsos, descreverPulsos, drenarCedendo } from '@/test/loop-livre';
 
 const RAIZ = resolve(fileURLToPath(import.meta.url), '../..');
 const REPO = lerRepo(RAIZ);
+
+/**
+ * O repo inteiro DENTRO do `it`, drenado CEDENDO o event loop do worker — para os `it` que PAGAM a
+ * varredura: o fold dos corpos vivos (sem `corpos`) ou a leitura que erra o memo do `lerSql` (chave
+ * = texto + caminho; renomear o caminho relê tudo). De uma vez, esses eram bloqueios síncronos de até
+ * 3,2s sob carga em 2026-10-05, e acima de 60s o RPC do vitest estoura — `test` rc=1 sem teste
+ * falhando (src/test/loop-livre.ts). Os `it` que só releem o memo (3–4ms) ficam no `analisar`
+ * síncrono: não há o que ceder, e um pulso sobre trabalho tão curto não bate nem cedendo.
+ */
+async function analisarCedendo(arquivos: readonly Arquivo[], corpos?: ReadonlyMap<string, string>) {
+  const p = await contarPulsos(async () =>
+    drenarCedendo(
+      analisarPassos(arquivos, corpos ?? (await drenarCedendo(corposVivosDePassos(arquivos))), VIVOS_PERMITIDOS),
+    ),
+  );
+  expect(p.batidas, descreverPulsos(p)).toBeGreaterThanOrEqual(2);
+  return p.resultado;
+}
 const FIX = 'supabase/migrations/20260929000234_padrao_like_contem_escapa_curinga.sql';
 
 const motivos = (sql: string): Motivo[] => lerSql('fixture.sql', sql).sitios.map((s) => s.motivo);
 const fixture = (fonte: string, caminho = 'fixture/x.sql'): Arquivo => ({ caminho, fonte });
 
 describe('calibração — o pré-fix acusa e a correção passa (arquivos REAIS)', () => {
-  it('sem a 20260929000234, os 5 corpos vivos do repo voltam a ser os crus e acusam os 9 sítios', () => {
+  it('sem a 20260929000234, os 5 corpos vivos do repo voltam a ser os crus e acusam os 9 sítios', async () => {
     // A 20261001014100 (universo de pedidos) recria melhoria_clientes_por_produto POR CIMA da FIX e herda o
     // escape: no contrafactual ela sai junto, senão a melhoria não volta a ser a crua (a última a recriar vence).
     const SUCESSORAS = ['supabase/migrations/20261001014100_universo_pedidos_recencia.sql'];
     const sem = REPO.arquivos.filter((a) => a.caminho !== FIX && !SUCESSORAS.includes(a.caminho));
-    const r = analisar(sem, corposVivosDe(sem), VIVOS_PERMITIDOS);
+    const r = await analisarCedendo(sem);
     const porFuncao = new Map<string, number>();
     for (const c of r.corposVivosComSitio) {
       const f = c.split(' — ')[0];
@@ -189,13 +209,13 @@ describe('o repo', () => {
     expect(r.permitidosInvalidos).toEqual([]);
   });
 
-  it('sítio novo numa migration nova reprova — e o texto diz onde', () => {
+  it('sítio novo numa migration nova reprova — e o texto diz onde', async () => {
     const nova = fixture(
       "CREATE OR REPLACE FUNCTION public.busca_nova(p text) RETURNS SETOF int LANGUAGE sql AS $$ SELECT 1 FROM t WHERE nome ILIKE '%' || p || '%' $$;",
       'supabase/migrations/29990101000000_busca_nova.sql',
     );
     const arquivos = [...REPO.arquivos, nova];
-    const v = veredito(analisar(arquivos, corposVivosDe(arquivos), VIVOS_PERMITIDOS), true);
+    const v = veredito(await analisarCedendo(arquivos), true);
     expect(v.codigo).toBe(1);
     expect(v.linhas.join('\n')).toContain('NOVO supabase/migrations/29990101000000_busca_nova.sql');
     expect(v.linhas.join('\n')).toContain('CORPO VIVO busca_nova(text)');
@@ -228,11 +248,11 @@ describe('o repo', () => {
     expect(v.linhas.join('\n')).toContain('PERMITIDO reposicao_alerta_pedido_minimo_tick(): o sítio');
   });
 
-  it('10 migrations não são o repo → INDETERMINADO só pelo piso de migrations', () => {
+  it('10 migrations não são o repo → INDETERMINADO só pelo piso de migrations', async () => {
     // Os demais arquivos continuam LIDOS (os operadores não caem), só deixam de contar como migration:
     // cortar a lista derrubaria junto o piso de operadores, e o teste não isolaria piso nenhum.
     const dez = REPO.arquivos.map((a, i) => (i < 10 ? a : { ...a, caminho: `fora/${a.caminho}` }));
-    const v = veredito(analisar(dez, REPO.corpos, VIVOS_PERMITIDOS), true);
+    const v = veredito(await analisarCedendo(dez, REPO.corpos), true);
     expect(v.codigo).toBe(2);
     expect(v.linhas.filter((l) => l.startsWith('  · '))).toEqual([`  · 10 migration(s) lida(s) < piso ${PISOS.migrations}`]);
   });

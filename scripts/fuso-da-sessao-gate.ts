@@ -28,7 +28,8 @@
 //     `date_trunc` de calendário sobre o relógio da sessão, esse, é medido em TODO corpo vivo (e em
 //     view, cron e skill) por `fuso-da-sessao-em-migrations-e-skills-gate.ts`;
 //   · SQL dinâmico montado em string (`EXECUTE format(...)`).
-import { modelarRepo } from './lib/deriva-corpo';
+import { modelarRepoPassos, type ModeloDoRepo } from './lib/deriva-corpo';
+import { drenar, type Passos } from '@/lib/gates/passos';
 import type { MigrationLida } from './lib/corpo-esperado';
 import { removerComentariosSql } from './lib/sql-comentarios';
 
@@ -141,7 +142,7 @@ export const PISOS = {
 
 export interface Varredura {
   /** O modelo que a varredura construiu — quem precisa dele reaproveita em vez de remodelar 740 arquivos. */
-  modelo: ReturnType<typeof modelarRepo>;
+  modelo: ModeloDoRepo;
   migrations: number;
   identidadesVivas: number;
   identidadesComSp: string[];
@@ -150,11 +151,19 @@ export interface Varredura {
 }
 
 export function varrerMigrations(migrations: readonly MigrationLida[]): Varredura {
-  const modelo = modelarRepo(migrations);
+  return drenar(varrerMigrationsPassos(migrations));
+}
+
+/** A varredura como gerador (`@/lib/gates/passos`): cede uma vez por migration (o fold) e uma por
+ *  identidade (o detector sobre o corpo vivo, ~3× o custo do fold) — o teste drena cedendo o event
+ *  loop do worker do vitest. */
+export function* varrerMigrationsPassos(migrations: readonly MigrationLida[]): Passos<Varredura> {
+  const modelo = yield* modelarRepoPassos(migrations);
   const achados = new Map<string, Achado[]>();
   const identidadesComSp: string[] = [];
   let vivas = 0;
   for (const [alvo, estado] of modelo.identidades) {
+    yield; // no TOPO: as saídas por `continue` também cedem
     if (estado.aposentadaPor) continue;
     const ultima = estado.versoes[estado.versoes.length - 1];
     if (!ultima?.corpo) continue;

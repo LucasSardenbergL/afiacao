@@ -10,7 +10,7 @@
  *   3. reprovar um gate por exclusividade zero (o veredito que o parecer do Codex proibiu:
  *      corpus curto nao mede gate raro).
  */
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -19,6 +19,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
 
 import { removerComentarios } from '@/lib/gates/limpeza-fonte';
+import { contarPulsos, descreverPulsos, rodar } from '@/test/loop-livre';
 
 import {
   CORPUS_DIR,
@@ -527,20 +528,25 @@ describe('conferirAncoraDaRaiz — o vacuo que desligaria a maquina inteira', ()
   // sai 1, e casar so o numero faria a sabotagem "passar" pelo motivo errado no dia em que a
   // matriz reprovasse. Marcador ASCII, caixa fixa, casado sem `-i`.
   const MARCA = 'ANCORA-DA-RAIZ-QUEBRADA';
-  const rodarGate = (args: string[]) => {
-    const r = spawnSync('bun', ['scripts/exclusividade-gate.ts', ...args], { encoding: 'utf8' });
-    return { status: r.status, saida: `${r.stdout ?? ''}${r.stderr ?? ''}` };
+  // O gate num filho ASSÍNCRONO (`rodar`): os dois `bun` síncronos seguidos deste `it` eram UM
+  // bloqueio do event loop do worker (2,3s sob carga em 2026-10-05), e acima de 60s o RPC do vitest
+  // estoura — `test` rc=1 sem teste falhando (src/test/loop-livre.ts). O pulso de toda execução é
+  // conferido.
+  const rodarGate = async (args: string[]) => {
+    const p = await contarPulsos(() => rodar('bun', ['scripts/exclusividade-gate.ts', ...args]));
+    expect(p.batidas, descreverPulsos(p)).toBeGreaterThanOrEqual(2);
+    return { status: p.resultado.status, saida: `${p.resultado.stdout}${p.resultado.stderr}` };
   };
 
-  it('o BINARIO reprova (exit 1 + marcador) contra um ci.yml sem a raiz', () => {
+  it('o BINARIO reprova (exit 1 + marcador) contra um ci.yml sem a raiz', async () => {
     const tmp = mkdtempSync(join(tmpdir(), 'excl-ancora-'));
     const arq = join(tmp, 'ci-sabotado.yml');
     writeFileSync(arq, ciSemRaiz);
     try {
-      const controle = rodarGate([]);
+      const controle = await rodarGate([]);
       expect(controle.saida, 'controle ja vermelho — nenhuma sabotagem abaixo provaria nada').not.toContain(MARCA);
 
-      const sabotado = rodarGate(['--ci', arq]);
+      const sabotado = await rodarGate(['--ci', arq]);
       expect(sabotado.saida).toContain(MARCA);
       expect(sabotado.status).toBe(1);
     } finally {

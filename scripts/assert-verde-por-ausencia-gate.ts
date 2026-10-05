@@ -70,6 +70,7 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 
 import { diagnosticarShell, removerComentariosShell } from '@/lib/gates/limpeza-shell';
+import { drenar, type Passos } from '@/lib/gates/passos';
 import { alarmesDoStripper, enumerar } from './shell-variavel-colada-gate';
 
 /** `import.meta.dir` é do Bun e não existe sob o vitest — por isso preguiçosa, como nos irmãos. */
@@ -426,10 +427,18 @@ export function detectarSql(caminho: string, fonte: string): { sitios: Sitio[]; 
 }
 
 export function analisar(arquivos: { caminho: string; fonte: string }[]): Analise {
+  return drenar(analisarPassos(arquivos));
+}
+
+/** A análise como gerador (`@/lib/gates/passos`): `yield` por arquivo (no TOPO do laço — o ramo `.sql`
+ *  sai por `continue`) — o teste que varre o repo inteiro drena cedendo o event loop do worker do
+ *  vitest (o RPC estoura com >60s de bloqueio: docs/historico/rpc-do-vitest-e-o-loop-preso.md). */
+export function* analisarPassos(arquivos: { caminho: string; fonte: string }[]): Passos<Analise> {
   const r: Analise = {
     caminhos: [], linhasDeCodigo: 0, asserts: 0, violacoes: [], alarmes: [], caminhosSql: [], assertsSql: 0, sitiosSql: [],
   };
   for (const a of arquivos) {
+    yield;
     if (a.caminho.endsWith('.sql')) {
       const d = detectarSql(a.caminho, a.fonte);
       r.caminhosSql.push(a.caminho);

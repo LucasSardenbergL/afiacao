@@ -4,7 +4,8 @@ import { fileURLToPath } from 'node:url';
 
 import { beforeAll, describe, expect, it } from 'vitest';
 
-import { analisar, detectar, veredito, type Analise } from './fuso-da-sessao-em-provas-gate';
+import { analisar, analisarPassos, detectar, veredito, type Analise } from './fuso-da-sessao-em-provas-gate';
+import { contarPulsos, descreverPulsos, drenarCedendo, type Pulsos } from '@/test/loop-livre';
 import { PISOS, RAIZES_PADRAO } from './relogio-bash-em-provas-gate';
 import { enumerar } from './shell-variavel-colada-gate';
 
@@ -231,10 +232,19 @@ describe('veredito — 2 nunca é "passou"', () => {
 describe('o corpo REAL do repo', () => {
   let arquivos: { caminho: string; fonte: string }[];
   let r: Analise;
-  beforeAll(() => {
+  // A varredura do repo CEDE o event loop entre os arquivos (`analisarPassos` + `drenarCedendo`):
+  // de uma vez, ela era UM bloqueio síncrono no `beforeAll` (4,6s sob carga em 2026-10-05), e acima
+  // de 60s o RPC do vitest estoura — `test` rc=1 sem teste falhando (src/test/loop-livre.ts).
+  let pulsos: Pulsos<Analise>;
+  beforeAll(async () => {
     arquivos = enumerar(RAIZES_PADRAO, RAIZ).map((c) => ({ caminho: relative(RAIZ, c), fonte: readFileSync(c, 'utf8') }));
-    r = analisar(arquivos);
+    pulsos = await contarPulsos(() => drenarCedendo(analisarPassos(arquivos)));
+    r = pulsos.resultado;
   }, 30_000);
+
+  it('a varredura do repo cede o event loop do worker — o pulso bate entre os arquivos', () => {
+    expect(pulsos.batidas, descreverPulsos(pulsos)).toBeGreaterThanOrEqual(2);
+  });
 
   it('nenhuma prova trunca o relógio da sessão sem fuso', () => {
     expect(r.violacoes.map((s) => `${s.arquivo}:${s.linha}  ${s.trecho}`)).toEqual([]);
@@ -251,7 +261,7 @@ describe('o corpo REAL do repo', () => {
    * acusar exatamente aquele sítio, e nada além dele. No arquivo REAL, e não num fixture: é ali que
    * o stripper precisa atravessar o arquivo sem perder o fio.
    */
-  it('falsificação: devolver o seed de antes do conserto à positivação acusa exatamente ele (e o corpo intocado, não)', () => {
+  it('falsificação: devolver o seed de antes do conserto à positivação acusa exatamente ele (e o corpo intocado, não)', async () => {
     const alvo = arquivos.find((a) => a.caminho === ARQUIVO_DA_POSITIVACAO);
     expect(alvo, `${ARQUIVO_DA_POSITIVACAO} sumiu do universo — a falsificação perdeu o alvo`).toBeDefined();
     expect(veredito(r, true).codigo).toBe(0); // controle, antes de sabotar
@@ -259,7 +269,11 @@ describe('o corpo REAL do repo', () => {
     const heredoc = doAlvo.findIndex((l) => /^[^#]*<<-?\s*'SQL'\s*$/.test(l));
     expect(heredoc, `${ARQUIVO_DA_POSITIVACAO} sem heredoc <<'SQL' — a falsificação perdeu o alvo`).toBeGreaterThanOrEqual(0);
     const sabotada = [...doAlvo.slice(0, heredoc + 1), SEED_145, ...doAlvo.slice(heredoc + 1)].join('\n');
-    const rs = analisar(arquivos.map((a) => (a === alvo ? { ...a, fonte: sabotada } : a)));
+    const ps = await contarPulsos(() =>
+      drenarCedendo(analisarPassos(arquivos.map((a) => (a === alvo ? { ...a, fonte: sabotada } : a)))),
+    );
+    expect(ps.batidas, descreverPulsos(ps)).toBeGreaterThanOrEqual(2);
+    const rs = ps.resultado;
     expect(rs.violacoes).toEqual([{ arquivo: ARQUIVO_DA_POSITIVACAO, linha: heredoc + 2, trecho: SEED_145.trim(), motivo: SEM_FUSO }]);
     expect(veredito(rs, true).codigo).toBe(1);
   });
