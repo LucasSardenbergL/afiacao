@@ -4,10 +4,10 @@
 // Os helpers puros da triagem. O laço REAL do cron (quem gasta a consulta, o que grava, o que vai
 // para a resposta) está em rodada_test.ts — a revisão do Codex de 2026-10-05 mostrou que testar só
 // estes helpers deixava o laço sabotável com tudo verde.
+import { estadoNoOmie } from "./estado.ts";
 import {
   contagemVazia,
   corpoDeFalhaOmie,
-  estadoNoOmie,
   falhaNoCorpo,
   identidadeDoRegistro,
   interpretarPaginaListagem,
@@ -55,7 +55,7 @@ Deno.test("triarRegistro: já importada vence 'recebida no Omie' — a NF-e do a
 Deno.test("triarRegistro: pendente com chave vai à consulta como COMPLETA, com o id numérico", () => {
   assertEquals(triarRegistro(registro("700", { cRecebido: "N", cCancelada: "N" }), NADA), { tipo: "consultar", nIdReceb: 700, incompleta: null });
   assertEquals(
-    triarRegistro({ cabec: { nIdReceb: 701, cChaveNfe: CHAVE }, infoCadastro: {} }, NADA),
+    triarRegistro({ cabec: { nIdReceb: 701, cChaveNfe: CHAVE }, infoCadastro: { cRecebido: "N", cCancelada: "N" } }, NADA),
     { tipo: "consultar", nIdReceb: 701, incompleta: null },
     "a chave também vem como cChaveNfe",
   );
@@ -64,16 +64,21 @@ Deno.test("triarRegistro: pendente com chave vai à consulta como COMPLETA, com 
 Deno.test("triarRegistro: o que a listagem não diz não é descartado — vai à consulta como INCOMPLETA", () => {
   assertEquals(triarRegistro(registro(800, undefined, null), NADA), { tipo: "consultar", nIdReceb: 800, incompleta: "listagem_magra" });
   assertEquals(triarRegistro({ nIdReceb: 801 }, NADA), { tipo: "consultar", nIdReceb: 801, incompleta: "listagem_magra" }, "id fora do cabec");
+  assertEquals(triarRegistro(registro(804, {}), NADA), { tipo: "consultar", nIdReceb: 804, incompleta: "listagem_magra" }, "estado sem os 'N' explícitos");
   // Revisão do Codex (2026-10-05): infoCadastro presente não prova cabeçalho inteiro.
-  assertEquals(triarRegistro(registro(802, { cRecebido: "N" }, null), NADA), { tipo: "consultar", nIdReceb: 802, incompleta: "chave_na_listagem" });
-  assertEquals(triarRegistro(registro(803, { cRecebido: "N" }, "123"), NADA), { tipo: "consultar", nIdReceb: 803, incompleta: "chave_na_listagem" });
+  const aberta = { cRecebido: "N", cCancelada: "N" };
+  assertEquals(triarRegistro(registro(802, aberta, null), NADA), { tipo: "consultar", nIdReceb: 802, incompleta: "chave_na_listagem" });
+  assertEquals(triarRegistro(registro(803, aberta, "123"), NADA), { tipo: "consultar", nIdReceb: 803, incompleta: "chave_na_listagem" });
 });
 
-Deno.test("estadoNoOmie: o mesmo critério para listagem e detalhe — cancelada vence recebida", () => {
+Deno.test("estadoNoOmie: cancelada vence recebida; aberta só com os dois 'N' explícitos — o resto é desconhecido", () => {
   assertEquals(estadoNoOmie({ cCancelada: "S", cRecebido: "S" }), "cancelado");
   assertEquals(estadoNoOmie({ cRecebido: " s " }), "recebido_no_omie");
-  assertEquals(estadoNoOmie({ cRecebido: "N", cCancelada: "N" }), null);
-  assertEquals(estadoNoOmie(undefined), null);
+  assertEquals(estadoNoOmie({ cRecebido: "N", cCancelada: "N" }), "aberta");
+  assertEquals(estadoNoOmie({ cRecebido: " n ", cCancelada: "n" }), "aberta", "caixa e espaço");
+  assertEquals(estadoNoOmie({ cRecebido: "N" }), "desconhecido", "sem cCancelada");
+  assertEquals(estadoNoOmie({}), "desconhecido");
+  assertEquals(estadoNoOmie(undefined), "desconhecido");
 });
 
 Deno.test("identidadeDoRegistro: id do cabec ou do registro; chave normalizada ou null", () => {

@@ -15,6 +15,7 @@
 
 import { classificarFaultstring, redigirSegredo } from "../_shared/omie-falha.ts";
 import { normalizarChaveAcesso } from "./chave.ts";
+import { estadoNoOmie } from "./estado.ts";
 
 /** Registro da `ListarRecebimentos` — só o que a triagem lê. */
 export interface RegistroListagem {
@@ -103,22 +104,6 @@ export function corpoDeFalhaOmie(texto: string): Record<string, unknown> | null 
   }
 }
 
-const sim = (v: unknown) => String(v ?? "").trim().toUpperCase() === "S";
-
-/**
- * O estado da NF-e no Omie pelo `infoCadastro` — o MESMO critério na listagem e no detalhe (a
- * revisão do Codex de 2026-10-05 achou o detalhe olhando só `cRecebido === "S"`: a listagem magra
- * importava a cancelada como pendente). Cancelada vence recebida.
- */
-export function estadoNoOmie(
-  info: { cCancelada?: unknown; cRecebido?: unknown } | null | undefined,
-): "cancelado" | "recebido_no_omie" | null {
-  if (!info) return null;
-  if (sim(info.cCancelada)) return "cancelado";
-  if (sim(info.cRecebido)) return "recebido_no_omie";
-  return null;
-}
-
 /** Id e chave de um registro da listagem; `null` onde o Omie não deu valor utilizável. */
 export function identidadeDoRegistro(rec: RegistroListagem): { id: number | null; chave: string | null } {
   const cabec = rec.cabec ?? {};
@@ -137,7 +122,11 @@ export interface JaImportados {
 
 export type MotivoPulo = "sem_id" | "ja_importado" | "cancelado" | "recebido_no_omie";
 
-/** Por que a candidata é INCOMPLETA: a listagem não deu o bastante para decidir sem a consulta. */
+/**
+ * Por que a candidata é INCOMPLETA: a listagem não deu o bastante para decidir sem a consulta —
+ * `listagem_magra` = sem estado utilizável (sem `infoCadastro`, ou sem os "N" explícitos);
+ * `chave_na_listagem` = aberta, mas sem chave legível.
+ */
 export type Incompleta = "listagem_magra" | "chave_na_listagem";
 
 export type Triagem =
@@ -147,17 +136,16 @@ export type Triagem =
 /**
  * Decide se o registro merece a consulta de detalhe da rodada. Só PULA com evidência da própria
  * listagem: já importada (pelo id ou pela chave), cancelada ou recebida no Omie. O que a listagem
- * não diz não é descartado — vai à consulta como INCOMPLETA (sem `infoCadastro`, ou sem chave
- * legível: a presença de `infoCadastro` não prova que o cabeçalho veio inteiro), e a rodada prefere
- * as completas.
+ * não diz não é descartado — vai à consulta como INCOMPLETA (estado desconhecido, ou sem chave
+ * legível: a presença de `infoCadastro` não prova que o cabeçalho veio inteiro).
  */
 export function triarRegistro(rec: RegistroListagem, ja: JaImportados): Triagem {
   const { id, chave } = identidadeDoRegistro(rec);
   if (id === null) return { tipo: "pular", motivo: "sem_id" };
   if (ja.ids.has(id) || (chave !== null && ja.chaves.has(chave))) return { tipo: "pular", motivo: "ja_importado" };
-  if (!rec.infoCadastro) return { tipo: "consultar", nIdReceb: id, incompleta: "listagem_magra" };
   const estado = estadoNoOmie(rec.infoCadastro);
-  if (estado !== null) return { tipo: "pular", motivo: estado };
+  if (estado === "cancelado" || estado === "recebido_no_omie") return { tipo: "pular", motivo: estado };
+  if (estado === "desconhecido") return { tipo: "consultar", nIdReceb: id, incompleta: "listagem_magra" };
   if (chave === null) return { tipo: "consultar", nIdReceb: id, incompleta: "chave_na_listagem" };
   return { tipo: "consultar", nIdReceb: id, incompleta: null };
 }

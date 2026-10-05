@@ -4431,7 +4431,7 @@ describe('guardrail: omie-nfe-recebimento-sync não conta NF-e como importada qu
   const handler = fatia('Deno.serve(', '\n});');
   const deps = fatia('function depsDaConta(', '\n}\n');
   const omie = fatia('async function omieCall(', '\n}\n');
-  const gravacao = fatiaDe(rodada, 'async function consultarEGravar(', '\n}\n');
+  const gravacao = fatiaDe(rodada, 'async function gravar(', '\n}\n');
 
   it('sentinela: leu a edge real e a rodada, e o stripper não comeu nem deixou de limpar os arquivos', () => {
     expect(bruto.length, 'index.ts vazio/inexistente').toBeGreaterThan(5_000);
@@ -4507,6 +4507,15 @@ describe('guardrail: omie-nfe-recebimento-sync não conta NF-e como importada qu
     );
     expect(deps, 'o bigint pode vir como texto: sem Number(), o Set nunca casa').toContain('idsJa.add(Number(r.omie_id_receb))');
     expect(deps, 'as chaves vão em lotes (URL)').toContain('chaves.slice(i, i + LOTE_CHAVES)');
+  });
+
+  it('cron: o adaptador real não cala falha nem esvazia o que grava', () => {
+    // Sabotagens que a 3ª rodada do Codex (2026-10-05) comprovou passarem: o Deno usa falsos, não este adaptador.
+    expect(handler, 'success tem de refletir os erros da rodada').toContain('success: errors.length === 0');
+    expect(src, 'a vez do sorteio tem de vir do relógio, não de uma constante').toMatch(/const vez = Math\.floor\(Date\.now\(\) \/ 60_000\);/);
+    expect(deps, 'os itens do detalhe têm de chegar ao insert').toContain('inserirItens(supabase, itens, nfeRecebimentoId)');
+    expect(helper, 'o erro do insert de itens tem de voltar ao chamador').toContain('return error ? error.message : null');
+    expect(count(deps, 'if (error) throw new Error(error.message);'), 'leitura do banco que falha não pode virar "nada importado"').toBe(2);
   });
 
   it('o Omie devolve o corpo de falha mesmo com HTTP 500 — quem classifica é o chamador', () => {

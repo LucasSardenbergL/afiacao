@@ -10,11 +10,11 @@ import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import { avaliarPagina, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
 import { type CabecalhoRecebimentoRow, mapearCabecalho, type OmieCabecRecebimento } from "./cabecalho.ts";
 import { normalizarChaveAcesso } from "./chave.ts";
+import { estadoNoOmie } from "./estado.ts";
 import type { OmieRecebimentoItem } from "./itens.ts";
 import {
   type ContagemArmazem,
   contagemVazia,
-  estadoNoOmie,
   falhaNoCorpo,
   identidadeDoRegistro,
   interpretarPaginaListagem,
@@ -89,18 +89,36 @@ interface Listagem {
 
 const semMensagem = (e: unknown) => mensagemDeErro(e) ?? "falha sem mensagem";
 
+/** FNV-1a de 32 bits com o finalizador do murmur3: espalha bem até entradas sequenciais. */
+function espalhar(texto: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < texto.length; i++) {
+    h ^= texto.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  h ^= h >>> 16;
+  h = Math.imul(h, 0x85ebca6b);
+  h ^= h >>> 13;
+  h = Math.imul(h, 0xc2b2ae35);
+  h ^= h >>> 16;
+  return h >>> 0;
+}
+
 /**
- * Qual candidata recebe a consulta: RODÍZIO pela vez da rodada (a hora, no cron). Sem memória entre
- * rodadas, escolher sempre "a primeira" — ou "a primeira completa" — deixa uma candidata cuja
+ * Quais candidatas recebem a consulta: SORTEIO determinístico por hash de (vez, id). Sem memória
+ * entre rodadas, escolher sempre "a primeira" — ou "a primeira completa" — deixa uma candidata cuja
  * consulta termina em pulo (recebida só no detalhe, duplicata só pela chave…) com a consulta de TODA
- * rodada, e as de trás nunca são vistas: foi o que travou a Oben desde 14/08, e a revisão do Codex
- * de 2026-10-05 reproduziu a mesma trava com a prioridade às completas. Com passo 1, cada candidata
- * recebe a consulta ao menos uma vez a cada N rodadas.
+ * rodada: foi o que travou a Oben desde 14/08. Um rodízio pelo número da vez também falha — o cron
+ * roda das 10 às 22h, e com 24 candidatas a hora módulo 24 nunca passava pelos índices 0–9 e 23
+ * (3ª revisão do Codex, 2026-10-05). O hash não tem essa estrutura: em toda rodada, cada candidata
+ * tem chance 1/N, mesmo com a fila mudando entre uma rodada e outra.
  */
-export function escolherNaVez(fila: readonly number[], vez: number, quantas: number): number[] {
-  if (fila.length === 0) return [];
-  const inicio = ((Math.trunc(vez) % fila.length) + fila.length) % fila.length;
-  return Array.from({ length: Math.min(quantas, fila.length) }, (_, k) => fila[(inicio + k) % fila.length]);
+export function escolherNaVez(candidatas: readonly number[], vez: number, quantas: number): number[] {
+  return candidatas
+    .map((id) => ({ id, peso: espalhar(`${Math.trunc(vez)}:${id}`) }))
+    .sort((a, b) => a.peso - b.peso || a.id - b.id)
+    .slice(0, Math.max(0, quantas))
+    .map((c) => c.id);
 }
 
 async function lerListagem(deps: DepsRodada, conta: string, dtDe: string, erros: string[]): Promise<Listagem> {
@@ -143,15 +161,15 @@ async function gravar(
   erros: string[],
 ): Promise<Desfecho> {
   const cabec = detalhe.cabec ?? {};
-  // O MESMO critério da listagem: a incompleta chega aqui sem triagem de estado, e a NF-e pode ter
-  // sido cancelada ou recebida entre a listagem e a consulta — importá-la seria pendência fantasma.
-  // Sem `infoCadastro` não há evidência de que a nota está aberta: não grava (precisão > recall).
-  if (!detalhe.infoCadastro) {
-    erros.push(`${conta} ConsultarRecebimento ${nIdReceb}: o detalhe veio sem infoCadastro — estado no Omie desconhecido, NF-e não importada`);
+  // O MESMO critério da listagem (estado.ts): a incompleta chega aqui sem triagem de estado, e a NF-e
+  // pode ter sido cancelada ou recebida entre a listagem e a consulta — importá-la seria pendência
+  // fantasma. Sem os "N" explícitos não há evidência de nota aberta: não grava (precisão > recall).
+  const estado = estadoNoOmie(detalhe.infoCadastro);
+  if (estado === "cancelado" || estado === "recebido_no_omie") return estado;
+  if (estado === "desconhecido") {
+    erros.push(`${conta} ConsultarRecebimento ${nIdReceb}: o detalhe não diz se a NF-e está aberta (cRecebido/cCancelada) — não importada`);
     return "estado_desconhecido";
   }
-  const estado = estadoNoOmie(detalhe.infoCadastro);
-  if (estado !== null) return estado;
   const chave = normalizarChaveAcesso(cabec.cChaveNFe || cabec.cChaveNfe);
   if (chave === null) return "sem_chave";
   let ja: JaImportados;
@@ -213,7 +231,7 @@ async function consultarEGravar(
 /**
  * Nunca lança: o que a rodada já viu (contagens, pulos, a consulta) volta mesmo quando algo quebra
  * no meio — a revisão do Codex de 2026-10-05 achou a exceção levando embora o resumo da conta.
- * `vez` escolhe a candidata do rodízio (ver `escolherNaVez`); o cron passa a hora corrente.
+ * `vez` alimenta o sorteio da consulta (ver `escolherNaVez`); o cron passa o minuto corrente.
  */
 export async function rodadaDaConta(
   deps: DepsRodada,
@@ -249,8 +267,7 @@ export async function rodadaDaConta(
         erros.push(`${conta}: não consegui ler as NF-e já importadas — ${semMensagem(e)}`);
       }
       if (ja !== null) {
-        const completas: number[] = [];
-        const incompletas: number[] = [];
+        const candidatas: number[] = [];
         for (const rec of listagem.registros) {
           const t = triarRegistro(rec, ja);
           if (t.tipo === "pular") {
@@ -260,12 +277,11 @@ export async function rodadaDaConta(
           }
           if (t.incompleta === "listagem_magra") contagem.listagem_magra++;
           if (t.incompleta === "chave_na_listagem") contagem.sem_chave_na_listagem++;
-          (t.incompleta === null ? completas : incompletas).push(t.nIdReceb);
+          candidatas.push(t.nIdReceb);
         }
-        // As completas à frente na ordem; o rodízio é que garante a vez de todas.
-        const fila = [...completas, ...incompletas];
-        const escolhidas = escolherNaVez(fila, vez, MAX_CONSULTAS_POR_RODADA);
-        contagem.aguardando = fila.length - escolhidas.length;
+        // Completa ou incompleta, todas entram no sorteio: só ele garante a vez de cada uma.
+        const escolhidas = escolherNaVez(candidatas, vez, MAX_CONSULTAS_POR_RODADA);
+        contagem.aguardando = candidatas.length - escolhidas.length;
         for (const nIdReceb of escolhidas) {
           contagem.consultados++;
           const desfecho = await consultarEGravar(deps, conta, warehouseId, nIdReceb, erros);

@@ -278,7 +278,8 @@ async function importarPorChave(supabase: SupabaseClient, corpo: Record<string, 
 
   const avaliacao = avaliarDetalhePorChave(consulta.detalhe, chave);
   if (avaliacao.tipo === "recusada") {
-    const anomalia = avaliacao.status === "chave_divergente" || avaliacao.status === "sem_id_recebimento";
+    const anomalia = avaliacao.status === "chave_divergente" || avaliacao.status === "sem_id_recebimento" ||
+      avaliacao.status === "estado_desconhecido";
     return responder({ status: avaliacao.status, error: avaliacao.mensagem }, anomalia ? 502 : 409);
   }
 
@@ -360,9 +361,10 @@ Deno.serve(async (req) => {
   // O sensor do cron: o `net._http_response` guarda esta resposta, e é por ela que se vê, conta a
   // conta, o que a listagem trouxe e por que cada NF-e não virou importação.
   const porArmazem: Record<string, ResumoConta> = {};
-  // A vez do rodízio da consulta (rodada.ts, `escolherNaVez`): a hora corrente — o cron é horário,
-  // então cada rodada avança uma candidata e nenhuma prende a consulta para sempre.
-  const vez = Math.floor(Date.now() / 3_600_000);
+  // A vez do sorteio da consulta (rodada.ts, `escolherNaVez`): o minuto corrente. O sorteio é por
+  // hash de (vez, id) — sem a estrutura do relógio do cron (10–22h, seg–sáb) colidindo com o tamanho
+  // da fila — e a execução manual na mesma hora sorteia de novo.
+  const vez = Math.floor(Date.now() / 60_000);
 
   for (const cred of allCreds) {
     try {

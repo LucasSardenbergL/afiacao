@@ -96,43 +96,72 @@ const rodar = (c: Cenario, vez = 0) => {
   return rodadaDaConta(f.deps, "OB", WH, DT_DE, vez).then((r) => ({ ...r, chamadas: f.chamadas }));
 };
 
-Deno.test("o incidente: recebida, cancelada e incompleta no topo não gastam a consulta — a pendente de trás é importada", async () => {
+Deno.test("o incidente: recebida e cancelada no topo nunca gastam a consulta — a escolhida é uma pendente, e é importada", async () => {
   const r = await rodar({
     paginas: [pagina([reg(101, { cRecebido: "S" }), reg(102, { cCancelada: "S" }), reg(103, PENDENTE, null), reg(104, PENDENTE)])],
-    detalhes: { 104: detalhe(104) },
+    detalhes: { 103: detalhe(103), 104: detalhe(104) },
   });
-  assertEquals(r.chamadas.consultar, [104]);
-  assertEquals(r.chamadas.cabecalhos.map((c) => [c.omie_id_receb, c.chave_acesso, c.status, c.warehouse_id]), [[104, chave(104), "pendente", WH]]);
-  assertEquals(r.chamadas.itens, [["nfe-104", 3]], "os itens do detalhe têm de chegar ao insert");
+  const [escolhida] = r.chamadas.consultar;
+  assertEquals([r.chamadas.consultar.length, escolhida === 103 || escolhida === 104], [1, true], `consultou ${r.chamadas.consultar}`);
+  assertEquals(r.chamadas.cabecalhos.map((c) => [c.omie_id_receb, c.chave_acesso, c.status, c.warehouse_id]), [[escolhida, chave(escolhida), "pendente", WH]]);
+  assertEquals(r.chamadas.itens, [[`nfe-${escolhida}`, 3]], "os itens do detalhe têm de chegar ao insert");
   assertEquals([r.importadas, r.puladas, r.erros], [1, 1, []]);
   const s = r.resumo;
   assertEquals(
     [s.listados, s.recebidos_no_omie, s.cancelados, s.sem_chave_na_listagem, s.aguardando, s.consultados, s.importados],
     [4, 1, 1, 1, 1, 1, 1],
   );
-  assertEquals(s.consulta, { nIdReceb: 104, desfecho: "importada" });
+  assertEquals(s.consulta, { nIdReceb: escolhida, desfecho: "importada" });
   assertEquals([s.janela_de, s.paginas_lidas, s.paginacao], [DT_DE, 1, "completa"]);
 });
 
-Deno.test("rodízio: a candidata que só pula no detalhe não prende a consulta — a seguinte entra na rodada seguinte", async () => {
+Deno.test("sorteio: a candidata que só pula no detalhe não prende a consulta — a importável entra em poucas rodadas", async () => {
   // P1 da 2ª rodada do Codex: B completa, mas recebida segundo o detalhe; A magra e importável.
   const cenario = {
     paginas: [pagina([reg(1101, PENDENTE), reg(1102)])],
-    detalhes: { 1101: detalhe(1101, { cRecebido: "S" }), 1102: detalhe(1102) },
+    detalhes: { 1101: detalhe(1101, { cRecebido: "S", cCancelada: "N" }), 1102: detalhe(1102) },
   };
-  const primeira = await rodar(cenario, 0);
-  assertEquals([primeira.chamadas.consultar, primeira.resumo.consulta?.desfecho, primeira.importadas], [[1101], "recebido_no_omie", 0]);
-  const segunda = await rodar(cenario, 1);
-  assertEquals([segunda.chamadas.consultar, segunda.resumo.consulta?.desfecho, segunda.importadas], [[1102], "importada", 1]);
+  let rodadaDaImportacao = -1;
+  for (let vez = 0; vez < 12 && rodadaDaImportacao < 0; vez++) {
+    if ((await rodar(cenario, vez)).importadas === 1) rodadaDaImportacao = vez;
+  }
+  assertEquals(rodadaDaImportacao >= 0, true, "em 12 rodadas a importável nunca teve a vez");
 });
 
-Deno.test("escolherNaVez: passo 1, dá a volta, aceita vez negativa e fila menor que a cota", () => {
-  assertEquals(escolherNaVez([7, 8, 9], 0, 1), [7]);
-  assertEquals(escolherNaVez([7, 8, 9], 4, 1), [8]);
-  assertEquals(escolherNaVez([7, 8, 9], -1, 1), [9]);
-  assertEquals(escolherNaVez([7, 8, 9], 2, 2), [9, 7]);
+Deno.test("escolherNaVez: determinístico, respeita a cota e não inventa candidata", () => {
+  assertEquals(escolherNaVez([7, 8, 9], 42, 1), escolherNaVez([9, 7, 8], 42, 1), "a ordem da fila não muda o sorteio");
+  assertEquals(escolherNaVez([7, 8, 9], 42, 3).slice().sort(), [7, 8, 9]);
   assertEquals(escolherNaVez([7], 5, 3), [7]);
   assertEquals(escolherNaVez([], 5, 1), []);
+  assertEquals(escolherNaVez([7, 8, 9], 5, 0), []);
+});
+
+Deno.test("escolherNaVez sob o relógio REAL do cron (10–22h, seg–sáb): nenhuma das 24 candidatas fica sem a vez", () => {
+  // P1 da 3ª rodada do Codex: o rodízio pela hora módulo 24 nunca passava pelos índices 0–9 e 23.
+  const candidatas = Array.from({ length: 24 }, (_, i) => 5000 + i);
+  const vistas = new Set<number>();
+  for (let dia = 0; dia < 28; dia++) {
+    const data = new Date(Date.UTC(2026, 9, 5 + dia));
+    if (data.getUTCDay() === 0) continue;
+    for (let hora = 10; hora <= 22; hora++) {
+      const vez = Math.floor(Date.UTC(2026, 9, 5 + dia, hora, 50) / 60_000);
+      vistas.add(escolherNaVez(candidatas, vez, 1)[0]);
+    }
+  }
+  assertEquals(candidatas.filter((c) => !vistas.has(c)), [], "candidatas que nunca tiveram a vez");
+});
+
+Deno.test("escolherNaVez com a fila mudando (importada sai, nova entra): a mais antiga não é abandonada", () => {
+  // P1 da 3ª rodada do Codex: com a fila trocando a cada rodada, o rodízio podia nunca chegar nela.
+  let fila = Array.from({ length: 9 }, (_, i) => 7000 + i);
+  let proximo = 7009;
+  let rodadas = 0;
+  while (fila.includes(7000) && rodadas < 100) {
+    const [escolhida] = escolherNaVez(fila, 29_000_000 + rodadas * 60, 1);
+    fila = [...fila.filter((id) => id !== escolhida), proximo++];
+    rodadas++;
+  }
+  assertEquals(fila.includes(7000), false, `a 7000 continuou na fila depois de ${rodadas} rodadas`);
 });
 
 Deno.test("a listagem pede os detalhes, com a janela da rodada, em toda página", async () => {
@@ -151,12 +180,15 @@ Deno.test("pulos não gastam a consulta: já importadas pelo id e pela chave, e 
   assertEquals([r.importadas, r.puladas, r.resumo.ja_importados], [1, 3, 3]);
 });
 
-Deno.test("a completa vem à frente da incompleta; a incompleta também tem a sua vez", async () => {
+Deno.test("completa e incompleta entram no sorteio: as duas têm a vez, e a incompleta importável é importada", async () => {
   const cenario = { paginas: [pagina([reg(301), reg(302, PENDENTE)])], detalhes: { 301: detalhe(301), 302: detalhe(302) } };
-  const vez0 = await rodar(cenario, 0);
-  assertEquals([vez0.chamadas.consultar, vez0.resumo.listagem_magra, vez0.resumo.aguardando], [[302], 1, 1]);
-  const vez1 = await rodar(cenario, 1);
-  assertEquals(vez1.resumo.consulta, { nIdReceb: 301, desfecho: "importada" });
+  const consultadas = new Set<number>();
+  for (let vez = 0; vez < 12; vez++) {
+    const r = await rodar(cenario, vez);
+    assertEquals([r.resumo.listagem_magra, r.resumo.aguardando, r.importadas], [1, 1, 1]);
+    consultadas.add(r.chamadas.consultar[0]);
+  }
+  assertEquals([...consultadas].sort(), [301, 302]);
 });
 
 Deno.test("chave ausente na listagem com infoCadastro não descarta: o detalhe traz a chave e a NF-e é importada", async () => {
