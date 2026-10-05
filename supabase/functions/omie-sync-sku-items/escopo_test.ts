@@ -66,6 +66,9 @@ Deno.test("parser estrito: chave ilegível não tem modelo (null), nunca é norm
 Deno.test("ehCte: só o modelo 57; 55, 65 e 67 (CT-e OS, fora do contrato medido) não", () => {
   assertEquals(ehCte(chave("57")), true);
   assertEquals(ehCte(chave("55")), false);
+  // "57" FORA das posições 21–22 (aqui no nNF) não é CT-e. Sem este caso, um mutante
+  // `chave.includes("57")` passava a suíte inteira e excluiria NF-e real (revisão adversarial).
+  assertEquals(ehCte(chave("55", "000005757")), false, "57 no número da nota não é o modelo");
   assertEquals(ehCte(chave("65")), false);
   assertEquals(ehCte(chave("67")), false, "67 entra só com contrato e teste próprios");
 });
@@ -78,14 +81,24 @@ Deno.test("separarCtes: tira só o 57, preserva ordem e identidade do resto (den
   const semChave = { id: "e", nfe_chave_acesso: null, nIdReceb: null };
   const cteMalformado = { id: "f", nfe_chave_acesso: ` ${chave("57", "000000004")}`, nIdReceb: "40" };
   const outroCte = { id: "g", nfe_chave_acesso: chave("57", "000000005"), nIdReceb: "50" };
-  const fila = [nfeDoisPedidosA, cteSayerlack, nfeDoisPedidosB, modeloDesconhecido, semChave, cteMalformado, outroCte];
+  const nfeCom57NoNumero = { id: "h", nfe_chave_acesso: chave("55", "000005757"), nIdReceb: "60" };
+  const fila = [
+    nfeDoisPedidosA,
+    cteSayerlack,
+    nfeDoisPedidosB,
+    modeloDesconhecido,
+    semChave,
+    cteMalformado,
+    outroCte,
+    nfeCom57NoNumero,
+  ];
 
   const { consultaveis, ctes } = separarCtes(fila);
 
   assertMesmosObjetos(
     consultaveis,
-    [nfeDoisPedidosA, nfeDoisPedidosB, modeloDesconhecido, semChave, cteMalformado],
-    "consultáveis (NF-e irmãs, modelo desconhecido, sem chave e chave ilegível ficam, na ordem)",
+    [nfeDoisPedidosA, nfeDoisPedidosB, modeloDesconhecido, semChave, cteMalformado, nfeCom57NoNumero],
+    "consultáveis (NF-e irmãs, modelo desconhecido, sem chave, chave ilegível e NF-e com 57 no número ficam, na ordem)",
   );
   assertMesmosObjetos(ctes, [cteSayerlack, outroCte], "CT-e (só os 57 legíveis saem)");
   // pendentes brutos = fila_pendente + ctes_fora_da_fila

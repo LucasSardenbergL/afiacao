@@ -79,7 +79,15 @@ filtrava nada.
 
 ## 5. Codex no código
 
-(preenchido após o adversarial do diff — ver o corpo do PR)
+Sem Codex: a cota estava em 88% (teto 85%), e a janela reabre em 09/10 19:30. **Caminho B**: revisor adversarial
+independente, **sem P0/P1**, com 4 achados P3, todos incorporados.
+
+| achado (P3) | decisão |
+|---|---|
+| vitest cego a 3 mutantes (`pendentes.concat(ctesForaDaFila)`, `pendentes && pendentesBrutos`, a linha certa comentada com `pendentes = pendentesBrutos`); o `vereditoFronteira` não enxerga desestruturação | aceito: asserts sobre `removerComentarios(src)` e âncora `= pendentes\s*\.map\(` |
+| a fixture do Deno não fixava a POSIÇÃO do modelo (o mutante `includes("57")` passava) | aceito: NF-e com `57` no nNF |
+| CNPJ alfanumérico: o writer arranca letras da chave | radar no §7 (direção segura; raiz no writer) |
+| o SQL de revalidação media `substr = '57'` sem o predicado estrito da edge | aceito: `~ '^[0-9]{44}$'` |
 
 ## 6. Falsificação — uma camada por vez, controle verde na mesma invocação
 
@@ -108,6 +116,11 @@ filtrava nada.
 - **Integridade do `nIdReceb` (pré-existente).** 9 grupos com o mesmo `nIdReceb` em chaves de NF-e
   distintas: 42 linhas, todas modelo 55 com pedido casado, todas com leadtime. Cobertura documental
   OK, mas a completude por par (tracking, SKU) não está provada.
+- **Radar: CNPJ alfanumérico (inscrições novas desde jul/2026).** O writer do sync de NFes normaliza a chave com
+  `replace(/\D/g, "")` (`omie-sync-nfes-recebidas/index.ts:281`) e arrancaria as letras. A chave ficaria com menos de
+  44 caracteres, o parser estrito devolveria `null` e o CT-e voltaria à fila. A direção é segura (tentativa, não
+  perda), mas a chave gravada estaria corrompida para qualquer casamento por chave. A raiz é o writer; tratar na
+  parte B (revisão adversarial, P3).
 - **14 NF-e sem leadtime (mar–abr/2026).** São anteriores ao controle (07/2026), já fora da janela, e
   nunca foram tentadas. Com o CT-e fora da fila, um run avulso com `dias` largo custaria ~14
   consultas para recuperá-las. É decisão do founder (dado histórico).
@@ -124,7 +137,8 @@ filtrava nada.
 ```sql
 -- CT-e intocados: nenhuma tentativa nova depois do deploy (:deploy = instante do deploy)
 select count(*) from sku_items_sync_controle c join purchase_orders_tracking t on t.id = c.tracking_id
-where substr(t.nfe_chave_acesso, 21, 2) = '57' and c.ultima_tentativa > :deploy;
+where t.nfe_chave_acesso ~ '^[0-9]{44}$' and substr(t.nfe_chave_acesso, 21, 2) = '57'
+  and c.ultima_tentativa > :deploy;
 -- o diário enxerga os CT-e e não os consulta
 select started_at, status, (results->>'ctes_fora_da_fila')::int ctes_fora,
        (results->>'fila_pendente')::int pend, (results->>'consultas_detalhadas')::int det,
