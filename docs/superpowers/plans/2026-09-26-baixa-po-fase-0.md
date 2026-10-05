@@ -806,7 +806,9 @@ adversarial do Codex (6 P1 + 4 P2) e da revisão final, a interface ficou assim 
 - PR(d) Task d.1: a soma de saldo por etapa usa `coalesce(quantidade, 0)`, então as linhas de presença entram com 0.
 - Motivos de não-publicação no resumo da edge (`observacao_motivo`, visível em `net._http_response` do cron):
   `pendente_nao_confiavel` · `coleta_incompleta: <motivo>` · `observacao_diverge_do_pendente` · `sem_tempo_no_run` ·
-  `rpc: <erro>`.
+  `rpc: <erro>`. **Retenção de ~6 h** (medido 2026-10-05): o motivo NÃO é persistido, e um run que CAI inteiro (500)
+  também não publica. Denominador da Task 0.5 = disparos dos jobs 31 e 124 em `cron.job_run_details` (~7 dias de
+  histórico; `succeeded` lá só prova o enqueue); `sync_state` guarda só o último estado.
 
 ## PR(b) — espelho versionado do recebimento (o `receipt`/`receipt_item` do ledger)
 
