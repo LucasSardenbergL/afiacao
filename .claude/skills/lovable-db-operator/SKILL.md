@@ -22,14 +22,14 @@ description: >-
 
 ## Por que esta skill existe (leia antes de qualquer coisa)
 
-Este repo roda em **Lovable Cloud**. Existe uma armadilha operacional real e silenciosa, documentada na **§5 do CLAUDE.md**:
+Este repo roda em **Lovable Cloud**. Existe uma armadilha operacional real e silenciosa, documentada em **`docs/agent/database.md` §2** (resumo na §Armadilhas do CLAUDE.md):
 
 > **O Lovable Cloud NÃO aplica automaticamente migrations commitadas em `supabase/migrations/`.**
 > Só migrations de nome **UUID** (ex.: `_868822bb-….sql`), geradas pelo *builder visual* do Lovable, rodam sozinhas. Migrations de **nome custom** (ex.: `20260523_meu_objetivo.sql`) — que é o que você cria ao escrever SQL à mão — **ficam só no repo e não tocam o banco.**
 
-O resultado é o pior tipo de bug: **a feature compila, o PR mergeia, o código referencia uma tabela que não existe no banco, e ninguém percebe até dar erro em produção.** Já aconteceu neste repo (ver histórico de audits na §5).
+O resultado é o pior tipo de bug: **a feature compila, o PR mergeia, o código referencia uma tabela que não existe no banco, e ninguém percebe até dar erro em produção.** Já aconteceu neste repo (histórico em `docs/migrations-audit.md`).
 
-Some-se a isso o ENVELOPE de escrita (revisto 2026-09-09): **a sessão aplica SQL que seja idempotente + transacional + com postcondição, e só com o pré-voo `psql-ro` 🟢** — via `mcp__lovable__query_database`, validando por fora depois. **Fora do envelope a escrita é do Lucas**, colando no SQL Editor: DDL destrutivo, SQL sem postcondição, pré-voo não-verde, schema de sistema. Até esta data a seção dizia "só o Lucas", e a razão era lida como capacidade — o que era falso; regra que confunde "não devo" com "não consigo" ninguém revisa, porque parece lei da física. O porquê da revisão está em `docs/agent/database.md` §1. Já a **LEITURA é sua**: `~/.config/afiacao/psql-ro` (role `claude_ro`, read-only) — use-a pra **pré-voar o SQL contra a PROD antes do handoff** (Passo 2.7) e pra **validar você mesmo depois do Run** (Passo 4), sem pedir nada ao founder.
+Some-se a isso o ENVELOPE de escrita: **a sessão aplica SQL que seja idempotente + transacional + com postcondição, e só com o pré-voo `psql-ro` 🟢** — via `mcp__lovable__query_database`, validando por fora depois. **Fora do envelope a escrita é do Lucas**, colando no SQL Editor: DDL destrutivo, SQL sem postcondição, pré-voo não-verde, schema de sistema. É uma regra de "não devo", não de "não consigo" — o porquê está em `docs/agent/database.md` §1. Já a **LEITURA é sua**: `~/.config/afiacao/psql-ro` (role `claude_ro`, read-only) — use-a pra **pré-voar o SQL contra a PROD antes do handoff** (Passo 2.7) e pra **validar você mesmo depois do Run** (Passo 4), sem pedir nada ao founder.
 
 Por isso esta skill existe: ela transforma "escrevi um SQL" em "o objeto existe no banco, validado", fechando a lacuna onde as coisas se perdem.
 
@@ -58,7 +58,7 @@ Quando a tarefa exigir mudança de banco, crie estes 6 todos (TodoWrite) e siga 
 
 Formato: `supabase/migrations/YYYYMMDDHHMMSS_<slug_descritivo>.sql`
 
-- `slug` em **snake_case português**, coerente com o domínio (ver §5 do CLAUDE.md): `customer_segments`, `add_deleted_at_to_sales_orders`, `idx_orders_status`.
+- `slug` em **snake_case português**, coerente com o domínio (convenção do CLAUDE.md §Convenções de código): `customer_segments`, `add_deleted_at_to_sales_orders`, `idx_orders_status`.
 - Gere o timestamp e **garanta que ele ordena DEPOIS da última migration** (a ordem de execução é alfabética/lexical):
 
 ```bash
@@ -77,7 +77,7 @@ Se `TS` não for maior que `LAST`, incremente para `LAST + 1` segundo. Isso evit
 Duas exigências do projeto que não são negociáveis:
 
 - **Idempotente.** O usuário pode colar e rodar mais de uma vez (re-apply após falha parcial, ou re-rodar o audit SQL). Use `IF NOT EXISTS`, `DROP … IF EXISTS` antes de `CREATE`, e `DO $$ … IF NOT EXISTS (SELECT 1 FROM pg_type …) $$` pra enums. Rodar duas vezes nunca pode dar erro.
-- **RLS em toda tabela nova.** O CLAUDE.md §11 exige RLS em todas as tabelas. Uma tabela criada sem `ENABLE ROW LEVEL SECURITY` + policies é um buraco de segurança que vaza dados entre empresas/usuários. Tabela nova **sempre** sai com RLS.
+- **RLS em toda tabela nova.** O CLAUDE.md (§Armadilhas) e `docs/agent/database.md` §4 exigem RLS em todas as tabelas. Uma tabela criada sem `ENABLE ROW LEVEL SECURITY` + policies é um buraco de segurança que vaza dados entre empresas/usuários. Tabela nova **sempre** sai com RLS.
 
 Template-base de tabela nova (ajuste colunas e policies ao caso). Os padrões de RLS e de coluna seguem o estilo real do repo — o catálogo completo de padrões de policy (staff / master / service_role / por empresa) está em `references/sql-house-style.md`:
 
@@ -193,7 +193,7 @@ Só entregue o bloco do Passo 3 com o pré-voo 🟢 (ou com a pendência EXPLÍC
 
 ### Passo 3 — Empacotar o bloco de handoff
 
-Este é o artefato central: o que o usuário copia e cola. Entregue **exatamente** neste formato, porque ele já está rotulado com o caminho do Lovable (§5 manda sempre rotular `🟣 Lovable → SQL Editor → cola → Run`):
+Este é o artefato central: o que o usuário copia e cola. Entregue **exatamente** neste formato, porque ele já está rotulado com o caminho do Lovable (`docs/agent/database.md` §2 manda sempre rotular `🟣 Lovable → SQL Editor → cola → Run`):
 
 ````markdown
 **🟣 Lovable → SQL Editor → cola → Run** — aplica a migration `<arquivo>.sql`:
@@ -243,7 +243,7 @@ Para índice, função, trigger, RLS policy, enum value, constraint, view e cron
 
 ### Passo 5 — Nota pro PR description
 
-Toda migration custom precisa avisar quem revisa/mergeia que **o merge não aplica nada no banco**. Inclua este bloco no corpo do PR (§5 do CLAUDE.md exige):
+Toda migration custom precisa avisar quem revisa/mergeia que **o merge não aplica nada no banco**. Inclua este bloco no corpo do PR (`docs/agent/database.md` §2 exige):
 
 ````markdown
 ## ⚠️ ATENÇÃO: migration manual necessária
@@ -312,7 +312,7 @@ Nunca encerre dizendo que a mudança "está pronta" sem esse lembrete — porque
 - `scripts/audit-custom-migrations.ts` — gera o audit; rode via `bun run audit:migrations`
 - `scripts/audit-custom-migrations.sql` — audit pronto pra colar no SQL Editor (cross-check completo)
 - `docs/migrations-audit.md` — inventário humano-legível das custom migrations
-- `CLAUDE.md` §5 — a fonte da verdade sobre a restrição do Lovable
+- `docs/agent/database.md` §2 — a fonte da verdade sobre a restrição do Lovable
 - Project ref Supabase: `fzvklzpomgnyikkfkzai`
 
 ## Arquivos de apoio desta skill

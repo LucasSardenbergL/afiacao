@@ -46,7 +46,7 @@
  * escrever o comando. Declarar o não-medido impede o verde de mentir; não fecha o buraco.
  */
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { AUTHZ_FUNCOES_FECHADAS } from '../authz-funcoes-fechadas';
@@ -65,6 +65,24 @@ import {
  *  difere entre os dois. */
 export const RAIZ = join(import.meta.dirname, '..', '..');
 export const CARIMBO_PATH = join(RAIZ, 'db', 'authz-carimbo-prod.json');
+
+/**
+ * O cluster de PROD: `sha256(system_identifier)` em 16 hex, o mesmo que a sonda do gravador calcula
+ * (`sondarAlvo` em `db/authz-carimbo-gravar.ts`). É a TRAVA de cluster, cobrada nos dois lados: o
+ * gravador não monta medição de outro banco (`conferirCluster`) e o gate bloqueia PR com carimbo de
+ * outro banco (`avaliarCarimbo`, CARIMBO_OUTRO_CLUSTER) — venha do gravador, de edição à mão ou de
+ * conflito resolvido com `--ours`/`--theirs`.
+ *
+ * Fixado no CÓDIGO, e não lido do carimbo anterior (revisão independente de 2026-10-05): a trava
+ * comparava com o arquivo que o próprio operador edita, a recusa ensinava a editá-lo, e o gate não lia
+ * `alvo`. Num repo que auto-mergeia sem revisão humana, "a troca fica no diff do PR" não protegia nada.
+ * As 36 versões commitadas do carimbo (2026-08-27 a 2026-10-01) têm este valor.
+ *
+ * Muda SÓ se prod for re-inicializado (restore ou upgrade que recrie o cluster: `system_identifier`
+ * novo). Aí o gravador recusa com CARIMBO_OUTRO_CLUSTER, e trocar esta constante é decisão do founder,
+ * num PR que traz a evidência do restore/upgrade e regrava o carimbo — nunca para fazer o gravador passar.
+ */
+export const PROJETO_HASH_PROD = 'a0010e4a9b3b3e6b';
 
 /** Versão do FORMATO do carimbo. Bump ⇒ carimbo antigo é ilegível ⇒ fail-closed (re-medir).
  *
@@ -308,16 +326,21 @@ export function fingerprintAuditor(chave: ChaveAudit): string {
  * `AUTHZ_GRANTS_TEST_JSON`, `AUTHZ_RLS_TEST_JSON`, …). O runner do carimbo tem de RECUSAR todas —
  * carimbar com uma delas setada produz evidência sobre um contrato que não é o do repo.
  *
- * 🔴 Por que por PREFIXO e não por lista literal: a lista literal é um apodrecimento com data
+ * 🔴 Por que por PADRÃO e não por lista literal: a lista literal é um apodrecimento com data
  * marcada. Ela nasceu com dois nomes; o audit de RLS chegou depois com um terceiro, que a lista
  * não conhecia — e o runner teria carimbado um contrato de teste como se fosse produção, em
  * silêncio. Casar o PADRÃO faz o audit futuro nascer coberto, que é a direção certa para uma
- * guarda: falso-positivo (uma env `AUTHZ_*_TEST_JSON` que não seja de contrato) custa uma
+ * guarda: falso-positivo (uma env `*_TEST_JSON` que não seja de contrato) custa uma
  * mensagem de erro; falso-negativo custa um carimbo mentiroso.
+ *
+ * 🔴 E o padrão também apodreceu (2026-10-01): era o PREFIXO `AUTHZ_`, e o audit de `claudeRo` lê
+ * `CLAUDE_RO_BASELINE_TEST_JSON` — fora dele. O teste que "provava" a cobertura calculava um nome
+ * canônico (`AUTHZ_CLAUDE_RO_TEST_JSON`) que auditor nenhum lê, e passava. Agora o padrão é o
+ * SUFIXO, e o teste tira os nomes da FONTE dos auditores de `AUDITS` (scripts/authz-carimbo.test.ts).
  */
 export function envDeTesteSetadas(env: Record<string, string | undefined>): string[] {
   return Object.keys(env)
-    .filter((k) => /^AUTHZ_[A-Z0-9_]*_TEST_JSON$/.test(k) && env[k])
+    .filter((k) => /^[A-Z][A-Z0-9_]*_TEST_JSON$/.test(k) && env[k])
     .sort();
 }
 
@@ -357,7 +380,7 @@ export function escolherResumo(linhas: string[]): string {
   return (ultimoOk ?? linhas[linhas.length - 1] ?? '').slice(0, 300);
 }
 
-export interface ResultadoAudit {
+interface ResultadoAudit {
   script: string;
   exit: number;
   resumo: string;
@@ -387,7 +410,8 @@ export interface Veredito {
  * Avalia o carimbo. NÃO lê prod — só o artefato. Pura para ser testável e falsificável sem banco.
  *
  * `bloqueiaPR` divide as severidades pela pergunta "um PR consegue consertar isto?":
- *   · contrato/auditor mudou, carimbo ausente/ilegível/no futuro → SIM (rodar o runner e commitar);
+ *   · contrato/auditor mudou, carimbo ausente/ilegível/no futuro/de outro cluster → SIM (rodar o
+ *     runner contra prod e commitar);
  *   · carimbo vencido, achado vivo em prod                       → NÃO (o fix é paste do founder
  *     no SQL Editor; travar a fila de ~30 worktrees puniria quem não pode consertar).
  */
@@ -413,6 +437,18 @@ export function avaliarCarimbo(
       codigo: 'CARIMBO_AUSENTE',
       bloqueiaPR: true,
       mensagem: `carimbo é schemaVersion ${carimbo.schemaVersion}, o gate lê ${SCHEMA_VERSION} — formato incompatível, re-meça.`,
+    });
+    return out;
+  }
+
+  // A TRAVA de cluster no ARTEFATO: evidência de outro banco não atesta prod, venha de onde vier.
+  // Ausente ≠ prod — bloqueia. Sem este eixo o gate não lia `alvo`, e o carimbo de outro banco passava.
+  const hash: unknown = carimbo.alvo?.projetoHash;
+  if (hash !== PROJETO_HASH_PROD) {
+    out.push({
+      codigo: 'CARIMBO_OUTRO_CLUSTER',
+      bloqueiaPR: true,
+      mensagem: `alvo.projetoHash é ${JSON.stringify(hash ?? null)}, e prod é ${PROJETO_HASH_PROD} (PROJETO_HASH_PROD) — evidência de OUTRO banco não atesta prod. Re-meça com o psql-ro de prod (\`bun run authz:carimbo:gravar\`).`,
     });
     return out;
   }
@@ -490,4 +526,374 @@ export function fingerprintsAtuais(): Record<ChaveAudit, { contrato: string; aud
     out[chave] = { contrato: fingerprintContrato(chave), auditor: fingerprintAuditor(chave) };
   }
   return out;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+// A RELEITURA do carimbo ANTERIOR pelo GRAVADOR (2026-10-01)
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+
+/**
+ * As versões do carimbo que o GRAVADOR relê, e as chaves de `audits` que cada uma TEM.
+ *
+ * Por que uma JANELA e não só `SCHEMA_VERSION`, como no gate: o gate recusa carimbo de outra versão e
+ * BLOQUEIA PR, então o PR que faz o bump tem de regravar o carimbo nele mesmo — e o gravador desse PR
+ * lê o carimbo da versão ANTERIOR. É a migração legítima (a 1→2 e a 2→3 passaram por aqui). Abortar
+ * nela travaria todo bump; aceitá-la sem conferir é o defeito que esta tabela fecha.
+ *
+ * Por que SÓ a anterior: na main o carimbo commitado está sempre em `SCHEMA_VERSION` (o gate garante),
+ * então duas versões atrás não é migração — é arquivo velho restaurado. E a FUTURA é código
+ * desatualizado: regravaria no formato velho (DOWNGRADE) e jogaria fora a `primeiraVez` das chaves
+ * que ele não conhece.
+ *
+ * As chaves são as MEDIDAS no histórico (36 versões commitadas: v1 ×2 com 4 chaves, v2 ×24 com 5,
+ * v3 ×10 com 6). Em todas, `alvo.projetoHash` no mesmo lugar e todo achado com `id` + `primeiraVez`.
+ * No bump: acrescente a versão nova, tire a mais velha. Bump que MUDE essa forma muda o leitor junto
+ * — o teste de releitura do carimbo de hoje (`carimboBom`, tipado `Carimbo`) fica vermelho se não.
+ */
+export const CHAVES_RELIDAS_POR_VERSAO: Readonly<Record<number, readonly string[]>> = {
+  2: ['funcoes', 'grants', 'audit', 'claudeRo', 'rls'],
+  3: ['funcoes', 'grants', 'audit', 'claudeRo', 'rls', 'corpo'],
+};
+
+/**
+ * O que o gravador usa do carimbo anterior — e SÓ isso: a projeção conferida, nunca o JSON cru. Desde
+ * 2026-10-05 é só a HERANÇA: a trava de cluster é a sonda contra PROJETO_HASH_PROD, e o `alvo` do
+ * anterior não é lido (era ele que o operador editava para "trocar de cluster").
+ */
+export interface CarimboAnterior {
+  schemaVersion: number;
+  /** Por chave de audit DA VERSÃO LIDA, os achados com a data de abertura da dívida. */
+  achados: Readonly<Record<string, readonly { id: string; primeiraVez: string }[]>>;
+}
+
+/** Por que o gravador NÃO grava: o anterior (CARIMBO_ANTERIOR_*) ou a sonda (CARIMBO_OUTRO_CLUSTER).
+ *  Cada código aborta com o próprio nome. */
+export interface RecusaDoAnterior {
+  codigo:
+    | 'CARIMBO_ANTERIOR_ILEGIVEL'
+    | 'CARIMBO_ANTERIOR_SCHEMA_INCOMPATIVEL'
+    | 'CARIMBO_ANTERIOR_MALFORMADO'
+    | 'CARIMBO_ANTERIOR_SEM_REFERENCIA'
+    | 'CARIMBO_OUTRO_CLUSTER';
+  motivo: string;
+}
+
+/** O que sai de `lerCarimboAnterior`: a projeção (ou `null`, não há texto), ou a recusa com o porquê.
+ *  `null` NÃO é nascimento por si: quem decide é `combinarAnteriores`, com a referência da main. */
+export type LeituraDoAnterior = { ok: true; anterior: CarimboAnterior | null } | ({ ok: false } & RecusaDoAnterior);
+
+const ehObjeto = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+const tem = (o: object, campo: string): boolean => Object.prototype.hasOwnProperty.call(o, campo);
+const NOME_DO_TIPO: Record<string, string> = { string: 'texto', number: 'numero', boolean: 'booleano', object: 'objeto' };
+/** O TIPO do que veio, em ASCII — nunca o valor, que traria acento do arquivo para a mensagem. */
+const tipoDe = (v: unknown): string => (v === null ? 'null' : Array.isArray(v) ? 'lista' : (NOME_DO_TIPO[typeof v] ?? typeof v));
+/** Texto vindo do ARQUIVO (uma chave, um hash) com o que não é ASCII imprimível trocado por `?`. */
+const ascii = (s: string): string => s.replace(/[^\x20-\x7e]/g, '?');
+/** Data de CALENDÁRIO `AAAA-MM-DD` — o formato E o calendário: `2026-13-45` casa o formato e não é data,
+ *  e a herança, que fica com a mais antiga, a propagaria para o carimbo novo (`0000-00-00` venceria toda
+ *  data real). Sem relógio: data no FUTURO passa aqui (limite declarado no histórico). */
+const ehData = (s: string): boolean => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const t = Date.parse(`${s}T00:00:00Z`);
+  return !Number.isNaN(t) && new Date(t).toISOString().slice(0, 10) === s;
+};
+const RESTAURAR = 'restaure o carimbo da main (`git checkout origin/main -- db/authz-carimbo-prod.json`)';
+
+/**
+ * A ÚNICA porta pela qual o gravador relê o carimbo anterior. `null` = o arquivo não existe.
+ *
+ * ## Por que ela existe (2026-10-01)
+ *
+ * O gravador relia com `JSON.parse(...) as Carimbo` e usava dois campos: `alvo.projetoHash` (a TRAVA
+ * que não sobrescreve evidência de prod com medição de outro cluster) e `audits[chave].achados`
+ * (`primeiraVez`, a idade da dívida). Num carimbo de outro formato — ou com o campo fora do lugar —
+ * `anterior.alvo?.projetoHash && …` era falso e a trava era PULADA calada; a `primeiraVez` regredia
+ * para hoje; `JSON.parse("null")` virava "nascimento" (sem trava); e JSON inválido era SyntaxError
+ * cru, exit 1 (o contrato do runner é 0 gravou · 2 não gravou). Irmão do defeito da matriz do
+ * `exclusividade` (`lerMatriz`, #2575) — o mesmo desenho, com a diferença da JANELA de versões.
+ *
+ * A ordem importa: versão ANTES da forma. Carimbo de outro schema tem, legitimamente, outra forma —
+ * chamá-lo de MALFORMADO mandaria o operador consertar o arquivo em vez do código.
+ * A forma conferida é a que o gravador USA, para a versão LIDA: as chaves EXATAS dela (faltando =
+ * dívida que sumiria; sobrando = dívida que seria jogada fora), cada achado com `id` e `primeiraVez`
+ * de calendário. O `alvo` não: desde 2026-10-05 a trava é a sonda contra PROJETO_HASH_PROD, e exigir
+ * do anterior o que ninguém lê só recusaria à toa.
+ *
+ * Todo motivo é ASCII imprimível (sem acento, sem travessão): é o que a suíte e o operador casam sem
+ * `-i`, em `LC_ALL=C` e em `pt_BR.UTF-8`. Por isso ele nomeia o TIPO do que veio, nunca o valor.
+ */
+export function lerCarimboAnterior(texto: string | null): LeituraDoAnterior {
+  // Sem texto não há anterior — e isso NÃO é, por si, nascimento: a evidência pode estar no git.
+  // Quem decide é `combinarAnteriores`, com a referência da origin/main (revisão de 2026-10-03).
+  if (texto === null) return { ok: true, anterior: null };
+  let doc: unknown;
+  try {
+    doc = JSON.parse(texto);
+  } catch {
+    return { ok: false, codigo: 'CARIMBO_ANTERIOR_ILEGIVEL', motivo: `o carimbo anterior nao e JSON valido - ${RESTAURAR}.` };
+  }
+  // `null`, lista, número: nunca o nascimento — o nascimento é o arquivo AUSENTE, e só ele.
+  if (!ehObjeto(doc)) {
+    return {
+      ok: false,
+      codigo: 'CARIMBO_ANTERIOR_MALFORMADO',
+      motivo: `o carimbo anterior deveria ser um objeto JSON (veio ${tipoDe(doc)}) - ${RESTAURAR}.`,
+    };
+  }
+
+  // 1. A VERSÃO, antes de qualquer campo.
+  const versao = doc.schemaVersion;
+  if (typeof versao !== 'number' || !tem(CHAVES_RELIDAS_POR_VERSAO, String(versao))) {
+    const v = versao;
+    const lida = !tem(doc, 'schemaVersion')
+      ? 'schemaVersion ausente'
+      : typeof v === 'number'
+        ? `schemaVersion ${v}`
+        : `schemaVersion nao numerico (veio ${tipoDe(v)})`;
+    return {
+      ok: false,
+      codigo: 'CARIMBO_ANTERIOR_SCHEMA_INCOMPATIVEL',
+      motivo:
+        `o carimbo anterior tem ${lida}; este gravador rele as versoes ${Object.keys(CHAVES_RELIDAS_POR_VERSAO).join(' e ')} ` +
+        `e grava a ${SCHEMA_VERSION}. Versao mais nova: atualize a worktree com a main antes de gravar (regravar ` +
+        `no formato velho jogaria fora a divida das chaves que este codigo nao conhece). Mais velha: ${RESTAURAR}.`,
+    };
+  }
+  const chaves = CHAVES_RELIDAS_POR_VERSAO[versao];
+
+  // 2. Os ACHADOS: a dívida que a re-execução não pode resetar.
+  const malformado = (onde: string): LeituraDoAnterior => ({
+    ok: false,
+    codigo: 'CARIMBO_ANTERIOR_MALFORMADO',
+    motivo: `o carimbo anterior esta fora da forma do schema ${versao}: ${onde}. Conflito de merge mal resolvido ou edicao a mao? ${RESTAURAR}.`,
+  });
+  const audits = doc.audits;
+  if (!ehObjeto(audits)) return malformado(tem(doc, 'audits') ? `audits deveria ser objeto (veio ${tipoDe(audits)})` : 'audits ausente');
+  const sobrando = Object.keys(audits).find((k) => !chaves.includes(k));
+  if (sobrando !== undefined) return malformado(`audits.${ascii(sobrando)} nao pertence ao schema ${versao}`);
+  const achados: Record<string, { id: string; primeiraVez: string }[]> = {};
+  for (const chave of chaves) {
+    if (!tem(audits, chave)) return malformado(`audits.${chave} ausente (o schema ${versao} grava as ${chaves.length} chaves)`);
+    const r = audits[chave];
+    if (!ehObjeto(r)) return malformado(`audits.${chave} deveria ser objeto (veio ${tipoDe(r)})`);
+    const lista = r.achados;
+    if (!Array.isArray(lista)) {
+      return malformado(tem(r, 'achados') ? `audits.${chave}.achados deveria ser lista (veio ${tipoDe(lista)})` : `audits.${chave}.achados ausente`);
+    }
+    const projetados: { id: string; primeiraVez: string }[] = [];
+    for (let i = 0; i < lista.length; i++) {
+      const a: unknown = lista[i];
+      const onde = `audits.${chave}.achados[${i}]`;
+      if (!ehObjeto(a)) return malformado(`${onde} deveria ser objeto (veio ${tipoDe(a)})`);
+      if (typeof a.id !== 'string' || a.id === '') return malformado(`${onde}.id deveria ser texto nao vazio`);
+      if (typeof a.primeiraVez !== 'string' || !ehData(a.primeiraVez)) return malformado(`${onde}.primeiraVez deveria ser data de calendario AAAA-MM-DD`);
+      projetados.push({ id: a.id, primeiraVez: a.primeiraVez });
+    }
+    achados[chave] = projetados;
+  }
+  return { ok: true, anterior: { schemaVersion: versao, achados } };
+}
+
+/**
+ * A TRAVA de cluster no gravador: a SONDA contra PROJETO_HASH_PROD. `null` = é prod, segue.
+ *
+ * Até 2026-10-05 ela comparava a sonda com o carimbo ANTERIOR — o arquivo que o operador edita — e a
+ * recusa ensinava a trocar o hash nele; o gate, que não lia `alvo`, deixava o resultado mergear. A
+ * mensagem agora não ensina contorno: manda conferir o psql-ro, e trocar a constante é do founder.
+ */
+export function conferirCluster(projetoHashMedido: string): RecusaDoAnterior | null {
+  if (projetoHashMedido === PROJETO_HASH_PROD) return null;
+  return {
+    codigo: 'CARIMBO_OUTRO_CLUSTER',
+    motivo:
+      `esta sessao mede o cluster ${ascii(JSON.stringify(projetoHashMedido))}, e prod e ${PROJETO_HASH_PROD} ` +
+      `(PROJETO_HASH_PROD em scripts/lib/authz-carimbo.ts): o gravador nao grava evidencia de outro banco. ` +
+      `Confira para qual banco aponta o wrapper psql-ro desta maquina. Se prod foi re-inicializado (restore ou upgrade: ` +
+      `system_identifier novo), trocar a constante e decisao do founder, num PR com a evidencia - nunca para ` +
+      `fazer o gravador passar.`,
+  };
+}
+
+/**
+ * O carimbo da `origin/main` — a REFERÊNCIA da herança (revisão adversarial de 2026-10-03).
+ *
+ * Reler só o arquivo LOCAL deixava dois buracos: (A) apagar o arquivo zerava a dívida, embora a
+ * evidência siga no git; e o próprio conserto, por recusar mais, dava mais motivo para apagá-lo. (B) um
+ * anterior VELHO (conflito de merge resolvido com `--ours`, branch antiga) passava pela porta — a forma
+ * está certa, o frescor é que não — e a `primeiraVez` do que a main já tinha visto regredia. A main é a
+ * cópia autoritativa: é dela que o CI lê.
+ */
+export type ReferenciaDaMain =
+  | { estado: 'presente'; carimbo: CarimboAnterior }
+  | { estado: 'ausente' }
+  | { estado: 'nao-consultada'; motivo: string };
+
+export type LeituraDaReferencia = { ok: true; referencia: ReferenciaDaMain } | ({ ok: false } & RecusaDoAnterior);
+
+/** O texto do carimbo da main, pela MESMA porta do local. Recusado = recusa, com a origem no motivo:
+ *  uma main de versão mais nova que este código é a worktree desatualizada — e não se grava por cima. */
+export function referenciaDoTexto(texto: string): LeituraDaReferencia {
+  const l = lerCarimboAnterior(texto);
+  if (!l.ok) return { ok: false, codigo: l.codigo, motivo: `(o carimbo da origin/main) ${l.motivo}` };
+  // Inalcançável (texto não nulo nunca dá anterior nulo) — e, por isso mesmo, FECHADO: o mesmo estado
+  // do git que não respondeu.
+  if (l.anterior === null) return { ok: true, referencia: { estado: 'nao-consultada', motivo: 'porta devolveu anterior nulo para texto nao nulo' } };
+  return { ok: true, referencia: { estado: 'presente', carimbo: l.anterior } };
+}
+
+/**
+ * Lê a referência pelo git. `git` é injetado (o gravador passa o real; os testes, um falso).
+ *
+ * O `fetch` vem PRIMEIRO (revisão independente de 2026-10-05): a referência era a origin/main do último
+ * fetch da worktree — e o audit `corpo`, que o mesmo gravador roda logo depois, faz o fetch e grava
+ * "ref origin/main@<sha>" no MESMO carimbo: duas mains num artefato só. Sem rede não há referência
+ * (`nao-consultada` → recusa); o gravador já depende de rede (o psql-ro e o fetch do `corpo`).
+ *
+ * `ls-tree` distingue o que `cat-file -e` confunde: ref válida SEM o arquivo (saída vazia, rc 0) é
+ * `ausente`; ref inexistente ou git quebrado (lança) é `nao-consultada` — ausência de resposta não é
+ * ausência de carimbo. (As duas acabam em recusa, em `combinarAnteriores`, com motivos diferentes.)
+ */
+export function lerReferenciaDaMain(git: (args: readonly string[]) => string, rel: string): LeituraDaReferencia {
+  const naoConsultada = (passo: string, e: unknown): LeituraDaReferencia => ({
+    ok: true,
+    referencia: { estado: 'nao-consultada', motivo: `git ${passo} falhou: ${ascii(String((e as Error)?.message ?? e)).slice(0, 160)}` },
+  });
+  try {
+    git(['fetch', 'origin', 'main', '--quiet']);
+  } catch (e) {
+    return naoConsultada('fetch origin main', e);
+  }
+  let lista: string;
+  try {
+    lista = git(['ls-tree', '--name-only', 'origin/main', '--', rel]);
+  } catch (e) {
+    return naoConsultada('ls-tree origin/main', e);
+  }
+  if (lista.trim() === '') return { ok: true, referencia: { estado: 'ausente' } };
+  let texto: string;
+  try {
+    texto = git(['show', `origin/main:${rel}`]);
+  } catch (e) {
+    return naoConsultada('show origin/main', e);
+  }
+  return referenciaDoTexto(texto);
+}
+
+/**
+ * O anterior LOCAL e o da MAIN, combinados na HERANÇA — a trava não mora aqui (é a sonda contra
+ * PROJETO_HASH_PROD). A regra, por caso:
+ *   · main não consultada → RECUSA: sem ela, a herança não confere o que a main já viu;
+ *   · main SEM o carimbo  → RECUSA: o nascimento foi em 2026-08-27 e não se repete — main sem ele é
+ *                           worktree ou remote errado, e "primeira medição" gravaria a dívida zerada;
+ *   · main presente       → a herança vem da main e do local, se houver: `montarAchados` fica com a
+ *                           `primeiraVez` mais antiga (um local velho não apaga o que a main já viu, e
+ *                           apagar o local não zera a dívida).
+ */
+export function combinarAnteriores(
+  local: CarimboAnterior | null,
+  main: ReferenciaDaMain,
+): { ok: true; heranca: readonly CarimboAnterior[] } | ({ ok: false } & RecusaDoAnterior) {
+  if (main.estado === 'nao-consultada') {
+    return {
+      ok: false,
+      codigo: 'CARIMBO_ANTERIOR_SEM_REFERENCIA',
+      motivo:
+        `nao consegui ler o carimbo da origin/main (${ascii(main.motivo)}). Sem a referencia, a heranca nao ` +
+        `confere o que a main ja viu - confira a rede e o \`git fetch origin main\`, e grave de novo.`,
+    };
+  }
+  if (main.estado === 'ausente') {
+    return {
+      ok: false,
+      codigo: 'CARIMBO_ANTERIOR_SEM_REFERENCIA',
+      motivo:
+        'a origin/main nao tem db/authz-carimbo-prod.json, e ele esta la desde 2026-08-27: main sem ele e ' +
+        'worktree desatualizada, arquivo renomeado ou remote errado - nunca a primeira medicao, que gravaria a ' +
+        'divida zerada. Confira `git ls-tree origin/main -- db/` e o `git remote -v` antes de gravar.',
+    };
+  }
+  return { ok: true, heranca: local === null ? [main.carimbo] : [local, main.carimbo] };
+}
+
+/**
+ * Os achados de UM audit, com a `primeiraVez` herdada por `id`. Re-executar NUNCA reseta a idade —
+ * senão a renovação lava a dívida. Ordem: a MAIS ANTIGA entre os anteriores (o local e o da main —
+ * um local velho não apaga o que a main já viu), a semente (dívida de antes do carimbo existir), hoje.
+ * Chave que nenhum anterior tem (audit novo no bump) nasce hoje: é a primeira medição dela, não dívida
+ * lavada — a porta já conferiu que cada anterior tem EXATAMENTE as chaves da versão dele.
+ * Mais antiga é o lado conservador: um achado que fechou e reabriu herda a data velha (dívida maior,
+ * nunca menor).
+ */
+export function montarAchados(
+  chave: ChaveAudit,
+  linhas: string[],
+  anteriores: readonly CarimboAnterior[],
+  hoje: string,
+  semente: Readonly<Record<string, string>>,
+): Achado[] {
+  return linhas.map((linha) => {
+    const id = idFinding(chave, linha);
+    // `AAAA-MM-DD` validado pela porta: a ordem lexicográfica é a cronológica.
+    const datas = anteriores.flatMap((a) => (a.achados[chave] ?? []).filter((x) => x.id === id).map((x) => x.primeiraVez));
+    const herdada = datas.length > 0 ? datas.reduce((m, d) => (d < m ? d : m)) : undefined;
+    return { id, linha, primeiraVez: herdada ?? semente[id] ?? hoje, ultimaVez: hoje };
+  });
+}
+
+/** O que o gravador mediu de UM audit: o exit e as linhas da saída. Chega VALIDADO pelo gravador
+ *  (exit 0 ou 1; exit 1 com ao menos uma linha `❌`) — erro de execução aborta lá, antes de montar. */
+export interface ExecucaoDeAudit {
+  exit: number;
+  linhas: readonly string[];
+}
+
+/**
+ * O carimbo NOVO a partir do que o gravador mediu — puro, para a trava e a herança serem testáveis fora
+ * do binário, que para na guarda de env por construção (revisão independente de 2026-10-05: a fiação
+ * de `main()` não tinha teste). O gravador fica só com o I/O: ler, sondar, rodar os audits, escrever.
+ *
+ * A trava roda AQUI de novo (o gravador a confere logo depois da sonda, para não gastar os audits no
+ * banco errado; e o gate a cobra no artefato): sem ela, esta função montaria evidência de outro banco.
+ */
+export function montarCarimbo(m: {
+  alvo: Carimbo['alvo'];
+  execucoes: Readonly<Record<ChaveAudit, ExecucaoDeAudit>>;
+  heranca: readonly CarimboAnterior[];
+  fps: Readonly<Record<ChaveAudit, { contrato: string; auditor: string }>>;
+  agora: string;
+  sourceHead: string | null;
+  semente: Readonly<Record<string, string>>;
+}): { ok: true; carimbo: Carimbo } | ({ ok: false } & RecusaDoAnterior) {
+  const outroCluster = conferirCluster(m.alvo.projetoHash);
+  if (outroCluster) return { ok: false, ...outroCluster };
+  const hoje = m.agora.slice(0, 10);
+  const audits = {} as Record<ChaveAudit, ResultadoAudit>;
+  for (const chave of Object.keys(AUDITS) as ChaveAudit[]) {
+    const { exit, linhas } = m.execucoes[chave];
+    audits[chave] = {
+      script: AUDITS[chave].script,
+      exit,
+      resumo: escolherResumo([...linhas]),
+      denominador: linhas.find((l) => l.startsWith('🔎'))?.slice(0, 300) ?? null,
+      contratoFingerprint: m.fps[chave].contrato,
+      auditorFingerprint: m.fps[chave].auditor,
+      achados: montarAchados(chave, linhas.filter((l) => l.startsWith('❌')), m.heranca, hoje, m.semente),
+    };
+  }
+  return { ok: true, carimbo: { schemaVersion: SCHEMA_VERSION, medidoEm: m.agora, sourceHead: m.sourceHead, alvo: m.alvo, audits } };
+}
+
+/**
+ * O texto do arquivo LOCAL, sem exceção solta: `null` = não existe; erro de leitura (EISDIR, EACCES,
+ * o arquivo sumindo entre a checagem e a leitura) é RECUSA — senão saía exit 1, fora do contrato
+ * 0 gravou · 2 não gravou que este módulo existe para manter.
+ */
+export function lerArquivoDoCarimbo(caminho: string): { ok: true; texto: string | null } | ({ ok: false } & RecusaDoAnterior) {
+  if (!existsSync(caminho)) return { ok: true, texto: null };
+  try {
+    return { ok: true, texto: readFileSync(caminho, 'utf8') };
+  } catch (e) {
+    const codigo = ascii(String((e as NodeJS.ErrnoException)?.code ?? 'erro'));
+    return { ok: false, codigo: 'CARIMBO_ANTERIOR_ILEGIVEL', motivo: `nao consegui ler o carimbo local (${codigo}) - ${RESTAURAR}.` };
+  }
 }

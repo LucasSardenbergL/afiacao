@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { assembleLinesEContexto, buildCrossSellCandidatos } from './proposta-preview-core';
 import type { PreviewOrder, PreviewItem, PreviewRec, PreviewProdById } from './proposta-preview-core';
+import { STATUS_NAO_VENDA } from '@/lib/farmer/universo-pedidos';
 
 const CANCEL = new Set(['CANCELADO', 'EXCLUIDO']);
 function ord(id: string, account: string, status: string, over: Partial<PreviewOrder> = {}): PreviewOrder {
@@ -43,6 +44,20 @@ describe('assembleLinesEContexto (codex Risco 2: join/account/status)', () => {
     const r = assembleLinesEContexto([], [], CANCEL);
     expect(r.account).toBeNull();
     expect(r.lines).toEqual([]);
+  });
+});
+
+describe('assembleLinesEContexto com a régua da AUTORIDADE (a que usePropostaPreview passa)', () => {
+  // Em caixa alta, como o core compara. Orçamento/rascunho/pendente ficavam DENTRO de statusValidos
+  // com a régua antiga (sinônimos de cancelado) — e podiam pôr SKU na cesta que vai ao cliente.
+  const AUTORIDADE = new Set(STATUS_NAO_VENDA.map((s) => s.toUpperCase()));
+  it('só o status de venda sobra em statusValidos', () => {
+    const r = assembleLinesEContexto(
+      [ord('1', 'oben', 'faturado'), ord('2', 'oben', 'orcamento'), ord('3', 'oben', 'rascunho'), ord('4', 'oben', 'pendente')],
+      [it_(100, '1'), it_(200, '2')],
+      AUTORIDADE,
+    );
+    expect(r.statusValidos).toEqual(['faturado']);
   });
 });
 
