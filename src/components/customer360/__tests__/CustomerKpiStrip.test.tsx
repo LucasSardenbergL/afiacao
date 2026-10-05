@@ -56,6 +56,13 @@ describe('CustomerKpiStrip', () => {
     expect(screen.queryByTestId('aviso-c360-consolidado')).toBeNull();
   });
 
+  it('controle das negativas: o R$ 0 LIDO aparece e a consulta normalizada o enxerga', () => {
+    // sem este controle, as asserções "nunca R$ 0" abaixo poderiam passar verdes por cegueira
+    // (foi o caso com `formatBRL(0)` cru — ver `brlNaTela`)
+    montar(fat12, lido<CustomerMetrics>({ ...linhaMv, faturamento_90d: 0, faturamento_prev_90d: 0, ticket_medio_90d: 0 }));
+    expect(screen.getAllByText(brlNaTela(0))).toHaveLength(2);
+  });
+
   it('12m que FALHOU sem valor: "indisponível", nunca R$ 0 e 0 pedidos', () => {
     montar(semValor('erro'), lido<CustomerMetrics>(linhaMv));
     expect(screen.getByText('indisponível')).toBeTruthy();

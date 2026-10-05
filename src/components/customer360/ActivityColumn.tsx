@@ -11,7 +11,7 @@ import { cn } from '@/lib/utils';
 import { ReguaPrecoSinal } from '@/components/regua-preco/ReguaPrecoSinal';
 import type { Regua360Entry } from '@/hooks/useReguaPreco360';
 import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
-import { estadoDeLeitura, naoConsegui } from '@/lib/leitura/estado-de-leitura';
+import { desatualizado, estadoDeLeitura, naoConsegui } from '@/lib/leitura/estado-de-leitura';
 import {
   formatBRL,
   formatContagemComTeto,
@@ -33,8 +33,12 @@ export function ActivityColumn({
   reguaByOmie?: Map<number, Regua360Entry>;
 }) {
   // O feed vem com teto (`LIMITE_FEED_PEDIDOS`): no teto, "200+" — não o total do cliente. E a
-  // leitura que falhou FALA em vez de sumir com o card, que é o mesmo silêncio de "sem pedidos".
+  // leitura que não aconteceu FALA: sem lista em mãos, no lugar do card (que sumiria como "sem
+  // pedidos"); com lista em mãos e o refetch falhando, junto dela — inclusive a lista VAZIA, que sem
+  // o aviso seria "sem pedidos" afirmado a partir de uma leitura velha.
   const estadoPedidos = estadoDeLeitura(orders);
+  const semLeituraPedidos = !orders.data && naoConsegui(estadoPedidos) ? estadoPedidos : null;
+  const pedidosVelhos = desatualizado(orders, orders.data !== undefined);
   const contagemPedidos = formatContagemComTeto(orders.data?.length ?? 0, LIMITE_FEED_PEDIDOS);
   return (
     <div className="lg:col-span-2 space-y-4">
@@ -189,8 +193,15 @@ export function ActivityColumn({
       </Card>
 
       {/* Pedidos recentes resumido */}
-      {naoConsegui(estadoPedidos) && !orders.data && (
-        <AvisoLeituraFalhou oque="os pedidos recentes" estado={estadoPedidos} testId="aviso-c360-pedidos-recentes" />
+      {semLeituraPedidos && (
+        <AvisoLeituraFalhou oque="os pedidos recentes" estado={semLeituraPedidos} testId="aviso-c360-pedidos-recentes" />
+      )}
+      {pedidosVelhos && (
+        <AvisoLeituraFalhou
+          oque="a leitura mais recente dos pedidos recentes"
+          estado={pedidosVelhos}
+          testId="aviso-c360-pedidos-recentes-desatualizado"
+        />
       )}
       {orders.data && orders.data.length > 0 && (
         <Card>

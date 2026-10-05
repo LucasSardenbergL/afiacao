@@ -172,6 +172,13 @@ type LinhaFaturamento = { total: number };
  * todo status (R$ 34,8 mil a mais em 19 clientes) e um `limit(200)` por `created_at` que escondia
  * 55–72% do faturamento dos 3 maiores clientes (2026-10-01). Paginado SEM teto; a falha LANÇA — a
  * tela mostra "indisponível", nunca R$ 0.
+ *
+ * ⚠️ LIMITE CONHECIDO (Codex, adversarial de 2026-10-05): paginar por offset não tira um retrato. Uma
+ * venda que entra ENTRE duas requisições, com `id` antes da fronteira, faz a página seguinte reler a
+ * última linha da anterior — a soma sai com sucesso e com uma linha a mais. Só existe com mais de
+ * 1.000 pedidos do cliente na janela; o máximo medido é 710 (2026-10-05), ou seja, 1 página e 1
+ * requisição. Se um cliente passar de 1.000, o retrato consistente é agregar no banco (`SUM`/`COUNT`
+ * numa consulta só), não paginar.
  */
 export function useCustomerFaturamento12m(customerId: string | undefined) {
   return useQuery({

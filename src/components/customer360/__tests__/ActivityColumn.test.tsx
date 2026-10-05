@@ -73,4 +73,18 @@ describe('ActivityColumn', () => {
     renderCol(<ActivityColumn preferred={emptyPreferred} interactions={emptyInteractions} orders={semRede} customer={customer} />);
     expect(screen.getByTestId('aviso-c360-pedidos-recentes').getAttribute('data-estado')).toBe('sem-rede');
   });
+
+  it('lista VAZIA em mãos e o refetch do feed FALHOU: avisa que é leitura velha, em vez de afirmar "sem pedidos"', () => {
+    const vaziaVelha = { data: [], status: 'error', fetchStatus: 'idle', isLoading: false } as unknown as OrdersQuery;
+    renderCol(<ActivityColumn preferred={emptyPreferred} interactions={emptyInteractions} orders={vaziaVelha} customer={customer} />);
+    expect(screen.getByTestId('aviso-c360-pedidos-recentes-desatualizado').getAttribute('data-estado')).toBe('erro');
+    expect(screen.queryByTestId('aviso-c360-pedidos-recentes')).toBeNull();
+  });
+
+  it('lista em mãos e o refetch do feed ficou sem rede: a lista FICA e o aviso aparece junto', () => {
+    const cheiaSemRede = { ...ordersQ, status: 'success', fetchStatus: 'paused' } as unknown as OrdersQuery;
+    renderCol(<ActivityColumn preferred={emptyPreferred} interactions={emptyInteractions} orders={cheiaSemRede} customer={customer} />);
+    expect(screen.getByText('PV 123')).toBeTruthy();
+    expect(screen.getByTestId('aviso-c360-pedidos-recentes-desatualizado').getAttribute('data-estado')).toBe('sem-rede');
+  });
 });
