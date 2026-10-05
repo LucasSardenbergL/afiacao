@@ -6,9 +6,10 @@
 > Migration: `supabase/migrations/20261001100001_sales_orders_gemeo_importado_contagem_unica.sql` ·
 > Prova: `db/test-gemeos-push-pull-contagem-unica.sh` (núcleo do CI).
 >
-> **Estado: NÃO aplicada.** Ensaio na prod verde em 2026-10-05 com a versão final, pós-Codex e
-> pós-revisão (`db:aplicar --ensaio`, sha256 `b7df9f5c…`, commit `b6f9ecbce`, ROLLBACK). O apply vem
-> logo depois do merge.
+> **Estado: APLICADA em 2026-10-05, 13:03 (horário do Mac)** — `bun run db:aplicar` com exit 0, tentativa
+> #240 virou recibo (sha256 `b7df9f5c…`); PR #2730 mergeado em `fff2011cf`. Validada por fora
+> (`psql-ro`): 25 ponteiros, 0 com kpi, 0 duplicata; os 22 `kpi_antes_app` viraram recibo; só abril
+> mudou, −R$ 12.840,46 com os mesmos 166 clientes; congelado idêntico. Detalhe em "Aplicação e validação".
 
 ## O que se mediu (prod, `psql-ro`, 2026-09-30)
 
@@ -86,6 +87,38 @@ Antes da prova, um spike descartável (S1–S9) testou a semântica do PG que o 
 o único deadlock possível: kpi gravado num UPDATE **posterior** de linha do app que já tem pid,
 concorrendo com a importação do mesmo pedido (tupla → advisory × advisory → tupla). O PG aborta um com
 40P01; no spike a vítima foi o importador — rollback, nenhuma duplicata, cura na rodada seguinte.
+
+## Aplicação e validação (2026-10-05)
+
+PR #2730 mergeado em `fff2011cf` (14:46 UTC). Pré-voo (`psql-ro`, logo antes): `dup_pos_backfill=0`,
+`backfill_ponteiros=25 kpi_zerados=22`, `ja_existe=0`, `importadas_sem_data=0`, `FIM-OK`.
+
+Recibo do `bun run db:aplicar` (worktree na `origin/main` `00af063e4`), `exit=0`:
+
+```
+🔑 sha256 b7df9f5c38696ee41600fe7c6afce3a36c33c27eca087d2d4781a082a78040e3 · commit 00af063e4
+📋 ledger: inedito
+🧾 tentativa #240 registrada
+✅ APLICADO — tentativa #240 virou recibo, na mesma transação.
+```
+
+2ª testemunha (`psql-ro`, outra conexão, `rc=0` e `FIM-OK`):
+
+```
+ponteiros=25 ptr_com_kpi=0 dup_kpi=0
+triggers=trg_sales_orders_gemeo_app:O,trg_sales_orders_gemeo_importada_antes:O,trg_sales_orders_gemeo_importada_depois:O
+indices=idx_sales_orders_app_pedido_omie,idx_sales_orders_gemeo_importado_id,uniq_sales_orders_kpi_por_pedido_omie
+checks=sales_orders_gemeo_e_recibo:true,sales_orders_importada_tem_data:true
+acl_aberto=0
+coluna_grant_authenticated=false
+ids_no_banco=22 recibo=22 ainda_com_kpi=0        (os 22 kpi_antes_app do anexo "antes")
+```
+
+Retrato por mês ([anexos/gemeos-depois.csv](anexos/gemeos-depois.csv)) contra um "antes" tirado ~1 min antes
+do apply: só `canonico_mes;;2026-04` mudou — 509.153,36 → 496.312,90 (−12.840,46), os mesmos 166
+clientes; os outros meses e o `congelado` idênticos. O abril "antes" é o mesmo do anexo de 30/09.
+Setembro está em 550.569,68 / 180 contra 546.670,68 / 179 no anexo: importações de setembro que chegaram
+depois do retrato de 30/09 — no par antes × depois do apply, setembro ficou igual.
 
 ## Reversão
 
