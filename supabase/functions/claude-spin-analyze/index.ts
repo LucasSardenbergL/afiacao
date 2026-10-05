@@ -307,7 +307,7 @@ Deno.serve(async (req) => {
         },
       ],
       tools: [SPIN_ANALYSIS_TOOL],
-      tool_choice: { type: "tool", name: "spin_analysis" },
+      tool_choice: { type: "tool", name: "spin_analysis", disable_parallel_tool_use: true },
       messages: [
         {
           role: "user",

@@ -87,7 +87,7 @@ Deno.serve(async (req) => {
       max_tokens: 2000,
       system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
       tools: [TOOL],
-      tool_choice: { type: "tool", name: "extrair_tarefas" },
+      tool_choice: { type: "tool", name: "extrair_tarefas", disable_parallel_tool_use: true },
       messages: [{ role: "user", content: userMsg }],
     });
 
