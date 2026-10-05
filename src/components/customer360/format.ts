@@ -85,6 +85,17 @@ export function orderStatusTone(status: string): { className: string; label: str
   return { className: 'text-muted-foreground', label: status };
 }
 
+/**
+ * Teto do feed "Pedidos recentes" (`useCustomerOrders`). Mora aqui, e não no hook, para quem CONTA a
+ * lista ler o teto sem importar o cliente Supabase.
+ */
+export const LIMITE_FEED_PEDIDOS = 200;
+
+/** Contagem de uma lista com TETO: no teto ela foi CORTADA — "200+", nunca o teto como se fosse o total. */
+export function formatContagemComTeto(n: number, teto: number): string {
+  return n >= teto ? `${teto}+` : String(n);
+}
+
 export function formatDateOrDash(d: string | null | undefined): string {
   if (!d) return '—';
   try {

@@ -69,15 +69,15 @@ export const REGISTRO: readonly EntradaRegistro[] = [
   { arquivo: 'src/hooks/dashboard/useBriefDeltas.ts', forma: 'select·gte(created_at)·is(deleted_at)', categoria: 'proposito', motivo: 'conta os pedidos novos que o feed (/sales) mostra: todo status, sem o apagado' },
   { arquivo: 'src/components/adminCustomers/useAdminCustomers.ts', forma: 'select·eq(customer_user_id)·is(deleted_at)·order(created_at)·limit', categoria: 'proposito', motivo: 'feed de pedidos do cliente no admin, com badge de status' },
   { arquivo: 'src/pages/SalesQuotes.tsx', forma: 'select·eq(status)·is(deleted_at)·order(created_at)', categoria: 'proposito', motivo: 'a lista de ORÇAMENTOS (`eq(status,orcamento)`): o complemento do universo, de propósito' },
+  { arquivo: 'src/components/customer360/hooks.ts', forma: 'select·eq(customer_user_id)·is(deleted_at)·order(created_at)·limit', categoria: 'proposito', motivo: '"Pedidos recentes" do Customer 360: feed com badge de status (o faturamento sai de useCustomerFaturamento12m, canônico)' },
   // ── dívida (2026-10-01) — cada PR de domínio quita as suas ──────────────────────────────────
-  { arquivo: 'src/components/customer360/hooks.ts', forma: 'select·eq(customer_user_id)·order(created_at)·limit', categoria: 'divida', dominio: 'customer360', motivo: 'faturamento 12m sem status nem deleted_at, e o limit(200) esconde 55–72% nos 3 maiores clientes' },
 ];
 
 /**
  * Teto da dívida: IGUAL ao número de entradas `divida` (o G4 exige a igualdade). Só desce — quem
  * quita uma entrada baixa o teto no mesmo diff; subir é reabrir a classe, e o diff é a conversa.
  */
-export const TETO_DIVIDA = 1;
+export const TETO_DIVIDA = 0;
 
 interface ConstanteDivida {
   arquivo: string;

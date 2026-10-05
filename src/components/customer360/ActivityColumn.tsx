@@ -10,7 +10,16 @@ import { EmptyState } from '@/components/EmptyState';
 import { cn } from '@/lib/utils';
 import { ReguaPrecoSinal } from '@/components/regua-preco/ReguaPrecoSinal';
 import type { Regua360Entry } from '@/hooks/useReguaPreco360';
-import { formatBRL, formatRelative, formatDateOrDash, orderStatusTone } from './format';
+import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
+import { desatualizado, estadoDeLeitura, naoConsegui } from '@/lib/leitura/estado-de-leitura';
+import {
+  formatBRL,
+  formatContagemComTeto,
+  formatRelative,
+  formatDateOrDash,
+  LIMITE_FEED_PEDIDOS,
+  orderStatusTone,
+} from './format';
 import type { Customer, PreferredQuery, OrdersQuery, InteractionsQuery } from './viewTypes';
 
 export function ActivityColumn({
@@ -23,6 +32,14 @@ export function ActivityColumn({
   /** Régua de Preço por omie_codigo (readonly). Vazio/undefined quando a flag está off. */
   reguaByOmie?: Map<number, Regua360Entry>;
 }) {
+  // O feed vem com teto (`LIMITE_FEED_PEDIDOS`): no teto, "200+" — não o total do cliente. E a
+  // leitura que não aconteceu FALA: sem lista em mãos, no lugar do card (que sumiria como "sem
+  // pedidos"); com lista em mãos e o refetch falhando, junto dela — inclusive a lista VAZIA, que sem
+  // o aviso seria "sem pedidos" afirmado a partir de uma leitura velha.
+  const estadoPedidos = estadoDeLeitura(orders);
+  const semLeituraPedidos = !orders.data && naoConsegui(estadoPedidos) ? estadoPedidos : null;
+  const pedidosVelhos = desatualizado(orders, orders.data !== undefined);
+  const contagemPedidos = formatContagemComTeto(orders.data?.length ?? 0, LIMITE_FEED_PEDIDOS);
   return (
     <div className="lg:col-span-2 space-y-4">
       <Card>
@@ -176,6 +193,16 @@ export function ActivityColumn({
       </Card>
 
       {/* Pedidos recentes resumido */}
+      {semLeituraPedidos && (
+        <AvisoLeituraFalhou oque="os pedidos recentes" estado={semLeituraPedidos} testId="aviso-c360-pedidos-recentes" />
+      )}
+      {pedidosVelhos && (
+        <AvisoLeituraFalhou
+          oque="a leitura mais recente dos pedidos recentes"
+          estado={pedidosVelhos}
+          testId="aviso-c360-pedidos-recentes-desatualizado"
+        />
+      )}
       {orders.data && orders.data.length > 0 && (
         <Card>
           <CardHeader className="pb-3">
@@ -183,7 +210,7 @@ export function ActivityColumn({
               <ShoppingBag className="w-4 h-4 text-muted-foreground" />
               Pedidos recentes
               <Badge variant="outline" className="ml-auto text-[10px] uppercase font-tabular">
-                {orders.data.length}
+                {contagemPedidos}
               </Badge>
             </CardTitle>
           </CardHeader>
@@ -226,7 +253,7 @@ export function ActivityColumn({
                     className="text-xs h-7"
                   >
                     <Link to={`/sales?customer=${customer.user_id}`}>
-                      Ver todos ({orders.data.length})
+                      Ver todos ({contagemPedidos})
                     </Link>
                   </Button>
                 </div>
