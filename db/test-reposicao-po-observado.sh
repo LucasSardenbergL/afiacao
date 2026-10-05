@@ -487,7 +487,7 @@ eq A5 "e preserva o OBEN de 13 dias, o COLACOR velho e o recém-publicado" "$v" 
 # ══════════════════════════════════════════════════════════════════════════════
 postcond_recusa() {   # <id> <descrição> <fragmento esperado na mensagem> <de> <para>
   local id="$1" desc="$2" frag="$3" copia="$TMPD/copia-$1.sql" db out v
-  db="p_$(printf '%s' "$1" | tr 'A-Z' 'a-z')"
+  db="p_$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
   if ! trocar "$MIG_EFETIVA" "$copia" "$4" "$5" 1; then erro_exec "$id" "$desc — INFRA: defeito não aplicável à cópia"; return; fi
   "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres -T molde "$db"
   if out="$(Pdb "$db" -f "$copia" 2>&1)"; then
