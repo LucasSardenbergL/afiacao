@@ -18,20 +18,44 @@ export interface ItemPosEstoqueOmie {
   nPrecoMedio?: number;
 }
 
+// Número EXPLÍCITO de um campo do Omie: number finito ou string numérica não-vazia. undefined,
+// null, "", branco, boolean, objeto, NaN e ±Infinity são null — `Number(null)`, `Number("")` e
+// `Number("  ")` dão 0, e é assim que um campo ausente virava saldo zero (ausente ≠ zero).
+export function numeroExplicito(v: unknown): number | null {
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+  if (typeof v !== "string" || v.trim() === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+// Código de produto EXPLÍCITO: inteiro seguro > 0 vindo de number ou de string só de dígitos.
+// `Number([7])` é 7 e `Number(true)` é 1 — coagir array/boolean/objeto inventa um código.
+export function codigoExplicito(v: unknown): number | null {
+  if (typeof v === "string") {
+    if (!/^\s*\d+\s*$/.test(v)) return null;
+  } else if (typeof v !== "number") {
+    return null;
+  }
+  const cod = Number(v);
+  return Number.isSafeInteger(cod) && cod > 0 ? cod : null;
+}
+
 // Normaliza e acumula uma página do ListarPosEstoque no Map (dedupe last-wins por código —
 // código repetido no MESMO statement de upsert daria 21000 "cannot affect row a second time").
-// ⚠️ Os `?? 0` são fabricação CONSCIENTE preservada do N+1: a posição VEIO na resposta do
-// Omie; campo ausente = posição zerada, não "dado indisponível". O gate money-path real é o
-// cmc>0 nos writers de custo (custo zero nunca vira product_costs).
+// O SALDO tem de vir explícito: sem ele o item sai do retrato (o código fica fora do Map, e quem
+// tem saldo local ≠ 0 vira candidato à confirmação de _shared/zeramento-estoque.ts). Os `?? 0` de
+// nCMC/nPrecoMedio seguem a fabricação consciente do N+1 — o gate money-path do custo é o cmc>0
+// nos writers de custo (custo zero nunca vira product_costs).
 export function acumularPosicoesDaPagina(
   posicoes: Map<number, PosicaoEstoque>,
   produtos: ItemPosEstoqueOmie[],
 ): number {
   let validos = 0;
   for (const prod of produtos) {
-    const codProd = Number(prod.nCodProd); // Omie pode devolver string; chave do Map é number
-    if (!Number.isSafeInteger(codProd) || codProd <= 0) continue;
-    const saldo = Number(prod.nSaldo ?? 0);
+    const codProd = codigoExplicito(prod.nCodProd); // Omie pode devolver string; chave do Map é number
+    if (codProd === null) continue;
+    const saldo = numeroExplicito(prod.nSaldo);
+    if (saldo === null) continue;
     const cmc = Number(prod.nCMC ?? 0);
     const precoMedio = Number(prod.nPrecoMedio ?? 0);
     // Drift de contrato (NaN/±Inf/lixo) descarta o ITEM, não o lote: em chunk de 500 um único

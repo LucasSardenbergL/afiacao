@@ -15,6 +15,14 @@ import { recomporCustoProducao } from "../_shared/recompor-custo-producao.ts";
 import { buildProductIdMap, montarCatalogoPorCod } from "../_shared/product-idmap.ts";
 import { avaliarPagina, MAX_PAGINAS_LISTAGEM, MAX_PAGINAS_POS_ESTOQUE, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
 import { acumularPosicoesDaPagina, type PosicaoEstoque } from "../_shared/pos-estoque.ts";
+import { avaliarCompletudeListagem } from "../_shared/zeramento-estoque.ts";
+import {
+  type EscritorPostgrest,
+  metadataDoZeramento,
+  type ResultadoZeramento,
+  zerarConfirmadosForaDaLista,
+} from "../_shared/zeramento-estoque-io.ts";
+import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import { atenderSondaOptions } from '../_shared/sonda-cron.ts';
 import { hojeSP, paraDataOmie } from "../_shared/hoje-sp.ts";
 import {
@@ -1419,10 +1427,19 @@ function chunked<T>(arr: T[], size: number): T[][] {
   return out;
 }
 
+// Usado no pedido E na checagem de completude: página "cheia" só significa algo contra o tamanho
+// que foi de fato pedido.
+const POR_PAGINA_POS_ESTOQUE = 100;
+
 async function syncInventory(db: SupabaseClient, account: OmieAccount) {
   await updateSyncState(db, "inventory", account, { status: "running", error_message: null });
   let pagina = 1;
   let totalPaginas = 1;
+  // A posição de HOJE em SP, UMA vez por run: todas as páginas e a confirmação do zero no MESMO
+  // retrato (calculada por página, uma rodada que cruzasse a meia-noite misturaria duas datas).
+  const dataPosicao = paraDataOmie(hojeSP());
+  const tamanhosPaginas: number[] = []; // itens CRUS por página — a completude que libera a confirmação
+  let itensIlegiveis = 0; // recusados pelo parser (código inválido, saldo não explícito) — telemetria
 
   try {
     // 1) COLETA todas as páginas do Omie em memória (dedupe last-wins por código).
@@ -1433,8 +1450,8 @@ async function syncInventory(db: SupabaseClient, account: OmieAccount) {
     while (pagina <= totalPaginas) {
       const result = (await callOmie(account, "estoque/consulta/", "ListarPosEstoque", {
         nPagina: pagina,
-        nRegPorPagina: 100,
-        dDataPosicao: paraDataOmie(hojeSP()), // a posição de HOJE em SP (toLocaleDateString sem fuso = dia UTC às 21h+)
+        nRegPorPagina: POR_PAGINA_POS_ESTOQUE,
+        dDataPosicao: dataPosicao,
       })) as unknown as OmieListarPosEstoqueResponse;
 
       // Piso MONOTÔNICO + teto fail-fast (_shared/omie-paginacao.ts, Codex P1 #1341/#1353):
@@ -1456,7 +1473,8 @@ async function syncInventory(db: SupabaseClient, account: OmieAccount) {
       // não-finito descarta o ITEM (um único malformado derrubaria o chunk de 500 com 22P02),
       // dedupe last-wins por código (repetido no MESMO statement de upsert daria 21000).
       itensRecebidos += produtos.length;
-      acumularPosicoesDaPagina(posicoes, produtos);
+      tamanhosPaginas.push(produtos.length);
+      itensIlegiveis += produtos.length - acumularPosicoesDaPagina(posicoes, produtos);
 
       console.log(`[Sync ${account}] Estoque página ${pagina}/${totalPaginas} (${produtos.length})`);
       pagina++;
@@ -1485,6 +1503,8 @@ async function syncInventory(db: SupabaseClient, account: OmieAccount) {
         total_synced: 0,
         last_sync_at: nowIso,
         last_page: totalPaginas,
+        // Sem isto a metadata da rodada ANTERIOR seguia lá, atribuída a esta (Codex P2 no adversarial).
+        metadata: metadataDoZeramento(null, null, "snapshot de posição vazio — zeramento não apurado"),
       });
       return { totalSynced: 0 };
     }
@@ -1600,6 +1620,32 @@ async function syncInventory(db: SupabaseClient, account: OmieAccount) {
       }
     }
 
+    // 4b) Zero de quem SAIU da lista padrão (saldo ≠ 0): posição desta conta e estoque da empresa
+    //     ≠ 0 ausentes de uma listagem COMPLETA viram candidatos; o zero só é escrito depois de
+    //     CONFIRMADO no Omie (cExibeTodos "S" + lista_produtos), com CAS no valor lido — a
+    //     paginação desliza e a ausência sozinha não prova zero. Antes ninguém zerava a posição
+    //     (congelada por meses, lida sem frescor pelo motor de compra) e o estoque do catálogo só
+    //     voltava a 0 pelo `quantidade_estoque || 0` dos writers de catálogo. Leitura que falha
+    //     NÃO zera ninguém e surfaça no sync_state. Regra e guardas: _shared/zeramento-estoque.ts.
+    let zeramento: ResultadoZeramento | null = null;
+    let erroZeramento: string | null = null;
+    try {
+      zeramento = await zerarConfirmadosForaDaLista({
+        leitor: db as unknown as BancoPostgrest,
+        escritor: db as unknown as EscritorPostgrest,
+        chamarOmie: (params) => callOmie(account, "estoque/consulta/", "ListarPosEstoque", params),
+        account,
+        empresa,
+        listados: new Set(posicoes.keys()),
+        completude: avaliarCompletudeListagem(tamanhosPaginas, POR_PAGINA_POS_ESTOQUE),
+        dataPosicao,
+        nowIso,
+      });
+    } catch (e) {
+      erroZeramento = mensagemDeErro(e) ?? "erro sem mensagem utilizável";
+      console.error(`[Sync ${account}] zeramento de quem saiu da lista não rodou: ${erroZeramento}`);
+    }
+
     // 5) product_costs — só onde há product_id E cmc>0. Preserva a semântica anterior:
     //    já existe → atualiza SÓ cmc+updated_at (não toca cost_price/source/confidence);
     //    novo → insere linha completa (cost_source='CMC', cost_confidence=0.7).
@@ -1658,18 +1704,29 @@ async function syncInventory(db: SupabaseClient, account: OmieAccount) {
     // Falha parcial de chunk NÃO derruba a run (idempotente; o próximo ciclo reconcilia), mas
     // SURFAÇA no error_message (lição #1344: o 23502 deste sync ficou invisível por meses
     // porque o console.error era engolido — 'complete' limpo nunca pode mentir de novo).
+    const metadataZeramento = metadataDoZeramento(zeramento, erroZeramento);
+    const errosRun = [
+      ...(falhasChunk > 0 ? [`${falhasChunk} chunk(s) com erro de escrita (lote parcial — próximo ciclo reconcilia)`] : []),
+      ...(erroZeramento ? [`zeramento de quem saiu da lista não rodou: ${erroZeramento}`] : []),
+      ...(zeramento && zeramento.falhas.length > 0
+        ? [`zeramento: ${zeramento.falhas.length} falha(s) de confirmação/escrita — os códigos afetados ficaram como estavam`]
+        : []),
+    ];
     await updateSyncState(db, "inventory", account, {
       status: "complete",
       total_synced: totalSynced,
       last_sync_at: nowIso,
       last_page: totalPaginas,
-      error_message: falhasChunk > 0
-        ? `${falhasChunk} chunk(s) com erro de escrita (lote parcial — próximo ciclo reconcilia)`
-        : null,
+      error_message: errosRun.length > 0 ? errosRun.join(" · ") : null,
+      metadata: { ...metadataZeramento, ...(itensIlegiveis > 0 ? { itens_ilegiveis: itensIlegiveis } : {}) },
     });
-    return { totalSynced, falhasChunk };
+    return { totalSynced, falhasChunk, zeramento: metadataZeramento };
   } catch (error) {
-    await updateSyncState(db, "inventory", account, { status: "error", error_message: String(error) });
+    await updateSyncState(db, "inventory", account, {
+      status: "error",
+      error_message: String(error),
+      metadata: metadataDoZeramento(null, null, "rodada com erro — zeramento não apurado"),
+    });
     throw error;
   }
 }

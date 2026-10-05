@@ -85,7 +85,7 @@ export const respostaSonda = criarRespostaSonda("sync-reprocess");
 // falha), agora tipado `string | number` por um tipo local — o `deno check` do preview deixa de acusar
 // a linha que o bot "consertava" com `Number()`. JS emitido byte-idêntico ao da v1.10.
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.14-estoque-dono-unico";
+export const VERSAO = "v1.15-zero-confirmado";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO = // v1.12 (2026-09-27, P2 Codex): run de pedidos que ABORTA grava o metadata apurado até o abort (não apurado = null, nunca 0) — ./apuracao-pedidos.ts. Nota aqui e não na linha do VERSAO: `scripts/sonda-versao-sql.ts` exige aquela linha limpa até o fim.

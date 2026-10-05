@@ -154,3 +154,67 @@ acidente, agora explícita, a cada 2 h, com guardas.
 - `inventory_position` não zera quem sai da lista: 78 posições oben e 87 `vendas` congeladas (Σ saldo×cmc
   R$ 26.918 e R$ 27.104), lidas sem filtro de frescor pelo motor de compra (`DISTINCT ON … synced_at DESC`
   + `GREATEST`), e por `atp_disponivel`, `selfservice_disponibilidade` e `fin_estimar_estoque_omie`.
+
+## Fase 2 — o zero passa a ser CONFIRMADO, e vale para a posição (2026-10-05, branch `estoque-dono-unico-classe`)
+
+Edges `omie-analytics-sync` → `v1.7-zero-confirmado` e `sync-reprocess` → `v1.15-zero-confirmado` (esta
+leva junto o #2744, que nunca foi deployado sozinho).
+
+**A medição que pediu a fase.** Re-medido em 05/10 13:00 UTC: 208 posições congeladas (`vendas` 84, `oben`
+75, `colacor_vendas` 49; Σ saldo×cmc R$ 63,6k), todas com mais de 24 h. O motor só lê o saldo de
+`inventory_position` no estoque consolidado dos grupos de embalagem (`GREATEST(inv, sku_estoque_atual)`), e
+ali a congelada **suprime compra**: a WP07.3900QT (pp 1, cmc R$ 796) tem 0 confirmado pelo modo "S" e 2,43
+congelado desde 27/08 — o motor não a sugere desde então. ⚠️ O primeiro cruzamento com os grupos deu 0 por
+CAIXA: `sku_embalagem_equivalencia.empresa` é `oben`, `sku_estoque_atual`/`sku_parametros` são `OBEN`.
+
+**O parecer de desenho (Codex `max`, sem P0) derrubou a inferência.** A listagem paginada não é retrato: se
+um produto esgota entre a página 1 e a 2, a seguinte desliza e um POSITIVO some do conjunto sem que guarda
+alguma de tamanho perceba — o zero por ausência do #2744 zeraria estoque real. E o upsert de linha
+completa podia restaurar `codigo`/`descricao` e apagar um positivo gravado depois da leitura.
+
+**O conserto** (`_shared/zeramento-estoque.ts` puro + `_shared/zeramento-estoque-io.ts`):
+- a ausência numa listagem completa só **descobre** candidatos (posição da conta e estoque da empresa ≠ 0);
+- o zero é **autorizado** por uma confirmação explícita — `ListarPosEstoque` com `cExibeTodos:"S"` +
+  `lista_produtos:[{nCodProd}]`, lotes de 50, a MESMA data do retrato — e só com saldo 0 explícito em
+  TODAS as entradas do código; código ausente, saldo não explícito ou item ilegível na resposta =
+  desconhecido, nunca zero;
+- escrita por `UPDATE` com CAS no valor lido; a posição muda só o saldo, e o `synced_at` avança só se a
+  confirmação trouxe cmc utilizável (ele é o frescor do CUSTO: `get_defasagem_cliente` recusa > 48 h);
+  `cmc`/`preco_medio` só entram no SET se mudaram (UPDATE OF cmc dispara o ledger mesmo com valor igual);
+- sem teto por rodada (com o zero confirmado ele não protege de zero falso — o positivo zerado por engano
+  volta na listagem principal seguinte —, e um teto "N mais velhos" deixaria os eternamente-desconhecidos,
+  57 congeladas de produto inativo, ocupando as vagas); só o limite de anomalia max(50, 25%) como guarda
+  de custo. O congelado drena na 1ª rodada, sem dreno manual;
+- `_shared/pos-estoque.ts`: `nSaldo` ausente/null/vazio não vira mais 0 — o item sai do retrato e, se tem
+  saldo local, vira candidato à confirmação (`numeroExplicito`);
+- `syncInventory` fixa a data do retrato antes da 1ª página (era calculada por página).
+
+**O adversarial do código (Codex `max`, 2 P1 + 3 P2, sem P0; o retroativo do #2744 sem P0/P1) mudou:**
+- a confirmação PAGINA (uma entrada por local): o lote só vale com a paginação terminada numa página
+  curta (teto de 5 páginas); página que falha = lote inteiro desconhecido — decidir pela página 1 zerava
+  produto com saldo em outro local;
+- o zero confirmado vale para os DOIS espelhos da mesma conta Omie (`vendas`↔`oben`, mesmas credenciais
+  `OMIE_OBEN_*`), cada um com o próprio CAS — senão o zero sem cmc (synced_at preservado) ficava escondido
+  na eleição por synced_at do motor e do ATP até o outro dono rodar;
+- o CAS é a VERSÃO da linha (`synced_at` da posição, `updated_at` do catálogo) + valor ≠ 0, não igualdade
+  numérica (um numeric com mais casas que um double seria recusado para sempre);
+- código de produto só de number ou string de dígitos (`[7]` e `true` coagiam para código);
+- rodada vazia e rodada com erro gravam `zeramento_candidatos: null` + o motivo, em vez de herdar a
+  metadata da rodada anterior.
+
+**Metadata** (`sync_state.metadata` das 3 contas do analytics; `sync_reprocess_log.metadata` do
+reprocess): `zeramento_candidatos` (null = não apurado), `zeramento_confirmados_zero`/`_nao_zero`/
+`_desconhecidos`, `zerados_posicao`, `zerados_estoque`, `zeramento_recusados_cas`, `zeramento_chamadas`,
+`zeramento_estranhos` (código não pedido = filtro não honrado), `zeramento_pulado`, `zeramento_falhas`.
+Substitui `zerados_fora_da_lista` do #2744 (nunca foi ao ar).
+
+**Gate** `src/__tests__/estoque-escritores-gate.test.ts` (registro em
+`src/lib/gates/estoque-escritores-registro.ts`): todo escritor de `inventory_position` ou de
+`omie_products` com a chave `estoque` está registrado com papel; o dono chama o zero confirmado; nenhum
+escritor grava zero literal.
+
+**Fora desta fase** (fases-PR seguintes): os 4 writers de catálogo deixam de gravar
+`quantidade_estoque || 0` **depois** de o zero confirmado provar em prod (senão a colacor fica sem quem
+zere); e o `omie-sync-estoque` passa a refrescar os membros de grupo de equivalência — o galão da WP01
+(`descontinuado`, fora dos habilitados) está congelado em 11,72 nas DUAS fontes, e zerar só a posição não
+o tira do `GREATEST`.
