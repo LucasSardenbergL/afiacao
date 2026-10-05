@@ -340,3 +340,99 @@ some na 1ª observação nova.
 `enabledPlugins` diz false, antes de ler os argumentos; o `worker-service.cjs` só barra `start`/`hook`/
 `restart`/`--daemon`): o stop é `~/.bun/bin/bun …/13.28.0/scripts/worker-service.cjs stop` direto — que
 também sai 0 com a porta presa (só loga `warn`), então o juiz é o `curl` rc 7.
+
+## 05/10 — a causa raiz do apagão de 27/07, medida só lendo
+
+**O pedido (briefing de 25/09):** por que nada grava desde 27/07, com a hipótese de o problema estar
+ANTES do gerador, já que `pending_messages` também parava em 27/07. Só leitura: logs, banco em
+`-readonly`, fonte do plugin (cache 13.15.3/13.28.0, clone do marketplace e tags do upstream).
+
+**1. Causa raiz — o observador não tem credencial válida.** O `claude` headless que o worker spawna
+autentica com o token OAuth do item `Claude Code-credentials` do keychain. O plugin assume que o app
+o mantém fresco (o cabeçalho do `oauth-token.ts` diz "keychain entries are always current because
+Claude Desktop refreshes them in place"). Aqui isso é falso: o Code tab autentica pelo host (seção de
+28/09) e só o `claude` de **terminal** renova o item. O token dura 8 h. O upstream chegou ao mesmo
+depois ([#4150](https://github.com/thedotmack/claude-mem/issues/4150), fechada em 04/10; o fonte da
+v13.31.0 diz "re-logging into Claude Desktop never repairs it").
+
+| quando (hora local) | evidência no log/banco |
+|---|---|
+| 27/07 13:17 | boot do worker com o token do item vencido desde 26/07 00:48 (`Refusing to inject … expiresAt=1785037733164`) |
+| 27/07 13:18–13:38 | token renovado (14× `Injected fresh`, vence às **21:18:06**); 57 `STORING`, o último às 13:42 = a última observação do banco |
+| 27/07 21:17:21 | o item **sumiu** do keychain (`SecKeychainSearchCopyNext: The specified item could not be found`), 45 s antes de vencer — quem apagou não ficou registrado; até 08/08, 12.132× `Not logged in · Please run /login`, e o parser da 13.10.2 descartou 6.066 lotes desses como "prosa" |
+| 25/09 (dia do briefing) | 180 resumos enfileirados, 1.064× `Failed to authenticate: OAuth session expired and could not be refreshed`, 0 `STORING` |
+| 27/09 16:39:32 | `/login` no terminal → `Injected fresh`, vence 28/09 00:39:04; nas 8 h, 162 resumos e 23 observações |
+| 28/09 01:00 | `Refusing to inject expired` com o MESMO `expiresAt`: 8 h de sessões no app e nenhuma renovação |
+
+Prova cruzada de quem renova: o `~/.local/bin/claude` (instalador nativo, que só se atualiza quando
+roda) ficou na 2.1.202 de **07/07** (o `/login` original) até **27/09 16:41** (2 min depois do
+`/login` novo). O CLI de terminal não rodou no intervalo inteiro.
+
+**2. A hipótese da fila caiu — `pending_messages` deixou de ser fila.** As 79 linhas são sobras (75+3
+de 07/07, 1 de 27/07). A última (id 78850, 27/07 13:17:58) é o 1º `ENQUEUED` do boot em que 13.2.0 e
+13.10.2 subiram juntas; 25 min depois o mesmo log numera `messageId=398`, contador do processo. O
+fonte upstream: `SessionMessageBuffer`, "Per-session in-RAM observation buffer. This replaces the
+durable `pending_messages` SQLite queue". O worker de 27/07 enfileirou 12.926 mensagens até 08/08, e
+27–28/09 gravou 23 observações sem deixar linha na tabela. O `max()` de tabela que ninguém mais
+escreve é fóssil, não sintoma.
+
+**3. Fator independente desde 20/08 — o desarme tirou a fonte das observações.** O incidente de fork
+de 19/08 ([setup-agente.md](setup-agente.md)) tirou do `hooks.json` o `PostToolUse` (`hook claude-code
+observation`, a captura por ferramenta) e o `PreToolUse(Read)`; o `~/.claude/hooks/claude-mem-vigia-hooks.sh`
+reaplica o desarme a cada update (27/09 15:27, 1 min depois da 13.28.0; há `hooks.json.bak-original`
+nas duas versões). Por worker: a 13.10.2 enfileirava `observation` (11.455 no de 27/07); **todo
+worker 13.15.3 (21/08–26/09) enfileirou 0 `observation`**, só `summarize`. Com login válido a
+observação ainda nasce, mas incidental — o modelo às vezes responde ao pedido de resumo com
+`<observation>`: as 23 de 27–28/09 vieram de 12 sessões só-`summarize`, e as duas com `PostToolUse`
+vivo (1364/1372, abertas na janela de 1 min antes do re-desarme) não gravaram nenhuma.
+
+**Consequência para o sensor:** o eixo "gravação" do `claude-mem-saude.sh` conta só `observations`,
+calibrado com julho (PostToolUse vivo, ≤ 11 prompts entre observações). Com o desarme, a janela
+SAUDÁVEL de 27/09 teve 33 prompts em 149 min sem observação (19:41Z–22:10Z), com 15 resumos gravados
+no mesmo trecho — um `[ACHADO] NAO GRAVA` falso. Religar mantendo o desarme exige o sensor contar
+`session_summaries` também.
+
+**Armadilha de leitura — por que 25/09 viu "nenhuma linha de processamento":** o worker escreve no
+arquivo do dia em que SUBIU; os processos de hook, no do dia corrente. `claude-mem-2026-09-24.log`
+tem 7.406 linhas datadas de 25/09 (e 1.839 de 26/09) — os erros estavam lá, e o "log de hoje" só
+tinha os hooks. Filtre por `grep '^\[AAAA-MM-DD'` em todos os arquivos, nunca pelo nome.
+
+**Bloqueio novo, medido hoje:** o app mudou o layout em 02/10 para
+`claude-code/<versão>/<hash>/claude.app/Contents/MacOS/claude`, e o glob do shim
+(`claude-code/*/claude.app/…`) não casa mais: ele sai 127 ("binário do app não encontrado"). Religar
+hoje voltaria à falha de 07/07 ("Claude executable not found"). Alternativa estável ao shim:
+`~/.local/bin/claude` (link do instalador nativo, 2.1.283). Os `pgrep -f 'claude.app/Contents/MacOS/claude'`
+do repo casam por substring e seguem valendo.
+
+**Upstream hoje:** #4129 e #4154 mergeados em 30/09, contidos a partir da **v13.29.0** (a 13.28.0
+instalada não tem nenhum dos dois); a mais nova é a v13.31.0. Nela os hooks de prompt falham aberto
+("your prompts are not blocked") e o `consecutiveFailures` segue incrementado e persistido — o eixo
+"contador" do bloco 6 continua valendo. O #4154 leva a falha de auth do SDK ao `observer-health.json`
+(aqui ele marcava `consecutiveFailures=0` com tudo falhando). Nada disso resolve o token de 8 h: o
+`~/.claude-mem/.env` aceita `ANTHROPIC_API_KEY`, gateway, Gemini e OpenRouter, e um
+`CLAUDE_CODE_OAUTH_TOKEN` só vale como reserva se estiver no ambiente do PRÓPRIO worker (herdado de
+quem o sobe).
+
+**Conserto — decisão do founder, o plugin segue desligado:** (a) shim no layout novo, ou
+`CLAUDE_CODE_PATH` apontando para `~/.local/bin/claude`; (b) plugin ≥ 13.29.0; (c) credencial:
+`/login` no Terminal dá 8 h, e a durável é `ANTHROPIC_API_KEY` no `~/.claude-mem/.env` (cobrada por
+token; modelo padrão `claude-haiku-4-5`; custo não medido); (d) religar e reiniciar as sessões; (e)
+mantido o desarme, o sensor passa a contar resumos. **Prova:** `bash scripts/claude-mem-saude.sh`
+com `gravacao: [LIMPO] gravando: … (<data de hoje>)`, e `max(created_at)` de `observations` e de
+`session_summaries` com a data de hoje. `[LIMPO]` com a data 2026-09-28 só quer dizer "ainda não
+juntou 30 prompts".
+
+**A lição (classe):**
+
+- **Desligar um componente exige dizer o que ele PRODUZ, não só o que ele CUSTA.** O desarme mediu
+  processos por disparo e chamou o que sobrou de "os 4 baratos"; nenhum registro disse que o
+  `PostToolUse` era a captura de observações — nem a nota de 05/09 acima, que anotou "nenhum
+  PostToolUse" sem ligar à memória morta. Um sensor calibrado ANTES do desligamento herda o mundo
+  errado.
+- **Antes de ler a parada de uma tabela como sintoma, prove que alguém ainda escreve nela** (o writer
+  no fonte da versão que roda). Troca de arquitetura transforma fila em fóssil.
+- **"Log de hoje" ≠ log do processo que importa:** arquivo nomeado pelo dia em que o processo subiu
+  esconde o erro do daemon de quem abre o arquivo do dia.
+- **Premissa do fornecedor também é hipótese.** O fonte afirmava que o app renova o item; o que
+  fechou a causa foi medir QUEM renova (28/09) e quando o binário de terminal rodou pela última vez
+  (`~/.local/share/claude/versions/`).
