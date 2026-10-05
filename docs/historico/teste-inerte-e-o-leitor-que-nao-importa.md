@@ -60,6 +60,9 @@ Tirar os testes do `content` do Tailwind (`"!./src/**/*.{test,spec}.{ts,tsx}"`,
 (pede Publish) e tem risco real: classe que só existe no CSS porque um teste a cita some. Medir o CSS
 com e sem os testes ANTES.
 
+**Puxada em 2026-10-01**, depois de medida: só `.m-1`/`.overscroll-contain` saíam, sem uso no app — e a
+prova ganhou o (d2') → [testes-fora-do-content-do-tailwind.md](testes-fora-do-content-do-tailwind.md).
+
 **Limite conhecido, pré-existente:** config que MONTA caminho (`path.join(base, "docs")`) escapa da
 varredura de strings também para `docs/`/`supabase/`. Para TESTE a prova agora exige configs sem API
 de leitura; para INERTE, não — fica registrado aqui.

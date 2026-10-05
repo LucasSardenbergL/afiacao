@@ -14,21 +14,28 @@ let fail = 0;
 const ok = (m) => console.log(`  ok    | ${m}`);
 const bad = (m) => { console.log(`  FAIL  | ${m}`); fail = 1; };
 
+// Desde 2026-10-03 o alarme vive no AGREGADOR `mutcheck-sensor`, e não mais dentro do
+// `mutation-check`: com o job em partes, cada parte abriria e fecharia a MESMA Issue sozinha.
+const JOB = 'mutcheck-sensor';
 const doc = YAML.parse(readFileSync(`${raiz}/.github/workflows/ci.yml`, 'utf8'));
-const steps = doc.jobs['mutation-check'].steps;
-const pega = (frag) => {
+const steps = doc.jobs[JOB]?.steps ?? [];
+const passo = (frag) => {
   const s = steps.find((x) => (x.name || '').includes(frag));
-  if (!s?.with?.script) throw new Error(`step "${frag}" sem script — o sensor sumiu do ci.yml`);
-  return s.with.script;
+  if (!s?.with?.script) throw new Error(`step "${frag}" sem script no job ${JOB} — o sensor sumiu do ci.yml`);
+  return s;
 };
-const scriptAlerta = pega('Alerta de cobertura');
-const scriptFecho = pega('voltou ao contrato');
+const scriptAlerta = passo('Alerta de cobertura').with.script;
+const scriptFecho = passo('voltou ao contrato').with.script;
+const condAlerta = String(passo('Alerta de cobertura').if ?? '');
+const condFecho = String(passo('voltou ao contrato').if ?? '');
 
 const contexto = {
   repo: { owner: 'o', repo: 'r' }, sha: 'abcdef1234', runId: 42,
   serverUrl: 'https://github.com', actor: 'a', payload: {},
 };
-function roda(script, issuesAbertas) {
+// `resultado` é o que o step recebe em `env.RESULTADO` (= `needs.mutation-check.result`). Vai por um
+// `process` injetado no escopo do script, como `github` e `context`: nada de mutar o process.env.
+function roda(script, issuesAbertas, resultado = 'failure') {
   const chamadas = { criadas: [], comentadas: [], fechadas: [] };
   const github = { rest: { issues: {
     createLabel: async () => {},
@@ -37,11 +44,21 @@ function roda(script, issuesAbertas) {
     create: async ({ title, body }) => { chamadas.criadas.push({ title, body }); },
     update: async ({ issue_number, state }) => { chamadas.fechadas.push({ issue_number, state }); },
   } } };
-  const fn = new Function('github', 'context', 'core', 'require', `return (async () => { ${script} })()`);
-  return fn(github, contexto, {}, require_).then(() => chamadas);
+  const fn = new Function('github', 'context', 'core', 'require', 'process', `return (async () => { ${script} })()`);
+  const processo = { ...process, env: { ...process.env, RESULTADO: resultado } };
+  return fn(github, contexto, {}, require_, processo).then(() => chamadas);
 }
 const escreve = (obj) => writeFileSync(CAMINHO, JSON.stringify(obj));
 const contrato = (o) => ({ mut: 'x.mut', exit: 1, invalidas: 0, divergencias: 0, abortou: false, sumario: 's', ...o });
+
+// As condições do GitHub não executam aqui; o que se prova é o TEXTO delas, nos dois sentidos que
+// importam: ausência de dado DISPARA o alarme e NÃO fecha a Issue.
+if (/incompleto\s*!=\s*'false'/.test(condAlerta) && /result\s*==\s*'failure'/.test(condAlerta))
+  ok("alerta: dispara com parte vermelha OU união incompleta (saída vazia também — `!= 'false'`)");
+else bad(`condição do alerta não cobre a união incompleta: ${condAlerta}`);
+if (/incompleto\s*==\s*'false'/.test(condFecho) && /result\s*==\s*'success'/.test(condFecho))
+  ok('fecho: só com TODAS as partes verdes E a união completa');
+else bad(`condição do fecho fecharia a Issue sem medir tudo: ${condFecho}`);
 
 // preserva um resumo real que porventura exista na máquina
 const bkp = `${CAMINHO}.bkp-teste`;
@@ -82,6 +99,17 @@ try {
   if (c.fechadas.length === 1 && c.fechadas[0].state === 'closed') ok('verde → fecha a Issue'); else bad('não fechou a Issue');
   c = await roda(scriptFecho, []);
   if (c.fechadas.length === 0) ok('verde sem Issue aberta → no-op'); else bad('fecho não é idempotente');
+
+  // 7. UNIÃO incompleta com todas as partes VERDES: ausência de dado, não "nenhum problema"
+  escreve({ total: 47, com_problema: 0, contratos: [], partes: 3, partes_sem_resumo: [], faltando: ['x.mut'], duplicados: [], inesperados: [] });
+  b = (await roda(scriptAlerta, [], 'success')).criadas[0]?.body || '';
+  if (/União incompleta/.test(b) && /x\.mut/.test(b)) ok('união incompleta → corpo nomeia o contrato sem medição'); else bad(`união incompleta virou silêncio: ${b.slice(0, 160)}`);
+  if (/sem medir tudo/.test(b) && !/falhou na/.test(b)) ok('resultado success + união incompleta → título não diz "falhou"'); else bad('título mente sobre o resultado');
+
+  // 8. parte CANCELADA (estourou o teto) e sem resumo: antes era silêncio total
+  escreve({ total: 31, com_problema: 0, contratos: [], partes: 3, partes_sem_resumo: [2], faltando: [], duplicados: [], inesperados: [] });
+  b = (await roda(scriptAlerta, [], 'cancelled')).criadas[0]?.body || '';
+  if (/partes sem resumo/.test(b) && /`cancelled`/.test(b)) ok('parte cancelada → corpo diz qual parte e o resultado'); else bad(`parte cancelada sem diagnóstico: ${b.slice(0, 160)}`);
 } finally {
   if (existsSync(CAMINHO)) unlinkSync(CAMINHO);
   if (existsSync(bkp)) renameSync(bkp, CAMINHO);

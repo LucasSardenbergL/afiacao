@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 579
+-- Total de custom migrations: 580
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -620,7 +620,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261001023000', 'hoje_sp_familia_data_ciclo', '20261001023000_hoje_sp_familia_data_ciclo.sql'),
   ('20261001043717', 'hoje_sp_route_visits_visit_date', '20261001043717_hoje_sp_route_visits_visit_date.sql'),
   ('20261001083000', 'converter_campanha_flat_colunas_reais', '20261001083000_converter_campanha_flat_colunas_reais.sql'),
-  ('20261001100000', 'sales_orders_colunas_whatsapp_select', '20261001100000_sales_orders_colunas_whatsapp_select.sql')
+  ('20261001100000', 'sales_orders_colunas_whatsapp_select', '20261001100000_sales_orders_colunas_whatsapp_select.sql'),
+  ('20261001204054', 'oportunidade_antidup_conta_disparado_simulado', '20261001204054_oportunidade_antidup_conta_disparado_simulado.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2516,7 +2517,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('hoje_sp_familia_data_ciclo', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
   ('hoje_sp_familia_data_ciclo', 'view', 'public', 'v_promocao_avaliacao_hoje', ''),
   ('hoje_sp_familia_data_ciclo', 'view', 'public', 'v_oportunidade_economica_hoje', ''),
-  ('converter_campanha_flat_colunas_reais', 'function', 'public', 'converter_sugestao_em_campanha_flat', '')
+  ('converter_campanha_flat_colunas_reais', 'function', 'public', 'converter_sugestao_em_campanha_flat', ''),
+  ('oportunidade_antidup_conta_disparado_simulado', 'function', 'public', 'gerar_pedidos_oportunidade_ciclo', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4460,7 +4462,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('hoje_sp_familia_data_ciclo', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
   ('hoje_sp_familia_data_ciclo', 'view', 'public', 'v_promocao_avaliacao_hoje', ''),
   ('hoje_sp_familia_data_ciclo', 'view', 'public', 'v_oportunidade_economica_hoje', ''),
-  ('converter_campanha_flat_colunas_reais', 'function', 'public', 'converter_sugestao_em_campanha_flat', '')
+  ('converter_campanha_flat_colunas_reais', 'function', 'public', 'converter_sugestao_em_campanha_flat', ''),
+  ('oportunidade_antidup_conta_disparado_simulado', 'function', 'public', 'gerar_pedidos_oportunidade_ciclo', '')
 )
 SELECT
   e.migration,
@@ -4803,6 +4806,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'gerar_pedidos_oportunidade_ciclo', 1, '20260611120000_reposicao_fixes_codex_711.sql', '0b88073f4ac26f6c3aedc8055a5c7ab7'),
   ('public', 'gerar_pedidos_oportunidade_ciclo', 2, '20260922225449_oportunidade_erro_terminal_nao_bloqueia_oferta.sql', 'feeda17a3271a3791a39db4870aae2da'),
   ('public', 'gerar_pedidos_oportunidade_ciclo', 3, '20261001023000_hoje_sp_familia_data_ciclo.sql', 'bb80edea94d19835ec55c34f007dc0ed'),
+  ('public', 'gerar_pedidos_oportunidade_ciclo', 4, '20261001204054_oportunidade_antidup_conta_disparado_simulado.sql', '9c334d43017c9f6fc8138f4d40e6a2f6'),
   ('public', 'buscar_skus_candidatos', 1, '20260611140000_kb_fundacao_casamento.sql', '1495a27d5ddd47d145e1123a99861a0c'),
   ('public', 'buscar_skus_candidatos', 2, '20260929000234_padrao_like_contem_escapa_curinga.sql', '70b42aa312d47e00816a37cf11ba1198'),
   ('public', 'confirmar_vinculo_boletim', 1, '20260611140000_kb_fundacao_casamento.sql', '69ec58b207bc65e6437f16e391f7a109'),
