@@ -821,3 +821,120 @@ A medição do PR0 decide quanto investir depois. Encerramento humano só após 
 **Ordem adotada no plano** (`docs/superpowers/plans/2026-09-26-baixa-po-fase-0.md`): a do Codex, com o PR(d) de
 proteção em paralelo. O PR0 decide quanto investir depois: se a medição por SKU confirmar resíduo pequeno e sem
 concentração perto da ruptura, os PRs (c1)/(c2) viram higiene de Omie de baixa prioridade.
+
+## 17. Execução de D3 e D4 (2026-10-05 — o founder delegou: "Faça o D3 e D4")
+
+### 17.1 D3 — backlog: decidido "encerrar à mão, guiado pela lista"
+
+- **Decisão** (a recomendação da §15): o backlog — POs com NF concluída que o motor **ainda conta** — é encerrado
+  **à mão** no Omie. Motivo: `Recebido pela(s) NF(s) nnn — encerrado sem associação (Afiação)`. Só vale para PO com
+  cobertura cheia **conferida item a item na NF**, em lotes (D2) e com revisão do ciclo seguinte do motor antes de
+  aprovar compras.
+- **Por que não "reverter + associar + concluir":** desfaria e refaria o estoque e o contas a pagar de NFs já fechadas,
+  um risco operacional maior que o ganho. O custo aceito é o relatório do Omie mostrar esses POs como "Encerrado", e
+  não como "Recebido".
+- **Pré-requisito não negociável: saber QUAIS POs o motor conta.** Só o PR0 dá isso. Ele está em implementação numa
+  sessão separada desde 2026-10-01 e, em 2026-10-05, ainda não tinha PR nem tabela no banco. Sem o PR0, a lista sairia
+  do espelho, que é cego à situação (§13.4) — a maior parte dos 273 POs "com NF" já está fora do "a caminho".
+- **Quem faz:** a equipe de compras/recebimento encerra no Omie. A sessão **não** encerra PO: a ação é irreversível,
+  só existe na interface e não tem API (§14 F1).
+- **Lote 1 — rodar assim que o PR0 publicar o 1º run completo** (provisório até a lista do PR(c2); executada em
+  2026-10-05 num PG17 com o snapshot e as migrations do PR0 — rc=0, sem erro de tipo):
+
+```sql
+WITH ultimo AS (
+  SELECT run_id FROM reposicao_po_observado_run
+  WHERE empresa = 'OBEN' AND varredura_completa AND pendente_aplicado
+  ORDER BY concluido_em DESC LIMIT 1
+), contados AS (
+  SELECT o.omie_codigo_pedido, sum(o.contribuicao) AS unidades_no_motor
+  FROM reposicao_po_observado_item o JOIN ultimo u ON u.run_id = o.run_id
+  WHERE o.exclusao IS NULL AND o.contribuicao > 0
+  GROUP BY 1
+)
+SELECT t.numero_pedido AS po, t.numero_contrato_fornecedor AS contrato, t.nfe_numero AS nf_mais_recente,
+       t.t4_data_recebimento::date AS nf_concluida_em, c.unidades_no_motor,
+       (SELECT string_agg((p->>'nCodProd') || ' x ' || (p->>'nQtde'), ', ')
+          FROM jsonb_array_elements(t.raw_data->'produtos_consulta') p) AS itens_do_po,
+       (SELECT count(*) FROM purchase_orders_tracking o
+         WHERE o.empresa = t.empresa AND o.omie_codigo_pedido > 0
+           AND o.numero_contrato_fornecedor = t.numero_contrato_fornecedor
+           AND o.omie_codigo_pedido <> t.omie_codigo_pedido) AS outros_pos_do_contrato
+FROM contados c
+JOIN purchase_orders_tracking t ON t.empresa = 'OBEN' AND t.omie_codigo_pedido = c.omie_codigo_pedido
+WHERE t.t4_data_recebimento IS NOT NULL
+ORDER BY c.unidades_no_motor DESC, t.t4_data_recebimento;
+\echo FIM-MEDICAO-OK
+```
+
+- **Conferência humana antes de cada encerramento:**
+  1. Abrir no Omie **todas** as NFs do contrato — o espelho guarda só a mais recente (`nf_mais_recente`).
+  2. Conferir cada item do PO contra os itens das NFs: produto e quantidade na unidade do produto. Se a NF vier em L e o
+     PO em UN, conferir a conversão.
+  3. Se faltar item ou quantidade, **não encerrar**: o saldo vem em outra NF (D1).
+  4. Com `outros_pos_do_contrato > 0`, não encerrar sem entender se é PO duplicado ou dividido (§13.5, V4).
+- **Depois de cada lote:** rodar a Task 0.5 do plano (unidades por SKU) e revisar o ciclo seguinte. Uma rajada de
+  sugestões é esperada: é compra suprimida sendo recuperada.
+
+### 17.2 D4 — o piloto como formulado foi refutado pela documentação; substituído pelo D4'
+
+- **Evidência (doc oficial, lida em 2026-10-05,
+  `https://ajuda.omie.com.br/pt-BR/articles/498834-preenchendo-o-xped-e-o-nitemped`):**
+  - Sobre o `xPed`: "O campo xPed indica o número do Pedido de Compra que você enviou ao seu Fornecedor. Assim que você
+    cadastra um Pedido de Compra no Omie, o sistema gera automaticamente esse número de forma sequencial."
+  - Sobre o `nItemPed`: o fornecedor tem de respeitar a sequência dos itens do nosso pedido.
+  - Logo, o resolvedor do Omie casa o `xPed` com o **número sequencial do nosso PO** (`cNumero`), e não com o
+    `cNumPedido`. Preencher o `cNumPedido` com o protocolo não muda nada: o D4 original foi **cancelado sem gastar PO
+    real**.
+- **Pista para a Fase 2 (H-xPed v2):**
+  - A resposta do portal Sayerlack à criação do pedido traz `nr_pedido_cliente` e `data.ordercust`, capturados em
+    15/05/2026 (`enviar-pedido-portal-sayerlack/index.ts:210-213`), e a automação hoje não preenche nada disso.
+  - Se o formulário aceitar o **nosso** número de PO e a Sayerlack o repetir no `xPed`, com o `nItemPed` na ordem dos
+    nossos itens, o Omie vincularia sozinho.
+  - Custo: criar o PO no Omie **antes** do portal (hoje é depois, porque o `cContrato` precisa do protocolo) — mudança
+    grande no disparo, money-path.
+  - Medir antes, com 1 pedido manual no portal com o campo preenchido: (a) o formulário tem o campo? (b) a Sayerlack o
+    leva ao `xPed`?
+- **D4' — o substituto, que mede de verdade o F3:** associação **nativa** manual em 1 NF Sayerlack pendente, feita pela
+  equipe no recebimento — o mesmo gesto que ela já faz com outros 20 fornecedores (§13.5).
+  - **Alvo:** NF **000953881** (faturada em 02/10; pendente no Omie em 05/10 às 12:35Z, com o sync de NFs rodando às
+    12:15Z e 12:35Z). Ela cobre os POs 1238, 1244, 1248 e 1254. O piloto mexe **só no PO 1244**: 1 item, SKU
+    `8689783623` (VERNIZ PU FOSCO FO20.6717.00), 2 un., R$ 1.021, contrato 2132614 único.
+  - **Passo a passo no Omie, quando a mercadoria chegar:**
+    1. No recebimento da NF 000953881, selecionar o item do VERNIZ FO20.6717.00.
+    2. Clicar em "Associar a um produto existente", depois em "Exibir todos os produtos não recebidos".
+    3. Selecionar o item do pedido **1244** e confirmar.
+    4. Concluir a NF como de costume.
+
+    Associar e concluir **juntos**: assim não se abre janela entre a baixa do "a caminho" e a entrada no físico. Os
+    outros itens da NF seguem como hoje.
+  - **Linha de base (05/10):** PO 1244 (`nCodPed` 12188607830) em etapa 15, item `12188607832` com `nQtdeRec = 0`. SKU
+    com físico 0, pendente 2, ponto de pedido 3, máximo 4.
+  - **O que medir depois:**
+    - `cEtapa` e `nQtdeRec` do PO 1244 no espelho, no próximo sync de POs;
+    - pendente e físico do SKU no próximo run do estoque (aos :40 das 9–19h UTC);
+    - se o PO sai do conjunto aberto (com o PR0 no ar, pela observação).
+  - **Query de antes/depois** (a linha de base acima saiu dela; rodar com `psql-ro -X -v ON_ERROR_STOP=1 -f` e exigir
+    o marcador):
+
+    ```sql
+    SELECT t.numero_pedido AS po, t.omie_codigo_pedido, t.raw_data->'cabecalho_consulta'->>'cEtapa' AS etapa,
+           (p->>'nCodItem') AS id_item, (p->>'nCodProd') AS sku, (p->>'nQtde')::numeric AS qtde,
+           (p->>'nQtdeRec')::numeric AS qtde_rec, t.nid_receb, t.t4_data_recebimento AS t4, t.updated_at
+    FROM purchase_orders_tracking t CROSS JOIN LATERAL jsonb_array_elements(t.raw_data->'produtos_consulta') p
+    WHERE t.empresa = 'OBEN' AND t.numero_pedido = '1244';
+    SELECT e.sku_codigo_omie, e.estoque_fisico, e.estoque_pendente_entrada, e.ultima_sincronizacao, sp.ponto_pedido, sp.estoque_maximo
+    FROM sku_estoque_atual e JOIN sku_parametros sp ON sp.empresa = 'OBEN' AND sp.sku_codigo_omie::text = e.sku_codigo_omie
+    WHERE e.empresa = 'OBEN' AND e.sku_codigo_omie = '8689783623';
+    \echo FIM-MEDICAO-OK
+    ```
+
+  - **Sucesso:** `nQtdeRec = 2`; o pendente do SKU cai 2 **no mesmo run** em que o físico sobe 2; e o `cEtapa` novo
+    fica registrado (responde o F3).
+  - **Sinal de risco:**
+    - se o pendente cair **antes** de o físico subir, há janela de subcontagem;
+    - se o `cEtapa` mudar com saldo aberto, é o caso parcial — exige o PR(d) antes de qualquer automação.
+  - **Se der certo:**
+    1. A equipe passa a associar as NFs Sayerlack no recebimento: zero código, e o backlog para de crescer.
+    2. A Fase 2 automatiza o mesmo gesto (`AlterarRecebimento` com `ASSOCIAR-PEDIDO`).
+    3. Um 2º piloto com entrega **parcial** fecha o caso que o Codex marcou como de risco (§16, achado 11).
