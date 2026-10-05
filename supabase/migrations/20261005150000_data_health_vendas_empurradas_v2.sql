@@ -1487,7 +1487,9 @@ BEGIN
   END IF;
 
   -- (4) o gate de papel EXECUTA: uma sessao logada sem papel (uuid zero, sem user_roles) recebe 42501
-  --     com a marca do gate. So a SQLSTATE esperada E a marca contam; qualquer outro erro sobe.
+  --     com a marca do gate. So a SQLSTATE esperada E a marca contam; qualquer outro erro sobe. A sessao
+  --     vai nas DUAS formas que o auth.uid() do Supabase le (o GUC legado claim.sub e o sub de claims).
+  PERFORM set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000000000', true);
   PERFORM set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-000000000000","role":"authenticated"}', true);
   BEGIN
     PERFORM 1 FROM public.get_data_health();
@@ -1497,6 +1499,7 @@ BEGIN
     END IF;
     v_barrou := true;
   END;
+  PERFORM set_config('request.jwt.claim.sub', '', true);
   PERFORM set_config('request.jwt.claims', '', true);
   IF NOT v_barrou THEN
     RAISE EXCEPTION 'POSTCONDICAO FALHOU: get_data_health() entregou linhas a uma sessao sem papel de staff.';
