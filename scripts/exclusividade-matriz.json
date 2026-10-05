@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "medidoEm": "2026-10-03T13:16:54.581Z",
-  "sourceHead": "6766e6eb88d7ff01b38738336e3efaba9fad089e",
+  "medidoEm": "2026-10-05T13:33:28.063Z",
+  "sourceHead": "5e28367389dc8b1dc5e49b935e911af6b1bef9c3",
   "dispensados": [
     {
       "gate": "authz:carimbo",
@@ -248,7 +248,7 @@
     {
       "gate": "test:falsificacao",
       "verde": true,
-      "ms": 4698607
+      "ms": 2307618
     },
     {
       "gate": "test:hooks",
@@ -2917,6 +2917,14 @@
           "fingerprint": "b4dbbfe49b60c31a",
           "fonteResolvida": false,
           "invocacao": "bun run test:edges"
+        },
+        {
+          "gate": "test:falsificacao",
+          "reprovou": false,
+          "ms": 2296061,
+          "fingerprint": "f7d494aab8ede9a6",
+          "fonteResolvida": true,
+          "invocacao": "bun run test:falsificacao"
         },
         {
           "gate": "test:hooks",
