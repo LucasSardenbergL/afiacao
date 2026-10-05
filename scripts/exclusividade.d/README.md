@@ -84,6 +84,10 @@ os gates ausentes são desconhecidos, não verdes. Execução gravada com outra 
 - **Enquanto o motor roda, a árvore é dele.** O write-guard fotografa a árvore INTEIRA: editar qualquer
   arquivo versionado durante a rodada aborta com `GATE-ESCREVEU: <o gate que calhava de rodar>` e
   **desfaz a edição** pelo snapshot. Ler, sim; escrever, nem no doc do histórico.
+- **Um estouro custa no máximo teto + carência, e interromper é seguro.** O teto vale para o GRUPO de
+  processos do gate (guarda 15): TERM no `EXCL_TIMEOUT_MS`, KILL `EXCL_CARENCIA_MS` (30 s) depois — o
+  `bun run` não segura mais o motor. Ctrl-C/`kill` mata o gate em voo, desfaz a sabotagem e sai 130,
+  sem gravar nada; não precisa de `kill -9` (que pularia a restauração).
 - **Se a M2 não segura os 31 de uma vez, fatie.** A completude é da LINHA, não da rodada
   (`fundirLinhas` funde por `(defeito, gate)`): rodadas com `--gates <fatia>` pagam só o baseline da
   fatia, cada uma grava, e a linha certifica quando todo gate do universo tiver execução em dia.
