@@ -72,6 +72,13 @@ export interface ExtractedObject {
    * audit segue com a sua, cada uma com autoteste contra o banco.
    */
   bodyMd5Exato?: string;
+  /**
+   * function: o corpo CRU, byte a byte — o texto cujo md5 é `bodyMd5Exato`, saído da MESMA
+   * delimitação. É o insumo do re-teste por TOKENS do eixo 5 do gate de deploy (`corpo-esperado.ts`),
+   * que precisa do texto e não só do hash: uma fonte só para os dois, senão o gate compararia tokens
+   * de um corpo e afirmaria sobre outro. Ausente exatamente quando `bodyMd5Exato` está.
+   */
+  bodyExato?: string;
 }
 
 /** `btrim(x)` do Postgres com UM argumento: só ESPAÇOS, nunca `\n`/`\t`. Ver `bodyMd5`. */
@@ -93,6 +100,8 @@ interface CorpoDeclarado {
   md5: string;
   /** md5 do corpo EXATO, byte a byte: o que `md5(pg_proc.prosrc)` devolve. */
   md5Exato: string;
+  /** O corpo cru que deu os dois hashes acima. */
+  texto: string;
 }
 
 /** Uma declaração `CREATE [OR REPLACE] FUNCTION`, na ordem em que aparece no arquivo. */
@@ -235,7 +244,7 @@ function corposCrusPorNome(sqlCru: string): Map<string, CorpoDeclarado> {
   const out = new Map<string, CorpoDeclarado>();
   for (const d of declaracoesDeFuncao(sqlCru)) {
     if (d.corpo === undefined || d.md5Exato === undefined) continue;
-    out.set(`${d.schema}.${d.nome}`, { md5: md5CorpoFuncao(d.corpo), md5Exato: d.md5Exato });
+    out.set(`${d.schema}.${d.nome}`, { md5: md5CorpoFuncao(d.corpo), md5Exato: d.md5Exato, texto: d.corpo });
   }
   return out;
 }
@@ -318,7 +327,9 @@ export function extractObjects(sql: string): ExtractedObject[] {
       schema: m[1] || 'public',
       name: m[2],
       signature: normalizeSignature(args),
-      ...(corpo === undefined ? {} : { bodyMd5: corpo.md5, bodyMd5Exato: corpo.md5Exato }),
+      ...(corpo === undefined
+        ? {}
+        : { bodyMd5: corpo.md5, bodyMd5Exato: corpo.md5Exato, bodyExato: corpo.texto }),
     });
   }
 

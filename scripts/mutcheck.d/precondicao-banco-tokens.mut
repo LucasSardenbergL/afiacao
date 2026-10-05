@@ -1,0 +1,22 @@
+# Invariantes do consumidor do re-teste por TOKENS (scripts/lib/precondicao-banco.ts).
+# @src: scripts/lib/precondicao-banco.ts
+# @test: scripts/lib/precondicao-banco.test.ts
+#
+# A variante cosmética é AFIRMAÇÃO do gate, com lista própria: jogada em `naoConferidas` voltaria a ser
+# lida como "edição manual". Sem o texto de prod, a DERIVA pode ser o CORPO_ANTERIOR por tokens — o
+# gate tem de dizer INCERTA, não liberar. E o "APLIQUE" sem a ressalva de DML manda colar o backfill
+# de novo (a 20260606190000 traz um sobre pedidos vivos).
+
+# CONTROLE+ : a cosmética cai no balaio "fora do alcance" — a lista própria some.
+PEGA | controle+: cosmetica cai em naoConferidas        | s/      cosmeticas\.push\(\{ rpc, esperada: v\.esperada, prova: v\.tokens \}\);/      naoConferidas.push({ rpc, motivo: 'x' });/
+PEGA | anterior por tokens perde o metodo e a prova     | s/v\.tokens === undefined \? \{ \.\.\.base, casouPor: 'md5-exato' \} : \{ \.\.\.base, casouPor: 'tokens', prova: v\.tokens \},/{ ...base, casouPor: 'md5-exato' },/
+PEGA | sem texto vira silencio que libera (fail-open)   | s/^  \} else if \(semTexto\.length > 0\) \{/  } else if (false) {/
+PEGA | o canal de texto nao chega ao re-teste           | s/      canalIntegro \? \(textos\.porNome\.get\(rpc\) \?\? \[\]\) : \[\],/      [],/
+PEGA | APLIQUE sem a ressalva de DML                    | s/reaplicar o ARQUIVO inteiro re-executa/reaplique a vontade/
+PEGA | relatorio da cosmetica sem o md5 de prod         | s/prod \$\{c\.prova\.md5Prod\} ≠ repo/prod ? ≠ repo/
+# Parecer de código do Codex (2026-10-05): canal incoerente tem de derrubar o veredito inteiro.
+PEGA | Codex P1: canal de detalhe incoerente nao bloqueia        | s/^  const canalIntegro = textos\.falhas\.length === 0;/  const canalIntegro = true;/
+# Codex, confirmação (2026-10-05):
+PEGA | Codex P1: modo divergente libera como DERIVA       | s/^    if \(v\.classificacao === 'MODO_DIVERGENTE'\) \{/    if (false) {/
+PEGA | Codex P1: irma sem medicao nao e nao-medida         | s/    if \(!nomesAlvo\.has\(rpc\) && !porNome\.has\(rpc\)\) naoMedidos\.push\(rpc\);/    void 0;/
+PEGA | Codex P2: INCERTA manda aplicar a migration        | s/^    if \(v\.estado === 'BLOQUEADA'\) \{/    if (true) {/

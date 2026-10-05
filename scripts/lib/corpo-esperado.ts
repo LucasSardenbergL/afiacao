@@ -41,6 +41,40 @@
  *   ⚪ `INDECIDIVEL`    não há corpo commitado, prod tem overload, ou prod não expõe corpo textual
  *                       (`LANGUAGE c`; `LANGUAGE sql` com `prosqlbody`, cujo `prosrc` é VAZIO).
  *
+ * ## O re-teste por TOKENS do que o md5 exato chama de `DERIVA` (2026-09-26)
+ *
+ * Medido em prod (`docs/historico/deriva-so-de-comentario-no-corpo.md`): 31 funções rodam o corpo
+ * commitado MENOS as linhas de comentário — uniforme por migration, concentrado nos applies de
+ * mai–jul/2026 — e o relatório chamava de "edição manual" a mesma lógica. `classificarComTokens`
+ * re-testa o que sai `DERIVA` com o critério ÚNICO de "mesmo programa" deste repo, `mesmosTokens`
+ * (`tokens-sql.ts`, o scanner do #2576, que segue o `scan.l`): comentário e espaço fora, literal e
+ * dollar-quote opacos, byte a byte. Segundo léxico para isto NÃO: o da 1ª versão (linhas inteiras de
+ * `--`) tinha três P1 reproduzidos pelo Codex, e este scanner responde DIFERENTES nos três.
+ *
+ *   🔵 `VARIANTE_COSMETICA` o corpo vivo tem os MESMOS tokens da ÚLTIMA versão. Lógica idêntica; não
+ *                       bloqueia, e vai para uma lista PRÓPRIA do veredito (não é "fora do alcance").
+ *   ❌ `CORPO_ANTERIOR` também por tokens: os mesmos tokens de uma versão ANTERIOR é a lógica velha
+ *                       em prod, comentário à parte — BLOQUEIA. Até aqui caía em `DERIVA` e liberava
+ *                       (P1 latente apontado pelo Codex; 0 casos medidos).
+ *   ⚪ `SEM_TEXTO`      o exato deu `DERIVA` e o texto de prod para o re-teste não veio (ou não
+ *                       reproduz o md5 medido). Sem ele, "edição manual" e "corpo anterior sem
+ *                       comentário" são indistinguíveis — o gate diz que não mediu (`INCERTA`).
+ *   ⚪ `MODO_DIVERGENTE` o veredito por tokens com standard_conforming_strings=on difere do veredito com
+ *                       `off` (um literal simples com barra muda de fronteira). O modo de execução da RPC
+ *                       não é observável daqui por inteiro (o `proconfig` é; o default do papel que chama,
+ *                       não) ⇒ `INCERTA`, nunca o veredito de um modo só — exigir os dois só para
+ *                       "cosmético" tirava o BLOQUEIO do anterior que casa em `on` (Codex, confirmação).
+ *
+ * A ORDEM é o que mantém o gate honesto: as checagens EXATAS vêm antes e não mudam (`classificarCorpo`
+ * está intocado; o re-teste só vê o que ele devolveu como `DERIVA`). Dentro do re-teste, a ÚLTIMA
+ * versão primeiro — o mesmo desempate do exato.
+ *
+ * ⚠️ EXCEÇÃO CONSERVADORA, deliberada: se a última migration só ACRESCENTOU comentário, prod pode
+ * bater EXATAMENTE com a anterior — e a precedência exata diz `CORPO_ANTERIOR`, mesmo com os tokens
+ * iguais aos da última. Fica assim porque não mexer nas checagens exatas é o requisito, e um falso
+ * bloqueio aqui custa uma conferência; afrouxá-lo seria julgar tokens ANTES do exato (o teste
+ * reprova). Caso real: `kb_documents_set_updated_at` (as duas versões têm os mesmos 14 tokens).
+ *
  * Medido nas mesmas 65 RPCs: **48 EM_DIA · 3 CORPO_ANTERIOR · 11 DERIVA · 2 INDECIDIVEL · 1 ausente**.
  * As 3 `CORPO_ANTERIOR` são exatamente as 3 funções da migration pendente. Zero falso positivo.
  *
@@ -63,6 +97,7 @@
  * `precondicao-banco.ts` já declarava.
  */
 import { extractObjects, md5Exato } from './migration-objects';
+import { md5DeTokens, mesmosTokensNoModo } from './tokens-sql';
 
 export { md5Exato };
 
@@ -75,6 +110,11 @@ export interface VersaoDeCorpo {
    * normalizada do audit: ver `bodyMd5Exato` em `migration-objects.ts`.
    */
   md5: string;
+  /**
+   * O corpo CRU que deu o `md5` (`bodyExato`, da MESMA delimitação). Obrigatório: é o texto do
+   * re-teste por tokens, e uma versão sem ele deixaria o `CORPO_ANTERIOR` por tokens cego em silêncio.
+   */
+  corpo: string;
 }
 
 /** Uma migration lida da árvore: nome do arquivo e o SQL CRU (comentários inclusive). */
@@ -83,10 +123,29 @@ export interface MigrationLida {
   sql: string;
 }
 
-type Classificacao = 'EM_DIA' | 'CORPO_ANTERIOR' | 'DERIVA' | 'INDECIDIVEL';
+type Classificacao =
+  | 'EM_DIA'
+  | 'CORPO_ANTERIOR'
+  | 'VARIANTE_COSMETICA'
+  | 'DERIVA'
+  | 'INDECIDIVEL'
+  | 'SEM_TEXTO'
+  | 'MODO_DIVERGENTE';
+
+/** A evidência de um casamento por TOKENS — para o relatório ser conferível sem reexecutar nada. */
+export interface ProvaPorTokens {
+  /** md5 EXATO do `prosrc` de prod (calculado no banco; o texto o reproduziu). */
+  md5Prod: string;
+  /** md5 EXATO do corpo commitado na versão casada — difere de `md5Prod`, senão o exato teria casado. */
+  md5Repo: string;
+  /** md5 da sequência de tokens (`md5DeTokens`) — o MESMO dos dois lados, por construção. */
+  md5Tokens: string;
+}
 
 export interface VereditoDeCorpo {
   classificacao: Classificacao;
+  /** Presente quando o casamento (`VARIANTE_COSMETICA` ou `CORPO_ANTERIOR`) foi por tokens, não byte a byte. */
+  tokens?: ProvaPorTokens;
   /** A migration que define o corpo esperado — a ÚLTIMA que recria a função. */
   esperada?: string;
   /** Em `CORPO_ANTERIOR`: a migration cujo corpo prod está rodando. */
@@ -121,10 +180,10 @@ export function historicoDeCorpos(migrations: readonly MigrationLida[]): Map<str
   const hist = new Map<string, VersaoDeCorpo[]>();
   for (const { nome, sql } of migrations) {
     for (const o of extractObjects(sql)) {
-      if (o.kind !== 'function' || o.bodyMd5Exato === undefined) continue;
+      if (o.kind !== 'function' || o.bodyMd5Exato === undefined || o.bodyExato === undefined) continue;
       const chave = `${o.schema}.${o.name}`.toLowerCase();
       const l = hist.get(chave) ?? [];
-      l.push({ migration: nome, md5: o.bodyMd5Exato });
+      l.push({ migration: nome, md5: o.bodyMd5Exato, corpo: o.bodyExato });
       hist.set(chave, l);
     }
   }
@@ -150,8 +209,11 @@ export function historicoDeCorpos(migrations: readonly MigrationLida[]): Map<str
  * 🔴 **Lista de corpos VAZIA não é "em dia"**: é prod sem corpo textual (`LANGUAGE c`, cujo
  * `prosrc` é um símbolo e não o código; `LANGUAGE sql` com `prosqlbody`, cujo `prosrc` é vazio) ou
  * a sonda não ter trazido a linha. Nos dois casos, `INDECIDIVEL` — nunca verde.
+ *
+ * Interna desde 2026-10-01 (o corpo não mudou): o gate chama `classificarComTokens`, que delega a
+ * ela — exportá-la sem consumidor externo reprova no gate de dead-code (`knip`), que só roda no CI.
  */
-export function classificarCorpo(
+function classificarCorpo(
   versoes: readonly VersaoDeCorpo[] | undefined,
   vivo: CorpoVivo,
 ): VereditoDeCorpo {
@@ -185,6 +247,52 @@ export function classificarCorpo(
     }
   }
   return { ...base, classificacao: 'DERIVA' };
+}
+
+/**
+ * O julgamento COMPLETO do eixo 5: o exato (`classificarCorpo`, intocado) e, SÓ no que ele chamou de
+ * `DERIVA`, o re-teste por tokens contra as versões commitadas (ver o cabeçalho).
+ *
+ * `textos` são os `prosrc` de prod que a sonda de detalhe trouxe para esta função. Só vale o que
+ * REPRODUZ um md5 que o exato julgou (`vivo.md5s`): texto de outro corpo, comparado por tokens,
+ * fabricaria veredito sobre o corpo errado. Nenhum assim ⇒ `SEM_TEXTO`, nunca "edição manual".
+ */
+export function classificarComTokens(
+  versoes: readonly VersaoDeCorpo[] | undefined,
+  vivo: CorpoVivo,
+  textos: readonly string[],
+): VereditoDeCorpo {
+  const exato = classificarCorpo(versoes, vivo);
+  // 🔴 A precedência EXATA, numa linha só: o que o md5 decidiu não é reaberto por tokens.
+  if (exato.classificacao !== 'DERIVA' || versoes === undefined) return exato;
+  const texto = textos.find((t) => vivo.md5s.includes(md5Exato(t)));
+  if (texto === undefined) {
+    return { ...exato, classificacao: 'SEM_TEXTO', motivo: 'o texto de prod não veio, ou não reproduz o md5 medido' };
+  }
+  const prova = (v: VersaoDeCorpo): ProvaPorTokens => ({
+    md5Prod: md5Exato(texto),
+    md5Repo: v.md5,
+    md5Tokens: md5DeTokens(texto),
+  });
+  const n = versoes.length;
+  // O casamento em CADA modo de standard_conforming_strings. A última PRIMEIRO — o desempate do exato:
+  // tokens iguais aos da última E aos de uma anterior não dizem qual das duas rodou.
+  const casaNoModo = (scsOff: boolean): number => {
+    if (mesmosTokensNoModo(texto, versoes[n - 1].corpo, scsOff)) return n - 1;
+    for (let i = n - 2; i >= 0; i--) if (mesmosTokensNoModo(texto, versoes[i].corpo, scsOff)) return i;
+    return -1;
+  };
+  const on = casaNoModo(false);
+  const off = casaNoModo(true);
+  const descrever = (k: number): string =>
+    k < 0 ? 'não casa versão nenhuma' : `casa ${k === n - 1 ? 'a última' : 'a anterior'} \`${versoes[k].migration}\``;
+  // 🔴 Só vale o veredito em que os DOIS modos concordam (ver `MODO_DIVERGENTE` no cabeçalho).
+  if (on !== off) {
+    return { ...exato, classificacao: 'MODO_DIVERGENTE', motivo: `com scs=on ${descrever(on)}; com scs=off ${descrever(off)}` };
+  }
+  if (on < 0) return exato;
+  if (on === n - 1) return { ...exato, classificacao: 'VARIANTE_COSMETICA', tokens: prova(versoes[on]) };
+  return { ...exato, classificacao: 'CORPO_ANTERIOR', emProd: versoes[on].migration, tokens: prova(versoes[on]) };
 }
 
 /**

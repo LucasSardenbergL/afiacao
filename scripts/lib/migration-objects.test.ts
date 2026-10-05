@@ -347,6 +347,24 @@ CREATE OR REPLACE FUNCTION public.g() RETURNS int LANGUAGE sql AS $$ SELECT 2; $
  SELECT 1; $$;`;
     expect(extractObjects(com)[0].bodyMd5Exato).not.toBe(extractObjects(sem)[0].bodyMd5Exato);
   });
+
+  it('o corpo CRU sai junto do md5 exato, da MESMA fonte — é o texto do re-teste por tokens do gate', () => {
+    // O eixo 5 re-testa por TOKENS o que o md5 exato chamou de DERIVA (deriva-so-de-comentario-no-
+    // corpo.md). Se o texto viesse de outro caminho que o hash, o gate compararia tokens de um corpo
+    // e afirmaria sobre outro.
+    const [f] = extractObjects(`CREATE FUNCTION public.f() RETURNS int LANGUAGE sql AS $$ -- nota
+ SELECT 1; $$;`);
+    expect(f.bodyExato).toBe(' -- nota\n SELECT 1; ');
+    expect(md5Exato(f.bodyExato ?? '')).toBe(f.bodyMd5Exato);
+    // Overload no mesmo arquivo: o "último vence" do md5 vale para o texto — os dois andam juntos.
+    const duas = extractObjects(`
+CREATE FUNCTION public.g(a int) RETURNS int LANGUAGE sql AS $a$ SELECT 3; $a$;
+CREATE FUNCTION public.g() RETURNS int LANGUAGE sql AS $b$ SELECT 4; $b$;
+`).filter((o) => o.kind === 'function');
+    expect(duas.map((o) => o.bodyExato)).toEqual([' SELECT 4; ', ' SELECT 4; ']);
+    // Sem corpo dollar-quoted, sem texto — ausência, nunca string vazia que "bateria" com algo.
+    expect(extractObjects('CREATE FUNCTION public.h() RETURNS int LANGUAGE sql RETURN 1;')[0].bodyExato).toBeUndefined();
+  });
 });
 
 describe('declaracoesDeFuncao — uma entrada POR DECLARAÇÃO, sem colapsar overload (deriva:corpo:prod)', () => {

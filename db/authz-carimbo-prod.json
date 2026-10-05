@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-10-05T15:10:30.980Z",
-  "sourceHead": "80a4604dbe11e12b0b4ebf57a90b334621875e11",
+  "medidoEm": "2026-10-05T16:03:36.576Z",
+  "sourceHead": "d23fa04ba22afc86ca0d22ab5c651920bf17a645",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -56,31 +56,12 @@
     },
     "corpo": {
       "script": "deriva:corpo:prod",
-      "exit": 1,
-      "resumo": "deriva-corpo — 3 divergência(s) em prod (3 AUSENTE) — ver as linhas ❌",
-      "denominador": "🔎 deriva-corpo — 320 identidade(s) conferida(s) · 16 aposentada(s) · ref origin/main@9e3c5a05f (fetch ok) · prod 2026-10-05 15:10:53.856726Z",
-      "contratoFingerprint": "576cba55e30c00a415fbeffdf3aeb900ba545c3b1ddf198d4b4955d9f40c1d61",
-      "auditorFingerprint": "84cbf3f189bbc3c6bd78f5c712f614ddc110d7d6b1f0d0787833fe128b44f903",
-      "achados": [
-        {
-          "id": "a8915b9581dc8f38",
-          "linha": "❌ [AUSENTE] sales_orders_gemeo_app_derivar(): viva no repo (último CREATE: 20261001100001_sales_orders_gemeo_importado_contagem_unica.sql) e ausente em prod — migration não aplicada ou DROP manual",
-          "primeiraVez": "2026-10-05",
-          "ultimaVez": "2026-10-05"
-        },
-        {
-          "id": "7f12d13791b5c2b1",
-          "linha": "❌ [AUSENTE] sales_orders_gemeo_importada_antes(): viva no repo (último CREATE: 20261001100001_sales_orders_gemeo_importado_contagem_unica.sql) e ausente em prod — migration não aplicada ou DROP manual",
-          "primeiraVez": "2026-10-05",
-          "ultimaVez": "2026-10-05"
-        },
-        {
-          "id": "b79712762dedffbc",
-          "linha": "❌ [AUSENTE] sales_orders_gemeo_importada_depois(): viva no repo (último CREATE: 20261001100001_sales_orders_gemeo_importado_contagem_unica.sql) e ausente em prod — migration não aplicada ou DROP manual",
-          "primeiraVez": "2026-10-05",
-          "ultimaVez": "2026-10-05"
-        }
-      ]
+      "exit": 0,
+      "resumo": "✅ deriva-corpo — 321 identidade(s) batem com o repo (245 em dia, 70 só cosméticas, 5 aceitas na baseline) e 16 aposentada(s) estão ausentes",
+      "denominador": "🔎 deriva-corpo — 321 identidade(s) conferida(s) · 16 aposentada(s) · ref origin/main@00af063e4 (fetch ok) · prod 2026-10-05 16:04:03.8351Z",
+      "contratoFingerprint": "a3ca2170bc686d60b0f503593e53b066815610ad25e196b200c158aea15152ab",
+      "auditorFingerprint": "6cf9b8ae065fcf1234c4744916e2dfb1e099be201c4bab502c2ed2add3fc380e",
+      "achados": []
     }
   }
 }
