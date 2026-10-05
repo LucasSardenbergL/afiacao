@@ -204,9 +204,12 @@ Deno.test("incompleta + detalhe cancelado ou recebido (com caixa/espaço): nada 
   assertEquals([recebida.resumo.consulta, recebida.chamadas.cabecalhos.length, recebida.puladas], [{ nIdReceb: 602, desfecho: "recebido_no_omie" }, 0, 1]);
 });
 
-Deno.test("detalhe sem infoCadastro: estado desconhecido, nada gravado, erro visível", async () => {
-  const r = await rodar({ paginas: [pagina([reg(603)])], detalhes: { 603: detalhe(603, null) } });
-  assertEquals([r.resumo.consulta, r.chamadas.cabecalhos.length, r.erros.length], [{ nIdReceb: 603, desfecho: "estado_desconhecido" }, 0, 1]);
+Deno.test("detalhe sem infoCadastro, ou com ele vazio: estado desconhecido, nada gravado, erro visível", async () => {
+  const sem = await rodar({ paginas: [pagina([reg(603)])], detalhes: { 603: detalhe(603, null) } });
+  assertEquals([sem.resumo.consulta, sem.chamadas.cabecalhos.length, sem.erros.length], [{ nIdReceb: 603, desfecho: "estado_desconhecido" }, 0, 1]);
+  // 4ª revisão do Codex: trocar a guarda por `!detalhe.infoCadastro` deixava o `{}` passar.
+  const vazio = await rodar({ paginas: [pagina([reg(604)])], detalhes: { 604: detalhe(604, {}) } });
+  assertEquals([vazio.resumo.consulta, vazio.chamadas.cabecalhos.length, vazio.erros.length], [{ nIdReceb: 604, desfecho: "estado_desconhecido" }, 0, 1]);
 });
 
 Deno.test("duplicata só pela chave, descoberta no detalhe: não grava de novo", async () => {

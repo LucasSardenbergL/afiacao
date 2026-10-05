@@ -4516,6 +4516,10 @@ describe('guardrail: omie-nfe-recebimento-sync não conta NF-e como importada qu
     expect(deps, 'os itens do detalhe têm de chegar ao insert').toContain('inserirItens(supabase, itens, nfeRecebimentoId)');
     expect(helper, 'o erro do insert de itens tem de voltar ao chamador').toContain('return error ? error.message : null');
     expect(count(deps, 'if (error) throw new Error(error.message);'), 'leitura do banco que falha não pode virar "nada importado"').toBe(2);
+    // 4ª revisão do Codex (2026-10-05): mais três sabotagens que passavam.
+    expect(helper, 'o mapeador tem de receber os itens do detalhe').toContain('mapearItensRecebimento(rawItems, nfeRecebimentoId)');
+    expect(deps, 'o que já está no banco tem de voltar à triagem').toContain('return { ids: idsJa, chaves: chavesJa };');
+    expect(manual, 'no manual, a falha de itens desfaz o cabeçalho — a condição não pode inverter').toContain('if (erroItens) {');
   });
 
   it('o Omie devolve o corpo de falha mesmo com HTTP 500 — quem classifica é o chamador', () => {
