@@ -1012,19 +1012,33 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
     ],
 
   },
+  // 2026-10-05: os 2 locales de cada sabotagem correm JUNTOS, e a medição se parte em dois blocos — o
+  // DISPARO (cópia e embrulho por locale, a suíte em fundo, o pid guardado) e o JUÍZO, que mede o exit
+  // pelo `wait` do pid DAQUELA rodada, colado no veredito; pid ausente ou não numérico é FALHA, preso
+  // aqui. docs/historico/falsificacao-fecho-em-paralelo.md
   'scripts/test-fecho-edges-pendentes.sh': {
     motivo: MOTIVO_CAMADA4,
     mede: ['log', 'rc', 'emb_alvo', 'novas'],
     ancoras: [
       [
         ': > "$log.stderr"',
-        `emb_alvo="$(embrulha_alvo "$copia" "$log.stderr")" || { printf '…' "$loc" "$desc"; falhou=1; continue; }`,
-        '( export LC_ALL="$loc"; ALVO="$emb_alvo"; fail=0; suite; [ "$fail" -eq 0 ] ) > "$log.cru" 2>&1; rc=$?',
+        `emb_alvo="$(embrulha_alvo "$alvo_loc" "$log.stderr")" || { printf '…' "$loc" "$desc"; falhou=1; printf -v "pid_$n" '%s' -; continue; }`,
+        '( export LC_ALL="$loc"; ALVO="$emb_alvo"; fail=0; suite; [ "$fail" -eq 0 ] ) > "$log.cru" 2>&1 &',
+        `printf -v "pid_$n" '%s' "$!"`,
+      ],
+      [
+        'n=$((n + 1)); ctl="$logs/controle.$loc.log"; log="$logs/sabotada-$sab.$loc.log"; alvo_loc="$DIR_COPIA/sabotado.$loc.sh"',
+        'v="pid_$n"; pid="${!v-}"',
+        'case "$pid" in',
+        '-) continue ;;',
+        `''|*[!0-9]*) printf '…' "$loc" "$desc"; falhou=1; continue ;;`,
+        'esac',
+        'wait "$pid"; rc=$?',
         'sem_cor "$log.cru" > "$log"',
         'if [ "$rc" -eq 0 ]; then',
         `printf '…' "$loc" "$desc"; falhou=1; continue`,
       ],
-      '      elif novas="$(camada4 "$sab" "$log" "$ctl" "$copia" "$controle")"; [ -n "$novas" ]; then',
+      '      elif novas="$(camada4 "$sab" "$log" "$ctl" "$alvo_loc" "$controle")"; [ -n "$novas" ]; then',
     ],
 
   },

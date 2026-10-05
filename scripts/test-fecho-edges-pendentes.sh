@@ -1471,13 +1471,33 @@ if [ "${1:-}" = "--falsificar" ]; then
       printf '  \033[31mFALHA\033[0m "%s": na lista SABOTAGENS e SEM registro — nada foi sabotado\n' "$sab"; falhou=1; continue
     fi
     aplica || continue
+    # Os 2 locales da sabotagem correm JUNTOS (2026-10-05): era o alvo mais lento do
+    # `test:falsificacao` (313 de 831 s no runner), ~102 rodadas de ~3 s em série. A rodada já é
+    # isolada por construção (`$tmp/rodada.*` por chamada, fixtures `chmod a-w`); o que era um só
+    # para os dois locales é a cópia e o EMBRULHO que `embrulha_alvo` escreve ao lado dela — com um
+    # embrulho só, o stderr de um locale cairia no arquivo do outro. Cada locale ganha os seus.
+    # O juiz abaixo não muda: espera a rodada DELE (`wait`) e lê o exit dela, na ordem de sempre.
+    # docs/historico/falsificacao-fecho-em-paralelo.md
+    n=0
     for loc in C "$utf8"; do
-      ctl="$logs/controle.$loc.log"; log="$logs/sabotada-$sab.$loc.log"
+      n=$((n + 1)); log="$logs/sabotada-$sab.$loc.log"; alvo_loc="$DIR_COPIA/sabotado.$loc.sh"
+      cp -p "$copia" "$alvo_loc"
       # subshell de proposito: a sabotagem e o locale morrem com ela, e o ALVO global fica intacto
       : > "$log.stderr"
-      emb_alvo="$(embrulha_alvo "$copia" "$log.stderr")" || { printf '  FALHA [%s] "%s": nao consegui embrulhar a copia\n' "$loc" "$desc"; falhou=1; continue; }
+      emb_alvo="$(embrulha_alvo "$alvo_loc" "$log.stderr")" || { printf '  FALHA [%s] "%s": nao consegui embrulhar a copia\n' "$loc" "$desc"; falhou=1; printf -v "pid_$n" '%s' -; continue; }
       # shellcheck disable=SC2030,SC2031
-      ( export LC_ALL="$loc"; ALVO="$emb_alvo"; fail=0; suite; [ "$fail" -eq 0 ] ) > "$log.cru" 2>&1; rc=$?
+      ( export LC_ALL="$loc"; ALVO="$emb_alvo"; fail=0; suite; [ "$fail" -eq 0 ] ) > "$log.cru" 2>&1 &
+      printf -v "pid_$n" '%s' "$!"
+    done
+    n=0
+    for loc in C "$utf8"; do
+      n=$((n + 1)); ctl="$logs/controle.$loc.log"; log="$logs/sabotada-$sab.$loc.log"; alvo_loc="$DIR_COPIA/sabotado.$loc.sh"
+      v="pid_$n"; pid="${!v-}"
+      case "$pid" in
+        -) continue ;;
+        ''|*[!0-9]*) printf '  \033[31mFALHA\033[0m [%s] "%s": rodada SEM pid — ausente nao e zero\n' "$loc" "$desc"; falhou=1; continue ;;
+      esac
+      wait "$pid"; rc=$?
       sem_cor "$log.cru" > "$log"
       if [ "$rc" -eq 0 ]; then
         printf '  \033[31mFALHA\033[0m [%s] "%s": suite ficou VERDE — assercao frouxa\n' "$loc" "$desc"; falhou=1; continue
@@ -1493,7 +1513,7 @@ if [ "${1:-}" = "--falsificar" ]; then
         printf '  \033[31mFALHA\033[0m [%s] "%s": a suite NAO rodou inteira (recibo [%s] x controle [%s], ou asserts ausentes/repetidos no log) — vermelho de aborto, nao de assert\n' \
           "$loc" "$desc" "$(recibo "$log")" "$(recibo "$ctl")"
         falhou=1
-      elif novas="$(camada4 "$sab" "$log" "$ctl" "$copia" "$controle")"; [ -n "$novas" ]; then
+      elif novas="$(camada4 "$sab" "$log" "$ctl" "$alvo_loc" "$controle")"; [ -n "$novas" ]; then
         printf '  \033[31mFALHA\033[0m [%s] "%s": vermelha com erro que o CONTROLE nao tem — o assert caiu por crash, nao por julgamento\n' "$loc" "$desc"
         printf '%s\n' "$novas" | head -3 | LC_ALL=C sed 's/^/       /'
         falhou=1
