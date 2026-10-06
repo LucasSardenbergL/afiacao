@@ -18564,6 +18564,17 @@ export type Database = {
         }
         Relationships: []
       }
+      v_sku_items_fila: {
+        Row: {
+          elegivel_desde: string | null
+          linhas_pendentes: number | null
+          nid_receb: string | null
+          parado: boolean | null
+          t2_min: string | null
+          tentativas_max: number | null
+        }
+        Relationships: []
+      }
       v_sku_leadtime_efetivo: {
         Row: {
           dedup_key: string | null
@@ -20940,6 +20951,7 @@ export type Database = {
         }
         Returns: Json
       }
+      sku_items_fila_parada_check: { Args: never; Returns: undefined }
       staff_get_sales_order_payload: {
         Args: { p_order_ids: string[] }
         Returns: {
