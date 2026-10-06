@@ -306,6 +306,11 @@ eq "P5 service_role lê as alíquotas" "$(sql "SELECT * FROM public.sayerlack_ip
 eq "P5e anon/authenticated sem EXECUTE em sayerlack_ipi_itens (catálogo)" "$(Pq -c "SELECT has_function_privilege('anon', 'public.sayerlack_ipi_itens(bigint)', 'EXECUTE') OR has_function_privilege('authenticated', 'public.sayerlack_ipi_itens(bigint)', 'EXECUTE')")" "f"
 eq "P5t anon/authenticated sem SELECT em ipi_aliquota_ncm (catálogo)" "$(Pq -c "SELECT has_table_privilege('anon', 'public.ipi_aliquota_ncm', 'SELECT') OR has_table_privilege('authenticated', 'public.ipi_aliquota_ncm', 'SELECT')")" "f"
 
+# LU1 — a RPC lê as alíquotas UMA vez (Codex 2026-10-06, P1). Sob READ COMMITTED cada comando vê um snapshot novo:
+# reler no UPDATE poderia gravar um IPI que a prova (CP006/CP007) não validou, se a tabela ou o NCM mudassem no meio.
+# A corrida é de microssegundos e não se reproduz num harness serial; a asserção trava a FORMA que a fecha.
+eq "LU1 a RPC chama sayerlack_ipi_itens uma vez só (prova e escrita usam a mesma leitura)" "$(Pq -c "SELECT (length(d) - length(replace(d, 'sayerlack_ipi_itens(p_pedido_id)', ''))) / length('sayerlack_ipi_itens(p_pedido_id)') FROM (SELECT pg_get_functiondef('public.sayerlack_aplicar_custo_portal(bigint,jsonb,numeric)'::regprocedure) AS d) s")" "1"
+
 # C1 — corrida com o PO Omie (o CAS re-avalia o predicado depois do commit concorrente).
 seed
 P -q -c "BEGIN; UPDATE public.pedido_compra_sugerido SET omie_pedido_compra_numero='PO-CORRIDA' WHERE id=100; SELECT pg_sleep(1.5); COMMIT;" &

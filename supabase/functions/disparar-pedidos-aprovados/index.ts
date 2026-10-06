@@ -8,7 +8,7 @@ import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import { hojeSP } from "../_shared/hoje-sp.ts";
 import { dataPrevisaoOmie } from "./previsao.ts";
-import { montarProdutoIncluir } from "./produto-po.ts";
+import { montarProdutosIncluir } from "./produto-po.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import {
   assuntoImplantado,
@@ -87,8 +87,10 @@ interface ItemRow {
   sku_descricao: string | null;
   qtde_final: number;
   preco_unitario: number;
+  valor_linha?: number | string | null;
   // Decomposição do preço provado pelo portal (RPC sayerlack_aplicar_custo_portal): ausente fora do Sayerlack, em
-  // captura cega e antes da migration 20261006120000. O PO só a usa com as duas presentes (./produto-po.ts).
+  // captura cega e antes da migration 20261006120000. O PO só a usa com o pedido inteiro decomposto e coerente com
+  // valor_linha (./produto-po.ts).
   preco_unitario_sem_ipi_portal?: number | string | null;
   valor_ipi_portal?: number | string | null;
 }
@@ -1124,9 +1126,12 @@ async function processarPedido(
       result.portal_data_entrega = pedido.portal_data_entrega ?? null;
     }
 
-    // Preço exato (spec 2026-10-05): com a decomposição provada pelo portal, nValUnit sem IPI + nValorIpi; sem ela,
-    // nValUnit = preco_unitario como sempre. A regra mora em ./produto-po.ts (pura, testada).
-    const produtos_incluir = (items as ItemRow[]).map((it, idx) => montarProdutoIncluir(it, idx));
+    // Preço exato (spec 2026-10-05): com o pedido inteiro decomposto pelo portal e coerente, nValUnit sem IPI +
+    // nValorIpi; senão nValUnit = preco_unitario como sempre, para todos os itens. A regra mora em ./produto-po.ts.
+    const { produtos: produtos_incluir, decomposicao } = montarProdutosIncluir(items as ItemRow[]);
+    if (decomposicao === "parcial" || decomposicao === "incoerente") {
+      console.warn(`[disparar-pedidos] Pedido ${pedido.id}: decomposição do portal ${decomposicao} — o PO sai com o preco_unitario de todos os itens, sem nValorIpi`);
+    }
 
     // Condição de pagamento (do pedido sugerido)
     // OBS: no Omie o campo é cCodParc (string3). Código "000" = "À Vista".

@@ -123,7 +123,7 @@ db/test-whatsapp-proposta.sh               17  falsificar=20
 # Preço exato no PO Sayerlack: a RPC de custo do portal confere o IPI contra ipi_aliquota_ncm (igualdade exata em
 # centavos), prova o total cobrado, grava a decomposição sem IPI/IPI e recusa NaN/Infinity/≤0 no payload; paridade
 # com os 29 pedidos reais do arquivo-ouro e falsificação inline por camada (docs/historico/preco-exato-po-sayerlack.md).
-db/test-sayerlack-ipi-po.sh                94
+db/test-sayerlack-ipi-po.sh                95
 
 # ── Eixo 3 — ATOMICIDADE ──────────────────────────────────────────────────────────
 # "Guard fora da escrita não é guard": o predicado tem de estar DENTRO do `WHERE`

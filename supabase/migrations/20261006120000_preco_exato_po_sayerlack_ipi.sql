@@ -154,6 +154,7 @@ DECLARE
   v_ipi_divergente integer;
   v_total_modelado numeric;
   v_tolerancia     numeric;
+  v_aliq           jsonb;
 BEGIN
   -- Gate de papel (defesa em profundidade; a tranca é o privilégio).
   IF auth.uid() IS NOT NULL
@@ -231,9 +232,14 @@ BEGIN
       v_n, v_pertencem, p_pedido_id, v_itens_total USING ERRCODE = 'CP004';
   END IF;
 
-  -- (3) CP006 — a alíquota de cada item, pela MESMA função que a edge leu. Ausente ≠ zero.
+  -- (3) CP006 — a alíquota de cada item, pela MESMA função que a edge leu. Ausente ≠ zero. UMA leitura só: sob
+  -- READ COMMITTED cada comando vê um snapshot novo, e reler no UPDATE poderia gravar um IPI que a prova não validou
+  -- (alíquota ou NCM alterados no meio). CP006, CP007 e a escrita usam esta mesma leitura materializada.
+  SELECT coalesce(jsonb_agg(jsonb_build_object('item_id', x.item_id, 'ncm', x.ncm, 'aliquota_pct', x.aliquota_pct)), '[]'::jsonb)
+    INTO v_aliq
+    FROM public.sayerlack_ipi_itens(p_pedido_id) x;
   SELECT string_agg(coalesce(x.ncm, '(sem NCM)'), ', ' ORDER BY x.item_id) INTO v_sem_aliquota
-    FROM public.sayerlack_ipi_itens(p_pedido_id) x
+    FROM jsonb_to_recordset(v_aliq) AS x(item_id bigint, ncm text, aliquota_pct numeric)
    WHERE x.aliquota_pct IS NULL;
   IF v_sem_aliquota IS NOT NULL THEN
     RAISE EXCEPTION 'custo_portal: item sem alíquota de IPI conhecida no pedido % (NCM: %) — nada gravado',
@@ -250,7 +256,7 @@ BEGIN
              round((e->>'valor_mercadoria')::numeric, 2) AS linha,
              round(round((e->>'valor_mercadoria')::numeric, 2) * x.aliquota_pct / 100, 2) AS ipi
         FROM jsonb_array_elements(p_itens) e
-        JOIN public.sayerlack_ipi_itens(p_pedido_id) x ON x.item_id = (e->>'item_id')::bigint
+        JOIN jsonb_to_recordset(v_aliq) AS x(item_id bigint, ncm text, aliquota_pct numeric) ON x.item_id = (e->>'item_id')::bigint
     ) c;
   v_tolerancia := 0.005 + 0.0101 * v_n;
   IF v_ipi_divergente <> 0 OR v_total_modelado IS NULL OR abs(v_total_modelado - p_valor_total) > v_tolerancia THEN
@@ -276,7 +282,7 @@ BEGIN
              x.aliquota_pct,
              x.ncm
         FROM jsonb_array_elements(p_itens) e
-        JOIN public.sayerlack_ipi_itens(p_pedido_id) x ON x.item_id = (e->>'item_id')::bigint
+        JOIN jsonb_to_recordset(v_aliq) AS x(item_id bigint, ncm text, aliquota_pct numeric) ON x.item_id = (e->>'item_id')::bigint
     ) c
    WHERE i.id = c.item_id AND i.pedido_id = p_pedido_id AND i.qtde_final = c.qtde_eco AND i.qtde_final = trunc(i.qtde_final);
   GET DIAGNOSTICS v_atualizados = ROW_COUNT;

@@ -87,11 +87,19 @@ describe('espelho Deno ↔ src (captura de custo)', () => {
     expect(edge).toMatch(/cons\.total_pedido != null && match\.naoCasados\.length === 0/);
     expect(edge).toMatch(/&& pulados\.length === 0;/);
   });
-  it('call-site do disparo: o item do PO sai de montarProdutoIncluir, lendo a decomposição sem quebrar sem a migration', () => {
+  it('call-site do disparo: os itens do PO saem de montarProdutosIncluir (pedido inteiro), lidos com select("*")', () => {
     const disparo = ler('supabase/functions/disparar-pedidos-aprovados/index.ts');
     expect(disparo).toContain('from "./produto-po.ts"');
-    expect(disparo).toMatch(/\.map\(\(it, idx\) => montarProdutoIncluir\(it, idx\)\)/);
+    expect(disparo).toMatch(/= montarProdutosIncluir\(items as ItemRow\[\]\);/);
     expect(disparo).not.toMatch(/nValUnit: Number\(it\.preco_unitario\)/);
+    // A leitura dos itens do PO (`// a. Items`) tem de trazer as colunas da decomposição sem citá-las (banco sem a
+    // migration não quebra): voltar à lista explícita de colunas desligaria o preço exato EM SILÊNCIO — o PO volta
+    // ao IPI embutido, com o total certo, e nenhum outro teste acusa.
+    const a = disparo.indexOf('// a. Items');
+    expect(a).toBeGreaterThan(0);
+    const leitura = disparo.slice(a, disparo.indexOf('.eq("pedido_id", pedido.id)', a));
+    expect(leitura).toContain('.from("pedido_compra_item")');
+    expect(leitura).toContain('.select("*")');
   });
   it('bloco espelhado NÃO tem crase nem ${ dentro de extrairAddJson (vai pro Browserless por toString)', () => {
     const deno = ler(`${EDGE_DIR}/captura-custo.ts`);
