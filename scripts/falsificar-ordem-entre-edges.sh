@@ -153,9 +153,9 @@ const SABOTAGENS: Sabotagem[] = [
     velho: '  if (comOrdem.length > 0) {', novo: '  if (false && comOrdem.length > 0) {',
     marca: '[PROMPT_RECUSA_ORDEM_DECLARADA]' },
   // ── o aviso de onda MUDA: a leva que ninguem declarou (#2469) ──────────
-  { id: 'S26', arquivo: LIB, defeito: 'colagem de UMA edge passa a avisar',
-    velho: '  if (onda.length < 2) return [];', novo: '  if (onda.length < 1) return [];',
-    marca: '[ONDA_MUDA_UMA_EDGE_CALA]' },
+  { id: 'S26', arquivo: LIB, defeito: 'o contador de pares da onda zera e toda onda vira determinada',
+    velho: '  const paresDaOnda = (onda.length * (onda.length - 1)) / 2;', novo: '  const paresDaOnda = 0;',
+    marca: '[ONDA_MUDA_NOMEIA_AS_DUAS]' },
   { id: 'S27', arquivo: LIB, defeito: 'regra com ponta fora da onda passa a determinar',
     velho: '      if (naOnda.has(r.edge) && naOnda.has(p)) declarados.add(chaveDoPar(r.edge, p));',
     novo: '      if (naOnda.has(r.edge) || naOnda.has(p)) declarados.add(chaveDoPar(r.edge, p));',

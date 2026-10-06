@@ -391,8 +391,9 @@ const chaveDoPar = (x: string, y: string): string => (porNome(x, y) <= 0 ? `${x}
  * TODA leva — gate que recusa tudo é gate desligado, e o silêncio voltaria pela porta da frente.
  */
 export function ondaSemOrdemDeclarada(plano: Pick<PlanoDeOndas, 'liberadas' | 'regras'>): string[] {
+  // Sem guarda de tamanho: com 0 ou 1 edge o contador de pares já dá 0, e `0 === 0` cala. A guarda
+  // `< 2` existiu aqui e a falsificação a mostrou REDUNDANTE (mutante equivalente, S26 verde).
   const onda = [...plano.liberadas].sort(porNome);
-  if (onda.length < 2) return [];
   const naOnda = new Set(onda);
   const declarados = new Set<string>();
   for (const r of plano.regras) {

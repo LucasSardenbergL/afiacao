@@ -1024,7 +1024,24 @@ describe('pendencias:pacote — a ordem entre edges vira ONDA', () => {
   });
 
   it('[PACOTE_INVENTARIO_CEGO_MECANICA] listagem que não vê a própria edge é exit 2', () => {
-    expect(rodar(repo({ quebrar: 'ls-tree-cego' }), ledger(veredito(A), divergente(B))).codigo).toBe(2);
+    const logs: string[] = [];
+    const espiao = vi.spyOn(process.stderr, 'write').mockImplementation((t) => {
+      logs.push(String(t));
+      return true;
+    });
+    let codigo: number;
+    try {
+      codigo = rodar(repo({ quebrar: 'ls-tree-cego' }), ledger(veredito(A), divergente(B))).codigo;
+    } finally {
+      espiao.mockRestore();
+    }
+    expect(codigo).toBe(2);
+    // Exit 2 sozinho não isola o ramo, e nem o texto do erro: a MESMA frase ("não lista o index.ts
+    // de") sai de DUAS camadas — `lerManifestosDaRef` (1c) e `mapa-coerente-na-ref` (1d). Com a 1c
+    // desligada, a 1d lançava a frase idêntica e o teste passava pelo motivo errado (verde-falso
+    // medido em 2026-10-06, S24). O dente é o rótulo de QUEM converteu em exit 2.
+    expect(logs.join('')).toMatch(/ordem entre edges não pôde ser julgada/);
+    expect(logs.join('')).toMatch(/não lista o index\.ts de/);
   });
 
   it('[PACOTE_SEM_MANIFESTO_SEGUE_INTEIRO] controle: sem manifesto, A e B saem juntas como sempre', () => {
