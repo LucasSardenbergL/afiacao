@@ -43,7 +43,7 @@ if [ "${1:-}" = "--falsificar" ]; then
               sem_condicao_envio:A11,A13 sem_envio_nem_autoguarda:A6,A21
               sobrescreve_kpi:A10 sem_guarda_outra_linha:A12
               costura_clock:A2 costura_now:A3
-              pre_sem_identidade:A24 pos_sem_dente:A25 sem_revoke:A26"
+              pre_sem_identidade:A24 pos_sem_dente:A25 sem_revoke:A26 pos_sem_dono:A27"
   LOGDIR="$(mktemp -d "/tmp/falsifica-${SLUG}.XXXXXX")"
   porta=$PORT
   executados() { sed -n 's/^PASS=\([0-9][0-9]*\)  FAIL=\([0-9][0-9]*\)$/\1 \2/p' "$1" | awk '{ print $1 + $2 }'; }
@@ -311,7 +311,7 @@ case "${SABOTAGEM:-}" in
     sabotar sales_orders_instante_envio "SELECT pg_catalog.statement_timestamp()" "SELECT pg_catalog.clock_timestamp()" ;;
   costura_now)
     sabotar sales_orders_instante_envio "SELECT pg_catalog.statement_timestamp()" "SELECT pg_catalog.now()" ;;
-  pre_sem_identidade|pos_sem_dente|sem_revoke) ;;   # aplicadas nos clones (A24–A26)
+  pre_sem_identidade|pos_sem_dente|sem_revoke|pos_sem_dono) ;;   # aplicadas nos clones (A24–A27)
   *) echo "❌ sabotagem desconhecida: $SABOTAGEM"; exit 9 ;;
 esac
 
@@ -435,11 +435,24 @@ CREATE ROLE escritor_sem_exec NOLOGIN;
 GRANT USAGE ON SCHEMA public TO escritor_sem_exec;
 GRANT SELECT, INSERT, UPDATE ON public.sales_orders TO escritor_sem_exec;
 SQL
+# O dono das funções SEM superusuário, como a prod (postgres tem rolsuper=f): no harness o postgres é
+# superusuário e pularia a checagem de EXECUTE que o trigger SECURITY DEFINER faz ao chamar a costura.
+P -q <<'SQL'
+CREATE ROLE dono_sem_super NOLOGIN NOSUPERUSER;
+GRANT USAGE ON SCHEMA public TO dono_sem_super;
+GRANT SELECT ON public.sales_orders TO dono_sem_super;
+ALTER FUNCTION public.sales_orders_gemeo_app_derivar() OWNER TO dono_sem_super;
+ALTER FUNCTION public.sales_orders_instante_envio()    OWNER TO dono_sem_super;
+SQL
 A18ID="$(nova_app 60)"
 sem_exec="$(Pq -c "SELECT has_function_privilege('escritor_sem_exec', 'public.sales_orders_instante_envio()', 'EXECUTE')
                        OR has_function_privilege('escritor_sem_exec', 'public.sales_orders_gemeo_app_derivar()', 'EXECUTE');")"
 r18="$(rodar "SET ROLE escritor_sem_exec; $(write_back "$A18ID" 1180)")"
-eq "A18 papel SEM EXECUTE nas funções (o service_role depois do REVOKE) faz o write-back e o kpi nasce" \
+P -q <<'SQL'
+ALTER FUNCTION public.sales_orders_gemeo_app_derivar() OWNER TO postgres;
+ALTER FUNCTION public.sales_orders_instante_envio()    OWNER TO postgres;
+SQL
+eq "A18 papel SEM EXECUTE nas funções (o service_role depois do REVOKE), com o dono delas SEM superusuário (como a prod), faz o write-back e o kpi nasce" \
    "$sem_exec|$r18|$(kpi_ptr "$A18ID")" "f|OK|2026-10-05|nulo"
 A19ID="$(Pq -q -c "INSERT INTO public.sales_orders (customer_user_id, created_by, status, total, hash_payload) VALUES ('$c1', '$vend', 'rascunho', 19, 'checkout_abc') RETURNING id;")"
 r19="$(rodar "$(write_back "$A19ID" 1190)")"
@@ -553,6 +566,29 @@ acl26="$(Pd acl -tA -c "SELECT count(*) FILTER (WHERE has_function_privilege(r.p
                    'public.sales_orders_gemeo_importada_antes()', 'public.sales_orders_gemeo_importada_depois()',
                    'public.sales_orders_instante_envio()']) AS s);")"
 eq "A26 a migration fecha o EXECUTE das 4 funções para PUBLIC/anon/authenticated" "$r26|$acl26" "OK|0|4"
+
+# A27 (revisão final): o trigger roda como o DONO dele e chama a costura. Se a costura nasce de outro dono
+# (quem aplica) e perde o EXECUTE público, o write-back cai em 42501 DEPOIS de o Omie aceitar o pedido.
+"$PGBIN/createdb" -p "$PORT" -h "$SOCK" -U postgres -T molde dono
+Pd dono -q <<'SQL'
+CREATE ROLE dono_trigger NOLOGIN NOSUPERUSER;
+GRANT USAGE ON SCHEMA public TO dono_trigger;
+GRANT SELECT ON public.sales_orders TO dono_trigger;
+ALTER FUNCTION public.sales_orders_gemeo_app_derivar() OWNER TO dono_trigger;
+SQL
+cp "$MIG" "$TMP/mig-dono.sql"
+if [ "${SABOTAGEM:-}" = "pos_sem_dono" ]; then
+  trocar "$TMP/mig-dono.sql" "OR NOT v_dono_exec" "OR false" \
+    || { echo "❌ SABOTAGEM NÃO APLICÁVEL — o padrão não ocorre exatamente 1× na POS"; exit 9; }
+  echo "⚠️  SABOTAGEM ATIVA em POS (sem o EXECUTE do dono do trigger na costura) — a suíte abaixo DEVE ficar vermelha"
+fi
+out27="$(Pd dono -q -1 -f "$TMP/mig-dono.sql" 2>&1 || true)"
+case "$out27" in
+  *"POS FALHOU kpi-no-envio:"*"dono_executa_costura=nao"*) r27="recusou:dono" ;;
+  *"POS FALHOU"*) r27="recusou:outro_motivo" ;;
+  *) if [ -z "$out27" ]; then r27="aplicou"; else r27="erro:$(printf '%s\n' "$out27" | sqlstate)"; fi ;;
+esac
+eq "A27 a POS recusa quando o dono do trigger não executa a costura (o write-back cairia em 42501)" "$r27" "recusou:dono"
 
 echo
 echo "PASS=${PASS}  FAIL=${FAIL}"

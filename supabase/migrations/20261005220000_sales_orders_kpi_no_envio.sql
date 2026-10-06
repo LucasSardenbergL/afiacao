@@ -138,6 +138,7 @@ DECLARE
   v_ptr_kpi    bigint;
   v_obj        int;
   v_acl        int;
+  v_dono_exec  boolean;
   v_md5_der    text;
   v_md5_ins    text;
 BEGIN
@@ -178,9 +179,15 @@ BEGIN
                  ('public.sales_orders_gemeo_importada_depois()'), ('public.sales_orders_instante_envio()')) AS f(sig),
          (VALUES ('public'), ('anon'), ('authenticated')) AS r(papel)
    WHERE has_function_privilege(r.papel, f.sig, 'EXECUTE');
-  IF v_dup <> 0 OR v_sem_ptr <> 0 OR v_ptr_errado <> 0 OR v_ptr_kpi <> 0 OR v_obj <> 8 OR v_acl <> 0 THEN
-    RAISE EXCEPTION 'POS FALHOU kpi-no-envio: dup_kpi=% sem_ponteiro=% ponteiro_errado=% ponteiro_com_kpi=% objetos=%/8 acl_aberto=%',
-      v_dup, v_sem_ptr, v_ptr_errado, v_ptr_kpi, v_obj, v_acl;
+  -- O trigger (SECURITY DEFINER) roda como o DONO dele e chama a costura: sem EXECUTE desse dono nela, o
+  -- write-back cairia em 42501 DEPOIS de o Omie aceitar o pedido. Na prod o dono nao e superusuario.
+  SELECT has_function_privilege(p.proowner, 'public.sales_orders_instante_envio()', 'EXECUTE')
+    INTO v_dono_exec
+    FROM pg_proc p WHERE p.oid = 'public.sales_orders_gemeo_app_derivar()'::regprocedure;
+  IF v_dup <> 0 OR v_sem_ptr <> 0 OR v_ptr_errado <> 0 OR v_ptr_kpi <> 0 OR v_obj <> 8 OR v_acl <> 0
+     OR NOT v_dono_exec THEN
+    RAISE EXCEPTION 'POS FALHOU kpi-no-envio: dup_kpi=% sem_ponteiro=% ponteiro_errado=% ponteiro_com_kpi=% objetos=%/8 acl_aberto=% dono_executa_costura=%',
+      v_dup, v_sem_ptr, v_ptr_errado, v_ptr_kpi, v_obj, v_acl, CASE WHEN v_dono_exec THEN 'sim' ELSE 'nao' END;
   END IF;
 
   SELECT md5(prosrc) INTO v_md5_der FROM pg_proc WHERE oid = 'public.sales_orders_gemeo_app_derivar()'::regprocedure;
