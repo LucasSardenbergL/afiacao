@@ -98,6 +98,36 @@ Falsificação com **controle verde na mesma invocação** (J1/J2/J4 acima, com 
 - **FJ1** inverte o predicado → J2 vira `1/1/1/0` (troca de valor contaria como nulificação)
 - **FJ2** remove `traz_desconto` → J4 vira `1/0/1/0` (a contenção quebra)
 
+## Os dois portões meta que me pegaram — os dois com razão
+
+Sem o Codex, quem fez o papel de cético foram dois gates do CI. Vale registrar porque **um deles
+achou defeito de verdade na MINHA prova**, não falso positivo:
+
+1. **`assert-verde-por-ausencia`** — a pós-condição (b) do apply usava `<> '0'` sobre chaves do jsonb
+   de retorno. Em PL/pgSQL `IF NULL <> '0'` **não dispara**: se uma das chaves sumisse, o assert
+   passaria verde sem medir nada. Eu havia guardado só `desconto_corrigido_para_null` com um
+   `IS NULL` explícito — `desconto_corrigido` e `desconto_apurado`, no mesmo `OR`, ficavam
+   desprotegidos. Conserto no idioma canônico do repo: `IS DISTINCT FROM` nos 10 sítios.
+   **A lição:** eu estava escrevendo uma pós-condição para provar um sensor de "ausente ≠ zero" e
+   cometi "ausente ≠ zero" na própria pós-condição. O gate viu o que eu não vi.
+
+2. **`limpeza-fonte`** — `versao.ts` estava **exatamente** no piso (9/90 = 0,1), então qualquer linha
+   de comentário o afundava. Afrouxar o piso enfraqueceria a sentinela para todo o repo; a saída foi
+   a do CLAUDE.md — prosa vai para `docs/historico/`, e o marcador de versão fica com 2 linhas e um
+   ponteiro. Não é falso positivo: é um arquivo no teto avisando que a prosa tem outro lugar.
+
+## O apply que travou sem escrever nada
+
+A reaplicação (bytes corrigidos) pendurou 18 minutos sem progresso. Diagnóstico antes de reflexo:
+`pg_stat_activity` não mostrava **nenhuma** sessão ativa em prod, e o ledger não tinha a tentativa —
+ou seja, travou na sonda de preflight, **antes** de escrever. Sem estado parcial e sem cicatriz, o
+que tornou seguro matar o processo (conexão morta no pooler; `psql` bloqueado num read que nunca
+voltaria). A regra do envelope — *nunca reaplicar resultado DESCONHECIDO* — vale porque o
+desconhecido é o caso em que a tentativa JÁ está gravada; aqui o ledger provou que não estava.
+
+⚠️ E o `APPLY_EXIT` do wrapper veio **143** (meu SIGTERM), mas o harness anunciou "exited with
+code 0": o compound depois do `kill` fabricou o veredito. O ledger, não o exit, foi a autoridade.
+
 ## Caminho B — o Codex não foi consultado
 
 `scripts/codex-async.sh` saiu **79** no preflight: cota em **92,0%** (teto 85%), janela de 7 dias
