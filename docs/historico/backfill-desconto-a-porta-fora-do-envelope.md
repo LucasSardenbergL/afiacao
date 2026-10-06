@@ -340,6 +340,23 @@ As três postcondições dele medem a mesma coisa por caminhos diferentes, e tê
 tabela não existe em prod enquanto ele não entrar de verdade. O ensaio dele é o passo entre os dois
 applies, e é obrigatório.
 
+### O bloqueio que eu reportei errado: `exit 79` não é a parede
+
+Fechei a etapa anterior dizendo ao founder que havia **duas** saídas — esperar 09/10 ou autorizar o
+Caminho B — e que a decisão era dele. A decisão é dele mesmo, mas a dicotomia era falsa, e o erro foi
+meu: li `exit 79` como "cota esgotada" quando o cabeçalho do próprio `codex-async.sh` diz, em letra
+redonda, `≠ 75, que é ter BATIDO na parede`. O 79 é guard **local** de orçamento, e o comentário dele
+declara a razão do teto de 85%: *"o que resta deve ficar pro money-path"*.
+
+O adversarial deste apply **é** money-path. A reserva não estava me barrando — estava guardando cota
+para exatamente este consult. Com ~1,4 pp por consulta (medido em 18/09) e 89% usado, sobram ~7
+consultas. A saída certa é a terceira, que eu não ofereci: **gastar a reserva** — decisão do founder,
+porque a cota é compartilhada, não porque o adversarial seja opcional.
+
+Nada disso afrouxa a regra: o adversarial de código continua não-pulável. O que muda é que o
+bloqueio tem 4 dias menos do que eu anunciei, e que eu transformei um código de saída em prazo de
+calendário sem ler o ramo que o emitiu.
+
 ### A sequência, quando o parecer chegar
 
 ```bash
