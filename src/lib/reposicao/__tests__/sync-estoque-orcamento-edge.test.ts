@@ -134,6 +134,17 @@ describe('omie-sync-estoque — deadline cabe no teto do cron', () => {
     expect(fonte).toContain('limiteCauda: deadline + FOLGA_CAUDA_MS,');
   });
 
+  it('toda escrita/leitura dos adaptadores carrega o AbortSignal do prazo — senão o prazo da cauda é decorativo', () => {
+    const ini = fonte.indexOf('function gravarMarcadorComPrazo(');
+    const fim = fonte.indexOf('const CHAVES_REGISTRO');
+    expect(ini).toBeGreaterThan(0);
+    expect(fim).toBeGreaterThan(ini);
+    const adaptadores = fonte.slice(ini, fim);
+    const chamadas = adaptadores.match(/supabase\s*\.\s*(from|rpc)\(/g) ?? [];
+    expect(chamadas).toHaveLength(7);
+    expect(adaptadores.match(/\.abortSignal\(s\)/g)).toHaveLength(chamadas.length);
+  });
+
   it('cauda + os 2 marcadores + o fechamento do registro deixam ≥1s para a resposta', () => {
     const fim = constante('MAX_DURACAO_MS') + constante('FOLGA_CAUDA_MS') + 2 * constante('PRAZO_MARCADOR_MS') +
       constante('PRAZO_REGISTRO_MS');
