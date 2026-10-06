@@ -17,8 +17,12 @@ import {
 function assertEquals(actual: unknown, expected: unknown, msg: string) {
   if (actual !== expected) throw new Error(`${msg}: esperado ${String(expected)}, veio ${String(actual)}`);
 }
+// `Number.isFinite`, nunca só `typeof === "number"`: com NaN, `Math.abs(NaN − x) > eps` é FALSO e o assert passaria —
+// um total NaN (que vira null no JSON e a RPC recusa) ficaria verde em todos os testes (Codex 2026-10-06).
 function assertPerto(actual: number | null | undefined, expected: number, msg: string, eps = 1e-6) {
-  if (typeof actual !== "number" || Math.abs(actual - expected) > eps) throw new Error(`${msg}: esperado ≈${expected}, veio ${String(actual)}`);
+  if (typeof actual !== "number" || !Number.isFinite(actual) || Math.abs(actual - expected) > eps) {
+    throw new Error(`${msg}: esperado ≈${expected}, veio ${String(actual)}`);
+  }
 }
 
 const dom = (o: Partial<LinhaDom> = {}): LinhaDom => ({ sku_portal: "X", prz_ent_raw: "5", qtd_un_raw: "1", preco_venda_raw: "1,0000", preco_un_raw: "1,0000", ...o });
