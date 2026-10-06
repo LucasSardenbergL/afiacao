@@ -13419,6 +13419,7 @@ export type Database = {
       sku_items_sync_controle: {
         Row: {
           criado_em: string
+          itens_pendentes: number | null
           motivo: string | null
           tentativas: number
           tracking_id: string
@@ -13426,6 +13427,7 @@ export type Database = {
         }
         Insert: {
           criado_em?: string
+          itens_pendentes?: number | null
           motivo?: string | null
           tentativas?: number
           tracking_id: string
@@ -13433,6 +13435,7 @@ export type Database = {
         }
         Update: {
           criado_em?: string
+          itens_pendentes?: number | null
           motivo?: string | null
           tentativas?: number
           tracking_id?: string
