@@ -7,10 +7,14 @@ import { removerComentarios } from '@/lib/gates/limpeza-fonte';
 // 104687): o run morreu na fase do PO por deadline, e o throw — fatal por desenho (Codex P1 2026-06-20) — descartou
 // o físico já lido. A v1.5 dá 5s a mais às varreduras e registra cada run. A fase do PO segue DEPOIS do físico: o
 // paralelo foi revertido no adversarial do #2817, porque lido antes o PO conta duas vezes a NF recebida no meio do
-// run. O adaptador do registro tem testes Deno (registro-com-prazo_test.ts); aqui se vigia ONDE e COMO o handler usa
-// as peças, sobre a fonte SEM comentários. Texto prova presença e ordem, não comportamento.
+// run. Desde a v1.6 a publicação mora em publicacao.ts, EXECUTADA pelos testes Deno com escritas falsas
+// (publicacao_test.ts, fisico_test.ts, registro-com-prazo_test.ts); aqui se vigia ONDE e COMO o handler entrega as
+// peças, sobre a fonte SEM comentários. Texto prova presença e ordem, não comportamento.
 const fonte = removerComentarios(
   readFileSync(resolve(__dirname, '../../../../supabase/functions/omie-sync-estoque/index.ts'), 'utf8'),
+);
+const fontePublicacao = removerComentarios(
+  readFileSync(resolve(__dirname, '../../../../supabase/functions/omie-sync-estoque/publicacao.ts'), 'utf8'),
 );
 const iHandler = fonte.indexOf('Deno.serve(');
 
@@ -21,19 +25,37 @@ function constante(nome: string): number {
 }
 
 describe('omie-sync-estoque — o par (físico, pendente) e a semântica fatal do PO', () => {
-  it('a fase do PO roda DEPOIS do físico inteiro e ANTES de qualquer acesso à sku_estoque_atual', () => {
+  it('a fase do PO roda DEPOIS do físico inteiro, e o handler não escreve no par: entrega tudo à publicação', () => {
     const iLaco = fonte.indexOf('while (page <= totalPaginas)', iHandler);
     const iFimLaco = fonte.indexOf('const faseFisicoMs', iHandler);
     const iPo = fonte.indexOf('await computePendenteViaPedidosCompra(', iHandler);
-    const iEstoque = fonte.indexOf('.from("sku_estoque_atual")', iHandler);
+    const iConcluir = fonte.indexOf('concluirRun(opsDoBanco(', iHandler);
     expect(iHandler).toBeGreaterThan(0);
     expect(iLaco).toBeGreaterThan(iHandler);
     expect(iFimLaco).toBeGreaterThan(iLaco);
     expect(iPo).toBeGreaterThan(iFimLaco);
-    expect(iEstoque).toBeGreaterThan(iPo);
+    expect(iConcluir).toBeGreaterThan(iPo);
     // uma chamada só (a outra ocorrência é a definição) e nada correndo em paralelo com o laço do físico
     expect(fonte.match(/computePendenteViaPedidosCompra\(/g)).toHaveLength(2);
     expect(fonte.slice(iHandler)).not.toMatch(/Promise\.(all|allSettled|race|any)\(/);
+    expect(fontePublicacao).not.toMatch(/Promise\.(all|allSettled|race|any)\(/);
+    // a única escrita no par é o adaptador entregue à publicação — que decide QUANDO ela acontece
+    expect(fonte.slice(iHandler)).not.toContain('from("sku_estoque_atual")');
+    expect(fonte.match(/from\("sku_estoque_atual"\)/g)).toHaveLength(1);
+  });
+
+  it('na publicação: gate do físico → fase do PO → gate do pendente → gravação, nessa ordem', () => {
+    const iConcluir = fontePublicacao.indexOf('export async function concluirRun(');
+    const passos = [
+      'exigirFisicoPublicavel(v, e.fisico.faseMs);',
+      'await ops.lerPendente();',
+      'exigirPendenteConfiavel(pend, fasePoMs);',
+      'await gravarEstoque(ops, e, linhas);',
+      'await inativarNaoEncontrados(ops, e);',
+      'await publicarObservacao(ops, e, pend, gravacaoCompleta);',
+    ].map((p) => fontePublicacao.indexOf(p, iConcluir));
+    expect(iConcluir).toBeGreaterThan(0);
+    for (let i = 0; i < passos.length; i++) expect(passos[i]).toBeGreaterThan(i === 0 ? iConcluir : passos[i - 1]);
   });
 
   it('erro de varredura do PO continua FATAL: nada entre o físico e a chamada o captura, nem .catch() nela', () => {
@@ -43,18 +65,27 @@ describe('omie-sync-estoque — o par (físico, pendente) e a semântica fatal d
     expect(fonte).toMatch(
       /const r = await computePendenteViaPedidosCompra\(appKey, appSecret, habilitadoMap, supabase, deadline\);/,
     );
+    // e na publicação: nenhum try aberto entre o início de concluirRun e a fase do PO, nenhum .catch() nela
+    const iConcluir = fontePublicacao.indexOf('export async function concluirRun(');
+    const iLer = fontePublicacao.indexOf('await ops.lerPendente()', iConcluir);
+    expect(fontePublicacao.slice(iConcluir, iLer)).not.toContain('try {');
+    expect(fontePublicacao).not.toMatch(/lerPendente\(\)\s*\.catch\(/);
   });
 
   it('nenhuma falha dentro do callback do registro vira resposta de sucesso', () => {
-    // [Codex P2 2026-10-05] um try/catch em volta do callback devolvendo ok:true passava verde. Os únicos `ok: true`
-    // do callback são o do caso vazio e o do resumo; `ok: false` só existe no catch final, FORA dele. Limite: um catch
-    // que devolva o próprio resumo não acrescenta literal e escapa desta guarda.
+    // [Codex P2 2026-10-05] um try/catch em volta do callback devolvendo ok:true passava verde. O único `ok: true` do
+    // callback é o do caso vazio; o resto é o resumo de concluirRun, cujo ok DERIVA do desfecho (os testes Deno provam
+    // que parcial responde ok:false). `ok: false` só existe no catch final, FORA dele. Limite: um catch que devolva o
+    // próprio resumo não acrescenta literal e escapa desta guarda.
     const iRegistro = fonte.indexOf('comRegistro(', iHandler);
     const iFimCallback = fonte.indexOf('}, detalhesDoRegistro)', iRegistro);
     expect(iFimCallback).toBeGreaterThan(iRegistro);
     const callback = fonte.slice(iRegistro, iFimCallback);
-    expect(callback.match(/\bok: true\b/g)).toHaveLength(2);
+    expect(callback.match(/\bok: true\b/g)).toHaveLength(1);
     expect(callback).not.toMatch(/\bok: false\b/);
+    expect(callback).toContain('return await concluirRun(');
+    expect(fontePublicacao).not.toMatch(/\bok: (true|false)\b/);
+    expect(fontePublicacao.match(/\bok: desfecho === "completo",/g)).toHaveLength(1);
   });
 
   it('o erro do ListarPosEstoque ganha página e relógio como SUFIXO — o startsWith("AUTH_ERROR") segue vendo a auth', () => {
@@ -98,12 +129,16 @@ describe('omie-sync-estoque — deadline cabe no teto do cron', () => {
     expect(constante('MAX_DURACAO_MS')).toBeLessThanOrEqual(TETO_CRON_MS - 10_000);
   });
 
-  it('o corte ABSOLUTO da observação (deadline + folga) continua em 85s — 5s antes do teto', () => {
-    expect(constante('MAX_DURACAO_MS') + constante('FOLGA_PUBLICACAO_MS')).toBe(TETO_CRON_MS - 5_000);
+  it('o corte ABSOLUTO da cauda (gravação, inativação, observação) continua em 85s — 5s antes do teto', () => {
+    expect(constante('MAX_DURACAO_MS') + constante('FOLGA_CAUDA_MS')).toBe(TETO_CRON_MS - 5_000);
+    expect(fonte).toContain('limiteCauda: deadline + FOLGA_CAUDA_MS,');
   });
 
-  it('corte da observação + prazo do fechamento do registro deixam ≥3s para os marcadores e a resposta', () => {
-    const fim = constante('MAX_DURACAO_MS') + constante('FOLGA_PUBLICACAO_MS') + constante('PRAZO_REGISTRO_MS');
-    expect(fim).toBeLessThanOrEqual(TETO_CRON_MS - 3_000);
+  it('cauda + os 2 marcadores + o fechamento do registro deixam ≥1s para a resposta', () => {
+    const fim = constante('MAX_DURACAO_MS') + constante('FOLGA_CAUDA_MS') + 2 * constante('PRAZO_MARCADOR_MS') +
+      constante('PRAZO_REGISTRO_MS');
+    expect(fim).toBeLessThanOrEqual(TETO_CRON_MS - 1_000);
+    // os marcadores usam o prazo FIXO (rodam depois do corte da cauda), nunca o limite da cauda
+    expect(fonte).toContain('marcadorMs: PRAZO_MARCADOR_MS,');
   });
 });

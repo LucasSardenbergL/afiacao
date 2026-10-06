@@ -9,18 +9,22 @@
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff, corsHeaders as sharedCors } from "../_shared/auth.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
-import {
-  avaliarPagina,
-  MAX_PAGINAS_POS_ESTOQUE,
-  proximoTotalPaginas,
-  varreduraTruncada as detectarVarreduraTruncada,
-} from "../_shared/omie-paginacao.ts";
+import { avaliarPagina, MAX_PAGINAS_POS_ESTOQUE, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
 import { cabeEspera, timeoutRequestMs } from "../_shared/omie-deadline.ts";
 import { hojeSP, paraDataOmie, somarDias } from "../_shared/hoje-sp.ts";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
+import { exigirLeitura } from "../_shared/leitura-critica.ts";
 import { comRegistro, type DbRegistro } from "../_shared/registro-execucao.ts";
-import { criarColetorObservacao, type LinhaObservada, observacaoBateComPendente } from "./observacao-po.ts";
+import { criarColetorObservacao, type LinhaObservada } from "./observacao-po.ts";
 import { registroComPrazo } from "./registro-com-prazo.ts";
+import { criarAcumuladorFisico } from "./fisico.ts";
+import {
+  concluirRun,
+  linhaMarcador,
+  MARKER_FULL,
+  type OpsPublicacao,
+  type ResultadoEscrita,
+} from "./publicacao.ts";
 
 const corsHeaders = {
   ...sharedCors,
@@ -40,10 +44,17 @@ const MAX_RETRIES = 3;
 // onde o run morre (incidente das 17:40Z do mesmo dia: o PO recusou a chamada aos 73,3s, net._http_response 104687).
 // Teto do cron continua 90s.
 const MAX_DURACAO_MS = 80_000;
-// A publicação da observação (PR0 da baixa de PO) é ACESSÓRIA: roda depois do upsert e nunca pode comer o tempo
-// da inativação e dos marcadores. Prazo = o que sobra até deadline + 5s — o MESMO corte absoluto de antes (75+10 =
-// 80+5 = 85s, os 90s do cron menos ~5s de reserva) —, com teto de 8s; sem margem (timeoutRequestMs = 0), não publica.
-const FOLGA_PUBLICACAO_MS = 5_000;
+// A CAUDA do run (gravação do par, inativação, observação do PR0) não começa request depois de deadline + 5s — o MESMO
+// corte absoluto de 85s que a v1.5 dava só à observação (os 90s do cron menos ~5s de reserva). [Codex P1 2026-10-06,
+// desenho da v1.6] o fallback de upsert individual não tinha prazo: num banco lento, até 200 tentativas comiam a
+// margem e o run não chegava aos marcadores — e o 'partial' que denuncia a gravação parcial nunca era gravado.
+const FOLGA_CAUDA_MS = 5_000;
+// Teto e mínimo de cada escrita/leitura da cauda (o mínimo é de BANCO: um upsert de 200 linhas leva ~100ms).
+const TETO_ESCRITA_MS = 8_000;
+const MINIMO_ESCRITA_MS = 500;
+// Prazo FIXO de cada marcador do Sentinela: eles rodam DEPOIS do corte da cauda (85s + 2×1s + 2s do registro = 89s).
+const PRAZO_MARCADOR_MS = 1_000;
+const CHUNK_ESTOQUE = 200;
 // Slug do registro do run em acoes_execucoes (_shared/registro-execucao.ts). Escritor ÚNICO: esta edge, que roda
 // por cron E por clique. O botão da tela registra OUTRA ação (o composto 'reposicao.sincronizar_recalcular').
 const ACAO_REGISTRO = "reposicao.sync_estoque";
@@ -539,46 +550,103 @@ async function computePendenteViaPedidosCompra(
 // permanente + Sentinela SURDO 17d (o incidente 30/06–02/07 passou mudo). A v3 (#1144, 20260702212000)
 // voltou o check ao dado real (max(ultima_sincronizacao)) e deixou a regra: "re-promover o marcador só
 // COM a edge gravando" — ESTA função é essa edge. Ordem certa de deploy: WRITER primeiro (aqui), check
-// v4 depois (partir do corpo v2 preservado na 20260626150000). Semântica dos marcadores:
-//   - fim de run OK → 'complete' + last_sync_at (o check v2/v4 mede a idade por last_sync_at);
-//   - pendente NÃO-confiável (OBEN) → OMITE o upsert do reposicao_pendente_po: o marcador envelhece e
-//     a futura v4 enxerga o "a-caminho congelado" que o frescor do físico mascara (o ponto cego que
-//     motivou o P1-A — a v3 ainda não o cobre);
-//   - falha total do run → 'error' no full SEM avançar last_sync_at (contrato v2/v4: 'error' = broken
-//     imediato; o horário do último sucesso fica preservado para o operador).
-// Best-effort: o marcador nunca derruba o sync real (padrão da irmã omie-sync-pedidos-compra).
-// 'syncing' do desenho P1-A não é usado: aqui os dois upserts saem juntos no fim do run (não existe a
-// janela físico→a-caminho do fluxo #809 que o estado intermediário cobria).
-const MARKER_FULL = "reposicao_estoque_full";
-const MARKER_PENDENTE_PO = "reposicao_pendente_po";
+// v4 depois (partir do corpo v2 preservado na 20260626150000). Semântica dos marcadores (v1.6, linhaMarcador em
+// publicacao.ts — o check sync_state_saude alerta em 'error' (broken) e 'partial' (stale); 'complete' com
+// error_message ele lê como ok, e era assim que a v1.5 sinalizava o físico truncado, sem ninguém ver):
+//   - run completo → 'complete' + last_sync_at, error_message limpo (a recuperação apaga o alerta);
+//   - gravação parcial do par ou inativação incompleta → 'partial' + last_sync_at (houve gravação) + o motivo;
+//   - recusa ou falha do run (físico incompleto, pendente não confiável, nada confirmado, Omie) → 'error' no full
+//     SEM avançar last_sync_at (o horário do último sucesso fica para o operador). Nada foi publicado, então o
+//     reposicao_pendente_po fica intocado e envelhece junto.
+// Best-effort com prazo fixo: o marcador nunca derruba o run, e também não o segura (padrão da irmã
+// omie-sync-pedidos-compra).
 
-async function gravarMarcadorSentinela(
-  supabase: SupabaseClient,
-  entityType: string,
-  empresa: Empresa,
-  status: "complete" | "error",
-  meta: Record<string, unknown>,
-  errorMessage: string | null = null,
-): Promise<void> {
-  const nowISO = new Date().toISOString();
-  const row: Record<string, unknown> = {
-    entity_type: entityType,
-    account: empresa.toLowerCase(),
-    status,
-    updated_at: nowISO,
-    error_message: errorMessage,
-    metadata: { ...meta, gravado_em: nowISO },
-  };
-  if (status === "complete") row.last_sync_at = nowISO; // 'error' preserva o último sucesso
+// Escrita/leitura do banco com prazo. O request que o PRAZO abortou fica "sem confirmação": o banco pode ter gravado.
+async function comPrazo(
+  executar: (sinal: AbortSignal) => PromiseLike<{ error: unknown }>,
+  prazoMs: number,
+): Promise<ResultadoEscrita> {
+  const sinal = AbortSignal.timeout(prazoMs);
   try {
-    const { error } = await supabase
-      .from("sync_state")
-      .upsert(row, { onConflict: "entity_type,account" });
-    if (error) throw error;
+    const { error } = await executar(sinal);
+    if (!error) return { erro: null, semConfirmacao: false };
+    return { erro: mensagemDeErro(error) ?? "erro sem mensagem", semConfirmacao: sinal.aborted };
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error(`[omie-sync-estoque] marcador ${entityType} (${status}) falhou: ${msg}`);
+    return { erro: mensagemDeErro(err) ?? "falha sem mensagem", semConfirmacao: sinal.aborted };
   }
+}
+
+function gravarMarcadorComPrazo(supabase: SupabaseClient, linha: Record<string, unknown>, prazoMs: number) {
+  return comPrazo((s) => supabase.from("sync_state").upsert(linha, { onConflict: "entity_type,account" }).abortSignal(s), prazoMs);
+}
+
+// Os adaptadores reais das escritas da publicação (publicacao.ts decide; aqui só se fala com o banco).
+function opsDoBanco(
+  supabase: SupabaseClient,
+  empresa: Empresa,
+  lerPendente: OpsPublicacao["lerPendente"],
+): OpsPublicacao {
+  return {
+    agora: () => Date.now(),
+    lerPendente,
+    upsertEstoque: (linhas, prazoMs) =>
+      comPrazo(
+        (s) => supabase.from("sku_estoque_atual").upsert(linhas, { onConflict: "empresa,sku_codigo_omie" }).abortSignal(s),
+        prazoMs,
+      ),
+    lerInativacoes: async (codigos, prazoMs) => {
+      let datas = new Map<string, string | null>();
+      const r = await comPrazo(async (s) => {
+        const res = await supabase
+          .from("sku_status_omie")
+          .select("sku_codigo_omie, data_inativacao")
+          .eq("empresa", empresa)
+          .in("sku_codigo_omie", codigos)
+          .abortSignal(s);
+        const linhas = exigirLeitura(res, "sku_status_omie (datas de inativação)");
+        if (linhas === null) throw new Error("sku_status_omie: leitura sem dados e sem erro");
+        datas = new Map(
+          linhas.map((x: { sku_codigo_omie: unknown; data_inativacao: string | null }) =>
+            [String(x.sku_codigo_omie), x.data_inativacao] as [string, string | null]
+          ),
+        );
+        return { error: null };
+      }, prazoMs);
+      return { erro: r.erro, dados: datas };
+    },
+    upsertStatus: (linhas, prazoMs) =>
+      comPrazo(
+        (s) => supabase.from("sku_status_omie").upsert(linhas, { onConflict: "empresa,sku_codigo_omie" }).abortSignal(s),
+        prazoMs,
+      ),
+    lerEventosPendentes: async (codigos, prazoMs) => {
+      let ja = new Set<string>();
+      const r = await comPrazo(async (s) => {
+        const res = await supabase
+          .from("eventos_outlier")
+          .select("sku_codigo_omie")
+          .eq("empresa", empresa)
+          .eq("tipo", "sku_inativado_omie")
+          .eq("status", "pendente")
+          .in("sku_codigo_omie", codigos)
+          .abortSignal(s);
+        const linhas = exigirLeitura(res, "eventos_outlier (inativações pendentes)");
+        if (linhas === null) throw new Error("eventos_outlier: leitura sem dados e sem erro");
+        ja = new Set(linhas.map((x: { sku_codigo_omie: unknown }) => String(x.sku_codigo_omie)));
+        return { error: null };
+      }, prazoMs);
+      return { erro: r.erro, dados: ja };
+    },
+    inserirEventos: (linhas, prazoMs) =>
+      comPrazo((s) => supabase.from("eventos_outlier").insert(linhas).abortSignal(s), prazoMs),
+    publicarObservacao: (run, itens, prazoMs) =>
+      comPrazo(
+        (s) => supabase.rpc("reposicao_po_observado_publicar", { p_run: run, p_itens: itens }).abortSignal(s),
+        prazoMs,
+      ),
+    gravarMarcador: (linha, prazoMs) => gravarMarcadorComPrazo(supabase, linha, prazoMs),
+    log: (nivel, msg) => console[nivel](`[omie-sync-estoque] ${msg}`),
+  };
 }
 
 // Teto anti-runaway do ListarSaldoPendente: 200 × 500/pág = 100k linhas de saldo >> realidade COLACOR.
@@ -618,13 +686,16 @@ async function computePendenteViaSaldoPendente(
   return pendente;
 }
 
-// O que vai para acoes_execucoes.detalhes num run bem-sucedido: o relógio por fase e o desfecho — a série que deixa
-// responder, com denominador, quantos runs chegaram perto do deadline e em que fase. Na falha o comRegistro grava o
-// texto do erro, que já nomeia a fase (e, no físico, a página e o relógio do run).
+// O que vai para acoes_execucoes.detalhes num run que publicou: o relógio por fase e o desfecho ('completo' ou
+// 'parcial' — o status do registro diz que a EXECUÇÃO terminou; o desfecho do par mora aqui) — a série que deixa
+// responder, com denominador, quantos runs chegaram perto do deadline e em que fase. Na recusa ou falha o comRegistro
+// grava o texto do erro: as recusas da v1.6 começam pela marca (FISICO_NAO_PUBLICAVEL, PENDENTE_NAO_CONFIAVEL,
+// GRAVACAO_NAO_CONFIRMADA) com o relógio da fase logo depois; a falha do físico leva a página e o relógio como sufixo.
 const CHAVES_REGISTRO = [
   "empresa", "duracao_ms", "fase_fisico_ms", "fase_po_ms", "paginas_omie", "registros_lidos",
   "total_skus_esperados", "sincronizados", "nao_encontrados", "erros_upsert", "pendente_confiavel",
-  "pendente_problemas", "varredura_truncada", "observacao_publicada",
+  "pendente_problemas", "varredura_truncada", "observacao_publicada", "desfecho", "upsert_sem_confirmacao",
+  "upsert_nao_tentados", "inativacao_falhou", "linhas_sem_local", "paginas_sem_total",
 ] as const;
 
 function detalhesDoRegistro(resumo: Record<string, unknown>): Record<string, unknown> {
@@ -737,11 +808,16 @@ Deno.serve(async (req) => {
       if (totalEsperado === 0) {
         // Run vazio legítimo = complete (só o full; deixar o pendente_po envelhecer aqui é sinal útil —
         // reposição desabilitada em massa merece atenção humana, não um complete fabricado).
-        await gravarMarcadorSentinela(supabase, MARKER_FULL, empresa, "complete", {
-          trigger: "run",
-          sincronizados: 0,
-          nota: "nenhum SKU habilitado",
-        });
+        const marcador = await gravarMarcadorComPrazo(
+          supabase,
+          linhaMarcador(MARKER_FULL, empresa, "complete", {
+            trigger: "run",
+            sincronizados: 0,
+            nota: "nenhum SKU habilitado",
+          }, null, Date.now()),
+          PRAZO_MARCADOR_MS,
+        );
+        if (marcador.erro !== null) console.error(`[omie-sync-estoque] marcador ${MARKER_FULL} (complete) falhou: ${marcador.erro}`);
         return {
           ok: true,
           empresa,
@@ -751,17 +827,14 @@ Deno.serve(async (req) => {
       }
 
       // 2-3) Paginar Omie — ListarPosEstoque (físico + reservado)
-      // IMPORTANTE: o método retorna UMA LINHA POR LOCAL DE ESTOQUE.
-      // Se o mesmo nCodProd está em N locais (matriz, filial, depósito),
-      // precisamos SOMAR físico/reservado/pendente de todos os locais —
-      // sobrescrever (Map.set) gerava estoque menor que o do ME.
+      // IMPORTANTE: o método retorna UMA LINHA POR LOCAL DE ESTOQUE. Se o mesmo nCodProd está em N locais (matriz,
+      // filial, depósito), o físico é a SOMA dos locais — sobrescrever (Map.set) gerava estoque menor que o do ME. A
+      // soma e o veredito de completude moram em fisico.ts (puro, testado em Deno).
       const dataPosicao = paraDataOmie(hojeSP()); // a posição de HOJE em SP (no servidor UTC, getDate() é amanhã às 21h+)
-      const encontrados = new Map<string, { fisico: number; reservado: number; pendente: number; locais: number }>();
+      const fisico = criarAcumuladorFisico((sku) => habilitadoMap.has(sku), totalEsperado);
 
       let page = 1;
       let totalPaginas = 1;
-      let totalRegistros = 0;
-      let registrosLidos = 0;
       const tFisicoIni = performance.now();
 
       while (page <= totalPaginas) {
@@ -783,361 +856,62 @@ Deno.serve(async (req) => {
         // encolhia o teto e a varredura PARCIAL completava — SKU habilitado da cauda perdida
         // virava ativo_no_omie=false + evento sku_inativado FALSO (money-path da reposição).
         totalPaginas = proximoTotalPaginas(totalPaginas, resp.nTotPaginas, MAX_PAGINAS_POS_ESTOQUE);
-        totalRegistros = resp.nTotRegistros ?? totalRegistros;
         const lista = resp.produtos ?? [];
         const veredicto = avaliarPagina(lista.length, page, totalPaginas);
         if (veredicto === "anomalia") {
           throw new Error(`página ${page}/${totalPaginas} do ListarPosEstoque veio vazia antes do fim declarado — abortando (retrato parcial)`);
         }
         if (veredicto === "fim") break;
-        registrosLidos += lista.length;
-        for (const item of lista) {
-          const codigo = String(item.nCodProd ?? "").trim();
-          if (!codigo) continue;
-          if (!habilitadoMap.has(codigo)) continue;
-          const acc = encontrados.get(codigo) ?? { fisico: 0, reservado: 0, pendente: 0, locais: 0 };
-          acc.fisico += Number(item.fisico ?? 0);
-          acc.reservado += Number(item.reservado ?? 0);
-          acc.pendente += Number(item.nPendente ?? 0);
-          acc.locais += 1;
-          encontrados.set(codigo, acc);
-        }
+        fisico.pagina(lista, resp.nTotRegistros);
         console.log(
-          `[omie-sync-estoque] ListarPosEstoque pág ${page}/${totalPaginas} — ${lista.length} itens, ${encontrados.size}/${totalEsperado} casados.`,
+          `[omie-sync-estoque] ListarPosEstoque pág ${page}/${totalPaginas} — ${lista.length} itens, ${fisico.encontrados.size}/${totalEsperado} casados.`,
         );
         page++;
       }
       const faseFisicoMs = Math.round(performance.now() - tFisicoIni);
+      const vereditoFisico = fisico.veredito();
 
       console.log(
-        `[omie-sync-estoque] varredura concluída: ${totalRegistros} no Omie, ${encontrados.size}/${totalEsperado} habilitados encontrados.`,
+        `[omie-sync-estoque] varredura concluída: ${vereditoFisico.registrosLidos}/${vereditoFisico.totalDeclarado ?? "?"} ` +
+          `registros, ${fisico.encontrados.size}/${totalEsperado} habilitados encontrados, veredito ${vereditoFisico.estado}.`,
       );
 
-      // 3.b) "A caminho" (estoque_pendente_entrada) — pedidos de compra ABERTOS do Omie.
-      // OBEN: via PesquisarPedCompra (pega previsão FUTURA de PO aprovada que o ListarSaldoPendente perdia —
-      //   incidente 2026-06-11, FUNDO PU/1054). Erro de VARREDURA (rede/fault/loop/truncamento) é FATAL (throw →
-      //   sync falha → Sentinela pega o congelado). Já dado torto/varredura vazia NÃO derruba o sync: o pendente
-      //   vira NÃO confiável e a coluna é PRESERVADA no upsert (o físico segue fresco). [Codex P1 2026-06-20]
-      //   Roda DEPOIS do físico inteiro, de propósito [Codex P1 2026-10-05, adversarial do #2817]: lido antes (em
-      //   paralelo), uma NF recebida entre a leitura do PO e a página do SKU entra no físico E segue no pendente —
-      //   dupla contagem, o motor SUB-sugere e ninguém vê. Nesta ordem a mesma corrida erra para o lado visível: a NF
-      //   some dos dois números e o motor sobre-sugere um item que o comprador acabou de receber.
-      // COLACOR: mantém ListarSaldoPendente, não-fatal (reposição é OBEN; etapa-map do COLACOR não confirmada).
-      let pendenteEntrada = new Map<string, number>();
-      let pendenteConfiavel = true; // COLACOR (ListarSaldoPendente) sempre aplica; OBEN é gated pela confiabilidade
-      let pendenteProblemas: string[] = [];
-      // Só o ramo OBEN observa o conjunto aberto (o COLACOR lê o ListarSaldoPendente, que não tem PO).
-      let observacaoPo: {
-        observados: LinhaObservada[]; janelaDe: string; janelaAte: string; varreduraCompleta: boolean;
-        coletaIntegra: boolean; perdaColeta: string | null;
-      } | null = null;
-      let fasePoMs: number | null = null;
-      if (empresa === "OBEN") {
-        const tPoIni = performance.now();
-        const r = await computePendenteViaPedidosCompra(appKey, appSecret, habilitadoMap, supabase, deadline);
-        fasePoMs = Math.round(performance.now() - tPoIni);
-        pendenteEntrada = r.pendente;
-        pendenteConfiavel = r.confiavel;
-        pendenteProblemas = r.problemas;
-        observacaoPo = r;
-      } else {
-        try {
-          pendenteEntrada = await computePendenteViaSaldoPendente(appKey, appSecret, habilitadoMap, deadline);
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          // Não-fatal ≠ zerar: sem confiável=false, o Map vazio do catch virava
-          // estoque_pendente_entrada=0 em TODO SKU COLACOR (fabricação). false OMITE a coluna
-          // no upsert → o último valor bom é PRESERVADO (mesmo mecanismo do ramo OBEN).
-          pendenteConfiavel = false;
-          pendenteProblemas = [msg];
-          console.warn(`[omie-sync-estoque] COLACOR ListarSaldoPendente falhou (não-fatal, pendente PRESERVADO): ${msg}`);
+      // 3.b) "A caminho" + publicação — concluirRun (publicacao.ts) decide o que chega ao motor, nesta ordem: gate do
+      //   físico (C2) → fase do PO → gate do pendente (C1) → gravação do par → inativação → observação → marcadores.
+      // OBEN: o pendente vem do PesquisarPedCompra (pega a previsão FUTURA de PO aprovada que o ListarSaldoPendente
+      //   perdia — incidente 2026-06-11, FUNDO PU/1054). Erro de VARREDURA é FATAL (throw → sync falha → Sentinela).
+      //   A fase do PO roda DEPOIS do físico inteiro, de propósito [Codex P1 2026-10-05, adversarial do #2817]: lido
+      //   antes (em paralelo), uma NF recebida entre a leitura do PO e a página do SKU entra no físico E segue no
+      //   pendente — dupla contagem, o motor SUB-sugere e ninguém vê. Nesta ordem a mesma corrida erra para o lado
+      //   visível: a NF some dos dois números e o motor sobre-sugere um item que o comprador acabou de receber.
+      //   Desde a v1.6 o "dado torto" (pendente não confiável) também não publica nada: preservar só a coluna do
+      //   pendente com o físico fresco era a mesma dupla contagem, por outra porta.
+      // COLACOR: ListarSaldoPendente (a reposição é OBEN; sem SKU habilitado, hoje o ramo nem chega aqui). A falha dele
+      //   agora é fatal como a do PO — a v1.5 a convertia em pendente não confiável, que a v1.6 também recusa publicar.
+      const lerPendente: OpsPublicacao["lerPendente"] = async () => {
+        if (empresa === "OBEN") {
+          const r = await computePendenteViaPedidosCompra(appKey, appSecret, habilitadoMap, supabase, deadline);
+          return { pendente: r.pendente, confiavel: r.confiavel, problemas: r.problemas, observacao: r };
         }
-      }
-      // [Codex P1 round3] pendente OBEN não confiável → PRESERVADO (físico segue fresco, evita double-buy/ruptura por
-      // número errado/zerado). console.error + flag no summary = sinal nos logs; o alerta PROATIVO (Sentinela enxergar
-      // o pendente congelado, que o frescor do físico mascara) depende do marcador sync_state — follow-up (#809 passo 5).
-      if (empresa === "OBEN" && !pendenteConfiavel) {
-        console.error(
-          `[omie-sync-estoque] ⚠️ pendente OBEN NÃO confiável → PRESERVADO. ${pendenteProblemas.length} problema(s): ${pendenteProblemas.slice(0, 5).join(" | ")}`,
-        );
-      }
-
-      // 4) UPSERT em sku_estoque_atual (valores já agregados por SKU)
-      // [Codex P1] estoque_pendente_entrada só é gravado quando o snapshot é CONFIÁVEL; senão a coluna é OMITIDA
-      // (no UPDATE o PostgREST não toca colunas ausentes → preserva o último valor bom) e o físico segue fresco.
-      const upsertRows = Array.from(encontrados.entries()).map(([codigo, agg]) => {
-        const row: Record<string, unknown> = {
-          empresa,
-          sku_codigo_omie: codigo,
-          estoque_fisico: agg.fisico,
-          estoque_disponivel: agg.fisico - agg.reservado,
-          ultima_sincronizacao: new Date().toISOString(),
-          fonte_sync: agg.locais > 1 ? `ListarPosEstoque(${agg.locais} locais)` : "ListarPosEstoque",
-        };
-        if (pendenteConfiavel) row.estoque_pendente_entrada = pendenteEntrada.get(codigo) ?? 0;
-        return row;
-      });
-
-      let sincronizados = 0;
-      const errosUpsert: Array<{ sku: string; erro: string }> = [];
-      // Upsert em chunks para evitar payload gigante
-      const CHUNK = 200;
-      for (let i = 0; i < upsertRows.length; i += CHUNK) {
-        const slice = upsertRows.slice(i, i + CHUNK);
-        const { error } = await supabase
-          .from("sku_estoque_atual")
-          .upsert(slice, { onConflict: "empresa,sku_codigo_omie" });
-        if (error) {
-          // Fallback: tentar individualmente para isolar SKU problemático
-          console.error(
-            `[omie-sync-estoque] erro upsert chunk ${i}-${i + slice.length}: ${error.message}. Tentando individual.`,
-          );
-          for (const row of slice) {
-            const { error: e2 } = await supabase
-              .from("sku_estoque_atual")
-              .upsert(row, { onConflict: "empresa,sku_codigo_omie" });
-            if (e2) {
-              errosUpsert.push({ sku: String(row.sku_codigo_omie), erro: e2.message });
-            } else {
-              sincronizados++;
-            }
-          }
-        } else {
-          sincronizados += slice.length;
-        }
-      }
-
-      // Falha TOTAL ≠ sucesso parcial (espelho do guard dos irmãos em sync-reprocess): se NENHUM
-      // upsert escreveu, a infra PostgREST está degradada — 'error' honesto via catch (o marcador
-      // 'complete' lá embaixo mentiria frescor pro Sentinela com nada escrito).
-      if (upsertRows.length > 0 && sincronizados === 0) {
-        throw new Error(`todos os ${upsertRows.length} upserts de sku_estoque_atual falharam — nada escrito`);
-      }
-
-      // 4.b) Observação do conjunto aberto (PR0 da baixa de PO) — DEPOIS do upsert do pendente e NUNCA fatal: sem a
-      // RPC, ou com a observação divergindo do pendente calculado, a evidência fica indisponível neste run e o sync
-      // segue igual. Só publica o que bate com o que o motor contou (senão mediria outra coisa); ausência de um PO
-      // aqui nunca vira "fechado" — quem lê decide, e só dentro da janela de um run com varredura_completa.
-      let observacaoPublicada = false;
-      let observacaoMotivo: string | null = null;
-      if (observacaoPo) {
-        try {
-          const prazoMs = timeoutRequestMs(Date.now(), deadline + FOLGA_PUBLICACAO_MS, TETO_PUBLICACAO_MS);
-          if (!pendenteConfiavel) {
-            observacaoMotivo = "pendente_nao_confiavel";
-          } else if (!observacaoPo.coletaIntegra) {
-            observacaoMotivo = `coleta_incompleta: ${observacaoPo.perdaColeta ?? "sem motivo"}`;
-          } else if (!observacaoBateComPendente(observacaoPo.observados, pendenteEntrada)) {
-            observacaoMotivo = "observacao_diverge_do_pendente";
-          } else if (prazoMs === 0) {
-            observacaoMotivo = "sem_tempo_no_run";
-          } else {
-            const { error } = await supabase.rpc("reposicao_po_observado_publicar", {
-              p_run: {
-                run_id: crypto.randomUUID(),
-                empresa,
-                iniciado_em: startedAt.toISOString(),
-                concluido_em: new Date().toISOString(),
-                janela_de: observacaoPo.janelaDe,
-                janela_ate: observacaoPo.janelaAte,
-                filtros: FILTROS_PENDENTE,
-                varredura_completa: observacaoPo.varreduraCompleta,
-                // a AFIRMAÇÃO da edge (pendente confiável, upsert sem erro); a RPC confere no banco, SKU a SKU
-                pendente_aplicado: pendenteConfiavel && errosUpsert.length === 0,
-                pedidos_lidos: new Set(observacaoPo.observados.map((o) => o.omie_codigo_pedido)).size,
-                versao_edge: VERSAO,
-              },
-              p_itens: observacaoPo.observados,
-            }).abortSignal(AbortSignal.timeout(prazoMs));
-            if (error) observacaoMotivo = `rpc: ${mensagemDeErro(error) ?? "sem mensagem"}`;
-            else observacaoPublicada = true;
-          }
-        } catch (err) {
-          observacaoMotivo = mensagemDeErro(err) ?? "falha sem mensagem";
-        }
-        // pendente não confiável já tem o próprio console.error acima; o resto é sinal desta fatia
-        if (!observacaoPublicada && observacaoMotivo !== "pendente_nao_confiavel") {
-          console.error(`[omie-sync-estoque] observação do conjunto aberto não publicada: ${observacaoMotivo}`);
-        }
-      }
-
-      // 5) SKUs habilitados que não apareceram → marca inativo + alerta
-      //
-      // ⚠️ SÓ com a varredura PROVADAMENTE completa. `nTotPaginas` é PISO, não teto (o Omie
-      // SUB-REPORTA em listas grandes — docs/agent/sync.md), e o laço acima para no total
-      // declarado: se ele veio curto, a cauda nunca é pedida e "não apareceu" significa
-      // "não li", não "sumiu do Omie". Inativar aí é a fabricação mais cara deste edge —
-      // ativo_no_omie=false + evento sku_inativado FALSO tiram o SKU da reposição (achado P0
-      // do challenge Codex deste PR). O segundo sinal que DISTINGUE os dois casos é o
-      // nTotRegistros que a própria resposta traz (money-path §8: truncar só é legítimo
-      // quando o caller consegue distinguir): lidos < declarados ⇒ retrato truncado ⇒ NÃO
-      // inativa. O físico já gravado segue fresco; o próximo ciclo re-tenta.
-      const varreduraTruncada = detectarVarreduraTruncada(registrosLidos, totalRegistros);
-      const naoEncontrados: string[] = [];
-      if (!varreduraTruncada) {
-        for (const codigo of habilitadoMap.keys()) {
-          if (!encontrados.has(codigo)) naoEncontrados.push(codigo);
-        }
-      } else {
-        console.error(
-          `[omie-sync-estoque] ⚠️ varredura TRUNCADA (${registrosLidos}/${totalRegistros} registros em ${totalPaginas} pág. declaradas) — ` +
-          `inativação de SKU SUSPENSA nesta rodada (não confundir "não li" com "sumiu do Omie").`,
-        );
-      }
-
-      let alertasNovos = 0;
-      if (naoEncontrados.length > 0) {
-        console.warn(
-          `[omie-sync-estoque] ${naoEncontrados.length} SKUs habilitados não vieram do Omie:`,
-          naoEncontrados,
-        );
-
-        const statusRows = naoEncontrados.map((codigo) => ({
-          empresa,
-          sku_codigo_omie: codigo,
-          sku_descricao: habilitadoMap.get(codigo) ?? null,
-          ativo_no_omie: false,
-          ultima_sincronizacao: new Date().toISOString(),
-          fonte_sincronizacao: "nao_apareceu_em_ListarPosicaoEstoque",
-        }));
-
-        // Para preservar data_inativacao existente usamos fetch + upsert seletivo
-        const { data: existentes } = await supabase
-          .from("sku_status_omie")
-          .select("sku_codigo_omie, data_inativacao")
-          .eq("empresa", empresa)
-          .in("sku_codigo_omie", naoEncontrados);
-
-        const existentesMap = new Map(
-          (existentes ?? []).map((r) => [r.sku_codigo_omie, r.data_inativacao]),
-        );
-
-        const nowIso = new Date().toISOString();
-        const enrichedStatus = statusRows.map((r) => ({
-          ...r,
-          data_inativacao: existentesMap.get(r.sku_codigo_omie) ?? nowIso,
-        }));
-
-        const { error: statusErr } = await supabase
-          .from("sku_status_omie")
-          .upsert(enrichedStatus, { onConflict: "empresa,sku_codigo_omie" });
-        if (statusErr) {
-          console.error(
-            `[omie-sync-estoque] erro upsert sku_status_omie: ${statusErr.message}`,
-          );
-        }
-
-        // Eventos pendentes existentes para evitar duplicar
-        const { data: eventosExistentes } = await supabase
-          .from("eventos_outlier")
-          .select("sku_codigo_omie")
-          .eq("empresa", empresa)
-          .eq("tipo", "sku_inativado_omie")
-          .eq("status", "pendente")
-          .in("sku_codigo_omie", naoEncontrados);
-
-        const jaTemEvento = new Set(
-          (eventosExistentes ?? []).map((e) => e.sku_codigo_omie),
-        );
-
-        const novosEventos = naoEncontrados
-          .filter((c) => !jaTemEvento.has(c))
-          .map((codigo) => ({
-            empresa,
-            sku_codigo_omie: codigo,
-            sku_descricao: habilitadoMap.get(codigo) ?? null,
-            tipo: "sku_inativado_omie",
-            severidade: "atencao",
-            data_evento: hojeSP(),
-            detalhes: {
-              mensagem:
-                "SKU foi inativado no Omie. Decidir: (1) merge histórico com outro SKU, (2) descadastrar do módulo de reposição, (3) reativar manualmente no Omie.",
-              detectado_em: new Date().toISOString(),
-              fonte: "omie-sync-estoque",
-            },
-          }));
-
-        if (novosEventos.length > 0) {
-          const { error: evErr } = await supabase
-            .from("eventos_outlier")
-            .insert(novosEventos);
-          if (evErr) {
-            console.error(
-              `[omie-sync-estoque] erro inserindo eventos_outlier: ${evErr.message}`,
-            );
-          } else {
-            alertasNovos = novosEventos.length;
-          }
-        }
-      }
-
-      const finishedAt = new Date();
-      const duracaoMs = Math.round(performance.now() - t0);
-
-      const summary = {
-        ok: true,
-        empresa,
-        sync_iniciado_em: startedAt.toISOString(),
-        sync_concluido_em: finishedAt.toISOString(),
-        duracao_ms: duracaoMs,
-        // Relógio por fase (o PO roda EM PARALELO com o físico): é o que diz quão perto do deadline o run chegou e
-        // quem foi o gargalo — o que a medição de 2026-10-05 não conseguiu reconstruir para 20 das 21 falhas.
-        fase_fisico_ms: faseFisicoMs,
-        fase_po_ms: fasePoMs,
-        total_skus_esperados: totalEsperado,
-        sincronizados,
-        nao_encontrados: naoEncontrados.length,
-        erros_upsert: errosUpsert.length,
-        alertas_novos: alertasNovos,
-        pendente_confiavel: pendenteConfiavel,
-        pendente_problemas: pendenteProblemas.length,
-        observacao_publicada: observacaoPublicada,
-        observacao_motivo: observacaoMotivo,
-        paginas_omie: totalPaginas,
-        total_produtos_omie: totalRegistros,
-        registros_lidos: registrosLidos,
-        varredura_truncada: varreduraTruncada,
-        lista_nao_encontrados: naoEncontrados,
-        lista_erros: errosUpsert,
+        const pendente = await computePendenteViaSaldoPendente(appKey, appSecret, habilitadoMap, deadline);
+        return { pendente, confiavel: true, problemas: [], observacao: null };
       };
-
-      console.log("[omie-sync-estoque] resumo:", JSON.stringify(summary));
-
-      // Marcadores do Sentinela (check estoque_reposicao): full sempre; pendente_po SÓ OBEN e SÓ quando o
-      // snapshot do a-caminho foi realmente gravado nesta rodada — não-confiável deixa o marcador envelhecer
-      // (stale/broken) = o alerta de "a-caminho congelado". COLACOR não tem esteira de reposição (o check é
-      // OBEN-only); o full dela fica gravado por uniformidade, o pendente não (ListarSaldoPendente é
-      // best-effort não-fatal lá — um 'complete' incondicional seria sinal fabricado).
-      // Truncada ainda avança o last_sync_at (o físico LIDO foi gravado e está fresco), mas NUNCA
-      // como 'complete' limpo: o error_message é o que o watchdog/health enxerga (mesmo contrato do
-      // reprocessOrders — reconcile parcial não derruba a run, e também não mente completude).
-      await gravarMarcadorSentinela(
-        supabase,
-        MARKER_FULL,
+      return await concluirRun(opsDoBanco(supabase, empresa, lerPendente), {
         empresa,
-        "complete",
-        {
-          trigger: "run",
-          sincronizados,
-          nao_encontrados: naoEncontrados.length,
-          duracao_ms: duracaoMs,
-          fase_fisico_ms: faseFisicoMs,
-          fase_po_ms: fasePoMs,
-          ...(varreduraTruncada ? { varredura_truncada: true, registros_lidos: registrosLidos, total_registros: totalRegistros } : {}),
+        habilitados: habilitadoMap,
+        fisico: { veredito: vereditoFisico, encontrados: fisico.encontrados, paginas: totalPaginas, faseMs: faseFisicoMs },
+        iniciadoEm: startedAt.getTime(),
+        limiteCauda: deadline + FOLGA_CAUDA_MS,
+        prazos: {
+          tetoEscritaMs: TETO_ESCRITA_MS,
+          minimoEscritaMs: MINIMO_ESCRITA_MS,
+          tetoObservacaoMs: TETO_PUBLICACAO_MS,
+          marcadorMs: PRAZO_MARCADOR_MS,
         },
-        varreduraTruncada
-          ? `varredura truncada (${registrosLidos}/${totalRegistros} registros) — inativação de SKU suspensa`
-          : null,
-      );
-      if (empresa === "OBEN" && pendenteConfiavel) {
-        await gravarMarcadorSentinela(supabase, MARKER_PENDENTE_PO, empresa, "complete", {
-          trigger: "run",
-          skus_com_pendente: pendenteEntrada.size,
-          duracao_ms: duracaoMs,
-        });
-      }
-
-      return summary;
+        chunk: CHUNK_ESTOQUE,
+        versao: VERSAO,
+        filtrosPendente: FILTROS_PENDENTE,
+      });
     }, detalhesDoRegistro);
 
     return jsonRes(resumo);
@@ -1147,9 +921,14 @@ Deno.serve(async (req) => {
     console.error(
       `[omie-sync-estoque] ${isAuth ? "CRÍTICO AUTH" : "ERRO"}: ${msg}`,
     );
-    // Falha TOTAL do run → 'error' no full marker (broken imediato no check), sem avançar last_sync_at.
+    // Recusa ou falha do run → 'error' no full marker (broken imediato no check), sem avançar last_sync_at.
     if (supabaseRef && empresaRef) {
-      await gravarMarcadorSentinela(supabaseRef, MARKER_FULL, empresaRef, "error", { trigger: "run" }, msg);
+      const marcador = await gravarMarcadorComPrazo(
+        supabaseRef,
+        linhaMarcador(MARKER_FULL, empresaRef, "error", { trigger: "run" }, msg, Date.now()),
+        PRAZO_MARCADOR_MS,
+      );
+      if (marcador.erro !== null) console.error(`[omie-sync-estoque] marcador ${MARKER_FULL} (error) falhou: ${marcador.erro}`);
     }
     return jsonRes({
       ok: false,
