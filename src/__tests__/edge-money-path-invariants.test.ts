@@ -2195,7 +2195,9 @@ describe('guardrail money-path: omie-sync-sku-items (fila de leadtime)', () => {
     // consulta. Depois do dedup, o CT-e podia ser eleito no lugar da NF-e; depois do backoff, contava
     // em `fila_em_backoff` e no sensor `fila_parada_48h`.
     const etapas: Array<[string, number]> = [
-      ['pendentes brutos', codigo.indexOf('.filter((n) => !existingTrackingIds.has(n.id))')],
+      // Desde a pendência por item (2026-10-05) os pendentes brutos vêm de `pendenteNaFila` — o filtro
+      // "sem linha" cru é justamente o que o pino da pendência proíbe. A ordem das etapas não mudou.
+      ['pendentes brutos', codigo.indexOf('.filter((n) => pendenteNaFila(controleMap.get(n.id), existingTrackingIds.has(n.id)))')],
       ['separarCtes', codigo.indexOf('separarCtes(pendentesBrutos)')],
       ['backoff', codigo.indexOf('.filter((n) => skuItemsElegivel(')],
       ['dedup', codigo.indexOf('skuItemsDedupPorRecebimento(filaOrdenada)')],
@@ -2284,6 +2286,68 @@ describe('guardrail money-path: omie-sync-sku-items (fila de leadtime)', () => {
       'REGRESSÃO: voltou a degradar quando sku_items_sync_controle falha — o poison ' +
         'reviveria sem ninguém saber (edge deployada antes da migration)',
     ).toMatch(/throw new Error\(\s*\n?\s*`sku_items_sync_controle ilegível/);
+  });
+
+  // ── Pendência por item (2026-10-05): o recebimento só sai da fila com evidência de completude ──
+  // O comportamento é provado em Deno (recebimento_test.ts, banco falso). Aqui se vigia a BORDA que o
+  // Deno não vê: o index.ts lê a pendência, decide a fila por ela e consome o desfecho da gravação.
+  // Todo pino daqui mede o CÓDIGO sem comentários (`removerComentarios`): o 1º lote de falsificação
+  // achou um pino destes VERMELHO no código íntegro porque o comentário explicativo do ramo citava a
+  // coluna — o "ALVO mente" (money-path §9). Prosa não pode nem reprovar nem aprovar a borda.
+  it('a fila LÊ a pendência medida — sem a coluna no select a correção é INERTE (tudo cai na regra antiga)', () => {
+    const codigo = removerComentarios(src);
+    const ini = codigo.indexOf('.from("sku_items_sync_controle")\n        .select(');
+    expect(ini, 'sentinela: a leitura do controle').toBeGreaterThan(-1);
+    const select = codigo.slice(ini, codigo.indexOf(')', codigo.indexOf('.select(', ini)));
+    expect(select, 'REGRESSÃO: a leitura do controle não traz itens_pendentes').toContain('itens_pendentes');
+    expect(codigo, 'o mapa do controle carrega a pendência lida').toMatch(/itens_pendentes:\s*row\.itens_pendentes\s*\?\?\s*null/);
+    expect(
+      vereditoFronteira(src, 'pendenteNaFila'),
+      'REGRESSÃO: o predicado da fila é avaliado e DESCARTADO',
+    ).toBe('ok');
+    expect(codigo, 'REGRESSÃO: a fila voltou a ser só "sem linha"')
+      .not.toMatch(/\.filter\(\(n\) => !existingTrackingIds\.has\(n\.id\)\)/);
+  });
+
+  it('o desfecho da gravação é CONSUMIDO — e só conta como tratado com o controle persistido', () => {
+    const codigo = removerComentarios(src);
+    expect(vereditoFronteira(src, 'gravarRecebimento'), 'REGRESSÃO: a gravação roda e o desfecho é descartado').toBe('ok');
+    expect(codigo, 'REGRESSÃO: recebimento sem controle persistido conta como tratado (some do sensor)')
+      .toMatch(/if \(gravado\.controle === "persistiu"\) recebimentosTratados\.add\(nIdReceb\);/);
+    // Fora do ramo da falha, a ÚNICA entrada nos tratados é a condicionada ao controle.
+    expect(codigo.match(/recebimentosTratados\.add\(/g)?.length ?? 0, 'falha + respondida, ambas condicionais').toBe(2);
+  });
+
+  it('o fechamento é CAS no carimbo e a falha da consulta NÃO toca a pendência', () => {
+    const codigo = removerComentarios(src);
+    expect(codigo, 'REGRESSÃO: o fechamento perdeu o CAS — resposta antiga sobrescreve a nova')
+      .toMatch(/\.update\(\{ itens_pendentes: final\.itens_pendentes[\s\S]{0,200}?\.eq\("ultima_tentativa", carimbo\)/);
+    const iniFalha = codigo.indexOf('if (resultado.tipo === "falhou")');
+    expect(iniFalha, 'sentinela: o ramo da falha').toBeGreaterThan(-1);
+    const ramoFalha = codigo.slice(iniFalha, codigo.indexOf('continue;', iniFalha));
+    expect(ramoFalha, 'REGRESSÃO: a falha da consulta passou a escrever a pendência').not.toContain('itens_pendentes');
+    expect(codigo, 'sem itens_pendentes no estado, a coluna fica FORA do payload (o upsert não a toca)')
+      .toMatch(/estado\.itens_pendentes !== undefined \? \{ itens_pendentes: estado\.itens_pendentes \} : \{\}/);
+  });
+
+  it('o sensor que PAGINA ignora os incompletos — e o conjunto deles nasce das linhas gravadas', () => {
+    // Recebimento com linha e pendência volta à fila; se o sensor de página o contasse, a retentativa de
+    // item que nunca é associado fabricaria `error` "fila não anda" no diário das 07:00 (achado do
+    // auto-adversarial, 2026-10-05). Os incompletos parados vão para `fila_incompleta_parada_48h`.
+    const codigo = removerComentarios(src);
+    expect(codigo, 'REGRESSÃO: o sensor de página voltou a contar recebimento com linha')
+      .toMatch(/fila_parada_48h = viaOrquestrador \? null : avaliarFilaParada\(\s*filaOrdenada,\s*controleMap,\s*recebimentosTratados,\s*Date\.now\(\),\s*skuItemsBackoffMs,\s*ELEGIVEL_HA_MUITO_MS,\s*recebimentosComLinha,?\s*\)/);
+    expect(codigo, 'o conjunto dos com-linha nasce das linhas de leadtime da janela')
+      .toMatch(/const recebimentosComLinha = new Set\(\s*todas\.filter\(\(n\) => existingTrackingIds\.has\(n\.id\)\)/);
+    expect(vereditoFronteira(src, 'avaliarFilaParada'), 'os dois sensores são consumidos').toBe('ok');
+  });
+
+  it('as irmãs vêm de leitura FAIL-CLOSED e com ordem total; o lookup do pedido também ordena', () => {
+    const codigo = removerComentarios(src);
+    expect(codigo, 'REGRESSÃO: erro na leitura das irmãs não grita').toMatch(/if \(irmasErr\) throw new Error\(/);
+    expect(codigo, 'a leitura das irmãs bate no teto do PostgREST e lança').toMatch(/linhasIrmas\.length >= 1000\) \{\s*throw/);
+    expect(codigo, 'REGRESSÃO: lookup do pedido sem ordem total — a rota muda entre runs')
+      .toMatch(/\.eq\("numero_contrato_fornecedor", numero\)\s*\.order\("id"\)\s*\.limit\(1\)/);
   });
 
   // O recompute derivado (RPC recomputar_leadtime_derivado) conserta o leadtime que nasce
@@ -2883,7 +2947,9 @@ describe('guardrail money-path: omie-cliente não fabrica identidade (hardening 
 // rebaixa o SKU no score_volume (peso 1.0) do ranking de negociação. Fix: helper puro
 // agregarItensRecebimento agrega por (tracking, sku) ANTES do upsert, espelhado MIRROR no edge.
 // A paridade textual aqui pega a reversão do deploy do Lovable (mesma armadilha do resto do arquivo).
-const SYNC_SKU_ITEMS = 'supabase/functions/omie-sync-sku-items/index.ts';
+// Desde 2026-10-05 a gravação do recebimento (com a agregação e o espelho) mora em recebimento.ts —
+// o index.ts só a chama; os pinos seguem o código para onde ele foi.
+const SYNC_SKU_ITEMS = 'supabase/functions/omie-sync-sku-items/recebimento.ts';
 const SKU_ITEMS_HELPER = 'src/lib/reposicao/sku-items-fila-helpers.ts';
 
 describe('guardrail money-path: omie-sync-sku-items agrega itens por (tracking, sku) antes do upsert', () => {
@@ -2914,14 +2980,15 @@ describe('guardrail money-path: omie-sync-sku-items agrega itens por (tracking, 
   it('WIRING: o upsert de sku_leadtime_history itera sobre os AGREGADOS, não sobre os itens crus', () => {
     // O bug era upsertar dentro de `for (const item of itens)`. Anti-regressão: a agregação
     // acontece, o upsert itera os agregados, e a passada 1 (itens crus) NÃO toca a tabela.
-    expect(src, 'sumiu a agregação dos itens resolvidos').toMatch(/agregarItensRecebimento\(resolvidos\)/);
+    expect(src, 'sumiu a agregação dos itens roteáveis').toMatch(/agregarItensRecebimento\(roteaveis\)/);
     expect(src, 'REGRESSÃO: o upsert não itera mais sobre os agregados').toMatch(/for \(const ag of agregados\)/);
-    const passada1 = src.match(/for \(const item of itens\)[\s\S]*?const agregados = agregarItensRecebimento\(resolvidos\)/)?.[0] ?? '';
+    const passada1 = src.match(/for \(const it of itens\)[\s\S]*?const agregados = agregarItensRecebimento\(roteaveis\)/)?.[0] ?? '';
     expect(passada1, 'não achei a passada 1 (âncora quebrada)').not.toBe('');
+    // A gravação é `deps.gravarLinha` (o upsert de sku_leadtime_history injetado pelo index.ts).
     expect(
       passada1,
       'REGRESSÃO: o upsert de sku_leadtime_history voltou para dentro do loop de itens crus — sobrescrita de novo',
-    ).not.toMatch(/from\("sku_leadtime_history"\)\s*\.upsert/);
+    ).not.toMatch(/gravarLinha\(|from\("sku_leadtime_history"\)\s*\.upsert/);
   });
 
   it('PARIDADE: o bloco espelhado no edge é IDÊNTICO ao helper de src/ (pega reversão do Lovable)', () => {
@@ -4583,5 +4650,122 @@ describe('guardrail: omie-nfe-recebimento-sync não conta NF-e como importada qu
     expect(leitura, 'o corpo de falha deixou de ser lido').toBeGreaterThan(-1);
     expect(leitura, 'o throw voltou a vir antes de ler o corpo').toBeLessThan(lancamento);
     expect(naoOk.slice(leitura, lancamento), 'o corpo de falha é lido mas não volta ao chamador').toMatch(/return corpoDeFalha;/);
+  });
+});
+
+// ── CT-e (modelo 57) fora do rastreio: a FONTE e o casamento de frete (parte B, OBEN 2026-10-05) ──
+// A lista do `ListarRecebimentos` traz NF-e e CT-e juntos. O `omie-sync-nfes-recebidas` gastava sleep
+// + `ConsultarRecebimento` em cada CT-e a cada ciclo de 2h e o gravava como órfã do rastreio (135
+// linhas, 0 com leadtime); o `omie-sync-ctes-recebidos` aceitava essa órfã como candidata e casou 13
+// dos 82 fretes numa linha 57. A decisão é pura e testada em Deno (`_shared/modelo-documento-fiscal.ts`
+// e `omie-sync-ctes-recebidos/candidatas.ts`); aqui se prova que ela CHEGA ao fluxo, e no lugar certo.
+// Tudo sobre o código SEM comentários: a linha certa comentada passava num assert sobre o fonte cru
+// (revisão adversarial da parte A).
+const CTES_RECEBIDOS = 'supabase/functions/omie-sync-ctes-recebidos/index.ts';
+
+/** O corpo do laço POR DOCUMENTO do `syncEmpresa` — sem o backfill e sem o sono entre páginas. */
+function lacoPorDocumento(fonte: string): string {
+  const ini = fonte.indexOf('for (const nfe of nfes)');
+  const fim = fonte.indexOf('if (interrompidoPorTempo) break;', ini);
+  expect(ini, 'o laço por documento do syncEmpresa sumiu — renomeado? os asserts ficariam cegos').toBeGreaterThan(-1);
+  expect(fim, 'o fim do laço por documento sumiu').toBeGreaterThan(ini);
+  return fonte.slice(ini, fim);
+}
+
+describe('guardrail money-path: CT-e (modelo 57) fora do rastreio — fonte e casamento de frete', () => {
+  const nfes = removerComentarios(read(POT_NFES));
+  const ctes = removerComentarios(read(CTES_RECEBIDOS));
+
+  it('fonte: o documento é classificado pelo cabeçalho CRU da lista, e o CT-e pula com contador', () => {
+    const laco = lacoPorDocumento(nfes);
+    expect(nfes, 'a decisão tem de vir do módulo compartilhado (a mesma da fila do leadtime)')
+      .toMatch(/import \{[^}]*\bclassificarModeloRecebimento\b[^}]*\} from "\.\.\/_shared\/modelo-documento-fiscal\.ts";/);
+    expect(
+      vereditoFronteira(laco, 'classificarModeloRecebimento'),
+      'REGRESSÃO: a classificação roda e é DESCARTADA — o CT-e volta a gastar consulta e a virar órfã',
+    ).toBe('ok');
+    // O argumento é o cabeçalho que a Omie mandou, não o `m` do mapNFe: a chave dele já passou pelo
+    // `replace(/\D/g, "").slice(0, 44)`, e uma chave formatada viraria evidência que ela não é.
+    expect(laco, 'REGRESSÃO: a classificação deixou de ler o cabeçalho CRU da lista')
+      .toMatch(/const modelo = classificarModeloRecebimento\(nfe\?\.cabec\);/);
+    expect(laco, 'REGRESSÃO: o CT-e não pula mais o resto do laço, ou pula sem ficar contado')
+      .toMatch(/if \(modelo\.tipo === "cte"\) \{[^{}]*summary\.ctes_ignorados\+\+;[^{}]*continue;\s*\}/);
+    expect(laco, 'a divergência entre chave e cabeçalho tem de ficar VISÍVEL').toMatch(/summary\.modelo_divergente\+\+/);
+    expect(laco, 'o sinal ilegível ou faltando tem de ficar VISÍVEL').toMatch(/summary\.modelo_ausente\+\+/);
+  });
+
+  it('fonte: a POSIÇÃO — depois do nIdReceb e do dedup, antes de mapNFe, do sono, da consulta e de toda escrita', () => {
+    const laco = lacoPorDocumento(nfes);
+    const etapas: Array<[string, number]> = [
+      ['nIdReceb validado', laco.indexOf('if (!nIdReceb)')],
+      ['dedup do run', laco.indexOf('processadasNoRun.add(nIdReceb)')],
+      // o denominador: nIdReceb válido e distinto, CT-e incluído (revisão adversarial, P2-4)
+      ['documento listado', laco.indexOf('summary.documentos_listados++')],
+      ['classificação', laco.indexOf('classificarModeloRecebimento(')],
+      ['ramo do CT-e', laco.indexOf('modelo.tipo === "cte"')],
+      ['mapNFe', laco.indexOf('mapNFe(nfe)')],
+      ['sono antes da consulta', laco.indexOf('await sleep(RATE_LIMIT_DELAY_MS)')],
+      ['ConsultarRecebimento', laco.indexOf('"ConsultarRecebimento"')],
+      ['updateLinhasDoPedido (escreve)', laco.indexOf('updateLinhasDoPedido(')],
+      ['insertOrfa (escreve)', laco.indexOf('insertOrfa(')],
+    ];
+    for (const [nome, pos] of etapas) {
+      expect(pos, `etapa "${nome}" não encontrada no laço — renomeada? o assert de ordem ficaria cego`).toBeGreaterThan(-1);
+    }
+    for (let k = 1; k < etapas.length; k++) {
+      expect(etapas[k - 1][1], `"${etapas[k - 1][0]}" tem de vir ANTES de "${etapas[k][0]}"`).toBeLessThan(etapas[k][1]);
+    }
+  });
+
+  it('fonte: os contadores do modelo nascem no resumo do run que MEDE, e só nele (ausente ≠ zero)', () => {
+    const ini = nfes.indexOf('const summary: EmpresaSummary & ContagemModelo = {');
+    const fim = nfes.indexOf('};', ini);
+    expect(ini, 'o resumo do syncEmpresa sumiu').toBeGreaterThan(-1);
+    const resumo = nfes.slice(ini, fim);
+    for (const campo of ['documentos_listados', 'ctes_ignorados', 'modelo_divergente', 'modelo_ausente']) {
+      expect(resumo, `${campo} tem de nascer zerado no resumo do run que mede`).toMatch(new RegExp(`\\b${campo}: 0,`));
+      // `apenas_backfill` e o erro fatal NÃO listaram documento nenhum: lá o contador fica AUSENTE do
+      // results, nunca um 0 que afirma "medi e não havia" (revisão adversarial, P3-1).
+      expect(count(nfes, `${campo}: 0`), `${campo} zerado fora do resumo do syncEmpresa — fabrica um zero no fin_sync_log`).toBe(1);
+    }
+  });
+
+  it('fonte: a fault canônica de fim encerra a listagem sem virar erro (janela vazia ≠ falha)', () => {
+    // "Não existem registros para a página" caía no `erros++`: a janela de 3 dias sem documento fechava
+    // o run `error` e o watchdog disparava alerta crítico falso (07-05, 07-20, 08-04, 09-08, 10-06).
+    expect(nfes, 'a decisão de fim tem de vir de listagem.ts (o que o Deno testa)')
+      .toMatch(/import \{[^}]*\behFimDaListagem\b[^}]*\} from "\.\/listagem\.ts";/);
+    // Janela LIMITADA e não `[^{}]*`: o log do ramo interpola `${empresa}`, e a chave dele cortaria o match.
+    expect(nfes, 'REGRESSÃO: o fim da listagem deixou de passar pela decisão testada')
+      .toMatch(/if \(ehFimDaListagem\(fs, pagina\)\) \{[\s\S]{0,200}?break;\s*\}/);
+    expect(nfes, 'REGRESSÃO: voltou um regex de fim local, fora do teste').not.toMatch(/nenhum\\s\*registro/);
+  });
+
+  it('casamento: as candidatas vêm do módulo testado, sem cópia local, e o retorno chega ao matcher e ao resumo', () => {
+    expect(ctes, 'buscarCandidatas tem de vir de candidatas.ts (o que o Deno testa)')
+      .toMatch(/import \{[^}]*\bbuscarCandidatas\b[^}]*\} from "\.\/candidatas\.ts";/);
+    expect(ctes, 'REGRESSÃO: voltou uma cópia local de buscarCandidatas, fora do teste').not.toMatch(/function buscarCandidatas\s*\(/);
+    expect(vereditoFronteira(ctes, 'buscarCandidatas'), 'a busca de candidatas roda e é descartada').toBe('ok');
+    // `vereditoFronteira` não enxerga desestruturação: as âncoras abaixo provam que as DUAS metades
+    // do retorno chegam a alguém — a lista filtrada aos matchers, a contagem ao resumo.
+    expect(ctes).toMatch(/const \{ candidatas, ctesExcluidas \} = await buscarCandidatas\(/);
+    expect(ctes, 'a defesa tem de ficar VISÍVEL no resumo do run').toMatch(/summary\.candidatas_cte_excluidas \+= ctesExcluidas;/);
+    expect(ctes, 'o SP Minas tem de receber a lista filtrada').toMatch(/matchSpMinas\(cte, candidatas\)/);
+    expect(ctes, 'o CONECT tem de receber a lista filtrada').toMatch(/matchConect\(cte, candidatas\)/);
+  });
+
+  it('casamento: a busca vem ANTES do matcher, e o matcher ANTES da escrita do vínculo', () => {
+    const etapas: Array<[string, number]> = [
+      ['buscarCandidatas', ctes.indexOf('await buscarCandidatas(')],
+      ['matchSpMinas', ctes.indexOf('matchSpMinas(cte, candidatas)')],
+      ['matchConect', ctes.indexOf('matchConect(cte, candidatas)')],
+      ['escrita do vínculo', ctes.indexOf('t3_data_cte: cte.data_emissao_iso')],
+    ];
+    for (const [nome, pos] of etapas) {
+      expect(pos, `etapa "${nome}" não encontrada — renomeada? o assert de ordem ficaria cego`).toBeGreaterThan(-1);
+    }
+    for (let k = 1; k < etapas.length; k++) {
+      expect(etapas[k - 1][1], `"${etapas[k - 1][0]}" tem de vir ANTES de "${etapas[k][0]}"`).toBeLessThan(etapas[k][1]);
+    }
   });
 });

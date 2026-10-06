@@ -109,13 +109,12 @@ mesma invocação (10 de 10 vermelhos, worktree limpo depois).
 
 ## 7. O que fica descoberto
 
-- **Parte B, na fonte (PR seguinte).** O `omie-sync-nfes-recebidas` deve pular o modelo 57 já na
-  resposta do `ListarRecebimentos` (quando a chave E o `cModeloNFe` dizem 57; divergência e ausência
-  são contadas à parte). Isso economiza a consulta de detalhe por CT-e em todo ciclo de 2h. O
-  `buscarCandidatas` do `omie-sync-ctes-recebidos` deve excluir o 57 das candidatas: hoje 13 dos 82
-  casamentos (16%) caíram numa linha CT-e, e a NF-e transportada ficou sem `t3_data_cte`. O `t3` não
-  entra nos `lt_*` do motor, então o dano é na decomposição logística e nas telas. Antes de mexer
-  no matcher, medir a re-associação de um CT-e já usado (achado do Codex).
+- **Parte B, na fonte — ENTREGUE em [cte-fora-do-rastreio.md](cte-fora-do-rastreio.md).** O
+  `omie-sync-nfes-recebidas` pula o 57 na resposta do `ListarRecebimentos` (chave crua E
+  `cModeloNFe`), e o `buscarCandidatas` do `omie-sync-ctes-recebidos` tira a linha 57 das
+  candidatas. A medição corrigiu o número daqui: os 13 são **vínculos** em linha 57; por CT-e, só 3
+  nunca chegaram a uma NF-e, porque o matcher re-associa o CT-e já usado. E o vínculo extra é quase
+  sempre a linha-irmã da mesma NF-e, então não se impôs unicidade.
 - **As 135 linhas de CT-e no tracking e os 13 fretes desviados.** Limpar ou re-casar é decisão do
   founder: tem efeito em dado, e o redeploy não desfaz vínculo gravado. As views
   `v_leadtime_por_grupo` (conta CT-e como "pedido": 33 de 39) e `v_pedidos_em_aberto` (29 CT-e como
@@ -162,3 +161,33 @@ Esperado: 0 CT-e com tentativa nova; no diário, `ctes_fora_da_fila` igual aos C
 janela de 30 dias (17 no dia 05/10, caindo conforme expiram) e `requisicoes_omie` só de NF-e; a
 cobertura de NF-e segue completa. **E 1 NF-e nova acompanhada até os itens gravados**, porque 45/45
 com zero pendente não exercita o caminho de gravação.
+
+## 9. Desfecho — o deploy e a prova (2026-10-05/06)
+
+1. **Merge (#2798).** Squash às 18:47:25 UTC (`e80fe16ec`). Antes do deploy, a `main` foi conferida:
+   o artefato estava presente (`separarCtes(pendentesBrutos)` e a `VERSAO` v1.3), e nenhum commit
+   posterior tocava a edge. Não havia "Changes" do Lovable revertendo nada.
+2. **Ledger antes.** `omie-sync-sku-items` estava em `DIVERGE_P1`, servindo a v1.2 (eco das 22:35Z).
+   Outras 3 edges pendentes (`fin-valor-cockpit`, `omie-analytics-sync`, `sync-reprocess`) eram de
+   outras sessões e ficaram FORA deste envio. O ledger final fechou com 0 pendentes.
+3. **Coordenação.** O `list_messages` mostrou outra sessão deployando a `fin-valor-cockpit` às
+   23:38:42Z, ainda sem resposta. Esperou-se esse deploy terminar antes de enviar este, para não
+   disputar o agente.
+4. **Baseline (23:35:05 UTC).** 81 linhas de CT-e no controle, Σ `tentativas` = 454,
+   `max(ultima_tentativa)` = 2026-10-05 07:00:40.592, impressão `afe4f263f244afa8718f30dd38343f4d`.
+5. **Envio às 23:39:31Z** (colagem do `pendencias:prompt`, 9 arquivos, base `588336292`). O agente
+   conferiu 9 de 9 hashes, deployou verbatim e reportou Active (401 sem credencial), com
+   `No files were edited.`. Custou 1,6 crédito. O sensor de edição, 5,4 min depois, deu `SEM_EDICAO`
+   (exit 0, 0 commits do bot na `main`).
+6. **Prova passiva no tick das 00:35 UTC (jobid 186).**
+   - `net._http_response` #105003: HTTP 200, `versao = v1.3-cte-fora-da-fila`, `fonte` `d1fe060b…`
+     (o fingerprint que o ledger esperava).
+   - O run das 00:35:02 fechou `complete` em 0,4s, com o campo novo `ctes_fora_da_fila` presente
+     (0 na janela de 3 dias).
+   - O baseline dos CT-e ficou **idêntico** às 00:36:05.
+   - O `pendencias:deploy` deu `CONFERE` via eco, com 0 pendentes.
+7. **Ainda a medir** (as queries estão no §8, com `:deploy` = `2026-10-05 23:41+00`):
+   - o diário das 07:00 UTC de 06/10, o 1º com a janela de 30 dias. Esperado: `ctes_fora_da_fila` =
+     **17** (mais algum CT-e novo), nenhuma consulta a CT-e, baseline idêntico e cobertura 55
+     completa;
+   - 1 NF-e nova acompanhada até os itens gravados.

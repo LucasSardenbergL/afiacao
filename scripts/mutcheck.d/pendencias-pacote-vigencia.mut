@@ -1,0 +1,9 @@
+# Invariante da FIAÇÃO da vigência no pacote (scripts/pendencias-pacote.ts) — Codex, rodada 3 do #2757.
+# @src: scripts/pendencias-pacote.ts
+# @test: scripts/pendencias-pacote.test.ts
+#
+# É o pacote que monta o `CorposEsperados`: sem a vigência do `modelarRepo`, toda irmã ausente vira
+# INDETERMINADA — a aposentada legítima trava a leva (exit 3), e a não aplicada sai sem a ordem de aplicar.
+
+# CONTROLE+ : a vigência não chega ao gate.
+PEGA | controle+: a vigencia nao chega ao gate          | s/vigencia: vigenciaPorNome\(modelarRepo\(lidas\)\),/vigencia: new Map(),/

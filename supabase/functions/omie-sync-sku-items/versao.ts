@@ -68,8 +68,13 @@ export const EDGE = "omie-sync-sku-items";
  * v1.3 (2026-10-05): o CT-e (modelo 57 pela chave de acesso, o conhecimento de frete) sai da fila
  * ANTES do backoff e do dedup, sem consulta à Omie e sem escrita no controle; `results` ganha
  * `ctes_fora_da_fila`. Era 17 de 17 linhas da fila do diário das 07:00. Ver escopo.ts.
+ *
+ * v1.4 (2026-10-05): a fila exige evidência de COMPLETUDE do recebimento — `itens_pendentes` no
+ * controle (item sem nIdProduto, lookup de pedido com erro, upsert falho), gravado em todas as irmãs
+ * com write-ahead e fechamento por CAS; dono estável do fallback; lt_bruto/lt_faturamento só com t1
+ * de pedido. Ver recebimento.ts. Exige a migration 20261005170000 ANTES do deploy.
  */
-export const VERSAO = "v1.3-cte-fora-da-fila";
+export const VERSAO = "v1.4-pendencia-por-item";
 
 /**
  * O fingerprint da FONTE, para o ECO carregá-lo também — não só a sonda.

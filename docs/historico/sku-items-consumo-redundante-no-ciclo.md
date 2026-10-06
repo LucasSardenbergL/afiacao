@@ -159,10 +159,10 @@ forma real do fault SOAP da Omie. Teste que passa por duas camadas não prova ne
   itens, com ~19 NFes pendentes por dia girando no backoff. O motivo novo vai dizer se é chave
   `itensRecebimento` ausente ou lista vazia — evidência antes de mudar comportamento.
 - **HTTP 500 com fault de negócio conta como falha** (comportamento anterior, mantido).
-- **Upsert parcial perde o SKU que falhou** (P1 do Codex, anterior a esta fatia): a linha gravada
-  tira o tracking da fila, e o SKU que falhou nunca é retentado. Zero ocorrências em 30 dias; o
-  motivo `ok_parcial` o deixa à vista. O conserto (pendência por SKU ou atomicidade por recebimento)
-  pede decisão de trade-off própria.
+- **Upsert parcial perde o SKU que falhou** (P1 do Codex, anterior a esta fatia) — **fechado em
+  2026-10-05**, por outro caminho: a medição achou 0 falhas de upsert, mas 2 SKUs perdidos por item
+  sem `nIdProduto` na consulta. A fila passou a exigir a pendência por ITEM — ver
+  [sku-items-pendencia-por-item.md](sku-items-pendencia-por-item.md).
 - **Antes da parte B, o sensor não pagina.** No :15 ele é `null` por desenho, e o `error` isolado
   das 07:00 é apagado pelo :15 seguinte. Ele passa a valer de verdade com o cron do :35.
 
@@ -224,3 +224,4 @@ Esperado: nenhum `error` "consultas Omie tentadas, 0 OK"; runs nos minutos :00 e
 - **Estado em 2026-09-25 às 22:52 UTC:** zero `error` desde o deploy da parte A; 6 marcações no controle depois do deploy, nenhuma com "limite pede"; `n7d = 46`.
 - A janela de 48h do critério original fica limpa em 2026-09-26 às 04:16 UTC, porque os 3 últimos `error` são anteriores ao deploy.
 - Depois do PR B, o critério "nos ciclos :15" deixa de ter objeto: o sku-items não roda mais no :15.
+- **Revalidação de 72h: ✅ 2026-10-05.** Janela 26/09 00:15 → 29/09 00:15 UTC, por psql-ro: 39 de 39 runs `complete`, só no :35 e às 07:00; 0 `error`; `fila_parada_max` = 0; 0 "limite pede"; `n7d` = 38. O jobid 186 segue ativo e `succeeded`.

@@ -76,3 +76,33 @@ gates for a ~0 e o vermelho bloqueante restante ficar abaixo de ~5% dos PRs, o a
 **resgate de PR parado** (carência de ~2 h, teto de 2 tentativas, money-path em draft, uma
 correção na main por falha sistêmica) provavelmente não compensa. Se a cauda de PRs parados por
 horas persistir, ele volta à mesa.
+
+## A medição (2026-10-03) e o porquê (2026-10-05)
+
+**Medido** (MCP GitHub, 322/322 runs do `ci.yml` em `pull_request`, janela 26/09 12:00Z → 03/10):
+**33 de 157** PRs mergeados (21%) tiveram `validate` vermelho antes do merge (base: 3/45, 7% — o
+volume triplicou, as janelas não se comparam limpo). Os 3 gates do hook derrubaram **12 PRs**
+(9 causas distintas: o fingerprint de 27/09 caiu em 3 branches na mesma hora, defeito da main).
+Da 1ª falha ao merge, mediana **110 min** (n=33), máximo ~40 h. Logs lidos em 14 dos 89 jobs; o
+resto classificado pelo step, que bateu 1:1 com o log nos 14.
+
+**Por quê o hook não barrou:** reproduzido numa worktree descartável, ele NEGA com a árvore limpa
+nas três formas de push. Mas 96 dos 98 commits dos 12 PRs têm committer humano e sem assinatura
+(sessão LOCAL, no Mac — a nuvem commita como `Claude`). Dois buracos que o fixture não via:
+
+- **`bun` fora do PATH do hook.** O hook herda o PATH do processo do Claude Code, não o do zsh;
+  o app aberto pelo Dock não lê o `~/.zshrc`, e o bun mora em `~/.bun/bin`. Sem bun, o hook saía
+  `exit 0` CALADO — e "calado" não se distingue de "passou". (Hipótese mais provável, não provada
+  daqui; o aviso novo é o que a prova na próxima vez.)
+- **`add && commit && push` num comando só** só avisava — e o aviso chega junto do push.
+
+**Conserto:** o hook procura o bun também em `~/.bun/bin`, `/opt/homebrew/bin` e
+`/usr/local/bin`, e quando não acha (ou um gate não dá veredito) AVISA que não checou. No comando
+único, se o commit do PRÓPRIO comando cobre toda a sujeira com prova (`add -A`/`.` na raiz,
+`add -u`/`commit -a`, caminho literal, ou já staged), o disco vira o HEAD → NEGA. Glob, `add -p`,
+`commit <caminho>` e add fora da raiz seguem só avisando. Falsificação: 10 sabotagens, uma camada
+por vez, vermelhas em `LC_ALL=C` e `C.UTF-8` com controle verde no início e no fim; a guarda de
+glob saiu porque ficou VERDE (o casamento já é literal — redundante).
+
+**Fase 2 (autofix):** fora da mesa pela regra de máquina meta (CLAUDE.md): CI vermelho não é
+incidente, e o vermelho de uma máquina não justifica outra.

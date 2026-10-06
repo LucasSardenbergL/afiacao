@@ -128,3 +128,133 @@ Três caminhos, nenhum é "rodar o backfill de novo":
 - **Os 9 pedidos que seguram setembro** (19 linhas sem correspondência no Omie). Decisão de produto, não de passada: investigar no ERP ou excluir do gate.
 - **207 linhas** que o Omie não correlaciona nas duas contas. Piso da conciliação.
 - **A conversão do acervo (#2499) segue convertendo 0** — agora por 9 pedidos, não por 170. Ver [pedido-total-liquido-do-acervo.md](pedido-total-liquido-do-acervo.md).
+
+## Terceira medição (2026-10-05): a regressão que não era
+
+Em 20/09 reportei uma **regressão ativa** ao founder: o `sync-reprocess`, ressuscitado pelo #2496,
+estaria nulificando `desconto_valor` na oben — o alvo subindo de 83 para 154 linhas em dois dias,
+contra a colacor parada em 124. Declarei o limite da prova (a retenção de ~6h do
+`net._http_response` já havia purgado os planos) e chamei a conclusão de inferência forte.
+
+Estava errada. Quinze dias e ~180 runs do cron depois, com a **mesma** regra da edge (`index.ts`
+L193-197: `desconto_valor IS NULL` + conta + `order_date_kpi >= de`, janela fixa de 2025-09-18):
+
+| conta | 18/09 | 20/09 | 05/10 |
+|---|---|---|---|
+| oben | 83 | 154 | **71** |
+| colacor | 124 | 124 | **124** |
+
+O resíduo da oben não cresceu — encolheu **abaixo do piso original**.
+
+E o que derruba a hipótese não é o número, é o eixo de toque: **nenhum dos 105 pedidos com linha
+NULL foi tocado nos últimos 7 dias.** O `updated_at` mais recente é `2026-09-16 02:30` na oben e
+`2026-09-08 16:20` na colacor — ambos *anteriores* à passada do backfill. Se o reprocesso
+nulificasse, as nulas estariam nos pedidos que ele acabou de tocar (`15 */2 * * *`, última run há
+menos de duas horas). Estão em pedidos que ninguém toca há três semanas. O cron segue `active = t`.
+
+### A lição: retrato durante churn não é tendência
+
+O reprocesso **reescreve os itens** do pedido — era isso o PV 12729 "mudando de 5 linhas para 2".
+Entre a reescrita e a `reconciliar_pedidos_omie` que preenche o desconto existe uma janela em que a
+linha está NULL. Medir logo depois da run amostra exatamente essa janela: as "87 das 154 nulas em
+pedidos tocados às `02:30` e `22:16`" não eram a prova da corrosão, eram a definição dela ao
+contrário — eu havia selecionado os pedidos em voo e lido o estado transitório como acúmulo.
+
+Duas medições em dois dias dão uma reta, e uma reta traçada sobre churn aponta para o lado que o
+relógio escolher. O que separa corrosão de piso de conciliação não é um terceiro ponto na série, é
+o **`updated_at` do pedido que está nulo**: corrosão mora em pedido recém-tocado, piso mora em
+pedido parado. Esse eixo custava uma coluna na query que eu já estava rodando.
+
+E o controle estava certo por acidente. A colacor é estável não porque nada a corrói, mas porque
+nada a **reprocessa** — num par de medições os dois efeitos têm assinatura idêntica, e só o eixo de
+toque os distingue. Um controle que não discrimina a causa alternativa não é controle, é coincidência
+confirmatória.
+
+Fica de pé, e sem relação com a regressão: os sensores `v_desc_apur`/`v_desc_corr` existem no corpo
+da `reconciliar_pedidos_omie` e **não chegam ao `metadata` de `sync_reprocess_log`**. Não houve
+corrosão para eles denunciarem, mas se houver, continuam sem chegar a ninguém.
+
+### O resíduo é estável — medido, não suposto
+
+Era esse o pressuposto que faltava para desenhar a exclusão nominal, e agora ele tem medida:
+
+| | 20/09 | 05/10 | variação em 15 dias |
+|---|---|---|---|
+| pedidos convertíveis | 559 | **564** | +5 |
+| desconto preso | R$ 104.237,04 | **R$ 104.250,58** | **+R$ 13,54** |
+| bloqueadores do gate | 105 | **105** | 0 |
+
+Composição dos 105 bloqueadores (195 linhas NULL): **56 pedidos sem nenhuma linha apurada**
+(42 colacor + 14 oben, 103 linhas) e **49 parciais**, com linha apurada e linha nula no mesmo pedido
+(33 colacor + 16 oben, 92 linhas).
+
+O gate de mês completo segue bloqueando **13 dos 14 meses** da janela. Só `2026-10` passa — zero
+bloqueadores, 5 pedidos com desconto prontos. O mês de melhor razão é `2025-12`: **45 convertíveis
+presos por 1 único bloqueador**.
+
+Sensor do cupom hoje: **636 pedidos com desconto, 66 já explicando a quebra na tela, 570 ainda com
+cabeçalho bruto** (era 614 / 42 / 572 em 20/09). Os pedidos novos nascem certos desde o corte do
+#2469; o acervo não se conserta sozinho.
+
+## Proposta: caminho 3 — a exclusão nominal e auditável
+
+O gate de mês completo está **certo** e não deve ser afrouxado: ele existe para que um mês não
+converta pela metade. O que falta é dizer-lhe que 105 pedidos nunca vão apurar, porque o Omie não os
+correlaciona — e isso é um fato sobre o ERP, não uma falha da passada.
+
+**Forma recomendada: tabela de exceção, não parâmetro novo.**
+
+Acrescentar `p_ids_excluidos uuid[] DEFAULT NULL` à `pedido_total_liquido_converter` parece a via
+curta e é a mais cara: a identidade de uma função inclui os tipos dos argumentos, então
+`CREATE OR REPLACE` com um parâmetro a mais **cria uma segunda função** em vez de substituir a
+primeira, e as chamadas existentes passam a ser ambíguas. Corrigir exige `DROP FUNCTION` + `CREATE`,
+que **reseta o ACL** (`REPLACE` preserva) — obrigando a reemitir o `REVOKE` nomeando as roles, no
+mesmo bloco, sob pena de abrir uma função de money-path para `PUBLIC`/`anon`.
+
+Uma tabela não toca a assinatura. O conversor a consulta, e o replace continua sendo
+`CREATE OR REPLACE` puro:
+
+```sql
+-- PROPOSTA — não aplicar ainda
+CREATE TABLE public.pedido_total_liquido_excecao (
+  sales_order_id uuid PRIMARY KEY REFERENCES public.sales_orders(id) ON DELETE CASCADE,
+  motivo         text        NOT NULL CHECK (motivo IN ('sem_correspondencia','ambiguo','sem_pai_omie')),
+  evidencia      text        NOT NULL,          -- de qual dry-run, com data
+  criado_em      timestamptz NOT NULL DEFAULT now(),
+  criado_por     text        NOT NULL,
+  revisar_em     date        NOT NULL           -- exceção sem data de revisão é alarme silenciado
+);
+ALTER TABLE public.pedido_total_liquido_excecao ENABLE ROW LEVEL SECURITY;
+```
+
+Quatro propriedades que o desenho precisa ter:
+
+1. **O excluído sai do universo ANTES do gate, e nunca é convertido.** A exceção retira o pedido do
+   denominador da cobertura do mês; não lhe fabrica desconto. Um pedido excluído segue com cabeçalho
+   bruto na tela — `ausente ≠ zero` preservado. É justamente por não escrever nada nos excluídos que
+   a exclusão é segura.
+2. **Fail-closed por omissão.** Pedido não apurado e **não** listado continua bloqueando o mês. A
+   tabela só consegue afrouxar o gate nominalmente, id por id.
+3. **`motivo` vem de medição, não de suposição.** Preenche-se com um `dry_run: true` do
+   `omie-desconto-backfill` restrito a esses 105 pedidos — barato (105, não 13.006) — que devolve
+   `recusadas` com `sem_correspondencia`/`ambiguo` por id. Sem esse passo a coluna é decorativa.
+4. **`revisar_em` com sensor.** Exceção que deixou de ser necessária (o Omie passou a correlacionar
+   o trio) tem de aparecer, senão a lista vira lixo permanente que esconde a regressão seguinte —
+   inclusive a que eu reportei por engano e que, um dia, pode ser real. O sensor é uma query: pedido
+   na tabela cujas linhas já estão todas apuradas, ou cuja `revisar_em` passou.
+
+**O que se libera:** 564 pedidos convertíveis, **R$ 104.250,58** de desconto que hoje a tela não
+explica, em 13 meses que o gate mantém fechados por 105 pedidos que não têm conserto no ERP.
+
+A lista nominal **não é colada aqui de propósito** — 105 uuids num doc apodrecem. Ela se reproduz:
+
+```sql
+SELECT so.id, so.account, so.omie_numero_pedido
+FROM sales_orders so JOIN order_items oi ON oi.sales_order_id = so.id
+WHERE so.order_date_kpi >= '2025-09-18'
+GROUP BY 1,2,3 HAVING bool_or(oi.desconto_valor IS NULL);
+```
+
+**Escrita pelo ENVELOPE** (`bun run db:aplicar`, com `--ensaio` antes e o `.sql` commitado em `db/`),
+ou bloco `🟣 SQL Editor` para o founder. Money-path: antes de aplicar, ritual `/codex` e
+`prove-sql-money-path` — a função é PL/pgSQL e **late-bound**, então o teste tem de EXECUTAR.

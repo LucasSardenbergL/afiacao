@@ -30,6 +30,11 @@ import {
 
 interface OmieItemCabec {
   nIdProduto?: number | string;
+  /** Decisão de associação do recebimento na Omie ("S"/"N"). Item sem `nIdProduto` com
+   *  `cIgnorarItem` "S" nunca vira SKU (terminal); os demais AGUARDAM associação — ver recebimento.ts. */
+  cIgnorarItem?: string;
+  cAssociarExistente?: string;
+  cAdicionarNovo?: string;
   cCodigoProduto?: string;
   cDescricaoProduto?: string;
   cUnidadeNfe?: string;
