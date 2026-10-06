@@ -155,6 +155,10 @@ describe('Customer360 — "não consegui ler" NÃO pode virar "cliente não enco
     respostaCore = () => falha('57014', 'canceling statement due to statement timeout');
     await act(async () => {
       await qc.refetchQueries();
+      // O react-query 5 avisa o React num `setTimeout(0)` (`notifyManager`): sem drenar esse tick DENTRO
+      // do act, a asserção lia o DOM de ANTES do erro — a falsificação mediu este teste passando COM a
+      // regressão (a página trocada pelo aviso). O `status` abaixo prova o cache; isto, a tela.
+      await new Promise((resolve) => setTimeout(resolve, 0));
     });
     // prova positiva de que o refetch FALHOU de fato — sem ela, a página "ficar" seria vacuidade
     expect(qc.getQueryState(['c360-core', ID])?.status).toBe('error');
