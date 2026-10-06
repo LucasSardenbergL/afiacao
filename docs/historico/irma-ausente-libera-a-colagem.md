@@ -136,6 +136,12 @@ exposição medida.
 Caminho B — a monotonicidade por força bruta e o auto-desafio acima, mais o mutcheck — e fica registrado
 **REVISÃO INDEPENDENTE PENDENTE** para o delta da 2ª rodada.
 
+**Decisão do founder (2026-10-05):** Caminho B aceito — o PR sai de DRAFT sem esperar a janela (`sem-codex:` no
+corpo do #2800). Antes disso, o merge da `origin/main` trouxe o #2802 para o mesmo `deriva-corpo.ts`
+(`modelarRepo` → `drenar(modelarRepoPassos(...))`, `yield` no fim de cada migration), e tudo rodou de novo sobre o
+código mesclado: 271/271 nos três arquivos de teste, mutcheck 17/17 nos dois contratos do `deriva-corpo.ts`
+(controle+), seco 58/58, harness falsificado e o carimbo `authz` regravado (o auditor `corpo` juntou os dois PRs).
+
 ## O que segue descoberto (declarado)
 
 - **Irmã sem corpo dollar-quoted fora do conjunto acoplado** (achado 4): o conjunto sai do `historicoDeCorpos`,
