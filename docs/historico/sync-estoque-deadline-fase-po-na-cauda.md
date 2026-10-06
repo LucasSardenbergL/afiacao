@@ -136,6 +136,9 @@ são desta entrega — estão abaixo, como pendência com evidência.
 
 ## Achados preexistentes do adversarial (não corrigidos aqui)
 
+> **Corrigidos na v1.6 (2026-10-06):** C1 e C2 recusam publicar, C3 degrada para `partial` — medição, desenho com o
+> Codex e provas em [sync-estoque-par-torto-tres-caminhos.md](sync-estoque-par-torto-tres-caminhos.md).
+
 Três caminhos em que a edge responde `ok:true` sobre um par que o motor não deveria consumir. Nenhum é desta
 entrega; os três pedem decisão de desenho (falhar, degradar ou só sinalizar):
 
