@@ -3,6 +3,7 @@ import Anthropic from "npm:@anthropic-ai/sdk@^0.93.0";
 // falhava em resolver no boot do edge runtime → RUNTIME_ERROR sem linha/stack (módulo não carrega).
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeMaster, corsHeaders } from "../_shared/auth.ts";
+import { avaliarEntradaBoletim } from "./entrada.ts";
 
 const SYSTEM_PROMPT_EXTRACT_SPECS = `Você extrai specs técnicos estruturados de boletins técnicos de tintas industriais para a base de conhecimento da Colacor (distribuidora Sayerlack).
 
@@ -142,14 +143,18 @@ Deno.serve(async (req) => {
       });
     }
 
+    // Boletim maior que o limite do prompt não é extraído pela metade (ausente ≠ completo).
+    const entrada = avaliarEntradaBoletim(doc.content_extracted);
+
     // CACHE-FIRST: se já existe rascunho ready e não é force → devolve sem chamar o Claude.
+    // Documento que hoje excede o limite não serve o cache: um `ready` dele seria spec parcial.
     const { data: existing } = await supabase
       .from("kb_extraction_drafts")
       .select("status, spec")
       .eq("document_id", documentId)
       .maybeSingle();
 
-    if (!force && existing?.status === "ready" && existing.spec) {
+    if (!force && !entrada.excede && existing?.status === "ready" && existing.spec) {
       return new Response(JSON.stringify({ specs: existing.spec, cached: true }), {
         status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -176,6 +181,20 @@ Deno.serve(async (req) => {
       });
     }
 
+    // ENTRADA EXCEDE → falha ANTES de pagar, gravando o motivo no draft (o revisor vê "entrada
+    // truncada" em `last_error`, nunca um `ready` com o fim do boletim cortado em silêncio).
+    if (entrada.excede) {
+      const { error: errMarcar } = await supabase
+        .from("kb_extraction_drafts")
+        .update({ status: "failed", spec: null, last_error: entrada.motivo })
+        .eq("document_id", documentId)
+        .eq("claim_token", claimToken);
+      if (errMarcar) console.error("[kb-extract-specs] não marcou draft failed (entrada truncada):", errMarcar.message);
+      return new Response(JSON.stringify({ error: entrada.motivo, ...(errMarcar ? { draft_nao_marcado: errMarcar.message } : {}) }), {
+        status: 422, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     // CHAMA O CLAUDE 1× — bloco preservado verbatim do original; apenas envolto em try/catch
     // para capturar spec/usage e persistir antes de responder.
     const client = new Anthropic({ apiKey });
@@ -188,7 +207,7 @@ Deno.serve(async (req) => {
 - Fornecedor: ${doc.supplier ?? "sayerlack"}
 
 # Texto extraído
-${doc.content_extracted.slice(0, 50_000)}
+${entrada.texto}
 
 Use a tool extract_product_specs.`;
 

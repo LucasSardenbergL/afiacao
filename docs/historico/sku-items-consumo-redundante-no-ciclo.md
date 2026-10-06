@@ -159,10 +159,10 @@ forma real do fault SOAP da Omie. Teste que passa por duas camadas não prova ne
   itens, com ~19 NFes pendentes por dia girando no backoff. O motivo novo vai dizer se é chave
   `itensRecebimento` ausente ou lista vazia — evidência antes de mudar comportamento.
 - **HTTP 500 com fault de negócio conta como falha** (comportamento anterior, mantido).
-- **Upsert parcial perde o SKU que falhou** (P1 do Codex, anterior a esta fatia): a linha gravada
-  tira o tracking da fila, e o SKU que falhou nunca é retentado. Zero ocorrências em 30 dias; o
-  motivo `ok_parcial` o deixa à vista. O conserto (pendência por SKU ou atomicidade por recebimento)
-  pede decisão de trade-off própria.
+- **Upsert parcial perde o SKU que falhou** (P1 do Codex, anterior a esta fatia) — **fechado em
+  2026-10-05**, por outro caminho: a medição achou 0 falhas de upsert, mas 2 SKUs perdidos por item
+  sem `nIdProduto` na consulta. A fila passou a exigir a pendência por ITEM — ver
+  [sku-items-pendencia-por-item.md](sku-items-pendencia-por-item.md).
 - **Antes da parte B, o sensor não pagina.** No :15 ele é `null` por desenho, e o `error` isolado
   das 07:00 é apagado pelo :15 seguinte. Ele passa a valer de verdade com o cron do :35.
 
