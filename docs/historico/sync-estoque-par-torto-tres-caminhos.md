@@ -2,7 +2,9 @@
 
 > Money-path (reposição). Edge `omie-sync-estoque` v1.5 → v1.6 (`v1.6-recusa-par-torto`). Os três achados
 > preexistentes do adversarial do #2817 ([diário da v1.5](sync-estoque-deadline-fase-po-na-cauda.md)). Codex: desenho
-> `gpt-6-astra · max · 323s · 45.434 tokens`; adversarial de código registrado no PR.
+> `gpt-6-astra · max · 323s · 45.434 tokens`; adversarial de código **não rodou** — `COTA_ESGOTADA` (exit 75, plano
+> `prolite` confere, janela reabre 09/10 19:30): PR em DRAFT, auto-adversarial (Caminho B) abaixo,
+> **REVISÃO INDEPENDENTE PENDENTE**.
 
 ## A medição (antes de mudar)
 
@@ -84,17 +86,32 @@ uma remoção no meio da varredura, e a remoção pula uma linha que vira inativ
 
 ## Provas executadas
 
-- **Deno `--no-remote`:** 50 testes da edge (`fisico_test.ts` 12, `publicacao_test.ts` 17 — orquestração com escritas
-  falsas que registram cada efeito); `test:edges` 1499/0.
+- **Deno `--no-remote`:** 52 testes da edge (`fisico_test.ts` 13, `publicacao_test.ts` 18 — orquestração com escritas
+  falsas que registram cada efeito, e o `comPrazo` executado); `test:edges` 1499/0 (antes do auto-adversarial).
 - **vitest:** os guards do F8 reescritos para a estrutura nova + o do `AbortSignal` (18 nos 2 arquivos); os 10 gates
   textuais sobre `supabase/functions/` 92/92; baseline do `[object Object]` 4→2 no `index.ts` (dívida quitada).
-- **Falsificação:** 30 sabotagens, uma por vez, controle verde na MESMA invocação, vermelho exigido no teste NOMEADO —
-  **30/30 sob `LC_ALL=C` e 30/30 sob `pt_BR.UTF-8`**. Camadas: gates e ordem (P1-P5, P13, P14) ficam vermelhos no
+- **Falsificação:** 37 sabotagens (30 + 7 do auto-adversarial), uma por vez, controle verde na MESMA invocação,
+  vermelho exigido no teste NOMEADO — **37/37 sob `LC_ALL=C` e 37/37 sob `pt_BR.UTF-8`**. Camadas: gates e ordem (P1-P5, P13, P14) ficam vermelhos no
   Deno E no vitest; semântica do desfecho, do prazo e do veredito (P6-P12, P15, F1-F9) só o Deno pega; fiação do
   handler (I1-I6) só o vitest. Na 1ª rodada o P6 deu "vermelho" no lugar errado: a sabotagem estreitou o tipo e o
   `deno test` caiu no type-check (TS2367) sem rodar teste nenhum — só a exigência do teste nomeado separou isso de uma
   mordida.
 - `edges:typecheck` (0 erro na edge com as flags do gate), `edges:sintaxe`, `sonda:bump`, `sonda:fingerprint`.
+
+## O auto-adversarial (Caminho B — cobre o intervalo, não substitui o Codex)
+
+As 5 perguntas que iam ao Codex, respondidas por mim sobre o diff; quatro furos, os quatro corrigidos e falsificados:
+
+1. **Falso-vermelho catastrófico:** `nTotRegistros: 0` numa página virava "desconhecido" e recusaria TODO run se o Omie
+   só declarasse o total na 1ª página. Zero agora conta como página sem total; só o total positivo decide.
+2. **Fail-open invisível:** o `comPrazo` (separa sucesso, falha e sem confirmação) morava no `index.ts`, que o Deno não
+   importa — devolver sucesso sempre deixava todos os testes verdes. Mudou para `publicacao.ts`, executado no Deno.
+3. **Fiação sem pino:** o veredito passado adulterado, `confiavel: true` forçado ou o catch gravando `complete`
+   passavam verdes. Pinados no vitest.
+4. **Leitura sem prazo:** `fetchEmTransitoKeys` podia pendurar a fase do PO até o kill do cron, sem marcador.
+
+Mudança de comportamento assumida: num run recusado pelo C1 a inativação não roda (a v1.5 a fazia mesmo com o pendente
+não confiável); ela volta no próximo run bom, e o `omie-sync-status-produtos` cobre o status no intervalo.
 
 ## Residuais (não corrigidos aqui)
 
@@ -105,6 +122,9 @@ uma remoção no meio da varredura, e a remoção pula uma linha que vira inativ
    Mudar exige Publish.
 4. **O motor não tem trava de frescor** — o cron dele consome o snapshot parcial (C3) e o par velho (C1/C2); agora
    com a Sentinela alertando.
+5. **Os dois totais sub-reportados juntos** — se o Omie errar `nTotPaginas` e `nTotRegistros` na mesma direção, a
+   contagem fecha sem a cauda e o veredito dá `completo`. Só uma página lida ALÉM do total declarado (vazia = fim
+   confirmado) fecharia isso; custa uma chamada por run.
 
 ## Quando medir é query
 
