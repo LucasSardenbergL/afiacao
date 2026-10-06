@@ -158,7 +158,8 @@ acidente, agora explícita, a cada 2 h, com guardas.
 ## Fase 2 — o zero passa a ser CONFIRMADO, e vale para a posição (2026-10-05, branch `estoque-dono-unico-classe`)
 
 Edges `omie-analytics-sync` → `v1.7-zero-confirmado` e `sync-reprocess` → `v1.15-zero-confirmado` (esta
-leva junto o #2744, que nunca foi deployado sozinho).
+leva substitui a v1.14 do #2744, que ficou no ar sozinha de 2026-10-05 16:12Z a 2026-10-06 00:27Z — ver
+"O deploy (2026-10-05)" acima e "O deploy da Fase 2" abaixo).
 
 **A medição que pediu a fase.** Re-medido em 05/10 13:00 UTC: 208 posições congeladas (`vendas` 84, `oben`
 75, `colacor_vendas` 49; Σ saldo×cmc R$ 63,6k), todas com mais de 24 h. O motor só lê o saldo de
@@ -206,7 +207,7 @@ completa podia restaurar `codigo`/`descricao` e apagar um positivo gravado depoi
 reprocess): `zeramento_candidatos` (null = não apurado), `zeramento_confirmados_zero`/`_nao_zero`/
 `_desconhecidos`, `zerados_posicao`, `zerados_estoque`, `zeramento_recusados_cas`, `zeramento_chamadas`,
 `zeramento_estranhos` (código não pedido = filtro não honrado), `zeramento_pulado`, `zeramento_falhas`.
-Substitui `zerados_fora_da_lista` do #2744 (nunca foi ao ar).
+Substitui `zerados_fora_da_lista` do #2744 (que foi ao ar na v1.14 e saiu do metadata com a v1.15).
 
 **Gate** `src/__tests__/estoque-escritores-gate.test.ts` (registro em
 `src/lib/gates/estoque-escritores-registro.ts`): todo escritor de `inventory_position` ou de
@@ -218,3 +219,23 @@ escritor grava zero literal.
 zere); e o `omie-sync-estoque` passa a refrescar os membros de grupo de equivalência — o galão da WP01
 (`descontinuado`, fora dos habilitados) está congelado em 11,72 nas DUAS fontes, e zerar só a posição não
 o tira do `GREATEST`.
+
+## O deploy da Fase 2 (2026-10-06)
+
+- Ledger antes: `sync-reprocess` prod `v1.14` → main `v1.15-zero-confirmado` e `omie-analytics-sync` `v1.6` →
+  `v1.7-zero-confirmado`, pendentes desde o merge do #2788 (17:28Z); nenhuma mensagem de deploy delas no chat.
+  Feito pela sessão do #2744, com o OK do founder.
+- Pacote `b7c1b30a0997` contra `main@0dc6ba510` (2 edges, 34 arquivos distintos, 8 RPCs de pré-condição em
+  prod ✅; 2 avisos informativos pré-existentes: `finalize_nao_vinculados_snapshot` com corpo editado à mão e
+  `omie_sync_identity_snapshot` sem migration que o commite). Nenhum PR aberto tocando o fecho.
+- Enviado às **00:26:05Z**; o agente conferiu os 34 `sha256` (`sha256sum -c` exit 0, workspace em `0dc6ba51`),
+  deployou as duas verbatim, sondas 401 nas duas, `No files were edited.` (2,1 créditos). Sensor 5,3 min depois:
+  **`SEM_EDICAO`**.
+- **Prova funcional, 1ª rodada da v1.7** (`sync_inventory` `vendas`, 00:30:12Z): `zeramento_candidatos: 84`,
+  `zeramento_confirmados_zero: 84`, `nao_zero: 0`, `desconhecidos: 0`, `recusados_cas: 0`,
+  `zerados_posicao: 158`, `zeramento_chamadas: 2`. Na tabela: as posições congeladas com saldo ≠ 0 caíram de
+  **78 (oben) e 87 (vendas)** — Σ saldo×cmc R$ 26.918 e R$ 27.104 — para **0 e 0**.
+- Ledger depois: **`✅ confere`** nas duas — `sync-reprocess v1.15-zero-confirmado` e `omie-analytics-sync v1.7-zero-confirmado`, vistas via sonda do cron às 00:38:10Z.
+- 📌 A conferir sem sessão viva: a 1ª rodada da `sync-reprocess` v1.15 (operational 02:15Z) e a strategic de
+  02:30Z — `divergences_found` do `inventory` no patamar da operational (≤ 13) e as chaves `zeramento_*` no
+  metadata do `sync_reprocess_log`.

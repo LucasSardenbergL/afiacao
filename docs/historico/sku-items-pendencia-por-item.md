@@ -217,3 +217,22 @@ satisfazia — foram consertados no PR). Números conferidos por psql-ro no mesm
 - **Pré-existentes vistos de passagem:** (a) o recompute não propaga t4/`lt_logistica` para a NF-e
   órfã — o passo 2 é condicionado à proveniência do t1 —, então o `lt_logistica` da órfã morre NULL;
   (b) a view efetiva zera o split legítimo (o mesmo SKU para dois pedidos na mesma NF-e: t1 diverge).
+
+## 8. No ar (2026-10-06, pela sessão, com OK do founder)
+
+| camada | como | prova (por fora) |
+|---|---|---|
+| migration `20261005170000` | MCP `query_database`, no envelope. Primeiro o ensaio (`COMMIT` → `RAISE 'ENSAIO_OK'`: rollback garantido); depois a aplicação com uma **trava de transcrição** na própria transação — a SQL passa pela mão da sessão, então o banco exige CHECK, atributos da coluna e md5 dos dois comentários IGUAIS aos do PG17 local com o arquivo aplicado verbatim | psql-ro: prod intacta depois do ensaio; depois do commit, `integer`/sem default/`YES`, CHECK `convalidated`, 4/4 fatos de catálogo iguais ao local, 144/144 legado `NULL` |
+| edge `omie-sync-sku-items` | pacote `b16267740b7e` (`origin/main@69e8d4c23`) → `send_message`; o agente conferiu 10/10 hashes antes do deploy | eco do run dirigido: `net._http_response` 105052, HTTP 200, `v1.4-pendencia-por-item`; `pendencias:deploy` **exit 0**, 62/62, `CONFERE` |
+| resíduo (§6.3) | UPDATE dos 2 trackings (`k=1`, postcondição) → run dirigido da EUROTECHNIKER (job 186 com `dias` 60 + fornecedor) | run 01:34:03 `complete`: 1 consulta, 1 fechamento, 0 falho, 0 página. PRD03703 ganhou linha no dono — bruto e faturamento `NULL` (t1 de fallback, NF-e órfã), logística 2 d.u. — e o controle fechou em `k=0`. SAYERLACK segue `k=1`, à espera do diário das 07:00 UTC |
+
+**O sensor de edição do Lovable deu `EDICAO_DETECTADA` (exit 1), e a edição era a esperada.** O eixo do
+`edit_id` acusa qualquer edição da rodada; o `get_diff` da mensagem mostra a edição inteira:
+`src/integrations/supabase/types.ts` +3 (`itens_pendentes` em Row/Insert/Update) — a regeneração que a
+coluna nova provoca, no mesmo arquivo que o eixo dos commits tolera (2 commits do bot, 0 fora de
+`types.ts`). Não reverter: reverter tiraria dos tipos uma coluna que existe. Deploy logo depois de
+migration de schema dá esse falso positivo; o desempate é o `get_diff` por `message_id`.
+
+Pendente, por query: depois do diário das 07:00 UTC de 06/10, a revalidação do §6.4 — o PRD00041
+(`8689733149`) com linha e o tracking `1ff785fc…` com `k=0` (ou `k>0`, se o recebimento, ainda na etapa
+40, tiver outro item sem produto: aí ele volta no backoff, como desenhado).

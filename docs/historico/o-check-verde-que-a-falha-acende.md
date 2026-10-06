@@ -265,3 +265,19 @@ Laço longo em máquina saturada precisa que o monitor vigie **a tomada do slot*
 Sobram **3** na `BASELINE_AFIRMATIVO`: `CompletudeSection` — em voo no PR #2305 — e
 `ToolHistory`/`ToolReports`, resíduo já documentado na própria baseline (a query IRMÃ `useToolEvents`
 ainda engole o erro no default `= []`; `tool_events` tem 0 linhas).
+
+## 2026-10-05 — o "zero" do eixo por ATRIBUTO envelheceu, e escondia o Customer 360
+
+O "`<EmptyState title=…/>` = 0" da abertura foi medido com o detector de 2026-09-06, que só seguia
+desestruturação direta. O endurecimento por alias de 2026-09-07 não re-mediu este eixo — e
+`src/pages/Customer360.tsx` tinha as duas cegueiras juntas: `const core = useCustomerCore(id)` +
+`if (!core.data) return <EmptyState title="Cliente não encontrado" …/>`, com o hook lançando no erro.
+Erro do PostgREST e offline na 1ª carga afirmavam "não existe". Quem achou foi o Codex adversarial do
+#2767, não o gate.
+
+Re-medido em 2026-10-05 com uma cópia do detector que conta também `JsxAttribute` com string literal
+não-vazia. Controles positivos: acha o sítio na `origin/main`, não acha a versão consertada, e a forma
+original segue batendo com a `BASELINE_AFIRMATIVO` (4). **1 sítio textual na `origin/main`,
+alcançável — este — e 0 depois do conserto.** Os outros 6 do delta bruto são atributo ESTRUTURAL
+(`className`, `variant`, `to`), não frase. O eixo segue fora do gate nesta entrega; se for gateado,
+o incidente que o justifica é este sítio (#2767).
