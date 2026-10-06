@@ -399,7 +399,19 @@ Deno.test("replicação: o estado do recebimento vai para TODAS as irmãs — a 
   assertEquals(banco.controle.get(IRMA_B.id)?.itens_pendentes, 1);
   assertEquals(banco.controle.get(IRMA_B.id)?.ultima_tentativa, banco.controle.get(IRMA_A.id)?.ultima_tentativa, "mesmo carimbo: mesmo backoff");
   // A (t2 04/09) saiu da janela de 30 dias; B (17/09), sem linha própria, segue carregando a pendência.
+  // Com k>0 a regra legada daria o mesmo (B não tem linha): aqui quem prova a réplica são os k e o
+  // carimbo acima. O caso que a DISTINGUE é o recebimento completo, no teste seguinte.
   assertEquals(pendenteNaFila(banco.controle.get(IRMA_B.id), banco.temLinha(IRMA_B.id)), true);
+});
+
+Deno.test("replicação: recebimento COMPLETO tira da fila a irmã sem linha própria — a regra legada a prenderia", async () => {
+  const banco = new BancoFalso();
+  await gravarRecebimento(banco, contexto([IRMA_A, IRMA_B]), { itensRecebimento: [PRD02562] });
+  assertEquals(banco.temLinha(IRMA_B.id), false, "o item foi para o dono (A): B não tem linha própria");
+  assertEquals(banco.controle.get(IRMA_B.id)?.itens_pendentes, 0);
+  // Sem a réplica, B não teria controle e a regra legada (sem linha → pendente) a devolveria à fila
+  // em todo run: a mesma consulta Omie para sempre, por um recebimento já completo.
+  assertEquals(pendenteNaFila(banco.controle.get(IRMA_B.id), banco.temLinha(IRMA_B.id)), false);
 });
 
 Deno.test("dono estável: o fallback cai na MESMA irmã qualquer que seja a ordem — a reconsulta não cria chave nova", async () => {

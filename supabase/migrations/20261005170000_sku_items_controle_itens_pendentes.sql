@@ -72,7 +72,7 @@ BEGIN
 
   -- A1: a coluna existe e é inteira
   IF v_tipo IS DISTINCT FROM 'integer' THEN
-    RAISE EXCEPTION 'A1 FALHOU: itens_pendentes ausente ou com tipo % — a edge v1.3 falharia fechada em todo run', coalesce(v_tipo, '<ausente>');
+    RAISE EXCEPTION 'A1 FALHOU: itens_pendentes ausente ou com tipo % — a edge v1.4-pendencia-por-item falharia fechada em todo run', coalesce(v_tipo, '<ausente>');
   END IF;
 
   -- A2: sem default — um default constante viraria "pendência medida" em toda linha histórica

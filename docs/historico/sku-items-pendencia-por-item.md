@@ -112,7 +112,7 @@ aplicada; a suíte tem de ficar VERMELHA no teste esperado (marcador ASCII); o g
 
 ## 6. Ordem de deploy e recuperação do resíduo
 
-1. **Migration** `20261005170000` — antes de tudo. A edge v1.3 lê a coluna; sem ela, a leitura do
+1. **Migration** `20261005170000` — antes de tudo. A edge v1.4 lê a coluna; sem ela, a leitura do
    controle falha fechada e todo run vira `error`. A edge velha não a lê nem escreve: aplicar antes é
    inócuo. Validação (psql-ro):
    ```sql
@@ -172,6 +172,37 @@ aplicada; a suíte tem de ficar VERMELHA no teste esperado (marcador ASCII); o g
 
 ## 7. O que fica descoberto
 
+Os três primeiros vieram da revisão adversarial por subagente (Fable, 2026-10-05: 0 P0/P1, 5 P2; os
+outros dois — a mensagem da A1 citando a v1.3 e um pino do teste de réplica que a regra legada também
+satisfazia — foram consertados no PR). Números conferidos por psql-ro no mesmo dia.
+
+- **Prospectivo por desenho.** A pendência só é medida em consulta feita DEPOIS do deploy: o legado com
+  linha e `itens_pendentes` nulo segue a regra antiga e não volta à fila (janela de 30 dias: 45
+  trackings com linha; os 17 sem linha são os CT-e que o #2798 tira — a fila nasce vazia). O passado
+  coberto é o da medição do §1 (63 recebimentos processados, 2 SKUs perdidos), reaberto um a um no §6.3.
+  Semear `itens_pendentes = 1` em massa fica de fora: reconsultaria recebimentos legados com várias
+  irmãs, cujo fallback iria para o dono estável ≠ a eleita antiga — a duplicata que a view zera (bullet
+  "Legado com várias irmãs"). Trocaria dado medido completo por perda de precisão. O que a medição não
+  alcança: item que entrou na Omie DEPOIS do payload do `raw_data` (§1, fato × reconstrução).
+- **As datas do dono valem para o recebimento inteiro.** t2/t3/t4 de toda linha vêm do dono (menor t2
+  entre TODAS as irmãs), inclusive a do item roteado ao tracking do seu pedido. Para o recebimento novo
+  é a eleita de antes (0 tentativas, t2 ASC — o diário das 07:00 já fazia assim), e é estável entre
+  runs; o preço é que, se as irmãs divergem nas datas, vale a mais antiga. OBEN: 80 recebimentos com >1
+  irmã — 13 com t2 distinto, 17 com t4 distinto, 9 com chave de NF-e distinta sob o mesmo `nid_receb` —
+  e, na janela de 30 dias, 0 de 38 com o dono fora da janela (exposição 0). A fonte certa das datas é o
+  cabeçalho da própria consulta Omie, fora do escopo. Linha de base para revalidar (linha com data ≠ a
+  do próprio tracking; hoje 16 de 4.316 em t2 e 215 em t4 — o t4 deriva também quando o tracking é
+  atualizado depois da gravação):
+  ```sql
+  select count(*) linhas,
+    count(*) filter (where h.t2_data_faturamento is distinct from t.t2_data_faturamento) t2_alheio,
+    count(*) filter (where h.t4_data_recebimento is distinct from t.t4_data_recebimento) t4_alheio
+  from sku_leadtime_history h join purchase_orders_tracking t on t.id = h.tracking_id;
+  ```
+- **Irmã nunca medida num recebimento com linha não pagina.** `fila_parada_48h` exclui o recebimento
+  que tem linha em QUALQUER irmã; uma irmã sem linha e sem controle (k nulo) nele — a regra antiga a
+  contava — só aparece em `fila_incompleta_parada_48h`. Converge na 1ª consulta (o controle vai para
+  todas as irmãs). Hoje: 5 casos no histórico todo (fora de CT-e), 0 na janela de 30 dias.
 - **Ignorado que depois é associado.** `cIgnorarItem`="S" sem produto é terminal; se o recebimento
   mudar de ideia, a lista nova só é lida se o recebimento ainda estiver pendente por outro motivo.
 - **Recebimento que nunca conclui.** Item `cAdicionarNovo` numa etapa 40 eterna é reconsultado no
