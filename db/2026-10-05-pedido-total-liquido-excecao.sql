@@ -22,7 +22,8 @@
 -- ║ recriar vence.                                                                         ║
 -- ╚════════════════════════════════════════════════════════════════════════════════════════╝
 
-BEGIN;
+-- A transacao e do `db:aplicar` (o corpo roda dentro dela, via EXECUTE): este arquivo NAO
+-- leva BEGIN;/COMMIT;. Migration para colar no SQL Editor leva — sao caminhos diferentes.
 
 -- ─── 1. A tabela ────────────────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS public.pedido_total_liquido_excecao (
@@ -233,4 +234,3 @@ $post$;
 
 SELECT 'FIM_APLICACAO_OK' AS marcador;
 
-COMMIT;
