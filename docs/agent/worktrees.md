@@ -303,9 +303,12 @@ destruído o merge por causa desse diagnóstico errado.
 **Antes do push**, o hook `push-gates-guard.sh` roda os três gates baratos que mais
 reprovavam PR no CI: `docs:indice`, `docs:citacoes` e `sonda:fingerprint` (~2,4 s juntos). Com a
 árvore limpa e evidência positiva (exit 1 + a marca de falha do gate), ele **nega** o push: o
-vermelho que o CI só mostraria ~30 min depois sai na hora. Com a árvore suja, inclusive no
-`git add && git commit && git push` de um comando só, que o hook vê antes do commit, ele só
-**avisa**, porque os gates leem o disco e o disco pode não ser o que vai no push. `git push
+vermelho que o CI só mostraria ~30 min depois sai na hora. No `git add … && git commit … &&
+git push` de um comando só ele também **nega** quando o commit do próprio comando cobre toda a
+sujeira com prova (`add -A`/`.` na raiz, `add -u`/`commit -a`, caminho literal, já staged);
+sujeira que o commit não cobre → só **avisa**, porque os gates leem o disco. Sem bun no PATH do
+hook (app aberto pelo Dock não lê o `~/.zshrc`) ele procura em `~/.bun/bin` e no Homebrew, e se
+não achar, ou se um gate não der veredito, **avisa que não checou** — nunca fica calado. `git push
 --no-verify` é a válvula para quando o GATE estiver errado; use e diga ao founder. Contrato
 completo no cabeçalho do hook; medição e motivo em `docs/historico/gates-no-push.md`.
 
