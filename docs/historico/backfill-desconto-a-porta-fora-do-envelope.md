@@ -218,7 +218,7 @@ Uma tabela não toca a assinatura. O conversor a consulta, e o replace continua 
 -- PROPOSTA — não aplicar ainda
 CREATE TABLE public.pedido_total_liquido_excecao (
   sales_order_id uuid PRIMARY KEY REFERENCES public.sales_orders(id) ON DELETE CASCADE,
-  motivo         text        NOT NULL CHECK (motivo IN ('sem_correspondencia','ambiguo','sem_pai_omie')),
+  motivo         text        NOT NULL CHECK (motivo IN ('sem_apuracao','apuracao_parcial')),
   evidencia      text        NOT NULL,          -- de qual dry-run, com data
   criado_em      timestamptz NOT NULL DEFAULT now(),
   criado_por     text        NOT NULL,
@@ -235,16 +235,34 @@ Quatro propriedades que o desenho precisa ter:
    a exclusão é segura.
 2. **Fail-closed por omissão.** Pedido não apurado e **não** listado continua bloqueando o mês. A
    tabela só consegue afrouxar o gate nominalmente, id por id.
-3. **`motivo` vem de medição, não de suposição.** Preenche-se com um `dry_run: true` do
-   `omie-desconto-backfill` restrito a esses 105 pedidos — barato (105, não 13.006) — que devolve
-   `recusadas` com `sem_correspondencia`/`ambiguo` por id. Sem esse passo a coluna é decorativa.
+3. **`motivo` vem de medição LOCAL e verificável, não de suposição.** `sem_apuracao` = nenhuma
+   linha do pedido tem `desconto_valor` (56 pedidos); `apuracao_parcial` = tem linha apurada e linha
+   NULL no mesmo pedido (49). Escolhi estes em vez dos rótulos do Omie
+   (`sem_correspondencia`/`ambiguo`) porque aqueles exigem um dry-run do backfill contra o ERP: é
+   enriquecimento legítimo, não pré-requisito, e uma coluna que eu não consigo preencher hoje nasceria
+   decorativa — que é exatamente o defeito que eu queria evitar.
 4. **`revisar_em` com sensor.** Exceção que deixou de ser necessária (o Omie passou a correlacionar
    o trio) tem de aparecer, senão a lista vira lixo permanente que esconde a regressão seguinte —
    inclusive a que eu reportei por engano e que, um dia, pode ser real. O sensor é uma query: pedido
    na tabela cujas linhas já estão todas apuradas, ou cuja `revisar_em` passou.
 
-**O que se libera:** 564 pedidos convertíveis, **R$ 104.250,58** de desconto que hoje a tela não
-explica, em 13 meses que o gate mantém fechados por 105 pedidos que não têm conserto no ERP.
+**O que se libera — medido por ensaio EXECUTADO em produção (2026-10-05, `db:aplicar --ensaio`,
+rodou inteiro e fez ROLLBACK):**
+
+```
+EXCECAO INSTALADA: 105 pedidos excluidos | controle sem excecao = 0 elegiveis
+                 | com excecao = 538 elegiveis | soma prevista = -100144.46
+```
+
+São **538** pedidos e **R$ 100.144,46**, não os 564 / R$ 104.250,58 que eu estimei por SQL próprio.
+A diferença de 26 pedidos (R$ 4.106,12) é o classificador sendo mais estrito que a minha régua: ele
+recusa linha inválida, líquido negativo, cabeçalho fora do padrão e total que já é o líquido. O
+número que vale é o do conversor, e é por isso que a postcondição o lê do banco em vez de confiar na
+estimativa.
+
+O `controle sem excecao = 0` é o que separa esta medição de um número bonito: com a lista vazia, na
+MESMA transação, o ensaio devolve zero elegíveis. A exclusão é a causa do destravamento, não uma
+coincidência com ele.
 
 A lista nominal **não é colada aqui de propósito** — 105 uuids num doc apodrecem. Ela se reproduz:
 
@@ -258,3 +276,38 @@ GROUP BY 1,2,3 HAVING bool_or(oi.desconto_valor IS NULL);
 **Escrita pelo ENVELOPE** (`bun run db:aplicar`, com `--ensaio` antes e o `.sql` commitado em `db/`),
 ou bloco `🟣 SQL Editor` para o founder. Money-path: antes de aplicar, ritual `/codex` e
 `prove-sql-money-path` — a função é PL/pgSQL e **late-bound**, então o teste tem de EXECUTAR.
+
+### Estado da entrega (2026-10-05)
+
+O apply está escrito, commitado e **provado por ensaio em produção**:
+[`db/2026-10-05-pedido-total-liquido-excecao.sql`](../../db/2026-10-05-pedido-total-liquido-excecao.sql).
+Ele instala a tabela, deriva a lista e troca o conversor — e **não converte nada**. A conversão é um
+segundo apply, com postcondição própria.
+
+Duas decisões que mudaram durante a escrita, as duas por lição do próprio repo:
+
+- **O conversor é trocado por SUBSTITUIÇÃO PROGRAMÁTICA**, não por corpo copiado. A primeira versão
+  colava as 246 linhas do `pg_get_functiondef`; isso é uma bomba de relógio, porque apply commitado é
+  imutável e um corpo copiado **reverte em silêncio** qualquer endurecimento posterior — a irmã da
+  armadilha do `CREATE OR REPLACE` sem `WITH`. O bloco lê o corpo VIVO, exige que cada âncora apareça
+  **exatamente 1×**, troca e reexecuta; âncora ausente ou duplicada **aborta**. É idempotente: se o
+  corpo já menciona a tabela, não faz nada.
+- **Guarda de 48h no INSERT**, que é a lição desta mesma sessão virada em código. O reprocesso deixa
+  linha NULL transitória; sem o filtro, um pedido **em voo** entraria na exceção por engano e perderia
+  a conversão para sempre, em silêncio. Hoje a guarda custa zero (105 bloqueadores, 105 parados, 0 em
+  voo) — e é por isso que ela tem de estar lá antes de custar algo.
+
+Provas colhidas:
+
+| prova | resultado |
+|---|---|
+| `db:aplicar … --ensaio` (prod, rodou inteiro e fez ROLLBACK) | **rc=0**, postcondições (a)–(f) |
+| controle da postcondição (e): lista vazia na mesma transação | **0 elegíveis** |
+| com a exceção de pé | **538 elegíveis**, −R$ 100.144,46 |
+| `db/test-pedido-total-liquido-acervo.sh` (PG17) | **68 ok / 0 fail** |
+
+**O que falta, e não é opcional:** `sem-codex` — a cota do Codex está em 89% (teto 85%) e a janela de
+7 dias só reabre em **09/10 19:30**. A regra do repo é explícita: em money-path o adversarial de
+CÓDIGO não se pula, e *"cota baixa não é gatilho de pular — é gatilho de DRAFT"*. Então o PR fica
+DRAFT e **nada foi aplicado em produção**: o ensaio reverteu tudo. O apply real espera o parecer, ou
+uma decisão explícita do founder pelo Caminho B.
