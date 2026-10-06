@@ -162,3 +162,33 @@ Esperado: 0 CT-e com tentativa nova; no diário, `ctes_fora_da_fila` igual aos C
 janela de 30 dias (17 no dia 05/10, caindo conforme expiram) e `requisicoes_omie` só de NF-e; a
 cobertura de NF-e segue completa. **E 1 NF-e nova acompanhada até os itens gravados**, porque 45/45
 com zero pendente não exercita o caminho de gravação.
+
+## 9. Desfecho — o deploy e a prova (2026-10-05/06)
+
+1. **Merge (#2798).** Squash às 18:47:25 UTC (`e80fe16ec`). Antes do deploy, a `main` foi conferida:
+   o artefato estava presente (`separarCtes(pendentesBrutos)` e a `VERSAO` v1.3), e nenhum commit
+   posterior tocava a edge. Não havia "Changes" do Lovable revertendo nada.
+2. **Ledger antes.** `omie-sync-sku-items` estava em `DIVERGE_P1`, servindo a v1.2 (eco das 22:35Z).
+   Outras 3 edges pendentes (`fin-valor-cockpit`, `omie-analytics-sync`, `sync-reprocess`) eram de
+   outras sessões e ficaram FORA deste envio. O ledger final fechou com 0 pendentes.
+3. **Coordenação.** O `list_messages` mostrou outra sessão deployando a `fin-valor-cockpit` às
+   23:38:42Z, ainda sem resposta. Esperou-se esse deploy terminar antes de enviar este, para não
+   disputar o agente.
+4. **Baseline (23:35:05 UTC).** 81 linhas de CT-e no controle, Σ `tentativas` = 454,
+   `max(ultima_tentativa)` = 2026-10-05 07:00:40.592, impressão `afe4f263f244afa8718f30dd38343f4d`.
+5. **Envio às 23:39:31Z** (colagem do `pendencias:prompt`, 9 arquivos, base `588336292`). O agente
+   conferiu 9 de 9 hashes, deployou verbatim e reportou Active (401 sem credencial), com
+   `No files were edited.`. Custou 1,6 crédito. O sensor de edição, 5,4 min depois, deu `SEM_EDICAO`
+   (exit 0, 0 commits do bot na `main`).
+6. **Prova passiva no tick das 00:35 UTC (jobid 186).**
+   - `net._http_response` #105003: HTTP 200, `versao = v1.3-cte-fora-da-fila`, `fonte` `d1fe060b…`
+     (o fingerprint que o ledger esperava).
+   - O run das 00:35:02 fechou `complete` em 0,4s, com o campo novo `ctes_fora_da_fila` presente
+     (0 na janela de 3 dias).
+   - O baseline dos CT-e ficou **idêntico** às 00:36:05.
+   - O `pendencias:deploy` deu `CONFERE` via eco, com 0 pendentes.
+7. **Ainda a medir** (as queries estão no §8, com `:deploy` = `2026-10-05 23:41+00`):
+   - o diário das 07:00 UTC de 06/10, o 1º com a janela de 30 dias. Esperado: `ctes_fora_da_fila` =
+     **17** (mais algum CT-e novo), nenhuma consulta a CT-e, baseline idêntico e cobertura 55
+     completa;
+   - 1 NF-e nova acompanhada até os itens gravados.
