@@ -114,13 +114,20 @@ import {
 import { type ConferenciaMapa, recusa, relatarForaDoRegime, relatarRecusa } from './lib/mapa-coerente-na-ref';
 import {
   consultasDeriva,
+  modelarRepo,
   montarSondaDeriva,
   parsearSondaDeriva,
   saidaDerivaComoPsql,
   textosDaLeitura,
+  vigenciaPorNome,
 } from './lib/deriva-corpo';
 import { montarPacote, type PacoteFonte } from './lib/pacote-entrega';
-import { type ParAlvo, planejarOndas, type PlanoDeOndas } from './lib/ordem-entre-edges';
+import {
+  ondaSemOrdemDeclarada,
+  type ParAlvo,
+  planejarOndas,
+  type PlanoDeOndas,
+} from './lib/ordem-entre-edges';
 import { ARQ_MAPA, parsearMapa, RAIZ_EDGES } from './sonda-fingerprint';
 import { extrairVersao } from './sonda-versao-sql';
 import {
@@ -354,6 +361,9 @@ export function main(
       inventarioDaRef: lidas.length,
       migrationsLidas: lidas.length,
       funcoesConhecidas: historico.size,
+      // O `historico` só modela CREATE; o `modelarRepo` modela também DROP/SET SCHEMA/RENAME. É a vigência
+      // que separa a irmã AUSENTE que a migration não criou da que uma posterior aposentou (Codex, #2757 r3).
+      vigencia: vigenciaPorNome(modelarRepo(lidas)),
     };
     nomesParaSonda = alvosDeCorpo(alvos, historico);
   } catch (e) {
@@ -481,6 +491,16 @@ export function main(
     process.stderr.write(
       `⏸️ ordem entre edges: ${ordem.liberadas.length} liberada(s) · ${ordem.retidas.length} retida(s)\n` +
         ordem.retidas.map((r) => `   · ${r.edge} ${r.tipo} — espera ${r.espera.join(', ')}\n`).join(''),
+    );
+  }
+  // O silêncio do #2469 no terminal, não só no arquivo: quem roda o comando vê antes de abrir o
+  // pacote. Aviso — não muda exit code (ver `ondaSemOrdemDeclarada`).
+  const mudas = ondaSemOrdemDeclarada(ordem);
+  if (mudas.length > 0) {
+    process.stderr.write(
+      `⚠️ ordem entre edges NÃO declarada: ${mudas.length} edges numa colagem só (${mudas.join(', ')})\n` +
+        '   pode não haver dependência — mas se houver, declare em supabase/functions/<dependente>/deploy-ordem.json\n' +
+        '   e rode o pacote de novo ANTES de colar (#2469)\n',
     );
   }
 

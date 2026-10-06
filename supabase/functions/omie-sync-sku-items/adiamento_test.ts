@@ -51,6 +51,8 @@ function estado(p: Partial<EstadoDoRun>): EstadoDoRun {
     fila_parada_48h: 0,
     controle_marcacoes: 0,
     controle_falhas: 0,
+    controle_fechamentos: 0,
+    controle_fechamentos_falhos: 0,
     itens_processados: 0,
     erros: 0,
     recompute_erro: null,
@@ -125,23 +127,38 @@ Deno.test("saidaDoLaco: deadline vencido encerra o laço; limite por chamada seg
   assertEquals(saidaDoLaco("limite_persistiu_apos_retentativas"), "proxima");
 });
 
-Deno.test("motivoDaTentativa: o texto do controle diz o que ACONTECEU — upsert morto não vira 'NFe sem itens'", () => {
-  const base = { faultstring: null, itensEhLista: true, itensRecebidos: 0, itensResolvidos: 0, itensGravados: 0, ultimoErroUpsert: null };
-  assertEquals(motivoDaTentativa({ ...base, itensRecebidos: 3, itensResolvidos: 2, itensGravados: 2 }), "ok_com_itens");
+Deno.test("motivoDaTentativa: o texto do controle diz o que ACONTECEU — parcial, upsert morto e item sem produto viram 'pendente'", () => {
+  const base = {
+    faultstring: null,
+    itensEhLista: true,
+    itensRecebidos: 0,
+    itensPendentes: null,
+    itensAguardando: 0,
+    itensSemRota: 0,
+    gruposAGravar: 0,
+    gruposGravados: 0,
+    ultimoErro: null,
+  };
+  assertEquals(motivoDaTentativa({ ...base, itensRecebidos: 3, itensPendentes: 0, gruposAGravar: 2, gruposGravados: 2 }), "ok_com_itens");
   assertEquals(
-    motivoDaTentativa({ ...base, itensRecebidos: 3, itensResolvidos: 3, itensGravados: 2, ultimoErroUpsert: "check constraint" }),
-    "ok_parcial: 2 de 3 gravados; check constraint",
-    "gravação PARCIAL não pode se esconder atrás de ok_com_itens",
+    motivoDaTentativa({ ...base, itensRecebidos: 3, itensPendentes: 1, gruposAGravar: 3, gruposGravados: 2, ultimoErro: "check constraint" }),
+    "pendente: 1 itens (0 aguardando associação, 0 sem rota de pedido); 2 de 3 grupos gravados; check constraint",
+    "gravação PARCIAL não pode se esconder atrás de ok_com_itens (era ok_parcial, que saía da fila)",
   );
   assertEquals(
-    motivoDaTentativa({ ...base, itensRecebidos: 3, itensResolvidos: 2, itensGravados: 0, ultimoErroUpsert: "permission denied" }),
-    "upsert_falhou: permission denied",
-    "antes virava ok_0_itens — a mentira de que a NFe não tinha itens",
+    motivoDaTentativa({ ...base, itensRecebidos: 3, itensPendentes: 3, gruposAGravar: 2, gruposGravados: 0, ultimoErro: "permission denied" }),
+    "pendente: 3 itens (0 aguardando associação, 0 sem rota de pedido); 0 de 2 grupos gravados; permission denied",
+    "upsert morto não vira ok_0_itens — a mentira de que a NFe não tinha itens",
+  );
+  assertEquals(
+    motivoDaTentativa({ ...base, itensRecebidos: 2, itensPendentes: 2, itensAguardando: 2 }),
+    "pendente: 2 itens (2 aguardando associação, 0 sem rota de pedido); 0 de 0 grupos gravados",
+    "item sem nIdProduto é pendência de associação, não 'NFe sem itens'",
   );
   assertEquals(motivoDaTentativa({ ...base, faultstring: "Recebimento inexistente" }), "fault: Recebimento inexistente");
   assertEquals(motivoDaTentativa({ ...base, itensEhLista: false }), "ok_sem_itensRecebimento", "chave ausente ≠ lista vazia");
-  assertEquals(motivoDaTentativa({ ...base, itensRecebidos: 2 }), "ok_itens_sem_nIdProduto");
   assertEquals(motivoDaTentativa(base), "ok_0_itens");
+  assertEquals(motivoDaTentativa({ ...base, itensRecebidos: 1, itensPendentes: 0 }), "ok_todos_ignorados");
 });
 
 const HORA = 3_600_000;
@@ -192,6 +209,20 @@ Deno.test("avaliarFilaParada: conta RECEBIMENTO com nIdReceb, elegível há mais
   assertEquals(avaliarFilaParada(fila, SEM_CONTROLE, new Set(["1", "4"]), agora, backoffFalso), 0, "tratar o parado zera a contagem");
   assertEquals(avaliarFilaParada([], SEM_CONTROLE, new Set(), agora, backoffFalso), 0, "fila vazia");
   assertEquals(avaliarFilaParada(fila, SEM_CONTROLE, new Set(["4"]), agora, backoffFalso, 100 * HORA), 0, "limite maior que a fila inteira");
+});
+
+Deno.test("avaliarFilaParada: recebimento que JÁ TEM linha (incompleto) não é fila parada — o sensor guarda a semântica de antes", () => {
+  // Desde a pendência por item (2026-10-05) o recebimento com linha e itens pendentes VOLTA à fila. O
+  // sensor que pagina continua medindo o que media: recebimento SEM NENHUMA linha que o run não
+  // alcança. Sem a exclusão, a retentativa de item que talvez nunca seja associado (etapa 40 há
+  // meses) disputaria os ~8 slots do diário das 07:00 e fabricaria `error` "fila não anda".
+  const agora = T0 + 1_000 * HORA;
+  const fila = [
+    linha("A", "1", 60, 60, agora), // sem linha, parado → conta
+    linha("G", "7", 90, 90, agora), // incompleto (já tem linha), parado → NÃO conta aqui
+  ];
+  assertEquals(avaliarFilaParada(fila, SEM_CONTROLE, new Set(), agora, backoffFalso, ELEGIVEL_HA_MUITO_MS, new Set(["7"])), 1);
+  assertEquals(avaliarFilaParada(fila, SEM_CONTROLE, new Set(), agora, backoffFalso), 2, "sem a exclusão, os dois contam (o comportamento de antes, quando o incompleto nem estava na fila)");
 });
 
 Deno.test("avaliarFilaParada: irmãs do mesmo recebimento — vale a MAIS ANTIGA, e o recebimento conta UMA vez (achado do Codex)", () => {
@@ -262,6 +293,21 @@ Deno.test("decidirErroDoRun: controle morto é medido contra as marcações FEIT
   );
   assertEquals(decidirErroDoRun(estado({ consultas_detalhadas: 2, controle_marcacoes: 2, controle_falhas: 1 })), undefined, "uma marcação pegou: backoff vivo");
   assertEquals(decidirErroDoRun(estado({ controle_marcacoes: 0, controle_falhas: 0 })), undefined, "sem marcação (só adiadas) não é controle morto");
+});
+
+Deno.test("decidirErroDoRun: fechamento do controle que falha em TODOS os recebimentos grita — a pendência ficaria conservadora para sempre", () => {
+  // O write-ahead persistiu, os dados foram gravados, mas o UPDATE final nunca pega (grant de UPDATE,
+  // coluna ausente): todo recebimento volta à fila com a pendência de "nada gravou" e é reconsultado
+  // à toa até sair da janela. Não perde dado — mas sem este grito ninguém saberia.
+  assertEquals(
+    decidirErroDoRun(estado({ consultas_detalhadas: 2, controle_marcacoes: 2, itens_processados: 3, controle_fechamentos: 2, controle_fechamentos_falhos: 2 })),
+    "fechamento do controle falhou em 2/2 recebimentos — a pendência fica conservadora e eles voltam à fila à toa (grant de UPDATE?)",
+  );
+  assertEquals(
+    decidirErroDoRun(estado({ consultas_detalhadas: 2, controle_marcacoes: 2, itens_processados: 3, controle_fechamentos: 2, controle_fechamentos_falhos: 1 })),
+    undefined,
+    "um fechamento pegou: o caminho vive",
+  );
 });
 
 Deno.test("decidirErroDoRun: upsert que NUNCA pega fecha error — complete com efeito zero é o defeito que o registry (b) nomeia", () => {

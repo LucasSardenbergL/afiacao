@@ -229,6 +229,15 @@ O gate acima é banco → edge. Entre duas edges, a ordem **só existe se estive
   reroda em segundos, sem push. Exits `0` · `1` achado · `2` mecânica. **Só segura o merge com o
   contexto `ordem-entre-edges` exigido na proteção da `main`** — ativação do founder; antes disso é aviso.
   [`ordem-entre-edges-declaracao-no-pr.md`](../historico/ordem-entre-edges-declaracao-no-pr.md).
+- **A leva que NINGUÉM declarou recebe aviso, não gate.** Colagem com ≥2 edges e nenhum par
+  determinado por manifesto → `⚠️ Ordem entre edges: NÃO DECLARADA` no pacote **e** no stderr,
+  nomeando a onda; exit code NÃO muda. Determinada = TODO par da onda tem regra (meia-ordem não é
+  ordem); regra com a outra ponta retida ou já no ar não conta. Por que aviso: o gate do corpo do PR
+  pergunta **por PR**, e a leva vem do LEDGER — pode juntar PRs distintos; e com ZERO manifesto no
+  repo, recusar seria recusar toda leva. **Risco por tabela/domínio fica FORA**: medido, a interseção
+  das RPCs que `omie-vendas-sync` e `sync-reprocess` chamam é VAZIA, então avisar por "RPC
+  compartilhada" ficaria calado no próprio #2469.
+  [`onda-sem-ordem-declarada.md`](../historico/onda-sem-ordem-declarada.md).
 
 **O que continua sendo do founder, e por quê:**
 

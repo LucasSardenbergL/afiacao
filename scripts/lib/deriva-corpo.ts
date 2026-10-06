@@ -21,6 +21,7 @@ import {
   type TextosVivos,
   TOKEN_SEM_CORPO,
   type VereditoPrecondicao,
+  type VigenciaNoRepo,
 } from './precondicao-banco';
 import { removerComentariosSql } from './sql-comentarios';
 import { md5DeTokens, mesmosTokens, tokensSql } from './tokens-sql';
@@ -103,6 +104,10 @@ function tipoCanonico(texto: string): string | null {
     colchetes = '[]';
     t = t.slice(0, -2).trim();
   }
+  // `"int4"` é o tipo de nome int4: citar um nome todo em minúsculas não muda o tipo, e o `format_type` não cita o
+  // que não precisa (adversarial do Codex, 2026-10-05: `DROP … g("int4")` não aposentava `g(p integer)`). `"char"` é
+  // a exceção — o tipo interno de 1 byte, que o `format_type` imprime CITADO e que `char` sem aspas (`character`) não é.
+  if (/^"[a-z_][a-z0-9_$]*"$/.test(t) && t !== '"char"') t = t.slice(1, -1);
   if (t.startsWith('"')) return /^"[^"]+"$/.test(t) ? t + colchetes : null;
   t = t.replace(/^(?:public|pg_catalog)\./, '');
   if (TIPOS_COMPOSTOS.has(t)) return t + colchetes;
@@ -151,39 +156,103 @@ export interface Remocao {
   posicao: number;
 }
 
+/** `'…'`/`E'…'` começa em `i`? (O `E` colado a identificador é parte dele.) */
+const abreLiteral = (s: string, i: number): { eString: boolean } | null => {
+  const eString = (s[i] === 'E' || s[i] === 'e') && s[i + 1] === "'" && !/[A-Za-z0-9_$]/.test(s[i - 1] ?? '');
+  return s[i] === "'" || eString ? { eString } : null;
+};
+
+/** O fim (exclusivo) do literal `'…'`/`E'…'` que começa em `i` — `''` dobrada, e a barra só no `E''`. */
+function fimDoLiteral(s: string, i: number, eString: boolean): number {
+  let j = i + (eString ? 2 : 1);
+  while (j < s.length) {
+    if (eString && s[j] === '\\') j += 2;
+    else if (s[j] === "'" && s[j + 1] === "'") j += 2;
+    else if (s[j] === "'") return j + 1;
+    else j++;
+  }
+  return s.length;
+}
+
 /**
  * Troca o conteúdo de todo literal `'…'`/`E'…'` por espaço (comprimento preservado). Um `SELECT
  * 'DROP FUNCTION public.f()'` é TEXTO, e contá-lo como remoção deixava uma ausência real sair
- * "explicada" (Codex, P1). O dollar-quote NÃO é mascarado: o corpo de um `DO` roda no apply, e o
- * `DROP` estático lá dentro conta. `EXECUTE 'DROP …'` some junto — DDL dinâmica não tem alvo
- * legível, e a ausência vira achado em vez de palpite.
+ * "explicada" (Codex, P1). `EXECUTE 'DROP …'` some junto — DDL dinâmica não tem alvo legível, e a
+ * ausência vira achado em vez de palpite. O dollar-quote é com `mascararDollarQueNaoExecuta`.
  */
 function mascararStrings(s: string): string {
   let fora = '';
   let i = 0;
   while (i < s.length) {
-    const c = s[i];
-    const eString = (c === 'E' || c === 'e') && s[i + 1] === "'" && !/[A-Za-z0-9_$]/.test(s[i - 1] ?? '');
-    if (c === "'" || eString) {
-      let j = i + (eString ? 2 : 1);
-      while (j < s.length) {
-        if (eString && s[j] === '\\') j += 2;
-        else if (s[j] === "'" && s[j + 1] === "'") j += 2;
-        else if (s[j] === "'") {
-          j++;
-          break;
-        } else j++;
-      }
-      const ate = Math.min(j, s.length);
+    const lit = abreLiteral(s, i);
+    if (lit !== null) {
+      const ate = fimDoLiteral(s, i, lit.eString);
       fora += s.slice(i, ate).replace(/[^\n]/g, ' ');
       i = ate;
       continue;
     }
-    fora += c;
+    fora += s[i];
     i++;
   }
   return fora;
 }
+
+/** Delimitador de dollar-quote (`scan.l`: `$` + tag opcional que não começa por dígito + `$`). */
+const DELIMITADOR_DOLLAR = /\$(?:[A-Za-z_\u0080-￿][A-Za-z_0-9\u0080-￿]*)?\$/y;
+
+/** A palavra (identificador) que termina em `fim`, pulando espaço — e onde ela começa. */
+function palavraAntes(s: string, fim: number): { palavra: string; inicio: number } {
+  let j = fim;
+  while (j > 0 && /\s/.test(s[j - 1])) j--;
+  let k = j;
+  while (k > 0 && /[A-Za-z0-9_$\u0080-￿]/.test(s[k - 1])) k--;
+  return { palavra: s.slice(k, j).toLowerCase(), inicio: k };
+}
+
+/**
+ * Esconde o que, no APPLY, NÃO é DDL executável escrito dentro de dollar-quote (adversarial do Codex sobre o gate
+ * do pacote, 2026-10-05, executado: o modelo aposentava por TEXTO): o conteúdo de todo dollar-quote que não é o
+ * corpo de um `DO` — literal de `SELECT`, argumento de `format()`, corpo de função que o extrator não reconheceu
+ * — e, dentro do corpo do `DO`, os dollar-quotes ANINHADOS (o texto de um `EXECUTE`). O comando estático direto
+ * no `DO` continua visível: ele roda no apply. Literais `'…'` são pulados intactos — um `$` dentro deles não abre
+ * nada; quem os esconde é `mascararStrings`, depois. Delimitador sem fecho esconde até o fim: na dúvida, não conta.
+ */
+function mascararDollarQueNaoExecuta(s: string, dentroDeDo = false): string {
+  let fora = '';
+  let i = 0;
+  while (i < s.length) {
+    const lit = abreLiteral(s, i);
+    if (lit !== null) {
+      const ate = fimDoLiteral(s, i, lit.eString);
+      fora += s.slice(i, ate);
+      i = ate;
+      continue;
+    }
+    DELIMITADOR_DOLLAR.lastIndex = i;
+    const d = s[i] === '$' && !/[A-Za-z0-9_$\u0080-￿]/.test(s[i - 1] ?? '') ? DELIMITADOR_DOLLAR.exec(s) : null;
+    if (d === null) {
+      fora += s[i];
+      i++;
+      continue;
+    }
+    const tag = d[0];
+    const fecho = s.indexOf(tag, i + tag.length);
+    const conteudo = s.slice(i + tag.length, fecho < 0 ? s.length : fecho);
+    // `DO $$ … $$` ou `DO LANGUAGE plpgsql $$ … $$`: o corpo roda no apply — só o que está ANINHADO nele some.
+    const p1 = palavraAntes(fora, fora.length);
+    const p2 = palavraAntes(fora, p1.inicio);
+    const p3 = palavraAntes(fora, p2.inicio);
+    const ehDo = !dentroDeDo && (p1.palavra === 'do' || (p2.palavra === 'language' && p3.palavra === 'do'));
+    fora += tag + (ehDo ? mascararDollarQueNaoExecuta(conteudo, true) : conteudo.replace(/[^\n]/g, ' '));
+    if (fecho < 0) return fora;
+    fora += tag;
+    i = fecho + tag.length;
+  }
+  return fora;
+}
+
+/** O texto em que se lê DDL de apply: sem comentário, sem literal, sem o que em dollar-quote não executa. */
+const ddlQueExecuta = (sql: string): string => mascararStrings(mascararDollarQueNaoExecuta(removerComentariosSql(sql)));
 
 /** `[schema.]nome` — com ou sem aspas —, e a posição logo depois dele. */
 const NOME_QUALIFICADO = /^\s*(?:"?([A-Za-z_][\w$]*)"?\s*\.\s*)?"?([A-Za-z_][\w$]*)"?\s*/;
@@ -211,10 +280,11 @@ function lerAlvo(m: string, i: number, posicao: number): { remocao?: Remocao; fi
  * O comentário sai pelo stripper compartilhado — aqui ele é o certo: é leitura de DDL (DROP dentro
  * de rollback comentado não conta), não comparação de corpo. DDL dinâmica (`EXECUTE format('DROP
  * FUNCTION %s', …)`) não tem alvo legível e não entra: a função segue esperada, e a ausência dela
- * em prod vira achado em vez de ser "explicada" por um palpite.
+ * em prod vira achado em vez de ser "explicada" por um palpite. E só conta o que EXECUTA no apply
+ * (`ddlQueExecuta`): DDL de topo e comando estático no corpo de `DO` — o texto de outro dollar-quote, não.
  */
 export function remocoesDe(sql: string): Remocao[] {
-  const m = mascararStrings(removerComentariosSql(sql));
+  const m = ddlQueExecuta(sql);
   const fora: Remocao[] = [];
   for (const d of m.matchAll(/\bDROP\s+FUNCTION\s+(?:IF\s+EXISTS\s+)?/gi)) {
     let i = (d.index ?? 0) + d[0].length;
@@ -231,6 +301,34 @@ export function remocoesDe(sql: string): Remocao[] {
     const alvo = lerAlvo(m, (a.index ?? 0) + a[0].length, a.index ?? 0);
     if (alvo?.remocao === undefined) continue;
     if (/^\s*(?:SET\s+SCHEMA|RENAME\s+TO)\b/i.test(m.slice(alvo.fim))) fora.push(alvo.remocao);
+  }
+  return fora;
+}
+
+/**
+ * Os nomes que a migration põe (de volta) em `public` SEM CREATE: `ALTER FUNCTION public.x(…) RENAME TO y` e
+ * `ALTER FUNCTION outro.y(…) SET SCHEMA public`. O modelo não reconstrói a identidade que entra — quem consome
+ * trata o nome como "pode ter voltado" (adversarial do Codex, 2026-10-05: na ida e volta por RENAME/SET SCHEMA,
+ * a saída aposentava e a volta não era vista — a aposentada ficava para sempre).
+ */
+function entradasEmPublicDe(sql: string): { nome: string; posicao: number }[] {
+  const m = ddlQueExecuta(sql);
+  const fora: { nome: string; posicao: number }[] = [];
+  for (const a of m.matchAll(/\bALTER\s+FUNCTION\s+/gi)) {
+    const ini = (a.index ?? 0) + a[0].length;
+    const item = NOME_QUALIFICADO.exec(m.slice(ini));
+    if (item === null) continue;
+    let fim = ini + item[0].length;
+    if (m[fim] === '(') fim += argumentosEntreParenteses(m, fim).length + 2;
+    const deOnde = (item[1] ?? 'public').toLowerCase();
+    // Destino CITADO é o nome exato (`RENAME TO "G"` cria `G`, que não é `g`); sem aspas, o PG o põe em minúsculas.
+    const renomeia = /^\s*RENAME\s+TO\s+(?:"([^"]+)"|([A-Za-z_][\w$]*))/i.exec(m.slice(fim));
+    const destino = renomeia === null ? null : (renomeia[1] ?? renomeia[2].toLowerCase());
+    if (destino !== null && deOnde === 'public') fora.push({ nome: destino, posicao: a.index ?? 0 });
+    const muda = /^\s*SET\s+SCHEMA\s+"?([A-Za-z_][\w$]*)"?/i.exec(m.slice(fim));
+    if (muda !== null && muda[1].toLowerCase() === 'public' && deOnde !== 'public') {
+      fora.push({ nome: item[2].toLowerCase(), posicao: a.index ?? 0 });
+    }
   }
   return fora;
 }
@@ -280,6 +378,11 @@ interface EstadoDeIdentidade {
   versoes: VersaoDeIdentidade[];
   /** A migration que a tirou de `public` DEPOIS do último CREATE; ausente = viva. */
   aposentadaPor?: string;
+  /**
+   * Aposentada, mas o NOME voltou a `public` depois, sem CREATE (RENAME TO / SET SCHEMA public) — o modelo não
+   * reconstrói a identidade que entrou, então "aposentada" deixa de ser afirmação. Um CREATE ou um novo DROP fecha.
+   */
+  retornoPossivel?: string;
   /** Migrations de patch por âncora que a CITAM depois do último CREATE — exigem conciliação. */
   patchesDepois: string[];
 }
@@ -367,6 +470,7 @@ export function* modelarRepoPassos(migrations: readonly MigrationLida[]): Passos
               : { migration, posicao: d.posicao, corpo: d.corpo, md5Exato: d.md5Exato },
           );
           e.aposentadaPor = undefined;
+          e.retornoPossivel = undefined;
           e.patchesDepois = [];
           identidades.set(k, e);
         },
@@ -385,10 +489,22 @@ export function* modelarRepoPassos(migrations: readonly MigrationLida[]): Passos
             return;
           }
           for (const e of identidades.values()) {
-            if (e.nome !== r.nome || e.aposentadaPor !== undefined) continue;
+            // A que "pode ter voltado" também é alvo: um DROP depois da volta a aposenta de novo, com certeza.
+            if (e.nome !== r.nome || (e.aposentadaPor !== undefined && e.retornoPossivel === undefined)) continue;
             // Sem lista ⇒ todas as do nome: o PG exige nome único nesse caso.
-            if (r.identidade === undefined || r.identidade === e.identidade) e.aposentadaPor = migration;
+            if (r.identidade === undefined || r.identidade === e.identidade) {
+              e.aposentadaPor = migration;
+              e.retornoPossivel = undefined;
+            }
           }
+        },
+      });
+    }
+    for (const r of entradasEmPublicDe(semCorpos)) {
+      eventos.push({
+        posicao: r.posicao,
+        aplicar: () => {
+          for (const e of identidades.values()) if (e.nome === r.nome && e.aposentadaPor !== undefined) e.retornoPossivel = migration;
         },
       });
     }
@@ -421,6 +537,64 @@ export function* modelarRepoPassos(migrations: readonly MigrationLida[]): Passos
     perdidas,
     ilegiveis: [...ilegiveis].sort((a, b) => a.localeCompare(b, 'en')),
   };
+}
+
+/**
+ * A vigência de cada NOME `public` ao fim das migrations — o `modelarRepo` reduzido à granularidade da sonda
+ * do gate do pacote, que mede `pg_proc.proname`. É o que deixa o gate separar a irmã AUSENTE que a migration
+ * não criou (bloqueia) da que uma posterior aposentou (não conta); chega a ele pelo `CorposEsperados`, porque
+ * `precondicao-banco.ts` não pode importar este arquivo (ciclo).
+ *
+ * Fail-closed por nome — o que o modelo não sustenta vira INDETERMINADA, nunca palpite:
+ *   · basta UMA identidade viva para o nome estar VIGENTE (a sonda mede o nome, não a assinatura);
+ *   · assinatura ilegível, no CREATE ou no DROP ⇒ INDETERMINADA: a lista que não se resolve pode ter
+ *     aposentado OU poupado a identidade viva;
+ *   · CREATE que o extrator perdeu (`perdidas`) só derruba a APOSENTADA — um CREATE a mais só acrescenta
+ *     vigência, mas pode ter trazido a aposentada de volta; nome que só o controle solto viu ⇒ INDETERMINADA;
+ *   · a aposentada cujo NOME voltou a `public` por RENAME/SET SCHEMA (`retornoPossivel`) ⇒ INDETERMINADA.
+ *
+ * O limite é o do sensor, declarado: DROP por DDL dinâmica (`EXECUTE format(…)`) não tem alvo legível, e a
+ * função segue VIGENTE no modelo — a ausência dela vira bloqueio, nunca "explicada" por palpite. E o DROP
+ * estático no corpo de um `DO` conta mesmo sob um `IF` que não rode: o modelo não avalia condição de PL/pgSQL.
+ */
+export function vigenciaPorNome(modelo: ModeloDoRepo): Map<string, VigenciaNoRepo> {
+  const ordenadas = (xs: Iterable<string>) => [...new Set(xs)].sort((a, b) => a.localeCompare(b, 'en'));
+  const perdidas = new Map<string, string[]>();
+  for (const p of modelo.perdidas) {
+    const i = p.indexOf('@');
+    const nome = p.slice(0, i);
+    perdidas.set(nome, [...(perdidas.get(nome) ?? []), p.slice(i + 1)]);
+  }
+  const porNome = new Map<string, EstadoDeIdentidade[]>();
+  for (const e of modelo.identidades.values()) porNome.set(e.nome, [...(porNome.get(e.nome) ?? []), e]);
+  const fora = new Map<string, VigenciaNoRepo>();
+  for (const nome of ordenadas([...modelo.nomes, ...perdidas.keys()])) {
+    const ids = porNome.get(nome) ?? [];
+    const vivas = ids.filter((e) => e.aposentadaPor === undefined);
+    const perdidasDoNome = perdidas.get(nome) ?? [];
+    if (modelo.ilegiveis.includes(nome)) {
+      fora.set(nome, {
+        estado: 'INDETERMINADA',
+        motivo: 'assinatura que não se resolve estaticamente (no CREATE ou no DROP) — o modelo não afirma se ela foi aposentada',
+      });
+    } else if (vivas.length > 0) {
+      fora.set(nome, { estado: 'VIGENTE', ultimosCreates: ordenadas(vivas.map((e) => e.versoes[e.versoes.length - 1].migration)) });
+    } else if (ids.length > 0 && perdidasDoNome.length === 0 && ids.every((e) => e.retornoPossivel === undefined)) {
+      fora.set(nome, { estado: 'APOSENTADA', por: ordenadas(ids.flatMap((e) => (e.aposentadaPor === undefined ? [] : [e.aposentadaPor]))) });
+    } else {
+      const retornos = ordenadas(ids.flatMap((e) => (e.retornoPossivel === undefined ? [] : [e.retornoPossivel])));
+      fora.set(nome, {
+        estado: 'INDETERMINADA',
+        motivo:
+          perdidasDoNome.length > 0
+            ? `CREATE que o extrator não reconheceu (${perdidasDoNome.join(', ')}) — a aposentada pode ter voltado por ele`
+            : retornos.length > 0
+              ? `o nome voltou a \`public\` por RENAME/SET SCHEMA (${retornos.join(', ')}) — o modelo não reconstrói a identidade que voltou`
+              : 'nenhuma identidade modelada para este nome',
+      });
+    }
+  }
+  return fora;
 }
 
 /** Marca de formato do detalhe; o parser recusa outra. */
