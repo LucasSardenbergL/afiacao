@@ -6,6 +6,8 @@ import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { EmptyState } from '@/components/EmptyState';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Button } from '@/components/ui/button';
+import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
+import { estadoDeRegistro, naoConsegui } from '@/lib/leitura/estado-de-leitura';
 import { useCustomerContacts } from '@/hooks/useCustomerContacts';
 import { useSalespeople } from '@/hooks/useCoverage';
 import { useFeatureFlag } from '@/hooks/useFeatureFlag';
@@ -33,7 +35,8 @@ export default function Customer360() {
   const { user, isMaster, isGestorComercial, isStaff } = useAuth();
   const [abrirVozTarefa, setAbrirVozTarefa] = useState(false);
 
-  const core = useCustomerCore(customerId);
+  const { data: customer, status: statusCore, fetchStatus: fetchCore, refetch: refetchCore } =
+    useCustomerCore(customerId);
   const address = useCustomerAddress(customerId);
   const metrics = useCustomerMetrics(customerId);
   const score = useCustomerScore(customerId, user?.id);
@@ -67,11 +70,46 @@ export default function Customer360() {
   const leitura12m = leituraDaQuery(faturamento12m);
   const leituraMetricas = leituraDaQuery(metrics);
 
-  if (core.isLoading || (core.isFetching && !core.data)) {
+  // `.maybeSingle()`: "não existe" é `null` em SUCESSO; erro e offline deixam `undefined`. Sem `error`
+  // de propósito — aqui o PGRST116 seria MAIS de uma linha (zero é `null`), e "inexistente" mentiria.
+  const estadoCore = estadoDeRegistro({ status: statusCore, fetchStatus: fetchCore }, customer != null);
+
+  if (estadoCore === 'carregando') {
     return <PageSkeleton variant="detail" />;
   }
 
-  if (!core.data) {
+  // Sem o cliente em mãos, "não consegui ler" NÃO é "não existe": o `if (!core.data)` de antes fundia
+  // os dois — e sem rede (`pending`+`paused`, `isLoading` FALSE) nem passava pelo esqueleto. Com o
+  // cliente no cache, o refetch que falha não derruba a página.
+  if (naoConsegui(estadoCore) && !customer) {
+    return (
+      <div className="mx-auto max-w-xl space-y-3 py-8">
+        <AvisoLeituraFalhou
+          oque="os dados deste cliente"
+          estado={estadoCore}
+          variante="bloco"
+          testId="aviso-c360-cliente"
+        />
+        {estadoCore === 'sem-rede' && (
+          <p className="text-2xs text-muted-foreground">A página abre sozinha quando a conexão voltar.</p>
+        )}
+        <div className="flex flex-wrap gap-2">
+          {/* sem rede, tentar de novo só pausaria de novo — o react-query retoma sozinho com a rede */}
+          {estadoCore === 'erro' && (
+            <Button size="sm" variant="outline" onClick={() => refetchCore()}>
+              Tentar de novo
+            </Button>
+          )}
+          <Button size="sm" variant="ghost" onClick={() => navigate('/admin/customers')}>
+            Voltar para Clientes
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  // Daqui em diante a leitura RESPONDEU (ou nem foi feita: sem id na URL) — `null` é "não existe".
+  if (!customer) {
     return (
       <EmptyState
         icon={AlertCircle}
@@ -84,7 +122,6 @@ export default function Customer360() {
     );
   }
 
-  const customer = core.data;
   const s = score.data;
   const isPj = (customer.document ?? '').replace(/\D/g, '').length === 14;
   const podeCriarTarefaPorVoz = isMaster || isGestorComercial;
