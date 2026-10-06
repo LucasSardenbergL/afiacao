@@ -1,0 +1,124 @@
+# O sensor media "mudou", e a pergunta era "virou NULL"
+
+**2026-10-06** · apply `db/2026-10-06-desconto-corrigido-para-null.sql` · edge `sync-reprocess` v1.16
+
+## O que me pediram, e por que a premissa já não valia
+
+O briefing dizia: os contadores `v_desc_apur`/`v_desc_corr` existem no corpo da
+`reconciliar_pedidos_omie` e **não chegam** ao `metadata` do `sync_reprocess_log`. A justificativa
+era boa e específica: em 2026-09-20 reportei ao founder uma regressão que não existia (o reprocesso
+nulificando `desconto_valor` na oben); eram só a janela transitória entre a reescrita dos itens e a
+reconciliação. Dois dias de investigação, e a hipótese só caiu 15 dias depois, pelo `updated_at`.
+
+**O pré-flight derrubou a premissa.** As duas chaves já chegavam ao `metadata`, em produção, desde
+**2026-09-20 23:15** — isto é, desde o próprio dia do falso alarme:
+
+| Camada | Evidência |
+| --- | --- |
+| Função em prod | `pg_get_functiondef`: `'desconto_apurado', v_desc_apur, 'desconto_corrigido', v_desc_corr` no `jsonb_build_object` de retorno |
+| Apply commitado | `db/aplicar-reconciliar-desconto-e-coerencia.sql`, com pós-condição exigindo as duas chaves |
+| Edge (escritor ÚNICO) | `metadataPedidos` em `apuracao-pedidos.ts` — não era jsonb multi-writer |
+| Edge servida | `pendencias:deploy` → `v1.15-zero-confirmado`, atestada |
+| Dado real | 195 runs com a chave; 1ª **com** 20/09 23:15, última **sem** 20/09 21:15 |
+| Sinal com denominador | 30d: `apurado=87`, `corrigido=6`, `itens_lidos` 351–413 por run |
+
+E o estado do acervo matou a hipótese de vez: 1.106 linhas na janela, **2** com `desconto_valor`
+NULL. O comentário da própria função registra 1.024 NULL em 2026-09-14 — convergiu, não corroeu.
+
+> **A lição de processo:** "procure o ARTEFATO antes de implementar" não é só sobre colisão de
+> arquivo. Aqui não havia PR concorrente nem arquivo disputado — a entrega simplesmente já existia,
+> e o briefing (meu, de 15 dias antes) envelheceu sem avisar. O que pegou isso foi o pré-flight
+> obrigatório na PROD, não a leitura do repo.
+
+## O defeito que sobrou — e que era a pergunta o tempo todo
+
+`desc_corrigido` é verdadeiro em **dois eventos distintos**:
+
+```sql
+(d.traz_desconto AND a.desconto_valor IS NOT NULL
+ AND (d.desconto_valor IS NULL                               -- ← nulificação
+      OR abs(a.desconto_valor - d.desconto_valor) >= 1e-6))  -- ← troca de valor
+```
+
+A declaração sempre avisou — "inclusive para NULL". Então `desconto_corrigido = 6` **não diz se
+alguma das 6 foi nulificação**. O sensor respondia "mudou?", e a pergunta que custou os dois dias
+era "virou NULL?". Levar os contadores ao log, sozinho, nunca teria resolvido o caso que motivou
+levá-los.
+
+## SUBCONJUNTO, não partição
+
+`desconto_corrigido` fica **idêntico** (os dois ramos) e nasce `desconto_corrigido_para_null` com só
+o ramo do NULL. Reparticionar seria mais limpo semanticamente e **errado na prática**: as 195 runs
+já logadas dizem "ambos", e as novas diriam "só troca" — série histórica que muda de significado sem
+mudar de nome. O NOME carrega a contenção: `corrigido_para_null` ⊆ `corrigido`, e quem somar as duas
+conta a nulificação duas vezes.
+
+A contenção é **estrutural**, não asserida: o predicado novo é o primeiro disjunto do antigo, com o
+mesmo `traz_desconto`. Tirar o `traz_desconto` quebraria a contenção — e a falsificação FJ2 prova
+isso ficando `para_null=1` com `corrigido=0`.
+
+## A fronteira que o contador NÃO conta, de propósito
+
+Payload **sem** a chave (edge anterior) também grava NULL por cima de um valor conhecido — é a
+invalidação legada, `traz_desconto = false`. Ela **não** entra no contador. Duas razões, nessa
+ordem: (1) incluí-la quebraria a contenção, porque `desconto_corrigido` também exige
+`traz_desconto`; (2) toda run da edge velha pareceria nulificação em massa — exatamente o falso
+alarme que esta entrega existe para evitar. O contador mede nulificação **com a chave na mão**. A
+fronteira está testada (J4), não é acidente.
+
+## As quatro combinações (RPC × edge), e a única perigosa
+
+| RPC | Edge | Resultado |
+| --- | --- | --- |
+| nova | nova | número correto |
+| nova | velha | chave ignorada → **ausente** no metadata |
+| **velha** | **nova** | chave não vem → **tem de virar `null`**; gravar 0 afirmaria "zero nulificações" sobre o que ninguém mediu |
+| velha | velha | ausente |
+
+Só a terceira produz número **errado** em vez de ausente — daí o `null` grudento, o mesmo contrato
+das duas chaves irmãs. E ela é **legível no próprio log**: `desconto_corrigido` presente com
+`desconto_corrigido_para_null` ausente é a assinatura de "RPC velha com edge nova".
+
+Por isso a ORDEM desta entrega foi SQL primeiro: RPC nova + edge velha é a combinação inócua.
+
+## Prova
+
+`db/test-desconto-valor-escritores.sh` (PG17, **executando** — plpgsql é late-bound): **123 ok / 0
+fail**. O par que importa:
+
+- **J1** nulificação → `corrections/corrigido/para_null/apurado` = `1/1/1/0`
+- **J2** troca de valor → `1/1/0/0`
+
+Antes desta entrega os dois davam o mesmo número. J4 fixa a fronteira (`NULO|1/0/0/0`), J5 prova
+idempotência, e a pós-condição (b) do apply **executa** a função com payload vazio — `CREATE` passar
+não prova nada em plpgsql.
+
+Falsificação com **controle verde na mesma invocação** (J1/J2/J4 acima, com o apply verdadeiro):
+
+- **FJ1** inverte o predicado → J2 vira `1/1/1/0` (troca de valor contaria como nulificação)
+- **FJ2** remove `traz_desconto` → J4 vira `1/0/1/0` (a contenção quebra)
+
+## Caminho B — o Codex não foi consultado
+
+`scripts/codex-async.sh` saiu **79** no preflight: cota em **92,0%** (teto 85%), janela de 7 dias
+reabrindo em 09/10 19:30. Não gastou a chamada. Cota alta não é gatilho de pular, é gatilho de
+**DRAFT** — e foi assim que o PR nasceu. As decisões que teriam ido ao challenge (subconjunto vs.
+partição; `traz_desconto` dentro do predicado; as quatro combinações) estão argumentadas acima e
+cobertas por falsificação, que é o substituto disponível, não um equivalente.
+
+## Resíduo
+
+A pergunta "o reprocesso está nulificando?" virou **query**:
+
+```sql
+SELECT created_at, account,
+       metadata->>'desconto_corrigido'           AS corrigido,
+       metadata->>'desconto_corrigido_para_null' AS virou_null
+  FROM public.sync_reprocess_log
+ WHERE entity_type = 'orders'
+ ORDER BY created_at DESC LIMIT 20;
+```
+
+`virou_null` ausente = a RPC no ar ainda não separa (ou a edge é anterior à v1.16). `virou_null` 0
+com `corrigido` > 0 = houve correção e **nenhuma** foi perda do dado — que é a resposta que levou
+dois dias para ser dada à mão.
