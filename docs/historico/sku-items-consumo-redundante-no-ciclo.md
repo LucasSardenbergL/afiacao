@@ -226,3 +226,4 @@ Esperado: nenhum `error` "consultas Omie tentadas, 0 OK"; runs nos minutos :00 e
 - **Estado em 2026-09-25 às 22:52 UTC:** zero `error` desde o deploy da parte A; 6 marcações no controle depois do deploy, nenhuma com "limite pede"; `n7d = 46`.
 - A janela de 48h do critério original fica limpa em 2026-09-26 às 04:16 UTC, porque os 3 últimos `error` são anteriores ao deploy.
 - Depois do PR B, o critério "nos ciclos :15" deixa de ter objeto: o sku-items não roda mais no :15.
+- **Revalidação de 72h: ✅ 2026-10-05.** Janela 26/09 00:15 → 29/09 00:15 UTC, por psql-ro: 39 de 39 runs `complete`, só no :35 e às 07:00; 0 `error`; `fila_parada_max` = 0; 0 "limite pede"; `n7d` = 38. O jobid 186 segue ativo e `succeeded`.

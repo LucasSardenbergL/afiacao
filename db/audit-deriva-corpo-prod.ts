@@ -63,6 +63,7 @@ import {
   relatarDeriva,
   saidaDerivaComoPsql,
   textosDaLeitura,
+  vigenciaPorNome,
 } from '../scripts/lib/deriva-corpo';
 import { migrationsDaRef } from '../scripts/lib/migrations-da-ref';
 import { alvosDeCorpo, julgarPrecondicao } from '../scripts/lib/precondicao-banco';
@@ -189,6 +190,8 @@ function medir(argv: readonly string[], deps: Dependencias, saida: string[], err
       inventarioDaRef: lidas.length,
       migrationsLidas: lidas.length,
       funcoesConhecidas: historico.size,
+      // O MESMO modelo que o `julgarDeriva` usa: a irmã aposentada não vira incerteza dos controles.
+      vigencia: vigenciaPorNome(modelo),
     },
     textosDaLeitura(leitura),
   );
