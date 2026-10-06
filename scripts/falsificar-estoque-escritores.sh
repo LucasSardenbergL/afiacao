@@ -53,9 +53,9 @@ sabotar S5 src/lib/gates/estoque-escritores.ts 's/inventory_position/inventory_p
 sabotar S6 src/lib/gates/estoque-escritores.ts 's/removerComentarios\(fonte\)/fonte/' 'const limpa = fonte;' "escrita COMENTADA não conta"
 # G5 — o `|| 0` do campo DEPRECATED volta ao syncProducts do analytics: arquivo REGISTRADO (G1 não
 # vê) e sem zero literal (G4 não vê) — só o G5 pega.
-sabotar S7 supabase/functions/omie-analytics-sync/index.ts 's/(valor_unitario: p\.valor_unitario \|\| 0,)/$1\n          estoque: p.quantidade_estoque || 0,/' 'estoque: p\.quantidade_estoque' "G5: fonte de edge lê o quantidade_estoque" "supabase/functions/omie-analytics-sync/index.ts"
+sabotar S7 supabase/functions/omie-analytics-sync/index.ts 's/valor_unitario: p\.valor_unitario \|\| 0,\K/\n          estoque: p.quantidade_estoque || 0,/' 'estoque: p\.quantidade_estoque' "G5: fonte de edge lê o quantidade_estoque" "supabase/functions/omie-analytics-sync/index.ts"
 # G1 — a volta do `|| 0` no catálogo diário (fora do registro desde o PR-2).
-sabotar S8 supabase/functions/omie-sync-metadados/index.ts 's/(valor_unitario: p\.valor_unitario \|\| 0,)/$1\n        estoque: p.quantidade_estoque || 0,/' 'estoque: p\.quantidade_estoque' "G1: escritor de estoque fora do registro" "supabase/functions/omie-sync-metadados/index.ts"
+sabotar S8 supabase/functions/omie-sync-metadados/index.ts 's/valor_unitario: p\.valor_unitario \|\| 0,\K/\n        estoque: p.quantidade_estoque || 0,/' 'estoque: p\.quantidade_estoque' "G1: escritor de estoque fora do registro" "supabase/functions/omie-sync-metadados/index.ts"
 controle depois
 echo "LOCALE=$LOC falhas=$falhas"
 rm -rf "$OUT" "$BK"
