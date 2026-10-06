@@ -6,26 +6,21 @@
 // src/lib/reposicao/sayerlack-scraping-pedido.ts (Deno não importa de src/). O vitest
 // src/lib/reposicao/__tests__/sayerlack-scraping-pedido.test.ts compara os dois blocos byte a byte.
 //
-// Semântica provada em prod (2026-09-05, pedido #2443 ↔ portal 2126906; docs/historico/sayerlack-captura-custo-cega.md):
-//   POST /order-creation/form/add → data.itens[{item, value}] + data.value.
-//   `value` do ITEM = Preço UN de TABELA por embalagem (antes do desconto por embalagem e da taxa −2%).
-//   `data.value`   = total do pedido cobrado pelo portal.
-//   `Preço Venda` da datatable = TOTAL DA LINHA já multiplicado pela Qtd UN, NÃO preço por embalagem
-//     (medido no pedido #2459 / portal 2126911: 142,2554 × 3 × (1 − 14,9488%) = 362,9698 = Preço Venda).
+// Semântica provada em prod:
+//   POST /order-creation/form/add → data.itens[{item, value}] + data.value (2026-09-05, #2443 ↔ portal 2126906).
+//   `value` do ITEM = Preço UN de TABELA por embalagem (antes do desconto por embalagem e da taxa −2%) — nunca custo.
+//   `data.value`   = total COBRADO pelo portal: Σ round2(Preço Venda) + Σ IPI por item (2026-10-05, backtest de 29
+//                    pedidos, ≤ R$ 0,02 com 13 alíquotas por NCM — a "divergência aberta" do #2459 era o IPI:
+//                    362,97 × 3,25% = 11,80 → 374,77).
+//   `Preço Venda` da datatable = TOTAL DA LINHA, sem IPI (#2459: 142,2554 × 3 × (1 − 14,9488%) = 362,9698).
 //
-// Cadeia de prova (Codex, challenge 2026-09-05 — precisão > recall, nada parcial):
+// Cadeia de prova (Codex 2026-09-05 + spec docs/superpowers/specs/2026-10-05-preco-exato-po-sayerlack-design.md):
 //   pedido local ↔ JSON ↔ DOM são o MESMO conjunto de SKUs (sem extra, ausência ou duplicata);
-//   Qtd UN lida no DOM == quantidade que a edge DIGITOU no portal (prova da quantidade aceita);
+//   Qtd UN lida no DOM == quantidade que a edge DIGITOU (prova da quantidade aceita);
 //   Preço UN lido no DOM == `value` do JSON do mesmo SKU (prova de que a coluna é a que se pensa);
-//   1 item  ⇒ total_linha = data.value ('json_total_unico');
-//   N itens ⇒ Σ(Preço Venda) == data.value com tolerância ABSOLUTA derivada do arredondamento exibido
-//             ('dom_checksum'). Qualquer elo faltando ⇒ total_linha = null em TODAS (ausente ≠ zero).
-//
-// ⚠️ DIVERGÊNCIA ABERTA (medida 2026-09-05, #2459): o portal cobrou `data.value` 374,77 enquanto a linha
-//   exibia Preço Venda 362,9698 — R$ 11,80 a mais (3,2510%), de natureza NÃO identificada (IPI? encargo?
-//   desconto aplicado ≠ exibido?). Enquanto ela existir, `dom_checksum` NÃO fecha e a captura multi-item
-//   degrada para 'checksum_divergente' — fail-closed, de propósito. O resumo carrega `soma_dom`,
-//   `total_json`, `delta_abs` e `delta_rel` justamente para MEDIR o padrão nos próximos envios.
+//   todo item tem alíquota de IPI conhecida (NCM do cadastro × ipi_aliquota_ncm; ausente ≠ zero);
+//   1 e N itens ⇒ Σ round2(Preço Venda) + Σ IPI == data.value dentro da tolerância do arredondamento.
+//   Qualquer elo faltando ⇒ total_linha = valor_ipi = null em TODAS (ausente ≠ zero).
 
 // >>> ESPELHO(captura-custo) INICIO
 export function parseBRL(s: string): number | null {
@@ -45,16 +40,20 @@ export function parseDiasPrzEnt(s: string): number | null {
   return Number.isInteger(n) ? n : null;
 }
 
-/** Linha consolidada. `total_linha` só é número quando a cadeia de prova fechou; null é TERMINAL (nunca cai em parser de texto). */
-export interface LinhaPortal { sku_portal: string; prz_ent_raw: string; total_linha: number | null; }
+/**
+ * Linha consolidada. `total_linha` = valor da MERCADORIA (Preço Venda do DOM, sem IPI) e `valor_ipi` = IPI do item,
+ * os dois só quando a cadeia de prova fechou; null é TERMINAL (nunca cai em parser de texto).
+ */
+export interface LinhaPortal { sku_portal: string; prz_ent_raw: string; total_linha: number | null; valor_ipi: number | null; }
 export interface ItemPedido {
   item_id: number; sku_codigo_omie: string; sku_descricao: string | null;
-  sku_portal: string | null; qtde_final: number; preco_atual: number;
+  sku_portal: string | null; qtde_final: number;
 }
-interface Casado { item: ItemPedido; prz_ent: number | null; total_linha: number | null; }
+interface Casado { item: ItemPedido; prz_ent: number | null; total_linha: number | null; valor_ipi: number | null; }
 export interface ResultadoMatch { casados: Casado[]; naoCasados: ItemPedido[]; ambiguos: ItemPedido[]; }
 
 function normPortal(s: string | null): string { return (s ?? '').trim().toUpperCase(); }
+function finitoOuNull(v: unknown): number | null { return typeof v === 'number' && Number.isFinite(v) ? v : null; }
 
 export function casarLinhasComItens(linhas: LinhaPortal[], itens: ItemPedido[]): ResultadoMatch {
   const casados: Casado[] = [];
@@ -79,32 +78,27 @@ export function casarLinhasComItens(linhas: LinhaPortal[], itens: ItemPedido[]):
     const lns = linhasPorSku.get(k) ?? [];
     if (its.length > 1 || lns.length > 1) { ambiguos.push(...its); continue; }
     if (lns.length === 0) { naoCasados.push(its[0]); continue; }
-    const t = lns[0].total_linha;
-    casados.push({ item: its[0], prz_ent: parseDiasPrzEnt(lns[0].prz_ent_raw), total_linha: typeof t === 'number' && Number.isFinite(t) ? t : null });
+    casados.push({ item: its[0], prz_ent: parseDiasPrzEnt(lns[0].prz_ent_raw), total_linha: finitoOuNull(lns[0].total_linha), valor_ipi: finitoOuNull(lns[0].valor_ipi) });
   }
   return { casados, naoCasados, ambiguos };
 }
 
-export interface CustoUpdate { item_id: number; preco_unitario: number; valor_linha: number; }
-/** @public — exportado pelo espelho (o teste do gêmeo em src o consome; a edge só o usa internamente). */
+/** O que vai à RPC por item: a mercadoria e o IPI PROVADOS + o eco da qtde_final. Os preços (÷ qtde) a RPC deriva. */
+export interface CustoUpdate { item_id: number; qtde_final: number; valor_mercadoria: number; valor_ipi: number; }
+/** @public — exportado pelo espelho (os testes o consomem). */
 export function round2(n: number): number { return Math.round((n + Number.EPSILON) * 100) / 100; }
 
 export function derivarCustos(res: ResultadoMatch): { updates: CustoUpdate[]; pulados: { sku_codigo_omie: string; motivo: string }[] } {
   const updates: CustoUpdate[] = [];
   const pulados: { sku_codigo_omie: string; motivo: string }[] = [];
   for (const c of res.casados) {
-    const total = c.total_linha; const qtde = c.item.qtde_final;
-    if (total == null || !Number.isFinite(total) || !(total > 0)) { pulados.push({ sku_codigo_omie: c.item.sku_codigo_omie, motivo: 'total_invalido' }); continue; }
+    const merc = c.total_linha; const ipi = c.valor_ipi; const qtde = c.item.qtde_final;
+    if (merc == null || !Number.isFinite(merc) || !(merc > 0)) { pulados.push({ sku_codigo_omie: c.item.sku_codigo_omie, motivo: 'total_invalido' }); continue; }
+    if (ipi == null || !Number.isFinite(ipi) || ipi < 0) { pulados.push({ sku_codigo_omie: c.item.sku_codigo_omie, motivo: 'ipi_invalido' }); continue; }
     if (!Number.isFinite(qtde) || !(qtde > 0)) { pulados.push({ sku_codigo_omie: c.item.sku_codigo_omie, motivo: 'qtde_invalida' }); continue; }
-    const unit = total / qtde;
-    if (!Number.isFinite(unit) || !(unit > 0)) { pulados.push({ sku_codigo_omie: c.item.sku_codigo_omie, motivo: 'custo_invalido' }); continue; }
-    // Pular por `round2(...) === round2(...)` comparava a CENTAVOS o que o checksum valida em precisão
-    // CHEIA: dois itens pulados podiam carregar ~meio centavo cada, o conjunto PERSISTIDO divergia do
-    // DOM acima da tolerância, e o checksum passava assim mesmo — ele valida o DOM, não o que fica
-    // gravado (Codex 2026-09-06). Só é 'sem_mudanca' o que é igual de verdade; 1e-9 absorve o ruído
-    // binário de `qtde * preco`, quatro ordens de grandeza abaixo do centavo que interessa.
-    if (Math.abs(total - qtde * c.item.preco_atual) < 1e-9) { pulados.push({ sku_codigo_omie: c.item.sku_codigo_omie, motivo: 'sem_mudanca' }); continue; }
-    updates.push({ item_id: c.item.item_id, preco_unitario: unit, valor_linha: total }); // precisão cheia
+    // Todo item vai, sempre: a decomposição precisa nascer em cada um (o pulo 'sem_mudanca' saiu em 2026-10-05).
+    // A RPC deriva os preços em numeric sobre a qtde_final da LINHA — e recusa se este eco divergir dela.
+    updates.push({ item_id: c.item.item_id, qtde_final: qtde, valor_mercadoria: merc, valor_ipi: ipi });
   }
   return { updates, pulados };
 }
@@ -116,10 +110,14 @@ export interface LinhaDom {
   sku_portal: string; prz_ent_raw: string;
   qtd_un_raw?: string; preco_venda_raw?: string; preco_un_raw?: string; desconto_raw?: string;
 }
-/** JSON do portal ao efetivar: `value` do item é preço de TABELA por embalagem; `value` do pedido é o total líquido. */
+/** JSON do portal ao efetivar: `value` do item é preço de TABELA por embalagem; `value` do pedido é o total cobrado. */
 export interface AddJsonPortal { itens: { item: string; value: number }[]; value: number | null; ordernum?: number | null; }
-/** O que a edge DIGITOU no portal para cada item (sku + quantidade em unidade do PORTAL, já com fator_conversao). */
-export interface ItemEsperado { sku_portal: string; qtde_portal: number; }
+/**
+ * O que a edge DIGITOU no portal para cada item (sku + quantidade em unidade do PORTAL, já com fator_conversao) e o
+ * IPI do NCM do item, lido de `sayerlack_ipi_itens` (a mesma função com que a RPC confere). `aliquota_ipi_pct` null =
+ * NCM ausente ou fora de `ipi_aliquota_ncm` — ausente ≠ zero, nunca vira 0%.
+ */
+export interface ItemEsperado { sku_portal: string; qtde_portal: number; ncm: string | null; aliquota_ipi_pct: number | null; }
 
 /**
  * Extrai {itens, value, ordernum} do JSON parseado da resposta do form/add. AUTOCONTIDA (vai pro browser
@@ -154,38 +152,71 @@ export function extrairAddJson(parsed: unknown): AddJsonPortal | null {
   return { itens, value, ordernum };
 }
 
-type FonteCaptura = 'json_total_unico' | 'dom_checksum' | 'nenhuma';
+type FonteCaptura = 'dom_checksum' | 'nenhuma';
 type MotivoCaptura =
   | 'sem_json' | 'total_json_invalido' | 'sku_ambiguo' | 'json_diverge_do_pedido'
-  | 'dom_incompleto' | 'qtd_diverge' | 'preco_un_diverge' | 'checksum_divergente';
+  | 'dom_incompleto' | 'qtd_diverge' | 'preco_un_diverge'
+  | 'ipi_leitura_falhou' | 'ipi_ncm_desconhecido' | 'checksum_divergente';
 export interface Consolidacao {
   linhas: LinhaPortal[];
   fonte: FonteCaptura;
   motivo: MotivoCaptura | null;
-  /** Total líquido do pedido PROVADO (= data.value) — só quando fonte ≠ 'nenhuma'. */
+  /** Total cobrado pelo portal PROVADO (= data.value) — só quando fonte ≠ 'nenhuma'. */
   total_pedido: number | null;
-  checksum: { soma_dom: number | null; total_json: number | null; delta_abs: number | null; delta_rel: number | null; tolerancia_abs: number | null };
+  /** NCMs dos itens sem alíquota (motivo 'ipi_ncm_desconhecido'): o que falta cadastrar em `ipi_aliquota_ncm`. */
+  ncm_sem_aliquota: string[];
+  checksum: {
+    soma_dom: number | null; ipi_modelado: number | null; total_modelado: number | null;
+    total_json: number | null; delta_abs: number | null; delta_rel: number | null; tolerancia_abs: number | null;
+  };
 }
 
 /**
- * Preço Venda é exibido com 4 casas e `data.value` com 2: ±0,005 do total mais ±0,00005 por linha.
- * Depende do NÚMERO DE LINHAS, não das quantidades — Preço Venda já é o total da linha, então a
- * quantidade não entra outra vez na conta (era o erro corrigido em 2026-09-05).
+ * Centavos INTEIROS de um valor exibido com até 4 casas (o Preço Venda do portal), meio centavo para cima — o mesmo
+ * que `round(numeric, 2)` do Postgres para valor positivo. null = não é valor de mercadoria (≤ 0, NaN, Infinity).
+ */
+export function centavosDaMercadoria(v: number): number | null {
+  if (typeof v !== 'number' || !Number.isFinite(v) || !(v > 0)) return null;
+  const dezMilesimos = Math.round(v * 10000); // o DOM exibe 4 casas: v·10⁴ é inteiro a menos de ruído binário
+  return Number.isSafeInteger(dezMilesimos) ? Math.floor((dezMilesimos + 50) / 100) : null;
+}
+/** Alíquota (%) em centésimos de ponto (3,25 → 325). null fora de [0, 100) ou com mais de 2 casas (a tabela proíbe). */
+export function centesimosDaAliquota(pct: number | null): number | null {
+  if (typeof pct !== 'number' || !Number.isFinite(pct) || pct < 0 || pct >= 100) return null;
+  const c = Math.round(pct * 100);
+  return Math.abs(pct * 100 - c) < 1e-6 ? c : null;
+}
+/**
+ * IPI do item em centavos = round(linha × alíquota ÷ 100), meio centavo para cima, só em INTEIROS. Em ponto
+ * flutuante, `round2(round2(pv) × alíq)` erra 1 centavo na fronteira de meio centavo (R$ 65,00 × 6,5% = 4,225 dá 4,22;
+ * o Postgres dá 4,23 — 76 fronteiras entre R$ 0,01 e R$ 2.000 nas 3 alíquotas medidas), e a RPC, que recalcula em
+ * numeric e exige igualdade, recusaria o pedido.
+ */
+export function ipiCentavos(linhaCentavos: number, aliquotaCentesimos: number): number {
+  return Math.floor((linhaCentavos * aliquotaCentesimos + 5000) / 10000);
+}
+/**
+ * Tolerância da prova `Σ round2(PV) + Σ IPI` × `data.value`: meio centavo do total (2 casas) mais, POR LINHA, o
+ * arredondamento da linha a centavos (0,005), o do IPI do item (0,005) e o da exibição do Preço Venda em 4 casas
+ * (0,00005 × (1 + alíquota), com folga até 100%). Depende do NÚMERO DE LINHAS, não das quantidades (Preço Venda já é
+ * o total da linha). Medido no backtest de 29 pedidos (2026-10-05): pior delta R$ 0,02, com até 18 linhas.
  */
 export function toleranciaChecksum(nLinhas: number): number {
-  return 0.005 + nLinhas * 0.00005;
+  return 0.005 + nLinhas * 0.0101;
 }
 /** Preço UN do DOM (4 casas) vs `value` do JSON (até 4 casas). */
 const TOL_PRECO_UN = 0.0001;
 
 /**
- * Consolida DOM + JSON + o que a edge digitou numa lista de LinhaPortal com `total_linha` só quando PROVADO.
- * Precisão > recall: qualquer elo faltando ⇒ 'nenhuma' + motivo, linhas com total_linha = null (sku/prz seguem
+ * Consolida DOM + JSON + o que a edge digitou + o IPI de cada item numa lista de LinhaPortal com mercadoria e IPI só
+ * quando PROVADOS. Precisão > recall: qualquer elo faltando ⇒ 'nenhuma' + motivo, linhas sem custo (sku/prz seguem
  * úteis ao diagnóstico), e NENHUM item recebe custo — nunca mistura custo novo com custo antigo no mesmo pedido.
  */
-export function consolidarLinhasPortal(dom: LinhaDom[], json: AddJsonPortal | null, esperados: ItemEsperado[]): Consolidacao {
-  const semChecksum: Consolidacao['checksum'] = { soma_dom: null, total_json: json?.value ?? null, delta_abs: null, delta_rel: null, tolerancia_abs: null };
-  const linhaSemCusto = (sku: string, prz: string): LinhaPortal => ({ sku_portal: sku, prz_ent_raw: prz, total_linha: null });
+export function consolidarLinhasPortal(dom: LinhaDom[], json: AddJsonPortal | null, esperados: ItemEsperado[], leituraIpi: 'ok' | 'falhou'): Consolidacao {
+  const semChecksum: Consolidacao['checksum'] = {
+    soma_dom: null, ipi_modelado: null, total_modelado: null, total_json: json?.value ?? null, delta_abs: null, delta_rel: null, tolerancia_abs: null,
+  };
+  const linhaSemCusto = (sku: string, prz: string): LinhaPortal => ({ sku_portal: sku, prz_ent_raw: prz, total_linha: null, valor_ipi: null });
   const domPorSku = new Map<string, LinhaDom[]>();
   for (const d of dom) {
     const k = normPortal(d.sku_portal);
@@ -201,12 +232,12 @@ export function consolidarLinhasPortal(dom: LinhaDom[], json: AddJsonPortal | nu
   };
 
   if (!json || json.itens.length === 0) {
-    return { linhas: dom.map((d) => linhaSemCusto(normPortal(d.sku_portal), d.prz_ent_raw ?? '')), fonte: 'nenhuma', motivo: 'sem_json', total_pedido: null, checksum: semChecksum };
+    return { linhas: dom.map((d) => linhaSemCusto(normPortal(d.sku_portal), d.prz_ent_raw ?? '')), fonte: 'nenhuma', motivo: 'sem_json', total_pedido: null, ncm_sem_aliquota: [], checksum: semChecksum };
   }
   const skusJson = json.itens.map((i) => normPortal(i.item));
   const linhasSemCusto = skusJson.map((s) => linhaSemCusto(s, przDe(s)));
-  const falha = (motivo: MotivoCaptura, checksum = semChecksum): Consolidacao =>
-    ({ linhas: linhasSemCusto, fonte: 'nenhuma', motivo, total_pedido: null, checksum });
+  const falha = (motivo: MotivoCaptura, checksum = semChecksum, ncmSemAliquota: string[] = []): Consolidacao =>
+    ({ linhas: linhasSemCusto, fonte: 'nenhuma', motivo, total_pedido: null, ncm_sem_aliquota: ncmSemAliquota, checksum });
 
   // (1) JSON é um CONJUNTO (sem duplicata) e igual ao conjunto do pedido local.
   if (new Set(skusJson).size !== skusJson.length) return falha('sku_ambiguo');
@@ -242,42 +273,35 @@ export function consolidarLinhasPortal(dom: LinhaDom[], json: AddJsonPortal | nu
     provadas.push({ sku, qtd, precoVenda: parseBRL(d.preco_venda_raw ?? '') });
   }
 
-  // (3) 1 item ⇒ o total líquido do pedido É o total da linha.
-  if (skusJson.length === 1) {
-    // O Preço Venda do DOM JÁ foi parseado acima e era jogado fora aqui — e era isso que tornava a
-    // divergência INVISÍVEL no pedido unitário: com `total_linha = json.value`, comparar depois da
-    // gravação dá delta zero POR CONSTRUÇÃO (Codex 2026-09-06). O #2459 é exatamente este caso —
-    // DOM 362,9698 contra JSON 374,77, R$ 11,80 (3,2510%) de origem ainda não identificada.
-    // Aqui o checksum MEDE, não decide: o pedido de 1 item continua aceito pelo `json.value` como
-    // sempre foi, e `tolerancia_abs: null` marca que não existe gate neste ramo.
-    const somaDom = provadas[0]?.precoVenda ?? null;
-    const deltaAbs = somaDom != null && json.value != null && Number.isFinite(somaDom) && Number.isFinite(json.value)
-      ? Math.abs(json.value - somaDom) : null;
-    return {
-      linhas: [{ sku_portal: skusJson[0], prz_ent_raw: przDe(skusJson[0]), total_linha: json.value }],
-      fonte: 'json_total_unico', motivo: null, total_pedido: json.value,
-      checksum: {
-        soma_dom: somaDom, total_json: json.value, delta_abs: deltaAbs,
-        delta_rel: deltaAbs != null && json.value ? deltaAbs / json.value : null,
-        tolerancia_abs: null,
-      },
-    };
+  // (3) IPI: a alíquota de cada item, do NCM do cadastro. Ausente ≠ zero — sem alíquota não existe custo provado.
+  if (leituraIpi !== 'ok') return falha('ipi_leitura_falhou');
+  const aliqPorSku = new Map<string, number | null>(esperados.map((e) => [normPortal(e.sku_portal), centesimosDaAliquota(e.aliquota_ipi_pct)]));
+  const semAliquota = esperados.filter((e) => aliqPorSku.get(normPortal(e.sku_portal)) == null);
+  if (semAliquota.length > 0) {
+    return falha('ipi_ncm_desconhecido', semChecksum, [...new Set(semAliquota.map((e) => e.ncm ?? '(sem NCM)'))].sort());
   }
 
-  // (4) N itens ⇒ Σ(Preço Venda) fecha com o total, tolerância ABSOLUTA derivada do arredondamento exibido.
-  // Preço Venda JÁ É o total da linha (Preço UN × Qtd UN × (1 − desconto)) — multiplicá-lo pela quantidade
-  // de novo inflava a soma e fazia todo pedido multi-item cair em 'checksum_divergente'.
-  if (provadas.some((p) => p.precoVenda == null || !(p.precoVenda > 0))) return falha('dom_incompleto');
-  const totais = provadas.map((p) => p.precoVenda as number);
-  if (totais.some((t) => !Number.isFinite(t))) return falha('dom_incompleto');
-  const soma = totais.reduce((s, v) => s + v, 0);
-  const tolerancia = toleranciaChecksum(provadas.length);
-  const delta = Math.abs(soma - json.value);
-  const checksum = { soma_dom: soma, total_json: json.value, delta_abs: delta, delta_rel: delta / json.value, tolerancia_abs: tolerancia };
-  if (delta > tolerancia) return falha('checksum_divergente', checksum);
+  // (4) Prova — para 1 e N itens: Σ round2(Preço Venda) + Σ IPI fecha com o total cobrado dentro da tolerância do
+  // arredondamento. Preço Venda JÁ É o total da linha (sem IPI); o IPI é o que o portal soma por cima.
+  const calc: { pv: number; linha: number; ipi: number }[] = [];
+  for (const p of provadas) {
+    const linha = p.precoVenda == null ? null : centavosDaMercadoria(p.precoVenda);
+    if (linha == null) return falha('dom_incompleto');
+    calc.push({ pv: p.precoVenda as number, linha, ipi: ipiCentavos(linha, aliqPorSku.get(p.sku) as number) });
+  }
+  const modelado = calc.reduce((s, l) => s + l.linha + l.ipi, 0);
+  const deltaAbs = Math.abs(modelado - Math.round(json.value * 100)) / 100;
+  const tolerancia = toleranciaChecksum(calc.length);
+  const checksum: Consolidacao['checksum'] = {
+    soma_dom: calc.reduce((s, l) => s + l.pv, 0),
+    ipi_modelado: calc.reduce((s, l) => s + l.ipi, 0) / 100,
+    total_modelado: modelado / 100,
+    total_json: json.value, delta_abs: deltaAbs, delta_rel: deltaAbs / json.value, tolerancia_abs: tolerancia,
+  };
+  if (deltaAbs > tolerancia) return falha('checksum_divergente', checksum);
   return {
-    linhas: skusJson.map((s, i) => ({ sku_portal: s, prz_ent_raw: przDe(s), total_linha: totais[i] })),
-    fonte: 'dom_checksum', motivo: null, total_pedido: json.value, checksum,
+    linhas: skusJson.map((s, i) => ({ sku_portal: s, prz_ent_raw: przDe(s), total_linha: calc[i].pv, valor_ipi: calc[i].ipi / 100 })),
+    fonte: 'dom_checksum', motivo: null, total_pedido: json.value, ncm_sem_aliquota: [], checksum,
   };
 }
 
@@ -285,18 +309,21 @@ export function consolidarLinhasPortal(dom: LinhaDom[], json: AddJsonPortal | nu
 
 // ---------------------------------------------------------------- RPC de escrita (tudo-ou-nada)
 /**
- * A escrita do custo é UMA RPC transacional (`sayerlack_aplicar_custo_portal`, migration
- * 20260905090000): compare-and-set no banco (`omie_pedido_compra_numero IS NULL AND status_envio_portal =
- * 'sucesso_portal'` no próprio UPDATE), todos os itens num UPDATE só com ROW_COUNT == n, valor_total provado.
- * Ela RECUSA com SQLSTATE própria (classe CP) e faz ROLLBACK de tudo — a edge casa a MARCA do ramo, nunca
- * "lançou algo". Código desconhecido/ausente é `erro_rpc` (transiente, cega), nunca um motivo fabricado.
+ * A escrita do custo é UMA RPC transacional (`sayerlack_aplicar_custo_portal`, v3 em 20261006120000): CAS no banco,
+ * o pedido INTEIRO no payload, IPI conferido contra `ipi_aliquota_ncm`, prova contra o total cobrado. Ela RECUSA com
+ * SQLSTATE própria (classe CP) e faz ROLLBACK de tudo — a edge casa a MARCA do ramo, nunca "lançou algo". Código
+ * desconhecido/ausente (inclusive o CP005, aposentado na v3) é `erro_rpc` (transiente, cega), nunca motivo fabricado.
  */
-export type MotivoRpcCusto = 'payload_invalido' | 'po_omie_existente' | 'pedido_nao_elegivel' | 'itens_divergentes' | 'erro_rpc';
+export type MotivoRpcCusto =
+  | 'payload_invalido' | 'po_omie_existente' | 'pedido_nao_elegivel' | 'itens_divergentes'
+  | 'aliquota_ipi_ausente' | 'prova_ipi_divergente' | 'erro_rpc';
 const SQLSTATE_CUSTO_PORTAL: Readonly<Record<string, Exclude<MotivoRpcCusto, 'erro_rpc'>>> = {
   CP001: 'payload_invalido',
   CP002: 'po_omie_existente',
   CP003: 'pedido_nao_elegivel',
   CP004: 'itens_divergentes',
+  CP006: 'aliquota_ipi_ausente',
+  CP007: 'prova_ipi_divergente',
 };
 export function classificarErroRpcCusto(code: string | null | undefined): MotivoRpcCusto {
   if (typeof code !== 'string') return 'erro_rpc';
@@ -308,10 +335,12 @@ export interface ResumoCaptura {
   /** SQLSTATE devolvida pela RPC de escrita quando ela recusou (auditoria; null = não chamada ou ok). */
   sqlstate_rpc: string | null;
   checksum: Consolidacao['checksum'];
+  /** NCMs sem alíquota em `ipi_aliquota_ncm` — a lista acionável do motivo 'ipi_ncm_desconhecido'. */
+  ncm_sem_aliquota: string[];
   n_dom: number; n_json: number; n_itens: number;
   casados: number; nao_casados: number; ambiguos: number;
   planejados: number; atualizados: number; pulados: { sku_codigo_omie: string; motivo: string }[];
-  /** true = envio bem-sucedido em que ≥1 item ficou sem custo provado/persistido (excluindo 'sem_mudanca' e PO Omie já existente). */
+  /** true = envio bem-sucedido em que ≥1 item ficou sem custo provado/persistido (fora PO Omie já existente). */
   cego: boolean;
 }
 
@@ -329,19 +358,18 @@ export function resumirCaptura(p: {
   // gravado — é a mesma idempotência de `jaTemOmie`, só que provada no banco (não é cegueira).
   const omieNoBanco = erroRpc?.motivo === 'po_omie_existente';
   const escritaParcial = p.atualizados !== p.planejados;
-  const puladoRuim = p.pulados.some((x) => x.motivo !== 'sem_mudanca');
-  // Cega = algum item do pedido ficou SEM custo provado/persistido: fonte não provou, não casou, ficou ambíguo,
-  // pulado por motivo ≠ 'sem_mudanca', casou menos itens do que o pedido tem, a RPC recusou (≠ CP002) ou a
-  // escrita ficou parcial (com a RPC tudo-ou-nada `atualizados` ∈ {0, planejados}; o ramo fica como defesa).
-  // Com PO Omie já existente (memória OU banco) a captura não grava (idempotência, não silêncio).
+  // Cega = algum item do pedido ficou SEM custo provado/persistido: fonte não provou, não casou, ficou ambíguo, foi
+  // pulado (qualquer motivo), casou menos itens do que o pedido tem, a RPC recusou (≠ CP002) ou a escrita ficou
+  // parcial. Com PO Omie já existente (memória OU banco) a captura não grava (idempotência, não silêncio).
   const cego = !p.jaTemOmie && !omieNoBanco && (
-    p.cons.fonte === 'nenhuma' || naoCasados > 0 || ambiguos > 0 || puladoRuim || erroRpc != null || escritaParcial || casados !== p.nItens
+    p.cons.fonte === 'nenhuma' || naoCasados > 0 || ambiguos > 0 || p.pulados.length > 0 || erroRpc != null || escritaParcial || casados !== p.nItens
   );
   const motivo: ResumoCaptura['motivo'] = p.jaTemOmie || omieNoBanco ? 'ja_tem_omie'
     : erroRpc ? erroRpc.motivo
     : (escritaParcial ? 'escrita_parcial' : p.cons.motivo);
   return {
     fonte: p.cons.fonte, motivo, sqlstate_rpc: erroRpc?.sqlstate ?? null, checksum: p.cons.checksum,
+    ncm_sem_aliquota: p.cons.ncm_sem_aliquota,
     n_dom: p.nDom, n_json: p.nJson, n_itens: p.nItens, casados, nao_casados: naoCasados, ambiguos,
     planejados: p.planejados, atualizados: p.atualizados, pulados: p.pulados, cego,
   };

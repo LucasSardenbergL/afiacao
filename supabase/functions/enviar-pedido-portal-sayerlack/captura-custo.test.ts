@@ -1,24 +1,16 @@
-// Testa a captura de custo PURA do portal Sayerlack (consolidar JSON do "Efetivar" + DOM + digitado, casar, derivar, sensor).
+// Testa a captura de custo PURA do portal Sayerlack: JSON do "Efetivar" + DOM + o que a edge digitou + a alíquota de
+// IPI do NCM de cada item ⇒ linhas com mercadoria (sem IPI) e IPI PROVADOS, ou nada.
 // Rodar: deno test supabase/functions/enviar-pedido-portal-sayerlack/
 //
-// Fatos de prod que estes testes preservam (2026-09-05, pedido #2443 / portal 2126906):
-//   POST /order-creation/form/add → {"data":{"itens":[{"item":"WP06.3900QT","value":153.203},...],"value":"1605.67"}}
-//   `value` do item = Preço UN de TABELA por embalagem (ANTES do desconto por embalagem e da taxa −2%);
-//   `data.value` = total LÍQUIDO do pedido. Prova: 153.203 × (1−0.138678) × 0.98 = 129.318 (líquido de jul/2026).
-//   ⇒ o `value` do item NUNCA vira custo direto; só o total do pedido (1 item) ou o DOM com checksum.
+// Fatos de prod que estes testes preservam:
+//   (2026-09-05, #2443) `value` do item no JSON = Preço UN de TABELA por embalagem — nunca é custo; `data.value` = cobrado.
+//   (2026-09-05, #2459) `Preço Venda` do DOM = TOTAL DA LINHA: 142,2554 × 3 × (1 − 14,9488%) = 362,9698.
+//   (2026-10-05, backtest de 29 pedidos) data.value = Σ round2(Preço Venda) + Σ IPI por item (alíquota do NCM): a
+//     "divergência aberta" do #2459 era o IPI — 362,97 × 3,25% = 11,80 → 374,77. Os casos abaixo são PEDIDOS REAIS.
 import {
-  casarLinhasComItens,
-  consolidarLinhasPortal,
-  derivarCustos,
-  extrairAddJson,
-  parseBRL,
-  parseDiasPrzEnt,
-  classificarErroRpcCusto, resumirCaptura,
-  toleranciaChecksum,
-  type AddJsonPortal,
-  type ItemEsperado,
-  type ItemPedido,
-  type LinhaDom,
+  casarLinhasComItens, centavosDaMercadoria, centesimosDaAliquota, classificarErroRpcCusto, consolidarLinhasPortal,
+  derivarCustos, extrairAddJson, ipiCentavos, parseBRL, parseDiasPrzEnt, resumirCaptura, round2, toleranciaChecksum,
+  type AddJsonPortal, type ItemEsperado, type ItemPedido, type LinhaDom, type MotivoRpcCusto,
 } from "./captura-custo.ts";
 
 // Asserts LOCAIS de propósito (sem jsr:@std/assert): `deno test --no-remote` roda no `validate` do CI.
@@ -26,40 +18,43 @@ function assertEquals(actual: unknown, expected: unknown, msg: string) {
   if (actual !== expected) throw new Error(`${msg}: esperado ${String(expected)}, veio ${String(actual)}`);
 }
 function assertPerto(actual: number | null | undefined, expected: number, msg: string, eps = 1e-6) {
-  if (typeof actual !== "number" || Math.abs(actual - expected) > eps) {
-    throw new Error(`${msg}: esperado ≈${expected}, veio ${String(actual)}`);
-  }
+  if (typeof actual !== "number" || Math.abs(actual - expected) > eps) throw new Error(`${msg}: esperado ≈${expected}, veio ${String(actual)}`);
 }
 
-const dom = (o: Partial<LinhaDom> = {}): LinhaDom => ({
-  sku_portal: "WP06.3900QT", prz_ent_raw: "5", qtd_un_raw: "2", preco_venda_raw: "258,6360", preco_un_raw: "153,2030", ...o,
-});
-const item = (o: Partial<ItemPedido> = {}): ItemPedido => ({
-  item_id: 1, sku_codigo_omie: "8689733285", sku_descricao: "d", sku_portal: "WP06.3900QT", qtde_final: 2, preco_atual: 172.200046, ...o,
-});
-// Réplica do JSON real do pedido #2443 (3 itens; TEH é balde: 40 L Omie = 8 BB no portal).
-const JSON_2443: AddJsonPortal = {
-  itens: [
-    { item: "WP06.3900QT", value: 153.203 },
-    { item: "WP53.3900QT", value: 264.021 },
-    { item: "TEH.3505.00BB", value: 124.9005 },
-  ],
-  value: 1605.67,
-  ordernum: 2126906,
+const dom = (o: Partial<LinhaDom> = {}): LinhaDom => ({ sku_portal: "X", prz_ent_raw: "5", qtd_un_raw: "1", preco_venda_raw: "1,0000", preco_un_raw: "1,0000", ...o });
+const item = (o: Partial<ItemPedido> = {}): ItemPedido => ({ item_id: 1, sku_codigo_omie: "1", sku_descricao: "d", sku_portal: "X", qtde_final: 1, ...o });
+
+// #3091 (portal 2133415): IPI misto. A NF 000953881 cobrou o WJOI a 242,25 — o round2 do Preço Venda.
+const DOM_3091: LinhaDom[] = [
+  dom({ sku_portal: "WJOI.7585GL", qtd_un_raw: "1", preco_un_raw: "284,8248", preco_venda_raw: "242,2470" }),
+  dom({ sku_portal: "FC.6902L5", qtd_un_raw: "2", preco_un_raw: "250,9460", preco_venda_raw: "426,8652" }),
+];
+const JSON_3091: AddJsonPortal = { itens: [{ item: "WJOI.7585GL", value: 284.8248 }, { item: "FC.6902L5", value: 250.946 }], value: 704.74, ordernum: 2133415 };
+const ESP_3091: ItemEsperado[] = [
+  { sku_portal: "WJOI.7585GL", qtde_portal: 1, ncm: "3208.20.20", aliquota_ipi_pct: 3.25 },
+  { sku_portal: "FC.6902L5", qtde_portal: 2, ncm: "3208.90.39", aliquota_ipi_pct: 6.5 },
+];
+// #2745: as 4 alíquotas (1,3% · 3,25% · 0% · 6,5%); modelado 4413,02 × 4413,01 cobrados — 1 centavo, tolerância 0,0454.
+const DOM_2745: LinhaDom[] = [
+  dom({ sku_portal: "YL.1424.02GL", qtd_un_raw: "4", preco_un_raw: "110,3076", preco_venda_raw: "375,2718" }),
+  dom({ sku_portal: "WJOB.7666GL", qtd_un_raw: "4", preco_un_raw: "310,7957", preco_venda_raw: "1057,3419" }),
+  dom({ sku_portal: "DEZ.8014L5", qtd_un_raw: "2", preco_un_raw: "219,5545", preco_venda_raw: "298,7742" }),
+  dom({ sku_portal: "FC.6975LT", qtd_un_raw: "5", preco_un_raw: "583,4430", preco_venda_raw: "2481,1264" }),
+];
+const JSON_2745: AddJsonPortal = {
+  itens: [{ item: "YL.1424.02GL", value: 110.3076 }, { item: "WJOB.7666GL", value: 310.7957 }, { item: "DEZ.8014L5", value: 219.5545 }, { item: "FC.6975LT", value: 583.443 }],
+  value: 4413.01, ordernum: 2745,
 };
-const ESPERADOS_2443: ItemEsperado[] = [
-  { sku_portal: "WP06.3900QT", qtde_portal: 2 },
-  { sku_portal: "WP53.3900QT", qtde_portal: 2 },
-  { sku_portal: "TEH.3505.00BB", qtde_portal: 8 },
+const ESP_2745: ItemEsperado[] = [
+  { sku_portal: "YL.1424.02GL", qtde_portal: 4, ncm: "3214.10.20", aliquota_ipi_pct: 1.3 },
+  { sku_portal: "WJOB.7666GL", qtde_portal: 4, ncm: "3208.20.19", aliquota_ipi_pct: 3.25 },
+  { sku_portal: "DEZ.8014L5", qtde_portal: 2, ncm: "2915.39.99", aliquota_ipi_pct: 0 },
+  { sku_portal: "FC.6975LT", qtde_portal: 5, ncm: "3208.90.39", aliquota_ipi_pct: 6.5 },
 ];
-const DOM_2443: LinhaDom[] = [
-  dom({ sku_portal: "WP06.3900QT", qtd_un_raw: "2", preco_venda_raw: "258,6360", preco_un_raw: "153,2030" }),   // 153,2030 × 2 × (1 − 15,6285%)
-  dom({ sku_portal: "WP53.3900QT", qtd_un_raw: "2", preco_venda_raw: "445,7178", preco_un_raw: "264,0210" }),
-  dom({ sku_portal: "TEH.3505.00BB", qtd_un_raw: "8", preco_venda_raw: "901,3200", preco_un_raw: "124,9005" }), // Σ = 258,636 + 445,7178 + 901,32 = 1605,6738 ≈ 1605,67
-];
-const UNICO_JSON: AddJsonPortal = { itens: [{ item: "DFA.4080LT", value: 357.5466 }], value: 3238.63, ordernum: 1 };
-const UNICO_ESP: ItemEsperado[] = [{ sku_portal: "DFA.4080LT", qtde_portal: 10 }];
-const UNICO_DOM_CEGO = [dom({ sku_portal: "", qtd_un_raw: "10", preco_venda_raw: "", preco_un_raw: "357,5466" })];
+// #2459 (portal 2126911, 1 item; WFBT.6045GL = NCM 3208.10.20): o caso que abriu a "divergência".
+const DOM_2459: LinhaDom[] = [dom({ sku_portal: "WFBT.6045GL", qtd_un_raw: "3", preco_un_raw: "142,2554", preco_venda_raw: "362,9698" })];
+const JSON_2459: AddJsonPortal = { itens: [{ item: "WFBT.6045GL", value: 142.2554 }], value: 374.77, ordernum: 2126911 };
+const ESP_2459: ItemEsperado[] = [{ sku_portal: "WFBT.6045GL", qtde_portal: 3, ncm: "3208.10.20", aliquota_ipi_pct: 3.25 }];
 
 // ---------------------------------------------------------------- extrairAddJson
 Deno.test("extrairAddJson: lê itens + total do JSON real do form/add (value vem como STRING)", () => {
@@ -71,13 +66,11 @@ Deno.test("extrairAddJson: lê itens + total do JSON real do form/add (value vem
   assertPerto(j?.value, 1605.67, "total do pedido parseado da string");
   assertEquals(j?.ordernum, 2126906, "ordernum");
 });
-
 Deno.test("extrairAddJson: '153.203' em string NÃO vira 153203; '1.605,67' pt-BR parseia; lixo vira null (não zero)", () => {
   assertPerto(extrairAddJson({ data: { itens: [{ item: "A", value: "153.203" }], value: "1.605,67" } })?.itens[0].value, 153.203, "ponto decimal");
   assertPerto(extrairAddJson({ data: { itens: [{ item: "A", value: 1 }], value: "1.605,67" } })?.value, 1605.67, "pt-BR");
   assertEquals(extrairAddJson({ data: { itens: [{ item: "A", value: 1 }], value: "abc" } })?.value, null, "lixo → null");
 });
-
 Deno.test("extrairAddJson: sem data.itens (ou itens malformados) → null, nunca lista vazia disfarçada", () => {
   assertEquals(extrairAddJson(null), null, "null");
   assertEquals(extrairAddJson({ success: true, message: "Itens salvos na sessão" }), null, "save-tab-preco-session");
@@ -86,296 +79,236 @@ Deno.test("extrairAddJson: sem data.itens (ou itens malformados) → null, nunca
   assertEquals(extrairAddJson({ data: { itens: [{ item: "A", value: "x" }] } }), null, "value não numérico");
 });
 
-// ---------------------------------------------------------------- consolidarLinhasPortal — 1 item
-Deno.test("consolidar 1 item: total_linha = total líquido do pedido (json_total_unico); sku do JSON; prz e qtd da única linha do DOM", () => {
-  const c = consolidarLinhasPortal(UNICO_DOM_CEGO, UNICO_JSON, UNICO_ESP);
-  assertEquals(c.fonte, "json_total_unico", "fonte");
-  assertEquals(c.linhas.length, 1, "1 linha");
-  assertEquals(c.linhas[0].sku_portal, "DFA.4080LT", "sku do JSON (o DOM não identificou)");
-  assertPerto(c.linhas[0].total_linha, 3238.63, "total = data.value, NÃO qtde×value (3575,47)");
-  assertEquals(c.linhas[0].prz_ent_raw, "5", "prz herdado da única linha do DOM");
-  assertPerto(c.total_pedido, 3238.63, "total do pedido provado");
+// ---------------------------------------------------------------- centavos (a conta que a RPC refaz em numeric)
+Deno.test("centavos: o IPI em inteiros bate com o round(numeric, 2) do Postgres na fronteira de meio centavo", () => {
+  assertEquals(ipiCentavos(6500, 650), 423, "R$ 65,00 × 6,5% = 4,225 → 4,23");
+  assertEquals(round2(round2(65) * 6.5 / 100), 4.22, "o ponto flutuante erra o mesmo caso (é por isso que a conta é inteira)");
+  assertEquals(ipiCentavos(42687, 650), 2775, "426,87 × 6,5% = 27,74655 → 27,75");
+  assertEquals(ipiCentavos(24225, 325), 787, "242,25 × 3,25% = 7,873125 → 7,87");
+  assertEquals(ipiCentavos(1371, 0), 0, "0% medido é 0");
+});
+Deno.test("centavosDaMercadoria: 4 casas do DOM viram centavos com meio-para-cima; ≤ 0, NaN e Infinity → null", () => {
+  assertEquals(centavosDaMercadoria(426.8652), 42687, "426,8652 → 426,87");
+  assertEquals(centavosDaMercadoria(100.005), 10001, "meio centavo sobe");
+  assertEquals(centavosDaMercadoria(242.247), 24225, "242,247 → 242,25");
+  assertEquals(centavosDaMercadoria(0), null, "zero");
+  assertEquals(centavosDaMercadoria(-1), null, "negativo");
+  assertEquals(centavosDaMercadoria(Number.NaN), null, "NaN");
+  assertEquals(centavosDaMercadoria(Number.POSITIVE_INFINITY), null, "Infinity");
+});
+Deno.test("centesimosDaAliquota: 2 casas em [0, 100); fora disso ou null → null (nunca 0%)", () => {
+  assertEquals(centesimosDaAliquota(3.25), 325, "3,25");
+  assertEquals(centesimosDaAliquota(1.3), 130, "1,3");
+  assertEquals(centesimosDaAliquota(0), 0, "0 medido");
+  assertEquals(centesimosDaAliquota(3.255), null, "3 casas");
+  assertEquals(centesimosDaAliquota(100), null, "100");
+  assertEquals(centesimosDaAliquota(-0.01), null, "negativa");
+  assertEquals(centesimosDaAliquota(null), null, "ausente");
+});
+Deno.test("toleranciaChecksum: meio centavo do total + 0,0101 por linha", () => {
+  assertPerto(toleranciaChecksum(1), 0.0151, "1 linha");
+  assertPerto(toleranciaChecksum(18), 0.1868, "18 linhas");
 });
 
-Deno.test("consolidar 1 item: Qtd UN do DOM ≠ quantidade digitada ⇒ qtd_diverge (o total não é rateável sem prova de quantidade)", () => {
-  const c = consolidarLinhasPortal([dom({ ...UNICO_DOM_CEGO[0], qtd_un_raw: "9" })], UNICO_JSON, UNICO_ESP);
-  assertEquals(c.motivo, "qtd_diverge", "marca do ramo");
-  assertEquals(c.linhas[0].total_linha, null, "sem custo");
+// ---------------------------------------------------------------- consolidarLinhasPortal — a prova com IPI
+Deno.test("1 item (#2459): linha 362,97 + IPI 11,80 = 374,77 exato ⇒ dom_checksum; total_linha é a MERCADORIA (sem IPI)", () => {
+  const c = consolidarLinhasPortal(DOM_2459, JSON_2459, ESP_2459, "ok");
+  assertEquals(c.fonte, "dom_checksum", "fonte");
+  assertPerto(c.linhas[0].total_linha, 362.9698, "mercadoria = Preço Venda, não data.value");
+  assertEquals(c.linhas[0].valor_ipi, 11.8, "IPI do item");
+  assertEquals(c.checksum.total_modelado, 374.77, "modelado");
+  assertEquals(c.checksum.delta_abs, 0, "fecha no centavo");
+  assertPerto(c.total_pedido, 374.77, "cobrado provado");
 });
-
-Deno.test("consolidar 1 item: DOM com 2 linhas gravadas ⇒ dom_incompleto (o total cobriria 2 linhas)", () => {
-  const c = consolidarLinhasPortal([DOM_2443[0], DOM_2443[1]], { itens: [{ item: "WP06.3900QT", value: 153.203 }], value: 258.636, ordernum: 1 }, [{ sku_portal: "WP06.3900QT", qtde_portal: 2 }]);
-  assertEquals(c.fonte, "nenhuma", "fonte");
+Deno.test("N itens (#3091): 426,87 × 6,5% = 27,75 e 242,25 × 3,25% = 7,87 ⇒ 704,74 exato", () => {
+  const c = consolidarLinhasPortal(DOM_3091, JSON_3091, ESP_3091, "ok");
+  assertEquals(c.fonte, "dom_checksum", "fonte");
+  assertEquals(c.linhas.map((l) => l.valor_ipi).join(","), "7.87,27.75", "IPI por linha na ordem do JSON");
+  assertEquals(c.checksum.ipi_modelado, 35.62, "IPI total");
+  assertEquals(c.checksum.total_modelado, 704.74, "modelado");
+});
+Deno.test("#2745: 4 alíquotas, 1 centavo de arredondamento dentro da tolerância de 4 linhas", () => {
+  const c = consolidarLinhasPortal(DOM_2745, JSON_2745, ESP_2745, "ok");
+  assertEquals(c.fonte, "dom_checksum", "fonte");
+  assertEquals(c.linhas.map((l) => l.valor_ipi).join(","), "4.88,34.36,0,161.27", "1,3% · 3,25% · 0% · 6,5%");
+  assertEquals(c.checksum.total_modelado, 4413.02, "modelado");
+  assertPerto(c.checksum.delta_abs, 0.01, "delta medido");
+  assertPerto(c.checksum.tolerancia_abs, 0.0454, "tolerância de 4 linhas");
+});
+Deno.test("tolerância: 2 linhas aceitam 2 centavos e recusam 3", () => {
+  assertEquals(consolidarLinhasPortal(DOM_3091, { ...JSON_3091, value: 704.76 }, ESP_3091, "ok").fonte, "dom_checksum", "0,02 ≤ 0,0252");
+  assertEquals(consolidarLinhasPortal(DOM_3091, { ...JSON_3091, value: 704.77 }, ESP_3091, "ok").motivo, "checksum_divergente", "0,03 > 0,0252");
+});
+Deno.test("sem o IPI modelado (alíquota 0 informada no #2459) ⇒ checksum_divergente com os R$ 11,80 medidos", () => {
+  const c = consolidarLinhasPortal(DOM_2459, JSON_2459, [{ ...ESP_2459[0], aliquota_ipi_pct: 0 }], "ok");
+  assertEquals(c.motivo, "checksum_divergente", "a divergência de 2026-09-05, agora explicada");
+  assertPerto(c.checksum.delta_abs, 11.8, "delta");
+  assertEquals(c.linhas.every((l) => l.total_linha === null && l.valor_ipi === null), true, "nada provado");
+});
+Deno.test("alíquota errada (6,5% no lugar de 3,25%) ⇒ checksum_divergente: a prova falsifica a tabela", () => {
+  const esp = ESP_3091.map((e) => (e.sku_portal === "WJOI.7585GL" ? { ...e, aliquota_ipi_pct: 6.5 } : e));
+  assertEquals(consolidarLinhasPortal(DOM_3091, JSON_3091, esp, "ok").motivo, "checksum_divergente", "15,75 − 7,87 = R$ 7,88 de erro");
+});
+Deno.test("item sem alíquota ⇒ ipi_ncm_desconhecido com os NCMs na lista — nunca IPI 0", () => {
+  const esp = ESP_3091.map((e) => (e.sku_portal === "FC.6902L5" ? { ...e, aliquota_ipi_pct: null } : e));
+  const c = consolidarLinhasPortal(DOM_3091, JSON_3091, esp, "ok");
+  assertEquals(c.motivo, "ipi_ncm_desconhecido", "marca do ramo");
+  assertEquals(c.ncm_sem_aliquota.join(","), "3208.90.39", "o que cadastrar");
+  const sem = consolidarLinhasPortal(DOM_2459, JSON_2459, [{ ...ESP_2459[0], ncm: null, aliquota_ipi_pct: null }], "ok");
+  assertEquals(sem.ncm_sem_aliquota.join(","), "(sem NCM)", "produto sem NCM no cadastro");
+});
+Deno.test("leitura das alíquotas falhou ⇒ ipi_leitura_falhou (não consegui ler ≠ não existe)", () => {
+  const c = consolidarLinhasPortal(DOM_3091, JSON_3091, ESP_3091, "falhou");
+  assertEquals(c.motivo, "ipi_leitura_falhou", "marca do ramo");
+  assertEquals(c.ncm_sem_aliquota.length, 0, "não acusa NCM que não foi lido");
+});
+Deno.test("1 item sem Preço Venda no DOM ⇒ dom_incompleto: data.value cego não prova mais a linha", () => {
+  const c = consolidarLinhasPortal([dom({ ...DOM_2459[0], preco_venda_raw: "" })], JSON_2459, ESP_2459, "ok");
   assertEquals(c.motivo, "dom_incompleto", "marca do ramo");
 });
-
-Deno.test("consolidar 1 item: JSON traz sku diferente do digitado ⇒ json_diverge_do_pedido", () => {
-  const c = consolidarLinhasPortal(UNICO_DOM_CEGO, UNICO_JSON, [{ sku_portal: "OUTRO.SKU", qtde_portal: 10 }]);
-  assertEquals(c.motivo, "json_diverge_do_pedido", "marca do ramo");
-});
-
-// ---------------------------------------------------------------- consolidarLinhasPortal — N itens
-Deno.test("consolidar N itens: DOM completo, quantidades e Preço UN batendo, checksum fechando ⇒ dom_checksum", () => {
-  const c = consolidarLinhasPortal(DOM_2443, JSON_2443, ESPERADOS_2443);
+Deno.test("1 item com o sku NÃO lido no DOM (defeito histórico): a linha única vale como a dele", () => {
+  const c = consolidarLinhasPortal([dom({ ...DOM_2459[0], sku_portal: "" })], JSON_2459, ESP_2459, "ok");
   assertEquals(c.fonte, "dom_checksum", "fonte");
-  assertEquals(c.linhas.length, 3, "3 linhas");
-  assertPerto(c.linhas[0].total_linha, 258.636, "WP06 2×129,318");
-  assertPerto(c.linhas[2].total_linha, 901.32, "TEH 8×112,665");
-  assertEquals((c.checksum.delta_abs ?? 1) <= (c.checksum.tolerancia_abs ?? 0), true, "checksum fecha dentro da tolerância (portal arredonda o total a centavos: 1605,6738 → 1605,67)");
-  assertPerto(c.total_pedido, 1605.67, "total provado");
-  assertPerto(c.checksum.delta_rel, Math.abs(1605.6738 - 1605.67) / 1605.67, "delta_rel exposto no resumo", 1e-9);
+  assertEquals(c.linhas[0].sku_portal, "WFBT.6045GL", "sku vem do JSON");
 });
-
-Deno.test("consolidar N itens (adversário Codex): ler 'Preço UN' no lugar de 'Preço Venda' ⇒ checksum_divergente", () => {
-  const domTabela = DOM_2443.map((l) => dom({ ...l, preco_venda_raw: l.preco_un_raw })); // Σ Preço UN = 542,12 ≠ 1605,67
-  const c = consolidarLinhasPortal(domTabela, JSON_2443, ESPERADOS_2443);
-  assertEquals(c.fonte, "nenhuma", "fonte");
-  assertEquals(c.motivo, "checksum_divergente", "marca do ramo");
-  assertEquals(c.linhas.every((l) => l.total_linha === null), true, "nenhum total fabricado");
-  assertEquals((c.checksum.delta_abs ?? 0) > (c.checksum.tolerancia_abs ?? 0), true, "delta acima da tolerância");
+Deno.test("adversário: ler 'Preço UN' no lugar de 'Preço Venda' ⇒ checksum_divergente", () => {
+  const d = DOM_3091.map((l) => ({ ...l, preco_venda_raw: l.preco_un_raw }));
+  assertEquals(consolidarLinhasPortal(d, JSON_3091, ESP_3091, "ok").motivo, "checksum_divergente", "marca do ramo");
 });
-
-Deno.test("consolidar N itens (adversário Codex): 'Qtd Fat' (litros) lida como 'Qtd UN' ⇒ qtd_diverge antes de qualquer soma", () => {
-  const domLitros = DOM_2443.map((l, i) => (i === 2 ? dom({ ...l, qtd_un_raw: "40" }) : l)); // TEH: 40 L, não 8 BB
-  assertEquals(consolidarLinhasPortal(domLitros, JSON_2443, ESPERADOS_2443).motivo, "qtd_diverge", "marca do ramo");
+Deno.test("adversário: 'Qtd Fat' lida como 'Qtd UN' ⇒ qtd_diverge antes de qualquer soma", () => {
+  const d = DOM_3091.map((l, i) => (i === 1 ? { ...l, qtd_un_raw: "4" } : l));
+  assertEquals(consolidarLinhasPortal(d, JSON_3091, ESP_3091, "ok").motivo, "qtd_diverge", "marca do ramo");
 });
-
-Deno.test("consolidar N itens: coluna 'Preço UN' do DOM ≠ value do JSON ⇒ preco_un_diverge (coluna não é a que se pensa)", () => {
-  const domTrocado = DOM_2443.map((l) => dom({ ...l, preco_un_raw: l.preco_venda_raw }));
-  assertEquals(consolidarLinhasPortal(domTrocado, JSON_2443, ESPERADOS_2443).motivo, "preco_un_diverge", "marca do ramo");
+Deno.test("coluna 'Preço UN' do DOM ≠ value do JSON ⇒ preco_un_diverge", () => {
+  const d = DOM_3091.map((l) => ({ ...l, preco_un_raw: l.preco_venda_raw }));
+  assertEquals(consolidarLinhasPortal(d, JSON_3091, ESP_3091, "ok").motivo, "preco_un_diverge", "marca do ramo");
 });
-
-Deno.test("consolidar N itens: amostra NÃO discriminante (desconto 0) ainda produz o custo CERTO — Preço Venda == Preço UN, soma fecha", () => {
-  const json: AddJsonPortal = { itens: [{ item: "A", value: 10 }, { item: "B", value: 20 }], value: 50, ordernum: 1 };
-  const d = [dom({ sku_portal: "A", qtd_un_raw: "1", preco_venda_raw: "10,0000", preco_un_raw: "10,0000" }), dom({ sku_portal: "B", qtd_un_raw: "2", preco_venda_raw: "40,0000", preco_un_raw: "20,0000" })];
-  const c = consolidarLinhasPortal(d, json, [{ sku_portal: "A", qtde_portal: 1 }, { sku_portal: "B", qtde_portal: 2 }]);
-  assertEquals(c.fonte, "dom_checksum", "fonte");
-  assertPerto(c.linhas[1].total_linha, 40, "B = 2×20");
-});
-
-Deno.test("consolidar N itens: DOM sem sku identificado (o defeito de prod: sku_portal='' em todas) ⇒ dom_incompleto, sem custo", () => {
-  const domCego = DOM_2443.map((l) => dom({ ...l, sku_portal: "" }));
-  const c = consolidarLinhasPortal(domCego, JSON_2443, ESPERADOS_2443);
-  assertEquals(c.fonte, "nenhuma", "fonte");
+Deno.test("DOM sem sku identificado (N itens) ⇒ dom_incompleto, sem custo; sku vem do JSON", () => {
+  const c = consolidarLinhasPortal(DOM_3091.map((l) => ({ ...l, sku_portal: "" })), JSON_3091, ESP_3091, "ok");
   assertEquals(c.motivo, "dom_incompleto", "marca do ramo");
-  assertEquals(c.linhas.map((l) => l.sku_portal).join(","), "WP06.3900QT,WP53.3900QT,TEH.3505.00BB", "sku vem do JSON mesmo assim");
+  assertEquals(c.linhas.map((l) => l.sku_portal).join(","), "WJOI.7585GL,FC.6902L5", "sku do JSON");
 });
-
-Deno.test("consolidar N itens: qtd/preço vazios (colunas não achadas) ⇒ dom_incompleto", () => {
-  assertEquals(consolidarLinhasPortal(DOM_2443.map((l) => dom({ ...l, preco_venda_raw: "" })), JSON_2443, ESPERADOS_2443).motivo, "dom_incompleto", "preco venda vazio");
-  assertEquals(consolidarLinhasPortal(DOM_2443.map((l) => dom({ ...l, preco_un_raw: "" })), JSON_2443, ESPERADOS_2443).motivo, "dom_incompleto", "preco un vazio");
-  assertEquals(consolidarLinhasPortal(DOM_2443.map((l) => dom({ ...l, qtd_un_raw: "0" })), JSON_2443, ESPERADOS_2443).motivo, "dom_incompleto", "qtd zero");
+Deno.test("qtd/preço vazios ⇒ dom_incompleto", () => {
+  assertEquals(consolidarLinhasPortal(DOM_3091.map((l) => ({ ...l, preco_venda_raw: "" })), JSON_3091, ESP_3091, "ok").motivo, "dom_incompleto", "preço venda");
+  assertEquals(consolidarLinhasPortal(DOM_3091.map((l) => ({ ...l, preco_un_raw: "" })), JSON_3091, ESP_3091, "ok").motivo, "dom_incompleto", "preço un");
+  assertEquals(consolidarLinhasPortal(DOM_3091.map((l) => ({ ...l, qtd_un_raw: "0" })), JSON_3091, ESP_3091, "ok").motivo, "dom_incompleto", "qtd zero");
 });
-
-Deno.test("consolidar N itens: mesmo sku 2× no DOM ⇒ dom_incompleto/sku_ambiguo (nunca escolhe uma)", () => {
-  const c = consolidarLinhasPortal([...DOM_2443, DOM_2443[0]], JSON_2443, ESPERADOS_2443);
-  assertEquals(c.fonte, "nenhuma", "fonte");
-  assertEquals(c.linhas.every((l) => l.total_linha === null), true, "sem custo");
-  const c2 = consolidarLinhasPortal([DOM_2443[0], DOM_2443[0], DOM_2443[2]], JSON_2443, ESPERADOS_2443);
-  assertEquals(c2.motivo, "sku_ambiguo", "mesmo tamanho, sku duplicado");
+Deno.test("mesmo sku 2× no DOM ⇒ nunca escolhe uma", () => {
+  assertEquals(consolidarLinhasPortal([...DOM_3091, DOM_3091[0]], JSON_3091, ESP_3091, "ok").fonte, "nenhuma", "DOM maior");
+  assertEquals(consolidarLinhasPortal([DOM_3091[0], DOM_3091[0]], JSON_3091, ESP_3091, "ok").motivo, "sku_ambiguo", "mesmo tamanho");
 });
-
-Deno.test("consolidar: JSON com sku duplicado ⇒ sku_ambiguo; JSON com item a mais/menos que o pedido ⇒ json_diverge_do_pedido", () => {
-  const dup: AddJsonPortal = { itens: [JSON_2443.itens[0], JSON_2443.itens[0], JSON_2443.itens[2]], value: 1, ordernum: 1 };
-  assertEquals(consolidarLinhasPortal(DOM_2443, dup, ESPERADOS_2443).motivo, "sku_ambiguo", "dup");
-  assertEquals(consolidarLinhasPortal(DOM_2443, JSON_2443, ESPERADOS_2443.slice(0, 2)).motivo, "json_diverge_do_pedido", "pedido menor");
-  assertEquals(consolidarLinhasPortal(DOM_2443, { ...JSON_2443, itens: JSON_2443.itens.slice(0, 2) }, ESPERADOS_2443).motivo, "json_diverge_do_pedido", "json menor");
+Deno.test("JSON com sku duplicado ⇒ sku_ambiguo; item a mais/menos que o pedido ⇒ json_diverge_do_pedido", () => {
+  const dup: AddJsonPortal = { itens: [JSON_3091.itens[0], JSON_3091.itens[0]], value: 1, ordernum: 1 };
+  assertEquals(consolidarLinhasPortal(DOM_3091, dup, ESP_3091, "ok").motivo, "sku_ambiguo", "dup");
+  assertEquals(consolidarLinhasPortal(DOM_3091, JSON_3091, ESP_3091.slice(0, 1), "ok").motivo, "json_diverge_do_pedido", "pedido menor");
+  assertEquals(consolidarLinhasPortal(DOM_3091, { ...JSON_3091, itens: JSON_3091.itens.slice(0, 1) }, ESP_3091, "ok").motivo, "json_diverge_do_pedido", "json menor");
 });
-
-Deno.test("consolidar: sem JSON ⇒ sem_json; linhas do DOM seguem (sku/prz) mas total null — o DOM sozinho não prova custo", () => {
-  const c = consolidarLinhasPortal(DOM_2443, null, ESPERADOS_2443);
-  assertEquals(c.fonte, "nenhuma", "fonte");
+Deno.test("sem JSON ⇒ sem_json; as linhas do DOM seguem (sku/prz) com mercadoria e IPI null", () => {
+  const c = consolidarLinhasPortal(DOM_3091, null, ESP_3091, "ok");
   assertEquals(c.motivo, "sem_json", "marca do ramo");
-  assertEquals(c.linhas.length, 3, "linhas do DOM");
-  assertEquals(c.linhas.every((l) => l.total_linha === null), true, "sem custo");
+  assertEquals(c.linhas.every((l) => l.total_linha === null && l.valor_ipi === null), true, "sem custo");
+});
+Deno.test("total do pedido inválido no JSON ⇒ total_json_invalido", () => {
+  assertEquals(consolidarLinhasPortal(DOM_2459, { ...JSON_2459, value: null }, ESP_2459, "ok").motivo, "total_json_invalido", "null");
+  assertEquals(consolidarLinhasPortal(DOM_2459, { ...JSON_2459, value: 0 }, ESP_2459, "ok").motivo, "total_json_invalido", "zero");
 });
 
-Deno.test("consolidar: total do pedido inválido no JSON ⇒ total_json_invalido, mesmo com 1 item", () => {
-  assertEquals(consolidarLinhasPortal(UNICO_DOM_CEGO, { ...UNICO_JSON, value: null }, UNICO_ESP).motivo, "total_json_invalido", "null");
-  assertEquals(consolidarLinhasPortal(UNICO_DOM_CEGO, { ...UNICO_JSON, value: 0 }, UNICO_ESP).motivo, "total_json_invalido", "zero");
-});
-
-Deno.test("toleranciaChecksum: depende do NÚMERO DE LINHAS, não da quantidade (Preço Venda já é o total da linha)", () => {
-  assertPerto(toleranciaChecksum(3), 0.005 + 3 * 0.00005, "3 linhas");
-  assertPerto(toleranciaChecksum(1), 0.005 + 0.00005, "1 linha");
-});
-
-Deno.test("checksum: arredondamento do portal (1605,6738 → 1605,67) passa; 2 centavos fora reprovam", () => {
-  assertEquals(consolidarLinhasPortal(DOM_2443, JSON_2443, ESPERADOS_2443).fonte, "dom_checksum", "delta 0,0038 dentro da tolerância");
-  assertEquals(consolidarLinhasPortal(DOM_2443, { ...JSON_2443, value: 1605.69 }, ESPERADOS_2443).motivo, "checksum_divergente", "2 centavos fora reprovam");
-});
-
-// REGRESSÃO do bug medido em prod (2026-09-05, #2459 / portal 2126911): o código somava
-// `Preço Venda × Qtd UN`, mas Preço Venda JÁ É o total da linha — 142,2554 × 3 × (1 − 14,9488%)
-// = 362,9698. Multiplicar de novo inflava a soma e todo pedido multi-item caía em
-// 'checksum_divergente', deixando a captura morta para quem tem mais de um item.
-Deno.test("regressão: a soma do DOM é Σ(Preço Venda) e NÃO Σ(Preço Venda × Qtd UN)", () => {
-  const c = consolidarLinhasPortal(DOM_2443, JSON_2443, ESPERADOS_2443);
-  assertPerto(c.checksum.soma_dom, 258.636 + 445.7178 + 901.32, "soma direta das linhas");
-  const somaInflada = 258.636 * 2 + 445.7178 * 2 + 901.32 * 8;
-  assertEquals(Math.abs((c.checksum.soma_dom ?? 0) - somaInflada) > 1, true, "a soma inflada (o bug) é outra ordem de grandeza");
-  assertEquals(c.fonte, "dom_checksum", "com a soma certa o checksum fecha");
-});
-
-// Dado REAL do pedido #2459 (1 item, mas usado aqui como linha de DOM): o portal cobrou
-// data.value 374,77 enquanto a linha exibia Preço Venda 362,9698 — R$ 11,80 (3,2510%) de origem
-// não identificada. Enquanto não se souber o que é, o custo NÃO pode nascer do DOM.
-Deno.test("divergência aberta do #2459: DOM 362,9698 vs JSON 374,77 ⇒ checksum_divergente com delta medido", () => {
-  const d = [
-    dom({ sku_portal: "WFBT.6045GL", qtd_un_raw: "3", preco_venda_raw: "362,9698", preco_un_raw: "142,2554" }),
-    dom({ sku_portal: "OUTRO.GL", qtd_un_raw: "1", preco_venda_raw: "100,0000", preco_un_raw: "100,0000" }),
-  ];
-  const j: AddJsonPortal = { itens: [{ item: "WFBT.6045GL", value: 142.2554 }, { item: "OUTRO.GL", value: 100 }], value: 474.77, ordernum: 2126911 };
-  const esp: ItemEsperado[] = [{ sku_portal: "WFBT.6045GL", qtde_portal: 3 }, { sku_portal: "OUTRO.GL", qtde_portal: 1 }];
-  const c = consolidarLinhasPortal(d, j, esp);
-  assertEquals(c.motivo, "checksum_divergente", "fail-closed enquanto a divergência não for explicada");
-  assertEquals(c.linhas.every((l) => l.total_linha === null), true, "nenhum custo fabricado");
-  assertPerto(c.checksum.delta_abs, 11.8002, "delta absoluto medido", 1e-4);
-  assertPerto(c.checksum.delta_rel, 11.8002 / 474.77, "delta relativo vai no resumo para medir o padrão", 1e-6);
-});
-
-// ---------------------------------------------------------------- casar + derivar (fim a fim)
-Deno.test("fim a fim #2443: dom_checksum → casa 3 → atualiza os 3 (custo em unidade OMIE: TEH 901,32 / 40 L)", () => {
-  const c = consolidarLinhasPortal(DOM_2443, JSON_2443, ESPERADOS_2443);
-  const itens = [
-    item({ item_id: 12836, sku_codigo_omie: "8689733285", sku_portal: "WP06.3900QT", qtde_final: 2, preco_atual: 172.200046 }),
-    item({ item_id: 12837, sku_codigo_omie: "8689783102", sku_portal: "WP53.3900QT", qtde_final: 2, preco_atual: 288.090035 }),
-    item({ item_id: 12838, sku_codigo_omie: "8689961993", sku_portal: "TEH.3505.00BB", qtde_final: 40, preco_atual: 22.048505 }),
-  ];
-  const m = casarLinhasComItens(c.linhas, itens);
-  assertEquals(m.casados.length, 3, "3 casados");
+// ---------------------------------------------------------------- casar + derivar
+Deno.test("fim a fim #3091: consolida → casa → deriva o payload da RPC (mercadoria + IPI + eco da qtde)", () => {
+  const c = consolidarLinhasPortal(DOM_3091, JSON_3091, ESP_3091, "ok");
+  const m = casarLinhasComItens(c.linhas, [
+    item({ item_id: 101, sku_codigo_omie: "8689962883", sku_portal: "FC.6902L5", qtde_final: 2 }),
+    item({ item_id: 102, sku_codigo_omie: "8689743214", sku_portal: "WJOI.7585GL", qtde_final: 1 }),
+  ]);
   const { updates, pulados } = derivarCustos(m);
-  assertEquals(updates.length, 3, "3 updates");
   assertEquals(pulados.length, 0, "0 pulados");
-  const teh = updates.find((u) => u.item_id === 12838);
-  assertPerto(teh?.preco_unitario, 22.533, "TEH: 901,32 / 40 L (unidade Omie, não por balde)");
-  assertPerto(teh?.valor_linha, 901.32, "valor_linha TEH");
+  assertEquals(JSON.stringify(updates.sort((a, b) => a.item_id - b.item_id)),
+    '[{"item_id":101,"qtde_final":2,"valor_mercadoria":426.8652,"valor_ipi":27.75},{"item_id":102,"qtde_final":1,"valor_mercadoria":242.247,"valor_ipi":7.87}]',
+    "o payload EXATO que a RPC recebe");
+});
+Deno.test("casar: mercadoria e IPI null/Infinity são TERMINAIS", () => {
+  const m = casarLinhasComItens([{ sku_portal: "X", prz_ent_raw: "5", total_linha: Number.POSITIVE_INFINITY, valor_ipi: Number.NaN }], [item()]);
+  assertEquals(m.casados[0].total_linha, null, "Infinity vira null");
+  assertEquals(m.casados[0].valor_ipi, null, "NaN vira null");
+});
+Deno.test("derivarCustos: IPI ausente/negativo, mercadoria ou qtde inválida ⇒ pulado, nunca update", () => {
+  const caso = (total_linha: number | null, valor_ipi: number | null, qtde = 1) =>
+    derivarCustos({ casados: [{ item: item({ qtde_final: qtde }), prz_ent: 5, total_linha, valor_ipi }], naoCasados: [], ambiguos: [] });
+  assertEquals(caso(100, null).pulados[0]?.motivo, "ipi_invalido", "IPI ausente");
+  assertEquals(caso(100, -0.01).pulados[0]?.motivo, "ipi_invalido", "IPI negativo");
+  assertEquals(caso(null, 1).pulados[0]?.motivo, "total_invalido", "mercadoria ausente");
+  assertEquals(caso(0, 1).pulados[0]?.motivo, "total_invalido", "mercadoria zero");
+  assertEquals(caso(100, 1, 0).pulados[0]?.motivo, "qtde_invalida", "qtde zero");
+  assertEquals(caso(100, 0).updates.length, 1, "IPI 0 medido é update");
 });
 
-Deno.test("fim a fim (defeito de prod): DOM cego + JSON multi-item → 0 updates e o motivo é total_invalido (nada fabricado)", () => {
-  const c = consolidarLinhasPortal(DOM_2443.map((l) => dom({ ...l, sku_portal: "" })), JSON_2443, ESPERADOS_2443);
-  const m = casarLinhasComItens(c.linhas, [item(), item({ item_id: 2, sku_codigo_omie: "X", sku_portal: "WP53.3900QT" }), item({ item_id: 3, sku_codigo_omie: "Y", sku_portal: "TEH.3505.00BB" })]);
-  assertEquals(m.casados.length, 3, "casa pelo sku do JSON");
-  const { updates, pulados } = derivarCustos(m);
-  assertEquals(updates.length, 0, "0 updates");
-  assertEquals(pulados.every((p) => p.motivo === "total_invalido"), true, "pulado por total_invalido");
+// ---------------------------------------------------------------- sensor
+const prov = () => {
+  const c = consolidarLinhasPortal(DOM_3091, JSON_3091, ESP_3091, "ok");
+  const m = casarLinhasComItens(c.linhas, [item({ item_id: 101, sku_portal: "FC.6902L5", qtde_final: 2 }), item({ item_id: 102, sku_portal: "WJOI.7585GL" })]);
+  return { c, m };
+};
+const resumo = (o: Partial<Parameters<typeof resumirCaptura>[0]>) => {
+  const { c, m } = prov();
+  return resumirCaptura({ cons: c, match: m, pulados: [], planejados: 2, atualizados: 2, jaTemOmie: false, nDom: 2, nJson: 2, nItens: 2, ...o });
+};
+Deno.test("resumirCaptura: pedido inteiro gravado ⇒ não cega, motivo null", () => {
+  const r = resumo({});
+  assertEquals(r.cego, false, "não cega");
+  assertEquals(r.motivo, null, "motivo");
+  assertEquals(r.ncm_sem_aliquota.length, 0, "nada a cadastrar");
+});
+Deno.test("resumirCaptura: ipi_ncm_desconhecido ⇒ cega, com a lista de NCMs no resumo", () => {
+  const c = consolidarLinhasPortal(DOM_3091, JSON_3091, ESP_3091.map((e) => ({ ...e, aliquota_ipi_pct: null })), "ok");
+  const r = resumo({ cons: c, planejados: 0, atualizados: 0 });
+  assertEquals(r.cego, true, "cega");
+  assertEquals(r.motivo, "ipi_ncm_desconhecido", "motivo");
+  assertEquals(r.ncm_sem_aliquota.join(","), "3208.20.20,3208.90.39", "lista ordenada");
+});
+Deno.test("resumirCaptura: qualquer item pulado ⇒ cega (o pulo 'sem_mudanca' não existe mais)", () => {
+  assertEquals(resumo({ pulados: [{ sku_codigo_omie: "1", motivo: "ipi_invalido" }], planejados: 0, atualizados: 0 }).cego, true, "cega");
+});
+Deno.test("resumirCaptura: item não casado ⇒ cega (parcial conta)", () => {
+  const { c } = prov();
+  const m = casarLinhasComItens(c.linhas, [item({ sku_portal: "FC.6902L5" }), item({ item_id: 9, sku_portal: null })]);
+  assertEquals(resumo({ match: m, planejados: 1, atualizados: 1 }).cego, true, "cega");
+});
+Deno.test("resumirCaptura: escrita parcial ⇒ cega escrita_parcial", () => {
+  const r = resumo({ planejados: 2, atualizados: 1 });
+  assertEquals(r.cego, true, "cega");
+  assertEquals(r.motivo, "escrita_parcial", "motivo");
+});
+Deno.test("resumirCaptura: recusas da RPC viram a MARCA do ramo; CP002 é idempotência (não cega)", () => {
+  const casos: [MotivoRpcCusto, string | null, boolean][] = [
+    ["itens_divergentes", "CP004", true], ["aliquota_ipi_ausente", "CP006", true], ["prova_ipi_divergente", "CP007", true],
+    ["erro_rpc", null, true], ["po_omie_existente", "CP002", false],
+  ];
+  for (const [motivo, sqlstate, cego] of casos) {
+    const r = resumo({ atualizados: 0, erroRpc: { motivo, sqlstate } });
+    assertEquals(r.cego, cego, `cego (${motivo})`);
+    assertEquals(r.motivo, motivo === "po_omie_existente" ? "ja_tem_omie" : motivo, `motivo (${motivo})`);
+  }
+});
+Deno.test("resumirCaptura: já tem PO Omie ⇒ a captura não grava e não é cega", () => {
+  const r = resumo({ jaTemOmie: true, planejados: 0, atualizados: 0 });
+  assertEquals(r.cego, false, "não cega");
+  assertEquals(r.motivo, "ja_tem_omie", "motivo");
+});
+Deno.test("classificarErroRpcCusto: CP001–CP004, CP006, CP007; o resto (inclusive o CP005 aposentado) é erro_rpc", () => {
+  const mapa: [string | null | undefined, string][] = [
+    ["CP001", "payload_invalido"], ["CP002", "po_omie_existente"], ["CP003", "pedido_nao_elegivel"], ["CP004", "itens_divergentes"],
+    ["CP006", "aliquota_ipi_ausente"], ["CP007", "prova_ipi_divergente"], ["CP005", "erro_rpc"], ["42501", "erro_rpc"],
+    ["cp006", "erro_rpc"], ["", "erro_rpc"], [null, "erro_rpc"], [undefined, "erro_rpc"],
+  ];
+  for (const [code, motivo] of mapa) assertEquals(classificarErroRpcCusto(code), motivo, String(code));
 });
 
-Deno.test("casar: total_linha null é TERMINAL (não existe fallback textual que fabrique R$ a partir de 'Ação 2')", () => {
-  const m = casarLinhasComItens([{ sku_portal: "WP06.3900QT", prz_ent_raw: "5", total_linha: null }], [item()]);
-  assertEquals(m.casados[0].total_linha, null, "null");
-  const m2 = casarLinhasComItens([{ sku_portal: "WP06.3900QT", prz_ent_raw: "5", total_linha: Number.POSITIVE_INFINITY }], [item()]);
-  assertEquals(m2.casados[0].total_linha, null, "Infinity vira null");
-});
-
-Deno.test("derivarCustos: Infinity/NaN em total ou qtde nunca vira custo (Number.isFinite na última fronteira)", () => {
-  const base = { naoCasados: [], ambiguos: [] };
-  assertEquals(derivarCustos({ ...base, casados: [{ item: item({ qtde_final: Number.POSITIVE_INFINITY }), prz_ent: 5, total_linha: 100 }] }).pulados[0]?.motivo, "qtde_invalida", "qtde Infinity");
-  assertEquals(derivarCustos({ ...base, casados: [{ item: item({ qtde_final: 1e-320 }), prz_ent: 5, total_linha: 1e300 }] }).pulados[0]?.motivo, "custo_invalido", "unitário Infinity");
-});
-
+// ---------------------------------------------------------------- parsers
 Deno.test("parseBRL: pt-BR (ponto milhar, vírgula decimal); lixo → null", () => {
   assertPerto(parseBRL("R$ 1.633,45"), 1633.45, "brl");
   assertEquals(parseBRL(""), null, "vazio");
   assertEquals(parseBRL("abc"), null, "lixo");
 });
-
-// ---------------------------------------------------------------- sensor
-const resumo = (o: Partial<Parameters<typeof resumirCaptura>[0]>) => resumirCaptura({
-  cons: consolidarLinhasPortal(DOM_2443, JSON_2443, ESPERADOS_2443), match: null, pulados: [], planejados: 0, atualizados: 0,
-  jaTemOmie: false, nDom: 3, nJson: 3, nItens: 3, ...o,
-});
-
-Deno.test("resumirCaptura: fonte nenhuma ⇒ CEGA (é o silêncio de prod virando sinal) com o motivo propagado", () => {
-  const c = consolidarLinhasPortal(DOM_2443.map((l) => dom({ ...l, sku_portal: "" })), JSON_2443, ESPERADOS_2443);
-  const m = casarLinhasComItens(c.linhas, [item()]);
-  const r = resumo({ cons: c, match: m, pulados: derivarCustos(m).pulados, nItens: 1 });
-  assertEquals(r.cego, true, "cego");
-  assertEquals(r.motivo, "dom_incompleto", "motivo propagado");
-});
-
-Deno.test("resumirCaptura: todos sem_mudanca, todos casados, nada planejado ⇒ NÃO é cega (custo já batia)", () => {
-  const c = consolidarLinhasPortal(UNICO_DOM_CEGO, { ...UNICO_JSON, value: 344.400092 }, UNICO_ESP);
-  const m = casarLinhasComItens(c.linhas, [item({ sku_portal: "DFA.4080LT", qtde_final: 2, preco_atual: 172.200046 })]);
-  const d = derivarCustos(m);
-  assertEquals(d.pulados[0]?.motivo, "sem_mudanca", "pré-condição: sem_mudanca");
-  assertEquals(resumo({ cons: c, match: m, pulados: d.pulados, nItens: 1, nDom: 1, nJson: 1 }).cego, false, "não cega");
-});
-
-Deno.test("resumirCaptura: item do pedido não casado, mesmo com os outros atualizados ⇒ cega (parcial conta)", () => {
-  const c = consolidarLinhasPortal(DOM_2443, JSON_2443, ESPERADOS_2443);
-  const m = casarLinhasComItens(c.linhas, [item(), item({ item_id: 9, sku_codigo_omie: "SEM_MAPA", sku_portal: null })]);
-  const r = resumo({ cons: c, match: m, pulados: [], planejados: 1, atualizados: 1, nItens: 2 });
-  assertEquals(r.nao_casados, 1, "1 não casado");
-  assertEquals(r.cego, true, "cega parcial");
-});
-
-Deno.test("resumirCaptura: escrita parcial (planejados 3, atualizados 2) ⇒ cega com motivo escrita_parcial", () => {
-  const c = consolidarLinhasPortal(DOM_2443, JSON_2443, ESPERADOS_2443);
-  const m = casarLinhasComItens(c.linhas, [item(), item({ item_id: 2, sku_codigo_omie: "X", sku_portal: "WP53.3900QT" }), item({ item_id: 3, sku_codigo_omie: "Y", sku_portal: "TEH.3505.00BB" })]);
-  const r = resumo({ cons: c, match: m, pulados: [{ sku_codigo_omie: "Y", motivo: "erro_update" }], planejados: 3, atualizados: 2 });
-  assertEquals(r.cego, true, "cega");
-  assertEquals(r.motivo, "escrita_parcial", "motivo");
-});
-
-Deno.test("classificarErroRpcCusto: casa a MARCA (SQLSTATE CP001..CP004); desconhecido/ausente ⇒ erro_rpc, nunca motivo fabricado", () => {
-  assertEquals(classificarErroRpcCusto("CP001"), "payload_invalido", "CP001");
-  assertEquals(classificarErroRpcCusto("CP002"), "po_omie_existente", "CP002");
-  assertEquals(classificarErroRpcCusto("CP003"), "pedido_nao_elegivel", "CP003");
-  assertEquals(classificarErroRpcCusto("CP004"), "itens_divergentes", "CP004");
-  assertEquals(classificarErroRpcCusto("42501"), "erro_rpc", "permission denied não é motivo de negócio");
-  assertEquals(classificarErroRpcCusto("CP005"), "erro_rpc", "código futuro não vira motivo conhecido");
-  assertEquals(classificarErroRpcCusto("cp002"), "erro_rpc", "caixa fixa — não é ILIKE");
-  assertEquals(classificarErroRpcCusto(undefined), "erro_rpc", "undefined");
-  assertEquals(classificarErroRpcCusto(null), "erro_rpc", "null");
-  assertEquals(classificarErroRpcCusto(""), "erro_rpc", "vazio");
-});
-
-const matchTres = () => {
-  const c = consolidarLinhasPortal(DOM_2443, JSON_2443, ESPERADOS_2443);
-  const m = casarLinhasComItens(c.linhas, [item(), item({ item_id: 2, sku_codigo_omie: "X", sku_portal: "WP53.3900QT" }), item({ item_id: 3, sku_codigo_omie: "Y", sku_portal: "TEH.3505.00BB" })]);
-  return { c, m };
-};
-
-Deno.test("resumirCaptura: RPC recusou por itens divergentes (CP004) ⇒ NADA gravado (atualizados 0), cega, motivo itens_divergentes, sqlstate no resumo", () => {
-  const { c, m } = matchTres();
-  const r = resumo({ cons: c, match: m, planejados: 3, atualizados: 0, erroRpc: { motivo: "itens_divergentes", sqlstate: "CP004" } });
-  assertEquals(r.cego, true, "cega");
-  assertEquals(r.motivo, "itens_divergentes", "motivo é a MARCA do ramo, não escrita_parcial");
-  assertEquals(r.sqlstate_rpc, "CP004", "sqlstate");
-  assertEquals(r.atualizados, 0, "tudo-ou-nada: 0, nunca 2 de 3");
-});
-
-Deno.test("resumirCaptura: RPC recusou por PO Omie já existente no BANCO (CP002) ⇒ idempotência provada, NÃO é cega, motivo ja_tem_omie", () => {
-  const { c, m } = matchTres();
-  const r = resumo({ cons: c, match: m, planejados: 3, atualizados: 0, jaTemOmie: false, erroRpc: { motivo: "po_omie_existente", sqlstate: "CP002" } });
-  assertEquals(r.cego, false, "não cega: o custo não pode mais mudar");
-  assertEquals(r.motivo, "ja_tem_omie", "motivo");
-  assertEquals(r.sqlstate_rpc, "CP002", "sqlstate");
-});
-
-Deno.test("resumirCaptura: erro transiente da RPC (erro_rpc, sem SQLSTATE) ⇒ cega com motivo erro_rpc (ausência de dado ≠ sucesso)", () => {
-  const { c, m } = matchTres();
-  const r = resumo({ cons: c, match: m, planejados: 3, atualizados: 0, erroRpc: { motivo: "erro_rpc", sqlstate: null } });
-  assertEquals(r.cego, true, "cega");
-  assertEquals(r.motivo, "erro_rpc", "motivo");
-  assertEquals(r.sqlstate_rpc, null, "sqlstate");
-});
-
-Deno.test("resumirCaptura: RPC gravou tudo (planejados 3, atualizados 3, sem erro) ⇒ não cega, motivo null, sqlstate null", () => {
-  const { c, m } = matchTres();
-  const r = resumo({ cons: c, match: m, planejados: 3, atualizados: 3 });
-  assertEquals(r.cego, false, "não cega");
-  assertEquals(r.motivo, null, "motivo");
-  assertEquals(r.sqlstate_rpc, null, "sqlstate");
-});
-
-Deno.test("resumirCaptura: já tem PO Omie ⇒ captura não roda, não é cega (idempotência, não silêncio)", () => {
-  const r = resumo({ jaTemOmie: true });
-  assertEquals(r.cego, false, "não cega");
-  assertEquals(r.motivo, "ja_tem_omie", "motivo");
-});
-
 Deno.test("parseDiasPrzEnt: inteiro de dias do Prz Ent; vazio/lixo → null (alimenta o gate de grupo)", () => {
   assertEquals(parseDiasPrzEnt("5"), 5, "5");
   assertEquals(parseDiasPrzEnt(" 12 dias "), 12, "com texto");
