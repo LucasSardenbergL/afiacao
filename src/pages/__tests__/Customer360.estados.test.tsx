@@ -132,8 +132,10 @@ describe('Customer360 — "não consegui ler" NÃO pode virar "cliente não enco
     await assentou();
     expect(screen.queryByText(NAO_ENCONTRADO), 'sem rede, a tela afirmou que o cliente não existe').toBeNull();
     expect(screen.getByTestId(AVISO).getAttribute('data-estado')).toBe('sem-rede');
-    // tentar de novo sem rede não faz nada (a query pausa de novo) — o caminho é a rede voltar
-    expect(screen.queryByRole('button', { name: 'Tentar de novo' })).toBeNull();
+    expect(
+      screen.queryByRole('button', { name: 'Tentar de novo' }),
+      'sem rede, a tela ofereceu um "Tentar de novo" que só pausaria de novo — o caminho é a rede voltar',
+    ).toBeNull();
 
     act(() => onlineManager.setOnline(true));
     expect(await screen.findByText(NOME)).toBeTruthy();
