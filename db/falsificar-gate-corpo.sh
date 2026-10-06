@@ -64,6 +64,7 @@ const historico = (): CorposEsperados => ({
   inventarioDaRef: 721,
   migrationsLidas: 721,
   funcoesConhecidas: 1,
+  vigencia: new Map(),
 });
 
 const sonda = (md5s: string[], overloads = 1): LeituraSonda => ({
@@ -94,6 +95,24 @@ const comComentario = (): CorposEsperados => ({
   ]]),
 });
 
+// A irmã do conjunto acoplado (Codex, rodada 3 do #2757): `reconciliar_pedidos_omie` nasce na MESMA
+// migration da RPC da leva, e prod a mede AUSENTE. Vigente no repo ⇒ a migration não foi aplicada por
+// inteiro; aposentada por migration posterior ⇒ não conta. md5 de 'c' digitado (`printf 'c' | md5`).
+const IRMA = 'reconciliar_pedidos_omie';
+const comIrma = (vigencia: CorposEsperados['vigencia']): CorposEsperados => ({
+  ...historico(),
+  historico: new Map([
+    ...historico().historico,
+    [`public.${IRMA}`, [{ migration: NOVA, md5: '4a8a08f09d37b73795649038408b5f33', corpo: 'c' }]],
+  ]),
+  funcoesConhecidas: 2,
+  vigencia,
+});
+const irmaAusente = (): LeituraSonda => ({
+  ...sonda([ATUAL]),
+  medicoes: [...sonda([ATUAL]).medicoes, { rpc: IRMA, existe: false, familia: 0 }],
+});
+
 let falhas = 0;
 const exigir = (rotulo: string, obtido: string, esperado: string) => {
   const ok = obtido === esperado;
@@ -120,12 +139,14 @@ exigir('repo foi lido VAZIO (extrator cego)', estado(sonda([VELHO]), {
   inventarioDaRef: 0,
   migrationsLidas: 0,
   funcoesConhecidas: 0,
+  vigencia: new Map(),
 }), 'INCERTA');
 exigir('arquivos lidos, ZERO funções extraídas', estado(sonda([ATUAL]), {
   historico: new Map(),
   inventarioDaRef: 721,
   migrationsLidas: 721,
   funcoesConhecidas: 0,
+  vigencia: new Map(),
 }), 'INCERTA');
 // O P1 latente do Codex: a ANTERIOR menos os comentários é a lógica velha em prod — até 2026-09-26
 // caía em DERIVA e liberava.
@@ -134,6 +155,11 @@ exigir('prod roda a ANTERIOR a menos de comentário (tokens)',
 // Sem o texto de prod, a DERIVA pode ser a anterior sem comentário — "não re-testei" não libera.
 exigir('DERIVA sem o texto de prod para o re-teste',
   estado(sonda(['67f373071560ba94845995105c614eb8']), comComentario()), 'INCERTA');
+// A irmã AUSENTE (Codex, rodada 3 do #2757): até 2026-10-05 caía em "sem corpo comparável" e liberava.
+exigir('irmã da MESMA migration AUSENTE e VIGENTE no repo',
+  estado(irmaAusente(), comIrma(new Map([[IRMA, { estado: 'VIGENTE', ultimosCreates: [NOVA] }]]))), 'BLOQUEADA');
+exigir('irmã AUSENTE com vigência INDETERMINADA no repo',
+  estado(irmaAusente(), comIrma(new Map([[IRMA, { estado: 'INDETERMINADA', motivo: 'ilegível' }]]))), 'INCERTA');
 
 // ── NÃO-SABOTAGENS: têm de continuar VERDES, senão o gate trava todo deploy ─────────────────────
 // Este bloco é o que separa "o gate discrimina" de "o gate reprova tudo que não é idêntico".
@@ -147,9 +173,13 @@ exigir('função sem CREATE commitado', estado(sonda([ATUAL]), {
   inventarioDaRef: 721,
   migrationsLidas: 721,
   funcoesConhecidas: 1,
+  vigencia: new Map(),
 }), 'LIBERADA');
 exigir('VARIANTE_COSMETICA: prod = a última a menos de comentário',
   estado(sonda(['ce4ddd2bf00f6904e90f235dd4c43b88']), comComentario(), comTexto('BEGIN\n  RETURN 2;\nEND;')), 'LIBERADA');
+// O bloqueio ingênuo ("toda irmã ausente bloqueia") travaria esta: medido em prod no `tint-sync-agent`.
+exigir('irmã AUSENTE e APOSENTADA por migration posterior',
+  estado(irmaAusente(), comIrma(new Map([[IRMA, { estado: 'APOSENTADA', por: ['20260920000000_aposenta.sql'] }]]))), 'LIBERADA');
 
 console.log(
   falhas === 0

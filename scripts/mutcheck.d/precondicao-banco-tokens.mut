@@ -18,5 +18,5 @@ PEGA | relatorio da cosmetica sem o md5 de prod         | s/prod \$\{c\.prova\.m
 PEGA | Codex P1: canal de detalhe incoerente nao bloqueia        | s/^  const canalIntegro = textos\.falhas\.length === 0;/  const canalIntegro = true;/
 # Codex, confirmação (2026-10-05):
 PEGA | Codex P1: modo divergente libera como DERIVA       | s/^    if \(v\.classificacao === 'MODO_DIVERGENTE'\) \{/    if (false) {/
-PEGA | Codex P1: irma sem medicao nao e nao-medida         | s/    if \(!nomesAlvo\.has\(rpc\) && !porNome\.has\(rpc\)\) naoMedidos\.push\(rpc\);/    void 0;/
+PEGA | Codex P1: irma sem medicao nao e nao-medida         | s/^      naoMedidos\.push\(rpc\);/      void 0;/
 PEGA | Codex P2: INCERTA manda aplicar a migration        | s/^    if \(v\.estado === 'BLOQUEADA'\) \{/    if (true) {/

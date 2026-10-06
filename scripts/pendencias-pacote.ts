@@ -114,10 +114,12 @@ import {
 import { type ConferenciaMapa, recusa, relatarForaDoRegime, relatarRecusa } from './lib/mapa-coerente-na-ref';
 import {
   consultasDeriva,
+  modelarRepo,
   montarSondaDeriva,
   parsearSondaDeriva,
   saidaDerivaComoPsql,
   textosDaLeitura,
+  vigenciaPorNome,
 } from './lib/deriva-corpo';
 import { montarPacote, type PacoteFonte } from './lib/pacote-entrega';
 import { type ParAlvo, planejarOndas, type PlanoDeOndas } from './lib/ordem-entre-edges';
@@ -354,6 +356,9 @@ export function main(
       inventarioDaRef: lidas.length,
       migrationsLidas: lidas.length,
       funcoesConhecidas: historico.size,
+      // O `historico` só modela CREATE; o `modelarRepo` modela também DROP/SET SCHEMA/RENAME. É a vigência
+      // que separa a irmã AUSENTE que a migration não criou da que uma posterior aposentou (Codex, #2757 r3).
+      vigencia: vigenciaPorNome(modelarRepo(lidas)),
     };
     nomesParaSonda = alvosDeCorpo(alvos, historico);
   } catch (e) {
