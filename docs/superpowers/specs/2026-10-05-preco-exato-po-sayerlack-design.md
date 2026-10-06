@@ -82,8 +82,9 @@ são os 2% da TIPI com a redução de 35% de 2022 — mesma família de 5% → 3
 ### 5.1 Dados — uma migration
 
 - **`ipi_aliquota_ncm`**: `ncm text` PK (CHECK 8 dígitos) · `aliquota_pct numeric` (CHECK `0 ≤ x < 100`, que barra NaN e
-  ±Infinity) · `fonte` (`'nf' | 'portal'`) · `evidencia` (não vazia) · `medido_em date` · `atualizado_em`. RLS ligada e
-  sem policy: só service_role lê. A escrita é pelo SQL Editor. Seed: as 13 linhas do §3.
+  ±Infinity, e no máximo 2 casas, como a TIPI — é o que deixa o IPI exato em centavos dos dois lados, §5.2) · `fonte`
+  (`'nf' | 'portal'`) · `evidencia` (não vazia) · `medido_em date` · `atualizado_em`. RLS ligada e sem policy: só
+  service_role lê. A escrita é pelo SQL Editor. Seed: as 13 linhas do §3.
 - **`pedido_compra_item`** ganha `preco_unitario_sem_ipi_portal`, `valor_ipi_portal`, `aliquota_ipi_portal` e
   `ncm_ipi_portal`. **Escritor único: a RPC do §5.3.** CHECK: as 4 nulas ou as 4 preenchidas, com finitude e faixa em
   cada uma.
@@ -95,7 +96,10 @@ são os 2% da TIPI com a redução de 35% de 2022 — mesma família de 5% → 3
 
 - A edge lê `sayerlack_ipi_itens` antes de consolidar. Erro na leitura vira o motivo `ipi_leitura_falhou` — não consegui
   ler ≠ não existe.
-- Linha = Preço Venda do DOM (sem IPI). `IPI_i = round2(round2(PV_i) × alíq_i)`.
+- Linha = Preço Venda do DOM (sem IPI). `IPI_i = round2(round2(PV_i) × alíq_i)`, calculado em **centavos inteiros**
+  (meio centavo para cima, como o `round(numeric, 2)` do Postgres para valor positivo). Em ponto flutuante, a fronteira
+  de meio centavo (ex.: R$ 2,00 × 3,25% = 0,065) podia dar 1 centavo diferente do SQL; em inteiros, o TS e a RPC
+  produzem o MESMO IPI, e a RPC pode exigir igualdade exata.
 - **Prova** (§6): `|Σ round2(PV_i) + Σ IPI_i − data.value| ≤ tol(n)`. Se falhar: `checksum_divergente`, nada gravado.
 - O pedido de **1 item passa pela mesma prova**: a fonte é `dom_checksum` para 1 e N itens, e `json_total_unico` deixa de
   ser emitido. Fica a leniência histórica do sku não lido na linha única.
@@ -119,12 +123,16 @@ Payload por item: `{item_id, qtde_final, valor_mercadoria, valor_ipi}`. A RPC, n
    com 3,6 L, `4 × mercadoria ÷ 3,6` passaria 11% da mercadoria. Hoje não acontece, porque o disparo persiste o `ceil`
    antes do portal e a captura só roda em produção; a recusa é a defesa na fronteira.
 5. **CP006** item sem alíquota (via `sayerlack_ipi_itens`).
-6. **CP007** o IPI do payload difere do recalculado com a alíquota da tabela por mais de R$ 0,01, ou
-   `|Σ (round2(mercadoria_i) + IPI recalculado_i) − total provado| > tol(n)`.
-7. Grava por item: o IPI recalculado, a alíquota e o NCM da tabela, `preco_unitario_sem_ipi_portal = mercadoria ÷ qtde`,
-   `valor_linha = mercadoria + IPI` e `preco_unitario = valor_linha ÷ qtde`. Recalcula `valor_total` (**CP005** como hoje).
+6. **CP007** o IPI do payload difere do recalculado com a alíquota da tabela (igualdade exata — os dois lados calculam
+   em centavos, §5.2), ou `|Σ (round2(mercadoria_i) + IPI_i) − total provado| > tol(n)`.
+7. Grava por item: o IPI, a alíquota e o NCM da tabela, `preco_unitario_sem_ipi_portal = round2(mercadoria) ÷ qtde`,
+   `valor_linha = round2(mercadoria) + IPI` e `preco_unitario = valor_linha ÷ qtde`. Recalcula `valor_total`. É
+   exatamente o que a prova validou: o conjunto gravado reproduz o total modelado ao centavo (princípio do Codex de
+   06/09 — o checksum valida o que fica gravado, não outra coisa).
 
-Tudo-ou-nada: qualquer RAISE desfaz o passo 3 também.
+Tudo-ou-nada: qualquer RAISE desfaz o passo 3 também. O CP005 de hoje (derivado indeterminado: item sem `valor_linha`)
+sai: com o payload cobrindo todos os itens e cada um gravado com `valor_linha > 0`, ele fica inalcançável — e guard
+inalcançável não se prova nem se falsifica.
 
 **Compatibilidade de deploy** — nenhuma combinação grava número errado:
 
@@ -174,7 +182,7 @@ Antes/depois, por query:
 - **Paridade TS×SQL** por arquivo-ouro com os 29 pedidos (`db/fixtures/`): o vitest e o PG17 conferem o mesmo IPI por
   linha e o mesmo veredito por pedido.
 - **PG17** (`db/test-*.sh` + `db/nucleo-ci.txt`): CHECKs da tabela e das colunas, `sayerlack_ipi_itens` e cada SQLSTATE
-  da RPC (CP001..CP007), com assert positivo e negativo. Falsificação: sabotar cada invariante com controle verde na
+  da RPC (CP001–CP004, CP006, CP007), com assert positivo e negativo. Falsificação: sabotar cada invariante com controle verde na
   mesma invocação, commitando antes.
 - Os 6 gates da edge, `sonda:bump`/`sonda:fingerprint` das 2 edges e os registros `authz-funcoes-fechadas` e
   `audit-custom-migrations`.
