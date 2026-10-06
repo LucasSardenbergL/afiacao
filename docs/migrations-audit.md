@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **584** custom migrations totais
-- **1926** objetos esperados (criados por estas migrations)
+- **585** custom migrations totais
+- **1929** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 647
+  - `function`: 649
   - `rls_policy`: 464
   - `index`: 267
   - `cron_job`: 174
-  - `table`: 168
+  - `table`: 169
   - `view`: 107
   - `trigger`: 95
   - `enum_value`: 4
@@ -4801,6 +4801,14 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20261005170000_sku_items_controle_itens_pendentes.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20261006120000_preco_exato_po_sayerlack_ipi.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.sayerlack_ipi_itens` | — |
+| `function` | `public.sayerlack_aplicar_custo_portal` | — |
+| `table` | `public.ipi_aliquota_ncm` | — |
 
 ## Próximos passos por status
 

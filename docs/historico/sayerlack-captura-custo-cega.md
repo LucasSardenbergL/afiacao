@@ -251,3 +251,10 @@ Enquanto não for explicado, `dom_checksum` continua reprovando e o resumo carre
 `sayerlack_aplicar_custo_portal` antes de a migration ser aplicada: todo envio caía em `erro_rpc`
 (`PGRST202`). Quem contou foi o sensor, no #2459: `fonte: json_total_unico` (o custo **foi** provado),
 `atualizados: 0`, `cego: true`. Primeiro sinal positivo da vida do sensor, e ele acertou o alvo.
+
+## Adendo (2026-10-05): a divergência era o IPI
+
+Os R$ 11,80 do #2459 (`374,77 − 362,9698`) são o IPI do NCM 3208.10.20 a 3,25%: `round2(362,9698) = 362,97`,
+`362,97 × 3,25% = 11,80`, `362,97 + 11,80 = 374,77`. O backtest de 29 pedidos (06/09 → 05/10) fechou todos em
+≤ R$ 0,02 com 13 alíquotas por NCM, e a captura passou a modelar o IPI — `dom_checksum` para 1 e N itens,
+`json_total_unico` aposentado. Detalhe: `docs/historico/preco-exato-po-sayerlack.md`.

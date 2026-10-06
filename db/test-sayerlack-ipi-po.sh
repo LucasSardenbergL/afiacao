@@ -164,6 +164,7 @@ rpc() { # $1 = argumentos da chamada · $2 = preâmbulo opcional (SET ROLE / GUC
 }
 sql() { # $1 = comando (sem aspas simples externas) · $2 = preâmbulo opcional
   local out rc=0
+  # shellcheck disable=SC2016  # $c$ é o dollar-quote do Postgres: literal de propósito, não expansão do shell
   out="$(printf '%s\nSELECT public.tentar_sql($c$%s$c$);\n' "${2:-}" "$1" | P -q -tA 2>/dev/null)" || rc=$?
   if [ "$rc" -eq 0 ] && [ -n "$out" ]; then printf '%s' "$out"; else printf 'SQL_SEM_MEDICAO_rc%s' "$rc"; fi
 }
