@@ -96,10 +96,15 @@ describe('retorno-consumido: as edges REAIS de hoje passam (controle da varredur
     ['supabase/functions/omie-sync/index.ts', 'decidirIdentidadeSelfService'],
     ['supabase/functions/omie-sync-sku-items/index.ts', 'skuItemsElegivel'],
     ['supabase/functions/omie-sync-sku-items/index.ts', 'skuItemsCompararFila'],
-    ['supabase/functions/omie-sync-sku-items/index.ts', 'agregarItensRecebimento'],
     ['supabase/functions/omie-sync-sku-items/index.ts', 'decidirErroDoRun'],
     ['supabase/functions/omie-sync-sku-items/index.ts', 'avaliarFilaParada'],
-    ['supabase/functions/omie-sync-sku-items/index.ts', 'motivoDaTentativa'],
+    ['supabase/functions/omie-sync-sku-items/index.ts', 'pendenteNaFila'],
+    ['supabase/functions/omie-sync-sku-items/index.ts', 'gravarRecebimento'],
+    // Desde 2026-10-05 a gravação do recebimento mora em recebimento.ts (o index.ts só a chama).
+    ['supabase/functions/omie-sync-sku-items/recebimento.ts', 'agregarItensRecebimento'],
+    ['supabase/functions/omie-sync-sku-items/recebimento.ts', 'motivoDaTentativa'],
+    ['supabase/functions/omie-sync-sku-items/recebimento.ts', 'classificarItem'],
+    ['supabase/functions/omie-sync-sku-items/recebimento.ts', 'donoDoRecebimento'],
     ['supabase/functions/analyze-unified-order/index.ts', 'acumularUsoCache'],
   ];
 

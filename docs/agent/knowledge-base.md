@@ -29,6 +29,7 @@
 
 - A edge `kb-extract-specs` extrai ~40 campos via Claude (**custa $**). Persistência em **`kb_extraction_drafts`** (⚠️ coluna **`spec` SINGULAR** — a edge responde `specs` plural; NÃO confundir, já mordeu).
 - **Claim atômico** (RPC `kb_extraction_draft_claim`) ANTES da chamada paga = **anti-duplo-pagamento**: o `UPSERT` resolve a corrida de LINHA, **não** a de CUSTO (2 abas/duplo-clique pagariam 2×). **Cache-first**: draft `ready` + não-force → devolve o salvo, **sem chamar o Claude**.
+- **Entrada inteira ou nenhuma** (`kb-extract-specs/entrada.ts`): boletim acima de `LIMITE_ENTRADA_CHARS` (50.000, herdado) **não** é extraído pela metade — draft `failed` com `last_error` "entrada truncada…" e 422 **antes** da chamada paga; o cache-first não serve `ready` de documento que excede. Antes era `slice(0, 50_000)` calado → `ready` com specs ausentes com cara de "o boletim não informa". Medido 2026-10-05 (psql-ro): maior boletim **14.644** chars (p99 14.464, 0 de 297 acima) ⇒ o limite NÃO foi mexido; se um dia exceder, a decisão (subir o limite — o modelo aguenta — ou várias passadas) se toma com o caso na mão. Par da trava de SAÍDA (`stop_reason !== "tool_use"` → failed, #2791).
 - Gate **master-only** (`authorizeMaster`, não `authorizeCronOrStaff` — que deixava qualquer staff disparar custo). A RPC de claim é INVOKER + `REVOKE` de anon/authenticated (só `service_role`).
 
 > ⚠️ Lição app-wide nascida do Codex retroativo neste programa (privilege escalation via trigger de role) está em `docs/agent/database.md` §4.
