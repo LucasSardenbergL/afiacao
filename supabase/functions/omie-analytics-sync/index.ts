@@ -122,7 +122,6 @@ interface OmieProdutoCadastro {
   unidade?: string;
   ncm?: string | null;
   valor_unitario?: number;
-  quantidade_estoque?: number;
   inativo?: string;
   imagens?: OmieImagemProduto[];
   descricao_familia?: string | null;
@@ -1351,7 +1350,7 @@ async function syncProducts(db: SupabaseClient, account: OmieAccount, startPage 
           unidade: p.unidade || "UN",
           ncm: p.ncm || null,
           valor_unitario: p.valor_unitario || 0,
-          estoque: p.quantidade_estoque || 0,
+          // Sem `estoque`: o campo do cadastro é DEPRECATED no Omie (chega 0); quem grava é o sync de estoque.
           ativo: p.inativo !== "S",
           account: acctValue,
           imagem_url: p.imagens?.[0]?.url_imagem || null,

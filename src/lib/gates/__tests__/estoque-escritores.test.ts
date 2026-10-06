@@ -51,3 +51,16 @@ describe('analisarEscritorEstoque — zero literal de estoque', () => {
     expect(analisarEscritorEstoque(`rows.push({ estoque: p.quantidade_estoque || 0 })`).zerosLiterais).toBe(0);
   });
 });
+
+describe('analisarEscritorEstoque — o campo DEPRECATED quantidade_estoque', () => {
+  it('conta leitura, chave entre aspas e campo de tipo — o `|| 0` que o zero literal não pega', () => {
+    expect(analisarEscritorEstoque(`rows.push({ estoque: p.quantidade_estoque || 0 })`).camposDeprecados).toBe(1);
+    expect(analisarEscritorEstoque(`const q = p["quantidade_estoque"];`).camposDeprecados).toBe(1);
+    expect(analisarEscritorEstoque(`interface P { valor_unitario?: number; quantidade_estoque?: number }`).camposDeprecados).toBe(1);
+  });
+
+  it('comentário e nome que só CONTÉM o campo não contam', () => {
+    expect(analisarEscritorEstoque(`// quantidade_estoque é DEPRECATED\n/* quantidade_estoque */ x = 1;`).camposDeprecados).toBe(0);
+    expect(analisarEscritorEstoque(`a.quantidade_estoque_omie; b.xquantidade_estoque;`).camposDeprecados).toBe(0);
+  });
+});

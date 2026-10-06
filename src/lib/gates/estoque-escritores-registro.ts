@@ -14,9 +14,7 @@ export type PapelEscritorEstoque =
   /** O próprio UPDATE com CAS do zero confirmado (_shared). */
   | 'zero-compartilhado'
   /** Grava só os positivos que a listagem trouxe e não pode provar completude: nunca zera. */
-  | 'positivos-parcial'
-  /** Writer de CATÁLOGO que ainda grava `quantidade_estoque || 0` (DEPRECATED no Omie, chega 0). */
-  | 'catalogo-legado';
+  | 'positivos-parcial';
 
 export const REGISTRO_ESCRITORES_ESTOQUE: Readonly<Record<string, { papel: PapelEscritorEstoque; motivo: string }>> = {
   'supabase/functions/_shared/zeramento-estoque-io.ts': {
@@ -27,7 +25,7 @@ export const REGISTRO_ESCRITORES_ESTOQUE: Readonly<Record<string, { papel: Papel
     papel: 'dono-zero-confirmado',
     motivo:
       'syncInventory (vendas, colacor_vendas, servicos) — dono do zero; syncInventoryFull é modo S (zero explícito); ' +
-      'syncProducts ainda grava o `quantidade_estoque || 0` do catálogo até o PR-2',
+      'o syncProducts (catálogo) não grava estoque',
   },
   'supabase/functions/sync-reprocess/index.ts': {
     papel: 'dono-zero-confirmado',
@@ -37,14 +35,6 @@ export const REGISTRO_ESCRITORES_ESTOQUE: Readonly<Record<string, { papel: Papel
     papel: 'positivos-parcial',
     motivo:
       'sync_estoque: cursor de 3 páginas por invocação, disparado pelo catálogo do pedido unificado — nenhuma ' +
-      'invocação vê a listagem inteira, logo não prova ausência; sync_products (catálogo) até o PR-2',
-  },
-  'supabase/functions/omie-sync-metadados/index.ts': {
-    papel: 'catalogo-legado',
-    motivo: 'catálogo diário (08:30 UTC, oben e colacor) — o `|| 0` sai no PR-2, depois de o zero confirmado provar em prod',
-  },
-  'supabase/functions/tint-omie-sync/index.ts': {
-    papel: 'catalogo-legado',
-    motivo: 'catálogo das famílias tintométricas (manual, oben) — o `|| 0` sai no PR-2',
+      'invocação vê a listagem inteira, logo não prova ausência; o sync_products (catálogo) não grava estoque',
   },
 };
