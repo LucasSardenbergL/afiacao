@@ -1,7 +1,8 @@
 import { describe, it, expect, onTestFailed } from 'vitest';
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { auditAuthz, auditCompleto, type Migration } from './authz-gate-check';
+import { auditAuthz, auditCompleto, auditCompletoPassos, type Finding, type Migration } from './authz-gate-check';
+import { contarPulsos, descreverPulsos, drenarCedendo, type Pulsos } from '@/test/loop-livre';
 import { AUTHZ_TABELAS_FECHADAS } from './authz-tabelas-fechadas';
 import { AUTHZ_FUNCOES_FECHADAS } from './authz-funcoes-fechadas';
 import { AUTHZ_MANIFEST, ACKNOWLEDGED_SENSITIVE, manifestKey } from './authz-manifest';
@@ -625,32 +626,46 @@ describe('AUTHZ_REESCRITAS_CONHECIDAS — a baseline não pode ser decoração',
    * com a máquina sob carga (medido 2026-09-07) — o custo é do laço, não da asserção, então a
    * saída é computar uma vez, não afrouxar o timeout: teto maior esconderia a duplicação em vez
    * de removê-la, e o próximo canário a entrar aqui pagaria o preço de novo.
+   *
+   * E a varredura CEDE o event loop entre as partes (`auditCompletoPassos` + `drenarCedendo`): de
+   * uma vez, ela era o MAIOR bloqueio síncrono da suíte (14,8s sob carga em 2026-10-05), e acima de
+   * 60s o RPC do vitest estoura — `test` rc=1 sem teste falhando (src/test/loop-livre.ts).
+   * Memoizada como PROMISE junto com o pulso dela, que a guarda abaixo lê seja qual for o `it` que
+   * a disparou.
    */
-  let achadosDoRepo: ReturnType<typeof auditCompleto> | undefined;
-  const doRepo = () => {
-    achadosDoRepo ??= auditCompleto(
-      readdirSync(dirMig)
-        .filter((f) => f.endsWith('.sql'))
-        .map((f) => ({ file: f, sql: readFileSync(join(dirMig, f), 'utf8') })),
-    );
-    return achadosDoRepo;
-  };
+  let varreduraDoRepo: Promise<Pulsos<Finding[]>> | undefined;
+  const varrerRepo = () =>
+    (varreduraDoRepo ??= contarPulsos(() =>
+      drenarCedendo(
+        auditCompletoPassos(
+          readdirSync(dirMig)
+            .filter((f) => f.endsWith('.sql'))
+            .map((f) => ({ file: f, sql: readFileSync(join(dirMig, f), 'utf8') })),
+        ),
+      ),
+    ));
+  const doRepo = async () => (await varrerRepo()).resultado;
 
-  it('nenhuma entrada da baseline foi SUPERADA por um CREATE posterior (baseline não podada)', () => {
+  it('a varredura do repo cede o event loop do worker — o pulso bate entre as partes', async () => {
+    const p = await varrerRepo();
+    expect(p.batidas, descreverPulsos(p)).toBeGreaterThanOrEqual(2);
+  }, ORCAMENTO_VARREDURA_MS);
+
+  it('nenhuma entrada da baseline foi SUPERADA por um CREATE posterior (baseline não podada)', async () => {
     armarDiagnosticoDeVarredura();
     // O prazo de uma entrada não é uma data: é a chegada de um CREATE parseável posterior, que
     // devolve a medição à Parte A. Passado esse ponto a entrada não protege mais nada e ainda
     // desvia o alarme do `authz:audit:prod` para o arquivo errado — foi assim que o MD5_DIVERGIU
     // de `get_defasagem_cliente` ficou aberto de 05/09 a 07/09 culpando uma migration inocente.
-    const obsoletas = doRepo().filter((f) => f.msg.includes('REESCRITA_BASELINE_OBSOLETA'));
+    const obsoletas = (await doRepo()).filter((f) => f.msg.includes('REESCRITA_BASELINE_OBSOLETA'));
     expect(obsoletas.map((f) => `${f.file}::${f.fn}`)).toEqual([]);
   }, ORCAMENTO_VARREDURA_MS);
 
-  it('o repo real não tem NENHUMA reescrita de função do manifest fora da baseline', () => {
+  it('o repo real não tem NENHUMA reescrita de função do manifest fora da baseline', async () => {
     armarDiagnosticoDeVarredura();
     // O canário do estado atual: se um PR novo introduzir o padrão sobre função do manifest,
     // este teste cai junto com o `authz:check` — e a mensagem diz qual arquivo.
-    const naoMedidas = doRepo().filter((f) => f.msg.includes('REESCRITA_VIVA_NAO_MEDIDA'));
+    const naoMedidas = (await doRepo()).filter((f) => f.msg.includes('REESCRITA_VIVA_NAO_MEDIDA'));
     expect(naoMedidas.map((f) => `${f.file}::${f.fn}`)).toEqual([]);
   }, ORCAMENTO_VARREDURA_MS);
 });

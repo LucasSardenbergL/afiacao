@@ -998,12 +998,19 @@ mediu mais três coisas da família:
 |---|---|
 | zsh | `no matches found` · exit 1 · **sem `depois`** |
 | bash | `depois` · exit 0 |
-| zsh com `(N)` | `depois` · exit 0 |
+| zsh limpo (`zsh -f`) com o qualificador `(N)` | `depois` · exit 0 |
+| zsh **do Bash tool** com `(N)` | `no matches found` · exit 1 — o snapshot liga `nobareglobqual`, e `(N)` deixa de ser qualificador |
 
 O custo real não foi o erro — foi o que eu li no lugar dele: a saída terminava num `Terminated: 15` de um
-job que eu mesmo tinha parado, e por minutos aquilo pareceu o veredito da suíte. ⇒ nomes explícitos, ou o
-qualificador `(N)` (`rm -f "$SCR"/mg-*.txt(N)`), ou `find "$SCR" -name 'mg-*.txt' -delete`; e confirme
-que o comando autoritativo **rodou** (a linha de resumo dele na saída) antes de ler qualquer exit.
+job que eu mesmo tinha parado, e por minutos aquilo pareceu o veredito da suíte. ⇒ nomes explícitos, ou
+`find "$SCR" -name 'mg-*.txt' -delete` (sem casamento, não faz nada e sai 0); e confirme que o comando
+autoritativo **rodou** (a linha de resumo dele na saída) antes de ler qualquer exit.
+
+⚠️ **O `(N)` NÃO é o conserto** — esta seção o recomendou na 1ª versão, e ele falhou no mesmo dia, no
+próprio harness: o zsh do Bash tool roda com `nobareglobqual` (medido com `setopt`), então `*.js(N)`
+volta ao `no matches found`. E onde ele funciona (zsh limpo), o glob vazio SOME da linha: `ls <glob>(N)`
+sem casamento vira `ls` sem argumento e lista o diretório atual (medido) — inofensivo no `rm -f`, errado
+em qualquer comando para o qual "sem argumento" quer dizer "tudo" ou "leia o stdin".
 
 O mesmo mecanismo, pelo avesso, no mesmo dia: `…; echo ===; cat "$S/saida-BR.txt"` no fim de um job em
 background. Com `===` sem aspas, a opção `EQUALS` do zsh tenta expandir `=<comando>` para o caminho do

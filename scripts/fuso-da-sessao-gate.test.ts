@@ -4,7 +4,8 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { CONHECIDOS, PISOS, confrontar, detectarFusoDaSessao, varrerMigrations } from './fuso-da-sessao-gate';
+import { CONHECIDOS, PISOS, confrontar, detectarFusoDaSessao, varrerMigrations, varrerMigrationsPassos } from './fuso-da-sessao-gate';
+import { contarPulsos, descreverPulsos, drenarCedendo } from '@/test/loop-livre';
 import { modelarRepo } from './lib/deriva-corpo';
 import { maiorBlocoDescartadoSql } from './lib/sql-comentarios';
 
@@ -131,11 +132,17 @@ describe('o corpo VIVO do repo (a última definição de cada função)', () => 
     for (const c of CONHECIDOS) expect(c.motivo.length, c.alvo).toBeGreaterThan(60);
   });
 
-  it('canário: uma migration nova que recria o corpo pré-fix REPROVA, nomeando o sítio', () => {
+  // Os canários refazem o fold do repo inteiro DENTRO do `it` — e o drenam CEDENDO o event loop:
+  // de uma vez, cada um era UM bloqueio síncrono (8,9s sob carga em 2026-10-05), e acima de 60s o
+  // RPC do vitest estoura — `test` rc=1 sem teste falhando (src/test/loop-livre.ts). A varredura
+  // do describe (`v`) fica na coleta, onde o bloqueio não estoura nada.
+  it('canário: uma migration nova que recria o corpo pré-fix REPROVA, nomeando o sítio', async () => {
     const origem = MIGS.find((m) => m.nome === ORIGEM);
     expect(origem).toBeDefined();
     const canario = { nome: '99999999999999_canario.sql', sql: origem?.sql ?? '' };
-    const { novos } = confrontar(varrerMigrations([...MIGS, canario]), CONHECIDOS);
+    const p = await contarPulsos(() => drenarCedendo(varrerMigrationsPassos([...MIGS, canario])));
+    expect(p.batidas, descreverPulsos(p)).toBeGreaterThanOrEqual(2);
+    const { novos } = confrontar(p.resultado, CONHECIDOS);
     expect(novos).toEqual([
       `${ALVO} · A · fc.started_at >= mes_inicio (1× no corpo vivo, baseline 0)`,
       `${ALVO} · A · fc.started_at < mes_fim (1× no corpo vivo, baseline 0)`,
@@ -143,7 +150,7 @@ describe('o corpo VIVO do repo (a última definição de cada função)', () => 
     ]);
   });
 
-  it('canário 2: o corpo pré-fix nas formas alternativas (`date =` e `CAST`) também REPROVA', () => {
+  it('canário 2: o corpo pré-fix nas formas alternativas (`date =` e `CAST`) também REPROVA', async () => {
     const origem = MIGS.find((m) => m.nome === ORIGEM)?.sql ?? '';
     const variante = origem.replaceAll('mes_inicio date :=', 'mes_inicio date =')
       .replaceAll('mes_fim date :=', 'mes_fim date =')
@@ -151,7 +158,11 @@ describe('o corpo VIVO do repo (a última definição de cada função)', () => 
     // controle: as 3 trocas aconteceram — senão o canário mediria o corpo de sempre
     expect(variante.split('date =').length - 1).toBeGreaterThanOrEqual(2);
     expect(variante).toContain('CAST(so.created_at AS date)');
-    const { novos } = confrontar(varrerMigrations([...MIGS, { nome: '99999999999999_canario.sql', sql: variante }]), CONHECIDOS);
+    const p = await contarPulsos(() =>
+      drenarCedendo(varrerMigrationsPassos([...MIGS, { nome: '99999999999999_canario.sql', sql: variante }])),
+    );
+    expect(p.batidas, descreverPulsos(p)).toBeGreaterThanOrEqual(2);
+    const { novos } = confrontar(p.resultado, CONHECIDOS);
     expect(novos).toEqual([
       `${ALVO} · A · fc.started_at >= mes_inicio (1× no corpo vivo, baseline 0)`,
       `${ALVO} · A · fc.started_at < mes_fim (1× no corpo vivo, baseline 0)`,

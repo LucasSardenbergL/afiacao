@@ -7,7 +7,16 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { enumerar } from './shell-variavel-colada-gate';
-import { PISOS, RAIZES_PADRAO, analisar, detectar, veredito, type Analise } from './relogio-bash-em-provas-gate';
+import {
+  PISOS,
+  RAIZES_PADRAO,
+  analisar,
+  analisarPassos,
+  detectar,
+  veredito,
+  type Analise,
+} from './relogio-bash-em-provas-gate';
+import { contarPulsos, descreverPulsos, drenarCedendo, type Pulsos } from '@/test/loop-livre';
 
 /**
  * Dente do fiscal do relógio do bash em provas (docs/historico/provas-janela-de-relogio-fora-do-
@@ -180,10 +189,19 @@ describe('veredito — 2 nunca é "passou"', () => {
 describe('o corpo REAL do repo', () => {
   let arquivos: { caminho: string; fonte: string }[];
   let r: Analise;
-  beforeAll(() => {
+  // A varredura do repo CEDE o event loop entre os arquivos (`analisarPassos` + `drenarCedendo`):
+  // de uma vez, ela era UM bloqueio síncrono no `beforeAll` (3,5s sob carga em 2026-10-05), e acima
+  // de 60s o RPC do vitest estoura — `test` rc=1 sem teste falhando (src/test/loop-livre.ts).
+  let pulsos: Pulsos<Analise>;
+  beforeAll(async () => {
     arquivos = enumerar(RAIZES_PADRAO, RAIZ).map((c) => ({ caminho: relative(RAIZ, c), fonte: readFileSync(c, 'utf8') }));
-    r = analisar(arquivos);
+    pulsos = await contarPulsos(() => drenarCedendo(analisarPassos(arquivos)));
+    r = pulsos.resultado;
   }, 30_000);
+
+  it('a varredura do repo cede o event loop do worker — o pulso bate entre os arquivos', () => {
+    expect(pulsos.batidas, descreverPulsos(pulsos)).toBeGreaterThanOrEqual(2);
+  });
 
   it('nenhuma prova tira o esperado do relógio do bash', () => {
     expect(r.violacoes.map((s) => `${s.arquivo}:${s.linha}  ${s.trecho}`)).toEqual([]);
@@ -198,13 +216,15 @@ describe('o corpo REAL do repo', () => {
    * arquivo de onde saiu, tem de acusar exatamente aquele sítio — e nada além dele. No arquivo
    * REAL, e não num fixture: é ali que o stripper precisa chegar ao fim sem perder o fio.
    */
-  it('falsificação: devolver o N9 ao arquivo real acusa exatamente ele (e o corpo intocado, não)', () => {
+  it('falsificação: devolver o N9 ao arquivo real acusa exatamente ele (e o corpo intocado, não)', async () => {
     const alvo = arquivos.find((a) => a.caminho === ARQUIVO_DO_N9);
     expect(alvo, `${ARQUIVO_DO_N9} sumiu do universo — a falsificação perdeu o alvo`).toBeDefined();
     expect(veredito(r, true).codigo).toBe(0); // controle, antes de sabotar
     const fonte = alvo!.fonte.endsWith('\n') ? alvo!.fonte : alvo!.fonte + '\n';
     const sabotado = arquivos.map((a) => (a === alvo ? { ...a, fonte: fonte + N9 + '\n' } : a));
-    const rs = analisar(sabotado);
+    const ps = await contarPulsos(() => drenarCedendo(analisarPassos(sabotado)));
+    expect(ps.batidas, descreverPulsos(ps)).toBeGreaterThanOrEqual(2);
+    const rs = ps.resultado;
     expect(rs.violacoes).toEqual([{ arquivo: ARQUIVO_DO_N9, linha: fonte.split('\n').length, trecho: N9 }]);
     expect(veredito(rs, true).codigo).toBe(1);
   });

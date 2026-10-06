@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { resolve, join } from 'node:path';
+import { contarPulsos, descreverPulsos, emFatias } from '@/test/loop-livre';
 import { removerComentarios, medirPreservacao, maiorBlocoDescartado } from '../limpeza-fonte';
 
 // Prova do stripper que os gates textuais usam para não medir a prosa que DESCREVE o defeito.
@@ -157,23 +158,36 @@ describe('sentinela: a limpeza não descarta região grande demais para ser come
     expect(fontes).toContain('supabase/functions/sayerlack-captura-precos/index.ts');
   });
 
-  it(`nenhum arquivo perde bloco contíguo > ${TETO_BLOCO} linhas`, () => {
-    const estouros = fontes
-      .map((f) => [f, maiorBlocoDescartado(readFileSync(resolve(RAIZ, f), 'utf8'))] as const)
-      .filter(([, n]) => n > TETO_BLOCO)
-      .map(([f, n]) => `${f}: ${n} linhas`);
+  // As duas varreduras CEDEM o event loop entre as fontes: síncronas, cada uma era UM bloqueio (3,1s
+  // sob carga em 2026-10-05), e acima de 60s o RPC do vitest estoura — `test` rc=1 sem teste
+  // falhando (src/test/loop-livre.ts). O pulso prova a cessão no laço real.
+  it(`nenhum arquivo perde bloco contíguo > ${TETO_BLOCO} linhas`, async () => {
+    const estouros: string[] = [];
+    const p = await contarPulsos(async () => {
+      for await (const f of emFatias(fontes)) {
+        const n = maiorBlocoDescartado(readFileSync(resolve(RAIZ, f), 'utf8'));
+        if (n > TETO_BLOCO) estouros.push(`${f}: ${n} linhas`);
+      }
+    });
     expect(
       estouros,
       'ou nasceu um cabeçalho gigante (aí suba TETO_BLOCO dizendo por quê), ou o stripper ' +
         'voltou a comer código achando que era comentário — que é a classe inteira deste arquivo',
     ).toEqual([]);
+    expect(p.batidas, descreverPulsos(p)).toBeGreaterThanOrEqual(2);
   });
 
-  it(`nenhum arquivo com ≥${CORPO_MINIMO} linhas preserva menos que ${PISO_FRACAO}`, () => {
-    const afundados = fontes
-      .map((f) => [f, medirPreservacao(readFileSync(resolve(RAIZ, f), 'utf8'))] as const)
-      .filter(([, m]) => m.linhasOriginais >= CORPO_MINIMO && m.fracao < PISO_FRACAO)
-      .map(([f, m]) => `${f}: ${m.linhasPreservadas}/${m.linhasOriginais}`);
+  it(`nenhum arquivo com ≥${CORPO_MINIMO} linhas preserva menos que ${PISO_FRACAO}`, async () => {
+    const afundados: string[] = [];
+    const p = await contarPulsos(async () => {
+      for await (const f of emFatias(fontes)) {
+        const m = medirPreservacao(readFileSync(resolve(RAIZ, f), 'utf8'));
+        if (m.linhasOriginais >= CORPO_MINIMO && m.fracao < PISO_FRACAO) {
+          afundados.push(`${f}: ${m.linhasPreservadas}/${m.linhasOriginais}`);
+        }
+      }
+    });
     expect(afundados, 'o fiscal está olhando quase nada destes arquivos').toEqual([]);
+    expect(p.batidas, descreverPulsos(p)).toBeGreaterThanOrEqual(2);
   });
 });

@@ -1037,6 +1037,7 @@ rodam, e o pulso bate zero. Prova o não-bloqueio sem reproduzir os 60 s nem a c
 exige subprocesso — `erro-colapsado-em-vazio-gate.test.ts` e `pendencias-prompt.test.ts` também
 quebraram por timeout sob carga sem usar `spawnSync` (trabalho síncrono de CPU). Cada teste que segura
 o loop por mais de 60 s sob carga é uma fonte do mesmo vermelho; a varredura deles é tarefa própria.
+→ Feita em 2026-10-05: [rpc-do-vitest-e-o-loop-preso.md](rpc-do-vitest-e-o-loop-preso.md).
 
 ## A leitura da matriz virou fail-closed (2026-09-25) — e o segundo leitor que o achado não listava
 

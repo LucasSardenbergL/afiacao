@@ -31,6 +31,7 @@
  *   · o alias é lido no FROM/JOIN imediato; leitura por CTE/subquery que renomeia não se distingue.
  */
 import { tokensSql } from './deriva-corpo';
+import { drenar, type Passos } from '@/lib/gates/passos';
 
 type TipoRegistro = 'lookup' | 'escritor' | 'proposito' | 'canonico_por_parametro';
 export interface EntradaRegistro {
@@ -179,6 +180,13 @@ function eventosDeTokens(migration: string, toks: readonly string[]): Evento[] {
 
 /** A última definição viva de cada objeto. Quem chama ORDENA as migrations (lexical do nome). */
 export function modelar(migrations: ReadonlyArray<{ nome: string; sql: string }>): Map<string, Definicao> {
+  return drenar(modelarPassos(migrations));
+}
+
+/** O `modelar` como gerador (`@/lib/gates/passos`): `yield` por migration, onde está o custo (os
+ *  eventos de cada uma) — o teste que modela o repo inteiro drena cedendo o event loop do worker do
+ *  vitest (o RPC estoura com >60s de bloqueio: docs/historico/rpc-do-vitest-e-o-loop-preso.md). */
+export function* modelarPassos(migrations: ReadonlyArray<{ nome: string; sql: string }>): Passos<Map<string, Definicao>> {
   const vivo = new Map<string, Definicao>();
   for (const { nome, sql } of migrations) {
     for (const e of eventosDaMigration(nome, sql)) {
@@ -189,6 +197,7 @@ export function modelar(migrations: ReadonlyArray<{ nome: string; sql: string }>
         if (d) { vivo.delete(e.de); vivo.set(e.para, { ...d, objeto: e.para }); }
       }
     }
+    yield;
   }
   return vivo;
 }

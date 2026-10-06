@@ -61,11 +61,17 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { type Arquivo, TETO_BLOCO_DESCARTADO, corposVivosDe, lerRepo } from './fuso-da-sessao-em-migrations-e-skills-gate';
+import {
+  type Arquivo,
+  TETO_BLOCO_DESCARTADO,
+  corposVivosDe,
+  corposVivosDePassos,
+  lerRepo,
+} from './fuso-da-sessao-em-migrations-e-skills-gate';
 import { somenteCercas } from './lib/markdown-codigo';
 import { maiorBlocoDescartadoSql, removerComentariosSql } from './lib/sql-comentarios';
 
-export { lerRepo, corposVivosDe, type Arquivo };
+export { lerRepo, corposVivosDe, corposVivosDePassos, type Arquivo };
 
 /** `import.meta.dir` é do Bun e não existe sob o vitest — por isso preguiçosa, como nos irmãos. */
 const raizDoRepo = () => fileURLToPath(new URL('..', import.meta.url));

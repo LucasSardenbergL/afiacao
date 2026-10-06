@@ -16,7 +16,8 @@
  */
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { type EntradaRegistro, julgar, lerAutoridade, modelar } from './lib/universo-pedidos-sql';
+import { type EntradaRegistro, julgar, lerAutoridade, modelarPassos } from './lib/universo-pedidos-sql';
+import { drenar, type Passos } from '@/lib/gates/passos';
 
 /**
  * Os leitores de sales_orders que NÃO aplicam o universo de VENDA, e por quê. Medido em 2026-10-01
@@ -73,9 +74,17 @@ export function lerMigrations(raiz: string): Array<{ nome: string; sql: string }
 }
 
 export function rodarGate(raiz: string) {
+  return drenar(rodarGatePassos(raiz));
+}
+
+/** O gate como gerador: as cessões são as do `modelarPassos`, uma por migration — o teste drena
+ *  cedendo o event loop do worker do vitest. */
+export function* rodarGatePassos(
+  raiz: string,
+): Passos<{ migrations: number; objetos: number } & ReturnType<typeof julgar>> {
   const migrations = lerMigrations(raiz);
   const autoridade = lerAutoridade(readFileSync(join(raiz, 'src', 'lib', 'farmer', 'universo-pedidos.ts'), 'utf8'));
-  const modelo = modelar(migrations);
+  const modelo = yield* modelarPassos(migrations);
   return { migrations: migrations.length, objetos: modelo.size, ...julgar(modelo, REGISTRO_UNIVERSO_PEDIDOS, autoridade) };
 }
 

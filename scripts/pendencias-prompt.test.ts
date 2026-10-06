@@ -1,10 +1,11 @@
-import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { contarPulsos, descreverPulsos, rodarOk } from '@/test/loop-livre';
 
 import {
   arvoreDaRef,
@@ -36,11 +37,13 @@ const MAPA = `${SHARED}/sonda-fingerprints.ts`;
 let raiz: string;
 let remoto: string;
 
-function gitF(...args: string[]): string {
-  return execFileSync(
-    'git',
-    ['-C', raiz, '-c', 'user.email=t@t', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...args],
-    { encoding: 'utf8' },
+// O `git` do repo de mentira é ASSÍNCRONO (`rodarOk`): síncronos, os forks dele (~6 por `it`)
+// colavam nos do código sob teste num bloco só que segurava o event loop do worker — 2,5s sob carga
+// em 2026-10-05, e este arquivo quebrou por timeout sob thrashing; acima de 60s o RPC do vitest
+// estoura, `test` rc=1 sem teste falhando (src/test/loop-livre.ts).
+async function gitF(...args: string[]): Promise<string> {
+  return (
+    await rodarOk('git', ['-C', raiz, '-c', 'user.email=t@t', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...args])
   ).trim();
 }
 
@@ -76,18 +79,18 @@ const ARVORE_MAIN: ArvoreDeFonte = {
 const MAPA_MAIN = renderizarMapa({ 'edge-e': fingerprintDaEdge('edge-e', '/fixture', ARVORE_MAIN) });
 
 /** Repo local + `origin` bare, com a fatia da `edge-e` commitada e publicada. */
-function montarRepo(): void {
-  execFileSync('git', ['init', '--bare', '-q', '-b', 'main', remoto]);
-  gitF('init', '-q', '-b', 'main');
-  gitF('remote', 'add', 'origin', remoto);
+async function montarRepo(): Promise<void> {
+  await rodarOk('git', ['init', '--bare', '-q', '-b', 'main', remoto]);
+  await gitF('init', '-q', '-b', 'main');
+  await gitF('remote', 'add', 'origin', remoto);
   escrever('supabase/functions/edge-e/index.ts', INDEX_MAIN);
   escrever('supabase/functions/edge-e/a.ts', A_MAIN);
   escrever('supabase/functions/edge-e/versao.ts', VERSAO_MAIN);
   escrever(`${SHARED}/b.ts`, B_MAIN);
   escrever(MAPA, MAPA_MAIN);
-  gitF('add', '-A');
-  gitF('commit', '-q', '-m', 'base');
-  gitF('push', '-q', 'origin', 'main');
+  await gitF('add', '-A');
+  await gitF('commit', '-q', '-m', 'base');
+  await gitF('push', '-q', 'origin', 'main');
 }
 
 /**
@@ -109,13 +112,21 @@ beforeEach(() => {
 });
 afterEach(() => rmSync(join(raiz, '..'), { recursive: true, force: true }));
 
+// A guarda do `gitF` — o que o repo de mentira usa: um git que DORME 200ms (alias `!sleep`),
+// duração determinística, para o pulso ter o que contar em qualquer máquina (6 forks de git no Linux
+// do CI somam menos que um pulso). Síncrono, ele bate zero.
+it('o git do repo de mentira NÃO prende o event loop do worker — o pulso bate com o filho vivo', async () => {
+  const p = await contarPulsos(() => gitF('-c', 'alias.dorme=!sleep 0.2', 'dorme'));
+  expect(p.batidas, descreverPulsos(p)).toBeGreaterThanOrEqual(2);
+});
+
 // ═══════════════════════════════════════════════════════════════════════════════════════════
 // O eixo ÁRVORE — o teste que fica VERMELHO se alguém trocar a ref pelo disco
 // ═══════════════════════════════════════════════════════════════════════════════════════════
 
 describe('fatiaDeDeploy lê a REF, não o working tree', () => {
-  it('CONTROLE: com o disco IGUAL à main, a fatia é a esperada e os hashes batem', () => {
-    montarRepo();
+  it('CONTROLE: com o disco IGUAL à main, a fatia é a esperada e os hashes batem', async () => {
+    await montarRepo();
     const f = fatiaDeDeploy('edge-e', raiz, arvoreDaRef(REF_DEPLOYADA, gitBytes(raiz)));
     expect(f.arquivos.map((a) => a.caminho)).toEqual([
       `${SHARED}/b.ts`,
@@ -128,12 +139,12 @@ describe('fatiaDeDeploy lê a REF, não o working tree', () => {
     expect(porCaminho['supabase/functions/edge-e/a.ts']).toBe(sha256De(A_MAIN));
   });
 
-  it('FALSIFICAÇÃO (ÁRVORE): disco DIVERGENTE não muda nem a lista nem os hashes', () => {
+  it('FALSIFICAÇÃO (ÁRVORE): disco DIVERGENTE não muda nem a lista nem os hashes', async () => {
     // Este é o teste que morre se `arvoreDaRef` virar `arvoreDeTrabalho`, ou se `fatiaDeDeploy`
     // voltar a `existsSync`/`readFileSync`. Contra o disco: 2 arquivos (`b.ts` sumiu do import E
     // do disco) e o hash de `a.ts` seria o do conteúdo sujo. Contra a ref: 4 arquivos e os hashes
     // da main. É o 5-vs-7 da `enviar-pedido-portal-sayerlack` reproduzido em miniatura.
-    montarRepo();
+    await montarRepo();
     divergirDoMain();
     const f = fatiaDeDeploy('edge-e', raiz, arvoreDaRef(REF_DEPLOYADA, gitBytes(raiz)));
 
@@ -145,27 +156,27 @@ describe('fatiaDeDeploy lê a REF, não o working tree', () => {
     expect(porCaminho['supabase/functions/edge-e/index.ts']).toBe(sha256De(INDEX_MAIN));
   });
 
-  it('o MAPA entra na fatia mesmo sem estar no closure — omiti-lo serve FONTE_SHA256 velho', () => {
-    montarRepo();
+  it('o MAPA entra na fatia mesmo sem estar no closure — omiti-lo serve FONTE_SHA256 velho', async () => {
+    await montarRepo();
     const f = fatiaDeDeploy('edge-e', raiz, arvoreDaRef(REF_DEPLOYADA, gitBytes(raiz)));
     const mapa = f.arquivos.find((a) => a.caminho === MAPA);
     expect(mapa?.sha256).toBe(sha256De(MAPA_MAIN));
   });
 
-  it('edge que existe SÓ no disco é recusada NOMEANDO a ref — não é edge para deployar', () => {
-    montarRepo();
+  it('edge que existe SÓ no disco é recusada NOMEANDO a ref — não é edge para deployar', async () => {
+    await montarRepo();
     escrever('supabase/functions/edge-fantasma/index.ts', `export default {};\n`);
     expect(() => fatiaDeDeploy('edge-fantasma', raiz, arvoreDaRef(REF_DEPLOYADA, gitBytes(raiz))))
       .toThrow(/edge inexistente em origin\/main/);
   });
 
-  it('import da ref que não resolve NA REF é fail-closed, e a mensagem diz QUAL árvore', () => {
-    montarRepo();
+  it('import da ref que não resolve NA REF é fail-closed, e a mensagem diz QUAL árvore', async () => {
+    await montarRepo();
     escrever('supabase/functions/edge-e/index.ts', `import "./sumido.ts";\nexport default {};\n`);
-    gitF('add', '-A');
-    gitF('commit', '-q', '-m', 'import quebrado');
-    gitF('push', '-q', 'origin', 'main');
-    gitF('fetch', '-q', 'origin', 'main');
+    await gitF('add', '-A');
+    await gitF('commit', '-q', '-m', 'import quebrado');
+    await gitF('push', '-q', 'origin', 'main');
+    await gitF('fetch', '-q', 'origin', 'main');
     expect(() => fatiaDeDeploy('edge-e', raiz, arvoreDaRef(REF_DEPLOYADA, gitBytes(raiz))))
       .toThrow(/import local que NÃO resolve em origin\/main/);
   });
@@ -176,11 +187,11 @@ describe('fatiaDeDeploy lê a REF, não o working tree', () => {
 // ═══════════════════════════════════════════════════════════════════════════════════════════
 
 describe('sha256Arquivo bate com o binário que o agente vai rodar', () => {
-  it('CONTROLE POSITIVO: o hash embutido = a saída de `sha256sum`/`shasum -a 256`', () => {
+  it('CONTROLE POSITIVO: o hash embutido = a saída de `sha256sum`/`shasum -a 256`', async () => {
     // Se estes dois divergirem, TODO deploy aborta com divergência fabricada. Não dá para provar
     // isto lendo o código: só medindo contra o binário. Sem `sha256sum` nem `shasum` a asserção
     // FALHA de propósito — não conseguir medir não é o mesmo que ter medido e batido.
-    montarRepo();
+    await montarRepo();
     escrever('amostra.bin', 'linha 1\nacentuação çãé\n');
     const nossa = sha256Arquivo(Buffer.from('linha 1\nacentuação çãé\n', 'utf8'));
 
@@ -191,7 +202,7 @@ describe('sha256Arquivo bate com o binário que o agente vai rodar', () => {
     let doBinario: string | null = null;
     for (const [cmd, args] of tentativas) {
       try {
-        doBinario = execFileSync(cmd, args, { cwd: raiz, encoding: 'utf8' }).trim().split(/\s+/)[0];
+        doBinario = (await rodarOk(cmd, args, { cwd: raiz })).trim().split(/\s+/)[0];
         break;
       } catch {
         /* tenta o próximo — macOS tem `shasum`, Linux tem `sha256sum` */
@@ -255,8 +266,8 @@ describe('sincronizarRef', () => {
 });
 
 describe('gitBytes — spawn que não respondeu NÃO é sucesso', () => {
-  it('binário inexistente devolve ok:false, não ok:true com bytes vazios', () => {
-    montarRepo();
+  it('binário inexistente devolve ok:false, não ok:true com bytes vazios', async () => {
+    await montarRepo();
     const r = gitBytes(raiz)(['nao-e-um-subcomando-de-git']);
     expect(r.ok).toBe(false);
   });
@@ -283,10 +294,10 @@ describe('main — nunca imprime colagem num caminho de erro', () => {
   });
   afterEach(() => vi.restoreAllMocks());
 
-  it('caminho feliz: exit 0, prompt com os arquivos, os hashes da MAIN e a procedência', () => {
-    montarRepo();
+  it('caminho feliz: exit 0, prompt com os arquivos, os hashes da MAIN e a procedência', async () => {
+    await montarRepo();
     divergirDoMain(); // o disco sujo NÃO pode aparecer na saída
-    const sha = gitF('rev-parse', REF_DEPLOYADA);
+    const sha = await gitF('rev-parse', REF_DEPLOYADA);
     expect(main(['edge-e'], raiz)).toBe(0);
     expect(saida).toContain(`- \`${SHARED}/b.ts\` — sha256 \`${sha256De(B_MAIN)}\``);
     expect(saida).toContain(`- \`supabase/functions/edge-e/a.ts\` — sha256 \`${sha256De(A_MAIN)}\``);
@@ -296,36 +307,36 @@ describe('main — nunca imprime colagem num caminho de erro', () => {
     expect(saida).toContain('do NOT deploy');
   });
 
-  it('fetch quebrado: exit 2 e stdout VAZIO — colagem sem conferência é pior que colagem nenhuma', () => {
-    montarRepo();
+  it('fetch quebrado: exit 2 e stdout VAZIO — colagem sem conferência é pior que colagem nenhuma', async () => {
+    await montarRepo();
     const { git } = gitFake((a) => (a[0] === 'fetch' ? falha('sem rede') : ok('84a115a43')));
     expect(main(['edge-e'], raiz, git)).toBe(2);
     expect(saida).toBe('');
   });
 
-  it('edge que não existe na ref: exit 2 e stdout vazio', () => {
-    montarRepo();
+  it('edge que não existe na ref: exit 2 e stdout vazio', async () => {
+    await montarRepo();
     expect(main(['edge-fantasma'], raiz)).toBe(2);
     expect(saida).toBe('');
   });
 
-  it('--sem-rede emite o prompt e não é confundido com nome de edge', () => {
-    montarRepo();
+  it('--sem-rede emite o prompt e não é confundido com nome de edge', async () => {
+    await montarRepo();
     expect(main(['edge-e', '--sem-rede'], raiz)).toBe(0);
     expect(saida).toContain('supabase/functions/edge-e/index.ts');
   });
 
   // #2541/#2579: o agente deployou certo e DEPOIS editou outras edges. O Passo 2 do pacote já mandava
   // rodar o sensor; este emissor (o de "qualquer edge pelo nome") só mandava a sonda.
-  it('[PROMPT_MANDA_RODAR_O_SENSOR] a conferência pós-envio sai para a SESSÃO (stderr), fora da colagem', () => {
-    montarRepo();
+  it('[PROMPT_MANDA_RODAR_O_SENSOR] a conferência pós-envio sai para a SESSÃO (stderr), fora da colagem', async () => {
+    await montarRepo();
     expect(main(['edge-e', '--sem-rede'], raiz)).toBe(0);
     expect(erro).toContain('bun scripts/lovable-sensor-edicao.ts --desde');
     expect(saida).not.toContain('lovable-sensor-edicao');
   });
 
-  it('sem argumento nenhum: exit 2, uso no stderr, nada no stdout', () => {
-    montarRepo();
+  it('sem argumento nenhum: exit 2, uso no stderr, nada no stdout', async () => {
+    await montarRepo();
     expect(main([], raiz)).toBe(2);
     expect(saida).toBe('');
   });
@@ -336,30 +347,30 @@ describe('main — nunca imprime colagem num caminho de erro', () => {
     depoisDe: [{ edge: 'edge-outra', motivo: 'na ordem inversa a predecessora velha desfaz a nova', pr: 2469 }],
   });
 
-  function commitarManifesto(conteudo: string): void {
+  async function commitarManifesto(conteudo: string): Promise<void> {
     escrever('supabase/functions/edge-e/deploy-ordem.json', conteudo);
-    gitF('add', '-A');
-    gitF('commit', '-q', '-m', 'manifesto de ordem');
-    gitF('push', '-q', 'origin', 'main');
-    gitF('fetch', '-q', 'origin', 'main');
+    await gitF('add', '-A');
+    await gitF('commit', '-q', '-m', 'manifesto de ordem');
+    await gitF('push', '-q', 'origin', 'main');
+    await gitF('fetch', '-q', 'origin', 'main');
   }
 
-  it('[PROMPT_RECUSA_ORDEM_DECLARADA] edge com manifesto na REF: exit 3 e stdout vazio', () => {
-    montarRepo();
-    commitarManifesto(MANIFESTO_VALIDO);
+  it('[PROMPT_RECUSA_ORDEM_DECLARADA] edge com manifesto na REF: exit 3 e stdout vazio', async () => {
+    await montarRepo();
+    await commitarManifesto(MANIFESTO_VALIDO);
     expect(main(['edge-e', '--sem-rede'], raiz)).toBe(3);
     expect(saida).toBe('');
   });
 
-  it('[PROMPT_MANIFESTO_SO_NO_DISCO_NAO_CONTA] manifesto fora do commit não recusa — vale a REF', () => {
-    montarRepo();
+  it('[PROMPT_MANIFESTO_SO_NO_DISCO_NAO_CONTA] manifesto fora do commit não recusa — vale a REF', async () => {
+    await montarRepo();
     escrever('supabase/functions/edge-e/deploy-ordem.json', MANIFESTO_VALIDO);
     expect(main(['edge-e', '--sem-rede'], raiz)).toBe(0);
   });
 
-  it('[PROMPT_MANIFESTO_MALFORMADO_MECANICA] manifesto ilegível na REF é mecânica, não "sem ordem"', () => {
-    montarRepo();
-    commitarManifesto('{ isto nao e json');
+  it('[PROMPT_MANIFESTO_MALFORMADO_MECANICA] manifesto ilegível na REF é mecânica, não "sem ordem"', async () => {
+    await montarRepo();
+    await commitarManifesto('{ isto nao e json');
     expect(main(['edge-e', '--sem-rede'], raiz)).toBe(2);
     expect(saida).toBe('');
   });

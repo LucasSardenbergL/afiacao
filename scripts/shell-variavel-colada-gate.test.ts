@@ -12,11 +12,13 @@ import {
   RAIZES_PADRAO,
   alarmesDoStripper,
   analisar,
+  analisarPassos,
   detectar,
   enumerar,
   veredito,
   type Analise,
 } from './shell-variavel-colada-gate';
+import { contarPulsos, descreverPulsos, drenarCedendo, type Pulsos } from '@/test/loop-livre';
 
 /**
  * Dente do fiscal de `$NOME…` colado em não-ASCII (docs/historico/shell-variavel-colada-em-nao-
@@ -213,11 +215,18 @@ describe('veredito — 2 nunca é "passou"', () => {
 
 describe('o corpo REAL do repo', () => {
   let r: Analise;
-  beforeAll(() => {
-    r = analisar(
-      enumerar(RAIZES_PADRAO, RAIZ).map((c) => ({ caminho: relative(RAIZ, c), fonte: readFileSync(c, 'utf8') })),
-    );
+  // A varredura do repo CEDE o event loop entre os arquivos (`analisarPassos` + `drenarCedendo`):
+  // de uma vez, ela era UM bloqueio síncrono no `beforeAll` (5,1s sob carga em 2026-10-05), e acima
+  // de 60s o RPC do vitest estoura — `test` rc=1 sem teste falhando (src/test/loop-livre.ts).
+  let pulsos: Pulsos<Analise>;
+  beforeAll(async () => {
+    pulsos = await contarPulsos(() => drenarCedendo(analisarPassos(enumerar(RAIZES_PADRAO, RAIZ).map((c) => ({ caminho: relative(RAIZ, c), fonte: readFileSync(c, 'utf8') })))));
+    r = pulsos.resultado;
   }, 30_000);
+
+  it('a varredura do repo cede o event loop do worker — o pulso bate entre os arquivos', () => {
+    expect(pulsos.batidas, descreverPulsos(pulsos)).toBeGreaterThanOrEqual(2);
+  });
 
   it('nenhuma expansão $NOME sem chaves colada em não-ASCII', () => {
     expect(r.violacoes.map((s) => `${s.arquivo}:${s.linha} $${s.nome}${s.colado}`)).toEqual([]);

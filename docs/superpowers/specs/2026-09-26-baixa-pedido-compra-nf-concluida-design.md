@@ -938,3 +938,55 @@ ORDER BY c.unidades_no_motor DESC, t.t4_data_recebimento;
     1. A equipe passa a associar as NFs Sayerlack no recebimento: zero código, e o backlog para de crescer.
     2. A Fase 2 automatiza o mesmo gesto (`AlterarRecebimento` com `ASSOCIAR-PEDIDO`).
     3. Um 2º piloto com entrega **parcial** fecha o caso que o Codex marcou como de risco (§16, achado 11).
+
+### 17.3 D4' simulado (05/10) — a associação real espera o preço exato do PO
+
+- **Decisão do founder (05/10):** em vez da associação real, simular — "atualmente você não está pegando o preço exato no
+  sistema da Sayerlack e colocando dentro do pedido de compra"; "a nota já tem o valor do unitário mais IPI, e no pedido de
+  compra você não está colocando esse". O D4' real fica para depois do preço exato, e a NF 000953881 foi liberada para a
+  equipe concluir como de costume.
+- **Fato novo da doc do Omie** (`https://ajuda.omie.com.br/pt-BR/articles/1429543-associando-a-nf-e-do-fornecedor-com-um-pedido-de-compra`):
+  - a associação muda a etapa do PO **antes** da conclusão: completa → "Faturado pelo Fornecedor"; parcial → "Recebido
+    Parcialmente"; "Recebido" só depois de concluir;
+  - como o motor só conta a etapa 15, associar sem concluir em seguida abre a janela de subcontagem do §17.2 — reforça
+    "associar e concluir juntos", vale também para a Fase 2 (`AlterarRecebimento`), e é por isso que a simulação parou antes
+    do "Confirmar".
+- **Na tela:** o caminho do §17.2 existe (lupa → "953881" → Recebimentos de NF-e → item → "Associar a um produto
+  existente").
+  - O diálogo não chegou a abrir: a trava de permissões da sessão o tratou como transação real.
+  - Tela fechada em "Entendi", nada salvo nem concluído.
+  - Armadilha: ao fechar um recebimento pendente, o Omie oferece "Concluir agora mesmo" ao lado de "Entendi".
+- **Com os dados** (NF lida na tela do Omie; POs no espelho; psql-ro, `FIM-MEDICAO-OK`):
+  - A NF fecha no centavo: vProd R$ 5.573,40 + IPI R$ 214,57 = R$ 5.787,97, com IPI arredondado por item. Alíquota por NCM:
+    3,25% em 3208.10.20 e 3208.20.20; 6,5% em 3208.90.39 e 3814.00.90. Sem ST e sem frete. O "Valor Unitário" da grade do
+    recebimento é sem IPI.
+  - Unitário por embalagem, sem IPI:
+
+    | Item da NF | PO | No PO | Na NF | Diferença |
+    |---|---|---|---|---|
+    | DFA.4080L5 (diluente) | 1238 | 107,14 | 87,69 | −18,2% |
+    | FO20.6717.00BH (verniz) | 1244 | 510,52 | 538,33 | +5,4% |
+    | WJOI.7585GL (base) | 1248 | 275,01 | 242,25 | −11,9% |
+    | FCA.6888QT (catalisador) | 1238 | 25,46 | 27,93 | +9,7% |
+    | FC.6902L5 (catalisador) | 1248 | 233,55 | 213,44 | −8,6% |
+    | FO10.6717.00BH (verniz) | 1254 | 555,15 | 599,26 | +7,9% |
+
+  - `nValorIpi = 0` em todos os POs. Os 2 itens FO0.6717 (BH e GL) não estão ligados a PO pelo app. O PO 1244 é manual.
+  - A lista "produtos não recebidos" viria poluída pelo backlog do §17.1: 22 itens de PO abertos do PRD00008 (desde
+    jun/2025), 20 do PRD00084 e 16 do PRD00005. Escolher o PO certo na mão erra fácil: encerrar o backlog (D3) é
+    pré-requisito prático da associação na rotina.
+- **Por que o PO não bate** (abre a próxima entrega):
+  - o PO nasce com o preço do motor — CMC ou média histórica (`disparar-pedidos-aprovados/index.ts`,
+    `nValUnit = preco_unitario`) —, não com o da Sayerlack;
+  - a captura do preço do portal (`enviar-pedido-portal-sayerlack/captura-custo.ts`) falhou fechado em 24 de 28 pedidos
+    desde 06/09 (`checksum_divergente`): o portal cobra a soma das linhas **mais o IPI** (pedidos de 1 item: ×1,0325 e
+    ×1,0650 exatos). A "divergência de natureza não identificada" do cabeçalho da captura é o IPI;
+  - mesmo o portal não é a NF em todo pedido: o PO 1248 bate no centavo, mas a NF do PO 1238 veio exatamente 5% abaixo
+    do portal (causa em aberto, perguntada ao founder).
+- **Destinos:**
+  - preço exato no PO (unitário do portal sem IPI em `nValUnit` + IPI do item em `nValorIpi`, que o `IncluirPedCompra`
+    aceita) é a próxima entrega, em sessão própria — chip "Gravar o preço exato da Sayerlack no PO (com IPI)";
+  - **gatilho do D4' real:** preço exato no ar + uma NF Sayerlack pendente cujos POs saíram com ele → repetir o protocolo
+    do §17.2;
+  - **D3 lote 1:** em 05/10 a migration do PR0 está aplicada, mas nenhum run foi publicado. A query do §17.1 roda assim que
+    existir o 1º run com `varredura_completa AND pendente_aplicado`.

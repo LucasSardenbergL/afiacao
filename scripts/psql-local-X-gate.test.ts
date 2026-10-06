@@ -5,7 +5,17 @@ import { fileURLToPath } from 'node:url';
 
 import { beforeAll, describe, expect, it } from 'vitest';
 
-import { PISOS, RAIZES_PADRAO, analisar, detectar, veredito, type Analise, type Sitio } from './psql-local-X-gate';
+import {
+  PISOS,
+  RAIZES_PADRAO,
+  analisar,
+  analisarPassos,
+  detectar,
+  veredito,
+  type Analise,
+  type Sitio,
+} from './psql-local-X-gate';
+import { contarPulsos, descreverPulsos, drenarCedendo, type Pulsos } from '@/test/loop-livre';
 import { enumerar } from './shell-variavel-colada-gate';
 
 /**
@@ -184,11 +194,18 @@ describe('veredito — 2 nunca é "passou"', () => {
 
 describe('o corpo REAL do repo', () => {
   let r: Analise;
-  beforeAll(() => {
-    r = analisar(
-      enumerar(RAIZES_PADRAO, RAIZ).map((c) => ({ caminho: relative(RAIZ, c), fonte: readFileSync(c, 'utf8') })),
-    );
+  // A varredura do repo CEDE o event loop entre os arquivos (`analisarPassos` + `drenarCedendo`):
+  // de uma vez, ela era UM bloqueio síncrono no `beforeAll` (6,9s sob carga em 2026-10-05), e acima
+  // de 60s o RPC do vitest estoura — `test` rc=1 sem teste falhando (src/test/loop-livre.ts).
+  let pulsos: Pulsos<Analise>;
+  beforeAll(async () => {
+    pulsos = await contarPulsos(() => drenarCedendo(analisarPassos(enumerar(RAIZES_PADRAO, RAIZ).map((c) => ({ caminho: relative(RAIZ, c), fonte: readFileSync(c, 'utf8') })))));
+    r = pulsos.resultado;
   }, 30_000);
+
+  it('a varredura do repo cede o event loop do worker — o pulso bate entre os arquivos', () => {
+    expect(pulsos.batidas, descreverPulsos(pulsos)).toBeGreaterThanOrEqual(2);
+  });
 
   it('nenhuma chamada de psql local sem -X', () => {
     expect(r.sitios.filter((s) => s.situacao === 'violacao').map((s) => `${s.arquivo}:${s.linha} ${s.binario}`)).toEqual([]);

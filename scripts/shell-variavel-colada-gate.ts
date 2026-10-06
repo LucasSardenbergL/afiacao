@@ -39,6 +39,7 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 
 import { diagnosticarShell, removerComentariosShell } from '@/lib/gates/limpeza-shell';
+import { drenar, type Passos } from '@/lib/gates/passos';
 import { PISOS as PISOS_DO_IRMAO } from './psql-ro-error-stop-gate';
 
 /** `import.meta.dir` é do Bun e não existe sob o vitest — por isso preguiçosa, como no irmão. */
@@ -168,6 +169,13 @@ export function alarmesDoStripper(caminho: string, d: Diagnostico): string[] {
 }
 
 export function analisar(arquivos: { caminho: string; fonte: string }[]): Analise {
+  return drenar(analisarPassos(arquivos));
+}
+
+/** A análise como gerador (`@/lib/gates/passos`): `yield` por arquivo — o teste que varre o repo
+ *  inteiro drena cedendo o event loop do worker do vitest (o RPC estoura com >60s de bloqueio:
+ *  docs/historico/rpc-do-vitest-e-o-loop-preso.md). */
+export function* analisarPassos(arquivos: { caminho: string; fonte: string }[]): Passos<Analise> {
   const r: Analise = { caminhos: [], expansoes: 0, formaCerta: 0, violacoes: [], alarmes: [] };
   for (const a of arquivos) {
     const d = detectar(a.caminho, a.fonte);
@@ -176,6 +184,7 @@ export function analisar(arquivos: { caminho: string; fonte: string }[]): Analis
     r.formaCerta += d.formaCerta;
     r.violacoes.push(...d.sitios);
     r.alarmes.push(...alarmesDoStripper(a.caminho, diagnosticarShell(a.fonte)));
+    yield;
   }
   return r;
 }

@@ -65,5 +65,20 @@ run atingido antes da chamada`, 73,3 s de 75 s; estoque OBEN sem regravar até a
 são 2 chamadas (21 POs) e só ganhou o coletor síncrono O(1); quem come o prazo é o `ListarPosEstoque` (75 páginas, ≈45 s
 por diferença num run normal), que a v1.4 não tocou; o tombo do run inteiro em erro de varredura do PO é desenho
 anterior; e o mesmo código fechou em 53,1 s às 19:40. Leitura: o sync OBEN roda a 66–71% do prazo, e um Omie ~1,5× mais
-lento derruba o run (17:40Z = 14:40 BRT, no lote concorrente do pg_net). **Para a 0.5:** run que caiu não publica — o denominador é o run do cron (`net._http_response`/`sync_state`),
-não só `reposicao_po_observado_run`; ausência de run publicado não é "PO fechado" (spec §16).
+lento derruba o run (17:40Z = 14:40 BRT, no lote concorrente do pg_net). A causa virou tarefa própria (chip "Evitar
+que lentidão do Omie derrube o sync de estoque").
+
+**Para a 0.5:** run que caiu não publica. O denominador durável são os disparos dos jobs 31 e 124 em
+`cron.job_run_details` (~7 dias de histórico; `succeeded` lá só prova o enqueue), não só `reposicao_po_observado_run`.
+O desfecho HTTP de cada run (`net._http_response`) fica só **~6 h** e `sync_state` guarda só o último estado — medido
+em 2026-10-05; por isso o PORQUÊ de um run não publicado se perde (M5 abaixo). Ausência de run publicado não é "PO
+fechado" (spec §16).
+
+## Menores adiados da revisão final (com destino)
+
+| # | achado | destino |
+|---|---|---|
+| M5 | o motivo de não-publicação não é persistido (nem o top-N de SKUs divergentes) | 📌 persistir na metadata do marcador `reposicao_pendente_po` **se** a 0.5 achar runs não publicados e precisar do porquê |
+| M6 | a edge não confere o retorno da RPC contra `observados.length` | 🚫 inalcançável: o INSERT dos itens é tudo-ou-nada na transação da RPC |
+| M7 | o run não tem `pendente_gravado_em` | 🚫 `concluido_em` fica 158 ms depois do carimbo do upsert (`ultima_sincronizacao`), medido no run de 19:40 |
+| M8 | comentário impreciso no teste Deno; o COMMENT do `_run` diz "uma linha por execução" (só as publicadas entram) | 🚫 cosmético; corrigir o COMMENT exigiria migration nova |
