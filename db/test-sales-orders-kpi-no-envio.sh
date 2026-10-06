@@ -40,7 +40,8 @@ unset PGTZ PGOPTIONS            # o fuso da SESSÃO é o do servidor (UTC, como 
 # ════════════════════════════════════════════════════════════════════════════════════════════════
 if [ "${1:-}" = "--falsificar" ]; then
   SABOTAGENS="sem_derivacao:A4,A5,A8,A18 fuso_utc:A4,A5 data_da_sessao:A4,A5
-              sem_condicao_envio:A6,A11,A13,A21 sobrescreve_kpi:A10 sem_guarda_outra_linha:A12
+              sem_condicao_envio:A11,A13 sem_envio_nem_autoguarda:A6,A21
+              sobrescreve_kpi:A10 sem_guarda_outra_linha:A12
               costura_clock:A2 costura_now:A3
               pre_sem_identidade:A24 pos_sem_dente:A25 sem_revoke:A26"
   LOGDIR="$(mktemp -d "/tmp/falsifica-${SLUG}.XXXXXX")"
@@ -273,6 +274,18 @@ sabotar() {
   echo "⚠️  SABOTAGEM ATIVA em $fn — a suíte abaixo DEVE ficar vermelha"
 }
 
+sabotar_duplo() {  # $1 = função, $2/$3 = 1ª troca, $4/$5 = 2ª troca — as duas no MESMO corpo
+  local fn="$1" tmp
+  tmp="$(mktemp "/tmp/sab-${SLUG}.XXXXXX")"
+  awk -v fn="CREATE OR REPLACE FUNCTION public.${fn}(" \
+      'index($0,fn)==1{f=1} f{print} f && /^\$function\$;$/{exit}' "$MIG" > "$tmp"
+  { trocar "$tmp" "$2" "$3" && trocar "$tmp" "$4" "$5"; } \
+    || { echo "❌ SABOTAGEM NÃO APLICÁVEL — um dos padrões não ocorre exatamente 1× em $fn"; rm -f "$tmp"; exit 9; }
+  P -q -f "$tmp" >/dev/null
+  rm -f "$tmp"
+  echo "⚠️  SABOTAGEM ATIVA em $fn (2 trechos) — a suíte abaixo DEVE ficar vermelha"
+}
+
 case "${SABOTAGEM:-}" in
   "") ;;
   sem_derivacao)
@@ -285,6 +298,11 @@ case "${SABOTAGEM:-}" in
       "(public.sales_orders_instante_envio() AT TIME ZONE 'America/Sao_Paulo')::date" "public.sales_orders_instante_envio()::date" ;;
   sem_condicao_envio)
     sabotar sales_orders_gemeo_app_derivar "    IF v_envio AND NOT EXISTS" "    IF NOT EXISTS" ;;
+  sem_envio_nem_autoguarda)
+    # o caminho do import tem DUAS travas: a condição de envio e a própria linha na guarda (a versão velha
+    # dela tem o kpi). Cada uma sozinha segura o A6/A21; sem as duas, o import cai em 23505 (o S9 do spike).
+    sabotar_duplo sales_orders_gemeo_app_derivar "    IF v_envio AND NOT EXISTS" "    IF NOT EXISTS" \
+      "AND o.order_date_kpi IS NOT NULL) THEN" "AND o.order_date_kpi IS NOT NULL AND o.id <> NEW.id) THEN" ;;
   sobrescreve_kpi)
     sabotar sales_orders_gemeo_app_derivar "  ELSIF NEW.order_date_kpi IS NULL THEN" "  ELSIF true THEN" ;;
   sem_guarda_outra_linha)

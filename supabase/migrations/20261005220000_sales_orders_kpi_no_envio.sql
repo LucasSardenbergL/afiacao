@@ -47,9 +47,9 @@ BEGIN
   IF v_md5 IS NULL THEN
     RAISE EXCEPTION 'PRE FALHOU: public.sales_orders_gemeo_app_derivar() ausente depois da trava.';
   END IF;
-  IF v_md5 <> 'cc036077756a992f97835f383686e110' AND v_md5 <> 'ebc3b65efc949db0dd0e225fb5776d34' THEN
+  IF v_md5 <> 'cc036077756a992f97835f383686e110' AND v_md5 <> '7b7a749a30c7167b0e4b3808447e81cc' THEN
     RAISE EXCEPTION 'PRE FALHOU: public.sales_orders_gemeo_app_derivar() tem corpo md5 % - nem o predecessor '
-                    '(cc036077756a992f97835f383686e110) nem esta versao (ebc3b65efc949db0dd0e225fb5776d34). Outro aplicador '
+                    '(cc036077756a992f97835f383686e110) nem esta versao (7b7a749a30c7167b0e4b3808447e81cc). Outro aplicador '
                     'recriou a funcao depois do pre-voo; este apply o REVERTERIA. Remonte a migration sobre o '
                     'pg_get_functiondef vivo.', v_md5;
   END IF;
@@ -111,6 +111,8 @@ BEGIN
       v_envio := OLD.omie_pedido_id IS NULL;
     END IF;
     -- Outra linha do MESMO pedido já com kpi: não deriva (o índice único barraria este write-back).
+    -- A própria linha também casa aqui quando o UPDATE não é envio (a versão velha dela tem o kpi):
+    -- trava de reserva contra re-derivar no import, se a condição de envio um dia falhar.
     IF v_envio AND NOT EXISTS (SELECT 1 FROM public.sales_orders o
                                 WHERE o.account = NEW.account
                                   AND o.omie_pedido_id = NEW.omie_pedido_id
@@ -183,8 +185,8 @@ BEGIN
 
   SELECT md5(prosrc) INTO v_md5_der FROM pg_proc WHERE oid = 'public.sales_orders_gemeo_app_derivar()'::regprocedure;
   SELECT md5(prosrc) INTO v_md5_ins FROM pg_proc WHERE oid = 'public.sales_orders_instante_envio()'::regprocedure;
-  IF v_md5_der IS DISTINCT FROM 'ebc3b65efc949db0dd0e225fb5776d34' OR v_md5_ins IS DISTINCT FROM '6ed605927fb4412b264619cbcbe34ceb' THEN
-    RAISE EXCEPTION 'POS FALHOU kpi-no-envio md5: derivar=% instante=% (esperado ebc3b65efc949db0dd0e225fb5776d34 / 6ed605927fb4412b264619cbcbe34ceb)',
+  IF v_md5_der IS DISTINCT FROM '7b7a749a30c7167b0e4b3808447e81cc' OR v_md5_ins IS DISTINCT FROM '6ed605927fb4412b264619cbcbe34ceb' THEN
+    RAISE EXCEPTION 'POS FALHOU kpi-no-envio md5: derivar=% instante=% (esperado 7b7a749a30c7167b0e4b3808447e81cc / 6ed605927fb4412b264619cbcbe34ceb)',
       v_md5_der, v_md5_ins;
   END IF;
 END
