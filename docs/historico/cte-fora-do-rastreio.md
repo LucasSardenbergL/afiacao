@@ -200,10 +200,11 @@ invocação, árvore limpa no fim.
   Medido: 4 NF-e 55 aparecem nos dois papéis (órfã e linha de pedido); a causa pode ser também o
   pedido chegar depois da nota. Conserto curto (`continue` sem `insertOrfa` quando algum update
   lançou), fora deste PR.
-- **Prova positiva do filtro do casamento em produção (P2-2)**: só sai se o casamento subir ANTES da
-  fonte e um CT-e de SP Minas da Sayerlack cair na janela enquanto a fonte velha ainda grava a linha
-  57 dele — captura no `net._http_response` em menos de 6 h. Não fiz (seguraria a fonte por tempo
-  indefinido); é opção do founder.
+- **Prova positiva do filtro do casamento em produção (P2-2) — saiu sozinha no 1º tick** (§8, "No
+  ar"). Este item previa sequenciar as edges, mas as duas subiram juntas e não precisou: a fonte velha
+  tinha gravado a linha 57 do CT-e de SP Minas às 02:15 do mesmo dia, e o casamento novo a excluiu
+  (`candidatas_cte_excluidas` = 1 com R1 = 0). Segue sem prova em produção o CONECT, sem CT-e da
+  Sayerlack desde junho.
 - **Radar: total de páginas (P3-9)**: o sync de NFes lê `nTotalPaginas`, o de CT-e lê
   `nTotPaginas`/`total_de_paginas`, no mesmo endpoint. Com `dias = 3` (uma página) não pesa; numa
   chamada manual com `dias` largo, a página 2 em diante pode não ser lida. O site já é dívida
@@ -256,8 +257,10 @@ Esperado:
   `aus` > 0 em NF-e com pedido é ruído (aviso a cada run), não omissão.
 - R4 com ≥ 1 NF-e com pedido assim que entrar nota nova: prova o lado que fica.
 - R5: `nfes_ctes_ignorados` igual a `ctes_processados`, salvo ausente/divergente e CT-e sem `nIdReceb`
-  no cabeçalho. `candidatas_57_fora` em 0: positivo ali é linha 57 NOVA, ou seja, vazamento da fonte.
-  A prova do filtro em si é a dos testes (§6), não esta.
+  no cabeçalho. `candidatas_57_fora` positivo NÃO é vazamento enquanto houver linha 57 LEGADA na
+  janela (a limpeza das antigas é do founder): é o filtro tirando uma linha antiga. Vazamento da fonte
+  é o R1 > 0. *Corrigido depois do 1º tick: esta linha dizia "em 0: positivo é linha 57 NOVA", e o
+  tick das 20:15 de 06/10 deu 1 com R1 = 0 (ver "No ar", abaixo).*
 
 Identidade derivada, por run: `documentos_listados − ctes_ignorados − nfes_processadas` = documentos
 que falharam no caminho de NF-e (detalhe ou escrita) — o que `erros` sozinho não dá.
@@ -278,3 +281,33 @@ group by 1 having max((results->>'documentos_listados')::int) = 0 order by 1 des
 Janela vazia (fim de semana ou feriado) não é regressão: desde esta versão ela sai `complete`, com
 `documentos_listados` = 0. Um `error` com 0 listados num tick em que o casamento listou 0 CT-e sem
 `erro_fatal` é o padrão de antes do conserto: verifique se a versão servida é a nova.
+
+### No ar (2026-10-06, pela sessão)
+
+| camada | como | prova (por fora) |
+|---|---|---|
+| as 2 edges (nfes v1.4, ctes v1.2) | `pendencias:prompt` só das duas (`origin/main@99567e308`) → `send_message` às 19:46:22Z. O agente conferiu 15/15 hashes antes do `deploy_edge_functions` (1,8 crédito). O `omie-sync-estoque` v1.5 (#2817), pendente no mesmo ledger, é de outra leva e ficou fora | eco no tick 105978 (20:15Z): `v1.4-cte-fora-do-rastreio` com `fonte` `9fdb19a3…` e `v1.2-cte-fora-das-candidatas` com `bc8533b7…`, os dois iguais ao mapa |
+| ledger do ctes (fora da allowlist do cron de sonda) | `db/sonda-pos-deploy-ctes-recebidos-v1.2-2026-10-06.sql`, gerado pelo `sonda:sql --so-disparo`, pelo `db:aplicar` (ensaio, depois tentativa #253) | passo 2 no psql-ro: request 105960, HTTP 200, **DEPLOY CONFIRMADO**; `pendencias:deploy` → `CONFERE` |
+| ledger do nfes | cron de sonda (job 184, :37 das horas pares) | `deploy_atestacoes` 20:37:00Z via sonda: `v1.4-cte-fora-do-rastreio` + `9fdb19a3…`; `pendencias:deploy` → `CONFERE` (a única pendência que restou no ledger é o `omie-sync-estoque` da outra leva) |
+
+**Sensor de edição: `EDICAO_DETECTADA` (exit 1), e a edição era a regeneração de tipos.** O sinal veio
+do `edit_id` da resposta. O `get_diff` da mensagem e os 2 commits do bot na `main` mostram só
+`src/integrations/supabase/types.ts` +12: `v_sku_items_fila` e `sku_items_fila_parada_check()`, do #2819
+(aberto), cuja migration já está em prod (`to_regclass`/`to_regprocedure` medidos). Não reverter: é o
+mesmo desempate do #2820.
+
+**Baseline (19:45Z):** 137 linhas 57 (eram 135 em 05/10; a fonte velha gravou mais 2 em 06/10, às
+02:15 e às 18:15 — o bug seguia ativo) e 13 com vínculo (md5 da lista `fe5f50ab…`).
+
+**Revalidação depois do tick das 20:15Z** (`deploy` = 19:46:22Z):
+
+| | medido | veredito |
+|---|---|---|
+| R1 | 0 novas, 0 regravadas | ✅ |
+| R2 | 13, md5 `fe5f50ab…` | ✅ igual ao baseline |
+| R3 | run 20:15:30 `complete`: 3 listados, 2 CT-e pulados, 0 divergente, 0 ausente, 1 consulta, 1 NF-e processada, 0 erro; identidade 3 − 2 − 1 = 0 | ✅ |
+| R4 | 0 / 0 | ⏳ nenhuma NF-e 55 emitida depois do deploy (o t2 é a data de emissão, então conta a partir de 07/10). O caminho de NF-e segue vivo: a NF-e do run (55, órfã desde as 14:15) foi reconsultada e regravada às 20:15:34, e as 339 linhas do rastreio tocadas depois do deploy, por qualquer escritor, são todas 55 |
+| R5 | `ctes_ignorados` 2 = `ctes_processados` 2; `candidatas_cte_excluidas` 1 | ✅ O 1 é linha 57 LEGADA: R1 = 0, e as 4 linhas 57 sem vínculo da janela são anteriores ao deploy. Pela janela e pelos dois CT-e que a fonte pulou, é a órfã SAYERLACK de 05/10 que a fonte velha gravou às 02:15, a linha do próprio CT-e de SP Minas (inferência: o resumo só dá o total) |
+
+O resumo do casamento no mesmo tick: 1 CT-e de SP Minas (órfão, sem casamento), 1 de outra
+transportadora ignorado, 0 CONECT. R6 fica armado, para vigiar à mão.
