@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 583
+-- Total de custom migrations: 584
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -624,7 +624,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261001100001', 'sales_orders_gemeo_importado_contagem_unica', '20261001100001_sales_orders_gemeo_importado_contagem_unica.sql'),
   ('20261001204054', 'oportunidade_antidup_conta_disparado_simulado', '20261001204054_oportunidade_antidup_conta_disparado_simulado.sql'),
   ('20261005131331', 'reposicao_po_observado_pelo_motor', '20261005131331_reposicao_po_observado_pelo_motor.sql'),
-  ('20261005150000', 'data_health_vendas_empurradas_v2', '20261005150000_data_health_vendas_empurradas_v2.sql')
+  ('20261005150000', 'data_health_vendas_empurradas_v2', '20261005150000_data_health_vendas_empurradas_v2.sql'),
+  ('20261006004500', 'sku_items_fila_parada_sensor', '20261006004500_sku_items_fila_parada_sensor.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2539,7 +2540,10 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('reposicao_po_observado_pelo_motor', 'rls_policy', 'public', 'reposicao_po_observado_run_select_staff', 'reposicao_po_observado_run'),
   ('reposicao_po_observado_pelo_motor', 'rls_policy', 'public', 'reposicao_po_observado_item_select_staff', 'reposicao_po_observado_item'),
   ('data_health_vendas_empurradas_v2', 'function', 'public', '_data_health_compute', ''),
-  ('data_health_vendas_empurradas_v2', 'function', 'public', 'get_data_health', '')
+  ('data_health_vendas_empurradas_v2', 'function', 'public', 'get_data_health', ''),
+  ('sku_items_fila_parada_sensor', 'function', 'public', 'sku_items_fila_parada_check', ''),
+  ('sku_items_fila_parada_sensor', 'view', 'public', 'v_sku_items_fila', ''),
+  ('sku_items_fila_parada_sensor', 'cron_job', 'cron', 'afiacao_sku_items_fila_parada_1h', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4502,7 +4506,10 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('reposicao_po_observado_pelo_motor', 'rls_policy', 'public', 'reposicao_po_observado_run_select_staff', 'reposicao_po_observado_run'),
   ('reposicao_po_observado_pelo_motor', 'rls_policy', 'public', 'reposicao_po_observado_item_select_staff', 'reposicao_po_observado_item'),
   ('data_health_vendas_empurradas_v2', 'function', 'public', '_data_health_compute', ''),
-  ('data_health_vendas_empurradas_v2', 'function', 'public', 'get_data_health', '')
+  ('data_health_vendas_empurradas_v2', 'function', 'public', 'get_data_health', ''),
+  ('sku_items_fila_parada_sensor', 'function', 'public', 'sku_items_fila_parada_check', ''),
+  ('sku_items_fila_parada_sensor', 'view', 'public', 'v_sku_items_fila', ''),
+  ('sku_items_fila_parada_sensor', 'cron_job', 'cron', 'afiacao_sku_items_fila_parada_1h', '')
 )
 SELECT
   e.migration,
