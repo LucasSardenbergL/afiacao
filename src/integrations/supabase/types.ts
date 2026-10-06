@@ -13419,6 +13419,7 @@ export type Database = {
       sku_items_sync_controle: {
         Row: {
           criado_em: string
+          itens_pendentes: number | null
           motivo: string | null
           tentativas: number
           tracking_id: string
@@ -13426,6 +13427,7 @@ export type Database = {
         }
         Insert: {
           criado_em?: string
+          itens_pendentes?: number | null
           motivo?: string | null
           tentativas?: number
           tracking_id: string
@@ -13433,6 +13435,7 @@ export type Database = {
         }
         Update: {
           criado_em?: string
+          itens_pendentes?: number | null
           motivo?: string | null
           tentativas?: number
           tracking_id?: string
@@ -18561,6 +18564,17 @@ export type Database = {
         }
         Relationships: []
       }
+      v_sku_items_fila: {
+        Row: {
+          elegivel_desde: string | null
+          linhas_pendentes: number | null
+          nid_receb: string | null
+          parado: boolean | null
+          t2_min: string | null
+          tentativas_max: number | null
+        }
+        Relationships: []
+      }
       v_sku_leadtime_efetivo: {
         Row: {
           dedup_key: string | null
@@ -20937,6 +20951,7 @@ export type Database = {
         }
         Returns: Json
       }
+      sku_items_fila_parada_check: { Args: never; Returns: undefined }
       staff_get_sales_order_payload: {
         Args: { p_order_ids: string[] }
         Returns: {

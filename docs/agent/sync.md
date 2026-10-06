@@ -43,6 +43,16 @@ ao milissegundo (`60031`/`60032` ambos `12:25:00.317984`), o que é o tell.
 fila, não o tempo da edge. A coluna serve para `status_code`, `timed_out` e cadência — nada além.
 Retenção medida: **~6h** (206 linhas cobrindo `06:50`→`12:45`).
 
+⚠️ **E os logs da edge no Lovable Cloud retêm ~10 MINUTOS** (medido 2026-10-05: o agente consultou o
+analytics por `source` — `function_edge_logs`, `function_logs`, `edge_logs`, `postgres_logs` —, a mais antiga
+de todas as fontes tinha ~10 min, e a invocação de 4h antes já não existia, com controle positivo de outras
+edges no mesmo intervalo). Pedir ao agente "leia os logs dos últimos dias" devolve vazio, não erro. ⇒ **Nem os
+logs nem o `net._http_response` são série histórica**: uma edge que só deixa o último estado (`sync_state`)
+tem as falhas passadas irrecuperáveis — no `omie-sync-estoque`, 20 de 21 ficaram sem tipo. Edge com cron
+(ou cron + clique) registra cada run no servidor via `_shared/registro-execucao.ts` (`comRegistro`, aberto
+ANTES de qualquer guard), e a série mora em `acoes_execucoes`.
+[Caso](../historico/sync-estoque-deadline-fase-po-na-cauda.md).
+
 ⚠️ **E `timed_out` NÃO é o campo que marca o estouro.** Medido 2026-08-25: a resposta `59887`, cortada
 com `error_msg = "Timeout of 150000 ms reached. Total time: 150004.306000 ms"`, tinha `timed_out` **NULL**
 e `status_code` **NULL**. `count(*) FILTER (WHERE timed_out)` devolveu **0 com um estouro real na tabela** —
