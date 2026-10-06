@@ -55,8 +55,13 @@ export const EDGE = "omie-sync-ctes-recebidos";
  * O marcador NOMEIA a fatia em vez de dizer `v1.0-sensor-inicial`: o que entra aqui não é só o
  * sensor, é o sensor MAIS o eco passivo de `versao` em toda resposta — a metade que faz o deploy
  * se provar pelo tick do cron, sem ninguém chamar nada.
+ *
+ * v1.2 (2026-10-05, parte B): a linha modelo 57 do rastreio (a órfã de um CT-e) sai das candidatas
+ * ao frete — era a própria linha do CT-e que o CONECT escolhia, em 13 dos 82 vínculos. A busca
+ * mudou para candidatas.ts (testada em Deno) e a falha de leitura passou a LANÇAR: antes virava
+ * "nenhuma candidata" e o CT-e contava como órfão. O resumo ganha `candidatas_cte_excluidas`.
  */
-export const VERSAO = "v1.1-eco-identidade-fonte";
+export const VERSAO = "v1.2-cte-fora-das-candidatas";
 
 /**
  * O fingerprint da FONTE, para o ECO carregá-lo também — não só a sonda.
