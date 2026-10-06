@@ -82,14 +82,36 @@ Deno.test("abertura pendurada: a ação roda mesmo assim e o fechamento é pulad
   confere(updates.length === 0, "sem id do registro não há o que fechar");
 });
 
-Deno.test("banco rápido: a resposta passa intacta e nenhum timer fica pendurado", async () => {
-  // prazo LONGO de propósito: se o timer não fosse limpo, o sanitizer de ops do Deno reprovaria este teste.
-  const { db, updates } = bancoFalso({ insert: abreRapido, update: () => Promise.resolve({ error: null }) });
-  const r = await comRegistro(registroComPrazo(db, 2_000), "x", { via: "cron" }, async () => ({ n: 7 }), (v) => ({ n: v.n }));
-  confere(r.n === 7, "o resultado da ação volta intacto");
-  confere(updates.length === 1, "fechou uma vez");
-  const detalhes = updates[0].detalhes as Record<string, unknown>;
-  confere(updates[0].status === "sucesso" && detalhes.n === 7, "fechou com sucesso e os detalhes da ação");
+Deno.test("banco rápido: a resposta passa intacta e o timer do prazo é limpo", async () => {
+  // Espião EXPLÍCITO nos timers: o sanitizer de ops do Deno 2.9 NÃO acusa um setTimeout pendente (medido na
+  // falsificação deste teste — sem o clearTimeout ele passava verde). Prazo longo, para o timer seguir vivo no fim.
+  const ativos = new Set<ReturnType<typeof setTimeout>>();
+  const setOriginal = globalThis.setTimeout;
+  const clearOriginal = globalThis.clearTimeout;
+  globalThis.setTimeout = ((fn: () => void, ms?: number) => {
+    const id = setOriginal(() => {
+      ativos.delete(id);
+      fn();
+    }, ms);
+    ativos.add(id);
+    return id;
+  }) as unknown as typeof setTimeout;
+  globalThis.clearTimeout = ((id?: ReturnType<typeof setTimeout>) => {
+    if (id !== undefined) ativos.delete(id);
+    clearOriginal(id);
+  }) as unknown as typeof clearTimeout;
+  try {
+    const { db, updates } = bancoFalso({ insert: abreRapido, update: () => Promise.resolve({ error: null }) });
+    const r = await comRegistro(registroComPrazo(db, 2_000), "x", { via: "cron" }, async () => ({ n: 7 }), (v) => ({ n: v.n }));
+    confere(r.n === 7, "o resultado da ação volta intacto");
+    confere(updates.length === 1, "fechou uma vez");
+    const detalhes = updates[0].detalhes as Record<string, unknown>;
+    confere(updates[0].status === "sucesso" && detalhes.n === 7, "fechou com sucesso e os detalhes da ação");
+    confere(ativos.size === 0, `${ativos.size} timer(s) do prazo ficaram pendurados depois das escritas`);
+  } finally {
+    globalThis.setTimeout = setOriginal;
+    globalThis.clearTimeout = clearOriginal;
+  }
 });
 
 Deno.test("rejeição do banco depois do prazo não vira uncaught", async () => {
