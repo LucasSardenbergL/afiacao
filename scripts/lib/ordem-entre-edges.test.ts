@@ -16,7 +16,9 @@ import {
   type Manifesto,
   manifestosNoFecho,
   NOME_MANIFESTO,
+  ondaSemOrdemDeclarada,
   planejarOndas,
+  type PlanoDeOndas,
 } from './ordem-entre-edges';
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════
@@ -334,6 +336,27 @@ describe('planejarOndas — B só ganha colagem com a predecessora PROVADA', () 
     expect(plano.regras).toEqual([{ edge: 'edge-b', depoisDe: ['edge-a'] }]);
     expect(plano.exigidos).toEqual([{ edge: 'edge-a', fonte: FONTE_A, versao: VERSAO_A }]);
   });
+
+  // O par REAL do #2469, e não `edge-a`/`edge-b`: aqui a predecessora (`sync-reprocess`) é a ÚLTIMA
+  // no alfabeto, então o eixo "quem vem antes na ordem" fica SEPARADO do eixo "quem vem antes no
+  // alfabeto". Com nomes colineares (a → b) uma implementação que liberasse a primeira alfabética
+  // passaria — e emitiria em prod exatamente a colagem proibida do incidente.
+  it('[ORDEM_PAR_REAL_2469] a predecessora sai na 1a onda mesmo sendo a ULTIMA do alfabeto', () => {
+    const plano = planejarOndas(
+      entrada({
+        leva: ['omie-vendas-sync', 'sync-reprocess'],
+        manifestos: new Map([['omie-vendas-sync', manifesto('omie-vendas-sync', 'sync-reprocess')]]),
+        ledger: null,
+        alvos: new Map(),
+      }),
+    );
+    expect(plano.liberadas).toEqual(['sync-reprocess']);
+    expect(plano.retidas).toEqual([
+      expect.objectContaining({ edge: 'omie-vendas-sync', tipo: 'ADIADA', espera: ['sync-reprocess'] }),
+    ]);
+    // E a leva que DECLAROU a ordem não recebe o aviso de onda muda.
+    expect(ondaSemOrdemDeclarada(plano)).toEqual([]);
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════
@@ -396,5 +419,51 @@ describe('manifestos commitados — o gate do repo', () => {
       manifestosNoFecho(fecharGrafo(`${RAIZ_EDGES}/${e}/index.ts`, RAIZ)).map((c) => `${e} importa ${c}`),
     );
     expect(achados).toEqual([]);
+  });
+});
+
+
+// ═══════════════════════════════════════
+// A onda que NINGUÉM declarou (#2469)
+// ═══════════════════════════════════════
+// O manifesto cobre o par que alguém escreveu. O #2469 não foi uma declaração errada: foi a AUSÊNCIA
+// de declaração sobre duas edges que saíam na MESMA colagem — e o gerador seguiu calado. Este
+// predicado é o fim do silêncio: ele não adivinha risco (medir que `omie-vendas-sync` e
+// `sync-reprocess` escrevem o mesmo pedido exigiria ler o SQL das RPCs — a interseção das RPCs que
+// as duas CHAMAM é vazia), ele só nomeia a colagem em que a ordem não está determinada.
+describe('ondaSemOrdemDeclarada — colagem com 2+ edges e ordem indeterminada', () => {
+  const plano = (liberadas: string[], regras: PlanoDeOndas['regras'] = []) =>
+    ({ liberadas, regras }) satisfies Pick<PlanoDeOndas, 'liberadas' | 'regras'>;
+
+  it('[ONDA_MUDA_NOMEIA_AS_DUAS] duas edges na mesma colagem e zero ordem declarada', () => {
+    expect(ondaSemOrdemDeclarada(plano(['omie-vendas-sync', 'sync-reprocess']))).toEqual([
+      'omie-vendas-sync',
+      'sync-reprocess',
+    ]);
+  });
+
+  it('[ONDA_MUDA_UMA_EDGE_CALA] colagem de UMA edge não tem ordem para errar', () => {
+    expect(ondaSemOrdemDeclarada(plano(['omie-vendas-sync']))).toEqual([]);
+    expect(ondaSemOrdemDeclarada(plano([]))).toEqual([]);
+  });
+
+  it('[ONDA_MUDA_PAR_DECLARADO_CALA] o par declarado entre as duas da onda determina a ordem', () => {
+    const regras = [{ edge: 'omie-vendas-sync', depoisDe: ['sync-reprocess'] }];
+    expect(ondaSemOrdemDeclarada(plano(['omie-vendas-sync', 'sync-reprocess'], regras))).toEqual([]);
+  });
+
+  it('[ONDA_MUDA_COBERTURA_PARCIAL_NOMEIA_A_ONDA] com 4 na colagem, um par declarado não determina as outras 5 relações', () => {
+    const regras = [{ edge: 'edge-b', depoisDe: ['edge-a'] }];
+    expect(ondaSemOrdemDeclarada(plano(['edge-a', 'edge-b', 'edge-c', 'edge-d'], regras))).toEqual([
+      'edge-a',
+      'edge-b',
+      'edge-c',
+      'edge-d',
+    ]);
+  });
+
+  it('[ONDA_MUDA_REGRA_DE_FORA_NAO_CONTA] regra cuja predecessora está RETIDA não determina a onda', () => {
+    const regras = [{ edge: 'edge-b', depoisDe: ['fora-da-onda'] }];
+    expect(ondaSemOrdemDeclarada(plano(['edge-a', 'edge-b'], regras))).toEqual(['edge-a', 'edge-b']);
   });
 });

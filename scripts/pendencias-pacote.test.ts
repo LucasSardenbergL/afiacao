@@ -978,6 +978,29 @@ describe('pendencias:pacote — a ordem entre edges vira ONDA', () => {
     expect(colagem).toContain(`\`${B}\``);
   });
 
+  // O estado REAL do repo hoje: zero `deploy-ordem.json`, logo TODA leva cai neste caminho. Era aqui
+  // que o gerador seguia calado — e foi este silêncio, não uma declaração errada, que montou a
+  // colagem proibida do #2469.
+  it('[PACOTE_CLI_ONDA_MUDA_AVISA] sem manifesto nenhum as 2 saem juntas, e o silêncio é nomeado', () => {
+    const logs: string[] = [];
+    const espiao = vi.spyOn(process.stderr, 'write').mockImplementation((t) => {
+      logs.push(String(t));
+      return true;
+    });
+    let r: ReturnType<typeof rodar>;
+    try {
+      r = rodar(repo({ manifesto: null }), ledger(divergente(A), divergente(B)));
+    } finally {
+      espiao.mockRestore();
+    }
+    expect(r.codigo).toBe(0);
+    expect(r.colagem).toContain(`\`${A}\``);
+    expect(r.colagem).toContain(`\`${B}\``);
+    expect(r.pacote).toContain('Ordem entre edges: NÃO DECLARADA');
+    // E no terminal, não só no arquivo: quem roda o comando vê sem abrir o pacote.
+    expect(logs.join('')).toMatch(/ordem entre edges NÃO declarada/);
+  });
+
   it('[PACOTE_TUDO_RETIDO_EXIT_3] só B pendente e A nunca atestada: nenhuma colagem', () => {
     const nunca = veredito(A, { estado: 'NUNCA_ATESTADA', observado: null, versao: null, via: null, idadeHoras: null });
     const { codigo, pacote, colagem } = rodar(repo(), ledger(nunca, divergente(B)));
@@ -1001,7 +1024,24 @@ describe('pendencias:pacote — a ordem entre edges vira ONDA', () => {
   });
 
   it('[PACOTE_INVENTARIO_CEGO_MECANICA] listagem que não vê a própria edge é exit 2', () => {
-    expect(rodar(repo({ quebrar: 'ls-tree-cego' }), ledger(veredito(A), divergente(B))).codigo).toBe(2);
+    const logs: string[] = [];
+    const espiao = vi.spyOn(process.stderr, 'write').mockImplementation((t) => {
+      logs.push(String(t));
+      return true;
+    });
+    let codigo: number;
+    try {
+      codigo = rodar(repo({ quebrar: 'ls-tree-cego' }), ledger(veredito(A), divergente(B))).codigo;
+    } finally {
+      espiao.mockRestore();
+    }
+    expect(codigo).toBe(2);
+    // Exit 2 sozinho não isola o ramo, e nem o texto do erro: a MESMA frase ("não lista o index.ts
+    // de") sai de DUAS camadas — `lerManifestosDaRef` (1c) e `mapa-coerente-na-ref` (1d). Com a 1c
+    // desligada, a 1d lançava a frase idêntica e o teste passava pelo motivo errado (verde-falso
+    // medido em 2026-10-06, S24). O dente é o rótulo de QUEM converteu em exit 2.
+    expect(logs.join('')).toMatch(/ordem entre edges não pôde ser julgada/);
+    expect(logs.join('')).toMatch(/não lista o index\.ts de/);
   });
 
   it('[PACOTE_SEM_MANIFESTO_SEGUE_INTEIRO] controle: sem manifesto, A e B saem juntas como sempre', () => {

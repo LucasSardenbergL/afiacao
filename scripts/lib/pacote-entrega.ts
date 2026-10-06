@@ -26,7 +26,12 @@
 
 import { createHash } from 'node:crypto';
 
-import { ASSENTAR_MIN, FRESCOR_MAX_H, type PlanoDeOndas } from './ordem-entre-edges';
+import {
+  ASSENTAR_MIN,
+  FRESCOR_MAX_H,
+  ondaSemOrdemDeclarada,
+  type PlanoDeOndas,
+} from './ordem-entre-edges';
 import { type EdgeParaDeploy, INSTRUCAO_POS_ENVIO, montarPrompt, type Procedencia } from './prompt-deploy';
 import type { AlvoRpc, VereditoPrecondicao } from './precondicao-banco';
 import { relatarPrecondicao } from './precondicao-banco';
@@ -138,6 +143,23 @@ export function montarPacote(f: PacoteFonte): { texto: string; sha: string } {
         `**${liberadas.length}** liberada(s) nesta execução, **${retidas.length}** retida(s). A retida NÃO ` +
         'tem colagem aqui — ela sai numa próxima execução do pacote, quando o ledger provar a predecessora. ' +
         'Colar a retida à mão é reencenar o #2469.',
+    );
+    L.push('');
+  }
+
+  // O espelho do bloco acima: a leva em que ninguém declarou NADA e 2+ edges saem na mesma colagem.
+  // O #2469 foi este silêncio, não uma declaração errada. Aviso, não gate — o pacote não adivinha se
+  // o risco se materializa (ver `ondaSemOrdemDeclarada`), e com zero manifesto no repo recusar aqui
+  // seria recusar toda leva.
+  const mudas = ondaSemOrdemDeclarada(f.ordem);
+  if (mudas.length > 0) {
+    L.push(
+      `⚠️ **Ordem entre edges: NÃO DECLARADA.** Esta colagem leva **${mudas.length}** edges — ` +
+        `${mudas.map((e) => `\`${e}\``).join(', ')} — e nenhum \`deploy-ordem.json\` determina a ordem ` +
+        'entre elas. Pode não haver dependência nenhuma: o pacote não adivinha. Mas o gate do corpo do ' +
+        'PR pergunta por PR, e esta leva vem do LEDGER — ela pode juntar edges de PRs distintos, caso ' +
+        'em que ninguém foi perguntado sobre este par. Se uma destas depende de outra, declare em ' +
+        '`supabase/functions/<dependente>/deploy-ordem.json` e rode o pacote de novo ANTES de colar.',
     );
     L.push('');
   }

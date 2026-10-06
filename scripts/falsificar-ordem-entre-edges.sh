@@ -152,6 +152,25 @@ const SABOTAGENS: Sabotagem[] = [
   { id: 'S25', arquivo: PROMPT, defeito: 'pendencias:prompt nao recusa leva com ordem',
     velho: '  if (comOrdem.length > 0) {', novo: '  if (false && comOrdem.length > 0) {',
     marca: '[PROMPT_RECUSA_ORDEM_DECLARADA]' },
+  // ── o aviso de onda MUDA: a leva que ninguem declarou (#2469) ──────────
+  { id: 'S26', arquivo: LIB, defeito: 'o contador de pares da onda zera e toda onda vira determinada',
+    velho: '  const paresDaOnda = (onda.length * (onda.length - 1)) / 2;', novo: '  const paresDaOnda = 0;',
+    marca: '[ONDA_MUDA_NOMEIA_AS_DUAS]' },
+  { id: 'S27', arquivo: LIB, defeito: 'regra com ponta fora da onda passa a determinar',
+    velho: '      if (naOnda.has(r.edge) && naOnda.has(p)) declarados.add(chaveDoPar(r.edge, p));',
+    novo: '      if (naOnda.has(r.edge) || naOnda.has(p)) declarados.add(chaveDoPar(r.edge, p));',
+    marca: '[ONDA_MUDA_REGRA_DE_FORA_NAO_CONTA]' },
+  { id: 'S28', arquivo: LIB, defeito: 'meia-ordem passa por ordem (um par declarado cala a onda)',
+    velho: '  return declarados.size === paresDaOnda ? [] : onda;', novo: '  return declarados.size > 0 ? [] : onda;',
+    marca: '[ONDA_MUDA_COBERTURA_PARCIAL_NOMEIA_A_ONDA]' },
+  { id: 'S29', arquivo: MONTADOR, defeito: 'o pacote volta a calar o silencio',
+    velho: '  const mudas = ondaSemOrdemDeclarada(f.ordem);\n  if (mudas.length > 0) {',
+    novo: '  const mudas = ondaSemOrdemDeclarada(f.ordem);\n  if (false && mudas.length > 0) {',
+    marca: '[PACOTE_ONDA_MUDA_AVISA]' },
+  { id: 'S30', arquivo: PACOTE, defeito: 'o terminal volta a calar o silencio',
+    velho: '  const mudas = ondaSemOrdemDeclarada(ordem);\n  if (mudas.length > 0) {',
+    novo: '  const mudas = ondaSemOrdemDeclarada(ordem);\n  if (false && mudas.length > 0) {',
+    marca: '[PACOTE_CLI_ONDA_MUDA_AVISA]' },
 ];
 
 const ALVOS = [...new Set(SABOTAGENS.map((s) => s.arquivo))];
