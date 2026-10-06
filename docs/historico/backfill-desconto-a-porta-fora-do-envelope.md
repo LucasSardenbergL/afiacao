@@ -311,3 +311,43 @@ Provas colhidas:
 CÓDIGO não se pula, e *"cota baixa não é gatilho de pular — é gatilho de DRAFT"*. Então o PR fica
 DRAFT e **nada foi aplicado em produção**: o ensaio reverteu tudo. O apply real espera o parecer, ou
 uma decisão explícita do founder pelo Caminho B.
+
+### O apply 2: a conversão, e o pré-voo que a recusa sem o apply 1
+
+[`db/2026-10-05-pedido-total-liquido-converter-acervo.sql`](../../db/2026-10-05-pedido-total-liquido-converter-acervo.sql)
+é a conversão em si. Ele **não acredita** que o apply 1 tenha pegado — confere, e no catálogo, não
+invocando (validação que executa o objeto mente nos dois sentidos): a tabela existe? o corpo vivo do
+conversor menciona a tabela? a lista tem linha? Qualquer "não" aborta antes de escrever.
+
+**Prova negativa, colhida hoje** (o apply 1 ainda não está em prod, então o pré-voo *deve* recusar):
+
+```
+rc=3 · marcador FIM_APLICACAO_OK AUSENTE
+ERROR: P0001: pre-voo: a tabela pedido_total_liquido_excecao NAO existe — o apply 1 nao foi
+aplicado (ou foi so ensaiado, e o ensaio faz ROLLBACK)
+```
+
+As três postcondições dele medem a mesma coisa por caminhos diferentes, e têm de bater:
+
+1. `escritos > 0` — o relatório do conversor.
+2. O **sensor do cupom** (a query que mede o que o cliente vê) tem de cair, e cair **exatamente** o
+   que foi escrito. Escrever sem consertar a tela, ou consertar mais do que se escreveu, aborta: o
+   relatório da função e o sensor da tela são medições independentes do mesmo fato.
+3. Nenhum total do lote fora de `(0, bruto]` — líquido zerado ou acima do bruto é número fabricado,
+   não conversão.
+
+⚠️ Este arquivo **não foi ensaiado**, e não podia ser: o ensaio do apply 1 faz ROLLBACK, então a
+tabela não existe em prod enquanto ele não entrar de verdade. O ensaio dele é o passo entre os dois
+applies, e é obrigatório.
+
+### A sequência, quando o parecer chegar
+
+```bash
+bun run db:aplicar db/2026-10-05-pedido-total-liquido-excecao.sql            # 1. instala (nao converte)
+bun run db:aplicar db/2026-10-05-pedido-total-liquido-converter-acervo.sql --ensaio
+bun run db:aplicar db/2026-10-05-pedido-total-liquido-converter-acervo.sql   # 2. converte os 538
+```
+
+E depois, por fora: o sensor do cupom tem de mostrar os brutos caindo de 570 para ~32, e
+`bun run audit:migrations` + re-dump do snapshot, porque objeto criado à mão fora de
+`supabase/migrations/` só existe no DR pelo snapshot.
