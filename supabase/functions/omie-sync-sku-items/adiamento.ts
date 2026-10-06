@@ -170,40 +170,43 @@ export function saidaDoLaco(motivo: MotivoAdiamento): "proxima" | "encerrar" {
 }
 
 /**
- * O texto gravado em `sku_items_sync_controle.motivo` quando a NFe É marcada (a consulta foi
- * RESPONDIDA). Nenhuma função, view ou tela lê estes valores (auditado 2026-09-24: pg_proc,
- * pg_get_viewdef e src/) — são diagnóstico para quem abre a tabela, então têm de dizer a verdade:
+ * O texto gravado em `sku_items_sync_controle.motivo` quando a consulta foi RESPONDIDA. É diagnóstico
+ * para quem abre a tabela (nenhuma função, view ou tela o lê — auditado 2026-09-24); quem DECIDE a
+ * fila é a coluna `itens_pendentes` (recebimento.ts). Tem de dizer a verdade:
  *
- *   · gravou parte dos itens e parte falhou → `ok_parcial: g de r gravados; …` — o item que falhou
- *     some da fila no run seguinte (a linha gravada já tira o tracking da fila: achado do Codex,
- *     pré-existente, fora deste conserto — ver o histórico); o motivo ao menos o deixa à vista;
- *   · gravou todos os itens → `ok_com_itens`;
- *   · resolveu itens mas NENHUM upsert pegou → `upsert_falhou: …` (antes virava `ok_0_itens`, a
- *     mentira de "a NFe não tem itens" quando quem falhou foi o nosso banco);
  *   · faultstring de negócio → `fault: …`;
  *   · payload SEM a chave `itensRecebimento` → `ok_sem_itensRecebimento` (ausente ≠ zero: separa
- *     "a Omie não mandou a lista" de "a lista veio vazia" — evidência para decidir, sem mudar o
- *     comportamento, se a família Sayerlack série 1 de 0 itens é uma coisa ou a outra);
- *   · itens vieram mas nenhum com `nIdProduto` → `ok_itens_sem_nIdProduto`;
- *   · lista vazia → `ok_0_itens`.
+ *     "a Omie não mandou a lista" de "a lista veio vazia");
+ *   · lista vazia → `ok_0_itens`;
+ *   · sobrou item sem linha → `pendente: k itens (a aguardando associação, s sem rota de pedido); g de r
+ *     grupos gravados; <último erro>` — engloba o que antes era `ok_parcial`, `upsert_falhou` e
+ *     `ok_itens_sem_nIdProduto`, e o recebimento VOLTA à fila (até 2026-10-05 o parcial saía dela);
+ *   · tudo gravado → `ok_com_itens`;
+ *   · nada a gravar e nada pendente (todo item ignorado na Omie) → `ok_todos_ignorados`.
  */
 export function motivoDaTentativa(r: {
   faultstring: string | null;
   itensEhLista: boolean;
   itensRecebidos: number;
-  itensResolvidos: number;
-  itensGravados: number;
-  ultimoErroUpsert: string | null;
+  /** A pendência medida ao fim; `null` = não medida (resposta sem lista). */
+  itensPendentes: number | null;
+  itensAguardando: number;
+  /** Lookup do pedido falhou — inclui os itens do mesmo SKU retidos para não gravar subtotal. */
+  itensSemRota: number;
+  gruposAGravar: number;
+  gruposGravados: number;
+  ultimoErro: string | null;
 }): string {
-  if (r.itensGravados > 0 && r.itensResolvidos > r.itensGravados) {
-    return `ok_parcial: ${r.itensGravados} de ${r.itensResolvidos} gravados; ${r.ultimoErroUpsert ?? "sem mensagem"}`;
-  }
-  if (r.itensGravados > 0) return "ok_com_itens";
-  if (r.itensResolvidos > 0) return `upsert_falhou: ${r.ultimoErroUpsert ?? "sem mensagem"}`;
   if (r.faultstring) return `fault: ${r.faultstring}`;
   if (!r.itensEhLista) return "ok_sem_itensRecebimento";
-  if (r.itensRecebidos > 0) return "ok_itens_sem_nIdProduto";
-  return "ok_0_itens";
+  if (r.itensRecebidos === 0) return "ok_0_itens";
+  if (r.itensPendentes !== null && r.itensPendentes > 0) {
+    return `pendente: ${r.itensPendentes} itens (${r.itensAguardando} aguardando associação, ` +
+      `${r.itensSemRota} sem rota de pedido); ${r.gruposGravados} de ${r.gruposAGravar} grupos gravados` +
+      (r.ultimoErro ? `; ${r.ultimoErro}` : "");
+  }
+  if (r.gruposGravados > 0) return "ok_com_itens";
+  return "ok_todos_ignorados";
 }
 
 /** Há quanto tempo uma NFe tem de estar ELEGÍVEL, sem ser tratada, para a fila contar como
@@ -266,10 +269,13 @@ export function avaliarFilaParada(
   agoraMs: number,
   backoffMs: (tentativas: number) => number,
   limiteMs: number = ELEGIVEL_HA_MUITO_MS,
+  /** Recebimentos que JÁ têm linha de leadtime — incompletos, não parados: ficam fora (ver o teste). */
+  recebimentosComLinha: ReadonlySet<string> = new Set(),
 ): number {
   const maisAntigaPorRecebimento = new Map<string, number>();
   for (const linha of filaElegivel) {
     if (!linha.nIdReceb || recebimentosTratados.has(linha.nIdReceb)) continue;
+    if (recebimentosComLinha.has(linha.nIdReceb)) continue;
     const desde = elegivelDesdeMs(controlePorId.get(linha.id), linha.created_at, linha.t2_data_faturamento, backoffMs);
     if (desde === null || !Number.isFinite(desde)) continue;
     const atual = maisAntigaPorRecebimento.get(linha.nIdReceb);
@@ -295,6 +301,10 @@ export interface EstadoDoRun {
   controle_marcacoes: number;
   /** Das marcações, quantas NÃO persistiram. */
   controle_falhas: number;
+  /** Fechamentos do controle (UPDATE com CAS da pendência final, depois dos upserts — recebimento.ts). */
+  controle_fechamentos: number;
+  /** Dos fechamentos, quantos deram ERRO (o preterido pelo CAS não conta: outro run gravou depois). */
+  controle_fechamentos_falhos: number;
   /** Linhas (tracking, sku) gravadas em `sku_leadtime_history`. */
   itens_processados: number;
   /** Upserts de `sku_leadtime_history` que falharam. */
@@ -312,6 +322,8 @@ export interface EstadoDoRun {
  *   2. Controle inoperante: NENHUMA marcação persistiu (grant/RLS) — o backoff morre e o poison
  *      volta. O denominador são as marcações FEITAS, não as consultas tentadas: a NFe adiada não
  *      marca por desenho, e dividir por tentadas esconderia o controle morto num run com adiamento.
+ *   2b. Fechamento morto: o write-ahead persistiu mas o UPDATE final (CAS) deu erro em TODOS os
+ *      recebimentos — a pendência fica a conservadora e todo recebimento volta à fila à toa.
  *   3. Escrita morta: houve upsert de leadtime e NENHUM pegou — `complete` com efeito zero.
  *   4. Fila não anda: NFe consultável, elegível há >48h, que o run não tratou.
  *   5. Recompute derivado falhou (migration/grant) — o leadtime deixa de MELHORAR, não piora; por
@@ -323,6 +335,9 @@ export function decidirErroDoRun(e: EstadoDoRun): string | undefined {
   }
   if (e.controle_marcacoes > 0 && e.controle_falhas === e.controle_marcacoes) {
     return `controle não persistiu em ${e.controle_falhas}/${e.controle_marcacoes} tentativas — backoff inoperante (grant/RLS?)`;
+  }
+  if (e.controle_fechamentos > 0 && e.controle_fechamentos_falhos === e.controle_fechamentos) {
+    return `fechamento do controle falhou em ${e.controle_fechamentos_falhos}/${e.controle_fechamentos} recebimentos — a pendência fica conservadora e eles voltam à fila à toa (grant de UPDATE?)`;
   }
   if (e.erros > 0 && e.itens_processados === 0) {
     return `upsert do leadtime falhou em ${e.erros} itens, 0 gravados — grant/RLS/constraint?`;
