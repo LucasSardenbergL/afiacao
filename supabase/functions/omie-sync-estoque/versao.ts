@@ -42,7 +42,14 @@ export const respostaSonda = criarRespostaSonda("omie-sync-estoque");
  * DEPOIS do upsert do pendente, só se a soma das contribuições bater com o pendente calculado, e nunca fatal.
  * O cálculo do pendente não muda; a resposta ganha `observacao_publicada`/`observacao_motivo`.
  */
-export const VERSAO = "v1.4-observa-conjunto-aberto";
+/**
+ * BUMP v1.5 (incidente 2026-10-05 17:40Z, net._http_response 104687 — deadline na fase do PO descartou o físico já
+ * lido): (1) a fase do PO é DISPARADA no início, em paralelo com o ListarPosEstoque (`fase-paralela.ts`), e só
+ * AGUARDADA depois do laço — erro de varredura do PO segue fatal, agora abortando o físico cedo; (2) deadline do run
+ * 75→80s, com a folga da observação 10→5s (mesmo corte absoluto de 85s); (3) cada run grava 1 linha em
+ * `acoes_execucoes` (slug `reposicao.sync_estoque`) com o relógio por fase — sucesso ou erro.
+ */
+export const VERSAO = "v1.5-po-em-paralelo";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
