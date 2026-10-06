@@ -1925,9 +1925,9 @@ importador (40P01, sem duplicata).` por:
 ⇒ desde `20261005220000` a linha do app **ganha o kpi NO ENVIO**: o trigger deriva o dia de SP do write-back (`sales_orders_instante_envio()` = `statement_timestamp()`) quando ela passa a ter pid sem gêmeo — nenhum escritor TS/edge grava kpi. Quem precisar gravá-lo: só **no INSERT ou no MESMO UPDATE do write-back que seta o pid** — qualquer UPDATE posterior de linha já empurrada que liste uma das 5 colunas que o trigger observa (pid, conta, hash, kpi, ponteiro) inverte a ordem de lock com o importador (40P01, sem duplicata).
 ```
 
-e o link final `→ [gemeos-push-pull-contagem-unica.md](../historico/gemeos-push-pull-contagem-unica.md)`
-por `→ [gemeos-push-pull-contagem-unica.md](../historico/gemeos-push-pull-contagem-unica.md) ·
-[app-grava-kpi-no-envio.md](../historico/app-grava-kpi-no-envio.md)` (tudo na MESMA linha 281).
+e, depois do link final do bullet (o que aponta `gemeos-push-pull-contagem-unica.md`), acrescente ` · ` e
+um link para `app-grava-kpi-no-envio.md` com o mesmo prefixo `../historico/` (relativo a `docs/agent/`),
+tudo na MESMA linha 281.
 
 Em `docs/historico/gemeos-push-pull-contagem-unica.md`, logo abaixo do título da seção
 "O que o PR do kpi do app precisa", inserir:
