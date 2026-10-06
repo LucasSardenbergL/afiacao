@@ -162,7 +162,8 @@ describe('Customer360 — "não consegui ler" NÃO pode virar "cliente não enco
     });
     // prova positiva de que o refetch FALHOU de fato — sem ela, a página "ficar" seria vacuidade
     expect(qc.getQueryState(['c360-core', ID])?.status).toBe('error');
-    expect(screen.getByText(NOME), 'o refetch falhou e a página trocou o cliente em mãos pelo aviso').toBeTruthy();
+    // `queryBy`, não `getBy`: o `getBy` LANÇA antes do expect e a mensagem abaixo nunca chegava ao relatório
+    expect(screen.queryByText(NOME), 'o refetch falhou e a página trocou o cliente em mãos pelo aviso').not.toBeNull();
     expect(screen.queryByText(NAO_ENCONTRADO)).toBeNull();
   });
 });
