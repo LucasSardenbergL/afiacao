@@ -88,14 +88,15 @@ A ponta que alerta:
 | sensor morto (cron ou função falhando) | **cego**, como as outras sentinelas avulsas; `cron.job_run_details` registra o erro plpgsql real |
 | só o :35 morrer | **não acusa** — o diário cobre tudo em ≤24h; não é fila parada |
 
-## 5. A ligação com o #2801 (em voo)
+## 5. A ligação com o #2801 (mergeado em 2026-10-06 01:13 UTC — migration e edge v1.4 ainda fora de prod)
 
-O #2801 mudou a regra da fila: a coluna `itens_pendentes` decide quando foi medida. Ele também tira da
+Conferido contra o código MERGEADO (`recebimento.ts` `pendenteNaFila`, `index.ts` `recebimentosComLinha`/`nIdRecebDe`/`separarCtes`, `adiamento.ts` `avaliarFilaParada`): bate regra a regra. O #2801 mudou a regra da fila: a coluna `itens_pendentes` decide quando foi medida. Ele também tira da
 contagem o recebimento que já tem linha. Ler a coluna por nome amarraria a ordem de aplicação dos
 dois PRs: a view não criaria sem a coluna. Por isso a leitura é por `to_jsonb(c)`:
 
 - **sem a coluna** dá NULL, e vale a regra legada — que é a da edge no ar (v1.3);
-- **com a coluna** passa a valer sozinha. A prova adiciona a coluna DEPOIS da view (B13) e confere que
+- **com a coluna e a edge v1.3** a coluna fica NULL (a v1.3 não a escreve) e segue valendo a regra legada; **com a v1.4** ela passa a valer sozinha — não há janela de inconsistência em nenhuma ordem de deploy.
+- **a prova** adiciona a coluna DEPOIS da view (B13) e confere que
   o `ADD COLUMN` não é bloqueado — a migration do #2801 aplica por cima sem erro;
 - **se a coluna for renomeada**, o sensor volta à regra legada e erra para o lado que ALERTA:
   barulho, não silêncio.
