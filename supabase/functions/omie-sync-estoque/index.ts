@@ -20,7 +20,7 @@ import { hojeSP, paraDataOmie, somarDias } from "../_shared/hoje-sp.ts";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import { comRegistro, type DbRegistro } from "../_shared/registro-execucao.ts";
 import { criarColetorObservacao, type LinhaObservada, observacaoBateComPendente } from "./observacao-po.ts";
-import { dispararFase } from "./fase-paralela.ts";
+import { registroComPrazo } from "./registro-com-prazo.ts";
 
 const corsHeaders = {
   ...sharedCors,
@@ -36,8 +36,9 @@ const MAX_RETRIES = 3;
 // já existe — o deadline não inventa truncamento, converte kill BRUTO em saída controlada.
 // 80s (era 75s, que reservavam ~15s à cauda): o que roda depois da enumeração (upsert de 399 linhas em 2 chunks,
 // observação, marcadores) não passa de poucos segundos — no run de 2026-10-05 19:40Z a observação foi chamada aos
-// 53,0s e a resposta saiu aos 53,1s. Os 5s devolvidos vão para a varredura, que é onde o run morre (incidente das
-// 17:40Z do mesmo dia: deadline aos 73,3s, net._http_response 104687). Teto do cron continua 90s.
+// 53,0s e a resposta saiu aos 53,1s. Os 5s devolvidos vão para as duas varreduras EM SÉRIE (físico, depois PO), que é
+// onde o run morre (incidente das 17:40Z do mesmo dia: o PO recusou a chamada aos 73,3s, net._http_response 104687).
+// Teto do cron continua 90s.
 const MAX_DURACAO_MS = 80_000;
 // A publicação da observação (PR0 da baixa de PO) é ACESSÓRIA: roda depois do upsert e nunca pode comer o tempo
 // da inativação e dos marcadores. Prazo = o que sobra até deadline + 5s — o MESMO corte absoluto de antes (75+10 =
@@ -46,6 +47,11 @@ const FOLGA_PUBLICACAO_MS = 5_000;
 // Slug do registro do run em acoes_execucoes (_shared/registro-execucao.ts). Escritor ÚNICO: esta edge, que roda
 // por cron E por clique. O botão da tela registra OUTRA ação (o composto 'reposicao.sincronizar_recalcular').
 const ACAO_REGISTRO = "reposicao.sync_estoque";
+// Prazo de CADA escrita do registro (abrir e fechar). [Codex P1 2026-10-05, adversarial do #2817] O comRegistro aguarda
+// o fechamento sem prazo, e ele roda DEPOIS do corte de 85s: num banco lento a resposta passava dos 90s do pg_net (o
+// cron via timeout com o dado já publicado) e, no erro, atrasava junto o marcador `error` da Sentinela, que o catch
+// final grava DEPOIS do comRegistro. 85s + 2s ainda deixa folga até os 90s para os marcadores e a resposta.
+const PRAZO_REGISTRO_MS = 2_000;
 const TETO_PUBLICACAO_MS = 8_000;
 const FETCH_TIMEOUT_MS = 20_000;
 
@@ -616,7 +622,7 @@ async function computePendenteViaSaldoPendente(
 // responder, com denominador, quantos runs chegaram perto do deadline e em que fase. Na falha o comRegistro grava o
 // texto do erro, que já nomeia a fase (e, no físico, a página e o relógio do run).
 const CHAVES_REGISTRO = [
-  "empresa", "duracao_ms", "fase_fisico_ms", "fase_po_ms", "espera_po_ms", "paginas_omie", "registros_lidos",
+  "empresa", "duracao_ms", "fase_fisico_ms", "fase_po_ms", "paginas_omie", "registros_lidos",
   "total_skus_esperados", "sincronizados", "nao_encontrados", "erros_upsert", "pendente_confiavel",
   "pendente_problemas", "varredura_truncada", "observacao_publicada",
 ] as const;
@@ -698,7 +704,7 @@ Deno.serve(async (req) => {
     // callback não deixa linha de falha (lição do analytics-outbox-drain, apagão de 2026-08-26). Fail-open — o
     // registro nunca derruba o sync. Sem ele, "quantas falhas foram deadline, e em que fase" era irrecuperável
     // (medição de 2026-10-05: net._http_response retém ~6h; os logs da edge, ~10 min).
-    const dbRegistro = supabase as unknown as DbRegistro;
+    const dbRegistro = registroComPrazo(supabase as unknown as DbRegistro, PRAZO_REGISTRO_MS);
     const origemRegistro = { via: auth.via, userId: auth.userId };
     const resumo = await comRegistro(dbRegistro, ACAO_REGISTRO, origemRegistro, async (): Promise<Record<string, unknown>> => {
       const { appKey, appSecret } = getOmieCredentials(empresa);
@@ -744,18 +750,7 @@ Deno.serve(async (req) => {
         };
       }
 
-      // 2) "A caminho" OBEN (PesquisarPedCompra) DISPARADO JÁ, em paralelo com o físico abaixo. [incidente
-      //    2026-10-05 17:40Z, net._http_response 104687] Em série ele rodava DEPOIS das 75 páginas do ListarPosEstoque:
-      //    com o Omie ~1,6× mais lento, esbarrou no deadline e o throw (fatal, ver 3.b) descartou o físico JÁ lido. Em
-      //    paralelo ele termina nos primeiros segundos e sai da cauda do run, e o par (físico, pendente) continua sendo
-      //    do MESMO run. A semântica não muda: erro de varredura do PO segue FATAL — só que agora ele aborta o físico
-      //    CEDO (falhaJaConhecida) em vez de esperar 75 páginas para cair. A promise nunca rejeita sem handler
-      //    (fase-paralela.ts): o laço do físico pode lançar antes de aguardá-la, e no Deno isso derrubaria o isolate.
-      const fasePo = empresa === "OBEN"
-        ? dispararFase(() => computePendenteViaPedidosCompra(appKey, appSecret, habilitadoMap, supabase, deadline))
-        : null;
-
-      // 3) Paginar Omie — ListarPosEstoque (físico + reservado)
+      // 2-3) Paginar Omie — ListarPosEstoque (físico + reservado)
       // IMPORTANTE: o método retorna UMA LINHA POR LOCAL DE ESTOQUE.
       // Se o mesmo nCodProd está em N locais (matriz, filial, depósito),
       // precisamos SOMAR físico/reservado/pendente de todos os locais —
@@ -770,8 +765,6 @@ Deno.serve(async (req) => {
       const tFisicoIni = performance.now();
 
       while (page <= totalPaginas) {
-        const falhaPo = fasePo?.falhaJaConhecida();
-        if (falhaPo) throw falhaPo.erro; // fatal como sempre foi (3.b) — só não queima as páginas que faltam
         let resp: OmiePosEstoqueResponse;
         try {
           resp = await callOmie<OmiePosEstoqueResponse>(
@@ -822,10 +815,13 @@ Deno.serve(async (req) => {
 
       // 3.b) "A caminho" (estoque_pendente_entrada) — pedidos de compra ABERTOS do Omie.
       // OBEN: via PesquisarPedCompra (pega previsão FUTURA de PO aprovada que o ListarSaldoPendente perdia —
-      //   incidente 2026-06-11, FUNDO PU/1054), disparado no passo 2 e AGUARDADO aqui. Erro de VARREDURA
-      //   (rede/fault/loop/truncamento) é FATAL (resultado() relança → sync falha → Sentinela pega o congelado). Já dado
-      //   torto/varredura vazia NÃO derruba o sync: o pendente vira NÃO confiável e a coluna é PRESERVADA no upsert (o
-      //   físico segue fresco). [Codex P1 2026-06-20]
+      //   incidente 2026-06-11, FUNDO PU/1054). Erro de VARREDURA (rede/fault/loop/truncamento) é FATAL (throw →
+      //   sync falha → Sentinela pega o congelado). Já dado torto/varredura vazia NÃO derruba o sync: o pendente
+      //   vira NÃO confiável e a coluna é PRESERVADA no upsert (o físico segue fresco). [Codex P1 2026-06-20]
+      //   Roda DEPOIS do físico inteiro, de propósito [Codex P1 2026-10-05, adversarial do #2817]: lido antes (em
+      //   paralelo), uma NF recebida entre a leitura do PO e a página do SKU entra no físico E segue no pendente —
+      //   dupla contagem, o motor SUB-sugere e ninguém vê. Nesta ordem a mesma corrida erra para o lado visível: a NF
+      //   some dos dois números e o motor sobre-sugere um item que o comprador acabou de receber.
       // COLACOR: mantém ListarSaldoPendente, não-fatal (reposição é OBEN; etapa-map do COLACOR não confirmada).
       let pendenteEntrada = new Map<string, number>();
       let pendenteConfiavel = true; // COLACOR (ListarSaldoPendente) sempre aplica; OBEN é gated pela confiabilidade
@@ -835,12 +831,11 @@ Deno.serve(async (req) => {
         observados: LinhaObservada[]; janelaDe: string; janelaAte: string; varreduraCompleta: boolean;
         coletaIntegra: boolean; perdaColeta: string | null;
       } | null = null;
-      // ms que o físico, já pronto, ainda esperou pelo PO (~0 no normal; se crescer, o gargalo virou o PO).
-      let esperaPoMs: number | null = null;
-      if (fasePo) {
-        const tEsperaIni = performance.now();
-        const r = await fasePo.resultado();
-        esperaPoMs = Math.round(performance.now() - tEsperaIni);
+      let fasePoMs: number | null = null;
+      if (empresa === "OBEN") {
+        const tPoIni = performance.now();
+        const r = await computePendenteViaPedidosCompra(appKey, appSecret, habilitadoMap, supabase, deadline);
+        fasePoMs = Math.round(performance.now() - tPoIni);
         pendenteEntrada = r.pendente;
         pendenteConfiavel = r.confiavel;
         pendenteProblemas = r.problemas;
@@ -1088,8 +1083,7 @@ Deno.serve(async (req) => {
         // Relógio por fase (o PO roda EM PARALELO com o físico): é o que diz quão perto do deadline o run chegou e
         // quem foi o gargalo — o que a medição de 2026-10-05 não conseguiu reconstruir para 20 das 21 falhas.
         fase_fisico_ms: faseFisicoMs,
-        fase_po_ms: fasePo?.duracaoMs() ?? null,
-        espera_po_ms: esperaPoMs,
+        fase_po_ms: fasePoMs,
         total_skus_esperados: totalEsperado,
         sincronizados,
         nao_encontrados: naoEncontrados.length,
@@ -1128,7 +1122,7 @@ Deno.serve(async (req) => {
           nao_encontrados: naoEncontrados.length,
           duracao_ms: duracaoMs,
           fase_fisico_ms: faseFisicoMs,
-          fase_po_ms: fasePo?.duracaoMs() ?? null,
+          fase_po_ms: fasePoMs,
           ...(varreduraTruncada ? { varredura_truncada: true, registros_lidos: registrosLidos, total_registros: totalRegistros } : {}),
         },
         varreduraTruncada

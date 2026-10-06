@@ -44,12 +44,13 @@ export const respostaSonda = criarRespostaSonda("omie-sync-estoque");
  */
 /**
  * BUMP v1.5 (incidente 2026-10-05 17:40Z, net._http_response 104687 — deadline na fase do PO descartou o físico já
- * lido): (1) a fase do PO é DISPARADA no início, em paralelo com o ListarPosEstoque (`fase-paralela.ts`), e só
- * AGUARDADA depois do laço — erro de varredura do PO segue fatal, agora abortando o físico cedo; (2) deadline do run
- * 75→80s, com a folga da observação 10→5s (mesmo corte absoluto de 85s); (3) cada run grava 1 linha em
- * `acoes_execucoes` (slug `reposicao.sync_estoque`) com o relógio por fase — sucesso ou erro.
+ * lido): (1) deadline do run 75→80s, com a folga da observação 10→5s (mesmo corte absoluto de 85s); (2) cada run
+ * grava 1 linha em `acoes_execucoes` (slug `reposicao.sync_estoque`) com o relógio por fase — sucesso ou erro —, e
+ * cada escrita do registro tem prazo de 2s (`registro-com-prazo.ts`). A fase do PO segue em série, DEPOIS do físico:
+ * a versão em paralelo foi revertida no adversarial do PR (o PO lido antes conta duas vezes a NF recebida no meio do
+ * run, e o motor sub-sugere).
  */
-export const VERSAO = "v1.5-po-em-paralelo";
+export const VERSAO = "v1.5-prazo-80s-e-registro";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

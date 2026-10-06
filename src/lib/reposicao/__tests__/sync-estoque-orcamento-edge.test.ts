@@ -4,9 +4,11 @@ import { describe, expect, it } from 'vitest';
 import { removerComentarios } from '@/lib/gates/limpeza-fonte';
 
 // Guarda textual do orçamento de tempo do omie-sync-estoque (incidente 2026-10-05 17:40Z, net._http_response
-// 104687): a fase do PO rodava DEPOIS das 75 páginas do ListarPosEstoque, esbarrou no deadline, e o throw — fatal
-// por desenho (Codex P1 2026-06-20) — descartou o físico já lido. O helper do paralelismo tem os testes Deno
-// (fase-paralela_test.ts); aqui se vigia ONDE e COMO o handler o usa, sobre a fonte SEM comentários.
+// 104687): o run morreu na fase do PO por deadline, e o throw — fatal por desenho (Codex P1 2026-06-20) — descartou
+// o físico já lido. A v1.5 dá 5s a mais às varreduras e registra cada run. A fase do PO segue DEPOIS do físico: o
+// paralelo foi revertido no adversarial do #2817, porque lido antes o PO conta duas vezes a NF recebida no meio do
+// run. O adaptador do registro tem testes Deno (registro-com-prazo_test.ts); aqui se vigia ONDE e COMO o handler usa
+// as peças, sobre a fonte SEM comentários. Texto prova presença e ordem, não comportamento.
 const fonte = removerComentarios(
   readFileSync(resolve(__dirname, '../../../../supabase/functions/omie-sync-estoque/index.ts'), 'utf8'),
 );
@@ -18,33 +20,41 @@ function constante(nome: string): number {
   return Number(m[1].replace(/_/g, ''));
 }
 
-describe('omie-sync-estoque — a fase do PO não fica na cauda do run', () => {
-  it('o PO é DISPARADO antes do laço do ListarPosEstoque e só AGUARDADO depois dele', () => {
-    const iDisparo = fonte.indexOf('dispararFase(', iHandler);
+describe('omie-sync-estoque — o par (físico, pendente) e a semântica fatal do PO', () => {
+  it('a fase do PO roda DEPOIS do físico inteiro e ANTES de qualquer acesso à sku_estoque_atual', () => {
     const iLaco = fonte.indexOf('while (page <= totalPaginas)', iHandler);
     const iFimLaco = fonte.indexOf('const faseFisicoMs', iHandler);
-    const iEspera = fonte.indexOf('await fasePo.resultado()', iHandler);
+    const iPo = fonte.indexOf('await computePendenteViaPedidosCompra(', iHandler);
+    const iEstoque = fonte.indexOf('.from("sku_estoque_atual")', iHandler);
     expect(iHandler).toBeGreaterThan(0);
-    expect(iDisparo).toBeGreaterThan(iHandler);
-    expect(iLaco).toBeGreaterThan(iDisparo);
+    expect(iLaco).toBeGreaterThan(iHandler);
     expect(iFimLaco).toBeGreaterThan(iLaco);
-    expect(iEspera).toBeGreaterThan(iFimLaco);
-    // o que se dispara é a varredura do PO — e ela não volta a ser chamada em série em lugar nenhum
-    expect(fonte.slice(iDisparo, fonte.indexOf(';', iDisparo))).toContain('computePendenteViaPedidosCompra(');
-    expect(fonte).not.toMatch(/await\s+computePendenteViaPedidosCompra\(/);
+    expect(iPo).toBeGreaterThan(iFimLaco);
+    expect(iEstoque).toBeGreaterThan(iPo);
+    // uma chamada só (a outra ocorrência é a definição) e nada correndo em paralelo com o laço do físico
+    expect(fonte.match(/computePendenteViaPedidosCompra\(/g)).toHaveLength(2);
+    expect(fonte.slice(iHandler)).not.toMatch(/Promise\.(all|allSettled|race|any)\(/);
   });
 
-  it('erro de varredura do PO continua FATAL: aborta o físico cedo e é relançado, nunca engolido', () => {
-    const iLaco = fonte.indexOf('while (page <= totalPaginas)', iHandler);
-    const iAborto = fonte.indexOf('if (falhaPo) throw falhaPo.erro', iLaco);
-    const iChamadaFisico = fonte.indexOf('callOmie<OmiePosEstoqueResponse>(', iLaco);
-    expect(iAborto).toBeGreaterThan(iLaco);
-    expect(iChamadaFisico).toBeGreaterThan(iAborto); // checa ANTES de pedir a próxima página
+  it('erro de varredura do PO continua FATAL: nada entre o físico e a chamada o captura, nem .catch() nela', () => {
     const iFimLaco = fonte.indexOf('const faseFisicoMs', iHandler);
-    const iEspera = fonte.indexOf('await fasePo.resultado()', iHandler);
-    // sem try/catch em volta da espera e sem .catch() nela: a rejeição sobe até o catch do handler (marcador 'error')
-    expect(fonte.slice(iFimLaco, iEspera)).not.toContain('try {');
-    expect(fonte.slice(iEspera, iEspera + 60)).not.toContain('.catch(');
+    const iPo = fonte.indexOf('await computePendenteViaPedidosCompra(', iHandler);
+    expect(fonte.slice(iFimLaco, iPo)).not.toContain('try {');
+    expect(fonte).toMatch(
+      /const r = await computePendenteViaPedidosCompra\(appKey, appSecret, habilitadoMap, supabase, deadline\);/,
+    );
+  });
+
+  it('nenhuma falha dentro do callback do registro vira resposta de sucesso', () => {
+    // [Codex P2 2026-10-05] um try/catch em volta do callback devolvendo ok:true passava verde. Os únicos `ok: true`
+    // do callback são o do caso vazio e o do resumo; `ok: false` só existe no catch final, FORA dele. Limite: um catch
+    // que devolva o próprio resumo não acrescenta literal e escapa desta guarda.
+    const iRegistro = fonte.indexOf('comRegistro(', iHandler);
+    const iFimCallback = fonte.indexOf('}, detalhesDoRegistro)', iRegistro);
+    expect(iFimCallback).toBeGreaterThan(iRegistro);
+    const callback = fonte.slice(iRegistro, iFimCallback);
+    expect(callback.match(/\bok: true\b/g)).toHaveLength(2);
+    expect(callback).not.toMatch(/\bok: false\b/);
   });
 
   it('o erro do ListarPosEstoque ganha página e relógio como SUFIXO — o startsWith("AUTH_ERROR") segue vendo a auth', () => {
@@ -58,14 +68,19 @@ describe('omie-sync-estoque — registro do run em acoes_execucoes', () => {
     const iClient = fonte.indexOf('createClient(', iHandler);
     const iRegistro = fonte.indexOf('comRegistro(', iHandler);
     const iCredenciais = fonte.indexOf('getOmieCredentials(empresa)', iHandler);
-    const iDisparo = fonte.indexOf('dispararFase(', iHandler);
     const iPrimeiraOmie = fonte.indexOf('callOmie<', iHandler);
     expect(iClient).toBeGreaterThan(iHandler);
     expect(iRegistro).toBeGreaterThan(iClient);
     // guard fora do callback não deixa linha de falha (lição do analytics-outbox-drain, apagão de 2026-08-26)
     expect(iCredenciais).toBeGreaterThan(iRegistro);
-    expect(iDisparo).toBeGreaterThan(iRegistro);
     expect(iPrimeiraOmie).toBeGreaterThan(iRegistro);
+  });
+
+  it('as escritas do registro passam pelo adaptador COM PRAZO (Codex P1 2026-10-05)', () => {
+    expect(fonte).toMatch(
+      /const dbRegistro = registroComPrazo\(supabase as unknown as DbRegistro, PRAZO_REGISTRO_MS\);/,
+    );
+    expect(fonte).toContain('comRegistro(dbRegistro, ACAO_REGISTRO,');
   });
 
   it('slug próprio, escritor único: a edge (o botão da tela registra o composto, outra ação)', () => {
@@ -85,5 +100,10 @@ describe('omie-sync-estoque — deadline cabe no teto do cron', () => {
 
   it('o corte ABSOLUTO da observação (deadline + folga) continua em 85s — 5s antes do teto', () => {
     expect(constante('MAX_DURACAO_MS') + constante('FOLGA_PUBLICACAO_MS')).toBe(TETO_CRON_MS - 5_000);
+  });
+
+  it('corte da observação + prazo do fechamento do registro deixam ≥3s para os marcadores e a resposta', () => {
+    const fim = constante('MAX_DURACAO_MS') + constante('FOLGA_PUBLICACAO_MS') + constante('PRAZO_REGISTRO_MS');
+    expect(fim).toBeLessThanOrEqual(TETO_CRON_MS - 3_000);
   });
 });
