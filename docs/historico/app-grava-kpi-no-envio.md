@@ -1,6 +1,6 @@
 # A venda empurrada entra no universo canônico no ENVIO (kpi da linha do app)
 
-> 2026-10-06 · money-path · spec [2026-10-05-app-grava-kpi-no-envio-design.md](../superpowers/specs/2026-10-05-app-grava-kpi-no-envio-design.md)
+> 2026-10-06 · money-path · PR [#2825](https://github.com/LucasSardenbergL/afiacao/pull/2825) · spec [2026-10-05-app-grava-kpi-no-envio-design.md](../superpowers/specs/2026-10-05-app-grava-kpi-no-envio-design.md)
 > · plano [2026-10-05-app-grava-kpi-no-envio.md](../superpowers/plans/2026-10-05-app-grava-kpi-no-envio.md)
 > · antecedente [gemeos-push-pull-contagem-unica.md](gemeos-push-pull-contagem-unica.md)
 
