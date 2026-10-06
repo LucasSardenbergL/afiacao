@@ -236,6 +236,21 @@ o tira do `GREATEST`.
   `zerados_posicao: 158`, `zeramento_chamadas: 2`. Na tabela: as posições congeladas com saldo ≠ 0 caíram de
   **78 (oben) e 87 (vendas)** — Σ saldo×cmc R$ 26.918 e R$ 27.104 — para **0 e 0**.
 - Ledger depois: **`✅ confere`** nas duas — `sync-reprocess v1.15-zero-confirmado` e `omie-analytics-sync v1.7-zero-confirmado`, vistas via sonda do cron às 00:38:10Z.
-- 📌 A conferir sem sessão viva: a 1ª rodada da `sync-reprocess` v1.15 (operational 02:15Z) e a strategic de
-  02:30Z — `divergences_found` do `inventory` no patamar da operational (≤ 13) e as chaves `zeramento_*` no
-  metadata do `sync_reprocess_log`.
+- ✅ **Conferido em 06/10** (psql-ro, até 18:15Z) — fecha o 📌 que estava aqui:
+  - `sync-reprocess` v1.15: a **strategic** das 02:30Z deu **`divergences_found: 0`** no `inventory` (eram
+    677–694 por noite antes do #2744) e `itens_sem_valor_unitario: 0` no `products`; as **operational** de
+    02:15Z a 18:15Z deram `zeramento_candidatos: 0`, todas `complete`, sem erro — o espelho `oben` já tinha
+    sido zerado pelo dono de `vendas` às 00:30Z (o zero confirmado vale para os dois espelhos).
+  - `colacor_vendas`, 1ª rodada da v1.7 (01:15Z): `candidatos: 48`, **`confirmados_zero: 44`**,
+    `desconhecidos: 4`, `estranhos: 0`, `recusados_cas: 0`. Os 4 desconhecidos são os 4 da medição de 05/10
+    com o catálogo parado — `5185282104/109/114/119` (lanterna, lâmpadas, "Manutenção Elétrica"), posição e
+    cadastro sem atualização desde 02/10, saldo 1–2: excluídos no Omie, a confirmação "S" não os devolve e o
+    zero NÃO é escrito (ausente ≠ zero). Ficam como órfãos presos (limpeza manual, `reposicao.md` §Malha OBEN)
+    e custam 1 chamada de confirmação por rodada da colacor.
+  - Contraprova nos dois sentidos (00:40Z): nenhuma posição zerada com `estoque_fisico > 0` no
+    `sku_estoque_atual` fresco do modo "S"; das zeradas com leitura "S" < 24 h, 40/40 confirmam 0.
+  - Congeladas ao longo do dia: `vendas` 0, `oben` 0, `servicos` 0, `colacor_vendas` 4 — sem reacúmulo; a
+    rodada de `vendas` das 01:00Z já deu 0 candidatos (estado de regime).
+  - **O incidente fechou:** a WP07.3900QT voltou a ser sugerida no ciclo de 06/10 12:15Z (estoque físico 0,
+    `qtde_sugerida` 2) e o pedido foi aprovado com 1 un a R$ 796,21 e **disparado** — a 1ª sugestão dela
+    desde 04/07. O ciclo de 18:15Z sugeriu +1 (pp 1/máx 2 com 1 a caminho: regra do motor, não fantasma).
