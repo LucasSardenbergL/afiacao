@@ -874,7 +874,9 @@ eq "J2b e a linha ficou com o valor novo, não NULL" "$(dv 9802 555)" "20"
 # J3 — APURAÇÃO (NULL → valor): o sentido oposto não pode vazar para o contador da nulificação.
 cria 9803 '[{"cod":555,"q":1,"p":100}]' 100
 R=$(reconc1 9803 '[{"cod":555,"q":1,"p":100,"dv":10}]' 90 -10)
-eq "J3 apuração não conta como nulificação" "$(sensn "$R")" "1/0/0/1"
+# `corrections` vem 0 de propósito: apuração é CONVERGÊNCIA, não correção de conteúdo — contá-la
+# inflaria, na primeira passada, a métrica que o log publica. O que importa aqui é o 3º campo.
+eq "J3 apuração não conta como nulificação (e nem como correção de conteúdo)" "$(sensn "$R")" "0/0/0/1"
 
 # J4 — A FRONTEIRA, nomeada de propósito: payload SEM a chave (edge anterior) também grava NULL,
 # e NÃO conta aqui. `traz_desconto` fora do predicado faria toda run da edge velha parecer

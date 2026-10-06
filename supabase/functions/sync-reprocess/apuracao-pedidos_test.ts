@@ -202,6 +202,7 @@ Deno.test("abort ANTES de qualquer página (ex.: productMap falhou) → toda fas
     "pages", "falhas", "sku_repetido", "ambiguos", "stale", "itens_lidos", "itens_com_codigo_item",
     "identidade_adotada", "identidade_usada", "desconto_ilegivel", "desconto_ilegivel_amostra",
     "item_sem_codigo", "item_sem_codigo_amostra", "falhas_amostra", "desconto_apurado", "desconto_corrigido",
+    "desconto_corrigido_para_null",
     "pagina_abortada",
   ]) {
     assertEquals(m[k], null, `[NAO-APURADO] ${k} não foi apurado e não pode virar 0/[]`);
@@ -228,11 +229,40 @@ Deno.test("amostras têm teto 20 (também somando páginas) e a mensagem da falh
 
 Deno.test("sensor do desconto: página SEM a chave torna o total null para o resto da run", () => {
   const ap = novaApuracaoPedidos();
-  somarRespostaRpc(ap, { desconto_apurado: 3, desconto_corrigido: 1 });
+  somarRespostaRpc(ap, { desconto_apurado: 3, desconto_corrigido: 1, desconto_corrigido_para_null: 1 });
   somarRespostaRpc(ap, {});
-  somarRespostaRpc(ap, { desconto_apurado: 9, desconto_corrigido: 9 });
+  somarRespostaRpc(ap, { desconto_apurado: 9, desconto_corrigido: 9, desconto_corrigido_para_null: 9 });
   assertEquals(ap.descontoApurado, null);
   assertEquals(ap.descontoCorrigido, null);
+  assertEquals(ap.descontoCorrigidoParaNull, null);
+});
+
+// A combinação PERIGOSA das quatro (RPC × edge): RPC ANTERIOR ao apply de 2026-10-06 servindo a
+// edge NOVA. A chave não vem; gravar 0 afirmaria "zero nulificações" sobre o que ninguém mediu —
+// e é a única das quatro que produz número ERRADO em vez de ausente.
+Deno.test("RPC sem a chave da nulificação + edge nova → null, nunca 0 (ausente ≠ zero)", () => {
+  const ap = novaApuracaoPedidos();
+  somarRespostaRpc(ap, { desconto_apurado: 2, desconto_corrigido: 1 });
+  assertEquals(ap.descontoApurado, 2, "as chaves que a RPC velha MANDA seguem somando");
+  assertEquals(ap.descontoCorrigido, 1);
+  assertEquals(ap.descontoCorrigidoParaNull, null, "[AUSENTE-NAO-E-ZERO] a chave que falta vira null");
+  const m = metadataPedidos(ap, 7, { tipo: "completa" });
+  assertEquals(m.desconto_corrigido_para_null, null);
+  assertEquals(m.desconto_corrigido, 1, "assinatura de 'RPC velha com edge nova', legível no log");
+});
+
+// CONTENÇÃO: a nulificação é SUBCONJUNTO da correção, nunca uma parcela a somar.
+Deno.test("nulificação ⊆ correção: o subconjunto nunca passa do total", () => {
+  const ap = novaApuracaoPedidos();
+  somarRespostaRpc(ap, { desconto_corrigido: 3, desconto_corrigido_para_null: 2 });
+  somarRespostaRpc(ap, { desconto_corrigido: 1, desconto_corrigido_para_null: 1 });
+  assertEquals(ap.descontoCorrigido, 4);
+  assertEquals(ap.descontoCorrigidoParaNull, 3);
+  assertEquals(
+    (ap.descontoCorrigidoParaNull as number) <= (ap.descontoCorrigido as number),
+    true,
+    "[CONTENCAO] somar os dois contaria a nulificação duas vezes",
+  );
 });
 
 Deno.test("run COMPLETA: metadata com as MESMAS chaves e na MESMA ordem de antes (sem campos de abort)", () => {
@@ -243,7 +273,7 @@ Deno.test("run COMPLETA: metadata com as MESMAS chaves e na MESMA ordem de antes
     "pages", "window_days", "falhas", "sku_repetido", "ambiguos", "stale",
     "itens_lidos", "itens_com_codigo_item", "identidade_adotada", "identidade_usada",
     "desconto_ilegivel", "desconto_ilegivel_amostra", "item_sem_codigo", "item_sem_codigo_amostra",
-    "falhas_amostra", "desconto_apurado", "desconto_corrigido",
+    "falhas_amostra", "desconto_apurado", "desconto_corrigido", "desconto_corrigido_para_null",
   ]);
   // Janela sem pedido: na run completa, 0 é medido (o denominador `itens_lidos = 0` diz "sem dado").
   assertEquals(m.falhas, 0);

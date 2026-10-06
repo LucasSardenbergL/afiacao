@@ -84,8 +84,14 @@ export const respostaSonda = criarRespostaSonda("sync-reprocess");
 // v1.11 (2026-09-27) — só TIPO: `omie_pedido_id` segue CRU para a RPC (que só o ecoa no registro de
 // falha), agora tipado `string | number` por um tipo local — o `deno check` do preview deixa de acusar
 // a linha que o bot "consertava" com `Number()`. JS emitido byte-idêntico ao da v1.10.
+// v1.16 (2026-10-06) — `metadata.desconto_corrigido_para_null`: SUBCONJUNTO de `desconto_corrigido`
+// com só o ramo em que o desconto conhecido virou NULL. `desconto_corrigido` NÃO muda de
+// significado (as 195 runs logadas desde 2026-09-20 seguem comparáveis) — por isso a chave é nova,
+// e NUNCA se somam as duas. Ausente = a RPC no ar ainda não separa a nulificação (apply
+// `db/2026-10-06-desconto-corrigido-para-null.sql`); `desconto_corrigido` presente E esta ausente
+// é a assinatura de "RPC velha com edge nova", legível no próprio log.
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.15-zero-confirmado";
+export const VERSAO = "v1.16-nulificacao-separada";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO = // v1.12 (2026-09-27, P2 Codex): run de pedidos que ABORTA grava o metadata apurado até o abort (não apurado = null, nunca 0) — ./apuracao-pedidos.ts. Nota aqui e não na linha do VERSAO: `scripts/sonda-versao-sql.ts` exige aquela linha limpa até o fim.
