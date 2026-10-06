@@ -1,7 +1,8 @@
 # omie-sync-estoque: o deadline na fase do PO descartava o físico já lido (2026-10-05)
 
 > Money-path (reposição). Edge `omie-sync-estoque` v1.4 → v1.5. Incidente: cron das 17:40Z,
-> `net._http_response` id **104687**. Codex: desenho **não consultado** (exit 79, sensor de cota), registro no PR.
+> `net._http_response` id **104687**. Codex: desenho **não consultado** (exit 79, sensor de cota); adversarial de
+> código consultado com o sensor liberado (3 pp) — ele derrubou a fase do PO em paralelo (ver abaixo).
 
 ## O incidente
 
@@ -63,43 +64,85 @@ pendente `error`) e o físico segue; **B1** — disparar a fase do PO em paralel
 **B2** — deadline 75→80s; **B3** — `ListarPosEstoque` só dos 399 habilitados via `lista_produtos`; **B5** — teto
 do cron 90→150s; **B6** — tirar o cron 31 do :00; **C** — registrar cada run em `acoes_execucoes`.
 
-O Codex não foi consultado: `scripts/codex-async.sh` saiu com **exit 79** (`SALDO_ALTO`, cota em 89% contra o
-teto de 85%; janela reabre 09/10 19:30) sem gastar a chamada. Pela regra do money-path, o desenho foi adiado para
-a `RÉGUA:` escrita e conferida aqui (prompt preservado no corpo do PR), e o adversarial de código fica pendente.
+No desenho o Codex não foi consultado: `scripts/codex-async.sh` saiu com **exit 79** (`SALDO_ALTO`, cota em 89%
+contra o teto de 85%; janela reabre 09/10 19:30) sem gastar a chamada. Pela regra do money-path, o desenho foi
+adiado para a `RÉGUA:` escrita e conferida aqui, e o PR ficou em DRAFT até o adversarial de código, que rodou com
+`CODEX_ASYNC_TETO_SALDO=0` — a faixa acima de 85% é a reserva do money-path, segundo o próprio script.
 
-**B1 domina A na faixa que as duas resgatam** — o físico terminando entre ~70s e ~73,5s:
+**A segue rejeitada.** Ela grava físico fresco com pendente preservado: a NF recebida entre os runs conta duas
+vezes (o físico já a soma, o pendente velho ainda conta o saldo daquele PO) e o motor sub-sugere aqueles SKUs por
+≥1 ciclo. O botão "Sincronizar e recalcular" recalcularia sobre esse par (`edgeSyncOk` só olha `ok`). E a
+cobertura exclusiva dela — falha do endpoint de PO fora do orçamento — tem frequência desconhecida.
 
-- B1 grava o par (físico, pendente) do MESMO run e mantém a semântica fatal e todos os contratos de consumidor.
-- A grava físico fresco com pendente preservado. Isso conta a NF recebida entre os runs duas vezes: o físico já
-  a soma, e o pendente velho ainda conta o saldo daquele PO. O motor sub-sugere aqueles SKUs por ≥1 ciclo.
-- O botão "Sincronizar e recalcular" recalcularia sobre esse par, porque `edgeSyncOk` só olha `ok`. E o alerta
-  trocaria de identidade.
-- A cobertura exclusiva de A — falha do endpoint de PO não induzida pelo orçamento — tem frequência
-  desconhecida. Não justifica o risco.
+**B1 entrou e saiu.** A 1ª versão do PR disparava a fase do PO no início, em paralelo com o físico, com o argumento
+de que o par (físico, pendente) continuava "do MESMO run". O adversarial derrubou a premissa: mesmo run não é
+mesmo instante. Com o PO lido nos primeiros ~4s e a página do SKU lida até ~75s depois, uma NF recebida no meio
+entra no físico E segue no pendente — a mesma dupla contagem que rejeitou A, numa janela menor, e invisível. Na
+ordem da v1.4 (físico, depois PO) a mesma corrida erra para o outro lado: a NF some dos dois números e o motor
+sobre-sugere um item que o comprador acabou de receber, que é o erro que ele vê. A ordem é desenho, não
+acidente — e ficou escrita no código e na guarda.
 
-O custo de B1 são 2 requisições a mais na conta OBEN nos primeiros ~4s. O botão já roda essa edge junto com o
-`omie-sync-status-produtos` (pool 3) na mesma conta desde julho.
+**Entrou (v1.5, `v1.5-prazo-80s-e-registro`):**
 
-**Entrou (v1.5):**
-
-1. **B1** — `fase-paralela.ts`: `dispararFase(fn)` chama já, captura a rejeição na criação (no Deno, rejeição sem
-   handler derruba o isolate, e o laço do físico pode lançar antes de aguardar o PO), expõe
-   `falhaJaConhecida()` (o laço aborta cedo: com o PO falho o run já é fatal, ler 75 páginas é desperdício de
-   cota) e `resultado()` relança o MESMO erro.
-2. **B2** — 80s de deadline, folga da observação 10→5s: o corte absoluto da observação segue em 85s.
-3. **C** — `comRegistro` (slug `reposicao.sync_estoque`, escritor único; o botão registra o composto
+1. **B2** — 80s de deadline, folga da observação 10→5s: o corte absoluto da observação segue em 85s. Sozinho ele
+   teria salvo o run do incidente (físico em ~73s + ~4s de PO < 80s), com ~2s de margem.
+2. **C** — `comRegistro` (slug `reposicao.sync_estoque`, escritor único; o botão registra o composto
    `reposicao.sincronizar_recalcular`). Aberto antes do guard das credenciais e de qualquer chamada Omie. O
-   sucesso grava `fase_fisico_ms`/`fase_po_ms`/`espera_po_ms`. A falha grava o texto do erro, e no físico ele
-   ganha o sufixo `(pág N/M, Xms do run)` — sufixo porque o catch final testa `startsWith("AUTH_ERROR")`.
+   sucesso grava `fase_fisico_ms`/`fase_po_ms`. A falha grava o texto do erro, e no físico ele ganha o sufixo
+   `(pág N/M, Xms do run)` — sufixo porque o catch final testa `startsWith("AUTH_ERROR")`. Efeito colateral
+   assumido: credencial ausente passa a gravar o marcador `error` (na v1.4 saía 500 sem marcador).
+3. **Prazo do registro** — `registro-com-prazo.ts` adapta o `DbRegistro` com 2s por escrita (abrir, fechar),
+   fail-open também contra a ESPERA. 85s + 2s ainda deixa folga até os 90s do pg_net.
+
+## O adversarial do código (Codex, `gpt-6-astra` · max · 601s · 139.305 tokens · 3 pp)
+
+Parecer cru, resumido (o Codex executou a fonte com Omie, banco e relógio simulados):
+
+- **[P1] regressão** — o paralelo conta a mesma entrada como físico e pendente (PO 10 pendente aos 0–4s, NF aos
+  10s, página do SKU aos 45s com físico 10 → grava 10 + 10, `ok:true`; a v1.4 gravou 10 + 0).
+- **[P1] regressão** — o `comRegistro` aguarda o fechamento sem prazo, depois do corte de 85s: banco lento leva a
+  resposta aos 91s (timeout no cron com o dado publicado) e, no erro, atrasa o marcador `error` da Sentinela.
+- **[P1] preexistente** — `pendenteConfiavel=false` publica físico fresco com pendente preservado e responde
+  `ok:true`: dupla contagem imediata, e o botão recalcula sobre ela.
+- **[P1] preexistente** — físico truncado (o Omie declara N linhas, a paginação entrega menos) é publicado antes
+  da checagem de completude; `varreduraTruncada` só suspende a inativação.
+- **[P2] preexistente** — upsert parcialmente falho (`sincronizados > 0`, `erros_upsert > 0`) recebe marcadores
+  `complete` sem `error_message`.
+- **[P2]** — as guardas da 1ª versão não provavam o anunciado: passavam verdes com um upsert antes do await do PO
+  e com um try/catch em volta do callback devolvendo `ok:true`; nenhum teste provava que o `comRegistro` relança.
+
+Conferido sem achado: deadline compartilhado coerente; `comRegistro` relança o erro original; `AUTH_ERROR`
+conserva o prefixo; métodos distintos na mesma app_key não esbarram nos limites do Omie (IP + app_key + método).
+
+**Calibração.** Os dois P1 regressivos procedem e foram corrigidos (B1 revertida; prazo do registro). O P2 das
+guardas procede: elas foram refeitas e falsificadas de novo. Os três preexistentes procedem pelo código, mas não
+são desta entrega — estão abaixo, como pendência com evidência.
 
 **Provas executadas.**
 
-- `fase-paralela_test.ts` (Deno, 5 testes). Falsificado numa cópia, com controle verde na mesma invocação:
-  sem a captura → `Uncaught error`, 6 vermelhos; erro reembrulhado → 2; disparo adiado → 2.
-- `src/lib/reposicao/__tests__/sync-estoque-orcamento-edge.test.ts` (vitest, 7 testes, fonte sem comentários).
-  Controle verde e 7/7 sabotagens vermelhas sob `LC_ALL=C` e `pt_BR.UTF-8`, cada uma no teste que a mira:
-  voltar ao sequencial, engolir o erro do PO, tirar o aborto cedo, credencial antes do registro, prefixo no
-  erro, deadline 85s, folga 10s.
+- `registro-com-prazo_test.ts` (Deno, 6 testes, sobre o `comRegistro` REAL): fechamento pendurado, ação que falha
+  com o fechamento pendurado (o MESMO erro sobe — a prova que faltava), abertura pendurada, banco rápido com o
+  timer limpo, rejeição tardia sem uncaught, mensagem do prazo. Falsificado numa cópia, com controle verde na
+  mesma invocação, sob `LC_ALL=C` e `pt_BR.UTF-8`: sem prazo → 4 vermelhos; timer não limpo → 1; rejeição órfã →
+  `Uncaught error`; `comRegistro` reembrulhando o erro → 1; mensagem sem a operação → 1. A 1ª rodada achou um
+  buraco: sem o `clearTimeout` o teste do timer passava verde, porque o sanitizer de ops do Deno 2.9.2 não acusa
+  `setTimeout` pendente. Agora um espião conta os timers vivos.
+- `src/lib/reposicao/__tests__/sync-estoque-orcamento-edge.test.ts` (vitest, 10 testes, fonte sem comentários).
+  Controle verde e 10/10 sabotagens vermelhas sob `LC_ALL=C` e `pt_BR.UTF-8`, cada uma no teste que a mira: PO
+  disparado antes do laço, estoque acessado antes do PO, `.catch()` engolindo o erro do PO, catch devolvendo
+  `ok:true` no callback, credencial antes do registro, registro sem prazo, prefixo no erro do físico, deadline
+  85s, folga 10s, prazo do registro 4s. Limite declarado: um catch que devolva o próprio resumo escapa da guarda
+  do `ok:true` — texto prova presença e ordem, não comportamento.
+
+## Achados preexistentes do adversarial (não corrigidos aqui)
+
+Três caminhos em que a edge responde `ok:true` sobre um par que o motor não deveria consumir. Nenhum é desta
+entrega; os três pedem decisão de desenho (falhar, degradar ou só sinalizar):
+
+1. **Pendente não confiável preservado** (`pendenteConfiavel=false`, "dado torto"): o físico sai fresco e o
+   pendente velho fica — a dupla contagem que rejeitou A acontece hoje nesse caminho, e o botão recalcula.
+2. **Físico truncado publicado**: `varreduraTruncada` é calculada depois do upsert e só segura a inativação.
+3. **Upsert parcial com marcadores limpos**: `erros_upsert > 0` não vira `error_message` nem `ok:false`.
 
 ## Próximos passos — com o dado que cada um espera
 
@@ -109,6 +152,7 @@ O custo de B1 são 2 requisições a mais na conta OBEN nos primeiros ~4s. O bot
   por causa do "não apareceu ⇒ inativo" e do guard de truncagem. Gatilho: o registro mostrar `fase_fisico_ms`
   perto dos 80s.
 - **B5 (teto do cron 150s)** — fora da restrição "não passar dos 90s" desta entrega.
+- **Os três preexistentes** acima — sessão própria, money-path, com Codex no desenho.
 
 Quando medir é query, não recado:
 
@@ -129,8 +173,16 @@ Antes da v1.5 a mesma pergunta só se responde por episódio: `fin_alertas`, `ti
 ## Lições
 
 - **Fase barata e fatal no FIM de um run com deadline único herda toda a lentidão das fases de antes.** A fase
-  do PO custa 3–4s e morria por causa dos 45s do físico — e levava o físico junto. Fase independente e curta vai
-  para o começo, em paralelo, onde a lentidão alheia não a alcança.
+  do PO custa 3–4s e morria por causa dos 45s do físico — e levava o físico junto. Mas a saída óbvia (movê-la
+  para o começo, em paralelo) só vale se as duas leituras forem independentes NO TEMPO, e aqui não são.
+- **"Mesmo run" não é "mesmo instante".** Duas leituras não atômicas da mesma realidade (estoque e PO) sempre
+  podem ser separadas por um evento (a NF). A ORDEM das leituras decide a DIREÇÃO do erro: escolha a que erra
+  para o lado visível e trave a ordem em guarda — paralelizar por desempenho inverteu a direção sem mudar nenhum
+  contrato aparente.
+- **Fail-open contra rejeição não é fail-open contra espera.** Um registro "que nunca derruba a ação" ainda pode
+  segurá-la: `await` sem prazo no caminho crítico é dependência dura, com ou sem try/catch.
+- **O sanitizer de ops do Deno 2.9 não acusa `setTimeout` pendente.** "Nenhum timer fica pendurado" se prova com
+  espião, não com o sanitizer — e só a falsificação mostrou a diferença.
 - **Introduzir deadline num run que termina calado em background troca lentidão invisível por falha visível.**
   É o certo (a morte fica legível), mas a taxa de falha "nasce" no deploy: 19 das 21 falhas vieram depois do
   #2043. Meça a distribuição de duração antes, e reveja o que o throw descarta.
