@@ -145,6 +145,8 @@ process.exit(9);
  * mais que teto + carencia dos cenarios, e menos que o timeout do vitest.
  *
  *  - obediente: TRATA o TERM (registra que limpou e sai 0). O neto, sem trap, morre no TERM do grupo.
+ *    O handler começa ignorando novos TERM: o do GRUPO e o que o `bun run` repassa chegam juntos, e o
+ *    dash (o `sh` do runner Linux) reentra no trap — 5 de 100 rodadas gravavam "limpou" 2× (0 no bash).
  *  - surdo: `trap '' TERM`. O SIG_IGN e herdado no exec, entao o neto tambem e surdo: so o KILL encerra.
  *  - neto-surdo: o filho morre no TERM, mas deixa um neto surdo para tras — o orfao que o
  *    `killSignal: 'SIGKILL'` cria, porque mata o `bun run` antes de ele repassar qualquer sinal.
@@ -153,7 +155,7 @@ process.exit(9);
 const ARVORE_SH = `#!/bin/sh
 papel=$1
 case "$papel" in
-  obediente) trap 'echo "limpou $$" >> "$PIDS_TETO"; exit 0' TERM ;;
+  obediente) trap 'trap "" TERM; echo "limpou $$" >> "$PIDS_TETO"; exit 0' TERM ;;
   surdo) trap '' TERM ;;
   surdo-sob-defeito) grep -q SABOTADO ${EDGE} || exit 0; trap '' TERM ;;
 esac
