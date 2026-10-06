@@ -1032,7 +1032,10 @@ em mãos → a página fica" passou COM a regressão (sabotagem: tirar o `&& !cu
 react-query 5 avisa o React num `setTimeout(0)` (`notifyManager`) que o `act` não drena. **Afirmar que a
 tela NÃO mudou exige prova de que o React RENDERIZOU o estado novo**: os irmãos `*.estados` escapam por
 esperar um sinal POSITIVO no DOM (o aviso de desatualizado aparecer); sem sinal positivo, drene o tick
-dentro do `act`. Verde no RED e no GREEN — só a sabotagem mostrou.
+dentro do `act`. Verde no RED e no GREEN — só a sabotagem mostrou. E a 2ª rodada pegou o resto: com o
+tick drenado o guard ficou vermelho, mas pelo `TestingLibraryElementError` do `getByText`, não pela
+mensagem do ramo — **mensagem de `expect` atrás de `getBy*` é código morto** (o `getBy` lança antes);
+`queryBy*` + mensagem, e o veredito casa a marca.
 
 O gate `erro-colapsado-em-vazio` não via o sítio: texto por ATRIBUTO, eixo cujo "= 0" envelheceu —
 re-medição em `o-check-verde-que-a-falha-acende.md` (1 sítio textual na main, este; 0 depois).
