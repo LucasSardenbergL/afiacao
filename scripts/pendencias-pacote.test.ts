@@ -519,6 +519,65 @@ describe('pendencias:pacote — a leitura da edge sai da REF, não do disco', ()
     expect(main([EDGE, '--saida', saida, '--sem-rede'], raiz, git, sondaFalsa(['rpc_velha']))).toBe(2);
   });
 
+  // ── Codex, rodada 3 do #2757: a irmã AUSENTE da migration da leva ──────────────────────────
+  // `f` e `g` nascem na MESMA migration e só funcionam juntas (o corpo de `f` chama `g`; plpgsql é
+  // late-bound, então nada falha no CREATE). A leva chama só `f`. O teste que BLOQUEIA está no bloco da
+  // nuvem, nos dois transportes; aqui fica o controle que prova que a vigência CHEGA ao gate.
+  const CORPO_F = ' BEGIN RETURN public.g_irma(); END; ';
+  const MIGRATION_PAR = {
+    nome: '20260303000000_par_acoplado.sql',
+    sql:
+      `CREATE OR REPLACE FUNCTION public.f_chama_g() RETURNS int LANGUAGE plpgsql AS $$${CORPO_F}$$;\n` +
+      'CREATE OR REPLACE FUNCTION public.g_irma() RETURNS int LANGUAGE plpgsql AS $$ BEGIN RETURN 7; END; $$;\n',
+  };
+  const MIGRATION_APOSENTA_G = { nome: '20260404000000_aposenta_g.sql', sql: 'DROP FUNCTION IF EXISTS public.g_irma();\n' };
+  const CHAMA_F = `await db.rpc('f_chama_g', {});\n`;
+
+  it('controle: a irmã APOSENTADA por migration posterior e ausente em prod NÃO bloqueia — LIBERA (0) com a colagem', () => {
+    // Sem a vigência do repo, esta ausência seria indistinguível da migration aplicada pela metade.
+    const { raiz, git, saida } = montarRepo(CHAMA_F, CHAMA_F, [MIGRATION_PAR, MIGRATION_APOSENTA_G]);
+    let sqlSonda = '';
+    const sonda = sondaFalsa(['f_chama_g'], { f_chama_g: CORPO_F });
+    const codigo = main([EDGE, '--saida', saida, '--sem-rede'], raiz, git, (sql) => {
+      sqlSonda = sql;
+      return sonda(sql);
+    });
+
+    // A irmã foi PEDIDA e respondida ausente — sem isto o verde não teria exercido a regra.
+    expect(pedidasNo(sqlSonda)).toContain('g_irma');
+    expect(codigo).toBe(0);
+    const pacote = readFileSync(saida, 'utf8');
+    expect(pacote).toContain('Cole no chat do Lovable');
+    expect(pacote).toContain(MIGRATION_APOSENTA_G.nome);
+  });
+
+  // Adversarial do Codex sobre o fix: M1 cria `g` (1); a PAR cria `f`, que chama `g`, e redefine `g` (7); M3 só CITA o
+  // DROP num literal. O modelo aposentava `g` pelo TEXTO — e o gate dispensava a irmã: saía 0 COM a colagem.
+  const M1_G = {
+    nome: '20260101000000_cria_g.sql',
+    sql: 'CREATE OR REPLACE FUNCTION public.g_irma() RETURNS int LANGUAGE plpgsql AS $$ BEGIN RETURN 1; END; $$;\n',
+  };
+  const M3_NOTA = { nome: '20260505000000_so_cita.sql', sql: 'SELECT $nota$DROP FUNCTION public.g_irma();$nota$;\n' };
+
+  it('Codex P1 (adversarial do fix): DROP como TEXTO não aposenta — prod com o corpo ANTERIOR da irmã BLOQUEIA (3)', () => {
+    const { raiz, git, saida } = montarRepo(CHAMA_F, CHAMA_F, [M1_G, MIGRATION_PAR, M3_NOTA]);
+    const prod = { f_chama_g: CORPO_F, g_irma: ' BEGIN RETURN 1; END; ' };
+    const codigo = main([EDGE, '--saida', saida, '--sem-rede'], raiz, git, sondaFalsa(['f_chama_g', 'g_irma'], prod));
+    expect(codigo).toBe(3);
+    const pacote = readFileSync(saida, 'utf8');
+    expect(pacote).toContain(`EXISTE em prod, mas rodando o corpo de \`${M1_G.nome}\``);
+    expect(pacote).not.toContain('Cole no chat do Lovable');
+  });
+
+  it('Codex P1 (adversarial do fix): DROP como TEXTO não aposenta — a irmã AUSENTE segue VIGENTE e BLOQUEIA (3)', () => {
+    const { raiz, git, saida } = montarRepo(CHAMA_F, CHAMA_F, [M1_G, MIGRATION_PAR, M3_NOTA]);
+    const codigo = main([EDGE, '--saida', saida, '--sem-rede'], raiz, git, sondaFalsa(['f_chama_g'], { f_chama_g: CORPO_F }));
+    expect(codigo).toBe(3);
+    const pacote = readFileSync(saida, 'utf8');
+    expect(pacote).toContain('APLIQUE essa migration');
+    expect(pacote).not.toContain('Cole no chat do Lovable');
+  });
+
   // ── pela NUVEM (2026-09-27): as duas rodadas do transporte chegam ao MESMO pacote ──────────
   // Sem `psql-ro`, a sonda de pré-condição sai por `--sql-nuvem` e volta por `--dados-nuvem`. O
   // que se prova aqui é a FIAÇÃO: o SQL emitido é o da sonda local, a resposta validada chega ao
@@ -689,6 +748,44 @@ describe('pendencias:pacote — a leitura da edge sai da REF, não do disco', ()
         expect(pacote).not.toContain('VARIANTE_COSMETICA');
         expect(pacote).not.toContain('Cole no chat do Lovable');
       }
+    });
+
+    it('Codex P1 (rodada 3 do #2757), nos DOIS transportes: `f` em dia e a irmã `g` da MESMA migration AUSENTE ⇒ BLOQUEIA (3), sem colagem', () => {
+      // O reprodutor do Codex: prod tem `f` (corpo da última) e não tem `g` — `rpc|g|NAO|…`, `n|g|0`. Antes,
+      // `main` saía 0 COM a colagem: a edge ia ao ar e `f` falhava em runtime.
+      const prod = { f_chama_g: CORPO_F };
+      const local = montarRepo(CHAMA_F, CHAMA_F, [MIGRATION_PAR]);
+      const sonda = sondaFalsa(['f_chama_g'], prod);
+      let sqlSonda = '';
+      const codigoLocal = main([EDGE, '--saida', local.saida, '--sem-rede'], local.raiz, local.git, (sql) => {
+        sqlSonda = sql;
+        return sonda(sql);
+      }, semEntrada, agora);
+      // A sonda PEDIU a irmã — é isso que leva a medição `rpc|g_irma|NAO` ao gate.
+      expect(pedidasNo(sqlSonda)).toContain('g_irma');
+
+      const nuvem = montarRepo(CHAMA_F, CHAMA_F, [MIGRATION_PAR]);
+      const arquivo = join(nuvem.raiz, 'resposta-nuvem.json');
+      writeFileSync(arquivo, respostaPara(sqlSonda, bancoFalso(['f_chama_g'], prod)), 'utf8');
+      const codigoNuvem = main(
+        [EDGE, '--saida', nuvem.saida, '--sem-rede', `--dados-nuvem=${arquivo}`],
+        nuvem.raiz,
+        nuvem.git,
+        psqlProibido,
+        semEntrada,
+        agora,
+      );
+
+      for (const [codigo, caminho] of [[codigoLocal, local.saida], [codigoNuvem, nuvem.saida]] as const) {
+        expect(codigo).toBe(3);
+        const pacote = readFileSync(caminho, 'utf8');
+        expect(pacote).toContain('`g_irma`');
+        expect(pacote).toContain('APLIQUE essa migration');
+        expect(pacote).toContain(MIGRATION_PAR.nome);
+        expect(pacote).toContain('BLOQUEADO no passo 1');
+        expect(pacote).not.toContain('Cole no chat do Lovable');
+      }
+      expect(readFileSync(nuvem.saida, 'utf8')).toBe(readFileSync(local.saida, 'utf8'));
     });
 
     it('MECÂNICA (2) quando a resposta é de OUTRA leva — o sql_md5 não fecha', () => {
