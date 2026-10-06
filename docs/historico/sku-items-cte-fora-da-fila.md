@@ -109,13 +109,12 @@ mesma invocação (10 de 10 vermelhos, worktree limpo depois).
 
 ## 7. O que fica descoberto
 
-- **Parte B, na fonte (PR seguinte).** O `omie-sync-nfes-recebidas` deve pular o modelo 57 já na
-  resposta do `ListarRecebimentos` (quando a chave E o `cModeloNFe` dizem 57; divergência e ausência
-  são contadas à parte). Isso economiza a consulta de detalhe por CT-e em todo ciclo de 2h. O
-  `buscarCandidatas` do `omie-sync-ctes-recebidos` deve excluir o 57 das candidatas: hoje 13 dos 82
-  casamentos (16%) caíram numa linha CT-e, e a NF-e transportada ficou sem `t3_data_cte`. O `t3` não
-  entra nos `lt_*` do motor, então o dano é na decomposição logística e nas telas. Antes de mexer
-  no matcher, medir a re-associação de um CT-e já usado (achado do Codex).
+- **Parte B, na fonte — ENTREGUE em [cte-fora-do-rastreio.md](cte-fora-do-rastreio.md).** O
+  `omie-sync-nfes-recebidas` pula o 57 na resposta do `ListarRecebimentos` (chave crua E
+  `cModeloNFe`), e o `buscarCandidatas` do `omie-sync-ctes-recebidos` tira a linha 57 das
+  candidatas. A medição corrigiu o número daqui: os 13 são **vínculos** em linha 57; por CT-e, só 3
+  nunca chegaram a uma NF-e, porque o matcher re-associa o CT-e já usado. E o vínculo extra é quase
+  sempre a linha-irmã da mesma NF-e, então não se impôs unicidade.
 - **As 135 linhas de CT-e no tracking e os 13 fretes desviados.** Limpar ou re-casar é decisão do
   founder: tem efeito em dado, e o redeploy não desfaz vínculo gravado. As views
   `v_leadtime_por_grupo` (conta CT-e como "pedido": 33 de 39) e `v_pedidos_em_aberto` (29 CT-e como

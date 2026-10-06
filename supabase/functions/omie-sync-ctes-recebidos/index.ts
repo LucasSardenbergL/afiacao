@@ -6,10 +6,12 @@
 //
 // Regras de match (Sayerlack apenas — fornecedor_codigo_omie = 8689681266):
 //   1. Identificar transportadora pela tag transporte.cRazaoTransp do detalhe do CTe.
-//   2. Filtrar candidatas:
+//   2. Filtrar candidatas (candidatas.ts):
 //        - empresa = OBEN, fornecedor_codigo_omie = SAYERLACK
 //        - t2_data_faturamento entre (cte_data - 3d) e cte_data
 //        - t3_data_cte IS NULL  (NFe ainda sem CTe)
+//        - chave de acesso que NÃO seja modelo 57: a linha órfã de um CT-e no rastreio não é NF-e
+//          transportada (era a própria linha do CT-e que o CONECT escolhia — parte B, 2026-10-05)
 //   3. Aplicar regra por transportadora:
 //        SP_MINAS  → método "SP_MINAS_25PCT": valor_esperado = nfe_valor * 0.025
 //                    desvio <= 15% → score 0.95
@@ -29,6 +31,7 @@
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { avaliarPagina, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
 import { classificarSonda, EDGE, EFEITO, erroSondaAmbigua, FONTE, respostaSonda, VERSAO } from "./versao.ts";
+import { type BancoCandidatas, buscarCandidatas, type NFeCandidata } from "./candidatas.ts";
 
 interface OmieCabec {
   nIdReceb?: number;
@@ -77,13 +80,6 @@ type OmieApiResponse =
   | OmieListarRecebimentosResponse
   | OmieRecebimentoDetalhe
   | OmieFaultResponse;
-
-interface PurchaseOrderTrackingRow {
-  id: string;
-  numero_pedido: string | null;
-  t2_data_faturamento: string;
-  raw_data: { cabec?: { nValorNFe?: number } } | null;
-}
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -136,6 +132,12 @@ interface EmpresaSummary {
   matches_conect: number;
   ctes_orfaos: number;
   erros: number;
+  // Pares (CT-e, linha modelo 57) que a janela de candidatas trazia e saíram (candidatas.ts): uma
+  // mesma linha conta uma vez por CT-e cuja janela a alcança. Só CT-e de SP Minas e Conect busca
+  // candidatas — o denominador é `ctes_sp_minas + ctes_conect`, não `ctes_processados`. Com a fonte
+  // sem gravar CT-e (omie-sync-nfes-recebidas v1.4), o esperado é 0: positivo depois disso é linha 57
+  // NOVA no rastreio, ou seja, vazamento da fonte.
+  candidatas_cte_excluidas: number;
   // Falha FATAL da varredura da empresa (throw da paginação/fault) — os contadores zerados
   // acima são "não medido", não "mediu zero" (achado Codex do challenge deste PR).
   erro_fatal?: string;
@@ -264,56 +266,11 @@ function classificarTransp(nome: string | null): TranspKind {
   return "OUTRA";
 }
 
-interface NFeCandidata {
-  id: string;
-  numero_pedido: string | null;
-  t2_data_faturamento: string;
-  valor_nfe: number;
-}
-
 interface MatchResult {
   candidata: NFeCandidata;
   score: number;
   desvio: number | null;
   metodo: MatchMetodo;
-}
-
-async function buscarCandidatas(
-  supabase: SupabaseClient,
-  empresa: Empresa,
-  fornecedorCodigo: number,
-  cte: MappedCte,
-): Promise<NFeCandidata[]> {
-  if (!cte.data_emissao_date) return [];
-  const dataFim = cte.data_emissao_date;
-  const dataInicio = new Date(dataFim.getTime() - 3 * 24 * 60 * 60 * 1000);
-
-  const { data, error } = await supabase
-    .from("purchase_orders_tracking")
-    .select("id, numero_pedido, t2_data_faturamento, raw_data")
-    .eq("empresa", empresa)
-    .eq("fornecedor_codigo_omie", fornecedorCodigo)
-    .not("nfe_chave_acesso", "is", null)
-    .is("t3_data_cte", null)
-    .gte("t2_data_faturamento", dataInicio.toISOString())
-    .lte("t2_data_faturamento", dataFim.toISOString())
-    .order("t2_data_faturamento", { ascending: false });
-
-  if (error) {
-    console.error("[sync-ctes] buscarCandidatas erro:", error);
-    return [];
-  }
-
-  const rows = (data ?? []) as unknown as PurchaseOrderTrackingRow[];
-  return rows.map((row) => {
-    const valorNfe = Number(row?.raw_data?.cabec?.nValorNFe ?? 0);
-    return {
-      id: row.id,
-      numero_pedido: row.numero_pedido,
-      t2_data_faturamento: row.t2_data_faturamento,
-      valor_nfe: valorNfe,
-    } as NFeCandidata;
-  });
 }
 
 function matchSpMinas(cte: MappedCte, candidatas: NFeCandidata[]): MatchResult | null {
@@ -370,6 +327,7 @@ async function processarEmpresa(
     matches_conect: 0,
     ctes_orfaos: 0,
     erros: 0,
+    candidatas_cte_excluidas: 0,
   };
 
   const { app_key, app_secret } = getCredentials(empresa);
@@ -447,10 +405,19 @@ async function processarEmpresa(
       if (transpKind === "SP_MINAS") summary.ctes_sp_minas++;
       else if (transpKind === "CONECT") summary.ctes_conect++;
 
-      const candidatas = await buscarCandidatas(supabase, empresa, fornecedorCodigo, cte);
+      // Falha de leitura LANÇA (FalhaLeituraCritica) e cai no catch do item: conta `erros`, não
+      // `ctes_orfaos`, e nada é gravado — "não consegui ler a janela" não é "não havia NF-e nela".
+      const { candidatas, ctesExcluidas } = await buscarCandidatas(
+        supabase as unknown as BancoCandidatas,
+        empresa,
+        fornecedorCodigo,
+        cte.data_emissao_date,
+      );
+      summary.candidatas_cte_excluidas += ctesExcluidas;
       console.log(
         `[sync-ctes] CTe ${cte.numero} (${transpKind}, R$${cte.valor_frete.toFixed(2)}) ` +
-        `→ ${candidatas.length} candidatas Sayerlack na janela`,
+        `→ ${candidatas.length} candidatas Sayerlack na janela` +
+        (ctesExcluidas > 0 ? ` (${ctesExcluidas} linha(s) modelo 57 fora)` : ""),
       );
 
       let match: MatchResult | null = null;
@@ -592,6 +559,7 @@ Deno.serve(async (req) => {
           matches_conect: 0,
           ctes_orfaos: 0,
           erros: 1,
+          candidatas_cte_excluidas: 0,
           erro_fatal: e instanceof Error ? e.message : String(e),
         });
       }
