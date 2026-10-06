@@ -114,8 +114,10 @@ Payload por item: `{item_id, qtde_final, valor_mercadoria, valor_ipi}`. A RPC, n
    `valor_ipi` não finito ou < 0; total não finito ou ≤ 0. O payload antigo (`preco_unitario`/`valor_linha`) cai aqui.
 2. **CP004** id repetido no payload.
 3. CAS no próprio UPDATE (sem PO Omie + `sucesso_portal`), que grava o provado como hoje — **CP002**/**CP003**.
-4. **CP004** o payload não cobre todos os itens do pedido, ou algum `qtde_final` difere do da linha (recusa se a
-   quantidade mudou depois do envio).
+4. **CP004** o payload não cobre todos os itens do pedido, algum `qtde_final` difere do da linha (recusa se a
+   quantidade mudou depois do envio) ou o `qtde_final` da linha não é inteiro. O PO manda `nQtde = ceil(qtde_final)`:
+   com 3,6 L, `4 × mercadoria ÷ 3,6` passaria 11% da mercadoria. Hoje não acontece, porque o disparo persiste o `ceil`
+   antes do portal e a captura só roda em produção; a recusa é a defesa na fronteira.
 5. **CP006** item sem alíquota (via `sayerlack_ipi_itens`).
 6. **CP007** o IPI do payload difere do recalculado com a alíquota da tabela por mais de R$ 0,01, ou
    `|Σ (round2(mercadoria_i) + IPI recalculado_i) − total provado| > tol(n)`.
@@ -156,7 +158,8 @@ num pedido de 18 linhas) passa — e o erro de dinheiro fica limitado à própri
 
 Camadas, todas do founder: (1) a migration (SQL Editor ou envelope da sessão); (2) as edges que `bun run
 pendencias:deploy` apontar — `disparar-pedidos-aprovados` e `enviar-pedido-portal-sayerlack`. A migration vai primeiro;
-entre as edges, qualquer ordem é segura (§5.3).
+entre as edges, qualquer ordem é segura (§5.3). Antes de pedir o deploy das edges, `git log -S` de um símbolo novo de
+cada uma na main: o sync do Lovable já reverteu arquivo recém-mergeado (#1445 → #1478).
 
 Antes/depois, por query:
 
@@ -191,5 +194,9 @@ Antes/depois, por query:
 
 ## 10. Pareceres Codex
 
-- **Desenho:** pendente.
-- **Código:** pendente.
+- **Desenho: Caminho B.** O Codex não foi consultado: `scripts/codex-async.sh` saiu com exit 79 (`SALDO_ALTO` — cota em
+  92%, acima do teto de 85%; a janela reabre em 09/10 às 19:30) sem gastar a chamada. Decisão do founder (05/10): o
+  desenho segue pela RÉGUA (§4), escrita e conferida pelo Claude sobre o backtest executado, e o Codex fica para o
+  adversarial de código. A conferência passou pelas 7 perguntas preparadas para o Codex e acrescentou dois pontos: a
+  recusa de `qtde_final` não inteiro (§5.3, passo 4) e o `git log -S` antes do deploy (§7).
+- **Código:** adversarial no diff final, com `CODEX_ASYNC_TETO_SALDO=0` (decisão do founder). Pendente.
