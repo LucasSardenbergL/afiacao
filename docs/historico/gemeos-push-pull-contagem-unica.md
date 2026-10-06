@@ -170,6 +170,8 @@ DROP FUNCTION IF EXISTS public.sales_orders_gemeo_importada_depois();
 
 ## O que o PR do kpi do app precisa
 
+> **Entregue em 2026-10-06** — [app-grava-kpi-no-envio.md](app-grava-kpi-no-envio.md): o trigger deriva o kpi no envio (abordagem A) e o `SalesQuotes` não regrava `'rascunho'`; a atribuição do ranking ficou com a entrega do dono da carteira.
+
 1. Gravar o kpi no INSERT ou no MESMO UPDATE do write-back que seta o pid — nunca num UPDATE depois
    (o deadlock do S9) — com a data de SP do instante (`AT TIME ZONE 'America/Sao_Paulo'`), não UTC.
 2. Atribuição do ranking (`useTeamRanking` credita por `created_by`; as importadas têm o `created_by`

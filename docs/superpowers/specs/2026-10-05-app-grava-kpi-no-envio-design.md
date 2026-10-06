@@ -116,6 +116,9 @@ ponteiro com kpi; 3 triggers ligados + 3 índices + 2 CHECKs; md5 dos corpos = o
 - **Ranking (D1):** `fetchPedidosMTD` passa a selecionar `hash_payload`; `montarRanking` só credita
   `created_by` em linha com hash `omie_` (a importada); linha do app → "Sem vendedor atribuído". Inerte
   até o apply (hoje 0 linhas do app com kpi e status de venda).
+  **Atualização 2026-10-06:** saiu desta entrega — o founder decidiu que o ranking atribui pelo dono da
+  carteira do cliente (entrega `claude/atribuicao-vendas-importadas`), o que dá à linha do app e à
+  importada o mesmo dono. Ver [o diário](../../historico/app-grava-kpi-no-envio.md).
 - **`SalesQuotes.convertToOrder`:** sai o `.update({ status: 'rascunho' })` pós-sucesso; ficam o
   `invalidateQueries` e o toast. O `GRANT UPDATE (status)` de `authenticated` fica: bundle antigo ainda
   o usa, e sem ele o cliente antigo veria erro depois de um envio que deu certo.

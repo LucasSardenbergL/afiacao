@@ -261,6 +261,14 @@ db/test-data-health-vendas-empurradas.sh   51  falsificar=28
 # de data da importada + mesmo pid em contas diferentes), com a RPC real do importador e corrida
 # determinística. 11 sabotagens, uma camada por vez.
 db/test-gemeos-push-pull-contagem-unica.sh   37  falsificar=11
+# kpi no envio: o trigger da linha do app deriva order_date_kpi (dia de SP do statement do write-back)
+# quando ela ganha o pedido Omie sem gêmeo — RPC real do importador, corrida nos 2 sentidos, costura do
+# relógio, bordas de SP com o servidor em UTC, PRE/POS/ACL em clones. 12 sabotagens (uma delas tira as
+# DUAS travas do caminho do import, que se cobrem uma à outra).
+db/test-sales-orders-kpi-no-envio.sh   26  falsificar=12
+# o texto do sensor vendas_empurradas_sem_gemeo depois do kpi no envio: corpo = v2 + exatamente 2 trocas
+# (desfeitas, dão o md5 de prod da v2), probable_cause novo numa órfã, resto da linha igual ao da v2.
+db/test-data-health-venda-empurrada-conta-pelo-app.sh   9  falsificar=4
 # Tintométrico: corante impagável EM USO alerta (fora de uso ou desativada, não), agravamento
 # re-emite e o dead-man dispara com a camada B parada.
 db/test-tint-watchdog-corante.sh           11
