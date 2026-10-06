@@ -141,8 +141,31 @@ RÉGUA:
 
 ## 8. Aplicação e revalidação
 
-Aplicação: `bun run db:aplicar` (ensaio primeiro), validação por fora via psql-ro, e o 1º disparo do
-:52 conferido em `cron.job_run_details`. O estado de cada passo fica no corpo do PR.
+**Aplicado em 2026-10-06**, a pedido do founder ("aplicar agora", com o PR em draft até o Codex):
+
+- **Ensaio** (`db:aplicar --ensaio`, rollback) ✅. **Apply real:** a tentativa #251 virou recibo, sha
+  `294f4d3d…`, e o log tem o marcador de fim da postcondição (A1–A7, inclusive a sonda que executa o
+  sensor).
+- **2ª testemunha** (psql-ro, outra conexão):
+  - view `invoker`, dona `postgres`, fechada para anon/authenticated e lida pelo `claude_ro`;
+  - função SECDEF do `postgres`, `search_path` preso, sem EXECUTE para PUBLIC/anon/authenticated;
+  - cron **jobid 190**, `52 * * * *`, ativo como `postgres`;
+  - `authz:claude-ro:prod` ✅ (39 asserções).
+- A coluna `itens_pendentes` do #2801 **já estava em prod** no apply, e a view a lê desde o 1º tick.
+- **1º disparo real: 01:52:00 UTC, `succeeded`.** Foram 19 de 19 até as 19:52, todos no :52, com fila
+  0 e nenhum alerta.
+- O vigia do 1º disparo disse "SEM TICK", e era falso negativo DELE: o Mac entrou em Clamshell Sleep
+  às 01:39:36 UTC e o prazo do laço venceu durante o sono — item 25 de
+  [evidencia-positiva-shell.md](evidencia-positiva-shell.md).
+
+⚠️ **O objeto agora EXISTE em prod.** Qualquer mudança (inclusive a que o adversarial do Codex pedir)
+é `CREATE OR REPLACE` no molde de objeto VIVO: TRAVA → PRE com o md5 do corpo vivo → PÓS
+(`.claude/skills/lovable-db-operator/references/sql-house-style.md`). A view leva o
+`WITH (security_invoker = on)` em todo replace.
+
+**Pendente:** o adversarial do Codex no código (`scripts/codex-async.sh -r max`, janela reabre em
+09/10 19:30), sobre o diff do #2819 com os fatos do §2 e do §4. O PR só sai de draft depois dele.
+
 
 ```sql
 -- o cron e o último disparo (SQL-local: aqui o status é a verdade, não só o enqueue)
