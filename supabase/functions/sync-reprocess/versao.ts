@@ -78,18 +78,10 @@ export const respostaSonda = criarRespostaSonda("sync-reprocess");
 //     RPC antiga. É assim que se lê, no log, que a edge subiu antes da migration.
 // ⚠️ ORDEM: livre, mas o defeito do desconto só fecha com as DUAS no ar — edge nova + RPC antiga
 // ignora a chave; RPC nova + edge velha recebe payload sem a chave e segue a regra antiga.
-// v1.10 (2026-09-27) — o MESMO corpo da v1.9: desfaz de novo os commits do bot do Lovable (16:58Z), que
-// reaplicaram `omie_pedido_id: Number(codigoPedido)` (money-path: ausente viraria 0). O bump só existe
-// porque o `sonda:bump` compara com a base, que já tinha o commit do bot.
-// v1.11 (2026-09-27) — só TIPO: `omie_pedido_id` segue CRU para a RPC (que só o ecoa no registro de
-// falha), agora tipado `string | number` por um tipo local — o `deno check` do preview deixa de acusar
-// a linha que o bot "consertava" com `Number()`. JS emitido byte-idêntico ao da v1.10.
+// v1.10/v1.11 (2026-09-27) — desfazem os commits do bot do Lovable que reaplicavam
+// `omie_pedido_id: Number(codigoPedido)` (money-path: ausente viraria 0); a v1.11 só tipa, JS idêntico.
 // v1.16 (2026-10-06) — `metadata.desconto_corrigido_para_null`: SUBCONJUNTO de `desconto_corrigido`
-// com só o ramo em que o desconto conhecido virou NULL. `desconto_corrigido` NÃO muda de
-// significado (as 195 runs logadas desde 2026-09-20 seguem comparáveis) — por isso a chave é nova,
-// e NUNCA se somam as duas. Ausente = a RPC no ar ainda não separa a nulificação (apply
-// `db/2026-10-06-desconto-corrigido-para-null.sql`); `desconto_corrigido` presente E esta ausente
-// é a assinatura de "RPC velha com edge nova", legível no próprio log.
+// (nunca somar as duas), ausente enquanto a RPC no ar não separar. → sensor-que-mede-mudanca-nao-responde-nulificacao.md
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
 export const VERSAO = "v1.16-nulificacao-separada";
 

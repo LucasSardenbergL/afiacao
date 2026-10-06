@@ -103,25 +103,28 @@ BEGIN
 
   -- Cada ancora EXATAMENTE 1x no corpo VIVO. 0x = o corpo mudou e esta troca precisa ser revista;
   -- 2x+ = a troca atingiria um sitio que eu nao inspecionei.
-  IF (length(v_def) - length(replace(v_def, v_a1v, ''))) / length(v_a1v) <> 1 THEN
+  -- `IS DISTINCT FROM`, nunca `<>`: em PL/pgSQL `IF NULL <> 1` NAO dispara, entao o assert passaria
+  -- VERDE POR AUSENCIA (docs/historico/assert-verde-por-ausencia.md). Vale aqui mesmo com `v_def`
+  -- guardado acima — o idioma e do bloco DO inteiro, nao da minha prova de que este caso nao ocorre.
+  IF (length(v_def) - length(replace(v_def, v_a1v, ''))) / length(v_a1v) IS DISTINCT FROM 1 THEN
     RAISE EXCEPTION 'patch: ancora A1 (declaracao por pedido) nao aparece 1x no corpo vivo';
   END IF;
-  IF (length(v_def) - length(replace(v_def, v_a2v, ''))) / length(v_a2v) <> 1 THEN
+  IF (length(v_def) - length(replace(v_def, v_a2v, ''))) / length(v_a2v) IS DISTINCT FROM 1 THEN
     RAISE EXCEPTION 'patch: ancora A2 (declaracao agregada) nao aparece 1x no corpo vivo';
   END IF;
-  IF (length(v_def) - length(replace(v_def, v_a3v, ''))) / length(v_a3v) <> 1 THEN
+  IF (length(v_def) - length(replace(v_def, v_a3v, ''))) / length(v_a3v) IS DISTINCT FROM 1 THEN
     RAISE EXCEPTION 'patch: ancora A3 (zeramento por pedido) nao aparece 1x no corpo vivo';
   END IF;
-  IF (length(v_def) - length(replace(v_def, v_a4v, ''))) / length(v_a4v) <> 1 THEN
+  IF (length(v_def) - length(replace(v_def, v_a4v, ''))) / length(v_a4v) IS DISTINCT FROM 1 THEN
     RAISE EXCEPTION 'patch: ancora A4 (predicado desc_corrigido) nao aparece 1x no corpo vivo';
   END IF;
-  IF (length(v_def) - length(replace(v_def, v_a5v, ''))) / length(v_a5v) <> 1 THEN
+  IF (length(v_def) - length(replace(v_def, v_a5v, ''))) / length(v_a5v) IS DISTINCT FROM 1 THEN
     RAISE EXCEPTION 'patch: ancora A5 (projecao INTO) nao aparece 1x no corpo vivo';
   END IF;
-  IF (length(v_def) - length(replace(v_def, v_a6v, ''))) / length(v_a6v) <> 1 THEN
+  IF (length(v_def) - length(replace(v_def, v_a6v, ''))) / length(v_a6v) IS DISTINCT FROM 1 THEN
     RAISE EXCEPTION 'patch: ancora A6 (acumulacao) nao aparece 1x no corpo vivo';
   END IF;
-  IF (length(v_def) - length(replace(v_def, v_a7v, ''))) / length(v_a7v) <> 1 THEN
+  IF (length(v_def) - length(replace(v_def, v_a7v, ''))) / length(v_a7v) IS DISTINCT FROM 1 THEN
     RAISE EXCEPTION 'patch: ancora A7 (chave do retorno) nao aparece 1x no corpo vivo';
   END IF;
 
@@ -160,9 +163,9 @@ BEGIN
   IF (v_ret -> 'desconto_corrigido_para_null') IS NULL THEN
     RAISE EXCEPTION 'postcondicao (b): a funcao EXECUTOU mas nao devolveu desconto_corrigido_para_null';
   END IF;
-  IF (v_ret ->> 'desconto_corrigido_para_null') <> '0'
-     OR (v_ret ->> 'desconto_corrigido') <> '0'
-     OR (v_ret ->> 'desconto_apurado') <> '0' THEN
+  IF (v_ret ->> 'desconto_corrigido_para_null') IS DISTINCT FROM '0'
+     OR (v_ret ->> 'desconto_corrigido') IS DISTINCT FROM '0'
+     OR (v_ret ->> 'desconto_apurado') IS DISTINCT FROM '0' THEN
     RAISE EXCEPTION 'postcondicao (b): payload vazio devia dar 0/0/0, veio %/%/%',
       v_ret ->> 'desconto_apurado', v_ret ->> 'desconto_corrigido',
       v_ret ->> 'desconto_corrigido_para_null';
