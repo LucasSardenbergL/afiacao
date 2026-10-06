@@ -3,9 +3,11 @@
 # STUBADOS (package.json → stub.sh), sem rede e sem depender do estado dos gates reais.
 #
 # Regra: `git push` do HEAD atual, árvore limpa, gate reprovando com EVIDÊNCIA (exit 1 + marca)
-#        → NEGA (permissionDecision=deny). Árvore suja → só AVISA (allow + additionalContext).
-#        Qualquer outro caso (não é push do HEAD, --no-verify, gate que quebrou, sem bun, repo
-#        sem os gates) → NÃO interfere (stdout mudo).
+#        → NEGA (permissionDecision=deny) — também quando o próprio comando commita, com prova,
+#        toda a sujeira antes do push. Sujeira que o commit não cobre → só AVISA (allow +
+#        additionalContext). Gate sem veredito ou bun ausente (procurado em ~/.bun/bin e no
+#        Homebrew) → AVISA que não checou. Não é push do HEAD, --no-verify, repo sem os gates →
+#        NÃO interfere (stdout mudo).
 # Sentinela de deriva: as marcas que o hook casa têm de continuar saindo dos gates REAIS — marca
 # que muda de texto deixaria o hook em fail-open CALADO (nunca mais nega, e ninguém vê).
 #
@@ -175,7 +177,7 @@ rm -f "$fx/supabase/functions/x/novo.ts"
 expect_warn "exit 1 sem a marca = crash"       "STUB_INDICE=crash"       "git push" "docs:indice (exit 1 sem a marca)"
 expect_warn "marca com exit 2 não é veredito"  "STUB_INDICE=marca-exit2" "git push" "docs:indice (exit 2)"
 expect_warn "bun ausente"                      "STUB_INDICE=falha PGG_BUN=/nao/existe/bun" "git push" "bun não encontrado"
-[ "$(_gates)" = 0 ] && _ok || _ko "bun ausente: nenhum gate deveria ter rodado — rodaram $(_gates)"
+if [ "$(_gates)" = 0 ]; then _ok; else _ko "bun ausente: nenhum gate deveria ter rodado — rodaram $(_gates)"; fi
 expect_deny "crash num gate não salva o outro" "STUB_INDICE=crash STUB_CITACOES=falha" "git push" "Sem veredito"
 if command -v timeout >/dev/null 2>&1 || command -v gtimeout >/dev/null 2>&1; then
   expect_warn "gate lento estoura o timeout"   "STUB_INDICE=lento PGG_TIMEOUT=1" "git push" "docs:indice (exit 124)"
@@ -198,7 +200,7 @@ if PATH="$binmin" command -v bun >/dev/null 2>&1; then
 else
   rm -f "$marca_bun"
   expect_deny "bun só em ~/.bun/bin ainda nega" "STUB_INDICE=falha PATH=$binmin HOME=$home_bun" "git push" "docs:indice"
-  [ -f "$marca_bun" ] && _ok || _ko "bun de ~/.bun/bin não foi o usado — a busca nele não está sendo medida"
+  if [ -f "$marca_bun" ]; then _ok; else _ko "bun de ~/.bun/bin não foi o usado — a busca nele não está sendo medida"; fi
   if [ ! -x /opt/homebrew/bin/bun ] && [ ! -x /usr/local/bin/bun ]; then
     expect_warn "sem bun em lugar nenhum avisa" "STUB_INDICE=falha PATH=$binmin HOME=$tmp/sem-home" "git push" "bun não encontrado"
   else
