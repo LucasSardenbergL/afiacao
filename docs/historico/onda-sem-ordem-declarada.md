@@ -92,6 +92,36 @@ controle verde na MESMA invocação por locale antes do 1º `replace`:
 | S29 | montador | o pacote volta a calar | `[PACOTE_ONDA_MUDA_AVISA]` |
 | S30 | CLI | o terminal volta a calar | `[PACOTE_CLI_ONDA_MUDA_AVISA]` |
 
+### Os dois mutantes que SOBREVIVERAM à 1ª rodada (56/60) — e o que cada um ensinou
+
+A 1ª rodada saiu `NAO_FALSIFICADO`. Nenhum dos dois verdes foi descartado:
+
+- **S26 era mutante EQUIVALENTE.** A guarda `if (onda.length < 2) return []` não tinha como pintar
+  vermelho: com 0 ou 1 edge o contador de pares já dá `0`, e `0 === 0` cala pelo outro caminho. A
+  camada era **redundante** — saiu do código, e a sabotagem passou a mirar o contador de pares.
+  A regra do `CLAUDE.md` ("a que fica VERDE é redundante ou inalcançada") cobrou aqui, na prática.
+- **S24 era verde-falso PRÉ-EXISTENTE, e a prova veio por medição, não por dedução.** Com o teste do
+  `HEAD~1` e a sabotagem instalada: **47/47 verde**. Causa: `[PACOTE_INVENTARIO_CEGO_MECANICA]` casava
+  só `exit 2`, e a MESMA frase ("não lista o index.ts de") sai de DUAS camadas —
+  `lerManifestosDaRef` (1c) e `mapa-coerente-na-ref` (1d). Desligada a 1c, a 1d lançava texto
+  idêntico: exit igual, mensagem igual, teste verde. **Dois lugares com a mesma mensagem tiram o
+  dente de qualquer asserção por texto** — o dente passou a ser o rótulo de QUEM converteu em exit 2
+  (`a ordem entre edges não pôde ser julgada`), que é o que separa 1c de 1d.
+
+### Armadilha de ferramenta
+
+`heavy bun run falsificar:ordem-edges` **deadlocka**: o script pede o slot do `heavy` por dentro e
+entra na fila atrás de si mesmo. Fica parado para sempre, e "ainda rodando" parece progresso — a
+classe do `evidencia-positiva-shell.md`, versão fila. A forma certa está na própria mensagem de fila:
+`heavy env FALSIF_DENTRO_DO_HEAVY=1 bash scripts/falsificar-ordem-entre-edges.sh`.
+
 ## Validação
 
-(preenchido ao fim da sessão — ver tabela no PR)
+| O que | Resultado |
+|---|---|
+| `bun run typecheck` | **0** |
+| `bun run lint` | **0 erros** (75 warnings pré-existentes) |
+| `bun run lint:shell` | **0 achados** em 485 arquivos |
+| suíte dos 4 arquivos tocados | verde (47 · 28 · 48) |
+| `bun run test` (completo) | 10838 passed / **9 failed** — as 9 rodadas ISOLADAS passam (48/48 e 17/17, exit 0): contenção de CPU/RAM com ~30 sessões Claude vivas, não o diff |
+| falsificação `falsificar:ordem-edges` | 1ª rodada `NAO_FALSIFICADO` 56/60 → corrigidas as duas camadas → 2ª rodada **`FALSIFICADO`: 60/60** (30 × 2 locales) pela marca certa, controles verdes, alvos restaurados |
