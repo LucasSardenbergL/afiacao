@@ -254,3 +254,57 @@ o tira do `GREATEST`.
   - **O incidente fechou:** a WP07.3900QT voltou a ser sugerida no ciclo de 06/10 12:15Z (estoque físico 0,
     `qtde_sugerida` 2) e o pedido foi aprovado com 1 un a R$ 796,21 e **disparado** — a 1ª sugestão dela
     desde 04/07. O ciclo de 18:15Z sugeriu +1 (pp 1/máx 2 com 1 a caminho: regra do motor, não fantasma).
+
+## Fase 3 — o catálogo deixa de gravar estoque (2026-10-06, branch `estoque-dono-unico-catalogo`)
+
+Edges `omie-sync-metadados` → `v1.1-catalogo-sem-estoque`, `omie-analytics-sync` → `v1.8-…`,
+`omie-vendas-sync` → `v1.11-…`, `sync-reprocess` → `v1.16-…` e `tint-omie-sync` (sem `versao.ts`).
+
+**O sinal da fase 2 que libera esta.** A WP07 foi sugerida e disparada, a strategic deu 0 divergência, e a
+1ª rodada confirmou 84/84 (`vendas`) e 44/48 (`colacor_vendas`). Re-medido em 06/10 ~19:40Z:
+- catálogo × posição mais fresca dá **0 divergência nos dois sentidos** (colacor 1.449 e oben 782 não-zero
+  iguais);
+- `omie_products.estoque` é numeric, aceita NULL e tem DEFAULT 0;
+- das 3 triggers da tabela, nenhuma cita estoque.
+
+**O conserto.**
+- Os 4 mapeamentos de catálogo perdem a chave `estoque`, e as interfaces perdem o campo. O lote é
+  homogêneo, então o postgrest-js monta `columns` sem `estoque`: no conflito o valor fica, e no INSERT
+  entra o DEFAULT 0, como já entrava com o `|| 0`. O desenho da classe, com o Codex, já tinha aprovado isso
+  (D4).
+- 5º ponto, achado nesta fase: o `products-lote` do `sync-reprocess` ainda VALIDAVA o campo e descartava o
+  produto (preço junto) quando vinha lixo. O Omie serializa campo vazio como `""` (o `cfop` vem assim em
+  3.714/3.714 produtos); se o DEPRECATED passar a chegar assim, a rodada perderia o catálogo inteiro por um
+  campo que o passo nem usa.
+
+**Gate.**
+- O registro encolheu: o papel `catalogo-legado` e as entradas de metadados e tint saíram. A partir de
+  agora, o G1 barra a volta deles.
+- Entrou o **G5**: nenhuma fonte de edge lê `quantidade_estoque`. Analytics e vendas-sync seguem
+  registrados por outras escritas legítimas, então a volta do `|| 0` no catálogo deles passaria por G1–G4.
+
+**A prova.**
+- Os REDs foram observados antes do conserto:
+  - calibração com 2 falhas (`undefined`);
+  - G5 vermelho com exatamente os 5 arquivos;
+  - G2 vermelho com metadados e tint;
+  - Deno `0 !== 4`: o lixo no campo tirava os 4 produtos, inclusive o `""`.
+- Falsificação `FALSIFICACAO_OK` em `C` e `pt_BR.UTF-8`, com controle 16/16 antes e depois:
+  - S2 e S4 re-miradas para o vendas-sync;
+  - **S7** (o `|| 0` de volta no syncProducts do analytics) só o G5 pega;
+  - **S8** (a volta no metadados) cai no G1.
+- `deno check` das 5 edges com a mesma contagem de erros da main (3/7/0/0/0).
+
+**Codex: Caminho B.** A cota estava em 92% (o teto é 85%) e a janela só reabre em 09/10 19:30. O desenho
+virou a RÉGUA escrita e conferida por mim, no corpo do PR. O PR fica em DRAFT até o adversarial do código.
+
+**O que NÃO muda.** Os 4 órfãos colacor seguem com `estoque` 2/2/1/1 desde 02/10: o reset do catálogo nunca
+os tocou, porque o `ListarProdutos` não os traz. A decisão de inativá-los é do founder.
+
+**Como conferir depois do deploy** (query, não recado). O metadados termina ~08:33Z e o `syncInventory`
+oben roda às 09:00Z. Entre 08:35Z e 08:59Z do dia seguinte, rode:
+`select account, count(*) filter (where updated_at >= current_date + time '08:30') catalogo_rodou, count(*) filter (where estoque <> 0) nao_zero from omie_products group by 1;`
+- Com o bundle velho, oben tem `nao_zero` ≈ 0 na janela.
+- Com o novo, ≈ 782, com `catalogo_rodou` ≈ 3.715.
+
+Na colacor a janela é 06:17Z–07:14Z, depois do syncProducts das 06:15Z.
