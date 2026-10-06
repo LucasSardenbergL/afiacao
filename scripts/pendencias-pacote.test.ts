@@ -978,6 +978,29 @@ describe('pendencias:pacote — a ordem entre edges vira ONDA', () => {
     expect(colagem).toContain(`\`${B}\``);
   });
 
+  // O estado REAL do repo hoje: zero `deploy-ordem.json`, logo TODA leva cai neste caminho. Era aqui
+  // que o gerador seguia calado — e foi este silêncio, não uma declaração errada, que montou a
+  // colagem proibida do #2469.
+  it('[PACOTE_CLI_ONDA_MUDA_AVISA] sem manifesto nenhum as 2 saem juntas, e o silêncio é nomeado', () => {
+    const logs: string[] = [];
+    const espiao = vi.spyOn(process.stderr, 'write').mockImplementation((t) => {
+      logs.push(String(t));
+      return true;
+    });
+    let r: ReturnType<typeof rodar>;
+    try {
+      r = rodar(repo({ manifesto: null }), ledger(divergente(A), divergente(B)));
+    } finally {
+      espiao.mockRestore();
+    }
+    expect(r.codigo).toBe(0);
+    expect(r.colagem).toContain(`\`${A}\``);
+    expect(r.colagem).toContain(`\`${B}\``);
+    expect(r.pacote).toContain('Ordem entre edges: NÃO DECLARADA');
+    // E no terminal, não só no arquivo: quem roda o comando vê sem abrir o pacote.
+    expect(logs.join('')).toMatch(/ordem entre edges NÃO declarada/);
+  });
+
   it('[PACOTE_TUDO_RETIDO_EXIT_3] só B pendente e A nunca atestada: nenhuma colagem', () => {
     const nunca = veredito(A, { estado: 'NUNCA_ATESTADA', observado: null, versao: null, via: null, idadeHoras: null });
     const { codigo, pacote, colagem } = rodar(repo(), ledger(nunca, divergente(B)));

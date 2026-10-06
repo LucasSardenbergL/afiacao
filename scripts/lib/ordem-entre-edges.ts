@@ -367,3 +367,41 @@ export function planejarOndas(e: EntradaPlano): PlanoDeOndas {
   });
   return { liberadas, retidas, regras, exigidos };
 }
+
+
+/** Chave canônica de um par não-ordenado — `(a,b)` e `(b,a)` são a MESMA relação. */
+const chaveDoPar = (x: string, y: string): string => (porNome(x, y) <= 0 ? `${x}\u0000${y}` : `${y}\u0000${x}`);
+
+/**
+ * As edges que saem na MESMA colagem com a ordem entre elas INDETERMINADA — `[]` quando não há o que
+ * avisar. É o fim do silêncio do #2469: lá o defeito não foi uma declaração errada, foi a AUSÊNCIA
+ * de declaração sobre duas edges que o pacote juntou numa mensagem só, e ninguém foi perguntado.
+ *
+ * O que ele NÃO faz, de propósito: adivinhar se o risco se materializa. Medir que `omie-vendas-sync`
+ * e `sync-reprocess` disputam o mesmo pedido exigiria ler o SQL das RPCs — a interseção das RPCs que
+ * as duas CHAMAM é VAZIA (`criar_pedidos_com_itens` contra `reconciliar_pedidos_omie`, medido com o
+ * `coletarDaEdge` do repo), então um aviso por "RPC compartilhada" teria ficado calado no próprio
+ * incidente que o motivou. O que dá para afirmar sem adivinhar é o que ele afirma: nesta colagem há
+ * 2+ edges e a ordem entre elas não está determinada por manifesto nenhum.
+ *
+ * Determinada = TODO par da onda tem regra. Com 3+ edges numa colagem, um par declarado deixa as
+ * outras relações abertas, e meia-ordem não é ordem: o aviso nomeia a onda inteira.
+ *
+ * Aviso, não gate: não muda exit code. Hoje o repo tem ZERO manifesto, então recusar seria recusar
+ * TODA leva — gate que recusa tudo é gate desligado, e o silêncio voltaria pela porta da frente.
+ */
+export function ondaSemOrdemDeclarada(plano: Pick<PlanoDeOndas, 'liberadas' | 'regras'>): string[] {
+  const onda = [...plano.liberadas].sort(porNome);
+  if (onda.length < 2) return [];
+  const naOnda = new Set(onda);
+  const declarados = new Set<string>();
+  for (const r of plano.regras) {
+    for (const p of r.depoisDe) {
+      // Regra com uma ponta fora da onda (predecessora RETIDA, ou já no ar) não determina NADA
+      // entre as que saem juntas agora.
+      if (naOnda.has(r.edge) && naOnda.has(p)) declarados.add(chaveDoPar(r.edge, p));
+    }
+  }
+  const paresDaOnda = (onda.length * (onda.length - 1)) / 2;
+  return declarados.size === paresDaOnda ? [] : onda;
+}
