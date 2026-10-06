@@ -42,7 +42,10 @@ export interface VereditoFisico {
 /** Marca ASCII, caixa fixa, no INÍCIO da recusa: o registro do run guarda só 300 caracteres do erro. */
 export const MARCA_FISICO = "FISICO_NAO_PUBLICAVEL";
 
-// nTotRegistros: inteiro positivo (número ou string de dígitos). Ausente = a página não declarou; o resto é inválido.
+// nTotRegistros: inteiro positivo (número ou string de dígitos). Ausente ou ZERO = a página não declarou — zero conta
+// como ausência porque uma API que só declara o total na 1ª página mandaria 0 nas outras, e tratá-lo como inválido
+// recusaria TODO run (o total que decide é o positivo, e ele tem de ser o mesmo em todas as páginas que o declaram).
+// Negativo, fracionário ou texto é inválido.
 function lerTotalDeclarado(v: unknown): number | null | "invalido" {
   if (v === undefined || v === null) return null;
   const n = typeof v === "number"
@@ -50,6 +53,7 @@ function lerTotalDeclarado(v: unknown): number | null | "invalido" {
     : typeof v === "string" && /^\d+$/.test(v.trim())
     ? Number(v.trim())
     : Number.NaN;
+  if (n === 0) return null;
   return Number.isSafeInteger(n) && n > 0 ? n : "invalido";
 }
 

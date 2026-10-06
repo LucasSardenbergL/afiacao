@@ -37,6 +37,25 @@ export interface ResultadoEscrita {
   semConfirmacao: boolean;
 }
 
+/**
+ * Escrita/leitura do banco com prazo — o adaptador que o handler usa em toda chamada da cauda. Mora aqui (e não no
+ * index.ts) para o Deno executá-lo: é ele que separa sucesso, falha e "sem confirmação" (o request que o PRAZO abortou;
+ * o banco pode ter gravado). Devolver sucesso onde houve erro tornaria toda a degradação invisível.
+ */
+export async function comPrazo(
+  executar: (sinal: AbortSignal) => PromiseLike<{ error: unknown }>,
+  prazoMs: number,
+): Promise<ResultadoEscrita> {
+  const sinal = AbortSignal.timeout(prazoMs);
+  try {
+    const { error } = await executar(sinal);
+    if (!error) return { erro: null, semConfirmacao: false };
+    return { erro: mensagemDeErro(error) ?? "erro sem mensagem", semConfirmacao: sinal.aborted };
+  } catch (err) {
+    return { erro: mensagemDeErro(err) ?? "falha sem mensagem", semConfirmacao: sinal.aborted };
+  }
+}
+
 export interface ResultadoLeitura<T> {
   erro: string | null;
   dados: T;

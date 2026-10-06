@@ -88,6 +88,22 @@ describe('omie-sync-estoque — o par (físico, pendente) e a semântica fatal d
     expect(fontePublicacao.match(/\bok: desfecho === "completo",/g)).toHaveLength(1);
   });
 
+  it('a fiação não adultera o que decide: o veredito, a confiança do pendente e o marcador do catch', () => {
+    // As decisões são testadas no Deno (publicacao_test.ts); o que o Deno não vê é o handler entregá-las intactas.
+    const iFimLaco = fonte.indexOf('const faseFisicoMs', iHandler);
+    const iVeredito = fonte.indexOf('const vereditoFisico = fisico.veredito();', iHandler);
+    expect(iVeredito).toBeGreaterThan(iFimLaco);
+    expect(fonte).toContain('fisico: { veredito: vereditoFisico, encontrados: fisico.encontrados,');
+    expect(fonte).toContain(
+      'return { pendente: r.pendente, confiavel: r.confiavel, problemas: r.problemas, observacao: r };',
+    );
+    const iCatchFinal = fonte.lastIndexOf('} catch (err) {');
+    expect(iCatchFinal).toBeGreaterThan(iHandler);
+    expect(fonte.slice(iCatchFinal)).toContain(
+      'linhaMarcador(MARKER_FULL, empresaRef, "error", { trigger: "run" }, msg, Date.now())',
+    );
+  });
+
   it('o erro do ListarPosEstoque ganha página e relógio como SUFIXO — o startsWith("AUTH_ERROR") segue vendo a auth', () => {
     expect(fonte).toMatch(/throw new Error\(\s*`\$\{mensagemDeErro\(err\) \?\? "falha sem mensagem"\} \(pág \$\{page\}/);
     expect(fonte).toContain('msg.startsWith("AUTH_ERROR")');
@@ -143,6 +159,11 @@ describe('omie-sync-estoque — deadline cabe no teto do cron', () => {
     const chamadas = adaptadores.match(/supabase\s*\.\s*(from|rpc)\(/g) ?? [];
     expect(chamadas).toHaveLength(7);
     expect(adaptadores.match(/\.abortSignal\(s\)/g)).toHaveLength(chamadas.length);
+    // e a leitura do em_transito na fase do PO, que antes podia pendurar o run até o kill do cron
+    const iEmTransito = fonte.indexOf('async function fetchEmTransitoKeys(');
+    const fimEmTransito = fonte.indexOf('\n}\n', iEmTransito);
+    expect(fonte.slice(iEmTransito, fimEmTransito)).toContain('.abortSignal(AbortSignal.timeout(prazo));');
+    expect(fonte).toContain('await fetchEmTransitoKeys(supabase, deadline);');
   });
 
   it('cauda + os 2 marcadores + o fechamento do registro deixam ≥1s para a resposta', () => {

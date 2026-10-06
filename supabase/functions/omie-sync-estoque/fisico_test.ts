@@ -57,11 +57,21 @@ Deno.test("total ausente em todas as páginas é desconhecido (o helper antigo l
   igual(v.paginasSemTotal, 1, "sensor de página sem total");
 });
 
-Deno.test("total inválido (zero, negativo, fracionário, texto) é desconhecido", () => {
-  for (const total of [0, -3, 2.5, "abc", "", Number.NaN]) {
+Deno.test("total inválido (negativo, fracionário, texto) é desconhecido", () => {
+  for (const total of [-3, 2.5, "abc", "", Number.NaN]) {
     const v = varrer([{ itens: [linha(101, 1), linha(102, 1)], total }]).veredito();
     igual(v.estado, "desconhecido", `total ${String(total)}`);
   }
+});
+
+Deno.test("total ZERO numa página conta como página sem total; zero em todas é desconhecido", () => {
+  const v = varrer([
+    { itens: [linha(101, 1)], total: 2 },
+    { itens: [linha(102, 1)], total: 0 },
+  ]).veredito();
+  igual([v.estado, v.paginasSemTotal, v.totalDeclarado], ["completo", 1, 2], "uma API que só declara na 1ª página");
+  const so0 = varrer([{ itens: [linha(101, 1), linha(102, 1)], total: 0 }]).veredito();
+  igual(so0.estado, "desconhecido", "sem nenhum total positivo não há denominador");
 });
 
 Deno.test("total como string de dígitos vale, e página sem total não decide se outra declarou", () => {

@@ -3,6 +3,7 @@
 // MARCA do ramo e a lista de efeitos, não "lançou algo".
 import { criarAcumuladorFisico, type LinhaPosEstoque, MARCA_FISICO } from "./fisico.ts";
 import {
+  comPrazo,
   concluirRun,
   type EntradaPublicacao,
   MARCA_GRAVACAO,
@@ -337,4 +338,33 @@ Deno.test("COLACOR: sem marcador do pendente (o check é OBEN-only)", async () =
   const f = criarFake();
   await concluirRun(f.ops, entrada({ empresa: "COLACOR" }));
   igual(SEM_MARCADOR(f.efeitos), [`marcador:${MARKER_FULL}:complete`], "só o full");
+});
+
+// comPrazo é o adaptador de TODA escrita da cauda no handler: se ele devolvesse sucesso onde houve erro, a degradação
+// inteira ficaria invisível — por isso mora aqui, executável.
+Deno.test("comPrazo: sucesso, erro do banco e exceção são distintos — e só o abort pelo prazo é 'sem confirmação'", async () => {
+  igual(await comPrazo(() => Promise.resolve({ error: null }), 1_000), { erro: null, semConfirmacao: false }, "sucesso");
+  igual(
+    await comPrazo(() => Promise.resolve({ error: { message: "violates check constraint" } }), 1_000),
+    { erro: "violates check constraint", semConfirmacao: false },
+    "erro do banco antes do prazo: falha, não 'sem confirmação'",
+  );
+  igual(
+    await comPrazo(() => Promise.reject(new Error("fetch failed")), 1_000),
+    { erro: "fetch failed", semConfirmacao: false },
+    "exceção vira erro",
+  );
+  igual(
+    await comPrazo(() => Promise.resolve({ error: {} }), 1_000),
+    { erro: "erro sem mensagem", semConfirmacao: false },
+    "erro sem mensagem nunca vira sucesso",
+  );
+  const abortado = await comPrazo(
+    (sinal) =>
+      new Promise((resolve) => {
+        sinal.addEventListener("abort", () => resolve({ error: { message: "AbortError: signal timed out" } }));
+      }),
+    20,
+  );
+  igual(abortado, { erro: "AbortError: signal timed out", semConfirmacao: true }, "o prazo abortou: o banco pode ter gravado");
 });

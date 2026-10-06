@@ -18,13 +18,7 @@ import { comRegistro, type DbRegistro } from "../_shared/registro-execucao.ts";
 import { criarColetorObservacao, type LinhaObservada } from "./observacao-po.ts";
 import { registroComPrazo } from "./registro-com-prazo.ts";
 import { criarAcumuladorFisico } from "./fisico.ts";
-import {
-  concluirRun,
-  linhaMarcador,
-  MARKER_FULL,
-  type OpsPublicacao,
-  type ResultadoEscrita,
-} from "./publicacao.ts";
+import { comPrazo, concluirRun, linhaMarcador, MARKER_FULL, type OpsPublicacao } from "./publicacao.ts";
 
 const corsHeaders = {
   ...sharedCors,
@@ -345,12 +339,16 @@ async function callOmiePedidos(
 // cCodIntPed=AFI-<id> (carimbo do disparo, robusto caso o numero não tenha voltado do Omie).
 async function fetchEmTransitoKeys(
   supabase: SupabaseClient,
+  deadline: number,
 ): Promise<{ numeros: Set<string>; codInts: Set<string> }> {
   const numeros = new Set<string>();
   const codInts = new Set<string>();
   // A janela de 7 dias é a da RPC (atualizar_parametros_numericos_skus: dia de SP − 7, desde a
   // 20261001023000) — no Deno, `new Date()` + `getDate()` é o dia UTC, um a mais das 21h BRT em diante.
   const corte = somarDias(hojeSP(), -7);
+  // Com prazo do run (v1.6): a leitura sem prazo podia pendurar a fase do PO até o kill do cron, sem marcador nenhum.
+  const prazo = timeoutRequestMs(Date.now(), deadline, FETCH_TIMEOUT_MS);
+  if (prazo === 0) throw new Error("em_transito query: deadline do run atingido antes da leitura");
   const { data, error } = await supabase
     .from("pedido_compra_sugerido")
     .select("id, omie_pedido_compra_numero")
@@ -359,7 +357,8 @@ async function fetchEmTransitoKeys(
     // do 1º ramo da CTE: status que a RPC conta e o sync não exclui = contado 2× (suprime compra); o inverso
     // = contado 0× (compra dupla). Paridade vigiada em edges-onorder-guardrail.test.ts.
     .in("status", ["aprovado_aguardando_disparo", "disparado", "disparado_simulado", "concluido_recebido"])
-    .gte("data_ciclo", corte);
+    .gte("data_ciclo", corte)
+    .abortSignal(AbortSignal.timeout(prazo));
   if (error) throw new Error(`em_transito query: ${error.message}`);
   for (const r of (data ?? []) as Array<{ id: string; omie_pedido_compra_numero: string | null }>) {
     if (r.omie_pedido_compra_numero) numeros.add(String(r.omie_pedido_compra_numero).trim());
@@ -397,7 +396,7 @@ async function computePendenteViaPedidosCompra(
   observados: LinhaObservada[]; janelaDe: string; janelaAte: string; varreduraCompleta: boolean;
   coletaIntegra: boolean; perdaColeta: string | null;
 }> {
-  const { numeros: emTransitoNumeros, codInts: emTransitoCodInts } = await fetchEmTransitoKeys(supabase);
+  const { numeros: emTransitoNumeros, codInts: emTransitoCodInts } = await fetchEmTransitoKeys(supabase, deadline);
 
   // A janela parte do dia de SP (o servidor é UTC: das 21h BRT em diante `new Date()` já é amanhã).
   const hoje = hojeSP();
@@ -560,21 +559,6 @@ async function computePendenteViaPedidosCompra(
 //     reposicao_pendente_po fica intocado e envelhece junto.
 // Best-effort com prazo fixo: o marcador nunca derruba o run, e também não o segura (padrão da irmã
 // omie-sync-pedidos-compra).
-
-// Escrita/leitura do banco com prazo. O request que o PRAZO abortou fica "sem confirmação": o banco pode ter gravado.
-async function comPrazo(
-  executar: (sinal: AbortSignal) => PromiseLike<{ error: unknown }>,
-  prazoMs: number,
-): Promise<ResultadoEscrita> {
-  const sinal = AbortSignal.timeout(prazoMs);
-  try {
-    const { error } = await executar(sinal);
-    if (!error) return { erro: null, semConfirmacao: false };
-    return { erro: mensagemDeErro(error) ?? "erro sem mensagem", semConfirmacao: sinal.aborted };
-  } catch (err) {
-    return { erro: mensagemDeErro(err) ?? "falha sem mensagem", semConfirmacao: sinal.aborted };
-  }
-}
 
 function gravarMarcadorComPrazo(supabase: SupabaseClient, linha: Record<string, unknown>, prazoMs: number) {
   return comPrazo((s) => supabase.from("sync_state").upsert(linha, { onConflict: "entity_type,account" }).abortSignal(s), prazoMs);
