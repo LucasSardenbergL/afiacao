@@ -133,11 +133,12 @@ exposição medida.
 
 **Rodada de confirmação: NÃO rodou.** O `codex-async.sh` recusou no preflight sem gastar a chamada
 (`SALDO_ALTO`: cota em 89% contra o teto de 85%; a janela de 7 dias reabre em 09/10 19:30). O delta seguiu pelo
-Caminho B — a monotonicidade por força bruta e o auto-desafio acima, mais o mutcheck — e fica registrado
-**REVISÃO INDEPENDENTE PENDENTE** para o delta da 2ª rodada.
+Caminho B — a monotonicidade por força bruta e o auto-desafio acima, mais o mutcheck. **O delta da 2ª rodada
+não teve revisão independente** — a auto-prova só cobre o intervalo, não a substitui.
 
-**Decisão do founder (2026-10-05):** Caminho B aceito — o PR sai de DRAFT sem esperar a janela (`sem-codex:` no
-corpo do #2800). Antes disso, o merge da `origin/main` trouxe o #2802 para o mesmo `deriva-corpo.ts`
+**Decisões do founder (2026-10-05):** Caminho B aceito — o PR sai de DRAFT sem esperar a janela (`sem-codex:` no
+corpo do #2800) — e a **revisão retroativa do Codex DISPENSADA**: não há rodada pendente para este delta, e o
+prompt preparado no corpo do PR fica só como registro. Antes disso, o merge da `origin/main` trouxe o #2802 para o mesmo `deriva-corpo.ts`
 (`modelarRepo` → `drenar(modelarRepoPassos(...))`, `yield` no fim de cada migration), e tudo rodou de novo sobre o
 código mesclado: 271/271 nos três arquivos de teste, mutcheck 17/17 nos dois contratos do `deriva-corpo.ts`
 (controle+), seco 58/58, harness falsificado e o carimbo `authz` regravado (o auditor `corpo` juntou os dois PRs).
