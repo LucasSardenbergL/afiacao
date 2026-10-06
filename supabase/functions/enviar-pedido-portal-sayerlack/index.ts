@@ -2154,8 +2154,8 @@ async function processarPedido(
             // UMA transação: CAS (omie IS NULL + sucesso_portal) no próprio UPDATE + o pedido inteiro (com o eco da
             // qtde_final) + IPI conferido contra a tabela + prova contra o total cobrado + a decomposição e o custo com
             // IPI gravados + o derivado remantido. Recusa = SQLSTATE CP00x + ROLLBACK; `data` = nº de itens gravados.
-            // Antes do apply de 20261006120000 a RPC anterior recusa este payload com CP001: captura cega, nunca
-            // número errado (a ordem segura é banco → edge).
+            // Antes do apply de 20261006120000 a execução nem chega aqui: sayerlack_ipi_itens não existe (PGRST202)
+            // ⇒ ipi_leitura_falhou ⇒ captura cega, nunca número errado (a ordem recomendada é banco → edge).
             const { data: gravados, error: eRpc } = await supabase.rpc("sayerlack_aplicar_custo_portal", {
               p_pedido_id: pedido.id,
               p_itens: derivado.updates,

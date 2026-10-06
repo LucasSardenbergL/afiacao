@@ -24,18 +24,31 @@
 - A tabela nasce com as 13 alíquotas medidas (4 confirmadas pela NF 000953881).
 - Codex: o desenho foi pelo Caminho B (cota em 92%, exit 79); o adversarial de código rodou com o teto furado.
 
+## O que o adversarial pegou (Codex REPROVADO + revisor final)
+
+- **A RPC relia as alíquotas** em cada comando (CP006, CP007, UPDATE): sob READ COMMITTED, uma alíquota ou NCM alterados
+  no meio gravariam um IPI que a prova não validou. Agora uma leitura só, materializada (prova PG17 `LU1`).
+- **O PO decidia item a item:** decomposição parcial misturava regimes, e quantidade editada depois da captura deixava o
+  IPI da LINHA velho (2 → 4 unidades: R$ 881,49 no PO contra R$ 909,24 de custo). Agora o PO usa a decomposição só com o
+  pedido inteiro coerente com `valor_linha`; senão, o PO de hoje para todos.
+- **Testes que passavam por ausência:** o assert numérico aceitava NaN, e nada travava o `select("*")` do disparo.
+  Corrigidos, com sabotagem que morde.
+- **Ficou como risco residual** (spec §9): a corrida captura → PO, pré-existente desde a v2 do CAS — o cron do disparo
+  roda 1× por dia e o desfecho é o PO de hoje, nunca número fabricado.
+
 ## Implantação (founder)
 
 1. Migration `20261006120000_preco_exato_po_sayerlack_ipi.sql` no SQL Editor (ou envelope da sessão).
 2. Edges que `bun run pendencias:deploy` apontar: `disparar-pedidos-aprovados` (v1.5) e
-   `enviar-pedido-portal-sayerlack` (v1.10). Antes: `git log -S montarProdutoIncluir -- supabase/functions/disparar-pedidos-aprovados/index.ts`
+   `enviar-pedido-portal-sayerlack` (v1.10). Antes: `git log -S montarProdutosIncluir -- supabase/functions/disparar-pedidos-aprovados/index.ts`
    e `git log -S sayerlack_ipi_itens -- supabase/functions/enviar-pedido-portal-sayerlack/index.ts` na main.
-3. 1º PO real com `nValorIpi`: combinado com o founder.
+3. 1º PO real com `nValorIpi`: combinado com o founder — conferir `nValorIpi > 0` e `nValTot` do Omie = `valor_total`
+   (± tolerância), o que pega o Omie tratando `nValorIpi` como valor por unidade ou recalculando o IPI pelo cadastro.
 
 ## Como medir (rode com `psql-ro`)
 
 ```sql
--- captura por fonte/motivo desde o deploy (esperado: dom_checksum, cego=false)
+-- captura por fonte/motivo desde o deploy (esperado: fonte dom_checksum com motivo nulo; ja_tem_omie = PO que já existia, à parte)
 SELECT s.portal_resposta->'captura_custo'->>'fonte' AS fonte, s.portal_resposta->'captura_custo'->>'motivo' AS motivo,
        count(*) FROM pedido_compra_sugerido s
  WHERE s.enviado_portal_em >= '<instante do deploy>' AND s.portal_protocolo IS NOT NULL GROUP BY 1, 2;

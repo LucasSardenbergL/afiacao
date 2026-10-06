@@ -73,7 +73,9 @@ são os 2% da TIPI com a redução de 35% de 2022 — mesma família de 5% → 3
 - **Denominador do sensor:** envios com protocolo, via `portal_resposta.captura_custo` (`fonte`, `motivo`, `cego`).
 - **Como a prova falsifica:** `|Σ round2(PV_i) + Σ IPI_i − data.value| ≤ tol(n)`. Uma alíquota errada numa linha de R$ L
   desloca o total em L × Δalíquota (≥ R$ 4,87 nos dados) e estoura. Frete ou encargo não modelado também estoura —
-  fail-closed.
+  fail-closed. **Alcance: a prova é AGREGADA** — o portal só mostra o total, e o IPI de cada item vem da alíquota do
+  NCM do cadastro. Dois erros que se compensam entre itens (alíquotas trocadas entre linhas de mesma mercadoria)
+  fecham o total; a conferência por item é a NF↔PO (D4').
 - **Ordem das etapas irreversíveis:** portal (compra na fábrica, irreversível) → captura (RPC, reversível enquanto não há
   PO) → PO no Omie (irreversível na prática). A RPC só grava **antes** do PO (CAS); o PO lê o que estiver gravado.
 
@@ -118,17 +120,21 @@ Payload por item: `{item_id, qtde_final, valor_mercadoria, valor_ipi}`. A RPC, n
    `valor_ipi` não finito ou < 0; total não finito ou ≤ 0. O payload antigo (`preco_unitario`/`valor_linha`) cai aqui.
 2. **CP004** id repetido no payload.
 3. CAS no próprio UPDATE (sem PO Omie + `sucesso_portal`), que grava o provado como hoje — **CP002**/**CP003**.
-4. **CP004** o payload não cobre todos os itens do pedido, algum `qtde_final` difere do da linha (recusa se a
-   quantidade mudou depois do envio) ou o `qtde_final` da linha não é inteiro. O PO manda `nQtde = ceil(qtde_final)`:
-   com 3,6 L, `4 × mercadoria ÷ 3,6` passaria 11% da mercadoria. Hoje não acontece, porque o disparo persiste o `ceil`
-   antes do portal e a captura só roda em produção; a recusa é a defesa na fronteira.
-5. **CP006** item sem alíquota (via `sayerlack_ipi_itens`).
+4. **CP004** o payload não cobre todos os itens do pedido.
+5. **CP006** item sem alíquota. A RPC lê `sayerlack_ipi_itens` **uma vez só** e materializa a leitura: CP006, CP007 e a
+   escrita usam a mesma. Sob READ COMMITTED cada comando vê um snapshot novo, e reler no UPDATE poderia gravar um IPI
+   que a prova não validou, se a alíquota ou o NCM mudassem no meio (Codex 06/10).
 6. **CP007** o IPI do payload difere do recalculado com a alíquota da tabela (igualdade exata — os dois lados calculam
    em centavos, §5.2), ou `|Σ (round2(mercadoria_i) + IPI_i) − total provado| > tol(n)`.
-7. Grava por item: o IPI, a alíquota e o NCM da tabela, `preco_unitario_sem_ipi_portal = round2(mercadoria) ÷ qtde`,
-   `valor_linha = round2(mercadoria) + IPI` e `preco_unitario = valor_linha ÷ qtde`. Recalcula `valor_total`. É
-   exatamente o que a prova validou: o conjunto gravado reproduz o total modelado ao centavo (princípio do Codex de
-   06/09 — o checksum valida o que fica gravado, não outra coisa).
+7. Grava por item: o IPI, a alíquota e o NCM da leitura do passo 5, `preco_unitario_sem_ipi_portal = round2(mercadoria)
+   ÷ qtde`, `valor_linha = round2(mercadoria) + IPI` e `preco_unitario = valor_linha ÷ qtde`. Recalcula `valor_total`.
+   É exatamente o que a prova validou: o conjunto gravado reproduz o total modelado ao centavo (princípio do Codex de
+   06/09 — o checksum valida o que fica gravado, não outra coisa). A quantidade é conferida no PRÓPRIO UPDATE —
+   **CP004** se algum `qtde_final` difere do ecoado pela edge (a quantidade mudou depois do envio) ou não é inteiro. O
+   PO manda `nQtde = ceil(qtde_final)`: com 3,6 L, `4 × mercadoria ÷ 3,6` passaria 11% da mercadoria. Hoje não
+   acontece, porque o disparo persiste o `ceil` antes do portal e a captura só roda em produção; a recusa é a defesa
+   na fronteira. Por ficar dentro da escrita, esse CP004 vem DEPOIS de CP006/CP007: um pedido com a quantidade alterada
+   e o NCM faltando sai como CP006.
 
 Tudo-ou-nada: qualquer RAISE desfaz o passo 3 também. O CP005 de hoje (derivado indeterminado: item sem `valor_linha`)
 sai: com o payload cobrindo todos os itens e cada um gravado com `valor_linha > 0`, ele fica inalcançável — e guard
@@ -138,16 +144,20 @@ inalcançável não se prova nem se falsifica.
 
 | Banco | Edge de captura | Edge de disparo | Resultado |
 |---|---|---|---|
-| velho | nova | qualquer | payload novo → CP001 → captura cega; PO como hoje |
+| velho | nova | qualquer | a edge não acha `sayerlack_ipi_itens` (PGRST202) → `ipi_leitura_falhou` → captura cega, a RPC nem é chamada; PO como hoje |
 | novo | velha | qualquer | payload velho → CP001 → captura cega; PO como hoje |
 | novo | nova | velha | custo com IPI gravado; PO com unitário COM IPI e sem `nValorIpi` — o mesmo do pedido de 1 item hoje (total certo) |
 | novo | nova | nova | PO com `nValUnit` sem IPI + `nValorIpi` ✅ |
 
 ### 5.4 PO — `disparar-pedidos-aprovados`
 
-- Item com decomposição (sem IPI > 0 e IPI ≥ 0, ambos finitos): `nValUnit = preco_unitario_sem_ipi_portal` e
-  `nValorIpi = valor_ipi_portal`. Sem decomposição: como hoje (`nValUnit = preco_unitario`, sem `nValorIpi`).
-- A leitura das colunas novas não quebra o disparo se a migration ainda não estiver aplicada: lê como hoje.
+- A decomposição vale só com o pedido **inteiro** decomposto e cada item coerente com o custo da linha
+  (`unitário sem IPI × qtde + IPI = valor_linha`, folga de meio centavo; sem IPI > 0 e IPI ≥ 0, finitos): então
+  `nValUnit = preco_unitario_sem_ipi_portal` e `nValorIpi = valor_ipi_portal` em todo item.
+- Decomposição parcial, inválida ou velha (quantidade ou preço editados depois da captura — o IPI é da LINHA e não
+  escala com a quantidade) ⇒ o PO de hoje para **todos** os itens (`nValUnit = preco_unitario`, sem `nValorIpi`), com
+  aviso no log. Nunca PO misto, nunca IPI velho (Codex 06/10).
+- A leitura dos itens é `select("*")`: sem a migration as colunas só não vêm, e o disparo lê como hoje.
 - Tela, e-mail e `valor_total` seguem com o custo com IPI — para quem lê, nada muda.
 
 ## 6. Tolerância
@@ -171,8 +181,11 @@ cada uma na main: o sync do Lovable já reverteu arquivo recém-mergeado (#1445 
 
 Antes/depois, por query:
 
-- próximo pedido Sayerlack: `captura_custo.fonte = 'dom_checksum'`, `cego = false` e itens com `valor_ipi_portal`;
-- PO no Omie: `nValorIpi > 0` (`ConsultarPedCompra` ou tela). O 1º PO real é combinado com o founder;
+- próximo pedido Sayerlack: `captura_custo.fonte = 'dom_checksum'` com `motivo` nulo e itens com `valor_ipi_portal`
+  (PO que já existia conta à parte: `motivo = 'ja_tem_omie'`, que também dá `cego = false`);
+- PO no Omie: `nValorIpi > 0` e `nValTot` = `valor_total` (± tolerância) — é o que pega o Omie tratando `nValorIpi`
+  como valor por unidade ou recalculando o IPI pelo cadastro (`ConsultarPedCompra` ou tela). O 1º PO real é combinado
+  com o founder;
 - NF seguinte: total do PO = total da NF, ou a diferença explicada.
 
 ## 8. Testes
@@ -199,6 +212,14 @@ Antes/depois, por query:
   não mostra, a conferência acusa.
 - **Pedido de 1 item com NCM fora da tabela** deixa de capturar (hoje captura com o IPI embutido). A cobertura é de 97% e
   o sensor lista o NCM que falta.
+- **Corrida captura → PO** (pré-existente desde a v2 do CAS; Codex 06/10): a edge publica `sucesso_portal` antes de
+  gravar a captura, e um disparo concorrente do MESMO pedido nessa janela (~1 s) cria o PO com o preço de hoje. Medido
+  em prod: o cron do disparo roda 1× por dia (`0 13 * * *`) e a edge de envio só aciona o disparo depois da captura. O
+  desfecho é o PO de hoje, nunca número fabricado. Fechar exige condicionar o claim do PO à captura concluída —
+  follow-up, decisão do founder.
+- **Escritor único por convenção:** a policy de UPDATE do staff alcança as 4 colunas; nenhuma tela as escreve, e a
+  coerência do §5.4 descarta decomposição que não bate com o custo da linha. Impor por privilégio pede refazer o ACL de
+  `pedido_compra_item` (outra entrega).
 
 ## 10. Pareceres Codex
 
@@ -207,4 +228,19 @@ Antes/depois, por query:
   desenho segue pela RÉGUA (§4), escrita e conferida pelo Claude sobre o backtest executado, e o Codex fica para o
   adversarial de código. A conferência passou pelas 7 perguntas preparadas para o Codex e acrescentou dois pontos: a
   recusa de `qtde_final` não inteiro (§5.3, passo 4) e o `git log -S` antes do deploy (§7).
-- **Código:** adversarial no diff final, com `CODEX_ASYNC_TETO_SALDO=0` (decisão do founder). Pendente.
+- **Código:** adversarial no diff final, com `CODEX_ASYNC_TETO_SALDO=0` (decisão do founder) —
+  `rollout-2026-10-06T20-04-18-01a11375` · gpt-6-astra · max · 689 s · 249.535 tokens · **REPROVADO** (3 P1 + 3 P2).
+  - Corrigidos, cada um com teste que falhou antes:
+    - a RPC lê as alíquotas uma vez só (§5.3, prova `LU1`);
+    - o PO usa a decomposição só com o pedido inteiro coerente (§5.4, testes Deno de pedido parcial, quantidade e
+      preço editados);
+    - o assert numérico exige número finito (sabotagem "total NaN");
+    - o `select("*")` está travado no vitest (sabotagem do select explícito).
+  - Calibrados, sem correção, com o motivo no §9:
+    - a corrida captura → PO (pré-existente, residual);
+    - o escritor único no banco (convenção);
+    - o alcance agregado da prova (§4).
+  - Revisor final de contexto limpo (Opus): nenhum Critical nem Important. Deu 7 Minor, 3 deles iguais aos do Codex.
+    Corrigidos também a ordem dos SQLSTATEs (§5.3), o texto "banco velho + edge nova" (§5.3), o `" "` que virava 0 no PO
+    e o diário. Adiado: testar por comportamento o mapeamento `ipiRows → esperados` da edge (hoje só regex textual,
+    com o CP007 de backstop).

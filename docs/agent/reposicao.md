@@ -80,7 +80,9 @@ Vocabulário que o founder assume ao falar de reposição (antes re-explicado a 
   meio centavo erra 1 centavo). Alíquota: `ipi_aliquota_ncm` (NCM do `omie_products` na conta `lower(empresa)`, via
   `sayerlack_ipi_itens`). A RPC grava a decomposição em `pedido_compra_item.{preco_unitario_sem_ipi_portal,
   valor_ipi_portal, aliquota_ipi_portal, ncm_ipi_portal}` (escritor único) e mantém `preco_unitario`/`valor_linha`
-  como **custo com IPI**; o PO leva `nValUnit` sem IPI + `nValorIpi` (`disparar-pedidos-aprovados/produto-po.ts`).
+  como **custo com IPI**; o PO leva `nValUnit` sem IPI + `nValorIpi` (`disparar-pedidos-aprovados/produto-po.ts`) **só
+  com o pedido inteiro decomposto e coerente** (`unitário sem IPI × qtde + IPI = valor_linha`) — qtde/preço editados
+  depois da captura ou decomposição parcial ⇒ o PO de hoje para todos (nunca PO misto, nunca IPI velho).
   **NCM fora da tabela ⇒ captura cega `ipi_ncm_desconhecido`, com a lista em `captura_custo.ncm_sem_aliquota`** —
   cadastrar a alíquota lida numa NF: `INSERT INTO public.ipi_aliquota_ncm (ncm, aliquota_pct, fonte, evidencia,
   medido_em) VALUES ('<8 dígitos>', <pct>, 'nf', 'NF <nº> (<data>), item <sku>', '<data da leitura>');`. Decreto

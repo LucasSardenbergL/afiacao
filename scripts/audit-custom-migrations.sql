@@ -5005,7 +5005,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'reconciliar_pedidos_omie', 5, '20260914180104_reconciliar_carrega_desconto_e_isola_coerencia.sql', 'bc85f6b5437a50fdb9a488867f4ee1a3'),
   ('public', 'sayerlack_aplicar_custo_portal', 1, '20260905090000_sayerlack_custo_portal_cas.sql', 'ad876e8c210428971511537d07f019e6'),
   ('public', 'sayerlack_aplicar_custo_portal', 2, '20260906193522_valor_total_portal_provado.sql', 'b7ddc0e52eb4e7e23b9febf0ff8e5a98'),
-  ('public', 'sayerlack_aplicar_custo_portal', 3, '20261006120000_preco_exato_po_sayerlack_ipi.sql', '2600527b1508bfd5a82a211602057cf0'),
+  ('public', 'sayerlack_aplicar_custo_portal', 3, '20261006120000_preco_exato_po_sayerlack_ipi.sql', '1b967a515beb300b9e3215d31a04ffe4'),
   ('public', 'aprovar_pedido_sugerido', 1, '20260906151715_aprovar_pedido_guard_atomico.sql', 'f9ffc3b7db7801d9c19589ca8c0ec6f9'),
   ('public', 'aprovar_pedido_sugerido', 2, '20260906170000_reposicao_selo_aprovacao_m1_expandir.sql', 'b313731a4cc51c5e0e4717be22e4c299'),
   ('public', 'aprovar_pedido_sugerido', 3, '20260906170000_reposicao_selo_aprovacao_m1_expandir.sql', 'b313731a4cc51c5e0e4717be22e4c299'),

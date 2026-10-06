@@ -17,8 +17,9 @@
 --      arredondamento e grava preco_unitario/valor_linha como CUSTO COM IPI (D1 do founder) junto da decomposição.
 --
 -- Compatibilidade (spec §5.3 — nenhuma combinação grava número errado): a edge anterior manda
--- {preco_unitario, valor_linha} ⇒ CP001 aqui (captura cega); a edge nova contra a RPC anterior cai em CP001 lá
--- (o payload novo não tem preco_unitario). Ordem segura: este BANCO antes das edges.
+-- {preco_unitario, valor_linha} ⇒ CP001 aqui (captura cega); a edge nova contra o banco anterior nem chega à RPC —
+-- sayerlack_ipi_itens não existe (PGRST202) ⇒ ipi_leitura_falhou (captura cega). Ordem recomendada: este BANCO antes
+-- das edges.
 --
 -- SQLSTATEs (classe CP = Custo do Portal; a edge casa a MARCA, nunca "lançou algo"):
 --   CP001  payload inválido: vazio, chave ausente, tipo não-número, ≤ 0, IPI < 0, total não finito ou ≤ 0
