@@ -20,7 +20,7 @@ Uma 2ª migration troca só o texto do sensor de órfã.
 **Spec:** [docs/superpowers/specs/2026-10-05-app-grava-kpi-no-envio-design.md](../specs/2026-10-05-app-grava-kpi-no-envio-design.md)
 
 > **Execução (2026-10-06):** o código commitado é a fonte de verdade; desvios: **Task 3 retirado** (o
-> ranking passou a atribuir pelo dono da carteira, em outra entrega) e a **prova A tem 12 sabotagens** —
+> ranking passou a atribuir pelo dono da carteira, em outra entrega) e a **prova A tem 13 sabotagens** (+ `pos_sem_dono`/A27, da revisão final) —
 > a guarda "outra linha com kpi" NÃO é inalcançável: no UPDATE que zera o kpi do app ela casa a versão
 > velha da própria linha e vira trava de reserva do import, então `sem_condicao_envio` declara A11/A13 e
 > a nova `sem_envio_nem_autoguarda` (as duas travas fora) declara A6/A21.

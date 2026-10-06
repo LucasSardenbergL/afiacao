@@ -28,13 +28,17 @@
   kpi" casa a versão velha da PRÓPRIA linha (que ainda tem o kpi) no UPDATE que a zera. Cada uma sozinha
   segura o import; a prova as derruba juntas (sabotagem `sem_envio_nem_autoguarda`) para mostrar o 23505.
   O plano achava essa cláusula inalcançável — a falsificação mostrou que não.
+- **A POS confere o dono do trigger (revisão final):** o trigger SECURITY DEFINER roda como o dono dele e
+  chama a costura, que perde o EXECUTE público. Na prod o `postgres` não é superusuário: se a costura
+  nascesse de outro dono, o write-back cairia em 42501 depois de o Omie aceitar o pedido. A POS recusa esse
+  estado, e o A18 roda com as funções num dono sem superusuário.
 - **`statement_timestamp()`:** a chegada do UPDATE do write-back; `now()` seria o início da transação,
   `clock_timestamp()` incluiria a espera de lock. A prod roda com `TimeZone=UTC`: `::date` puro erraria
   3 h por dia.
 
 ## Provas
 
-- `db/test-sales-orders-kpi-no-envio.sh` — 26 asserts, 12 sabotagens, verde e falsificada em `C` e `pt_BR`.
+- `db/test-sales-orders-kpi-no-envio.sh` — 27 asserts, 13 sabotagens, verde e falsificada em `C` e `pt_BR`.
 - `db/test-data-health-venda-empurrada-conta-pelo-app.sh` — 9 asserts, 4 sabotagens, idem.
 - vitest: `SalesQuotes.accountGuard.test.tsx` (sucesso sem update; vermelho antes da correção).
 
