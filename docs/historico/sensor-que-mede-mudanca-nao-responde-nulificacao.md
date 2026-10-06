@@ -116,6 +116,23 @@ achou defeito de verdade na MINHA prova**, não falso positivo:
    a do CLAUDE.md — prosa vai para `docs/historico/`, e o marcador de versão fica com 2 linhas e um
    ponteiro. Não é falso positivo: é um arquivo no teto avisando que a prosa tem outro lugar.
 
+## O furo de método que o CI pegou: revalidação SELETIVA
+
+Depois de consertar os dois portões acima, eu reexecutei **só os dois que haviam falhado** — e um
+deles me fez editar `versao.ts`, isto é, a FONTE de uma edge. O `sonda:fingerprint` já havia passado
+antes dessa edição, então saiu da minha lista mental; o mapa commitado ficou sendo o de antes. O CI
+reprovou com a mensagem exata: *"sync-reprocess: fonte mudou e o mapa não"*.
+
+**A regra que faltava, e que vale sempre:** mexer na fonte de uma edge invalida o LOTE de sondas,
+não só a que falhou antes. "Já passou" é um fato sobre a árvore de ANTES da edição.
+
+E o furo irmão, do mesmo turno: declarei "6 portões de edge verdes" contando pela tabela do
+CLAUDE.md, quando o job `edges-e-build` do `ci.yml` tem **13 passos**. A tabela é um resumo; o
+autoritativo é o workflow. Dos 13, eu nunca havia rodado `test:sonda-rollback`,
+`sonda:cron-prova --gate`, `sonda:nova`, `sonda:autentica`, `canaria:bump` e `build` — todos verdes
+quando finalmente rodaram, mas eram seis passos sobre os quais eu havia afirmado verificação sem ter
+medido. Evidência positiva é do comando autoritativo, e aqui ele era o `.github/workflows/ci.yml`.
+
 ## O apply que travou sem escrever nada
 
 A reaplicação (bytes corrigidos) pendurou 18 minutos sem progresso. Diagnóstico antes de reflexo:
