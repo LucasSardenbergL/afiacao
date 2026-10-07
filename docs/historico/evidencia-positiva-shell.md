@@ -1020,7 +1020,28 @@ falsificação que tinha passado nos dois locales — o veredito estava no arqui
 ⇒ separador entre aspas (`echo '==='`), e o veredito vem do arquivo da ferramenta, não do status do
 embrulho.
 
-## O padrão por trás das vinte e quatro
+### 25. Laço com prazo de relógio de parede + host que DORME — "não aconteceu" sobre uma leitura de ANTES do evento
+
+O vigia do 1º disparo do cron do sensor de fila do sku-items (jobid 190, `52 * * * *`) era um laço em
+background: `fim=$(( $(date +%s) + 1800 ))`, consulta a `cron.job_run_details` a cada 60s e, se o
+prazo passasse, `echo "SEM TICK em 30 min (ultima leitura: $r)"; exit 1`. Ele começou às 01:36 UTC e
+saiu com **`SEM TICK … (ultima leitura: )`**. O job tinha disparado às **01:52:00, `succeeded`**, e
+seguiu 19 de 19 até as 19:52 (medido em 2026-10-06).
+
+A causa está no `pmset -g log`: **Clamshell Sleep às 01:39:36 UTC**, 3 min depois de o laço começar
+e 12 min antes do disparo. Com o processo congelado, o relógio de parede seguiu andando. No primeiro
+despertar depois do prazo, a condição do `while` falhou ANTES de qualquer consulta nova. O laço então
+imprimiu a última leitura, feita às 01:39, quando ainda não havia linha nenhuma. O veredito "não
+disparou" foi escrito sobre um dado de antes do evento.
+
+⇒ Laço de espera com prazo:
+- **depois do prazo, faz UMA leitura final** antes de declarar ausência;
+- **imprime a HORA da última leitura** ao lado do veredito (aqui ela teria denunciado a leitura velha);
+- e prefere o relógio do SISTEMA OBSERVADO: "o disparo é às 01:52, consulte as execuções desde
+  01:52 depois de 01:55". Um orçamento local de segundos para de contar só quando o host para — e
+  isso não aparece no log. Espera longa num laptop leva também `caffeinate`.
+
+## O padrão por trás das vinte e cinco
 
 Seis produzem **verde por construção**, não por mérito; a sétima mostra que o mesmo defeito
 fabrica **vermelho** com a mesma facilidade; a oitava, que o veredito certo pode existir e ainda
@@ -1078,6 +1099,11 @@ A vigésima terceira é a décima nona no eixo do TEMPO. "Sem ocorrência" é ve
 o git escolheu, completada em silêncio com a hora do relógio, e a conclusão é escrita sobre o dia
 inteiro. O comando, o canal e o exit são honestos. Quem mente é o PARÂMETRO, e o erro cresce com a
 hora da consulta.
+
+A vigésima quinta fecha pelo lado do HOST: a consulta, o canal e o comando estavam certos, e quem
+mentiu foi o relógio do laço, que andou com o processo congelado. É a única em que a ausência
+reportada é de uma leitura que **nunca foi feita**: o "último valor" é de antes do evento, e o
+veredito não carrega a hora que o desmentiria.
 
 É a mesma família de `WHEN OTHERS THEN 'OK'` (SQL) e `toThrow()` pelado (TS): o teste passa sem
 provar nada. Ver `docs/historico/tothrow-pelado.md`.

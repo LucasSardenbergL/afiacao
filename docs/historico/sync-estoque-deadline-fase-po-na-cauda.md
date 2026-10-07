@@ -144,6 +144,22 @@ entrega; os três pedem decisão de desenho (falhar, degradar ou só sinalizar):
 2. **Físico truncado publicado**: `varreduraTruncada` é calculada depois do upsert e só segura a inativação.
 3. **Upsert parcial com marcadores limpos**: `erros_upsert > 0` não vira `error_message` nem `ok:false`.
 
+## Deploy (2026-10-06) — confirmado pela sonda
+
+- **Merge:** #2817 → `2b35de860` (12:41Z). Antes do pedido, `git log -S registroComPrazo` na main: nenhum
+  "Changes" do Lovable tocou a edge depois do merge.
+- **Leva:** o `pendencias:deploy` + `pendencias:pacote` montou 2 edges. A outra (`omie-sync-nfes-recebidas`, do
+  #2821) já tinha sido pedida por outra sessão às 19:46Z, e o `list_messages` mostrou. O ledger só vê o deploy
+  depois da sonda. Pacote refeito nomeando só esta edge (`6a147637b4f1`, contra `a31344234`).
+- **Envio:** 20:06:55Z. O agente conferiu os 12 hashes, publicou e reportou Active, sem erro de build, ao custo de
+  1,1 crédito. O sensor de edição às 20:12:30Z deu `SEM_EDICAO`.
+- **Sonda:** pela própria sessão, pelo `db:aplicar` (a pedido do founder, em vez da colagem no SQL Editor):
+  `db/sonda-pos-deploy-omie-sync-estoque-v1.5-2026-10-06.sql`, ensaio com ROLLBACK e depois o recibo #259
+  (sha256 `9cf08e72…`, commit `799ce5168`). O request 106150 voltou HTTP 200 com
+  `versao=v1.5-prazo-80s-e-registro` e `fonte=ead6dbf9…` → **DEPLOY CONFIRMADO**. Ledger: `confere`.
+- **Falta:** a 1ª linha `reposicao.sync_estoque` em `acoes_execucoes`, no cron das 09:00Z de 07/10 (só a v1.5
+  grava esse slug).
+
 ## Próximos passos — com o dado que cada um espera
 
 - **B6 (tirar o cron 31 do :00, ex. `5 9 * * *`)** — o candidato mais barato para o slot que concentra 15 das 21

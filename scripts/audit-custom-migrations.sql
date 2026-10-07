@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 587
+-- Total de custom migrations: 588
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -628,6 +628,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261005170000', 'sku_items_controle_itens_pendentes', '20261005170000_sku_items_controle_itens_pendentes.sql'),
   ('20261005220000', 'sales_orders_kpi_no_envio', '20261005220000_sales_orders_kpi_no_envio.sql'),
   ('20261005220100', 'data_health_venda_empurrada_conta_pelo_app', '20261005220100_data_health_venda_empurrada_conta_pelo_app.sql'),
+  ('20261006004500', 'sku_items_fila_parada_sensor', '20261006004500_sku_items_fila_parada_sensor.sql'),
   ('20261006120000', 'preco_exato_po_sayerlack_ipi', '20261006120000_preco_exato_po_sayerlack_ipi.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
@@ -2547,6 +2548,9 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('sales_orders_kpi_no_envio', 'function', 'public', 'sales_orders_instante_envio', ''),
   ('sales_orders_kpi_no_envio', 'function', 'public', 'sales_orders_gemeo_app_derivar', ''),
   ('data_health_venda_empurrada_conta_pelo_app', 'function', 'public', '_data_health_compute', ''),
+  ('sku_items_fila_parada_sensor', 'function', 'public', 'sku_items_fila_parada_check', ''),
+  ('sku_items_fila_parada_sensor', 'view', 'public', 'v_sku_items_fila', ''),
+  ('sku_items_fila_parada_sensor', 'cron_job', 'cron', 'afiacao_sku_items_fila_parada_1h', ''),
   ('preco_exato_po_sayerlack_ipi', 'function', 'public', 'sayerlack_ipi_itens', ''),
   ('preco_exato_po_sayerlack_ipi', 'function', 'public', 'sayerlack_aplicar_custo_portal', ''),
   ('preco_exato_po_sayerlack_ipi', 'table', 'public', 'ipi_aliquota_ncm', '')
@@ -4516,6 +4520,9 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('sales_orders_kpi_no_envio', 'function', 'public', 'sales_orders_instante_envio', ''),
   ('sales_orders_kpi_no_envio', 'function', 'public', 'sales_orders_gemeo_app_derivar', ''),
   ('data_health_venda_empurrada_conta_pelo_app', 'function', 'public', '_data_health_compute', ''),
+  ('sku_items_fila_parada_sensor', 'function', 'public', 'sku_items_fila_parada_check', ''),
+  ('sku_items_fila_parada_sensor', 'view', 'public', 'v_sku_items_fila', ''),
+  ('sku_items_fila_parada_sensor', 'cron_job', 'cron', 'afiacao_sku_items_fila_parada_1h', ''),
   ('preco_exato_po_sayerlack_ipi', 'function', 'public', 'sayerlack_ipi_itens', ''),
   ('preco_exato_po_sayerlack_ipi', 'function', 'public', 'sayerlack_aplicar_custo_portal', ''),
   ('preco_exato_po_sayerlack_ipi', 'table', 'public', 'ipi_aliquota_ncm', '')

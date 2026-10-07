@@ -283,6 +283,14 @@ db/test-tint-watchdog-corante.sh           11
 # 185–252s para ~12s no runner: o custo era o plano da view num fixture SEM os índices de prod (mais
 # 36s de sleep no B14), não o universo — docs/historico/fixture-sem-indices-de-prod.md.
 db/test-tint-fase5-watchdog.sh             31
+# sku-items, a fila que não anda (20261006004500): o sensor POR FORA da edge — view + função + cron :52 —
+# acusa o recebimento sem leadtime elegível há >48h, que o fin_sync_watchdog_check não pagina (o `error`
+# do diário das 07:00 some no `complete` do :35 seguinte; o C0 prova esse verde falso com o watchdog REAL).
+# Limiar estrito, backoff 6/24/72h, piso GREATEST(created_at,t2), irmã mais antiga, CT-e fora, recebimento
+# com linha fora, janela de 30d, só OBEN, dual-read do nIdReceb, a itens_pendentes do #2801 lida por
+# to_jsonb (coluna adicionada DEPOIS da view) e o episódio. 17 sabotagens de comportamento + 7 de
+# postcondição rodam inline; a inválida conta no FAIL. ~28s no laptop.
+db/test-sku-items-fila-parada.sh           58
 # Tintométrico: o vigia da cobertura (o Check A empurra e-mail; o B, vínculo tint↔Omie, é
 # dashboard-only) e a lista das bases divergentes no corpo do e-mail. Ficaram fora do #2605 como
 # APODRECIDAS, e o defeito era de ALVO: re-aplicavam a migration da sua fase (junho/julho) sobre o
