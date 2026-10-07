@@ -80,7 +80,7 @@ BEGIN
                     'escritos. Escreveu sem consertar a tela e as duas coisas tinham de andar junto',
                     v_antes, v_depois, v_escritos;
   END IF;
-  IF (v_antes - v_depois) <> v_escritos THEN
+  IF (v_antes - v_depois) IS DISTINCT FROM v_escritos THEN
     RAISE EXCEPTION 'postcondicao: a tela melhorou em % pedidos mas a conversao diz ter escrito % — '
                     'os dois numeros medem a MESMA coisa por caminhos diferentes e tem de bater',
                     v_antes - v_depois, v_escritos;

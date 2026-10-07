@@ -121,11 +121,11 @@ BEGIN
     RETURN;
   END IF;
 
-  IF (length(v_def) - length(replace(v_def, v_a1v, ''))) / length(v_a1v) <> 1 THEN
+  IF (length(v_def) - length(replace(v_def, v_a1v, ''))) / length(v_a1v) IS DISTINCT FROM 1 THEN
     RAISE EXCEPTION 'patch: a ancora 1 (v_escopo) nao aparece EXATAMENTE 1x no corpo vivo — o '
                     'conversor mudou e esta troca precisa ser revista a mao';
   END IF;
-  IF (length(v_def) - length(replace(v_def, v_a2v, ''))) / length(v_a2v) <> 1 THEN
+  IF (length(v_def) - length(replace(v_def, v_a2v, ''))) / length(v_a2v) IS DISTINCT FROM 1 THEN
     RAISE EXCEPTION 'patch: a ancora 2 (CTE c) nao aparece EXATAMENTE 1x no corpo vivo — o '
                     'conversor mudou e esta troca precisa ser revista a mao';
   END IF;
