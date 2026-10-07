@@ -340,6 +340,38 @@ As três postcondições dele medem a mesma coisa por caminhos diferentes, e tê
 tabela não existe em prod enquanto ele não entrar de verdade. O ensaio dele é o passo entre os dois
 applies, e é obrigatório.
 
+### O par inteiro, EXECUTADO: `db/test-pedido-total-liquido-excecao.sh`
+
+Eu escrevi aqui que o apply 2 "não foi ensaiado, e não podia ser". A segunda metade era falsa: não
+podia **em produção** (o `--ensaio` faz ROLLBACK, então no ensaio a tabela nem existe e o pré-voo
+recusa — corretamente). Num PG17 local, com as migrations reais, os dois applies rodam na ordem e
+dá para olhar. **20 asserções, 0 falhas.**
+
+O que só esta prova mostra, e o ensaio em prod não mostrava:
+
+| assert | o que afirma |
+|---|---|
+| A1 | o pré-voo do apply 2 recusa sem o apply 1, **no mesmo cluster** |
+| A9 | o corpo vivo passou a ler a tabela — a substituição programática produz código que **executa** |
+| A10–A11 | reaplicar o apply 1 é idempotente (lista segue com 2, patch segue 1×) |
+| A12 | o destravamento é **nominal**: julho sai, junho fica preso pelo pedido em voo |
+| A14–A18 | o convertível virou líquido; os três excluídos seguem com **cabeçalho bruto** |
+| A19 | o sensor do cupom caiu **exatamente** o que foi escrito |
+| A20 | reaplicar o apply 2 **falha** em vez de escrever de novo |
+
+E `--falsificar`: **5 sabotagens, 5 vermelhas**, com o controle verde (20/0) na MESMA invocação.
+
+- **F1** — guarda de 48h do passo 2 fora, **sozinha** (o `p.` casa só a linha que popula a lista; a
+  postcondição (c) usa `so.` e fica de pé) → **(c) pega**. Sabotar as duas de uma vez não provaria
+  nada, e foi o primeiro erro que eu cometi ao escrever este harness.
+- **F2** — âncora 2 adulterada → o patch **aborta** em vez de adivinhar onde aplicar.
+- **F3** — filtro da exceção neutralizado (`AND false`) → a postcondição (f) pega o gate ainda fechado.
+- **F4** — pré-voo da tabela cegado → pega o **segundo** cinto do mesmo pré-voo (o conversor não lê a
+  tabela). Duas verificações independentes, não uma repetida.
+- **F5** — guarda **e** verificador fora: o apply passa e o pedido em voo entra na lista. Não é teste
+  de dente, é a medida do que as duas camadas compram. É o dano que a lição desta sessão evita: um
+  pedido recuperável excluído para sempre, em silêncio.
+
 ### O bloqueio que eu reportei errado: `exit 79` não é a parede
 
 Fechei a etapa anterior dizendo ao founder que havia **duas** saídas — esperar 09/10 ou autorizar o
