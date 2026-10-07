@@ -37,11 +37,14 @@ export function useTeamKpis() {
       const inicioHojeUTC = spMeiaNoiteUTC(hoje);
       const inicio7dUTC = spMeiaNoiteUTC(addDias(hoje, -6)); // hoje + 6 dias atrás
 
-      // q2 — vendedores que lançaram pedido nos últimos 7d (escopo de empresa).
+      // q2 — vendedores que lançaram pedido NO APP nos últimos 7d (escopo de empresa). A importada
+      // (hash_payload 'omie_*') fica fora: o created_by dela é carimbo técnico do importador (o 1º staff
+      // do profiles), não quem vendeu — contava um "vendedor ativo" que não lançou nada.
       let qSales = supabase
         .from('sales_orders')
         .select('created_by, created_at')
         .is('deleted_at', null)
+        .is('hash_payload', null)
         .gte('created_at', inicio7dUTC);
       if (selection !== 'all') qSales = qSales.eq('account', selection);
 
