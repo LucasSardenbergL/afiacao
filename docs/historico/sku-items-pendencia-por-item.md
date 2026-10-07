@@ -233,6 +233,15 @@ coluna nova provoca, no mesmo arquivo que o eixo dos commits tolera (2 commits d
 `types.ts`). Não reverter: reverter tiraria dos tipos uma coluna que existe. Deploy logo depois de
 migration de schema dá esse falso positivo; o desempate é o `get_diff` por `message_id`.
 
-Pendente, por query: depois do diário das 07:00 UTC de 06/10, a revalidação do §6.4 — o PRD00041
-(`8689733149`) com linha e o tracking `1ff785fc…` com `k=0` (ou `k>0`, se o recebimento, ainda na etapa
-40, tiver outro item sem produto: aí ele volta no backoff, como desenhado).
+**Revalidado em 2026-10-07 01:30 UTC (§6.4, psql-ro).** O diário das 07:00 de 06/10 consultou a
+SAYERLACK: o PRD00041 (`8689733149`) ganhou linha e o controle fechou em `k=0`. A logística dessa linha
+é `NULL`, e está certo: o recebimento segue na etapa 40, sem t4 (ausente ≠ zero). Os 2 SKUs do resíduo
+estão recuperados. Nas 26 h seguintes ao deploy foram 15 de 15 runs `complete`, com 0 página
+(`fila_parada_48h` = 0) e 0 fechamento falho; os CT-e saíram antes da consulta (18 no diário).
+
+**O sinal de uso veio sozinho no run das 00:35 de 07/10.** Foram 2 recebimentos consultados, ambos da
+Renner Sayerlack com NF-e de 06/10, e os 2 ficaram incompletos. Num deles, 31 de 31 grupos foram gravados
+e 4 itens ficaram esperando associação; no outro, 1 item. São 5 SKUs que a v1.3 teria perdido em
+silêncio, da mesma classe do resíduo. Agora eles ficam com `k>0`, replicado nas irmãs, e voltam no
+backoff até a Omie associar os produtos. A distribuição do controle ficou em 142 legado `NULL`, 3 com
+`k=0` e 3 com `k>0`.
