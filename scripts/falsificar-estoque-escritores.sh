@@ -22,7 +22,7 @@ rodar() { LC_ALL="$LOC" bunx vitest run $T > "$OUT" 2>&1; echo $?; }
 falhas=0
 controle() {
   local rc; rc=$(rodar)
-  if [ "$rc" = 0 ] && grep -q 'Tests  13 passed (13)' "$OUT"; then echo "CONTROLE $1: verde (13/13)"; else echo "CONTROLE $1: NÃO verde (rc=$rc) — aborto"; tail -5 "$OUT"; exit 3; fi
+  if [ "$rc" = 0 ] && grep -q 'Tests  16 passed (16)' "$OUT"; then echo "CONTROLE $1: verde (16/16)"; else echo "CONTROLE $1: NÃO verde (rc=$rc) — aborto"; tail -5 "$OUT"; exit 3; fi
 }
 # sabotar <id> <arquivo> <perl-expr> <prova-que-pegou(regex no arquivo)> <marca1> [marca2]
 sabotar() {
@@ -41,16 +41,21 @@ sabotar() {
 controle antes
 # G3 — o dono mantém o import e perde a CHAMADA do zero confirmado.
 sabotar S1 supabase/functions/sync-reprocess/index.ts 's/await zerarConfirmadosForaDaLista\(/await Promise.resolve(/' 'await Promise\.resolve\(\{' "G3: dono do zero sem a chamada" "supabase/functions/sync-reprocess/index.ts"
-# G4 — um escritor grava o zero LITERAL (a forma do "|| 0" sem a fonte).
-sabotar S2 supabase/functions/tint-omie-sync/index.ts 's/estoque: prod\.quantidade_estoque \|\| 0,/estoque: 0,/' 'estoque: 0,' "G4: zero literal de estoque num escritor" "supabase/functions/tint-omie-sync/index.ts"
+# G4 — um escritor registrado grava o zero LITERAL no lugar do saldo lido.
+sabotar S2 supabase/functions/omie-vendas-sync/index.ts 's/estoque: Number\(prod\.nSaldo \?\? 0\),/estoque: 0,/' 'estoque: 0,' "G4: zero literal de estoque num escritor" "supabase/functions/omie-vendas-sync/index.ts"
 # G1 — um writer NOVO de posição numa edge fora do registro.
 sabotar S3 supabase/functions/omie-sync-status-produtos/index.ts 's/\z/\nexport const sabotagemEstoque = (db: { from: (t: string) => { update: (v: unknown) => unknown } }) => db.from("inventory_position").update({ saldo: 1 });\n/' 'sabotagemEstoque' "G1: escritor de estoque fora do registro" "supabase/functions/omie-sync-status-produtos/index.ts"
 # G2 — a entrada do registro cujo arquivo deixou de escrever (o registro só encolhe).
-sabotar S4 supabase/functions/tint-omie-sync/index.ts 's/\.from\("omie_products"\)/.from("omie_productz")/g' 'omie_productz' "G2: entrada do registro que não escreve mais" "supabase/functions/tint-omie-sync/index.ts"
+sabotar S4 supabase/functions/omie-vendas-sync/index.ts 's/\.from\("omie_products"\)/.from("omie_productz")/g' 'omie_productz' "G2: entrada do registro que não escreve mais" "supabase/functions/omie-vendas-sync/index.ts"
 # Detector cego para a posição: a sentinela tem de cair (sem ela, G1–G4 aprovariam um repo sem escritores).
 sabotar S5 src/lib/gates/estoque-escritores.ts 's/inventory_position/inventory_positionz/g' 'inventory_positionz' "sentinela: o walker anda e o detector acha os dois donos"
 # Detector que lê comentário: a escrita comentada passaria a contar.
 sabotar S6 src/lib/gates/estoque-escritores.ts 's/removerComentarios\(fonte\)/fonte/' 'const limpa = fonte;' "escrita COMENTADA não conta"
+# G5 — o `|| 0` do campo DEPRECATED volta ao syncProducts do analytics: arquivo REGISTRADO (G1 não
+# vê) e sem zero literal (G4 não vê) — só o G5 pega.
+sabotar S7 supabase/functions/omie-analytics-sync/index.ts 's/valor_unitario: p\.valor_unitario \|\| 0,\K/\n          estoque: p.quantidade_estoque || 0,/' 'estoque: p\.quantidade_estoque' "G5: fonte de edge lê o quantidade_estoque" "supabase/functions/omie-analytics-sync/index.ts"
+# G1 — a volta do `|| 0` no catálogo diário (fora do registro desde o PR-2).
+sabotar S8 supabase/functions/omie-sync-metadados/index.ts 's/valor_unitario: p\.valor_unitario \|\| 0,\K/\n        estoque: p.quantidade_estoque || 0,/' 'estoque: p\.quantidade_estoque' "G1: escritor de estoque fora do registro" "supabase/functions/omie-sync-metadados/index.ts"
 controle depois
 echo "LOCALE=$LOC falhas=$falhas"
 rm -rf "$OUT" "$BK"

@@ -15,7 +15,11 @@ import { REGISTRO_ESCRITORES_ESTOQUE } from '@/lib/gates/estoque-escritores-regi
 //   G3 — o dono do zero CHAMA `zerarConfirmadosForaDaLista` (manter o import e tirar a chamada é a
 //        fuga que o import sozinho não pega);
 //   G4 — nenhum escritor grava zero LITERAL de saldo/estoque: o zero vem do planejador do zero
-//        confirmado (_shared/zeramento-estoque.ts), que não escreve nada.
+//        confirmado (_shared/zeramento-estoque.ts), que não escreve nada;
+//   G5 — nenhuma fonte de edge lê `quantidade_estoque` ("DEPRECATED." no Omie, chega PRESENTE como 0).
+//        Incidente: o `|| 0` dele nos writers de catálogo zerava ~694 posicionados por rodada (#2744:
+//        a strategic contava 677–694 divergências em 19/19 noites). Analytics e vendas-sync seguem
+//        registrados por outras escritas, então a volta do `|| 0` neles passaria por G1–G4.
 // Por que TEXTUAL (readFileSync): as edges são Deno e o vitest não as executa.
 
 const RAIZ = resolve(__dirname, '../..');
@@ -67,5 +71,10 @@ describe('gate estoque-escritores', () => {
   it('G4: nenhum escritor grava zero literal de saldo/estoque', () => {
     const comZero = ESCRITORES.filter((a) => a.zerosLiterais > 0).map((a) => `${a.arquivo} (${a.zerosLiterais})`);
     expect(comZero, 'G4: zero literal de estoque num escritor').toEqual([]);
+  });
+
+  it('G5: nenhuma fonte de edge lê o campo DEPRECATED quantidade_estoque', () => {
+    const leem = ANALISES.filter((a) => a.camposDeprecados > 0).map((a) => `${a.arquivo} (${a.camposDeprecados})`);
+    expect(leem, 'G5: fonte de edge lê o quantidade_estoque').toEqual([]);
   });
 });

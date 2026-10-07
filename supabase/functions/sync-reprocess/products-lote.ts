@@ -32,7 +32,6 @@ export interface ProdutoCadastroOmie {
   unidade?: string;
   ncm?: string | null;
   valor_unitario?: number;
-  quantidade_estoque?: number;
   descricao_familia?: string;
   inativo?: string;
   tipo?: string;
@@ -104,7 +103,7 @@ export const EXCLUDED_FAMILIES = [
 // 500 páginas × 100 = 50k produtos ≈ ordens de grandeza acima do catálogo real.
 export const MAX_PAGINAS_PRODUTOS = 500;
 
-// Campo numérico OPCIONAL (valor_unitario e quantidade_estoque): ausente passa (quem decide é o
+// Campo numérico OPCIONAL (valor_unitario): ausente passa (quem decide é o
 // planejar), number finito passa, string numérica coage (o N+1 mandava a string crua e o
 // Postgres coagia — funcionava; coagir AQUI preserva o efeito e mata o falso-positivo perpétuo
 // de divergência local-number vs omie-string). Lixo (NaN/±Inf/boolean/string não-numérica)
@@ -141,15 +140,15 @@ export function acumularProdutosDaPagina(
     const codProd = Number(prod.codigo_produto); // string numérica normaliza; chave do Map é number
     if (!Number.isSafeInteger(codProd) || codProd <= 0) continue; // Number("")=0 nunca vira entrada
 
+    // Só o valor_unitario decide: o campo DEPRECATED de estoque do cadastro não vai para a row, e
+    // validá-lo tirava o produto (preço junto) por um campo que este passo não usa (2026-10-06).
     const valorUnitario = coagirNumericoOpcional(prod.valor_unitario);
-    const quantidadeEstoque = coagirNumericoOpcional(prod.quantidade_estoque);
-    if (valorUnitario === "invalido" || quantidadeEstoque === "invalido") continue;
+    if (valorUnitario === "invalido") continue;
 
     catalogo.set(codProd, {
       ...prod,
       codigo_produto: codProd,
       valor_unitario: valorUnitario,
-      quantidade_estoque: quantidadeEstoque,
     });
     elegiveis++;
   }
