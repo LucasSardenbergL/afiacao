@@ -7021,6 +7021,33 @@ export type Database = {
           },
         ]
       }
+      ipi_aliquota_ncm: {
+        Row: {
+          aliquota_pct: number
+          atualizado_em: string
+          evidencia: string
+          fonte: string
+          medido_em: string
+          ncm: string
+        }
+        Insert: {
+          aliquota_pct: number
+          atualizado_em?: string
+          evidencia: string
+          fonte: string
+          medido_em: string
+          ncm: string
+        }
+        Update: {
+          aliquota_pct?: number
+          atualizado_em?: string
+          evidencia?: string
+          fonte?: string
+          medido_em?: string
+          ncm?: string
+        }
+        Relationships: []
+      }
       kb_catalisador_links: {
         Row: {
           account: string
@@ -9355,6 +9382,7 @@ export type Database = {
       pedido_compra_item: {
         Row: {
           ajustado_humano: boolean | null
+          aliquota_ipi_portal: number | null
           criado_em: string | null
           desconto_perc_aplicado: number | null
           economia_estimada_valor: number | null
@@ -9366,10 +9394,12 @@ export type Database = {
           fator_portal_aprovado: number | null
           id: number
           modo_promocao: string | null
+          ncm_ipi_portal: string | null
           pedido_id: number
           ponto_pedido: number | null
           preco_sem_desconto: number | null
           preco_unitario: number | null
+          preco_unitario_sem_ipi_portal: number | null
           primeira_compra: boolean | null
           promocao_item_id: number | null
           qtde_final: number | null
@@ -9380,10 +9410,12 @@ export type Database = {
           sku_descricao: string | null
           sku_portal_aprovado: string | null
           teto_cobertura_aplicado: boolean
+          valor_ipi_portal: number | null
           valor_linha: number | null
         }
         Insert: {
           ajustado_humano?: boolean | null
+          aliquota_ipi_portal?: number | null
           criado_em?: string | null
           desconto_perc_aplicado?: number | null
           economia_estimada_valor?: number | null
@@ -9395,10 +9427,12 @@ export type Database = {
           fator_portal_aprovado?: number | null
           id?: number
           modo_promocao?: string | null
+          ncm_ipi_portal?: string | null
           pedido_id: number
           ponto_pedido?: number | null
           preco_sem_desconto?: number | null
           preco_unitario?: number | null
+          preco_unitario_sem_ipi_portal?: number | null
           primeira_compra?: boolean | null
           promocao_item_id?: number | null
           qtde_final?: number | null
@@ -9409,10 +9443,12 @@ export type Database = {
           sku_descricao?: string | null
           sku_portal_aprovado?: string | null
           teto_cobertura_aplicado?: boolean
+          valor_ipi_portal?: number | null
           valor_linha?: number | null
         }
         Update: {
           ajustado_humano?: boolean | null
+          aliquota_ipi_portal?: number | null
           criado_em?: string | null
           desconto_perc_aplicado?: number | null
           economia_estimada_valor?: number | null
@@ -9424,10 +9460,12 @@ export type Database = {
           fator_portal_aprovado?: number | null
           id?: number
           modo_promocao?: string | null
+          ncm_ipi_portal?: string | null
           pedido_id?: number
           ponto_pedido?: number | null
           preco_sem_desconto?: number | null
           preco_unitario?: number | null
+          preco_unitario_sem_ipi_portal?: number | null
           primeira_compra?: boolean | null
           promocao_item_id?: number | null
           qtde_final?: number | null
@@ -9438,6 +9476,7 @@ export type Database = {
           sku_descricao?: string | null
           sku_portal_aprovado?: string | null
           teto_cobertura_aplicado?: boolean
+          valor_ipi_portal?: number | null
           valor_linha?: number | null
         }
         Relationships: [
@@ -20911,6 +20950,14 @@ export type Database = {
       sayerlack_aplicar_custo_portal: {
         Args: { p_itens: Json; p_pedido_id: number; p_valor_total: number }
         Returns: number
+      }
+      sayerlack_ipi_itens: {
+        Args: { p_pedido_id: number }
+        Returns: {
+          aliquota_pct: number
+          item_id: number
+          ncm: string
+        }[]
       }
       sayerlack_retry_orfaos: { Args: never; Returns: Json }
       seed_targets_faltantes: {
