@@ -120,6 +120,10 @@ db/test-tint-gate-revalida.sh              38
 # sales_orders que o snapshot não tem, com seed coerente (db/lib/corpo-vivo.sh); nasceu morta
 # fora do núcleo em 08-06 (docs/historico/provas-canal-revividas.md).
 db/test-whatsapp-proposta.sh               17  falsificar=20
+# Preço exato no PO Sayerlack: a RPC de custo do portal confere o IPI contra ipi_aliquota_ncm (igualdade exata em
+# centavos), prova o total cobrado, grava a decomposição sem IPI/IPI e recusa NaN/Infinity/≤0 no payload; paridade
+# com os 29 pedidos reais do arquivo-ouro e falsificação inline por camada (docs/historico/preco-exato-po-sayerlack.md).
+db/test-sayerlack-ipi-po.sh                95
 
 # ── Eixo 3 — ATOMICIDADE ──────────────────────────────────────────────────────────
 # "Guard fora da escrita não é guard": o predicado tem de estar DENTRO do `WHERE`

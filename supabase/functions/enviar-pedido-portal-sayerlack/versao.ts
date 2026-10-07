@@ -20,9 +20,9 @@ export const respostaSonda = criarRespostaSonda("enviar-pedido-portal-sayerlack"
  * embalagem · v1.3 fator aprovado ≠ vivo · v1.4 captura de custo deixou de ser cega ·
  * v1.5 escrita do custo em RPC transacional com CAS · v1.6 Preço Venda é o total da linha ·
  * v1.7 enviado = aprovado na quantidade (NULL lê-se 1:1; qtde fora do múltiplo recusa; normalização sai) ·
- * v1.8 itens+de-para por caminho único (a RPC inexistente e a instrumentação `[DEBUG_*]` saíram).
+ * v1.8 itens+de-para por caminho único (a RPC inexistente e a instrumentação `[DEBUG_*]` saíram) · v1.9 prova sem mudança e sensor do unitário · v1.10 IPI por NCM: a prova soma o IPI e a RPC grava a decomposição.
  */
-export const VERSAO = "v1.9-prova-sem-mudanca-e-sensor-unitario";
+export const VERSAO = "v1.10-ipi-por-ncm";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

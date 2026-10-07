@@ -628,6 +628,12 @@ export const ACL_ONLY_INTERNAL = new Set<string>([
   //   db/test-farmer-escopo-carteira.sh.
   'public.farmer_recomendacoes_substituir',
   'public.farmer_bundle_recomendacoes_substituir',
+  // Alíquota de IPI por item do pedido (NCM do omie_products na conta lower(empresa) × ipi_aliquota_ncm).
+  // SECURITY INVOKER de propósito: quem chama é a edge `enviar-pedido-portal-sayerlack` (service_role) e a RPC
+  // `sayerlack_aplicar_custo_portal` (SECDEF, owner postgres) — ambas com SELECT nas tabelas. anon/authenticated
+  // morreriam no SELECT de ipi_aliquota_ncm (REVOKE ALL + RLS sem policy) — o REVOKE do EXECUTE é a 2ª tranca,
+  // e cada camada é falsificada sozinha em db/test-sayerlack-ipi-po.sh. Fecho: 20261006120000_preco_exato_po_sayerlack_ipi.sql.
+  'public.sayerlack_ipi_itens',
 ]);
 
 /** chave de lookup a partir de schema+name (case-insensitive, sem assinatura) */

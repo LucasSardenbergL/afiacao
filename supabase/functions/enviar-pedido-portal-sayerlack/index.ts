@@ -1454,8 +1454,6 @@ interface ItemMapeado {
   // fator com que o MOTOR arredondou qtde_final ao múltiplo da embalagem (#2157). NULL/undefined = não
   // arredondou. Conferido contra o fator VIVO antes do envio (`verificarFatorAprovado`) — TOCTOU aprovação→envio.
   fator_embalagem_portal?: number | string | null;
-  // preço unitário atual do item (base da tolerância na captura de custo do portal)
-  preco_atual?: number;
 }
 
 interface ProcessResult {
@@ -1818,16 +1816,6 @@ async function processarPedido(
     return result;
   }
 
-  // preco_unitario atual (base da tolerância de custo na captura). Independe da RPC trazer ou não.
-  {
-    const ids = itensList.map((i) => i.item_id);
-    if (ids.length > 0) {
-      const { data: precos } = await supabase.from("pedido_compra_item").select("id, preco_unitario").in("id", ids);
-      const pm = new Map<number, number>((precos ?? []).map((p) => [Number((p as { id: number }).id), Number((p as { preco_unitario: number | null }).preco_unitario ?? 0)]));
-      for (const it of itensList) (it as { preco_atual?: number }).preco_atual = pm.get(it.item_id) ?? 0;
-    }
-  }
-
   // lead time esperado do grupo (validação de Prz Ent). Null = sem config → gate fica indisponível (fail-open).
   // grupo_codigo não vem no PedidoCandidato (select enxuto) — buscamos a config direto por empresa+fornecedor+grupo.
   let ltEsperado: number | null = null;
@@ -2126,9 +2114,23 @@ async function processarPedido(
       const capturados = (Array.isArray(envelope?.itens_capturados) ? envelope.itens_capturados : []) as LinhaDom[];
       const addJson = (envelope?.portal_add_json ?? null) as AddJsonPortal | null;
       const jaTemOmie = !!(pedido as { omie_pedido_compra_numero?: string | null }).omie_pedido_compra_numero;
-      // O que ESTA execução digitou no portal (sku + qtde em unidade do portal): prova de quantidade aceita.
-      const esperados = itemsPortal.map((i) => ({ sku_portal: i.sku_portal, qtde_portal: i.qtde }));
-      const cons = consolidarLinhasPortal(capturados, addJson, esperados);
+      // IPI de cada item: NCM do cadastro × `ipi_aliquota_ncm`, pela MESMA função com que a RPC confere. Falha de
+      // leitura vira 'ipi_leitura_falhou' (não consegui ler ≠ NCM desconhecido) — nunca alíquota 0.
+      const { data: ipiRows, error: eIpi } = await supabase.rpc("sayerlack_ipi_itens", { p_pedido_id: pedido.id }) as unknown as {
+        data: { item_id: number; ncm: string | null; aliquota_pct: number | string | null }[] | null; error: PostgrestErrorLike | null;
+      };
+      if (eIpi) console.error(`[envio-portal] Pedido #${pedido.id}: leitura das alíquotas de IPI falhou (${eIpi.code ?? 'sem código'}):`, eIpi.message);
+      const ipiPorItem = new Map((ipiRows ?? []).map((r) => [Number(r.item_id), {
+        ncm: r.ncm ?? null,
+        aliquota_pct: r.aliquota_pct === null || r.aliquota_pct === undefined ? null : Number(r.aliquota_pct),
+      }]));
+      // O que ESTA execução digitou no portal (sku + qtde em unidade do portal) + o IPI do NCM de cada item.
+      // `itemsPortal` nasce de `itensList.map` (passo 3), na MESMA ordem: o índice liga os dois.
+      const esperados = itemsPortal.map((p, idx) => {
+        const ipi = ipiPorItem.get(itensList[idx].item_id);
+        return { sku_portal: p.sku_portal, qtde_portal: p.qtde, ncm: ipi?.ncm ?? null, aliquota_ipi_pct: ipi?.aliquota_pct ?? null };
+      });
+      const cons = consolidarLinhasPortal(capturados, addJson, esperados, eIpi || !Array.isArray(ipiRows) ? 'falhou' : 'ok');
       let match: ResultadoMatch | null = null;
       let pulados: { sku_codigo_omie: string; motivo: string }[] = [];
       let planejados = 0;
@@ -2137,28 +2139,23 @@ async function processarPedido(
       if (!jaTemOmie) {
         const itensParaCusto: ItemPedido[] = itensList.map((i) => ({
           item_id: i.item_id, sku_codigo_omie: i.sku_codigo_omie, sku_descricao: i.sku_descricao,
-          sku_portal: i.sku_portal, qtde_final: Number(i.qtde_final), preco_atual: Number((i as { preco_atual?: number }).preco_atual ?? 0),
+          sku_portal: i.sku_portal, qtde_final: Number(i.qtde_final),
         }));
         match = casarLinhasComItens(cons.linhas, itensParaCusto);
         const derivado = derivarCustos(match);
         pulados = derivado.pulados;
-        // Só escreve quando o pedido INTEIRO está provado (fonte ≠ nenhuma ⇒ conjunto local↔JSON↔DOM fechado e
-        // todos casados): nunca mistura custo novo com custo antigo no mesmo PO (Codex P1).
-        // `total_pedido != null` entra na prova: sem o total provado não há `valor_total` — e a RPC é
-        // tudo-ou-nada (itens + total na mesma transação), então não existe "itens sem total".
+        // Só escreve com o pedido INTEIRO provado (fonte ≠ nenhuma ⇒ conjunto local↔JSON↔DOM fechado, IPI de todo item
+        // conhecido e a prova com IPI fechando), todo item casado e derivado: nunca custo misto no mesmo PO.
         const pedidoInteiroProvado = cons.fonte !== 'nenhuma' && cons.total_pedido != null && match.naoCasados.length === 0
-          && match.ambiguos.length === 0 && match.casados.length === itensParaCusto.length && !pulados.some((p) => p.motivo !== 'sem_mudanca');
+          && match.ambiguos.length === 0 && match.casados.length === itensParaCusto.length && pulados.length === 0;
         if (pedidoInteiroProvado) {
           planejados = derivado.updates.length;
-          // planejados === 0 = todos 'sem_mudanca' (custo já batia). A RPC é chamada MESMO ASSIM: a
-          // prova do portal vale por si — antes ela era DESCARTADA e as colunas do provado ficavam
-          // nulas apesar de a compra estar comprovada (Codex 2026-09-06). O SQL aceita array vazio
-          // desde 20260906193522; DEPLOYAR ESTA EDGE SÓ DEPOIS DO APPLY dessa migration, senão a
-          // versão anterior da RPC recusa o array vazio com CP001.
           {
-            // UMA transação: CAS (omie IS NULL + sucesso_portal) no próprio UPDATE + todos os itens +
-            // o total provado em coluna dedicada + o derivado remantido sobre todos os itens.
-            // Recusa = SQLSTATE CP00x + ROLLBACK; `data` = nº de itens gravados (== planejados, senão a RPC lançou).
+            // UMA transação: CAS (omie IS NULL + sucesso_portal) no próprio UPDATE + o pedido inteiro (com o eco da
+            // qtde_final) + IPI conferido contra a tabela + prova contra o total cobrado + a decomposição e o custo com
+            // IPI gravados + o derivado remantido. Recusa = SQLSTATE CP00x + ROLLBACK; `data` = nº de itens gravados.
+            // Antes do apply de 20261006120000 a execução nem chega aqui: sayerlack_ipi_itens não existe (PGRST202)
+            // ⇒ ipi_leitura_falhou ⇒ captura cega, nunca número errado (a ordem recomendada é banco → edge).
             const { data: gravados, error: eRpc } = await supabase.rpc("sayerlack_aplicar_custo_portal", {
               p_pedido_id: pedido.id,
               p_itens: derivado.updates,

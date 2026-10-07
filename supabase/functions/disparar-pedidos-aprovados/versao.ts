@@ -44,8 +44,13 @@ export const respostaSonda = criarRespostaSonda("disparar-pedidos-aprovados");
  * do portal (hoje + lead time em dias úteis, `./previsao.ts`), o yymmdd do número do pedido e o
  * `dataCiclo` padrão saíam do dia UTC do servidor — o pedido aprovado (= disparado) das 21:00 às 23:59 BRT
  * ia ao Omie com a previsão um dia útil adiante. O ramo do portal não muda. Nenhuma pré-condição de banco.
+ *
+ * v1.5 (2026-10-06) — preço exato no PO Sayerlack: o item do IncluirPedCompra sai de `./produto-po.ts`; com a
+ * decomposição provada pelo portal (preco_unitario_sem_ipi_portal + valor_ipi_portal) vai nValUnit sem IPI +
+ * nValorIpi, sem ela o PO de sempre. A leitura dos itens passou a `select("*")` — sem a migration 20261006120000 as
+ * colunas só não vêm. Nenhuma pré-condição de banco para o comportamento de hoje.
  */
-export const VERSAO = "v1.4-hoje-sp-previsao";
+export const VERSAO = "v1.5-ipi-por-item";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO = "esta edge cria pedido de compra REAL no Omie, inclusive em dry_run";

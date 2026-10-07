@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-10-05T23:46:43.270Z",
-  "sourceHead": "bc6364ddcb4505a2db26960cf64a56dbd6a36790",
+  "medidoEm": "2026-10-07T00:13:06.434Z",
+  "sourceHead": "a582a006424c62dcb40474e643747a853aae147d",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -11,12 +11,19 @@
   "audits": {
     "funcoes": {
       "script": "authz:funcoes:prod",
-      "exit": 0,
-      "resumo": "✅ o EXECUTE de prod bate com o contrato nas 60 função(ões) da allowlist. ⚠️ 1 delas têm o fecho FORA do repo (fechadaPor=null) e portanto NÃO são vigiadas pelo CI: public.aplicar_sql.",
-      "denominador": "🔎 authz:funcoes:prod — 61 definição(ões) lida(s) para 60 chave(s) da allowlist.",
-      "contratoFingerprint": "b8ebaf0bc9e56560caea2cac58d19e20776fa0286c1f7f3b0bca3a14e3c298d6",
+      "exit": 1,
+      "resumo": "authz:funcoes:prod — 1 divergência(s) de EXECUTE. Ver scripts/authz-funcoes-fechadas.ts.",
+      "denominador": "🔎 authz:funcoes:prod — 61 definição(ões) lida(s) para 61 chave(s) da allowlist.",
+      "contratoFingerprint": "1d364465c8481a402cbf9cb14dad001a8544e9e0c12762b7ad853c1249ca8367",
       "auditorFingerprint": "8971003ee5ae2343ff6129fe9569b7afb3b5cfd5bab5abed86c6e27520c8358f",
-      "achados": []
+      "achados": [
+        {
+          "id": "8e8c72eafe7ee73b",
+          "linha": "❌ public.sayerlack_ipi_itens — [FUNCAO_AUSENTE_EM_PROD] public.sayerlack_ipi_itens está na allowlist e NÃO existe no banco — foi removida, renomeada, ou a allowlist ficou obsoleta.",
+          "primeiraVez": "2026-10-07",
+          "ultimaVez": "2026-10-07"
+        }
+      ]
     },
     "grants": {
       "script": "authz:grants:prod",
@@ -56,12 +63,37 @@
     },
     "corpo": {
       "script": "deriva:corpo:prod",
-      "exit": 0,
-      "resumo": "✅ deriva-corpo — 321 identidade(s) batem com o repo (246 em dia, 69 só cosméticas, 5 aceitas na baseline) e 16 aposentada(s) estão ausentes",
-      "denominador": "🔎 deriva-corpo — 321 identidade(s) conferida(s) · 16 aposentada(s) · ref origin/main@8bc5226ee (fetch ok) · prod 2026-10-05 23:47:40.632435Z",
+      "exit": 1,
+      "resumo": "deriva-corpo — 4 divergência(s) em prod (2 CORPO_ANTERIOR, 1 SEM_PAR, 1 AUSENTE) — ver as linhas ❌",
+      "denominador": "🔎 deriva-corpo — 322 identidade(s) conferida(s) · 16 aposentada(s) · ref origin/main@f55523513 (fetch ok) · prod 2026-10-07 00:13:32.735818Z",
       "contratoFingerprint": "a56b13542c742978cb13bdb7800db0228fbcd84f1a2b284a94544675a37c470d",
       "auditorFingerprint": "a28648bb57672ec779f588df9a71ad100e526051c8e8d1211fc8fb13a0d5960c",
-      "achados": []
+      "achados": [
+        {
+          "id": "7ebf5f8ded47938e",
+          "linha": "❌ [CORPO_ANTERIOR] _data_health_compute(): prod roda o corpo de 20261005150000_data_health_vendas_empurradas_v2.sql; o repo commitou 20261005220100_data_health_venda_empurrada_conta_pelo_app.sql depois — revert por ordem de colagem, ou migration mergeada e não aplicada (xmin 11290639)",
+          "primeiraVez": "2026-10-07",
+          "ultimaVez": "2026-10-07"
+        },
+        {
+          "id": "9d0d9f35716b9701",
+          "linha": "❌ [SEM_PAR] reconciliar_pedidos_omie(jsonb,text[],timestamp with time zone): corpo que nenhuma das 5 versão(ões) commitadas explica — edição manual, ou DDL aplicada ANTES do merge (compare com as migrations das branches abertas) — último CREATE: 20260914180104_reconciliar_carrega_desconto_e_isola_coerencia.sql (xmin 11371641)",
+          "primeiraVez": "2026-10-07",
+          "ultimaVez": "2026-10-07"
+        },
+        {
+          "id": "e472ecb34005f358",
+          "linha": "❌ [CORPO_ANTERIOR] sales_orders_gemeo_app_derivar(): prod roda o corpo de 20261001100001_sales_orders_gemeo_importado_contagem_unica.sql; o repo commitou 20261005220000_sales_orders_kpi_no_envio.sql depois — revert por ordem de colagem, ou migration mergeada e não aplicada (xmin 11286631)",
+          "primeiraVez": "2026-10-07",
+          "ultimaVez": "2026-10-07"
+        },
+        {
+          "id": "59ba86155c0a84cf",
+          "linha": "❌ [AUSENTE] sales_orders_instante_envio(): viva no repo (último CREATE: 20261005220000_sales_orders_kpi_no_envio.sql) e ausente em prod — migration não aplicada ou DROP manual",
+          "primeiraVez": "2026-10-07",
+          "ultimaVez": "2026-10-07"
+        }
+      ]
     }
   }
 }

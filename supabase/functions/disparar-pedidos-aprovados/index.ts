@@ -8,6 +8,7 @@ import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import { hojeSP } from "../_shared/hoje-sp.ts";
 import { dataPrevisaoOmie } from "./previsao.ts";
+import { montarProdutosIncluir } from "./produto-po.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import {
   assuntoImplantado,
@@ -86,6 +87,12 @@ interface ItemRow {
   sku_descricao: string | null;
   qtde_final: number;
   preco_unitario: number;
+  valor_linha?: number | string | null;
+  // Decomposição do preço provado pelo portal (RPC sayerlack_aplicar_custo_portal): ausente fora do Sayerlack, em
+  // captura cega e antes da migration 20261006120000. O PO só a usa com o pedido inteiro decomposto e coerente com
+  // valor_linha (./produto-po.ts).
+  preco_unitario_sem_ipi_portal?: number | string | null;
+  valor_ipi_portal?: number | string | null;
 }
 
 interface OmieGenericResponse {
@@ -978,9 +985,12 @@ async function processarPedido(
 
   try {
     // a. Items
+    // `*` de propósito: as colunas da decomposição (preço exato do PO) nascem na migration 20261006120000. Listá-las
+    // explicitamente faria o disparo de TODO fornecedor falhar se a edge subisse antes do banco; com `*`, sem a
+    // migration elas só não vêm, e o PO sai como sempre (./produto-po.ts).
     const { data: items, error: itErr } = await db
       .from("pedido_compra_item")
-      .select("sku_codigo_omie, sku_descricao, qtde_final, preco_unitario")
+      .select("*")
       .eq("pedido_id", pedido.id);
     if (itErr) throw new Error(`Items: ${itErr.message}`);
     if (!items || items.length === 0) {
@@ -1116,16 +1126,12 @@ async function processarPedido(
       result.portal_data_entrega = pedido.portal_data_entrega ?? null;
     }
 
-    const produtos_incluir = (items as ItemRow[]).map((it, idx) => ({
-      cCodIntItem: `ITEM${String(idx + 1).padStart(3, "0")}`,
-      nCodProd: Number(it.sku_codigo_omie),
-      // [QTDE-INTEIRA] backstop universal: nenhum item de pedido pode ser fracionário. O estoque
-      // do Omie vem com poeira decimal (tinta em litros) → qtde_final pode ser 3,99996. ceil aqui
-      // pega qualquer fonte (linha legada, edição humana, promo, cold-start), mesmo que a RPC já
-      // ceile na origem. Math.ceil (não round) = nunca sub-pedir. O guard nQtde>0 acima já barrou ≤0.
-      nQtde: Math.ceil(Number(it.qtde_final)),
-      nValUnit: Number(it.preco_unitario),
-    }));
+    // Preço exato (spec 2026-10-05): com o pedido inteiro decomposto pelo portal e coerente, nValUnit sem IPI +
+    // nValorIpi; senão nValUnit = preco_unitario como sempre, para todos os itens. A regra mora em ./produto-po.ts.
+    const { produtos: produtos_incluir, decomposicao } = montarProdutosIncluir(items as ItemRow[]);
+    if (decomposicao === "parcial" || decomposicao === "incoerente") {
+      console.warn(`[disparar-pedidos] Pedido ${pedido.id}: decomposição do portal ${decomposicao} — o PO sai com o preco_unitario de todos os itens, sem nValorIpi`);
+    }
 
     // Condição de pagamento (do pedido sugerido)
     // OBS: no Omie o campo é cCodParc (string3). Código "000" = "À Vista".
