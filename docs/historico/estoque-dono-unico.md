@@ -400,3 +400,21 @@ ao banco é migration.
   - observação: conferência só com habilitados, `pendente_aplicado` ignorando os membros;
   - fiação: predicado, recorte, item inválido do membro em `problemas`, coletor sem o membro.
 - Codex: sem consulta, por decisão do founder (cota). Adversarial retroativo depois de 09/10 19:30.
+
+## O deploy da Fase 4 (2026-10-07)
+
+O pacote `e887a72f8751` (`omie-sync-estoque`, `origin/main@1c05421a1`) foi colado pelo conector, com o OK do
+founder.
+- O agente conferiu os 15 sha256 (exit 0) e publicou a edge. Ela está Active: respondeu 401 sem credencial.
+- Ele fechou com `No files were edited.`, e o sensor de edição deu `SEM_EDICAO` duas vezes, a 2ª com 6,6 min de
+  folga sobre o envio.
+- Custo: 1,8 crédito.
+
+**Atestação.** A edge não está na allowlist do cron, então passou por sonda humana pelo envelope (`db:aplicar`,
+tentativa #272, registro no #2843) e deu **DEPLOY CONFIRMADO** (`v1.7-membros-de-grupo`, fonte batendo). O
+ledger marca confere.
+
+**Como conferir:** depois do 1º run da v1.7 (cron 09:00Z), rode a query do PR #2836:
+- os 4 membros não habilitados devem ter `ultima_sincronizacao` do run;
+- o resumo deve trazer `membros_grupo_gravados` = 4;
+- a observação deve seguir publicando.
