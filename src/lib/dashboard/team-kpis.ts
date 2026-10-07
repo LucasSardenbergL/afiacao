@@ -53,13 +53,14 @@ export function contarAtivos(linhas: AtividadeRow[], desdeUTC: string): number {
 }
 
 // ---------------------------------------------------------------------------
-// Ranking de vendedores (Master v2)
+// Ranking de vendedores (Master) — pelo DONO DA CARTEIRA do cliente
 // ---------------------------------------------------------------------------
 
 export interface OrderRankRow {
   total: number | null;
   status: string | null;
-  created_by: string | null;
+  /** Cliente do pedido: a venda vai para o dono ATUAL da carteira elegível dele. */
+  customer_user_id: string | null;
 }
 interface RankingVendedor {
   id: string;
@@ -69,43 +70,63 @@ interface RankingVendedor {
 }
 export interface RankingResult {
   ranking: RankingVendedor[];
-  /** Pedidos válidos sem vendedor atribuído (created_by NULL ou não-vendedor). Conta no total, fora do ranking. */
+  /** Pedidos válidos de cliente com carteira ELEGÍVEL cujo dono não é vendedor (hoje: o master e o pool órfão). */
+  carteiraNaoVendedor: { receita: number; pedidos: number };
+  /** Pedidos válidos sem carteira elegível (cliente sem carteira, carteira inelegível, pedido sem cliente). */
   naoAtribuido: { receita: number; pedidos: number };
   /** Vendedores cadastrados sem nenhum pedido válido na janela. */
   semAtividade: number;
 }
 
 /**
- * Ranking de vendedores por receita de pedidos válidos, ATRIBUÍDO por `created_by`
- * (quem lançou o pedido). `vendedores` = Map<userId, nome> dos vendedores reais
- * (commercial_role farmer/hunter/closer). created_by fora desse set → bucket "não atribuído".
- * Ordena por receita desc. Não lista vendedor sem pedido (entra em `semAtividade`).
+ * Ranking de vendedores por receita de pedidos válidos, ATRIBUÍDO ao dono ATUAL da carteira ELEGÍVEL do
+ * cliente — a régua da positivação e da cadeia de comissão. O `created_by` não entra: na importada ele é
+ * carimbo técnico (o 1º staff do `profiles`), não quem vendeu.
+ * `donoPorCliente` = cliente → dono, SÓ `eligible`; `vendedores` = userId → nome (commercial_role
+ * farmer/hunter/closer). Os dois vão NOMEADOS: são do mesmo tipo, e trocá-los compilaria.
+ * Dono fora de `vendedores` → `carteiraNaoVendedor`; sem dono → `naoAtribuido`. Ordena por receita desc;
+ * vendedor sem pedido entra em `semAtividade`.
+ * Spec: docs/superpowers/specs/2026-10-06-ranking-atribuicao-por-carteira-design.md
  */
-export function montarRanking(orders: OrderRankRow[], vendedores: Map<string, string>): RankingResult {
+export function montarRanking(
+  orders: OrderRankRow[],
+  { donoPorCliente, vendedores }: { donoPorCliente: Map<string, string>; vendedores: Map<string, string> },
+): RankingResult {
   const acc = new Map<string, { receita: number; pedidos: number }>();
-  let naoR = 0;
-  let naoP = 0;
+  const carteiraNaoVendedor = { receita: 0, pedidos: 0 };
+  const naoAtribuido = { receita: 0, pedidos: 0 };
   for (const o of orders) {
     if (!isPedidoValido(o.status)) continue;
     const v = o.total ?? 0;
-    if (o.created_by && vendedores.has(o.created_by)) {
-      const cur = acc.get(o.created_by) ?? { receita: 0, pedidos: 0 };
+    const dono = o.customer_user_id ? donoPorCliente.get(o.customer_user_id) : undefined;
+    if (dono !== undefined && vendedores.has(dono)) {
+      const cur = acc.get(dono) ?? { receita: 0, pedidos: 0 };
       cur.receita += v;
       cur.pedidos += 1;
-      acc.set(o.created_by, cur);
-    } else {
-      naoR += v;
-      naoP += 1;
+      acc.set(dono, cur);
+      continue;
     }
+    const balde = dono === undefined ? naoAtribuido : carteiraNaoVendedor;
+    balde.receita += v;
+    balde.pedidos += 1;
   }
   const ranking = [...acc.entries()]
     .map(([id, a]) => ({ id, nome: vendedores.get(id) ?? 'Vendedor', receita: a.receita, pedidos: a.pedidos }))
     .sort((a, b) => b.receita - a.receita);
   return {
     ranking,
-    naoAtribuido: { receita: naoR, pedidos: naoP },
+    carteiraNaoVendedor,
+    naoAtribuido,
     semAtividade: vendedores.size - ranking.length,
   };
+}
+
+/**
+ * O card se esconde só quando NENHUM dos três destinos tem pedido: um mês só de carteira de não-vendedor
+ * (ex.: dia 1 com um pedido do pool órfão) é um mês COM venda e precisa aparecer.
+ */
+export function rankingSemPedido(r: RankingResult): boolean {
+  return r.ranking.length === 0 && r.carteiraNaoVendedor.pedidos === 0 && r.naoAtribuido.pedidos === 0;
 }
 
 /**

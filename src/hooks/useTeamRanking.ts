@@ -3,6 +3,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useCompany } from '@/contexts/CompanyContext';
 import { hojeSP, addDias, inicioMes } from '@/lib/dashboard/sp-date';
 import { fetchPedidosMTD } from '@/lib/dashboard/fetch-pedidos-mtd';
+import { fetchDonosCarteira } from '@/lib/dashboard/fetch-donos-carteira';
 import { montarRanking, type RankingResult } from '@/lib/dashboard/team-kpis';
 
 /** commercial_roles que vendem (donos de carteira) — mesma definição de useSalespeople. */
@@ -10,9 +11,12 @@ const ROLES_VENDEDOR = ['farmer', 'hunter', 'closer'] as const;
 
 /**
  * Ranking de vendedores do mês (MTD) pro dashboard Master, escopado na empresa do switcher.
- * Atribuição por `created_by` ∈ vendedores reais (commercial_role farmer/hunter/closer);
- * o resto vira bucket "não atribuído". Receita = pedidos válidos do Omie, paginada (não trunca).
- * Read-only; lança em erro (money honesto). Spec: docs/.../2026-06-04-master-visao-time-design.md
+ * Atribuição pelo DONO ATUAL da carteira ELEGÍVEL do cliente do pedido (a régua da positivação e da
+ * comissão). Dono que não é farmer/hunter/closer → "carteira de não-vendedor"; cliente sem carteira →
+ * "não atribuído". O `created_by` não entra: na importada é carimbo técnico do importador.
+ * Receita = pedidos válidos, paginada (não trunca). Read-only; pedidos e carteira LANÇAM em erro — o card
+ * mostra "Indisponível", nunca "Sem vendedor atribuído" por falha de leitura.
+ * Spec: docs/superpowers/specs/2026-10-06-ranking-atribuicao-por-carteira-design.md
  */
 export function useTeamRanking() {
   const { selection } = useCompany();
@@ -31,7 +35,10 @@ export function useTeamRanking() {
         .select('user_id, commercial_role')
         .in('commercial_role', ROLES_VENDEDOR);
       if (rErr) throw new Error(rErr.message);
-      const ids = [...new Set((roles ?? []).map((r) => r.user_id).filter(Boolean))];
+      // data nula sem error = malformada, não "nenhum vendedor": sem vendedores, toda venda com carteira
+      // iria para "Carteira de não-vendedor" — veredito falso no card (classe #1338→#1564).
+      if (roles == null) throw new Error('commercial_roles: data null sem error — malformada, não é fim');
+      const ids = [...new Set(roles.map((r) => r.user_id).filter(Boolean))];
 
       const nomes = new Map<string, string>();
       if (ids.length > 0) {
@@ -44,11 +51,13 @@ export function useTeamRanking() {
       const vendedores = new Map<string, string>();
       for (const id of ids) vendedores.set(id, nomes.get(id) ?? 'Sem nome');
 
-      // Pedidos MTD (paginado, lança em erro).
+      // Pedidos MTD (paginado, lança em erro) → dono da carteira de cada cliente (lança em erro).
       const orders = await fetchPedidosMTD(selection, mesInicio, amanha);
+      const clienteIds = orders.map((o) => o.customer_user_id).filter((id): id is string => id != null);
+      const donoPorCliente = await fetchDonosCarteira(clienteIds);
       return montarRanking(
-        orders.map((o) => ({ total: o.total, status: o.status, created_by: o.created_by })),
-        vendedores,
+        orders.map((o) => ({ total: o.total, status: o.status, customer_user_id: o.customer_user_id })),
+        { donoPorCliente, vendedores },
       );
     },
   });
