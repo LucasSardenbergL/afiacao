@@ -389,6 +389,27 @@ Nada disso afrouxa a regra: o adversarial de código continua não-pulável. O q
 bloqueio tem 4 dias menos do que eu anunciei, e que eu transformei um código de saída em prazo de
 calendário sem ler o ramo que o emitiu.
 
+### O desfecho do `exit 79`: a reserva não existia, e o erro era o mesmo de antes
+
+Autorizado a gastar a reserva, subi o teto e rodei. O wrapper releu o saldo e devolveu **100,0%** —
+não 89%. O 89% era leitura de ontem, de um rollout antigo; entre ontem e hoje o saldo virou em alguma
+das 14 sessões paralelas desta máquina. **Não havia reserva para gastar.**
+
+Então eu errei duas vezes seguidas, e a segunda é mais interessante que a primeira. A primeira foi ler
+`exit 79` como parede (corrigido acima — e aquela correção segue válida: o 79 é guard local, não 429).
+A segunda foi transformar o número que o 79 imprime em capacidade: *"89% usado, ~1,4 pp por consulta,
+cabem ~7"*. Esse número é um **piso** por desenho — o próprio sensor diz que piso é o lado certo de
+errar num guard. Piso não se divide.
+
+E é a mesma armadilha desta sessão inteira, pela terceira vez: **retrato datado lido como estado
+atual.** Foi o churn de reprocesso lido como corrosão (83→154 linhas); foi o pedido em voo que a
+guarda de 48h mantém fora da lista; e agora foi um saldo de ontem virando orçamento de hoje. O
+antídoto é o mesmo nos três: antes de transformar leitura em previsão, **re-medir** — aqui a releitura
+custava zero, bastava subir o teto, que é exatamente o que descobriu o 100%.
+
+Fato operacional: o adversarial de código **não roda antes de 09/10 19:30**. Não por política nossa
+agora, mas porque a janela está esgotada de verdade.
+
 ### A sequência, quando o parecer chegar
 
 ```bash
