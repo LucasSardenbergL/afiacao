@@ -99,11 +99,12 @@ describe('origem — a fatia FECHOU (o vigia do M-04 virou o invariante que ele 
     expect(ocorrencias).toEqual(['supabase/functions/omie-vendas-sync/index.ts']);
 
     // E que ela está mesmo no bloco de catálogo: o objeto vizinho carrega campos que só o
-    // cadastro de produto tem. Sem esta parte, o ratchet contaria certo e mediria errado.
+    // cadastro de produto tem (a imagem — o `quantidade_estoque` saiu do catálogo no PR-2 do
+    // estoque com dono único). Sem esta parte, o ratchet contaria certo e mediria errado.
     const src = fonte('supabase/functions/omie-vendas-sync/index.ts');
     const i = src.search(/prod\.valor_unitario\s*\|\|\s*0/);
     const vizinhanca = src.slice(Math.max(0, i - 500), i + 500);
-    expect(vizinhanca).toMatch(/quantidade_estoque/);
+    expect(vizinhanca).toMatch(/url_imagem/);
     expect(vizinhanca).not.toMatch(/hash_payload|sales_order_id/);
   });
 

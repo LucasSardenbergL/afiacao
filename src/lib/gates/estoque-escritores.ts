@@ -1,6 +1,7 @@
 // Detector do gate `estoque-escritores` (src/__tests__/estoque-escritores-gate.test.ts): o que uma fonte
-// de edge ESCREVE nos espelhos de estoque do Omie, se chama o zero confirmado e quantos zeros LITERAIS
-// de saldo/estoque ela carrega. Lê a fonte SEM comentários (escrita comentada não conta). Calibração:
+// de edge ESCREVE nos espelhos de estoque do Omie, se chama o zero confirmado, quantos zeros LITERAIS
+// de saldo/estoque ela carrega e quantas vezes cita o campo DEPRECATED `quantidade_estoque`. Lê a fonte
+// SEM comentários (escrita comentada não conta). Calibração:
 // src/lib/gates/__tests__/estoque-escritores.test.ts. Diário: docs/historico/estoque-dono-unico.md.
 import { removerComentarios } from '@/lib/gates/limpeza-fonte';
 
@@ -10,6 +11,7 @@ export interface AnaliseEscritor {
   tabelas: TabelaEstoque[];
   chamaZeroConfirmado: boolean;
   zerosLiterais: number;
+  camposDeprecados: number;
 }
 
 const escrita = (tabela: string) =>
@@ -21,6 +23,8 @@ const RE_CHAVE_ESTOQUE = /[{,]\s*estoque\s*:/;
 const RE_CHAMADA_ZERO = /\bzerarConfirmadosForaDaLista\s*\(/g;
 /** `saldo: 0` / `estoque: 0` em literal (de valor ou de tipo) — não 0.5, 0x1, 0n nem `|| 0`. */
 const RE_ZERO_LITERAL = /[{,]\s*(?:saldo|estoque)\s*:\s*0(?![\d.xXbBoOeE_n])/g;
+/** `quantidade_estoque` é "DEPRECATED." no Omie e chega PRESENTE como 0: qualquer leitura fabrica estoque. */
+const RE_CAMPO_DEPRECADO = /\bquantidade_estoque\b/g;
 
 export function analisarEscritorEstoque(fonte: string): AnaliseEscritor {
   const limpa = removerComentarios(fonte);
@@ -36,5 +40,6 @@ export function analisarEscritorEstoque(fonte: string): AnaliseEscritor {
     }
   }
   const zerosLiterais = [...limpa.matchAll(RE_ZERO_LITERAL)].length;
-  return { tabelas, chamaZeroConfirmado, zerosLiterais };
+  const camposDeprecados = [...limpa.matchAll(RE_CAMPO_DEPRECADO)].length;
+  return { tabelas, chamaZeroConfirmado, zerosLiterais, camposDeprecados };
 }
