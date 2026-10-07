@@ -342,35 +342,52 @@ applies, e é obrigatório.
 
 ### O par inteiro, EXECUTADO: `db/test-pedido-total-liquido-excecao.sh`
 
-Eu escrevi aqui que o apply 2 "não foi ensaiado, e não podia ser". A segunda metade era falsa: não
-podia **em produção** (o `--ensaio` faz ROLLBACK, então no ensaio a tabela nem existe e o pré-voo
-recusa — corretamente). Num PG17 local, com as migrations reais, os dois applies rodam na ordem e
-dá para olhar. **20 asserções, 0 falhas.**
+Eu escrevi aqui que o apply 2 "não foi ensaiado e não podia ser". A segunda metade era falsa: não
+podia **em produção** (o `--ensaio` faz ROLLBACK, então lá a tabela nem existe e o pré-voo recusa —
+corretamente). Num PG17 local, com as migrations reais, os dois applies rodam na ordem e dá para
+olhar. **21 asserções, 0 falhas.**
 
 O que só esta prova mostra, e o ensaio em prod não mostrava:
 
 | assert | o que afirma |
 |---|---|
-| A1 | o pré-voo do apply 2 recusa sem o apply 1, **no mesmo cluster** |
-| A9 | o corpo vivo passou a ler a tabela — a substituição programática produz código que **executa** |
+| A1 · A1b | o pré-voo do apply 2 recusa sem o apply 1 — e recusa **pelo motivo certo** |
+| A9 | o corpo vivo passou a ler a tabela: a substituição programática produz código que **executa** |
 | A10–A11 | reaplicar o apply 1 é idempotente (lista segue com 2, patch segue 1×) |
 | A12 | o destravamento é **nominal**: julho sai, junho fica preso pelo pedido em voo |
 | A14–A18 | o convertível virou líquido; os três excluídos seguem com **cabeçalho bruto** |
 | A19 | o sensor do cupom caiu **exatamente** o que foi escrito |
 | A20 | reaplicar o apply 2 **falha** em vez de escrever de novo |
 
-E `--falsificar`: **5 sabotagens, 5 vermelhas**, com o controle verde (20/0) na MESMA invocação.
+E `--falsificar`: **5 sabotagens, 5 vermelhas no assert DECLARADO**, com o controle verde (21/0) na
+MESMA invocação.
 
-- **F1** — guarda de 48h do passo 2 fora, **sozinha** (o `p.` casa só a linha que popula a lista; a
-  postcondição (c) usa `so.` e fica de pé) → **(c) pega**. Sabotar as duas de uma vez não provaria
-  nada, e foi o primeiro erro que eu cometi ao escrever este harness.
-- **F2** — âncora 2 adulterada → o patch **aborta** em vez de adivinhar onde aplicar.
-- **F3** — filtro da exceção neutralizado (`AND false`) → a postcondição (f) pega o gate ainda fechado.
-- **F4** — pré-voo da tabela cegado → pega o **segundo** cinto do mesmo pré-voo (o conversor não lê a
-  tabela). Duas verificações independentes, não uma repetida.
-- **F5** — guarda **e** verificador fora: o apply passa e o pedido em voo entra na lista. Não é teste
-  de dente, é a medida do que as duas camadas compram. É o dano que a lição desta sessão evita: um
-  pedido recuperável excluído para sempre, em silêncio.
+| sabotagem | assert que a acusa | o que pegou |
+|---|---|---|
+| `guarda48_fora` | A4 | `postcondicao (c)`: 1 exceção com pedido tocado nas últimas 48h |
+| `ancora_adulterada` | A4 | `patch: a ancora 2 nao aparece EXATAMENTE 1x no corpo vivo` |
+| `filtro_neutralizado` | A4 | `postcondicao (f)`: com 2 exceções o ensaio segue com 0 elegíveis |
+| `prevoo_tabela_cego` | A1b | o **segundo** cinto do pré-voo: o conversor não lê a tabela |
+| `duas_camadas_fora` | A6, A7 | **sem ERROR nenhum** — o apply passa e só os asserts pegam |
+
+A última linha é a que vale ler. Com a guarda de 48h **e** seu verificador fora, o apply **não
+reclama**: o pedido em voo entra na lista e é excluído para sempre, em silêncio. É o dano que a lição
+desta sessão (churn ≠ corrosão) evita, agora medido em vez de suposto. E a `guarda48_fora` sabota
+**uma camada por vez** — o passo 2 usa `p.updated_at <`, a postcondição (c) usa `so.updated_at >=`,
+âncoras distintas de propósito. Na primeira versão eu derrubei as duas juntas, que não prova nada.
+
+**Duas correções que o CI e o próprio harness me cobraram**, e as duas são da mesma família:
+
+1. O gate `falsificar-exige-assert-gate` (regra R3) reprovou minha primeira versão, com razão: o
+   veredito era `saída ≠ "ok"`, ou seja, **aceitava vermelho de qualquer causa** — PG que não sobe,
+   arquivo que falta, migration que muda. Vermelho de ambiente aprovaria a sabotagem. O idioma
+   `SABOTAGENS` do repo obriga a declarar *qual* assert tem de acusar cada sabotagem, e o laço confere
+   três coisas: controle verde antes, a sabotagem **aplicou** (marca `SABOTAGEM ativa:`), e o assert
+   declarado virou vermelho.
+2. O A1b nasceu vazio e passava calado: `APPLY_ERR` era setada dentro de `$(aplicar …)`, que é
+   **subshell** — variável de lá não volta ao pai. O erro agora vai para arquivo. Ausente lido como
+   vazio é a mesma armadilha de `ausente ≠ zero`, só que no shell.
+
 
 ### O bloqueio que eu reportei errado: `exit 79` não é a parede
 

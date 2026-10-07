@@ -6,20 +6,22 @@
 # ╚════════════════════════════════════════════════════════════════════════════════════════════╝
 # POR QUE ESTE HARNESS EXISTE (e não bastava o ensaio em produção):
 # o apply 2 (a conversão) NÃO PODE ser ensaiado em prod — `db:aplicar --ensaio` faz ROLLBACK, então
-# no ensaio a tabela de exceção nem existe e o pré-voo do apply 2 recusa (corretamente). A única
-# forma de ver o par inteiro rodar antes de valer dinheiro é aqui: PG17 local, migrations reais,
-# os dois .sql EXECUTADOS na ordem. PL/pgSQL é late-bound — CREATE passa, o erro mora no runtime.
+# no ensaio a tabela de exceção nem existe e o pré-voo recusa (corretamente). A única forma de ver o
+# par inteiro rodar antes de valer dinheiro é aqui: PG17 local, migrations reais, os dois .sql
+# EXECUTADOS na ordem. PL/pgSQL é late-bound — CREATE passa, o erro mora no runtime.
 #
-# O que este harness afirma, e o outro não podia:
-#   · o pré-voo do apply 2 RECUSA sem o apply 1 (prova negativa, dentro do mesmo cluster);
+# O que este harness afirma, e o ensaio em prod não podia:
+#   · o pré-voo do apply 2 RECUSA sem o apply 1, e recusa PELO MOTIVO CERTO (A1/A1b);
 #   · a substituição programática (pg_get_functiondef + replace ancorado) produz corpo que EXECUTA;
 #   · a guarda de 48h mantém o pedido EM VOO fora da lista — e o mês dele continua BLOQUEADO
-#     (fail-closed custa: é o lado certo de errar, e aqui o custo é VISÍVEL, não suposto);
+#     (fail-closed custa: é o lado certo de errar, e aqui o custo fica VISÍVEL, não suposto);
 #   · o apply 2 converte só o mês destravado, e nenhum excluído recebe número (`ausente ≠ zero`);
 #   · reaplicar o apply 1 é idempotente; reaplicar o apply 2 FALHA em vez de escrever de novo.
 #
-# `--falsificar` sabota cópias em $TMPD (NUNCA os .sql de db/) e exige VERMELHO em cada item, com o
-# CONTROLE verde na MESMA invocação — sempre-vermelha aprova tudo, e aí a suíte não teria dente.
+# `--falsificar` usa o idioma SABOTAGENS: cada entrada DECLARA o assert que tem de acusá-la, o laço
+# re-invoca a suíte INTEIRA com `SABOTAGEM=<nome>` e só conta a rodada se (a) o controle ficou verde
+# ANTES, (b) a sabotagem APLICOU de verdade (a marca `SABOTAGEM ativa:`) e (c) o assert DECLARADO
+# virou vermelho. Veredito por exit code aceitaria vermelho de ambiente — e aí a suíte aprova tudo.
 set -euo pipefail
 
 MODO="normal"
@@ -32,7 +34,58 @@ esac
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export PGVER=17
 PORT="${PGPORT_TEST:-5489}"
+SABOTAGEM="${SABOTAGEM:-}"
 SLUG="pedido-total-liquido-excecao"
+
+# ════════════════════════════════════ modo --falsificar ══════════════════════════════════════
+# A3 fica de fora das declarações de propósito: é o sensor do cupom ANTES de qualquer apply, e
+# nenhuma sabotagem dos applies pode movê-lo. Declarar A3 seria declarar o que não depende delas.
+if [ "$MODO" = "falsificar" ]; then
+  SABOTAGENS="guarda48_fora:A4
+              ancora_adulterada:A4
+              filtro_neutralizado:A4
+              prevoo_tabela_cego:A1b
+              duas_camadas_fora:A6,A7"
+  LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-${SLUG}.XXXXXX")"
+  porta=$PORT
+
+  echo "══ CONTROLE (sem sabotagem) — tem de ficar VERDE ══"
+  if PGPORT_TEST=$porta SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
+    echo "  ✅ controle VERDE ($(grep -c ' OK — ' "$LOGDIR/controle.log" || true) asserts) — a suíte sabe passar"
+  else
+    echo "  ❌ CONTROLE VERMELHO — abortando ANTES de sabotar: sempre-vermelha aprova qualquer sabotagem"
+    tail -25 "$LOGDIR/controle.log"; exit 1
+  fi
+
+  falhas=0
+  for item in $SABOTAGENS; do
+    sab="${item%%:*}"; verm="${item#*:}"
+    porta=$((porta + 1)); log="$LOGDIR/$sab.log"
+    if PGPORT_TEST=$porta SABOTAGEM="$sab" bash "$0" > "$log" 2>&1; then
+      echo "  ❌ $sab — suíte VERDE com a sabotagem ativa: o assert NÃO tem dente"; falhas=$((falhas+1)); continue
+    fi
+    if ! grep -q "SABOTAGEM ativa: $sab\$" "$log"; then
+      echo "  ❌ $sab — vermelha, mas a sabotagem NÃO aplicou: quebrou outra coisa"
+      grep -E 'FALHOU|ERROR' "$log" | head -3 | sed 's/^/       /'; falhas=$((falhas+1)); continue
+    fi
+    faltou=""
+    for x in ${verm//,/ }; do grep -Eq "❌ ${x} " "$log" || faltou="$faltou $x"; done
+    if [ -z "$faltou" ]; then
+      echo "  ✅ $sab — vermelha em [$verm]: $(grep -m1 -oE 'ERROR:.{0,80}' "$log" || echo 'sem ERROR (assert puro)')"
+    else
+      echo "  ❌ $sab — devia ficar vermelha em:$faltou"; falhas=$((falhas+1))
+    fi
+  done
+  total="$(wc -w <<<"$SABOTAGENS" | tr -d ' ')"
+  echo "SABOTAGENS: $((total - falhas)) vermelhas / $falhas falhas"
+  if [ "$falhas" -eq 0 ]; then
+    echo "═══ falsificação OK: controle verde + $total sabotagens no assert DECLARADO ═══"
+    rm -rf "$LOGDIR"; exit 0
+  fi
+  echo "═══ FALSIFICAÇÃO FALHOU: $falhas ═══"; exit 1
+fi
+
+# ═════════════════════════════════════ a suíte ═══════════════════════════════════════════════
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
 export LC_ALL=C LANG=C
 
@@ -54,20 +107,46 @@ DBF="$REPO_ROOT/db/aplicar-pedido-total-liquido-rpc.sql"
 A1_SRC="$REPO_ROOT/db/2026-10-05-pedido-total-liquido-excecao.sql"
 A2_SRC="$REPO_ROOT/db/2026-10-05-pedido-total-liquido-converter-acervo.sql"
 for f in "$MIG1" "$MIG2" "$COER" "$DBF" "$A1_SRC" "$A2_SRC"; do
-  if [ -z "$f" ] || [ ! -f "$f" ]; then
-    echo "FALTA ARQUIVO [$f] — o harness testaria o NADA"; exit 1
-  fi
+  if [ -z "$f" ] || [ ! -f "$f" ]; then echo "FALTA ARQUIVO [$f] — o harness testaria o NADA"; exit 1; fi
 done
+
+# ── A sabotagem, quando houver: cópia em $TMPD, NUNCA os .sql de db/ ─────────────────────────
+# Cada `sed` é conferido com `cmp`: âncora que morreu deixaria a rodada VERDE por não sabotar nada,
+# e o laço leria isso como "o assert não tem dente" — vermelho pelo motivo errado.
+A1="$A1_SRC"; A2="$A2_SRC"
+sabotar() {   # sabotar <destino> <fonte> <sed...>
+  local dst="$1" src="$2"; shift 2
+  sed "$@" "$src" > "$dst"
+  if cmp -s "$src" "$dst"; then echo "SABOTAGEM INERTE: o sed não mudou nada em $src"; exit 1; fi
+}
+# O passo 2 do apply 1 usa `p.updated_at <`; a postcondição (c) usa `so.updated_at >=`. São âncoras
+# distintas DE PROPÓSITO: dá para derrubar a guarda sem tocar seu verificador, que é o único jeito de
+# saber qual camada pega o quê (money-path.md: sabote UMA por vez; a que fica verde é redundante).
+S_GUARDA=(-e "s/p\.updated_at < now() - interval '48 hours'/p.updated_at < now() - interval '0 hours'/")
+S_VERIF=(-e "s/so\.updated_at >= now() - interval '48 hours'/so.updated_at >= now() + interval '1 hour'/")
+case "$SABOTAGEM" in
+  "") ;;
+  guarda48_fora)       sabotar "$TMPD/a1.sql" "$A1_SRC" "${S_GUARDA[@]}"; A1="$TMPD/a1.sql" ;;
+  duas_camadas_fora)   sabotar "$TMPD/a1.sql" "$A1_SRC" "${S_GUARDA[@]}" "${S_VERIF[@]}"; A1="$TMPD/a1.sql" ;;
+  ancora_adulterada)   sabotar "$TMPD/a1.sql" "$A1_SRC" \
+                         -e "s/WITH c AS MATERIALIZED (/WITH c AS MATERIALIZED ( --x/"; A1="$TMPD/a1.sql" ;;
+  filtro_neutralizado) sabotar "$TMPD/a1.sql" "$A1_SRC" \
+                         -e "s/WHERE x.sales_order_id = z.sales_order_id/WHERE x.sales_order_id = z.sales_order_id AND false/"
+                       A1="$TMPD/a1.sql" ;;
+  prevoo_tabela_cego)  sabotar "$TMPD/a2.sql" "$A2_SRC" \
+                         -e "s/to_regclass('public.pedido_total_liquido_excecao') IS NULL/false/"; A2="$TMPD/a2.sql" ;;
+  *) echo "SABOTAGEM desconhecida: $SABOTAGEM"; exit 2 ;;
+esac
+[ -z "$SABOTAGEM" ] || echo "SABOTAGEM ativa: $SABOTAGEM"
 
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "$TMPD/pg.log" -w start >/dev/null
 
 PASS=0; FAIL=0
-ok()  { PASS=$((PASS+1)); echo "  OK   $1"; }
-bad() { FAIL=$((FAIL+1)); echo "  FAIL $1"; }
-eq()  { if [ "$2" = "$3" ]; then ok "$1 [$2]"; else bad "$1 — esperado [$3], veio [$2]"; fi; }
-# `vermelho` é o assert do modo --falsificar: passa quando a sabotagem QUEBRA algo.
-vermelho() { if [ "$2" != "ok" ]; then ok "$1 (sabotagem pegou: $2)"; else bad "$1 — a sabotagem ficou VERDE: o assert não tem dente"; fi; }
+ok()  { PASS=$((PASS+1)); printf '  ✅ %s\n' "$1"; }
+nok() { FAIL=$((FAIL+1)); printf '  ❌ %s\n' "$1"; }
+# asserta <id> <esperado> <obtido> <descrição>
+asserta() { if [ "$2" = "$3" ]; then ok "$1 OK — $4"; else nok "$1 FALHOU — $4: esperado '$2', obtido '$3'"; fi; }
 
 SCHEMA="$TMPD/schema.sql"
 cat > "$SCHEMA" <<'SQL'
@@ -103,7 +182,6 @@ CREATE TRIGGER update_sales_orders_updated_at BEFORE UPDATE ON public.sales_orde
   FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 SQL
 
-# ── As fixtures. Dois meses, e o eixo de cada pedido no comentário ───────────────────────────
 FIXT="$TMPD/fixtures.sql"
 cat > "$FIXT" <<'SQL'
 CREATE OR REPLACE FUNCTION public.t_pedido(
@@ -142,28 +220,32 @@ SELECT public.t_pedido('00000000-0000-0000-0000-00000000c0d5', 'oben', '2026-06-
   '[{"sku":2002,"q":1,"p":30}]', now() - interval '1 hour');   -- EM VOO: churn de reprocesso
 SQL
 
-# ── sobe o banco do zero (usado 2×: controle e sabotagem) ────────────────────────────────────
-semear() {
-  "$PGBIN/dropdb"   -p "$PORT" -h /tmp -U postgres --if-exists prove
-  "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
-  P -q -f "$REPO_ROOT/db/stubs-supabase.sql"
-  P -q -f "$SCHEMA"
-  P -q -f "$COER"
-  P -q -f "$MIG1"
-  P -q -f "$MIG2"
-  P -q -1 -f "$DBF"
-  P -q -f "$FIXT"
-}
 P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }
 
-# Roda um apply como o envelope roda: UMA transação (-1) e marcador positivo de fim.
-# Ecoa "ok" ou a 1ª linha de ERROR — o veredito é o marcador no banco+saída, nunca só o rc.
+"$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
+P -q -f "$REPO_ROOT/db/stubs-supabase.sql"
+P -q -f "$SCHEMA"
+P -q -f "$COER"
+P -q -f "$MIG1"
+P -q -f "$MIG2"
+P -q -1 -f "$DBF"
+P -q -f "$FIXT"
+echo "=== setup pronto (PG17 :$PORT) ==="
+
+# Roda um apply como o envelope roda: UMA transação (-1) e marcador positivo de fim. Ecoa "ok", ou a
+# 1ª linha de ERROR — o veredito é o MARCADOR, nunca o exit (o `-1` sai 0 com ERROR em alguns casos).
+# O ERROR vai para ARQUIVO, não para variável: todo chamador usa `$(aplicar …)`, que é SUBSHELL —
+# variável setada lá dentro não volta, e o A1b lia vazio em silêncio (medido, 2026-10-06).
+APPLY_ERR_F="$TMPD/apply.err"
+: > "$APPLY_ERR_F"
 aplicar() {
-  local sql="$1" out="$TMPD/apply.out" rc=0
+  local sql="$1" out="$TMPD/apply.out" rc=0 err=""
+  : > "$APPLY_ERR_F"
   P -1 -f "$sql" > "$out" 2>&1 || rc=$?
   if [ "$rc" -eq 0 ] && grep -q 'FIM_APLICACAO_OK' "$out"; then echo "ok"; return 0; fi
-  local err; err="$(grep -m1 -o 'ERROR:.*' "$out" || true)"
+  err="$(grep -m1 -o 'ERROR:.*' "$out" || true)"
+  printf '%s' "$err" > "$APPLY_ERR_F"
   if [ -n "$err" ]; then printf '%s\n' "$err" | cut -c1-150
   else echo "rc=$rc sem ERROR e sem marcador — o apply saiu 0 calado"; fi
   return 1
@@ -179,128 +261,68 @@ sensor() {
 }
 elegiveis() {
   Pq -c "SELECT (public.pedido_total_liquido_converter(false, '2026-09-14 20:09:13+00', NULL,
-                   '2025-09-01', '2026-10-01')->>'elegiveis')::int;"
+                   '2025-09-01', '2026-10-01')->>'elegiveis')::int;" 2>/dev/null || echo "erro"
 }
 total_de() { Pq -c "SELECT round(total,2)::text FROM public.sales_orders WHERE id = '$1';"; }
-
-semear
-echo "=== setup pronto (PG17 :$PORT) ==="
-
-suite_normal() {
-  echo "── A prova negativa: o apply 2 sem o apply 1 ──"
-  local r; r="$(aplicar "$A2" || true)"
-  if [ "$r" = "ok" ]; then bad "A1 pré-voo do apply 2 DEIXOU passar sem a tabela de exceção"
-  else ok "A1 pré-voo do apply 2 recusa sem o apply 1 ($(printf '%s' "$r" | cut -c1-72)…)"; fi
-
-  echo "── O estado ANTES: o gate prende os dois meses ──"
-  eq "A2 elegíveis antes do apply 1" "$(elegiveis)" "0"
-  eq "A3 sensor do cupom antes" "$(sensor)" "3"
-
-  echo "── Apply 1: instala a exceção e patcheia o conversor ──"
-  eq "A4 apply 1 roda inteiro" "$(aplicar "$A1" || true)" "ok"
-  eq "A5 RLS ligada na tabela de exceção" \
-     "$(Pq -c "SELECT relrowsecurity FROM pg_class WHERE oid='public.pedido_total_liquido_excecao'::regclass;")" "t"
-  eq "A6 a lista tem exatamente os 2 bloqueadores PARADOS" \
-     "$(Pq -c "SELECT count(*) FROM public.pedido_total_liquido_excecao;")" "2"
-  eq "A7 a guarda de 48h deixou o pedido EM VOO FORA da lista" \
-     "$(Pq -c "SELECT count(*) FROM public.pedido_total_liquido_excecao
-                WHERE sales_order_id='00000000-0000-0000-0000-00000000c0d5';")" "0"
-  eq "A8 motivos classificados por medição local" \
-     "$(Pq -c "SELECT string_agg(motivo, ',' ORDER BY motivo) FROM public.pedido_total_liquido_excecao;")" \
-     "apuracao_parcial,sem_apuracao"
-  eq "A9 o corpo vivo passou a ler a tabela (patch pegou, 1×)" \
-     "$(Pq -c "SELECT (length(d)-length(replace(d,'pedido_total_liquido_excecao x',''))) /
-                      length('pedido_total_liquido_excecao x')
-                 FROM pg_get_functiondef('public.pedido_total_liquido_converter(boolean,timestamptz,text[],date,date,integer,boolean)'::regprocedure) d;")" "1"
-
-  echo "── Idempotência: reaplicar o apply 1 não duplica nada ──"
-  eq "A10 apply 1 de novo roda" "$(aplicar "$A1" || true)" "ok"
-  eq "A11 a lista segue com 2" "$(Pq -c "SELECT count(*) FROM public.pedido_total_liquido_excecao;")" "2"
-
-  echo "── O destravamento é NOMINAL: julho sai, junho fica ──"
-  eq "A12 elegíveis depois do apply 1 (só o convertível de julho)" "$(elegiveis)" "1"
-
-  echo "── Apply 2: a conversão ──"
-  eq "A13 apply 2 roda inteiro" "$(aplicar "$A2" || true)" "ok"
-  eq "A14 p1 convertido para o líquido" "$(total_de '00000000-0000-0000-0000-00000000c0d1')" "90.00"
-  eq "A15 p4 intacto — junho segue preso pelo pedido em voo" \
-     "$(total_de '00000000-0000-0000-0000-00000000c0d4')" "200.00"
-  eq "A16 p2 excluído segue com cabeçalho BRUTO (ausente != zero)" \
-     "$(total_de '00000000-0000-0000-0000-00000000c0d2')" "50.00"
-  eq "A17 p3 excluído segue com cabeçalho BRUTO" \
-     "$(total_de '00000000-0000-0000-0000-00000000c0d3')" "100.00"
-  eq "A18 p5 em voo intocado" "$(total_de '00000000-0000-0000-0000-00000000c0d5')" "30.00"
-  eq "A19 o sensor do cupom caiu exatamente 1" "$(sensor)" "2"
-
-  echo "── Reaplicar o apply 2 FALHA em vez de escrever de novo ──"
-  local r2; r2="$(aplicar "$A2" || true)"
-  if [ "$r2" = "ok" ]; then bad "A20 apply 2 rodou DUAS vezes e não reclamou — dupla escrita silenciosa"
-  else ok "A20 apply 2 recusa a 2ª passada ($(printf '%s' "$r2" | cut -c1-60)…)"; fi
+na_lista() {
+  Pq -c "SELECT count(*) FROM public.pedido_total_liquido_excecao WHERE sales_order_id = '$1';" \
+    2>/dev/null || echo "erro"
 }
 
-A1="$A1_SRC"; A2="$A2_SRC"
+echo "── A prova negativa: o apply 2 sem o apply 1 ──"
+r="$(aplicar "$A2" || true)"
+if [ "$r" = "ok" ]; then nok "A1 FALHOU — o pré-voo do apply 2 deixou passar sem a tabela de exceção"
+else ok "A1 OK — o apply 2 recusa sem o apply 1"; fi
+# A1b: a recusa tem de vir do pré-voo da TABELA, não de outro ramo. Sem casar a MARCA, cegar o 1º
+# cinto do pré-voo passaria invisível — o 2º cinto recusaria igual e a suíte ficaria verde.
+case "$(cat "$APPLY_ERR_F")" in
+  *"a tabela pedido_total_liquido_excecao NAO existe"*) ok "A1b OK — a recusa é do pré-voo da TABELA" ;;
+  *) nok "A1b FALHOU — a recusa não é do pré-voo da tabela: [$(cut -c1-90 "$APPLY_ERR_F")]" ;;
+esac
 
-if [ "$MODO" = "normal" ]; then
-  suite_normal
-else
-  echo "=== modo --falsificar: o CONTROLE primeiro, senão a suíte aprova tudo ==="
-  CTRL_PASS=0; CTRL_FAIL=0
-  suite_normal
-  CTRL_PASS=$PASS; CTRL_FAIL=$FAIL
-  echo "--- controle: $CTRL_PASS ok / $CTRL_FAIL fail ---"
-  if [ "$CTRL_FAIL" -ne 0 ]; then
-    echo "ABORTANDO antes da 1ª sabotagem: o controle já está VERMELHO ($CTRL_FAIL) — sabotar daqui"
-    echo "prova nada, porque sempre-vermelha aprova qualquer sabotagem."
-    exit 1
-  fi
-  PASS=0; FAIL=0; VERM=0
+echo "── O estado ANTES: o gate prende os dois meses ──"
+asserta A2 "0" "$(elegiveis)" "elegíveis antes do apply 1"
+asserta A3 "3" "$(sensor)"    "sensor do cupom antes (os 2 convertíveis + o parcial)"
 
-  # F1 — a guarda de 48h do passo 2, SOZINHA (o `p.` casa só a linha que popula a lista; a
-  #      postcondição (c) usa `so.` e fica de pé). Sabotar as duas de uma vez não provaria nada.
-  sed "s/p\.updated_at < now() - interval '48 hours'/p.updated_at < now() - interval '0 hours'/" \
-    "$A1_SRC" > "$TMPD/f1.sql"
-  cmp -s "$A1_SRC" "$TMPD/f1.sql" && { echo "F1 não sabotou nada (âncora morta)"; exit 1; }
-  semear; A1="$TMPD/f1.sql"
-  vermelho "F1 guarda de 48h removida" "$(aplicar "$A1" || true)"; VERM=$((VERM+1))
+echo "── Apply 1: instala a exceção e patcheia o conversor ──"
+asserta A4 "ok" "$(aplicar "$A1" || true)" "o apply 1 roda inteiro e deixa o marcador"
+asserta A5 "t" "$(Pq -c "SELECT relrowsecurity FROM pg_class
+                          WHERE oid='public.pedido_total_liquido_excecao'::regclass;" 2>/dev/null || echo erro)" \
+  "RLS ligada na tabela de exceção"
+asserta A6 "2" "$(Pq -c "SELECT count(*) FROM public.pedido_total_liquido_excecao;" 2>/dev/null || echo erro)" \
+  "a lista tem exatamente os 2 bloqueadores PARADOS"
+asserta A7 "0" "$(na_lista '00000000-0000-0000-0000-00000000c0d5')" \
+  "a guarda de 48h deixou o pedido EM VOO fora da lista"
+asserta A8 "apuracao_parcial,sem_apuracao" \
+  "$(Pq -c "SELECT string_agg(motivo, ',' ORDER BY motivo) FROM public.pedido_total_liquido_excecao;" \
+      2>/dev/null || echo erro)" "motivos classificados por medição local"
+asserta A9 "1" "$(Pq -c "SELECT (length(d)-length(replace(d,'pedido_total_liquido_excecao x',''))) /
+                                length('pedido_total_liquido_excecao x')
+                           FROM pg_get_functiondef('public.pedido_total_liquido_converter(boolean,timestamptz,text[],date,date,integer,boolean)'::regprocedure) d;" \
+                   2>/dev/null || echo erro)" "o corpo vivo passou a ler a tabela (o patch pegou, 1×)"
 
-  # F2 — a âncora do patch: se ela não casa exatamente 1×, o apply tem de ABORTAR, não adivinhar.
-  sed "s/WITH c AS MATERIALIZED (/WITH c AS MATERIALIZED ( -- bagunçado/" "$A1_SRC" > "$TMPD/f2.sql"
-  cmp -s "$A1_SRC" "$TMPD/f2.sql" && { echo "F2 não sabotou nada (âncora morta)"; exit 1; }
-  semear; A1="$TMPD/f2.sql"
-  vermelho "F2 âncora 2 adulterada" "$(aplicar "$A1" || true)"; VERM=$((VERM+1))
+echo "── Idempotência: reaplicar o apply 1 não duplica nada ──"
+asserta A10 "ok" "$(aplicar "$A1" || true)" "o apply 1 roda de novo"
+asserta A11 "2" "$(Pq -c "SELECT count(*) FROM public.pedido_total_liquido_excecao;" 2>/dev/null || echo erro)" \
+  "a lista segue com 2 depois da 2ª passada"
 
-  # F3 — o filtro do patch: se o NOT EXISTS não exclui ninguém, (f) tem de pegar o gate ainda fechado.
-  sed "s/WHERE x.sales_order_id = z.sales_order_id/WHERE x.sales_order_id = z.sales_order_id AND false/" \
-    "$A1_SRC" > "$TMPD/f3.sql"
-  cmp -s "$A1_SRC" "$TMPD/f3.sql" && { echo "F3 não sabotou nada (âncora morta)"; exit 1; }
-  semear; A1="$TMPD/f3.sql"
-  vermelho "F3 filtro da exceção neutralizado" "$(aplicar "$A1" || true)"; VERM=$((VERM+1))
+echo "── O destravamento é NOMINAL: julho sai, junho fica ──"
+asserta A12 "1" "$(elegiveis)" "elegíveis depois do apply 1 (só o convertível de julho)"
 
-  # F4 — o pré-voo do apply 2: sem ele, a postcondição `escritos > 0` é o segundo cinto.
-  sed "s/to_regclass('public.pedido_total_liquido_excecao') IS NULL/false/" "$A2_SRC" > "$TMPD/f4.sql"
-  cmp -s "$A2_SRC" "$TMPD/f4.sql" && { echo "F4 não sabotou nada (âncora morta)"; exit 1; }
-  semear; A1="$A1_SRC"; A2="$TMPD/f4.sql"
-  vermelho "F4 pré-voo do apply 2 cego, sem o apply 1" "$(aplicar "$A2" || true)"; VERM=$((VERM+1))
+echo "── Apply 2: a conversão ──"
+asserta A13 "ok" "$(aplicar "$A2" || true)" "o apply 2 roda inteiro e deixa o marcador"
+asserta A14 "90.00"  "$(total_de '00000000-0000-0000-0000-00000000c0d1')" "o convertível virou LÍQUIDO"
+asserta A15 "200.00" "$(total_de '00000000-0000-0000-0000-00000000c0d4')" "junho intacto — segue preso pelo em voo"
+asserta A16 "50.00"  "$(total_de '00000000-0000-0000-0000-00000000c0d2')" "excluído segue com cabeçalho BRUTO (ausente != zero)"
+asserta A17 "100.00" "$(total_de '00000000-0000-0000-0000-00000000c0d3')" "excluído parcial segue com cabeçalho BRUTO"
+asserta A18 "30.00"  "$(total_de '00000000-0000-0000-0000-00000000c0d5')" "o pedido em voo ficou intocado"
+asserta A19 "2" "$(sensor)" "o sensor do cupom caiu exatamente 1 (3 -> 2)"
 
-  # F5 — guarda E verificador fora: o apply PASSA e o pedido em voo entra na lista. Isto não é
-  #      teste de dente, é a medição do que as duas camadas juntas compram: sem elas, um pedido
-  #      recuperável é excluído para sempre, em silêncio, e nada no apply reclama.
-  sed -e "s/p\.updated_at < now() - interval '48 hours'/p.updated_at < now() - interval '0 hours'/" \
-      -e "s/so\.updated_at >= now() - interval '48 hours'/so.updated_at >= now() + interval '1 hour'/" \
-      "$A1_SRC" > "$TMPD/f5.sql"
-  semear; A1="$TMPD/f5.sql"; A2="$A2_SRC"
-  if [ "$(aplicar "$A1" || true)" = "ok" ]; then
-    eq "F5 sem as DUAS camadas o pedido EM VOO é excluído em silêncio" \
-       "$(Pq -c "SELECT count(*) FROM public.pedido_total_liquido_excecao
-                  WHERE sales_order_id='00000000-0000-0000-0000-00000000c0d5';")" "1"
-  else
-    bad "F5 o apply abortou — então alguma TERCEIRA camada pega, e eu não sei qual"
-  fi
-  VERM=$((VERM+1))
-
-  echo "SABOTAGENS: $PASS vermelhas / $FAIL falhas (de $VERM)"
-fi
+echo "── Reaplicar o apply 2 FALHA em vez de escrever de novo ──"
+r2="$(aplicar "$A2" || true)"
+if [ "$r2" = "ok" ]; then nok "A20 FALHOU — o apply 2 rodou 2× sem reclamar: dupla escrita silenciosa"
+else ok "A20 OK — o apply 2 recusa a 2ª passada"; fi
 
 echo "═══ $PASS ok / $FAIL fail ═══"
-[ "$FAIL" -eq 0 ] && echo "FIM_PROVA_OK"
-exit $(( FAIL > 0 ? 1 : 0 ))
+if [ "$FAIL" -eq 0 ]; then echo "FIM_PROVA_OK"; exit 0; fi
+exit 1
