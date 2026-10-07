@@ -162,7 +162,7 @@ janela de 30 dias (17 no dia 05/10, caindo conforme expiram) e `requisicoes_omie
 cobertura de NF-e segue completa. **E 1 NF-e nova acompanhada até os itens gravados**, porque 45/45
 com zero pendente não exercita o caminho de gravação.
 
-## 9. Desfecho — o deploy e a prova (2026-10-05/06)
+## 9. Desfecho — o deploy e a prova (2026-10-05/07)
 
 1. **Merge (#2798).** Squash às 18:47:25 UTC (`e80fe16ec`). Antes do deploy, a `main` foi conferida:
    o artefato estava presente (`separarCtes(pendentesBrutos)` e a `VERSAO` v1.3), e nenhum commit
@@ -186,8 +186,37 @@ com zero pendente não exercita o caminho de gravação.
      (0 na janela de 3 dias).
    - O baseline dos CT-e ficou **idêntico** às 00:36:05.
    - O `pendencias:deploy` deu `CONFERE` via eco, com 0 pendentes.
-7. **Ainda a medir** (as queries estão no §8, com `:deploy` = `2026-10-05 23:41+00`):
-   - o diário das 07:00 UTC de 06/10, o 1º com a janela de 30 dias. Esperado: `ctes_fora_da_fila` =
-     **17** (mais algum CT-e novo), nenhuma consulta a CT-e, baseline idêntico e cobertura 55
-     completa;
-   - 1 NF-e nova acompanhada até os itens gravados.
+7. **Revalidação — ✅ (psql-ro, 2026-10-07 01:46 UTC).** Foram 15 runs depois do deploy, todos
+   `complete`. Usei as queries do §8 com `:deploy` = `2026-10-05 23:41+00`, o ledger
+   `deploy_atestacoes` e o recorte por bundle descrito abaixo.
+   - **Quem serviu.** A v1.3 isolada serviu só o tick das 00:35 de 06/10 (1 eco no ledger). Às 01:34
+     entrou a `v1.4-pendencia-por-item` (#2801, de outra sessão), com 14 ecos até 00:35 de 07/10. Ela
+     carrega o MESMO corte: `separarCtes(pendentesBrutos)` antes do backoff. O diário de 06/10 rodou
+     na v1.4: o `results` dele traz `fila_incompleta`, chave que só existe no código da v1.4. O que se
+     mediu, portanto, é o corte da v1.3 dentro do bundle da v1.4.
+   - **Diário das 07:00:35 de 06/10 (dias=30).** `ctes_fora_da_fila` deu **18**. É o esperado pela
+     regra da edge com o que existia às 07:00: os 17 de 05/10 mais 1 CT-e que entrou no rastreio às
+     02:15. Os outros números: `fila_pendente` 1, `consultas_detalhadas` 1, `requisicoes_omie` **1**,
+     8,5s. A única consulta foi uma NF-e modelo 55 (000951497, Renner Sayerlack), que fechou
+     `ok_com_itens` com 3 itens. Nenhum dos 18 CT-e custou consulta.
+   - **CT-e intocados.** Nenhuma linha de controle modelo 57 tem `ultima_tentativa` depois do deploy.
+     O baseline ficou **idêntico** 26h depois: 81 linhas, Σ 454, max 2026-10-05 07:00:40.592,
+     impressão `afe4f263f244afa8718f30dd38343f4d`.
+   - **Ticks de 2h (dias=3).** `ctes_fora_da_fila` subiu de 0 a 2 à medida que 2 CT-e entraram no
+     rastreio (02:15 e 18:15 de 06/10). Nenhum dos dois foi consultado.
+   - **NF-e nova até os itens.** A 000116856 (Francimar) entrou no rastreio às 14:15:35 de 06/10. O
+     tick das 14:35 a consultou (`fila_pendente` 1, `requisicoes_omie` 1) e gravou 1 item às 14:35:11
+     (`ok_com_itens`): 20 minutos de ponta a ponta.
+   - **Cobertura 55 na janela de 30 dias: 50 de 51.** A que falta é a 000954162 (Renner Sayerlack),
+     que entrou às 00:15:38 de 07/10, 1h30 antes da medição. Está na fila pela regra da v1.4 (1 item
+     "aguardando associação"). Não é CT-e nem lacuna do corte. O `sku_leadtime_history` OBEN teve 71
+     linhas atualizadas em 7 dias.
+8. **Parte B no ar.** A `omie-sync-nfes-recebidas` `v1.4-cte-fora-do-rastreio` tem eco desde 20:37
+   de 06/10, e a `omie-sync-ctes-recebidos` `v1.2` desde 19:54. O CT-e das 18:15 ainda entrou pela
+   v1.3 da edge de NF-e. Desde a parte B, nenhum CT-e entrou no rastreio em 3 ciclos. É pouco para
+   concluir (em 06/10, antes dela, entraram 2), e essa revalidação é da
+   [cte-fora-do-rastreio.md](cte-fora-do-rastreio.md). Hoje há 19 CT-e pendentes na janela de 30
+   dias (os 18 do diário mais o das 18:15), e o `t2` mais novo é 2026-10-06 03:00 UTC. Se a fonte
+   segurar e as 135 linhas ficarem como estão (§7), o `ctes_fora_da_fila` cai a 0 à medida que esses
+   CT-e saem da janela. No tick de 2h isso acontece a partir de 2026-10-09 03:00 UTC; no diário, a
+   partir de 2026-11-05 03:00 UTC. A medição é a query do diário no §8.
