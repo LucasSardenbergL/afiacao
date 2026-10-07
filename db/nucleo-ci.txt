@@ -105,6 +105,14 @@ db/test-desconto-valor-escritores.sh      123
 # db:aplicar tem de instalar a mesma coisa. O `--falsificar` (18 sabotagens, uma camada por vez,
 # depois de linha de base verde na mesma invocação) roda aqui.
 db/test-pedido-total-liquido-acervo.sh     68  falsificar=18
+# A exclusão NOMINAL que destrava o gate de mês completo: os DOIS applies de `db/` EXECUTADOS na
+# ordem (o apply 2 não pode ser ensaiado em prod — `db:aplicar --ensaio` faz ROLLBACK, então lá a
+# tabela nem existe e o pré-voo recusa, corretamente). Prova o corpo PATCHADO rodando (a substituição
+# é programática, via pg_get_functiondef — e PL/pgSQL é late-bound), a idempotência de reaplicar, e
+# que o destravamento é NOMINAL: o mês com bloqueador EM VOO continua preso. O `--falsificar` sabota
+# uma camada por vez (a guarda de 48h do passo 2 sem tocar seu verificador) e inclui F5, que mede o
+# DANO quando as duas camadas caem juntas: o pedido em voo é excluído para sempre, em silêncio.
+db/test-pedido-total-liquido-excecao.sh    21  falsificar=5
 # Tintométrico: preço que não se apura é NULL, nunca R$ 0,00 — base zerada ou inativa, corante sem
 # custo (singular e batch); o recálculo NULL PRESERVA o preço vigente em vez de zerá-lo (~19k pisos
 # no flip); a canônica mantém o piso NULL-preserving; e o gate de submit BLOQUEIA preço obsoleto,

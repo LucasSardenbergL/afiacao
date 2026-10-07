@@ -218,7 +218,7 @@ Uma tabela não toca a assinatura. O conversor a consulta, e o replace continua 
 -- PROPOSTA — não aplicar ainda
 CREATE TABLE public.pedido_total_liquido_excecao (
   sales_order_id uuid PRIMARY KEY REFERENCES public.sales_orders(id) ON DELETE CASCADE,
-  motivo         text        NOT NULL CHECK (motivo IN ('sem_correspondencia','ambiguo','sem_pai_omie')),
+  motivo         text        NOT NULL CHECK (motivo IN ('sem_apuracao','apuracao_parcial')),
   evidencia      text        NOT NULL,          -- de qual dry-run, com data
   criado_em      timestamptz NOT NULL DEFAULT now(),
   criado_por     text        NOT NULL,
@@ -235,16 +235,34 @@ Quatro propriedades que o desenho precisa ter:
    a exclusão é segura.
 2. **Fail-closed por omissão.** Pedido não apurado e **não** listado continua bloqueando o mês. A
    tabela só consegue afrouxar o gate nominalmente, id por id.
-3. **`motivo` vem de medição, não de suposição.** Preenche-se com um `dry_run: true` do
-   `omie-desconto-backfill` restrito a esses 105 pedidos — barato (105, não 13.006) — que devolve
-   `recusadas` com `sem_correspondencia`/`ambiguo` por id. Sem esse passo a coluna é decorativa.
+3. **`motivo` vem de medição LOCAL e verificável, não de suposição.** `sem_apuracao` = nenhuma
+   linha do pedido tem `desconto_valor` (56 pedidos); `apuracao_parcial` = tem linha apurada e linha
+   NULL no mesmo pedido (49). Escolhi estes em vez dos rótulos do Omie
+   (`sem_correspondencia`/`ambiguo`) porque aqueles exigem um dry-run do backfill contra o ERP: é
+   enriquecimento legítimo, não pré-requisito, e uma coluna que eu não consigo preencher hoje nasceria
+   decorativa — que é exatamente o defeito que eu queria evitar.
 4. **`revisar_em` com sensor.** Exceção que deixou de ser necessária (o Omie passou a correlacionar
    o trio) tem de aparecer, senão a lista vira lixo permanente que esconde a regressão seguinte —
    inclusive a que eu reportei por engano e que, um dia, pode ser real. O sensor é uma query: pedido
    na tabela cujas linhas já estão todas apuradas, ou cuja `revisar_em` passou.
 
-**O que se libera:** 564 pedidos convertíveis, **R$ 104.250,58** de desconto que hoje a tela não
-explica, em 13 meses que o gate mantém fechados por 105 pedidos que não têm conserto no ERP.
+**O que se libera — medido por ensaio EXECUTADO em produção (2026-10-05, `db:aplicar --ensaio`,
+rodou inteiro e fez ROLLBACK):**
+
+```
+EXCECAO INSTALADA: 105 pedidos excluidos | controle sem excecao = 0 elegiveis
+                 | com excecao = 538 elegiveis | soma prevista = -100144.46
+```
+
+São **538** pedidos e **R$ 100.144,46**, não os 564 / R$ 104.250,58 que eu estimei por SQL próprio.
+A diferença de 26 pedidos (R$ 4.106,12) é o classificador sendo mais estrito que a minha régua: ele
+recusa linha inválida, líquido negativo, cabeçalho fora do padrão e total que já é o líquido. O
+número que vale é o do conversor, e é por isso que a postcondição o lê do banco em vez de confiar na
+estimativa.
+
+O `controle sem excecao = 0` é o que separa esta medição de um número bonito: com a lista vazia, na
+MESMA transação, o ensaio devolve zero elegíveis. A exclusão é a causa do destravamento, não uma
+coincidência com ele.
 
 A lista nominal **não é colada aqui de propósito** — 105 uuids num doc apodrecem. Ela se reproduz:
 
@@ -258,3 +276,177 @@ GROUP BY 1,2,3 HAVING bool_or(oi.desconto_valor IS NULL);
 **Escrita pelo ENVELOPE** (`bun run db:aplicar`, com `--ensaio` antes e o `.sql` commitado em `db/`),
 ou bloco `🟣 SQL Editor` para o founder. Money-path: antes de aplicar, ritual `/codex` e
 `prove-sql-money-path` — a função é PL/pgSQL e **late-bound**, então o teste tem de EXECUTAR.
+
+### Estado da entrega (2026-10-05)
+
+O apply está escrito, commitado e **provado por ensaio em produção**:
+[`db/2026-10-05-pedido-total-liquido-excecao.sql`](../../db/2026-10-05-pedido-total-liquido-excecao.sql).
+Ele instala a tabela, deriva a lista e troca o conversor — e **não converte nada**. A conversão é um
+segundo apply, com postcondição própria.
+
+Duas decisões que mudaram durante a escrita, as duas por lição do próprio repo:
+
+- **O conversor é trocado por SUBSTITUIÇÃO PROGRAMÁTICA**, não por corpo copiado. A primeira versão
+  colava as 246 linhas do `pg_get_functiondef`; isso é uma bomba de relógio, porque apply commitado é
+  imutável e um corpo copiado **reverte em silêncio** qualquer endurecimento posterior — a irmã da
+  armadilha do `CREATE OR REPLACE` sem `WITH`. O bloco lê o corpo VIVO, exige que cada âncora apareça
+  **exatamente 1×**, troca e reexecuta; âncora ausente ou duplicada **aborta**. É idempotente: se o
+  corpo já menciona a tabela, não faz nada.
+- **Guarda de 48h no INSERT**, que é a lição desta mesma sessão virada em código. O reprocesso deixa
+  linha NULL transitória; sem o filtro, um pedido **em voo** entraria na exceção por engano e perderia
+  a conversão para sempre, em silêncio. Hoje a guarda custa zero (105 bloqueadores, 105 parados, 0 em
+  voo) — e é por isso que ela tem de estar lá antes de custar algo.
+
+Provas colhidas:
+
+| prova | resultado |
+|---|---|
+| `db:aplicar … --ensaio` (prod, rodou inteiro e fez ROLLBACK) | **rc=0**, postcondições (a)–(f) |
+| controle da postcondição (e): lista vazia na mesma transação | **0 elegíveis** |
+| com a exceção de pé | **538 elegíveis**, −R$ 100.144,46 |
+| `db/test-pedido-total-liquido-acervo.sh` (PG17) | **68 ok / 0 fail** |
+
+**O que falta, e não é opcional:** `sem-codex` — a cota do Codex está em 89% (teto 85%) e a janela de
+7 dias só reabre em **09/10 19:30**. A regra do repo é explícita: em money-path o adversarial de
+CÓDIGO não se pula, e *"cota baixa não é gatilho de pular — é gatilho de DRAFT"*. Então o PR fica
+DRAFT e **nada foi aplicado em produção**: o ensaio reverteu tudo. O apply real espera o parecer, ou
+uma decisão explícita do founder pelo Caminho B.
+
+### O apply 2: a conversão, e o pré-voo que a recusa sem o apply 1
+
+[`db/2026-10-05-pedido-total-liquido-converter-acervo.sql`](../../db/2026-10-05-pedido-total-liquido-converter-acervo.sql)
+é a conversão em si. Ele **não acredita** que o apply 1 tenha pegado — confere, e no catálogo, não
+invocando (validação que executa o objeto mente nos dois sentidos): a tabela existe? o corpo vivo do
+conversor menciona a tabela? a lista tem linha? Qualquer "não" aborta antes de escrever.
+
+**Prova negativa, colhida hoje** (o apply 1 ainda não está em prod, então o pré-voo *deve* recusar):
+
+```
+rc=3 · marcador FIM_APLICACAO_OK AUSENTE
+ERROR: P0001: pre-voo: a tabela pedido_total_liquido_excecao NAO existe — o apply 1 nao foi
+aplicado (ou foi so ensaiado, e o ensaio faz ROLLBACK)
+```
+
+As três postcondições dele medem a mesma coisa por caminhos diferentes, e têm de bater:
+
+1. `escritos > 0` — o relatório do conversor.
+2. O **sensor do cupom** (a query que mede o que o cliente vê) tem de cair, e cair **exatamente** o
+   que foi escrito. Escrever sem consertar a tela, ou consertar mais do que se escreveu, aborta: o
+   relatório da função e o sensor da tela são medições independentes do mesmo fato.
+3. Nenhum total do lote fora de `(0, bruto]` — líquido zerado ou acima do bruto é número fabricado,
+   não conversão.
+
+⚠️ Este arquivo **não foi ensaiado**, e não podia ser: o ensaio do apply 1 faz ROLLBACK, então a
+tabela não existe em prod enquanto ele não entrar de verdade. O ensaio dele é o passo entre os dois
+applies, e é obrigatório.
+
+### O par inteiro, EXECUTADO: `db/test-pedido-total-liquido-excecao.sh`
+
+Eu escrevi aqui que o apply 2 "não foi ensaiado e não podia ser". A segunda metade era falsa: não
+podia **em produção** (o `--ensaio` faz ROLLBACK, então lá a tabela nem existe e o pré-voo recusa —
+corretamente). Num PG17 local, com as migrations reais, os dois applies rodam na ordem e dá para
+olhar. **21 asserções, 0 falhas.**
+
+O que só esta prova mostra, e o ensaio em prod não mostrava:
+
+| assert | o que afirma |
+|---|---|
+| A1 · A1b | o pré-voo do apply 2 recusa sem o apply 1 — e recusa **pelo motivo certo** |
+| A9 | o corpo vivo passou a ler a tabela: a substituição programática produz código que **executa** |
+| A10–A11 | reaplicar o apply 1 é idempotente (lista segue com 2, patch segue 1×) |
+| A12 | o destravamento é **nominal**: julho sai, junho fica preso pelo pedido em voo |
+| A14–A18 | o convertível virou líquido; os três excluídos seguem com **cabeçalho bruto** |
+| A19 | o sensor do cupom caiu **exatamente** o que foi escrito |
+| A20 | reaplicar o apply 2 **falha** em vez de escrever de novo |
+
+E `--falsificar`: **5 sabotagens, 5 vermelhas no assert DECLARADO**, com o controle verde (21/0) na
+MESMA invocação.
+
+| sabotagem | assert que a acusa | o que pegou |
+|---|---|---|
+| `guarda48_fora` | A4 | `postcondicao (c)`: 1 exceção com pedido tocado nas últimas 48h |
+| `ancora_adulterada` | A4 | `patch: a ancora 2 nao aparece EXATAMENTE 1x no corpo vivo` |
+| `filtro_neutralizado` | A4 | `postcondicao (f)`: com 2 exceções o ensaio segue com 0 elegíveis |
+| `prevoo_tabela_cego` | A1b | o **segundo** cinto do pré-voo: o conversor não lê a tabela |
+| `duas_camadas_fora` | A6, A7 | **sem ERROR nenhum** — o apply passa e só os asserts pegam |
+
+A última linha é a que vale ler. Com a guarda de 48h **e** seu verificador fora, o apply **não
+reclama**: o pedido em voo entra na lista e é excluído para sempre, em silêncio. É o dano que a lição
+desta sessão (churn ≠ corrosão) evita, agora medido em vez de suposto. E a `guarda48_fora` sabota
+**uma camada por vez** — o passo 2 usa `p.updated_at <`, a postcondição (c) usa `so.updated_at >=`,
+âncoras distintas de propósito. Na primeira versão eu derrubei as duas juntas, que não prova nada.
+
+**Três correções que o CI me cobrou**, e as três são da mesma família — ausência lida como aprovação:
+
+1. O gate `falsificar-exige-assert-gate` (regra R3) reprovou minha primeira versão, com razão: o
+   veredito era `saída ≠ "ok"`, ou seja, **aceitava vermelho de qualquer causa** — PG que não sobe,
+   arquivo que falta, migration que muda. Vermelho de ambiente aprovaria a sabotagem. O idioma
+   `SABOTAGENS` do repo obriga a declarar *qual* assert tem de acusar cada sabotagem, e o laço confere
+   três coisas: controle verde antes, a sabotagem **aplicou** (marca `SABOTAGEM ativa:`), e o assert
+   declarado virou vermelho.
+2. O A1b nasceu vazio e passava calado: `APPLY_ERR` era setada dentro de `$(aplicar …)`, que é
+   **subshell** — variável de lá não volta ao pai. O erro agora vai para arquivo. Ausente lido como
+   vazio é a mesma armadilha de `ausente ≠ zero`, só que no shell.
+3. O gate `assert-verde-por-ausencia` achou **três asserções NULL-blind nos próprios applies**, e
+   são defeito real, não ruído de linter: `IF (length(v_def) - …) / length(v_a1v) <> 1` não dispara
+   quando o lado esquerdo é NULL, porque `NULL <> 1` é NULL. Se `pg_get_functiondef` devolvesse NULL,
+   a asserção de âncora **aprovaria em silêncio** e o replace seguiria num corpo que ninguém conferiu.
+   Existe um guard de existência antes, mas uma asserção não deve depender da ordem dos guards para
+   ser fail-closed. Viraram `IS DISTINCT FROM`, NULL-safe por construção. A terceira era a do sensor
+   do cupom (`(v_antes - v_depois) <> v_escritos`) — a postcondição mais importante do apply 2.
+
+⚠️ Os bytes mudaram com isso, e **o ensaio vale para os bytes exatos** — refeito em produção com o
+sha novo (`67fedaa6…`): mesmo resultado, `105 pedidos excluidos | controle sem excecao = 0 elegiveis
+| com excecao = 538 elegiveis | soma prevista = -100144.46`. O PG17 também: controle verde (21) e as
+5 sabotagens vermelhas no assert declarado.
+
+
+### O bloqueio que eu reportei errado: `exit 79` não é a parede
+
+Fechei a etapa anterior dizendo ao founder que havia **duas** saídas — esperar 09/10 ou autorizar o
+Caminho B — e que a decisão era dele. A decisão é dele mesmo, mas a dicotomia era falsa, e o erro foi
+meu: li `exit 79` como "cota esgotada" quando o cabeçalho do próprio `codex-async.sh` diz, em letra
+redonda, `≠ 75, que é ter BATIDO na parede`. O 79 é guard **local** de orçamento, e o comentário dele
+declara a razão do teto de 85%: *"o que resta deve ficar pro money-path"*.
+
+O adversarial deste apply **é** money-path. A reserva não estava me barrando — estava guardando cota
+para exatamente este consult. Com ~1,4 pp por consulta (medido em 18/09) e 89% usado, sobram ~7
+consultas. A saída certa é a terceira, que eu não ofereci: **gastar a reserva** — decisão do founder,
+porque a cota é compartilhada, não porque o adversarial seja opcional.
+
+Nada disso afrouxa a regra: o adversarial de código continua não-pulável. O que muda é que o
+bloqueio tem 4 dias menos do que eu anunciei, e que eu transformei um código de saída em prazo de
+calendário sem ler o ramo que o emitiu.
+
+### O desfecho do `exit 79`: a reserva não existia, e o erro era o mesmo de antes
+
+Autorizado a gastar a reserva, subi o teto e rodei. O wrapper releu o saldo e devolveu **100,0%** —
+não 89%. O 89% era leitura de ontem, de um rollout antigo; entre ontem e hoje o saldo virou em alguma
+das 14 sessões paralelas desta máquina. **Não havia reserva para gastar.**
+
+Então eu errei duas vezes seguidas, e a segunda é mais interessante que a primeira. A primeira foi ler
+`exit 79` como parede (corrigido acima — e aquela correção segue válida: o 79 é guard local, não 429).
+A segunda foi transformar o número que o 79 imprime em capacidade: *"89% usado, ~1,4 pp por consulta,
+cabem ~7"*. Esse número é um **piso** por desenho — o próprio sensor diz que piso é o lado certo de
+errar num guard. Piso não se divide.
+
+E é a mesma armadilha desta sessão inteira, pela terceira vez: **retrato datado lido como estado
+atual.** Foi o churn de reprocesso lido como corrosão (83→154 linhas); foi o pedido em voo que a
+guarda de 48h mantém fora da lista; e agora foi um saldo de ontem virando orçamento de hoje. O
+antídoto é o mesmo nos três: antes de transformar leitura em previsão, **re-medir** — aqui a releitura
+custava zero, bastava subir o teto, que é exatamente o que descobriu o 100%.
+
+Fato operacional: o adversarial de código **não roda antes de 09/10 19:30**. Não por política nossa
+agora, mas porque a janela está esgotada de verdade.
+
+### A sequência, quando o parecer chegar
+
+```bash
+bun run db:aplicar db/2026-10-05-pedido-total-liquido-excecao.sql            # 1. instala (nao converte)
+bun run db:aplicar db/2026-10-05-pedido-total-liquido-converter-acervo.sql --ensaio
+bun run db:aplicar db/2026-10-05-pedido-total-liquido-converter-acervo.sql   # 2. converte os 538
+```
+
+E depois, por fora: o sensor do cupom tem de mostrar os brutos caindo de 570 para ~32, e
+`bun run audit:migrations` + re-dump do snapshot, porque objeto criado à mão fora de
+`supabase/migrations/` só existe no DR pelo snapshot.
