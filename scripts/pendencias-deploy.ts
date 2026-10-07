@@ -544,11 +544,11 @@ export function lerEsperados(): Record<string, Esperado> {
  * dos detectores no gate irmão. A classe é um ROTEIRO de prioridade, não um alvará: `nenhuma` diz
  * "o index.ts não escreve", não "a edge é inerte".
  */
-export function lerUniverso(): Universo {
-  const { ok, saida } = git(['ls-tree', '--name-only', '-d', REF_MAIN, `${RAIZ_EDGES}/`]);
+export function lerUniverso(ref: string = REF_MAIN): Universo {
+  const { ok, saida } = git(['ls-tree', '--name-only', '-d', ref, `${RAIZ_EDGES}/`]);
   if (!ok) {
     throw new Error(
-      `\`git ls-tree -d ${REF_MAIN} ${RAIZ_EDGES}/\` falhou — sem o universo de edges da ref o ` +
+      `\`git ls-tree -d ${ref} ${RAIZ_EDGES}/\` falhou — sem o universo de edges da ref o ` +
         'denominador da cobertura seria inventado, e foi um denominador inventado que escondeu a ' +
         '`tint-omie-sync` no #2824.',
     );
@@ -566,11 +566,11 @@ export function lerUniverso(): Universo {
   for (const edge of pastas.sort()) {
     // A PRESENÇA de `index.ts` é o que faz da pasta uma edge servida — a mesma régua do
     // `sonda:nova`. Pasta de utilitário sem entrada não é edge e não entra no denominador.
-    if (lerNaRev(REF_MAIN, `${RAIZ_EDGES}/${edge}/index.ts`) === null) continue;
+    if (lerNaRev(ref, `${RAIZ_EDGES}/${edge}/index.ts`) === null) continue;
     existentes.push(edge);
-    if (lerNaRev(REF_MAIN, `${RAIZ_EDGES}/${edge}/versao.ts`) !== null) continue;
+    if (lerNaRev(ref, `${RAIZ_EDGES}/${edge}/versao.ts`) !== null) continue;
 
-    const corpo = lerNaRev(REF_MAIN, `${RAIZ_EDGES}/${edge}/index.ts`) ?? '';
+    const corpo = lerNaRev(ref, `${RAIZ_EDGES}/${edge}/index.ts`) ?? '';
     const escrita: EdgeSemMarcador['escrita'] =
       detectarMutacao(corpo) !== null ? 'postgrest' : detectarRpcs(corpo).length > 0 ? 'rpc' : 'nenhuma';
     semMarcador.push({ edge, escrita });
@@ -823,15 +823,9 @@ function idade(v: Veredito): string {
  * Quem COBRA a decisão é o `sonda:nova`, no PR que mexer no corpo de uma delas — lá a decisão tem
  * contexto e dono. Aqui só se declara.
  */
-function imprimirSemMarcador(u: Universo): void {
-  if (u.semMarcador.length === 0) return;
+export function linhasSemMarcador(u: Universo): string[] {
+  if (u.semMarcador.length === 0) return [];
   const n = contarEscrita(u.semMarcador);
-  console.log(
-    `\n⚫ FORA DO ALCANCE deste instrumento — ${u.semMarcador.length} edge(s) sem \`versao.ts\`` +
-      `\n   Não têm marcador ⇒ não entram no mapa de fingerprints ⇒ não têm (versao, fonte) a julgar.` +
-      `\n   Deploy pendente nelas é INVISÍVEL aqui, hoje e sempre, até que sejam instrumentadas.` +
-      `\n   ${n.postgrest} escrevem no banco por PostgREST · ${n.rpc} só por \`.rpc()\` (opaco) · ${n.nenhuma} nem um nem outro`,
-  );
   // Escritoras primeiro: a classe é um roteiro de prioridade, e `tint-omie-sync` — a edge do
   // #2824 — está nessa primeira linha. Dentro da classe, ordem alfabética (saída estável).
   const peso: Record<EdgeSemMarcador['escrita'], number> = { postgrest: 0, rpc: 1, nenhuma: 2 };
@@ -840,13 +834,34 @@ function imprimirSemMarcador(u: Universo): void {
     rpc: '❔ rpc',
     nenhuma: '·  —',
   };
-  for (const e of [...u.semMarcador].sort((a, b) => peso[a.escrita] - peso[b.escrita] || a.edge.localeCompare(b.edge))) {
-    console.log(`   ${e.edge.padEnd(34)}${marca[e.escrita]}`);
-  }
-  console.log(
+  return [
+    `\n⚫ FORA DO ALCANCE deste instrumento — ${u.semMarcador.length} edge(s) sem \`versao.ts\`` +
+      '\n   Não têm marcador ⇒ não entram no mapa de fingerprints ⇒ não têm (versao, fonte) a julgar.' +
+      '\n   Deploy pendente nelas é INVISÍVEL aqui, hoje e sempre, até que sejam instrumentadas.' +
+      `\n   ${n.postgrest} escrevem no banco por PostgREST · ${n.rpc} só por \`.rpc()\` (opaco) · ${n.nenhuma} nem um nem outro`,
+    ...[...u.semMarcador]
+      .sort((a, b) => peso[a.escrita] - peso[b.escrita] || a.edge.localeCompare(b.edge))
+      .map((e) => `   ${e.edge.padEnd(34)}${marca[e.escrita]}`),
     '   → decidir por edge, no PR que mexer nela: instrumentar (`versao.ts` + `sonda:fingerprint --write`)' +
       '\n     ou dispensar em `DISPENSAS` (scripts/sonda-edge-nova-gate.ts) com `porque` assinado.',
-  );
+  ];
+}
+
+/**
+ * Os TRÊS números, nesta ordem, porque dois deles sozinhos mentem:
+ *   · observadas/mapeadas  — o que ele julgou (era a linha ANTIGA, lida como cobertura total)
+ *   · mapeadas/existentes  — o que ele ALCANÇA do que existe (62/97 = 64%, não 100%)
+ *
+ * Imprimir só o 1º par foi o que escondeu a `tint-omie-sync` no #2824: `62/62` não estava errado,
+ * estava incompleto, e incompleto com cara de completo é o que se lê como aprovação.
+ */
+export function linhaCobertura(rel: Relatorio, u: Universo): string {
+  const alcance =
+    u.totalExistentes > 0
+      ? ` · alcance: ${rel.totalMapeadas}/${u.totalExistentes} edges da ref instrumentadas` +
+        (u.semMarcador.length > 0 ? ` (${u.semMarcador.length} fora do alcance, acima)` : '')
+      : '';
+  return `\n─── cobertura: ${rel.totalObservadas}/${rel.totalMapeadas} edges mapeadas com atestação (ledger ∪ janela viva)${alcance}`;
 }
 
 function imprimir(rel: Relatorio, linhasSemIdentidade: string[], universo: Universo): void {
@@ -919,21 +934,9 @@ function imprimir(rel: Relatorio, linhasSemIdentidade: string[], universo: Unive
     }
   }
 
-  imprimirSemMarcador(universo);
+  for (const linha of linhasSemMarcador(universo)) console.log(linha);
 
-  // Os TRÊS números, nesta ordem, porque dois deles sozinhos mentem:
-  //   · observadas/mapeadas  — o que ele julgou (era a linha ANTIGA, lida como cobertura total)
-  //   · mapeadas/existentes  — o que ele ALCANÇA do que existe (62/97 = 64%, não 100%)
-  // Imprimir só o 1º par foi o que escondeu a `tint-omie-sync` no #2824: 62/62 não estava errado,
-  // estava incompleto, e incompleto com cara de completo é o que se lê como aprovação.
-  const alcance =
-    universo.totalExistentes > 0
-      ? ` · alcance: ${rel.totalMapeadas}/${universo.totalExistentes} edges da ref instrumentadas` +
-        (universo.semMarcador.length > 0 ? ` (${universo.semMarcador.length} fora do alcance, acima)` : '')
-      : '';
-  console.log(
-    `\n─── cobertura: ${rel.totalObservadas}/${rel.totalMapeadas} edges mapeadas com atestação (ledger ∪ janela viva)${alcance}`,
-  );
+  console.log(linhaCobertura(rel, universo));
   if (rel.foraDoMapaHistoricas.length > 0) {
     console.log(
       `    ${rel.foraDoMapaHistoricas.length} edge(s) só no histórico do ledger, sem observação fresca (main não mapeia): ${rel.foraDoMapaHistoricas.join(', ')}`,

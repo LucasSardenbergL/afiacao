@@ -43,6 +43,8 @@ import {
   lerArgIds,
   lerArgJson,
   lerUniverso,
+  linhaCobertura,
+  linhasSemMarcador,
   main,
   MIGRATION_LEDGER,
   REF_MAIN,
@@ -1184,9 +1186,74 @@ describe('lerUniverso — o denominador HONESTO, medido na ref real (#2824)', ()
     expect(detectarMutacao("await sb.from('t').insert(x);")).toBe('insert');
   });
 
+  it('FAIL-CLOSED: ref que não resolve LANÇA, nunca devolve universo vazio', () => {
+    // Universo vazio por ERRO imprimiria `0 fora do alcance` — o mesmo silêncio que esta função
+    // existe para desfazer, agora com cara de boa notícia. O `main` converte isto em exit 2.
+    expect(() => lerUniverso('ref-que-nao-existe-xyz-000')).toThrow(/falhou/);
+  });
+
   it('contarEscrita soma exatamente a lista — o eixo do risco, não o tamanho dela', () => {
     const n = contarEscrita(u.semMarcador);
     expect(n.postgrest + n.rpc + n.nenhuma).toBe(u.semMarcador.length);
     expect(n.postgrest).toBeGreaterThan(0);
+  });
+});
+
+describe('a SAÍDA declara o que o instrumento não alcança (#2824)', () => {
+  const U = {
+    totalExistentes: 97,
+    semMarcador: [
+      { edge: 'zz-ultima-alfabetica', escrita: 'nenhuma' as const },
+      { edge: 'tint-omie-sync', escrita: 'postgrest' as const },
+      { edge: 'cep-geo-resolver', escrita: 'rpc' as const },
+    ],
+  };
+  const REL = { totalMapeadas: 62, totalObservadas: 60 } as Parameters<typeof linhaCobertura>[0];
+
+  it('a linha de cobertura imprime os DOIS denominadores, não só o do julgamento', () => {
+    const l = linhaCobertura(REL, U);
+    expect(l).toContain('60/62');
+    expect(l).toContain('62/97');
+    expect(l).toContain('3 fora do alcance');
+  });
+
+  it('sem o alcance, `62/62` se lia como cobertura total — o número que escondeu a quinta edge', () => {
+    // Falsificação do formato: um universo do TAMANHO do mapa não acusa fora-do-alcance nenhum,
+    // e é exatamente esse caso que a linha antiga imprimia para TODO mundo.
+    const l = linhaCobertura(REL, { totalExistentes: 62, semMarcador: [] });
+    expect(l).toContain('62/62 edges da ref instrumentadas');
+    expect(l).not.toContain('fora do alcance');
+  });
+
+  it('a seção NOMEIA cada edge — contagem em bloco não dá para agir', () => {
+    const txt = linhasSemMarcador(U).join('\n');
+    for (const e of U.semMarcador) expect(txt).toContain(e.edge);
+  });
+
+  it('as que ESCREVEM vêm primeiro: a lista é roteiro de prioridade, não inventário', () => {
+    const linhas = linhasSemMarcador(U);
+    const iTint = linhas.findIndex((l) => l.includes('tint-omie-sync'));
+    const iRpc = linhas.findIndex((l) => l.includes('cep-geo-resolver'));
+    const iNada = linhas.findIndex((l) => l.includes('zz-ultima-alfabetica'));
+    expect(iTint).toBeGreaterThan(0);
+    expect(iTint).toBeLessThan(iRpc);
+    expect(iRpc).toBeLessThan(iNada);
+  });
+
+  it('o cabeçalho diz o EIXO DO RISCO (quantas escrevem) e que o deploy delas é invisível', () => {
+    const cab = linhasSemMarcador(U)[0];
+    expect(cab).toContain('1 escrevem no banco por PostgREST');
+    expect(cab).toContain('INVIS');
+    expect(cab).toContain('3 edge(s) sem');
+  });
+
+  it('oferece as DUAS saídas, como o gate — declarar não é cobrar, mas tem de dizer como sair', () => {
+    const fim = linhasSemMarcador(U).at(-1) ?? '';
+    expect(fim).toContain('versao.ts');
+    expect(fim).toContain('DISPENSAS');
+  });
+
+  it('universo sem lacuna não imprime seção — zero ruído quando não há o que declarar', () => {
+    expect(linhasSemMarcador({ totalExistentes: 62, semMarcador: [] })).toEqual([]);
   });
 });
