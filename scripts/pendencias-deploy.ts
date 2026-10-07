@@ -564,11 +564,18 @@ export function lerUniverso(ref: string = REF_MAIN): Universo {
   const existentes: string[] = [];
   const semMarcador: EdgeSemMarcador[] = [];
   for (const edge of pastas.sort()) {
-    // A PRESENÇA de `index.ts` é o que faz da pasta uma edge servida — a mesma régua do
-    // `sonda:nova`. Pasta de utilitário sem entrada não é edge e não entra no denominador.
-    if (lerNaRev(ref, `${RAIZ_EDGES}/${edge}/index.ts`) === null) continue;
+    // A pasta conta como edge quando tem `index.ts` (é servida — a régua do `sonda:nova`) OU
+    // `versao.ts` (o mapa a mapeia — a régua do `sonda:fingerprint`). A UNIÃO, e não só a
+    // primeira, porque as duas réguas são de gates diferentes e usar uma só deixa o denominador
+    // MENOR que o mapa quando elas divergem: o teste ponta a ponta da allowlist montou
+    // exatamente esse caso (pasta com marcador e sem entrada) e o exit 2 da guarda abaixo
+    // disparou. Contornar seria trocar uma divergência de régua por uma exceção; a união a
+    // elimina. Pasta sem nenhum dos dois não é edge e segue fora.
+    const temEntrada = lerNaRev(ref, `${RAIZ_EDGES}/${edge}/index.ts`) !== null;
+    const temMarcador = lerNaRev(ref, `${RAIZ_EDGES}/${edge}/versao.ts`) !== null;
+    if (!temEntrada && !temMarcador) continue;
     existentes.push(edge);
-    if (lerNaRev(ref, `${RAIZ_EDGES}/${edge}/versao.ts`) !== null) continue;
+    if (temMarcador) continue;
 
     const corpo = lerNaRev(ref, `${RAIZ_EDGES}/${edge}/index.ts`) ?? '';
     const escrita: EdgeSemMarcador['escrita'] =

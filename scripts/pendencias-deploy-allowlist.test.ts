@@ -133,6 +133,9 @@ async function montarCenario(opts: {
   escrever(remoto, {
     'supabase/functions/_shared/sonda-fingerprints.ts':
       `export const SONDA_FINGERPRINTS: Record<string, string> = {\n  "edge-a": "${FP}",\n};\n`,
+    // a entrada entra junto: edge servida de verdade tem `index.ts`, e o cenário sem ela fazia o
+    // universo de `lerUniverso` divergir do mapa (o CLI reclamava, com razão, do denominador)
+    'supabase/functions/edge-a/index.ts': 'Deno.serve(() => new Response("ok"));\n',
     'supabase/functions/edge-a/versao.ts': 'export const VERSAO = "v1.0-a";\n',
     'supabase/functions/_shared/sonda-cron-alvos.ts': allowlistTs(opts.allowlistC1),
   });

@@ -1186,6 +1186,14 @@ describe('lerUniverso — o denominador HONESTO, medido na ref real (#2824)', ()
     expect(detectarMutacao("await sb.from('t').insert(x);")).toBe('insert');
   });
 
+  it('pasta com `versao.ts` e SEM `index.ts` conta no universo — a UNIÃO das duas réguas', () => {
+    // O mapa inclui edge pela presença de `versao.ts`; o `sonda:nova` pela de `index.ts`. Contar
+    // só por uma deixava o denominador MENOR que o numerador quando elas divergem — pego pelo
+    // teste ponta a ponta da allowlist, que montou esse caso. O universo nunca pode ser menor
+    // que o mapa, ou a cobertura passaria de 100%.
+    expect(u.totalExistentes).toBeGreaterThanOrEqual(62);
+  });
+
   it('FAIL-CLOSED: ref que não resolve LANÇA, nunca devolve universo vazio', () => {
     // Universo vazio por ERRO imprimiria `0 fora do alcance` — o mesmo silêncio que esta função
     // existe para desfazer, agora com cara de boa notícia. O `main` converte isto em exit 2.
