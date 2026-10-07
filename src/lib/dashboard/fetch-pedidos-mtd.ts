@@ -5,7 +5,6 @@ import type { CompanySelection } from '@/contexts/CompanyContext';
 export interface PedidoMTDRow {
   total: number | null;
   status: string | null;
-  created_by: string | null;
   /** Cliente do pedido — o ranking credita a venda ao dono da carteira dele. */
   customer_user_id: string | null;
   order_date_kpi: string | null;
@@ -27,7 +26,7 @@ export async function fetchPedidosMTD(
   for (let from = 0; ; from += PAGE) {
     let q = supabase
       .from('sales_orders')
-      .select('total, status, created_by, customer_user_id, order_date_kpi')
+      .select('total, status, customer_user_id, order_date_kpi')
       // O universo de VENDA na query (era só o deleted_at, e o status vinha do isPedidoValido em
       // memória com uma cópia de 2 status — orçamento e pendente contariam como receita).
       .not('status', 'in', STATUS_NAO_VENDA_POSTGREST)
