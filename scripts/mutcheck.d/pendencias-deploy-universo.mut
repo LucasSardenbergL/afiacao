@@ -1,0 +1,31 @@
+# Poder de discriminação da suíte sobre o UNIVERSO de edges do `pendencias:deploy` (denominador honesto).
+#
+# Incidente #2824 (`f55523513`): a fatia tirou `estoque: prod.quantidade_estoque || 0` de cinco edges;
+# o relatório acusou quatro. A quinta, `tint-omie-sync`, não tem `versao.ts` — logo fora do mapa, logo
+# fora de `lerEsperados`, logo fora do relatório inteiro E do denominador (`cobertura: 62/62` de 97
+# pastas). Sem deploy ela seguia gravando `estoque = 0` no tintométrico, sem sensor nenhum.
+#
+# Cada mutação abaixo devolve UMA camada ao estado cego; a suíte tem de ficar vermelha em todas.
+# Baseline verde na MESMA invocação é do harness (aborta se já está vermelha).
+#
+# Estas mutações são TODAS sobre código PURO (`montarUniverso`, `linhasSemMarcador`,
+# `linhaCobertura`), exercitado por fixture — de propósito: o harness copia os arquivos para um temp
+# dir SEM a ref `origin/main`, e a versão anterior deste contrato morria na coleta porque um
+# `lerUniverso()` real estava no corpo de um `describe`. O que fala com git vive em
+# `pendencias-deploy-universo.test.ts`, fora do escopo dos `.mut`.
+#
+# A 8ª linha (`uniao de reguas`) é a que mais vale: ela ficou VERDE na primeira falsificação. Na
+# árvore real toda edge com `versao.ts` também tem `index.ts`, então um teste contra o repo não
+# distingue as duas réguas — verde por VACUIDADE. Foi o que motivou o seam `montarUniverso`.
+# @src: scripts/pendencias-deploy.ts
+# @test: scripts/pendencias-deploy.test.ts
+# Rode: scripts/mutcheck.sh scripts/pendencias-deploy.ts scripts/pendencias-deploy.test.ts scripts/mutcheck.d/pendencias-deploy-universo.mut
+PEGA | semMarcador degradado para lista vazia (silencio)   | s/return \{ totalExistentes: existentes\.length, semMarcador \};/return { totalExistentes: existentes.length, semMarcador: [] };/
+PEGA | classe de escrita apagada (eixo do risco some)      | s/detectarMutacao\(corpo\) !== null \? 'postgrest' : detectarRpcs\(corpo\)\.length > 0 \? 'rpc' : 'nenhuma';/'nenhuma';/
+PEGA | uniao de reguas vira so index.ts (verde por vacuidade) | s/if \(!temEntrada && !temMarcador\) continue;/if (!temEntrada) continue;/
+PEGA | pasta sem entrada e sem marcador conta como edge    | s/if \(!temEntrada && !temMarcador\) continue;/void 0;/
+PEGA | edge COM marcador entra na lista de lacunas         | s/if \(temMarcador\) continue;/if (false) continue;/
+PEGA | alcance sai da linha de cobertura (o 62\/62 de volta) | s/\$\{alcance\}`;/`;/
+PEGA | secao FORA DO ALCANCE nao e impressa                | s/  if \(u\.semMarcador\.length === 0\) return \[\];/  return [];/
+PEGA | escritoras perdem a prioridade na lista             | s/peso\[a\.escrita\] - peso\[b\.escrita\] \|\| a\.edge\.localeCompare\(b\.edge\)/a.edge.localeCompare(b.edge)/
+PEGA | ordem do universo passa a depender da chegada       | s/for \(const edge of \[\.\.\.pastas\]\.sort\(\)\) \{/for (const edge of pastas) {/
