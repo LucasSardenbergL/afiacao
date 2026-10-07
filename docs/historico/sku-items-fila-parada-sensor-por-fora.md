@@ -124,8 +124,10 @@ dois PRs: a view não criaria sem a coluna. Por isso a leitura é por `to_jsonb(
 - **Desenho:** não rodou. O `codex-async.sh` saiu com exit 79 (cota em 89%, teto 85%, janela reabre
   em 09/10 19:30) sem gastar a chamada. A seção `RÉGUA:` foi escrita e conferida por mim, e está
   abaixo.
-- **Adversarial do código:** obrigatório no money-path. O PR fica DRAFT até ele rodar (§"Sem Codex"
-  de `docs/agent/money-path.md`).
+- **Adversarial do código:** não rodou antes do merge. Em 2026-10-06 o founder mandou tirar o PR de
+  draft e mergear, o que é o **Caminho B** de `docs/agent/money-path.md` §"Sem Codex", com
+  `sem-codex:` registrado no corpo do PR. O sensor já estava aplicado e validado em prod. O
+  adversarial vira **retroativo**: roda quando a janela reabrir (09/10 19:30).
 
 RÉGUA:
 
@@ -163,8 +165,9 @@ RÉGUA:
 (`.claude/skills/lovable-db-operator/references/sql-house-style.md`). A view leva o
 `WITH (security_invoker = on)` em todo replace.
 
-**Pendente:** o adversarial do Codex no código (`scripts/codex-async.sh -r max`, janela reabre em
-09/10 19:30), sobre o diff do #2819 com os fatos do §2 e do §4. O PR só sai de draft depois dele.
+**Pendente (retroativo, Caminho B):** o adversarial do Codex no código (`scripts/codex-async.sh -r max`,
+janela reabre em 09/10 19:30), sobre o diff do #2819 com os fatos do §2 e do §4. O PR mergeou antes
+dele por decisão do founder. Achado P0 ou P1 vira migration de correção no molde de objeto vivo.
 
 
 ```sql
