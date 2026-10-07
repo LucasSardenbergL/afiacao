@@ -52,7 +52,7 @@ describe('omie-sync-estoque — o par (físico, pendente) e a semântica fatal d
       'exigirPendenteConfiavel(pend, fasePoMs);',
       'await gravarEstoque(ops, e, linhas);',
       'await inativarNaoEncontrados(ops, e);',
-      'await publicarObservacao(ops, e, pend, gravacaoCompleta);',
+      'await publicarObservacao(ops, e, pend, gravacaoCompleta && gm.confirmados === linhasMembros.length, pendenteGravado);',
     ].map((p) => fontePublicacao.indexOf(p, iConcluir));
     expect(iConcluir).toBeGreaterThan(0);
     for (let i = 0; i < passos.length; i++) expect(passos[i]).toBeGreaterThan(i === 0 ? iConcluir : passos[i - 1]);
@@ -63,7 +63,7 @@ describe('omie-sync-estoque — o par (físico, pendente) e a semântica fatal d
     const iPo = fonte.indexOf('await computePendenteViaPedidosCompra(', iHandler);
     expect(fonte.slice(iFimLaco, iPo)).not.toContain('try {');
     expect(fonte).toMatch(
-      /const r = await computePendenteViaPedidosCompra\(appKey, appSecret, habilitadoMap, supabase, deadline\);/,
+      /const r = await computePendenteViaPedidosCompra\(appKey, appSecret, habilitadoMap, ehMembro, supabase, deadline\);/,
     );
     // e na publicação: nenhum try aberto entre o início de concluirRun e a fase do PO, nenhum .catch() nela
     const iConcluir = fontePublicacao.indexOf('export async function concluirRun(');
@@ -95,7 +95,7 @@ describe('omie-sync-estoque — o par (físico, pendente) e a semântica fatal d
     expect(iVeredito).toBeGreaterThan(iFimLaco);
     expect(fonte).toContain('fisico: { veredito: vereditoFisico, encontrados: fisico.encontrados,');
     expect(fonte).toContain(
-      'return { pendente: r.pendente, confiavel: r.confiavel, problemas: r.problemas, observacao: r };',
+      'return { pendente: r.pendente, confiavel: r.confiavel, problemas: r.problemas, observacao: r, ...doMembro };',
     );
     const iCatchFinal = fonte.lastIndexOf('} catch (err) {');
     expect(iCatchFinal).toBeGreaterThan(iHandler);
@@ -114,10 +114,15 @@ describe('omie-sync-estoque — o par (físico, pendente) e a semântica fatal d
     expect(leitura).toContain('.eq("ativo", true)');
     expect(leitura).toContain('.gt("fator_para_base", 0)');
     expect(fonte).toContain('.filter((sku) => !habilitadoMap.has(sku))');
-    expect(fonte).toContain(
-      'criarAcumuladorFisico((sku) => habilitadoMap.has(sku), totalEsperado, (sku) => membrosGrupo.has(sku))',
-    );
+    expect(fonte).toContain('const ehMembro = (sku: string) => membrosGrupo.has(sku);');
+    expect(fonte).toContain('criarAcumuladorFisico((sku) => habilitadoMap.has(sku), totalEsperado, ehMembro)');
     expect(fonte).toContain('membros: fisico.membros, membrosIlegiveis: fisico.membrosIlegiveis, membrosErro }');
+    // O PAR: o pendente dos membros vem da MESMA varredura (OBEN e COLACOR), e o coletor observa o que o motor conta.
+    expect(fonte).toContain('computePendenteViaPedidosCompra(appKey, appSecret, habilitadoMap, ehMembro, supabase, deadline)');
+    expect(fonte).toContain('computePendenteViaSaldoPendente(appKey, appSecret, habilitadoMap, ehMembro, deadline)');
+    expect(fonte).toContain('criarColetorObservacao((sku) => habilitadoMap.has(sku) || membro(sku), { parseQtd, parseRecebido })');
+    // Item inválido de membro vai para o conjunto à parte, nunca para `problemas` (que barraria os habilitados).
+    expect(fonte).toContain('else membrosPendenteIlegiveis.add(sku);');
   });
 
   it('o erro do ListarPosEstoque ganha página e relógio como SUFIXO — o startsWith("AUTH_ERROR") segue vendo a auth', () => {
