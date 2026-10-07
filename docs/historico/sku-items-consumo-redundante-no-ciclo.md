@@ -154,7 +154,9 @@ forma real do fault SOAP da Omie. Teste que passa por duas camadas não prova ne
 - **A coorte de 30 dias só é alcançada pelo diário das 07:00.** Um `error` "fila não anda" ali é
   seguido de runs `complete` de 2h, que não enxergam NFes de mais de 3 dias ⇒ nunca há dois `error`
   seguidos, e o Sentinela não pagina. O `error` fica no `fin_sync_log`. Fechar isso pede um sensor
-  por fora da edge (SQL sobre a fila), não mais regra dentro dela.
+  por fora da edge (SQL sobre a fila), não mais regra dentro dela. **Fechado em 2026-10-06** pelo
+  sensor por fora `v_sku_items_fila` + `sku_items_fila_parada_check()` (cron :52, migration
+  `20261006004500`) — ver [sku-items-fila-parada-sensor-por-fora.md](sku-items-fila-parada-sensor-por-fora.md).
 - **A família Sayerlack série 1 responde 0 itens.** ✅ Resolvido em 2026-10-05: era CT-e (modelo 57, o frete), não NF-e — ver [sku-items-cte-fora-da-fila.md](sku-items-cte-fora-da-fila.md). Nos 30 runs das 07:00 o total gravado foi ZERO
   itens, com ~19 NFes pendentes por dia girando no backoff. O motivo novo vai dizer se é chave
   `itensRecebimento` ausente ou lista vazia — evidência antes de mudar comportamento.

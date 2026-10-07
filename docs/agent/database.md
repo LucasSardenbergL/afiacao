@@ -116,6 +116,14 @@ COLUMN`), qualquer SQL sem postcondição, pré-voo não-verde, e escrita em sch
 Primeira aplicação por este caminho: `20260908204421_deploy_sonda_alvos_onda3.sql`
 (3 linhas de allowlist), pré-voo 11→14 alvos, validada por fora com `✅`.
 
+**Cron pelo `db:aplicar` nasce com dono `postgres` (medido 2026-10-06).** O `aplicar_sql()` é
+SECURITY DEFINER do `postgres`, então dentro dele o `current_user` é o `postgres`. É esse papel que o
+`cron.schedule` grava em `cron.job.username`, e é como o job roda. A nota da `20260924163250` ("cole
+como `postgres` no SQL Editor — o `claude_rw` nem tem USAGE no schema `cron`") vale para o PAPEL, não
+para o caminho. Os objetos criados pelo `db:aplicar` também saem com dono e ACL default do `postgres`.
+Medido no ensaio e no apply da `20261006004500` (jobid 190, `username = postgres`), com a
+postcondição exigindo isso.
+
 **Migration COM envelope (`BEGIN;`/`COMMIT;`) vai pelo MCP — e o risco passa a ser a TRANSCRIÇÃO.**
 O `db:aplicar` a recusa por desenho, e tirar o envelope no cliente quebra o sha. Pelo MCP, o SQL
 passa pela mão da sessão: feche isso na própria transação, com a postcondição exigindo
