@@ -1,0 +1,1705 @@
+{
+  "fonte": "psql-ro 2026-10-05: pedido_compra_sugerido.portal_resposta (itens_capturados = DOM, portal_add_json.value = total cobrado) × pedido_compra_item.sku_portal_aprovado × omie_products.ncm (conta oben); pedidos Sayerlack com protocolo enviados desde 2026-09-06",
+  "modelo": "linha = round2(Preço Venda); IPI = round2(linha × alíquota ÷ 100), meio centavo para cima; prova |Σ linha + Σ IPI − total| ≤ 0,005 + 0,0101·n",
+  "aliquotas_pct": {
+    "29153999": 0,
+    "29221919": 0,
+    "32041210": 0,
+    "32081010": 3.25,
+    "32081020": 3.25,
+    "32082019": 3.25,
+    "32082020": 3.25,
+    "32089039": 6.5,
+    "32129090": 6.5,
+    "32141020": 1.3,
+    "32149000": 0,
+    "38089219": 0,
+    "38140090": 6.5
+  },
+  "pedidos": [
+    {
+      "pedido_id": 2575,
+      "total_json": 3675.91,
+      "total_modelado": 3675.92,
+      "delta": 0.01,
+      "linhas": [
+        {
+          "sku_portal": "WFBB.6045GL",
+          "sku_codigo_omie": "8689729212",
+          "ncm": "3208.10.10",
+          "qtde_final": 2,
+          "qtd_un_raw": "2",
+          "preco_un_raw": "198,8728",
+          "preco_venda_raw": "338,2875",
+          "preco_venda": 338.2875,
+          "ipi": 10.99
+        },
+        {
+          "sku_portal": "DFA.4128LT",
+          "sku_codigo_omie": "11892839175",
+          "ncm": "3814.00.90",
+          "qtde_final": 4,
+          "qtd_un_raw": "4",
+          "preco_un_raw": "520,8912",
+          "preco_venda_raw": "1417,6784",
+          "preco_venda": 1417.6784,
+          "ipi": 92.15
+        },
+        {
+          "sku_portal": "WJOI.7666GL",
+          "sku_codigo_omie": "8689791246",
+          "ncm": "3208.20.19",
+          "qtde_final": 4,
+          "qtd_un_raw": "4",
+          "preco_un_raw": "298,8058",
+          "preco_venda_raw": "1016,5513",
+          "preco_venda": 1016.5513,
+          "ipi": 33.04
+        },
+        {
+          "sku_portal": "DF.4056LT",
+          "sku_codigo_omie": "8689776765",
+          "ncm": "3814.00.90",
+          "qtde_final": 2,
+          "qtd_un_raw": "2",
+          "preco_un_raw": "529,3800",
+          "preco_venda_raw": "720,3909",
+          "preco_venda": 720.3909,
+          "ipi": 46.83
+        }
+      ]
+    },
+    {
+      "pedido_id": 2579,
+      "total_json": 8862.78,
+      "total_modelado": 8862.78,
+      "delta": 0,
+      "linhas": [
+        {
+          "sku_portal": "WFOT.6863QT",
+          "sku_codigo_omie": "8690083226",
+          "ncm": "3208.10.20",
+          "qtde_final": 5,
+          "qtd_un_raw": "5",
+          "preco_un_raw": "51,7271",
+          "preco_venda_raw": "219,9726",
+          "preco_venda": 219.9726,
+          "ipi": 7.15
+        },
+        {
+          "sku_portal": "XT.1803.07FG",
+          "sku_codigo_omie": "8689717763",
+          "ncm": "3204.12.10",
+          "qtde_final": 1,
+          "qtd_un_raw": "1",
+          "preco_un_raw": "292,3486",
+          "preco_venda_raw": "248,6459",
+          "preco_venda": 248.6459,
+          "ipi": 0
+        },
+        {
+          "sku_portal": "WP08.3900QT",
+          "sku_codigo_omie": "8689717638",
+          "ncm": "3212.90.90",
+          "qtde_final": 4,
+          "qtd_un_raw": "4",
+          "preco_un_raw": "253,4818",
+          "preco_venda_raw": "862,3573",
+          "preco_venda": 862.3573,
+          "ipi": 56.05
+        },
+        {
+          "sku_portal": "WJOT.7585QT",
+          "sku_codigo_omie": "8690087234",
+          "ncm": "3208.20.20",
+          "qtde_final": 6,
+          "qtd_un_raw": "6",
+          "preco_un_raw": "70,4646",
+          "preco_venda_raw": "359,5860",
+          "preco_venda": 359.586,
+          "ipi": 11.69
+        },
+        {
+          "sku_portal": "FC.5202.RAL5",
+          "sku_codigo_omie": "8689786288",
+          "ncm": "3208.90.39",
+          "qtde_final": 2,
+          "qtd_un_raw": "2",
+          "preco_un_raw": "366,3835",
+          "preco_venda_raw": "623,2272",
+          "preco_venda": 623.2272,
+          "ipi": 40.51
+        },
+        {
+          "sku_portal": "WJOI.7666QT",
+          "sku_codigo_omie": "8689791322",
+          "ncm": "3208.20.19",
+          "qtde_final": 12,
+          "qtd_un_raw": "12",
+          "preco_un_raw": "81,4204",
+          "preco_venda_raw": "830,9884",
+          "preco_venda": 830.9884,
+          "ipi": 27.01
+        },
+        {
+          "sku_portal": "FL.6673.00L5",
+          "sku_codigo_omie": "8689980971",
+          "ncm": "3214.90.00",
+          "qtde_final": 6,
+          "qtd_un_raw": "6",
+          "preco_un_raw": "159,3735",
+          "preco_venda_raw": "813,2945",
+          "preco_venda": 813.2945,
+          "ipi": 0
+        },
+        {
+          "sku_portal": "WFOB.6501QT",
+          "sku_codigo_omie": "8689731502",
+          "ncm": "3208.10.10",
+          "qtde_final": 11,
+          "qtd_un_raw": "11",
+          "preco_un_raw": "62,0603",
+          "preco_venda_raw": "580,6134",
+          "preco_venda": 580.6134,
+          "ipi": 18.87
+        },
+        {
+          "sku_portal": "FC.5202.RAQT",
+          "sku_codigo_omie": "8689723369",
+          "ncm": "3208.90.39",
+          "qtde_final": 5,
+          "qtd_un_raw": "5",
+          "preco_un_raw": "70,8821",
+          "preco_venda_raw": "301,4299",
+          "preco_venda": 301.4299,
+          "ipi": 19.59
+        },
+        {
+          "sku_portal": "WFBB.6045GL",
+          "sku_codigo_omie": "8689729212",
+          "ncm": "3208.10.10",
+          "qtde_final": 3,
+          "qtd_un_raw": "3",
+          "preco_un_raw": "198,8728",
+          "preco_venda_raw": "507,4312",
+          "preco_venda": 507.4312,
+          "ipi": 16.49
+        },
+        {
+          "sku_portal": "FL.6298.00QT",
+          "sku_codigo_omie": "8689783655",
+          "ncm": "3214.90.00",
+          "qtde_final": 1,
+          "qtd_un_raw": "1",
+          "preco_un_raw": "33,0672",
+          "preco_venda_raw": "28,1241",
+          "preco_venda": 28.1241,
+          "ipi": 0
+        },
+        {
+          "sku_portal": "WFBI.6045QT",
+          "sku_codigo_omie": "8689767646",
+          "ncm": "3208.10.10",
+          "qtde_final": 2,
+          "qtd_un_raw": "2",
+          "preco_un_raw": "48,9860",
+          "preco_venda_raw": "83,3264",
+          "preco_venda": 83.3264,
+          "ipi": 2.71
+        },
+        {
+          "sku_portal": "WFOI.6501GL",
+          "sku_codigo_omie": "8689787732",
+          "ncm": "3208.10.10",
+          "qtde_final": 2,
+          "qtd_un_raw": "2",
+          "preco_un_raw": "194,0485",
+          "preco_venda_raw": "330,0812",
+          "preco_venda": 330.0812,
+          "ipi": 10.73
+        },
+        {
+          "sku_portal": "FL.6269.02BD",
+          "sku_codigo_omie": "8689739288",
+          "ncm": "3214.90.00",
+          "qtde_final": 3,
+          "qtd_un_raw": "3",
+          "preco_un_raw": "506,2068",
+          "preco_venda_raw": "1291,6049",
+          "preco_venda": 1291.6049,
+          "ipi": 0
+        },
+        {
+          "sku_portal": "WFOB.6501GL",
+          "sku_codigo_omie": "8689743143",
+          "ncm": "3208.10.10",
+          "qtde_final": 8,
+          "qtd_un_raw": "8",
+          "preco_un_raw": "223,6659",
+          "preco_venda_raw": "1521,8443",
+          "preco_venda": 1521.8443,
+          "ipi": 49.46
+        }
+      ]
+    },
+    {
+      "pedido_id": 2580,
+      "total_json": 4979.15,
+      "total_modelado": 4979.16,
+      "delta": 0.01,
+      "linhas": [
+        {
+          "sku_portal": "WFOB.6554QT",
+          "sku_codigo_omie": "11928873640",
+          "ncm": "3208.10.10",
+          "qtde_final": 13,
+          "qtd_un_raw": "13",
+          "preco_un_raw": "82,1572",
+          "preco_venda_raw": "726,7076",
+          "preco_venda": 726.7076,
+          "ipi": 23.62
+        },
+        {
+          "sku_portal": "FC.7074QT",
+          "sku_codigo_omie": "8689733257",
+          "ncm": "3208.90.39",
+          "qtde_final": 6,
+          "qtd_un_raw": "6",
+          "preco_un_raw": "57,3030",
+          "preco_venda_raw": "292,4214",
+          "preco_venda": 292.4214,
+          "ipi": 19.01
+        },
+        {
+          "sku_portal": "WFOT.6554QT",
+          "sku_codigo_omie": "11929917667",
+          "ncm": "3208.10.20",
+          "qtde_final": 7,
+          "qtd_un_raw": "7",
+          "preco_un_raw": "72,1677",
+          "preco_venda_raw": "343,7254",
+          "preco_venda": 343.7254,
+          "ipi": 11.17
+        },
+        {
+          "sku_portal": "DFA.4080LT",
+          "sku_codigo_omie": "12101724100",
+          "ncm": "3814.00.90",
+          "qtde_final": 11,
+          "qtd_un_raw": "11",
+          "preco_un_raw": "357,5466",
+          "preco_venda_raw": "3345,0745",
+          "preco_venda": 3345.0745,
+          "ipi": 217.43
+        }
+      ]
+    },
+    {
+      "pedido_id": 2607,
+      "total_json": 159.63,
+      "total_modelado": 159.63,
+      "delta": 0,
+      "linhas": [
+        {
+          "sku_portal": "WFOB.6857QT",
+          "sku_codigo_omie": "8689927793",
+          "ncm": "3208.10.10",
+          "qtde_final": 2,
+          "qtd_un_raw": "2",
+          "preco_un_raw": "74,8800",
+          "preco_venda_raw": "127,3727",
+          "preco_venda": 127.3727,
+          "ipi": 4.14
+        },
+        {
+          "sku_portal": "FL.6298.00QT",
+          "sku_codigo_omie": "8689783655",
+          "ncm": "3214.90.00",
+          "qtde_final": 1,
+          "qtd_un_raw": "1",
+          "preco_un_raw": "33,0672",
+          "preco_venda_raw": "28,1241",
+          "preco_venda": 28.1241,
+          "ipi": 0
+        }
+      ]
+    },
+    {
+      "pedido_id": 2612,
+      "total_json": 504.73,
+      "total_modelado": 504.73,
+      "delta": 0,
+      "linhas": [
+        {
+          "sku_portal": "DEZ.8014QT",
+          "sku_codigo_omie": "11979470842",
+          "ncm": "2915.39.99",
+          "qtde_final": 6,
+          "qtd_un_raw": "6",
+          "preco_un_raw": "40,6814",
+          "preco_venda_raw": "166,0796",
+          "preco_venda": 166.0796,
+          "ipi": 0
+        },
+        {
+          "sku_portal": "JO5.7644.00GL",
+          "sku_codigo_omie": "8689719116",
+          "ncm": "3208.20.20",
+          "qtde_final": 2,
+          "qtd_un_raw": "2",
+          "preco_un_raw": "192,8196",
+          "preco_venda_raw": "327,9908",
+          "preco_venda": 327.9908,
+          "ipi": 10.66
+        }
+      ]
+    },
+    {
+      "pedido_id": 2661,
+      "total_json": 6565.28,
+      "total_modelado": 6565.29,
+      "delta": 0.01,
+      "linhas": [
+        {
+          "sku_portal": "WJOB.7585GL",
+          "sku_codigo_omie": "8689787325",
+          "ncm": "3208.20.19",
+          "qtde_final": 3,
+          "qtd_un_raw": "3",
+          "preco_un_raw": "294,3002",
+          "preco_venda_raw": "750,9176",
+          "preco_venda": 750.9176,
+          "ipi": 24.4
+        },
+        {
+          "sku_portal": "WJOT.7585GL",
+          "sku_codigo_omie": "8690097764",
+          "ncm": "3208.20.20",
+          "qtde_final": 3,
+          "qtd_un_raw": "3",
+          "preco_un_raw": "257,7987",
+          "preco_venda_raw": "657,7827",
+          "preco_venda": 657.7827,
+          "ipi": 21.38
+        },
+        {
+          "sku_portal": "WFOI.6861GL",
+          "sku_codigo_omie": "8690166141",
+          "ncm": "3208.10.10",
+          "qtde_final": 2,
+          "qtd_un_raw": "2",
+          "preco_un_raw": "292,8111",
+          "preco_venda_raw": "498,0788",
+          "preco_venda": 498.0788,
+          "ipi": 16.19
+        },
+        {
+          "sku_portal": "WFOI.6736QT",
+          "sku_codigo_omie": "8689787374",
+          "ncm": "3208.10.10",
+          "qtde_final": 7,
+          "qtd_un_raw": "7",
+          "preco_un_raw": "68,3267",
+          "preco_venda_raw": "406,7888",
+          "preco_venda": 406.7888,
+          "ipi": 13.22
+        },
+        {
+          "sku_portal": "WFBB.6045QT",
+          "sku_codigo_omie": "8690086493",
+          "ncm": "3208.10.10",
+          "qtde_final": 5,
+          "qtd_un_raw": "5",
+          "preco_un_raw": "55,4773",
+          "preco_venda_raw": "235,9206",
+          "preco_venda": 235.9206,
+          "ipi": 7.67
+        },
+        {
+          "sku_portal": "DF.4068LT",
+          "sku_codigo_omie": "8689733356",
+          "ncm": "3814.00.90",
+          "qtde_final": 2,
+          "qtd_un_raw": "2",
+          "preco_un_raw": "435,1644",
+          "preco_venda_raw": "740,2251",
+          "preco_venda": 740.2251,
+          "ipi": 48.11
+        },
+        {
+          "sku_portal": "FC.5202.RAL5",
+          "sku_codigo_omie": "8689786288",
+          "ncm": "3208.90.39",
+          "qtde_final": 2,
+          "qtd_un_raw": "2",
+          "preco_un_raw": "366,3835",
+          "preco_venda_raw": "623,2272",
+          "preco_venda": 623.2272,
+          "ipi": 40.51
+        },
+        {
+          "sku_portal": "WFBT.6045QT",
+          "sku_codigo_omie": "8689767732",
+          "ncm": "3208.10.20",
+          "qtde_final": 4,
+          "qtd_un_raw": "4",
+          "preco_un_raw": "40,9282",
+          "preco_venda_raw": "139,2394",
+          "preco_venda": 139.2394,
+          "ipi": 4.53
+        },
+        {
+          "sku_portal": "WJOI.7666GL",
+          "sku_codigo_omie": "8689791246",
+          "ncm": "3208.20.19",
+          "qtde_final": 4,
+          "qtd_un_raw": "4",
+          "preco_un_raw": "298,8058",
+          "preco_venda_raw": "1016,5513",
+          "preco_venda": 1016.5513,
+          "ipi": 33.04
+        },
+        {
+          "sku_portal": "FC.6975L5",
+          "sku_codigo_omie": "8689774923",
+          "ncm": "3208.90.39",
+          "qtde_final": 5,
+          "qtd_un_raw": "5",
+          "preco_un_raw": "174,1365",
+          "preco_venda_raw": "740,5260",
+          "preco_venda": 740.526,
+          "ipi": 48.13
+        },
+        {
+          "sku_portal": "DEZ.8014LT",
+          "sku_codigo_omie": "11973701972",
+          "ncm": "2915.39.99",
+          "qtde_final": 1,
+          "qtd_un_raw": "1",
+          "preco_un_raw": "733,1508",
+          "preco_venda_raw": "498,8432",
+          "preco_venda": 498.8432,
+          "ipi": 0
+        }
+      ]
+    },
+    {
+      "pedido_id": 2662,
+      "total_json": 13.71,
+      "total_modelado": 13.71,
+      "delta": 0,
+      "linhas": [
+        {
+          "sku_portal": "YC.1401VP",
+          "sku_codigo_omie": "8690108598",
+          "ncm": "2922.19.19",
+          "qtde_final": 1,
+          "qtd_un_raw": "1",
+          "preco_un_raw": "20,1501",
+          "preco_venda_raw": "13,7103",
+          "preco_venda": 13.7103,
+          "ipi": 0
+        }
+      ]
+    },
+    {
+      "pedido_id": 2745,
+      "total_json": 4413.01,
+      "total_modelado": 4413.02,
+      "delta": 0.01,
+      "linhas": [
+        {
+          "sku_portal": "YL.1424.02GL",
+          "sku_codigo_omie": "8689744087",
+          "ncm": "3214.10.20",
+          "qtde_final": 4,
+          "qtd_un_raw": "4",
+          "preco_un_raw": "110,3076",
+          "preco_venda_raw": "375,2718",
+          "preco_venda": 375.2718,
+          "ipi": 4.88
+        },
+        {
+          "sku_portal": "WJOB.7666GL",
+          "sku_codigo_omie": "8689723179",
+          "ncm": "3208.20.19",
+          "qtde_final": 4,
+          "qtd_un_raw": "4",
+          "preco_un_raw": "310,7957",
+          "preco_venda_raw": "1057,3419",
+          "preco_venda": 1057.3419,
+          "ipi": 34.36
+        },
+        {
+          "sku_portal": "DEZ.8014L5",
+          "sku_codigo_omie": "11981109474",
+          "ncm": "2915.39.99",
+          "qtde_final": 2,
+          "qtd_un_raw": "2",
+          "preco_un_raw": "219,5545",
+          "preco_venda_raw": "298,7742",
+          "preco_venda": 298.7742,
+          "ipi": 0
+        },
+        {
+          "sku_portal": "FC.6975LT",
+          "sku_codigo_omie": "8689743956",
+          "ncm": "3208.90.39",
+          "qtde_final": 5,
+          "qtd_un_raw": "5",
+          "preco_un_raw": "583,4430",
+          "preco_venda_raw": "2481,1264",
+          "preco_venda": 2481.1264,
+          "ipi": 161.27
+        }
+      ]
+    },
+    {
+      "pedido_id": 2763,
+      "total_json": 12623.06,
+      "total_modelado": 12623.08,
+      "delta": 0.02,
+      "linhas": [
+        {
+          "sku_portal": "WFOI.6863QT",
+          "sku_codigo_omie": "8690091587",
+          "ncm": "3208.10.10",
+          "qtde_final": 6,
+          "qtd_un_raw": "6",
+          "preco_un_raw": "57,2278",
+          "preco_venda_raw": "292,0376",
+          "preco_venda": 292.0376,
+          "ipi": 9.49
+        },
+        {
+          "sku_portal": "FL.6298.00LT",
+          "sku_codigo_omie": "8689717697",
+          "ncm": "3214.90.00",
+          "qtde_final": 5,
+          "qtd_un_raw": "5",
+          "preco_un_raw": "506,2986",
+          "preco_venda_raw": "2153,0652",
+          "preco_venda": 2153.0652,
+          "ipi": 0
+        },
+        {
+          "sku_portal": "WFOI.6861QT",
+          "sku_codigo_omie": "8689781117",
+          "ncm": "3208.10.10",
+          "qtde_final": 8,
+          "qtd_un_raw": "8",
+          "preco_un_raw": "79,4751",
+          "preco_venda_raw": "540,7563",
+          "preco_venda": 540.7563,
+          "ipi": 17.57
+        },
+        {
+          "sku_portal": "WJOB.7666GL",
+          "sku_codigo_omie": "8689723179",
+          "ncm": "3208.20.19",
+          "qtde_final": 5,
+          "qtd_un_raw": "5",
+          "preco_un_raw": "310,7957",
+          "preco_venda_raw": "1321,6774",
+          "preco_venda": 1321.6774,
+          "ipi": 42.95
+        },
+        {
+          "sku_portal": "WJOB.7666QT",
+          "sku_codigo_omie": "8689717577",
+          "ncm": "3208.20.19",
+          "qtde_final": 6,
+          "qtd_un_raw": "6",
+          "preco_un_raw": "84,4834",
+          "preco_venda_raw": "431,1249",
+          "preco_venda": 431.1249,
+          "ipi": 14.01
+        },
+        {
+          "sku_portal": "FC.6902QT",
+          "sku_codigo_omie": "8689743966",
+          "ncm": "3208.90.39",
+          "qtde_final": 9,
+          "qtd_un_raw": "9",
+          "preco_un_raw": "49,2721",
+          "preco_venda_raw": "377,1587",
+          "preco_venda": 377.1587,
+          "ipi": 24.52
+        },
+        {
+          "sku_portal": "FC.6975LT",
+          "sku_codigo_omie": "8689743956",
+          "ncm": "3208.90.39",
+          "qtde_final": 14,
+          "qtd_un_raw": "14",
+          "preco_un_raw": "583,4430",
+          "preco_venda_raw": "6947,1539",
+          "preco_venda": 6947.1539,
+          "ipi": 451.56
+        }
+      ]
+    },
+    {
+      "pedido_id": 2764,
+      "total_json": 4472.07,
+      "total_modelado": 4472.08,
+      "delta": 0.01,
+      "linhas": [
+        {
+          "sku_portal": "FO0.6717.00BH",
+          "sku_codigo_omie": "11963134154",
+          "ncm": "3208.10.20",
+          "qtde_final": 1,
+          "qtd_un_raw": "1",
+          "preco_un_raw": "1077,8140",
+          "preco_venda_raw": "733,3555",
+          "preco_venda": 733.3555,
+          "ipi": 23.83
+        },
+        {
+          "sku_portal": "WFOI.6554QT",
+          "sku_codigo_omie": "11928885445",
+          "ncm": "3208.10.10",
+          "qtde_final": 8,
+          "qtd_un_raw": "8",
+          "preco_un_raw": "74,9431",
+          "preco_venda_raw": "407,9363",
+          "preco_venda": 407.9363,
+          "ipi": 13.26
+        },
+        {
+          "sku_portal": "JO5.7644.00GL",
+          "sku_codigo_omie": "8689719116",
+          "ncm": "3208.20.20",
+          "qtde_final": 2,
+          "qtd_un_raw": "2",
+          "preco_un_raw": "192,8196",
+          "preco_venda_raw": "327,9908",
+          "preco_venda": 327.9908,
+          "ipi": 10.66
+        },
+        {
+          "sku_portal": "FC.7074L5",
+          "sku_codigo_omie": "8689792256",
+          "ncm": "3208.90.39",
+          "qtde_final": 5,
+          "qtd_un_raw": "5",
+          "preco_un_raw": "293,6415",
+          "preco_venda_raw": "1248,7281",
+          "preco_venda": 1248.7281,
+          "ipi": 81.17
+        },
+        {
+          "sku_portal": "FL.6264.02KGBH",
+          "sku_codigo_omie": "12025181714",
+          "ncm": "3214.90.00",
+          "qtde_final": 3,
+          "qtd_un_raw": "3",
+          "preco_un_raw": "636,9275",
+          "preco_venda_raw": "1625,1435",
+          "preco_venda": 1625.1435,
+          "ipi": 0
+        }
+      ]
+    },
+    {
+      "pedido_id": 2790,
+      "total_json": 932.19,
+      "total_modelado": 932.19,
+      "delta": 0,
+      "linhas": [
+        {
+          "sku_portal": "FL.6269.02GL",
+          "sku_codigo_omie": "8689723498",
+          "ncm": "3214.90.00",
+          "qtde_final": 4,
+          "qtd_un_raw": "4",
+          "preco_un_raw": "102,0157",
+          "preco_venda_raw": "347,0624",
+          "preco_venda": 347.0624,
+          "ipi": 0
+        },
+        {
+          "sku_portal": "DN.4260LT",
+          "sku_codigo_omie": "11973975666",
+          "ncm": "3814.00.90",
+          "qtde_final": 2,
+          "qtd_un_raw": "2",
+          "preco_un_raw": "403,7418",
+          "preco_venda_raw": "549,4200",
+          "preco_venda": 549.42,
+          "ipi": 35.71
+        }
+      ]
+    },
+    {
+      "pedido_id": 2791,
+      "total_json": 2075.88,
+      "total_modelado": 2075.88,
+      "delta": 0,
+      "linhas": [
+        {
+          "sku_portal": "FO0.6717.00BH",
+          "sku_codigo_omie": "11963134154",
+          "ncm": "3208.10.20",
+          "qtde_final": 2,
+          "qtd_un_raw": "2",
+          "preco_un_raw": "1077,8140",
+          "preco_venda_raw": "1466,7109",
+          "preco_venda": 1466.7109,
+          "ipi": 47.67
+        },
+        {
+          "sku_portal": "FCA.7090L5",
+          "sku_codigo_omie": "12030582668",
+          "ncm": "3208.90.39",
+          "qtde_final": 2,
+          "qtd_un_raw": "2",
+          "preco_un_raw": "387,4340",
+          "preco_venda_raw": "527,2280",
+          "preco_venda": 527.228,
+          "ipi": 34.27
+        }
+      ]
+    },
+    {
+      "pedido_id": 2892,
+      "total_json": 1685.72,
+      "total_modelado": 1685.72,
+      "delta": 0,
+      "linhas": [
+        {
+          "sku_portal": "NLO.9506.00LT",
+          "sku_codigo_omie": "8689723601",
+          "ncm": "3208.10.20",
+          "qtde_final": 1,
+          "qtd_un_raw": "1",
+          "preco_un_raw": "550,1484",
+          "preco_venda_raw": "467,9079",
+          "preco_venda": 467.9079,
+          "ipi": 15.21
+        },
+        {
+          "sku_portal": "DN.4260LT",
+          "sku_codigo_omie": "11973975666",
+          "ncm": "3814.00.90",
+          "qtde_final": 3,
+          "qtd_un_raw": "3",
+          "preco_un_raw": "403,7418",
+          "preco_venda_raw": "824,1299",
+          "preco_venda": 824.1299,
+          "ipi": 53.57
+        },
+        {
+          "sku_portal": "WFOT.6863GL",
+          "sku_codigo_omie": "8689721755",
+          "ncm": "3208.10.20",
+          "qtde_final": 2,
+          "qtd_un_raw": "2",
+          "preco_un_raw": "184,9904",
+          "preco_venda_raw": "314,6732",
+          "preco_venda": 314.6732,
+          "ipi": 10.23
+        }
+      ]
+    },
+    {
+      "pedido_id": 2916,
+      "total_json": 2314.02,
+      "total_modelado": 2314.02,
+      "delta": 0,
+      "linhas": [
+        {
+          "sku_portal": "WFOI.6501QT",
+          "sku_codigo_omie": "8689743515",
+          "ncm": "3208.10.10",
+          "qtde_final": 6,
+          "qtd_un_raw": "6",
+          "preco_un_raw": "54,4608",
+          "preco_venda_raw": "277,9174",
+          "preco_venda": 277.9174,
+          "ipi": 9.03
+        },
+        {
+          "sku_portal": "FC.6975L5",
+          "sku_codigo_omie": "8689774923",
+          "ncm": "3208.90.39",
+          "qtde_final": 5,
+          "qtd_un_raw": "5",
+          "preco_un_raw": "174,1365",
+          "preco_venda_raw": "740,5260",
+          "preco_venda": 740.526,
+          "ipi": 48.13
+        },
+        {
+          "sku_portal": "SB.2316.427CGL",
+          "sku_codigo_omie": "8689823569",
+          "ncm": "3208.10.10",
+          "qtde_final": 4,
+          "qtd_un_raw": "4",
+          "preco_un_raw": "223,1352",
+          "preco_venda_raw": "759,1167",
+          "preco_venda": 759.1167,
+          "ipi": 24.67
+        },
+        {
+          "sku_portal": "FC.6902L5",
+          "sku_codigo_omie": "8689962883",
+          "ncm": "3208.90.39",
+          "qtde_final": 2,
+          "qtd_un_raw": "2",
+          "preco_un_raw": "250,9460",
+          "preco_venda_raw": "426,8652",
+          "preco_venda": 426.8652,
+          "ipi": 27.75
+        }
+      ]
+    },
+    {
+      "pedido_id": 2917,
+      "total_json": 757.89,
+      "total_modelado": 757.89,
+      "delta": 0,
+      "linhas": [
+        {
+          "sku_portal": "FI.6197QT",
+          "sku_codigo_omie": "8690067541",
+          "ncm": "3208.20.20",
+          "qtde_final": 6,
+          "qtd_un_raw": "6",
+          "preco_un_raw": "73,3369",
+          "preco_venda_raw": "374,2435",
+          "preco_venda": 374.2435,
+          "ipi": 12.16
+        },
+        {
+          "sku_portal": "TM.3600.4608QT",
+          "sku_codigo_omie": "8689771455",
+          "ncm": "3212.90.90",
+          "qtde_final": 6,
+          "qtd_un_raw": "6",
+          "preco_un_raw": "85,4439",
+          "preco_venda_raw": "348,8214",
+          "preco_venda": 348.8214,
+          "ipi": 22.67
+        }
+      ]
+    },
+    {
+      "pedido_id": 2955,
+      "total_json": 2333.74,
+      "total_modelado": 2333.74,
+      "delta": 0,
+      "linhas": [
+        {
+          "sku_portal": "FL.6269.02GL",
+          "sku_codigo_omie": "8689723498",
+          "ncm": "3214.90.00",
+          "qtde_final": 5,
+          "qtd_un_raw": "5",
+          "preco_un_raw": "102,0157",
+          "preco_venda_raw": "433,8279",
+          "preco_venda": 433.8279,
+          "ipi": 0
+        },
+        {
+          "sku_portal": "WFOB.6529QT",
+          "sku_codigo_omie": "8689926214",
+          "ncm": "3208.10.10",
+          "qtde_final": 11,
+          "qtd_un_raw": "11",
+          "preco_un_raw": "62,5599",
+          "preco_venda_raw": "585,2875",
+          "preco_venda": 585.2875,
+          "ipi": 19.02
+        },
+        {
+          "sku_portal": "WFOB.6863QT",
+          "sku_codigo_omie": "8689915563",
+          "ncm": "3208.10.10",
+          "qtde_final": 5,
+          "qtd_un_raw": "5",
+          "preco_un_raw": "68,6803",
+          "preco_venda_raw": "292,0671",
+          "preco_venda": 292.0671,
+          "ipi": 9.49
+        },
+        {
+          "sku_portal": "WFOB.6529GL",
+          "sku_codigo_omie": "8690104346",
+          "ncm": "3208.10.10",
+          "qtde_final": 5,
+          "qtd_un_raw": "5",
+          "preco_un_raw": "226,3937",
+          "preco_venda_raw": "962,7528",
+          "preco_venda": 962.7528,
+          "ipi": 31.29
+        }
+      ]
+    },
+    {
+      "pedido_id": 2956,
+      "total_json": 674.99,
+      "total_modelado": 674.99,
+      "delta": 0,
+      "linhas": [
+        {
+          "sku_portal": "DFA.4080L5",
+          "sku_codigo_omie": "12101100460",
+          "ncm": "3814.00.90",
+          "qtde_final": 4,
+          "qtd_un_raw": "4",
+          "preco_un_raw": "108,5230",
+          "preco_venda_raw": "369,2005",
+          "preco_venda": 369.2005,
+          "ipi": 24
+        },
+        {
+          "sku_portal": "FCA.6888QT",
+          "sku_codigo_omie": "12060446728",
+          "ncm": "3208.90.39",
+          "qtde_final": 9,
+          "qtd_un_raw": "9",
+          "preco_un_raw": "34,5659",
+          "preco_venda_raw": "264,5885",
+          "preco_venda": 264.5885,
+          "ipi": 17.2
+        }
+      ]
+    },
+    {
+      "pedido_id": 2972,
+      "total_json": 1825.62,
+      "total_modelado": 1825.62,
+      "delta": 0,
+      "linhas": [
+        {
+          "sku_portal": "WJOB.7585GL",
+          "sku_codigo_omie": "8689787325",
+          "ncm": "3208.20.19",
+          "qtde_final": 3,
+          "qtd_un_raw": "3",
+          "preco_un_raw": "294,3002",
+          "preco_venda_raw": "750,9176",
+          "preco_venda": 750.9176,
+          "ipi": 24.4
+        },
+        {
+          "sku_portal": "WJOB.7585QT",
+          "sku_codigo_omie": "8689729346",
+          "ncm": "3208.20.19",
+          "qtde_final": 6,
+          "qtd_un_raw": "6",
+          "preco_un_raw": "79,8378",
+          "preco_venda_raw": "407,4181",
+          "preco_venda": 407.4181,
+          "ipi": 13.24
+        },
+        {
+          "sku_portal": "WFOI.6529QT",
+          "sku_codigo_omie": "8689721476",
+          "ncm": "3208.10.10",
+          "qtde_final": 8,
+          "qtd_un_raw": "8",
+          "preco_un_raw": "47,3542",
+          "preco_venda_raw": "322,2026",
+          "preco_venda": 322.2026,
+          "ipi": 10.47
+        },
+        {
+          "sku_portal": "WFOT.6857QT",
+          "sku_codigo_omie": "8689743421",
+          "ncm": "3208.10.20",
+          "qtde_final": 5,
+          "qtd_un_raw": "5",
+          "preco_un_raw": "67,6339",
+          "preco_venda_raw": "287,6173",
+          "preco_venda": 287.6173,
+          "ipi": 9.35
+        }
+      ]
+    },
+    {
+      "pedido_id": 3000,
+      "total_json": 2072.82,
+      "total_modelado": 2072.82,
+      "delta": 0,
+      "linhas": [
+        {
+          "sku_portal": "FO5.6717.00QT",
+          "sku_codigo_omie": "8689790824",
+          "ncm": "3208.10.20",
+          "qtde_final": 1,
+          "qtd_un_raw": "1",
+          "preco_un_raw": "39,4849",
+          "preco_venda_raw": "33,5824",
+          "preco_venda": 33.5824,
+          "ipi": 1.09
+        },
+        {
+          "sku_portal": "FO5.6717.00GL",
+          "sku_codigo_omie": "8689723039",
+          "ncm": "3208.10.20",
+          "qtde_final": 3,
+          "qtd_un_raw": "3",
+          "preco_un_raw": "139,4766",
+          "preco_venda_raw": "355,8796",
+          "preco_venda": 355.8796,
+          "ipi": 11.57
+        },
+        {
+          "sku_portal": "WFOB.6736QT",
+          "sku_codigo_omie": "8689768177",
+          "ncm": "3208.10.10",
+          "qtde_final": 5,
+          "qtd_un_raw": "5",
+          "preco_un_raw": "71,0453",
+          "preco_venda_raw": "302,1245",
+          "preco_venda": 302.1245,
+          "ipi": 9.82
+        },
+        {
+          "sku_portal": "FL.6673.00LT",
+          "sku_codigo_omie": "8689776554",
+          "ncm": "3214.90.00",
+          "qtde_final": 3,
+          "qtd_un_raw": "3",
+          "preco_un_raw": "532,5282",
+          "preco_venda_raw": "1358,7649",
+          "preco_venda": 1358.7649,
+          "ipi": 0
+        }
+      ]
+    },
+    {
+      "pedido_id": 3001,
+      "total_json": 908.17,
+      "total_modelado": 908.17,
+      "delta": 0,
+      "linhas": [
+        {
+          "sku_portal": "JO5.7644.00BH",
+          "sku_codigo_omie": "11896869440",
+          "ncm": "3208.20.20",
+          "qtde_final": 1,
+          "qtd_un_raw": "1",
+          "preco_un_raw": "1034,1780",
+          "preco_venda_raw": "879,5808",
+          "preco_venda": 879.5808,
+          "ipi": 28.59
+        }
+      ]
+    },
+    {
+      "pedido_id": 3091,
+      "total_json": 704.74,
+      "total_modelado": 704.74,
+      "delta": 0,
+      "linhas": [
+        {
+          "sku_portal": "WJOI.7585GL",
+          "sku_codigo_omie": "8689743214",
+          "ncm": "3208.20.20",
+          "qtde_final": 1,
+          "qtd_un_raw": "1",
+          "preco_un_raw": "284,8248",
+          "preco_venda_raw": "242,2470",
+          "preco_venda": 242.247,
+          "ipi": 7.87
+        },
+        {
+          "sku_portal": "FC.6902L5",
+          "sku_codigo_omie": "8689962883",
+          "ncm": "3208.90.39",
+          "qtde_final": 2,
+          "qtd_un_raw": "2",
+          "preco_un_raw": "250,9460",
+          "preco_venda_raw": "426,8652",
+          "preco_venda": 426.8652,
+          "ipi": 27.75
+        }
+      ]
+    },
+    {
+      "pedido_id": 3092,
+      "total_json": 908.17,
+      "total_modelado": 908.17,
+      "delta": 0,
+      "linhas": [
+        {
+          "sku_portal": "JO5.7644.00BH",
+          "sku_codigo_omie": "11896869440",
+          "ncm": "3208.20.20",
+          "qtde_final": 1,
+          "qtd_un_raw": "1",
+          "preco_un_raw": "1034,1780",
+          "preco_venda_raw": "879,5808",
+          "preco_venda": 879.5808,
+          "ipi": 28.59
+        }
+      ]
+    },
+    {
+      "pedido_id": 3168,
+      "total_json": 19981.58,
+      "total_modelado": 19981.6,
+      "delta": 0.02,
+      "linhas": [
+        {
+          "sku_portal": "WFOB.6736QT",
+          "sku_codigo_omie": "8689768177",
+          "ncm": "3208.10.10",
+          "qtde_final": 4,
+          "qtd_un_raw": "4",
+          "preco_un_raw": "71,0453",
+          "preco_venda_raw": "241,6996",
+          "preco_venda": 241.6996,
+          "ipi": 7.86
+        },
+        {
+          "sku_portal": "FO10.6717.00GL",
+          "sku_codigo_omie": "8689774769",
+          "ncm": "3208.10.20",
+          "qtde_final": 2,
+          "qtd_un_raw": "2",
+          "preco_un_raw": "130,9820",
+          "preco_venda_raw": "222,8036",
+          "preco_venda": 222.8036,
+          "ipi": 7.24
+        },
+        {
+          "sku_portal": "XT.1803.07FG",
+          "sku_codigo_omie": "8689717763",
+          "ncm": "3204.12.10",
+          "qtde_final": 2,
+          "qtd_un_raw": "2",
+          "preco_un_raw": "292,3486",
+          "preco_venda_raw": "497,2918",
+          "preco_venda": 497.2918,
+          "ipi": 0
+        },
+        {
+          "sku_portal": "DEZ.8014L5",
+          "sku_codigo_omie": "11981109474",
+          "ncm": "2915.39.99",
+          "qtde_final": 3,
+          "qtd_un_raw": "3",
+          "preco_un_raw": "219,5545",
+          "preco_venda_raw": "448,1613",
+          "preco_venda": 448.1613,
+          "ipi": 0
+        },
+        {
+          "sku_portal": "DF.4056LT",
+          "sku_codigo_omie": "8689776765",
+          "ncm": "3814.00.90",
+          "qtde_final": 1,
+          "qtd_un_raw": "1",
+          "preco_un_raw": "529,3800",
+          "preco_venda_raw": "360,1955",
+          "preco_venda": 360.1955,
+          "ipi": 23.41
+        },
+        {
+          "sku_portal": "WFOI.6736QT",
+          "sku_codigo_omie": "8689787374",
+          "ncm": "3208.10.10",
+          "qtde_final": 5,
+          "qtd_un_raw": "5",
+          "preco_un_raw": "68,3267",
+          "preco_venda_raw": "290,5634",
+          "preco_venda": 290.5634,
+          "ipi": 9.44
+        },
+        {
+          "sku_portal": "WFOI.6861GL",
+          "sku_codigo_omie": "8690166141",
+          "ncm": "3208.10.10",
+          "qtde_final": 3,
+          "qtd_un_raw": "3",
+          "preco_un_raw": "292,8111",
+          "preco_venda_raw": "747,1181",
+          "preco_venda": 747.1181,
+          "ipi": 24.28
+        },
+        {
+          "sku_portal": "FC.6975L5",
+          "sku_codigo_omie": "8689774923",
+          "ncm": "3208.90.39",
+          "qtde_final": 17,
+          "qtd_un_raw": "17",
+          "preco_un_raw": "174,1365",
+          "preco_venda_raw": "2517,7882",
+          "preco_venda": 2517.7882,
+          "ipi": 163.66
+        },
+        {
+          "sku_portal": "WJOI.7585GL",
+          "sku_codigo_omie": "8689743214",
+          "ncm": "3208.20.20",
+          "qtde_final": 1,
+          "qtd_un_raw": "1",
+          "preco_un_raw": "284,8248",
+          "preco_venda_raw": "242,2470",
+          "preco_venda": 242.247,
+          "ipi": 7.87
+        },
+        {
+          "sku_portal": "DF.4068LT",
+          "sku_codigo_omie": "8689733356",
+          "ncm": "3814.00.90",
+          "qtde_final": 1,
+          "qtd_un_raw": "1",
+          "preco_un_raw": "435,1644",
+          "preco_venda_raw": "370,1126",
+          "preco_venda": 370.1126,
+          "ipi": 24.06
+        },
+        {
+          "sku_portal": "WFOI.6863QT",
+          "sku_codigo_omie": "8690091587",
+          "ncm": "3208.10.10",
+          "qtde_final": 9,
+          "qtd_un_raw": "9",
+          "preco_un_raw": "57,2278",
+          "preco_venda_raw": "438,0564",
+          "preco_venda": 438.0564,
+          "ipi": 14.24
+        },
+        {
+          "sku_portal": "DEZ.8014LT",
+          "sku_codigo_omie": "11973701972",
+          "ncm": "2915.39.99",
+          "qtde_final": 2,
+          "qtd_un_raw": "2",
+          "preco_un_raw": "733,1508",
+          "preco_venda_raw": "997,6863",
+          "preco_venda": 997.6863,
+          "ipi": 0
+        },
+        {
+          "sku_portal": "FO40.6717.00BH",
+          "sku_codigo_omie": "8689743841",
+          "ncm": "3208.10.20",
+          "qtde_final": 2,
+          "qtd_un_raw": "2",
+          "preco_un_raw": "636,3800",
+          "preco_venda_raw": "1082,4977",
+          "preco_venda": 1082.4977,
+          "ipi": 35.18
+        },
+        {
+          "sku_portal": "WJOI.7666QT",
+          "sku_codigo_omie": "8689791322",
+          "ncm": "3208.20.19",
+          "qtde_final": 14,
+          "qtd_un_raw": "14",
+          "preco_un_raw": "81,4204",
+          "preco_venda_raw": "969,4864",
+          "preco_venda": 969.4864,
+          "ipi": 31.51
+        },
+        {
+          "sku_portal": "WFOB.6861GL",
+          "sku_codigo_omie": "8689780771",
+          "ncm": "3208.10.10",
+          "qtde_final": 5,
+          "qtd_un_raw": "5",
+          "preco_un_raw": "321,6964",
+          "preco_venda_raw": "1368,0333",
+          "preco_venda": 1368.0333,
+          "ipi": 44.46
+        },
+        {
+          "sku_portal": "WJOI.7666GL",
+          "sku_codigo_omie": "8689791246",
+          "ncm": "3208.20.19",
+          "qtde_final": 12,
+          "qtd_un_raw": "12",
+          "preco_un_raw": "298,8058",
+          "preco_venda_raw": "3049,6539",
+          "preco_venda": 3049.6539,
+          "ipi": 99.11
+        },
+        {
+          "sku_portal": "FL.6673.00LT",
+          "sku_codigo_omie": "8689776554",
+          "ncm": "3214.90.00",
+          "qtde_final": 11,
+          "qtd_un_raw": "11",
+          "preco_un_raw": "532,5282",
+          "preco_venda_raw": "4982,1379",
+          "preco_venda": 4982.1379,
+          "ipi": 0
+        },
+        {
+          "sku_portal": "FC.5202.RAL5",
+          "sku_codigo_omie": "8689786288",
+          "ncm": "3208.90.39",
+          "qtde_final": 2,
+          "qtd_un_raw": "2",
+          "preco_un_raw": "366,3835",
+          "preco_venda_raw": "623,2272",
+          "preco_venda": 623.2272,
+          "ipi": 40.51
+        }
+      ]
+    },
+    {
+      "pedido_id": 3174,
+      "total_json": 10142.68,
+      "total_modelado": 10142.7,
+      "delta": 0.02,
+      "linhas": [
+        {
+          "sku_portal": "WFOI.6554QT",
+          "sku_codigo_omie": "11928885445",
+          "ncm": "3208.10.10",
+          "qtde_final": 10,
+          "qtd_un_raw": "10",
+          "preco_un_raw": "74,9431",
+          "preco_venda_raw": "509,9204",
+          "preco_venda": 509.9204,
+          "ipi": 16.57
+        },
+        {
+          "sku_portal": "FC.7074QT",
+          "sku_codigo_omie": "8689733257",
+          "ncm": "3208.90.39",
+          "qtde_final": 7,
+          "qtd_un_raw": "7",
+          "preco_un_raw": "57,3030",
+          "preco_venda_raw": "341,1583",
+          "preco_venda": 341.1583,
+          "ipi": 22.18
+        },
+        {
+          "sku_portal": "DEZ.8014QT",
+          "sku_codigo_omie": "11979470842",
+          "ncm": "2915.39.99",
+          "qtde_final": 7,
+          "qtd_un_raw": "7",
+          "preco_un_raw": "40,6814",
+          "preco_venda_raw": "193,7596",
+          "preco_venda": 193.7596,
+          "ipi": 0
+        },
+        {
+          "sku_portal": "JL.7705.00BH",
+          "sku_codigo_omie": "8689731064",
+          "ncm": "3214.90.00",
+          "qtde_final": 1,
+          "qtd_un_raw": "1",
+          "preco_un_raw": "916,3740",
+          "preco_venda_raw": "779,3871",
+          "preco_venda": 779.3871,
+          "ipi": 0
+        },
+        {
+          "sku_portal": "JOA05.7787.00BH",
+          "sku_codigo_omie": "12188292968",
+          "ncm": "3208.20.20",
+          "qtde_final": 1,
+          "qtd_un_raw": "1",
+          "preco_un_raw": "1908,1120",
+          "preco_venda_raw": "1298,2985",
+          "preco_venda": 1298.2985,
+          "ipi": 42.19
+        },
+        {
+          "sku_portal": "FL.6264.02KGBH",
+          "sku_codigo_omie": "12025181714",
+          "ncm": "3214.90.00",
+          "qtde_final": 2,
+          "qtd_un_raw": "2",
+          "preco_un_raw": "636,9275",
+          "preco_venda_raw": "1083,4290",
+          "preco_venda": 1083.429,
+          "ipi": 0
+        },
+        {
+          "sku_portal": "FCA.7090LT",
+          "sku_codigo_omie": "12067285434",
+          "ncm": "3208.90.39",
+          "qtde_final": 1,
+          "qtd_un_raw": "1",
+          "preco_un_raw": "1316,1186",
+          "preco_venda_raw": "895,5003",
+          "preco_venda": 895.5003,
+          "ipi": 58.21
+        },
+        {
+          "sku_portal": "DFA.4080LT",
+          "sku_codigo_omie": "12101724100",
+          "ncm": "3814.00.90",
+          "qtde_final": 7,
+          "qtd_un_raw": "7",
+          "preco_un_raw": "357,5466",
+          "preco_venda_raw": "2128,6838",
+          "preco_venda": 2128.6838,
+          "ipi": 138.36
+        },
+        {
+          "sku_portal": "FCA.6888LT",
+          "sku_codigo_omie": "12017010823",
+          "ncm": "3208.90.39",
+          "qtde_final": 5,
+          "qtd_un_raw": "5",
+          "preco_un_raw": "576,0684",
+          "preco_venda_raw": "2449,7655",
+          "preco_venda": 2449.7655,
+          "ipi": 159.24
+        },
+        {
+          "sku_portal": "NLO.9525.00QT",
+          "sku_codigo_omie": "11979532777",
+          "ncm": "3208.10.20",
+          "qtde_final": 1,
+          "qtd_un_raw": "1",
+          "preco_un_raw": "37,0598",
+          "preco_venda_raw": "25,2159",
+          "preco_venda": 25.2159,
+          "ipi": 0.82
+        }
+      ]
+    },
+    {
+      "pedido_id": 3187,
+      "total_json": 12471.17,
+      "total_modelado": 12471.18,
+      "delta": 0.01,
+      "linhas": [
+        {
+          "sku_portal": "DPA.4302LT",
+          "sku_codigo_omie": "11919812384",
+          "ncm": "3814.00.90",
+          "qtde_final": 1,
+          "qtd_un_raw": "1",
+          "preco_un_raw": "374,2056",
+          "preco_venda_raw": "254,6133",
+          "preco_venda": 254.6133,
+          "ipi": 16.55
+        },
+        {
+          "sku_portal": "TS.3201.00GL",
+          "sku_codigo_omie": "8689783235",
+          "ncm": "3808.92.19",
+          "qtde_final": 4,
+          "qtd_un_raw": "4",
+          "preco_un_raw": "133,3717",
+          "preco_venda_raw": "453,7370",
+          "preco_venda": 453.737,
+          "ipi": 0
+        },
+        {
+          "sku_portal": "WFOB.6736GL",
+          "sku_codigo_omie": "11990219861",
+          "ncm": "3208.10.10",
+          "qtde_final": 2,
+          "qtd_un_raw": "2",
+          "preco_un_raw": "260,1351",
+          "preco_venda_raw": "442,4961",
+          "preco_venda": 442.4961,
+          "ipi": 14.38
+        },
+        {
+          "sku_portal": "FO20.6717.00GL",
+          "sku_codigo_omie": "8689717555",
+          "ncm": "3208.10.20",
+          "qtde_final": 2,
+          "qtd_un_raw": "2",
+          "preco_un_raw": "124,6151",
+          "preco_venda_raw": "211,9733",
+          "preco_venda": 211.9733,
+          "ipi": 6.89
+        },
+        {
+          "sku_portal": "FO10.6717.00BH",
+          "sku_codigo_omie": "8689960103",
+          "ncm": "3208.10.20",
+          "qtde_final": 4,
+          "qtd_un_raw": "4",
+          "preco_un_raw": "704,5880",
+          "preco_venda_raw": "2397,0422",
+          "preco_venda": 2397.0422,
+          "ipi": 77.9
+        },
+        {
+          "sku_portal": "FO5.6717.00BH",
+          "sku_codigo_omie": "8689733082",
+          "ncm": "3208.10.20",
+          "qtde_final": 4,
+          "qtd_un_raw": "4",
+          "preco_un_raw": "745,6480",
+          "preco_venda_raw": "2536,7303",
+          "preco_venda": 2536.7303,
+          "ipi": 82.44
+        },
+        {
+          "sku_portal": "FL.6298.00LT",
+          "sku_codigo_omie": "8689717697",
+          "ncm": "3214.90.00",
+          "qtde_final": 4,
+          "qtd_un_raw": "4",
+          "preco_un_raw": "506,2986",
+          "preco_venda_raw": "1722,4522",
+          "preco_venda": 1722.4522,
+          "ipi": 0
+        },
+        {
+          "sku_portal": "DEA.4014LT",
+          "sku_codigo_omie": "8689723138",
+          "ncm": "2915.39.99",
+          "qtde_final": 2,
+          "qtd_un_raw": "2",
+          "preco_un_raw": "636,7320",
+          "preco_venda_raw": "1083,0965",
+          "preco_venda": 1083.0965,
+          "ipi": 0
+        },
+        {
+          "sku_portal": "FC.6975LT",
+          "sku_codigo_omie": "8689743956",
+          "ncm": "3208.90.39",
+          "qtde_final": 6,
+          "qtd_un_raw": "6",
+          "preco_un_raw": "583,4430",
+          "preco_venda_raw": "2977,3517",
+          "preco_venda": 2977.3517,
+          "ipi": 193.53
+        }
+      ]
+    },
+    {
+      "pedido_id": 3207,
+      "total_json": 1848.41,
+      "total_modelado": 1848.41,
+      "delta": 0,
+      "linhas": [
+        {
+          "sku_portal": "FO20.6717.00BH",
+          "sku_codigo_omie": "8689783623",
+          "ncm": "3208.10.20",
+          "qtde_final": 1,
+          "qtd_un_raw": "1",
+          "preco_un_raw": "666,2600",
+          "preco_venda_raw": "566,6622",
+          "preco_venda": 566.6622,
+          "ipi": 18.42
+        },
+        {
+          "sku_portal": "FC.5202.RAQT",
+          "sku_codigo_omie": "8689723369",
+          "ncm": "3208.90.39",
+          "qtde_final": 8,
+          "qtd_un_raw": "8",
+          "preco_un_raw": "65,9203",
+          "preco_venda_raw": "448,5281",
+          "preco_venda": 448.5281,
+          "ipi": 29.15
+        },
+        {
+          "sku_portal": "WFOB.6501GL",
+          "sku_codigo_omie": "8689743143",
+          "ncm": "3208.10.10",
+          "qtde_final": 4,
+          "qtd_un_raw": "4",
+          "preco_un_raw": "223,6659",
+          "preco_venda_raw": "760,9222",
+          "preco_venda": 760.9222,
+          "ipi": 24.73
+        }
+      ]
+    },
+    {
+      "pedido_id": 3235,
+      "total_json": 650.59,
+      "total_modelado": 650.59,
+      "delta": 0,
+      "linhas": [
+        {
+          "sku_portal": "FO20.6717.00BH",
+          "sku_codigo_omie": "8689783623",
+          "ncm": "3208.10.20",
+          "qtde_final": 1,
+          "qtd_un_raw": "1",
+          "preco_un_raw": "666,2600",
+          "preco_venda_raw": "566,6622",
+          "preco_venda": 566.6622,
+          "ipi": 18.42
+        },
+        {
+          "sku_portal": "DR.4403L5",
+          "sku_codigo_omie": "8689744102",
+          "ncm": "3814.00.90",
+          "qtde_final": 1,
+          "qtd_un_raw": "1",
+          "preco_un_raw": "72,3230",
+          "preco_venda_raw": "61,5115",
+          "preco_venda": 61.5115,
+          "ipi": 4
+        }
+      ]
+    },
+    {
+      "pedido_id": 3236,
+      "total_json": 589.8,
+      "total_modelado": 589.8,
+      "delta": 0,
+      "linhas": [
+        {
+          "sku_portal": "DFA.4080L5",
+          "sku_codigo_omie": "12101100460",
+          "ncm": "3814.00.90",
+          "qtde_final": 6,
+          "qtd_un_raw": "6",
+          "preco_un_raw": "108,5230",
+          "preco_venda_raw": "553,8007",
+          "preco_venda": 553.8007,
+          "ipi": 36
+        }
+      ]
+    },
+    {
+      "pedido_id": 3327,
+      "total_json": 1194.31,
+      "total_modelado": 1194.31,
+      "delta": 0,
+      "linhas": [
+        {
+          "sku_portal": "FC.5202.RAQT",
+          "sku_codigo_omie": "8689723369",
+          "ncm": "3208.90.39",
+          "qtde_final": 6,
+          "qtd_un_raw": "6",
+          "preco_un_raw": "65,9203",
+          "preco_venda_raw": "336,3961",
+          "preco_venda": 336.3961,
+          "ipi": 21.87
+        },
+        {
+          "sku_portal": "SO.2301.00GL",
+          "sku_codigo_omie": "8689733644",
+          "ncm": "3208.10.20",
+          "qtde_final": 4,
+          "qtd_un_raw": "4",
+          "preco_un_raw": "124,8120",
+          "preco_venda_raw": "424,6165",
+          "preco_venda": 424.6165,
+          "ipi": 13.8
+        },
+        {
+          "sku_portal": "WFOB.6529GL",
+          "sku_codigo_omie": "8690104346",
+          "ncm": "3208.10.10",
+          "qtde_final": 2,
+          "qtd_un_raw": "2",
+          "preco_un_raw": "226,3937",
+          "preco_venda_raw": "385,1012",
+          "preco_venda": 385.1012,
+          "ipi": 12.52
+        }
+      ]
+    }
+  ]
+}

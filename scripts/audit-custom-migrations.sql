@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 587
+-- Total de custom migrations: 588
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -628,7 +628,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261005170000', 'sku_items_controle_itens_pendentes', '20261005170000_sku_items_controle_itens_pendentes.sql'),
   ('20261005220000', 'sales_orders_kpi_no_envio', '20261005220000_sales_orders_kpi_no_envio.sql'),
   ('20261005220100', 'data_health_venda_empurrada_conta_pelo_app', '20261005220100_data_health_venda_empurrada_conta_pelo_app.sql'),
-  ('20261006004500', 'sku_items_fila_parada_sensor', '20261006004500_sku_items_fila_parada_sensor.sql')
+  ('20261006004500', 'sku_items_fila_parada_sensor', '20261006004500_sku_items_fila_parada_sensor.sql'),
+  ('20261006120000', 'preco_exato_po_sayerlack_ipi', '20261006120000_preco_exato_po_sayerlack_ipi.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2549,7 +2550,10 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('data_health_venda_empurrada_conta_pelo_app', 'function', 'public', '_data_health_compute', ''),
   ('sku_items_fila_parada_sensor', 'function', 'public', 'sku_items_fila_parada_check', ''),
   ('sku_items_fila_parada_sensor', 'view', 'public', 'v_sku_items_fila', ''),
-  ('sku_items_fila_parada_sensor', 'cron_job', 'cron', 'afiacao_sku_items_fila_parada_1h', '')
+  ('sku_items_fila_parada_sensor', 'cron_job', 'cron', 'afiacao_sku_items_fila_parada_1h', ''),
+  ('preco_exato_po_sayerlack_ipi', 'function', 'public', 'sayerlack_ipi_itens', ''),
+  ('preco_exato_po_sayerlack_ipi', 'function', 'public', 'sayerlack_aplicar_custo_portal', ''),
+  ('preco_exato_po_sayerlack_ipi', 'table', 'public', 'ipi_aliquota_ncm', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4518,7 +4522,10 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('data_health_venda_empurrada_conta_pelo_app', 'function', 'public', '_data_health_compute', ''),
   ('sku_items_fila_parada_sensor', 'function', 'public', 'sku_items_fila_parada_check', ''),
   ('sku_items_fila_parada_sensor', 'view', 'public', 'v_sku_items_fila', ''),
-  ('sku_items_fila_parada_sensor', 'cron_job', 'cron', 'afiacao_sku_items_fila_parada_1h', '')
+  ('sku_items_fila_parada_sensor', 'cron_job', 'cron', 'afiacao_sku_items_fila_parada_1h', ''),
+  ('preco_exato_po_sayerlack_ipi', 'function', 'public', 'sayerlack_ipi_itens', ''),
+  ('preco_exato_po_sayerlack_ipi', 'function', 'public', 'sayerlack_aplicar_custo_portal', ''),
+  ('preco_exato_po_sayerlack_ipi', 'table', 'public', 'ipi_aliquota_ncm', '')
 )
 SELECT
   e.migration,
@@ -5014,6 +5021,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'reconciliar_pedidos_omie', 5, '20260914180104_reconciliar_carrega_desconto_e_isola_coerencia.sql', 'bc85f6b5437a50fdb9a488867f4ee1a3'),
   ('public', 'sayerlack_aplicar_custo_portal', 1, '20260905090000_sayerlack_custo_portal_cas.sql', 'ad876e8c210428971511537d07f019e6'),
   ('public', 'sayerlack_aplicar_custo_portal', 2, '20260906193522_valor_total_portal_provado.sql', 'b7ddc0e52eb4e7e23b9febf0ff8e5a98'),
+  ('public', 'sayerlack_aplicar_custo_portal', 3, '20261006120000_preco_exato_po_sayerlack_ipi.sql', '1b967a515beb300b9e3215d31a04ffe4'),
   ('public', 'aprovar_pedido_sugerido', 1, '20260906151715_aprovar_pedido_guard_atomico.sql', 'f9ffc3b7db7801d9c19589ca8c0ec6f9'),
   ('public', 'aprovar_pedido_sugerido', 2, '20260906170000_reposicao_selo_aprovacao_m1_expandir.sql', 'b313731a4cc51c5e0e4717be22e4c299'),
   ('public', 'aprovar_pedido_sugerido', 3, '20260906170000_reposicao_selo_aprovacao_m1_expandir.sql', 'b313731a4cc51c5e0e4717be22e4c299'),

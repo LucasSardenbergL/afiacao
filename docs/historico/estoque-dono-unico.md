@@ -309,6 +309,49 @@ oben roda às 09:00Z. Entre 08:35Z e 08:59Z do dia seguinte, rode:
 
 Na colacor a janela é 06:17Z–07:14Z, depois do syncProducts das 06:15Z.
 
+## O deploy da Fase 3 (2026-10-07)
+
+O pacote `58d7df9c0628` (5 edges, `origin/main@f55523513`) foi colado pelo conector, com o OK do founder.
+- O agente conferiu os 45 sha256 (exit 0) e publicou as 5 edges.
+- Todas estão Active: responderam 401 sem credencial, o que mostra boot sem erro.
+- Ele fechou com `No files were edited.`, e o sensor de edição deu `SEM_EDICAO` (nenhum commit do bot na main).
+- Custo: 3,5 créditos.
+- Banco: pré-condição ✅ (as 18 RPCs rodam o corpo commitado).
+
+**Atestação:**
+- `omie-sync-metadados` (fora da allowlist do cron) passou por sonda humana pelo envelope (`db:aplicar`, tentativa #261, registro no #2831) e deu **DEPLOY CONFIRMADO** (`v1.1-catalogo-sem-estoque`, fonte batendo).
+- `omie-analytics-sync` v1.8, `omie-vendas-sync` v1.11 e `sync-reprocess` v1.16 foram atestadas pelo cron de sonda das 00:37Z, vistas às 00:39Z.
+- `tint-omie-sync` não tem `versao.ts`; a prova é o deploy com os hashes.
+
+O adversarial do Codex no diff ficou para retroativo (a cota reabre em 09/10 19:30), por decisão do founder.
+
+## Remendo da WP01 (2026-10-07): o galão congelado sai do grupo
+
+O galão da WP01 (`12078998671`) é membro NÃO habilitado do grupo de equivalência. Ele estava em 11,72 no
+`sku_estoque_atual` desde 31/07, enquanto o Omie confirmou 0 (zero confirmado, 06/10 00:30:12Z, nos dois
+espelhos).
+
+O motor (`gerar_pedidos_sugeridos_ciclo`) soma `GREATEST(inv.saldo, sea.estoque_fisico)` por membro, em
+litros (a unidade dos 28 membros) e sem fator. Por isso o físico do grupo era 16,92 L, quando o real era
+5,2 L. O quarto, com ponto de pedido em torno de 5, estava a uma venda de precisar de uma compra que o motor
+não sugeriria.
+
+**Aplicação.** Pelo envelope, com `db/remendo-wp01-galao-zero-confirmado-2026-10-07.sql`:
+- pré-condição: o zero confirmado ainda de pé nos dois espelhos;
+- UPDATE com CAS no valor congelado (11,72 e a data de 31/07);
+- pós-condição: a linha em 0;
+- ensaio OK, depois a tentativa #263.
+
+**Validação por fora:** a linha ficou em 0/0, com `ultima_sincronizacao` igual ao instante da confirmação e
+`fonte_sync` em `ListarPosEstoque` (o motor só trata `cold_start_seed` como não confirmada). O físico do
+grupo ficou em 5,2 L.
+
+**Os outros membros.** Dos 28 membros dos 14 grupos, 4 não são habilitados e congelam. Só este tinha
+fantasma positivo. Os outros 3 estão em 0 há 94–96 dias, e o `GREATEST` com a posição fresca os neutraliza.
+
+**A classe** (membro desabilitado com estoque congela positivo) se conserta no PR-3: o `omie-sync-estoque`
+passa a gravar o físico dos membros de grupo.
+
 ## Fase 4 — o físico dos membros de grupo (PR-3, 2026-10-07, branch `estoque-membros-de-grupo`)
 
 Edge `omie-sync-estoque` → `v1.7-membros-de-grupo`, construída em cima da v1.6 do #2828 (refactor

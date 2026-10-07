@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **587** custom migrations totais
-- **1932** objetos esperados (criados por estas migrations)
+- **588** custom migrations totais
+- **1935** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 651
+  - `function`: 653
   - `rls_policy`: 464
   - `index`: 267
   - `cron_job`: 175
-  - `table`: 168
+  - `table`: 169
   - `view`: 108
   - `trigger`: 95
   - `enum_value`: 4
@@ -4822,6 +4822,14 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.sku_items_fila_parada_check` | — |
 | `view` | `public.v_sku_items_fila` | — |
 | `cron_job` | `cron.afiacao_sku_items_fila_parada_1h` | — |
+
+### `20261006120000_preco_exato_po_sayerlack_ipi.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.sayerlack_ipi_itens` | — |
+| `function` | `public.sayerlack_aplicar_custo_portal` | — |
+| `table` | `public.ipi_aliquota_ncm` | — |
 
 ## Próximos passos por status
 
