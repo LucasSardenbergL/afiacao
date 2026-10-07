@@ -186,8 +186,8 @@ const SalesQuotes = () => {
       }
       const blockedDesconhecido = (omieData as { success?: boolean; blocked?: string } | null);
       if (blockedDesconhecido?.success === false || blockedDesconhecido?.blocked) {
-        // Fail-closed p/ gate FUTURO do edge que esta versão não conhece: tratar
-        // como sucesso marcaria 'rascunho' sem PV no Omie (lição Codex 2026-08-06).
+        // Fail-closed p/ gate FUTURO do edge que esta versão não conhece: tratar como
+        // sucesso diria "convertido" sem PV no Omie (lição Codex 2026-08-06).
         toast.error('Conversão recusada pelo servidor', {
           description: `O envio foi bloqueado (${blockedDesconhecido.blocked ?? 'sem detalhe'}) e o PV não foi criado. Atualize a página — pode haver uma versão nova do app.`,
         });
