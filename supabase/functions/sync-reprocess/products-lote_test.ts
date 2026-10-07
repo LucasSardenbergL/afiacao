@@ -33,6 +33,10 @@ function assertEquals(a: unknown, b: unknown, msg?: string) {
 
 const NOW = "2026-07-17T12:00:00.000Z";
 
+// O payload do Omie AINDA traz o campo DEPRECATED de estoque; a interface não o declara de propósito
+// (G5 do gate estoque-escritores). A fixture o carrega para provar que nada o lê.
+const comCampoDeprecado = (ps: Array<ProdutoCadastroOmie & { quantidade_estoque?: unknown }>): ProdutoCadastroOmie[] => ps;
+
 // ════════ acumularProdutosDaPagina — filtros de exclusão + normalização + dedupe ════════
 
 Deno.test("acumular — produto elegível entra pela chave numérica; retorna quantos entraram", () => {
@@ -151,33 +155,47 @@ Deno.test("acumular — codigo_produto boolean/array/objeto é descartado (nunca
 // Codex P1 do #1353: no N+1, valor_unitario "abc" (truthy) ia pro payload e falhava SÓ aquele
 // produto (22P02 silencioso); em lote derrubaria o chunk INTEIRO de 500. Descarta o ITEM —
 // fiel em efeito (produto não escrito neste ciclo), nunca clampa lixo para 0 (fabricação).
-Deno.test("acumular — valor_unitario/quantidade_estoque LIXO (string não-numérica, NaN, ±Inf, boolean) descarta o ITEM", () => {
+Deno.test("acumular — valor_unitario LIXO (string não-numérica, NaN, ±Inf, boolean) descarta o ITEM", () => {
   const cat = new Map<number, ProdutoCadastroOmie>();
   const n = acumularProdutosDaPagina(cat, [
     { codigo_produto: 1, valor_unitario: "abc" as unknown as number },
-    { codigo_produto: 2, quantidade_estoque: "lixo" as unknown as number },
     { codigo_produto: 3, valor_unitario: Number.NaN },
-    { codigo_produto: 4, quantidade_estoque: Number.POSITIVE_INFINITY },
+    { codigo_produto: 4, valor_unitario: Number.POSITIVE_INFINITY },
     { codigo_produto: 5, valor_unitario: true as unknown as number },
-    { codigo_produto: 6, valor_unitario: 9.9, quantidade_estoque: 3 }, // válido no meio do lixo
+    { codigo_produto: 6, valor_unitario: 9.9 }, // válido no meio do lixo
   ]);
   assertEquals(n, 1);
   assertEquals(cat.size, 1);
   assertEquals(cat.has(6), true);
 });
 
+// 2026-10-06 (PR-2 do estoque com dono único): `quantidade_estoque` é "DEPRECATED." no Omie e não
+// vai mais para a row — validá-lo descartava o PRODUTO (preço junto) por um campo que o passo não
+// usa. O Omie serializa campo de esquema vazio como "" (cfop em 3.714/3.714): se o DEPRECATED
+// passar a chegar assim, o descarte tiraria o catálogo inteiro da rodada.
+Deno.test("acumular — lixo no quantidade_estoque (DEPRECATED, fora da row) NÃO tira o item", () => {
+  const cat = new Map<number, ProdutoCadastroOmie>();
+  const n = acumularProdutosDaPagina(cat, comCampoDeprecado([
+    { codigo_produto: 2, valor_unitario: 1, quantidade_estoque: "lixo" },
+    { codigo_produto: 4, valor_unitario: 1, quantidade_estoque: Number.POSITIVE_INFINITY },
+    { codigo_produto: 7, valor_unitario: 1, quantidade_estoque: "" },
+    { codigo_produto: 8, valor_unitario: 1, quantidade_estoque: true },
+  ]));
+  assertEquals(n, 4);
+  assertEquals([...cat.keys()].sort((a, b) => a - b), [2, 4, 7, 8]);
+});
+
 // String numérica coage na ENTRADA (canônica): o N+1 mandava "5.5" cru e o Postgres coagia —
 // funcionava. Coagir aqui preserva o efeito E mata o falso-positivo perpétuo de divergência
 // (local 5.5 number vs "5.5" string divergia TODO ciclo no N+1 — decisão deliberada, ver
 // comentário no módulo).
-Deno.test("acumular — valor_unitario/quantidade_estoque string NUMÉRICA coage para number", () => {
+Deno.test("acumular — valor_unitario string NUMÉRICA coage para number", () => {
   const cat = new Map<number, ProdutoCadastroOmie>();
   const n = acumularProdutosDaPagina(cat, [
-    { codigo_produto: 1, valor_unitario: "5.5" as unknown as number, quantidade_estoque: "3" as unknown as number },
+    { codigo_produto: 1, valor_unitario: "5.5" as unknown as number },
   ]);
   assertEquals(n, 1);
   assertEquals(cat.get(1)?.valor_unitario, 5.5);
-  assertEquals(cat.get(1)?.quantidade_estoque, 3);
 });
 
 Deno.test("acumular — mesmo código em páginas sucessivas: last-wins (dedupe p/ upsert em lote)", () => {
@@ -221,7 +239,7 @@ Deno.test("planejar — row com os fallbacks do N+1 (produto mínimo: codigo_pro
 
 Deno.test("planejar — row com campos preenchidos (imagem = primeira do array; metadata com o shape do N+1)", () => {
   const cat = new Map<number, ProdutoCadastroOmie>();
-  acumularProdutosDaPagina(cat, [{
+  acumularProdutosDaPagina(cat, comCampoDeprecado([{
     codigo_produto: 7,
     codigo_produto_integracao: "INT-7",
     codigo: "SKU-7",
@@ -237,7 +255,7 @@ Deno.test("planejar — row com campos preenchidos (imagem = primeira do array; 
     peso_bruto: 1.2,
     peso_liq: 1.1,
     cfop: "5102",
-  }]);
+  }]));
   const plano = planejarEscritaProdutos(cat, [], "colacor", NOW);
   assertEquals(plano.rows, [{
     omie_codigo_produto: 7,
@@ -284,11 +302,11 @@ Deno.test("planejar — rows cobrem TODOS os códigos acumulados (com e sem linh
 // coluna é o passo de estoque (ListarPosEstoque), inclusive o zero de quem saiu da lista.
 Deno.test("planejar — a row NUNCA carrega a chave estoque (quantidade_estoque 30, 0 ou ausente)", () => {
   const cat = new Map<number, ProdutoCadastroOmie>();
-  acumularProdutosDaPagina(cat, [
+  acumularProdutosDaPagina(cat, comCampoDeprecado([
     { codigo_produto: 1, valor_unitario: 5, quantidade_estoque: 30 },
     { codigo_produto: 2, valor_unitario: 5, quantidade_estoque: 0 },
     { codigo_produto: 3, valor_unitario: 5 },
-  ]);
+  ]));
   const plano = planejarEscritaProdutos(cat, [], "oben", NOW);
   assertEquals(plano.rows.length, 3);
   assertEquals(plano.rows.filter((r) => Object.hasOwn(r, "estoque")).length, 0);
@@ -300,7 +318,7 @@ Deno.test("planejar — a row NUNCA carrega a chave estoque (quantidade_estoque 
 // NULL → 23502). Pino de forma: nasce verde, falsificado à parte.
 Deno.test("planejar — todas as rows têm o MESMO conjunto de chaves (lote homogêneo para o upsert)", () => {
   const cat = new Map<number, ProdutoCadastroOmie>();
-  acumularProdutosDaPagina(cat, [
+  acumularProdutosDaPagina(cat, comCampoDeprecado([
     { codigo_produto: 1, valor_unitario: 0 },
     {
       codigo_produto: 2,
@@ -315,7 +333,7 @@ Deno.test("planejar — todas as rows têm o MESMO conjunto de chaves (lote homo
       imagens: [{ url_imagem: "https://a/1.png" }],
       marca: "M",
     },
-  ]);
+  ]));
   const plano = planejarEscritaProdutos(cat, [], "oben", NOW);
   const formas = new Set(plano.rows.map((r) => Object.keys(r).sort().join(",")));
   assertEquals(plano.rows.length, 2);

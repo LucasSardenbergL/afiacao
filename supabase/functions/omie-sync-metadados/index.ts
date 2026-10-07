@@ -122,7 +122,7 @@ async function syncMetadadosAccount(
         unidade: p.unidade || "UN",
         ncm: p.ncm || null,
         valor_unitario: p.valor_unitario || 0,
-        estoque: p.quantidade_estoque || 0,
+        // Sem `estoque`: o campo do cadastro é DEPRECATED no Omie (chega 0); quem grava é o sync de estoque.
         ativo: !inativoFlag,
         account: acctValue,
         imagem_url: p.imagens?.[0]?.url_imagem || null,

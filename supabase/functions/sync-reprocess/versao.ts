@@ -80,10 +80,10 @@ export const respostaSonda = criarRespostaSonda("sync-reprocess");
 // ignora a chave; RPC nova + edge velha recebe payload sem a chave e segue a regra antiga.
 // v1.10/v1.11 (2026-09-27) — desfazem os commits do bot do Lovable que reaplicavam
 // `omie_pedido_id: Number(codigoPedido)` (money-path: ausente viraria 0); a v1.11 só tipa, JS idêntico.
-// v1.16 (2026-10-06) — `metadata.desconto_corrigido_para_null`: SUBCONJUNTO de `desconto_corrigido`
+// v1.17 (2026-10-06) — junta DUAS entregas: `desconto_corrigido_para_null`, SUBCONJUNTO de `desconto_corrigido`
 // (nunca somar as duas), ausente enquanto a RPC no ar não separar. → sensor-que-mede-mudanca-nao-responde-nulificacao.md
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.16-nulificacao-separada";
+export const VERSAO = "v1.17-nulificacao-e-catalogo";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO = // v1.12 (2026-09-27, P2 Codex): run de pedidos que ABORTA grava o metadata apurado até o abort (não apurado = null, nunca 0) — ./apuracao-pedidos.ts. Nota aqui e não na linha do VERSAO: `scripts/sonda-versao-sql.ts` exige aquela linha limpa até o fim.
