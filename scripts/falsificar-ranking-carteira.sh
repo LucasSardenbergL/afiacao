@@ -191,6 +191,14 @@ for LOC in C pt_BR.UTF-8; do
     "'total, status, customer_user_id, order_date_kpi'" \
     "'total, status, order_date_kpi'" \
     '[MTD-COL]'
+  sabotar 'S11 papeis com data nula viram destino' src/hooks/useTeamRanking.ts \
+    'if (roles == null) throw new Error(' \
+    'if (false) throw new Error(' \
+    '[HK-ROLES-NULO]'
+  sabotar 'S12 falha de outra origem no lugar da carteira' src/hooks/useTeamRanking.ts \
+    'fetchDonosCarteira(clienteIds)' \
+    'Promise.reject<Map<string, string>>(new Error("outra falha"))' \
+    '[HK-IDS],[HK-REGUA],[HK-FALHA]'
 done
 
 echo

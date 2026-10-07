@@ -35,7 +35,10 @@ export function useTeamRanking() {
         .select('user_id, commercial_role')
         .in('commercial_role', ROLES_VENDEDOR);
       if (rErr) throw new Error(rErr.message);
-      const ids = [...new Set((roles ?? []).map((r) => r.user_id).filter(Boolean))];
+      // data nula sem error = malformada, não "nenhum vendedor": sem vendedores, toda venda com carteira
+      // iria para "Carteira de não-vendedor" — veredito falso no card (classe #1338→#1564).
+      if (roles == null) throw new Error('commercial_roles: data null sem error — malformada, não é fim');
+      const ids = [...new Set(roles.map((r) => r.user_id).filter(Boolean))];
 
       const nomes = new Map<string, string>();
       if (ids.length > 0) {

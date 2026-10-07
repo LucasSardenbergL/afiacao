@@ -96,5 +96,16 @@ describe('useTeamRanking — pedidos do mês pela carteira', () => {
     const { result } = montar();
     await waitFor(() => expect(result.current.isError).toBe(true));
     expect(result.current.data).toBeUndefined();
+    // A marca do ramo: o erro é o DA CARTEIRA — falha de outra origem não pode passar por esta.
+    expect((result.current.error as Error).message).toContain('carteira_assignments (donos)');
+  });
+
+  it('[HK-ROLES-NULO] papéis com data nula sem error derrubam o ranking — sem vendedores, tudo viraria "Carteira de não-vendedor"', async () => {
+    respostas.commercial_roles = { data: null, error: null };
+    fetchPedidosMTD.mockResolvedValue(PEDIDOS);
+    fetchDonosCarteira.mockResolvedValue(new Map([['C1', 'V1'], ['C2', 'V2']]));
+    const { result } = montar();
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect((result.current.error as Error).message).toContain('commercial_roles: data null sem error');
   });
 });
