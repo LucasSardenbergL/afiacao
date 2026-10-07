@@ -58,9 +58,18 @@
 
 ## Deploy
 
-Ordem: Publish do front (founder) → o cliente do founder atualizado → apply A (`--ensaio`, real) →
-validação por fora (`psql-ro`) → apply B → validação. Status: **pendente** — o PR fica DRAFT até o Codex
-adversarial no diff (cota reabre 09/10 19:30) e a revisão final.
+**No ar em 2026-10-07.** O founder liberou o merge do #2825 sem o Codex adversarial no diff (merge
+00:10Z) e fez o Publish do front. As duas migrations foram pelo envelope por TRANSCRIÇÃO em `db/`: o arquivo
+da migration não tem o marcador positivo (`FIM_APLICACAO_OK`) que o `db:aplicar` exige — o plano mandava
+aplicar a migration direto, e isso falharia.
+
+- **A** — `db/2026-10-06-aplicar-kpi-no-envio.sql`, aplicada por outra sessão (#2837): ledger
+  `db_aplicacoes` id 267, commit `c56436ab9`.
+- **B** — `db/2026-10-07-aplicar-venda-empurrada-conta-pelo-app.sql`: ensaio OK e apply com ledger id 270,
+  commit `3f6e0b796`; a POS rodou o compute na prod (31 sources; o sensor `ok`, sem órfã).
+- **Validação por fora** (`psql-ro`, 2026-10-07, `FIM-OK`): trigger `7b7a749a…`, costura `6ed60592…` (dono
+  `postgres`, que a executa), compute `3fcf8a90…` (`search_path=public, pg_temp`), ACL fechado nas
+  funções, 0 pedido com 2 linhas com kpi.
 
 ## Quando medir (o 1º envio real depois do apply)
 
