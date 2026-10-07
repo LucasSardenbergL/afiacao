@@ -15,9 +15,10 @@ import {
   type EstadoEdgeNova,
   type Dispensa,
 } from './sonda-edge-nova-gate';
+import { git } from './sonda-versao-bump-gate';
 
 function nova(p: Partial<EstadoEdgeNova> & { edge: string }): EstadoEdgeNova {
-  return { corpo: [{ caminho: 'index.ts', fonte: 'Deno.serve(() => new Response("ok"));' }], versao: null, temMarcador: false, noMapa: false, ...p };
+  return { corpo: [{ caminho: 'index.ts', fonte: 'Deno.serve(() => new Response("ok"));' }], versao: null, temMarcador: false, noMapa: false, origem: 'nasceu', ...p };
 }
 
 const SEM_DISPENSA: Record<string, Dispensa> = {};
@@ -127,10 +128,17 @@ describe('montarEstadoNovas — quem é NOVA (e quem só parece)', () => {
     expect(novas[0].corpo.map((c) => c.caminho)).toEqual([`${R}/drain/index.ts`]);
   });
 
-  it('edge que JÁ existia na base NÃO é nova, por mais que a fatia a altere', () => {
+  // Este teste AFIRMAVA `toEqual([])` para uma edge que já existia e NÃO tem marcador — e era a
+  // expressão exata do buraco do #2824: devolvia o caso ao `sonda:bump`, que também o descarta
+  // (`versaoBase === null`). A asserção que ele realmente queria fazer é a de baixo: é MUDAR de
+  // edge INSTRUMENTADA que não é problema deste gate.
+  it('edge que já existia e É instrumentada NÃO entra — MUDAR com marcador é do `sonda:bump`', () => {
     const ler = leitor({
       base: { [`${R}/drain/index.ts`]: 'const x = 0;' },
-      HEAD: { [`${R}/drain/index.ts`]: 'const x = 1;' },
+      HEAD: {
+        [`${R}/drain/index.ts`]: 'const x = 1;',
+        [`${R}/drain/versao.ts`]: "export const VERSAO = 'v1.0-ja-instrumentada';",
+      },
     });
     expect(montarEstadoNovas([`${R}/drain/index.ts`], 'base', null, ler)).toEqual([]);
   });
@@ -183,6 +191,122 @@ describe('montarEstadoNovas — quem é NOVA (e quem só parece)', () => {
     });
     const novas = montarEstadoNovas([`${R}/drain/helper.ts`], 'base', null, ler);
     expect(novas.map((n) => n.edge)).toEqual(['drain']);
+  });
+});
+
+describe('o SEGUNDO universo: mexer no corpo de edge SEM MARCADOR (#2824)', () => {
+  const BASE = { [`${R}/tint/index.ts`]: 'const x = 0;' };
+
+  it('edge que já existia, SEM marcador, com o CORPO alterado ENTRA — e marcada como mexida', () => {
+    const ler = leitor({ base: BASE, HEAD: { [`${R}/tint/index.ts`]: 'const x = 1;' } });
+    const novas = montarEstadoNovas([`${R}/tint/index.ts`], 'base', null, ler);
+    expect(novas.map((n) => n.edge)).toEqual(['tint']);
+    expect(novas[0].origem).toBe('mexida-sem-marcador');
+    expect(novas[0].temMarcador).toBe(false);
+  });
+
+  it('edge NOVA continua marcada como `nasceu` — as duas réguas não se confundem', () => {
+    const ler = leitor({ base: {}, HEAD: { [`${R}/tint/index.ts`]: 'const x = 1;' } });
+    expect(montarEstadoNovas([`${R}/tint/index.ts`], 'base', null, ler)[0].origem).toBe('nasceu');
+  });
+
+  it('só o `_test.ts` mexido NÃO entra — teste não cria deploy pendente', () => {
+    const ler = leitor({
+      base: { ...BASE, [`${R}/tint/index_test.ts`]: 'a' },
+      HEAD: { ...BASE, [`${R}/tint/index_test.ts`]: 'b' },
+    });
+    expect(montarEstadoNovas([`${R}/tint/index_test.ts`], 'base', null, ler)).toEqual([]);
+  });
+
+  it('só o `versao.ts` mexido NÃO entra (e com marcador no head o caso é do `sonda:bump`)', () => {
+    const ler = leitor({
+      base: BASE,
+      HEAD: { ...BASE, [`${R}/tint/versao.ts`]: "export const VERSAO = 'v1.1-x';" },
+    });
+    expect(montarEstadoNovas([`${R}/tint/versao.ts`], 'base', null, ler)).toEqual([]);
+  });
+
+  it('helper da pasta mexido entra, e o `index.ts` do head entra no corpo junto', () => {
+    const ler = leitor({
+      base: { ...BASE, [`${R}/tint/helper.ts`]: 'a' },
+      HEAD: { [`${R}/tint/index.ts`]: 'const x = 1;', [`${R}/tint/helper.ts`]: 'b' },
+    });
+    const [n] = montarEstadoNovas([`${R}/tint/helper.ts`], 'base', null, ler);
+    expect(n.origem).toBe('mexida-sem-marcador');
+    // o index.ts é onde a escrita está em 16 das 16 escritoras medidas — por isso ele entra sempre
+    expect(n.corpo.map((c) => c.caminho).sort()).toEqual([`${R}/tint/helper.ts`, `${R}/tint/index.ts`]);
+  });
+
+  it('a edge REMOVIDA na fatia segue fora — sumir não é mexer', () => {
+    const ler = leitor({ base: BASE, HEAD: {} });
+    expect(montarEstadoNovas([`${R}/tint/index.ts`], 'base', null, ler)).toEqual([]);
+  });
+
+  it('mexida sem marcador e sem dispensa REPROVA, com o detalhe que nomeia o invisível', () => {
+    const a = auditarEdgesNovas([nova({ edge: 'tint-omie-sync', origem: 'mexida-sem-marcador' })], SEM_DISPENSA);
+    expect(a.map((v) => v.motivo)).toEqual(['sem-decisao']);
+    expect(a[0].detalhe).toMatch(/alterou o corpo/);
+    expect(a[0].detalhe).toMatch(/pendencias:deploy/);
+    // e o remédio impresso oferece as DUAS saídas, como para a edge nova
+    const texto = formatarAchado(a[0]);
+    expect(texto).toMatch(/versao\.ts/);
+    expect(texto).toMatch(/DISPENSAS/);
+  });
+
+  it('mexida sem marcador mas DISPENSADA passa — a decisão existe, e o gate só proíbe a omissão', () => {
+    const a = auditarEdgesNovas([nova({ edge: 'cep-geo', origem: 'mexida-sem-marcador' })], {
+      'cep-geo': { motivo: 'leitura-pura', porque: 'só resolve CEP, não grava' },
+    });
+    expect(a).toEqual([]);
+  });
+
+  it('dispensa FALSA de mexida é falsificada igual à de edge nova', () => {
+    const a = auditarEdgesNovas(
+      [
+        nova({
+          edge: 'tint-omie-sync',
+          origem: 'mexida-sem-marcador',
+          corpo: [{ caminho: 'index.ts', fonte: "await sb.from('produtos').update({ estoque: 0 });" }],
+        }),
+      ],
+      { 'tint-omie-sync': { motivo: 'leitura-pura', porque: 'só lê o Omie' } },
+    );
+    expect(a.map((v) => v.motivo)).toEqual(['dispensa-falsa']);
+  });
+});
+
+describe('CONTROLE POSITIVO VIVO: a fatia real do #2824 reprova, e as vizinhas não', () => {
+  // O incidente, medido em git de verdade: `f55523513` tirou `estoque: prod.quantidade_estoque
+  // || 0` de CINCO edges; quatro instrumentadas (pegas pelo `sonda:bump`) e a `tint-omie-sync`,
+  // sem marcador. Antes desta entrega os DOIS gates saíam `exit 0` com mensagem de aprovação
+  // sobre essa fatia. Se este teste ficar verde por vacuidade, o `git` do CI não tem o commit —
+  // daí a asserção de que a fatia existe antes da asserção sobre o veredito.
+  const COMMIT = 'f55523513';
+
+  function temCommit(): boolean {
+    return git(['rev-parse', '--verify', `${COMMIT}^{commit}`]).ok;
+  }
+
+  it('a fatia do incidente acusa `tint-omie-sync` como decisão em aberto', () => {
+    if (!temCommit()) {
+      expect.fail(`o commit ${COMMIT} não está neste clone — sem ele o controle positivo é vácuo`);
+    }
+    const achados = auditarEdgesNovas(coletarNovas(`${COMMIT}^`, COMMIT), SEM_DISPENSA);
+    const tint = achados.find((a) => a.edge === 'tint-omie-sync');
+    expect(tint, 'a quinta edge do #2824 tem de aparecer').toBeDefined();
+    expect(tint?.motivo).toBe('sem-decisao');
+    // e as quatro instrumentadas NÃO entram aqui: elas são do `sonda:bump`, que as pegou
+    for (const instrumentada of ['omie-analytics-sync', 'omie-sync-metadados', 'omie-vendas-sync', 'sync-reprocess']) {
+      expect(achados.map((a) => a.edge)).not.toContain(instrumentada);
+    }
+  });
+
+  it('CALIBRAÇÃO: uma fatia que não toca edge sem marcador segue VERDE', () => {
+    if (!temCommit()) expect.fail(`o commit ${COMMIT} não está neste clone`);
+    // o commit anterior (`d699d9c26`) mexe em edge instrumentada e em SQL — nada sem marcador.
+    // Sem este controle, uma régua sempre-vermelha passaria no teste de cima e quebraria a main.
+    const achados = auditarEdgesNovas(coletarNovas(`${COMMIT}^^`, `${COMMIT}^`), SEM_DISPENSA);
+    expect(achados.map((a) => `${a.edge}:${a.motivo}`)).toEqual([]);
   });
 });
 

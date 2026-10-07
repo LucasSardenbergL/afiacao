@@ -22,9 +22,36 @@
  * Uma pasta de `supabase/functions/` é NOVA quando tem `index.ts` no HEAD e não tinha na BASE.
  * A entrada — não o diff — é o que decide: a fatia pode tocar só um `helper.ts`, e pasta que
  * ganha arquivo sem ganhar `index.ts` não é edge servida. Ler os dois lados é o que separa
- * NASCER de MUDAR (quem cuida é o `sonda:bump`) e de SUMIR (que não é problema de ninguém).
+ * NASCER de MUDAR e de SUMIR (que não é problema de ninguém).
  *
- * Edge nova precisa de UMA das duas, e o gate não escolhe qual:
+ * ### O segundo universo (2026-10-06): MUDAR o corpo de edge SEM MARCADOR
+ *
+ * "MUDAR" não era problema deste gate porque seria do `sonda:bump` — e o `sonda:bump` só olha
+ * edge que tem `versao.ts` na BASE (`versaoBase === null` ⇒ `continue`, linha ~280 de
+ * `sonda-versao-bump-gate.ts`). Os dois `continue` se remetiam um ao outro e o caso caía no vão:
+ * **edge que JÁ existia, SEM marcador, cujo corpo MUDA.**
+ *
+ * MEDIDO, não suposto (#2824, commit `f55523513`): a fatia tirou `estoque: prod.quantidade_estoque
+ * || 0` de CINCO edges. Quatro eram instrumentadas e viraram P1 no `pendencias:deploy`; a quinta,
+ * `tint-omie-sync`, não tem `versao.ts`. Rodando os dois gates sobre aquela fatia, ambos saem
+ * `exit 0` com mensagem de APROVAÇÃO e nenhum dos dois cita a edge — ela segue gravando
+ * `estoque = 0` no tintométrico (money-path), que é o defeito que o #2824 foi corrigir, sem
+ * nenhum sensor para dizê-lo. Verde por AUSÊNCIA de dado.
+ *
+ * Então o universo passa a ser DOIS, com a MESMA pergunta e a MESMA saída:
+ *
+ *   · `nasceu`             — `index.ts` no HEAD e não na BASE (a régua original);
+ *   · `mexida-sem-marcador` — `index.ts` nos DOIS lados, SEM `versao.ts` no HEAD, e a fatia
+ *                             alterou algo que `contaComoCorpo`.
+ *
+ * O que ele continua NÃO fazendo, e é deliberado: as 35 edges sem marcador da main **não** são
+ * reprovadas por existirem. Este é um gate de DIFF, não de estado — numa fatia que não mexe
+ * nelas, ele fica verde. Reprovar o passivo quebraria a main por condição pré-existente, e
+ * retro-preencher `DISPENSAS` seria inventar assinatura de decisão que ninguém tomou (ver o
+ * comentário da própria `DISPENSAS`). A decisão de cada uma acontece no PR que mexer nela, que é
+ * onde ela tem CONTEXTO e DONO — a condição 3 de `docs/agent/maquinas-meta.md`.
+ *
+ * Edge nos dois universos precisa de UMA das duas, e o gate não escolhe qual:
  *
  *   (a) `versao.ts` com `export const VERSAO` legível E entrada em `_shared/sonda-fingerprints.ts`;
  *   (b) o nome em `DISPENSAS`, aqui embaixo, com motivo tipado e o `porque` assinado.
@@ -36,6 +63,17 @@
  * grátis, então a sonda não resolve problema que ela tenha". Um gate que exigisse `versao.ts` de
  * toda edge nova seria imposto sobre quem não precisa de sonda, e gate assim é o que alguém
  * afrouxa no primeiro atrito. O que este gate proíbe não é a dispensa: é a OMISSÃO.
+ *
+ * ⚠️ A PREMISSA ACIMA ("a maioria é leitura pura") NÃO VALE MAIS, e o parágrafo fica porque a
+ * conclusão sobrevive à premissa. Medido em 2026-10-06 na `origin/main` pelos detectores deste
+ * arquivo: 97 pastas, 62 instrumentadas, 35 sem marcador — e das 35, **16 escrevem por PostgREST,
+ * 4 só chamam `.rpc()` (opaco) e 15 não fazem nem um nem outro**. Leitura pura é 15 de 35 (43%):
+ * minoria. A medição que contraria a premissa já estava seis linhas abaixo dela desde 2026-08-28
+ * (31 de 56 escrevendo), no mesmo comentário — ninguém releu as duas juntas.
+ *
+ * O que muda com isso: a dispensa continua legítima (gate imposto sobre quem não precisa de sonda
+ * é gate que alguém afrouxa), mas ela deixa de ser o caso ESPERADO. Para quase metade das edges
+ * sem marcador o motivo honesto não existe no vocabulário, e a saída certa é instrumentar.
  *
  * Só que lista de dispensa livre apodrece. Então ela é verificada no que dá para verificar:
  * `leitura-pura` é uma AFIRMAÇÃO sobre o código, e o gate a falsifica — corpo com a cadeia
@@ -121,12 +159,20 @@ export interface Dispensa {
   porque: string;
 }
 
+/**
+ * Por qual das duas réguas a edge entrou. Só muda a PROSA do achado — a pergunta ("a
+ * instrumentação foi decidida?") e as duas saídas são as mesmas, e é por isso que o segundo
+ * universo mora aqui em vez de virar máquina nova.
+ */
+export type OrigemDecisao = 'nasceu' | 'mexida-sem-marcador';
+
 export interface EstadoEdgeNova {
   edge: string;
   corpo: { caminho: string; fonte: string }[];
   versao: string | null;
   temMarcador: boolean;
   noMapa: boolean;
+  origem: OrigemDecisao;
 }
 
 export type MotivoAchado =
@@ -162,6 +208,13 @@ export const DISPENSAS: Record<string, Dispensa> = {};
  * fan-out é o `sonda:fingerprint`, e ele só age sobre edge JÁ instrumentada. Declarado em vez de
  * silenciado: o gate promete falsificar a dispensa, e prometer mais do que mede é a mesma classe
  * de falha que ele existe para tapar.
+ *
+ * ⚠️ SEGUNDO LIMITE, só em `mexida-sem-marcador`: o corpo coletado é o que a FATIA tocou ∪ o
+ * `index.ts` do head — não a pasta inteira. Para edge que NASCE os dois coincidem (ela nasce
+ * inteira no diff); para edge que já existia, um `helper.ts` da pasta que escreva e que a fatia
+ * não tenha tocado fica fora da falsificação de `leitura-pura`. Mesma classe do limite acima, e
+ * declarada pelo mesmo motivo. O `index.ts` entra sempre porque é onde a escrita está em 16 das
+ * 16 escritoras medidas em 2026-10-06.
  */
 
 /**
@@ -260,7 +313,15 @@ export function auditarEdgesNovas(
     }
 
     if (!e.temMarcador) {
-      achados.push({ edge: e.edge, motivo: 'sem-decisao', detalhe: 'sem `versao.ts` e fora de DISPENSAS' });
+      achados.push({
+        edge: e.edge,
+        motivo: 'sem-decisao',
+        detalhe:
+          e.origem === 'nasceu'
+            ? 'sem `versao.ts` e fora de DISPENSAS'
+            : 'esta fatia alterou o corpo de uma edge que não tem `versao.ts` nem entrada em ' +
+              'DISPENSAS — o deploy dela não é julgável por nenhum gate nem pelo `pendencias:deploy`',
+      });
       continue;
     }
     if (e.versao === null) {
@@ -291,7 +352,9 @@ const ARQ_ENTRADA = 'index.ts';
 const ARQ_MARCADOR = 'versao.ts';
 
 /**
- * Monta o estado das edges que NASCERAM nesta fatia — o miolo do coletor, SEM git.
+ * Monta o estado das edges cuja decisão de instrumentação esta fatia põe em jogo — o miolo do
+ * coletor, SEM git. São dois universos: a que NASCEU, e a que já existia SEM marcador e teve o
+ * corpo alterado (ver `OrigemDecisao` e a §A régua).
  *
  * "Nova" é decidido pelo `index.ts`, não pelo diff: a fatia pode tocar só um `helper.ts`, e uma
  * pasta que ganha arquivo sem ganhar `index.ts` não é edge servida. Ler os dois lados (base e
@@ -319,10 +382,24 @@ export function montarEstadoNovas(
   const novas: EstadoEdgeNova[] = [];
   for (const [edge, arquivos] of [...porEdge].sort()) {
     const entrada = `${RAIZ_EDGES}/${edge}/${ARQ_ENTRADA}`;
-    if (ler(base, entrada) !== null) continue; // já existia: é MUDANÇA, e quem cuida é o `sonda:bump`
     if (ler(headRev, entrada) === null) continue; // não existe no head: removida, ou pasta sem edge
 
+    const existiaNaBase = ler(base, entrada) !== null;
     const fonteMarcador = ler(headRev, `${RAIZ_EDGES}/${edge}/${ARQ_MARCADOR}`);
+
+    // Já existia E é instrumentada: MUDANÇA de edge com marcador, e quem cobra o bump é o
+    // `sonda:bump`. Este é o único `continue` que devolve o caso a ele — e a condição ganhou o
+    // `fonteMarcador` porque sem ele o `sonda:bump` também dava `continue` (`versaoBase === null`)
+    // e a edge sem marcador caía no vão entre os dois gates (#2824, `tint-omie-sync`).
+    if (existiaNaBase && fonteMarcador !== null) continue;
+
+    const tocadosCorpo = arquivos.filter((c) => contaComoCorpo(c, edge));
+    // Edge que já existia só entra quando a fatia mexeu no CORPO: mudar o `_test.ts` (ou só o
+    // `versao.ts`) não cria deploy pendente, e cobrar decisão aí seria o gate gritando errado —
+    // precisão > recall, porque gate que grita errado treina a ignorar. Para edge NOVA a régua
+    // segue sendo a ENTRADA, não o diff: ela nasce inteira, mesmo que a fatia só liste um helper.
+    if (existiaNaBase && tocadosCorpo.length === 0) continue;
+
     const corpo: EstadoEdgeNova['corpo'] = [];
     for (const caminho of [...new Set([...arquivos, entrada])].sort()) {
       if (!contaComoCorpo(caminho, edge)) continue;
@@ -336,6 +413,7 @@ export function montarEstadoNovas(
       versao: fonteMarcador === null ? null : extrairVersao(fonteMarcador),
       temMarcador: fonteMarcador !== null,
       noMapa: Object.prototype.hasOwnProperty.call(mapaHead, edge),
+      origem: existiaNaBase ? 'mexida-sem-marcador' : 'nasceu',
     });
   }
   return novas;
@@ -358,7 +436,7 @@ export function unirTocados(doDiff: string[], untracked: string[], headRev: stri
   return headRev === null ? [...new Set([...doDiff, ...untracked])] : doDiff;
 }
 
-/** Coleta as edges que nasceram nesta fatia. */
+/** Coleta as edges cuja decisão de instrumentação esta fatia põe em jogo (os dois universos). */
 export function coletarNovas(base: string, headRev: string | null): EstadoEdgeNova[] {
   const args = ['diff', '--name-only', base];
   if (headRev) args.push(headRev);
@@ -398,7 +476,7 @@ export function formatarAchado(a: Achado): string {
     case 'sem-decisao':
       return (
         `${cabeca}\n` +
-        '  Edge nova precisa de UMA das duas — e o gate não escolhe qual:\n' +
+        '  Esta edge precisa de UMA das duas — e o gate não escolhe qual:\n' +
         `    (a) instrumentar: criar ${RAIZ_EDGES}/${a.edge}/versao.ts com \`export const VERSAO\`\n` +
         '        (formato `vN.N-slug`) e rodar `bun run sonda:fingerprint --write`;\n' +
         `    (b) dispensar: adicionar "${a.edge}" a \`DISPENSAS\` em ${ARQ_GATE}, com motivo e\n` +
@@ -481,14 +559,14 @@ export function main(argv: string[]): number {
 
   if (achados.length === 0) {
     console.log(
-      `sonda-edge-nova: ✓ toda edge nascida nesta fatia tem a decisão de instrumentação TOMADA ` +
-        `(base ${base.slice(0, 9)}).`,
+      'sonda-edge-nova: ✓ toda edge que esta fatia fez NASCER, e toda edge SEM MARCADOR cujo ' +
+        `corpo ela alterou, tem a decisão de instrumentação TOMADA (base ${base.slice(0, 9)}).`,
     );
     return 0;
   }
 
   for (const a of achados) console.error(formatarAchado(a));
-  console.error(`\nsonda-edge-nova: ${achados.length} edge(s) nova(s) com a decisão em aberto.`);
+  console.error(`\nsonda-edge-nova: ${achados.length} edge(s) com a decisão de instrumentação em aberto.`);
   return 1;
 }
 

@@ -10,6 +10,7 @@ import * as cliDeploy from './pendencias-deploy';
 import {
   atribuirSondasSemIdentidade,
   DATA_ECO_COM_IDENTIDADE,
+  contarEscrita,
   decidirExit,
   edgesParaSondar,
   ESCALAR_P2_APOS_DIAS,
@@ -28,6 +29,7 @@ import {
   type Observacao,
   type SondaSemIdentidade,
 } from './lib/pendencias-deploy';
+import { detectarMutacao } from './sonda-edge-nova-gate';
 import {
   ARQ_ALLOWLIST,
   CONSULTAS_NUVEM,
@@ -40,6 +42,7 @@ import {
   lerAllowlists,
   lerArgIds,
   lerArgJson,
+  lerUniverso,
   main,
   MIGRATION_LEDGER,
   REF_MAIN,
@@ -800,9 +803,20 @@ describe('--json — o contrato que o Passo 3 do /fecho lê', () => {
     // fail-closed, nunca "limpo".
   });
 
+  // Universo de mentira: 2 mapeadas de 4 pastas, logo 2 sem marcador — uma que escreve e uma que
+  // não. O par (2 mapeadas, 4 existentes) é o que faz a diferença entre os dois denominadores
+  // aparecer no JSON; com 2/2 o teste passaria sem distinguir nada.
+  const UNIVERSO = {
+    totalExistentes: 4,
+    semMarcador: [
+      { edge: 'edge-c', escrita: 'postgrest' as const },
+      { edge: 'edge-d', escrita: 'nenhuma' as const },
+    ],
+  };
+
   it('serializarRelatorio: JSON parseável, com a MARCA de formato, os totais e os vereditos INTEIROS', () => {
     const rel = julgar(ESPERADOS, [obs('edge-a', 'aaa111')], ctx());
-    const j = JSON.parse(serializarRelatorio(rel, { ref: 'origin/main', tolerarNunca: false, geradoEm: '2026-09-14T20:00:00.000Z' }));
+    const j = JSON.parse(serializarRelatorio(rel, { ref: 'origin/main', tolerarNunca: false, geradoEm: '2026-09-14T20:00:00.000Z' }, UNIVERSO));
     expect(j.formato).toBe(FORMATO_JSON);
     expect(j.ref).toBe('origin/main');
     expect(j.geradoEm).toBe('2026-09-14T20:00:00.000Z');
@@ -810,6 +824,15 @@ describe('--json — o contrato que o Passo 3 do /fecho lê', () => {
     expect(j.totalMapeadas).toBe(2);
     expect(j.totalObservadas).toBe(1);
     expect(j.totalPendentes).toBe(1);
+    // Os campos ACRESCENTADOS (#2824): sem eles o consumidor não distingue "edge CONFERE" de
+    // "edge que este instrumento não julga" — as duas chegavam como ausência da chave.
+    expect(j.totalExistentes).toBe(4);
+    expect(j.semMarcador).toEqual([
+      { edge: 'edge-c', escrita: 'postgrest' },
+      { edge: 'edge-d', escrita: 'nenhuma' },
+    ]);
+    // e o denominador do ALCANCE não é o do julgamento: 2 mapeadas ≠ 4 existentes
+    expect(j.totalMapeadas).toBeLessThan(j.totalExistentes);
     const a = j.vereditos.find((v: { edge: string }) => v.edge === 'edge-a');
     expect(a).toMatchObject({
       estado: 'CONFERE',
@@ -824,7 +847,7 @@ describe('--json — o contrato que o Passo 3 do /fecho lê', () => {
 
   it('NUNCA_ATESTADA sai com observado/versao/via/idade NULL — ausente ≠ zero, o shell lê "-" e não absolve', () => {
     const rel = julgar(ESPERADOS, [obs('edge-a', 'aaa111')], ctx());
-    const j = JSON.parse(serializarRelatorio(rel, { ref: 'origin/main', tolerarNunca: false, geradoEm: '2026-09-14T20:00:00.000Z' }));
+    const j = JSON.parse(serializarRelatorio(rel, { ref: 'origin/main', tolerarNunca: false, geradoEm: '2026-09-14T20:00:00.000Z' }, UNIVERSO));
     const b = j.vereditos.find((v: { edge: string }) => v.edge === 'edge-b');
     expect(b).toMatchObject({ estado: 'NUNCA_ATESTADA', esperado: 'bbb222', observado: null, versao: null, via: null, idadeHoras: null });
   });
@@ -1113,5 +1136,57 @@ describe('transporte da nuvem — o pacote cobre todas as leituras', () => {
     }
     expect(codigo).toBe(2);
     expect(erros.join('\n')).toContain('duas metades da MESMA leitura');
+  });
+});
+
+describe('lerUniverso — o denominador HONESTO, medido na ref real (#2824)', () => {
+  // Controle positivo VIVO, no padrão do `sonda:nova`: a asserção é sobre a árvore de verdade,
+  // não sobre uma fixture. Se a `tint-omie-sync` for instrumentada amanhã, este teste fica
+  // vermelho e manda reler o controle — que é o comportamento certo, não um incômodo.
+  const u = lerUniverso();
+
+  it('conta MAIS edges do que o mapa mapeia — era essa a diferença que o relatório não dizia', () => {
+    expect(u.totalExistentes).toBeGreaterThan(0);
+    expect(u.semMarcador.length).toBeGreaterThan(0);
+    // o universo contém as mapeadas: sem-marcador é um SUBCONJUNTO do que existe
+    expect(u.semMarcador.length).toBeLessThan(u.totalExistentes);
+  });
+
+  it('`_shared` não é edge e não entra no denominador', () => {
+    expect(u.semMarcador.map((e) => e.edge)).not.toContain('_shared');
+  });
+
+  it('a QUINTA edge do #2824 está na lista, e classificada como quem ESCREVE', () => {
+    const tint = u.semMarcador.find((e) => e.edge === 'tint-omie-sync');
+    expect(tint, 'a edge do incidente saiu da lista — se foi instrumentada, reveja este controle').toBeDefined();
+    // ela grava `estoque` no tintométrico: é por isso que deixá-la fora do relatório era
+    // money-path invisível, e não só uma lacuna de contagem.
+    expect(tint?.escrita).toBe('postgrest');
+  });
+
+  it('as QUATRO instrumentadas do #2824 NÃO aparecem aqui — elas o relatório já julgava', () => {
+    const nomes = u.semMarcador.map((e) => e.edge);
+    for (const e of ['omie-analytics-sync', 'omie-sync-metadados', 'omie-vendas-sync', 'sync-reprocess']) {
+      expect(nomes).not.toContain(e);
+    }
+  });
+
+  it('toda edge listada tem classe do vocabulário fechado — nunca `undefined` virando "sem risco"', () => {
+    for (const e of u.semMarcador) {
+      expect(['postgrest', 'rpc', 'nenhuma']).toContain(e.escrita);
+    }
+  });
+
+  it('a classificação vem dos detectores do gate (stripper compartilhado), não de grep local', () => {
+    // Falsificação do stripper: `.insert(` só dentro de comentário NÃO é escrita. Um grep local
+    // diria `postgrest` aqui — e foi para isso que o `maquinas-meta.md` proibiu regex própria.
+    expect(detectarMutacao("// await sb.from('t').insert(x)\nDeno.serve(() => new Response('ok'));")).toBeNull();
+    expect(detectarMutacao("await sb.from('t').insert(x);")).toBe('insert');
+  });
+
+  it('contarEscrita soma exatamente a lista — o eixo do risco, não o tamanho dela', () => {
+    const n = contarEscrita(u.semMarcador);
+    expect(n.postgrest + n.rpc + n.nenhuma).toBe(u.semMarcador.length);
+    expect(n.postgrest).toBeGreaterThan(0);
   });
 });
