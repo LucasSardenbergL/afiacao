@@ -376,7 +376,7 @@ desta sessão (churn ≠ corrosão) evita, agora medido em vez de suposto. E a `
 **uma camada por vez** — o passo 2 usa `p.updated_at <`, a postcondição (c) usa `so.updated_at >=`,
 âncoras distintas de propósito. Na primeira versão eu derrubei as duas juntas, que não prova nada.
 
-**Duas correções que o CI e o próprio harness me cobraram**, e as duas são da mesma família:
+**Três correções que o CI me cobrou**, e as três são da mesma família — ausência lida como aprovação:
 
 1. O gate `falsificar-exige-assert-gate` (regra R3) reprovou minha primeira versão, com razão: o
    veredito era `saída ≠ "ok"`, ou seja, **aceitava vermelho de qualquer causa** — PG que não sobe,
@@ -387,6 +387,18 @@ desta sessão (churn ≠ corrosão) evita, agora medido em vez de suposto. E a `
 2. O A1b nasceu vazio e passava calado: `APPLY_ERR` era setada dentro de `$(aplicar …)`, que é
    **subshell** — variável de lá não volta ao pai. O erro agora vai para arquivo. Ausente lido como
    vazio é a mesma armadilha de `ausente ≠ zero`, só que no shell.
+3. O gate `assert-verde-por-ausencia` achou **três asserções NULL-blind nos próprios applies**, e
+   são defeito real, não ruído de linter: `IF (length(v_def) - …) / length(v_a1v) <> 1` não dispara
+   quando o lado esquerdo é NULL, porque `NULL <> 1` é NULL. Se `pg_get_functiondef` devolvesse NULL,
+   a asserção de âncora **aprovaria em silêncio** e o replace seguiria num corpo que ninguém conferiu.
+   Existe um guard de existência antes, mas uma asserção não deve depender da ordem dos guards para
+   ser fail-closed. Viraram `IS DISTINCT FROM`, NULL-safe por construção. A terceira era a do sensor
+   do cupom (`(v_antes - v_depois) <> v_escritos`) — a postcondição mais importante do apply 2.
+
+⚠️ Os bytes mudaram com isso, e **o ensaio vale para os bytes exatos** — refeito em produção com o
+sha novo (`67fedaa6…`): mesmo resultado, `105 pedidos excluidos | controle sem excecao = 0 elegiveis
+| com excecao = 538 elegiveis | soma prevista = -100144.46`. O PG17 também: controle verde (21) e as
+5 sabotagens vermelhas no assert declarado.
 
 
 ### O bloqueio que eu reportei errado: `exit 79` não é a parede
