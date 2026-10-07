@@ -117,8 +117,10 @@ PY
     falhou=1
     return
   fi
+  # Sem pipe para `grep -q` (aqui e no locale abaixo): com `pipefail`, o grep que sai no 1º casamento
+  # derruba o produtor por SIGPIPE (141) e o veredito se inverte — medido com `locale -a | grep -qx`.
   for m in "${marcas[@]}"; do
-    printf '%s\n' "$vermelhos" | grep -qF -- "$m" || faltou="$faltou $m"
+    grep -qF -- "$m" <<<"$vermelhos" || faltou="$faltou $m"
   done
   while IFS= read -r linha; do
     casou=0
@@ -136,7 +138,8 @@ PY
 }
 
 for LOC in C pt_BR.UTF-8; do
-  if [ "$LOC" != C ] && ! locale -a 2>/dev/null | grep -qx "$LOC"; then
+  locais="$(locale -a 2>/dev/null)"
+  if [ "$LOC" != C ] && ! grep -qx -- "$LOC" <<<"$locais"; then
     echo "ABORTADO: o locale $LOC não existe nesta máquina — a falsificação exige os dois."
     exit 2
   fi
