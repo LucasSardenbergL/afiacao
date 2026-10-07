@@ -78,14 +78,12 @@ export const respostaSonda = criarRespostaSonda("sync-reprocess");
 //     RPC antiga. É assim que se lê, no log, que a edge subiu antes da migration.
 // ⚠️ ORDEM: livre, mas o defeito do desconto só fecha com as DUAS no ar — edge nova + RPC antiga
 // ignora a chave; RPC nova + edge velha recebe payload sem a chave e segue a regra antiga.
-// v1.10 (2026-09-27) — o MESMO corpo da v1.9: desfaz de novo os commits do bot do Lovable (16:58Z), que
-// reaplicaram `omie_pedido_id: Number(codigoPedido)` (money-path: ausente viraria 0). O bump só existe
-// porque o `sonda:bump` compara com a base, que já tinha o commit do bot.
-// v1.11 (2026-09-27) — só TIPO: `omie_pedido_id` segue CRU para a RPC (que só o ecoa no registro de
-// falha), agora tipado `string | number` por um tipo local — o `deno check` do preview deixa de acusar
-// a linha que o bot "consertava" com `Number()`. JS emitido byte-idêntico ao da v1.10.
+// v1.10/v1.11 (2026-09-27) — desfazem os commits do bot do Lovable que reaplicavam
+// `omie_pedido_id: Number(codigoPedido)` (money-path: ausente viraria 0); a v1.11 só tipa, JS idêntico.
+// v1.17 (2026-10-06) — junta DUAS entregas: `desconto_corrigido_para_null`, SUBCONJUNTO de `desconto_corrigido`
+// (nunca somar as duas), ausente enquanto a RPC no ar não separar. → sensor-que-mede-mudanca-nao-responde-nulificacao.md
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.16-catalogo-sem-estoque";
+export const VERSAO = "v1.17-nulificacao-e-catalogo";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO = // v1.12 (2026-09-27, P2 Codex): run de pedidos que ABORTA grava o metadata apurado até o abort (não apurado = null, nunca 0) — ./apuracao-pedidos.ts. Nota aqui e não na linha do VERSAO: `scripts/sonda-versao-sql.ts` exige aquela linha limpa até o fim.

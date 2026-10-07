@@ -21,6 +21,7 @@ export interface RespostaReconciliarPedidos {
   sem_item?: number; sem_pai?: number;
   identidade_adotada?: number; identidade_usada?: number;
   desconto_apurado?: number; desconto_corrigido?: number;
+  desconto_corrigido_para_null?: number;
   falhas?: Array<Record<string, unknown>>;
 }
 
@@ -60,6 +61,10 @@ export interface ApuracaoPedidos {
   // chave, isto é, a RPC no ar é a anterior.
   descontoApurado: number | null;
   descontoCorrigido: number | null;
+  // SUBCONJUNTO de `descontoCorrigido` (apply 2026-10-06): só o ramo em que o desconto conhecido
+  // virou NULL. É o que separa "o reprocesso nulificou" de "o Omie mudou o valor" — com o contador
+  // único, a suspeita de 2026-09-20 custou dois dias de forense. NUNCA somar com `descontoCorrigido`.
+  descontoCorrigidoParaNull: number | null;
 }
 
 const TETO_AMOSTRA = 20;
@@ -88,6 +93,7 @@ export function novaApuracaoPedidos(): ApuracaoPedidos {
     falhasAmostra: [],
     descontoApurado: 0,
     descontoCorrigido: 0,
+    descontoCorrigidoParaNull: 0,
   };
 }
 
@@ -170,6 +176,13 @@ export function somarRespostaRpc(
   ap.descontoCorrigido = ap.descontoCorrigido !== null && typeof r.desconto_corrigido === "number"
     ? ap.descontoCorrigido + r.desconto_corrigido
     : null;
+  // Mesmo contrato: a RPC anterior ao apply de 2026-10-06 não manda esta chave, e gravar 0 afirmaria
+  // "zero nulificações" sobre o que não foi medido. Esta é a ÚNICA das quatro combinações
+  // (RPC × edge) capaz de produzir número ERRADO em vez de ausente — por isso o `null` grudento.
+  ap.descontoCorrigidoParaNull =
+    ap.descontoCorrigidoParaNull !== null && typeof r.desconto_corrigido_para_null === "number"
+      ? ap.descontoCorrigidoParaNull + r.desconto_corrigido_para_null
+      : null;
   ap.ambiguos += r.ambiguo || 0;
   ap.stale += r.stale || 0;
   ap.identidadeAdotada += r.identidade_adotada || 0;
@@ -300,6 +313,10 @@ export function metadataPedidos(
     // na run abortada, nenhuma página chegou a ser reconciliada).
     desconto_apurado: f2(ap.descontoApurado),
     desconto_corrigido: f2(ap.descontoCorrigido),
+    // SUBCONJUNTO de `desconto_corrigido`, nunca uma parcela a somar. Ausente = a RPC no ar ainda
+    // não separa a nulificação; `desconto_corrigido` presente E esta ausente é exatamente a
+    // assinatura de "RPC velha com edge nova", e isso se vê pelo próprio log.
+    desconto_corrigido_para_null: f2(ap.descontoCorrigidoParaNull),
   };
   if (completa) return metadata;
   return {
