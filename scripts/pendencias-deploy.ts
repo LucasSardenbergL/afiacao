@@ -21,6 +21,18 @@
  *      Zero aqui NÃO é "tudo limpo" — um cron que devolvesse 0 ensinaria o operador a ler
  *      silêncio como aprovação, que é exatamente o hábito que a varredura existe para desfazer.
  *
+ * O QUE ELE NÃO ALCANÇA, e passou a DIZER (2026-10-06, #2824): o universo deste instrumento é o
+ * MAPA de fingerprints, e o mapa é derivado da presença de `versao.ts`. Edge sem marcador não
+ * tinha veredito — e, pior, não entrava no denominador: o relatório fechava com
+ * `cobertura: 62/62 edges mapeadas`, um número verdadeiro que se lia como cobertura total, de 97
+ * pastas de edge na main. Medido: o `f55523513` tirou `estoque: prod.quantidade_estoque || 0` de
+ * CINCO edges; quatro viraram P1 aqui e a quinta, `tint-omie-sync` (money-path do tintométrico),
+ * não apareceu em seção nenhuma — nem pendente, nem confere. A ausência do marcador comprava
+ * silêncio no relatório inteiro, e silêncio assim é verde por AUSÊNCIA de dado.
+ * Agora: `lerUniverso()` conta as pastas da ref, a seção ⚫ FORA DO ALCANCE as NOMEIA com a classe
+ * de escrita, e a cobertura imprime também `alcance: <mapeadas>/<existentes>`. É AVISO, não
+ * pendência — quem COBRA a decisão é o `sonda:nova`, no PR que mexer no corpo de uma delas.
+ *
  * `--sql-nuvem` / `--dados-nuvem=<arquivo>` (2026-09-27): a MESMA varredura numa sessão da NUVEM,
  * que não tem `psql-ro`. O `--sql-nuvem` imprime UM SQL com as 8 consultas deste arquivo; o modelo
  * o roda VERBATIM pelo `query_database` do conector Lovable e grava a resposta; o `--dados-nuvem`
@@ -79,6 +91,7 @@ import ts from 'typescript';
 
 import {
   atribuirSondasSemIdentidade,
+  contarEscrita,
   DATA_ECO_COM_IDENTIDADE,
   decidirExit,
   edgesParaSondar,
@@ -91,8 +104,10 @@ import {
   type Contexto,
   type Esperado,
   type Estado,
+  type EdgeSemMarcador,
   type Observacao,
   type Relatorio,
+  type Universo,
   type Veredito,
 } from './lib/pendencias-deploy';
 import {
@@ -111,6 +126,7 @@ import {
   separarFlagsNuvem,
 } from './lib/transporte-nuvem';
 import { SONDA_CRON_ALVOS } from '../supabase/functions/_shared/sonda-cron-alvos';
+import { detectarMutacao, detectarRpcs } from './sonda-edge-nova-gate';
 import { ARQ_MAPA, parsearMapa, RAIZ_EDGES } from './sonda-fingerprint';
 import { git, lerNaRev } from './sonda-versao-bump-gate';
 import { extrairVersao } from './sonda-versao-sql';
@@ -165,6 +181,7 @@ export function lerArgJson(argv: string[]): boolean {
 export function serializarRelatorio(
   rel: Relatorio,
   meta: { ref: string; tolerarNunca: boolean; geradoEm: string },
+  universo: Universo,
 ): string {
   return JSON.stringify({
     formato: FORMATO_JSON,
@@ -178,6 +195,12 @@ export function serializarRelatorio(
     totalObservadas: rel.totalObservadas,
     totalPendentes: rel.totalPendentes,
     totalUrgentes: rel.totalUrgentes,
+    // ACRESCENTADOS em 2026-10-06 (#2824), sem bump do `FORMATO_JSON`: campo novo não quebra
+    // consumidor que lê por nome, e o `/fecho` lê `vereditos`/`totalPendentes`. O que eles
+    // permitem é o consumidor distinguir "esta edge CONFERE" de "esta edge não é julgável" —
+    // antes as duas chegavam como ausência da chave, indistinguíveis.
+    totalExistentes: universo.totalExistentes,
+    semMarcador: universo.semMarcador,
     foraDoMapaHistoricas: rel.foraDoMapaHistoricas,
     vereditos: rel.vereditos,
   });
@@ -506,6 +529,77 @@ export function lerEsperados(): Record<string, Esperado> {
 }
 
 /**
+ * O universo REAL de edges da ref — e quais delas este instrumento NÃO alcança.
+ *
+ * FAIL-CLOSED: `git ls-tree` que falha vira exceção, e o `main` a converte em exit 2 (mecânica).
+ * Degradar para lista vazia aqui imprimiria `0 fora do alcance` — o mesmo silêncio que esta função
+ * existe para desfazer, agora com cara de boa notícia. Universo que não se lê não é universo limpo.
+ *
+ * A classificação de escrita usa `detectarMutacao`/`detectarRpcs` do `sonda-edge-nova-gate.ts`,
+ * que limpam comentário com o stripper COMPARTILHADO (`removerComentarios`). Regex local aqui
+ * contaria `.insert(` dentro de comentário ou de string como escrita — verde/vermelho por
+ * cegueira, a armadilha dos gates textuais do `docs/agent/maquinas-meta.md`.
+ *
+ * LIMITE declarado: lê o `index.ts` da pasta, não o fecho transitivo de `_shared/` — mesmo alcance
+ * dos detectores no gate irmão. A classe é um ROTEIRO de prioridade, não um alvará: `nenhuma` diz
+ * "o index.ts não escreve", não "a edge é inerte".
+ */
+export function lerUniverso(ref: string = REF_MAIN): Universo {
+  const { ok, saida } = git(['ls-tree', '--name-only', '-d', ref, `${RAIZ_EDGES}/`]);
+  if (!ok) {
+    throw new Error(
+      `\`git ls-tree -d ${ref} ${RAIZ_EDGES}/\` falhou — sem o universo de edges da ref o ` +
+        'denominador da cobertura seria inventado, e foi um denominador inventado que escondeu a ' +
+        '`tint-omie-sync` no #2824.',
+    );
+  }
+
+  const pastas = saida
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l !== '')
+    .map((l) => l.slice(`${RAIZ_EDGES}/`.length))
+    .filter((n) => n !== '' && n !== '_shared');
+
+  return montarUniverso(pastas, (caminho) => lerNaRev(ref, caminho));
+}
+
+/**
+ * O miolo PURO do universo — sem git, com o leitor injetado.
+ *
+ * Separado por motivo medido, não por estética: a UNIÃO das duas réguas abaixo nasceu SEM sensor.
+ * Na árvore real toda edge com `versao.ts` também tem `index.ts`, então um teste contra o repo
+ * fica VERDE mesmo com a régua errada — verde por vacuidade. A falsificação pegou isso (sabotar a
+ * união não derrubou nada) e a resposta foi este seam, o mesmo que `montarEstadoNovas` tem no
+ * gate irmão e pelo mesmo motivo: o caso que distingue as réguas não existe na árvore, só em
+ * fixture.
+ */
+export function montarUniverso(pastas: string[], ler: (caminho: string) => string | null): Universo {
+  const existentes: string[] = [];
+  const semMarcador: EdgeSemMarcador[] = [];
+  for (const edge of [...pastas].sort()) {
+    // A pasta conta como edge quando tem `index.ts` (é servida — a régua do `sonda:nova`) OU
+    // `versao.ts` (o mapa a mapeia — a régua do `sonda:fingerprint`). A UNIÃO, e não só a
+    // primeira, porque as duas réguas são de gates diferentes e usar uma só deixa o denominador
+    // MENOR que o mapa quando elas divergem — e `totalExistentes < totalMapeadas` imprimiria
+    // cobertura acima de 100%, que é o defeito deste relatório ao contrário. Pasta sem nenhum
+    // dos dois não é edge e segue fora do denominador.
+    const temEntrada = ler(`${RAIZ_EDGES}/${edge}/index.ts`) !== null;
+    const temMarcador = ler(`${RAIZ_EDGES}/${edge}/versao.ts`) !== null;
+    if (!temEntrada && !temMarcador) continue;
+    existentes.push(edge);
+    if (temMarcador) continue;
+
+    const corpo = ler(`${RAIZ_EDGES}/${edge}/index.ts`) ?? '';
+    const escrita: EdgeSemMarcador['escrita'] =
+      detectarMutacao(corpo) !== null ? 'postgrest' : detectarRpcs(corpo).length > 0 ? 'rpc' : 'nenhuma';
+    semMarcador.push({ edge, escrita });
+  }
+
+  return { totalExistentes: existentes.length, semMarcador };
+}
+
+/**
  * ── A allowlist do cron de sonda, lida NA REF ─────────────────────────────────────────────────
  *
  * Incidente de 2026-09-10: o guard de intrusos comparava o banco com o `import` de
@@ -738,7 +832,59 @@ function idade(v: Veredito): string {
   return `há ${Math.round(v.idadeHoras / 24)} d`;
 }
 
-function imprimir(rel: Relatorio, linhasSemIdentidade: string[]): void {
+/**
+ * A seção que faltava: as edges que o julgamento NÃO ALCANÇA, nomeadas uma a uma.
+ *
+ * Não é pendência e não muda exit code — é AVISO, e de propósito. Elas não estão reprovadas: não
+ * há prova a cobrar de quem não tem sensor, e reprovar o passivo quebraria toda sessão por
+ * condição pré-existente. O que a seção faz é tirar o silêncio do acidente: 35 nomes na tela são
+ * uma dívida declarada, e a dívida declarada é a que alguém escolhe pagar.
+ *
+ * Quem COBRA a decisão é o `sonda:nova`, no PR que mexer no corpo de uma delas — lá a decisão tem
+ * contexto e dono. Aqui só se declara.
+ */
+export function linhasSemMarcador(u: Universo): string[] {
+  if (u.semMarcador.length === 0) return [];
+  const n = contarEscrita(u.semMarcador);
+  // Escritoras primeiro: a classe é um roteiro de prioridade, e `tint-omie-sync` — a edge do
+  // #2824 — está nessa primeira linha. Dentro da classe, ordem alfabética (saída estável).
+  const peso: Record<EdgeSemMarcador['escrita'], number> = { postgrest: 0, rpc: 1, nenhuma: 2 };
+  const marca: Record<EdgeSemMarcador['escrita'], string> = {
+    postgrest: '✍️  escreve',
+    rpc: '❔ rpc',
+    nenhuma: '·  —',
+  };
+  return [
+    `\n⚫ FORA DO ALCANCE deste instrumento — ${u.semMarcador.length} edge(s) sem \`versao.ts\`` +
+      '\n   Não têm marcador ⇒ não entram no mapa de fingerprints ⇒ não têm (versao, fonte) a julgar.' +
+      '\n   Deploy pendente nelas é INVISÍVEL aqui, hoje e sempre, até que sejam instrumentadas.' +
+      `\n   ${n.postgrest} escrevem no banco por PostgREST · ${n.rpc} só por \`.rpc()\` (opaco) · ${n.nenhuma} nem um nem outro`,
+    ...[...u.semMarcador]
+      .sort((a, b) => peso[a.escrita] - peso[b.escrita] || a.edge.localeCompare(b.edge))
+      .map((e) => `   ${e.edge.padEnd(34)}${marca[e.escrita]}`),
+    '   → decidir por edge, no PR que mexer nela: instrumentar (`versao.ts` + `sonda:fingerprint --write`)' +
+      '\n     ou dispensar em `DISPENSAS` (scripts/sonda-edge-nova-gate.ts) com `porque` assinado.',
+  ];
+}
+
+/**
+ * Os TRÊS números, nesta ordem, porque dois deles sozinhos mentem:
+ *   · observadas/mapeadas  — o que ele julgou (era a linha ANTIGA, lida como cobertura total)
+ *   · mapeadas/existentes  — o que ele ALCANÇA do que existe (62/97 = 64%, não 100%)
+ *
+ * Imprimir só o 1º par foi o que escondeu a `tint-omie-sync` no #2824: `62/62` não estava errado,
+ * estava incompleto, e incompleto com cara de completo é o que se lê como aprovação.
+ */
+export function linhaCobertura(rel: Relatorio, u: Universo): string {
+  const alcance =
+    u.totalExistentes > 0
+      ? ` · alcance: ${rel.totalMapeadas}/${u.totalExistentes} edges da ref instrumentadas` +
+        (u.semMarcador.length > 0 ? ` (${u.semMarcador.length} fora do alcance, acima)` : '')
+      : '';
+  return `\n─── cobertura: ${rel.totalObservadas}/${rel.totalMapeadas} edges mapeadas com atestação (ledger ∪ janela viva)${alcance}`;
+}
+
+function imprimir(rel: Relatorio, linhasSemIdentidade: string[], universo: Universo): void {
   // Tipados como `Estado` de propósito: um estado novo na lib sem rótulo aqui — ou um nome
   // digitado errado — vira erro de compilação, não seção que some calada do relatório.
   const ordem: Estado[] = [
@@ -808,9 +954,9 @@ function imprimir(rel: Relatorio, linhasSemIdentidade: string[]): void {
     }
   }
 
-  console.log(
-    `\n─── cobertura: ${rel.totalObservadas}/${rel.totalMapeadas} edges mapeadas com atestação (ledger ∪ janela viva)`,
-  );
+  for (const linha of linhasSemMarcador(universo)) console.log(linha);
+
+  console.log(linhaCobertura(rel, universo));
   if (rel.foraDoMapaHistoricas.length > 0) {
     console.log(
       `    ${rel.foraDoMapaHistoricas.length} edge(s) só no histórico do ledger, sem observação fresca (main não mapeia): ${rel.foraDoMapaHistoricas.join(', ')}`,
@@ -974,6 +1120,26 @@ export function main(argv: string[] = []): number {
     return 2;
   }
 
+  // Depois do `lerEsperados` porque ele faz o fetch: o universo lido é o da ref recém-buscada, a
+  // MESMA contra a qual o mapa e a allowlist são julgados. Mecânica, não aviso — um denominador
+  // que não se lê é a classe de falha deste bloco inteiro (ver o exit 2 no topo do arquivo).
+  let universo: Universo;
+  try {
+    universo = lerUniverso();
+  } catch (e) {
+    console.error(`❌ MECÂNICA: universo de edges indeterminável — ${(e as Error).message}`);
+    return 2;
+  }
+  if (universo.totalExistentes < Object.keys(esperados).length) {
+    console.error(
+      `❌ MECÂNICA: o universo (${universo.totalExistentes}) é MENOR que o mapa ` +
+        `(${Object.keys(esperados).length}) em ${REF_MAIN} — o mapa nomeia edge que a ref não tem, ou ` +
+        'o `ls-tree` leu a árvore errada. Denominador menor que o numerador imprimiria uma ' +
+        'cobertura acima de 100%, que é o defeito deste relatório ao contrário.',
+    );
+    return 2;
+  }
+
   // Depois do fetch de `lerEsperados`: a allowlist que julga o banco é a da MESMA ref do mapa.
   let allowlists: Allowlists;
   try {
@@ -1103,8 +1269,8 @@ export function main(argv: string[] = []): number {
   // consumidor, que trataria como não consultado. Avisos vão para o stderr.
   // Pela nuvem, o instante da medição é o `now()` do BANCO — o mesmo a que cada `idadeHoras` é relativa.
   const geradoEm = (medidoEm ?? new Date()).toISOString();
-  if (json) console.log(serializarRelatorio(rel, { ref: REF_MAIN, tolerarNunca, geradoEm }));
-  else imprimir(rel, linhasSemIdentidade);
+  if (json) console.log(serializarRelatorio(rel, { ref: REF_MAIN, tolerarNunca, geradoEm }, universo));
+  else imprimir(rel, linhasSemIdentidade, universo);
   for (const linha of secao.linhas) {
     if (json) console.error(linha);
     else console.log(linha);

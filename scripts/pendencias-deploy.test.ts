@@ -40,6 +40,9 @@ import {
   lerAllowlists,
   lerArgIds,
   lerArgJson,
+  linhaCobertura,
+  montarUniverso,
+  linhasSemMarcador,
   main,
   MIGRATION_LEDGER,
   REF_MAIN,
@@ -800,9 +803,20 @@ describe('--json — o contrato que o Passo 3 do /fecho lê', () => {
     // fail-closed, nunca "limpo".
   });
 
+  // Universo de mentira: 2 mapeadas de 4 pastas, logo 2 sem marcador — uma que escreve e uma que
+  // não. O par (2 mapeadas, 4 existentes) é o que faz a diferença entre os dois denominadores
+  // aparecer no JSON; com 2/2 o teste passaria sem distinguir nada.
+  const UNIVERSO = {
+    totalExistentes: 4,
+    semMarcador: [
+      { edge: 'edge-c', escrita: 'postgrest' as const },
+      { edge: 'edge-d', escrita: 'nenhuma' as const },
+    ],
+  };
+
   it('serializarRelatorio: JSON parseável, com a MARCA de formato, os totais e os vereditos INTEIROS', () => {
     const rel = julgar(ESPERADOS, [obs('edge-a', 'aaa111')], ctx());
-    const j = JSON.parse(serializarRelatorio(rel, { ref: 'origin/main', tolerarNunca: false, geradoEm: '2026-09-14T20:00:00.000Z' }));
+    const j = JSON.parse(serializarRelatorio(rel, { ref: 'origin/main', tolerarNunca: false, geradoEm: '2026-09-14T20:00:00.000Z' }, UNIVERSO));
     expect(j.formato).toBe(FORMATO_JSON);
     expect(j.ref).toBe('origin/main');
     expect(j.geradoEm).toBe('2026-09-14T20:00:00.000Z');
@@ -810,6 +824,15 @@ describe('--json — o contrato que o Passo 3 do /fecho lê', () => {
     expect(j.totalMapeadas).toBe(2);
     expect(j.totalObservadas).toBe(1);
     expect(j.totalPendentes).toBe(1);
+    // Os campos ACRESCENTADOS (#2824): sem eles o consumidor não distingue "edge CONFERE" de
+    // "edge que este instrumento não julga" — as duas chegavam como ausência da chave.
+    expect(j.totalExistentes).toBe(4);
+    expect(j.semMarcador).toEqual([
+      { edge: 'edge-c', escrita: 'postgrest' },
+      { edge: 'edge-d', escrita: 'nenhuma' },
+    ]);
+    // e o denominador do ALCANCE não é o do julgamento: 2 mapeadas ≠ 4 existentes
+    expect(j.totalMapeadas).toBeLessThan(j.totalExistentes);
     const a = j.vereditos.find((v: { edge: string }) => v.edge === 'edge-a');
     expect(a).toMatchObject({
       estado: 'CONFERE',
@@ -824,7 +847,7 @@ describe('--json — o contrato que o Passo 3 do /fecho lê', () => {
 
   it('NUNCA_ATESTADA sai com observado/versao/via/idade NULL — ausente ≠ zero, o shell lê "-" e não absolve', () => {
     const rel = julgar(ESPERADOS, [obs('edge-a', 'aaa111')], ctx());
-    const j = JSON.parse(serializarRelatorio(rel, { ref: 'origin/main', tolerarNunca: false, geradoEm: '2026-09-14T20:00:00.000Z' }));
+    const j = JSON.parse(serializarRelatorio(rel, { ref: 'origin/main', tolerarNunca: false, geradoEm: '2026-09-14T20:00:00.000Z' }, UNIVERSO));
     const b = j.vereditos.find((v: { edge: string }) => v.edge === 'edge-b');
     expect(b).toMatchObject({ estado: 'NUNCA_ATESTADA', esperado: 'bbb222', observado: null, versao: null, via: null, idadeHoras: null });
   });
@@ -1113,5 +1136,120 @@ describe('transporte da nuvem — o pacote cobre todas as leituras', () => {
     }
     expect(codigo).toBe(2);
     expect(erros.join('\n')).toContain('duas metades da MESMA leitura');
+  });
+});
+
+describe('a SAÍDA declara o que o instrumento não alcança (#2824)', () => {
+  const U = {
+    totalExistentes: 97,
+    semMarcador: [
+      { edge: 'zz-ultima-alfabetica', escrita: 'nenhuma' as const },
+      { edge: 'tint-omie-sync', escrita: 'postgrest' as const },
+      { edge: 'cep-geo-resolver', escrita: 'rpc' as const },
+    ],
+  };
+  const REL = { totalMapeadas: 62, totalObservadas: 60 } as Parameters<typeof linhaCobertura>[0];
+
+  it('a linha de cobertura imprime os DOIS denominadores, não só o do julgamento', () => {
+    const l = linhaCobertura(REL, U);
+    expect(l).toContain('60/62');
+    expect(l).toContain('62/97');
+    expect(l).toContain('3 fora do alcance');
+  });
+
+  it('sem o alcance, `62/62` se lia como cobertura total — o número que escondeu a quinta edge', () => {
+    // Falsificação do formato: um universo do TAMANHO do mapa não acusa fora-do-alcance nenhum,
+    // e é exatamente esse caso que a linha antiga imprimia para TODO mundo.
+    const l = linhaCobertura(REL, { totalExistentes: 62, semMarcador: [] });
+    expect(l).toContain('62/62 edges da ref instrumentadas');
+    expect(l).not.toContain('fora do alcance');
+  });
+
+  it('a seção NOMEIA cada edge — contagem em bloco não dá para agir', () => {
+    const txt = linhasSemMarcador(U).join('\n');
+    for (const e of U.semMarcador) expect(txt).toContain(e.edge);
+  });
+
+  it('as que ESCREVEM vêm primeiro: a lista é roteiro de prioridade, não inventário', () => {
+    const linhas = linhasSemMarcador(U);
+    const iTint = linhas.findIndex((l) => l.includes('tint-omie-sync'));
+    const iRpc = linhas.findIndex((l) => l.includes('cep-geo-resolver'));
+    const iNada = linhas.findIndex((l) => l.includes('zz-ultima-alfabetica'));
+    expect(iTint).toBeGreaterThan(0);
+    expect(iTint).toBeLessThan(iRpc);
+    expect(iRpc).toBeLessThan(iNada);
+  });
+
+  it('o cabeçalho diz o EIXO DO RISCO (quantas escrevem) e que o deploy delas é invisível', () => {
+    const cab = linhasSemMarcador(U)[0];
+    expect(cab).toContain('1 escrevem no banco por PostgREST');
+    expect(cab).toContain('INVIS');
+    expect(cab).toContain('3 edge(s) sem');
+  });
+
+  it('oferece as DUAS saídas, como o gate — declarar não é cobrar, mas tem de dizer como sair', () => {
+    const fim = linhasSemMarcador(U).at(-1) ?? '';
+    expect(fim).toContain('versao.ts');
+    expect(fim).toContain('DISPENSAS');
+  });
+
+  it('universo sem lacuna não imprime seção — zero ruído quando não há o que declarar', () => {
+    expect(linhasSemMarcador({ totalExistentes: 62, semMarcador: [] })).toEqual([]);
+  });
+});
+
+describe('montarUniverso — a UNIÃO das duas réguas (o caso não existe na árvore real)', () => {
+  // Fixture e não repo DE PROPÓSITO: na main toda edge com `versao.ts` também tem `index.ts`, e
+  // um teste contra a árvore fica verde com a régua errada. A falsificação provou isso — sabotar
+  // a união para "só index.ts" não derrubava teste nenhum.
+  const ler = (arvore: Record<string, string>) => (c: string) => arvore[c] ?? null;
+  const R = 'supabase/functions';
+
+  it('pasta com `versao.ts` e SEM `index.ts` CONTA no denominador (régua do mapa)', () => {
+    const u = montarUniverso(['edge-a'], ler({ [`${R}/edge-a/versao.ts`]: "export const VERSAO = 'v1.0-a';" }));
+    expect(u.totalExistentes).toBe(1);
+    // tem marcador ⇒ é julgável ⇒ NÃO é lacuna
+    expect(u.semMarcador).toEqual([]);
+  });
+
+  it('pasta com `index.ts` e SEM `versao.ts` conta E é lacuna (régua do `sonda:nova`)', () => {
+    const u = montarUniverso(['edge-b'], ler({ [`${R}/edge-b/index.ts`]: "await sb.from('t').insert(x);" }));
+    expect(u.totalExistentes).toBe(1);
+    expect(u.semMarcador).toEqual([{ edge: 'edge-b', escrita: 'postgrest' }]);
+  });
+
+  it('pasta sem NENHUM dos dois não é edge — fica fora do denominador', () => {
+    const u = montarUniverso(['utilitario'], ler({ [`${R}/utilitario/helper.ts`]: 'export const x = 1;' }));
+    expect(u).toEqual({ totalExistentes: 0, semMarcador: [] });
+  });
+
+  it('o denominador nunca fica MENOR que o conjunto com marcador — a invariante da cobertura', () => {
+    const arvore = {
+      [`${R}/com-marcador-sem-entrada/versao.ts`]: "export const VERSAO = 'v1.0-x';",
+      [`${R}/com-os-dois/index.ts`]: 'a',
+      [`${R}/com-os-dois/versao.ts`]: "export const VERSAO = 'v1.0-y';",
+      [`${R}/so-entrada/index.ts`]: 'b',
+    };
+    const u = montarUniverso(['com-marcador-sem-entrada', 'com-os-dois', 'so-entrada'], ler(arvore));
+    const comMarcador = 2;
+    expect(u.totalExistentes).toBe(3);
+    expect(u.totalExistentes).toBeGreaterThanOrEqual(comMarcador);
+    expect(u.semMarcador.map((e) => e.edge)).toEqual(['so-entrada']);
+  });
+
+  it('classifica `.rpc()` separado de PostgREST — opaco não é inofensivo', () => {
+    const u = montarUniverso(
+      ['r'],
+      ler({ [`${R}/r/index.ts`]: "await sb.rpc('recalcular_tudo');" }),
+    );
+    expect(u.semMarcador).toEqual([{ edge: 'r', escrita: 'rpc' }]);
+  });
+
+  it('saída ESTÁVEL: a ordem do universo não depende da ordem de chegada das pastas', () => {
+    const arvore = { [`${R}/z/index.ts`]: 'a', [`${R}/a/index.ts`]: 'b' };
+    const u1 = montarUniverso(['z', 'a'], ler(arvore));
+    const u2 = montarUniverso(['a', 'z'], ler(arvore));
+    expect(u1).toEqual(u2);
+    expect(u1.semMarcador.map((e) => e.edge)).toEqual(['a', 'z']);
   });
 });

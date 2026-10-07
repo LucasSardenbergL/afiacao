@@ -113,6 +113,53 @@ export interface Veredito {
   escalada: boolean;
 }
 
+/**
+ * Uma edge que existe na main e que este instrumento NÃO ALCANÇA: sem `versao.ts`, logo fora do
+ * mapa de fingerprints, logo fora de `lerEsperados`, logo fora de `julgar`. Ela não tem veredito
+ * — não há `(versao, fonte)` esperado para comparar — e é por isso que ela não entra no
+ * `Relatorio.vereditos`: inventar um estado para ela seria fabricar prova de deploy.
+ *
+ * O que ela tem é CLASSE, e a classe é o que diz o tamanho do risco de deixá-la fora.
+ */
+export interface EdgeSemMarcador {
+  edge: string;
+  /** Pelos detectores de `sonda-edge-nova-gate.ts` (stripper compartilhado), nunca por grep local. */
+  escrita: 'postgrest' | 'rpc' | 'nenhuma';
+}
+
+/**
+ * O universo REAL de edges da main — o denominador honesto.
+ *
+ * Existe porque o relatório imprimia `cobertura: 62/62 edges mapeadas`, um número verdadeiro que
+ * se LIA como cobertura total: as 35 edges sem marcador não estavam reprovadas, estavam ausentes
+ * do denominador. Medido no #2824 (`f55523513`): a fatia tocou 5 edges, 4 viraram P1 e a 5ª
+ * (`tint-omie-sync`, money-path do tintométrico) não apareceu em NENHUMA seção — nem pendente,
+ * nem confere. A ausência de `versao.ts` comprava silêncio no relatório inteiro.
+ *
+ * É produzido pela BORDA (o CLI, que tem git), não pelo `julgar`: o juízo continua sendo sobre o
+ * que o ledger diz de quem tem marcador. O que muda é que o relatório passa a DECLARAR o que ele
+ * não alcança, em vez de omiti-lo.
+ */
+export interface Universo {
+  /** Pastas de `supabase/functions/` com `index.ts` na ref, fora `_shared`. */
+  totalExistentes: number;
+  /** As que não têm `versao.ts` — nomeadas, nunca contadas em bloco. */
+  semMarcador: EdgeSemMarcador[];
+}
+
+/** Quantas das sem-marcador escrevem no banco — o eixo do risco, não o tamanho da lista. */
+export function contarEscrita(semMarcador: EdgeSemMarcador[]): {
+  postgrest: number;
+  rpc: number;
+  nenhuma: number;
+} {
+  return {
+    postgrest: semMarcador.filter((e) => e.escrita === 'postgrest').length,
+    rpc: semMarcador.filter((e) => e.escrita === 'rpc').length,
+    nenhuma: semMarcador.filter((e) => e.escrita === 'nenhuma').length,
+  };
+}
+
 export interface Relatorio {
   vereditos: Veredito[];
   /** Edges no mapa commitado (universo que este instrumento consegue julgar). */
