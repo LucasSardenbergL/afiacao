@@ -844,6 +844,83 @@ MD5_OUTRO=$(Q "SELECT md5(prosrc) FROM pg_proc WHERE proname='reconciliar_pedido
 OUT=$(Qf "$MIG_RECONC" 2>&1 || true)
 eq "FP2 a PRÉ-CONDIÇÃO recusa aplicar sobre um corpo que não foi o medido" "$(tem "$OUT" 'outra entrega o recriou')|$([ "$MD5_OUTRO" != "$MD5_BASE" ] && echo difere)" "sim|difere"
 eq "FP2b e o corpo alheio segue intacto" "$(Q "SELECT md5(prosrc) FROM pg_proc WHERE proname='reconciliar_pedidos_omie'")" "$MD5_OUTRO"
+
+echo "═══ J · desconto_corrigido_para_null: o sensor diz SE VIROU NULL, não só que mudou ═══"
+# O defeito que esta seção fecha: `desconto_corrigido` é verdadeiro tanto quando o desconto conhecido
+# vira NULL quanto quando muda para outro valor. Em 2026-09-20 a suspeita foi de nulificação em massa
+# e o log não distinguia — J1 vs J2 é exatamente a distinção que faltava.
+APLICAR_NULL="$REPO_ROOT/db/2026-10-06-desconto-corrigido-para-null.sql"
+sensn() { Q "SELECT concat_ws('/', r->>'corrections', r->>'desconto_corrigido', r->>'desconto_corrigido_para_null', r->>'desconto_apurado') FROM (SELECT \$j\$$1\$j\$::jsonb AS r) x"; }
+
+novo_banco prove_j nova
+OUT_J="$(Qf "$APLICAR_NULL" 2>&1 || true)"
+eq "J0 o apply roda sobre o corpo VIVO e chega ao fim" "$(tem "$OUT_J" 'FIM_APLICACAO_OK')" "sim"
+eq "J0b e a função EXECUTA com a chave nova (plpgsql é late-bound: criar não prova)" \
+  "$(Q "SELECT (teste.reconc('[]'::jsonb, 0) ? 'desconto_corrigido_para_null')::text")" "true"
+
+# J1 — NULIFICAÇÃO: desconto conhecido 10, a leitura traz a chave com valor ILEGÍVEL (JSON null) →
+# a função INVALIDA (grava NULL). É o evento que a oben fez suspeitar de regressão em 2026-09-20.
+cria 9801 '[{"cod":555,"q":1,"p":100,"dv":10}]' 90
+R=$(reconc1 9801 '[{"cod":555,"q":1,"p":100,"dv":null}]' 100 -10)
+eq "J1 a linha de fato NULIFICOU (o sensor mede um evento real, não hipotético)" "$(dv 9801 555)" "NULO"
+eq "J1b nulificação conta nos DOIS: corrigido E corrigido_para_null (contenção)" "$(sensn "$R")" "1/1/1/0"
+
+# J2 — TROCA DE VALOR: o discriminador. Antes desta entrega J1 e J2 davam o MESMO número.
+cria 9802 '[{"cod":555,"q":1,"p":100,"dv":10}]' 90
+R=$(reconc1 9802 '[{"cod":555,"q":1,"p":100,"dv":20}]' 80 -10)
+eq "J2 troca de valor conta em corrigido mas NÃO em corrigido_para_null" "$(sensn "$R")" "1/1/0/0"
+eq "J2b e a linha ficou com o valor novo, não NULL" "$(dv 9802 555)" "20"
+
+# J3 — APURAÇÃO (NULL → valor): o sentido oposto não pode vazar para o contador da nulificação.
+cria 9803 '[{"cod":555,"q":1,"p":100}]' 100
+R=$(reconc1 9803 '[{"cod":555,"q":1,"p":100,"dv":10}]' 90 -10)
+# `corrections` vem 0 de propósito: apuração é CONVERGÊNCIA, não correção de conteúdo — contá-la
+# inflaria, na primeira passada, a métrica que o log publica. O que importa aqui é o 3º campo.
+eq "J3 apuração não conta como nulificação (e nem como correção de conteúdo)" "$(sensn "$R")" "0/0/0/1"
+
+# J4 — A FRONTEIRA, nomeada de propósito: payload SEM a chave (edge anterior) também grava NULL,
+# e NÃO conta aqui. `traz_desconto` fora do predicado faria toda run da edge velha parecer
+# nulificação em massa — e quebraria a contenção, porque `desconto_corrigido` também o exige.
+# Esta é uma invalidação LEGADA, fenômeno distinto; o contador mede nulificação COM a chave na mão.
+cria 9804 '[{"cod":555,"q":1,"p":100,"dv":10}]' 90
+R=$(reconc1 9804 '[{"cod":555,"q":1,"p":120}]' 120 -10)
+eq "J4 sem a chave no payload: a linha nulifica mas o sensor NÃO a atribui à leitura" \
+  "$(dv 9804 555)|$(sensn "$R")" "NULO|1/0/0/0"
+
+# J5 — idempotência: reaplicar o apply é no-op (o `position` acha a chave e retorna).
+OUT_J2="$(Qf "$APLICAR_NULL" 2>&1 || true)"
+eq "J5 reaplicar é idempotente (chega ao fim de novo, sem recriar)" "$(tem "$OUT_J2" 'FIM_APLICACAO_OK')" "sim"
+
+echo "═══ FJ · FALSIFICAÇÃO (Lei #3): o predicado novo tem de ter DENTE ═══"
+# CONTROLE VERDE: J1/J2 acima, na MESMA invocação, com o apply verdadeiro. Sem eles, uma sabotagem
+# sempre-vermelha aprovaria qualquer coisa.
+sabotado_apply() {  # $1 = rótulo, $2 = programa perl -0pe sobre o APPLY
+  local sab="$TMPF.$1.sql"
+  perl -0pe "$2" "$APLICAR_NULL" > "$sab"
+  if cmp -s "$sab" "$APLICAR_NULL"; then bad "$1.0 a sabotagem NÃO alterou o apply — o assert seria teatro"; return 1; fi
+  DB="$1"
+  "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres -T molde "$DB"
+  Qf "$MIG" >/dev/null; Qf "$MIG_COER" >/dev/null; Qf "$MIG_RECONC" >/dev/null
+  if ! Qf "$sab" > "$sab.log" 2>&1; then
+    ok "$1.0 o apply sabotado ABORTOU sozinho: $(head -c 110 "$sab.log" | tr -d '\n')"; return 1
+  fi
+  Q "$HELPERS_SQL" >/dev/null
+  ok "$1.0 (controle da sabotagem) o apply mudou e aplicou"
+}
+
+# FJ1 — inverter o predicado: conta como nulificação justamente o que NÃO é.
+if sabotado_apply fj1 's/AND d\.desconto_valor IS NULL\)                              AS desc_corrigido_para_null/AND d.desconto_valor IS NOT NULL)                          AS desc_corrigido_para_null/'; then
+  cria 9802 '[{"cod":555,"q":1,"p":100,"dv":10}]' 90
+  R=$(reconc1 9802 '[{"cod":555,"q":1,"p":100,"dv":20}]' 80 -10)
+  confere FJ1 "$(sensn "$R")" "1/1/1/0" "J2 (troca de valor passaria a contar como nulificação)"
+fi
+
+# FJ2 — tirar `traz_desconto`: a contenção quebra e a invalidação legada vira nulificação.
+if sabotado_apply fj2 's/\(d\.traz_desconto AND a\.desconto_valor IS NOT NULL\n[ ]+AND d\.desconto_valor IS NULL\)/(a.desconto_valor IS NOT NULL\n                     AND d.desconto_valor IS NULL)/'; then
+  cria 9804 '[{"cod":555,"q":1,"p":100,"dv":10}]' 90
+  R=$(reconc1 9804 '[{"cod":555,"q":1,"p":120}]' 120 -10)
+  confere FJ2 "$(sensn "$R")" "1/0/1/0" "J4 (sem traz_desconto, para_null > corrigido — a contenção quebra)"
+fi
 rm -f "$TMPF".*
 
 # Formato `N ok / N fail`: é o que o runner do núcleo (db/roda-nucleo-ci.sh) sabe contar. O

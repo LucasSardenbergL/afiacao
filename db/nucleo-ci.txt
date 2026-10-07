@@ -96,7 +96,7 @@ db/test-caca-custo-producao.sh              6
 # pedido (H0 reproduz o incidente de 79 runs), diferencial sem a chave, SKU mudando de dono sob a
 # mesma identidade (G13-G15, cenários da validação independente da sessão quirky-rosalind), 14
 # sabotagens com dente. 110 é o que a prova executa hoje.
-db/test-desconto-valor-escritores.sh      110
+db/test-desconto-valor-escritores.sh      123
 # O cabeçalho do ACERVO de bruto para líquido (2026-09-14): converte só onde TODAS as linhas têm
 # desconto apurado e o cabeçalho ainda é o bruto escrito ANTES do corte (depois dele o desconto pode
 # estar vencido); recusa em vez de truncar acima do limite; não deixa meio mês convertido — nem numa
