@@ -352,7 +352,7 @@ fantasma positivo. Os outros 3 estão em 0 há 94–96 dias, e o `GREATEST` com 
 **A classe** (membro desabilitado com estoque congela positivo) se conserta no PR-3: o `omie-sync-estoque`
 passa a gravar o físico dos membros de grupo.
 
-## Fase 4 — o físico dos membros de grupo (PR-3, 2026-10-07, branch `estoque-membros-de-grupo`)
+## Fase 4 — o par dos membros de grupo (PR-3, 2026-10-07, branch `estoque-membros-de-grupo`)
 
 Edge `omie-sync-estoque` → `v1.7-membros-de-grupo`, construída em cima da v1.6 do #2828 (refactor
 `fisico.ts`/`publicacao.ts`).
@@ -365,26 +365,38 @@ congelavam no `sku_estoque_atual`:
 Os zeros velhos são inofensivos enquanto a posição está fresca. A classe que dá dano é **membro desabilitado
 com estoque positivo**.
 
+**O que a sessão do #2828 pegou no 1º desenho.** O 1º desenho gravava só o físico do membro e preservava o
+pendente. Mas o motor SOMA o físico e o pendente de todos os membros do grupo. Físico fresco com pendente
+velho conta a NF recebida duas vezes: é o par misto que o C1 da v1.6 recusa, numa população nova. O PR voltou
+para DRAFT até o par ficar completo.
+
 **O conserto.**
 - `fisico.ts`: o membro NÃO habilitado vai para um mapa à parte (`membros`). As invariantes do `encontrados`
   (vazio inesperado, inativação, pendente) não mudam. Membro ilegível em algum local perde a soma inteira e
   nunca barra os habilitados.
-- `publicacao.ts`: depois da inativação, um lote à parte grava só o físico dos membros, SEM
-  `estoque_pendente_entrada`; com a chave fora do lote, o valor da linha se preserva. Falha ali não muda o
-  desfecho e aparece no resumo (`membros_grupo_*`).
 - `index.ts`: lê os membros com o MESMO recorte do motor (empresa minúscula, `ativo`, `fator_para_base > 0`).
-  Se a leitura falha, o resumo diz o erro (nunca "0 membros").
+  - As duas varreduras de pendente (PesquisarPedCompra e ListarSaldoPendente) devolvem `pendenteMembros` à
+    parte, sob o MESMO gate de confiança.
+  - Item inválido de membro vai para `membrosPendenteIlegiveis`, nunca para `problemas`.
+  - O coletor da baixa de PO observa habilitado OU membro (o contrato do #2780: "o conjunto aberto que o
+    motor contou").
+- `publicacao.ts`: depois da inativação, um lote à parte grava o PAR (físico + pendente da mesma varredura,
+  `?? 0` legítimo sob o C1).
+  - Sem o pendente dos membros, ou com item inválido, não há linha: nunca o físico sozinho.
+  - A observação confere contra o pendente GRAVADO (habilitados ∪ membros com par), e `pendente_aplicado`
+    exige os dois lotes inteiros.
+  - Falha no lote dos membros não muda o desfecho; aparece no resumo (`membros_grupo_*`).
+
+**Limite.** A 2ª testemunha da RPC `reposicao_po_observado_publicar` confere SKU a SKU só os HABILITADOS
+(`sku_parametros.habilitado_reposicao_automatica`). Para os membros, a conferência é só a da edge; estendê-la
+ao banco é migration.
 
 **A prova.**
-- RED antes do GREEN (5 falhas pelos motivos certos), depois 60/60 na pasta da edge.
-- Falsificação 10/10 com a marca, em `C` e `pt_BR.UTF-8`, com controle Deno e vitest verde antes e depois:
-  - membro no `encontrados`;
-  - membro ilegível barrando a varredura;
-  - soma parcial, nas 2 ordens;
-  - vazio contando membros;
-  - pendente 0 na linha do membro;
-  - desfecho dependendo dos membros;
-  - `0` no lugar de `null` quando a leitura falha;
-  - predicado e recorte na fiação (o teste de forma `sync-estoque-orcamento-edge`).
-- Suítes completas verdes.
+- RED antes do GREEN, nas duas rodadas (o físico, depois o par), e então 66/66 na pasta da edge.
+- Falsificação 16/16 com a marca, em `C` e `pt_BR.UTF-8`, com controle Deno e vitest verde antes e depois:
+  - acumulador: membro no `encontrados`, ilegível barrando, soma parcial nas 2 ordens, vazio contando membros;
+  - lote: pendente 0 no lugar do par, físico sem par, membro ilegível gravado, desfecho dependendo dos
+    membros, `0` no lugar de `null`;
+  - observação: conferência só com habilitados, `pendente_aplicado` ignorando os membros;
+  - fiação: predicado, recorte, item inválido do membro em `problemas`, coletor sem o membro.
 - Codex: sem consulta, por decisão do founder (cota). Adversarial retroativo depois de 09/10 19:30.
