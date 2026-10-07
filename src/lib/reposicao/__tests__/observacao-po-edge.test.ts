@@ -5,30 +5,39 @@ import { removerComentarios } from '@/lib/gates/limpeza-fonte';
 
 // Guarda textual do PR0 da baixa de PO (spec 2026-09-26 §15 item 2): a edge omie-sync-estoque registra o
 // conjunto aberto que o motor contou SEM nunca pôr o pendente em risco. O helper puro tem os testes Deno
-// (observacao-po_test.ts); aqui se vigia só o que o helper não vê — ONDE e COMO a edge o usa.
+// (observacao-po_test.ts) e, desde a v1.6, a publicação é EXECUTADA com escritas falsas (publicacao_test.ts); aqui se
+// vigia só o que nenhum dos dois vê — ONDE e COMO a edge os usa.
 const fonte = removerComentarios(
   readFileSync(resolve(__dirname, '../../../../supabase/functions/omie-sync-estoque/index.ts'), 'utf8'),
 );
+const fontePublicacao = removerComentarios(
+  readFileSync(resolve(__dirname, '../../../../supabase/functions/omie-sync-estoque/publicacao.ts'), 'utf8'),
+);
+const iFuncaoObservacao = fontePublicacao.indexOf('async function publicarObservacao(');
 
 describe('omie-sync-estoque — observação do conjunto aberto', () => {
   it('só publica depois de conferir que a observação bate com o pendente calculado', () => {
-    const iInvariante = fonte.indexOf('observacaoBateComPendente(');
-    const iRpc = fonte.indexOf('"reposicao_po_observado_publicar"');
-    expect(iInvariante).toBeGreaterThan(0);
+    const iInvariante = fontePublicacao.indexOf('observacaoBateComPendente(', iFuncaoObservacao);
+    const iRpc = fontePublicacao.indexOf('ops.publicarObservacao(', iFuncaoObservacao);
+    expect(iFuncaoObservacao).toBeGreaterThan(0);
+    expect(iInvariante).toBeGreaterThan(iFuncaoObservacao);
     expect(iRpc).toBeGreaterThan(iInvariante);
+    // o adaptador real é a RPC, com prazo
+    expect(fonte).toMatch(/rpc\("reposicao_po_observado_publicar", \{ p_run: run, p_itens: itens \}\)\.abortSignal\(s\)/);
   });
 
-  it('a publicação é não-fatal: chamada dentro de try/catch e nunca antes do upsert do pendente', () => {
-    // O try tem de abrir DENTRO do bloco da observação (um `lastIndexOf('try {')` solto acharia o try do ramo COLACOR
-    // se este sumisse — revisão final do PR0) e o catch fechar antes do passo seguinte do run.
-    const iBloco = fonte.indexOf('if (observacaoPo) {');
-    const iRpc = fonte.indexOf('"reposicao_po_observado_publicar"');
-    const iDepois = fonte.indexOf('detectarVarreduraTruncada(', iRpc);
-    expect(iBloco).toBeGreaterThan(0);
-    expect(iDepois).toBeGreaterThan(iRpc);
-    expect(fonte.slice(iBloco, iRpc)).toContain('try {');
-    expect(fonte.slice(iRpc, iDepois)).toContain('} catch');
-    expect(iRpc).toBeGreaterThan(fonte.indexOf('from("sku_estoque_atual")'));
+  it('a publicação é não-fatal (try/catch dentro da função) e roda depois da gravação do par e da inativação', () => {
+    const iRpc = fontePublicacao.indexOf('ops.publicarObservacao(', iFuncaoObservacao);
+    const iFimFuncao = fontePublicacao.indexOf('\nasync function ', iRpc);
+    expect(fontePublicacao.slice(iFuncaoObservacao, iRpc)).toContain('try {');
+    expect(fontePublicacao.slice(iRpc, iFimFuncao)).toContain('} catch');
+    const iConcluir = fontePublicacao.indexOf('export async function concluirRun(');
+    const iGravacao = fontePublicacao.indexOf('await gravarEstoque(ops, e, linhas);', iConcluir);
+    const iInativacao = fontePublicacao.indexOf('await inativarNaoEncontrados(ops, e);', iConcluir);
+    const iChamada = fontePublicacao.indexOf('await publicarObservacao(ops, e, pend, gravacaoCompleta);', iConcluir);
+    expect(iGravacao).toBeGreaterThan(iConcluir);
+    expect(iInativacao).toBeGreaterThan(iGravacao);
+    expect(iChamada).toBeGreaterThan(iInativacao);
   });
 
   it('cada ponto de decisão da varredura registra o motivo', () => {
@@ -48,10 +57,11 @@ describe('omie-sync-estoque — observação do conjunto aberto', () => {
     expect(fonte).toContain('coletor.registrar(cabObs, itensObs, emTransitoNumeros.has(cNumero) ? "dedup_app" : null)');
   });
 
-  it('a publicação exige coleta íntegra e tem prazo: não come o tempo da inativação nem dos marcadores', () => {
-    const iRpc = fonte.indexOf('"reposicao_po_observado_publicar"');
-    expect(fonte.lastIndexOf('coletaIntegra', iRpc)).toBeGreaterThan(0);
-    expect(fonte.indexOf('.abortSignal(', iRpc)).toBeGreaterThan(iRpc);
-    expect(fonte.lastIndexOf('timeoutRequestMs(', iRpc)).toBeGreaterThan(fonte.indexOf('from("sku_estoque_atual")'));
+  it('a publicação exige coleta íntegra e tem prazo: o limite da cauda, o mesmo da gravação e da inativação', () => {
+    const iRpc = fontePublicacao.indexOf('ops.publicarObservacao(', iFuncaoObservacao);
+    expect(fontePublicacao.slice(iFuncaoObservacao, iRpc)).toContain('o.coletaIntegra');
+    expect(fontePublicacao.slice(iFuncaoObservacao, iRpc)).toMatch(
+      /timeoutRequestMs\(ops\.agora\(\), e\.limiteCauda, e\.prazos\.tetoObservacaoMs\)/,
+    );
   });
 });

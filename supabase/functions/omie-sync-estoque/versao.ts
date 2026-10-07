@@ -50,7 +50,15 @@ export const respostaSonda = criarRespostaSonda("omie-sync-estoque");
  * a versão em paralelo foi revertida no adversarial do PR (o PO lido antes conta duas vezes a NF recebida no meio do
  * run, e o motor sub-sugere).
  */
-export const VERSAO = "v1.5-prazo-80s-e-registro";
+/**
+ * BUMP v1.6 (os três achados preexistentes do adversarial do #2817 — caminhos em que a edge respondia ok:true sobre um
+ * par (físico, pendente) que o motor não deveria consumir; desenho com o Codex em 2026-10-06): (1) físico incompleto
+ * (truncado, sobre-lido, total ausente/variando, par produto|local repetido, nenhum habilitado) → recusa ANTES da fase
+ * do PO (`fisico.ts`); (2) pendente não confiável → recusa ANTES de qualquer escrita, o par velho fica coerente (a v1.5
+ * gravava o físico fresco com o pendente velho: dupla contagem invisível); (3) gravação parcial → marcadores 'partial'
+ * e ok:false, com prazo na cauda e a inativação no desfecho. A orquestração mudou para `publicacao.ts`.
+ */
+export const VERSAO = "v1.6-recusa-par-torto";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
