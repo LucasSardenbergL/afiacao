@@ -308,3 +308,40 @@ oben roda às 09:00Z. Entre 08:35Z e 08:59Z do dia seguinte, rode:
 - Com o novo, ≈ 782, com `catalogo_rodou` ≈ 3.715.
 
 Na colacor a janela é 06:17Z–07:14Z, depois do syncProducts das 06:15Z.
+
+## Fase 4 — o físico dos membros de grupo (PR-3, 2026-10-07, branch `estoque-membros-de-grupo`)
+
+Edge `omie-sync-estoque` → `v1.7-membros-de-grupo`, construída em cima da v1.6 do #2828 (refactor
+`fisico.ts`/`publicacao.ts`).
+
+**A medição.** São 14 grupos de equivalência com 28 membros, todos em L. Desses, 4 não são habilitados e
+congelavam no `sku_estoque_atual`:
+- o galão da WP01, com 11,72 de 31/07 e 0 confirmado (o fantasma, remendado no #2832);
+- WP02.3900GL, WP71.3900QT e WP88.3900QT, em 0 há 94–96 dias.
+
+Os zeros velhos são inofensivos enquanto a posição está fresca. A classe que dá dano é **membro desabilitado
+com estoque positivo**.
+
+**O conserto.**
+- `fisico.ts`: o membro NÃO habilitado vai para um mapa à parte (`membros`). As invariantes do `encontrados`
+  (vazio inesperado, inativação, pendente) não mudam. Membro ilegível em algum local perde a soma inteira e
+  nunca barra os habilitados.
+- `publicacao.ts`: depois da inativação, um lote à parte grava só o físico dos membros, SEM
+  `estoque_pendente_entrada`; com a chave fora do lote, o valor da linha se preserva. Falha ali não muda o
+  desfecho e aparece no resumo (`membros_grupo_*`).
+- `index.ts`: lê os membros com o MESMO recorte do motor (empresa minúscula, `ativo`, `fator_para_base > 0`).
+  Se a leitura falha, o resumo diz o erro (nunca "0 membros").
+
+**A prova.**
+- RED antes do GREEN (5 falhas pelos motivos certos), depois 60/60 na pasta da edge.
+- Falsificação 10/10 com a marca, em `C` e `pt_BR.UTF-8`, com controle Deno e vitest verde antes e depois:
+  - membro no `encontrados`;
+  - membro ilegível barrando a varredura;
+  - soma parcial, nas 2 ordens;
+  - vazio contando membros;
+  - pendente 0 na linha do membro;
+  - desfecho dependendo dos membros;
+  - `0` no lugar de `null` quando a leitura falha;
+  - predicado e recorte na fiação (o teste de forma `sync-estoque-orcamento-edge`).
+- Suítes completas verdes.
+- Codex: sem consulta, por decisão do founder (cota). Adversarial retroativo depois de 09/10 19:30.
