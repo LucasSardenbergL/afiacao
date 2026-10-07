@@ -23,6 +23,8 @@
 - `preco_unitario`/`valor_linha` seguem como custo com IPI; a decomposição vai em colunas novas que o PO usa.
 - A tabela nasce com as 13 alíquotas medidas (4 confirmadas pela NF 000953881).
 - Codex: o desenho foi pelo Caminho B (cota em 92%, exit 79); o adversarial de código rodou com o teto furado.
+- Os 5% a menos da NF no PO 1238 (06/10): **promoção para quem bate o volume do trimestre**. O PO segue o portal; a
+  diferença vai para a conferência NF↔PO (D4'), que tem de reconhecê-la como desconto de volume.
 
 ## O que o adversarial pegou (Codex REPROVADO + revisor final)
 
@@ -44,6 +46,28 @@
    e `git log -S sayerlack_ipi_itens -- supabase/functions/enviar-pedido-portal-sayerlack/index.ts` na main.
 3. 1º PO real com `nValorIpi`: combinado com o founder — conferir `nValorIpi > 0` e `nValTot` do Omie = `valor_total`
    (± tolerância), o que pega o Omie tratando `nValorIpi` como valor por unidade ou recalculando o IPI pelo cadastro.
+
+## No ar (2026-10-07, pela sessão, autorizada pelo founder)
+
+- **Migration** aplicada pelo MCP `query_database` às 00:52Z, no envelope de `docs/agent/database.md` §Escrita:
+  - pré-voo `psql-ro` 🟢: o corpo da RPC em prod era byte a byte o da `20260906193522`, e nada da migration nova existia;
+  - ensaio com `RAISE EXCEPTION 'ENSAIO_OK…'` (rollback conferido por fora);
+  - no apply, a postcondição da migration e mais uma guarda de transcrição: o md5 dos 2 corpos, das 13 alíquotas e
+    dos 5 CHECKs, calculados por um PG17 local a partir dos bytes do arquivo;
+  - 2ª testemunha `psql-ro`: 10/10.
+- **Edges** pelo pacote `91e529ae290c` (`origin/main@e18806c54`, pré-condição de banco satisfeita):
+  - foram `disparar-pedidos-aprovados` v1.5, `enviar-pedido-portal-sayerlack` v1.10 e `omie-sync-estoque` v1.6 (esta
+    de outra entrega, autorizada junto);
+  - o Lovable conferiu os 26 hashes e deixou as 3 Active;
+  - sonda `db/sonda-pos-deploy-disparar-enviar-sayerlack-omie-sync-estoque-2026-10-07.sql` (recibo #265): **DEPLOY
+    CONFIRMADO** nas 3;
+  - `pendencias:deploy` saiu 0, com 62/62 edges.
+- **Sensor de edição do Lovable:** deu `EDICAO_DETECTADA`, porque a resposta trouxe `edit_id`/`commit_sha` e o commit
+  ainda não estava na main. Conferido à mão: o commit do bot (`d0d43894`, em `origin/lovable-sync`) parte de
+  `e18806c54` e muda só `src/integrations/supabase/types.ts` (+47, os tipos da migration) — o caso tolerado, nenhuma
+  edge tocada.
+- **Antes** (envios Sayerlack com protocolo desde 06/09): 26 `checksum_divergente` (captura cega por causa do IPI) e 5
+  `json_total_unico` (1 item, IPI embutido no unitário). **Depois:** a medir no próximo envio, com as queries abaixo.
 
 ## Como medir (rode com `psql-ro`)
 
