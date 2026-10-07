@@ -7,7 +7,8 @@
 
 ## 1. O problema
 
-O importador `omie-vendas-sync` (`sync_pedidos`, `index.ts:1116-1124`) carimba em TODA linha importada o
+O importador `omie-vendas-sync` (`sync_pedidos`, `index.ts:1115-1123` na main de 2026-10-06, o bloco
+`// System user for created_by`) carimba em TODA linha importada o
 `created_by` de `profiles WHERE is_employee = true LIMIT 1`, sem `ORDER BY`. O ranking de vendedores do Master
 (`useTeamRanking` → `fetchPedidosMTD` → `montarRanking`) credita a receita por `created_by` ("quem lançou o
 pedido"). Resultado: o card dá **100%** da receita a uma farmer qualquer. E o mesmo artefato faz o tile
@@ -82,10 +83,15 @@ export interface RankingResult {
 }
 export function montarRanking(
   orders: OrderRankRow[],
-  donoPorCliente: Map<string, string>,   // customer_user_id → owner_user_id, SÓ eligible
-  vendedores: Map<string, string>,       // userId → nome (farmer/hunter/closer)
+  regua: {
+    donoPorCliente: Map<string, string>; // customer_user_id → owner_user_id, SÓ eligible
+    vendedores: Map<string, string>;     // userId → nome (farmer/hunter/closer)
+  },
 ): RankingResult
 ```
+
+Os dois mapas vão num objeto NOMEADO: são do mesmo tipo (`Map<string, string>`), e na forma posicional
+trocá-los compilaria em silêncio.
 
 Para cada pedido com `isPedidoValido(status)`: `dono = donoPorCliente.get(customer_user_id)`;
 `dono ∈ vendedores` → linha do vendedor; `dono` definido e ∉ `vendedores` → `carteiraNaoVendedor`; sem `dono`
@@ -129,8 +135,11 @@ forma nova da query.
 
 ### 5.6 O importador
 
-Só comentário em `index.ts:1116`: o `created_by` da importada é carimbo técnico, NÃO atribuição — quem precisa
-de "quem vendeu" usa a carteira. Nenhuma mudança de comportamento, nenhum deploy de edge.
+**Nenhum byte na edge.** A ideia inicial era um comentário em `index.ts` (o `created_by` da importada é carimbo
+técnico, NÃO atribuição). Só que o `sonda:fingerprint` faz hash dos bytes CRUS da edge, com os comentários, e o
+`omie-vendas-sync` é instrumentado (`versao.ts`). Um comentário mudaria a `fonte` e abriria pendência de deploy
+(DIVERGE_P2) no ledger. A lição vai para `docs/agent/database.md`, que é onde o próximo leitor de
+`sales_orders.created_by` procura.
 
 ## 6. Prova
 
@@ -143,12 +152,21 @@ de "quem vendeu" usa a carteira. Nenhuma mudança de comportamento, nenhum deplo
 - `fetchDonosCarteira` (supabase mockado): 151 ids → 2 chamadas (150 + 1); duplicados deduplicados; filtro
   `eligible = true` presente em toda chamada; `error` → lança; `data` nula → lança; `[]` → nenhuma chamada.
 - tile: a query de atividade carrega o filtro de `hash_payload` nulo (asserção sobre o builder mockado).
+- `fetchDonosCarteira`: erro no 2º lote lança (o 1º lote não vira mapa parcial).
+- `fetchPedidosMTD`: a página traz `customer_user_id` (sem ele, o mês inteiro iria calado para "Sem vendedor
+  atribuído").
+- hook: a carteira é lida com os clientes dos pedidos do mês (sem nulo); falha da carteira → erro (card
+  "Indisponível"), nunca mapa vazio.
+- card: subtítulo "por dono da carteira"; linha "Carteira de não-vendedor" (com `title`) antes de "Sem vendedor
+  atribuído"; some só com os três destinos vazios.
 
-**Falsificação** (commit antes; `trap` restaura; controle VERDE na mesma invocação antes da 1ª sabotagem; cada
-sabotagem declara o teste que a acusa e só ele pode avermelhar; rodada em `LC_ALL=C` e `pt_BR.UTF-8`):
+**Falsificação** (`scripts/falsificar-ranking-carteira.sh`; commit antes; `trap` restaura; controle VERDE na mesma
+invocação antes da 1ª sabotagem; cada sabotagem declara os testes que a acusam, que TÊM de avermelhar, e nenhum
+outro pode; rodada em `LC_ALL=C` e `pt_BR.UTF-8`; os testes casam por marcador ASCII como `[RK-D]`):
 S1 sem `.eq('eligible', true)` · S2 crédito por `created_by` · S3 erro da carteira vira mapa vazio ·
-S4 `data` nula vira fim · S5 não-vendedor somado em `naoAtribuido` · S6 card esconde olhando só 2 destinos
-(`rankingSemPedido`) · S7 tile sem o filtro de `hash_payload`.
+S4 `data` nula vira fim · S5 não-vendedor somado em `naoAtribuido` · S6 `rankingSemPedido` olhando só 2 destinos ·
+S6b o card voltando a olhar só 2 destinos · S7 tile sem o filtro de `hash_payload` · S8 hook manda lista vazia à
+carteira · S9 hook engole a falha da carteira · S10 `fetchPedidosMTD` sem `customer_user_id`.
 
 **Medir depois:** a SQL de referência (Apêndice A) roda no dia da validação e dá os números esperados do card
 naquele instante; o founder confirma no card depois do Publish e de atualizar o app (o SW só troca de build no
@@ -168,7 +186,7 @@ própria; não substitui o adversarial no diff, que segura o PR em DRAFT.
   (`_carteira_positivacao_for_owner`) e a comissão (cadeia `codigo-vendedor.ts` → `carteira-rebuild`).
 - *Denominador:* set/26 = 528 pedidos válidos, R$ 533.890,89; 100% têm carteira; 96,3% em vendedor, 3,7% em
   não-vendedor, 0% sem carteira (§2).
-- *Como a prova falsifica:* §6 — S1..S7, cada camada sozinha.
+- *Como a prova falsifica:* §6 — S1..S10 e S6b, cada camada sozinha, nos dois locales.
 - *Ordem irreversível:* nenhuma. Só front (Publish); reverter = reverter o PR + Publish. Nenhum dado escrito.
 
 **Premissas atacadas:**
@@ -205,7 +223,7 @@ própria; não substitui o adversarial no diff, que segura o PR em DRAFT.
 ## 10. Pronto quando
 
 - [ ] spec e plano revisados pelo founder;
-- [ ] código + testes (TDD) + falsificação S1..S7 nos 2 locales; `typecheck`, `lint`, `test` verdes;
+- [ ] código + testes (TDD) + falsificação S1..S10 e S6b nos 2 locales; `typecheck`, `lint`, `test` verdes;
 - [ ] PR **DRAFT**; Codex adversarial no diff (≥ 09/10 19:30), achados tratados; revisão final com contexto novo;
 - [ ] Publish do front (founder) e o app do founder atualizado;
 - [ ] medição depois (Apêndice A) × card, registrada em `docs/historico/`.
