@@ -145,13 +145,103 @@ desconhecido é o caso em que a tentativa JÁ está gravada; aqui o ledger provo
 ⚠️ E o `APPLY_EXIT` do wrapper veio **143** (meu SIGTERM), mas o harness anunciou "exited with
 code 0": o compound depois do `kill` fabricou o veredito. O ledger, não o exit, foi a autoridade.
 
-## Caminho B — o Codex não foi consultado
+## O desfecho: a janela fechou antes do challenge
 
-`scripts/codex-async.sh` saiu **79** no preflight: cota em **92,0%** (teto 85%), janela de 7 dias
-reabrindo em 09/10 19:30. Não gastou a chamada. Cota alta não é gatilho de pular, é gatilho de
-**DRAFT** — e foi assim que o PR nasceu. As decisões que teriam ido ao challenge (subconjunto vs.
-partição; `traz_desconto` dentro do predicado; as quatro combinações) estão argumentadas acima e
-cobertas por falsificação, que é o substituto disponível, não um equivalente.
+A cota do Codex foi medida **duas vezes na mesma janela de 7 dias**, e a trajetória é o dado, não
+cada ponta: **92,0%** quando o PR nasceu DRAFT (exit 79 do preflight, sem gastar a chamada) e
+**100,0%** poucas horas depois, com a janela reabrindo só em 09/10 19:30. Não houve contradição
+entre as leituras — houve consumo entre elas. A consequência operacional é mais forte do que
+"a cota estava alta": **esperar não era caminho**, porque a janela esgotou dentro do próprio dia da
+entrega. O founder tirou do draft por decisão própria, com o Caminho B registrado.
+
+Então registre sem rodeio: as três decisões — subconjunto vs. partição, `traz_desconto` dentro do
+predicado novo, as quatro combinações RPC × edge — **entraram em produção sem segunda opinião**.
+A falsificação cobre cada uma, e é o substituto disponível, não um equivalente. Um challenge
+retroativo depois de 09/10 é melhoria, e deve nascer como PR próprio: a branch da entrega tinha um
+escritor só, e commit de prosa em branch com auto-merge em voo só reinicia o CI.
+
+## O marcador de versão de edge é recurso DISPUTADO
+
+Duas sessões reivindicaram **v1.16** para a mesma edge no mesmo dia: a `main` levou
+`v1.16-catalogo-sem-estoque` (#2824) e esta entrega chegou com `v1.16-nulificacao-separada`. O
+conflito não apareceu em nenhum gate — apareceu no **merge**, porque `sonda:bump` compara o bump com
+a BASE, e nada compara dois PRs irmãos em voo entre si. Resolução: **`v1.17-nulificacao-e-catalogo`**,
+as duas entregas no MESMO bundle, logo um deploy serve as duas.
+
+A lição operacional é a que o CLAUDE.md já pede para arquivo quente, e vale citar o marcador por
+nome: antes de bumpar `versao.ts`, `git fetch && git show origin/main:<edge>/versao.ts` — e de novo
+imediatamente antes de entregar. Um número de versão não é propriedade de quem o escreveu primeiro
+localmente; é de quem mergeou primeiro.
+
+## O denominador não mente por acidente — a premissa dele envelheceu
+
+Montando o prompt de deploy do founder, as edges do diff do #2824 e as do relatório não fecharam:
+o #2824 removeu `quantidade_estoque || 0` de **cinco** edges e o `bun run pendencias:deploy` acusou
+**quatro**. A quinta, `tint-omie-sync`, não aparecia em seção nenhuma — nem pendente, nem confere.
+Ela não tem `versao.ts`.
+
+O enquadramento fácil — "verde por ausência acidental" — está **errado**, e vale registrar porque foi
+o meu primeiro. `scripts/sonda-edge-nova-gate.ts` (linhas 24-56) mostra que a omissão é **escopo
+DECLARADO**: edge NOVA precisa de `versao.ts`+fingerprint **ou** de entrada em `DISPENSAS` com motivo
+tipado e `porque` assinado, e as pré-existentes ficaram fora **de propósito** na terceira leva
+(#1767). O arquivo até se defende do conserto preguiçoso: retro-preencher `DISPENSAS` "seria inventar
+assinatura de decisão que ninguém tomou". Um gate que reprovasse as 35 quebraria a `main` por
+condição pré-existente — e é o tipo de gate que alguém afrouxa no primeiro atrito.
+
+O defeito real é mais estreito e pior: **a premissa que sustenta o grandfathering é contrariada pela
+medição que o próprio arquivo carrega.** A vovó-cláusula se justifica com "a maioria é leitura pura",
+e a linha 48, seis linhas abaixo, já registrava 31 de 56 escrevendo em 2026-08-28. Medição de hoje na
+`origin/main`, reproduzida por dois detectores independentes (o do gate e um grep cru de
+`.insert|.update|.upsert|.delete` e `.rpc(`):
+
+```
+97 pastas de edge (fora _shared) · 62 com versao.ts · 35 sem
+das 35:  16 ESCREVEM por PostgREST · 4 só .rpc() (opaco) · 15 nenhum
+```
+
+**15 de 35 (43%)** são leitura pura: a "maioria" da justificativa não existe mais. E o relatório fecha
+"cobertura: 62/62 edges mapeadas", um denominador que conta só as instrumentadas — a leitura honesta
+é **62/97**, 64%. A `tint-omie-sync` é a prova viva: money-path do tintométrico, corpo alterado por
+uma correção de dinheiro, e nenhuma máquina pediu o deploy. Sem ele, ela segue gravando `estoque = 0`,
+que é exatamente o defeito que o #2824 foi corrigir.
+
+O conserto não é máquina nova, é denominador honesto: imprimir "62/97 instrumentadas · 35 fora do
+alcance (16 escrevem, 4 opacas)" em vez de "62/62 mapeadas". Instrumentar as 16 escritoras é leva
+separada, com deploy por edge, porque marcador novo só vale depois de servido. Chip aberto com #2824
+como incidente citável.
+
+## A deriva que o apply programático CRIA — e que precisa ficar declarada
+
+O envelope desta entrega (`db/2026-10-06-desconto-corrigido-para-null.sql`) faz substituição
+**programática**: lê `pg_get_functiondef` do corpo vivo, exige 7 âncoras uma vez cada, `EXECUTE`.
+Isso é o certo — corpo copiado diverge do repo e a última a recriar vence. Mas tem consequência
+que precisa ser dita: **o corpo em prod deixa de ser derivável do repo sozinho.**
+
+E o repo tem um sensor para exatamente isso. Horas depois do apply, `bun run deriva:corpo:prod`
+virou vermelho (estava verde na véspera):
+
+```
+❌ [SEM_PAR] reconciliar_pedidos_omie(jsonb,text[],timestamp with time zone):
+   corpo que nenhuma das 5 versões commitadas explica
+   — último CREATE: 20260914180104_reconciliar_carrega_desconto_e_isola_coerencia.sql
+```
+
+Não é defeito do apply: é a **assinatura** dele. O `db/audit-deriva-corpo-prod.ts` lê apenas as
+migrations de `supabase/migrations/` da `origin/main` e é estruturalmente cego a applies por
+envelope de `db/`. O perigo real não é o vermelho — é que **o próximo `CREATE OR REPLACE` desta
+função a partir do repo apaga a nulificação em silêncio**, e nada no repo avisa quem for fazê-lo.
+
+A saída é a declarada: entrada na baseline `db/deriva-corpo-baseline.json`, que é onde o repo guarda
+"o que alguém olhou e aceitou", com o `motivo` nomeando o envelope e mandando pré-flight de
+`pg_get_functiondef` da PROD antes de qualquer replace. A classe `PATCH` **não** serve: ela concilia
+por `patchesDepois`, que só enxerga patches em `supabase/migrations/`. A classe é `EDICAO_MANUAL`,
+com `md5`/`md5Tokens` do corpo de prod — e a entrada é assinada pelo founder, não pelo agente.
+
+Na mesma rodada apareceu um segundo achado, de outra entrega e por via independente:
+`_data_health_compute` roda em prod o corpo de `20261005150000` enquanto o repo commitou
+`20261005220100` depois, e `sales_orders_instante_envio` (migration `20261005220000`) **não existe**
+em prod. Duas migrations da leva de 05/10 mergeadas e não aplicadas — a armadilha nº 1 na forma
+silenciosa, agora com dois sensores apontando para ela.
 
 ## Resíduo
 
@@ -166,6 +256,41 @@ SELECT created_at, account,
  ORDER BY created_at DESC LIMIT 20;
 ```
 
-`virou_null` ausente = a RPC no ar ainda não separa (ou a edge é anterior à v1.16). `virou_null` 0
+`virou_null` ausente = a RPC no ar ainda não separa (ou a edge é anterior à v1.17). `virou_null` 0
 com `corrigido` > 0 = houve correção e **nenhuma** foi perda do dado — que é a resposta que levou
 dois dias para ser dada à mão.
+
+## O primeiro tick com as duas pontas no ar — e o par que prova
+
+Deploy da edge colado no Lovable em 06/10 à noite; o `sync-reprocess-operational` (`15 */2 * * *`)
+rodou às 02:15Z. O par é que fala, não cada metade:
+
+```
+07 02:15 | ups=0 | apurado=0 | corrigido=0 | virou_null=number=0      ← edge v1.17 + RPC nova
+07 00:16 | ups=0 | apurado=0 | corrigido=0 | virou_null=CHAVE_AUSENTE
+06 22:15 | ups=0 | apurado=0 | corrigido=0 | virou_null=CHAVE_AUSENTE
+06 20:15 | ups=5 | apurado=0 | corrigido=0 | virou_null=CHAVE_AUSENTE
+```
+
+A chave **existir** é a prova da ponta nova: nas três runs anteriores ela não estava no objeto, e na
+de 02:15 está, valendo `0`. E a resposta substantiva à pergunta que custou dois dias de forense em
+20/09 é a linha inteira: `corrigido=0` e `virou_null=0` ⇒ **nenhuma correção nesta janela, logo
+nenhuma nulificação.** Antes, essa frase exigia um humano reconstruindo payload à mão.
+
+## A armadilha que me pegou lendo o próprio sensor: `->>` não distingue ausente de null
+
+O vigia que armei para esperar o tick reportou `virou_null=<AUSENTE>` **na mesma run** que a consulta
+seguinte mostrou como `number=0`. Dois defeitos somados, e os dois valem registro porque são o
+espelho da lição que esta entrega inteira persegue:
+
+1. **`metadata->>'chave'` devolve SQL NULL tanto para chave AUSENTE quanto para chave presente com
+   valor JSON `null`.** Envolver em `coalesce(..., '<AUSENTE>')` FABRICA o veredito "ausente" para um
+   valor que está lá. A leitura correta usa `metadata ? 'chave'` para existência e
+   `jsonb_typeof(metadata->'chave')` para o tipo — nunca `->>` sozinho quando a pergunta É sobre
+   ausência. Esta entrega nasceu de "ausente ≠ zero" e quase morreu de "presente-com-null lido como
+   ausente".
+2. **A linha do log tem CICLO DE VIDA.** `duration_ms=12199` na run de 02:15, e a mesma linha
+   (`created_at 02:15:04.611521`) devolveu conteúdos diferentes em duas leituras: ela é inserida com
+   metadata parcial e atualizada no fecho. Um vigia que consulta por `created_at >` pega a linha no
+   NASCIMENTO e lê metadata que ainda não existe. Quem espera resultado de run deve exigir
+   `status='complete'` no predicado, não a existência da linha.
