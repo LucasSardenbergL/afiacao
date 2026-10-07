@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 585
+-- Total de custom migrations: 587
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -626,6 +626,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261005131331', 'reposicao_po_observado_pelo_motor', '20261005131331_reposicao_po_observado_pelo_motor.sql'),
   ('20261005150000', 'data_health_vendas_empurradas_v2', '20261005150000_data_health_vendas_empurradas_v2.sql'),
   ('20261005170000', 'sku_items_controle_itens_pendentes', '20261005170000_sku_items_controle_itens_pendentes.sql'),
+  ('20261005220000', 'sales_orders_kpi_no_envio', '20261005220000_sales_orders_kpi_no_envio.sql'),
+  ('20261005220100', 'data_health_venda_empurrada_conta_pelo_app', '20261005220100_data_health_venda_empurrada_conta_pelo_app.sql'),
   ('20261006004500', 'sku_items_fila_parada_sensor', '20261006004500_sku_items_fila_parada_sensor.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
@@ -2542,6 +2544,9 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('reposicao_po_observado_pelo_motor', 'rls_policy', 'public', 'reposicao_po_observado_item_select_staff', 'reposicao_po_observado_item'),
   ('data_health_vendas_empurradas_v2', 'function', 'public', '_data_health_compute', ''),
   ('data_health_vendas_empurradas_v2', 'function', 'public', 'get_data_health', ''),
+  ('sales_orders_kpi_no_envio', 'function', 'public', 'sales_orders_instante_envio', ''),
+  ('sales_orders_kpi_no_envio', 'function', 'public', 'sales_orders_gemeo_app_derivar', ''),
+  ('data_health_venda_empurrada_conta_pelo_app', 'function', 'public', '_data_health_compute', ''),
   ('sku_items_fila_parada_sensor', 'function', 'public', 'sku_items_fila_parada_check', ''),
   ('sku_items_fila_parada_sensor', 'view', 'public', 'v_sku_items_fila', ''),
   ('sku_items_fila_parada_sensor', 'cron_job', 'cron', 'afiacao_sku_items_fila_parada_1h', '')
@@ -4508,6 +4513,9 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('reposicao_po_observado_pelo_motor', 'rls_policy', 'public', 'reposicao_po_observado_item_select_staff', 'reposicao_po_observado_item'),
   ('data_health_vendas_empurradas_v2', 'function', 'public', '_data_health_compute', ''),
   ('data_health_vendas_empurradas_v2', 'function', 'public', 'get_data_health', ''),
+  ('sales_orders_kpi_no_envio', 'function', 'public', 'sales_orders_instante_envio', ''),
+  ('sales_orders_kpi_no_envio', 'function', 'public', 'sales_orders_gemeo_app_derivar', ''),
+  ('data_health_venda_empurrada_conta_pelo_app', 'function', 'public', '_data_health_compute', ''),
   ('sku_items_fila_parada_sensor', 'function', 'public', 'sku_items_fila_parada_check', ''),
   ('sku_items_fila_parada_sensor', 'view', 'public', 'v_sku_items_fila', ''),
   ('sku_items_fila_parada_sensor', 'cron_job', 'cron', 'afiacao_sku_items_fila_parada_1h', '')
@@ -4538,7 +4546,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 125.
+-- Funções redefinidas com corpo extraível: 126.
 
 WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (VALUES
   ('public', 'has_role', 1, '20260207192203_1ed442e5-a224-456e-9d94-cfe50e88c670.sql', 'c63a92e3cfa92e6aab8cb894ad505e30'),
@@ -4755,6 +4763,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', '_data_health_compute', 33, '20260922225500_data_health_portal_humano_critico_apos_24h.sql', 'aa3cac116f66f5bfdcfdf549dbe9afb1'),
   ('public', '_data_health_compute', 34, '20261001011500_data_health_vendas_empurradas_sem_gemeo.sql', '04da1485a726ec5737464547eb8a886d'),
   ('public', '_data_health_compute', 35, '20261005150000_data_health_vendas_empurradas_v2.sql', '5a8d9ac5032ebba773f3a986d742bcc3'),
+  ('public', '_data_health_compute', 36, '20261005220100_data_health_venda_empurrada_conta_pelo_app.sql', 'baf01d5785762d138aa826a1151f49e9'),
   ('public', 'data_health_watchdog', 1, '20260527220000_data_health_watchdog.sql', '4d210b1cab0b10bcf589746005859c4b'),
   ('public', 'data_health_watchdog', 2, '20260527250000_data_health_checks_high.sql', '936015f396af02ab4229e4e20f656803'),
   ('public', 'data_health_watchdog', 3, '20260530190000_data_health_portal_push.sql', '0e436fed51baecafdfbccbe3191e5bfa'),
@@ -5020,7 +5029,9 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'pedido_total_liquido_converter', 1, '20260914181500_pedido_total_liquido_acervo.sql', 'ed8296520bc8513f55f4039161657cc8'),
   ('public', 'pedido_total_liquido_converter', 2, '20260914193000_pedido_total_liquido_acervo_mes_entre_contas.sql', 'dc365744059741095767a967d0c05055'),
   ('public', 'expandir_promocao_item', 1, '20260929000234_padrao_like_contem_escapa_curinga.sql', '6a4779419c33db1ffe1f5c6bc6d7670b'),
-  ('public', 'expandir_promocao_item', 2, '20260930220148_expandir_promocao_item_overload_similarity_volume.sql', '15cd9b2496f669df8e979de9545b4f98')
+  ('public', 'expandir_promocao_item', 2, '20260930220148_expandir_promocao_item_overload_similarity_volume.sql', '15cd9b2496f669df8e979de9545b4f98'),
+  ('public', 'sales_orders_gemeo_app_derivar', 1, '20261001100001_sales_orders_gemeo_importado_contagem_unica.sql', '858944c47f258a1e33ddd58249316263'),
+  ('public', 'sales_orders_gemeo_app_derivar', 2, '20261005220000_sales_orders_kpi_no_envio.sql', '617b8551f551551b37200cb3ae787fe3')
 ),
 ultima AS (
   SELECT schema_name, object_name, max(ordem) AS ordem FROM corpo_esperado GROUP BY 1, 2

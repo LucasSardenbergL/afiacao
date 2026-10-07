@@ -15,7 +15,6 @@ interface OmieProdutoCadastro {
   unidade?: string;
   ncm?: string;
   valor_unitario?: number;
-  quantidade_estoque?: number;
   inativo?: string;
   marca?: string;
   modelo?: string;
@@ -196,7 +195,7 @@ Deno.serve(async (req) => {
             unidade: prod.unidade || "UN",
             ncm: prod.ncm || null,
             valor_unitario: prod.valor_unitario || 0,
-            estoque: prod.quantidade_estoque || 0,
+            // Sem `estoque`: o campo do cadastro é DEPRECATED no Omie (chega 0); quem grava é o sync de estoque.
             ativo: true,
             familia: prod.descricao_familia || null,
             imagem_url: prod.imagens?.[0]?.url_imagem || null,

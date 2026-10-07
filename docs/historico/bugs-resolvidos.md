@@ -1011,3 +1011,31 @@ após ensaio `ENSAIO_OK` e re-medição da PROD (`2cae069c…`) imediatamente an
 `reposicao_pedido_auto_aprovavel` (`20260629140000`) lista só `('disparado','concluido_recebido')` e cobre o PO do
 dry_run por COINCIDÊNCIA de coluna (`omie_pedido_compra_numero IS NOT NULL`, gravado no mesmo UPDATE do status —
 `disparar-pedidos-aprovados/index.ts`), não por vocabulário.
+
+## O Customer 360 afirmava "Cliente não encontrado" quando a leitura falhava ou estava sem rede (2026-10-05)
+
+**Defeito.** A porta do C360 fazia `if (!core.data) return <EmptyState title="Cliente não encontrado"/>`
+sobre `useCustomerCore` (`.maybeSingle()` que LANÇA): erro do PostgREST e offline na 1ª carga
+(`pending`+`paused`, com `isLoading` FALSE na v5) viravam "não existe", e o vendedor saía procurando um
+cliente que existe. Dedução do Codex adversarial no #2767; confirmado executando (RED 2/7, exatamente
+nesses dois ramos).
+
+**Conserto.** `estadoDeRegistro` + `<AvisoLeituraFalhou variante="bloco">` quando não há o cliente em
+mãos; "Tentar de novo" só no erro — sem rede, `refetch()` pausaria de novo, e o react-query já retoma
+sozinho quando a rede volta. Com o cliente no cache, o refetch que falha não derruba a página. `error`
+fica FORA do `estadoDeRegistro` de propósito: em `.maybeSingle()` o `PGRST116` é MAIS de uma linha (zero
+é `null`) e viraria "inexistente" — hoje impossível (`profiles_user_id_key` UNIQUE, 0 duplicatas).
+
+**A falsificação pegou um teste vácuo — a lição que generaliza.** O guard "refetch falha com o cliente
+em mãos → a página fica" passou COM a regressão (sabotagem: tirar o `&& !customer`), nos 2 locales.
+`qc.getQueryState().status === 'error'` provava o CACHE; a tela ainda era a de antes, porque o
+react-query 5 avisa o React num `setTimeout(0)` (`notifyManager`) que o `act` não drena. **Afirmar que a
+tela NÃO mudou exige prova de que o React RENDERIZOU o estado novo**: os irmãos `*.estados` escapam por
+esperar um sinal POSITIVO no DOM (o aviso de desatualizado aparecer); sem sinal positivo, drene o tick
+dentro do `act`. Verde no RED e no GREEN — só a sabotagem mostrou. E a 2ª rodada pegou o resto: com o
+tick drenado o guard ficou vermelho, mas pelo `TestingLibraryElementError` do `getByText`, não pela
+mensagem do ramo — **mensagem de `expect` atrás de `getBy*` é código morto** (o `getBy` lança antes);
+`queryBy*` + mensagem, e o veredito casa a marca.
+
+O gate `erro-colapsado-em-vazio` não via o sítio: texto por ATRIBUTO, eixo cujo "= 0" envelheceu —
+re-medição em `o-check-verde-que-a-falha-acende.md` (1 sítio textual na main, este; 0 depois).

@@ -158,7 +158,8 @@ acidente, agora explícita, a cada 2 h, com guardas.
 ## Fase 2 — o zero passa a ser CONFIRMADO, e vale para a posição (2026-10-05, branch `estoque-dono-unico-classe`)
 
 Edges `omie-analytics-sync` → `v1.7-zero-confirmado` e `sync-reprocess` → `v1.15-zero-confirmado` (esta
-leva junto o #2744, que nunca foi deployado sozinho).
+leva substitui a v1.14 do #2744, que ficou no ar sozinha de 2026-10-05 16:12Z a 2026-10-06 00:27Z — ver
+"O deploy (2026-10-05)" acima e "O deploy da Fase 2" abaixo).
 
 **A medição que pediu a fase.** Re-medido em 05/10 13:00 UTC: 208 posições congeladas (`vendas` 84, `oben`
 75, `colacor_vendas` 49; Σ saldo×cmc R$ 63,6k), todas com mais de 24 h. O motor só lê o saldo de
@@ -206,7 +207,7 @@ completa podia restaurar `codigo`/`descricao` e apagar um positivo gravado depoi
 reprocess): `zeramento_candidatos` (null = não apurado), `zeramento_confirmados_zero`/`_nao_zero`/
 `_desconhecidos`, `zerados_posicao`, `zerados_estoque`, `zeramento_recusados_cas`, `zeramento_chamadas`,
 `zeramento_estranhos` (código não pedido = filtro não honrado), `zeramento_pulado`, `zeramento_falhas`.
-Substitui `zerados_fora_da_lista` do #2744 (nunca foi ao ar).
+Substitui `zerados_fora_da_lista` do #2744 (que foi ao ar na v1.14 e saiu do metadata com a v1.15).
 
 **Gate** `src/__tests__/estoque-escritores-gate.test.ts` (registro em
 `src/lib/gates/estoque-escritores-registro.ts`): todo escritor de `inventory_position` ou de
@@ -218,3 +219,92 @@ escritor grava zero literal.
 zere); e o `omie-sync-estoque` passa a refrescar os membros de grupo de equivalência — o galão da WP01
 (`descontinuado`, fora dos habilitados) está congelado em 11,72 nas DUAS fontes, e zerar só a posição não
 o tira do `GREATEST`.
+
+## O deploy da Fase 2 (2026-10-06)
+
+- Ledger antes: `sync-reprocess` prod `v1.14` → main `v1.15-zero-confirmado` e `omie-analytics-sync` `v1.6` →
+  `v1.7-zero-confirmado`, pendentes desde o merge do #2788 (17:28Z); nenhuma mensagem de deploy delas no chat.
+  Feito pela sessão do #2744, com o OK do founder.
+- Pacote `b7c1b30a0997` contra `main@0dc6ba510` (2 edges, 34 arquivos distintos, 8 RPCs de pré-condição em
+  prod ✅; 2 avisos informativos pré-existentes: `finalize_nao_vinculados_snapshot` com corpo editado à mão e
+  `omie_sync_identity_snapshot` sem migration que o commite). Nenhum PR aberto tocando o fecho.
+- Enviado às **00:26:05Z**; o agente conferiu os 34 `sha256` (`sha256sum -c` exit 0, workspace em `0dc6ba51`),
+  deployou as duas verbatim, sondas 401 nas duas, `No files were edited.` (2,1 créditos). Sensor 5,3 min depois:
+  **`SEM_EDICAO`**.
+- **Prova funcional, 1ª rodada da v1.7** (`sync_inventory` `vendas`, 00:30:12Z): `zeramento_candidatos: 84`,
+  `zeramento_confirmados_zero: 84`, `nao_zero: 0`, `desconhecidos: 0`, `recusados_cas: 0`,
+  `zerados_posicao: 158`, `zeramento_chamadas: 2`. Na tabela: as posições congeladas com saldo ≠ 0 caíram de
+  **78 (oben) e 87 (vendas)** — Σ saldo×cmc R$ 26.918 e R$ 27.104 — para **0 e 0**.
+- Ledger depois: **`✅ confere`** nas duas — `sync-reprocess v1.15-zero-confirmado` e `omie-analytics-sync v1.7-zero-confirmado`, vistas via sonda do cron às 00:38:10Z.
+- ✅ **Conferido em 06/10** (psql-ro, até 18:15Z) — fecha o 📌 que estava aqui:
+  - `sync-reprocess` v1.15: a **strategic** das 02:30Z deu **`divergences_found: 0`** no `inventory` (eram
+    677–694 por noite antes do #2744) e `itens_sem_valor_unitario: 0` no `products`; as **operational** de
+    02:15Z a 18:15Z deram `zeramento_candidatos: 0`, todas `complete`, sem erro — o espelho `oben` já tinha
+    sido zerado pelo dono de `vendas` às 00:30Z (o zero confirmado vale para os dois espelhos).
+  - `colacor_vendas`, 1ª rodada da v1.7 (01:15Z): `candidatos: 48`, **`confirmados_zero: 44`**,
+    `desconhecidos: 4`, `estranhos: 0`, `recusados_cas: 0`. Os 4 desconhecidos são os 4 da medição de 05/10
+    com o catálogo parado — `5185282104/109/114/119` (lanterna, lâmpadas, "Manutenção Elétrica"), posição e
+    cadastro sem atualização desde 02/10, saldo 1–2: excluídos no Omie, a confirmação "S" não os devolve e o
+    zero NÃO é escrito (ausente ≠ zero). Ficam como órfãos presos (limpeza manual, `reposicao.md` §Malha OBEN)
+    e custam 1 chamada de confirmação por rodada da colacor.
+  - Contraprova nos dois sentidos (00:40Z): nenhuma posição zerada com `estoque_fisico > 0` no
+    `sku_estoque_atual` fresco do modo "S"; das zeradas com leitura "S" < 24 h, 40/40 confirmam 0.
+  - Congeladas ao longo do dia: `vendas` 0, `oben` 0, `servicos` 0, `colacor_vendas` 4 — sem reacúmulo; a
+    rodada de `vendas` das 01:00Z já deu 0 candidatos (estado de regime).
+  - **O incidente fechou:** a WP07.3900QT voltou a ser sugerida no ciclo de 06/10 12:15Z (estoque físico 0,
+    `qtde_sugerida` 2) e o pedido foi aprovado com 1 un a R$ 796,21 e **disparado** — a 1ª sugestão dela
+    desde 04/07. O ciclo de 18:15Z sugeriu +1 (pp 1/máx 2 com 1 a caminho: regra do motor, não fantasma).
+
+## Fase 3 — o catálogo deixa de gravar estoque (2026-10-06, branch `estoque-dono-unico-catalogo`)
+
+Edges `omie-sync-metadados` → `v1.1-catalogo-sem-estoque`, `omie-analytics-sync` → `v1.8-…`,
+`omie-vendas-sync` → `v1.11-…`, `sync-reprocess` → `v1.16-…` e `tint-omie-sync` (sem `versao.ts`).
+
+**O sinal da fase 2 que libera esta.** A WP07 foi sugerida e disparada, a strategic deu 0 divergência, e a
+1ª rodada confirmou 84/84 (`vendas`) e 44/48 (`colacor_vendas`). Re-medido em 06/10 ~19:40Z:
+- catálogo × posição mais fresca dá **0 divergência nos dois sentidos** (colacor 1.449 e oben 782 não-zero
+  iguais);
+- `omie_products.estoque` é numeric, aceita NULL e tem DEFAULT 0;
+- das 3 triggers da tabela, nenhuma cita estoque.
+
+**O conserto.**
+- Os 4 mapeamentos de catálogo perdem a chave `estoque`, e as interfaces perdem o campo. O lote é
+  homogêneo, então o postgrest-js monta `columns` sem `estoque`: no conflito o valor fica, e no INSERT
+  entra o DEFAULT 0, como já entrava com o `|| 0`. O desenho da classe, com o Codex, já tinha aprovado isso
+  (D4).
+- 5º ponto, achado nesta fase: o `products-lote` do `sync-reprocess` ainda VALIDAVA o campo e descartava o
+  produto (preço junto) quando vinha lixo. O Omie serializa campo vazio como `""` (o `cfop` vem assim em
+  3.714/3.714 produtos); se o DEPRECATED passar a chegar assim, a rodada perderia o catálogo inteiro por um
+  campo que o passo nem usa.
+
+**Gate.**
+- O registro encolheu: o papel `catalogo-legado` e as entradas de metadados e tint saíram. A partir de
+  agora, o G1 barra a volta deles.
+- Entrou o **G5**: nenhuma fonte de edge lê `quantidade_estoque`. Analytics e vendas-sync seguem
+  registrados por outras escritas legítimas, então a volta do `|| 0` no catálogo deles passaria por G1–G4.
+
+**A prova.**
+- Os REDs foram observados antes do conserto:
+  - calibração com 2 falhas (`undefined`);
+  - G5 vermelho com exatamente os 5 arquivos;
+  - G2 vermelho com metadados e tint;
+  - Deno `0 !== 4`: o lixo no campo tirava os 4 produtos, inclusive o `""`.
+- Falsificação `FALSIFICACAO_OK` em `C` e `pt_BR.UTF-8`, com controle 16/16 antes e depois:
+  - S2 e S4 re-miradas para o vendas-sync;
+  - **S7** (o `|| 0` de volta no syncProducts do analytics) só o G5 pega;
+  - **S8** (a volta no metadados) cai no G1.
+- `deno check` das 5 edges com a mesma contagem de erros da main (3/7/0/0/0).
+
+**Codex: Caminho B.** A cota estava em 92% (o teto é 85%) e a janela só reabre em 09/10 19:30. O desenho
+virou a RÉGUA escrita e conferida por mim, no corpo do PR. O PR fica em DRAFT até o adversarial do código.
+
+**O que NÃO muda.** Os 4 órfãos colacor seguem com `estoque` 2/2/1/1 desde 02/10: o reset do catálogo nunca
+os tocou, porque o `ListarProdutos` não os traz. A decisão de inativá-los é do founder.
+
+**Como conferir depois do deploy** (query, não recado). O metadados termina ~08:33Z e o `syncInventory`
+oben roda às 09:00Z. Entre 08:35Z e 08:59Z do dia seguinte, rode:
+`select account, count(*) filter (where updated_at >= current_date + time '08:30') catalogo_rodou, count(*) filter (where estoque <> 0) nao_zero from omie_products group by 1;`
+- Com o bundle velho, oben tem `nao_zero` ≈ 0 na janela.
+- Com o novo, ≈ 782, com `catalogo_rodou` ≈ 3.715.
+
+Na colacor a janela é 06:17Z–07:14Z, depois do syncProducts das 06:15Z.

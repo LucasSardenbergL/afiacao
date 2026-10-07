@@ -6,8 +6,9 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 // Money-path (P0-B): a conversão orçamento→pedido (SalesQuotes.convertToOrder) NÃO resolve mais o
 // código Omie no cliente — a identidade AUTORITATIVA é derivada na FRONTEIRA (edge criar_pedido) a
 // partir do documento do pedido. convertToOrder manda só sales_order_id + account + items (sem
-// código), awaita o edge, e só marca 'rascunho' no SUCESSO (fail-closed do edge deixa o orçamento
-// intacto). Isso DESTRAVA a conversão OBEN (o espelho omie_clientes tem 0 linhas oben, que antes
+// código), awaita o edge e, no SUCESSO, não regrava status nenhum: o 'enviado' que a edge grava tira a
+// linha da lista e mantém a venda no universo (spec 2026-10-05); o fail-closed do edge deixa o orçamento
+// intacto. Isso DESTRAVA a conversão OBEN (o espelho omie_clientes tem 0 linhas oben, que antes
 // fail-closava toda conversão oben). Estes testes provam o novo contrato.
 
 interface FakeOmieRow {
@@ -119,7 +120,7 @@ beforeEach(() => {
 });
 
 describe('SalesQuotes — conversão de orçamento deriva a identidade na FRONTEIRA (edge), P0-B money-path', () => {
-  it('destrava OBEN: envia ao edge SEM codigo_cliente (o edge deriva do documento) e marca rascunho no sucesso', async () => {
+  it('destrava OBEN: envia ao edge SEM codigo_cliente (o edge deriva do documento) e, no sucesso, NÃO regrava o status', async () => {
     h.quotes = [makeQuote('oben')];
     // Espelho SEM linha oben (0 hoje) — antes isto fail-closava TODA conversão oben. Agora o edge deriva.
     renderPage();
@@ -132,9 +133,10 @@ describe('SalesQuotes — conversão de orçamento deriva a identidade na FRONTE
     // NÃO manda código: a identidade autoritativa é derivada no edge (não confia no espelho parcial).
     expect(body.codigo_cliente).toBeUndefined();
     expect(body.codigo_vendedor).toBeUndefined();
-    // Sucesso do edge → marca 'rascunho' + toast de sucesso.
-    await waitFor(() => expect(h.updateSalesOrder).toHaveBeenCalledWith({ status: 'rascunho' }));
-    expect(h.toastSuccess).toHaveBeenCalled();
+    // Sucesso do edge → toast de sucesso e NENHUM update: o 'enviado' da edge é o estado final
+    // (regravar 'rascunho' tirava a venda do universo canônico — spec 2026-10-05 §3.4).
+    await waitFor(() => expect(h.toastSuccess).toHaveBeenCalled());
+    expect(h.updateSalesOrder).not.toHaveBeenCalled();
   });
 
   it('edge fail-closed (identidade não provada) → toast de erro e NÃO marca rascunho (sem status órfão)', async () => {

@@ -4652,3 +4652,120 @@ describe('guardrail: omie-nfe-recebimento-sync não conta NF-e como importada qu
     expect(naoOk.slice(leitura, lancamento), 'o corpo de falha é lido mas não volta ao chamador').toMatch(/return corpoDeFalha;/);
   });
 });
+
+// ── CT-e (modelo 57) fora do rastreio: a FONTE e o casamento de frete (parte B, OBEN 2026-10-05) ──
+// A lista do `ListarRecebimentos` traz NF-e e CT-e juntos. O `omie-sync-nfes-recebidas` gastava sleep
+// + `ConsultarRecebimento` em cada CT-e a cada ciclo de 2h e o gravava como órfã do rastreio (135
+// linhas, 0 com leadtime); o `omie-sync-ctes-recebidos` aceitava essa órfã como candidata e casou 13
+// dos 82 fretes numa linha 57. A decisão é pura e testada em Deno (`_shared/modelo-documento-fiscal.ts`
+// e `omie-sync-ctes-recebidos/candidatas.ts`); aqui se prova que ela CHEGA ao fluxo, e no lugar certo.
+// Tudo sobre o código SEM comentários: a linha certa comentada passava num assert sobre o fonte cru
+// (revisão adversarial da parte A).
+const CTES_RECEBIDOS = 'supabase/functions/omie-sync-ctes-recebidos/index.ts';
+
+/** O corpo do laço POR DOCUMENTO do `syncEmpresa` — sem o backfill e sem o sono entre páginas. */
+function lacoPorDocumento(fonte: string): string {
+  const ini = fonte.indexOf('for (const nfe of nfes)');
+  const fim = fonte.indexOf('if (interrompidoPorTempo) break;', ini);
+  expect(ini, 'o laço por documento do syncEmpresa sumiu — renomeado? os asserts ficariam cegos').toBeGreaterThan(-1);
+  expect(fim, 'o fim do laço por documento sumiu').toBeGreaterThan(ini);
+  return fonte.slice(ini, fim);
+}
+
+describe('guardrail money-path: CT-e (modelo 57) fora do rastreio — fonte e casamento de frete', () => {
+  const nfes = removerComentarios(read(POT_NFES));
+  const ctes = removerComentarios(read(CTES_RECEBIDOS));
+
+  it('fonte: o documento é classificado pelo cabeçalho CRU da lista, e o CT-e pula com contador', () => {
+    const laco = lacoPorDocumento(nfes);
+    expect(nfes, 'a decisão tem de vir do módulo compartilhado (a mesma da fila do leadtime)')
+      .toMatch(/import \{[^}]*\bclassificarModeloRecebimento\b[^}]*\} from "\.\.\/_shared\/modelo-documento-fiscal\.ts";/);
+    expect(
+      vereditoFronteira(laco, 'classificarModeloRecebimento'),
+      'REGRESSÃO: a classificação roda e é DESCARTADA — o CT-e volta a gastar consulta e a virar órfã',
+    ).toBe('ok');
+    // O argumento é o cabeçalho que a Omie mandou, não o `m` do mapNFe: a chave dele já passou pelo
+    // `replace(/\D/g, "").slice(0, 44)`, e uma chave formatada viraria evidência que ela não é.
+    expect(laco, 'REGRESSÃO: a classificação deixou de ler o cabeçalho CRU da lista')
+      .toMatch(/const modelo = classificarModeloRecebimento\(nfe\?\.cabec\);/);
+    expect(laco, 'REGRESSÃO: o CT-e não pula mais o resto do laço, ou pula sem ficar contado')
+      .toMatch(/if \(modelo\.tipo === "cte"\) \{[^{}]*summary\.ctes_ignorados\+\+;[^{}]*continue;\s*\}/);
+    expect(laco, 'a divergência entre chave e cabeçalho tem de ficar VISÍVEL').toMatch(/summary\.modelo_divergente\+\+/);
+    expect(laco, 'o sinal ilegível ou faltando tem de ficar VISÍVEL').toMatch(/summary\.modelo_ausente\+\+/);
+  });
+
+  it('fonte: a POSIÇÃO — depois do nIdReceb e do dedup, antes de mapNFe, do sono, da consulta e de toda escrita', () => {
+    const laco = lacoPorDocumento(nfes);
+    const etapas: Array<[string, number]> = [
+      ['nIdReceb validado', laco.indexOf('if (!nIdReceb)')],
+      ['dedup do run', laco.indexOf('processadasNoRun.add(nIdReceb)')],
+      // o denominador: nIdReceb válido e distinto, CT-e incluído (revisão adversarial, P2-4)
+      ['documento listado', laco.indexOf('summary.documentos_listados++')],
+      ['classificação', laco.indexOf('classificarModeloRecebimento(')],
+      ['ramo do CT-e', laco.indexOf('modelo.tipo === "cte"')],
+      ['mapNFe', laco.indexOf('mapNFe(nfe)')],
+      ['sono antes da consulta', laco.indexOf('await sleep(RATE_LIMIT_DELAY_MS)')],
+      ['ConsultarRecebimento', laco.indexOf('"ConsultarRecebimento"')],
+      ['updateLinhasDoPedido (escreve)', laco.indexOf('updateLinhasDoPedido(')],
+      ['insertOrfa (escreve)', laco.indexOf('insertOrfa(')],
+    ];
+    for (const [nome, pos] of etapas) {
+      expect(pos, `etapa "${nome}" não encontrada no laço — renomeada? o assert de ordem ficaria cego`).toBeGreaterThan(-1);
+    }
+    for (let k = 1; k < etapas.length; k++) {
+      expect(etapas[k - 1][1], `"${etapas[k - 1][0]}" tem de vir ANTES de "${etapas[k][0]}"`).toBeLessThan(etapas[k][1]);
+    }
+  });
+
+  it('fonte: os contadores do modelo nascem no resumo do run que MEDE, e só nele (ausente ≠ zero)', () => {
+    const ini = nfes.indexOf('const summary: EmpresaSummary & ContagemModelo = {');
+    const fim = nfes.indexOf('};', ini);
+    expect(ini, 'o resumo do syncEmpresa sumiu').toBeGreaterThan(-1);
+    const resumo = nfes.slice(ini, fim);
+    for (const campo of ['documentos_listados', 'ctes_ignorados', 'modelo_divergente', 'modelo_ausente']) {
+      expect(resumo, `${campo} tem de nascer zerado no resumo do run que mede`).toMatch(new RegExp(`\\b${campo}: 0,`));
+      // `apenas_backfill` e o erro fatal NÃO listaram documento nenhum: lá o contador fica AUSENTE do
+      // results, nunca um 0 que afirma "medi e não havia" (revisão adversarial, P3-1).
+      expect(count(nfes, `${campo}: 0`), `${campo} zerado fora do resumo do syncEmpresa — fabrica um zero no fin_sync_log`).toBe(1);
+    }
+  });
+
+  it('fonte: a fault canônica de fim encerra a listagem sem virar erro (janela vazia ≠ falha)', () => {
+    // "Não existem registros para a página" caía no `erros++`: a janela de 3 dias sem documento fechava
+    // o run `error` e o watchdog disparava alerta crítico falso (07-05, 07-20, 08-04, 09-08, 10-06).
+    expect(nfes, 'a decisão de fim tem de vir de listagem.ts (o que o Deno testa)')
+      .toMatch(/import \{[^}]*\behFimDaListagem\b[^}]*\} from "\.\/listagem\.ts";/);
+    // Janela LIMITADA e não `[^{}]*`: o log do ramo interpola `${empresa}`, e a chave dele cortaria o match.
+    expect(nfes, 'REGRESSÃO: o fim da listagem deixou de passar pela decisão testada')
+      .toMatch(/if \(ehFimDaListagem\(fs, pagina\)\) \{[\s\S]{0,200}?break;\s*\}/);
+    expect(nfes, 'REGRESSÃO: voltou um regex de fim local, fora do teste').not.toMatch(/nenhum\\s\*registro/);
+  });
+
+  it('casamento: as candidatas vêm do módulo testado, sem cópia local, e o retorno chega ao matcher e ao resumo', () => {
+    expect(ctes, 'buscarCandidatas tem de vir de candidatas.ts (o que o Deno testa)')
+      .toMatch(/import \{[^}]*\bbuscarCandidatas\b[^}]*\} from "\.\/candidatas\.ts";/);
+    expect(ctes, 'REGRESSÃO: voltou uma cópia local de buscarCandidatas, fora do teste').not.toMatch(/function buscarCandidatas\s*\(/);
+    expect(vereditoFronteira(ctes, 'buscarCandidatas'), 'a busca de candidatas roda e é descartada').toBe('ok');
+    // `vereditoFronteira` não enxerga desestruturação: as âncoras abaixo provam que as DUAS metades
+    // do retorno chegam a alguém — a lista filtrada aos matchers, a contagem ao resumo.
+    expect(ctes).toMatch(/const \{ candidatas, ctesExcluidas \} = await buscarCandidatas\(/);
+    expect(ctes, 'a defesa tem de ficar VISÍVEL no resumo do run').toMatch(/summary\.candidatas_cte_excluidas \+= ctesExcluidas;/);
+    expect(ctes, 'o SP Minas tem de receber a lista filtrada').toMatch(/matchSpMinas\(cte, candidatas\)/);
+    expect(ctes, 'o CONECT tem de receber a lista filtrada').toMatch(/matchConect\(cte, candidatas\)/);
+  });
+
+  it('casamento: a busca vem ANTES do matcher, e o matcher ANTES da escrita do vínculo', () => {
+    const etapas: Array<[string, number]> = [
+      ['buscarCandidatas', ctes.indexOf('await buscarCandidatas(')],
+      ['matchSpMinas', ctes.indexOf('matchSpMinas(cte, candidatas)')],
+      ['matchConect', ctes.indexOf('matchConect(cte, candidatas)')],
+      ['escrita do vínculo', ctes.indexOf('t3_data_cte: cte.data_emissao_iso')],
+    ];
+    for (const [nome, pos] of etapas) {
+      expect(pos, `etapa "${nome}" não encontrada — renomeada? o assert de ordem ficaria cego`).toBeGreaterThan(-1);
+    }
+    for (let k = 1; k < etapas.length; k++) {
+      expect(etapas[k - 1][1], `"${etapas[k - 1][0]}" tem de vir ANTES de "${etapas[k][0]}"`).toBeLessThan(etapas[k][1]);
+    }
+  });
+});

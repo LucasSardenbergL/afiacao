@@ -346,6 +346,7 @@ export const MODULOS: ModuloApp[] = [
       "src/pages/__tests__/FarmerRecommendations.erro-honesto.test.tsx",
       "src/pages/__tests__/FarmerRecommendations.desfecho-geracao.test.tsx",
       "src/pages/__tests__/FarmerCalls.mixgap-fora-do-gate.test.tsx",
+      "src/pages/__tests__/Customer360.estados.test.tsx",
     ],
     risco: { moneyPath: false, offlineFirst: false, authSensitive: false },
   },

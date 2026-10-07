@@ -194,13 +194,9 @@ const SalesQuotes = () => {
         return;
       }
 
-      // Sucesso: marca como pedido (sai da lista de orçamentos). Só AQUI — falha do edge deixa o
-      // orçamento intacto, sem status órfão.
-      const { error: updateError } = await supabase
-        .from('sales_orders')
-        .update({ status: 'rascunho' })
-        .eq('id', quote.id);
-      if (updateError) throw updateError;
+      // Sucesso: a edge já gravou 'enviado' + o pedido Omie na linha (e o trigger deriva o kpi no
+      // envio) — ela sai da lista de orçamentos, que filtra 'orcamento', sem regravar nada. Regravar
+      // 'rascunho' aqui tirava a venda do universo canônico (rascunho ∈ STATUS_NAO_VENDA).
       queryClient.invalidateQueries({ queryKey: ['sales-quotes'] });
       toast.success('Orçamento convertido em pedido!');
     } catch (e) {

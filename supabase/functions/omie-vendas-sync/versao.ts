@@ -91,7 +91,7 @@ export const respostaSonda = criarRespostaSonda("omie-vendas-sync");
  * dia UTC do servidor, AMANHÃ das 21:00 às 23:59 BRT — e, sem dInc, o data_previsao vira o order_date_kpi.
  * Nenhuma pré-condição de banco, nenhuma ordem de deploy.
  */
-export const VERSAO = "v1.10-hoje-sp-data-previsao";
+export const VERSAO = "v1.11-catalogo-sem-estoque";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

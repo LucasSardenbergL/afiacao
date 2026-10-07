@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **585** custom migrations totais
-- **1929** objetos esperados (criados por estas migrations)
+- **587** custom migrations totais
+- **1932** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 648
+  - `function`: 651
   - `rls_policy`: 464
   - `index`: 267
   - `cron_job`: 175
@@ -4801,6 +4801,19 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20261005170000_sku_items_controle_itens_pendentes.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20261005220000_sales_orders_kpi_no_envio.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.sales_orders_instante_envio` | — |
+| `function` | `public.sales_orders_gemeo_app_derivar` | — |
+
+### `20261005220100_data_health_venda_empurrada_conta_pelo_app.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
 
 ### `20261006004500_sku_items_fila_parada_sensor.sql`
 

@@ -7,7 +7,10 @@
 //   - ConsultarRecebimento → detalha 1 NFe e traz itensRecebimento[].itensInfoAdic.nNumPedCompra
 //
 // Estratégia de vínculo NFe ↔ Pedido:
-//   1) Lista NFes do período via ListarRecebimentos.
+//   1) Lista NFes do período via ListarRecebimentos. A lista traz CT-e (modelo 57, o conhecimento
+//      de frete) junto: quando a chave CRUA e o `cModeloNFe` dizem 57, o documento sai AQUI, antes
+//      de consulta e de escrita, contado em `ctes_ignorados` — o CT-e não tem item nem pedido, e
+//      virava linha órfã do rastreio (135 linhas, 0 com leadtime; parte B, 2026-10-05).
 //   2) Para CADA NFe, chama ConsultarRecebimento(nIdReceb) e extrai
 //      a lista DEDUPLICADA de itensRecebimento[].itensInfoAdic.nNumPedCompra.
 //      Esses são CNUMERO de pedidos de compra (string, ex: "2083548"), NÃO o ID interno.
@@ -26,6 +29,8 @@ import { classificarSonda, EDGE, EFEITO, erroSondaAmbigua, FONTE, respostaSonda,
 import { classifyOmieResponse, computeBackoffMs } from "./retry.ts";
 import { cabeEspera, timeoutRequestMs } from "../_shared/omie-deadline.ts";
 import { atenderSondaOptions } from '../_shared/sonda-cron.ts';
+import { classificarModeloRecebimento } from "../_shared/modelo-documento-fiscal.ts";
+import { ehFimDaListagem } from "./listagem.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -58,7 +63,7 @@ interface BackfillSummary {
   erros: number;
 }
 
-interface EmpresaSummary {
+interface EmpresaSummary extends Partial<ContagemModelo> {
   empresa: Empresa;
   nfes_processadas: number;
   consultas_detalhadas: number;       // quantas ConsultarRecebimento rodaram com sucesso
@@ -69,6 +74,24 @@ interface EmpresaSummary {
   erros: number;
   interrompido_por_timeout?: boolean;
   backfill?: BackfillSummary;
+}
+
+/**
+ * O modelo do documento (_shared/modelo-documento-fiscal.ts), por nIdReceb válido e distinto no run.
+ * Só existe no resumo do run que LISTOU: em `apenas_backfill` e no erro fatal fica AUSENTE do results,
+ * nunca um 0 que afirma "medi e não havia". (Resíduo conhecido: o `ListarRecebimentos` que lança já
+ * na página 1, ou o guarda de tempo antes dela, deixam 0 sem nada medido — distinguíveis pelo status
+ * `error` e por `interrompido_por_timeout`.) `erros` NÃO fecha a conta com estes: conta falha de
+ * página e pode contar 2× o mesmo documento. O que fecha é a identidade derivada
+ * `documentos_listados − ctes_ignorados − nfes_processadas` = documentos que falharam no caminho de
+ * NF-e (detalhe ou escrita). A conferência externa é contra o step de CT-e do MESMO tick do
+ * orquestrador (mesma janela): `ctes_ignorados` ≈ `ctes_processados` dele.
+ */
+interface ContagemModelo {
+  documentos_listados: number;        // nIdReceb válido e distinto que o run viu, CT-e incluído
+  ctes_ignorados: number;             // chave E cabeçalho = 57: fora do rastreio, sem consulta nem escrita
+  modelo_divergente: number;          // chave e cabeçalho legíveis e diferentes: segue o fluxo de NF-e
+  modelo_ausente: number;             // algum dos dois ilegível ou faltando: segue o fluxo de NF-e
 }
 
 const TIMEOUT_GUARD_MS = 130_000;
@@ -93,6 +116,8 @@ interface OmieNFeCabec {
   cCNPJ_CPF?: string;
   cNumeroNFe?: string;
   cSerieNFe?: string;
+  /** "55" (NF-e) ou "57" (CT-e) — string em 210 de 210 órfãs medidas. Quem lê é o classificador estrito. */
+  cModeloNFe?: string;
   dEmissaoNFe?: string;
   transporte?: OmieNFeTransporte;
 }
@@ -435,7 +460,7 @@ async function syncEmpresa(
   // Deadline do loop PRINCIPAL, derivado do MESMO t0 e do MESMO guard que o laço já consulta —
   // não é um relógio novo, é o guard existente ficando visível para o request e para o backoff.
   const deadline = t0 + MAIN_LOOP_GUARD_MS;
-  const summary: EmpresaSummary = {
+  const summary: EmpresaSummary & ContagemModelo = {
     empresa,
     nfes_processadas: 0,
     consultas_detalhadas: 0,
@@ -444,6 +469,10 @@ async function syncEmpresa(
     nfes_orfas: 0,
     vinculos_criados_total: 0,
     erros: 0,
+    documentos_listados: 0,
+    ctes_ignorados: 0,
+    modelo_divergente: 0,
+    modelo_ausente: 0,
   };
 
   const { app_key, app_secret } = getCredentials(empresa);
@@ -497,7 +526,10 @@ async function syncEmpresa(
 
     if (resp?.faultstring) {
       const fs = String(resp.faultstring);
-      if (/not\s*found|sem\s*registros|n[ãa]o\s*encontrado|nenhum\s*registro/i.test(fs)) {
+      // A Omie diz "acabou" por fault ("Não existem registros para a página"). Na página 1 é a janela
+      // vazia — fim, não erro (antes virava `error` e alerta falso); numa página > 1 é anomalia e
+      // segue erro visível (listagem.ts).
+      if (ehFimDaListagem(fs, pagina)) {
         console.log(`[sync-nfes] ${empresa} pag=${pagina} sem resultados — fim`);
         break;
       }
@@ -523,6 +555,26 @@ async function syncEmpresa(
       }
       if (processadasNoRun.has(nIdReceb)) continue;
       processadasNoRun.add(nIdReceb);
+      summary.documentos_listados++;
+
+      // CT-e (modelo 57) é o conhecimento de FRETE: sem item, sem pedido. Sai AQUI — antes do sono,
+      // do ConsultarRecebimento e de toda escrita (updateLinhasDoPedido também escreve) —, e só
+      // quando a chave CRUA e o `cModeloNFe` concordam. O argumento é o cabeçalho que a Omie
+      // mandou, não o `m` do mapNFe: a chave dele já foi normalizada, e uma chave formatada viraria
+      // evidência que ela não é. Divergência e ausência seguem o fluxo de NF-e, contadas à parte.
+      // O `continue` não mexe na paginação: página só de CT-e avança para a seguinte.
+      const modelo = classificarModeloRecebimento(nfe?.cabec);
+      if (modelo.tipo === "cte") {
+        summary.ctes_ignorados++;
+        continue;
+      }
+      if (modelo.tipo === "divergente") {
+        summary.modelo_divergente++;
+        console.warn(`[sync-nfes] ${empresa} nIdReceb=${nIdReceb} modelo divergente: chave=${modelo.daChave} cabec=${modelo.doCabecalho} — segue como NF-e`);
+      } else if (modelo.tipo === "ausente") {
+        summary.modelo_ausente++;
+        console.warn(`[sync-nfes] ${empresa} nIdReceb=${nIdReceb} modelo ilegível: chave=${modelo.daChave ?? "?"} cabec=${modelo.doCabecalho ?? "?"} — segue como NF-e`);
+      }
 
       try {
         const m = mapNFe(nfe);
@@ -938,7 +990,9 @@ Deno.serve(async (req) => {
             `[sync-nfes] ${empresa} TOTAL: nfes=${s.nfes_processadas} ` +
             `consultas=${s.consultas_detalhadas} vinculadas=${s.pedidos_vinculados} ` +
             `multi=${s.nfes_com_multiplos_pedidos} orfas=${s.nfes_orfas} ` +
-            `vinculos=${s.vinculos_criados_total} erros=${s.erros} dur=${Date.now() - t0}ms`,
+            `vinculos=${s.vinculos_criados_total} erros=${s.erros} listados=${s.documentos_listados} ` +
+            `ctes_ignorados=${s.ctes_ignorados} modelo_div=${s.modelo_divergente} ` +
+            `modelo_aus=${s.modelo_ausente} dur=${Date.now() - t0}ms`,
           );
         }
 

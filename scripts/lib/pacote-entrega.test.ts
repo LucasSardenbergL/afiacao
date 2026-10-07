@@ -264,6 +264,26 @@ describe('montarPacote — em ONDAS, a retida não tem colagem', () => {
     expect(texto).toMatch(/`omie-vendas-sync`\*\* — ADIADA/);
   });
 
+  // O #2469 ao contrário: a leva em que NINGUÉM declarou nada. As duas saem na mesma colagem, e era
+  // esse silêncio — não uma declaração errada — que entregava a ordem proibida.
+  it('[PACOTE_ONDA_MUDA_AVISA] 2 edges numa colagem sem ordem declarada: o pacote nomeia o silêncio', () => {
+    const semOrdem: PlanoDeOndas = {
+      liberadas: ['omie-vendas-sync', 'sync-reprocess'],
+      retidas: [],
+      regras: [],
+      exigidos: [],
+    };
+    const { texto } = montarPacote(emOndas({ ordem: semOrdem }));
+    expect(texto).toContain('Ordem entre edges: NÃO DECLARADA');
+    expect(texto).toContain('`omie-vendas-sync`');
+    expect(texto).toContain('`sync-reprocess`');
+    expect(texto).toContain('deploy-ordem.json');
+  });
+
+  it('[PACOTE_ONDA_DECLARADA_SEM_AVISO] quem declarou a ordem não leva aviso de silêncio', () => {
+    expect(montarPacote(emOndas()).texto).not.toContain('NÃO DECLARADA');
+  });
+
   it('[PACOTE_NENHUMA_LIBERADA_SEM_COLAGEM] com tudo retido não há bloco para colar', () => {
     const ordem: PlanoDeOndas = {
       ...EM_ONDAS,
