@@ -1,15 +1,19 @@
 /**
- * Ranking de vendedores do mês (MTD) no dashboard Master. Read-only, escopo da empresa
- * do switcher. Ordena por receita de pedidos válidos, atribuído por quem LANÇOU (created_by);
- * rodapé expõe "não atribuído" e "sem pedido no mês". Self-hide sem pedidos.
- * Conversão de visita fica fora (route_visits não tem account → seria cross-empresa). v2.
- * Spec: docs/superpowers/specs/2026-06-04-master-visao-time-design.md
+ * Ranking de vendedores do mês (MTD) no dashboard Master. Read-only, escopo da empresa do switcher.
+ * Ordena por receita de pedidos válidos, atribuída ao DONO ATUAL da carteira elegível do cliente (a régua
+ * da positivação e da comissão — o `created_by` da importada é carimbo técnico, não quem vendeu).
+ * O rodapé separa "carteira de não-vendedor" (dono sem papel de venda) de "sem vendedor atribuído"
+ * (cliente sem carteira) e expõe "sem pedido no mês". Some só sem pedido em nenhum dos três destinos.
+ * Conversão de visita fica fora (route_visits não tem account → seria cross-empresa).
+ * Specs: docs/superpowers/specs/2026-06-04-master-visao-time-design.md
+ *        docs/superpowers/specs/2026-10-06-ranking-atribuicao-por-carteira-design.md
  */
 import { Card, CardHeader } from '@/components/ui/card';
 import { Trophy, Loader2 } from 'lucide-react';
 import { useTeamRanking } from '@/hooks/useTeamRanking';
 import { useCompany } from '@/contexts/CompanyContext';
 import { formatBRL } from '@/components/customer360/format';
+import { rankingSemPedido } from '@/lib/dashboard/team-kpis';
 
 const TOP = 8;
 
@@ -37,12 +41,13 @@ export function RankingVendedoresCard() {
     );
   }
   if (!data) return null;
+  if (rankingSemPedido(data)) return null; // nenhum dos 3 destinos tem pedido no mês
 
-  const { ranking, naoAtribuido, semAtividade } = data;
-  if (ranking.length === 0 && naoAtribuido.pedidos === 0) return null; // sem pedidos no mês
-
+  const { ranking, carteiraNaoVendedor, naoAtribuido, semAtividade } = data;
   const visiveis = ranking.slice(0, TOP);
   const restante = ranking.length - visiveis.length;
+  const temRodape =
+    restante > 0 || carteiraNaoVendedor.pedidos > 0 || naoAtribuido.pedidos > 0 || semAtividade > 0;
 
   return (
     <Card>
@@ -51,7 +56,7 @@ export function RankingVendedoresCard() {
           <Trophy className="w-4 h-4 text-muted-foreground" />
           <div>
             <h2 className="text-base font-medium">Ranking de vendedores · mês</h2>
-            <p className="text-2xs text-muted-foreground">por quem lançou o pedido · {escopo}</p>
+            <p className="text-2xs text-muted-foreground">por dono da carteira · {escopo}</p>
           </div>
         </div>
       </CardHeader>
@@ -67,15 +72,20 @@ export function RankingVendedoresCard() {
         ))}
       </div>
 
-      {(restante > 0 || naoAtribuido.pedidos > 0 || semAtividade > 0) && (
+      {temRodape && (
         <div className="px-4 pb-3 pt-2 space-y-0.5 text-2xs text-muted-foreground">
           {restante > 0 && (
             <div>
               +{restante} vendedor{restante > 1 ? 'es' : ''} com pedido
             </div>
           )}
+          {carteiraNaoVendedor.pedidos > 0 && (
+            <div title="Dono da carteira sem papel farmer, hunter nem closer — hoje o master e o pool órfão.">
+              Carteira de não-vendedor: {formatBRL(carteiraNaoVendedor.receita)} · {carteiraNaoVendedor.pedidos} ped.
+            </div>
+          )}
           {naoAtribuido.pedidos > 0 && (
-            <div>
+            <div title="Cliente sem carteira elegível (ou pedido sem cliente).">
               Sem vendedor atribuído: {formatBRL(naoAtribuido.receita)} · {naoAtribuido.pedidos} ped.
             </div>
           )}
