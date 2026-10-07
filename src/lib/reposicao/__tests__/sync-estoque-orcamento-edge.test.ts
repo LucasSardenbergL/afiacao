@@ -104,6 +104,22 @@ describe('omie-sync-estoque — o par (físico, pendente) e a semântica fatal d
     );
   });
 
+  it('a fiação dos membros de grupo: o MESMO recorte do motor, o predicado no acumulador e a entrega à publicação', () => {
+    // PR-3 do estoque com dono único: a soma e a gravação dos membros são testadas no Deno (fisico_test/publicacao_test);
+    // aqui, que o handler lê os membros com o recorte de gerar_pedidos_sugeridos_ciclo e os entrega sem desviar.
+    const iMembros = fonte.indexOf('.from("sku_embalagem_equivalencia")', iHandler);
+    expect(iMembros).toBeGreaterThan(iHandler);
+    const leitura = fonte.slice(iMembros, fonte.indexOf(';', iMembros));
+    expect(leitura).toContain('.eq("empresa", empresa.toLowerCase())');
+    expect(leitura).toContain('.eq("ativo", true)');
+    expect(leitura).toContain('.gt("fator_para_base", 0)');
+    expect(fonte).toContain('.filter((sku) => !habilitadoMap.has(sku))');
+    expect(fonte).toContain(
+      'criarAcumuladorFisico((sku) => habilitadoMap.has(sku), totalEsperado, (sku) => membrosGrupo.has(sku))',
+    );
+    expect(fonte).toContain('membros: fisico.membros, membrosIlegiveis: fisico.membrosIlegiveis, membrosErro }');
+  });
+
   it('o erro do ListarPosEstoque ganha página e relógio como SUFIXO — o startsWith("AUTH_ERROR") segue vendo a auth', () => {
     expect(fonte).toMatch(/throw new Error\(\s*`\$\{mensagemDeErro\(err\) \?\? "falha sem mensagem"\} \(pág \$\{page\}/);
     expect(fonte).toContain('msg.startsWith("AUTH_ERROR")');

@@ -112,6 +112,7 @@ function entrada(opts: {
   paginas?: Array<{ itens: LinhaPosEstoque[]; total: unknown }>;
   empresa?: "OBEN" | "COLACOR";
   chunk?: number;
+  membros?: string[];
 } = {}): EntradaPublicacao {
   const habilitados = new Map<string, string | null>([["101", "A"], ["102", "B"], ["103", "C"], ["104", "D"]]);
   const paginas = opts.paginas ?? [{
@@ -123,12 +124,20 @@ function entrada(opts: {
     ],
     total: 4,
   }];
-  const acc = criarAcumuladorFisico((s) => habilitados.has(s), habilitados.size);
+  const membros = new Set(opts.membros ?? []);
+  const acc = criarAcumuladorFisico((s) => habilitados.has(s), habilitados.size, (s) => membros.has(s));
   for (const p of paginas) acc.pagina(p.itens, p.total);
   return {
     empresa: opts.empresa ?? "OBEN",
     habilitados,
-    fisico: { veredito: acc.veredito(), encontrados: acc.encontrados, paginas: paginas.length, faseMs: 45_000 },
+    fisico: {
+      veredito: acc.veredito(),
+      encontrados: acc.encontrados,
+      membros: acc.membros,
+      membrosIlegiveis: acc.membrosIlegiveis,
+      paginas: paginas.length,
+      faseMs: 45_000,
+    },
     iniciadoEm: T0,
     limiteCauda: T0 + 85_000,
     prazos: { tetoEscritaMs: 8_000, minimoEscritaMs: 500, tetoObservacaoMs: 8_000, marcadorMs: 1_000 },
@@ -367,4 +376,42 @@ Deno.test("comPrazo: sucesso, erro do banco e exceção são distintos — e só
     20,
   );
   igual(abortado, { erro: "AbortError: signal timed out", semConfirmacao: true }, "o prazo abortou: o banco pode ter gravado");
+});
+
+// PR-3 do estoque com dono único (2026-10-07): o membro de grupo NÃO habilitado (999) tem o físico gravado num upsert À
+// PARTE e SEM a coluna do pendente — o PO dele não é varrido, e a coluna fora do lote preserva o valor da linha.
+Deno.test("membro de grupo: físico gravado à parte, sem estoque_pendente_entrada, depois dos habilitados", async () => {
+  const f = criarFake();
+  const r = await concluirRun(f.ops, entrada({ membros: ["999"] }));
+  const doMembro = f.linhasEstoque.filter((lote) => lote.some((l) => l.sku_codigo_omie === "999"));
+  igual(doMembro.length, 1, "um lote com o membro");
+  igual(doMembro[0].map((l) => l.sku_codigo_omie), ["999"], "o lote do membro não mistura habilitado");
+  igual(Object.hasOwn(doMembro[0][0], "estoque_pendente_entrada"), false, "sem a chave do pendente");
+  igual([doMembro[0][0].estoque_fisico, doMembro[0][0].estoque_disponivel], [1, 1], "físico e disponível");
+  igual(f.efeitos.indexOf("upsertEstoque:999") > f.efeitos.indexOf("upsertEstoque:103"), true, "depois dos habilitados");
+  igual([r.membros_grupo_encontrados, r.membros_grupo_gravados, r.membros_grupo_falhas], [1, 1, 0], "resumo");
+  igual(r.desfecho, "completo", "desfecho dos habilitados");
+});
+
+Deno.test("membro de grupo: falha ao gravar NÃO muda o desfecho dos habilitados e fica no resumo", async () => {
+  const ERRO: ResultadoEscrita = { erro: "boom", semConfirmacao: false };
+  const f = criarFake({ estoque: [OK, OK, ERRO, ERRO] });
+  const r = await concluirRun(f.ops, entrada({ membros: ["999"] }));
+  igual(r.desfecho, "completo", "desfecho");
+  igual([r.membros_grupo_gravados, r.membros_grupo_falhas], [0, 1], "a falha aparece no resumo");
+});
+
+Deno.test("membro de grupo que não veio no retrato não é escrito", async () => {
+  const f = criarFake();
+  const r = await concluirRun(f.ops, entrada({ membros: ["555"] }));
+  igual(f.linhasEstoque.some((lote) => lote.some((l) => l.sku_codigo_omie === "555")), false, "nada do 555");
+  igual([r.membros_grupo_encontrados, r.membros_grupo_gravados], [0, 0], "resumo");
+});
+
+Deno.test("membros de grupo não lidos: o resumo diz o erro e null, nunca '0 membros'", async () => {
+  const f = criarFake();
+  const en = entrada();
+  const r = await concluirRun(f.ops, { ...en, fisico: { ...en.fisico, membrosErro: "boom" } });
+  igual([r.membros_grupo_encontrados, r.membros_grupo_erro], [null, "boom"], "resumo");
+  igual(r.desfecho, "completo", "os habilitados seguem");
 });

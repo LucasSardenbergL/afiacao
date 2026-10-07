@@ -136,3 +136,48 @@ Deno.test("exigirFisicoPublicavel lança com a MARCA no início, o estado e o re
   }
   contem(msg, "nada foi gravado", "fecho da mensagem");
 });
+
+// PR-3 do estoque com dono único (2026-10-07): o membro de grupo de equivalência NÃO habilitado entra num mapa À
+// PARTE. O motor soma GREATEST(inv, sea.estoque_fisico) por membro, e a linha dele congelava no último valor de quando
+// era habilitado (o galão da WP01: 11,72 L de 31/07 com 0 confirmado no Omie). O `encontrados` não muda.
+const MEMBROS = new Set(["999"]);
+function varrerComMembros(paginas: Array<{ itens: LinhaPosEstoque[]; total: unknown }>, esperados = HAB.size) {
+  const acc = criarAcumuladorFisico((sku) => HAB.has(sku), esperados, (sku) => MEMBROS.has(sku));
+  for (const p of paginas) acc.pagina(p.itens, p.total);
+  return acc;
+}
+
+Deno.test("membro de grupo não habilitado: soma os locais num mapa À PARTE, fora do encontrados", () => {
+  const acc = varrerComMembros([
+    { itens: [linha(101, 1, 3, 1), linha(999, 1, 4, 1), linha(999, 2, 2, 0), linha(888, 1, 9)], total: 4 },
+  ]);
+  igual(acc.veredito().estado, "completo", "veredito");
+  igual([...acc.encontrados.keys()], ["101"], "encontrados só com habilitado");
+  igual(acc.membros.get("999"), { fisico: 6, reservado: 1, locais: 2 }, "membro somado nos 2 locais");
+  igual(acc.membros.has("888"), false, "quem não é habilitado nem membro segue ignorado");
+});
+
+Deno.test("membro achado NÃO mascara o vazio inesperado: só habilitado conta", () => {
+  const v = varrerComMembros([{ itens: [linha(999, 1, 5)], total: 1 }]).veredito();
+  igual(v.estado, "inconsistente", "estado");
+  contem(v.motivo, "nenhum dos 2 SKUs habilitados apareceu", "motivo");
+});
+
+Deno.test("membro com físico ilegível é pulado sem derrubar a varredura, e fica no sensor", () => {
+  const acc = varrerComMembros([{ itens: [linha(101, 1, 3), linha(999, 1, Number.NaN)], total: 2 }]);
+  igual(acc.veredito().estado, "completo", "o habilitado segue publicável");
+  igual(acc.membros.has("999"), false, "membro ilegível não vira linha");
+  igual(acc.membrosIlegiveis, ["999"], "sensor");
+});
+
+Deno.test("membro com UM local ilegível perde a soma inteira (parcial seria físico fabricado), nas duas ordens", () => {
+  for (const itens of [
+    [linha(101, 1, 3), linha(999, 1, 4), linha(999, 2, "abc")],
+    [linha(101, 1, 3), linha(999, 2, "abc"), linha(999, 1, 4)],
+  ]) {
+    const acc = varrerComMembros([{ itens, total: 3 }]);
+    igual(acc.veredito().estado, "completo", "o habilitado segue publicável");
+    igual(acc.membros.has("999"), false, "sem soma parcial");
+    igual(acc.membrosIlegiveis, ["999"], "sensor");
+  }
+});

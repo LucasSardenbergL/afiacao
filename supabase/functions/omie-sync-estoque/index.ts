@@ -815,7 +815,29 @@ Deno.serve(async (req) => {
       // filial, depósito), o físico é a SOMA dos locais — sobrescrever (Map.set) gerava estoque menor que o do ME. A
       // soma e o veredito de completude moram em fisico.ts (puro, testado em Deno).
       const dataPosicao = paraDataOmie(hojeSP()); // a posição de HOJE em SP (no servidor UTC, getDate() é amanhã às 21h+)
-      const fisico = criarAcumuladorFisico((sku) => habilitadoMap.has(sku), totalEsperado);
+
+      // 1b) Membros de grupo de equivalência NÃO habilitados: o motor lê o físico deles no GREATEST do grupo, com o
+      // MESMO recorte daqui (empresa minúscula, ativo, fator > 0). Leitura que falha não derruba o sync dos
+      // habilitados: segue sem membros, e o resumo diz por quê (nunca "0 membros").
+      let membrosGrupo = new Set<string>();
+      let membrosErro: string | null = null;
+      const { data: membrosRows, error: membrosErr } = await supabase
+        .from("sku_embalagem_equivalencia")
+        .select("sku_codigo_omie")
+        .eq("empresa", empresa.toLowerCase())
+        .eq("ativo", true)
+        .gt("fator_para_base", 0);
+      if (membrosErr) {
+        membrosErro = String(membrosErr.message).slice(0, 200);
+        console.error(`[omie-sync-estoque] ${empresa}: membros de grupo não lidos: ${membrosErro}`);
+      } else {
+        membrosGrupo = new Set(
+          ((membrosRows ?? []) as Array<{ sku_codigo_omie: string | number }>)
+            .map((r) => String(r.sku_codigo_omie))
+            .filter((sku) => !habilitadoMap.has(sku)),
+        );
+      }
+      const fisico = criarAcumuladorFisico((sku) => habilitadoMap.has(sku), totalEsperado, (sku) => membrosGrupo.has(sku));
 
       let page = 1;
       let totalPaginas = 1;
@@ -883,7 +905,8 @@ Deno.serve(async (req) => {
       return await concluirRun(opsDoBanco(supabase, empresa, lerPendente), {
         empresa,
         habilitados: habilitadoMap,
-        fisico: { veredito: vereditoFisico, encontrados: fisico.encontrados, paginas: totalPaginas, faseMs: faseFisicoMs },
+        fisico: { veredito: vereditoFisico, encontrados: fisico.encontrados, paginas: totalPaginas, faseMs: faseFisicoMs,
+          membros: fisico.membros, membrosIlegiveis: fisico.membrosIlegiveis, membrosErro },
         iniciadoEm: startedAt.getTime(),
         limiteCauda: deadline + FOLGA_CAUDA_MS,
         prazos: {

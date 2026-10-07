@@ -101,6 +101,11 @@ export interface EntradaPublicacao {
   fisico: {
     veredito: VereditoFisico;
     encontrados: ReadonlyMap<string, AgregadoSku>;
+    /** Membros de grupo de equivalência NÃO habilitados (só o físico; ver concluirRun). */
+    membros?: ReadonlyMap<string, AgregadoSku>;
+    membrosIlegiveis?: readonly string[];
+    /** A leitura dos membros falhou: o resumo diz isso em vez de "0 membros". */
+    membrosErro?: string | null;
     paginas: number;
     faseMs: number;
   };
@@ -371,6 +376,22 @@ export async function concluirRun(ops: OpsPublicacao, e: EntradaPublicacao): Pro
 
   // Inativação ANTES da observação: ela é efeito money-path (tira o SKU da compra); a observação é acessória.
   const inat = await inativarNaoEncontrados(ops, e);
+
+  // Membro de grupo de equivalência NÃO habilitado: o motor soma GREATEST(inv, sea.estoque_fisico) por membro, e a linha
+  // dele congelava no valor de quando era habilitado (o galão da WP01: 11,72 L de 31/07 com 0 confirmado no Omie).
+  // Só o físico, num lote à parte e SEM estoque_pendente_entrada: o PO dele não é varrido, e a coluna fora do lote
+  // preserva o valor da linha. Falha aqui não muda o desfecho dos habilitados; fica no resumo.
+  const membros = e.fisico.membros ?? new Map<string, AgregadoSku>();
+  const linhasMembros = [...membros].map(([codigo, agg]) => ({
+    empresa: e.empresa,
+    sku_codigo_omie: codigo,
+    estoque_fisico: agg.fisico,
+    estoque_disponivel: agg.fisico - agg.reservado,
+    ultima_sincronizacao: agoraIso,
+    fonte_sync: agg.locais > 1 ? `ListarPosEstoque(${agg.locais} locais)` : "ListarPosEstoque",
+  }));
+  const gm = await gravarEstoque(ops, e, linhasMembros);
+
   const obs = await publicarObservacao(ops, e, pend, gravacaoCompleta);
 
   const desfecho: Desfecho = gravacaoCompleta && inat.completa ? "completo" : "parcial";
@@ -404,6 +425,11 @@ export async function concluirRun(ops: OpsPublicacao, e: EntradaPublicacao): Pro
     paginas_sem_total: v.paginasSemTotal,
     lista_nao_encontrados: inat.naoEncontrados,
     lista_erros: g.falhas,
+    membros_grupo_encontrados: e.fisico.membrosErro ? null : membros.size,
+    membros_grupo_erro: e.fisico.membrosErro ?? null,
+    membros_grupo_gravados: gm.confirmados,
+    membros_grupo_falhas: linhasMembros.length - gm.confirmados,
+    membros_grupo_ilegiveis: (e.fisico.membrosIlegiveis ?? []).length,
   };
   ops.log("log", `resumo: ${JSON.stringify(resumo)}`);
 

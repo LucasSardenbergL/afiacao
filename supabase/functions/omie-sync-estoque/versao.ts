@@ -58,7 +58,7 @@ export const respostaSonda = criarRespostaSonda("omie-sync-estoque");
  * gravava o físico fresco com o pendente velho: dupla contagem invisível); (3) gravação parcial → marcadores 'partial'
  * e ok:false, com prazo na cauda e a inativação no desfecho. A orquestração mudou para `publicacao.ts`.
  */
-export const VERSAO = "v1.6-recusa-par-torto";
+export const VERSAO = "v1.7-membros-de-grupo";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

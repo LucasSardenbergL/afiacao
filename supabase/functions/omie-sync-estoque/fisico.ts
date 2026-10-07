@@ -66,6 +66,10 @@ function lerLocal(v: unknown): string | null {
 export interface AcumuladorFisico {
   pagina(itens: readonly LinhaPosEstoque[], nTotRegistros: unknown): void;
   readonly encontrados: ReadonlyMap<string, AgregadoSku>;
+  /** Membros de grupo de equivalência NÃO habilitados: mapa à parte, fora das invariantes do `encontrados`. */
+  readonly membros: ReadonlyMap<string, AgregadoSku>;
+  /** Membro com físico/reservado não finito em algum local: sem linha (a soma parcial seria fabricada). */
+  readonly membrosIlegiveis: readonly string[];
   readonly registrosLidos: number;
   veredito(): VereditoFisico;
 }
@@ -73,9 +77,17 @@ export interface AcumuladorFisico {
 /**
  * @param habilitado  o SKU entra na soma? (as demais linhas só contam para a completude e a unicidade)
  * @param esperados   quantos SKUs habilitados existem — com algum esperado, nenhum encontrado é vazio INESPERADO
+ * @param membro      membro de grupo de equivalência NÃO habilitado? Vai para `membros`: o motor lê o físico dele no
+ *                    GREATEST do grupo, e sem este caminho a linha congelava no valor de quando era habilitado
  */
-export function criarAcumuladorFisico(habilitado: (sku: string) => boolean, esperados: number): AcumuladorFisico {
+export function criarAcumuladorFisico(
+  habilitado: (sku: string) => boolean,
+  esperados: number,
+  membro: (sku: string) => boolean = () => false,
+): AcumuladorFisico {
   const encontrados = new Map<string, AgregadoSku>();
+  const membros = new Map<string, AgregadoSku>();
+  const membrosIlegiveis = new Set<string>();
   const totais = new Set<number>();
   const chaves = new Set<string>();
   let registrosLidos = 0;
@@ -105,22 +117,37 @@ export function criarAcumuladorFisico(habilitado: (sku: string) => boolean, espe
           if (chaves.has(chave)) primeiraRepetida ??= chave;
           else chaves.add(chave);
         }
-        if (!habilitado(codigo)) continue;
+        const ehHabilitado = habilitado(codigo);
+        if (!ehHabilitado && !membro(codigo)) continue;
         const fisico = Number(item.fisico ?? 0);
         const reservado = Number(item.reservado ?? 0);
         if (!Number.isFinite(fisico) || !Number.isFinite(reservado)) {
-          naoFinitos.push(codigo);
+          // No habilitado, barra a varredura inteira; no membro, só tira o membro — nunca barra os habilitados.
+          if (ehHabilitado) {
+            naoFinitos.push(codigo);
+          } else {
+            membrosIlegiveis.add(codigo);
+            membros.delete(codigo);
+          }
           continue;
         }
-        const acc = encontrados.get(codigo) ?? { fisico: 0, reservado: 0, locais: 0 };
+        if (!ehHabilitado && membrosIlegiveis.has(codigo)) continue;
+        const destino = ehHabilitado ? encontrados : membros;
+        const acc = destino.get(codigo) ?? { fisico: 0, reservado: 0, locais: 0 };
         acc.fisico += fisico;
         acc.reservado += reservado;
         acc.locais += 1;
-        encontrados.set(codigo, acc);
+        destino.set(codigo, acc);
       }
     },
     get encontrados() {
       return encontrados;
+    },
+    get membros() {
+      return membros;
+    },
+    get membrosIlegiveis() {
+      return [...membrosIlegiveis];
     },
     get registrosLidos() {
       return registrosLidos;
