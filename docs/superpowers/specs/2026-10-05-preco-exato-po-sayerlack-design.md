@@ -208,8 +208,10 @@ Antes/depois, por query:
   estoura a prova e a captura fica cega (fail-closed).
 - **Decreto que mude uma alíquota:** a prova estoura nos pedidos daquele NCM e o sensor mostra `checksum_divergente`;
   conserto = atualizar a linha da tabela.
-- **NF 5% abaixo do portal** (PO 1238, pergunta aberta ao founder): o PO segue o portal; se for desconto que o portal
-  não mostra, a conferência acusa.
+- **NF 5% abaixo do portal** (PO 1238) — respondido pelo founder em 06/10: é **promoção para quem bate o volume do
+  trimestre**, um desconto que o portal não mostra no pedido. O PO segue o portal (o preço do momento do pedido); nos
+  trimestres em que a meta é batida, a NF vem até 5% abaixo, e a conferência NF↔PO (D4') tem de reconhecer essa
+  diferença como desconto de volume, não como erro de preço.
 - **Pedido de 1 item com NCM fora da tabela** deixa de capturar (hoje captura com o IPI embutido). A cobertura é de 97% e
   o sensor lista o NCM que falta.
 - **Corrida captura → PO** (pré-existente desde a v2 do CAS; Codex 06/10): a edge publica `sucesso_portal` antes de
