@@ -44,6 +44,7 @@ import {
   lerArgJson,
   lerUniverso,
   linhaCobertura,
+  montarUniverso,
   linhasSemMarcador,
   main,
   MIGRATION_LEDGER,
@@ -1186,14 +1187,6 @@ describe('lerUniverso — o denominador HONESTO, medido na ref real (#2824)', ()
     expect(detectarMutacao("await sb.from('t').insert(x);")).toBe('insert');
   });
 
-  it('pasta com `versao.ts` e SEM `index.ts` conta no universo — a UNIÃO das duas réguas', () => {
-    // O mapa inclui edge pela presença de `versao.ts`; o `sonda:nova` pela de `index.ts`. Contar
-    // só por uma deixava o denominador MENOR que o numerador quando elas divergem — pego pelo
-    // teste ponta a ponta da allowlist, que montou esse caso. O universo nunca pode ser menor
-    // que o mapa, ou a cobertura passaria de 100%.
-    expect(u.totalExistentes).toBeGreaterThanOrEqual(62);
-  });
-
   it('FAIL-CLOSED: ref que não resolve LANÇA, nunca devolve universo vazio', () => {
     // Universo vazio por ERRO imprimiria `0 fora do alcance` — o mesmo silêncio que esta função
     // existe para desfazer, agora com cara de boa notícia. O `main` converte isto em exit 2.
@@ -1263,5 +1256,61 @@ describe('a SAÍDA declara o que o instrumento não alcança (#2824)', () => {
 
   it('universo sem lacuna não imprime seção — zero ruído quando não há o que declarar', () => {
     expect(linhasSemMarcador({ totalExistentes: 62, semMarcador: [] })).toEqual([]);
+  });
+});
+
+describe('montarUniverso — a UNIÃO das duas réguas (o caso não existe na árvore real)', () => {
+  // Fixture e não repo DE PROPÓSITO: na main toda edge com `versao.ts` também tem `index.ts`, e
+  // um teste contra a árvore fica verde com a régua errada. A falsificação provou isso — sabotar
+  // a união para "só index.ts" não derrubava teste nenhum.
+  const ler = (arvore: Record<string, string>) => (c: string) => arvore[c] ?? null;
+  const R = 'supabase/functions';
+
+  it('pasta com `versao.ts` e SEM `index.ts` CONTA no denominador (régua do mapa)', () => {
+    const u = montarUniverso(['edge-a'], ler({ [`${R}/edge-a/versao.ts`]: "export const VERSAO = 'v1.0-a';" }));
+    expect(u.totalExistentes).toBe(1);
+    // tem marcador ⇒ é julgável ⇒ NÃO é lacuna
+    expect(u.semMarcador).toEqual([]);
+  });
+
+  it('pasta com `index.ts` e SEM `versao.ts` conta E é lacuna (régua do `sonda:nova`)', () => {
+    const u = montarUniverso(['edge-b'], ler({ [`${R}/edge-b/index.ts`]: "await sb.from('t').insert(x);" }));
+    expect(u.totalExistentes).toBe(1);
+    expect(u.semMarcador).toEqual([{ edge: 'edge-b', escrita: 'postgrest' }]);
+  });
+
+  it('pasta sem NENHUM dos dois não é edge — fica fora do denominador', () => {
+    const u = montarUniverso(['utilitario'], ler({ [`${R}/utilitario/helper.ts`]: 'export const x = 1;' }));
+    expect(u).toEqual({ totalExistentes: 0, semMarcador: [] });
+  });
+
+  it('o denominador nunca fica MENOR que o conjunto com marcador — a invariante da cobertura', () => {
+    const arvore = {
+      [`${R}/com-marcador-sem-entrada/versao.ts`]: "export const VERSAO = 'v1.0-x';",
+      [`${R}/com-os-dois/index.ts`]: 'a',
+      [`${R}/com-os-dois/versao.ts`]: "export const VERSAO = 'v1.0-y';",
+      [`${R}/so-entrada/index.ts`]: 'b',
+    };
+    const u = montarUniverso(['com-marcador-sem-entrada', 'com-os-dois', 'so-entrada'], ler(arvore));
+    const comMarcador = 2;
+    expect(u.totalExistentes).toBe(3);
+    expect(u.totalExistentes).toBeGreaterThanOrEqual(comMarcador);
+    expect(u.semMarcador.map((e) => e.edge)).toEqual(['so-entrada']);
+  });
+
+  it('classifica `.rpc()` separado de PostgREST — opaco não é inofensivo', () => {
+    const u = montarUniverso(
+      ['r'],
+      ler({ [`${R}/r/index.ts`]: "await sb.rpc('recalcular_tudo');" }),
+    );
+    expect(u.semMarcador).toEqual([{ edge: 'r', escrita: 'rpc' }]);
+  });
+
+  it('saída ESTÁVEL: a ordem do universo não depende da ordem de chegada das pastas', () => {
+    const arvore = { [`${R}/z/index.ts`]: 'a', [`${R}/a/index.ts`]: 'b' };
+    const u1 = montarUniverso(['z', 'a'], ler(arvore));
+    const u2 = montarUniverso(['a', 'z'], ler(arvore));
+    expect(u1).toEqual(u2);
+    expect(u1.semMarcador.map((e) => e.edge)).toEqual(['a', 'z']);
   });
 });

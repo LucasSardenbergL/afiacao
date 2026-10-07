@@ -561,23 +561,36 @@ export function lerUniverso(ref: string = REF_MAIN): Universo {
     .map((l) => l.slice(`${RAIZ_EDGES}/`.length))
     .filter((n) => n !== '' && n !== '_shared');
 
+  return montarUniverso(pastas, (caminho) => lerNaRev(ref, caminho));
+}
+
+/**
+ * O miolo PURO do universo — sem git, com o leitor injetado.
+ *
+ * Separado por motivo medido, não por estética: a UNIÃO das duas réguas abaixo nasceu SEM sensor.
+ * Na árvore real toda edge com `versao.ts` também tem `index.ts`, então um teste contra o repo
+ * fica VERDE mesmo com a régua errada — verde por vacuidade. A falsificação pegou isso (sabotar a
+ * união não derrubou nada) e a resposta foi este seam, o mesmo que `montarEstadoNovas` tem no
+ * gate irmão e pelo mesmo motivo: o caso que distingue as réguas não existe na árvore, só em
+ * fixture.
+ */
+export function montarUniverso(pastas: string[], ler: (caminho: string) => string | null): Universo {
   const existentes: string[] = [];
   const semMarcador: EdgeSemMarcador[] = [];
-  for (const edge of pastas.sort()) {
+  for (const edge of [...pastas].sort()) {
     // A pasta conta como edge quando tem `index.ts` (é servida — a régua do `sonda:nova`) OU
     // `versao.ts` (o mapa a mapeia — a régua do `sonda:fingerprint`). A UNIÃO, e não só a
     // primeira, porque as duas réguas são de gates diferentes e usar uma só deixa o denominador
-    // MENOR que o mapa quando elas divergem: o teste ponta a ponta da allowlist montou
-    // exatamente esse caso (pasta com marcador e sem entrada) e o exit 2 da guarda abaixo
-    // disparou. Contornar seria trocar uma divergência de régua por uma exceção; a união a
-    // elimina. Pasta sem nenhum dos dois não é edge e segue fora.
-    const temEntrada = lerNaRev(ref, `${RAIZ_EDGES}/${edge}/index.ts`) !== null;
-    const temMarcador = lerNaRev(ref, `${RAIZ_EDGES}/${edge}/versao.ts`) !== null;
+    // MENOR que o mapa quando elas divergem — e `totalExistentes < totalMapeadas` imprimiria
+    // cobertura acima de 100%, que é o defeito deste relatório ao contrário. Pasta sem nenhum
+    // dos dois não é edge e segue fora do denominador.
+    const temEntrada = ler(`${RAIZ_EDGES}/${edge}/index.ts`) !== null;
+    const temMarcador = ler(`${RAIZ_EDGES}/${edge}/versao.ts`) !== null;
     if (!temEntrada && !temMarcador) continue;
     existentes.push(edge);
     if (temMarcador) continue;
 
-    const corpo = lerNaRev(ref, `${RAIZ_EDGES}/${edge}/index.ts`) ?? '';
+    const corpo = ler(`${RAIZ_EDGES}/${edge}/index.ts`) ?? '';
     const escrita: EdgeSemMarcador['escrita'] =
       detectarMutacao(corpo) !== null ? 'postgrest' : detectarRpcs(corpo).length > 0 ? 'rpc' : 'nenhuma';
     semMarcador.push({ edge, escrita });
