@@ -26,7 +26,7 @@ export interface AgregadoSku {
   locais: number;
 }
 
-export type EstadoVarredura = "completo" | "inconsistente" | "desconhecido";
+type EstadoVarredura = "completo" | "inconsistente" | "desconhecido";
 
 export interface VereditoFisico {
   estado: EstadoVarredura;

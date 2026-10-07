@@ -22,7 +22,7 @@ import { hojeSP } from "../_shared/hoje-sp.ts";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 
 export type Empresa = "OBEN" | "COLACOR";
-export type Desfecho = "completo" | "parcial";
+type Desfecho = "completo" | "parcial";
 
 /** Marcas ASCII, caixa fixa, no INÍCIO das recusas (o registro guarda só 300 caracteres do erro). */
 export const MARCA_PENDENTE = "PENDENTE_NAO_CONFIAVEL";
@@ -56,12 +56,12 @@ export async function comPrazo(
   }
 }
 
-export interface ResultadoLeitura<T> {
+interface ResultadoLeitura<T> {
   erro: string | null;
   dados: T;
 }
 
-export interface ObservacaoPo {
+interface ObservacaoPo {
   observados: LinhaObservada[];
   janelaDe: string;
   janelaAte: string;
@@ -123,7 +123,7 @@ export interface EntradaPublicacao {
 }
 
 /** Lança (com a marca no início) se o pendente não é confiável. Nada foi gravado até aqui. */
-export function exigirPendenteConfiavel(r: Pick<ResultadoPendente, "confiavel" | "problemas">, fasePoMs: number): void {
+function exigirPendenteConfiavel(r: Pick<ResultadoPendente, "confiavel" | "problemas">, fasePoMs: number): void {
   if (r.confiavel) return;
   const motivo = r.problemas.length > 0
     ? `${r.problemas.length} problema(s): ${r.problemas.slice(0, 3).join(" | ")}`
