@@ -166,7 +166,9 @@ outro pode; rodada em `LC_ALL=C` e `pt_BR.UTF-8`; os testes casam por marcador A
 S1 sem `.eq('eligible', true)` · S2 crédito por `created_by` · S3 erro da carteira vira mapa vazio ·
 S4 `data` nula vira fim · S5 não-vendedor somado em `naoAtribuido` · S6 `rankingSemPedido` olhando só 2 destinos ·
 S6b o card voltando a olhar só 2 destinos · S7 tile sem o filtro de `hash_payload` · S8 hook manda lista vazia à
-carteira · S9 hook engole a falha da carteira · S10 `fetchPedidosMTD` sem `customer_user_id`.
+carteira · S9 hook engole a falha da carteira · S10 `fetchPedidosMTD` sem `customer_user_id` · S11 papéis
+(`commercial_roles`) com `data` nula viram destino · S12 falha de outra origem no lugar da carteira (o `[HK-FALHA]`
+casa a marca do ramo). S11 e S12 vieram da revisão final com contexto novo.
 
 **Medir depois:** a SQL de referência (Apêndice A) roda no dia da validação e dá os números esperados do card
 naquele instante; o founder confirma no card depois do Publish e de atualizar o app (o SW só troca de build no
@@ -186,7 +188,7 @@ própria; não substitui o adversarial no diff, que segura o PR em DRAFT.
   (`_carteira_positivacao_for_owner`) e a comissão (cadeia `codigo-vendedor.ts` → `carteira-rebuild`).
 - *Denominador:* set/26 = 528 pedidos válidos, R$ 533.890,89; 100% têm carteira; 96,3% em vendedor, 3,7% em
   não-vendedor, 0% sem carteira (§2).
-- *Como a prova falsifica:* §6 — S1..S10 e S6b, cada camada sozinha, nos dois locales.
+- *Como a prova falsifica:* §6 — S1..S12 e S6b, cada camada sozinha, nos dois locales.
 - *Ordem irreversível:* nenhuma. Só front (Publish); reverter = reverter o PR + Publish. Nenhum dado escrito.
 
 **Premissas atacadas:**
@@ -223,7 +225,7 @@ própria; não substitui o adversarial no diff, que segura o PR em DRAFT.
 ## 10. Pronto quando
 
 - [ ] spec e plano revisados pelo founder;
-- [ ] código + testes (TDD) + falsificação S1..S10 e S6b nos 2 locales; `typecheck`, `lint`, `test` verdes;
+- [ ] código + testes (TDD) + falsificação S1..S12 e S6b nos 2 locales; `typecheck`, `lint`, `test` verdes;
 - [ ] PR **DRAFT**; Codex adversarial no diff (≥ 09/10 19:30), achados tratados; revisão final com contexto novo;
 - [ ] Publish do front (founder) e o app do founder atualizado;
 - [ ] medição depois (Apêndice A) × card, registrada em `docs/historico/`.
