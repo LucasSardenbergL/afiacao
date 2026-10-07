@@ -112,6 +112,7 @@ function entrada(opts: {
   paginas?: Array<{ itens: LinhaPosEstoque[]; total: unknown }>;
   empresa?: "OBEN" | "COLACOR";
   chunk?: number;
+  membros?: string[];
 } = {}): EntradaPublicacao {
   const habilitados = new Map<string, string | null>([["101", "A"], ["102", "B"], ["103", "C"], ["104", "D"]]);
   const paginas = opts.paginas ?? [{
@@ -123,12 +124,20 @@ function entrada(opts: {
     ],
     total: 4,
   }];
-  const acc = criarAcumuladorFisico((s) => habilitados.has(s), habilitados.size);
+  const membros = new Set(opts.membros ?? []);
+  const acc = criarAcumuladorFisico((s) => habilitados.has(s), habilitados.size, (s) => membros.has(s));
   for (const p of paginas) acc.pagina(p.itens, p.total);
   return {
     empresa: opts.empresa ?? "OBEN",
     habilitados,
-    fisico: { veredito: acc.veredito(), encontrados: acc.encontrados, paginas: paginas.length, faseMs: 45_000 },
+    fisico: {
+      veredito: acc.veredito(),
+      encontrados: acc.encontrados,
+      membros: acc.membros,
+      membrosIlegiveis: acc.membrosIlegiveis,
+      paginas: paginas.length,
+      faseMs: 45_000,
+    },
     iniciadoEm: T0,
     limiteCauda: T0 + 85_000,
     prazos: { tetoEscritaMs: 8_000, minimoEscritaMs: 500, tetoObservacaoMs: 8_000, marcadorMs: 1_000 },
@@ -367,4 +376,107 @@ Deno.test("comPrazo: sucesso, erro do banco e exceção são distintos — e só
     20,
   );
   igual(abortado, { erro: "AbortError: signal timed out", semConfirmacao: true }, "o prazo abortou: o banco pode ter gravado");
+});
+
+// PR-3 do estoque com dono único (2026-10-07): o membro de grupo NÃO habilitado (999) ganha linha própria com o PAR
+// (físico + pendente da MESMA varredura de PO), num lote à parte. O motor SOMA o físico e o pendente de todos os membros
+// do grupo: físico fresco com pendente velho conta a NF recebida duas vezes (o par misto que o C1 recusa).
+const pendenteComMembros = (membros: Map<string, number>, ilegiveis: string[] = []): ResultadoPendente => ({
+  pendente: new Map([["101", 5]]),
+  confiavel: true,
+  problemas: [],
+  observacao: null,
+  pendenteMembros: membros,
+  membrosPendenteIlegiveis: ilegiveis,
+});
+
+Deno.test("membro de grupo: o PAR (físico + pendente da mesma varredura) num lote à parte, depois dos habilitados", async () => {
+  const f = criarFake({ pendente: pendenteComMembros(new Map([["999", 3]])) });
+  const r = await concluirRun(f.ops, entrada({ membros: ["999"] }));
+  const doMembro = f.linhasEstoque.filter((lote) => lote.some((l) => l.sku_codigo_omie === "999"));
+  igual(doMembro.length, 1, "um lote com o membro");
+  igual(doMembro[0].map((l) => l.sku_codigo_omie), ["999"], "o lote do membro não mistura habilitado");
+  const l = doMembro[0][0];
+  igual([l.estoque_fisico, l.estoque_disponivel, l.estoque_pendente_entrada], [1, 1, 3], "físico, disponível e pendente");
+  igual(f.efeitos.indexOf("upsertEstoque:999") > f.efeitos.indexOf("upsertEstoque:103"), true, "depois dos habilitados");
+  igual([r.membros_grupo_encontrados, r.membros_grupo_gravados, r.membros_grupo_falhas], [1, 1, 0], "resumo");
+  igual(r.desfecho, "completo", "desfecho dos habilitados");
+});
+
+Deno.test("membro de grupo sem PO aberto: pendente 0 legítimo (a varredura passou pelo C1)", async () => {
+  const f = criarFake({ pendente: pendenteComMembros(new Map()) });
+  await concluirRun(f.ops, entrada({ membros: ["999"] }));
+  const l = f.linhasEstoque.flat().find((x) => x.sku_codigo_omie === "999");
+  igual(l?.estoque_pendente_entrada, 0, "0 sob o gate de confiança");
+});
+
+Deno.test("membro de grupo com item de PO ilegível: sem linha (par incompleto), e os habilitados seguem", async () => {
+  const f = criarFake({ pendente: pendenteComMembros(new Map(), ["999"]) });
+  const r = await concluirRun(f.ops, entrada({ membros: ["999"] }));
+  igual(f.linhasEstoque.some((lote) => lote.some((x) => x.sku_codigo_omie === "999")), false, "nada do 999");
+  igual([r.desfecho, r.membros_grupo_ilegiveis, r.membros_grupo_gravados], ["completo", 1, 0], "resumo");
+});
+
+Deno.test("varredura do PO sem o recorte dos membros: nenhum membro gravado — nunca o físico sozinho", async () => {
+  const f = criarFake();
+  const r = await concluirRun(f.ops, entrada({ membros: ["999"] }));
+  igual(f.linhasEstoque.some((lote) => lote.some((x) => x.sku_codigo_omie === "999")), false, "nada do 999");
+  igual([r.desfecho, r.membros_grupo_sem_pendente, r.membros_grupo_gravados], ["completo", true, 0], "resumo");
+});
+
+Deno.test("membro de grupo: falha ao gravar NÃO muda o desfecho dos habilitados e fica no resumo", async () => {
+  const ERRO: ResultadoEscrita = { erro: "boom", semConfirmacao: false };
+  const f = criarFake({ pendente: pendenteComMembros(new Map([["999", 3]])), estoque: [OK, OK, ERRO, ERRO] });
+  const r = await concluirRun(f.ops, entrada({ membros: ["999"] }));
+  igual(r.desfecho, "completo", "desfecho");
+  igual([r.membros_grupo_gravados, r.membros_grupo_falhas], [0, 1], "a falha aparece no resumo");
+});
+
+Deno.test("membro de grupo que não veio no retrato não é escrito", async () => {
+  const f = criarFake({ pendente: pendenteComMembros(new Map([["555", 2]])) });
+  const r = await concluirRun(f.ops, entrada({ membros: ["555"] }));
+  igual(f.linhasEstoque.some((lote) => lote.some((l) => l.sku_codigo_omie === "555")), false, "nada do 555");
+  igual([r.membros_grupo_encontrados, r.membros_grupo_gravados], [0, 0], "resumo");
+});
+
+Deno.test("membros de grupo não lidos: o resumo diz o erro e null, nunca '0 membros'", async () => {
+  const f = criarFake();
+  const en = entrada();
+  const r = await concluirRun(f.ops, { ...en, fisico: { ...en.fisico, membrosErro: "boom" } });
+  igual([r.membros_grupo_encontrados, r.membros_grupo_erro], [null, "boom"], "resumo");
+  igual(r.desfecho, "completo", "os habilitados seguem");
+});
+
+// A observação (PR0 da baixa de PO) é "o conjunto aberto que o motor contou": com o par dos membros gravado, o motor
+// conta o pendente deles — a conferência é contra o pendente GRAVADO (habilitados ∪ membros com par).
+const observacaoComMembro = (pendMembros: Map<string, number>, ilegiveis: string[] = []): ResultadoPendente => ({
+  ...pendenteComMembros(pendMembros, ilegiveis),
+  observacao: {
+    observados: [observado(101, 5), observado(999, 3)],
+    janelaDe: "2025-10-06",
+    janelaAte: "2027-02-03",
+    varreduraCompleta: true,
+    coletaIntegra: true,
+    perdaColeta: null,
+  },
+});
+
+Deno.test("observação com membro de grupo: publica quando bate com habilitados ∪ membros com par", async () => {
+  const f = criarFake({ pendente: observacaoComMembro(new Map([["999", 3]])) });
+  const r = await concluirRun(f.ops, entrada({ membros: ["999"] }));
+  igual([r.observacao_publicada, f.observacoes[0]?.pendente_aplicado], [true, true], "publicada e aplicada");
+});
+
+Deno.test("observação com membro SEM par (item de PO inválido): diverge e não publica — fail-closed", async () => {
+  const f = criarFake({ pendente: observacaoComMembro(new Map(), ["999"]) });
+  const r = await concluirRun(f.ops, entrada({ membros: ["999"] }));
+  igual([r.observacao_publicada, r.observacao_motivo], [false, "observacao_diverge_do_pendente"], "não publica");
+  igual(r.desfecho, "completo", "acessória: o desfecho não muda");
+});
+
+Deno.test("observação: pendente_aplicado só com os DOIS lotes inteiros (habilitados e membros)", async () => {
+  const ERRO: ResultadoEscrita = { erro: "boom", semConfirmacao: false };
+  const f = criarFake({ pendente: observacaoComMembro(new Map([["999", 3]])), estoque: [OK, OK, ERRO, ERRO] });
+  await concluirRun(f.ops, entrada({ membros: ["999"] }));
+  igual(f.observacoes[0]?.pendente_aplicado, false, "o lote do membro falhou");
 });

@@ -76,6 +76,10 @@ export interface ResultadoPendente {
   problemas: string[];
   /** Só o ramo OBEN (PesquisarPedCompra) observa o conjunto aberto. */
   observacao: ObservacaoPo | null;
+  /** Pendente dos membros de grupo NÃO habilitados, da MESMA varredura (ausente = a varredura não os cobriu). */
+  pendenteMembros?: Map<string, number>;
+  /** Membro com item de PO inválido: fora do lote (o par ficaria incompleto) — nunca barra os habilitados. */
+  membrosPendenteIlegiveis?: string[];
 }
 
 export interface OpsPublicacao {
@@ -101,6 +105,11 @@ export interface EntradaPublicacao {
   fisico: {
     veredito: VereditoFisico;
     encontrados: ReadonlyMap<string, AgregadoSku>;
+    /** Membros de grupo de equivalência NÃO habilitados: gravados com o PAR físico+pendente (ver concluirRun). */
+    membros?: ReadonlyMap<string, AgregadoSku>;
+    membrosIlegiveis?: readonly string[];
+    /** A leitura dos membros falhou: o resumo diz isso em vez de "0 membros". */
+    membrosErro?: string | null;
     paginas: number;
     faseMs: number;
   };
@@ -272,6 +281,8 @@ async function publicarObservacao(
   e: EntradaPublicacao,
   pend: ResultadoPendente,
   gravacaoCompleta: boolean,
+  /** O pendente GRAVADO neste run: habilitados ∪ membros de grupo que entraram com o par. */
+  pendenteGravado: Map<string, number>,
 ): Promise<{ publicada: boolean; motivo: string | null }> {
   const o = pend.observacao;
   if (o === null) return { publicada: false, motivo: null };
@@ -280,7 +291,7 @@ async function publicarObservacao(
     const prazoMs = timeoutRequestMs(ops.agora(), e.limiteCauda, e.prazos.tetoObservacaoMs);
     if (!o.coletaIntegra) {
       motivo = `coleta_incompleta: ${o.perdaColeta ?? "sem motivo"}`;
-    } else if (!observacaoBateComPendente(o.observados, pend.pendente)) {
+    } else if (!observacaoBateComPendente(o.observados, pendenteGravado)) {
       motivo = "observacao_diverge_do_pendente";
     } else if (prazoMs === 0) {
       motivo = "sem_tempo_no_run";
@@ -371,7 +382,35 @@ export async function concluirRun(ops: OpsPublicacao, e: EntradaPublicacao): Pro
 
   // Inativação ANTES da observação: ela é efeito money-path (tira o SKU da compra); a observação é acessória.
   const inat = await inativarNaoEncontrados(ops, e);
-  const obs = await publicarObservacao(ops, e, pend, gravacaoCompleta);
+
+  // Membro de grupo de equivalência NÃO habilitado: o motor SOMA o físico (GREATEST com a posição) e o pendente de todos
+  // os membros do grupo, e a linha dele congelava no valor de quando era habilitado (o galão da WP01: 11,72 L de 31/07
+  // com 0 confirmado no Omie). Grava o PAR da mesma varredura, num lote à parte: físico fresco com pendente velho
+  // contaria a NF recebida duas vezes (o par misto que o C1 recusa). Sem o pendente dos membros na varredura, ou com
+  // item de PO inválido do membro, não há par — a linha fica como está. Falha aqui não muda o desfecho; fica no resumo.
+  const membros = e.fisico.membros ?? new Map<string, AgregadoSku>();
+  const pendMembros = pend.pendenteMembros;
+  const ilegiveisPo = new Set(pend.membrosPendenteIlegiveis ?? []);
+  const linhasMembros = pendMembros === undefined ? [] : [...membros]
+    .filter(([codigo]) => !ilegiveisPo.has(codigo))
+    .map(([codigo, agg]) => ({
+      empresa: e.empresa,
+      sku_codigo_omie: codigo,
+      estoque_fisico: agg.fisico,
+      estoque_disponivel: agg.fisico - agg.reservado,
+      ultima_sincronizacao: agoraIso,
+      fonte_sync: agg.locais > 1 ? `ListarPosEstoque(${agg.locais} locais)` : "ListarPosEstoque",
+      // Membro sem PO aberto: 0 legítimo — a mesma varredura passou pelo gate de confiança (C1) acima.
+      estoque_pendente_entrada: pendMembros.get(codigo) ?? 0,
+    }));
+  const gm = await gravarEstoque(ops, e, linhasMembros);
+  const membrosIlegiveis = new Set([...(e.fisico.membrosIlegiveis ?? []), ...[...membros.keys()].filter((c) => ilegiveisPo.has(c))]);
+
+  // A observação conta o que o motor contou (habilitados ∪ membros com par); o pendente só vale como aplicado se os dois
+  // lotes gravaram inteiros.
+  const pendenteGravado = new Map(pend.pendente);
+  for (const l of linhasMembros) pendenteGravado.set(l.sku_codigo_omie, l.estoque_pendente_entrada);
+  const obs = await publicarObservacao(ops, e, pend, gravacaoCompleta && gm.confirmados === linhasMembros.length, pendenteGravado);
 
   const desfecho: Desfecho = gravacaoCompleta && inat.completa ? "completo" : "parcial";
   const duracaoMs = ops.agora() - e.iniciadoEm;
@@ -404,6 +443,12 @@ export async function concluirRun(ops: OpsPublicacao, e: EntradaPublicacao): Pro
     paginas_sem_total: v.paginasSemTotal,
     lista_nao_encontrados: inat.naoEncontrados,
     lista_erros: g.falhas,
+    membros_grupo_encontrados: e.fisico.membrosErro ? null : membros.size,
+    membros_grupo_erro: e.fisico.membrosErro ?? null,
+    membros_grupo_gravados: gm.confirmados,
+    membros_grupo_falhas: linhasMembros.length - gm.confirmados,
+    membros_grupo_ilegiveis: membrosIlegiveis.size,
+    ...(pendMembros === undefined && membros.size > 0 ? { membros_grupo_sem_pendente: true } : {}),
   };
   ops.log("log", `resumo: ${JSON.stringify(resumo)}`);
 

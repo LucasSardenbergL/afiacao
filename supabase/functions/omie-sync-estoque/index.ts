@@ -389,10 +389,12 @@ function fingerprintPagina(pedidos: readonly OmiePedConsulta[]): string {
 async function computePendenteViaPedidosCompra(
   appKey: string, appSecret: string,
   habilitadoMap: Map<string, string | null>,
+  membro: (sku: string) => boolean,
   supabase: SupabaseClient,
   deadline: number,
 ): Promise<{
   pendente: Map<string, number>; confiavel: boolean; problemas: string[];
+  pendenteMembros: Map<string, number>; membrosPendenteIlegiveis: string[];
   observados: LinhaObservada[]; janelaDe: string; janelaAte: string; varreduraCompleta: boolean;
   coletaIntegra: boolean; perdaColeta: string | null;
 }> {
@@ -406,6 +408,10 @@ async function computePendenteViaPedidosCompra(
   const dataAte = paraDataOmie(fimJanela); // [fix] cobre previsões de entrega FUTURAS (era ddmmyyyyPed(hoje) → cortava tudo a caminho)
 
   const items: PoItemOmie[] = [];
+  // Membros de grupo NÃO habilitados: o motor SOMA o pendente deles no grupo. Mapa à parte, e item inválido de membro
+  // tira só o membro (sem par, sem linha) — nunca entra em `problemas`, que barraria a rodada dos habilitados.
+  const itemsMembros: PoItemOmie[] = [];
+  const membrosPendenteIlegiveis = new Set<string>();
   const etapasInesperadas = new Set<string>();
   // [fix double-buy 2026-06-20] PAGINA ATÉ A PÁGINA VAZIA — não confiar em nTotalPaginas (Omie SUB-REPORTA →
   // lia só a 1ª página → POs aprovadas além dela sumiam → pendente subestimado → motor re-sugeria = double-buy).
@@ -416,7 +422,7 @@ async function computePendenteViaPedidosCompra(
   let pedidosVistos = 0, pedidosApp = 0, paginasLidas = 0, fim = false;
   // Observação do conjunto que o motor contou (PR0 da baixa de PO): anotada nos MESMOS pontos de decisão abaixo,
   // sem mudar o que conta. 1 registro por PO (coletor) — a reaparição colidiria na PK. O handler publica.
-  const coletor = criarColetorObservacao((sku) => habilitadoMap.has(sku), { parseQtd, parseRecebido });
+  const coletor = criarColetorObservacao((sku) => habilitadoMap.has(sku) || membro(sku), { parseQtd, parseRecebido });
 
   for (let pagina = 1; pagina <= MAX_PAGINAS_PED; pagina++) {
     const resp = await callOmiePedidos(appKey, appSecret, pagina, dataDe, dataAte, deadline);
@@ -502,7 +508,13 @@ async function computePendenteViaPedidosCompra(
           continue;
         }
         itensComSku++;
-        if (!habilitadoMap.has(sku)) continue;
+        if (!habilitadoMap.has(sku)) {
+          if (membro(sku)) {
+            if (quantidadesValidas(qtde, recebido)) itemsMembros.push({ sku, poNumero: cNumero, etapa, qtde, recebido });
+            else membrosPendenteIlegiveis.add(sku);
+          }
+          continue;
+        }
         if (!quantidadesValidas(qtde, recebido)) {
           problemas.push(`item inválido (sku=${sku} po=${cNumero} nQtde=${it.nQtde} nQtdeRec=${it.nQtdeRec})`);
           continue;
@@ -529,6 +541,12 @@ async function computePendenteViaPedidosCompra(
   const pendente = confiavel
     ? computePendenteEntradaPorSku(items, { etapasAbertas: ETAPAS_APROVADO_ABERTO, poNumerosEmTransito: emTransitoNumeros })
     : new Map<string, number>();
+  const pendenteMembros = confiavel
+    ? computePendenteEntradaPorSku(itemsMembros.filter((i) => !membrosPendenteIlegiveis.has(i.sku)), {
+      etapasAbertas: ETAPAS_APROVADO_ABERTO,
+      poNumerosEmTransito: emTransitoNumeros,
+    })
+    : new Map<string, number>();
   console.log(
     `[omie-sync-estoque] PesquisarPedCompra: ${paginasLidas} págs até vazia, ${pedidosVistos} pedidos abertos (${pedidosApp} do app de-dup), ` +
     `${items.length} itens habilitados, ${pendente.size} SKUs com a caminho, confiavel=${confiavel}.` +
@@ -537,6 +555,7 @@ async function computePendenteViaPedidosCompra(
   );
   return {
     pendente, confiavel, problemas,
+    pendenteMembros, membrosPendenteIlegiveis: [...membrosPendenteIlegiveis],
     observados: coletor.linhas, janelaDe: inicioJanela, janelaAte: fimJanela,
     varreduraCompleta: fim && problemas.length === 0,
     coletaIntegra: coletor.integra, perdaColeta: coletor.perda,
@@ -638,9 +657,11 @@ const MAX_PAGINAS_SALDO_PENDENTE = 200;
 
 async function computePendenteViaSaldoPendente(
   appKey: string, appSecret: string, habilitadoMap: Map<string, string | null>,
+  membro: (sku: string) => boolean,
   deadline: number,
-): Promise<Map<string, number>> {
+): Promise<{ pendente: Map<string, number>; pendenteMembros: Map<string, number> }> {
   const pendente = new Map<string, number>();
+  const pendenteMembros = new Map<string, number>();
   let pPag = 1, pTot = 1;
   while (pPag <= pTot) {
     const resp = await callOmie<OmieSaldoPendenteResponse>(
@@ -661,8 +682,10 @@ async function computePendenteViaSaldoPendente(
     if (veredicto === "fim") break;
     for (const item of lista) {
       const codigo = String(item.id_prod ?? "").trim();
-      if (!codigo || !habilitadoMap.has(codigo)) continue;
-      pendente.set(codigo, (pendente.get(codigo) ?? 0) + Number(item.qtde_entrada ?? 0));
+      if (!codigo) continue;
+      const destino = habilitadoMap.has(codigo) ? pendente : membro(codigo) ? pendenteMembros : null;
+      if (destino === null) continue;
+      destino.set(codigo, (destino.get(codigo) ?? 0) + Number(item.qtde_entrada ?? 0));
     }
     pPag++;
   }
@@ -815,7 +838,30 @@ Deno.serve(async (req) => {
       // filial, depósito), o físico é a SOMA dos locais — sobrescrever (Map.set) gerava estoque menor que o do ME. A
       // soma e o veredito de completude moram em fisico.ts (puro, testado em Deno).
       const dataPosicao = paraDataOmie(hojeSP()); // a posição de HOJE em SP (no servidor UTC, getDate() é amanhã às 21h+)
-      const fisico = criarAcumuladorFisico((sku) => habilitadoMap.has(sku), totalEsperado);
+
+      // 1b) Membros de grupo de equivalência NÃO habilitados: o motor lê o físico deles no GREATEST do grupo, com o
+      // MESMO recorte daqui (empresa minúscula, ativo, fator > 0). Leitura que falha não derruba o sync dos
+      // habilitados: segue sem membros, e o resumo diz por quê (nunca "0 membros").
+      let membrosGrupo = new Set<string>();
+      let membrosErro: string | null = null;
+      const { data: membrosRows, error: membrosErr } = await supabase
+        .from("sku_embalagem_equivalencia")
+        .select("sku_codigo_omie")
+        .eq("empresa", empresa.toLowerCase())
+        .eq("ativo", true)
+        .gt("fator_para_base", 0);
+      if (membrosErr) {
+        membrosErro = String(membrosErr.message).slice(0, 200);
+        console.error(`[omie-sync-estoque] ${empresa}: membros de grupo não lidos: ${membrosErro}`);
+      } else {
+        membrosGrupo = new Set(
+          ((membrosRows ?? []) as Array<{ sku_codigo_omie: string | number }>)
+            .map((r) => String(r.sku_codigo_omie))
+            .filter((sku) => !habilitadoMap.has(sku)),
+        );
+      }
+      const ehMembro = (sku: string) => membrosGrupo.has(sku);
+      const fisico = criarAcumuladorFisico((sku) => habilitadoMap.has(sku), totalEsperado, ehMembro);
 
       let page = 1;
       let totalPaginas = 1;
@@ -874,16 +920,18 @@ Deno.serve(async (req) => {
       //   agora é fatal como a do PO — a v1.5 a convertia em pendente não confiável, que a v1.6 também recusa publicar.
       const lerPendente: OpsPublicacao["lerPendente"] = async () => {
         if (empresa === "OBEN") {
-          const r = await computePendenteViaPedidosCompra(appKey, appSecret, habilitadoMap, supabase, deadline);
-          return { pendente: r.pendente, confiavel: r.confiavel, problemas: r.problemas, observacao: r };
+          const r = await computePendenteViaPedidosCompra(appKey, appSecret, habilitadoMap, ehMembro, supabase, deadline);
+          const doMembro = { pendenteMembros: r.pendenteMembros, membrosPendenteIlegiveis: r.membrosPendenteIlegiveis };
+          return { pendente: r.pendente, confiavel: r.confiavel, problemas: r.problemas, observacao: r, ...doMembro };
         }
-        const pendente = await computePendenteViaSaldoPendente(appKey, appSecret, habilitadoMap, deadline);
-        return { pendente, confiavel: true, problemas: [], observacao: null };
+        const s = await computePendenteViaSaldoPendente(appKey, appSecret, habilitadoMap, ehMembro, deadline);
+        return { pendente: s.pendente, confiavel: true, problemas: [], observacao: null, pendenteMembros: s.pendenteMembros };
       };
       return await concluirRun(opsDoBanco(supabase, empresa, lerPendente), {
         empresa,
         habilitados: habilitadoMap,
-        fisico: { veredito: vereditoFisico, encontrados: fisico.encontrados, paginas: totalPaginas, faseMs: faseFisicoMs },
+        fisico: { veredito: vereditoFisico, encontrados: fisico.encontrados, paginas: totalPaginas, faseMs: faseFisicoMs,
+          membros: fisico.membros, membrosIlegiveis: fisico.membrosIlegiveis, membrosErro },
         iniciadoEm: startedAt.getTime(),
         limiteCauda: deadline + FOLGA_CAUDA_MS,
         prazos: {

@@ -34,7 +34,7 @@ describe('omie-sync-estoque — observação do conjunto aberto', () => {
     const iConcluir = fontePublicacao.indexOf('export async function concluirRun(');
     const iGravacao = fontePublicacao.indexOf('await gravarEstoque(ops, e, linhas);', iConcluir);
     const iInativacao = fontePublicacao.indexOf('await inativarNaoEncontrados(ops, e);', iConcluir);
-    const iChamada = fontePublicacao.indexOf('await publicarObservacao(ops, e, pend, gravacaoCompleta);', iConcluir);
+    const iChamada = fontePublicacao.indexOf('await publicarObservacao(ops, e, pend, gravacaoCompleta && gm.confirmados === linhasMembros.length, pendenteGravado);', iConcluir);
     expect(iGravacao).toBeGreaterThan(iConcluir);
     expect(iInativacao).toBeGreaterThan(iGravacao);
     expect(iChamada).toBeGreaterThan(iInativacao);
