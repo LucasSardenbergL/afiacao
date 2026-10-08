@@ -27,6 +27,10 @@
 -- ║ Narrativa: docs/historico/cte-fora-do-rastreio.md §7 e sku-items-cte-fora-da-fila.md §7.   ║
 -- ╚══════════════════════════════════════════════════════════════════════════════════════════╝
 
+-- APLICADO em 2026-10-08 00:57:50Z (recibo #283) com sha256 f0c6ac07... (commit 5049195fb). Depois, os
+-- `<>` das guardas viraram `IS DISTINCT FROM` (gate assert-verde-por-ausencia); os operandos sao
+-- count(*), nunca NULL, entao o comportamento aplicado e identico. Reaplicar este arquivo: o PRE aborta.
+
 -- A transacao e do `db:aplicar` (o corpo roda dentro dela, via EXECUTE): este arquivo NAO
 -- leva BEGIN;/COMMIT;. As mensagens de RAISE sao ASCII com rotulo fixo na frente.
 
@@ -64,14 +68,14 @@ BEGIN
 
   -- PRE 2: o CASCADE de sku_leadtime_history nao pode alcancar historico.
   SELECT count(*) INTO v_hist57 FROM public.sku_leadtime_history WHERE tracking_id = ANY(v_ids);
-  IF v_hist57 <> 0 THEN
+  IF v_hist57 IS DISTINCT FROM 0 THEN
     RAISE EXCEPTION 'PRE_HISTORICO: % linhas de leadtime em CT-e - o CASCADE apagaria historico',
       v_hist57;
   END IF;
 
   -- PRE 3: o controle que o CASCADE leva e o medido no pre-voo (lido DEPOIS do lock).
   SELECT count(*) INTO v_ctl57 FROM public.sku_items_sync_controle WHERE tracking_id = ANY(v_ids);
-  IF v_ctl57 <> c_ctl_esperado THEN
+  IF v_ctl57 IS DISTINCT FROM c_ctl_esperado THEN
     RAISE EXCEPTION 'PRE_CONTROLE: % linhas de controle em CT-e, esperado %',
       v_ctl57, c_ctl_esperado;
   END IF;
@@ -97,7 +101,7 @@ BEGIN
   SELECT count(*), md5(string_agg(id::text, ',' ORDER BY id)) INTO v_del, v_md5_del FROM d;
 
   -- POS 1: apagou exatamente o conjunto do pre-voo (contagem E identidade).
-  IF v_del <> c_n_esperado OR v_md5_del IS DISTINCT FROM c_md5_esperado THEN
+  IF v_del IS DISTINCT FROM c_n_esperado OR v_md5_del IS DISTINCT FROM c_md5_esperado THEN
     RAISE EXCEPTION 'POS_APAGADAS: % linhas apagadas (md5=%), esperado % (md5=%)',
       v_del, v_md5_del, c_n_esperado, c_md5_esperado;
   END IF;
@@ -106,7 +110,7 @@ BEGIN
   SELECT count(*) INTO v_resta
   FROM public.purchase_orders_tracking
   WHERE nfe_chave_acesso ~ '^[0-9]{44}$' AND substr(nfe_chave_acesso, 21, 2) = '57';
-  IF v_resta <> 0 THEN
+  IF v_resta IS DISTINCT FROM 0 THEN
     RAISE EXCEPTION 'POS_RESTAM: % linhas 57 ainda no rastreio', v_resta;
   END IF;
 
@@ -114,13 +118,13 @@ BEGIN
   SELECT count(*) INTO v_sumiram
   FROM unnest(v_outras) AS o(id)
   WHERE NOT EXISTS (SELECT 1 FROM public.purchase_orders_tracking t WHERE t.id = o.id);
-  IF v_sumiram <> 0 THEN
+  IF v_sumiram IS DISTINCT FROM 0 THEN
     RAISE EXCEPTION 'POS_OUTRAS: % linhas nao-57 sumiram', v_sumiram;
   END IF;
 
   -- POS 4: o CASCADE levou o controle das 137 (nada delas restou).
   SELECT count(*) INTO v_ctl_resta FROM public.sku_items_sync_controle WHERE tracking_id = ANY(v_ids);
-  IF v_ctl_resta <> 0 THEN
+  IF v_ctl_resta IS DISTINCT FROM 0 THEN
     RAISE EXCEPTION 'POS_CONTROLE: % linhas de controle das CT-e restaram', v_ctl_resta;
   END IF;
 
