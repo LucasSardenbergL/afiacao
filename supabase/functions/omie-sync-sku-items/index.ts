@@ -630,7 +630,8 @@ Deno.serve(async (req) => {
     const nfes = await carregarNfesDaJanela<NFeRow>(db, {
       empresa,
       cutoffIso,
-      fornecedor: fornecedorFiltro,
+      // Truthy, como antes da v1.5 (`if (fornecedorFiltro)`): `0` não filtra.
+      fornecedor: fornecedorFiltro ? fornecedorFiltro : null,
       colunas:
         "id, nfe_chave_acesso, t1_data_pedido, t2_data_faturamento, t3_data_cte, t4_data_recebimento, fornecedor_codigo_omie, fornecedor_nome, raw_data, nid_receb, created_at",
     });

@@ -17,8 +17,11 @@
 // DOIS cortes, não um:
 //   · KEYSET (`fetchAllKeyset`) pela chave ÚNICA do recorte (`id`, ou a PK `tracking_id` do
 //     controle), não offset: outro run da MESMA edge (o cron das 2h com um dirigido em paralelo)
-//     insere em `sku_leadtime_history` durante a leitura, e um INSERT antes do offset desloca as
-//     páginas — linha pulada é tracking "sem linha", o mesmo defeito por outra porta.
+//     insere em `sku_leadtime_history` durante a leitura, e com offset um INSERT antes da posição
+//     desloca as páginas — uma linha que JÁ EXISTIA seria pulada e o tracking dela leria "sem
+//     linha", o mesmo defeito por outra porta. O keyset garante não pular nem duplicar as linhas
+//     pré-existentes; a linha inserida DURANTE a leitura (uuid aleatório) pode ou não ser vista —
+//     não há snapshot, como antes.
 //   · LOTES no `.in()`: a lista de valores vai na URL (~37 bytes por UUID). Com a janela máxima
 //     (365 dias, 423 trackings) são ~16 KB de querystring — perto do que proxy costuma aceitar.
 //     Os lotes são DISJUNTOS em valor, então as linhas de lotes distintos também são.

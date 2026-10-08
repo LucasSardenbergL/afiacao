@@ -2293,6 +2293,15 @@ describe('guardrail money-path: omie-sync-sku-items (fila de leadtime)', () => {
       codigo,
       'REGRESSÃO: voltou a degradar quando sku_items_sync_controle falha (edge deployada antes da migration)',
     ).not.toMatch(/carregarControleDaFila\([^)]*\)\s*\.catch/);
+    // Nenhum `try` LOCAL em volta da chamada (achado do Caminho B, 2026-10-08): o único try que pode
+    // envolvê-la é o do handler, cujo catch fecha o run como 'error'. Entre o começo do corpo do
+    // handler e a leitura do controle não pode nascer outro.
+    const ini = codigo.indexOf('const fornecedorFiltro');
+    const fim = codigo.indexOf('await carregarControleDaFila(db, trackingIds)');
+    expect(ini, 'sentinela: início do corpo do handler').toBeGreaterThan(-1);
+    expect(fim, 'sentinela: a leitura do controle').toBeGreaterThan(ini);
+    expect(codigo.slice(ini, fim), 'REGRESSÃO: try local em volta da leitura do controle — o poison voltaria em silêncio')
+      .not.toMatch(/\btry\s*\{/);
   });
 
   // ── Pendência por item (2026-10-05): o recebimento só sai da fila com evidência de completude ──
@@ -2369,6 +2378,8 @@ describe('guardrail money-path: omie-sync-sku-items (fila de leadtime)', () => {
       .not.toMatch(/from\("sku_items_sync_controle"\)\s*\.select\(/);
     expect(codigo, 'REGRESSÃO: leitura crua de purchase_orders_tracking por .in() na edge')
       .not.toMatch(/\.in\("nid_receb"/);
+    expect(codigo, 'REGRESSÃO: a janela de NF-e voltou a ser lida crua na edge (o teto de 1.000 volta)')
+      .not.toMatch(/\.gte\("t2_data_faturamento"/);
     const leituras = removerComentarios(read('supabase/functions/omie-sync-sku-items/leituras.ts'));
     expect(leituras, 'leituras.ts pagina por keyset').toMatch(/fetchAllKeyset</);
     expect(leituras, 'leituras.ts não pode chamar .range()/.in() fora de lotes').toMatch(/for \(const lote of emLotes\(/);
