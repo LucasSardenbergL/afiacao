@@ -350,6 +350,44 @@ falsificação precisa passar em todas as outras regras, para que só a sabotada
 Caso contrário o verde vem por motivo alheio — e verde por motivo alheio é indistinguível de prova.
 
 
+**A classe GERAL: `${arr[0]}` em array QUALQUER** (2026-10-08). O `[0]` vazio não é um defeito do
+`pipestatus` — é de **todo** array do zsh. E o ramo `INDICE-ZERO` descrito acima julga por **nome
+fixo** (o awk procura literalmente a string `pipestatus`), então `${fila[0]}`, `${queue[0]}` e
+`${casados[0]}` não tinham hook nenhum. Medido no corpus de **112.113** chamadas Bash reais
+(2026-05..10): 392 leem `${NOME[0]}`, e **87 com nome ≠ PIPESTATUS**.
+
+⇒ **vigiado pelo ramo `ZSH-INDICE-ZERO` do `word-split-zsh-guard.sh`** — e a escolha do hook é a
+lição de desenho. Aqui o predicado não pode ser o nome: tem de ser **DECLARAÇÃO** (`arr=(...)`,
+`typeset -a`, `read -A`, `set -A`, `arr+=(...)` no **próprio** comando — o estado do shell não
+persiste entre chamadas do Bash tool), e o `ARR[]` que cala os três ramos de word splitting já
+prova exatamente isso. Estender o guard do `pipestatus` seria **portar o tokenizador**: regra local
+em vez de compartilhada ([maquinas-meta.md](../agent/maquinas-meta.md)). De graça veio também a
+inversão de semântica que este ramo exige: no `IDX0` **aspas duplas são USO**, não menção
+(`f="${fila[0]}"` expande e dá vazio) — e `${...}` dentro de `"..."` já passa pelo mesmo `chaves()`
+que `'...'`, corpo de heredoc e comentário nunca alcançam.
+
+**Calibração antes de ligar: 2 disparos, 2 VP, 0 FP** nas 1.972 chamadas do corpus que contêm
+`[0]`. Os dois são os BFS de imports que imprimiram `closure_count=0` em 2026-09-05/06 — e dos 4
+comandos do corpus que imprimem `closure_count`, são exatamente os 2 que rodam no zsh.
+
+**O julgamento MANUAL superestimou em 4×, e a culpa é da janela.** Classificando os 16 candidatos
+pelo recorte do `grep` em volta do `${fila[0]}`, dei 8 VP. O hook deu 2 — e estava certo: 6 dos 8
+eram `cat > x.sh <<'EOF'` escrevendo um script com shebang `#!/bin/bash`, onde `[0]` é **correto**.
+A janela mostrava `fila=(` e `${fila[0]}`, e **não** mostrava o heredoc seis linhas acima.
+⇒ **precisão aferida por recorte de contexto superestima, porque o recorte esconde o quoting** — e
+o quoting é justamente o que decide uso × menção. Vale para toda calibração de guard textual: o
+número honesto sai de **rodar** o detector no corpus, não de ler trechos dele.
+
+**Três formas ficaram FORA, cada uma por medição e não por esquecimento** — registradas aqui para
+que ninguém "complete a classe" com um ramo que nunca dispara:
+
+- `${arr[0,2]}` é **range LEGÍTIMO**: dá `a b` no zsh (medido). Ampliar o recall aqui inventaria bug.
+- `$arr[0]` **sem chaves**: 14 linhas no corpus, **zero** com array declarado — eram `$F[0]` do
+  autosplit do perl e `$t[0]` de filtro `jq`, ambos dentro de aspas simples.
+- `arr=($escalar)` — array nascendo com UM elemento porque o zsh não divide a variável: **0 VP em
+  77.916 chamadas**; os 3 casos brutos eram `+=(` acrescentando um item de propósito (`rcs+=($rc)`,
+  um exit code). Ficou fora do `word-split-zsh-guard.sh` desde o começo, de caso pensado.
+
 ### 10. `git show "$ref:path"` no zsh — o `:` vira MODIFIER e o path SOME
 
 O idioma canônico para ler um arquivo numa revisão é `git show <ref>:<path>`. Entre aspas dobradas e
@@ -900,6 +938,7 @@ certa no próprio aviso:
 | `ZSH-NAO-DIVIDE-SET` | `set -- $x` | a lista posicional é UMA palavra que é UMA expansão escalar | `read -r a b <<< "$x"` |
 | `ZSH-NAO-DIVIDE-FOR` | `for v in $x` | `x` foi atribuída como texto ANTES, no mesmo comando | `while IFS= read -r` ou array |
 | `ZSH-NAO-DIVIDE-ARGS` | `cmd $x` | `x` é LISTA numa string, montada antes no mesmo comando: `$(… \| tr '\n' ' ')`, `paste -s`, `xargs`, ou literal com espaço | `arr+=("$l")` + `"${arr[@]}"` |
+| `ZSH-INDICE-ZERO` | `${arr[0]}` | `arr` é array DECLARADO no mesmo comando — a §9 sem o nome `PIPESTATUS`, registrada lá (2026-10-08) | `${arr[1]}`, ou `"${arr[@]}"` sem índice nenhum |
 
 "No mesmo comando" é completo, não atalho: o estado do shell não persiste entre chamadas do Bash
 tool. Aspas simples, `$'…'`, comentário, heredoc e texto de aspas duplas são menção (`bash -c '…'`
