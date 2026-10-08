@@ -58,7 +58,12 @@ export const respostaSonda = criarRespostaSonda("omie-sync-estoque");
  * gravava o físico fresco com o pendente velho: dupla contagem invisível); (3) gravação parcial → marcadores 'partial'
  * e ok:false, com prazo na cauda e a inativação no desfecho. A orquestração mudou para `publicacao.ts`.
  */
-export const VERSAO = "v1.7-membros-de-grupo";
+/**
+ * BUMP v1.8 (conferência do 1º dia da v1.7, 2026-10-07): o resumo do lote dos membros de grupo (`membros_grupo_*`)
+ * passa a ir para `acoes_execucoes.detalhes` (`CHAVES_REGISTRO`). Antes saía só na resposta HTTP, que o cron
+ * descarta: uma falha no lote dos membros (a linha do membro congelando de novo) ficava invisível depois do run.
+ */
+export const VERSAO = "v1.8-registro-membros";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
