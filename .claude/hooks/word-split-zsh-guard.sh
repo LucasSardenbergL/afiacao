@@ -96,6 +96,11 @@
 #   - `x` usada ANTES da atribuicao no texto (laco que re-atribui no fim do corpo);
 #   - `setopt SH_WORD_SPLIT` em QUALQUER ponto do comando cala tudo, mesmo depois do uso;
 #   - `)` de padrao de `case` dentro de `$(...)` fecha a substituicao cedo demais.
+#   IDX0 so: palavra que e ALVO DE REDIRECAO — `cat <<< "${arr[0]}"` e `echo x > "${arr[0]}"` — que
+#     o `fimpal()` descarta antes de guardar a forma. Medido: no corpus, redirecao `>` para `[0]`
+#     tem **0** casos, e os 12 "here-string com [0]" sao `'<<<<<<<'` (marcador de conflito) em
+#     codigo Python, com `[0]` indexando LISTA. Cobrir custaria propagar a palavra de redirecao, e
+#     o alvo de `>` com nome vazio ja falha ALTO ("no such file"), que nao e a classe silenciosa;
 #   IDX0 so: subscript que nao seja o `0` EXATO (`${arr[0,2]}` e range LEGITIMO — da "a b" no zsh,
 #     medido; `${arr[0+0]}`, `${arr[$i]}` com i=0 sao calculados), `${#arr[0]}` e flag de parametro
 #     (`${(e)arr[0]}` — o `ct` nao comeca por nome), `${arr[0]:-pad}` (o default disfarca o vazio),

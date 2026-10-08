@@ -277,6 +277,8 @@ rodada() {
   checa "M3 \${#arr[0]} e comprimento de elemento ausente (FN)" "$NADA" 'arr=(a b); echo "${#arr[0]}"'
   checa "M4 flag de parametro: \${(e)arr[0]} (FN)" "$NADA" 'arr=(a b); echo "${(e)arr[0]}"'
   checa "M5 palavra DENTRO de array literal (FN)" "$NADA" 'arr=(a b); nova=("${arr[0]}")'
+  checa "M6 alvo de here-string (FN: 0 casos reais no corpus)" "$NADA" 'arr=(a b); cat <<< "${arr[0]}"'
+  checa "M7 alvo de redirecao (FN: 0 casos, e nome vazio falha ALTO)" "$NADA" 'arr=(a b); echo x > "${arr[0]}"'
 
   # ── SILENCIADORES ─────────────────────────────────────────────────────────────────────────────
   checa "Z1 WORD_SPLIT_INTENCIONAL=1 no inicio" "$NADA" 'WORD_SPLIT_INTENCIONAL=1 set -- $st'
