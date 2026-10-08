@@ -226,12 +226,12 @@ export function toleranciaDoCronMin(periodoHoras = 2): number {
 }
 
 /** Uma edge ATIVA que ficou fora do exame, e há quantos minutos ela espera. `null` = não medido. */
-export interface EsperaDaEdge {
+interface EsperaDaEdge {
   edge: string;
   minutos: number | null;
 }
 
-export interface SemPerguntaClassificada {
+interface SemPerguntaClassificada {
   /** Dentro da tolerância, ou sem medida: é a vez dela, e nada está provado contra o dispatcher. */
   aguardando: EsperaDaEdge[];
   /** Acima da tolerância: um tick que pergunta toda ativa já passou sem perguntar por ela. */
