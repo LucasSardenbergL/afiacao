@@ -36,7 +36,7 @@ begin
       where q.id > v_antes
         and q.url like '%/functions/v1/omie-sync-sku-items'
         and convert_from(q.body, 'UTF8')::jsonb @> '{"empresa":"OBEN","dias":175,"fornecedor_codigo_omie":8689681266}'::jsonb
-     ) <> 1 then
+     ) is distinct from 1 then
     raise exception 'pós-condição: o POST dirigido não foi enfileirado (ou foi mais de um)';
   end if;
 end $run$;

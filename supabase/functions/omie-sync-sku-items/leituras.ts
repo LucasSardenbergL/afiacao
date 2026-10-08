@@ -34,7 +34,7 @@ import { type BancoPostgrest, fetchAllKeyset, type QueryPostgrest } from "../_sh
 import type { ControleFila } from "./recebimento.ts";
 
 /** Valores por `.in()`. 150 UUIDs ≈ 5,5 KB de querystring. */
-export const LOTE_IN = 150;
+const LOTE_IN = 150;
 
 export function emLotes<T>(valores: readonly T[], tamanho: number = LOTE_IN): T[][] {
   if (!Number.isInteger(tamanho) || tamanho < 1) throw new Error(`emLotes: tamanho inválido (${tamanho})`);
