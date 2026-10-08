@@ -118,10 +118,12 @@ import {
 } from './lib/sonda-cron-allowlist';
 import {
   alvosForaDoRepo,
+  classificarSemPergunta,
   cronSondaParado,
   type AtestacaoAtribuida,
   type Disparo,
   julgarSondaCron,
+  toleranciaDoCronMin,
 } from './lib/sonda-cron-testemunha';
 import {
   type Consultas,
@@ -390,6 +392,31 @@ WHERE r.c IS NOT NULL
 ORDER BY r.id;
 `.trim();
 
+/**
+ * Há quantos minutos cada edge ATIVA espera por uma pergunta: desde o último disparo para ELA — em
+ * qualquer tick, inclusive o manual que o `sonda:sql` oferece — ou desde `habilitado_em`, o que for
+ * MAIS RECENTE. É o que dá TETO à espera: sem medida, "sem pergunta" descreveria para sempre tanto a
+ * edge que acabou de entrar quanto a que o dispatcher parou de perguntar.
+ *
+ * O `greatest` com o último disparo é o que impede o alarme falso MEDIDO em prod (tick manual de
+ * 2026-09-10 23:14Z, só `sonda-relay`): um tick parcial desloca o tick do cron da janela de 2, e as
+ * outras 15 edges — perguntadas pelo cron 34 min antes — pareceriam esquecidas se a régua fosse só
+ * `habilitado_em`. O kill switch é o avesso: o `UPDATE … SET ativo` NÃO mexe em `habilitado_em`, então
+ * uma edge recém-reativada conta a espera desde antes de ser desligada — é por isso que o teto gera
+ * AVISO (que nomeia as duas causas), nunca achado.
+ *
+ * Lida só quando alguma ativa ficou fora dos ticks que julgam: no caso comum não custa round-trip.
+ */
+export const SQL_SONDA_CRON_ESPERA = `
+SELECT a.edge,
+       round((extract(epoch FROM (now() - greatest(a.habilitado_em, max(d.enfileirado_em)))) / 60.0)::numeric, 1)::text
+FROM public.deploy_sonda_alvos a
+LEFT JOIN public.deploy_sonda_disparos d ON d.edge = a.edge
+WHERE a.ativo
+GROUP BY a.edge, a.habilitado_em
+ORDER BY a.edge;
+`.trim();
+
 export const SQL_SAUDE_CRON_SONDA = `
 SELECT coalesce(
   round((extract(epoch FROM (now() - max(d.end_time))) / 60.0)::numeric, 1)::text,
@@ -413,6 +440,7 @@ export const CONSULTAS_NUVEM: Consultas = {
   sonda_atestacoes: SQL_SONDA_CRON_ATESTACOES,
   sonda_motivos: SQL_SONDA_CRON_MOTIVOS,
   sonda_saude: SQL_SAUDE_CRON_SONDA,
+  sonda_espera: SQL_SONDA_CRON_ESPERA,
 };
 
 /** Quem consome a resposta — resposta gerada para outro CLI é recusada como "arquivo de outra leitura". */
@@ -876,6 +904,22 @@ function imprimir(rel: Relatorio, linhasSemIdentidade: string[], universo: Unive
   }
 }
 
+/** Minutos, como o psql devolve: `34.0`. Vazio NÃO casa — `Number('')` é 0, e 0 min mentiria "perguntada agora". */
+const MINUTOS_DE_ESPERA = /^\d+(\.\d+)?$/;
+
+/** `edge|minutos` por linha. Linha fora do formato LANÇA: espera ilegível é ausência de medida. */
+function parsearEspera(saida: string): Map<string, number> {
+  const espera = new Map<string, number>();
+  for (const linha of semChatter(saida)) {
+    const [edge, min] = linha.split('|');
+    if (!edge || min === undefined || !MINUTOS_DE_ESPERA.test(min)) {
+      throw new Error(`linha de espera fora do formato: ${linha}`);
+    }
+    espera.set(edge, Number(min));
+  }
+  return espera;
+}
+
 /**
  * Lê e julga a sonda por CRON. Devolve as linhas a imprimir e quantos ACHADOS houve (pendências).
  *
@@ -981,17 +1025,70 @@ export function secaoSondaCron(
     motivos,
   });
 
+  // Quem nenhum tick perguntou não foi EXAMINADO, e a espera decide se é só a vez dela (⏳) ou se o
+  // dispatcher parou de perguntar (⚠️). Falhar nesta leitura NÃO é mecânica: o veredito não depende
+  // dela, só a classificação da linha — reprovar trocaria o relatório inteiro por nenhum. Mas o ramo
+  // "não consegui medir" tem de APARECER, senão a degradação vira silêncio aprovador.
+  let espera = new Map<string, number>();
+  let falhaDaEspera: string | null = null;
+  if (r.semPergunta.length > 0) {
+    try {
+      espera = parsearEspera(ler(SQL_SONDA_CRON_ESPERA));
+    } catch (err) {
+      falhaDaEspera = (err as Error).message;
+    }
+  }
+  const { aguardando, atrasadas } = classificarSemPergunta(r.semPergunta, espera);
+
   const atestadas = new Set(atestacoes.map((a) => a.requestId));
   const respondidos = disparos.filter((d) => atestadas.has(d.requestId)).length;
+  const perguntadas = ativos.length - r.semPergunta.length;
   linhas.push(
-    `\n🕒 SONDA POR CRON — ${ativos.length} edge(s) ativa(s), ${ticksRecentes.length} tick(s) recente(s), ` +
-      `${respondidos}/${disparos.length} disparo(s) atestado(s)`,
+    `\n🕒 SONDA POR CRON — ${perguntadas}/${ativos.length} edge(s) ativa(s) perguntada(s) em ` +
+      `${ticksRecentes.length} tick(s) recente(s), ${respondidos}/${disparos.length} disparo(s) atestado(s)`,
   );
   const defasagem = avisoAllowlistDefasada(allowlists);
   if (defasagem) linhas.push(defasagem);
   for (const a of r.achados) linhas.push(`   🔴 ${a.classe} · ${a.edge}: ${a.detalhe}`);
   for (const aviso of r.avisos) linhas.push(`   ⚠️  ${aviso}`);
-  if (r.achados.length === 0 && r.avisos.length === 0) {
+  for (const a of atrasadas) {
+    linhas.push(
+      `   ⚠️  ${a.edge}: ativa e sem pergunta há ${a.minutos} min, acima da tolerância de ` +
+        `${toleranciaDoCronMin()} min (2 períodos do cron + 15) — ou o dispatcher parou de perguntar por ` +
+        `ela (confira o job '${CRON_SONDA}' e public.deploy_sonda_disparar()), ou ela acabou de voltar ` +
+        `pelo kill switch (o UPDATE em ativo não mexe em habilitado_em).`,
+    );
+  }
+  if (aguardando.length > 0) {
+    const lista = aguardando
+      .map((a) => `${a.edge} (${a.minutos === null ? 'sem medida da espera' : `espera ${a.minutos} min`})`)
+      .join(', ');
+    linhas.push(
+      `   ⏳ ${aguardando.length} edge(s) ativa(s) sem pergunta nos ticks recentes, FORA do exame — ` +
+        `não contam como atestadas: ${lista}`,
+    );
+    if (aguardando.some((a) => a.minutos === null)) {
+      linhas.push(
+        '      sem a espera não dá para separar edge recém-habilitada de dispatcher que parou de perguntar' +
+          (falhaDaEspera === null ? '' : ` — a leitura falhou: ${falhaDaEspera}`),
+      );
+    }
+  }
+  if (r.silencioEsperado.length > 0) {
+    const lista = r.silencioEsperado
+      .map((edge) => `${edge} (${estadoPorEdge.get(edge) ?? 'sem veredito'})`)
+      .join(', ');
+    linhas.push(
+      `   ·  ${r.silencioEsperado.length} edge(s) perguntada(s) sem resposta, e esperado — o ledger não diz ` +
+        `CONFERE, o ramo não está no ar: ${lista}`,
+    );
+  }
+  // O ✅ é um ∀ sobre as ATIVAS: sai só quando toda uma delas foi perguntada E atestada. Derivá-lo da
+  // AUSÊNCIA de achado herdava todo `continue` do juiz (edge sem pergunta, silêncio esperado) — e com
+  // zero ativa afirmaria sobre o conjunto vazio, que é ausência de dado, não aprovação.
+  const todaAtivaAtestada =
+    ativos.length > 0 && r.semPergunta.length === 0 && r.silencioEsperado.length === 0;
+  if (r.achados.length === 0 && r.avisos.length === 0 && todaAtivaAtestada) {
     linhas.push('   ✅ toda edge ativa foi atestada nos ticks recentes — o bundle do ledger continua no ar');
   }
   return { linhas, achados: r.achados.length, mecanica: null };

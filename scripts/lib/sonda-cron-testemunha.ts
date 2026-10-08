@@ -75,6 +75,19 @@ export interface ResultadoSondaCron {
   achados: AchadoSondaCron[];
   /** Avisos que NÃO reprovam: 1 tick só de silêncio, edge do repo ainda não habilitada no banco. */
   avisos: string[];
+  /**
+   * Edges ATIVAS que NENHUM dos ticks que julgam perguntou. Não é achado nem aviso — ausência de
+   * PERGUNTA não é silêncio —, mas também não é atestação: sai aqui porque quem RESUME precisa saber
+   * quem ficou fora do exame. Medido em 2026-09-10, logo após a onda 5 da allowlist: 16 ativas, 15
+   * perguntadas (`omie-desconto-backfill` entrou depois do último tick) e a tela afirmando "toda edge
+   * ativa foi atestada" — cobertura afirmada sobre uma população com membro não examinado.
+   */
+  semPergunta: string[];
+  /**
+   * Edges perguntadas que não responderam e cujo ledger NÃO diz CONFERE: o silêncio é a consequência
+   * esperada do deploy pendente, então não acusa — e, pela mesma razão, não é atestação.
+   */
+  silencioEsperado: string[];
 }
 
 /** Quantos ticks recentes formam o julgamento. Dois, e a razão está em `julgarSondaCron`. */
@@ -97,6 +110,8 @@ const TICKS_QUE_JULGAM = 2;
 export function julgarSondaCron(e: EntradaSondaCron): ResultadoSondaCron {
   const achados: AchadoSondaCron[] = [];
   const avisos: string[] = [];
+  const semPergunta: string[] = [];
+  const silencioEsperado: string[] = [];
 
   const ativos = new Set(e.ativosNoBanco);
   const respondidos = new Set(e.atestacoes.map((a) => a.requestId));
@@ -125,12 +140,18 @@ export function julgarSondaCron(e: EntradaSondaCron): ResultadoSondaCron {
     const disparosDaEdge = ticks
       .map((t) => e.disparos.find((d) => d.tickId === t && d.edge === edge))
       .filter((d): d is Disparo => d !== undefined);
-    if (disparosDaEdge.length === 0) continue; // nenhum tick pediu: ausência de PERGUNTA, não silêncio
+    if (disparosDaEdge.length === 0) {
+      semPergunta.push(edge); // nenhum tick pediu: ausência de PERGUNTA, não silêncio — e fora do exame
+      continue;
+    }
 
     const mudos = disparosDaEdge.filter((d) => !respondidos.has(d.requestId));
     if (mudos.length === 0) continue;
 
-    if (e.estadoPorEdge.get(edge) !== 'CONFERE') continue; // silêncio esperado: o ramo não está no ar
+    if (e.estadoPorEdge.get(edge) !== 'CONFERE') {
+      silencioEsperado.push(edge); // silêncio esperado: o ramo não está no ar — e não é atestação
+      continue;
+    }
 
     if (mudos.length < TICKS_QUE_JULGAM || disparosDaEdge.length < TICKS_QUE_JULGAM) {
       avisos.push(
@@ -165,7 +186,7 @@ export function julgarSondaCron(e: EntradaSondaCron): ResultadoSondaCron {
     }
   }
 
-  return { achados, avisos };
+  return { achados, avisos, semPergunta, silencioEsperado };
 }
 
 /**
@@ -189,5 +210,55 @@ export function alvosForaDoRepo(ativosNoBanco: string[], allowlistDoRepo: string
  */
 export function cronSondaParado(minutosDesdeSucesso: number | null, periodoHoras = 2): boolean {
   if (minutosDesdeSucesso === null) return false;
-  return minutosDesdeSucesso > periodoHoras * 60 * TICKS_QUE_JULGAM + 15;
+  return minutosDesdeSucesso > toleranciaDoCronMin(periodoHoras);
+}
+
+/**
+ * A tolerância de uma espera pelo cron de sonda: 2 períodos + 15 min de folga.
+ *
+ * Uma definição só para as duas perguntas que a usam — *o cron parou?* e *o dispatcher deixou de
+ * perguntar por esta edge?* —, porque as duas se medem pelo MESMO relógio: com o cron vivo (é o que
+ * `cronSondaParado` garante antes), uma edge que espera há mais de 2 períodos esteve ativa durante
+ * ao menos um tick bem-sucedido, e um tick pergunta TODA ativa (`deploy_sonda_disparar` sem `p_alvos`).
+ */
+export function toleranciaDoCronMin(periodoHoras = 2): number {
+  return periodoHoras * 60 * TICKS_QUE_JULGAM + 15;
+}
+
+/** Uma edge ATIVA que ficou fora do exame, e há quantos minutos ela espera. `null` = não medido. */
+interface EsperaDaEdge {
+  edge: string;
+  minutos: number | null;
+}
+
+interface SemPerguntaClassificada {
+  /** Dentro da tolerância, ou sem medida: é a vez dela, e nada está provado contra o dispatcher. */
+  aguardando: EsperaDaEdge[];
+  /** Acima da tolerância: um tick que pergunta toda ativa já passou sem perguntar por ela. */
+  atrasadas: Array<{ edge: string; minutos: number }>;
+}
+
+/**
+ * Esperar por uma pergunta tem TETO — laço de espera sem desistência é fail-OPEN
+ * (docs/historico/espera-sem-desistencia.md). Sem ele, a linha "sem pergunta" descreveria para
+ * sempre, com cara de normalidade, uma edge que o dispatcher parou de perguntar: o sensor de
+ * rollback dela estaria morto e a tela não diria nada.
+ *
+ * Sem medida NÃO vira atraso nem zero — é o ramo "não consegui medir", que o chamador IMPRIME.
+ */
+export function classificarSemPergunta(
+  semPergunta: string[],
+  esperaPorEdge: Map<string, number>,
+  periodoHoras = 2,
+): SemPerguntaClassificada {
+  const teto = toleranciaDoCronMin(periodoHoras);
+  const aguardando: EsperaDaEdge[] = [];
+  const atrasadas: Array<{ edge: string; minutos: number }> = [];
+  for (const edge of semPergunta) {
+    const minutos = esperaPorEdge.get(edge);
+    if (minutos === undefined) aguardando.push({ edge, minutos: null });
+    else if (minutos > teto) atrasadas.push({ edge, minutos });
+    else aguardando.push({ edge, minutos });
+  }
+  return { aguardando, atrasadas };
 }

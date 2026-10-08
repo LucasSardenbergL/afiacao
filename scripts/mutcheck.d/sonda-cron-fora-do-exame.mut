@@ -1,0 +1,14 @@
+# Poder da suíte sobre o que o JUIZ da sonda por cron deixa de examinar, e sobre o TETO da espera.
+# Os dois `continue` do juiz (edge que nenhum tick perguntou; silêncio que o ledger não-CONFERE torna
+# esperado) estão certos em não acusar — e estavam errados em não deixar RASTRO: quem resumia lia só
+# `achados`/`avisos` e afirmava cobertura sobre uma população com membro não examinado (2026-09-10).
+# As duas últimas pinam a direção inversa: o juiz não pode passar a ACUSAR quem não foi perguntado.
+# @src: scripts/lib/sonda-cron-testemunha.ts
+# @test: scripts/lib/sonda-cron-testemunha.test.ts
+# Rode: scripts/mutcheck.sh scripts/lib/sonda-cron-testemunha.ts scripts/lib/sonda-cron-testemunha.test.ts scripts/mutcheck.d/sonda-cron-fora-do-exame.mut
+PEGA | edge sem pergunta volta a ser pulo sem rastro        | s/      semPergunta\.push\(edge\);/      void edge;/
+PEGA | silencio esperado volta a ser pulo sem rastro        | s/      silencioEsperado\.push\(edge\);/      void edge;/
+PEGA | o teto da espera passa a incluir o limite            | s/else if \(minutos > teto\)/else if (minutos >= teto)/
+PEGA | espera nao medida vira ZERO (ausente = zero)         | s/aguardando\.push\(\{ edge, minutos: null \}\)/aguardando.push({ edge, minutos: 0 })/
+PEGA | tolerancia perde os 2 periodos do cron               | s/return periodoHoras \* 60 \* TICKS_QUE_JULGAM \+ 15;/return periodoHoras * 60 + 15;/
+PEGA | o juiz passa a ACUSAR quem nenhum tick perguntou     | s/      semPergunta\.push\(edge\);/      semPergunta.push(edge); avisos.push(edge + ': sem pergunta');/
