@@ -20,7 +20,18 @@ Vocabulário que o founder assume ao falar de reposição (antes re-explicado a 
 
 `CGL` **não existe** → `null` ("sob consulta"); sufixo fora da tabela → `null`. **Nunca chute litragem** (é money-path de pricing: litro errado = preço errado). Em ml (a linha de tint fala em ml, versão base): QT 810 · GL 3240 · BH 18000.
 
-**Fator do motor ≠ litragem.** O motor consolida grupo/escolhe embalagem pelo fator RELATIVO `sku_embalagem_equivalencia.fator_para_base` (QT=1, GL=4 — bate com 3,6÷0,9), não pela litragem absoluta; `qtde_final` do pedido é **nº de embalagens**, não litros (§Motor). Âncora = sempre o fator-1 (galão nunca é âncora).
+**Fator do motor ≠ litragem.** O motor consolida grupo/escolhe embalagem pelo fator RELATIVO `sku_embalagem_equivalencia.fator_para_base` (QT=1, GL=4 — nos concentrados, que são base, bate com 3,24÷0,81), não pela litragem absoluta; `qtde_final` do pedido é **nº de embalagens**, não litros (§Motor). Âncora = sempre o fator-1 (galão nunca é âncora).
+
+**⚠️ Concentrados WP: litro de um lado, embalagem do outro** (medido em 2026-10-07; conserto na fila em [#2849](https://github.com/LucasSardenbergL/afiacao/issues/2849)).
+- Os 28 membros dos 14 grupos estão em **litros no Omie**: QT = **0,81 L** e GL = **3,24 L** (versão base).
+- **Em litros:** estoque, demanda, ponto de pedido e máximo. O físico do grupo (L + L, sem fator) está **certo**.
+- **Em embalagens:** `qtde_final`, em trânsito e o `nQtde` do PO. O de-para do portal tem fator 1 nesses SKUs.
+- **Consequências:**
+  - `ceil(máx − efetivo)` lê litros como QT: compra **~19% a menos**;
+  - a troca para galão divide por 4, quando deveria dividir por 3,24;
+  - o em trânsito entra no efetivo **~23% inflado** por até 7 dias.
+- **Dano:** pequeno. O motor compra menos e com mais frequência; o gatilho compara litro com litro.
+- **Não "conserte" o físico com o fator:** a conversão que falta é a do lado da COMPRA.
 
 **Lead time por grupo — computado, não tabelado.** Sai do histórico (`sku_leadtime_history.grupo_leadtime`) → `sku_parametros` (`lt_medio_dias_uteis`, `lt_p95_dias`, `lt_desvio_padrao_dias`, `fonte_leadtime`) via `v_sku_leadtime_estatisticas`/`v_sku_lt_teorico`. `v_sku_lt_teorico` só dá LT com linha em `sku_grupo_producao` **E** fornecedor do grupo (senão `SEM_LEADTIME_DEFINIDO`, ver §Outras frentes). Para o LT de um grupo hoje, rode `psql-ro`.
 
