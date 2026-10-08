@@ -418,3 +418,11 @@ ledger marca confere.
 - os 4 membros não habilitados devem ter `ultima_sincronizacao` do run;
 - o resumo deve trazer `membros_grupo_gravados` = 4;
 - a observação deve seguir publicando.
+
+## As unidades do consolidado de grupo (2026-10-07)
+
+A suspeita, levantada durante a Fase 4, era que o físico do grupo estivesse sendo somado sem fator, misturando quartinhos e galões. A medição na prod (psql-ro) mostrou o contrário: **o físico está certo**. Os 28 membros estão em litros no Omie (QT = 0,81 L, GL = 3,24 L), então somar litro com litro dispensa o fator.
+
+O desvio real está na compra. A `qtde_final`, o em trânsito e o PO falam em embalagens, mas o motor as compara com o máximo em litros. O resultado é comprar cerca de 19% a menos e contar o trânsito cerca de 23% inflado. O caso visto foi o pedido 1268 (WP01 QT): 5 QT pedidos chegam como 4,05 L contra um máximo de 8 L.
+
+O dano é pequeno: o motor compra menos e com mais frequência, e o gatilho compara litro com litro. O founder decidiu documentar e deixar o conserto na fila: [#2849](https://github.com/LucasSardenbergL/afiacao/issues/2849), uma migration money-path com Codex. Detalhe em `docs/agent/reposicao.md` §Léxico.
