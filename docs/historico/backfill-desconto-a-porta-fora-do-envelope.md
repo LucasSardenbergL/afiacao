@@ -439,6 +439,97 @@ custava zero, bastava subir o teto, que é exatamente o que descobriu o 100%.
 Fato operacional: o adversarial de código **não roda antes de 09/10 19:30**. Não por política nossa
 agora, mas porque a janela está esgotada de verdade.
 
+### APLICADO em produção (2026-10-08, 00:41–00:52 UTC) — o desfecho medido
+
+Caminho B por decisão do founder: o PR saiu do draft com `REVISÃO INDEPENDENTE PENDENTE` e
+auto-challenge registrados, mergeou, e os dois applies foram aplicados pelo envelope.
+
+| passo | recibo |
+|---|---|
+| `db:aplicar …excecao.sql` (sha `67fedaa6…`) | **APLICADO**, tentativa #274 virou recibo na mesma transação |
+| `db:aplicar …converter-acervo.sql --ensaio` | rodou inteiro: **538 escritos, tela 570 → 32**, e reverteu |
+| `db:aplicar …converter-acervo.sql` (sha `14fd7848…`) | **APLICADO**, tentativa #276 · lote `e8ec64ba…` |
+
+```
+EXCECAO INSTALADA: 105 pedidos excluidos | controle sem excecao = 0 elegiveis
+                 | com excecao = 538 elegiveis | soma prevista = -100144.46
+CONVERSAO OK: 538 pedidos escritos | tela: 570 brutos -> 32 | soma da mudanca = -100144.46
+```
+
+**O sensor do cupom, medido POR FORA** (query própria via `psql-ro`, não o relatório da função — as
+duas medições são independentes de propósito):
+
+| | antes | depois |
+|---|---|---|
+| pedidos com desconto | 639 | 639 |
+| **coerentes na tela** | 69 | **607** |
+| **ainda com cabeçalho bruto** | **570** | **32** |
+
+E as invariantes, também por fora:
+
+- lote `e8ec64ba…`: **538 escritos**, soma **−R$ 100.144,46**, **0** totais fora de `(0, bruto]`;
+- **105/105 excluídos seguem com cabeçalho BRUTO** — `ausente ≠ zero` preservado na prática, não só
+  no desenho;
+- **nenhum excluído foi convertido** (junção do ledger com a tabela de exceção: 0 linhas);
+- 11 meses destravados: `2025-10`=70 · `11`=49 · **`12`=45** · `2026-01`=65 · `02`=41 · `03`=53 ·
+  `04`=50 · `05`=38 · `06`=57 · `07`=51 · `08`=19. Os 45 de dezembro são exatamente os que estavam
+  presos por **um** bloqueador.
+
+Dois detalhes que valem como prova de desenho, e não eram garantidos:
+
+1. **O ACL da função sobreviveu.** A substituição programática é `CREATE OR REPLACE` por construção
+   (`pg_get_functiondef` + `EXECUTE`), e `REPLACE` preserva o ACL onde `DROP`+`CREATE` o resetaria. A
+   evidência é um erro: o `psql-ro` levou `permission denied for function
+   pedido_total_liquido_converter` ao tentar chamá-la, e `has_function_privilege` devolve `false` para
+   `anon` e `authenticated`. Se eu tivesse recopiado o corpo, a função teria voltado aberta.
+2. **A janela foi escolhida pelo achado P2 do auto-challenge:** 00:41 UTC, com os crons em `15 */2` e
+   `30 2` — ~1h30 de folga até o próximo. O sensor antes/depois roda em `read committed` (medido), e
+   um commit de cron no meio moveria o delta.
+
+**O que fica aberto, e é passo do founder:** o `supabase/schema-snapshot.sql` precisa ser re-gerado
+pelo chat do Lovable. A tabela `pedido_total_liquido_excecao` e o corpo novo do conversor existem em
+prod e **não** em `supabase/migrations/` — então, até o re-dump, eles só existem no DR por este
+parágrafo. Os outros dois passos da reconciliação não se aplicam: não há migration formal para
+registrar em `schema_migrations`, e `types.ts` não morde porque a tabela tem RLS fechada e o front
+não a consome (se um dia consumir, a regeneração dos tipos entra na mesma entrega).
+
+**O Codex retroativo foi DISPENSADO pelo founder** (2026-10-08), com o apply já em produção. Fica
+dito sem maquiagem: esta entrega **não teve revisão independente de código**. O que ela teve está
+acima — PG17 com 21 asserts e 5 sabotagens no assert declarado, ensaio em prod, três correções que o
+CI cobrou, e o auto-challenge com quatro achados próprios (dois P2 vivos: o sensor em `read
+committed` e o `revisar_em` sem sensor). Auto-revisão não vira revisão independente por decisão —
+vira dívida assumida, e o registro serve para quem for mexer nisso depois saber o que não foi olhado.
+
+### A auditoria de migrations, rodada contra prod (2026-10-08)
+
+`bun run audit:migrations` gera `scripts/audit-custom-migrations.sql`, que é **leitura pura** (zero
+INSERT/UPDATE/DDL — conferido antes de rodar) e por isso passou pelo `psql-ro` em vez do SQL Editor.
+588 migrations, 1935 objetos esperados. Veredito:
+
+| achado | n | de quem |
+|---|---|---|
+| migrations **aplicadas sem registro** em `schema_migrations` | **430** (contra 74 registradas) | estrutural: nome custom não auto-aplica no Lovable, então o padrão do repo é aplicar à mão |
+| **corpo em deriva** (prod ≠ qualquer migration) | **15** | **1 é desta entrega** e esperada: `pedido_total_liquido_converter`, patcheado via `db:aplicar`. As outras 14 são antigas |
+| **objetos ausentes** em prod | **20** (14 deles RLS policy) | nenhum é desta entrega |
+| migrations parcialmente materializadas | 12 | nenhuma é desta entrega |
+
+⚠️ **A auditoria ACUSOU a minha mudança, e isso é o sistema funcionando** — o conversor aparece como
+deriva porque o corpo novo não existe em nenhuma migration. É a consequência documentada de aplicar
+em `db/` por envelope, e se resolve pelo re-dump do snapshot, não por migration (tocar
+`supabase/migrations/` é proibido aqui).
+
+**Triagem dos 20 ausentes, antes de qualquer alarme:** 14 são RLS policy, o que soa grave e não é —
+medido em prod no mesmo minuto: **347 tabelas em `public`, ZERO com RLS desligada**, e 10 com RLS
+ligada e nenhuma policy. Ou seja, nenhuma exposição: o pior caso é **fail-closed** (staff que deveria
+ler uma tabela e não lê). Bug funcional, não vazamento. Os domínios são reposição, carteira, scoring,
+selfservice e markup — e parte pode ser falso-positivo do audit, que casa nome literal e acusa
+renomeação feita em migration posterior.
+
+Isso **não** entra nesta entrega: 20 objetos de 12 migrations alheias, em cinco domínios que eu não
+investiguei, é escopo próprio. Fica aqui com os números para quem pegar — a query da triagem é a de
+`pg_class` × `pg_policy` acima, e roda em segundos.
+
+
 ### A sequência, quando o parecer chegar
 
 ```bash
