@@ -47,6 +47,22 @@
 | âncora | a CONTROLE lia a função velha do **snapshot de DR** (seção abaixo) | a função pré-fix vem do bloco da `20260611120000`, extraído do arquivo |
 | juiz | o gate `falsificar-exige-assert` (R3, roda no vitest) só confia no recibo de uma linha `falsificar=<n>` se a prova usar o idioma `SABOTAGENS="nome:VERMELHOS"` ou tiver JUIZ registrado — esta usa vermelho por valor exato declarado, fora do idioma | juiz em `JUIZES` + `REGISTRO_FECHADO`: 2 blocos de âncora prendendo o apply sabotado (falha nomeada aborta), a medição, a declaração EXATA e o veredito; `mede` = `OUT SAIDA RET HI MED DECL` (toda escrita delas presa) |
 
+**O juiz morde — meta-falsificação**, uma camada por vez, restauração por `git checkout`, controle antes e
+depois, em `LC_ALL=C` e `pt_BR.UTF-8` (**5 ok / 0 fail** nos dois). O gate já sai ≠0 por uma R4 ANTERIOR a
+este PR (`scripts/test-hooks-sessionstart.sh`, reproduzida com o gate da main; o vitest não a acusa), então
+o critério não é o exit: é haver violação NOMEANDO esta prova — e o controle exige que a R4 alheia siga lá,
+prova de que o gate mediu.
+
+| sabotagem | camada | o gate acusa |
+|---|---|---|
+| J1 veredito frouxo (`[ "$MED" != "$DECL" ]` → `[ -z "$MED" ]`) | bloco 1 | `bloco do juízo rompeu (18 linhas…)` |
+| J2 `SAIDA="6001,6004"` entre os dois blocos | `mede` | `a variável julgada SAIDA é ESCRITA na linha 241, dentro do juízo (linhas 219–262)` |
+| J3 apply sabotado engolido (o `{ echo …; exit 1; }` vira `true`) | bloco 2 | `bloco do juízo rompeu (9 linhas…)` |
+
+A 1ª J2 escrevia `DECL` ANTES do laço e o gate a deixou passar — com razão: o juízo vai da 1ª medição presa
+à última âncora que lê a variável, e uma escrita antes dele é sobrescrita pela medição presa antes do
+veredito. Sabotagem fora do alcance declarado da camada não testa a camada; o verde ali é desenho, não furo.
+
 O diff do log contra o commit do porte é **só** o declarado: os rótulos da CONTROLE, a linha da âncora,
 o `RESULTADO` e o `SABOTAGENS`. Nenhum assert, seed ou medição mudou.
 
