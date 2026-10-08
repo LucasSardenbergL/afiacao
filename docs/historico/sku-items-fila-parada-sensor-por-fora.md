@@ -127,7 +127,7 @@ dois PRs: a view não criaria sem a coluna. Por isso a leitura é por `to_jsonb(
 - **Adversarial do código:** não rodou antes do merge. Em 2026-10-06 o founder mandou tirar o PR de
   draft e mergear, o que é o **Caminho B** de `docs/agent/money-path.md` §"Sem Codex", com
   `sem-codex:` registrado no corpo do PR. O sensor já estava aplicado e validado em prod. O
-  adversarial vira **retroativo**: roda quando a janela reabrir (09/10 19:30).
+  adversarial retroativo foi dispensado pelo founder em 2026-10-07 (ver §8).
 
 RÉGUA:
 
@@ -165,9 +165,9 @@ RÉGUA:
 (`.claude/skills/lovable-db-operator/references/sql-house-style.md`). A view leva o
 `WITH (security_invoker = on)` em todo replace.
 
-**Pendente (retroativo, Caminho B):** o adversarial do Codex no código (`scripts/codex-async.sh -r max`,
-janela reabre em 09/10 19:30), sobre o diff do #2819 com os fatos do §2 e do §4. O PR mergeou antes
-dele por decisão do founder. Achado P0 ou P1 vira migration de correção no molde de objeto vivo.
+**Codex dispensado (2026-10-07, decisão do founder):** o adversarial retroativo não vai rodar. O PR #2819
+mergeou em 07/10 00:29 UTC sem 2ª opinião, e o sensor estava saudável em prod: 47 de 47 disparos `succeeded`,
+fila 0, nenhum alerta.
 
 
 ```sql
