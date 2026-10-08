@@ -703,6 +703,8 @@ const CHAVES_REGISTRO = [
   "total_skus_esperados", "sincronizados", "nao_encontrados", "erros_upsert", "pendente_confiavel",
   "pendente_problemas", "varredura_truncada", "observacao_publicada", "desfecho", "upsert_sem_confirmacao",
   "upsert_nao_tentados", "inativacao_falhou", "linhas_sem_local", "paginas_sem_total",
+  "membros_grupo_encontrados", "membros_grupo_erro", "membros_grupo_gravados", "membros_grupo_falhas",
+  "membros_grupo_ilegiveis", "membros_grupo_sem_pendente",
 ] as const;
 
 function detalhesDoRegistro(resumo: Record<string, unknown>): Record<string, unknown> {
