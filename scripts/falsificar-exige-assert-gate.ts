@@ -331,6 +331,44 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
     ],
   },
 
+  'db/test-oportunidade-erro-terminal.sh': {
+    motivo:
+      'falsificação no modo --falsificar: o apply sabotado que FALHA é nomeado e aborta, e a sabotagem só conta com a medição EXATA que ela declara (blocos 1-2: saída|retorno|header×itens; bloco 3: 6001,6004) — "≠ 6001" aceitava uma saída vazia',
+    mede: ['OUT', 'SAIDA', 'RET', 'HI', 'MED', 'DECL'],
+    ancoras: [
+      [
+        'P -v ON_ERROR_STOP=1 -q -f "$SAB" >/dev/null 2>&1 || { echo "…"; exit 1; }',
+        'OUT="$(OFERTADOS)"',
+        String.raw`SAIDA="$(printf '%s\n' "$OUT" | tail -1)"`,
+        String.raw`RET="$(printf '%s\n' "$OUT" | tail -2 | head -1)"`,
+        'HI="$(P -At -v ON_ERROR_STOP=1 -c "…")"',
+        'MED="$SAIDA|ret=$RET|hi=$HI"',
+        `if [ "$BLOCO" = "1" ]; then DECL='NENHUM|ret=0|0|0|0|{promo_flat}|hi=0|0'; else DECL='NENHUM|ret=1|1|200|0|{promo_flat}|hi=1|0'; fi`,
+        'if [ "$SAIDA" = "6001" ]; then',
+        'echo "…"',
+        'echo "…"',
+        'exit 1',
+        'fi',
+        'if [ "$MED" != "$DECL" ]; then',
+        'echo "…"',
+        'exit 1',
+        'fi',
+        'vermelha "…"',
+        'P -v ON_ERROR_STOP=1 -q -f "$MIGRACAO" >/dev/null',
+      ],
+      [
+        'P -v ON_ERROR_STOP=1 -q -f "$SAB" >/dev/null 2>&1 || { echo "…"; exit 1; }',
+        'SAIDA="$(OFERTADOS | tail -1)"',
+        'case "$SAIDA" in',
+        '6001,6004) vermelha "…" ;;',
+        '*) echo "…"',
+        'echo "…"',
+        'exit 1 ;;',
+        'esac',
+        'P -v ON_ERROR_STOP=1 -q -f "$MIGRACAO" >/dev/null',
+      ],
+    ],
+  },
   // ── R4: os alvos do `test:falsificacao` fora do idioma SABOTAGENS (2026-09-29). Cada um RELIDO: a
   // varredura de 2026-09-27 os chamava de "já-corretos", e três não eram (setup-contrato,
   // medir-footprint, sonda-cron-prova — consertados junto; docs/historico/falsificacao-exit-nao-e-dente.md).
@@ -1131,6 +1169,7 @@ export const REGISTRO_FECHADO: readonly string[] = [
   'db/test-canaria-veredito.sh',
   'db/test-data-health-sync-reprocess.sh',
   'db/test-db-aplicar.sh',
+  'db/test-oportunidade-erro-terminal.sh',
   'db/test-pedido-edicao-atomica.sh',
   'db/test-pedido-total-liquido-acervo.sh',
   'db/test-tint-promocao-assincrona.sh',
