@@ -2280,12 +2280,19 @@ describe('guardrail money-path: omie-sync-sku-items (fila de leadtime)', () => {
     expect(ramoFalha.match(/recebimentosTratados\.add/g)?.length ?? 0, 'só UMA entrada nos tratados, a condicional').toBe(1);
   });
 
+  // v1.5: a leitura mora em leituras.ts e o fail-closed é o `FalhaLeituraCritica` do `fetchAllKeyset`
+  // (erro do PostgREST LANÇA). A borda vigiada aqui: ninguém engole o lançamento no caminho.
   it('controle da fila é FAIL-CLOSED: tabela ausente grita, não degrada em silêncio', () => {
+    const codigo = removerComentarios(src);
+    const leituras = removerComentarios(read('supabase/functions/omie-sync-sku-items/leituras.ts'));
+    const fn = leituras.slice(leituras.indexOf('export async function carregarControleDaFila'));
+    expect(fn, 'sentinela: carregarControleDaFila em leituras.ts').toContain('tabela: "sku_items_sync_controle"');
+    expect(fn.slice(0, fn.indexOf('\n}\n')), 'o controle lê pela paginação que LANÇA').toMatch(/await lerEmLotes</);
+    expect(leituras, 'REGRESSÃO: leituras.ts engole erro — o poison reviveria sem ninguém saber').not.toMatch(/\bcatch\b/);
     expect(
-      src,
-      'REGRESSÃO: voltou a degradar quando sku_items_sync_controle falha — o poison ' +
-        'reviveria sem ninguém saber (edge deployada antes da migration)',
-    ).toMatch(/throw new Error\(\s*\n?\s*`sku_items_sync_controle ilegível/);
+      codigo,
+      'REGRESSÃO: voltou a degradar quando sku_items_sync_controle falha (edge deployada antes da migration)',
+    ).not.toMatch(/carregarControleDaFila\([^)]*\)\s*\.catch/);
   });
 
   // ── Pendência por item (2026-10-05): o recebimento só sai da fila com evidência de completude ──
@@ -2296,11 +2303,14 @@ describe('guardrail money-path: omie-sync-sku-items (fila de leadtime)', () => {
   // coluna — o "ALVO mente" (money-path §9). Prosa não pode nem reprovar nem aprovar a borda.
   it('a fila LÊ a pendência medida — sem a coluna no select a correção é INERTE (tudo cai na regra antiga)', () => {
     const codigo = removerComentarios(src);
-    const ini = codigo.indexOf('.from("sku_items_sync_controle")\n        .select(');
-    expect(ini, 'sentinela: a leitura do controle').toBeGreaterThan(-1);
-    const select = codigo.slice(ini, codigo.indexOf(')', codigo.indexOf('.select(', ini)));
-    expect(select, 'REGRESSÃO: a leitura do controle não traz itens_pendentes').toContain('itens_pendentes');
-    expect(codigo, 'o mapa do controle carrega a pendência lida').toMatch(/itens_pendentes:\s*row\.itens_pendentes\s*\?\?\s*null/);
+    // v1.5: a leitura do controle mora em leituras.ts (paginada).
+    const leituras = removerComentarios(read('supabase/functions/omie-sync-sku-items/leituras.ts'));
+    const fn = leituras.slice(leituras.indexOf('export async function carregarControleDaFila'));
+    const colunas = fn.match(/colunas: "([^"]*)"/);
+    expect(colunas, 'sentinela: a leitura do controle').not.toBeNull();
+    expect(colunas![1], 'REGRESSÃO: a leitura do controle não traz itens_pendentes').toContain('itens_pendentes');
+    expect(fn, 'o mapa do controle carrega a pendência lida').toMatch(/itens_pendentes:\s*row\.itens_pendentes\s*\?\?\s*null/);
+    expect(codigo, 'o mapa do controle chega à fila').toMatch(/const controleMap = trackingIds\.length > 0\s*\?\s*await carregarControleDaFila\(db, trackingIds\)/);
     expect(
       vereditoFronteira(src, 'pendenteNaFila'),
       'REGRESSÃO: o predicado da fila é avaliado e DESCARTADO',
@@ -2342,10 +2352,30 @@ describe('guardrail money-path: omie-sync-sku-items (fila de leadtime)', () => {
     expect(vereditoFronteira(src, 'avaliarFilaParada'), 'os dois sensores são consumidos').toBe('ok');
   });
 
-  it('as irmãs vêm de leitura FAIL-CLOSED e com ordem total; o lookup do pedido também ordena', () => {
+  // v1.5 (2026-10-08): as leituras da montagem da fila moram em leituras.ts (keyset + `.in()` em lotes,
+  // fail-closed por `FalhaLeituraCritica`) — o teste Deno `leituras_test.ts` prova a paginação contra um
+  // banco que corta em 1.000. Aqui, o WIRING: a edge usa as quatro e não lê nenhuma das tabelas cru.
+  // Incidente: run dirigido de 2026-10-08 00:58Z, `fila_pendente` 228 em vez de 18 (o `.in()` cru do
+  // histórico voltou 1.000 de 2.962 linhas) — docs/historico/sku-items-cte-fora-da-fila.md §10.
+  it('as leituras que montam a fila vêm PAGINADAS de leituras.ts; nenhuma volta a ser .in() cru', () => {
     const codigo = removerComentarios(src);
-    expect(codigo, 'REGRESSÃO: erro na leitura das irmãs não grita').toMatch(/if \(irmasErr\) throw new Error\(/);
-    expect(codigo, 'a leitura das irmãs bate no teto do PostgREST e lança').toMatch(/linhasIrmas\.length >= 1000\) \{\s*throw/);
+    for (const f of ['carregarNfesDaJanela', 'carregarTrackingsComLinha', 'carregarControleDaFila', 'carregarIrmas']) {
+      // O retorno é CONSUMIDO (atribuído), não só chamado — `vereditoFronteira` não lê chamada genérica `f<T>(`.
+      expect(codigo, `REGRESSÃO: a edge não consome mais ${f}`).toMatch(new RegExp(`(=|\\?)\\s*await ${f}(<[^(]*>)?\\(db,`));
+    }
+    expect(codigo, 'REGRESSÃO: leitura crua de sku_leadtime_history na edge (o teto de 1.000 volta)')
+      .not.toMatch(/from\("sku_leadtime_history"\)\s*\.select\(/);
+    expect(codigo, 'REGRESSÃO: leitura crua do controle na edge (o teto de 1.000 volta)')
+      .not.toMatch(/from\("sku_items_sync_controle"\)\s*\.select\(/);
+    expect(codigo, 'REGRESSÃO: leitura crua de purchase_orders_tracking por .in() na edge')
+      .not.toMatch(/\.in\("nid_receb"/);
+    const leituras = removerComentarios(read('supabase/functions/omie-sync-sku-items/leituras.ts'));
+    expect(leituras, 'leituras.ts pagina por keyset').toMatch(/fetchAllKeyset</);
+    expect(leituras, 'leituras.ts não pode chamar .range()/.in() fora de lotes').toMatch(/for \(const lote of emLotes\(/);
+  });
+
+  it('o lookup do pedido ordena (ordem total)', () => {
+    const codigo = removerComentarios(src);
     expect(codigo, 'REGRESSÃO: lookup do pedido sem ordem total — a rota muda entre runs')
       .toMatch(/\.eq\("numero_contrato_fornecedor", numero\)\s*\.order\("id"\)\s*\.limit\(1\)/);
   });
