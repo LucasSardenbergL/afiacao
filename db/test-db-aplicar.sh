@@ -19,15 +19,21 @@
 # ║    A13 conexão perdida DEPOIS da tentativa e DURANTE o apply sai 5 (não sei), não 4;    ║
 # ║    A14 o mesmo com o cluster fora do ar — a reconciliação MUDA não vira "rollback";     ║
 # ║    A15 dois applies SIMULTÂNEOS dos mesmos bytes: o corpo roda UMA vez, e quem barra o  ║
-# ║        2º é a PORTA, antes de executar — não o índice do recibo, depois.               ║
+# ║        2º é a PORTA, antes de executar — não o índice do recibo, depois;               ║
+# ║    A16–A19b o delta db/aplicar-porta-recheck.sql (v2 → v3) pelo caminho que vai a prod: ║
+# ║        aplica pelo próprio executor e deixa o corpo do bootstrap; re-ensaia sobre si;   ║
+# ║        a PRE recusa corpo estranho; a PÓS barra um re-check quebrado (late-bound) — e   ║
+# ║        é a parte REAL da sonda que barra: só com a de ensaio, o quebrado aplica.        ║
 # ╚═════════════════════════════════════════════════════════════════════════════════════════╝
 # Falsifica — cada sabotagem com rc EXATO + MARCA lida da saída real, julgada nas TRÊS combinações
 # servidor×cliente com o desfecho previsto para cada uma, e contra o seu GÊMEO verde (o mesmo cenário
 # sem a sabotagem não pode passar) — o porquê está no bloco da falsificação, lá embaixo:
 #   (S1)  marcador E reconciliação cegos → o apply conclui, e o veredito honesto é 5 (não sei);
 #   (S2)  ON_ERROR_STOP removido → o erro ACONTECE e o psql sai 0: vira 5, não 4;
-#   (S3)  checagem de 'já aplicada' removida → o re-apply chega ao banco e o índice único barra o
-#         2º recibo (4). Não aplica duas vezes: deixa de ser o no-op que A2 afirma;
+#   (S3)  checagem de 'já aplicada' removida → o re-apply chega à porta, que o RECUSA antes de
+#         executar (4, RECUSA_SHA_JA_APLICADO). Deixa de ser o no-op que A2 afirma, mas não aplica
+#         duas vezes. Até o re-check isso era FALSO: quem barrava era o índice do recibo, DEPOIS de o
+#         corpo rodar de novo — e a S3 exigia exatamente a marca do índice;
 #   (S4)  só o marcador cego → o ledger responde e o script AVISA, não finge;
 #   (S5)  recusa do envelope removida → o corpo com BEGIN; chega ao banco, que o barra (4);
 #   (S6)  guard de não-transacional desligado → o banco barra o CREATE INDEX CONCURRENTLY (4);
@@ -585,6 +591,91 @@ case "$A15" in
   *) nok "A15" "sem veredito — ${A15:-a dupla não respondeu}" ;;
 esac
 
+echo "▶ A16–A19b — o delta db/aplicar-porta-recheck.sql (v2 → v3), pelo caminho que vai a produção"
+# A v2 é o corpo que o delta da FILA deixa — o de prod até este delta (o E3 de test-pre-anti-deriva o
+# ancora em MD5_V2_FILA). Ela sai do próprio arquivo da fila: não há cópia para divergir.
+DELTA_RC="db/aplicar-porta-recheck.sql"
+DELTA_FILA="db/aplicar-executor-serializa.sql"
+MD5_V2="38699b251148bcc4c74faab795d06d38"
+porta_md5() { q_estrito "select md5(prosrc) from pg_proc where oid='public.aplicar_sql(text,text,bigint)'::regprocedure" || printf 'ILEGIVEL'; }
+bloco_aplicar_sql() { awk '/^CREATE OR REPLACE FUNCTION public\.aplicar_sql\(/{f=1} f{print} /^\$funcao\$;$/{if(f){exit}}' "$1"; }
+instala_porta() { bloco_aplicar_sql "$1" | $PSQL -q -f - > "$WORK/porta.log" 2>&1; }
+# delta como postgres numa transação, com VERBOSITY verbose para a SQLSTATE vir na linha do erro. Usado
+# só com CÓPIAS (o executor recusa arquivo fora do git): o que se prova é a PRE e a PÓS do arquivo.
+delta_como_postgres() { # <arquivo> <log>
+  printf '\\set VERBOSITY verbose\nBEGIN;\n\\i %s\nCOMMIT;\n' "$1" | $PSQL -f - > "$2" 2>&1 || true
+}
+# o md5 de uma porta, calculado NO BANCO numa cópia com outro nome (a régua do md5 é do Postgres)
+md5_de_porta() { # <arquivo com o bloco> — imprime o md5, ou ILEGIVEL
+  local m=""
+  bloco_aplicar_sql "$1" | sed 's/^CREATE OR REPLACE FUNCTION public\.aplicar_sql(/CREATE OR REPLACE FUNCTION public.aplicar_sql_md5_sonda(/' \
+    | $PSQL -q -f - > "$WORK/md5-sonda.log" 2>&1 || { printf 'ILEGIVEL'; return 0; }
+  m="$(q_estrito "select md5(prosrc) from pg_proc where proname='aplicar_sql_md5_sonda'")" || m="ILEGIVEL"
+  q_estrito "drop function if exists public.aplicar_sql_md5_sonda(text, text, bigint)" > /dev/null || true
+  printf '%s' "$m"
+}
+MD5_V3="$(porta_md5)"   # a do bootstrap, instalada lá no começo
+
+# A16 — sobre a v2, o delta aplica pelo PRÓPRIO executor (auto-substituição) e deixa o corpo do bootstrap
+instala_porta "$REPO_ROOT/$DELTA_FILA" || true
+eq "A16 a v2 de partida é a de prod (md5 conferido por psql-ro)" "$(porta_md5)" "$MD5_V2"
+OUT="$WORK/a16.log"
+eq "A16 o delta aplica pelo PRÓPRIO executor sobre a v2" "$(rc_de "$DELTA_RC")" "0"
+eq "A16 o corpo que o delta deixa é o do bootstrap" "$(porta_md5)" "$MD5_V3"
+eq "A16 o md5 do bootstrap é o literal da PRE e da PÓS do delta" "$(grep -c "$MD5_V3" "$REPO_ROOT/$DELTA_RC")" "2"
+eq "A16 a sonda da PÓS não deixou rastro no ledger" \
+   "$(q "select count(*) from public.db_aplicacoes where arquivo like '$DELTA_RC#%'")" "0"
+
+# A17 — sobre si mesmo (já a v3), re-ensaiado: a PRE aceita "já este", e a PÓS percorre a porta nova
+OUT="$WORK/a17.log"
+eq "A17 o delta re-ensaiado sobre a v3 passa (PRE 'já este' + as três sondas da PÓS)" "$(rc_de "$DELTA_RC" --ensaio)" "0"
+
+# A18 — sobre um corpo ESTRANHO a PRE recusa, e o estranho fica
+bloco_aplicar_sql "$REPO_ROOT/$DELTA_FILA" \
+  | sed "s/^  RETURN 'FIM_APLICACAO_OK';\$/  RETURN 'FIM_APLICACAO_OK';  -- estranho/" > "$WORK/porta-estranha.sql"
+$PSQL -q -f "$WORK/porta-estranha.sql" > /dev/null 2>&1 || true
+A18_MD5="$(porta_md5)"
+if [ "$A18_MD5" = "$MD5_V2" ] || [ "$A18_MD5" = "$MD5_V3" ] || [ "$A18_MD5" = ILEGIVEL ]; then
+  nok "A18" "o corpo 'estranho' não ficou estranho (md5 $A18_MD5): nada abaixo seria veredito"
+else
+  delta_como_postgres "$REPO_ROOT/$DELTA_RC" "$WORK/a18.log"
+  if grep -qF 'PRE FALHOU' "$WORK/a18.log"; then ok "A18 a PRE recusou o corpo estranho (PRE FALHOU)"
+  else nok "A18 PRE" "sem 'PRE FALHOU': $(tail -c 200 "$WORK/a18.log" | tr '\n' ' ')"; fi
+  eq "A18 e o estranho FICOU (o CREATE não rodou)" "$(porta_md5)" "$A18_MD5"
+fi
+
+# A19 — o delta com o RE-CHECK quebrado (late-bound: compila, e só explode quando o re-check RODA)
+# aborta na PÓS, e a v2 fica. O md5 literal da cópia vira o da porta quebrada, para quem barrar ser a
+# SONDA, não a régua do md5. 42703 só sai do PLANEJAMENTO do SELECT — prova que o re-check rodou.
+# A19b — o CONTROLE: a mesma cópia quebrada com a PÓS reduzida à sonda de ENSAIO (o molde do delta da
+# fila) APLICA. Sem ele, A19 poderia ser verde por um motivo qualquer; com ele, é a parte REAL da sonda
+# que barra — e um delta com sonda só de ensaio entregaria a prod uma porta que nenhum apply atravessa.
+sed "s/^     WHERE sha256 = p_sha AND estado = 'aplicada';\$/     WHERE sha256 = p_sha AND estado_quebrado = 'aplicada';/" \
+  "$REPO_ROOT/$DELTA_RC" > "$WORK/delta-quebrado.sql"
+A19_MD5="$(md5_de_porta "$WORK/delta-quebrado.sql")"
+if cmp -s "$REPO_ROOT/$DELTA_RC" "$WORK/delta-quebrado.sql" || [ "$A19_MD5" = ILEGIVEL ] || [ "$A19_MD5" = "$MD5_V3" ]; then
+  nok "A19" "a quebra não pegou no delta (md5 $A19_MD5): nada abaixo seria veredito"
+else
+  sed -i.bak "s/$MD5_V3/$A19_MD5/g" "$WORK/delta-quebrado.sql"
+  perl -0pe 's/\n    -- \(2\) o caminho REAL.*?\n    END;\n/\n/s' "$WORK/delta-quebrado.sql" > "$WORK/delta-quebrado-so-ensaio.sql"
+  instala_porta "$REPO_ROOT/$DELTA_FILA" || true
+  delta_como_postgres "$WORK/delta-quebrado.sql" "$WORK/a19.log"
+  if grep -qF '42703' "$WORK/a19.log" && grep -qF 'estado_quebrado' "$WORK/a19.log"; then
+    ok "A19 a PÓS percorreu o re-check quebrado e abortou (42703)"
+  else
+    nok "A19 PÓS" "sem 42703/estado_quebrado: $(tail -c 220 "$WORK/a19.log" | tr '\n' ' ')"
+  fi
+  eq "A19 e a v2 FICOU de pé" "$(porta_md5)" "$MD5_V2"
+  if cmp -s "$WORK/delta-quebrado.sql" "$WORK/delta-quebrado-so-ensaio.sql"; then
+    nok "A19b" "a redução da PÓS ao ensaio não casou com o arquivo: o controle não existe"
+  else
+    delta_como_postgres "$WORK/delta-quebrado-so-ensaio.sql" "$WORK/a19b.log"
+    eq "A19b CONTROLE: com a sonda SÓ de ensaio, o mesmo re-check quebrado APLICA" "$(porta_md5)" "$A19_MD5"
+  fi
+fi
+instala_porta "$BOOT" || true
+eq "A16–A19b a porta do bootstrap de volta (A13/A14 dependem dela)" "$(porta_md5)" "$MD5_V3"
+
 echo "▶ A13/A14 — a conexão cai DEPOIS da tentativa e DURANTE o apply"
 # A classe de desfecho que o veredito da etapa 6 não sabia nomear. Até 2026-09-18 a regex que
 # separava 4 (falhou, rollback limpo) de 5 (não sei) era `grep -iE '...(ERRO|ERROR|FATAL|PANIC)'`:
@@ -1014,8 +1105,14 @@ cen_s3() {
     || { printf 'preparo: a leitura do ledger falhou'; return 0; }
   [ "$n" = 1 ] || { printf "preparo: esperava 1 recibo 'aplicada', veio '%s'" "$n"; return 0; }
   r="$(rc_de "$FIX_OK")"
-  # leu 'aplicada', seguiu mesmo assim (tentativa registrada), e o ÍNDICE ÚNICO barrou o 2º recibo
-  confere "$r" 4 "$OUT" 'ledger: aplicada' 'tentativa #' 'APPLY FALHOU' 'db_aplicacoes_sha_aplicada_uniq' "$M_CTX"
+  # leu 'aplicada', seguiu mesmo assim (tentativa registrada), e a PORTA o recusou ANTES de executar.
+  # Até o re-check (db/aplicar-porta-recheck.sql) quem barrava era o índice único do 2º RECIBO, depois
+  # de o corpo rodar de novo. Por isso o índice NÃO pode aparecer: se aparece, o corpo executou.
+  m="$(confere "$r" 4 "$OUT" 'ledger: aplicada' 'tentativa #' 'APPLY FALHOU' 'RECUSA_SHA_JA_APLICADO' "$M_CTX")"
+  if [ "$m" = CERTO ] && grep -qF 'db_aplicacoes_sha_aplicada_uniq' "$OUT"; then
+    m='o indice do recibo apareceu: o corpo executou antes de ser barrado'
+  fi
+  printf '%s' "$m"
 }
 cen_s5() {
   local r="" m="" t=""
