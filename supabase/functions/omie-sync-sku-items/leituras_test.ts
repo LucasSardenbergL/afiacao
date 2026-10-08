@@ -8,7 +8,6 @@ import {
   carregarNfesDaJanela,
   carregarTrackingsComLinha,
   emLotes,
-  LOTE_IN,
 } from "./leituras.ts";
 
 function assertEquals(a: unknown, b: unknown, msg?: string) {
@@ -107,7 +106,9 @@ Deno.test("trackings com linha: 2.962 linhas de histórico, TODOS os 297 trackin
   for (let t = 297; t < 334; t++) {
     if (comLinha.has(trackings[t])) throw new Error(`tracking ${t} sem linha apareceu como com linha`);
   }
-  if (log.maiorIn > LOTE_IN) throw new Error(`.in() com ${log.maiorIn} valores > LOTE_IN ${LOTE_IN}`);
+  // Teto FIXO aqui, não `LOTE_IN`: comparar com a própria constante aprovaria um LOTE_IN de 100.000
+  // (falsificado). 200 UUIDs ≈ 7,4 KB de querystring; 334 de uma vez (o v1.4) reprova.
+  if (log.maiorIn > 200) throw new Error(`.in() com ${log.maiorIn} valores numa requisição (teto 200)`);
 });
 
 Deno.test("trackings com linha: o `.in()` cru do v1.4 perderia trackings (controle do cenário)", async () => {
