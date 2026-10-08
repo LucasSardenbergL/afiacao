@@ -178,6 +178,16 @@
       "classe": "NAO_MENSURAVEL",
       "motivo": "declarada com corpo SQL-padrão (prosqlbody): prod não tem prosrc textual para comparar.",
       "desde": "2026-09-26"
+    },
+    {
+      "funcao": "reconciliar_pedidos_omie",
+      "identidade": "jsonb,text[],timestamp with time zone",
+      "classe": "EDICAO_MANUAL",
+      "esperadaNoAceite": "20260914180104_reconciliar_carrega_desconto_e_isola_coerencia.sql",
+      "motivo": "Aplicada em prod pelo ENVELOPE db/2026-10-06-desconto-corrigido-para-null.sql (#2827, money-path): substituição PROGRAMÁTICA que lê o pg_get_functiondef vivo, exige 7 âncoras 1x cada e faz EXECUTE. Por DESENHO o corpo resultante não é derivável das migrations commitadas, e é justamente por isso que o apply não copia corpo (corpo copiado diverge do repo). O que ela acrescenta: o contador v_desc_corr_null e a chave metadata.desconto_corrigido_para_null, SUBCONJUNTO de desconto_corrigido (nunca somar as duas). Risco a vigiar: um CREATE OR REPLACE desta função a partir do repo apaga a nulificação separada em silêncio, porque a última a recriar vence — o pré-flight de pg_get_functiondef da PROD é obrigatório antes, conforme CLAUDE.md. Provado no ar em 2026-10-07 02:15Z: a chave nasceu valendo 0 na run do cron, ausente nas três anteriores. Aceita pelo founder em 2026-10-07.",
+      "md5": "4b16bbb469c7b4dc6f688df58e191d72",
+      "md5Tokens": "3c5d0fb742e9e8032abada8879b4347c",
+      "desde": "2026-10-07"
     }
   ]
 }
