@@ -493,8 +493,42 @@ parágrafo. Os outros dois passos da reconciliação não se aplicam: não há m
 registrar em `schema_migrations`, e `types.ts` não morde porque a tabela tem RLS fechada e o front
 não a consome (se um dia consumir, a regeneração dos tipos entra na mesma entrega).
 
-E o Codex retroativo segue devendo: a cota reabre **09/10 19:30**, e o achado que vier de lá é
-conserto, não discussão.
+**O Codex retroativo foi DISPENSADO pelo founder** (2026-10-08), com o apply já em produção. Fica
+dito sem maquiagem: esta entrega **não teve revisão independente de código**. O que ela teve está
+acima — PG17 com 21 asserts e 5 sabotagens no assert declarado, ensaio em prod, três correções que o
+CI cobrou, e o auto-challenge com quatro achados próprios (dois P2 vivos: o sensor em `read
+committed` e o `revisar_em` sem sensor). Auto-revisão não vira revisão independente por decisão —
+vira dívida assumida, e o registro serve para quem for mexer nisso depois saber o que não foi olhado.
+
+### A auditoria de migrations, rodada contra prod (2026-10-08)
+
+`bun run audit:migrations` gera `scripts/audit-custom-migrations.sql`, que é **leitura pura** (zero
+INSERT/UPDATE/DDL — conferido antes de rodar) e por isso passou pelo `psql-ro` em vez do SQL Editor.
+588 migrations, 1935 objetos esperados. Veredito:
+
+| achado | n | de quem |
+|---|---|---|
+| migrations **aplicadas sem registro** em `schema_migrations` | **430** (contra 74 registradas) | estrutural: nome custom não auto-aplica no Lovable, então o padrão do repo é aplicar à mão |
+| **corpo em deriva** (prod ≠ qualquer migration) | **15** | **1 é desta entrega** e esperada: `pedido_total_liquido_converter`, patcheado via `db:aplicar`. As outras 14 são antigas |
+| **objetos ausentes** em prod | **20** (14 deles RLS policy) | nenhum é desta entrega |
+| migrations parcialmente materializadas | 12 | nenhuma é desta entrega |
+
+⚠️ **A auditoria ACUSOU a minha mudança, e isso é o sistema funcionando** — o conversor aparece como
+deriva porque o corpo novo não existe em nenhuma migration. É a consequência documentada de aplicar
+em `db/` por envelope, e se resolve pelo re-dump do snapshot, não por migration (tocar
+`supabase/migrations/` é proibido aqui).
+
+**Triagem dos 20 ausentes, antes de qualquer alarme:** 14 são RLS policy, o que soa grave e não é —
+medido em prod no mesmo minuto: **347 tabelas em `public`, ZERO com RLS desligada**, e 10 com RLS
+ligada e nenhuma policy. Ou seja, nenhuma exposição: o pior caso é **fail-closed** (staff que deveria
+ler uma tabela e não lê). Bug funcional, não vazamento. Os domínios são reposição, carteira, scoring,
+selfservice e markup — e parte pode ser falso-positivo do audit, que casa nome literal e acusa
+renomeação feita em migration posterior.
+
+Isso **não** entra nesta entrega: 20 objetos de 12 migrations alheias, em cinco domínios que eu não
+investiguei, é escopo próprio. Fica aqui com os números para quem pegar — a query da triagem é a de
+`pg_class` × `pg_policy` acima, e roda em segundos.
+
 
 ### A sequência, quando o parecer chegar
 
