@@ -1,0 +1,20 @@
+# Poder da suíte sobre o RESUMO da sonda por cron no `pendencias:deploy` — a camada que afirma
+# cobertura. Medido em prod em 2026-09-10, logo após a onda 5 da allowlist: 16 edges ativas, cabeçalho
+# "30/30 disparo(s) atestado(s)" (15 edges × 2 ticks — `omie-desconto-backfill` entrou depois do último
+# tick e NENHUM tick a perguntou) e a linha "✅ toda edge ativa foi atestada". O juiz pulava a edge sem
+# pergunta CORRETAMENTE; o ✅ é que era derivado da AUSÊNCIA de achado/aviso e herdava os pulos dele.
+# Cada mutação devolve UMA camada da correção ao estado quebrado; a suíte tem de ficar vermelha em todas.
+# Baseline verde na MESMA invocação é do harness (aborta se já está vermelha).
+# @src: scripts/pendencias-deploy.ts
+# @test: scripts/pendencias-deploy.test.ts
+# Rode: scripts/mutcheck.sh scripts/pendencias-deploy.ts scripts/pendencias-deploy.test.ts scripts/mutcheck.d/pendencias-deploy-resumo-cobertura.mut
+PEGA | o ✅ volta a ser incondicional (o defeito inteiro)    | s/    ativos\.length > 0 && r\.semPergunta\.length === 0 && r\.silencioEsperado\.length === 0;/    true;/
+PEGA | ✅ ignora a edge que nenhum tick perguntou            | s/r\.semPergunta\.length === 0 && //
+PEGA | ✅ ignora a perguntada e muda com ledger DIVERGE      | s/ && r\.silencioEsperado\.length === 0;/;/
+PEGA | ✅ afirma sobre populacao VAZIA (zero ativa)          | s/ativos\.length > 0 && //
+PEGA | cabecalho conta toda ativa como perguntada            | s/const perguntadas = ativos\.length - r\.semPergunta\.length;/const perguntadas = ativos.length;/
+PEGA | a linha que NOMEIA quem ficou fora do exame some      | s/if \(aguardando\.length > 0\) \{/if (aguardando.length > 99) {/
+PEGA | a linha da perguntada-e-muda esperada some            | s/if \(r\.silencioEsperado\.length > 0\) \{/if (r.silencioEsperado.length > 99) {/
+PEGA | espera ilegivel passa e "" vira 0 min (ausente=zero)  | s/!MINUTOS_DE_ESPERA\.test\(min\)/false/
+PEGA | o ramo "nao consegui medir" para de aparecer          | s/if \(aguardando\.some\(\(a\) => a\.minutos === null\)\) \{/if (aguardando.some((a) => a.minutos === 0)) {/
+PEGA | a espera nunca e lida: toda edge fora do exame fica sem teto | s/if \(r\.semPergunta\.length > 0\) \{/if (false) {/

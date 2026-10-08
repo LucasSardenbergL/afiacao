@@ -54,6 +54,7 @@ import {
   SQL_SONDA_CRON_ALVOS,
   SQL_SONDA_CRON_ATESTACOES,
   SQL_SONDA_CRON_DISPAROS,
+  SQL_SONDA_CRON_ESPERA,
   SQL_SONDA_CRON_MOTIVOS,
 } from './pendencias-deploy';
 
@@ -876,13 +877,15 @@ describe('--json — o contrato que o Passo 3 do /fecho lê', () => {
 const UPDATE_MARCA = 'UPDATE public.deploy_sonda_alvos SET ativo = false';
 
 const lerBanco =
-  (ativos: string[], extra: { disparos?: string; atestacoes?: string } = {}) =>
+  (ativos: string[], extra: { disparos?: string; atestacoes?: string; espera?: string } = {}) =>
   (sql: string): string => {
     if (sql === SQL_SONDA_CRON_ALVOS) return `${ativos.join('\n')}\n`;
     if (sql === SQL_SAUDE_CRON_SONDA) return '12.5\n';
     if (sql === SQL_SONDA_CRON_DISPAROS) return extra.disparos ?? '';
     if (sql === SQL_SONDA_CRON_ATESTACOES) return extra.atestacoes ?? '';
     if (sql === SQL_SONDA_CRON_MOTIVOS) return '';
+    // Sem `espera` no cenário, a leitura FALHA — é o ramo "não consegui medir", nunca "0 min".
+    if (sql === SQL_SONDA_CRON_ESPERA && extra.espera !== undefined) return extra.espera;
     throw new Error(`SQL inesperado no teste: ${sql.slice(0, 60)}`);
   };
 
@@ -965,6 +968,127 @@ describe('secaoSondaCron — o guard compara o banco com a allowlist da REF, nã
     });
     expect(s.mecanica).toBeNull();
     expect(s.linhas.join('\n')).not.toContain('ALLOWLIST_DEFASADA');
+  });
+});
+
+/**
+ * O resumo da sonda por cron diz SÓ o que foi examinado (medido em prod em 2026-09-10, logo após a
+ * onda 5): 16 edges ativas, cabeçalho "30/30 disparo(s) atestado(s)" — 15 edges × 2 ticks, porque a
+ * recém-habilitada `omie-desconto-backfill` nunca tinha sido perguntada — e o ✅ "toda edge ativa foi
+ * atestada". O juiz pulava a edge sem pergunta CORRETAMENTE; o ✅ é que vinha da AUSÊNCIA de achado e
+ * herdava o pulo. A marca abaixo é o texto EXATO do ✅: trocá-lo faria o teste negativo passar por
+ * cegueira, então o controle positivo exige a MESMA string.
+ */
+const MARCA_TUDO_ATESTADO = 'toda edge ativa foi atestada';
+const NOVA = 'omie-desconto-backfill';
+const DUAS = ['monthly-report', NOVA];
+const SEM_DEFASAGEM = { ref: DUAS, disco: DUAS, worktree: { aFrente: 0, atras: 0 } };
+const CONFERE_DUAS = new Map(DUAS.map((e) => [e, 'CONFERE']));
+/** `monthly-report` perguntada nos 2 ticks e atestada nos 2. */
+const SO_MONTHLY = {
+  disparos: 't2|monthly-report|200\nt1|monthly-report|100\n',
+  atestacoes: '100|monthly-report\n200|monthly-report\n',
+};
+
+describe('secaoSondaCron — o resumo afirma só o que o juiz examinou', () => {
+  it('edge ativa SEM disparo nos ticks recentes → o resumo NÃO afirma "toda edge ativa foi atestada"', () => {
+    const s = secaoSondaCron(
+      CONFERE_DUAS,
+      lerBanco(DUAS, { ...SO_MONTHLY, espera: `monthly-report|30.0\n${NOVA}|40.0\n` }),
+      SEM_DEFASAGEM,
+    );
+    expect(s.mecanica).toBeNull();
+    expect(s.achados).toBe(0);
+    const tudo = s.linhas.join('\n');
+    expect(tudo).not.toContain(MARCA_TUDO_ATESTADO);
+    // prova POSITIVA do ramo certo: o cabeçalho conta quem foi perguntado e a linha nomeia quem não foi
+    expect(tudo).toContain('1/2 edge(s) ativa(s) perguntada(s) em 2 tick(s) recente(s)');
+    expect(tudo).toContain('2/2 disparo(s) atestado(s)');
+    expect(tudo).toContain('sem pergunta');
+    expect(tudo).toContain(`${NOVA} (espera 40 min)`);
+  });
+
+  it('controle: toda ativa perguntada e atestada → o ✅ continua, com o MESMO texto', () => {
+    const s = secaoSondaCron(
+      CONFERE_DUAS,
+      lerBanco(DUAS, {
+        disparos: `t2|monthly-report|200\nt2|${NOVA}|201\nt1|monthly-report|100\nt1|${NOVA}|101\n`,
+        atestacoes: `100|monthly-report\n101|${NOVA}\n200|monthly-report\n201|${NOVA}\n`,
+      }),
+      SEM_DEFASAGEM,
+    );
+    expect(s.mecanica).toBeNull();
+    const tudo = s.linhas.join('\n');
+    expect(tudo).toContain(MARCA_TUDO_ATESTADO);
+    expect(tudo).toContain('2/2 edge(s) ativa(s) perguntada(s) em 2 tick(s) recente(s)');
+    expect(tudo).not.toContain('sem pergunta');
+  });
+
+  it('cron que nunca rodou (0 ticks, 0/0 disparos) → nada foi examinado, e nada é afirmado', () => {
+    const s = secaoSondaCron(CONFERE_DUAS, lerBanco(DUAS, { espera: `monthly-report|40.0\n${NOVA}|40.0\n` }), SEM_DEFASAGEM);
+    expect(s.mecanica).toBeNull();
+    const tudo = s.linhas.join('\n');
+    expect(tudo).not.toContain(MARCA_TUDO_ATESTADO);
+    expect(tudo).toContain('0/2 edge(s) ativa(s) perguntada(s) em 0 tick(s) recente(s)');
+    expect(tudo).toContain('0/0 disparo(s) atestado(s)');
+    expect(tudo).toContain('monthly-report (espera 40 min)');
+  });
+
+  it('sem pergunta ACIMA do teto → aviso de que o dispatcher não pergunta, fora da lista de espera', () => {
+    const s = secaoSondaCron(
+      CONFERE_DUAS,
+      lerBanco(DUAS, { ...SO_MONTHLY, espera: `monthly-report|30.0\n${NOVA}|300.0\n` }),
+      SEM_DEFASAGEM,
+    );
+    expect(s.mecanica).toBeNull();
+    expect(s.achados).toBe(0); // aviso não reprova: precisão > recall
+    const tudo = s.linhas.join('\n');
+    expect(tudo).not.toContain(MARCA_TUDO_ATESTADO);
+    expect(tudo).toContain(`${NOVA}: ativa e sem pergunta`);
+    expect(tudo).toContain('300 min');
+    expect(tudo).toContain('deploy-sonda-cron');
+    expect(tudo).not.toContain(`${NOVA} (espera`);
+  });
+
+  it('a leitura da espera FALHA → a linha diz que não mediu, e o ✅ continua fora', () => {
+    const s = secaoSondaCron(CONFERE_DUAS, lerBanco(DUAS, SO_MONTHLY), SEM_DEFASAGEM);
+    expect(s.mecanica).toBeNull(); // refinamento do resumo, não mecânica: o veredito não depende dele
+    const tudo = s.linhas.join('\n');
+    expect(tudo).not.toContain(MARCA_TUDO_ATESTADO);
+    expect(tudo).toContain(`${NOVA} (sem medida da espera)`);
+    expect(tudo).toContain('a leitura falhou');
+  });
+
+  it('espera com minutos VAZIO → sem medida, nunca "0 min" (ausente não é zero)', () => {
+    const s = secaoSondaCron(CONFERE_DUAS, lerBanco(DUAS, { ...SO_MONTHLY, espera: `${NOVA}|\n` }), SEM_DEFASAGEM);
+    const tudo = s.linhas.join('\n');
+    expect(tudo).toContain(`${NOVA} (sem medida da espera)`);
+    expect(tudo).not.toContain('(espera 0 min)');
+  });
+
+  it('perguntada e muda com ledger DIVERGE → sem acusar, mas também sem o ✅', () => {
+    const s = secaoSondaCron(
+      new Map([['monthly-report', 'CONFERE'], [NOVA, 'DIVERGE_P1']]),
+      lerBanco(DUAS, {
+        disparos: `t2|monthly-report|200\nt2|${NOVA}|201\nt1|monthly-report|100\nt1|${NOVA}|101\n`,
+        atestacoes: '100|monthly-report\n200|monthly-report\n',
+      }),
+      SEM_DEFASAGEM,
+    );
+    expect(s.mecanica).toBeNull();
+    expect(s.achados).toBe(0);
+    const tudo = s.linhas.join('\n');
+    expect(tudo).not.toContain(MARCA_TUDO_ATESTADO);
+    expect(tudo).toContain('perguntada(s) sem resposta');
+    expect(tudo).toContain(`${NOVA} (DIVERGE_P1)`);
+  });
+
+  it('nenhuma edge ativa → "toda" sobre população VAZIA não é evidência: sem ✅', () => {
+    const s = secaoSondaCron(SEM_ESTADO, lerBanco([]), { ref: [], disco: [], worktree: { aFrente: 0, atras: 0 } });
+    expect(s.mecanica).toBeNull();
+    const tudo = s.linhas.join('\n');
+    expect(tudo).toContain('0/0 edge(s) ativa(s) perguntada(s)');
+    expect(tudo).not.toContain(MARCA_TUDO_ATESTADO);
   });
 });
 

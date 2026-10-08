@@ -295,12 +295,95 @@ decisão sem ser conferido contra a ref*. Calibrada nos dois pré-fix (casou) e 
 | site | dado do disco | o que sai errado |
 |---|---|---|
 | `sonda-versao-sql.ts` (este PR) | `SONDA_CRON_ALVOS` | recusa do bloco legado desaparece |
-| `scripts/heavy-install.sh --status` | `sha_de scripts/heavy.sh` | instalado == disco ≠ main ⇒ "EM VOO" + exit 0: o vigia cala e o heavy defasado fica |
-| `lovable-deploy-verify/SKILL.md` §bloco bash | `grep ... index.ts` do disco | closure de deploy com 5 arquivos onde a main tem 7 (o próprio doc mediu isso) |
+| `scripts/heavy-install.sh --status` | `sha_de scripts/heavy.sh` | instalado == disco ≠ main ⇒ "EM VOO" + exit 0: o vigia cala e o heavy defasado fica — ✅ **#2861** |
+| `lovable-deploy-verify/SKILL.md` §bloco bash | `grep ... index.ts` do disco | closure de deploy com 5 arquivos onde a main tem 7 (o próprio doc mediu isso) — ✅ **#2858** |
+
+**Desfecho dos dois chips.** O `SKILL.md` fechou em **#2858**: o bloco do closure passa a ler a ref
+(`git show origin/main:<path> | grep -oE "from ['\"]…"`), com a escada nomeada na 1ª linha (o canônico
+é `pendencias:prompt`, que já lê a ref); o comando do import NOVO passou a casar aspas SIMPLES —
+só-duplas perdia 1 de 3 imports **até lendo a ref**; e a forma contra o disco ficou UMA vez, DEPOIS
+da certa, rotulada `❌ RASCUNHO LOCAL — não vale para pedir deploy`. Medido em repo-fixture:
+`REF=3 DISCO=1 REGEX_SO_DUPLAS_NA_REF=2`. O `heavy-install.sh --status` fechou em **#2861** — seção abaixo —, e com
+isso a varredura não tem mais site aberto.
+
+**E a classe tem uma variante em INSTRUÇÃO, não só em código: o resíduo de ORDEM.** No `SKILL.md` a
+correção **já existia** — no MESMO arquivo, ~45 linhas depois do comando errado, num 🔴 que mandava
+ler a ref. Não bastou: o bloco antigo não estava marcado como errado, e quem lê de cima para baixo
+(ou recorta só aquele passo) usa o primeiro comando que encontra. Num doc, *saber* não é *ensinar*:
+a lição só vale onde o leitor vai PARAR. Remédio nas duas pontas — o comando certo vem PRIMEIRO, e
+a forma errada, se ficar, fica **rotulada** como errada, nunca nua. Corolário para a varredura: num
+doc, procurar a lição não acusa nada (ela costuma estar lá); o que acusa é **comando errado sem
+rótulo**, e a distância até a correção é o tamanho do furo.
 
 Já-correto, por conferirem contra a ref ou julgarem disco × disco: `pendencias-deploy.ts` (o disco só
 nomeia), `sonda-cron-prova.ts`, `edges-afetadas.ts` (lê um `git archive`), `edges-pendentes.sh`,
 `pendencias-pacote.ts`, `monitor-deploy.sh`, `pr-duplicata-guard.sh`, `wt-preflight-migration.ts`.
+
+### O 2º site fechado: `heavy-install.sh --status` — aqui o furo era o ramo SILÊNCIO (2026-10-08)
+
+O `--status` comparava o `heavy` instalado com `origin/main:scripts/heavy.sh` (a ref, certo) e, quando
+divergia, comparava com o `scripts/heavy.sh` **do working tree** para decidir se era mudança em voo.
+Igual ⇒ `"heavy EM VOO"` + **exit 0**. Só que **"instalado == disco ≠ main" tem duas causas opostas**:
+disco **à frente** (alguém rodou `--daqui`; exit 0 é certo) e disco **atrás** (worktree defasado cujo
+`heavy.sh` é velho e cujo `heavy` instalado veio dali) — e esse segundo é **exatamente o caso que o
+instalador existe para pegar**: em 2026-07-20, 32 das 39 worktrees carregavam o `heavy.sh` pré-#1459.
+Como o `vigia-worktree.sh` trata exit 0 como silêncio, o worktree atrasado **nunca ouvia nada** e o
+semáforo velho ficava instalado indefinidamente. **Direção do furo:** a pior — o mesmo ramo mudo do
+irmão no `sonda:sql`, mas num sensor cujo ÚNICO leitor é um hook que só fala em exit ≠ 0.
+
+**O fix** (`direcao_do_disco`, `scripts/heavy-install.sh`) desempata pelo **git, não por heurística de
+texto**: o blob do `heavy.sh` do disco está na HISTÓRIA de `origin/main` para esse path? Está ⇒
+`ATRAS` ⇒ **`heavy DEFASADO`** + exit 1 (o vigia FALA, e a mensagem nomeia o commit da main que
+introduziu a versão do disco); não está ⇒ `A_FRENTE` ⇒ EM VOO + exit 0, preservado para o `--daqui`
+legítimo. Um `git log --no-abbrev --raw` dá os blobs old+new de todas as revisões do path em **um
+fork** — medido 0,33s com 6.535 commits, dentro do teto de 3s que o hook aplica, por isso não há um
+`rev-parse` por commit.
+
+**O controle é POSITIVO, não `command -v`** (`sonda-ausente-em-script-que-apaga.md`): a enumeração tem
+de **conter o blob da ponta** de `origin/main` — o objeto que o script acabou de comparar. `git` que
+não responde, ref ilegível, história vazia ou enumeração que não se contém caem em **exit 3**
+("não consegui verificar"), **nunca** em `A_FRENTE` — porque `A_FRENTE` é o ramo mudo, e mandar
+ausência de dado para o ramo mudo é o defeito outra vez, pela porta de trás.
+
+**A armadilha que a suíte pegou** (e que vale para qualquer sensor que leia a ref em shell):
+`git log -- <pathspec>` é relativo ao **CWD**, e `git -C "$here"` põe o CWD em `scripts/` —
+`-- scripts/heavy.sh` ali vira `scripts/scripts/heavy.sh` e a enumeração sai **vazia**. A sintaxe
+`rev:path` do `git show` logo acima no mesmo arquivo **não** tem esse problema (é sempre relativa à
+raiz), e foi ler as duas como "mesmo caminho" que quebrou. Remédio: pathspec `:(top)`. Sem o controle
+positivo isso teria saído como `A_FRENTE` — silêncio — em vez do exit 3 que denunciou.
+
+**Provado** em `scripts/test-heavy-install.sh` (casos 13-16, macOS-only como o resto da família
+`heavy`): disco atrás ⇒ rc **1** (o código que o vigia transforma em aviso) + marca `DEFASADO` e
+**não** `EM VOO`; disco à frente ⇒ rc 0 + `EM VOO`; `git log` emudecido ⇒ rc 3; e história
+**não-vazia sem o blob da ponta** ⇒ rc 3, que é o eixo que o caso do `log` mudo não alcança.
+Falsificado via `mutcheck` (baseline-check verde na MESMA invocação, abortando antes do 1º `sed`) nos
+dois locales, **6/6 pegas**, `controle+` ✓: marca do `case`, `exit 1`→`0`, `DEFASADO`→`DIVERGENTE`,
+`-n`→`-z` na direção, controle da ponta desligado e perda do `:(top)`. O contrato de mutação **não**
+foi versionado em `scripts/mutcheck.d/`: o job `mutation-check` roda em `ubuntu-latest` e esta suíte
+está em `hooks-suites-baseline.ts` como macOS-only (`stat -f %i` é BSD), então o mutcheck abortaria
+lá por baseline vermelha culpando o "harness/ambiente" — mensagem que aponta para o lugar errado.
+**Limite nomeado:** o guard de lista vazia (`[ -n "$pares" ]`) **sobreviveu** à mutação exploratória
+— o controle da ponta pega o mesmo caso. Ele fica por clareza do fluxo, não por poder de detecção.
+
+As mutações ficam AQUI, e não num `.mut` fora do versionamento, porque falsificação que só existe
+na transcrição de uma sessão não se reproduz. Salve como `.mut`, aponte `@src`/`@test` e rode:
+
+```
+# @src: scripts/heavy-install.sh      @test: scripts/test-heavy-install.sh
+# @test_cmd: bash                     @compile_cmd: bash -n
+PEGA | ATRAS deixa de ser reconhecido no case | s{"ATRAS \$commit_disco"}{"ATRASX"}
+PEGA | DEFASADO sai 0 (vigia volta a calar)   | s{^            exit 1$}{            exit 0}
+PEGA | marca DEFASADO vira DIVERGENTE         | s{heavy DEFASADO}{heavy DIVERGENTE}
+PEGA | direcao invertida (-n vira -z)         | s{if \[ -n "\$commit_disco" \]}{if [ -z "\$commit_disco" ]}
+PEGA | controle positivo da ponta desligado   | s{\[ "\$achou_ponta" = 1 \]}{[ 1 = 1 ]}
+PEGA | pathspec perde o :(top)                | s{':\(top\)scripts/heavy.sh'}{scripts/heavy.sh}
+?    | guard de lista vazia de pares          | s{\[ -n "\$pares" \] \|\|}{[ 1 = 1 ] ||}
+```
+
+```bash
+MUTCHECK_TEST_CMD=bash MUTCHECK_COMPILE_CMD='bash -n' \
+  bash scripts/mutcheck.sh scripts/heavy-install.sh scripts/test-heavy-install.sh <arquivo.mut>
+```
 
 **O gate** é `scripts/gate-allowlist-sonda-da-ref.test.ts`: varre `scripts/`, `db/` e `.claude/` e
 RECUSA importador novo de `_shared/sonda-cron-alvos` (o dado do disco) fora de uma lista fechada com
