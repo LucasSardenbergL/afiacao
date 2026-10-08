@@ -348,6 +348,26 @@ lá por baseline vermelha culpando o "harness/ambiente" — mensagem que aponta 
 **Limite nomeado:** o guard de lista vazia (`[ -n "$pares" ]`) **sobreviveu** à mutação exploratória
 — o controle da ponta pega o mesmo caso. Ele fica por clareza do fluxo, não por poder de detecção.
 
+As mutações ficam AQUI, e não num `.mut` fora do versionamento, porque falsificação que só existe
+na transcrição de uma sessão não se reproduz. Salve como `.mut`, aponte `@src`/`@test` e rode:
+
+```
+# @src: scripts/heavy-install.sh      @test: scripts/test-heavy-install.sh
+# @test_cmd: bash                     @compile_cmd: bash -n
+PEGA | ATRAS deixa de ser reconhecido no case | s{"ATRAS \$commit_disco"}{"ATRASX"}
+PEGA | DEFASADO sai 0 (vigia volta a calar)   | s{^            exit 1$}{            exit 0}
+PEGA | marca DEFASADO vira DIVERGENTE         | s{heavy DEFASADO}{heavy DIVERGENTE}
+PEGA | direcao invertida (-n vira -z)         | s{if \[ -n "\$commit_disco" \]}{if [ -z "\$commit_disco" ]}
+PEGA | controle positivo da ponta desligado   | s{\[ "\$achou_ponta" = 1 \]}{[ 1 = 1 ]}
+PEGA | pathspec perde o :(top)                | s{':\(top\)scripts/heavy.sh'}{scripts/heavy.sh}
+?    | guard de lista vazia de pares          | s{\[ -n "\$pares" \] \|\|}{[ 1 = 1 ] ||}
+```
+
+```bash
+MUTCHECK_TEST_CMD=bash MUTCHECK_COMPILE_CMD='bash -n' \
+  bash scripts/mutcheck.sh scripts/heavy-install.sh scripts/test-heavy-install.sh <arquivo.mut>
+```
+
 **O gate** é `scripts/gate-allowlist-sonda-da-ref.test.ts`: varre `scripts/`, `db/` e `.claude/` e
 RECUSA importador novo de `_shared/sonda-cron-alvos` (o dado do disco) fora de uma lista fechada com
 justificativa escrita — hoje `pendencias-deploy.ts` ("só nomeia") e `sonda-cron-prova.ts` ("disco ×
