@@ -157,7 +157,7 @@ db/test-pedido-edicao-atomica.sh           54
 # e, medido, nem isso bastava: a palavra ERRO×ERROR que o executor casa vem do SERVIDOR
 # (`lc_messages`), e a rodada pt_BR antiga trocava só o cliente — as duas saíam idênticas
 # (docs/historico/falsificacao-db-aplicar-idioma-do-servidor.md).
-db/test-db-aplicar.sh                      46  falsificar=13
+db/test-db-aplicar.sh                      52  falsificar=15
 # Tintométrico: a promoção staging→oficial é tudo-ou-nada — receita corrompida não grava parcial,
 # linha sem `nome_cor` não derruba o run, e linha carimbada pela Fase 5 não é reativada (sem a
 # migration, o 23514 abortava o promote INTEIRO); o UPDATE da Fase 5 aborta a transação toda se o

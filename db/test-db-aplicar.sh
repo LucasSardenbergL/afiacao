@@ -2,7 +2,7 @@
 # ╔═════════════════════════════════════════════════════════════════════════════════════════╗
 # ║   PROVA PG17 — db/claude-rw-bootstrap.sql + scripts/db-aplicar.sh                       ║
 # ║   Rode:  bash db/test-db-aplicar.sh > /tmp/t.log 2>&1; echo $?                          ║
-# ║          bash db/test-db-aplicar.sh --falsificar    (13 sabotagens, exige VERMELHO)     ║
+# ║          bash db/test-db-aplicar.sh --falsificar    (15 sabotagens, exige VERMELHO)     ║
 # ║   Exit:  0 verde · 1 asserção vermelha · 3 SONDA/CONTROLE podre (nada a julgar)         ║
 # ║                                                                                         ║
 # ║   Prova, EXECUTANDO (PL/pgSQL e psql são late-bound; criar não é rodar):                ║
@@ -17,7 +17,9 @@
 # ║    A9 tentativa já fechada não pode ser reusada (nem executa);                          ║
 # ║    A10 SQL COM envelope é recusado (exit 2) sem criar nada e sem gravar no ledger;      ║
 # ║    A13 conexão perdida DEPOIS da tentativa e DURANTE o apply sai 5 (não sei), não 4;    ║
-# ║    A14 o mesmo com o cluster fora do ar — a reconciliação MUDA não vira "rollback".     ║
+# ║    A14 o mesmo com o cluster fora do ar — a reconciliação MUDA não vira "rollback";     ║
+# ║    A15 dois applies SIMULTÂNEOS dos mesmos bytes: o corpo roda UMA vez, e quem barra o  ║
+# ║        2º é a PORTA, antes de executar — não o índice do recibo, depois.               ║
 # ╚═════════════════════════════════════════════════════════════════════════════════════════╝
 # Falsifica — cada sabotagem com rc EXATO + MARCA lida da saída real, julgada nas TRÊS combinações
 # servidor×cliente com o desfecho previsto para cada uma, e contra o seu GÊMEO verde (o mesmo cenário
@@ -39,7 +41,11 @@
 #         severidade do servidor e a queda de conexão volta a ser anunciada como rollback (4);
 #   (S13) a detecção da queda desligada → o rc segue 5 e só a MARCA cai: o 5 perde o nome próprio
 #         e a instrução (ler o ledger). S12 e S13 são as duas camadas do mesmo veredito, e nenhuma
-#         das duas é alcançada por fixture de erro do banco — só pela queda no meio do apply.
+#         das duas é alcançada por fixture de erro do banco — só pela queda no meio do apply;
+#   (S14) re-check da porta removido → o 2º apply dos mesmos bytes espera a vez e EXECUTA o corpo de
+#         novo; só o índice do recibo o reverte, depois (execuções 2, dado 1);
+#   (S15) fila removida → o re-check do 2º lê o ledger antes do commit do 1º e os dois executam juntos.
+#         S14 e S15 são as duas camadas da mesma garantia: cada uma sozinha deixa o corpo rodar 2 vezes.
 set -euo pipefail
 
 # Esta prova está em `db/nucleo-ci.txt` (job `provas-sql`) nos DOIS modos: o normal, com mínimo de
@@ -282,6 +288,13 @@ dupla_derruba() {
 # Logs dos dois em $OUT.1 e $OUT.2. Tabela e sequência nascem AQUI, fora dos applies: `CREATE … IF NOT
 # EXISTS` concorrente não se tolera, e mataria o 2º de S15 antes de ele chegar ao ponto que se mede.
 dupla_aplicacao() {
+  local r=""
+  r="$(dupla_aplicacao_)"
+  { echo "== 1o apply =="; cat "$OUT.1" 2>/dev/null || true; echo "== 2o apply =="
+    cat "$OUT.2" 2>/dev/null || true; echo "== desfecho: $r"; } > "$OUT"
+  printf '%s' "$r"
+}
+dupla_aplicacao_() {
   local i=0 ex="" n="" p1="" p2="" motivo=""
   if ! $PSQL -q -c "DROP TABLE IF EXISTS public.fixture_aplicar_dupla;
         DROP SEQUENCE IF EXISTS public.fixture_aplicar_dupla_seq;
@@ -335,6 +348,52 @@ dupla_aplicacao() {
     "$(dupla_q 'select count(*) from public.fixture_aplicar_dupla')" \
     "$(dupla_q "select count(*) from public.db_aplicacoes where arquivo='$FIX_DUPLA' and estado='aplicada'")" \
     "$(head -1 "$OUT.1.rc" | tr -d '[:space:]')" "$(head -1 "$OUT.2.rc" | tr -d '[:space:]')"
+}
+# dupla_veredito <UMA|DUAS> — CERTO só se o desfecho é EXATAMENTE o previsto; senão diz o que veio.
+#   UMA  (a porta íntegra): o corpo rodou UMA vez; o 2º foi recusado PELA PORTA, depois da fila e sem
+#        executar (RECUSA_SHA_JA_APLICADO), sem chegar ao índice; o 1º aplicou limpo.
+#   DUAS (sem re-check, ou sem fila): o corpo rodou DUAS vezes; quem perdeu foi barrado pelo ÍNDICE do
+#        recibo (db_aplicacoes_sha_aplicada_uniq) DEPOIS de executar; a porta não recusou ninguém.
+# Nos dois, 1 linha e 1 recibo: o índice sempre salva o DADO — por isso o critério é a EXECUÇÃO e a
+# marca de QUEM barrou, e o rc 4 sozinho aprovaria os dois. Marcas ASCII de caixa fixa, `grep -F` sem
+# `-i`: o nome do índice e a marca são texto nosso, idênticos em C e em pt_BR.
+dupla_veredito() {
+  local res="" ex="" lin="" rec="" r1="" r2="" perdeu=""
+  res="$(dupla_aplicacao)"
+  case "$res" in
+    RES\ *) ;;
+    *) printf '%s' "${res:-SEM_VEREDITO a dupla nao respondeu}"; return 0 ;;
+  esac
+  ex="$(fld 2 "$res")"; lin="$(fld 3 "$res")"; rec="$(fld 4 "$res")"; r1="$(fld 5 "$res")"; r2="$(fld 6 "$res")"
+  if [ "$lin" != 1 ] || [ "$rec" != 1 ]; then
+    printf 'linhas=%s recibos=%s (o indice tinha de salvar o dado nos dois desfechos: 1 e 1)' "$lin" "$rec"; return 0
+  fi
+  case "$1" in
+    UMA)
+      if [ "$ex" != 1 ]; then printf 'execucoes=%s: o corpo rodou de novo com a porta integra' "$ex"; return 0; fi
+      if [ "$r1" != 0 ] || [ "$r2" != 4 ]; then printf 'rcs %s/%s (previsto 0/4)' "$r1" "$r2"; return 0; fi
+      if ! grep -qF 'RECUSA_SHA_JA_APLICADO' "$OUT.2"; then
+        printf 'o 2o saiu 4 SEM a marca da porta: %s' "$(tail -c 160 "$OUT.2" | tr '\n' ' ')"; return 0
+      fi
+      if grep -qF 'db_aplicacoes_sha_aplicada_uniq' "$OUT.2"; then
+        printf 'o 2o chegou ao INDICE do recibo: executou antes de ser barrado'; return 0
+      fi ;;
+    DUAS)
+      if [ "$ex" != 2 ]; then printf 'execucoes=%s (previsto 2)' "$ex"; return 0; fi
+      case "$r1/$r2" in
+        0/4) perdeu="$OUT.2" ;;
+        4/0) perdeu="$OUT.1" ;;
+        *) printf 'rcs %s/%s (previsto um 0 e um 4)' "$r1" "$r2"; return 0 ;;
+      esac
+      if ! grep -qF 'db_aplicacoes_sha_aplicada_uniq' "$perdeu"; then
+        printf 'quem saiu 4 nao foi barrado pelo indice: %s' "$(tail -c 160 "$perdeu" | tr '\n' ' ')"; return 0
+      fi
+      if grep -qF 'RECUSA_SHA_JA_APLICADO' "$OUT.1" "$OUT.2"; then
+        printf 'a PORTA recusou alguem: a camada sabotada ainda esta la'; return 0
+      fi ;;
+    *) printf "dupla_veredito: desfecho desconhecido '%s'" "$1"; return 0 ;;
+  esac
+  printf 'CERTO'
 }
 
 # ═════════════════════════════════════════════════════════════════════════════════════════
@@ -713,7 +772,8 @@ limpa() { # zera fixtures e ledger do cluster selecionado; o status é conferido
   $PSQL -q -c "DROP FUNCTION IF EXISTS public.fixture_corpo_refresca();
     DROP TABLE IF EXISTS public.fixture_aplicar_ok, public.fixture_aplicar_meia,
       public.fixture_aplicar_envelope, public.fixture_aplicar_cic, public.fixture_aplicar_corpo,
-      public.fixture_aplicar_lento;
+      public.fixture_aplicar_lento, public.fixture_aplicar_dupla;
+    DROP SEQUENCE IF EXISTS public.fixture_aplicar_dupla_seq;
     DELETE FROM public.db_aplicacoes" > "$CDIR/limpa.log" 2>&1
 }
 # A S2 deixa estado `desconhecido` no ledger, e a S3 um recibo `aplicada`: limpeza que falhasse em
@@ -772,6 +832,11 @@ controle_combo() {
   [ "$m" = CERTO ] || { printf 'A12: %s' "$m"; return 0; }
   c="$(corpo_guardado)" || { printf 'A12b: a leitura do corpo guardado falhou'; return 0; }
   [ "$c" = "$CORPO_ARQ" ] || { printf 'A12b: o corpo guardado NAO e o do arquivo'; return 0; }
+  # A15 no controle é o que dá dente a S14/S15: prova, NESTA invocação e antes da 1ª sabotagem, que a
+  # sobreposição acontece de verdade e que a porta íntegra deixa o corpo rodar UMA vez. Sem ele, uma
+  # dupla que nunca sobrepõe deixaria S15 "vermelha" por acidente — ou verde sem a fila ser exercitada.
+  OUT="$LOGS/$rot-A15.$COMBO.log"; m="$(dupla_veredito UMA)"
+  [ "$m" = CERTO ] || { printf 'A15: %s' "$m"; return 0; }
   printf 'CERTO'
 }
 
@@ -1088,13 +1153,50 @@ cen_s9() {
   printf 'CERTO'
 }
 
+# S14/S15 — as duas camadas da porta contra a aplicação DUPLA, sabotadas UMA por vez. Cada uma sozinha
+# deixa o corpo rodar de novo, por um caminho diferente: sem o re-check (S14) o 2º espera a vez e
+# executa assim que a pega — a fila só ORDENA; sem a fila (S15) o re-check do 2º lê o ledger enquanto o
+# 1º ainda não commitou — ausência de recibo lida como "inédito" — e os dois executam juntos. Nos dois o
+# ÍNDICE do recibo reverte quem perde: o dado fica certo, a execução não. Mexe na função dos clusters,
+# como a S9, e a devolve conferida antes de julgar.
+#
+# A instalação é conferida pelo md5, não pelo BOOTSTRAP_OK: a pós-condição do bootstrap confere a fila e
+# o re-check no corpo, então o bootstrap SABOTADO diz BOOTSTRAP_FALHOU — e isso é EXIGIDO, como 2ª
+# testemunha: a camada estática também tem de notar a sabotagem. O veredito é o MESMO nas duas fases
+# (DUAS): no gêmeo íntegro ele não pode dar CERTO, e é exatamente isso que o juiz cobra do gêmeo.
+cen_dupla() {
+  local m="" md5="" orig=""
+  limpo || return 0
+  if ! $PSQL -f "$BOOT_SAB" > "$OUT.boot" 2>&1; then
+    printf 'o bootstrap da fase nao rodou'; restaura_bootstrap || true; return 0
+  fi
+  md5="$(md5_aplicar_sql)" || md5="(leitura falhou)"
+  orig="$(cat "$CDIR/aplicar_sql.md5")"
+  case "$FASE" in
+    sabotado)
+      if [ "$md5" = "$orig" ]; then
+        printf 'a funcao instalada e a ORIGINAL: a sabotagem nao chegou ao banco'; restaura_bootstrap || true; return 0
+      fi
+      if ! grep -qF 'BOOTSTRAP_FALHOU' "$OUT.boot"; then
+        printf 'a pos-condicao do bootstrap NAO notou a sabotagem'; restaura_bootstrap || true; return 0
+      fi ;;
+    *)
+      if [ "$md5" != "$orig" ]; then
+        printf 'o gemeo instalou uma funcao que NAO e a original'; restaura_bootstrap || true; return 0
+      fi ;;
+  esac
+  m="$(dupla_veredito DUAS)"
+  restaura_bootstrap || { printf 'a RESTAURACAO do bootstrap falhou: a aplicar_sql() do cluster %s segue sabotada?' "$CLUSTER"; return 0; }
+  printf '%s' "$m"
+}
+
 # roda_cenario <nome> — despacho EXPLÍCITO, não `"$cen"`: o shellcheck enxerga cada chamada, e um
 # nome errado cai no `*)`, que diz o motivo em vez de executar outra coisa.
 roda_cenario() {
   case "$1" in
     s1) cen_s1 ;;  s2) cen_s2 ;;  s3) cen_s3 ;;  s4) cen_s4 ;;  s5) cen_s5 ;;  s6) cen_s6 ;;
     s7) cen_s7 ;;  s8) cen_s8 ;;  s9) cen_s9 ;;  s10) cen_s10 ;;  s11) cen_s11 ;;
-    s12) cen_s12 ;;  s13) cen_s13 ;;
+    s12) cen_s12 ;;  s13) cen_s13 ;;  dupla) cen_dupla ;;
     *) printf "cenario desconhecido '%s'" "$1" ;;
   esac
 }
@@ -1277,14 +1379,18 @@ sabotagem S12 "regex do veredito volta a ignorar a CAIXA (o rotulo do cliente vi
 # de 'sem marcador' e some a única instrução que serve aqui: ler o ledger para saber se commitou.
 sabotagem S13 "deteccao de conexao perdida desligada (o 5 perde o nome e a instrucao)" executor \
   's/^  CONEXAO_PERDIDA=1$/  CONEXAO_PERDIDA=0/m' s13
-# S9 por último: é a única que muda a função instalada nos clusters.
+# S9, S14 e S15 por último: são as que mudam a função instalada nos clusters.
 sabotagem S9 "transformacao SERVER-SIDE (so o corpo guardado a enxerga)" bootstrap \
   's/^  EXECUTE p_sql;$/  EXECUTE regexp_replace(p_sql, E\x27\\n  \x27, E\x27\\n\x27, \x27g\x27);/m' s9
+sabotagem S14 "re-check da porta removido (o 2o apply dos mesmos bytes espera a vez e EXECUTA de novo)" bootstrap \
+  's/\n  IF v_sha_ledger = p_sha THEN\n.*?\n  END IF;\n/\n/s' dupla
+sabotagem S15 "fila removida (o re-check do 2o le o ledger antes do commit do 1o; os dois executam)" bootstrap \
+  's/\n  IF NOT pg_try_advisory_xact_lock\(20260909, 1\) THEN\n.*?\n  END IF;\n/\n/s' dupla
 
 # Identidade, não contagem: cada sabotagem prevista foi julgada exatamente UMA vez, e nenhuma além
 # delas. O recibo só conta — duplicar uma e apagar outra daria o mesmo 11. O `registra` barra a
 # duplicata; esta conferência não depende dele.
-IDS_ESPERADOS="S1 S2 S3 S4 S5 S6 S7 S8 S9 S10 S11 S12 S13"
+IDS_ESPERADOS="S1 S2 S3 S4 S5 S6 S7 S8 S9 S10 S11 S12 S13 S14 S15"
 n_esp=0; n_julg=0
 for x in $IDS_ESPERADOS; do n_esp=$((n_esp + 1)); done
 for x in $SAB_JULGADAS;  do n_julg=$((n_julg + 1)); done
