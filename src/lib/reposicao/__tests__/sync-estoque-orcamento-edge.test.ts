@@ -158,7 +158,7 @@ describe('omie-sync-estoque — registro do run em acoes_execucoes', () => {
 });
 
 describe('omie-sync-estoque — deadline cabe no teto do cron', () => {
-  // Espelho do que vive em PROD, não no repo: cron.job 31 ('0 9 * * *') e 124 ('40 9,11,…,19 * * *') chamam a edge
+  // Espelho do que vive em PROD, não no repo: cron.job 31 ('5 9 * * *' desde 2026-10-08) e 124 ('40 9,11,…,19 * * *') chamam a edge
   // com timeout_milliseconds := 90000 (medido em 2026-10-05). Mudou o teto lá? Mude aqui e o deadline junto.
   const TETO_CRON_MS = 90_000;
 

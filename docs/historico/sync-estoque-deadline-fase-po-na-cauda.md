@@ -165,7 +165,7 @@ entrega; os três pedem decisão de desenho (falhar, degradar ou só sinalizar):
 
 ## Próximos passos — com o dado que cada um espera
 
-- **B6 (tirar o cron 31 do :00, ex. `5 9 * * *`)** — o candidato mais barato para o slot que concentra 15 das 21
+- ✅ **Feito em 2026-10-08** (migration `20261008010000`, depois do 1º `REDUNDANT` tipado às 09:00Z de 07/10). **B6 (tirar o cron 31 do :00, ex. `5 9 * * *`)** — o candidato mais barato para o slot que concentra 15 das 21
   falhas; migration de cron, deploy à parte. Decisão do founder.
 - **B3 (`lista_produtos`)** — a margem estrutural, ~8–16 chamadas no lugar de 75. Precisa de comparação sombra,
   por causa do "não apareceu ⇒ inativo" e do guard de truncagem. Gatilho: o registro mostrar `fase_fisico_ms`
