@@ -98,11 +98,18 @@ Falsificação, com controle verde na mesma invocação antes de sabotar:
 | F2 sem `DISTINCT ON` | `1000` → **`1400`** (o cumulativo somado) |
 | F3 sem allowlist positiva | `(vazio)` → **`700`** (previsão virando baixa) |
 | F4 filtro cego `CONTA_A_%` | `500\|conta_corrente` → **`(vazio)`** |
-| F6 partição sem company/tipo | `0/0` → **`5/3`** |
+| F6 partição sem company/tipo | `falta= sobra=` → as **5 identidades que faltam e as 3 que sobram**, declaradas uma a uma (#2640: "5/3" também sai trocando a linha certa por outra) |
 | F5 replace sem o `WITH` | `security_invoker on` → **`OFF`** |
 
 A postcondição embutida na migration também é falsificada (A9): rodada sobre a view furada por F5,
-ela **aborta** — a sentinela casa a ausência do `RAISE NOTICE`, não o texto do próprio `RAISE`.
+ela **aborta**. Desde o #2640 (2026-09-27) o bloco `DO $post$` é **extraído da migration** e executado —
+até então era uma cópia escrita no teste, e remover o guard da migration deixava a A9 verde (achado do
+Codex). O veredito casa a condição NOMEADA do `RAISE` do guard, não a ausência de um `NOTICE`.
+
+Desde 2026-10-07 a prova roda no **núcleo do CI** (`db/nucleo-ci.txt`, Eixo 6, mínimo 21, parte 2/3 da
+matriz, 2 s). Nasceu presa ao PGBIN do Homebrew e rodava só no laptop; o porte, a falsificação externa
+contra a migration real e a classe re-medida estão em
+[prova-otica-canonica-no-nucleo-ci.md](prova-otica-canonica-no-nucleo-ci.md).
 
 ## O que isto NÃO resolve (levantado pelo Codex, medido)
 

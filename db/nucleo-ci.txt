@@ -243,6 +243,15 @@ db/test-sonda-passo-pelo-db-aplicar.sh     32  falsificar=14
 # só fica vermelho aqui. Entrou em 2026-09-10, quando a dobra já tinha inflado a tendência de
 # caixa publicada no fechamento de abril (docs/cfo/2026-04-fechamento.md, errata).
 db/test-cfo-caixa-90d-otica.sh             30
+# A MIGRATION que escolhe a ótica por título: `v_titulo_baixas`, de onde saem a data de baixa e o prazo
+# ponderado de cada título. Título com as duas óticas conta UMA; o fallback de conta corrente se declara
+# em `origem_baixa`; resumo cumulativo do título não soma (mas baixa de conta corrente soma, que é o
+# mesmo eixo pelo outro lado); e o replace mantém o `security_invoker` — a falha ABERTA do Eixo 1. As 6
+# sabotagens (F1-F6) e a A9 rodam INLINE, na mesma invocação, então o 21 conta com elas: tirar uma
+# sabotagem derruba para 20 e reprova aqui. Nasceu no #2423 presa ao PGBIN do Homebrew — rodava só no
+# laptop, que pelo critério do repo é ausência de dado. Custa 2-6 s no runner (2 medições em 2026-10-07,
+# laptop com carga variável), contra partes de 4m36s-6m52s sob teto de 20 min: cai na parte 2/3.
+db/test-v-titulo-baixas-otica-canonica.sh  21
 # O mesmo PO sob duas óticas de compra: o `em_transito` do motor e o anti-compra-dupla da oportunidade
 # ([SIMETRIA-NORMAL]). `disparado_simulado` (PO REAL do dry_run) entrou na 1ª e ficou fora da 2ª — o SKU
 # voltava a ser ofertado = compra antecipada em dobro. Controle = versão da PROD por md5; falsificação
