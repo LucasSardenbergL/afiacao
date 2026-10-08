@@ -426,3 +426,24 @@ A suspeita, levantada durante a Fase 4, era que o físico do grupo estivesse sen
 O desvio real está na compra. A `qtde_final`, o em trânsito e o PO falam em embalagens, mas o motor as compara com o máximo em litros. O resultado é comprar cerca de 19% a menos e contar o trânsito cerca de 23% inflado. O caso visto foi o pedido 1268 (WP01 QT): 5 QT pedidos chegam como 4,05 L contra um máximo de 8 L.
 
 O dano é pequeno: o motor compra menos e com mais frequência, e o gatilho compara litro com litro. O founder decidiu documentar e deixar o conserto na fila: [#2849](https://github.com/LucasSardenbergL/afiacao/issues/2849), uma migration money-path com Codex. Detalhe em `docs/agent/reposicao.md` §Léxico.
+
+## A conferência do 1º dia e a v1.8 (2026-10-07/08)
+
+**PR-3 (v1.7) conferido em prod.** As 4 linhas de membro não habilitado (os galões da WP01 e da WP02, os quartinhos da WP71 e da WP88) passaram a ser sincronizadas a cada run, com o par 0/0 vindo de `ListarPosEstoque`. Os 8 runs de 07/10 terminaram com `desfecho: completo` e a observação de PO publicada.
+
+**O que a conferência pegou.** A query prometida no PR-3 (`membros_grupo_*` em `acoes_execucoes`) não tinha o que mostrar. A `CHAVES_REGISTRO` filtra o resumo, e as chaves dos membros ficaram de fora: saíam só na resposta HTTP, que o cron descarta. Uma falha no lote dos membros, justamente a classe que a v1.7 fecha, não deixaria rastro. A **v1.8-registro-membros** (#2854) acrescenta as 6 chaves. O teste de forma ficou vermelho antes do conserto, e a falsificação deu 6/6 nos dois locales.
+
+**O deploy da v1.8 (08/10):**
+- O Lovable conferiu os 15 hashes contra `2663721ed`, a edge ficou **Active** às 10:43 UTC e custou 0,9 crédito.
+- A sonda deu **DEPLOY CONFIRMADO** (tentativa #285), e o ledger marca "confere".
+- O sensor de edição deu EDICAO_DETECTADA, mas o `edit_id` era a regeneração do `types.ts` pela migration do acervo (`pedido_total_liquido_excecao`). Nada em `supabase/functions/` mudou.
+
+**PR-2: a conferência precisa ser feita DENTRO da janela.** O `sync-inventory-vendas-30m` regrava as linhas com estoque às :00 e às :30, então um zeramento pelo catálogo das 08:3x seria desfeito às 09:00. Ler depois disso não prova nada; em 07/10 e 08/10, a leitura tardia deu 784 linhas não-zero na oben, o esperado, mas sem valor de prova. A leitura que vale é entre 08:40 e 08:59 UTC:
+
+```sql
+select account, count(*) filter (where estoque <> 0) nao_zero from omie_products group by 1;
+```
+
+Esperado: oben ≈ 784 (o bundle velho daria ≈ 0 depois do catálogo).
+
+**De passagem:** o run das 09:00 de 07/10 falhou com "consumo redundante" do Omie, provavelmente disputando a chamada com o `sync-inventory-vendas-30m`, que roda nos mesmos :00. O run das 09:41 recuperou. Foi 1 caso em 9; observar antes de mexer no cron.
