@@ -143,7 +143,7 @@ SOBREVIVE | ORDER BY por posicao (inerte: edge e a 1a col) | s/ORDER BY l\.edge;
 # ⚠️ O `r.status ?? 127` do `gitReal` (spawn morto por sinal/timeout ⇒ fail-CLOSED) NÃO tem mutação
 #    aqui: `git` fora de repo devolve 128, não `null`, e forjar um spawn morto viraria teste do
 #    Node. É limite CONHECIDO da medição, não cobertura silenciosa.
-PEGA      | guard de sincronia desligado no main (modo sonda)      | s/conferirSincronia\(fontesDoEsperado\(levaSondada\), semRede === true, deps\.git\)/{ aviso: null }/
+PEGA      | guard de sincronia desligado no main (modo sonda)      | s/conferirSincronia\(fontesDoEsperado\(levaSondada\), semRede === true, git\)/{ aviso: null }/
 PEGA      | divergencia vira warning que se le e ignora            | s/if \(ausentes\.length > 0 \|\| divergentes\.length > 0\) \{/if (false) {/
 PEGA      | fatia VAZIA passa (guard decorativo em silencio)       | s/if \(fontes\.length === 0\) \{/if (false) {/
 PEGA      | comparacao de conteudo INVERTIDA (igual=divergente)    | s/if \(r\.stdout !== bytes\)/if (r.stdout === bytes)/
