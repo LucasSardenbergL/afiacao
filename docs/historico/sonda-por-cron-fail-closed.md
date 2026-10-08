@@ -185,7 +185,8 @@ significar e quase nunca significa.
 ## 8. O que falta (fatias seguintes)
 
 - **F4 (ondas)**: as demais edges, uma onda por vez, cada uma com `sonda:cron-prova` 100 % `PASSA`.
-  `sync-reprocess` ficou fora desta fatia por **colisão** com o PR #2224, não por risco.
+  `sync-reprocess` ficou fora desta fatia por **colisão** com o PR #2224, não por risco. O
+  andamento, onda a onda, está no §11.
 
 ## 9. As três rodadas de challenge (o que cada uma derrubou)
 
@@ -254,3 +255,158 @@ No pré-voo, `pg_get_function_identity_arguments(p.oid) = 'text'` devolveu **0**
 nome do parâmetro. O banco estava certo; a **pergunta** estava errada. Vale a mesma regra de
 `ausente ≠ zero`, um nível acima: antes de tratar zero como fato do mundo, confirme que o
 predicado sabe produzir não-zero.
+
+## 11. As ondas da allowlist (F4) — o que cada uma destravou
+
+As migrations de TODAS as ondas citam esta seção no cabeçalho (`Contexto: … §11`), e até a onda 5
+ela não existia: cinco arquivos imutáveis apontando para um endereço vazio. Como migration não se
+edita, o conserto é escrever o destino. O detalhe de cada onda continua no cabeçalho da própria
+migration — aqui fica o índice e o que só se aprendeu depois.
+
+| onda | migration | edges que entraram | ativos | o que destravou |
+|---|---|---|---|---|
+| F1 | `20260906151204_deploy_sonda_cron_fail_closed` | `sonda-relay`, `monthly-report`, `calculate-scores` | 3 | o mecanismo (§1–§10) |
+| 1 | `20260907101349_deploy_sonda_alvos_onda1` | `sync-reprocess`, `reposicao-depara-sayerlack-auto`, `carteira-positivacao-snapshot`, `process-recurring-orders` | 7 | `sync-reprocess` (44/44) ficou fora da F1 por colisão com o #2224, nunca por risco |
+| 2 | `20260908070850_deploy_sonda_alvos_onda2` | `copilot-analyze`, `fin-valor-cockpit`, `recommend`, `generate-tactical-plan` | 11 | o controle positivo precisa de corpo REAL: com `{}`, o 400 de transcrição curta deixava o de `copilot-analyze` inerte (15/15 com transcript real); e 35/36 não é "quase seguro" — o closure que falta executaria efeito |
+| 3 | `20260908204421_deploy_sonda_alvos_onda3` | `omie-vendas-sync`, `omie-analytics-sync`, `generate-bundle-argument` | 14 | a correção: as sete candidatas somavam zero closures `FALHA` — todo não-PASSA era `INVERIFICAVEL`, controle que não subia; com corpos medidos por escada, 127/188 → 189/189 · 16/86 → 86/86 · 12/14 → 14/14 |
+| 4 | `20260908223555_deploy_sonda_alvos_onda4` | `omie-sync-nfes-recebidas` | 15 | classe `NAO_COMPILA`: o 36º closure de 35/36 (`b880daeb1`) não parseia, logo nunca bootou nem serviu tráfego |
+| 5 | `20260909222423_deploy_sonda_alvos_onda5` | `omie-desconto-backfill` | 16 | a 1ª edge que ESCREVE — §11.1 a §11.5 |
+
+### 11.1 Onda 5 — a prova por execução aprovou o que o gate textual reprovou
+
+`omie-desconto-backfill` reescreve `order_items.desconto_valor` (o `EFEITO` do `versao.ts` diz isso
+em voz alta), então um OPTIONS que caísse no fluxo normal seria um backfill não pedido a cada 2 h.
+Ela entrou pelo custo de ficar fora: sem alvo de cron, cada PR que a tocava gerava sonda à mão —
+duas no mesmo dia 2026-09-09 (#2447 e #2451), porque o #2448 mudou o `index.ts` horas depois da 1ª.
+
+A execução dos closures deu **2/2 PASSA** na primeira rodada. Quem reprovou foi o `gateG1`, que é
+textual: `G1 ❌ omie-desconto-backfill: bloco OPTIONS não encontrado`. A guarda `atenderSondaOptions` morava ANTES do bloco
+`if (req.method === "OPTIONS")` — funcionalmente certa, numa forma que o regex não lê. A onda moveu a
+guarda para dentro (#2461): a resposta de todo método fica idêntica, porque o helper abre com
+`if (req.method !== METODO_SONDA) return null`; o que muda é um ponto de suspensão a menos antes do
+gate de auth; e o corpo `"ok"` do preflight fica byte a byte.
+
+O challenge Codex discordou da ROTA — preferia estender o G1 a reconhecer a forma antiga a pagar um
+deploy da edge. A onda seguiu o precedente (a onda 4 também deu o bloco à edge na mesma fatia)
+porque ampliar um gate textual para uma segunda forma aumenta a superfície de aprovação por leitura.
+Duas correções do parecer entraram no código: "provadamente neutra" exagerava (havia a suspensão),
+e a parte (b) da prova compara o preflight do MESMO closure, não uma resposta anterior à mudança.
+O parecer também mediu que o G1 **não** verifica que o bloco precede todo efeito — um `await fetch`
+injetado antes do bloco canônico segue aprovado. Quem prova a propriedade é a execução; o G1 prova
+só a forma.
+
+### 11.2 O relé é o deploy que a onda inteira espera — e a ferramenta o chamou de adiável
+
+O relé faz default-deny em runtime com a allowlist COMPILADA (`sonda-relay/index.ts`:
+`!ALLOWLIST.has(alvo)` → `400 fora-da-allowlist`). Depois do merge e do INSERT, o relé em produção,
+ainda com a lista anterior, recusa a edge nova em todo tick — até ser redeployado. Mas o
+`pendencias:deploy`, logo após o apply, classificou (recorte das duas classes):
+
+```
+🔴 P1 — DEPLOY PENDENTE declarado (versao bumpou): deploy no PR — 1
+   omie-desconto-backfill              prod v1.1-unicidade-no-universo-completo → main v1.2-preflight-na-forma-que-a-prova-mede
+🟡 P2 — DEPLOY PENDENTE não declarado (closure mudou sem bump): política = leva agrupada, escala após 7 d — 1
+   sonda-relay                         v1.1-alvos-da-onda-1 · fonte 0c4d1f67e4… → 6ca17c394a…
+```
+
+O deploy do qual a onda depende saiu como "pode esperar 7 dias": o `pendencias:deploy` escolhe a
+fila pelo `VERSAO`, e o do relé estava congelado em `v1.1-alvos-da-onda-1` desde a onda 1, porque o
+`sonda:bump` não via a allowlist — ela mora em `_shared/`. O diagnóstico e o conserto, mergeado
+durante a espera do 1º tick (#2470), estão em `docs/historico/sonda-marcador-congelado.md`, seção
+"O congelamento que o gate não via": o gate passou a tratar a allowlist como fatia do relé,
+projetada no conjunto de slugs. A próxima onda que mudar os alvos fica obrigada a bumpar o relé, e o
+deploy dele sai P1. Limite honesto: até 10-08 nenhuma onda nova mudou os alvos — o marcador do relé
+segue em `v1.1-alvos-da-onda-1` —, então essa cobrança não foi exercitada por uma onda real ainda.
+
+### 11.3 O primeiro tick que perguntou — medido no ledger
+
+A transição ainda produziu sonda à mão: entre o INSERT e o 1º tick agendado, alguém deployou as duas
+edges e sondou a do backfill duas vezes (23:06:35 em v1.1, 23:12:25 em v1.2 — ambas **sem disparo**,
+isto é, manuais) e disparou um tick avulso só para o relé (23:14:15, 1 disparo). Nenhum desses é o
+cron perguntando a edge nova.
+
+O primeiro tick AGENDADO com os 16 alvos — 09-11 00:37:00Z, tick `d1ebf474…` — perguntou a edge, e
+ela respondeu. Disparo e atestação com o MESMO `request_id`:
+
+| edge | `request_id` | versão atestada | `fonte` | observado | registrado |
+|---|---|---|---|---|---|
+| `omie-desconto-backfill` | 75774 | `v1.2-preflight-na-forma-que-a-prova-mede` | `558681b43bac` | 00:37:00 | 00:45:00 |
+| `sonda-relay` | 75780 | `v1.1-alvos-da-onda-1` | `6ca17c394ae9` | 00:37:00 | 00:45:00 |
+
+O tick fechou com 16 disparos e 16 atestações, uma por edge. A `fonte` é a do closure do #2461 (o
+bloco OPTIONS na forma canônica), e o relé que aceitou a alvo é o que serve a lista da onda 5. Das
+três atestações da edge desde 23:00, só essa tem disparo; as outras duas são as manuais da transição.
+Os 8 min entre observar e registrar não são da edge: foram exatamente 8:00 em todos os 45 disparos
+dos três ticks anteriores. Quem espera a linha precisa de graça maior que isso — um monitor que
+julgasse o silêncio às 00:44 teria fabricado "disparou e não respondeu".
+
+E a onda já segurou o primeiro PR seguinte. O #2467, de outra sessão, mudou o `index.ts` da edge e
+mergeou às 00:40:53Z sem tocar o manifesto — e o `sonda:cron-prova -- --gate` do CI dele imprimiu
+`omie-desconto-backfill: 5/5 closures PASSA ✅`, porque o `--gate` re-executa também os closures que
+o manifesto ainda não tem. A prova não é uma foto da onda: é refeita em todo PR que toca uma edge da
+allowlist. O que se esperava do deploy desse `v1.3` era zero sonda à mão; isso deixou de ser
+expectativa e está medido no §11.4.
+
+**O efeito, pela testemunha independente** — o análogo do §10.1, porque a resposta da sonda é a
+própria coisa sob suspeita. `order_items` não tem hora de atualização; o único contador legível pelo
+`psql-ro` é o cumulativo `pg_stat_user_tables.n_tup_upd`, amostrado a cada 20 s em torno do tick:
+
+| amostra (UTC) | `n_tup_upd(order_items)` |
+|---|---|
+| 23:32:52 (linha de base) | 90566 |
+| 00:16:47 | 90604 — um escritor legítimo, +38 |
+| 00:36:24 (antes do tick) | 90604 |
+| 00:40:11 (3 min depois) | **90604** |
+
+Zero UPDATE na janela do tick, em 181 amostras sem nenhuma falha de leitura. O +38 das 00:16 mostra
+que o contador anda quando alguém escreve — o zero não é um sensor surdo. Limite honesto: o
+contador não enxerga quota do Omie, que o fluxo normal consumiria ANTES de escrever; nesse eixo
+quem sustenta é a prova por execução do §11.1.
+
+Uma armadilha de leitura no meio do caminho: com 16 alvos ativos e `30/30 disparo(s) atestado(s)`
+— 15 edges × 2 ticks, porque a recém-inserida nunca tinha sido perguntada —, o resumo do
+`pendencias:deploy` dizia `✅ toda edge ativa foi atestada nos ticks recentes — o bundle do ledger
+continua no ar`, com a edge nova em **zero** disparos. O juiz (`scripts/lib/sonda-cron-testemunha.ts`) está certo em não acusar edge que
+ninguém perguntou ("ausência de PERGUNTA, não silêncio"); é o RESUMO que generaliza para uma verdade
+vazia. Enquanto ele não for corrigido, a prova de uma onda é a linha do ledger — disparo e atestação
+com o MESMO `request_id` —, nunca o ✅ agregado. Depois do tick das 00:37, com a edge perguntada, a
+mesma frase passou a ter lastro: `16 edge(s) ativa(s), 2 tick(s) recente(s), 17/17 disparo(s)
+atestado(s)`.
+
+### 11.4 Vinte e sete dias depois — três deploys da edge, zero sonda à mão (medido)
+
+O §11.3 fechou com uma expectativa, e esta seção é a query. Entre 09-11 00:50Z e 10-08 10:25Z, as
+atestações de `omie-desconto-backfill` cruzadas com `deploy_sonda_disparos` pelo `request_id`:
+
+| versão servida | atestações | com disparo de cron | janela (UTC) |
+|---|---|---|---|
+| `v1.3-sensor-do-valor-plano-por-id-escrita-na-janela` | 43 | **43** | 09-11 02:37 → 09-14 14:37 |
+| `v1.4-recusas-da-escrita-por-motivo` | 5 | **5** | 09-14 16:37 → 09-15 00:37 |
+| `v1.5-portao-plano-aprovado-e-corpo-estrito` | 280 | **280** | 09-15 02:37 → 10-08 08:37 |
+
+328 atestações, 328 com disparo, **nenhuma manual** — numa edge que trocou de versão três vezes no
+período. O `v1.3` foi atestado no primeiro tick agendado depois do deploy (09-11 02:37). É o que a
+onda existia para comprar: antes dela, cada PR que tocava o `index.ts` custava uma sonda à mão, e o
+dia 2026-09-09 custou duas.
+
+E o zero é medido, não ausência de dado. A `deploy_atestacoes` cobre 09-05 16:00 a 10-08 10:25 sem
+poda (15.653 linhas), e uma sonda manual bem-sucedida grava atestação SEM disparo: é justamente a
+linha que não existe. Se a `deploy_sonda_disparos` fosse podada, o erro cairia para o lado contrário
+— atestação de cron pareceria manual —, e não é o que se vê.
+
+### 11.5 O que uma onda É (checklist medido na onda 5)
+
+1. Entrada em `SONDA_CRON_ALVOS` com controles que SOBEM o contador naquela história.
+2. `bun run sonda:cron-prova --backfill <edge>` grava o manifesto; `--gate` com `EXIT=0` — e ele
+   inclui o G1, que exige a guarda DENTRO do bloco OPTIONS.
+3. Se o `index.ts` mudou: `sonda:bump` e `sonda:fingerprint -- --write`. Mudar o conjunto de alvos
+   também muda o relé: desde o #2470 o `sonda:bump` cobra o bump de `sonda-relay/versao.ts`.
+4. Migration envelopada (DR) + `db/aplicar-sonda-alvos-ondaN.sql` sem envelope, com postcondição
+   no TOTAL de ativos; `db:aplicar --ensaio`, `db:aplicar`, e a 2ª testemunha por `psql-ro`. Aplique
+   com o HEAD na `main` — o ledger grava `git rev-parse HEAD`, e o commit do branch morre no squash.
+5. Deploy do **relé junto com a onda** — sem ele a edge nova toma `fora-da-allowlist`. Com o bump
+   cobrado ele sai P1; até a onda 5 saía P2, "leva agrupada" (§11.2). E da edge, se o `index.ts`
+   mudou.
+6. A prova é o 1º tick AGENDADO que inclui a edge: disparo + atestação com o mesmo `request_id` no
+   ledger, registrada ~8 min depois do tick (§11.3). Sonda manual depois do deploy é exatamente o que
+   a onda existe para aposentar — e o §11.4 mede o que ela aposentou.
