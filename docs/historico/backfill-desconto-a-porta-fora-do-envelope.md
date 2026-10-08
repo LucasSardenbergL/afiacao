@@ -439,6 +439,63 @@ custava zero, bastava subir o teto, que é exatamente o que descobriu o 100%.
 Fato operacional: o adversarial de código **não roda antes de 09/10 19:30**. Não por política nossa
 agora, mas porque a janela está esgotada de verdade.
 
+### APLICADO em produção (2026-10-08, 00:41–00:52 UTC) — o desfecho medido
+
+Caminho B por decisão do founder: o PR saiu do draft com `REVISÃO INDEPENDENTE PENDENTE` e
+auto-challenge registrados, mergeou, e os dois applies foram aplicados pelo envelope.
+
+| passo | recibo |
+|---|---|
+| `db:aplicar …excecao.sql` (sha `67fedaa6…`) | **APLICADO**, tentativa #274 virou recibo na mesma transação |
+| `db:aplicar …converter-acervo.sql --ensaio` | rodou inteiro: **538 escritos, tela 570 → 32**, e reverteu |
+| `db:aplicar …converter-acervo.sql` (sha `14fd7848…`) | **APLICADO**, tentativa #276 · lote `e8ec64ba…` |
+
+```
+EXCECAO INSTALADA: 105 pedidos excluidos | controle sem excecao = 0 elegiveis
+                 | com excecao = 538 elegiveis | soma prevista = -100144.46
+CONVERSAO OK: 538 pedidos escritos | tela: 570 brutos -> 32 | soma da mudanca = -100144.46
+```
+
+**O sensor do cupom, medido POR FORA** (query própria via `psql-ro`, não o relatório da função — as
+duas medições são independentes de propósito):
+
+| | antes | depois |
+|---|---|---|
+| pedidos com desconto | 639 | 639 |
+| **coerentes na tela** | 69 | **607** |
+| **ainda com cabeçalho bruto** | **570** | **32** |
+
+E as invariantes, também por fora:
+
+- lote `e8ec64ba…`: **538 escritos**, soma **−R$ 100.144,46**, **0** totais fora de `(0, bruto]`;
+- **105/105 excluídos seguem com cabeçalho BRUTO** — `ausente ≠ zero` preservado na prática, não só
+  no desenho;
+- **nenhum excluído foi convertido** (junção do ledger com a tabela de exceção: 0 linhas);
+- 11 meses destravados: `2025-10`=70 · `11`=49 · **`12`=45** · `2026-01`=65 · `02`=41 · `03`=53 ·
+  `04`=50 · `05`=38 · `06`=57 · `07`=51 · `08`=19. Os 45 de dezembro são exatamente os que estavam
+  presos por **um** bloqueador.
+
+Dois detalhes que valem como prova de desenho, e não eram garantidos:
+
+1. **O ACL da função sobreviveu.** A substituição programática é `CREATE OR REPLACE` por construção
+   (`pg_get_functiondef` + `EXECUTE`), e `REPLACE` preserva o ACL onde `DROP`+`CREATE` o resetaria. A
+   evidência é um erro: o `psql-ro` levou `permission denied for function
+   pedido_total_liquido_converter` ao tentar chamá-la, e `has_function_privilege` devolve `false` para
+   `anon` e `authenticated`. Se eu tivesse recopiado o corpo, a função teria voltado aberta.
+2. **A janela foi escolhida pelo achado P2 do auto-challenge:** 00:41 UTC, com os crons em `15 */2` e
+   `30 2` — ~1h30 de folga até o próximo. O sensor antes/depois roda em `read committed` (medido), e
+   um commit de cron no meio moveria o delta.
+
+**O que fica aberto, e é passo do founder:** o `supabase/schema-snapshot.sql` precisa ser re-gerado
+pelo chat do Lovable. A tabela `pedido_total_liquido_excecao` e o corpo novo do conversor existem em
+prod e **não** em `supabase/migrations/` — então, até o re-dump, eles só existem no DR por este
+parágrafo. Os outros dois passos da reconciliação não se aplicam: não há migration formal para
+registrar em `schema_migrations`, e `types.ts` não morde porque a tabela tem RLS fechada e o front
+não a consome (se um dia consumir, a regeneração dos tipos entra na mesma entrega).
+
+E o Codex retroativo segue devendo: a cota reabre **09/10 19:30**, e o achado que vier de lá é
+conserto, não discussão.
+
 ### A sequência, quando o parecer chegar
 
 ```bash
