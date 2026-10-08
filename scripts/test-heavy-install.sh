@@ -137,6 +137,131 @@ else
   bad "--status quando ausente sai 0"
 fi
 
+# ── 13 · 14 · 15 — a DIREÇÃO de "instalado == disco ≠ main" (classe
+# "sensor que julga contra a REF mas lê DADO versionado do DISCO",
+# docs/historico/sonda-le-worktree-defasado.md).
+# O mesmo sinal sai de duas causas OPOSTAS, e uma delas é o ramo MUDO do
+# vigia-worktree.sh (exit 0). Sem estes três casos, o worktree ATRASADO —
+# justo o que este script existe para pegar — saía 0 e o heavy velho ficava.
+# Cada caso casa a MARCA do ramo (ASCII, caixa fixa, sem -i), não "saiu != 0".
+
+# 13 — disco ATRÁS da main ⇒ DEFASADO, e com rc=1: é o código que o
+# vigia-worktree.sh transforma em AVISO (`case "$rc" in 1) avisos=...`). rc=0
+# ali é silêncio — por isso o teste cobra o 1, não um "diferente de zero".
+git init -q --bare "$TD/up-atras"
+atras="$TD/atras"
+git init -q "$atras"
+git -C "$atras" remote add origin "$TD/up-atras"
+mkdir -p "$atras/scripts"
+cp "$here/heavy-install.sh" "$atras/scripts/heavy-install.sh"
+printf '#!/usr/bin/env bash\necho VERSAO-ANTIGA\n' > "$atras/scripts/heavy.sh"
+git -C "$atras" add -A
+git -C "$atras" -c user.email=t@t -c user.name=t commit -qm v1
+printf '#!/usr/bin/env bash\necho VERSAO-NOVA\n' > "$atras/scripts/heavy.sh"
+git -C "$atras" add -A
+git -C "$atras" -c user.email=t@t -c user.name=t commit -qm v2
+git -C "$atras" push -q origin HEAD:main
+git -C "$atras" fetch -q origin
+# o worktree defasado DE VERDADE: checkout do commit anterior → o heavy.sh do
+# disco volta a ser o VELHO, enquanto origin/main já está no novo.
+git -C "$atras" checkout -q HEAD~1
+D_ATRAS="$TD/bin-atras/heavy"
+AFIACAO_HEAVY_DEST="$D_ATRAS" bash "$atras/scripts/heavy-install.sh" --daqui >/dev/null 2>&1
+out_atras="$(AFIACAO_HEAVY_DEST="$D_ATRAS" bash "$atras/scripts/heavy-install.sh" --status 2>&1)"
+rc_atras=$?
+if [ "$rc_atras" = 1 ]; then
+  ok "disco ATRAS da main: rc=1 (o vigia FALA; 0 seria o ramo mudo)"
+else
+  bad "disco ATRAS da main: rc=$rc_atras, esperado 1 — vigia cala e o heavy velho fica"
+fi
+case "$out_atras" in
+  *DEFASADO*) ok "disco ATRAS da main: marca DEFASADO" ;;
+  *) bad "disco ATRAS da main: sem a marca DEFASADO (saiu: $out_atras)" ;;
+esac
+case "$out_atras" in
+  *"EM VOO"*) bad "disco ATRAS da main veredito EM VOO — exatamente o defeito da classe" ;;
+  *) ok "disco ATRAS da main NAO sai como EM VOO" ;;
+esac
+
+# 14 — disco À FRENTE (VERSAO-LOCAL nunca commitada em $work) ⇒ EM VOO, exit 0.
+# É o caso legítimo do --daqui: tem de continuar calando, senão o fix do 13 vira nag.
+D_VOO="$TD/bin-voo/heavy"
+AFIACAO_HEAVY_DEST="$D_VOO" bash "$INST" --daqui >/dev/null 2>&1
+out_voo="$(AFIACAO_HEAVY_DEST="$D_VOO" bash "$INST" --status 2>&1)"
+rc_voo=$?
+if [ "$rc_voo" = 0 ]; then ok "disco A FRENTE: exit 0"; else bad "disco A FRENTE: rc=$rc_voo, esperado 0 (nag falso no --daqui proposital)"; fi
+case "$out_voo" in
+  *"EM VOO"*) ok "disco A FRENTE: marca EM VOO" ;;
+  *) bad "disco A FRENTE: sem a marca EM VOO (saiu: $out_voo)" ;;
+esac
+
+# 15 — FAIL-CLOSED: git que não responde NÃO pode cair no ramo mudo.
+# Mesmíssimo cenário do 14 (que sai 0), só com o subcomando `log` emudecido:
+# se o veredito continuar 0, a sonda ausente estaria virando aprovação.
+# `command -v git` não bastaria aqui — o git existe e responde a tudo menos ao
+# `log` (docs/historico/sonda-ausente-em-script-que-apaga.md).
+mkdir -p "$TD/stubbin"
+cat > "$TD/stubbin/git" <<'STUB'
+#!/usr/bin/env bash
+# Repassa ao git real, menos `git log` (exit 1, stdout vazio). O subcomando é a
+# primeira palavra que não é opção — `-C <dir>` e `-c <k=v>` carregam VALOR.
+pula=0
+for a in "$@"; do
+  if [ "$pula" = 1 ]; then pula=0; continue; fi
+  case "$a" in
+    -C|--git-dir|--work-tree|-c) pula=1; continue ;;
+    -*) continue ;;
+  esac
+  if [ "$a" = "log" ]; then exit 1; fi
+  break
+done
+exec "${GIT_REAL:?stub: GIT_REAL nao definido}" "$@"
+STUB
+chmod +x "$TD/stubbin/git"
+out_mudo="$(GIT_REAL="$(command -v git)" PATH="$TD/stubbin:$PATH" AFIACAO_HEAVY_DEST="$D_VOO" bash "$INST" --status 2>&1)"
+rc_mudo=$?
+if [ "$rc_mudo" = 3 ]; then
+  ok "git mudo: exit 3 (NAO CONSEGUI VERIFICAR, nao o ramo mudo)"
+else
+  bad "git mudo: rc=$rc_mudo, esperado 3 — ausencia de dado virou veredito (saiu: $out_mudo)"
+fi
+
+# 16 — o CONTROLE POSITIVO, que o caso 15 NÃO alcança: aqui o `git log` RESPONDE,
+# com uma história não-vazia e bem-formada, só que de outro conteúdo — nenhum
+# blob dela é o da ponta de origin/main. Sem exigir resposta POSITIVA (a ponta
+# presente na enumeração), "o blob do disco não está lá" viraria A_FRENTE ⇒ exit
+# 0 ⇒ silêncio: ausência de dado promovida a aprovação. O guard de lista vazia do
+# caso 15 não cobre este eixo — a lista aqui tem conteúdo.
+mkdir -p "$TD/stubbin-fake"
+cat > "$TD/stubbin-fake/git" <<'STUB'
+#!/usr/bin/env bash
+pula=0
+for a in "$@"; do
+  if [ "$pula" = 1 ]; then pula=0; continue; fi
+  case "$a" in
+    -C|--git-dir|--work-tree|-c) pula=1; continue ;;
+    -*) continue ;;
+  esac
+  if [ "$a" = "log" ]; then
+    # história sintética, bem-formada, de blobs que não existem neste repo
+    echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    printf ':100755 100755 %s %s M\tscripts/heavy.sh\n' \
+      bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb cccccccccccccccccccccccccccccccccccccccc
+    exit 0
+  fi
+  break
+done
+exec "${GIT_REAL:?stub: GIT_REAL nao definido}" "$@"
+STUB
+chmod +x "$TD/stubbin-fake/git"
+out_fake="$(GIT_REAL="$(command -v git)" PATH="$TD/stubbin-fake:$PATH" AFIACAO_HEAVY_DEST="$D_VOO" bash "$INST" --status 2>&1)"
+rc_fake=$?
+if [ "$rc_fake" = 3 ]; then
+  ok "historia sem o blob da PONTA: exit 3 (controle positivo)"
+else
+  bad "historia sem o blob da PONTA: rc=$rc_fake, esperado 3 — enumeracao nao conferida virou veredito (saiu: $out_fake)"
+fi
+
 echo
 if [ "$fail" = 0 ]; then echo "test-heavy-install.sh: TUDO VERDE"; else echo "test-heavy-install.sh: FALHAS ACIMA"; fi
 exit "$fail"
