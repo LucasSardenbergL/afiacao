@@ -7,12 +7,14 @@ import { spawnSync } from 'node:child_process';
 
 import { lerCanariasDoRepo } from './canaria-leitor-do-repo';
 import * as kit from './lib/sonda-cron-allowlist';
+import { parsearMapa } from './sonda-fingerprint';
 
 import {
   awkDoPasso,
   CANARIAS,
   comandoDeExtracao,
   conferirSincronia,
+  entradaDoMapa,
   escaparParaFormat,
   FUNCAO_DO_NOTICE,
   fontesDoEsperado,
@@ -24,6 +26,7 @@ import {
   marcadoresDoPasso,
   parsearArgs,
   PISO_CONTROLE_CREDENCIAL,
+  projecaoEntradaDoMapa,
   resolverCanarias,
   resolverLeva,
   SENTINELA_MAPA,
@@ -1255,6 +1258,9 @@ describe('CLI', () => {
 // GUARD DE SINCRONIA com a `origin/main` (o worktree defasado que vira veredito falso).
 // ============================================================================================
 
+/** O commit que o `rev-parse` do `gitFalso` resolve — é com ELE que todo `show` tem de sair. */
+const SHA_DA_MAIN = 'abc123def4567890';
+
 /**
  * `git` fabricado: `origin/main` é um SNAPSHOT declarado e o disco é o fixture.
  *
@@ -1275,10 +1281,13 @@ function gitFalso(opts: {
         : { status: 0, stdout: '', stderr: '' };
     }
     if (opts.main == null) return { status: 1, stdout: '', stderr: '' };
-    if (args[0] === 'rev-parse') return { status: 0, stdout: 'abc123def4567890\n', stderr: '' };
+    if (args[0] === 'rev-parse') return { status: 0, stdout: `${SHA_DA_MAIN}\n`, stderr: '' };
     if (args[0] === 'log') return { status: 0, stdout: '2026-09-01 10:00:00 +0000\n', stderr: '' };
     if (args[0] === 'show') {
-      const caminho = args[1].slice('origin/main:'.length);
+      // Corta no PRIMEIRO `:`, não num prefixo fixo: o guard passou a pedir os arquivos pelo
+      // COMMIT resolvido, e um espelho ancorado no nome do ramo devolveria caminho picado — teste
+      // que mede a própria fixture, não o guard.
+      const caminho = args[1].slice(args[1].indexOf(':') + 1);
       const conteudo = opts.main[caminho];
       return conteudo === undefined
         ? { status: 128, stdout: '', stderr: `fatal: path '${caminho}' does not exist in 'origin/main'` }
@@ -2453,6 +2462,280 @@ describe('modo canária: a fatia SEGUE o `index.ts`, que é de onde o marcador s
 // Varre TODAS as chamadas, não a primeira: o SQL tem `net.http_post` no bloco BARATO e no CARO, e
 // `toContain` sobre o texto inteiro fica verde com uma ocorrência correta escondendo outra quebrada
 // (ressalva do parecer Codex de 2026-09-08). O `.mut` ancora nestas invariantes.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// A fatia do MODO SONDA desceu do arquivo para a ENTRADA. Era o resíduo espelhado do furo que o
+// #2435 fechou no modo canária: lá SOBRAVA um arquivo que o marcador não lê; aqui sobrava o
+// arquivo INTEIRO de um que ele lê por uma linha só. Medido em 2026-09-09 com a CLI real —
+// `sonda:sql omie-sync` com o hash de `whatsapp-send-template` alterado no disco: `exit 1`, stdout
+// de ZERO bytes, e o SQL que sairia byte-a-byte o mesmo (sha256 igual, 18 316 bytes). Bloqueio
+// pelo bloqueio, e de ROTINA: `sonda:fingerprint -- --write` regrava esse mapa a cada mudança em
+// `_shared/` e há ~30 worktrees paralelas.
+//
+// Os testes abaixo nomeiam o caminho EXATO (nunca substring — foi casando por substring que o
+// teste de fatia do #2435 passava por acidente) e cobram da CLI as DUAS metades: o que NÃO pode
+// mais bloquear, provado por SQL idêntico byte-a-byte, e tudo o que tem de CONTINUAR bloqueando.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+/** Troca o fingerprint de uma edge no TEXTO do mapa. ABORTA se a troca não pegar. */
+function comEntradaTrocada(mapa: string, edge: string, novo: string): string {
+  const antes = entradaDoMapa(mapa, edge);
+  if (antes === null) throw new Error(`fixture inválida: "${edge}" não está no mapa`);
+  if (antes === novo) throw new Error(`fixture inválida: "${edge}" já tem esse fingerprint`);
+  const trocado = mapa.replace(`"${edge}": "${antes}"`, `"${edge}": "${novo}"`);
+  // Sabotagem que não pega deixa o teste verde por CEGUEIRA: o helper grita em vez de seguir.
+  if (entradaDoMapa(trocado, edge) !== novo) throw new Error(`fixture inválida: troca de "${edge}" inerte`);
+  return trocado;
+}
+
+/** Remove do TEXTO do mapa a entrada de uma edge. ABORTA se não houver o que remover. */
+function semEntrada(mapa: string, edge: string): string {
+  if (entradaDoMapa(mapa, edge) === null) throw new Error(`fixture inválida: "${edge}" não está no mapa`);
+  const sem = mapa
+    .split('\n')
+    .filter((l) => !l.includes(`"${edge}": `))
+    .join('\n');
+  if (entradaDoMapa(sem, edge) !== null) throw new Error(`fixture inválida: remoção de "${edge}" inerte`);
+  return sem;
+}
+
+/** `git` espelho do repo REAL, com o mapa de `origin/main` passado por `transformar`. */
+function gitComMapaDaMain(raiz: string, transformar: (mapa: string) => string): ExecutorGit {
+  const base = gitDivergindoEm(raiz, []);
+  return (args) => {
+    const r = base(args);
+    // Caminho EXATO: compara o que vem DEPOIS do `:`, nunca um `endsWith` no argumento inteiro.
+    if (args[0] === 'show' && args[1].slice(args[1].indexOf(':') + 1) === MAPA) {
+      return { ...r, stdout: transformar(r.stdout) };
+    }
+    return r;
+  };
+}
+
+describe('modo sonda: a fatia do mapa é a ENTRADA da edge, não o arquivo inteiro', () => {
+  const OUTRO_FP = 'f'.repeat(64);
+
+  it('CONTROLE: espelho fiel emite o SQL — a suíte não é sempre-vermelha', () => {
+    const raiz = fixture({ 'edge-a': 'v1.0-a', 'edge-b': 'v1.0-b' });
+    const r = rodar(raiz, ['edge-a'], gitFalso({ main: espelho(raiz, ['edge-a']) }));
+    expect(r.codigo).toBe(0);
+    expect(r.saida).toContain("('edge-a', 'v1.0-a'");
+  });
+
+  it('O CASO MEDIDO: a entrada de OUTRA edge divergindo emite o MESMO SQL, byte-a-byte', () => {
+    const raiz = fixture({ 'edge-a': 'v1.0-a', 'edge-b': 'v1.0-b' });
+    const fiel = espelho(raiz, ['edge-a']);
+    const limpo = rodar(raiz, ['edge-a'], gitFalso({ main: fiel }));
+
+    // `edge-b` não é sondada: o fingerprint dela não entra em veredito nenhum.
+    const comVizinhaMexida = { ...fiel, [MAPA]: comEntradaTrocada(fiel[MAPA], 'edge-b', OUTRO_FP) };
+    const r = rodar(raiz, ['edge-a'], gitFalso({ main: comVizinhaMexida }));
+
+    expect(r.codigo).toBe(0);
+    expect(r.erros).toBe('');
+    // A asserção que mata o bloqueio pelo bloqueio: o veredito é o MESMO, então recusar não
+    // protegia nada. Comparar `toContain` aqui passaria com um SQL sutilmente diferente.
+    expect(r.saida).toBe(limpo.saida);
+    expect(r.saida.length).toBeGreaterThan(0);
+  });
+
+  it('a entrada DA edge sondada divergindo segue abortando — é ela que vira `fonte`', () => {
+    const raiz = fixture({ 'edge-a': 'v1.0-a', 'edge-b': 'v1.0-b' });
+    const fiel = espelho(raiz, ['edge-a']);
+    const r = rodar(
+      raiz,
+      ['edge-a'],
+      gitFalso({ main: { ...fiel, [MAPA]: comEntradaTrocada(fiel[MAPA], 'edge-a', OUTRO_FP) } }),
+    );
+    expect(r.codigo).toBe(1);
+    expect(r.saida).toBe(''); // ZERO bytes: nada de SQL parcial
+    expect(r.erros).toMatch(/DESSINCRONIZADO/);
+    expect(r.erros).toContain(MAPA);
+    expect(r.erros).toContain('entrada "edge-a"');
+  });
+
+  it('entrada AUSENTE na origin/main aborta — edge fora do mapa é o que o gate existe para barrar', () => {
+    const raiz = fixture({ 'edge-a': 'v1.0-a', 'edge-b': 'v1.0-b' });
+    const fiel = espelho(raiz, ['edge-a']);
+    const r = rodar(
+      raiz,
+      ['edge-a'],
+      gitFalso({ main: { ...fiel, [MAPA]: semEntrada(fiel[MAPA], 'edge-a') } }),
+    );
+    expect(r.codigo).toBe(1);
+    expect(r.saida).toBe('');
+    expect(r.erros).toContain(`não existe em origin/main: ${MAPA} (entrada "edge-a")`);
+  });
+
+  it('cada edge confere a SUA entrada: numa leva de duas, a divergente é nomeada e a outra não', () => {
+    // Mata a dedup por CAMINHO, que descartaria a projeção da segunda edge e deixaria o guard
+    // conferindo uma entrada e ignorando a outra — em silêncio. Nas DUAS ordens de pedido.
+    const raiz = fixture({ 'edge-a': 'v1.0-a', 'edge-b': 'v1.0-b' });
+    for (const ordem of [
+      ['edge-a', 'edge-b'],
+      ['edge-b', 'edge-a'],
+    ]) {
+      const fiel = espelho(raiz, ordem);
+      const main = { ...fiel, [MAPA]: comEntradaTrocada(fiel[MAPA], 'edge-b', OUTRO_FP) };
+      const r = rodar(raiz, ordem, gitFalso({ main }));
+      expect(r.codigo).toBe(1);
+      expect(r.saida).toBe('');
+      expect(r.erros).toContain('entrada "edge-b"');
+      expect(r.erros).not.toContain('entrada "edge-a"');
+    }
+  });
+
+  it('entrada ausente nas DUAS pontas não vira igualdade — ausência de dado não é aprovação', () => {
+    // O ramo que uma implementação "compara os recortes" apagaria: `null === null` passaria, e o
+    // `esperado(...)` sairia com `fonte` de uma edge que o mapa não conhece.
+    const raiz = fixture({ 'edge-a': 'v1.0-a' });
+    const mapaSemEla = semEntrada(readFileSync(join(raiz, MAPA), 'utf8'), 'edge-a');
+    const msg = msgDoErro(() =>
+      conferirSincronia(
+        [{ caminho: MAPA, bytes: mapaSemEla, projecao: projecaoEntradaDoMapa('edge-a') }],
+        false,
+        gitFalso({ main: { [MAPA]: mapaSemEla } }),
+      ),
+    );
+    expect(msg).toMatch(/a fatia declarada não existe no arquivo LIDO/);
+    expect(msg).toContain(`${MAPA} (entrada "edge-a")`);
+    expect(msg).toMatch(/Nenhum SQL foi emitido/);
+  });
+
+  it('a fatia que não existe nos bytes LIDOS aborta, mesmo com a main inteira idêntica', () => {
+    const raiz = fixture({ 'edge-a': 'v1.0-a', 'edge-b': 'v1.0-b' });
+    const mapa = readFileSync(join(raiz, MAPA), 'utf8');
+    const msg = msgDoErro(() =>
+      conferirSincronia(
+        // Proveniência INCOERENTE: declara projetar `edge-z`, que não está nos bytes que ela leu.
+        [{ caminho: MAPA, bytes: mapa, projecao: projecaoEntradaDoMapa('edge-z') }],
+        false,
+        gitFalso({ main: { [MAPA]: mapa } }),
+      ),
+    );
+    expect(msg).toMatch(/a fatia declarada não existe no arquivo LIDO/);
+    expect(msg).toContain('sonda:fingerprint');
+  });
+
+  it('a CORRIDA segue sendo julgada no ARQUIVO: recortes iguais, bytes inteiros diferentes, aborta', () => {
+    // Projetar não pode encolher a porta (5). Aqui as duas leituras dão o MESMO fingerprint para a
+    // edge e diferem FORA do recorte — alguém regravou o mapa entre as leituras, e escolher uma é
+    // escolher qual metade do veredito é a verdadeira.
+    const raiz = fixture({ 'edge-a': 'v1.0-a', 'edge-b': 'v1.0-b' });
+    const mapa = readFileSync(join(raiz, MAPA), 'utf8');
+    const outraLeitura = `${mapa}// gravado depois\n`;
+    expect(entradaDoMapa(outraLeitura, 'edge-a')).toBe(entradaDoMapa(mapa, 'edge-a'));
+    const msg = msgDoErro(() =>
+      fontesDoEsperado([
+        { proveniencia: [{ caminho: MAPA, bytes: mapa, projecao: projecaoEntradaDoMapa('edge-a') }] },
+        { proveniencia: [{ caminho: MAPA, bytes: outraLeitura, projecao: projecaoEntradaDoMapa('edge-b') }] },
+      ]),
+    );
+    expect(msg).toMatch(/bytes DIFERENTES dentro desta execução/);
+    expect(msg).toContain(MAPA);
+  });
+
+  it('nenhuma projeção é DESCARTADA: duas de rótulo igual e alvo diferente são as duas conferidas', () => {
+    // O rótulo é diagnóstico, não identidade: deduplicar por ele mataria a segunda projeção e o
+    // guard aprovaria a divergência que só ela veria (ressalva do parecer Codex de 2026-09-09).
+    const raiz = fixture({ 'edge-a': 'v1.0-a', 'edge-b': 'v1.0-b' });
+    const mapa = readFileSync(join(raiz, MAPA), 'utf8');
+    const rotuloColidido = (edge: string) => ({
+      rotulo: 'entrada',
+      recortar: (texto: string) => entradaDoMapa(texto, edge),
+    });
+    const naMain = comEntradaTrocada(mapa, 'edge-b', OUTRO_FP);
+    const msg = msgDoErro(() =>
+      conferirSincronia(
+        [
+          { caminho: MAPA, bytes: mapa, projecao: rotuloColidido('edge-a') },
+          { caminho: MAPA, bytes: mapa, projecao: rotuloColidido('edge-b') },
+        ],
+        false,
+        gitFalso({ main: { [MAPA]: naMain } }),
+      ),
+    );
+    expect(msg).toMatch(/DESSINCRONIZADO/);
+  });
+
+  it('todo `show` DA FATIA sai do COMMIT resolvido, e um por ARQUIVO — a main pode andar no meio', () => {
+    // `origin/main` pode se mover entre dois `show` (um `git fetch` de outra worktree), e aí cada
+    // arquivo sairia de um commit diferente: o guard aprovaria uma COMBINAÇÃO que nunca existiu
+    // num commit só (ressalva do parecer Codex de 2026-09-09).
+    const raiz = fixture({ 'edge-a': 'v1.0-a', 'edge-b': 'v1.0-b' });
+    const chamadas: string[][] = [];
+    const r = rodar(
+      raiz,
+      ['edge-a', 'edge-b'],
+      gitFalso({ main: espelho(raiz, ['edge-a', 'edge-b']), chamadas }),
+    );
+    expect(r.codigo).toBe(0);
+
+    const daFatia = [MAPA, VER('edge-a'), VER('edge-b')];
+    const alvo = (c: string[]) => c[1].slice(c[1].indexOf(':') + 1);
+    const shows = chamadas.filter((c) => c[0] === 'show' && daFatia.includes(alvo(c)));
+    // O mapa UMA vez, apesar das DUAS projeções sobre ele — e os dois `versao.ts`.
+    expect(shows.map(alvo).sort()).toEqual([...daFatia].sort());
+    for (const c of shows) expect(c[1].split(':')[0]).toBe(SHA_DA_MAIN);
+
+    // ⚠️ LIMITE CONHECIDO, não cobertura silenciosa: o `show` da allowlist do relé (#2856) segue
+    // saindo pelo NOME do ramo, então numa execução a allowlist pode vir de um commit e as fontes
+    // de outro. É o mesmo eixo, noutro guard, e fica de fora desta entrega de propósito.
+    const foraDaFatia = chamadas.filter((c) => c[0] === 'show' && !daFatia.includes(alvo(c)));
+    expect(foraDaFatia.map(alvo)).toEqual([kit.ARQ_ALLOWLIST]);
+  });
+});
+
+describe('entradaDoMapa — a projeção lê o mapa pelo MESMO leitor que alimenta o `esperado(...)`', () => {
+  const mapaReal = () => readFileSync(join(RAIZ_REPO, MAPA), 'utf8');
+
+  it('no mapa REAL concorda com `parsearMapa` em TODA edge — zero drift de gramática', () => {
+    const texto = mapaReal();
+    const doParser = parsearMapa(texto);
+    const chaves = Object.keys(doParser);
+    // Denominador: mapa vazio faria o `for` abaixo não asseverar nada e o teste ficaria verde.
+    expect(chaves.length).toBeGreaterThan(20);
+    for (const edge of chaves) expect(entradaDoMapa(texto, edge)).toBe(doParser[edge]);
+  });
+
+  it('o falso POSITIVO do parecer Codex: valor na linha de BAIXO, chave repetida, parser manda', () => {
+    // `parsearMapa` usa `\s*`, que atravessa `\n`, e resolve o duplicado pela ÚLTIMA ocorrência.
+    // Uma projeção com gramática própria (`[ \t]*`) só enxergaria `aaa…` e aprovaria o disco
+    // contra uma main que tem só a primeira linha — com o SQL carregando `bbb…`.
+    const a = 'a'.repeat(64);
+    const b = 'b'.repeat(64);
+    const mapa = `export const FONTE_SHA256: Record<string, string> = {\n  "omie-sync": "${a}",\n  "omie-sync":\n    "${b}",\n};\n`;
+    expect(parsearMapa(mapa)['omie-sync']).toBe(b);
+    expect(entradaDoMapa(mapa, 'omie-sync')).toBe(b);
+  });
+
+  it('nome EXATO: edge fora do mapa NÃO herda a entrada da vizinha cujo nome a contém', () => {
+    // `omie-sync` é prefixo de OITO chaves reais deste mapa. Leitura por prefixo devolveria o hash
+    // de outra edge e o `esperado(...)` compararia a fatia errada nas duas pontas.
+    const semEla = semEntrada(mapaReal(), 'omie-sync');
+    const vizinhas = Object.keys(parsearMapa(semEla)).filter((e) => e.startsWith('omie-sync'));
+    expect(vizinhas.length).toBeGreaterThan(1);
+    expect(entradaDoMapa(semEla, 'omie-sync')).toBe(null);
+  });
+
+  it('nome que é membro de Object.prototype não vira fingerprint herdado do protótipo', () => {
+    expect(entradaDoMapa(mapaReal(), 'constructor')).toBe(null);
+    expect(entradaDoMapa(mapaReal(), 'toString')).toBe(null);
+  });
+
+  it('a CLI real: a entrada da vizinha prefixada não trava a sondagem de `omie-sync`', () => {
+    // Fecha o eixo contra os nomes de VERDADE, onde a armadilha do prefixo mora.
+    const trocada = (edge: string) => (m: string) => comEntradaTrocada(m, edge, 'e'.repeat(64));
+    const vizinha = rodarCli(['omie-sync'], gitComMapaDaMain(RAIZ_REPO, trocada('omie-sync-estoque')));
+    expect(vizinha.codigo).toBe(0);
+    expect(vizinha.saida).toContain('AS veredito');
+
+    const propria = rodarCli(['omie-sync'], gitComMapaDaMain(RAIZ_REPO, trocada('omie-sync')));
+    expect(propria.codigo).toBe(1);
+    expect(propria.saida).toBe('');
+    expect(propria.erros).toContain(`${MAPA} (entrada "omie-sync")`);
+  });
+});
+
 // ══════════════════════════════════════════════════════════════════════════════════════════════
 describe('transporte do disparo — os headers valem para os DOIS modos por construção', () => {
   /** Cada `net.http_post(...)` do SQL, do `net.http_post(` até o `timeout_milliseconds := N)`. */
