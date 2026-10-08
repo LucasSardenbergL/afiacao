@@ -46,6 +46,8 @@ import {
   pendenteNaFila,
 } from "./recebimento.ts";
 import { separarCtes } from "./escopo.ts";
+import { carregarControleDaFila, carregarIrmas, carregarNfesDaJanela, carregarTrackingsComLinha } from "./leituras.ts";
+import type { BancoPostgrest } from "../_shared/paginate.ts";
 import { classificarSonda, EDGE, EFEITO, erroSondaAmbigua, FONTE, respostaSonda, VERSAO } from "./versao.ts";
 
 // Tipos da resposta do Omie: consulta.ts (junto da chamada que os produz).
@@ -160,10 +162,6 @@ interface EmpresaSummary {
   /** Fechamentos PRETERIDOS pelo CAS: outro run gravou o controle depois do nosso carimbo. */
   controle_fechamentos_preteridos: number;
   interrompido_por_timeout: boolean;
-}
-
-interface ExistingTrackingRow {
-  tracking_id: string;
 }
 
 // ─── Fila com backoff (espelho verbatim de src/lib/reposicao/sku-items-fila-helpers.ts;
@@ -625,33 +623,22 @@ Deno.serve(async (req) => {
 
     const cutoffIso = new Date(Date.now() - dias * 86_400_000).toISOString();
 
-    let q = supabase
-      .from("purchase_orders_tracking")
-      .select(
+    // As quatro leituras da montagem paginam (keyset + lotes no `.in()`): o PostgREST corta em
+    // 1.000 linhas em SILÊNCIO, e o histórico truncado virava "sem linha" → pendente (leituras.ts).
+    // `as unknown as BancoPostgrest`: o módulo é testável sem `npm:` (suíte `--no-remote`).
+    const db = supabase as unknown as BancoPostgrest;
+    const nfes = await carregarNfesDaJanela<NFeRow>(db, {
+      empresa,
+      cutoffIso,
+      fornecedor: fornecedorFiltro,
+      colunas:
         "id, nfe_chave_acesso, t1_data_pedido, t2_data_faturamento, t3_data_cte, t4_data_recebimento, fornecedor_codigo_omie, fornecedor_nome, raw_data, nid_receb, created_at",
-      )
-      .eq("empresa", empresa)
-      .gte("t2_data_faturamento", cutoffIso)
-      .not("t2_data_faturamento", "is", null)
-      .not("nfe_chave_acesso", "is", null)
-      .order("t2_data_faturamento", { ascending: false });
-    if (fornecedorFiltro) q = q.eq("fornecedor_codigo_omie", fornecedorFiltro);
+    });
 
-    const { data: nfes, error: nfesErr } = await q;
-    if (nfesErr) throw nfesErr;
-
-    const trackingIds = ((nfes ?? []) as NFeRow[]).map((nfe) => nfe.id);
-    const existingTrackingIds = new Set<string>();
-    if (trackingIds.length > 0) {
-      const { data: existingRows, error: existingErr } = await supabase
-        .from("sku_leadtime_history")
-        .select("tracking_id")
-        .in("tracking_id", trackingIds);
-      if (existingErr) throw existingErr;
-      for (const row of (existingRows ?? []) as ExistingTrackingRow[]) {
-        if (row?.tracking_id) existingTrackingIds.add(row.tracking_id);
-      }
-    }
+    const trackingIds = nfes.map((nfe) => nfe.id);
+    const existingTrackingIds = trackingIds.length > 0
+      ? await carregarTrackingsComLinha(db, trackingIds)
+      : new Set<string>();
 
     // Controle de tentativas — FAIL-CLOSED, antes de qualquer chamada Omie.
     // Sem o controle não há backoff: a NFe que responde 0 itens volta à fila para
@@ -660,40 +647,14 @@ Deno.serve(async (req) => {
     // ordem: edge antes da migration) tem de gritar — 'error' acionável no Sentinela.
     // `itens_pendentes` vem desde 2026-10-05 (migration 20261005170000): sem a coluna esta leitura
     // FALHA e o run grita aqui — edge nova antes da migration não roda a regra velha em silêncio.
-    const controleMap = new Map<string, ControleFila>();
-    if (trackingIds.length > 0) {
-      const { data: controleRows, error: controleErr } = await supabase
-        .from("sku_items_sync_controle")
-        .select("tracking_id, tentativas, ultima_tentativa, itens_pendentes")
-        .in("tracking_id", trackingIds);
-      if (controleErr) {
-        throw new Error(
-          `sku_items_sync_controle ilegível (migration aplicada? cache do PostgREST?): ${controleErr.message}`,
-        );
-      }
-      for (
-        const row of (controleRows ?? []) as Array<
-          {
-            tracking_id: string;
-            tentativas: number | null;
-            ultima_tentativa: string | null;
-            itens_pendentes: number | null;
-          }
-        >
-      ) {
-        if (!row?.tracking_id) continue;
-        controleMap.set(row.tracking_id, {
-          tentativas: row.tentativas ?? 0,
-          ultima_tentativa: row.ultima_tentativa,
-          itens_pendentes: row.itens_pendentes ?? null,
-        });
-      }
-    }
+    const controleMap = trackingIds.length > 0
+      ? await carregarControleDaFila(db, trackingIds)
+      : new Map<string, ControleFila>();
 
     const agoraMs = Date.now();
     // Pendente = pela pendência MEDIDA quando há (k>0 volta mesmo com linha; k=0 sai mesmo sem); pela
     // regra antiga ("sem linha") no legado — recebimento.ts, `pendenteNaFila`.
-    const todas = (nfes ?? []) as NFeRow[];
+    const todas = nfes;
     const pendentesBrutos = todas.filter((n) => pendenteNaFila(controleMap.get(n.id), existingTrackingIds.has(n.id)));
     // CT-e (modelo 57, o conhecimento de FRETE) sai aqui: a Omie o responde sem `itensRecebimento`,
     // e o produto que ele transporta vira leadtime pela NF-e dele. Era 17 de 17 linhas da fila do
@@ -731,20 +692,13 @@ Deno.serve(async (req) => {
     const recebimentosDaFila = [...new Set(fila.map((n) => n.nIdReceb).filter((r): r is string => r !== null))];
     const irmasPorRecebimento = new Map<string, Irma[]>();
     if (recebimentosDaFila.length > 0) {
-      const { data: irmasRows, error: irmasErr } = await supabase
-        .from("purchase_orders_tracking")
-        .select(
+      // Paginada (leituras.ts): antes lançava no teto de 1.000; agora lê o recebimento inteiro.
+      const linhasIrmas = await carregarIrmas<Irma & { nid_receb: number | string | null }>(db, {
+        empresa,
+        recebimentos: recebimentosDaFila,
+        colunas:
           "id, nid_receb, t1_data_pedido, t2_data_faturamento, t3_data_cte, t4_data_recebimento, fornecedor_codigo_omie, fornecedor_nome",
-        )
-        .eq("empresa", empresa)
-        .in("nid_receb", recebimentosDaFila)
-        .order("id");
-      if (irmasErr) throw new Error(`irmãs do recebimento ilegíveis (purchase_orders_tracking): ${irmasErr.message}`);
-      const linhasIrmas = (irmasRows ?? []) as Array<Irma & { nid_receb: number | string | null }>;
-      // O PostgREST corta em 1.000 linhas EM SILÊNCIO: chegar no teto é leitura possivelmente parcial.
-      if (linhasIrmas.length >= 1000) {
-        throw new Error(`irmãs do recebimento: ${linhasIrmas.length} linhas — teto do PostgREST, leitura possivelmente parcial`);
-      }
+      });
       for (const linha of linhasIrmas) {
         if (linha.nid_receb === null || linha.nid_receb === undefined) continue;
         const chave = String(linha.nid_receb);
