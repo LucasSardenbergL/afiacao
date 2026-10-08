@@ -37,6 +37,36 @@
 # Nos tres, cala se `x` e ARRAY no proprio comando (`x=(...)`, `typeset -a`, `read -A`, `set -A`) —
 # `for v in $arr` e o idioma CERTO no zsh — ou array especial do zsh (`$path`, `$argv`...).
 #
+# ── A 4a FORMA: ARRAY DO ZSH E 1-INDEXED, ENTAO `${arr[0]}` E SEMPRE VAZIO ─────────────────────
+#   IDX0  `${arr[0]}`, com `arr` sendo array DECLARADO neste mesmo comando. Medido em 2026-10-08,
+#         `zsh -f` x bash 3.2.57 — `arr=(a b c)`:
+#           ${arr[0]}     zsh: VAZIO   bash: a      ${arr[1]}   zsh: a       bash: b
+#           ${arr[0,2]}   zsh: "a b"   bash: c      ${#arr[0]}  zsh: 0       bash: 1
+#         O vazio e a §9 generalizada: `[ "" -eq 0 ]` e VERDADEIRO e calado no zsh, entao exit code
+#         e contador ausentes viram SUCESSO e ZERO. O ramo `INDICE-ZERO` do pipestatus-zsh-guard.sh
+#         ja cobre `pipestatus[0]`, mas ele julga por NOME FIXO (o awk procura a string
+#         `pipestatus`): o caso GERAL — `${fila[0]}`, `${queue[0]}` — nao tinha hook nenhum.
+#         ESTE hook e o lugar porque o predicado NAO e nome, e DECLARACAO: o `ARR[]` que cala os
+#         tres ramos acima ja prova "x e array neste comando", e o tokenizador ja separa uso de
+#         mencao. No vizinho seria portar o tokenizador — regra local em vez de compartilhada.
+#         ATENCAO: aqui aspas DUPLAS sao USO, nao mencao (`f="${fila[0]}"` expande e da vazio) —
+#         semantica oposta a das tres formas acima, e de graca: `${...}` dentro de `"..."` passa
+#         por `chaves()`, dentro de `'...'`/heredoc/comentario nao passa.
+# Precisao medida (corpus de 112.113 comandos Bash reais, 2026-05..10): 392 chamadas leem
+# `${NOME[0]}`; 87 com nome != PIPESTATUS (as outras ja sao do vizinho). Dessas 87, 55 linhas sao
+# `${BASH_SOURCE[0]}` — array do BASH, nunca declarado no comando, logo calado pelo predicado — e
+# das 32 restantes 16 declaram array aqui. Rodando ESTE hook nas 1.972 chamadas do corpus que tem
+# `[0]`: **2 disparos, 2 VP, 0 FP**. Os dois sao os BFS de imports que imprimiram
+# `closure_count=0` em 2026-09-05/06 — zero com cara de resultado; dos 4 comandos do corpus que
+# imprimem `closure_count`, estes 2 sao exatamente os que rodam no zsh.
+# Os outros 14 dos 16 calam, e TODOS por MENCAO: 6 sao `cat > x.sh <<'EOF'` escrevendo um script
+# com shebang `#!/bin/bash` (ali `[0]` esta CERTO), 5 sao `ps=("${PIPESTATUS[@]}")` dentro de
+# heredoc ou `bash -c`, e 3 sao TS/JS em heredoc. 16/16 julgados certo.
+# LICAO DE METODO, da calibracao: o julgamento MANUAL destes 16 — feito pela janela do `grep` em
+# volta do `${fila[0]}` — deu 8 VP, o quadruplo. A janela mostrava `fila=(` e `${fila[0]}` e NAO
+# mostrava o `cat > x.sh <<'EOF'` seis linhas acima. O tokenizador acertou onde o olho errou:
+# precisao aferida por recorte de contexto superestima, porque o recorte esconde o quoting.
+#
 # ── MENCAO NAO E USO ──────────────────────────────────────────────────────────────────────────
 # Um tokenizador reconstroi so o que o zsh de fora EXECUTA. E mencao, e descartado: aspas simples,
 # `$'...'`, comentario, corpo de heredoc (quoted OU nao — o corpo e dado para quem le: `bash <<EOF`
@@ -59,12 +89,24 @@
 #
 # ── O QUE ELE NAO PEGA (limites assumidos, cada um travado por teste) ─────────────────────────
 #   - reinterpretacao posterior num zsh que este hook nao enxerga: `eval 'set -- $x'`,
-#     `zsh -c '...'`, script com shebang zsh (nenhum no repo: 448 `.sh` tem bash);
+#     `zsh -c '...'`, script com shebang zsh (nenhum no repo: 495 `.sh` tem bash, 0 tem zsh —
+#     remedido em 2026-10-08, eram 448);
 #   - a forma curta do zsh `for x ($l)`, e variavel como NOME de comando (`c="git status"; $c` —
 #     falha ALTO, exit 127, que nao e a classe silenciosa daqui);
 #   - `x` usada ANTES da atribuicao no texto (laco que re-atribui no fim do corpo);
 #   - `setopt SH_WORD_SPLIT` em QUALQUER ponto do comando cala tudo, mesmo depois do uso;
 #   - `)` de padrao de `case` dentro de `$(...)` fecha a substituicao cedo demais.
+#   IDX0 so: subscript que nao seja o `0` EXATO (`${arr[0,2]}` e range LEGITIMO — da "a b" no zsh,
+#     medido; `${arr[0+0]}`, `${arr[$i]}` com i=0 sao calculados), `${#arr[0]}` e flag de parametro
+#     (`${(e)arr[0]}` — o `ct` nao comeca por nome), `${arr[0]:-pad}` (o default disfarca o vazio),
+#     array declarado DENTRO de aspas/heredoc que o mesmo texto depois roda em bash, e array que
+#     vem do AMBIENTE (nao declarado aqui) — inclusive `${BASH_SOURCE[0]}`, que e correto no bash.
+#
+# ── FORMA MEDIDA E RECUSADA (para ninguem "completar a classe" com um ramo que nunca dispara) ──
+# `arr=($escalar)` — array nascendo com UM elemento porque o zsh nao divide a variavel — foi
+# medida no MESMO corpus de 77.916 chamadas que calibrou este hook: **0 verdadeiros positivos**.
+# Os 3 casos brutos eram `+=(` acrescentando UM item de proposito (`rcs+=($rc)`, um exit code),
+# isto e, falso positivo. Ficou fora DE PROPOSITO — nao e lacuna a fechar.
 # E prevencao de acidente de boa-fe, nao sandbox contra adversario.
 #
 # ── ORIGEM ────────────────────────────────────────────────────────────────────────────────────
@@ -94,12 +136,22 @@ esac
 # `NOME="` poria +8,4% das chamadas no jq+awk; o regex, que exige o espaco DENTRO do literal, +2,1%.
 re_lit_d='[A-Za-z_][A-Za-z0-9_]*=\\"[^\\$]*[ ][^\\$]*\\"'
 re_lit_s="[A-Za-z_][A-Za-z0-9_]*='[^']*[ ][^']*'"
+# O 4o gatilho — IDX0 — exige os DOIS sinais: um subscript `[0]` E uma declaracao de array no
+# texto. Aqui a conjuncao e PERFORMANCE medida, nao regra (ao contrario dos tres de cima): quem
+# decide e `regra_idx0`, e afrouxar isto so faria MAIS comando chegar ao awk, que segue calando
+# por falta de array declarado. So `[0]` poria 1,76% do corpus no jq+awk (1.972 de 112.113, a
+# maioria `.[0]` de jq); com a declaracao exigida sao 0,08% (91). Medido 2026-10-08. O
+# `-[-A-Za-z]*[aA]` pede que a flag TERMINE em a/A, entao `typeset -aU arr` (sem outro sinal no
+# texto) e FN do portao — o awk o reconheceria, mas nao chega la.
+re_idx0_sub='\[[[:space:]]*0[[:space:]]*\]'
+re_idx0_dec='(=\(|\+=\(|(typeset|declare|local|readonly|export|integer|float|private)[[:space:]]+-[-A-Za-z]*[aA]|read[[:space:]]+-[-A-Za-z]*[aA]|set[[:space:]]+-A)'
+porta_idx0() { [[ "$entrada" =~ $re_idx0_sub ]] && [[ "$entrada" =~ $re_idx0_dec ]]; }
 # shellcheck disable=SC2016  # `$(` e crase aqui sao TEXTO do payload a casar, nao expansao
 case "$entrada" in
   *[!A-Za-z0-9_]set\ *|*\\nset\ *|*\\tset\ *) ;;
   *[!A-Za-z0-9_]for\ *|*\\nfor\ *|*\\tfor\ *) ;;
   *'=$('*|*'=\"$('*|*'=`'*|*'=\"`'*) ;;
-  *) [[ "$entrada" =~ $re_lit_d || "$entrada" =~ $re_lit_s ]] || exit 0 ;;
+  *) [[ "$entrada" =~ $re_lit_d || "$entrada" =~ $re_lit_s ]] || porta_idx0 || exit 0 ;;
 esac
 
 command -v jq >/dev/null 2>&1 || exit 0
@@ -133,7 +185,7 @@ cmd="${cmd//\\$'\n'/}"
 # exata. LC_ALL=C: varredura por BYTE. Nenhum byte de caractere UTF-8 multibyte e ASCII, entao a
 # sintaxe e reconhecida igual em qualquer locale, e o substr do gawk nao fica quadratico.
 saida="$(printf '%s\n' "$cmd" | LC_ALL=C awk -v SQ="'" '
-  function wreset(o) { WR[o] = ""; WSH[o] = ""; WV[o] = ""; WPN[o] = ""; WPOS[o] = 0; WRHS[o] = 0; WACT[o] = 0 }
+  function wreset(o) { WR[o] = ""; WSH[o] = ""; WV[o] = ""; WPN[o] = ""; WZ[o] = ""; WPOS[o] = 0; WRHS[o] = 0; WACT[o] = 0 }
   function wtouch(o) { if (!WACT[o]) { WACT[o] = 1; WPOS[o] = NR * 1000000 + I } }
   function wraw(o, s) { wtouch(o); WR[o] = WR[o] s }
   function wshape(o, cod) { wtouch(o); if (INB[D]) return; WSH[o] = WSH[o] cod }
@@ -154,6 +206,7 @@ saida="$(printf '%s\n' "$cmd" | LC_ALL=C awk -v SQ="'" '
     if (RP[d] || CT[d] != "C") { RP[d] = 0; wreset(d); return }
     k = ++NWC[d]
     PR[d, k] = WR[d]; PS[d, k] = WSH[d]; PV[d, k] = WV[d]; PP[d, k] = WPOS[d]
+    PZ[d, k] = WZ[d]                        # nomes lidos com `[0]` nesta palavra (ramo IDX0)
     PN[d, k] = (WSH[d] == "P" ? WPN[d] : "")
     PH[d, k] = ((WSH[d] == "L=C" || WSH[d] == "L=QCq") ? WRHS[d] : 0)
     wreset(d)
@@ -164,7 +217,7 @@ saida="$(printf '%s\n' "$cmd" | LC_ALL=C awk -v SQ="'" '
     NC++; CN[NC] = NWC[d]; CS[NC] = CID[d]
     for (k = 1; k <= NWC[d]; k++) {
       R_[NC, k] = PR[d, k]; S_[NC, k] = PS[d, k]; V_[NC, k] = PV[d, k]
-      N_[NC, k] = PN[d, k]; P_[NC, k] = PP[d, k]; H_[NC, k] = PH[d, k]
+      N_[NC, k] = PN[d, k]; P_[NC, k] = PP[d, k]; H_[NC, k] = PH[d, k]; Z_[NC, k] = PZ[d, k]
     }
     NWC[d] = 0
   }
@@ -197,7 +250,15 @@ saida="$(printf '%s\n' "$cmd" | LC_ALL=C awk -v SQ="'" '
   }
   # ${...}: escalar puro e `${nome}` ou `${nome<op>...}`. Flag `(`, `=`, `~`, `^`, `#` de
   # comprimento, `!`, `+` e subscript `[` NAO sao — ${=x} e ${(f)x} sao o split EXPLICITO do zsh.
-  function chaves(o, ct,   nome) {
+  function chaves(o, ct,   nome, z0) {
+    # IDX0: `${arr[0]}` com o subscript sendo o `0` EXATO, e nada depois do `]`. Range e indice
+    # calculado ficam FORA de proposito: `${arr[0,2]}` da "a b" no zsh (medido), e `${arr[0]:-pad}`
+    # entrega o default, nao o vazio. Este e o UNICO ponto da deteccao, e ele da a semantica de
+    # mencao de graca: `${...}` dentro de `"..."` chega aqui (expande, logo e USO), dentro de
+    # `'...'`, de heredoc e de comentario o tokenizador nunca chama esta funcao.
+    if (!INB[D] && ct ~ /^[A-Za-z_][A-Za-z0-9_]*\[[[:space:]]*0[[:space:]]*\]$/) {
+      z0 = ct; sub(/\[.*$/, "", z0); WZ[o] = WZ[o] " " z0
+    }
     nome = ""
     if (ct ~ /^[A-Za-z_][A-Za-z0-9_]*$/ || ct ~ /^[0-9]+$/) nome = ct
     else if (ct ~ /^[A-Za-z_][A-Za-z0-9_]*[:#%\/^,~?=+-]/ || ct ~ /^[0-9]+[:#%\/^,~?=+-]/) {
@@ -248,7 +309,7 @@ saida="$(printf '%s\n' "$cmd" | LC_ALL=C awk -v SQ="'" '
     split("argv path fpath cdpath manpath mailpath module_path pipestatus signals match mbegin mend reply funcstack funcfiletrace funcsourcetrace functrace historywords dirstack psvar watch zsh_eval_context precmd_functions preexec_functions chpwd_functions periodic_functions zshexit_functions", L_, " ")
     for (x in L_) ESPECIAL[L_[x]] = 1
     D = 1; CT[1] = "C"; OWN[1] = 1; INB[1] = 0; wreset(1); NWC[1] = 0; RP[1] = 0; PD[1] = 0; BT[1] = 0; CID[1] = 0
-    NC = 0; NCS = 0; NA = 0; HQN = 0; HQI = 0; inhd = 0; SPLIT = 0; VR = ""; VP = 0; VC = 0
+    NC = 0; NCS = 0; NA = 0; HQN = 0; HQI = 0; inhd = 0; SPLIT = 0; KSHARR = 0; VR = ""; VP = 0; VC = 0
   }
   {
     linha = $0
@@ -376,6 +437,14 @@ saida="$(printf '%s\n' "$cmd" | LC_ALL=C awk -v SQ="'" '
     ALIT[NA] = (substr(S_[c, a], 3) !~ /[PXCAR]/ && substr(V_[c, a], index(V_[c, a], "=") + 1) ~ /[ \t\n]/)
   }
   function normaliza(w) { w = tolower(w); gsub(/_/, "", w); return w }
+  # Opcao de `setopt`/`set -o` que muda a semantica de um dos ramos. SH_WORD_SPLIT liga o split do
+  # bash (cala as tres formas); KSH_ARRAYS e KSH_ZERO_SUBSCRIPT tornam `[0]` LEGITIMO (medido em
+  # `zsh -f`: com qualquer das duas, `arr=(a b c); ${arr[0]}` da "a"), e calam so o IDX0. As duas
+  # ortogonais: ligar o split nao conserta subscript, e vice-versa.
+  function opcao(op) {
+    if (op == "shwordsplit") SPLIT = 1
+    else if (op == "ksharrays" || op == "kshzerosubscript") KSHARR = 1
+  }
   # A substituicao JUNTA a lista numa linha por espaco/tab? (so os comandos DIRETOS dela)
   function junta(c, k,   cmd, a, w, n, p, temS, delim) {
     cmd = V_[c, k]
@@ -450,6 +519,20 @@ saida="$(printf '%s\n' "$cmd" | LC_ALL=C awk -v SQ="'" '
       if ((AID[j] > 0 && JUNTA[AID[j]]) || ALIT[j]) { viola("ZSH-NAO-DIVIDE-ARGS", c, P_[c, a]); return }
     }
   }
+  # IDX0: a palavra le `${nome[0]}` e `nome` e array DECLARADO neste comando. O predicado e a
+  # DECLARACAO, nunca o nome — por isso `${BASH_SOURCE[0]}` (array do bash, vindo do ambiente, 55
+  # das 87 chamadas do corpus) fica calado, e tambem o escalar: `${s[0]}` tambem e vazio no zsh,
+  # mas ali o idioma e outro (`${s[1]}` e o 1o CARACTERE, medido) e pediria outra mensagem.
+  function regra_idx0(c,   k, m, i, nm) {
+    for (k = 1; k <= CN[c]; k++) {
+      if (Z_[c, k] == "") continue
+      m = split(Z_[c, k], Z0_, " ")
+      for (i = 1; i <= m; i++) {
+        nm = Z0_[i]
+        if (nm in ARR) { viola("ZSH-INDICE-ZERO", c, P_[c, k]); return }
+      }
+    }
+  }
   function trecho(c,   k, s) {
     s = ""
     for (k = 1; k <= CN[c]; k++) s = s (k > 1 ? " " : "") R_[c, k]
@@ -488,17 +571,22 @@ saida="$(printf '%s\n' "$cmd" | LC_ALL=C awk -v SQ="'" '
         for (a = k + 1; a <= CN[c]; a++) {
           w = V_[c, a]
           if (w ~ /^[-+][A-Za-z]*A[A-Za-z]*$/ && a < CN[c]) { ARR[V_[c, a + 1]] = 1; break }
-          if (w ~ /^-[A-Za-z]*o$/ && a < CN[c] && normaliza(V_[c, a + 1]) == "shwordsplit") SPLIT = 1
+          if (w ~ /^-[A-Za-z]*o$/ && a < CN[c]) opcao(normaliza(V_[c, a + 1]))
         }
       } else if (cmd == "setopt") {
-        for (a = k + 1; a <= CN[c]; a++) if (normaliza(V_[c, a]) == "shwordsplit") SPLIT = 1
+        for (a = k + 1; a <= CN[c]; a++) opcao(normaliza(V_[c, a]))
       } else if (cmd == "emulate") {
-        for (a = k + 1; a <= CN[c]; a++) if (V_[c, a] == "sh" || V_[c, a] == "ksh") SPLIT = 1
+        # `emulate sh`/`ksh` liga as DUAS: o split E o indice base 0 (KSH_ARRAYS entra no pacote).
+        for (a = k + 1; a <= CN[c]; a++) if (V_[c, a] == "sh" || V_[c, a] == "ksh") { SPLIT = 1; KSHARR = 1 }
       }
     }
-    if (SPLIT) exit                             # o comando LIGOU o split: o idioma do bash vale
-    # passo 2: as tres formas; vale a PRIMEIRA violacao no texto
-    for (c = 1; c <= NC; c++) {
+    # passo 2a: IDX0. NAO e calado por SPLIT — ligar o word splitting nao muda o indice base do
+    # array (as duas opcoes sao ortogonais, medido). Precisa de laco PROPRIO porque a violacao
+    # mora em comando que pode nao ter palavra de comando nenhuma: `f="${fila[0]}"` e atribuicao
+    # pura, e o `cabeca()` do passo 2b descarta esse comando antes de olhar a palavra.
+    if (!KSHARR) for (c = 1; c <= NC; c++) regra_idx0(c)
+    # passo 2b: as tres formas do word splitting; vale a PRIMEIRA violacao no texto
+    if (!SPLIT) for (c = 1; c <= NC; c++) {
       k = cabeca(c)
       if (k > CN[c] || S_[c, k] != "L") continue
       cmd = V_[c, k]
@@ -515,8 +603,10 @@ ramo="${saida%%$'\t'*}"
 trecho="${saida#*$'\t'}"
 trecho="${trecho%%$'\n'*}"
 
-# ZSH-NAO-DIVIDE-{SET,FOR,ARGS} sao CONTRATO DE TESTE: ASCII, caixa fixa, e o PREFIXO do
-# additionalContext (antes do 1o `:`). scripts/test-word-split-zsh-guard.sh compara por IGUALDADE.
+# ZSH-NAO-DIVIDE-{SET,FOR,ARGS} e ZSH-INDICE-ZERO sao CONTRATO DE TESTE: ASCII, caixa fixa, e o
+# PREFIXO do additionalContext (antes do 1o `:`). scripts/test-word-split-zsh-guard.sh compara por
+# IGUALDADE — e ZSH-INDICE-ZERO e distinto de PIPESTATUS-INDICE-ZERO (o marcador do hook vizinho)
+# nos DOIS sentidos de substring, para que `command grep -F` de uma suite nunca case a da outra.
 IFS= read -r -d '' idioma_linha <<'MSG' || true
 Idioma certo (vale nos DOIS shells) — partir UMA LINHA em campos:
   read -r status conclusao <<< "$st"
@@ -539,6 +629,19 @@ roda `cmd` sem argumento.
 
 Isto e um AVISO, nao um bloqueio. Para silenciar: WORD_SPLIT_INTENCIONAL=1 <cmd>
 MSG
+IFS= read -r -d '' idioma_indice <<'MSG' || true
+Idioma certo no zsh — array comeca em 1:
+  primeiro="${arr[1]}"                      # e o ULTIMO e "${arr[-1]}"
+  for v in "${arr[@]}"; do ...; done        # iterar nao precisa de indice nenhum
+Consumindo como FILA, descarte o 1o com "${arr[@]:1}" — esse offset de slice E base 0 nos dois
+shells, e por isso `f="${fila[0]}"; fila=("${fila[@]:1}")` mistura as duas bases no mesmo laco.
+Portavel nos DOIS shells, sem indice:  set -- "${arr[@]}"; primeiro="$1"
+Conte o que chegou ANTES de ler o veredito: "${#arr[@]}". Array vazio e `[0]` ausente dao o MESMO
+vazio — e vazio em teste numerico do zsh vale 0, que e sucesso e tambem "nenhum".
+
+Isto e um AVISO, nao um bloqueio. Sob KSH_ARRAYS/KSH_ZERO_SUBSCRIPT o [0] e legitimo: ignore.
+Para silenciar: WORD_SPLIT_INTENCIONAL=1 <cmd>
+MSG
 
 # shellcheck disable=SC2016  # as mensagens ENSINAM o idioma: $1, $var e ${arr[@]} sao literais
 case "$ramo" in
@@ -557,6 +660,11 @@ $idioma_lista" ;;
     ctx="ZSH-NAO-DIVIDE-ARGS: este comando passa \`\$var\` sem aspas como argumento (trecho: \`$trecho\`), e \`var\` foi montada AQUI como LISTA numa string so (literal com espaco, ou \`\$(... | tr '\\n' ' ')\`/\`paste -s\`/\`xargs\`). No zsh — o shell do Bash tool — variavel sem aspas NAO e dividida: o comando recebe UM argumento com a lista inteira dentro. Com \`tr '\\n' ' '\` nem UM item escapa: o espaco final vai junto — \"x.test.ts \" nao casa filtro nenhum (o vitest rodou 16 de 17 sem avisar) e \`kill \"79967 \"\` e pid ilegal. Duas vezes foi o vitest (2026-07-16 e 2026-09-25): 'No test files found', exit 1, zero testes — a linha \`filter:\` mostrava UM filtro com todos os caminhos dentro (docs/historico/evidencia-positiva-shell.md §21).
 
 $idioma_lista" ;;
+  ZSH-INDICE-ZERO)
+    msg='🔴 array do zsh comeca em 1: `${arr[0]}` e SEMPRE vazio — o primeiro e `${arr[1]}`'
+    ctx="ZSH-INDICE-ZERO: este comando le \`\${arr[0]}\` de um array DECLARADO aqui mesmo (trecho: \`$trecho\`). O Bash tool roda em /bin/zsh, onde array e 1-INDEXED: com \`arr=(a b c)\`, \${arr[0]} e VAZIO e \${arr[1]} e \"a\" — no bash seriam \"a\" e \"b\" (medido nos dois shells em 2026-10-08). Nada falha: a expansao devolve string vazia, e vazio no \`[\` do zsh vale 0 — que e o exit code de SUCESSO e tambem o contador \"nenhum\". E a §9 do catalogo sem o nome PIPESTATUS: em 2026-09-05/06 um BFS de imports com \`f=\"\${queue[0]}\"\` nunca entrou no laco e imprimiu \`closure_count=0\` — zero com cara de resultado (docs/historico/evidencia-positiva-shell.md §9).
+
+$idioma_indice" ;;
   *) exit 0 ;;   # ramo desconhecido: o awk mudou e este bloco nao — calado e melhor que aviso errado
 esac
 
