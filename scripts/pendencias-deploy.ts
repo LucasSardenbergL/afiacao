@@ -440,6 +440,7 @@ export const CONSULTAS_NUVEM: Consultas = {
   sonda_atestacoes: SQL_SONDA_CRON_ATESTACOES,
   sonda_motivos: SQL_SONDA_CRON_MOTIVOS,
   sonda_saude: SQL_SAUDE_CRON_SONDA,
+  sonda_espera: SQL_SONDA_CRON_ESPERA,
 };
 
 /** Quem consome a resposta — resposta gerada para outro CLI é recusada como "arquivo de outra leitura". */
