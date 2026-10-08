@@ -296,7 +296,23 @@ decisão sem ser conferido contra a ref*. Calibrada nos dois pré-fix (casou) e 
 |---|---|---|
 | `sonda-versao-sql.ts` (este PR) | `SONDA_CRON_ALVOS` | recusa do bloco legado desaparece |
 | `scripts/heavy-install.sh --status` | `sha_de scripts/heavy.sh` | instalado == disco ≠ main ⇒ "EM VOO" + exit 0: o vigia cala e o heavy defasado fica |
-| `lovable-deploy-verify/SKILL.md` §bloco bash | `grep ... index.ts` do disco | closure de deploy com 5 arquivos onde a main tem 7 (o próprio doc mediu isso) |
+| `lovable-deploy-verify/SKILL.md` §bloco bash | `grep ... index.ts` do disco | closure de deploy com 5 arquivos onde a main tem 7 (o próprio doc mediu isso) — ✅ **#2858** |
+
+**Desfecho dos dois chips.** O `SKILL.md` fechou em **#2858**: o bloco do closure passa a ler a ref
+(`git show origin/main:<path> | grep -oE "from ['\"]…"`), com a escada nomeada na 1ª linha (o canônico
+é `pendencias:prompt`, que já lê a ref); o comando do import NOVO passou a casar aspas SIMPLES —
+só-duplas perdia 1 de 3 imports **até lendo a ref**; e a forma contra o disco ficou UMA vez, DEPOIS
+da certa, rotulada `❌ RASCUNHO LOCAL — não vale para pedir deploy`. Medido em repo-fixture:
+`REF=3 DISCO=1 REGEX_SO_DUPLAS_NA_REF=2`. O `heavy-install.sh --status` segue aberto.
+
+**E a classe tem uma variante em INSTRUÇÃO, não só em código: o resíduo de ORDEM.** No `SKILL.md` a
+correção **já existia** — no MESMO arquivo, ~45 linhas depois do comando errado, num 🔴 que mandava
+ler a ref. Não bastou: o bloco antigo não estava marcado como errado, e quem lê de cima para baixo
+(ou recorta só aquele passo) usa o primeiro comando que encontra. Num doc, *saber* não é *ensinar*:
+a lição só vale onde o leitor vai PARAR. Remédio nas duas pontas — o comando certo vem PRIMEIRO, e
+a forma errada, se ficar, fica **rotulada** como errada, nunca nua. Corolário para a varredura: num
+doc, procurar a lição não acusa nada (ela costuma estar lá); o que acusa é **comando errado sem
+rótulo**, e a distância até a correção é o tamanho do furo.
 
 Já-correto, por conferirem contra a ref ou julgarem disco × disco: `pendencias-deploy.ts` (o disco só
 nomeia), `sonda-cron-prova.ts`, `edges-afetadas.ts` (lê um `git archive`), `edges-pendentes.sh`,
