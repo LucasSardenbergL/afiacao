@@ -179,9 +179,9 @@ invocação, árvore limpa no fim.
   vinculado a outra NF-e. Decisão de produto. O `t3` não entra nos `lt_*` do motor: o dano é na
   decomposição logística e nas telas. E o SP_MINAS está quase parado por outro motivo (P3-8): lê o
   `nValorNFe` de um jsonb multi-writer que o sync de pedidos sobrescreve.
-- **As 135 linhas 57, os 13 vínculos em linha 57 e os 3 CT-e que nunca chegaram a uma NF-e.** Limpar
-  ou re-casar é decisão do founder, porque tem efeito em dado e redeploy não desfaz vínculo gravado.
-  Nada aqui os re-casa sozinho: os 3 são de mais de 30 dias, e o cron só olha 3.
+- **As 135 linhas 57, os 13 vínculos em linha 57 e os 3 CT-e que nunca chegaram a uma NF-e — ✅ resolvido
+  em 2026-10-08.** As 137 linhas foram apagadas pelo envelope, com backup, e os 3 CT-e não foram re-casados
+  (decisão do founder). Ver [sku-items-cte-fora-da-fila.md](sku-items-cte-fora-da-fila.md) §10.
 - **As órfãs 57 deixam de ser regravadas**: `status` e `t4` delas congelam. Nenhum leitor depende
   disso (as duas views que as contam não têm leitor no repo).
 - **Radar: CNPJ alfanumérico** (inscrições novas desde jul/2026). A classificação lê a chave CRUA
