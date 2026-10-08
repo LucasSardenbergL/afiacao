@@ -450,8 +450,8 @@ describe('getFluxoCaixa — caixa PREVISTO (fin_contas_receber / fin_contas_paga
   });
 
   it('título liquidado, cancelado, de status desconhecido ou nulo NÃO entra no previsto', async () => {
-    // Não é hipotético: em prod (2026-09-10) há 33 CR RECEBIDO + 37 CANCELADO com vencimento
-    // nos próximos 3 meses — R$ 44,3 mil que, sem o filtro, a tela somaria como a receber.
+    // Não é hipotético: em prod (2026-10-08) há 20 CR RECEBIDO + 24 CANCELADO com vencimento
+    // nos próximos 3 meses — R$ 35,7 mil que, sem o filtro, a tela somaria como a receber.
     // Potências de 10: se algum escapar, a soma diz qual.
     state.db.fin_contas_receber = [
       titulo(0, '2026-03-10', 1),
@@ -499,7 +499,7 @@ describe('getFluxoCaixa — caixa PREVISTO (fin_contas_receber / fin_contas_paga
   // DEFAULT da coluna); 'PARCIAL' só tem remanescente confiável com a baixa gravada, que o LIST
   // não traz (#396). Na ENTRADA, contar o ambíguo pode prever dinheiro que não vem; na SAÍDA,
   // DEIXAR de contar é que infla o saldo projetado. Os três tinham zero linhas em prod
-  // (2026-09-10). Valores em potências de 10: a soma diz exatamente quais entraram.
+  // (2026-10-08). Valores em potências de 10: a soma diz exatamente quais entraram.
 
   it("ENTRADA prevista exige status NATIVO do Omie — 'ABERTO', 'VENCIDO' e 'PARCIAL' ficam fora do CR", async () => {
     // O PARCIAL aqui está como está HOJE em prod: status parcial e `valor_recebido` 0, logo

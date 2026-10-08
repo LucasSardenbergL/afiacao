@@ -1,6 +1,6 @@
 # Status ambíguo e a DIREÇÃO do dinheiro — o aberto canônico não serve às duas pontas do caixa previsto
 
-> **A classe (2026-09-10):** numa SOMA que alimenta decisão de caixa, um item de classificação
+> **A classe (decidida em 2026-09-10, entregue em 2026-10-08):** numa SOMA que alimenta decisão de caixa, um item de classificação
 > ambígua não tem resposta neutra. Incluí-lo afirma um status que ninguém provou; excluí-lo fabrica
 > zero para ele (ausente ≠ zero). "Precisão > recall" não se traduz em "exclua o ambíguo": numa
 > soma as duas escolhas erram, e o que muda é o LADO do erro.
@@ -53,9 +53,9 @@ por título, só na janela da tela e, na entrada, só com status nativo. São pe
 
 ## Hoje o número não muda (e isso é medição)
 
-psql-ro, 2026-09-10 21:03 BRT: 44.543 CR + 16.125 CP, zero com `saldo <> valor_documento`, zero com
+psql-ro, 2026-10-08 08:54 BRT: 45.129 CR + 16.223 CP, zero com `saldo <> valor_documento`, zero com
 `saldo < 0`, zero com status `'ABERTO'`/`'VENCIDO'`/`'PARCIAL'`. Na janela da tela, previsto velho =
-novo nas 6 combinações lado × empresa (1.053 dias, 0 diferentes). É defesa para quando o ingest
+novo nas 6 combinações lado × empresa (1.063 dias, 0 diferentes). É defesa para quando o ingest
 mudar — o gatilho destes defeitos é o INGEST, não a tela.
 
 ## A suíte que aprovava sabotagem

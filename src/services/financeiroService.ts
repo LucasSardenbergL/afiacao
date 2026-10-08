@@ -455,8 +455,8 @@ export async function getFluxoCaixa(
   //
   // ⚠️ HOJE tudo isto é NUMERICAMENTE INERTE, e isso é medição, não esperança: o LIST do Omie não
   // traz a baixa (#396), então `valor_recebido`/`valor_pago` são 0 em 100% do universo — medido
-  // 2026-09-10 via psql-ro: ZERO linhas com `saldo <> valor_documento` ou `saldo < 0` em 44.543 CR
-  // + 16.125 CP, e zero com status 'ABERTO'/'VENCIDO'/'PARCIAL'. É defesa em profundidade: o gatilho
+  // 2026-10-08 via psql-ro: ZERO linhas com `saldo <> valor_documento` ou `saldo < 0` em 45.129 CR
+  // + 16.223 CP, e zero com status 'ABERTO'/'VENCIDO'/'PARCIAL'. É defesa em profundidade: o gatilho
   // destes defeitos é o INGEST, não a tela.
   //
   // Por que aqui NÃO degrada para `null`/"—" como em `procedencia-baixa.ts` (#2437): aquele helper
