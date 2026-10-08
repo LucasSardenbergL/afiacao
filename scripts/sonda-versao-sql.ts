@@ -55,6 +55,75 @@ import type { EstadoWorktree } from './lib/sonda-cron-allowlist';
 export interface FonteDoEsperado {
   readonly caminho: string;
   readonly bytes: string;
+  /**
+   * Se presente, só ESTA fatia do arquivo alimentou o `esperado(...)` — e é só ela que o guard
+   * compara. Ausente = o arquivo inteiro alimentou, e é o arquivo inteiro que se confere.
+   */
+  readonly projecao?: ProjecaoDaFonte;
+}
+
+/**
+ * Como recortar, de dentro de um arquivo, a fatia que de fato alimentou o `esperado(...)`.
+ *
+ * Existe porque o arquivo é a unidade que o `git show` conhece, e nem sempre é a unidade que o
+ * marcador consome. O caso medido (2026-09-09, CLI real): no modo SONDA a proveniência registrava
+ * `_shared/sonda-fingerprints.ts` INTEIRO, mas o `esperado(...)` de uma edge lê só a ENTRADA dela.
+ * Sondando `omie-sync` com o hash de `whatsapp-send-template` — edge que ninguém pediu — alterado
+ * no disco, a CLI saiu `exit 1` com stdout de ZERO bytes; o SQL que sairia é byte-a-byte o mesmo
+ * (sha256 idêntico, 18 316 bytes), porque a entrada da vizinha não entra em veredito nenhum.
+ * Bloqueio pelo bloqueio — a mesma sobre-inclusão que o #2435 tirou do modo canária. E não é caso
+ * de canto: `sonda:fingerprint -- --write` regrava esse mapa a cada mudança em `_shared/` (o
+ * fingerprint é TRANSITIVO dos imports locais), então com ~30 worktrees paralelas divergir nele é a
+ * ROTINA. (Não bloqueia o CI: a prova chama `gerarSqlDasCanarias`, a função pura, desde o #2425 —
+ * o guard só roda no `main()`. Quem pagava era o operador do `bun run sonda:sql`.)
+ *
+ * A projeção é DECLARADA por quem resolve o marcador, no mesmo gesto em que resolve — é a doutrina
+ * do #2435 (a fatia é derivada da leitura que ela vigia, nunca uma lista à parte) levada um nível
+ * abaixo do arquivo. `conferirSincronia` não sabe o que é um mapa de fingerprints; ela aplica a
+ * projeção nos DOIS lados e compara os recortes.
+ *
+ * `recortar` devolve `null` quando a fatia NÃO existe naquele texto, e `null` de qualquer ponta é
+ * DIVERGÊNCIA, nunca aprovação: uma edge fora do mapa é exatamente o que o gate `sonda:fingerprint`
+ * existe para barrar, e deixá-la passar emitiria `esperado(...)` sem fingerprint nenhum — o falso
+ * POSITIVO, que é a classe pior porque ENCERRA a verificação.
+ */
+export interface ProjecaoDaFonte {
+  /** Nomeia a fatia na mensagem de erro, e é o que distingue duas projeções do MESMO arquivo. */
+  readonly rotulo: string;
+  /** Recorta a fatia do texto INTEIRO do arquivo. `null` = a fatia não está nesse texto. */
+  readonly recortar: (texto: string) => string | null;
+}
+
+/**
+ * O FINGERPRINT que a edge tem dentro do mapa — ou `null` se ela não está lá.
+ *
+ * Delega a `parsearMapa`, o dono do formato, e isso é o desenho, não preguiça: uma segunda
+ * gramática do mesmo arquivo é uma segunda fonte da verdade, e as duas divergem em silêncio. O
+ * parecer Codex de 2026-09-09 reproduziu o falso POSITIVO exato — a versão anterior desta função
+ * ancorava o espaço com `[ \t]*` enquanto `parsearMapa` usa `\s*`, que atravessa quebra de linha.
+ * Num mapa com a chave repetida e o valor da 2ª ocorrência na linha de baixo, o parser resolvia
+ * pela última (`bbbb…`) e a projeção só enxergava a primeira (`aaaa…`): o guard comparava `aaaa`
+ * dos dois lados e APROVAVA, com o `esperado(...)` carregando `bbbb`. Fatia que não é lida pelo
+ * mesmo leitor não é a fatia.
+ *
+ * Delegar também resolve o duplicado pela MESMA regra do `esperado(...)` (a última ocorrência
+ * vence) e casa o nome EXATO por indexação, não por padrão — `omie-sync` é prefixo de OITO chaves
+ * reais deste mapa (`omie-sync-estoque`, `omie-sync-vendas-items`, …), e casar por prefixo leria o
+ * hash da edge ERRADA nos dois lados, aprovando ou reprovando por engano.
+ *
+ * `Object.hasOwn` e não `in`: `parsearMapa` devolve objeto literal, então `mapa['constructor']`
+ * responderia uma FUNÇÃO herdada do protótipo, e `?? null` não a pegaria. Uma edge com nome de
+ * membro de `Object.prototype` cai aqui em `null` — ou seja, BLOQUEIO, que é o desfecho certo:
+ * `resolverLeva` (que testa com `in`) emitiria fingerprint fabricado para ela.
+ */
+export function entradaDoMapa(texto: string, edge: string): string | null {
+  const mapa = parsearMapa(texto);
+  return Object.hasOwn(mapa, edge) ? mapa[edge] : null;
+}
+
+/** A projeção que recorta do mapa de fingerprints a entrada de UMA edge. */
+export function projecaoEntradaDoMapa(edge: string): ProjecaoDaFonte {
+  return { rotulo: `entrada "${edge}"`, recortar: (texto) => entradaDoMapa(texto, edge) };
 }
 
 /** Uma edge da leva, com o marcador do `versao.ts` dela e o fingerprint da FONTE dela. */
@@ -115,8 +184,12 @@ export function resolverLeva(raiz: string, edges: string[]): EdgeSondada[] {
     }
   })();
   const mapa = bytesMapa === null ? {} : parsearMapa(bytesMapa);
-  const fonteMapa: FonteDoEsperado[] =
-    bytesMapa === null ? [] : [{ caminho: ARQ_MAPA, bytes: bytesMapa }];
+  // A fatia do mapa é a ENTRADA DA EDGE, não o arquivo: é só ela que vira `fonte` no `esperado(...)`.
+  // Os bytes ficam INTEIROS de propósito — é sobre eles que `fontesDoEsperado` detecta a corrida.
+  const fonteMapa = (edge: string): FonteDoEsperado[] =>
+    bytesMapa === null
+      ? []
+      : [{ caminho: ARQ_MAPA, bytes: bytesMapa, projecao: projecaoEntradaDoMapa(edge) }];
   const semSensor: string[] = [];
   const semMarcador: string[] = [];
   const semFingerprint: string[] = [];
@@ -146,7 +219,7 @@ export function resolverLeva(raiz: string, edges: string[]): EdgeSondada[] {
       // O `versao.ts` DESTA edge (os bytes de que `versao` saiu) e o mapa (de que `fonte` saiu).
       // Nada mais: `supabase/config.toml` decide PARA ONDE a sonda vai, não o que ela espera, e um
       // ref velho falha ALTO (404 do gateway) em vez de virar "bundle velho".
-      proveniencia: [{ caminho: relVersao(edge), bytes: textoVersao }, ...fonteMapa],
+      proveniencia: [{ caminho: relVersao(edge), bytes: textoVersao }, ...fonteMapa(edge)],
     });
   }
 
@@ -268,11 +341,14 @@ export function gitReal(raiz: string): ExecutorGit {
 export function fontesDoEsperado(
   resolvidas: ReadonlyArray<{ readonly proveniencia: readonly FonteDoEsperado[] }>,
 ): FonteDoEsperado[] {
-  const porCaminho = new Map<string, string>();
+  // A corrida é sobre o ARQUIVO — os mesmos bytes inteiros têm de sair de TODAS as leituras — e é
+  // julgada sobre todas as ocorrências, antes de qualquer descarte.
+  const bytesPorCaminho = new Map<string, string>();
   const brigando: string[] = [];
-  for (const f of resolvidas.flatMap((r) => r.proveniencia)) {
-    const antes = porCaminho.get(f.caminho);
-    if (antes === undefined) porCaminho.set(f.caminho, f.bytes);
+  const todas = resolvidas.flatMap((r) => r.proveniencia);
+  for (const f of todas) {
+    const antes = bytesPorCaminho.get(f.caminho);
+    if (antes === undefined) bytesPorCaminho.set(f.caminho, f.bytes);
     else if (antes !== f.bytes && !brigando.includes(f.caminho)) brigando.push(f.caminho);
   }
   if (brigando.length > 0) {
@@ -284,9 +360,18 @@ export function fontesDoEsperado(
         'Nenhum SQL foi emitido.',
     );
   }
-  return [...porCaminho]
-    .map(([caminho, bytes]) => ({ caminho, bytes }))
-    .sort((a, b) => a.caminho.localeCompare(b.caminho));
+  // NENHUMA fonte é descartada. Deduplicar obrigação por uma CHAVE é apostar que a chave carrega a
+  // semântica da projeção, e não carrega: o parecer Codex de 2026-09-09 reproduziu duas projeções
+  // de rótulo igual e alvo diferente (uma confere `omie-sync`, a outra `whatsapp-send-template`) —
+  // a dedup matava a segunda e o guard APROVAVA a divergência que só ela veria. E `undefined`
+  // colidiria com uma projeção de rótulo vazio, apagando a conferência do arquivo inteiro. O que se
+  // deduplica com segurança é TRABALHO, não dever: `conferirSincronia` cacheia o `git show` por
+  // caminho e junta as mensagens repetidas.
+  return [...todas].sort(
+    (a, b) =>
+      a.caminho.localeCompare(b.caminho) ||
+      (a.projecao?.rotulo ?? '').localeCompare(b.projecao?.rotulo ?? ''),
+  );
 }
 
 /** O que o guard concluiu. `aviso` só existe no caminho `--sem-rede`, que degradou de propósito. */
@@ -343,25 +428,62 @@ export function conferirSincronia(
   }
   const sha = buscarRefDeployada(semRede, git);
 
-  const ausentes: string[] = [];
-  const divergentes: string[] = [];
-  for (const { caminho, bytes } of fontes) {
-    const r = git(['show', `${REF_DEPLOYADA}:${caminho}`]);
+  const ausentes = new Set<string>();
+  const divergentes = new Set<string>();
+  const semFatiaNoDisco = new Set<string>();
+  // Todos os `show` no COMMIT que `buscarRefDeployada` acabou de resolver, nunca no NOME do ramo:
+  // um `git fetch` de outra worktree pode mover a `origin/main` no meio desta conferência, e aí
+  // cada arquivo sairia de um commit diferente — o guard aprovaria uma COMBINAÇÃO que nunca existiu
+  // num commit só (ressalva do parecer Codex de 2026-09-09). O `sha` já estava resolvido aqui e
+  // servia só para o aviso de `--sem-rede`; agora é ele que manda nas leituras. Um `show` por
+  // ARQUIVO, e não por fatia: N edges sondadas projetam N fatias do mesmo mapa, e a resposta é a
+  // mesma para todas.
+  const daMain = new Map<string, { status: number; stdout: string }>();
+  for (const { caminho, bytes, projecao } of fontes) {
+    let r = daMain.get(caminho);
+    if (r === undefined) {
+      const bruto = git(['show', `${sha}:${caminho}`]);
+      r = { status: bruto.status, stdout: bruto.stdout };
+      daMain.set(caminho, r);
+    }
+    const nome = projecao === undefined ? caminho : `${caminho} (${projecao.rotulo})`;
     if (r.status !== 0) {
-      ausentes.push(caminho);
+      ausentes.add(nome);
       continue;
     }
-    // `bytes`, e não um `readFileSync` daqui: o que se confere tem de ser o que se EMITIU.
-    if (r.stdout !== bytes) divergentes.push(caminho);
+    if (projecao === undefined) {
+      // `bytes`, e não um `readFileSync` daqui: o que se confere tem de ser o que se EMITIU.
+      if (r.stdout !== bytes) divergentes.add(nome);
+      continue;
+    }
+    // A MESMA projeção nos dois lados — é isso que torna a comparação uma comparação. E `null` de
+    // qualquer ponta é divergência: fatia que sumiu não é fatia que bate.
+    const noDisco = projecao.recortar(bytes);
+    if (noDisco === null) {
+      semFatiaNoDisco.add(nome);
+      continue;
+    }
+    const naMain = projecao.recortar(r.stdout);
+    if (naMain === null) {
+      ausentes.add(nome);
+      continue;
+    }
+    if (naMain !== noDisco) divergentes.add(nome);
   }
 
-  if (ausentes.length > 0 || divergentes.length > 0) {
+  if (ausentes.size > 0 || divergentes.size > 0 || semFatiaNoDisco.size > 0) {
     const problemas: string[] = [];
-    if (divergentes.length > 0) {
-      problemas.push(`difere de ${REF_DEPLOYADA}: ${divergentes.join(', ')}`);
+    if (divergentes.size > 0) {
+      problemas.push(`difere de ${REF_DEPLOYADA}: ${[...divergentes].join(', ')}`);
     }
-    if (ausentes.length > 0) {
-      problemas.push(`não existe em ${REF_DEPLOYADA}: ${ausentes.join(', ')}`);
+    if (ausentes.size > 0) {
+      problemas.push(`não existe em ${REF_DEPLOYADA}: ${[...ausentes].join(', ')}`);
+    }
+    if (semFatiaNoDisco.size > 0) {
+      problemas.push(
+        `a fatia declarada não existe no arquivo LIDO (rode \`bun run sonda:fingerprint -- ` +
+          `--write\` e commite o mapa): ${[...semFatiaNoDisco].join(', ')}`,
+      );
     }
     throw new Error(
       `working tree DESSINCRONIZADO da ${REF_DEPLOYADA} na fatia que vira o \`esperado(...)\` — ` +

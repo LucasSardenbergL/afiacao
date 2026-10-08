@@ -105,8 +105,12 @@ function gitDaMain(
     if (args.join(' ') === REV_LIST.join(' ') && opts.revList !== undefined) {
       return { status: 0, stdout: opts.revList, stderr: '' };
     }
-    if (args[0] === 'show' && args[1].startsWith('origin/main:')) {
-      const caminho = args[1].slice('origin/main:'.length);
+    // Corta no PRIMEIRO `:`, não num prefixo fixo: `conferirSincronia` passou a pedir as fontes da
+    // fatia pelo COMMIT resolvido (a `origin/main` pode andar no meio da conferência), enquanto a
+    // allowlist segue pedida pelo NOME do ramo. Espelho ancorado em `origin/main:` só responderia
+    // metade das leituras, e o guard abortaria por fonte "ausente" — teste medindo a fixture.
+    if (args[0] === 'show' && args[1].includes(':')) {
+      const caminho = args[1].slice(args[1].indexOf(':') + 1);
       let conteudo: string | undefined = fatia.get(caminho);
       if (caminho === kit.ARQ_ALLOWLIST && opts.allowlist !== null) {
         const inteiro = allowlistTs(opts.allowlist === 'ilegivel' ? [COMUM, DA_MAIN] : opts.allowlist);
