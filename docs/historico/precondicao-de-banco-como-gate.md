@@ -142,14 +142,24 @@ a própria entrada é o que transforma esta classe de erro em um vermelho barato
 - **Não cobre secrets nem o frontend.** A ordem canônica é secrets → DDL → edges → frontend; o
   pacote mede o elo **DDL→edge** e ordena o resto sem medi-lo. Dizer que ordena não é dizer que mede.
 - **Não decide deploy.** Quem decide é o ledger; este script só responde "PODE AGORA?".
-- **Só existência, não ASSINATURA.** A sonda casa `pg_proc.proname`: ela responde *"foi criada?"* e
-  é cega para *"foi alterada?"*. Uma RPC antiga de mesmo nome com contrato incompatível conta como
-  presente e o gate libera — o erro sai em runtime, com a cara do #2285, só que depois do deploy.
-  Declarado e **não** corrigido por precisão > recall: conferir assinatura exige extrair a
-  ESPERADA do call-site (`db.rpc(nome, { a, b })`), um segundo extrator cujo modo de falha é o
-  **bloqueio falso** — e um gate de deploy que bloqueia sem razão ensina o operador a contorná-lo.
-  Gatilho de reentrada: o primeiro incidente em que a RPC **existia** e a edge quebrou por
-  contrato (assinatura, tipo de retorno, overload ambíguo).
+- **Só existência, não ASSINATURA — gatilho ATINGIDO, e fechado por OUTRO eixo (2026-09-09, #2439).**
+  A sonda casava `pg_proc.proname`: respondia *"foi criada?"* e era cega para *"foi alterada?"*.
+  O incidente previsto aconteceu — `criar_pedidos_com_itens` estava em prod na versão anterior à
+  migration da leva, e a edge `omie-vendas-sync` v1.6 já mandava `desconto_valor`: a RPC velha
+  **descartava o campo sem erro nenhum**. Sem 500, sem log, sem sintoma — o sync reportava sucesso e
+  o ledger atestava `CONFERE` sobre metade de uma entrega.
+  **O conserto NÃO foi conferir assinatura**, e a razão declarada acima continua de pé: extrair a
+  esperada do call-site (`db.rpc(nome, { a, b })`) tem o **bloqueio falso** como modo de falha, e um
+  gate de deploy que bloqueia sem razão ensina o operador a contorná-lo. Medido nas 65 RPCs literais
+  das 97 edges: **14 divergem e 11 são deriva benigna** — o gate "óbvio" barraria 17/65.
+  O que bloqueia é **evidência POSITIVA de regressão**: prod rodando um corpo que o próprio repo
+  commitou **antes** do atual (`md5(prosrc)` × histórico das migrations da ref). Quatro estados —
+  `EM_DIA` libera · `CORPO_ANTERIOR` **bloqueia** · `DERIVA` e `INDECIDIVEL` declaram a não-cobertura
+  e liberam. A unidade conferida é a **MIGRATION**, não a função, senão um dos escritores acoplados
+  escapa por ser chamado por outra edge.
+  **Segue descoberto de propósito:** `DERIVA` não bloqueia — uma edição manual que também ignore o
+  campo novo passa. Fecha-se **commitando a DDL**, não com mais gate.
+  Narrativa e medição: [existe-nao-e-a-versao-que-a-edge-espera.md](existe-nao-e-a-versao-que-a-edge-espera.md).
 
 ## 6. O buraco que o gate tinha na PRÓPRIA procedência (2026-09-08, achado pelo Codex)
 
