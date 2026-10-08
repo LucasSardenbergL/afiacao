@@ -69,6 +69,10 @@ FIX_CORPO="db/fixtures/db-aplicar-corpo-de-funcao.sql"
 # não exercita veredito nenhum — a queda precisa acontecer depois do primeiro comando.
 FIX_LENTO="db/fixtures/db-aplicar-lento.sql"
 SENTINELA_LENTO='APPLY_LENTO'
+# Dois applies dos MESMOS bytes ao mesmo tempo (A15, CONTROLE, S14/S15). O sentinela é a 1ª linha da
+# fixture: pg_stat_activity.query trunca em 1024 bytes, e o corpo inteiro vai dentro da chamada.
+FIX_DUPLA="db/fixtures/db-aplicar-dupla.sql"
+SENTINELA_DUPLA='APLICAR_DUPLA_PORTAO'
 WORK="$(mktemp -d "/tmp/pgtest-db-aplicar.XXXXXX")"
 LOGS="$WORK/logs"
 mkdir -p "$LOGS"
@@ -246,6 +250,93 @@ reinicia_cluster() {
   [ "$(q "select 'CLUSTER_VIVO'")" = "CLUSTER_VIVO" ]
 }
 
+# ── dois `db:aplicar` dos MESMOS bytes ao mesmo tempo (A15, CONTROLE, S14/S15) ──────────────────────
+# "Re-aplicar os mesmos bytes é no-op" era garantia de SEQUÊNCIA: o executor lê o ledger e grava a
+# tentativa FORA da transação, então dois applies simultâneos passam os dois pela etapa 3. A fila
+# (20260909, 1) os põe em ORDEM, e ordem não é impedimento: o 2º espera a vez e executa o corpo de
+# novo. O índice único do recibo reverte o 2º — o DADO se salva —, mas não devolve o que não é
+# transacional (sequência, IDENTITY) nem a carga e os locks de rodar a migration duas vezes.
+#
+# A sobreposição é MEDIDA, em três respostas POSITIVAS com teto e ramo que DIZ "não consegui"
+# (docs/historico/espera-sem-desistencia.md): o 1º executou e está PARADO no portão, segurando a vez;
+# o 2º chegou ao ponto de decisão (esperando a vez, ou já executando); os dois terminaram. Torcer pelo
+# timing degeneraria em série sob carga — e em série o re-check sozinho basta, então S15 (sem fila)
+# ficaria verde sem a fila ter sido exercitada.
+fld() { printf '%s\n' "$2" | cut -d' ' -f"$1"; }   # campo n de uma linha — sem here-string (bash 3.2)
+dupla_q() { q_estrito "$1" || printf 'ILEGIVEL'; }
+dupla_execs() { dupla_q "select coalesce(pg_sequence_last_value('public.fixture_aplicar_dupla_seq'::regclass), 0)"; }
+dupla_conta() { # <condição> — quantos applies DESTA fixture a satisfazem agora
+  dupla_q "select count(*) from pg_stat_activity where usename='claude_rw' and query like '%$SENTINELA_DUPLA%' and $1"
+}
+# pg_cancel_backend na LISTA do SELECT, não no WHERE: no WHERE o planner pode avaliá-lo antes do filtro
+# de wait_event e cancelar também quem espera a vez na fila — o que transformaria S14 em verde.
+dupla_abre_portao() {
+  dupla_q "select count(pg_cancel_backend(pid)) from pg_stat_activity where usename='claude_rw'
+             and wait_event='PgSleep' and query like '%$SENTINELA_DUPLA%'" > /dev/null
+}
+dupla_derruba() {
+  dupla_q "select count(pg_terminate_backend(pid)) from pg_stat_activity where usename='claude_rw'
+             and query like '%$SENTINELA_DUPLA%'" > /dev/null
+}
+# dupla_aplicacao — imprime "RES <execuções> <linhas> <recibos> <rc1> <rc2>" ou "SEM_VEREDITO <motivo>".
+# Logs dos dois em $OUT.1 e $OUT.2. Tabela e sequência nascem AQUI, fora dos applies: `CREATE … IF NOT
+# EXISTS` concorrente não se tolera, e mataria o 2º de S15 antes de ele chegar ao ponto que se mede.
+dupla_aplicacao() {
+  local i=0 ex="" n="" p1="" p2="" motivo=""
+  if ! $PSQL -q -c "DROP TABLE IF EXISTS public.fixture_aplicar_dupla;
+        DROP SEQUENCE IF EXISTS public.fixture_aplicar_dupla_seq;
+        CREATE SEQUENCE public.fixture_aplicar_dupla_seq;
+        CREATE TABLE public.fixture_aplicar_dupla (id int GENERATED ALWAYS AS IDENTITY PRIMARY KEY)" \
+        > "$OUT.prep" 2>&1; then
+    printf 'SEM_VEREDITO o preparo da tabela/sequencia falhou: %s' "$(tail -c 120 "$OUT.prep" | tr '\n' ' ')"
+    return 0
+  fi
+  rm -f "$OUT.1.rc" "$OUT.2.rc"
+  ( r=0; aplicar "$FIX_DUPLA" > "$OUT.1" 2>&1 || r=$?; echo "$r" > "$OUT.1.rc" ) > /dev/null 2>&1 &
+  p1=$!
+  while :; do   # (1) o 1º EXECUTOU e está parado no portão, segurando a vez
+    ex="$(dupla_execs)"; n="$(dupla_conta "wait_event='PgSleep'")"
+    if [ "$ex" = 1 ] && [ "$n" = 1 ]; then break; fi
+    case "$ex $n" in *ILEGIVEL*) motivo="nao consegui LER o estado do 1o (execucoes=$ex portao=$n)" ;; esac
+    if [ -z "$motivo" ] && [ -s "$OUT.1.rc" ]; then
+      motivo="o 1o TERMINOU (rc $(head -c 8 "$OUT.1.rc" | tr -d '[:space:]')) sem parar no portao: $(tail -c 160 "$OUT.1" | tr '\n' ' ')"
+    fi
+    if [ -z "$motivo" ] && [ "$i" -ge 150 ]; then motivo="o 1o nao chegou ao portao em 30 s (execucoes=$ex portao=$n)"; fi
+    if [ -n "$motivo" ]; then dupla_derruba; wait "$p1" 2>/dev/null || true; printf 'SEM_VEREDITO %s' "$motivo"; return 0; fi
+    sleep 0.2; i=$((i + 1))
+  done
+  ( r=0; aplicar "$FIX_DUPLA" > "$OUT.2" 2>&1 || r=$?; echo "$r" > "$OUT.2.rc" ) > /dev/null 2>&1 &
+  p2=$!
+  i=0
+  while :; do   # (2) o 2º no PONTO DE DECISÃO: esperando a vez na fila, ou já executando (sem fila)
+    ex="$(dupla_execs)"; n="$(dupla_conta "wait_event='advisory'")"
+    if [ "$n" = 1 ] || [ "$ex" = 2 ]; then break; fi
+    case "$ex $n" in *ILEGIVEL*) motivo="nao consegui LER o estado do 2o (execucoes=$ex fila=$n)" ;; esac
+    if [ -z "$motivo" ] && [ -s "$OUT.2.rc" ]; then
+      motivo="o 2o TERMINOU (rc $(head -c 8 "$OUT.2.rc" | tr -d '[:space:]')) sem chegar ao ponto de decisao: $(tail -c 160 "$OUT.2" | tr '\n' ' ')"
+    fi
+    if [ -z "$motivo" ] && [ "$i" -ge 150 ]; then motivo="o 2o nao chegou ao ponto de decisao em 30 s (execucoes=$ex fila=$n)"; fi
+    if [ -n "$motivo" ]; then
+      dupla_derruba; wait "$p1" "$p2" 2>/dev/null || true; printf 'SEM_VEREDITO %s' "$motivo"; return 0
+    fi
+    sleep 0.2; i=$((i + 1))
+  done
+  i=0
+  while [ ! -s "$OUT.1.rc" ] || [ ! -s "$OUT.2.rc" ]; do   # (3) portão aberto até os DOIS terminarem
+    dupla_abre_portao   # sem o re-check, o 2º entra no PRÓPRIO portão depois de pegar a vez
+    if [ "$i" -ge 150 ]; then
+      dupla_derruba; wait "$p1" "$p2" 2>/dev/null || true
+      printf 'SEM_VEREDITO os applies nao terminaram em 30 s com o portao aberto'; return 0
+    fi
+    sleep 0.2; i=$((i + 1))
+  done
+  wait "$p1" "$p2" 2>/dev/null || true
+  printf 'RES %s %s %s %s %s' "$(dupla_execs)" \
+    "$(dupla_q 'select count(*) from public.fixture_aplicar_dupla')" \
+    "$(dupla_q "select count(*) from public.db_aplicacoes where arquivo='$FIX_DUPLA' and estado='aplicada'")" \
+    "$(head -1 "$OUT.1.rc" | tr -d '[:space:]')" "$(head -1 "$OUT.2.rc" | tr -d '[:space:]')"
+}
+
 # ═════════════════════════════════════════════════════════════════════════════════════════
 if [ "$FALSIFICAR" -eq 0 ]; then
 seleciona_cluster n
@@ -412,6 +503,28 @@ eq "A12 corpo de função com BEGIN/END; e REFRESH MV CONCURRENTLY APLICA" \
 # isso), os guards seguem verdes e só esta comparação vê o corpo mudar. Ver S9.
 CORPO_DB="$(q_bruto "select prosrc from pg_proc where oid='public.fixture_corpo_refresca()'::regprocedure" | norm_corpo || true)"
 eq "A12b o corpo GUARDADO pelo Postgres é o do arquivo (linhas em branco fora; indentação conta)" "$CORPO_DB" "$CORPO_ARQ"
+
+echo "▶ A15 — dois db:aplicar dos MESMOS bytes ao mesmo tempo: o corpo roda UMA vez"
+# A2 vale em SEQUÊNCIA. Em paralelo os dois passam pelo ledger antes de qualquer recibo existir, e
+# quem decide é a PORTA: depois de pegar a vez na fila, ela re-confere o recibo. Sem o re-check o 2º
+# executava o corpo e só o índice do recibo o revertia, depois (S14). Ver dupla_aplicacao.
+# Vem antes de A13/A14 porque não depende do cluster que A14 derruba e reergue.
+OUT="$WORK/a15.log"
+A15="$(dupla_aplicacao)"
+case "$A15" in
+  RES\ *)
+    eq "A15 o corpo EXECUTOU uma vez (a sequência não-transacional não volta no rollback)" "$(fld 2 "$A15")" "1"
+    eq "A15 o DADO ficou uma vez" "$(fld 3 "$A15")" "1"
+    eq "A15 UM recibo 'aplicada'" "$(fld 4 "$A15")" "1"
+    eq "A15 o 1º aplicou limpo" "$(fld 5 "$A15")" "0"
+    eq "A15 o 2º saiu 4 (recusado — não um no-op silencioso)" "$(fld 6 "$A15")" "4"
+    if grep -qF 'RECUSA_SHA_JA_APLICADO' "$OUT.2" && ! grep -qF 'db_aplicacoes_sha_aplicada_uniq' "$OUT.2"; then
+      ok "A15 quem barrou o 2º foi a PORTA, antes de executar — não o índice do recibo, depois"
+    else
+      nok "A15 marca" "o 2º não saiu pela porta: $(tail -c 220 "$OUT.2" | tr '\n' ' ')"
+    fi ;;
+  *) nok "A15" "sem veredito — ${A15:-a dupla não respondeu}" ;;
+esac
 
 echo "▶ A13/A14 — a conexão cai DEPOIS da tentativa e DURANTE o apply"
 # A classe de desfecho que o veredito da etapa 6 não sabia nomear. Até 2026-09-18 a regex que
