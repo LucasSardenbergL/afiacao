@@ -6,7 +6,8 @@
 # migration e prova que so o caso FANTASMA destravou. A falsificacao (--falsificar) sabota a
 # guarda de cada bloco SEPARADAMENTE e exige vermelho em cada um.
 # Tecnica: a view v_oportunidade_economica_hoje vira TABELA-fixture (plpgsql resolve em runtime).
-# Base: db/test-fixes-codex-711.sh. Pre-req: brew install postgresql@17 pgvector.
+# Base: db/test-fixes-codex-711.sh. Pre-req: PostgreSQL 17 (macOS `brew install postgresql@17 pgvector`;
+# Linux/CI: `postgresql-17` do PGDG) — quem acha os binarios e o db/lib/pg-harness.sh.
 set -euo pipefail
 
 FALSIFICAR=0
@@ -14,19 +15,19 @@ FALSIFICAR=0
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MIGRACAO="$REPO_ROOT/supabase/migrations/20260922225449_oportunidade_erro_terminal_nao_bloqueia_oferta.sql"
-PGVER=17
-PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
-PORT=5451
+export PGVER=17                  # consumido pelo db/lib/pg-harness.sh via source
+PORT="${PGPORT_TEST:-5451}"      # o runner do nucleo entrega a porta por PGPORT_TEST
 DATA="$(mktemp -d /tmp/pgtest-oppfant.XXXXXX)/data"
 export LC_ALL=C LANG=C
 
-[ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER} pgvector"; exit 1; }
 [ -f "$MIGRACAO" ] || { echo "migration ausente: $MIGRACAO"; exit 1; }
 
-CELLAR="$(brew --prefix postgresql@${PGVER})"
-cp -Rn "$CELLAR"/share/postgresql/. "/opt/homebrew/share/postgresql@${PGVER}/" 2>/dev/null || true
-mkdir -p "/opt/homebrew/lib/postgresql@${PGVER}"
-cp -Rn "$CELLAR"/lib/postgresql/. "/opt/homebrew/lib/postgresql@${PGVER}/" 2>/dev/null || true
+# PGBIN: resolvido por plataforma (macOS Homebrew / Linux PGDG) com conferencia POSITIVA da major —
+# `-x` sozinho aceita um initdb de outra versao. Fail-closed: PG ausente e ERRO, nunca skip; no macOS
+# o helper tambem contorna o keg-only do brew. O /opt/homebrew hardcodado era o que mantinha esta
+# prova FORA do CI (runner ubuntu).
+# shellcheck disable=SC1091  # o gate roda sem -x; o helper e versionado ao lado, em db/lib/
+. "$REPO_ROOT/db/lib/pg-harness.sh"
 
 cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$(dirname "$DATA")"; rm -f "${RR:-}" "${SAB:-}"; }
 trap cleanup EXIT
