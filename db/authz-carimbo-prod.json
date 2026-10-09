@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-10-09T11:49:31.109Z",
-  "sourceHead": "278ff50e8796bd17b007a7617391956bbd33585d",
+  "medidoEm": "2026-10-09T22:34:43.797Z",
+  "sourceHead": "cb78f7f1dbad6f46cd98bc2f8a8bb226bd7488fc",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -12,9 +12,9 @@
     "funcoes": {
       "script": "authz:funcoes:prod",
       "exit": 0,
-      "resumo": "✅ o EXECUTE de prod bate com o contrato nas 61 função(ões) da allowlist. ⚠️ 1 delas têm o fecho FORA do repo (fechadaPor=null) e portanto NÃO são vigiadas pelo CI: public.aplicar_sql.",
-      "denominador": "🔎 authz:funcoes:prod — 62 definição(ões) lida(s) para 61 chave(s) da allowlist.",
-      "contratoFingerprint": "1d364465c8481a402cbf9cb14dad001a8544e9e0c12762b7ad853c1249ca8367",
+      "resumo": "✅ o EXECUTE de prod bate com o contrato nas 62 função(ões) da allowlist. ⚠️ 1 delas têm o fecho FORA do repo (fechadaPor=null) e portanto NÃO são vigiadas pelo CI: public.aplicar_sql.",
+      "denominador": "🔎 authz:funcoes:prod — 63 definição(ões) lida(s) para 62 chave(s) da allowlist.",
+      "contratoFingerprint": "899e7cf2a26789ea6cf2bb2f4b619ec99a3dc5d4b6f6a6e22f8fa51f089e681c",
       "auditorFingerprint": "8971003ee5ae2343ff6129fe9569b7afb3b5cfd5bab5abed86c6e27520c8358f",
       "achados": []
     },
@@ -30,9 +30,9 @@
     "audit": {
       "script": "authz:audit:prod",
       "exit": 0,
-      "resumo": "✅ gate do manifest vale no corpo VIVO das 23 funções, e as 0 reescritas baselinadas batem no md5 de prod.",
-      "denominador": "🔎 authz:audit:prod — 24 definição(ões) lida(s) para 23 chave(s) do manifest.",
-      "contratoFingerprint": "7318749018a7457ca3ab6fc4f2cc72c1eb61b848d059be188f5e51fa11363e10",
+      "resumo": "✅ gate do manifest vale no corpo VIVO das 24 funções, e as 0 reescritas baselinadas batem no md5 de prod.",
+      "denominador": "🔎 authz:audit:prod — 25 definição(ões) lida(s) para 24 chave(s) do manifest.",
+      "contratoFingerprint": "48c83d23c6995c9920d577d3c595628774ff758c3be77d9c6622dd21f0153254",
       "auditorFingerprint": "8243bb07ec22b02ca36694989777a7859c086994435fe38f9e48b649907e8909",
       "achados": []
     },
@@ -57,8 +57,8 @@
     "corpo": {
       "script": "deriva:corpo:prod",
       "exit": 0,
-      "resumo": "✅ deriva-corpo — 324 identidade(s) batem com o repo (247 em dia, 69 só cosméticas, 7 aceitas na baseline) e 16 aposentada(s) estão ausentes",
-      "denominador": "🔎 deriva-corpo — 324 identidade(s) conferida(s) · 16 aposentada(s) · ref origin/main@062142076 (fetch ok) · prod 2026-10-09 11:49:57.286311Z",
+      "resumo": "✅ deriva-corpo — 325 identidade(s) batem com o repo (248 em dia, 69 só cosméticas, 7 aceitas na baseline) e 16 aposentada(s) estão ausentes",
+      "denominador": "🔎 deriva-corpo — 325 identidade(s) conferida(s) · 16 aposentada(s) · ref origin/main@685576e0d (fetch ok) · prod 2026-10-09 22:35:18.259137Z",
       "contratoFingerprint": "8b4beb5b6ac1a69509cf990c47e44dd76d091d0306361dd3dbe80052687c79b3",
       "auditorFingerprint": "4462770b72b5f20416a470aa6c1099d3b34d660cbf9638d2cc977b1203dbc752",
       "achados": []
