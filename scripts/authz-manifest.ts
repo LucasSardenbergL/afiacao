@@ -278,6 +278,15 @@ export const AUTHZ_MANIFEST: Record<string, AuthzEntry> = {
     requiredGate: { anyOf: [{ call: 'has_role', roles: ['employee', 'master'] }] },
     motivo: 'divide pedido de compra aprovado em filhos (fornecedor/condição de pagamento herdados); staff-only quando há JWT',
   },
+  // #2849 (migration 20261009194000): o cadastro de grupos WP (QT↔GL) era SECDEF viva aplicada FORA de
+  // supabase/migrations/ (db/embalagem-auto-cadastro-wp.sql), por isso o check nunca a viu; a migration a recria
+  // com o MESMO gate. Forma igual à de `pedido_compra_split` (uid NULL não roda o gate — cron), e o limite é o
+  // mesmo, MEDIDO (psql-ro 2026-10-09): anon_exec=f, authenticated_exec=t. Se `anon` ganhar EXECUTE, reescreva o gate.
+  'public.reposicao_sincronizar_embalagem_wp': {
+    sensitive: true,
+    requiredGate: { anyOf: [{ call: 'has_role', roles: ['employee', 'master'] }] },
+    motivo: 'cadastra grupos de embalagem WP (fornecedor, fator, unidades Omie) que o motor de compra lê; staff-only quando há JWT',
+  },
   // md5 99ebc805… (repo == prod). RPC irmã do detector de PO, mesma migration 20260814000125.
   // Este é o **follow-up 2** do mesmo histórico, e ele NÃO foi revelado pela ampliação do eixo:
   // o corpo lê `reposicao_pedidos_compra_run` e não cita nenhum dos tokens novos. Está aqui por

@@ -1,6 +1,9 @@
 -- Auto-cadastro dos pares QT+GL dos concentrados WP.3900 na Embalagem econômica.
 -- Fonte VERSIONADA → colar no SQL Editor do Lovable (migration custom NÃO auto-aplica).
 -- NÃO editar supabase/migrations/.
+-- ⚠️ SUPERADO (2026-10-09, #2849): a função reposicao_sincronizar_embalagem_wp VIVA é a da
+--    supabase/migrations/20261009194000_motor_unidades_concentrado_wp.sql (grava unidades_omie_por_embalagem).
+--    NÃO recole a função deste arquivo na prod: ela apagaria a coluna do cadastro das cores novas.
 -- ⚠️ MONEY-PATH: sku_embalagem_equivalencia é lida pela TELA advisory E pelo MOTOR de compra
 -- (gerar_pedidos_sugeridos_ciclo). Cadastrar o par faz o WP CONSOLIDAR estoque QT+GL no motor.
 -- 15 SKUs WP têm habilitado_reposicao_automatica (empresa 'OBEN' MAIÚSCULO) → o backfill re-modela a

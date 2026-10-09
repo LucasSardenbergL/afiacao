@@ -455,3 +455,32 @@ A leitura foi feita às 08:48 e às 08:56 UTC, antes do `sync-inventory-vendas-3
 O catálogo rodou numa varredura só: oben das 08:30:09 às 08:31:20 (3.714 linhas) e colacor das 08:31:23 às 08:32:21 (4.335 linhas). As linhas com estoque (794 e 1.448) foram regravadas **na mesma varredura** e não zeraram.
 
 Com o bundle velho, que mandava `estoque: quantidade_estoque || 0`, elas sairiam dessa varredura em 0. Era a última conferência pendente da classe "estoque com dono único".
+
+## O conserto das unidades (2026-10-09, #2849)
+
+A migration `20261009194000_motor_unidades_concentrado_wp.sql` faz o motor converter litro em embalagem nos 28 concentrados WP.
+
+- **Dado:** a coluna `sku_embalagem_equivalencia.unidades_omie_por_embalagem`, com QT = 0,81 e GL = 3,24.
+- **Motor:** `conv` é essa coluna quando o grupo INTEIRO a tem e coerente com o fator (`u/fator` igual entre os membros). Senão o grupo inteiro volta ao fator relativo, que é a conta de antes. Coerência é exigida porque a escolha QT↔GL compara custo pelo fator, e a quantidade divide por `conv`: os dois têm de concordar.
+- **O que muda:** o em trânsito multiplica por `conv`, a necessidade divide por `conv`, e o preço da âncora vira cmc × `conv`. O preço também corrige o `nValUnit` do PO quando o portal não decompõe, porque a edge manda `preco_unitario`.
+- **O que não muda:** `qtde_final` segue inteira em embalagens (o PO é inteiro). A `qtde_sugerida` (gate > 0 e rastro) passou a embalagens da âncora: a primeira versão a deixou em litros, e o Codex mostrou que a tela (`ItensTable`) compara `qtde_final > qtde_sugerida` e acenderia um "mínimo forçado" falso (6 QT > 5 L).
+- **Cadastro WP:** grava a coluna numa cor nova só se ela estiver em `L` no Omie. Em outra unidade fica NULL, e o motor usa o fator.
+
+**Prova PG17** (`db/test-motor-unidades-concentrado.sh`, schema da prod pelo snapshot), com o motor EXECUTADO. Ela compara o motor novo com uma cópia renomeada do antigo sobre a mesma semente:
+- quartinho: 6 QT a cmc × 0,81 (o antigo dava 5 a cmc);
+- galão: 3 GL (o antigo dava 2);
+- em trânsito: 4,86 L, contra 6 do antigo;
+- mínimo forçado: 10 QT (o antigo dava 8);
+- byte-idênticos ao antigo: os controles sem cadastro, parcial e incoerente, e o SKU sem grupo.
+
+O G1-G8 põe a PRE e a PÓS à prova. A falsificação deu 12 sabotagens vermelhas no assert certo, com controle verde de 30 asserts, em `LC_ALL=C` e em `pt_BR.UTF-8`.
+
+O Codex do desenho caiu no guard local de cota (exit 79, janela até 19:30). A `RÉGUA:` foi conferida pela sessão.
+
+**O adversarial de código** (gpt-6-astra, max, 19:32) aprovou com mudanças:
+- **P1, pré-existente e fora desta fatia:** `estoque_pendente_entrada` entra cru. Os POs WP do Omie estão em embalagens (o PO 1268 grava `quantidade=5` num produto em L), e depois da janela de 7 dias do em trânsito o sync contribuiria com o número cru. Em toda a história houve só 2 POs WP observados, todos `dedup_app`, então ainda não disparou. O conserto vai na fonte (sync), num chip à parte.
+- **P2, consertados aqui:**
+  - o "mínimo forçado" falso na tela, pela `qtde_sugerida` em embalagens;
+  - o K3 vácuo, agora com um par WP elegível já cadastrado e a sabotagem `cadastro_sobrescreve`.
+- **Também:** a foto passou a ser lida como `pg_temp.motor_unidades_wp_foto`.
+- **Sem achado:** em `cap_teto`, `portal_fator`, anti-dup, preço a jusante e salto da POS no `db:aplicar` (uma transação só).

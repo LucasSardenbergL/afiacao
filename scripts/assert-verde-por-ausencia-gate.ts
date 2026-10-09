@@ -114,7 +114,6 @@ export const CATRACA_SQL: Readonly<Record<string, number>> = {
   'db/aplicar-sonda-alvos-onda4.sql': 1,
   'db/aplicar-sonda-alvos-onda5.sql': 1,
   'db/aplicar-sync-reprocess-degradado-vigiadas.sql': 1,
-  'db/embalagem-motor-rpc.sql': 2,
   'db/reparo-15o-pedido-11701.sql': 7,
   'db/reparo-passivo-coerencia-pedido-venda.sql': 3,
 };

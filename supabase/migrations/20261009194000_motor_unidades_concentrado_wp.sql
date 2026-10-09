@@ -1,19 +1,161 @@
--- gerar_pedidos_sugeridos_ciclo — a FONTE versionada viva do motor de reposição (money-path) e a fixture das
--- provas db/test-embalagem-motor.sh, db/test-em-transito-erro-terminal.sh e db/test-gate-estoque-nao-confirmado.sh.
+-- 20261009194000_motor_unidades_concentrado_wp.sql
+-- ============================================================
+-- O motor de reposição (gerar_pedidos_sugeridos_ciclo) passa a converter UNIDADES nos concentrados WP
+-- (#2849): o estoque, o ponto e o máximo estão em LITROS no Omie; a compra, o em trânsito e o PO, em
+-- EMBALAGENS (QT = 0,81 L, GL = 3,24 L). Antes o motor lia litro como QT e o galão como 4 QT.
+-- ============================================================
+-- Medido (psql-ro, 2026-10-07 e 09): 14 grupos / 28 membros ativos da oben, todos omie_products.unidade='L',
+-- recebimentos em múltiplos de 0,81. Os erros eram: ceil(máx − efetivo) em L lido como nº de QT (~19% a
+-- menos); troca p/ galão ÷ 4 em vez de ÷ 3,24; em trânsito (QT, e GL × 4) somado em L (~23% a mais por até
+-- 7 dias); preco_unitario da âncora = cmc (R$/L) por embalagem (~23% acima, e o mesmo valor ia ao nValUnit
+-- do PO quando o portal não decompõe). Caso real: pedido 1268, WP01 QT, 3,2 L de 8 L → pediu 5 QT (4,05 L).
 --
--- O guard src/lib/reposicao/__tests__/embalagem-motor-paridade.test.ts exige que este arquivo, do CREATE OR
--- REPLACE até o FIM, seja IGUAL ao trecho da ÚLTIMA migration que recria a função (a que vence em prod).
--- Desde 2026-10-09 essa migration é a 20261009194000_motor_unidades_concentrado_wp.sql (#2849: o motor converte
--- unidades pelo grupo — conv = sku_embalagem_equivalencia.unidades_omie_por_embalagem quando o grupo inteiro a
--- tem, senão o fator relativo). O que vem depois do $function$; é a pós-condição, autocontida (os corpos, a foto
--- do ACL e o cadastro só são conferidos quando a migration roda inteira). Histórico: git log deste arquivo.
--- Spec original (embalagem no motor, 2026-06-26): docs/superpowers/specs/2026-06-26-reposicao-embalagem-no-motor-spec.md
+-- O conserto:
+--   · dado: sku_embalagem_equivalencia.unidades_omie_por_embalagem (0,81 / 3,24 nos 28);
+--   · motor: conv = essa coluna quando o grupo INTEIRO a tem e coerente com o fator; senão o fator relativo
+--     (a conta de antes). Em trânsito × conv; necessidade ÷ conv; preço da âncora = cmc × conv. SKU sem
+--     grupo divide e multiplica por 1 — idêntico. qtde_final segue INTEIRA em embalagens (o PO é inteiro);
+--     qtde_sugerida (gate > 0 e rastro) passa a EMBALAGENS da âncora — a tela compara final × sugerida na mesma unidade;
+--   · cadastro WP (reposicao_sincronizar_embalagem_wp): a cor nova já nasce com a coluna, só se em litros.
+--
+-- Molde "Recriar objeto VIVO" (.claude/skills/lovable-db-operator/references/sql-house-style.md).
+-- Sem BEGIN/COMMIT: a transação é do `bun run db:aplicar`. Prova PG17: db/test-motor-unidades-concentrado.sh.
+-- Predecessores (md5 do prosrc na prod, 2026-10-09): motor 7a15485d16c2a88c2de88cc80f87756b (= corpo da
+-- 20261001023000); cadastro 141a28f4f696a985e2172de2aa18d1e9.
+-- ============================================================
 
--- A coluna que o motor lê (da mesma migration; NULL = fator relativo, a conta de antes). Idempotente.
+-- TRAVA, antes de ler: ALTER sem efeito (a volatilidade VIVA) em cada função que a PRE guarda e este arquivo recria.
+DO $trava$
+BEGIN
+  IF to_regprocedure('public.gerar_pedidos_sugeridos_ciclo(text, date)') IS NOT NULL THEN
+    ALTER FUNCTION public.gerar_pedidos_sugeridos_ciclo(text, date) VOLATILE;
+  END IF;
+  IF to_regprocedure('public.reposicao_sincronizar_embalagem_wp(text)') IS NOT NULL THEN
+    ALTER FUNCTION public.reposicao_sincronizar_embalagem_wp(text) VOLATILE;
+  END IF;
+END
+$trava$;
+
+-- PRE: md5 EXATO do corpo vivo ∈ {predecessor revisado, este}. Ausente ABORTA. Foto de ACL/config/secdef.
+DO $pre$
+DECLARE
+  r record;
+BEGIN
+  FOR r IN
+    SELECT x.alvo, x.predecessor, x.este,
+           (SELECT md5(p.prosrc) FROM pg_catalog.pg_proc p WHERE p.oid = to_regprocedure('public.' || x.alvo)) AS vivo
+      FROM (VALUES
+        ('gerar_pedidos_sugeridos_ciclo(text, date)', '7a15485d16c2a88c2de88cc80f87756b', 'd3f55f2621c27a234925821e06f73dd7'),
+        ('reposicao_sincronizar_embalagem_wp(text)', '141a28f4f696a985e2172de2aa18d1e9', 'f201f94a74b9371478653ddcb825b86a')
+      ) AS x(alvo, predecessor, este)
+  LOOP
+    IF r.vivo IS NULL OR r.vivo NOT IN (r.predecessor, r.este) THEN
+      RAISE EXCEPTION 'PRE FALHOU: % vivo (md5 %) não é o predecessor revisado nem este — reconcilie antes de aplicar', r.alvo, r.vivo;
+    END IF;
+  END LOOP;
+  CREATE TEMP TABLE motor_unidades_wp_foto ON COMMIT DROP AS
+    SELECT p.oid::regprocedure::text AS alvo, p.proacl::text AS acl, p.proconfig::text AS config,
+           p.prosecdef AS secdef, p.provolatile AS vol, pg_catalog.pg_get_userbyid(p.proowner) AS dono
+      FROM pg_catalog.pg_proc p
+     WHERE p.oid = ANY (ARRAY[
+       to_regprocedure('public.gerar_pedidos_sugeridos_ciclo(text, date)'),
+       to_regprocedure('public.reposicao_sincronizar_embalagem_wp(text)')
+     ]::oid[]);
+END
+$pre$;
+
+-- DADO: unidades Omie por embalagem comprada. NULL = sem cadastro → o motor usa o fator relativo.
 ALTER TABLE public.sku_embalagem_equivalencia
   ADD COLUMN IF NOT EXISTS unidades_omie_por_embalagem numeric
   CHECK (unidades_omie_por_embalagem IS NULL OR unidades_omie_por_embalagem > 0);
+COMMENT ON COLUMN public.sku_embalagem_equivalencia.unidades_omie_por_embalagem IS
+  'Unidades do Omie (omie_products.unidade) contidas em 1 embalagem comprada deste SKU. Concentrado WP em litros: QT = 0,81, GL = 3,24. O motor de reposição (gerar_pedidos_sugeridos_ciclo) só a usa quando TODO membro ativo do grupo a tem e u/fator_para_base é igual entre eles; senão usa fator_para_base. NULL = sem cadastro (#2849).';
 
+
+CREATE OR REPLACE FUNCTION public.reposicao_sincronizar_embalagem_wp(p_empresa text DEFAULT 'oben'::text)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE
+  v_uid uuid := auth.uid();
+  v_disparado_por text;
+  v_cores int := 0;
+  v_linhas int := 0;
+  v_ins int;
+  r record;
+  v_grupo uuid;
+BEGIN
+  -- Gate cron-or-staff: usuário logado exige staff; cron (auth.uid()=NULL) passa.
+  IF v_uid IS NOT NULL
+     AND NOT (has_role(v_uid,'employee'::app_role) OR has_role(v_uid,'master'::app_role)) THEN
+    RAISE EXCEPTION 'não autorizado' USING ERRCODE = '42501';
+  END IF;
+  v_disparado_por := CASE WHEN v_uid IS NULL THEN 'cron' ELSE 'manual:'||v_uid::text END;
+
+  FOR r IN
+    WITH wp AS (
+      SELECT substring(descricao FROM '^(WP[0-9]+\.[0-9]+)') AS cor,
+             substring(descricao FROM '^WP[0-9]+\.[0-9]+([A-Z0-9]+)') AS sufixo,
+             omie_codigo_produto, unidade
+      FROM public.omie_products
+      WHERE account = p_empresa AND ativo
+        AND descricao ~ '^WP[0-9]+\.[0-9]+(QT|GL) '
+    )
+    SELECT cor,
+           max(omie_codigo_produto) FILTER (WHERE sufixo='QT') AS qt,
+           max(omie_codigo_produto) FILTER (WHERE sufixo='GL') AS gl,
+           -- [UNIDADES #2849] 0,81 L/QT e 3,24 L/GL só valem com a cor em LITROS no Omie; fora disso NULL e o
+           -- motor fica no fator relativo (a conta de antes) — nunca um litro presumido.
+           COALESCE(bool_and(upper(btrim(unidade)) = 'L'), false) AS em_litros
+    FROM wp GROUP BY cor
+    HAVING count(*) FILTER (WHERE sufixo='QT') = 1
+       AND count(*) FILTER (WHERE sufixo='GL') = 1
+  LOOP
+    v_cores := v_cores + 1;
+    -- Reusa o grupo da cor se já cadastrada; senão gera novo.
+    SELECT grupo_id INTO v_grupo
+    FROM public.sku_embalagem_equivalencia
+    WHERE empresa = p_empresa AND ativo AND sku_codigo_omie IN (r.qt::text, r.gl::text)
+    LIMIT 1;
+    IF v_grupo IS NULL THEN v_grupo := gen_random_uuid(); END IF;
+
+    -- Insere só as embalagens faltantes (idempotente; ON CONFLICT é atômico no índice).
+    INSERT INTO public.sku_embalagem_equivalencia
+      (empresa, grupo_id, sku_codigo_omie, unidade_base, fator_para_base, fornecedor_nome, ativo, criado_por,
+       unidades_omie_por_embalagem)
+    SELECT p_empresa, v_grupo, x.sku::text, 'QT', x.fator, 'Sayerlack', true, 'auto:embalagem-wp',
+           CASE WHEN r.em_litros THEN x.unidades END
+    FROM (VALUES (r.qt, 1::numeric, 0.81::numeric), (r.gl, 4::numeric, 3.24::numeric)) AS x(sku, fator, unidades)
+    ON CONFLICT (empresa, sku_codigo_omie) WHERE ativo DO NOTHING;
+    GET DIAGNOSTICS v_ins = ROW_COUNT;
+    v_linhas := v_linhas + v_ins;
+  END LOOP;
+
+  INSERT INTO public.reposicao_embalagem_sync_log (empresa, disparado_por, cores_elegiveis, linhas_inseridas)
+  VALUES (p_empresa, v_disparado_por, v_cores, v_linhas);
+
+  RETURN jsonb_build_object('empresa', p_empresa, 'cores_elegiveis', v_cores, 'linhas_inseridas', v_linhas);
+END $function$;
+-- O fecho do browser anônimo, agora no repo (antes só em db/embalagem-auto-cadastro-wp.sql): sem efeito no ACL vivo
+-- (psql-ro 2026-10-09: anon_exec=f, sem PUBLIC) — a POS3 exige o ACL igual ao da foto. O gate do corpo não roda com
+-- uid NULL (cron), então `anon` com EXECUTE a abriria (scripts/authz-manifest.ts).
+REVOKE ALL ON FUNCTION public.reposicao_sincronizar_embalagem_wp(text) FROM PUBLIC, anon;
+
+-- Os 28 membros WP da oben: QT (fator 1) = 0,81 L, GL (fator 4) = 3,24 L. Só onde NULL (idempotente), só com o
+-- produto em LITROS e a descrição concordando com o fator.
+UPDATE public.sku_embalagem_equivalencia e
+   SET unidades_omie_por_embalagem = CASE e.fator_para_base WHEN 1 THEN 0.81 WHEN 4 THEN 3.24 END
+  FROM public.omie_products op
+ WHERE e.unidades_omie_por_embalagem IS NULL
+   AND e.ativo AND e.empresa = 'oben'
+   AND op.omie_codigo_produto::text = e.sku_codigo_omie::text AND op.account = e.empresa
+   AND upper(btrim(op.unidade)) = 'L'
+   AND (   (op.descricao ~ '^WP[0-9]+\.[0-9]+QT ' AND e.fator_para_base = 1)
+        OR (op.descricao ~ '^WP[0-9]+\.[0-9]+GL ' AND e.fator_para_base = 4));
+
+-- O motor por ÚLTIMO, seguido só da PÓS: db/embalagem-motor-rpc.sql é a cópia deste trecho até o FIM.
 CREATE OR REPLACE FUNCTION public.gerar_pedidos_sugeridos_ciclo(p_empresa text DEFAULT 'OBEN'::text, p_data_ciclo date DEFAULT ((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date)
  RETURNS TABLE(pedidos_gerados integer, skus_incluidos integer, valor_total_ciclo numeric, bloqueados integer)
  LANGUAGE plpgsql
