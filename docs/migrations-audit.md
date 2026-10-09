@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **590** custom migrations totais
-- **1935** objetos esperados (criados por estas migrations)
+- **591** custom migrations totais
+- **1944** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 653
+  - `function`: 660
   - `rls_policy`: 464
-  - `index`: 267
+  - `index`: 268
   - `cron_job`: 175
   - `table`: 169
   - `view`: 108
-  - `trigger`: 95
+  - `trigger`: 96
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -4834,6 +4834,20 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20261008010000_cron_estoque_diario_fora_do_minuto_00.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20261009120000_atp_fase3_1_elo_pid.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.estoque_reservas_pv_write_once` | — |
+| `function` | `private.atp_canonico_da_reserva` | — |
+| `function` | `private.atp_disponivel` | — |
+| `function` | `private.expirar_reservas_vencidas_job` | — |
+| `function` | `private.atp_reconciliar_job` | — |
+| `function` | `public.atp_reservas_pendentes` | — |
+| `function` | `public.atp_confirmar_pv` | — |
+| `index` | `public.idx_estoque_reservas_pv_ativa` | `estoque_reservas` |
+| `trigger` | `public.trg_estoque_reservas_pv_write_once` | `estoque_reservas` |
 
 ### `20261009120000_check_finitude_teto_faixa.sql`
 

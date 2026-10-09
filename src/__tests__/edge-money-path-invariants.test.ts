@@ -4810,3 +4810,47 @@ describe('guardrail money-path: CT-e (modelo 57) fora do rastreio — fonte e ca
     }
   });
 });
+
+// ── ATP fase 3.1 (2026-10-09): o write-back do PV é ATÔMICO com o carimbo da reserva ──
+// O `.update()` solto em sales_orders deixava o estado intermediário "PV criado + reserva por
+// transicionar" e, no DELETE da push (`excluir_pedido`), a reserva perdia o elo com o pedido. A RPC
+// `atp_confirmar_pv` grava o PV E o par (omie_account, omie_pedido_id) da reserva na MESMA transação.
+// Prova de comportamento da RPC: db/test-atp-reconciliacao-fase3.sh (zona 9). Aqui, a FORMA da edge
+// (o deploy pelo chat do Lovable pode reverter o fix e commitar a reversão).
+describe('guardrail money-path: write-back do PV pela RPC atômica (ATP fase 3.1)', () => {
+  const src = read('supabase/functions/omie-vendas-sync/index.ts');
+  const ini = src.indexOf('async function criarPedidoVenda(');
+  const fim = src.indexOf('\n}\n', ini);
+  const fn = removerComentarios(ini >= 0 && fim > ini ? src.slice(ini, fim) : '');
+
+  it('sentinela: extraiu o corpo REAL do criarPedidoVenda', () => {
+    expect(fn).toContain('"IncluirPedido"');
+    expect(fn.length, 'recorte vazio ou o stripper comeu o miolo').toBeGreaterThan(1500);
+  });
+
+  it('o write-back chama atp_confirmar_pv DEPOIS do IncluirPedido, com conta e PID', () => {
+    const rpc = fn.indexOf('.rpc("atp_confirmar_pv"');
+    expect(rpc, 'REGRESSÃO: o write-back voltou a não carimbar a reserva (sumiu a RPC atômica)').toBeGreaterThan(-1);
+    expect(rpc, 'a RPC tem de vir DEPOIS de o PV existir no Omie').toBeGreaterThan(fn.indexOf('"IncluirPedido"'));
+    const args = fn.slice(rpc, rpc + 400);
+    expect(args).toMatch(/p_sales_order_id:\s*salesOrderId/);
+    expect(args).toMatch(/p_account:\s*account/);
+    expect(args).toMatch(/p_omie_pedido_id:\s*omie_pedido_id/);
+  });
+
+  it('o update legado em sales_orders só existe no ramo PGRST202 (RPC ausente)', () => {
+    expect(count(fn, '.from("sales_orders")'), 'um 2º write-back solto reabriria o estado intermediário').toBe(1);
+    const ramo = fn.indexOf('wbError?.code === "PGRST202"');
+    const legado = fn.indexOf('.from("sales_orders")');
+    const p0002 = fn.indexOf('wbError?.code === "P0002"');
+    expect(ramo, 'sumiu o ramo PGRST202').toBeGreaterThan(-1);
+    expect(legado, 'o update legado tem de estar DENTRO do ramo PGRST202').toBeGreaterThan(ramo);
+    expect(legado, 'o update legado vazou para fora do ramo PGRST202').toBeLessThan(p0002);
+  });
+
+  it('qualquer outro erro da RPC LANÇA (PV no Omie sem write-back nunca é sucesso)', () => {
+    expect(fn).toMatch(/if \(wbError\?\.code === "P0002"\) \{\s*throw new Error\(/);
+    expect(fn).toMatch(/if \(wbError\) \{\s*throw new Error\(/);
+    expect(fn).toMatch(/\?\.ok !== true\) \{\s*throw new Error\(/);
+  });
+});

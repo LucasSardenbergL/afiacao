@@ -2252,29 +2252,59 @@ async function criarPedidoVenda(
     omie_response = { reconciled: true, consulta };
   }
 
-  // Write-back COM erro checado E exigindo EXATAMENTE 1 linha (P1-2: o PostgREST devolve
-  // error:null mesmo atualizando 0 linhas → deixaria pedido órfão no Omie com "sucesso").
-  // Casa por id + account.
-  const { data: wbRows, error: wbError } = await supabase
-    .from("sales_orders")
-    .update({
-      omie_pedido_id,
-      omie_numero_pedido: String(omie_numero_pedido),
-      omie_payload: payload,
-      omie_response,
-      status: "enviado",
-    })
-    .eq("id", salesOrderId)
-    .eq("account", account)
-    .select("id");
+  // Write-back ATÔMICO (ATP fase 3.1, migration 20261009120000): a RPC grava o PV em
+  // sales_orders E carimba o par (omie_account, omie_pedido_id) nas reservas ativas do pedido
+  // NA MESMA TRANSAÇÃO. Esse par é o elo reserva↔PV que sobrevive ao DELETE da linha push
+  // (`excluir_pedido` apaga a push mesmo quando o CancelarPedido falha). O `.update()` solto
+  // que existia aqui deixava o estado intermediário "PV criado + reserva por transicionar".
+  // Contrato preservado (P1-2): casa por id + account e exige EXATAMENTE 1 linha — a RPC lança
+  // P0002 e NADA é gravado. Qualquer erro DEPOIS do pedido existir no Omie = linha potencialmente
+  // órfã → surfaça (NÃO engolir). (Não há UNIQUE(account, omie_pedido_id): push+pull gravam o
+  // mesmo omie_pedido_id em linhas distintas por design — ver a migração 20260613120000.)
+  const { data: wb, error: wbError } = await supabase.rpc("atp_confirmar_pv", {
+    p_sales_order_id: salesOrderId,
+    p_account: account,
+    p_omie_pedido_id: omie_pedido_id,
+    p_omie_numero_pedido: String(omie_numero_pedido),
+    p_omie_payload: payload,
+    p_omie_response: omie_response,
+  });
+  if (wbError?.code === "PGRST202") {
+    // A RPC NÃO EXISTE no banco = migration 20261009120000 ainda não aplicada (a ordem certa é
+    // migration ANTES deste edge). Nunca deixar um PV criado no Omie sem write-back: cai no
+    // write-back legado, com log ALTO — a reserva fica firme pelo vínculo (fase 3), mas sem o
+    // par próprio não sobrevive ao DELETE. Só PGRST202: qualquer outro erro LANÇA abaixo.
+    console.error(
+      `[atp] atp_confirmar_pv AUSENTE (migration 20261009120000 não aplicada) — write-back LEGADO do pedido ${omie_pedido_id}; a reserva não ganha o par próprio`,
+    );
+    const { data: wbRows, error: wbLegErr } = await supabase
+      .from("sales_orders")
+      .update({
+        omie_pedido_id,
+        omie_numero_pedido: String(omie_numero_pedido),
+        omie_payload: payload,
+        omie_response,
+        status: "enviado",
+      })
+      .eq("id", salesOrderId)
+      .eq("account", account)
+      .select("id");
+    if (wbLegErr) {
+      throw new Error(`Pedido no Omie (${omie_pedido_id}) mas o write-back em sales_orders falhou: ${wbLegErr.message}.`);
+    }
+    if (!wbRows || wbRows.length !== 1) {
+      throw new Error(`Pedido no Omie (${omie_pedido_id}) mas o write-back não casou exatamente 1 linha (id=${salesOrderId}, account=${account}) — linha órfã, investigar.`);
+    }
+    return { omie_pedido_id, omie_numero_pedido };
+  }
+  if (wbError?.code === "P0002") {
+    throw new Error(`Pedido no Omie (${omie_pedido_id}) mas o write-back não casou exatamente 1 linha (id=${salesOrderId}, account=${account}) — linha órfã, investigar.`);
+  }
   if (wbError) {
-    // Qualquer erro de DB no write-back DEPOIS do pedido existir no Omie = linha potencialmente
-    // órfã → surfaça (NÃO engolir). (Não há UNIQUE(account, omie_pedido_id): push+pull gravam o
-    // mesmo omie_pedido_id em linhas distintas por design — ver a migração 20260613120000.)
     throw new Error(`Pedido no Omie (${omie_pedido_id}) mas o write-back em sales_orders falhou: ${wbError.message}.`);
   }
-  if (!wbRows || wbRows.length !== 1) {
-    throw new Error(`Pedido no Omie (${omie_pedido_id}) mas o write-back não casou exatamente 1 linha (id=${salesOrderId}, account=${account}) — linha órfã, investigar.`);
+  if ((wb as { ok?: unknown } | null)?.ok !== true) {
+    throw new Error(`Pedido no Omie (${omie_pedido_id}) mas o write-back não confirmou (resposta ${JSON.stringify(wb)}) — investigar.`);
   }
 
   return { omie_pedido_id, omie_numero_pedido };

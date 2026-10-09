@@ -90,8 +90,10 @@ export const respostaSonda = criarRespostaSonda("omie-vendas-sync");
  * AlterarPedidoVenda, no `dDtPrevisao` do IncluirOrdemProducao e no `dDataPosicao` do syncEstoque: saíam do
  * dia UTC do servidor, AMANHÃ das 21:00 às 23:59 BRT — e, sem dInc, o data_previsao vira o order_date_kpi.
  * Nenhuma pré-condição de banco, nenhuma ordem de deploy.
+ * v1.12 (2026-10-09, ATP 3.1) — write-back do PV pela RPC atômica `atp_confirmar_pv` (carimba a reserva).
+ * ⚠️ Migration `20261009120000` ANTES deste edge (sem ela: PGRST202 → write-back legado + console.error).
  */
-export const VERSAO = "v1.11-catalogo-sem-estoque";
+export const VERSAO = "v1.12-write-back-pv-atomico";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
