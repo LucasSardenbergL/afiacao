@@ -447,3 +447,11 @@ select account, count(*) filter (where estoque <> 0) nao_zero from omie_products
 Esperado: oben ≈ 784 (o bundle velho daria ≈ 0 depois do catálogo).
 
 **De passagem:** o run das 09:00 de 07/10 falhou com "consumo redundante" do Omie, provavelmente disputando a chamada com o `sync-inventory-vendas-30m`, que roda nos mesmos :00. O run das 09:41 recuperou. Foi 1 caso em 9; observar antes de mexer no cron.
+
+## PR-2 conferido dentro da janela (2026-10-09)
+
+A leitura foi feita às 08:48 e às 08:56 UTC, antes do `sync-inventory-vendas-30m` das 09:00. Nas duas, oben deu **794** linhas com estoque diferente de zero e colacor **1.452**.
+
+O catálogo rodou numa varredura só: oben das 08:30:09 às 08:31:20 (3.714 linhas) e colacor das 08:31:23 às 08:32:21 (4.335 linhas). As linhas com estoque (794 e 1.448) foram regravadas **na mesma varredura** e não zeraram.
+
+Com o bundle velho, que mandava `estoque: quantidade_estoque || 0`, elas sairiam dessa varredura em 0. Era a última conferência pendente da classe "estoque com dono único".
