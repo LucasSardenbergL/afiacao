@@ -87,6 +87,9 @@ const REV_LIST = ['rev-list', '--left-right', '--count', 'HEAD...origin/main'];
  * (`null` = o arquivo não existe na ref; `'ilegivel'` = texto cortado). Só a ref `origin/main`
  * responde: ler de qualquer outra (`HEAD`, a cópia commitada do disco) cai no "não existe".
  */
+/** O commit que o `rev-parse` fabricado resolve para a `origin/main`. */
+const SHA_DA_MAIN = 'abc123def4567890';
+
 function gitDaMain(
   raiz: string,
   leva: string[],
@@ -100,7 +103,7 @@ function gitDaMain(
         ? { status: 128, stdout: '', stderr: 'fatal: unable to access ...: Could not resolve host' }
         : { status: 0, stdout: '', stderr: '' };
     }
-    if (args[0] === 'rev-parse') return { status: 0, stdout: 'abc123def4567890\n', stderr: '' };
+    if (args[0] === 'rev-parse') return { status: 0, stdout: `${SHA_DA_MAIN}\n`, stderr: '' };
     if (args[0] === 'log') return { status: 0, stdout: '2026-09-01 10:00:00 +0000\n', stderr: '' };
     if (args.join(' ') === REV_LIST.join(' ') && opts.revList !== undefined) {
       return { status: 0, stdout: opts.revList, stderr: '' };
@@ -109,8 +112,10 @@ function gitDaMain(
     // allowlist — sai do COMMIT resolvido, porque `origin/main` pode andar no meio da execução.
     // Espelho ancorado em `origin/main:` não responderia nenhuma, e o guard abortaria por fonte
     // "ausente" — teste medindo a fixture.
-    if (args[0] === 'show' && args[1].includes(':')) {
-      const caminho = args[1].slice(args[1].indexOf(':') + 1);
+    // E só responde ao commit que o `rev-parse` acima devolveu: um espelho que aceita QUALQUER
+    // prefixo responde também a `HEAD:` — e a mutação "ref lida do HEAD" sobrevive em silêncio.
+    if (args[0] === 'show' && args[1].startsWith(`${SHA_DA_MAIN}:`)) {
+      const caminho = args[1].slice(SHA_DA_MAIN.length + 1);
       let conteudo: string | undefined = fatia.get(caminho);
       if (caminho === kit.ARQ_ALLOWLIST && opts.allowlist !== null) {
         const inteiro = allowlistTs(opts.allowlist === 'ilegivel' ? [COMUM, DA_MAIN] : opts.allowlist);
