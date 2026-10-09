@@ -6,8 +6,8 @@
 # pela Fase 5 (desativada_motivo NOT NULL) → viola tint_formulas_motivo_exige_desativacao (23514)
 # → o promote INTEIRO aborta.
 #
-# Parte do snapshot de schema (= prod: já traz a v6 E a CHECK da Fase 5), então as âncoras do
-# replace são medidas contra o corpo que prod de fato tem. Casos:
+# Parte do snapshot de schema (a CHECK da Fase 5 e a base) com a v6 ANCORADA na 20260726120000 — o
+# corpo que a prod tinha no incidente, imune ao re-dump do DR (que já traz a 5b#1). Casos:
 #   T0 — REPRODUÇÃO: sem a migration, o promote de um run que toca o par da chave carimbada
 #        morre com SQLSTATE 23514 (exatamente esta, não "qualquer erro").
 #   T1 — com a migration: o mesmo run promove; tombstone intocado (inativo, carimbado, preço e
@@ -49,7 +49,29 @@ sed -E 's/^(CREATE SCHEMA public;)/-- \1/' "$REPO_ROOT/supabase/schema-snapshot.
   | grep -vE '^\\(un)?restrict |^SET transaction_timeout' > "$TMP/snap.sql"
 T -q --single-transaction -f "$TMP/snap.sql" >/dev/null
 
-# Pré-condições do cenário (o snapshot TEM de ser o estado que dispara o incidente).
+# A v6 (o estado do incidente) ancorada num artefato IMUTAVEL, nao no snapshot. O schema-snapshot.sql
+# e o dump de DR, re-gerado da PROD a cada 1-3 semanas — e a PROD ja roda a 5b#1 (o patch desta
+# migration). Lida do snapshot, a v6 sumiria no proximo re-dump: a pre-condicao/T0 ficariam vermelhas
+# sem defeito nenhum, e F1/F2 cairiam no guard "ja aplicada" da migration. O bloco da funcao na
+# 20260726120000 e a v6 (byte-identico ao snapshot de 2026-09-05, sha256 3eeb6cd760); extraido do
+# arquivo e aplicado por cima do snapshot. Hoje nao muda nada; depois do re-dump, e ele que segura.
+MIG_V6="$REPO_ROOT/supabase/migrations/20260726120000_tint_promote_error_details_completo.sql"
+[ -f "$MIG_V6" ] || { echo "migration da v6 ausente: $MIG_V6"; exit 1; }
+python3 - "$MIG_V6" "$TMP/v6.sql" <<'PY0'
+import sys, re
+src, dst = sys.argv[1], sys.argv[2]
+t = open(src).read()
+ms = list(re.finditer(r'CREATE\s+OR\s+REPLACE\s+FUNCTION\s+public\.tint_promote_sync_run\s*\(', t))
+assert len(ms) == 1, f"esperava 1 definicao da funcao na migration da v6, achei {len(ms)}"
+tag = re.compile(r'\$[A-Za-z_]*\$').search(t, ms[0].end())
+fim_corpo = t.find(tag.group(0), tag.end())
+fim = t.find(';', fim_corpo + len(tag.group(0)))
+assert fim_corpo > 0 and fim > 0, "bloco da v6 sem fechamento"
+open(dst, 'w').write(t[ms[0].start():fim + 1] + '\n')
+PY0
+T -q -f "$TMP/v6.sql" >/dev/null
+
+# Pré-condições do cenário (a base + a v6 ancorada TÊM de ser o estado que dispara o incidente).
 PRE="$(T -tA -c "SELECT (position('CREATE TEMP TABLE _fl_culpa' in pg_get_functiondef('public.tint_promote_sync_run(uuid)'::regprocedure)) > 0)::text
                  || '/' || EXISTS (SELECT 1 FROM pg_constraint WHERE conname='tint_formulas_motivo_exige_desativacao')::text")"
 [ "$PRE" = "true/true" ] || { echo "✗ pré-condição: snapshot sem v6 e/ou sem a CHECK da Fase 5 ($PRE)"; exit 1; }
