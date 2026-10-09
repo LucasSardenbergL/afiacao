@@ -8,15 +8,20 @@ import {
   toleranciaDoCronMin,
 } from './sonda-cron-testemunha';
 
-const disparo = (tickId: string, edge: string, requestId: number): Disparo => ({ tickId, edge, requestId });
+/** `idadeMin` default 10: recente, dentro do teto — o caso comum em quase todo cenário. */
+const disparo = (tickId: string, edge: string, requestId: number, idadeMin = 10): Disparo => ({
+  tickId,
+  edge,
+  requestId,
+  idadeMin,
+});
 
-/** Cenário base: 2 ticks, 1 edge, ambos atestados, ledger CONFERE. */
+/** Cenário base: 2 disparos recentes de 1 edge, ambos atestados, ledger CONFERE. */
 function base() {
   return {
     ativosNoBanco: ['monthly-report'],
     allowlistDoRepo: ['monthly-report'],
-    ticksRecentes: ['t2', 't1'],
-    disparos: [disparo('t2', 'monthly-report', 200), disparo('t1', 'monthly-report', 100)],
+    disparos: [disparo('t2', 'monthly-report', 200, 30), disparo('t1', 'monthly-report', 100, 150)],
     atestacoes: [
       { requestId: 200, edgeDoCorpo: 'monthly-report' },
       { requestId: 100, edgeDoCorpo: 'monthly-report' },
@@ -63,10 +68,9 @@ describe('julgarSondaCron — o silêncio como sinal de rollback', () => {
     expect(julgarSondaCron(e).achados).toEqual([]);
   });
 
-  it('só 1 tick na história (cron recém-aplicado) é AVISO, não pendência', () => {
+  it('só 1 disparo na história (cron recém-aplicado) é AVISO, não pendência', () => {
     const e = {
       ...base(),
-      ticksRecentes: ['t1'],
       disparos: [disparo('t1', 'monthly-report', 100)],
       atestacoes: [],
     };
@@ -134,19 +138,201 @@ describe('julgarSondaCron — o silêncio como sinal de rollback', () => {
     expect(julgarSondaCron(e).avisos.join(' ')).toMatch(/calculate-scores.*ainda não ativa no banco/);
   });
 
-  it('só os 2 ticks MAIS RECENTES contam — um terceiro tick antigo não dilui o silêncio', () => {
+  it('só os 2 disparos MAIS RECENTES dela contam — um terceiro mais antigo não dilui o silêncio', () => {
     const e = {
       ...base(),
-      ticksRecentes: ['t3', 't2', 't1'],
       disparos: [
-        disparo('t3', 'monthly-report', 300),
-        disparo('t2', 'monthly-report', 200),
-        disparo('t1', 'monthly-report', 100),
+        disparo('t3', 'monthly-report', 300, 20),
+        disparo('t2', 'monthly-report', 200, 140),
+        disparo('t1', 'monthly-report', 100, 250),
       ],
       atestacoes: [{ requestId: 100, edgeDoCorpo: 'monthly-report' }],
     };
     const r = julgarSondaCron(e);
     expect(r.achados[0]?.classe).toBe('SONDA_CRON_SILENCIOSA');
+  });
+});
+
+/**
+ * A janela é POR EDGE — os 2 últimos disparos DELA —, não os 2 ticks globais mais recentes.
+ *
+ * Medido em prod em 2026-09-10: às 23:14:15Z um tick manual PARCIAL (o one-liner
+ * `deploy_sonda_disparar(ARRAY['sonda-relay'])` que o `sonda:sql` oferece, 1 disparo) caiu entre os
+ * ticks cheios das 22:37Z e 00:37Z. Com a janela GLOBAL de 2 ticks, as outras 15 edges ficavam com
+ * **1** disparo dentro dela e, por ~2 h, o silêncio delas só podia virar AVISO ("1 de 1 tick(s)
+ * recentes sem resposta") — nunca `SONDA_CRON_SILENCIOSA`, que é a pergunta que o mecanismo inteiro
+ * existe para responder. Dois parciais em sequência zeravam a janela das demais.
+ *
+ * Contagem real do recorte naquele instante (`row_number()` contra a prod, âncora 2026-09-10 23:20Z):
+ * janela global → 1 edge com 2 disparos e **14 com 1**; janela por edge → **15 com 2**, nenhuma com 1.
+ */
+describe('julgarSondaCron — a janela é POR EDGE: um tick parcial não zera o poder de detecção', () => {
+  /** Cheio (94 min) → parcial de 1 edge (60 min) → cheio (30 min), o cenário medido. */
+  function comTickParcial() {
+    return {
+      ...base(),
+      ativosNoBanco: ['monthly-report', 'sonda-relay'],
+      allowlistDoRepo: ['monthly-report', 'sonda-relay'],
+      disparos: [
+        disparo('t-cheio-2', 'monthly-report', 200, 30),
+        disparo('t-cheio-2', 'sonda-relay', 201, 30),
+        disparo('t-parcial', 'sonda-relay', 150, 60),
+        disparo('t-cheio-1', 'monthly-report', 100, 94),
+        disparo('t-cheio-1', 'sonda-relay', 101, 94),
+      ],
+      estadoPorEdge: new Map([
+        ['monthly-report', 'CONFERE'],
+        ['sonda-relay', 'CONFERE'],
+      ]),
+    };
+  }
+
+  it('a edge muda nos DOIS disparos DELA é acusada, mesmo com um tick parcial no meio', () => {
+    const e = { ...comTickParcial(), atestacoes: [{ requestId: 150, edgeDoCorpo: 'sonda-relay' }, { requestId: 201, edgeDoCorpo: 'sonda-relay' }] };
+    const r = julgarSondaCron(e);
+    const mudas = r.achados.filter((a) => a.classe === 'SONDA_CRON_SILENCIOSA');
+    expect(mudas).toHaveLength(1);
+    expect(mudas[0].edge).toBe('monthly-report');
+    expect(mudas[0].detalhe).toMatch(/200, 100|100, 200/);
+    expect(r.avisos).toEqual([]);
+  });
+
+  it('controle: a MESMA edge respondendo nos dois disparos dela não vira achado nem aviso', () => {
+    const e = {
+      ...comTickParcial(),
+      atestacoes: [
+        { requestId: 200, edgeDoCorpo: 'monthly-report' },
+        { requestId: 100, edgeDoCorpo: 'monthly-report' },
+        { requestId: 201, edgeDoCorpo: 'sonda-relay' },
+        { requestId: 150, edgeDoCorpo: 'sonda-relay' },
+      ],
+    };
+    const r = julgarSondaCron(e);
+    expect(r.achados).toEqual([]);
+    expect(r.avisos).toEqual([]);
+    expect(r.semPergunta).toEqual([]);
+  });
+
+  it('DOIS parciais em sequência também não zeram a janela das demais', () => {
+    const e = {
+      ...base(),
+      disparos: [
+        disparo('t-parcial-b', 'outra-edge', 301, 20),
+        disparo('t-parcial-a', 'outra-edge', 300, 40),
+        disparo('t-cheio-2', 'monthly-report', 200, 70),
+        disparo('t-cheio-1', 'monthly-report', 100, 190),
+      ],
+      atestacoes: [],
+    };
+    const r = julgarSondaCron(e);
+    expect(r.achados.map((a) => a.classe)).toEqual(['SONDA_CRON_SILENCIOSA']);
+    expect(r.avisos).toEqual([]);
+  });
+
+  it('o exame informado ao resumo conta os disparos POR EDGE que julgaram, e quantos responderam', () => {
+    const r = julgarSondaCron(comTickParcial());
+    expect(r.exame).toEqual({ disparos: 4, atestados: 2 });
+  });
+
+  it('o exame NÃO conta disparo de edge inativa — ela está fora da população examinada', () => {
+    const e = {
+      ...base(),
+      disparos: [
+        disparo('t2', 'monthly-report', 200, 30),
+        disparo('t2', 'desligada-no-kill-switch', 900, 30),
+        disparo('t1', 'monthly-report', 100, 150),
+        disparo('t1', 'desligada-no-kill-switch', 901, 150),
+      ],
+    };
+    expect(julgarSondaCron(e).exame).toEqual({ disparos: 2, atestados: 2 });
+  });
+
+  it('o exame só conta o que entrou na janela — disparo acima do teto fica fora da contagem', () => {
+    const e = {
+      ...base(),
+      disparos: [disparo('t2', 'monthly-report', 200, 30), disparo('t1', 'monthly-report', 100, 400)],
+    };
+    expect(julgarSondaCron(e).exame).toEqual({ disparos: 1, atestados: 1 });
+  });
+
+  it('empate de idade desempata pelo request_id MAIOR — o recorte não depende da ordem das linhas', () => {
+    const e = {
+      ...base(),
+      disparos: [
+        disparo('t-manual', 'monthly-report', 100, 30),
+        disparo('t-cheio', 'monthly-report', 200, 30),
+        disparo('t-velho', 'monthly-report', 50, 90),
+      ],
+      atestacoes: [{ requestId: 50, edgeDoCorpo: 'monthly-report' }],
+    };
+    const r = julgarSondaCron(e);
+    // os que julgam são 200 e 100 (idade 30, ids maiores); o 50, atestado, ficou fora do recorte
+    expect(r.achados.map((a) => a.classe)).toEqual(['SONDA_CRON_SILENCIOSA']);
+    expect(r.achados[0].detalhe).toMatch(/200, 100|100, 200/);
+    expect(r.exame).toEqual({ disparos: 2, atestados: 0 });
+  });
+});
+
+/**
+ * O TETO de idade é o que o `LIMIT 2` por tick global dava de graça: dois disparos ANTIGOS — edge
+ * desligada pelo kill switch e religada — não podem formar acusação de rollback. A régua é a MESMA
+ * tolerância do `cronSondaParado` e do teto da espera (2 períodos do cron + 15 min): uma definição só.
+ */
+describe('julgarSondaCron — o teto de idade dos disparos que julgam', () => {
+  it('2 disparos ACIMA do teto não acusam: a edge fica sem pergunta, não muda', () => {
+    const e = {
+      ...base(),
+      disparos: [disparo('t2', 'monthly-report', 200, 400), disparo('t1', 'monthly-report', 100, 520)],
+      atestacoes: [],
+    };
+    const r = julgarSondaCron(e);
+    expect(r.achados).toEqual([]);
+    expect(r.avisos).toEqual([]);
+    expect(r.semPergunta).toEqual(['monthly-report']);
+  });
+
+  it('no teto exato ainda julga; acima dele sai do exame', () => {
+    const noTeto = {
+      ...base(),
+      disparos: [
+        disparo('t2', 'monthly-report', 200, toleranciaDoCronMin()),
+        disparo('t1', 'monthly-report', 100, toleranciaDoCronMin()),
+      ],
+      atestacoes: [],
+    };
+    expect(julgarSondaCron(noTeto).achados.map((a) => a.classe)).toEqual(['SONDA_CRON_SILENCIOSA']);
+
+    const acima = {
+      ...noTeto,
+      disparos: [
+        disparo('t2', 'monthly-report', 200, toleranciaDoCronMin() + 0.1),
+        disparo('t1', 'monthly-report', 100, toleranciaDoCronMin() + 0.1),
+      ],
+    };
+    expect(julgarSondaCron(acima).achados).toEqual([]);
+    expect(julgarSondaCron(acima).semPergunta).toEqual(['monthly-report']);
+  });
+
+  it('1 disparo dentro do teto e 1 fora: AVISO, não acusação (precisão > recall)', () => {
+    const e = {
+      ...base(),
+      disparos: [disparo('t2', 'monthly-report', 200, 30), disparo('t1', 'monthly-report', 100, 400)],
+      atestacoes: [],
+    };
+    const r = julgarSondaCron(e);
+    expect(r.achados).toEqual([]);
+    expect(r.avisos.join(' ')).toMatch(/1 de 1/);
+  });
+
+  it('idade ILEGÍVEL fica FORA do exame — ausente não é recente (fail-closed)', () => {
+    const e = {
+      ...base(),
+      disparos: [disparo('t2', 'monthly-report', 200, Number.NaN), disparo('t1', 'monthly-report', 100, Number.NaN)],
+      atestacoes: [],
+    };
+    const r = julgarSondaCron(e);
+    expect(r.achados).toEqual([]);
+    expect(r.semPergunta).toEqual(['monthly-report']);
   });
 });
 
@@ -172,18 +358,17 @@ describe('julgarSondaCron — o que ficou FORA do exame sai no resultado, sem ac
     expect(julgarSondaCron(e).semPergunta).toEqual([]);
   });
 
-  it('pergunta num tick FORA dos 2 que julgam não conta como pergunta', () => {
+  it('pergunta ACIMA do teto de idade não conta como pergunta — é o que o LIMIT por tick dava de graça', () => {
     const e = {
       ...base(),
-      ticksRecentes: ['t3', 't2', 't1'],
-      disparos: [disparo('t1', 'monthly-report', 100)],
+      disparos: [disparo('t1', 'monthly-report', 100, toleranciaDoCronMin() + 1)],
       atestacoes: [{ requestId: 100, edgeDoCorpo: 'monthly-report' }],
     };
     expect(julgarSondaCron(e).semPergunta).toEqual(['monthly-report']);
   });
 
-  it('nenhum tick na história (cron que nunca rodou): toda ativa fica em semPergunta', () => {
-    const e = { ...base(), ativosNoBanco: ['calculate-scores', 'monthly-report'], ticksRecentes: [], disparos: [], atestacoes: [] };
+  it('nenhum disparo na história (cron que nunca rodou): toda ativa fica em semPergunta', () => {
+    const e = { ...base(), ativosNoBanco: ['calculate-scores', 'monthly-report'], disparos: [], atestacoes: [] };
     expect(julgarSondaCron(e).semPergunta).toEqual(['calculate-scores', 'monthly-report']);
   });
 

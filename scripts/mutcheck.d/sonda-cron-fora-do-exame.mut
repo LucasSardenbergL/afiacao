@@ -10,5 +10,5 @@ PEGA | edge sem pergunta volta a ser pulo sem rastro        | s/      semPergunt
 PEGA | silencio esperado volta a ser pulo sem rastro        | s/      silencioEsperado\.push\(edge\);/      void edge;/
 PEGA | o teto da espera passa a incluir o limite            | s/else if \(minutos > teto\)/else if (minutos >= teto)/
 PEGA | espera nao medida vira ZERO (ausente = zero)         | s/aguardando\.push\(\{ edge, minutos: null \}\)/aguardando.push({ edge, minutos: 0 })/
-PEGA | tolerancia perde os 2 periodos do cron               | s/return periodoHoras \* 60 \* TICKS_QUE_JULGAM \+ 15;/return periodoHoras * 60 + 15;/
-PEGA | o juiz passa a ACUSAR quem nenhum tick perguntou     | s/      semPergunta\.push\(edge\);/      semPergunta.push(edge); avisos.push(edge + ': sem pergunta');/
+PEGA | tolerancia perde os 2 periodos do cron               | s/return periodoHoras \* 60 \* DISPAROS_QUE_JULGAM \+ 15;/return periodoHoras * 60 + 15;/
+PEGA | o juiz passa a ACUSAR quem nenhum disparo perguntou  | s/      semPergunta\.push\(edge\);/      semPergunta.push(edge); avisos.push(edge + ': sem pergunta');/
