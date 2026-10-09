@@ -367,7 +367,7 @@ const corsHeaders = {
 const OMIE_API_URL = "https://app.omie.com.br/api/v1";
 
 async function setAuditOrigem(
-  supabase: ReturnType<typeof createClient>,
+  supabase: SupabaseClient,
   origem: 'omie_sync' | 'edge_fn' | 'cron',
 ): Promise<void> {
   // Wrapper RPC restrito ao namespace 'fin.'. Session-level (is_local=false)

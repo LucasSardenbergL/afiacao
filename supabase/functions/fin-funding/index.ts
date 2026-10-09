@@ -4,7 +4,7 @@
 // fin_contas_receber (títulos antecipáveis) e compõe projeção via fin-cashflow-engine.
 // Helpers espelhados VERBATIM de src/lib/financeiro/funding-helpers.ts.
 // Spec: 2026-05-25-financeiro-funding-divida (sub-PR A: decisão de antecipação).
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 // Paginação robusta (anti-truncamento do cap de 1000 do PostgREST). Era uma CÓPIA local
 // do helper do fin-valor-cockpit, com o mesmo furo: `data ?? []` transformava resposta
 // malformada (data:null SEM error) em página vazia → EOF falso → o parcial passava por
@@ -284,7 +284,7 @@ function montarPlanoCobertura(input: {
 
 // ===================== Utilitários =====================
 
-type DbClient = ReturnType<typeof createClient>;
+type DbClient = SupabaseClient;
 
 // Invoke de outra edge function via service_role (verbatim de fin-next-best-action/index.ts).
 async function invoke<T>(fn: string, body: unknown): Promise<T | null> {

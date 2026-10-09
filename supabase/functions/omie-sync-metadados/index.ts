@@ -1,4 +1,4 @@
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCron, corsHeaders } from "../_shared/auth.ts";
 import { avaliarPagina, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
@@ -67,7 +67,7 @@ async function callOmie(
 }
 
 async function syncMetadadosAccount(
-  db: ReturnType<typeof createClient>,
+  db: SupabaseClient,
   account: OmieAccount,
 ) {
   const acctValue = getCredentials(account).label;

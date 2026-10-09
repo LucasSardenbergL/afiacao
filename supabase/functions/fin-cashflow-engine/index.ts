@@ -1,4 +1,4 @@
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 // Anti-truncamento do PostgREST (cap default de 1000 linhas): a colacor tem ~11k CP e
 // ~29k CR não-cancelados; um .select() simples carregaria só as 1000 primeiras (quase
 // tudo PAGO/RECEBIDO antigo) e PERDERIA a maioria dos títulos em aberto → NCG/projeção
@@ -388,7 +388,7 @@ type DadosBase = {
 };
 
 async function carregarDados(
-  supabase: ReturnType<typeof createClient>,
+  supabase: SupabaseClient,
   company: Company,
 ): Promise<DadosBase> {
   // CR/CP paginados (anti-truncamento, ver o import de fetchAll); o resto cabe em <1000
@@ -1304,7 +1304,7 @@ function formatBRLSimple(value: number): string {
 }
 
 async function calcular(
-  supabase: ReturnType<typeof createClient>,
+  supabase: SupabaseClient,
   company: Company,
   cenario: Cenario,
   horizon: number,
@@ -1403,7 +1403,6 @@ async function calcular(
       if (existente) {
         await escritaCritica(
           'fin_alertas.update',
-          // @ts-expect-error - fin_alertas not in supabase types yet
           supabase.from('fin_alertas').update({
             severidade: a.severidade, mensagem: a.mensagem,
             valor: a.valor, threshold: a.threshold, contexto: a.contexto,
@@ -1425,7 +1424,6 @@ async function calcular(
     if (tiposParaDismiss.length > 0) {
       await escritaCritica(
         'fin_alertas.dismiss',
-        // @ts-expect-error - fin_alertas not in supabase types yet
         supabase.from('fin_alertas').update({ dismissed_at: nowIso })
           .eq('company', company).in('tipo', tiposParaDismiss).is('dismissed_at', null),
       );
