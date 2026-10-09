@@ -267,6 +267,12 @@ export const AUTHZ_FUNCOES_FECHADAS: Record<string, FuncaoFechada> = {
     permitido: PORTA_GATE,
     motivo: 'divide pedido de compra aprovado em filhos — staff-only quando há JWT',
   },
+  'public.reposicao_sincronizar_embalagem_wp': {
+    // Mesmo idioma de gate da `pedido_compra_split` (uid NULL passa — cron): `anon` com EXECUTE a abriria.
+    fechadaPor: '20261009194000_motor_unidades_concentrado_wp.sql',
+    permitido: PORTA_GATE,
+    motivo: 'cadastra grupos de embalagem WP que o motor de compra lê — staff-only quando há JWT',
+  },
 
   // ═══════ ACKNOWLEDGED_SENSITIVE — fecham por PRIVILÉGIO: nenhuma role do browser executa ═══════
   // Aqui a Parte E protege o fecho INTEIRO: sem o REVOKE, um DROP+CREATE devolve a função a

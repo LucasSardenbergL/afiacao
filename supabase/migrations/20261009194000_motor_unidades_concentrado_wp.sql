@@ -138,6 +138,10 @@ BEGIN
 
   RETURN jsonb_build_object('empresa', p_empresa, 'cores_elegiveis', v_cores, 'linhas_inseridas', v_linhas);
 END $function$;
+-- O fecho do browser anônimo, agora no repo (antes só em db/embalagem-auto-cadastro-wp.sql): sem efeito no ACL vivo
+-- (psql-ro 2026-10-09: anon_exec=f, sem PUBLIC) — a POS3 exige o ACL igual ao da foto. O gate do corpo não roda com
+-- uid NULL (cron), então `anon` com EXECUTE a abriria (scripts/authz-manifest.ts).
+REVOKE ALL ON FUNCTION public.reposicao_sincronizar_embalagem_wp(text) FROM PUBLIC, anon;
 
 -- Os 28 membros WP da oben: QT (fator 1) = 0,81 L, GL (fator 4) = 3,24 L. Só onde NULL (idempotente), só com o
 -- produto em LITROS e a descrição concordando com o fator.
