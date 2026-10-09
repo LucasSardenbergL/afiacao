@@ -8,7 +8,7 @@
 //
 // Auth: authorizeCronOrStaff (cron via x-cron-secret OU staff JWT).
 
-import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
+import { createClient } from 'npm:@supabase/supabase-js@2';
 import { authorizeCronOrStaff, corsHeaders } from '../_shared/auth.ts';
 import { exigirLeitura, FalhaLeituraCritica } from '../_shared/leitura-critica.ts';
 import { STATUS_NAO_VENDA_POSTGREST } from '../_shared/universo-pedidos.ts';
@@ -297,7 +297,7 @@ interface RecalcRequest {
 // --- Recalc core ---
 // =====================================================
 async function recalcOne(
-  supabase: SupabaseClient,
+  supabase: ReturnType<typeof createClient>,
   customer_user_id: string,
   farmer_id: string,
 ): Promise<{ ok: boolean; error?: string; visit_score?: number; primary_mission?: MissionType }> {

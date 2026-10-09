@@ -3,7 +3,7 @@
 // Master-only. Lê DRE TTM (fin_dre_snapshots, regime competência) + inputs manuais (fin_regime_inputs).
 // Helpers espelhados VERBATIM de src/lib/financeiro/regime-tributario-helpers.ts (+ dre-tabelas-tributarias.ts
 // e aliquotaEfetivaSimples/faixaPorRBT12 de dre-helpers.ts). Estilo de leitura espelhado de fin-valor-engine.
-import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
+import { createClient } from "npm:@supabase/supabase-js@2";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -382,7 +382,7 @@ type RegimeEmpresaResult = {
 };
 type RegimeTributarioResult = { por_empresa: RegimeEmpresaResult[]; consolidado: { imposto_atual_total: number; imposto_otimizado_total: number; economia_total: number; confianca: "alta" | "media" | "baixa" }; gerado_em: string };
 
-type DbClient = SupabaseClient;
+type DbClient = ReturnType<typeof createClient>;
 
 async function calcularEmpresa(db: DbClient, empresa: Company): Promise<RegimeEmpresaResult | null> {
   const regime_atual = REGIME_ATUAL_POR_EMPRESA[empresa];

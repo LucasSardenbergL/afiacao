@@ -7,7 +7,7 @@
 // Fonte canônica: src/lib/scoring/{decay,modulators,aggregate,types}.ts
 // TODO: PR-SCORING-V2.1 — extrair para _shared/scoring/ e remover duplicação.
 
-import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
+import { createClient } from 'npm:@supabase/supabase-js@2';
 import { authorizeCronOrStaff, corsHeaders } from '../_shared/auth.ts';
 
 // --- Inline: decay.ts ---
@@ -344,7 +344,7 @@ interface RecalcRequest {
 
 // --- Core recalc logic ---
 async function recalcOne(
-  supabase: SupabaseClient,
+  supabase: ReturnType<typeof createClient>,
   customer_user_id: string,
 ): Promise<{ ok: boolean; error?: string; adjustment?: ScoreAdjustment; skipped?: boolean }> {
   const cutoff = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
