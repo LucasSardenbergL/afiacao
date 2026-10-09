@@ -14,21 +14,41 @@
 -- Read-only — não altera nada no banco.
 -- ========================================================================
 
--- 13 objeto(s) OBSOLETO(s) excluído(s) do inventário (criados por uma migration,
+-- 33 objeto(s) OBSOLETO(s) excluído(s) do inventário (criados por uma migration,
 -- removidos/renomeados por outra — NÃO são bug; ver OBSOLETE em scripts/audit-custom-migrations.ts):
 --   • rls_policy public.kb_product_specs_insert_staff (kb_specs_and_competitors) — substituída → kb_product_specs_insert_master (hardening)
+--   • rls_policy public.Staff can view recalc queue (scoring_v2_signal_modifiers) — substituída → Master can view recalc queue (20260718100000_filas_recalc_rls_master_only)
+--   • rls_policy public.Staff can insert recalc queue (scoring_v2_signal_modifiers) — substituída → Master can insert recalc queue (20260718100000_filas_recalc_rls_master_only)
+--   • rls_policy public.Staff can view their visit scores (visit_intelligence_v1) — substituída → cvs_select_carteira (20260526020000_rls_score_carteira_hardening)
+--   • rls_policy public.Staff can manage their visit scores (visit_intelligence_v1) — substituída → cvs_insert/update/delete_own_or_gestor (20260526020000_rls_score_carteira_hardening)
+--   • rls_policy public.Staff can view visit recalc queue (visit_intelligence_v1) — substituída → Master can view visit recalc queue (20260718100000_filas_recalc_rls_master_only)
+--   • rls_policy public.Staff can insert visit recalc queue (visit_intelligence_v1) — substituída → Master can insert visit recalc queue (20260718100000_filas_recalc_rls_master_only)
 --   • trigger public.trg_audit (fin_a1_audit_lock_attach) — drop — 20260523210000_drop_audit_trigger_fin_config_cashflow
 --   • trigger public.trg_audit (fin_a1_audit_lock_attach) — drop — 20260523210000_drop_audit_trigger_fin_config_cashflow
 --   • trigger public.trg_audit (fin_a1_audit_lock_attach) — drop — 20260523210000_drop_audit_trigger_fin_config_cashflow
 --   • trigger public.trg_audit (fin_a1_audit_lock_attach) — drop — 20260523210000_drop_audit_trigger_fin_config_cashflow
 --   • cron_job cron.fin-omie-sync-2x-diario (cron_financeiro_e_fix_sayerlack) — reorganizado → crons omie-sync-*
+--   • function public.carteira_visivel_para (carteira_omie_fase1) — SET SCHEMA private — 20260718150000_fu7_helpers_rls_schema_privado
 --   • cron_job cron.sync-orders-vendas-2h (tuning_crons_estoque_freq_e_timeouts) — drop — 20260527190000_drop_redundant_sync_orders_cron
 --   • cron_job cron.sayerlack-portal-lote-retry (cron_sayerlack_lote_retry) — unschedule — 20260530170000_unschedule_sayerlack_lote_retry
 --   • view public.v_sayerlack_mapeamento_gap (data_health_check_sayerlack_mapeamento_gap) — view abandonada (zero uso no app/SQL)
 --   • cron_job cron.sync-inventory-full-vendas-daily (cron_sync_inventory_full) — reorganizado → sync-inventory-vendas-30m / -servicos-1h / -colacor-vendas-1h
+--   • rls_policy public.Staff lê alertas de pedido mínimo (reposicao_alerta_pedido_minimo) — substituída → reposicao_alerta_pedido_minimo_sel (fu4h, DROP dinâmico pelo catálogo)
+--   • rls_policy public.Staff lê log de auto-aprovação (reposicao_auto_aprovacao_piloto) — substituída → reposicao_auto_aprovacao_log_sel (fu4h)
 --   • rls_policy public.cmc_ledger_select_staff (cmc_ledger) — substituída → cmc_ledger_select_gestor (hardening staff→gestor)
+--   • index public.uq_markup_policy_conta (markup_policy) — drop — 20260704120000_preco_por_tier → constraint markup_policy_escopo_tier_uq
+--   • index public.uq_markup_policy_fam (markup_policy) — drop — 20260704120000_preco_por_tier → constraint markup_policy_escopo_tier_uq
+--   • index public.uq_markup_policy_sku (markup_policy) — drop — 20260704120000_preco_por_tier → constraint markup_policy_escopo_tier_uq
+--   • rls_policy public.markup_policy_select_staff (markup_policy) — substituída → markup_policy_select_carteira (20260704120000_preco_por_tier)
+--   • rls_policy public.Staff lê log de auto-aprovação (reposicao_auto_aprovacao_v2) — substituída → reposicao_auto_aprovacao_log_sel (fu4h)
+--   • rls_policy public.regua_preco_log_staff_all (regua_preco) — substituída → regua_preco_log_select_custo (20260723150000_authz_custo_fu4f_fase2_regua)
+--   • index public.idx_customer_metrics_mv_uid (recencia_mv_order_date_kpi) — MV movida para private (20261001014100_universo_pedidos_recencia); o índice vive em private.customer_metrics_mv
 --   • function public.omie_cliente_upsert_mapping (omie_identidade_por_conta) — drop — 20260718091409_drop_omie_cliente_upsert_mapping_orfa (PR #1409)
+--   • rls_policy public.ss_allowlist_gestor_iud (selfservice_pr01_allowlist_gate) — split → ss_allowlist_select/insert/update/delete (20260718190000_authz_capability_matrix_e2)
+--   • trigger public.trg_omie_clientes_to_ledger (carteira_membership_ledger_fatia0) — tabela renomeada → _quarantine_omie_clientes_20260722 (20260722110000_quarentena_omie_clientes_espelho); o trigger foi junto
 --   • function public.estimar_impacto_exclusao_outlier (outliers_leadtime_stack_efetivo) — drop — 20260718093248_drop_estimar_impacto_exclusao_outlier_orfa
+--   • function public.carteira_visivel_para (carteira_visivel_para_filtra_eligible) — SET SCHEMA private — 20260718150000_fu7_helpers_rls_schema_privado
+--   • rls_policy public.estoque_reservas_service_all (atp_reserva_estoque_fase1) — drop — 20260806225052_atp_reserva_estoque_fase1_1_hardening (decorativa: service_role tem BYPASSRLS) → estoque_reservas_service_select
 
 -- =====================================================
 -- SECTION 1: Status reconciliado por migration
@@ -880,8 +900,6 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('scoring_v2_signal_modifiers', 'index', 'public', 'idx_score_recalc_queue_pending', 'score_recalc_queue'),
   ('scoring_v2_signal_modifiers', 'index', 'public', 'uniq_score_recalc_queue_pending', 'score_recalc_queue'),
   ('scoring_v2_signal_modifiers', 'trigger', 'public', 'trg_farmer_calls_enqueue_recalc', 'farmer_calls'),
-  ('scoring_v2_signal_modifiers', 'rls_policy', 'public', 'Staff can view recalc queue', 'score_recalc_queue'),
-  ('scoring_v2_signal_modifiers', 'rls_policy', 'public', 'Staff can insert recalc queue', 'score_recalc_queue'),
   ('visit_intelligence_v1', 'function', 'public', 'enqueue_visit_score_recalc_from_visit', ''),
   ('visit_intelligence_v1', 'function', 'public', 'enqueue_visit_score_recalc_from_client_score', ''),
   ('visit_intelligence_v1', 'view', 'public', 'visit_score_recalc_pending', ''),
@@ -893,10 +911,6 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('visit_intelligence_v1', 'index', 'public', 'uniq_visit_score_queue_pending', 'visit_score_recalc_queue'),
   ('visit_intelligence_v1', 'trigger', 'public', 'trg_route_visits_enqueue_visit_recalc', 'route_visits'),
   ('visit_intelligence_v1', 'trigger', 'public', 'trg_farmer_client_scores_enqueue_visit_recalc', 'farmer_client_scores'),
-  ('visit_intelligence_v1', 'rls_policy', 'public', 'Staff can view their visit scores', 'customer_visit_scores'),
-  ('visit_intelligence_v1', 'rls_policy', 'public', 'Staff can manage their visit scores', 'customer_visit_scores'),
-  ('visit_intelligence_v1', 'rls_policy', 'public', 'Staff can view visit recalc queue', 'visit_score_recalc_queue'),
-  ('visit_intelligence_v1', 'rls_policy', 'public', 'Staff can insert visit recalc queue', 'visit_score_recalc_queue'),
   ('fin_a1_eventos', 'table', 'public', 'fin_eventos_recorrentes', ''),
   ('fin_a1_eventos', 'table', 'public', 'fin_eventos_eventuais', ''),
   ('fin_a1_eventos', 'index', 'public', 'fin_eventos_rec_company_ativo_idx', 'fin_eventos_recorrentes'),
@@ -957,7 +971,6 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('cron_financeiro_e_fix_sayerlack', 'cron_job', 'cron', 'sayerlack-portal-watchdog', ''),
   ('fix_fin_triggers_json_field_access', 'function', 'public', 'fin_audit_trigger', ''),
   ('fix_fin_triggers_json_field_access', 'function', 'public', 'fin_period_lock_trigger', ''),
-  ('carteira_omie_fase1', 'function', 'public', 'carteira_visivel_para', ''),
   ('carteira_omie_fase1', 'function', 'public', 'minha_carteira', ''),
   ('carteira_omie_fase1', 'table', 'public', 'omie_vendedor_map', ''),
   ('carteira_omie_fase1', 'table', 'public', 'carteira_assignments', ''),
@@ -1444,7 +1457,6 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('reposicao_alerta_pedido_minimo', 'table', 'public', 'reposicao_alerta_pedido_minimo', ''),
   ('reposicao_alerta_pedido_minimo', 'index', 'public', 'reposicao_alerta_pedido_minimo_ativo', 'reposicao_alerta_pedido_minimo'),
   ('reposicao_alerta_pedido_minimo', 'cron_job', 'cron', 'reposicao-alerta-pedido-minimo', ''),
-  ('reposicao_alerta_pedido_minimo', 'rls_policy', 'public', 'Staff lê alertas de pedido mínimo', 'reposicao_alerta_pedido_minimo'),
   ('tint_sync_promote', 'function', 'public', 'tint_promote_sync_run', ''),
   ('tint_sync_promote', 'function', 'public', 'tint_ensure_corante_stub', ''),
   ('tint_sync_promote', 'function', 'public', 'tint_calc_preco_final', ''),
@@ -1478,7 +1490,6 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('reposicao_auto_aprovacao_piloto', 'function', 'public', 'reposicao_alerta_pedido_minimo_tick', ''),
   ('reposicao_auto_aprovacao_piloto', 'table', 'public', 'reposicao_auto_aprovacao_log', ''),
   ('reposicao_auto_aprovacao_piloto', 'index', 'public', 'reposicao_auto_aprovacao_log_criado_em', 'reposicao_auto_aprovacao_log'),
-  ('reposicao_auto_aprovacao_piloto', 'rls_policy', 'public', 'Staff lê log de auto-aprovação', 'reposicao_auto_aprovacao_log'),
   ('push_vendedora', 'function', 'public', 'upsert_push_subscription', ''),
   ('push_vendedora', 'function', 'public', 'delete_push_subscription', ''),
   ('push_vendedora', 'function', 'public', '_push_enviar', ''),
@@ -1591,10 +1602,6 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('roteirizador_campo_carteira_sufixo_uf', 'function', 'public', 'carteira_por_municipio', ''),
   ('markup_policy', 'function', 'public', 'resolve_markup_policy', ''),
   ('markup_policy', 'table', 'public', 'markup_policy', ''),
-  ('markup_policy', 'index', 'public', 'uq_markup_policy_conta', 'markup_policy'),
-  ('markup_policy', 'index', 'public', 'uq_markup_policy_fam', 'markup_policy'),
-  ('markup_policy', 'index', 'public', 'uq_markup_policy_sku', 'markup_policy'),
-  ('markup_policy', 'rls_policy', 'public', 'markup_policy_select_staff', 'markup_policy'),
   ('markup_policy', 'rls_policy', 'public', 'markup_policy_write_master', 'markup_policy'),
   ('get_preco_cockpit', 'function', 'public', 'get_preco_cockpit', ''),
   ('reposicao_timeout_sync_inventory', 'cron_job', 'cron', 'sync-inventory-vendas-30m', ''),
@@ -1647,14 +1654,12 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('reposicao_auto_aprovacao_v2', 'function', 'public', 'reposicao_alerta_pedido_minimo_tick', ''),
   ('reposicao_auto_aprovacao_v2', 'table', 'public', 'reposicao_auto_aprovacao_log', ''),
   ('reposicao_auto_aprovacao_v2', 'index', 'public', 'reposicao_auto_aprovacao_log_criado_em', 'reposicao_auto_aprovacao_log'),
-  ('reposicao_auto_aprovacao_v2', 'rls_policy', 'public', 'Staff lê log de auto-aprovação', 'reposicao_auto_aprovacao_log'),
   ('tint_get_prices_batch', 'function', 'public', 'get_tint_prices', ''),
   ('fix_aging_views_status_vocab', 'view', 'public', 'fin_aging_receber', ''),
   ('fix_aging_views_status_vocab', 'view', 'public', 'fin_aging_pagar', ''),
   ('regua_preco', 'function', 'public', 'get_regua_preco', ''),
   ('regua_preco', 'table', 'public', 'regua_preco_log', ''),
   ('regua_preco', 'index', 'public', 'idx_regua_preco_log_cliente_sku', 'regua_preco_log'),
-  ('regua_preco', 'rls_policy', 'public', 'regua_preco_log_staff_all', 'regua_preco_log'),
   ('tint_price_gate_ativo', 'function', 'public', 'get_tint_price', ''),
   ('tint_price_gate_ativo', 'function', 'public', 'get_tint_prices', ''),
   ('v_grupo_contas_receber', 'view', 'public', 'v_grupo_contas_receber', ''),
@@ -1705,7 +1710,6 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('caca_custo_producao', 'view', 'public', 'v_caca_compradores', ''),
   ('caca_custo_producao_cron', 'cron_job', 'cron', 'caca-custo-producao-colacor-daily', ''),
   ('recencia_mv_order_date_kpi', 'view', 'public', 'customer_metrics_mv', ''),
-  ('recencia_mv_order_date_kpi', 'index', 'public', 'idx_customer_metrics_mv_uid', 'customer_metrics_mv'),
   ('get_customer_sales_summary_tz_fallback', 'function', 'public', 'get_customer_sales_summary', ''),
   ('data_health_custos_proveniencia', 'function', 'public', '_data_health_compute', ''),
   ('data_health_custos_proveniencia', 'function', 'public', 'data_health_watchdog', ''),
@@ -1895,7 +1899,6 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('selfservice_pr01_allowlist_gate', 'index', 'public', 'idx_ss_allowlist_customer', 'selfservice_cliente_allowlist'),
   ('selfservice_pr01_allowlist_gate', 'trigger', 'public', 'trg_ss_allowlist_autor', 'selfservice_cliente_allowlist'),
   ('selfservice_pr01_allowlist_gate', 'rls_policy', 'public', 'ss_allowlist_staff_select', 'selfservice_cliente_allowlist'),
-  ('selfservice_pr01_allowlist_gate', 'rls_policy', 'public', 'ss_allowlist_gestor_iud', 'selfservice_cliente_allowlist'),
   ('selfservice_pr01_allowlist_gate', 'rls_policy', 'public', 'ss_allowlist_service', 'selfservice_cliente_allowlist'),
   ('fin_custo_rateio', 'function', 'public', 'fin_custo_rateio_set_autor', ''),
   ('fin_custo_rateio', 'table', 'public', 'fin_custo_rateio', ''),
@@ -1948,7 +1951,6 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('carteira_membership_ledger_fatia0', 'function', 'public', 'tg_omie_clientes_to_ledger', ''),
   ('carteira_membership_ledger_fatia0', 'table', 'public', 'carteira_membership_ledger', ''),
   ('carteira_membership_ledger_fatia0', 'index', 'public', 'idx_cml_identity_state', 'carteira_membership_ledger'),
-  ('carteira_membership_ledger_fatia0', 'trigger', 'public', 'trg_omie_clientes_to_ledger', 'omie_clientes'),
   ('carteira_membership_ledger_fatia0', 'rls_policy', 'public', 'Staff can manage carteira membership ledger', 'carteira_membership_ledger'),
   ('carteira_membership_ledger_fatia0', 'rls_policy', 'public', 'Users can view their own membership', 'carteira_membership_ledger'),
   ('whatsapp_templates_hsm', 'table', 'public', 'whatsapp_templates', ''),
@@ -2008,7 +2010,6 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('refresh_customer_metrics_automacao', 'cron_job', 'cron', 'afiacao_customer_metrics_refresh_6h', ''),
   ('data_health_customer_metrics_watchdog', 'function', 'public', '_data_health_compute', ''),
   ('tint_promote_fail_closed_receita_parcial', 'function', 'public', 'tint_promote_sync_run', ''),
-  ('carteira_visivel_para_filtra_eligible', 'function', 'public', 'carteira_visivel_para', ''),
   ('carteira_visivel_para_filtra_eligible', 'function', 'public', 'minha_carteira', ''),
   ('filas_recalc_rls_master_only', 'rls_policy', 'public', 'Master can view recalc queue', 'score_recalc_queue'),
   ('filas_recalc_rls_master_only', 'rls_policy', 'public', 'Master can insert recalc queue', 'score_recalc_queue'),
@@ -2225,7 +2226,6 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('atp_reserva_estoque_fase1', 'index', 'public', 'idx_estoque_reservas_expira', 'estoque_reservas'),
   ('atp_reserva_estoque_fase1', 'index', 'public', 'estoque_reservas_checkout_item_ativa_uq', 'estoque_reservas'),
   ('atp_reserva_estoque_fase1', 'rls_policy', 'public', 'estoque_reservas_select_staff', 'estoque_reservas'),
-  ('atp_reserva_estoque_fase1', 'rls_policy', 'public', 'estoque_reservas_service_all', 'estoque_reservas'),
   ('atp_reserva_estoque_fase1_1_hardening', 'function', 'private', 'atp_disponivel', ''),
   ('atp_reserva_estoque_fase1_1_hardening', 'function', 'public', 'reservar_estoque', ''),
   ('atp_reserva_estoque_fase1_1_hardening', 'function', 'private', 'expirar_reservas_vencidas_job', ''),
@@ -2861,8 +2861,6 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('scoring_v2_signal_modifiers', 'index', 'public', 'idx_score_recalc_queue_pending', 'score_recalc_queue'),
   ('scoring_v2_signal_modifiers', 'index', 'public', 'uniq_score_recalc_queue_pending', 'score_recalc_queue'),
   ('scoring_v2_signal_modifiers', 'trigger', 'public', 'trg_farmer_calls_enqueue_recalc', 'farmer_calls'),
-  ('scoring_v2_signal_modifiers', 'rls_policy', 'public', 'Staff can view recalc queue', 'score_recalc_queue'),
-  ('scoring_v2_signal_modifiers', 'rls_policy', 'public', 'Staff can insert recalc queue', 'score_recalc_queue'),
   ('visit_intelligence_v1', 'function', 'public', 'enqueue_visit_score_recalc_from_visit', ''),
   ('visit_intelligence_v1', 'function', 'public', 'enqueue_visit_score_recalc_from_client_score', ''),
   ('visit_intelligence_v1', 'view', 'public', 'visit_score_recalc_pending', ''),
@@ -2874,10 +2872,6 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('visit_intelligence_v1', 'index', 'public', 'uniq_visit_score_queue_pending', 'visit_score_recalc_queue'),
   ('visit_intelligence_v1', 'trigger', 'public', 'trg_route_visits_enqueue_visit_recalc', 'route_visits'),
   ('visit_intelligence_v1', 'trigger', 'public', 'trg_farmer_client_scores_enqueue_visit_recalc', 'farmer_client_scores'),
-  ('visit_intelligence_v1', 'rls_policy', 'public', 'Staff can view their visit scores', 'customer_visit_scores'),
-  ('visit_intelligence_v1', 'rls_policy', 'public', 'Staff can manage their visit scores', 'customer_visit_scores'),
-  ('visit_intelligence_v1', 'rls_policy', 'public', 'Staff can view visit recalc queue', 'visit_score_recalc_queue'),
-  ('visit_intelligence_v1', 'rls_policy', 'public', 'Staff can insert visit recalc queue', 'visit_score_recalc_queue'),
   ('fin_a1_eventos', 'table', 'public', 'fin_eventos_recorrentes', ''),
   ('fin_a1_eventos', 'table', 'public', 'fin_eventos_eventuais', ''),
   ('fin_a1_eventos', 'index', 'public', 'fin_eventos_rec_company_ativo_idx', 'fin_eventos_recorrentes'),
@@ -2938,7 +2932,6 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('cron_financeiro_e_fix_sayerlack', 'cron_job', 'cron', 'sayerlack-portal-watchdog', ''),
   ('fix_fin_triggers_json_field_access', 'function', 'public', 'fin_audit_trigger', ''),
   ('fix_fin_triggers_json_field_access', 'function', 'public', 'fin_period_lock_trigger', ''),
-  ('carteira_omie_fase1', 'function', 'public', 'carteira_visivel_para', ''),
   ('carteira_omie_fase1', 'function', 'public', 'minha_carteira', ''),
   ('carteira_omie_fase1', 'table', 'public', 'omie_vendedor_map', ''),
   ('carteira_omie_fase1', 'table', 'public', 'carteira_assignments', ''),
@@ -3425,7 +3418,6 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('reposicao_alerta_pedido_minimo', 'table', 'public', 'reposicao_alerta_pedido_minimo', ''),
   ('reposicao_alerta_pedido_minimo', 'index', 'public', 'reposicao_alerta_pedido_minimo_ativo', 'reposicao_alerta_pedido_minimo'),
   ('reposicao_alerta_pedido_minimo', 'cron_job', 'cron', 'reposicao-alerta-pedido-minimo', ''),
-  ('reposicao_alerta_pedido_minimo', 'rls_policy', 'public', 'Staff lê alertas de pedido mínimo', 'reposicao_alerta_pedido_minimo'),
   ('tint_sync_promote', 'function', 'public', 'tint_promote_sync_run', ''),
   ('tint_sync_promote', 'function', 'public', 'tint_ensure_corante_stub', ''),
   ('tint_sync_promote', 'function', 'public', 'tint_calc_preco_final', ''),
@@ -3459,7 +3451,6 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('reposicao_auto_aprovacao_piloto', 'function', 'public', 'reposicao_alerta_pedido_minimo_tick', ''),
   ('reposicao_auto_aprovacao_piloto', 'table', 'public', 'reposicao_auto_aprovacao_log', ''),
   ('reposicao_auto_aprovacao_piloto', 'index', 'public', 'reposicao_auto_aprovacao_log_criado_em', 'reposicao_auto_aprovacao_log'),
-  ('reposicao_auto_aprovacao_piloto', 'rls_policy', 'public', 'Staff lê log de auto-aprovação', 'reposicao_auto_aprovacao_log'),
   ('push_vendedora', 'function', 'public', 'upsert_push_subscription', ''),
   ('push_vendedora', 'function', 'public', 'delete_push_subscription', ''),
   ('push_vendedora', 'function', 'public', '_push_enviar', ''),
@@ -3572,10 +3563,6 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('roteirizador_campo_carteira_sufixo_uf', 'function', 'public', 'carteira_por_municipio', ''),
   ('markup_policy', 'function', 'public', 'resolve_markup_policy', ''),
   ('markup_policy', 'table', 'public', 'markup_policy', ''),
-  ('markup_policy', 'index', 'public', 'uq_markup_policy_conta', 'markup_policy'),
-  ('markup_policy', 'index', 'public', 'uq_markup_policy_fam', 'markup_policy'),
-  ('markup_policy', 'index', 'public', 'uq_markup_policy_sku', 'markup_policy'),
-  ('markup_policy', 'rls_policy', 'public', 'markup_policy_select_staff', 'markup_policy'),
   ('markup_policy', 'rls_policy', 'public', 'markup_policy_write_master', 'markup_policy'),
   ('get_preco_cockpit', 'function', 'public', 'get_preco_cockpit', ''),
   ('reposicao_timeout_sync_inventory', 'cron_job', 'cron', 'sync-inventory-vendas-30m', ''),
@@ -3628,14 +3615,12 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('reposicao_auto_aprovacao_v2', 'function', 'public', 'reposicao_alerta_pedido_minimo_tick', ''),
   ('reposicao_auto_aprovacao_v2', 'table', 'public', 'reposicao_auto_aprovacao_log', ''),
   ('reposicao_auto_aprovacao_v2', 'index', 'public', 'reposicao_auto_aprovacao_log_criado_em', 'reposicao_auto_aprovacao_log'),
-  ('reposicao_auto_aprovacao_v2', 'rls_policy', 'public', 'Staff lê log de auto-aprovação', 'reposicao_auto_aprovacao_log'),
   ('tint_get_prices_batch', 'function', 'public', 'get_tint_prices', ''),
   ('fix_aging_views_status_vocab', 'view', 'public', 'fin_aging_receber', ''),
   ('fix_aging_views_status_vocab', 'view', 'public', 'fin_aging_pagar', ''),
   ('regua_preco', 'function', 'public', 'get_regua_preco', ''),
   ('regua_preco', 'table', 'public', 'regua_preco_log', ''),
   ('regua_preco', 'index', 'public', 'idx_regua_preco_log_cliente_sku', 'regua_preco_log'),
-  ('regua_preco', 'rls_policy', 'public', 'regua_preco_log_staff_all', 'regua_preco_log'),
   ('tint_price_gate_ativo', 'function', 'public', 'get_tint_price', ''),
   ('tint_price_gate_ativo', 'function', 'public', 'get_tint_prices', ''),
   ('v_grupo_contas_receber', 'view', 'public', 'v_grupo_contas_receber', ''),
@@ -3686,7 +3671,6 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('caca_custo_producao', 'view', 'public', 'v_caca_compradores', ''),
   ('caca_custo_producao_cron', 'cron_job', 'cron', 'caca-custo-producao-colacor-daily', ''),
   ('recencia_mv_order_date_kpi', 'view', 'public', 'customer_metrics_mv', ''),
-  ('recencia_mv_order_date_kpi', 'index', 'public', 'idx_customer_metrics_mv_uid', 'customer_metrics_mv'),
   ('get_customer_sales_summary_tz_fallback', 'function', 'public', 'get_customer_sales_summary', ''),
   ('data_health_custos_proveniencia', 'function', 'public', '_data_health_compute', ''),
   ('data_health_custos_proveniencia', 'function', 'public', 'data_health_watchdog', ''),
@@ -3876,7 +3860,6 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('selfservice_pr01_allowlist_gate', 'index', 'public', 'idx_ss_allowlist_customer', 'selfservice_cliente_allowlist'),
   ('selfservice_pr01_allowlist_gate', 'trigger', 'public', 'trg_ss_allowlist_autor', 'selfservice_cliente_allowlist'),
   ('selfservice_pr01_allowlist_gate', 'rls_policy', 'public', 'ss_allowlist_staff_select', 'selfservice_cliente_allowlist'),
-  ('selfservice_pr01_allowlist_gate', 'rls_policy', 'public', 'ss_allowlist_gestor_iud', 'selfservice_cliente_allowlist'),
   ('selfservice_pr01_allowlist_gate', 'rls_policy', 'public', 'ss_allowlist_service', 'selfservice_cliente_allowlist'),
   ('fin_custo_rateio', 'function', 'public', 'fin_custo_rateio_set_autor', ''),
   ('fin_custo_rateio', 'table', 'public', 'fin_custo_rateio', ''),
@@ -3929,7 +3912,6 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('carteira_membership_ledger_fatia0', 'function', 'public', 'tg_omie_clientes_to_ledger', ''),
   ('carteira_membership_ledger_fatia0', 'table', 'public', 'carteira_membership_ledger', ''),
   ('carteira_membership_ledger_fatia0', 'index', 'public', 'idx_cml_identity_state', 'carteira_membership_ledger'),
-  ('carteira_membership_ledger_fatia0', 'trigger', 'public', 'trg_omie_clientes_to_ledger', 'omie_clientes'),
   ('carteira_membership_ledger_fatia0', 'rls_policy', 'public', 'Staff can manage carteira membership ledger', 'carteira_membership_ledger'),
   ('carteira_membership_ledger_fatia0', 'rls_policy', 'public', 'Users can view their own membership', 'carteira_membership_ledger'),
   ('whatsapp_templates_hsm', 'table', 'public', 'whatsapp_templates', ''),
@@ -3989,7 +3971,6 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('refresh_customer_metrics_automacao', 'cron_job', 'cron', 'afiacao_customer_metrics_refresh_6h', ''),
   ('data_health_customer_metrics_watchdog', 'function', 'public', '_data_health_compute', ''),
   ('tint_promote_fail_closed_receita_parcial', 'function', 'public', 'tint_promote_sync_run', ''),
-  ('carteira_visivel_para_filtra_eligible', 'function', 'public', 'carteira_visivel_para', ''),
   ('carteira_visivel_para_filtra_eligible', 'function', 'public', 'minha_carteira', ''),
   ('filas_recalc_rls_master_only', 'rls_policy', 'public', 'Master can view recalc queue', 'score_recalc_queue'),
   ('filas_recalc_rls_master_only', 'rls_policy', 'public', 'Master can insert recalc queue', 'score_recalc_queue'),
@@ -4206,7 +4187,6 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('atp_reserva_estoque_fase1', 'index', 'public', 'idx_estoque_reservas_expira', 'estoque_reservas'),
   ('atp_reserva_estoque_fase1', 'index', 'public', 'estoque_reservas_checkout_item_ativa_uq', 'estoque_reservas'),
   ('atp_reserva_estoque_fase1', 'rls_policy', 'public', 'estoque_reservas_select_staff', 'estoque_reservas'),
-  ('atp_reserva_estoque_fase1', 'rls_policy', 'public', 'estoque_reservas_service_all', 'estoque_reservas'),
   ('atp_reserva_estoque_fase1_1_hardening', 'function', 'private', 'atp_disponivel', ''),
   ('atp_reserva_estoque_fase1_1_hardening', 'function', 'public', 'reservar_estoque', ''),
   ('atp_reserva_estoque_fase1_1_hardening', 'function', 'private', 'expirar_reservas_vencidas_job', ''),
@@ -4573,7 +4553,13 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 128.
+-- Funções redefinidas com corpo extraível: 124.
+-- Fora da seção (4) — o último evento é REMOÇÃO de propósito (DROP / SET SCHEMA / RENAME):
+--   • public.import_tint_formulas — 20260806223407_drop_import_tint_formulas.sql
+--   • public.estimar_impacto_exclusao_outlier — 20260718093248_drop_estimar_impacto_exclusao_outlier_orfa.sql
+--   • public.calcular_gatilhos_reposicao — 20260801120000_drop_calcular_gatilhos_reposicao.sql
+--   • public.carteira_visivel_para — 20260718150000_fu7_helpers_rls_schema_privado.sql
+-- ✅ deriva reconhecida = corpo vivo com o md5 EXATO triado em DERIVA_RECONHECIDA; mudou o corpo, volta a 🔴.
 
 WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (VALUES
   ('public', 'has_role', 1, '20260207192203_1ed442e5-a224-456e-9d94-cfe50e88c670.sql', 'c63a92e3cfa92e6aab8cb894ad505e30'),
@@ -4590,9 +4576,6 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'refresh_customer_metrics', 2, '20260512101121_a96fa007-f688-4c3a-8cd9-43f9d88e5505.sql', '46cd1e1b2a9af2067f758c8f4ea2f642'),
   ('public', 'refresh_customer_metrics', 3, '20260629120000_seg_customer_metrics_viewgate.sql', 'fa7a857acd64fc288145ec9d8bcb9599'),
   ('public', 'refresh_customer_metrics', 4, '20260717154500_refresh_customer_metrics_automacao.sql', '2565591951fcfab2dd89f924aa08e75a'),
-  ('public', 'import_tint_formulas', 1, '20260323232524_26b4a6d3-6fd1-4131-a6bc-8e041087859d.sql', 'e619c85dcd78bab3c3b7e245c30e88ca'),
-  ('public', 'import_tint_formulas', 2, '20260324022016_dbb5a02b-f0ce-4651-b864-6cc156eb714d.sql', 'e92148dfe30a142c93d420c41d907224'),
-  ('public', 'import_tint_formulas', 3, '20260512101346_632761fc-2bd6-4caa-9c61-d35f872c2489.sql', '30bd8f8bed51d678926fa4db62daccc9'),
   ('public', 'fin_user_can_access', 1, '20260328200500_financeiro_v2.sql', '4ec44d163781e33594aad7a9b9197232'),
   ('public', 'fin_user_can_access', 2, '20260329161139_e0b1e0c0-92dc-4f62-832c-412598ccc184.sql', '670c6247ee89db718a2525ad6fdc23ec'),
   ('public', 'fin_user_can_access', 3, '20260512021259_fbd14c5b-5766-4115-b796-3cfc56212905.sql', '6599d0b9836c35f9f4836ae18bb6f336'),
@@ -4613,9 +4596,6 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'resolver_outlier', 2, '20260512101346_632761fc-2bd6-4caa-9c61-d35f872c2489.sql', '7f86b7149b77b251b6c590dbb4bfc2a2'),
   ('public', 'resolver_outlier', 3, '20260717003000_outliers_leadtime_stack_efetivo.sql', '8622a0d8c196716af433ace41a276413'),
   ('public', 'resolver_outlier', 4, '20260717020000_reposicao_exclusao_outlier_remover.sql', 'df9658ec39cdd3ba895cb2b2be8ed5b7'),
-  ('public', 'estimar_impacto_exclusao_outlier', 1, '20260419215246_fc2dc8da-2aab-43f5-b543-9211893af4e6.sql', '4fa55269b9a1e86cd154b7aa53a5ea6f'),
-  ('public', 'estimar_impacto_exclusao_outlier', 2, '20260512101346_632761fc-2bd6-4caa-9c61-d35f872c2489.sql', '394fd59f9a8968bc099750f969bc06c3'),
-  ('public', 'estimar_impacto_exclusao_outlier', 3, '20260717003000_outliers_leadtime_stack_efetivo.sql', '83378fd567f9afc08526da52998974a5'),
   ('public', 'detectar_skus_sem_grupo', 1, '20260419231054_aba546f4-9556-429a-b54c-33e25fdcb096.sql', '58eafb22203b2662e1a641ddc68b28a0'),
   ('public', 'detectar_skus_sem_grupo', 2, '20260606130000_detectar_skus_sem_grupo_exclui_04.sql', '79f418c8b7e50fd3dfad16b7c55266cb'),
   ('public', 'detectar_skus_sem_grupo', 3, '20260606140000_detectar_skus_sem_grupo_self_heal.sql', '983e1084aaca3577a4ecdd2198f2d05e'),
@@ -4665,9 +4645,6 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'sugerir_negociacao_paralela_hoje', 2, '20260524203000_rpc_staff_guard_permite_cron_backend.sql', '7aac0d077fe1b0519898eb93463f2dfe'),
   ('public', 'resolver_sku_por_codigo_fornecedor', 1, '20260513005653_ef077490-1563-4287-b6bb-a48d3aadf780.sql', 'eb00a3299f699935b6ecfac82dcdb677'),
   ('public', 'resolver_sku_por_codigo_fornecedor', 2, '20260929000234_padrao_like_contem_escapa_curinga.sql', '23b949f189b64fe93e2c643eeb9e801a'),
-  ('public', 'calcular_gatilhos_reposicao', 1, '20260513233050_2b5510fb-e9d5-40a9-b6cd-8789d972803c.sql', '38752164924bf851776e7e515dc06d71'),
-  ('public', 'calcular_gatilhos_reposicao', 2, '20260513233141_ada2b9bf-9bf4-4cd0-a44d-5f9b6cd49c77.sql', 'cd3a827993284f8ae1e21e534f3a09c1'),
-  ('public', 'calcular_gatilhos_reposicao', 3, '20260515003131_0035f604-5186-461d-80de-c6e639fe5807.sql', '2e54cfe74af09b125817173109ebb94b'),
   ('public', 'pedido_compra_split', 1, '20260515050000_3ad7ffe3-a6f9-420f-8f1d-557467b555d2.sql', '48a7e03a9f88ab5818e4bff558de0697'),
   ('public', 'pedido_compra_split', 2, '20260515161910_41c8e98a-7603-4e67-9984-d8dc711a3b08.sql', '285ba1a8bd6eb532b88210a3211dbce8'),
   ('public', 'pedido_compra_split', 3, '20260515170100_89108e1b-8b24-4b95-b50f-ab5cb80a48be.sql', 'f0b7b9298762cca403f666224a806c41'),
@@ -4698,8 +4675,6 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'fin_estimar_estoque_omie', 3, '20260528150000_fin_estoque_omie_feed.sql', 'b8c08afd2509200d39e62c3df3273f5c'),
   ('public', 'fin_estimar_estoque_omie', 4, '20260709120500_authz_estimar_estoque_omie.sql', '22d69b9c08cb5830f11c7ab0718a752f'),
   ('public', 'fin_estimar_estoque_omie', 5, '20260718190000_authz_capability_matrix_e2.sql', 'dd09a9bca698993cc7774f0ac10ee4f2'),
-  ('public', 'carteira_visivel_para', 1, '20260524120000_carteira_omie_fase1.sql', '0f006873dc0d41e700fdef5ffea1f652'),
-  ('public', 'carteira_visivel_para', 2, '20260717181500_carteira_visivel_para_filtra_eligible.sql', '76de7734fc459d344be3ea86265a0267'),
   ('public', 'minha_carteira', 1, '20260524120000_carteira_omie_fase1.sql', 'fe59a447363f85679ee1fc97b0a16035'),
   ('public', 'minha_carteira', 2, '20260717181500_carteira_visivel_para_filtra_eligible.sql', '65104f59be13920573f6791e8124b28e'),
   ('public', 'get_minha_positivacao', 1, '20260525120000_positivacao_kpis.sql', '68433ad67c285180145cbe7a716e9829'),
@@ -5067,6 +5042,23 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'sales_orders_gemeo_app_derivar', 1, '20261001100001_sales_orders_gemeo_importado_contagem_unica.sql', '858944c47f258a1e33ddd58249316263'),
   ('public', 'sales_orders_gemeo_app_derivar', 2, '20261005220000_sales_orders_kpi_no_envio.sql', '617b8551f551551b37200cb3ae787fe3')
 ),
+deriva_reconhecida (schema_name, object_name, body_md5, motivo) AS (VALUES
+  ('public', 'apply_score_updates', '331996f594ff3491f36ce7da9068dbd9', 'cosmética (triagem 2026-10-08)'),
+  ('public', 'aprovar_versao_boletim', '3c84eb4fc24751d4e68965aabecb9a4a', 'cosmética; has_role master preservado'),
+  ('public', 'confirmar_vinculo_boletim', '781e8e85d791fc7b01a3370ceb92e379', 'cosmética; has_role master preservado'),
+  ('public', 'detectar_skus_sem_grupo', '8e2a852f25c58fcc8afec1e421193e99', 'só o texto gravado em justificativa_decisao difere; lógica idêntica'),
+  ('public', 'fin_calcular_confiabilidade', 'b76260aca8e086b765bdc84006f00f6d', 'cosmética (triagem 2026-10-08)'),
+  ('public', 'get_customer_sales_summary', '1af8a023586be99ad188760bf8a78837', 'cosmética: corpo recriado sem um comentário SQL (conferido token a token)'),
+  ('public', 'pedido_total_liquido_converter', 'b01c8f547258a2f3ffbafdf8a6e2812e', 'patch programático por âncora — db/2026-10-05-pedido-total-liquido-excecao.sql'),
+  ('public', 'promover_candidato_primeira_compra', '76b44ddda40c0329f3785d9cbfa7b938', 'cosmética; checagem de papel preservada'),
+  ('public', 'reconciliar_pedidos_omie', '7bb459f58e37c6bc9691971f0b2aa009', 'patch por âncora — db/2026-10-06-desconto-corrigido-para-null.sql'),
+  ('public', 'resolve_markup_policy', 'dd23eedbafe99b73cd3e68462c11dbcd', 'cosmética (triagem 2026-10-08)'),
+  ('public', 'seed_targets_faltantes', '33458c80ec700367cbdf4652becf5002', 'cosmética (triagem 2026-10-08)'),
+  ('public', 'sugerir_negociacao_paralela_hoje', '534d0ddb7943af1a72bbe0f4d013ca78', 'search_path public,private via ALTER FUNCTION (20260527160000)'),
+  ('public', 'tarefas_guard_comprovacao', 'e9b5850b9f681e7061899719718bf23b', 'hardening à mão (SET search_path) sem rastro no repo — RETURNS trigger, não SECDEF'),
+  ('public', 'tarefas_materializar_recorrentes', '65b0ce06867c71934288d53858dba781', 'cosmética (triagem 2026-10-08)'),
+  ('public', 'tint_promote_sync_run', 'c33d4186be26ca4f5b08998cdfea4e5a', 'patch por replace() no corpo vivo — migrations 20260924/20260925')
+),
 ultima AS (
   SELECT schema_name, object_name, max(ordem) AS ordem FROM corpo_esperado GROUP BY 1, 2
 ),
@@ -5095,6 +5087,12 @@ SELECT
                   AND ce.body_md5 = v.body_md5
                  WHERE v.schema_name = u.schema_name AND v.object_name = u.object_name)
       THEN '❌ NAO APLICADA — o corpo vivo e de uma migration ANTERIOR'
+    WHEN EXISTS (SELECT 1 FROM vivo v JOIN deriva_reconhecida dr
+                   ON dr.schema_name = v.schema_name AND dr.object_name = v.object_name
+                  AND dr.body_md5 = v.body_md5
+                 WHERE v.schema_name = u.schema_name AND v.object_name = u.object_name)
+      THEN '✅ deriva reconhecida — ' || (SELECT dr.motivo FROM deriva_reconhecida dr
+                 WHERE dr.schema_name = u.schema_name AND dr.object_name = u.object_name)
     ELSE '🔴 DERIVA — corpo em prod nao bate com nenhuma migration (edicao manual)'
   END AS status
 FROM ultima u

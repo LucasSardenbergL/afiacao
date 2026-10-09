@@ -2,22 +2,21 @@
 -- PostgreSQL database dump
 --
 
-\restrict TYblAFvg7zrh9JK7rVfgv0hn2pFKlRWuGBTVX04nAr4jeZA8c7YcmyajDm5gBw8
+\restrict SbsqGAuVJJeXXTpgiIv1laTtKk7Gra4RI3YQQFdDJNiY4oZcqcKAWX3JrfxgkoJ
 
 -- Dumped from database version 17.6
--- Dumped by pg_dump version 17.9
+-- Dumped by pg_dump version 17.10 (Homebrew)
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
 SET idle_in_transaction_session_timeout = 0;
 SET transaction_timeout = 0;
-SET client_encoding = 'SQL_ASCII';
-SET standard_conforming_strings = off;
+SET client_encoding = 'UTF8';
+SET standard_conforming_strings = on;
 SELECT pg_catalog.set_config('search_path', '', false);
 SET check_function_bodies = false;
 SET xmloption = content;
 SET client_min_messages = warning;
-SET escape_string_warning = off;
 SET row_security = off;
 
 --
@@ -976,7 +975,7 @@ $$;
 -- Name: margem_cliente_agregada(); Type: FUNCTION; Schema: private; Owner: -
 --
 
-CREATE FUNCTION private.margem_cliente_agregada() RETURNS TABLE(customer_user_id uuid, itens_computaveis bigint, itens_ignorados bigint, receita_computada numeric, custo_computado numeric, margem_pct numeric)
+CREATE FUNCTION private.margem_cliente_agregada() RETURNS TABLE(customer_user_id uuid, itens_computaveis bigint, itens_ignorados bigint, receita_computada numeric, custo_computado numeric, margem_pct numeric, itens_sem_preco bigint, itens_sem_custo bigint)
     LANGUAGE sql STABLE SECURITY DEFINER
     SET search_path TO 'pg_catalog', 'pg_temp'
     AS $$
@@ -1017,29 +1016,48 @@ CREATE FUNCTION private.margem_cliente_agregada() RETURNS TABLE(customer_user_id
   norm AS (
     -- EIXO 3: um item só conta com as TRÊS pernas utilizáveis. `COALESCE(unit_price,0)` fabricava
     -- margem: item com custo conhecido e preço ausente entrava com receita 0 e custo real.
+    --
+    -- ⚠️ O preço usa `> 0`, não `>= 0`. Enquanto `order_items.unit_price` foi NOT NULL DEFAULT 0,
+    -- "não sei o preço" chegava aqui como 0 — e `0 >= 0` é TRUE, então o item era COMPUTÁVEL e
+    -- fabricava a margem negativa que este bloco existe para impedir. O `IS NOT NULL` sozinho era
+    -- um ramo MORTO (a coluna não podia ser NULL). Régua idêntica à do custo, acima, e à do TS
+    -- (`valorMedido(...)` + `> 0` em src/lib/scoring/margin.ts).
+    --
+    -- Um 0 legítimo (bonificação/brinde) também sai da margem, de propósito: receita 0 com custo
+    -- real é margem -100%, que envenenaria o agregado. Ele fica visível em `itens_sem_preco`.
     SELECT i.cid, i.qtd, i.preco_unit, i.custo_unit,
-           ( i.qtd        IS NOT NULL AND i.qtd        >  0 AND i.qtd        < 'Infinity'::numeric
-         AND i.preco_unit IS NOT NULL AND i.preco_unit >= 0 AND i.preco_unit < 'Infinity'::numeric
-         AND i.custo_unit IS NOT NULL ) AS computavel
+           ( i.qtd IS NOT NULL AND i.qtd > 0 AND i.qtd < 'Infinity'::numeric )       AS qtd_ok,
+           ( i.preco_unit IS NOT NULL AND i.preco_unit > 0
+             AND i.preco_unit < 'Infinity'::numeric )                                AS preco_ok,
+           ( i.custo_unit IS NOT NULL )                                              AS custo_ok
       FROM itens i
+  ),
+  flag AS (
+    SELECT n.*, (n.qtd_ok AND n.preco_ok AND n.custo_ok) AS computavel FROM norm n
   )
   SELECT
-    n.cid,
-    count(*) FILTER (WHERE n.computavel),
-    count(*) FILTER (WHERE NOT n.computavel),
-    COALESCE(sum(n.preco_unit * n.qtd)  FILTER (WHERE n.computavel), 0),
-    COALESCE(sum(n.custo_unit  * n.qtd) FILTER (WHERE n.computavel), 0),
+    f.cid,
+    count(*) FILTER (WHERE f.computavel),
+    count(*) FILTER (WHERE NOT f.computavel),
+    COALESCE(sum(f.preco_unit * f.qtd)  FILTER (WHERE f.computavel), 0),
+    COALESCE(sum(f.custo_unit  * f.qtd) FILTER (WHERE f.computavel), 0),
     CASE
-      WHEN COALESCE(sum(n.preco_unit * n.qtd) FILTER (WHERE n.computavel), 0) > 0
+      WHEN COALESCE(sum(f.preco_unit * f.qtd) FILTER (WHERE f.computavel), 0) > 0
       THEN round(
-             ( sum(n.preco_unit * n.qtd)  FILTER (WHERE n.computavel)
-             - sum(n.custo_unit  * n.qtd) FILTER (WHERE n.computavel) )
-             / sum(n.preco_unit * n.qtd)  FILTER (WHERE n.computavel) * 100
+             ( sum(f.preco_unit * f.qtd)  FILTER (WHERE f.computavel)
+             - sum(f.custo_unit  * f.qtd) FILTER (WHERE f.computavel) )
+             / sum(f.preco_unit * f.qtd)  FILTER (WHERE f.computavel) * 100
            , 2)
       ELSE NULL
-    END
-  FROM norm n
-  GROUP BY n.cid;
+    END,
+    -- ⚠️ COBERTURA POR MOTIVO — as duas contagens SE SOBREPÕEM, de propósito: um item sem preço E
+    -- sem custo conta nas DUAS. Elas não particionam `itens_ignorados` e não somam para ele. Cada
+    -- uma responde a sua pergunta ("quantos itens não sei precificar?" / "…custear?"); forçá-las a
+    -- somar exigiria eleger um motivo "principal" — uma escolha arbitrária apresentada como fato.
+    count(*) FILTER (WHERE NOT f.preco_ok),
+    count(*) FILTER (WHERE NOT f.custo_ok)
+  FROM flag f
+  GROUP BY f.cid;
 $$;
 
 
@@ -1047,7 +1065,29 @@ $$;
 -- Name: FUNCTION margem_cliente_agregada(); Type: COMMENT; Schema: private; Owner: -
 --
 
-COMMENT ON FUNCTION private.margem_cliente_agregada() IS 'Fonte UNICA da margem bruta por cliente (order_items x omie_products x product_costs). Universo por DENYLIST de status (inclui separacao/enviado/importado: sao vendas reais, R$ 6.985.425,66 que a allowlist anterior descartava). JOIN por omie_codigo_produto — product_id e nulo em 2,67% dos itens. ausente<>zero nas TRES pernas: sem item computavel devolve NULL, nunca 0. Fechada por REVOKE; o schema private fecha a rota do PostgREST mas NAO o EXECUTE (authenticated tem USAGE nele).';
+COMMENT ON FUNCTION private.margem_cliente_agregada() IS 'Fonte UNICA da margem bruta por cliente (order_items x omie_products x product_costs). Universo por DENYLIST de status (inclui separacao/enviado/importado: sao vendas reais, R$ 6.985.425,66 que a allowlist anterior descartava). JOIN por omie_codigo_produto — product_id e nulo em 2,67% dos itens. ausente<>zero nas TRES pernas: sem item computavel devolve NULL, nunca 0. Preco exige > 0 (nao >= 0): enquanto unit_price foi NOT NULL DEFAULT 0, preco ausente chegava como 0 e era computavel — margem negativa fabricada. itens_sem_preco e itens_sem_custo SE SOBREPOEM (item sem os dois conta nas duas) e NAO somam itens_ignorados.';
+
+
+--
+-- Name: padrao_like_contem(text); Type: FUNCTION; Schema: private; Owner: -
+--
+
+CREATE FUNCTION private.padrao_like_contem(p_termo text) RETURNS text
+    LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
+    SET search_path TO ''
+    AS $$
+  SELECT CASE
+    WHEN btrim(translate(p_termo, '%_', ''), E' \t\r\n') = '' THEN NULL
+    ELSE '%' || replace(replace(replace(p_termo, '\', '\\'), '%', '\%'), '_', '\_') || '%'
+  END
+$$;
+
+
+--
+-- Name: FUNCTION padrao_like_contem(p_termo text); Type: COMMENT; Schema: private; Owner: -
+--
+
+COMMENT ON FUNCTION private.padrao_like_contem(p_termo text) IS 'Pattern de "contém" para [I]LIKE com \, % e _ do termo escapados, ou NULL quando o termo não tem conteúdo útil (nulo, vazio, só espaço, só curinga). Uso: col ILIKE private.padrao_like_contem(t) ESCAPE ''\''. NULL faz o LIKE não casar nada. Espelho SQL do ilikeContainsPattern (src/lib/postgrest.ts). Classe pattern-like-cru: docs/agent/database.md §5.';
 
 
 --
@@ -1256,11 +1296,11 @@ BEGIN
     WHERE ca.owner_user_id = uid AND ca.eligible = true
   ),
   pedidos_validos AS (
-    SELECT so.customer_user_id,
-           COALESCE(so.order_date_kpi, so.created_at::date) AS d,
-           so.total
+    -- universo canônico (4 status + não apagado) e a data de KPI, as do mês congelado
+    SELECT so.customer_user_id, so.order_date_kpi AS d, so.total
     FROM public.sales_orders so
-    WHERE so.status NOT IN ('cancelado','rascunho','pendente')
+    WHERE so.status NOT IN ('cancelado','rascunho','pendente','orcamento')
+      AND so.deleted_at IS NULL
   ),
   pedidos_mes AS (
     SELECT pv.customer_user_id, sum(pv.total) AS receita
@@ -1279,7 +1319,10 @@ BEGIN
     SELECT DISTINCT u.customer_user_id
     FROM (
       SELECT fc.customer_user_id FROM public.farmer_calls fc
-        WHERE fc.farmer_id = uid AND fc.started_at >= mes_inicio AND fc.started_at < mes_fim
+        -- a ligação é comparada pela data de SP, nunca pelo cast da sessão
+        WHERE fc.farmer_id = uid
+          AND (fc.started_at AT TIME ZONE 'America/Sao_Paulo')::date >= mes_inicio
+          AND (fc.started_at AT TIME ZONE 'America/Sao_Paulo')::date < mes_fim
           AND fc.customer_user_id IS NOT NULL
       UNION
       SELECT rv.customer_user_id FROM public.route_visits rv
@@ -1413,9 +1456,13 @@ CREATE FUNCTION public._data_health_compute() RETURNS TABLE(source text, domain 
     UNION ALL
     SELECT 'reposicao_sugestoes'::text, 'estoque'::text,
       CASE WHEN max(pcs.data_ciclo) IS NULL THEN 'broken'
-           WHEN current_date - max(pcs.data_ciclo) > 3 THEN 'stale' ELSE 'ok' END,
+           -- [2026-10-01] DIA DE SP ESCRITO (era current_date, o dia UTC da sessao da prod): data_ciclo e
+           -- gravada no dia de SAO PAULO — 645 de 646 execucoes do motor, 19 de 20 depois das 21h BRT
+           -- (reposicao_motor_run, medido 2026-10-01). Com o dia UTC, das 21h a meia-noite BRT a idade
+           -- saia +1 dia e o stale de 3 dias disparava 1 dia antes. Gate relogio-nu-da-sessao.
+           WHEN (now() AT TIME ZONE 'America/Sao_Paulo')::date - max(pcs.data_ciclo) > 3 THEN 'stale' ELSE 'ok' END,
       CASE WHEN max(pcs.data_ciclo) IS NULL THEN NULL
-           ELSE (current_date - max(pcs.data_ciclo))::bigint * 86400 END,
+           ELSE ((now() AT TIME ZONE 'America/Sao_Paulo')::date - max(pcs.data_ciclo))::bigint * 86400 END,
       (3*86400)::bigint, 'pedido_compra_sugerido.data_ciclo',
       'Sugestão de compra: último ciclo ' || COALESCE(to_char(max(pcs.data_ciclo),'DD/MM/YYYY'),'nunca'),
       NULL, CASE WHEN max(pcs.data_ciclo) IS NULL THEN 'gerar-pedidos nunca gerou sugestão' ELSE NULL END,
@@ -1544,7 +1591,20 @@ CREATE FUNCTION public._data_health_compute() RETURNS TABLE(source text, domain 
       NULL,
       CASE WHEN now() - hu.mais_antigo > interval '2 hours' THEN 'Pedido(s) que o automático não resolve: conciliar indeterminado (NÃO re-disparar — duplica PO), mapear SKU (erro_nao_retentavel), ou conferir protocolo' ELSE NULL END,
       'Em /admin/reposicao: concilie os indeterminado_requer_conciliacao (cheque o fornecedor ANTES — NÃO re-dispare), faça o de-para dos erro_nao_retentavel, e confira aceito_portal_sem_protocolo'::text,
-      'warning'::text
+      -- [SEV-DINAMICA-PORTAL-HUMANO] (#2388, 2026-09-22) A severidade passa a acompanhar o STATUS
+      -- DESTE MESMO check: >24h parado — o ramo 'broken' do CASE de status 12 linhas acima — vira
+      -- 'critical'; abaixo disso segue 'warning', que é a janela normal do humano.
+      -- ⚠️ O predicado abaixo é ESPELHO do ramo 'broken' daquele CASE (mesma coluna, mesmo
+      -- intervalo). Mudou o limiar lá, muda aqui — não há como derivar um do outro dentro de um
+      -- SELECT de UNION ALL, então o acoplamento é textual e está declarado.
+      -- POR QUÊ: o pedido #2388 ficou 19 DIAS em erro_nao_retentavel com este alerta ABERTO
+      -- (fin_alertas 1d34d5f6, criado 03/09 15:30, nunca resolvido/dispensado) e não foi atendido.
+      -- O check acertou o diagnóstico; o que faltou foi PESO. 'critico' muda 3 coisas em
+      -- _data_health_episodio: cadência de e-mail 72h -> 24h, fin_alertas.severidade aviso ->
+      -- critico (e fornecedor_alerta atencao -> urgente), e gravidade 23 -> 33, que por ser
+      -- ESCALADA força um e-mail fora da cadência assim que a mudança entrar.
+      CASE WHEN hu.pendentes <> 0 AND now() - hu.mais_antigo > interval '24 hours'
+           THEN 'critical' ELSE 'warning' END::text
     FROM (
       SELECT
         count(*)::int AS pendentes,
@@ -2268,6 +2328,369 @@ CREATE FUNCTION public._data_health_compute() RETURNS TABLE(source text, domain 
                ON o.chave_dedup = 'pcs:' || p.id::text || ':reposicao.sugestao_aprovada'
        WHERE p.aprovado_em > now() - interval '48 hours'
     ) tg
+    UNION ALL
+    -- ── sync_reprocess_saude ──────────────────────────────────────────────────────────────────
+    -- POR QUE EXISTE: de 08/09 a 18/09/2026 o reprocesso da Oben falhou em 122 ciclos
+    -- operational/orders e 10 strategic/orders, e os estagios seguintes (inventory/products)
+    -- PARARAM de gravar — 10 dias, ZERO alerta. Nenhum dos 21 checks lia sync_reprocess_log; o
+    -- `vendas_pedidos` mede o sync INCREMENTAL (fin_sync_log), que estava verde o tempo todo, e o
+    -- marcador `orders` do sync_state foi removido como fossil na 20260824232212. A acao `get_health`
+    -- da propria edge le a tabela mas nao tem limiar, nao escreve e ninguem a chama.
+    -- Diario: docs/historico/reprocess-oben-parado-seis-dias.md · conserto do reprocesso: #2496.
+    --
+    -- CATALOGO EXPLICITO, NAO DESCOBERTA POR JANELA. A lista abaixo e a fonte de quem se vigia.
+    -- Descobrir as chaves "que rodaram nos ultimos N dias" seria fail-OPEN no TEMPO: a chave que
+    -- quebrasse por mais de N dias sairia da janela e o alerta SUMIRIA sozinho exatamente quando
+    -- o problema e mais grave (e a chave que NUNCA rodou — cron criado, edge que nunca produziu —
+    -- seria invisivel desde sempre). Com catalogo, ausencia de linha e `broken`, nao silencio; e
+    -- aposentar uma chave vira decisao humana versionada no diff, nao um alerta que se apaga.
+    -- sla_h NULL = catalogada e DISPENSADA de proposito (o motivo de cada uma esta ao lado).
+    -- O FULL JOIN com a atividade recente fecha o outro lado: chave nova que ninguem catalogou sai
+    -- como `unknown` — nunca `ok`. Cobertura desconhecida nao e cobertura saudavel.
+    --
+    -- 1 LINHA SEMPRE (agregada, sem GROUP BY): o watchdog trata count(*) <> count(DISTINCT source)
+    -- como "compute quebrado" e NAO executa o laco — 2 linhas aqui cegariam os outros 21 checks.
+    -- Por isso o FROM parte do catalogo (VALUES, que nunca e vazio) e nao da tabela: com a tabela
+    -- vazia este bloco ainda devolve exatamente 1 linha.
+    -- MESSAGE SEM IDADE VARIAVEL: o fingerprint do push e source|status|severity|message e o cron
+    -- e */30 ⇒ hora corrida re-emailaria a cada meia hora. Usa DATA congelada do ultimo sucesso,
+    -- que so muda quando o conjunto de problemas muda (= aviso novo, nao repeticao).
+    -- SEVERITY FIXA 'critical': severidade variavel no mesmo source nao re-emailaria (mesma razao
+    -- do sync_state_saude). O pior caso agregado — reconciliacao de pedidos parada 10 dias, que foi
+    -- o incidente real — e critico; o catalogo inteiro herda esse piso.
+    SELECT 'sync_reprocess_saude'::text, 'omie_sync'::text,
+      CASE WHEN sr.n_broken  > 0 THEN 'broken'
+           WHEN sr.n_stale   > 0 THEN 'stale'
+           WHEN sr.n_unknown > 0 THEN 'unknown'
+           ELSE 'ok' END,
+      sr.pior_idade_s, (30*3600)::bigint,
+      'sync_reprocess_log: ultima linha por (account, reprocess_type, entity_type) do catalogo + SLA de 2x a cadencia do cron'::text,
+      -- A contagem de degradados so entra na message no ramo OK — ali o watchdog dismissa o alerta
+      -- e nao emite e-mail, entao a instabilidade dela e inofensiva. Nos ramos que ALERTAM a
+      -- message fica ancorada em data congelada.
+      CASE WHEN sr.n_broken = 0 AND sr.n_stale = 0 AND sr.n_unknown = 0 AND sr.n_degradado = 0
+             THEN 'Reprocesso Omie: todos os estagios do catalogo saudaveis'
+           WHEN sr.n_broken = 0 AND sr.n_stale = 0 AND sr.n_unknown = 0
+             THEN 'Reprocesso Omie: estagios no ar, com falha por pedido registrada em '
+                  || sr.n_degradado::text || ' estagio(s) — ver error_message da ultima run'
+           WHEN sr.n_broken > 0 THEN 'Reprocesso Omie PARADO: ' || sr.resumo
+           WHEN sr.n_stale  > 0 THEN 'Reprocesso Omie atrasado: ' || sr.resumo
+           ELSE 'Reprocesso Omie com chave nao catalogada: ' || sr.resumo END,
+      sr.erro,
+      CASE WHEN sr.n_broken = 0 AND sr.n_stale = 0 AND sr.n_unknown = 0 THEN NULL
+           ELSE 'A edge sync-reprocess (crons 34 operational */2h e 35 strategic diario; 48 status-produtos diario) '
+                || 'grava 1 linha por estagio em sync_reprocess_log. Estagio em error/failed derruba a run e os '
+                || 'estagios SEGUINTES nem chegam a gravar — por isso um erro em orders aparece aqui como orders '
+                || 'quebrado E inventory/products sem sucesso. `running` parado ha mais de 2h e run morta sem catch '
+                || '(a duracao maxima real medida em 90 dias e 2,6 min). Chave `nao catalogada` = escritor novo na '
+                || 'tabela que ninguem decidiu vigiar.' END,
+      CASE WHEN sr.n_broken = 0 AND sr.n_stale = 0 AND sr.n_unknown = 0 THEN NULL
+           ELSE 'Leia o erro: SELECT created_at, entity_type, status, error_message FROM sync_reprocess_log '
+                || E'WHERE reprocess_type IN (\'operational\',\'strategic\',\'status_produtos\') ORDER BY created_at DESC LIMIT 20; '
+                || 'Corrigida a causa, re-invoque a edge (acao reprocess) — os estagios seguintes so voltam a '
+                || 'gravar quando o anterior passar. Chave nao catalogada: decida vigiar ou dispensar no catalogo '
+                || 'deste check (sla_h NULL = dispensada, com o motivo escrito).' END,
+      'critical'::text
+    FROM (
+      SELECT
+        (count(*) FILTER (WHERE d.veredito = 'broken'))::int   AS n_broken,
+        (count(*) FILTER (WHERE d.veredito = 'stale'))::int    AS n_stale,
+        (count(*) FILTER (WHERE d.veredito = 'unknown'))::int  AS n_unknown,
+        (count(*) FILTER (WHERE d.degradado))::int             AS n_degradado,
+        COALESCE(max(EXTRACT(EPOCH FROM now() - d.ultimo_sucesso_em)::bigint)
+                   FILTER (WHERE d.veredito <> 'ok'), 0)       AS pior_idade_s,
+        COALESCE(string_agg(
+          d.reprocess_type || '/' || d.entity_type || ' (' || d.account || '): '
+            || CASE WHEN d.veredito = 'unknown' AND d.nao_catalogada THEN 'chave nao catalogada'
+                    WHEN d.veredito = 'unknown' THEN 'status desconhecido ' || COALESCE(d.ultimo_status,'<nulo>')
+                    WHEN d.ultimo_status IN ('error','failed') THEN 'erro'
+                    WHEN d.orfa_em_voo THEN 'travado em running'
+                    WHEN d.ultimo_status IS NULL THEN 'nunca executou'
+                    ELSE 'sem sucesso' END
+            || CASE WHEN d.ultimo_sucesso_em IS NULL THEN ''
+                    ELSE ' desde ' || to_char(d.ultimo_sucesso_em AT TIME ZONE 'America/Sao_Paulo','DD/MM') END,
+          '; ' ORDER BY d.reprocess_type, d.entity_type, d.account)
+          FILTER (WHERE d.veredito <> 'ok'), '')               AS resumo,
+        (array_agg(d.error_message ORDER BY d.ultima_em DESC NULLS LAST)
+           FILTER (WHERE d.error_message IS NOT NULL))[1]      AS erro
+      FROM (
+        SELECT cat.account, cat.reprocess_type, cat.entity_type, cat.nao_catalogada,
+               u.status AS ultimo_status, u.created_at AS ultima_em, u.error_message,
+               s.ultimo_sucesso_em,
+               -- DEGRADACAO ≠ QUEBRA (precisao): uma run que COMPLETOU registrando falha por pedido
+               -- (comportamento que o #2496 introduz) nao e `broken` — o estagio andou. Fica visivel
+               -- na message do ramo ok, sem gritar e sem inventar um status que o watchdog recusa
+               -- (ele so aceita ok|stale|broken|unknown, ERRCODE 22023 em qualquer outro).
+               -- SÓ das VIGIADAS: uma chave DISPENSADA (sla_h NULL) ou não catalogada não empresta
+               -- degradação ao conjunto. Medido em prod 2026-09-20: `oben/manual/orders` tem um
+               -- `complete` com error_message de 94 dias e inflava a message sobre um fóssil que
+               -- ninguém vigia — o ruído que o catálogo existe para barrar.
+               (cat.sla_h IS NOT NULL AND NOT cat.nao_catalogada
+                AND u.status = 'complete' AND u.error_message IS NOT NULL) AS degradado,
+               (r.created_at IS NOT NULL
+                AND (u.created_at IS NULL OR r.created_at > u.created_at)
+                AND r.created_at < now() - interval '2 hours')                AS orfa_em_voo,
+               CASE
+                 WHEN cat.nao_catalogada THEN 'unknown'
+                 WHEN cat.sla_h IS NULL THEN 'ok'
+                 -- ⚠️ ERRO TERMINAL MANDA, mesmo com tentativa POSTERIOR em voo. Um INÍCIO nao e um
+                 -- DESFECHO. Antes o veredito lia a ultima linha QUALQUER: sucesso 10h → erro 12h →
+                 -- retry grava `running` 12h29 e, as 12h30, a ultima linha ja nao era erro, o
+                 -- running era recente e o sucesso das 10h ainda cabia no SLA de 4h ⇒ o check dizia
+                 -- `ok` e o watchdog DISMISSAVA o alerta antes de o retry completar. Reproduzido por
+                 -- execucao (achado E.1 do challenge Codex de 2026-09-20; assert no harness).
+                 -- Por isso `u` passou a ser o ultimo RESULTADO (status <> 'running') e `r` a ultima
+                 -- TENTATIVA em voo, avaliados separadamente.
+                 WHEN u.status IN ('error','failed') THEN 'broken'
+                 -- terminal de dialeto desconhecido nunca vira ok
+                 WHEN u.status IS NOT NULL AND u.status <> 'complete' THEN 'unknown'
+                 -- tentativa em voo parada (duracao maxima real de uma run em 90 dias: 2,6 min)
+                 WHEN r.created_at IS NOT NULL
+                      AND (u.created_at IS NULL OR r.created_at > u.created_at)
+                      AND r.created_at < now() - interval '2 hours' THEN 'broken'
+                 -- catalogada que nunca completou (inclui a tabela vazia): ausencia e falha, nao silencio
+                 WHEN s.ultimo_sucesso_em IS NULL THEN 'broken'
+                 WHEN s.ultimo_sucesso_em < now() - make_interval(hours => cat.sla_h) THEN 'stale'
+                 ELSE 'ok'
+               END AS veredito
+        FROM (
+          SELECT COALESCE(a.account, v.account)               AS account,
+                 COALESCE(a.reprocess_type, v.reprocess_type) AS reprocess_type,
+                 COALESCE(a.entity_type, v.entity_type)       AS entity_type,
+                 a.sla_h,
+                 (a.account IS NULL)                          AS nao_catalogada
+          FROM (VALUES
+                 -- VIGIADAS (sla_h = 2x a cadencia do cron, com folga p/ jitter)
+                 ('oben'::text,   'operational'::text,    'orders'::text,                    4::int),
+                 ('oben',         'operational',          'inventory',                       4),
+                 ('oben',         'strategic',            'orders',                         30),
+                 ('oben',         'strategic',            'inventory',                      30),
+                 ('oben',         'strategic',            'products',                       30),
+                 ('oben',         'status_produtos',      'sku_status_omie',                30),
+                 ('colacor',      'status_produtos',      'sku_status_omie',                30),
+                 -- DISPENSADAS (sla_h NULL) — catalogadas p/ nao virarem "nao catalogada":
+                 -- `manual` e disparo HUMANO e sincrono: quem dispara ve o resultado na hora, e
+                 -- staleness nao tem sentido sem cadencia. colacor/manual/products esta em error
+                 -- desde 28/02/2026 — vigia-lo faria este check nascer vermelho por um fossil.
+                 ('oben',         'manual',               'orders',                       NULL),
+                 ('oben',         'manual',               'products',                     NULL),
+                 ('colacor',      'manual',               'orders',                       NULL),
+                 ('colacor',      'manual',               'products',                     NULL),
+                 -- OBEN maiusculo e OUTRO escritor (gerar-pedidos-diario / disparar-pedidos-
+                 -- aprovados), com dialeto proprio (ok|partial|error) e ja vigiado por EFEITO:
+                 -- `reposicao_sugestoes` le pedido_compra_sugerido.data_ciclo e `reposicao_disparo`
+                 -- le a fila aprovado_aguardando_disparo. Vigiar aqui tambem seria alarme duplicado.
+                 ('OBEN',         'ciclo_diario',         'pedidos_compra_sugeridos',     NULL),
+                 ('OBEN',         'disparo_diario',       'pedidos_compra_disparo',       NULL),
+                 -- fossil: 6 linhas, todas de 30/04/2026, sem cron.
+                 ('OBEN',         'sync_full',            'omie_condicoes_pagamento',     NULL)
+               ) AS a(account, reprocess_type, entity_type, sla_h)
+          FULL JOIN (
+            SELECT DISTINCT l.account, l.reprocess_type, l.entity_type
+              FROM public.sync_reprocess_log l
+             WHERE l.created_at > now() - interval '48 hours'
+          ) v ON v.account = a.account
+             AND v.reprocess_type = a.reprocess_type
+             AND v.entity_type = a.entity_type
+        ) cat
+        -- `u` = ultimo RESULTADO (linha terminal). `running` fica de fora de proposito: uma
+        -- tentativa em voo nao e um desfecho, e deixa-la aqui fazia um retry LIQUIDAR o erro
+        -- anterior (E.1). Quem avalia o em-voo e o `r` abaixo.
+        LEFT JOIN LATERAL (
+          SELECT l.status, l.created_at, l.error_message
+            FROM public.sync_reprocess_log l
+           WHERE l.account = cat.account AND l.reprocess_type = cat.reprocess_type
+             AND l.entity_type = cat.entity_type
+             AND l.status IS DISTINCT FROM 'running'
+           -- desempate EXPLICITO por id: sem ele o ORDER BY empata entre linhas do mesmo
+           -- created_at e a message oscila entre duas formas (licao do #1980).
+           ORDER BY l.created_at DESC, l.id DESC
+           LIMIT 1
+        ) u ON true
+        -- `r` = ultima TENTATIVA em voo, so para o teste de orfa
+        LEFT JOIN LATERAL (
+          SELECT l.created_at
+            FROM public.sync_reprocess_log l
+           WHERE l.account = cat.account AND l.reprocess_type = cat.reprocess_type
+             AND l.entity_type = cat.entity_type AND l.status = 'running'
+           ORDER BY l.created_at DESC, l.id DESC
+           LIMIT 1
+        ) r ON true
+        LEFT JOIN LATERAL (
+          SELECT max(l2.created_at) AS ultimo_sucesso_em
+            FROM public.sync_reprocess_log l2
+           WHERE l2.account = cat.account AND l2.reprocess_type = cat.reprocess_type
+             AND l2.entity_type = cat.entity_type
+             -- sucesso e so o vocabulario de SUCESSO dos escritores vigiados; `ok` e dialeto do
+             -- grupo dispensado e nao aparece nas chaves vigiadas.
+             AND l2.status = 'complete'
+        ) s ON true
+      ) d
+    ) sr
+    UNION ALL
+    -- ── [VENDA-EMPURRADA-SEM-GEMEO v2] 2026-10-05 · vendas_empurradas_sem_gemeo (31o source, 23o do push)
+    -- v2 (Codex retroativo do #2698, achados C3/C4/C6/C8): ancora no fim do dia de SP, proveniencia
+    -- pelo hash, ref do conjunto de orfas na message e a janela do importador escrita por dia de calendario.
+    -- A venda que o app EMPURRA ao Omie (criar_pedido: UPDATE na propria linha, omie_payload +
+    -- omie_pedido_id) ganha order_date_kpi NO ENVIO (20261005220000: o trigger da linha do app deriva
+    -- o dia de SP do write-back) e conta pela linha do app ate o importador trazer o GEMEO: outra
+    -- linha, mesma (account, omie_pedido_id), omie_payload nulo, com order_date_kpi, que entao vira a
+    -- venda. O importador pode PULAR um pedido e isso so
+    -- vira contador em fin_sync_log.results, sem o id (medido 2026-09-30: 1 em 26 nunca voltou).
+    -- GEMEO em QUALQUER status, apagado ou nao: a pergunta e "o importador conhece o pedido?", e um
+    -- gemeo cancelado ja diz que a venda nao vale. PROVENIENCIA PELO HASH (v2): a importada carrega o
+    -- hash canonico 'omie_<account>_<id>'; a linha do app, hash NULO. Editar pelo app um pedido IMPORTADO
+    -- (alterar_pedido -> aplicar_edicao_pedido_omie) grava omie_payload e MANTEM o hash: pelo payload ele
+    -- viraria "linha do app" e deixaria de ser gemeo (orfa falsa). Linha do app = payload + id + hash
+    -- nulo OU fora do padrao omie_ (orcamento/checkout com hash proprio pode ser enviado: reenvio-pedido);
+    -- gemeo = mesma (account, id) com payload nulo OU o hash CANONICO dela. Qualquer hash nao e
+    -- proveniencia: um checkout_<x> enviado sairia do sensor, e o indice unico parcial de (account, id)
+    -- com hash ainda barraria o gemeo do importador (Codex C9).
+    -- ANCORA DA IDADE = o instante mais cedo em que se pode AFIRMAR que o envio ja aconteceu (o envio nao
+    -- grava carimbo). created_at mentiria no orcamento convertido, que reusa a linha (SalesQuotes). Os
+    -- dois LIMITES SUPERIORES do envio: updated_at (o gatilho o renova no UPDATE do envio) e o fim do DIA
+    -- DE SP da data_previsao do payload (alterar_pedido a reescreve). A edge grava o dia de SP do envio
+    -- desde a v1.10 (#2736, no ar desde 2026-10-01 ~20:37Z); ate a v1.9, o dia UTC. O fim do dia de SP e
+    -- limite superior nas DUAS eras (apertado na v1.10, 3 h folgado na v1.9); o fim do dia UTC caia ate
+    -- 3 h ANTES do envio real nos envios das 21h-23h59 BRT da v1.10 (achado Codex C3). E o ULTIMO INSTANTE
+    -- do dia (23:59:59.999999), nao a meia-noite seguinte: o envio e <= ele, e a data exibida ("a mais
+    -- antiga de", "desde") segue sendo a do envio, nao o dia seguinte. LIMITE ACEITO (Codex C10): a edge
+    -- monta a data ANTES do IncluirPedido, na mesma chamada (segundos); so um envio que cruza a meia-noite
+    -- de SP e acusado esse tanto antes das 6 h. Fechar exigiria carimbo do envio no write-back.
+    -- LEAST dos dois nunca acusa antes de 6 h do envio real; o preco e uma orfa EDITADA reancorar. A
+    -- previsao so vale como carimbo se for data valida e coerente com a criacao (>= created_at). O parse
+    -- e por CASE aninhado e NUNCA lanca: erro aqui derrubaria os 31 checks (o watchdog engole o erro do
+    -- compute). LEAST ignora NULL: previsao ausente/ilegivel cai em updated_at (NOT NULL).
+    -- NIVEIS: stale = orfa ha mais de 6 h (3 ciclos do cron a cada 2 h por conta) e ate 6 dias; broken =
+    -- alguma passou de 6 dias (decisao do founder). A janela incremental [hoje_SP-5, hoje_SP] e por DIA DE
+    -- CALENDARIO: alcanca o pedido ate o fim do 5o dia de SP depois do envio; entre ~5 e 6 dias a orfa ainda
+    -- e stale mas ja so volta por semeadura manual ou alteracao do pedido no Omie (achado Codex C8). Severity FIXA 'warning': a subida stale->broken escala a
+    -- gravidade e fura o ack; o lembrete de 72 h nao fura.
+    -- 1 LINHA SEMPRE (agregado sem GROUP BY: com a tabela vazia sai exatamente 1 linha). MESSAGE nos
+    -- ramos que ALERTAM so com fatos das orfas, por conta em ordem fixa, numero e data sem depender de
+    -- lc_numeric/fuso da sessao, data CONGELADA (a da orfa mais antiga), e a REF do conjunto (md5 dos ids
+    -- de TODAS as orfas): sem ela, uma orfa que substitui outra de mesma conta, valor e dia nao
+    -- mudava a message, que e o fingerprint (achado Codex C6). O denominador so entra no ramo ok, onde o
+    -- watchdog dismissa e nao ha fingerprint.
+    SELECT 'vendas_empurradas_sem_gemeo'::text, 'vendas'::text,
+      CASE WHEN ve.n_orfas = 0 THEN 'ok'
+           WHEN ve.n_perdidas > 0 THEN 'broken'
+           ELSE 'stale' END,
+      ve.pior_idade_s, (6*3600)::bigint,
+      'sales_orders: linha do app (omie_payload + omie_pedido_id, hash nulo ou nao-omie, venda no universo canonico) '
+        || 'sem gemeo importado (mesma account + omie_pedido_id, omie_payload nulo ou hash canonico); idade '
+        || 'desde menor(updated_at, fim do dia de SP da data_previsao do envio)'::text,
+      CASE WHEN ve.n_orfas = 0
+             THEN 'Vendas empurradas ao Omie: todas voltaram pelo importador ('
+                  || ve.n_empurradas::text || ' empurradas; ' || ve.n_aguardando::text
+                  || ' aguardando o proximo ciclo)'
+           ELSE ve.n_orfas::text
+                || CASE WHEN ve.n_orfas = 1 THEN ' venda empurrada' ELSE ' vendas empurradas' END
+                || ' ao Omie sem gemeo do importador ha mais de 6 h'
+                || CASE WHEN ve.n_perdidas > 0
+                        THEN ' (' || ve.n_perdidas::text || ' com mais de 6 dias)'
+                        ELSE '' END
+                || ' - ' || ve.resumo || ' (ref ' || ve.ref || ')' END,
+      ve.lista,
+      CASE WHEN ve.n_orfas = 0 THEN NULL
+           ELSE 'O importador (omie-vendas-sync sync_pedidos: cron a cada 2 h por conta, oben :05 e colacor '
+                || ':20 das horas pares UTC; janela [hoje-5, hoje] em SP; ate 10 paginas) nao trouxe o pedido: '
+                || 'cliente nao resolvido (skippedNoClient), desconto ilegivel ou falha individual na RPC '
+                || 'criar_pedidos_com_itens (as tres so viram CONTADOR em fin_sync_log.results, sem o id), '
+                || 'importador parado (ver o check vendas_pedidos) ou pedido cancelado/excluido direto no '
+                || 'Omie. Enquanto o gemeo nao chega a venda conta pela linha do app (valor e cliente do app, '
+                || 'sem a confirmacao do Omie), na positivacao ao vivo e no congelado se o mes fechar assim; '
+                || 'cancelada no Omie, ela segue contando ate a linha do app ser marcada cancelado.' END,
+      CASE WHEN ve.n_orfas = 0 THEN NULL
+           ELSE 'As orfas estao em last_error (conta, numero do pedido no Omie, id da linha do app). Para cada '
+                || 'uma, abra o pedido no Omie da conta: (a) existe e vale -> semeie a janela da data dele em '
+                || '/admin/analytics-sync para o importador trazer o gemeo (so enquanto a data dele estiver na '
+                || 'janela [hoje-5, hoje] de SP o cron incremental ainda pode traze-lo sozinho); (b) foi '
+                || 'cancelado/excluido no Omie -> marque a linha do app como '
+                || 'cancelado. NAO reconheca (ack) o alerta para aceitar uma orfa: sob ack, uma orfa NOVA no '
+                || 'mesmo nivel nao re-envia e-mail. A ref da mensagem muda quando o conjunto de orfas muda. '
+                || 'Lista: SELECT id, account, omie_numero_pedido, status, total, created_at, updated_at FROM '
+                || 'sales_orders WHERE omie_payload IS NOT NULL AND omie_pedido_id IS NOT NULL AND (hash_payload '
+                || 'IS NULL OR hash_payload NOT LIKE ''omie\_%'') ORDER BY created_at DESC;' END,
+      'warning'::text
+    FROM (
+      WITH app AS (
+        SELECT a.id, a.account, a.omie_pedido_id, a.omie_numero_pedido, a.total, a.created_at,
+               a.updated_at, a.omie_payload #>> '{cabecalho,data_previsao}' AS prev_txt,
+               EXISTS (SELECT 1 FROM public.sales_orders t
+                        WHERE t.account = a.account
+                          AND t.omie_pedido_id = a.omie_pedido_id
+                          AND (t.omie_payload IS NULL
+                               OR t.hash_payload = 'omie_' || a.account || '_' || a.omie_pedido_id::text)) AS tem_gemeo
+          FROM public.sales_orders a
+         WHERE a.omie_payload IS NOT NULL
+           AND a.omie_pedido_id IS NOT NULL
+           AND (a.hash_payload IS NULL OR a.hash_payload NOT LIKE 'omie\_%')
+           AND a.status NOT IN ('cancelado','rascunho','pendente','orcamento')
+           AND a.deleted_at IS NULL
+      ), prev AS (
+        -- 'DD/MM/YYYY' -> date sem NUNCA lancar: cada nivel do CASE so avalia o seguinte se o anterior
+        -- passou (dentro de um AND a ordem nao e garantida; entre niveis de CASE, e).
+        SELECT app.*,
+               CASE WHEN app.prev_txt ~ '^[0-9]{2}/[0-9]{2}/[0-9]{4}$' THEN
+                 CASE WHEN substr(app.prev_txt, 4, 2)::int BETWEEN 1 AND 12
+                       AND substr(app.prev_txt, 7, 4)::int BETWEEN 2000 AND 2999 THEN
+                   CASE WHEN substr(app.prev_txt, 1, 2)::int BETWEEN 1 AND
+                             EXTRACT(DAY FROM make_date(substr(app.prev_txt, 7, 4)::int,
+                                                        substr(app.prev_txt, 4, 2)::int, 1)
+                                              + interval '1 month' - interval '1 day')::int
+                        THEN make_date(substr(app.prev_txt, 7, 4)::int, substr(app.prev_txt, 4, 2)::int,
+                                       substr(app.prev_txt, 1, 2)::int)
+                   END
+                 END
+               END AS prev_dia
+          FROM app
+      ), anc AS (
+        SELECT prev.*,
+               LEAST(prev.updated_at,
+                     CASE WHEN ((prev.prev_dia + time '23:59:59.999999') AT TIME ZONE 'America/Sao_Paulo') >= prev.created_at
+                          THEN (prev.prev_dia + time '23:59:59.999999') AT TIME ZONE 'America/Sao_Paulo' END) AS ancora
+          FROM prev
+      ), cls AS (
+        SELECT anc.*, (NOT anc.tem_gemeo AND anc.ancora < now() - interval '6 hours') AS orfa
+          FROM anc
+      ), conta AS (
+        SELECT c2.account, count(*)::int AS n, sum(c2.total) AS valor, min(c2.ancora) AS mais_antiga
+          FROM cls c2
+         WHERE c2.orfa
+         GROUP BY c2.account
+      )
+      SELECT
+        (count(*) FILTER (WHERE c.orfa))::int                                            AS n_orfas,
+        (count(*) FILTER (WHERE c.orfa AND c.ancora < now() - interval '6 days'))::int  AS n_perdidas,
+        (count(*))::int                                                                   AS n_empurradas,
+        (count(*) FILTER (WHERE NOT c.tem_gemeo AND NOT c.orfa))::int                    AS n_aguardando,
+        COALESCE(max(EXTRACT(EPOCH FROM now() - c.ancora)::bigint) FILTER (WHERE c.orfa), 0) AS pior_idade_s,
+        -- identidade do CONJUNTO (todas as orfas, nao so as 20 listadas): entra na message = fingerprint.
+        -- md5 COMPLETO: truncado em 8 hex, dois conjuntos colidiam por busca de aniversario (Codex C12).
+        md5(string_agg(c.id::text, ',' ORDER BY c.id) FILTER (WHERE c.orfa))            AS ref,
+        -- ',' e '.' do to_char NAO dependem de lc_numeric (G e D dependeriam); o translate poe no formato BR.
+        (SELECT string_agg(ct.account || ': ' || ct.n::text || ' (R$ '
+                           || translate(to_char(round(ct.valor, 2), 'FM999,999,999,990.00'), ',.', '.,')
+                           || ', a mais antiga de '
+                           || to_char(ct.mais_antiga AT TIME ZONE 'America/Sao_Paulo', 'DD/MM/YYYY') || ')',
+                           '; ' ORDER BY ct.account COLLATE "C")
+           FROM conta ct)                                                                 AS resumo,
+        (SELECT string_agg(x.item, '; ' ORDER BY x.ancora, x.id)
+           FROM (SELECT c3.ancora, c3.id,
+                        c3.account || ' pedido '
+                          || COALESCE(NULLIF(ltrim(c3.omie_numero_pedido, '0'), ''), c3.omie_pedido_id::text)
+                          || ' (linha ' || left(c3.id::text, 8) || ', desde '
+                          || to_char(c3.ancora AT TIME ZONE 'America/Sao_Paulo', 'DD/MM/YYYY HH24:MI')
+                          || ' BRT)' AS item
+                   FROM cls c3
+                  WHERE c3.orfa
+                  ORDER BY c3.ancora, c3.id
+                  LIMIT 20) x)
+          || CASE WHEN count(*) FILTER (WHERE c.orfa) > 20
+                  THEN '; (+' || (count(*) FILTER (WHERE c.orfa) - 20)::text || ')' ELSE '' END AS lista
+      FROM cls c
+    ) ve
   )
   -- P1: campos de "problema" (erro técnico, causa provável, remédio) só saem quando
   -- o check NÃO está ok. Check verde = nada a reportar.
@@ -3022,7 +3445,7 @@ BEGIN
   END IF;
 
   -- Allowlist FECHADA: o ledger não é canal genérico de escrita no banco.
-  IF p_evento NOT IN ('carteira.mixgap_servido') THEN
+  IF p_evento NOT IN ('carteira.mixgap_servido', 'navegacao.rota_servida') THEN
     RAISE EXCEPTION 'analytics_ledger_registrar: evento % fora da allowlist', p_evento
       USING ERRCODE = '22023';
   END IF;
@@ -3285,6 +3708,268 @@ $$;
 
 
 --
+-- Name: aplicar_edicao_pedido_omie(uuid, jsonb, jsonb, numeric, text, jsonb, jsonb, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.aplicar_edicao_pedido_omie(p_sales_order_id uuid, p_items jsonb, p_itens jsonb, p_total numeric, p_notes text, p_omie_payload jsonb, p_omie_response jsonb, p_lido_em timestamp with time zone) RETURNS jsonb
+    LANGUAGE plpgsql
+    SET search_path TO ''
+    AS $$
+DECLARE
+  -- O Omie aceita `codigo_item_integracao` de 1 a 999 (ver getOmieItemIntegrationCode no edge).
+  -- Lote maior que isso não veio da edição — truncar em silêncio seria pior que recusar.
+  c_max_itens constant integer := 999;
+  v_customer     uuid;
+  v_hash_pai     text;
+  v_lido_atual   timestamptz;
+  v_created_at   timestamptz;
+  v_pid_por_sku  jsonb;
+  v_n_antes      integer;
+  v_n_itens      integer;
+  v_n_items      integer;
+  v_soma_itens   numeric;
+  v_del          integer := 0;
+  v_ins          integer := 0;
+  v_divergiu     boolean;
+BEGIN
+  -- ── 1) Entrada fail-closed. Tudo LANÇA: o Omie já está mutado quando isto roda. ──
+  IF p_sales_order_id IS NULL THEN
+    RAISE EXCEPTION 'aplicar_edicao_pedido_omie: p_sales_order_id ausente'
+      USING ERRCODE = '22023';
+  END IF;
+
+  IF p_items IS NULL OR jsonb_typeof(p_items) <> 'array' THEN
+    RAISE EXCEPTION 'aplicar_edicao_pedido_omie: p_items deve ser array jsonb (veio %) — ausente nao e lista vazia',
+      jsonb_typeof(p_items) USING ERRCODE = '22023';
+  END IF;
+
+  IF p_itens IS NULL OR jsonb_typeof(p_itens) <> 'array' THEN
+    RAISE EXCEPTION 'aplicar_edicao_pedido_omie: p_itens deve ser array jsonb (veio %) — ausente nao e lista vazia',
+      jsonb_typeof(p_itens) USING ERRCODE = '22023';
+  END IF;
+
+  v_n_items := jsonb_array_length(p_items);
+  v_n_itens := jsonb_array_length(p_itens);
+
+  IF v_n_items = 0 OR v_n_itens = 0 THEN
+    RAISE EXCEPTION 'aplicar_edicao_pedido_omie: edicao sem itens (items=%, itens=%) — esvaziar o pedido local nao e desfecho de edicao',
+      v_n_items, v_n_itens USING ERRCODE = '22023';
+  END IF;
+
+  IF v_n_itens > c_max_itens THEN
+    RAISE EXCEPTION 'aplicar_edicao_pedido_omie: % itens excede o teto de %',
+      v_n_itens, c_max_itens USING ERRCODE = '54000';
+  END IF;
+
+  IF p_lido_em IS NULL THEN
+    RAISE EXCEPTION 'aplicar_edicao_pedido_omie: p_lido_em ausente — sem o instante da leitura final do Omie nao ha como impedir que um pull atrasado reverta esta edicao'
+      USING ERRCODE = '22023';
+  END IF;
+
+  IF p_lido_em > now() + interval '1 minute' THEN
+    RAISE EXCEPTION 'aplicar_edicao_pedido_omie: p_lido_em no futuro (% > %) — relogio do chamador envenenaria o compare-and-set',
+      p_lido_em, now() USING ERRCODE = '22023';
+  END IF;
+
+  IF p_total IS NULL THEN
+    RAISE EXCEPTION 'aplicar_edicao_pedido_omie: p_total ausente — ausente nao e zero'
+      USING ERRCODE = '22023';
+  END IF;
+
+  -- Regua de finitude nao-negativa (mesma de criar_pedidos_com_itens/reconciliar_pedidos_omie).
+  -- Pega NaN tambem: em numeric NaN ordena ACIMA de Infinity, entao `NaN < Infinity` e falso.
+  IF NOT (p_total >= 0 AND p_total < 'Infinity'::numeric) THEN
+    RAISE EXCEPTION 'aplicar_edicao_pedido_omie: p_total invalido (%) — negativo/NaN/infinito nao e total',
+      p_total USING ERRCODE = '22023';
+  END IF;
+
+  -- Contrato POR ELEMENTO (achado do Codex: dois arrays iguais podem carregar o mesmo dado
+  -- invalido). `quantity` e NOT NULL na tabela, `omie_codigo_produto` e a identidade do item no
+  -- espelho, e o preco precisa existir e ser finito nao-negativo — sem preco nao ha total.
+  IF EXISTS (
+    SELECT 1 FROM jsonb_array_elements(p_itens) AS it
+     WHERE (it->>'omie_codigo_produto') IS NULL
+        OR (it->>'quantity') IS NULL
+        OR (it->>'unit_price') IS NULL
+        OR NOT ((it->>'quantity')::numeric  >= 0 AND (it->>'quantity')::numeric  < 'Infinity'::numeric)
+        OR NOT ((it->>'unit_price')::numeric >= 0 AND (it->>'unit_price')::numeric < 'Infinity'::numeric)
+  ) THEN
+    RAISE EXCEPTION 'aplicar_edicao_pedido_omie: item sem omie_codigo_produto/quantity/unit_price ou com valor negativo/NaN/infinito'
+      USING ERRCODE = '22023';
+  END IF;
+
+  -- Desconto: este caminho NAO envia `desconto` ao Omie (ver inclPayload no edge), entao o ERP
+  -- grava 0. Aceitar desconto aqui exigiria escolher a formula do total — e a semantica de
+  -- `desconto` esta contraditoria entre escritores (o sync aplica qtd*preco*(1-d/100), o cockpit
+  -- qtd*preco-d). Recusar e fail-closed: se a edicao ganhar desconto um dia, isto LANCA e forca a
+  -- decisao de produto em vez de fabricar um numero.
+  IF EXISTS (
+    SELECT 1 FROM jsonb_array_elements(p_itens) AS it
+     WHERE (it->>'discount') IS NOT NULL AND (it->>'discount')::numeric <> 0
+  ) THEN
+    RAISE EXCEPTION 'aplicar_edicao_pedido_omie: item com desconto <> 0 — a edicao nao envia desconto ao Omie; a formula do total precisa de decisao de produto'
+      USING ERRCODE = '22023';
+  END IF;
+
+  -- Com desconto 0 por contrato, o total tem UMA formula so: soma de qtd*preco. `p_total` finito
+  -- nao prova que ele corresponde aos itens (achado do Codex) — esta comparacao prova.
+  SELECT sum((it->>'quantity')::numeric * (it->>'unit_price')::numeric)
+    INTO v_soma_itens
+    FROM jsonb_array_elements(p_itens) AS it;
+
+  IF abs(p_total - v_soma_itens) > 0.01 THEN
+    RAISE EXCEPTION 'aplicar_edicao_pedido_omie: p_total (%) nao bate com a soma dos itens (%) — cabecalho e linhas contariam historias diferentes',
+      p_total, v_soma_itens USING ERRCODE = '22023';
+  END IF;
+
+  -- ── 2) Trava o pai. FOR UPDATE serializa contra outra edicao/reconciliacao do MESMO pedido. ──
+  SELECT customer_user_id, hash_payload, omie_reconciliado_em
+    INTO v_customer, v_hash_pai, v_lido_atual
+    FROM public.sales_orders
+   WHERE id = p_sales_order_id
+     FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'aplicar_edicao_pedido_omie: pedido % nao existe — o Omie ja foi mutado e nao ha onde gravar a revisao nova',
+      p_sales_order_id USING ERRCODE = 'P0002';
+  END IF;
+
+  -- Compare-and-set de revisao. Sem isto, um pull que leu o Omie ANTES desta edicao e escreve
+  -- DEPOIS reverte tudo — e reverte de forma COERENTE, entao a trigger aceita (achado do Codex).
+  -- Escrever o marcador aqui faz a `reconciliar_pedidos_omie` recusar essa leitura velha como
+  -- `stale`. O caso inverso (marcador ja mais novo que a nossa leitura) LANCA: e conflito real,
+  -- e neste caminho pular em silencio e o pior desfecho possivel.
+  IF v_lido_atual IS NOT NULL AND p_lido_em < v_lido_atual THEN
+    RAISE EXCEPTION 'aplicar_edicao_pedido_omie: pedido % ja tem revisao mais nova gravada (lido_em % < %) — recarregue antes de re-salvar',
+      p_sales_order_id, p_lido_em, v_lido_atual USING ERRCODE = '55000';
+  END IF;
+
+  -- ── 3) Linhas: substituicao INTEGRAL, e SO quando o pedido ja tinha linhas. ──
+  -- Pedido sem linhas e push do app (desenho legitimo, isento da invariante): criar linhas aqui
+  -- mudaria QUAIS pedidos sao canonicos — decisao de produto, nao conserto de escritor.
+  SELECT count(*), min(created_at)
+    INTO v_n_antes, v_created_at
+    FROM public.order_items WHERE sales_order_id = p_sales_order_id;
+
+  IF v_n_antes > 0 THEN
+    -- `product_id` NAO viaja no items-jsonb do caminho de PULL (construirItemsJson nao grava a
+    -- chave), entao a edicao de um pedido canonico manda `product_id` so nos itens que o usuario
+    -- ACRESCENTOU pelo catalogo. Substituir as linhas sem mais nada ZERARIA o product_id dos
+    -- itens preexistentes — e ele e FK para omie_products e a chave de custo da margem.
+    -- Regra: payload vence; onde ele nao sabe, herda o da linha substituida do MESMO SKU, e so
+    -- quando aquele SKU tem UM product_id so nas linhas atuais. Ambiguo => NULL (nao adivinha).
+    SELECT coalesce(jsonb_object_agg(cod::text, pid), '{}'::jsonb)
+      INTO v_pid_por_sku
+      FROM (
+        SELECT omie_codigo_produto AS cod, min(product_id::text) AS pid
+          FROM public.order_items
+         WHERE sales_order_id = p_sales_order_id
+           AND omie_codigo_produto IS NOT NULL
+           AND product_id IS NOT NULL
+         GROUP BY omie_codigo_produto
+        HAVING count(DISTINCT product_id) = 1
+      ) m;
+
+    DELETE FROM public.order_items WHERE sales_order_id = p_sales_order_id;
+    GET DIAGNOSTICS v_del = ROW_COUNT;
+
+    INSERT INTO public.order_items (
+      sales_order_id, customer_user_id, product_id, omie_codigo_produto,
+      quantity, unit_price, discount, desconto_valor, hash_payload, omie_codigo_item, created_at
+    )
+    SELECT p_sales_order_id,
+           v_customer,                              -- do PAI travado, nunca do payload
+           coalesce((it->>'product_id')::uuid,
+                    (v_pid_por_sku->>(it->>'omie_codigo_produto'))::uuid),
+           (it->>'omie_codigo_produto')::bigint,
+           (it->>'quantity')::numeric,
+           (it->>'unit_price')::numeric,
+           -- SEM coalesce: desconto ausente vira NULL, nao 0. O espelho jsonb tem de dizer a
+           -- MESMA coisa (a postcondicao cobra), e NULL=NULL nao e divergencia.
+           (it->>'discount')::numeric,
+           -- O desconto canonico ATRAVESSA a edicao. Esta funcao APAGA e reinsere as linhas do
+           -- pedido; sem esta coluna aqui, editar um pedido zeraria para NULL um desconto ja
+           -- apurado — perda silenciosa de dado money-path, sem erro e sem divergencia. Segue
+           -- sem coalesce: quem edita sem informar desconto deixa a linha NAO APURADA, e o
+           -- backfill a re-apura; fabricar 0 aqui afirmaria um fato que ninguem mediu.
+           (it->>'desconto_valor')::numeric,
+           -- Formato do repo: <hash do pai>_<codigo_produto> (ver o sync). Derivado do PAI de
+           -- proposito: o chamador nao consegue forjar um hash de item de outro pedido.
+           CASE WHEN v_hash_pai IS NULL THEN NULL
+                ELSE v_hash_pai || '_' || (it->>'omie_codigo_produto') END,
+           (it->>'omie_codigo_item')::bigint,
+           -- Recencia: carrega a data de CARGA que as linhas substituidas ja tinham.
+           coalesce(v_created_at, now())
+      FROM jsonb_array_elements(p_itens) AS it;
+    GET DIAGNOSTICS v_ins = ROW_COUNT;
+
+    IF v_ins <> v_n_itens THEN
+      RAISE EXCEPTION 'aplicar_edicao_pedido_omie: inseri % linhas para % itens do payload',
+        v_ins, v_n_itens USING ERRCODE = '23514';
+    END IF;
+  END IF;
+
+  -- ── 4) Cabecalho, na MESMA transacao das linhas. ──
+  UPDATE public.sales_orders
+     SET items                = p_items,
+         subtotal             = p_total,
+         total                = p_total,
+         notes                = p_notes,
+         omie_payload         = p_omie_payload,
+         omie_response        = p_omie_response,
+         omie_reconciliado_em = p_lido_em,
+         updated_at           = now()
+   WHERE id = p_sales_order_id;
+
+  -- ── 5) Postcondicao: os dois espelhos, lidos do BANCO, com o predicado da trigger. ──
+  IF v_n_antes > 0 THEN
+    WITH lado_rel AS (
+      SELECT omie_codigo_produto AS prod, quantity AS qtd, unit_price AS preco, discount AS desc_item
+        FROM public.order_items WHERE sales_order_id = p_sales_order_id
+    ),
+    lado_json AS (
+      SELECT (el->>'omie_codigo_produto')::bigint AS prod,
+             (el->>'quantidade')::numeric         AS qtd,
+             (el->>'valor_unitario')::numeric     AS preco,
+             (el->>'desconto')::numeric           AS desc_item
+        FROM public.sales_orders so CROSS JOIN LATERAL jsonb_array_elements(so.items) el
+       WHERE so.id = p_sales_order_id AND jsonb_typeof(so.items) = 'array'
+    )
+    SELECT EXISTS (
+      (TABLE lado_rel EXCEPT ALL TABLE lado_json)
+      UNION ALL
+      (TABLE lado_json EXCEPT ALL TABLE lado_rel)
+    ) INTO v_divergiu;
+
+    IF v_divergiu THEN
+      RAISE EXCEPTION
+        'aplicar_edicao_pedido_omie: pedido % ficaria incoerente — items(jsonb) e order_items descrevem conjuntos diferentes',
+        p_sales_order_id
+        USING ERRCODE = '23514',
+              CONSTRAINT = 'pedido_venda_coerencia',
+              HINT = 'p_items e p_itens tem de descrever os MESMOS (produto, quantidade, preco, desconto); confira a chave desconto/discount';
+    END IF;
+  END IF;
+
+  RETURN jsonb_build_object(
+    'sales_order_id',   p_sales_order_id,
+    'tinha_linhas',     v_n_antes > 0,
+    'linhas_antes',     v_n_antes,
+    'linhas_removidas', v_del,
+    'linhas_inseridas', v_ins,
+    'itens_payload',    v_n_itens);
+END;
+$$;
+
+
+--
+-- Name: FUNCTION aplicar_edicao_pedido_omie(p_sales_order_id uuid, p_items jsonb, p_itens jsonb, p_total numeric, p_notes text, p_omie_payload jsonb, p_omie_response jsonb, p_lido_em timestamp with time zone); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.aplicar_edicao_pedido_omie(p_sales_order_id uuid, p_items jsonb, p_itens jsonb, p_total numeric, p_notes text, p_omie_payload jsonb, p_omie_response jsonb, p_lido_em timestamp with time zone) IS 'Write-back local da acao `alterar_pedido` (omie-vendas-sync): grava cabecalho E linhas do pedido na MESMA transacao, sob FOR UPDATE do pai, chaveado pelo id. Substitui as linhas por inteiro (a edicao apagou e recriou todas no Omie: o conjunto novo e a verdade declarada, nao um diff) carregando das linhas substituidas o created_at (recencia do fin-valor-cockpit) e o product_id por SKU 1-1 (o items-jsonb do pull nao tem a chave; zera-lo quebraria a FK de custo da margem). Pedido SEM linhas segue sem linhas (push do app e desenho legitimo, isento da invariante). Fail-closed: id/items/itens/total/lido_em ausentes ou invalidos LANCAM, item sem preco LANCA, desconto <> 0 LANCA, total que nao bate com a soma dos itens LANCA, pai inexistente LANCA — nunca pula em silencio, porque o Omie ja foi mutado quando isto roda. Compare-and-set por p_lido_em contra omie_reconciliado_em (revisao mais nova gravada => 55000). Postcondicao propria compara os dois espelhos LIDOS DO BANCO com o mesmo predicado da trigger pedido_venda_coerencia.';
+
+
+--
 -- Name: aplicar_exclusao_fornecedores(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3347,7 +4032,7 @@ $$;
 -- Name: aplicar_promocoes_no_ciclo(text, date); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.aplicar_promocoes_no_ciclo(p_empresa text DEFAULT 'OBEN'::text, p_data_ciclo date DEFAULT CURRENT_DATE) RETURNS TABLE(itens_flat_aplicados integer, itens_forward_buying_aplicados integer, pedidos_afetados integer, economia_total_estimada numeric, pedidos_bloqueados_por_delta integer)
+CREATE FUNCTION public.aplicar_promocoes_no_ciclo(p_empresa text DEFAULT 'OBEN'::text, p_data_ciclo date DEFAULT ((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date) RETURNS TABLE(itens_flat_aplicados integer, itens_forward_buying_aplicados integer, pedidos_afetados integer, economia_total_estimada numeric, pedidos_bloqueados_por_delta integer)
     LANGUAGE plpgsql
     SET search_path TO 'public', 'pg_temp'
     AS $$
@@ -3628,6 +4313,130 @@ $$;
 
 
 --
+-- Name: aplicar_sql(text, text, bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.aplicar_sql(p_sql text, p_sha text, p_id bigint) RETURNS text
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_sha_real   text;
+  v_sha_ledger text;
+  v_recibo     bigint;
+BEGIN
+  IF p_sql IS NULL OR length(btrim(p_sql)) = 0 THEN
+    RAISE EXCEPTION 'APLICAR_SQL: corpo vazio' USING ERRCODE = '22023';
+  END IF;
+
+  -- Integridade ponta-a-ponta: os bytes que vão RODAR são os bytes que foram REGISTRADOS.
+  v_sha_real := encode(sha256(convert_to(p_sql, 'UTF8')), 'hex');
+  IF v_sha_real IS DISTINCT FROM p_sha THEN
+    RAISE EXCEPTION 'APLICAR_SQL: sha divergente (declarado=%, recebido=%)', p_sha, v_sha_real
+      USING ERRCODE = '22023';
+  END IF;
+
+  -- UM apply POR VEZ, daqui até o COMMIT (achado do Codex, 2026-09-27). A PRE anti-deriva de uma
+  -- migration LÊ o corpo vivo num comando e o CREATE OR REPLACE GRAVA em outro: em READ COMMITTED,
+  -- um apply concorrente que commitasse entre os dois era apagado em silêncio, com a PÓS aprovando
+  -- (medido em PG17: db/test-pre-anti-deriva-concorrencia.sh). A fila fecha isso para TODO apply que
+  -- passa por esta porta, com ou sem PRE, com ou sem trava no arquivo: quem chega depois espera AQUI,
+  -- antes de ler qualquer coisa. Não alcança quem não passa por ela (SQL Editor, MCP, builder) —
+  -- para esses vale a trava por ALTER sem efeito no próprio arquivo (skill lovable-db-operator).
+  --
+  -- READ COMMITTED é EXIGIDO, não suposto: a fila só serve se cada comando do corpo tirar snapshot
+  -- NOVO depois dela. Em REPEATABLE READ o snapshot nasce no 1º comando da transação, antes desta
+  -- espera, e a PRE de quem esperou leria o mundo de antes do primeiro.
+  --
+  -- Espera até o `lock_timeout` de quem chama (15 s no db-aplicar.sh); estourou, recusa com nome
+  -- próprio e o corpo não roda. Chave (int4, int4) = (20260909, 1), o nascimento do db:aplicar:
+  -- as outras travas do repo são todas bigint, e as duas formas não colidem.
+  IF current_setting('transaction_isolation') <> 'read committed' THEN
+    RAISE EXCEPTION 'APLICAR_SQL: isolamento % — a fila exige READ COMMITTED (ISOLAMENTO_ERRADO); NADA foi executado',
+      current_setting('transaction_isolation') USING ERRCODE = '25000';
+  END IF;
+
+  IF NOT pg_try_advisory_xact_lock(20260909, 1) THEN
+    RAISE NOTICE 'APLICAR_SQL: outro apply em curso — aguardando a vez';
+    BEGIN
+      PERFORM pg_advisory_xact_lock(20260909, 1);
+    EXCEPTION WHEN lock_not_available THEN
+      RAISE EXCEPTION 'APLICAR_SQL: outro apply segurou a vez além do lock_timeout (VEZ_OCUPADA) — NADA foi executado; rode de novo'
+        USING ERRCODE = '55P03';
+    END;
+  END IF;
+
+  -- TRAVA e VALIDA a tentativa ANTES do EXECUTE. Conferir só depois seria tarde: o corpo já
+  -- teria rodado. E `WHERE id = p_id` sozinho não bastava — aceitava um id JÁ fechado (o corpo
+  -- executava de novo e a mesma linha era reescrita, sem violar unicidade nenhuma) e aceitava
+  -- um id de OUTRO hash (recibo apontando para bytes que não são os que rodaram). O FOR UPDATE
+  -- serializa quem tentar usar a mesma tentativa em paralelo.
+  SELECT sha256 INTO v_sha_ledger
+    FROM public.db_aplicacoes
+   WHERE id = p_id AND estado = 'tentativa'
+     FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'APLICAR_SQL: tentativa % inexistente ou já fechada — NADA foi executado', p_id
+      USING ERRCODE = '22023';
+  END IF;
+
+  -- O ensaio grava o hash prefixado (a linha morre no ROLLBACK); fora isso, tem de bater.
+  IF v_sha_ledger NOT IN (p_sha, 'ensaio:' || p_sha) THEN
+    RAISE EXCEPTION 'APLICAR_SQL: tentativa % é de OUTRO corpo (ledger=%, recebido=%)',
+      p_id, v_sha_ledger, p_sha USING ERRCODE = '22023';
+  END IF;
+
+  -- O RE-CHECK, depois da fila: estes bytes já têm recibo? A fila põe dois applies dos MESMOS bytes
+  -- em ORDEM, e ordem não é impedimento. O executor lê o ledger e grava a tentativa FORA desta
+  -- transação, então os dois passam pela etapa 3 dele antes de qualquer recibo existir; o 2º, quando
+  -- pegava a vez, chegava aqui com uma tentativa válida e executava o corpo DE NOVO. O índice único
+  -- do recibo o revertia, depois: o dado se salvava, a execução não — sequência e IDENTITY
+  -- consumidas, e a carga e os locks de rodar a migration duas vezes (medido em PG17:
+  -- db/test-db-aplicar.sh, A15; sem este bloco, S14).
+  --
+  -- Só vale DEPOIS da fila: antes dela a leitura seria a de um 1º que ainda não commitou — ausência
+  -- de recibo lida como "inédito" (S15). E só vale porque a fila exige READ COMMITTED: cada comando
+  -- tira snapshot NOVO, e este enxerga o commit de quem segurava a vez.
+  --
+  -- Só para o apply REAL. No `--ensaio` o ledger guarda 'ensaio:'||sha e a transação inteira morre
+  -- no ROLLBACK: bloqueá-lo por "já aplicado" não protege ninguém e empurra quem quer conferir para o
+  -- caminho que ESCREVE — o inverso do que o `--ensaio` existe para fazer.
+  IF v_sha_ledger = p_sha THEN
+    SELECT id INTO v_recibo
+      FROM public.db_aplicacoes
+     WHERE sha256 = p_sha AND estado = 'aplicada';
+    IF FOUND THEN
+      RAISE EXCEPTION 'APLICAR_SQL: estes bytes já foram aplicados — recibo % (RECUSA_SHA_JA_APLICADO); NADA foi executado',
+        v_recibo USING ERRCODE = '22023';
+    END IF;
+  END IF;
+
+  -- O apply. Erro aqui aborta a função inteira, e com ela o recibo abaixo: é o que garante
+  -- que "aplicada" nunca sobrevive a uma migration que voltou atrás.
+  EXECUTE p_sql;
+
+  UPDATE public.db_aplicacoes
+     SET estado = 'aplicada', concluido_em = now()
+   WHERE id = p_id AND estado = 'tentativa';
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'APLICAR_SQL: recibo % não pôde ser fechado', p_id USING ERRCODE = '22023';
+  END IF;
+
+  RETURN 'FIM_APLICACAO_OK';
+END
+$$;
+
+
+--
+-- Name: FUNCTION aplicar_sql(p_sql text, p_sha text, p_id bigint); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.aplicar_sql(p_sql text, p_sha text, p_id bigint) IS 'Porta de escrita automatizada (SECURITY DEFINER = postgres). Um apply por vez (advisory (20260909,1), exige READ COMMITTED). Confere o sha256 do corpo antes de executar, re-confere o recibo depois da fila (os mesmos bytes não rodam duas vezes, nem em paralelo) e grava o recibo na mesma transação. EXECUTE só para claude_rw.';
+
+
+--
 -- Name: apply_score_updates(jsonb); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3831,24 +4640,114 @@ CREATE FUNCTION public.aprovar_pedido_sugerido(p_pedido_id bigint, p_usuario tex
     LANGUAGE plpgsql
     SET search_path TO 'public', 'pg_temp'
     AS $$
+BEGIN
+  IF auth.uid() IS NOT NULL AND NOT private.cap_compras_ler(auth.uid()) THEN
+    RAISE EXCEPTION 'Acesso negado: requer capacidade de compras' USING ERRCODE = '42501';
+  END IF;
+  RETURN public.aprovar_pedido_sugerido(p_pedido_id, p_usuario, NULL::jsonb);
+END;
+$$;
+
+
+--
+-- Name: aprovar_pedido_sugerido(bigint, text, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.aprovar_pedido_sugerido(p_pedido_id bigint, p_usuario text, p_itens_vistos jsonb) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
 DECLARE
   v_pedido RECORD;
+  v_div    integer;
+  v_corte  timestamptz;
 BEGIN
-  SELECT * INTO v_pedido FROM pedido_compra_sugerido WHERE id = p_pedido_id;
+  IF auth.uid() IS NOT NULL AND NOT private.cap_compras_ler(auth.uid()) THEN
+    RAISE EXCEPTION 'Acesso negado: requer capacidade de compras' USING ERRCODE = '42501';
+  END IF;
+  SELECT * INTO v_pedido FROM public.pedido_compra_sugerido WHERE id = p_pedido_id FOR UPDATE;
   IF NOT FOUND THEN
     RETURN jsonb_build_object('error', 'pedido não encontrado');
   END IF;
   IF v_pedido.status NOT IN ('pendente_aprovacao', 'bloqueado_guardrail') THEN
     RETURN jsonb_build_object('error', 'pedido já está no estado ' || v_pedido.status);
   END IF;
-  UPDATE pedido_compra_sugerido
-  SET status = 'aprovado_aguardando_disparo',
-      aprovado_por = p_usuario,
-      aprovado_em = NOW(),
-      atualizado_em = NOW()
-  WHERE id = p_pedido_id;
+
+  -- Trava os itens ANTES de comparar o token: sem isto a comparação olharia um
+  -- estado que outra aba pode trocar entre a conferência e o selo.
+  PERFORM 1 FROM public.pedido_compra_item WHERE pedido_id = p_pedido_id ORDER BY id FOR UPDATE;
+
+  -- Token de revisão. NULL = chamador legado (wrapper de 2 args). A M2 passa a
+  -- exigir token de aprovação humana; aqui NULL ainda é aceito de propósito,
+  -- senão a UI velha pararia de aprovar entre o apply da M1 e o Publish.
+  IF p_itens_vistos IS NOT NULL THEN
+    BEGIN
+      -- `preco_unitario` entra no token a pedido da sessão do #2258 (selo de preço no disparo,
+      -- "disparado = aprovado no OMIE"), e o motivo é bom: as 4 RPCs que geram/alteram itens
+      -- (ciclo, oportunidade, promoções, remover_itens) são SECURITY INVOKER e executáveis por
+      -- `authenticated`, então quando um humano roda o ciclo pela tela o `current_user` é
+      -- indistinguível de um UPDATE cru dele — o trigger de procedência de lá NÃO separa os dois
+      -- na fase pré-aprovação. Quem separa é ESTE token, que compara "o que você viu" com "o que
+      -- está lá" no instante da aprovação.
+      -- ⚠️ NÃO contradiz a §8.4 do spec (preço fora do SELO): o token é anti-TOCTOU de LEITURA,
+      -- o selo é procedência. O selo segue sem preço.
+      -- ⚠️ Fail-closed: token que omitir `preco_unitario` passa a divergir de um item com preço.
+      -- É o lado seguro — não há chamador enviando token ainda (a UI é fatia posterior).
+      WITH visto AS (
+        SELECT (e->>'id')::bigint AS id,
+               e->>'sku_codigo_omie' AS sku,
+               trim_scale((e->>'qtde_final')::numeric)::text AS q,
+               trim_scale((e->>'fator_embalagem_portal')::numeric)::text AS f,
+               trim_scale((e->>'preco_unitario')::numeric)::text AS pr
+          FROM jsonb_array_elements(p_itens_vistos) e
+      ), atual AS (
+        SELECT i.id, i.sku_codigo_omie AS sku,
+               trim_scale(i.qtde_final)::text AS q,
+               trim_scale(i.fator_embalagem_portal)::text AS f,
+               trim_scale(i.preco_unitario)::text AS pr
+          FROM public.pedido_compra_item i WHERE i.pedido_id = p_pedido_id
+      )
+      SELECT count(*) INTO v_div FROM (
+        (SELECT * FROM visto EXCEPT SELECT * FROM atual)
+        UNION ALL
+        (SELECT * FROM atual EXCEPT SELECT * FROM visto)
+      ) d;
+    EXCEPTION WHEN invalid_text_representation OR invalid_parameter_value OR wrong_object_type THEN
+      RETURN jsonb_build_object('error', 'itens_vistos inválido — recarregue a tela');
+    END;
+    IF v_div > 0 THEN
+      RETURN jsonb_build_object('error', 'os itens mudaram desde que você abriu a tela — recarregue e confira antes de aprovar');
+    END IF;
+  END IF;
+
+  BEGIN
+    PERFORM public.reposicao_selar_pedido(p_pedido_id);
+  EXCEPTION
+    WHEN SQLSTATE 'SA003' OR SQLSTATE 'SA004' OR SQLSTATE 'SA005' OR SQLSTATE 'SA006' THEN
+      RETURN jsonb_build_object('error', SQLERRM);
+  END;
+
+  -- O predicado de status vive DENTRO da escrita (padrão do 20260906151715, que fechou o
+  -- TOCTOU desta RPC). Aqui ele é redundante com o FOR UPDATE acima — que é obrigatório, porque
+  -- o selo precisa do lock segurado ATRAVÉS de várias instruções — mas redundância barata no
+  -- money-path é defesa, e a falsificação F12 prova que este WHERE tem dente.
+  UPDATE public.pedido_compra_sugerido
+     SET status = 'aprovado_aguardando_disparo',
+         aprovado_por = p_usuario,
+         aprovado_em = NOW(),
+         atualizado_em = NOW()
+   WHERE id = p_pedido_id
+     AND status IN ('pendente_aprovacao', 'bloqueado_guardrail')
+  RETURNING horario_corte_planejado INTO v_corte;
+
+  IF NOT FOUND THEN
+    -- Impossível sob o FOR UPDATE (ninguém consegue mudar o status enquanto seguramos a linha).
+    -- RAISE, não RETURN: precisa DESFAZER o selo já gravado nesta transação.
+    RAISE EXCEPTION 'Pedido % mudou de estado durante a aprovação', p_pedido_id USING ERRCODE = 'SA008';
+  END IF;
+
   RETURN jsonb_build_object('status', 'ok', 'pedido_id', p_pedido_id,
-                             'sera_disparado_em', v_pedido.horario_corte_planejado);
+                            'sera_disparado_em', v_corte);
 END;
 $$;
 
@@ -4660,8 +5559,8 @@ BEGIN
       FROM public.pedido_compra_item pci
       JOIN public.pedido_compra_sugerido pcs2 ON pcs2.id = pci.pedido_id
       WHERE pcs2.empresa = p_empresa
-        AND pcs2.status IN ('aprovado_aguardando_disparo','disparado','concluido_recebido')
-        AND pcs2.data_ciclo >= (CURRENT_DATE - INTERVAL '7 days')
+        AND pcs2.status IN ('aprovado_aguardando_disparo','disparado','disparado_simulado','concluido_recebido')  -- [SIMULADO] PO real do dry_run
+        AND pcs2.data_ciclo >= ((now() AT TIME ZONE 'America/Sao_Paulo')::date - INTERVAL '7 days')
       GROUP BY pcs2.empresa, pci.sku_codigo_omie
     ),
     posicao AS (
@@ -4751,40 +5650,6 @@ COMMENT ON FUNCTION public.authz_contract_version() IS 'E2/FU4 — versão do co
 
 
 --
--- Name: auto_assign_commercial_super_admin(); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.auto_assign_commercial_super_admin() RETURNS trigger
-    LANGUAGE plpgsql SECURITY DEFINER
-    SET search_path TO 'public'
-    AS $$
-DECLARE
-  master_cpf_value TEXT;
-  profile_doc TEXT;
-BEGIN
-  IF TG_OP != 'INSERT' THEN
-    RETURN NEW;
-  END IF;
-
-  IF NEW.is_employee != true THEN
-    RETURN NEW;
-  END IF;
-
-  SELECT value INTO master_cpf_value FROM public.company_config WHERE key = 'master_cpf';
-  profile_doc := REGEXP_REPLACE(NEW.document, '\D', '', 'g');
-
-  IF profile_doc = master_cpf_value THEN
-    INSERT INTO public.commercial_roles (user_id, commercial_role)
-    VALUES (NEW.user_id, 'super_admin')
-    ON CONFLICT (user_id) DO UPDATE SET commercial_role = 'super_admin', updated_at = now();
-  END IF;
-
-  RETURN NEW;
-END;
-$$;
-
-
---
 -- Name: auto_assign_user_role(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -4865,7 +5730,7 @@ BEGIN
     AND EXISTS (
       SELECT 1 FROM unnest(p_termos) t
       WHERE upper(op.descricao) LIKE
-        '%' || replace(replace(replace(upper(t), '\', '\\'), '%', '\%'), '_', '\_') || '%' ESCAPE '\'
+        private.padrao_like_contem(upper(t)) ESCAPE '\'
     )
   ORDER BY op.account, op.descricao
   LIMIT 100;
@@ -4882,15 +5747,14 @@ CREATE FUNCTION public.cancelar_pedido_sugerido(p_pedido_id bigint, p_usuario te
     SET search_path TO 'public', 'pg_temp'
     AS $$
 DECLARE
-  v_pedido RECORD;
+  v_id       bigint;
+  v_status   text;
+  v_portal   text;
+  v_omie     text;
+  v_disparo  timestamptz;
 BEGIN
-  SELECT * INTO v_pedido FROM pedido_compra_sugerido WHERE id = p_pedido_id;
-  IF NOT FOUND THEN
-    RETURN jsonb_build_object('error', 'pedido não encontrado');
-  END IF;
-  IF v_pedido.status IN ('disparado', 'concluido_recebido') THEN
-    RETURN jsonb_build_object('error', 'pedido já foi disparado em ' || v_pedido.horario_disparo_real::text);
-  END IF;
+  -- ⚠️ Guard e escrita são UMA instrução. Não separe: é o predicado preso a este WHERE que faz
+  -- o Postgres re-avaliá-lo contra a versão nova da linha depois de esperar o lock.
   UPDATE pedido_compra_sugerido
   SET status = 'cancelado_humano',
       cancelado_por = p_usuario,
@@ -4899,8 +5763,54 @@ BEGIN
       status_envio_portal = 'nao_aplicavel',
       portal_proximo_retry_em = NULL,
       atualizado_em = NOW()
-  WHERE id = p_pedido_id;
-  RETURN jsonb_build_object('status', 'ok', 'pedido_id', p_pedido_id);
+  WHERE id = p_pedido_id
+    AND status NOT IN ('disparado', 'disparado_simulado', 'concluido_recebido')
+    AND COALESCE(status_envio_portal, 'nao_aplicavel') NOT IN (
+          'enviando_portal', 'enviado_portal', 'sucesso_portal',
+          'aceito_portal_sem_protocolo', 'indeterminado_requer_conciliacao')
+  RETURNING id INTO v_id;
+
+  IF v_id IS NOT NULL THEN
+    RETURN jsonb_build_object('status', 'ok', 'pedido_id', p_pedido_id);
+  END IF;
+
+  -- 0 linhas. A DECISÃO já foi tomada pelo predicado — esta leitura só MONTA A MENSAGEM.
+  SELECT status, status_envio_portal, horario_disparo_real, omie_pedido_compra_id
+    INTO v_status, v_portal, v_disparo, v_omie
+    FROM pedido_compra_sugerido WHERE id = p_pedido_id;
+
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('error', 'pedido não encontrado');
+  END IF;
+
+  IF v_status IN ('disparado', 'concluido_recebido') THEN
+    RETURN jsonb_build_object('error', 'pedido já foi disparado em ' || COALESCE(v_disparo::text, '(sem carimbo)'));
+  END IF;
+
+  -- `disparado_simulado` tem mensagem PRÓPRIA porque a intuição do operador é o inimigo aqui:
+  -- "simulado" soa como "não aconteceu", e é justamente o contrário. Reaproveitar a mensagem
+  -- acima ("já foi disparado") seria correto e inútil — quem lê iria discordar dela e procurar
+  -- outro caminho. A mensagem tem de dizer o que o nome do status esconde.
+  IF v_status = 'disparado_simulado' THEN
+    RETURN jsonb_build_object('error',
+      'pedido em dry-run ("disparado_simulado") em ' || COALESCE(v_disparo::text, '(sem carimbo)') ||
+      ' — apesar do nome, o pedido de compra FOI criado no Omie' ||
+      CASE WHEN v_omie IS NOT NULL THEN ' (PO ' || v_omie || ')' ELSE '' END ||
+      '. Cancele junto ao fornecedor primeiro e depois use corrigir_cancelamento_pos_disparo(), que exige evidência e deixa trilha.');
+  END IF;
+
+  IF COALESCE(v_portal, 'nao_aplicavel') IN (
+       'enviando_portal', 'enviado_portal', 'sucesso_portal',
+       'aceito_portal_sem_protocolo', 'indeterminado_requer_conciliacao') THEN
+    RETURN jsonb_build_object('error',
+      'envio ao portal em ' || v_portal ||
+      ' — cancelar agora deixaria o fornecedor com um pedido que aqui consta cancelado. Aguarde o desfecho ou concilie.');
+  END IF;
+
+  -- Estado cancelável AGORA mas o UPDATE não pegou ⇒ mudou entre as instruções. Não FABRICAR
+  -- motivo: dizer "já está em X" seria mentira quando X é cancelável.
+  RETURN jsonb_build_object('error',
+    'pedido mudou de estado durante o cancelamento (estado atual: ' || COALESCE(v_status, '(desconhecido)') || ') - tente de novo');
 END;
 $$;
 
@@ -4998,7 +5908,7 @@ END $_$;
 -- Name: ciclo_oportunidade_do_dia(text, date); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.ciclo_oportunidade_do_dia(p_empresa text DEFAULT 'OBEN'::text, p_data_ciclo date DEFAULT CURRENT_DATE) RETURNS TABLE(executou boolean, motivo text, pedidos_gerados integer, skus_incluidos integer, economia_estimada numeric)
+CREATE FUNCTION public.ciclo_oportunidade_do_dia(p_empresa text DEFAULT 'OBEN'::text, p_data_ciclo date DEFAULT ((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date) RETURNS TABLE(executou boolean, motivo text, pedidos_gerados integer, skus_incluidos integer, economia_estimada numeric)
     LANGUAGE plpgsql
     SET search_path TO 'public', 'pg_temp'
     AS $_$
@@ -5185,7 +6095,7 @@ BEGIN
     tem_venda_real = EXISTS (
       SELECT 1 FROM public.sales_orders so
       WHERE so.customer_user_id = cc.user_id
-        AND so.status NOT IN ('cancelado','rascunho','pendente','orcamento')
+        AND so.status NOT IN ('cancelado','rascunho','pendente','orcamento') AND so.deleted_at IS NULL
     ),
     excluir_da_carteira = (
       EXISTS (
@@ -5195,7 +6105,7 @@ BEGIN
       AND NOT EXISTS (
         SELECT 1 FROM public.sales_orders so
         WHERE so.customer_user_id = cc.user_id
-          AND so.status NOT IN ('cancelado','rascunho','pendente','orcamento')
+          AND so.status NOT IN ('cancelado','rascunho','pendente','orcamento') AND so.deleted_at IS NULL
       )
       AND NOT EXISTS (SELECT 1 FROM public.fornecedor_excecao e WHERE e.user_id = cc.user_id)
     ),
@@ -5351,7 +6261,7 @@ $$;
 CREATE FUNCTION public.cockpit_itens_snapshot(p_created_at_de timestamp with time zone, p_teto_linhas integer DEFAULT 150000, p_teto_bytes bigint DEFAULT 25165824) RETURNS jsonb
     LANGUAGE plpgsql STABLE
     SET search_path TO 'public', 'pg_temp'
-    AS $$
+    AS $_$
 DECLARE
   c_max_linhas constant integer := 500000;
   c_max_bytes  constant bigint  := 33554432;
@@ -5381,6 +6291,14 @@ BEGIN
                'quantity',            t.quantity,
                'unit_price',          t.unit_price,
                'discount',            t.discount,
+               -- O desconto CANÔNICO (R$ da linha). `discount` acima é a coluna LEGADO, e as
+               -- duas viajam juntas de propósito: os consumidores migram um a um, e quem ainda
+               -- não migrou continua lendo o campo antigo em vez de receber `undefined`.
+               -- NULL aqui é NÃO APURADO e chega ao consumidor COMO null — o jsonb preserva a
+               -- distinção que a coluna existe para carregar. Um `coalesce(...,0)` neste ponto
+               -- desfaria em silêncio toda a cadeia: a linha chegaria ao cockpit afirmando
+               -- "sem desconto", e a receita voltaria cheia.
+               'desconto_valor',      t.desconto_valor,
                'sales_order_id',      t.sales_order_id,
                'sales_orders', jsonb_build_object(
                  'status',         t.status,
@@ -5398,7 +6316,7 @@ BEGIN
     INTO v_itens
   FROM (
     SELECT oi.id, oi.customer_user_id, oi.product_id, oi.omie_codigo_produto, oi.quantity,
-           oi.unit_price, oi.discount, oi.sales_order_id,
+           oi.unit_price, oi.discount, oi.desconto_valor, oi.sales_order_id,
            so.status, so.deleted_at, so.order_date_kpi, so.account, so.origem, so.checkout_id
     FROM public.order_items oi
     JOIN public.sales_orders so ON so.id = oi.sales_order_id
@@ -5424,7 +6342,7 @@ BEGIN
     'itens',       v_itens
   );
 END;
-$$;
+$_$;
 
 
 --
@@ -5692,22 +6610,37 @@ END $_$;
 
 
 --
--- Name: converter_sugestao_em_campanha_flat(bigint, numeric, numeric, text, date, text, text, text); Type: FUNCTION; Schema: public; Owner: -
+-- Name: converter_sugestao_em_campanha_flat(bigint, numeric, numeric, text, date, text, text, text, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.converter_sugestao_em_campanha_flat(p_sugestao_id bigint, p_desconto_perc numeric, p_volume_minimo numeric, p_volume_unidade text, p_data_fim date, p_responsavel_nome text DEFAULT NULL::text, p_canal text DEFAULT 'ligacao'::text, p_observacoes text DEFAULT NULL::text) RETURNS bigint
+CREATE FUNCTION public.converter_sugestao_em_campanha_flat(p_sugestao_id bigint, p_desconto_perc numeric, p_volume_minimo numeric, p_volume_unidade text, p_data_fim date, p_sku_codigo_fornecedor text, p_responsavel_nome text DEFAULT NULL::text, p_canal text DEFAULT 'ligacao'::text, p_observacoes text DEFAULT NULL::text) RETURNS bigint
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public'
-    AS $$
+    AS $_$
 DECLARE
   v_sugestao record;
   v_campanha_id bigint;
+  -- o dia de SÃO PAULO: o instante da transação levado à data de SP (a sessão da prod é UTC)
+  v_hoje date := (now() AT TIME ZONE 'America/Sao_Paulo')::date;
+  v_codigo text := nullif(btrim(p_sku_codigo_fornecedor), '');
 BEGIN
   IF auth.uid() IS NULL OR NOT (public.has_role(auth.uid(), 'employee'::app_role) OR public.has_role(auth.uid(), 'master'::app_role)) THEN
     RAISE EXCEPTION 'Acesso negado: requer perfil staff' USING ERRCODE = '42501';
   END IF;
-  SELECT * INTO v_sugestao FROM sugestao_negociacao_paralela WHERE id = p_sugestao_id;
+  IF v_codigo IS NULL THEN
+    RAISE EXCEPTION 'Informe o código Sayerlack do produto' USING ERRCODE = '22023';
+  END IF;
+  IF p_data_fim IS NULL OR p_data_fim < v_hoje THEN
+    RAISE EXCEPTION 'A data fim (%) não pode ser anterior a hoje (%)', p_data_fim, v_hoje USING ERRCODE = '22023';
+  END IF;
+  SELECT * INTO v_sugestao FROM sugestao_negociacao_paralela WHERE id = p_sugestao_id FOR UPDATE;
   IF NOT FOUND THEN RAISE EXCEPTION 'Sugestão % não encontrada', p_sugestao_id; END IF;
+  IF v_sugestao.campanha_id_gerada IS NOT NULL THEN
+    RAISE EXCEPTION 'Sugestão % já foi convertida na campanha %', p_sugestao_id, v_sugestao.campanha_id_gerada;
+  END IF;
+  IF v_sugestao.sku_codigo_omie !~ '^[0-9]+$' THEN
+    RAISE EXCEPTION 'O SKU % da sugestão não é um código Omie numérico', v_sugestao.sku_codigo_omie USING ERRCODE = '22023';
+  END IF;
   INSERT INTO promocao_campanha (
     empresa, fornecedor_nome, nome, tipo_origem, estado,
     data_inicio, data_fim, data_corte_pedido, data_corte_faturamento,
@@ -5718,24 +6651,150 @@ BEGIN
     v_sugestao.empresa, 'RENNER SAYERLACK S/A',
     format('Desconto Flat Condicional - %s', v_sugestao.sku_codigo_omie),
     'desconto_flat_condicional', 'negociando',
-    CURRENT_DATE, p_data_fim, p_data_fim,
-    (date_trunc('month', p_data_fim) + interval '2 months - 1 day')::date,
-    p_responsavel_nome, p_canal, CURRENT_DATE,
+    v_hoje, p_data_fim, p_data_fim,
+    (date_trunc('month', p_data_fim::timestamp) + interval '2 months - 1 day')::date,
+    p_responsavel_nome, p_canal, v_hoje,
     p_volume_minimo, p_volume_unidade,
     'aceita', p_observacoes, false
   ) RETURNING id INTO v_campanha_id;
   INSERT INTO promocao_item (
-    campanha_id, sku_codigo_omie, sku_descricao_extraido,
-    desconto_base_perc, mapeamento_confianca, mapeamento_origem, ativo
+    campanha_id, sku_codigo_fornecedor, descricao_produto_fornecedor, sku_codigo_omie,
+    mapeamento_qualidade, desconto_perc, confirmado, ativo, observacoes
   ) VALUES (
-    v_campanha_id, v_sugestao.sku_codigo_omie, v_sugestao.sku_descricao,
-    p_desconto_perc, 1.0, 'sugestao_sistema', true
+    v_campanha_id, v_codigo, v_sugestao.sku_descricao, v_sugestao.sku_codigo_omie::bigint,
+    'manual_confirmado', p_desconto_perc, true, true,
+    format('Convertido da sugestão de negociação paralela #%s', p_sugestao_id)
   );
   UPDATE sugestao_negociacao_paralela
   SET status = 'fechada_desconto', campanha_id_gerada = v_campanha_id,
       data_acao = now(), observacoes = p_observacoes, atualizado_em = now()
   WHERE id = p_sugestao_id;
   RETURN v_campanha_id;
+END;
+$_$;
+
+
+--
+-- Name: corrigir_cancelamento_pos_disparo(bigint, text, text, text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.corrigir_cancelamento_pos_disparo(p_pedido_id bigint, p_usuario text, p_motivo text, p_evidencia text, p_justificativa text DEFAULT NULL::text) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_uid      uuid := auth.uid();
+  v_agora    timestamptz := now();
+  v_evid     text := btrim(COALESCE(p_evidencia, ''));
+  v_ant      text;
+  v_omie     text;
+  v_valor    numeric;
+BEGIN
+  -- GATE. SECURITY DEFINER bypassa RLS ⇒ a autorização tem de ser explícita, na fronteira.
+  -- A FORMA importa tanto quanto a semântica. `NOT COALESCE(gate(), false)` — o que estava aqui —
+  -- é fail-CLOSED e mesmo assim REPROVA no `authz:check`: o matcher só aceita a negação como
+  -- CABEÇA da condição, e ali o `false` é argumento (limite declarado em lib/authz-contract.ts).
+  -- Esta forma casa o ramo `NOT ( … )` do matcher E mantém o fail-closed, com o COALESCE movido
+  -- para DENTRO de cada parcela: sem ele, um ramo NULL faria `NOT (NULL)` ser NULL, o IF não
+  -- dispararia e o gate falharia ABERTO — que é o defeito que o COALESCE existia para impedir.
+  -- Um gate que a fronteira do CI não enxerga é um gate que ninguém defende na próxima edição.
+  IF NOT (
+       COALESCE(public.has_role(v_uid, 'employee'::public.app_role), false)
+       OR COALESCE(public.has_role(v_uid, 'master'::public.app_role), false)
+       OR COALESCE(auth.role() = 'service_role', false)
+     ) THEN
+    RAISE EXCEPTION '[CANCEL-POS-DISPARO-FORBIDDEN] apenas staff corrige cancelamento pos-disparo'
+      USING ERRCODE = '42501';
+  END IF;
+
+  -- Validação ANTES de qualquer escrita. Depois da primeira, toda falha teria de ser RAISE
+  -- (o PostgREST commita a transação que termina sem erro SQL — lição do #2231); aqui ainda
+  -- não escrevemos nada, e mesmo assim usamos RAISE para que a recusa seja indistinguível de
+  -- um abort — nunca um `{error}` que uma via distraída leia como sucesso.
+  IF p_motivo IS NULL OR p_motivo NOT IN
+       ('cancelado_junto_ao_fornecedor', 'po_excluido_no_omie', 'duplicidade_operacional') THEN
+    RAISE EXCEPTION '[CANCEL-POS-DISPARO-MOTIVO] motivo invalido: % (esperado cancelado_junto_ao_fornecedor | po_excluido_no_omie | duplicidade_operacional)',
+      COALESCE(p_motivo, '(nulo)') USING ERRCODE = 'P0001';
+  END IF;
+
+  IF length(v_evid) < 4 THEN
+    RAISE EXCEPTION '[CANCEL-POS-DISPARO-EVIDENCIA] evidencia obrigatoria: informe o protocolo do fornecedor, o numero do chamado ou o id do PO excluido no Omie (minimo 4 caracteres, veio %)',
+      length(v_evid) USING ERRCODE = 'P0001';
+  END IF;
+
+  IF p_usuario IS NULL OR btrim(p_usuario) = '' THEN
+    RAISE EXCEPTION '[CANCEL-POS-DISPARO-USUARIO] usuario obrigatorio' USING ERRCODE = 'P0001';
+  END IF;
+
+  -- LOCK antes de qualquer escrita. Preciso do status ANTERIOR para a trilha, e `RETURNING` só
+  -- devolve os valores NOVOS (PG17 não tem `RETURNING OLD.*`). Ler antes SEM lock recriaria
+  -- exatamente o TOCTOU da 20260905224959. `FOR NO KEY UPDATE` — não `FOR SHARE`, que faria dois
+  -- corretores adquirirem o lock juntos e deadlockarem na promoção (achado Codex no #2231).
+  SELECT status, omie_pedido_compra_id, valor_total
+    INTO v_ant, v_omie, v_valor
+    FROM public.pedido_compra_sugerido
+   WHERE id = p_pedido_id
+     FOR NO KEY UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION '[CANCEL-POS-DISPARO-AUSENTE] pedido % nao encontrado', p_pedido_id
+      USING ERRCODE = 'P0001';
+  END IF;
+
+  -- ALLOWLIST, não denylist (lição do #2231): esta RPC existe SÓ para o caso pós-disparo. Pedido
+  -- em qualquer outro estado tem a porta normal (`cancelar_pedido_sugerido`) — esta não é atalho
+  -- para ela, e deixar passar aqui seria abrir um segundo caminho sem o guard daquela.
+  IF v_ant NOT IN ('disparado', 'disparado_simulado', 'concluido_recebido') THEN
+    RAISE EXCEPTION '[CANCEL-POS-DISPARO-ESTADO] pedido % esta em "%" — a correcao pos-disparo so se aplica a disparado/disparado_simulado/concluido_recebido. Use cancelar_pedido_sugerido().',
+      p_pedido_id, v_ant USING ERRCODE = 'P0001';
+  END IF;
+
+  -- Abre a porta para ESTE pedido e só para ele. `is_local => true` ⇒ morre no fim da transação
+  -- mesmo se algo abaixo lançar.
+  PERFORM set_config('app.correcao_cancelamento_pos_disparo', p_pedido_id::text, true);
+
+  UPDATE public.pedido_compra_sugerido
+     SET status                             = 'cancelado_humano',
+         cancelado_por                      = p_usuario,
+         cancelado_em                       = v_agora,
+         justificativa_cancelamento         = p_justificativa,
+         cancelamento_pos_disparo_motivo    = p_motivo,
+         cancelamento_pos_disparo_evidencia = v_evid,
+         cancelamento_pos_disparo_por       = p_usuario,
+         cancelamento_pos_disparo_em        = v_agora,
+         status_envio_portal                = 'nao_aplicavel',  -- mesma higiene do portal da RPC normal
+         portal_proximo_retry_em            = NULL,
+         atualizado_em                      = v_agora
+   WHERE id = p_pedido_id
+     AND status IN ('disparado', 'disparado_simulado', 'concluido_recebido');  -- redundante sob o lock; barato e fail-closed
+
+  IF NOT FOUND THEN
+    -- Sob o lock isto é inalcançável. Se acontecer, algo mudou a linha sem respeitar o lock:
+    -- abortar é a única resposta honesta — jamais devolver "ok" sobre zero linhas (#2231).
+    RAISE EXCEPTION '[CANCEL-POS-DISPARO-ZERO-LINHAS] o UPDATE do pedido % nao pegou nenhuma linha sob lock', p_pedido_id
+      USING ERRCODE = 'P0001';
+  END IF;
+
+  -- Fecha a porta ANTES da trilha: nada depois deste ponto precisa dela, e uma função futura que
+  -- chame esta e siga escrevendo não herda a autorização.
+  PERFORM set_config('app.correcao_cancelamento_pos_disparo', '', true);
+
+  -- A trilha. Mesma transação: se o INSERT falhar, o cancelamento não acontece. Sem trilha,
+  -- sem correção — é essa a diferença entre esta porta e o SQL na mão que ela substitui.
+  INSERT INTO public.reposicao_cancelamento_pos_disparo_audit
+    (pedido_id, status_anterior, status_novo, motivo, evidencia, justificativa,
+     omie_pedido_compra_id, valor_total, executado_por, executado_por_uid, executado_em)
+  VALUES
+    (p_pedido_id, v_ant, 'cancelado_humano', p_motivo, v_evid, p_justificativa,
+     v_omie, v_valor, p_usuario, v_uid, v_agora);
+
+  RETURN jsonb_build_object(
+    'status', 'ok',
+    'pedido_id', p_pedido_id,
+    'status_anterior', v_ant,
+    'omie_pedido_compra_id', v_omie,
+    'motivo', p_motivo
+  );
 END;
 $$;
 
@@ -5747,7 +6806,7 @@ $$;
 CREATE FUNCTION public.criar_pedidos_com_itens(p_pedidos jsonb) RETURNS jsonb
     LANGUAGE plpgsql
     SET search_path TO ''
-    AS $$
+    AS $_$
 DECLARE
   v_pedido     jsonb;
   v_account    text;
@@ -5860,21 +6919,79 @@ BEGIN
 
       IF v_do_items THEN
         -- ── G6: order_items.created_at = created_at do PAI (nunca now()) ──
+        -- ── IDENTIDADE DE LINHA NO NASCIMENTO (`det.ide.codigo_item`) — o que esta migration
+        --    ACRESCENTA ao corpo vigente do #2224. Tudo abaixo veio de la por TRANSFORMACAO:
+        --    a regua de preco esta preservada VERBATIM (recriar do corpo de 17/06 teria
+        --    revertido o #2224 em silencio — "a ultima a recriar VENCE", database.md §4).
+        --
+        --    POR QUE: `criar_pedidos_com_itens` nascia com `omie_codigo_item` NULL, e so a
+        --    reconciliacao adotava a identidade depois. Enquanto ela e NULL, um pedido com SKU
+        --    repetido depende do payload trazer identidade COMPLETA para escapar do guard de
+        --    ambiguidade da `reconciliar_pedidos_omie` — e quando nao traz, o pedido inteiro e
+        --    PULADO (nem itens, nem cabecalho) e o app fica na revisao velha em silencio.
+        --    Nascer com identidade torna esse guard INALCANCAVEL por construcao, em vez de
+        --    contornavel. Medido em prod 2026-09-08: o `ListarPedidos` — o MESMO endpoint que
+        --    alimenta esta RPC — devolve o campo em 4.220/4.220 itens lidos.
+        WITH cand AS (
+          SELECT it,
+                 -- A REGUA: inteiro POSITIVO em texto decimal (ate 18 digitos, cabe em bigint).
+                 -- Um `codigo_item` invalido (vazio, 0, fracionario, negativo, texto) e PIOR que
+                 -- ausente: ausente degrada pro casamento por SKU, que e conhecido e guardado;
+                 -- um numero fabricado casaria a linha ERRADA dentro do pedido, em silencio, no
+                 -- caminho do dinheiro. O regex e TAMBEM o cast seguro — sem ele um shape
+                 -- inesperado derruba a subtransacao G9 e perde o pedido inteiro por um campo
+                 -- que e opcional por desenho. Espelha `_shared/omie-codigo-item.ts` (a edge
+                 -- filtra antes); aqui de novo porque a RPC e a fronteira e nao confia no caller.
+                 CASE WHEN (it->>'omie_codigo_item') ~ '^[1-9][0-9]{0,17}$'
+                      THEN (it->>'omie_codigo_item')::bigint END AS cid
+            FROM jsonb_array_elements(coalesce(v_pedido->'itens', '[]'::jsonb)) AS it
+           WHERE (it->>'omie_codigo_produto') IS NOT NULL
+        ),
+        ga AS (
+          -- G-a: a identidade so vale para o pedido INTEIRO quando e DISTINTA entre as linhas
+          -- que a trazem — a mesma regua POR PEDIDO do `v_ident` da reconciliacao, nao por
+          -- linha. `count(cid)` e `count(DISTINCT cid)` ignoram NULL: ausente NAO e duplicata de
+          -- ausente, senao um payload parcialmente lido zeraria a adocao inteira.
+          -- Gravar `codigo_item` repetido criaria a condicao `G-b` da `reconciliar_pedidos_omie`
+          -- (identidade duplicada no ATUAL), que faz o reconciliador PULAR aquele pedido PARA
+          -- SEMPRE — ele congela na revisao velha. Ausente e reversivel; ambiguo gravado nao e.
+          SELECT count(cid) = count(DISTINCT cid) AS ok FROM cand
+        )
         INSERT INTO public.order_items (
           sales_order_id, customer_user_id, product_id, omie_codigo_produto,
-          quantity, unit_price, discount, hash_payload, created_at
+          quantity, unit_price, discount, desconto_valor, hash_payload, created_at, omie_codigo_item
         )
         SELECT v_order_id,
-               coalesce((it->>'customer_user_id')::uuid, (v_pedido->>'customer_user_id')::uuid),
-               (it->>'product_id')::uuid,
-               (it->>'omie_codigo_produto')::bigint,
-               coalesce((it->>'quantity')::numeric, 1),
-               coalesce((it->>'unit_price')::numeric, 0),
-               coalesce((it->>'discount')::numeric, 0),
-               it->>'hash_payload',
-               v_created_at  -- G6
-        FROM jsonb_array_elements(coalesce(v_pedido->'itens', '[]'::jsonb)) AS it
-        WHERE (it->>'omie_codigo_produto') IS NOT NULL;
+               coalesce((c.it->>'customer_user_id')::uuid, (v_pedido->>'customer_user_id')::uuid),
+               (c.it->>'product_id')::uuid,
+               (c.it->>'omie_codigo_produto')::bigint,
+               coalesce((c.it->>'quantity')::numeric, 1),
+               -- REGUA DE PRECO NA INGESTAO — finitude NAO-NEGATIVA. O `coalesce(...,0)`
+               -- anterior mapeava "o Omie nao informou" e "o Omie informou 0" no MESMO byte.
+               -- Aqui os dois fatos ficam distintos:
+               --   ausente/null  -> NULL  ("nao sei")
+               --   0             -> 0     (o Omie DISSE zero: bonificacao/brinde e dado real)
+               --   negativo, Infinity, NaN (que o Postgres ordena acima de Infinity) -> NULL
+               --                          (lixo, nao dado)
+               -- A ingestao NAO decide se o preco serve pra margem — isso e do CONSUMO, onde
+               -- private.margem_cliente_agregada() aplica finitude POSITIVA (`> 0`) e exclui
+               -- tambem o zero. Destruir o zero aqui perderia informacao da fonte de graca.
+               CASE WHEN (c.it->>'unit_price')::numeric >= 0
+                     AND (c.it->>'unit_price')::numeric < 'Infinity'::numeric
+                    THEN (c.it->>'unit_price')::numeric END,
+               coalesce((c.it->>'discount')::numeric, 0),
+               -- REGUA DO DESCONTO — sem coalesce, de proposito. `discount` acima e a coluna
+               -- LEGADO (default 0, semantica ambigua entre percentual e valor); esta e a
+               -- canonica, em R$ da LINHA. NULL aqui significa NAO APURADO, e e diferente de
+               -- 0 = "o Omie informou que nao ha desconto". Um `coalesce(...,0)` reintroduziria
+               -- a fabricacao que a coluna existe para evitar: o leitor antigo lia
+               -- `prod.desconto`, chave que a API do Omie nao tem, e o `|| 0` gravou zero em
+               -- 71.006 linhas por CEGUEIRA. Quem calcula e _shared/desconto-omie.ts, na edge.
+               (c.it->>'desconto_valor')::numeric,
+               c.it->>'hash_payload',
+               v_created_at,  -- G6
+               CASE WHEN (SELECT ok FROM ga) THEN c.cid END
+        FROM cand c;
         GET DIAGNOSTICS v_n = ROW_COUNT;
         v_items := v_items + v_n;
 
@@ -5910,14 +7027,14 @@ BEGIN
     'skipped_complete', v_skipped_complete, 'skipped_no_items', v_skipped_no_items,
     'divergence', v_divergence, 'failed', v_failed);
 END;
-$$;
+$_$;
 
 
 --
 -- Name: FUNCTION criar_pedidos_com_itens(p_pedidos jsonb); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.criar_pedidos_com_itens(p_pedidos jsonb) IS 'Sync Omie: insere pai+filhos atômico (subtransação/pedido). ON CONFLICT parcial (account,hash_payload). Repara órfão (pai sem itens) só se cabeçalho compatível (G5) — não reconcilia pedido alterado (Fase 2). created_at dos filhos = created_at do pai. Retorna {inserted,repaired,skipped_complete,skipped_no_items,divergence[],failed[]}.';
+COMMENT ON FUNCTION public.criar_pedidos_com_itens(p_pedidos jsonb) IS 'Sync Omie: insere pai+filhos atomico (subtransacao/pedido). ON CONFLICT parcial (account,hash_payload). Preco: finitude nao-negativa, ausente->NULL (#2224). Identidade de linha: grava order_items.omie_codigo_item quando o payload traz det.ide.codigo_item DISTINTO entre as linhas do pedido (G-a); repetido -> NULL em todas, degradando para o casamento por SKU. Ambiguo GRAVADO congelaria o pedido no G-b da reconciliar_pedidos_omie; ausente e reversivel.';
 
 
 --
@@ -6071,7 +7188,16 @@ DECLARE
     'tint_cobertura_bases',
     'custos_proxy_conf_alta','custos_product_cost_revivido','pedidos_compra_sync',
     'carteira_identidade_quarentena','sync_state_saude',
-    'analytics_outbox_transporte','analytics_outbox_trigger'];
+    'analytics_outbox_transporte','analytics_outbox_trigger',
+    -- [2026-09-18] sync_reprocess_saude: 22o check. Registrar o bloco no compute NAO basta —
+    -- o laco filtra WHERE t.source = ANY (v_sources); source fora daqui e check que existe e
+    -- NUNCA e avaliado (nem verde nem vermelho). Esta ARRAY tambem define o esperado do
+    -- dead-man, entao o numero sobe de 21 para 22 junto.
+    'sync_reprocess_saude',
+    -- [2026-09-30] vendas_empurradas_sem_gemeo: 23o check (venda empurrada ao Omie sem gemeo do
+    -- importador). Entra no compute, AQUI e no resumo do heartbeat na MESMA migration (o trio e
+    -- acoplado); o dead-man passa a esperar 23.
+    'vendas_empurradas_sem_gemeo'];
   v_deadman_h int := 3;   -- cron é */30 ⇒ 3h = 6 rodadas completas perdidas
   r           record;
   v_rows      jsonb;
@@ -6282,6 +7408,205 @@ $$;
 
 
 --
+-- Name: deploy_atestacoes_colher(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.deploy_atestacoes_colher() RETURNS integer
+    LANGUAGE plpgsql
+    SET search_path TO ''
+    AS $$
+DECLARE
+  v_n integer;
+BEGIN
+  INSERT INTO public.deploy_atestacoes (request_id, observado_em, edge, versao, fonte, via)
+  SELECT j.request_id, j.observado_em, j.edge, j.versao, j.fonte, j.via
+  FROM public.deploy_atestacoes_janela_viva() j
+  ON CONFLICT (request_id, observado_em) DO NOTHING;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  RETURN v_n;
+END
+$$;
+
+
+--
+-- Name: deploy_atestacoes_janela_viva(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.deploy_atestacoes_janela_viva() RETURNS TABLE(request_id bigint, observado_em timestamp with time zone, edge text, versao text, fonte text, via text)
+    LANGUAGE sql STABLE
+    SET search_path TO ''
+    AS $_$
+  SELECT r.id,
+         r.created,
+         r.c ->> 'edge',
+         r.c ->> 'versao',
+         coalesce(r.c ->> 'fonte', 'sem-campo'),
+         CASE WHEN (r.c -> 'probe') = to_jsonb(true) THEN 'sonda' ELSE 'eco' END
+  FROM (
+    SELECT id, created,
+           CASE WHEN content IS JSON OBJECT THEN content::jsonb END AS c
+    FROM net._http_response
+    WHERE status_code = 200
+      AND id IS NOT NULL
+      AND created IS NOT NULL
+      AND content IS NOT NULL
+      AND left(ltrim(content), 1) = '{'
+      AND content LIKE '%"edge"%'
+      AND content LIKE '%"versao"%'
+  ) r
+  WHERE r.c IS NOT NULL
+    AND jsonb_typeof(r.c -> 'edge') = 'string'
+    AND jsonb_typeof(r.c -> 'versao') = 'string'
+    AND (r.c ->> 'edge') ~ '^[a-z0-9-]{1,80}$'
+    AND length(r.c ->> 'versao') BETWEEN 1 AND 120
+    AND (
+      NOT (r.c ? 'fonte')
+      OR (jsonb_typeof(r.c -> 'fonte') = 'string'
+          AND ((r.c ->> 'fonte') ~ '^[0-9a-f]{64}$' OR (r.c ->> 'fonte') = 'nao-mapeada'))
+    )
+    AND (NOT (r.c ? 'probe') OR (r.c -> 'probe') = to_jsonb(true))
+$_$;
+
+
+--
+-- Name: FUNCTION deploy_atestacoes_janela_viva(); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.deploy_atestacoes_janela_viva() IS 'Observações válidas de deploy na janela viva de net._http_response (sonda ativa OU eco passivo). Fonte única do filtro: usada pelo coletor e por `bun run pendencias:deploy`.';
+
+
+--
+-- Name: deploy_sonda_disparar(text[]); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.deploy_sonda_disparar(p_alvos text[] DEFAULT NULL::text[]) RETURNS TABLE(tick_id uuid, edge text, request_id bigint)
+    LANGUAGE plpgsql
+    SET search_path TO ''
+    AS $$
+DECLARE
+  v_tick    uuid := gen_random_uuid();
+  v_secret  text;
+  v_n       integer;
+  v_edge    text;
+  v_req     bigint;
+BEGIN
+  -- O segredo do CRON tem de ser ÚNICO e não-vazio. Duas linhas com o mesmo nome tornariam o
+  -- `SELECT INTO` arbitrário — o dispatcher passaria a autenticar com um valor que ninguém escolheu,
+  -- e o sintoma seria 401 no relé, intermitente e inexplicável. Zero linhas é o caso trivial.
+  SELECT count(*), max(s.decrypted_secret) INTO v_n, v_secret
+  FROM vault.decrypted_secrets s
+  WHERE s.name = 'CRON_SECRET'
+    AND s.decrypted_secret IS NOT NULL
+    AND s.decrypted_secret <> '';
+  IF v_n <> 1 THEN
+    RAISE EXCEPTION 'deploy_sonda_disparar: esperava EXATAMENTE 1 CRON_SECRET nao vazio no vault, achei % — nenhum disparo feito', v_n;
+  END IF;
+
+  FOR v_edge IN
+    SELECT a.edge
+    FROM public.deploy_sonda_alvos a
+    WHERE a.ativo
+      AND (p_alvos IS NULL OR a.edge = ANY (p_alvos))
+    ORDER BY a.edge
+  LOOP
+    -- Headers: SÓ o que o relé precisa. Nenhuma credencial de sonda sai daqui — quem a deriva é o
+    -- relé, a partir de `SONDA_HMAC_KEY`, que vive só nos secrets das edges e o banco nem conhece.
+    SELECT net.http_post(
+             url := 'https://fzvklzpomgnyikkfkzai.supabase.co/functions/v1/sonda-relay',
+             headers := jsonb_build_object(
+               'Content-Type', 'application/json',
+               'x-cron-secret', v_secret),
+             body := jsonb_build_object('alvo', v_edge, 'tick', v_tick::text),
+             timeout_milliseconds := 20000)
+      INTO v_req;
+
+    -- MESMA transação do post: o pg_net só envia após o COMMIT, então não existe janela em que a
+    -- resposta chegue sem a linha de atribuição já estar aqui.
+    --
+    -- ⚠️ `WHERE NOT EXISTS` e não `ON CONFLICT (request_id)`: `request_id` é também uma coluna de
+    -- SAÍDA desta função (RETURNS TABLE), e o `ON CONFLICT` não aceita qualificação — o Postgres
+    -- rejeita com "column reference is ambiguous" em RUNTIME, não no CREATE. Aqui o `d.request_id`
+    -- é qualificado e a ambiguidade não existe.
+    INSERT INTO public.deploy_sonda_disparos (request_id, tick_id, edge)
+    SELECT v_req, v_tick, v_edge
+    WHERE NOT EXISTS (
+      SELECT 1 FROM public.deploy_sonda_disparos d WHERE d.request_id = v_req
+    );
+
+    tick_id := v_tick;
+    edge := v_edge;
+    request_id := v_req;
+    RETURN NEXT;
+  END LOOP;
+END
+$$;
+
+
+--
+-- Name: FUNCTION deploy_sonda_disparar(p_alvos text[]); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.deploy_sonda_disparar(p_alvos text[]) IS 'Dispara a sonda por cron: um POST na edge-relé sonda-relay por alvo ATIVO, gravando a atribuição (tick_id, edge, request_id). Sem argumento sonda todos os ativos; com p_alvos, só os nomeados. O relé é quem emite o OPTIONS na alvo — nada aqui fala com a edge-alvo.';
+
+
+--
+-- Name: deploy_sonda_resultados_colher(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.deploy_sonda_resultados_colher() RETURNS integer
+    LANGUAGE plpgsql
+    SET search_path TO ''
+    AS $$
+DECLARE
+  v_n integer;
+BEGIN
+  WITH candidatos AS (
+    SELECT d.request_id, d.tick_id, d.edge,
+           r.status_code, r.created,
+           CASE WHEN r.content IS NOT NULL
+                     AND left(ltrim(r.content), 1) = '{'
+                     AND r.content IS JSON OBJECT
+                THEN r.content::jsonb END AS c
+    FROM public.deploy_sonda_disparos d
+    LEFT JOIN net._http_response r ON r.id = d.request_id
+    WHERE d.enfileirado_em > now() - interval '48 hours'
+  ), classificados AS (
+    SELECT request_id, tick_id, edge, status_code, created,
+           CASE
+             WHEN c IS NULL THEN NULL
+             -- A atestação: o relé só repassa o corpo verbatim quando ele passa no contrato COMPLETO.
+             WHEN (c -> 'probe') = to_jsonb(true) AND jsonb_typeof(c -> 'edge') = 'string' THEN 'atestou'
+             WHEN jsonb_typeof(c -> 'classe') = 'string' THEN c ->> 'classe'
+             ELSE 'sem-corpo-reconhecido'
+           END AS classe
+    FROM candidatos
+  )
+  INSERT INTO public.deploy_sonda_resultados (request_id, tick_id, edge, status_code, classe, observado_em)
+  SELECT request_id, tick_id, edge, status_code, classe, created
+  FROM classificados
+  ON CONFLICT (request_id) DO UPDATE
+    SET status_code = EXCLUDED.status_code,
+        classe = EXCLUDED.classe,
+        observado_em = EXCLUDED.observado_em,
+        colhido_em = now()
+    -- Só atualiza quando há novidade: sem isto, cada passagem reescreveria 100% das linhas e o
+    -- `colhido_em` deixaria de significar "quando este resultado apareceu".
+    WHERE public.deploy_sonda_resultados.classe IS DISTINCT FROM EXCLUDED.classe
+       OR public.deploy_sonda_resultados.status_code IS DISTINCT FROM EXCLUDED.status_code;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  RETURN v_n;
+END
+$$;
+
+
+--
+-- Name: FUNCTION deploy_sonda_resultados_colher(); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.deploy_sonda_resultados_colher() IS 'Copia o RESULTADO de cada disparo da sonda (48h) de net._http_response para public.deploy_sonda_resultados, preservando o motivo além do TTL de 6h do pg_net.';
+
+
+--
 -- Name: des_data_faturamento_prevista(date, text, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -6321,6 +7646,96 @@ CREATE FUNCTION public.des_determinar_faixa(p_valor numeric, p_versao text DEFAU
     AND p_valor >= fq.volume_min
     AND (fq.volume_max IS NULL OR p_valor <= fq.volume_max)
   LIMIT 1;
+$$;
+
+
+--
+-- Name: desconto_backfill_aplicar(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.desconto_backfill_aplicar(p_linhas jsonb) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_pedidas   integer := 0;
+  v_aplicadas integer := 0;
+  v_ja_apuradas integer := 0;
+BEGIN
+  IF p_linhas IS NULL OR jsonb_typeof(p_linhas) <> 'array' THEN
+    RAISE EXCEPTION 'desconto_backfill_aplicar: p_linhas tem de ser um array jsonb (veio %)',
+      coalesce(jsonb_typeof(p_linhas), 'null');
+  END IF;
+
+  SELECT count(*) INTO v_pedidas FROM jsonb_array_elements(p_linhas);
+
+  -- `ja_apuradas`: linhas do plano que JÁ tinham desconto quando esta chamada começou — outro
+  -- writer ganhou a corrida, ou um run anterior já as escreveu. O guard de concorrência do UPDATE
+  -- abaixo as recusa; contá-las à parte é o que deixa o chamador separar, dentro de `recusadas`,
+  -- "corrida perdida" de "base mudou" — consertos opostos.
+  --
+  -- CONTADA ANTES DO UPDATE, e a ordem é o conserto. Até 2026-09-10 esta contagem vinha DEPOIS
+  -- dele: em plpgsql o statement seguinte enxerga o que a própria transação acabou de escrever, e
+  -- ela contava junto as linhas que ESTA chamada aplicou. Um plano de 40 linhas, todas aplicadas,
+  -- devolvia ja_apuradas=40 contra recusadas=0 — estado impossível.
+  --
+  -- Por que não `preenchidas_depois - aplicadas`: só coincide se cada id aparece UMA vez no plano.
+  -- Um id repetido, aplicado por esta chamada, sairia como "já apurado" (1 onde o certo é 0): o
+  -- `UPDATE ... FROM` escreve a linha uma vez só e o RETURNING devolve uma linha só.
+  --
+  -- Limite aceito: são dois statements. Um writer que comite ENTRE eles (microssegundos) faz a
+  -- linha cair em `recusadas` sem cair aqui, e ela é lida como "base mudou". Fechar essa janela
+  -- pediria `FOR UPDATE` nas linhas recusadas — lock a mais num writer de money-path, pela
+  -- exatidão de um contador de observabilidade. Não compensa.
+  SELECT count(*) INTO v_ja_apuradas
+    FROM jsonb_to_recordset(p_linhas) AS x(id uuid)
+    JOIN public.order_items oi ON oi.id = x.id
+   WHERE oi.desconto_valor IS NOT NULL;
+
+  WITH plano AS (
+    SELECT * FROM jsonb_to_recordset(p_linhas) AS x(
+      id uuid,
+      desconto_valor numeric,
+      base_quantity numeric,
+      base_unit_price numeric,
+      base_sku bigint
+    )
+  ),
+  aplicado AS (
+    UPDATE public.order_items oi
+       SET desconto_valor = pl.desconto_valor
+      FROM plano pl
+     WHERE oi.id = pl.id
+       -- Sem `coalesce(...,0)` em nenhum lado: `IS NOT DISTINCT FROM` é NULL-safe e trata
+       -- ausência como ausência. Um `coalesce(oi.unit_price, 0) = coalesce(pl.base_unit_price, 0)`
+       -- casaria "preço desconhecido" com "preço zero" e escreveria sobre a linha errada.
+       AND oi.quantity            IS NOT DISTINCT FROM pl.base_quantity
+       AND oi.unit_price          IS NOT DISTINCT FROM pl.base_unit_price
+       AND oi.omie_codigo_produto IS NOT DISTINCT FROM pl.base_sku
+       -- O plano NUNCA carrega `null` como valor a gravar: "não apurado" é a AUSÊNCIA de entrada
+       -- no plano, não uma entrada com null. Aceitar null aqui deixaria um bug do chamador
+       -- apagar apuração já feita, em massa e sem sinal.
+       AND pl.desconto_valor IS NOT NULL
+       -- SO ESCREVE O QUE AINDA NAO FOI APURADO. Sem isto, um writer que preencha a linha entre a
+       -- leitura que montou o plano e esta escrita seria SOBRESCRITO -- e sem divergencia visivel,
+       -- porque o trio (SKU, qtd, preco) continua batendo: o guard de base nao ve mudanca de
+       -- desconto. Reapurar nao e' inofensivo: o valor do plano foi lido ANTES, e o do outro
+       -- writer pode ser mais novo. Repetir o mesmo plano segue idempotente no que importa (a
+       -- linha ja tem o valor); o que muda e' que a corrida deixa de ter vencedor por sorte.
+       AND oi.desconto_valor IS NULL
+     RETURNING 1
+  )
+  SELECT count(*) INTO v_aplicadas FROM aplicado;
+
+  -- O chamador precisa das DUAS contagens. Só "aplicadas" não distingue "o plano tinha 40 linhas
+  -- e 40 foram escritas" de "tinha 900 e 40 foram escritas porque 860 mudaram no meio do caminho".
+  RETURN jsonb_build_object(
+    'pedidas',      v_pedidas,
+    'aplicadas',    v_aplicadas,
+    'recusadas',    v_pedidas - v_aplicadas,
+    'ja_apuradas',  v_ja_apuradas
+  );
+END
 $$;
 
 
@@ -6962,14 +8377,18 @@ BEGIN
               OR public.has_role(auth.uid(), 'master'::app_role)) THEN
     RAISE EXCEPTION 'Acesso negado: requer perfil staff' USING ERRCODE = '42501';
   END IF;
-
   RETURN QUERY
   UPDATE public.pedido_compra_sugerido p
      SET status_envio_portal = 'enviando_portal',
-         portal_erro = NULL
+         portal_erro = NULL,
+         -- P1-4 (Codex): sem este carimbo o claim nasce VELHO num retry de 15 min e o watchdog
+         -- (stale = atualizado_em < now()-5min) o declara `indeterminado_requer_conciliacao`
+         -- enquanto o Browserless ainda está executando. A irmã lock_candidatos já carimbava.
+         atualizado_em = now()
    WHERE p.id = ANY(p_ids)
-     AND p.empresa = 'OBEN'
-     AND p.fornecedor_nome ILIKE '%SAYERLACK%'
+     AND public.reposicao_pedido_e_portal(p.empresa, p.fornecedor_nome)
+     AND p.status IN ('aprovado_aguardando_disparo', 'disparado', 'falha_envio')
+     AND p.portal_recusa_motivo IS NULL
      AND p.status_envio_portal IN ('pendente_envio_portal', 'erro_retentavel')
   RETURNING p.id;
 END;
@@ -6986,170 +8405,34 @@ CREATE FUNCTION public.envio_portal_lock_candidatos(p_max integer DEFAULT 5) RET
     AS $$
 BEGIN
   IF auth.uid() IS NOT NULL
-     AND NOT (public.has_role(auth.uid(), 'employee'::app_role) OR public.has_role(auth.uid(), 'master'::app_role)) THEN
+     AND NOT (public.has_role(auth.uid(), 'employee'::app_role)
+              OR public.has_role(auth.uid(), 'master'::app_role)) THEN
     RAISE EXCEPTION 'Acesso negado: requer perfil staff' USING ERRCODE = '42501';
   END IF;
   RETURN QUERY
   WITH candidatos AS (
     SELECT p.id, p.status_envio_portal AS status_anterior
-    FROM public.pedido_compra_sugerido p
-    WHERE p.fornecedor_nome ILIKE '%SAYERLACK%' AND p.empresa = 'OBEN'
-      AND p.status IN ('aprovado_aguardando_disparo','disparado')
-      AND p.status_envio_portal IN ('pendente_envio_portal','erro_retentavel')
-      AND COALESCE(p.portal_tentativas, 0) < 3
-      AND (p.portal_proximo_retry_em IS NULL OR p.portal_proximo_retry_em <= now())
-    ORDER BY p.aprovado_em ASC NULLS LAST, p.id ASC
-    LIMIT p_max FOR UPDATE SKIP LOCKED
+      FROM public.pedido_compra_sugerido p
+     WHERE public.reposicao_pedido_e_portal(p.empresa, p.fornecedor_nome)
+       AND p.status IN ('aprovado_aguardando_disparo', 'disparado', 'falha_envio')
+       AND p.portal_recusa_motivo IS NULL
+       AND p.status_envio_portal IN ('pendente_envio_portal', 'erro_retentavel')
+       AND COALESCE(p.portal_tentativas, 0) < 3
+       AND (p.portal_proximo_retry_em IS NULL OR p.portal_proximo_retry_em <= now())
+     ORDER BY p.aprovado_em ASC NULLS LAST, p.id ASC
+     LIMIT p_max FOR UPDATE SKIP LOCKED
   ),
   travados AS (
     UPDATE public.pedido_compra_sugerido p
-    SET status_envio_portal = 'enviando_portal', atualizado_em = now()
-    FROM candidatos c WHERE p.id = c.id
+       SET status_envio_portal = 'enviando_portal', atualizado_em = now()
+      FROM candidatos c WHERE p.id = c.id
     RETURNING p.id, p.empresa, p.fornecedor_nome, c.status_anterior AS status_envio_portal,
               COALESCE(p.portal_tentativas, 0) AS portal_tentativas, p.portal_protocolo
   )
-  SELECT t.id, t.empresa, t.fornecedor_nome, t.status_envio_portal, t.portal_tentativas, t.portal_protocolo FROM travados t;
-END; $$;
-
-
---
--- Name: expandir_promocao_item(bigint); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.expandir_promocao_item(p_item_id bigint) RETURNS jsonb
-    LANGUAGE plpgsql
-    SET search_path TO 'public', 'pg_temp'
-    AS $$
-DECLARE
-  v_item record;
-  v_variantes_count int;
-  v_variante record;
-  v_novos_ids bigint[] := ARRAY[]::bigint[];
-  v_novo_id bigint;
-BEGIN
-  -- Carrega item original
-  SELECT pi.*, pc.empresa
-  INTO v_item
-  FROM promocao_item pi
-  JOIN promocao_campanha pc ON pc.id = pi.campanha_id
-  WHERE pi.id = p_item_id;
-
-  IF NOT FOUND THEN
-    RETURN jsonb_build_object('erro', 'item_nao_encontrado', 'item_id', p_item_id);
-  END IF;
-
-  -- Protege contra expansão dupla
-  IF v_item.mapeamento_qualidade = 'expandido_origem' THEN
-    RETURN jsonb_build_object('erro', 'ja_expandido', 'item_id', p_item_id);
-  END IF;
-
-  IF v_item.confirmado = true AND v_item.sku_codigo_omie IS NOT NULL THEN
-    RETURN jsonb_build_object('erro', 'ja_confirmado', 'item_id', p_item_id);
-  END IF;
-
-  -- Conta variantes
-  SELECT COUNT(*) INTO v_variantes_count
-  FROM listar_skus_por_codigo_fornecedor(v_item.empresa, v_item.sku_codigo_fornecedor);
-
-  -- Zero variantes: marca como não encontrado
-  IF v_variantes_count = 0 THEN
-    UPDATE promocao_item 
-    SET mapeamento_qualidade = 'nao_encontrado',
-        sku_codigo_omie = NULL,
-        mapeamento_candidatos = NULL
-    WHERE id = p_item_id;
-    
-    RETURN jsonb_build_object(
-      'status', 'nao_encontrado',
-      'item_id', p_item_id,
-      'codigo_fornecedor', v_item.sku_codigo_fornecedor
-    );
-  END IF;
-
-  -- Uma variante: resolve in-place (não precisa expandir)
-  IF v_variantes_count = 1 THEN
-    SELECT * INTO v_variante
-    FROM listar_skus_por_codigo_fornecedor(v_item.empresa, v_item.sku_codigo_fornecedor)
-    LIMIT 1;
-
-    UPDATE promocao_item 
-    SET mapeamento_qualidade = 'unico',
-        sku_codigo_omie = v_variante.omie_codigo_produto,
-        descricao_produto_fornecedor = COALESCE(descricao_produto_fornecedor, v_variante.descricao),
-        confirmado = true,
-        mapeamento_candidatos = NULL
-    WHERE id = p_item_id;
-
-    RETURN jsonb_build_object(
-      'status', 'resolvido_unico',
-      'item_id', p_item_id,
-      'sku_codigo_omie', v_variante.omie_codigo_produto,
-      'descricao', v_variante.descricao
-    );
-  END IF;
-
-  -- Múltiplas variantes: expande criando N itens novos
-  FOR v_variante IN 
-    SELECT * FROM listar_skus_por_codigo_fornecedor(v_item.empresa, v_item.sku_codigo_fornecedor)
-  LOOP
-    INSERT INTO promocao_item (
-      campanha_id,
-      sku_codigo_fornecedor,
-      descricao_produto_fornecedor,
-      sku_codigo_omie,
-      mapeamento_qualidade,
-      mapeamento_candidatos,
-      desconto_perc,
-      volume_minimo,
-      confirmado,
-      ativo,
-      observacoes
-    ) VALUES (
-      v_item.campanha_id,
-      v_item.sku_codigo_fornecedor,
-      v_variante.descricao,
-      v_variante.omie_codigo_produto,
-      'expandido_automatico',
-      NULL,
-      v_item.desconto_perc,
-      v_item.volume_minimo,
-      true,  -- expansão é confirmada automaticamente
-      true,
-      COALESCE(v_item.observacoes, '') || 
-        ' [Expandido automaticamente do código ' || v_item.sku_codigo_fornecedor || 
-        ' — variante: ' || v_variante.descricao || ']'
-    )
-    ON CONFLICT (campanha_id, sku_codigo_fornecedor, volume_minimo) DO NOTHING
-    RETURNING id INTO v_novo_id;
-
-    IF v_novo_id IS NOT NULL THEN
-      v_novos_ids := array_append(v_novos_ids, v_novo_id);
-    END IF;
-  END LOOP;
-
-  -- Desativa o item original (marca como origem da expansão)
-  UPDATE promocao_item 
-  SET ativo = false,
-      mapeamento_qualidade = 'expandido_origem',
-      observacoes = COALESCE(observacoes, '') || 
-        ' [Item original — expandido em ' || array_length(v_novos_ids, 1) || ' variantes]'
-  WHERE id = p_item_id;
-
-  RETURN jsonb_build_object(
-    'status', 'expandido',
-    'item_id_original', p_item_id,
-    'variantes_criadas', array_length(v_novos_ids, 1),
-    'novos_ids', v_novos_ids
-  );
+  SELECT t.id, t.empresa, t.fornecedor_nome, t.status_envio_portal, t.portal_tentativas, t.portal_protocolo
+    FROM travados t;
 END;
 $$;
-
-
---
--- Name: FUNCTION expandir_promocao_item(p_item_id bigint); Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON FUNCTION public.expandir_promocao_item(p_item_id bigint) IS 'Transforma um item com múltiplas variantes em N itens (um por variante de embalagem). Cenários: 0 matches = marca nao_encontrado. 1 match = resolve in-place. N matches = cria N novos itens, desativa o original. Idempotente.';
 
 
 --
@@ -7168,6 +8451,7 @@ DECLARE
   v_novo_id bigint;
   v_usou_similaridade boolean := false;
   v_similar_max numeric;
+  v_candidatos jsonb := '[]'::jsonb;
 BEGIN
   SELECT pi.*, pc.empresa INTO v_item
   FROM promocao_item pi JOIN promocao_campanha pc ON pc.id = pi.campanha_id
@@ -7187,7 +8471,7 @@ BEGIN
   FROM listar_skus_por_codigo_fornecedor(v_item.empresa, v_item.sku_codigo_fornecedor);
 
   IF v_variantes_count = 0 THEN
-    SELECT MAX(similarity(op.descricao, v_item.sku_codigo_fornecedor))
+    SELECT MAX(extensions.similarity(op.descricao, v_item.sku_codigo_fornecedor))
     INTO v_similar_max
     FROM omie_products op
     WHERE LOWER(op.account) = LOWER(v_item.empresa) AND COALESCE(op.ativo, true) = true;
@@ -7198,7 +8482,7 @@ BEGIN
       FROM omie_products op
       WHERE LOWER(op.account) = LOWER(v_item.empresa)
         AND COALESCE(op.ativo, true) = true
-        AND similarity(op.descricao, v_item.sku_codigo_fornecedor) >= p_threshold_similaridade;
+        AND extensions.similarity(op.descricao, v_item.sku_codigo_fornecedor) >= p_threshold_similaridade;
     END IF;
   END IF;
 
@@ -7219,8 +8503,8 @@ BEGIN
       SELECT op.omie_codigo_produto, op.descricao, op.codigo INTO v_variante
       FROM omie_products op
       WHERE LOWER(op.account) = LOWER(v_item.empresa) AND COALESCE(op.ativo, true) = true
-        AND similarity(op.descricao, v_item.sku_codigo_fornecedor) >= p_threshold_similaridade
-      ORDER BY similarity(op.descricao, v_item.sku_codigo_fornecedor) DESC LIMIT 1;
+        AND extensions.similarity(op.descricao, v_item.sku_codigo_fornecedor) >= p_threshold_similaridade
+      ORDER BY extensions.similarity(op.descricao, v_item.sku_codigo_fornecedor) DESC LIMIT 1;
     ELSE
       SELECT omie_codigo_produto, descricao, codigo_interno AS codigo INTO v_variante
       FROM listar_skus_por_codigo_fornecedor(v_item.empresa, v_item.sku_codigo_fornecedor) LIMIT 1;
@@ -7249,10 +8533,17 @@ BEGIN
     FROM omie_products op
     WHERE LOWER(op.account) = LOWER(v_item.empresa) AND COALESCE(op.ativo, true) = true
       AND (CASE WHEN v_usou_similaridade 
-                THEN similarity(op.descricao, v_item.sku_codigo_fornecedor) >= p_threshold_similaridade
-                ELSE op.descricao ILIKE '%' || v_item.sku_codigo_fornecedor || '%' END)
+                THEN extensions.similarity(op.descricao, v_item.sku_codigo_fornecedor) >= p_threshold_similaridade
+                ELSE op.descricao ILIKE private.padrao_like_contem(v_item.sku_codigo_fornecedor) ESCAPE '\' END)
     ORDER BY op.descricao
   LOOP
+    IF v_item.volume_minimo IS NOT NULL THEN
+      v_candidatos := v_candidatos || jsonb_build_object(
+        'omie_codigo_produto', v_variante.omie_codigo_produto,
+        'descricao', v_variante.descricao,
+        'codigo_interno', v_variante.codigo_interno);
+      CONTINUE;
+    END IF;
     INSERT INTO promocao_item (
       campanha_id, sku_codigo_fornecedor, descricao_produto_fornecedor,
       sku_codigo_omie, mapeamento_qualidade, mapeamento_candidatos,
@@ -7274,6 +8565,32 @@ BEGIN
     END IF;
   END LOOP;
 
+  -- O UNIQUE (campanha_id, sku_codigo_fornecedor, volume_minimo) só admite N variantes com o código
+  -- do original enquanto volume_minimo é NULL (NULL não colide com NULL). Com volume preenchido,
+  -- cada variante colidiria com o próprio original e o ON CONFLICT engoliria as N. Não expande: o
+  -- item fica ativo, 'ambiguo', com os candidatos, para o mapeamento manual (que contorna o UNIQUE
+  -- com o sufixo #omie<id>).
+  IF v_item.volume_minimo IS NOT NULL THEN
+    UPDATE promocao_item
+    SET mapeamento_qualidade = 'ambiguo',
+        sku_codigo_omie = NULL,
+        mapeamento_candidatos = v_candidatos
+    WHERE id = p_item_id;
+    RETURN jsonb_build_object(
+      'status', 'ambiguo', 'item_id', p_item_id,
+      'motivo', 'volume_minimo_impede_expansao',
+      'total_matches', jsonb_array_length(v_candidatos),
+      'candidatos', v_candidatos,
+      'requer_revisao', true
+    );
+  END IF;
+
+  -- Nenhuma variante inserida: desativar o original o tiraria da campanha sem substituto.
+  IF cardinality(v_novos_ids) = 0 THEN
+    RAISE EXCEPTION 'expandir_promocao_item: nenhuma das % variantes do item % foi inserida; o original não foi desativado',
+      v_variantes_count, p_item_id;
+  END IF;
+
   UPDATE promocao_item 
   SET ativo = false, mapeamento_qualidade = 'expandido_origem',
       observacoes = COALESCE(observacoes, '') || 
@@ -7290,6 +8607,13 @@ BEGIN
   );
 END;
 $$;
+
+
+--
+-- Name: FUNCTION expandir_promocao_item(p_item_id bigint, p_threshold_similaridade numeric); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.expandir_promocao_item(p_item_id bigint, p_threshold_similaridade numeric) IS 'Mapeia um item de promoção para os SKUs Omie cuja descrição contém o código do fornecedor (LIKE literal, via listar_skus_por_codigo_fornecedor). 0 variantes: tenta similaridade (pg_trgm, >= p_threshold_similaridade, default 0,5); sem nada, marca nao_encontrado. 1 variante: resolve in-place (unico; unico_por_similaridade sai sem confirmar). N variantes: cria N itens irmãos e desativa o original; com volume_minimo preenchido não expande (o UNIQUE colidiria com o original) e marca ambiguo com os candidatos. Laço sem nenhuma inserção aborta. Issue #2665.';
 
 
 --
@@ -7725,6 +9049,13 @@ $$;
 
 
 --
+-- Name: FUNCTION farmer_bundle_recomendacoes_substituir(p_farmer_id uuid, p_run_id uuid, p_geracao_vista uuid, p_linhas jsonb, p_completude text, p_motivo text, p_insumos jsonb, p_head_visto uuid); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.farmer_bundle_recomendacoes_substituir(p_farmer_id uuid, p_run_id uuid, p_geracao_vista uuid, p_linhas jsonb, p_completude text, p_motivo text, p_insumos jsonb, p_head_visto uuid) IS 'Idem farmer_recomendacoes_substituir, no bundle. Corpo capturado do VIVO em prod pela migration 20260906164002 — captura-deriva-authz 2026-08-30.';
+
+
+--
 -- Name: farmer_escopo_invariante(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -8017,6 +9348,111 @@ COMMENT ON FUNCTION public.farmer_melhor_individual_por_cliente(p_farmer_id uuid
 
 
 --
+-- Name: farmer_melhores_individuais_por_cliente(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.farmer_melhores_individuais_por_cliente(p_farmer_id uuid) RETURNS jsonb
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+  WITH base AS (
+    SELECT r.customer_user_id, r.recommendation_type, r.product_id,
+           r.affinity_score, r.run_id, r.ordem, r.referencia_ambigua
+    FROM public.farmer_recommendations r
+    WHERE r.farmer_id = p_farmer_id
+      AND r.status = 'pendente'
+      -- fail-closed do #1800: sem score nao ha oferta, e ordenar por coluna toda-nula elegeria
+      -- um vencedor ARBITRARIO que a tela apresentaria como veredicto.
+      AND r.affinity_score IS NOT NULL
+  ),
+  grupo AS (
+    SELECT b.customer_user_id, b.recommendation_type,
+           count(DISTINCT b.product_id)                                 AS candidatos,
+           count(*) FILTER (WHERE b.ordem IS NULL)                      AS sem_ordem,
+           min(b.ordem)                                                 AS ordem_minima,
+           bool_or(coalesce(b.referencia_ambigua, b.ordem IS NOT NULL)) AS ambigua,
+           -- Geracoes DISTINTAS no grupo. O `+ (… IS NULL)` nao e decoracao: `count(DISTINCT)`
+           -- IGNORA NULL, entao [G1, NULL] passaria por coerente. A trigger trg_frec_exige_run_id
+           -- torna run_id nulo impossivel em `pendente` hoje — e e justamente por isso que a
+           -- checagem tem de ser explicita: quando a trigger cair, a falha tem de aparecer aqui
+           -- em vez de virar uma eleicao entre universos diferentes.
+           count(DISTINCT b.run_id)
+             + (count(*) FILTER (WHERE b.run_id IS NULL) > 0)::int      AS geracoes,
+           max(b.affinity_score)                                        AS affinity_score,
+           (array_agg(b.run_id ORDER BY b.run_id))[1]                   AS run_id_qualquer,
+           -- Os NOMES do grupo inteiro, montados na varredura que ja acontece. Eles saiam de
+           -- uma subquery CORRELACIONADA por grupo la embaixo, e o challenge (rodada 5) contou
+           -- o custo: 3.858 clientes x 5 recomendacoes = 7.716 grupos varrendo `base` uma vez
+           -- cada, ~149 milhoes de verificacoes — e o sensor arrastou isso para DENTRO da
+           -- transacao de gravacao, segurando os locks. `AS MATERIALIZED` no CTE externo nao
+           -- alcanca subquery interna: quem paga o correlacionado e o plano, nao o CTE.
+           jsonb_agg(DISTINCT b.product_id ORDER BY b.product_id)        AS todos_ids
+    FROM base b
+    GROUP BY 1, 2
+  ),
+  topo AS (
+    SELECT g.customer_user_id, g.recommendation_type,
+           count(DISTINCT b.product_id) AS no_topo,
+           jsonb_agg(DISTINCT b.product_id ORDER BY b.product_id) AS topo_ids
+    FROM grupo g
+    JOIN base b USING (customer_user_id, recommendation_type)
+    WHERE g.ordem_minima IS NOT NULL AND b.ordem = g.ordem_minima
+    GROUP BY 1, 2
+  ),
+  final AS (
+    SELECT g.customer_user_id, g.recommendation_type, g.candidatos, g.ordem_minima,
+           g.affinity_score,
+           -- Geracao INCOERENTE nao transporta run_id: mandar um dos dois esconderia a mistura
+           -- do proprio canario do leitor, que conta geracoes distintas EXIBIDAS.
+           CASE WHEN g.geracoes = 1 THEN g.run_id_qualquer END AS run_id,
+           CASE
+             WHEN g.ambigua                              THEN 'referencia_ambigua'
+             -- Rank so e comparavel DENTRO de uma geracao: `ordem 1` de G1 contra `ordem 2` de
+             -- G2 sao universos diferentes, e elegeria o primeiro sem que nada os tenha
+             -- comparado. O writer normal nao produz isso (ele substitui a geracao inteira),
+             -- mas NAO e invariante da tabela — a trigger exige run_id, nao geracao unica.
+             WHEN g.geracoes > 1
+               OR (g.candidatos >= 2 AND g.sem_ordem > 0) THEN 'ordem_indisponivel'
+             WHEN g.candidatos = 1                       THEN 'unico_registrado'
+             WHEN coalesce(t.no_topo, 2) > 1             THEN 'empatado'
+             ELSE                                             'eleito'
+           END AS situacao
+    FROM grupo g
+    LEFT JOIN topo t USING (customer_user_id, recommendation_type)
+  ),
+  -- Os arrays chegam PRONTOS ao SELECT externo — ele so escolhe QUAL, pelo estado.
+  nomeado AS (
+    SELECT f.*, g.todos_ids, t.topo_ids
+    FROM final f
+    JOIN grupo g USING (customer_user_id, recommendation_type)
+    LEFT JOIN topo t USING (customer_user_id, recommendation_type)
+  )
+  SELECT coalesce(
+           jsonb_agg(to_jsonb(m) ORDER BY m.customer_user_id, m.recommendation_type),
+           '[]'::jsonb)
+  FROM (
+    SELECT f.customer_user_id, f.recommendation_type, f.situacao, f.candidatos,
+           f.affinity_score, f.run_id,
+           -- `eleito` e `empatado` nomeiam o TOPO; os tres estados sem ordenacao confiavel
+           -- nomeiam o grupo INTEIRO — la nao existe topo que signifique alguma coisa.
+           CASE WHEN f.situacao IN ('eleito', 'empatado') THEN f.topo_ids ELSE f.todos_ids END
+             AS produtos,
+           -- Em `eleito` o topo tem exatamente UM elemento (é o que o estado significa), entao
+           -- o primeiro do array E o eleito — sem segunda varredura para descobrir isso.
+           CASE WHEN f.situacao = 'eleito' THEN f.topo_ids->>0 END AS produto_eleito
+    FROM nomeado f
+  ) m
+$$;
+
+
+--
+-- Name: FUNCTION farmer_melhores_individuais_por_cliente(p_farmer_id uuid); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.farmer_melhores_individuais_por_cliente(p_farmer_id uuid) IS 'Motor de bundles: a melhor oferta individual de cada cliente POR TIPO (cross_sell e up_sell disputavam a mesma coluna de score sem regra comercial — up vencia 186 de 186). Uma tupla jsonb = um snapshot MVCC, e o cap de 1.000 do PostgREST some por construcao. Identidade (`produtos`) e separada de eleicao (`produto_eleito`, nao-nulo <=> situacao eleito): a tela nomeia sempre, e afirma prioridade so quando o sinal decidiu. `situacao` tem 5 estados avaliados por PRECEDENCIA (referencia_ambigua > ordem_indisponivel > unico_registrado > empatado > eleito). `[]` = li e nao ha; NULL nunca sai daqui, e o caller trata NULL como FALHA. SECURITY INVOKER: frec_select_carteira segue sendo a unica fronteira.';
+
+
+--
 -- Name: farmer_rec_exige_run_id(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -8176,6 +9612,10 @@ DECLARE
   v_expiradas      integer;
   v_inseridas      integer;
   v_head_atual     uuid;
+  v_tipo_errado    integer;
+  v_eleitos        integer;
+  v_grupos         integer;
+  v_distribuicao   jsonb;
 BEGIN
   -- 1) Gate de MENSAGEM (a RLS é quem autoriza — ver cabeçalho).
   IF p_farmer_id IS NULL OR p_run_id IS NULL THEN
@@ -8252,13 +9692,30 @@ BEGIN
       USING ERRCODE = 'FG006';
   END IF;
 
+  -- 6-pre) TIPO JSON BRUTO das chaves novas — antes do cast, porque o cast NÃO recusa.
+  -- `jsonb_to_recordset` encaminha o valor para a função de entrada do tipo, e `boolean_in`
+  -- aceita "false", "off" e "0"; `int2in` aceita "3". Um produtor defeituoso gravaria uma
+  -- NEGATIVA EXPLÍCITA de ambiguidade — ou uma ordem — em vez de ser recusado, e um teste
+  -- que só experimenta "talvez" fica verde sem provar a exigência (achado do challenge).
+  SELECT count(*) INTO v_tipo_errado
+  FROM jsonb_array_elements(p_linhas) AS e(linha)
+  WHERE (e.linha ? 'ordem'              AND jsonb_typeof(e.linha->'ordem')              NOT IN ('number','null'))
+     OR (e.linha ? 'referencia_ambigua' AND jsonb_typeof(e.linha->'referencia_ambigua') NOT IN ('boolean','null'));
+
+  IF v_tipo_errado > 0 THEN
+    RAISE EXCEPTION '% linha(s) com ordem não-numérica ou referencia_ambigua não-booleana — nada foi expirado',
+      v_tipo_errado USING ERRCODE = 'FG007';
+  END IF;
+
   -- 6) VALIDAÇÃO ANTES DE MEXER (nada é expirado se o lote tem lixo).
   SELECT count(*) INTO v_invalidas
   FROM jsonb_to_recordset(p_linhas) AS r(
     customer_user_id        uuid,
     recommendation_type     text,
     product_id              uuid,
-    affinity_score          numeric
+    affinity_score          numeric,
+    ordem                   smallint,
+    referencia_ambigua      boolean
   )
   WHERE r.customer_user_id IS NULL
      OR r.product_id IS NULL
@@ -8271,10 +9728,14 @@ BEGIN
           r.affinity_score >= 0
           AND r.affinity_score < 'Infinity'::numeric
           AND r.affinity_score <> 'NaN'::numeric
-        );
+        )
+     -- `ordem` e OPCIONAL (o produtor legado nao a emite, e §6 aceita essa perda de
+     -- cobertura), mas quando VEM tem de ser rank: 0 e negativo nao sao posicao.
+     -- Nao ha teto aqui — `smallint` ja explodiu no cast antes desta linha.
+     OR (r.ordem IS NOT NULL AND r.ordem < 1);
 
   IF v_invalidas > 0 THEN
-    RAISE EXCEPTION '% de % linha(s) inválidas (cliente/produto/tipo ausente, ou afinidade nula/negativa/NaN/Infinita) — nada foi expirado',
+    RAISE EXCEPTION '% de % linha(s) inválidas (cliente/produto/tipo ausente, afinidade nula/negativa/NaN/Infinita, ou ordem < 1) — nada foi expirado',
       v_invalidas, v_total USING ERRCODE = 'FG007';
   END IF;
   -- 6-bis) ESCOPO DE CARTEIRA — o cliente do lote precisa ser DESTE farmer.
@@ -8375,6 +9836,7 @@ BEGIN
   INSERT INTO public.farmer_recommendations (
     farmer_id, customer_user_id, recommendation_type, product_id, current_product_id,
     p_ij, m_ij, lie, affinity_score, complexity_factor, cluster_volume_estimate,
+    ordem, referencia_ambigua,
     status, run_id
   )
   SELECT
@@ -8385,6 +9847,10 @@ BEGIN
     -- como fabricá-los de volta.
     NULL, NULL,
     r.affinity_score, coalesce(r.complexity_factor, 1), coalesce(r.cluster_volume_estimate, 1),
+    -- Sem coalesce NENHUM nos dois: NULL aqui significa "o produtor nao mediu", e um
+    -- default afirmaria medicao que ninguem fez (money-path §2). Quem le fecha a falha
+    -- (a RPC trata flag NULL com ordem preenchida como ambigua).
+    r.ordem, r.referencia_ambigua,
     'pendente', p_run_id
   FROM jsonb_to_recordset(p_linhas) AS r(
     customer_user_id        uuid,
@@ -8394,7 +9860,9 @@ BEGIN
     p_ij                    numeric,
     affinity_score          numeric,
     complexity_factor       numeric,
-    cluster_volume_estimate numeric
+    cluster_volume_estimate numeric,
+    ordem                   smallint,
+    referencia_ambigua      boolean
   );
   GET DIAGNOSTICS v_inseridas = ROW_COUNT;
 
@@ -8419,9 +9887,67 @@ BEGIN
     v_head_atual := p_head_visto;
   END IF;
 
+  -- ── O SENSOR DA DISTRIBUIÇÃO ───────────────────────────────────────────────────────────
+  --
+  -- A distribuição por situação NÃO é derivável do banco antes da entrega: a mudança de ordem
+  -- em memória (D3) altera QUAIS SKUs são persistidos, e o challenge executou o contraexemplo
+  -- (N=269, k=[9,9,9,10]: a ordem antiga persiste A/B/C e encontra empate, a nova persiste
+  -- D/A/B e encontra vencedor único). "Empate entre os produtos persistidos" não demonstra
+  -- ausência de vencedor entre os candidatos que o motor verá. Então ela é MEDIDA, aqui, sobre
+  -- o que acabou de ser gravado — e com DENOMINADOR, porque sem ele a fase seguinte volta a se
+  -- decidir por "ninguém reclamou", que é ausência de dado.
+  --
+  -- ⚠️ O universo é "grupos PENDENTES no instante da gravação", NÃO "eleições exibidas". Os dois
+  -- divergem sem concorrência nenhuma: um grupo `eleito` cujo único SKU saiu do catálogo ativo
+  -- conta como eleito aqui e vira `indisponivel` na tela, e o leitor pula cliente sem `profile`.
+  -- Chamar isto de "distribuição da tela" seria afirmar além do que ele mede (achado R5/1);
+  -- medir o exibido exige um sensor DEPOIS da projeção, que é outra entrega.
+  --
+  -- ⚠️ Reusa a RPC de LEITURA em vez de reimplementar a precedência dos 5 estados. Duas cópias
+  -- da mesma regra divergem no primeiro conserto que só uma recebe, e aí o sensor passa a medir
+  -- uma tela que não existe. A ordem em que as duas funções aparecem NESTE arquivo não importa:
+  -- plpgsql resolve a chamada em RUNTIME, e o harness prova a chamada EXECUTANDO.
+  --
+  -- Ela é SECURITY INVOKER e este writer também, então a `frec_select_carteira` continua sendo
+  -- a fronteira: o sensor conta exatamente o que este usuário poderia ver.
+  --
+  -- `AS MATERIALIZED` não é estilo: sem ele o planner pode INLINE o CTE e executar a RPC uma
+  -- vez por referência — três varreduras da carteira inteira (3.858 clientes na maior) para
+  -- produzir um número. Com ele a chamada acontece UMA vez e as três leituras são do resultado.
+  WITH grupos AS MATERIALIZED (
+    SELECT
+      j->>'recommendation_type' AS tipo,
+      j->>'situacao'            AS situacao
+    FROM jsonb_array_elements(public.farmer_melhores_individuais_por_cliente(p_farmer_id)) j
+  ),
+  por_chave AS (
+    SELECT tipo || ':' || situacao AS chave, count(*) AS n
+    FROM grupos GROUP BY 1
+  )
+  SELECT
+    (SELECT count(*) FROM grupos WHERE situacao = 'eleito'),
+    (SELECT count(*) FROM grupos),
+    -- `coalesce` para `{}`: carteira sem grupo nenhum devolve NULL do agregado, e NULL aqui
+    -- seria indistinguível de "o sensor não rodou" — a mesma confusão que o `[]` da RPC evita.
+    coalesce((SELECT jsonb_object_agg(chave, n) FROM por_chave), '{}'::jsonb)
+  INTO v_eleitos, v_grupos, v_distribuicao;
+
   PERFORM public.farmer_geracao_registrar(
     'cross_sell', p_farmer_id, p_run_id, 'linhas', v_inseridas,
-    p_completude, p_motivo, p_insumos, v_head_atual
+    p_completude, p_motivo,
+    -- `||` do lado DIREITO: a chave do sensor nunca sobrescreve o que o produtor mediu, e um
+    -- `p_insumos` nulo vira `{}` para que a evidência nova não se perca junto com a ausência.
+    coalesce(p_insumos, '{}'::jsonb) || jsonb_build_object(
+      'individuais_eleicao', jsonb_build_object(
+        -- Inerte por construção (`ok:true`, sem `pisoCobertura`): mede sem julgar, como as
+        -- demais evidências do §13 — degradar o head por causa dela travaria a fase 2.
+        'ok', true,
+        'n', v_eleitos,
+        'esperado', v_grupos,
+        'distribuicao', v_distribuicao
+      )
+    ),
+    v_head_atual
   );
 
   RETURN jsonb_build_object(
@@ -8431,6 +9957,13 @@ BEGIN
   );
 END;
 $$;
+
+
+--
+-- Name: FUNCTION farmer_recomendacoes_substituir(p_farmer_id uuid, p_run_id uuid, p_geracao_vista uuid, p_linhas jsonb, p_completude text, p_motivo text, p_insumos jsonb, p_head_visto uuid); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.farmer_recomendacoes_substituir(p_farmer_id uuid, p_run_id uuid, p_geracao_vista uuid, p_linhas jsonb, p_completude text, p_motivo text, p_insumos jsonb, p_head_visto uuid) IS 'Guard de escopo de carteira: FOR SHARE em farmer_client_scores + FG009 quando farmer_id IS DISTINCT FROM p_farmer_id. Exige UPDATE em farmer_client_scores para authenticated (SECURITY INVOKER). Corpo capturado do VIVO em prod pela migration 20260906164002 — captura-deriva-authz 2026-08-30.';
 
 
 --
@@ -8472,9 +10005,9 @@ CREATE TABLE public.fin_contas_pagar (
     data_previsao date,
     valor_documento numeric(15,2) DEFAULT 0 NOT NULL,
     valor_pago numeric(15,2) DEFAULT 0,
-    valor_desconto numeric(15,2) DEFAULT 0,
-    valor_juros numeric(15,2) DEFAULT 0,
-    valor_multa numeric(15,2) DEFAULT 0,
+    valor_desconto numeric(15,2),
+    valor_juros numeric(15,2),
+    valor_multa numeric(15,2),
     saldo numeric(15,2) GENERATED ALWAYS AS ((valor_documento - COALESCE(valor_pago, (0)::numeric))) STORED,
     status_titulo text DEFAULT 'ABERTO'::text,
     categoria_codigo text,
@@ -8491,6 +10024,27 @@ CREATE TABLE public.fin_contas_pagar (
     updated_at timestamp with time zone DEFAULT now(),
     CONSTRAINT fin_contas_pagar_company_check CHECK ((company = ANY (ARRAY['oben'::text, 'colacor'::text, 'colacor_sc'::text])))
 );
+
+
+--
+-- Name: COLUMN fin_contas_pagar.valor_desconto; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.fin_contas_pagar.valor_desconto IS 'NÃO INGERIDO. Ver fin_contas_receber.valor_desconto.';
+
+
+--
+-- Name: COLUMN fin_contas_pagar.valor_juros; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.fin_contas_pagar.valor_juros IS 'NÃO INGERIDO. Ver fin_contas_receber.valor_desconto.';
+
+
+--
+-- Name: COLUMN fin_contas_pagar.valor_multa; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.fin_contas_pagar.valor_multa IS 'NÃO INGERIDO. Ver fin_contas_receber.valor_desconto.';
 
 
 --
@@ -8567,9 +10121,9 @@ CREATE TABLE public.fin_contas_receber (
     data_previsao date,
     valor_documento numeric(15,2) DEFAULT 0 NOT NULL,
     valor_recebido numeric(15,2) DEFAULT 0,
-    valor_desconto numeric(15,2) DEFAULT 0,
-    valor_juros numeric(15,2) DEFAULT 0,
-    valor_multa numeric(15,2) DEFAULT 0,
+    valor_desconto numeric(15,2),
+    valor_juros numeric(15,2),
+    valor_multa numeric(15,2),
     saldo numeric(15,2) GENERATED ALWAYS AS ((valor_documento - COALESCE(valor_recebido, (0)::numeric))) STORED,
     status_titulo text DEFAULT 'ABERTO'::text,
     categoria_codigo text,
@@ -8586,6 +10140,27 @@ CREATE TABLE public.fin_contas_receber (
     updated_at timestamp with time zone DEFAULT now(),
     CONSTRAINT fin_contas_receber_company_check CHECK ((company = ANY (ARRAY['oben'::text, 'colacor'::text, 'colacor_sc'::text])))
 );
+
+
+--
+-- Name: COLUMN fin_contas_receber.valor_desconto; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.fin_contas_receber.valor_desconto IS 'NÃO INGERIDO. Desconto é atributo da BAIXA (sub-tag `recebimento`), não do título; `ListarContasReceber` não o devolve. NULL = desconhecido. Ver docs/historico/desconto-juros-multa-do-titulo-nao-existem-no-omie.md';
+
+
+--
+-- Name: COLUMN fin_contas_receber.valor_juros; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.fin_contas_receber.valor_juros IS 'NÃO INGERIDO. Ver fin_contas_receber.valor_desconto.';
+
+
+--
+-- Name: COLUMN fin_contas_receber.valor_multa; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.fin_contas_receber.valor_multa IS 'NÃO INGERIDO. Ver fin_contas_receber.valor_desconto.';
 
 
 --
@@ -9201,7 +10776,7 @@ BEGIN
     WHEN 'fin_contas_receber'        THEN (v_rec->>'data_emissao')::date
     WHEN 'fin_contas_pagar'          THEN (v_rec->>'data_emissao')::date
     WHEN 'fin_movimentacoes'         THEN (v_rec->>'data_movimento')::date
-    WHEN 'fin_categoria_dre_mapping' THEN current_date
+    WHEN 'fin_categoria_dre_mapping' THEN (now() AT TIME ZONE 'America/Sao_Paulo')::date
     WHEN 'fin_orcamento'             THEN make_date((v_rec->>'ano')::int, (v_rec->>'mes')::int, 1)
     WHEN 'fin_eventos_recorrentes'   THEN (v_rec->>'inicio')::date
     WHEN 'fin_eventos_eventuais'     THEN (v_rec->>'data_prevista')::date
@@ -9276,7 +10851,7 @@ BEGIN
   END IF;
 
   FOR i IN 0..12 LOOP
-    v_week_start := date_trunc('week', CURRENT_DATE)::date + (i * 7);
+    v_week_start := date_trunc('week', now() AT TIME ZONE 'America/Sao_Paulo')::date + (i * 7);
     v_week_end := v_week_start + 6;
     SELECT COALESCE(SUM(valor_documento - COALESCE(valor_recebido, 0)), 0) INTO entradas_previstas
     FROM fin_contas_receber
@@ -9441,7 +11016,12 @@ BEGIN
                    -- [2026-08-29] `sync_state_saude` estava faltando desde 2026-08-24: o check
                    -- existia, alertava, e o RESUMO do e-mail nao o listava. Entra junto.
                    'sync_state_saude','analytics_outbox_transporte',
-                   'analytics_outbox_trigger');  -- [VIGIA tint 2026-06-15] +A no resumo (B fica fora)
+                   'analytics_outbox_trigger',
+                   -- [2026-09-18] sync_reprocess_saude entra no RESUMO junto com o push: o
+                   -- sync_state_saude ficou 5 dias alertando fora do resumo por esta omissao.
+                   'sync_reprocess_saude',
+                   -- [2026-09-30] vendas_empurradas_sem_gemeo entra no RESUMO junto com o push.
+                   'vendas_empurradas_sem_gemeo');  -- [VIGIA tint 2026-06-15] +A no resumo (B fica fora)
 
   v_titulo := '[Watchdog'
               || CASE WHEN (v_ativos + v_dh_ativos) > 0
@@ -10873,7 +12453,7 @@ $$;
 -- Name: gerar_pedidos_oportunidade_ciclo(text, date, text[]); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.gerar_pedidos_oportunidade_ciclo(p_empresa text DEFAULT 'OBEN'::text, p_data_ciclo date DEFAULT CURRENT_DATE, p_cenarios text[] DEFAULT ARRAY['promo_flat'::text, 'promo_volume'::text, 'promo_e_aumento'::text, 'aumento_apenas'::text]) RETURNS TABLE(pedidos_gerados integer, skus_incluidos integer, valor_total numeric, economia_bruta numeric, cenarios_cobertos text[])
+CREATE FUNCTION public.gerar_pedidos_oportunidade_ciclo(p_empresa text DEFAULT 'OBEN'::text, p_data_ciclo date DEFAULT ((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date, p_cenarios text[] DEFAULT ARRAY['promo_flat'::text, 'promo_volume'::text, 'promo_e_aumento'::text, 'aumento_apenas'::text]) RETURNS TABLE(pedidos_gerados integer, skus_incluidos integer, valor_total numeric, economia_bruta numeric, cenarios_cobertos text[])
     LANGUAGE plpgsql
     SET search_path TO 'public', 'pg_temp'
     AS $$
@@ -10930,7 +12510,26 @@ BEGIN
             JOIN pedido_compra_sugerido pcsn ON pcsn.id = pcin.pedido_id
             WHERE pcsn.empresa = p_empresa
               AND COALESCE(pcsn.tipo_ciclo, 'normal') = 'normal'
-              AND pcsn.status IN ('pendente_aprovacao','bloqueado_guardrail','aprovado_aguardando_disparo','falha_envio','disparado','concluido_recebido')
+              AND pcsn.status IN ('pendente_aprovacao','bloqueado_guardrail','aprovado_aguardando_disparo','falha_envio','disparado','disparado_simulado','concluido_recebido')
+              -- 'disparado_simulado' = PO REAL no Omie: o dry_run da edge disparar-pedidos-aprovados chama
+              -- IncluirPedCompra. Espelha o em_transito do motor (20260925225004); fora da lista, o SKU desse
+              -- PO voltava a ser ofertado aqui = compra dupla antecipada.
+              -- [FANTASMA] espelha a guarda da RPC normal (migration 20260802120000, pedido #1276):
+              -- erro TERMINAL do portal significa que NADA foi colocado no fornecedor, logo NAO ha
+              -- compra para duplicar — e bloquear a oferta so queima a economia da promocao/aumento.
+              -- Fail-CLOSED: basta UM sinal de que algo chegou (protocolo do portal ou n. do pedido
+              -- no Omie) para o pedido seguir bloqueando. Comprar duas vezes queima caixa; aqui o
+              -- downside e MAIOR que na RPC normal, porque a qtde de oportunidade e antecipada.
+              -- IS NOT DISTINCT FROM, nao "=": negacao e NULL-blind. Com "=" e a coluna NULL o
+              -- predicado inteiro vira NULL, NOT(NULL) e NULL, e o pedido SAUDAVEL desaparece do
+              -- NOT EXISTS — destravando a oferta de TODO SKU em pedido aprovado (compra dupla em
+              -- escala, nao so no caso fantasma). Pego pelo db/test-oportunidade-erro-terminal.sh.
+              AND NOT (
+                    pcsn.status = 'aprovado_aguardando_disparo'
+                AND pcsn.status_envio_portal IS NOT DISTINCT FROM 'erro_nao_retentavel'
+                AND pcsn.portal_protocolo IS NULL
+                AND pcsn.omie_pedido_compra_numero IS NULL
+              )
               AND pcsn.data_ciclo >= (p_data_ciclo - INTERVAL '7 days')
               AND pcin.sku_codigo_omie = voeh.sku_codigo_omie::text
           )
@@ -10946,7 +12545,7 @@ BEGIN
       o.fornecedor_nome,
       NULL,  -- oportunidade não respeita grupo; é um pedido único por fornecedor
       p_data_ciclo,
-      (p_data_ciclo + TIME '18:00')::timestamptz,
+      ((p_data_ciclo + TIME '18:00') AT TIME ZONE 'America/Sao_Paulo'),
       SUM(o.qtde_oportunidade * o.preco_item_eoq),
       COUNT(*),
       'pendente_aprovacao',
@@ -11004,7 +12603,26 @@ BEGIN
           JOIN pedido_compra_sugerido pcsn ON pcsn.id = pcin.pedido_id
           WHERE pcsn.empresa = p_empresa
             AND COALESCE(pcsn.tipo_ciclo, 'normal') = 'normal'
-            AND pcsn.status IN ('pendente_aprovacao','bloqueado_guardrail','aprovado_aguardando_disparo','falha_envio','disparado','concluido_recebido')
+            AND pcsn.status IN ('pendente_aprovacao','bloqueado_guardrail','aprovado_aguardando_disparo','falha_envio','disparado','disparado_simulado','concluido_recebido')
+            -- 'disparado_simulado' = PO REAL no Omie: o dry_run da edge disparar-pedidos-aprovados chama
+            -- IncluirPedCompra. Espelha o em_transito do motor (20260925225004); fora da lista, o SKU desse
+            -- PO voltava a ser ofertado aqui = compra dupla antecipada.
+            -- [FANTASMA] espelha a guarda da RPC normal (migration 20260802120000, pedido #1276):
+            -- erro TERMINAL do portal significa que NADA foi colocado no fornecedor, logo NAO ha
+            -- compra para duplicar — e bloquear a oferta so queima a economia da promocao/aumento.
+            -- Fail-CLOSED: basta UM sinal de que algo chegou (protocolo do portal ou n. do pedido
+            -- no Omie) para o pedido seguir bloqueando. Comprar duas vezes queima caixa; aqui o
+            -- downside e MAIOR que na RPC normal, porque a qtde de oportunidade e antecipada.
+            -- IS NOT DISTINCT FROM, nao "=": negacao e NULL-blind. Com "=" e a coluna NULL o
+            -- predicado inteiro vira NULL, NOT(NULL) e NULL, e o pedido SAUDAVEL desaparece do
+            -- NOT EXISTS — destravando a oferta de TODO SKU em pedido aprovado (compra dupla em
+            -- escala, nao so no caso fantasma). Pego pelo db/test-oportunidade-erro-terminal.sh.
+            AND NOT (
+                  pcsn.status = 'aprovado_aguardando_disparo'
+              AND pcsn.status_envio_portal IS NOT DISTINCT FROM 'erro_nao_retentavel'
+              AND pcsn.portal_protocolo IS NULL
+              AND pcsn.omie_pedido_compra_numero IS NULL
+            )
             AND pcsn.data_ciclo >= (p_data_ciclo - INTERVAL '7 days')
             AND pcin.sku_codigo_omie = o.sku_codigo_omie::text
         );
@@ -11046,7 +12664,7 @@ $$;
 -- Name: gerar_pedidos_sugeridos_ciclo(text, date); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.gerar_pedidos_sugeridos_ciclo(p_empresa text DEFAULT 'OBEN'::text, p_data_ciclo date DEFAULT CURRENT_DATE) RETURNS TABLE(pedidos_gerados integer, skus_incluidos integer, valor_total_ciclo numeric, bloqueados integer)
+CREATE FUNCTION public.gerar_pedidos_sugeridos_ciclo(p_empresa text DEFAULT 'OBEN'::text, p_data_ciclo date DEFAULT ((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date) RETURNS TABLE(pedidos_gerados integer, skus_incluidos integer, valor_total_ciclo numeric, bloqueados integer)
     LANGUAGE plpgsql
     SET search_path TO 'public', 'pg_temp'
     SET statement_timeout TO '120s'
@@ -11112,7 +12730,9 @@ BEGIN
     JOIN pedido_compra_sugerido pcs2 ON pcs2.id = pci.pedido_id
     WHERE pcs2.empresa = p_empresa
       AND (
-        (pcs2.status IN ('aprovado_aguardando_disparo','disparado','concluido_recebido') AND pcs2.data_ciclo >= (p_data_ciclo - INTERVAL '7 days')
+        -- [SIMULADO] 'disparado_simulado' É pedido real: o dry_run da edge chama IncluirPedCompra no Omie.
+        -- Fora desta lista ele sumia do "a caminho" (o 2º ramo exige nº Omie NULL) → compra dupla.
+        (pcs2.status IN ('aprovado_aguardando_disparo','disparado','disparado_simulado','concluido_recebido') AND pcs2.data_ciclo >= (p_data_ciclo - INTERVAL '7 days')
          -- [FANTASMA] Erro TERMINAL do portal NÃO é estoque a caminho. 'erro_nao_retentavel' só é alcançado
          -- com efetivarAttempted=false — o resultado AMBÍGUO tem estado PRÓPRIO (aceito_portal_sem_protocolo
          -- / indeterminado_requer_conciliacao), então este status significa "nada foi colocado no fornecedor".
@@ -11120,9 +12740,14 @@ BEGIN
          -- abaixo do ponto de pedido ficaram 7 dias sem sugestão, 3 deles classe A).
          -- As 3 guardas são fail-CLOSED: basta UM sinal de que algo chegou (protocolo do portal ou nº do
          -- pedido no Omie) para seguir contando. Subcomprar é recuperável; comprar duas vezes queima caixa.
+         -- IS NOT DISTINCT FROM, não "=": negação é NULL-blind. Com "=" e status_envio_portal NULL o
+         -- predicado interno vira NULL, NOT(NULL) é NULL, e o pedido SAUDÁVEL some desta CTE — o motor
+         -- recompraria TODO SKU em pedido aprovado ainda não disparado (compra dupla em escala, não só no
+         -- caso fantasma). Com IS NOT DISTINCT FROM, NULL dá false → NOT(false) → segue contando.
+         -- Pego pelo db/test-em-transito-erro-terminal.sh (S7 + falsificação F5).
          AND NOT (
            pcs2.status = 'aprovado_aguardando_disparo'
-           AND pcs2.status_envio_portal = 'erro_nao_retentavel'
+           AND pcs2.status_envio_portal IS NOT DISTINCT FROM 'erro_nao_retentavel'
            AND pcs2.portal_protocolo IS NULL
            AND pcs2.omie_pedido_compra_numero IS NULL
          ))
@@ -11175,6 +12800,18 @@ BEGIN
     SELECT DISTINCT sku_omie::text AS sku
     FROM sku_fornecedor_externo
     WHERE empresa = p_empresa AND ativo = TRUE AND sku_portal IS NOT NULL AND btrim(sku_portal) <> ''
+  ),
+  -- [EMBALAGEM PORTAL] fator_conversao = unidades do PORTAL por unidade do OMIE (0,2 = litro → balde 5 L).
+  -- Só fator ATIVO, finito e > 0, DIFERENTE de 1, chaveado por (empresa, fornecedor, sku) — a UNIQUE da tabela.
+  -- O join adiante exige fornecedor_nome = o da linha (sp.fornecedor_nome): precisão > recall — de-para de
+  -- OUTRO fornecedor nunca decide a embalagem desta compra. Fator ≤ 0/NaN/Infinity é ignorado aqui (status quo em L);
+  -- a edge, que tem efeito externo, é quem lança (fail-closed na fronteira).
+  portal_fator AS (
+    SELECT sku_omie::text AS sku, fornecedor_nome, fator_conversao AS fator
+    FROM sku_fornecedor_externo
+    WHERE empresa = p_empresa AND ativo = TRUE
+      AND fator_conversao IS NOT NULL AND fator_conversao > 0 AND fator_conversao <> 1
+      AND fator_conversao < 1e9   -- UMA guarda de finitude: NaN e Infinity ordenam ACIMA de todo número em numeric (NaN > 0 é TRUE)
   ),
   -- [P0-a] Saldo físico do Omie por SKU (account-aware; 1 linha/SKU, a mais recente). As 2 fontes de estoque
   -- DIVERGEM: inventory_position tem alguns galões (WP87/WP04), sku_estoque_atual tem outros (WP01). GREATEST
@@ -11281,7 +12918,8 @@ BEGIN
            -- o estoque da OBEN vive em 'vendas'; PRESENÇA da linha de inv (isl.sku), p/ casar o gate de grupo.
            ((sea.sku_codigo_omie IS NULL OR COALESCE(sea.fonte_sync, '') = 'cold_start_seed') AND isl.sku IS NULL) AS linha_nao_confirmada,
            ge.grupo_nao_confirmado,
-           sea.fonte_sync AS linha_fonte_sync
+           sea.fonte_sync AS linha_fonte_sync,
+           pf.fator AS fator_portal   -- [EMBALAGEM PORTAL] NULL = sem de-para com fator ≠ 1 p/ este fornecedor
     FROM sku_parametros sp
     LEFT JOIN sku_grupo_producao sg ON sg.empresa = sp.empresa AND sg.sku_codigo_omie = sp.sku_codigo_omie::text
     LEFT JOIN sku_estoque_atual sea ON sea.empresa = sp.empresa AND sea.sku_codigo_omie = sp.sku_codigo_omie::text
@@ -11298,6 +12936,7 @@ BEGIN
     LEFT JOIN grupo_estoque ge ON ge.grupo_id = ea.grupo_id
     LEFT JOIN embalagem_escolhida ee ON ee.grupo_id = ea.grupo_id
     LEFT JOIN membro_elegivel me_anc ON me_anc.grupo_id = ea.grupo_id AND me_anc.sku = sp.sku_codigo_omie::text
+    LEFT JOIN portal_fator pf ON pf.sku = sp.sku_codigo_omie::text AND pf.fornecedor_nome = sp.fornecedor_nome
     WHERE sp.empresa = p_empresa
       AND sp.habilitado_reposicao_automatica = TRUE
       AND COALESCE(sp.tipo_reposicao, 'automatica') = 'automatica'
@@ -11332,7 +12971,9 @@ BEGIN
                    COALESCE(sea.estoque_fisico, 0) + COALESCE(sea.estoque_pendente_entrada, 0) + COALESCE(et.qtde, 0)) <= sp.ponto_pedido
   ),
   -- ── DECISÃO: troca p/ galão só se ESTRITAMENTE mais barato/base e a âncora também é elegível ──
-  skus_necessitando AS (
+  -- [EMBALAGEM PORTAL] esta CTE decide em unidades-Omie (L) ou em embalagens do grupo; o múltiplo do portal
+  -- entra na CTE seguinte (skus_necessitando), que é a que os INSERTs leem.
+  skus_decididos AS (
     SELECT b.empresa,
            CASE WHEN trocou THEN b.sku_escolhido ELSE b.ancora_sku END AS sku_codigo_omie,
            CASE WHEN trocou
@@ -11376,9 +13017,13 @@ BEGIN
            CASE WHEN b.grupo_nao_confirmado THEN 'grupo_membro_seed_only'
                 WHEN b.linha_nao_confirmada THEN 'linha_seed_only'
                 ELSE NULL END AS motivo,
-           b.linha_fonte_sync
+           b.linha_fonte_sync,
+           b.fator_embalagem
     FROM (
       SELECT b0.*,
+             -- [EMBALAGEM PORTAL] só SKU SEM grupo de equivalência: no grupo, qtde_final já é nº de embalagens
+             -- (QT↔GL) e o de-para dos concentrados tem fator 1 — aplicar aqui compraria N× a mais.
+             CASE WHEN b0.equiv_grupo IS NULL THEN b0.fator_portal ELSE NULL END AS fator_embalagem,
              ( b0.sku_escolhido IS NOT NULL
                AND b0.sku_escolhido <> b0.ancora_sku
                AND b0.ancora_custo_base IS NOT NULL                 -- âncora elegível (comparável)
@@ -11413,6 +13058,38 @@ BEGIN
         AND COALESCE(pcs9.tipo_ciclo, 'normal') <> 'normal'
         AND pci9.sku_codigo_omie = CASE WHEN b.trocou THEN b.sku_escolhido ELSE b.ancora_sku END
     )
+  ),
+  -- ── [EMBALAGEM PORTAL] múltiplo da embalagem do fornecedor, ANTES da aprovação ──────────────────
+  -- SKU em LITRO no Omie comprado em BALDE (fator 0,2): 36 L → ceil(7,2) = 8 BB → 40 L. É o número que a
+  -- edge enviar-pedido-portal-sayerlack gravaria de qualquer forma no envio (qtdeFisicaOmie(qtdePortal()));
+  -- antecipar faz o comprador aprovar o que será comprado. Fórmula espelho do helper qtde-portal.ts:
+  --   trim_scale(round(GREATEST(1, ceil(round(q × fator, 6))) / fator, 6))   -- trim_scale: grava 40, não 40.000000
+  -- GREATEST(1, …) = o max(1, …) de qtdePortal: necessidade > 0 nunca vira ZERO embalagens (fator minúsculo faria
+  -- round(q×f,6)=0 → ceil 0 → a linha sumiria do pedido em silêncio — Codex P1-5). Domínio: 1/fator tem de ser
+  -- inteiro em unidades Omie (0,2 → 5 L); com 1/3,6 o resultado 3,6 L seria integerizado depois e a edge leria
+  -- 4 L como 2 galões (7,2 L) — só cadastre fator cujo inverso é inteiro.
+  -- round6 ANTES do ceil: 36 × (1/3,6) em numeric = 10,000000000000000000008 → ceil 11 = um galão a mais,
+  -- sem desfazer. round6 DEPOIS: 3 ÷ 0,3333333333333333 = 9,0000000000000009 → 9 (paridade com o TS).
+  -- qtde_sem_teto recebe a MESMA conversão: capada ⇔ qtde_final < qtde_sem_teto compara na MESMA unidade
+  -- (cap 27 L→30 L vs 36 L→40 L segue capada; cap 36→40 vs 38→40 deixa de sê-lo porque FISICAMENTE são os
+  -- mesmos 8 baldes — o cap não mudou a compra). Linha capada a ZERO fica 0 (o CASE exige > 0).
+  -- qtde_sugerida NÃO muda (rastro em L; a tela mostra "36 → 40" com a causa certa via fator_embalagem_portal).
+  skus_necessitando AS (
+    SELECT sd.empresa, sd.sku_codigo_omie, sd.sku_descricao, sd.fornecedor_nome, sd.grupo_codigo,
+           sd.ponto_pedido, sd.estoque_maximo, sd.estoque_fisico, sd.estoque_a_caminho, sd.estoque_efetivo,
+           sd.qtde_sugerida,
+           CASE WHEN sd.fator_embalagem IS NOT NULL AND sd.qtde_final > 0
+                THEN trim_scale(round(GREATEST(1, ceil(round(sd.qtde_final * sd.fator_embalagem, 6))) / sd.fator_embalagem, 6))
+                ELSE sd.qtde_final END AS qtde_final,
+           CASE WHEN sd.fator_embalagem IS NOT NULL AND sd.qtde_sem_teto > 0
+                THEN trim_scale(round(GREATEST(1, ceil(round(sd.qtde_sem_teto * sd.fator_embalagem, 6))) / sd.fator_embalagem, 6))
+                ELSE sd.qtde_sem_teto END AS qtde_sem_teto,
+           sd.cap_teto_ancora, sd.teto_dias_linha, sd.demanda_diaria_linha, sd.classe_abc_efetiva,
+           sd.preco_unitario, sd.primeira_compra, sd.horario_corte_pedido, sd.valor_maximo_mensal, sd.delta_max_perc,
+           sd.suprimido, sd.motivo, sd.linha_fonte_sync,
+           CASE WHEN sd.fator_embalagem IS NOT NULL AND sd.qtde_final > 0 THEN sd.fator_embalagem ELSE NULL END
+             AS fator_embalagem_portal
+    FROM skus_decididos sd
   ),
   -- [GATE estoque-não-confirmado] LOG dos suprimidos ANTES de inserir o pedido — senão vira subcompra silenciosa.
   log_ins AS (
@@ -11452,7 +13129,7 @@ BEGIN
       num_parcelas, dias_parcelas, condicao_origem
     )
     SELECT sn.empresa, sn.fornecedor_nome, sn.grupo_codigo, p_data_ciclo,
-           (p_data_ciclo + MAX(sn.horario_corte_pedido))::timestamptz,
+           ((p_data_ciclo + MAX(sn.horario_corte_pedido)) AT TIME ZONE 'America/Sao_Paulo'),
            COALESCE(SUM(sn.qtde_final * sn.preco_unitario), 0), COUNT(*),   -- [PRECO-AUSENTE] valor_total é NOT NULL; item.valor_linha segue NULL (honesto)
            'pendente_aprovacao', '000', 'À Vista', 1, NULL, 'default_a_vista'
     FROM skus_inseriveis sn
@@ -11462,14 +13139,18 @@ BEGIN
   INSERT INTO pedido_compra_item (
     pedido_id, sku_codigo_omie, sku_descricao, estoque_atual, ponto_pedido, estoque_maximo,
     qtde_sugerida, qtde_final, preco_unitario, valor_linha, primeira_compra,
-    estoque_fisico, estoque_a_caminho, qtde_sem_teto, teto_cobertura_aplicado
+    estoque_fisico, estoque_a_caminho, qtde_sem_teto, teto_cobertura_aplicado, fator_embalagem_portal
   )
   SELECT pfg.id, sn.sku_codigo_omie, sn.sku_descricao, sn.estoque_efetivo, sn.ponto_pedido, sn.estoque_maximo,
          sn.qtde_sugerida, sn.qtde_final, sn.preco_unitario, sn.qtde_final * sn.preco_unitario, sn.primeira_compra,
-         sn.estoque_fisico, sn.estoque_a_caminho, sn.qtde_sem_teto, (sn.qtde_final < sn.qtde_sem_teto)
+         sn.estoque_fisico, sn.estoque_a_caminho, sn.qtde_sem_teto, (sn.qtde_final < sn.qtde_sem_teto),
+         sn.fator_embalagem_portal
   FROM skus_inseriveis sn
   JOIN pedidos_por_fornecedor_grupo pfg
-    ON pfg.fornecedor_nome = sn.fornecedor_nome AND COALESCE(pfg.grupo_codigo,'') = COALESCE(sn.grupo_codigo,'');
+    -- [GRUPO-NULL] a MESMA partição do GROUP BY acima (que separa NULL de ''). COALESCE(...,'') fundia os
+    -- dois: com um SKU de grupo NULL e outro de grupo '' no mesmo fornecedor, cada item casava com os 2
+    -- cabeçalhos (4 itens / 16 un em vez de 2 / 8).
+    ON pfg.fornecedor_nome = sn.fornecedor_nome AND pfg.grupo_codigo IS NOT DISTINCT FROM sn.grupo_codigo;
 
   SELECT COUNT(*), COALESCE(SUM(num_skus),0), COALESCE(SUM(valor_total),0)
   INTO v_pedidos, v_skus, v_valor
@@ -11686,7 +13367,7 @@ $$;
 -- Name: get_customer_margin_summary(); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.get_customer_margin_summary() RETURNS TABLE(customer_user_id uuid, itens_com_custo bigint, itens_sem_custo bigint, receita_com_custo numeric, custo_conhecido numeric, gross_margin_pct numeric)
+CREATE FUNCTION public.get_customer_margin_summary() RETURNS TABLE(customer_user_id uuid, itens_com_custo bigint, itens_sem_custo bigint, receita_com_custo numeric, custo_conhecido numeric, gross_margin_pct numeric, itens_sem_preco bigint, itens_sem_custo_conhecido bigint)
     LANGUAGE sql STABLE SECURITY DEFINER
     SET search_path TO 'pg_catalog', 'pg_temp'
     AS $$
@@ -11695,7 +13376,9 @@ CREATE FUNCTION public.get_customer_margin_summary() RETURNS TABLE(customer_user
          m.itens_ignorados,
          m.receita_computada,
          m.custo_computado,
-         m.margem_pct
+         m.margem_pct,
+         m.itens_sem_preco,
+         m.itens_sem_custo
     FROM private.margem_cliente_agregada() m;
 $$;
 
@@ -11704,7 +13387,7 @@ $$;
 -- Name: FUNCTION get_customer_margin_summary(); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.get_customer_margin_summary() IS 'Margem bruta por cliente para o componente de margem do health score. Desde a reconciliacao (2026-07-21) e uma PROJECAO de private.margem_cliente_agregada() — nao tem calculo proprio. Nomes de coluna preservados para a edge calculate-scores. ausente<>zero: cliente sem item computavel devolve NULL, nunca 0. SECURITY DEFINER + EXECUTE so para service_role.';
+COMMENT ON FUNCTION public.get_customer_margin_summary() IS 'Margem bruta por cliente para o componente de margem do health score. Desde a reconciliacao (2026-07-21) e uma PROJECAO de private.margem_cliente_agregada() — nao tem calculo proprio. Nomes das 6 primeiras colunas preservados para a edge calculate-scores. ATENCAO: itens_sem_custo (col. 2) e nome LEGADO e traz itens_ignorados (excluidos por QUALQUER motivo); os nomes honestos sao itens_sem_preco e itens_sem_custo_conhecido, acrescentados no fim, e eles SE SOBREPOEM entre si. ausente<>zero: cliente sem item computavel devolve NULL, nunca 0. SECURITY DEFINER + EXECUTE so para service_role.';
 
 
 --
@@ -11762,6 +13445,13 @@ DECLARE v_full boolean;
 BEGIN
   IF auth.uid() IS NULL THEN
     RAISE EXCEPTION 'Acesso negado: não autenticado' USING ERRCODE = '42501';
+  END IF;
+  -- Saude de dados e do STAFF: todo consumidor do app ja e de staff (useDataHealth; o badge ainda filtra
+  -- master/gestor). Sem este gate, qualquer sessao logada, cliente inclusive, lia via /rpc a message dos
+  -- 31 checks, e a de vendas_empurradas_sem_gemeo traz conta e valor (achado Codex C1, 2026-10-05).
+  IF NOT (public.has_role(auth.uid(), 'employee'::public.app_role)
+          OR public.has_role(auth.uid(), 'master'::public.app_role)) THEN
+    RAISE EXCEPTION 'Acesso negado: requer perfil staff' USING ERRCODE = '42501';
   END IF;
   v_full := COALESCE(public.pode_ver_carteira_completa(auth.uid()), false);
   RETURN QUERY
@@ -11858,7 +13548,7 @@ BEGIN
       WHERE oi.customer_user_id = p_customer_user_id
         AND oi.omie_codigo_produto = v_codigo
         AND so.account = ANY(v_accounts)
-        AND so.status IN ('faturado','importado','separacao','enviado')  -- allowlist POSITIVA
+        AND so.status NOT IN ('cancelado','rascunho','pendente','orcamento')  -- universo canônico (src/lib/farmer/universo-pedidos.ts)
         AND so.omie_pedido_id IS NOT NULL
         AND so.deleted_at IS NULL
     ),
@@ -11877,8 +13567,16 @@ BEGIN
       WHERE a.data_real = (SELECT data_real FROM melhor_data)
     )
     SELECT
-      CASE WHEN sum(quantity) > 0
-           THEN sum(unit_price * quantity) / sum(quantity)
+      -- ⚠️ As duas somas do PRECO sao FILTRADAS pelas linhas com preco utilizavel; a
+      -- quantidade da ancora (linha de baixo) NAO e — sao medidas diferentes.
+      -- Sem o FILTER no DENOMINADOR, uma linha sem preco DILUI a media: duas linhas do
+      -- mesmo SKU/dia, quantidade 1 cada, precos 100 e NULL, davam 100/2 = 50. Um preco
+      -- que ninguem praticou, que depois passa pelo guard positivo e alimenta p_req,
+      -- markup e a classificacao de defasagem. [P1 do challenge Codex]
+      -- `> 0` e nao `IS NOT NULL`: preco zero informado tambem nao e preco praticado.
+      CASE WHEN sum(quantity) FILTER (WHERE unit_price > 0) > 0
+           THEN sum(unit_price * quantity) FILTER (WHERE unit_price > 0)
+                / sum(quantity) FILTER (WHERE unit_price > 0)
            ELSE NULL END,
       sum(quantity),
       (SELECT data_real FROM melhor_data),
@@ -12162,6 +13860,13 @@ END; $$;
 
 
 --
+-- Name: FUNCTION get_preco_cockpit(p_itens jsonb); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.get_preco_cockpit(p_itens jsonb) IS 'DOIS gates: execucao (employee OR master -> 42501) e projecao numerica (private.cap_custo_ler). Corpo capturado do VIVO em prod pela migration 20260906164001 — captura-deriva-authz 2026-08-30.';
+
+
+--
 -- Name: get_public_tool_history(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -12283,17 +13988,17 @@ BEGIN
 
   SELECT array_agg(oi.unit_price ORDER BY so.order_date_kpi DESC) INTO v_precos_cli
     FROM public.order_items oi JOIN public.sales_orders so ON so.id = oi.sales_order_id
-   WHERE so.account = v_account AND so.deleted_at IS NULL
+   WHERE so.account = v_account AND so.deleted_at IS NULL AND so.status NOT IN ('cancelado','rascunho','pendente','orcamento')
      AND oi.product_id = p_product AND oi.customer_user_id = p_customer
-     AND oi.unit_price > 0 AND so.order_date_kpi >= current_date - interval '180 days';
+     AND oi.unit_price > 0 AND so.order_date_kpi >= (now() AT TIME ZONE 'America/Sao_Paulo')::date - interval '180 days';
 
   WITH base AS (
     SELECT oi.unit_price, dense_rank() OVER (ORDER BY oi.customer_user_id) AS c_ord
       FROM public.order_items oi JOIN public.sales_orders so ON so.id = oi.sales_order_id
-     WHERE so.account = v_account AND so.deleted_at IS NULL
+     WHERE so.account = v_account AND so.deleted_at IS NULL AND so.status NOT IN ('cancelado','rascunho','pendente','orcamento')
        AND oi.product_id = p_product AND oi.customer_user_id <> p_customer
        AND oi.unit_price > 0 AND oi.quantity BETWEEN v_qty_lo AND v_qty_hi
-       AND so.order_date_kpi >= current_date - interval '180 days'
+       AND so.order_date_kpi >= (now() AT TIME ZONE 'America/Sao_Paulo')::date - interval '180 days'
   )
   SELECT jsonb_agg(jsonb_build_object('preco', unit_price, 'c', c_ord)) INTO v_comparaveis FROM base;
 
@@ -12355,7 +14060,7 @@ BEGIN
 
     SELECT oi.product_id INTO v_product_id
       FROM public.order_items oi JOIN public.sales_orders so ON so.id = oi.sales_order_id
-     WHERE so.account = v_account AND so.deleted_at IS NULL
+     WHERE so.account = v_account AND so.deleted_at IS NULL AND so.status NOT IN ('cancelado','rascunho','pendente','orcamento')
        AND oi.customer_user_id = p_customer AND oi.omie_codigo_produto = v_codigo
        AND oi.product_id IS NOT NULL
      ORDER BY so.order_date_kpi DESC NULLS LAST, so.created_at DESC NULLS LAST, oi.id DESC
@@ -12370,7 +14075,7 @@ BEGIN
     SELECT oi.unit_price, so.order_date_kpi, oi.quantity
       INTO v_preco_atual, v_preco_atual_at, v_qty_preco
       FROM public.order_items oi JOIN public.sales_orders so ON so.id = oi.sales_order_id
-     WHERE so.account = v_account AND so.deleted_at IS NULL
+     WHERE so.account = v_account AND so.deleted_at IS NULL AND so.status NOT IN ('cancelado','rascunho','pendente','orcamento')
        AND oi.customer_user_id = p_customer AND oi.product_id = v_product_id
        AND oi.unit_price > 0
      ORDER BY so.order_date_kpi DESC NULLS LAST, so.created_at DESC NULLS LAST, oi.id DESC
@@ -12889,6 +14594,13 @@ END; $$;
 
 
 --
+-- Name: FUNCTION get_tint_price(p_formula_id uuid); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.get_tint_price(p_formula_id uuid) IS 'Gate de custo = private.cap_custo_ler (master ou employee estrategico/super_admin). Corpo capturado do VIVO em prod pela migration 20260906164001 — captura-deriva-authz 2026-08-30. Ver docs/historico/deriva-de-corpo-prod-a-frente-do-repo.md.';
+
+
+--
 -- Name: get_tint_prices(uuid[]); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -12934,6 +14646,13 @@ $$;
 
 
 --
+-- Name: FUNCTION get_tint_prices(p_formula_ids uuid[]); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.get_tint_prices(p_formula_ids uuid[]) IS 'Gate de custo = private.cap_custo_ler, dentro do CTE staff AS MATERIALIZED. Corpo capturado do VIVO em prod pela migration 20260906164001 — captura-deriva-authz 2026-08-30.';
+
+
+--
 -- Name: get_ultimos_precos_cliente(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -12950,9 +14669,10 @@ BEGIN
     COALESCE(so.order_date_kpi, (so.created_at AT TIME ZONE 'America/Sao_Paulo')::date) AS ultimo_praticado_em
   FROM public.order_items oi JOIN public.sales_orders so ON so.id = oi.sales_order_id
   WHERE oi.customer_user_id = p_customer AND oi.customer_user_id = so.customer_user_id
-    AND so.deleted_at IS NULL AND COALESCE(so.status, '') NOT IN ('cancelado', 'orcamento')
+    AND so.deleted_at IS NULL AND so.status NOT IN ('cancelado','rascunho','pendente','orcamento')
     AND oi.unit_price > 0 AND oi.product_id IS NOT NULL
-    AND COALESCE(so.order_date_kpi, (so.created_at AT TIME ZONE 'America/Sao_Paulo')::date) <= current_date
+    -- anti-futuro contra o hoje de SP: o "hoje" da sessão UTC da prod já é amanhã das 21:00 às 23:59 BRT
+    AND COALESCE(so.order_date_kpi, (so.created_at AT TIME ZONE 'America/Sao_Paulo')::date) <= (now() AT TIME ZONE 'America/Sao_Paulo')::date
   ORDER BY oi.product_id, COALESCE(so.order_date_kpi, (so.created_at AT TIME ZONE 'America/Sao_Paulo')::date) DESC,
            so.created_at DESC, oi.created_at DESC, oi.id DESC;
 END; $$;
@@ -13120,6 +14840,8 @@ CREATE FUNCTION public.get_whatsapp_proposta_cotacao(p_customer_user_id uuid, p_
       JOIN public.sales_orders so ON so.id = oi.sales_order_id
      WHERE oi.customer_user_id = p_customer_user_id
        AND so.account = p_account
+       AND so.status NOT IN ('cancelado','rascunho','pendente','orcamento')
+       AND so.deleted_at IS NULL
        AND oi.omie_codigo_produto = ANY(p_skus)
        AND oi.unit_price > 0
        AND oi.unit_price <> 'NaN'::numeric
@@ -13299,6 +15021,8 @@ BEGIN
          portal_proximo_retry_em = now() + interval '15 minutes'
    WHERE id = p_pedido_id
      AND COALESCE(status_envio_portal, 'nao_aplicavel') <> 'enviando_portal'
+     AND status IN ('aprovado_aguardando_disparo', 'disparado', 'falha_envio')
+     AND portal_recusa_motivo IS NULL
   RETURNING true INTO v_claimed;
   RETURN COALESCE(v_claimed, false);
 END;
@@ -13552,14 +15276,14 @@ BEGIN
   END IF;
   RETURN QUERY
     SELECT so.id, so.customer_user_id, so.total, so.status,
-           COALESCE(so.order_date_kpi, so.created_at::date) AS data, so.items
+           COALESCE(so.order_date_kpi, (so.created_at AT TIME ZONE 'America/Sao_Paulo')::date) AS data, so.items
     FROM sales_orders so
     WHERE lower(so.account) = lower(p_account)
       AND so.deleted_at IS NULL
       AND so.status NOT IN ('cancelado','rascunho','orcamento')
-      AND COALESCE(so.order_date_kpi, so.created_at::date) >= current_date - 60
+      AND COALESCE(so.order_date_kpi, (so.created_at AT TIME ZONE 'America/Sao_Paulo')::date) >= (now() AT TIME ZONE 'America/Sao_Paulo')::date - 60
       AND NOT EXISTS (SELECT 1 FROM picking_tasks pt WHERE pt.sales_order_id = so.id)
-    ORDER BY COALESCE(so.order_date_kpi, so.created_at::date) DESC
+    ORDER BY COALESCE(so.order_date_kpi, (so.created_at AT TIME ZONE 'America/Sao_Paulo')::date) DESC
     LIMIT 100;
 END $$;
 
@@ -13582,7 +15306,7 @@ CREATE FUNCTION public.listar_skus_por_codigo_fornecedor(p_empresa text, p_codig
     AND COALESCE(op.ativo, true) = true
     AND p_codigo_fornecedor IS NOT NULL
     AND TRIM(p_codigo_fornecedor) <> ''
-    AND op.descricao ILIKE '%' || p_codigo_fornecedor || '%'
+    AND op.descricao ILIKE private.padrao_like_contem(p_codigo_fornecedor) ESCAPE '\'
   ORDER BY op.descricao;
 $$;
 
@@ -13707,10 +15431,11 @@ BEGIN
     FROM public.order_items oi JOIN public.sales_orders so ON so.id = oi.sales_order_id
     LEFT JOIN public.cliente_tier_preco ctp ON ctp.company = so.account AND ctp.customer_user_id = so.customer_user_id
     LEFT JOIN public.omie_products op ON op.omie_codigo_produto = oi.omie_codigo_produto AND op.account = so.account
-    WHERE so.deleted_at IS NULL AND COALESCE(so.status, '') NOT IN ('cancelado', 'orcamento')
+    WHERE so.deleted_at IS NULL AND so.status NOT IN ('cancelado','rascunho','pendente','orcamento')
       AND so.omie_numero_pedido IS NOT NULL AND so.omie_numero_pedido::text <> ''
       AND so.account IN ('oben', 'colacor')
-      AND COALESCE(so.order_date_kpi, (so.created_at AT TIME ZONE 'America/Sao_Paulo')::date) >= current_date - p_dias
+      -- janela de p_dias dias de SP contada do hoje de SP: a da sessão UTC da prod perdia o dia mais antigo das 21:00 às 23:59 BRT
+      AND COALESCE(so.order_date_kpi, (so.created_at AT TIME ZONE 'America/Sao_Paulo')::date) >= (now() AT TIME ZONE 'America/Sao_Paulo')::date - p_dias
       AND oi.unit_price > 0
   ),
   avaliado AS (
@@ -13752,21 +15477,21 @@ begin
     select id, descricao, codigo, account
     from omie_products
     where coalesce(ativo, true) = true
-      and (descricao ilike '%' || trim(p_termo) || '%' or codigo ilike '%' || trim(p_termo) || '%')
+      and (descricao ilike private.padrao_like_contem(trim(p_termo)) escape '\' or codigo ilike private.padrao_like_contem(trim(p_termo)) escape '\')
     order by descricao
     limit 5
   ),
   compras as (
     select oi.customer_user_id,
            count(distinct oi.sales_order_id) as n_pedidos,
-           max(coalesce(so.order_date_kpi, so.created_at::date)) as ultima_compra,
+           max(so.order_date_kpi) as ultima_compra,
            sum(oi.quantity * oi.unit_price) as valor_12m
     from order_items oi
     join sales_orders so on so.id = oi.sales_order_id
     join prods p on p.id = oi.product_id
-    where so.status not in ('cancelado','rascunho','pendente')
+    where so.status not in ('cancelado','rascunho','pendente','orcamento')
       and so.deleted_at is null
-      and coalesce(so.order_date_kpi, so.created_at::date) >= current_date - interval '12 months'
+      and so.order_date_kpi >= (now() at time zone 'America/Sao_Paulo')::date - interval '12 months'
     group by oi.customer_user_id
   ),
   visiveis as (
@@ -13774,7 +15499,13 @@ begin
     where v_full or carteira_visivel_para(c.customer_user_id, v_uid)
   ),
   top50 as (
-    select * from visiveis order by valor_12m desc limit 50
+    -- NULLS LAST e OBRIGATORIO desde que order_items.unit_price virou nullable
+    -- (20260905225613): `sum(quantity * unit_price)` devolve NULL quando NENHUM item do
+    -- cliente tem preco conhecido, e o default do Postgres em DESC e NULLS **FIRST** —
+    -- medido: `ORDER BY v DESC` sobre (1,NULL,5) devolve NULL,5,1. Sem isto, o cliente
+    -- de quem NAO SE SABE a receita encabecaria o top-50 de melhoria, invertendo a
+    -- ordem que a tela usa para decidir quem visitar. "Nao sei" nao e "o maior".
+    select * from visiveis order by valor_12m desc nulls last limit 50
   )
   select jsonb_build_object(
     'produtos_casados', (select coalesce(jsonb_agg(jsonb_build_object(
@@ -13784,7 +15515,7 @@ begin
         'n_pedidos', t.n_pedidos,
         'ultima_compra', t.ultima_compra,
         'valor_12m', round(t.valor_12m::numeric, 2)
-      ) order by t.valor_12m desc), '[]'::jsonb)
+      ) order by t.valor_12m desc nulls last), '[]'::jsonb)
       from top50 t join profiles pr on pr.user_id = t.customer_user_id),
     'total_clientes_visiveis', (select count(*) from visiveis),
     'escopo', case when v_full then 'todos' else 'minha_carteira' end
@@ -13831,7 +15562,7 @@ begin
     select id, descricao, codigo, familia, account
     from omie_products
     where coalesce(ativo, true) = true
-      and (descricao ilike '%' || trim(p_termo) || '%' or codigo ilike '%' || trim(p_termo) || '%')
+      and (descricao ilike private.padrao_like_contem(trim(p_termo)) escape '\' or codigo ilike private.padrao_like_contem(trim(p_termo)) escape '\')
     order by descricao
     limit 5
   ),
@@ -14102,48 +15833,68 @@ CREATE FUNCTION public.pedido_compra_split(p_pedido_id bigint, p_chunk_size inte
     SET search_path TO 'public', 'pg_temp'
     AS $$
 DECLARE
-  v_status text;
-  v_split_parent bigint;
-  v_itens_total integer;
-  v_total_chunks integer;
-  v_chunk_idx integer;
-  v_filho_id bigint;
+  v_status        text;
+  v_split_parent  bigint;
+  v_selo_pai      text;
+  v_portal_pai    text;
+  v_itens_total   integer;
+  v_total_chunks  integer;
+  v_chunk_idx     integer;
+  v_filho_id      bigint;
 BEGIN
   IF auth.uid() IS NOT NULL THEN
     IF NOT (public.has_role(auth.uid(), 'employee'::app_role) OR public.has_role(auth.uid(), 'master'::app_role)) THEN
       RAISE EXCEPTION 'Acesso negado: requer perfil staff' USING ERRCODE = '42501';
     END IF;
   END IF;
-
   IF p_chunk_size < 1 THEN
     RAISE EXCEPTION 'chunk_size deve ser >= 1';
   END IF;
 
-  SELECT status, split_parent_id INTO v_status, v_split_parent
-  FROM public.pedido_compra_sugerido
-  WHERE id = p_pedido_id
-  FOR UPDATE;
-
+  SELECT status, split_parent_id, aprovacao_selo, COALESCE(status_envio_portal, 'nao_aplicavel')
+    INTO v_status, v_split_parent, v_selo_pai, v_portal_pai
+    FROM public.pedido_compra_sugerido WHERE id = p_pedido_id FOR UPDATE;
   IF NOT FOUND THEN
     RAISE EXCEPTION 'Pedido % não encontrado', p_pedido_id;
   END IF;
-
   IF v_status <> 'aprovado_aguardando_disparo' THEN
     RAISE EXCEPTION 'Pedido % com status=% não pode ser dividido (esperado: aprovado_aguardando_disparo)', p_pedido_id, v_status;
   END IF;
-
   IF v_split_parent IS NOT NULL THEN
     RAISE EXCEPTION 'Pedido % já é filho de um split (parent=%)', p_pedido_id, v_split_parent;
   END IF;
 
-  SELECT count(*) INTO v_itens_total FROM public.pedido_compra_item WHERE pedido_id = p_pedido_id;
+  -- P0-1 (challenge Codex): o lock do pai serializa as transações, mas sem LER o status do
+  -- PORTAL o predicado fica incompleto. Sequência que duplicava pedido no fornecedor:
+  --   claim marca `enviando_portal` (NÃO mexe no status principal) → a edge lê os itens em
+  --   memória → o split pega o lock DEPOIS, vê só `aprovado_aguardando_disparo`, move os itens e
+  --   cria filhos aprovados → a edge envia o PAI com o payload que tinha → os filhos também
+  --   ficam elegíveis ⇒ PO do pai + POs dos filhos.
+  -- Fail-closed: só divide quem NUNCA tocou o portal.
+  IF v_portal_pai <> 'nao_aplicavel' THEN
+    RAISE EXCEPTION 'Pedido % está em status_envio_portal=% — dividir agora pode duplicar o pedido no fornecedor',
+      p_pedido_id, v_portal_pai USING ERRCODE = 'SA009';
+  END IF;
 
+  -- P1-3 (challenge Codex): `v_selo_pai IS NOT NULL` provava que o pai FOI selado um dia, não que
+  -- ele continua íntegro. Como a M1 ainda não tem o trigger de trava, uma edição posterior pode
+  -- ter invalidado o pai — e o split abençoaria o estado alterado gerando selos VÁLIDOS para os
+  -- filhos. Reusar snapshot exige o selo do pai BATENDO agora.
+  IF v_selo_pai IS NOT NULL AND v_selo_pai IS DISTINCT FROM public.reposicao_selo_itens(p_pedido_id) THEN
+    RAISE EXCEPTION 'Pedido % foi alterado depois de aprovado (selo não confere) — cancele e aguarde o ciclo',
+      p_pedido_id USING ERRCODE = 'SA010';
+  END IF;
+
+  SELECT count(*) INTO v_itens_total FROM public.pedido_compra_item WHERE pedido_id = p_pedido_id;
   IF v_itens_total <= p_chunk_size THEN
     RETURN;
   END IF;
 
-  v_total_chunks := ceil(v_itens_total::numeric / p_chunk_size)::integer;
+  -- Mover item de pedido SELADO é escrita em coluna selada: o split é o único
+  -- caminho legítimo. O GUC só é honrado para postgres/service_role (M2).
+  PERFORM set_config('reposicao.selo_bypass', 'on', true);
 
+  v_total_chunks := ceil(v_itens_total::numeric / p_chunk_size)::integer;
   FOR v_chunk_idx IN 1..v_total_chunks LOOP
     INSERT INTO public.pedido_compra_sugerido (
       empresa, fornecedor_nome, grupo_codigo, data_ciclo,
@@ -14160,7 +15911,7 @@ BEGIN
       p.empresa, p.fornecedor_nome, p.grupo_codigo, p.data_ciclo,
       p.horario_geracao, p.horario_corte_planejado,
       0, 0,
-      'aprovado_aguardando_disparo',
+      'pendente_aprovacao',
       p.condicao_pagamento_codigo, p.condicao_pagamento_descricao,
       p.num_parcelas, p.dias_parcelas, p.condicao_origem,
       p.aprovado_em, p.aprovado_por,
@@ -14172,24 +15923,27 @@ BEGIN
 
     WITH lote_ids AS (
       SELECT id FROM public.pedido_compra_item
-      WHERE pedido_id = p_pedido_id
-      ORDER BY id
-      LIMIT p_chunk_size
+       WHERE pedido_id = p_pedido_id
+       ORDER BY id
+       LIMIT p_chunk_size
     )
     UPDATE public.pedido_compra_item pci
-    SET pedido_id = v_filho_id
-    FROM lote_ids
-    WHERE pci.id = lote_ids.id;
+       SET pedido_id = v_filho_id
+      FROM lote_ids
+     WHERE pci.id = lote_ids.id;
 
     UPDATE public.pedido_compra_sugerido f
-    SET
-      num_skus = (SELECT count(*) FROM public.pedido_compra_item WHERE pedido_id = f.id),
-      valor_total = COALESCE(
-        (SELECT sum(COALESCE(valor_linha, qtde_final * preco_unitario, 0))
-         FROM public.pedido_compra_item WHERE pedido_id = f.id),
-        0
-      )
-    WHERE f.id = v_filho_id;
+       SET num_skus = (SELECT count(*) FROM public.pedido_compra_item WHERE pedido_id = f.id),
+           valor_total = COALESCE(
+             (SELECT sum(COALESCE(valor_linha, qtde_final * preco_unitario, 0))
+                FROM public.pedido_compra_item WHERE pedido_id = f.id), 0)
+     WHERE f.id = v_filho_id;
+
+    PERFORM public.reposicao_selar_pedido(v_filho_id, v_selo_pai IS NOT NULL);
+
+    UPDATE public.pedido_compra_sugerido
+       SET status = 'aprovado_aguardando_disparo', atualizado_em = now()
+     WHERE id = v_filho_id;
 
     filho_id := v_filho_id;
     lote := v_chunk_idx;
@@ -14203,6 +15957,508 @@ BEGIN
     split_total = v_total_chunks,
     atualizado_em = now()
   WHERE id = p_pedido_id;
+END;
+$$;
+
+
+--
+-- Name: pedido_total_liquido_classificar(timestamp with time zone, uuid[]); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.pedido_total_liquido_classificar(p_corte timestamp with time zone, p_ids uuid[] DEFAULT NULL::uuid[]) RETURNS TABLE(sales_order_id uuid, account text, mes date, classe text, total numeric, bruto numeric, liquido numeric)
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+  WITH lin AS (
+    SELECT oi.sales_order_id                                        AS so_id,
+           count(*) FILTER (WHERE oi.desconto_valor IS NULL)        AS n_nao_apurada,
+           -- `IS NOT TRUE` e não `NOT (...)`: um predicado NULL (preço ausente) conta como
+           -- inválido. `NOT NULL` é NULL, e o FILTER o descartaria como se a linha fosse sã.
+           -- `< 'Infinity'` fecha NaN e +Infinity de uma vez: em numeric, NaN ordena ACIMA de
+           -- Infinity, e `'NaN' > 0` é TRUE (money-path.md §2).
+           count(*) FILTER (WHERE (
+                 oi.quantity   >  0 AND oi.quantity   < 'Infinity'::numeric
+             AND oi.unit_price >= 0 AND oi.unit_price < 'Infinity'::numeric
+           ) IS NOT TRUE)                                           AS n_base_invalida,
+           count(*) FILTER (WHERE oi.desconto_valor IS NOT NULL AND (
+                 oi.desconto_valor >= 0 AND oi.desconto_valor < 'Infinity'::numeric
+             AND oi.desconto_valor <= oi.quantity * oi.unit_price + 0.005
+           ) IS NOT TRUE)                                           AS n_desconto_invalido,
+           sum(oi.quantity * oi.unit_price)                         AS bruto_cru,
+           sum(oi.quantity * oi.unit_price - oi.desconto_valor)     AS liquido_cru,
+           sum(oi.desconto_valor)                                   AS desconto_cru
+      FROM public.order_items oi
+     WHERE p_ids IS NULL OR oi.sales_order_id = ANY (p_ids)
+     GROUP BY oi.sales_order_id
+  ),
+  cab AS (
+    SELECT so.id                                                    AS so_id,
+           so.account                                               AS conta,
+           -- O mesmo dia que a `customer_metrics_mv` usa para janelar o faturamento. `::timestamp`
+           -- para o date_trunc não passar por timestamptz e depender do TimeZone da sessão.
+           date_trunc('month', COALESCE(so.order_date_kpi,
+             (so.created_at AT TIME ZONE 'America/Sao_Paulo')::date)::timestamp)::date AS mes,
+           so.total                                                 AS total_atual,
+           so.subtotal                                              AS subtotal_atual,
+           so.discount                                              AS discount_atual,
+           so.updated_at                                            AS atualizado_em
+      FROM public.sales_orders so
+     WHERE so.omie_pedido_id IS NOT NULL
+       AND (p_ids IS NULL OR so.id = ANY (p_ids))
+  ),
+  medido AS (
+    SELECT c.so_id, c.conta, c.mes, c.total_atual, c.subtotal_atual, c.discount_atual, c.atualizado_em,
+           l.so_id IS NOT NULL                                      AS tem_linha,
+           l.n_nao_apurada, l.n_base_invalida, l.n_desconto_invalido, l.desconto_cru,
+           round(l.bruto_cru, 2)                                    AS bruto_r,
+           round(l.liquido_cru, 2)                                  AS liquido_r
+      FROM cab c
+      LEFT JOIN lin l ON l.so_id = c.so_id
+  )
+  SELECT m.so_id,
+         m.conta,
+         m.mes,
+         CASE
+           WHEN NOT m.tem_linha
+             THEN 'sem_linha'
+           WHEN (m.total_atual >= 0 AND m.total_atual < 'Infinity'::numeric
+                 AND m.subtotal_atual = m.total_atual AND m.discount_atual = 0) IS NOT TRUE
+             THEN 'cabecalho_fora_do_padrao'
+           WHEN m.n_base_invalida > 0 OR m.n_desconto_invalido > 0
+             THEN 'linha_invalida'
+           WHEN m.n_nao_apurada > 0
+             THEN 'nao_apurado'
+           -- Desconto de ½ centavo por linha sobre base de ½ centavo arredonda o pedido para −0,01
+           -- no numeric (empate longe do zero); o TS daria −0. Total negativo não se publica.
+           WHEN m.liquido_r < 0
+             THEN 'linha_invalida'
+           WHEN abs(m.total_atual - m.bruto_r) > 0.01 AND abs(m.total_atual - m.liquido_r) > 0.01
+             THEN 'divergente'
+           WHEN m.desconto_cru = 0
+             THEN 'sem_desconto'
+           WHEN abs(m.total_atual - m.bruto_r) <= 0.01 AND abs(m.total_atual - m.liquido_r) <= 0.01
+             THEN 'ambiguo'
+           WHEN abs(m.total_atual - m.bruto_r) <= 0.01 AND p_corte IS NOT NULL AND m.atualizado_em >= p_corte
+             THEN 'tocado_pos_corte'
+           WHEN abs(m.total_atual - m.bruto_r) <= 0.01
+             THEN 'convertivel'
+           ELSE 'ja_liquido'
+         END,
+         m.total_atual,
+         m.bruto_r,
+         m.liquido_r
+    FROM medido m;
+$$;
+
+
+--
+-- Name: pedido_total_liquido_converter(boolean, timestamp with time zone, text[], date, date, integer, boolean); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.pedido_total_liquido_converter(p_aplicar boolean, p_corte timestamp with time zone, p_contas text[] DEFAULT NULL::text[], p_mes_de date DEFAULT NULL::date, p_mes_ate date DEFAULT NULL::date, p_limite integer DEFAULT 5000, p_exigir_mes_completo boolean DEFAULT true) RETURNS jsonb
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_mes_de         date := date_trunc('month', p_mes_de::timestamp)::date;
+  v_mes_ate        date := date_trunc('month', p_mes_ate::timestamp)::date;
+  v_lote           uuid := gen_random_uuid();
+  v_escopo         jsonb;
+  v_elegiveis      uuid[];
+  v_n_elegiveis    integer;
+  v_soma_prevista  numeric;
+  v_por_mes        jsonb;
+  v_bloqueados     jsonb;
+  v_travados       uuid[];
+  v_coerentes      uuid[] := '{}';
+  v_incoerentes    uuid[] := '{}';
+  v_id             uuid;
+  v_n_alvo         integer;
+  v_n_escritos     integer;
+  v_n_registrados  integer;
+  v_escritos       uuid[];
+  v_soma_mudanca   numeric;
+  v_escritos_mes   jsonb;
+  v_ruins          integer;
+BEGIN
+  IF p_aplicar IS NULL OR p_exigir_mes_completo IS NULL THEN
+    RAISE EXCEPTION 'pedido_total_liquido_converter: p_aplicar e p_exigir_mes_completo nao podem ser NULL'
+      USING ERRCODE = '22023';
+  END IF;
+  IF p_corte IS NULL OR p_corte > now() THEN
+    RAISE EXCEPTION 'pedido_total_liquido_converter: p_corte tem de ser um instante passado em que a v1.6 ainda servia (veio %)', p_corte
+      USING ERRCODE = '22023';
+  END IF;
+  IF p_contas IS NOT NULL AND (cardinality(p_contas) = 0 OR NOT (p_contas <@ ARRAY['oben', 'colacor'])) THEN
+    RAISE EXCEPTION 'pedido_total_liquido_converter: p_contas tem de ser NULL (todas) ou um subconjunto nao vazio de {oben, colacor} (veio %)', p_contas
+      USING ERRCODE = '22023';
+  END IF;
+  IF v_mes_de IS NOT NULL AND v_mes_ate IS NOT NULL AND v_mes_de > v_mes_ate THEN
+    RAISE EXCEPTION 'pedido_total_liquido_converter: p_mes_de (%) depois de p_mes_ate (%)', v_mes_de, v_mes_ate
+      USING ERRCODE = '22023';
+  END IF;
+  -- NULL é recusado, não lido como "sem limite": `LIMIT NULL` no Postgres remove o limite.
+  IF p_limite IS NULL OR p_limite < 1 OR p_limite > 50000 THEN
+    RAISE EXCEPTION 'pedido_total_liquido_converter: p_limite fora de [1, 50000] (veio %)', p_limite
+      USING ERRCODE = '22023';
+  END IF;
+
+  IF p_aplicar THEN
+    IF NOT pg_try_advisory_xact_lock(hashtext('pedido_total_liquido_converter')) THEN
+      RAISE EXCEPTION 'pedido_total_liquido_converter: outra conversao esta em curso'
+        USING ERRCODE = '55P03';
+    END IF;
+  END IF;
+
+  v_escopo := jsonb_build_object(
+    'contas',              to_jsonb(p_contas),
+    'mes_de',              to_char(v_mes_de, 'YYYY-MM'),
+    'mes_ate',             to_char(v_mes_ate, 'YYYY-MM'),
+    'exigir_mes_completo', p_exigir_mes_completo,
+    'excecoes_ativas',     (SELECT count(*) FROM public.pedido_total_liquido_excecao)
+  );
+
+  WITH c AS MATERIALIZED (
+    -- Exclusao NOMINAL: o pedido listado em `pedido_total_liquido_excecao` sai do universo ANTES de
+    -- tudo, e isso lhe da as duas propriedades de uma vez — nao conta no `n_nao_apurado` que bloqueia
+    -- o mes, e nunca entra em `elegivel`, porque sua classe nunca foi 'convertivel'. A exclusao deixa
+    -- de CONSERTAR o pedido; nao lhe fabrica desconto (`ausente != zero`): ele segue com cabecalho
+    -- bruto na tela, visivel e nao mentido.
+    SELECT z.*
+      FROM public.pedido_total_liquido_classificar(p_corte, NULL) z
+     WHERE NOT EXISTS (SELECT 1
+                         FROM public.pedido_total_liquido_excecao x
+                        WHERE x.sales_order_id = z.sales_order_id)
+  ),
+  mes_estado AS (
+    SELECT c.account, c.mes,
+           count(*) FILTER (WHERE c.classe = 'convertivel')    AS n_convertivel,
+           count(*) FILTER (WHERE c.classe = 'nao_apurado')    AS n_nao_apurado,
+           count(*) FILTER (WHERE c.classe = 'linha_invalida') AS n_linha_invalida
+      FROM c
+     GROUP BY c.account, c.mes
+  ),
+  no_escopo AS (
+    SELECT m.*
+      FROM mes_estado m
+     WHERE (p_contas  IS NULL OR m.account = ANY (p_contas))
+       AND (v_mes_de  IS NULL OR m.mes >= v_mes_de)
+       AND (v_mes_ate IS NULL OR m.mes <= v_mes_ate)
+  ),
+  -- O mês fica incompleto se QUALQUER conta do escopo tiver pedido sem apuração nele: os
+  -- comparadores que não filtram conta somam as duas, e oben líquido sobre colacor bruta é base
+  -- mista do mesmo jeito. Converter uma conta sozinha é escolha explícita, pelo escopo.
+  mes_bloqueado AS (
+    SELECT m.mes
+      FROM no_escopo m
+     GROUP BY m.mes
+    HAVING sum(m.n_nao_apurado + m.n_linha_invalida) > 0
+  ),
+  elegivel AS (
+    SELECT c.*
+      FROM c
+      JOIN no_escopo m ON m.account = c.account AND m.mes = c.mes
+     WHERE c.classe = 'convertivel'
+       AND (NOT p_exigir_mes_completo OR c.mes NOT IN (SELECT b.mes FROM mes_bloqueado b))
+  )
+  SELECT (SELECT array_agg(e.sales_order_id ORDER BY e.sales_order_id) FROM elegivel e),
+         (SELECT count(*) FROM elegivel),
+         (SELECT sum(e.liquido - e.total) FROM elegivel e),
+         (SELECT jsonb_agg(jsonb_build_object(
+                   'conta', g.account, 'mes', to_char(g.mes, 'YYYY-MM'), 'pedidos', g.n,
+                   'soma_total_atual', g.s_total, 'soma_liquido', g.s_liquido,
+                   'soma_mudanca', g.s_liquido - g.s_total
+                 ) ORDER BY g.account, g.mes DESC)
+            FROM (SELECT e.account, e.mes, count(*) AS n, sum(e.total) AS s_total, sum(e.liquido) AS s_liquido
+                    FROM elegivel e GROUP BY e.account, e.mes) g),
+         -- Todo conta×mês de um mês bloqueado que tinha convertível no escopo: mostra QUEM bloqueia.
+         (SELECT jsonb_agg(jsonb_build_object(
+                   'conta', m.account, 'mes', to_char(m.mes, 'YYYY-MM'), 'convertivel', m.n_convertivel,
+                   'nao_apurado', m.n_nao_apurado, 'linha_invalida', m.n_linha_invalida
+                 ) ORDER BY m.mes DESC, m.account)
+            FROM no_escopo m
+           WHERE p_exigir_mes_completo
+             AND m.mes IN (SELECT b.mes FROM mes_bloqueado b)
+             AND m.mes IN (SELECT x.mes FROM no_escopo x WHERE x.n_convertivel > 0))
+    INTO v_elegiveis, v_n_elegiveis, v_soma_prevista, v_por_mes, v_bloqueados;
+  -- array_agg de nada é NULL — e NULL, para o classificador, quer dizer TODOS os pedidos.
+  v_elegiveis := coalesce(v_elegiveis, '{}'::uuid[]);
+
+  IF v_n_elegiveis > p_limite THEN
+    IF p_aplicar THEN
+      RAISE EXCEPTION 'pedido_total_liquido_converter: o escopo tem % convertiveis, acima do limite % — reduza o escopo ou suba o limite; nada foi gravado', v_n_elegiveis, p_limite
+        USING ERRCODE = 'TL002';
+    END IF;
+    RETURN jsonb_build_object(
+      'modo', 'ensaio', 'corte', p_corte, 'escopo', v_escopo, 'limite', p_limite,
+      'excede_limite', true, 'elegiveis', v_n_elegiveis,
+      'por_conta_mes', coalesce(v_por_mes, '[]'::jsonb),
+      'meses_bloqueados', coalesce(v_bloqueados, '[]'::jsonb)
+    );
+  END IF;
+
+  IF p_aplicar THEN
+    -- SKIP LOCKED: pedido que um escritor está reescrevendo agora fica para a próxima rodada. Não
+    -- esperar é o que impede deadlock com a ordem de lock dos escritores.
+    SELECT array_agg(t.id ORDER BY t.id)
+      INTO v_travados
+      FROM (SELECT so.id
+              FROM public.sales_orders so
+             WHERE so.id = ANY (v_elegiveis)
+             ORDER BY so.id
+               FOR UPDATE SKIP LOCKED) t;
+    v_travados := coalesce(v_travados, '{}'::uuid[]);
+  ELSE
+    v_travados := v_elegiveis;
+  END IF;
+
+  -- A mesma função que a trigger deferida roda no COMMIT: quem ela recusaria não entra no lote.
+  FOREACH v_id IN ARRAY v_travados LOOP
+    BEGIN
+      PERFORM public.pedido_venda_exigir_coerencia(v_id);
+      v_coerentes := v_coerentes || v_id;
+    EXCEPTION WHEN check_violation THEN
+      v_incoerentes := v_incoerentes || v_id;
+    END;
+  END LOOP;
+
+  IF NOT p_aplicar THEN
+    RETURN jsonb_build_object(
+      'modo', 'ensaio', 'corte', p_corte, 'escopo', v_escopo, 'limite', p_limite,
+      'excede_limite', false, 'elegiveis', v_n_elegiveis,
+      'incoerentes', cardinality(v_incoerentes), 'amostra_incoerentes', to_jsonb(v_incoerentes[1:20]),
+      -- Σ dos elegíveis, ANTES de pular os incoerentes; sobre nada elegível, a mudança é 0 de fato.
+      'soma_mudanca_prevista', coalesce(v_soma_prevista, 0),
+      'por_conta_mes', coalesce(v_por_mes, '[]'::jsonb),
+      'meses_bloqueados', coalesce(v_bloqueados, '[]'::jsonb)
+    );
+  END IF;
+
+  -- Statement POSTERIOR ao lock: snapshot novo. `alvo` re-classifica quem está travado, e o
+  -- UPDATE só reescreve o total que acabou de ler.
+  WITH alvo AS (
+    SELECT c.sales_order_id, c.account, c.mes, c.total, c.liquido
+      FROM public.pedido_total_liquido_classificar(p_corte, v_coerentes) c
+     WHERE c.classe = 'convertivel'
+  ),
+  escrito AS (
+    UPDATE public.sales_orders so
+       SET total    = a.liquido,
+           subtotal = a.liquido
+      FROM alvo a
+     WHERE so.id = a.sales_order_id
+       AND so.total = a.total
+    RETURNING so.id AS sales_order_id, a.account, a.mes, a.total AS total_antes, a.liquido AS total_depois
+  ),
+  registrado AS (
+    INSERT INTO public.pedido_total_liquido_conversoes
+           (lote, sales_order_id, account, mes, total_antes, total_depois, corte)
+    SELECT v_lote, e.sales_order_id, e.account, e.mes, e.total_antes, e.total_depois, p_corte
+      FROM escrito e
+    RETURNING 1
+  )
+  SELECT (SELECT count(*) FROM alvo),
+         (SELECT count(*) FROM escrito),
+         (SELECT count(*) FROM registrado),
+         (SELECT array_agg(e.sales_order_id ORDER BY e.sales_order_id) FROM escrito e),
+         (SELECT sum(e.total_depois - e.total_antes) FROM escrito e),
+         (SELECT jsonb_agg(jsonb_build_object(
+                   'conta', m.account, 'mes', to_char(m.mes, 'YYYY-MM'), 'pedidos', m.n,
+                   'soma_total_antes', m.s_antes, 'soma_total_depois', m.s_depois,
+                   'soma_mudanca', m.s_depois - m.s_antes
+                 ) ORDER BY m.account, m.mes DESC)
+            FROM (SELECT e.account, e.mes, count(*) AS n,
+                         sum(e.total_antes) AS s_antes, sum(e.total_depois) AS s_depois
+                    FROM escrito e GROUP BY e.account, e.mes) m)
+    INTO v_n_alvo, v_n_escritos, v_n_registrados, v_escritos, v_soma_mudanca, v_escritos_mes;
+  v_escritos := coalesce(v_escritos, '{}'::uuid[]);
+
+  -- Postcondição em statements POSTERIORES ao UPDATE: qualquer falha devolve o lote inteiro.
+  IF v_n_escritos <> v_n_alvo OR v_n_registrados <> v_n_escritos THEN
+    RAISE EXCEPTION 'pedido_total_liquido_converter: POSTCONDICAO alvo=% escritos=% registrados=% — nada foi gravado', v_n_alvo, v_n_escritos, v_n_registrados
+      USING ERRCODE = 'TL001';
+  END IF;
+
+  SELECT count(*)
+    INTO v_ruins
+    FROM public.sales_orders so
+    LEFT JOIN public.pedido_total_liquido_classificar(p_corte, v_escritos) c ON c.sales_order_id = so.id
+   WHERE so.id = ANY (v_escritos)
+     AND (c.sales_order_id IS NULL
+          OR c.classe NOT IN ('ja_liquido', 'ambiguo')
+          OR so.total    IS DISTINCT FROM c.liquido
+          OR so.subtotal IS DISTINCT FROM c.liquido);
+  IF v_ruins > 0 THEN
+    RAISE EXCEPTION 'pedido_total_liquido_converter: POSTCONDICAO % pedido(s) escritos sem total = subtotal = liquido das linhas — nada foi gravado', v_ruins
+      USING ERRCODE = 'TL001';
+  END IF;
+
+  RETURN jsonb_build_object(
+    'modo', 'aplicado', 'lote', v_lote, 'corte', p_corte, 'escopo', v_escopo, 'limite', p_limite,
+    'elegiveis',              v_n_elegiveis,
+    'pulados_em_uso',         v_n_elegiveis - cardinality(v_travados),
+    'incoerentes',            cardinality(v_incoerentes),
+    'amostra_incoerentes',    to_jsonb(v_incoerentes[1:20]),
+    'mudaram_sob_lock',       cardinality(v_coerentes) - v_n_alvo,
+    'escritos',               v_n_escritos,
+    -- Σ sobre nada escrito: a mudança foi 0 de fato.
+    'soma_mudanca',           coalesce(v_soma_mudanca, 0),
+    'escritos_por_conta_mes', coalesce(v_escritos_mes, '[]'::jsonb),
+    'meses_bloqueados',       coalesce(v_bloqueados, '[]'::jsonb)
+  );
+END
+$$;
+
+
+--
+-- Name: pedido_total_liquido_relatorio(timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.pedido_total_liquido_relatorio(p_corte timestamp with time zone) RETURNS jsonb
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+  WITH c AS MATERIALIZED (
+    SELECT * FROM public.pedido_total_liquido_classificar(p_corte, NULL)
+  )
+  SELECT jsonb_build_object(
+    'medido_em',    now(),
+    'corte',        p_corte,
+    'pedidos_omie', (SELECT count(*) FROM c),
+    'por_classe', (
+      SELECT coalesce(jsonb_agg(jsonb_build_object(
+               'conta', x.account, 'classe', x.classe, 'pedidos', x.n, 'soma_total', x.s
+             ) ORDER BY x.account, x.classe), '[]'::jsonb)
+        FROM (SELECT c.account, c.classe, count(*) AS n, sum(c.total) AS s
+                FROM c GROUP BY c.account, c.classe) x
+    ),
+    -- `pedidos` é o DENOMINADOR do mês. `nao_apurado` NÃO quer dizer bruto: depois da v1.7 o
+    -- reprocess reescreve o cabeçalho a líquido sem apurar a linha. Quer dizer "sem prova".
+    'por_conta_mes', (
+      SELECT coalesce(jsonb_agg(jsonb_build_object(
+               'conta', z.account, 'mes', to_char(z.mes, 'YYYY-MM'),
+               'pedidos', z.n, 'soma_total', z.s_total,
+               'liquido_provado', z.n_ja_liquido, 'sem_desconto', z.n_sem_desconto,
+               'convertivel', z.n_convertivel, 'soma_mudanca_convertivel', z.s_mudanca,
+               'nao_apurado', z.n_nao_apurado, 'soma_total_nao_apurado', z.s_nao_apurado,
+               'sem_prova_outros', z.n_outros,
+               'apuracao_completa', (z.n_nao_apurado + z.n_linha_invalida = 0)
+             ) ORDER BY z.account, z.mes DESC), '[]'::jsonb)
+        FROM (SELECT c.account, c.mes,
+                     count(*)                                                    AS n,
+                     sum(c.total)                                                AS s_total,
+                     count(*) FILTER (WHERE c.classe = 'ja_liquido')             AS n_ja_liquido,
+                     count(*) FILTER (WHERE c.classe = 'sem_desconto')           AS n_sem_desconto,
+                     count(*) FILTER (WHERE c.classe = 'convertivel')            AS n_convertivel,
+                     -- Σ sobre conjunto vazio: nenhum pedido da classe no mês soma 0 de fato.
+                     coalesce(sum(c.liquido - c.total) FILTER (WHERE c.classe = 'convertivel'), 0) AS s_mudanca,
+                     count(*) FILTER (WHERE c.classe = 'nao_apurado')            AS n_nao_apurado,
+                     coalesce(sum(c.total) FILTER (WHERE c.classe = 'nao_apurado'), 0) AS s_nao_apurado,
+                     count(*) FILTER (WHERE c.classe = 'linha_invalida')         AS n_linha_invalida,
+                     count(*) FILTER (WHERE c.classe IN ('linha_invalida', 'tocado_pos_corte', 'ambiguo',
+                                                         'divergente', 'cabecalho_fora_do_padrao', 'sem_linha')) AS n_outros
+                FROM c
+               GROUP BY c.account, c.mes) z
+    )
+  );
+$$;
+
+
+--
+-- Name: pedido_venda_coerencia_cab(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.pedido_venda_coerencia_cab() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+  -- DELETE do cabecalho leva as linhas junto (CASCADE): nada a exigir
+  IF TG_OP = 'DELETE' THEN RETURN NULL; END IF;
+  PERFORM public.pedido_venda_exigir_coerencia(NEW.id);
+  RETURN NULL;
+END;
+$$;
+
+
+--
+-- Name: pedido_venda_coerencia_lin(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.pedido_venda_coerencia_lin() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+  -- UPDATE que move a linha de pedido exige coerencia dos DOIS pedidos
+  IF TG_OP = 'DELETE' THEN
+    PERFORM public.pedido_venda_exigir_coerencia(OLD.sales_order_id);
+  ELSIF TG_OP = 'INSERT' THEN
+    PERFORM public.pedido_venda_exigir_coerencia(NEW.sales_order_id);
+  ELSE
+    PERFORM public.pedido_venda_exigir_coerencia(NEW.sales_order_id);
+    IF OLD.sales_order_id IS DISTINCT FROM NEW.sales_order_id THEN
+      PERFORM public.pedido_venda_exigir_coerencia(OLD.sales_order_id);
+    END IF;
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+
+--
+-- Name: pedido_venda_exigir_coerencia(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.pedido_venda_exigir_coerencia(p_id uuid) RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_n_linhas bigint;
+  v_divergiu boolean;
+BEGIN
+  IF p_id IS NULL THEN RETURN; END IF;
+
+  -- pedido apagado na mesma transacao (CASCADE): nada a exigir
+  PERFORM 1 FROM sales_orders WHERE id = p_id;
+  IF NOT FOUND THEN RETURN; END IF;
+
+  SELECT count(*) INTO v_n_linhas FROM order_items WHERE sales_order_id = p_id;
+
+  -- Sem linhas = push do app. Desenho legitimo, nao e defeito. Fora do escopo.
+  IF v_n_linhas = 0 THEN RETURN; END IF;
+
+  -- Com linhas: os dois lados descrevem o MESMO multiconjunto de itens.
+  -- Comparacao por (produto, quantidade, preco) -- a identidade que o money-path
+  -- consome. EXCEPT ALL trata NULL como NAO-DISTINTO de NULL: duas ausencias
+  -- casam entre si, e ausente NUNCA casa com 0 (ausente != zero).
+  WITH lado_rel AS (
+    SELECT omie_codigo_produto AS prod, quantity AS qtd, unit_price AS preco,
+           discount AS desc_item
+    FROM order_items WHERE sales_order_id = p_id
+  ),
+  lado_json AS (
+    SELECT (el->>'omie_codigo_produto')::bigint AS prod,
+           (el->>'quantidade')::numeric        AS qtd,
+           (el->>'valor_unitario')::numeric    AS preco,
+           (el->>'desconto')::numeric          AS desc_item
+    FROM sales_orders so CROSS JOIN LATERAL jsonb_array_elements(so.items) el
+    WHERE so.id = p_id AND jsonb_typeof(so.items) = 'array'
+  )
+  SELECT EXISTS (
+    (TABLE lado_rel EXCEPT ALL TABLE lado_json)
+    UNION ALL
+    (TABLE lado_json EXCEPT ALL TABLE lado_rel)
+  ) INTO v_divergiu;
+
+  IF v_divergiu THEN
+    RAISE EXCEPTION
+      'pedido % incoerente: order_items e items(jsonb) descrevem conjuntos diferentes', p_id
+      USING ERRCODE = '23514',  -- check_violation: nome identificavel pelo caller
+            CONSTRAINT = 'pedido_venda_coerencia',
+            HINT = 'escreva cabecalho e linhas na MESMA transacao (RPC criar_pedidos_com_itens / reconciliar_pedidos_omie)';
+  END IF;
 END;
 $$;
 
@@ -14953,7 +17209,7 @@ BEGIN
     modo, due_date, interacao_tipo, auto_satisfy_mode, status
   ) VALUES (
     v_desc, 'ligar', NULL, v_uid, v_uid, 'oben',
-    'data', (current_date + v_dias), NULL, 'off', 'aberta'
+    'data', ((now() AT TIME ZONE 'America/Sao_Paulo')::date + v_dias), NULL, 'off', 'aberta'
   ) RETURNING id INTO v_id;
 
   RETURN jsonb_build_object('id', v_id, 'deduped', false);
@@ -15057,7 +17313,7 @@ BEGIN
    WHERE prospeccao_status = 'em_conversa';
   SELECT count(*) INTO v_virou_mes FROM public.radar_empresas
    WHERE prospeccao_status = 'virou_cliente'
-     AND prospeccao_atualizado_em >= date_trunc('month', now());
+     AND prospeccao_atualizado_em >= date_trunc('month', now(), 'America/Sao_Paulo');
 
   RETURN jsonb_build_object(
     'lote', v_lote, 'novos', COALESCE(v_novos, 0),
@@ -15473,7 +17729,7 @@ $$;
 CREATE FUNCTION public.reconciliar_pedidos_omie(p_pedidos jsonb, p_status_gerido_omie text[], p_lido_em timestamp with time zone) RETURNS jsonb
     LANGUAGE plpgsql
     SET search_path TO ''
-    AS $$
+    AS $_$
 DECLARE
   -- Espelho da autoridade `STATUS_OMIE` (TS `_shared/omie-pedido.ts`): os status cujo dono é o
   -- Omie. Status app-avançado (`confirmado`, `entregue`, ...) NÃO está aqui de propósito — quem
@@ -15499,14 +17755,25 @@ DECLARE
 
   v_n_validos     integer;
   v_n_distintos   integer;
+  v_n_id_desej    integer;   -- itens do DESEJADO que trazem omie_codigo_item
+  v_n_id_desej_d  integer;   -- ...quantos valores DISTINTOS
   v_atual_dup     integer;
+  v_atual_id_dup  integer;   -- linhas ATUAIS com omie_codigo_item repetido (o lado do BANCO)
+  v_ident         boolean;   -- este pedido pode ser diffado por IDENTIDADE DE LINHA
   v_items_atual   jsonb;
   v_subtotal_atual numeric;
   v_lido_atual    timestamptz;
   v_cab_mudou     boolean;
   v_stale         integer := 0;
   v_ambiguo       integer := 0;
-  v_del int; v_upd int; v_ins int;
+  v_del int; v_upd int; v_ins int; v_adot int; v_apur int; v_corr int; v_upd_tot int;
+  v_corr_null int;
+  -- O que ESTE pedido soma aos totais. Só é somado depois da checagem de coerência (fim do
+  -- laço): o rollback da subtransação desfaz o banco, não as variáveis, e um pedido revertido
+  -- não pode deixar trabalho contado.
+  v_usou_id       boolean;
+  v_conta_upsert  boolean;
+  v_conta_diverg  boolean;
   v_itens_mudaram boolean;
   v_status_mudou  boolean;
   v_total_mudou   boolean;
@@ -15517,6 +17784,16 @@ DECLARE
   v_sku_repetido  integer := 0;
   v_sem_item      integer := 0;
   v_sem_pai       integer := 0;
+  v_id_adotada    integer := 0;   -- linhas que GANHARAM omie_codigo_item nesta chamada (sensor)
+  v_id_usada      integer := 0;   -- pedidos diffados por identidade de linha (sensor)
+  -- SENSORES do desconto da linha (ver o UPDATE). Só o 2º é correção de conteúdo; o 1º é
+  -- convergência do acervo: linha que sai de NÃO APURADO para um valor lido do Omie.
+  v_desc_apur     integer := 0;   -- linhas cujo desconto_valor saiu de NULL para um valor
+  v_desc_corr     integer := 0;   -- linhas cujo desconto CONHECIDO mudou (inclusive para NULL)
+  -- SUBCONJUNTO do de cima: so o ramo em que o conhecido virou NULL. Separar os dois ramos e o
+  -- que torna "o reprocesso esta nulificando?" uma QUERY — com o contador unico, nulificacao e
+  -- troca de valor somam no mesmo numero e a pergunta so se responde por forense de updated_at.
+  v_desc_corr_null integer := 0;
   v_falhas        jsonb   := '[]'::jsonb;
 BEGIN
   IF p_pedidos IS NULL OR jsonb_typeof(p_pedidos) <> 'array' THEN
@@ -15573,7 +17850,9 @@ BEGIN
     --    mão, e que nunca cobriu a falha ENTRE dois writes de item. ──
     BEGIN
       v_order_id := NULL;
-      v_del := 0; v_upd := 0; v_ins := 0;
+      v_del := 0; v_upd := 0; v_ins := 0; v_adot := 0; v_apur := 0; v_corr := 0; v_upd_tot := 0;
+      v_corr_null := 0;
+      v_usou_id := false; v_conta_upsert := false; v_conta_diverg := false;
 
       v_account     := v_pedido->>'account';
       v_hash        := v_pedido->>'hash_payload';
@@ -15602,14 +17881,33 @@ BEGIN
       -- [A4/G7] guard de leitura vazia/malformada: sem item VÁLIDO o pedido NÃO é reconciliado —
       -- nem itens nem cabeçalho. Um ListarPedidos degenerado não pode zerar o total de um pedido
       -- real nem apagar seus itens.
-      SELECT count(*), count(DISTINCT (it->>'omie_codigo_produto')::bigint)
-        INTO v_n_validos, v_n_distintos
+      SELECT count(*),
+             count(DISTINCT (it->>'omie_codigo_produto')::bigint),
+             count(*) FILTER (WHERE (it->>'omie_codigo_item') IS NOT NULL),
+             count(DISTINCT (it->>'omie_codigo_item')::bigint)
+        INTO v_n_validos, v_n_distintos, v_n_id_desej, v_n_id_desej_d
         FROM jsonb_array_elements(v_itens) AS it
        WHERE (it->>'omie_codigo_produto') IS NOT NULL;
       IF v_n_validos = 0 THEN
         v_sem_item := v_sem_item + 1;
         CONTINUE;
       END IF;
+
+      -- ── G-a: identidade repetida no DESEJADO. Dois itens do payload com o mesmo `codigo_item`
+      --    é payload contraditório: a chave que existe para desempatar está empatada. Casar por
+      --    ela produziria dois UPDATEs sobre a mesma linha local (ou um INSERT fantasma), e
+      --    persistir o valor repetido envenenaria o estado — na run seguinte o `G-b` pararia o
+      --    pedido para sempre. Fail-closed aqui, antes de qualquer escrita.
+      IF v_n_id_desej > 0 AND v_n_id_desej_d <> v_n_id_desej THEN
+        v_ambiguo := v_ambiguo + 1;
+        CONTINUE;
+      END IF;
+
+      -- Identidade só vale quando é COMPLETA no desejado. Payload parcialmente identificado
+      -- (item de kit, por exemplo, que a doc do Omie marca como podendo não trazer o código) cai
+      -- no caminho legado INTEIRO: misturar duas chaves de casamento no mesmo pedido é convidar
+      -- de volta a classe de defeito que esta função existe para fechar.
+      v_ident := (v_n_id_desej = v_n_validos);
 
       -- Identidade IMUTÁVEL: o pai vem pelo hash determinístico (único pelo índice parcial
       -- uniq_sales_orders_omie_hash), NUNCA por omie_numero_pedido — pegaria a linha errada
@@ -15651,45 +17949,132 @@ BEGIN
       --    ESTRUTURAL, escopo próprio, exige backfill das ~70 mil linhas vivas), o desfecho certo
       --    é NÃO TOCAR NO PEDIDO: nem itens, nem cabeçalho. Precisão > recall — um pedido que
       --    fica na revisão anterior COMPLETA é honesto; um pedido com valor dobrado, não.
-      SELECT count(*) INTO v_atual_dup FROM (
+      -- ── G-b: identidade repetida no ATUAL — O LADO DO BANCO. Este é o lado que a versão
+      --    anterior desta função esqueceu na chave antiga, e o motivo de o parecer ter BLOQUEADO
+      --    a entrega. A chave mudou; a armadilha não. Duas linhas locais com o mesmo
+      --    `codigo_item` casariam AMBAS com o mesmo item desejado no nível 1: as duas recebem o
+      --    conteúdo dele, nenhuma é deletada, e o item que ficou sem par é inserido por cima — o
+      --    pós-estado deixa de ser o desejado. Vale SEMPRE, inclusive no caminho legado, porque o
+      --    ESTADO pode carregar identidade mesmo quando o payload de hoje não traz.
+      SELECT count(*) INTO v_atual_id_dup FROM (
         SELECT 1 FROM public.order_items
-         WHERE sales_order_id = v_order_id AND omie_codigo_produto IS NOT NULL
-         GROUP BY omie_codigo_produto HAVING count(*) > 1
+         WHERE sales_order_id = v_order_id AND omie_codigo_item IS NOT NULL
+         GROUP BY omie_codigo_item HAVING count(*) > 1
       ) d;
-      IF v_n_distintos <> v_n_validos OR v_atual_dup > 0 THEN
+      IF v_atual_id_dup > 0 THEN
         v_ambiguo := v_ambiguo + 1;
-        IF v_n_distintos <> v_n_validos THEN
-          v_sku_repetido := v_sku_repetido + 1;
-        END IF;
         CONTINUE;
       END IF;
 
+      -- ── G-c: sem identidade completa, a chave de casamento volta a ser o SKU — e aí valem os
+      --    DOIS lados do guard, inalterados. `omie_codigo_produto` só é identidade quando não se
+      --    repete no pedido; quando repete (1.179 pares medidos em prod, e a duplicidade é
+      --    LEGÍTIMA: o payload do Omie repete o SKU em 1.177 deles), não há como dizer qual linha
+      --    casa com qual item.
+      --    ⚠️ Este guard NÃO é mais o que impede o valor DOBRADO — isso passou a ser estrutural,
+      --    no requisito de 1-1 entre os remanescentes do nível 2 abaixo. O que ele impede agora é
+      --    o pedido ambíguo ser RECONSTRUÍDO a cada run: sem identidade de linha o casamento
+      --    nunca converge, então o delete+insert se repetiria a cada 2 h com `corrections`
+      --    inflado para sempre. Congelar é estável; reconstruir em loop, não.
+      IF NOT v_ident THEN
+        SELECT count(*) INTO v_atual_dup FROM (
+          SELECT 1 FROM public.order_items
+           WHERE sales_order_id = v_order_id AND omie_codigo_produto IS NOT NULL
+           GROUP BY omie_codigo_produto HAVING count(*) > 1
+        ) d;
+        IF v_n_distintos <> v_n_validos OR v_atual_dup > 0 THEN
+          v_ambiguo := v_ambiguo + 1;
+          IF v_n_distintos <> v_n_validos THEN
+            v_sku_repetido := v_sku_repetido + 1;
+          END IF;
+          CONTINUE;
+        END IF;
+      ELSE
+        v_usou_id := true;   -- somado a v_id_usada só se o pedido passar a checagem
+      END IF;
+
       BEGIN
-        -- ── A reconciliação INTEIRA numa única statement. As três CTEs de escrita enxergam o
-        --    MESMO snapshot inicial, que é exatamente o que se quer: os três conjuntos são
-        --    disjuntos por construção (remover / atualizar / inserir), então nenhuma precisa ver
-        --    o efeito da outra. Espelha `diffOrderItens` do TS, inclusive a tolerância de 1e-6
-        --    que evita reescrever linha por ruído de ponto flutuante. ──
+        -- ── A reconciliação INTEIRA numa única statement. As CTEs de escrita enxergam o MESMO
+        --    snapshot inicial; os três conjuntos (remover / atualizar / inserir) são disjuntos
+        --    por construção, porque `par` é um casamento 1-1 provado pelos guards acima.
+        --
+        --    O casamento tem DOIS NÍVEIS, e o nível 2 é o que dispensa o backfill:
+        --      · nível 1 — por `omie_codigo_item`, quando os dois lados o têm;
+        --      · nível 2 — por `omie_codigo_produto`, e SÓ onde o SKU é 1-1 entre os que
+        --        SOBRARAM, nos DOIS lados. É aqui que a linha antiga (sem identidade) casa com o
+        --        item novo (com identidade) e o `UPDATE` GRAVA o `codigo_item`: a adoção é
+        --        incremental, correta por construção (SKU único naquele pedido É identidade
+        --        naquele pedido) e preserva o `id` da linha.
+        --    O caminho legado é um CASO PARTICULAR disto, não um ramo à parte: com `v_ident`
+        --    falso o nível 1 é vazio, e o `G-c` já garantiu SKU 1-1 dos dois lados, então o
+        --    nível 2 reproduz exatamente o join `d.cod = a.cod` de antes. Um `IF/ELSE` com duas
+        --    statements teria o mesmo efeito e DUAS superfícies para divergir.
+        --
+        --    O que sobra de `atual` é DELETE; o que sobra de `desejado` é INSERT. O pós-estado é
+        --    exatamente o conjunto desejado — essa é a invariante, e é ela que o harness afirma.
+        --    Tolerância de 1e-6 preservada, e a comparação de preço segue NULL-SAFE (#2224). ──
         WITH desejado AS (
-          SELECT (it->>'omie_codigo_produto')::bigint          AS cod,
-                 coalesce((it->>'quantity')::numeric, 1)       AS quantity,
-                 coalesce((it->>'unit_price')::numeric, 0)     AS unit_price,
-                 coalesce((it->>'discount')::numeric, 0)       AS discount,
-                 (it->>'product_id')::uuid                     AS product_id,
-                 it->>'hash_payload'                           AS hash_payload
-            FROM jsonb_array_elements(v_itens) AS it
+          SELECT t.ord                                          AS did,
+                 (it->>'omie_codigo_produto')::bigint           AS cod,
+                 coalesce((it->>'quantity')::numeric, 1)        AS quantity,
+                 -- REGUA DE PRECO: identica a de criar_pedidos_com_itens — finitude
+                 -- NAO-NEGATIVA. ausente -> NULL; 0 informado -> 0; lixo -> NULL.
+                 CASE WHEN (it->>'unit_price')::numeric >= 0
+                       AND (it->>'unit_price')::numeric < 'Infinity'::numeric
+                      THEN (it->>'unit_price')::numeric END     AS unit_price,
+                 coalesce((it->>'discount')::numeric, 0)        AS discount,
+                 -- DESCONTO DA LINHA (R$), apurado pela régua na edge sobre a MESMA base
+                 -- qty·preço do subtotal. Dois contratos de payload, e a diferença importa:
+                 --   chave AUSENTE  → edge anterior a esta versão, que não leu o desconto. A
+                 --                    linha segue a regra antiga (invalida quando a base muda).
+                 --   chave PRESENTE → a leitura atual do Omie. `null` = a régua não soube ler,
+                 --                    e isso se grava como NULL (não apurado), nunca como 0.
+                 -- `->` e não `->>`: o texto de um JSON null é o NULL do SQL, igual ao da chave
+                 -- ausente. Já o jsonb `null` é um VALOR, e é ele que prova que a chave veio.
+                 (it -> 'desconto_valor') IS NOT NULL          AS traz_desconto,
+                 -- REGUA DE FINITUDE NAO-NEGATIVA, a mesma do unit_price: negativo, Infinity e
+                 -- NaN (que o Postgres ordena acima de Infinity) são lixo, e lixo vira NULL.
+                 CASE WHEN (it->>'desconto_valor')::numeric >= 0
+                       AND (it->>'desconto_valor')::numeric < 'Infinity'::numeric
+                      THEN (it->>'desconto_valor')::numeric END AS desconto_valor,
+                 (it->>'product_id')::uuid                      AS product_id,
+                 it->>'hash_payload'                            AS hash_payload,
+                 (it->>'omie_codigo_item')::bigint              AS cid
+            FROM jsonb_array_elements(v_itens) WITH ORDINALITY AS t(it, ord)
            WHERE (it->>'omie_codigo_produto') IS NOT NULL
         ),
         atual AS (
-          SELECT id, omie_codigo_produto AS cod, quantity, unit_price, discount, product_id
+          SELECT id, omie_codigo_produto AS cod, quantity, unit_price, discount, product_id,
+                 omie_codigo_item AS cid, desconto_valor
             FROM public.order_items
            WHERE sales_order_id = v_order_id
         ),
+        p1 AS (   -- nível 1: identidade de linha (só quando o desejado está TODO identificado)
+          SELECT a.id AS aid, d.did
+            FROM atual a
+            JOIN desejado d ON d.cid = a.cid
+           WHERE v_ident AND a.cid IS NOT NULL AND d.cid IS NOT NULL
+        ),
+        ar AS (SELECT a.* FROM atual a    WHERE NOT EXISTS (SELECT 1 FROM p1 WHERE p1.aid = a.id)),
+        dr AS (SELECT d.* FROM desejado d WHERE NOT EXISTS (SELECT 1 FROM p1 WHERE p1.did = d.did)),
+        -- 1-1 entre os REMANESCENTES, exigido nos DOIS lados. É esta exigência — e não o G-c —
+        -- que impede o valor DOBRADO: duas linhas do mesmo SKU simplesmente não casam com
+        -- ninguém, caem no DELETE, e os itens desejados entram pelo INSERT.
+        ar1 AS (SELECT cod FROM ar WHERE cod IS NOT NULL GROUP BY cod HAVING count(*) = 1),
+        dr1 AS (SELECT cod FROM dr                       GROUP BY cod HAVING count(*) = 1),
+        p2 AS (   -- nível 2: SKU. É aqui que a linha legada ADOTA a identidade que veio no item.
+          SELECT a.id AS aid, d.did
+            FROM ar a
+            JOIN dr d ON d.cod = a.cod
+           WHERE a.cod IN (SELECT cod FROM ar1)
+             AND d.cod IN (SELECT cod FROM dr1)
+        ),
+        par AS (SELECT aid, did FROM p1 UNION ALL SELECT aid, did FROM p2),
         del AS (
           DELETE FROM public.order_items oi
            USING atual a
            WHERE oi.id = a.id
-             AND NOT EXISTS (SELECT 1 FROM desejado d WHERE d.cod = a.cod)
+             AND NOT EXISTS (SELECT 1 FROM par WHERE par.aid = a.id)
           RETURNING 1
         ),
         upd AS (
@@ -15697,37 +18082,120 @@ BEGIN
              SET quantity     = d.quantity,
                  unit_price   = d.unit_price,
                  discount     = d.discount,
+                 -- o SKU também. No casamento por `omie_codigo_item` (nível 1) a linha pode ser a
+                 -- MESMA com outro produto no Omie. Sem esta coluna, product_id e hash mudavam e o
+                 -- `omie_codigo_produto` ficava o velho: linha contraditória, e o items-jsonb (com o
+                 -- SKU novo) passava a descrever outro multiconjunto, que o banco recusa.
+                 omie_codigo_produto = d.cod,
+                 -- ESCREVE O DESCONTO DA LEITURA, ou INVALIDA — nunca conserva. `d.desconto_valor`
+                 -- é o desconto que a edge apurou sobre a base NOVA desta linha: um valor, ou NULL
+                 -- quando a régua não soube ler. Payload SEM a chave (edge anterior) dá NULL por
+                 -- construção, que é a invalidação de antes: a base mudou e ninguém mediu o
+                 -- desconto dela. Conservar o valor antigo segue proibido: um número cuja
+                 -- validade deixou de ser conhecida é fabricação com outra roupa.
+                 desconto_valor = d.desconto_valor,
                  product_id   = d.product_id,
                  -- o update REPARA a identidade do item (hash legado de conteúdo → de identidade)
-                 hash_payload = d.hash_payload
-            FROM atual a
-            JOIN desejado d ON d.cod = a.cod
-           WHERE oi.id = a.id
-             AND NOT (      abs(coalesce(a.quantity,   0) - d.quantity)   < 1e-6
-                        AND abs(coalesce(a.unit_price, 0) - d.unit_price) < 1e-6
-                        AND abs(coalesce(a.discount,   0) - d.discount)   < 1e-6
-                        AND a.product_id IS NOT DISTINCT FROM d.product_id )
-          RETURNING 1
+                 hash_payload = d.hash_payload,
+                 -- ADOÇÃO: grava a identidade quando o payload a traz; `coalesce` porque no
+                 -- caminho legado `d.cid` é nulo e apagar a identidade já gravada seria regressão
+                 omie_codigo_item = coalesce(d.cid, oi.omie_codigo_item)
+            FROM par
+            JOIN atual a    ON a.id  = par.aid
+            JOIN desejado d ON d.did = par.did
+           WHERE oi.id = par.aid
+             -- A DECISÃO de escrever é por igualdade EXATA (IS NOT DISTINCT FROM, NULL-safe por
+             -- definição: NULL==NULL não reescreve, NULL contra número reescreve) nos campos que
+             -- a coerência do agregado compara — produto, quantidade, preço e desconto legado. O
+             -- trigger `pedido_venda_coerencia` exige o multiconjunto IGUAL entre linhas e
+             -- items-jsonb, e por TOLERÂNCIA (1e-6, e discount NULL tratado como 0) uma diferença
+             -- pequena deixava a linha velha sob o jsonb exato: o banco recusava a escrita. A
+             -- tolerância continua valendo na CLASSIFICAÇÃO das métricas (RETURNING abaixo).
+             AND NOT (      a.cod        IS NOT DISTINCT FROM d.cod
+                        AND a.quantity   IS NOT DISTINCT FROM d.quantity
+                        AND a.unit_price IS NOT DISTINCT FROM d.unit_price
+                        AND a.discount   IS NOT DISTINCT FROM d.discount
+                        AND a.product_id IS NOT DISTINCT FROM d.product_id
+                        -- a adoção precisa ser um motivo PRÓPRIO de escrita: sem este termo, um
+                        -- pedido cujo conteúdo não mudou nunca ganharia identidade, e a coluna
+                        -- ficaria vazia para sempre nos pedidos estáveis — o desenho inteiro
+                        -- nasceria INERTE sem ninguém ver
+                        AND (d.cid IS NULL OR a.cid IS NOT DISTINCT FROM d.cid)
+                        -- o DESCONTO é motivo próprio de escrita, quando o payload o traz. É este
+                        -- termo que fecha o defeito: base intacta e só o desconto mudado no Omie,
+                        -- e sem ele o UPDATE nem disparava.
+                        AND (NOT d.traz_desconto
+                             OR a.desconto_valor IS NOT DISTINCT FROM d.desconto_valor) )
+          -- separa CORREÇÃO de conteúdo (money-path) de ADOÇÃO de identidade (metadado) e de
+          -- APURAÇÃO de desconto (convergência): contá-las como "correção" inflaria, na primeira
+          -- passada, a métrica que o log publica — 1.024 linhas da janela de 30 dias tinham
+          -- desconto_valor NULL em 2026-09-14. A TOLERÂNCIA mora aqui, e não na decisão de
+          -- escrever: uma diferença de ruído converge a linha sem contar como correção.
+          RETURNING (CASE WHEN a.cod IS NOT DISTINCT FROM d.cod
+                           AND abs(coalesce(a.quantity,   0) - d.quantity)   < 1e-6
+                           AND (    (a.unit_price IS NULL AND d.unit_price IS NULL)
+                                 OR (a.unit_price IS NOT NULL AND d.unit_price IS NOT NULL
+                                     AND abs(a.unit_price - d.unit_price) < 1e-6) )
+                           AND abs(coalesce(a.discount,   0) - d.discount)   < 1e-6
+                           AND a.product_id IS NOT DISTINCT FROM d.product_id
+                           -- desconto CONHECIDO que mudou (inclusive para NULL) é conteúdo. Só
+                           -- com a chave no payload: sem ela a regra antiga não muda de conta.
+                           AND NOT (d.traz_desconto AND a.desconto_valor IS NOT NULL
+                                    AND (d.desconto_valor IS NULL
+                                         OR abs(a.desconto_valor - d.desconto_valor) >= 1e-6))
+                          THEN 0 ELSE 1 END) AS conteudo_mudou,
+                    (d.traz_desconto AND a.desconto_valor IS NULL
+                     AND d.desconto_valor IS NOT NULL)                          AS desc_apurado,
+                    (d.traz_desconto AND a.desconto_valor IS NOT NULL
+                     AND (d.desconto_valor IS NULL
+                          OR abs(a.desconto_valor - d.desconto_valor) >= 1e-6)) AS desc_corrigido,
+                    -- NULIFICACAO: o primeiro disjunto do predicado acima, isolado. `traz_desconto`
+                    -- fora deixaria todo payload da edge antiga parecer nulificacao em massa; linha
+                    -- NOVA nao entra aqui (nasce no CTE `ins`, nao no `upd`) porque nao havia valor
+                    -- conhecido a perder — nascer NULL e NAO APURADO, nao nulificado. E NULL nao e
+                    -- 0: desconto conhecido que vira 0 e troca de valor, nao perda do dado.
+                    (d.traz_desconto AND a.desconto_valor IS NOT NULL
+                     AND d.desconto_valor IS NULL)                              AS desc_corrigido_para_null,
+                    (d.cid IS NOT NULL AND a.cid IS DISTINCT FROM d.cid)        AS id_adotada
         ),
         ins AS (
           -- `created_at` fica de fora: o trigger `trg_order_items_created_at_omie` herda a data do
           -- PAI para todo pedido `omie\_%`. Passá-la aqui duplicaria a regra em dois lugares.
           INSERT INTO public.order_items (
             sales_order_id, customer_user_id, product_id, omie_codigo_produto,
-            quantity, unit_price, discount, hash_payload
+            quantity, unit_price, discount, desconto_valor, hash_payload, omie_codigo_item
           )
           SELECT v_order_id, v_customer, d.product_id, d.cod,
-                 d.quantity, d.unit_price, d.discount, d.hash_payload
+                 d.quantity, d.unit_price, d.discount,
+                 -- Linha NOVA leva o desconto que a edge apurou sobre a base dela. Payload SEM a
+                 -- chave (edge anterior) dá NULL e a linha nasce NÃO APURADA, como antes — não
+                 -- ter o dado se escreve NULL, nunca 0.
+                 d.desconto_valor,
+                 d.hash_payload, d.cid
             FROM desejado d
-           WHERE NOT EXISTS (SELECT 1 FROM atual a WHERE a.cod = d.cod)
+           WHERE NOT EXISTS (SELECT 1 FROM par WHERE par.did = d.did)
           RETURNING 1
         )
-        SELECT (SELECT count(*) FROM del), (SELECT count(*) FROM upd), (SELECT count(*) FROM ins)
-          INTO v_del, v_upd, v_ins;
+        SELECT (SELECT count(*) FROM del),
+               (SELECT count(*) FROM upd WHERE conteudo_mudou = 1),
+               -- ADOÇÃO pede os dois: conteúdo intacto E identidade gravada agora. O 1º bastava
+               -- enquanto a identidade era o único outro motivo de escrita. Com o desconto como
+               -- motivo próprio, `conteudo_mudou = 0` sozinho contaria APURAÇÃO como adoção. Sem a
+               -- chave de desconto no payload os dois predicados coincidem. Segue medindo adoção
+               -- SEM correção de conteúdo, como antes.
+               (SELECT count(*) FROM upd WHERE conteudo_mudou = 0 AND id_adotada),
+               (SELECT count(*) FROM ins),
+               (SELECT count(*) FROM upd WHERE desc_apurado),
+               (SELECT count(*) FROM upd WHERE desc_corrigido),
+               (SELECT count(*) FROM upd WHERE desc_corrigido_para_null),
+               (SELECT count(*) FROM upd)
+          INTO v_del, v_upd, v_adot, v_ins, v_apur, v_corr, v_corr_null, v_upd_tot;
       END;
 
+      -- Adoção de identidade e apuração de desconto NÃO são revisão de itens: o conteúdo
+      -- money-path da linha é o mesmo. Contá-las aqui faria a primeira passada parecer uma
+      -- reconciliação em massa que não houve.
       v_itens_mudaram := (v_del + v_upd + v_ins) > 0;
-      v_corrections   := v_corrections + v_del + v_upd + v_ins;
 
       -- [A4] status só reconcilia com etapa CONHECIDA (status_omie não-nulo) e status local ainda
       -- gerido pelo Omie — nunca rebaixa para 'importado' por leitura malformada nem clobbera
@@ -15768,12 +18236,38 @@ BEGIN
         IF v_status_mudou OR v_total_mudou OR v_itens_mudaram
            OR v_items_atual IS DISTINCT FROM v_items_json
            OR abs(coalesce(v_subtotal_atual, 0) - v_total_novo) > 0.01 THEN
-          v_upserts := v_upserts + 1;
+          v_conta_upsert := true;
         END IF;
         IF v_status_mudou OR v_total_mudou THEN
-          v_divergences := v_divergences + 1;
+          v_conta_diverg := true;
         END IF;
       END IF;
+
+      -- ── COERÊNCIA DO AGREGADO checada DENTRO da subtransação deste pedido ──
+      --    `trg_pedido_venda_coerencia_cab`/`_lin` são DEFERRABLE INITIALLY DEFERRED (linhas e
+      --    cabeçalho se escrevem em statements sucessivos) e checam no COMMIT — que aqui é o da
+      --    CHAMADA, fora do BEGIN/EXCEPTION por pedido. Uma única escrita incoerente derrubava a
+      --    chamada, a página e a run, a cada ciclo: medido em prod, 79 runs de pedidos da oben em
+      --    erro entre 2026-09-08 20:15 UTC e 2026-09-14, todas no mesmo pedido.
+      --    O MESMO predicado dos triggers, chamado aqui só quando este pedido escreveu (é quando
+      --    eles teriam evento dele), faz o 23514 cair no WHEN integrity_constraint_violation
+      --    abaixo: o pedido é revertido INTEIRO, vai para `falhas`, e o lote segue. Os triggers
+      --    ficam como a defesa do COMMIT. Não `SET CONSTRAINTS … IMMEDIATE`: ele checaria os
+      --    eventos pendentes da transação INTEIRA, e um pedido pagaria pela pendência de outro.
+      IF v_cab_mudou OR (v_del + v_upd_tot + v_ins) > 0 THEN
+        PERFORM public.pedido_venda_exigir_coerencia(v_order_id);
+      END IF;
+
+      -- Só agora o pedido CONTA. Somar antes da checagem deixaria nos totais o trabalho de um
+      -- pedido que acabou revertido: `corrections` afirmaria correção que não aconteceu.
+      v_corrections := v_corrections + v_del + v_upd + v_ins;
+      v_id_adotada  := v_id_adotada + v_adot;
+      v_desc_apur   := v_desc_apur + v_apur;
+      v_desc_corr   := v_desc_corr + v_corr;
+      v_desc_corr_null := v_desc_corr_null + v_corr_null;
+      IF v_usou_id      THEN v_id_usada    := v_id_usada + 1;    END IF;
+      IF v_conta_upsert THEN v_upserts     := v_upserts + 1;     END IF;
+      IF v_conta_diverg THEN v_divergences := v_divergences + 1; END IF;
 
     -- ── P1-4 (achado do challenge): ALLOWLIST, não catch-all. O `WHEN OTHERS` capturava
     --    deadlock (40P01), serialization failure (40001), permissão, relação/coluna ausente e
@@ -15804,16 +18298,30 @@ BEGIN
     'stale',        v_stale,       -- pedidos NÃO tocados por leitura mais velha que a publicada
     'sem_item',     v_sem_item,
     'sem_pai',      v_sem_pai,
+    -- SENSORES da adoção de identidade. `identidade_adotada` conta LINHAS que ganharam o
+    -- `codigo_item`; `identidade_usada` conta PEDIDOS diffados por ela. Enquanto os dois
+    -- forem zero run após run, a resposta é que o ListarPedidos não traz `det.ide.codigo_item`
+    -- — e essa é a medição que nenhum payload persistido permitia fazer.
+    'identidade_adotada', v_id_adotada,
+    'identidade_usada',   v_id_usada,
+    -- SENSORES do desconto da linha. `desconto_corrigido` mede o defeito que esta versão fecha
+    -- (desconto alterado no Omie depois de apurado). `desconto_apurado` mede a convergência do
+    -- acervo NULL. Uma edge que não manda a chave os deixa em zero.
+    'desconto_apurado',   v_desc_apur,
+    'desconto_corrigido', v_desc_corr,
+    -- SUBCONJUNTO de `desconto_corrigido` (nunca somar as duas). Ausente no retorno = RPC
+    -- anterior no ar; a edge grava `null`, nunca 0 — ausente != zero.
+    'desconto_corrigido_para_null', v_desc_corr_null,
     'falhas',       v_falhas);
 END;
-$$;
+$_$;
 
 
 --
 -- Name: FUNCTION reconciliar_pedidos_omie(p_pedidos jsonb, p_status_gerido_omie text[], p_lido_em timestamp with time zone); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.reconciliar_pedidos_omie(p_pedidos jsonb, p_status_gerido_omie text[], p_lido_em timestamp with time zone) IS 'Fase 2 de criar_pedidos_com_itens: reconcilia pedido Omie ALTERADO (itens + cabeçalho) numa ÚNICA transação por pedido, fechando a janela em que o pedido ficava meio-reconciliado e visível aos consumidores money-path. Diff DECLARATIVO computado dentro da transação sob FOR UPDATE do pai (sem TOCTOU, idempotente). Fail-closed: lista de status por igualdade de conjunto, total/items/p_lido_em ausentes LANÇAM, lote com teto não-contornável. Compare-and-set por p_lido_em (leitura VELHA não sobrescreve revisão nova). Duplicidade de omie_codigo_produto — no estado ATUAL ou no desejado — PULA o pedido inteiro (SKU não é identidade de linha). Lote ordenado por (account,hash_payload) contra deadlock AB/BA. EXCEPTION por ALLOWLIST (22xxx/23xxx); classe sistêmica RELANÇA. Retorna {upserts,divergences,corrections,sku_repetido,ambiguo,stale,sem_item,sem_pai,falhas[]}.';
+COMMENT ON FUNCTION public.reconciliar_pedidos_omie(p_pedidos jsonb, p_status_gerido_omie text[], p_lido_em timestamp with time zone) IS 'Fase 2 de criar_pedidos_com_itens: reconcilia pedido Omie ALTERADO (itens + cabeçalho) numa ÚNICA transação por pedido. Diff DECLARATIVO computado dentro da transação sob FOR UPDATE do pai (sem TOCTOU, idempotente). Casamento em DOIS NÍVEIS: (1) omie_codigo_item (identidade de linha do Omie) quando o desejado está TODO identificado; (2) omie_codigo_produto, só onde é 1-1 entre os remanescentes nos DOIS lados — e é o nível 2 que ADOTA a identidade incrementalmente, dispensando backfill. Ambiguidade de identidade é guardada nos DOIS lados (payload e banco) e PULA o pedido inteiro. Preço segue a régua de finitude não-negativa e o diff dele é NULL-SAFE (#2224): item sem preço NÃO compara igual a 0. Fail-closed: lista de status por igualdade de conjunto, total/items/p_lido_em ausentes LANÇAM, lote com teto não-contornável. Compare-and-set por p_lido_em (leitura VELHA não sobrescreve revisão nova). Lote ordenado por (account,hash_payload) contra deadlock AB/BA. EXCEPTION por ALLOWLIST (22xxx/23xxx); classe sistêmica RELANÇA. Retorna {upserts,divergences,corrections,sku_repetido,ambiguo,stale,sem_item,sem_pai,identidade_adotada,identidade_usada,falhas[]}.';
 
 
 --
@@ -16428,6 +18936,120 @@ $$;
 
 
 --
+-- Name: remover_itens_pedido_sugerido(bigint, bigint[], text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.remover_itens_pedido_sugerido(p_pedido_id bigint, p_item_ids bigint[], p_usuario text) RETURNS jsonb
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_status    text;
+  v_removidos bigint[];
+  v_restantes integer;
+  v_total     numeric;
+  v_cancelou  boolean := false;
+BEGIN
+  IF p_item_ids IS NULL OR cardinality(p_item_ids) = 0 THEN
+    RETURN jsonb_build_object('error', 'nenhum item informado');
+  END IF;
+
+  -- (1) TRAVA O PAI ANTES DE QUALQUER ESCRITA. Esta é a linha que faz o guard valer:
+  -- em READ COMMITTED, se o disparador/aprovador já segura a linha, este SELECT ESPERA o
+  -- commit dele e relê a versão NOVA (EvalPlanQual) — então `v_status` abaixo é o status
+  -- REAL, não um retrato. E o lock é mantido até o fim da transação, de modo que a decisão
+  -- tomada sobre ele continua verdadeira enquanto as escritas acontecem.
+  -- ⚠️ Não troque por um SELECT sem lock nem mova esta leitura para depois do DELETE:
+  -- as duas coisas reabrem exatamente o [P1] que esta migration fecha.
+  SELECT s.status INTO v_status
+    FROM pedido_compra_sugerido s
+   WHERE s.id = p_pedido_id
+     FOR NO KEY UPDATE;
+
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('error', 'pedido não encontrado');
+  END IF;
+
+  -- (2) ALLOWLIST — a regra do cliente virando política de servidor. Ver o cabeçalho:
+  -- `aprovado_aguardando_disparo` fica DE FORA de propósito (é o estado que o disparador pega).
+  IF v_status NOT IN ('pendente_aprovacao', 'bloqueado_guardrail') THEN
+    -- COALESCE porque `'texto' || NULL` colapsa a STRING INTEIRA para NULL: sem ele, se o
+    -- NOT NULL de `status` algum dia cair, a recusa viraria {"error": null} e o front leria
+    -- "sem erro" — a recusa SUMIRIA da tela. Mesma lição da 20260905224959.
+    RETURN jsonb_build_object(
+      'error', 'pedido não permite remoção de itens (status atual: ' || COALESCE(v_status, '(desconhecido)') || ')'
+    );
+  END IF;
+
+  -- ⚠️ DAQUI PARA BAIXO JÁ HÁ ESCRITA. Toda falha vira RAISE (rollback da transação inteira),
+  -- NUNCA `RETURN jsonb_build_object('error', …)`: devolver JSON de erro depois de um DELETE
+  -- não desfaz o DELETE — o PostgREST commita a transação que termina sem erro SQL, e o
+  -- operador veria "falhou" com os itens já apagados (achado Codex).
+
+  -- (3) O DELETE é preso ao pedido JÁ TRAVADO. O `pedido_id = p_pedido_id` não é redundante:
+  -- é ele que impede que um id de item de OUTRO pedido (que não passou pelo guard acima)
+  -- seja apagado de carona.
+  WITH apagados AS (
+    DELETE FROM pedido_compra_item
+     WHERE pedido_id = p_pedido_id
+       AND id = ANY(p_item_ids)
+    RETURNING id
+  )
+  SELECT array_agg(id) INTO v_removidos FROM apagados;
+
+  -- (4) RECÁLCULO A PARTIR DO BANCO, não do retrato do browser. O total que o front somava
+  -- vinha de um SELECT anterior ao DELETE: com dois removedores concorrentes, cada um contava
+  -- o item que o outro ainda não tinha commitado e ambos gravavam um total errado. Somar aqui,
+  -- sob o lock do pai, elimina isso.
+  SELECT count(*)::integer,
+         COALESCE(SUM(COALESCE(qtde_final, qtde_sugerida, 0) * COALESCE(preco_unitario, 0)), 0)
+    INTO v_restantes, v_total
+    FROM pedido_compra_item
+   WHERE pedido_id = p_pedido_id;
+
+  -- (5) O recálculo NÃO é condicional ao cancelamento: `valor_total`/`num_skus` são derivados
+  -- legítimos e são gravados nos DOIS ramos. O que o guard condiciona é o CARIMBO DE STATUS.
+  IF v_restantes = 0 THEN
+    UPDATE pedido_compra_sugerido
+       SET valor_total = 0,
+           num_skus = 0,
+           status = 'cancelado_humano',
+           cancelado_por = p_usuario,
+           cancelado_em = NOW(),
+           justificativa_cancelamento = 'Todos os itens foram removidos manualmente',
+           status_envio_portal = 'nao_aplicavel',  -- higiene do portal (20260530210001)
+           portal_proximo_retry_em = NULL,         -- e cancela qualquer retry agendado
+           atualizado_em = NOW()
+     WHERE id = p_pedido_id;
+    v_cancelou := true;
+  ELSE
+    UPDATE pedido_compra_sugerido
+       SET valor_total = v_total,
+           num_skus = v_restantes,
+           atualizado_em = NOW()
+     WHERE id = p_pedido_id;
+  END IF;
+
+  -- UPDATE que pega ZERO linhas não é sucesso (achado Codex): sob RLS, um chamador que
+  -- enxerga a linha no SELECT pode não poder atualizá-la. Sem este assert a função devolveria
+  -- 'ok' com os itens apagados e o cabeçalho intacto — pior que a falha original.
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'remover_itens_pedido_sugerido: o UPDATE do pedido % nao pegou nenhuma linha (RLS de escrita?) -- itens ja apagados, abortando para nao deixar cabecalho divergente', p_pedido_id;
+  END IF;
+
+  RETURN jsonb_build_object(
+    'status', 'ok',
+    'pedido_id', p_pedido_id,
+    'removidos', COALESCE(cardinality(v_removidos), 0),
+    'restantes', v_restantes,
+    'valor_total', v_total,
+    'cancelado', v_cancelou
+  );
+END;
+$$;
+
+
+--
 -- Name: reposicao__po_id(text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -16494,6 +19116,115 @@ CREATE FUNCTION public.reposicao__trim(p text) RETURNS text
     AS $_$ SELECT COALESCE(regexp_replace(regexp_replace(p,
        '^[[:space:]\u0085\u00a0\u1680\u2000-\u200b\u2028\u2029\u202f\u205f\u3000\ufeff]+', ''),
        '[[:space:]\u0085\u00a0\u1680\u2000-\u200b\u2028\u2029\u202f\u205f\u3000\ufeff]+$', ''), '') $_$;
+
+
+--
+-- Name: reposicao__valida_cancelamento_pos_disparo(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.reposicao__valida_cancelamento_pos_disparo() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_portao text;
+BEGIN
+  -- Curto-circuito: a esmagadora maioria dos UPDATEs desta tabela não mexe em status
+  -- (valor_total, portal, quantidades). Eles saem aqui, sem custo.
+  IF NEW.status IS NOT DISTINCT FROM OLD.status THEN
+    RETURN NEW;
+  END IF;
+
+  -- Só me interessa SAIR de um estado em que a compra existe no fornecedor.
+  --
+  -- ⚠️ `disparado_simulado` ENTRA na lista, e é toda a razão desta migration. O nome mente: o
+  -- modo `dry_run` da edge `disparar-pedidos-aprovados` chama `IncluirPedCompra` INCONDICIONALMENTE
+  -- (medido no index.ts: a chamada ao Omie acontece antes de `novoStatus` ser decidido) e CRIA UM
+  -- PEDIDO DE COMPRA REAL no fornecedor. O que o dry_run muda é `cObs`/`cObsInt` e o status
+  -- gravado aqui — não o efeito no Omie. Logo, sair de `disparado_simulado` para `cancelado*`
+  -- carimba como cancelada uma compra que EXISTE, que é exatamente o dano que este trigger nasceu
+  -- para impedir. Ficou de fora da lista original por acidente de nomenclatura, não por desenho.
+  IF OLD.status NOT IN ('disparado', 'disparado_simulado', 'concluido_recebido') THEN
+    RETURN NEW;
+  END IF;
+
+  -- ⚠️ PREFIXO, não lista. Cobre os DOIS vocabulários medidos (`cancelado` legado e
+  -- `cancelado_humano`) e qualquer `cancelado_*` que nasça depois — que passa a ser barrado por
+  -- DEFAULT, em vez de escapar até alguém lembrar de atualizar esta lista. A direção é
+  -- deliberada: aqui errar barrando custa um round-trip; errar deixando passar custa uma compra
+  -- real carimbada como cancelada. Não há CHECK constraint em `status` nesta tabela (medido —
+  -- a coluna é `text` livre), então a lista fechada seria ainda mais frágil do que parece.
+  IF NEW.status NOT LIKE 'cancelad%' THEN
+    RETURN NEW;
+  END IF;
+
+  -- A PORTA. Carrega o id do pedido, não um booleano: autorização para UM pedido não vira
+  -- autorização para o próximo UPDATE da mesma transação.
+  v_portao := nullif(current_setting('app.correcao_cancelamento_pos_disparo', true), '');
+  IF v_portao IS DISTINCT FROM OLD.id::text THEN
+    RAISE EXCEPTION
+      '[CANCEL-POS-DISPARO-SEM-PORTAO] pedido % esta em "%" (a compra existe no fornecedor) e nao pode ir para "%" por escrita direta. Use a RPC corrigir_cancelamento_pos_disparo(), que exige evidencia e deixa trilha.',
+      OLD.id, OLD.status, NEW.status
+      USING ERRCODE = 'P0001';
+  END IF;
+
+  -- REDE: mesmo com a porta aberta, a linha tem de sair carimbada. Uma RPC futura que abra o
+  -- GUC e esqueça a evidência morre aqui — foi assim que a "segunda via" (#2231) nasceu.
+  IF NEW.cancelamento_pos_disparo_motivo IS NULL
+     OR NEW.cancelamento_pos_disparo_por IS NULL
+     OR NEW.cancelamento_pos_disparo_em IS NULL
+     OR length(btrim(COALESCE(NEW.cancelamento_pos_disparo_evidencia, ''))) < 4 THEN
+    RAISE EXCEPTION
+      '[CANCEL-POS-DISPARO-SEM-EVIDENCIA] pedido %: a porta foi aberta mas a linha nao carrega motivo/evidencia/autor/data do cancelamento junto ao fornecedor.',
+      OLD.id
+      USING ERRCODE = 'P0001';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: reposicao__veta_cancelamento_com_disparo_pendente(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.reposicao__veta_cancelamento_com_disparo_pendente() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+  -- Curto-circuito: a esmagadora maioria dos UPDATEs desta tabela não mexe em status (valor_total,
+  -- portal, quantidades — e o próprio claim). Eles saem aqui, sem custo.
+  IF NEW.status IS NOT DISTINCT FROM OLD.status THEN
+    RETURN NEW;
+  END IF;
+
+  -- PREFIXO, não lista: cobre `cancelado` (legado), `cancelado_humano` e qualquer `cancelado_*` que
+  -- nasça depois, que passa a ser barrado por DEFAULT. Mesma direção deliberada do trigger irmão:
+  -- errar barrando custa um round-trip; errar deixando passar custa uma compra real carimbada como
+  -- cancelada. Não há CHECK em `status` nesta tabela (medido — a coluna é `text` livre).
+  IF NEW.status NOT LIKE 'cancelad%' THEN
+    RETURN NEW;
+  END IF;
+
+  IF OLD.disparo_claim_em IS NULL THEN
+    RETURN NEW;
+  END IF;
+
+  -- ⚠️ SEM PORTA, e isso é decisão do 2º parecer Codex sobre um rascunho que TINHA porta (a GUC
+  -- `app.correcao_cancelamento_pos_disparo` do trigger irmão). Uma porta significa "conciliei e sei
+  -- o desfecho". Com uma pendência ABERTA ninguém sabe: uma execução ainda em voo pode comprar
+  -- DEPOIS da conciliação, e "não achei PO agora" não é prova de que não haverá um.
+  -- A saída é encerrar a pendência numa instrução ANTERIOR — explícita e auditável. E o Postgres
+  -- força essa ordem sozinho: limpar o claim e cancelar na MESMA instrução continua barrado, porque
+  -- o trigger lê OLD.
+  RAISE EXCEPTION
+    '[CANCEL-COM-DISPARO-PENDENTE] pedido % tem disparo pendente desde % (aberto por %): a compra pode ter sido criada no Omie e o cancelamento chegaria depois dela. Espere o disparo terminar. Se ele nao terminar: concilie no Omie e, so entao, encerre a pendencia numa instrucao propria -- UPDATE pedido_compra_sugerido SET disparo_claim_em=NULL, disparo_claim_por=NULL WHERE id=%; -- antes de cancelar.',
+    OLD.id, OLD.disparo_claim_em, COALESCE(OLD.disparo_claim_por, '(sem autor)'), OLD.id
+    USING ERRCODE = 'P0001';
+END;
+$$;
 
 
 --
@@ -16798,6 +19529,63 @@ END $$;
 
 
 --
+-- Name: reposicao_claim_disparo(bigint, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.reposicao_claim_disparo(p_pedido_id bigint, p_origem text) RETURNS jsonb
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_status text;
+  v_desde  timestamptz;
+  v_atual  text;
+BEGIN
+  -- ⚠️ O guard e a escrita são UMA instrução. Não separe: o `status IN (…)` preso a ESTE WHERE é o
+  -- que faz o Postgres re-avaliá-lo contra a linha recém-commitada por um cancelamento concorrente
+  -- (EvalPlanQual, READ COMMITTED). Movê-lo para um SELECT acima reabre exatamente o Cenário B.
+  -- ALLOWLIST, não denylist: só os dois status que a edge de fato seleciona podem ser disparados.
+  -- ⚠️ `atualizado_em` NÃO é tocado de propósito. Abrir a pendência não é mudança de conteúdo do
+  -- pedido, e há consumidores que medem staleness por `min(atualizado_em)` (checks do portal em
+  -- 20260829012000) — renovar aquele relógio a cada tentativa de disparo esconderia pedido parado.
+  -- Medido em 2026-09-06: esta tabela tem 4 triggers e NENHUM deles escreve `atualizado_em`, então
+  -- a omissão de fato se mantém.
+  UPDATE pedido_compra_sugerido
+     SET disparo_claim_em  = COALESCE(disparo_claim_em, NOW()),
+         disparo_claim_por = COALESCE(disparo_claim_por,
+                                      left(COALESCE(NULLIF(btrim(p_origem), ''), 'edge'), 120))
+   WHERE id = p_pedido_id
+     AND status IN ('aprovado_aguardando_disparo', 'falha_envio')
+  RETURNING status, disparo_claim_em INTO v_status, v_desde;
+
+  IF v_status IS NOT NULL THEN
+    -- `desde` é o carimbo EFETIVO (pode ser de uma tentativa anterior): é ele que diz à edge, e a
+    -- quem for investigar, há quanto tempo esta linha tem uma compra possivelmente em aberto.
+    RETURN jsonb_build_object('claimed', true, 'pedido_id', p_pedido_id,
+                              'status', v_status, 'desde', v_desde);
+  END IF;
+
+  -- 0 linhas. A DECISÃO já foi tomada acima, pelo predicado — esta leitura serve só para MONTAR A
+  -- MENSAGEM e não pode voltar a decidir nada.
+  SELECT status INTO v_atual FROM pedido_compra_sugerido WHERE id = p_pedido_id;
+
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('claimed', false, 'pedido_id', p_pedido_id,
+                              'motivo', 'pedido não encontrado');
+  END IF;
+
+  -- COALESCE porque `'texto' || NULL` colapsa a STRING INTEIRA para NULL: sem ele, se o NOT NULL de
+  -- `status` algum dia cair, o motivo viraria null e o log da edge não diria por que não disparou.
+  RETURN jsonb_build_object(
+    'claimed', false, 'pedido_id', p_pedido_id, 'status', v_atual,
+    'motivo', 'pedido não está mais disparável (status atual: '
+              || COALESCE(v_atual, '(desconhecido)') || ')'
+  );
+END;
+$$;
+
+
+--
 -- Name: reposicao_cold_start_parametros(text, integer, uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -16912,6 +19700,93 @@ END $$;
 --
 
 COMMENT ON FUNCTION public.reposicao_cold_start_parametros(p_empresa text, p_limite integer, p_run_id uuid) IS 'Cold start de parâmetros de reposição. GRADUAR aplica o parâmetro real, agora sob o MESMO fusível de magnitude de atualizar_parametros_numericos_skus (param_auto_fusivel_mult): salto acima do limite, ou ausência de âncora, vira acao=''segurado'' para revisão humana — nunca escrita silenciosa.';
+
+
+--
+-- Name: reposicao_conferir_envio(bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.reposicao_conferir_envio(p_pedido_id bigint) RETURNS TABLE(selo_ok boolean, depara_ok boolean, motivo text, divergencias jsonb)
+    LANGUAGE plpgsql STABLE SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_ped    RECORD;
+  v_atual  text;
+  v_div    jsonb;
+BEGIN
+  IF auth.uid() IS NOT NULL AND NOT private.cap_compras_ler(auth.uid()) THEN
+    RAISE EXCEPTION 'Acesso negado: requer capacidade de compras' USING ERRCODE = '42501';
+  END IF;
+
+  SELECT id, empresa, fornecedor_nome, aprovacao_selo INTO v_ped
+    FROM public.pedido_compra_sugerido WHERE id = p_pedido_id;
+  IF NOT FOUND THEN
+    RETURN QUERY SELECT false, false, 'pedido_inexistente'::text, '[]'::jsonb;
+    RETURN;
+  END IF;
+
+  IF v_ped.aprovacao_selo IS NULL THEN
+    RETURN QUERY SELECT false, false, 'selo_ausente'::text, '[]'::jsonb;
+    RETURN;
+  END IF;
+
+  v_atual := public.reposicao_selo_itens(p_pedido_id);
+  IF v_atual IS DISTINCT FROM v_ped.aprovacao_selo THEN
+    RETURN QUERY SELECT false, false, 'selo_aprovacao_divergente'::text,
+      jsonb_build_object('selo_aprovado', v_ped.aprovacao_selo, 'selo_atual', v_atual);
+    RETURN;
+  END IF;
+
+  IF NOT public.reposicao_pedido_e_portal(v_ped.empresa, v_ped.fornecedor_nome) THEN
+    RETURN QUERY SELECT true, true, NULL::text, '[]'::jsonb;
+    RETURN;
+  END IF;
+
+  SELECT COALESCE(jsonb_agg(jsonb_build_object(
+           'sku', x.sku_codigo_omie,
+           'linhas_ativas', x.n,
+           'sku_portal_aprovado', x.sku_portal_aprovado,
+           'sku_portal_vivo', x.sku_portal_vivo,
+           'fator_aprovado', trim_scale(x.fator_portal_aprovado)::text,
+           'fator_vivo', trim_scale(x.fator_vivo)::text
+         ) ORDER BY x.id), '[]'::jsonb)
+    INTO v_div
+    FROM (
+      SELECT i.id, i.sku_codigo_omie, i.sku_portal_aprovado, i.fator_portal_aprovado,
+             COALESCE(d.n, 0) AS n, d.sku_portal AS sku_portal_vivo, d.fator_conversao AS fator_vivo
+        FROM public.pedido_compra_item i
+        -- LEFT, não CROSS: com CROSS, o item que ficou SEM de-para (a linha foi
+        -- desativada depois da aprovação) sumiria do resultado e a conferência
+        -- diria "de-para ok" — falha ABERTA no exato caso que ela existe pra pegar.
+        LEFT JOIN LATERAL (
+          SELECT s.sku_portal, s.fator_conversao,
+                 (SELECT count(*) FROM public.sku_fornecedor_externo s2
+                   WHERE s2.empresa = v_ped.empresa
+                     AND s2.fornecedor_nome = v_ped.fornecedor_nome
+                     AND s2.sku_omie = i.sku_codigo_omie
+                     AND s2.ativo) AS n
+            FROM public.sku_fornecedor_externo s
+           WHERE s.empresa = v_ped.empresa
+             AND s.fornecedor_nome = v_ped.fornecedor_nome
+             AND s.sku_omie = i.sku_codigo_omie
+             AND s.ativo
+           ORDER BY s.id LIMIT 1
+        ) d ON true
+       WHERE i.pedido_id = p_pedido_id
+         AND (COALESCE(d.n, 0) <> 1
+              OR d.sku_portal IS DISTINCT FROM i.sku_portal_aprovado
+              OR d.fator_conversao IS DISTINCT FROM i.fator_portal_aprovado)
+    ) x;
+
+  IF jsonb_array_length(v_div) > 0 THEN
+    RETURN QUERY SELECT true, false, 'depara_aprovado_divergente'::text, v_div;
+    RETURN;
+  END IF;
+
+  RETURN QUERY SELECT true, true, NULL::text, '[]'::jsonb;
+END;
+$$;
 
 
 --
@@ -17337,6 +20212,25 @@ $_$;
 
 
 --
+-- Name: reposicao_pedido_e_portal(text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.reposicao_pedido_e_portal(p_empresa text, p_fornecedor_nome text) RETURNS boolean
+    LANGUAGE sql IMMUTABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+  SELECT p_empresa = 'OBEN' AND p_fornecedor_nome ILIKE '%SAYERLACK%';
+$$;
+
+
+--
+-- Name: FUNCTION reposicao_pedido_e_portal(p_empresa text, p_fornecedor_nome text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.reposicao_pedido_e_portal(p_empresa text, p_fornecedor_nome text) IS 'Definição ÚNICA de "pedido que vai ao portal Sayerlack". Antes vivia copiada em envio_portal_claim_ids e envio_portal_lock_candidatos.';
+
+
+--
 -- Name: reposicao_persistir_qtde_inteira(bigint); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -17367,6 +20261,68 @@ BEGIN
 
   RETURN v_ajustados;
 END;
+$$;
+
+
+--
+-- Name: reposicao_po_observado_publicar(jsonb, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.reposicao_po_observado_publicar(p_run jsonb, p_itens jsonb) RETURNS integer
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    SET lock_timeout TO '5s'
+    AS $$
+DECLARE
+  v_run_id uuid := (p_run->>'run_id')::uuid;
+  v_n integer;
+  v_divergentes integer;
+BEGIN
+  IF v_run_id IS NULL THEN
+    RAISE EXCEPTION 'reposicao_po_observado_publicar: run_id ausente' USING ERRCODE = '22023';
+  END IF;
+  IF jsonb_typeof(p_itens) IS DISTINCT FROM 'array' THEN
+    RAISE EXCEPTION 'reposicao_po_observado_publicar: p_itens não é array' USING ERRCODE = '22023';
+  END IF;
+
+  -- A 2ª testemunha do invariante, no BANCO e na mesma transação: para cada SKU habilitado da empresa, o pendente
+  -- GRAVADO tem de ser a soma do que esta observação diz que contou. Run concorrente, upsert parcial ou SKU fora do
+  -- ListarPosEstoque fazem a observação não valer como "pendente aplicado" — sem tocar no pendente.
+  SELECT count(*) INTO v_divergentes
+  FROM public.sku_parametros sp
+  LEFT JOIN public.sku_estoque_atual e ON e.empresa = sp.empresa AND e.sku_codigo_omie = sp.sku_codigo_omie::text
+  LEFT JOIN (SELECT (i->>'sku_codigo_omie')::bigint AS sku, sum((i->>'contribuicao')::numeric) AS contribuicao
+               FROM jsonb_array_elements(p_itens) AS i
+              WHERE i->>'exclusao' IS NULL
+              GROUP BY 1) s ON s.sku = sp.sku_codigo_omie
+  WHERE sp.empresa = p_run->>'empresa' AND sp.habilitado_reposicao_automatica
+    AND (e.estoque_pendente_entrada IS NULL OR abs(coalesce(s.contribuicao, 0) - e.estoque_pendente_entrada) > 0.001);
+
+  INSERT INTO public.reposicao_po_observado_run
+    (run_id, empresa, iniciado_em, concluido_em, janela_de, janela_ate, filtros, varredura_completa,
+     pendente_aplicado, skus_divergentes, pedidos_lidos, versao_edge)
+  VALUES
+    (v_run_id, p_run->>'empresa', (p_run->>'iniciado_em')::timestamptz, (p_run->>'concluido_em')::timestamptz,
+     (p_run->>'janela_de')::date, (p_run->>'janela_ate')::date, p_run->'filtros',
+     (p_run->>'varredura_completa')::boolean,
+     coalesce((p_run->>'pendente_aplicado')::boolean, false) AND v_divergentes = 0,
+     v_divergentes, (p_run->>'pedidos_lidos')::integer, p_run->>'versao_edge');
+
+  INSERT INTO public.reposicao_po_observado_item
+    (run_id, omie_codigo_pedido, seq_item, numero_pedido, etapa, id_item, sku_codigo_omie, quantidade,
+     quantidade_recebida, contribuicao, exclusao)
+  SELECT v_run_id, (i->>'omie_codigo_pedido')::bigint, (i->>'seq_item')::integer, i->>'numero_pedido', i->>'etapa',
+         (i->>'id_item')::bigint, (i->>'sku_codigo_omie')::bigint, (i->>'quantidade')::numeric,
+         (i->>'quantidade_recebida')::numeric, (i->>'contribuicao')::numeric, i->>'exclusao'
+  FROM jsonb_array_elements(p_itens) AS i;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+
+  -- Retenção no MESMO writer: 14 dias bastam para as leituras de antes/depois por lote (spec §16, achado 9).
+  DELETE FROM public.reposicao_po_observado_run
+   WHERE empresa = p_run->>'empresa' AND concluido_em < now() - interval '14 days';
+
+  RETURN v_n;
+END
 $$;
 
 
@@ -17414,7 +20370,7 @@ BEGIN
       p.id AS pedido_id,
       p.omie_pedido_compra_id AS omie_codigo_pedido,
       p.data_ciclo::date AS data_ciclo,
-      (now()::date - p.data_ciclo::date)::integer AS idade_dias,
+      ((now() AT TIME ZONE 'America/Sao_Paulo')::date - p.data_ciclo::date)::integer AS idade_dias,
       p.fornecedor_nome,
       p.canal_usado,
       p.portal_protocolo,
@@ -17656,6 +20612,214 @@ BEGIN
   END IF;
 
   RETURN v_volume_ok;
+END;
+$$;
+
+
+--
+-- Name: reposicao_selar_pedido(bigint, boolean); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.reposicao_selar_pedido(p_pedido_id bigint, p_reusar_snapshot boolean DEFAULT false) RETURNS text
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_ped     RECORD;
+  v_portal  boolean;
+  v_n       integer;
+  v_bad     RECORD;
+  v_selo    text;
+BEGIN
+  IF auth.uid() IS NOT NULL AND NOT private.cap_compras_ler(auth.uid()) THEN
+    RAISE EXCEPTION 'Acesso negado: requer capacidade de compras' USING ERRCODE = '42501';
+  END IF;
+
+  SELECT id, empresa, fornecedor_nome INTO v_ped
+    FROM public.pedido_compra_sugerido WHERE id = p_pedido_id FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Pedido % não encontrado', p_pedido_id USING ERRCODE = 'SA005';
+  END IF;
+
+  v_portal := public.reposicao_pedido_e_portal(v_ped.empresa, v_ped.fornecedor_nome);
+
+  -- Trava os itens: serializa UPDATE/DELETE concorrentes com a aprovação.
+  PERFORM 1 FROM public.pedido_compra_item WHERE pedido_id = p_pedido_id ORDER BY id FOR UPDATE;
+
+  SELECT count(*) INTO v_n FROM public.pedido_compra_item WHERE pedido_id = p_pedido_id;
+  IF v_n = 0 THEN
+    RAISE EXCEPTION 'Pedido % não tem itens — nada a aprovar', p_pedido_id USING ERRCODE = 'SA005';
+  END IF;
+
+  -- (2) Canonicidade. `< 1e9` não é frescura: em numeric, NaN e Infinity são
+  -- MAIORES que tudo, então `> 0` sozinho deixa os dois passarem (mesma lição do
+  -- CHECK sku_fornecedor_externo_fator_positivo).
+  SELECT i.sku_codigo_omie, i.qtde_final INTO v_bad
+    FROM public.pedido_compra_item i
+   WHERE i.pedido_id = p_pedido_id
+     AND NOT (i.qtde_final IS NOT NULL
+              AND i.qtde_final > 0
+              AND i.qtde_final < 1e9
+              AND i.qtde_final = trunc(i.qtde_final))
+   ORDER BY i.id LIMIT 1;
+  IF FOUND THEN
+    RAISE EXCEPTION 'Quantidade não é inteira/positiva no SKU % (qtde=%) — corrija antes de aprovar',
+      v_bad.sku_codigo_omie, v_bad.qtde_final USING ERRCODE = 'SA005';
+  END IF;
+
+  IF v_portal THEN
+    IF p_reusar_snapshot THEN
+      -- Split: deriva do snapshot JÁ gravado pelo pai; NÃO relê o de-para vivo
+      -- (reler reabriria a janela que o selo existe para fechar).
+      SELECT i.sku_codigo_omie INTO v_bad
+        FROM public.pedido_compra_item i
+       WHERE i.pedido_id = p_pedido_id
+         AND (i.sku_portal_aprovado IS NULL OR i.fator_portal_aprovado IS NULL)
+       ORDER BY i.id LIMIT 1;
+      IF FOUND THEN
+        RAISE EXCEPTION 'Item do SKU % sem snapshot de de-para para reusar', v_bad.sku_codigo_omie
+          USING ERRCODE = 'SA006';
+      END IF;
+    ELSE
+      -- (3) Snapshot pela MESMA chave do motor e da edge (fornecedor EXATO).
+      -- P1-5 (Codex): conta ATIVAS e UTILIZÁVEIS separadamente. Contar só as utilizáveis faria
+      -- "1 válida + 1 ativa com sku_portal vazio" passar na aprovação e falhar no envio, porque
+      -- `reposicao_conferir_envio` conta as ATIVAS. Os dois lados têm de contar a mesma coisa.
+      SELECT i.sku_codigo_omie, d.n_util AS n, d.n_ativas INTO v_bad
+        FROM public.pedido_compra_item i
+        CROSS JOIN LATERAL (
+          SELECT count(*) FILTER (
+                   WHERE COALESCE(btrim(s.sku_portal), '') <> ''
+                     AND s.fator_conversao IS NOT NULL
+                     AND s.fator_conversao > 0
+                     AND s.fator_conversao < 1e9
+                 ) AS n_util,
+                 count(*) AS n_ativas
+            FROM public.sku_fornecedor_externo s
+           WHERE s.empresa = v_ped.empresa
+             AND s.fornecedor_nome = v_ped.fornecedor_nome
+             AND s.sku_omie = i.sku_codigo_omie
+             AND s.ativo
+        ) d
+       WHERE i.pedido_id = p_pedido_id AND (d.n_util <> 1 OR d.n_ativas <> 1)
+       ORDER BY i.id LIMIT 1;
+      IF FOUND THEN
+        IF v_bad.n_ativas > 1 THEN
+          RAISE EXCEPTION 'SKU % tem % linhas ativas no de-para de % — ambíguo, resolva antes de aprovar',
+            v_bad.sku_codigo_omie, v_bad.n_ativas, v_ped.fornecedor_nome USING ERRCODE = 'SA003';
+        END IF;
+        IF v_bad.n = 0 THEN
+          RAISE EXCEPTION 'SKU % não tem de-para ativo utilizável para % — cadastre antes de aprovar',
+            v_bad.sku_codigo_omie, v_ped.fornecedor_nome USING ERRCODE = 'SA006';
+        END IF;
+        RAISE EXCEPTION 'SKU % tem de-para ativo inutilizável em % (código vazio ou fator fora do domínio)',
+          v_bad.sku_codigo_omie, v_ped.fornecedor_nome USING ERRCODE = 'SA006';
+      END IF;
+
+      UPDATE public.pedido_compra_item i
+         SET sku_portal_aprovado   = s.sku_portal,
+             fator_portal_aprovado = s.fator_conversao
+        FROM public.sku_fornecedor_externo s
+       WHERE i.pedido_id = p_pedido_id
+         AND s.empresa = v_ped.empresa
+         AND s.fornecedor_nome = v_ped.fornecedor_nome
+         AND s.sku_omie = i.sku_codigo_omie
+         AND s.ativo
+         AND COALESCE(btrim(s.sku_portal), '') <> ''
+         AND s.fator_conversao IS NOT NULL
+         AND s.fator_conversao > 0
+         AND s.fator_conversao < 1e9;
+
+      -- (4) O fator com que o MOTOR arredondou tem de ser o que está vivo agora. Este teste vem
+      -- ANTES do round-trip de propósito: com o de-para trocado (0,2 -> 0,18) a quantidade
+      -- aprovada deixa de ser múltiplo POR CONSEQUÊNCIA, e apontar SA005 mandaria o comprador
+      -- ajustar uma quantidade que não é o problema. A causa raiz é o de-para ter mudado.
+      -- (comentário original abaixo)
+      -- O fator com que o MOTOR arredondou tem de ser o que está vivo agora.
+      SELECT i.sku_codigo_omie INTO v_bad
+        FROM public.pedido_compra_item i
+       WHERE i.pedido_id = p_pedido_id
+         AND i.fator_embalagem_portal IS NOT NULL
+         AND i.fator_embalagem_portal IS DISTINCT FROM i.fator_portal_aprovado
+       ORDER BY i.id LIMIT 1;
+      IF FOUND THEN
+        RAISE EXCEPTION 'O de-para do SKU % mudou depois que o motor gerou o pedido — cancele e aguarde o próximo ciclo',
+          v_bad.sku_codigo_omie USING ERRCODE = 'SA004';
+      END IF;
+      -- P1-2 (Codex): o round-trip da embalagem vale para TODO item de portal, com o fator do
+      -- SNAPSHOT — não só quando `fator_embalagem_portal` não é NULL. Medido em prod: 16 itens
+      -- têm fator do motor NULL e fator vivo <> 1; para eles a aprovação selaria 41 e a edge
+      -- VELHA gravaria 45 antes do Browserless, invalidando o próprio selo. A checagem anterior,
+      -- gateada por `fator_embalagem_portal IS NOT NULL`, era cega a exatamente esses.
+      SELECT i.sku_codigo_omie, i.qtde_final INTO v_bad
+        FROM public.pedido_compra_item i
+       WHERE i.pedido_id = p_pedido_id
+         AND i.fator_portal_aprovado IS NOT NULL
+         AND trim_scale(round(GREATEST(1, ceil(round(i.qtde_final * i.fator_portal_aprovado, 6)))
+                              / i.fator_portal_aprovado, 6)) IS DISTINCT FROM trim_scale(i.qtde_final)
+       ORDER BY i.id LIMIT 1;
+      IF FOUND THEN
+        RAISE EXCEPTION 'Quantidade % do SKU % não é múltiplo da embalagem do portal — ajuste na tela antes de aprovar',
+          v_bad.qtde_final, v_bad.sku_codigo_omie USING ERRCODE = 'SA005';
+      END IF;
+
+    END IF;
+  END IF;
+
+  -- (5) Sela.
+  -- ⚠️ NÃO use GUC para autorizar o trigger da M2. Uma função com cláusula SET
+  -- (todas aqui têm `SET search_path`) roda num NEST LEVEL de GUC próprio, e o
+  -- Postgres reverte em AtEOXact_GUC TUDO que foi setado lá dentro quando a
+  -- função retorna — inclusive um set_config(..., is_local => true). O GUC
+  -- morreria antes de o CHAMADOR fazer o flip de status, e a M2 recusaria TODA
+  -- aprovação por SA007. A M2 autoriza por ESTADO, que é mais forte que um GUC:
+  --   · flip para aprovado_aguardando_disparo exige
+  --     NEW.aprovacao_selo = reposicao_selo_itens(NEW.id) (selo presente E conferido);
+  --   · aprovacao_selo só muda enquanto o status ainda é pendente/bloqueado.
+  -- Assim o UPDATE direto do runAutoApprove é recusado por não ter selo válido,
+  -- sem depender de nenhum sinal fora da linha.
+  v_selo := public.reposicao_selo_itens(p_pedido_id);
+
+  UPDATE public.pedido_compra_sugerido
+     SET aprovacao_selo = v_selo, aprovacao_selo_em = now()
+   WHERE id = p_pedido_id;
+
+  RETURN v_selo;
+END;
+$$;
+
+
+--
+-- Name: reposicao_selo_itens(bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.reposicao_selo_itens(p_pedido_id bigint) RETURNS text
+    LANGUAGE plpgsql STABLE SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_payload jsonb;
+BEGIN
+  IF auth.uid() IS NOT NULL AND NOT private.cap_compras_ler(auth.uid()) THEN
+    RAISE EXCEPTION 'Acesso negado: requer capacidade de compras' USING ERRCODE = '42501';
+  END IF;
+
+  SELECT COALESCE(jsonb_agg(
+           jsonb_build_array(
+             i.id,
+             i.pedido_id,
+             i.sku_codigo_omie,
+             trim_scale(i.qtde_final)::text,
+             trim_scale(i.fator_embalagem_portal)::text,
+             i.sku_portal_aprovado,
+             trim_scale(i.fator_portal_aprovado)::text
+           ) ORDER BY i.id
+         ), '[]'::jsonb)
+    INTO v_payload
+    FROM public.pedido_compra_item i
+   WHERE i.pedido_id = p_pedido_id;
+
+  RETURN encode(sha256(convert_to(v_payload::text, 'UTF8')), 'hex');
 END;
 $$;
 
@@ -18022,7 +21186,7 @@ BEGIN
   FROM omie_products op
   WHERE lower(op.account) = v_empresa
     AND COALESCE(op.ativo, true) = true
-    AND op.descricao ILIKE '%' || p_codigo_fornecedor || '%';
+    AND op.descricao ILIKE private.padrao_like_contem(p_codigo_fornecedor) ESCAPE '\';
 
   IF v_count = 0 THEN
     RETURN jsonb_build_object('qualidade', 'nao_encontrado');
@@ -18033,7 +21197,7 @@ BEGIN
     FROM omie_products op
     WHERE lower(op.account) = v_empresa
       AND COALESCE(op.ativo, true) = true
-      AND op.descricao ILIKE '%' || p_codigo_fornecedor || '%'
+      AND op.descricao ILIKE private.padrao_like_contem(p_codigo_fornecedor) ESCAPE '\'
     LIMIT 1;
 
     RETURN jsonb_build_object(
@@ -18057,7 +21221,7 @@ BEGIN
     FROM omie_products
     WHERE lower(account) = v_empresa
       AND COALESCE(ativo, true) = true
-      AND descricao ILIKE '%' || p_codigo_fornecedor || '%'
+      AND descricao ILIKE private.padrao_like_contem(p_codigo_fornecedor) ESCAPE '\'
     LIMIT 5
   ) op;
 
@@ -18249,6 +21413,323 @@ BEGIN
   RETURN nullif(s, '');
 END
 $_$;
+
+
+--
+-- Name: sales_orders_gemeo_app_derivar(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.sales_orders_gemeo_app_derivar() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_gemeo uuid;
+  v_envio boolean;
+BEGIN
+  -- Linha do app ainda não empurrada: não há gêmea possível.
+  IF NEW.omie_pedido_id IS NULL THEN
+    NEW.gemeo_importado_id := NULL;
+    RETURN NEW;
+  END IF;
+  -- Serializa com o trigger da importada do MESMO pedido (write-back x importador). Quem chega
+  -- depois vê o commit do outro: o SELECT abaixo roda com snapshot novo, depois do lock.
+  PERFORM pg_advisory_xact_lock(hashtextextended('sales_orders.gemeo:' || NEW.account || ':' || NEW.omie_pedido_id, 0));
+  SELECT i.id INTO v_gemeo
+    FROM public.sales_orders i
+   WHERE i.account = NEW.account
+     AND i.hash_payload LIKE 'omie\_%'
+     AND i.hash_payload = 'omie_' || NEW.account || '_' || NEW.omie_pedido_id;
+  NEW.gemeo_importado_id := v_gemeo;
+  IF v_gemeo IS NOT NULL THEN
+    NEW.order_date_kpi := NULL;
+  ELSIF NEW.order_date_kpi IS NULL THEN
+    -- ENVIO = a linha que não tinha pedido Omie e passa a ter (write-back), ou que já nasce com ele.
+    -- O UPDATE do trigger da importada (que zera este kpi) não é envio: não re-deriva.
+    IF TG_OP = 'INSERT' THEN
+      v_envio := true;
+    ELSE
+      v_envio := OLD.omie_pedido_id IS NULL;
+    END IF;
+    -- Outra linha do MESMO pedido já com kpi: não deriva (o índice único barraria este write-back).
+    -- A própria linha também casa aqui quando o UPDATE não é envio (a versão velha dela tem o kpi):
+    -- trava de reserva contra re-derivar no import, se a condição de envio um dia falhar.
+    IF v_envio AND NOT EXISTS (SELECT 1 FROM public.sales_orders o
+                                WHERE o.account = NEW.account
+                                  AND o.omie_pedido_id = NEW.omie_pedido_id
+                                  AND o.order_date_kpi IS NOT NULL) THEN
+      -- O dia de São Paulo do envio, nunca o de UTC (a prod roda com TimeZone=UTC).
+      NEW.order_date_kpi := (public.sales_orders_instante_envio() AT TIME ZONE 'America/Sao_Paulo')::date;
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: sales_orders_gemeo_importada_antes(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.sales_orders_gemeo_importada_antes() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+  -- Mesmo lock do trigger da linha do app (ver sales_orders_gemeo_app_derivar).
+  PERFORM pg_advisory_xact_lock(hashtextextended('sales_orders.gemeo:' || NEW.account || ':' || NEW.omie_pedido_id, 0));
+  -- ANTES da inserção: o índice único é imediato e barraria a importada se a linha do app ainda
+  -- tivesse kpi. Dispara também quando o INSERT ... ON CONFLICT DO NOTHING acaba não inserindo —
+  -- coerente: a importada já existe, e a linha do app não pode ter kpi. Importada SEM data não
+  -- chega a existir: o CHECK sales_orders_importada_tem_data recusa a linha proposta (o PG avalia o
+  -- CHECK antes do ON CONFLICT) e a falha desfaz este UPDATE junto com o comando.
+  UPDATE public.sales_orders a
+     SET order_date_kpi = NULL
+   WHERE a.account = NEW.account
+     AND a.omie_pedido_id = NEW.omie_pedido_id
+     AND a.hash_payload IS NULL
+     AND a.order_date_kpi IS NOT NULL;
+  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: sales_orders_gemeo_importada_depois(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.sales_orders_gemeo_importada_depois() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+  -- DEPOIS da inserção (a FK exige a importada existindo): toca as linhas do app do mesmo pedido
+  -- para o trigger delas derivar o ponteiro.
+  UPDATE public.sales_orders a
+     SET gemeo_importado_id = NEW.id
+   WHERE a.account = NEW.account
+     AND a.omie_pedido_id = NEW.omie_pedido_id
+     AND a.hash_payload IS NULL
+     AND a.gemeo_importado_id IS DISTINCT FROM NEW.id;
+  RETURN NULL;
+END;
+$$;
+
+
+--
+-- Name: sales_orders_instante_envio(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.sales_orders_instante_envio() RETURNS timestamp with time zone
+    LANGUAGE sql STABLE
+    SET search_path TO 'public'
+    AS $$
+  SELECT pg_catalog.statement_timestamp()
+$$;
+
+
+--
+-- Name: sayerlack_aplicar_custo_portal(bigint, jsonb, numeric); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.sayerlack_aplicar_custo_portal(p_pedido_id bigint, p_itens jsonb, p_valor_total numeric) RETURNS integer
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $_$
+DECLARE
+  v_n              integer;
+  v_afetadas       integer;
+  v_atualizados    integer;
+  v_omie           text;
+  v_status         text;
+  v_ids_distintos  integer;
+  v_itens_total    integer;
+  v_pertencem      integer;
+  v_sem_aliquota   text;
+  v_ipi_divergente integer;
+  v_total_modelado numeric;
+  v_tolerancia     numeric;
+  v_aliq           jsonb;
+BEGIN
+  -- Gate de papel (defesa em profundidade; a tranca é o privilégio).
+  IF auth.uid() IS NOT NULL
+     AND NOT (public.has_role(auth.uid(), 'employee'::app_role)
+              OR public.has_role(auth.uid(), 'master'::app_role)) THEN
+    RAISE EXCEPTION 'Acesso negado: requer perfil staff' USING ERRCODE = '42501';
+  END IF;
+
+  -- CP001 — payload. Ausente ≠ zero: nada aqui degrada para default.
+  IF p_pedido_id IS NULL OR p_itens IS NULL OR jsonb_typeof(p_itens) <> 'array' THEN
+    RAISE EXCEPTION 'custo_portal: payload inválido (pedido=%, itens=%)',
+      coalesce(p_pedido_id::text, 'null'), coalesce(jsonb_typeof(p_itens), 'null') USING ERRCODE = 'CP001';
+  END IF;
+  v_n := jsonb_array_length(p_itens);
+  IF v_n = 0 THEN
+    RAISE EXCEPTION 'custo_portal: payload sem itens — a prova cobre o pedido inteiro' USING ERRCODE = 'CP001';
+  END IF;
+  IF p_valor_total IS NULL OR p_valor_total = 'NaN'::numeric
+     OR NOT (p_valor_total > 0 AND p_valor_total < 'Infinity'::numeric) THEN
+    RAISE EXCEPTION 'custo_portal: valor_total não finito ou ≤ 0 (%)', coalesce(p_valor_total::text, 'null') USING ERRCODE = 'CP001';
+  END IF;
+  -- Cada item: id inteiro e 3 NÚMEROS JSON. `IS DISTINCT FROM`, nunca `<>`: chave AUSENTE dá jsonb_typeof NULL, e
+  -- `NULL <> 'number'` é NULL — o EXISTS leria "nada errado" e o item sem IPI passaria (verde por ausência).
+  -- Número JSON nunca é NaN/Infinity (a string "NaN" tem tipo 'string').
+  IF EXISTS (
+    SELECT 1 FROM jsonb_array_elements(p_itens) e
+     WHERE jsonb_typeof(e) IS DISTINCT FROM 'object'
+        OR (e->>'item_id') IS NULL OR (e->>'item_id') !~ '^[0-9]+$'
+        OR jsonb_typeof(e->'qtde_final')       IS DISTINCT FROM 'number'
+        OR jsonb_typeof(e->'valor_mercadoria') IS DISTINCT FROM 'number'
+        OR jsonb_typeof(e->'valor_ipi')        IS DISTINCT FROM 'number'
+  ) THEN
+    RAISE EXCEPTION 'custo_portal: item sem id inteiro ou sem qtde_final/valor_mercadoria/valor_ipi numéricos' USING ERRCODE = 'CP001';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM jsonb_array_elements(p_itens) e
+     WHERE NOT ((e->>'qtde_final')::numeric > 0 AND (e->>'valor_mercadoria')::numeric > 0 AND (e->>'valor_ipi')::numeric >= 0)
+  ) THEN
+    RAISE EXCEPTION 'custo_portal: qtde_final/valor_mercadoria ≤ 0 ou valor_ipi < 0 no payload' USING ERRCODE = 'CP001';
+  END IF;
+  -- CP004 (forma barata): id repetido.
+  SELECT count(DISTINCT (e->>'item_id')::bigint) INTO v_ids_distintos FROM jsonb_array_elements(p_itens) e;
+  IF v_ids_distintos <> v_n THEN
+    RAISE EXCEPTION 'custo_portal: item_id repetido no payload (% ids, % distintos)', v_n, v_ids_distintos USING ERRCODE = 'CP004';
+  END IF;
+
+  -- (1) CAS no próprio UPDATE: só grava se AINDA não há PO Omie e o pedido está em sucesso_portal. O row-lock
+  -- serializa contra quem grava omie_pedido_compra_numero; sob READ COMMITTED o predicado é reavaliado.
+  UPDATE public.pedido_compra_sugerido p
+     SET valor_total_portal_provado           = p_valor_total,
+         valor_total_portal_provado_em        = now(),
+         valor_total_portal_provado_protocolo = p.portal_protocolo
+   WHERE p.id = p_pedido_id
+     AND p.omie_pedido_compra_numero IS NULL
+     AND p.status_envio_portal = 'sucesso_portal';
+  GET DIAGNOSTICS v_afetadas = ROW_COUNT;
+  IF v_afetadas <> 1 THEN
+    SELECT p.omie_pedido_compra_numero, p.status_envio_portal INTO v_omie, v_status
+      FROM public.pedido_compra_sugerido p WHERE p.id = p_pedido_id;
+    IF FOUND AND v_omie IS NOT NULL THEN
+      RAISE EXCEPTION 'custo_portal: pedido % já tem PO Omie (%) — custo não muda mais', p_pedido_id, v_omie USING ERRCODE = 'CP002';
+    END IF;
+    RAISE EXCEPTION 'custo_portal: pedido % não elegível (status_envio_portal=%)',
+      p_pedido_id, coalesce(v_status, 'inexistente') USING ERRCODE = 'CP003';
+  END IF;
+
+  -- (2) CP004 — o payload é o pedido INTEIRO: nem item a menos, nem item alheio. A decomposição tem de nascer em
+  -- todo item; PO com metade dos itens sem IPI seria o custo misto que o tudo-ou-nada existe para impedir.
+  SELECT count(*) INTO v_itens_total FROM public.pedido_compra_item WHERE pedido_id = p_pedido_id;
+  SELECT count(*) INTO v_pertencem
+    FROM jsonb_array_elements(p_itens) e
+    JOIN public.pedido_compra_item i ON i.id = (e->>'item_id')::bigint AND i.pedido_id = p_pedido_id;
+  IF v_n <> v_itens_total OR v_pertencem <> v_n THEN
+    RAISE EXCEPTION 'custo_portal: o payload (% itens, % do pedido) não é o pedido % inteiro (% itens) — nada gravado',
+      v_n, v_pertencem, p_pedido_id, v_itens_total USING ERRCODE = 'CP004';
+  END IF;
+
+  -- (3) CP006 — a alíquota de cada item, pela MESMA função que a edge leu. Ausente ≠ zero. UMA leitura só: sob
+  -- READ COMMITTED cada comando vê um snapshot novo, e reler no UPDATE poderia gravar um IPI que a prova não validou
+  -- (alíquota ou NCM alterados no meio). CP006, CP007 e a escrita usam esta mesma leitura materializada.
+  SELECT coalesce(jsonb_agg(jsonb_build_object('item_id', x.item_id, 'ncm', x.ncm, 'aliquota_pct', x.aliquota_pct)), '[]'::jsonb)
+    INTO v_aliq
+    FROM public.sayerlack_ipi_itens(p_pedido_id) x;
+  SELECT string_agg(coalesce(x.ncm, '(sem NCM)'), ', ' ORDER BY x.item_id) INTO v_sem_aliquota
+    FROM jsonb_to_recordset(v_aliq) AS x(item_id bigint, ncm text, aliquota_pct numeric)
+   WHERE x.aliquota_pct IS NULL;
+  IF v_sem_aliquota IS NOT NULL THEN
+    RAISE EXCEPTION 'custo_portal: item sem alíquota de IPI conhecida no pedido % (NCM: %) — nada gravado',
+      p_pedido_id, v_sem_aliquota USING ERRCODE = 'CP006';
+  END IF;
+
+  -- (4) CP007 — a prova. IPI do item = round(round(mercadoria, 2) × alíquota ÷ 100, 2), meio centavo para cima: a
+  -- edge faz a MESMA conta em centavos inteiros, logo a igualdade é EXATA. O total modelado (Σ linha + IPI) fecha
+  -- com o cobrado dentro do arredondamento: meio centavo do total + 0,0101 por linha (spec §6).
+  SELECT count(*) FILTER (WHERE c.ipi_payload IS DISTINCT FROM c.ipi), sum(c.linha + c.ipi)
+    INTO v_ipi_divergente, v_total_modelado
+    FROM (
+      SELECT (e->>'valor_ipi')::numeric AS ipi_payload,
+             round((e->>'valor_mercadoria')::numeric, 2) AS linha,
+             round(round((e->>'valor_mercadoria')::numeric, 2) * x.aliquota_pct / 100, 2) AS ipi
+        FROM jsonb_array_elements(p_itens) e
+        JOIN jsonb_to_recordset(v_aliq) AS x(item_id bigint, ncm text, aliquota_pct numeric) ON x.item_id = (e->>'item_id')::bigint
+    ) c;
+  v_tolerancia := 0.005 + 0.0101 * v_n;
+  IF v_ipi_divergente <> 0 OR v_total_modelado IS NULL OR abs(v_total_modelado - p_valor_total) > v_tolerancia THEN
+    RAISE EXCEPTION 'custo_portal: a prova do IPI não fecha no pedido % (% IPI divergente; modelado %, cobrado %, tolerância %) — nada gravado',
+      p_pedido_id, v_ipi_divergente, coalesce(v_total_modelado::text, 'null'), p_valor_total, v_tolerancia USING ERRCODE = 'CP007';
+  END IF;
+
+  -- (5) grava a decomposição (o que o PO leva) e o CUSTO COM IPI (o que tela, e-mail e valor_total leem — D1). O
+  -- WHERE confere a quantidade: a ecoada pela edge tem de ser a da linha, e inteira — o PO manda
+  -- nQtde = ceil(qtde_final); com 3,6 L, `4 × mercadoria ÷ 3,6` passaria 11% da mercadoria.
+  UPDATE public.pedido_compra_item i
+     SET preco_unitario_sem_ipi_portal = c.linha / i.qtde_final,
+         valor_ipi_portal              = c.ipi,
+         aliquota_ipi_portal           = c.aliquota_pct,
+         ncm_ipi_portal                = c.ncm,
+         valor_linha                   = c.linha + c.ipi,
+         preco_unitario                = (c.linha + c.ipi) / i.qtde_final
+    FROM (
+      SELECT (e->>'item_id')::bigint AS item_id,
+             (e->>'qtde_final')::numeric AS qtde_eco,
+             round((e->>'valor_mercadoria')::numeric, 2) AS linha,
+             round(round((e->>'valor_mercadoria')::numeric, 2) * x.aliquota_pct / 100, 2) AS ipi,
+             x.aliquota_pct,
+             x.ncm
+        FROM jsonb_array_elements(p_itens) e
+        JOIN jsonb_to_recordset(v_aliq) AS x(item_id bigint, ncm text, aliquota_pct numeric) ON x.item_id = (e->>'item_id')::bigint
+    ) c
+   WHERE i.id = c.item_id AND i.pedido_id = p_pedido_id AND i.qtde_final = c.qtde_eco AND i.qtde_final = trunc(i.qtde_final);
+  GET DIAGNOSTICS v_atualizados = ROW_COUNT;
+  IF v_atualizados <> v_n THEN
+    RAISE EXCEPTION 'custo_portal: % de % itens com qtde_final igual à ecoada e inteira no pedido % — nada gravado',
+      v_atualizados, v_n, p_pedido_id USING ERRCODE = 'CP004';
+  END IF;
+
+  -- (6) o DERIVADO, na mesma transação. Todo item acabou de ganhar valor_linha > 0: a soma não tem NULL.
+  UPDATE public.pedido_compra_sugerido
+     SET valor_total = (SELECT sum(valor_linha) FROM public.pedido_compra_item WHERE pedido_id = p_pedido_id)
+   WHERE id = p_pedido_id;
+
+  RETURN v_atualizados;
+END;
+$_$;
+
+
+--
+-- Name: FUNCTION sayerlack_aplicar_custo_portal(p_pedido_id bigint, p_itens jsonb, p_valor_total numeric); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.sayerlack_aplicar_custo_portal(p_pedido_id bigint, p_itens jsonb, p_valor_total numeric) IS 'Custo do portal Sayerlack com IPI (edge enviar-pedido-portal-sayerlack, service_role): CAS omie IS NULL + sucesso_portal; payload = pedido inteiro {item_id, qtde_final, valor_mercadoria, valor_ipi}; IPI conferido contra ipi_aliquota_ncm (sayerlack_ipi_itens) com igualdade exata; prova contra o total cobrado; grava a decomposição (sem IPI/IPI/alíquota/NCM) e o custo com IPI, e remantém o derivado — uma transação. SQLSTATE CP001–CP004, CP006, CP007.';
+
+
+--
+-- Name: sayerlack_ipi_itens(bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.sayerlack_ipi_itens(p_pedido_id bigint) RETURNS TABLE(item_id bigint, ncm text, aliquota_pct numeric)
+    LANGUAGE sql STABLE
+    SET search_path TO 'public'
+    AS $$
+  SELECT i.id,
+         n.ncm,
+         a.aliquota_pct
+    FROM public.pedido_compra_item i
+    JOIN public.pedido_compra_sugerido s ON s.id = i.pedido_id
+    LEFT JOIN public.omie_products op
+      ON op.omie_codigo_produto::text = i.sku_codigo_omie AND op.account = lower(s.empresa)
+    CROSS JOIN LATERAL (SELECT NULLIF(regexp_replace(coalesce(op.ncm, ''), '[^0-9]', '', 'g'), '') AS ncm) n
+    LEFT JOIN public.ipi_aliquota_ncm a ON a.ncm = n.ncm
+   WHERE i.pedido_id = p_pedido_id
+   ORDER BY i.id
+$$;
+
+
+--
+-- Name: FUNCTION sayerlack_ipi_itens(p_pedido_id bigint); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.sayerlack_ipi_itens(p_pedido_id bigint) IS 'Por item do pedido: NCM (só dígitos, de omie_products na conta lower(empresa)) e a alíquota de ipi_aliquota_ncm (NULL = NCM ausente ou fora da tabela). Usada pela edge enviar-pedido-portal-sayerlack e pela RPC sayerlack_aplicar_custo_portal. service_role.';
 
 
 --
@@ -18911,7 +22392,7 @@ BEGIN
     )
     SELECT 
       sp.empresa, sp.sku_codigo_omie::text, sp.sku_descricao,
-      'sku_inativado_omie', 'atencao', CURRENT_DATE,
+      'sku_inativado_omie', 'atencao', (now() AT TIME ZONE 'America/Sao_Paulo')::date,
       jsonb_build_object(
         'mensagem', 'SKU foi inativado no Omie. Reposição automática desligada. Decida: (1) merge histórico com outro SKU, (2) manter desabilitado, (3) reativar no Omie.',
         'familia', NEW.familia,
@@ -18936,7 +22417,7 @@ BEGIN
     )
     SELECT 
       sp.empresa, sp.sku_codigo_omie::text, sp.sku_descricao,
-      'sku_reativado_omie', 'info', CURRENT_DATE,
+      'sku_reativado_omie', 'info', (now() AT TIME ZONE 'America/Sao_Paulo')::date,
       jsonb_build_object(
         'mensagem', 'SKU foi reativado no Omie. Revisar se deseja habilitar reposição automática novamente.'
       )
@@ -18947,6 +22428,74 @@ BEGIN
   RETURN NEW;
 END;
 $$;
+
+
+--
+-- Name: sku_items_fila_parada_check(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.sku_items_fila_parada_check() RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_parados int;
+  v_na_fila int;
+  v_nid text;
+  v_desde timestamptz;
+  v_msg text;
+BEGIN
+  SELECT count(*) FILTER (WHERE f.parado), count(*)
+    INTO v_parados, v_na_fila
+    FROM public.v_sku_items_fila f;
+
+  IF v_parados > 0 THEN
+    SELECT f.nid_receb, f.elegivel_desde
+      INTO v_nid, v_desde
+      FROM public.v_sku_items_fila f
+     WHERE f.parado
+     ORDER BY f.elegivel_desde, f.nid_receb
+     LIMIT 1;
+
+    v_msg := format(
+      'Fila do sku-items OBEN parada: %s recebimento(s) sem leadtime elegível(is) há mais de 48h sem consulta. '
+      'Mais antigo: nIdReceb %s, elegível desde %s UTC. Lista: SELECT * FROM v_sku_items_fila WHERE parado.',
+      v_parados, v_nid, to_char(v_desde AT TIME ZONE 'UTC', 'DD/MM HH24:MI'));
+
+    -- Abre o episódio uma vez: com um alerta ativo do tipo (inclusive silenciado — dismissed_until
+    -- deixa a linha ativa), o índice único parcial faz o INSERT não pegar e nada é reenviado.
+    INSERT INTO public.fin_alertas (company, tipo, severidade, mensagem, contexto, email_enfileirado_em)
+    VALUES ('oben', 'sync_sku_items_fila_parada', 'aviso', v_msg,
+            jsonb_build_object(
+              'recebimentos_parados', v_parados,
+              'recebimentos_na_fila', v_na_fila,
+              'nid_receb_mais_antigo', v_nid,
+              'elegivel_desde_mais_antigo', v_desde,
+              'limiar_horas', 48,
+              'janela_dias', 30,
+              'fonte', 'v_sku_items_fila'),
+            now())
+    ON CONFLICT (company, tipo) WHERE dismissed_at IS NULL DO NOTHING;
+    IF FOUND THEN
+      INSERT INTO public.fornecedor_alerta (empresa, tipo, severidade, titulo, mensagem, status)
+      VALUES ('oben', 'outro', 'atencao', '[Sync fila] OBEN', v_msg, 'pendente_notificacao');
+    END IF;
+  ELSE
+    UPDATE public.fin_alertas
+       SET dismissed_at = now(), resolvido_em = now()
+     WHERE company = 'oben'
+       AND tipo = 'sync_sku_items_fila_parada'
+       AND dismissed_at IS NULL;
+  END IF;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION sku_items_fila_parada_check(); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.sku_items_fila_parada_check() IS 'Sensor por fora da fila do omie-sync-sku-items: abre fin_alertas sync_sku_items_fila_parada (+ e-mail) quando algum recebimento de v_sku_items_fila esta parado; resolve quando zera. Cron afiacao_sku_items_fila_parada_1h (:52). docs/historico/sku-items-fila-parada-sensor-por-fora.md';
 
 
 --
@@ -19292,7 +22841,7 @@ begin
       from jsonb_array_elements(coalesce(fc.entities_extracted, '[]'::jsonb)) e
       where e->>'type' in ('product','price')
         and t.target_texto is not null
-        and e->>'value' ilike '%'||t.target_texto||'%'
+        and e->>'value' ilike private.padrao_like_contem(t.target_texto) escape '\'
       order by (e->>'confidence')::numeric desc nulls last
       limit 1
     ) m on true
@@ -20055,6 +23604,245 @@ $$;
 
 
 --
+-- Name: tint_promocao_tick(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.tint_promocao_tick() RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_max_tentativas constant int := 3;
+  v_tipo       text;
+  v_run_id     uuid;
+  v_snap_id    uuid;
+  v_status_run text;
+  v_tent       int;
+  v_n          int;
+  v_res        jsonb;
+  v_ok         boolean;
+  v_msg        text;
+  v_state      text;
+BEGIN
+  IF NOT pg_try_advisory_xact_lock(hashtext('tint_promocao_tick')) THEN
+    RETURN jsonb_build_object('ok', true, 'acao', 'pulado_tick_concorrente');
+  END IF;
+
+  WITH fila AS (
+    SELECT 'run'::text AS tipo, sr.id AS run_id, NULL::uuid AS snap_id,
+           sr.account, sr.store_code,
+           COALESCE(sr.completed_at, sr.started_at) AS enfileirado_em,
+           sr.promocao_proxima_em AS proxima_em
+      FROM tint_sync_runs sr
+     WHERE sr.promocao_status = 'pendente'
+    UNION ALL
+    SELECT 'snapshot'::text, NULL::uuid, ks.snapshot_id,
+           min(ks.account), min(ks.store_code),
+           max(ks.created_at), max(ks.aplicacao_proxima_em)
+      FROM tint_keys_snapshots ks
+     WHERE ks.aplicacao_status = 'pendente' AND ks.entity = 'formulas'
+     GROUP BY ks.snapshot_id
+  ), cabeca AS (
+    SELECT DISTINCT ON (f.account, f.store_code) f.*
+      FROM fila f
+     ORDER BY f.account, f.store_code, f.enfileirado_em, f.tipo, COALESCE(f.run_id, f.snap_id)
+  )
+  SELECT c.tipo, c.run_id, c.snap_id
+    INTO v_tipo, v_run_id, v_snap_id
+    FROM cabeca c
+   WHERE c.proxima_em IS NULL OR c.proxima_em <= clock_timestamp()
+   ORDER BY c.enfileirado_em, COALESCE(c.run_id, c.snap_id)
+   LIMIT 1;
+
+  IF v_tipo IS NULL THEN
+    RETURN jsonb_build_object('ok', true, 'acao', 'fila_vazia');
+  END IF;
+
+  -- ════ RUN (catalogs / formulas) ════
+  IF v_tipo = 'run' THEN
+    UPDATE tint_sync_runs sr
+       SET promocao_tentativas = sr.promocao_tentativas + 1
+     WHERE sr.id = v_run_id AND sr.promocao_status = 'pendente'
+    RETURNING sr.promocao_tentativas, sr.status INTO v_tent, v_status_run;
+    IF NOT FOUND THEN
+      RETURN jsonb_build_object('ok', true, 'acao', 'corrida_item_mudou', 'run_id', v_run_id);
+    END IF;
+
+    -- A edge marca complete+pendente no MESMO UPDATE; outro status = ingestão não confirmada.
+    IF v_status_run IS DISTINCT FROM 'complete' THEN
+      UPDATE tint_sync_runs
+         SET promocao_status = 'erro', promocao_proxima_em = NULL,
+             promocao_erro = 'run com status ' || COALESCE(v_status_run, 'NULL') ||
+                             ' (esperado complete): ingestão não confirmada — não promovido'
+       WHERE id = v_run_id;
+      RETURN jsonb_build_object('ok', false, 'acao', 'erro_status_run', 'run_id', v_run_id, 'status', v_status_run);
+    END IF;
+
+    BEGIN
+      PERFORM set_config('lock_timeout', '120s', true);
+      v_res := public.tint_promote_sync_run(v_run_id);
+      v_ok  := COALESCE((v_res ->> 'ok')::boolean, false);
+    EXCEPTION WHEN query_canceled OR others THEN
+      GET STACKED DIAGNOSTICS v_msg = MESSAGE_TEXT, v_state = RETURNED_SQLSTATE;
+      v_ok := NULL;
+    END;
+
+    IF v_ok THEN
+      UPDATE tint_sync_runs
+         SET promocao_status = 'promovido', promovido_em = clock_timestamp(),
+             promocao_erro = NULL, promocao_proxima_em = NULL
+       WHERE id = v_run_id;
+      RETURN jsonb_build_object('ok', true, 'acao', 'promovido', 'run_id', v_run_id,
+                                'tentativa', v_tent, 'resultado', v_res);
+    ELSIF v_ok IS FALSE THEN
+      -- O RPC respondeu ok:false — determinístico, repetir não muda: erro direto.
+      UPDATE tint_sync_runs
+         SET promocao_status = 'erro', promocao_proxima_em = NULL,
+             promocao_erro = left('RPC tint_promote_sync_run ok=false: ' || v_res::text, 2000)
+       WHERE id = v_run_id;
+      INSERT INTO tint_sync_errors (sync_run_id, entity_type, entity_id, error_message, error_details)
+      VALUES (v_run_id, 'promotion', NULL, 'promoção recusada pelo RPC (ok=false)',
+              jsonb_build_object('resultado', v_res, 'origem', 'tint_promocao_tick'));
+      RETURN jsonb_build_object('ok', false, 'acao', 'erro_rpc', 'run_id', v_run_id, 'resultado', v_res);
+    ELSE
+      UPDATE tint_sync_runs
+         SET promocao_erro = left(v_state || ': ' || v_msg, 2000),
+             promocao_status = CASE WHEN v_tent >= v_max_tentativas THEN 'erro' ELSE 'pendente' END,
+             promocao_proxima_em = CASE WHEN v_tent >= v_max_tentativas THEN NULL
+                                        ELSE clock_timestamp() + interval '1 minute' * power(2, v_tent - 1) END
+       WHERE id = v_run_id;
+      INSERT INTO tint_sync_errors (sync_run_id, entity_type, entity_id, error_message, error_details)
+      VALUES (v_run_id, 'promotion', NULL, v_msg,
+              jsonb_build_object('sqlstate', v_state, 'tentativa', v_tent,
+                                 'max_tentativas', v_max_tentativas, 'origem', 'tint_promocao_tick'));
+      RETURN jsonb_build_object('ok', false, 'acao', CASE WHEN v_tent >= v_max_tentativas THEN 'erro_esgotou' ELSE 'erro_retry' END,
+                                'run_id', v_run_id, 'tentativa', v_tent, 'sqlstate', v_state, 'erro', v_msg);
+    END IF;
+  END IF;
+
+  -- ════ SNAPSHOT de chaves ════
+  UPDATE tint_keys_snapshots ks
+     SET aplicacao_tentativas = ks.aplicacao_tentativas + 1
+   WHERE ks.snapshot_id = v_snap_id AND ks.entity = 'formulas' AND ks.aplicacao_status = 'pendente';
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  IF v_n = 0 THEN
+    RETURN jsonb_build_object('ok', true, 'acao', 'corrida_item_mudou', 'snapshot_id', v_snap_id);
+  END IF;
+  SELECT max(aplicacao_tentativas) INTO v_tent
+    FROM tint_keys_snapshots WHERE snapshot_id = v_snap_id AND entity = 'formulas';
+
+  BEGIN
+    PERFORM set_config('lock_timeout', '120s', true);
+    v_res := public.tint_apply_keys_snapshot(v_snap_id);
+    v_ok  := COALESCE((v_res ->> 'ok')::boolean, false);
+  EXCEPTION WHEN query_canceled OR others THEN
+    GET STACKED DIAGNOSTICS v_msg = MESSAGE_TEXT, v_state = RETURNED_SQLSTATE;
+    v_ok := NULL;
+  END;
+
+  IF v_ok THEN
+    UPDATE tint_keys_snapshots
+       SET aplicacao_status = 'aplicado', aplicado_em = clock_timestamp(),
+           aplicacao_erro = NULL, aplicacao_proxima_em = NULL
+     WHERE snapshot_id = v_snap_id AND entity = 'formulas';
+    RETURN jsonb_build_object('ok', true, 'acao', 'aplicado', 'snapshot_id', v_snap_id,
+                              'tentativa', v_tent, 'resultado', v_res);
+  ELSIF v_ok IS FALSE THEN
+    -- blast radius / chunks incompletos: o apply já registrou run 'error' + tint_sync_errors.
+    UPDATE tint_keys_snapshots
+       SET aplicacao_status = 'erro', aplicacao_proxima_em = NULL,
+           aplicacao_erro = left('RPC tint_apply_keys_snapshot ok=false: ' || v_res::text, 2000)
+     WHERE snapshot_id = v_snap_id AND entity = 'formulas';
+    RETURN jsonb_build_object('ok', false, 'acao', 'erro_rpc', 'snapshot_id', v_snap_id, 'resultado', v_res);
+  ELSE
+    -- (tint_sync_errors exige sync_run_id, e o run do apply foi desfeito junto: o rastro é aplicacao_erro.)
+    UPDATE tint_keys_snapshots
+       SET aplicacao_erro = left(v_state || ': ' || v_msg, 2000),
+           aplicacao_status = CASE WHEN v_tent >= v_max_tentativas THEN 'erro' ELSE 'pendente' END,
+           aplicacao_proxima_em = CASE WHEN v_tent >= v_max_tentativas THEN NULL
+                                       ELSE clock_timestamp() + interval '1 minute' * power(2, v_tent - 1) END
+     WHERE snapshot_id = v_snap_id AND entity = 'formulas';
+    RETURN jsonb_build_object('ok', false, 'acao', CASE WHEN v_tent >= v_max_tentativas THEN 'erro_esgotou' ELSE 'erro_retry' END,
+                              'snapshot_id', v_snap_id, 'tentativa', v_tent, 'sqlstate', v_state, 'erro', v_msg);
+  END IF;
+END
+$$;
+
+
+--
+-- Name: tint_promocao_watchdog(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.tint_promocao_watchdog() RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  -- fin_alertas.company: 100% do tint é 'oben' (mesmo critério do tint_watchdog_fase5_check).
+  v_conta          constant text := 'oben';
+  v_limite_atraso  constant interval := interval '45 minutes';
+  v_erro_runs      bigint;
+  v_erro_snaps     bigint;
+  v_erro           bigint;
+  v_pendentes      bigint;
+  v_atrasados      bigint;
+  v_mais_antigo    timestamptz;
+  v_msg            text;
+BEGIN
+  -- Erro NÃO resolvido, sem janela de tempo (Codex P1): o dado do item pode não ter entrado
+  -- (o conector já cacheou o hash e não re-envia) — o sinal só sai com reenfileirar/descartar.
+  SELECT count(*) INTO v_erro_runs FROM tint_sync_runs WHERE promocao_status = 'erro';
+  SELECT count(DISTINCT snapshot_id) INTO v_erro_snaps
+    FROM tint_keys_snapshots WHERE aplicacao_status = 'erro';
+  v_erro := v_erro_runs + v_erro_snaps;
+
+  WITH pend AS (
+    SELECT COALESCE(completed_at, started_at) AS em FROM tint_sync_runs WHERE promocao_status = 'pendente'
+    UNION ALL
+    SELECT max(created_at) FROM tint_keys_snapshots WHERE aplicacao_status = 'pendente' GROUP BY snapshot_id
+  )
+  SELECT count(*), count(*) FILTER (WHERE em < clock_timestamp() - v_limite_atraso), min(em)
+    INTO v_pendentes, v_atrasados, v_mais_antigo
+    FROM pend;
+
+  IF v_erro > 0 THEN
+    v_msg := 'Tintometrico: ' || v_erro || ' item(ns) da fila de promocao do sync em ERRO (' ||
+             v_erro_runs || ' run(s), ' || v_erro_snaps || ' snapshot(s) de chaves) apos 3 tentativas ' ||
+             'ou recusa do RPC. O dado desses itens pode NAO ter entrado no catalogo, e o conector ' ||
+             'NAO re-envia (ele recebeu ok). Veja promocao_erro/aplicacao_erro e, corrigida a causa, ' ||
+             'REENFILEIRE (promocao_status=''pendente'', tentativas=0) ou encerre com ''descartado''. ' ||
+             'Dispensar este alerta sem isso so o reabre no proximo ciclo.';
+    PERFORM public._tint_watchdog_fase5_transicao(
+      v_conta, 'tint_promocao_erro', v_erro,
+      CASE WHEN v_erro >= 3 THEN 'critico' ELSE 'aviso' END,
+      '[Tintometrico] promocao do sync em erro', v_msg,
+      jsonb_build_object('runs_erro', v_erro_runs, 'snapshots_erro', v_erro_snaps));
+  ELSE
+    PERFORM public._tint_watchdog_fase5_transicao(
+      v_conta, 'tint_promocao_erro', 0, 'info', '', '', '{}'::jsonb);
+  END IF;
+
+  IF v_atrasados > 0 THEN
+    v_msg := 'Tintometrico: ' || v_atrasados || ' item(ns) pendente(s) na fila de promocao ha mais de ' ||
+             '45 min (mais antigo desde ' || to_char(v_mais_antigo AT TIME ZONE 'America/Sao_Paulo', 'DD/MM HH24:MI') ||
+             '). O cron tint-promocao-tick pode estar parado, ou um item em retry segura a fila. ' ||
+             'Confira cron.job_run_details e promocao_erro.';
+    PERFORM public._tint_watchdog_fase5_transicao(
+      v_conta, 'tint_promocao_atrasada', v_atrasados,
+      CASE WHEN v_mais_antigo < clock_timestamp() - interval '3 hours' THEN 'critico' ELSE 'aviso' END,
+      '[Tintometrico] fila de promocao do sync atrasada', v_msg,
+      jsonb_build_object('atrasados', v_atrasados, 'pendentes', v_pendentes, 'mais_antigo', v_mais_antigo));
+  ELSE
+    PERFORM public._tint_watchdog_fase5_transicao(
+      v_conta, 'tint_promocao_atrasada', 0, 'info', '', '', '{}'::jsonb);
+  END IF;
+
+  RETURN jsonb_build_object('ok', true, 'erro', v_erro, 'pendentes', v_pendentes, 'atrasados', v_atrasados);
+END
+$$;
+
+
+--
 -- Name: tint_promote_sync_run(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -20091,6 +23879,7 @@ DECLARE
   v_limpezas       int := 0;
   v_limpezas_24h   int := 0;
   v_cap_limpezas   constant int := 50;
+  v_tombstones_fase5 int := 0;  -- 5b#1 (20260924120000)
 BEGIN
   SELECT * INTO v_run FROM tint_sync_runs WHERE id = p_sync_run_id;
   IF NOT FOUND THEN
@@ -20823,7 +24612,11 @@ BEGIN
   SELECT COALESCE(sum((tr.metadata->>'receitas_limpas')::int), 0) INTO v_limpezas_24h
   FROM tint_sync_runs tr
   WHERE tr.account = v_account AND tr.store_code = v_store
-    AND tr.started_at > now() - interval '24 hours'
+    -- promocao-assincrona (20260925210000): com a fila, started_at (ingestão) pode ser
+    -- MUITO anterior à promoção; contar por ele tiraria da janela limpezas recém-feitas
+    -- e o cap de 50/24h deixaria passar mais (Codex P1). Run legado (promovido no HTTP)
+    -- não tem promovido_em → started_at, que era ~ o instante da promoção.
+    AND COALESCE(tr.promovido_em, tr.started_at) > now() - interval '24 hours'
     AND tr.metadata ? 'receitas_limpas';
 
   IF v_limpezas > 0 AND (v_limpezas + v_limpezas_24h) > v_cap_limpezas THEN
@@ -20846,6 +24639,22 @@ BEGIN
   -- v_promovidas conta o que REALMENTE será gravado (linhas oficiais upsertadas), não as expansões
   -- pré-dedup: com o guard aqui, contar _expand reportaria como "promovida" uma fórmula barrada —
   -- número fabricado num contador money-path (registros_importados / tint_sync_runs.inserts).
+  -- 5b#1 (20260924120000): TOMBSTONE DA FASE 5 VENCE. Chave cuja linha oficial está
+  -- carimbada (desativada_motivo NOT NULL) NÃO é reativada: o upsert abaixo faria
+  -- desativada_em = NULL e violaria tint_formulas_motivo_exige_desativacao (23514),
+  -- abortando o promote INTEIRO (edge 500 em catalogs E formulas). A linha fica como a
+  -- Fase 5 deixou; o resto do run promove. Mesma chave do ON CONFLICT (uq_tint_formulas_chave).
+  DELETE FROM _expand_uniq eu
+  USING tint_formulas tf
+  WHERE tf.account = v_account
+    AND tf.cor_id = eu.cor_id
+    AND tf.produto_id = eu.produto_id
+    AND tf.base_id = eu.base_id
+    AND COALESCE(tf.subcolecao_id, v_zero_uuid) = COALESCE(eu.subcolecao_id, v_zero_uuid)
+    AND tf.embalagem_id = eu.emb_id
+    AND tf.desativada_motivo IS NOT NULL;
+  GET DIAGNOSTICS v_tombstones_fase5 = ROW_COUNT;
+
   SELECT count(*) INTO v_promovidas FROM _expand_uniq;
 
   -- Corante stubs em massa ANTES dos itens (espelha tint_ensure_corante_stub: volume 1000).
@@ -20980,7 +24789,7 @@ BEGIN
   WHERE id = v_importacao_id;
 
   UPDATE tint_sync_runs
-    SET inserts = v_promovidas, errors = v_erros, metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('recalculadas', v_recalc, 'receitas_limpas', v_limpezas)
+    SET inserts = v_promovidas, errors = v_erros, metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('recalculadas', v_recalc, 'receitas_limpas', v_limpezas, 'tombstones_fase5_preservados', v_tombstones_fase5)
   WHERE id = p_sync_run_id;
 
   -- PURGE: NUNCA apaga a linha MAIS RECENTE por chave natural (account+store) — a promoção
@@ -21053,7 +24862,11 @@ BEGIN
         AND (n.created_at, n.id) > (s.created_at, s.id));
 
   -- keys-snapshot: point-in-time (não latest-per-key) → purge por tempo é correto.
-  DELETE FROM tint_keys_snapshots          WHERE created_at < now() - interval '30 days';
+  -- promocao-assincrona (20260925210000): snapshot PENDENTE na fila, ou em ERRO não resolvido,
+  -- não some pelo purge — apagar o erro dispensaria o alerta do watchdog sem ninguém ter
+  -- reprocessado nem descartado, e levaria o payload do reprocessamento junto.
+  DELETE FROM tint_keys_snapshots          WHERE created_at < now() - interval '30 days'
+    AND (aplicacao_status IS NULL OR aplicacao_status NOT IN ('pendente', 'erro'));
 
   UPDATE tint_sync_runs
     SET status = 'error', completed_at = COALESCE(completed_at, now())
@@ -21062,6 +24875,7 @@ BEGIN
   RETURN jsonb_build_object(
     'ok', true, 'promovidas', v_promovidas, 'recalculadas', v_recalc,
     'receitas_limpas', v_limpezas,
+    'tombstones_fase5_preservados', v_tombstones_fase5,
     'erros', v_erros, 'importacao_id', v_importacao_id);
 END $_$;
 
@@ -21277,8 +25091,9 @@ CREATE FUNCTION public.tint_ultimo_preco_cliente(p_customer_user_id uuid, p_prod
     AND so.account = 'oben'
     -- acordo comercial só conta se virou pedido REAL no Omie…
     AND so.omie_pedido_id IS NOT NULL
-    -- …não-cancelado…
-    AND so.status IS DISTINCT FROM 'cancelado'
+    -- …no universo de VENDA (denylist canônica + não apagado: src/lib/farmer/universo-pedidos.ts)…
+    AND so.status NOT IN ('cancelado','rascunho','pendente','orcamento')
+    AND so.deleted_at IS NULL
     -- …recente (validade da inferência; fora da janela = renegociar)…
     AND so.created_at >= now() - interval '180 days'
     -- …e NUNCA o pedido que está sendo validado (anti-autovalidação)
@@ -21799,7 +25614,7 @@ BEGIN
   -- Campanha suspensa/cancelada durante vigência
   IF NEW.estado = 'cancelada' 
      AND (OLD IS NULL OR OLD.estado IN ('ativa', 'negociando'))
-     AND OLD.data_fim >= CURRENT_DATE THEN
+     AND OLD.data_fim >= (now() AT TIME ZONE 'America/Sao_Paulo')::date THEN
     INSERT INTO fornecedor_alerta (
       empresa, fornecedor_nome, tipo, severidade,
       titulo, mensagem, campanha_id
@@ -22227,7 +26042,7 @@ BEGIN
     RAISE EXCEPTION 'janela invalida: date_from (%) deve ser <= date_to (%)', p_date_from, p_date_to
       USING ERRCODE = '22023';
   END IF;
-  IF p_date_to > current_date THEN
+  IF p_date_to > (now() AT TIME ZONE 'America/Sao_Paulo')::date THEN
     RAISE EXCEPTION 'janela invalida: date_to (%) no futuro', p_date_to
       USING ERRCODE = '22023';
   END IF;
@@ -22426,6 +26241,28 @@ $$;
 
 
 --
+-- Name: auth_refresh_tokens_diag; Type: VIEW; Schema: private; Owner: -
+--
+
+CREATE VIEW private.auth_refresh_tokens_diag WITH (security_invoker='on') AS
+ SELECT instance_id,
+    id,
+    user_id,
+    revoked,
+    created_at,
+    updated_at,
+    session_id
+   FROM auth.refresh_tokens;
+
+
+--
+-- Name: VIEW auth_refresh_tokens_diag; Type: COMMENT; Schema: private; Owner: -
+--
+
+COMMENT ON VIEW private.auth_refresh_tokens_diag IS 'Telemetria de login p/ claude_ro (fase-sem-sinal.md). security_invoker=on de proposito: preserva o ACL por coluna de 2026-08-25 como 2a barreira. NUNCA adicionar token/parent.';
+
+
+--
 -- Name: sales_orders; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -22460,7 +26297,10 @@ CREATE TABLE public.sales_orders (
     whatsapp_conversation_id uuid,
     whatsapp_proposta_dedupe text,
     omie_reconciliado_em timestamp with time zone,
-    CONSTRAINT sales_orders_hash_omie_canonico CHECK (((hash_payload IS NULL) OR (hash_payload !~~ 'omie\_%'::text) OR ((omie_pedido_id IS NOT NULL) AND (hash_payload = ((('omie_'::text || account) || '_'::text) || (omie_pedido_id)::text)))))
+    gemeo_importado_id uuid,
+    CONSTRAINT sales_orders_gemeo_e_recibo CHECK (((gemeo_importado_id IS NULL) OR ((hash_payload IS NULL) AND (order_date_kpi IS NULL) AND (gemeo_importado_id <> id)))),
+    CONSTRAINT sales_orders_hash_omie_canonico CHECK (((hash_payload IS NULL) OR (hash_payload !~~ 'omie\_%'::text) OR ((omie_pedido_id IS NOT NULL) AND (hash_payload = ((('omie_'::text || account) || '_'::text) || (omie_pedido_id)::text))))),
+    CONSTRAINT sales_orders_importada_tem_data CHECK (((hash_payload IS NULL) OR (hash_payload !~~ 'omie\_%'::text) OR (order_date_kpi IS NOT NULL)))
 );
 
 
@@ -22475,7 +26315,14 @@ COMMENT ON COLUMN public.sales_orders.deleted_at IS 'Soft-delete timestamp. NULL
 -- Name: COLUMN sales_orders.omie_reconciliado_em; Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON COLUMN public.sales_orders.omie_reconciliado_em IS 'Instante em que a edge BUSCOU no Omie a revisão que gerou a última reconciliação deste pedido. Escrito por UM writer só (reconciliar_pedidos_omie) e usado como compare-and-set: uma leitura mais VELHA que esta não sobrescreve. NULL = nunca reconciliado por este caminho (aceita a 1ª).';
+COMMENT ON COLUMN public.sales_orders.omie_reconciliado_em IS 'Instante em que a edge BUSCOU no Omie a revisao que esta gravada nesta linha. Compare-and-set: escrita cuja leitura e mais VELHA que este marcador nao sobrescreve a linha. DOIS escritores, com a MESMA semantica: `reconciliar_pedidos_omie` (pull em lote, carimbo por pagina) e `aplicar_edicao_pedido_omie` (edicao, carimbo do ConsultarPedido final). O 2o entrou em 2026-09-07 para fechar a reversao "pull atrasado desfaz a edicao" — sem ele a reversao passa pela trigger de coerencia, porque os dois espelhos retrocedem JUNTOS.';
+
+
+--
+-- Name: COLUMN sales_orders.gemeo_importado_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.sales_orders.gemeo_importado_id IS 'Só em linha do APP (hash_payload nulo): a linha IMPORTADA do mesmo (account, omie_pedido_id). Preenchida = esta linha é recibo de envio, sem order_date_kpi, fora do universo de vendas. Derivada por trg_sales_orders_gemeo_app; não escreva.';
 
 
 --
@@ -22493,9 +26340,9 @@ CREATE MATERIALIZED VIEW private.customer_metrics_mv AS
  WITH base AS (
          SELECT so.customer_user_id,
             so.total,
-            COALESCE(so.order_date_kpi, ((so.created_at AT TIME ZONE 'America/Sao_Paulo'::text))::date) AS d
+            so.order_date_kpi AS d
            FROM public.sales_orders so
-          WHERE (so.status <> ALL (ARRAY['cancelado'::text, 'rascunho'::text]))
+          WHERE ((so.status <> ALL (ARRAY['cancelado'::text, 'rascunho'::text, 'pendente'::text, 'orcamento'::text])) AND (so.deleted_at IS NULL) AND (so.order_date_kpi IS NOT NULL))
         ), last_order AS (
          SELECT base.customer_user_id,
             ((max(base.d))::timestamp without time zone AT TIME ZONE 'America/Sao_Paulo'::text) AS ultima_compra_data,
@@ -22694,7 +26541,7 @@ CREATE TABLE public.fornecedor_cadeia_logistica (
     parceiro_tipo text,
     parceiro_contato text,
     ativo boolean DEFAULT true,
-    valido_desde date DEFAULT CURRENT_DATE,
+    valido_desde date DEFAULT ((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date,
     valido_ate date,
     observacoes text,
     criado_em timestamp with time zone DEFAULT now(),
@@ -22955,7 +26802,7 @@ CREATE VIEW public.v_fornecedor_lt_logistica_total WITH (security_invoker='on') 
         END) AS lt_logistica_total_dias_uteis,
     string_agg(parceiro_nome, ' → '::text ORDER BY ordem) AS cadeia_descricao
    FROM public.fornecedor_cadeia_logistica
-  WHERE ((ativo = true) AND ((valido_ate IS NULL) OR (valido_ate >= CURRENT_DATE)))
+  WHERE ((ativo = true) AND ((valido_ate IS NULL) OR (valido_ate >= ((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date)))
   GROUP BY empresa, fornecedor_nome;
 
 
@@ -23122,7 +26969,7 @@ CREATE VIEW public.v_sku_aumento_vigente WITH (security_invoker='on') AS
      JOIN public.fornecedor_aumento_item fai ON ((fai.aumento_id = fa.id)))
      JOIN public.categoria_aumento_familia_mapeamento m ON ((m.aumento_item_id = fai.id)))
      JOIN public.omie_products op ON (((op.familia = m.familia_omie) AND (lower(op.account) = lower(fa.empresa)) AND (COALESCE(op.ativo, true) = true) AND ((m.sku_codigo_omie_especifico IS NULL) OR (op.omie_codigo_produto = m.sku_codigo_omie_especifico)))))
-  WHERE ((fa.estado = ANY (ARRAY['ativo'::text, 'vigente'::text])) AND (fai.ativo = true) AND (fai.confirmado = true) AND (COALESCE(fai.data_vigencia_especifica, fa.data_vigencia) >= (CURRENT_DATE - '7 days'::interval)));
+  WHERE ((fa.estado = ANY (ARRAY['ativo'::text, 'vigente'::text])) AND (fai.ativo = true) AND (fai.confirmado = true) AND (COALESCE(fai.data_vigencia_especifica, fa.data_vigencia) >= (((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - '7 days'::interval)));
 
 
 --
@@ -23272,7 +27119,7 @@ CREATE VIEW public.v_sku_demanda_estatisticas WITH (security_invoker='on') AS
             sum(venda_items_history.quantidade) AS qtde_ordem,
             sum(venda_items_history.valor_total) AS valor_ordem
            FROM public.v_sku_demanda_efetiva venda_items_history
-          WHERE (venda_items_history.data_emissao >= (CURRENT_DATE - '90 days'::interval))
+          WHERE (venda_items_history.data_emissao >= (((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - '90 days'::interval))
           GROUP BY venda_items_history.empresa, venda_items_history.sku_codigo_omie, venda_items_history.nfe_chave_acesso, venda_items_history.data_emissao
         ), stats AS (
          SELECT vendas_por_ordem.empresa,
@@ -23391,14 +27238,14 @@ CREATE VIEW public.v_sku_classificacao_abc_xyz WITH (security_invoker='on') AS
 
 CREATE VIEW public.v_sku_demanda_rajada WITH (security_invoker='on') AS
  WITH datas_serie AS (
-         SELECT (generate_series((CURRENT_DATE - '179 days'::interval), (CURRENT_DATE)::timestamp without time zone, '1 day'::interval))::date AS dt
+         SELECT (generate_series((((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - '179 days'::interval), (((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date)::timestamp without time zone, '1 day'::interval))::date AS dt
         ), skus_ativos AS (
          SELECT DISTINCT venda_items_history.empresa,
             venda_items_history.sku_codigo_omie,
             max(venda_items_history.sku_descricao) AS sku_descricao,
             max(venda_items_history.sku_unidade) AS sku_unidade
            FROM public.v_sku_demanda_efetiva venda_items_history
-          WHERE (venda_items_history.data_emissao >= (CURRENT_DATE - '180 days'::interval))
+          WHERE (venda_items_history.data_emissao >= (((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - '180 days'::interval))
           GROUP BY venda_items_history.empresa, venda_items_history.sku_codigo_omie
         ), vendas_diarias AS (
          SELECT venda_items_history.empresa,
@@ -23407,7 +27254,7 @@ CREATE VIEW public.v_sku_demanda_rajada WITH (security_invoker='on') AS
             sum(venda_items_history.quantidade) AS qtde_dia,
             sum(venda_items_history.valor_total) AS valor_dia
            FROM public.v_sku_demanda_efetiva venda_items_history
-          WHERE (venda_items_history.data_emissao >= (CURRENT_DATE - '180 days'::interval))
+          WHERE (venda_items_history.data_emissao >= (((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - '180 days'::interval))
           GROUP BY venda_items_history.empresa, venda_items_history.sku_codigo_omie, venda_items_history.data_emissao
         ), serie_completa AS (
          SELECT s.empresa,
@@ -23601,7 +27448,7 @@ CREATE VIEW public.v_sku_leadtime_estatisticas WITH (security_invoker='on') AS
             round(stddev(h.lt_bruto_dias_uteis), 2) AS lt_sku_desvio,
             percentile_cont((0.95)::double precision) WITHIN GROUP (ORDER BY ((h.lt_bruto_dias_uteis)::double precision)) AS lt_p95_dias
            FROM public.v_sku_leadtime_efetivo h
-          WHERE ((h.t2_data_faturamento >= (CURRENT_DATE - '180 days'::interval)) AND (h.lt_bruto_dias_uteis IS NOT NULL))
+          WHERE ((h.t2_data_faturamento >= ((((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - '180 days'::interval) AT TIME ZONE 'America/Sao_Paulo'::text)) AND (h.lt_bruto_dias_uteis IS NOT NULL))
           GROUP BY (h.empresa)::text, h.sku_codigo_omie
         ), fornecedor_stats AS (
          SELECT (h.empresa)::text AS empresa,
@@ -23610,7 +27457,7 @@ CREATE VIEW public.v_sku_leadtime_estatisticas WITH (security_invoker='on') AS
             round(stddev(h.lt_bruto_dias_uteis), 2) AS lt_fornecedor_desvio,
             count(*) AS lt_fornecedor_n_observacoes
            FROM public.v_sku_leadtime_efetivo h
-          WHERE ((h.t2_data_faturamento >= (CURRENT_DATE - '180 days'::interval)) AND (h.lt_bruto_dias_uteis IS NOT NULL))
+          WHERE ((h.t2_data_faturamento >= ((((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - '180 days'::interval) AT TIME ZONE 'America/Sao_Paulo'::text)) AND (h.lt_bruto_dias_uteis IS NOT NULL))
           GROUP BY (h.empresa)::text, h.fornecedor_codigo_omie
         )
  SELECT s.empresa,
@@ -23670,14 +27517,14 @@ CREATE VIEW public.v_sku_lt_teorico WITH (security_invoker='on') AS
 
 CREATE VIEW public.v_sku_sigma_demanda WITH (security_invoker='on') AS
  WITH datas AS (
-         SELECT (generate_series((CURRENT_DATE - '180 days'::interval), (CURRENT_DATE - '1 day'::interval), '1 day'::interval))::date AS dt
+         SELECT (generate_series((((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - '180 days'::interval), (((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - '1 day'::interval), '1 day'::interval))::date AS dt
         ), vendas_diarias AS (
          SELECT venda_items_history.empresa,
             (venda_items_history.sku_codigo_omie)::text AS sku_codigo_omie,
             venda_items_history.data_emissao AS dt,
             sum(venda_items_history.quantidade) AS qtde
            FROM public.v_sku_demanda_efetiva venda_items_history
-          WHERE (venda_items_history.data_emissao >= (CURRENT_DATE - '180 days'::interval))
+          WHERE (venda_items_history.data_emissao >= (((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - '180 days'::interval))
           GROUP BY venda_items_history.empresa, (venda_items_history.sku_codigo_omie)::text, venda_items_history.data_emissao
         ), serie AS (
          SELECT v.empresa,
@@ -23738,7 +27585,7 @@ CREATE VIEW public.v_sku_parametros_sugeridos WITH (security_invoker='on') AS
             (venda_items_history.sku_codigo_omie)::text AS sku_codigo_omie,
             avg((venda_items_history.valor_total / NULLIF(venda_items_history.quantidade, (0)::numeric))) AS preco_venda_medio
            FROM public.venda_items_history
-          WHERE ((venda_items_history.data_emissao >= (CURRENT_DATE - '180 days'::interval)) AND (venda_items_history.quantidade > (0)::numeric))
+          WHERE ((venda_items_history.data_emissao >= (((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - '180 days'::interval)) AND (venda_items_history.quantidade > (0)::numeric))
           GROUP BY venda_items_history.empresa, (venda_items_history.sku_codigo_omie)::text
         ), precos_cmc AS (
          SELECT DISTINCT ON (m.empresa, m.sku_codigo_omie) m.empresa,
@@ -24015,7 +27862,7 @@ CREATE VIEW public.v_sku_parametros_sugeridos WITH (security_invoker='on') AS
             ELSE NULL::integer
         END AS cobertura_alvo_dias,
     COALESCE(valor_total_90d, valor_total_180d) AS valor_total_90d,
-    CURRENT_DATE AS calculado_em,
+    ((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date AS calculado_em,
         CASE
             WHEN (status_sugestao = 'OK'::text) THEN ss_calculado
             ELSE NULL::numeric
@@ -24055,7 +27902,7 @@ CREATE VIEW public.v_oportunidade_economica_hoje WITH (security_invoker='on') AS
            FROM ((public.promocao_campanha pc
              JOIN public.promocao_item pi ON ((pi.campanha_id = pc.id)))
              JOIN public.v_promocao_item_efetivo ef ON ((ef.id = pi.id)))
-          WHERE ((pc.estado = 'ativa'::text) AND ((CURRENT_DATE >= pc.data_inicio) AND (CURRENT_DATE <= pc.data_fim)) AND (pi.ativo = true) AND (pi.confirmado = true) AND (pi.sku_codigo_omie IS NOT NULL))
+          WHERE ((pc.estado = 'ativa'::text) AND (((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date >= pc.data_inicio) AND (((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date <= pc.data_fim) AND (pi.ativo = true) AND (pi.confirmado = true) AND (pi.sku_codigo_omie IS NOT NULL))
         ), aumento_por_sku AS (
          SELECT lower(v_sku_aumento_vigente.empresa_lower) AS empresa_lower,
             v_sku_aumento_vigente.sku_codigo_omie,
@@ -24159,12 +28006,12 @@ CREATE VIEW public.v_oportunidade_economica_hoje WITH (security_invoker='on') AS
             com_decisao.cenario,
                 CASE
                     WHEN (com_decisao.data_limite_acao IS NULL) THEN NULL::integer
-                    ELSE GREATEST(0, (com_decisao.data_limite_acao - CURRENT_DATE))
+                    ELSE GREATEST(0, (com_decisao.data_limite_acao - ((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date))
                 END AS dias_ate_limite,
                 CASE
                     WHEN (com_decisao.cenario = 'promo_flat'::text) THEN com_decisao.qtde_base
                     WHEN (com_decisao.cenario = 'promo_volume'::text) THEN GREATEST(COALESCE(com_decisao.qtde_base, (0)::numeric), COALESCE(com_decisao.promo_volume_minimo, (0)::numeric))
-                    WHEN (com_decisao.cenario = ANY (ARRAY['aumento_apenas'::text, 'promo_e_aumento'::text])) THEN ceil((com_decisao.d * (((((date_trunc('month'::text, (com_decisao.proxima_vigencia_aumento)::timestamp with time zone) + '2 mons'::interval) - '1 day'::interval))::date - CURRENT_DATE))::numeric))
+                    WHEN (com_decisao.cenario = ANY (ARRAY['aumento_apenas'::text, 'promo_e_aumento'::text])) THEN ceil((com_decisao.d * (((((date_trunc('month'::text, (com_decisao.proxima_vigencia_aumento)::timestamp with time zone) + '2 mons'::interval) - '1 day'::interval))::date - ((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date))::numeric))
                     ELSE com_decisao.qtde_base
                 END AS qtde_oportunidade,
                 CASE
@@ -24172,7 +28019,7 @@ CREATE VIEW public.v_oportunidade_economica_hoje WITH (security_invoker='on') AS
                     CASE
                         WHEN (com_decisao.cenario = 'promo_flat'::text) THEN com_decisao.qtde_base
                         WHEN (com_decisao.cenario = 'promo_volume'::text) THEN GREATEST(COALESCE(com_decisao.qtde_base, (0)::numeric), COALESCE(com_decisao.promo_volume_minimo, (0)::numeric))
-                        WHEN (com_decisao.cenario = ANY (ARRAY['aumento_apenas'::text, 'promo_e_aumento'::text])) THEN ceil((com_decisao.d * (((((date_trunc('month'::text, (com_decisao.proxima_vigencia_aumento)::timestamp with time zone) + '2 mons'::interval) - '1 day'::interval))::date - CURRENT_DATE))::numeric))
+                        WHEN (com_decisao.cenario = ANY (ARRAY['aumento_apenas'::text, 'promo_e_aumento'::text])) THEN ceil((com_decisao.d * (((((date_trunc('month'::text, (com_decisao.proxima_vigencia_aumento)::timestamp with time zone) + '2 mons'::interval) - '1 day'::interval))::date - ((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date))::numeric))
                         ELSE com_decisao.qtde_base
                     END * com_decisao.preco_item_eoq) * com_decisao.desconto_total_perc) / (100)::numeric), 2)
                     ELSE NULL::numeric
@@ -24453,7 +28300,7 @@ CREATE TABLE public.pedido_compra_sugerido (
     empresa text NOT NULL,
     fornecedor_nome text,
     grupo_codigo text,
-    data_ciclo date DEFAULT CURRENT_DATE NOT NULL,
+    data_ciclo date DEFAULT ((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date NOT NULL,
     horario_geracao timestamp with time zone DEFAULT now(),
     horario_corte_planejado timestamp with time zone,
     horario_disparo_real timestamp with time zone,
@@ -24497,10 +28344,30 @@ CREATE TABLE public.pedido_compra_sugerido (
     split_lote integer,
     split_total integer,
     omie_po_inexistente_antes_de timestamp with time zone,
+    cancelamento_pos_disparo_motivo text,
+    cancelamento_pos_disparo_evidencia text,
+    cancelamento_pos_disparo_por text,
+    cancelamento_pos_disparo_em timestamp with time zone,
+    valor_total_portal_provado numeric,
+    valor_total_portal_provado_em timestamp with time zone,
+    valor_total_portal_provado_protocolo text,
+    aprovacao_selo text,
+    aprovacao_selo_em timestamp with time zone,
+    portal_recusa_motivo text,
+    disparo_claim_em timestamp with time zone,
+    disparo_claim_por text,
+    CONSTRAINT pedido_compra_sugerido_cancel_pos_disparo_motivo_check CHECK (((cancelamento_pos_disparo_motivo IS NULL) OR (cancelamento_pos_disparo_motivo = ANY (ARRAY['cancelado_junto_ao_fornecedor'::text, 'po_excluido_no_omie'::text, 'duplicidade_operacional'::text])))),
     CONSTRAINT pedido_compra_sugerido_origem_evento_tipo_check CHECK ((origem_evento_tipo = ANY (ARRAY['campanha_promocao'::text, 'aumento_anunciado'::text, NULL::text]))),
     CONSTRAINT pedido_compra_sugerido_status_envio_portal_check CHECK ((status_envio_portal = ANY (ARRAY['nao_aplicavel'::text, 'pendente_envio_portal'::text, 'enviando_portal'::text, 'enviado_portal'::text, 'falha_envio_portal'::text, 'sucesso_portal'::text, 'aceito_portal_sem_protocolo'::text, 'indeterminado_requer_conciliacao'::text, 'erro_retentavel'::text, 'erro_nao_retentavel'::text]))),
     CONSTRAINT pedido_compra_sugerido_tipo_ciclo_check CHECK ((tipo_ciclo = ANY (ARRAY['normal'::text, 'oportunidade_promo'::text, 'oportunidade_aumento'::text])))
 );
+
+
+--
+-- Name: COLUMN pedido_compra_sugerido.valor_total; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.pedido_compra_sugerido.valor_total IS 'Total DERIVADO: Σ(pedido_compra_item.valor_linha). É o que o gate de valor mínimo compara e o que corresponde ao payload do Omie (nQtde × nValUnit). NÃO é o total cobrado pelo fornecedor — esse é valor_total_portal_provado.';
 
 
 --
@@ -24529,6 +28396,62 @@ COMMENT ON COLUMN public.pedido_compra_sugerido.portal_data_entrega IS 'Data de 
 --
 
 COMMENT ON COLUMN public.pedido_compra_sugerido.omie_po_inexistente_antes_de IS 'Limite CAUSAL: o pedido de compra no Omie comprovadamente NÃO existia antes deste instante. Lido do relógio do BANCO (clock_timestamp() via reposicao_marco_pre_omie()) ANTES de IncluirPedCompra sair da edge, e persistido só se a chamada CONFIRMAR a criação — logo é sempre <= o instante real de nascimento do PO. NÃO confundir com omie_registrado_em, que é o relógio da EDGE lido DEPOIS da resposta (posterior ao nascimento, e por isso inválido como limite inferior). Consumido pelo guard temporal de reposicao_pos_candidatos(text): valor > finalizado_em do marcador ⇒ o run terminou antes de o PO existir ⇒ o silêncio dele não é evidência de ausência. NULL = sem limite conhecido ⇒ segue candidato (fail-closed). Monotônico e nunca no futuro (trigger trg_po_inexistente_antes_de_guard). 1 writer: a edge disparar-pedidos-aprovados, no caminho de INCLUSÃO. A RECONCILIAÇÃO (Omie recusa "já cadastrado" e ConsultarPedCompra confirma) NÃO carimba: ali o PO nasceu ANTES da chamada, então o marco da consulta não é limite inferior válido.';
+
+
+--
+-- Name: COLUMN pedido_compra_sugerido.cancelamento_pos_disparo_evidencia; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.pedido_compra_sugerido.cancelamento_pos_disparo_evidencia IS 'Referência externa que sustenta o cancelamento de uma compra JÁ DISPARADA (protocolo do fornecedor, nº do chamado, id do PO excluído no Omie). O banco garante que ela EXISTE e que alguém a assinou — não que ela é verdadeira. Isso é deliberado: nenhum guard técnico verifica um protocolo; o que este exige é que ninguém cancele uma compra real sem se comprometer por escrito.';
+
+
+--
+-- Name: COLUMN pedido_compra_sugerido.valor_total_portal_provado; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.pedido_compra_sugerido.valor_total_portal_provado IS 'Total PROVADO pelo portal do fornecedor (data.value do Efetivar Sayerlack) — o que o fornecedor cobrou. NÃO é Σ(valor_linha): pode incluir frete/arredondamento/desconto. Escritor ÚNICO: sayerlack_aplicar_custo_portal. Compare com valor_total (derivado) para medir divergência; NUNCA COALESCE um no outro.';
+
+
+--
+-- Name: COLUMN pedido_compra_sugerido.valor_total_portal_provado_em; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.pedido_compra_sugerido.valor_total_portal_provado_em IS 'Quando o total provado foi gravado (mesma transação da prova).';
+
+
+--
+-- Name: COLUMN pedido_compra_sugerido.valor_total_portal_provado_protocolo; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.pedido_compra_sugerido.valor_total_portal_provado_protocolo IS 'portal_protocolo vigente no instante da prova — identifica QUAL compra externa foi comprovada. Um envio posterior reescreve portal_protocolo; esta coluna não.';
+
+
+--
+-- Name: COLUMN pedido_compra_sugerido.aprovacao_selo; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.pedido_compra_sugerido.aprovacao_selo IS 'sha256 hex dos itens no instante da aprovação (reposicao_selo_itens). Escritor ÚNICO: reposicao_selar_pedido. A edge confere antes do Browserless.';
+
+
+--
+-- Name: COLUMN pedido_compra_sugerido.portal_recusa_motivo; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.pedido_compra_sugerido.portal_recusa_motivo IS 'Motivo da recusa PRÉ-Browserless (requestSent:false). Escritor ÚNICO: recusarPreBrowserless da edge enviar-pedido-portal-sayerlack. Vocabulário: selo_ausente, selo_aprovacao_divergente, depara_aprovado_divergente, fator_aprovado_divergente, qtde_nao_multiplo_embalagem, mapeamento_ambiguo, fator_conversao_invalido. Não-NULL = requer REAPROVAÇÃO (cancelar + o ciclo regrava); os claims recusam.';
+
+
+--
+-- Name: COLUMN pedido_compra_sugerido.disparo_claim_em; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.pedido_compra_sugerido.disparo_claim_em IS 'Pendência de disparo: NOT NULL desde que a edge disparar-pedidos-aprovados reivindicou o pedido até o desfecho REGISTRADO (disparado/disparado_simulado). Veta o cancelamento. NÃO expira por tempo e NÃO é limpa por falha — não-nula e velha = a compra pode existir no Omie sem registro local, requer conciliação.';
+
+
+--
+-- Name: COLUMN pedido_compra_sugerido.disparo_claim_por; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.pedido_compra_sugerido.disparo_claim_por IS 'Quem abriu a pendência (modo + run da edge). Diagnóstico apenas — nenhuma decisão lê esta coluna. Preserva o PRIMEIRO reivindicante, para casar com disparo_claim_em.';
 
 
 --
@@ -25213,6 +29136,45 @@ COMMENT ON TABLE public.data_health_watchdog_estado IS 'Dead-man do data_health_
 
 
 --
+-- Name: db_aplicacoes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.db_aplicacoes (
+    id bigint NOT NULL,
+    arquivo text NOT NULL,
+    sha256 text NOT NULL,
+    commit_sha text,
+    estado text DEFAULT 'tentativa'::text NOT NULL,
+    ator text DEFAULT CURRENT_USER NOT NULL,
+    iniciado_em timestamp with time zone DEFAULT now() NOT NULL,
+    concluido_em timestamp with time zone,
+    erro text,
+    CONSTRAINT db_aplicacoes_estado_check CHECK ((estado = ANY (ARRAY['tentativa'::text, 'aplicada'::text, 'falhou'::text, 'desconhecido'::text])))
+);
+
+
+--
+-- Name: TABLE db_aplicacoes; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.db_aplicacoes IS 'Trilha de aplicação de SQL em produção via `bun run db:aplicar`. Tentativa gravada fora da transação (sobrevive a rollback); recibo (estado=aplicada) gravado dentro dela.';
+
+
+--
+-- Name: db_aplicacoes_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.db_aplicacoes ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.db_aplicacoes_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
 -- Name: default_prices; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -25225,6 +29187,90 @@ CREATE TABLE public.default_prices (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
+
+
+--
+-- Name: deploy_atestacoes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deploy_atestacoes (
+    request_id bigint NOT NULL,
+    observado_em timestamp with time zone NOT NULL,
+    edge text NOT NULL,
+    versao text NOT NULL,
+    fonte text NOT NULL,
+    via text NOT NULL,
+    registrado_em timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT deploy_atestacoes_via_check CHECK ((via = ANY (ARRAY['sonda'::text, 'eco'::text])))
+);
+
+
+--
+-- Name: TABLE deploy_atestacoes; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.deploy_atestacoes IS 'Ledger de atestação de deploy de edge: cada linha é uma resposta de prod que disse qual bundle (versao, fonte) está no ar. Alimentado pelo cron deploy-atestacoes-colher a partir de net._http_response (pg_net.ttl = 6h). Lido por `bun run pendencias:deploy`.';
+
+
+--
+-- Name: deploy_sonda_alvos; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deploy_sonda_alvos (
+    edge text NOT NULL,
+    ativo boolean DEFAULT true NOT NULL,
+    habilitado_em timestamp with time zone DEFAULT now() NOT NULL,
+    motivo text NOT NULL,
+    CONSTRAINT deploy_sonda_alvos_edge_check CHECK ((edge ~ '^[a-z0-9-]{1,80}$'::text))
+);
+
+
+--
+-- Name: TABLE deploy_sonda_alvos; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.deploy_sonda_alvos IS 'Espelho da allowlist da sonda por cron (fonte única: supabase/functions/_shared/sonda-cron-alvos.ts). Uma edge só entra aqui depois de `bun run sonda:cron-prova` aprovar TODOS os closures históricos dela. O CLI `pendencias:deploy` exige banco ⊆ repo.';
+
+
+--
+-- Name: deploy_sonda_disparos; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deploy_sonda_disparos (
+    request_id bigint NOT NULL,
+    tick_id uuid NOT NULL,
+    edge text NOT NULL,
+    enfileirado_em timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: TABLE deploy_sonda_disparos; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.deploy_sonda_disparos IS 'Um registro por disparo da sonda por cron: liga (tick_id, edge) ao request_id do pg_net, gravado na MESMA transação do http_post. É por aqui que `pendencias:deploy` sabe que a linha do ledger responde a ESTE tick — resposta atrasada ou sonda manual têm outro id e não contam.';
+
+
+--
+-- Name: deploy_sonda_resultados; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deploy_sonda_resultados (
+    request_id bigint NOT NULL,
+    tick_id uuid NOT NULL,
+    edge text NOT NULL,
+    status_code integer,
+    classe text,
+    observado_em timestamp with time zone,
+    colhido_em timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: TABLE deploy_sonda_resultados; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.deploy_sonda_resultados IS 'Motivo de cada disparo da sonda por cron, preservado além do TTL de 6h do pg_net. Alimentada pelo cron deploy-sonda-resultados-colher a partir de deploy_sonda_disparos ⋈ net._http_response. NÃO é prova de deploy — quem prova é public.deploy_atestacoes.';
 
 
 --
@@ -25699,7 +29745,7 @@ CREATE TABLE public.farmer_agenda (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     farmer_id uuid NOT NULL,
     customer_user_id uuid NOT NULL,
-    agenda_date date DEFAULT CURRENT_DATE NOT NULL,
+    agenda_date date DEFAULT ((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date NOT NULL,
     priority_score numeric DEFAULT 0,
     agenda_type text DEFAULT 'follow_up'::text NOT NULL,
     status text DEFAULT 'pendente'::text,
@@ -26331,6 +30377,8 @@ CREATE TABLE public.farmer_recommendations (
     expired_by_run uuid,
     rejection_reason text,
     expired_reason text,
+    ordem smallint,
+    referencia_ambigua boolean,
     CONSTRAINT farmer_recommendations_affinity_score_finita CHECK (((affinity_score IS NULL) OR ((affinity_score <> 'NaN'::numeric) AND (affinity_score < 'Infinity'::numeric) AND (affinity_score >= (0)::numeric)))),
     CONSTRAINT farmer_recommendations_desfecho_coerente CHECK (((status IS NOT NULL) AND ((status = 'aceito'::text) = (accepted_at IS NOT NULL)) AND ((status = 'rejeitado'::text) = (rejected_at IS NOT NULL)) AND ((offered_at IS NULL) OR (status = ANY (ARRAY['ofertado'::text, 'aceito'::text, 'rejeitado'::text]))) AND ((status <> 'ofertado'::text) OR (offered_at IS NOT NULL)))),
     CONSTRAINT farmer_recommendations_expirado_coerente CHECK (((status IS NOT NULL) AND ((status = 'expirado'::text) = (expired_at IS NOT NULL)))),
@@ -26374,6 +30422,20 @@ COMMENT ON COLUMN public.farmer_recommendations.expired_by_run IS 'Qual execuç�
 --
 
 COMMENT ON COLUMN public.farmer_recommendations.rejection_reason IS 'Motivo da recusa, vocabulário fechado. Escrito SÓ por farmer_recomendacao_registrar_desfecho. NULL = não informado (≠ "sem motivo").';
+
+
+--
+-- Name: COLUMN farmer_recommendations.ordem; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.farmer_recommendations.ordem IS 'Rank DENSO dentro de (farmer_id, customer_user_id, recommendation_type, run_id): candidatos que o sinal nao separou COMPARTILHAM o valor. NULL = geracao gravada por produtor que nao calcula rank (aceitacao declarada de perda de cobertura, spec §6). Numerar 1,2,3 entre empatados trocaria o endereco do defeito: de uuid para indice do array, que e a ordem de varredura do catalogo.';
+
+
+--
+-- Name: COLUMN farmer_recommendations.referencia_ambigua; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.farmer_recommendations.referencia_ambigua IS 'up_sell: o preco de referencia deste CLIENTE saiu de um desempate por uuid em preco-referencia.ts (instante indistinguivel entre pedidos distintos, com precos diferentes). Marca do CLIENTE e nao da linha: a deduplicacao guarda por SKU so a melhor relacao, e a razao de preco que decide essa "melhor" e justamente a que a referencia sorteada altera — a flag da linha sumiria com a relacao descartada. cross_sell grava false explicito (o tipo nao usa preco). NULL = nao medido; NAO usar DEFAULT false, que afirmaria medicao sobre 17.316 linhas legadas.';
 
 
 --
@@ -26459,16 +30521,16 @@ COMMENT ON COLUMN public.farmer_tactical_plans.best_individual_lie IS 'Melhor LI
 
 CREATE VIEW public.fin_aging_pagar WITH (security_invoker='on') AS
  SELECT company,
-    count(*) FILTER (WHERE (data_vencimento >= CURRENT_DATE)) AS a_vencer_qtd,
-    COALESCE(sum(saldo) FILTER (WHERE (data_vencimento >= CURRENT_DATE)), (0)::numeric) AS a_vencer_valor,
-    count(*) FILTER (WHERE (((CURRENT_DATE - data_vencimento) >= 1) AND ((CURRENT_DATE - data_vencimento) <= 30))) AS vencido_1_30_qtd,
-    COALESCE(sum(saldo) FILTER (WHERE (((CURRENT_DATE - data_vencimento) >= 1) AND ((CURRENT_DATE - data_vencimento) <= 30))), (0)::numeric) AS vencido_1_30_valor,
-    count(*) FILTER (WHERE (((CURRENT_DATE - data_vencimento) >= 31) AND ((CURRENT_DATE - data_vencimento) <= 60))) AS vencido_31_60_qtd,
-    COALESCE(sum(saldo) FILTER (WHERE (((CURRENT_DATE - data_vencimento) >= 31) AND ((CURRENT_DATE - data_vencimento) <= 60))), (0)::numeric) AS vencido_31_60_valor,
-    count(*) FILTER (WHERE (((CURRENT_DATE - data_vencimento) >= 61) AND ((CURRENT_DATE - data_vencimento) <= 90))) AS vencido_61_90_qtd,
-    COALESCE(sum(saldo) FILTER (WHERE (((CURRENT_DATE - data_vencimento) >= 61) AND ((CURRENT_DATE - data_vencimento) <= 90))), (0)::numeric) AS vencido_61_90_valor,
-    count(*) FILTER (WHERE ((CURRENT_DATE - data_vencimento) > 90)) AS vencido_90_plus_qtd,
-    COALESCE(sum(saldo) FILTER (WHERE ((CURRENT_DATE - data_vencimento) > 90)), (0)::numeric) AS vencido_90_plus_valor
+    count(*) FILTER (WHERE (data_vencimento >= ((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date)) AS a_vencer_qtd,
+    COALESCE(sum(saldo) FILTER (WHERE (data_vencimento >= ((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date)), (0)::numeric) AS a_vencer_valor,
+    count(*) FILTER (WHERE (((((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - data_vencimento) >= 1) AND ((((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - data_vencimento) <= 30))) AS vencido_1_30_qtd,
+    COALESCE(sum(saldo) FILTER (WHERE (((((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - data_vencimento) >= 1) AND ((((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - data_vencimento) <= 30))), (0)::numeric) AS vencido_1_30_valor,
+    count(*) FILTER (WHERE (((((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - data_vencimento) >= 31) AND ((((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - data_vencimento) <= 60))) AS vencido_31_60_qtd,
+    COALESCE(sum(saldo) FILTER (WHERE (((((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - data_vencimento) >= 31) AND ((((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - data_vencimento) <= 60))), (0)::numeric) AS vencido_31_60_valor,
+    count(*) FILTER (WHERE (((((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - data_vencimento) >= 61) AND ((((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - data_vencimento) <= 90))) AS vencido_61_90_qtd,
+    COALESCE(sum(saldo) FILTER (WHERE (((((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - data_vencimento) >= 61) AND ((((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - data_vencimento) <= 90))), (0)::numeric) AS vencido_61_90_valor,
+    count(*) FILTER (WHERE ((((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - data_vencimento) > 90)) AS vencido_90_plus_qtd,
+    COALESCE(sum(saldo) FILTER (WHERE ((((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - data_vencimento) > 90)), (0)::numeric) AS vencido_90_plus_valor
    FROM public.fin_contas_pagar
   WHERE (status_titulo <> ALL (ARRAY['PAGO'::text, 'CANCELADO'::text]))
   GROUP BY company;
@@ -26480,16 +30542,16 @@ CREATE VIEW public.fin_aging_pagar WITH (security_invoker='on') AS
 
 CREATE VIEW public.fin_aging_receber WITH (security_invoker='on') AS
  SELECT company,
-    count(*) FILTER (WHERE (data_vencimento >= CURRENT_DATE)) AS a_vencer_qtd,
-    COALESCE(sum(saldo) FILTER (WHERE (data_vencimento >= CURRENT_DATE)), (0)::numeric) AS a_vencer_valor,
-    count(*) FILTER (WHERE (((CURRENT_DATE - data_vencimento) >= 1) AND ((CURRENT_DATE - data_vencimento) <= 30))) AS vencido_1_30_qtd,
-    COALESCE(sum(saldo) FILTER (WHERE (((CURRENT_DATE - data_vencimento) >= 1) AND ((CURRENT_DATE - data_vencimento) <= 30))), (0)::numeric) AS vencido_1_30_valor,
-    count(*) FILTER (WHERE (((CURRENT_DATE - data_vencimento) >= 31) AND ((CURRENT_DATE - data_vencimento) <= 60))) AS vencido_31_60_qtd,
-    COALESCE(sum(saldo) FILTER (WHERE (((CURRENT_DATE - data_vencimento) >= 31) AND ((CURRENT_DATE - data_vencimento) <= 60))), (0)::numeric) AS vencido_31_60_valor,
-    count(*) FILTER (WHERE (((CURRENT_DATE - data_vencimento) >= 61) AND ((CURRENT_DATE - data_vencimento) <= 90))) AS vencido_61_90_qtd,
-    COALESCE(sum(saldo) FILTER (WHERE (((CURRENT_DATE - data_vencimento) >= 61) AND ((CURRENT_DATE - data_vencimento) <= 90))), (0)::numeric) AS vencido_61_90_valor,
-    count(*) FILTER (WHERE ((CURRENT_DATE - data_vencimento) > 90)) AS vencido_90_plus_qtd,
-    COALESCE(sum(saldo) FILTER (WHERE ((CURRENT_DATE - data_vencimento) > 90)), (0)::numeric) AS vencido_90_plus_valor
+    count(*) FILTER (WHERE (data_vencimento >= ((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date)) AS a_vencer_qtd,
+    COALESCE(sum(saldo) FILTER (WHERE (data_vencimento >= ((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date)), (0)::numeric) AS a_vencer_valor,
+    count(*) FILTER (WHERE (((((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - data_vencimento) >= 1) AND ((((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - data_vencimento) <= 30))) AS vencido_1_30_qtd,
+    COALESCE(sum(saldo) FILTER (WHERE (((((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - data_vencimento) >= 1) AND ((((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - data_vencimento) <= 30))), (0)::numeric) AS vencido_1_30_valor,
+    count(*) FILTER (WHERE (((((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - data_vencimento) >= 31) AND ((((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - data_vencimento) <= 60))) AS vencido_31_60_qtd,
+    COALESCE(sum(saldo) FILTER (WHERE (((((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - data_vencimento) >= 31) AND ((((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - data_vencimento) <= 60))), (0)::numeric) AS vencido_31_60_valor,
+    count(*) FILTER (WHERE (((((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - data_vencimento) >= 61) AND ((((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - data_vencimento) <= 90))) AS vencido_61_90_qtd,
+    COALESCE(sum(saldo) FILTER (WHERE (((((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - data_vencimento) >= 61) AND ((((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - data_vencimento) <= 90))), (0)::numeric) AS vencido_61_90_valor,
+    count(*) FILTER (WHERE ((((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - data_vencimento) > 90)) AS vencido_90_plus_qtd,
+    COALESCE(sum(saldo) FILTER (WHERE ((((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - data_vencimento) > 90)), (0)::numeric) AS vencido_90_plus_valor
    FROM public.fin_contas_receber
   WHERE (status_titulo <> ALL (ARRAY['RECEBIDO'::text, 'CANCELADO'::text]))
   GROUP BY company;
@@ -27197,7 +31259,7 @@ CREATE TABLE public.fin_fechamentos (
 CREATE VIEW public.fin_fluxo_caixa_diario WITH (security_invoker='on') AS
  WITH datas AS (
          SELECT (d_1.d)::date AS data
-           FROM generate_series((CURRENT_DATE - '90 days'::interval), (CURRENT_DATE + '90 days'::interval), '1 day'::interval) d_1(d)
+           FROM generate_series((((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - '90 days'::interval), (((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date + '90 days'::interval), '1 day'::interval) d_1(d)
         ), empresas AS (
          SELECT DISTINCT fin_contas_receber.company
            FROM public.fin_contas_receber
@@ -28353,6 +32415,31 @@ COMMENT ON VIEW public.inventory_position_operacional IS 'FU4-F fase 2 — porta
 
 
 --
+-- Name: ipi_aliquota_ncm; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.ipi_aliquota_ncm (
+    ncm text NOT NULL,
+    aliquota_pct numeric NOT NULL,
+    fonte text NOT NULL,
+    evidencia text NOT NULL,
+    medido_em date NOT NULL,
+    atualizado_em timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT ipi_aliquota_ncm_aliquota_faixa CHECK (((aliquota_pct >= (0)::numeric) AND (aliquota_pct < (100)::numeric) AND (aliquota_pct = round(aliquota_pct, 2)))),
+    CONSTRAINT ipi_aliquota_ncm_evidencia_nao_vazia CHECK ((btrim(evidencia) <> ''::text)),
+    CONSTRAINT ipi_aliquota_ncm_fonte_valida CHECK ((fonte = ANY (ARRAY['nf'::text, 'portal'::text]))),
+    CONSTRAINT ipi_aliquota_ncm_ncm_8_digitos CHECK ((ncm ~ '^[0-9]{8}$'::text))
+);
+
+
+--
+-- Name: TABLE ipi_aliquota_ncm; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.ipi_aliquota_ncm IS 'Alíquota de IPI MEDIDA por NCM (8 dígitos) — fonte nf (NF de entrada lida) ou portal (identificada pelo total cobrado). Lida por sayerlack_ipi_itens; a captura do portal a re-prova a cada pedido (soma das linhas + IPI = total cobrado). Escrita: SQL Editor. NCM fora daqui = captura cega ipi_ncm_desconhecido (nunca 0%).';
+
+
+--
 -- Name: kb_catalisador_links; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -29186,11 +33273,41 @@ CREATE TABLE public.order_items (
     product_id uuid,
     omie_codigo_produto bigint,
     quantity numeric DEFAULT 1 NOT NULL,
-    unit_price numeric DEFAULT 0 NOT NULL,
+    unit_price numeric,
     discount numeric DEFAULT 0,
     created_at timestamp with time zone DEFAULT now(),
-    hash_payload text
+    hash_payload text,
+    omie_codigo_item bigint,
+    desconto_valor numeric
 );
+
+
+--
+-- Name: COLUMN order_items.unit_price; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.order_items.unit_price IS 'Preço unitário praticado. NULL = NÃO SABIDO (o Omie não informou valor_unitario, ou informou lixo: negativo/Infinity/NaN), jamais "de graça" — ausente <> zero. Era NOT NULL DEFAULT 0, o que fabricava R$ 0,00 e fazia o item entrar na margem do cliente com receita 0 e custo cheio. Um 0 aqui é FATO ("o Omie informou zero" — bonificação/brinde), distinto de NULL; a ingestão preserva os dois. Quem calcula margem exclui ambos (private.margem_cliente_agregada usa > 0), porque receita 0 com custo real é margem -100% e envenenaria o agregado.';
+
+
+--
+-- Name: COLUMN order_items.discount; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.order_items.discount IS 'LEGADO — semântica AMBÍGUA, não use em código novo. Preenchida por um leitor que lia `prod.desconto`, campo que a API do Omie não tem, então é 0 em 100% das linhas por cegueira, não por medição. Sete consumidores a interpretaram de duas formas incompatíveis (percentual e valor). Substituída por desconto_valor. Mantida porque consumidores ainda a leem; remover exige migrar todos primeiro.';
+
+
+--
+-- Name: COLUMN order_items.omie_codigo_item; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.order_items.omie_codigo_item IS 'IDENTIDADE DE LINHA do item dentro do pedido Omie (`det.ide.codigo_item`, atribuído pelo Omie). NULL = linha ainda sem identidade (pré-existente, ou origem que não a forneceu) — a reconciliação degrada para casamento por omie_codigo_produto, que só é identidade quando o SKU não se repete no pedido. NÃO tem UNIQUE: a distinção é guardada na RPC reconciliar_pedidos_omie (pedido ambíguo é PULADO, não corrigido).';
+
+
+--
+-- Name: COLUMN order_items.desconto_valor; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.order_items.desconto_valor IS 'Desconto do item em VALOR ABSOLUTO (R$), da LINHA inteira — não por unidade e não percentual. Receita líquida da linha = unit_price * quantity - desconto_valor; preço unitário líquido = unit_price - desconto_valor / quantity. NULL = NÃO APURADO (ingerido pelo leitor que lia a chave inexistente `prod.desconto`), e é diferente de 0 = o Omie informou que não há desconto. Origem: det.produto do Omie, normalizado por _shared/desconto-omie.ts, que lê tipo_desconto ("V"/"P") + valor_desconto + percentual_desconto. NUNCA faça COALESCE(desconto_valor, 0) na ingestão: isso reintroduz a fabricação que a coluna existe para evitar.';
 
 
 --
@@ -29527,6 +33644,14 @@ CREATE TABLE public.pedido_compra_item (
     estoque_a_caminho numeric,
     qtde_sem_teto numeric,
     teto_cobertura_aplicado boolean DEFAULT false NOT NULL,
+    fator_embalagem_portal numeric,
+    sku_portal_aprovado text,
+    fator_portal_aprovado numeric,
+    preco_unitario_sem_ipi_portal numeric,
+    valor_ipi_portal numeric,
+    aliquota_ipi_portal numeric,
+    ncm_ipi_portal text,
+    CONSTRAINT pedido_compra_item_ipi_portal_coerente CHECK (((num_nulls(preco_unitario_sem_ipi_portal, valor_ipi_portal, aliquota_ipi_portal, ncm_ipi_portal) = ANY (ARRAY[0, 4])) AND ((preco_unitario_sem_ipi_portal IS NULL) OR ((preco_unitario_sem_ipi_portal > (0)::numeric) AND (preco_unitario_sem_ipi_portal < 'Infinity'::numeric))) AND ((valor_ipi_portal IS NULL) OR ((valor_ipi_portal >= (0)::numeric) AND (valor_ipi_portal < 'Infinity'::numeric))) AND ((aliquota_ipi_portal IS NULL) OR ((aliquota_ipi_portal >= (0)::numeric) AND (aliquota_ipi_portal < (100)::numeric))) AND ((ncm_ipi_portal IS NULL) OR (ncm_ipi_portal ~ '^[0-9]{8}$'::text)))),
     CONSTRAINT pedido_compra_item_modo_promocao_check CHECK ((modo_promocao = ANY (ARRAY['flat'::text, 'forward_buying'::text, NULL::text])))
 );
 
@@ -29567,6 +33692,55 @@ COMMENT ON COLUMN public.pedido_compra_item.teto_cobertura_aplicado IS 'true = q
 
 
 --
+-- Name: COLUMN pedido_compra_item.fator_embalagem_portal; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.pedido_compra_item.fator_embalagem_portal IS 'Unidades do PORTAL por unidade do Omie (sku_fornecedor_externo.fator_conversao) aplicadas pelo motor ao arredondar qtde_final ao múltiplo da embalagem. NULL = sem arredondamento. 1 escritor: gerar_pedidos_sugeridos_ciclo.';
+
+
+--
+-- Name: COLUMN pedido_compra_item.sku_portal_aprovado; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.pedido_compra_item.sku_portal_aprovado IS 'Snapshot do sku_fornecedor_externo.sku_portal no instante da APROVAÇÃO. O de-para é vivo (312 linhas ativas, 5 já editadas): sem este congelamento o portal pode receber outro código do que foi aprovado.';
+
+
+--
+-- Name: COLUMN pedido_compra_item.fator_portal_aprovado; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.pedido_compra_item.fator_portal_aprovado IS 'Snapshot do fator_conversao do de-para na APROVAÇÃO. Diferente de fator_embalagem_portal, que é o fator com que o MOTOR arredondou (NULL = não arredondou).';
+
+
+--
+-- Name: COLUMN pedido_compra_item.preco_unitario_sem_ipi_portal; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.pedido_compra_item.preco_unitario_sem_ipi_portal IS 'Unitário SEM IPI provado pelo portal (round2(Preço Venda) ÷ qtde_final) — vai em nValUnit do PO. Escritor único: sayerlack_aplicar_custo_portal. Nulo = sem prova (o PO usa preco_unitario, como antes).';
+
+
+--
+-- Name: COLUMN pedido_compra_item.valor_ipi_portal; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.pedido_compra_item.valor_ipi_portal IS 'IPI da LINHA em R$ (round2(linha × alíquota ÷ 100)) — vai em nValorIpi do PO. 0 = alíquota 0% MEDIDA, nunca ausência. Escritor único: sayerlack_aplicar_custo_portal.';
+
+
+--
+-- Name: COLUMN pedido_compra_item.aliquota_ipi_portal; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.pedido_compra_item.aliquota_ipi_portal IS 'Alíquota (%) de ipi_aliquota_ncm usada na prova deste item (auditoria — a tabela pode mudar depois). Escritor único: sayerlack_aplicar_custo_portal.';
+
+
+--
+-- Name: COLUMN pedido_compra_item.ncm_ipi_portal; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.pedido_compra_item.ncm_ipi_portal IS 'NCM (8 dígitos, do omie_products da conta do pedido) usado na prova deste item. Escritor único: sayerlack_aplicar_custo_portal.';
+
+
+--
 -- Name: pedido_compra_item_id_seq; Type: SEQUENCE; Schema: public; Owner: -
 --
 
@@ -29602,6 +33776,69 @@ CREATE SEQUENCE public.pedido_compra_sugerido_id_seq
 --
 
 ALTER SEQUENCE public.pedido_compra_sugerido_id_seq OWNED BY public.pedido_compra_sugerido.id;
+
+
+--
+-- Name: pedido_total_liquido_conversoes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.pedido_total_liquido_conversoes (
+    id bigint NOT NULL,
+    lote uuid NOT NULL,
+    sales_order_id uuid NOT NULL,
+    account text NOT NULL,
+    mes date NOT NULL,
+    total_antes numeric NOT NULL,
+    total_depois numeric NOT NULL,
+    corte timestamp with time zone NOT NULL,
+    convertido_em timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT pedido_total_liquido_conversoes_valores CHECK (((total_antes >= (0)::numeric) AND (total_antes < 'Infinity'::numeric) AND (total_depois >= (0)::numeric) AND (total_depois < 'Infinity'::numeric) AND (total_depois < total_antes)))
+);
+
+
+--
+-- Name: pedido_total_liquido_conversoes_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.pedido_total_liquido_conversoes ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.pedido_total_liquido_conversoes_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: pedido_total_liquido_excecao; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.pedido_total_liquido_excecao (
+    sales_order_id uuid NOT NULL,
+    motivo text NOT NULL,
+    evidencia text NOT NULL,
+    criado_em timestamp with time zone DEFAULT now() NOT NULL,
+    criado_por text NOT NULL,
+    revisar_em date NOT NULL,
+    CONSTRAINT pedido_total_liquido_excecao_criado_por_check CHECK ((length(btrim(criado_por)) > 0)),
+    CONSTRAINT pedido_total_liquido_excecao_evidencia_check CHECK ((length(btrim(evidencia)) > 0)),
+    CONSTRAINT pedido_total_liquido_excecao_motivo_check CHECK ((motivo = ANY (ARRAY['sem_apuracao'::text, 'apuracao_parcial'::text])))
+);
+
+
+--
+-- Name: TABLE pedido_total_liquido_excecao; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.pedido_total_liquido_excecao IS 'Pedidos que o conversor do total liquido ignora NOMINALMENTE: nao contam no gate de mes completo e nunca sao convertidos. Fail-closed por omissao — pedido nao apurado e nao listado segue bloqueando o mes. Ver docs/historico/backfill-desconto-a-porta-fora-do-envelope.md';
+
+
+--
+-- Name: COLUMN pedido_total_liquido_excecao.motivo; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.pedido_total_liquido_excecao.motivo IS 'Forma medida LOCALMENTE e verificavel: sem_apuracao = nenhuma linha do pedido tem desconto_valor; apuracao_parcial = tem linha apurada e linha NULL no mesmo pedido. O motivo do lado do Omie (sem_correspondencia/ambiguo) exige um dry-run do backfill e e enriquecimento, nao pre-requisito.';
 
 
 --
@@ -29920,7 +34157,7 @@ CREATE TABLE public.priority_score_log (
     churn_risk_component numeric DEFAULT 0,
     repurchase_component numeric DEFAULT 0,
     goal_proximity_component numeric DEFAULT 0,
-    score_date date DEFAULT CURRENT_DATE NOT NULL,
+    score_date date DEFAULT ((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date NOT NULL,
     calculated_at timestamp with time zone DEFAULT now() NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL
 );
@@ -30399,6 +34636,45 @@ ALTER TABLE public.reposicao_auto_aprovacao_log ALTER COLUMN id ADD GENERATED AL
 
 
 --
+-- Name: reposicao_cancelamento_pos_disparo_audit; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.reposicao_cancelamento_pos_disparo_audit (
+    id bigint NOT NULL,
+    pedido_id bigint NOT NULL,
+    status_anterior text NOT NULL,
+    status_novo text NOT NULL,
+    motivo text NOT NULL,
+    evidencia text NOT NULL,
+    justificativa text,
+    omie_pedido_compra_id text,
+    valor_total numeric,
+    executado_por text NOT NULL,
+    executado_por_uid uuid,
+    executado_em timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: reposicao_cancelamento_pos_disparo_audit_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.reposicao_cancelamento_pos_disparo_audit_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: reposicao_cancelamento_pos_disparo_audit_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.reposicao_cancelamento_pos_disparo_audit_id_seq OWNED BY public.reposicao_cancelamento_pos_disparo_audit.id;
+
+
+--
 -- Name: reposicao_cold_start_log; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -30704,6 +34980,70 @@ COMMENT ON TABLE public.reposicao_po_last_seen IS 'Último run VÁLIDO que VIU c
 
 
 --
+-- Name: reposicao_po_observado_item; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.reposicao_po_observado_item (
+    run_id uuid NOT NULL,
+    omie_codigo_pedido bigint NOT NULL,
+    seq_item integer NOT NULL,
+    numero_pedido text,
+    etapa text,
+    id_item bigint,
+    sku_codigo_omie bigint,
+    quantidade numeric,
+    quantidade_recebida numeric,
+    contribuicao numeric NOT NULL,
+    exclusao text,
+    CONSTRAINT reposicao_po_observado_item_contado_tem_sku CHECK (((exclusao IS NOT NULL) OR ((sku_codigo_omie IS NOT NULL) AND (quantidade IS NOT NULL) AND (quantidade_recebida IS NOT NULL)))),
+    CONSTRAINT reposicao_po_observado_item_contribuicao_check CHECK ((contribuicao >= (0)::numeric)),
+    CONSTRAINT reposicao_po_observado_item_excluido_nao_contribui CHECK (((exclusao IS NULL) OR (contribuicao = (0)::numeric))),
+    CONSTRAINT reposicao_po_observado_item_exclusao_conhecida CHECK ((exclusao = ANY (ARRAY['dedup_app'::text, 'etapa_nao_aberta'::text, 'repetido_na_varredura'::text, 'item_sem_sku'::text, 'sku_nao_habilitado'::text, 'quantidade_invalida'::text]))),
+    CONSTRAINT reposicao_po_observado_item_seq_item_check CHECK ((seq_item >= 0))
+);
+
+
+--
+-- Name: TABLE reposicao_po_observado_item; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.reposicao_po_observado_item IS 'Itens dos POs lidos no conjunto aberto do Omie e o que cada um contribuiu ao estoque_pendente_entrada (0 + exclusao quando não contou). PO sem itens: 1 linha de presença (seq_item 0, campos do item NULL).';
+
+
+--
+-- Name: reposicao_po_observado_run; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.reposicao_po_observado_run (
+    run_id uuid NOT NULL,
+    empresa text NOT NULL,
+    iniciado_em timestamp with time zone NOT NULL,
+    concluido_em timestamp with time zone NOT NULL,
+    janela_de date NOT NULL,
+    janela_ate date NOT NULL,
+    filtros jsonb NOT NULL,
+    varredura_completa boolean NOT NULL,
+    pendente_aplicado boolean NOT NULL,
+    skus_divergentes integer NOT NULL,
+    pedidos_lidos integer NOT NULL,
+    versao_edge text NOT NULL,
+    gravado_em timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT reposicao_po_observado_run_check CHECK ((concluido_em >= iniciado_em)),
+    CONSTRAINT reposicao_po_observado_run_check1 CHECK ((janela_ate >= janela_de)),
+    CONSTRAINT reposicao_po_observado_run_empresa_check CHECK ((empresa = ANY (ARRAY['OBEN'::text, 'COLACOR'::text]))),
+    CONSTRAINT reposicao_po_observado_run_pedidos_lidos_check CHECK ((pedidos_lidos >= 0)),
+    CONSTRAINT reposicao_po_observado_run_skus_divergentes_check CHECK ((skus_divergentes >= 0))
+);
+
+
+--
+-- Name: TABLE reposicao_po_observado_run; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.reposicao_po_observado_run IS 'Uma linha por execução do omie-sync-estoque (OBEN): janela, filtros e se a varredura/pendente valeram (pendente_aplicado e skus_divergentes conferidos no banco pela RPC). Writer único: reposicao_po_observado_publicar.';
+
+
+--
 -- Name: reposicao_teto_cobertura_log; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -30899,7 +35239,7 @@ CREATE TABLE public.route_visits (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     customer_user_id uuid NOT NULL,
     visited_by uuid NOT NULL,
-    visit_date date DEFAULT CURRENT_DATE NOT NULL,
+    visit_date date DEFAULT ((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date NOT NULL,
     check_in_at timestamp with time zone,
     check_out_at timestamp with time zone,
     visit_type text DEFAULT 'comercial'::text NOT NULL,
@@ -31159,7 +35499,7 @@ CREATE TABLE public.sku_embalagem_equivalencia (
     fator_para_base numeric NOT NULL,
     fornecedor_nome text,
     ativo boolean DEFAULT true NOT NULL,
-    vigente_desde date DEFAULT CURRENT_DATE NOT NULL,
+    vigente_desde date DEFAULT ((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date NOT NULL,
     vigente_ate date,
     criado_por text,
     criado_em timestamp with time zone DEFAULT now() NOT NULL,
@@ -31211,7 +35551,8 @@ CREATE TABLE public.sku_fornecedor_externo (
     ativo boolean DEFAULT true NOT NULL,
     observacoes text,
     criado_em timestamp with time zone DEFAULT now() NOT NULL,
-    atualizado_em timestamp with time zone DEFAULT now() NOT NULL
+    atualizado_em timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT sku_fornecedor_externo_fator_positivo CHECK (((fator_conversao > (0)::numeric) AND (fator_conversao < 'Infinity'::numeric)))
 );
 
 
@@ -31244,6 +35585,8 @@ CREATE TABLE public.sku_items_sync_controle (
     ultima_tentativa timestamp with time zone DEFAULT now() NOT NULL,
     motivo text,
     criado_em timestamp with time zone DEFAULT now() NOT NULL,
+    itens_pendentes integer,
+    CONSTRAINT sku_items_sync_controle_itens_pendentes_check CHECK (((itens_pendentes IS NULL) OR (itens_pendentes >= 0))),
     CONSTRAINT sku_items_sync_controle_tentativas_check CHECK ((tentativas >= 0))
 );
 
@@ -31259,7 +35602,14 @@ COMMENT ON TABLE public.sku_items_sync_controle IS 'Estado da fila do omie-sync-
 -- Name: COLUMN sku_items_sync_controle.motivo; Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON COLUMN public.sku_items_sync_controle.motivo IS 'Desfecho da última tentativa: ok_com_itens | ok_0_itens | fault: <faultstring> | consulta_falhou: <erro>. Diagnóstico — não é sinal money-path.';
+COMMENT ON COLUMN public.sku_items_sync_controle.motivo IS 'Desfecho da última tentativa: ok_com_itens | ok_todos_ignorados | ok_0_itens | ok_sem_itensRecebimento | pendente: <k> itens (...) | em_gravacao: ... | fault: <faultstring> | consulta_falhou: <erro>. Diagnóstico humano — quem decide a fila é itens_pendentes.';
+
+
+--
+-- Name: COLUMN sku_items_sync_controle.itens_pendentes; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.sku_items_sync_controle.itens_pendentes IS 'Itens da última lista de ConsultarRecebimento sem linha em sku_leadtime_history (aguardando associação, lookup de pedido com erro, upsert falho). NULL = não medido (legado / resposta sem lista) — a fila usa a regra antiga ("sem linha"). >0 = volta à fila mesmo com linha; 0 = completo. Writer único: edge omie-sync-sku-items (write-ahead + fechamento com CAS em ultima_tentativa).';
 
 
 --
@@ -31468,8 +35818,8 @@ CREATE TABLE public.sugestao_negociacao_paralela (
     campanha_id_gerada bigint,
     data_acao timestamp with time zone,
     observacoes text,
-    data_geracao date DEFAULT CURRENT_DATE NOT NULL,
-    valido_ate date DEFAULT (CURRENT_DATE + '14 days'::interval) NOT NULL,
+    data_geracao date DEFAULT ((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date NOT NULL,
+    valido_ate date DEFAULT (((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date + '14 days'::interval) NOT NULL,
     criado_em timestamp with time zone DEFAULT now(),
     atualizado_em timestamp with time zone DEFAULT now(),
     CONSTRAINT sugestao_negociacao_paralela_motivo_check CHECK ((motivo = ANY (ARRAY['candidato_forte_sem_promo_recente'::text, 'consumo_abaixo_tipico_fim_de_mes'::text, 'score_alto_ciclo_semanal'::text, 'combinacao_heuristica'::text]))),
@@ -31907,8 +36257,21 @@ CREATE TABLE public.tint_keys_snapshots (
     total_chunks integer NOT NULL,
     chunk_index integer NOT NULL,
     keys jsonb NOT NULL,
-    created_at timestamp with time zone DEFAULT now()
+    created_at timestamp with time zone DEFAULT now(),
+    aplicacao_status text,
+    aplicacao_tentativas integer DEFAULT 0 NOT NULL,
+    aplicacao_erro text,
+    aplicacao_proxima_em timestamp with time zone,
+    aplicado_em timestamp with time zone,
+    CONSTRAINT tint_keys_snapshots_aplicacao_status_check CHECK (((aplicacao_status IS NULL) OR (aplicacao_status = ANY (ARRAY['pendente'::text, 'aplicado'::text, 'erro'::text, 'descartado'::text]))))
 );
+
+
+--
+-- Name: COLUMN tint_keys_snapshots.aplicacao_status; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.tint_keys_snapshots.aplicacao_status IS 'Fila de aplicação (tint_promocao_tick): pendente → aplicado | erro | descartado, igual em TODAS as linhas-chunk do snapshot_id. NULL = legado ou modo não-automático.';
 
 
 --
@@ -32289,8 +36652,21 @@ CREATE TABLE public.tint_sync_runs (
     metadata jsonb,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     idempotency_key text,
-    idempotency_response jsonb
+    idempotency_response jsonb,
+    promocao_status text,
+    promocao_tentativas integer DEFAULT 0 NOT NULL,
+    promocao_erro text,
+    promocao_proxima_em timestamp with time zone,
+    promovido_em timestamp with time zone,
+    CONSTRAINT tint_sync_runs_promocao_status_check CHECK (((promocao_status IS NULL) OR (promocao_status = ANY (ARRAY['pendente'::text, 'promovido'::text, 'erro'::text, 'descartado'::text]))))
 );
+
+
+--
+-- Name: COLUMN tint_sync_runs.promocao_status; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.tint_sync_runs.promocao_status IS 'Fila de promoção (tint_promocao_tick): pendente → promovido | erro | descartado. NULL = run legado (promovido no HTTP) ou modo não-automático. NÃO confundir com status (ingestão).';
 
 
 --
@@ -32513,15 +36889,15 @@ CREATE VIEW public.v_caca_candidatos WITH (security_invoker='on') AS
          SELECT so.id,
             so.account,
             so.total,
-            COALESCE(so.order_date_kpi, (so.created_at)::date) AS dt,
+            so.order_date_kpi AS dt,
             cv.documento
            FROM (public.sales_orders so
              JOIN cli_valid cv ON ((cv.user_id = so.customer_user_id)))
-          WHERE ((so.deleted_at IS NULL) AND (so.status <> ALL (ARRAY['cancelado'::text, 'rascunho'::text])) AND (so.account = ANY (ARRAY['oben'::text, 'colacor'::text])))
+          WHERE ((so.status <> ALL (ARRAY['cancelado'::text, 'rascunho'::text, 'pendente'::text, 'orcamento'::text])) AND (so.deleted_at IS NULL) AND (so.order_date_kpi IS NOT NULL) AND (so.account = ANY (ARRAY['oben'::text, 'colacor'::text])))
         ), ativ AS (
          SELECT so_ok.documento,
             so_ok.account,
-            (max(so_ok.dt) >= ((now() - '6 mons'::interval))::date) AS ativo_6m
+            (max(so_ok.dt) >= (((now() AT TIME ZONE 'America/Sao_Paulo'::text) - '6 mons'::interval))::date) AS ativo_6m
            FROM so_ok
           GROUP BY so_ok.documento, so_ok.account
         ), grupo AS (
@@ -32589,7 +36965,7 @@ CREATE VIEW public.v_caca_candidatos WITH (security_invoker='on') AS
            FROM ativ av2
           WHERE ((av2.documento = cand.documento) AND (av2.account <> cand.empresa_alvo) AND av2.ativo_6m))) AS compra_em_outra_empresa,
         CASE
-            WHEN (g.ultima_grupo IS NOT NULL) THEN ((now())::date - g.ultima_grupo)
+            WHEN (g.ultima_grupo IS NOT NULL) THEN (((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - g.ultima_grupo)
             ELSE NULL::integer
         END AS ultima_compra_grupo_dias,
     cand.name AS nome,
@@ -32639,11 +37015,11 @@ CREATE VIEW public.v_caca_compradores WITH (security_invoker='on') AS
          SELECT so.id,
             so.account,
             so.total,
-            COALESCE(so.order_date_kpi, (so.created_at)::date) AS dt,
+            so.order_date_kpi AS dt,
             cv.documento
            FROM (public.sales_orders so
              JOIN cli_valid cv ON ((cv.user_id = so.customer_user_id)))
-          WHERE ((so.deleted_at IS NULL) AND (so.status <> ALL (ARRAY['cancelado'::text, 'rascunho'::text])) AND (so.account = ANY (ARRAY['oben'::text, 'colacor'::text])))
+          WHERE ((so.status <> ALL (ARRAY['cancelado'::text, 'rascunho'::text, 'pendente'::text, 'orcamento'::text])) AND (so.deleted_at IS NULL) AND (so.order_date_kpi IS NOT NULL) AND (so.account = ANY (ARRAY['oben'::text, 'colacor'::text])))
         ), compras AS (
          SELECT so_ok.documento,
             so_ok.account,
@@ -32706,7 +37082,7 @@ CREATE VIEW public.v_caca_compradores WITH (security_invoker='on') AS
     COALESCE(f.familias, ARRAY[]::text[]) AS familias,
     c.volume,
     c.n_pedidos,
-    ((now())::date - c.ultima) AS recencia_dias,
+    (((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - c.ultima) AS recencia_dias,
         CASE
             WHEN (l.lucro_com_custo IS NOT NULL) THEN round(l.lucro_com_custo, 2)
             ELSE NULL::numeric
@@ -32732,9 +37108,49 @@ CREATE VIEW public.v_titulo_baixas WITH (security_invoker='on') AS
             fin_movimentacoes.omie_codigo_lancamento AS cod,
             fin_movimentacoes.tipo,
             fin_movimentacoes.data_movimento,
-            fin_movimentacoes.valor
+            fin_movimentacoes.valor,
+            fin_movimentacoes.categoria_descricao AS grupo
            FROM public.fin_movimentacoes
-          WHERE ((fin_movimentacoes.omie_codigo_lancamento IS NOT NULL) AND (fin_movimentacoes.data_movimento IS NOT NULL) AND (fin_movimentacoes.tipo = ANY (ARRAY['E'::text, 'S'::text])) AND (fin_movimentacoes.valor > (0)::numeric))
+          WHERE ((fin_movimentacoes.omie_codigo_lancamento IS NOT NULL) AND (fin_movimentacoes.data_movimento IS NOT NULL) AND (fin_movimentacoes.tipo = ANY (ARRAY['E'::text, 'S'::text])) AND (fin_movimentacoes.valor > (0)::numeric) AND (fin_movimentacoes.categoria_descricao = ANY (ARRAY['CONTA_A_RECEBER'::text, 'CONTA_A_PAGAR'::text, 'CONTA_CORRENTE_REC'::text, 'CONTA_CORRENTE_PAG'::text])))
+        ), canon AS (
+         SELECT mov.company,
+            mov.cod,
+            mov.tipo,
+            bool_or((mov.grupo = ANY (ARRAY['CONTA_A_RECEBER'::text, 'CONTA_A_PAGAR'::text]))) AS tem_otica_titulo
+           FROM mov
+          GROUP BY mov.company, mov.cod, mov.tipo
+        ), base AS (
+         SELECT m.company,
+            m.cod,
+            m.tipo,
+            m.data_movimento,
+            m.valor,
+                CASE
+                    WHEN c.tem_otica_titulo THEN 'titulo'::text
+                    ELSE 'conta_corrente'::text
+                END AS origem
+           FROM (mov m
+             JOIN canon c ON (((c.company = m.company) AND (c.cod = m.cod) AND (c.tipo = m.tipo))))
+          WHERE ((c.tem_otica_titulo AND (m.grupo = ANY (ARRAY['CONTA_A_RECEBER'::text, 'CONTA_A_PAGAR'::text]))) OR (NOT c.tem_otica_titulo))
+        ), mov_canon AS (
+        ( SELECT DISTINCT ON (base.company, base.cod, base.tipo) base.company,
+            base.cod,
+            base.tipo,
+            base.data_movimento,
+            base.valor,
+            base.origem
+           FROM base
+          WHERE (base.origem = 'titulo'::text)
+          ORDER BY base.company, base.cod, base.tipo, base.valor DESC, base.data_movimento DESC)
+        UNION ALL
+         SELECT base.company,
+            base.cod,
+            base.tipo,
+            base.data_movimento,
+            base.valor,
+            base.origem
+           FROM base
+          WHERE (base.origem = 'conta_corrente'::text)
         )
  SELECT cr.company,
     cr.omie_codigo_lancamento,
@@ -32745,9 +37161,10 @@ CREATE VIEW public.v_titulo_baixas WITH (security_invoker='on') AS
         CASE
             WHEN ((cr.data_emissao IS NOT NULL) AND (sum(m.valor) > (0)::numeric)) THEN round((sum((m.valor * ((m.data_movimento - cr.data_emissao))::numeric)) / sum(m.valor)))
             ELSE NULL::numeric
-        END AS prazo_ponderado_dias
+        END AS prazo_ponderado_dias,
+    max(m.origem) AS origem_baixa
    FROM (public.fin_contas_receber cr
-     JOIN mov m ON (((m.company = cr.company) AND (m.cod = cr.omie_codigo_lancamento) AND (m.tipo = 'E'::text))))
+     JOIN mov_canon m ON (((m.company = cr.company) AND (m.cod = cr.omie_codigo_lancamento) AND (m.tipo = 'E'::text))))
   WHERE ((cr.omie_codigo_lancamento IS NOT NULL) AND (cr.status_titulo = ANY (ARRAY['RECEBIDO'::text, 'LIQUIDADO'::text])))
   GROUP BY cr.company, cr.omie_codigo_lancamento, cr.data_emissao
 UNION ALL
@@ -32760,9 +37177,10 @@ UNION ALL
         CASE
             WHEN ((cp.data_emissao IS NOT NULL) AND (sum(m.valor) > (0)::numeric)) THEN round((sum((m.valor * ((m.data_movimento - cp.data_emissao))::numeric)) / sum(m.valor)))
             ELSE NULL::numeric
-        END AS prazo_ponderado_dias
+        END AS prazo_ponderado_dias,
+    max(m.origem) AS origem_baixa
    FROM (public.fin_contas_pagar cp
-     JOIN mov m ON (((m.company = cp.company) AND (m.cod = cp.omie_codigo_lancamento) AND (m.tipo = 'S'::text))))
+     JOIN mov_canon m ON (((m.company = cp.company) AND (m.cod = cp.omie_codigo_lancamento) AND (m.tipo = 'S'::text))))
   WHERE ((cp.omie_codigo_lancamento IS NOT NULL) AND (cp.status_titulo = ANY (ARRAY['PAGO'::text, 'LIQUIDADO'::text])))
   GROUP BY cp.company, cp.omie_codigo_lancamento, cp.data_emissao;
 
@@ -33067,10 +37485,10 @@ CREATE VIEW public.v_des_checkin_atual WITH (security_invoker='on') AS
 
 CREATE VIEW public.v_des_pedidos_em_transito WITH (security_invoker='on') AS
  WITH trimestre_info AS (
-         SELECT (EXTRACT(year FROM CURRENT_DATE))::integer AS ano_atual,
-            (EXTRACT(quarter FROM CURRENT_DATE))::integer AS trimestre_atual,
-            (date_trunc('quarter'::text, (CURRENT_DATE)::timestamp with time zone))::date AS inicio_trimestre,
-            ((date_trunc('quarter'::text, (CURRENT_DATE)::timestamp with time zone) + '3 mons -1 days'::interval))::date AS fim_trimestre
+         SELECT (EXTRACT(year FROM (now() AT TIME ZONE 'America/Sao_Paulo'::text)))::integer AS ano_atual,
+            (EXTRACT(quarter FROM (now() AT TIME ZONE 'America/Sao_Paulo'::text)))::integer AS trimestre_atual,
+            (date_trunc('quarter'::text, (now() AT TIME ZONE 'America/Sao_Paulo'::text)))::date AS inicio_trimestre,
+            ((date_trunc('quarter'::text, (now() AT TIME ZONE 'America/Sao_Paulo'::text)) + '3 mons -1 days'::interval))::date AS fim_trimestre
         ), pedidos AS (
          SELECT pcs.id AS pedido_id,
             pcs.empresa,
@@ -33226,10 +37644,10 @@ CREATE VIEW public.v_des_posicao_trimestre_ao_vivo WITH (security_invoker='on') 
                     des_determinar_faixa.volume_max
                    FROM public.des_determinar_faixa(((COALESCE(s.fat_bruto_valor, (0)::numeric) + COALESCE(p.valor_em_transito_seguro, (0)::numeric)) + COALESCE(p.valor_em_transito_risco, (0)::numeric))) des_determinar_faixa(faixa_id, faixa_numero, estrelas, desconto_padrao_perc, volume_min, volume_max)) r) AS faixa_otimista,
     round(GREATEST((0)::numeric, (COALESCE(m.meta_faturamento, (0)::numeric) - (COALESCE(s.fat_bruto_valor, (0)::numeric) + COALESCE(p.valor_em_transito_seguro, (0)::numeric)))), 2) AS gap_para_meta_pessoal,
-    CURRENT_DATE AS calculado_em,
-    (date_trunc('quarter'::text, (CURRENT_DATE)::timestamp with time zone))::date AS inicio_trimestre,
-    ((date_trunc('quarter'::text, (CURRENT_DATE)::timestamp with time zone) + '3 mons -1 days'::interval))::date AS fim_trimestre,
-    (((date_trunc('quarter'::text, (CURRENT_DATE)::timestamp with time zone) + '3 mons -1 days'::interval))::date - CURRENT_DATE) AS dias_restantes
+    ((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date AS calculado_em,
+    (date_trunc('quarter'::text, (now() AT TIME ZONE 'America/Sao_Paulo'::text)))::date AS inicio_trimestre,
+    ((date_trunc('quarter'::text, (now() AT TIME ZONE 'America/Sao_Paulo'::text)) + '3 mons -1 days'::interval))::date AS fim_trimestre,
+    (((date_trunc('quarter'::text, (now() AT TIME ZONE 'America/Sao_Paulo'::text)) + '3 mons -1 days'::interval))::date - ((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date) AS dias_restantes
    FROM ((snapshot s
      FULL JOIN pedidos_apos_snapshot p ON (((p.empresa = s.empresa) AND (p.ano = s.ano) AND (p.trimestre = s.trimestre))))
      FULL JOIN meta m ON (((m.empresa = COALESCE(s.empresa, p.empresa)) AND (m.ano = COALESCE(s.ano, p.ano)) AND (m.trimestre = COALESCE(s.trimestre, p.trimestre)))));
@@ -33301,7 +37719,9 @@ CREATE VIEW public.v_des_desconto_por_checkin WITH (security_invoker='on') AS
     (desconto_padrao + ( SELECT sum(cp2.percentual) AS sum
            FROM (public.des_criterio_percentual cp2
              JOIN public.des_criterio_qualitativo cq2 ON ((cq2.id = cp2.criterio_id)))
-          WHERE (cp2.faixa_id = cp2.faixa_id))) AS desconto_total_maximo
+          WHERE ((cp2.faixa_id = checkin_com_faixa.faixa_id) AND (cq2.contrato_versao_id = ( SELECT des_contrato_versao.id
+                   FROM public.des_contrato_versao
+                  WHERE (des_contrato_versao.versao = '2026'::text)))))) AS desconto_total_maximo
    FROM checkin_com_faixa
   WHERE (faixa_id IS NOT NULL)
   GROUP BY empresa, ano, trimestre, checkin_id, data_avaliacao, tipo, faixa_id, faixa_numero, estrelas, desconto_padrao;
@@ -33332,11 +37752,11 @@ CREATE VIEW public.v_desconto_flat_condicional_ativo WITH (security_invoker='on'
     ( SELECT count(*) AS count
            FROM public.promocao_item pi
           WHERE ((pi.campanha_id = pc.id) AND pi.ativo)) AS qtd_itens,
-    (data_fim - CURRENT_DATE) AS dias_restantes,
+    (data_fim - ((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date) AS dias_restantes,
         CASE
-            WHEN (data_fim < CURRENT_DATE) THEN 'expirada'::text
-            WHEN ((data_fim - CURRENT_DATE) <= 3) THEN 'urgente'::text
-            WHEN ((data_fim - CURRENT_DATE) <= 7) THEN 'atencao'::text
+            WHEN (data_fim < ((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date) THEN 'expirada'::text
+            WHEN ((data_fim - ((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date) <= 3) THEN 'urgente'::text
+            WHEN ((data_fim - ((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date) <= 7) THEN 'atencao'::text
             ELSE 'confortavel'::text
         END AS urgencia
    FROM public.promocao_campanha pc
@@ -33480,22 +37900,22 @@ CREATE VIEW public.v_fornecedor_sla_compliance WITH (security_invoker='on') AS
 CREATE VIEW public.v_grupo_comercial WITH (security_invoker='true') AS
  WITH ped AS (
          SELECT regexp_replace(COALESCE(p.cnpj, p.document, ''::text), '\D'::text, ''::text, 'g'::text) AS doc,
-            (so.created_at)::date AS data,
+            so.order_date_kpi AS data,
             COALESCE(so.total, ( SELECT sum((((it.value ->> 'quantity'::text))::numeric * ((it.value ->> 'unit_price'::text))::numeric)) AS sum
                    FROM jsonb_array_elements(so.items) it(value))) AS valor
            FROM (public.sales_orders so
              JOIN public.profiles p ON ((p.user_id = so.customer_user_id)))
-          WHERE ((so.status = ANY (ARRAY['faturado'::text, 'importado'::text, 'separacao'::text, 'enviado'::text])) AND (so.deleted_at IS NULL))
+          WHERE ((so.status <> ALL (ARRAY['cancelado'::text, 'rascunho'::text, 'pendente'::text, 'orcamento'::text])) AND (so.deleted_at IS NULL) AND (so.order_date_kpi IS NOT NULL))
         )
  SELECT m.grupo_id,
     count(DISTINCT ped.doc) FILTER (WHERE (ped.doc IS NOT NULL)) AS documentos_com_compra,
     count(ped.data) AS qtd_pedidos,
     max(ped.data) AS ultima_compra,
-    (CURRENT_DATE - max(ped.data)) AS dias_desde_ultima,
+    (((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - max(ped.data)) AS dias_desde_ultima,
     COALESCE(sum(ped.valor), (0)::numeric) AS faturamento_total,
-    COALESCE(sum(ped.valor) FILTER (WHERE (ped.data > (CURRENT_DATE - 90))), (0)::numeric) AS fat_90d,
-    COALESCE(sum(ped.valor) FILTER (WHERE ((ped.data <= (CURRENT_DATE - 90)) AND (ped.data > (CURRENT_DATE - 180)))), (0)::numeric) AS fat_90d_anterior,
-    round((COALESCE(sum(ped.valor) FILTER (WHERE (ped.data > (CURRENT_DATE - 180))), (0)::numeric) / 6.0), 2) AS media_mensal_6m
+    COALESCE(sum(ped.valor) FILTER (WHERE (ped.data > (((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - 90))), (0)::numeric) AS fat_90d,
+    COALESCE(sum(ped.valor) FILTER (WHERE ((ped.data <= (((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - 90)) AND (ped.data > (((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - 180)))), (0)::numeric) AS fat_90d_anterior,
+    round((COALESCE(sum(ped.valor) FILTER (WHERE (ped.data > (((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - 180))), (0)::numeric) / 6.0), 2) AS media_mensal_6m
    FROM (public.cliente_grupo_membros m
      LEFT JOIN ped ON ((ped.doc = m.documento)))
   GROUP BY m.grupo_id;
@@ -33517,11 +37937,11 @@ CREATE VIEW public.v_grupo_contas_receber WITH (security_invoker='true') AS
     g.nome,
     count(DISTINCT m.documento) FILTER (WHERE (t.doc IS NOT NULL)) AS documentos_com_titulo,
     COALESCE(sum(t.saldo), (0)::numeric) AS total_aberto,
-    COALESCE(sum(t.saldo) FILTER (WHERE (t.data_vencimento >= CURRENT_DATE)), (0)::numeric) AS a_vencer,
-    COALESCE(sum(t.saldo) FILTER (WHERE (((CURRENT_DATE - t.data_vencimento) >= 1) AND ((CURRENT_DATE - t.data_vencimento) <= 30))), (0)::numeric) AS venc_1_30,
-    COALESCE(sum(t.saldo) FILTER (WHERE (((CURRENT_DATE - t.data_vencimento) >= 31) AND ((CURRENT_DATE - t.data_vencimento) <= 60))), (0)::numeric) AS venc_31_60,
-    COALESCE(sum(t.saldo) FILTER (WHERE (((CURRENT_DATE - t.data_vencimento) >= 61) AND ((CURRENT_DATE - t.data_vencimento) <= 90))), (0)::numeric) AS venc_61_90,
-    COALESCE(sum(t.saldo) FILTER (WHERE ((CURRENT_DATE - t.data_vencimento) > 90)), (0)::numeric) AS venc_90_mais
+    COALESCE(sum(t.saldo) FILTER (WHERE (t.data_vencimento >= ((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date)), (0)::numeric) AS a_vencer,
+    COALESCE(sum(t.saldo) FILTER (WHERE (((((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - t.data_vencimento) >= 1) AND ((((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - t.data_vencimento) <= 30))), (0)::numeric) AS venc_1_30,
+    COALESCE(sum(t.saldo) FILTER (WHERE (((((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - t.data_vencimento) >= 31) AND ((((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - t.data_vencimento) <= 60))), (0)::numeric) AS venc_31_60,
+    COALESCE(sum(t.saldo) FILTER (WHERE (((((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - t.data_vencimento) >= 61) AND ((((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - t.data_vencimento) <= 90))), (0)::numeric) AS venc_61_90,
+    COALESCE(sum(t.saldo) FILTER (WHERE ((((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - t.data_vencimento) > 90)), (0)::numeric) AS venc_90_mais
    FROM ((public.cliente_grupos g
      JOIN public.cliente_grupo_membros m ON ((m.grupo_id = g.id)))
      LEFT JOIN tit t ON ((t.doc = m.documento)))
@@ -33548,7 +37968,7 @@ CREATE VIEW public.v_grupo_contas_receber_por_doc WITH (security_invoker='true')
     t.company,
     max(t.nome_cliente) AS nome_cliente,
     COALESCE(sum(t.saldo), (0)::numeric) AS total_aberto,
-    COALESCE(sum(t.saldo) FILTER (WHERE ((CURRENT_DATE - t.data_vencimento) > 0)), (0)::numeric) AS vencido
+    COALESCE(sum(t.saldo) FILTER (WHERE ((((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - t.data_vencimento) > 0)), (0)::numeric) AS vencido
    FROM (public.cliente_grupo_membros m
      LEFT JOIN tit t ON ((t.doc = m.documento)))
   GROUP BY m.grupo_id, m.documento, t.company;
@@ -33891,7 +38311,7 @@ CREATE VIEW public.v_promocao_avaliacao_hoje WITH (security_invoker='on') AS
             pc.data_fim,
             pc.tipo_origem
            FROM public.promocao_campanha pc
-          WHERE ((pc.estado = 'ativa'::text) AND ((CURRENT_DATE >= pc.data_inicio) AND (CURRENT_DATE <= pc.data_fim)))
+          WHERE ((pc.estado = 'ativa'::text) AND (((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date >= pc.data_inicio) AND (((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date <= pc.data_fim))
         ), itens_ativos AS (
          SELECT ca.campanha_id,
             ca.empresa,
@@ -34113,6 +38533,27 @@ COMMENT ON VIEW public.v_reposicao_param_fila IS 'Fila de prontidão de parâmet
 
 
 --
+-- Name: v_reposicao_sku_fora_do_motor; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_reposicao_sku_fora_do_motor WITH (security_invoker='on') AS
+ SELECT sp.empresa,
+    sp.sku_codigo_omie,
+    sp.sku_descricao,
+    sp.fornecedor_nome,
+    (EXISTS ( SELECT 1
+           FROM public.eventos_outlier e
+          WHERE ((e.empresa = sp.empresa) AND (e.sku_codigo_omie = (sp.sku_codigo_omie)::text) AND (e.tipo = 'sku_reativado_omie'::text) AND (e.status = 'pendente'::text)))) AS reativado_omie_pendente
+   FROM (((public.sku_parametros sp
+     LEFT JOIN public.omie_products op ON ((((op.omie_codigo_produto)::text = (sp.sku_codigo_omie)::text) AND (op.account = lower(sp.empresa)))))
+     LEFT JOIN public.sku_status_omie sso ON (((sso.empresa = sp.empresa) AND (sso.sku_codigo_omie = (sp.sku_codigo_omie)::text))))
+     LEFT JOIN public.familia_nao_comprada fnc ON (((fnc.empresa = sp.empresa) AND (fnc.familia = op.familia))))
+  WHERE ((sp.habilitado_reposicao_automatica IS NOT TRUE) AND (COALESCE(sp.tipo_reposicao, 'automatica'::text) = 'automatica'::text) AND (sp.fornecedor_nome IS NOT NULL) AND (btrim(sp.fornecedor_nome) <> ''::text) AND (fnc.id IS NULL) AND (COALESCE(op.ativo, true) = true) AND (COALESCE(sso.ativo_no_omie, true) = true) AND (COALESCE(op.descricao, ''::text) !~~* '%450ML'::text) AND (COALESCE(op.descricao, ''::text) !~~* '%405ML'::text) AND (COALESCE(op.tipo_produto, (op.metadata ->> 'tipo_produto'::text), ''::text) <> '04'::text) AND (NOT (EXISTS ( SELECT 1
+           FROM public.sku_embalagem_equivalencia eq
+          WHERE ((eq.empresa = lower(sp.empresa)) AND (eq.ativo = true) AND (eq.fator_para_base > (1)::numeric) AND (eq.sku_codigo_omie = (sp.sku_codigo_omie)::text))))) AND (sp.ponto_pedido IS NOT NULL) AND (sp.estoque_maximo IS NOT NULL) AND (COALESCE(sp.demanda_dias_com_movimento, 0) > 0));
+
+
+--
 -- Name: v_reposicao_sku_sem_fornecedor; Type: VIEW; Schema: public; Owner: -
 --
 
@@ -34248,9 +38689,9 @@ CREATE VIEW public.v_sku_candidatos_primeira_compra WITH (security_invoker='on')
             count(DISTINCT vih.nfe_chave_acesso) AS nfs_180d,
             count(DISTINCT to_char((vih.data_emissao)::timestamp with time zone, 'YYYY-MM'::text)) AS meses_180d,
             count(DISTINCT vih.cliente_cnpj_cpf) AS clientes_180d,
-            (CURRENT_DATE - max(vih.data_emissao)) AS dias_desde_ultima
+            (((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - max(vih.data_emissao)) AS dias_desde_ultima
            FROM public.v_sku_demanda_efetiva vih
-          WHERE ((vih.data_emissao >= (CURRENT_DATE - '180 days'::interval)) AND (vih.quantidade > (0)::numeric))
+          WHERE ((vih.data_emissao >= (((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - '180 days'::interval)) AND (vih.quantidade > (0)::numeric))
           GROUP BY vih.empresa, vih.sku_codigo_omie
         ), elegiveis AS (
          SELECT v.empresa,
@@ -34425,6 +38866,64 @@ COMMENT ON VIEW public.v_sku_classe_sb IS 'Quadrantes Syntetos-Boylan (ADI x CV2
 
 
 --
+-- Name: v_sku_items_fila; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_sku_items_fila WITH (security_invoker='on') AS
+ WITH janela AS (
+         SELECT t.id,
+            t.created_at,
+            t.t2_data_faturamento,
+            t.nfe_chave_acesso,
+            COALESCE((t.nid_receb)::text, NULLIF(((t.raw_data -> 'cabec'::text) ->> 'nIdReceb'::text), ''::text)) AS nid_receb,
+            (EXISTS ( SELECT 1
+                   FROM public.sku_leadtime_history h
+                  WHERE (h.tracking_id = t.id))) AS tem_linha
+           FROM public.purchase_orders_tracking t
+          WHERE ((t.empresa = 'OBEN'::public.empresa_reposicao) AND (t.t2_data_faturamento >= (now() - '30 days'::interval)) AND (t.nfe_chave_acesso IS NOT NULL))
+        ), pendentes AS (
+         SELECT j.nid_receb,
+            j.t2_data_faturamento,
+            COALESCE(c.tentativas, 0) AS tentativas,
+                CASE
+                    WHEN (COALESCE(c.tentativas, 0) > 0) THEN (c.ultima_tentativa +
+                    CASE c.tentativas
+                        WHEN 1 THEN '06:00:00'::interval
+                        WHEN 2 THEN '24:00:00'::interval
+                        ELSE '72:00:00'::interval
+                    END)
+                    ELSE GREATEST(j.created_at, j.t2_data_faturamento)
+                END AS elegivel_desde
+           FROM ((janela j
+             LEFT JOIN public.sku_items_sync_controle c ON ((c.tracking_id = j.id)))
+             CROSS JOIN LATERAL ( SELECT ((to_jsonb(c.*) ->> 'itens_pendentes'::text))::integer AS itens_pendentes) m)
+          WHERE ((NOT ((j.nfe_chave_acesso ~ '^[0-9]{44}$'::text) AND (substr(j.nfe_chave_acesso, 21, 2) = '57'::text))) AND
+                CASE
+                    WHEN (m.itens_pendentes IS NOT NULL) THEN (m.itens_pendentes > 0)
+                    ELSE (NOT j.tem_linha)
+                END)
+        )
+ SELECT nid_receb,
+    (count(*))::integer AS linhas_pendentes,
+    min(elegivel_desde) AS elegivel_desde,
+    max(tentativas) AS tentativas_max,
+    min(t2_data_faturamento) AS t2_min,
+    ((now() - min(elegivel_desde)) > '48:00:00'::interval) AS parado
+   FROM pendentes p
+  WHERE ((nid_receb IS NOT NULL) AND (NOT (EXISTS ( SELECT 1
+           FROM janela j2
+          WHERE ((j2.nid_receb = p.nid_receb) AND j2.tem_linha)))))
+  GROUP BY nid_receb;
+
+
+--
+-- Name: VIEW v_sku_items_fila; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON VIEW public.v_sku_items_fila IS 'Fila do omie-sync-sku-items (OBEN, 30 dias), 1 linha por recebimento SEM leadtime: elegivel_desde (a linha mais antiga; no futuro = ainda em backoff) e parado (> 48h elegivel). Espelho por fora de avaliarFilaParada. Le-se no diagnostico: SELECT * FROM v_sku_items_fila WHERE parado. docs/historico/sku-items-fila-parada-sensor-por-fora.md';
+
+
+--
 -- Name: v_sku_ultima_venda; Type: VIEW; Schema: public; Owner: -
 --
 
@@ -34463,7 +38962,7 @@ CREATE VIEW public.v_sugestao_negociacao_ativa WITH (security_invoker='on') AS
     sng.status,
     sng.data_geracao,
     sng.valido_ate,
-    (sng.valido_ate - CURRENT_DATE) AS dias_ate_expirar,
+    (sng.valido_ate - ((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date) AS dias_ate_expirar,
     sng.campanha_id_gerada,
     mv.categoria,
     sp.fornecedor_nome,
@@ -34474,7 +38973,7 @@ CREATE VIEW public.v_sugestao_negociacao_ativa WITH (security_invoker='on') AS
      LEFT JOIN private.mv_sku_ranking_negociacao_paralela mv ON (((mv.empresa = sng.empresa) AND (mv.sku_codigo_omie = sng.sku_codigo_omie))))
      LEFT JOIN public.sku_parametros sp ON (((sp.empresa = sng.empresa) AND ((sp.sku_codigo_omie)::text = sng.sku_codigo_omie))))
      LEFT JOIN public.sku_estoque_atual sea ON (((sea.empresa = sng.empresa) AND (sea.sku_codigo_omie = sng.sku_codigo_omie))))
-  WHERE ((sng.status = ANY (ARRAY['nova'::text, 'visualizada'::text, 'acao_tomada'::text])) AND (sng.valido_ate >= (CURRENT_DATE - '7 days'::interval)));
+  WHERE ((sng.status = ANY (ARRAY['nova'::text, 'visualizada'::text, 'acao_tomada'::text])) AND (sng.valido_ate >= (((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - '7 days'::interval)));
 
 
 --
@@ -34947,6 +39446,25 @@ CREATE TABLE public.visitas_agendadas (
 --
 
 COMMENT ON TABLE public.visitas_agendadas IS 'Visitas agendadas pelo vendedor para clientes da carteira (pendente/realizada/cancelada).';
+
+
+--
+-- Name: vw_cancelamento_pos_disparo_sem_evidencia; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.vw_cancelamento_pos_disparo_sem_evidencia WITH (security_invoker='on') AS
+ SELECT id,
+    empresa,
+    fornecedor_nome,
+    status,
+    omie_pedido_compra_id,
+    cancelado_por,
+    cancelado_em,
+    justificativa_cancelamento,
+    horario_disparo_real,
+    valor_total
+   FROM public.pedido_compra_sugerido
+  WHERE ((status ~~ 'cancelad%'::text) AND (omie_pedido_compra_id IS NOT NULL) AND (cancelamento_pos_disparo_evidencia IS NULL));
 
 
 --
@@ -35467,6 +39985,13 @@ ALTER TABLE ONLY public.promocao_negociacao_evento ALTER COLUMN id SET DEFAULT n
 
 
 --
+-- Name: reposicao_cancelamento_pos_disparo_audit id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.reposicao_cancelamento_pos_disparo_audit ALTER COLUMN id SET DEFAULT nextval('public.reposicao_cancelamento_pos_disparo_audit_id_seq'::regclass);
+
+
+--
 -- Name: simulacao_estoque_resultados id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -35959,11 +40484,51 @@ ALTER TABLE ONLY public.data_health_watchdog_estado
 
 
 --
+-- Name: db_aplicacoes db_aplicacoes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.db_aplicacoes
+    ADD CONSTRAINT db_aplicacoes_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: default_prices default_prices_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.default_prices
     ADD CONSTRAINT default_prices_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: deploy_atestacoes deploy_atestacoes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deploy_atestacoes
+    ADD CONSTRAINT deploy_atestacoes_pkey PRIMARY KEY (request_id, observado_em);
+
+
+--
+-- Name: deploy_sonda_alvos deploy_sonda_alvos_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deploy_sonda_alvos
+    ADD CONSTRAINT deploy_sonda_alvos_pkey PRIMARY KEY (edge);
+
+
+--
+-- Name: deploy_sonda_disparos deploy_sonda_disparos_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deploy_sonda_disparos
+    ADD CONSTRAINT deploy_sonda_disparos_pkey PRIMARY KEY (request_id);
+
+
+--
+-- Name: deploy_sonda_resultados deploy_sonda_resultados_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deploy_sonda_resultados
+    ADD CONSTRAINT deploy_sonda_resultados_pkey PRIMARY KEY (request_id);
 
 
 --
@@ -36991,6 +41556,14 @@ ALTER TABLE ONLY public.inventory_position
 
 
 --
+-- Name: ipi_aliquota_ncm ipi_aliquota_ncm_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ipi_aliquota_ncm
+    ADD CONSTRAINT ipi_aliquota_ncm_pkey PRIMARY KEY (ncm);
+
+
+--
 -- Name: kb_catalisador_links kb_catalisador_links_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -37479,6 +42052,22 @@ ALTER TABLE ONLY public.pedido_compra_sugerido
 
 
 --
+-- Name: pedido_total_liquido_conversoes pedido_total_liquido_conversoes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.pedido_total_liquido_conversoes
+    ADD CONSTRAINT pedido_total_liquido_conversoes_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: pedido_total_liquido_excecao pedido_total_liquido_excecao_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.pedido_total_liquido_excecao
+    ADD CONSTRAINT pedido_total_liquido_excecao_pkey PRIMARY KEY (sales_order_id);
+
+
+--
 -- Name: pedidos_portal_tentativas pedidos_portal_tentativas_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -37815,6 +42404,14 @@ ALTER TABLE ONLY public.reposicao_auto_aprovacao_log
 
 
 --
+-- Name: reposicao_cancelamento_pos_disparo_audit reposicao_cancelamento_pos_disparo_audit_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.reposicao_cancelamento_pos_disparo_audit
+    ADD CONSTRAINT reposicao_cancelamento_pos_disparo_audit_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: reposicao_cold_start_log reposicao_cold_start_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -37916,6 +42513,22 @@ ALTER TABLE ONLY public.reposicao_pedidos_compra_run
 
 ALTER TABLE ONLY public.reposicao_po_last_seen
     ADD CONSTRAINT reposicao_po_last_seen_pkey PRIMARY KEY (empresa, omie_codigo_pedido);
+
+
+--
+-- Name: reposicao_po_observado_item reposicao_po_observado_item_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.reposicao_po_observado_item
+    ADD CONSTRAINT reposicao_po_observado_item_pkey PRIMARY KEY (run_id, omie_codigo_pedido, seq_item);
+
+
+--
+-- Name: reposicao_po_observado_run reposicao_po_observado_run_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.reposicao_po_observado_run
+    ADD CONSTRAINT reposicao_po_observado_run_pkey PRIMARY KEY (run_id);
 
 
 --
@@ -39161,6 +43774,20 @@ CREATE INDEX company_cnpjs_normalized_idx ON public.company_cnpjs USING btree (c
 
 
 --
+-- Name: db_aplicacoes_iniciado_em_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX db_aplicacoes_iniciado_em_idx ON public.db_aplicacoes USING btree (iniciado_em DESC);
+
+
+--
+-- Name: db_aplicacoes_sha_aplicada_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX db_aplicacoes_sha_aplicada_uniq ON public.db_aplicacoes USING btree (sha256) WHERE (estado = 'aplicada'::text);
+
+
+--
 -- Name: estoque_reservas_checkout_item_ativa_uq; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -39676,6 +44303,41 @@ CREATE INDEX idx_cvs_customer ON public.customer_visit_scores USING btree (custo
 --
 
 CREATE INDEX idx_dashboard_visits_user_recent ON public.dashboard_visits USING btree (user_id, visited_at DESC);
+
+
+--
+-- Name: idx_deploy_atestacoes_edge_observado; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_deploy_atestacoes_edge_observado ON public.deploy_atestacoes USING btree (edge, observado_em DESC);
+
+
+--
+-- Name: idx_deploy_sonda_disparos_edge_quando; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_deploy_sonda_disparos_edge_quando ON public.deploy_sonda_disparos USING btree (edge, enfileirado_em DESC);
+
+
+--
+-- Name: idx_deploy_sonda_disparos_tick; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_deploy_sonda_disparos_tick ON public.deploy_sonda_disparos USING btree (tick_id, edge);
+
+
+--
+-- Name: idx_deploy_sonda_resultados_edge; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_deploy_sonda_resultados_edge ON public.deploy_sonda_resultados USING btree (edge, colhido_em DESC);
+
+
+--
+-- Name: idx_deploy_sonda_resultados_tick; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_deploy_sonda_resultados_tick ON public.deploy_sonda_resultados USING btree (tick_id);
 
 
 --
@@ -40533,6 +45195,20 @@ CREATE INDEX idx_pedido_status_envio_portal ON public.pedido_compra_sugerido USI
 
 
 --
+-- Name: idx_pedido_total_liquido_conversoes_lote; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_pedido_total_liquido_conversoes_lote ON public.pedido_total_liquido_conversoes USING btree (lote);
+
+
+--
+-- Name: idx_pedido_total_liquido_conversoes_pedido; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_pedido_total_liquido_conversoes_pedido ON public.pedido_total_liquido_conversoes USING btree (sales_order_id);
+
+
+--
 -- Name: idx_pedidos_portal_tentativas_iniciado; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -40918,6 +45594,13 @@ CREATE INDEX idx_repos_status ON public.reposition_parameters USING btree (empre
 
 
 --
+-- Name: idx_reposicao_cancel_pos_disparo_audit_pedido; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_reposicao_cancel_pos_disparo_audit_pedido ON public.reposicao_cancelamento_pos_disparo_audit USING btree (pedido_id);
+
+
+--
 -- Name: idx_reposicao_motor_run_empresa_data; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -40929,6 +45612,20 @@ CREATE INDEX idx_reposicao_motor_run_empresa_data ON public.reposicao_motor_run 
 --
 
 CREATE INDEX idx_reposicao_pedidos_compra_run_baseline ON public.reposicao_pedidos_compra_run USING btree (empresa, seq DESC);
+
+
+--
+-- Name: idx_reposicao_po_observado_item_po; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_reposicao_po_observado_item_po ON public.reposicao_po_observado_item USING btree (omie_codigo_pedido, run_id);
+
+
+--
+-- Name: idx_reposicao_po_observado_run_empresa; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_reposicao_po_observado_run_empresa ON public.reposicao_po_observado_run USING btree (empresa, concluido_em DESC);
 
 
 --
@@ -40978,6 +45675,20 @@ CREATE INDEX idx_sales_orders_account_kpi ON public.sales_orders USING btree (ac
 --
 
 CREATE INDEX idx_sales_orders_active ON public.sales_orders USING btree (created_at DESC) WHERE (deleted_at IS NULL);
+
+
+--
+-- Name: idx_sales_orders_app_pedido_omie; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_sales_orders_app_pedido_omie ON public.sales_orders USING btree (account, omie_pedido_id) WHERE ((hash_payload IS NULL) AND (omie_pedido_id IS NOT NULL));
+
+
+--
+-- Name: idx_sales_orders_gemeo_importado_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_sales_orders_gemeo_importado_id ON public.sales_orders USING btree (gemeo_importado_id) WHERE (gemeo_importado_id IS NOT NULL);
 
 
 --
@@ -41303,6 +46014,13 @@ CREATE INDEX idx_tint_formulas_nome_cor ON public.tint_formulas USING gin (nome_
 
 
 --
+-- Name: idx_tint_keys_snapshots_aplicacao_fila; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_tint_keys_snapshots_aplicacao_fila ON public.tint_keys_snapshots USING btree (snapshot_id) WHERE (aplicacao_status = ANY (ARRAY['pendente'::text, 'erro'::text]));
+
+
+--
 -- Name: idx_tint_reconciliation_items_run; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -41342,6 +46060,13 @@ CREATE INDEX idx_tint_sync_errors_run ON public.tint_sync_errors USING btree (sy
 --
 
 CREATE UNIQUE INDEX idx_tint_sync_runs_idempotency ON public.tint_sync_runs USING btree (setting_id, sync_type, idempotency_key) WHERE (idempotency_key IS NOT NULL);
+
+
+--
+-- Name: idx_tint_sync_runs_promocao_fila; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_tint_sync_runs_promocao_fila ON public.tint_sync_runs USING btree (account, store_code, completed_at, id) WHERE (promocao_status = ANY (ARRAY['pendente'::text, 'erro'::text]));
 
 
 --
@@ -41737,6 +46462,13 @@ CREATE UNIQUE INDEX sync_state_entity_account_uq ON public.sync_state USING btre
 
 
 --
+-- Name: uniq_sales_orders_kpi_por_pedido_omie; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uniq_sales_orders_kpi_por_pedido_omie ON public.sales_orders USING btree (account, omie_pedido_id) WHERE ((omie_pedido_id IS NOT NULL) AND (order_date_kpi IS NOT NULL));
+
+
+--
 -- Name: uniq_sales_orders_omie_hash; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -41881,6 +46613,13 @@ CREATE UNIQUE INDEX ux_farmer_tactical_plans_dia_operacional ON public.farmer_ta
 --
 
 COMMENT ON INDEX public.ux_farmer_tactical_plans_dia_operacional IS 'Idempotência do plano tático por dia operacional BRT (UTC-3 fixo, paridade com _shared/dia-operacional.ts). Recorte >= 2026-07-22 preserva as 30 duplicatas do incidente de 2026-07-21 sem abrir mão da invariante daqui em diante.';
+
+
+--
+-- Name: ux_sku_fornecedor_externo_ativo; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX ux_sku_fornecedor_externo_ativo ON public.sku_fornecedor_externo USING btree (empresa, fornecedor_nome, sku_omie) WHERE ativo;
 
 
 --
@@ -42042,13 +46781,6 @@ CREATE TRIGGER trg_audit AFTER INSERT OR DELETE OR UPDATE ON public.fin_orcament
 --
 
 CREATE TRIGGER trg_aumento_alerta AFTER INSERT OR UPDATE OF estado ON public.fornecedor_aumento_anunciado FOR EACH ROW EXECUTE FUNCTION public.trg_aumento_gera_alerta();
-
-
---
--- Name: profiles trg_auto_commercial_super_admin; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE TRIGGER trg_auto_commercial_super_admin AFTER INSERT ON public.profiles FOR EACH ROW EXECUTE FUNCTION public.auto_assign_commercial_super_admin();
 
 
 --
@@ -42332,6 +47064,24 @@ CREATE TRIGGER trg_order_items_created_at_omie BEFORE INSERT ON public.order_ite
 
 
 --
+-- Name: sales_orders trg_pedido_venda_coerencia_cab; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER trg_pedido_venda_coerencia_cab AFTER INSERT OR DELETE OR UPDATE ON public.sales_orders DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.pedido_venda_coerencia_cab();
+
+ALTER TABLE public.sales_orders ENABLE ALWAYS TRIGGER trg_pedido_venda_coerencia_cab;
+
+
+--
+-- Name: order_items trg_pedido_venda_coerencia_lin; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER trg_pedido_venda_coerencia_lin AFTER INSERT OR DELETE OR UPDATE ON public.order_items DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.pedido_venda_coerencia_lin();
+
+ALTER TABLE public.order_items ENABLE ALWAYS TRIGGER trg_pedido_venda_coerencia_lin;
+
+
+--
 -- Name: fin_categoria_dre_mapping trg_period_lock; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -42507,6 +47257,27 @@ CREATE TRIGGER trg_route_visits_enqueue_visit_recalc AFTER INSERT OR UPDATE OF c
 
 
 --
+-- Name: sales_orders trg_sales_orders_gemeo_app; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_sales_orders_gemeo_app BEFORE INSERT OR UPDATE OF omie_pedido_id, account, hash_payload, order_date_kpi, gemeo_importado_id ON public.sales_orders FOR EACH ROW WHEN ((new.hash_payload IS NULL)) EXECUTE FUNCTION public.sales_orders_gemeo_app_derivar();
+
+
+--
+-- Name: sales_orders trg_sales_orders_gemeo_importada_antes; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_sales_orders_gemeo_importada_antes BEFORE INSERT ON public.sales_orders FOR EACH ROW WHEN (((new.hash_payload ~~ 'omie\_%'::text) AND (new.omie_pedido_id IS NOT NULL))) EXECUTE FUNCTION public.sales_orders_gemeo_importada_antes();
+
+
+--
+-- Name: sales_orders trg_sales_orders_gemeo_importada_depois; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_sales_orders_gemeo_importada_depois AFTER INSERT ON public.sales_orders FOR EACH ROW WHEN (((new.hash_payload ~~ 'omie\_%'::text) AND (new.omie_pedido_id IS NOT NULL))) EXECUTE FUNCTION public.sales_orders_gemeo_importada_depois();
+
+
+--
 -- Name: pedido_compra_sugerido trg_set_status_envio_portal; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -42612,10 +47383,24 @@ CREATE TRIGGER trg_vag_updated_at BEFORE UPDATE ON public.visitas_agendadas FOR 
 
 
 --
+-- Name: pedido_compra_sugerido trg_valida_cancelamento_pos_disparo; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_valida_cancelamento_pos_disparo BEFORE UPDATE ON public.pedido_compra_sugerido FOR EACH ROW EXECUTE FUNCTION public.reposicao__valida_cancelamento_pos_disparo();
+
+
+--
 -- Name: venda_excecao_credito trg_venda_excecao_forca_autor; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER trg_venda_excecao_forca_autor BEFORE INSERT ON public.venda_excecao_credito FOR EACH ROW EXECUTE FUNCTION public.venda_excecao_credito_forca_autor();
+
+
+--
+-- Name: pedido_compra_sugerido trg_veta_cancelamento_com_disparo_pendente; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_veta_cancelamento_com_disparo_pendente BEFORE UPDATE ON public.pedido_compra_sugerido FOR EACH ROW EXECUTE FUNCTION public.reposicao__veta_cancelamento_com_disparo_pendente();
 
 
 --
@@ -43694,6 +48479,14 @@ ALTER TABLE ONLY public.pedido_compra_sugerido
 
 
 --
+-- Name: pedido_total_liquido_excecao pedido_total_liquido_excecao_sales_order_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.pedido_total_liquido_excecao
+    ADD CONSTRAINT pedido_total_liquido_excecao_sales_order_id_fkey FOREIGN KEY (sales_order_id) REFERENCES public.sales_orders(id) ON DELETE CASCADE;
+
+
+--
 -- Name: pedidos_portal_tentativas pedidos_portal_tentativas_pedido_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -43899,6 +48692,22 @@ ALTER TABLE ONLY public.recurring_schedules
 
 ALTER TABLE ONLY public.reposicao_param_auto_log
     ADD CONSTRAINT reposicao_param_auto_log_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.reposicao_param_auto_run(id);
+
+
+--
+-- Name: reposicao_po_observado_item reposicao_po_observado_item_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.reposicao_po_observado_item
+    ADD CONSTRAINT reposicao_po_observado_item_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.reposicao_po_observado_run(run_id) ON DELETE CASCADE;
+
+
+--
+-- Name: sales_orders sales_orders_gemeo_importado_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_orders
+    ADD CONSTRAINT sales_orders_gemeo_importado_id_fkey FOREIGN KEY (gemeo_importado_id) REFERENCES public.sales_orders(id) ON DELETE SET NULL;
 
 
 --
@@ -45930,9 +50739,9 @@ CREATE POLICY "Staff vê snapshot positivação" ON public.carteira_positivacao_
 -- Name: margin_audit_log Strategic+ can view margin audit; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY "Strategic+ can view margin audit" ON public.margin_audit_log FOR SELECT TO authenticated USING ((private.is_super_admin(auth.uid()) OR (( SELECT commercial_roles.commercial_role
-   FROM public.commercial_roles
-  WHERE (commercial_roles.user_id = auth.uid())) = 'estrategico'::public.commercial_role)));
+CREATE POLICY "Strategic+ can view margin audit" ON public.margin_audit_log FOR SELECT TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR private.is_super_admin(auth.uid()) OR (( SELECT cr.commercial_role
+   FROM public.commercial_roles cr
+  WHERE (cr.user_id = auth.uid())) = 'estrategico'::public.commercial_role)));
 
 
 --
@@ -46929,6 +51738,28 @@ CREATE POLICY data_health_watchdog_estado_service_all ON public.data_health_watc
 
 
 --
+-- Name: db_aplicacoes; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.db_aplicacoes ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: db_aplicacoes db_aplicacoes_rw; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY db_aplicacoes_rw ON public.db_aplicacoes TO claude_rw USING (true) WITH CHECK (true);
+
+
+--
+-- Name: db_aplicacoes db_aplicacoes_staff_le; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY db_aplicacoes_staff_le ON public.db_aplicacoes FOR SELECT TO authenticated USING ((EXISTS ( SELECT 1
+   FROM public.user_roles ur
+  WHERE ((ur.user_id = auth.uid()) AND (ur.role = ANY (ARRAY['employee'::public.app_role, 'master'::public.app_role]))))));
+
+
+--
 -- Name: default_prices; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
@@ -46939,6 +51770,73 @@ ALTER TABLE public.default_prices ENABLE ROW LEVEL SECURITY;
 --
 
 CREATE POLICY depara_auto_log_sel ON public.reposicao_depara_auto_log FOR SELECT TO authenticated USING (( SELECT private.cap_compras_ler(( SELECT auth.uid() AS uid)) AS cap_compras_ler));
+
+
+--
+-- Name: deploy_atestacoes; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.deploy_atestacoes ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: deploy_atestacoes deploy_atestacoes_select_staff; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY deploy_atestacoes_select_staff ON public.deploy_atestacoes FOR SELECT USING ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = ANY (ARRAY['employee'::public.app_role, 'master'::public.app_role]))))));
+
+
+--
+-- Name: deploy_atestacoes deploy_atestacoes_service_all; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY deploy_atestacoes_service_all ON public.deploy_atestacoes USING ((auth.role() = 'service_role'::text)) WITH CHECK ((auth.role() = 'service_role'::text));
+
+
+--
+-- Name: deploy_sonda_alvos; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.deploy_sonda_alvos ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: deploy_sonda_alvos deploy_sonda_alvos_select_staff; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY deploy_sonda_alvos_select_staff ON public.deploy_sonda_alvos FOR SELECT USING ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = ANY (ARRAY['employee'::public.app_role, 'master'::public.app_role]))))));
+
+
+--
+-- Name: deploy_sonda_disparos; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.deploy_sonda_disparos ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: deploy_sonda_disparos deploy_sonda_disparos_select_staff; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY deploy_sonda_disparos_select_staff ON public.deploy_sonda_disparos FOR SELECT USING ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = ANY (ARRAY['employee'::public.app_role, 'master'::public.app_role]))))));
+
+
+--
+-- Name: deploy_sonda_resultados; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.deploy_sonda_resultados ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: deploy_sonda_resultados deploy_sonda_resultados_select_staff; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY deploy_sonda_resultados_select_staff ON public.deploy_sonda_resultados FOR SELECT USING ((EXISTS ( SELECT 1
+   FROM public.user_roles
+  WHERE ((user_roles.user_id = auth.uid()) AND (user_roles.role = ANY (ARRAY['employee'::public.app_role, 'master'::public.app_role]))))));
 
 
 --
@@ -48511,6 +53409,12 @@ ALTER TABLE public.impersonation_audit ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.inventory_position ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: ipi_aliquota_ncm; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.ipi_aliquota_ncm ENABLE ROW LEVEL SECURITY;
+
+--
 -- Name: kb_catalisador_links; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
@@ -49222,6 +54126,18 @@ ALTER TABLE public.pedido_compra_item ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.pedido_compra_sugerido ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: pedido_total_liquido_conversoes; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.pedido_total_liquido_conversoes ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: pedido_total_liquido_excecao; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.pedido_total_liquido_excecao ENABLE ROW LEVEL SECURITY;
+
+--
 -- Name: pedidos_portal_tentativas; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
@@ -49623,6 +54539,19 @@ CREATE POLICY reposicao_auto_aprovacao_log_sel ON public.reposicao_auto_aprovaca
 
 
 --
+-- Name: reposicao_cancelamento_pos_disparo_audit reposicao_cancel_pos_disparo_audit_select_staff; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY reposicao_cancel_pos_disparo_audit_select_staff ON public.reposicao_cancelamento_pos_disparo_audit FOR SELECT USING ((public.has_role(auth.uid(), 'employee'::public.app_role) OR public.has_role(auth.uid(), 'master'::public.app_role)));
+
+
+--
+-- Name: reposicao_cancelamento_pos_disparo_audit; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.reposicao_cancelamento_pos_disparo_audit ENABLE ROW LEVEL SECURITY;
+
+--
 -- Name: reposicao_cold_start_log; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
@@ -49727,6 +54656,32 @@ ALTER TABLE public.reposicao_po_last_seen ENABLE ROW LEVEL SECURITY;
 --
 
 CREATE POLICY reposicao_po_last_seen_sel ON public.reposicao_po_last_seen FOR SELECT TO authenticated USING (( SELECT private.cap_compras_ler(( SELECT auth.uid() AS uid)) AS cap_compras_ler));
+
+
+--
+-- Name: reposicao_po_observado_item; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.reposicao_po_observado_item ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: reposicao_po_observado_item reposicao_po_observado_item_select_staff; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY reposicao_po_observado_item_select_staff ON public.reposicao_po_observado_item FOR SELECT USING ((public.has_role(( SELECT auth.uid() AS uid), 'employee'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role)));
+
+
+--
+-- Name: reposicao_po_observado_run; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.reposicao_po_observado_run ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: reposicao_po_observado_run reposicao_po_observado_run_select_staff; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY reposicao_po_observado_run_select_staff ON public.reposicao_po_observado_run FOR SELECT USING ((public.has_role(( SELECT auth.uid() AS uid), 'employee'::public.app_role) OR public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role)));
 
 
 --
@@ -51688,5 +56643,5 @@ CREATE POLICY wts_staff_read ON public.whatsapp_template_sends FOR SELECT TO aut
 -- PostgreSQL database dump complete
 --
 
-\unrestrict TYblAFvg7zrh9JK7rVfgv0hn2pFKlRWuGBTVX04nAr4jeZA8c7YcmyajDm5gBw8
+\unrestrict SbsqGAuVJJeXXTpgiIv1laTtKk7Gra4RI3YQQFdDJNiY4oZcqcKAWX3JrfxgkoJ
 

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-10-09T02:15:29.707Z",
-  "sourceHead": "feca9502ef0aa3c2da0fe6cf120369baca013bc6",
+  "medidoEm": "2026-10-09T11:49:31.109Z",
+  "sourceHead": "278ff50e8796bd17b007a7617391956bbd33585d",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -58,9 +58,9 @@
       "script": "deriva:corpo:prod",
       "exit": 0,
       "resumo": "✅ deriva-corpo — 324 identidade(s) batem com o repo (247 em dia, 69 só cosméticas, 7 aceitas na baseline) e 16 aposentada(s) estão ausentes",
-      "denominador": "🔎 deriva-corpo — 324 identidade(s) conferida(s) · 16 aposentada(s) · ref origin/main@83e19c8d1 (fetch ok) · prod 2026-10-09 02:15:57.3676Z",
-      "contratoFingerprint": "e0f882348ad5b90d6488624ba0b32f282d81b8340dd7e90dbad312e5389c9f5a",
-      "auditorFingerprint": "b59b41790a3cee0b495a7a83e4a2f9f887444e3cf49e19671004cf2a286840e8",
+      "denominador": "🔎 deriva-corpo — 324 identidade(s) conferida(s) · 16 aposentada(s) · ref origin/main@062142076 (fetch ok) · prod 2026-10-09 11:49:57.286311Z",
+      "contratoFingerprint": "8b4beb5b6ac1a69509cf990c47e44dd76d091d0306361dd3dbe80052687c79b3",
+      "auditorFingerprint": "4462770b72b5f20416a470aa6c1099d3b34d660cbf9638d2cc977b1203dbc752",
       "achados": []
     }
   }

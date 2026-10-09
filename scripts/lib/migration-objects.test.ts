@@ -16,7 +16,7 @@
 import { describe, it, expect } from 'vitest';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { declaracoesDeFuncao, extractObjects, md5Exato, objectKey } from './migration-objects';
+import { declaracoesDeFuncao, extractObjects, funcoesRemovidas, md5Exato, objectKey } from './migration-objects';
 import { removerComentariosSql } from './sql-comentarios';
 
 /** só as policies — os demais kinds têm bloco próprio abaixo (migrado da órfã, 2026-08-23) */
@@ -428,5 +428,35 @@ CREATE FUNCTION public.depois() RETURNS int LANGUAGE sql AS $$ SELECT 2; $$;`;
   it('schema implícito é public; nome e schema em minúscula', () => {
     const d = declaracoesDeFuncao('CREATE FUNCTION Private.X() RETURNS int LANGUAGE sql AS $$ SELECT 1; $$;\nCREATE FUNCTION y() RETURNS int LANGUAGE sql AS $$ SELECT 2; $$;');
     expect(d.map((x) => `${x.schema}.${x.nome}`)).toEqual(['private.x', 'public.y']);
+  });
+});
+
+describe('funcoesRemovidas — a Seção 3 do audit passa a enxergar remoção (2026-10-08)', () => {
+  it('DROP com IF EXISTS, args aninhados e CASCADE', () => {
+    expect(funcoesRemovidas('DROP FUNCTION IF EXISTS public.f(int, numeric(10,2)) CASCADE;')).toEqual(['public.f']);
+  });
+  it('DROP de várias funções no mesmo statement, com e sem schema', () => {
+    expect(funcoesRemovidas('DROP FUNCTION a(int), private.b(text);').sort()).toEqual(['private.b', 'public.a']);
+  });
+  it('rollback COMENTADO não é remoção — seria verde falso', () => {
+    expect(funcoesRemovidas('-- DROP FUNCTION public.x(int);\n/* DROP FUNCTION public.y(); */\nSELECT 1;')).toEqual([]);
+  });
+  it('SET SCHEMA tira a função do schema de origem', () => {
+    expect(funcoesRemovidas('ALTER FUNCTION public.carteira_visivel_para(uuid, uuid) SET SCHEMA private;'))
+      .toEqual(['public.carteira_visivel_para']);
+  });
+  it('RENAME TO tira o nome antigo', () => {
+    expect(funcoesRemovidas('ALTER FUNCTION f(int) RENAME TO g;')).toEqual(['public.f']);
+  });
+  it('preso ao statement: OWNER TO seguido de ALTER TABLE … RENAME não é remoção', () => {
+    expect(funcoesRemovidas('ALTER FUNCTION public.f(int) OWNER TO postgres;\nALTER TABLE t RENAME TO u;')).toEqual([]);
+  });
+  it('corpus REAL: as 4 remoções que deixavam ❌ AUSENTE eterno são achadas no arquivo certo', () => {
+    const dir = join(__dirname, '..', '..', 'supabase', 'migrations');
+    const achou = (arquivo: string) => funcoesRemovidas(readFileSync(join(dir, arquivo), 'utf8'));
+    expect(achou('20260801120000_drop_calcular_gatilhos_reposicao.sql')).toContain('public.calcular_gatilhos_reposicao');
+    expect(achou('20260806223407_drop_import_tint_formulas.sql')).toContain('public.import_tint_formulas');
+    expect(achou('20260718093248_drop_estimar_impacto_exclusao_outlier_orfa.sql')).toContain('public.estimar_impacto_exclusao_outlier');
+    expect(achou('20260718150000_fu7_helpers_rls_schema_privado.sql')).toContain('public.carteira_visivel_para');
   });
 });
