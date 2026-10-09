@@ -743,8 +743,8 @@ eq "E18 e o gate/validacao nao deixaram rastro" "$(par "$CK_E5")" "NULL/NULL"
 #    passaria e a ordem com o reservar ficaria indefinida.
 espera_lock() { # $1 = chave do advisory lock
   P -q -c "SELECT pg_advisory_lock(hashtextextended('$1',0)); SELECT pg_sleep(6);" >/dev/null 2>&1 &
-  local bg=$! i
-  for i in $(seq 1 50); do
+  local bg=$!
+  for _ in $(seq 1 50); do
     [ "$(Pq -c "SELECT count(*) FROM pg_locks WHERE locktype='advisory' AND granted")" -ge 1 ] && break
     sleep 0.1
   done
@@ -756,7 +756,7 @@ SQL
 )
   kill "$bg" 2>/dev/null; wait "$bg" 2>/dev/null || true
   P -q -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE query LIKE '%pg_sleep(6)%' AND pid <> pg_backend_pid()" >/dev/null
-  for i in $(seq 1 50); do
+  for _ in $(seq 1 50); do
     [ "$(Pq -c "SELECT count(*) FROM pg_locks WHERE locktype='advisory'")" -eq 0 ] && break
     sleep 0.1
   done

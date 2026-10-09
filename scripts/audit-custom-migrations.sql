@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 588
+-- Total de custom migrations: 590
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -629,7 +629,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261005220000', 'sales_orders_kpi_no_envio', '20261005220000_sales_orders_kpi_no_envio.sql'),
   ('20261005220100', 'data_health_venda_empurrada_conta_pelo_app', '20261005220100_data_health_venda_empurrada_conta_pelo_app.sql'),
   ('20261006004500', 'sku_items_fila_parada_sensor', '20261006004500_sku_items_fila_parada_sensor.sql'),
-  ('20261006120000', 'preco_exato_po_sayerlack_ipi', '20261006120000_preco_exato_po_sayerlack_ipi.sql')
+  ('20261006120000', 'preco_exato_po_sayerlack_ipi', '20261006120000_preco_exato_po_sayerlack_ipi.sql'),
+  ('20261008010000', 'cron_estoque_diario_fora_do_minuto_00', '20261008010000_cron_estoque_diario_fora_do_minuto_00.sql'),
+  ('20261009120000', 'atp_fase3_1_elo_pid', '20261009120000_atp_fase3_1_elo_pid.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2553,7 +2555,16 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('sku_items_fila_parada_sensor', 'cron_job', 'cron', 'afiacao_sku_items_fila_parada_1h', ''),
   ('preco_exato_po_sayerlack_ipi', 'function', 'public', 'sayerlack_ipi_itens', ''),
   ('preco_exato_po_sayerlack_ipi', 'function', 'public', 'sayerlack_aplicar_custo_portal', ''),
-  ('preco_exato_po_sayerlack_ipi', 'table', 'public', 'ipi_aliquota_ncm', '')
+  ('preco_exato_po_sayerlack_ipi', 'table', 'public', 'ipi_aliquota_ncm', ''),
+  ('atp_fase3_1_elo_pid', 'function', 'private', 'estoque_reservas_pv_write_once', ''),
+  ('atp_fase3_1_elo_pid', 'function', 'private', 'atp_canonico_da_reserva', ''),
+  ('atp_fase3_1_elo_pid', 'function', 'private', 'atp_disponivel', ''),
+  ('atp_fase3_1_elo_pid', 'function', 'private', 'expirar_reservas_vencidas_job', ''),
+  ('atp_fase3_1_elo_pid', 'function', 'private', 'atp_reconciliar_job', ''),
+  ('atp_fase3_1_elo_pid', 'function', 'public', 'atp_reservas_pendentes', ''),
+  ('atp_fase3_1_elo_pid', 'function', 'public', 'atp_confirmar_pv', ''),
+  ('atp_fase3_1_elo_pid', 'index', 'public', 'idx_estoque_reservas_pv_ativa', 'estoque_reservas'),
+  ('atp_fase3_1_elo_pid', 'trigger', 'public', 'trg_estoque_reservas_pv_write_once', 'estoque_reservas')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4525,7 +4536,16 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('sku_items_fila_parada_sensor', 'cron_job', 'cron', 'afiacao_sku_items_fila_parada_1h', ''),
   ('preco_exato_po_sayerlack_ipi', 'function', 'public', 'sayerlack_ipi_itens', ''),
   ('preco_exato_po_sayerlack_ipi', 'function', 'public', 'sayerlack_aplicar_custo_portal', ''),
-  ('preco_exato_po_sayerlack_ipi', 'table', 'public', 'ipi_aliquota_ncm', '')
+  ('preco_exato_po_sayerlack_ipi', 'table', 'public', 'ipi_aliquota_ncm', ''),
+  ('atp_fase3_1_elo_pid', 'function', 'private', 'estoque_reservas_pv_write_once', ''),
+  ('atp_fase3_1_elo_pid', 'function', 'private', 'atp_canonico_da_reserva', ''),
+  ('atp_fase3_1_elo_pid', 'function', 'private', 'atp_disponivel', ''),
+  ('atp_fase3_1_elo_pid', 'function', 'private', 'expirar_reservas_vencidas_job', ''),
+  ('atp_fase3_1_elo_pid', 'function', 'private', 'atp_reconciliar_job', ''),
+  ('atp_fase3_1_elo_pid', 'function', 'public', 'atp_reservas_pendentes', ''),
+  ('atp_fase3_1_elo_pid', 'function', 'public', 'atp_confirmar_pv', ''),
+  ('atp_fase3_1_elo_pid', 'index', 'public', 'idx_estoque_reservas_pv_ativa', 'estoque_reservas'),
+  ('atp_fase3_1_elo_pid', 'trigger', 'public', 'trg_estoque_reservas_pv_write_once', 'estoque_reservas')
 )
 SELECT
   e.migration,
@@ -4553,7 +4573,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 126.
+-- Funções redefinidas com corpo extraível: 128.
 
 WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (VALUES
   ('public', 'has_role', 1, '20260207192203_1ed442e5-a224-456e-9d94-cfe50e88c670.sql', 'c63a92e3cfa92e6aab8cb894ad505e30'),
@@ -4992,12 +5012,18 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('private', 'atp_disponivel', 1, '20260806101417_atp_reserva_estoque_fase1.sql', 'aeb0989efc8aae6130bfe73f2dd3d397'),
   ('private', 'atp_disponivel', 2, '20260806225052_atp_reserva_estoque_fase1_1_hardening.sql', '271e2acd633a4ceddd8a73cd988cfe49'),
   ('private', 'atp_disponivel', 3, '20260808012000_atp_reconciliacao_fase3.sql', '8326d00deff699c3730acadd7ee359a4'),
+  ('private', 'atp_disponivel', 4, '20261009120000_atp_fase3_1_elo_pid.sql', '3a2ea01c2c910b508b6934ffc3abfd20'),
   ('public', 'reservar_estoque', 1, '20260806101417_atp_reserva_estoque_fase1.sql', 'cb3b97889c2252c8051aef62c942c218'),
   ('public', 'reservar_estoque', 2, '20260806225052_atp_reserva_estoque_fase1_1_hardening.sql', '25e8cd10e4da4c95c0584b6b97d1445c'),
   ('public', 'expirar_reservas_vencidas', 1, '20260806101417_atp_reserva_estoque_fase1.sql', '9f74c49751e1c6320a625f915afcc8a5'),
   ('public', 'expirar_reservas_vencidas', 2, '20260806225052_atp_reserva_estoque_fase1_1_hardening.sql', 'c82f961257c8bc9de7234aa0810a50f7'),
   ('private', 'expirar_reservas_vencidas_job', 1, '20260806225052_atp_reserva_estoque_fase1_1_hardening.sql', '0cf6163f37d880432bb9ad67d1f99a27'),
   ('private', 'expirar_reservas_vencidas_job', 2, '20260808012000_atp_reconciliacao_fase3.sql', 'c747ad0db21e0dff944d205b1d106815'),
+  ('private', 'expirar_reservas_vencidas_job', 3, '20261009120000_atp_fase3_1_elo_pid.sql', '16505e4e14dd184efa91b6386a08adbb'),
+  ('private', 'atp_reconciliar_job', 1, '20260808012000_atp_reconciliacao_fase3.sql', '0e5f57721806e17cccb517b2c343097f'),
+  ('private', 'atp_reconciliar_job', 2, '20261009120000_atp_fase3_1_elo_pid.sql', '3b1ceac68d639f99616f58e789682a36'),
+  ('public', 'atp_reservas_pendentes', 1, '20260808012000_atp_reconciliacao_fase3.sql', '378b3653de9af53dae833cf14a3c43b5'),
+  ('public', 'atp_reservas_pendentes', 2, '20261009120000_atp_fase3_1_elo_pid.sql', 'd0d12646b3886421a92f152057811326'),
   ('public', 'farmer_recomendacoes_substituir', 1, '20260814223445_farmer_recomendacoes_geracao_vigente.sql', '39e59cbfb7071472c9eaa0baaf733282'),
   ('public', 'farmer_recomendacoes_substituir', 2, '20260815181500_farmer_geracao_head_sensor.sql', '55e4fc0765dd5cd10ff3e8ee60c4ce45'),
   ('public', 'farmer_recomendacoes_substituir', 3, '20260906164002_captura_authz_escopo_carteira_farmer.sql', 'db77f24d70a09cc45b69e46c7a7b7532'),
