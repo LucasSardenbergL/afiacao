@@ -160,6 +160,10 @@ WITH defs AS (
              AND regexp_replace(p.prosrc, '--[^\n]*', '', 'g')
                  ~ 'UPDATE\s+(public\.)?estoque_reservas[^;]*omie_(account|pedido_id)\s*=')
          AND NOT has_table_privilege('service_role', 'public.estoque_reservas', 'UPDATE')
+  -- o SINAL da fila humana (decisão 2026-10-09: consumo segue humano)
+  UNION ALL SELECT 42, '3.1 fila humana expoe o sinal saldo_embute_faturamento',
+         COALESCE(pg_get_function_result(to_regprocedure('public.atp_reservas_pendentes(integer)'))
+                  ~ 'saldo_embute_faturamento boolean', false)
 )
 SELECT n, CASE WHEN ok THEN 'OK  ' ELSE 'FALHOU' END AS status, item
 FROM checks ORDER BY n;

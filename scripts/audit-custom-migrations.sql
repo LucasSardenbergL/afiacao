@@ -5023,7 +5023,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('private', 'atp_reconciliar_job', 1, '20260808012000_atp_reconciliacao_fase3.sql', '0e5f57721806e17cccb517b2c343097f'),
   ('private', 'atp_reconciliar_job', 2, '20261009120000_atp_fase3_1_elo_pid.sql', '3b1ceac68d639f99616f58e789682a36'),
   ('public', 'atp_reservas_pendentes', 1, '20260808012000_atp_reconciliacao_fase3.sql', '378b3653de9af53dae833cf14a3c43b5'),
-  ('public', 'atp_reservas_pendentes', 2, '20261009120000_atp_fase3_1_elo_pid.sql', 'd0d12646b3886421a92f152057811326'),
+  ('public', 'atp_reservas_pendentes', 2, '20261009120000_atp_fase3_1_elo_pid.sql', '8615e3591021a379328e1f835797305f'),
   ('public', 'farmer_recomendacoes_substituir', 1, '20260814223445_farmer_recomendacoes_geracao_vigente.sql', '39e59cbfb7071472c9eaa0baaf733282'),
   ('public', 'farmer_recomendacoes_substituir', 2, '20260815181500_farmer_geracao_head_sensor.sql', '55e4fc0765dd5cd10ff3e8ee60c4ce45'),
   ('public', 'farmer_recomendacoes_substituir', 3, '20260906164002_captura_authz_escopo_carteira_farmer.sql', 'db77f24d70a09cc45b69e46c7a7b7532'),

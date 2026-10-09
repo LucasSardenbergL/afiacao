@@ -31,6 +31,7 @@ import { drenar, type Passos } from '@/lib/gates/passos';
 export const REGISTRO_UNIVERSO_PEDIDOS: Readonly<Record<string, EntradaRegistro>> = {
   // ── lookup ──────────────────────────────────────────────────────────────────────────────────
   'private.atp_disponivel': { tipo: 'lookup', motivo: 'ATP: confere se o pedido da RESERVA já existe no Omie (por id)' },
+  'private.atp_canonico_da_reserva': { tipo: 'lookup', motivo: 'ATP 3.1: acha a canônica de UMA reserva pelo par próprio (conta, omie_pedido_id) ou pelo vínculo (por id da reserva)' },
   'private.atp_pedido_canonico': { tipo: 'lookup', motivo: 'ATP: acha o gêmeo canônico de um pedido empurrado (por id/omie_pedido_id)' },
   'private.expirar_reservas_vencidas_job': { tipo: 'lookup', motivo: 'ATP: expira reserva cujo pedido não virou Omie (por id)' },
   'public.atp_gate_pedido': { tipo: 'lookup', motivo: 'ATP: gate de UM pedido (por id)' },

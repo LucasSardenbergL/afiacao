@@ -323,6 +323,14 @@ falsifica MIG31 F19 "sem backfill do par" \
   '   AND false;' \
   "E20 backfill deu o par a reserva legada"
 
+# F21 — a MARGEM some: "coletado depois do faturamento" passa a aceitar coleta de
+#       ATÉ 1h ANTES — leitura pré-baixa viraria sinal verde para o humano
+falsifica MIG31 F21 "sinal da fila sem a margem de 1h" \
+  "r.faturamento_observado_em + interval '1 hour'" \
+  "r.faturamento_observado_em - interval '1 hour'" \
+  "r.faturamento_observado_em - interval '1 hour'" \
+  "S2 coletado 30min depois do faturamento: AINDA NAO prova (dentro da margem)"
+
 echo
 echo "=== FALSIFICACAO: $VALIDAS validas / $SEM_DENTE sem dente / $INVALIDAS invalidas ==="
 restaura

@@ -670,6 +670,25 @@ reconciliar >/dev/null
 eq "E7 desvinculada + canonica faturada: carimba a observacao" "$(carimbo "$CK_E2")" "true"
 eq "E7 e NAO consome (consumo segue humano na 3.1)" "$(st "$CK_E2")" "ativa"
 
+# ── S1-S3 — o SINAL da fila: o saldo eleito foi COLETADO depois do faturamento?
+#    (decisão 2026-10-09: o consumo segue humano; o sinal encurta a decisão).
+#    Margem de 1h sobre o faturamento_observado_em: os writers de synced_at
+#    carimbam depois da coleta, na mesma invocação (<= ~400s).
+sinal() { Pq -q <<SQL
+SET test.uid='$STAFF'; SET test.role='authenticated';
+SELECT COALESCE(p.saldo_embute_faturamento::text,'NULL')
+FROM public.atp_reservas_pendentes(0) p
+JOIN public.estoque_reservas r ON r.id = p.reserva_id WHERE r.checkout_id='$1';
+SQL
+}
+eq "S1 sem carimbo de faturamento: o sinal NAO se aplica (NULL, nunca false)" "$(sinal "$CK_E5")" "NULL"
+P -q -c "UPDATE public.inventory_position SET synced_at = now() WHERE omie_codigo_produto = 3102"
+P -q -c "UPDATE public.estoque_reservas SET faturamento_observado_em = now() - interval '30 minutes' WHERE checkout_id='$CK_E2'"
+eq "S2 coletado 30min depois do faturamento: AINDA NAO prova (dentro da margem)" "$(sinal "$CK_E2")" "false"
+P -q -c "UPDATE public.estoque_reservas SET faturamento_observado_em = now() - interval '61 minutes' WHERE checkout_id='$CK_E2'"
+eq "S3 coletado 61min depois: o saldo eleito EMBUTE o faturamento" "$(sinal "$CK_E2")" "true"
+eq "S3 o sinal so informa: a reserva segue ativa" "$(st "$CK_E2")" "ativa"
+
 # ── E8 — ATOMICIDADE: write-back que não casa ⇒ P0002 e NADA gravado ──
 V=$(sqlstate_de no_data_found <<SQL
 PERFORM set_config('test.role','service_role',true);
@@ -792,8 +811,8 @@ eq "Z1 validador da o veredito APLICADA" \
    "$(printf '%s' "$VAL" | command grep -c 'FASE 3 APLICADA' || true)" "1"
 eq "Z1 validador da o veredito da 3.1 APLICADA" \
    "$(printf '%s' "$VAL" | command grep -c 'FASE 3.1 APLICADA' || true)" "1"
-eq "Z1 validador tem os 41 checks (3 + 3.1)" \
-   "$(printf '%s' "$VAL" | command grep -cE '^[0-9]+\|(OK|FALHOU)' || true)" "41"
+eq "Z1 validador tem os 42 checks (3 + 3.1)" \
+   "$(printf '%s' "$VAL" | command grep -cE '^[0-9]+\|(OK|FALHOU)' || true)" "42"
 
 # Z2 — banco SABOTADO: um objeto some e o validador tem de acusar. Roda por
 # último de propósito (o DROP não pode contaminar assert anterior).

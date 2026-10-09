@@ -55,7 +55,8 @@
 -- no intervalo, o disponível negativo é a informação verdadeira.)
 --
 -- NÃO entra (registrado de propósito — cada um é outra entrega):
---  • Consumo automático (frente A da 3.1). A âncora proposta — run de
+--  • Consumo automático (frente A da 3.1) — DECISÃO do founder 2026-10-09: segue
+--    humano, com o SINAL temporal na fila (seção 8). A âncora proposta — run de
 --    `sync_estoque` em public.fin_sync_log — NÃO serve, medido em 2026-10-09:
 --    aquela ação é do omie-vendas-sync e grava omie_products.estoque (2 páginas
 --    por chamada), nunca inventory_position; e não registra run desde
@@ -492,12 +493,36 @@ REVOKE ALL ON FUNCTION private.atp_reconciliar_job() FROM anon;
 REVOKE ALL ON FUNCTION private.atp_reconciliar_job() FROM authenticated;
 
 -- ────────────────────────────────────────────────────────────
--- 8) A fila humana — mesma assinatura e colunas da fase 3. Mudanças: entra a
---    reserva DESVINCULADA com par próprio (status_vinculado vem NULL = a linha
---    push foi apagada — é o caso que mais precisa de olho humano), e o PID e a
---    canônica vêm do par próprio quando ele existe.
+-- 8) A fila humana. Mudanças em relação à fase 3:
+--    • entra a reserva DESVINCULADA com par próprio (status_vinculado vem NULL =
+--      a linha push foi apagada — é o caso que mais precisa de olho humano), e o
+--      PID e a canônica vêm do par próprio quando ele existe;
+--    • DUAS colunas novas no FIM — o SINAL que encurta a resolução humana do
+--      consumo (decisão do founder 2026-10-09: consumo segue humano, ver o "NÃO
+--      entra" do cabeçalho):
+--        saldo_synced_at          — synced_at da posição que o PRÓPRIO
+--                                   atp_disponivel elege (fonte única da eleição);
+--        saldo_embute_faturamento — o saldo eleito foi COLETADO depois do
+--                                   faturamento? NULL = não se aplica (sem carimbo
+--                                   de faturamento, ou sem posição); true só com
+--                                   synced_at >= faturamento_observado_em + 1h.
+--      POR QUE A MARGEM PROVA (varredura dos writers, 2026-10-09): os 4 writers de
+--      inventory_position.synced_at (omie-analytics-sync syncInventory e
+--      syncInventoryFull, sync-reprocess, zeramento) carimbam UM instante por
+--      invocação DEPOIS de coletar todas as páginas do ListarPosEstoque, sem
+--      staging nem cursor entre invocações; a edge vive <= ~400s. Logo o início
+--      da coleta >= synced_at - 400s, e 1h de folga cobre isso e o desvio de
+--      relógio edge×banco. faturamento_observado_em >= o faturamento real (é
+--      quando a reconciliação VIU), então o lado da margem é o conservador.
+--      ⚠️ O sinal diz que o saldo EMBUTE o faturamento — não que o faturamento
+--      baixou ESTE item: o Omie permite faturar item que não movimenta estoque, e
+--      faturamento parcial cria pedido filho com outro PID. É por isso que ele
+--      informa a decisão humana e não decide sozinho.
+--    Mudar o RETURNS TABLE exige DROP + CREATE, que RESETA o ACL (database.md
+--    §4) — o REVOKE abaixo nomeia as roles de novo.
 -- ────────────────────────────────────────────────────────────
-CREATE OR REPLACE FUNCTION public.atp_reservas_pendentes(p_dias integer DEFAULT 0)
+DROP FUNCTION IF EXISTS public.atp_reservas_pendentes(integer);
+CREATE FUNCTION public.atp_reservas_pendentes(p_dias integer DEFAULT 0)
 RETURNS TABLE (
   reserva_id uuid,
   sales_order_id uuid,
@@ -507,7 +532,9 @@ RETURNS TABLE (
   status_vinculado text,
   status_canonico text,
   faturamento_observado_em timestamptz,
-  ativa_ha_dias numeric
+  ativa_ha_dias numeric,
+  saldo_synced_at timestamptz,
+  saldo_embute_faturamento boolean
 )
 LANGUAGE plpgsql
 STABLE SECURITY DEFINER
@@ -526,10 +553,16 @@ BEGIN
   SELECT r.id, r.sales_order_id, COALESCE(r.omie_pedido_id, so.omie_pedido_id),
          r.omie_codigo_produto, r.quantidade,
          so.status, k.status, r.faturamento_observado_em,
-         round((EXTRACT(epoch FROM (now() - r.created_at)) / 86400)::numeric, 1)
+         round((EXTRACT(epoch FROM (now() - r.created_at)) / 86400)::numeric, 1),
+         d.saldo_synced_at,
+         CASE
+           WHEN r.faturamento_observado_em IS NULL OR d.saldo_synced_at IS NULL THEN NULL
+           ELSE d.saldo_synced_at >= r.faturamento_observado_em + interval '1 hour'
+         END
   FROM public.estoque_reservas r
   LEFT JOIN public.sales_orders so ON so.id = r.sales_order_id
   LEFT JOIN LATERAL private.atp_canonico_da_reserva(r.id) k ON true
+  LEFT JOIN LATERAL private.atp_disponivel(r.pool, r.omie_codigo_produto) d ON true
   WHERE r.status = 'ativa'
     AND (r.sales_order_id IS NOT NULL OR r.omie_pedido_id IS NOT NULL)
     AND r.created_at <= now() - make_interval(days => p_dias)
