@@ -130,7 +130,7 @@ listing só encolhe removendo o provedor inteiro. **Errado** — o orçamento é
 | `skillListingBudgetFraction` | `0.01` (1% da janela) | **é o orçamento** que se reabastecia sozinho |
 | `skillListingMaxDescChars` | `1536` | teto por descrição (por isso as longas apareciam cortadas) |
 | `skillOverrides` | — | por skill: `name-only`, `user-invocable-only`, `off` |
-| `disableClaudeAiConnectors` | — | o switch CERTO dos connectors (`ENABLE_CLAUDEAI_MCP_SERVERS` **não** funciona) |
+| `disableClaudeAiConnectors` | — | ❌ **INERTE no app desktop** (medido 2026-10-09: 112/126 sessões seguiam com Gmail). Connector de conta se desliga na UI, não no settings — ver `docs/agent/worktrees.md` §MCPs enxutas |
 
 Medido com a sonda (baseline 43.896), e o resultado tem uma inversão útil:
 

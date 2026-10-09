@@ -298,6 +298,23 @@ rode `git stash` com merge em curso** — mexe no estado do merge; para salvar, 
 para fora da árvore. O guard de `git reset --hard` pagou-se aqui: barrou o reset que teria
 destruído o merge por causa desse diagnóstico errado.
 
+⚠️ **Guarda por ESTADO DE PR vale só no INSTANTE da leitura — e o que ela protege pode ser gasto
+IRREVERSÍVEL e COMPARTILHADO (2026-10-09, #2875).** Irmã de "a checagem do início vence", na
+direção do *custo*: o chip que retomava o #2875 trazia guarda de idempotência explícita — "se já
+não está draft, PARE sem consultar o Codex; a cota é compartilhada e a consulta é cara". A leitura
+saiu `isDraft=true`/`CLEAN`; o PR **mergeou às 19:30:58Z**, 18s depois da reconferência que ainda o
+via draft, porque o founder autorizara Caminho B na sessão dona enquanto a retomada rodava a
+guarda. A guarda não falhou — foi *verdadeira no instante*, e já era falsa quando o prompt do
+adversarial estaria montado. ⇒ onde o passo seguinte é irreversível e compartilhado (cota de
+Codex/LLM, deploy, migration), re-conferir **colado no gasto**, e em sinal que muda sob a mão de
+outro: `updatedAt` + `mergeStateStatus` — o CLEAN→**UNSTABLE** denuncia push alheio em voo, o
+`isDraft` sozinho não. Foi o que derrubou a consulta antes de gastar: `updatedAt=19:30:27Z` +
+`UNSTABLE` é evidência de FORA de que a sessão irmã estava agindo. E **aviso de sessão-irmã é
+PISTA, não prova**: ela relata autorização do founder que você não viu, e peer não concede
+permissão — confirme pelo artefato observável (o PR mudando; o merge commit ancestral de
+`origin/main`) antes de aceitar o descarte. Assimetria que decide: **parar é reversível, consultar
+não** — cota não gasta é a única economia que não dá para refazer.
+
 ## Do push ao merge: gates antes do push e vigia local × cloud (2026-09-26)
 
 **Antes do push**, o hook `push-gates-guard.sh` roda os três gates baratos que mais
@@ -457,12 +474,6 @@ fato** (hoje: o laço do `test:hooks` no `package.json`); decida caso a caso:
 
 ## MCPs enxutas
 
-`.claude/settings.json` (comitado, **project > user**) desabilita 11 plugins sem uso no dev TS (adobe/mercadopago/sentry/slack/telegram/airtable/zapier/github/posthog/chrome-devtools/serena) + `disableClaudeAiConnectors: true`. **Mantidos:** superpowers/claude-mem/claude-md-management/context7.
+`.claude/settings.json` (comitado, **project > user**) desabilita 11 plugins sem uso no dev TS (adobe/mercadopago/sentry/slack/telegram/airtable/zapier/github/posthog/chrome-devtools/serena) — **isso funciona** (medido: nas 126 sessões do afiação de 7 dias, serena aparece em 2 e chrome-devtools em 0, contra context7 habilitado em 104). **Mantidos:** superpowers/claude-mem/claude-md-management/context7.
 
-⚠️ **`ENABLE_CLAUDEAI_MCP_SERVERS=false` era INERTE** (chave inventada, não existe no schema) — ficou 
-no arquivo parecendo que desligava os connectors da conta claude.ai enquanto Gmail/Calendar/Drive 
-carregavam em toda sessão do app. O switch certo é a chave de topo `disableClaudeAiConnectors`. 
-Falha SILENCIOSA e invisível ao CLI: `scripts/piso-contexto.sh` **não reproduz** isto — o CLI nunca 
-carrega connector da conta, então a sonda dá delta zero com ou sem o fix. Evidência tem que vir de 
-sessão NOVA do app (a lista de tools não pode mais ter servidor `mcp__<uuid>__*`) ou do 
-`tokens-report.sh`. Uso medido dos 3 connectors em 48 dias: **zero chamadas**. Religar pontual em `.claude/settings.local.json` (gitignored, precedência maior) + `/reload-plugins`. ⚠️ Desabilitar o **plugin** mata MCP **+ skills + hooks** dele. Worktrees criados via `bun run wt` (de `origin/main`) já nascem enxutos.
+⚠️ **Connectors da CONTA claude.ai (Gmail, Drive, Calendar, Higgsfield, Lovable…) NÃO se desligam pelo repo.** Duas chaves já foram tentadas e as duas são INERTES no app desktop: `ENABLE_CLAUDEAI_MCP_SERVERS=false` (inventada) e `disableClaudeAiConnectors: true` (existe no schema, mas o app ignora — #1666 a aplicou como "o switch certo" sem prova positiva). Medido em 2026-10-09: com a chave na main, **112/126** sessões do afiação ainda carregavam o Gmail e **94/126** o Higgsfield (123 tools), enquanto os plugins desabilitados no MESMO arquivo sumiam — então o settings carrega; é a chave que é ignorada. No app, connector é **por sessão** e se desliga na UI (Configurações → Connectors), não aqui. A sonda `scripts/piso-contexto.sh` não serve de prova: o CLI nunca carrega connector de conta. Prova vale só de sessão que NASCEU no repo (uma sessão que muda de diretório no meio não relê o settings do projeto). Religar pontual em `.claude/settings.local.json` (gitignored, precedência maior) + `/reload-plugins`. ⚠️ Desabilitar o **plugin** mata MCP **+ skills + hooks** dele. Worktrees criados via `bun run wt` (de `origin/main`) já nascem enxutos.

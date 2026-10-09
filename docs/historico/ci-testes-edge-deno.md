@@ -401,6 +401,35 @@ resolvida de verdade (`omie-webhook`, pinada em `2.39.0`, a mais velha do repo; 
 portal Sayerlack) tiveram a superfície da lib medida antes: só `.from()` e `.rpc()`, zero
 `auth`/`storage`/`realtime`/`functions` — PostgREST puro, a parte que não mudou de contrato dentro do 2.x.
 
+## O sync do Lovable reverteu uma linha 2min35s depois do merge
+
+Registro porque a janela medida aqui é **duas ordens de grandeza menor** que a do caso conhecido. O
+#1694 mergeou às `00:56:49Z`; às `00:59:24Z` o commit `942a69b8` ("Changes", o sync bidirecional do
+Lovable) empurrou o workspace velho por cima de **um** dos 17 arquivos:
+
+```
+-import { createClient } from 'npm:@supabase/supabase-js@2';
++import { createClient } from 'npm:@supabase/supabase-js@^2';
+```
+
+O caso que gerou a regra do CLAUDE.md (#1445→#1478) levou **4 horas**. Este levou **2min35s** — dentro
+da própria sessão que abriu o PR, e depois de eu já ter verificado a main e declarado a série completa.
+A verificação pós-merge estava certa e mesmo assim não pegou: ela rodou **antes** da reversão existir.
+
+> **Regra viva:** verificar a main logo após o merge **não** prova que a mudança sobreviveu ao sync do
+> Lovable — a janela pode ser de minutos, e a checagem imediata cai dentro dela. Para um PR que toca
+> `supabase/functions/`, a conferência que vale é a **defasada** (ou a da sessão seguinte), com
+> `git log -S <string-nova> -- <arquivo>`. E vale escolher a string a conferir: aqui só um dos 17
+> arquivos voltou, então uma amostra de um arquivo qualquer teria dado falso "sobreviveu".
+
+Não foi conflito de rebase, e o hook de colisão de multi-sessão **avisou sobre este arquivo exato** — o
+#1692 tinha tocado a lógica dele. Analisei, concluí (corretamente) que o import estava noutra linha e que
+o rebase seria limpo, e foi. O que reverteu veio depois e por fora do git do repo.
+
+Descoberto por acaso: o Codex, consultado sobre outro assunto, contou os especificadores do repo e
+reportou `84 @2 · 1 ^2 · 1 ^2.95.3` — divergindo do `85 @2 · 1 ^2.95.3` que eu tinha acabado de medir e
+publicar no corpo do PR. A divergência é que era o sinal.
+
 ## Follow-ups (atualizados)
 
 1. ~~Consolidar `@supabase/supabase-js` numa versão só~~ ✅ feito aqui (`npm:…@2`).

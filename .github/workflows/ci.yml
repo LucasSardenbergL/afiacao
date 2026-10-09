@@ -360,13 +360,13 @@ jobs:
       # typecheck e lint — só apareceu num `deno check` manual.
       #
       # ⚠️ Este step PRECISA de rede, ao contrário do `test:edges` — não dá para espelhar o
-      # `--no-remote` aqui: as edges importam `npm:`/`https://` de verdade e o check resolve o grafo
-      # todo (2.245 downloads, ~48s cold / ~2,5s warm). Mitigação do que dá: dos 3 hosts,
-      # `registry.npmjs.org` (2.087 requests) JÁ está no caminho de entrega via `bun install`; os
-      # novos são `esm.sh` (135) e `deno.land` (23), ambos de import legado — 34 edges em
-      # `deno.land/std/http/server.ts` (o `Deno.serve` nativo substitui) e 18 em
-      # `esm.sh/@supabase/supabase-js` (tem equivalente `npm:`). Migrar as duas famílias zera os
-      # hosts novos: é o follow-up 2 do spec.
+      # `--no-remote` aqui: as edges importam `npm:` de verdade e o check resolve o grafo todo.
+      # Mas ele já NÃO tem host próprio: em 2026-08-07 (#1685/#1687/#1690/#1694) as duas famílias
+      # legadas foram migradas — 34 edges de `deno.land/std/http/server.ts` para o `Deno.serve`
+      # nativo e 19 de `esm.sh/@supabase/supabase-js` para `npm:`, com o repo inteiro consolidado
+      # em `npm:@supabase/supabase-js@2`. Sobrou só `registry.npmjs.org`, que JÁ estava no caminho
+      # de entrega via `bun install`. O gatilho foi o #1670, uma PR só de documentação derrubada por
+      # um 500 do esm.sh. Histórico: docs/historico/ci-testes-edge-deno.md §Sequela (2026-08-07).
       #
       # Sem `actions/cache` de propósito: o DENO_DIR fica em 681 MB (677 de tarballs npm) e
       # economizaria ~30s dos 48s consumindo ~7% do budget de 10 GB do repo, mais drift de chave —
