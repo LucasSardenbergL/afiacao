@@ -513,7 +513,8 @@ export function conferirSincronia(
  *
  * Mora fora de `conferirSincronia` porque, no modo sonda, a ref tem DOIS leitores: a fatia do
  * `esperado(...)` e a allowlist do cron, que decide a recusa do bloco legado ANTES de a fatia ser
- * comparada. Os dois leem a mesma ref depois do mesmo fetch (ver `umFetchPorExecucao`).
+ * comparada. Os dois leem o MESMO COMMIT: a medição da ref é única por execução — ver
+ * `umaMedicaoDaRefPorExecucao`, que memoiza o `rev-parse` e não só o `fetch`.
  */
 export function buscarRefDeployada(semRede: boolean, git: ExecutorGit): string {
   if (!semRede) {
@@ -543,17 +544,30 @@ export function buscarRefDeployada(semRede: boolean, git: ExecutorGit): string {
 }
 
 /**
- * Um `git` cujo `fetch` roda UMA vez por execução — repetido, devolve a MESMA resposta.
+ * Um `git` que mede a `origin/main` UMA vez por execução: o `fetch` que a busca e o `rev-parse` que
+ * a resolve, repetidos, devolvem a MESMA resposta.
  *
- * No modo sonda a `origin/main` tem dois leitores: a allowlist do cron (a recusa do bloco legado)
- * e a fatia do `esperado(...)`. Dois fetches seriam duas MEDIÇÕES — a main pode andar entre elas, e
- * a recusa julgaria uma ref e o veredito outra — além de pagar a rede duas vezes. A falha também é
- * memorizada: quem pergunta de novo ouve o mesmo "não", nunca um segundo palpite.
+ * No modo sonda a ref tem dois leitores: a allowlist do cron (a recusa do bloco legado) e a fatia
+ * do `esperado(...)`. Dois fetches seriam duas MEDIÇÕES — a main pode andar entre elas, e a recusa
+ * julgaria uma ref e o veredito outra — além de pagar a rede duas vezes.
+ *
+ * O `rev-parse` entrou em 2026-10-08 (#2870) porque o fetch único cobria METADE do eixo: ele impede
+ * que ESTE processo mova a ref, nunca que outro mova. `refs/remotes/origin/main` é COMPARTILHADO por
+ * todas as worktrees do repo — com ~30 em paralelo, o `git fetch` de uma sessão vizinha reescreve a
+ * ref no meio desta execução. Cada leitor resolvendo o seu `rev-parse` lia um commit diferente, e o
+ * veredito saía de uma COMBINAÇÃO que nunca existiu num commit só: o eixo do #2868 (entre dois
+ * `show` da mesma fatia) um nível acima, entre os dois GUARDS. Medido pelo teste "UMA resolução por
+ * execução", que com a ref andando entre os leitores via `['1111111111aaaa', '2222222222bbbb']`.
+ *
+ * A falha também é memorizada: quem pergunta de novo ouve o mesmo "não", nunca um segundo palpite.
  */
-function umFetchPorExecucao(git: ExecutorGit): ExecutorGit {
+function umaMedicaoDaRefPorExecucao(git: ExecutorGit): ExecutorGit {
   const respostas = new Map<string, SaidaGit>();
   return (args) => {
-    if (args[0] !== 'fetch') return git(args);
+    // `fetch` (que busca a ref) e `rev-parse` (que a resolve) são a MESMA medição: qual é a
+    // `origin/main` desta execução. `show`, `log` e `rev-list` passam direto — o `show` já pede
+    // pelo commit resolvido, e os outros dois são diagnóstico.
+    if (args[0] !== 'fetch' && args[0] !== 'rev-parse') return git(args);
     const chave = args.join(' ');
     const antes = respostas.get(chave);
     if (antes !== undefined) return antes;
@@ -2492,8 +2506,11 @@ export interface AllowlistDoRele {
 }
 
 /**
- * A allowlist do cron de sonda — as edges que já têm o caminho SEGURO — lida NA REF, a mesma de que
- * sai o resto do veredito. Chame DEPOIS de `buscarRefDeployada`: a ref lida aqui é a recém-buscada.
+ * A allowlist do cron de sonda — as edges que já têm o caminho SEGURO — lida NO COMMIT `sha`, o
+ * mesmo de que sai o resto do veredito. O `sha` chega por PARÂMETRO, e não é resolvido aqui: pedir
+ * pelo NOME do ramo deixaria a allowlist vir de um commit e a fatia do `esperado(...)` de outro
+ * dentro da MESMA execução — `origin/main` é ref compartilhado e o fetch de outra worktree a move
+ * no meio. A recusa do bloco legado e o veredito passam a julgar um commit só (#2870).
  *
  * Incidente de 2026-09-10 (a classe do #2464, `docs/historico/sonda-le-worktree-defasado.md`): esta
  * lista vinha do `import` do DISCO na borda da CLI. Num worktree atrás da main, uma edge que a main
@@ -2505,11 +2522,20 @@ export interface AllowlistDoRele {
  * sabe ler: tratar a falha como lista vazia desligaria a recusa para TODAS as edges. O disco entra
  * só para nomear a defasagem, e disco ilegível é "não li" — nunca "igual à ref".
  */
-export function lerAllowlistDoRele(kit: KitAllowlist, git: ExecutorGit, raiz: string): AllowlistDoRele {
-  const naRef = git(['show', `${REF_DEPLOYADA}:${kit.ARQ_ALLOWLIST}`]);
+export function lerAllowlistDoRele(
+  kit: KitAllowlist,
+  git: ExecutorGit,
+  raiz: string,
+  sha: string,
+): AllowlistDoRele {
+  const naRef = git(['show', `${sha}:${kit.ARQ_ALLOWLIST}`]);
   if (naRef.status !== 0) {
     throw new Error(
-      `ALLOWLIST_ILEGIVEL: \`git show ${REF_DEPLOYADA}:${kit.ARQ_ALLOWLIST}\` falhou (status ${naRef.status}: ` +
+      // O comando IMPRESSO fala em `origin/main` porque é o que quem lê consegue rodar — e o sha
+      // curto vai ao lado para o texto não mentir sobre QUAL commit foi lido (se a ref andou, o
+      // `git show` do humano pode funcionar justamente onde este falhou).
+      `ALLOWLIST_ILEGIVEL: \`git show ${REF_DEPLOYADA}:${kit.ARQ_ALLOWLIST}\` falhou em ${sha.slice(0, 9)} ` +
+        `(status ${naRef.status}: ` +
         `${primeiraLinha(naRef.stderr)}). Sem a allowlist da main não sei que edges já têm o caminho seguro, ` +
         'e tratá-la como vazia desligaria a recusa do bloco legado para TODAS. Nenhum SQL foi emitido.',
     );
@@ -2624,9 +2650,9 @@ export function main(argv: string[], deps: DependenciasCli): number {
       // decide o veredito) julgam a MESMA origin/main. A recusa vem ANTES da comparação da fatia
       // porque não depende do disco — o relé não lê este worktree —, então worktree defasado não
       // adia a resposta certa.
-      const git = umFetchPorExecucao(deps.git);
-      buscarRefDeployada(semRede === true, git);
-      const allowlist = lerAllowlistDoRele(deps.allowlist, git, deps.raiz);
+      const git = umaMedicaoDaRefPorExecucao(deps.git);
+      const sha = buscarRefDeployada(semRede === true, git);
+      const allowlist = lerAllowlistDoRele(deps.allowlist, git, deps.raiz, sha);
       avisoAllowlist = avisoAllowlistDoRele(deps.allowlist, allowlist, edges, git);
       const recusa = guardEfeitoLegado(edges, permitirEfeitoLegado === true, allowlist.ref);
       if (recusa !== null) {
