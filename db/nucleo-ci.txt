@@ -257,6 +257,12 @@ db/test-v-titulo-baixas-otica-canonica.sh  21
 # voltava a ser ofertado = compra antecipada em dobro. Controle = versão da PROD por md5; falsificação
 # sempre ligada, uma lista por vez. Entrou em 2026-10-01 (migration 20261001204054).
 db/test-oportunidade-antidup-disparado-simulado.sh  17
+# A MESMA guarda anti-compra-dupla, pelo lado oposto: PO com erro TERMINAL no portal (nada colocado
+# no fornecedor) seguia contando como "ja comprado" nos 2 NOT EXISTS ([SIMETRIA-NORMAL]) e travava a
+# oferta do SKU por ate 7 dias. CONTROLE = funcao pre-fix da 20260611120000, fora do snapshot de DR
+# (que no proximo re-dump ja traz a guarda); falsificacao: cada bloco sabotado em separado + a forma
+# NULL-blind `=`. Caminho adormecido na PROD (defesa em profundidade). Entrou em 2026-10-08.
+db/test-oportunidade-erro-terminal.sh       7  falsificar=3
 # Tintométrico: item repetido (fórmula, corante) na promoção fica com a quantidade de maior ordem —
 # SOMAR dobraria a dose do corante sem erro nenhum.
 db/test-tint-promote-dedup-itens.sh        11

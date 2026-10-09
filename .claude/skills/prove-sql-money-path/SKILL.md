@@ -33,7 +33,7 @@ Duas verdades deste repo se combinam num risco silencioso:
 
 Logo: pra qualquer SQL que mexe com dinheiro, autorização ou automação, **o PG17 local com falsificação é a rede de segurança**. Ele roda a função **de verdade** (pega o bug late-bound), prova os invariantes do money-path, prova que o gate/RLS **nega** quem deve negar, e — o passo que separa teste real de teatro — **se sabota de propósito pra provar que os asserts têm dente**.
 
-Esta skill não fabrica a prova. Ela resolve o boilerplate PG17 chato (initdb descartável, contorno do keg-only do brew, stubs do Supabase, GUC pra impersonar RLS) e **impõe a disciplina** que faz o teste valer. Os asserts e a falsificação você escreve pensando em cada caso — auto-gerá-los recriaria exatamente o teatro que a falsificação existe pra matar.
+Esta skill não fabrica a prova. Ela resolve o boilerplate PG17 chato (initdb descartável, PGBIN resolvido por plataforma via `db/lib/pg-harness.sh`, stubs do Supabase, GUC pra impersonar RLS) e **impõe a disciplina** que faz o teste valer. Os asserts e a falsificação você escreve pensando em cada caso — auto-gerá-los recriaria exatamente o teatro que a falsificação existe pra matar.
 
 ## A Lei de Ferro (3 regras inegociáveis)
 
@@ -78,7 +78,7 @@ cp .claude/skills/prove-sql-money-path/references/harness-template.sh db/test-<s
 chmod +x db/test-<slug>.sh
 ```
 
-O template já resolve: PG17 descartável (initdb em tmpdir + trap cleanup), contorno do keg-only do brew, `LC_ALL=C` (sem isso o postmaster aborta), `db/stubs-supabase.sql` (roles `anon`/`authenticated`/`service_role`, schema `auth`, `auth.users`), `auth.uid()`/`auth.role()` lendo GUC de sessão (pra impersonar RLS), e `service_role` com `BYPASSRLS`. Você preenche 4 zonas marcadas `[[...]]`: pré-requisitos de schema, a migration a aplicar, os seeds, os asserts/falsificação.
+O template já resolve: PG17 descartável (initdb em tmpdir + trap cleanup), o **PGBIN por plataforma** — ele carrega `db/lib/pg-harness.sh`, que resolve macOS Homebrew / Linux PGDG com conferência POSITIVA da major, é fail-closed (PG ausente é ERRO, nunca skip) e contorna o keg-only do brew no macOS —, `LC_ALL=C` (sem isso o postmaster aborta), `db/stubs-supabase.sql` (roles `anon`/`authenticated`/`service_role`, schema `auth`, `auth.users`), `auth.uid()`/`auth.role()` lendo GUC de sessão (pra impersonar RLS), e `service_role` com `BYPASSRLS`. Você preenche 4 zonas marcadas `[[...]]`: pré-requisitos de schema, a migration a aplicar, os seeds, os asserts/falsificação.
 
 ### Passo 3 — Pré-requisitos + aplicar a migration REAL (Lei #1)
 
@@ -118,10 +118,10 @@ Itere até: **verde com a migração real** E **vermelho com cada sabotagem** (d
 
 ## Arquivos de apoio desta skill
 
-- `references/harness-template.sh` — o esqueleto PG17 descartável pronto (copie pra `db/test-<slug>.sh` e preencha as 4 zonas).
+- `references/harness-template.sh` — o esqueleto PG17 descartável pronto (copie pra `db/test-<slug>.sh` e preencha as 4 zonas). O PGBIN vem de `db/lib/pg-harness.sh`: a prova nasce PORTÁVEL, que é o pré-requisito pra ela entrar em `db/nucleo-ci.txt`.
 - `references/assert-patterns.md` — padrões prontos: assert positivo, negativo (SQLSTATE + re-raise), RLS (SET ROLE + GUC), e o padrão de falsificação anti-teatro.
 - `evals/trigger-eval.json` — casos `should_trigger` true/false pra calibrar o disparo da skill.
 
 ## Pré-requisitos da máquina
 
-`brew install postgresql@17 pgvector`. O template contorna o keg-only do brew (copia `share`/`lib` do Cellar) e usa `LC_ALL=C`. Roda em ~2-5s por harness. Se rodar vários em paralelo (40 worktrees), ajuste a `PORT` no topo do harness pra não colidir.
+macOS: `brew install postgresql@17 pgvector`. Linux/CI (runner `ubuntu`): `postgresql-17` do repo PGDG. Quem acha os binários é o `db/lib/pg-harness.sh` que o template carrega (contorna o keg-only do brew no macOS, confere a major e **erra** se o PG17 faltar — nunca pula o teste); o template usa `LC_ALL=C`. Roda em ~2-5s por harness. Se rodar vários em paralelo (40 worktrees), ajuste a `PORT` no topo do harness pra não colidir.

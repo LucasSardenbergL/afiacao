@@ -402,3 +402,59 @@ como dado (`ARQ_ALLOWLIST`), que é o que a lib faz.
 **Limite conhecido, nomeado em vez de escondido:** o gate cobre ESTA allowlist, não todo dado
 versionado. Um sensor novo que importe outra constante do repo para julgar contra a ref continua
 passando; para esse eixo o que existe é a varredura do `/matar-classe` e esta página.
+
+## Epílogo 2 (2026-10-08): a fatia certa podia ser MENOR que o arquivo
+
+O #2435 ensinou que a fatia tem de ser **derivada da leitura** que ela vigia. Sobrou um resíduo no
+lado espelhado: no modo SONDA a proveniência registrava o `_shared/sonda-fingerprints.ts`
+**inteiro**, e o `esperado(...)` de uma edge consome só a **entrada dela**. O arquivo é a unidade
+que o `git show` conhece; não era a unidade que o marcador consumia.
+
+Medido na CLI real, contra a `origin/main` do dia, com a sabotagem conferida nos dois lados:
+
+| sondando `omie-sync`, com a entrada de … sabotada | antes | depois |
+|---|---|---|
+| `whatsapp-send-template` (edge que ninguém pediu) | `exit 1`, 0 bytes | `exit 0`, **SQL idêntico byte-a-byte** |
+| `omie-sync-estoque` (vizinha PREFIXADA) | `exit 1`, 0 bytes | `exit 0`, idêntico |
+| `omie-sync` (a própria) | `exit 1` | `exit 1`, nomeando `entrada "omie-sync"` |
+
+O veredito saía igual com ou sem a divergência — bloqueio pelo bloqueio, e de ROTINA, porque
+`sonda:fingerprint -- --write` regrava esse mapa a cada mudança em `_shared/` (fingerprint
+TRANSITIVO) e há ~30 worktrees. O CI nunca pagou: desde o #2425 a prova chama a função pura, e o
+guard só roda no `main()`. Quem pagava era o operador.
+
+> **Fatia de guard tem a granularidade do que o marcador CONSOME, não a do arquivo.** Quando as
+> duas divergem, a comparação ganha uma **projeção declarada por quem resolve** — e o guard aplica
+> a MESMA projeção nos dois lados, sem saber o que está recortando.
+
+### Projetar abre três fail-OPENs, e o parecer Codex achou os três
+
+1. **Gramática própria = segunda fonte da verdade.** A 1ª versão de `entradaDoMapa` ancorava o
+   espaço com `[ \t]*`; `parsearMapa` usa `\s*`, que atravessa `\n`. Com a chave repetida e o valor
+   na linha de baixo, o parser resolvia pela ÚLTIMA (`bbb…`) e a projeção só via a PRIMEIRA
+   (`aaa…`): o guard comparava `aaa` dos dois lados e **aprovava**, com o SQL levando `bbb`. O fix
+   não é alinhar as duas regex — é **delegar ao dono do formato**. Fatia que não é lida pelo mesmo
+   leitor não é a fatia. (De lambuja, casar o nome exato passa a ser por INDEXAÇÃO, não por padrão:
+   `omie-sync` é prefixo de OITO chaves reais do mapa.)
+2. **Deduplicar OBRIGAÇÃO por chave.** Duas projeções de rótulo igual e alvo diferente: a 2ª era
+   descartada e o guard aprovava a divergência que só ela veria. Rótulo é diagnóstico, não
+   identidade — `toString()` de callback também não é. O que se deduplica com segurança é
+   **trabalho** (o `git show`, por caminho), nunca dever.
+3. **`show` pelo NOME do ramo.** Um `git fetch` de outra worktree move a `origin/main` no meio da
+   conferência e cada arquivo vem de um commit diferente: aprova-se uma **combinação que nunca
+   existiu num commit só**. O `sha` já era resolvido ali — só não mandava nas leituras.
+
+E a porta da corrida (#2435) exigiu cuidado: ela continua julgada sobre os bytes **inteiros**, antes
+de qualquer descarte. Guardar só o recorte na fonte a encolheria — duas leituras que diferem FORA do
+recorte voltariam a passar.
+
+### A sabotagem de um dígito que era no-op
+
+A primeira medição deste epílogo deu `exit 0` onde devia dar 1, e a causa não era o código: o
+`perl -pe 's/("omie-sync": ")[0-9a-f]/${1}0/` troca o 1º dígito do hash por `0`, e o hash de
+`omie-sync` **começa com `0`**. Sabotagem inerte, medição verde sobre nada — a mesma classe de
+`--falsificar` que não rodou a suíte. Sabotar por amostra de UM caractere depende do valor que lá
+está: troque a fatia INTEIRA e **compare o arquivo antes/depois**, abortando se não mudou.
+
+Resíduo conhecido, registrado no próprio teste: o `show` da allowlist do relé (#2856) ainda sai pelo
+NOME do ramo.
