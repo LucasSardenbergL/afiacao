@@ -84,6 +84,11 @@ done
 
 # md5 EXATOS (prosrc / pg_get_viewdef(…, true)), medidos em PG17 — a prova os confere ao montar.
 MD5_V1_PROD=ac51b3cea53fa87492e6956ed7a56586     # aplicar_sql de prod, 2026-09-30 (psql-ro)
+# O que o DELTA deste teste deixa: a porta com a fila (v2), viva em prod até o re-check — md5 de prod
+# conferido por psql-ro em 2026-10-08. Até ali era o mesmo corpo do bootstrap, e o teste o chamava de
+# MD5_BOOT; desde db/aplicar-porta-recheck.sql o bootstrap está um passo adiante, e este delta vira
+# HISTÓRIA — com âncora própria, como a v1. Confundir os dois quebrou E3, E12 e E14 de uma vez.
+MD5_V2_FILA=38699b251148bcc4c74faab795d06d38
 F_PRED=f150aad8dd266247b8908d3114492975          # SELECT 'predecessor'
 F_ESTE=747315aee156042621a96709601ebc31          # SELECT 'este'
 F_A=ce03e1a9b01768d820b237f85779e1bf             # SELECT 'A'
@@ -480,7 +485,7 @@ esperando() { # <app> <classid> <objid> <objsubid>
 }
 qual_alvo() { Q "SELECT CASE md5(prosrc) WHEN '$F_PRED' THEN 'pred' WHEN '$F_A' THEN 'A' WHEN '$F_B' THEN 'B'
                    ELSE 'outro' END FROM pg_proc WHERE oid = to_regprocedure('public.corrida_alvo()')"; }
-qual_porta() { Q "SELECT CASE md5(prosrc) WHEN '$MD5_V1_PROD' THEN 'v1' WHEN '$MD5_BOOT' THEN 'nova'
+qual_porta() { Q "SELECT CASE md5(prosrc) WHEN '$MD5_V1_PROD' THEN 'v1' WHEN '$MD5_BOOT' THEN 'nova' WHEN '$MD5_V2_FILA' THEN 'v2'
                     ELSE 'outro:' || md5(prosrc) END FROM pg_proc WHERE oid = to_regprocedure('public.aplicar_sql(text,text,bigint)')"; }
 reset_e() {
   Q "CREATE OR REPLACE FUNCTION public.corrida_alvo() RETURNS text LANGUAGE sql STABLE AS \$\$SELECT 'predecessor'\$\$;
@@ -576,7 +581,7 @@ delta_quebrado() { # <rótulo> <de> <para> — ecoa <sqlstate>|vivo=<v1|nova|out
   P -f "$sonda" > /dev/null 2>&1 || { echo "SEM_VEREDITO:a porta quebrada nao compila (tem de compilar: late-bound)"; return; }
   md5_q="$(Q "SELECT md5(prosrc) FROM pg_proc WHERE proname = 'aplicar_sql_md5_sonda'")"
   Q "DROP FUNCTION public.aplicar_sql_md5_sonda(text, text, bigint)" > /dev/null
-  troca "$d" "$MD5_BOOT" "$md5_q" 2 || { echo "SEM_VEREDITO:md5"; return; }
+  troca "$d" "$MD5_V2_FILA" "$md5_q" 2 || { echo "SEM_VEREDITO:md5"; return; }
   if [ "$SABOTAGEM" = delta_sem_sonda ]; then
     corta "$d" "  BEGIN
     INSERT INTO public.db_aplicacoes" "  END;
@@ -675,8 +680,8 @@ roda_nivel_executor() { # <C|P>
 
   reset_e
   eq "${L}E2" "o delta aplica pelo PRÓPRIO executor (auto-substituição)" "$(aplica "$DELTA")" "0"
-  eq "${L}E3" "o corpo que o delta deixa = o do bootstrap = o literal do delta" \
-    "$(qual_porta)|$(grep -c "$MD5_BOOT" "$REPO_ROOT/$DELTA")" "nova|2"
+  eq "${L}E3" "o corpo que o delta deixa = a v2 congelada = o literal do delta" \
+    "$(qual_porta)|$(grep -c "$MD5_V2_FILA" "$REPO_ROOT/$DELTA")" "v2|2"
   eq "${L}E4" "a porta continua fechada (claude_rw sim; PUBLIC e anon não)" \
     "$(Q "SELECT has_function_privilege('claude_rw', 'public.aplicar_sql(text,text,bigint)', 'EXECUTE')
               || '|' || has_function_privilege('public', 'public.aplicar_sql(text,text,bigint)', 'EXECUTE')
@@ -732,7 +737,14 @@ roda_nivel_executor() { # <C|P>
   # A porta real de volta (as sabotagens acima não podem contaminar o delta).
   bloco_porta "$REPO_ROOT/$BOOT" | P -f - > /dev/null 2>&1 || { echo "ABORTA: não consegui restaurar a porta"; exit 3; }
   [ "$(qual_porta)" = "nova" ] || { echo "ABORTA: a porta restaurada não é a do bootstrap"; exit 3; }
+  # "Sobre si mesmo" = sobre a porta que ESTE delta deixa (a v2), não a do bootstrap: desde o re-check
+  # as duas diferem, e a PRE deste delta — corretamente — recusaria a v3 como corpo estranho. Depois do
+  # E12 a do bootstrap volta, para E13–E15 partirem do mesmo estado de antes.
+  bloco_porta "$REPO_ROOT/$DELTA" | P -f - > /dev/null 2>&1 || { echo "ABORTA: não consegui instalar a porta do delta"; exit 3; }
+  [ "$(qual_porta)" = "v2" ] || { echo "ABORTA: a porta do delta não é a v2 congelada"; exit 3; }
   eq "${L}E12" "o delta re-ensaiado sobre si mesmo passa (PRE 'já este' + sonda da PÓS)" "$(aplica "$DELTA" --ensaio)" "0"
+  bloco_porta "$REPO_ROOT/$BOOT" | P -f - > /dev/null 2>&1 || { echo "ABORTA: não consegui restaurar a porta"; exit 3; }
+  [ "$(qual_porta)" = "nova" ] || { echo "ABORTA: a porta restaurada não é a do bootstrap"; exit 3; }
 
   # E13/E14 aplicam CÓPIAS do delta como postgres numa transação: o que se prova é a PRE e a PÓS do
   # arquivo, que não dependem de quem executa — e é onde as sabotagens do delta mordem.

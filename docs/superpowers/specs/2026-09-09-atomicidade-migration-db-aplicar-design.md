@@ -76,8 +76,12 @@ Prova: PG17.10, locales `C` e `pt_BR.UTF-8`, normal (36 ✅) e `--falsificar` (2
 - **O ledger não é à prova do próprio escritor:** `claude_rw` tem `GRANT UPDATE` nele
   (`db/claude-rw-bootstrap.sql:179`), de propósito — é como o script marca `falhou` quando a função
   abortou. Trilha honesta, não inviolável. Fora do escopo.
-- **`FOR UPDATE` trava por `p_id`, não por sha:** dois `db:aplicar` simultâneos do mesmo arquivo
+- ~~**`FOR UPDATE` trava por `p_id`, não por sha:** dois `db:aplicar` simultâneos do mesmo arquivo
   ganham ids distintos e **ambos executam**; só depois o índice único deixa um virar `aplicada`.
-  "Re-aplicar é no-op" vale em SEQUÊNCIA, não sob concorrência. Fora do escopo; registrado.
+  "Re-aplicar é no-op" vale em SEQUÊNCIA, não sob concorrência. Fora do escopo; registrado.~~
+  **FECHADO em 2026-10-08, em duas etapas.** A fila `(20260909, 1)` (2026-09-27, por outro motivo) pôs
+  os dois em ORDEM — e o 2º ainda executava; o re-check depois da fila (`db/aplicar-porta-recheck.sql`)
+  recusa os mesmos bytes antes do `EXECUTE`. Prova em `db/test-db-aplicar.sh` (A15; S14/S15). Detalhe:
+  `docs/historico/ordem-nao-e-impedimento.md`.
 - **A asserção de `search_path` do harness é fraca:** confere `proconfig IS NOT NULL`, então trocar
   o `search_path` por lixo passa. Fora do escopo; registrado.
