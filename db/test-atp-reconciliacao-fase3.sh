@@ -164,7 +164,9 @@ MIG11="$REPO_ROOT/supabase/migrations/20260806225052_atp_reserva_estoque_fase1_1
 MIG2="$REPO_ROOT/supabase/migrations/20260807015000_atp_gate_pedido_fase2.sql"
 MIG3="$REPO_ROOT/supabase/migrations/20260808012000_atp_reconciliacao_fase3.sql"
 MIG31="$REPO_ROOT/supabase/migrations/20261009120000_atp_fase3_1_elo_pid.sql"
-P -q -f "$MIG1"; P -q -f "$MIG11"; P -q -f "$MIG2"; P -q -f "$MIG3"; P -q -f "$MIG31"
+P -q -f "$MIG1"; P -q -f "$MIG11"; P -q -f "$MIG2"; P -q -f "$MIG3"
+# a 3.1 vai em UMA transação, como o BEGIN; … COMMIT; do bloco do SQL Editor (a TRAVA só vale assim)
+P -q -1 -f "$MIG31"
 echo "migrations aplicadas: fase1 + fase1.1 + fase2 + fase3 + fase3.1"
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -790,10 +792,44 @@ eq "E19 sem lock livre, nada gravado" "$(par "$CK_E5")" "NULL/NULL"
 # ── E20 — re-aplicar a migration é IDEMPOTENTE e o BACKFILL dá o par a quem
 #    já tinha PV pelo vínculo (o seed da fase 3: 3001 → push com PID 9001)
 eq "E20 antes do re-apply, a reserva legada nao tem par" "$(par "$CK_VIVO")" "NULL/NULL"
-if P -q -f "$MIG31" >/dev/null 2>&1; then ok "E20 re-aplicar a 3.1 nao quebra (idempotente)"
+if P -q -1 -f "$MIG31" >/dev/null 2>&1; then ok "E20 re-aplicar a 3.1 nao quebra (idempotente)"
 else bad "E20 re-aplicar a 3.1 FALHOU"; fi
 eq "E20 backfill deu o par a reserva legada" "$(par "$CK_VIVO")" "oben/9001"
 eq "E20 backfill nao tocou a ja carimbada (write-once intacto)" "$(par "$CK_E6")" "oben/9106"
+
+# ── P1/P2 — as defesas do APPLY (provadas pelo ESTADO, não pela mensagem) ──
+# P1: uma cópia da migration com GRANT acidental a authenticated tem de ABORTAR
+#     na PÓS — e, numa transação só, nada do que veio antes fica gravado.
+TMPMIG="$(mktemp -t atp31-sabotada.XXXXXX)"
+sed 's/^REVOKE ALL ON FUNCTION public.atp_confirmar_pv(uuid, text, bigint, text, jsonb, jsonb) FROM authenticated;$/GRANT EXECUTE ON FUNCTION public.atp_confirmar_pv(uuid, text, bigint, text, jsonb, jsonb) TO authenticated;/' \
+  "$MIG31" > "$TMPMIG"
+if cmp -s "$TMPMIG" "$MIG31"; then bad "P1 a copia sabotada NAO mudou (sed nao casou) — teste invalido"
+elif P -q -1 -f "$TMPMIG" >/dev/null 2>&1; then bad "P1 a POS deixou passar GRANT a authenticated"
+else ok "P1 GRANT acidental a authenticated: o apply ABORTA na POS"; fi
+eq "P1 e nada ficou concedido (transacao unica voltou inteira)" \
+   "$(Pq -c "SELECT has_function_privilege('authenticated','public.atp_confirmar_pv(uuid,text,bigint,text,jsonb,jsonb)','EXECUTE')::text")" "false"
+rm -f "$TMPMIG"
+
+# P2: outra sessão recriou o cálculo DEPOIS do pré-voo ⇒ a PRE aborta e o corpo
+#     dela SOBREVIVE (CREATE OR REPLACE às cegas o apagaria em silêncio).
+P -q <<'SQL'
+CREATE TABLE public._harness_p2 AS
+  SELECT pg_get_functiondef('private.atp_disponivel(text,bigint,uuid)'::regprocedure) AS def;
+DO $$ BEGIN
+  EXECUTE replace((SELECT def FROM public._harness_p2), 'SELECT COALESCE(sum(r.quantidade), 0) AS reservado',
+                  'SELECT /* OUTRA_SESSAO_P2 */ COALESCE(sum(r.quantidade), 0) AS reservado');
+END $$;
+SQL
+MD5_OUTRA=$(Pq -c "SELECT md5(prosrc) FROM pg_proc WHERE oid = 'private.atp_disponivel(text,bigint,uuid)'::regprocedure")
+if P -q -1 -f "$MIG31" >/dev/null 2>&1; then bad "P2 a PRE deixou sobrescrever o corpo de outra sessao"
+else ok "P2 corpo vivo desconhecido: o apply ABORTA na PRE"; fi
+eq "P2 e o corpo da outra sessao SOBREVIVEU" \
+   "$(Pq -c "SELECT md5(prosrc) FROM pg_proc WHERE oid = 'private.atp_disponivel(text,bigint,uuid)'::regprocedure")" "$MD5_OUTRA"
+# devolve o corpo desta migration (o validador da ZONA 8 mede o estado entregue)
+P -q -c "DO \$\$ BEGIN EXECUTE (SELECT def FROM public._harness_p2); END \$\$;"
+P -q -c "DROP TABLE public._harness_p2"
+eq "P2 restaurado: o corpo vivo voltou a ser o desta migration" \
+   "$(Pq -c "SELECT md5(prosrc) FROM pg_proc WHERE oid = 'private.atp_disponivel(text,bigint,uuid)'::regprocedure")" "af3d5d4d97c4a47977c030daab87c385"
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ZONA 8 — O VALIDADOR PÓS-APPLY TAMBÉM É CÓDIGO, E TAMBÉM MENTE

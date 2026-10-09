@@ -70,6 +70,61 @@
 -- ============================================================
 
 -- ────────────────────────────────────────────────────────────
+-- 0) TRAVA → PRE (molde "recriar objeto VIVO", lovable-db-operator/sql-house-style).
+--    Este arquivo recria 4 funções que JÁ estão em prod. A TRAVA (ALTER sem efeito,
+--    na volatilidade VIVA) prende cada uma ANTES da leitura, até o COMMIT; a PRE
+--    exige que o corpo vivo seja o predecessor revisado (md5 do prosrc medido em
+--    prod em 2026-10-09 = o da fase 3) ou ESTE (re-aplicação). Corpo vivo
+--    diferente = outra sessão mexeu depois do pré-voo ⇒ ABORTA em vez de apagar.
+--    No SQL Editor este arquivo vai entre BEGIN; … COMMIT; (a trava só vale numa
+--    transação).
+-- ────────────────────────────────────────────────────────────
+DO $trava$
+BEGIN
+  IF to_regprocedure('private.atp_disponivel(text,bigint,uuid)') IS NOT NULL THEN
+    ALTER FUNCTION private.atp_disponivel(text, bigint, uuid) STABLE;
+  END IF;
+  IF to_regprocedure('private.expirar_reservas_vencidas_job()') IS NOT NULL THEN
+    ALTER FUNCTION private.expirar_reservas_vencidas_job() VOLATILE;
+  END IF;
+  IF to_regprocedure('private.atp_reconciliar_job()') IS NOT NULL THEN
+    ALTER FUNCTION private.atp_reconciliar_job() VOLATILE;
+  END IF;
+  IF to_regprocedure('public.atp_reservas_pendentes(integer)') IS NOT NULL THEN
+    ALTER FUNCTION public.atp_reservas_pendentes(integer) STABLE;
+  END IF;
+END
+$trava$;
+
+DO $pre$
+DECLARE
+  r record;
+BEGIN
+  FOR r IN
+    SELECT x.alvo, x.vivo, x.predecessor, x.este
+      FROM (VALUES
+        ('private.atp_disponivel',
+         (SELECT md5(p.prosrc) FROM pg_catalog.pg_proc p WHERE p.oid = to_regprocedure('private.atp_disponivel(text,bigint,uuid)')),
+         '21431ec7fc0b34ad8e55302a019570eb', 'af3d5d4d97c4a47977c030daab87c385'),
+        ('private.expirar_reservas_vencidas_job',
+         (SELECT md5(p.prosrc) FROM pg_catalog.pg_proc p WHERE p.oid = to_regprocedure('private.expirar_reservas_vencidas_job()')),
+         '1138790b62b561663618c4b38212af96', 'd0c6bcbde087d92beb7f892e234b23e5'),
+        ('private.atp_reconciliar_job',
+         (SELECT md5(p.prosrc) FROM pg_catalog.pg_proc p WHERE p.oid = to_regprocedure('private.atp_reconciliar_job()')),
+         'e88388375c984eeb0daeee93c92d89d3', '7078a1aaaef5544018bf7041c779a9eb'),
+        ('public.atp_reservas_pendentes',
+         (SELECT md5(p.prosrc) FROM pg_catalog.pg_proc p WHERE p.oid = to_regprocedure('public.atp_reservas_pendentes(integer)')),
+         'e9871ba3d67e65fbe4c09f7dad065cd3', '3b7d1bd32e32194b0dd1d168511f24a5')
+      ) AS x(alvo, vivo, predecessor, este)
+  LOOP
+    IF r.vivo IS NULL OR r.vivo NOT IN (r.predecessor, r.este) THEN
+      RAISE EXCEPTION 'PRE FALHOU: % vivo (md5 %) não é o da fase 3 nem o desta migration — alguém o recriou depois do pré-voo de 2026-10-09; NÃO sobrescrever sem revisar', r.alvo, r.vivo;
+    END IF;
+  END LOOP;
+END
+$pre$;
+
+-- ────────────────────────────────────────────────────────────
 -- 1) O par próprio (sobrevive ao DELETE da linha push)
 -- ────────────────────────────────────────────────────────────
 ALTER TABLE public.estoque_reservas
@@ -675,3 +730,59 @@ REVOKE ALL ON FUNCTION public.atp_confirmar_pv(uuid, text, bigint, text, jsonb, 
 REVOKE ALL ON FUNCTION public.atp_confirmar_pv(uuid, text, bigint, text, jsonb, jsonb) FROM anon;
 REVOKE ALL ON FUNCTION public.atp_confirmar_pv(uuid, text, bigint, text, jsonb, jsonb) FROM authenticated;
 GRANT EXECUTE ON FUNCTION public.atp_confirmar_pv(uuid, text, bigint, text, jsonb, jsonb) TO service_role;
+
+-- ────────────────────────────────────────────────────────────
+-- 10) PÓS — a migration não termina em silêncio se algo não pegou. Régua
+--     ESTRUTURAL (a do validador), não md5: prova o estado, não o byte.
+--     Inclui os PRIVILÉGIOS: um GRANT errado aqui aborta o apply inteiro.
+-- ────────────────────────────────────────────────────────────
+DO $pos$
+DECLARE
+  v_cpv oid := to_regprocedure('public.atp_confirmar_pv(uuid,text,bigint,text,jsonb,jsonb)');
+  v_pend oid := to_regprocedure('public.atp_reservas_pendentes(integer)');
+BEGIN
+  IF (SELECT count(*) FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'estoque_reservas'
+         AND column_name IN ('omie_pedido_id', 'omie_account')) <> 2 THEN
+    RAISE EXCEPTION 'POS FALHOU: estoque_reservas sem o par (omie_account, omie_pedido_id)';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conrelid = 'public.estoque_reservas'::regclass
+                    AND conname = 'estoque_reservas_pv_par_check' AND convalidated) THEN
+    RAISE EXCEPTION 'POS FALHOU: CHECK do par ausente ou não validado';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger
+                  WHERE tgrelid = 'public.estoque_reservas'::regclass
+                    AND tgname = 'trg_estoque_reservas_pv_write_once' AND tgenabled <> 'D') THEN
+    RAISE EXCEPTION 'POS FALHOU: trigger write-once ausente ou desligado — o elo poderia ser apagado';
+  END IF;
+  IF v_cpv IS NULL THEN
+    RAISE EXCEPTION 'POS FALHOU: public.atp_confirmar_pv ausente — o edge cairia no write-back legado';
+  END IF;
+  IF NOT has_function_privilege('service_role', v_cpv, 'EXECUTE') THEN
+    RAISE EXCEPTION 'POS FALHOU: service_role sem EXECUTE em atp_confirmar_pv — o write-back quebraria DEPOIS do PV criado';
+  END IF;
+  IF has_function_privilege('anon', v_cpv, 'EXECUTE')
+     OR has_function_privilege('authenticated', v_cpv, 'EXECUTE') THEN
+    RAISE EXCEPTION 'POS FALHOU: atp_confirmar_pv executável por anon/authenticated';
+  END IF;
+  IF v_pend IS NULL OR has_function_privilege('anon', v_pend, 'EXECUTE') THEN
+    RAISE EXCEPTION 'POS FALHOU: atp_reservas_pendentes ausente ou aberta a anon (o DROP+CREATE reseta o ACL)';
+  END IF;
+  IF pg_get_function_result(v_pend) !~ 'saldo_embute_faturamento boolean' THEN
+    RAISE EXCEPTION 'POS FALHOU: a fila humana não expõe o sinal saldo_embute_faturamento';
+  END IF;
+  IF (SELECT p.prosrc FROM pg_proc p WHERE p.oid = to_regprocedure('private.atp_disponivel(text,bigint,uuid)'))
+     !~ 'r\.omie_pedido_id IS NOT NULL' THEN
+    RAISE EXCEPTION 'POS FALHOU: o cálculo não reconhece o par próprio';
+  END IF;
+  IF (SELECT p.prosrc FROM pg_proc p WHERE p.oid = to_regprocedure('private.expirar_reservas_vencidas_job()'))
+     !~ 'r\.omie_pedido_id IS NULL' THEN
+    RAISE EXCEPTION 'POS FALHOU: o job de TTL não reconhece o par próprio';
+  END IF;
+  IF (SELECT p.prosrc FROM pg_proc p WHERE p.oid = to_regprocedure('private.atp_reconciliar_job()'))
+     !~ 'atp_canonico_da_reserva' THEN
+    RAISE EXCEPTION 'POS FALHOU: a reconciliação não acha a canônica pela reserva';
+  END IF;
+END
+$pos$;

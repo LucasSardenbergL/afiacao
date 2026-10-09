@@ -82,7 +82,11 @@ falsifica() {
   echo "── $id [$qual] — $desc"
 
   restaura
-  perl -0pi -e "s/\Q${busca}\E/${troca}/" "$mig"
+  if [ "$busca" = "@@FIM@@" ]; then
+    printf '\n%s\n' "$troca" >> "$mig"      # sabotagem por ACRÉSCIMO no fim do arquivo
+  else
+    perl -0pi -e "s/\Q${busca}\E/${troca}/" "$mig"
+  fi
 
   # (a) a sabotagem aplicou? Sem isto, "não reproduziu" e "o padrão não casou" são
   #     o mesmo output — e o segundo convida a enfraquecer o assert.
@@ -309,9 +313,12 @@ falsifica MIG31 F17 "RPC sem gate proprio de service_role" \
   '  IF false THEN' \
   "E17 esperava 42501 do gate proprio"
 
-# F18 — GRANT acidental a authenticated (o assert de CATÁLOGO, não o do gate)
-falsifica MIG31 F18 "authenticated ganha EXECUTE na RPC" \
-  'REVOKE ALL ON FUNCTION public.atp_confirmar_pv(uuid, text, bigint, text, jsonb, jsonb) FROM authenticated;' \
+# F18 — GRANT acidental a authenticated DEPOIS da migration (outra migration, um
+#       clique no painel). Acrescentado APÓS a PÓS de propósito: dentro do arquivo a
+#       PÓS abortaria o apply (é a P1) — aqui se prova a OUTRA camada, o assert de
+#       CATÁLOGO, sozinha (uma camada por vez).
+falsifica MIG31 F18 "authenticated ganha EXECUTE na RPC (depois da migration)" \
+  '@@FIM@@' \
   'GRANT EXECUTE ON FUNCTION public.atp_confirmar_pv(uuid, text, bigint, text, jsonb, jsonb) TO authenticated;' \
   'GRANT EXECUTE ON FUNCTION public.atp_confirmar_pv(uuid, text, bigint, text, jsonb, jsonb) TO authenticated;' \
   "E15 authenticated sem EXECUTE em atp_confirmar_pv (catalogo)"
@@ -330,6 +337,22 @@ falsifica MIG31 F21 "sinal da fila sem a margem de 1h" \
   "r.faturamento_observado_em - interval '1 hour'" \
   "r.faturamento_observado_em - interval '1 hour'" \
   "S2 coletado 30min depois do faturamento: AINDA NAO prova (dentro da margem)"
+
+# F22 — a PÓS perde o check de privilégio: o GRANT acidental DENTRO do arquivo passa
+falsifica MIG31 F22 "POS sem o check de privilegio de authenticated" \
+  "     OR has_function_privilege('authenticated', v_cpv, 'EXECUTE') THEN" \
+  "     OR false THEN" \
+  "     OR false THEN" \
+  "P1 a POS deixou passar GRANT a authenticated" \
+  "P1 e nada ficou concedido (transacao unica voltou inteira)"
+
+# F23 — a PRE aceita qualquer corpo vivo: o apply apaga o que outra sessão aplicou
+falsifica MIG31 F23 "PRE anti-deriva aceita qualquer corpo" \
+  "    IF r.vivo IS NULL OR r.vivo NOT IN (r.predecessor, r.este) THEN" \
+  "    IF r.vivo IS NULL OR false THEN" \
+  "IF r.vivo IS NULL OR false THEN" \
+  "P2 a PRE deixou sobrescrever o corpo de outra sessao" \
+  "P2 e o corpo da outra sessao SOBREVIVEU"
 
 echo
 echo "=== FALSIFICACAO: $VALIDAS validas / $SEM_DENTE sem dente / $INVALIDAS invalidas ==="
