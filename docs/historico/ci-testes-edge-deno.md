@@ -931,10 +931,10 @@ mensagens, e sem mensagem não há como ver que 14 erros são o mesmo.
 
 ## Números (medidos 2026-10-09, base `cbd6a2bd0`)
 
-- Tolerados **101 → 75**. `TS2345` 38→17 · `TS2353` 7→1 · `TS2561` 1→0 (as duas últimas eram cascata:
+- Tolerados **101 → 73**. `TS2345` 38→17 · `TS2353` 7→1 · `TS2561` 1→0 (as duas últimas eram cascata:
   com o client tipado `<unknown,never>`, `.insert/.update` recebiam `never`). Demais classes idênticas.
 - A correção tornou **2 `@ts-expect-error` obsoletos** (`fin-cashflow-engine`, `fin_alertas.update`/
-  `.dismiss` — o 3º, do `.insert`, segue necessário): `TS2578` subiu 13→15 e voltou a 13 ao removê-los.
+  `.dismiss` — o 3º, do `.insert`, segue necessário): `TS2578` subiu 13→15 e voltou a 13 ao removê-los (75 → 73).
   Corrigir tipo **revela** expect-error morto — conte o `TS2578` no depois, não só a classe-alvo.
 - **Runtime byte-idêntico:** `bun build --no-bundle` dos 11 arquivos antes/depois, `diff -r` exit 0
   (são 6 edges money-path: `fin-cashflow-engine`, `fin-funding`, `fin-regime-tributario`,
