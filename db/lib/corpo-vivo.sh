@@ -72,7 +72,17 @@
 # migration da cadeia mede o que ela faz com o ACL de prod (CREATE OR REPLACE preserva; DROP+CREATE
 # volta ao default de PROD, que dá EXECUTE explícito ao anon — não ao default do PG, que só tem PUBLIC).
 
-CV_INICIO=20260905090000   # 1ª migration fora do re-dump de 2026-09-05 (1851416fc); medido em 2026-09-30
+# Re-dump de 2026-10-08 (461f2725d): MEDIDO contra prod em 2026-10-09 que ele absorveu TODAS as migrations do
+# repo — as 21 ≥ 20260930 pela auditoria (🟡 aplicado) e as 4 que ela não rastreia (ALTER/GRANT/cron) pelo
+# catálogo: default de route_visits, attacl de sales_orders, colunas de sku_items_sync_controle, schedule do
+# omie-sync-estoque-diario. Sem migration fora do dump, o início é a MAIS NOVA do repo (20261008010000), que
+# está em prod e só mexe em cron — não toca objeto guardado, então não entra na cadeia e a cadeia sai vazia.
+# Não pode ser uma versão-sentinela: `cv_cadeia` exige que o início EXISTA em supabase/migrations (guarda
+# contra typo; medido — 20261008010001 abortou as duas provas). Legítimo aqui (ver acima), ao contrário do dhv, cujo início NÃO
+# foi avançado: lá a cadeia vazia é defeito e as provas dele seguiram verdes sobre o snapshot novo.
+# Antes: 20260905090000 — e com ela a cadeia re-aplicava a 20260929000234 sobre um snapshot que já tinha a
+# 20260930220148, e o PRE da 0929 derrubava fornecedores-classificacao e melhorias-rpcs no PR do re-dump.
+CV_INICIO=20261008010000
 
 # _cv_alternativas <nome…> — "a|b|c" para o regex; vazio se a lista for vazia (o chamador pula o ramo:
 # alternação vazia casaria qualquer migration).

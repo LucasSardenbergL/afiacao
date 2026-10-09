@@ -188,6 +188,16 @@
       "md5": "4b16bbb469c7b4dc6f688df58e191d72",
       "md5Tokens": "3c5d0fb742e9e8032abada8879b4347c",
       "desde": "2026-10-07"
+    },
+    {
+      "funcao": "pedido_total_liquido_converter",
+      "identidade": "boolean,timestamp with time zone,text[],date,date,integer,boolean",
+      "classe": "EDICAO_MANUAL",
+      "esperadaNoAceite": "20260914193000_pedido_total_liquido_acervo_mes_entre_contas.sql",
+      "motivo": "Aplicada em prod pelo ENVELOPE db/2026-10-05-pedido-total-liquido-excecao.sql (#2818, money-path, aplicação autorizada pelo founder em 2026-10-08): substituição PROGRAMÁTICA ancorada (pg_get_functiondef + replace + EXECUTE) que faz o classificador ignorar os pedidos de public.pedido_total_liquido_excecao e expõe excecoes_ativas no relatório. Não há literal do corpo em nenhum arquivo — por desenho: re-colar o corpo grande reverteria hardening posterior em silêncio. Provado em PG17 (db/test-pedido-total-liquido-excecao.sh, 21 asserts + 5 sabotagens no assert declarado) e ensaiado em prod antes do apply.",
+      "md5": "4d88eebd9dea026346d706befca0fced",
+      "md5Tokens": "d5e193d18d19c8d10b802aaf10bba8f1",
+      "desde": "2026-10-09"
     }
   ]
 }

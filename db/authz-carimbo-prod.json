@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-10-08T01:27:33.865Z",
-  "sourceHead": "9c0e7690f8beae904bd0d97576b4d6ef4f98fbef",
+  "medidoEm": "2026-10-09T11:46:01.795Z",
+  "sourceHead": "971e2e0875908f991a369681d3b648d0824bfeab",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -56,19 +56,12 @@
     },
     "corpo": {
       "script": "deriva:corpo:prod",
-      "exit": 1,
-      "resumo": "deriva-corpo — 1 divergência(s) em prod (1 SEM_PAR) — ver as linhas ❌",
-      "denominador": "🔎 deriva-corpo — 324 identidade(s) conferida(s) · 16 aposentada(s) · ref origin/main@11906fd82 (fetch ok) · prod 2026-10-08 01:28:14.268287Z",
-      "contratoFingerprint": "c75d2e1d87bd8aa9123fdedb2b38aba93387ab7ba028e61a17857ee7912a09e2",
-      "auditorFingerprint": "519b7c83bf1c4368b2fb52f6c9c426c1bb25b6d61acb67ce8636362199813067",
-      "achados": [
-        {
-          "id": "d3281ac4664a35c5",
-          "linha": "❌ [SEM_PAR] pedido_total_liquido_converter(boolean,timestamp with time zone,text[],date,date,integer,boolean): corpo que nenhuma das 2 versão(ões) commitadas explica — edição manual, ou DDL aplicada ANTES do merge (compare com as migrations das branches abertas) — último CREATE: 20260914193000_pedido_total_liquido_acervo_mes_entre_contas.sql (xmin 11457657)",
-          "primeiraVez": "2026-10-08",
-          "ultimaVez": "2026-10-08"
-        }
-      ]
+      "exit": 0,
+      "resumo": "✅ deriva-corpo — 324 identidade(s) batem com o repo (247 em dia, 69 só cosméticas, 7 aceitas na baseline) e 16 aposentada(s) estão ausentes",
+      "denominador": "🔎 deriva-corpo — 324 identidade(s) conferida(s) · 16 aposentada(s) · ref origin/main@062142076 (fetch ok) · prod 2026-10-09 11:46:27.78905Z",
+      "contratoFingerprint": "f8f1ee0958bfef8bb468bb981017cce7ba9b236f51bdb80cd9344b50f3e06a83",
+      "auditorFingerprint": "7d2c73307092070b870b5d4c74479f64404d8cfe610baa160de10e967646e91b",
+      "achados": []
     }
   }
 }

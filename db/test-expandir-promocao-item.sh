@@ -40,7 +40,13 @@ MIG="$REPO_ROOT/supabase/migrations/20260930220148_expandir_promocao_item_overlo
 # O corpo de PROD do (bigint,numeric), de listar_skus e do helper é o desta migration (aplicada em
 # prod em 2026-09-30); o do (bigint) só existe no snapshot.
 MIG_LIKE="$REPO_ROOT/supabase/migrations/20260929000234_padrao_like_contem_escapa_curinga.sql"
-SNAP="$REPO_ROOT/supabase/schema-snapshot.sql"
+# O SNAPSHOT É O DE 2026-09-05 (commit 1851416fc), lido do histórico — não o vivo. Esta prova prova a
+# TRANSFORMAÇÃO que a migration dela faz sobre o prod de ANTES; o re-dump de 2026-10-08 absorveu a
+# migration, e o snapshot vivo passou a ser o DEPOIS (no-op para a migration, e o pré-estado que ela
+# transforma sumiu). O pré-estado de migration já absorvida é histórico e não muda mais: tirá-lo do
+# snapshot vivo condena a prova a morrer em todo re-dump. Exige o histórico do git (o job `provas-sql`
+# faz checkout com fetch-depth: 0); sem ele, INFRA alto — nunca um snapshot errado em silêncio.
+SNAP_COMMIT=1851416fc
 # Denominador: C1-C5 · A1-A6 · M1a M1b M2 M3 M4 M5 M5c M6 M7a M7b M8-M15 · F1-F12.
 # Menos asserts executados é vermelho: FAIL=0 com PASS encolhido é a prova truncada que aprova tudo.
 TOTAL_ESPERADO=41
@@ -153,6 +159,9 @@ SABOTAGEM="${SABOTAGEM:-}"
 . "$REPO_ROOT/db/lib/pg-harness.sh"
 
 TMPD="$(mktemp -d "${TMPDIR:-/tmp}/pgtest-${SLUG}.XXXXXX")"
+SNAP="$TMPD/schema-snapshot-20260905.sql"
+git -C "$REPO_ROOT" show "$SNAP_COMMIT:supabase/schema-snapshot.sql" > "$SNAP" 2>/dev/null \
+  || { echo "INFRA: snapshot de 2026-09-05 ($SNAP_COMMIT) indisponível — o checkout precisa do histórico (fetch-depth: 0)"; exit 1; }
 DATA="$TMPD/data"
 cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$TMPD"; }
 trap cleanup EXIT
