@@ -1,0 +1,83 @@
+# Poder de discriminação da suíte do getFluxoCaixa — o caixa PREVISTO por dia da aba "Fluxo de
+# Caixa" de /financeiro, exibido ao dono como número firme. Nasceu das seis sabotagens que a revisão
+# Codex do #2458 achou passando 17/17, mais os sobreviventes da mutação da 1ª rodada Codex de
+# 2026-09-10 (empresa, janela, ordem, centavos, status desconhecido/nulo).
+#
+# A regra de STATUS é assimétrica por direção (decisão do founder, 2026-09-10): entrada (CR) só com
+# os 3 status NATIVOS do Omie; saída (CP) com o aberto canônico de `isOpenTitleStatus`. Status
+# ambíguo nunca infla o caixa projetado. As mutações S7 sabotam cada lado e cada status.
+#
+# Linhas de query do CR e do CP são idênticas: as mutações de bloco usam a flag `$f`, ligada na
+# âncora do bloco ("CR do fluxo de caixa" / "CP do fluxo de caixa") e desligada no fim dele —
+# como no desconto-omie.mut. Sem ela o padrão casaria 2 linhas e o mutcheck o daria INVÁLIDO.
+#
+# Fora deste contrato (cobertos pela falsificação estrita do PR, que casa título + mensagem):
+#   - `saldo || valor_documento` COM a coluna de volta no select (2 linhas); aqui vai a forma de 1
+#     linha, que no teste vira NaN e também reprova;
+#   - piso zero aplicado na soma do DIA em vez de por título (2 linhas);
+#   - remover o `.range()`: `buscarTodasPaginas` não tem guard de página que nunca encolhe, então
+#     o laço não termina — travamento, não vermelho limpo.
+#
+# O compila-check padrão (`bun build` com bundle) empacota a árvore inteira do serviço e passa de
+# 2 minutos por mutante; aqui basta a SINTAXE do arquivo, que é o que o compila-check mede.
+# @src: src/services/financeiroService.ts
+# @test: src/services/__tests__/getFluxoCaixa.test.ts
+# @compile_cmd: bun build --no-bundle --target node --outfile /dev/null
+# Rode: scripts/mutcheck.sh src/services/financeiroService.ts src/services/__tests__/getFluxoCaixa.test.ts scripts/mutcheck.d/fluxo-caixa-previsto.mut
+
+# ── S1: saldo ZERO legítimo tratado como ausência (a regressão mais provável do #2458) ──
+PEGA      | S1 CR: saldo zero cai no valor_documento    | s/day\.entradas_previstas \+= Math\.max\(0, cr\.saldo \?\? 0\);/day.entradas_previstas += Math.max(0, cr.saldo || cr.valor_documento);/
+PEGA      | S1 CP: saldo zero cai no valor_documento    | s/day\.saidas_previstas \+= Math\.max\(0, cp\.saldo \?\? 0\);/day.saidas_previstas += Math.max(0, cp.saldo || cp.valor_documento);/
+
+# ── S2/S3: o filtro de status some ou encolhe ──
+PEGA      | S2 CR: sem filtro de status                 | s/if \(cr\.status_titulo != null && STATUS_ENTRADA_PREVISTA\.has\(cr\.status_titulo\)\) \{/if (true) {/
+PEGA      | S2 CP: sem filtro de status                 | s/if \(isOpenTitleStatus\(cp\.status_titulo\)\) \{/if (true) {/
+PEGA      | S3 CR: só 'A VENCER'                        | s/if \(cr\.status_titulo != null && STATUS_ENTRADA_PREVISTA\.has\(cr\.status_titulo\)\) \{/if (cr.status_titulo === 'A VENCER') {/
+PEGA      | S3 CP: só 'A VENCER'                        | s/if \(isOpenTitleStatus\(cp\.status_titulo\)\) \{/if (cp.status_titulo === 'A VENCER') {/
+
+# ── S4/S5: o dinheiro muda de dia, ou o dia guarda só o último título ──
+PEGA      | S4 CR: soma no início da janela             | s/const day = ensureDay\(cr\.data_vencimento\);/const day = ensureDay(dataInicio);/
+PEGA      | S4 CP: soma no início da janela             | s/const day = ensureDay\(cp\.data_vencimento\);/const day = ensureDay(dataInicio);/
+PEGA      | S5 CR: = no lugar de +=                     | s/day\.entradas_previstas \+= Math\.max/day.entradas_previstas = Math.max/
+PEGA      | S5 CP: = no lugar de +=                     | s/day\.saidas_previstas \+= Math\.max/day.saidas_previstas = Math.max/
+
+# ── S6: `saldo_previsto` não tem leitor em produção (FluxoCaixaTab e agruparSemanasFluxo leem
+#    entradas/saídas e ancoram no saldo de hoje). Sobrevive de propósito: fixá-lo por teste
+#    perpetuaria um acumulado sem âncora — a classe do #2459 esperando um consumidor novo.
+#    Remover o campo é decisão à parte. Se isto passar a PEGAR, alguém começou a lê-lo.
+SOBREVIVE | S6: saldo_previsto zerado (campo sem leitor) | s/day\.saldo_previsto = acumPrevisto;/day.saldo_previsto = 0;/
+
+# ── S7: a assimetria, lado a lado e status a status ──
+PEGA      | S7 CR: aberto canônico (6) na entrada        | s/if \(cr\.status_titulo != null && STATUS_ENTRADA_PREVISTA\.has\(cr\.status_titulo\)\) \{/if (isOpenTitleStatus(cr.status_titulo)) {/
+PEGA      | S7 CR: 'ABERTO' admitido na entrada          | s/new Set\(\['A VENCER', 'ATRASADO', 'VENCE HOJE'\]\)/new Set(['A VENCER', 'ATRASADO', 'VENCE HOJE', 'ABERTO'])/
+PEGA      | S7 CR: 'VENCIDO' admitido na entrada         | s/new Set\(\['A VENCER', 'ATRASADO', 'VENCE HOJE'\]\)/new Set(['A VENCER', 'ATRASADO', 'VENCE HOJE', 'VENCIDO'])/
+PEGA      | S7 CR: 'PARCIAL' admitido na entrada         | s/new Set\(\['A VENCER', 'ATRASADO', 'VENCE HOJE'\]\)/new Set(['A VENCER', 'ATRASADO', 'VENCE HOJE', 'PARCIAL'])/
+PEGA      | S7 CP: de volta à lista curta                | s/if \(isOpenTitleStatus\(cp\.status_titulo\)\) \{/if (cp.status_titulo && ['A VENCER', 'ATRASADO', 'VENCE HOJE'].includes(cp.status_titulo)) {/
+PEGA      | S7 CP: 'ABERTO' fora da saída                | s/if \(isOpenTitleStatus\(cp\.status_titulo\)\) \{/if (isOpenTitleStatus(cp.status_titulo) && cp.status_titulo !== 'ABERTO') {/
+PEGA      | S7 CP: 'VENCIDO' fora da saída               | s/if \(isOpenTitleStatus\(cp\.status_titulo\)\) \{/if (isOpenTitleStatus(cp.status_titulo) && cp.status_titulo !== 'VENCIDO') {/
+PEGA      | S7 CP: 'PARCIAL' fora da saída               | s/if \(isOpenTitleStatus\(cp\.status_titulo\)\) \{/if (isOpenTitleStatus(cp.status_titulo) && cp.status_titulo !== 'PARCIAL') {/
+
+# ── S8: saldo negativo volta a inverter a direção do dinheiro ──
+PEGA      | S8 CR: sem piso zero por título              | s/day\.entradas_previstas \+= Math\.max\(0, cr\.saldo \?\? 0\);/day.entradas_previstas += cr.saldo ?? 0;/
+PEGA      | S8 CP: sem piso zero por título              | s/day\.saidas_previstas \+= Math\.max\(0, cp\.saldo \?\? 0\);/day.saidas_previstas += cp.saldo ?? 0;/
+
+# ── Empresa: caixa é por CNPJ, não fungível ──
+PEGA      | empresa CR: sem filtro                       | $f=1 if /CR do fluxo de caixa/; $f=0 if /CP do fluxo de caixa/; s/if \(company !== 'all'\) q = q\.eq\("company", company\);// if $f
+PEGA      | empresa CP: sem filtro                       | $f=1 if /CP do fluxo de caixa/; $f=0 if /^  \]\);/; s/if \(company !== 'all'\) q = q\.eq\("company", company\);// if $f
+PEGA      | empresa realizado: sem filtro                | s/if \(company !== 'all'\) q = q\.eq\('company', company\);//
+
+# ── Janela: inclusiva nas duas pontas, nada de fora ──
+PEGA      | janela CR: sem limite inferior               | $f=1 if /CR do fluxo de caixa/; $f=0 if /CP do fluxo de caixa/; s/\.gte\("data_vencimento", dataInicio\)// if $f
+PEGA      | janela CR: sem limite superior               | $f=1 if /CR do fluxo de caixa/; $f=0 if /CP do fluxo de caixa/; s/\.lte\("data_vencimento", dataFim\);/;/ if $f
+PEGA      | janela CP: sem limite inferior               | $f=1 if /CP do fluxo de caixa/; $f=0 if /^  \]\);/; s/\.gte\("data_vencimento", dataInicio\)// if $f
+PEGA      | janela CP: sem limite superior               | $f=1 if /CP do fluxo de caixa/; $f=0 if /^  \]\);/; s/\.lte\("data_vencimento", dataFim\);/;/ if $f
+PEGA      | janela realizado: sem limite inferior        | s/\.gte\('data_movimento', dataInicio\)//
+PEGA      | janela realizado: sem limite superior        | s/\.lte\('data_movimento', dataFim\);/;/
+
+# ── Ordem total acima da capa de 1.000 (valor distinto por título: pulo/duplicata desloca a soma) ──
+PEGA      | ordem CR: sem .order("id")                   | $f=1 if /CR do fluxo de caixa/; $f=0 if /CP do fluxo de caixa/; s/return q\.order\("id"\)\.range\(from, to\);/return q.range(from, to);/ if $f
+PEGA      | ordem CP: sem .order("id")                   | $f=1 if /CP do fluxo de caixa/; $f=0 if /^  \]\);/; s/return q\.order\("id"\)\.range\(from, to\);/return q.range(from, to);/ if $f
+
+# ── Centavos: nenhum arredondamento no caminho ──
+PEGA      | centavos CR: trunca                          | s/Math\.max\(0, cr\.saldo \?\? 0\)/Math.max(0, Math.trunc(cr.saldo ?? 0))/
+PEGA      | centavos CP: trunca                          | s/Math\.max\(0, cp\.saldo \?\? 0\)/Math.max(0, Math.trunc(cp.saldo ?? 0))/
