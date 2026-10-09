@@ -2321,7 +2321,9 @@ export type Database = {
           faturamento_observado_em: string | null
           id: string
           motivo: string | null
+          omie_account: string | null
           omie_codigo_produto: number
+          omie_pedido_id: number | null
           pool: string
           quantidade: number
           sales_order_id: string | null
@@ -2336,7 +2338,9 @@ export type Database = {
           faturamento_observado_em?: string | null
           id?: string
           motivo?: string | null
+          omie_account?: string | null
           omie_codigo_produto: number
+          omie_pedido_id?: number | null
           pool: string
           quantidade: number
           sales_order_id?: string | null
@@ -2351,7 +2355,9 @@ export type Database = {
           faturamento_observado_em?: string | null
           id?: string
           motivo?: string | null
+          omie_account?: string | null
           omie_codigo_produto?: number
+          omie_pedido_id?: number | null
           pool?: string
           quantidade?: number
           sales_order_id?: string | null
@@ -19459,6 +19465,17 @@ export type Database = {
         }
         Returns: string
       }
+      atp_confirmar_pv: {
+        Args: {
+          p_account: string
+          p_omie_numero_pedido: string
+          p_omie_payload: Json
+          p_omie_pedido_id: number
+          p_omie_response: Json
+          p_sales_order_id: string
+        }
+        Returns: Json
+      }
       atp_consultar: {
         Args: { p_pool: string; p_skus: number[] }
         Returns: {
@@ -19489,6 +19506,8 @@ export type Database = {
           omie_pedido_id: number
           quantidade: number
           reserva_id: string
+          saldo_embute_faturamento: boolean
+          saldo_synced_at: string
           sales_order_id: string
           status_canonico: string
           status_vinculado: string
