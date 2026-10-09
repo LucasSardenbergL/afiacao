@@ -2,7 +2,7 @@
 // PUROS + HOFs testáveis aqui; a glue Supabase é anexada na 2ª metade (Task 2).
 // Spec: docs/superpowers/specs/2026-06-11-clientes-escopo-carteira-design.md
 import { supabase } from '@/integrations/supabase/client';
-import { margemConhecida, valorMedido } from '@/lib/scoring/margin';
+import { coberturaCustoCliente, margemConhecida, valorMedido } from '@/lib/scoring/margin';
 import { churnConhecido } from '@/lib/scoring/churn';
 import type { Customer, ClientScore } from '@/components/adminCustomers/types';
 
@@ -173,12 +173,13 @@ export async function fetchScoresPorCustomer(ids: string[]): Promise<Map<string,
   const rows = await coletarEmLotes(ids, LOTE_IN, async (lote) => {
     const { data, error } = await supabase
       .from('farmer_client_scores')
-      .select('customer_user_id, health_score, health_class, churn_risk, expansion_score, priority_score, avg_monthly_spend_180d, days_since_last_purchase, category_count, gross_margin_pct, avg_repurchase_interval, sales_history_status')
+      .select('customer_user_id, health_score, health_class, churn_risk, expansion_score, priority_score, avg_monthly_spend_180d, days_since_last_purchase, category_count, gross_margin_pct, itens_com_custo, itens_sem_custo, avg_repurchase_interval, sales_history_status')
       .in('customer_user_id', lote);
     if (error) throw error;
     return data ?? [];
   });
   for (const s of rows) {
+    const cobertura = coberturaCustoCliente(s);
     map.set(s.customer_user_id, {
       customer_user_id: s.customer_user_id,
       health_score: s.health_score ?? 0,
@@ -197,6 +198,9 @@ export async function fetchScoresPorCustomer(ids: string[]): Promise<Map<string,
       // Sem `?? 0`: margem ausente tem de chegar como null ao consumidor. Coagir aqui tornaria
       // inertes os guards de quem lê este mapa (a armadilha da "correção só no consumidor").
       gross_margin_pct: margemConhecida(s.gross_margin_pct),
+      // Cobertura de custo (#1567): mesma disciplina — contagem não computada chega como null.
+      itens_com_custo: cobertura.itensComCusto,
+      itens_sem_custo: cobertura.itensSemCusto,
       sales_history_status: s.sales_history_status ?? null,
     });
   }
