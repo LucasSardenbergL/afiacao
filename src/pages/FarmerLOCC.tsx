@@ -9,6 +9,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import {
   Heart, Target, Shield, FlaskConical,
   Phone, Package, Radio, Zap, DollarSign,
+  RefreshCw, Loader2,
 } from 'lucide-react';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { type TabKey } from '@/components/farmer/locc/types';
@@ -24,7 +25,7 @@ const FarmerLOCC = () => {
   const { isStaff, loading: authLoading } = useAuth();
 
   // Only overview-critical hooks at page level
-  const { summary, loading: scoringLoading, calculating: scoringCalc, recalculate, config } = useFarmerScoring();
+  const { summary, clientScores, loading: scoringLoading, calculating: scoringCalc, recalculate, config, erro } = useFarmerScoring();
   const { metrics, loading: metricsLoading } = useFarmerMetrics();
 
   // Track which tabs have been visited (overview is always visited)
@@ -52,6 +53,14 @@ const FarmerLOCC = () => {
   }
 
   if (!isStaff) { navigate('/', { replace: true }); return null; }
+
+  // §7 do money-path: o `summary` é o pior caso da classe porque FABRICA o número explícito —
+  // `useFarmerScoring` tem, literal, `if (clientScores.length === 0) return { avgHealth: 0,
+  // saudavel: 0, … }`. Sob falha de leitura `clientScores === []`, então o Motor de Diagnóstico
+  // exibiria quatro zeros e "Health Score Médio 0" com a barra em 0: números de decisão
+  // inventados por uma falha de transporte (`Number(null) === 0` do CLAUDE.md — ausente ≠ zero).
+  const diagnosticoIndisponivel = !!erro && clientScores.length === 0;
+  const diagnosticoDesatualizado = !!erro && clientScores.length > 0;
 
   return (
     <div className="min-h-screen bg-background pb-24">
@@ -118,13 +127,42 @@ const FarmerLOCC = () => {
 
           {/* ─── OVERVIEW TAB ──────────────────────────────────────── */}
           <TabsContent value="overview" className="space-y-3 mt-3">
-            <OverviewTab
-              summary={summary}
-              metrics={metrics}
-              scoringCalc={scoringCalc}
-              recalculate={recalculate}
-              navigate={navigate}
-            />
+            {diagnosticoIndisponivel ? (
+              <Card role="alert" className="border-status-error/30 bg-status-error/5">
+                <CardContent className="p-4 space-y-3">
+                  <p className="text-sm text-status-error">
+                    Diagnóstico indisponível — a leitura da carteira falhou ({erro}). Nenhum
+                    health score foi estimado; isto não significa carteira sem clientes.
+                  </p>
+                  <Button
+                    variant="outline" size="sm" onClick={recalculate}
+                    disabled={scoringCalc} className="gap-1.5"
+                  >
+                    {scoringCalc ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                    Tentar novamente
+                  </Button>
+                </CardContent>
+              </Card>
+            ) : (
+              <>
+                {diagnosticoDesatualizado && (
+                  <div
+                    role="alert"
+                    className="rounded-lg border border-status-warning/30 bg-status-warning/5 p-3 text-xs text-status-warning"
+                  >
+                    Exibindo a última leitura bem-sucedida — a atualização mais recente falhou
+                    ({erro}). Os números podem estar desatualizados.
+                  </div>
+                )}
+                <OverviewTab
+                  summary={summary}
+                  metrics={metrics}
+                  scoringCalc={scoringCalc}
+                  recalculate={recalculate}
+                  navigate={navigate}
+                />
+              </>
+            )}
           </TabsContent>
 
           {/* ─── EXPERIMENTS TAB ─────────────────────────────────── */}
