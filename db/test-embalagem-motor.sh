@@ -302,9 +302,9 @@ falsify "consolidacao" \
 falsify "greatest-2fontes" \
   's/GREATEST(COALESCE(inv.saldo, 0), COALESCE(sea.estoque_fisico, 0))/COALESCE(sea.estoque_fisico, 0)/g' \
   'conta "'"'"'8689775019'"'"','"'"'12097949925'"'"'"' "0"
-# F3 — [P0-b] em_transito SEM ×fator (galão em voo conta 2 cru, não 8): TRANS recompra
+# F3 — [P0-b] em_transito SEM ×conv (= fator no grupo sem cadastro) (galão em voo conta 2 cru, não 8): TRANS recompra
 falsify "transito-fator" \
-  's/COALESCE(et.qtde, 0) \* e.fator_para_base/COALESCE(et.qtde, 0)/g' \
+  's/COALESCE(et.qtde, 0) \* e.conv/COALESCE(et.qtde, 0)/g' \
   'conta "'"'"'6666666001'"'"','"'"'6666666002'"'"'"' "0"
 # F4 — frescor removido: galão STALE vira elegível e troca
 falsify "frescor" \
@@ -324,7 +324,7 @@ falsify "guard-ancora-galao" \
   'conta "'"'"'4444444001'"'"','"'"'4444444002'"'"'"' "1"
 # F8 — [P1-e] minimo ignorado no galão (zera o piso na branch trocou): MINIMO compra 1 (não 2)
 falsify "minimo-no-galao" \
-  's/COALESCE(b.minimo_forcado_manual, 0)) \/ b.fator_escolhido/0) \/ b.fator_escolhido/' \
+  's/COALESCE(b.minimo_forcado_manual, 0)) \/ b.conv_escolhido/0) \/ b.conv_escolhido/' \
   'campo "qtde_final::int" "3333333002"' "2"
 # F9 — [P1-d] anti-dup ignora o galão escolhido (só âncora): OPORT (galão escolhido em oportunidade) deixa de bloquear
 falsify "oportunidade-escolhido" \
