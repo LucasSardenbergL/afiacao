@@ -908,3 +908,48 @@ Ao mexer em edge, o mínimo passa a ser:
 bun run test:edges && bun run edges:sintaxe && bun run edges:typecheck && heavy bun run test \
   && bun run sonda:fingerprint && bun run sonda:bump <edge>
 ```
+
+# Sequela (2026-10-09): a causa do `SupabaseClient not assignable` era ANOTAÇÃO, não versão
+
+A sequela de 2026-08-07 refutou a hipótese das "6 versões" e deixou a causa como **desconhecida**.
+Medida agora com `edges:typecheck --json`, agrupando o `TS2345` pelo TIPO-ALVO da mensagem (não pelo
+arquivo), as 19 ocorrências de client caíram em **duas** anotações de fronteira:
+
+| Família | Alvo na mensagem | Causa | Ocorrências |
+|---|---|---|---|
+| B | `SupabaseClient<unknown, { PostgrestVersion: string }, never, never, …>` | parâmetro anotado `ReturnType<typeof createClient>` — sem argumento de tipo, o `ReturnType` instancia os genéricos de `createClient` com os defaults `unknown`/`never`, que não aceitam o client real `SupabaseClient<any, "public", …>` | 14 (10 edges) |
+| A | `ClienteRpc` | interface estrutural de `_shared/ia-cota.ts` exigia `Promise`; `.rpc()` devolve um builder **thenable** (`PromiseLike`) | 5 |
+
+Provado num arquivo-sonda descartável antes de editar: controles (`ReturnType`, `Promise`) VERMELHOS,
+hipóteses (`SupabaseClient`, `PromiseLike`) VERDES, na mesma invocação do `deno check`.
+
+**Por que a versão nunca moveria isto:** com uma versão só, o `ReturnType` continua produzindo os
+defaults vazios — o erro é da anotação, não do grafo. E **3 edges já tinham descoberto e corrigido
+isto localmente** (`calculate-scores`, `omie-sync-status-produtos`, `whatsapp-inbound` têm comentário
+explicando o idioma `SupabaseClient`) — a correção nunca se espalhou porque o resumo do gate não guarda
+mensagens, e sem mensagem não há como ver que 14 erros são o mesmo.
+
+## Números (medidos 2026-10-09, base `cbd6a2bd0`)
+
+- Tolerados **101 → 75**. `TS2345` 38→17 · `TS2353` 7→1 · `TS2561` 1→0 (as duas últimas eram cascata:
+  com o client tipado `<unknown,never>`, `.insert/.update` recebiam `never`). Demais classes idênticas.
+- A correção tornou **2 `@ts-expect-error` obsoletos** (`fin-cashflow-engine`, `fin_alertas.update`/
+  `.dismiss` — o 3º, do `.insert`, segue necessário): `TS2578` subiu 13→15 e voltou a 13 ao removê-los.
+  Corrigir tipo **revela** expect-error morto — conte o `TS2578` no depois, não só a classe-alvo.
+- **Runtime byte-idêntico:** `bun build --no-bundle` dos 11 arquivos antes/depois, `diff -r` exit 0
+  (são 6 edges money-path: `fin-cashflow-engine`, `fin-funding`, `fin-regime-tributario`,
+  `omie-financeiro`, `omie-sync-metadados`, `recommend`). Por isso sem PR separado de comportamento e
+  sem mutirão de redeploy: entra no próximo deploy natural de cada edge.
+
+## O que sobra (17 `TS2345`)
+
+Heterogêneos, cada um de causa própria: `string | undefined` → `string` (`analyze-unified-order` ×3,
+`mcp` — auto-gerado, fora), `{}` vindo de `unknown` (`omie-nfe-webhook` ×4, `omie-sync-metadados`,
+`enviar-pedido-portal-sayerlack`), `string` → `OmieAccount` (`omie-analytics-sync` ×3), `never` de
+tabela fora dos tipos gerados (`nvoip-calls`, `scoring-recalc-client`, `omie-financeiro`) e dois de
+forma (`recommend` ×2, `process-recurring-orders`). Vários em money-path — o próximo passo não é
+"mais uma anotação", é um por um com o rigor de `docs/agent/money-path.md`.
+
+**Lição transferível:** dívida de tipo se agrupa pelo **tipo-alvo da mensagem**, não pelo código de
+erro nem pelo arquivo — 14 erros em 10 edges eram UMA linha de anotação repetida. Gate que resume por
+código esconde exatamente esse agrupamento; o `--json` existe para isso.
