@@ -3,11 +3,16 @@
 --
 -- O guard src/lib/reposicao/__tests__/embalagem-motor-paridade.test.ts exige que este arquivo, do CREATE OR
 -- REPLACE até o FIM, seja IGUAL ao trecho da ÚLTIMA migration que recria a função (a que vence em prod).
--- Desde 2026-10-01 essa migration é a 20261001023000_hoje_sp_familia_data_ciclo.sql (fase 3 da classe ii do fuso:
--- o DEFAULT de p_data_ciclo é o dia de SP, e o corte gravado é (data + hora) AT TIME ZONE 'America/Sao_Paulo');
--- o que vem depois do $function$; é a pós-condição do motor, autocontida (a foto do ACL da PRÉ só é conferida
--- quando a migration roda inteira). Histórico das versões anteriores: git log deste arquivo.
+-- Desde 2026-10-09 essa migration é a 20261009194000_motor_unidades_concentrado_wp.sql (#2849: o motor converte
+-- unidades pelo grupo — conv = sku_embalagem_equivalencia.unidades_omie_por_embalagem quando o grupo inteiro a
+-- tem, senão o fator relativo). O que vem depois do $function$; é a pós-condição, autocontida (os corpos, a foto
+-- do ACL e o cadastro só são conferidos quando a migration roda inteira). Histórico: git log deste arquivo.
 -- Spec original (embalagem no motor, 2026-06-26): docs/superpowers/specs/2026-06-26-reposicao-embalagem-no-motor-spec.md
+
+-- A coluna que o motor lê (da mesma migration; NULL = fator relativo, a conta de antes). Idempotente.
+ALTER TABLE public.sku_embalagem_equivalencia
+  ADD COLUMN IF NOT EXISTS unidades_omie_por_embalagem numeric
+  CHECK (unidades_omie_por_embalagem IS NULL OR unidades_omie_por_embalagem > 0);
 
 CREATE OR REPLACE FUNCTION public.gerar_pedidos_sugeridos_ciclo(p_empresa text DEFAULT 'OBEN'::text, p_data_ciclo date DEFAULT ((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date)
  RETURNS TABLE(pedidos_gerados integer, skus_incluidos integer, valor_total_ciclo numeric, bloqueados integer)
@@ -125,10 +130,20 @@ BEGIN
   ),
   -- ── EMBALAGEM (novo) ─────────────────────────────────────────────────────────────────────
   -- Membros ativos dos grupos de equivalência (empresa = lower).
+  -- [UNIDADES #2849] conv = unidades Omie (o que o estoque, o ponto e o máximo contam) por embalagem comprada
+  -- (o que qtde_final, o em trânsito e o PO contam). Concentrado WP: estoque em L, QT = 0,81 L e GL = 3,24 L.
+  -- Vale só com o grupo INTEIRO cadastrado e COERENTE com o fator (u/fator igual em todos os membros: a
+  -- escolha QT↔GL compara custo por fator, a quantidade divide por conv — os dois têm de concordar). Senão o
+  -- grupo todo volta ao fator relativo, que é a conta de antes (cadastro ausente ≠ 1 L por embalagem).
   equiv AS (
-    SELECT grupo_id, sku_codigo_omie::text AS sku, fator_para_base
-    FROM sku_embalagem_equivalencia
-    WHERE empresa = lower(p_empresa) AND ativo = TRUE AND fator_para_base > 0
+    SELECT q.grupo_id, q.sku, q.fator_para_base,
+           CASE WHEN bool_and(q.u IS NOT NULL AND q.u > 0 AND q.u < 1e9) OVER (PARTITION BY q.grupo_id)
+                 AND min(q.u / q.fator_para_base) OVER (PARTITION BY q.grupo_id)
+                   = max(q.u / q.fator_para_base) OVER (PARTITION BY q.grupo_id)
+                THEN q.u ELSE q.fator_para_base END AS conv
+    FROM (SELECT grupo_id, sku_codigo_omie::text AS sku, fator_para_base, unidades_omie_por_embalagem AS u
+          FROM sku_embalagem_equivalencia
+          WHERE empresa = lower(p_empresa) AND ativo = TRUE AND fator_para_base > 0) q
   ),
   -- Só grupos com >= 2 membros têm decisão de embalagem.
   equiv_grupos AS (
@@ -175,7 +190,7 @@ BEGIN
   -- [P1-f] Membro ELEGÍVEL p/ a decisão: preço-app FRESCO + portal-map + CATÁLOGO OK (ativo, tipo≠04, família
   -- comprável, ativo_no_omie) — os MESMOS filtros que protegem a âncora, agora também no SKU que pode ser escolhido.
   membro_elegivel AS (
-    SELECT e.grupo_id, e.sku, e.fator_para_base, pa.preco,
+    SELECT e.grupo_id, e.sku, e.fator_para_base, e.conv, pa.preco,
            (pa.preco / e.fator_para_base) AS custo_base
     FROM equiv e
     JOIN equiv_grupos eg ON eg.grupo_id = e.grupo_id
@@ -195,19 +210,19 @@ BEGIN
   embalagem_escolhida AS (
     SELECT DISTINCT ON (grupo_id)
            grupo_id, sku AS sku_escolhido, fator_para_base AS fator_escolhido,
-           preco AS preco_escolhido, custo_base AS custo_base_escolhido
+           preco AS preco_escolhido, custo_base AS custo_base_escolhido, conv AS conv_escolhido
     FROM membro_elegivel
     ORDER BY grupo_id, custo_base ASC, fator_para_base DESC
   ),
   -- [P0-a/P0-b] Estoque consolidado por grupo (escala unidades-âncora):
   --   físico = Σ GREATEST(inv.saldo, sea.estoque_fisico)   ← pega o galão real de onde estiver
-  --   a caminho = Σ [pendente(sea) + em_transito × fator]  ← galão em voo conta em unidades-base (2 GL = 8), não cru
+  --   a caminho = Σ [pendente(sea) + em_transito × conv]   ← embalagem em voo conta em unidades Omie (2 GL = 6,48 L no WP; 8 sem cadastro)
   grupo_estoque AS (
     SELECT e.grupo_id,
            SUM(GREATEST(COALESCE(inv.saldo, 0), COALESCE(sea.estoque_fisico, 0)))                              AS fisico_grupo,
-           SUM(COALESCE(sea.estoque_pendente_entrada, 0) + COALESCE(et.qtde, 0) * e.fator_para_base)           AS acaminho_grupo,
+           SUM(COALESCE(sea.estoque_pendente_entrada, 0) + COALESCE(et.qtde, 0) * e.conv)           AS acaminho_grupo,
            SUM(GREATEST(COALESCE(inv.saldo, 0), COALESCE(sea.estoque_fisico, 0))
-               + COALESCE(sea.estoque_pendente_entrada, 0) + COALESCE(et.qtde, 0) * e.fator_para_base)         AS estoque_grupo,
+               + COALESCE(sea.estoque_pendente_entrada, 0) + COALESCE(et.qtde, 0) * e.conv)         AS estoque_grupo,
            -- [GATE estoque-não-confirmado] grupo NÃO-CONFIRMADO se QUALQUER membro ATIVO tem seed (cold_start_seed)
            -- sem inventory_position — pode ter saldo real que mudaria a decisão. NÃO conta "sem linha de sea" (galão
            -- legitimamente vive sem sea próprio; o estoque vem de outro membro — só a LINHA isolada gateia sea ausente).
@@ -241,6 +256,7 @@ BEGIN
            COALESCE(ge.estoque_grupo,
                     COALESCE(sea.estoque_fisico, 0) + COALESCE(sea.estoque_pendente_entrada, 0) + COALESCE(et.qtde, 0)) AS estoque_efetivo,
            ee.sku_escolhido, ee.fator_escolhido, ee.preco_escolhido, ee.custo_base_escolhido,
+           ee.conv_escolhido, ea.conv AS conv_ancora,   -- [UNIDADES #2849] NULL p/ SKU sem grupo
            me_anc.custo_base AS ancora_custo_base,  -- NULL = âncora não-elegível → estrito (não troca)
            -- custo da linha p/ a ÂNCORA: cmc account-aware, senão preço médio histórico, senão NULL.
            -- [PRECO-AUSENTE] ausente≠zero — NÃO fabrica R$0 (o gate de auto-aprovação e o disparo já barram custo desconhecido).
@@ -332,30 +348,32 @@ BEGIN
            COALESCE(b.acaminho_grupo, b.acaminho_proprio)      AS estoque_a_caminho,
            b.estoque_efetivo,
            ceil(b.estoque_maximo - b.estoque_efetivo) AS qtde_sugerida,  -- gate >0 (unidades-âncora)
-           -- nº de embalagens do SKU escolhido: galão = ceil(necessidade / fator); quartinho = lógica atual.
+           -- nº de embalagens do SKU escolhido: ceil(necessidade em unidades Omie / conv) [UNIDADES #2849];
+           -- SKU sem grupo divide por 1 (idêntico ao de antes).
            -- [P1-e] minimo_forcado_manual (unidades-âncora) aplicado como piso ANTES de dividir pelo fator.
            -- [TETO cobertura] só o ramo ELSE recebe o cap (trocou ⇒ tem grupo ⇒ cap NULL; min_forcado ⇒ cap NULL).
            -- LEAST na necessidade-âncora ANTES do ceil; cap 0 zera a linha (sai do pedido via skus_inseriveis + log).
            CASE
              WHEN trocou THEN ceil(GREATEST(b.estoque_maximo - b.estoque_efetivo,
-                                            COALESCE(b.minimo_forcado_manual, 0)) / b.fator_escolhido)
+                                            COALESCE(b.minimo_forcado_manual, 0)) / b.conv_escolhido)
              WHEN b.minimo_forcado_manual IS NOT NULL AND b.minimo_forcado_manual > 0
-                  THEN ceil(GREATEST(b.estoque_maximo - b.estoque_efetivo, b.minimo_forcado_manual))
+                  THEN ceil(GREATEST(b.estoque_maximo - b.estoque_efetivo, b.minimo_forcado_manual) / COALESCE(b.conv_ancora, 1))
              ELSE ceil(LEAST(b.estoque_maximo - b.estoque_efetivo,
-                             COALESCE(b.cap_teto_ancora, b.estoque_maximo - b.estoque_efetivo)))
+                             COALESCE(b.cap_teto_ancora, b.estoque_maximo - b.estoque_efetivo)) / COALESCE(b.conv_ancora, 1))
            END AS qtde_final,
            -- [TETO cobertura] o que a linha compraria SEM o cap (mesma unidade de qtde_final — embalagens no galão):
            -- rastro p/ item/log; capada ⇔ qtde_final < qtde_sem_teto (comparação nos consumidores).
            CASE
              WHEN trocou THEN ceil(GREATEST(b.estoque_maximo - b.estoque_efetivo,
-                                            COALESCE(b.minimo_forcado_manual, 0)) / b.fator_escolhido)
+                                            COALESCE(b.minimo_forcado_manual, 0)) / b.conv_escolhido)
              WHEN b.minimo_forcado_manual IS NOT NULL AND b.minimo_forcado_manual > 0
-                  THEN ceil(GREATEST(b.estoque_maximo - b.estoque_efetivo, b.minimo_forcado_manual))
-             ELSE ceil(b.estoque_maximo - b.estoque_efetivo)
+                  THEN ceil(GREATEST(b.estoque_maximo - b.estoque_efetivo, b.minimo_forcado_manual) / COALESCE(b.conv_ancora, 1))
+             ELSE ceil((b.estoque_maximo - b.estoque_efetivo) / COALESCE(b.conv_ancora, 1))
            END AS qtde_sem_teto,
            b.cap_teto_ancora, b.teto_dias_linha, b.demanda_diaria_linha, b.classe_abc_efetiva,
-           -- custo da linha: galão → preço-app (R$/embalagem, nunca 0); quartinho → cmc atual.
-           CASE WHEN trocou THEN b.preco_escolhido ELSE b.preco_unitario_ancora END AS preco_unitario,
+           -- custo da linha: galão → preço-app (R$/embalagem, nunca 0); quartinho → cmc (R$/unidade Omie) × conv
+           -- = R$/embalagem [UNIDADES #2849]; SKU sem grupo × 1.
+           CASE WHEN trocou THEN b.preco_escolhido ELSE b.preco_unitario_ancora * COALESCE(b.conv_ancora, 1) END AS preco_unitario,
            b.primeira_compra, b.horario_corte_pedido, b.valor_maximo_mensal, b.delta_max_perc,
            -- [GATE estoque-não-confirmado] espelha estoque_efetivo=COALESCE(grupo,linha): decisão pelo grupo usa a
            -- confirmação do grupo; pela linha, a da linha. Suprime quando a fonte é só seed (ausente≠zero, precisão>recall).
@@ -517,10 +535,16 @@ BEGIN
 END;
 $function$;
 
-DO $pos_motor$
+-- PÓS, autocontida: db/embalagem-motor-rpc.sql copia este arquivo do CREATE do motor até o FIM (guard
+-- embalagem-motor-paridade.test.ts) e as provas vizinhas o carregam como fixture e SABOTAM o corpo. Fora da
+-- migration inteira valem só os invariantes do motor; com a foto da PRÉ: os corpos vivos são ESTES, os
+-- atributos iguais aos da foto e o cadastro completo. IF aninhado, não AND: a condição de um IF é planejada
+-- inteira, e a foto ausente faria a referência à tabela temporária errar antes do to_regclass.
+DO $pos$
 DECLARE
   v_oid oid := to_regprocedure('public.gerar_pedidos_sugeridos_ciclo(text, date)');
   v_txt text;
+  v_n int;
 BEGIN
   IF v_oid IS NULL THEN
     RAISE EXCEPTION 'POS-M1 FALHOU: gerar_pedidos_sugeridos_ciclo não existe — o motor e o Cockpit quebrariam';
@@ -529,7 +553,7 @@ BEGIN
   -- As agulhas vão partidas: o gate textual lê a migration inteira, literal incluso.
   IF position(upper('current' || '_date') IN upper(v_txt)) > 0
      OR position('::timestamp' || 'tz,' IN v_txt) > 0
-     OR (length(v_txt) - length(replace(v_txt, 'America/Sao_Paulo', ''))) / length('America/Sao_Paulo') <> 2 THEN
+     OR (length(v_txt) - length(replace(v_txt, 'America/Sao_Paulo', ''))) / length('America/Sao_Paulo') IS DISTINCT FROM 2 THEN
     RAISE EXCEPTION 'POS-M3 FALHOU: o motor ainda lê o dia da sessão, ou o corte voltou ao fuso da sessão';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_proc p
@@ -538,19 +562,31 @@ BEGIN
                     AND pg_catalog.pg_get_userbyid(p.proowner) = 'postgres') THEN
     RAISE EXCEPTION 'POS-M4 FALHOU: o motor mudou de atributo — esperado VOLATILE, INVOKER, config [search_path=public, pg_temp;statement_timeout=120s], dono postgres';
   END IF;
-  -- Com a migration rodando INTEIRA (a foto da PRÉ existe): o motor instalado é ESTE texto (md5 de argumentos e
-  -- corpo) e o ACL é o de antes. Fora dela — as provas vizinhas carregam este trecho como fixture e SABOTAM o
-  -- corpo para provar o dente delas — valem só os invariantes acima. IF aninhado, não AND: a condição de um IF
-  -- é planejada inteira, e a foto ausente faria a referência à tabela temporária errar antes do to_regclass.
-  IF to_regclass('pg_temp.hoje_sp_data_ciclo_acl_antes') IS NOT NULL THEN
-    IF (SELECT md5(pg_catalog.pg_get_function_arguments(p.oid)) || md5(p.prosrc) FROM pg_catalog.pg_proc p WHERE p.oid = v_oid)
-       <> 'f2a876ac1f0e05994931f55ae04d7bfa' || '7a15485d16c2a88c2de88cc80f87756b' THEN
-      RAISE EXCEPTION 'POS-M2 FALHOU: o motor instalado não é o desta migration (argumentos ou corpo)';
+  IF to_regclass('pg_temp.motor_unidades_wp_foto') IS NOT NULL THEN
+    IF (SELECT md5(p.prosrc) FROM pg_catalog.pg_proc p WHERE p.oid = v_oid) IS DISTINCT FROM '7c862179c87eee8fed7ddcd97ed4e31c' THEN
+      RAISE EXCEPTION 'POS1 FALHOU: o motor instalado não é o desta migration';
     END IF;
-    IF (SELECT a.acl FROM hoje_sp_data_ciclo_acl_antes a WHERE a.alvo = 'f:gerar_pedidos_sugeridos_ciclo(text,date)')
-       IS DISTINCT FROM (SELECT p.proacl::text FROM pg_catalog.pg_proc p WHERE p.oid = v_oid) THEN
-      RAISE EXCEPTION 'POS-M6 FALHOU: o ACL do motor mudou no replace';
+    IF (SELECT md5(p.prosrc) FROM pg_catalog.pg_proc p
+         WHERE p.oid = to_regprocedure('public.reposicao_sincronizar_embalagem_wp(text)')) IS DISTINCT FROM 'f201f94a74b9371478653ddcb825b86a' THEN
+      RAISE EXCEPTION 'POS2 FALHOU: o cadastro WP instalado não é o desta migration';
+    END IF;
+    SELECT count(*) INTO v_n
+      FROM motor_unidades_wp_foto f
+      JOIN pg_catalog.pg_proc p ON p.oid = to_regprocedure('public.' || f.alvo)
+     WHERE f.acl IS NOT DISTINCT FROM p.proacl::text
+       AND f.config IS NOT DISTINCT FROM p.proconfig::text
+       AND f.secdef = p.prosecdef AND f.vol = p.provolatile
+       AND f.dono = pg_catalog.pg_get_userbyid(p.proowner);
+    IF v_n IS DISTINCT FROM 2 THEN
+      RAISE EXCEPTION 'POS3 FALHOU: ACL, config, SECURITY DEFINER, volatilidade ou dono mudou no replace (% de 2 iguais)', v_n;
+    END IF;
+    SELECT count(*) INTO v_n
+      FROM public.sku_embalagem_equivalencia e
+     WHERE e.ativo AND e.empresa = 'oben'
+       AND e.unidades_omie_por_embalagem IS DISTINCT FROM e.fator_para_base * 0.81;
+    IF v_n > 0 THEN
+      RAISE EXCEPTION 'POS4 FALHOU: % membro(s) ativo(s) da oben sem unidades_omie_por_embalagem coerente com o fator (QT 0,81 / GL 3,24)', v_n;
     END IF;
   END IF;
 END
-$pos_motor$;
+$pos$;

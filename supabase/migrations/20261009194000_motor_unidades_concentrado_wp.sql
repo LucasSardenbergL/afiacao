@@ -71,6 +71,87 @@ ALTER TABLE public.sku_embalagem_equivalencia
 COMMENT ON COLUMN public.sku_embalagem_equivalencia.unidades_omie_por_embalagem IS
   'Unidades do Omie (omie_products.unidade) contidas em 1 embalagem comprada deste SKU. Concentrado WP em litros: QT = 0,81, GL = 3,24. O motor de reposição (gerar_pedidos_sugeridos_ciclo) só a usa quando TODO membro ativo do grupo a tem e u/fator_para_base é igual entre eles; senão usa fator_para_base. NULL = sem cadastro (#2849).';
 
+
+CREATE OR REPLACE FUNCTION public.reposicao_sincronizar_embalagem_wp(p_empresa text DEFAULT 'oben'::text)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE
+  v_uid uuid := auth.uid();
+  v_disparado_por text;
+  v_cores int := 0;
+  v_linhas int := 0;
+  v_ins int;
+  r record;
+  v_grupo uuid;
+BEGIN
+  -- Gate cron-or-staff: usuário logado exige staff; cron (auth.uid()=NULL) passa.
+  IF v_uid IS NOT NULL
+     AND NOT (has_role(v_uid,'employee'::app_role) OR has_role(v_uid,'master'::app_role)) THEN
+    RAISE EXCEPTION 'não autorizado' USING ERRCODE = '42501';
+  END IF;
+  v_disparado_por := CASE WHEN v_uid IS NULL THEN 'cron' ELSE 'manual:'||v_uid::text END;
+
+  FOR r IN
+    WITH wp AS (
+      SELECT substring(descricao FROM '^(WP[0-9]+\.[0-9]+)') AS cor,
+             substring(descricao FROM '^WP[0-9]+\.[0-9]+([A-Z0-9]+)') AS sufixo,
+             omie_codigo_produto, unidade
+      FROM public.omie_products
+      WHERE account = p_empresa AND ativo
+        AND descricao ~ '^WP[0-9]+\.[0-9]+(QT|GL) '
+    )
+    SELECT cor,
+           max(omie_codigo_produto) FILTER (WHERE sufixo='QT') AS qt,
+           max(omie_codigo_produto) FILTER (WHERE sufixo='GL') AS gl,
+           -- [UNIDADES #2849] 0,81 L/QT e 3,24 L/GL só valem com a cor em LITROS no Omie; fora disso NULL e o
+           -- motor fica no fator relativo (a conta de antes) — nunca um litro presumido.
+           COALESCE(bool_and(upper(btrim(unidade)) = 'L'), false) AS em_litros
+    FROM wp GROUP BY cor
+    HAVING count(*) FILTER (WHERE sufixo='QT') = 1
+       AND count(*) FILTER (WHERE sufixo='GL') = 1
+  LOOP
+    v_cores := v_cores + 1;
+    -- Reusa o grupo da cor se já cadastrada; senão gera novo.
+    SELECT grupo_id INTO v_grupo
+    FROM public.sku_embalagem_equivalencia
+    WHERE empresa = p_empresa AND ativo AND sku_codigo_omie IN (r.qt::text, r.gl::text)
+    LIMIT 1;
+    IF v_grupo IS NULL THEN v_grupo := gen_random_uuid(); END IF;
+
+    -- Insere só as embalagens faltantes (idempotente; ON CONFLICT é atômico no índice).
+    INSERT INTO public.sku_embalagem_equivalencia
+      (empresa, grupo_id, sku_codigo_omie, unidade_base, fator_para_base, fornecedor_nome, ativo, criado_por,
+       unidades_omie_por_embalagem)
+    SELECT p_empresa, v_grupo, x.sku::text, 'QT', x.fator, 'Sayerlack', true, 'auto:embalagem-wp',
+           CASE WHEN r.em_litros THEN x.unidades END
+    FROM (VALUES (r.qt, 1::numeric, 0.81::numeric), (r.gl, 4::numeric, 3.24::numeric)) AS x(sku, fator, unidades)
+    ON CONFLICT (empresa, sku_codigo_omie) WHERE ativo DO NOTHING;
+    GET DIAGNOSTICS v_ins = ROW_COUNT;
+    v_linhas := v_linhas + v_ins;
+  END LOOP;
+
+  INSERT INTO public.reposicao_embalagem_sync_log (empresa, disparado_por, cores_elegiveis, linhas_inseridas)
+  VALUES (p_empresa, v_disparado_por, v_cores, v_linhas);
+
+  RETURN jsonb_build_object('empresa', p_empresa, 'cores_elegiveis', v_cores, 'linhas_inseridas', v_linhas);
+END $function$;
+
+-- Os 28 membros WP da oben: QT (fator 1) = 0,81 L, GL (fator 4) = 3,24 L. Só onde NULL (idempotente), só com o
+-- produto em LITROS e a descrição concordando com o fator.
+UPDATE public.sku_embalagem_equivalencia e
+   SET unidades_omie_por_embalagem = CASE e.fator_para_base WHEN 1 THEN 0.81 WHEN 4 THEN 3.24 END
+  FROM public.omie_products op
+ WHERE e.unidades_omie_por_embalagem IS NULL
+   AND e.ativo AND e.empresa = 'oben'
+   AND op.omie_codigo_produto::text = e.sku_codigo_omie::text AND op.account = e.empresa
+   AND upper(btrim(op.unidade)) = 'L'
+   AND (   (op.descricao ~ '^WP[0-9]+\.[0-9]+QT ' AND e.fator_para_base = 1)
+        OR (op.descricao ~ '^WP[0-9]+\.[0-9]+GL ' AND e.fator_para_base = 4));
+
+-- O motor por ÚLTIMO, seguido só da PÓS: db/embalagem-motor-rpc.sql é a cópia deste trecho até o FIM.
 CREATE OR REPLACE FUNCTION public.gerar_pedidos_sugeridos_ciclo(p_empresa text DEFAULT 'OBEN'::text, p_data_ciclo date DEFAULT ((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date)
  RETURNS TABLE(pedidos_gerados integer, skus_incluidos integer, valor_total_ciclo numeric, bloqueados integer)
  LANGUAGE plpgsql
@@ -592,114 +673,58 @@ BEGIN
 END;
 $function$;
 
-CREATE OR REPLACE FUNCTION public.reposicao_sincronizar_embalagem_wp(p_empresa text DEFAULT 'oben'::text)
- RETURNS jsonb
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
-DECLARE
-  v_uid uuid := auth.uid();
-  v_disparado_por text;
-  v_cores int := 0;
-  v_linhas int := 0;
-  v_ins int;
-  r record;
-  v_grupo uuid;
-BEGIN
-  -- Gate cron-or-staff: usuário logado exige staff; cron (auth.uid()=NULL) passa.
-  IF v_uid IS NOT NULL
-     AND NOT (has_role(v_uid,'employee'::app_role) OR has_role(v_uid,'master'::app_role)) THEN
-    RAISE EXCEPTION 'não autorizado' USING ERRCODE = '42501';
-  END IF;
-  v_disparado_por := CASE WHEN v_uid IS NULL THEN 'cron' ELSE 'manual:'||v_uid::text END;
-
-  FOR r IN
-    WITH wp AS (
-      SELECT substring(descricao FROM '^(WP[0-9]+\.[0-9]+)') AS cor,
-             substring(descricao FROM '^WP[0-9]+\.[0-9]+([A-Z0-9]+)') AS sufixo,
-             omie_codigo_produto, unidade
-      FROM public.omie_products
-      WHERE account = p_empresa AND ativo
-        AND descricao ~ '^WP[0-9]+\.[0-9]+(QT|GL) '
-    )
-    SELECT cor,
-           max(omie_codigo_produto) FILTER (WHERE sufixo='QT') AS qt,
-           max(omie_codigo_produto) FILTER (WHERE sufixo='GL') AS gl,
-           -- [UNIDADES #2849] 0,81 L/QT e 3,24 L/GL só valem com a cor em LITROS no Omie; fora disso NULL e o
-           -- motor fica no fator relativo (a conta de antes) — nunca um litro presumido.
-           COALESCE(bool_and(upper(btrim(unidade)) = 'L'), false) AS em_litros
-    FROM wp GROUP BY cor
-    HAVING count(*) FILTER (WHERE sufixo='QT') = 1
-       AND count(*) FILTER (WHERE sufixo='GL') = 1
-  LOOP
-    v_cores := v_cores + 1;
-    -- Reusa o grupo da cor se já cadastrada; senão gera novo.
-    SELECT grupo_id INTO v_grupo
-    FROM public.sku_embalagem_equivalencia
-    WHERE empresa = p_empresa AND ativo AND sku_codigo_omie IN (r.qt::text, r.gl::text)
-    LIMIT 1;
-    IF v_grupo IS NULL THEN v_grupo := gen_random_uuid(); END IF;
-
-    -- Insere só as embalagens faltantes (idempotente; ON CONFLICT é atômico no índice).
-    INSERT INTO public.sku_embalagem_equivalencia
-      (empresa, grupo_id, sku_codigo_omie, unidade_base, fator_para_base, fornecedor_nome, ativo, criado_por,
-       unidades_omie_por_embalagem)
-    SELECT p_empresa, v_grupo, x.sku::text, 'QT', x.fator, 'Sayerlack', true, 'auto:embalagem-wp',
-           CASE WHEN r.em_litros THEN x.unidades END
-    FROM (VALUES (r.qt, 1::numeric, 0.81::numeric), (r.gl, 4::numeric, 3.24::numeric)) AS x(sku, fator, unidades)
-    ON CONFLICT (empresa, sku_codigo_omie) WHERE ativo DO NOTHING;
-    GET DIAGNOSTICS v_ins = ROW_COUNT;
-    v_linhas := v_linhas + v_ins;
-  END LOOP;
-
-  INSERT INTO public.reposicao_embalagem_sync_log (empresa, disparado_por, cores_elegiveis, linhas_inseridas)
-  VALUES (p_empresa, v_disparado_por, v_cores, v_linhas);
-
-  RETURN jsonb_build_object('empresa', p_empresa, 'cores_elegiveis', v_cores, 'linhas_inseridas', v_linhas);
-END $function$;
-
--- Os 28 membros WP da oben: QT (fator 1) = 0,81 L, GL (fator 4) = 3,24 L. Só onde NULL (idempotente), só com o
--- produto em LITROS e a descrição concordando com o fator.
-UPDATE public.sku_embalagem_equivalencia e
-   SET unidades_omie_por_embalagem = CASE e.fator_para_base WHEN 1 THEN 0.81 WHEN 4 THEN 3.24 END
-  FROM public.omie_products op
- WHERE e.unidades_omie_por_embalagem IS NULL
-   AND e.ativo AND e.empresa = 'oben'
-   AND op.omie_codigo_produto::text = e.sku_codigo_omie::text AND op.account = e.empresa
-   AND upper(btrim(op.unidade)) = 'L'
-   AND (   (op.descricao ~ '^WP[0-9]+\.[0-9]+QT ' AND e.fator_para_base = 1)
-        OR (op.descricao ~ '^WP[0-9]+\.[0-9]+GL ' AND e.fator_para_base = 4));
-
--- PÓS: os corpos vivos são ESTES; atributos iguais aos da foto; o cadastro completo.
+-- PÓS, autocontida: db/embalagem-motor-rpc.sql copia este arquivo do CREATE do motor até o FIM (guard
+-- embalagem-motor-paridade.test.ts) e as provas vizinhas o carregam como fixture e SABOTAM o corpo. Fora da
+-- migration inteira valem só os invariantes do motor; com a foto da PRÉ: os corpos vivos são ESTES, os
+-- atributos iguais aos da foto e o cadastro completo. IF aninhado, não AND: a condição de um IF é planejada
+-- inteira, e a foto ausente faria a referência à tabela temporária errar antes do to_regclass.
 DO $pos$
 DECLARE
+  v_oid oid := to_regprocedure('public.gerar_pedidos_sugeridos_ciclo(text, date)');
+  v_txt text;
   v_n int;
 BEGIN
-  IF (SELECT md5(p.prosrc) FROM pg_catalog.pg_proc p
-       WHERE p.oid = to_regprocedure('public.gerar_pedidos_sugeridos_ciclo(text, date)')) IS DISTINCT FROM '7c862179c87eee8fed7ddcd97ed4e31c' THEN
-    RAISE EXCEPTION 'POS1 FALHOU: o motor instalado não é o desta migration';
+  IF v_oid IS NULL THEN
+    RAISE EXCEPTION 'POS-M1 FALHOU: gerar_pedidos_sugeridos_ciclo não existe — o motor e o Cockpit quebrariam';
   END IF;
-  IF (SELECT md5(p.prosrc) FROM pg_catalog.pg_proc p
-       WHERE p.oid = to_regprocedure('public.reposicao_sincronizar_embalagem_wp(text)')) IS DISTINCT FROM 'f201f94a74b9371478653ddcb825b86a' THEN
-    RAISE EXCEPTION 'POS2 FALHOU: o cadastro WP instalado não é o desta migration';
+  SELECT pg_catalog.pg_get_function_arguments(p.oid) || ' ' || p.prosrc INTO v_txt FROM pg_catalog.pg_proc p WHERE p.oid = v_oid;
+  -- As agulhas vão partidas: o gate textual lê a migration inteira, literal incluso.
+  IF position(upper('current' || '_date') IN upper(v_txt)) > 0
+     OR position('::timestamp' || 'tz,' IN v_txt) > 0
+     OR (length(v_txt) - length(replace(v_txt, 'America/Sao_Paulo', ''))) / length('America/Sao_Paulo') IS DISTINCT FROM 2 THEN
+    RAISE EXCEPTION 'POS-M3 FALHOU: o motor ainda lê o dia da sessão, ou o corte voltou ao fuso da sessão';
   END IF;
-  SELECT count(*) INTO v_n
-    FROM motor_unidades_wp_foto f
-    JOIN pg_catalog.pg_proc p ON p.oid = to_regprocedure('public.' || f.alvo)
-   WHERE f.acl IS NOT DISTINCT FROM p.proacl::text
-     AND f.config IS NOT DISTINCT FROM p.proconfig::text
-     AND f.secdef = p.prosecdef AND f.vol = p.provolatile
-     AND f.dono = pg_catalog.pg_get_userbyid(p.proowner);
-  IF v_n IS DISTINCT FROM 2 THEN
-    RAISE EXCEPTION 'POS3 FALHOU: ACL, config, SECURITY DEFINER, volatilidade ou dono mudou no replace (% de 2 iguais)', v_n;
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_proc p
+                  WHERE p.oid = v_oid AND p.provolatile = 'v' AND NOT p.prosecdef
+                    AND array_to_string(p.proconfig, ';') = 'search_path=public, pg_temp;statement_timeout=120s'
+                    AND pg_catalog.pg_get_userbyid(p.proowner) = 'postgres') THEN
+    RAISE EXCEPTION 'POS-M4 FALHOU: o motor mudou de atributo — esperado VOLATILE, INVOKER, config [search_path=public, pg_temp;statement_timeout=120s], dono postgres';
   END IF;
-  SELECT count(*) INTO v_n
-    FROM public.sku_embalagem_equivalencia e
-   WHERE e.ativo AND e.empresa = 'oben'
-     AND e.unidades_omie_por_embalagem IS DISTINCT FROM e.fator_para_base * 0.81;
-  IF v_n > 0 THEN
-    RAISE EXCEPTION 'POS4 FALHOU: % membro(s) ativo(s) da oben sem unidades_omie_por_embalagem coerente com o fator (QT 0,81 / GL 3,24)', v_n;
+  IF to_regclass('pg_temp.motor_unidades_wp_foto') IS NOT NULL THEN
+    IF (SELECT md5(p.prosrc) FROM pg_catalog.pg_proc p WHERE p.oid = v_oid) IS DISTINCT FROM '7c862179c87eee8fed7ddcd97ed4e31c' THEN
+      RAISE EXCEPTION 'POS1 FALHOU: o motor instalado não é o desta migration';
+    END IF;
+    IF (SELECT md5(p.prosrc) FROM pg_catalog.pg_proc p
+         WHERE p.oid = to_regprocedure('public.reposicao_sincronizar_embalagem_wp(text)')) IS DISTINCT FROM 'f201f94a74b9371478653ddcb825b86a' THEN
+      RAISE EXCEPTION 'POS2 FALHOU: o cadastro WP instalado não é o desta migration';
+    END IF;
+    SELECT count(*) INTO v_n
+      FROM motor_unidades_wp_foto f
+      JOIN pg_catalog.pg_proc p ON p.oid = to_regprocedure('public.' || f.alvo)
+     WHERE f.acl IS NOT DISTINCT FROM p.proacl::text
+       AND f.config IS NOT DISTINCT FROM p.proconfig::text
+       AND f.secdef = p.prosecdef AND f.vol = p.provolatile
+       AND f.dono = pg_catalog.pg_get_userbyid(p.proowner);
+    IF v_n IS DISTINCT FROM 2 THEN
+      RAISE EXCEPTION 'POS3 FALHOU: ACL, config, SECURITY DEFINER, volatilidade ou dono mudou no replace (% de 2 iguais)', v_n;
+    END IF;
+    SELECT count(*) INTO v_n
+      FROM public.sku_embalagem_equivalencia e
+     WHERE e.ativo AND e.empresa = 'oben'
+       AND e.unidades_omie_por_embalagem IS DISTINCT FROM e.fator_para_base * 0.81;
+    IF v_n > 0 THEN
+      RAISE EXCEPTION 'POS4 FALHOU: % membro(s) ativo(s) da oben sem unidades_omie_por_embalagem coerente com o fator (QT 0,81 / GL 3,24)', v_n;
+    END IF;
   END IF;
 END
 $pos$;
