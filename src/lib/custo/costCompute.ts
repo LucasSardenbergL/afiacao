@@ -57,7 +57,8 @@ export interface PosicaoCmc {
 export interface UpsertCusto {
   product_id: string;
   cost_price: number | null;
-  cmc: number;
+  /** CMC do Omie, ou null quando não há (proxy). NUNCA 0: ausente ≠ zero (money-path §2). */
+  cmc: number | null;
   cost_final: number;
   cost_source: CostSourceComUnidade;
   cost_confidence: number;
@@ -135,7 +136,7 @@ export function montarUpsertsDeCusto(
     rows.push({
       product_id: product.id,
       cost_price: costPriceToPersist,
-      cmc: cmc ?? 0,
+      cmc, // null quando não há CMC — nunca 0: ausente ≠ zero (era `cmc ?? 0`, 39% do catálogo com custo 0 aparente)
       cost_final: costFinal,
       cost_source: costSource,
       cost_confidence: costConfidence,

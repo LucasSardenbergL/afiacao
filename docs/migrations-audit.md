@@ -21,7 +21,7 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **591** custom migrations totais
+- **592** custom migrations totais
 - **1944** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 660
@@ -4850,6 +4850,10 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `trigger` | `public.trg_estoque_reservas_pv_write_once` | `estoque_reservas` |
 
 ### `20261009120000_check_finitude_teto_faixa.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20261009180000_product_costs_cmc_ausente_null.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 

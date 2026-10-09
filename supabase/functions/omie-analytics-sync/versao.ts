@@ -69,8 +69,15 @@ export const respostaSonda = criarRespostaSonda("omie-analytics-sync");
  * v1.6 (2026-10-01) — o `dDataPosicao` dos dois ListarPosEstoque no dia de SP (classe ii do fuso, fase 3):
  * o `toLocaleDateString` sem fuso dava o dia UTC do servidor, AMANHÃ das 21:00 às 23:59 BRT. Nenhuma
  * pré-condição de banco.
+ *
+ * v1.9 (2026-10-09) — `product_costs.cmc` grava NULL quando não há CMC (era `cmc ?? 0`, em
+ * `_shared/cost-compute.ts`): ~38% do catálogo (os proxies de família/default) tinha custo 0
+ * APARENTE na coluna. Ausente ≠ zero (money-path §2). Pré-condição de banco: nenhuma — a coluna
+ * já aceita NULL; a migration 20261009180000 tira o DEFAULT 0 e põe o CHECK de faixa, e vale
+ * nas duas ordens de deploy (aceita 0 na transição). Após o deploy, o próximo computeCosts
+ * converte os zeros sozinho (mede-se: `count(*) FILTER (WHERE cmc = 0)` deve cair a ~0).
  */
-export const VERSAO = "v1.8-catalogo-sem-estoque";
+export const VERSAO = "v1.9-cmc-ausente-null";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
