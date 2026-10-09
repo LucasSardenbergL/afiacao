@@ -1092,7 +1092,7 @@ export function secaoSondaCron(
       .map((a) => `${a.edge} (${a.minutos === null ? 'sem medida da espera' : `espera ${a.minutos} min`})`)
       .join(', ');
     linhas.push(
-      `   ⏳ ${aguardando.length} edge(s) ativa(s) sem pergunta nos ticks recentes, FORA do exame — ` +
+      `   ⏳ ${aguardando.length} edge(s) ativa(s) sem pergunta na janela de cada uma, FORA do exame — ` +
         `não contam como atestadas: ${lista}`,
     );
     if (aguardando.some((a) => a.minutos === null)) {
@@ -1117,7 +1117,7 @@ export function secaoSondaCron(
   const todaAtivaAtestada =
     ativos.length > 0 && r.semPergunta.length === 0 && r.silencioEsperado.length === 0;
   if (r.achados.length === 0 && r.avisos.length === 0 && todaAtivaAtestada) {
-    linhas.push('   ✅ toda edge ativa foi atestada nos ticks recentes — o bundle do ledger continua no ar');
+    linhas.push('   ✅ toda edge ativa foi atestada na janela de cada uma — o bundle do ledger continua no ar');
   }
   return { linhas, achados: r.achados.length, mecanica: null };
 }

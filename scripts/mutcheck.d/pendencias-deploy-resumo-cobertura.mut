@@ -20,5 +20,5 @@ PEGA | o ramo "nao consegui medir" para de aparecer          | s/if \(aguardando
 PEGA | a espera nunca e lida: toda edge fora do exame fica sem teto | s/if \(r\.semPergunta\.length > 0\) \{/if (false) {/
 PEGA | o cabecalho conta os disparos CRUS, nao o examinado   | s/\$\{r\.exame\.atestados\}\/\$\{r\.exame\.disparos\} disparo/${r.exame.atestados}\/${disparos.length} disparo/
 PEGA | idade ilegivel na linha de disparo passa (sem medida)  | s/ \|\| idade === undefined \|\| !MINUTOS\.test\(idade\)//
-PEGA | o cabecalho volta a afirmar "N tick(s) recente(s)"     | s/nos \$\{DISPAROS_QUE_JULGAM\} últimos disparos de CADA uma/em 2 tick(s) recente(s)/
+PEGA | o cabecalho volta a afirmar "N tick(s) recente(s)"     | s/ disparos de CADA uma \(teto/ tick(s) recente(s) (teto/
 PEGA | o cabecalho deixa de dizer o TETO que aplicou          | s/\(teto \$\{toleranciaDoCronMin\(\)\} min\)/(sem teto)/

@@ -85,7 +85,7 @@ interface AchadoSondaCron {
 export interface ResultadoSondaCron {
   /** Pendências — o CLI sai 1. */
   achados: AchadoSondaCron[];
-  /** Avisos que NÃO reprovam: 1 tick só de silêncio, edge do repo ainda não habilitada no banco. */
+  /** Avisos que NÃO reprovam: 1 disparo só de silêncio, edge do repo ainda não habilitada no banco. */
   avisos: string[];
   /**
    * Edges ATIVAS que NENHUM dos ticks que julgam perguntou. Não é achado nem aviso — ausência de
@@ -210,7 +210,7 @@ export function julgarSondaCron(e: EntradaSondaCron): ResultadoSondaCron {
 
     if (mudos.length < DISPAROS_QUE_JULGAM || disparosDaEdge.length < DISPAROS_QUE_JULGAM) {
       avisos.push(
-        `${edge}: ${mudos.length} de ${disparosDaEdge.length} tick(s) recentes sem resposta — ` +
+        `${edge}: ${mudos.length} de ${disparosDaEdge.length} disparo(s) recente(s) dela sem resposta — ` +
           `abaixo de ${DISPAROS_QUE_JULGAM} não acusa (timeout e 429 acontecem)`,
       );
       continue;
