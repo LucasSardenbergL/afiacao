@@ -1,0 +1,24 @@
+# Poder da suíte sobre a JANELA do juiz da sonda por cron — por EDGE, não por tick global.
+#
+# Deixado em aberto no PR #2862 e MEDIDO em prod em 2026-09-10: às 23:14:15Z um tick manual PARCIAL
+# (o one-liner `deploy_sonda_disparar(ARRAY['sonda-relay'])` que o `bun run sonda:sql` oferece a quem
+# já tem o relé, 1 disparo) caiu entre os ticks cheios das 22:37Z e 00:37Z. Com a janela de 2 ticks
+# GLOBAIS, as outras edges ficavam com 1 disparo dentro dela: contagem real do recorte naquele
+# instante — global 1 edge com 2 disparos e **14 com 1**; por edge **15 com 2**, nenhuma com 1. Por
+# ~2 h o silêncio das 14 só podia virar AVISO ("1 de 1 tick(s) recentes sem resposta"), nunca
+# `SONDA_CRON_SILENCIOSA` — que é a única pergunta que o mecanismo existe para responder.
+#
+# Cada mutação devolve UMA camada ao estado sem poder de detecção, ou abre a que o teto fechou; a
+# suíte tem de ficar vermelha em todas. Baseline verde na MESMA invocação é do harness (aborta se já
+# está vermelha).
+# @src: scripts/lib/sonda-cron-testemunha.ts
+# @test: scripts/lib/sonda-cron-testemunha.test.ts
+# Rode: scripts/mutcheck.sh scripts/lib/sonda-cron-testemunha.ts scripts/lib/sonda-cron-testemunha.test.ts scripts/mutcheck.d/sonda-cron-janela-por-edge.mut
+PEGA | a janela por edge perde o limite de 2 (recorte aberto) | s/    lista\.splice\(DISPAROS_QUE_JULGAM\);/    void lista;/
+PEGA | o recorte pega os disparos MAIS ANTIGOS da edge        | s/lista\.sort\(\(a, b\) => a\.idadeMin - b\.idadeMin \|\|/lista.sort((a, b) => b.idadeMin - a.idadeMin ||/
+PEGA | o teto de idade deixa de valer (disparo antigo acusa)  | s/    if \(!\(d\.idadeMin <= teto\)\) continue;/    void teto;/
+PEGA | idade ILEGIVEL entra no exame (NaN passa, fail-OPEN)   | s/!\(d\.idadeMin <= teto\)/d.idadeMin > teto/
+PEGA | a regra dos 2 cai para 1 (um disparo mudo acusa)       | s/export const DISPAROS_QUE_JULGAM = 2;/export const DISPAROS_QUE_JULGAM = 1;/
+PEGA | o exame devolve a contagem CRUA do input               | s/exame: \{ disparos: examinados, atestados: examinadosAtestados \}/exame: { disparos: e.disparos.length, atestados: e.atestacoes.length }/
+PEGA | o exame conta a janela inteira, inclusive edge INATIVA | s/    examinados \+= disparosDaEdge\.length;/    examinados += [...janelaPorEdge.values()].flat().length;/
+PEGA | o exame conta atestacao de request_id fora do recorte  | s/    examinadosAtestados \+= disparosDaEdge\.filter\(\(d\) => respondidos\.has\(d\.requestId\)\)\.length;/    examinadosAtestados += e.atestacoes.length;/
