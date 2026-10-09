@@ -48,7 +48,7 @@ export const respostaSonda = criarRespostaSonda("recommend");
  * e a lição concreta é que o marcador cobre a fatia que o BUMPOU, não a janela de tempo: uma fatia
  * que entra DEPOIS do bump e ANTES do deploy volta a ser invisível.
  */
-export const VERSAO = "v1.7-sonda-cron-onda2";
+export const VERSAO = "v1.8-tipos-client";
 
 /** Efeito citado no 400 de `probe` ambíguo. */
 export const EFEITO =

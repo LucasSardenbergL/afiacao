@@ -1,4 +1,4 @@
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import {
   limiteCandidatos,
   projetarCandidato,
@@ -122,14 +122,14 @@ interface Candidate {
  *
  * Fail-closed também no erro: RPC indisponível ⇒ `false`. "Não consegui verificar" não é permissão.
  */
-async function podeLerCusto(dbUsuario: ReturnType<typeof createClient>): Promise<boolean> {
+async function podeLerCusto(dbUsuario: SupabaseClient): Promise<boolean> {
   const { data, error } = await dbUsuario.rpc("pode_ler_custo");
   if (error) return false;
   return data === true;
 }
 
 async function recommend(
-  db: ReturnType<typeof createClient>,
+  db: SupabaseClient,
   customerId: string,
   basketProductIds: string[],
   farmerId: string,
@@ -435,7 +435,7 @@ async function recommend(
 // ======== LOG EVENT ========
 
 async function logEvent(
-  db: ReturnType<typeof createClient>,
+  db: SupabaseClient,
   farmerId: string,
   customerId: string,
   productId: string,

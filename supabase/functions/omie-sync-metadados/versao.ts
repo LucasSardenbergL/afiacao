@@ -23,7 +23,7 @@ import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
 export const respostaSonda = criarRespostaSonda("omie-sync-metadados");
 
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.1-catalogo-sem-estoque";
+export const VERSAO = "v1.2-tipos-client";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
