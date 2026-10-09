@@ -38,7 +38,7 @@ export const FONTE_SHA256: Record<string, string> = {
   "identify-tool": "6b4917dfc938e0e34dc7228b290feddbde1548f7385feadc64896571f5391fd1",
   "monthly-report": "578a6e8963a0f1fd0fee9bc8fbd971892b9cdae5128894e40e74d9989cc4d7ab",
   "nvoip-calls": "5a136e22d19fbb0682c5669554bcd5912ff9ca186ecb1014b327d49946bba36b",
-  "omie-analytics-sync": "3ec619339d0d84bac09da27443bb4be5a2491cb4ea43f800267c4a298aa7d0aa",
+  "omie-analytics-sync": "86611f00e1f34965179f8b6a6c5bac38bc01a240b677b296182304046e7472e5",
   "omie-aplicar-parametros": "132174780a3175d470853b88833b8e366fcce36cfa2608ec3308bea2cb75518c",
   "omie-cliente": "fade69529ee1b7d62c65c640c98af721bf9df1030c078c93ec5c9dd55eaae92f",
   "omie-cron-diario": "0bc7f2b02ce1be0d11b791a665bf5ba44494e90488205474ad38a49fa14fa4f3",

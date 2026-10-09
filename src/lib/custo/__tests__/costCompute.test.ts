@@ -67,7 +67,7 @@ describe('montarUpsertsDeCusto — degradação honesta (ausente ≠ zero)', () 
     const r = byId(rows, 'p1');
     expect(r.cost_source).toBe('DEFAULT_PROXY');
     expect(r.cost_price).toBeNull();
-    expect(r.cmc).toBe(0); // sem CMC: cost_price null, mas a coluna cmc grava 0 (ausente)
+    expect(r.cmc).toBeNull(); // sem CMC: ausente é null, NUNCA 0 (o assert antigo canonizava o defeito)
   });
 
   it('produto com price<=0 não gera upsert (guard money-path)', () => {
