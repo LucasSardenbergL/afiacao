@@ -87,6 +87,7 @@ havia escrito, que provei vazar PII interpolada sem delimitador (`cliente 123.45
 Silva, joao@exemplo.com) sem permissão` passava inteiro — sem aspas e abaixo do teto de caracteres).
 Implementação descartada por inteiro. **A re-checagem pré-`gh pr create` evita o PR duplicado; só a
 pré-implementação evita a hora perdida.**
+**Onde o passo mora (2026-10-09):** nos rituais que PRODUZEM o achado compartilhado — [money-path.md](money-path.md) §Segunda opinião (parecer do Codex) e a skill `benchmark-externo` (Passo 6) — com os três eixos abaixo. Não virou comando `wt:tema`: reprova no critério de [maquinas-meta.md](maquinas-meta.md) (retrabalho não é dano fora do repo), e o texto no ritual chega antes do código, que é onde a hora se perde.
 
 ⚠️ **E a varredura por TÍTULO é CEGA a quem já MERGEOU (2026-08-15).** Falsificado contra 3
 duplicatas do mesmo dia: `git log origin/main --format='%s' | grep -c <símbolo>` → **0** para
