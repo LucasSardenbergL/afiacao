@@ -90,8 +90,17 @@ export const respostaSonda = criarRespostaSonda("omie-vendas-sync");
  * AlterarPedidoVenda, no `dDtPrevisao` do IncluirOrdemProducao e no `dDataPosicao` do syncEstoque: saíam do
  * dia UTC do servidor, AMANHÃ das 21:00 às 23:59 BRT — e, sem dInc, o data_previsao vira o order_date_kpi.
  * Nenhuma pré-condição de banco, nenhuma ordem de deploy.
+ *
+ * `v1.12-write-back-pv-atomico` (2026-10-09, ATP fase 3.1): o write-back do `criar_pedido`
+ * (`criarPedidoVenda`) deixa o `.update()` solto em `sales_orders` e chama a RPC
+ * `atp_confirmar_pv`, que grava o PV E carimba o par (omie_account, omie_pedido_id) nas reservas
+ * ativas do pedido na MESMA transação — o elo que sobrevive ao DELETE da push no
+ * `excluir_pedido`. Mesmo contrato de antes (exatamente 1 linha, erro alto).
+ * ⚠️ PRÉ-CONDIÇÃO DE BANCO / ORDEM DE DEPLOY: migration `20261009120000` ANTES deste edge. Sem
+ * ela a RPC responde PGRST202 e o edge cai no write-back LEGADO com `console.error` — o pedido
+ * nunca fica sem write-back, mas a reserva não ganha o par. Fatia EDGE-LOCAL ⇒ a canária basta.
  */
-export const VERSAO = "v1.11-catalogo-sem-estoque";
+export const VERSAO = "v1.12-write-back-pv-atomico";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
