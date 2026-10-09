@@ -3,6 +3,9 @@
 # ║  PROVA PG17 — ATP FASE 3: a reserva do PV firme para de morrer por TTL         ║
 # ║  Migration: 20260808012000_atp_reconciliacao_fase3.sql                          ║
 # ║  (sobre as fases 1 + 1.1 + 2, aplicadas em ordem)                               ║
+# ║  + FASE 3.1: 20261009120000_atp_fase3_1_elo_pid.sql, aplicada POR CIMA — as     ║
+# ║    zonas 4-8 re-exercem a fase 3 sob as funções que a 3.1 recria (versão        ║
+# ║    coberta = versão entregue) e a ZONA 9 prova o elo que sobrevive ao DELETE.   ║
 # ║                                                                                ║
 # ║  Invariante CENTRAL:                                                           ║
 # ║   • reserva de PV FIRME (pedido com omie_pedido_id) não morre por relógio —     ║
@@ -118,7 +121,11 @@ CREATE TABLE IF NOT EXISTS public.sales_orders (
   hash_payload text,
   origem text,
   deleted_at timestamptz,
-  created_at timestamptz NOT NULL DEFAULT now()
+  created_at timestamptz NOT NULL DEFAULT now(),
+  -- fase 3.1: o que o write-back do PV grava (tipos conferidos por psql-ro, 2026-10-09)
+  omie_numero_pedido text,
+  omie_payload jsonb,
+  omie_response jsonb
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uniq_sales_orders_omie_pedido_id
   ON public.sales_orders (account, omie_pedido_id)
@@ -156,8 +163,9 @@ MIG1="$REPO_ROOT/supabase/migrations/20260806101417_atp_reserva_estoque_fase1.sq
 MIG11="$REPO_ROOT/supabase/migrations/20260806225052_atp_reserva_estoque_fase1_1_hardening.sql"
 MIG2="$REPO_ROOT/supabase/migrations/20260807015000_atp_gate_pedido_fase2.sql"
 MIG3="$REPO_ROOT/supabase/migrations/20260808012000_atp_reconciliacao_fase3.sql"
-P -q -f "$MIG1"; P -q -f "$MIG11"; P -q -f "$MIG2"; P -q -f "$MIG3"
-echo "migrations aplicadas: fase1 + fase1.1 + fase2 + fase3"
+MIG31="$REPO_ROOT/supabase/migrations/20261009120000_atp_fase3_1_elo_pid.sql"
+P -q -f "$MIG1"; P -q -f "$MIG11"; P -q -f "$MIG2"; P -q -f "$MIG3"; P -q -f "$MIG31"
+echo "migrations aplicadas: fase1 + fase1.1 + fase2 + fase3 + fase3.1"
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ZONA 3 — SEEDS
@@ -353,7 +361,11 @@ reconciliar >/dev/null
 eq "B5 novo faturamento volta a carimbar" "$(carimbo "$CK_REGR")" "true"
 
 # B6 — hard-delete do pedido: FK ON DELETE SET NULL zera o vínculo e a reserva
-#      volta ao regime de TTL — na hora, no cálculo (o tick só muda o status)
+#      volta ao regime de TTL — na hora, no cálculo (o tick só muda o status).
+#      ⚠️ Sob a 3.1 isto vale SÓ para a reserva confirmada SEM o par próprio (o
+#      seed vincula direto, como o edge antigo fazia). A reserva confirmada pela
+#      atp_confirmar_pv faz o CONTRÁRIO — ZONA 9 (E3-E5). Os dois lados juntos
+#      provam que é o par, e não outra coisa, que segura o elo.
 vencer "$CK_HARD"
 eq "B6 antes do delete, PV firme nao expira" "$(reservado 3007)" "2"
 P -q -c "DELETE FROM public.sales_orders WHERE id='$SO_HARD'"
@@ -553,6 +565,218 @@ SQL
 case "$V" in *SENTINELA_CHECK_BARROU*) ok "N13 CHECK de decisao recusa valor fora do dominio";; *) bad "N13 CHECK aceitou lixo: $V";; esac
 
 # ══════════════════════════════════════════════════════════════════════════════
+# ZONA 9 — FASE 3.1: O ELO RESERVA↔PV SOBREVIVE AO DELETE
+#  A reserva conhecia o pedido só pela FK (ON DELETE SET NULL). O excluir_pedido
+#  apaga a linha push MESMO com o CancelarPedido falho no Omie ⇒ PV vivo, reserva
+#  cega. A 3.1 dá à reserva o PAR PRÓPRIO (omie_account, omie_pedido_id), gravado
+#  pelo writer único atp_confirmar_pv na mesma transação do write-back.
+#  SKUs 3101-3106, um cenário por SKU.
+# ══════════════════════════════════════════════════════════════════════════════
+echo "-- fase 3.1: elo que sobrevive ao DELETE --"
+
+SO_E1='e3100000-0000-0000-0000-000000000001'   # confirma → apaga a push → PV vivo
+SO_E2='e3100000-0000-0000-0000-000000000002'   # confirma → apaga a push → faturado
+SO_E3='e3100000-0000-0000-0000-000000000003'   # write-back que não casa (atomicidade)
+SO_E4='e3100000-0000-0000-0000-000000000004'   # expirada antes do PV (não ressuscita)
+SO_E5='e3100000-0000-0000-0000-000000000005'   # lock
+SO_E6='e3100000-0000-0000-0000-000000000006'   # vencida-mas-ativa: confirmar AUMENTA
+CK_E1='c3100000-0000-0000-0000-000000000001'
+CK_E2='c3100000-0000-0000-0000-000000000002'
+CK_E3='c3100000-0000-0000-0000-000000000003'
+CK_E4='c3100000-0000-0000-0000-000000000004'
+CK_E5='c3100000-0000-0000-0000-000000000005'
+CK_E6='c3100000-0000-0000-0000-000000000006'
+
+P -q <<SQL
+INSERT INTO public.inventory_position (omie_codigo_produto, account, saldo, synced_at)
+SELECT s, a, 10, now() FROM unnest(ARRAY[3101,3102,3103,3104,3105,3106]) s,
+                            unnest(ARRAY['oben','vendas']) a;
+-- linhas PUSH pré-PV (o gate já vinculou a reserva; o PID ainda não voltou do Omie)
+INSERT INTO public.sales_orders (id, checkout_id, account, items, omie_pedido_id, status, hash_payload, origem) VALUES
+  ('$SO_E1','$CK_E1','oben','[{"omie_codigo_produto":3101,"quantidade":2}]',NULL,'rascunho',NULL,'web_staff'),
+  ('$SO_E2','$CK_E2','oben','[{"omie_codigo_produto":3102,"quantidade":2}]',NULL,'rascunho',NULL,'web_staff'),
+  ('$SO_E3','$CK_E3','oben','[{"omie_codigo_produto":3103,"quantidade":2}]',NULL,'rascunho',NULL,'web_staff'),
+  ('$SO_E4','$CK_E4','oben','[{"omie_codigo_produto":3104,"quantidade":2}]',NULL,'rascunho',NULL,'web_staff'),
+  ('$SO_E5','$CK_E5','oben','[{"omie_codigo_produto":3105,"quantidade":2}]',NULL,'rascunho',NULL,'web_staff'),
+  ('$SO_E6','$CK_E6','oben','[{"omie_codigo_produto":3106,"quantidade":2}]',NULL,'rascunho',NULL,'web_staff');
+-- canônicas (pull) que o sync traria depois do PV
+INSERT INTO public.sales_orders (account, omie_pedido_id, status, hash_payload, items) VALUES
+  ('oben', 9101, 'importado', 'omie_oben_9101', '[]'),
+  ('oben', 9102, 'faturado',  'omie_oben_9102', '[]');
+SQL
+seed_reserva 3101 2 "$CK_E1" "$SO_E1"
+seed_reserva 3102 2 "$CK_E2" "$SO_E2"
+seed_reserva 3103 2 "$CK_E3" "$SO_E3"
+seed_reserva 3104 2 "$CK_E4" "$SO_E4"
+seed_reserva 3105 2 "$CK_E5" "$SO_E5"
+seed_reserva 3106 2 "$CK_E6" "$SO_E6"
+
+# o edge chama como service_role (supabaseAdmin) — o gate próprio lê auth.role()
+confirmar() { # $1=sales_order_id $2=account $3=pid
+  Pq -q <<SQL
+SET test.role='service_role';
+SELECT public.atp_confirmar_pv('$1'::uuid, '$2', $3, 'N$3', '{"p":1}'::jsonb, '{"r":1}'::jsonb)::text;
+SQL
+}
+par() { Pq -c "SELECT COALESCE(omie_account,'NULL')||'/'||COALESCE(omie_pedido_id::text,'NULL') FROM public.estoque_reservas WHERE checkout_id='$1' ORDER BY created_at DESC LIMIT 1"; }
+# assert negativo por SQLSTATE: imprime SENTINELA_<estado> só se veio o erro esperado
+sqlstate_de() { # stdin = SQL dentro do DO; $1 = condição esperada
+  P -q -v ON_ERROR_STOP=0 2>&1 <<SQL | tr -d '\n'
+DO \$\$ BEGIN
+  $(cat)
+  RAISE NOTICE 'SENTINELA_NADA_LANCOU';
+EXCEPTION WHEN $1 THEN RAISE NOTICE 'SENTINELA_VEIO_O_ESPERADO';
+END \$\$;
+SQL
+}
+
+# ── E1/E2 — o writer único: write-back + carimbo na MESMA transação ──
+R=$(confirmar "$SO_E1" oben 9101)
+eq "E1 RPC confirma e carimba 1 reserva" "$(printf '%s' "$R" | command grep -o '"reservas_firmadas": 1' | head -1)" '"reservas_firmadas": 1'
+eq "E1 write-back gravou o PID na push" \
+   "$(Pq -c "SELECT omie_pedido_id||'/'||status||'/'||omie_numero_pedido FROM public.sales_orders WHERE id='$SO_E1'")" "9101/enviado/N9101"
+eq "E2 a reserva ganhou o PAR PROPRIO" "$(par "$CK_E1")" "oben/9101"
+
+# ── E3-E5 — o caso pior: CancelarPedido falhou, DELETE local feito mesmo assim ──
+vencer "$CK_E1"
+P -q -c "DELETE FROM public.sales_orders WHERE id='$SO_E1'"
+eq "E3 FK SET NULL zerou o vinculo (o cenario do excluir_pedido)" \
+   "$(Pq -c "SELECT (sales_order_id IS NULL)::text FROM public.estoque_reservas WHERE checkout_id='$CK_E1'")" "true"
+eq "E3 push apagada: a reserva SEGUE descontando (elo sobrevive)" "$(reservado 3101)" "2"
+expirar >/dev/null
+eq "E4 push apagada + vencida: o TTL NAO a carimba" "$(st "$CK_E1")" "ativa"
+reconciliar >/dev/null
+eq "E5 canonica viva (PV nao cancelado no Omie): reconciliacao NAO libera" "$(st "$CK_E1")" "ativa"
+eq "E5 a desvinculada aparece na FILA humana, pelo PID proprio" \
+   "$(Pq -q <<SQL
+SET test.uid='$STAFF'; SET test.role='authenticated';
+SELECT p.omie_pedido_id||'/'||COALESCE(p.status_vinculado,'NULL')||'/'||COALESCE(p.status_canonico,'NULL')
+FROM public.atp_reservas_pendentes(0) p
+JOIN public.estoque_reservas r ON r.id = p.reserva_id WHERE r.checkout_id='$CK_E1';
+SQL
+)" "9101/NULL/importado"
+
+# o Omie confirma o cancelamento (o sync traz 'cancelado' para a canônica)
+P -q -c "UPDATE public.sales_orders SET status='cancelado' WHERE hash_payload='omie_oben_9101'"
+reconciliar >/dev/null
+eq "E6 canonica cancelada: a desvinculada e LIBERADA pelo par proprio" "$(st "$CK_E1")" "liberada"
+eq "E6 trilha registra a liberacao mesmo sem sales_order_id" \
+   "$(Pq -c "SELECT count(*) FROM public.atp_decisoes WHERE decisao='liberado_por_cancelamento' AND checkout_id='$CK_E1' AND sales_order_id IS NULL")" "1"
+
+# E7 — faturado observado numa reserva desvinculada (o carimbo da fila também acha)
+confirmar "$SO_E2" oben 9102 >/dev/null
+P -q -c "DELETE FROM public.sales_orders WHERE id='$SO_E2'"
+reconciliar >/dev/null
+eq "E7 desvinculada + canonica faturada: carimba a observacao" "$(carimbo "$CK_E2")" "true"
+eq "E7 e NAO consome (consumo segue humano na 3.1)" "$(st "$CK_E2")" "ativa"
+
+# ── E8 — ATOMICIDADE: write-back que não casa ⇒ P0002 e NADA gravado ──
+V=$(sqlstate_de no_data_found <<SQL
+PERFORM set_config('test.role','service_role',true);
+PERFORM public.atp_confirmar_pv('$SO_E3'::uuid, 'colacor', 9103, 'N', '{}'::jsonb, '{}'::jsonb);
+SQL
+)
+case "$V" in *SENTINELA_VEIO_O_ESPERADO*) ok "E8 write-back sem a linha (conta errada) -> P0002";; *) bad "E8 esperava P0002: $V";; esac
+eq "E8 nada gravado: a reserva ficou SEM par" "$(par "$CK_E3")" "NULL/NULL"
+eq "E8 nada gravado: a push ficou sem PID" \
+   "$(Pq -c "SELECT COALESCE(omie_pedido_id::text,'NULL') FROM public.sales_orders WHERE id='$SO_E3'")" "NULL"
+
+# ── E9 — reserva já ENCERRADA não é carimbada nem ressuscita (gêmeo do A5) ──
+vencer "$CK_E4"; expirar >/dev/null
+R=$(confirmar "$SO_E4" oben 9104)
+eq "E9 expirada antes do PV: 0 reservas firmadas" "$(printf '%s' "$R" | command grep -o '"reservas_firmadas": 0' | head -1)" '"reservas_firmadas": 0'
+eq "E9 e segue expirada, sem descontar" "$(st "$CK_E4")/$(reservado 3104)" "expirada/0"
+
+# ── E10 — confirmar AUMENTA o reservado (por isso a RPC trava como o reservar) ──
+vencer "$CK_E6"
+eq "E10 antes: vencida pre-PV ainda 'ativa' NAO desconta" "$(st "$CK_E6")/$(reservado 3106)" "ativa/0"
+confirmar "$SO_E6" oben 9106 >/dev/null
+eq "E10 depois do PV: a mesma reserva VOLTA a descontar" "$(reservado 3106)" "2"
+
+# ── E11-E14 — WRITE-ONCE ──
+R=$(confirmar "$SO_E6" oben 9106)
+eq "E11 reconfirmar o MESMO PID e idempotente" "$(printf '%s' "$R" | command grep -o '"ok": true' | head -1)" '"ok": true'
+V=$(sqlstate_de check_violation <<SQL
+PERFORM set_config('test.role','service_role',true);
+PERFORM public.atp_confirmar_pv('$SO_E6'::uuid, 'oben', 9199, 'N', '{}'::jsonb, '{}'::jsonb);
+SQL
+)
+case "$V" in *SENTINELA_VEIO_O_ESPERADO*) ok "E12 trocar o PID pela RPC -> 23514";; *) bad "E12 esperava 23514 ao trocar o PID: $V";; esac
+eq "E12 e a push NAO ficou com o PID trocado (rollback inteiro)" \
+   "$(Pq -c "SELECT omie_pedido_id FROM public.sales_orders WHERE id='$SO_E6'")" "9106"
+V=$(sqlstate_de check_violation <<SQL
+UPDATE public.estoque_reservas SET omie_pedido_id = NULL, omie_account = NULL WHERE checkout_id='$CK_E6';
+SQL
+)
+case "$V" in *SENTINELA_VEIO_O_ESPERADO*) ok "E13 apagar o par -> 23514";; *) bad "E13 esperava 23514 ao apagar o par: $V";; esac
+V=$(sqlstate_de check_violation <<SQL
+INSERT INTO public.estoque_reservas (pool, checkout_id, omie_codigo_produto, quantidade, expira_em, omie_pedido_id, omie_account)
+VALUES ('oben', gen_random_uuid(), 3106, 1, now() + interval '30 minutes', 9106, 'oben');
+SQL
+)
+case "$V" in *SENTINELA_VEIO_O_ESPERADO*) ok "E14 reserva nao NASCE com par -> 23514";; *) bad "E14 esperava 23514 no INSERT com par: $V";; esac
+
+# ── E15-E18 — AUTORIZAÇÃO (catálogo ≠ comportamento: 42501 tem dois emissores) ──
+eq "E15 anon sem EXECUTE em atp_confirmar_pv (catalogo)" \
+   "$(Pq -c "SELECT has_function_privilege('anon','public.atp_confirmar_pv(uuid,text,bigint,text,jsonb,jsonb)','EXECUTE')::text")" "false"
+eq "E15 authenticated sem EXECUTE em atp_confirmar_pv (catalogo)" \
+   "$(Pq -c "SELECT has_function_privilege('authenticated','public.atp_confirmar_pv(uuid,text,bigint,text,jsonb,jsonb)','EXECUTE')::text")" "false"
+eq "E16 service_role COM EXECUTE (senao o edge quebra depois do PV criado)" \
+   "$(Pq -c "SELECT has_function_privilege('service_role','public.atp_confirmar_pv(uuid,text,bigint,text,jsonb,jsonb)','EXECUTE')::text")" "true"
+# comportamento: o superuser do harness TEM execute — então só o gate PRÓPRIO barra
+V=$(sqlstate_de insufficient_privilege <<SQL
+PERFORM set_config('test.role','authenticated',true);
+PERFORM public.atp_confirmar_pv('$SO_E5'::uuid, 'oben', 9105, 'N', '{}'::jsonb, '{}'::jsonb);
+SQL
+)
+case "$V" in *SENTINELA_VEIO_O_ESPERADO*) ok "E17 gate proprio: role authenticated -> 42501";; *) bad "E17 esperava 42501 do gate proprio: $V";; esac
+V=$(sqlstate_de invalid_parameter_value <<SQL
+PERFORM set_config('test.role','service_role',true);
+PERFORM public.atp_confirmar_pv('$SO_E5'::uuid, 'oben', 0, 'N', '{}'::jsonb, '{}'::jsonb);
+SQL
+)
+case "$V" in *SENTINELA_VEIO_O_ESPERADO*) ok "E18 PID 0 -> 22023";; *) bad "E18 esperava 22023 para PID 0: $V";; esac
+eq "E18 e o gate/validacao nao deixaram rastro" "$(par "$CK_E5")" "NULL/NULL"
+
+# ── E19 — LOCK: com o SKU travado por outra sessão (um reservar_estoque em
+#    curso), a RPC ESPERA — prova por lock_timeout ⇒ 55P03. Sem o lock ela
+#    passaria e a ordem com o reservar ficaria indefinida.
+espera_lock() { # $1 = chave do advisory lock
+  P -q -c "SELECT pg_advisory_lock(hashtextextended('$1',0)); SELECT pg_sleep(6);" >/dev/null 2>&1 &
+  local bg=$! i
+  for i in $(seq 1 50); do
+    [ "$(Pq -c "SELECT count(*) FROM pg_locks WHERE locktype='advisory' AND granted")" -ge 1 ] && break
+    sleep 0.1
+  done
+  V=$(sqlstate_de lock_not_available <<SQL
+PERFORM set_config('test.role','service_role',true);
+PERFORM set_config('lock_timeout','300ms',true);
+PERFORM public.atp_confirmar_pv('$SO_E5'::uuid, 'oben', 9105, 'N', '{}'::jsonb, '{}'::jsonb);
+SQL
+)
+  kill "$bg" 2>/dev/null; wait "$bg" 2>/dev/null || true
+  P -q -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE query LIKE '%pg_sleep(6)%' AND pid <> pg_backend_pid()" >/dev/null
+  for i in $(seq 1 50); do
+    [ "$(Pq -c "SELECT count(*) FROM pg_locks WHERE locktype='advisory'")" -eq 0 ] && break
+    sleep 0.1
+  done
+  printf '%s' "$V"
+}
+V=$(espera_lock "atp:sku:oben:3105")
+case "$V" in *SENTINELA_VEIO_O_ESPERADO*) ok "E19 SKU travado: a RPC espera o lock (55P03)";; *) bad "E19 a RPC NAO esperou o lock do SKU: $V";; esac
+V=$(espera_lock "atp:checkout:$CK_E5")
+case "$V" in *SENTINELA_VEIO_O_ESPERADO*) ok "E19 checkout travado: a RPC espera o lock (55P03)";; *) bad "E19 a RPC NAO esperou o lock do checkout: $V";; esac
+eq "E19 sem lock livre, nada gravado" "$(par "$CK_E5")" "NULL/NULL"
+
+# ── E20 — re-aplicar a migration é IDEMPOTENTE e o BACKFILL dá o par a quem
+#    já tinha PV pelo vínculo (o seed da fase 3: 3001 → push com PID 9001)
+eq "E20 antes do re-apply, a reserva legada nao tem par" "$(par "$CK_VIVO")" "NULL/NULL"
+if P -q -f "$MIG31" >/dev/null 2>&1; then ok "E20 re-aplicar a 3.1 nao quebra (idempotente)"
+else bad "E20 re-aplicar a 3.1 FALHOU"; fi
+eq "E20 backfill deu o par a reserva legada" "$(par "$CK_VIVO")" "oben/9001"
+eq "E20 backfill nao tocou a ja carimbada (write-once intacto)" "$(par "$CK_E6")" "oben/9106"
+
+# ══════════════════════════════════════════════════════════════════════════════
 # ZONA 8 — O VALIDADOR PÓS-APPLY TAMBÉM É CÓDIGO, E TAMBÉM MENTE
 # (money-path §"O VALIDADOR mente": o script que o founder cola no SQL Editor
 #  nasce sem prova de que morde, e erra nos dois sentidos. Aqui ele é EXECUTADO
@@ -566,6 +790,10 @@ eq "Z1 validador contra banco BOM: nenhum FALHOU" \
    "$(printf '%s' "$VAL" | command grep -c 'FALHOU' || true)" "0"
 eq "Z1 validador da o veredito APLICADA" \
    "$(printf '%s' "$VAL" | command grep -c 'FASE 3 APLICADA' || true)" "1"
+eq "Z1 validador da o veredito da 3.1 APLICADA" \
+   "$(printf '%s' "$VAL" | command grep -c 'FASE 3.1 APLICADA' || true)" "1"
+eq "Z1 validador tem os 41 checks (3 + 3.1)" \
+   "$(printf '%s' "$VAL" | command grep -cE '^[0-9]+\|(OK|FALHOU)' || true)" "41"
 
 # Z2 — banco SABOTADO: um objeto some e o validador tem de acusar. Roda por
 # último de propósito (o DROP não pode contaminar assert anterior).
