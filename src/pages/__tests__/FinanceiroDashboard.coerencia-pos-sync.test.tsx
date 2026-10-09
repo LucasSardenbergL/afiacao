@@ -81,17 +81,22 @@ const getResumoFinanceiro = vi.fn(async (companies: string[]) =>
   ),
 );
 
-const getFluxoCaixa = vi.fn(async () => [
+/** `falharFluxo` simula a leitura do previsto que ERRA (RLS, timeout, rede). */
+let falharFluxo = false;
+const getFluxoCaixa = vi.fn(async () => {
+  if (falharFluxo) throw new Error('leitura do fluxo falhou');
+  return [
   {
     data: DIA_FUTURO,
     entradas_previstas: previstoFuturo,
     entradas_realizadas: 0,
     saidas_previstas: 0,
     saidas_realizadas: 0,
-    saldo_previsto: 0,
-    saldo_realizado: 0,
-  },
-]);
+      saldo_previsto: 0,
+      saldo_realizado: 0,
+    },
+  ];
+});
 
 /**
  * O sync RECEBE 2.000 do título a vencer: o dinheiro muda de bolso, o total não muda.
@@ -151,6 +156,7 @@ beforeEach(() => {
   previstoFuturo = 4000;
   modoManual = false;
   liberarSync = null;
+  falharFluxo = false;
   getResumoFinanceiro.mockClear();
   getFluxoCaixa.mockClear();
   triggerFinanceiroSync.mockClear();
@@ -223,5 +229,24 @@ describe('useFinanceiro: ação que muda o banco não deixa previsto velho em me
     // pela `versaoDados` — o pior caso é a aba vazia, nunca a soma de duas épocas.
     expect(result.current.fluxoCaixa).toHaveLength(0);
     expect(result.current.versaoDados).toBeGreaterThan(versaoAntes);
+  });
+
+  it('carga do previsto que FALHA não deixa o fluxo da leitura anterior na tela', async () => {
+    const { result } = renderHook(() => useFinanceiro('all'));
+
+    await act(async () => {
+      await result.current.loadFluxoCaixa('2026-01-01', '2026-12-31');
+    });
+    expect(result.current.fluxoCaixa).toHaveLength(1);
+
+    // Trocar de empresa (ou de janela) e a leitura falhar: o previsto de antes não pode
+    // sobreviver sob a âncora nova — é a mesma mistura, por outra porta.
+    falharFluxo = true;
+    await act(async () => {
+      await result.current.loadFluxoCaixa('2026-01-01', '2026-12-31');
+    });
+
+    expect(result.current.fluxoCaixa).toHaveLength(0);
+    expect(result.current.error).not.toBeNull();
   });
 });

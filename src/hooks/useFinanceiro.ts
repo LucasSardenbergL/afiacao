@@ -167,6 +167,10 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
       const data = await getFluxoCaixa(company, dataInicio, dataFim);
       setFluxoCaixa(data);
     } catch (e) {
+      // Manter o previsto anterior é a MESMA mistura do `invalidarFluxoCaixa`: trocar de
+      // empresa e falhar na leitura mostrava o fluxo da empresa ANTERIOR sob a âncora da
+      // atual. Leitura que falha não é leitura vazia, mas também não é a leitura de antes.
+      setFluxoCaixa([]);
       setError(mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.');
     } finally {
       setLoading(false);
