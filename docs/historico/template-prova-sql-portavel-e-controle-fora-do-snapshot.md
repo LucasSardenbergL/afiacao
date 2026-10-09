@@ -147,8 +147,17 @@ exige que o snapshot PURO traga a v6 de `tint_promote_sync_run` (marca `_fl_culp
 exige que, sem a migration, o promote morra com 23514 (linhas 126-127): o snapshot TEM de ser o estado do
 incidente. A 5b#1 (`20260924120000`) consta ✅ em `docs/agent/tintometrico.md`; quando o re-dump levá-la ao
 snapshot, a T0 fica vermelha sem defeito — e as sabotagens F1/F2 caem no guard "já aplicada" da própria
-migration. **Não corrigida aqui** (outra prova, outro domínio): o conserto tem a forma desta — aplicar a v6
-de um artefato imutável por cima do snapshot antes da T0.
+migration.
+
+**Corrigida no PR seguinte (2026-10-08), mesma forma:** a v6 vem do bloco da `20260726120000` (byte-idêntico
+ao snapshot de 2026-09-05, sha256 `3eeb6cd760`), aplicado no banco-template antes da pré-condição. Log
+idêntico antes × depois (`diff` exit 0, `PASS=5 FAIL=0`); runner com a linha do manifesto: `asserts=5 (≥5)`.
+Falsificação num espelho com re-dump **fiel** — o corpo pós-5b#1 MEDIDO num PG17 (aplica a migration, lê o
+`prosrc`: 1.001 → 1.019 linhas, marca `v_tombstones_fase5`) —, controle antes e depois, `LC_ALL=C` e
+`pt_BR.UTF-8`, **6 ok / 0 fail** nos dois: sem âncora → `✗ T0 não reproduziu o incidente` (`T0=PROMOVEU`)
+e `✗ F1: sabotagem NÃO derrubou a suíte` (o guard "já aplicada" vira no-op); com âncora → verde; linha da
+âncora removida → vermelha de novo. Com isso, das 12 provas varridas, nenhuma segue exigindo do snapshot um
+estado que o re-dump apaga; as 6 que citam md5 não foram auditadas.
 
 **O acervo legado** segue com 233 provas de PGBIN fixo (`^PGBIN="/opt/homebrew/opt/postgresql`; eram 234 no
 #2855, menos esta). Nenhuma nasceu depois do harness: portá-las é trabalho de quem precisar delas no CI, não
