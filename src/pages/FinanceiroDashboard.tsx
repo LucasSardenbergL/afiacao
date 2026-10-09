@@ -37,7 +37,7 @@ const FinanceiroDashboard = ({ embedded = false }: { embedded?: boolean } = {}) 
     contasPagar, contasReceber,
     agingReceber, agingPagar,
     dreConsolidado, drePorEmpresa,
-    fluxoCaixa, inadimplentes,
+    fluxoCaixa, inadimplentes, versaoDados,
     loadResumo, loadContasPagar, loadContasReceber,
     loadAging, loadDRE, loadFluxoCaixa, loadInadimplentes,
     syncAll, calcularDRE, calcularDREAnual,
@@ -107,7 +107,10 @@ const FinanceiroDashboard = ({ embedded = false }: { embedded?: boolean } = {}) 
       );
     }
     if (tab === 'dre') loadDRE(dreAno, undefined, regime);
-  }, [tab, view, cpFilter, crFilter, dreAno, regime, crDateFrom, crDateTo, cpDateFrom, cpDateTo, loadDRE]);
+    // `versaoDados` muda a cada ação que escreve no banco (sync, recálculo de DRE): é o que
+    // faz a aba ATIVA reler. Sem ela, só o `resumo` era relido e a aba de fluxo somava a
+    // âncora nova com o previsto de antes do sync — ver `invalidarFluxoCaixa` no hook.
+  }, [tab, view, cpFilter, crFilter, dreAno, regime, crDateFrom, crDateTo, cpDateFrom, cpDateTo, loadDRE, versaoDados]);
 
   return (
     <div className="space-y-4 pb-24">
@@ -230,7 +233,9 @@ const FinanceiroDashboard = ({ embedded = false }: { embedded?: boolean } = {}) 
 
         {/* ═══════════ TAB: FLUXO DE CAIXA ═══════════ */}
         <TabsContent value="fluxo-caixa" className="space-y-4 mt-4">
-          <FluxoCaixaTab data={fluxoCaixa} loading={loading} saldoCC={activeResumo?.saldo_total_cc} />
+          {/* `syncing` conta como carregando: durante o sync o previsto já foi descartado, e sem
+              isso a aba mostraria o empty state "Sincronize os dados primeiro" no meio do sync. */}
+          <FluxoCaixaTab data={fluxoCaixa} loading={loading || syncing} saldoCC={activeResumo?.saldo_total_cc} />
         </TabsContent>
 
         {/* ═══════════ TAB: DRE ═══════════ */}

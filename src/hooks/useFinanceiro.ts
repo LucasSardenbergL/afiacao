@@ -41,6 +41,13 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
   >([]);
   const [lastSync, setLastSync] = useState<string | null>(null);
 
+  /**
+   * Versão dos dados: toda ação que ESCREVE no banco a incrementa ao terminar, e a tela usa
+   * isso como dependência para recarregar a aba ativa. Sem ela, um sync relia só o `resumo`
+   * e o resto da tela continuava numa época anterior à do banco.
+   */
+  const [versaoDados, setVersaoDados] = useState(0);
+
   // Computed resumo consolidado
   const resumoConsolidado: FinResumo | null =
     Object.keys(resumo).length > 0
@@ -176,6 +183,22 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
     }
   }, [view]);
 
+  /**
+   * A aba "Fluxo Caixa" combina duas pontas de ÉPOCAS diferentes no MESMO número: a ÂNCORA
+   * (`resumo.saldo_total_cc`, o saldo bancário de hoje) e o PREVISTO (`fluxoCaixa`, o que
+   * ainda não entrou) — ver `fluxo-caixa-semanas.ts`. Toda ação que muda os dados no banco
+   * descarta o previsto ANTES de mexer; quem o repõe é a tela, pela `versaoDados`.
+   *
+   * Por que invalidar na FRENTE e não apenas recarregar no fim: recarregar as duas pontas em
+   * sequência são dois `setState` em `await`s distintos, e o render do meio exibe a mistura;
+   * e se a segunda leitura falhar, o estado final É o defeito — âncora nova somando previsto
+   * velho, a dupla contagem do #2459 criada pelo próprio botão (um título recebido durante o
+   * sync já entrou no saldo e continuaria contando como entrada futura). Com a invalidação na
+   * frente o pior caso é a aba vazia, nunca um número fabricado — precisão > recall,
+   * `docs/agent/money-path.md`.
+   */
+  const invalidarFluxoCaixa = useCallback(() => setFluxoCaixa([]), []);
+
   // Sync from Omie
   const syncAll = useCallback(async () => {
     try {
@@ -184,6 +207,7 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
       const companies: Company[] = view === 'all' 
         ? ['oben', 'colacor', 'colacor_sc']
         : [view as Company];
+      invalidarFluxoCaixa();
       await triggerFinanceiroSync('sync_all', companies);
       // Reload local data after sync
       await loadResumo();
@@ -191,8 +215,11 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
       setError(mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.');
     } finally {
       setSyncing(false);
+      // Também no erro: o sync é por empresa e pode ter escrito antes de falhar, então a tela
+      // precisa reconciliar de qualquer jeito — senão a aba fica vazia até alguém clicar.
+      setVersaoDados(v => v + 1);
     }
-  }, [view, loadResumo]);
+  }, [view, loadResumo, invalidarFluxoCaixa]);
 
   const calcularDRE = useCallback(async (ano: number, mes: number, regime: 'caixa' | 'competencia' = 'competencia') => {
     try {
@@ -206,6 +233,7 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
       setError(mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.');
     } finally {
       setSyncing(false);
+      setVersaoDados(v => v + 1);
     }
   }, [view, loadDRE]);
 
@@ -221,6 +249,7 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
       setError(mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.');
     } finally {
       setSyncing(false);
+      setVersaoDados(v => v + 1);
     }
   }, [view, loadDRE]);
 
@@ -233,6 +262,9 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
         : [view as Company];
 
       // Heavy sync actions: call one company at a time to avoid 150s timeout
+      // Mesma classe do `syncAll`: `sync_contas_correntes` move a âncora e
+      // `sync_contas_receber`/`sync_movimentacoes` movem o previsto — e aqui nada era relido.
+      invalidarFluxoCaixa();
       const heavyActions = ['sync_contas_pagar', 'sync_contas_receber', 'sync_movimentacoes', 'sync_all', 'calcular_dre', 'calcular_dre_year'];
       if (heavyActions.includes(action)) {
         const allResults: Record<string, unknown> = {};
@@ -266,8 +298,9 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
       setError(mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.');
     } finally {
       setSyncing(false);
+      setVersaoDados(v => v + 1);
     }
-  }, [view]);
+  }, [view, invalidarFluxoCaixa]);
 
   // Computed: DRE consolidado por mês (soma empresas quando view === 'all')
   const dreConsolidado = useMemo<FinDRE[]>(() => {
@@ -325,6 +358,8 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
     drePorEmpresa,
     fluxoCaixa,
     inadimplentes,
+    /** Muda a cada ação que escreve no banco — dependência de recarga da tela. */
+    versaoDados,
 
     // Actions
     loadResumo,
