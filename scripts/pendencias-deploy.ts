@@ -87,8 +87,6 @@ import { execFileSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import ts from 'typescript';
-
 import {
   atribuirSondasSemIdentidade,
   contarEscrita,
@@ -111,11 +109,21 @@ import {
   type Veredito,
 } from './lib/pendencias-deploy';
 import {
+  ARQ_ALLOWLIST,
+  descreverDivergencia,
+  diagnosticoWorktree,
+  extrairAlvosDaAllowlist,
+  parsearEstadoWorktree,
+  type EstadoWorktree,
+} from './lib/sonda-cron-allowlist';
+import {
   alvosForaDoRepo,
+  classificarSemPergunta,
   cronSondaParado,
   type AtestacaoAtribuida,
   type Disparo,
   julgarSondaCron,
+  toleranciaDoCronMin,
 } from './lib/sonda-cron-testemunha';
 import {
   type Consultas,
@@ -384,6 +392,31 @@ WHERE r.c IS NOT NULL
 ORDER BY r.id;
 `.trim();
 
+/**
+ * Há quantos minutos cada edge ATIVA espera por uma pergunta: desde o último disparo para ELA — em
+ * qualquer tick, inclusive o manual que o `sonda:sql` oferece — ou desde `habilitado_em`, o que for
+ * MAIS RECENTE. É o que dá TETO à espera: sem medida, "sem pergunta" descreveria para sempre tanto a
+ * edge que acabou de entrar quanto a que o dispatcher parou de perguntar.
+ *
+ * O `greatest` com o último disparo é o que impede o alarme falso MEDIDO em prod (tick manual de
+ * 2026-09-10 23:14Z, só `sonda-relay`): um tick parcial desloca o tick do cron da janela de 2, e as
+ * outras 15 edges — perguntadas pelo cron 34 min antes — pareceriam esquecidas se a régua fosse só
+ * `habilitado_em`. O kill switch é o avesso: o `UPDATE … SET ativo` NÃO mexe em `habilitado_em`, então
+ * uma edge recém-reativada conta a espera desde antes de ser desligada — é por isso que o teto gera
+ * AVISO (que nomeia as duas causas), nunca achado.
+ *
+ * Lida só quando alguma ativa ficou fora dos ticks que julgam: no caso comum não custa round-trip.
+ */
+export const SQL_SONDA_CRON_ESPERA = `
+SELECT a.edge,
+       round((extract(epoch FROM (now() - greatest(a.habilitado_em, max(d.enfileirado_em)))) / 60.0)::numeric, 1)::text
+FROM public.deploy_sonda_alvos a
+LEFT JOIN public.deploy_sonda_disparos d ON d.edge = a.edge
+WHERE a.ativo
+GROUP BY a.edge, a.habilitado_em
+ORDER BY a.edge;
+`.trim();
+
 export const SQL_SAUDE_CRON_SONDA = `
 SELECT coalesce(
   round((extract(epoch FROM (now() - max(d.end_time))) / 60.0)::numeric, 1)::text,
@@ -407,6 +440,7 @@ export const CONSULTAS_NUVEM: Consultas = {
   sonda_atestacoes: SQL_SONDA_CRON_ATESTACOES,
   sonda_motivos: SQL_SONDA_CRON_MOTIVOS,
   sonda_saude: SQL_SAUDE_CRON_SONDA,
+  sonda_espera: SQL_SONDA_CRON_ESPERA,
 };
 
 /** Quem consome a resposta — resposta gerada para outro CLI é recusada como "arquivo de outra leitura". */
@@ -609,86 +643,16 @@ export function montarUniverso(pastas: string[], ler: (caminho: string) => strin
  * — `UPDATE … SET ativo = false`, desfazendo a migration e tirando do cron uma edge provada. Duas
  * fontes de verdade no mesmo sensor; a mais frequente das causas (worktree defasado, ~30 no repo)
  * recebia o remédio mais destrutivo. O disco agora só NOMEIA a defasagem; quem julga é a ref.
+ *
+ * O parser da allowlist e o diagnóstico da defasagem moram em `scripts/lib/sonda-cron-allowlist.ts`,
+ * compartilhados com o `sonda:sql` — o outro sensor que decidia por esta allowlist do disco.
  */
-export const ARQ_ALLOWLIST = 'supabase/functions/_shared/sonda-cron-alvos.ts';
-
-const EXPORT_ALLOWLIST = 'SONDA_CRON_ALVOS';
-const SLUG_EDGE = /^[a-z0-9][a-z0-9-]*$/;
-
-/** Commits entre o worktree e a ref: `aFrente` = só no worktree, `atras` = só na main. */
-export interface EstadoWorktree {
-  aFrente: number;
-  atras: number;
-}
 
 /** Só `ref` julga. `disco` (o import desta árvore) existe para NOMEAR a defasagem, nunca para decidir. */
 export interface Allowlists {
   ref: string[];
   disco: string[];
   worktree: EstadoWorktree | null;
-}
-
-function nomeDaPropriedade(nome: ts.PropertyName): string | null {
-  return ts.isIdentifier(nome) || ts.isStringLiteralLike(nome) ? nome.text : null;
-}
-
-/**
- * Os slugs de `SONDA_CRON_ALVOS` num TEXTO do arquivo — pela AST do TS, sem executar nada.
- *
- * Texto porque a ref não está no disco; AST e não regex porque o arquivo CITA slugs em comentário
- * (a entrada da onda 5 vem depois de um parágrafo que nomeia `omie-desconto-backfill`) e um regex
- * aprovaria edge por comentário. Para a AST, comentário é trivia e string de `nota` não é propriedade.
- *
- * LANÇA `ALLOWLIST_ILEGIVEL` para toda forma que não seja `{ edge: "<slug>", … }` literal, para
- * texto que não parseia e para o array vazio. Uma lista MENOR que a real é o pior erro possível
- * aqui: a edge omitida vira intrusa e o relatório imprime o UPDATE que desativa edge aprovada — o
- * incidente de novo, por outro caminho. Formato novo na main exige ensinar este parser no mesmo PR
- * (o teste que o compara com o import real reprova antes).
- */
-export function extrairAlvosDaAllowlist(fonte: string): string[] {
-  const ilegivel = (motivo: string) => new Error(`ALLOWLIST_ILEGIVEL: ${ARQ_ALLOWLIST} — ${motivo}`);
-
-  // Texto truncado ainda vira árvore (o parser do TS se recupera) — e a árvore de um corte no meio
-  // do array é uma lista MENOR com cara de lista inteira. O diagnóstico de sintaxe é o que a separa.
-  const sintaxe = ts.transpileModule(fonte, { reportDiagnostics: true }).diagnostics ?? [];
-  if (sintaxe.length > 0) {
-    throw ilegivel(`texto que não parseia: ${ts.flattenDiagnosticMessageText(sintaxe[0].messageText, ' ')}`);
-  }
-
-  const arquivo = ts.createSourceFile(ARQ_ALLOWLIST, fonte, ts.ScriptTarget.ESNext, true);
-  const trecho = (n: ts.Node) => n.getText(arquivo).replace(/\s+/g, ' ').slice(0, 80);
-  let array: ts.ArrayLiteralExpression | null = null;
-  for (const st of arquivo.statements) {
-    if (!ts.isVariableStatement(st)) continue;
-    if (!st.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword)) continue;
-    for (const d of st.declarationList.declarations) {
-      if (!ts.isIdentifier(d.name) || d.name.text !== EXPORT_ALLOWLIST) continue;
-      if (!d.initializer || !ts.isArrayLiteralExpression(d.initializer)) {
-        throw ilegivel(`\`${EXPORT_ALLOWLIST}\` não é um array literal`);
-      }
-      array = d.initializer;
-    }
-  }
-  if (array === null) throw ilegivel(`sem \`export const ${EXPORT_ALLOWLIST}\``);
-
-  const edges: string[] = [];
-  for (const el of array.elements) {
-    if (!ts.isObjectLiteralExpression(el)) throw ilegivel(`entrada que não é objeto literal: ${trecho(el)}`);
-    let edge: string | null = null;
-    for (const p of el.properties) {
-      if (ts.isSpreadAssignment(p)) throw ilegivel(`entrada com spread: ${trecho(el)}`);
-      if (nomeDaPropriedade(p.name) !== 'edge') continue;
-      if (!ts.isPropertyAssignment(p) || !ts.isStringLiteralLike(p.initializer)) {
-        throw ilegivel(`\`edge\` que não é string literal: ${trecho(p)}`);
-      }
-      edge = p.initializer.text;
-    }
-    if (edge === null) throw ilegivel(`entrada sem \`edge\`: ${trecho(el)}`);
-    if (!SLUG_EDGE.test(edge)) throw ilegivel(`slug fora do formato de edge: "${edge}"`);
-    edges.push(edge);
-  }
-  if (edges.length === 0) throw ilegivel('array vazio — ausente ≠ zero: "nenhuma aprovada" e "não li" têm a mesma cara');
-  return edges;
 }
 
 /**
@@ -698,8 +662,7 @@ export function extrairAlvosDaAllowlist(fonte: string): string[] {
 export function estadoDoWorktree(gitFn: typeof git = git): EstadoWorktree | null {
   const r = gitFn(['rev-list', '--left-right', '--count', `HEAD...${REF_MAIN}`]);
   if (!r.ok) return null;
-  const m = /^(\d+)\s+(\d+)$/.exec(r.saida.trim());
-  return m ? { aFrente: Number(m[1]), atras: Number(m[2]) } : null;
+  return parsearEstadoWorktree(r.saida);
 }
 
 /**
@@ -729,22 +692,6 @@ export function lerAllowlists(
 }
 
 /**
- * A causa PROVÁVEL da defasagem, pelo que o git contou. Heurística: havendo commit de diferença, ele
- * é o palpite; edição local não commitada só é nomeada quando não há commit de diferença (worktree
- * atrás E com a allowlist editada sai como "atrás" — raro, e o "só na main/só no worktree" ao lado
- * continua dizendo exatamente O QUE diverge).
- */
-export function diagnosticoWorktree(w: EstadoWorktree | null): string {
-  if (w === null) return `não consegui contar os commits entre o seu worktree e ${REF_MAIN}`;
-  if (w.atras > 0) {
-    const frente = w.aFrente > 0 ? ` (e ${w.aFrente} à frente)` : '';
-    return `seu worktree está ${w.atras} commit(s) atrás de ${REF_MAIN}${frente} — sincronize antes de medir`;
-  }
-  if (w.aFrente > 0) return `seu worktree está ${w.aFrente} commit(s) à frente de ${REF_MAIN} — entrega ainda não mergeada`;
-  return `seu worktree não tem commit de diferença para ${REF_MAIN} — a divergência é edição NÃO commitada`;
-}
-
-/**
  * O remédio depende de ONDE a edge intrusa falta. Só a que falta na ref E no disco recebe o
  * UPDATE: nada que este worktree veja a aprova. A que o disco aprova e a main não é ambígua — sua
  * entrega ainda não mergeada (banco adiantado) ou uma remoção na main que o worktree não viu — e
@@ -766,7 +713,7 @@ function mecanicaDosIntrusos(intrusos: string[], a: Allowlists): string {
   if (soNoWorktree.length > 0) {
     partes.push(
       `ALVO_SO_NO_WORKTREE — o banco sonda edge(s) que o SEU worktree aprova e ${REF_MAIN} NÃO: ` +
-        `${soNoWorktree.join(', ')} (${diagnosticoWorktree(a.worktree)}). NÃO desative a partir desta leitura: ` +
+        `${soNoWorktree.join(', ')} (${diagnosticoWorktree(a.worktree, REF_MAIN)}). NÃO desative a partir desta leitura: ` +
         `rode de novo depois de sincronizar com ${REF_MAIN} — se a main REMOVEU a edge, o sensor passa a imprimir ` +
         'o UPDATE; se a aprovação é entrega ainda não mergeada, o banco foi adiantado antes do merge, e o ' +
         'default-deny vale pela main até lá.',
@@ -777,18 +724,11 @@ function mecanicaDosIntrusos(intrusos: string[], a: Allowlists): string {
 
 /** Aviso (não reprova): a allowlist do disco difere da da ref. Igual → null — silêncio é o certo. */
 function avisoAllowlistDefasada(a: Allowlists): string | null {
-  const ref = new Set(a.ref);
-  const disco = new Set(a.disco);
-  const soNaMain = [...ref].filter((e) => !disco.has(e)).sort();
-  const soNoWorktree = [...disco].filter((e) => !ref.has(e)).sort();
-  if (soNaMain.length === 0 && soNoWorktree.length === 0) return null;
-  const diferencas = [
-    ...(soNaMain.length > 0 ? [`só na main: ${soNaMain.join(', ')}`] : []),
-    ...(soNoWorktree.length > 0 ? [`só no seu worktree: ${soNoWorktree.join(', ')}`] : []),
-  ];
+  const diferencas = descreverDivergencia(a.ref, a.disco);
+  if (diferencas === null) return null;
   return (
-    `   ⚠️  ALLOWLIST_DEFASADA — a allowlist do seu worktree difere da de ${REF_MAIN} (${diferencas.join('; ')}); ` +
-    `${diagnosticoWorktree(a.worktree)}. Este julgamento usou a de ${REF_MAIN}; o código do sensor é o do seu worktree.`
+    `   ⚠️  ALLOWLIST_DEFASADA — a allowlist do seu worktree difere da de ${REF_MAIN} (${diferencas}); ` +
+    `${diagnosticoWorktree(a.worktree, REF_MAIN)}. Este julgamento usou a de ${REF_MAIN}; o código do sensor é o do seu worktree.`
   );
 }
 
@@ -964,6 +904,22 @@ function imprimir(rel: Relatorio, linhasSemIdentidade: string[], universo: Unive
   }
 }
 
+/** Minutos, como o psql devolve: `34.0`. Vazio NÃO casa — `Number('')` é 0, e 0 min mentiria "perguntada agora". */
+const MINUTOS_DE_ESPERA = /^\d+(\.\d+)?$/;
+
+/** `edge|minutos` por linha. Linha fora do formato LANÇA: espera ilegível é ausência de medida. */
+function parsearEspera(saida: string): Map<string, number> {
+  const espera = new Map<string, number>();
+  for (const linha of semChatter(saida)) {
+    const [edge, min] = linha.split('|');
+    if (!edge || min === undefined || !MINUTOS_DE_ESPERA.test(min)) {
+      throw new Error(`linha de espera fora do formato: ${linha}`);
+    }
+    espera.set(edge, Number(min));
+  }
+  return espera;
+}
+
 /**
  * Lê e julga a sonda por CRON. Devolve as linhas a imprimir e quantos ACHADOS houve (pendências).
  *
@@ -1069,17 +1025,70 @@ export function secaoSondaCron(
     motivos,
   });
 
+  // Quem nenhum tick perguntou não foi EXAMINADO, e a espera decide se é só a vez dela (⏳) ou se o
+  // dispatcher parou de perguntar (⚠️). Falhar nesta leitura NÃO é mecânica: o veredito não depende
+  // dela, só a classificação da linha — reprovar trocaria o relatório inteiro por nenhum. Mas o ramo
+  // "não consegui medir" tem de APARECER, senão a degradação vira silêncio aprovador.
+  let espera = new Map<string, number>();
+  let falhaDaEspera: string | null = null;
+  if (r.semPergunta.length > 0) {
+    try {
+      espera = parsearEspera(ler(SQL_SONDA_CRON_ESPERA));
+    } catch (err) {
+      falhaDaEspera = (err as Error).message;
+    }
+  }
+  const { aguardando, atrasadas } = classificarSemPergunta(r.semPergunta, espera);
+
   const atestadas = new Set(atestacoes.map((a) => a.requestId));
   const respondidos = disparos.filter((d) => atestadas.has(d.requestId)).length;
+  const perguntadas = ativos.length - r.semPergunta.length;
   linhas.push(
-    `\n🕒 SONDA POR CRON — ${ativos.length} edge(s) ativa(s), ${ticksRecentes.length} tick(s) recente(s), ` +
-      `${respondidos}/${disparos.length} disparo(s) atestado(s)`,
+    `\n🕒 SONDA POR CRON — ${perguntadas}/${ativos.length} edge(s) ativa(s) perguntada(s) em ` +
+      `${ticksRecentes.length} tick(s) recente(s), ${respondidos}/${disparos.length} disparo(s) atestado(s)`,
   );
   const defasagem = avisoAllowlistDefasada(allowlists);
   if (defasagem) linhas.push(defasagem);
   for (const a of r.achados) linhas.push(`   🔴 ${a.classe} · ${a.edge}: ${a.detalhe}`);
   for (const aviso of r.avisos) linhas.push(`   ⚠️  ${aviso}`);
-  if (r.achados.length === 0 && r.avisos.length === 0) {
+  for (const a of atrasadas) {
+    linhas.push(
+      `   ⚠️  ${a.edge}: ativa e sem pergunta há ${a.minutos} min, acima da tolerância de ` +
+        `${toleranciaDoCronMin()} min (2 períodos do cron + 15) — ou o dispatcher parou de perguntar por ` +
+        `ela (confira o job '${CRON_SONDA}' e public.deploy_sonda_disparar()), ou ela acabou de voltar ` +
+        `pelo kill switch (o UPDATE em ativo não mexe em habilitado_em).`,
+    );
+  }
+  if (aguardando.length > 0) {
+    const lista = aguardando
+      .map((a) => `${a.edge} (${a.minutos === null ? 'sem medida da espera' : `espera ${a.minutos} min`})`)
+      .join(', ');
+    linhas.push(
+      `   ⏳ ${aguardando.length} edge(s) ativa(s) sem pergunta nos ticks recentes, FORA do exame — ` +
+        `não contam como atestadas: ${lista}`,
+    );
+    if (aguardando.some((a) => a.minutos === null)) {
+      linhas.push(
+        '      sem a espera não dá para separar edge recém-habilitada de dispatcher que parou de perguntar' +
+          (falhaDaEspera === null ? '' : ` — a leitura falhou: ${falhaDaEspera}`),
+      );
+    }
+  }
+  if (r.silencioEsperado.length > 0) {
+    const lista = r.silencioEsperado
+      .map((edge) => `${edge} (${estadoPorEdge.get(edge) ?? 'sem veredito'})`)
+      .join(', ');
+    linhas.push(
+      `   ·  ${r.silencioEsperado.length} edge(s) perguntada(s) sem resposta, e esperado — o ledger não diz ` +
+        `CONFERE, o ramo não está no ar: ${lista}`,
+    );
+  }
+  // O ✅ é um ∀ sobre as ATIVAS: sai só quando toda uma delas foi perguntada E atestada. Derivá-lo da
+  // AUSÊNCIA de achado herdava todo `continue` do juiz (edge sem pergunta, silêncio esperado) — e com
+  // zero ativa afirmaria sobre o conjunto vazio, que é ausência de dado, não aprovação.
+  const todaAtivaAtestada =
+    ativos.length > 0 && r.semPergunta.length === 0 && r.silencioEsperado.length === 0;
+  if (r.achados.length === 0 && r.avisos.length === 0 && todaAtivaAtestada) {
     linhas.push('   ✅ toda edge ativa foi atestada nos ticks recentes — o bundle do ledger continua no ar');
   }
   return { linhas, achados: r.achados.length, mecanica: null };
@@ -1146,7 +1155,7 @@ export function main(argv: string[] = []): number {
     allowlists = lerAllowlists();
   } catch (e) {
     // formato que ESTE parser não conhece costuma ser worktree velho lendo main nova
-    console.error(`❌ MECÂNICA: ${(e as Error).message}\n   (${diagnosticoWorktree(estadoDoWorktree())})`);
+    console.error(`❌ MECÂNICA: ${(e as Error).message}\n   (${diagnosticoWorktree(estadoDoWorktree(), REF_MAIN)})`);
     return 2;
   }
 

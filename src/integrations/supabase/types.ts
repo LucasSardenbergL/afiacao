@@ -9785,6 +9785,48 @@ export type Database = {
         }
         Relationships: []
       }
+      pedido_total_liquido_excecao: {
+        Row: {
+          criado_em: string
+          criado_por: string
+          evidencia: string
+          motivo: string
+          revisar_em: string
+          sales_order_id: string
+        }
+        Insert: {
+          criado_em?: string
+          criado_por: string
+          evidencia: string
+          motivo: string
+          revisar_em: string
+          sales_order_id: string
+        }
+        Update: {
+          criado_em?: string
+          criado_por?: string
+          evidencia?: string
+          motivo?: string
+          revisar_em?: string
+          sales_order_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pedido_total_liquido_excecao_sales_order_id_fkey"
+            columns: ["sales_order_id"]
+            isOneToOne: true
+            referencedRelation: "sales_orders"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pedido_total_liquido_excecao_sales_order_id_fkey"
+            columns: ["sales_order_id"]
+            isOneToOne: true
+            referencedRelation: "selfservice_meus_pedidos"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       pedidos_portal_tentativas: {
         Row: {
           browserless_response_ms: number | null

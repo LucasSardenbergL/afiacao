@@ -9,6 +9,12 @@
 # O eixo dos NEGATIVOS e o precedente de 2026-06-24 (um guard do repo bloqueou o commit que
 # DOCUMENTAVA o padrao que ele detectava): mencao != execucao. Este hook nasce numa sessao que
 # escreve `set -- $st` e `for c in $fatias` em doc, em mensagem de commit e no corpo do PR.
+#
+# Sao QUATRO ramos, e o 4o (`ZSH-INDICE-ZERO`, 2026-10-08) inverte uma das premissas dos outros:
+# nele aspas DUPLAS sao USO, nao mencao — `f="${fila[0]}"` expande e da vazio. Por isso os casos
+# I*/J*/K*/M* nao reaproveitam as fixtures dos tres primeiros, e cada fixture do IDX0 precisa de
+# `[0]` + uma declaracao de array para ATRAVESSAR o portao barato; nos negativos de precisao o
+# `[0]` inerte vem de `${BASH_SOURCE[0]}`, que nao esta em `ARR` e por isso nao decide nada.
 # shellcheck disable=SC2016  # ARQUIVO INTEIRO: os comandos de teste sao strings LITERAIS de
 # proposito — expandir "$st"/"$(git grep …)" aqui destruiria justamente o que o guard tem de ver.
 set -u
@@ -44,7 +50,7 @@ veredito() {
   if [ "$dec" != "-" ]; then echo "BLOQUEOU:$dec"; return 0; fi
   ctx="$(printf '%s' "$saida" | jq -r '.hookSpecificOutput.additionalContext // ""' 2>/dev/null)"
   case "${ctx%%:*}" in
-    ZSH-NAO-DIVIDE-SET|ZSH-NAO-DIVIDE-FOR|ZSH-NAO-DIVIDE-ARGS) echo "${ctx%%:*}" ;;
+    ZSH-NAO-DIVIDE-SET|ZSH-NAO-DIVIDE-FOR|ZSH-NAO-DIVIDE-ARGS|ZSH-INDICE-ZERO) echo "${ctx%%:*}" ;;
     *) echo "LIXO:$(printf '%s' "$saida" | head -c 120)" ;;
   esac
 }
@@ -60,6 +66,7 @@ checa() { # <titulo> <esperado> <comando> [tool_name]
 SET="ZSH-NAO-DIVIDE-SET"
 FOR="ZSH-NAO-DIVIDE-FOR"
 ARGS="ZSH-NAO-DIVIDE-ARGS"
+IDX0="ZSH-INDICE-ZERO"
 NADA="SILENCIO"
 JUNTA_TR="tr '\\n' ' '"   # o texto `tr '\n' ' '`, sem a danca de '"'"' em cada fixture nova
 
@@ -207,6 +214,72 @@ rodada() {
     "cat <<'A' > um.txt; cat <<'B' > dois.txt" 'texto de A' 'A' 'set -- $st' 'B' \
     'l=$(ls); for x in $l; do :; done')"
 
+  # ── IDX0: array do zsh e 1-indexed, `${arr[0]}` e sempre vazio ───────────────────────────────
+  # TODA fixture daqui precisa de `[0]` E de uma declaracao de array no texto para atravessar o
+  # portao barato; nos negativos de precisao, o `[0]` inerte vem de `${BASH_SOURCE[0]}` — que nao
+  # esta em ARR e por isso nao decide nada.
+  checa "I1 o BFS de 2026-09-05/06, que imprimiu closure_count=0" "$IDX0" \
+    'fila=("$ENTRY"); while [ ${#fila[@]} -gt 0 ]; do f="${fila[0]}"; fila=("${fila[@]:1}"); done'
+  checa "I2 queue=( ) + \${queue[0]}" "$IDX0" 'queue=("$edge/index.ts"); f="${queue[0]}"'
+  checa "I3 declare -a" "$IDX0" 'declare -a fila=("$e"); cur="${fila[0]}"'
+  checa "I4 typeset -a" "$IDX0" 'typeset -a l; l=(a b); echo "${l[0]}"'
+  checa "I5 local -a" "$IDX0" 'local -a l=(a b); echo "${l[0]}"'
+  checa "I6 read -A" "$IDX0" 'read -A arr <<< "a b"; echo "${arr[0]}"'
+  checa "I7 set -A" "$IDX0" 'set -A arr a b; echo "${arr[0]}"'
+  checa "I8 arr+=( ) tambem declara" "$IDX0" 'arr=(); arr+=(x); echo "${arr[0]}"'
+  checa "I9 atribuicao PURA, sem palavra de comando" "$IDX0" 'arr=(a b); f="${arr[0]}"'
+  checa "I10 espaco dentro do subscript" "$IDX0" 'arr=(a b); echo "${arr[ 0 ]}"'
+  checa "I11 dentro de \$( ), que e codigo" "$IDX0" 'arr=(a b); echo "x$(printf %s "${arr[0]}")"'
+  checa "I12 SH_WORD_SPLIT NAO cala o IDX0 (as opcoes sao ortogonais)" "$IDX0" \
+    'setopt SH_WORD_SPLIT; arr=(a b); echo "${arr[0]}"'
+
+  # precisao do IDX0: cada um cala por um motivo diferente
+  checa "J1 \${BASH_SOURCE[0]} e array do BASH, nao declarado aqui" "$NADA" \
+    'arr=(a b); echo "${BASH_SOURCE[0]}"'
+  checa "J2 indice 1 e o certo no zsh" "$NADA" 'arr=(a b); s="${BASH_SOURCE[0]}"; echo "${arr[1]}"'
+  checa "J3 range [0,2] e LEGITIMO (da \"a b\", medido)" "$NADA" \
+    'arr=(a b c); s="${BASH_SOURCE[0]}"; echo "${arr[0,2]}"'
+  checa "J4 escalar: vazio tambem, mas o idioma e outro" "$NADA" 'arr=(a b); s=abc; echo "${s[0]}"'
+  checa "J5 variavel do AMBIENTE, nao declarada aqui" "$NADA" 'arr=(a b); echo "${MEU_ARR[0]}"'
+  checa "J6 \${arr[0]:-pad} entrega o default, nao o vazio" "$NADA" 'arr=(a b); echo "${arr[0]:-pad}"'
+  checa "J7 \${#arr[@]} e o idioma certo de contar" "$NADA" 'arr=(a b); s="${BASH_SOURCE[0]}"; echo "${#arr[@]}"'
+  checa "J8 slice \${arr[@]:1} tem offset base 0 de proposito" "$NADA" \
+    'arr=(a b); s="${BASH_SOURCE[0]}"; echo "${arr[@]:1}"'
+  checa "J9 bash -c com aspas simples roda no BASH" "$NADA" "bash -c 'arr=(a b); echo \${arr[0]}'"
+  checa "J10 corpo de heredoc quoted e dado" "$NADA" \
+    "$(linhas "cat > b.sh <<'EOF'" 'arr=(a b); echo "${arr[0]}"' 'EOF')"
+  checa "J11 corpo de heredoc nao-quoted tambem" "$NADA" \
+    "$(linhas 'cat > b.sh <<EOF' 'arr=(a b); echo "${arr[0]}"' 'EOF')"
+  checa "J12 comentario" "$NADA" 'arr=(a b)  # nao use ${arr[0]}, e vazio'
+  checa "J13 commit que DOCUMENTA o padrao (precedente 2026-06-24)" "$NADA" \
+    'git commit -m "docs: arr=(a b) e ${arr[0]} e vazio no zsh"'
+  # A forma que DOMINA o corpus: 6 das 16 chamadas que declaram array e leem `[0]` sao um script
+  # BASH escrito em arquivo. O `[0]` ali esta certo, e foi exatamente aqui que o julgamento manual
+  # por janela de `grep` errou — ela nao mostrava o `cat > x.sh <<` seis linhas acima.
+  checa "J14 heredoc que escreve um script com shebang bash (6 das 16 do corpus)" "$NADA" \
+    "$(linhas "cat > /tmp/closure.sh <<'EOF'" '#!/bin/bash' 'set -uo pipefail' \
+       'fila=("$ENTRY")' 'while [ ${#fila[@]} -gt 0 ]; do' '  atual="${fila[0]}"' \
+       '  fila=("${fila[@]:1}")' 'done' 'EOF')"
+
+  # silenciadores PROPRIOS do IDX0 (os do word splitting nao servem, e vice-versa)
+  checa "K1 setopt KSH_ZERO_SUBSCRIPT" "$NADA" 'setopt KSH_ZERO_SUBSCRIPT; arr=(a b); echo "${arr[0]}"'
+  checa "K2 setopt KSH_ARRAYS" "$NADA" 'setopt KSH_ARRAYS; arr=(a b); echo "${arr[0]}"'
+  checa "K3 setopt ksh_arrays (caixa e _ livres)" "$NADA" 'setopt ksh_arrays; arr=(a b); echo "${arr[0]}"'
+  checa "K4 set -o kshzerosubscript" "$NADA" 'set -o kshzerosubscript; arr=(a b); echo "${arr[0]}"'
+  checa "K5 emulate -L ksh liga as duas" "$NADA" 'emulate -L ksh; arr=(a b); echo "${arr[0]}"'
+  checa "K6 WORD_SPLIT_INTENCIONAL=1 serve para os quatro ramos" "$NADA" \
+    'WORD_SPLIT_INTENCIONAL=1 arr=(a b); echo "${arr[0]}"'
+
+  # limites do IDX0, cada um MEDIDO no corpus antes de ficar de fora
+  checa "M1 \$arr[0] sem chaves (FN: 14 linhas no corpus, 0 com array — era perl \$F[0] e jq \$t[0])" \
+    "$NADA" 'arr=(a b); echo "$arr[0]"'
+  checa "M2 aritmetica sem cifrao: (( arr[0] )) (FN)" "$NADA" 'arr=(a b); (( arr[0] == 0 )) && echo z'
+  checa "M3 \${#arr[0]} e comprimento de elemento ausente (FN)" "$NADA" 'arr=(a b); echo "${#arr[0]}"'
+  checa "M4 flag de parametro: \${(e)arr[0]} (FN)" "$NADA" 'arr=(a b); echo "${(e)arr[0]}"'
+  checa "M5 palavra DENTRO de array literal (FN)" "$NADA" 'arr=(a b); nova=("${arr[0]}")'
+  checa "M6 alvo de here-string (FN: 0 casos reais no corpus)" "$NADA" 'arr=(a b); cat <<< "${arr[0]}"'
+  checa "M7 alvo de redirecao (FN: 0 casos, e nome vazio falha ALTO)" "$NADA" 'arr=(a b); echo x > "${arr[0]}"'
+
   # ── SILENCIADORES ─────────────────────────────────────────────────────────────────────────────
   checa "Z1 WORD_SPLIT_INTENCIONAL=1 no inicio" "$NADA" 'WORD_SPLIT_INTENCIONAL=1 set -- $st'
   checa "Z2 setopt SH_WORD_SPLIT liga o split" "$NADA" 'setopt SH_WORD_SPLIT; st="a b"; set -- $st'
@@ -269,6 +342,15 @@ rodada() {
       printf '  ok   R6 %s ensina o array\n' "${ctx%%:*}"
     else printf '  FALHA R6 sem a contramedida de LISTA em: %s\n' "$forma"; falhas=$((falhas + 1)); fi
   done
+  # IDX0 tem contramedida PROPRIA: o indice 1, nao o `read` nem o array. Se um dia alguem colar a
+  # mensagem de LISTA aqui, isto fica vermelho.
+  ctx="$(printf '%s' "$(entrada 'arr=(a b); echo "${arr[0]}"')" \
+        | WORD_SPLIT_GUARD_LOG="$LOGTESTE" bash "$HOOK" 2>/dev/null \
+        | jq -r '.hookSpecificOutput.additionalContext // ""' 2>/dev/null)"
+  if printf '%s' "$ctx" | command grep -qF '"${arr[1]}"' \
+     && printf '%s' "$ctx" | command grep -qF 'KSH_ZERO_SUBSCRIPT'; then
+    printf '  ok   R7 IDX0 ensina o indice 1 e nomeia o silenciador\n'
+  else printf '  FALHA R7 IDX0 sem a contramedida de INDICE\n'; falhas=$((falhas + 1)); fi
 }
 
 echo "== word-split-zsh-guard =="
@@ -357,7 +439,7 @@ regra "SB22 xargs -n nao junta" 'if (w ~ /^-[A-Za-z0-9]*[nLIiJl]/) return 0; ' '
   "$NADA" "$ARGS" 't=$(ls | xargs -n1); cmd $t'
 regra "SB23 paste so junta com espaco/tab" 'return (temS && delim ~ /^([ \t]|\\t)+$/)' 'return (temS)' \
   "$NADA" "$ARGS" 't=$(ls | paste -sd, -); cmd $t'
-regra "SB24 setopt SH_WORD_SPLIT cala" 'if (SPLIT) exit' 'if (0) exit' \
+regra "SB24 setopt SH_WORD_SPLIT cala" 'if (!SPLIT) for (c = 1; c <= NC; c++) {' 'if (1) for (c = 1; c <= NC; c++) {' \
   "$NADA" "$SET" 'setopt SH_WORD_SPLIT; st="a b"; set -- $st'
 regra "SB25 silenciador WORD_SPLIT_INTENCIONAL" '[[ "$cmd" =~ $re_silencio ]] && exit 0' 'false && exit 0' \
   "$NADA" "$SET" 'WORD_SPLIT_INTENCIONAL=1 set -- $st'
@@ -401,8 +483,53 @@ regra "SB38 lista literal dispara (deteccao)" '|| ALIT[j])' ')' \
 regra "SB39 lista literal tem de ser PURA (precisao)" 'ALIT[NA] = (substr(S_[c, a], 3) !~ /[PXCAR]/ && ' 'ALIT[NA] = (' \
   "$NADA" "$ARGS" 'x="dir $HOME"; M="a b"; cmd $x'
 regra "SB40 o portao deixa a lista literal passar (deteccao)" \
-  '*) [[ "$entrada" =~ $re_lit_d || "$entrada" =~ $re_lit_s ]] || exit 0 ;;' '*) exit 0 ;;' \
+  '*) [[ "$entrada" =~ $re_lit_d || "$entrada" =~ $re_lit_s ]] || porta_idx0 || exit 0 ;;' '*) exit 0 ;;' \
   "$ARGS" "$NADA" 'T="src/lib/a.test.ts src/lib/b.test.ts"; bun run test -- $T'
+
+# ── IDX0: `${arr[0]}` com array declarado no proprio comando ──────────────────────────────────
+# Cada fixture atravessa o PORTAO BARATO pelo gatilho do PROPRIO ramo (`[0]` + declaracao) — sem
+# `set `/`for `/`=$(`/literal-com-espaco —, entao o verde nao pode vir do caminho dos vizinhos.
+# Precisao: cala por causa da regra; sabotada, dispara.
+regra "SB41 IDX0 exige array DECLARADO aqui" 'if (nm in ARR) { viola("ZSH-INDICE-ZERO", c, P_[c, k]); return }' \
+  'if (1) { viola("ZSH-INDICE-ZERO", c, P_[c, k]); return }' \
+  "$NADA" "$IDX0" 'arr=(a b); echo "${BASH_SOURCE[0]}"'
+# O `[0]` do BASH_SOURCE existe para a fixture ATRAVESSAR o portao (`[0,2]` sozinho nao casa
+# `re_idx0_sub`) e e inerte na regra: BASH_SOURCE nao esta em ARR. Quem decide e o `0` EXATO.
+regra "SB42 IDX0 exige o subscript 0 EXATO (range e legitimo)" \
+  'ct ~ /^[A-Za-z_][A-Za-z0-9_]*\[[[:space:]]*0[[:space:]]*\]$/' 'ct ~ /^[A-Za-z_][A-Za-z0-9_]*\[/' \
+  "$NADA" "$IDX0" 'arr=(a b c); s="${BASH_SOURCE[0]}"; echo "${arr[0,2]}"'
+regra "SB43 KSH_ZERO_SUBSCRIPT cala o IDX0" 'if (!KSHARR) for (c = 1; c <= NC; c++) regra_idx0(c)' \
+  'if (1) for (c = 1; c <= NC; c++) regra_idx0(c)' \
+  "$NADA" "$IDX0" 'setopt KSH_ZERO_SUBSCRIPT; arr=(a b); echo "${arr[0]}"'
+# A DECLARACAO fica FORA das aspas simples de proposito: com `arr=(a b)` DENTRO delas, desligar o
+# reconhecimento de `'` tambem destroi a atribuicao (a palavra viraria `'arr=(a`), ARR nao e
+# populado e a fixture calaria pela OUTRA regra — verde por motivo alheio, que foi o que a 1a
+# versao desta SB produziu.
+regra "SB44 aspas simples sao mencao tambem no IDX0" \
+  'if (c == SQ) { wshape(o, "S"); wraw(o, c); push("S"); i++; continue }' \
+  'if (0) { wshape(o, "S"); wraw(o, c); push("S"); i++; continue }' \
+  "$NADA" "$IDX0" "arr=(a b); echo 'no zsh \${arr[0]} e vazio'"
+# Deteccao: a fixture DISPARA por causa da regra; sabotada, cala.
+regra "SB45 a deteccao do IDX0 mora em chaves() (deteccao)" \
+  'z0 = ct; sub(/\[.*$/, "", z0); WZ[o] = WZ[o] " " z0' 'z0 = ct' \
+  "$IDX0" "$NADA" 'arr=(a b); echo "${arr[0]}"'
+regra "SB46 aspas DUPLAS sao USO no IDX0 (deteccao)" \
+  'if (c == "$") { i = dolar(linha, i, n); continue }
+        if (c == "`") { wraw(o, c); abre_sub(1); i++; continue }
+        wlit(o, c); i++; continue' \
+  'wlit(o, c); i++; continue' \
+  "$IDX0" "$NADA" 'arr=(a b); f="${arr[0]}"'
+regra "SB47 o IDX0 corre fora do passo 2b (deteccao)" \
+  'if (!KSHARR) for (c = 1; c <= NC; c++) regra_idx0(c)' '' \
+  "$IDX0" "$NADA" 'arr=(a b); f="${arr[0]}"'
+regra "SB48 o portao deixa o IDX0 passar (deteccao)" \
+  'porta_idx0() { [[ "$entrada" =~ $re_idx0_sub ]] && [[ "$entrada" =~ $re_idx0_dec ]]; }' \
+  'porta_idx0() { false; }' \
+  "$IDX0" "$NADA" 'arr=(a b); echo "${arr[0]}"'
+# NAO existe SB de "precisao do portao do IDX0", e a ausencia e deliberada: afrouxar
+# `re_idx0_dec` so faz MAIS comando chegar ao awk, que segue calando por falta de array declarado
+# — antes e depois iguais, sabotagem inocua. Para o IDX0 a conjuncao do portao e PERFORMANCE
+# medida (0,08% do corpus em vez de 1,76%); quem decide e `regra_idx0`, provado por SB41/SB48.
 
 ORIG="$TMPD/hook-foto.sh"; cp "$HOOK" "$ORIG"          # foto: base de toda sabotagem E controle de saida
 IDENT="$TMPD/hook-identidade.sh"; cp "$ORIG" "$IDENT"  # a sabotagem NULA do controle

@@ -158,7 +158,7 @@ describe('omie-sync-estoque — registro do run em acoes_execucoes', () => {
 });
 
 describe('omie-sync-estoque — deadline cabe no teto do cron', () => {
-  // Espelho do que vive em PROD, não no repo: cron.job 31 ('0 9 * * *') e 124 ('40 9,11,…,19 * * *') chamam a edge
+  // Espelho do que vive em PROD, não no repo: cron.job 31 ('5 9 * * *' desde 2026-10-08) e 124 ('40 9,11,…,19 * * *') chamam a edge
   // com timeout_milliseconds := 90000 (medido em 2026-10-05). Mudou o teto lá? Mude aqui e o deadline junto.
   const TETO_CRON_MS = 90_000;
 
@@ -193,5 +193,24 @@ describe('omie-sync-estoque — deadline cabe no teto do cron', () => {
     expect(fim).toBeLessThanOrEqual(TETO_CRON_MS - 1_000);
     // os marcadores usam o prazo FIXO (rodam depois do corte da cauda), nunca o limite da cauda
     expect(fonte).toContain('marcadorMs: PRAZO_MARCADOR_MS,');
+  });
+});
+
+// Achado na conferência de 07/10 (o 1º dia da v1.7): o resumo dos membros de grupo (`membros_grupo_*`) saía só
+// na resposta HTTP, que o cron descarta — o registro em acoes_execucoes não o levava, e uma falha no lote dos
+// membros (a classe que a v1.7 fecha: a linha do membro congelando) seria invisível depois do run.
+describe('omie-sync-estoque — o registro leva o resumo dos membros de grupo', () => {
+  it('toda chave membros_grupo_* do resumo está em CHAVES_REGISTRO', () => {
+    const ini = fonte.indexOf('const CHAVES_REGISTRO');
+    const fim = fonte.indexOf('] as const;', ini);
+    expect(ini).toBeGreaterThan(0);
+    expect(fim).toBeGreaterThan(ini);
+    const registro = new Set(fonte.slice(ini, fim).match(/"[a-z_]+"/g)?.map((c) => c.slice(1, -1)) ?? []);
+    const doResumo = [...new Set(fontePublicacao.match(/\bmembros_grupo_[a-z_]+(?=\s*:)/g) ?? [])];
+    expect(doResumo.sort()).toEqual([
+      'membros_grupo_encontrados', 'membros_grupo_erro', 'membros_grupo_falhas',
+      'membros_grupo_gravados', 'membros_grupo_ilegiveis', 'membros_grupo_sem_pendente',
+    ]);
+    expect(doResumo.filter((c) => !registro.has(c))).toEqual([]);
   });
 });

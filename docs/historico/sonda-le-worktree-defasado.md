@@ -234,3 +234,227 @@ nomeando a defasagem. Falsificação versionada em `scripts/mutcheck.d/pendencia
 (uma mutação por camada). O irmão desta classe no `sonda:sql` — o `guardEfeitoLegado` também lê a
 allowlist do disco, e ali o furo é fail-OPEN (edge aprovada escapa da recusa do POST legado) — ficou
 como tarefa separada.
+
+## Recorrência, parte 2: o irmão no `sonda:sql` — e ali o furo era fail-OPEN
+
+A tarefa separada que a seção acima deixou nomeada. O `guardEfeitoLegado` RECUSA o bloco LEGADO do
+`sonda:sql` — `POST {"probe":true}` direto na edge, que num bundle pré-sensor executa o FLUXO REAL
+(medido: `monthly-report` chegou ao Resend; `calculate-scores` fez 11 escritas) — para as edges que
+já têm o caminho seguro, o relé por `OPTIONS`. A lista dessas edges vinha do `import` de
+`SONDA_CRON_ALVOS` na **borda da CLI**.
+
+**A direção do furo é a pior das duas.** No `pendencias:deploy` o disco defasado produzia um remédio
+destrutivo que o humano ainda podia recusar; aqui a proteção **sumia calada**: num worktree atrás da
+main, `omie-desconto-backfill` (que a main já tinha posto no relé, e que ESCREVE) não estava no
+disco, o guard não recusava, e o bloco saía igual ao de uma edge sem caminho seguro. Fail-OPEN no
+caso mais comum do repo.
+
+**Por que escapou aos testes:** o `guardEfeitoLegado` era testado SOZINHO, com uma lista fixa
+(`const RELE = [...]`), e **nenhum teste chamava o `main` com a allowlist**. O defeito não estava na
+função testada — estava na FIAÇÃO entre a borda e ela, que é justamente o que o teste unitário de
+uma função pura não alcança. Lição que generaliza: *função pura verde + borda não testada = guard
+decorativo*; quem escolhe a FONTE é a borda, e é dela que o teste tem de partir.
+
+**O fix** (`lerAllowlistDoRele`, `scripts/sonda-versao-sql.ts`):
+
+- a allowlist passa a ser lida **na ref**, dentro do `main`; a borda injeta só o PARSER. A injeção
+  continua existindo pela restrição real do arquivo — o eval da skill `lovable-deploy-verify` COPIA
+  `sonda-versao-sql.ts` + `sonda-fingerprint.ts` para um diretório temporário, e um import de topo
+  para `supabase/functions/` (ou para `scripts/lib/`, que puxa o `typescript`) fez 7 cenários do eval
+  devolverem `SQL_VAZIO`. O tipo vem por `import type`, que a transpilação apaga — verificado
+  carregando o módulo copiado para um `mktemp -d` com só os dois arquivos;
+- `git show` que falha, ou texto que o parser não lê, é **mecânica** (`ALLOWLIST_ILEGIVEL`, nada
+  emitido). Lista vazia desligaria a recusa para TODAS as edges — é o mesmo "ausente ≠ zero" do
+  #2464, pela porta oposta;
+- `DependenciasCli.allowlist` é **obrigatório no tipo**, pelo motivo que o `git` já carregava:
+  opcional valia "nenhuma" (`?? []`), e um guard que some em quem esquece de passá-lo é fail-OPEN.
+  O compilador cobra — e cobrou, nos 12 pontos de chamada da suíte;
+- **um `git fetch` por execução** (`umFetchPorExecucao`): a ref tem dois leitores no modo sonda (a
+  allowlist, que decide a recusa, e a fatia do `esperado(...)`), e dois fetches seriam duas MEDIÇÕES
+  — a main pode andar entre elas, e a recusa julgaria uma ref enquanto o veredito julga outra;
+- a recusa vem **antes** da comparação da fatia: ela não depende do disco (o relé não lê este
+  worktree), então um worktree defasado não deve adiar a resposta certa. Consequência medida na
+  suíte: um teste do guard de sincronia que usava `copilot-analyze` passou a sair RECUSADO antes de
+  medir o que dizia medir — reancorado numa edge FORA da allowlist, com o porquê escrito no teste.
+
+**Disco ≠ ref: nomear, não decidir.** A assimetria entre os dois sensores é real e vale registrar:
+no `pendencias:deploy` a lista MENOR é a perigosa (gera UPDATE), aqui a lista menor é a que afrouxa
+a recusa — a direção segura seria a UNIÃO. Mesmo assim quem julga é só a ref, por uma razão de
+produto: edge aprovada só no worktree não tem relé no ar (a migration que a ativa no banco pode nem
+ter sido aplicada), e recusar mandaria o operador para um relé que não responde. O que o disco faz é
+NOMEAR a divergência (`ALLOWLIST_DEFASADA` + N commits atrás/à frente), e o aviso sobe para o topo
+do SQL quando a divergência mudou o que foi emitido — o stderr some, o SQL colado num chat sobrevive.
+
+### A varredura (passo 2 do `/matar-classe`) e o gate
+
+Assinatura usada: *o script consulta uma ref como autoridade* **e** *obtém dado versionado do
+working tree* (import de dado, `readFileSync`, `cat`/`grep` em shell) **e** *esse dado alimenta uma
+decisão sem ser conferido contra a ref*. Calibrada nos dois pré-fix (casou) e no pós-fix do #2464
+(não casou). 78 arquivos do escopo tocam ref; os afetados foram três, e os dois novos viraram chip:
+
+| site | dado do disco | o que sai errado |
+|---|---|---|
+| `sonda-versao-sql.ts` (este PR) | `SONDA_CRON_ALVOS` | recusa do bloco legado desaparece |
+| `scripts/heavy-install.sh --status` | `sha_de scripts/heavy.sh` | instalado == disco ≠ main ⇒ "EM VOO" + exit 0: o vigia cala e o heavy defasado fica — ✅ **#2861** |
+| `lovable-deploy-verify/SKILL.md` §bloco bash | `grep ... index.ts` do disco | closure de deploy com 5 arquivos onde a main tem 7 (o próprio doc mediu isso) — ✅ **#2858** |
+
+**Desfecho dos dois chips.** O `SKILL.md` fechou em **#2858**: o bloco do closure passa a ler a ref
+(`git show origin/main:<path> | grep -oE "from ['\"]…"`), com a escada nomeada na 1ª linha (o canônico
+é `pendencias:prompt`, que já lê a ref); o comando do import NOVO passou a casar aspas SIMPLES —
+só-duplas perdia 1 de 3 imports **até lendo a ref**; e a forma contra o disco ficou UMA vez, DEPOIS
+da certa, rotulada `❌ RASCUNHO LOCAL — não vale para pedir deploy`. Medido em repo-fixture:
+`REF=3 DISCO=1 REGEX_SO_DUPLAS_NA_REF=2`. O `heavy-install.sh --status` fechou em **#2861** — seção abaixo —, e com
+isso a varredura não tem mais site aberto.
+
+**E a classe tem uma variante em INSTRUÇÃO, não só em código: o resíduo de ORDEM.** No `SKILL.md` a
+correção **já existia** — no MESMO arquivo, ~45 linhas depois do comando errado, num 🔴 que mandava
+ler a ref. Não bastou: o bloco antigo não estava marcado como errado, e quem lê de cima para baixo
+(ou recorta só aquele passo) usa o primeiro comando que encontra. Num doc, *saber* não é *ensinar*:
+a lição só vale onde o leitor vai PARAR. Remédio nas duas pontas — o comando certo vem PRIMEIRO, e
+a forma errada, se ficar, fica **rotulada** como errada, nunca nua. Corolário para a varredura: num
+doc, procurar a lição não acusa nada (ela costuma estar lá); o que acusa é **comando errado sem
+rótulo**, e a distância até a correção é o tamanho do furo.
+
+Já-correto, por conferirem contra a ref ou julgarem disco × disco: `pendencias-deploy.ts` (o disco só
+nomeia), `sonda-cron-prova.ts`, `edges-afetadas.ts` (lê um `git archive`), `edges-pendentes.sh`,
+`pendencias-pacote.ts`, `monitor-deploy.sh`, `pr-duplicata-guard.sh`, `wt-preflight-migration.ts`.
+
+### O 2º site fechado: `heavy-install.sh --status` — aqui o furo era o ramo SILÊNCIO (2026-10-08)
+
+O `--status` comparava o `heavy` instalado com `origin/main:scripts/heavy.sh` (a ref, certo) e, quando
+divergia, comparava com o `scripts/heavy.sh` **do working tree** para decidir se era mudança em voo.
+Igual ⇒ `"heavy EM VOO"` + **exit 0**. Só que **"instalado == disco ≠ main" tem duas causas opostas**:
+disco **à frente** (alguém rodou `--daqui`; exit 0 é certo) e disco **atrás** (worktree defasado cujo
+`heavy.sh` é velho e cujo `heavy` instalado veio dali) — e esse segundo é **exatamente o caso que o
+instalador existe para pegar**: em 2026-07-20, 32 das 39 worktrees carregavam o `heavy.sh` pré-#1459.
+Como o `vigia-worktree.sh` trata exit 0 como silêncio, o worktree atrasado **nunca ouvia nada** e o
+semáforo velho ficava instalado indefinidamente. **Direção do furo:** a pior — o mesmo ramo mudo do
+irmão no `sonda:sql`, mas num sensor cujo ÚNICO leitor é um hook que só fala em exit ≠ 0.
+
+**O fix** (`direcao_do_disco`, `scripts/heavy-install.sh`) desempata pelo **git, não por heurística de
+texto**: o blob do `heavy.sh` do disco está na HISTÓRIA de `origin/main` para esse path? Está ⇒
+`ATRAS` ⇒ **`heavy DEFASADO`** + exit 1 (o vigia FALA, e a mensagem nomeia o commit da main que
+introduziu a versão do disco); não está ⇒ `A_FRENTE` ⇒ EM VOO + exit 0, preservado para o `--daqui`
+legítimo. Um `git log --no-abbrev --raw` dá os blobs old+new de todas as revisões do path em **um
+fork** — medido 0,33s com 6.535 commits, dentro do teto de 3s que o hook aplica, por isso não há um
+`rev-parse` por commit.
+
+**O controle é POSITIVO, não `command -v`** (`sonda-ausente-em-script-que-apaga.md`): a enumeração tem
+de **conter o blob da ponta** de `origin/main` — o objeto que o script acabou de comparar. `git` que
+não responde, ref ilegível, história vazia ou enumeração que não se contém caem em **exit 3**
+("não consegui verificar"), **nunca** em `A_FRENTE` — porque `A_FRENTE` é o ramo mudo, e mandar
+ausência de dado para o ramo mudo é o defeito outra vez, pela porta de trás.
+
+**A armadilha que a suíte pegou** (e que vale para qualquer sensor que leia a ref em shell):
+`git log -- <pathspec>` é relativo ao **CWD**, e `git -C "$here"` põe o CWD em `scripts/` —
+`-- scripts/heavy.sh` ali vira `scripts/scripts/heavy.sh` e a enumeração sai **vazia**. A sintaxe
+`rev:path` do `git show` logo acima no mesmo arquivo **não** tem esse problema (é sempre relativa à
+raiz), e foi ler as duas como "mesmo caminho" que quebrou. Remédio: pathspec `:(top)`. Sem o controle
+positivo isso teria saído como `A_FRENTE` — silêncio — em vez do exit 3 que denunciou.
+
+**Provado** em `scripts/test-heavy-install.sh` (casos 13-16, macOS-only como o resto da família
+`heavy`): disco atrás ⇒ rc **1** (o código que o vigia transforma em aviso) + marca `DEFASADO` e
+**não** `EM VOO`; disco à frente ⇒ rc 0 + `EM VOO`; `git log` emudecido ⇒ rc 3; e história
+**não-vazia sem o blob da ponta** ⇒ rc 3, que é o eixo que o caso do `log` mudo não alcança.
+Falsificado via `mutcheck` (baseline-check verde na MESMA invocação, abortando antes do 1º `sed`) nos
+dois locales, **6/6 pegas**, `controle+` ✓: marca do `case`, `exit 1`→`0`, `DEFASADO`→`DIVERGENTE`,
+`-n`→`-z` na direção, controle da ponta desligado e perda do `:(top)`. O contrato de mutação **não**
+foi versionado em `scripts/mutcheck.d/`: o job `mutation-check` roda em `ubuntu-latest` e esta suíte
+está em `hooks-suites-baseline.ts` como macOS-only (`stat -f %i` é BSD), então o mutcheck abortaria
+lá por baseline vermelha culpando o "harness/ambiente" — mensagem que aponta para o lugar errado.
+**Limite nomeado:** o guard de lista vazia (`[ -n "$pares" ]`) **sobreviveu** à mutação exploratória
+— o controle da ponta pega o mesmo caso. Ele fica por clareza do fluxo, não por poder de detecção.
+
+As mutações ficam AQUI, e não num `.mut` fora do versionamento, porque falsificação que só existe
+na transcrição de uma sessão não se reproduz. Salve como `.mut`, aponte `@src`/`@test` e rode:
+
+```
+# @src: scripts/heavy-install.sh      @test: scripts/test-heavy-install.sh
+# @test_cmd: bash                     @compile_cmd: bash -n
+PEGA | ATRAS deixa de ser reconhecido no case | s{"ATRAS \$commit_disco"}{"ATRASX"}
+PEGA | DEFASADO sai 0 (vigia volta a calar)   | s{^            exit 1$}{            exit 0}
+PEGA | marca DEFASADO vira DIVERGENTE         | s{heavy DEFASADO}{heavy DIVERGENTE}
+PEGA | direcao invertida (-n vira -z)         | s{if \[ -n "\$commit_disco" \]}{if [ -z "\$commit_disco" ]}
+PEGA | controle positivo da ponta desligado   | s{\[ "\$achou_ponta" = 1 \]}{[ 1 = 1 ]}
+PEGA | pathspec perde o :(top)                | s{':\(top\)scripts/heavy.sh'}{scripts/heavy.sh}
+?    | guard de lista vazia de pares          | s{\[ -n "\$pares" \] \|\|}{[ 1 = 1 ] ||}
+```
+
+```bash
+MUTCHECK_TEST_CMD=bash MUTCHECK_COMPILE_CMD='bash -n' \
+  bash scripts/mutcheck.sh scripts/heavy-install.sh scripts/test-heavy-install.sh <arquivo.mut>
+```
+
+**O gate** é `scripts/gate-allowlist-sonda-da-ref.test.ts`: varre `scripts/`, `db/` e `.claude/` e
+RECUSA importador novo de `_shared/sonda-cron-alvos` (o dado do disco) fora de uma lista fechada com
+justificativa escrita — hoje `pendencias-deploy.ts` ("só nomeia") e `sonda-cron-prova.ts` ("disco ×
+disco"). Em shell, recusa menção ao arquivo fora de um `git show`. Mede o CÓDIGO pelo stripper
+compartilhado (`removerComentarios`/`removerComentariosShell`), porque a própria lição está escrita
+em comentário nesses arquivos e o texto cru ficaria vermelho pela PROSA.
+
+Falsificado nos dois locales (`LC_ALL=C` e `pt_BR.UTF-8`), com controle verde na MESMA invocação e
+abortando antes do 1º `sed` se o controle não estivesse verde: import novo num script não listado →
+vermelho em `IMPORTADORES_PERMITIDOS`; leitura em shell → vermelho em "working tree em shell";
+permitido que deixa de importar → vermelho em "vira lista morta". E o detector tem CONTROLE
+versionado dentro do próprio gate: ele casa os três formatos de import e NÃO casa o caminho usado
+como dado (`ARQ_ALLOWLIST`), que é o que a lib faz.
+
+**Limite conhecido, nomeado em vez de escondido:** o gate cobre ESTA allowlist, não todo dado
+versionado. Um sensor novo que importe outra constante do repo para julgar contra a ref continua
+passando; para esse eixo o que existe é a varredura do `/matar-classe` e esta página.
+
+## Epílogo 2 (2026-10-08): a fatia certa podia ser MENOR que o arquivo
+
+O #2435 ensinou que a fatia tem de ser **derivada da leitura** que ela vigia. Sobrou um resíduo no
+lado espelhado: no modo SONDA a proveniência registrava o `_shared/sonda-fingerprints.ts`
+**inteiro**, e o `esperado(...)` de uma edge consome só a **entrada dela**. O arquivo é a unidade
+que o `git show` conhece; não era a unidade que o marcador consumia.
+
+Medido na CLI real, contra a `origin/main` do dia, com a sabotagem conferida nos dois lados:
+
+| sondando `omie-sync`, com a entrada de … sabotada | antes | depois |
+|---|---|---|
+| `whatsapp-send-template` (edge que ninguém pediu) | `exit 1`, 0 bytes | `exit 0`, **SQL idêntico byte-a-byte** |
+| `omie-sync-estoque` (vizinha PREFIXADA) | `exit 1`, 0 bytes | `exit 0`, idêntico |
+| `omie-sync` (a própria) | `exit 1` | `exit 1`, nomeando `entrada "omie-sync"` |
+
+O veredito saía igual com ou sem a divergência — bloqueio pelo bloqueio, e de ROTINA, porque
+`sonda:fingerprint -- --write` regrava esse mapa a cada mudança em `_shared/` (fingerprint
+TRANSITIVO) e há ~30 worktrees. O CI nunca pagou: desde o #2425 a prova chama a função pura, e o
+guard só roda no `main()`. Quem pagava era o operador.
+
+> **Fatia de guard tem a granularidade do que o marcador CONSOME, não a do arquivo.** Quando as
+> duas divergem, a comparação ganha uma **projeção declarada por quem resolve** — e o guard aplica
+> a MESMA projeção nos dois lados, sem saber o que está recortando.
+
+### Projetar abre três fail-OPENs, e o parecer Codex achou os três
+
+1. **Gramática própria = segunda fonte da verdade.** A 1ª versão de `entradaDoMapa` ancorava o
+   espaço com `[ \t]*`; `parsearMapa` usa `\s*`, que atravessa `\n`. Com a chave repetida e o valor
+   na linha de baixo, o parser resolvia pela ÚLTIMA (`bbb…`) e a projeção só via a PRIMEIRA
+   (`aaa…`): o guard comparava `aaa` dos dois lados e **aprovava**, com o SQL levando `bbb`. O fix
+   não é alinhar as duas regex — é **delegar ao dono do formato**. Fatia que não é lida pelo mesmo
+   leitor não é a fatia. (De lambuja, casar o nome exato passa a ser por INDEXAÇÃO, não por padrão:
+   `omie-sync` é prefixo de OITO chaves reais do mapa.)
+2. **Deduplicar OBRIGAÇÃO por chave.** Duas projeções de rótulo igual e alvo diferente: a 2ª era
+   descartada e o guard aprovava a divergência que só ela veria. Rótulo é diagnóstico, não
+   identidade — `toString()` de callback também não é. O que se deduplica com segurança é
+   **trabalho** (o `git show`, por caminho), nunca dever.
+3. **`show` pelo NOME do ramo.** Um `git fetch` de outra worktree move a `origin/main` no meio da
+   conferência e cada arquivo vem de um commit diferente: aprova-se uma **combinação que nunca
+   existiu num commit só**. O `sha` já era resolvido ali — só não mandava nas leituras.
+
+E a porta da corrida (#2435) exigiu cuidado: ela continua julgada sobre os bytes **inteiros**, antes
+de qualquer descarte. Guardar só o recorte na fonte a encolheria — duas leituras que diferem FORA do
+recorte voltariam a passar.
+
+### A sabotagem de um dígito que era no-op
+
+A primeira medição deste epílogo deu `exit 0` onde devia dar 1, e a causa não era o código: o
+`perl -pe 's/("omie-sync": ")[0-9a-f]/${1}0/` troca o 1º dígito do hash por `0`, e o hash de
+`omie-sync` **começa com `0`**. Sabotagem inerte, medição verde sobre nada — a mesma classe de
+`--falsificar` que não rodou a suíte. Sabotar por amostra de UM caractere depende do valor que lá
+está: troque a fatia INTEIRA e **compare o arquivo antes/depois**, abortando se não mudou.
+
+Resíduo conhecido, registrado no próprio teste: o `show` da allowlist do relé (#2856) ainda sai pelo
+NOME do ramo.

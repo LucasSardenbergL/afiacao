@@ -115,10 +115,8 @@ mesma invocação (10 de 10 vermelhos, worktree limpo depois).
   candidatas. A medição corrigiu o número daqui: os 13 são **vínculos** em linha 57; por CT-e, só 3
   nunca chegaram a uma NF-e, porque o matcher re-associa o CT-e já usado. E o vínculo extra é quase
   sempre a linha-irmã da mesma NF-e, então não se impôs unicidade.
-- **As 135 linhas de CT-e no tracking e os 13 fretes desviados.** Limpar ou re-casar é decisão do
-  founder: tem efeito em dado, e o redeploy não desfaz vínculo gravado. As views
-  `v_leadtime_por_grupo` (conta CT-e como "pedido": 33 de 39) e `v_pedidos_em_aberto` (29 CT-e como
-  AGUARDANDO_CTE) não têm leitor no repo.
+- **As 135 linhas de CT-e no tracking e os 13 fretes desviados — ✅ LIMPAS em 2026-10-08 (§10).** Eram 137
+  na hora da limpeza. Os 3 CT-e que nunca chegaram a uma NF-e não foram re-casados, por decisão do founder.
 - **Integridade do `nIdReceb` (pré-existente).** 9 grupos com o mesmo `nIdReceb` em chaves de NF-e
   distintas: 42 linhas, todas modelo 55 com pedido casado, todas com leadtime. Cobertura documental
   OK, mas a completude por par (tracking, SKU) não está provada.
@@ -127,9 +125,8 @@ mesma invocação (10 de 10 vermelhos, worktree limpo depois).
   44 caracteres, o parser estrito devolveria `null` e o CT-e voltaria à fila. A direção é segura (tentativa, não
   perda), mas a chave gravada estaria corrompida para qualquer casamento por chave. A raiz é o writer; tratar na
   parte B (revisão adversarial, P3).
-- **14 NF-e sem leadtime (mar–abr/2026).** São anteriores ao controle (07/2026), já fora da janela, e
-  nunca foram tentadas. Com o CT-e fora da fila, um run avulso com `dias` largo custaria ~14
-  consultas para recuperá-las. É decisão do founder (dado histórico).
+- **14 NF-e sem leadtime (mar–abr/2026) — 🔄 7 de 14 resolvidas em 2026-10-08 (§10).** As 7 da Renner
+  Sayerlack esperam o conserto do teto de 1.000 linhas na leitura do histórico.
 
 ## 8. Deploy e revalidação
 
@@ -220,3 +217,34 @@ com zero pendente não exercita o caminho de gravação.
    segurar e as 135 linhas ficarem como estão (§7), o `ctes_fora_da_fila` cai a 0 à medida que esses
    CT-e saem da janela. No tick de 2h isso acontece a partir de 2026-10-09 03:00 UTC; no diário, a
    partir de 2026-11-05 03:00 UTC. A medição é a query do diário no §8.
+
+## 10. Resíduo — a limpeza e a recuperação (2026-10-08, decisões do founder de 07/10)
+
+O founder decidiu: apagar as linhas de CT-e com backup, recuperar as 14 NF-e históricas, não re-casar
+os 3 CT-e e encerrar o Codex retroativo do #2798 sem rodar.
+
+1. **Limpeza das linhas 57** pelo envelope (`db/2026-10-08-cte-fora-do-rastreio-limpeza.sql`).
+   - Pré-voo às 00:45Z: 137 linhas, md5 dos IDs `2268839510f5de40d0ae27ba64ae02e8`, 81 de controle, 0
+     de histórico.
+   - Backup por `\copy` em `~/.config/afiacao/backups/2026-10-08-cte-rastreio/` (137 + 81 registros).
+   - O conjunto é travado com `FOR UPDATE`, apagado por ID e conferido pelo md5 do `RETURNING`.
+   - Codex exit 79 (cota em 100%), então Caminho B: o revisor deu APROVADO COM RESSALVAS, e os achados 1
+     (identidade) e 3 (guarda tautológica) entraram no arquivo.
+   - Falsificação num PG17 com os IDs reais: 12 de 12 (controle verde antes e depois, 10 sabotagens),
+     nos locales `C` e `pt_BR.UTF-8`.
+   - Ensaio verde e apply às 00:57:50Z (recibo #283). Validação por fora: 0 linhas 57, 762 não-57
+     (igual ao pré-voo), 0 controle órfão e histórico em 4.361 (igual).
+2. **14 NF-e históricas: 7 resolvidas.**
+   - Kanefusa, Mastercol, Francimar e Mirka ganharam leadtime (4 NF-e, 10 linhas).
+   - 3 fecharam como `ok_todos_ignorados` (L.N. e 2 da Mastercol).
+   - O 1º run dirigido (dias=215, sem filtro) enxergou **228** pendentes em vez das 18 previstas e
+     fechou `error` ("fila não anda", interrompido no guard). Gastou 5 consultas em recebimentos
+     Sayerlack de março que já tinham linha. Não regravou linha nenhuma, só marcou o controle k=0.
+   - Os 3 seguintes foram filtrados por fornecedor (dias 195–205) e fecharam `complete`.
+3. **Achado: teto de 1.000 do PostgREST na fila do sku-items** (`index.ts:646-649`). O
+   `.in("tracking_id", …)` sobre `sku_leadtime_history` não pagina. Com janela de 215 dias, a leitura
+   devolve 1.000 de 2.953 linhas, e as linhas COM leadtime viram "sem linha", portanto pendentes. No
+   cron (30 dias, 182 linhas) há folga de 5x, então hoje o defeito é latente. Ele é a razão de as 7
+   NF-e da Renner Sayerlack (1.395 linhas na janela do fornecedor) não terem sido recuperadas: o run
+   repetiria o defeito. O conserto (paginar a leitura) e a recuperação das 7 ficam para sessão própria.
+

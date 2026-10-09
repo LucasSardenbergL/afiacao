@@ -38,6 +38,10 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { ARQ_MAPA, parsearMapa } from './sonda-fingerprint';
+// SÓ TIPOS: `import type` some na transpilação, e é por isso que pode estar aqui em cima. A lib
+// chega em tempo de execução INJETADA pela borda da CLI — ver `KitAllowlist`.
+import type * as LibAllowlist from './lib/sonda-cron-allowlist';
+import type { EstadoWorktree } from './lib/sonda-cron-allowlist';
 
 /**
  * Um arquivo que ALIMENTOU o `esperado(...)`, com os BYTES que a geração de fato usou.
@@ -51,6 +55,75 @@ import { ARQ_MAPA, parsearMapa } from './sonda-fingerprint';
 export interface FonteDoEsperado {
   readonly caminho: string;
   readonly bytes: string;
+  /**
+   * Se presente, só ESTA fatia do arquivo alimentou o `esperado(...)` — e é só ela que o guard
+   * compara. Ausente = o arquivo inteiro alimentou, e é o arquivo inteiro que se confere.
+   */
+  readonly projecao?: ProjecaoDaFonte;
+}
+
+/**
+ * Como recortar, de dentro de um arquivo, a fatia que de fato alimentou o `esperado(...)`.
+ *
+ * Existe porque o arquivo é a unidade que o `git show` conhece, e nem sempre é a unidade que o
+ * marcador consome. O caso medido (2026-09-09, CLI real): no modo SONDA a proveniência registrava
+ * `_shared/sonda-fingerprints.ts` INTEIRO, mas o `esperado(...)` de uma edge lê só a ENTRADA dela.
+ * Sondando `omie-sync` com o hash de `whatsapp-send-template` — edge que ninguém pediu — alterado
+ * no disco, a CLI saiu `exit 1` com stdout de ZERO bytes; o SQL que sairia é byte-a-byte o mesmo
+ * (sha256 idêntico, 18 316 bytes), porque a entrada da vizinha não entra em veredito nenhum.
+ * Bloqueio pelo bloqueio — a mesma sobre-inclusão que o #2435 tirou do modo canária. E não é caso
+ * de canto: `sonda:fingerprint -- --write` regrava esse mapa a cada mudança em `_shared/` (o
+ * fingerprint é TRANSITIVO dos imports locais), então com ~30 worktrees paralelas divergir nele é a
+ * ROTINA. (Não bloqueia o CI: a prova chama `gerarSqlDasCanarias`, a função pura, desde o #2425 —
+ * o guard só roda no `main()`. Quem pagava era o operador do `bun run sonda:sql`.)
+ *
+ * A projeção é DECLARADA por quem resolve o marcador, no mesmo gesto em que resolve — é a doutrina
+ * do #2435 (a fatia é derivada da leitura que ela vigia, nunca uma lista à parte) levada um nível
+ * abaixo do arquivo. `conferirSincronia` não sabe o que é um mapa de fingerprints; ela aplica a
+ * projeção nos DOIS lados e compara os recortes.
+ *
+ * `recortar` devolve `null` quando a fatia NÃO existe naquele texto, e `null` de qualquer ponta é
+ * DIVERGÊNCIA, nunca aprovação: uma edge fora do mapa é exatamente o que o gate `sonda:fingerprint`
+ * existe para barrar, e deixá-la passar emitiria `esperado(...)` sem fingerprint nenhum — o falso
+ * POSITIVO, que é a classe pior porque ENCERRA a verificação.
+ */
+export interface ProjecaoDaFonte {
+  /** Nomeia a fatia na mensagem de erro, e é o que distingue duas projeções do MESMO arquivo. */
+  readonly rotulo: string;
+  /** Recorta a fatia do texto INTEIRO do arquivo. `null` = a fatia não está nesse texto. */
+  readonly recortar: (texto: string) => string | null;
+}
+
+/**
+ * O FINGERPRINT que a edge tem dentro do mapa — ou `null` se ela não está lá.
+ *
+ * Delega a `parsearMapa`, o dono do formato, e isso é o desenho, não preguiça: uma segunda
+ * gramática do mesmo arquivo é uma segunda fonte da verdade, e as duas divergem em silêncio. O
+ * parecer Codex de 2026-09-09 reproduziu o falso POSITIVO exato — a versão anterior desta função
+ * ancorava o espaço com `[ \t]*` enquanto `parsearMapa` usa `\s*`, que atravessa quebra de linha.
+ * Num mapa com a chave repetida e o valor da 2ª ocorrência na linha de baixo, o parser resolvia
+ * pela última (`bbbb…`) e a projeção só enxergava a primeira (`aaaa…`): o guard comparava `aaaa`
+ * dos dois lados e APROVAVA, com o `esperado(...)` carregando `bbbb`. Fatia que não é lida pelo
+ * mesmo leitor não é a fatia.
+ *
+ * Delegar também resolve o duplicado pela MESMA regra do `esperado(...)` (a última ocorrência
+ * vence) e casa o nome EXATO por indexação, não por padrão — `omie-sync` é prefixo de OITO chaves
+ * reais deste mapa (`omie-sync-estoque`, `omie-sync-vendas-items`, …), e casar por prefixo leria o
+ * hash da edge ERRADA nos dois lados, aprovando ou reprovando por engano.
+ *
+ * `Object.hasOwn` e não `in`: `parsearMapa` devolve objeto literal, então `mapa['constructor']`
+ * responderia uma FUNÇÃO herdada do protótipo, e `?? null` não a pegaria. Uma edge com nome de
+ * membro de `Object.prototype` cai aqui em `null` — ou seja, BLOQUEIO, que é o desfecho certo:
+ * `resolverLeva` (que testa com `in`) emitiria fingerprint fabricado para ela.
+ */
+export function entradaDoMapa(texto: string, edge: string): string | null {
+  const mapa = parsearMapa(texto);
+  return Object.hasOwn(mapa, edge) ? mapa[edge] : null;
+}
+
+/** A projeção que recorta do mapa de fingerprints a entrada de UMA edge. */
+export function projecaoEntradaDoMapa(edge: string): ProjecaoDaFonte {
+  return { rotulo: `entrada "${edge}"`, recortar: (texto) => entradaDoMapa(texto, edge) };
 }
 
 /** Uma edge da leva, com o marcador do `versao.ts` dela e o fingerprint da FONTE dela. */
@@ -111,8 +184,12 @@ export function resolverLeva(raiz: string, edges: string[]): EdgeSondada[] {
     }
   })();
   const mapa = bytesMapa === null ? {} : parsearMapa(bytesMapa);
-  const fonteMapa: FonteDoEsperado[] =
-    bytesMapa === null ? [] : [{ caminho: ARQ_MAPA, bytes: bytesMapa }];
+  // A fatia do mapa é a ENTRADA DA EDGE, não o arquivo: é só ela que vira `fonte` no `esperado(...)`.
+  // Os bytes ficam INTEIROS de propósito — é sobre eles que `fontesDoEsperado` detecta a corrida.
+  const fonteMapa = (edge: string): FonteDoEsperado[] =>
+    bytesMapa === null
+      ? []
+      : [{ caminho: ARQ_MAPA, bytes: bytesMapa, projecao: projecaoEntradaDoMapa(edge) }];
   const semSensor: string[] = [];
   const semMarcador: string[] = [];
   const semFingerprint: string[] = [];
@@ -142,7 +219,7 @@ export function resolverLeva(raiz: string, edges: string[]): EdgeSondada[] {
       // O `versao.ts` DESTA edge (os bytes de que `versao` saiu) e o mapa (de que `fonte` saiu).
       // Nada mais: `supabase/config.toml` decide PARA ONDE a sonda vai, não o que ela espera, e um
       // ref velho falha ALTO (404 do gateway) em vez de virar "bundle velho".
-      proveniencia: [{ caminho: relVersao(edge), bytes: textoVersao }, ...fonteMapa],
+      proveniencia: [{ caminho: relVersao(edge), bytes: textoVersao }, ...fonteMapa(edge)],
     });
   }
 
@@ -264,11 +341,14 @@ export function gitReal(raiz: string): ExecutorGit {
 export function fontesDoEsperado(
   resolvidas: ReadonlyArray<{ readonly proveniencia: readonly FonteDoEsperado[] }>,
 ): FonteDoEsperado[] {
-  const porCaminho = new Map<string, string>();
+  // A corrida é sobre o ARQUIVO — os mesmos bytes inteiros têm de sair de TODAS as leituras — e é
+  // julgada sobre todas as ocorrências, antes de qualquer descarte.
+  const bytesPorCaminho = new Map<string, string>();
   const brigando: string[] = [];
-  for (const f of resolvidas.flatMap((r) => r.proveniencia)) {
-    const antes = porCaminho.get(f.caminho);
-    if (antes === undefined) porCaminho.set(f.caminho, f.bytes);
+  const todas = resolvidas.flatMap((r) => r.proveniencia);
+  for (const f of todas) {
+    const antes = bytesPorCaminho.get(f.caminho);
+    if (antes === undefined) bytesPorCaminho.set(f.caminho, f.bytes);
     else if (antes !== f.bytes && !brigando.includes(f.caminho)) brigando.push(f.caminho);
   }
   if (brigando.length > 0) {
@@ -280,9 +360,18 @@ export function fontesDoEsperado(
         'Nenhum SQL foi emitido.',
     );
   }
-  return [...porCaminho]
-    .map(([caminho, bytes]) => ({ caminho, bytes }))
-    .sort((a, b) => a.caminho.localeCompare(b.caminho));
+  // NENHUMA fonte é descartada. Deduplicar obrigação por uma CHAVE é apostar que a chave carrega a
+  // semântica da projeção, e não carrega: o parecer Codex de 2026-09-09 reproduziu duas projeções
+  // de rótulo igual e alvo diferente (uma confere `omie-sync`, a outra `whatsapp-send-template`) —
+  // a dedup matava a segunda e o guard APROVAVA a divergência que só ela veria. E `undefined`
+  // colidiria com uma projeção de rótulo vazio, apagando a conferência do arquivo inteiro. O que se
+  // deduplica com segurança é TRABALHO, não dever: `conferirSincronia` cacheia o `git show` por
+  // caminho e junta as mensagens repetidas.
+  return [...todas].sort(
+    (a, b) =>
+      a.caminho.localeCompare(b.caminho) ||
+      (a.projecao?.rotulo ?? '').localeCompare(b.projecao?.rotulo ?? ''),
+  );
 }
 
 /** O que o guard concluiu. `aviso` só existe no caminho `--sem-rede`, que degradou de propósito. */
@@ -337,6 +426,96 @@ export function conferirSincronia(
         'declarar de que arquivos ele saiu (`proveniencia`). Nenhum SQL foi emitido.',
     );
   }
+  const sha = buscarRefDeployada(semRede, git);
+
+  const ausentes = new Set<string>();
+  const divergentes = new Set<string>();
+  const semFatiaNoDisco = new Set<string>();
+  // Todos os `show` no COMMIT que `buscarRefDeployada` acabou de resolver, nunca no NOME do ramo:
+  // um `git fetch` de outra worktree pode mover a `origin/main` no meio desta conferência, e aí
+  // cada arquivo sairia de um commit diferente — o guard aprovaria uma COMBINAÇÃO que nunca existiu
+  // num commit só (ressalva do parecer Codex de 2026-09-09). O `sha` já estava resolvido aqui e
+  // servia só para o aviso de `--sem-rede`; agora é ele que manda nas leituras. Um `show` por
+  // ARQUIVO, e não por fatia: N edges sondadas projetam N fatias do mesmo mapa, e a resposta é a
+  // mesma para todas.
+  const daMain = new Map<string, { status: number; stdout: string }>();
+  for (const { caminho, bytes, projecao } of fontes) {
+    let r = daMain.get(caminho);
+    if (r === undefined) {
+      const bruto = git(['show', `${sha}:${caminho}`]);
+      r = { status: bruto.status, stdout: bruto.stdout };
+      daMain.set(caminho, r);
+    }
+    const nome = projecao === undefined ? caminho : `${caminho} (${projecao.rotulo})`;
+    if (r.status !== 0) {
+      ausentes.add(nome);
+      continue;
+    }
+    if (projecao === undefined) {
+      // `bytes`, e não um `readFileSync` daqui: o que se confere tem de ser o que se EMITIU.
+      if (r.stdout !== bytes) divergentes.add(nome);
+      continue;
+    }
+    // A MESMA projeção nos dois lados — é isso que torna a comparação uma comparação. E `null` de
+    // qualquer ponta é divergência: fatia que sumiu não é fatia que bate.
+    const noDisco = projecao.recortar(bytes);
+    if (noDisco === null) {
+      semFatiaNoDisco.add(nome);
+      continue;
+    }
+    const naMain = projecao.recortar(r.stdout);
+    if (naMain === null) {
+      ausentes.add(nome);
+      continue;
+    }
+    if (naMain !== noDisco) divergentes.add(nome);
+  }
+
+  if (ausentes.size > 0 || divergentes.size > 0 || semFatiaNoDisco.size > 0) {
+    const problemas: string[] = [];
+    if (divergentes.size > 0) {
+      problemas.push(`difere de ${REF_DEPLOYADA}: ${[...divergentes].join(', ')}`);
+    }
+    if (ausentes.size > 0) {
+      problemas.push(`não existe em ${REF_DEPLOYADA}: ${[...ausentes].join(', ')}`);
+    }
+    if (semFatiaNoDisco.size > 0) {
+      problemas.push(
+        `a fatia declarada não existe no arquivo LIDO (rode \`bun run sonda:fingerprint -- ` +
+          `--write\` e commite o mapa): ${[...semFatiaNoDisco].join(', ')}`,
+      );
+    }
+    throw new Error(
+      `working tree DESSINCRONIZADO da ${REF_DEPLOYADA} na fatia que vira o \`esperado(...)\` — ` +
+        `${problemas.join(' | ')}. O marcador e o fingerprint sairiam deste disco e o veredito ` +
+        `compararia com o que a ${REF_DEPLOYADA} deployou: divergência aqui produz "BUNDLE VELHO ` +
+        'SERVINDO" numa edge que está no ar (falso NEGATIVO — o desfecho é redeployar money-path ' +
+        `à toa). Sincronize e repita: \`${CORRECAO}\`. Se o bump é SEU e ainda não mergeou, não há ` +
+        'o que sondar: a edge no ar não serve um marcador que só existe neste branch. ' +
+        'Nenhum SQL foi emitido.',
+    );
+  }
+
+  if (!semRede) return { aviso: null };
+  const data = git(['log', '-1', '--format=%ci', REF_DEPLOYADA]);
+  const idade = data.status === 0 && data.stdout.trim() !== '' ? data.stdout.trim() : 'data desconhecida';
+  return {
+    aviso:
+      `⚠️ --sem-rede: NÃO busquei a ${REF_DEPLOYADA}; comparei contra a cópia em disco, de ${idade} ` +
+      `(${sha.slice(0, 9)}). O veredito é sobre ESTE disco — se a main andou desde ` +
+      'então, "BUNDLE VELHO" pode ser este worktree atrasado, não a edge.',
+  };
+}
+
+/**
+ * As portas 2 e 3 do guard de sincronia: a `origin/main` recém-buscada — ou, com `--sem-rede`, a
+ * que está em disco — EXISTE, ou LANÇA. Devolve o sha dela.
+ *
+ * Mora fora de `conferirSincronia` porque, no modo sonda, a ref tem DOIS leitores: a fatia do
+ * `esperado(...)` e a allowlist do cron, que decide a recusa do bloco legado ANTES de a fatia ser
+ * comparada. Os dois leem a mesma ref depois do mesmo fetch (ver `umFetchPorExecucao`).
+ */
+export function buscarRefDeployada(semRede: boolean, git: ExecutorGit): string {
   if (!semRede) {
     const f = git(['fetch', REMOTO, RAMO_DEPLOYADO]);
     if (f.status !== 0) {
@@ -360,46 +539,27 @@ export function conferirSincronia(
         'Nenhum SQL foi emitido.',
     );
   }
+  return rev.stdout.trim();
+}
 
-  const ausentes: string[] = [];
-  const divergentes: string[] = [];
-  for (const { caminho, bytes } of fontes) {
-    const r = git(['show', `${REF_DEPLOYADA}:${caminho}`]);
-    if (r.status !== 0) {
-      ausentes.push(caminho);
-      continue;
-    }
-    // `bytes`, e não um `readFileSync` daqui: o que se confere tem de ser o que se EMITIU.
-    if (r.stdout !== bytes) divergentes.push(caminho);
-  }
-
-  if (ausentes.length > 0 || divergentes.length > 0) {
-    const problemas: string[] = [];
-    if (divergentes.length > 0) {
-      problemas.push(`difere de ${REF_DEPLOYADA}: ${divergentes.join(', ')}`);
-    }
-    if (ausentes.length > 0) {
-      problemas.push(`não existe em ${REF_DEPLOYADA}: ${ausentes.join(', ')}`);
-    }
-    throw new Error(
-      `working tree DESSINCRONIZADO da ${REF_DEPLOYADA} na fatia que vira o \`esperado(...)\` — ` +
-        `${problemas.join(' | ')}. O marcador e o fingerprint sairiam deste disco e o veredito ` +
-        `compararia com o que a ${REF_DEPLOYADA} deployou: divergência aqui produz "BUNDLE VELHO ` +
-        'SERVINDO" numa edge que está no ar (falso NEGATIVO — o desfecho é redeployar money-path ' +
-        `à toa). Sincronize e repita: \`${CORRECAO}\`. Se o bump é SEU e ainda não mergeou, não há ` +
-        'o que sondar: a edge no ar não serve um marcador que só existe neste branch. ' +
-        'Nenhum SQL foi emitido.',
-    );
-  }
-
-  if (!semRede) return { aviso: null };
-  const data = git(['log', '-1', '--format=%ci', REF_DEPLOYADA]);
-  const idade = data.status === 0 && data.stdout.trim() !== '' ? data.stdout.trim() : 'data desconhecida';
-  return {
-    aviso:
-      `⚠️ --sem-rede: NÃO busquei a ${REF_DEPLOYADA}; comparei contra a cópia em disco, de ${idade} ` +
-      `(${rev.stdout.trim().slice(0, 9)}). O veredito é sobre ESTE disco — se a main andou desde ` +
-      'então, "BUNDLE VELHO" pode ser este worktree atrasado, não a edge.',
+/**
+ * Um `git` cujo `fetch` roda UMA vez por execução — repetido, devolve a MESMA resposta.
+ *
+ * No modo sonda a `origin/main` tem dois leitores: a allowlist do cron (a recusa do bloco legado)
+ * e a fatia do `esperado(...)`. Dois fetches seriam duas MEDIÇÕES — a main pode andar entre elas, e
+ * a recusa julgaria uma ref e o veredito outra — além de pagar a rede duas vezes. A falha também é
+ * memorizada: quem pergunta de novo ouve o mesmo "não", nunca um segundo palpite.
+ */
+function umFetchPorExecucao(git: ExecutorGit): ExecutorGit {
+  const respostas = new Map<string, SaidaGit>();
+  return (args) => {
+    if (args[0] !== 'fetch') return git(args);
+    const chave = args.join(' ');
+    const antes = respostas.get(chave);
+    if (antes !== undefined) return antes;
+    const r = git(args);
+    respostas.set(chave, r);
+    return r;
   };
 }
 
@@ -2253,11 +2413,16 @@ export interface DependenciasCli {
   escrever: (texto: string) => void;
   erro: (texto: string) => void;
   /**
-   * Edges que já têm o caminho seguro da sonda (o ramo `OPTIONS` + entrada na allowlist do cron).
-   * Injetada, não importada: ver a nota em `guardEfeitoLegado`. Ausente = nenhuma, e o guard não
-   * recusa nada — o que é o comportamento certo para quem chama sem conhecer a allowlist.
+   * O kit da allowlist do cron de sonda (`scripts/lib/sonda-cron-allowlist.ts`): o parser e o
+   * diagnóstico da defasagem. Injetado, não importado: ver a nota em `guardEfeitoLegado`. Com ele o
+   * `main` lê a lista NA REF (`lerAllowlistDoRele`) — a CLI entrega o parser, nunca mais a lista.
+   *
+   * OBRIGATÓRIO pelo motivo do `git`: até 2026-09-10 este campo era a própria lista, opcional, e
+   * ausente valia "nenhuma" (`?? []`) — exatamente o que desliga a recusa do bloco legado para TODAS
+   * as edges. Opcional é o guard sumindo em quem esquece de passá-lo; obrigatório, o compilador cobra.
+   * O modo canária não o usa, e passa-o igual: o tipo não sabe o modo, e o furo não pode depender dele.
    */
-  edgesComRele?: readonly string[];
+  allowlist: KitAllowlist;
   /**
    * O `git` que o guard de sincronia usa. OBRIGATÓRIO de propósito: opcional-com-default sumiria
    * silenciosamente em quem esquecesse de passá-lo, e um guard que some é fail-OPEN. Assim o
@@ -2265,7 +2430,7 @@ export interface DependenciasCli {
    */
   git: ExecutorGit;
   /**
-   * O leitor de canárias do repo. Injetado pelo mesmo motivo do `edgesComRele` (o eval copia só
+   * O leitor de canárias do repo. Injetado pelo mesmo motivo do `allowlist` acima (o eval copia só
    * dois arquivos), mas AUSENTE aqui é fail-CLOSED e não "nenhuma": sem ele o marcador esperado
    * teria de ser digitado, que é a via do veredito falso. `--canaria` sem leitor RECUSA.
    */
@@ -2283,11 +2448,13 @@ export interface DependenciasCli {
  * Então aqui o legado deixa de ser o padrão e passa a exigir `--permitir-efeito-legado` — um aviso
  * impresso não basta, porque quem cola o bloco às 2 da manhã não lê o stderr.
  *
- * A allowlist chega por PARÂMETRO, e não por import de topo, por um motivo concreto: o eval da
+ * A allowlist é a de `origin/main`, lida pelo `main` (`lerAllowlistDoRele`) — nunca a do disco.
+ * O PARSER dela chega por PARÂMETRO, e não por import de topo, por um motivo concreto: o eval da
  * skill `lovable-deploy-verify` COPIA este arquivo (mais o `sonda-fingerprint`) para um diretório
- * temporário e importa `gerarSqlDaLeva` de lá. Um import de topo para `supabase/functions/` não
- * resolve nesse contexto, e o módulo inteiro deixaria de carregar — foi assim que 7 cenários do
- * eval passaram a devolver `SQL_VAZIO`. Quem executa como CLI resolve a lista no fim do arquivo.
+ * temporário e importa `gerarSqlDaLeva` de lá. Um import de topo para `supabase/functions/` (ou para
+ * `scripts/lib/`, que puxa o `typescript`) não resolve nesse contexto, e o módulo inteiro deixaria de
+ * carregar — foi assim que 7 cenários do eval passaram a devolver `SQL_VAZIO`. A CLI injeta o kit
+ * no fim do arquivo.
  */
 export function guardEfeitoLegado(edges: string[], permitido: boolean, edgesComRele: readonly string[]): string | null {
   if (permitido) return null;
@@ -2306,9 +2473,123 @@ export function guardEfeitoLegado(edges: string[], permitido: boolean, edgesComR
   );
 }
 
+/**
+ * O que o modo sonda usa de `scripts/lib/sonda-cron-allowlist.ts` — o mesmo parser do
+ * `pendencias:deploy`, nunca uma cópia. Só o TIPO vem de lá (o `import type` do topo some na
+ * transpilação); o valor chega injetado pela CLI, pelo motivo que `guardEfeitoLegado` documenta.
+ */
+export type KitAllowlist = Pick<
+  typeof LibAllowlist,
+  'ARQ_ALLOWLIST' | 'extrairAlvosDaAllowlist' | 'parsearEstadoWorktree' | 'diagnosticoWorktree' | 'descreverDivergencia'
+>;
+
+/** A allowlist que JULGA (a da ref) e a que só NOMEIA a defasagem (a do disco). */
+export interface AllowlistDoRele {
+  ref: string[];
+  /** `null` = não consegui ler o disco — o que NÃO é "igual à ref"; `motivoDisco` diz por quê. */
+  disco: string[] | null;
+  motivoDisco?: string;
+}
+
+/**
+ * A allowlist do cron de sonda — as edges que já têm o caminho SEGURO — lida NA REF, a mesma de que
+ * sai o resto do veredito. Chame DEPOIS de `buscarRefDeployada`: a ref lida aqui é a recém-buscada.
+ *
+ * Incidente de 2026-09-10 (a classe do #2464, `docs/historico/sonda-le-worktree-defasado.md`): esta
+ * lista vinha do `import` do DISCO na borda da CLI. Num worktree atrás da main, uma edge que a main
+ * já tinha posto na allowlist (`omie-desconto-backfill`, que ESCREVE) não estava no disco, o guard
+ * não recusava e o bloco legado saía sem aviso — POST direto numa edge que tem o relé. Fail-OPEN, e
+ * no caso mais comum do repo.
+ *
+ * LANÇA `ALLOWLIST_ILEGIVEL` se o `git show` falhar ou se o texto da ref não for a forma que o parser
+ * sabe ler: tratar a falha como lista vazia desligaria a recusa para TODAS as edges. O disco entra
+ * só para nomear a defasagem, e disco ilegível é "não li" — nunca "igual à ref".
+ */
+export function lerAllowlistDoRele(kit: KitAllowlist, git: ExecutorGit, raiz: string): AllowlistDoRele {
+  const naRef = git(['show', `${REF_DEPLOYADA}:${kit.ARQ_ALLOWLIST}`]);
+  if (naRef.status !== 0) {
+    throw new Error(
+      `ALLOWLIST_ILEGIVEL: \`git show ${REF_DEPLOYADA}:${kit.ARQ_ALLOWLIST}\` falhou (status ${naRef.status}: ` +
+        `${primeiraLinha(naRef.stderr)}). Sem a allowlist da main não sei que edges já têm o caminho seguro, ` +
+        'e tratá-la como vazia desligaria a recusa do bloco legado para TODAS. Nenhum SQL foi emitido.',
+    );
+  }
+  let ref: string[];
+  try {
+    ref = kit.extrairAlvosDaAllowlist(naRef.stdout);
+  } catch (e) {
+    // Formato que o parser DESTE worktree não conhece costuma ser worktree velho lendo main nova.
+    throw new Error(
+      `${(e as Error).message} (lida em ${REF_DEPLOYADA}; ` +
+        `${kit.diagnosticoWorktree(estadoDoWorktree(kit, git), REF_DEPLOYADA)}). Nenhum SQL foi emitido.`,
+    );
+  }
+  try {
+    return { ref, disco: kit.extrairAlvosDaAllowlist(readFileSync(join(raiz, kit.ARQ_ALLOWLIST), 'utf8')) };
+  } catch (e) {
+    return { ref, disco: null, motivoDisco: primeiraLinha((e as Error).message) };
+  }
+}
+
+/** Quantos commits separam o worktree da ref — `null` se o git não contou (ausente ≠ zero). */
+function estadoDoWorktree(kit: KitAllowlist, git: ExecutorGit): EstadoWorktree | null {
+  const r = git(['rev-list', '--left-right', '--count', `HEAD...${REF_DEPLOYADA}`]);
+  return r.status === 0 ? kit.parsearEstadoWorktree(r.stdout) : null;
+}
+
+/** Um aviso da allowlist: sempre no stderr; `noSql` diz se sobe também para o topo do SQL. */
+interface AvisoAllowlist {
+  texto: string;
+  noSql: boolean;
+}
+
+/**
+ * O aviso de defasagem da allowlist — ou `null` quando o disco concorda com a ref (silêncio é o
+ * certo). NÃO reprova: quem julgou foi a ref, e o que muda o remédio é o que ela diz.
+ *
+ * Sobe para o topo do SQL (`noSql`) só quando a divergência mudou o que foi EMITIDO: edge da leva
+ * que o seu worktree aprova e a main não — pela main ela não tem o relé, e por isso saiu no bloco
+ * legado. É a leitura que quem cola o SQL precisa ter na frente; o stderr some, o SQL sobrevive. A
+ * edge que só a MAIN aprova não precisa disso: ela foi recusada, e nada foi emitido.
+ */
+function avisoAllowlistDoRele(
+  kit: KitAllowlist,
+  a: AllowlistDoRele,
+  leva: readonly string[],
+  git: ExecutorGit,
+): AvisoAllowlist | null {
+  if (a.disco === null) {
+    return {
+      texto:
+        `⚠️ ALLOWLIST_DO_DISCO_ILEGIVEL — não consegui ler a allowlist do cron no seu worktree ` +
+        `(${a.motivoDisco ?? 'motivo desconhecido'}). O guard do bloco legado seguiu a de ${REF_DEPLOYADA}, ` +
+        'que é quem julga; só a comparação com o disco ficou de fora.',
+      noSql: false,
+    };
+  }
+  const diferencas = kit.descreverDivergencia(a.ref, a.disco);
+  if (diferencas === null) return null;
+  const naRef = new Set(a.ref);
+  const noDisco = new Set(a.disco);
+  const emitidasPeloDisco = leva.filter((e) => noDisco.has(e) && !naRef.has(e));
+  const partes = [
+    `⚠️ ALLOWLIST_DEFASADA — a allowlist do cron no seu worktree difere da de ${REF_DEPLOYADA} ` +
+      `(${diferencas}); ${kit.diagnosticoWorktree(estadoDoWorktree(kit, git), REF_DEPLOYADA)}. ` +
+      `O guard do bloco legado seguiu a de ${REF_DEPLOYADA}.`,
+  ];
+  if (emitidasPeloDisco.length > 0) {
+    partes.push(
+      `Nesta leva, aprovada(s) só no seu worktree: ${emitidasPeloDisco.join(', ')} — pela main ainda sem ` +
+        'o relé, e por isso saiu(saíram) no bloco legado: confira o EFEITO declarado no versao.ts antes de colar.',
+    );
+  }
+  return { texto: partes.join('\n'), noSql: emitidasPeloDisco.length > 0 };
+}
+
 export function main(argv: string[], deps: DependenciasCli): number {
   let sql: string;
   let aviso: string | null;
+  let avisoAllowlist: AvisoAllowlist | null = null;
   try {
     const { edges, caras, janelaMin, soDisparo, soLeitura, semRede, permitirEfeitoLegado, canaria } =
       parsearArgs(argv);
@@ -2334,17 +2615,26 @@ export function main(argv: string[], deps: DependenciasCli): number {
       ({ aviso } = conferirSincronia(fontesDoEsperado(leva), semRede === true, deps.git));
       sql = gerarSqlDeCanariasResolvidas(deps.raiz, leva, validarJanela(janelaMin));
     } else {
-      const recusa = guardEfeitoLegado(edges, permitirEfeitoLegado === true, deps.edgesComRele ?? []);
+      // A leva é resolvida ANTES de tudo que toca o git porque as falhas competem pelo mesmo texto
+      // e a da leva é mais específica: uma edge sem `versao.ts` deve ouvir "sem sensor", não "não
+      // existe em origin/main". Nada é escrito até TUDO passar — `gerarSqlDaLeva` só monta a
+      // string, e é este `escrever` lá embaixo que emite.
+      const levaSondada = resolverLeva(deps.raiz, edges);
+      // UM fetch para os dois leitores da ref: a allowlist (que decide a recusa) e a fatia (que
+      // decide o veredito) julgam a MESMA origin/main. A recusa vem ANTES da comparação da fatia
+      // porque não depende do disco — o relé não lê este worktree —, então worktree defasado não
+      // adia a resposta certa.
+      const git = umFetchPorExecucao(deps.git);
+      buscarRefDeployada(semRede === true, git);
+      const allowlist = lerAllowlistDoRele(deps.allowlist, git, deps.raiz);
+      avisoAllowlist = avisoAllowlistDoRele(deps.allowlist, allowlist, edges, git);
+      const recusa = guardEfeitoLegado(edges, permitirEfeitoLegado === true, allowlist.ref);
       if (recusa !== null) {
         deps.erro(`❌ ${recusa}`);
+        if (avisoAllowlist !== null) deps.erro(avisoAllowlist.texto);
         return 1;
       }
-      // A leva é resolvida ANTES do guard de sincronia porque as duas falhas competem pelo mesmo
-      // texto e a da leva é mais específica: uma edge sem `versao.ts` deve ouvir "sem sensor", não
-      // "não existe em origin/main". Nada é escrito até as DUAS passarem — `gerarSqlDaLeva` só
-      // monta a string, e é este `escrever` lá embaixo que emite.
-      const levaSondada = resolverLeva(deps.raiz, edges);
-      ({ aviso } = conferirSincronia(fontesDoEsperado(levaSondada), semRede === true, deps.git));
+      ({ aviso } = conferirSincronia(fontesDoEsperado(levaSondada), semRede === true, git));
       sql = gerarSqlDaLeva({
         raiz: deps.raiz,
         edges,
@@ -2359,6 +2649,10 @@ export function main(argv: string[], deps: DependenciasCli): number {
     deps.erro(`❌ ${(e as Error).message}`);
     return 1;
   }
+  if (avisoAllowlist !== null) {
+    deps.erro(avisoAllowlist.texto);
+    if (avisoAllowlist.noSql) sql = `-- ${avisoAllowlist.texto.split('\n').join('\n-- ')}\n${sql}`;
+  }
   if (aviso !== null) {
     deps.erro(aviso);
     // Também no SQL: o stderr some, e o SQL é o artefato que sobrevive colado num chat ou num PR.
@@ -2369,21 +2663,25 @@ export function main(argv: string[], deps: DependenciasCli): number {
 }
 
 if (import.meta.main) {
-  // Import DINÂMICO, e só aqui: quem apenas importa este módulo (o eval da skill, que o copia para
-  // um diretório temporário) não pode depender de `supabase/functions/` resolver.
-  const { SONDA_CRON_ALVOS } = await import('../supabase/functions/_shared/sonda-cron-alvos');
+  // Imports DINÂMICOS, e só aqui: quem apenas importa este módulo (o eval da skill, que o copia para
+  // um diretório temporário) não pode depender de `scripts/lib/` nem do `typescript` resolverem.
+  // Esta borda entrega o PARSER da allowlist do cron, nunca a lista: até 2026-09-10 ela entregava
+  // `SONDA_CRON_ALVOS` importado de `supabase/functions/` — o DISCO —, e worktree defasado liberava o
+  // bloco legado para edge que a main já pusera no relé. A lista agora sai da ref, no `main`.
+  const allowlist = await import('./lib/sonda-cron-allowlist');
   // O leitor de canárias sai daqui pela MESMA razão, e mora num módulo PRÓPRIO
   // (`canaria-leitor-do-repo.ts`) porque a prova executada precisa do MESMO leitor: duas cópias da
   // regra "onde mora o marcador" divergiriam, e a prova continuaria verde julgando um SQL que não é
   // o que o operador cola.
   const { lerCanariasDoRepo } = await import('./canaria-leitor-do-repo');
+  const raiz = join(import.meta.dirname, '..');
   process.exit(
     main(process.argv.slice(2), {
-      raiz: join(import.meta.dirname, '..'),
+      raiz,
       escrever: (t) => process.stdout.write(t),
       erro: (t) => console.error(t),
-      git: gitReal(join(import.meta.dirname, '..')),
-      edgesComRele: SONDA_CRON_ALVOS.map((a) => a.edge),
+      git: gitReal(raiz),
+      allowlist,
       lerCanarias: lerCanariasDoRepo,
     }),
   );

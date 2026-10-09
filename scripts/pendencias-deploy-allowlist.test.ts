@@ -33,6 +33,7 @@ import {
   SQL_SONDA_CRON_ALVOS,
   SQL_SONDA_CRON_ATESTACOES,
   SQL_SONDA_CRON_DISPAROS,
+  SQL_SONDA_CRON_ESPERA,
   SQL_SONDA_CRON_MOTIVOS,
 } from './pendencias-deploy';
 
@@ -92,6 +93,7 @@ function psqlFalso(dir: string, ativosNoBanco: string[]): string {
     [SQL_SONDA_CRON_DISPAROS]: '',
     [SQL_SONDA_CRON_ATESTACOES]: '',
     [SQL_SONDA_CRON_MOTIVOS]: '',
+    [SQL_SONDA_CRON_ESPERA]: ativosNoBanco.map((e) => `${e}|20.0\n`).join(''),
   };
   const arqRespostas = join(dir, 'respostas.json');
   writeFileSync(arqRespostas, JSON.stringify(respostas));
@@ -187,7 +189,10 @@ describe('pendencias:deploy ponta a ponta — a allowlist que julga é a da main
     const r = await rodarCli(local, psql);
     // Evidência POSITIVA de que o CLI chegou à seção e passou pelo ramo certo: sem ela, um crash
     // anterior também "não emitiria o UPDATE" e o teste passaria por cegueira. ASCII (lição #1483).
-    expect(r.stdout).toContain('2 edge(s) ativa(s), 0 tick(s) recente(s)');
+    // 0 ticks = nada examinado: o ✅ universal não pode sair (o mesmo defeito do resumo, pelo main())
+    expect(r.stdout).not.toContain('toda edge ativa foi atestada');
+    expect(r.stdout).toContain('0/2 edge(s) ativa(s) perguntada(s) em 0 tick(s) recente(s)');
+    expect(r.stdout).toContain(`${EDGE_NOVA} (espera 20 min)`);
     expect(r.stdout).toContain('ALLOWLIST_DEFASADA');
     expect(r.stdout).toContain('1 commit(s)');
     expect(`${r.stdout}${r.stderr}`).not.toContain(ORDEM_DE_ESCRITA);

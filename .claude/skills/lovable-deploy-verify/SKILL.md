@@ -207,12 +207,16 @@ com o `ia-cota.ts` **inalterado desde 2026-07-31**: o `--name-status` devolvia t
 estavam certos para a pergunta errada. Feche o closure, sempre:
 
 ```bash
-# imports locais de 1º nível — repita em cada arquivo alcançado até não achar mais
-grep -oE 'from "\.\.?/[^"]+"' supabase/functions/<edge>/index.ts | sort -u
-# algum deles é import NOVO nesta edge? (resposta POSITIVA no diff, nunca de memória)
+# ESCADA: o canônico é `bun run pendencias:prompt <edge>`, que já lê a ref e fecha closure ∪ {mapa}.
+# imports locais de 1º nível, LIDOS DA REF — repita em cada arquivo alcançado até não achar mais
+git show origin/main:supabase/functions/<edge>/index.ts | grep -oE "from ['\"]\.\.?/[^'\"]+['\"]" | sort -u
+# é a REF, nunca `cat`/`grep` no working tree: worktree UM commit atrás devolve 5 arquivos onde a
+# main tem 7, e a saída não denuncia (medido 2026-09-04 — o caso inteiro no 🔴 abaixo)
+# aspas SIMPLES contam: `from '…'` era 3 das 7 edges daquela medição, e regex cego devolve vazio
 # UM ponto só no padrão: `\.\.` perderia `from "./helper.ts"` — e 41 dos 96 diretórios de edge
 # importam assim, o mesmo ponto cego que este bloco existe para fechar (medido 2026-08-30)
-git show <sha-do-merge> -- supabase/functions/<edge>/index.ts | grep -E '^\+.*from "\.'
+# algum deles é import NOVO nesta edge? (resposta POSITIVA no diff, nunca de memória)
+git show <sha-do-merge> -- supabase/functions/<edge>/index.ts | grep -E "^\+.*from ['\"]\."
 ```
 
 ⚠️ E some ao closure o **mapa** `_shared/sonda-fingerprints.ts`: a `fecharGrafo()` do gerador o exclui
@@ -255,8 +259,12 @@ eixo TEMPO acima, com o mesmo desfecho (deploy que não boota) por um caminho qu
 fecha. Leia da ref, sempre — e a ref é a MESMA que o Lovable deploya:
 
 ```bash
+# ✅ A FATIA QUE SE PEDE — a ref que o Lovable deploya (é o bloco do closure lá acima)
 git show origin/main:supabase/functions/<edge>/index.ts | grep -oE "from ['\"]\.\.?/[^'\"]+['\"]"
 # repita em cada arquivo alcançado, sempre com `git show origin/main:<path>` — nunca `cat <path>`
+# ❌ RASCUNHO LOCAL — a MESMA forma contra o disco. Explora o SEU worktree e nada mais: NÃO vale
+# para pedir deploy, e o que ela imprime é indistinguível do certo (mesma forma, menos arquivos)
+grep -oE "from ['\"]\.\.?/[^'\"]+['\"]" supabase/functions/<edge>/index.ts
 ```
 
 ⚠️ E o guard de contagem 0/1 vale para o **arnês**, não só para o regex. Na mesma sessão a primeira

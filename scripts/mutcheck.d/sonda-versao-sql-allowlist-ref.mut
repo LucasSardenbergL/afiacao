@@ -1,0 +1,27 @@
+# Poder de discriminação da suíte sobre a FONTE da allowlist do cron no `sonda:sql` — a recusa do
+# bloco legado (POST `{"probe":true}` direto na edge, que num bundle velho roda o FLUXO REAL).
+# Incidente de 2026-09-10, a classe do #2464 (`docs/historico/sonda-le-worktree-defasado.md`): a
+# allowlist vinha do `import` do DISCO na borda da CLI, e num worktree atrás da main uma edge que a
+# main já pusera no relé (`omie-desconto-backfill`, que ESCREVE) escapava da recusa — fail-OPEN, no
+# caso mais comum do repo (~30 worktrees). Cada mutação devolve UMA camada ao estado quebrado; a
+# suíte tem de ficar vermelha em todas. Baseline verde na MESMA invocação é do harness.
+# @src: scripts/sonda-versao-sql.ts
+# @test: scripts/sonda-versao-sql-allowlist.test.ts
+# Rode: scripts/mutcheck.sh scripts/sonda-versao-sql.ts scripts/sonda-versao-sql-allowlist.test.ts scripts/mutcheck.d/sonda-versao-sql-allowlist-ref.mut
+PEGA | guard volta a julgar pelo DISCO (o incidente)        | s/guardEfeitoLegado\(edges, permitirEfeitoLegado === true, allowlist\.ref\)/guardEfeitoLegado(edges, permitirEfeitoLegado === true, allowlist.disco ?? [])/
+PEGA | ref e disco trocados na leitura                      | s/return \{ ref, disco: kit\.extrairAlvosDaAllowlist\(readFileSync/return { disco: ref, ref: kit.extrairAlvosDaAllowlist(readFileSync/
+PEGA | ref lida do HEAD (a copia commitada do disco)        | s/const naRef = git\(\['show', \x60\$\{REF_DEPLOYADA\}:/const naRef = git(['show', \x60HEAD:/
+PEGA | git show que falha vira allowlist vazia              | s/if \(naRef\.status !== 0\) \{/if (naRef.status !== 0) { return { ref: [], disco: [] };/
+PEGA | git show que falha cai para o disco                  | s/if \(naRef\.status !== 0\) \{/if (naRef.status !== 0) { const d = kit.extrairAlvosDaAllowlist(readFileSync(join(raiz, kit.ARQ_ALLOWLIST), 'utf8')); return { ref: d, disco: d };/
+PEGA | texto ILEGIVEL na ref engolido vira lista vazia      | s/ref = kit\.extrairAlvosDaAllowlist\(naRef\.stdout\);/ref = (() => { try { return kit.extrairAlvosDaAllowlist(naRef.stdout); } catch { return []; } })();/
+PEGA | disco ilegivel vira "igual a ref" (silencio)        | s/if \(a\.disco === null\) \{/if (a.disco === null) { return null;/
+PEGA | rev-list ao contrario (o diagnostico perde a conta)  | s/\x60HEAD\.\.\.\$\{REF_DEPLOYADA\}\x60/\x60\$\{REF_DEPLOYADA\}...HEAD\x60/
+PEGA | fetch depois da allowlist (retrato velho recusa)     | s/^      buscarRefDeployada\(semRede === true, git\);/      void semRede;/
+PEGA | dois fetches: allowlist e fatia em refs diferentes   | s/const git = umFetchPorExecucao\(deps\.git\);/const git = deps.git;/
+PEGA | o memo esquece a resposta (cada fetch vai a rede)    | s/if \(antes !== undefined\) return antes;/void antes;/
+PEGA | guard de sincronia fura o memo (fetch dobrado)       | s/conferirSincronia\(fontesDoEsperado\(levaSondada\), semRede === true, git\)/conferirSincronia(fontesDoEsperado(levaSondada), semRede === true, deps.git)/
+PEGA | aviso de defasagem some                              | s/avisoAllowlist = avisoAllowlistDoRele\(deps\.allowlist, allowlist, edges, git\);/avisoAllowlist = null;/
+PEGA | a recusa esconde a defasagem (o porque some)         | s/if \(avisoAllowlist !== null\) deps\.erro\(avisoAllowlist\.texto\);/void 0;/
+PEGA | aviso nao sobe ao SQL (so no stderr, que some)       | s/if \(avisoAllowlist\.noSql\) sql =/if (false) sql =/
+PEGA | edge so no worktree da leva deixa de ser nomeada     | s/const emitidasPeloDisco = leva\.filter\(\(e\) => noDisco\.has\(e\) && !naRef\.has\(e\)\);/const emitidasPeloDisco: string[] = [];/
+PEGA | a borda volta a importar a allowlist do disco        | s/const allowlist = await import\('\.\/lib\/sonda-cron-allowlist'\);/const allowlist = { ...(await import('.\/lib\/sonda-cron-allowlist')), doDisco: (await import('..\/supabase\/functions\/_shared\/sonda-cron-alvos')).SONDA_CRON_ALVOS };/

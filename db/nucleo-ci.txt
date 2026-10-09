@@ -157,7 +157,7 @@ db/test-pedido-edicao-atomica.sh           54
 # e, medido, nem isso bastava: a palavra ERRO×ERROR que o executor casa vem do SERVIDOR
 # (`lc_messages`), e a rodada pt_BR antiga trocava só o cliente — as duas saíam idênticas
 # (docs/historico/falsificacao-db-aplicar-idioma-do-servidor.md).
-db/test-db-aplicar.sh                      46  falsificar=13
+db/test-db-aplicar.sh                      64  falsificar=15
 # Tintométrico: a promoção staging→oficial é tudo-ou-nada — receita corrompida não grava parcial,
 # linha sem `nome_cor` não derruba o run, e linha carimbada pela Fase 5 não é reativada (sem a
 # migration, o 23514 abortava o promote INTEIRO); o UPDATE da Fase 5 aborta a transação toda se o
@@ -243,11 +243,26 @@ db/test-sonda-passo-pelo-db-aplicar.sh     32  falsificar=14
 # só fica vermelho aqui. Entrou em 2026-09-10, quando a dobra já tinha inflado a tendência de
 # caixa publicada no fechamento de abril (docs/cfo/2026-04-fechamento.md, errata).
 db/test-cfo-caixa-90d-otica.sh             30
+# A MIGRATION que escolhe a ótica por título: `v_titulo_baixas`, de onde saem a data de baixa e o prazo
+# ponderado de cada título. Título com as duas óticas conta UMA; o fallback de conta corrente se declara
+# em `origem_baixa`; resumo cumulativo do título não soma (mas baixa de conta corrente soma, que é o
+# mesmo eixo pelo outro lado); e o replace mantém o `security_invoker` — a falha ABERTA do Eixo 1. As 6
+# sabotagens (F1-F6) e a A9 rodam INLINE, na mesma invocação, então o 21 conta com elas: tirar uma
+# sabotagem derruba para 20 e reprova aqui. Nasceu no #2423 presa ao PGBIN do Homebrew — rodava só no
+# laptop, que pelo critério do repo é ausência de dado. Custa 2-6 s no runner (2 medições em 2026-10-07,
+# laptop com carga variável), contra partes de 4m36s-6m52s sob teto de 20 min: cai na parte 2/3.
+db/test-v-titulo-baixas-otica-canonica.sh  21
 # O mesmo PO sob duas óticas de compra: o `em_transito` do motor e o anti-compra-dupla da oportunidade
 # ([SIMETRIA-NORMAL]). `disparado_simulado` (PO REAL do dry_run) entrou na 1ª e ficou fora da 2ª — o SKU
 # voltava a ser ofertado = compra antecipada em dobro. Controle = versão da PROD por md5; falsificação
 # sempre ligada, uma lista por vez. Entrou em 2026-10-01 (migration 20261001204054).
 db/test-oportunidade-antidup-disparado-simulado.sh  17
+# A MESMA guarda anti-compra-dupla, pelo lado oposto: PO com erro TERMINAL no portal (nada colocado
+# no fornecedor) seguia contando como "ja comprado" nos 2 NOT EXISTS ([SIMETRIA-NORMAL]) e travava a
+# oferta do SKU por ate 7 dias. CONTROLE = funcao pre-fix da 20260611120000, fora do snapshot de DR
+# (que no proximo re-dump ja traz a guarda); falsificacao: cada bloco sabotado em separado + a forma
+# NULL-blind `=`. Caminho adormecido na PROD (defesa em profundidade). Entrou em 2026-10-08.
+db/test-oportunidade-erro-terminal.sh       7  falsificar=3
 # Tintométrico: item repetido (fórmula, corante) na promoção fica com a quantidade de maior ordem —
 # SOMAR dobraria a dose do corante sem erro nenhum.
 db/test-tint-promote-dedup-itens.sh        11

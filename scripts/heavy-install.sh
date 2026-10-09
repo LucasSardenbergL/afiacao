@@ -15,13 +15,15 @@
 #   bash scripts/heavy-install.sh --daqui     # instala o DESTA worktree (mudança em voo)
 #   bash scripts/heavy-install.sh --status    # só compara — contrato de 4 estados:
 #     exit 0  sincronizado com origin/main
-#     exit 0  EM VOO — instalado == scripts/heavy.sh desta worktree, mas ≠ origin/main
+#     exit 0  EM VOO — instalado == scripts/heavy.sh desta worktree, ≠ origin/main, e esse
+#             arquivo do disco NÃO está na história da main: mudança local não mergeada
 #             (alguém rodou --daqui de propósito; mensagem distingue do sincronizado)
-#     exit 1  DIVERGENTE (a comparação foi FEITA e deu diferente) OU heavy ausente
+#     exit 1  DIVERGENTE (a comparação foi FEITA e deu diferente), DEFASADO (instalado ==
+#             disco, mas o disco é uma versão ANTIGA da main — worktree atrasado) OU ausente
 #     exit 3  NÃO CONSEGUI VERIFICAR — origin/main ilegível (sem fetch), fonte vazia,
-#             mktemp falhou, ou o CHAMADOR (o hook) estourou o teto de tempo. A
-#             mensagem diz o que fazer; NUNCA é o mesmo que "divergente" (ausência
-#             de dado ≠ afirmação de divergência).
+#             mktemp falhou, a DIREÇÃO do "instalado == disco ≠ main" não foi desempatável,
+#             ou o CHAMADOR (o hook) estourou o teto de tempo. A mensagem diz o que fazer;
+#             NUNCA é o mesmo que "divergente" (ausência de dado ≠ afirmação de divergência).
 #   "Instalado mas fora do PATH" entra como NOTA na mensagem dos exit 0, sem exit
 #   code próprio — o PATH lido é o DESTE processo, e no hook isso é o PATH do app
 #   (nag permanente e falso). Ver o bloco comentado no --status.
@@ -141,6 +143,64 @@ case ":$PATH:" in
   *) nota_path=" · ⚠️ $(dirname "$DEST") fora do PATH deste processo: 'heavy' digitado à mão sai 127 (o hook heavy-guard usa o caminho absoluto e não é afetado)" ;;
 esac
 
+# ── desempate de DIREÇÃO: "instalado == disco ≠ main" tem DUAS causas opostas ──
+# Ler o sha do scripts/heavy.sh DESTE worktree e concluir "em voo" é a classe
+# "sensor que julga contra a REF mas lê DADO versionado do DISCO"
+# (docs/historico/sonda-le-worktree-defasado.md): o mesmo sinal sai de
+#   (a) disco À FRENTE da main — mudança em voo, alguém rodou --daqui: exit 0 certo;
+#   (b) disco ATRÁS da main — worktree defasado cujo heavy.sh é velho, e o instalado
+#       veio daquele arquivo velho: é EXATAMENTE o caso que este script existe para
+#       pegar (32 das 39 worktrees em 2026-07-20), e o ramo "em voo" é o SILENCIOSO
+#       no vigia-worktree.sh — o heavy velho ficaria instalado indefinidamente.
+# O desempate vem do git, não de heurística de texto: o blob do arquivo do disco
+# está na HISTÓRIA de origin/main para esse caminho?
+#   está      ⇒ ATRAS      (versão que já esteve na main ⇒ o disco é a antiga)
+#   não está  ⇒ A_FRENTE   (conteúdo que nunca foi mergeado ⇒ em voo de verdade)
+# `git log --raw` dá os blobs old+new de cada revisão do path em UM fork (medido:
+# 0,33s com 6.535 commits, bem dentro do teto de 3s que o hook aplica) — por isso
+# não há um `rev-parse` por commit aqui.
+# FAIL-CLOSED: git que não responde, ref ilegível ou história vazia NÃO podem cair
+# em A_FRENTE, que é o ramo mudo — viram INDETERMINADO (exit 3, "não consegui
+# verificar"). E `command -v git` não basta: o controle é uma resposta POSITIVA —
+# a enumeração tem de CONTER o blob da ponta de origin/main (o que ela acabou de
+# comparar). Enumeração que não contém a própria ponta não é enumeração confiável
+# (docs/historico/sonda-ausente-em-script-que-apaga.md).
+direcao_do_disco() {
+  local blob_disco blob_ponta pares c b achou_ponta=0 commit_disco=""
+  blob_disco="$(git -C "$here" hash-object -- "$here/heavy.sh" 2>/dev/null || true)"
+  blob_ponta="$(git -C "$here" rev-parse --verify --quiet "origin/main:scripts/heavy.sh" 2>/dev/null || true)"
+  case "$blob_disco$blob_ponta" in
+    *[!0-9a-f]* | "") echo INDETERMINADO; return 0 ;;
+  esac
+  [ ${#blob_disco} -eq 40 ] && [ ${#blob_ponta} -eq 40 ] || { echo INDETERMINADO; return 0; }
+  # Coerência: neste ramo sha_local ≠ sha_fonte (o `if` que chama isto garante),
+  # logo os blobs TÊM de diferir. Iguais = a mecânica de hashing está mentindo
+  # (filtro de conteúdo em .gitattributes, por exemplo) — não arrisque um veredito.
+  [ "$blob_disco" != "$blob_ponta" ] || { echo INDETERMINADO; return 0; }
+
+  # Pathspec `:(top)`: `git log -- <pathspec>` é relativo ao CWD, e o `git -C "$here"`
+  # põe o CWD em scripts/ — `-- scripts/heavy.sh` ali vira scripts/scripts/heavy.sh e a
+  # enumeração sai VAZIA. (A sintaxe `rev:path` do `git show` acima não tem esse problema:
+  # ela é sempre relativa à RAIZ. Ler as duas como "mesmo caminho" foi o que o caso 13 da
+  # suíte pegou.) `:(top)` ancora na raiz do repo, de qualquer CWD.
+  pares="$(git -C "$here" log --no-abbrev --raw --format='%H' origin/main -- ':(top)scripts/heavy.sh' 2>/dev/null |
+    awk '/^[0-9a-f]{40}$/ { c = $0; next }
+         /^:/ { for (i = 1; i <= NF; i++)
+                  if ($i ~ /^[0-9a-f]{40}$/ && $i !~ /^0{40}$/) print c, $i }' || true)"
+  [ -n "$pares" ] || { echo INDETERMINADO; return 0; }
+  while read -r c b; do
+    if [ "$b" = "$blob_ponta" ]; then achou_ponta=1; fi
+    if [ "$b" = "$blob_disco" ] && [ -z "$commit_disco" ]; then commit_disco="$c"; fi
+  done <<EOF
+$pares
+EOF
+  # O controle POSITIVO. Sem ele, um `git log` que devolve lixo (ou a história de
+  # outro path) viraria "o blob do disco não está lá" ⇒ A_FRENTE ⇒ silêncio.
+  [ "$achou_ponta" = 1 ] || { echo INDETERMINADO; return 0; }
+  if [ -n "$commit_disco" ]; then echo "ATRAS $commit_disco"; else echo A_FRENTE; fi
+  return 0
+}
+
 if [ "$modo" = "status" ]; then
   if [ -z "$sha_dest" ]; then
     echo "heavy NÃO instalado ($DEST ausente) — fonte $desc"
@@ -158,8 +218,27 @@ if [ "$modo" = "status" ]; then
     if [ "$fonte" = "main" ] && [ -s "$here/heavy.sh" ]; then
       sha_local="$(sha_de "$here/heavy.sh")"
       if [ "$sha_local" = "$sha_dest" ]; then
-        echo "heavy EM VOO — instalado (${sha_dest:0:12}) == scripts/heavy.sh desta worktree, ≠ $desc (${sha_fonte:0:12}). Parece --daqui proposital nesta worktree; se não foi você, confira quem instalou.${nota_path}"
-        exit 0
+        # "instalado == disco ≠ main": desempate obrigatório antes de calar (ver
+        # direcao_do_disco acima). Sem ele, o worktree ATRASADO sai 0 e o vigia cala.
+        direcao="$(direcao_do_disco)"
+        case "$direcao" in
+          ATRAS\ *)
+            echo "heavy DEFASADO — instalado ${sha_dest:0:12} == scripts/heavy.sh DESTE worktree, mas esse arquivo é uma versão ANTIGA de $desc (entrou na main em ${direcao#ATRAS }); a main já está em ${sha_fonte:0:12}. Não é mudança em voo: é worktree atrasado → rode 'bun run heavy:install'."
+            exit 1
+            ;;
+          A_FRENTE)
+            echo "heavy EM VOO — instalado (${sha_dest:0:12}) == scripts/heavy.sh desta worktree, ≠ $desc (${sha_fonte:0:12}), e esse conteúdo não está na história da main: mudança local não mergeada. Parece --daqui proposital nesta worktree; se não foi você, confira quem instalou.${nota_path}"
+            exit 0
+            ;;
+          *)
+            # Não passa por falhar_fonte de propósito: ali a frase é "a comparação
+            # nem rodou", e aqui ela RODOU — o que faltou foi desempatar a direção.
+            # Dizer a causa certa é o ponto do exit 3 (ausência de dado ≠ veredito).
+            echo "heavy-install --status: instalado == scripts/heavy.sh desta worktree e ≠ $desc, mas NÃO CONSEGUI desempatar a direção (git não respondeu, ou a enumeração da história não continha o blob da ponta de origin/main)." >&2
+            echo "  → 'git fetch origin' resolve o caso comum; ou 'bun run heavy:install' sincroniza com origin/main sem depender deste desempate." >&2
+            exit 3
+            ;;
+        esac
       fi
     fi
     echo "heavy DIVERGENTE — instalado ${sha_dest:0:12} ≠ $desc ${sha_fonte:0:12}"

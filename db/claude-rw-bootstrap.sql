@@ -99,6 +99,7 @@ AS $funcao$
 DECLARE
   v_sha_real   text;
   v_sha_ledger text;
+  v_recibo     bigint;
 BEGIN
   IF p_sql IS NULL OR length(btrim(p_sql)) = 0 THEN
     RAISE EXCEPTION 'APLICAR_SQL: corpo vazio' USING ERRCODE = '22023';
@@ -162,6 +163,31 @@ BEGIN
       p_id, v_sha_ledger, p_sha USING ERRCODE = '22023';
   END IF;
 
+  -- O RE-CHECK, depois da fila: estes bytes já têm recibo? A fila põe dois applies dos MESMOS bytes
+  -- em ORDEM, e ordem não é impedimento. O executor lê o ledger e grava a tentativa FORA desta
+  -- transação, então os dois passam pela etapa 3 dele antes de qualquer recibo existir; o 2º, quando
+  -- pegava a vez, chegava aqui com uma tentativa válida e executava o corpo DE NOVO. O índice único
+  -- do recibo o revertia, depois: o dado se salvava, a execução não — sequência e IDENTITY
+  -- consumidas, e a carga e os locks de rodar a migration duas vezes (medido em PG17:
+  -- db/test-db-aplicar.sh, A15; sem este bloco, S14).
+  --
+  -- Só vale DEPOIS da fila: antes dela a leitura seria a de um 1º que ainda não commitou — ausência
+  -- de recibo lida como "inédito" (S15). E só vale porque a fila exige READ COMMITTED: cada comando
+  -- tira snapshot NOVO, e este enxerga o commit de quem segurava a vez.
+  --
+  -- Só para o apply REAL. No `--ensaio` o ledger guarda 'ensaio:'||sha e a transação inteira morre
+  -- no ROLLBACK: bloqueá-lo por "já aplicado" não protege ninguém e empurra quem quer conferir para o
+  -- caminho que ESCREVE — o inverso do que o `--ensaio` existe para fazer.
+  IF v_sha_ledger = p_sha THEN
+    SELECT id INTO v_recibo
+      FROM public.db_aplicacoes
+     WHERE sha256 = p_sha AND estado = 'aplicada';
+    IF FOUND THEN
+      RAISE EXCEPTION 'APLICAR_SQL: estes bytes já foram aplicados — recibo % (RECUSA_SHA_JA_APLICADO); NADA foi executado',
+        v_recibo USING ERRCODE = '22023';
+    END IF;
+  END IF;
+
   -- O apply. Erro aqui aborta a função inteira, e com ela o recibo abaixo: é o que garante
   -- que "aplicada" nunca sobrevive a uma migration que voltou atrás.
   EXECUTE p_sql;
@@ -180,8 +206,9 @@ $funcao$;
 
 COMMENT ON FUNCTION public.aplicar_sql(text, text, bigint) IS
   'Porta de escrita automatizada (SECURITY DEFINER = postgres). Um apply por vez (advisory '
-  '(20260909,1), exige READ COMMITTED). Confere o sha256 do corpo antes de executar e grava o '
-  'recibo na mesma transação. EXECUTE só para claude_rw.';
+  '(20260909,1), exige READ COMMITTED). Confere o sha256 do corpo antes de executar, re-confere o '
+  'recibo depois da fila (os mesmos bytes não rodam duas vezes, nem em paralelo) e grava o recibo '
+  'na mesma transação. EXECUTE só para claude_rw.';
 
 -- ════════════════════════════════════════════════════════════════════════════════════════
 -- 4) RLS + ACL — as duas pontas, sempre
@@ -280,6 +307,15 @@ SELECT
      AND has_function_privilege('claude_rw', 'public.aplicar_sql(text,text,bigint)', 'EXECUTE')
      -- a fila (um apply por vez) está no corpo que este arquivo acabou de criar
      AND (SELECT position('pg_advisory_xact_lock(20260909, 1)' IN prosrc) > 0
+            FROM pg_proc WHERE oid = 'public.aplicar_sql(text,text,bigint)'::regprocedure)
+     -- o re-check (os mesmos bytes não rodam duas vezes) está DEPOIS da fila e ANTES do EXECUTE.
+     -- Fora dessa janela ele lê o ledger antes do commit de quem segurava a vez, ou confere depois de
+     -- o corpo já ter rodado. Ancorado em `\n  EXECUTE ` e não na linha inteira: a S9 de
+     -- db/test-db-aplicar.sh troca o argumento do EXECUTE e precisa continuar instalando.
+     AND (SELECT position('pg_advisory_xact_lock(20260909, 1)' IN prosrc)
+                   < position('(RECUSA_SHA_JA_APLICADO)' IN prosrc)
+             AND position('(RECUSA_SHA_JA_APLICADO)' IN prosrc)
+                   < position(E'\n  EXECUTE ' IN prosrc)
             FROM pg_proc WHERE oid = 'public.aplicar_sql(text,text,bigint)'::regprocedure)
      AND NOT has_function_privilege('anon',   'public.aplicar_sql(text,text,bigint)', 'EXECUTE')
      AND NOT has_function_privilege('public', 'public.aplicar_sql(text,text,bigint)', 'EXECUTE')

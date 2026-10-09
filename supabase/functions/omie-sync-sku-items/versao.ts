@@ -73,8 +73,13 @@ export const EDGE = "omie-sync-sku-items";
  * controle (item sem nIdProduto, lookup de pedido com erro, upsert falho), gravado em todas as irmãs
  * com write-ahead e fechamento por CAS; dono estável do fallback; lt_bruto/lt_faturamento só com t1
  * de pedido. Ver recebimento.ts. Exige a migration 20261005170000 ANTES do deploy.
+ *
+ * v1.5 (2026-10-08): as quatro leituras que MONTAM a fila (janela de NF-e, histórico, controle,
+ * irmãs) paginam por keyset com `.in()` em lotes. O `.in()` cru sobre `sku_leadtime_history`
+ * voltava 1.000 de 2.962 linhas na janela de 215 dias, e os trackings da cauda viravam pendentes
+ * (`fila_pendente` 228 em vez de 18). Ver leituras.ts.
  */
-export const VERSAO = "v1.4-pendencia-por-item";
+export const VERSAO = "v1.5-fila-paginada";
 
 /**
  * O fingerprint da FONTE, para o ECO carregá-lo também — não só a sonda.

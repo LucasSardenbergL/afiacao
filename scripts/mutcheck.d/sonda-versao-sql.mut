@@ -143,21 +143,46 @@ SOBREVIVE | ORDER BY por posicao (inerte: edge e a 1a col) | s/ORDER BY l\.edge;
 # ⚠️ O `r.status ?? 127` do `gitReal` (spawn morto por sinal/timeout ⇒ fail-CLOSED) NÃO tem mutação
 #    aqui: `git` fora de repo devolve 128, não `null`, e forjar um spawn morto viraria teste do
 #    Node. É limite CONHECIDO da medição, não cobertura silenciosa.
-PEGA      | guard de sincronia desligado no main (modo sonda)      | s/conferirSincronia\(fontesDoEsperado\(levaSondada\), semRede === true, deps\.git\)/{ aviso: null }/
-PEGA      | divergencia vira warning que se le e ignora            | s/if \(ausentes\.length > 0 \|\| divergentes\.length > 0\) \{/if (false) {/
+PEGA      | guard de sincronia desligado no main (modo sonda)      | s/conferirSincronia\(fontesDoEsperado\(levaSondada\), semRede === true, git\)/{ aviso: null }/
+PEGA      | divergencia vira warning que se le e ignora            | s/if \(ausentes\.size > 0 \|\| divergentes\.size > 0 \|\| semFatiaNoDisco\.size > 0\) \{/if (false) {/
 PEGA      | fatia VAZIA passa (guard decorativo em silencio)       | s/if \(fontes\.length === 0\) \{/if (false) {/
 PEGA      | comparacao de conteudo INVERTIDA (igual=divergente)    | s/if \(r\.stdout !== bytes\)/if (r.stdout === bytes)/
-PEGA      | bump nao-mergeado deixa de contar como divergencia     | s/ausentes\.push\(caminho\)/void caminho/
+PEGA      | arquivo ausente na main deixa de ser "nao existe"      | s/if \(r\.status !== 0\) \{/if (false) {/
 # A fatia deixou de ser LISTA e virou o que o resolvedor registrou ter lido (#2414, 2026-09-09).
 # As mutações abaixo sabotam a PROVENIENCIA — o eixo onde a fatia agora pode ficar cega. As duas
 # direções importam: a que TIRA o mapa do modo sonda (sub-inclusão, veredito falso) e a que tira o
 # `index.ts` do modo canária, que era o furo MEDIDO: `contrato:` não mergeado saía como esperado.
-PEGA      | fatia do modo sonda perde o mapa (so versao.ts)        | s/proveniencia: \[\{ caminho: relVersao\(edge\), bytes: textoVersao \}, \.\.\.fonteMapa\],/proveniencia: [{ caminho: relVersao(edge), bytes: textoVersao }],/
-PEGA      | fatia do modo sonda perde o versao.ts (so o mapa)      | s/proveniencia: \[\{ caminho: relVersao\(edge\), bytes: textoVersao \}, \.\.\.fonteMapa\],/proveniencia: [...fonteMapa],/
+PEGA      | fatia do modo sonda perde o mapa (so versao.ts)        | s/proveniencia: \[\{ caminho: relVersao\(edge\), bytes: textoVersao \}, \.\.\.fonteMapa\(edge\)\],/proveniencia: [{ caminho: relVersao(edge), bytes: textoVersao }],/
+PEGA      | fatia do modo sonda perde o versao.ts (so o mapa)      | s/proveniencia: \[\{ caminho: relVersao\(edge\), bytes: textoVersao \}, \.\.\.fonteMapa\(edge\)\],/proveniencia: [...fonteMapa(edge)],/
 # A CORRIDA que o parecer Codex nomeou: a proveniencia deixa de ser o que o LEITOR usou e vira uma
 # SEGUNDA leitura do disco. Compila, e o veredito continua saindo — mas o que o guard aprova nao e
 # mais o que o marcador atravessou. So pega quem tenha um leitor que discorde do disco.
 PEGA      | proveniencia vira 2a leitura do disco (a corrida)      | s/const doIndex: FonteDoEsperado = lido\.fonte;/const doIndex: FonteDoEsperado = { caminho: relIndex(reg.edge), bytes: readFileSync(join(raiz, relIndex(reg.edge)), 'utf8') };/
+# ── a fatia do modo SONDA desceu do ARQUIVO para a ENTRADA (2026-09-09, medido na CLI real) ──
+# `sonda:sql omie-sync` com o hash de `whatsapp-send-template` mexido: exit 1, stdout 0 bytes, e o
+# SQL que sairia byte-a-byte o mesmo. As duas direções têm de doer: a que devolve a sobre-inclusão
+# (bloqueio pelo bloqueio, de ROTINA porque `sonda:fingerprint --write` regrava o mapa a cada
+# mudança em `_shared/`) e TODA a que afrouxa — ausência de fatia em qualquer ponta é divergência,
+# nunca aprovação, senão uma edge fora do mapa emitiria `esperado(...)` sem fingerprint nenhum.
+PEGA      | fatia do mapa volta a ser o ARQUIVO inteiro (a sobra) | s/projecao: projecaoEntradaDoMapa\(edge\)/projecao: undefined/
+PEGA      | guard ignora a projecao e compara o arquivo todo      | s/if \(projecao === undefined\) \{/if (true) {/
+PEGA      | projecao aplicada so no disco (compara consigo mesmo) | s/const naMain = projecao\.recortar\(r\.stdout\);/const naMain = projecao.recortar(bytes);/
+PEGA      | entrada ausente na main vira igual ao disco (aprova)  | s/const naMain = projecao\.recortar\(r\.stdout\);/const naMain = projecao.recortar(r.stdout) ?? noDisco;/
+PEGA      | entrada ausente no DISCO deixa de ter ramo proprio    | s/if \(noDisco === null\) \{/if (false) {/
+PEGA      | mensagem nao nomeia QUAL entrada divergiu             | s/projecao === undefined \? caminho :/true ? caminho :/
+# A leitura da entrada: nome EXATO e a MESMA gramática do parser. `omie-sync` é prefixo de OITO
+# chaves reais do mapa — casar por prefixo lê o hash da edge errada nas duas pontas.
+PEGA      | entrada lida por PREFIXO (le o hash da edge errada)   | s/Object\.hasOwn\(mapa, edge\) \? mapa\[edge\] : null/Object.entries(mapa).find(([k]) => k.startsWith(edge))?.[1] ?? null/
+PEGA      | `in` no lugar de hasOwn (herda do Object.prototype)   | s/Object\.hasOwn\(mapa, edge\) \? mapa\[edge\] : null/edge in mapa ? mapa[edge] : null/
+# Deduplicar OBRIGAÇÃO por caminho descarta a projeção da 2ª edge: o guard confere uma entrada e
+# ignora a outra, em silêncio (ressalva do parecer Codex de 2026-09-09).
+PEGA      | dedup por CAMINHO descarta projecao da 2a edge        | s/return \[\.\.\.todas\]\.sort\(/return [...new Map(todas.map((f) => [f.caminho, f])).values()].sort(/
+PEGA      | corrida deixa de comparar os bytes INTEIROS           | s/if \(antes === undefined\) bytesPorCaminho\.set\(f\.caminho, f\.bytes\);/if (true) bytesPorCaminho.set(f.caminho, f.bytes);/
+# Os `show` todos no MESMO commit: a `origin/main` pode andar no meio da conferência (um `git fetch`
+# de outra worktree) e aí cada arquivo sai de um commit diferente — aprova-se uma COMBINAÇÃO que
+# nunca existiu num commit só.
+PEGA      | `show` volta ao NOME do ramo (combinacao inexistente) | s/\['show', `\$\{sha\}:\$\{caminho\}`\]/['show', `\$\{REF_DEPLOYADA\}:\$\{caminho\}`]/
+PEGA      | cache do `show` por arquivo some (N vezes o mesmo)    | s/let r = daMain\.get\(caminho\);/let r = daMain.get(`${caminho}!`);/
 PEGA      | leitura discordante na mesma execucao passa em silencio| s/if \(brigando\.length > 0\) \{/if (false) {/
 PEGA      | fetch some: compara contra retrato velho por padrao    | s/const f = git\(\['fetch', REMOTO, RAMO_DEPLOYADO\]\);/const f = { status: 0, stdout: '', stderr: '' };/
 PEGA      | fetch que falha degrada em vez de abortar              | s/if \(f\.status !== 0\) \{/if (false) {/

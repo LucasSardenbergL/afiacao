@@ -113,6 +113,25 @@ As 5 perguntas que iam ao Codex, respondidas por mim sobre o diff; quatro furos,
 Mudança de comportamento assumida: num run recusado pelo C1 a inativação não roda (a v1.5 a fazia mesmo com o pendente
 não confiável); ela volta no próximo run bom, e o `omie-sync-status-produtos` cobre o status no intervalo.
 
+## Pós-deploy (medido em 2026-10-08 00:43Z)
+
+- **Merge e deploy:** #2828 mergeado em 2026-10-07 00:36:50Z (`15e544904`); a v1.6 saiu na leva do #2835 e o ledger a
+  atestou às 01:00:27Z (fonte `94166e3d48cb0c…`, igual ao mapa do PR). Às 02:26:57Z a v1.7 (#2836, membros de grupo —
+  construída em cima desta) substituiu a v1.6 **antes de qualquer cron**: a v1.6 nunca rodou em prod; os gates dela
+  rodam dentro da v1.7.
+- **Série (`acoes_execucoes`), 07/10 → 08/10 00:37Z — 10 runs:** 8 `completo` na v1.7 (6 de cron, 2 cliques), 0
+  `parcial`, **0 recusas** (`FISICO_NAO_PUBLICAVEL` / `PENDENTE_NAO_CONFIAVEL` / `GRAVACAO_NAO_CONFIRMADA`), 1 run da
+  v1.5 (clique às 00:13Z) e **1 falha: o cron das 09:00Z** — `REDUNDANT` do Omie ("Consumo redundante detectado") na
+  pág 6/75, 11,1s de run. Não é gate desta entrega: é a contenção no minuto :00 que o diário da v1.5 levantou como
+  hipótese (outra edge chamando o mesmo `ListarPosEstoque` na mesma conta). Primeira falha do slot com o TIPO
+  registrado — sustenta o B6 (tirar o cron 31 do :00), que segue decisão do founder.
+- **As premissas não medidas do veredito se confirmaram:** `linhas_sem_local = 0` e `paginas_sem_total = 0` nos 8 runs
+  — toda linha traz `codigo_local_estoque` e toda página declara `nTotRegistros`. A unicidade `produto|local` foi
+  conferida sobre 100% das linhas, e nenhum run deu falso-vermelho.
+- **`fase_fisico_ms` (dado novo):** de 24,0s a 54,2s; nos crons de :40, de 38,1s a 54,2s (17:40Z o mais lento);
+  `fase_po_ms` de 4,8s a 8,6s. Pior run ~63s contra o deadline de 80s.
+- **Codex de código:** não rodou (cota); o founder decidiu seguir sem ele. Segue `REVISÃO INDEPENDENTE PENDENTE`.
+
 ## Residuais (não corrigidos aqui)
 
 1. **Corrida cron × botão** — precisa de primitiva no banco (migration). Detecção: query (5).
