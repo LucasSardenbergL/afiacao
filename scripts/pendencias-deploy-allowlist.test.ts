@@ -189,9 +189,10 @@ describe('pendencias:deploy ponta a ponta — a allowlist que julga é a da main
     const r = await rodarCli(local, psql);
     // Evidência POSITIVA de que o CLI chegou à seção e passou pelo ramo certo: sem ela, um crash
     // anterior também "não emitiria o UPDATE" e o teste passaria por cegueira. ASCII (lição #1483).
-    // 0 ticks = nada examinado: o ✅ universal não pode sair (o mesmo defeito do resumo, pelo main())
+    // 0 disparo = nada examinado: o ✅ universal não pode sair (o mesmo defeito do resumo, pelo main())
     expect(r.stdout).not.toContain('toda edge ativa foi atestada');
-    expect(r.stdout).toContain('0/2 edge(s) ativa(s) perguntada(s) em 0 tick(s) recente(s)');
+    expect(r.stdout).toContain('0/2 edge(s) ativa(s) perguntada(s) nos 2 últimos disparos de CADA uma');
+    expect(r.stdout).toContain('0/0 disparo(s) examinado(s) atestado(s)');
     expect(r.stdout).toContain(`${EDGE_NOVA} (espera 20 min)`);
     expect(r.stdout).toContain('ALLOWLIST_DEFASADA');
     expect(r.stdout).toContain('1 commit(s)');

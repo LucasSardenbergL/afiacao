@@ -15,6 +15,10 @@ PEGA | ✅ afirma sobre populacao VAZIA (zero ativa)          | s/ativos\.length
 PEGA | cabecalho conta toda ativa como perguntada            | s/const perguntadas = ativos\.length - r\.semPergunta\.length;/const perguntadas = ativos.length;/
 PEGA | a linha que NOMEIA quem ficou fora do exame some      | s/if \(aguardando\.length > 0\) \{/if (aguardando.length > 99) {/
 PEGA | a linha da perguntada-e-muda esperada some            | s/if \(r\.silencioEsperado\.length > 0\) \{/if (r.silencioEsperado.length > 99) {/
-PEGA | espera ilegivel passa e "" vira 0 min (ausente=zero)  | s/!MINUTOS_DE_ESPERA\.test\(min\)/false/
+PEGA | espera ilegivel passa e "" vira 0 min (ausente=zero)  | s/!MINUTOS\.test\(min\)/false/
 PEGA | o ramo "nao consegui medir" para de aparecer          | s/if \(aguardando\.some\(\(a\) => a\.minutos === null\)\) \{/if (aguardando.some((a) => a.minutos === 0)) {/
 PEGA | a espera nunca e lida: toda edge fora do exame fica sem teto | s/if \(r\.semPergunta\.length > 0\) \{/if (false) {/
+PEGA | o cabecalho conta os disparos CRUS, nao o examinado   | s/\$\{r\.exame\.atestados\}\/\$\{r\.exame\.disparos\} disparo/${r.exame.atestados}\/${disparos.length} disparo/
+PEGA | idade ilegivel na linha de disparo passa (sem medida)  | s/ \|\| idade === undefined \|\| !MINUTOS\.test\(idade\)//
+PEGA | o cabecalho volta a afirmar "N tick(s) recente(s)"     | s/ disparos de CADA uma \(teto/ tick(s) recente(s) (teto/
+PEGA | o cabecalho deixa de dizer o TETO que aplicou          | s/\(teto \$\{toleranciaDoCronMin\(\)\} min\)/(sem teto)/

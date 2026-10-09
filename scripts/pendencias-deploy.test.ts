@@ -986,7 +986,7 @@ const SEM_DEFASAGEM = { ref: DUAS, disco: DUAS, worktree: { aFrente: 0, atras: 0
 const CONFERE_DUAS = new Map(DUAS.map((e) => [e, 'CONFERE']));
 /** `monthly-report` perguntada nos 2 ticks e atestada nos 2. */
 const SO_MONTHLY = {
-  disparos: 't2|monthly-report|200\nt1|monthly-report|100\n',
+  disparos: 't2|monthly-report|200|30.0\nt1|monthly-report|100|150.0\n',
   atestacoes: '100|monthly-report\n200|monthly-report\n',
 };
 
@@ -1002,8 +1002,9 @@ describe('secaoSondaCron — o resumo afirma só o que o juiz examinou', () => {
     const tudo = s.linhas.join('\n');
     expect(tudo).not.toContain(MARCA_TUDO_ATESTADO);
     // prova POSITIVA do ramo certo: o cabeçalho conta quem foi perguntado e a linha nomeia quem não foi
-    expect(tudo).toContain('1/2 edge(s) ativa(s) perguntada(s) em 2 tick(s) recente(s)');
-    expect(tudo).toContain('2/2 disparo(s) atestado(s)');
+    expect(tudo).toContain('1/2 edge(s) ativa(s) perguntada(s) nos 2 últimos disparos de CADA uma (teto 255 min)');
+    expect(tudo).toContain('2/2 disparo(s) examinado(s) atestado(s)');
+    expect(tudo).not.toContain('tick(s) recente(s)'); // o número que não mede mais a população
     expect(tudo).toContain('sem pergunta');
     expect(tudo).toContain(`${NOVA} (espera 40 min)`);
   });
@@ -1012,7 +1013,7 @@ describe('secaoSondaCron — o resumo afirma só o que o juiz examinou', () => {
     const s = secaoSondaCron(
       CONFERE_DUAS,
       lerBanco(DUAS, {
-        disparos: `t2|monthly-report|200\nt2|${NOVA}|201\nt1|monthly-report|100\nt1|${NOVA}|101\n`,
+        disparos: `t2|monthly-report|200|30.0\nt2|${NOVA}|201|30.0\nt1|monthly-report|100|150.0\nt1|${NOVA}|101|150.0\n`,
         atestacoes: `100|monthly-report\n101|${NOVA}\n200|monthly-report\n201|${NOVA}\n`,
       }),
       SEM_DEFASAGEM,
@@ -1020,17 +1021,18 @@ describe('secaoSondaCron — o resumo afirma só o que o juiz examinou', () => {
     expect(s.mecanica).toBeNull();
     const tudo = s.linhas.join('\n');
     expect(tudo).toContain(MARCA_TUDO_ATESTADO);
-    expect(tudo).toContain('2/2 edge(s) ativa(s) perguntada(s) em 2 tick(s) recente(s)');
+    expect(tudo).toContain('2/2 edge(s) ativa(s) perguntada(s) nos 2 últimos disparos de CADA uma');
+    expect(tudo).toContain('4/4 disparo(s) examinado(s) atestado(s)');
     expect(tudo).not.toContain('sem pergunta');
   });
 
-  it('cron que nunca rodou (0 ticks, 0/0 disparos) → nada foi examinado, e nada é afirmado', () => {
+  it('cron que nunca rodou (0 disparos) → nada foi examinado, e nada é afirmado', () => {
     const s = secaoSondaCron(CONFERE_DUAS, lerBanco(DUAS, { espera: `monthly-report|40.0\n${NOVA}|40.0\n` }), SEM_DEFASAGEM);
     expect(s.mecanica).toBeNull();
     const tudo = s.linhas.join('\n');
     expect(tudo).not.toContain(MARCA_TUDO_ATESTADO);
-    expect(tudo).toContain('0/2 edge(s) ativa(s) perguntada(s) em 0 tick(s) recente(s)');
-    expect(tudo).toContain('0/0 disparo(s) atestado(s)');
+    expect(tudo).toContain('0/2 edge(s) ativa(s) perguntada(s) nos 2 últimos disparos de CADA uma');
+    expect(tudo).toContain('0/0 disparo(s) examinado(s) atestado(s)');
     expect(tudo).toContain('monthly-report (espera 40 min)');
   });
 
@@ -1070,7 +1072,7 @@ describe('secaoSondaCron — o resumo afirma só o que o juiz examinou', () => {
     const s = secaoSondaCron(
       new Map([['monthly-report', 'CONFERE'], [NOVA, 'DIVERGE_P1']]),
       lerBanco(DUAS, {
-        disparos: `t2|monthly-report|200\nt2|${NOVA}|201\nt1|monthly-report|100\nt1|${NOVA}|101\n`,
+        disparos: `t2|monthly-report|200|30.0\nt2|${NOVA}|201|30.0\nt1|monthly-report|100|150.0\nt1|${NOVA}|101|150.0\n`,
         atestacoes: '100|monthly-report\n200|monthly-report\n',
       }),
       SEM_DEFASAGEM,
@@ -1081,6 +1083,34 @@ describe('secaoSondaCron — o resumo afirma só o que o juiz examinou', () => {
     expect(tudo).not.toContain(MARCA_TUDO_ATESTADO);
     expect(tudo).toContain('perguntada(s) sem resposta');
     expect(tudo).toContain(`${NOVA} (DIVERGE_P1)`);
+  });
+
+  it('disparo ACIMA do teto não entra no cabeçalho — o número é o EXAME, não a leitura crua', () => {
+    const s = secaoSondaCron(
+      CONFERE_DUAS,
+      lerBanco(DUAS, {
+        // 4 linhas lidas; as de 400 min estão acima do teto de 255 e ficam fora do exame.
+        disparos: `t2|monthly-report|200|30.0\nt2|${NOVA}|201|400.0\nt1|monthly-report|100|150.0\nt1|${NOVA}|101|400.0\n`,
+        atestacoes: `100|monthly-report\n200|monthly-report\n`,
+        espera: `monthly-report|30.0\n${NOVA}|400.0\n`,
+      }),
+      SEM_DEFASAGEM,
+    );
+    expect(s.mecanica).toBeNull();
+    const tudo = s.linhas.join('\n');
+    expect(tudo).toContain('2/2 disparo(s) examinado(s) atestado(s)'); // não 2/4
+    expect(tudo).toContain('1/2 edge(s) ativa(s) perguntada(s)');
+    expect(tudo).not.toContain(MARCA_TUDO_ATESTADO);
+  });
+
+  it('idade ILEGÍVEL na linha de disparo é MECÂNICA — sem medida não se aplica teto em minutos', () => {
+    const s = secaoSondaCron(
+      CONFERE_DUAS,
+      lerBanco(DUAS, { disparos: 't2|monthly-report|200|agora-mesmo\n' }),
+      SEM_DEFASAGEM,
+    );
+    expect(s.mecanica).toContain('linha de disparo fora do formato');
+    expect(s.linhas).toEqual([]);
   });
 
   it('nenhuma edge ativa → "toda" sobre população VAZIA não é evidência: sem ✅', () => {

@@ -23,9 +23,18 @@
 
 /** Um disparo do cron: a ponte entre o tick e a resposta que ele vai produzir. */
 export interface Disparo {
+  /** Só para DIAGNÓSTICO humano desde a janela por edge: não é mais a chave do julgamento. */
   tickId: string;
   edge: string;
   requestId: number;
+  /**
+   * Minutos desde o enfileiramento, medidos pelo relógio do BANCO.
+   *
+   * Serve para ORDENAR a janela e aplicar o TETO — nunca para atribuir uma resposta a um disparo.
+   * Essa ligação continua sendo o `request_id`, e a diferença é a razão (1) do cabeçalho: uma
+   * resposta atrasada do tick anterior tem outro id e não conta, por mais perto da hora que caia.
+   */
+  idadeMin: number;
 }
 
 /** Uma atestação já atribuída: o `request_id` que respondeu e a edge que o CORPO declarou. */
@@ -52,8 +61,11 @@ export interface EntradaSondaCron {
   ativosNoBanco: string[];
   /** Edges na allowlist do REPO — a fonte única, e a única cujo conteúdo foi provado. */
   allowlistDoRepo: string[];
-  /** Os `tick_id` recentes, MAIS RECENTE PRIMEIRO. Só os 2 primeiros julgam. */
-  ticksRecentes: string[];
+  /**
+   * Todos os disparos legíveis das edges. O juiz recorta daqui a janela que julga — os
+   * `DISPAROS_QUE_JULGAM` mais recentes de CADA edge, dentro do teto de idade —, então mandar mais
+   * do que ele julga é inofensivo e mandar de menos é o que o SQL tem de não fazer.
+   */
   disparos: Disparo[];
   atestacoes: AtestacaoAtribuida[];
   /** O estado que a matriz do par já deu por edge. Só `CONFERE` torna o silêncio suspeito. */
@@ -73,7 +85,7 @@ interface AchadoSondaCron {
 export interface ResultadoSondaCron {
   /** Pendências — o CLI sai 1. */
   achados: AchadoSondaCron[];
-  /** Avisos que NÃO reprovam: 1 tick só de silêncio, edge do repo ainda não habilitada no banco. */
+  /** Avisos que NÃO reprovam: 1 disparo só de silêncio, edge do repo ainda não habilitada no banco. */
   avisos: string[];
   /**
    * Edges ATIVAS que NENHUM dos ticks que julgam perguntou. Não é achado nem aviso — ausência de
@@ -88,10 +100,27 @@ export interface ResultadoSondaCron {
    * esperada do deploy pendente, então não acusa — e, pela mesma razão, não é atestação.
    */
   silencioEsperado: string[];
+  /**
+   * O tamanho do EXAME: quantos disparos entraram na janela que julgou, e quantos responderam.
+   *
+   * Sai daqui, e não da contagem crua do input, porque quem resume não pode recontar o recorte: o
+   * cabeçalho dizia "N tick(s) recente(s)" derivando N dos `tick_id` que apareceram na leitura, e com
+   * a janela por edge esse número não mede mais a população examinada (lição de
+   * docs/historico/resumo-universal-herda-o-pulo-do-juiz.md).
+   */
+  exame: { disparos: number; atestados: number };
 }
 
-/** Quantos ticks recentes formam o julgamento. Dois, e a razão está em `julgarSondaCron`. */
-const TICKS_QUE_JULGAM = 2;
+/**
+ * Quantos disparos DE CADA EDGE formam o julgamento. Dois, e a razão está em `julgarSondaCron`.
+ *
+ * Era "quantos TICKS recentes", e os ticks eram escolhidos GLOBALMENTE — o que fazia um tick PARCIAL
+ * legítimo (o one-liner `deploy_sonda_disparar(ARRAY['<edge>'])` que o `sonda:sql` oferece) consumir
+ * uma das duas vagas de TODAS as outras edges. Medido em prod em 2026-09-10 23:14:15Z: 1 edge com 2
+ * disparos na janela e **14 com 1** — por ~2 h o silêncio das 14 só podia virar AVISO, nunca a
+ * acusação de rollback que é a pergunta do mecanismo. Com a janela por edge, 15 com 2 e nenhuma com 1.
+ */
+export const DISPAROS_QUE_JULGAM = 2;
 
 /**
  * O silêncio só acusa quando as três condições valem JUNTAS, e cada uma existe para não fabricar:
@@ -135,11 +164,37 @@ export function julgarSondaCron(e: EntradaSondaCron): ResultadoSondaCron {
   }
 
   // — silêncio —
-  const ticks = e.ticksRecentes.slice(0, TICKS_QUE_JULGAM);
+  // A janela é POR EDGE: os `DISPAROS_QUE_JULGAM` mais recentes DELA, dentro do teto de idade. O
+  // teto é o que o `LIMIT 2` por tick global dava de graça — sem ele, dois disparos ANTIGOS (edge
+  // desligada pelo kill switch e religada) formariam acusação de rollback. A régua é a MESMA
+  // tolerância de `cronSondaParado` e do teto da espera: uma definição só, em `toleranciaDoCronMin`.
+  // O `!(idade <= teto)` — e não `idade > teto` — é o que mantém idade ILEGÍVEL fora do exame:
+  // `NaN > teto` é false e deixaria o disparo entrar, que é a forma `ausente ≠ zero` nesta camada.
+  const teto = toleranciaDoCronMin();
+  const janelaPorEdge = new Map<string, Disparo[]>();
+  for (const d of e.disparos) {
+    if (!(d.idadeMin <= teto)) continue;
+    const lista = janelaPorEdge.get(d.edge);
+    if (lista === undefined) janelaPorEdge.set(d.edge, [d]);
+    else lista.push(d);
+  }
+  for (const lista of janelaPorEdge.values()) {
+    // Desempate por `request_id` DESC: dois disparos do MESMO instante (o tick manual que repete a
+    // edge do cron) precisam de ordem total, senão o recorte depende da ordem de chegada das linhas.
+    lista.sort((a, b) => a.idadeMin - b.idadeMin || b.requestId - a.requestId);
+    lista.splice(DISPAROS_QUE_JULGAM);
+  }
+
+  // O exame conta DENTRO do laço das ATIVAS, nunca sobre `janelaPorEdge` inteira: uma edge desligada
+  // pelo kill switch continua tendo disparos recentes no ledger, e contá-los faria o cabeçalho
+  // afirmar um exame maior do que a população que o juiz de fato examina.
+  let examinados = 0;
+  let examinadosAtestados = 0;
+
   for (const edge of [...ativos].sort()) {
-    const disparosDaEdge = ticks
-      .map((t) => e.disparos.find((d) => d.tickId === t && d.edge === edge))
-      .filter((d): d is Disparo => d !== undefined);
+    const disparosDaEdge = janelaPorEdge.get(edge) ?? [];
+    examinados += disparosDaEdge.length;
+    examinadosAtestados += disparosDaEdge.filter((d) => respondidos.has(d.requestId)).length;
     if (disparosDaEdge.length === 0) {
       semPergunta.push(edge); // nenhum tick pediu: ausência de PERGUNTA, não silêncio — e fora do exame
       continue;
@@ -153,10 +208,10 @@ export function julgarSondaCron(e: EntradaSondaCron): ResultadoSondaCron {
       continue;
     }
 
-    if (mudos.length < TICKS_QUE_JULGAM || disparosDaEdge.length < TICKS_QUE_JULGAM) {
+    if (mudos.length < DISPAROS_QUE_JULGAM || disparosDaEdge.length < DISPAROS_QUE_JULGAM) {
       avisos.push(
-        `${edge}: ${mudos.length} de ${disparosDaEdge.length} tick(s) recentes sem resposta — ` +
-          `abaixo de ${TICKS_QUE_JULGAM} não acusa (timeout e 429 acontecem)`,
+        `${edge}: ${mudos.length} de ${disparosDaEdge.length} disparo(s) recente(s) dela sem resposta — ` +
+          `abaixo de ${DISPAROS_QUE_JULGAM} não acusa (timeout e 429 acontecem)`,
       );
       continue;
     }
@@ -173,7 +228,7 @@ export function julgarSondaCron(e: EntradaSondaCron): ResultadoSondaCron {
       edge,
       classe: 'SONDA_CRON_SILENCIOSA',
       detalhe:
-        `os ${disparosDaEdge.length} últimos ticks dispararam e NENHUM foi atestado, mas o ledger diz CONFERE — ` +
+        `os ${disparosDaEdge.length} últimos disparos PARA ELA não foram atestados, mas o ledger diz CONFERE — ` +
         `o bundle que deveria estar no ar tem o ramo e honraria a credencial. ${causa} ` +
         `Requests sem resposta: ${mudos.map((d) => d.requestId).join(', ')}`,
     });
@@ -186,7 +241,13 @@ export function julgarSondaCron(e: EntradaSondaCron): ResultadoSondaCron {
     }
   }
 
-  return { achados, avisos, semPergunta, silencioEsperado };
+  return {
+    achados,
+    avisos,
+    semPergunta,
+    silencioEsperado,
+    exame: { disparos: examinados, atestados: examinadosAtestados },
+  };
 }
 
 /**
@@ -222,7 +283,7 @@ export function cronSondaParado(minutosDesdeSucesso: number | null, periodoHoras
  * ao menos um tick bem-sucedido, e um tick pergunta TODA ativa (`deploy_sonda_disparar` sem `p_alvos`).
  */
 export function toleranciaDoCronMin(periodoHoras = 2): number {
-  return periodoHoras * 60 * TICKS_QUE_JULGAM + 15;
+  return periodoHoras * 60 * DISPAROS_QUE_JULGAM + 15;
 }
 
 /** Uma edge ATIVA que ficou fora do exame, e há quantos minutos ela espera. `null` = não medido. */
