@@ -13,4 +13,4 @@
 70	## Auth & roles
 56	## Convenções de código
 34	## gstack (REQUIRED)
-122	## Multi-sessão (regra — detalhe em `docs/agent/worktrees.md`)
+159	## Multi-sessão (regra — detalhe em `docs/agent/worktrees.md`)
