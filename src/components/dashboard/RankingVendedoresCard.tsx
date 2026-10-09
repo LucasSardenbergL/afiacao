@@ -81,12 +81,12 @@ export function RankingVendedoresCard() {
           )}
           {carteiraNaoVendedor.pedidos > 0 && (
             <div title="Dono da carteira sem papel farmer, hunter nem closer — hoje o master e o pool órfão.">
-              Carteira de não-vendedor: {formatBRL(carteiraNaoVendedor.receita)} · {carteiraNaoVendedor.pedidos} ped.
+              Carteira de não-vendedor: {formatBRL(carteiraNaoVendedor.receita)} · {carteiraNaoVendedor.pedidos} ped. — dono sem papel de venda
             </div>
           )}
           {naoAtribuido.pedidos > 0 && (
             <div title="Cliente sem carteira elegível (ou pedido sem cliente).">
-              Sem vendedor atribuído: {formatBRL(naoAtribuido.receita)} · {naoAtribuido.pedidos} ped.
+              Sem vendedor atribuído: {formatBRL(naoAtribuido.receita)} · {naoAtribuido.pedidos} ped. — cliente sem carteira
             </div>
           )}
           {semAtividade > 0 && (

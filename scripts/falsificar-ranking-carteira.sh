@@ -20,6 +20,7 @@ FONTES=(
   src/hooks/useTeamRanking.ts
   src/hooks/useTeamKpis.ts
   src/components/dashboard/RankingVendedoresCard.tsx
+  src/components/dashboard/TeamKpiTiles.tsx
 )
 ALVOS=(
   src/lib/dashboard/__tests__/team-kpis.test.ts
@@ -28,6 +29,7 @@ ALVOS=(
   src/hooks/__tests__/useTeamRanking.carteira.test.tsx
   src/hooks/__tests__/useTeamKpis.atividade.test.tsx
   src/components/dashboard/__tests__/RankingVendedoresCard.carteira.test.tsx
+  src/components/dashboard/__tests__/TeamKpiTiles.no-app.test.tsx
 )
 
 TMP="$(mktemp -d)"
@@ -199,6 +201,18 @@ for LOC in C pt_BR.UTF-8; do
     'fetchDonosCarteira(clienteIds)' \
     'Promise.reject<Map<string, string>>(new Error("outra falha"))' \
     '[HK-IDS],[HK-REGUA],[HK-FALHA]'
+  sabotar 'S13 card com erro some calado' src/components/dashboard/RankingVendedoresCard.tsx \
+    '  if (isError) {' \
+    '  if (isError) return null;'$'\n''  if (false) {' \
+    '[CARD-ERRO]'
+  sabotar 'S14 porque do rodape volta a ser so title' src/components/dashboard/RankingVendedoresCard.tsx \
+    ' ped. — cliente sem carteira' \
+    ' ped.' \
+    '[CARD-POR-QUE]'
+  sabotar 'S15 tile sem o no app' src/components/dashboard/TeamKpiTiles.tsx \
+    '`ativos no app hoje · 7d:' \
+    '`ativos hoje · 7d:' \
+    '[TILE-NO-APP]'
 done
 
 echo

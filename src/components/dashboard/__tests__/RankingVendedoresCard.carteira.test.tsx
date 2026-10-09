@@ -55,4 +55,18 @@ describe('RankingVendedoresCard — régua da carteira', () => {
     const { container } = render(<RankingVendedoresCard />);
     expect(container.firstChild).toBeNull();
   });
+
+  it('[CARD-POR-QUE] o porquê de cada rodapé é texto visível (toque e leitor de tela), não só title', () => {
+    comDados({ carteiraNaoVendedor: { receita: 200, pedidos: 1 }, naoAtribuido: { receita: 300, pedidos: 2 } });
+    render(<RankingVendedoresCard />);
+    expect(screen.getByText(/Carteira de não-vendedor:/).textContent).toContain('dono sem papel de venda');
+    expect(screen.getByText(/Sem vendedor atribuído:/).textContent).toContain('cliente sem carteira');
+  });
+
+  it('[CARD-ERRO] leitura que falha mostra "Indisponível no momento", nunca some nem vira ranking vazio', () => {
+    estado = { isLoading: false, isError: true };
+    render(<RankingVendedoresCard />);
+    expect(screen.getByText('Indisponível no momento.')).toBeTruthy();
+    expect(screen.queryByText(/Sem vendedor atribuído/)).toBeNull();
+  });
 });
