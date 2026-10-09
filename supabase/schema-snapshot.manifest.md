@@ -4,14 +4,28 @@
 
 | Campo | Valor |
 |---|---|
-| Gerado em | 2026-08-28 (anterior: 2026-08-08 — ver as notas por geração abaixo) |
+| Gerado em | 2026-10-08 (anterior: 2026-09-05 — ver as notas por geração abaixo) |
 | Fonte | produção (Supabase Lovable, `fzvklzpomgnyikkfkzai`) — **gerado via `pg_dump` por `~/.config/afiacao/psql-ro`** (read-only, role `claude_ro`). Idêntico objeto-por-objeto ao dump do chat do Lovable (cross-validado no #1093); difere só no **preâmbulo** do `pg_dump`: token `\restrict`, versão 17.9→17.10, e `client_encoding` SQL_ASCII→UTF8 / `standard_conforming_strings` off→on (estilo da ferramenta, **não** conteúdo — corpo dos objetos idêntico; cada dump é internamente consistente; replay valida o restore). |
 | Versão do banco | PostgreSQL 17.6 |
 | pg_dump | 17.10 (Homebrew, via psql-ro) |
 | Flags | `--schema-only --schema=public --schema=private --no-owner --no-privileges` |
-| Linhas do arquivo | 50.880 (anterior: 47.285) |
-| Tamanho | ~2,0 MB |
+| Linhas do arquivo | 56.647 (anterior: 51.692) |
+| Tamanho | ~2,4 MB |
 
+> **Geração 2026-10-08 (por quê):** o caminho 3 do acervo (exclusão nominal do total líquido) criou em
+> prod uma tabela (`pedido_total_liquido_excecao`) e patcheou o corpo de `pedido_total_liquido_converter`
+> por envelope em `db/` — **fora** de `supabase/migrations/`, então até este dump os dois só existiam no DR
+> pelo doc. Um mês de deriva junto: 51.692 → 56.647 linhas. Gerado por `db/refresh-snapshot.sh`, e
+> **o replay recusou instalar duas vezes**, com razão: o dump novo citava `auth.refresh_tokens` (view de
+> diagnóstico `private.auth_refresh_tokens_diag`, nova) e as roles `claude_ro`/`claude_rw`, que o
+> `db/stubs-supabase.sql` não criava. Levantadas TODAS as dependências do tipo de uma vez pelo catálogo
+> (grantees, owners, roles de policy; referências a `auth.*` em views/matviews/constraints) antes de
+> relançar; o 3º run passou as 3 provas (integridade, paridade 0/0, replay com enforcement de RLS OK).
+> Revisão do diff pareando `-CREATE`/`+CREATE` por nome (a lição da geração de 08-28): **3 remoções
+> reais, todas versionadas** — `auto_assign_commercial_super_admin` + `trg_auto_commercial_super_admin`
+> (`20260830122702_remove_trigger_auto_super_admin`, hardening de autorização; confirmado ausente em prod)
+> e um overload de `expandir_promocao_item` (`20260930220148`, a função segue viva com a assinatura nova).
+>
 > **Geração 2026-08-28 (por quê):** o snapshot era de **08/08** e **40 migrations** mergearam desde
 > então — três semanas de deriva num artefato de **DR**. Medido antes de re-gerar: `telemetria_probes`,
 > `analytics_outbox` e `reposicao_param_fila_log` existiam em prod e **não existiam no dump**; um restore
@@ -38,15 +52,15 @@
 
 | Objeto | Quantidade |
 |---|---:|
-| `CREATE TABLE` | 335 |
-| `CREATE VIEW` | 81 |
+| `CREATE TABLE` | 347 |
+| `CREATE VIEW` | 84 |
 | `CREATE MATERIALIZED VIEW` | 2 (public; +3 em `private` = 5 no arquivo) |
-| `CREATE FUNCTION` | 344 (public) **+ 25 em `private`** |
-| `CREATE TRIGGER` | 132 |
+| `CREATE FUNCTION` | 379 (public) **+ 26 em `private`** |
+| `CREATE TRIGGER` | 136 |
 | `CREATE TYPE` | 14 |
-| `CREATE POLICY` | 701 |
-| `ENABLE ROW LEVEL SECURITY` | 335 (= todas as tabelas) |
-| views com `security_invoker` LIGADO | 75 de 81 (56 `'on'` + 19 `'true'`) — ver ⚠️ abaixo |
+| `CREATE POLICY` | 713 |
+| `ENABLE ROW LEVEL SECURITY` | 347 (= todas as tabelas) |
+| views com `security_invoker` LIGADO | 81 de 84 (62 `'on'` + 19 `'true'`) — ver ⚠️ abaixo |
 
 > ⚠️ **Contar `security_invoker` no dump exige DOIS padrões, não um** (medido nesta geração; é o §"o `reloptions` preserva o LITERAL" do `docs/agent/database.md` na forma do `pg_dump`). O dump renderiza o valor **com aspas** (`security_invoker='on'` / `='true'` / `='false'`) **e sem aspas** (`security_invoker=off`, sempre acompanhado de `security_barrier='true'`). Um padrão que exija aspas mede **74 de 79** e some justamente com as 5 view-gates — o pior falso-negativo possível, porque são exatamente as views cuja autorização mora no `WHERE`. As **6 desligadas** são todas deliberadas, e o discriminante do §61 (`barrier=true` + `relacl` sem `anon` + gate no corpo) confere nas 6: `v_oportunidade_economica_hoje_badge_cached` (gate sobre MV `private`), `customer_metrics_mv` (fechada no #1380), as 3 `selfservice_*` (definer intencional — ligar o invoker QUEBRA o self-service) e **`inventory_position_operacional`**, que ainda não estava na lista do `database.md` §61 e foi conferida aqui: `barrier=true`, `relacl` = `authenticated=r` + `service_role=r` **sem `anon`**, gate no corpo. Nenhuma regressão.
 

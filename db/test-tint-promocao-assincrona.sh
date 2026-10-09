@@ -49,6 +49,16 @@ case "${1:-}" in
 esac
 LOC="${HARNESS_LOCALE:-C}"
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/pgtest-promoasync.XXXXXX")"
+# O SNAPSHOT É O DE 2026-09-05 (commit 1851416fc), lido do histórico — não o vivo. Esta prova prova a
+# TRANSFORMAÇÃO que a migration dela faz sobre o prod de ANTES; o re-dump de 2026-10-08 absorveu a
+# migration, e o snapshot vivo passou a ser o DEPOIS (no-op para a migration, e o pré-estado que ela
+# transforma sumiu). O pré-estado de migration já absorvida é histórico e não muda mais: tirá-lo do
+# snapshot vivo condena a prova a morrer em todo re-dump. Exige o histórico do git (o job `provas-sql`
+# faz checkout com fetch-depth: 0); sem ele, INFRA alto — nunca um snapshot errado em silêncio.
+SNAP_COMMIT=1851416fc
+SNAP="$TMP/schema-snapshot-20260905.sql"
+git -C "$REPO_ROOT" show "$SNAP_COMMIT:supabase/schema-snapshot.sql" > "$SNAP" 2>/dev/null \
+  || { echo "INFRA: snapshot de 2026-09-05 ($SNAP_COMMIT) indisponível — o checkout precisa do histórico (fetch-depth: 0)"; exit 1; }
 SOCK="$(mktemp -d /tmp/pgs.XXXXXX)"   # socket curto: o limite do Unix-domain socket é 103 bytes
 DATA="$TMP/data"
 MIG="$REPO_ROOT/supabase/migrations/20260925210000_tint_promocao_assincrona.sql"
@@ -87,7 +97,7 @@ PA -q -d postgres -c "CREATE DATABASE tpl0" >/dev/null
 T0() { PA -d tpl0 "$@"; }
 T0 -q -f "$REPO_ROOT/db/stubs-supabase.sql" >/dev/null
 T0 -q -f "$REPO_ROOT/supabase/schema-extensions-prelude.sql" >/dev/null
-sed -E 's/^(CREATE SCHEMA public;)/-- \1/' "$REPO_ROOT/supabase/schema-snapshot.sql" \
+sed -E 's/^(CREATE SCHEMA public;)/-- \1/' "$SNAP" \
   | grep -vE '^\\(un)?restrict |^SET transaction_timeout' > "$TMP/snap.sql"
 T0 -q --single-transaction -f "$TMP/snap.sql" >/dev/null
 T0 -q <<'SQL' >/dev/null

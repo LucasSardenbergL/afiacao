@@ -22,7 +22,7 @@
 import { readdirSync, readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join, basename, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { extractObjects, type ExtractedObject, type ObjectKind } from './lib/migration-objects';
+import { extractObjects, funcoesRemovidas, type ExtractedObject, type ObjectKind } from './lib/migration-objects';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const MIGRATIONS_DIR = join(REPO_ROOT, 'supabase', 'migrations');
@@ -53,6 +53,30 @@ const OBSOLETE: Record<string, string> = {
   // Faxina de RPCs órfãs (2026-07-18) — orfandade provada via psql-ro + grep no repo antes do DROP.
   'outliers_leadtime_stack_efetivo::estimar_impacto_exclusao_outlier': 'drop — 20260718093248_drop_estimar_impacto_exclusao_outlier_orfa',
   'omie_identidade_por_conta::omie_cliente_upsert_mapping': 'drop — 20260718091409_drop_omie_cliente_upsert_mapping_orfa (PR #1409)',
+  // Faxina de falso-vermelhos (2026-10-08) — 20 ❌ do audit, TODOS remoção/renomeação/troca de schema
+  // feita de propósito por migration POSTERIOR (o extrator casa nome literal e não modela DROP/RENAME/
+  // SET SCHEMA). Cada substituto CONFERIDO EXISTINDO em prod via psql-ro no mesmo dia (pg_policies,
+  // pg_indexes, pg_trigger, pg_proc, pg_constraint) — ausência + substituto vivo = não é bug.
+  'atp_reserva_estoque_fase1::estoque_reservas_service_all': 'drop — 20260806225052_atp_reserva_estoque_fase1_1_hardening (decorativa: service_role tem BYPASSRLS) → estoque_reservas_service_select',
+  'carteira_membership_ledger_fatia0::trg_omie_clientes_to_ledger': 'tabela renomeada → _quarantine_omie_clientes_20260722 (20260722110000_quarentena_omie_clientes_espelho); o trigger foi junto',
+  'carteira_omie_fase1::carteira_visivel_para': 'SET SCHEMA private — 20260718150000_fu7_helpers_rls_schema_privado',
+  'carteira_visivel_para_filtra_eligible::carteira_visivel_para': 'SET SCHEMA private — 20260718150000_fu7_helpers_rls_schema_privado',
+  'markup_policy::uq_markup_policy_conta': 'drop — 20260704120000_preco_por_tier → constraint markup_policy_escopo_tier_uq',
+  'markup_policy::uq_markup_policy_fam': 'drop — 20260704120000_preco_por_tier → constraint markup_policy_escopo_tier_uq',
+  'markup_policy::uq_markup_policy_sku': 'drop — 20260704120000_preco_por_tier → constraint markup_policy_escopo_tier_uq',
+  'markup_policy::markup_policy_select_staff': 'substituída → markup_policy_select_carteira (20260704120000_preco_por_tier)',
+  'recencia_mv_order_date_kpi::idx_customer_metrics_mv_uid': 'MV movida para private (20261001014100_universo_pedidos_recencia); o índice vive em private.customer_metrics_mv',
+  'regua_preco::regua_preco_log_staff_all': 'substituída → regua_preco_log_select_custo (20260723150000_authz_custo_fu4f_fase2_regua)',
+  'reposicao_alerta_pedido_minimo::Staff lê alertas de pedido mínimo': 'substituída → reposicao_alerta_pedido_minimo_sel (fu4h, DROP dinâmico pelo catálogo)',
+  'reposicao_auto_aprovacao_piloto::Staff lê log de auto-aprovação': 'substituída → reposicao_auto_aprovacao_log_sel (fu4h)',
+  'reposicao_auto_aprovacao_v2::Staff lê log de auto-aprovação': 'substituída → reposicao_auto_aprovacao_log_sel (fu4h)',
+  'scoring_v2_signal_modifiers::Staff can insert recalc queue': 'substituída → Master can insert recalc queue (20260718100000_filas_recalc_rls_master_only)',
+  'scoring_v2_signal_modifiers::Staff can view recalc queue': 'substituída → Master can view recalc queue (20260718100000_filas_recalc_rls_master_only)',
+  'selfservice_pr01_allowlist_gate::ss_allowlist_gestor_iud': 'split → ss_allowlist_select/insert/update/delete (20260718190000_authz_capability_matrix_e2)',
+  'visit_intelligence_v1::Staff can insert visit recalc queue': 'substituída → Master can insert visit recalc queue (20260718100000_filas_recalc_rls_master_only)',
+  'visit_intelligence_v1::Staff can view visit recalc queue': 'substituída → Master can view visit recalc queue (20260718100000_filas_recalc_rls_master_only)',
+  'visit_intelligence_v1::Staff can manage their visit scores': 'substituída → cvs_insert/update/delete_own_or_gestor (20260526020000_rls_score_carteira_hardening)',
+  'visit_intelligence_v1::Staff can view their visit scores': 'substituída → cvs_select_carteira (20260526020000_rls_score_carteira_hardening)',
 };
 
 interface MigrationAudit {
@@ -80,6 +104,64 @@ function isCustom(filename: string): boolean {
  *
  * A ordem é a lexical do nome do arquivo, que é a ordem de apply (timestamp na frente).
  */
+/**
+ * Deriva da Seção 3 RECONHECIDA — pelo md5 do corpo vivo, nunca pelo nome.
+ *
+ * DERIVA = corpo em prod que nenhuma migration declara. Boa parte é patch LEGÍTIMO que o audit não
+ * enxerga por construção: envelope em `db/` (patch por âncora, `replace()` no corpo vivo) ou corpo
+ * recriado sem um comentário (o hash é do `prosrc` com espaço colapsado — comentário CONTA). Cada
+ * entrada abaixo foi triada em 2026-10-08 (corpo vivo × última migration, normalizados; flags de
+ * SECURITY DEFINER, search_path e EXECUTE de anon/authenticated medidos): nenhuma é regressão.
+ *
+ * O md5 é o que torna isto seguro: reconhecer pelo NOME cegaria o audit para a próxima edição; pelo
+ * HASH, qualquer mudança no corpo volta a ser 🔴 DERIVA. md5 = o da Seção 3,
+ * `md5(regexp_replace(btrim(prosrc), '\s+', ' ', 'g'))`, medido via psql-ro no mesmo dia.
+ *
+ * ⚠️ O auditor de deriva OFICIAL é `bun run deriva:corpo:prod` (tokens, patches por âncora, baseline ACEITA
+ * pelo founder em `db/deriva-corpo-baseline.json`) — ele já classificava estas 15 como em dia/cosméticas/
+ * aceitas quando este mapa nasceu (descoberto depois, 2026-10-09). Este mapa só serve à visão do SQL Editor
+ * desta Seção 3, que não compara tokens. Deriva NOVA se aceita lá primeiro; aqui é espelho, e os md5 têm
+ * definições diferentes (lá: `md5(prosrc)` cru).
+ */
+const DERIVA_RECONHECIDA: Record<string, { md5: string; motivo: string }> = {
+  'public.apply_score_updates': { md5: '331996f594ff3491f36ce7da9068dbd9', motivo: 'cosmética (triagem 2026-10-08)' },
+  'public.aprovar_versao_boletim': { md5: '3c84eb4fc24751d4e68965aabecb9a4a', motivo: 'cosmética; has_role master preservado' },
+  'public.confirmar_vinculo_boletim': { md5: '781e8e85d791fc7b01a3370ceb92e379', motivo: 'cosmética; has_role master preservado' },
+  'public.detectar_skus_sem_grupo': { md5: '8e2a852f25c58fcc8afec1e421193e99', motivo: 'só o texto gravado em justificativa_decisao difere; lógica idêntica' },
+  'public.fin_calcular_confiabilidade': { md5: 'b76260aca8e086b765bdc84006f00f6d', motivo: 'cosmética (triagem 2026-10-08)' },
+  'public.get_customer_sales_summary': { md5: '1af8a023586be99ad188760bf8a78837', motivo: 'cosmética: corpo recriado sem um comentário SQL (conferido token a token)' },
+  'public.pedido_total_liquido_converter': { md5: 'b01c8f547258a2f3ffbafdf8a6e2812e', motivo: 'patch programático por âncora — db/2026-10-05-pedido-total-liquido-excecao.sql' },
+  'public.promover_candidato_primeira_compra': { md5: '76b44ddda40c0329f3785d9cbfa7b938', motivo: 'cosmética; checagem de papel preservada' },
+  'public.reconciliar_pedidos_omie': { md5: '7bb459f58e37c6bc9691971f0b2aa009', motivo: 'patch por âncora — db/2026-10-06-desconto-corrigido-para-null.sql' },
+  'public.resolve_markup_policy': { md5: 'dd23eedbafe99b73cd3e68462c11dbcd', motivo: 'cosmética (triagem 2026-10-08)' },
+  'public.seed_targets_faltantes': { md5: '33458c80ec700367cbdf4652becf5002', motivo: 'cosmética (triagem 2026-10-08)' },
+  'public.sugerir_negociacao_paralela_hoje': { md5: '534d0ddb7943af1a72bbe0f4d013ca78', motivo: 'search_path public,private via ALTER FUNCTION (20260527160000)' },
+  'public.tarefas_guard_comprovacao': { md5: 'e9b5850b9f681e7061899719718bf23b', motivo: 'hardening à mão (SET search_path) sem rastro no repo — RETURNS trigger, não SECDEF' },
+  'public.tarefas_materializar_recorrentes': { md5: '65b0ce06867c71934288d53858dba781', motivo: 'cosmética (triagem 2026-10-08)' },
+  'public.tint_promote_sync_run': { md5: 'c33d4186be26ca4f5b08998cdfea4e5a', motivo: 'patch por replace() no corpo vivo — migrations 20260924/20260925' },
+};
+
+/**
+ * Funções cujo ÚLTIMO evento no histórico de migrations é uma remoção (DROP / SET SCHEMA / RENAME)
+ * sem recriação posterior → `schema.nome` (minúsculas) para a migration que a removeu.
+ *
+ * Mesmo arquivo com DROP e CREATE vale o CREATE (é o padrão "recriar"). No pior caso isso deixa um
+ * vermelho a mais, nunca um verde falso. Varre TODAS as migrations, inclusive as UUID, como o
+ * histórico de corpos — o CREATE costuma estar numa UUID e o DROP numa custom.
+ */
+function funcoesRemovidasPorHistorico(): Map<string, string> {
+  const removidas = new Map<string, string>();
+  for (const filename of readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith('.sql')).sort()) {
+    const sql = readFileSync(join(MIGRATIONS_DIR, filename), 'utf8');
+    const criadas = new Set(
+      extractObjects(sql).filter((o) => o.kind === 'function').map((o) => `${o.schema}.${o.name}`.toLowerCase()),
+    );
+    for (const k of funcoesRemovidas(sql)) if (!criadas.has(k)) removidas.set(k, filename);
+    for (const k of criadas) removidas.delete(k);
+  }
+  return removidas;
+}
+
 function historicoDeCorpos(): Map<string, { migration: string; md5: string }[]> {
   const hist = new Map<string, { migration: string; md5: string }[]>();
   for (const filename of readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith('.sql')).sort()) {
@@ -279,7 +361,10 @@ function emitSql(audits: MigrationAudit[]): string {
  */
 function emitSecaoCorpos(lines: string[]): void {
   const hist = historicoDeCorpos();
-  const recriadas = [...hist.entries()].filter(([, v]) => v.length > 1);
+  const removidas = funcoesRemovidasPorHistorico();
+  const recriadasTodas = [...hist.entries()].filter(([, v]) => v.length > 1);
+  const recriadas = recriadasTodas.filter(([chave]) => !removidas.has(chave.toLowerCase()));
+  const excluidasPorRemocao = recriadasTodas.filter(([chave]) => removidas.has(chave.toLowerCase()));
 
   lines.push('-- =====================================================');
   lines.push('-- SEÇÃO 3: objetos RECRIADOS — existência não decide, o CORPO decide');
@@ -289,6 +374,11 @@ function emitSecaoCorpos(lines: string[]): void {
   lines.push('--   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA');
   lines.push('-- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.');
   lines.push(`-- Funções redefinidas com corpo extraível: ${recriadas.length}.`);
+  if (excluidasPorRemocao.length > 0) {
+    lines.push(`-- Fora da seção (${excluidasPorRemocao.length}) — o último evento é REMOÇÃO de propósito (DROP / SET SCHEMA / RENAME):`);
+    for (const [chave] of excluidasPorRemocao) lines.push(`--   • ${chave} — ${removidas.get(chave.toLowerCase())}`);
+  }
+  lines.push('-- ✅ deriva reconhecida = corpo vivo com o md5 EXATO triado em DERIVA_RECONHECIDA; mudou o corpo, volta a 🔴.');
   lines.push('');
 
   if (recriadas.length === 0) {
@@ -305,6 +395,13 @@ function emitSecaoCorpos(lines: string[]): void {
   }
   lines.push('WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (VALUES');
   vals.forEach((v, i) => lines.push(v + (i === vals.length - 1 ? '' : ',')));
+  lines.push('),');
+  const reconhecidas = Object.entries(DERIVA_RECONHECIDA).map(([chave, r]) => {
+    const [schema, nome] = chave.split('.');
+    return `  (${sqlString(schema)}, ${sqlString(nome)}, ${sqlString(r.md5)}, ${sqlString(r.motivo)})`;
+  });
+  lines.push('deriva_reconhecida (schema_name, object_name, body_md5, motivo) AS (VALUES');
+  reconhecidas.forEach((v, i) => lines.push(v + (i === reconhecidas.length - 1 ? '' : ',')));
   lines.push('),');
   lines.push('ultima AS (');
   lines.push('  SELECT schema_name, object_name, max(ordem) AS ordem FROM corpo_esperado GROUP BY 1, 2');
@@ -337,6 +434,12 @@ function emitSecaoCorpos(lines: string[]): void {
   lines.push('                  AND ce.body_md5 = v.body_md5');
   lines.push('                 WHERE v.schema_name = u.schema_name AND v.object_name = u.object_name)');
   lines.push("      THEN '❌ NAO APLICADA — o corpo vivo e de uma migration ANTERIOR'");
+  lines.push('    WHEN EXISTS (SELECT 1 FROM vivo v JOIN deriva_reconhecida dr');
+  lines.push('                   ON dr.schema_name = v.schema_name AND dr.object_name = v.object_name');
+  lines.push('                  AND dr.body_md5 = v.body_md5');
+  lines.push('                 WHERE v.schema_name = u.schema_name AND v.object_name = u.object_name)');
+  lines.push("      THEN '✅ deriva reconhecida — ' || (SELECT dr.motivo FROM deriva_reconhecida dr");
+  lines.push('                 WHERE dr.schema_name = u.schema_name AND dr.object_name = u.object_name)');
   lines.push("    ELSE '🔴 DERIVA — corpo em prod nao bate com nenhuma migration (edicao manual)'");
   lines.push('  END AS status');
   lines.push('FROM ultima u');

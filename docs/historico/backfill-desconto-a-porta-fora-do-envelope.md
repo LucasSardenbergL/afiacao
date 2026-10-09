@@ -486,8 +486,9 @@ Dois detalhes que valem como prova de desenho, e não eram garantidos:
    `30 2` — ~1h30 de folga até o próximo. O sensor antes/depois roda em `read committed` (medido), e
    um commit de cron no meio moveria o delta.
 
-**O que fica aberto, e é passo do founder:** o `supabase/schema-snapshot.sql` precisa ser re-gerado
-pelo chat do Lovable. A tabela `pedido_total_liquido_excecao` e o corpo novo do conversor existem em
+~~**O que fica aberto, e é passo do founder:**~~ → **resolvido na mesma sessão, e não era passo do
+founder** (ver "Tudo resolvido" abaixo). Eu disse que o `supabase/schema-snapshot.sql` precisava ser
+re-gerado pelo chat do Lovable. A tabela `pedido_total_liquido_excecao` e o corpo novo do conversor existem em
 prod e **não** em `supabase/migrations/` — então, até o re-dump, eles só existem no DR por este
 parágrafo. Os outros dois passos da reconciliação não se aplicam: não há migration formal para
 registrar em `schema_migrations`, e `types.ts` não morde porque a tabela tem RLS fechada e o front
@@ -529,6 +530,35 @@ Isso **não** entra nesta entrega: 20 objetos de 12 migrations alheias, em cinco
 investiguei, é escopo próprio. Fica aqui com os números para quem pegar — a query da triagem é a de
 `pg_class` × `pg_policy` acima, e roda em segundos.
 
+
+### Tudo resolvido (2026-10-08, mesma sessão, a pedido do founder)
+
+| pendência | desfecho |
+|---|---|
+| re-dump do snapshot | **feito por mim** — `db/refresh-snapshot.sh` é leitura pura e sai pelo `claude_ro`; eu tinha dito duas vezes que era passo do founder pelo Lovable, sem ler o README. 3º run instalou (integridade, paridade 0/0, replay+RLS); a tabela de exceção e o conversor patcheado estão no DR |
+| P2 · sensor em `read committed` | **fechado por desenho**: o apply 2 é one-shot e reexecutá-lo FALHA (A20). Não há próxima execução para ser vulnerável |
+| P2 · `revisar_em` sem sensor | **rebaixado a P3, com medida**: 0 de 105 recuperados; `revisar_em` = 2027-01-06. Dano máximo se um recuperar: o pedido segue com cabeçalho bruto — honesto, nunca errado. Não criei máquina nova sem incidente (CLAUDE.md) |
+| 20 objetos ausentes · 12 parciais | **todos falso-positivo** do extrator (DROP/RENAME/SET SCHEMA posteriores), cada substituto conferido vivo em prod → `OBSOLETE` |
+| 4 ausentes da Seção 3 | **classe morta**: `funcoesRemovidas()` modela remoção (falsificado: desligada, voltam os 4) |
+| 15 derivas | **nenhuma regressão**; reconhecidas pelo md5 do corpo vivo (falsificado: hash sabotado ⇒ exatamente 1 acusada) |
+| 430 sem registro em `schema_migrations` | **não registrei, de propósito** — `✅ registrado` curto-circuita a conferência; ficaria mais verde e mais cego |
+
+Dois danos que **eu causei** no caminho e consertei antes de entregar, os dois de stub: `claude_ro` nos
+stubs silenciou o `CREATE ROLE … LOGIN BYPASSRLS` de uma prova, e o `auth.refresh_tokens` sem DEFAULT
+preemptou o da mesma prova. E o re-dump quebrou `test-universo-pedidos-classe` (núcleo): trigger
+`ENABLE ALWAYS` dispara mesmo em `replica` — causalidade conferida rodando a prova contra a `main` num
+worktree isolado.
+
+**Achado lateral — APLICADO por decisão explícita do founder (2026-10-09):** `tarefas_materializar_recorrentes`
+era SECURITY DEFINER, sem checagem de papel, executável por `authenticated` — qualquer usuário logado,
+cliente inclusive. Único chamador: o cron diário, como `postgres`. Não apliquei por inferência (era escrita
+nova em prod fora do pedido; o classificador do app inclusive reagiu); perguntei, e veio o sim.
+`db/2026-10-08-revoke-tarefas-materializar-recorrentes.sql`: v1 (sha `9dd08122…`, tentativa #295) e v2 (sha
+`00b7468d…`, tentativa #297 — a postcondição do dono tinha `<>` NULL-blind; o gate pegou e eu reapliquei), e conferido por outra sessão via `psql-ro`: `authenticated=false anon=false
+service_role=true`, cron ativo como `postgres`. Para confirmar que o cron segue vivo depois do REVOKE:
+`SELECT status, start_time FROM cron.job_run_details d JOIN cron.job j USING (jobid) WHERE
+j.jobname='tarefas-materializar-recorrentes' ORDER BY start_time DESC LIMIT 1;` — tem de ser `succeeded`
+numa execução **posterior** a 2026-10-09.
 
 ### A sequência, quando o parecer chegar
 

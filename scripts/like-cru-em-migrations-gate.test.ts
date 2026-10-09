@@ -76,17 +76,25 @@ describe('calibração — o pré-fix acusa e a correção passa (arquivos REAIS
     expect(l.operadores).toBe(14);
   });
 
-  it('os corpos de PROD de listar_skus e expandir (só existem no schema-snapshot) acusam', () => {
+  // Até o snapshot de 2026-09-05 estes dois corpos de PROD ainda tinham o ILIKE cru — era a calibração
+  // contra arquivo real: `ilike '%' || p_codigo_fornecedor || '%'` e `… v_item.sku_codigo_fornecedor …`.
+  // O re-dump de 2026-10-08 trouxe os corpos de hoje: a 20260929000234 CHEGOU a prod, e os dois agora
+  // escapam o curinga. A asserção virou a prova de que o conserto está vivo. `operadores > 0` é o que
+  // impede o vazio: `sitios = []` passaria igual com um parser que não leu nada. A calibração de que o
+  // detector ACUSA em arquivo real segue no 1º caso deste bloco (o contrafactual sem a FIX).
+  it('os corpos de PROD de listar_skus e expandir (snapshot de 2026-10-08) já não acusam — o conserto chegou', () => {
     const snap = readFileSync(resolve(RAIZ, 'supabase/schema-snapshot.sql'), 'utf8');
     const bloco = (nome: string) => {
       const ini = snap.indexOf(`CREATE FUNCTION ${nome}`);
       expect(ini).toBeGreaterThan(-1);
       return snap.slice(ini, snap.indexOf('$$;', snap.indexOf('AS $$', ini) + 5) + 3);
     };
-    expect(lerSql('snapshot', bloco('public.listar_skus_por_codigo_fornecedor(')).sitios.map((s) => s.trecho))
-      .toEqual(["ilike '%' || p_codigo_fornecedor || '%'"]);
-    expect(lerSql('snapshot', bloco('public.expandir_promocao_item(p_item_id bigint, p_threshold')).sitios.map((s) => s.trecho))
-      .toEqual(["ilike '%' || v_item . sku_codigo_fornecedor || '%'"]);
+    for (const nome of ['public.listar_skus_por_codigo_fornecedor(', 'public.expandir_promocao_item(p_item_id bigint, p_threshold']) {
+      const l = lerSql('snapshot', bloco(nome));
+      expect(l.operadores).toBeGreaterThan(0);
+      expect(l.sitios).toEqual([]);
+      expect(l.alarmes).toEqual([]);
+    }
   });
 });
 

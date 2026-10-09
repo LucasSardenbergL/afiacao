@@ -271,6 +271,13 @@ INSERT INTO teste.pred VALUES (1,'cancelado','cancelado',false),(2,'rascunho','r
 CREATE TABLE teste.adm (n int PRIMARY KEY, status text NOT NULL);
 INSERT INTO teste.adm VALUES (1,'faturado'),(2,'importado'),(3,'separacao'),(4,'enviado');
 
+-- `replica` desliga gatilho comum, mas NÃO os `ENABLE ALWAYS` — e os dois de coerência pedido × itens
+-- (`trg_pedido_venda_coerencia_cab/_lin`, constraint triggers DEFERRED) são ALWAYS em prod. Eles entraram
+-- no snapshot no re-dump de 2026-10-08 e passaram a recusar esta semente (`order_items e items(jsonb)
+-- descrevem conjuntos diferentes`): a semente monta itens sem espelhar o jsonb, de propósito. Desligá-los
+-- AQUI é cumprir a intenção declarada acima (a semente não é o objeto sob teste), e só durante ela.
+ALTER TABLE public.sales_orders DISABLE TRIGGER trg_pedido_venda_coerencia_cab;
+ALTER TABLE public.order_items  DISABLE TRIGGER trg_pedido_venda_coerencia_lin;
 SET session_replication_role = replica;
 DO $seed$
 DECLARE r record; c uuid; p uuid; v uuid; h date := teste.hoje(); s uuid := teste.uid('STAFF'); m numeric;
@@ -382,6 +389,9 @@ BEGIN
   v := teste.pedido(c, 'oben', 'cancelado', h - 20, h - 20, 100); PERFORM teste.item(v, c, pso, 3300, 10, 10, h - 20);
 END $seed$;
 SET session_replication_role = origin;
+-- religa no modo de PROD (ALWAYS), não com ENABLE simples — que mudaria o modo e afastaria a prova de prod
+ALTER TABLE public.sales_orders ENABLE ALWAYS TRIGGER trg_pedido_venda_coerencia_cab;
+ALTER TABLE public.order_items  ENABLE ALWAYS TRIGGER trg_pedido_venda_coerencia_lin;
 -- a MV predecessora populada, como na prod (o REFRESH ... CONCURRENTLY do cron exige)
 REFRESH MATERIALIZED VIEW private.customer_metrics_mv;
 SQL
