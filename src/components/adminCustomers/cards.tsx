@@ -18,11 +18,16 @@ export function MetricCard({ icon: Icon, label, value, danger }: { icon: LucideI
   );
 }
 
-export function ScoreItem({ label, value, danger }: { label: string; value: string; danger?: boolean }) {
+export function ScoreItem({ label, value, danger, hint, hintTitle }: {
+  label: string; value: string; danger?: boolean;
+  /** Linha miúda sob o valor (ex.: a cobertura por trás de uma margem). */
+  hint?: string | null; hintTitle?: string;
+}) {
   return (
     <div className="text-center">
       <p className="text-[10px] text-muted-foreground mb-0.5">{label}</p>
       <p className={cn('text-sm font-semibold', danger && 'text-destructive')}>{value}</p>
+      {hint && <p className="text-[10px] text-muted-foreground mt-0.5" title={hintTitle}>{hint}</p>}
     </div>
   );
 }

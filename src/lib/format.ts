@@ -75,6 +75,39 @@ export function formatMargemPct(v: number | null | undefined): string {
 }
 
 /**
+ * Legenda da cobertura de custo de UM cliente, para acompanhar a margem na tela:
+ * "3 de 40 linhas c/ custo". Sem ela, "53%" parece apurado sobre o cliente inteiro.
+ *
+ * ⚠️ São LINHAS de item de pedido, não unidades nem receita — e a margem é ponderada por RECEITA.
+ * "3 de 40" pode cobrir 99% do faturamento, e "39 de 40" pode omitir justamente a linha grande.
+ * Por isso a palavra é "linhas", nunca "itens"/"produtos" (que soariam como fração da compra), e
+ * quem exibe deve acompanhar de `DICA_COBERTURA_LINHAS`.
+ *
+ * Mora em `format` (plataforma) e não em `lib/scoring/margin` por fronteira de módulo: o admin-crm
+ * exibe e não pode depender de farmer-inteligencia. A entrada é estrutural — quem lê o banco
+ * normaliza com `coberturaCustoCliente` (margin.ts) antes de chegar aqui.
+ *
+ * ausente≠zero: cobertura não computada (qualquer lado null) → null, jamais "0 de 0". O 0 de
+ * `itensComCusto` com total > 0 é VEREDITO ("nenhuma de 40 linhas c/ custo") e aparece.
+ */
+export function legendaCoberturaItens({ itensComCusto, itensSemCusto }: {
+  itensComCusto: number | null; itensSemCusto: number | null;
+}): string | null {
+  if (itensComCusto == null || itensSemCusto == null) return null;
+  const total = itensComCusto + itensSemCusto;
+  if (total === 0) return null;
+  const linhas = total === 1 ? 'linha' : 'linhas';
+  const totalFmt = total.toLocaleString('pt-BR');
+  if (itensComCusto === 0) return `nenhuma de ${totalFmt} ${linhas} c/ custo`;
+  return `${itensComCusto.toLocaleString('pt-BR')} de ${totalFmt} ${linhas} c/ custo`;
+}
+
+/** Tooltip que acompanha a legenda: impede ler contagem de linhas como cobertura de receita. */
+export const DICA_COBERTURA_LINHAS =
+  'Contagem de LINHAS de pedido com custo conhecido — não é fração da receita. A margem é ' +
+  'ponderada por valor: poucas linhas podem cobrir quase todo o faturamento, e o contrário também.';
+
+/**
  * Preço em BRL, ou "—" quando NÃO SABIDO. Irmã monetária de `formatMargemPct`.
  *
  * Existe porque o preço do item de pedido passou a poder ser `null`: o Omie nem sempre informa

@@ -43,6 +43,10 @@ export interface ClientScore {
   category_count: number;
   /** PERCENTUAL (0–100, negativo válido). `null` = não apurada — jamais tratar como 0. */
   gross_margin_pct: number | null;
+  /** Linhas de pedido com custo conhecido (base da margem). `null` = cobertura não computada. */
+  itens_com_custo?: number | null;
+  /** Linhas de pedido NÃO computáveis na margem. `null` = cobertura não computada. */
+  itens_sem_custo?: number | null;
   avg_repurchase_interval?: number | null;
   sales_history_status: string | null;
 }

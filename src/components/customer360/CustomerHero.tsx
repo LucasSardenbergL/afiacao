@@ -10,7 +10,8 @@ import { CallButton } from '@/components/call/CallButton';
 import { AgendarVisitaDialog } from '@/components/visitas/AgendarVisitaDialog';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
-import { formatMargemPct } from '@/lib/format';
+import { DICA_COBERTURA_LINHAS, formatMargemPct, legendaCoberturaItens } from '@/lib/format';
+import { coberturaCustoCliente } from '@/lib/scoring/margin';
 import { whatsappLink } from '@/lib/phone';
 import {
   formatDateOrDash, initials, healthTone, churnTone, formatDocument,
@@ -27,6 +28,7 @@ export function CustomerHero({
 }) {
   const health = healthTone(s?.health_class ?? null, s?.sales_history_status ?? null);
   const churn = churnTone(s?.churn_risk ?? null);
+  const coberturaItens = legendaCoberturaItens(coberturaCustoCliente(s));
   const waHref = whatsappLink(customer.phone);
 
   return (
@@ -137,6 +139,7 @@ export function CustomerHero({
               )}
               {s?.gross_margin_pct != null && (
                 <span
+                  title={coberturaItens ? DICA_COBERTURA_LINHAS : undefined}
                   className={cn(
                     'inline-flex items-center gap-1.5 px-2 py-1 rounded-md border',
                     // Limiares em PERCENTUAL (30 / 15), não em fração (0.3 / 0.15): a coluna é
@@ -152,6 +155,21 @@ export function CustomerHero({
                 >
                   <Activity className="w-3 h-3" />
                   {formatMargemPct(s.gross_margin_pct)} margem
+                  {/* Confiança da margem: "53%" sozinho parece apurado sobre o cliente inteiro. */}
+                  {coberturaItens && <span className="font-normal opacity-80">· {coberturaItens}</span>}
+                </span>
+              )}
+              {/* Sem margem MAS com cobertura computada: o cliente tem compras e nenhuma (ou quase
+                  nenhuma) linha com custo. Antes este caso sumia da tela, indistinguível de "sem
+                  venda" — e é justamente o que o cadastro de custo resolveria. Neutro, não vermelho:
+                  margem desconhecida não é margem ruim. */}
+              {s?.gross_margin_pct == null && coberturaItens && (
+                <span
+                  title={DICA_COBERTURA_LINHAS}
+                  className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md border bg-muted text-muted-foreground"
+                >
+                  <Activity className="w-3 h-3" />
+                  margem não apurada · {coberturaItens}
                 </span>
               )}
             </div>
