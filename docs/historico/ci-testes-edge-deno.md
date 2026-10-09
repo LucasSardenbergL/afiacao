@@ -403,6 +403,8 @@ portal Sayerlack) tiveram a superfície da lib medida antes: só `.from()` e `.r
 
 ## O sync do Lovable reverteu uma linha 2min35s depois do merge
 
+> **Desfecho (2026-10-09):** a linha revertida (`@2`→`^2` na `carteira-positivacao-snapshot`) ficou ~2 meses na `main`, foi restaurada no [#2882](https://github.com/LucasSardenbergL/afiacao/pull/2882) e só então deployada pela sessão (MCP, 12 hashes conferidos contra a `main`; sensor de edição `SEM_EDICAO`) — **`CONFERE v1.3-supabase-js-at2` pela sonda das 22:37Z** (versão + fonte).
+
 Registro porque a janela medida aqui é **duas ordens de grandeza menor** que a do caso conhecido. O
 #1694 mergeou às `00:56:49Z`; às `00:59:24Z` o commit `942a69b8` ("Changes", o sync bidirecional do
 Lovable) empurrou o workspace velho por cima de **um** dos 17 arquivos:
