@@ -424,4 +424,232 @@ describe('getFluxoCaixa — caixa PREVISTO (fin_contas_receber / fin_contas_paga
     expect(somaPrevistoEntradas(fluxo)).toBe(1000);
     expect(somaPrevistoSaidas(fluxo)).toBe(700);
   });
+
+  // ── Lacunas: seis sabotagens passavam 17/17 (revisão Codex do #2458) ──────────────────
+  // Cada caso abaixo nasce para deixar VERMELHA uma troca que a suíte aprovava. Os casos que
+  // esperam "não entra" levam um título legítimo junto — sem ele, uma sabotagem que zerasse o
+  // previsto inteiro também passaria. E CR e CP usam magnitudes diferentes: quando só um dos
+  // dois laços é sabotado, a mensagem do vitest diz qual.
+
+  it('título em aberto com saldo ZERO não ressuscita o valor cheio', async () => {
+    // A regressão mais provável do #2458: `saldo || valor_documento` trata o zero legítimo
+    // (baixa integral com o status ainda aberto) como ausência e volta a somar o documento.
+    state.db.fin_contas_receber = [
+      titulo(0, '2026-03-10', 1000, 1000),
+      titulo(1, '2026-03-12', 250),
+    ];
+    state.db.fin_contas_pagar = [
+      tituloPagar(0, '2026-03-11', 700, 700),
+      tituloPagar(1, '2026-03-13', 40),
+    ];
+
+    const fluxo = await getFluxoCaixa('oben', INICIO, FIM);
+
+    expect(somaPrevistoEntradas(fluxo)).toBe(250);
+    expect(somaPrevistoSaidas(fluxo)).toBe(40);
+  });
+
+  it('título liquidado, cancelado, de status desconhecido ou nulo NÃO entra no previsto', async () => {
+    // Não é hipotético: em prod (2026-10-08) há 20 CR RECEBIDO + 24 CANCELADO com vencimento
+    // nos próximos 3 meses — R$ 35,7 mil que, sem o filtro, a tela somaria como a receber.
+    // Potências de 10: se algum escapar, a soma diz qual.
+    state.db.fin_contas_receber = [
+      titulo(0, '2026-03-10', 1),
+      { ...titulo(1, '2026-03-10', 10), status_titulo: 'RECEBIDO' },
+      { ...titulo(2, '2026-03-11', 100), status_titulo: 'CANCELADO' },
+      { ...titulo(3, '2026-03-11', 1000), status_titulo: 'LIQUIDADO' },
+      { ...titulo(4, '2026-03-12', 10000), status_titulo: 'EM NEGOCIACAO' },
+      { ...titulo(5, '2026-03-12', 100000), status_titulo: null },
+    ];
+    state.db.fin_contas_pagar = [
+      tituloPagar(0, '2026-03-10', 2),
+      { ...tituloPagar(1, '2026-03-10', 20), status_titulo: 'PAGO' },
+      { ...tituloPagar(2, '2026-03-11', 200), status_titulo: 'CANCELADO' },
+      { ...tituloPagar(3, '2026-03-11', 2000), status_titulo: 'LIQUIDADO' },
+      { ...tituloPagar(4, '2026-03-12', 20000), status_titulo: 'EM NEGOCIACAO' },
+      { ...tituloPagar(5, '2026-03-12', 200000), status_titulo: null },
+    ];
+
+    const fluxo = await getFluxoCaixa('oben', INICIO, FIM);
+
+    expect(somaPrevistoEntradas(fluxo)).toBe(1);
+    expect(somaPrevistoSaidas(fluxo)).toBe(2);
+  });
+
+  it("'ATRASADO' e 'VENCE HOJE' entram — aberto não é só 'A VENCER'", async () => {
+    state.db.fin_contas_receber = [
+      titulo(0, '2026-03-10', 100),
+      { ...titulo(1, '2026-03-10', 200), status_titulo: 'ATRASADO' },
+      { ...titulo(2, '2026-03-11', 400), status_titulo: 'VENCE HOJE' },
+    ];
+    state.db.fin_contas_pagar = [
+      tituloPagar(0, '2026-03-10', 10),
+      { ...tituloPagar(1, '2026-03-10', 20), status_titulo: 'ATRASADO' },
+      { ...tituloPagar(2, '2026-03-11', 40), status_titulo: 'VENCE HOJE' },
+    ];
+
+    const fluxo = await getFluxoCaixa('oben', INICIO, FIM);
+
+    expect(somaPrevistoEntradas(fluxo)).toBe(700);
+    expect(somaPrevistoSaidas(fluxo)).toBe(70);
+  });
+
+  // ── Status AMBÍGUO nunca infla o caixa projetado — por isso a regra é assimétrica ──────
+  // 'ABERTO'/'VENCIDO' são o fallback do ingest quando o Omie NÃO manda status (e 'ABERTO' é o
+  // DEFAULT da coluna); 'PARCIAL' só tem remanescente confiável com a baixa gravada, que o LIST
+  // não traz (#396). Na ENTRADA, contar o ambíguo pode prever dinheiro que não vem; na SAÍDA,
+  // DEIXAR de contar é que infla o saldo projetado. Os três tinham zero linhas em prod
+  // (2026-10-08). Valores em potências de 10: a soma diz exatamente quais entraram.
+
+  it("ENTRADA prevista exige status NATIVO do Omie — 'ABERTO', 'VENCIDO' e 'PARCIAL' ficam fora do CR", async () => {
+    // O PARCIAL aqui está como está HOJE em prod: status parcial e `valor_recebido` 0, logo
+    // `saldo` = documento cheio. Contá-lo seria prever de novo a parte já recebida — que o
+    // saldo âncora já tem.
+    state.db.fin_contas_receber = [
+      titulo(0, '2026-03-10', 1),
+      { ...titulo(1, '2026-03-10', 10), status_titulo: 'ABERTO' },
+      { ...titulo(2, '2026-03-11', 100), status_titulo: 'VENCIDO' },
+      { ...titulo(3, '2026-03-12', 1000), status_titulo: 'PARCIAL' },
+    ];
+
+    expect(somaPrevistoEntradas(await getFluxoCaixa('oben', INICIO, FIM))).toBe(1);
+  });
+
+  it("SAÍDA prevista aceita o aberto canônico — 'ABERTO', 'VENCIDO' e 'PARCIAL' entram no CP", async () => {
+    // Uma obrigação de status incerto some da projeção se ficar de fora — e o saldo projetado
+    // sobe. Contá-la é o erro conservador. O PARCIAL entra pelo SALDO (doc 6.000 − pago 4.000).
+    state.db.fin_contas_pagar = [
+      tituloPagar(0, '2026-03-10', 2),
+      { ...tituloPagar(1, '2026-03-10', 20), status_titulo: 'ABERTO' },
+      { ...tituloPagar(2, '2026-03-11', 200), status_titulo: 'VENCIDO' },
+      { ...tituloPagar(3, '2026-03-12', 6000, 4000), status_titulo: 'PARCIAL' },
+    ];
+
+    expect(somaPrevistoSaidas(await getFluxoCaixa('oben', INICIO, FIM))).toBe(2222);
+  });
+
+  it('o previsto cai no DIA do vencimento, não no início da janela', async () => {
+    // Somar no dia errado preserva o total — e todo teste por soma passava. Mas a tela só
+    // conta como previsto os dias >= hoje: dinheiro deslocado para o início da janela (6 meses
+    // atrás) SOME da projeção.
+    state.db.fin_contas_receber = [titulo(0, '2026-03-10', 300)];
+    state.db.fin_contas_pagar = [tituloPagar(0, '2026-03-20', 80)];
+
+    const fluxo = await getFluxoCaixa('oben', INICIO, FIM);
+
+    expect(fluxo.find((d) => d.data === '2026-03-10')?.entradas_previstas).toBe(300);
+    expect(fluxo.find((d) => d.data === '2026-03-20')?.saidas_previstas).toBe(80);
+  });
+
+  it('dois títulos no MESMO dia somam, com centavos — não fica só o último', async () => {
+    // Centavos em frações binárias exatas (,25 ,50 ,75): a soma em ponto flutuante é exata, e
+    // qualquer arredondamento/truncamento no caminho desloca o resultado.
+    state.db.fin_contas_receber = [
+      titulo(0, '2026-03-10', 30.25),
+      titulo(1, '2026-03-10', 50.5),
+    ];
+    state.db.fin_contas_pagar = [
+      tituloPagar(0, '2026-03-10', 300.5),
+      tituloPagar(1, '2026-03-10', 500.25),
+    ];
+
+    const fluxo = await getFluxoCaixa('oben', INICIO, FIM);
+    const dia = fluxo.find((d) => d.data === '2026-03-10');
+
+    expect(dia?.entradas_previstas).toBe(80.75);
+    expect(dia?.saidas_previstas).toBe(800.75);
+  });
+
+  it('a visão de UMA empresa não soma título nem movimento de outra; a visão "todas" soma', async () => {
+    // Caixa é por CNPJ e não é fungível: título da colacor na tela da oben é dinheiro que a
+    // oben não tem. As fixtures eram todas da oben, então remover o filtro passava verde.
+    state.db.fin_contas_receber = [
+      titulo(0, '2026-03-10', 1),
+      { ...titulo(1, '2026-03-10', 10), company: 'colacor' },
+    ];
+    state.db.fin_contas_pagar = [
+      tituloPagar(0, '2026-03-10', 2),
+      { ...tituloPagar(1, '2026-03-10', 20), company: 'colacor' },
+    ];
+    state.db.fin_movimentacoes = [
+      mov(0, '2026-03-10', 3),
+      { ...mov(1, '2026-03-10', 30), company: 'colacor' },
+    ];
+
+    const oben = await getFluxoCaixa('oben', INICIO, FIM);
+    expect(somaPrevistoEntradas(oben)).toBe(1);
+    expect(somaPrevistoSaidas(oben)).toBe(2);
+    expect(somaRealizadoEntradas(oben)).toBe(3);
+
+    const todas = await getFluxoCaixa('all', INICIO, FIM);
+    expect(somaPrevistoEntradas(todas)).toBe(11);
+    expect(somaPrevistoSaidas(todas)).toBe(22);
+    expect(somaRealizadoEntradas(todas)).toBe(33);
+  });
+
+  it('a janela é inclusiva nas duas pontas e nada de fora dela entra', async () => {
+    // A tela conta como previsto todo dia >= hoje que o serviço devolver: um título além do fim
+    // da janela, se vazasse, entraria no total previsto. Fronteiras exatas + um dia de cada lado.
+    state.db.fin_contas_receber = [
+      titulo(0, '2025-12-31', 1000),
+      titulo(1, INICIO, 1),
+      titulo(2, FIM, 10),
+      titulo(3, '2027-01-01', 100),
+    ];
+    state.db.fin_contas_pagar = [
+      tituloPagar(0, '2025-12-31', 2000),
+      tituloPagar(1, INICIO, 2),
+      tituloPagar(2, FIM, 20),
+      tituloPagar(3, '2027-01-01', 200),
+    ];
+    state.db.fin_movimentacoes = [
+      mov(0, '2025-12-31', 3000),
+      mov(1, INICIO, 3),
+      mov(2, FIM, 30),
+      mov(3, '2027-01-01', 300),
+    ];
+
+    const fluxo = await getFluxoCaixa('oben', INICIO, FIM);
+
+    expect(somaPrevistoEntradas(fluxo)).toBe(11);
+    expect(somaPrevistoSaidas(fluxo)).toBe(22);
+    expect(somaRealizadoEntradas(fluxo)).toBe(33);
+  });
+
+  it('ordem total no previsto: acima da capa, CR e CP não pulam nem duplicam título entre páginas', async () => {
+    // O teste de 2.500 CR acima usa valor IGUAL por título: pular um e duplicar outro preserva a
+    // soma, e ele não vê ordem instável. Aqui cada título tem valor distinto — e o CP ganha o
+    // seu teste de paginação, que não tinha.
+    state.db.fin_contas_receber = Array.from({ length: 2500 }, (_, i) =>
+      titulo(i, `2026-03-${String((i % 28) + 1).padStart(2, '0')}`, i + 1),
+    );
+    state.db.fin_contas_pagar = Array.from({ length: 2500 }, (_, i) =>
+      tituloPagar(i, `2026-04-${String((i % 28) + 1).padStart(2, '0')}`, 2 * (i + 1)),
+    );
+
+    const fluxo = await getFluxoCaixa('oben', INICIO, FIM);
+
+    expect(somaPrevistoEntradas(fluxo)).toBe((2500 * 2501) / 2);
+    expect(somaPrevistoSaidas(fluxo)).toBe(2500 * 2501);
+  });
+
+  it('saldo NEGATIVO (baixa maior que o documento) não vira caixa fantasma — o título conta zero', async () => {
+    // Juros/multa na baixa, ou status defasado: `saldo < 0` num título ainda aberto. Cru, ele
+    // entra como ENTRADA NEGATIVA no CR e, no CP, como saída negativa — que SOBE o acumulado.
+    // O dia mistura um título normal com o negativo de propósito: o zero é POR TÍTULO. Com o
+    // corte aplicado à soma do dia, o negativo comeria a entrada do vizinho (700, não 1.000).
+    state.db.fin_contas_receber = [
+      titulo(0, '2026-03-10', 1000),
+      titulo(1, '2026-03-10', 500, 800),
+    ];
+    state.db.fin_contas_pagar = [
+      tituloPagar(0, '2026-03-11', 600),
+      tituloPagar(1, '2026-03-11', 200, 450),
+    ];
+
+    const fluxo = await getFluxoCaixa('oben', INICIO, FIM);
+
+    expect(fluxo.find((d) => d.data === '2026-03-10')?.entradas_previstas).toBe(1000);
+    expect(fluxo.find((d) => d.data === '2026-03-11')?.saidas_previstas).toBe(600);
+  });
 });
