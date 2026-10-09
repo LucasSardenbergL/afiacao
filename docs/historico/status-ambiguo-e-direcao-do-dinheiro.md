@@ -81,12 +81,13 @@ Removê-lo é decisão à parte.
 
 ## Registrado, fora do escopo
 
-- `syncAll` recarrega só o resumo: depois de "Sincronizar", a âncora é nova e o fluxo, velho — um
-  título que virou RECEBIDO já está no saldo e segue como entrada prevista. Acontece HOJE, sem #396.
+- ✅ **Corrigido** (2026-10-08, [ancora-nova-com-previsto-velho.md](ancora-nova-com-previsto-velho.md)):
+  `syncAll` recarregava só o resumo — depois de "Sincronizar", a âncora era nova e o fluxo, velho, e um
+  título que virou RECEBIDO já estava no saldo e seguia como entrada prevista. Acontecia HOJE, sem #396.
 - O ingest compara o vencimento em UTC: das 21h à meia-noite (SP), um título sem status que vence
   AMANHÃ vira `'VENCIDO'`.
-- `loadFluxoCaixa` mantém o fluxo anterior quando a carga falha: trocar de empresa e falhar mostra o
-  fluxo da empresa anterior com a âncora da atual.
+- ✅ **Corrigido** na mesma entrega: `loadFluxoCaixa` mantinha o fluxo anterior quando a carga falhava —
+  trocar de empresa e falhar mostrava o fluxo da empresa anterior com a âncora da atual.
 - `buscarTodasPaginas` não tem guard de página que nunca encolhe: sem `.range()`, o laço não termina.
 - O contrato do #396 precisa separar baixa financeira de redução da obrigação: desconto concedido
   sem recebimento deixa o `saldo` no documento cheio.
