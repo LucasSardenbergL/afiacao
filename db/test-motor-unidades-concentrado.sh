@@ -15,7 +15,7 @@
 #   F — minimo_forcado_manual (em L) ÷ 0,81: 8 L → 10 QT. F0: o antigo dava 8.
 #   D — CONTROLE: grupo SEM cadastro (D1), PARCIAL (D2) e INCOERENTE (D3) saem byte-idênticos ao motor antigo.
 #   E — SKU sem grupo: idêntico ao antigo (E1) e o valor esperado (E2). X1: tudo fora dos WP cadastrados idêntico.
-#   K — o cadastro WP grava 0,81/3,24 numa cor nova em LITROS (K1), NULL numa cor em UN (K2), não reescreve (K3).
+#   K — o cadastro WP grava 0,81/3,24 numa cor nova em LITROS (K1), NULL numa cor em UN (K2), não reescreve par WP elegível já cadastrado (K3).
 #   P01-P02: os predecessores do snapshot batem o md5 da prod (o ensaio do predicado da PRÉ).
 #   M0-M2: a migration aplica, instala ESTES corpos e preenche os membros WP.
 #   G1-G8: a PRÉ e a PÓS recusam o que devem (numa transação que volta atrás).
@@ -37,7 +37,7 @@ MIG="$REPO_ROOT/supabase/migrations/20261009194000_motor_unidades_concentrado_wp
 SNAP="$REPO_ROOT/supabase/schema-snapshot.sql"
 MD5_MOTOR_PRED=7a15485d16c2a88c2de88cc80f87756b
 MD5_CAD_PRED=141a28f4f696a985e2172de2aa18d1e9
-MD5_MOTOR=7c862179c87eee8fed7ddcd97ed4e31c
+MD5_MOTOR=d3f55f2621c27a234925821e06f73dd7
 MD5_CAD=f201f94a74b9371478653ddcb825b86a
 # Denominador: P01-P02 · M0-M2 · G1-G8 · A0,A1 · B0,B1 · C0,C1 · F0,F1 · D1-D3 · E1,E2 · X1 · K1-K3.
 TOTAL_ESPERADO=30
@@ -59,6 +59,8 @@ if [ "${1:-}" = "--falsificar" ]; then
               sem_grupo_divide:E1,E2,X1:A1
               cadastro_sem_litros:K2:K1
               cadastro_sem_coluna:K1:K2
+              sugerida_em_litros:A1,B1,C1,F1:E2
+              cadastro_sobrescreve:K3:K1,K2
               pre_removida:G1,G2:G3
               pos_removida:G4,G5,G6,G7,G8:G3"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-${SLUG}.XXXXXX")"
@@ -411,9 +413,13 @@ case "$SABOTAGEM" in
   minimo_sem_conv)     sabotar $M "b.minimo_forcado_manual) / COALESCE(b.conv_ancora, 1))" "b.minimo_forcado_manual))" 2 ;;
   grupo_parcial_vale)  sabotar $M "bool_and(q.u IS NOT NULL AND q.u > 0 AND q.u < 1e9) OVER (PARTITION BY q.grupo_id)" "true" 1 ;;
   sem_coerencia)       sabotar $M "min(q.u / q.fator_para_base) OVER (PARTITION BY q.grupo_id)" "max(q.u / q.fator_para_base) OVER (PARTITION BY q.grupo_id)" 1 ;;
-  sem_grupo_divide)    sabotar $M "COALESCE(b.conv_ancora, 1)" "COALESCE(b.conv_ancora, 0.81)" 5 ;;
+  sem_grupo_divide)    sabotar $M "COALESCE(b.conv_ancora, 1)" "COALESCE(b.conv_ancora, 0.81)" 6 ;;
+  sugerida_em_litros)  sabotar $M "ceil((b.estoque_maximo - b.estoque_efetivo) / COALESCE(b.conv_ancora, 1)) AS qtde_sugerida" \
+                                  "ceil(b.estoque_maximo - b.estoque_efetivo) AS qtde_sugerida" 1 ;;
   cadastro_sem_litros) sabotar $C "CASE WHEN r.em_litros THEN x.unidades END" "x.unidades" 1 ;;
   cadastro_sem_coluna) sabotar $C "CASE WHEN r.em_litros THEN x.unidades END" "NULL::numeric" 1 ;;
+  cadastro_sobrescreve) sabotar $C "ON CONFLICT (empresa, sku_codigo_omie) WHERE ativo DO NOTHING;" \
+                                  "ON CONFLICT (empresa, sku_codigo_omie) WHERE ativo DO UPDATE SET unidades_omie_por_embalagem = EXCLUDED.unidades_omie_por_embalagem;" 1 ;;
   *) echo "❌ SABOTAGEM desconhecida: $SABOTAGEM"; exit 9 ;;
 esac
 [ -n "$SABOTAGEM" ] && echo "→ SABOTAGEM ativa: $SABOTAGEM"
@@ -449,19 +455,19 @@ echo "── A: quartinho (físico 3,2 L, pp 5, máx 8, cmc 101,08 R\$/L)"
 eq A0 "o ANTIGO lia L como QT: 5 QT a 101,08 (o defeito que a migration conserta)" \
   "$(linhas $ANT "$GA")" "9100000001|5|5|101.08|505.4|3.2|0|5"
 eq A1 "NOVO: ceil(4,8/0,81) = 6 QT a 101,08 × 0,81 = 81,8748" \
-  "$(linhas $NOVO "$GA")" "9100000001|5|6|81.8748|491.2488|3.2|0|6"
+  "$(linhas $NOVO "$GA")" "9100000001|6|6|81.8748|491.2488|3.2|0|6"
 echo "── B: troca p/ galão (físico 3 L, máx 10; GL 300 < 4 × 100)"
 eq B0 "o ANTIGO dividia por 4: ceil(7/4) = 2 GL" "$(linhas $ANT "$GB")" "9200000002|7|2|300|600|3|0|2"
-eq B1 "NOVO: ceil(7/3,24) = 3 GL a 300" "$(linhas $NOVO "$GB")" "9200000002|7|3|300|900|3|0|3"
+eq B1 "NOVO: ceil(7/3,24) = 3 GL a 300" "$(linhas $NOVO "$GB")" "9200000002|9|3|300|900|3|0|3"
 echo "── C: em trânsito (físico 2 L; em voo 2 QT + 1 GL; pp 9, máx 12)"
 eq C0 "o ANTIGO somava 2 + 1×4 = 6 'L' a caminho → efetivo 8 → 4 QT" \
   "$(linhas $ANT "$GC")" "9300000001|4|4|101.08|404.32|2|6|4"
 eq C1 "NOVO: a caminho 2×0,81 + 1×3,24 = 4,86 L → efetivo 6,86 → ceil(5,14/0,81) = 7 QT" \
-  "$(linhas $NOVO "$GC")" "9300000001|6|7|81.8748|573.1236|2|4.86|7"
+  "$(linhas $NOVO "$GC")" "9300000001|7|7|81.8748|573.1236|2|4.86|7"
 echo "── F: minimo_forcado_manual = 8 L (físico 5, pp 5, máx 6)"
 eq F0 "o ANTIGO comprava 8 QT (= 6,48 L) para um mínimo de 8 L" \
   "$(linhas $ANT "$GF")" "9400000001|1|8|101.08|808.64|5|0|8"
-eq F1 "NOVO: ceil(8/0,81) = 10 QT" "$(linhas $NOVO "$GF")" "9400000001|1|10|81.8748|818.748|5|0|10"
+eq F1 "NOVO: ceil(8/0,81) = 10 QT" "$(linhas $NOVO "$GF")" "9400000001|2|10|81.8748|818.748|5|0|10"
 echo "── D: CONTROLES — byte-idênticos ao motor antigo (valores crus, sem trim_scale)"
 iguais D1 "grupo SEM cadastro (coluna NULL)" \
   "$(linhas $ANT "i.sku_codigo_omie LIKE '95%'" cru)" "$(linhas $NOVO "i.sku_codigo_omie LIKE '95%'" cru)"
@@ -477,16 +483,19 @@ FORA="i.sku_codigo_omie NOT LIKE '91%' AND i.sku_codigo_omie NOT LIKE '92%' AND 
 iguais X1 "TUDO fora dos 4 grupos WP cadastrados: byte-idêntico" "$(linhas $ANT "$FORA" cru)" "$(linhas $NOVO "$FORA" cru)"
 
 echo "── K: o cadastro WP (cron, auth.uid() NULL) numa transação que volta atrás"
-cad() {   # <filtro sobre sku_codigo_omie>
-  Pq -q -c "BEGIN" -c "CREATE TEMP TABLE r_cad AS SELECT public.reposicao_sincronizar_embalagem_wp('oben')" \
+cad() {   # <filtro sobre sku_codigo_omie> [<SQL antes do cadastro, na mesma transação>]
+  Pq -q -c "BEGIN" -c "${2:-SET LOCAL client_min_messages TO warning}" -c "CREATE TEMP TABLE r_cad AS SELECT public.reposicao_sincronizar_embalagem_wp('oben')" \
      -c "SELECT string_agg(sku_codigo_omie || '/' || trim_scale(fator_para_base) || '=' || COALESCE(trim_scale(unidades_omie_por_embalagem)::text, 'NULL'), ',' ORDER BY sku_codigo_omie)
            FROM sku_embalagem_equivalencia WHERE ativo AND ($1)" \
      -c "ROLLBACK" 2>&1 || true
 }
 eq K1 "cor nova em LITROS nasce com 0,81 / 3,24" "$(cad "sku_codigo_omie LIKE '88%'")" "8800000001/1=0.81,8800000002/4=3.24"
 eq K2 "cor nova em UN nasce com NULL (o motor fica no fator)" "$(cad "sku_codigo_omie LIKE '89%'")" "8900000001/1=NULL,8900000002/4=NULL"
-eq K3 "linha já cadastrada NÃO é reescrita (o controle sem cadastro segue NULL)" \
-  "$(cad "sku_codigo_omie LIKE '95%'")" "9500000001/1=NULL,9500000002/4=NULL"
+# K3: o WP91 é ELEGÍVEL (WP, em L, QT+GL) e já está no grupo; um valor que o cadastro nunca escreveria (0,8/3,2)
+# denuncia sobrescrita — o ON CONFLICT DO NOTHING o preserva.
+eq K3 "par WP elegível já cadastrado NÃO é reescrito (0,8/3,2 sobrevivem ao cadastro)" \
+  "$(cad "sku_codigo_omie LIKE '91%'" "UPDATE sku_embalagem_equivalencia SET unidades_omie_por_embalagem = fator_para_base * 0.8 WHERE sku_codigo_omie LIKE '91%'")" \
+  "9100000001/1=0.8,9100000002/4=3.2"
 
 echo
 echo "PASS=$PASS  FAIL=$FAIL"

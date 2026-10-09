@@ -347,7 +347,7 @@ BEGIN
            COALESCE(b.fisico_grupo, b.estoque_fisico_proprio)  AS estoque_fisico,
            COALESCE(b.acaminho_grupo, b.acaminho_proprio)      AS estoque_a_caminho,
            b.estoque_efetivo,
-           ceil(b.estoque_maximo - b.estoque_efetivo) AS qtde_sugerida,  -- gate >0 (unidades-âncora)
+           ceil((b.estoque_maximo - b.estoque_efetivo) / COALESCE(b.conv_ancora, 1)) AS qtde_sugerida,  -- gate >0; EMBALAGENS da âncora [UNIDADES #2849]
            -- nº de embalagens do SKU escolhido: ceil(necessidade em unidades Omie / conv) [UNIDADES #2849];
            -- SKU sem grupo divide por 1 (idêntico ao de antes).
            -- [P1-e] minimo_forcado_manual (unidades-âncora) aplicado como piso ANTES de dividir pelo fator.
@@ -437,7 +437,7 @@ BEGIN
   -- qtde_sem_teto recebe a MESMA conversão: capada ⇔ qtde_final < qtde_sem_teto compara na MESMA unidade
   -- (cap 27 L→30 L vs 36 L→40 L segue capada; cap 36→40 vs 38→40 deixa de sê-lo porque FISICAMENTE são os
   -- mesmos 8 baldes — o cap não mudou a compra). Linha capada a ZERO fica 0 (o CASE exige > 0).
-  -- qtde_sugerida NÃO muda (rastro em L; a tela mostra "36 → 40" com a causa certa via fator_embalagem_portal).
+  -- qtde_sugerida NÃO muda (rastro em embalagens da âncora; a tela mostra "36 → 40" com a causa certa via fator_embalagem_portal).
   skus_necessitando AS (
     SELECT sd.empresa, sd.sku_codigo_omie, sd.sku_descricao, sd.fornecedor_nome, sd.grupo_codigo,
            sd.ponto_pedido, sd.estoque_maximo, sd.estoque_fisico, sd.estoque_a_caminho, sd.estoque_efetivo,
@@ -563,7 +563,7 @@ BEGIN
     RAISE EXCEPTION 'POS-M4 FALHOU: o motor mudou de atributo — esperado VOLATILE, INVOKER, config [search_path=public, pg_temp;statement_timeout=120s], dono postgres';
   END IF;
   IF to_regclass('pg_temp.motor_unidades_wp_foto') IS NOT NULL THEN
-    IF (SELECT md5(p.prosrc) FROM pg_catalog.pg_proc p WHERE p.oid = v_oid) IS DISTINCT FROM '7c862179c87eee8fed7ddcd97ed4e31c' THEN
+    IF (SELECT md5(p.prosrc) FROM pg_catalog.pg_proc p WHERE p.oid = v_oid) IS DISTINCT FROM 'd3f55f2621c27a234925821e06f73dd7' THEN
       RAISE EXCEPTION 'POS1 FALHOU: o motor instalado não é o desta migration';
     END IF;
     IF (SELECT md5(p.prosrc) FROM pg_catalog.pg_proc p
@@ -571,7 +571,7 @@ BEGIN
       RAISE EXCEPTION 'POS2 FALHOU: o cadastro WP instalado não é o desta migration';
     END IF;
     SELECT count(*) INTO v_n
-      FROM motor_unidades_wp_foto f
+      FROM pg_temp.motor_unidades_wp_foto f
       JOIN pg_catalog.pg_proc p ON p.oid = to_regprocedure('public.' || f.alvo)
      WHERE f.acl IS NOT DISTINCT FROM p.proacl::text
        AND f.config IS NOT DISTINCT FROM p.proconfig::text
