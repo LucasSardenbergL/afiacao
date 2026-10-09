@@ -553,8 +553,8 @@ worktree isolado.
 era SECURITY DEFINER, sem checagem de papel, executável por `authenticated` — qualquer usuário logado,
 cliente inclusive. Único chamador: o cron diário, como `postgres`. Não apliquei por inferência (era escrita
 nova em prod fora do pedido; o classificador do app inclusive reagiu); perguntei, e veio o sim.
-`db/2026-10-08-revoke-tarefas-materializar-recorrentes.sql` (sha `9dd08122…`): ensaio com as 4 pontas, apply
-(tentativa #295), e conferido por outra sessão via `psql-ro`: `authenticated=false anon=false
+`db/2026-10-08-revoke-tarefas-materializar-recorrentes.sql`: v1 (sha `9dd08122…`, tentativa #295) e v2 (sha
+`00b7468d…`, tentativa #297 — a postcondição do dono tinha `<>` NULL-blind; o gate pegou e eu reapliquei), e conferido por outra sessão via `psql-ro`: `authenticated=false anon=false
 service_role=true`, cron ativo como `postgres`. Para confirmar que o cron segue vivo depois do REVOKE:
 `SELECT status, start_time FROM cron.job_run_details d JOIN cron.job j USING (jobid) WHERE
 j.jobname='tarefas-materializar-recorrentes' ORDER BY start_time DESC LIMIT 1;` — tem de ser `succeeded`

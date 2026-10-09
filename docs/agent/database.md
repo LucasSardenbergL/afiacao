@@ -204,7 +204,10 @@ rotulado, o que garante o rollback e ainda dá o veredito positivo. Caso real e 
   `git show <sha>:supabase/schema-snapshot.sql` (padrão em `db/test-padrao-like-contem.sh`) — fixture só
   de corpos não basta quando o pré-estado inclui coluna/cron. (3) Calibração que afirma "prod ainda tem o
   bug X" lendo o snapshot vira falsa quando o conserto chega — inverta para provar o conserto, com
-  contagem de leitura > 0. (4) Mexeu em auditor/contrato de authz ⇒ `bun run authz:carimbo:gravar`.
+  contagem de leitura > 0. (4) Mexeu em auditor/contrato de authz ⇒ `bun run authz:carimbo:gravar`. (5) **Re-meça `db/lib/corpo-vivo-acl.sql` junto** (a consulta está no rodapé dele): o dump é
+  `--no-privileges`, então migration só de GRANT/REVOKE **nunca** é absorvida por ele — avançar o
+  `CV_INICIO` sem re-medir o ACL tirou da cadeia o GRANT por coluna da 20261001100000 e derrubou o
+  `test-whatsapp-funil` (42501). "O dump absorveu a migration" vale para DDL, não para ACL.
   ⚠️ O auditor de deriva OFICIAL é `bun run deriva:corpo:prod` (tokens, patches, baseline aceita em
   `db/deriva-corpo-baseline.json`) — patch programático por envelope entra lá como `EDICAO_MANUAL`, md5 do
   `prosrc` cru + `md5DeTokens`. A Seção 3 do audit de migrations é a visão para o SQL Editor; eu dupliquei
