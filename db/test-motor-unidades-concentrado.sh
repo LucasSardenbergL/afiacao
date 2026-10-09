@@ -338,7 +338,7 @@ g_arquivo "$TMPD/g2.sql" "$DERIVA_CAD"
 eq G2 "cadastro WP vivo DIVERGENTE — a PRÉ aborta" "$(Tenta "$TMPD/g2.sql" P0001 'PRE FALHOU: reposicao_sincronizar_embalagem_wp')" NEGOU
 g_arquivo "$TMPD/g3.sql" ""
 eq G3 "re-aplicar sobre si mesma passa (idempotente)" "$(Tenta "$TMPD/g3.sql" P0001 'nunca')" PASSOU
-g_arquivo "$TMPD/g4.sql" "" '-- DADO: unidades Omie' 'GRANT EXECUTE ON FUNCTION public.reposicao_sincronizar_embalagem_wp(text) TO anon;
+g_arquivo "$TMPD/g4.sql" "" '-- DADO: unidades Omie' 'REVOKE EXECUTE ON FUNCTION public.reposicao_sincronizar_embalagem_wp(text) FROM authenticated;
 -- DADO: unidades Omie'
 eq G4 "ACL do cadastro mexido no meio — a POS3 recusa" "$(Tenta "$TMPD/g4.sql" P0001 'POS3 FALHOU')" NEGOU
 g_arquivo "$TMPD/g5.sql" "UPDATE public.sku_embalagem_equivalencia SET unidades_omie_por_embalagem = NULL WHERE sku_codigo_omie = '9100000002';
