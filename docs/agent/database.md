@@ -116,6 +116,11 @@ COLUMN`), qualquer SQL sem postcondição, pré-voo não-verde, e escrita em sch
 Primeira aplicação por este caminho: `20260908204421_deploy_sonda_alvos_onda3.sql`
 (3 linhas de allowlist), pré-voo 11→14 alvos, validada por fora com `✅`.
 
+**Dois `db:aplicar` simultâneos do MESMO arquivo** (desde 2026-10-08): a fila os põe em ordem e o 2º é
+recusado pela porta ANTES de executar — `exit 4` com `RECUSA_SHA_JA_APLICADO`, tentativa `falhou`. É
+benigno: o 1º aplicou. Antes o 2º executava o corpo de novo e só o índice do recibo o revertia
+([ordem-nao-e-impedimento.md](../historico/ordem-nao-e-impedimento.md)).
+
 **Cron pelo `db:aplicar` nasce com dono `postgres` (medido 2026-10-06).** O `aplicar_sql()` é
 SECURITY DEFINER do `postgres`, então dentro dele o `current_user` é o `postgres`. É esse papel que o
 `cron.schedule` grava em `cron.job.username`, e é como o job roda. A nota da `20260924163250` ("cole
