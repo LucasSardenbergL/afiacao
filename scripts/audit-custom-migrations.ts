@@ -116,6 +116,12 @@ function isCustom(filename: string): boolean {
  * O md5 é o que torna isto seguro: reconhecer pelo NOME cegaria o audit para a próxima edição; pelo
  * HASH, qualquer mudança no corpo volta a ser 🔴 DERIVA. md5 = o da Seção 3,
  * `md5(regexp_replace(btrim(prosrc), '\s+', ' ', 'g'))`, medido via psql-ro no mesmo dia.
+ *
+ * ⚠️ O auditor de deriva OFICIAL é `bun run deriva:corpo:prod` (tokens, patches por âncora, baseline ACEITA
+ * pelo founder em `db/deriva-corpo-baseline.json`) — ele já classificava estas 15 como em dia/cosméticas/
+ * aceitas quando este mapa nasceu (descoberto depois, 2026-10-09). Este mapa só serve à visão do SQL Editor
+ * desta Seção 3, que não compara tokens. Deriva NOVA se aceita lá primeiro; aqui é espelho, e os md5 têm
+ * definições diferentes (lá: `md5(prosrc)` cru).
  */
 const DERIVA_RECONHECIDA: Record<string, { md5: string; motivo: string }> = {
   'public.apply_score_updates': { md5: '331996f594ff3491f36ce7da9068dbd9', motivo: 'cosmética (triagem 2026-10-08)' },
