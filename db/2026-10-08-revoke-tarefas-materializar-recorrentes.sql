@@ -46,7 +46,9 @@ BEGIN
   IF NOT has_function_privilege('service_role', f, 'EXECUTE') THEN
     RAISE EXCEPTION 'postcondicao: service_role PERDEU o EXECUTE — fechei demais';
   END IF;
-  IF (SELECT pg_get_userbyid(proowner) FROM pg_proc WHERE oid = f) <> 'postgres' THEN
+  -- IS DISTINCT FROM, não `<>`: se o SELECT voltasse vazio, `NULL <> 'postgres'` é NULL, o IF não dispara
+  -- e a postcondição aprova sem medir (o gate assert-verde-por-ausencia pegou; v1 aplicada com `<>`).
+  IF (SELECT pg_get_userbyid(proowner) FROM pg_proc WHERE oid = f) IS DISTINCT FROM 'postgres' THEN
     RAISE EXCEPTION 'postcondicao: o dono nao e postgres — o cron (que roda como postgres) pode depender de GRANT';
   END IF;
   RAISE NOTICE 'FECHADA: authenticated=false anon=false service_role=true owner=postgres';
