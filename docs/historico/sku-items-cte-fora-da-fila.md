@@ -248,3 +248,30 @@ os 3 CT-e e encerrar o Codex retroativo do #2798 sem rodar.
    NF-e da Renner Sayerlack (1.395 linhas na janela do fornecedor) não terem sido recuperadas: o run
    repetiria o defeito. O conserto (paginar a leitura) e a recuperação das 7 ficam para sessão própria.
 
+4. **Conserto do teto: `omie-sync-sku-items` `v1.5-fila-paginada`** ([#2860](https://github.com/LucasSardenbergL/afiacao/pull/2860),
+   merge 2026-10-08 12:05Z).
+   - **O que mudou:** as quatro leituras que montam a fila (janela de NF-e, histórico, controle e
+     irmãs) passaram para `leituras.ts`. Elas paginam por keyset, com o `.in()` em lotes de 150.
+     A janela, o controle e as irmãs também estavam abaixo do teto só por causa do volume.
+   - **Medição (psql-ro, OBEN):** trackings / histórico / controle = 334 / 2.962 / 93 em 215 dias
+     e 423 / 4.376 / 97 em 365 dias.
+   - **Falsificação:** 12/12 vermelhas em `leituras.ts` (2 locales) e 5/5 no wiring do `index.ts`
+     (invariantes vitest), com controle verde na mesma invocação. A 1ª rodada achou uma asserção
+     tautológica: o teto do `.in()` era comparado com a própria constante.
+   - **Revisão:** o Codex deu exit 79 (cota em 100%), então foi pelo Caminho B. O revisor
+     independente aprovou com ressalvas (0 P0/P1, 1 P2 e 3 P3), e as 4 foram consertadas no PR.
+   - **Deploy:** pelo ledger. A 1ª resposta do Lovable não trouxe nem a tabela de hash nem a
+     confirmação do deploy, então quem decidiu foi o eco: `v1.4` às 00:35Z e `v1.5-fila-paginada`
+     às 02:35Z de 09/10, com a fonte `8c321a930cf5` igual ao fingerprint da main. O sensor de
+     edição deu `SEM_EDICAO`.
+5. **As 7 NF-e da Renner Sayerlack recuperadas** (`db/2026-10-08-sku-items-run-renner-sayerlack.sql`).
+   O run usou o job 186 com `dias 175` e o fornecedor 8689681266, pelo envelope, com pós-condição de
+   enfileiramento em `net.http_request_queue`.
+   - **Pré-voo às 02:45Z:** janela de 223 NF-e, 216 com linha e 1.402 linhas de histórico (acima do
+     teto). A regra da v1.5 previa **7** pendentes, sem nenhuma em backoff.
+   - **Run** `0efb1926` (02:46:10–02:47:00Z): fechou `complete`. `fila_pendente` 7, 2 recebimentos
+     deduplicados, 5 consultas, 0 falhas. Foram 80 itens (54 com pedido, 28 sem), sem timeout e com 0
+     fechamentos preteridos no CAS.
+   - **Validação por fora:** 223 de 223 trackings da janela com linha, histórico em 1.456 (+54) e
+     controle `k=0` (`ok_com_itens`). Nenhum tracking ficou sem linha e sem controle.
+   - **Resultado:** com os 7 do item 2, as 14 NF-e históricas estão resolvidas.

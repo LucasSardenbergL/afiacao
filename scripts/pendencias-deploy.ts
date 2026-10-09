@@ -120,6 +120,7 @@ import {
   alvosForaDoRepo,
   classificarSemPergunta,
   cronSondaParado,
+  DISPAROS_QUE_JULGAM,
   type AtestacaoAtribuida,
   type Disparo,
   julgarSondaCron,
@@ -325,19 +326,41 @@ export const SQL_SONDA_CRON_ALVOS = `
 SELECT edge FROM public.deploy_sonda_alvos WHERE ativo ORDER BY edge;
 `.trim();
 
-/** Os disparos dos 2 ticks mais recentes: (tick, edge, request_id), mais recente primeiro. */
+/**
+ * A janela de VOLUME da leitura dos disparos — 7 dias — e deliberadamente **não** o teto do
+ * julgamento, que é do juiz (`toleranciaDoCronMin()`, 255 min no cron de 2 h) e vale ~40× menos.
+ *
+ * Existe só para o `row_number()` não varrer um ledger que cresce sem limite (medido em 2026-10-09:
+ * 5 909 disparos em 33 dias, ~180/dia). Por ser 40× o teto, não participa do veredito: todo disparo
+ * que ela corta o juiz já teria descartado por idade. Afrouxá-la não acusa ninguém a mais; apertá-la
+ * abaixo do teto tiraria disparos do exame, e é por isso que ela está nomeada e não inline.
+ */
+const JANELA_VOLUME_DISPAROS = '7 days';
+
+/**
+ * Os `DISPAROS_QUE_JULGAM` disparos mais recentes de CADA edge: (tick, edge, request_id, idade_min).
+ *
+ * A janela é POR EDGE, não os 2 ticks globais mais recentes. Com a janela global, um tick PARCIAL
+ * legítimo — o one-liner `deploy_sonda_disparar(ARRAY['<edge>'])` que o `sonda:sql` oferece — consumia
+ * uma das duas vagas de TODAS as outras edges. Medido em prod (âncora 2026-09-10 23:20Z, logo após o
+ * tick parcial de 1 disparo das 23:14:15Z): janela global → 1 edge com 2 disparos e **14 com 1**;
+ * janela por edge → **15 com 2**, nenhuma com 1.
+ *
+ * A `idade_min` vem do relógio do BANCO porque o juiz aplica o teto sobre ela: comparar `now()` local
+ * com `enfileirado_em` do servidor introduziria skew de relógio num veredito.
+ */
 export const SQL_SONDA_CRON_DISPAROS = `
-WITH ticks AS (
-  SELECT tick_id, max(enfileirado_em) AS quando
-  FROM public.deploy_sonda_disparos
-  GROUP BY tick_id
-  ORDER BY quando DESC
-  LIMIT 2
+WITH recorte AS (
+  SELECT d.tick_id, d.edge, d.request_id, d.enfileirado_em,
+         row_number() OVER (PARTITION BY d.edge ORDER BY d.enfileirado_em DESC, d.request_id DESC) AS n
+  FROM public.deploy_sonda_disparos d
+  WHERE d.enfileirado_em > now() - interval '${JANELA_VOLUME_DISPAROS}'
 )
-SELECT d.tick_id::text, d.edge, d.request_id
-FROM public.deploy_sonda_disparos d
-JOIN ticks t ON t.tick_id = d.tick_id
-ORDER BY t.quando DESC, d.edge;
+SELECT tick_id::text, edge, request_id,
+       round((extract(epoch FROM (now() - enfileirado_em)) / 60.0)::numeric, 1)::text
+FROM recorte
+WHERE n <= ${DISPAROS_QUE_JULGAM}
+ORDER BY edge, n;
 `.trim();
 
 /**
@@ -346,16 +369,19 @@ ORDER BY t.quando DESC, d.edge;
  * Lê o LEDGER e a janela viva — a mesma união do veredito principal. Uma atestação que só existe
  * na janela ainda não foi colhida, e ignorá-la faria o CLI acusar silêncio nos 15 minutos entre a
  * resposta e a passagem do coletor.
+ *
+ * O recorte é o MESMO de `SQL_SONDA_CRON_DISPAROS` — por edge, não por tick global. As duas leituras
+ * têm de concordar sobre o conjunto examinado: um disparo que o juiz julga e cuja atestação não foi
+ * perguntada aqui viraria silêncio fabricado.
  */
 export const SQL_SONDA_CRON_ATESTACOES = `
-WITH ticks AS (
-  SELECT tick_id, max(enfileirado_em) AS quando
-  FROM public.deploy_sonda_disparos
-  GROUP BY tick_id
-  ORDER BY quando DESC
-  LIMIT 2
+WITH recorte AS (
+  SELECT d.request_id,
+         row_number() OVER (PARTITION BY d.edge ORDER BY d.enfileirado_em DESC, d.request_id DESC) AS n
+  FROM public.deploy_sonda_disparos d
+  WHERE d.enfileirado_em > now() - interval '${JANELA_VOLUME_DISPAROS}'
 ), pedidos AS (
-  SELECT d.request_id FROM public.deploy_sonda_disparos d JOIN ticks t ON t.tick_id = d.tick_id
+  SELECT request_id FROM recorte WHERE n <= ${DISPAROS_QUE_JULGAM}
 ), tudo AS (
   SELECT request_id, edge FROM public.deploy_atestacoes
   UNION ALL
@@ -398,10 +424,11 @@ ORDER BY r.id;
  * MAIS RECENTE. É o que dá TETO à espera: sem medida, "sem pergunta" descreveria para sempre tanto a
  * edge que acabou de entrar quanto a que o dispatcher parou de perguntar.
  *
- * O `greatest` com o último disparo é o que impede o alarme falso MEDIDO em prod (tick manual de
- * 2026-09-10 23:14Z, só `sonda-relay`): um tick parcial desloca o tick do cron da janela de 2, e as
- * outras 15 edges — perguntadas pelo cron 34 min antes — pareceriam esquecidas se a régua fosse só
- * `habilitado_em`. O kill switch é o avesso: o `UPDATE … SET ativo` NÃO mexe em `habilitado_em`, então
+ * O `greatest` com o último disparo é o que mede a espera pelo que de fato aconteceu com ELA, e não
+ * pela data de cadastro: `habilitado_em` sozinho faria toda edge antiga parecer esquecida. (Até
+ * 2026-10-09 havia uma segunda razão — um tick parcial deslocava o tick do cron da janela GLOBAL de 2 e
+ * as outras edges pareceriam esquecidas. Essa causa morreu com a janela por edge; a régua segue certa
+ * pela primeira.) O kill switch é o avesso: o `UPDATE … SET ativo` NÃO mexe em `habilitado_em`, então
  * uma edge recém-reativada conta a espera desde antes de ser desligada — é por isso que o teto gera
  * AVISO (que nomeia as duas causas), nunca achado.
  *
@@ -905,14 +932,15 @@ function imprimir(rel: Relatorio, linhasSemIdentidade: string[], universo: Unive
 }
 
 /** Minutos, como o psql devolve: `34.0`. Vazio NÃO casa — `Number('')` é 0, e 0 min mentiria "perguntada agora". */
-const MINUTOS_DE_ESPERA = /^\d+(\.\d+)?$/;
+/** Minutos em `edge|minutos` e na `idade_min` do disparo — o `round(...,1)::text` do PG. */
+const MINUTOS = /^\d+(\.\d+)?$/;
 
 /** `edge|minutos` por linha. Linha fora do formato LANÇA: espera ilegível é ausência de medida. */
 function parsearEspera(saida: string): Map<string, number> {
   const espera = new Map<string, number>();
   for (const linha of semChatter(saida)) {
     const [edge, min] = linha.split('|');
-    if (!edge || min === undefined || !MINUTOS_DE_ESPERA.test(min)) {
+    if (!edge || min === undefined || !MINUTOS.test(min)) {
       throw new Error(`linha de espera fora do formato: ${linha}`);
     }
     espera.set(edge, Number(min));
@@ -979,16 +1007,16 @@ export function secaoSondaCron(
     };
   }
 
+  // A idade é recusada com a MESMA régua da espera: idade ilegível é ausência de medida, e um
+  // disparo sem idade não pode entrar num exame cujo teto se mede em minutos.
   const disparos: Disparo[] = [];
-  const ticksRecentes: string[] = [];
   for (const linha of semChatter(ler(SQL_SONDA_CRON_DISPAROS))) {
-    const [tickId, edge, req] = linha.split('|');
+    const [tickId, edge, req, idade] = linha.split('|');
     const requestId = Number(req);
-    if (!tickId || !edge || !Number.isFinite(requestId)) {
+    if (!tickId || !edge || !Number.isFinite(requestId) || idade === undefined || !MINUTOS.test(idade)) {
       return { linhas: [], achados: 0, mecanica: `linha de disparo fora do formato: ${linha}` };
     }
-    disparos.push({ tickId, edge, requestId });
-    if (!ticksRecentes.includes(tickId)) ticksRecentes.push(tickId);
+    disparos.push({ tickId, edge, requestId, idadeMin: Number(idade) });
   }
 
   const atestacoes: AtestacaoAtribuida[] = [];
@@ -1018,7 +1046,6 @@ export function secaoSondaCron(
   const r = julgarSondaCron({
     ativosNoBanco: ativos,
     allowlistDoRepo: allowlists.ref,
-    ticksRecentes,
     disparos,
     atestacoes,
     estadoPorEdge,
@@ -1040,12 +1067,14 @@ export function secaoSondaCron(
   }
   const { aguardando, atrasadas } = classificarSemPergunta(r.semPergunta, espera);
 
-  const atestadas = new Set(atestacoes.map((a) => a.requestId));
-  const respondidos = disparos.filter((d) => atestadas.has(d.requestId)).length;
+  // "N tick(s) recente(s)" morreu com a janela global: os ticks eram a população examinada e agora
+  // não são — a janela é por edge. Os dois números vêm do EXAME que o juiz devolve, nunca da
+  // contagem crua da leitura, que inclui disparos acima do teto (resumo-universal-herda-o-pulo-do-juiz).
   const perguntadas = ativos.length - r.semPergunta.length;
   linhas.push(
-    `\n🕒 SONDA POR CRON — ${perguntadas}/${ativos.length} edge(s) ativa(s) perguntada(s) em ` +
-      `${ticksRecentes.length} tick(s) recente(s), ${respondidos}/${disparos.length} disparo(s) atestado(s)`,
+    `\n🕒 SONDA POR CRON — ${perguntadas}/${ativos.length} edge(s) ativa(s) perguntada(s) nos ` +
+      `${DISPAROS_QUE_JULGAM} últimos disparos de CADA uma (teto ${toleranciaDoCronMin()} min), ` +
+      `${r.exame.atestados}/${r.exame.disparos} disparo(s) examinado(s) atestado(s)`,
   );
   const defasagem = avisoAllowlistDefasada(allowlists);
   if (defasagem) linhas.push(defasagem);
@@ -1064,7 +1093,7 @@ export function secaoSondaCron(
       .map((a) => `${a.edge} (${a.minutos === null ? 'sem medida da espera' : `espera ${a.minutos} min`})`)
       .join(', ');
     linhas.push(
-      `   ⏳ ${aguardando.length} edge(s) ativa(s) sem pergunta nos ticks recentes, FORA do exame — ` +
+      `   ⏳ ${aguardando.length} edge(s) ativa(s) sem pergunta na janela de cada uma, FORA do exame — ` +
         `não contam como atestadas: ${lista}`,
     );
     if (aguardando.some((a) => a.minutos === null)) {
@@ -1089,7 +1118,7 @@ export function secaoSondaCron(
   const todaAtivaAtestada =
     ativos.length > 0 && r.semPergunta.length === 0 && r.silencioEsperado.length === 0;
   if (r.achados.length === 0 && r.avisos.length === 0 && todaAtivaAtestada) {
-    linhas.push('   ✅ toda edge ativa foi atestada nos ticks recentes — o bundle do ledger continua no ar');
+    linhas.push('   ✅ toda edge ativa foi atestada na janela de cada uma — o bundle do ledger continua no ar');
   }
   return { linhas, achados: r.achados.length, mecanica: null };
 }

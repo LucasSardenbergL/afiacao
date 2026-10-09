@@ -54,10 +54,16 @@ inteiro (`todaAtivaAtestada = true`). O texto do ✅ ficou **idêntico** de prop
 teste negativo (`not.toContain('toda edge ativa foi atestada')`) passar por cegueira, então o controle
 positivo exige a mesma string.
 
-## O que fica em aberto
+## O que ficava em aberto — FECHADO em 2026-10-09
 
-A janela de 2 ticks é **global**, não por edge: depois de um tick manual parcial, as outras ativas ficam
-com 1 disparo na janela e, por ~2 h, o silêncio delas só pode virar AVISO — nunca `SONDA_CRON_SILENCIOSA`
-(que exige 2 ticks mudos). Não é desonestidade do resumo (1 disparo respondido É atestação), é **poder de
-detecção** reduzido num intervalo conhecido. Fica como entrega própria: janela por edge
-(`row_number() OVER (PARTITION BY edge ORDER BY enfileirado_em DESC) <= 2`).
+A janela de 2 ticks era **global**, não por edge: depois de um tick manual parcial, as outras ativas
+ficavam com 1 disparo na janela e, por ~2 h, o silêncio delas só podia virar AVISO — nunca
+`SONDA_CRON_SILENCIOSA` (que exige 2 disparos mudos). Não era desonestidade do resumo (1 disparo
+respondido É atestação), era **poder de detecção** reduzido num intervalo conhecido.
+
+Entregue como `row_number() OVER (PARTITION BY edge ORDER BY enfileirado_em DESC) <= 2`, com o TETO de
+idade que o `LIMIT` por tick dava de graça e um cabeçalho que parou de afirmar "N tick(s) recente(s)" —
+número que, com a janela por edge, não mede mais a população examinada. A narrativa, a contagem medida em
+prod (global: 14 edges com 1 disparo · por edge: 15 com 2) e a mutação que foi descartada por não poder
+pegar estão em
+[janela-global-rouba-a-vaga-de-quem-nao-participou.md](janela-global-rouba-a-vaga-de-quem-nao-participou.md).

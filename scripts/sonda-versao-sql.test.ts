@@ -2657,7 +2657,7 @@ describe('modo sonda: a fatia do mapa é a ENTRADA da edge, não o arquivo intei
     expect(msg).toMatch(/DESSINCRONIZADO/);
   });
 
-  it('todo `show` DA FATIA sai do COMMIT resolvido, e um por ARQUIVO — a main pode andar no meio', () => {
+  it('todo `show` DA EXECUÇÃO sai do COMMIT resolvido, e um por ARQUIVO — a main pode andar no meio', () => {
     // `origin/main` pode se mover entre dois `show` (um `git fetch` de outra worktree), e aí cada
     // arquivo sairia de um commit diferente: o guard aprovaria uma COMBINAÇÃO que nunca existiu
     // num commit só (ressalva do parecer Codex de 2026-09-09).
@@ -2672,16 +2672,49 @@ describe('modo sonda: a fatia do mapa é a ENTRADA da edge, não o arquivo intei
 
     const daFatia = [MAPA, VER('edge-a'), VER('edge-b')];
     const alvo = (c: string[]) => c[1].slice(c[1].indexOf(':') + 1);
-    const shows = chamadas.filter((c) => c[0] === 'show' && daFatia.includes(alvo(c)));
-    // O mapa UMA vez, apesar das DUAS projeções sobre ele — e os dois `versao.ts`.
-    expect(shows.map(alvo).sort()).toEqual([...daFatia].sort());
+    // Os DOIS leitores da ref nesta execução: a fatia do `esperado(...)` e a allowlist do relé, o
+    // guard que decide a recusa do bloco legado. O limite que esta asserção registrava (allowlist
+    // pelo NOME do ramo) fechou no #2871 — ela julgando um commit enquanto a fatia julga outro é o
+    // mesmo eixo, um guard ao lado.
+    const naExecucao = [...daFatia, kit.ARQ_ALLOWLIST];
+    const shows = chamadas.filter((c) => c[0] === 'show' && naExecucao.includes(alvo(c)));
+    // O mapa UMA vez, apesar das DUAS projeções sobre ele — os dois `versao.ts` e a allowlist.
+    expect(shows.map(alvo).sort()).toEqual([...naExecucao].sort());
     for (const c of shows) expect(c[1].split(':')[0]).toBe(SHA_DA_MAIN);
 
-    // ⚠️ LIMITE CONHECIDO, não cobertura silenciosa: o `show` da allowlist do relé (#2856) segue
-    // saindo pelo NOME do ramo, então numa execução a allowlist pode vir de um commit e as fontes
-    // de outro. É o mesmo eixo, noutro guard, e fica de fora desta entrega de propósito.
-    const foraDaFatia = chamadas.filter((c) => c[0] === 'show' && !daFatia.includes(alvo(c)));
-    expect(foraDaFatia.map(alvo)).toEqual([kit.ARQ_ALLOWLIST]);
+    // Nenhum `show` fora da conta: um leitor NOVO da ref não entra nesta execução em silêncio —
+    // ele chega aqui como vermelho, e quem o acrescentar decide de que commit ele sai.
+    const foraDaConta = chamadas.filter((c) => c[0] === 'show' && !naExecucao.includes(alvo(c)));
+    expect(foraDaConta.map(alvo)).toEqual([]);
+  });
+
+  it('UMA resolução por execução: a ref que ANDA entre os dois leitores não parte o veredito', () => {
+    // O `fetch` já é único por execução, mas `origin/main` é um ref COMPARTILHADO por todas as
+    // worktrees do repo: o fetch de OUTRA sessão move o ref no meio desta execução, e cada leitor
+    // que resolve o SEU `rev-parse` lê um commit diferente. A allowlist julgaria um commit e a
+    // fatia outro — a COMBINAÇÃO que nunca existiu do #2868, agora entre os dois guards. Um
+    // `fetch` único não alcança isto: ele impede que ESTE processo mova a ref, nunca que outro mova.
+    const raiz = fixture({ 'edge-a': 'v1.0-a' });
+    const chamadas: string[][] = [];
+    const base = gitFalso({ main: espelho(raiz, ['edge-a']), chamadas });
+    const emSequencia = ['1111111111aaaa', '2222222222bbbb', '3333333333cccc'];
+    let resolucoes = 0;
+    const refQueAnda: ExecutorGit = (args) =>
+      args[0] === 'rev-parse'
+        ? { status: 0, stdout: `${emSequencia[resolucoes++] ?? 'ffffffffffffff'}\n`, stderr: '' }
+        : base(args);
+
+    const r = rodar(raiz, ['edge-a'], refQueAnda);
+    expect(r.codigo).toBe(0);
+
+    const shows = chamadas.filter((c) => c[0] === 'show');
+    // Denominador: sem `show` nenhum o `Set` sairia VAZIO, e "nada foi lido" leria como "tudo do
+    // mesmo commit" — o `ausente ≠ zero` aplicado à própria asserção.
+    expect(shows.length).toBeGreaterThanOrEqual(2);
+    const prefixos = [...new Set(shows.map((c) => c[1].split(':')[0]))];
+    // UM commit — e o PRIMEIRO resolvido, o que o `fetch` desta execução mediu e o mesmo que o
+    // aviso de `--sem-rede` imprime. Leitor que resolve de novo cai no segundo e reprova aqui.
+    expect(prefixos).toEqual([emSequencia[0]]);
   });
 });
 

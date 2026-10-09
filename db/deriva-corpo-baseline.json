@@ -194,10 +194,10 @@
       "identidade": "boolean,timestamp with time zone,text[],date,date,integer,boolean",
       "classe": "EDICAO_MANUAL",
       "esperadaNoAceite": "20260914193000_pedido_total_liquido_acervo_mes_entre_contas.sql",
-      "motivo": "Aplicada em prod pelo ENVELOPE db/2026-10-05-pedido-total-liquido-excecao.sql (#2818, money-path, aplicação autorizada pelo founder em 2026-10-08): substituição PROGRAMÁTICA ancorada (pg_get_functiondef + replace + EXECUTE) que faz o classificador ignorar os pedidos de public.pedido_total_liquido_excecao e expõe excecoes_ativas no relatório. Não há literal do corpo em nenhum arquivo — por desenho: re-colar o corpo grande reverteria hardening posterior em silêncio. Provado em PG17 (db/test-pedido-total-liquido-excecao.sh, 21 asserts + 5 sabotagens no assert declarado) e ensaiado em prod antes do apply.",
+      "motivo": "Aplicada em prod pelo ENVELOPE db/2026-10-05-pedido-total-liquido-excecao.sql (db_aplicacoes #274, money-path, entrega do acervo #2846): troca o universo por 'pedido_total_liquido_classificar(...) z WHERE NOT EXISTS (pedido_total_liquido_excecao)', bloqueia o MÊS inteiro se QUALQUER conta do escopo tiver pendência (CTE mes_bloqueado) e acrescenta 'excecoes_ativas' ao retorno. Vive em db/, então nenhuma migration commitada o explica. Um CREATE OR REPLACE desta função a partir de supabase/migrations/ APAGA a exclusão nominal (105 pedidos em pedido_total_liquido_excecao em 2026-10-08) e a regra do mês entre contas, em silêncio — faça o pré-flight de pg_get_functiondef da PROD antes.",
       "md5": "4d88eebd9dea026346d706befca0fced",
       "md5Tokens": "d5e193d18d19c8d10b802aaf10bba8f1",
-      "desde": "2026-10-09"
+      "desde": "2026-10-08"
     }
   ]
 }
