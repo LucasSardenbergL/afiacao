@@ -55,8 +55,8 @@ export function TeamKpiTiles() {
     : data
       ? data.ativosHoje === null
         ? 'atividade indisponível'
-        : `ativos hoje · 7d: ${data.ativos7d}`
-      : 'ativos hoje';
+        : `ativos no app hoje · 7d: ${data.ativos7d}`
+      : 'ativos no app hoje';
   const escopoSub = `pedidos Omie · ${escopo}`;
   const mesSub: ReactNode = isError ? (
     'indisponível'
