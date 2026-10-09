@@ -460,7 +460,7 @@ está: troque a fatia INTEIRA e **compare o arquivo antes/depois**, abortando se
 Resíduo conhecido, registrado no próprio teste: o `show` da allowlist do relé (#2856) ainda saía pelo
 NOME do ramo — fechado no Epílogo 3.
 
-## Epílogo 3 (2026-10-08): o guard AO LADO lia pelo NOME — e o fetch único cobria METADE do eixo
+## Epílogo 3 (2026-10-08, #2871): o guard AO LADO lia pelo NOME — e o fetch único cobria METADE do eixo
 
 O resíduo que o Epílogo 2 deixou escrito no próprio teste (`expect(foraDaFatia.map(alvo))
 .toEqual([kit.ARQ_ALLOWLIST])`). Ele valia o conserto por si: a allowlist do relé não é diagnóstico,

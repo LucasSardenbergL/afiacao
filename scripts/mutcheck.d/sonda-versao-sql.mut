@@ -183,7 +183,7 @@ PEGA      | corrida deixa de comparar os bytes INTEIROS           | s/if \(antes
 # nunca existiu num commit só.
 PEGA      | `show` volta ao NOME do ramo (combinacao inexistente) | s/\['show', `\$\{sha\}:\$\{caminho\}`\]/['show', `\$\{REF_DEPLOYADA\}:\$\{caminho\}`]/
 PEGA      | cache do `show` por arquivo some (N vezes o mesmo)    | s/let r = daMain\.get\(caminho\);/let r = daMain.get(`${caminho}!`);/
-# O MESMO eixo um nível ACIMA, entre os dois GUARDS (#2870): a allowlist do relé decide a RECUSA do
+# O MESMO eixo um nível ACIMA, entre os dois GUARDS (#2871): a allowlist do relé decide a RECUSA do
 # bloco legado (POST direto na edge, que num bundle velho roda o FLUXO REAL) e a fatia decide o
 # VEREDITO. Lidas de commits diferentes, aprova-se uma combinação que nunca existiu — agora com o
 # dano nos dois sentidos (redeploy à toa de money-path, ou POST direto numa edge que já tem o relé).

@@ -551,7 +551,7 @@ export function buscarRefDeployada(semRede: boolean, git: ExecutorGit): string {
  * do `esperado(...)`. Dois fetches seriam duas MEDIÇÕES — a main pode andar entre elas, e a recusa
  * julgaria uma ref e o veredito outra — além de pagar a rede duas vezes.
  *
- * O `rev-parse` entrou em 2026-10-08 (#2870) porque o fetch único cobria METADE do eixo: ele impede
+ * O `rev-parse` entrou em 2026-10-08 (#2871) porque o fetch único cobria METADE do eixo: ele impede
  * que ESTE processo mova a ref, nunca que outro mova. `refs/remotes/origin/main` é COMPARTILHADO por
  * todas as worktrees do repo — com ~30 em paralelo, o `git fetch` de uma sessão vizinha reescreve a
  * ref no meio desta execução. Cada leitor resolvendo o seu `rev-parse` lia um commit diferente, e o
@@ -2510,7 +2510,7 @@ export interface AllowlistDoRele {
  * mesmo de que sai o resto do veredito. O `sha` chega por PARÂMETRO, e não é resolvido aqui: pedir
  * pelo NOME do ramo deixaria a allowlist vir de um commit e a fatia do `esperado(...)` de outro
  * dentro da MESMA execução — `origin/main` é ref compartilhado e o fetch de outra worktree a move
- * no meio. A recusa do bloco legado e o veredito passam a julgar um commit só (#2870).
+ * no meio. A recusa do bloco legado e o veredito passam a julgar um commit só (#2871).
  *
  * Incidente de 2026-09-10 (a classe do #2464, `docs/historico/sonda-le-worktree-defasado.md`): esta
  * lista vinha do `import` do DISCO na borda da CLI. Num worktree atrás da main, uma edge que a main

@@ -132,7 +132,7 @@ function rodar(raiz: string, argv: string[], git: ExecutorGit) {
 /**
  * Onde, na lista de chamadas, o `git show` da allowlist aconteceu (-1 = nunca).
  *
- * Casa pelo SUFIXO porque o alvo é `<sha>:<arquivo>`, nunca mais `origin/main:<arquivo>` (#2870).
+ * Casa pelo SUFIXO porque o alvo é `<sha>:<arquivo>`, nunca mais `origin/main:<arquivo>` (#2871).
  * De que commit ele sai é asserção de `sonda-versao-sql.test.ts` ("todo `show` DA EXECUÇÃO"); aqui
  * o que importa é a ORDEM — depois do fetch, e nunca quando o fetch falhou.
  */

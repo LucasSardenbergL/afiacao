@@ -2674,7 +2674,7 @@ describe('modo sonda: a fatia do mapa é a ENTRADA da edge, não o arquivo intei
     const alvo = (c: string[]) => c[1].slice(c[1].indexOf(':') + 1);
     // Os DOIS leitores da ref nesta execução: a fatia do `esperado(...)` e a allowlist do relé, o
     // guard que decide a recusa do bloco legado. O limite que esta asserção registrava (allowlist
-    // pelo NOME do ramo) fechou no #2870 — ela julgando um commit enquanto a fatia julga outro é o
+    // pelo NOME do ramo) fechou no #2871 — ela julgando um commit enquanto a fatia julga outro é o
     // mesmo eixo, um guard ao lado.
     const naExecucao = [...daFatia, kit.ARQ_ALLOWLIST];
     const shows = chamadas.filter((c) => c[0] === 'show' && naExecucao.includes(alvo(c)));
