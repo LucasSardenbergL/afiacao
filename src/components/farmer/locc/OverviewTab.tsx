@@ -30,7 +30,10 @@ export const OverviewTab = memo(({ summary, metrics, scoringCalc, recalculate, n
               <Heart className="w-4 h-4 text-primary" />
               <span className="text-xs font-semibold">Motor de Diagnóstico</span>
             </div>
-            <Button size="sm" variant="ghost" className="h-6 text-[10px]" onClick={recalculate} disabled={scoringCalc}>
+            {/* Botão icônico PRECISA de nome acessível: sem ele nem leitor de tela nem teste
+                alcançam o recálculo — `getByRole('button', { name: /Recalcular/i })` era a
+                única porta para provar o caminho de stale (último dado bom + aviso). */}
+            <Button size="sm" variant="ghost" aria-label="Recalcular" className="h-6 text-[10px]" onClick={recalculate} disabled={scoringCalc}>
               {scoringCalc ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
             </Button>
           </div>
