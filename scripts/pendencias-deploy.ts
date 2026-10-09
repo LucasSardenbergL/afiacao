@@ -424,10 +424,11 @@ ORDER BY r.id;
  * MAIS RECENTE. É o que dá TETO à espera: sem medida, "sem pergunta" descreveria para sempre tanto a
  * edge que acabou de entrar quanto a que o dispatcher parou de perguntar.
  *
- * O `greatest` com o último disparo é o que impede o alarme falso MEDIDO em prod (tick manual de
- * 2026-09-10 23:14Z, só `sonda-relay`): um tick parcial desloca o tick do cron da janela de 2, e as
- * outras 15 edges — perguntadas pelo cron 34 min antes — pareceriam esquecidas se a régua fosse só
- * `habilitado_em`. O kill switch é o avesso: o `UPDATE … SET ativo` NÃO mexe em `habilitado_em`, então
+ * O `greatest` com o último disparo é o que mede a espera pelo que de fato aconteceu com ELA, e não
+ * pela data de cadastro: `habilitado_em` sozinho faria toda edge antiga parecer esquecida. (Até
+ * 2026-10-09 havia uma segunda razão — um tick parcial deslocava o tick do cron da janela GLOBAL de 2 e
+ * as outras edges pareceriam esquecidas. Essa causa morreu com a janela por edge; a régua segue certa
+ * pela primeira.) O kill switch é o avesso: o `UPDATE … SET ativo` NÃO mexe em `habilitado_em`, então
  * uma edge recém-reativada conta a espera desde antes de ser desligada — é por isso que o teto gera
  * AVISO (que nomeia as duas causas), nunca achado.
  *

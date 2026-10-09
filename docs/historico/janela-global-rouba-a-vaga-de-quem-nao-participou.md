@@ -90,9 +90,11 @@ Duas sutilezas que só apareceram ao escrever a mutação:
 ## Como foi falsificado
 
 Contrato novo [`sonda-cron-janela-por-edge.mut`](../../scripts/mutcheck.d/sonda-cron-janela-por-edge.mut)
-(8 mutações) mais as camadas novas em `pendencias-deploy-resumo-cobertura.mut`, com baseline verde na
-MESMA invocação do harness (ele aborta se a suíte já está vermelha) e padrões perl em **ASCII de caixa
-fixa** (lição #1483), nos dois locales.
+(8 mutações) mais as camadas novas em `pendencias-deploy-resumo-cobertura.mut` (14) e o
+`sonda-cron-fora-do-exame.mut` (6) seguindo verde — **28 mutações × 2 locales (`C` e `pt_BR.UTF-8`) =
+56/56 pegas, 0 sobreviventes, 0 inválidas, `controle+ ✓` em todas**, com `baseline: ✓ verde` nas 6
+invocações do harness (ele aborta se a suíte já está vermelha) e padrões perl em **ASCII de caixa fixa**
+(lição #1483) — o único byte não-ASCII nos contratos está em RÓTULO, nunca em padrão.
 
 O RED foi dirigido ao cenário medido — cheio → parcial de 1 edge → cheio, com a vítima muda nos dois
 disparos DELA: `achados` saía `[]` e o AVISO ocupava o lugar da acusação. O **controle** na mesma
@@ -106,4 +108,9 @@ cobertura — entraram no lugar duas que pinam o TEXTO do cabeçalho.
 
 A leitura nova foi executada contra a prod via `psql-ro` (`-v ON_ERROR_STOP=1` + marcador positivo de
 fim): 32 linhas, 16 edges, `n` entre 1 e 2, **2 disparos para cada uma das 16 ativas**, e 32/32 com
-atestação pelo mesmo recorte.
+atestação pelo mesmo recorte. Na segunda passada as duas constantes foram **importadas do código** e
+rodadas byte a byte, para a prova não ser de um SQL parecido com o que ficou no repo.
+
+E o marcador positivo pagou-se na hora: uma tentativa cujo gerador falhou produziu um `.sql` **vazio**,
+e o `psql-ro` saiu **0** — ausência do marcador foi o único sinal de que nada havia executado
+([base](psql-ro-exit-zero-em-sql-que-falhou.md)).
