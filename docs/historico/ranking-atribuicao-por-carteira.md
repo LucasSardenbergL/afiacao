@@ -15,6 +15,14 @@ SQL do Apêndice A da spec, rodada na prod. O card em si é medido depois do Pub
 Pela régua nova: Regina 69,0% (332 ped.), Tatyana 27,4% (175 ped.), carteira de não-vendedor 3,7% (21 ped.) e sem
 vendedor 0%.
 
+**No ar (09/10/26).** O PR #2844 foi mergeado em 07/10 (`bd0c56e`). Depois do Publish, o bundle de `steu.lovable.app`
+passou a conter "por dono da carteira". Às 16:33 de 09/10, o Apêndice A (01–09/10, todas as contas) deu Regina
+R$ 77.058,07 (82 ped.), Tatyana R$ 31.582,55 (45 ped.), carteira de não-vendedor R$ 16.005,30 (8 ped.) e sem vendedor 0.
+O card no Master, com o escopo "todas as empresas", mostrou os mesmos valores, ao centavo. Por conta, a SQL dá: Oben,
+Regina R$ 70.472,57 (61), Tatyana R$ 22.684,51 (29) e não-vendedor R$ 5.864,30 (4); Colacor, Tatyana R$ 8.898,04 (16),
+Regina R$ 6.585,50 (21) e não-vendedor R$ 10.141,00 (4). Bytes no ar provam que a versão está disponível, não que foi
+adotada: cada cliente só passa a vê-la quando aceita a atualização do app.
+
 **Lições.**
 - `created_by` da importada é carimbo técnico, não autoria (→ `docs/agent/database.md`).
 - Comentário em edge instrumentada não é "zero deploy": o `sonda:fingerprint` faz hash dos bytes crus, e um
