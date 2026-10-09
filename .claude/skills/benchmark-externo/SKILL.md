@@ -110,6 +110,7 @@ Marque em cada PR o que o founder terá de fazer à mão (§ armadilhas do Lovab
 ### Passo 6 — Persistir e (se o founder mandar atacar) começar
 
 - **Roadmap vivo no chat** (preferência do founder) — a tabela + o programa, re-renderizados quando mudam. Não crie arquivo de roadmap compartilhado (ímã de conflito multi-worktree).
+- **Antes de atacar CADA PR do programa, procure quem já o atacou** — a fonte do benchmark é compartilhada (o founder cola o mesmo link em mais de uma sessão; um gap óbvio atrai várias). Três eixos, porque cada um é cego a um caso dos outros: `gh pr list --state all --search "<tema do PR> in:title"` (em voo ou recém-mergeado) · `git fetch && git grep <símbolo/rota> origin/main` (já entregue sob outro título) · `git log origin/main -- <arquivo que vai editar>` (concorrente com outro vocabulário). Achou → o PR vira o DIFERENCIAL sobre o vencedor, ou sai do programa. Lição medida: `docs/agent/worktrees.md` §Colisão de CÓDIGO.
 - Programa grande e aprovado → registre em `docs/historico/` ou abra spec em `docs/superpowers/specs/` (via `writing-plans`), e execute PR a PR. Ao abrir cada PR (não-draft): no app, ligue o Auto-fix (`set_monitor`); sem o app, **arme `scripts/pr-watch.sh <nº>` em background** e avise no desfecho por PushNotification (CLAUDE.md §Merge).
 
 ## Resumo do que entregar
