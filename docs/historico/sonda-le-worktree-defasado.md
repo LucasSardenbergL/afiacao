@@ -269,7 +269,8 @@ decorativo*; quem escolhe a FONTE é a borda, e é dela que o teste tem de parti
 - `DependenciasCli.allowlist` é **obrigatório no tipo**, pelo motivo que o `git` já carregava:
   opcional valia "nenhuma" (`?? []`), e um guard que some em quem esquece de passá-lo é fail-OPEN.
   O compilador cobra — e cobrou, nos 12 pontos de chamada da suíte;
-- **um `git fetch` por execução** (`umFetchPorExecucao`): a ref tem dois leitores no modo sonda (a
+- **um `git fetch` por execução** (`umFetchPorExecucao`, hoje `umaMedicaoDaRefPorExecucao` — ver o
+  Epílogo 3, que mostrou que o fetch único cobria metade): a ref tem dois leitores no modo sonda (a
   allowlist, que decide a recusa, e a fatia do `esperado(...)`), e dois fetches seriam duas MEDIÇÕES
   — a main pode andar entre elas, e a recusa julgaria uma ref enquanto o veredito julga outra;
 - a recusa vem **antes** da comparação da fatia: ela não depende do disco (o relé não lê este
@@ -456,5 +457,40 @@ A primeira medição deste epílogo deu `exit 0` onde devia dar 1, e a causa nã
 `--falsificar` que não rodou a suíte. Sabotar por amostra de UM caractere depende do valor que lá
 está: troque a fatia INTEIRA e **compare o arquivo antes/depois**, abortando se não mudou.
 
-Resíduo conhecido, registrado no próprio teste: o `show` da allowlist do relé (#2856) ainda sai pelo
-NOME do ramo.
+Resíduo conhecido, registrado no próprio teste: o `show` da allowlist do relé (#2856) ainda saía pelo
+NOME do ramo — fechado no Epílogo 3.
+
+## Epílogo 3 (2026-10-08, #2871): o guard AO LADO lia pelo NOME — e o fetch único cobria METADE do eixo
+
+O resíduo que o Epílogo 2 deixou escrito no próprio teste (`expect(foraDaFatia.map(alvo))
+.toEqual([kit.ARQ_ALLOWLIST])`). Ele valia o conserto por si: a allowlist do relé não é diagnóstico,
+é o guard que decide se o bloco LEGADO (POST direto na edge, que num bundle velho roda o FLUXO
+REAL) sai liberado — e, lida de um commit enquanto a fatia vem de outro, o dano tem as DUAS
+direções: redeploy à toa de edge money-path, ou POST direto numa edge que já tinha o caminho seguro.
+
+**O que a medição acrescentou ao pedido.** Passar o `sha` para `lerAllowlistDoRele` — o retorno de
+`buscarRefDeployada` era DESCARTADO no `main`, uma linha antes — fechou o limite registrado, e o
+teste do Epílogo 2 ficou verde. Mas o teste NOVO, que faz o `rev-parse` ANDAR entre os leitores,
+seguiu vermelho mostrando `['1111111111aaaa', '2222222222bbbb']`: `conferirSincronia` resolve o SEU
+próprio `rev-parse`, então a allowlist saía do 1º commit e a fatia do 2º. O pedido estava certo e
+era insuficiente — **a combinação inexistente mudou de endereço em vez de desaparecer**.
+
+A causa é o que `umFetchPorExecucao` prometia e não entregava: o memo do `fetch` impede que ESTE
+processo mova a ref, **nunca que outro mova**. `refs/remotes/origin/main` é COMPARTILHADO por todas
+as worktrees do repo — com ~30 em paralelo, o `git fetch` de uma sessão vizinha reescreve a ref no
+meio desta execução. O fix é o memo cobrindo também o `rev-parse` (`umaMedicaoDaRefPorExecucao`):
+**uma medição da ref por execução**, estrutural no transporte, e não disciplina de cada chamador —
+quem adicionar um terceiro leitor da ref já nasce no mesmo commit, sem precisar saber disso.
+
+**A lição que generaliza:** *invariante declarada em comentário não é invariante medida*. O comentário
+de `buscarRefDeployada` afirmava, desde 2026-09-10, que "os dois leem a mesma ref depois do mesmo
+fetch" — e o `fetch` único era prova de **uma** das duas metades. Quando o eixo é "a fonte pode se
+mover no meio", o teste tem de **MOVER a fonte**: o falso que devolve sempre o mesmo sha deixa as
+duas resoluções indistinguíveis, e qualquer número de leitores passa.
+
+**Cobertura:** o `foraDaFatia` virou `foraDaConta` com `toEqual([])` — todo `show` da execução, a
+allowlist inclusa, sai do commit resolvido, e leitor NOVO da ref chega como vermelho em vez de
+entrar em silêncio. 2 mutações no `.mut` do par (a allowlist de volta ao NOME; o `rev-parse` fora do
+memo), as duas observadas VERMELHAS antes do fix — porque foram, literalmente, os dois estados
+intermírios desta entrega. E 3 mutações do `-allowlist-ref.mut` tiveram de ser REANCORADAS: elas
+apontavam para linhas que este diff mudou, e `--seco` é o gate que pega isso em ~1s.
