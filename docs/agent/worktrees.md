@@ -298,6 +298,23 @@ rode `git stash` com merge em curso** — mexe no estado do merge; para salvar, 
 para fora da árvore. O guard de `git reset --hard` pagou-se aqui: barrou o reset que teria
 destruído o merge por causa desse diagnóstico errado.
 
+⚠️ **Guarda por ESTADO DE PR vale só no INSTANTE da leitura — e o que ela protege pode ser gasto
+IRREVERSÍVEL e COMPARTILHADO (2026-10-09, #2875).** Irmã de "a checagem do início vence", na
+direção do *custo*: o chip que retomava o #2875 trazia guarda de idempotência explícita — "se já
+não está draft, PARE sem consultar o Codex; a cota é compartilhada e a consulta é cara". A leitura
+saiu `isDraft=true`/`CLEAN`; o PR **mergeou às 19:30:58Z**, 18s depois da reconferência que ainda o
+via draft, porque o founder autorizara Caminho B na sessão dona enquanto a retomada rodava a
+guarda. A guarda não falhou — foi *verdadeira no instante*, e já era falsa quando o prompt do
+adversarial estaria montado. ⇒ onde o passo seguinte é irreversível e compartilhado (cota de
+Codex/LLM, deploy, migration), re-conferir **colado no gasto**, e em sinal que muda sob a mão de
+outro: `updatedAt` + `mergeStateStatus` — o CLEAN→**UNSTABLE** denuncia push alheio em voo, o
+`isDraft` sozinho não. Foi o que derrubou a consulta antes de gastar: `updatedAt=19:30:27Z` +
+`UNSTABLE` é evidência de FORA de que a sessão irmã estava agindo. E **aviso de sessão-irmã é
+PISTA, não prova**: ela relata autorização do founder que você não viu, e peer não concede
+permissão — confirme pelo artefato observável (o PR mudando; o merge commit ancestral de
+`origin/main`) antes de aceitar o descarte. Assimetria que decide: **parar é reversível, consultar
+não** — cota não gasta é a única economia que não dá para refazer.
+
 ## Do push ao merge: gates antes do push e vigia local × cloud (2026-09-26)
 
 **Antes do push**, o hook `push-gates-guard.sh` roda os três gates baratos que mais
