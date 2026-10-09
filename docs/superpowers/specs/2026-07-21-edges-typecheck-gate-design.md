@@ -37,9 +37,13 @@ Detectado no PR #1498: `classifyProfile` usado sem estar no import em `generate-
 
 **3. Dos 3 hosts, só 2 são novos no caminho de entrega.** `registry.npmjs.org` (2.087 dos 2.245 requests) já é usado pelo `bun install --frozen-lockfile`. Novos: `esm.sh` (135) e `deno.land` (23), ambos vindos de import legado — 34 edges em `https://deno.land/std@*/http/server.ts` (o `Deno.serve` nativo do Deno 2 substitui) e 18 em `https://esm.sh/@supabase/supabase-js@*` (tem equivalente `npm:`). Migrar zeraria os hosts novos → **follow-up**, não este PR (mexeria em ~50 edges que só deployam manualmente).
 
+> ✅ **Feito em 2026-08-07** (#1685/#1687/#1690/#1694): os dois hosts estão em **0 imports**. Sobrou `registry.npmjs.org`, que já estava no caminho de entrega. O gatilho foi o #1670 — uma PR só de documentação derrubada por um 500 do `esm.sh`. A tabela de hosts acima é a medição de 2026-07-21 e fica como registro da época.
+
 ### Dívida pré-existente: existe, mas não é a classe perigosa
 
-Os 141 erros são quase todos ruído dos tipos gerados do Supabase — `Property 'x' does not exist on type 'never'`, `@ts-expect-error` obsoleto (13), e `SupabaseClient not assignable` (17). Este último tem causa identificada: `@supabase/supabase-js` aparece em **6 versões distintas** nas edges (`npm:@2`, `@2.45.0`, `@^2`, `@^2.95.3`, `esm.sh@2`, `esm.sh@2.39.0`), então versões diferentes do tipo do client fluem para os helpers compartilhados. Código que **roda bem**.
+Os 141 erros são quase todos ruído dos tipos gerados do Supabase — `Property 'x' does not exist on type 'never'`, `@ts-expect-error` obsoleto (13), e `SupabaseClient not assignable` (17). Código que **roda bem**.
+
+> ⚠️ **Correção (2026-08-07):** este parágrafo dizia que o `SupabaseClient not assignable` tinha *"causa identificada"* — as **6 versões distintas** de `@supabase/supabase-js` fluindo para os helpers. **A hipótese foi testada e refutada.** A série #1685/#1687/#1690/#1694 consolidou o repo inteiro em `npm:@supabase/supabase-js@2` — especificador único, uma versão no grafo — e a classe `TS2345` saiu em **36, o mesmo número de antes**, com os 136 tolerados idênticos classe por classe nos quatro PRs. O espalhamento de versão custava **download**, não este erro. A causa segue **desconhecida**; quem for atacá-la comece por `bun run edges:typecheck --json`, que traz as mensagens (o resumo do gate não as guarda). Detalhe em `docs/historico/ci-testes-edge-deno.md` §Sequela (2026-08-07).
 
 A classe que de fato crasha em runtime — símbolo ou módulo que não resolve, a do #1498 — está em **zero nas 93 edges**. É isso que permite um gate sem allowlist nenhuma.
 
@@ -100,10 +104,12 @@ Apertar para check completo é o destino natural, depois que a dívida encolher.
 
 ## Follow-ups (medidos, não especulativos)
 
-1. **Consolidar `@supabase/supabase-js` numa versão** — hoje 6. Corta download e resolve 17 dos 141 erros de uma vez.
-2. **Migrar `deno.land/std/http/server.ts` → `Deno.serve`** (34 edges) e **`esm.sh/@supabase/supabase-js` → `npm:`** (18 edges). Deixa `registry.npmjs.org` como host único; o gate passa a não adicionar SPOF novo.
-3. **Zerar as 25 edges sujas** e então apertar o gate para check completo.
-4. **Versionar `deno.lock`** — reprodutibilidade + habilita chave de cache estável, caso o custo de rede vire problema.
+> O título envelheceu mal, e vale dizer por quê: o item 1 juntava uma medição (*"corta download"*) com uma **previsão** (*"resolve 17 dos 141"*) na mesma frase, sem separar as duas. Executado em 2026-08-07, a medição se confirmou e a previsão não. Previsão dentro de uma lista chamada "medidos" é lida como fato pelo próximo agente — a lição está em `docs/historico/ci-testes-edge-deno.md` §Sequela (2026-08-07).
+
+1. ~~**Consolidar `@supabase/supabase-js` numa versão** — hoje 6. Corta download e resolve 17 dos 141 erros de uma vez.~~ ✅ **feito** (#1694): repo inteiro em `npm:…@2`. Cortou download; **não** resolveu os 17 — ver a correção na §"Dívida pré-existente".
+2. ~~**Migrar `deno.land/std/http/server.ts` → `Deno.serve`** (34 edges) e **`esm.sh/@supabase/supabase-js` → `npm:`** (18 edges).~~ ✅ **feito** (#1685/#1687/#1690): os dois hosts em 0 imports, `registry.npmjs.org` como host único.
+3. **Zerar as 25 edges sujas** e então apertar o gate para check completo. Comece sabendo que consolidar versão **já foi tentado e não move o `TS2345`**.
+4. **Versionar `deno.lock`** — reprodutibilidade + habilita chave de cache estável, caso o custo de rede vire problema. **Subiu de prioridade em 2026-08-07:** com o repo inteiro em range (`@2`, não pin), o lock virou o *único* lugar que prende a versão resolvida. Atenção ao escopo real: o gate roda `--no-lock` explícito (`scripts/edges-typecheck-gate.ts`), então versionar o arquivo sozinho não tem efeito — são duas mudanças acopladas, e tirar o `--no-lock` cria um modo de falha novo (PR vermelho por lock defasado, não por código errado).
 
 ## Validação de aceite
 
