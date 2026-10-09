@@ -450,3 +450,40 @@ com um evento único de abertura teria produzido exatamente o mesmo impasse um n
 número sem como saber o que ele significa. O trabalho real não foi chamar `track()` — foi **ler o
 código e enumerar as saídas**, e descobrir que uma delas (o `error` descartado) já era um bug de
 observabilidade esperando para ser lido como veredito de produto.
+
+## Medição pós-deploy da fase 2 (#1703) — 2026-10-09
+
+A leitura no PostHog que a seção anterior pedia foi feita. Resposta: **a tela não é aberta.**
+
+**A fase 2 funcionou mecanicamente** (psql-ro). Migration aplicada (`criar_plano_tatico` contém
+`_janela_dias`); edges deployadas entre 13 e 14/08 — o degrau é visível na série diária.
+
+| | até 13/08 | desde 14/08 |
+|---|---|---|
+| planos/dia | 20–25 | 3–6 |
+| pares do mesmo cliente com < 7 dias entre si | 2.259 | **0** |
+| desfechos (`concluido` / `call_result` / `actual_margin`) | 0 | **0** (de 955 no total) |
+
+A alternância de 4 e 6 planos/dia é desenho, não farmer pulado: uma carteira tem só 10 clientes
+elegíveis (56 planos em 31 de 56 dias), esgota em ~5 dias e espera a janela liberar.
+
+**O desfecho seguiu em zero, e não é a tela** (`scripts/posthog-query.sh`, desde 14/08):
+
+- O 1 toque (#1701) **está no ar**: `plano_tatico.desfecho_clicado` e `um_toque` presentes no chunk
+  publicado `FarmerTacticalPlan-*.js` em `steu.lovable.app`.
+- **Zero** `$pageview` em rota de farmer e **zero** eventos `plano_tatico.*`.
+- Controle positivo: o PostHog está vivo — 115 pageviews de outro usuário no mesmo período
+  (rotas `/admin/reposicao/*`). O zero não é sensor morto.
+- As duas carteiras com volume real (110 e 112 planos) aparecem no PostHog em **um único dia cada**
+  (3 pageviews; 0 pageviews). A terceira (56 planos) é de quem usa o app todo dia, só na reposição.
+- Descartado: app nativo (não há Swift/Kotlin no repo). Não verificado: sessão server-side — o
+  `claude_ro` não lê o schema `auth`. Ressalva residual: bloqueador num segundo aparelho
+  (improvável: o PostHog capturou as duas carteiras nos dias em que apareceram).
+
+**Consequência:** volume (fase 2) e custo de registro (1 toque) eram problemas reais, mas não o
+gargalo. Nenhuma melhoria **na tela** move o desfecho enquanto ninguém a abre. O próximo passo é
+decisão de produto, não de código: levar o plano ao canal onde o vendedor já está (ex.: WhatsApp),
+fazer do app a ferramenta da rotina, ou pausar a geração até haver uso.
+
+**Lição:** antes de otimizar a superfície de captura, meça se a superfície é **vista**. Três
+fatias (saída da fila, volume, 1 toque) foram entregues contra um gargalo que estava um passo antes.
