@@ -394,6 +394,52 @@ export function extractObjects(sql: string): ExtractedObject[] {
 }
 
 /**
+ * Funções que uma migration REMOVE de `schema.nome`: `DROP FUNCTION`, `ALTER FUNCTION … SET SCHEMA`
+ * e `ALTER FUNCTION … RENAME TO`. Devolve as chaves `schema.nome` (minúsculas; sem schema = public).
+ *
+ * Existe porque a Seção 3 do audit não modelava remoção: função dropada de propósito por migration
+ * posterior aparecia como `❌ AUSENTE em prod` para sempre (medido 2026-10-08: 4 de 4 eram isso —
+ * `calcular_gatilhos_reposicao`, `import_tint_formulas`, `estimar_impacto_exclusao_outlier` e
+ * `carteira_visivel_para`, esta movida para `private`). Quem decide "removida" é o CHAMADOR, olhando
+ * a ordem dos arquivos; aqui só se lê o que ESTE arquivo faz.
+ *
+ * Comentário sai antes (`removerComentariosSql`): rollback comentado (`-- DROP FUNCTION x;`) não
+ * pode virar remoção — seria verde falso, o pior modo. `DROP` dentro de string de `EXECUTE` conta,
+ * porque é executado; `format('… %I', …)` vira um nome que não existe, e isso é inofensivo.
+ */
+export function funcoesRemovidas(sqlCru: string): string[] {
+  const sql = removerComentariosSql(sqlCru);
+  const chaves = new Set<string>();
+  const chave = (nomeCru: string): string | null => {
+    const limpo = nomeCru.trim().replace(/['"]/g, '');
+    if (!limpo) return null;
+    const partes = limpo.split('.');
+    const [schema, nome] = partes.length > 1 ? [partes[0], partes[1]] : ['public', partes[0]];
+    if (!/^[A-Za-z_][\w$%]*$/.test(nome)) return null;
+    return `${schema.toLowerCase()}.${nome.toLowerCase()}`;
+  };
+
+  for (const m of sql.matchAll(/\bDROP\s+FUNCTION\s+(?:IF\s+EXISTS\s+)?([\s\S]*?);/gi)) {
+    let corpo = m[1];
+    // tira as listas de argumento (inclusive aninhadas: numeric(10,2)) antes de separar por vírgula
+    for (let antes = ''; antes !== corpo; ) { antes = corpo; corpo = corpo.replace(/\([^()]*\)/g, ''); }
+    corpo = corpo.replace(/\b(CASCADE|RESTRICT)\b/gi, '');
+    for (const nome of corpo.split(',')) {
+      const k = chave(nome);
+      if (k) chaves.add(k);
+    }
+  }
+  // `[^;]*?` e não `[\s\S]*?`: preso ao PRÓPRIO statement. Atravessar `;` faria `ALTER FUNCTION f
+  // OWNER TO x;` + `ALTER TABLE t RENAME TO u;` virar "f removida" — e remoção indevida ESCONDE um
+  // ausente real da Seção 3 (verde falso). Caso no teste.
+  for (const m of sql.matchAll(/\bALTER\s+FUNCTION\s+([\w."$]+)[^;]*?\b(?:SET\s+SCHEMA|RENAME\s+TO)\b[^;]*;/gi)) {
+    const k = chave(m[1]);
+    if (k) chaves.add(k);
+  }
+  return [...chaves];
+}
+
+/**
  * Chave estável de colisão. Dois objetos com a MESMA chave em migrations diferentes = a
  * "última a rodar vence" sobrescreve a outra. Function inclui assinatura (overloads são
  * objetos distintos); trigger/policy são por-tabela; enum_value é por-enum.
