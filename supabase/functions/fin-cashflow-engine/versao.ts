@@ -29,7 +29,7 @@ export const respostaSonda = criarRespostaSonda("fin-cashflow-engine");
 // numérica), então NENHUMA canária de comportamento consegue discriminar bundle novo de velho aqui:
 // os dois produzem bytes idênticos. Sem mexer no marcador, a sonda responderia "v1.0-sensor-inicial"
 // tendo o deploy acontecido ou não — o "mente verde" da ⚠️ #2 de docs/agent/deploy.md.
-export const VERSAO = "v1.2-datas-dia-sp";
+export const VERSAO = "v1.3-tipos-client";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

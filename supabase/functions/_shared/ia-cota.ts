@@ -10,12 +10,14 @@
 // cliente entra por interface ESTRUTURAL mínima e o teste usa um duplo. Isso
 // mantém o módulo inteiro exercitável sem rede.
 
-/** O mínimo do cliente Supabase que este módulo precisa. */
+/** O mínimo do cliente Supabase que este módulo precisa. `PromiseLike`, não
+ *  `Promise`: `supabase.rpc()` devolve um builder THENABLE — com `Promise` o
+ *  client real não satisfaz a interface (TS2345 em toda edge que chama). */
 export interface ClienteRpc {
   rpc(
     nome: string,
     args: Record<string, unknown>,
-  ): Promise<{ data: unknown; error: unknown }>;
+  ): PromiseLike<{ data: unknown; error: unknown }>;
 }
 
 export type ResultadoCota =

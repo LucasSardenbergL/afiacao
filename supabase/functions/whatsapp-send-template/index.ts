@@ -3,7 +3,7 @@
 // (2) opt_out NUNCA recebe template (LGPD); (3) idempotência dedupe-first: reserva a dedupe_key
 // no banco ANTES do POST — retry legítimo só re-envia registro 'failed'.
 // Espelhos de src/lib/whatsapp/template-payload.ts e inbound.ts (Deno não importa do src/).
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
@@ -58,7 +58,7 @@ function waPhoneCandidates(input: string | null | undefined): string[] {
   return [...out];
 }
 
-type Supa = ReturnType<typeof createClient>;
+type Supa = SupabaseClient;
 
 async function matchCustomer(supabase: Supa, fromPhone: string): Promise<string | null> {
   const cands = waPhoneCandidates(fromPhone);

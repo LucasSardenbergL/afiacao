@@ -1,4 +1,4 @@
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
@@ -171,7 +171,7 @@ Deno.serve(async (req) => {
       return data.access_token;
     }
 
-    async function saveTokens(sb: ReturnType<typeof createClient>, tokenResp: { expires_in?: number; access_token: string; refresh_token?: string }) {
+    async function saveTokens(sb: SupabaseClient, tokenResp: { expires_in?: number; access_token: string; refresh_token?: string }) {
       const expiresAt = Date.now() + (tokenResp.expires_in || 86400) * 1000;
 
       const upsert = async (key: string, value: string) => {

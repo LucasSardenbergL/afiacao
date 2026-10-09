@@ -908,3 +908,71 @@ Ao mexer em edge, o mínimo passa a ser:
 bun run test:edges && bun run edges:sintaxe && bun run edges:typecheck && heavy bun run test \
   && bun run sonda:fingerprint && bun run sonda:bump <edge>
 ```
+
+# Sequela (2026-10-09): a causa do `SupabaseClient not assignable` era ANOTAÇÃO, não versão
+
+A sequela de 2026-08-07 refutou a hipótese das "6 versões" e deixou a causa como **desconhecida**.
+Medida agora com `edges:typecheck --json`, agrupando o `TS2345` pelo TIPO-ALVO da mensagem (não pelo
+arquivo), as 19 ocorrências de client caíram em **duas** anotações de fronteira:
+
+| Família | Alvo na mensagem | Causa | Ocorrências |
+|---|---|---|---|
+| B | `SupabaseClient<unknown, { PostgrestVersion: string }, never, never, …>` | parâmetro anotado `ReturnType<typeof createClient>` — sem argumento de tipo, o `ReturnType` instancia os genéricos de `createClient` com os defaults `unknown`/`never`, que não aceitam o client real `SupabaseClient<any, "public", …>` | 14 (10 edges) |
+| A | `ClienteRpc` | interface estrutural de `_shared/ia-cota.ts` exigia `Promise`; `.rpc()` devolve um builder **thenable** (`PromiseLike`) | 5 |
+
+Provado num arquivo-sonda descartável antes de editar: controles (`ReturnType`, `Promise`) VERMELHOS,
+hipóteses (`SupabaseClient`, `PromiseLike`) VERDES, na mesma invocação do `deno check`.
+
+**Por que a versão nunca moveria isto:** com uma versão só, o `ReturnType` continua produzindo os
+defaults vazios — o erro é da anotação, não do grafo. E **3 edges já tinham descoberto e corrigido
+isto localmente** (`calculate-scores`, `omie-sync-status-produtos`, `whatsapp-inbound` têm comentário
+explicando o idioma `SupabaseClient`) — a correção nunca se espalhou porque o resumo do gate não guarda
+mensagens, e sem mensagem não há como ver que 14 erros são o mesmo.
+
+## Números (medidos 2026-10-09, base `cbd6a2bd0`, PR #2891)
+
+- Tolerados **101 → 79**. Sumiram 25 (`TS2345` −19 · `TS2353` −5 · `TS2561` −1 — as duas últimas em
+  cascata: com o client tipado `<unknown,never>`, `.insert/.update` recebiam `never`) e foram
+  **revelados 3** (ver abaixo). Por classe: `TS2345` 38→22 · `TS2353` 7→2 · `TS2561` 1→0 · resto igual.
+- A correção tornou **2 `@ts-expect-error` obsoletos** (`fin-cashflow-engine`, `fin_alertas.update`/
+  `.dismiss` — o do `.insert` segue necessário): `TS2578` subiu 13→15 e voltou a 13 ao removê-los.
+  Corrigir tipo **revela** expect-error morto — conte o `TS2578` no depois, não só a classe-alvo.
+- **Runtime byte-idêntico:** `bun build --no-bundle` dos 8 arquivos antes/depois, `cmp` 8/8 iguais
+  (5 edges money-path: `fin-cashflow-engine`, `fin-funding`, `omie-financeiro`, `omie-sync-metadados`,
+  `recommend`). Sem PR separado de comportamento e sem mutirão de redeploy.
+
+## Corrigir um erro REVELA o que ele escondia — compare por MENSAGEM, não por linha
+
+Em `recommend` (linhas 571/576/583) o `TS2345` do 1º argumento (o client) mascarava o do 2º/3º:
+`customer_id`/`product_id` saem do corpo da requisição como `unknown` e entram em parâmetros `string`
+sem validação. Tipado o client, 3 erros **novos** aparecem — reais, não ruído. Minha 1ª comparação
+antes×depois era por `arquivo:linha` e **não viu** a troca: a linha seguia com erro, só que outro.
+⇒ diff de dívida de tipo se faz por **(código, arquivo, mensagem)**, e o delta publicado separa
+"sumiram" de "revelados". Corrigi-los é validar input = mudança de comportamento em edge money-path ⇒
+PR separado, não aqui.
+
+## O SÉTIMO gate de edge: `sonda:nova` — e o preço de não instrumentar
+
+O CI reprovou o #2891 em `sonda:nova` (step "edge NOVA declara se é instrumentada ou dispensada"),
+que a bateria local não rodou porque a lista "seis gates" não o inclui: edge **sem `versao.ts`** cujo
+corpo a fatia altera precisa instrumentar OU entrar em `DISPENSAS` com `porque` assinado. Três das 10
+edges não tinham marcador (`fin-regime-tributario`, `scoring-recalc-client`,
+`visit-score-recalc-client`). O próprio gate diz que, sem dispensa honesta, a saída é instrumentar —
+mas instrumentar acrescenta resposta de sonda (diff de RUNTIME, e `fin-regime-tributario` é
+money-path). Decisão: **tirar as 3 do PR** e manter a fatia puro-tipo. Custo: os 4 `TS2345` de
+`scoring-`/`visit-score-recalc-client` ficam; instrumentar + corrigir é fatia própria.
+⇒ Ao mexer em edge, rode também `bun run sonda:nova` — e escolha as edges da fatia sabendo que
+tocar uma edge sem marcador obriga a decidir a instrumentação dela.
+
+## O que sobra (22 `TS2345`)
+
+Medido no `--json` final: `scoring-recalc-client` ×3 e `visit-score-recalc-client` ×2 (mesma causa B
++ um `never`; esperam a instrumentação), `recommend` ×4 (os 3 revelados + `Candidate`),
+`omie-nfe-webhook` ×4 (`{}` → `string`), `analyze-unified-order` ×3 (`string | undefined`),
+`omie-analytics-sync` ×3 (`string` → `OmieAccount`), `enviar-pedido-portal-sayerlack`,
+`process-recurring-orders`, `mcp` (auto-gerado, fora). Vários em money-path — um por um, com o rigor
+de `docs/agent/money-path.md`.
+
+**Lição transferível:** dívida de tipo se agrupa pelo **tipo-alvo da mensagem**, não pelo código de
+erro nem pelo arquivo — 19 erros em 10 edges eram DUAS linhas de anotação repetidas. Gate que resume
+por código esconde exatamente esse agrupamento; o `--json` existe para isso.
