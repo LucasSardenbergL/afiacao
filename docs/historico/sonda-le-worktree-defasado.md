@@ -492,5 +492,36 @@ duas resoluções indistinguíveis, e qualquer número de leitores passa.
 allowlist inclusa, sai do commit resolvido, e leitor NOVO da ref chega como vermelho em vez de
 entrar em silêncio. 2 mutações no `.mut` do par (a allowlist de volta ao NOME; o `rev-parse` fora do
 memo), as duas observadas VERMELHAS antes do fix — porque foram, literalmente, os dois estados
-intermírios desta entrega. E 3 mutações do `-allowlist-ref.mut` tiveram de ser REANCORADAS: elas
+intermediários desta entrega. E 3 mutações do `-allowlist-ref.mut` tiveram de ser REANCORADAS: elas
 apontavam para linhas que este diff mudou, e `--seco` é o gate que pega isso em ~1s.
+
+### A reancoragem que AFROUXOU o predicado (regressão medida, #2878)
+
+O `--seco` aprovou as 3 mutações reancoradas — e **uma delas deixou de ser PEGA**. Quem mediu foi o
+`mutation-check` do CI: `ref lida do HEAD (a copia commitada do disco) ⚠ SOBREVIVE ← DIVERGE`,
+`controle+ ✗ (16/17)`, e a main ficou vermelha até o #2878.
+
+A causa foi o helper `indiceDoShowDaAllowlist`. Ele casava o alvo por IGUALDADE
+(`origin/main:<arq>`); como o alvo passou a ser `<sha>:<arq>`, trocaram-no por
+`endsWith(':<arq>')` — que casa `HEAD:<arq>` também. Com o `git` fabricado respondendo a QUALQUER
+prefixo, a mutação lia a allowlist do HEAD e **nada** ficava vermelho.
+
+Três lições, nenhuma sobre a sonda:
+
+1. **`--seco` e `mutation-check` medem coisas DIFERENTES, e o barato não cobre o caro.** "Cirúrgico"
+   (casa, e casa UMA linha) não é "PEGO". Reancorar padrão depois de refactor é exatamente a hora
+   em que o par precisa da rodada CHEIA — e o `--seco` verde deu a sensação de validação completa,
+   com o `sumário: ... 0 problema(s)` ao lado da frase "cobertura NÃO medida".
+2. **Trocar igualdade por `endsWith`/`includes` é AFROUXAR o predicado, não reancorar.** O que mudou
+   era justamente o PREFIXO; o conserto honesto é ancorar no prefixo NOVO (o sha que o falso
+   resolve), nunca deixar de olhar para ele. Irmã da regra do `word-split-guard` (#2864): o
+   predicado tem de casar a COISA que mudou.
+3. **O fail-OPEN morava no FALSO — e é lá que o #2878 consertou.** Um `git` fabricado que responde a
+   qualquer `<ref>:` responde também às refs ERRADAS, e com ele TODA mutação de proveniência
+   sobrevive: falso permissivo é **teto de cobertura**, que nenhum teste do arquivo consegue furar.
+   O espelho passou a responder só a `${SHA_DA_MAIN}:`, e ler de outra ref cai no "não existe".
+
+E o desfecho que fecha o laço: o auto-merge mergeou **45 s ANTES** de o `mutation-check` terminar
+(02:45:29 × 02:46:14). O gate que pegaria isso existia e rodou — só não é requerido para o merge.
+Quem mexe em `.mut` não pode ler "o PR mergeou" como "os contratos de mutação passaram": são
+eventos independentes, e o segundo chega depois.
