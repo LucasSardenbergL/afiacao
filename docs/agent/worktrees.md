@@ -457,12 +457,6 @@ fato** (hoje: o laço do `test:hooks` no `package.json`); decida caso a caso:
 
 ## MCPs enxutas
 
-`.claude/settings.json` (comitado, **project > user**) desabilita 11 plugins sem uso no dev TS (adobe/mercadopago/sentry/slack/telegram/airtable/zapier/github/posthog/chrome-devtools/serena) + `disableClaudeAiConnectors: true`. **Mantidos:** superpowers/claude-mem/claude-md-management/context7.
+`.claude/settings.json` (comitado, **project > user**) desabilita 11 plugins sem uso no dev TS (adobe/mercadopago/sentry/slack/telegram/airtable/zapier/github/posthog/chrome-devtools/serena) — **isso funciona** (medido: nas 126 sessões do afiação de 7 dias, serena aparece em 2 e chrome-devtools em 0, contra context7 habilitado em 104). **Mantidos:** superpowers/claude-mem/claude-md-management/context7.
 
-⚠️ **`ENABLE_CLAUDEAI_MCP_SERVERS=false` era INERTE** (chave inventada, não existe no schema) — ficou 
-no arquivo parecendo que desligava os connectors da conta claude.ai enquanto Gmail/Calendar/Drive 
-carregavam em toda sessão do app. O switch certo é a chave de topo `disableClaudeAiConnectors`. 
-Falha SILENCIOSA e invisível ao CLI: `scripts/piso-contexto.sh` **não reproduz** isto — o CLI nunca 
-carrega connector da conta, então a sonda dá delta zero com ou sem o fix. Evidência tem que vir de 
-sessão NOVA do app (a lista de tools não pode mais ter servidor `mcp__<uuid>__*`) ou do 
-`tokens-report.sh`. Uso medido dos 3 connectors em 48 dias: **zero chamadas**. Religar pontual em `.claude/settings.local.json` (gitignored, precedência maior) + `/reload-plugins`. ⚠️ Desabilitar o **plugin** mata MCP **+ skills + hooks** dele. Worktrees criados via `bun run wt` (de `origin/main`) já nascem enxutos.
+⚠️ **Connectors da CONTA claude.ai (Gmail, Drive, Calendar, Higgsfield, Lovable…) NÃO se desligam pelo repo.** Duas chaves já foram tentadas e as duas são INERTES no app desktop: `ENABLE_CLAUDEAI_MCP_SERVERS=false` (inventada) e `disableClaudeAiConnectors: true` (existe no schema, mas o app ignora — #1666 a aplicou como "o switch certo" sem prova positiva). Medido em 2026-10-09: com a chave na main, **112/126** sessões do afiação ainda carregavam o Gmail e **94/126** o Higgsfield (123 tools), enquanto os plugins desabilitados no MESMO arquivo sumiam — então o settings carrega; é a chave que é ignorada. No app, connector é **por sessão** e se desliga na UI (Configurações → Connectors), não aqui. A sonda `scripts/piso-contexto.sh` não serve de prova: o CLI nunca carrega connector de conta. Prova vale só de sessão que NASCEU no repo (uma sessão que muda de diretório no meio não relê o settings do projeto). Religar pontual em `.claude/settings.local.json` (gitignored, precedência maior) + `/reload-plugins`. ⚠️ Desabilitar o **plugin** mata MCP **+ skills + hooks** dele. Worktrees criados via `bun run wt` (de `origin/main`) já nascem enxutos.
