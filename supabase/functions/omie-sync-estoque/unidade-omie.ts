@@ -98,7 +98,7 @@ export function convPendentePorSku(linhas: readonly LinhaEquivalencia[]): ConvPe
   return { conv, problemas };
 }
 
-export const PREFIXO_PO_DO_APP = "AFI-";
+const PREFIXO_PO_DO_APP = "AFI-";
 
 /** O conv que vale para os itens DESTE PO: o do SKU se o PO é do app (carimbo AFI-), nenhum se não é. */
 export function convDaOrigem(
