@@ -56,6 +56,18 @@
 - ⚠️ **Este harness esteve MORTO e SILENCIOSO** entre o re-dump do snapshot (#1509) e 2026-07-21: morria em `cannot drop columns from view` **antes do primeiro assert**, porque o snapshot passou a trazer a view pronta e a Fase 2 (12 colunas) não consegue encolhê-la. A canônica levou o conserto no #1523; aqui passou batido, e como `db/test-*.sh` **não roda no CI** nada acusou — a prova da fronteira que todo pedido tint cruza não protegia nada. Consertado com `DROP VIEW` antes da cadeia **e** com a cadeia da view aplicada INTEIRA (faltavam o fix semântico e a allowlist: o gate era testado contra uma versão antiga da view que ele lê). Modo de falha a vigiar: arquivo de teste que existe, parece proteger, e não executa.
 - **Follow-ups conhecidos (calibrados, não furos novos):** drift local×Omie na edição (o `alterar_pedido` SEMPRE re-enviou o local por cima do Omie, para qualquer item — reconciliação é fase própria); janela TOCTOU residual de ~1-2s entre o gate e o `IncluirPedido` (era 5min de cache); carimbo de validação server-side no jsonb; cap comercial de desconto (0–99,99% livre é comportamento pré-existente da UI); **duplicação da subquery do `preco_csv_legado` na view** (aparece 2× — coluna 13 e teste de NULL da 14ª — achado (2) do challenge de 2026-07-21: o guard contra drift é o invariante I1, que só observa NULIDADE; um `LATERAL` único elimina o risco estruturalmente, e agora é migration NOVA porque a `20260726160000` já está aplicada).
 
+## Adoção do balcão — o sensor é o PEDIDO, não o PostHog
+
+O fluxo do app (canônica → `get_tint_prices` → `tint_gate_revalida`) só protege o que passa por ele. **Medição 2026-10-10: 171 pedidos com cor nos 90d, 0 com fórmula do app** (6 na vida toda, último 2026-04-22) — o balcão digita a cor no Omie e o `omie-vendas-sync` só parseia o texto da observação. O founder decidiu (2026-10-10) que o balcão **vai** vender pelo app. Sinal decisório = query no banco (o PostHog via 1 usuário em 30d — parque em build sem instrumentação, ver `analytics.md`):
+
+```sql
+SELECT count(*) FILTER (WHERE items::text LIKE '%tint_nome_cor%')   AS pedidos_com_cor,
+       count(*) FILTER (WHERE items::text LIKE '%tint_formula_id%') AS pelo_app
+FROM sales_orders WHERE created_at > now() - interval '30 days';
+```
+
+Funil (censurável, só pra achar ONDE trava — `useTintColorSelect.ts`/`TintColorSelectDialog.tsx`): `tint.seletor_aberto` · `tint.base_nao_configurada` · `tint.falha_leitura` · `tint.cor_nao_encontrada_na_base` · `tint.sem_preco{motivo}` · `tint.cor_confirmada{fonte,alternativa,com_desconto}`. **Falha de leitura ≠ "não existe"**: o seletor mostra "não consegui carregar" + "tentar de novo" — antes, erro de rede no SKU virava "esta base não está configurada" e mandava a vendedora de volta pro Omie.
+
 ## Regra de ouro
 
 Fórmula ativa com preço mas **0 corantes NÃO é catálogo legítimo** (base pura) — é receita perdida. Prova barata: `volume_final_ml − vol_embalagem` da fórmula vazia bate com a soma dos corantes da gêmea com receita. Cores como PRETA/AMARELO/PANTONE com 0 corante são fisicamente impossíveis. Precisão > recall: **não apagar/desativar em massa sem o founder** — 465k linhas de catálogo, irreversível na prática; a remediação é o programa em `docs/superpowers/plans/2026-07-17-tint-receita-perdida-remediacao.md`.

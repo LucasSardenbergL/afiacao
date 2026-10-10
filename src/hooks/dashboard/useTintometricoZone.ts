@@ -70,9 +70,11 @@ export function useTintometricoZone() {
           .order('created_at', { ascending: false })
           .limit(3),
       ]);
-      for (const r of [formulasRes, skusTotalRes, skusMappedRes, impRes, errsRes]) {
-        if (r.error) throw r.error;
-      }
+      if (formulasRes.error) throw formulasRes.error;
+      if (skusTotalRes.error) throw skusTotalRes.error;
+      if (skusMappedRes.error) throw skusMappedRes.error;
+      if (impRes.error) throw impRes.error;
+      if (errsRes.error) throw errsRes.error;
       if (formulasRes.count == null || skusTotalRes.count == null || skusMappedRes.count == null) {
         throw new Error('tintometrico: contagem exata não veio do PostgREST');
       }
