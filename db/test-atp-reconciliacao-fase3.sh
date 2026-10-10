@@ -6,6 +6,8 @@
 # ║  + FASE 3.1: 20261009120000_atp_fase3_1_elo_pid.sql, aplicada POR CIMA — as     ║
 # ║    zonas 4-8 re-exercem a fase 3 sob as funções que a 3.1 recria (versão        ║
 # ║    coberta = versão entregue) e a ZONA 9 prova o elo que sobrevive ao DELETE.   ║
+# ║  + FASE 3.2: 20261009233000_atp_fase3_2_corretiva.sql, também na zona 2 — tudo  ║
+# ║    roda sob os corpos da 3.2; a ZONA 10 prova as correções do Codex retroativo. ║
 # ║                                                                                ║
 # ║  Invariante CENTRAL:                                                           ║
 # ║   • reserva de PV FIRME (pedido com omie_pedido_id) não morre por relógio —     ║
@@ -167,7 +169,13 @@ MIG31="$REPO_ROOT/supabase/migrations/20261009120000_atp_fase3_1_elo_pid.sql"
 P -q -f "$MIG1"; P -q -f "$MIG11"; P -q -f "$MIG2"; P -q -f "$MIG3"
 # a 3.1 vai em UMA transação, como o BEGIN; … COMMIT; do bloco do SQL Editor (a TRAVA só vale assim)
 P -q -1 -f "$MIG31"
-echo "migrations aplicadas: fase1 + fase1.1 + fase2 + fase3 + fase3.1"
+# Os corpos da 3.1 das 3 funções que a 3.2 recria ficam guardados: a zona 9
+# precisa voltar o banco ao ESTADO 3.1 para re-aplicar a 3.1 (E20/P1/P2) —
+# com a 3.2 por cima, a PRE da 3.1 aborta, e é exatamente o que a ZONA 10 (P3) prova.
+P -q -c "CREATE TABLE public._harness_defs31 AS SELECT pg_get_functiondef(p.oid) AS def FROM pg_proc p WHERE p.oid IN (to_regprocedure('public.reservar_estoque(text,uuid,jsonb,integer)'), to_regprocedure('public.liberar_reserva_checkout(uuid,text,text)'), to_regprocedure('public.atp_reservas_pendentes(integer)'))"
+MIG32="$REPO_ROOT/supabase/migrations/20261009233000_atp_fase3_2_corretiva.sql"
+P -q -1 -f "$MIG32"
+echo "migrations aplicadas: fase1 + fase1.1 + fase2 + fase3 + fase3.1 + fase3.2"
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ZONA 3 — SEEDS
@@ -791,6 +799,9 @@ eq "E19 sem lock livre, nada gravado" "$(par "$CK_E5")" "NULL/NULL"
 
 # ── E20 — re-aplicar a migration é IDEMPOTENTE e o BACKFILL dá o par a quem
 #    já tinha PV pelo vínculo (o seed da fase 3: 3001 → push com PID 9001)
+# E20/P1/P2 re-aplicam a 3.1 ⇒ o banco volta ao ESTADO 3.1 (o da prod antes da 3.2)
+# e a 3.2 é re-aplicada no fim de P2 — a transição real, provada de quebra.
+P -q -c "DO \$\$ DECLARE d text; BEGIN FOR d IN SELECT def FROM public._harness_defs31 LOOP EXECUTE d; END LOOP; END \$\$;"
 eq "E20 antes do re-apply, a reserva legada nao tem par" "$(par "$CK_VIVO")" "NULL/NULL"
 if P -q -1 -f "$MIG31" >/dev/null 2>&1; then ok "E20 re-aplicar a 3.1 nao quebra (idempotente)"
 else bad "E20 re-aplicar a 3.1 FALHOU"; fi
@@ -831,6 +842,103 @@ P -q -c "DROP TABLE public._harness_p2"
 eq "P2 restaurado: o corpo vivo voltou a ser o desta migration" \
    "$(Pq -c "SELECT md5(prosrc) FROM pg_proc WHERE oid = 'private.atp_disponivel(text,bigint,uuid)'::regprocedure")" "af3d5d4d97c4a47977c030daab87c385"
 
+# volta ao estado entregue: a 3.2 por cima do estado 3.1 (a transição que a prod faz)
+md5_32() { Pq -c "SELECT string_agg(md5(p.prosrc||'|'||p.prosecdef::text||'|'||p.provolatile::text||'|'||coalesce(p.proconfig::text,'')), ',' ORDER BY p.oid::regprocedure::text DESC) FROM pg_proc p WHERE p.oid IN (to_regprocedure('public.reservar_estoque(text,uuid,jsonb,integer)'), to_regprocedure('public.liberar_reserva_checkout(uuid,text,text)'), to_regprocedure('public.atp_reservas_pendentes(integer)'))"; }
+if P -q -1 -f "$MIG32" >/dev/null 2>&1; then ok "T1 a 3.2 aplica sobre o estado 3.1 (a transicao da prod)"
+else bad "T1 a 3.2 NAO aplicou sobre o estado 3.1"; fi
+eq "T1 os 3 corpos vivos sao os da 3.2 (corpo+atributos)" "$(md5_32)" "5fe65f8bb3f4c0cc9c0c77a09cbdca86,551e21229425a71a1ea0c2a6b2d36ce0,6f44d06f8fd0888a12a6d33b950c83e0"
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ZONA 10 — FASE 3.2: as correções do challenge Codex RETROATIVO da 3.1
+#  #2 a reserva FIRME não sai por substituição nem por liberar_reserva_checkout
+#  #5 o sinal da fila só se pronuncia sobre saldo que o ATP aceita e canônica faturada
+#  #6 o CHECK do par recusa conta com PID nulo
+#  #7 re-aplicar a 3.1 por cima da 3.2 ABORTA (não regride em silêncio)
+#  SKUs 3201-3204, um cenário por SKU.
+# ══════════════════════════════════════════════════════════════════════════════
+echo "-- fase 3.2: correcoes do Codex retroativo --"
+
+SO_K1='e3200000-0000-0000-0000-000000000001'   # firme LEGADO (PID só no vínculo)
+SO_K2='e3200000-0000-0000-0000-000000000002'   # pré-PV (controle da substituição)
+SO_K3='e3200000-0000-0000-0000-000000000003'   # firme pelo PAR (atp_confirmar_pv)
+SO_K4='e3200000-0000-0000-0000-000000000004'   # pré-PV (controle do liberar)
+CK_K1='c3200000-0000-0000-0000-000000000001'
+CK_K2='c3200000-0000-0000-0000-000000000002'
+CK_K3='c3200000-0000-0000-0000-000000000003'
+CK_K4='c3200000-0000-0000-0000-000000000004'
+P -q <<SQL
+INSERT INTO public.inventory_position (omie_codigo_produto, account, saldo, synced_at)
+SELECT s, a, 10, now() FROM unnest(ARRAY[3201,3202,3203,3204]) s, unnest(ARRAY['oben','vendas']) a;
+INSERT INTO public.sales_orders (id, checkout_id, account, items, omie_pedido_id, status, hash_payload, origem) VALUES
+  ('$SO_K1','$CK_K1','oben','[{"omie_codigo_produto":3201,"quantidade":2}]',9201,'enviado',NULL,'web_staff'),
+  ('$SO_K2','$CK_K2','oben','[{"omie_codigo_produto":3202,"quantidade":2}]',NULL,'rascunho',NULL,'web_staff'),
+  ('$SO_K3','$CK_K3','oben','[{"omie_codigo_produto":3203,"quantidade":2}]',NULL,'rascunho',NULL,'web_staff'),
+  ('$SO_K4','$CK_K4','oben','[{"omie_codigo_produto":3204,"quantidade":2}]',NULL,'rascunho',NULL,'web_staff');
+SQL
+seed_reserva 3201 2 "$CK_K1" "$SO_K1"
+seed_reserva 3202 2 "$CK_K2" "$SO_K2"
+seed_reserva 3203 2 "$CK_K3" "$SO_K3"
+seed_reserva 3204 2 "$CK_K4" "$SO_K4"
+confirmar "$SO_K3" oben 9203 >/dev/null
+eq "K0 setup: K3 firme pelo par, K1 firme so pelo vinculo" "$(par "$CK_K3")|$(par "$CK_K1")" "oben/9203|NULL/NULL"
+
+reservar_como_staff() { # $1=checkout $2=sku $3=qtd — corpo para sqlstate_de
+  printf "PERFORM set_config('test.uid','%s',true); PERFORM set_config('test.role','authenticated',true);\nPERFORM public.reservar_estoque('oben','%s'::uuid, jsonb_build_array(jsonb_build_object('omie_codigo_produto',%s,'quantidade',%s)));" "$STAFF" "$1" "$2" "$3"
+}
+liberar_como_staff() { # $1=checkout
+  Pq -q <<SQL
+SET test.uid='$STAFF'; SET test.role='authenticated';
+SELECT (r->>'liberadas')||'/'||(r->>'preservadas_firmes') FROM (SELECT public.liberar_reserva_checkout('$1'::uuid) AS r) x;
+SQL
+}
+
+# ── R1-R3 — a substituição do reservar_estoque ──
+V=$(reservar_como_staff "$CK_K3" 3203 1 | sqlstate_de invalid_parameter_value)
+case "$V" in *SENTINELA_VEIO_O_ESPERADO*) ok "R1 substituir reserva firme pelo PAR -> 22023";; *) bad "R1 a substituicao soltou a reserva firme pelo par: $V";; esac
+eq "R1 e a firme segue ativa e descontando" "$(st "$CK_K3")/$(reservado 3203)" "ativa/2"
+V=$(reservar_como_staff "$CK_K1" 3201 1 | sqlstate_de invalid_parameter_value)
+case "$V" in *SENTINELA_VEIO_O_ESPERADO*) ok "R2 substituir reserva firme LEGADA (vinculo) -> 22023";; *) bad "R2 a substituicao soltou a reserva firme legada: $V";; esac
+eq "R2 e a legada segue ativa e descontando" "$(st "$CK_K1")/$(reservado 3201)" "ativa/2"
+V=$(reservar_como_staff "$CK_K2" 3202 3 | sqlstate_de invalid_parameter_value)
+case "$V" in *SENTINELA_NADA_LANCOU*) ok "R3 controle: checkout PRE-PV segue substituivel";; *) bad "R3 a guarda pegou checkout sem PV: $V";; esac
+eq "R3 a substituicao trocou 2 por 3" "$(reservado 3202)" "3"
+
+# ── L1-L2 — o liberar_reserva_checkout ──
+eq "L1 liberar checkout firme pelo PAR: 0 liberadas / 1 preservada" "$(liberar_como_staff "$CK_K3")" "0/1"
+eq "L1 e a firme segue ativa" "$(st "$CK_K3")" "ativa"
+eq "L1 liberar checkout firme LEGADO: 0 liberadas / 1 preservada" "$(liberar_como_staff "$CK_K1")" "0/1"
+eq "L2 controle: checkout PRE-PV e liberado" "$(liberar_como_staff "$CK_K4")" "1/0"
+eq "L2 e a reserva dele saiu de ativa" "$(st "$CK_K4")" "liberada"
+
+# ── C1 — o CHECK do par recusa conta com PID nulo (o trigger deixa: OLD sem PID) ──
+V=$(sqlstate_de check_violation <<SQL
+UPDATE public.estoque_reservas SET omie_account = 'oben' WHERE checkout_id = '$CK_K4';
+SQL
+)
+case "$V" in *SENTINELA_VEIO_O_ESPERADO*) ok "C1 conta preenchida com PID nulo -> 23514";; *) bad "C1 o CHECK aceitou conta sem PID: $V";; esac
+
+# ── S4-S5 — o sinal da fila (a reserva de 3102 estava true no S3) ──
+P -q -c "UPDATE public.inventory_position SET saldo = 9 WHERE omie_codigo_produto = 3102 AND account = 'vendas'"
+eq "S4 contas do pool divergentes (o ATP recusa o SKU): o sinal vira NULL" "$(sinal "$CK_E2")" "NULL"
+P -q -c "UPDATE public.inventory_position SET saldo = 10 WHERE omie_codigo_produto = 3102 AND account = 'vendas'"
+eq "S4 controle: contas concordando, o sinal volta a true" "$(sinal "$CK_E2")" "true"
+P -q -c "UPDATE public.sales_orders SET status = 'importado' WHERE hash_payload = 'omie_oben_9102'"
+eq "S5 canonica regrediu (carimbo ainda velho): o sinal vira NULL" "$(sinal "$CK_E2")" "NULL"
+P -q -c "UPDATE public.sales_orders SET status = 'faturado' WHERE hash_payload = 'omie_oben_9102'"
+
+# ── P3-P4 — re-aplicar (#7) ──
+if P -q -1 -f "$MIG31" >/dev/null 2>&1; then bad "P3 re-aplicar a 3.1 por cima da 3.2 PASSOU (regressao silenciosa)"
+else ok "P3 re-aplicar a 3.1 por cima da 3.2 ABORTA na PRE"; fi
+eq "P3 e os corpos da 3.2 sobreviveram" "$(md5_32)" "5fe65f8bb3f4c0cc9c0c77a09cbdca86,551e21229425a71a1ea0c2a6b2d36ce0,6f44d06f8fd0888a12a6d33b950c83e0"
+if P -q -1 -f "$MIG32" >/dev/null 2>&1; then ok "P4 re-aplicar a 3.2 e idempotente"
+else bad "P4 re-aplicar a 3.2 FALHOU"; fi
+# P5 — o atributo agora conta: SECURITY INVOKER no reservar (corpo igual) e a PRE recusa
+P -q -c "ALTER FUNCTION public.reservar_estoque(text,uuid,jsonb,integer) SECURITY INVOKER"
+if P -q -1 -f "$MIG32" >/dev/null 2>&1; then bad "P5 a PRE ignorou o atributo trocado (SECURITY INVOKER)"
+else ok "P5 atributo trocado com corpo igual: a PRE da 3.2 ABORTA"; fi
+P -q -c "ALTER FUNCTION public.reservar_estoque(text,uuid,jsonb,integer) SECURITY DEFINER"
+eq "P5 restaurado" "$(md5_32)" "5fe65f8bb3f4c0cc9c0c77a09cbdca86,551e21229425a71a1ea0c2a6b2d36ce0,6f44d06f8fd0888a12a6d33b950c83e0"
+
 # ══════════════════════════════════════════════════════════════════════════════
 # ZONA 8 — O VALIDADOR PÓS-APPLY TAMBÉM É CÓDIGO, E TAMBÉM MENTE
 # (money-path §"O VALIDADOR mente": o script que o founder cola no SQL Editor
@@ -847,8 +955,10 @@ eq "Z1 validador da o veredito APLICADA" \
    "$(printf '%s' "$VAL" | command grep -c 'FASE 3 APLICADA' || true)" "1"
 eq "Z1 validador da o veredito da 3.1 APLICADA" \
    "$(printf '%s' "$VAL" | command grep -c 'FASE 3.1 APLICADA' || true)" "1"
-eq "Z1 validador tem os 42 checks (3 + 3.1)" \
-   "$(printf '%s' "$VAL" | command grep -cE '^[0-9]+\|(OK|FALHOU)' || true)" "42"
+eq "Z1 validador da o veredito da 3.2 APLICADA" \
+   "$(printf '%s' "$VAL" | command grep -c 'FASE 3.2 APLICADA' || true)" "1"
+eq "Z1 validador tem os 47 checks (3 + 3.1 + 3.2)" \
+   "$(printf '%s' "$VAL" | command grep -cE '^[0-9]+\|(OK|FALHOU)' || true)" "47"
 
 # Z2 — banco SABOTADO: um objeto some e o validador tem de acusar. Roda por
 # último de propósito (o DROP não pode contaminar assert anterior).

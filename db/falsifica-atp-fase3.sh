@@ -29,20 +29,23 @@ set -uo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MIG3="$REPO_ROOT/supabase/migrations/20260808012000_atp_reconciliacao_fase3.sql"
 MIG31="$REPO_ROOT/supabase/migrations/20261009120000_atp_fase3_1_elo_pid.sql"
+MIG32="$REPO_ROOT/supabase/migrations/20261009233000_atp_fase3_2_corretiva.sql"
 TESTE="$REPO_ROOT/db/test-atp-reconciliacao-fase3.sh"
 BAK3="$(mktemp -t atp-fase3-mig.XXXXXX)"
 BAK31="$(mktemp -t atp-fase31-mig.XXXXXX)"
+BAK32="$(mktemp -t atp-fase32-mig.XXXXXX)"
 LOGDIR="${LOGDIR:-$REPO_ROOT/logs/atp-fase3}"
 mkdir -p "$LOGDIR"
 
-cp "$MIG3" "$BAK3"; cp "$MIG31" "$BAK31"
+cp "$MIG3" "$BAK3"; cp "$MIG31" "$BAK31"; cp "$MIG32" "$BAK32"
 # idempotente: o trap dispara depois da restauração explícita do fim do script
 restaura() {
   [ -f "$BAK3" ] && cp "$BAK3" "$MIG3"
   [ -f "$BAK31" ] && cp "$BAK31" "$MIG31"
+  [ -f "$BAK32" ] && cp "$BAK32" "$MIG32"
   return 0
 }
-trap 'restaura; rm -f "$BAK3" "$BAK31"' EXIT
+trap 'restaura; rm -f "$BAK3" "$BAK31" "$BAK32"' EXIT
 
 conta() { command grep -c "$1" "$2" || true; }
 
@@ -66,7 +69,7 @@ echo "baseline verde: $TOTAL_ESPERADO OK / 0 ERR (exit 0)"
 VALIDAS=0; INVALIDAS=0; SEM_DENTE=0
 
 # roda uma falsificação:
-#   $1 = arquivo-alvo (MIG3|MIG31)   $2 = id   $3 = descrição
+#   $1 = arquivo-alvo (MIG3|MIG31|MIG32)   $2 = id   $3 = descrição
 #   $4 = perl (busca)   $5 = perl (troca)   $6 = marca que prova a sabotagem aplicada
 #   $7.. = asserts que TÊM de ficar vermelhos
 # ⚠️ busca/troca vão para dentro de um s/// do perl: não podem conter $ nem @.
@@ -76,6 +79,7 @@ falsifica() {
   case "$qual" in
     MIG3)  mig="$MIG3";  bak="$BAK3" ;;
     MIG31) mig="$MIG31"; bak="$BAK31" ;;
+    MIG32) mig="$MIG32"; bak="$BAK32" ;;
     *) echo "alvo desconhecido: $qual"; INVALIDAS=$((INVALIDAS+1)); return ;;
   esac
   echo
@@ -354,10 +358,73 @@ falsifica MIG31 F23 "PRE anti-deriva aceita qualquer corpo" \
   "P2 a PRE deixou sobrescrever o corpo de outra sessao" \
   "P2 e o corpo da outra sessao SOBREVIVEU"
 
+# ════════════════════ FASE 3.2 — correções do Codex retroativo ══════════════════
+
+# F24 — a guarda do reservar_estoque some: a substituição volta a soltar reserva firme
+falsifica MIG32 F24 "reservar_estoque substitui reserva firme" \
+  "  IF EXISTS (
+    SELECT 1 FROM public.estoque_reservas r
+    WHERE r.checkout_id = p_checkout_id" \
+  "  IF false AND EXISTS (
+    SELECT 1 FROM public.estoque_reservas r
+    WHERE r.checkout_id = p_checkout_id" \
+  "IF false AND EXISTS (" \
+  "R1 a substituicao soltou a reserva firme pelo par" \
+  "R2 a substituicao soltou a reserva firme legada"
+
+# F25 — a guarda só olha o PAR (esquece o firme LEGADO pelo vínculo) — camada distinta
+falsifica MIG32 F25 "guarda do reservar ignora o firme legado" \
+  "      AND (r.omie_pedido_id IS NOT NULL
+           OR EXISTS (SELECT 1 FROM public.sales_orders so" \
+  "      AND (r.omie_pedido_id IS NOT NULL
+           OR false AND EXISTS (SELECT 1 FROM public.sales_orders so" \
+  "OR false AND EXISTS (SELECT 1 FROM public.sales_orders so" \
+  "R2 a substituicao soltou a reserva firme legada"
+
+# F26 — o liberar volta a soltar reserva firme
+falsifica MIG32 F26 "liberar_reserva_checkout solta reserva firme" \
+  "     AND r.omie_pedido_id IS NULL
+     AND NOT EXISTS (SELECT 1 FROM public.sales_orders so
+                     WHERE so.id" \
+  "     AND (r.omie_pedido_id IS NULL OR true)
+     AND NOT EXISTS (SELECT 1 FROM public.sales_orders so
+                     WHERE false AND so.id" \
+  "WHERE false AND so.id" \
+  "L1 liberar checkout firme pelo PAR: 0 liberadas / 1 preservada" \
+  "L1 liberar checkout firme LEGADO: 0 liberadas / 1 preservada"
+
+# F27 — o sinal volta a ignorar se o ATP aceita o saldo
+falsifica MIG32 F27 "sinal ignora saldo_confiavel" \
+  "             OR d.saldo_confiavel IS DISTINCT FROM true" \
+  "             OR false" \
+  "             OR false" \
+  "S4 contas do pool divergentes (o ATP recusa o SKU): o sinal vira NULL"
+
+# F28 — o sinal volta a ignorar a regressão da canônica
+falsifica MIG32 F28 "sinal ignora a canonica atual" \
+  "             OR k.status IS DISTINCT FROM 'faturado' THEN NULL" \
+  "             OR false THEN NULL" \
+  "             OR false THEN NULL" \
+  "S5 canonica regrediu (carimbo ainda velho): o sinal vira NULL"
+
+# F29 — o CHECK volta à forma da 3.1 (aceita conta com PID nulo)
+falsifica MIG32 F29 "CHECK do par sem o ramo PID nao nulo" \
+  "    OR (omie_pedido_id IS NOT NULL AND omie_pedido_id > 0" \
+  "    OR (omie_pedido_id > 0" \
+  "    OR (omie_pedido_id > 0" \
+  "C1 o CHECK aceitou conta sem PID"
+
+# F30 — a PRE da 3.2 aceita qualquer corpo/atributo vivo
+falsifica MIG32 F30 "PRE da 3.2 aceita qualquer estado vivo" \
+  "    IF r.vivo IS NULL OR r.vivo NOT IN (r.predecessor, r.este) THEN" \
+  "    IF r.vivo IS NULL OR false THEN" \
+  "IF r.vivo IS NULL OR false THEN" \
+  "P5 a PRE ignorou o atributo trocado (SECURITY INVOKER)"
+
 echo
 echo "=== FALSIFICACAO: $VALIDAS validas / $SEM_DENTE sem dente / $INVALIDAS invalidas ==="
 restaura
-if cmp -s "$MIG3" "$BAK3" && cmp -s "$MIG31" "$BAK31"; then
+if cmp -s "$MIG3" "$BAK3" && cmp -s "$MIG31" "$BAK31" && cmp -s "$MIG32" "$BAK32"; then
   echo "migrations restauradas (byte-a-byte iguais ao backup)"
 else
   echo "ERRO: migration NAO restaurada"; exit 1

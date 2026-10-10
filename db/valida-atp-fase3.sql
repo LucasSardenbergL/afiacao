@@ -1,6 +1,7 @@
 -- ============================================================
 -- Validação PÓS-APPLY — ATP fase 3 (20260808012000_atp_reconciliacao_fase3.sql)
 --                     + fase 3.1 (20261009120000_atp_fase3_1_elo_pid.sql), checks 26+
+--                     + fase 3.2 (20261009233000_atp_fase3_2_corretiva.sql), checks 43+
 -- A 3.1 RECRIA o cálculo, o job de TTL e a reconciliação: os checks 7 e 10 aceitam
 -- as duas formas (a propriedade da fase 3 — PV firme isento do relógio, canônica
 -- lida — vale nas duas); sem isso este validador ficaria VERMELHO em prod depois
@@ -164,6 +165,38 @@ WITH defs AS (
   UNION ALL SELECT 42, '3.1 fila humana expoe o sinal saldo_embute_faturamento',
          COALESCE(pg_get_function_result(to_regprocedure('public.atp_reservas_pendentes(integer)'))
                   ~ 'saldo_embute_faturamento boolean', false)
+
+  -- ══ FASE 3.2 — correções do Codex retroativo da 3.1 ═══════════════════════
+  -- CENSO: o conjunto de funções que ESCREVEM em estoque_reservas é exatamente
+  -- o revisado. Um writer novo é uma porta nova para soltar reserva firme (o #2
+  -- eram duas portas que ninguém tinha listado) — reprova até alguém revisá-lo.
+  UNION ALL SELECT 43, '3.2 censo: writers de estoque_reservas = os 7 revisados',
+         (SELECT COALESCE(array_agg(p.oid::regprocedure::text ORDER BY p.oid::regprocedure::text), '{}')
+            FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+           WHERE n.nspname IN ('public','private')
+             AND regexp_replace(p.prosrc, '--[^\n]*', '', 'g') ~* 'update\s+(public\.)?estoque_reservas')
+         = ARRAY['atp_confirmar_pv(uuid,text,bigint,text,jsonb,jsonb)',
+                 'atp_gate_pedido(uuid,boolean,uuid,boolean,text)',
+                 'atp_resolver_reserva(uuid,text,text)',
+                 'liberar_reserva_checkout(uuid,text,text)',
+                 'private.atp_reconciliar_job()',
+                 'private.expirar_reservas_vencidas_job()',
+                 'reservar_estoque(text,uuid,jsonb,integer)']
+  UNION ALL SELECT 44, '3.2 reservar_estoque nao substitui reserva firme',
+         COALESCE((SELECT regexp_replace(prosrc, '--[^\n]*', '', 'g') ~ 'reserva de PV CONFIRMADO'
+                     FROM pg_proc WHERE oid = to_regprocedure('public.reservar_estoque(text,uuid,jsonb,integer)')), false)
+  UNION ALL SELECT 45, '3.2 liberar_reserva_checkout preserva reserva firme',
+         COALESCE((SELECT regexp_replace(prosrc, '--[^\n]*', '', 'g') ~ 'preservadas_firmes'
+                     FROM pg_proc WHERE oid = to_regprocedure('public.liberar_reserva_checkout(uuid,text,text)')), false)
+  UNION ALL SELECT 46, '3.2 sinal da fila exige saldo confiavel e canonica faturada',
+         COALESCE((SELECT regexp_replace(prosrc, '--[^\n]*', '', 'g') ~ 'saldo_confiavel IS DISTINCT FROM true'
+                      AND regexp_replace(prosrc, '--[^\n]*', '', 'g') ~ 'k\.status IS DISTINCT FROM ''faturado'''
+                     FROM pg_proc WHERE oid = to_regprocedure('public.atp_reservas_pendentes(integer)')), false)
+  UNION ALL SELECT 47, '3.2 CHECK do par recusa conta com PID nulo',
+         EXISTS (SELECT 1 FROM pg_constraint
+                 WHERE conrelid = 'public.estoque_reservas'::regclass
+                   AND conname = 'estoque_reservas_pv_par_check'
+                   AND pg_get_constraintdef(oid) ~ 'omie_pedido_id IS NOT NULL')
 )
 SELECT n, CASE WHEN ok THEN 'OK  ' ELSE 'FALHOU' END AS status, item
 FROM checks ORDER BY n;
@@ -183,3 +216,12 @@ SELECT CASE WHEN to_regprocedure('public.atp_confirmar_pv(uuid,text,bigint,text,
              AND regexp_replace(pg_get_functiondef(to_regprocedure('private.atp_disponivel(text,bigint,uuid)')), '--[^\n]*', '', 'g')
                  ~ 'OR r\.omie_pedido_id IS NOT NULL'
        THEN 'FASE 3.1 APLICADA' ELSE 'FASE 3.1 NAO APLICADA (ou parcial)' END AS veredito_3_1;
+
+-- Veredito da 3.2 (linha própria)
+SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_constraint
+                         WHERE conrelid = 'public.estoque_reservas'::regclass
+                           AND conname = 'estoque_reservas_pv_par_check'
+                           AND pg_get_constraintdef(oid) ~ 'omie_pedido_id IS NOT NULL')
+             AND COALESCE((SELECT prosrc ~ 'preservadas_firmes' FROM pg_proc
+                            WHERE oid = to_regprocedure('public.liberar_reserva_checkout(uuid,text,text)')), false)
+       THEN 'FASE 3.2 APLICADA' ELSE 'FASE 3.2 NAO APLICADA (ou parcial)' END AS veredito_3_2;
