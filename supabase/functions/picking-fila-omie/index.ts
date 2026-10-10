@@ -8,7 +8,7 @@
 // o mesmo `ListarPedidos` — REDUNDANT aqui é reportado, nunca re-tentado.
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff, corsHeaders } from "../_shared/auth.ts";
-import { clienteCotaDoAmbiente, comVezOmie } from "../_shared/omie-cota.ts";
+import { clienteCotaDoAmbiente, comVezOmie, metodoCoordenado } from "../_shared/omie-cota.ts";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import { redigirSegredo } from "../_shared/omie-falha.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
@@ -40,7 +40,8 @@ type Chamada = { ok: true; corpo: unknown } | { ok: false; erro: string };
 
 /**
  * UMA chamada, sem retentativa. Falha do Omie no corpo (faultstring) com qualquer HTTP volta como
- * erro. Método coordenado (`ListarPedidos`) pede a vez na trava; vez negada volta como erro, sem chamar.
+ * erro. Método coordenado (`ListarPedidos`) pede a vez na trava; vez negada (ou trava sem resposta —
+ * fail-closed) volta como erro, sem chamar.
  */
 async function chamarOmie(
   conta: Conta,
@@ -83,6 +84,9 @@ async function chamarOmieSemTrava(
     if (!res.ok) return { ok: false, erro: `HTTP ${res.status}: ${redigirSegredo(txt.slice(0, 200))}` };
     return { ok: true, corpo };
   } catch (e) {
+    // Timeout do método coordenado sobe para a trava NÃO devolver a vez: o Omie pode seguir
+    // processando o que recebeu (o lease vence sozinho). `chamarOmie` o converte em erro.
+    if (e instanceof DOMException && e.name === "TimeoutError" && metodoCoordenado(metodo)) throw e;
     return { ok: false, erro: redigirSegredo(mensagemDeErro(e) ?? "falha de rede sem mensagem") };
   }
 }

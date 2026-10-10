@@ -3,7 +3,7 @@ import { descontoItemOmie } from "../_shared/desconto-omie.ts";
 import { normalizarCodigoItemOmie } from "../_shared/omie-codigo-item.ts";
 import { authorizeCron, corsHeaders } from "../_shared/auth.ts";
 import { atenderSondaOptions } from "../_shared/sonda-cron.ts";
-import { clienteCotaDoAmbiente, comVezOmie } from "../_shared/omie-cota.ts";
+import { clienteCotaDoAmbiente, comVezOmie, sinalDaChamada } from "../_shared/omie-cota.ts";
 import {
   omieEtapaToStatus,
   etapaConhecida,
@@ -177,6 +177,7 @@ async function callOmie(account: Account, endpoint: string, call: string, params
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
+      signal: sinalDaChamada(call),
     });
     // HTTP não-2xx LANÇA antes de o corpo virar payload. Sem isto, um 429/5xx cujo corpo parseia
     // SEM `faultstring` (o `{}` de proxy/gateway) devolvia um objeto sem total e sem lista — e os

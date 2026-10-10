@@ -25,7 +25,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff, corsHeaders } from "../_shared/auth.ts";
 import { atenderSondaOptions } from "../_shared/sonda-cron.ts";
-import { clienteCotaDoAmbiente, comVezOmie } from "../_shared/omie-cota.ts";
+import { clienteCotaDoAmbiente, comVezOmie, sinalDaChamada } from "../_shared/omie-cota.ts";
 import {
   type CausaNaoClassificada,
   conciliarDescontosPedido,
@@ -78,6 +78,7 @@ async function callOmie(account: Account, endpoint: string, call: string, params
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ call, app_key: creds.key, app_secret: creds.secret, param: [params] }),
+      signal: sinalDaChamada(call),
     });
     // HTTP não-2xx LANÇA antes de o corpo virar payload: um 429/5xx cujo corpo parseia sem
     // `faultstring` seria lido como página vazia, isto é, como FIM — e o backfill terminaria

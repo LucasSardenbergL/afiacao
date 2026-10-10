@@ -9,18 +9,29 @@
 // indevido" (~30 min). Agora: pede a vez no banco, respeita o "aguarde" que QUALQUER edge
 // registrou, e registra o seu.
 //
-// Fail-open: se o banco não responde, a chamada segue como era antes (a trava reduz colisão; não
-// é condição de correção de dado). Sem I/O próprio — o cliente vem de quem chama.
+// FAIL-CLOSED (revisão Codex, 2026-10-10): sem resposta da trava, a chamada coordenada NÃO é feita
+// — lança `CotaOmieIndisponivel` e o consumidor adia, como já adia um rate-limit. Fail-open
+// desligaria a proteção calado justamente quando ela não funciona (RPC ausente, grant errado).
+// Toda RPC da trava tem prazo próprio: banco pendurado não pendura a edge.
+// Só o que é coordenado passa por aqui: os outros métodos seguem exatamente como eram.
+import { mensagemDeErro } from "./erro-mensagem.ts";
 
-/** Métodos coordenados pela trava. Só o que tem mais de um consumidor em cron. */
+/** Métodos coordenados pela trava. Só leitura com mais de um consumidor em cron — nada de escrita. */
 export const METODOS_COORDENADOS: ReadonlySet<string> = new Set(["ListarPedidos"]);
 
 export function metodoCoordenado(metodo: string): boolean {
   return METODOS_COORDENADOS.has(metodo);
 }
 
-/** Lease de quem chama. Cobre o timeout de uma chamada ao Omie com folga; renovável pelo mesmo token. */
-export const LEASE_PADRAO_S = 90;
+/**
+ * Timeout da chamada coordenada ao Omie. O lease (abaixo) é maior: abortar o fetch não prova que o
+ * Omie parou de processar, então quem estoura o timeout NÃO devolve a vez — o lease vence sozinho.
+ */
+export const TIMEOUT_CHAMADA_COORDENADA_MS = 80_000;
+/** Lease de quem chama: timeout da chamada + folga para o Omie terminar o que já recebeu. */
+export const LEASE_PADRAO_S = 150;
+/** Prazo de cada RPC da trava. */
+export const PRAZO_RPC_MS = 5_000;
 /** "Bloqueada por consumo indevido" sem prazo legível: o Omie documenta ~30 min. */
 export const BLOQUEIO_INDEVIDO_PADRAO_S = 30 * 60;
 /** Margem somada ao "Aguarde N segundos" — relógio do Omie × o nosso. */
@@ -83,7 +94,7 @@ export type Vez =
   | { tipo: "livre" }
   | { tipo: "bloqueado"; ate: string | null }
   | { tipo: "ocupado"; ate: string | null }
-  /** O banco não respondeu — fail-open: quem chama segue para o Omie. */
+  /** A trava não respondeu (erro, prazo, forma inesperada) — fail-closed: a chamada não é feita. */
   | { tipo: "sem_trava"; erro: string };
 
 /** Lê a linha devolvida por `omie_cota_tentar` (RETURNS TABLE → array de 1). */
@@ -100,35 +111,54 @@ export function lerVez(data: unknown): Vez {
   return { tipo: "sem_trava", erro: `omie_cota_tentar devolveu forma inesperada: ${JSON.stringify(r).slice(0, 120)}` };
 }
 
+/** RPC com prazo: banco pendurado vira erro em `prazoMs`, nunca uma espera sem fim. */
+async function rpcComPrazo(
+  db: ClienteCota,
+  fn: string,
+  args: Record<string, unknown>,
+  prazoMs: number,
+): Promise<{ data: unknown; erro: string | null }> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const prazo = new Promise<never>((_, rej) => {
+    timer = setTimeout(() => rej(new Error(`${fn} sem resposta em ${prazoMs} ms`)), prazoMs);
+  });
+  try {
+    const { data, error } = await Promise.race([Promise.resolve(db.rpc(fn, args)), prazo]);
+    return { data, erro: error ? (mensagemDeErro(error) ?? `${fn} falhou sem mensagem`) : null };
+  } catch (e) {
+    return { data: null, erro: mensagemDeErro(e) ?? `${fn} falhou sem mensagem` };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function pedirVez(
   db: ClienteCota,
   conta: Conta,
   metodo: string,
   token: string,
-  leaseSegundos = LEASE_PADRAO_S,
+  opts: { leaseSegundos?: number; prazoRpcMs?: number } = {},
 ): Promise<Vez> {
-  try {
-    const { data, error } = await db.rpc("omie_cota_tentar", {
-      p_conta: conta,
-      p_metodo: metodo,
-      p_token: token,
-      p_lease_segundos: leaseSegundos,
-    });
-    if (error) return { tipo: "sem_trava", erro: error.message };
-    return lerVez(data);
-  } catch (e) {
-    return { tipo: "sem_trava", erro: e instanceof Error ? e.message : String(e) };
-  }
+  const { data, erro } = await rpcComPrazo(db, "omie_cota_tentar", {
+    p_conta: conta,
+    p_metodo: metodo,
+    p_token: token,
+    p_lease_segundos: opts.leaseSegundos ?? LEASE_PADRAO_S,
+  }, opts.prazoRpcMs ?? PRAZO_RPC_MS);
+  if (erro) return { tipo: "sem_trava", erro };
+  return lerVez(data);
 }
 
 /** Devolve a vez. Nunca lança: o lease vence sozinho. */
-export async function devolverVez(db: ClienteCota, conta: Conta, metodo: string, token: string): Promise<void> {
-  try {
-    const { error } = await db.rpc("omie_cota_liberar", { p_conta: conta, p_metodo: metodo, p_token: token });
-    if (error) console.warn(`[omie-cota][${conta}] liberar ${metodo} falhou: ${error.message}`);
-  } catch (e) {
-    console.warn(`[omie-cota][${conta}] liberar ${metodo} falhou: ${e instanceof Error ? e.message : String(e)}`);
-  }
+export async function devolverVez(
+  db: ClienteCota,
+  conta: Conta,
+  metodo: string,
+  token: string,
+  prazoRpcMs = PRAZO_RPC_MS,
+): Promise<void> {
+  const { erro } = await rpcComPrazo(db, "omie_cota_liberar", { p_conta: conta, p_metodo: metodo, p_token: token }, prazoRpcMs);
+  if (erro) console.warn(`[omie-cota][${conta}] liberar ${metodo} falhou (o lease vence sozinho): ${erro}`);
 }
 
 /** Registra o "aguarde" do Omie para todas as edges. Nunca lança. Só faults com prazo. */
@@ -138,30 +168,30 @@ export async function registrarFault(
   metodo: string,
   fault: FaultCota,
   texto: string,
+  prazoRpcMs = PRAZO_RPC_MS,
 ): Promise<void> {
   if (fault.tipo === "concorrente") return;
-  try {
-    const { error } = await db.rpc("omie_cota_registrar_fault", {
-      p_conta: conta,
-      p_metodo: metodo,
-      p_bloqueio_segundos: Math.max(1, Math.ceil(fault.segundos)),
-      p_fault: texto.slice(0, 300),
-    });
-    if (error) console.warn(`[omie-cota][${conta}] registrar fault ${metodo} falhou: ${error.message}`);
-  } catch (e) {
-    console.warn(`[omie-cota][${conta}] registrar fault ${metodo} falhou: ${e instanceof Error ? e.message : String(e)}`);
-  }
+  const { erro } = await rpcComPrazo(db, "omie_cota_registrar_fault", {
+    p_conta: conta,
+    p_metodo: metodo,
+    p_bloqueio_segundos: Math.max(1, Math.ceil(fault.segundos)),
+    p_fault: texto.slice(0, 300),
+  }, prazoRpcMs);
+  if (erro) console.warn(`[omie-cota][${conta}] registrar fault ${metodo} falhou: ${erro}`);
 }
 
-/** Erro de "não é a sua vez" — quem chama trata como o rate-limit persistente que já tratava. */
+/** "Não é a sua vez" — a chamada NÃO foi feita. Quem chama trata como o rate-limit que já tratava. */
 export class CotaOmieIndisponivel extends Error {
   constructor(
     readonly conta: Conta,
     readonly metodo: string,
-    readonly motivo: "bloqueado" | "ocupado",
+    readonly motivo: "bloqueado" | "ocupado" | "sem_trava",
     readonly ate: string | null,
+    detalhe?: string,
   ) {
-    super(`OMIE_COTA (${conta}): ${metodo} ${motivo} até ${ate ?? "?"} — chamada não feita`);
+    super(
+      `OMIE_COTA (${conta}): ${metodo} ${motivo}${ate ? ` até ${ate}` : ""}${detalhe ? ` (${detalhe})` : ""} — chamada não feita`,
+    );
     this.name = "CotaOmieIndisponivel";
   }
 }
@@ -173,28 +203,28 @@ export function esperaAte(ate: string | null, agoraMs: number, tetoMs: number): 
   return ms <= tetoMs ? ms : null;
 }
 
+export interface OpcoesVez {
+  tetoEsperaMs?: number;
+  tentativas?: number;
+  prazoRpcMs?: number;
+  esperar?: (ms: number) => Promise<void>;
+  agora?: () => number;
+}
+
 /**
- * Pede a vez, esperando só prazo curto (≤ `tetoEsperaMs`). Devolve o token se conseguiu a vez,
- * `null` se o banco não respondeu (fail-open) — ou lança `CotaOmieIndisponivel`.
+ * Pede a vez, esperando só prazo curto (≤ `tetoEsperaMs`). Devolve o token, ou lança
+ * `CotaOmieIndisponivel` (vez negada, prazo longo, ou trava sem resposta — fail-closed).
  */
-export async function obterVez(
-  db: ClienteCota,
-  conta: Conta,
-  metodo: string,
-  opts: { tetoEsperaMs?: number; tentativas?: number; esperar?: (ms: number) => Promise<void>; agora?: () => number } = {},
-): Promise<string | null> {
+export async function obterVez(db: ClienteCota, conta: Conta, metodo: string, opts: OpcoesVez = {}): Promise<string> {
   const token = crypto.randomUUID();
   const tentativas = opts.tentativas ?? 3;
   const tetoEsperaMs = opts.tetoEsperaMs ?? 20_000;
   const esperar = opts.esperar ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const agora = opts.agora ?? (() => Date.now());
   for (let i = 0; ; i++) {
-    const vez = await pedirVez(db, conta, metodo, token);
+    const vez = await pedirVez(db, conta, metodo, token, { prazoRpcMs: opts.prazoRpcMs });
     if (vez.tipo === "livre") return token;
-    if (vez.tipo === "sem_trava") {
-      console.warn(`[omie-cota][${conta}] ${metodo} sem trava (fail-open): ${vez.erro}`);
-      return null;
-    }
+    if (vez.tipo === "sem_trava") throw new CotaOmieIndisponivel(conta, metodo, "sem_trava", null, vez.erro);
     // Prazo curto (o "aguarde 5 s" do REDUNDANT, ou outra edge no meio de UMA chamada) cabe na
     // invocação: espera o prazo INTEIRO e pede de novo. Prazo longo: desiste sem chamar.
     const ms = esperaAte(vez.ate, agora(), tetoEsperaMs);
@@ -203,10 +233,16 @@ export async function obterVez(
   }
 }
 
+/** O fetch abortou por prazo: o Omie pode seguir processando — não devolver a vez. */
+function estourouPrazo(e: unknown): boolean {
+  return e instanceof DOMException && (e.name === "TimeoutError" || e.name === "AbortError");
+}
+
 /**
  * Executa UMA chamada ao Omie com a vez: pede (com espera curta), roda `chamar`, devolve a vez —
- * também quando `chamar` lança. Se o texto devolvido por `faultDe` for de trava, registra o prazo
- * para todas as edges. Método não coordenado: só roda `chamar`.
+ * também quando `chamar` lança, EXCETO por timeout (aí o lease vence sozinho). Se o texto de
+ * `faultDe` (ou do erro lançado) for de trava, registra o prazo para todas as edges.
+ * Método não coordenado ou `db` null (sem env, teste local): só roda `chamar`.
  */
 export async function comVezOmie<T>(
   db: ClienteCota | null,
@@ -214,30 +250,37 @@ export async function comVezOmie<T>(
   metodo: string,
   chamar: () => Promise<T>,
   faultDe: (r: T) => string | null,
-  opts: Parameters<typeof obterVez>[3] = {},
+  opts: OpcoesVez = {},
 ): Promise<T> {
   if (!db || !metodoCoordenado(metodo)) return await chamar();
   const token = await obterVez(db, conta, metodo, opts);
+  let devolver = true;
   try {
     const r = await chamar();
     const texto = faultDe(r);
     const fault = texto ? classificarFaultCota(texto) : null;
-    if (fault && texto) await registrarFault(db, conta, metodo, fault, texto);
+    if (fault && texto) await registrarFault(db, conta, metodo, fault, texto, opts.prazoRpcMs);
     return r;
   } catch (e) {
-    const texto = e instanceof Error ? e.message : String(e);
-    const fault = classificarFaultCota(texto);
-    if (fault) await registrarFault(db, conta, metodo, fault, texto);
+    if (estourouPrazo(e)) devolver = false;
+    const texto = mensagemDeErro(e);
+    const fault = texto ? classificarFaultCota(texto) : null;
+    if (fault && texto) await registrarFault(db, conta, metodo, fault, texto, opts.prazoRpcMs);
     throw e;
   } finally {
-    if (token) await devolverVez(db, conta, metodo, token);
+    if (devolver) await devolverVez(db, conta, metodo, token, opts.prazoRpcMs);
   }
+}
+
+/** `signal` da chamada coordenada (timeout menor que o lease); `undefined` para as outras. */
+export function sinalDaChamada(metodo: string): AbortSignal | undefined {
+  return metodoCoordenado(metodo) ? AbortSignal.timeout(TIMEOUT_CHAMADA_COORDENADA_MS) : undefined;
 }
 
 /**
  * Cliente service_role da trava, criado uma vez por isolate a partir do env. `null` = sem env
- * (teste local): a chamada segue sem trava, como antes da Fase 0.2. `criar` = o `createClient`
- * da edge (o _shared não importa o supabase-js).
+ * (teste local): a chamada segue sem trava. `criar` = o `createClient` da edge (o _shared não
+ * importa o supabase-js).
  */
 export function clienteCotaDoAmbiente(
   criar: (url: string, chave: string) => ClienteCota,

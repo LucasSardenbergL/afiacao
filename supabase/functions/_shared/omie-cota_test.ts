@@ -106,9 +106,30 @@ Deno.test("obterVez: 'ocupado' curto espera e consegue na 2ª", async () => {
   assertEquals(chamadas[0].args.p_token, chamadas[1].args.p_token);
 });
 
-Deno.test("obterVez: banco fora → null (fail-open), sem lançar", async () => {
+Deno.test("obterVez: trava com erro → lança sem_trava (fail-closed)", async () => {
   const { db } = bancoFalso([], "connection refused");
-  assertEquals(await obterVez(db, "oben", "ListarPedidos"), null);
+  let lancou: unknown = null;
+  try {
+    await obterVez(db, "oben", "ListarPedidos");
+  } catch (e) {
+    lancou = e;
+  }
+  if (!(lancou instanceof CotaOmieIndisponivel) || lancou.motivo !== "sem_trava") {
+    throw new Error(`esperava CotaOmieIndisponivel/sem_trava, veio ${String(lancou)}`);
+  }
+});
+
+Deno.test("obterVez: RPC pendurada → prazo vence e lança sem_trava (não pendura a edge)", async () => {
+  const db: ClienteCota = { rpc: () => new Promise(() => {}) };
+  let lancou: unknown = null;
+  try {
+    await obterVez(db, "oben", "ListarPedidos", { prazoRpcMs: 20 });
+  } catch (e) {
+    lancou = e;
+  }
+  if (!(lancou instanceof CotaOmieIndisponivel) || lancou.motivo !== "sem_trava" || !lancou.message.includes("sem resposta")) {
+    throw new Error(`esperava sem_trava por prazo, veio ${String(lancou)}`);
+  }
 });
 
 Deno.test("comVezOmie: método não coordenado não toca o banco", async () => {
@@ -157,12 +178,37 @@ Deno.test("comVezOmie: concorrência não registra prazo (o Omie não deu um)", 
   assertEquals(chamadas.map((c) => c.fn), ["omie_cota_tentar", "omie_cota_liberar"]);
 });
 
-Deno.test("comVezOmie: banco fora segue para o Omie (fail-open) e não tenta liberar", async () => {
-  const { db, chamadas } = bancoFalso([], "timeout");
+Deno.test("comVezOmie: trava fora → NÃO chama o Omie (fail-closed)", async () => {
+  const { db } = bancoFalso([], "timeout");
   let chamou = false;
-  await comVezOmie(db, "oben", "ListarPedidos", () => (chamou = true, Promise.resolve(null)), () => null);
-  assertEquals(chamou, true);
+  let lancou: unknown = null;
+  try {
+    await comVezOmie(db, "oben", "ListarPedidos", () => (chamou = true, Promise.resolve(null)), () => null);
+  } catch (e) {
+    lancou = e;
+  }
+  assertEquals(chamou, false);
+  if (!(lancou instanceof CotaOmieIndisponivel)) throw new Error(`esperava CotaOmieIndisponivel, veio ${String(lancou)}`);
+});
+
+Deno.test("comVezOmie: timeout do fetch NÃO devolve a vez (o Omie pode seguir processando)", async () => {
+  const { db, chamadas } = bancoFalso([LIVRE]);
+  const timeout = new DOMException("Signal timed out.", "TimeoutError");
+  let lancou: unknown = null;
+  try {
+    await comVezOmie(db, "oben", "ListarPedidos", () => Promise.reject(timeout), () => null);
+  } catch (e) {
+    lancou = e;
+  }
+  if (lancou !== timeout) throw new Error(`esperava o MESMO timeout re-lançado, veio ${String(lancou)}`);
   assertEquals(chamadas.map((c) => c.fn), ["omie_cota_tentar"]);
+});
+
+Deno.test("comVezOmie: liberar pendurado não pendura a entrega da resposta", async () => {
+  const db: ClienteCota = {
+    rpc: (fn) => fn === "omie_cota_tentar" ? Promise.resolve({ data: LIVRE, error: null }) : new Promise(() => {}),
+  };
+  assertEquals(await comVezOmie(db, "oben", "ListarPedidos", () => Promise.resolve(42), () => null, { prazoRpcMs: 20 }), 42);
 });
 
 Deno.test("clienteCotaDoAmbiente: sem env → null; com env cria UMA vez", () => {

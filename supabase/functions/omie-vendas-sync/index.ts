@@ -16,7 +16,7 @@ import { avaliarAssinaturaA2, CONTRATO_A2 } from "./assinatura-a2.ts";
 import type { BancoPostgrest } from "../_shared/paginate.ts";
 import { avaliarPagina, MAX_PAGINAS_LISTAGEM, MAX_PAGINAS_PEDIDOS, MAX_PAGINAS_POS_ESTOQUE, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
 import { atenderSondaOptions } from '../_shared/sonda-cron.ts';
-import { clienteCotaDoAmbiente, comVezOmie, CotaOmieIndisponivel } from "../_shared/omie-cota.ts";
+import { clienteCotaDoAmbiente, comVezOmie, CotaOmieIndisponivel, metodoCoordenado, sinalDaChamada } from "../_shared/omie-cota.ts";
 
 type OmieGenericResponse = Record<string, unknown> & { faultstring?: string; codigo_status?: number | string; descricao_status?: string };
 
@@ -253,7 +253,8 @@ async function callOmieVendasApi(
   const maxRetries = 3;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     // Método coordenado (ListarPedidos): pede a vez na trava compartilhada com as outras edges
-    // (_shared/omie-cota.ts) e registra o "aguarde" do Omie para todas. Banco fora → segue sem trava.
+    // (_shared/omie-cota.ts) e registra o "aguarde" do Omie para todas. Trava sem resposta → a
+    // chamada não é feita (fail-closed) e cai na semântica do rate-limit persistente abaixo.
     let response: Response;
     let result: OmieGenericResponse;
     try {
@@ -266,6 +267,8 @@ async function callOmieVendasApi(
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(body),
+            // timeout só no método coordenado (menor que o lease); os demais seguem sem, como eram
+            signal: sinalDaChamada(call),
           });
           const result = (await response.json()) as OmieGenericResponse;
           return { response, result };
@@ -296,11 +299,14 @@ async function callOmieVendasApi(
       if (isRateLimit || isTransient) {
         const waitMatch = fs.match(/Aguarde (\d+) segundos/);
         const requestedDelay = waitMatch ? parseInt(waitMatch[1]) : (attempt + 1) * 5;
-        // O Omie pediu mais do que a espera cabe: re-tentar ANTES do prazo renova a trava e escala
-        // para "bloqueada por consumo indevido" (~30 min). Desiste agora, sem chamar de novo.
-        const prazoCabe = !waitMatch || requestedDelay + 2 <= 15;
+        // Método COORDENADO (só leitura): se o Omie pediu mais do que a espera cabe, re-tentar ANTES
+        // do prazo renova a trava e escala para "bloqueada por consumo indevido" (~30 min) — desiste
+        // sem chamar (o prazo já ficou registrado para as outras edges). Os demais métodos seguem
+        // como eram: a edição de pedido (exclui itens → reinclui) e o cancelamento dependem desse
+        // retry para não parar no meio (revisão Codex 2026-10-10).
+        const prazoCabe = !metodoCoordenado(call) || !waitMatch || requestedDelay + 2 <= 15;
         if (attempt < maxRetries && prazoCabe) {
-          const delay = (requestedDelay + 2) * 1000;
+          const delay = Math.min(requestedDelay + 2, 15) * 1000;
           console.log(`[Omie Vendas][${account}] ${isRateLimit ? 'Rate limit' : 'Transient error'}, waiting ${delay/1000}s (attempt ${attempt + 1}/${maxRetries})`);
           await new Promise(r => setTimeout(r, delay));
           continue;
