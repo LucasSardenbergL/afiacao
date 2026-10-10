@@ -58,10 +58,10 @@ if [ "${1:-}" = "--falsificar" ]; then
               sem_positivo:F9:S1,F8
               sem_parcial:F11:S1,F13
               sem_numero:F13:S1,F11
-              grupo_desconta:W1,W2:S1
+              rastro_no_grupo:W2:W1,S1
               gatilho_sem_desconto:S1,T1,M2:S2,S3
               efetivo_sem_desconto:S1,S2,S3:F1
-              rastro_ausente:S1,S2:F1
+              rastro_ausente:S1,S2:X1
               desligador_ignora:K1,K2:K3
               sem_grant:R1:S1
               pre_removida:G1:G2
@@ -423,14 +423,16 @@ case "$SABOTAGEM" in
   janela_7d)            sabotar "make_interval(hours => v_comp_horas)" "interval '7 days'" 1 ;;
   sem_tipo)             sabotar "CASE WHEN jsonb_typeof(it->'quantidade') = 'number' THEN (it->>'quantidade')::numeric END" "(it->>'quantidade')::numeric" 1 ;;
   sem_positivo)         sabotar "WHERE x.q > 0 AND x.q < 1e9" "WHERE x.q < 1e9" 1 ;;
-  sem_parcial)          sabotar "AND NOT EXISTS (SELECT 1 FROM sales_orders s2" "AND NOT EXISTS (SELECT 1 FROM sales_orders s2 WHERE false AND EXISTS (SELECT 1 FROM sales_orders s2" 1
-                        sabotar "AND s2.hash_payload LIKE 'omie\\_%' AND s2.id <> so.id)" "AND s2.hash_payload LIKE 'omie\\_%' AND s2.id <> so.id))" 1 ;;
+  sem_parcial)          sabotar "AND s2.hash_payload LIKE 'omie\\_%' AND s2.id <> so.id)" "AND s2.hash_payload LIKE 'omie\\_%' AND s2.id <> so.id AND false)" 1 ;;
   sem_numero)           sabotar "AND so.omie_numero_pedido IS NOT NULL" "" 1 ;;
-  grupo_desconta)       sabotar "AND ea.grupo_id IS NULL   -- [COMPROMETIDO] só sem grupo" "" 1 ;;
+  # O guard do JOIN (cp só casa ea.grupo_id IS NULL) é REDUNDANTE por construção: no grupo o efetivo e o gatilho
+  # vêm de ge.estoque_grupo, que não lê cp — sabotá-lo fica VERDE (medido 2026-10-10). W1 prova a PROPRIEDADE
+  # (grupo idêntico ao antigo); a camada que decide o rastro do grupo é o CASE, e é ela que se sabota aqui.
+  rastro_no_grupo)      sabotar "CASE WHEN ea.grupo_id IS NULL AND v_comp_ativo THEN" "CASE WHEN v_comp_ativo THEN" 1 ;;
   gatilho_sem_desconto) sabotar "                   - COALESCE(cp.qtde, 0)) <= sp.ponto_pedido" "                   ) <= sp.ponto_pedido" 1 ;;
   efetivo_sem_desconto) sabotar "                    - COALESCE(cp.qtde, 0)) AS estoque_efetivo," "                    ) AS estoque_efetivo," 1 ;;
   rastro_ausente)       sabotar "sn.fator_embalagem_portal, sn.estoque_comprometido" "sn.fator_embalagem_portal, NULL::numeric" 1 ;;
-  desligador_ignora)    sabotar "SELECT lower(btrim(value)) = 'true' FROM company_config" "SELECT true FROM company_config" 1 ;;
+  desligador_ignora)    sabotar "WHERE key = 'reposicao_comprometido_' || lower(p_empresa) || '_ativo' LIMIT 1)" "WHERE false LIMIT 1)" 1 ;;
   *) echo "❌ SABOTAGEM desconhecida: $SABOTAGEM"; exit 9 ;;
 esac
 [ -n "$SABOTAGEM" ] && echo "→ SABOTAGEM ativa: $SABOTAGEM"
