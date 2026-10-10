@@ -161,7 +161,10 @@ export async function devolverVez(
   if (erro) console.warn(`[omie-cota][${conta}] liberar ${metodo} falhou (o lease vence sozinho): ${erro}`);
 }
 
-/** Registra o "aguarde" do Omie para todas as edges. Nunca lança. Só faults com prazo. */
+/**
+ * Registra o "aguarde" do Omie para todas as edges. Nunca lança. Só faults com prazo.
+ * Devolve se o prazo ficou CONFIRMADO no banco (fault sem prazo = nada a registrar = true).
+ */
 export async function registrarFault(
   db: ClienteCota,
   conta: Conta,
@@ -169,15 +172,19 @@ export async function registrarFault(
   fault: FaultCota,
   texto: string,
   prazoRpcMs = PRAZO_RPC_MS,
-): Promise<void> {
-  if (fault.tipo === "concorrente") return;
+): Promise<boolean> {
+  if (fault.tipo === "concorrente") return true;
   const { erro } = await rpcComPrazo(db, "omie_cota_registrar_fault", {
     p_conta: conta,
     p_metodo: metodo,
     p_bloqueio_segundos: Math.max(1, Math.ceil(fault.segundos)),
     p_fault: texto.slice(0, 300),
   }, prazoRpcMs);
-  if (erro) console.warn(`[omie-cota][${conta}] registrar fault ${metodo} falhou: ${erro}`);
+  if (erro) {
+    console.warn(`[omie-cota][${conta}] registrar fault ${metodo} falhou (a vez fica retida até o lease vencer): ${erro}`);
+    return false;
+  }
+  return true;
 }
 
 /** "Não é a sua vez" — a chamada NÃO foi feita. Quem chama trata como o rate-limit que já tratava. */
@@ -240,7 +247,8 @@ function estourouPrazo(e: unknown): boolean {
 
 /**
  * Executa UMA chamada ao Omie com a vez: pede (com espera curta), roda `chamar`, devolve a vez —
- * também quando `chamar` lança, EXCETO por timeout (aí o lease vence sozinho). Se o texto de
+ * também quando `chamar` lança, EXCETO por timeout ou "aguarde" não registrado (aí o lease vence
+ * sozinho). Se o texto de
  * `faultDe` (ou do erro lançado) for de trava, registra o prazo para todas as edges.
  * Método não coordenado ou `db` null (sem env, teste local): só roda `chamar`.
  */
@@ -255,17 +263,20 @@ export async function comVezOmie<T>(
   if (!db || !metodoCoordenado(metodo)) return await chamar();
   const token = await obterVez(db, conta, metodo, opts);
   let devolver = true;
+  // "Aguarde" do Omie que NÃO ficou registrado no banco: devolver a vez deixaria a próxima edge
+  // chamar já — exatamente o que escala o REDUNDANT. A vez fica retida e o lease (150 s) faz as
+  // vezes do prazo (revisão Codex, rodada 2).
+  const registrar = async (texto: string | null) => {
+    const fault = texto ? classificarFaultCota(texto) : null;
+    if (fault && texto && !(await registrarFault(db, conta, metodo, fault, texto, opts.prazoRpcMs))) devolver = false;
+  };
   try {
     const r = await chamar();
-    const texto = faultDe(r);
-    const fault = texto ? classificarFaultCota(texto) : null;
-    if (fault && texto) await registrarFault(db, conta, metodo, fault, texto, opts.prazoRpcMs);
+    await registrar(faultDe(r));
     return r;
   } catch (e) {
     if (estourouPrazo(e)) devolver = false;
-    const texto = mensagemDeErro(e);
-    const fault = texto ? classificarFaultCota(texto) : null;
-    if (fault && texto) await registrarFault(db, conta, metodo, fault, texto, opts.prazoRpcMs);
+    await registrar(mensagemDeErro(e));
     throw e;
   } finally {
     if (devolver) await devolverVez(db, conta, metodo, token, opts.prazoRpcMs);

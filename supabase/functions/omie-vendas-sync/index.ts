@@ -3902,6 +3902,9 @@ Deno.serve(async (req) => {
             "ListarPedidos",
             { pagina: 1, registros_por_pagina: 1, filtrar_apenas_inclusao: "N", filtrar_por_data_de: w.de, filtrar_por_data_ate: w.ate },
             account,
+            // Rate-limit/trava sem resposta LANÇA: o null viraria `omie_aprox:0, tem_dado:false` —
+            // a sonda afirmando ausência sem ter consultado o Omie (revisão Codex, rodada 2).
+            { throwOnTransient: true },
           )) as { total_de_paginas?: number; pedido_venda_produto?: unknown[] } | null;
           const lista = Array.isArray(rp?.pedido_venda_produto) ? (rp!.pedido_venda_produto as unknown[]) : [];
           probe.push({ mes: w.mes, omie_aprox: Number(rp?.total_de_paginas ?? 0), tem_dado: lista.length > 0 });

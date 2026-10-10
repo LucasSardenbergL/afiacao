@@ -211,6 +211,27 @@ Deno.test("comVezOmie: liberar pendurado não pendura a entrega da resposta", as
   assertEquals(await comVezOmie(db, "oben", "ListarPedidos", () => Promise.resolve(42), () => null, { prazoRpcMs: 20 }), 42);
 });
 
+Deno.test("comVezOmie: 'aguarde' que não registrou no banco RETÉM a vez (não libera)", async () => {
+  const chamadas: string[] = [];
+  const db: ClienteCota = {
+    rpc: (fn) => {
+      chamadas.push(fn);
+      if (fn === "omie_cota_tentar") return Promise.resolve({ data: LIVRE, error: null });
+      if (fn === "omie_cota_registrar_fault") return new Promise(() => {}); // banco pendurado
+      return Promise.resolve({ data: true, error: null });
+    },
+  };
+  await comVezOmie(
+    db,
+    "oben",
+    "ListarPedidos",
+    () => Promise.resolve("Consumo redundante detectado. Aguarde 47 segundos (REDUNDANT)"),
+    (x) => x,
+    { prazoRpcMs: 20 },
+  );
+  assertEquals(chamadas, ["omie_cota_tentar", "omie_cota_registrar_fault"]);
+});
+
 Deno.test("clienteCotaDoAmbiente: sem env → null; com env cria UMA vez", () => {
   let criados = 0;
   const criar = () => (criados++, { rpc: () => Promise.resolve({ data: null, error: null }) });
