@@ -427,11 +427,10 @@ async function computePendenteViaPedidosCompra(
   // Observação do conjunto que o motor contou (PR0 da baixa de PO): anotada nos MESMOS pontos de decisão abaixo,
   // sem mudar o que conta. 1 registro por PO (coletor) — a reaparição colidiria na PK. O handler publica.
   // Unidade (unidade-omie.ts): o saldo do PO de um SKU com conv entra em unidades Omie no pendente E na contribuição.
-  const coletor = criarColetorObservacao((sku) => habilitadoMap.has(sku) || membro(sku), {
-    parseQtd, parseRecebido, conv: (sku) => conv.get(sku),
-  });
+  const convDe = (sku: string) => conv.get(sku);
+  const coletor = criarColetorObservacao((sku) => habilitadoMap.has(sku) || membro(sku), { parseQtd, parseRecebido, conv: convDe });
   const itemDoPo = (sku: string, poNumero: string, etapa: string, qtde: number, recebido: number): PoItemOmie =>
-    ({ sku, poNumero, etapa, ...quantidadesEmUnidadeOmie(qtde, recebido, conv.get(sku)) });
+    ({ sku, poNumero, etapa, ...quantidadesEmUnidadeOmie(qtde, recebido, convDe(sku)) });
 
   for (let pagina = 1; pagina <= MAX_PAGINAS_PED; pagina++) {
     const resp = await callOmiePedidos(appKey, appSecret, pagina, dataDe, dataAte, deadline);
@@ -941,9 +940,8 @@ Deno.serve(async (req) => {
           if (recusa !== null || convPendente === null) {
             return { pendente: new Map(), confiavel: false, problemas: [recusa ?? "unidade do PO não lida"], observacao: null };
           }
-          const r = await computePendenteViaPedidosCompra(
-            appKey, appSecret, habilitadoMap, ehMembro, convPendente.conv, supabase, deadline,
-          );
+          const conv = convPendente.conv;
+          const r = await computePendenteViaPedidosCompra(appKey, appSecret, habilitadoMap, ehMembro, conv, supabase, deadline);
           const doMembro = { pendenteMembros: r.pendenteMembros, membrosPendenteIlegiveis: r.membrosPendenteIlegiveis };
           return { pendente: r.pendente, confiavel: r.confiavel, problemas: r.problemas, observacao: r, ...doMembro };
         }
