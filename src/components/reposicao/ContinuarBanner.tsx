@@ -74,7 +74,13 @@ export function ContinuarBanner({ currentStep, stale = false }: Props) {
               Você está na <span className="font-medium text-foreground">etapa {currentStep}</span>:{" "}
               {stepLabel}
               {stale && (
-                <span className="text-status-warning"> · a última leitura do ciclo falhou, pode estar desatualizada</span>
+                /* `data-testid` é ÂNCORA DE GUARD, não estilo: a tela tem OUTROS avisos com a
+                   mesma frase (o `AvisoLeituraDoCiclo` do EtapasGrid, logo abaixo), e sem âncora
+                   própria o teste desta ressalva passava VERDE pelo aviso do vizinho — pego na
+                   falsificação, é a mesma lição do `testId` do AvisoLeituraFalhou. */
+                <span data-testid="continuar-banner-stale" className="text-status-warning">
+                  {" · a última leitura do ciclo falhou, pode estar desatualizada"}
+                </span>
               )}
             </div>
           </div>

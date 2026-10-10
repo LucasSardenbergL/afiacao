@@ -148,9 +148,12 @@ describe('AdminReposicaoCockpit — "você está na etapa X" só com o ciclo lid
       screen.getAllByText(/etapa 3/).length,
       'descartou o último dado bom em vez de mantê-lo ressalvado',
     ).toBeGreaterThan(0);
+    // Âncora PRÓPRIA do banner: casar a frase passava verde pelo aviso do `EtapasGrid` logo
+    // abaixo, que diz quase a mesma coisa — a sabotagem que removia a ressalva do banner não
+    // reprovava (pego na falsificação; é a lição do `testId` do AvisoLeituraFalhou).
     expect(
-      (await screen.findAllByText(/última leitura do ciclo falhou/i)).length,
-      'manteve a afirmação "você está na etapa 3" sem dizer que a releitura falhou',
-    ).toBeGreaterThan(0);
+      await screen.findByTestId('continuar-banner-stale'),
+      'manteve a afirmação "você está na etapa 3" sem ressalvar que a releitura falhou',
+    ).toBeTruthy();
   });
 });
