@@ -75,8 +75,27 @@ export function formatMargemPct(v: number | null | undefined): string {
 }
 
 /**
+ * Janela da margem por cliente: desde 2026-10-09, `private.margem_cliente_agregada()` só agrega
+ * itens de pedidos dos ÚLTIMOS 12 MESES móveis — o custo (`product_costs`) é o ATUAL, e aplicá-lo
+ * a preço de venda de anos atrás deprimia a margem (~5 p.p.). Toda legenda de margem cita a janela,
+ * senão quem lê assume "histórico inteiro" (docs/historico/farmer-margem-cobertura-custo.md).
+ */
+export const JANELA_MARGEM_ROTULO = 'últimos 12 meses';
+const JANELA_MARGEM_DIAS = 365;
+
+/**
+ * Por que o cliente não tem margem, quando o motivo é a JANELA: nenhuma compra nos últimos 12 meses.
+ * Lê `days_since_last_purchase` (MEDIDO pelo calculate-scores; 999 = sem compra registrada) — é o
+ * que permite afirmar o motivo em vez de mostrar "—". Dias ausente/não-finito → null (não afirma nada).
+ */
+export function legendaMargemSemCompraNaJanela(diasSemCompra: number | null | undefined): string | null {
+  if (diasSemCompra == null || !Number.isFinite(diasSemCompra)) return null;
+  return diasSemCompra > JANELA_MARGEM_DIAS ? `sem compra nos ${JANELA_MARGEM_ROTULO}` : null;
+}
+
+/**
  * Legenda da cobertura de custo de UM cliente, para acompanhar a margem na tela:
- * "3 de 40 linhas c/ custo". Sem ela, "53%" parece apurado sobre o cliente inteiro.
+ * "3 de 40 linhas c/ custo (últimos 12 meses)". Sem ela, "53%" parece apurado sobre o cliente inteiro.
  *
  * ⚠️ São LINHAS de item de pedido, não unidades nem receita — e a margem é ponderada por RECEITA.
  * "3 de 40" pode cobrir 99% do faturamento, e "39 de 40" pode omitir justamente a linha grande.
@@ -98,14 +117,16 @@ export function legendaCoberturaItens({ itensComCusto, itensSemCusto }: {
   if (total === 0) return null;
   const linhas = total === 1 ? 'linha' : 'linhas';
   const totalFmt = total.toLocaleString('pt-BR');
-  if (itensComCusto === 0) return `nenhuma de ${totalFmt} ${linhas} c/ custo`;
-  return `${itensComCusto.toLocaleString('pt-BR')} de ${totalFmt} ${linhas} c/ custo`;
+  const janela = `(${JANELA_MARGEM_ROTULO})`;
+  if (itensComCusto === 0) return `nenhuma de ${totalFmt} ${linhas} c/ custo ${janela}`;
+  return `${itensComCusto.toLocaleString('pt-BR')} de ${totalFmt} ${linhas} c/ custo ${janela}`;
 }
 
 /** Tooltip que acompanha a legenda: impede ler contagem de linhas como cobertura de receita. */
 export const DICA_COBERTURA_LINHAS =
   'Contagem de LINHAS de pedido com custo conhecido — não é fração da receita. A margem é ' +
-  'ponderada por valor: poucas linhas podem cobrir quase todo o faturamento, e o contrário também.';
+  'ponderada por valor: poucas linhas podem cobrir quase todo o faturamento, e o contrário também. ' +
+  `Só entram pedidos dos ${JANELA_MARGEM_ROTULO}: o custo cadastrado é o atual e não vale para preço antigo.`;
 
 /**
  * Preço em BRL, ou "—" quando NÃO SABIDO. Irmã monetária de `formatMargemPct`.

@@ -38,7 +38,7 @@ prepara() {
   "$PGBIN/dropdb" -p "$PORT" -h /tmp -U postgres --if-exists prove
   "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
   P -q -f "$REPO_ROOT/db/stubs-supabase.sql"
-  P -q <<'SQL'
+  P -q > /dev/null <<'SQL'
 CREATE SCHEMA IF NOT EXISTS private;
 CREATE TABLE public.omie_products (id uuid PRIMARY KEY, omie_codigo_produto bigint UNIQUE);
 CREATE TABLE public.product_costs (
@@ -105,8 +105,8 @@ SELECT pg_temp.item('10000000-0000-0000-0000-00000000000a', '88000000-0000-0000-
 SQL
 }
 
-FAIL=0
-ok()  { echo "  OK   $1"; }
+FAIL=0; PASS=0
+ok()  { PASS=$((PASS+1)); echo "  OK   $1"; }
 bad() { FAIL=$((FAIL+1)); echo "  FALHOU $1"; }
 eq()  { if [ "$2" = "$3" ]; then ok "$1 (=$2)"; else bad "$1 -- esperado [$3], veio [$2]"; fi; }
 
@@ -116,7 +116,7 @@ m() { Pq -c "SELECT COALESCE((SELECT COALESCE(margem_pct::text,'NULL') FROM priv
 # Uma rodada = banco limpo + aplica $1 + bateria. Devolve (em FAIL) quantos asserts caíram.
 rodada() {
   local arquivo="$1" log="$TMP/apply.log"
-  FAIL=0
+  FAIL=0; PASS=0
   prepara
   if ! P -f "$arquivo" > "$log" 2>&1; then
     bad "APPLY da migration falhou: $(tail -c 300 "$log")"; return 0
@@ -146,7 +146,7 @@ sabota() {
   sed "$expr" "$MIG" > "$copia"
   if cmp -s "$MIG" "$copia"; then echo "  ERRO sabotagem '$nome' nao alterou o arquivo (sed nao casou)"; exit 1; fi
   echo "--- sabotagem: $nome (espera $alvo VERMELHO) ---"
-  local saida; saida="$(rodada "$copia")"; echo "$saida" | sed 's/^/    /'
+  local saida; saida="$(rodada "$copia")"; printf '%s\n' "$saida" | while IFS= read -r l; do echo "    $l"; done
   if echo "$saida" | grep -q "FALHOU $alvo "; then
     SABOTAGENS_OK=$((SABOTAGENS_OK+1)); echo "  OK   sabotagem '$nome' derrubou $alvo"
   else
@@ -156,9 +156,10 @@ sabota() {
 
 echo "=== CONTROLE: migration REAL (PG17 :$PORT) ==="
 rodada "$MIG"
-CONTROLE_FAIL=$FAIL
+CONTROLE_FAIL=$FAIL; CONTROLE_PASS=$PASS
 if [ "$CONTROLE_FAIL" -ne 0 ]; then
-  echo "RESULTADO: CONTROLE VERMELHO ($CONTROLE_FAIL falhas) — falsificacao abortada"; exit 1
+  echo "PASS=$CONTROLE_PASS  FAIL=$CONTROLE_FAIL"
+  echo "CONTROLE VERMELHO — falsificacao abortada"; exit 1
 fi
 
 echo "=== FALSIFICACAO (mesma invocacao, apos controle verde) ==="
@@ -172,7 +173,9 @@ sabota "janela de 11 meses"    "J4" "s|now() - interval '12 months'$|now() - int
 # Regra preexistente perdida no replace.
 sabota "sem deleted_at"        "R3" "s|^       AND so.deleted_at IS NULL$|       AND true|"
 
-echo "=== RESULTADO ==="
-echo "controle: 0 falhas · sabotagens com dente: $SABOTAGENS_OK · sem dente: $SABOTAGENS_FRACAS"
-if [ "$SABOTAGENS_FRACAS" -ne 0 ] || [ "$SABOTAGENS_OK" -ne 5 ]; then echo "RESULTADO: VERMELHO"; exit 1; fi
-echo "RESULTADO: VERDE (controle verde + 5/5 sabotagens vermelhas)"
+echo "=== FECHAMENTO ==="
+echo "controle: $CONTROLE_PASS asserts verdes · sabotagens com dente: $SABOTAGENS_OK · sem dente: $SABOTAGENS_FRACAS"
+# Contrato do db/roda-nucleo-ci.sh: UMA linha PASS=/FAIL=. PASS = asserts do controle + sabotagens com dente.
+echo "PASS=$((CONTROLE_PASS + SABOTAGENS_OK))  FAIL=$SABOTAGENS_FRACAS"
+if [ "$SABOTAGENS_FRACAS" -ne 0 ] || [ "$SABOTAGENS_OK" -ne 5 ]; then echo "VERMELHO"; exit 1; fi
+echo "VERDE-REAL: controle verde + 5/5 sabotagens vermelhas"

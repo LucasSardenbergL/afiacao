@@ -10,7 +10,7 @@ import { CallButton } from '@/components/call/CallButton';
 import { AgendarVisitaDialog } from '@/components/visitas/AgendarVisitaDialog';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
-import { DICA_COBERTURA_LINHAS, formatMargemPct, legendaCoberturaItens } from '@/lib/format';
+import { DICA_COBERTURA_LINHAS, formatMargemPct, legendaCoberturaItens, legendaMargemSemCompraNaJanela } from '@/lib/format';
 import { coberturaCustoCliente } from '@/lib/scoring/margin';
 import { whatsappLink } from '@/lib/phone';
 import {
@@ -29,6 +29,11 @@ export function CustomerHero({
   const health = healthTone(s?.health_class ?? null, s?.sales_history_status ?? null);
   const churn = churnTone(s?.churn_risk ?? null);
   const coberturaItens = legendaCoberturaItens(coberturaCustoCliente(s));
+  // Sem margem E sem cobertura: se o motivo é a janela (nenhuma compra em 12m), a tela diz — em vez
+  // de sumir com a margem como se nunca tivesse existido, ou de mostrar um número velho.
+  const semCompraNaJanela = s?.gross_margin_pct == null && !coberturaItens
+    ? legendaMargemSemCompraNaJanela(s?.days_since_last_purchase)
+    : null;
   const waHref = whatsappLink(customer.phone);
 
   return (
@@ -170,6 +175,15 @@ export function CustomerHero({
                 >
                   <Activity className="w-3 h-3" />
                   margem não apurada · {coberturaItens}
+                </span>
+              )}
+              {semCompraNaJanela && (
+                <span
+                  title={DICA_COBERTURA_LINHAS}
+                  className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md border bg-muted text-muted-foreground"
+                >
+                  <Activity className="w-3 h-3" />
+                  margem: {semCompraNaJanela}
                 </span>
               )}
             </div>

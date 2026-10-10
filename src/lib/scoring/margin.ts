@@ -1,3 +1,5 @@
+import { JANELA_MARGEM_ROTULO } from '@/lib/format';
+
 /**
  * Margem utilizável, ou `null` se desconhecida.
  *
@@ -96,13 +98,18 @@ export function coberturaMargem(valores: Iterable<unknown>): CoberturaMargem {
   return { comMargem, total };
 }
 
-/** Legenda pronta para acompanhar o KPI. Sem isso, quem lê assume "todos os clientes". */
+/**
+ * Legenda pronta para acompanhar o KPI. Sem isso, quem lê assume "todos os clientes" — e, desde a
+ * janela de 2026-10-09, também "o histórico inteiro": a margem é só dos últimos 12 meses, então quem
+ * não comprou no período fica FORA da contagem (sem margem), não com um número velho.
+ */
 export function legendaCobertura({ comMargem, total }: CoberturaMargem): string {
   if (total === 0) return 'sem clientes';
-  if (comMargem === 0) return 'nenhum cliente c/ margem conhecida';
+  const janela = `(${JANELA_MARGEM_ROTULO})`;
+  if (comMargem === 0) return `nenhum cliente c/ margem conhecida ${janela}`;
   const cobertos = comMargem.toLocaleString('pt-BR');
-  if (comMargem === total) return `${cobertos} clientes c/ margem`;
-  return `parcial — ${cobertos} de ${total.toLocaleString('pt-BR')} clientes c/ margem`;
+  if (comMargem === total) return `${cobertos} clientes c/ margem ${janela}`;
+  return `parcial — ${cobertos} de ${total.toLocaleString('pt-BR')} clientes c/ margem ${janela}`;
 }
 
 /**
