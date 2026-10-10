@@ -82,9 +82,7 @@ export const respostaSonda = criarRespostaSonda("analyze-unified-order");
  * "bump v1.1-corpo-tipado". Um `git revert` deste bump devolveria a sonda a "responde verde sem provar nada".
  * `v1.3-ia-nao-precifica`: a edge deixou de decidir preço (fronteira `montarRespostaAnalise`, canária
  * `ia-nao-precifica-v1`); v1.4 = hotfix do BOOT_ERROR. Por quê: docs/historico/ia-nao-precifica.md.
- * `v1.6-so-imagem-2-passos`: o modo só-imagem deixou de ler 1.000 perfis/1.000 produtos (de 5.668 e
- * 3.223) e de despejá-los no prompt — agora transcreve a foto e ranqueia o catálogo/perfis INTEIROS
- * (keyset, fail-closed) por item. Ver `transcricao.ts`.
+ * `v1.6-so-imagem-2-passos`: só-imagem transcreve a foto e ranqueia catálogo/perfis INTEIROS (transcricao.ts).
  */
 export const VERSAO = "v1.6-so-imagem-2-passos";
 
