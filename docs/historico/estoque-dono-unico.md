@@ -526,3 +526,7 @@ Resíduos, não consertados:
 - **P3 — a recusa só acontece depois da varredura física.** Custa tempo de execução, não precisão.
 
 Sem achado: membro inativo, `grupo_id` nulo e SKU em 2 grupos (o DDL impede), empresa, grupo de 1 membro, fallback 1, recusa do run inteiro e arredondamento a 6 casas (1.000 contribuições fracionárias reproduzidas).
+
+**No ar (2026-10-10).** PR #2903 mergeado: `3199902ac`. O deploy foi pelo pacote `pendencias:pacote`, montado contra `51eecb8ce`, com os 16 hashes batendo, a edge Active e a resposta "No files were edited.". O sensor `lovable-sensor-edicao` deu SEM_EDICAO (envio às 14:50:30Z). Validação na prod:
+- **Sonda no ledger** (`db/sonda-omie-sync-estoque-v19-2026-10-10.sql`, via `db:aplicar`): o ensaio rodou e o real virou o recibo #306. Resultado: HTTP 200, `v1.9-pendente-po-app-em-unidade-omie`, fonte `80a8ff43…`, **DEPLOY CONFIRMADO**. No `pendencias:deploy`, a `omie-sync-estoque` aparece em ✅ confere.
+- **1º run do cron v1.9** (`reposicao_po_observado_run`, psql-ro): `concluido_em` 15:40:50Z, `versao_edge` v1.9, `pendente_aplicado = true`, `skus_divergentes = 0`. A 2ª testemunha (a observação contra `sea.estoque_pendente_entrada`) fechou na unidade nova.
