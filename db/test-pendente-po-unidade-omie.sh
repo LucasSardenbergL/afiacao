@@ -43,7 +43,7 @@ TOTAL_ESPERADO=8
 if [ "${1:-}" = "--falsificar" ]; then
   SABOTAGENS="pendente_cru:U1,T1:U0,T0,X1
               contribuicao_crua:W1:U1,T1
-              parcial_vale:X1:U1,T1
+              sem_guarda_1e9:X1:U1,T1
               sem_coerencia:X1:U1,T1"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-${SLUG}.XXXXXX")"
   porta=$PORT
@@ -135,7 +135,7 @@ case "$SABOTAGEM" in
   pendente_cru)      troca unidade-omie.ts "  if (conv === undefined) return { qtde, recebido };" "  return { qtde, recebido };" ;;
   contribuicao_crua) troca observacao-po.ts "contribuicao: saldoEmUnidadeOmie(Math.max(0, qtde - recebido), parse.conv?.(skuTexto))" \
                                             "contribuicao: Math.max(0, qtde - recebido)" ;;
-  parcial_vale)      troca unidade-omie.ts "const todosValidos = membros.every(" "const todosValidos = membros.some(" ;;
+  sem_guarda_1e9)    troca unidade-omie.ts "m.u !== null && m.u.n > 0n && paraNumero(m.u) < 1e9" "m.u !== null && m.u.n > 0n" ;;
   sem_coerencia)     troca unidade-omie.ts "    if (!membros.every((m) => mesmaRazao(" "    if (membros.every((m) => !mesmaRazao(" ;;
   *) echo "❌ SABOTAGEM desconhecida: $SABOTAGEM"; exit 9 ;;
 esac
