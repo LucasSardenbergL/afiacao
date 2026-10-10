@@ -3,8 +3,8 @@
 // p/ não misturar a lente de exibição com mutação — ver guard de impersonação).
 // Aqui: estado de detalhe (cliente selecionado, ferramentas, pedidos) + mutações.
 // Spec: docs/superpowers/specs/2026-06-11-clientes-escopo-carteira-design.md
-import { useState, useEffect } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useState, useEffect, useRef } from 'react';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
@@ -14,12 +14,17 @@ import type { Customer, ToolCategory, UserTool, SalesOrder } from './types';
 export function useAdminCustomers() {
   const navigate = useNavigate();
   const { customerId } = useParams<{ customerId?: string }>();
+  // `?search=` é escrito (com debounce) pela CustomerListView via useUrlState; aqui só lemos,
+  // para a busca ir ao servidor no modo completa.
+  const [searchParams] = useSearchParams();
+  const busca = searchParams.get('search') ?? '';
   const { user, isStaff, loading: authLoading } = useAuth();
 
   const {
     customers, scores, total, isCarteira, loading, isError, refetch,
     hasNextPage, isFetchingNextPage, fetchNextPage, effectiveUserId,
-  } = useClientesScope();
+    buscaNoServidor, buscando, clienteAlvo,
+  } = useClientesScope({ busca, customerIdAlvo: customerId ?? null });
 
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [customerTools, setCustomerTools] = useState<UserTool[]>([]);
@@ -28,6 +33,8 @@ export function useAdminCustomers() {
   const [loadingTools, setLoadingTools] = useState(false);
   const [loadingOrders, setLoadingOrders] = useState(false);
   const [addToolDialogOpen, setAddToolDialogOpen] = useState(false);
+  // De quem já carregamos ferramentas/pedidos — evita recarregar a cada página da lista.
+  const detalheCarregadoDe = useRef<string | null>(null);
 
   useEffect(() => {
     if (!authLoading && !isStaff) navigate('/', { replace: true });
@@ -39,22 +46,33 @@ export function useAdminCustomers() {
     setSelectedCustomer(null);
     setCustomerTools([]);
     setOrders([]);
+    detalheCarregadoDe.current = null;
   }, [effectiveUserId]);
 
   useEffect(() => {
     if (user && isStaff) loadCategories();
   }, [user, isStaff]);
 
+  // Deep link: o scope resolve o cliente por id mesmo fora das páginas carregadas. Só carrega
+  // ferramentas/pedidos quando o cliente MUDA — antes isto re-disparava a cada página da lista.
+  const alvo = clienteAlvo.estado === 'encontrado' ? clienteAlvo.customer : null;
   useEffect(() => {
-    if (customerId && customers.length > 0) {
-      const customer = customers.find((c) => c.user_id === customerId);
-      if (customer) {
-        setSelectedCustomer(customer);
-        loadCustomerTools(customerId);
-        loadCustomerOrders(customerId);
+    if (!customerId) {
+      // Voltar pelo histórico (/admin/customers/:id → /admin/customers) também fecha o detalhe.
+      setSelectedCustomer(null);
+      detalheCarregadoDe.current = null;
+      return;
+    }
+    if (alvo && alvo.user_id === customerId) {
+      setSelectedCustomer(alvo);
+      if (detalheCarregadoDe.current !== alvo.user_id) {
+        detalheCarregadoDe.current = alvo.user_id;
+        loadCustomerTools(alvo.user_id);
+        loadCustomerOrders(alvo.user_id);
       }
     }
-  }, [customerId, customers]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customerId, alvo, effectiveUserId]);
 
   const loadCategories = async () => {
     const { data } = await supabase.from('tool_categories').select('*').order('name');
@@ -97,6 +115,7 @@ export function useAdminCustomers() {
   };
 
   const handleSelectCustomer = (customer: Customer) => {
+    detalheCarregadoDe.current = customer.user_id;
     setSelectedCustomer(customer);
     loadCustomerTools(customer.user_id);
     loadCustomerOrders(customer.user_id);
@@ -115,6 +134,7 @@ export function useAdminCustomers() {
   };
 
   const handleBack = () => {
+    detalheCarregadoDe.current = null;
     setSelectedCustomer(null);
     navigate('/admin/customers');
   };
@@ -132,6 +152,11 @@ export function useAdminCustomers() {
     refetch,
     customers,
     scores,
+    buscaNoServidor,
+    buscando,
+    /** Estado do deep link — a página mostra "não encontrado" em vez de cair na lista. */
+    estadoDeepLink: clienteAlvo.estado,
+    retryDeepLink: clienteAlvo.estado === 'erro' ? clienteAlvo.refetch : undefined,
     categories,
     total,
     isCarteira,
