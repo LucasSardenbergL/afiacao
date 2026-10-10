@@ -1137,7 +1137,7 @@ SET test.role='service_role';
 SELECT (r->>'reserva_ajustada')||'/'||COALESCE(r->>'ajuste_falhou','NULL')
   FROM (SELECT public.atp_confirmar_pv('$SO_D14'::uuid, 'oben', 9314, 'N', '{}'::jsonb, '$(rec "$(det 3316:9)")'::jsonb) AS r) x;
 SQL
-)
+) || true
 P -q -c "DROP TRIGGER _harness_d14 ON public.estoque_reservas; DROP FUNCTION public._harness_d14();"
 case "$R" in "false/P0001: D14 sabotagem") ok "D14 ajuste que falha volta como ajuste_falhou (=$R)";; *) bad "D14 esperava false/P0001: D14 sabotagem, veio [$R]";; esac
 eq "D14 o write-back FICOU (o PV existe no Omie)" \
@@ -1172,7 +1172,7 @@ SET test.role='service_role';
 SELECT COALESCE(r->>'reserva_ajustada','NULL')||'/'||COALESCE(r->>'ajuste_falhou','NULL')
   FROM (SELECT public.atp_confirmar_pv('$SO_D16'::uuid, 'oben', 9316, 'N', '{}'::jsonb, '$(rec "$(det 3321:5)")'::jsonb) AS r) x;
 SQL
-)
+) || true
 wait "$BG" 2>/dev/null || true
 eq "D16 substituicao concorrente: a releitura sob lock aborta o ajuste limpo" "$R" "false/NULL"
 eq "D16 a reserva nova do checkout (sem pedido) ficou intacta" \
