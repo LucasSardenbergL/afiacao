@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { ilikeOr, isSearchablePostgrestTerm } from '@/lib/postgrest';
 import { useTintPricing, useTintPrices } from '@/hooks/useTintPricing';
+import { track } from '@/lib/analytics';
 import { selectTintPrice, type TintPriceSource, type AltPriceSource } from '@/lib/tint/select-price';
 import type { Product } from '@/hooks/useUnifiedOrder';
 import type { FormulaResult, AlternativePackaging } from './types';
@@ -56,18 +57,24 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
   }, [search]);
 
   // Find SKU id + produto_id + base_id for this omie product
-  const { data: skuInfo, isLoading: loadingSku } = useQuery({
+  // Erro LANÇA: antes `data || null` sem ler `error` fazia uma falha de rede/RLS virar
+  // skuId=null, e o diálogo afirmava "esta base não está configurada" — mentira que manda
+  // a vendedora de volta pro Omie. `order('id')` torna determinística a escolha quando o
+  // mesmo produto Omie tiver 2 SKUs (0 em prod em 2026-10-10; a unicidade é do mapeamento).
+  const { data: skuInfo, isLoading: loadingSku, isError: skuError, refetch: refetchSku } = useQuery({
     queryKey: ['tint-sku-for-product', product.id],
     staleTime: 5 * 60 * 1000,
     enabled: open,
     queryFn: async () => {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('tint_skus')
         .select('id, produto_id, base_id')
         .eq('omie_product_id', product.id)
         .eq('account', 'oben')
+        .order('id', { ascending: true })
         .limit(1)
         .maybeSingle();
+      if (error) throw error;
       return data || null;
     },
   });
@@ -99,7 +106,7 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
   // Fase 2): 1 linha por (account, sku_id, cor_id), preferência SL, fallback
   // SAYERLACK. Elimina a duplicata das 2 gerações no picker sem apagar nada.
   // ORDER determinístico (antes: LIMIT 20 sem order — resultado instável).
-  const { data: formulas, isLoading: loadingFormulas } = useQuery({
+  const { data: formulas, isLoading: loadingFormulas, isError: formulasError, refetch: refetchFormulas } = useQuery({
     queryKey: ['tint-formula-search', skuId, debouncedSearch],
     staleTime: 5 * 60 * 1000,
     enabled: !!skuId && debouncedSearch.length >= 2,
@@ -124,7 +131,7 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
   // When color not found in current base, search ALL bases for it
   const colorNotFoundInBase = debouncedSearch.length >= 2 && !loadingFormulas && formulas && formulas.length === 0;
 
-  const { data: globalColorData, isLoading: loadingGlobalColors } = useQuery({
+  const { data: globalColorData, isLoading: loadingGlobalColors, isError: globalError, refetch: refetchGlobal } = useQuery({
     queryKey: ['tint-global-color-search', debouncedSearch, currentBaseSuffix],
     staleTime: 5 * 60 * 1000,
     // Roda mesmo sem sufixo (base sem código na descrição): aí não filtra por
@@ -157,21 +164,23 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
 
       // Get SKU details
       const skuIds = [...new Set(globalFormulas.map(f => f.sku_id))];
-      const { data: skus } = await supabase
+      const { data: skus, error: skusErr } = await supabase
         .from('tint_skus')
         .select('id, omie_product_id, produto_id, base_id')
         .in('id', skuIds)
         .not('omie_product_id', 'is', null);
+      if (skusErr) throw skusErr;
 
       if (!skus || skus.length === 0) return { matches: [], colorExists: true };
 
       // Filter SKUs to only those with the same base suffix (e.g. ".7666")
       if (currentBaseSuffix) {
         const baseIds = [...new Set(skus.map(s => s.base_id))];
-        const { data: bases } = await supabase
+        const { data: bases, error: basesErr } = await supabase
           .from('tint_bases')
           .select('id, descricao')
           .in('id', baseIds);
+        if (basesErr) throw basesErr;
 
         const validBaseIds = new Set(
           (bases || [])
@@ -192,12 +201,13 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
 
       // Get product details
       const productIds = skus.map(s => s.omie_product_id!).filter(Boolean);
-      const { data: products } = await supabase
+      const { data: products, error: productsErr } = await supabase
         .from('omie_products')
         .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto, account, is_tintometric, tint_type')
         // money-path: não oferecer produto-base desativado no Omie (UX; o gate final é no submit)
         .eq('ativo', true)
         .in('id', productIds);
+      if (productsErr) throw productsErr;
 
       if (!products) return { matches: [], colorExists: true };
 
@@ -265,7 +275,7 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
   });
 
   // Alternative packagings: same color, different SKUs
-  const { data: alternatives, isLoading: loadingAlternatives } = useQuery({
+  const { data: alternatives, isLoading: loadingAlternatives, isError: alternativesError, refetch: refetchAlternatives } = useQuery({
     queryKey: ['tint-alternatives', selectedFormula?.cor_id, skuId],
     staleTime: 5 * 60 * 1000,
     enabled: !!selectedFormula?.cor_id && !!skuId,
@@ -287,22 +297,24 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
 
       // Get SKU details with omie_product_id, produto_id, base_id
       const skuIds = [...new Set(altFormulas.map(f => f.sku_id!))];
-      const { data: skus } = await supabase
+      const { data: skus, error: skusErr } = await supabase
         .from('tint_skus')
         .select('id, omie_product_id, produto_id, base_id')
         .in('id', skuIds)
         .not('omie_product_id', 'is', null);
+      if (skusErr) throw skusErr;
 
       if (!skus || skus.length === 0) return [];
 
       // Get product details
       const productIds = skus.map(s => s.omie_product_id!).filter(Boolean);
-      const { data: products } = await supabase
+      const { data: products, error: productsErr } = await supabase
         .from('omie_products')
         .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto, account, is_tintometric, tint_type')
         // money-path: não oferecer produto-base desativado no Omie (UX; o gate final é no submit)
         .eq('ativo', true)
         .in('id', productIds);
+      if (productsErr) throw productsErr;
 
       if (!products) return [];
 
@@ -348,7 +360,7 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
     () => [...(alternatives ?? []), ...globalColorMatches].map((a) => a.formulaId),
     [alternatives, globalColorMatches],
   );
-  const { data: altPriceMap, isLoading: altPriceQueryLoading } = useTintPrices(altFormulaIds);
+  const { data: altPriceMap, isLoading: altPriceQueryLoading, isError: altPriceError } = useTintPrices(altFormulaIds);
   const altPriceLoading = altFormulaIds.length > 0 && altPriceQueryLoading;
 
   // Preço honesto da cor selecionada: motor get_tint_price (base + corantes, NULL quando
@@ -427,6 +439,44 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
     ? null
     : (discountPct > 0 ? Math.round(precoSemDesconto * (1 - discountPct / 100) * 100) / 100 : precoSemDesconto);
 
+  // Falha de LEITURA (≠ "não existe"): a UI mostra o erro com "tentar de novo" em vez de
+  // tela em branco / "base não configurada" / "cor não encontrada".
+  const falhaLeitura = skuError || formulasError || globalError || alternativesError;
+  const tentarDeNovo = () => {
+    if (skuError) void refetchSku();
+    if (formulasError) void refetchFormulas();
+    if (globalError) void refetchGlobal();
+    if (alternativesError) void refetchAlternatives();
+  };
+
+  // ── Telemetria de jornada do balcão (PR de adoção, 2026-10-10) ───────────────────
+  // Pergunta que estes eventos respondem: ONDE a vendedora desiste do fluxo do app e volta
+  // pro Omie (0 de 171 pedidos com cor nos 90d passaram pela fórmula). Cada evento dispara
+  // 1x por transição (deps), nunca por render. O sinal DECISÓRIO de adoção continua sendo o
+  // banco (pedido com tint_formula_id ÷ pedido com cor — query em docs/agent/tintometrico.md);
+  // isto aqui é o funil, censurável por bloqueador, e assumido como tal.
+  useEffect(() => {
+    if (open) track('tint.seletor_aberto', { com_busca_inicial: !!initialSearch });
+  }, [open, initialSearch]);
+  useEffect(() => {
+    if (open && !loadingSku && !skuError && skuId === null) track('tint.base_nao_configurada');
+  }, [open, loadingSku, skuError, skuId]);
+  useEffect(() => {
+    if (open && falhaLeitura) track('tint.falha_leitura');
+  }, [open, falhaLeitura]);
+  useEffect(() => {
+    if (colorNotFoundInBase && !loadingGlobalColors && !globalError) {
+      track('tint.cor_nao_encontrada_na_base', {
+        cor_existe_no_catalogo: globalColorExists,
+        outras_bases: globalColorMatches.length,
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 1x por busca concluída
+  }, [colorNotFoundInBase, loadingGlobalColors, globalError, debouncedSearch]);
+  useEffect(() => {
+    if (selectedFormula && motivoSemPreco) track('tint.sem_preco', { motivo: motivoSemPreco });
+  }, [selectedFormula?.id, motivoSemPreco]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const onSearchChange = (value: string) => {
     setSearch(value);
     setSelectedFormula(null);
@@ -453,6 +503,10 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
     loadingAlternatives,
     altPriceMap,
     altPriceLoading,
+    altPriceError,
+    falhaLeitura,
+    skuError,
+    tentarDeNovo,
     discountPct,
     setDiscountPct,
     altDiscounts,

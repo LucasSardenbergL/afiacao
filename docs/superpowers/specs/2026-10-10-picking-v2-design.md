@@ -20,6 +20,23 @@ Medido em prod (psql-ro, 2026-10-10):
 - **Contrato de linha OK** (50 pedidos/conta): `codigo_item` presente e único em 100% das linhas; quantidade válida em 100%; `dAlt/hAlt` em 100%. Fracionário: Oben 4/107 (L), Colacor 0/141 (1 linha M2).
 - **EAN vem no próprio pedido:** `det[].produto.ean` existe na listagem (além de `ListarProdutos.ean`). Amostra do cadastro: Oben 30/50 com EAN (29 EAN-13, 1 EAN-8), Colacor 50/50 (1ª página — não representa os fabricados).
 
+### 1.2 Fase 0.2 — trava compartilhada do Omie (2026-10-10)
+
+- **Banco:** `omie_cota_metodo(conta, metodo)` com lease por token e `bloqueado_ate` (só aumenta); RPCs
+  `omie_cota_tentar`/`omie_cota_liberar`/`omie_cota_registrar_fault`, só `service_role`
+  (migration `20261010204708`, prova `db/test-omie-cota-metodo.sh` — 44 asserts, 9 sabotagens, no núcleo CI).
+- **Edges:** `_shared/omie-cota.ts` coordena **só `ListarPedidos`** em `omie-vendas-sync`, `sync-reprocess`,
+  `omie-desconto-backfill` e `picking-fila-omie`. **Fail-closed**: trava sem resposta → a chamada não é feita
+  (o consumidor adia, como já adiava rate-limit). Timeout 80 s < lease 150 s; timeout ou "aguarde" não
+  registrado retêm a vez até o lease vencer.
+- **Causa provável dos bloqueios de 30 min:** o vendas-sync re-tentava REDUNDANT com espera limitada a 15 s
+  mesmo quando o Omie pedia mais. No `ListarPedidos` isso acabou; os demais métodos seguem idênticos à main
+  (Codex rodada 1 pegou que estender a regra a todos quebraria edição — exclui→reinclui itens — e
+  cancelamento de pedido; rodada 2 confirmou 56 cenários idênticos).
+- **Codex:** 3 rodadas — REPROVADO (2 P1 + 2 P2) → REPROVADO (2 P2) → **APROVADO**.
+- **Fora de escopo, pré-existente:** `historico_produtos_cliente` grava o prefixo lido quando a paginação
+  para no meio (rate-limit ou trava), sem sinalizar incompletude — não apaga nada.
+
 ## 2. Decisões do founder (2026-10-10)
 
 | Tema | Decisão |

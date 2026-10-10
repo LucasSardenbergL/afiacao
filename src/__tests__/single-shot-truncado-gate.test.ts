@@ -95,7 +95,6 @@ const DIVIDA: ReadonlyMap<string, number> = new Map([
   ['src/pages/SalesProducts.tsx', 1], // 55:omie_products
   ['src/pages/SalesQuotes.tsx', 1], // 62:sales_orders
   ['src/pages/TintCorantes.tsx', 2], // 15:tint_corantes 29:omie_products
-  ['src/pages/TintMapping.tsx', 2], // 43:omie_products 79:tint_corantes
   ['src/services/financeiroConciliacao.ts', 1], // 51:fin_movimentacoes
   ['supabase/functions/analyze-services/index.ts', 1], // 147:omie_servicos
   ['supabase/functions/analyze-unified-order/index.ts', 1], // 599:omie_servicos (profiles/omie_products saíram: só-imagem em 2 passos, keyset em transcricao.ts)

@@ -82,8 +82,10 @@ export const respostaSonda = criarRespostaSonda("sync-reprocess");
 // `omie_pedido_id: Number(codigoPedido)` (money-path: ausente viraria 0); a v1.11 só tipa, JS idêntico.
 // v1.17 (2026-10-06) — junta DUAS entregas: `desconto_corrigido_para_null`, SUBCONJUNTO de `desconto_corrigido`
 // (nunca somar as duas), ausente enquanto a RPC no ar não separar. → sensor-que-mede-mudanca-nao-responde-nulificacao.md
+// v1.18 (2026-10-10, picking v2 Fase 0.2) — `ListarPedidos` pede a vez na trava `omie_cota_metodo`
+// (_shared/omie-cota.ts); vez negada LANÇA (chamada não feita). Migration 20261010204708 antes.
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.17-nulificacao-e-catalogo";
+export const VERSAO = "v1.18-cota-omie-compartilhada";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO = // v1.12 (2026-09-27, P2 Codex): run de pedidos que ABORTA grava o metadata apurado até o abort (não apurado = null, nunca 0) — ./apuracao-pedidos.ts. Nota aqui e não na linha do VERSAO: `scripts/sonda-versao-sql.ts` exige aquela linha limpa até o fim.

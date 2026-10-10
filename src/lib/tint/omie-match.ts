@@ -135,3 +135,24 @@ export function sugerirMapeamento(
   ).map((p) => p.id);
   return { tipo: 'revisar', candidatos };
 }
+
+/**
+ * O `sugerirMapeamento` roda POR LINHA e não reserva o produto escolhido: num lote, dois
+ * SKUs podem receber o MESMO produto Omie como "forte". Aprovados, o balcão depois serve um
+ * deles ao acaso. Produto disputado ⇒ ambíguo ⇒ sai das sugestões (todas as linhas que o
+ * disputam), e a escolha fica pro humano no seletor.
+ */
+export function descartarSugestoesDisputadas(sugestoes: Map<string, string>): {
+  unicas: Map<string, string>;
+  disputadas: number;
+} {
+  const porProduto = new Map<string, number>();
+  for (const produtoId of sugestoes.values()) porProduto.set(produtoId, (porProduto.get(produtoId) ?? 0) + 1);
+  const unicas = new Map<string, string>();
+  let disputadas = 0;
+  for (const [skuId, produtoId] of sugestoes) {
+    if ((porProduto.get(produtoId) ?? 0) > 1) disputadas++;
+    else unicas.set(skuId, produtoId);
+  }
+  return { unicas, disputadas };
+}

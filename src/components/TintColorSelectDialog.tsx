@@ -1,5 +1,7 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
+import { track } from '@/lib/analytics';
 import { Search, Palette, Loader2, AlertTriangle } from 'lucide-react';
 import type { TintColorSelectDialogProps } from './tintColorSelect/types';
 import { useTintColorSelect } from './tintColorSelect/useTintColorSelect';
@@ -27,6 +29,10 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
     loadingAlternatives,
     altPriceMap,
     altPriceLoading,
+    altPriceError,
+    falhaLeitura,
+    skuError,
+    tentarDeNovo,
     discountPct,
     setDiscountPct,
     altDiscounts,
@@ -50,6 +56,17 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
     motivoSemPreco,
   } = useTintColorSelect({ product, open, customerUserId, initialSearch });
 
+  // Fim do funil: a cor saiu do app pro pedido (≠ do Omie). `fonte` e `alternativa` dizem
+  // por qual caminho — o mesmo SKU, outra embalagem/base, ou a busca global.
+  const confirmar: typeof onConfirm = (formulaId, corId, nomeCor, precoFinalItem, custo, meta, alternativeProduct) => {
+    track('tint.cor_confirmada', {
+      fonte: meta.source ?? 'nenhuma',
+      alternativa: !!alternativeProduct,
+      com_desconto: meta.discountPct > 0,
+    });
+    onConfirm(formulaId, corId, nomeCor, precoFinalItem, custo, meta, alternativeProduct);
+  };
+
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
@@ -61,7 +78,19 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
           <p className="text-xs text-muted-foreground">{product.descricao}</p>
         </DialogHeader>
 
-        {skuId === null && !loadingSku ? (
+        {/* Falha de LEITURA ≠ "não existe": sem este aviso a falha virava "base não
+            configurada" / tela em branco e a vendedora voltava pro Omie. */}
+        {falhaLeitura && (
+          <div className="flex items-start gap-2 p-3 rounded-md bg-destructive/10 text-destructive text-xs">
+            <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+            <div className="space-y-2">
+              <span className="block">Não consegui carregar as cores agora (falha de conexão ou do servidor). Isso não significa que a cor não exista.</span>
+              <Button size="sm" variant="outline" onClick={tentarDeNovo}>Tentar de novo</Button>
+            </div>
+          </div>
+        )}
+
+        {skuId === null && !loadingSku && !skuError ? (
           <div className="flex items-start gap-2 p-3 rounded-md bg-destructive/10 text-destructive text-xs">
             <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
             <span>Esta base não está configurada no módulo tintométrico. Configure o mapeamento em <strong>Tintométrico &gt; Mapeamento Omie</strong>.</span>
@@ -94,10 +123,15 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
                 precoLoading={altPriceLoading}
                 altPriceSourceOverrides={altPriceSourceOverrides}
                 setAltPriceSourceOverride={setAltPriceSourceOverride}
-                onConfirm={onConfirm}
+                onConfirm={confirmar}
               />
             )}
             {loadingGlobalColors && <Loader2 className="w-4 h-4 animate-spin mx-auto my-4" />}
+            {altPriceError && (
+              <p className="text-xs text-status-error">
+                Não consegui calcular o preço das outras embalagens agora — aparecem sem preço até recarregar.
+              </p>
+            )}
 
             {selectedFormula && (
               <SelectedFormulaCard
@@ -129,7 +163,7 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
                 altDiscounts={altDiscounts}
                 setAltDiscounts={setAltDiscounts}
                 custoCorantes={custoCorantes}
-                onConfirm={onConfirm}
+                onConfirm={confirmar}
               />
             )}
           </>

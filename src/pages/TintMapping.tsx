@@ -13,7 +13,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Search, EyeOff, Eye, Wand2, Check, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { OmieBaseCombobox, type ProdutoOmieOption } from '@/components/tint/OmieBaseCombobox';
-import { sugerirMapeamento, type LinhaSku } from '@/lib/tint/omie-match';
+import { sugerirMapeamento, descartarSugestoesDisputadas, type LinhaSku } from '@/lib/tint/omie-match';
+import { fetchAllPages } from '@/lib/postgrest';
 
 const ACCOUNT = 'oben';
 
@@ -35,59 +36,75 @@ interface CoranteRow {
 
 type FilterStatus = 'all' | 'mapped' | 'pending';
 
+// As 3 leituras abaixo alimentam o `sugerirMapeamento`, cujo contrato exige o UNIVERSO
+// elegível COMPLETO: um universo truncado (teto PostgREST de 1.000) ou vazio-por-erro faz
+// um candidato único parecer "forte" quando o concorrente só não veio. Por isso: paginação
+// com ordem estável (`id` como desempate) e erro que LANÇA (fetchAllPages), nunca `data ?? []`.
 function useOmieProducts(tintType: string) {
   return useQuery({
     queryKey: ['omie-tint-products', tintType],
-    queryFn: async () => {
-      const { data } = await supabase
-        .from('omie_products')
-        .select('id, codigo, descricao, valor_unitario, estoque')
-        .eq('account', ACCOUNT)
-        .eq('is_tintometric', true)
-        .eq('tint_type', tintType)
-        .eq('ativo', true)
-        .order('descricao');
-      return data ?? [];
-    },
+    queryFn: () =>
+      fetchAllPages(
+        (de, ate) =>
+          supabase
+            .from('omie_products')
+            .select('id, codigo, descricao, valor_unitario, estoque')
+            .eq('account', ACCOUNT)
+            .eq('is_tintometric', true)
+            .eq('tint_type', tintType)
+            .eq('ativo', true)
+            .order('descricao')
+            .order('id')
+            .range(de, ate),
+        'omie_products/tint-mapping',
+      ),
   });
 }
 
 function useSkus() {
   return useQuery({
     queryKey: ['tint-skus-mapping'],
-    queryFn: async () => {
-      const { data } = await supabase
-        .from('tint_skus')
-        .select(`
-          id, omie_product_id, ativo,
-          tint_produtos!inner(descricao, cod_produto),
-          tint_bases!inner(descricao),
-          tint_embalagens!inner(descricao, volume_ml)
-        `)
-        .eq('account', ACCOUNT)
-        .order('created_at');
-      return data ?? [];
-    },
+    queryFn: () =>
+      fetchAllPages(
+        (de, ate) =>
+          supabase
+            .from('tint_skus')
+            .select(`
+              id, omie_product_id, ativo,
+              tint_produtos!inner(descricao, cod_produto),
+              tint_bases!inner(descricao),
+              tint_embalagens!inner(descricao, volume_ml)
+            `)
+            .eq('account', ACCOUNT)
+            .order('created_at')
+            .order('id')
+            .range(de, ate),
+        'tint_skus/tint-mapping',
+      ),
   });
 }
 
 function useCorantes() {
   return useQuery({
     queryKey: ['tint-corantes-mapping'],
-    queryFn: async () => {
-      const { data } = await supabase
-        .from('tint_corantes')
-        .select('id, descricao, omie_product_id, volume_total_ml')
-        .eq('account', ACCOUNT)
-        .order('descricao');
-      return data ?? [];
-    },
+    queryFn: () =>
+      fetchAllPages(
+        (de, ate) =>
+          supabase
+            .from('tint_corantes')
+            .select('id, descricao, omie_product_id, volume_total_ml')
+            .eq('account', ACCOUNT)
+            .order('descricao')
+            .order('id')
+            .range(de, ate),
+        'tint_corantes/tint-mapping',
+      ),
   });
 }
 
 function SkuTab() {
-  const { data: skus, isLoading } = useSkus();
-  const { data: omieProducts } = useOmieProducts('base');
+  const { data: skus, isLoading, isError: skusError } = useSkus();
+  const { data: omieProducts, isError: omieError } = useOmieProducts('base');
   const [search, setSearch] = useState('');
   const [showInactive, setShowInactive] = useState(false);
   const [filterStatus, setFilterStatus] = useState<'all' | 'mapped' | 'pending'>('all');
@@ -167,17 +184,24 @@ function SkuTab() {
     };
   }
   function gerarSugestoes() {
+    // Universo incompleto ⇒ não sugere: "forte" sobre leitura que falhou é falsa certeza.
+    if (skusError || omieError || !skus || !omieProducts) {
+      toast.error('Não dá pra sugerir: a lista de SKUs ou de produtos Omie não carregou. Recarregue a página.');
+      return;
+    }
     const novas = new Map<string, string>();
     for (const s of filtered) {
       if (s.omie_product_id) continue;
       const sug = sugerirMapeamento(linhaDoSku(s), omieOptions, idsJaMapeados);
       if (sug.tipo === 'forte') novas.set(s.id, sug.produtoId);
     }
-    setSugestoes(novas);
-    toast[novas.size ? 'success' : 'info'](
-      novas.size
-        ? `${novas.size} sugestão(ões) forte(s) — revise e aprove`
-        : 'Nenhuma sugestão forte encontrada (os ambíguos ficam pra você escolher no seletor)',
+    const { unicas, disputadas } = descartarSugestoesDisputadas(novas);
+    setSugestoes(unicas);
+    const sufixoDisputa = disputadas ? ` · ${disputadas} descartada(s): o mesmo produto Omie servia a mais de um SKU` : '';
+    toast[unicas.size ? 'success' : 'info'](
+      (unicas.size
+        ? `${unicas.size} sugestão(ões) forte(s) — revise e aprove`
+        : 'Nenhuma sugestão forte encontrada (os ambíguos ficam pra você escolher no seletor)') + sufixoDisputa,
     );
   }
   function descartarSugestao(skuId: string) {
@@ -229,6 +253,11 @@ function SkuTab() {
 
   return (
     <div className="space-y-4">
+      {(skusError || omieError) && (
+        <p className="text-sm text-status-error">
+          Erro ao carregar {skusError ? 'os SKUs' : 'os produtos Omie'} — a lista abaixo está incompleta. Recarregue a página.
+        </p>
+      )}
       <div className="flex flex-wrap items-center gap-4">
         <div className="relative max-w-sm flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -371,8 +400,8 @@ function SkuTab() {
 }
 
 function CoranteTab() {
-  const { data: corantes, isLoading } = useCorantes();
-  const { data: omieProducts } = useOmieProducts('concentrado');
+  const { data: corantes, isLoading, isError: corantesError } = useCorantes();
+  const { data: omieProducts, isError: omieError } = useOmieProducts('concentrado');
   const queryClient = useQueryClient();
 
   const mutation = useMutation({
@@ -396,6 +425,12 @@ function CoranteTab() {
   if (isLoading) return <Skeleton className="h-40 w-full" />;
 
   return (
+    <div className="space-y-2">
+    {(corantesError || omieError) && (
+      <p className="text-sm text-status-error">
+        Erro ao carregar {corantesError ? 'os corantes' : 'os produtos Omie'} — a lista abaixo está incompleta. Recarregue a página.
+      </p>
+    )}
     <div className="border rounded-md overflow-x-auto">
       <Table>
         <TableHeader>
@@ -445,6 +480,7 @@ function CoranteTab() {
           })}
         </TableBody>
       </Table>
+    </div>
     </div>
   );
 }

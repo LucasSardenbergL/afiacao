@@ -4,7 +4,9 @@
 // Esta edge nasce COM sensor: cada execução devolve o denominador (alvos, apurados, e as recusas
 // por motivo) e o `cursor` de onde parou. "Rodou e não deu erro" não é sinal de nada aqui — o
 // modo de falha característico do backfill é apurar POUCO e parecer bem-sucedido.
-export const VERSAO = "v1.5-portao-plano-aprovado-e-corpo-estrito";
+// v1.6 (2026-10-10, picking v2 Fase 0.2) — `ListarPedidos` pede a vez na trava `omie_cota_metodo`
+// (_shared/omie-cota.ts); vez negada LANÇA (chamada não feita). Migration 20261010204708 antes.
+export const VERSAO = "v1.6-cota-omie-compartilhada";
 
 // v1.5 — a conferência com o total do Omie deixa de ser só diagnóstico e vira PORTÃO: pedido cujo
 // `total_pedido.valor_descontos` não confere com a soma dos itens não tem linha nenhuma no plano —

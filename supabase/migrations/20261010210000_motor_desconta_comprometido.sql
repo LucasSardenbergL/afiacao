@@ -1,19 +1,57 @@
--- gerar_pedidos_sugeridos_ciclo — a FONTE versionada viva do motor de reposição (money-path) e a fixture das
--- provas db/test-embalagem-motor.sh, db/test-em-transito-erro-terminal.sh e db/test-gate-estoque-nao-confirmado.sh.
+-- 20261010210000_motor_desconta_comprometido.sql
+-- ============================================================
+-- O motor de reposição (gerar_pedidos_sugeridos_ciclo) passa a DESCONTAR, do estoque que decide o gatilho
+-- (estoque_efetivo <= ponto_pedido) e a quantidade, o que já está VENDIDO em pedido de venda ABERTO no Omie.
+-- ============================================================
+-- Medido (psql-ro, 2026-10-10): o Omie da Oben NÃO reserva — sku_estoque_atual.estoque_disponivel = físico em
+-- 500/500 SKUs — e só baixa o físico na NF. O motor não lia sales_orders: via como livre o que já tinha dono.
+-- Pedidos abertos relidos pelo Omie em 36 h: ~100, em ~130 SKUs; 21 SKUs sem grupo viram "compra" (ex.: CATALISADOR
+-- FC.7074QT, pp 9, máx 16, efetivo 12, vendido 4 em aberto → 8 a comprar; antes, nada).
 --
--- O guard src/lib/reposicao/__tests__/embalagem-motor-paridade.test.ts exige que este arquivo, do CREATE OR
--- REPLACE até o FIM, seja IGUAL ao trecho da ÚLTIMA migration que recria a função (a que vence em prod).
--- Desde 2026-10-10 essa migration é a 20261010210000_motor_desconta_comprometido.sql (o motor desconta o vendido
--- em pedido de venda aberto no Omie, só nos SKUs sem grupo; antes, a 20261009194000 — #2849, unidades WP). O que
--- vem depois do $function$; é a coluna de rastro, o GRANT da coluna lida e a pós-condição, autocontida (o corpo e
--- a foto do ACL só são conferidos quando a migration roda inteira). Histórico: git log deste arquivo.
--- Spec original (embalagem no motor, 2026-06-26): docs/superpowers/specs/2026-06-26-reposicao-embalagem-no-motor-spec.md
+-- O conserto:
+--   · CTE comprometido: Σ quantidade dos itens de sales_orders da empresa, só a linha CANÔNICA importada
+--     (hash 'omie_…'), não deletada, nos 3 status pré-NF, RELIDA pelo Omie nas últimas 36 h (constante), sem irmão
+--     de mesmo número (faturamento parcial). Desligador: company_config.reposicao_comprometido_<empresa>_ativo
+--     ('true' liga; outro valor desliga; ausente = ligado só na oben);
+--   · só no caminho SEM grupo de equivalência: no concentrado WP a venda vem ora em litro, ora em embalagem;
+--   · estoque_efetivo (gatilho, quantidade, teto) = físico + pendente + em trânsito − comprometido (pode ser < 0);
+--   · rastro: pedido_compra_item.estoque_comprometido (nova, nullable; NULL = desconto não se aplica);
+--   · GRANT SELECT (omie_reconciliado_em) ao authenticated: o motor é INVOKER e o botão roda como o staff.
+-- Desenho revisado pelo Codex (2026-10-10, aprovar com mudanças, sem P0).
+--
+-- Molde "Recriar objeto VIVO" (.claude/skills/lovable-db-operator/references/sql-house-style.md).
+-- Sem BEGIN/COMMIT: a transação é do `bun run db:aplicar`. Prova PG17: db/test-motor-desconta-comprometido.sh.
+-- Predecessor (md5 do prosrc na prod, 2026-10-10): d3f55f2621c27a234925821e06f73dd7 (= corpo da 20261009194000).
+-- ============================================================
 
--- A coluna que o motor lê (da mesma migration; NULL = fator relativo, a conta de antes). Idempotente.
-ALTER TABLE public.sku_embalagem_equivalencia
-  ADD COLUMN IF NOT EXISTS unidades_omie_por_embalagem numeric
-  CHECK (unidades_omie_por_embalagem IS NULL OR unidades_omie_por_embalagem > 0);
+-- TRAVA, antes de ler: ALTER sem efeito (a volatilidade VIVA) na função que a PRE guarda e este arquivo recria.
+DO $trava$
+BEGIN
+  IF to_regprocedure('public.gerar_pedidos_sugeridos_ciclo(text, date)') IS NOT NULL THEN
+    ALTER FUNCTION public.gerar_pedidos_sugeridos_ciclo(text, date) VOLATILE;
+  END IF;
+END
+$trava$;
 
+-- PRE: md5 EXATO do corpo vivo ∈ {predecessor revisado, este}. Ausente ABORTA. Foto de ACL/config/secdef.
+DO $pre$
+DECLARE
+  v_vivo text := (SELECT md5(p.prosrc) FROM pg_catalog.pg_proc p
+                   WHERE p.oid = to_regprocedure('public.gerar_pedidos_sugeridos_ciclo(text, date)'));
+BEGIN
+  IF v_vivo IS NULL OR v_vivo NOT IN ('d3f55f2621c27a234925821e06f73dd7', '4187116fdf4284f79d416249d3f35335') THEN
+    RAISE EXCEPTION 'PRE FALHOU: gerar_pedidos_sugeridos_ciclo vivo (md5 %) não é o predecessor revisado nem este — reconcilie antes de aplicar', v_vivo;
+  END IF;
+  CREATE TEMP TABLE motor_comprometido_foto ON COMMIT DROP AS
+    SELECT p.proacl::text AS acl, p.proconfig::text AS config,
+           p.prosecdef AS secdef, p.provolatile AS vol, pg_catalog.pg_get_userbyid(p.proowner) AS dono
+      FROM pg_catalog.pg_proc p
+     WHERE p.oid = to_regprocedure('public.gerar_pedidos_sugeridos_ciclo(text, date)');
+END
+$pre$;
+
+-- O motor por ÚLTIMO, seguido da coluna de rastro e da PÓS: db/embalagem-motor-rpc.sql é a cópia deste trecho até o
+-- FIM (a coluna vem DEPOIS do CREATE para a fixture também a criar — plpgsql resolve o INSERT só ao executar).
 CREATE OR REPLACE FUNCTION public.gerar_pedidos_sugeridos_ciclo(p_empresa text DEFAULT 'OBEN'::text, p_data_ciclo date DEFAULT ((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date)
  RETURNS TABLE(pedidos_gerados integer, skus_incluidos integer, valor_total_ciclo numeric, bloqueados integer)
  LANGUAGE plpgsql
