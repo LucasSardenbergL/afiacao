@@ -15,7 +15,7 @@
 #   T2 — o defeito: o pendente CRU (2 + 1) no lugar do convertido muda a compra (7 QT → 9 QT).
 #   U1 — o que a edge grava fora da janela, por SKU (1,62 / 3,24); U0 — dentro da janela, nada.
 #   W1 — a 2ª testemunha da RPC reposicao_po_observado_publicar aceita a observação (contribuição em litros).
-#   X1 — CONTROLE byte a byte: grupo sem cadastro, parcial e incoerente gravam o PO CRU (a conta de antes).
+#   X1 — CONTROLE byte a byte: grupo sem cadastro, parcial, incoerente e fora da guarda gravam o PO CRU (a conta de antes).
 #
 # Rodar:   bash db/test-pendente-po-unidade-omie.sh > log 2>&1; echo $?
 #          bash db/test-pendente-po-unidade-omie.sh --falsificar > log 2>&1; echo $?
@@ -246,7 +246,10 @@ SQL
 P -q -c "SELECT public.t_grupo(9300000001, 9300000002, 'WP93.01', 9, 12, 2,   0.81, 3.24)" \
      -c "SELECT public.t_grupo(9500000001, 9500000002, 'CTL95',   9, 12, 2,   NULL, NULL)" \
      -c "SELECT public.t_grupo(9600000001, 9600000002, 'PAR96',   9, 12, 2,   0.81, NULL)" \
-     -c "SELECT public.t_grupo(9700000001, 9700000002, 'INC97',   9, 12, 2,   0.81, 4)" >/dev/null
+     -c "SELECT public.t_grupo(9700000001, 9700000002, 'INC97',   9, 12, 2,   0.81, 4)" \
+     -c "SELECT public.t_grupo(9800000001, 9800000002, 'BIG98',   9, 12, 2,   5e8,  2e9)" >/dev/null
+# BIG98 é COERENTE (2e9/4 = 5e8) com um membro fora da guarda de finitude (u < 1e9): só a validade o barra — sem ele a
+# exigência de 'todos válidos' seria mascarada pela coerência (u NULL já quebra a razão).
 # O PO do app: 2 QT + 1 GL no WP93 (o cenário C do #2849) e o mesmo nos controles, no Omie como nº 4242.
 P -q <<'SQL'
 SET session_replication_role = replica;
@@ -256,7 +259,8 @@ INSERT INTO pedido_compra_item (pedido_id, sku_codigo_omie, qtde_sugerida, qtde_
   (990001, '9300000001', 2, 2), (990001, '9300000002', 1, 1),
   (990001, '9500000001', 2, 2), (990001, '9500000002', 1, 1),
   (990001, '9600000001', 2, 2), (990001, '9600000002', 1, 1),
-  (990001, '9700000001', 2, 2), (990001, '9700000002', 1, 1);
+  (990001, '9700000001', 2, 2), (990001, '9700000002', 1, 1),
+  (990001, '9800000001', 2, 2), (990001, '9800000002', 1, 1);
 SQL
 
 # ── a EDGE executada: as linhas de equivalência e o em_transito vêm do BANCO, no recorte da edge ─────────────
@@ -308,7 +312,7 @@ motor() {
      -c "ROLLBACK" 2>&1 || true
 }
 PEND_WP="'%s|%s' % (d['pendente'].get('9300000001', 0), d['pendente'].get('9300000002', 0))"
-PEND_CTL="';'.join('%s=%s' % (k, d['pendente'].get(k, 0)) for k in ['9500000001','9500000002','9600000001','9600000002','9700000001','9700000002'])"
+PEND_CTL="';'.join('%s=%s' % (k, d['pendente'].get(k, 0)) for k in ['9500000001','9500000002','9600000001','9600000002','9700000001','9700000002','9800000001','9800000002'])"
 
 echo "── T0: o PO 4242 DENTRO da janela (data_ciclo 08/10, ciclo 09/10)"
 edge; gravar_pendente
@@ -345,8 +349,8 @@ eq T2 "cru: a caminho 3 'L' → efetivo 5 → ceil(7/0,81) = 9 QT (compra 2 QT a
   "9300000001|9|9|81.8748|736.8732|2|3|9"
 
 echo "── X1: CONTROLE byte a byte — grupo sem cadastro, parcial e incoerente: o PO entra CRU, como antes"
-eq X1 "CTL95 / PAR96 / INC97: 2 QT e 1 GL gravados como 2 e 1" "$(jcampo "$PEND_CTL")" \
-  "9500000001=2;9500000002=1;9600000001=2;9600000002=1;9700000001=2;9700000002=1"
+eq X1 "CTL95 / PAR96 / INC97 / BIG98: 2 QT e 1 GL gravados como 2 e 1" "$(jcampo "$PEND_CTL")" \
+  "9500000001=2;9500000002=1;9600000001=2;9600000002=1;9700000001=2;9700000002=1;9800000001=2;9800000002=1"
 
 echo "═══ $PASS OK / $FAIL falhas (denominador $TOTAL_ESPERADO) ═══"
 [ "$FAIL" -eq 0 ] && [ "$PASS" -eq "$TOTAL_ESPERADO" ] || exit 1
