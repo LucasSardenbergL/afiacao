@@ -19,7 +19,7 @@ import { criarColetorObservacao, type LinhaObservada } from "./observacao-po.ts"
 import { registroComPrazo } from "./registro-com-prazo.ts";
 import { criarAcumuladorFisico } from "./fisico.ts";
 import {
-  convPendentePorSku, type LinhaEquivalencia, quantidadesEmUnidadeOmie, recusaPorUnidade,
+  convDaOrigem, convPendentePorSku, type LinhaEquivalencia, quantidadesEmUnidadeOmie, recusaPorUnidade,
 } from "./unidade-omie.ts";
 import { comPrazo, concluirRun, linhaMarcador, MARKER_FULL, type OpsPublicacao } from "./publicacao.ts";
 
@@ -426,11 +426,12 @@ async function computePendenteViaPedidosCompra(
   let pedidosVistos = 0, pedidosApp = 0, paginasLidas = 0, fim = false;
   // Observação do conjunto que o motor contou (PR0 da baixa de PO): anotada nos MESMOS pontos de decisão abaixo,
   // sem mudar o que conta. 1 registro por PO (coletor) — a reaparição colidiria na PK. O handler publica.
-  // Unidade (unidade-omie.ts): o saldo do PO de um SKU com conv entra em unidades Omie no pendente E na contribuição.
-  const convDe = (sku: string) => conv.get(sku);
-  const coletor = criarColetorObservacao((sku) => habilitadoMap.has(sku) || membro(sku), { parseQtd, parseRecebido, conv: convDe });
-  const itemDoPo = (sku: string, poNumero: string, etapa: string, qtde: number, recebido: number): PoItemOmie =>
-    ({ sku, poNumero, etapa, ...quantidadesEmUnidadeOmie(qtde, recebido, convDe(sku)) });
+  // Unidade (unidade-omie.ts): o saldo de um PO DO APP (carimbo AFI-) num SKU com conv entra em unidades Omie no
+  // pendente E na contribuição; PO manual já está em litros e entra cru. O conv é decidido POR PO (convDoPo).
+  const coletor = criarColetorObservacao((sku) => habilitadoMap.has(sku) || membro(sku), { parseQtd, parseRecebido });
+  type ConvDoPo = (sku: string) => number | undefined;
+  const itemDoPo = (convDoPo: ConvDoPo, sku: string, poNumero: string, etapa: string, qtde: number, recebido: number): PoItemOmie =>
+    ({ sku, poNumero, etapa, ...quantidadesEmUnidadeOmie(qtde, recebido, convDoPo(sku)) });
 
   for (let pagina = 1; pagina <= MAX_PAGINAS_PED; pagina++) {
     const resp = await callOmiePedidos(appKey, appSecret, pagina, dataDe, dataAte, deadline);
@@ -464,6 +465,7 @@ async function computePendenteViaPedidosCompra(
       if (cNumero) aliases.push(`num:${cNumero}`);
       if (cCodIntPed) aliases.push(`cod:${cCodIntPed}`);
       const cabObs = { nCodPed: Number(nCodPed), cNumero: cNumero || null, cEtapa: etapa || null };
+      const convDoPo = convDaOrigem(cCodIntPed, conv);
       const itensObs = ped?.produtos_consulta ?? [];
       // De-dup vs em_transito: PO do app já é contada pelo em_transito da RPC → NÃO entra no pendente Omie. Pula CEDO
       // (não exige nCodPed: uma PO app não pode congelar o snapshot — [Codex P2 round3]). Registra TODAS as aliases
@@ -518,7 +520,7 @@ async function computePendenteViaPedidosCompra(
         itensComSku++;
         if (!habilitadoMap.has(sku)) {
           if (membro(sku)) {
-            if (quantidadesValidas(qtde, recebido)) itemsMembros.push(itemDoPo(sku, cNumero, etapa, qtde, recebido));
+            if (quantidadesValidas(qtde, recebido)) itemsMembros.push(itemDoPo(convDoPo, sku, cNumero, etapa, qtde, recebido));
             else membrosPendenteIlegiveis.add(sku);
           }
           continue;
@@ -527,7 +529,7 @@ async function computePendenteViaPedidosCompra(
           problemas.push(`item inválido (sku=${sku} po=${cNumero} nQtde=${it.nQtde} nQtdeRec=${it.nQtdeRec})`);
           continue;
         }
-        items.push(itemDoPo(sku, cNumero, etapa, qtde, recebido));
+        items.push(itemDoPo(convDoPo, sku, cNumero, etapa, qtde, recebido));
       }
       if (itensComSku === 0) {
         problemas.push(`PO aprovada sem item com SKU (po=${cNumero || nCodPed} etapa=${etapa})`);
@@ -535,7 +537,7 @@ async function computePendenteViaPedidosCompra(
       // A decisão FINAL do motor: o acumulador (computePendenteEntradaPorSku) ainda descarta por número o PO cujo
       // cNumero está no em_transito — só alcançável com cNumero "" e um número vazio no app, mas aí a soma por SKU
       // fecharia por compensação com outro PO se a observação o anotasse como contado.
-      coletor.registrar(cabObs, itensObs, emTransitoNumeros.has(cNumero) ? "dedup_app" : null);
+      coletor.registrar(cabObs, itensObs, emTransitoNumeros.has(cNumero) ? "dedup_app" : null, convDoPo);
     }
     await new Promise((r) => setTimeout(r, 1100));   // rate-limit Omie entre páginas
   }

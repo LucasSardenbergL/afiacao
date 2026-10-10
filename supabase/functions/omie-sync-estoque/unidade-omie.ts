@@ -1,5 +1,10 @@
 // Unidade do "a caminho" que vem do PO — PURO, sem I/O (o `deno test --no-remote` executa este arquivo).
 //
+// A unidade do PO depende da ORIGEM, não só do SKU (founder, 2026-10-09): o PO do APP sai em EMBALAGENS (o disparo
+// manda nQtde = ceil(qtde_final), sem unidade, carimbado cCodIntPed = AFI-<id>); o PO lançado À MÃO no Omie é
+// digitado em LITROS, a unidade do estoque. Converte-se só o PO com o carimbo do app — prova positiva de origem
+// (medido 2026-10-09: os 2 POs WP já observados têm AFI- e existem no app). Sem carimbo = cru, a conta de antes.
+//
 // O pendente gravado em sku_estoque_atual.estoque_pendente_entrada soma com o FÍSICO no motor, então tem de estar
 // na unidade do estoque do Omie. Nos concentrados WP elas divergem (medido 2026-10-07/09, #2849): o estoque, o ponto
 // e o máximo estão em LITROS; o PO (nQtde/nQtdeRec), em EMBALAGENS (QT = 0,81 L, GL = 3,24 L). O PO 1268 tinha
@@ -91,6 +96,16 @@ export function convPendentePorSku(linhas: readonly LinhaEquivalencia[]): ConvPe
     for (const m of membros) conv.set(m.sku, paraNumero(m.u as Decimal));
   }
   return { conv, problemas };
+}
+
+export const PREFIXO_PO_DO_APP = "AFI-";
+
+/** O conv que vale para os itens DESTE PO: o do SKU se o PO é do app (carimbo AFI-), nenhum se não é. */
+export function convDaOrigem(
+  cCodIntPed: string,
+  conv: ReadonlyMap<string, number>,
+): (sku: string) => number | undefined {
+  return cCodIntPed.trim().startsWith(PREFIXO_PO_DO_APP) ? (sku) => conv.get(sku) : () => undefined;
 }
 
 /** Saldo do PO (embalagens) → unidades Omie. Sem conv devolve o MESMO número (byte a byte). */

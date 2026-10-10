@@ -1,4 +1,6 @@
-import { convPendentePorSku, quantidadesEmUnidadeOmie, recusaPorUnidade, saldoEmUnidadeOmie } from "./unidade-omie.ts";
+import {
+  convDaOrigem, convPendentePorSku, quantidadesEmUnidadeOmie, recusaPorUnidade, saldoEmUnidadeOmie,
+} from "./unidade-omie.ts";
 import { criarColetorObservacao, observacaoBateComPendente, somarContribuicaoPorSku } from "./observacao-po.ts";
 
 function igual<T>(real: T, esperado: T, msg: string): void {
@@ -84,13 +86,12 @@ Deno.test("a contribuição da observação e o pendente fecham na mesma unidade
   const parse = {
     parseQtd: (v: unknown) => (typeof v === "number" ? v : NaN),
     parseRecebido: (v: unknown) => (v === undefined ? 0 : typeof v === "number" ? v : NaN),
-    conv: (sku: string) => conv.get(sku),
   };
   const col = criarColetorObservacao((s) => s === QT || s === GL, parse);
   col.registrar({ nCodPed: 1268, cNumero: "1268", cEtapa: "15" }, [
     { nCodItem: 1, nCodProd: Number(QT), nQtde: 5 },
     { nCodItem: 2, nCodProd: Number(GL), nQtde: 3, nQtdeRec: 1 },
-  ], null);
+  ], null, convDaOrigem("AFI-1268", conv));
   igual(col.linhas.map((l) => [l.quantidade, l.quantidade_recebida, l.contribuicao]), [[5, 0, 4.05], [3, 1, 6.48]],
     "quantidade do PO crua, contribuição em litros");
   const pendente = new Map([[QT, quantidadesEmUnidadeOmie(5, 0, conv.get(QT)).qtde], [GL, quantidadesEmUnidadeOmie(3, 1, conv.get(GL)).qtde]]);
@@ -104,4 +105,14 @@ Deno.test("recusa: leitura que falhou ou linha ilegível barra o pendente; leitu
   igual(recusaPorUnidade(convPendentePorSku(wp("0,81", 3.24)), null)?.startsWith("unidade do PO ilegível"), true, "ilegível");
   igual(recusaPorUnidade(convPendentePorSku(wp()), null), null, "WP legível");
   igual(recusaPorUnidade(convPendentePorSku([]), null), null, "nenhum grupo cadastrado: nada a converter, publica cru");
+});
+
+Deno.test("origem: PO do app (AFI-) converte; PO manual (litros) e carimbo de outra integração ficam crus", () => {
+  const { conv } = convPendentePorSku(wp());
+  igual(convDaOrigem("AFI-990001", conv)(GL), 3.24, "app");
+  igual(convDaOrigem("  AFI-7 ", conv)(QT), 0.81, "app com espaço");
+  igual(convDaOrigem("", conv)(GL), undefined, "manual sem carimbo");
+  igual(convDaOrigem("afi-7", conv)(GL), undefined, "caixa diferente não é o carimbo");
+  igual(convDaOrigem("ERP-123", conv)(QT), undefined, "outra integração");
+  igual(convDaOrigem("AFI-1", conv)("999"), undefined, "app, SKU fora dos grupos");
 });

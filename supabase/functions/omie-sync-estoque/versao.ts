@@ -69,8 +69,9 @@ export const respostaSonda = criarRespostaSonda("omie-sync-estoque");
  * estava no em_transito o motor convertia, mas o PO que saía da janela de 7 dias entrava CRU (2 GL valiam 2, não 6,48).
  * O saldo × `unidades_omie_por_embalagem` (regra do `equiv` do motor; fallback 1, não o fator) vale no pendente dos
  * habilitados, no dos membros e na `contribuicao` da observação. Equivalência não lida/ilegível → recusa do run (C1).
+ * Só o PO DO APP (carimbo cCodIntPed AFI-<id>) converte: o PO lançado à mão no Omie já vem em litros (founder).
  */
-export const VERSAO = "v1.9-pendente-po-em-unidade-omie";
+export const VERSAO = "v1.9-pendente-po-app-em-unidade-omie";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

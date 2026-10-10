@@ -120,9 +120,7 @@ describe('omie-sync-estoque — o par (físico, pendente) e a semântica fatal d
     // O PAR: o pendente dos membros vem da MESMA varredura (OBEN e COLACOR), e o coletor observa o que o motor conta.
     expect(fonte).toContain('computePendenteViaPedidosCompra(appKey, appSecret, habilitadoMap, ehMembro, conv, supabase, deadline)');
     expect(fonte).toContain('computePendenteViaSaldoPendente(appKey, appSecret, habilitadoMap, ehMembro, deadline)');
-    expect(fonte).toContain(
-      'criarColetorObservacao((sku) => habilitadoMap.has(sku) || membro(sku), { parseQtd, parseRecebido, conv: convDe })',
-    );
+    expect(fonte).toContain('criarColetorObservacao((sku) => habilitadoMap.has(sku) || membro(sku), { parseQtd, parseRecebido })');
     // Item inválido de membro vai para o conjunto à parte, nunca para `problemas` (que barraria os habilitados).
     expect(fonte).toContain('else membrosPendenteIlegiveis.add(sku);');
   });
@@ -140,15 +138,18 @@ describe('omie-sync-estoque — o par (físico, pendente) e a semântica fatal d
     // A ligação EXATA (Codex: `const conv = new Map()` passava com os textos acima): o mapa que chega à varredura é o
     // da leitura, e é o MESMO que o coletor e os dois acumuladores usam.
     expect(fonte.match(/const conv = [^;]+;/g)).toEqual(['const conv = convPendente.conv;']);
-    expect(fonte).toContain('const convDe = (sku: string) => conv.get(sku);');
-    expect(fonte).toContain('...quantidadesEmUnidadeOmie(qtde, recebido, convDe(sku)) });');
+    // O conv é decidido POR PO, pela ORIGEM (carimbo AFI- do app = embalagens; manual = litros, cru), e o MESMO
+    // conv vai aos dois acumuladores e à observação do PO contado.
+    expect(fonte).toContain('const convDoPo = convDaOrigem(cCodIntPed, conv);');
+    expect(fonte).toContain('...quantidadesEmUnidadeOmie(qtde, recebido, convDoPo(sku)) });');
+    expect(fonte).toContain('coletor.registrar(cabObs, itensObs, emTransitoNumeros.has(cNumero) ? "dedup_app" : null, convDoPo);');
     const iRecusa = fonte.indexOf('const recusa = recusaPorUnidade(convPendente, membrosErro);', iHandler);
     const iPo = fonte.indexOf('await computePendenteViaPedidosCompra(', iHandler);
     expect(iRecusa).toBeGreaterThan(iHandler);
     expect(iPo).toBeGreaterThan(iRecusa);
     expect(fonte.slice(iRecusa, iPo)).toContain('confiavel: false');
     // Os DOIS acumuladores (habilitados e membros) recebem o item convertido; nenhum push cru sobra.
-    expect(fonte.match(/items(Membros)?\.push\(itemDoPo\(sku, cNumero, etapa, qtde, recebido\)\)/g)).toHaveLength(2);
+    expect(fonte.match(/items(Membros)?\.push\(itemDoPo\(convDoPo, sku, cNumero, etapa, qtde, recebido\)\)/g)).toHaveLength(2);
     expect(fonte).not.toMatch(/items(Membros)?\.push\(\{/);
   });
 

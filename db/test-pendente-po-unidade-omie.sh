@@ -15,6 +15,7 @@
 #   T2 — o defeito: o pendente CRU (2 + 1) no lugar do convertido muda a compra (7 QT → 9 QT).
 #   U1 — o que a edge grava fora da janela, por SKU (1,62 / 3,24); U0 — dentro da janela, nada.
 #   W1 — a 2ª testemunha da RPC reposicao_po_observado_publicar aceita a observação (contribuição em litros).
+#   T3 — PO MANUAL no Omie (sem o carimbo AFI-), digitado em LITROS (founder): entra CRU e o motor sai idêntico ao T0.
 #   X1 — CONTROLE byte a byte: grupo sem cadastro, parcial, incoerente e fora da guarda gravam o PO CRU (a conta de antes).
 #
 # Rodar:   bash db/test-pendente-po-unidade-omie.sh > log 2>&1; echo $?
@@ -32,8 +33,8 @@ export LC_ALL=C LANG=C
 MIG="$REPO_ROOT/supabase/migrations/20261009194000_motor_unidades_concentrado_wp.sql"
 SNAP="$REPO_ROOT/supabase/schema-snapshot.sql"
 EDGE_SRC="$REPO_ROOT/supabase/functions/omie-sync-estoque"
-# Denominador: M0 · U0,U1 · T0,T1,T2 · W1 · X1.
-TOTAL_ESPERADO=8
+# Denominador: M0 · U0,U1,U3 · T0,T1,T2,T3 · W1 · X1.
+TOTAL_ESPERADO=10
 
 # ═══════════════════════════════════════════════════════════════════════════════════════════════════════════
 # MODO --falsificar: o controle roda PRIMEIRO, na mesma invocação (suíte que já falha sozinha aprovaria todas as
@@ -42,6 +43,7 @@ TOTAL_ESPERADO=8
 # ═══════════════════════════════════════════════════════════════════════════════════════════════════════════
 if [ "${1:-}" = "--falsificar" ]; then
   SABOTAGENS="pendente_cru:U1,T1:U0,T0,X1
+              origem_ignorada:U3,T3:U1,T1
               contribuicao_crua:W1:U1,T1
               sem_guarda_1e9:X1:U1,T1
               sem_coerencia:X1:U1,T1"
@@ -133,7 +135,8 @@ PY
 case "$SABOTAGEM" in
   "") ;;
   pendente_cru)      troca unidade-omie.ts "  if (conv === undefined) return { qtde, recebido };" "  return { qtde, recebido };" ;;
-  contribuicao_crua) troca observacao-po.ts "contribuicao: saldoEmUnidadeOmie(Math.max(0, qtde - recebido), parse.conv?.(skuTexto))" \
+  origem_ignorada)   troca unidade-omie.ts "return cCodIntPed.trim().startsWith(PREFIXO_PO_DO_APP) ?" "return true ?" ;;
+  contribuicao_crua) troca observacao-po.ts "contribuicao: saldoEmUnidadeOmie(Math.max(0, qtde - recebido), conv?.(skuTexto))" \
                                             "contribuicao: Math.max(0, qtde - recebido)" ;;
   sem_guarda_1e9)    troca unidade-omie.ts "m.u !== null && m.u.n > 0n && paraNumero(m.u) < 1e9" "m.u !== null && m.u.n > 0n" ;;
   sem_coerencia)     troca unidade-omie.ts "    if (!membros.every((m) => mesmaRazao(" "    if (membros.every((m) => !mesmaRazao(" ;;
@@ -145,27 +148,26 @@ esac
 # { equiv: linhas de sku_embalagem_equivalencia como o PostgREST as devolve, emTransito: [cNumero], pedidos: [...] }.
 # Saída: { pendente: {sku: valor}, observacao: [linhas], problemas: [...] }.
 cat > "$EDGE/driver.ts" <<'TS'
-import { convPendentePorSku, quantidadesEmUnidadeOmie } from "./unidade-omie.ts";
+import { convDaOrigem, convPendentePorSku, quantidadesEmUnidadeOmie } from "./unidade-omie.ts";
 import { criarColetorObservacao } from "./observacao-po.ts";
 
 const entrada = JSON.parse(await new Response(Deno.stdin.readable).text());
 const { conv, problemas } = convPendentePorSku(entrada.equiv);
 const emTransito = new Set<string>(entrada.emTransito);
 const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : NaN);
-const coletor = criarColetorObservacao(() => true, {
-  parseQtd: num, parseRecebido: (v) => (v === undefined ? 0 : num(v)), conv: (sku) => conv.get(sku),
-});
+const coletor = criarColetorObservacao(() => true, { parseQtd: num, parseRecebido: (v) => (v === undefined ? 0 : num(v)) });
 const pendente: Record<string, number> = {};
 for (const ped of entrada.pedidos) {
   const cab = { nCodPed: ped.nCodPed, cNumero: ped.cNumero, cEtapa: "15" };
+  const convDoPo = convDaOrigem(ped.cCodIntPed, conv);
   if (emTransito.has(ped.cNumero)) { coletor.registrar(cab, ped.itens, "dedup_app"); continue; }
   for (const it of ped.itens) {
     const sku = String(it.nCodProd);
-    const q = quantidadesEmUnidadeOmie(it.nQtde, it.nQtdeRec ?? 0, conv.get(sku));
+    const q = quantidadesEmUnidadeOmie(it.nQtde, it.nQtdeRec ?? 0, convDoPo(sku));
     const saldo = Math.max(0, q.qtde - q.recebido);
     if (saldo > 0) pendente[sku] = (pendente[sku] ?? 0) + saldo;
   }
-  coletor.registrar(cab, ped.itens, null);
+  coletor.registrar(cab, ped.itens, null, convDoPo);
 }
 console.log(JSON.stringify({ pendente, observacao: coletor.linhas, problemas, integra: coletor.integra }));
 TS
@@ -261,6 +263,10 @@ INSERT INTO pedido_compra_item (pedido_id, sku_codigo_omie, qtde_sugerida, qtde_
   (990001, '9600000001', 2, 2), (990001, '9600000002', 1, 1),
   (990001, '9700000001', 2, 2), (990001, '9700000002', 1, 1),
   (990001, '9800000001', 2, 2), (990001, '9800000002', 1, 1);
+-- O lado OMIE (PesquisarPedCompra): o PO do app leva o carimbo AFI-<id> do disparo e as quantidades em embalagens.
+CREATE TABLE t_po_omie (ncodped bigint, cnumero text, ccodintped text, seq int, sku text, nqtde numeric);
+INSERT INTO t_po_omie SELECT 4242000001, '4242', 'AFI-990001', row_number() OVER (ORDER BY sku_codigo_omie),
+                             sku_codigo_omie, qtde_final FROM pedido_compra_item WHERE pedido_id = 990001;
 SQL
 
 # ── a EDGE executada: as linhas de equivalência e o em_transito vêm do BANCO, no recorte da edge ─────────────
@@ -273,10 +279,11 @@ ENTRADA_SQL="SELECT json_build_object(
                  WHERE empresa = 'OBEN' AND omie_pedido_compra_numero IS NOT NULL
                    AND status IN ('aprovado_aguardando_disparo','disparado','disparado_simulado','concluido_recebido')
                    AND data_ciclo >= DATE '2026-10-09' - 7),
-  'pedidos', json_build_array(json_build_object('nCodPed', 4242000001, 'cNumero', '4242', 'itens',
-    (SELECT json_agg(json_build_object('nCodItem', n, 'nCodProd', sku::bigint, 'nQtde', qtde_final) ORDER BY n)
-       FROM (SELECT row_number() OVER (ORDER BY sku_codigo_omie) AS n, sku_codigo_omie AS sku, qtde_final
-               FROM pedido_compra_item WHERE pedido_id = 990001) it))))"
+  'pedidos', (SELECT coalesce(json_agg(json_build_object('nCodPed', ncodped, 'cNumero', cnumero,
+                 'cCodIntPed', ccodintped, 'itens', itens) ORDER BY ncodped), '[]')
+              FROM (SELECT ncodped, cnumero, ccodintped,
+                           json_agg(json_build_object('nCodItem', seq, 'nCodProd', sku::bigint, 'nQtde', nqtde) ORDER BY seq) AS itens
+                      FROM t_po_omie GROUP BY ncodped, cnumero, ccodintped) po))"
 edge() {   # roda a edge sobre o estado atual do banco → JSON de saída em $TMPD/edge.json
   Pq -c "$ENTRADA_SQL" > "$TMPD/entrada.json"
   deno run --no-remote --no-prompt --quiet "$EDGE/driver.ts" < "$TMPD/entrada.json" > "$TMPD/edge.json" 2>"$TMPD/edge.err" \
@@ -325,6 +332,7 @@ echo "── T1: o MESMO PO FORA da janela (data_ciclo 25/09) — agora quem con
 P -q -c "UPDATE pedido_compra_sugerido SET data_ciclo = DATE '2026-09-25' WHERE id = 990001"
 edge; gravar_pendente
 eq U1 "a edge grava 2 QT = 1,62 L e 1 GL = 3,24 L" "$(jcampo "$PEND_WP")" "1.62|3.24"
+controles="$(jcampo "$PEND_CTL")"   # os controles saem desta MESMA execução (o T3 tira o PO do app do Omie)
 fora="$(motor)"
 iguais T1 "a passagem app→PO é NEUTRA: o motor sai idêntico ao T0" "$dentro" "$fora"
 
@@ -348,8 +356,15 @@ P -q -c "UPDATE sku_estoque_atual SET estoque_pendente_entrada = CASE sku_codigo
 eq T2 "cru: a caminho 3 'L' → efetivo 5 → ceil(7/0,81) = 9 QT (compra 2 QT a mais)" "$(motor)" \
   "9300000001|9|9|81.8748|736.8732|2|3|9"
 
+echo "── T3: PO MANUAL (sem carimbo AFI-), digitado em LITROS — o do app já chegou e saiu do Omie"
+P -q -c "DELETE FROM t_po_omie" \
+     -c "INSERT INTO t_po_omie VALUES (4243000001, '4243', '', 1, '9300000001', 4.86)"
+edge; gravar_pendente
+eq U3 "a edge grava os 4,86 L CRUS (o PO manual já está na unidade do estoque)" "$(jcampo "$PEND_WP")" "4.86|0"
+iguais T3 "4,86 L lançados à mão = 2 QT + 1 GL do app: o motor sai idêntico ao T0" "$dentro" "$(motor)"
+
 echo "── X1: CONTROLE byte a byte — grupo sem cadastro, parcial e incoerente: o PO entra CRU, como antes"
-eq X1 "CTL95 / PAR96 / INC97 / BIG98: 2 QT e 1 GL gravados como 2 e 1" "$(jcampo "$PEND_CTL")" \
+eq X1 "CTL95 / PAR96 / INC97 / BIG98: 2 QT e 1 GL gravados como 2 e 1" "$controles" \
   "9500000001=2;9500000002=1;9600000001=2;9600000002=1;9700000001=2;9700000002=1;9800000001=2;9800000002=1"
 
 echo "═══ $PASS OK / $FAIL falhas (denominador $TOTAL_ESPERADO) ═══"
