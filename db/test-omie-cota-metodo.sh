@@ -180,10 +180,22 @@ else
     fi
   }
 
-  # F1 — sem FOR UPDATE: B lê o snapshot sem o lease de A e também ganha a vez
-  if sabotar f1_sem_lock 's/^   FOR UPDATE;$/   ;/'; then
-    v=$(chk_concorrencia f1_sem_lock)
-    if [ "$v" != "A=t B=false|ocupado" ]; then ok "F1 sem FOR UPDATE → A9 vermelho ($v)"; else bad "F1 sem FOR UPDATE e A9 seguiu verde — assert sem dente"; fi
+  # F1 — DUAS camadas serializam a disputa, e cada uma sozinha basta (medido, sabotando uma por vez):
+  #   (a) o INSERT…ON CONFLICT DO NOTHING ESPERA a transação que está mexendo na linha (o índice
+  #       único enxerga a versão em curso) e depois a sessão relê com snapshot novo;
+  #   (b) o SELECT…FOR UPDATE.
+  # Sem só uma delas, A9 segue verde (camada redundante — esperado); sem as duas, vermelho.
+  if sabotar f1a_sem_lock 's/^   FOR UPDATE;$/   ;/'; then
+    v=$(chk_concorrencia f1a_sem_lock)
+    if [ "$v" = "A=t B=false|ocupado" ]; then ok "F1a só sem FOR UPDATE → A9 verde (o INSERT…ON CONFLICT serializa)"; else bad "F1a só sem FOR UPDATE e A9 vermelho ($v) — o INSERT não serializa como medido"; fi
+  fi
+  if sabotar f1b_sem_insert '/^  INSERT INTO public.omie_cota_metodo (conta, metodo)$/,/^  ON CONFLICT (conta, metodo) DO NOTHING;$/d'; then
+    v=$(chk_concorrencia f1b_sem_insert)
+    if [ "$v" = "A=t B=false|ocupado" ]; then ok "F1b só sem o INSERT → A9 verde (o FOR UPDATE serializa)"; else bad "F1b só sem o INSERT e A9 vermelho ($v) — o FOR UPDATE não serializa"; fi
+  fi
+  if sabotar f1c_sem_ambos 's/^   FOR UPDATE;$/   ;/; /^  INSERT INTO public.omie_cota_metodo (conta, metodo)$/,/^  ON CONFLICT (conta, metodo) DO NOTHING;$/d'; then
+    v=$(chk_concorrencia f1c_sem_ambos)
+    if [ "$v" != "A=t B=false|ocupado" ]; then ok "F1c sem as duas camadas → A9 vermelho ($v)"; else bad "F1c sem as duas camadas e A9 seguiu verde — assert sem dente"; fi
   fi
 
   # F2 — prazo substituído em vez de GREATEST: o aguarde curto encurta o bloqueio
