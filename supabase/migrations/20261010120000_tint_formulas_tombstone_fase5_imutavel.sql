@@ -20,17 +20,18 @@
 -- Desenho:
 --   * 3 triggers BEFORE (INSERT/UPDATE/DELETE) FOR EACH ROW, cada um com cláusula WHEN no motivo:
 --     o caminho quente (promote, snapshot) tem desativada_motivo NULL no OLD e no NEW ⇒ o WHEN é
---     avaliado no executor e a função plpgsql NÃO é chamada. Custo zero no promote, que já sofreu
---     com timeout de gateway.
+--     avaliado no executor e a função plpgsql NÃO é chamada. O custo que sobra no promote (que já
+--     sofreu com timeout de gateway) é a avaliação do WHEN por linha — não medido em escala.
 --   * Linha carimbada vira imutável por INTEIRO (qualquer coluna: o max() da view chaveia em
 --     account/sku_id/cor_id + subcoleção '1', e trocar a chave move o piso tanto quanto trocar o
 --     preço). UPDATE no-op (NEW = OLD) passa.
 --   * Carimbar linha nova (INSERT ou UPDATE com NEW.desativada_motivo = 'fase5_geracao_legada')
 --     também é barrado: só a Fase 5 carimbava, e ela é one-shot.
 --   * Escape de manutenção (reversão documentada da Fase 5 ou re-carimbo deliberado): na MESMA
---     transação, SET LOCAL afiacao.tint_tombstone_manutencao = 'on', e só vale fora das roles da API
---     (anon/authenticated). O PostgREST não consegue setar GUC arbitrário, e a checagem de role
---     fecha a porta mesmo que algum dia consiga.
+--     transação, SET LOCAL afiacao.tint_tombstone_manutencao = 'on'. Vale só se current_user E
+--     session_user estão fora das roles da API: o session_user de toda requisição PostgREST é
+--     'authenticator', então nem uma RPC SECURITY DEFINER que ligue o GUC (current_user = dono)
+--     abre o escape — só uma conexão de manutenção (SQL Editor como postgres). Parecer Codex.
 --   * SQLSTATE 42501 (o PostgREST devolve 403) com o prefixo tint_tombstone_fase5_imutavel.
 --   * 2º vetor, fora de tint_formulas: a view só lê o tombstone se a subcoleção dele tem
 --     id_subcolecao_sayersystem = '1'. tint_subcolecoes tem a mesma policy "Staff can manage" cmd '*'
@@ -40,15 +41,18 @@
 --     NOTHING (nunca atualiza).
 --
 -- Aplicar: colar no SQL Editor do Lovable (nome custom não é aplicado automaticamente). É idempotente
--- (CREATE OR REPLACE + DROP TRIGGER IF EXISTS) e transacional. A pós-condição, além do catálogo,
+-- (CREATE OR REPLACE FUNCTION/TRIGGER) e transacional. A pós-condição, além do catálogo,
 -- EXECUTA um UPDATE real numa linha carimbada e exige o 42501; o subbloco reverte, nenhum dado muda.
 -- Prova: db/test-tint-tombstone-fase5-imutavel.sh.
 
 BEGIN;
 
--- CREATE TRIGGER pega SHARE ROW EXCLUSIVE em tint_formulas (conflita com os writers do promote). Se
--- um promote estiver rodando, falha rápido em vez de enfileirar; basta colar de novo.
+-- CREATE OR REPLACE TRIGGER pega SHARE ROW EXCLUSIVE (não bloqueia as leituras do balcão; DROP
+-- TRIGGER pegaria ACCESS EXCLUSIVE, por isso não há DROP — parecer Codex). O LOCK explícito toma o
+-- modo antes de tudo; se um promote estiver escrevendo, falha em 5s em vez de enfileirar writers.
+-- Basta colar de novo.
 SET LOCAL lock_timeout = '5s';
+LOCK TABLE public.tint_formulas, public.tint_subcolecoes IN SHARE ROW EXCLUSIVE MODE;
 
 CREATE OR REPLACE FUNCTION public.tint_formulas_guard_tombstone_fase5()
 RETURNS trigger
@@ -58,7 +62,8 @@ AS $fn$
 BEGIN
   -- Escape de manutenção: GUC explícito na transação E fora das roles da API.
   IF current_setting('afiacao.tint_tombstone_manutencao', true) = 'on'
-     AND current_user NOT IN ('anon', 'authenticated') THEN
+     AND current_user NOT IN ('anon', 'authenticated')
+     AND session_user NOT IN ('authenticator', 'anon', 'authenticated', 'service_role') THEN
     RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
   END IF;
 
@@ -82,23 +87,20 @@ COMMENT ON FUNCTION public.tint_formulas_guard_tombstone_fase5() IS
 REVOKE ALL ON FUNCTION public.tint_formulas_guard_tombstone_fase5() FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.tint_formulas_guard_tombstone_fase5() FROM anon, authenticated;
 
-DROP TRIGGER IF EXISTS trg_tint_formulas_tombstone_fase5_ins ON public.tint_formulas;
-DROP TRIGGER IF EXISTS trg_tint_formulas_tombstone_fase5_upd ON public.tint_formulas;
-DROP TRIGGER IF EXISTS trg_tint_formulas_tombstone_fase5_del ON public.tint_formulas;
 
-CREATE TRIGGER trg_tint_formulas_tombstone_fase5_ins
+CREATE OR REPLACE TRIGGER trg_tint_formulas_tombstone_fase5_ins
   BEFORE INSERT ON public.tint_formulas
   FOR EACH ROW
   WHEN (NEW.desativada_motivo = 'fase5_geracao_legada')
   EXECUTE FUNCTION public.tint_formulas_guard_tombstone_fase5();
 
-CREATE TRIGGER trg_tint_formulas_tombstone_fase5_upd
+CREATE OR REPLACE TRIGGER trg_tint_formulas_tombstone_fase5_upd
   BEFORE UPDATE ON public.tint_formulas
   FOR EACH ROW
   WHEN (OLD.desativada_motivo = 'fase5_geracao_legada' OR NEW.desativada_motivo = 'fase5_geracao_legada')
   EXECUTE FUNCTION public.tint_formulas_guard_tombstone_fase5();
 
-CREATE TRIGGER trg_tint_formulas_tombstone_fase5_del
+CREATE OR REPLACE TRIGGER trg_tint_formulas_tombstone_fase5_del
   BEFORE DELETE ON public.tint_formulas
   FOR EACH ROW
   WHEN (OLD.desativada_motivo = 'fase5_geracao_legada')
@@ -111,7 +113,8 @@ SET search_path = public, pg_temp
 AS $fn$
 BEGIN
   IF current_setting('afiacao.tint_tombstone_manutencao', true) = 'on'
-     AND current_user NOT IN ('anon', 'authenticated') THEN
+     AND current_user NOT IN ('anon', 'authenticated')
+     AND session_user NOT IN ('authenticator', 'anon', 'authenticated', 'service_role') THEN
     RETURN NEW;
   END IF;
 
@@ -128,9 +131,7 @@ COMMENT ON FUNCTION public.tint_subcolecoes_guard_tombstone_fase5() IS
 REVOKE ALL ON FUNCTION public.tint_subcolecoes_guard_tombstone_fase5() FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.tint_subcolecoes_guard_tombstone_fase5() FROM anon, authenticated;
 
-DROP TRIGGER IF EXISTS trg_tint_subcolecoes_tombstone_fase5_upd ON public.tint_subcolecoes;
-
-CREATE TRIGGER trg_tint_subcolecoes_tombstone_fase5_upd
+CREATE OR REPLACE TRIGGER trg_tint_subcolecoes_tombstone_fase5_upd
   BEFORE UPDATE ON public.tint_subcolecoes
   FOR EACH ROW
   WHEN (OLD.id_subcolecao_sayersystem = '1'
@@ -182,6 +183,7 @@ BEGIN
   EXCEPTION WHEN insufficient_privilege THEN
     IF SQLERRM NOT LIKE 'tint_tombstone_fase5_imutavel:%' THEN RAISE; END IF;
   END;
+  RAISE NOTICE 'pós-condição: UPDATE real no tombstone % barrado com 42501', v_id;
 END
 $pos$;
 

@@ -171,7 +171,7 @@ db/test-db-aplicar.sh                      64  falsificar=15
 db/test-tint-promote.sh                    24
 db/test-tint-promote-nome-cor.sh            3
 db/test-tint-promote-tombstone-fase5.sh     5
-db/test-tint-tombstone-fase5-imutavel.sh   11
+db/test-tint-tombstone-fase5-imutavel.sh   16
 db/test-tint-fase5-desativacao.sh          37
 
 # ── Eixo 4 — CONCORRÊNCIA / TOCTOU ────────────────────────────────────────────────

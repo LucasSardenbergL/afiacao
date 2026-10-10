@@ -16,6 +16,10 @@
 #   P9 authenticated COM o GUC (tem de ser barrado: o escape exige role fora da API)
 #   P10 renomear a subcoleção '1' (tira TODOS os tombstones do max() da view de uma vez)
 #   P11 renomear OUTRA subcoleção (tem de PASSAR: o guard é só da '1')
+#   P12 RPC SECURITY DEFINER (dona postgres) que liga o GUC, chamada pela API (session_user =
+#       authenticator): tem de ser barrada — o escape exige session_user fora da API (parecer Codex)
+#   P13-P16 trocar sku_id / cor_id / account / subcolecao_id do tombstone (move a contribuição dele
+#       no max() sem mexer no preço — mata o mutante "compara só preço/motivo")
 #   V  efeito no dinheiro: preco_csv_legado/preco_piso_legado da COR1 depois de P1 e de P3
 #   N  não-regressão: o promote de um run que toca a chave carimbada segue promovendo
 # B0 = BASELINE sem a migration: P1-P5 PASSAM e V muda (o resíduo reproduzido). T1 = migration real.
@@ -41,6 +45,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k $TMP" -l "$TMP/pg.log" -w start >/dev/null
 PA() { "$PGBIN/psql" -X -p "$PORT" -h "$TMP" -U postgres -v ON_ERROR_STOP=1 "$@"; }
+PU() { "$PGBIN/psql" -X -p "$PORT" -h "$TMP" -U authenticator -v ON_ERROR_STOP=1 "$@"; }  # como o PostgREST
 
 # ── template: stubs + prelude + snapshot (prod: promote já com a 5b#1) + seed ─────────────────
 PA -q -d postgres -c "CREATE DATABASE tpl_tomb" >/dev/null
@@ -61,6 +66,21 @@ T -q <<'SQL' >/dev/null
 GRANT ALL ON public.tint_formulas, public.tint_formula_itens TO anon, authenticated;
 GRANT SELECT ON public.user_roles, public.tint_embalagens TO authenticated;
 GRANT ALL ON public.tint_subcolecoes TO authenticated;   -- prod: arwdDxtm + policy Staff can manage cmd '*'
+
+-- O PostgREST conecta como authenticator e troca para authenticated.
+ALTER ROLE authenticator LOGIN NOINHERIT;
+GRANT authenticated TO authenticator;
+-- Uma RPC SECURITY DEFINER hipotética que ligasse o escape (não existe em prod — P12 prova que não abriria).
+CREATE FUNCTION public.zz_rpc_definer_liga_escape() RETURNS int LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = public AS $f$
+DECLARE n int;
+BEGIN
+  PERFORM set_config('afiacao.tint_tombstone_manutencao', 'on', true);
+  UPDATE tint_formulas SET preco_final_sayersystem = 999 WHERE desativada_motivo = 'fase5_geracao_legada';
+  GET DIAGNOSTICS n = ROW_COUNT;
+  RETURN n;
+END $f$;
+GRANT EXECUTE ON FUNCTION public.zz_rpc_definer_liga_escape() TO authenticated;
 
 -- Staff (employee) que faz o PATCH.
 INSERT INTO auth.users (id) VALUES ('5aff0000-0000-0000-0000-000000000001');
@@ -123,14 +143,15 @@ ok()  { echo "  ✓ $*"; PASSOU=$((PASSOU + 1)); }
 bad() { echo "  ✗ $*"; FALHAS=$((FALHAS + 1)); }
 novo_db() { PA -q -d postgres -c "DROP DATABASE IF EXISTS $1" -c "CREATE DATABASE $1 TEMPLATE tpl_tomb" >/dev/null 2>&1; }
 
-# Uma sonda: $1 = db, $2 = rótulo, $3 = role (staff|postgres), $4 = 'guc' liga o escape, $5 = SQL
-# (um único comando DML). Imprime <rótulo>=PASSOU (≥1 linha afetada) | BLOQ (o 42501 do guard) |
+# Uma sonda: $1 = db, $2 = rótulo, $3 = role (staff|postgres|api = staff conectado como authenticator),
+# $4 = 'guc' liga o escape, $5 = SQL (um único comando DML), $6 = ROLLBACK (padrão) | COMMIT. Imprime <rótulo>=PASSOU (≥1 linha afetada) | BLOQ (o 42501 do guard) |
 # ZERO (0 linhas — RLS ou WHERE vazio, NUNCA conta como passou) | ERRO:<sqlstate>. Sempre ROLLBACK.
 sonda() {
-  local db="$1" rot="$2" quem="$3" guc="$4" dml="$5" pre=""
+  local db="$1" rot="$2" quem="$3" guc="$4" dml="$5" fim="${6:-ROLLBACK}" pre="" run=PA
   [ "$guc" = "guc" ] && pre="SET LOCAL afiacao.tint_tombstone_manutencao = 'on';"
-  [ "$quem" = "staff" ] && pre="$pre SET LOCAL request.jwt.claim.sub = '5aff0000-0000-0000-0000-000000000001'; SET LOCAL ROLE authenticated;"
-  PA -d "$db" -tA 2>&1 <<SQL | grep -E "^(NOTICE:  )?$rot=" | sed 's/^NOTICE:  //' || echo "$rot=SEM_SAIDA"
+  [ "$quem" = "api" ] && run=PU
+  [ "$quem" != "postgres" ] && pre="$pre SET LOCAL request.jwt.claim.sub = '5aff0000-0000-0000-0000-000000000001'; SET LOCAL ROLE authenticated;"
+  "$run" -d "$db" -tA 2>&1 <<SQL | grep -E "^(NOTICE:  )?$rot=" | sed 's/^NOTICE:  //' || echo "$rot=SEM_SAIDA"
 BEGIN;
 $pre
 DO \$s\$
@@ -145,7 +166,7 @@ EXCEPTION
     ELSE RAISE NOTICE '$rot=ERRO:42501:%', SQLERRM; END IF;
   WHEN OTHERS THEN RAISE NOTICE '$rot=ERRO:%:%', SQLSTATE, SQLERRM;
 END \$s\$;
-ROLLBACK;
+$fim;
 SQL
 }
 
@@ -175,25 +196,33 @@ vetor() {
     sonda "$db" P9 staff    guc "UPDATE tint_formulas SET preco_final_sayersystem = 999 WHERE id = $TOMB"
     sonda "$db" P10 staff   -   "$REN_SUB1"
     sonda "$db" P11 staff   -   "UPDATE tint_subcolecoes SET descricao = 'x', id_subcolecao_sayersystem = 'SL2' WHERE id_subcolecao_sayersystem = 'SL'"
+    sonda "$db" P12 api     -   "PERFORM 1 WHERE zz_rpc_definer_liga_escape() > 0"
+    sonda "$db" P13 staff   -   "UPDATE tint_formulas SET sku_id = NULL WHERE id = $TOMB"
+    sonda "$db" P14 staff   -   "UPDATE tint_formulas SET cor_id = 'COR9' WHERE id = $TOMB"
+    sonda "$db" P15 staff   -   "UPDATE tint_formulas SET account = 'outra' WHERE id = $TOMB"
+    sonda "$db" P16 staff   -   "UPDATE tint_formulas SET subcolecao_id = NULL WHERE id = $TOMB"
   } | tr '\n' ' ' | sed 's/ $//'
 }
 
-# Efeito no dinheiro: depois de um DML como staff (COMMIT, num db descartável), o csv/piso da COR1.
+# Efeito no dinheiro: um DML como staff COMMITADO (db descartável) → "<desfecho>:<csv>/<piso>" da COR1.
+# O desfecho vem casado com o valor (parecer Codex): um erro qualquer que deixasse o piso intacto
+# apareceria como ERRO:…, nunca como o BLOQ que o controle exige.
 dinheiro() {  # $1 = db, $2 = DML
-  PA -d "$1" -q -c "BEGIN; SET LOCAL request.jwt.claim.sub = '5aff0000-0000-0000-0000-000000000001'; SET LOCAL ROLE authenticated; $2; COMMIT;" >/dev/null 2>&1 || true
-  PA -d "$1" -tA -c "SELECT COALESCE(preco_csv_legado::text,'∅') || '/' || COALESCE(preco_piso_legado::text,'∅') FROM v_tint_formula_canonica WHERE cor_id = 'COR1'"
+  local st
+  st="$(sonda "$1" D staff - "$2" COMMIT)"
+  echo "${st#D=}:$(PA -d "$1" -tA -c "SELECT COALESCE(preco_csv_legado::text,'∅') || '/' || COALESCE(preco_piso_legado::text,'∅') FROM v_tint_formula_canonica WHERE cor_id = 'COR1'")"
 }
 
 # ── B0: BASELINE sem a migration — o resíduo reproduzido ─────────────────────────────────────
 echo "════ B0 — baseline SEM a migration (o PATCH direto do staff passa) ════"
 novo_db b0
 V0="$(vetor b0)"
-B0_ESPERADO="P1=PASSOU P2=PASSOU P3=PASSOU P4=PASSOU P5=PASSOU P6=PASSOU P7=PASSOU P8=PASSOU P9=PASSOU P10=PASSOU P11=PASSOU"
+B0_ESPERADO="P1=PASSOU P2=PASSOU P3=PASSOU P4=PASSOU P5=PASSOU P6=PASSOU P7=PASSOU P8=PASSOU P9=PASSOU P10=PASSOU P11=PASSOU P12=PASSOU P13=PASSOU P14=PASSOU P15=PASSOU P16=PASSOU"
 if [ "$V0" = "$B0_ESPERADO" ]; then ok "sem a migration o staff muda preço, reativa, insere carimbada, apaga e carimba: [$V0]"; else bad "baseline não reproduziu o resíduo: [$V0]"; fi
 novo_db b0p1; M1="$(dinheiro b0p1 "UPDATE tint_formulas SET preco_final_sayersystem = 999 WHERE id = $TOMB")"
 novo_db b0p3; M3="$(dinheiro b0p3 "$INS_CARIMBADA")"
 novo_db b0p10; M10="$(dinheiro b0p10 "$REN_SUB1")"
-if [ "$M1" = "999/999" ] && [ "$M3" = "999/999" ] && [ "$M10" = "∅/∅" ]; then ok "sem a migration o csv_legado/piso da COR1 vai de 123.45 a 999 (UPDATE: $M1 · INSERT: $M3) e some com o rename da subcoleção (P10: $M10)"; else bad "baseline: efeito no dinheiro inesperado (UPDATE: $M1 · INSERT: $M3 · P10: $M10)"; fi
+if [ "$M1" = "PASSOU:999/999" ] && [ "$M3" = "PASSOU:999/999" ] && [ "$M10" = "PASSOU:∅/∅" ]; then ok "sem a migration o csv_legado/piso da COR1 vai de 123.45 a 999 (UPDATE: $M1 · INSERT: $M3) e some com o rename da subcoleção (P10: $M10)"; else bad "baseline: efeito no dinheiro inesperado (UPDATE: $M1 · INSERT: $M3 · P10: $M10)"; fi
 
 # ── suíte: aplica <migration> num db novo; imprime o vetor + dinheiro + não-regressão ────────
 suite() {  # $1 = migration, $2 = prefixo do db
@@ -228,7 +257,7 @@ SQL
   echo "$v | DIN=$m1,$m3,$m10 | $n"
 }
 
-T1_ESPERADO="P1=BLOQ P2=BLOQ P3=BLOQ P4=BLOQ P5=BLOQ P6=PASSOU P7=BLOQ P8=PASSOU P9=BLOQ P10=BLOQ P11=PASSOU | DIN=123.45/123.45,123.45/123.45,123.45/123.45 | N=t/123.45/t/t/1/3"
+T1_ESPERADO="P1=BLOQ P2=BLOQ P3=BLOQ P4=BLOQ P5=BLOQ P6=PASSOU P7=BLOQ P8=PASSOU P9=BLOQ P10=BLOQ P11=PASSOU P12=BLOQ P13=BLOQ P14=BLOQ P15=BLOQ P16=BLOQ | DIN=BLOQ:123.45/123.45,BLOQ:123.45/123.45,BLOQ:123.45/123.45 | N=t/123.45/t/t/1/3"
 
 echo "════ T1 — controle VERDE (migration real) ════"
 S1="$(suite "$MIG" t1)"
@@ -293,23 +322,58 @@ t = t.replace("o trigger não morde'"'"', v_id;", "o trigger não morde'"'"', v_
 echo "════ F1 — WHEN do UPDATE neutralizado (o trigger de UPDATE nunca dispara) ════"
 falsifica F1 "t = t.replace(\"WHEN (OLD.desativada_motivo = 'fase5_geracao_legada' OR NEW.desativada_motivo = 'fase5_geracao_legada')\", 'WHEN (false)')
 $SEM_EXEC" \
-  "P1=PASSOU P2=PASSOU P3=BLOQ P4=BLOQ P5=PASSOU P6=PASSOU P7=PASSOU P8=PASSOU P9=PASSOU P10=BLOQ P11=PASSOU | DIN=999/999,123.45/123.45,123.45/123.45 | N=t/123.45/t/t/1/3"
+  "P1=PASSOU P2=PASSOU P3=BLOQ P4=BLOQ P5=PASSOU P6=PASSOU P7=PASSOU P8=PASSOU P9=PASSOU P10=BLOQ P11=PASSOU P12=PASSOU P13=PASSOU P14=PASSOU P15=PASSOU P16=PASSOU | DIN=PASSOU:999/999,BLOQ:123.45/123.45,BLOQ:123.45/123.45 | N=t/123.45/t/t/1/3"
 
 echo "════ F2 — trigger de INSERT removido ════"
 falsifica F2 "t = t.replace(\"WHEN (NEW.desativada_motivo = 'fase5_geracao_legada')\n\", 'WHEN (false)\n', 1)" \
-  "P1=BLOQ P2=BLOQ P3=PASSOU P4=BLOQ P5=BLOQ P6=PASSOU P7=BLOQ P8=PASSOU P9=BLOQ P10=BLOQ P11=PASSOU | DIN=123.45/123.45,999/999,123.45/123.45 | N=t/123.45/t/t/1/3"
+  "P1=BLOQ P2=BLOQ P3=PASSOU P4=BLOQ P5=BLOQ P6=PASSOU P7=BLOQ P8=PASSOU P9=BLOQ P10=BLOQ P11=PASSOU P12=BLOQ P13=BLOQ P14=BLOQ P15=BLOQ P16=BLOQ | DIN=BLOQ:123.45/123.45,PASSOU:999/999,BLOQ:123.45/123.45 | N=t/123.45/t/t/1/3"
 
 echo "════ F3 — trigger de DELETE removido ════"
 falsifica F3 "t = t.replace(\"BEFORE DELETE ON public.tint_formulas\n  FOR EACH ROW\n  WHEN (OLD.desativada_motivo = 'fase5_geracao_legada')\", 'BEFORE DELETE ON public.tint_formulas\n  FOR EACH ROW\n  WHEN (false)')" \
-  "P1=BLOQ P2=BLOQ P3=BLOQ P4=PASSOU P5=BLOQ P6=PASSOU P7=BLOQ P8=PASSOU P9=BLOQ P10=BLOQ P11=PASSOU | DIN=123.45/123.45,123.45/123.45,123.45/123.45 | N=t/123.45/t/t/1/3"
+  "P1=BLOQ P2=BLOQ P3=BLOQ P4=PASSOU P5=BLOQ P6=PASSOU P7=BLOQ P8=PASSOU P9=BLOQ P10=BLOQ P11=PASSOU P12=BLOQ P13=BLOQ P14=BLOQ P15=BLOQ P16=BLOQ | DIN=BLOQ:123.45/123.45,BLOQ:123.45/123.45,BLOQ:123.45/123.45 | N=t/123.45/t/t/1/3"
 
 echo "════ F4 — escape SEM a checagem de role (authenticated com o GUC passaria) ════"
-falsifica F4 "t = t.replace(\"     AND current_user NOT IN ('anon', 'authenticated') THEN\", '     THEN')" \
-  "P1=BLOQ P2=BLOQ P3=BLOQ P4=BLOQ P5=BLOQ P6=PASSOU P7=BLOQ P8=PASSOU P9=PASSOU P10=BLOQ P11=PASSOU | DIN=123.45/123.45,123.45/123.45,123.45/123.45 | N=t/123.45/t/t/1/3"
+falsifica F4 "t = t.replace(\"\n     AND current_user NOT IN ('anon', 'authenticated')\", '')" \
+  "P1=BLOQ P2=BLOQ P3=BLOQ P4=BLOQ P5=BLOQ P6=PASSOU P7=BLOQ P8=PASSOU P9=PASSOU P10=BLOQ P11=PASSOU P12=BLOQ P13=BLOQ P14=BLOQ P15=BLOQ P16=BLOQ | DIN=BLOQ:123.45/123.45,BLOQ:123.45/123.45,BLOQ:123.45/123.45 | N=t/123.45/t/t/1/3"
 
 echo "════ F5 — WHEN do trigger da subcoleção '1' neutralizado ════"
 falsifica F5 "t = t.replace(\"  WHEN (OLD.id_subcolecao_sayersystem = '1'\n\", '  WHEN (false AND OLD.id_subcolecao_sayersystem = \\'1\\'\n')" \
-  "P1=BLOQ P2=BLOQ P3=BLOQ P4=BLOQ P5=BLOQ P6=PASSOU P7=BLOQ P8=PASSOU P9=BLOQ P10=PASSOU P11=PASSOU | DIN=123.45/123.45,123.45/123.45,∅/∅ | N=t/123.45/t/t/1/3"
+  "P1=BLOQ P2=BLOQ P3=BLOQ P4=BLOQ P5=BLOQ P6=PASSOU P7=BLOQ P8=PASSOU P9=BLOQ P10=PASSOU P11=PASSOU P12=BLOQ P13=BLOQ P14=BLOQ P15=BLOQ P16=BLOQ | DIN=BLOQ:123.45/123.45,BLOQ:123.45/123.45,PASSOU:∅/∅ | N=t/123.45/t/t/1/3"
+
+echo "════ F6 — escape SEM a checagem de session_user (RPC definer ligando o GUC passaria) ════"
+falsifica F6 "t = t.replace(\"\n     AND session_user NOT IN ('authenticator', 'anon', 'authenticated', 'service_role') THEN\", ' THEN')" \
+  "P1=BLOQ P2=BLOQ P3=BLOQ P4=BLOQ P5=BLOQ P6=PASSOU P7=BLOQ P8=PASSOU P9=BLOQ P10=BLOQ P11=PASSOU P12=PASSOU P13=BLOQ P14=BLOQ P15=BLOQ P16=BLOQ | DIN=BLOQ:123.45/123.45,BLOQ:123.45/123.45,BLOQ:123.45/123.45 | N=t/123.45/t/t/1/3"
+
+echo "════ F7 — comparação parcial (só preço/motivo/desativada_em): troca de chave passaria ════"
+falsifica F7 "t = t.replace('NEW IS NOT DISTINCT FROM OLD THEN', 'NEW.preco_final_sayersystem IS NOT DISTINCT FROM OLD.preco_final_sayersystem AND NEW.desativada_motivo IS NOT DISTINCT FROM OLD.desativada_motivo AND NEW.desativada_em IS NOT DISTINCT FROM OLD.desativada_em THEN')" \
+  "P1=BLOQ P2=BLOQ P3=BLOQ P4=BLOQ P5=BLOQ P6=PASSOU P7=BLOQ P8=PASSOU P9=BLOQ P10=BLOQ P11=PASSOU P12=BLOQ P13=PASSOU P14=PASSOU P15=PASSOU P16=PASSOU | DIN=BLOQ:123.45/123.45,BLOQ:123.45/123.45,BLOQ:123.45/123.45 | N=t/123.45/t/t/1/3"
+
+echo "════ F8 — sem a exceção do no-op (UPDATE que não muda nada passaria a ser barrado) ════"
+falsifica F8 "t = t.replace('  IF TG_OP = \\'UPDATE\\' AND NEW IS NOT DISTINCT FROM OLD THEN', '  IF false THEN')" \
+  "P1=BLOQ P2=BLOQ P3=BLOQ P4=BLOQ P5=BLOQ P6=BLOQ P7=BLOQ P8=PASSOU P9=BLOQ P10=BLOQ P11=PASSOU P12=BLOQ P13=BLOQ P14=BLOQ P15=BLOQ P16=BLOQ | DIN=BLOQ:123.45/123.45,BLOQ:123.45/123.45,BLOQ:123.45/123.45 | N=t/123.45/t/t/1/3"
+
+echo "════ F9 — escape SEM exigir o GUC (postgres sem SET LOCAL passaria) ════"
+falsifica F9 "t = t.replace(\"  IF current_setting('afiacao.tint_tombstone_manutencao', true) = 'on'\n     AND current_user\", '  IF true\n     AND current_user', 1)
+$SEM_EXEC" \
+  "P1=BLOQ P2=BLOQ P3=BLOQ P4=BLOQ P5=BLOQ P6=PASSOU P7=PASSOU P8=PASSOU P9=BLOQ P10=BLOQ P11=PASSOU P12=BLOQ P13=BLOQ P14=BLOQ P15=BLOQ P16=BLOQ | DIN=BLOQ:123.45/123.45,BLOQ:123.45/123.45,BLOQ:123.45/123.45 | N=t/123.45/t/t/1/3"
+
+echo "════ T4 — pós-condição EXECUTÁVEL morde sozinha (WHEN(false) no UPDATE, catálogo intacto ⇒ apply aborta) ════"
+python3 - "$MIG" "$TMP/t4.sql" <<'PY4'
+import sys
+t = open(sys.argv[1]).read()
+a = "WHEN (OLD.desativada_motivo = 'fase5_geracao_legada' OR NEW.desativada_motivo = 'fase5_geracao_legada')"
+assert t.count(a) == 1, "alvo do T4 não encontrado"
+open(sys.argv[2], "w").write(t.replace(a, "WHEN (false)"))
+PY4
+novo_db t4
+if R4="$(PA -d t4 -tA -f "$TMP/t4.sql" 2>&1)"; then
+  bad "T4: apply com o trigger de UPDATE inerte PASSOU: [$R4]"
+else
+  case "$R4" in
+    *"PASSOU"*"o trigger n"*"o morde"*) ok "pós-condição executável aborta o apply quando o trigger existe mas não morde" ;;
+    *) bad "T4: abortou por outro motivo: [$R4]" ;;
+  esac
+fi
 
 echo ""
 echo "PASS=$PASSOU  FAIL=$FALHAS"   # recibo lido pelo db/roda-nucleo-ci.sh
