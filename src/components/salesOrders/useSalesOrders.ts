@@ -30,6 +30,7 @@ import { buscarDescontosItens } from '@/components/sales/print/buscarDescontosIt
 import { leituraDoPedido, mensagemAvisoDesconto, type LeituraDescontosItens } from '@/components/sales/print/descontoCupom';
 import { ehFalhaDePagina } from '@/lib/postgrest';
 import { mensagemDoErroEdge } from '@/lib/invoke-function';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 // O PostgREST capa cada resposta em 1000 linhas → a query drena em páginas até o
 // count (medido em prod: ~2.660 pedidos ≈ 3 requests). Teto de sanidade de
@@ -296,7 +297,7 @@ export function useSalesOrders() {
       } catch (e) {
         failedIds.push(o.id);
         // o texto da edge (ex.: "o pedido existe no Omie — cancele lá") vem no corpo, não no message
-        motivos.push((await mensagemDoErroEdge(e)) ?? (e instanceof Error ? e.message : String(e)));
+        motivos.push((await mensagemDoErroEdge(e)) ?? mensagemDeErro(e) ?? 'falha ao excluir no Omie');
         console.error(e);
       }
     }

@@ -818,7 +818,7 @@ describe('guardrail money-path: criar_pedido não confia no espelho legado omie_
       src,
       'o edge deixou de ler customer_user_id/customer_document do pedido local — voltaria a confiar no payload',
     ).toMatch(
-      /select\("account, customer_user_id, customer_document, created_by, checkout_id, omie_pedido_id, hash_payload"\)/,
+      /select\("account, customer_user_id, customer_document, created_by, checkout_id, omie_pedido_id, hash_payload(, deleted_at)?"\)/,
     );
   });
 });

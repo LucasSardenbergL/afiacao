@@ -11,6 +11,8 @@
 //   falhou). A mesma chave determinística é o registro durável do envio: a edge consulta o Omie por
 //   ela antes de apagar e, se o PV existe, recupera o vínculo e RECUSA a exclusão.
 
+import { mensagemDeErro } from "./erro-mensagem.ts";
+
 interface ItemEnviado {
   omie_codigo_produto: number;
   quantidade: number;
@@ -133,7 +135,7 @@ const PEDIDO_NAO_ENCONTRADO = /pedido[^.;\n]{0,60}n[aã]o (cadastrad|encontrad)/
 /** Erro do ConsultarPedido: só o fault que afirma ausência DO PEDIDO vira "ausente". Transitório,
  *  HTTP, fault de outra entidade ou desconhecido ⇒ indeterminado (a exclusão é recusada). */
 export function classificarErroConsultaExclusao(e: unknown): ConsultaExclusao {
-  const msg = e instanceof Error ? e.message : String(e);
+  const msg = mensagemDeErro(e) ?? "";
   if (!msg.startsWith("OMIE_TRANSIENT") && PEDIDO_NAO_ENCONTRADO.test(msg)) return { tipo: "ausente" };
   return { tipo: "indeterminado", detalhe: msg };
 }
