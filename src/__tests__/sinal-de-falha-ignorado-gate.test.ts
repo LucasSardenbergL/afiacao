@@ -68,17 +68,13 @@ function contarPorArquivo(hooks: Map<string, HookComSinal>): Map<string, number>
   return mapa;
 }
 
-// Fronteira medida em 2026-10-09 (16 sítios / 15 arquivos). Triagem money-path no PR.
+// Fronteira medida em 2026-10-09 (16 sítios / 15 arquivos), encolhida pela erradicação dos
+// money-path: o domínio de reposição saiu em 2026-10-10 (5 sítios / 5 arquivos). Resta 11.
 const DIVIDA: ReadonlyMap<string, number> = new Map([
   ['src/components/RequireCaca.tsx', 1],
   ['src/components/dashboard/CommercialDashboard.tsx', 1],
   ['src/components/farmer/locc/OverviewTab.tsx', 1],
-  ['src/components/reposicao/BaixoGiroBadge.tsx', 1],
-  ['src/components/reposicao/EtapaChecklist.tsx', 1],
-  ['src/components/reposicao/EtapasGrid.tsx', 1],
-  ['src/components/reposicao/ReposicaoSessionLayout.tsx', 1],
   ['src/hooks/useRoutePlanner.ts', 1],
-  ['src/pages/AdminReposicaoBaixoGiro.tsx', 1],
   ['src/pages/FarmerCalls.tsx', 2],
   ['src/pages/FarmerGovernance.tsx', 1],
   ['src/pages/FinanceiroSync.tsx', 1],
@@ -86,6 +82,22 @@ const DIVIDA: ReadonlyMap<string, number> = new Map([
   ['src/pages/SavingsDashboard.tsx', 1],
   ['src/pages/UnifiedOrder.tsx', 1],
 ]);
+
+/**
+ * Sítios JÁ quitados, com o PR que os quitou. A `DIVIDA` acima só encolhe; esta lista é o
+ * contrapeso — ela só CRESCE, e cada linha é um controle de regressão na ÁRVORE REAL (os pares
+ * inline provam a assinatura; estes provam o fix). Sem eles, um revert silencioso voltaria a
+ * caber na baseline antiga sem nada ficar vermelho.
+ */
+const QUITADOS: ReadonlyArray<[string, string]> = [
+  ['src/pages/CarteiraBoard.tsx', '#2894'],
+  ['src/pages/FarmerLOCC.tsx', '#2894'],
+  ['src/components/reposicao/ReposicaoSessionLayout.tsx', 'reposição'],
+  ['src/components/reposicao/EtapasGrid.tsx', 'reposição'],
+  ['src/components/reposicao/EtapaChecklist.tsx', 'reposição'],
+  ['src/components/reposicao/BaixoGiroBadge.tsx', 'reposição'],
+  ['src/pages/AdminReposicaoBaixoGiro.tsx', 'reposição'],
+];
 
 // ── Controles de calibração ───────────────────────────────────────────────────────────
 // A FORMA do CarteiraBoard pré-fix (HEAD~ deste PR). Assinatura que não casa isto é varredura
@@ -177,10 +189,20 @@ describe('gate: sinal de falha exposto e ignorado', () => {
     ).toEqual([]);
   });
 
-  it('os dois consumidores deste PR saíram da dívida e não voltam', () => {
-    // Controle de regressão na ÁRVORE REAL (o par inline prova a assinatura; este prova o fix).
+  it('os consumidores já quitados não voltam para a dívida', () => {
     const atual = contarPorArquivo(mapearHooksComSinal(fontes()));
-    expect(atual.get('src/pages/CarteiraBoard.tsx') ?? 0, 'CarteiraBoard regrediu').toBe(0);
-    expect(atual.get('src/pages/FarmerLOCC.tsx') ?? 0, 'FarmerLOCC regrediu').toBe(0);
+    const regressoes = QUITADOS.filter(([arquivo]) => (atual.get(arquivo) ?? 0) > 0)
+      .map(([arquivo, pr]) => `${arquivo} (quitado em ${pr})`);
+    expect(
+      regressoes,
+      'consumidor já quitado voltou a ignorar o sinal do hook — o fix foi desfeito',
+    ).toEqual([]);
+  });
+
+  it('nenhum arquivo aparece ao mesmo tempo na DIVIDA e nos QUITADOS', () => {
+    // Guard da própria contabilidade: um arquivo nos dois lados tornaria o controle de
+    // regressão satisfeito pela baseline (sempre verde) e a quitação, inverificável.
+    const nosDois = QUITADOS.map(([a]) => a).filter((a) => DIVIDA.has(a));
+    expect(nosDois, 'arquivo em DIVIDA e QUITADOS ao mesmo tempo').toEqual([]);
   });
 });

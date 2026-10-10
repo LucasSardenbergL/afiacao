@@ -22,12 +22,19 @@ const fmtBRLCompacto = (v: number) =>
  * números IDÊNTICOS aos do painel (fonte única do universo e do capital, via
  * somarCapitalParado). Nada de query/soma própria: dois cálculos de dinheiro que
  * podem divergir é o pecado recorrente do domínio.
+ *
+ * Sob falha de leitura ele DIZ que não conseguiu consultar, em vez de sumir — mesma decisão
+ * (e mesma razão) do irmão `ForaDoMotorBadge`: `rows === []` por falha de transporte zera o
+ * `kpis.totalItens`, e o `return null` tornava "não consegui ler a cauda" indistinguível de
+ * "não há cauda". Sumir calado é exatamente o defeito que estes atalhos vigiam.
  */
 export function BaixoGiroBadge() {
   const navigate = useNavigate();
-  const { kpis, isLoading } = useBaixoGiro();
+  const { kpis, isLoading, error } = useBaixoGiro();
+  const falhou = error != null;
 
-  if (isLoading || kpis.totalItens === 0) return null;
+  if (isLoading) return null;
+  if (!falhou && kpis.totalItens === 0) return null; // zero LIDO: cauda vazia de verdade
 
   return (
     <Button
@@ -35,20 +42,30 @@ export function BaixoGiroBadge() {
       size="sm"
       onClick={() => navigate("/admin/reposicao/baixo-giro")}
       className="w-fit text-muted-foreground hover:text-foreground"
-      title="Ver itens de baixo giro e estoque parado"
+      title={
+        falhou
+          ? "Não consegui consultar o baixo giro — abra o painel para conferir"
+          : "Ver itens de baixo giro e estoque parado"
+      }
     >
       <Boxes className="h-4 w-4 mr-1.5" />
       Baixo giro &amp; estoque parado
       <span className="mx-1.5 opacity-40" aria-hidden="true">·</span>
-      <span className="tabular-nums">
-        {kpis.totalItens} {kpis.totalItens === 1 ? "item" : "itens"}
-      </span>
-      {kpis.totalRs > 0 && (
+      {falhou ? (
+        <span>não consegui consultar</span>
+      ) : (
         <>
-          <span className="mx-1.5 opacity-40" aria-hidden="true">·</span>
-          <span className="font-medium text-foreground tabular-nums">
-            {fmtBRLCompacto(kpis.totalRs)} parado
+          <span className="tabular-nums">
+            {kpis.totalItens} {kpis.totalItens === 1 ? "item" : "itens"}
           </span>
+          {kpis.totalRs > 0 && (
+            <>
+              <span className="mx-1.5 opacity-40" aria-hidden="true">·</span>
+              <span className="font-medium text-foreground tabular-nums">
+                {fmtBRLCompacto(kpis.totalRs)} parado
+              </span>
+            </>
+          )}
         </>
       )}
       <ChevronRight className="h-4 w-4 ml-1.5 opacity-60" />

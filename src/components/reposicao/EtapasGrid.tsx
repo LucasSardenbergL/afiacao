@@ -4,6 +4,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { REPOSICAO_STEPS } from "./ProcessoComprasStepper";
+import { AvisoLeituraDoCiclo } from "./AvisoLeituraDoCiclo";
 import { useReposicaoStatus, getStepLocks, type ReposicaoStatus } from "@/hooks/useReposicaoSessao";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -36,11 +37,10 @@ function describe(step: number, s: ReposicaoStatus): string {
 
 export function EtapasGrid() {
   const navigate = useNavigate();
-  const { data: status, isLoading } = useReposicaoStatus();
-  const locks = getStepLocks(status);
-  const currentStep = status?.current ?? 3;
+  const { data: status, isLoading, isError, refetch } = useReposicaoStatus();
+  const tentarNovamente = () => { void refetch(); };
 
-  if (isLoading || !status) {
+  if (isLoading) {
     return (
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
         {Array.from({ length: 5 }).map((_, i) => (
@@ -49,76 +49,86 @@ export function EtapasGrid() {
       </div>
     );
   }
+  // O guard era `isLoading || !status`: com `isLoading` já falso e `status` undefined (falha de
+  // leitura) o grid ficava em SKELETON ETERNO — cara de "carregando" para sempre, sem nunca
+  // dizer que falhou nem oferecer retry (§7 money-path).
+  if (!status) return <AvisoLeituraDoCiclo onRetry={tentarNovamente} />;
+
+  const locks = getStepLocks(status);
+  const currentStep = status.current;
 
   return (
-    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-      {REPOSICAO_STEPS.map((step, idx) => {
-        const stepNum = idx + 1;
-        const isCurrent = stepNum === currentStep;
-        const isDone = stepNum < currentStep;
-        const lock = locks[idx];
-        const isLocked = !isCurrent && !isDone && lock.locked;
-        const Icon = step.icon;
+    <div className="space-y-3">
+      {isError && <AvisoLeituraDoCiclo stale onRetry={tentarNovamente} />}
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        {REPOSICAO_STEPS.map((step, idx) => {
+          const stepNum = idx + 1;
+          const isCurrent = stepNum === currentStep;
+          const isDone = stepNum < currentStep;
+          const lock = locks[idx];
+          const isLocked = !isCurrent && !isDone && lock.locked;
+          const Icon = step.icon;
 
-        return (
-          <button
-            key={step.label}
-            type="button"
-            onClick={() => navigate(step.to)}
-            className={cn(
-              "text-left transition-colors rounded-lg group",
-              isLocked && "cursor-not-allowed",
-            )}
-          >
-            <Card
+          return (
+            <button
+              key={step.label}
+              type="button"
+              onClick={() => navigate(step.to)}
               className={cn(
-                "h-full transition-colors",
-                isCurrent && "border-primary/40 bg-primary/5",
-                isDone && "border-status-success/30 bg-status-success/5",
-                isLocked && "border-dashed opacity-70",
-                !isCurrent && !isDone && !isLocked && "hover:bg-muted/40",
+                "text-left transition-colors rounded-lg group",
+                isLocked && "cursor-not-allowed",
               )}
             >
-              <CardContent className="p-4">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-2">
-                    <div
-                      className={cn(
-                        "flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold",
-                        isCurrent && "bg-primary text-primary-foreground",
-                        isDone && "bg-status-success text-white",
-                        !isCurrent && !isDone && "bg-muted text-foreground/70",
-                      )}
-                    >
-                      {isLocked ? <Lock className="h-3.5 w-3.5" /> : <Icon className="h-4 w-4" />}
+              <Card
+                className={cn(
+                  "h-full transition-colors",
+                  isCurrent && "border-primary/40 bg-primary/5",
+                  isDone && "border-status-success/30 bg-status-success/5",
+                  isLocked && "border-dashed opacity-70",
+                  !isCurrent && !isDone && !isLocked && "hover:bg-muted/40",
+                )}
+              >
+                <CardContent className="p-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <div
+                        className={cn(
+                          "flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold",
+                          isCurrent && "bg-primary text-primary-foreground",
+                          isDone && "bg-status-success text-white",
+                          !isCurrent && !isDone && "bg-muted text-foreground/70",
+                        )}
+                      >
+                        {isLocked ? <Lock className="h-3.5 w-3.5" /> : <Icon className="h-4 w-4" />}
+                      </div>
+                      <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                        Etapa {stepNum}
+                      </span>
                     </div>
-                    <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                      Etapa {stepNum}
-                    </span>
+                    {isCurrent && (
+                      <Badge className="h-4 px-1.5 text-[9px] bg-primary text-primary-foreground border-0">
+                        atual
+                      </Badge>
+                    )}
+                    {isDone && (
+                      <Badge className="h-4 px-1.5 text-[9px] bg-status-success text-white border-0">
+                        ok
+                      </Badge>
+                    )}
                   </div>
-                  {isCurrent && (
-                    <Badge className="h-4 px-1.5 text-[9px] bg-primary text-primary-foreground border-0">
-                      atual
-                    </Badge>
-                  )}
-                  {isDone && (
-                    <Badge className="h-4 px-1.5 text-[9px] bg-status-success text-white border-0">
-                      ok
-                    </Badge>
-                  )}
-                </div>
-                <div className="text-sm font-semibold mb-1">{step.label}</div>
-                <div className="text-xs text-muted-foreground line-clamp-2">
-                  {isLocked && lock.reason ? lock.reason : describe(stepNum, status)}
-                </div>
-                <div className="mt-3 text-xs text-primary opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
-                  Abrir etapa <ArrowRight className="h-3 w-3" />
-                </div>
-              </CardContent>
-            </Card>
-          </button>
-        );
-      })}
+                  <div className="text-sm font-semibold mb-1">{step.label}</div>
+                  <div className="text-xs text-muted-foreground line-clamp-2">
+                    {isLocked && lock.reason ? lock.reason : describe(stepNum, status)}
+                  </div>
+                  <div className="mt-3 text-xs text-primary opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
+                    Abrir etapa <ArrowRight className="h-3 w-3" />
+                  </div>
+                </CardContent>
+              </Card>
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }

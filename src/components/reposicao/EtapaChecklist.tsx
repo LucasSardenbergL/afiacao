@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { useReposicaoStatus, type ReposicaoStatus } from "@/hooks/useReposicaoSessao";
+import { AvisoLeituraDoCiclo } from "./AvisoLeituraDoCiclo";
 import { useNavigate } from "react-router-dom";
 
 type ChecklistItem = {
@@ -99,9 +100,10 @@ interface Props {
 
 export function EtapaChecklist({ step }: Props) {
   const navigate = useNavigate();
-  const { data: status, isLoading } = useReposicaoStatus();
+  const { data: status, isLoading, isError, refetch } = useReposicaoStatus();
+  const tentarNovamente = () => { void refetch(); };
 
-  if (isLoading || !status) {
+  if (isLoading) {
     return (
       <Card>
         <CardContent className="p-4">
@@ -112,57 +114,64 @@ export function EtapaChecklist({ step }: Props) {
       </Card>
     );
   }
+  // O guard era `isLoading || !status`: com `isLoading` já falso e `status` undefined (falha de
+  // leitura) o checklist ficava em SKELETON ETERNO — e os itens que ele monta são afirmações
+  // sobre o ciclo ("Revisar 0 pedido(s) pendente(s)"), não podem nascer de dado ausente.
+  if (!status) return <AvisoLeituraDoCiclo onRetry={tentarNovamente} />;
 
   const def = buildEtapaChecklist(step, status);
   const allDone = def.items.every((i) => i.done);
 
   return (
-    <Card className={cn(allDone && "border-status-success/30 bg-status-success/5")}>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-sm flex items-center gap-2">
-          {allDone ? (
-            <CheckCircle2 className="h-4 w-4 text-status-success" />
-          ) : (
-            <Circle className="h-4 w-4 text-muted-foreground" />
-          )}
-          {def.title}
-          {allDone && (
-            <span className="text-xs font-normal text-status-success ml-auto">
-              tudo pronto
-            </span>
-          )}
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="pt-0">
-        <ul className="space-y-1.5">
-          {def.items.map((item, idx) => (
-            <li key={idx} className="flex items-center justify-between gap-2 text-sm">
-              <div className="flex items-center gap-2 min-w-0">
-                {item.done ? (
-                  <CheckCircle2 className="h-4 w-4 text-status-success shrink-0" />
-                ) : (
-                  <Circle className="h-4 w-4 text-muted-foreground shrink-0" />
+    <div className="space-y-3">
+      {isError && <AvisoLeituraDoCiclo stale onRetry={tentarNovamente} />}
+      <Card className={cn(allDone && "border-status-success/30 bg-status-success/5")}>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm flex items-center gap-2">
+            {allDone ? (
+              <CheckCircle2 className="h-4 w-4 text-status-success" />
+            ) : (
+              <Circle className="h-4 w-4 text-muted-foreground" />
+            )}
+            {def.title}
+            {allDone && (
+              <span className="text-xs font-normal text-status-success ml-auto">
+                tudo pronto
+              </span>
+            )}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="pt-0">
+          <ul className="space-y-1.5">
+            {def.items.map((item, idx) => (
+              <li key={idx} className="flex items-center justify-between gap-2 text-sm">
+                <div className="flex items-center gap-2 min-w-0">
+                  {item.done ? (
+                    <CheckCircle2 className="h-4 w-4 text-status-success shrink-0" />
+                  ) : (
+                    <Circle className="h-4 w-4 text-muted-foreground shrink-0" />
+                  )}
+                  <span className={cn("truncate", item.done && "text-muted-foreground")}>
+                    {item.label}
+                  </span>
+                </div>
+                {item.cta && !item.done && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 px-2 text-xs"
+                    onClick={() => navigate(item.cta!.to)}
+                  >
+                    {item.cta.label}
+                    <ArrowRight className="h-3 w-3 ml-1" />
+                  </Button>
                 )}
-                <span className={cn("truncate", item.done && "text-muted-foreground")}>
-                  {item.label}
-                </span>
-              </div>
-              {item.cta && !item.done && (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="h-7 px-2 text-xs"
-                  onClick={() => navigate(item.cta!.to)}
-                >
-                  {item.cta.label}
-                  <ArrowRight className="h-3 w-3 ml-1" />
-                </Button>
-              )}
-            </li>
-          ))}
-        </ul>
-      </CardContent>
-    </Card>
+              </li>
+            ))}
+          </ul>
+        </CardContent>
+      </Card>
+    </div>
   );
 }
 

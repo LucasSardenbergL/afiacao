@@ -180,7 +180,11 @@ export function useReposicaoStatus() {
   }, [pedidosQ.data, oportQ.data]);
 
   // Loading/erro seguem os PEDIDOS (eixo do cockpit); o count degrada sem bloquear.
-  return { data, isLoading: pedidosQ.isLoading, isError: pedidosQ.isError };
+  // `refetch` recarrega AS DUAS leituras: é o retry que o §7 do money-path exige na tela
+  // ("falha → retry → último dado bom + aviso de stale"), e sem ele o operador fica preso
+  // no estado de erro — era o que faltava para o layout/grid/checklist pararem de mentir.
+  const refetch = () => Promise.all([oportQ.refetch(), pedidosQ.refetch()]);
+  return { data, isLoading: pedidosQ.isLoading, isError: pedidosQ.isError, refetch };
 }
 
 /**

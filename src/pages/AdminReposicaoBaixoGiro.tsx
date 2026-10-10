@@ -56,7 +56,7 @@ function exportarCsvExcesso(rows: RowExcesso[]) {
 }
 
 export default function AdminReposicaoBaixoGiro() {
-  const { rows, kpis, isLoading, manterEmEstoque, descontinuar, descontinuarLote, sobEncomendaLote } = useBaixoGiro();
+  const { rows, kpis, isLoading, error, refetch, manterEmEstoque, descontinuar, descontinuarLote, sobEncomendaLote } = useBaixoGiro();
   const excesso = useExcessoEstoque();
   const [filtros, setFiltros] = useState<FiltrosBaixoGiro>({ situacao: "todos", estoque: "todos", giro: "todos", busca: "" });
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -66,6 +66,12 @@ export default function AdminReposicaoBaixoGiro() {
   const [missaoAlvos, setMissaoAlvos] = useState<RowExcesso[] | null>(null); // desova (PR2 Cabreúva)
   const { empresa } = useReposicaoEmpresa();
   const [sobEncomendaAlvos, setSobEncomendaAlvos] = useState<RowBaixoGiro[] | null>(null);
+
+  // Sem cache, `rows === []` zera o `kpis` e a tela afirmava R$ 0,00 de capital parado e 0 itens
+  // na cauda — dinheiro fabricado por falha de transporte (§7 money-path). O irmão da mesma tela
+  // (`excesso.error`, abaixo) já declarava a dele; esta metade, não.
+  const semDado = error != null && rows.length === 0;
+  const tentarNovamente = () => { void refetch(); };
 
   const filtered = useMemo(() => {
     return rows.filter((r) => {
@@ -101,61 +107,85 @@ export default function AdminReposicaoBaixoGiro() {
         </TabsList>
 
         <TabsContent value="baixo-giro" className="space-y-4">
-          <BaixoGiroKpis {...kpis} />
-          <BaixoGiroFiltros filtros={filtros} onChange={setFiltros} />
-          {selected.size > 0 && (
-            <div className="flex flex-wrap items-center gap-2">
-              <Button
-                onClick={() =>
-                  setDialogAlvos(filtered.filter((r) => selected.has(r.sku_codigo_omie)))
-                }
-              >
-                Manter em estoque — {selected.size} selecionado(s)
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() =>
-                  setLoteAlvos(filtered.filter((r) => selected.has(r.sku_codigo_omie)))
-                }
-              >
-                Descontinuar — {selected.size} selecionado(s)
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() =>
-                  setSobEncomendaAlvos(filtered.filter((r) => selected.has(r.sku_codigo_omie)))
-                }
-              >
-                Sob encomenda — {selected.size} selecionado(s)
+          {semDado ? (
+            <div role="alert" className="rounded-md border border-status-error/30 bg-status-error/5 p-4 space-y-2">
+              <p className="text-sm">
+                Não consegui ler o universo de baixo giro — o capital parado e os itens da cauda
+                ficam indisponíveis até a leitura voltar.
+              </p>
+              <Button size="sm" variant="outline" onClick={tentarNovamente}>
+                Tentar novamente
               </Button>
             </div>
-          )}
-          <BaixoGiroTable
-            rows={filtered}
-            selected={selected}
-            onToggle={(c) =>
-              setSelected((prev) => {
-                const n = new Set(prev);
-                if (n.has(c)) n.delete(c);
-                else n.add(c);
-                return n;
-              })
-            }
-            onToggleAll={(codes) =>
-              setSelected((prev) =>
-                prev.size === codes.length ? new Set() : new Set(codes)
-              )
-            }
-            onResolverBloqueio={(r) =>
-              toast.info(
-                `Resolver: ${r.situacao_label} — ${r.sku_descricao ?? r.sku_codigo_omie}`
-              )
-            }
-            onManter={(r) => setDialogAlvos([r])}
-            onDescontinuar={(r) => setDescontinuarAlvo(r)}
-          />
-          {isLoading && (
-            <div className="text-sm text-muted-foreground">Carregando…</div>
+          ) : (
+            <>
+              {error != null && (
+                <div role="alert" className="flex items-center gap-2 rounded-md border border-status-warning/30 bg-status-warning/5 px-3 py-2 text-xs text-status-warning">
+                  <span className="min-w-0">
+                    A última leitura do baixo giro falhou — os números abaixo podem estar desatualizados.
+                  </span>
+                  <Button size="sm" variant="ghost" className="ml-auto h-6 px-2 text-xs" onClick={tentarNovamente}>
+                    Tentar novamente
+                  </Button>
+                </div>
+              )}
+              <BaixoGiroKpis {...kpis} />
+              <BaixoGiroFiltros filtros={filtros} onChange={setFiltros} />
+              {selected.size > 0 && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    onClick={() =>
+                      setDialogAlvos(filtered.filter((r) => selected.has(r.sku_codigo_omie)))
+                    }
+                  >
+                    Manter em estoque — {selected.size} selecionado(s)
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() =>
+                      setLoteAlvos(filtered.filter((r) => selected.has(r.sku_codigo_omie)))
+                    }
+                  >
+                    Descontinuar — {selected.size} selecionado(s)
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() =>
+                      setSobEncomendaAlvos(filtered.filter((r) => selected.has(r.sku_codigo_omie)))
+                    }
+                  >
+                    Sob encomenda — {selected.size} selecionado(s)
+                  </Button>
+                </div>
+              )}
+              <BaixoGiroTable
+                rows={filtered}
+                selected={selected}
+                onToggle={(c) =>
+                  setSelected((prev) => {
+                    const n = new Set(prev);
+                    if (n.has(c)) n.delete(c);
+                    else n.add(c);
+                    return n;
+                  })
+                }
+                onToggleAll={(codes) =>
+                  setSelected((prev) =>
+                    prev.size === codes.length ? new Set() : new Set(codes)
+                  )
+                }
+                onResolverBloqueio={(r) =>
+                  toast.info(
+                    `Resolver: ${r.situacao_label} — ${r.sku_descricao ?? r.sku_codigo_omie}`
+                  )
+                }
+                onManter={(r) => setDialogAlvos([r])}
+                onDescontinuar={(r) => setDescontinuarAlvo(r)}
+              />
+              {isLoading && (
+                <div className="text-sm text-muted-foreground">Carregando…</div>
+              )}
+            </>
           )}
         </TabsContent>
 
