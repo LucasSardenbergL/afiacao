@@ -125,7 +125,7 @@ sabotar() {  # $1 = trecho original (literal), $2 = substituto
   local n; n="$(grep -cF -- "$1" "$MIG_USADA" || true)"
   [ "$n" -ge 1 ] || { echo "❌ padrão da sabotagem não ocorre na migration: [$1]"; exit 1; }
   ORIG="$1" NOVO="$2" perl -0pi -e 's/\Q$ENV{ORIG}\E/$ENV{NOVO}/g' "$MIG_USADA"
-  echo "SABOTAGEM ATIVA em migration: ${SABOTAGEM} ($n ocorrência(s))"
+  echo "SABOTAGEM ATIVA em migration: ${SABOTAGEM:-} ($n ocorrência(s))"
 }
 case "${SABOTAGEM:-}" in
   "") ;;
@@ -134,7 +134,7 @@ case "${SABOTAGEM:-}" in
   sem_desempate)      sabotar "a.owner_user_id = auth.uid()" "false" ;;
   ambiguo_escolhe)    sabotar "IF cardinality(v_ids) = 1 THEN" "IF cardinality(v_ids) >= 1 THEN" ;;
   aceita_placeholder) sabotar "IF v_sufixo ~ '^(\\d)\\1{7}$' THEN" "IF false THEN" ;;
-  *) echo "❌ sabotagem desconhecida: ${SABOTAGEM}"; exit 1 ;;
+  *) echo "❌ sabotagem desconhecida: ${SABOTAGEM:-}"; exit 1 ;;
 esac
 
 P -q -f "$REPO_ROOT/db/stubs-supabase.sql"
