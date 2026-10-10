@@ -40,6 +40,11 @@ db/test-security-invoker-views.sh          27
 db/test-views-invoker-off-p0.sh            25
 db/test-authz-revoke-anon-rpc.sh           19
 db/test-authz-is-not-true-escritas.sh      24
+# Telefonia: quem é o dono do número discado (resolver_cliente_por_telefone, INVOKER). Roda COMO a
+# vendedora sob a RLS copiada da prod: o telefone com hífen casa (a busca antiga reconhecia 4% das
+# carteiras), staff não é cliente, ambíguo fica sem dono em vez de cair num cliente ao acaso, um
+# customer não descobre o dono de outro telefone, e o anon é revogado pelo NOME (a postcondição tem dente).
+db/test-resolver-cliente-por-telefone.sh   15  falsificar=5
 # Tintométrico (as provas tint entraram em 2026-09-27; até então nenhuma barrava merge — 18 de 19
 # fixavam o PGBIN do Homebrew e 13 carregam o schema-snapshot, que exige pgvector). A RLS de
 # `tint_formulas` decide IGUAL antes e depois do InitPlan (USING e WITH CHECK), e o custo de base e

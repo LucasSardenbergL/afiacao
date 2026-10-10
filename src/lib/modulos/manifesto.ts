@@ -670,6 +670,7 @@ export const MODULOS: ModuloApp[] = [
     ],
     testes: [
       "src/contexts/__tests__/WebRTCCallContext.test.tsx",
+      "src/contexts/__tests__/WebRTCCallContext.fim-remoto-persiste.test.tsx",
       "src/pages/__tests__/WhatsappInbox.sla-leitura-falhou.test.tsx",
       "src/contexts/__tests__/webrtc-context-split.test.ts",
       "src/hooks/__tests__/useCallBackend.test.tsx",

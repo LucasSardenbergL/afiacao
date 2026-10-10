@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 597
+-- Total de custom migrations: 599
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -657,8 +657,10 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261009194000', 'motor_unidades_concentrado_wp', '20261009194000_motor_unidades_concentrado_wp.sql'),
   ('20261009220000', 'margem_cliente_janela_12m', '20261009220000_margem_cliente_janela_12m.sql'),
   ('20261009233000', 'atp_fase3_2_corretiva', '20261009233000_atp_fase3_2_corretiva.sql'),
+  ('20261010120000', 'apply_score_updates_fencing_lease', '20261010120000_apply_score_updates_fencing_lease.sql'),
   ('20261010120000', 'tint_formulas_tombstone_fase5_imutavel', '20261010120000_tint_formulas_tombstone_fase5_imutavel.sql'),
-  ('20261010150000', 'remove_cron_disparo_10h', '20261010150000_remove_cron_disparo_10h.sql')
+  ('20261010150000', 'remove_cron_disparo_10h', '20261010150000_remove_cron_disparo_10h.sql'),
+  ('20261010163424', 'resolver_cliente_por_telefone', '20261010163424_resolver_cliente_por_telefone.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2578,12 +2580,14 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('atp_fase3_2_corretiva', 'function', 'public', 'reservar_estoque', ''),
   ('atp_fase3_2_corretiva', 'function', 'public', 'liberar_reserva_checkout', ''),
   ('atp_fase3_2_corretiva', 'function', 'public', 'atp_reservas_pendentes', ''),
+  ('apply_score_updates_fencing_lease', 'function', 'public', 'apply_score_updates', ''),
   ('tint_formulas_tombstone_fase5_imutavel', 'function', 'public', 'tint_formulas_guard_tombstone_fase5', ''),
   ('tint_formulas_tombstone_fase5_imutavel', 'function', 'public', 'tint_subcolecoes_guard_tombstone_fase5', ''),
   ('tint_formulas_tombstone_fase5_imutavel', 'trigger', 'public', 'trg_tint_formulas_tombstone_fase5_ins', 'tint_formulas'),
   ('tint_formulas_tombstone_fase5_imutavel', 'trigger', 'public', 'trg_tint_formulas_tombstone_fase5_upd', 'tint_formulas'),
   ('tint_formulas_tombstone_fase5_imutavel', 'trigger', 'public', 'trg_tint_formulas_tombstone_fase5_del', 'tint_formulas'),
-  ('tint_formulas_tombstone_fase5_imutavel', 'trigger', 'public', 'trg_tint_subcolecoes_tombstone_fase5_upd', 'tint_subcolecoes')
+  ('tint_formulas_tombstone_fase5_imutavel', 'trigger', 'public', 'trg_tint_subcolecoes_tombstone_fase5_upd', 'tint_subcolecoes'),
+  ('resolver_cliente_por_telefone', 'function', 'public', 'resolver_cliente_por_telefone', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4551,12 +4555,14 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('atp_fase3_2_corretiva', 'function', 'public', 'reservar_estoque', ''),
   ('atp_fase3_2_corretiva', 'function', 'public', 'liberar_reserva_checkout', ''),
   ('atp_fase3_2_corretiva', 'function', 'public', 'atp_reservas_pendentes', ''),
+  ('apply_score_updates_fencing_lease', 'function', 'public', 'apply_score_updates', ''),
   ('tint_formulas_tombstone_fase5_imutavel', 'function', 'public', 'tint_formulas_guard_tombstone_fase5', ''),
   ('tint_formulas_tombstone_fase5_imutavel', 'function', 'public', 'tint_subcolecoes_guard_tombstone_fase5', ''),
   ('tint_formulas_tombstone_fase5_imutavel', 'trigger', 'public', 'trg_tint_formulas_tombstone_fase5_ins', 'tint_formulas'),
   ('tint_formulas_tombstone_fase5_imutavel', 'trigger', 'public', 'trg_tint_formulas_tombstone_fase5_upd', 'tint_formulas'),
   ('tint_formulas_tombstone_fase5_imutavel', 'trigger', 'public', 'trg_tint_formulas_tombstone_fase5_del', 'tint_formulas'),
-  ('tint_formulas_tombstone_fase5_imutavel', 'trigger', 'public', 'trg_tint_subcolecoes_tombstone_fase5_upd', 'tint_subcolecoes')
+  ('tint_formulas_tombstone_fase5_imutavel', 'trigger', 'public', 'trg_tint_subcolecoes_tombstone_fase5_upd', 'tint_subcolecoes'),
+  ('resolver_cliente_por_telefone', 'function', 'public', 'resolver_cliente_por_telefone', '')
 )
 SELECT
   e.migration,
@@ -4952,6 +4958,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'apply_score_updates', 5, '20260723150000_farmer_margem_server_side.sql', 'e436afb33eef27c88987ba6466437d40'),
   ('public', 'apply_score_updates', 6, '20260723160000_farmer_margem_correcoes_review.sql', 'a83b8b980bfd701382b50bf5fa20959f'),
   ('public', 'apply_score_updates', 7, '20260728120000_farmer_persiste_cobertura_custo.sql', 'b1158e842845de541a8522fd23e39cdd'),
+  ('public', 'apply_score_updates', 8, '20261010120000_apply_score_updates_fencing_lease.sql', '39467b187f06fc776efdcb4a7b6810f9'),
   ('public', 'seed_targets_faltantes', 1, '20260621120000_seed_targets_faltantes_rpc.sql', 'b4e28f3f6ef5daa898d38b4a2cea63c6'),
   ('public', 'seed_targets_faltantes', 2, '20260718220100_seed_targets_faltantes_ledger.sql', '2a7b41d037d4a34e48f230e346e5cdbd'),
   ('public', 'criar_plano_tatico', 1, '20260623180000_rpc_tactical_plan_posse_segura.sql', '55deb54a5a5949d1465ca2fcbd74689c'),

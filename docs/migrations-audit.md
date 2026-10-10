@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **597** custom migrations totais
-- **1956** objetos esperados (criados por estas migrations)
+- **599** custom migrations totais
+- **1958** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 668
+  - `function`: 670
   - `rls_policy`: 464
   - `index`: 268
   - `cron_job`: 175
@@ -4878,6 +4878,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.liberar_reserva_checkout` | — |
 | `function` | `public.atp_reservas_pendentes` | — |
 
+### `20261010120000_apply_score_updates_fencing_lease.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.apply_score_updates` | — |
+
 ### `20261010120000_tint_formulas_tombstone_fase5_imutavel.sql`
 
 | Tipo | Objeto | Parent |
@@ -4892,6 +4898,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20261010150000_remove_cron_disparo_10h.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20261010163424_resolver_cliente_por_telefone.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.resolver_cliente_por_telefone` | — |
 
 ## Próximos passos por status
 

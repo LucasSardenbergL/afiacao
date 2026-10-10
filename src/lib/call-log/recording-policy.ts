@@ -23,7 +23,10 @@ export interface ResolvedCallParty {
  */
 export async function resolveCallParty(rawPhone: string): Promise<ResolvedCallParty> {
   const r = await resolveCustomerByPhone(rawPhone);
-  if (r.customerUserId) {
+  // `reconhecido`, não `customerUserId`: telefone compartilhado por vários clientes (sem dono único na
+  // carteira de quem liga) continua sendo telefone de CLIENTE — grava, e o dono fica null para a
+  // vendedora associar depois. Antes, o dono ausente rebaixava o número a 'desconhecido'.
+  if (r.reconhecido) {
     return {
       kind: 'cliente',
       customerUserId: r.customerUserId,

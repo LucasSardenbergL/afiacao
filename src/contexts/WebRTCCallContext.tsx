@@ -59,7 +59,8 @@ async function persistCallSession(opts: {
 
     // Reverse-link best-effort: grava atendimento_id em farmer_calls quando disponível.
     // O link primário confiável é sales_orders.atendimento_id — este é auxiliar (só existe
-    // quando endCall tem conteúdo gravável; remote-hangup/sem-transcrição não geram linha).
+    // quando a ligação gravada tem conteúdo — fim pelo endCall OU pelo lado remoto; sem transcrição
+    // não gera linha).
     const payload = buildSessionPayload({
       farmerId: user.id,
       customerUserId,
@@ -131,8 +132,6 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
 
   // PR4 — Refs pra persistência da sessão de chamada
   const analysisHistoryRef = useRef<SpinAnalysis[]>([]);
-  const dialedPhoneRef = useRef<string>('');
-  const callStartedAtRef = useRef<Date | null>(null);
   // Telefonia — call_log do outbound + gate de gravação
   const dialedSipCallIdRef = useRef<string | null>(null);
   const recordingRef = useRef<boolean>(false);
@@ -145,7 +144,18 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
   // Onda 1 / Fase 1 — guards do contexto da ligação:
   const callGenerationRef = useRef(0);                          // guard de async-race (resolução tardia de party descartada)
   const startingCallRef = useRef(false);                        // start-mutex (anti-concorrência de makeCall/accept)
-  const atendimentoIdRef = useRef<string | null>(null);         // snapshot do atendimento pro persist (Task 2 usa)
+  // Sessão de gravação em aberto: nasce no makeCall/acceptIncoming e é consumida UMA vez — pelo
+  // endCall ou pelo fim remoto (consumirSessao). Carrega o PRÓPRIO telefone/atendimento — o fim de
+  // uma ligação não lê estado global que a seguinte já sobrescreveu. `estabelecida` só vira true quando a
+  // ligação conecta: antes disso não existe conversa DESTA sessão — os turns no ref podem ser da
+  // ligação anterior (o useTranscription só os zera ao conectar).
+  const sessaoRef = useRef<{
+    startedAt: Date;
+    phone: string;
+    atendimentoId: string | null;
+    estabelecida: boolean;
+  } | null>(null);
+  const callStateRef = useRef<WebRTCCallState>('idle');         // espelho p/ o makeCall (callback estável) ler o estado
   const incomingPartyRef = useRef<{ sipCallId: string; party: ResolvedCallParty } | null>(null);
 
   useEffect(() => {
@@ -233,6 +243,34 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
     }
   }, [callState]);
 
+  /**
+   * Persiste a sessão em farmer_calls — no máximo UMA vez por sessão, venha o fim de onde vier.
+   * Antes só o botão "Encerrar" persistia: a ligação que o CLIENTE encerrava (o caso comum) sumia do
+   * histórico e o cliente seguia "nunca contatado". Regras: sessão que conectou (`estabelecida`),
+   * gravada, e com conteúdo. Lê só refs → identidade estável.
+   */
+  const consumirSessao = useCallback(() => {
+    const sessao = sessaoRef.current;
+    if (!sessao) return;
+    sessaoRef.current = null;
+    const turns = [...turnsRef.current];
+    const analyses = [...analysisHistoryRef.current];
+    if (!sessao.estabelecida || !recordingRef.current || (turns.length === 0 && analyses.length === 0)) return;
+    void persistCallSession({
+      startedAt: sessao.startedAt,
+      endedAt: new Date(),
+      turns,
+      analyses,
+      dialedPhone: sessao.phone,
+      atendimentoId: sessao.atendimentoId,
+    });
+  }, []);
+
+  useEffect(() => {
+    callStateRef.current = callState;
+    if (callState === 'established' && sessaoRef.current) sessaoRef.current.estabelecida = true;
+  }, [callState]);
+
   // Telefonia — fecha o call_log do outbound quando a chamada termina por QUALQUER via
   // (no-answer, busy, failed, error ou remote hangup), não só pelo botão "Encerrar" (endCall).
   // Sem isso, linhas outbound ficavam presas em 'ringing' pra sempre (o cron backstop só varria inbound).
@@ -254,7 +292,6 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
     setCurrentParty(null);
     setCurrentAtendimentoId(null);
     setCallDirection(null);
-    atendimentoIdRef.current = null;
     incomingPartyRef.current = null;
     if (dialedSipCallIdRef.current) {
       const sid = dialedSipCallIdRef.current;
@@ -327,6 +364,14 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
       toast.error('Já há uma chamada sendo iniciada.');
       return;
     }
+    // Uma ligação por vez: o mutex acima só cobre a INICIALIZAÇÃO. Com uma ligação em curso (a agenda
+    // deixa clicar "Ligar" nela), a nova sobrescreveria a sessão, e o fim da antiga persistiria a
+    // conversa dela no telefone/atendimento da nova (revisão adversária, 2026-10-10). Entrante não
+    // precisa disto: o SipClient já recusa com 486 Busy quando há sessão ativa.
+    if (['calling_origin', 'calling_destination', 'established'].includes(callStateRef.current)) {
+      toast.error('Encerre a ligação atual antes de iniciar outra.');
+      return;
+    }
     startingCallRef.current = true;
     try {
       setError(null);
@@ -350,7 +395,6 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
       // await de resolveCallParty → uma resolução tardia de geração antiga é descartada.
       const gen = ++callGenerationRef.current;
       const atendimentoId = crypto.randomUUID();
-      atendimentoIdRef.current = atendimentoId;
       setCurrentAtendimentoId(atendimentoId);
       setCallDirection('outbound');
 
@@ -378,8 +422,7 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
 
       // PR4 — Reset refs de sessão antes de iniciar nova chamada
       analysisHistoryRef.current = [];
-      dialedPhoneRef.current = normalized;
-      callStartedAtRef.current = new Date();
+        sessaoRef.current = { startedAt: new Date(), phone: normalized, atendimentoId, estabelecida: false };
 
       cleanupAudioResources();
 
@@ -418,15 +461,9 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
   }, [prerollUrl]);
 
   const endCall = useCallback(async () => {
-    // PR4 — Capturar snapshot ANTES de cleanup (refs/state ainda válidos).
-    // Lê turns/analyses via refs pra evitar hoisting com `transcription` (declarado abaixo).
-    const startedAt = callStartedAtRef.current;
-    const turnsSnapshot = [...turnsRef.current];
-    const analysesSnapshot = [...analysisHistoryRef.current];
-    const dialedPhone = dialedPhoneRef.current;
-    const wasRecording = recordingRef.current;
-    // Onda 1 / Fase 1 — captura antes do efeito terminal zerar o ref.
-    const atendimentoIdSnapshot = atendimentoIdRef.current;
+    // Persiste (fire-and-forget) e CONSOME a sessão antes do hangUp: o stateChange terminal que ele
+    // dispara encontra a sessão nula e não grava de novo. Lê refs — refs/state ainda válidos aqui.
+    consumirSessao();
 
     // Telefonia — duração/answered vêm do SipClient (callStartedAt só existe após accept).
     // Captura ANTES de hangUp (hangUp não zera callStartedAt, mas captura é mais seguro).
@@ -444,20 +481,7 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
       void logClosed(dialedSipCallIdRef.current, { answered, durationSeconds });
       dialedSipCallIdRef.current = null;
     }
-
-    // Fire-and-forget — não bloqueia UI. Só persiste farmer_calls quando GRAVAMOS
-    // (cliente/fornecedor ou forceRecord) E houve conteúdo útil.
-    if (wasRecording && startedAt && (turnsSnapshot.length > 0 || analysesSnapshot.length > 0)) {
-      void persistCallSession({
-        startedAt,
-        endedAt: new Date(),
-        turns: turnsSnapshot,
-        analyses: analysesSnapshot,
-        dialedPhone,
-        atendimentoId: atendimentoIdSnapshot,
-      });
-    }
-  }, []);
+  }, [consumirSessao]);
 
   const toggleMute = useCallback(() => {
     if (!clientRef.current) return;
@@ -493,7 +517,6 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
     // Onda 1 / Fase 1 — cunha o atendimento + direção (inbound) e resolve o party.
     const gen = ++callGenerationRef.current;
     const atendimentoId = crypto.randomUUID();
-    atendimentoIdRef.current = atendimentoId;
     setCurrentAtendimentoId(atendimentoId);
     setCallDirection('inbound');
     const sipId = incomingCall.sipCallId;
@@ -510,8 +533,7 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
 
     // Reset refs de sessão (mesma lógica do makeCall pro persist funcionar)
     analysisHistoryRef.current = [];
-    dialedPhoneRef.current = incomingCall.phone;
-    callStartedAtRef.current = new Date();
+    sessaoRef.current = { startedAt: new Date(), phone: incomingCall.phone, atendimentoId, estabelecida: false };
     // Inbound atendido sempre grava (preroll + transcrição inalterados) → persist habilitado.
     // dialedSipCallIdRef fica null: o fechamento da call_log do inbound é feito pelo
     // listener 'incomingClosed' (SipClient), não pelo endCall.
@@ -593,6 +615,15 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
   useEffect(() => {
     turnsRef.current = transcription.turns;
   }, [transcription.turns]);
+
+  // Fim pelo lado REMOTO (o cliente desligou, queda, sem resposta): consome a sessão como o endCall.
+  // Declarado DEPOIS dos efeitos que sincronizam turns/análises DE PROPÓSITO: quando o último turno e o
+  // BYE chegam no mesmo commit, os efeitos rodam em ordem de declaração e o ref já tem o turno aqui.
+  // Sessão não estabelecida (sem resposta/ocupado) não persiste — consumirSessao exige `estabelecida`.
+  useEffect(() => {
+    const TERMINAL: WebRTCCallState[] = ['finished', 'noanswer', 'busy', 'failed', 'error'];
+    if (TERMINAL.includes(callState)) consumirSessao();
+  }, [callState, consumirSessao]);
 
   // Ownership: o <WebRTCDialer> que vai discar se declara dono ANTES do makeCall.
   const claimCall = useCallback((ownerId: string) => setCallOwnerId(ownerId), []);
