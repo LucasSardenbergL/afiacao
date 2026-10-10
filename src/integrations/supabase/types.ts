@@ -13374,6 +13374,7 @@ export type Database = {
           id: number
           sku_codigo_omie: string
           unidade_base: string
+          unidades_omie_por_embalagem: number | null
           vigente_ate: string | null
           vigente_desde: string
         }
@@ -13388,6 +13389,7 @@ export type Database = {
           id?: never
           sku_codigo_omie: string
           unidade_base: string
+          unidades_omie_por_embalagem?: number | null
           vigente_ate?: string | null
           vigente_desde?: string
         }
@@ -13402,6 +13404,7 @@ export type Database = {
           id?: never
           sku_codigo_omie?: string
           unidade_base?: string
+          unidades_omie_por_embalagem?: number | null
           vigente_ate?: string | null
           vigente_desde?: string
         }
