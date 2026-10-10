@@ -82,13 +82,15 @@ let cacheContagem: Map<string, number> | null = null;
 const contagemDaArvore = () => (cacheContagem ??= contarPorArquivo(hooksDaArvore()));
 
 // Fronteira medida em 2026-10-09 (16 sítios / 15 arquivos), encolhida pela erradicação dos
-// money-path: reposição (5 sítios), preço/pedido (1) e carteira/rota (4) saíram em 2026-10-10.
-// Restam 6, e 5 deles são os periféricos + o `FarmerGovernance`, cujo furo é DO HOOK.
+// money-path: reposição (5 sítios), preço/pedido (1), carteira/rota (4) e financeiro (1) saíram
+// em 2026-10-10. Restam 5, e NENHUM é money-path — são os 4 periféricos (`useMyCommercialRole`
+// escolhendo tela, `useSavingsSummary`) e o `FarmerGovernance`, cujo furo é DO HOOK: o `setErro`
+// do `useFarmerScoring` só acontece no cálculo dos scores, então o campo `erro` não cobre a
+// falha de CARGA do `config` — ler o sinal lá não consertaria a tela.
 const DIVIDA: ReadonlyMap<string, number> = new Map([
   ['src/components/RequireCaca.tsx', 1],
   ['src/components/dashboard/CommercialDashboard.tsx', 1],
   ['src/pages/FarmerGovernance.tsx', 1],
-  ['src/pages/FinanceiroSync.tsx', 1],
   ['src/pages/Index.tsx', 1],
   ['src/pages/SavingsDashboard.tsx', 1],
 ]);
@@ -121,6 +123,7 @@ const QUITADOS: ReadonlyArray<[string, string]> = [
   ['src/components/farmer/locc/OverviewTab.tsx', 'carteira/rota'],
   // Nasce vigiado: `useRoutePlanner` passou a EXPOR `erro`, então o gate agora vê a página.
   ['src/pages/AdminRoutePlanner.tsx', 'carteira/rota'],
+  ['src/pages/FinanceiroSync.tsx', 'financeiro'],
 ];
 
 // ── Controles de calibração ───────────────────────────────────────────────────────────

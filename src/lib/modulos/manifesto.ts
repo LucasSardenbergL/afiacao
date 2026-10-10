@@ -136,6 +136,7 @@ export const MODULOS: ModuloApp[] = [
       "src/pages/__tests__/FinanceiroAnalytics.baixa-indisponivel.test.tsx",
       "src/pages/__tests__/FinanceiroDashboard.coerencia-pos-sync.test.tsx",
       "src/pages/__tests__/FinanceiroIc.leitura-falhou.test.tsx",
+      "src/pages/__tests__/FinanceiroSync.erro-honesto.test.tsx",
       "src/hooks/__tests__/useFinanceiroRegime.test.tsx",
       "src/hooks/__tests__/usePeriodOverride.test.tsx",
       "src/hooks/__tests__/useUtiContas.test.ts",
