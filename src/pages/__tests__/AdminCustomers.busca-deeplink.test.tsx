@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, renderHook, screen, fireEvent, waitFor } from '@testing-library/react';
+import type { ReactNode } from 'react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
@@ -90,6 +91,7 @@ vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn(), message: v
 vi.mock('@/lib/analytics', () => ({ captureException: vi.fn(), track: vi.fn() }));
 
 import AdminCustomers from '../AdminCustomers';
+import { useClientesScope } from '@/components/adminCustomers/useClientesScope';
 
 const renderEm = (url: string) => {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -177,21 +179,6 @@ describe('AdminCustomers — deep link fora das páginas carregadas', () => {
     expect(screen.queryByText('Cliente não encontrado')).toBeNull();
   });
 
-  it('leitura por id vazia ANTES da lista: não pisca "não encontrado" — espera a lista', async () => {
-    h.atrasarBase = true;
-    renderEm(`/admin/customers/${WALTER.user_id}`);
-
-    await waitFor(() => {
-      expect(queriesDeProfiles().some((c) => tem(c.ops, 'maybeSingle'))).toBe(true);
-      expect(h.liberarBase).not.toBeNull();
-    });
-    await new Promise((r) => setTimeout(r, 20)); // a leitura por id (null) já assentou
-    expect(screen.queryByText('Cliente não encontrado'), 'afirmou ausência sem a lista ter respondido').toBeNull();
-
-    h.liberarBase!();
-    expect(await screen.findByText('ficha: WALTER JOSE NOGUEIRA')).toBeTruthy();
-  });
-
   it('id inexistente/invisível: estado explícito, não a lista', async () => {
     renderEm('/admin/customers/00000000-0000-0000-0000-000000000000');
 
@@ -211,5 +198,28 @@ describe('AdminCustomers — deep link fora das páginas carregadas', () => {
       expect(queriesDeProfiles().some((c) => tem(c.ops, 'maybeSingle'))).toBe(false);
     });
     expect(screen.queryByText(/ficha:/)).toBeNull();
+  });
+});
+
+describe('useClientesScope — contrato do deep link', () => {
+  // Na PÁGINA a corrida é mascarada (lista carregando → skeleton antes do deep link); o contrato
+  // é do scope, que não pode depender da ordem de render de quem o consome.
+  it('leitura por id vazia ANTES da 1ª página: "carregando", nunca "nao_encontrado"', async () => {
+    h.atrasarBase = true;
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={qc}><MemoryRouter>{children}</MemoryRouter></QueryClientProvider>
+    );
+    const { result } = renderHook(() => useClientesScope({ customerIdAlvo: WALTER.user_id }), { wrapper });
+
+    await waitFor(() => {
+      expect(queriesDeProfiles().some((c) => tem(c.ops, 'maybeSingle'))).toBe(true);
+      expect(h.liberarBase).not.toBeNull();
+    });
+    await new Promise((r) => setTimeout(r, 20)); // a leitura por id (null) já assentou
+    expect(result.current.clienteAlvo.estado, 'afirmou ausência sem a lista ter respondido').toBe('carregando');
+
+    h.liberarBase!();
+    await waitFor(() => { expect(result.current.clienteAlvo.estado).toBe('encontrado'); });
   });
 });

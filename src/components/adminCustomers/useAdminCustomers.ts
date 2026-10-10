@@ -71,7 +71,6 @@ export function useAdminCustomers() {
         loadCustomerOrders(alvo.user_id);
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [customerId, alvo, effectiveUserId]);
 
   const loadCategories = async () => {

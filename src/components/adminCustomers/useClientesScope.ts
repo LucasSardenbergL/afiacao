@@ -27,7 +27,7 @@ const COLUNAS_BUSCA = ['name', 'email', 'document', 'phone'];
  * - `nao_encontrado`: base completa, leitura por id voltou vazia (não existe, é funcionário ou a RLS não mostra).
  * - `erro`: a leitura falhou — não dá pra afirmar que o cliente não existe.
  */
-export type ClienteAlvo =
+type ClienteAlvo =
   | { estado: 'nenhum' }
   | { estado: 'carregando' }
   | { estado: 'encontrado'; customer: Customer }

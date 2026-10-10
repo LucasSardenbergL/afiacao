@@ -1039,3 +1039,31 @@ mensagem do ramo — **mensagem de `expect` atrás de `getBy*` é código morto*
 
 O gate `erro-colapsado-em-vazio` não via o sítio: texto por ATRIBUTO, eixo cujo "= 0" envelheceu —
 re-medição em `o-check-verde-que-a-falha-acende.md` (1 sítio textual na main, este; 0 depois).
+
+## Lista de clientes do admin: busca e deep link só viam as páginas carregadas (2026-10-09)
+
+**Sintoma (prod, master, base completa).** Buscar "HELIOMAR" → "Nenhum cliente com esses filtros" +
+spinner sem fim; `/admin/customers/<id>` desse cliente caía na LISTA. Medido via psql-ro: o cliente é o
+nº ~2.886 de 5.665 em `order by name` — página 29 de 100, nunca carregada na hora.
+
+**Causa.** A base completa vem por `useInfiniteQuery` (100/página) e a busca era `.filter` em memória
+sobre as páginas carregadas; o deep link resolvia com `customers.find`. O spinner NÃO estava travado
+(hipótese do relato refutada pela leitura): a callback ref do `useInfiniteScroll` recria o observer a
+cada `enabled` falso→verdadeiro e o `observe()` sempre emite a entrada inicial — com a lista filtrada
+vazia o sentinel fica visível e a tela VARRE a base inteira em série (e re-busca os scores do conjunto
+crescente a cada página).
+
+**Conserto.** Modo completa: termo da URL vai ao servidor (`.or(ilikeOr(name,email,document,phone))`
++ `is_employee=false`, ordem total `name,user_id`, `keepPreviousData` p/ o input não desmontar sob
+skeleton). Carteira: busca segue LOCAL (lida inteira; nenhuma query nova alarga o escopo). Deep link:
+completa lê o profile por id (em paralelo com a 1ª página; só afirma ausência depois que a lista
+respondeu); carteira **não** lê por id (na lente a sessão é master e vazaria) → "fora da sua carteira".
+Estados explícitos (não encontrado / erro com retry) em vez de cair na lista.
+
+**Pendente registrado:** o filtro de SAÚDE continua filtrando só o carregado (os scores vivem em
+`farmer_client_scores`, sem join com a paginação de `profiles`). Mitigado: com páginas pendentes o
+empty state diz "nenhum nas páginas carregadas até agora", não "nenhum cliente".
+
+**Falsificação.** 3 sabotagens, uma por vez, cada uma vermelha; controle verde. A da corrida
+("não encontrado" antes da lista) ficou VERDE no teste de página — a página mostra skeleton enquanto a
+lista carrega e mascara a corrida; o teste foi movido para o contrato do hook (`renderHook`).
