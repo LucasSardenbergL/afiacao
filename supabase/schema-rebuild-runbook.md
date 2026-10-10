@@ -41,7 +41,7 @@ Inventário (jobname / schedule):
 | compute-costs-daily | `0 7 * * *` | | sync-products-customers-daily | `0 6 * * *` |
 | daily-calculate-scores | `0 6 * * *` | | sync-reprocess-operational | `15 */2 * * *` |
 | detectar-outliers-diario | `30 7 * * *` | | sync-reprocess-strategic | `30 2 * * *` |
-| disparar-pedidos-aprovados-oben | `0 13 * * *` | | visit-score-recalc-batch-nightly | `0 7 * * *` |
+| ~~disparar-pedidos-aprovados-oben~~ (removido 2026-10-10) | — | | visit-score-recalc-batch-nightly | `0 7 * * *` |
 | fin-cashflow-snapshot-diario | `0 10 * * *` | | weekly-algorithm-a-audit | `0 3 * * 0` |
 | fin-ic-reconcile-daily | `0 9 * * *` | | gerar-pedidos-diario-oben | `15 9 * * *` |
 | monthly-tool-report | `0 9 1 * *` | | | |
