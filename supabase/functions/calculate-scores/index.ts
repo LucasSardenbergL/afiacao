@@ -230,8 +230,13 @@ async function carregarRpcPaginada<T>(
   const linhas: T[] = [];
   const sz = 1000;
   for (let pg = 0; ; pg++) {
-    const { data, error } = await supabase
-      .rpc(fn)
+    // Nome LITERAL por ramo, não `.rpc(fn)`: o pré-flight de deploy (`preflight:rpcs`/`pendencias:pacote`)
+    // só enxerga RPC com nome literal e RECUSA liberar a edge com indireção — a dependência de banco
+    // tem de ser legível no sítio da chamada.
+    const consulta = fn === 'get_customer_sales_summary'
+      ? supabase.rpc('get_customer_sales_summary')
+      : supabase.rpc('get_customer_margin_summary');
+    const { data, error } = await consulta
       .order('customer_user_id', { ascending: true })
       .range(pg * sz, (pg + 1) * sz - 1);
     if (error) throw new Error(`${fn} pág.${pg}: ${error.message}`);
