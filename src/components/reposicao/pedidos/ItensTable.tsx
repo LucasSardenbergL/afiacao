@@ -13,6 +13,12 @@ import { precoEditavelDaLinha } from './preco-edit';
 
 // Nº de embalagens do portal que a quantidade representa (40 L × 0,2 = 8 BB). round6 mata a poeira
 // binária (40 × 0,2 = 8,000000000000002 em IEEE-754) — mesmo helper da edge (qtde-portal.ts).
+// Estoque com fração quando ela existe (L/KG; o desconto de 0,4 não pode virar "0", nem o efetivo −0,2 virar "−0"):
+// a conta físico + a caminho − vendido tem de FECHAR com o efetivo exibido, que é o que o aprovador confere.
+function qtdEstoque(n: number): string {
+  return Number.isInteger(n) ? String(n) : n.toLocaleString('pt-BR', { maximumFractionDigits: 2 });
+}
+
 function embalagens(qtdeFinal: number | null | undefined, fator: number | null | undefined): number {
   return Math.round(Number(qtdeFinal ?? 0) * Number(fator ?? 0) * 1e6) / 1e6;
 }
@@ -102,9 +108,9 @@ export function ItensTable({
           const temComprometido = comprometido != null && Number(comprometido) > 0;
           const temSplit = fisico != null && aCaminho != null && (temACaminho || temComprometido);
           const sublinha = temSplit
-            ? `${Number(fisico).toFixed(0)}` +
-              (temACaminho ? ` + ${Number(aCaminho).toFixed(0)} a caminho` : '') +
-              (temComprometido ? ` − ${Number(comprometido).toFixed(0)} vendido` : '')
+            ? `${qtdEstoque(Number(fisico))}` +
+              (temACaminho ? ` + ${qtdEstoque(Number(aCaminho))} a caminho` : '') +
+              (temComprometido ? ` − ${qtdEstoque(Number(comprometido))} vendido` : '')
             : null;
           return (
           <TableRow key={l.id} data-state={selecionados.has(l.id) ? 'selected' : undefined}>
@@ -164,14 +170,14 @@ export function ItensTable({
             <TableCell
               className={`text-right tabular-nums ${zoneClass}`}
               title={temSplit
-                ? `Estoque efetivo ${estoque.toFixed(0)} = ${Number(fisico).toFixed(0)} físico (saldo Omie) + ${Number(aCaminho).toFixed(0)} a caminho (pendente de entrada + em trânsito)` +
+                ? `Estoque efetivo ${qtdEstoque(estoque)} = ${qtdEstoque(Number(fisico))} físico (saldo Omie) + ${qtdEstoque(Number(aCaminho))} a caminho (pendente de entrada + em trânsito)` +
                   (temComprometido
-                    ? ` − ${Number(comprometido).toFixed(0)} vendido em pedido aberto no Omie (ainda sem NF, relido nas últimas 36 h)`
+                    ? ` − ${qtdEstoque(Number(comprometido))} vendido em pedido aberto no Omie (ainda sem NF, relido nas últimas 36 h)`
                     : '') +
                   '. O motor compara o efetivo com o ponto de pedido.'
                 : undefined}
             >
-              {estoque.toFixed(0)}
+              {qtdEstoque(estoque)}
               {sublinha && (
                 <div className="text-[10px] font-normal text-muted-foreground leading-tight">{sublinha}</div>
               )}

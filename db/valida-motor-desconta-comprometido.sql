@@ -24,6 +24,41 @@ SELECT CASE WHEN p.provolatile = 'v' AND NOT p.prosecdef
        'motor segue VOLATILE, INVOKER, config intacta', array_to_string(p.proconfig, ';')
   FROM pg_catalog.pg_proc p WHERE p.oid = to_regprocedure('public.gerar_pedidos_sugeridos_ciclo(text, date)');
 
+-- A tabela acima é para o OLHO; o veredito é este bloco. Função ausente não vira "zero linhas e dois ✅"
+-- (Codex, adversarial 2026-10-10): cada condição é exigida nominalmente e a falha ABORTA (ON_ERROR_STOP → exit ≠ 0,
+-- sem o marcador de fim).
+DO $v$
+DECLARE
+  v_oid oid := to_regprocedure('public.gerar_pedidos_sugeridos_ciclo(text, date)');
+  v_falhas text[] := '{}';
+BEGIN
+  IF v_oid IS NULL THEN
+    RAISE EXCEPTION 'VALIDA FALHOU: gerar_pedidos_sugeridos_ciclo(text, date) não existe';
+  END IF;
+  IF (SELECT md5(prosrc) FROM pg_catalog.pg_proc WHERE oid = v_oid) IS DISTINCT FROM '4187116fdf4284f79d416249d3f35335' THEN
+    v_falhas := v_falhas || 'corpo'::text;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_proc p WHERE p.oid = v_oid AND p.provolatile = 'v' AND NOT p.prosecdef
+                   AND array_to_string(p.proconfig, ';') = 'search_path=public, pg_temp;statement_timeout=120s') THEN
+    v_falhas := v_falhas || 'atributos'::text;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_attribute a
+                  WHERE a.attrelid = 'public.pedido_compra_item'::regclass AND a.attname = 'estoque_comprometido'
+                    AND NOT a.attisdropped AND a.atttypid = 'numeric'::regtype AND NOT a.attnotnull) THEN
+    v_falhas := v_falhas || 'coluna'::text;
+  END IF;
+  IF NOT has_column_privilege('authenticated', 'public.sales_orders', 'omie_reconciliado_em', 'SELECT')
+     OR has_table_privilege('authenticated', 'public.sales_orders', 'SELECT')
+     OR has_column_privilege('authenticated', 'public.sales_orders', 'omie_payload', 'SELECT') THEN
+    v_falhas := v_falhas || 'grant'::text;
+  END IF;
+  IF cardinality(v_falhas) > 0 THEN
+    RAISE EXCEPTION 'VALIDA FALHOU: %', array_to_string(v_falhas, ', ');
+  END IF;
+  RAISE NOTICE 'VALIDA_INSTALACAO_OK: 4 de 4 (corpo, atributos, coluna, grant)';
+END
+$v$;
+
 \echo '── 2. último ciclo do motor (OBEN)'
 SELECT r.run_id, r.data_ciclo, r.pedidos_gerados, r.skus_incluidos, r.suprimidos_n, r.capados_n
   FROM public.reposicao_motor_run r WHERE r.empresa = 'OBEN' ORDER BY r.criado_em DESC LIMIT 1;

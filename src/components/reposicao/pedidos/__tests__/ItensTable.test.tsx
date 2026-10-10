@@ -130,9 +130,26 @@ describe('ItensTable', () => {
     expect(screen.queryByText(/a caminho/)).toBeNull();
   });
 
-  it('a caminho E vendido: "10 + 2 a caminho − 5 vendido"; efetivo negativo é exibido como é', () => {
+  it('a caminho E vendido: "10 + 2 a caminho − 5 vendido"', () => {
     setup({ podeEditar: false, linhas: [linha({ estoque_atual: 7, estoque_fisico: 10, estoque_a_caminho: 2, estoque_comprometido: 5 })] });
     expect(screen.getByText('10 + 2 a caminho − 5 vendido')).toBeTruthy();
+  });
+
+  it('efetivo NEGATIVO (vendido > físico) é exibido como é: 2 − 5 = −3', () => {
+    setup({ podeEditar: false, linhas: [linha({ estoque_atual: -3, estoque_fisico: 2, estoque_a_caminho: 0, estoque_comprometido: 5 })] });
+    expect(screen.getByText('2 − 5 vendido').parentElement?.textContent).toBe('-32 − 5 vendido');
+  });
+
+  it('fração não some no arredondamento: 0,6 − 0,4 = 0,2 (não "1 − 0" nem "0"); −0,2 não vira "−0"', () => {
+    setup({
+      podeEditar: false,
+      linhas: [
+        linha({ id: 1, estoque_atual: 0.2, estoque_fisico: 0.6, estoque_a_caminho: 0, estoque_comprometido: 0.4 }),
+        linha({ id: 2, sku_codigo_omie: '556', estoque_atual: -0.2, estoque_fisico: 0.2, estoque_a_caminho: 0, estoque_comprometido: 0.4 }),
+      ],
+    });
+    expect(screen.getByText('0,6 − 0,4 vendido').parentElement?.textContent).toBe('0,20,6 − 0,4 vendido');
+    expect(screen.getByText('0,2 − 0,4 vendido').parentElement?.textContent).toBe('-0,20,2 − 0,4 vendido');
   });
 
   it('vendido 0 ou NULL (desconto sem nada em aberto, ou SKU de grupo) não acrescenta nada', () => {

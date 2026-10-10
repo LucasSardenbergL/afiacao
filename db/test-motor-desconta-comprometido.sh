@@ -18,7 +18,7 @@
 #   K — desligador por empresa: 'false' e lixo desligam (idêntico ao antigo, rastro NULL); 'true' liga.
 #   R — o caminho do BOTÃO: o staff (authenticated + RLS + o ACL por coluna de prod) roda o motor e vê o mesmo.
 #   X1 — tudo que não tem pedido elegível: byte-idêntico ao motor antigo.
-#   P01-P02 · M0-M1 · G1-G5: predecessores = prod, a migration aplica, a PRÉ e a PÓS recusam o que devem.
+#   P01-P03 · M0-M1 · G1-G5: predecessores = prod (corpo e ACL), a migration aplica, a PRÉ e a PÓS recusam o que devem.
 #
 # Rodar:   bash db/test-motor-desconta-comprometido.sh > log 2>&1; echo $?
 #          bash db/test-motor-desconta-comprometido.sh --falsificar > log 2>&1; echo $?
@@ -38,8 +38,8 @@ SNAP="$REPO_ROOT/supabase/schema-snapshot.sql"
 MD5_SNAP=7a15485d16c2a88c2de88cc80f87756b   # o motor do snapshot (antes da 20261009194000)
 MD5_PRED=d3f55f2621c27a234925821e06f73dd7   # o motor VIVO em prod em 2026-10-10 (= 20261009194000)
 MD5_NOVO=4187116fdf4284f79d416249d3f35335
-# Denominador: P01,P02 · M0,M1 · G1-G5 · S0,S1,S2,S3,B1 · F1-F13 · W1,W2 · T1 · M2 · N1 · K1-K4 · R1 · X1.
-TOTAL_ESPERADO=38
+# Denominador: P01,P02,P03 · M0,M1 · G1-G5 · S0,S1,S2,S3,B1 · F1-F13 · W1,W2 · T1 · M2 · N1 · K1-K4 · R1 · X1.
+TOTAL_ESPERADO=39
 
 # ════════════════════════════════════════════════════════════════════════════════════════════════════════
 # MODO --falsificar: o controle roda PRIMEIRO, na mesma invocação (uma suíte que já falha aprovaria tudo). Cada
@@ -63,7 +63,7 @@ if [ "${1:-}" = "--falsificar" ]; then
               efetivo_sem_desconto:S1,S2,S3:F1
               rastro_ausente:S1,S2:X1
               desligador_ignora:K1,K2:K3
-              sem_grant:R1:S1
+              sem_grant:R1:S1,P03
               pre_removida:G1:G2
               pos_removida:G3,G4,G5:G2"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-${SLUG}.XXXXXX")"
@@ -187,13 +187,27 @@ P -q -f "$REPO_ROOT/db/stubs-supabase.sql" >/dev/null
 P -q -f "$REPO_ROOT/supabase/schema-extensions-prelude.sql" >/dev/null
 P --single-transaction -q -f "$rr" >/dev/null 2>"$TMPD/snap.err" || { echo "INFRA: snapshot não carregou"; tail -5 "$TMPD/snap.err"; exit 1; }
 P -q -f "$REPO_ROOT/db/lib/corpo-vivo-acl.sql" >/dev/null 2>"$TMPD/acl.err" || { echo "INFRA: ACL de prod não carregou"; tail -5 "$TMPD/acl.err"; exit 1; }
+# O estado PREDECESSOR desta migration, afirmado e não presumido: depois do apply, o corpo-vivo-acl.sql re-medido
+# passa a trazer o GRANT — sem este REVOKE, a sabotagem sem_grant ficaria verde (Codex, adversarial 2026-10-10).
+P -q -c "REVOKE SELECT (omie_reconciliado_em) ON public.sales_orders FROM authenticated;"
 P -q -c "CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS \$f\$ SELECT nullif(current_setting('test.uid', true), '')::uuid \$f\$;"
 
-eq P01 "motor do snapshot = o predecessor da 20261009194000" \
-  "$(Exec "SELECT md5(prosrc) FROM pg_proc WHERE oid = 'public.gerar_pedidos_sugeridos_ciclo(text, date)'::regprocedure")" "$MD5_SNAP"
-P --single-transaction -q -f "$MIG_PRED" >/dev/null 2>"$TMPD/pred.err" || { echo "INFRA: a 20261009194000 não aplicou"; tail -3 "$TMPD/pred.err"; exit 1; }
+# O snapshot pode estar ANTES da 20261009194000 (aplica-se ela) ou já tê-la absorvido num re-dump (nada a aplicar).
+# Qualquer outro corpo = o snapshot andou além do predecessor desta migration: a prova precisa ser revista.
+snap_md5="$(Exec "SELECT md5(prosrc) FROM pg_proc WHERE oid = 'public.gerar_pedidos_sugeridos_ciclo(text, date)'::regprocedure")"
+case "$snap_md5" in
+  "$MD5_SNAP") P --single-transaction -q -f "$MIG_PRED" >/dev/null 2>"$TMPD/pred.err" \
+                 || { echo "INFRA: a 20261009194000 não aplicou"; tail -3 "$TMPD/pred.err"; exit 1; }
+               p01="ALCANCAVEL" ;;
+  "$MD5_PRED") p01="ALCANCAVEL" ;;
+  *)           p01="snapshot com motor $snap_md5 (nem $MD5_SNAP nem $MD5_PRED)" ;;
+esac
+eq P01 "o motor do snapshot leva ao predecessor (antes da 20261009194000, ou já com ela)" "$p01" "ALCANCAVEL"
 eq P02 "depois da 20261009194000, o motor = o VIVO em prod (predecessor desta migration)" \
   "$(Exec "SELECT md5(prosrc) FROM pg_proc WHERE oid = 'public.gerar_pedidos_sugeridos_ciclo(text, date)'::regprocedure")" "$MD5_PRED"
+
+eq P03 "estado predecessor: authenticated NÃO lê sales_orders.omie_reconciliado_em (é o que a migration concede)" \
+  "$(Exec "SELECT has_column_privilege('authenticated', 'public.sales_orders', 'omie_reconciliado_em', 'SELECT')")" "f"
 
 # O MOTOR ANTIGO, renomeado, para a comparação byte a byte.
 P -q <<'SQL'

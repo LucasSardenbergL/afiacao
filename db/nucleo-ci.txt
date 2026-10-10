@@ -351,6 +351,12 @@ db/test-data-health-carteira-rebuild.sh    20  falsificar=13
 # mesma invocação, + security_invoker/anon/RLS e o dente das postcondições A1–A3. Autocontida:
 # initdb + db/stubs-supabase.sql + a migration. docs/historico/sku-fora-do-motor-em-silencio.md.
 db/test-v-sku-fora-do-motor.sh             33
+# Reposição: o motor desconta o vendido em pedido de venda aberto no Omie (20261010210000) — cada filtro do
+# comprometido (status, hash, deletado, conta, janela 36 h, tipo/sinal da quantidade, parcial por número
+# repetido, items não-array, sem número), o grupo WP intocado, efetivo negativo, teto/mínimo/gate, desligador
+# e o motor como MASTER autenticado sob o ACL por coluna de prod. Snapshot + db/lib/corpo-vivo-acl.sql + a
+# 20261009194000 (pulada se o re-dump já a absorveu). docs/historico/motor-desconta-comprometido.md.
+db/test-motor-desconta-comprometido.sh     39  falsificar=fora-do-ci  # 20 rodadas com o snapshot ≈ +5 min num job no teto; controle + 19/19 sabotagens nos locales C e pt_BR rodados no PR (2026-10-10)
 
 # ── Eixo 7 — FUSO DA SESSÃO (a prod roda UTC; o negócio mede em São Paulo) ─────────────────────
 # A positivação AO VIVO fixava o mês em SP e comparava ligação e pedido no fuso da SESSÃO: das
