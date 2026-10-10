@@ -60,6 +60,9 @@ verify_jwt = false
 [functions.omie-nfe-reconcile]
 verify_jwt = false
 
+[functions.picking-fila-omie]
+verify_jwt = false
+
 [functions.omie-nfe-recebimento-sync]
 verify_jwt = false
 
