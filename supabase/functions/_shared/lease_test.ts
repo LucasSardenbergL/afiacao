@@ -6,7 +6,7 @@
 // correto em todo o resto). Um FALSO POSITIVO silencia um lease quebrado e reabre a corrida
 // last-writer-wins sem ninguém saber — por isso os negativos abaixo pesam mais que os positivos, e
 // por isso o predicado olha SÓ o código do erro, sem nenhuma heurística de mensagem.
-import { decidirClaim, erroTransitorio, esperaClaimMs, leaseIndisponivel } from "./lease.ts";
+import { classificarErroApply, decidirClaim, erroTransitorio, esperaClaimMs, leaseIndisponivel } from "./lease.ts";
 
 function assertEquals(a: unknown, b: unknown, msg?: string) {
   if (JSON.stringify(a) !== JSON.stringify(b)) {
@@ -182,4 +182,43 @@ Deno.test("esperaClaimMs e curta, positiva e cresce", () => {
   if (esperaClaimMs(2) <= esperaClaimMs(1)) throw new Error("a espera precisa crescer");
   // Com 2 tentativas a espera total e 2s — nao move a agulha do wall-clock do edge (150s Free).
   if (esperaClaimMs(1) > 5000) throw new Error("espera longa demais para cobrir so transporte");
+});
+
+// ── classificarErroApply: o FENCING do apply (migration 20261010120000) ──
+// O que pesa aqui: confundir "perdi o lease" com qualquer outra coisa. Ler 55000 como `falha` só
+// troca a mensagem; ler um erro qualquer como `fencing_indisponivel` faria a edge REFAZER o chunk
+// SEM token — contornando a cerca num banco que a tem. Por isso os negativos do atalho pesam mais.
+
+Deno.test("apply sem erro = ok (com e sem token)", () => {
+  assertEquals(classificarErroApply(null, true), "ok");
+  assertEquals(classificarErroApply(undefined, false), "ok");
+});
+
+Deno.test("55000 com token = lease_perdido (o banco recusou: outro run e dono)", () => {
+  assertEquals(classificarErroApply({ code: "55000", message: "x" }, true), "lease_perdido");
+});
+
+Deno.test("55000 SEM token NAO e lease_perdido (a RPC nem consultou o lease)", () => {
+  assertEquals(classificarErroApply({ code: "55000" }, false), "falha");
+});
+
+Deno.test("PGRST202/42883 com token = fencing_indisponivel (edge nova antes da migration)", () => {
+  assertEquals(classificarErroApply({ code: "PGRST202" }, true), "fencing_indisponivel");
+  assertEquals(classificarErroApply({ code: "42883" }, true), "fencing_indisponivel");
+});
+
+Deno.test("PGRST202 SEM token = falha (a RPC inteira sumiu — nao ha para onde cair)", () => {
+  assertEquals(classificarErroApply({ code: "PGRST202" }, false), "falha");
+});
+
+Deno.test("o atalho sem token NAO dispara por erro qualquer (so codigo, zero heuristica de texto)", () => {
+  // cada um destes, lido como fencing_indisponivel, faria a edge reescrever SEM a cerca
+  for (const code of ["22004", "23514", "42501", "57014", "08006", "42P01", ""]) {
+    assertEquals(classificarErroApply({ code, message: "function does not exist" }, true), "falha",
+      `codigo [${code}] nao pode virar fencing_indisponivel`);
+  }
+});
+
+Deno.test("22004 (p_run_id vazio) e falha, nao lease_perdido", () => {
+  assertEquals(classificarErroApply({ code: "22004" }, true), "falha");
 });

@@ -149,3 +149,38 @@ export function decidirClaim(
 export function esperaClaimMs(tentativa: number): number {
   return tentativa * 2000;
 }
+
+/** O que fazer com o resultado de UM chunk de `apply_score_updates`. */
+export type DesfechoApply =
+  | 'ok'                    // escreveu
+  | 'fencing_indisponivel'  // a assinatura com p_run_id não existe (janela de deploy) — refaça SEM token
+  | 'lease_perdido'         // o banco RECUSOU: outro run é dono do lease — pare o laço, fail-closed
+  | 'falha';                // qualquer outro erro — colete e lance (contrato F2 do recompute)
+
+/**
+ * Classifica o resultado de um chunk do apply quando o FENCING TOKEN (p_run_id) está em jogo.
+ *
+ * O fencing (migration 20261010120000) troca a premissa EXTERNA do #1578 — "a plataforma mata o
+ * edge antes do TTL" — por uma trava no banco: a RPC só escreve se este run ainda é o dono do lease,
+ * validado sob FOR SHARE na mesma transação da escrita, e responde 55000 quando não é.
+ *
+ * `lease_perdido` (55000) SÓ conta com token enviado: sem token a RPC nem consulta o lease, então um
+ * 55000 ali viria de outra coisa e não pode ser lido como "perdi o lease".
+ *
+ * `fencing_indisponivel` reusa `leaseIndisponivel` (42883/PGRST202, SÓ código): a edge nova subiu
+ * antes da migration e a assinatura (jsonb, text) ainda não existe. Refazer o chunk sem token devolve
+ * EXATAMENTE o comportamento de hoje — o banco não tem a cerca, então não há cerca a contornar. É o
+ * mesmo fail-open DECLARADO do claim, pelo mesmo motivo (as duas ordens de publicação manual do
+ * Lovable têm de ser seguras). Depois que a assinatura nova existe, PGRST202 para ela é impossível,
+ * então o atalho não alcança um banco que tenha o fencing.
+ */
+export function classificarErroApply(
+  erro: ErroRpc | null | undefined,
+  enviouToken: boolean,
+): DesfechoApply {
+  if (erro == null) return 'ok';
+  const codigo = typeof erro.code === 'string' ? erro.code : '';
+  if (enviouToken && codigo === '55000') return 'lease_perdido';
+  if (enviouToken && leaseIndisponivel(erro)) return 'fencing_indisponivel';
+  return 'falha';
+}
