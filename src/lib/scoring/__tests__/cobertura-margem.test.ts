@@ -36,17 +36,17 @@ describe('coberturaMargem', () => {
 describe('legendaCobertura', () => {
   it('declara que a média é parcial quando falta margem', () => {
     expect(legendaCobertura({ comMargem: 1053, total: 6632 })).toBe(
-      'parcial — 1.053 de 6.632 clientes c/ margem',
+      'parcial — 1.053 de 6.632 clientes c/ margem (últimos 12 meses)',
     );
   });
 
   it('não diz "parcial" quando todos têm margem', () => {
-    expect(legendaCobertura({ comMargem: 10, total: 10 })).toBe('10 clientes c/ margem');
+    expect(legendaCobertura({ comMargem: 10, total: 10 })).toBe('10 clientes c/ margem (últimos 12 meses)');
   });
 
   it('nenhum com margem → diz isso, em vez de exibir cobertura 0', () => {
     expect(legendaCobertura({ comMargem: 0, total: 6632 })).toBe(
-      'nenhum cliente c/ margem conhecida',
+      'nenhum cliente c/ margem conhecida (últimos 12 meses)',
     );
   });
 
