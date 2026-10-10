@@ -127,6 +127,14 @@ rodada() {
      "$(Pq -c "SELECT itens_computaveis FROM private.margem_cliente_agregada() WHERE customer_user_id='aa000000-0000-0000-0000-000000000001';")" "1"
   eq "J3 B: sem compra em 12m -> AUSENTE, nunca 0" "$(m bb000000-0000-0000-0000-000000000002)" "AUSENTE"
   eq "J4 C: borda (12m-1d entra, 12m+1d sai)" "$(m cc000000-0000-0000-0000-000000000003)" "40.00"
+  # J5: pedido EXATAMENTE no instante de corte. Seed e consulta numa MESMA transação (um só -c), para
+  # now() ser o mesmo nos dois lados — senão o corte anda entre o INSERT e o SELECT. `>=` inclui; `>` não.
+  eq "J5 I: corte exato (now()-12m) ENTRA" \
+     "$(Pq -q -c "INSERT INTO public.sales_orders VALUES ('10000000-0000-0000-0000-00000000000b','faturado',NULL,now() - interval '12 months');
+               INSERT INTO public.order_items (sales_order_id, customer_user_id, omie_codigo_produto, quantity, unit_price)
+                 VALUES ('10000000-0000-0000-0000-00000000000b','77000000-0000-0000-0000-000000000009',1,1,100);
+               SELECT COALESCE((SELECT margem_pct::text FROM private.margem_cliente_agregada()
+                                 WHERE customer_user_id='77000000-0000-0000-0000-000000000009'),'AUSENTE');")" "40.00"
   eq "R1 D: excluir_da_carteira segue fora" "$(m dd000000-0000-0000-0000-000000000004)" "AUSENTE"
   eq "R2 E: cancelado segue fora" "$(m ee000000-0000-0000-0000-000000000005)" "AUSENTE"
   eq "R3 F: deletado segue fora" "$(m ff000000-0000-0000-0000-000000000006)" "AUSENTE"
@@ -170,6 +178,8 @@ sabota "janela neutralizada/B" "J3" "s|now() - interval '12 months'$|now() - int
 sabota "janela de 13 meses"    "J4" "s|now() - interval '12 months'$|now() - interval '12 months' - interval '1 month'|"
 # Janela apertada (11 meses): a borda interna sai.
 sabota "janela de 11 meses"    "J4" "s|now() - interval '12 months'$|now() - interval '12 months' + interval '1 month'|"
+# Corte exclusivo (`>` no lugar de `>=`): o pedido no instante exato do corte sai (achado Codex 2026-10-09).
+sabota "corte exclusivo"       "J5" "s|AND so.created_at >= now() - interval '12 months'$|AND so.created_at > now() - interval '12 months'|"
 # Regra preexistente perdida no replace.
 sabota "sem deleted_at"        "R3" "s|^       AND so.deleted_at IS NULL$|       AND true|"
 
@@ -177,5 +187,5 @@ echo "=== FECHAMENTO ==="
 echo "controle: $CONTROLE_PASS asserts verdes · sabotagens com dente: $SABOTAGENS_OK · sem dente: $SABOTAGENS_FRACAS"
 # Contrato do db/roda-nucleo-ci.sh: UMA linha PASS=/FAIL=. PASS = asserts do controle + sabotagens com dente.
 echo "PASS=$((CONTROLE_PASS + SABOTAGENS_OK))  FAIL=$SABOTAGENS_FRACAS"
-if [ "$SABOTAGENS_FRACAS" -ne 0 ] || [ "$SABOTAGENS_OK" -ne 5 ]; then echo "VERMELHO"; exit 1; fi
-echo "VERDE-REAL: controle verde + 5/5 sabotagens vermelhas"
+if [ "$SABOTAGENS_FRACAS" -ne 0 ] || [ "$SABOTAGENS_OK" -ne 6 ]; then echo "VERMELHO"; exit 1; fi
+echo "VERDE-REAL: controle verde + 6/6 sabotagens vermelhas"

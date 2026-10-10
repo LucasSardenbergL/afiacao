@@ -90,7 +90,11 @@ const JANELA_MARGEM_DIAS = 365;
  */
 export function legendaMargemSemCompraNaJanela(diasSemCompra: number | null | undefined): string | null {
   if (diasSemCompra == null || !Number.isFinite(diasSemCompra)) return null;
-  return diasSemCompra > JANELA_MARGEM_DIAS ? `sem compra nos ${JANELA_MARGEM_ROTULO}` : null;
+  // `>=`, não `>`: o SQL corta por INSTANTE (`created_at >= now() - 12 months`) e os dias são DATA
+  // CIVIL (SP). Com 365 dias civis o pedido pode já ter saído da janela (comprou às 8h, agora são 9h)
+  // — e com ≤ 364 nunca saiu (12 meses ≥ 365 dias). Quem chama só pergunta quando a margem é null,
+  // então na faixa 365–366 em que o pedido ainda está dentro a legenda nem é consultada.
+  return diasSemCompra >= JANELA_MARGEM_DIAS ? `sem compra nos ${JANELA_MARGEM_ROTULO}` : null;
 }
 
 /**

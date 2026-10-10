@@ -35,14 +35,16 @@ describe('legendaCoberturaItens', () => {
 });
 
 describe('legendaMargemSemCompraNaJanela', () => {
-  it('mais de 365 dias sem compra → afirma o motivo da margem ausente', () => {
+  it('365+ dias sem compra → afirma o motivo da margem ausente', () => {
+    // 365 dias civis já pode estar fora da janela SQL (corte por instante) — achado Codex 2026-10-09.
+    expect(legendaMargemSemCompraNaJanela(365)).toBe('sem compra nos últimos 12 meses');
     expect(legendaMargemSemCompraNaJanela(366)).toBe('sem compra nos últimos 12 meses');
     // 999 é o sentinela do calculate-scores para "sem compra registrada" — também fora da janela.
     expect(legendaMargemSemCompraNaJanela(999)).toBe('sem compra nos últimos 12 meses');
   });
 
   it('comprou dentro da janela → null (o motivo da ausência é outro, não a janela)', () => {
-    expect(legendaMargemSemCompraNaJanela(365)).toBeNull();
+    expect(legendaMargemSemCompraNaJanela(364)).toBeNull();
     expect(legendaMargemSemCompraNaJanela(0)).toBeNull();
   });
 
