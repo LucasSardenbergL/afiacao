@@ -64,6 +64,13 @@ export const REGISTRO_UNIVERSO_PEDIDOS: Readonly<Record<string, EntradaRegistro>
   'public.listar_pedidos_a_separar': { tipo: 'proposito', motivo: 'picking: universo OPERACIONAL do que falta separar (não do que foi vendido)' },
   'public.get_whatsapp_funil': { tipo: 'proposito', motivo: 'funil de propostas: conta toda proposta, orçamento inclusive (0 pedidos com conversa em 2026-10-01)' },
   'public.cockpit_itens_snapshot': { tipo: 'proposito', motivo: 'export: devolve status/deleted_at por linha e o universo é do CONSUMIDOR (fin-valor-cockpit — metade TS da classe)' },
+  'public.gerar_pedidos_sugeridos_ciclo': {
+    tipo: 'proposito',
+    motivo:
+      'motor de compras: universo OPERACIONAL do vendido AINDA NÃO FATURADO (allowlist importado/separacao/enviado, ' +
+      'só a importada canônica relida em 36 h, deleted_at IS NULL); o alias s2 só procura IRMÃO de mesmo número ' +
+      '(faturamento parcial) e conta qualquer status/deletado de propósito — 20261010210000',
+  },
   // ── canônico por parâmetro ──────────────────────────────────────────────────────────────────
   'public.apriori_universo_snapshot': { tipo: 'canonico_por_parametro', motivo: 'recebe p_status_nao_venda e o VALIDA contra STATUS_NAO_VENDA antes de ler' },
 };

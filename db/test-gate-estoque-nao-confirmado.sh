@@ -49,6 +49,12 @@ CREATE TABLE public.sku_fornecedor_externo (empresa text, fornecedor_nome text, 
   fator_conversao numeric NOT NULL DEFAULT 1);  -- [EMBALAGEM PORTAL] a funcao le fornecedor_nome + fator_conversao (20260904232555)
 CREATE TABLE public.inventory_position (omie_codigo_produto bigint, account text, saldo numeric DEFAULT 0, cmc numeric, synced_at timestamptz);
 CREATE TABLE public.company_config (key text, value text);
+-- [COMPROMETIDO] o motor lê sales_orders desde a 20261010210000 (o vendido em pedido aberto) e a fixture concede
+-- SELECT de uma coluna dela ao authenticated: stub com as colunas que o motor lê, vazio (o desconto é zero aqui).
+DO $r$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF; END $r$;
+CREATE TABLE public.sales_orders (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), items jsonb NOT NULL DEFAULT '[]'::jsonb,
+  status text NOT NULL DEFAULT 'rascunho', account text NOT NULL DEFAULT 'oben', hash_payload text, omie_numero_pedido text,
+  omie_reconciliado_em timestamptz, deleted_at timestamptz);
 CREATE TABLE public.omie_products (omie_codigo_produto bigint, account text, descricao text, familia text, ativo boolean, tipo_produto text, metadata jsonb DEFAULT '{}');
 CREATE TABLE public.sku_grupo_producao (empresa text, sku_codigo_omie text, grupo_codigo text);
 CREATE TABLE public.sku_leadtime_history (empresa text, sku_codigo_omie text, quantidade_recebida numeric, valor_total numeric);

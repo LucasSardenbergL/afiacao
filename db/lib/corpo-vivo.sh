@@ -124,9 +124,19 @@ cv_cadeia() {
   [ "$achou_inicio" -eq 1 ] || { echo "cv_cadeia: a migration de início $CV_INICIO sumiu de $dir" >&2; return 1; }
 }
 
+# CV_PREDECESSORAS — "<migration da cadeia>:<migration que leva um alvo dela ao predecessor de prod>". Para a
+# migration da cadeia cujo PRE (md5 estrito) exige a versão de prod de um objeto que NENHUMA prova guarda — a
+# cadeia não o alcança. Vale para TODA prova cuja cadeia contenha a 1ª: é aplicada logo antes dela (a 2ª, que tem
+# o próprio PRE, é a fonte da versão, não um fixture). Sai quando um re-dump absorver as duas (avançar CV_INICIO).
+#   · 20261010210000 (o motor desconta o comprometido) entra na cadeia de quem guarda sales_orders pelo GRANT de
+#     uma coluna; o PRE dela exige o motor d3f55…, que só a 20261009194000 (unidades WP) produz sobre o snapshot.
+CV_PREDECESSORAS=(
+  "20261010210000_motor_desconta_comprometido.sql:20261009194000_motor_unidades_concentrado_wp.sql"
+)
+
 # cv_aplicar_cadeia <dir de migrations> — aplica a cadeia no banco de `P`, em ordem, e conta.
 cv_aplicar_cadeia() {
-  local dir="$1" lista f n=0 err
+  local dir="$1" lista f n=0 err par pred
   lista="$(cv_cadeia "$dir")" || return 1
   if [ -z "$lista" ]; then
     echo "    (nenhuma migration ≥ $CV_INICIO toca os objetos guardados — o snapshot já é a versão viva)"
@@ -134,6 +144,17 @@ cv_aplicar_cadeia() {
   fi
   err="$(mktemp "${TMPDIR:-/tmp}/cv-cadeia-err.XXXXXX")"
   while IFS= read -r f; do
+    for par in "${CV_PREDECESSORAS[@]}"; do
+      [ "${par%%:*}" = "$(basename "$f")" ] || continue
+      pred="$dir/${par#*:}"
+      [ -f "$pred" ] || { echo "cv_aplicar_cadeia: predecessora ausente: ${par#*:}" >&2; rm -f "$err"; return 1; }
+      P --single-transaction -v ON_ERROR_STOP=1 -q -f "$pred" > /dev/null 2> "$err" || {
+        cat "$err" >&2; rm -f "$err"
+        echo "cv_aplicar_cadeia: a predecessora ${par#*:} (de $(basename "$f")) não aplicou" >&2
+        return 1
+      }
+      echo "    · ${par#*:} (predecessora de $(basename "$f"))"
+    done
     P --single-transaction -v ON_ERROR_STOP=1 -q -f "$f" > /dev/null 2> "$err" || {
       cat "$err" >&2; rm -f "$err"
       echo "cv_aplicar_cadeia: não aplicou $(basename "$f") — se o snapshot já a absorveu, avance CV_INICIO;" \

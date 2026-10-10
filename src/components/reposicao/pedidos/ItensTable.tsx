@@ -13,6 +13,12 @@ import { precoEditavelDaLinha } from './preco-edit';
 
 // Nº de embalagens do portal que a quantidade representa (40 L × 0,2 = 8 BB). round6 mata a poeira
 // binária (40 × 0,2 = 8,000000000000002 em IEEE-754) — mesmo helper da edge (qtde-portal.ts).
+// Estoque com fração quando ela existe (L/KG; o desconto de 0,4 não pode virar "0", nem o efetivo −0,2 virar "−0"):
+// a conta físico + a caminho − vendido tem de FECHAR com o efetivo exibido, que é o que o aprovador confere.
+function qtdEstoque(n: number): string {
+  return Number.isInteger(n) ? String(n) : n.toLocaleString('pt-BR', { maximumFractionDigits: 2 });
+}
+
 function embalagens(qtdeFinal: number | null | undefined, fator: number | null | undefined): number {
   return Math.round(Number(qtdeFinal ?? 0) * Number(fator ?? 0) * 1e6) / 1e6;
 }
@@ -70,7 +76,7 @@ export function ItensTable({
           <TableHead className="w-[34%] min-w-[300px]">SKU / Descrição</TableHead>
           <TableHead
             className="text-right"
-            title="Estoque efetivo = físico (saldo Omie) + a caminho (pendente de entrada + em trânsito). É o que o motor compara com o ponto de pedido — por isso pode ser maior que o saldo do Omie."
+            title="Estoque efetivo = físico (saldo Omie) + a caminho (pendente de entrada + em trânsito) − vendido em pedido aberto no Omie (ainda sem NF). É o que o motor compara com o ponto de pedido — por isso pode ser maior que o saldo do Omie, ou negativo."
           >
             Estoque efetivo
           </TableHead>
@@ -91,11 +97,21 @@ export function ItensTable({
           const pp = Number(l.ponto_pedido ?? 0);
           const zoneClass = getEstoqueZoneClass(estoque, minimo, pp);
           const sugerida = Number(l.qtde_sugerida ?? 0);
-          // Snapshot do split (físico + a caminho). Só decompõe quando há algo a caminho:
-          // sem isso o efetivo == físico e a sublinha seria ruído.
+          // Snapshot do split (físico + a caminho − vendido em aberto). Só decompõe quando há algo a caminho
+          // ou vendido: sem isso o efetivo == físico e a sublinha seria ruído. O vendido em aberto (pedido de
+          // venda do Omie ainda sem NF) é o que o motor desconta desde a 20261010210000 — sem mostrá-lo, a conta
+          // "físico + a caminho" ficaria falsa justo no item que ele fez comprar.
           const fisico = l.estoque_fisico;
           const aCaminho = l.estoque_a_caminho;
-          const temSplit = fisico != null && aCaminho != null && Number(aCaminho) > 0;
+          const comprometido = l.estoque_comprometido;
+          const temACaminho = aCaminho != null && Number(aCaminho) > 0;
+          const temComprometido = comprometido != null && Number(comprometido) > 0;
+          const temSplit = fisico != null && aCaminho != null && (temACaminho || temComprometido);
+          const sublinha = temSplit
+            ? `${qtdEstoque(Number(fisico))}` +
+              (temACaminho ? ` + ${qtdEstoque(Number(aCaminho))} a caminho` : '') +
+              (temComprometido ? ` − ${qtdEstoque(Number(comprometido))} vendido` : '')
+            : null;
           return (
           <TableRow key={l.id} data-state={selecionados.has(l.id) ? 'selected' : undefined}>
             {podeEditar && (
@@ -154,14 +170,16 @@ export function ItensTable({
             <TableCell
               className={`text-right tabular-nums ${zoneClass}`}
               title={temSplit
-                ? `Estoque efetivo ${estoque.toFixed(0)} = ${Number(fisico).toFixed(0)} físico (saldo Omie) + ${Number(aCaminho).toFixed(0)} a caminho (pendente de entrada + em trânsito). O motor compara o efetivo com o ponto de pedido.`
+                ? `Estoque efetivo ${qtdEstoque(estoque)} = ${qtdEstoque(Number(fisico))} físico (saldo Omie) + ${qtdEstoque(Number(aCaminho))} a caminho (pendente de entrada + em trânsito)` +
+                  (temComprometido
+                    ? ` − ${qtdEstoque(Number(comprometido))} vendido em pedido aberto no Omie (ainda sem NF, relido nas últimas 36 h)`
+                    : '') +
+                  '. O motor compara o efetivo com o ponto de pedido.'
                 : undefined}
             >
-              {estoque.toFixed(0)}
-              {temSplit && (
-                <div className="text-[10px] font-normal text-muted-foreground leading-tight">
-                  {Number(fisico).toFixed(0)} + {Number(aCaminho).toFixed(0)} a caminho
-                </div>
+              {qtdEstoque(estoque)}
+              {sublinha && (
+                <div className="text-[10px] font-normal text-muted-foreground leading-tight">{sublinha}</div>
               )}
             </TableCell>
             <TableCell className="text-right tabular-nums text-muted-foreground">{minimo.toFixed(0)}</TableCell>

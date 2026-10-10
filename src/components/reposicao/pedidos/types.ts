@@ -81,10 +81,13 @@ export interface PedidoItem {
   pedido_id: number;
   sku_codigo_omie: string;
   sku_descricao: string | null;
-  estoque_atual: number | null; // efetivo no momento da geração = estoque_fisico + estoque_a_caminho
+  estoque_atual: number | null; // efetivo no momento da geração = físico + a caminho − comprometido
   // Snapshot do split do efetivo (migration 20260626150457). NULL em itens anteriores → UI cai no efetivo.
   estoque_fisico: number | null; // saldo físico = o que aparece no Omie
   estoque_a_caminho: number | null; // pendente de entrada + em trânsito
+  // Vendido em pedido de venda aberto no Omie (sem NF), descontado pelo motor (migration 20261010210000).
+  // NULL = o desconto não se aplica (SKU de grupo de equivalência, desligado, ou item anterior).
+  estoque_comprometido?: number | null;
   estoque_minimo: number | null;
   // Enriquecido (JOIN manual em useDetalhesModal): produto ficou inativo no Omie DEPOIS da geração
   // do pedido (o pedido é snapshot congelado; a exibição não filtra). undefined = não checado.

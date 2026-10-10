@@ -42,7 +42,7 @@ BEGIN
     ('c', 'public.omie_customer_account_map', 'anon', 'SELECT (account, created_at, id, omie_codigo_cliente, omie_codigo_vendedor, source, updated_at, user_id)'),
     ('c', 'public.omie_customer_account_map', 'authenticated', 'SELECT (account, created_at, id, omie_codigo_cliente, omie_codigo_vendedor, source, updated_at, user_id)'),
     ('c', 'public.pcp_bom_excecoes', 'authenticated', 'UPDATE (disposicao, disposicao_nota)'),
-    ('c', 'public.sales_orders', 'authenticated', 'SELECT (account, atendimento_id, checkout_id, created_at, created_by, customer_address, customer_document, customer_phone, customer_user_id, deleted_at, discount, hash_payload, id, items, notes, omie_numero_pedido, omie_pedido_id, order_date_kpi, origem, pedido_programado_envio_id, ready_by_date, status, subtotal, total, updated_at, whatsapp_conversation_id, whatsapp_proposta_dedupe)'),
+    ('c', 'public.sales_orders', 'authenticated', 'SELECT (account, atendimento_id, checkout_id, created_at, created_by, customer_address, customer_document, customer_phone, customer_user_id, deleted_at, discount, hash_payload, id, items, notes, omie_numero_pedido, omie_pedido_id, omie_reconciliado_em, order_date_kpi, origem, pedido_programado_envio_id, ready_by_date, status, subtotal, total, updated_at, whatsapp_conversation_id, whatsapp_proposta_dedupe)'),
     ('c', 'public.sales_orders', 'authenticated', 'UPDATE (customer_address, customer_document, customer_phone, deleted_at, items, notes, omie_payload, ready_by_date, status, subtotal, total)'),
     ('c', 'public.visitas_agendadas', 'authenticated', 'UPDATE (notes, scheduled_date, status, visit_type)'),
     ('f', '_carteira_mixgap_for_owner(uuid)', 'service_role', ''),

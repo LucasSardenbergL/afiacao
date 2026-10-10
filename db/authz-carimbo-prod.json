@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-10-09T22:34:43.797Z",
-  "sourceHead": "cb78f7f1dbad6f46cd98bc2f8a8bb226bd7488fc",
+  "medidoEm": "2026-10-10T21:27:55.236Z",
+  "sourceHead": "e14940930ade7b012e2d3ed46dd6fc57443dfa52",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -23,7 +23,7 @@
       "exit": 0,
       "resumo": "✅ audit-grants — 4 tabela(s) conferida(s); prod bate com o contrato.",
       "denominador": null,
-      "contratoFingerprint": "fea3c8f56957f7d875ad92d3239b14cc1c4a5f5212ed0aa65ebd3b483afe0ae0",
+      "contratoFingerprint": "a4dbc69dc15a8f65ef112acd30f8e045416202309c9684939a560ac3059f4734",
       "auditorFingerprint": "b55db338c6c26db92938511d5e8f118e5013c3bffcb770401655e1b7aecac3fe",
       "achados": []
     },
@@ -56,12 +56,19 @@
     },
     "corpo": {
       "script": "deriva:corpo:prod",
-      "exit": 0,
-      "resumo": "✅ deriva-corpo — 325 identidade(s) batem com o repo (248 em dia, 69 só cosméticas, 7 aceitas na baseline) e 16 aposentada(s) estão ausentes",
-      "denominador": "🔎 deriva-corpo — 325 identidade(s) conferida(s) · 16 aposentada(s) · ref origin/main@685576e0d (fetch ok) · prod 2026-10-09 22:35:18.259137Z",
+      "exit": 1,
+      "resumo": "deriva-corpo — 1 divergência(s) em prod (1 SEM_PAR) — ver as linhas ❌",
+      "denominador": "🔎 deriva-corpo — 329 identidade(s) conferida(s) · 17 aposentada(s) · ref origin/main@fcd4f89f2 (fetch ok) · prod 2026-10-10 21:28:28.763239Z",
       "contratoFingerprint": "8b4beb5b6ac1a69509cf990c47e44dd76d091d0306361dd3dbe80052687c79b3",
       "auditorFingerprint": "4462770b72b5f20416a470aa6c1099d3b34d660cbf9638d2cc977b1203dbc752",
-      "achados": []
+      "achados": [
+        {
+          "id": "2021f7353ac34cf8",
+          "linha": "❌ [SEM_PAR] gerar_pedidos_sugeridos_ciclo(text,date): corpo que nenhuma das 31 versão(ões) commitadas explica — edição manual, ou DDL aplicada ANTES do merge (compare com as migrations das branches abertas) — último CREATE: 20261009194000_motor_unidades_concentrado_wp.sql (xmin 11680475)",
+          "primeiraVez": "2026-10-10",
+          "ultimaVez": "2026-10-10"
+        }
+      ]
     }
   }
 }
