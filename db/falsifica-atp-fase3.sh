@@ -336,7 +336,7 @@ falsifica MIG31 F19 "sem backfill do par" \
 
 # F21 — a MARGEM some: "coletado depois do faturamento" passa a aceitar coleta de
 #       ATÉ 1h ANTES — leitura pré-baixa viraria sinal verde para o humano
-falsifica MIG31 F21 "sinal da fila sem a margem de 1h" \
+falsifica MIG32 F21 "sinal da fila sem a margem de 1h (corpo entregue: o da 3.2)" \
   "r.faturamento_observado_em + interval '1 hour'" \
   "r.faturamento_observado_em - interval '1 hour'" \
   "r.faturamento_observado_em - interval '1 hour'" \
@@ -394,10 +394,10 @@ falsifica MIG32 F26 "liberar_reserva_checkout solta reserva firme" \
   "L1 liberar checkout firme LEGADO: 0 liberadas / 1 preservada"
 
 # F27 — o sinal volta a ignorar se o ATP aceita o saldo
-falsifica MIG32 F27 "sinal ignora saldo_confiavel" \
+falsifica MIG32 F27 "sinal ignora saldo_confiavel (sem tocar o texto que a POS confere)" \
   "             OR d.saldo_confiavel IS DISTINCT FROM true" \
-  "             OR false" \
-  "             OR false" \
+  "             OR d.saldo_confiavel IS DISTINCT FROM true AND false" \
+  "OR d.saldo_confiavel IS DISTINCT FROM true AND false" \
   "S4 contas do pool divergentes (o ATP recusa o SKU): o sinal vira NULL"
 
 # F28 — o sinal volta a ignorar a regressão da canônica
@@ -408,11 +408,15 @@ falsifica MIG32 F28 "sinal ignora a canonica atual" \
   "S5 canonica regrediu (carimbo ainda velho): o sinal vira NULL"
 
 # F29 — o CHECK volta à forma da 3.1 (aceita conta com PID nulo)
-falsifica MIG32 F29 "CHECK do par sem o ramo PID nao nulo" \
+falsifica MIG32 F29 "CHECK aceita PID nulo (sem tocar o texto que a POS confere)" \
   "    OR (omie_pedido_id IS NOT NULL AND omie_pedido_id > 0" \
-  "    OR (omie_pedido_id > 0" \
-  "    OR (omie_pedido_id > 0" \
+  "    OR ((omie_pedido_id IS NOT NULL OR omie_pedido_id > 0)" \
+  "OR ((omie_pedido_id IS NOT NULL OR omie_pedido_id > 0)" \
   "C1 o CHECK aceitou conta sem PID"
+
+# ⚠️ F27/F29 são escritas para PASSAR pela PÓS (mantêm o texto que ela confere):
+# a versão óbvia (apagar a linha) é pega pela PÓS e aborta o apply — defesa em
+# profundidade real, mas aí o assert de COMPORTAMENTO não é medido sozinho.
 
 # F30 — a PRE da 3.2 aceita qualquer corpo/atributo vivo
 falsifica MIG32 F30 "PRE da 3.2 aceita qualquer estado vivo" \
