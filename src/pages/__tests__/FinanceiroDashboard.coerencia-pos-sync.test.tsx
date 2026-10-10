@@ -247,6 +247,6 @@ describe('useFinanceiro: ação que muda o banco não deixa previsto velho em me
     });
 
     expect(result.current.fluxoCaixa).toHaveLength(0);
-    expect(result.current.error).not.toBeNull();
+    expect(result.current.errosCarga.fluxoCaixa).toBeDefined();
   });
 });
