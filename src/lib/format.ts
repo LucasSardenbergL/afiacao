@@ -80,7 +80,7 @@ export function formatMargemPct(v: number | null | undefined): string {
  * a preço de venda de anos atrás deprimia a margem (~5 p.p.). Toda legenda de margem cita a janela,
  * senão quem lê assume "histórico inteiro" (docs/historico/farmer-margem-cobertura-custo.md).
  */
-export const JANELA_MARGEM_ROTULO = 'últimos 12 meses';
+const JANELA_MARGEM_ROTULO = 'últimos 12 meses';
 const JANELA_MARGEM_DIAS = 365;
 
 /**
