@@ -4854,3 +4854,24 @@ describe('guardrail money-path: write-back do PV pela RPC atômica (ATP fase 3.1
     expect(fn).toMatch(/\?\.ok !== true\) \{\s*throw new Error\(/);
   });
 });
+
+// ── ATP fase 3.2 (2026-10-09): erro SEM override do gate interrompe também o caller antigo ──
+// Achado P0 do challenge Codex da 3.2: no modo advisory (atp_capaz ausente) a edge registrava a
+// falha do gate e criava o PV mesmo assim — com o reservar_estoque recusando (22023) substituir a
+// reserva firme de um pedido anterior do mesmo checkout, o PV novo nascia SEM reserva.
+describe('guardrail money-path: erro sem override do gate ATP nunca segue para o Omie (ATP 3.2)', () => {
+  const bloco = removerComentarios(blocoCriarPedido(read('supabase/functions/omie-vendas-sync/index.ts')));
+  const ramo = bloco.slice(bloco.indexOf('if (atpCls.acao === "falha_verificacao") {'), bloco.indexOf('criarPedidoVenda('));
+
+  it('sentinela: recortou o ramo da falha de verificação até a criação do PV', () => {
+    expect(ramo).toContain('if (atpCapaz) {');
+    expect(ramo.length).toBeGreaterThan(300);
+  });
+
+  it('semOverride LANÇA antes de criarPedidoVenda, fora do condicional do atpCapaz', () => {
+    const capaz = ramo.indexOf('if (atpCapaz) {');
+    const sem = ramo.indexOf('if (atpCls.semOverride) {');
+    expect(sem, 'REGRESSÃO: caller antigo segue para o Omie mesmo com recusa por contrato').toBeGreaterThan(capaz);
+    expect(ramo.slice(sem, sem + 200), 'a recusa sem override tem de ser throw').toMatch(/throw new Error\(/);
+  });
+});

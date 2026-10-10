@@ -425,6 +425,13 @@ falsifica MIG32 F30 "PRE da 3.2 aceita qualquer estado vivo" \
   "IF r.vivo IS NULL OR false THEN" \
   "P5 a PRE ignorou o atributo trocado (SECURITY INVOKER)"
 
+# F31 — a TRAVA volta a IMPOR a volatilidade (normaliza a deriva antes da PRE)
+falsifica MIG32 F31 "TRAVA volta a impor valor fixo por funcao (a da versao anterior)" \
+  "CASE f.provolatile WHEN 'v' THEN 'VOLATILE' WHEN 's' THEN 'STABLE' ELSE 'IMMUTABLE' END" \
+  "CASE WHEN f.alvo::text LIKE '%pendentes%' THEN 'STABLE' ELSE 'VOLATILE' END" \
+  "CASE WHEN f.alvo::text LIKE '%pendentes%'" \
+  "P6 a TRAVA normalizou a volatilidade trocada e a PRE aceitou"
+
 echo
 echo "=== FALSIFICACAO: $VALIDAS validas / $SEM_DENTE sem dente / $INVALIDAS invalidas ==="
 restaura

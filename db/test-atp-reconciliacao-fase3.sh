@@ -938,6 +938,12 @@ if P -q -1 -f "$MIG32" >/dev/null 2>&1; then bad "P5 a PRE ignorou o atributo tr
 else ok "P5 atributo trocado com corpo igual: a PRE da 3.2 ABORTA"; fi
 P -q -c "ALTER FUNCTION public.reservar_estoque(text,uuid,jsonb,integer) SECURITY DEFINER"
 eq "P5 restaurado" "$(md5_32)" "5fe65f8bb3f4c0cc9c0c77a09cbdca86,551e21229425a71a1ea0c2a6b2d36ce0,6f44d06f8fd0888a12a6d33b950c83e0"
+# P6 — deriva de VOLATILIDADE (corpo igual): a TRAVA não pode normalizá-la antes da PRE
+P -q -c "ALTER FUNCTION public.reservar_estoque(text,uuid,jsonb,integer) STABLE"
+if P -q -1 -f "$MIG32" >/dev/null 2>&1; then bad "P6 a TRAVA normalizou a volatilidade trocada e a PRE aceitou"
+else ok "P6 volatilidade trocada com corpo igual: a PRE da 3.2 ABORTA"; fi
+P -q -c "ALTER FUNCTION public.reservar_estoque(text,uuid,jsonb,integer) VOLATILE"
+eq "P6 restaurado" "$(md5_32)" "5fe65f8bb3f4c0cc9c0c77a09cbdca86,551e21229425a71a1ea0c2a6b2d36ce0,6f44d06f8fd0888a12a6d33b950c83e0"
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ZONA 8 — O VALIDADOR PÓS-APPLY TAMBÉM É CÓDIGO, E TAMBÉM MENTE
@@ -959,6 +965,19 @@ eq "Z1 validador da o veredito da 3.2 APLICADA" \
    "$(printf '%s' "$VAL" | command grep -c 'FASE 3.2 APLICADA' || true)" "1"
 eq "Z1 validador tem os 47 checks (3 + 3.1 + 3.2)" \
    "$(printf '%s' "$VAL" | command grep -cE '^[0-9]+\|(OK|FALHOU)' || true)" "47"
+
+# Z3 — o CENSO do validador (#43) pega writer intruso escrito com UPDATE ONLY e
+# schema entre aspas — as formas que a regex anterior não via (Codex 3.2).
+P -q <<'SQL'
+CREATE FUNCTION private._intruso_z3() RETURNS void LANGUAGE sql SECURITY DEFINER AS
+$f$ UPDATE ONLY "public".estoque_reservas SET status = status WHERE false $f$;
+SQL
+VAL3=$(Pq -f "$REPO_ROOT/db/valida-atp-fase3.sql" 2>&1)
+eq "Z3 censo acusa writer intruso (UPDATE ONLY + schema entre aspas)" \
+   "$(printf '%s' "$VAL3" | command grep -c '^43|FALHOU' || true)" "1"
+P -q -c "DROP FUNCTION private._intruso_z3()"
+eq "Z3 controle: sem o intruso o censo volta a OK" \
+   "$(Pq -f "$REPO_ROOT/db/valida-atp-fase3.sql" 2>&1 | command grep -c '^43|OK' || true)" "1"
 
 # Z2 — banco SABOTADO: um objeto some e o validador tem de acusar. Roda por
 # último de propósito (o DROP não pode contaminar assert anterior).

@@ -167,21 +167,26 @@ WITH defs AS (
                   ~ 'saldo_embute_faturamento boolean', false)
 
   -- ══ FASE 3.2 — correções do Codex retroativo da 3.1 ═══════════════════════
-  -- CENSO: o conjunto de funções que ESCREVEM em estoque_reservas é exatamente
-  -- o revisado. Um writer novo é uma porta nova para soltar reserva firme (o #2
-  -- eram duas portas que ninguém tinha listado) — reprova até alguém revisá-lo.
+  -- CENSO (HEURÍSTICO): as funções que escrevem em estoque_reservas são
+  -- exatamente as 7 revisadas. Um writer novo é uma porta nova para soltar
+  -- reserva firme (o #2 eram duas portas que ninguém tinha listado). Pega
+  -- UPDATE [ONLY] e DELETE FROM [ONLY], com ou sem schema/aspas, em qualquer
+  -- schema de usuário, e compara por OID (o nome impresso depende do
+  -- search_path). NÃO vê SQL dinâmico (EXECUTE format(...)) — é rede, não prova.
   UNION ALL SELECT 43, '3.2 censo: writers de estoque_reservas = os 7 revisados',
-         (SELECT COALESCE(array_agg(p.oid::regprocedure::text ORDER BY p.oid::regprocedure::text), '{}')
+         (SELECT COALESCE(array_agg(p.oid ORDER BY p.oid), '{}')
             FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-           WHERE n.nspname IN ('public','private')
-             AND regexp_replace(p.prosrc, '--[^\n]*', '', 'g') ~* 'update\s+(public\.)?estoque_reservas')
-         = ARRAY['atp_confirmar_pv(uuid,text,bigint,text,jsonb,jsonb)',
-                 'atp_gate_pedido(uuid,boolean,uuid,boolean,text)',
-                 'atp_resolver_reserva(uuid,text,text)',
-                 'liberar_reserva_checkout(uuid,text,text)',
-                 'private.atp_reconciliar_job()',
-                 'private.expirar_reservas_vencidas_job()',
-                 'reservar_estoque(text,uuid,jsonb,integer)']
+           WHERE n.nspname NOT IN ('pg_catalog', 'information_schema') AND n.nspname !~ '^pg_toast'
+             AND regexp_replace(p.prosrc, '--[^\n]*', '', 'g')
+                 ~* '(update|delete\s+from)\s+(only\s+)?("?public"?\s*\.\s*)?"?estoque_reservas"?\M')
+         = (SELECT array_agg(x ORDER BY x) FROM unnest(ARRAY[
+                 to_regprocedure('public.atp_confirmar_pv(uuid,text,bigint,text,jsonb,jsonb)')::oid,
+                 to_regprocedure('public.atp_gate_pedido(uuid,boolean,uuid,boolean,text)')::oid,
+                 to_regprocedure('public.atp_resolver_reserva(uuid,text,text)')::oid,
+                 to_regprocedure('public.liberar_reserva_checkout(uuid,text,text)')::oid,
+                 to_regprocedure('private.atp_reconciliar_job()')::oid,
+                 to_regprocedure('private.expirar_reservas_vencidas_job()')::oid,
+                 to_regprocedure('public.reservar_estoque(text,uuid,jsonb,integer)')::oid]) AS x)
   UNION ALL SELECT 44, '3.2 reservar_estoque nao substitui reserva firme',
          COALESCE((SELECT regexp_replace(prosrc, '--[^\n]*', '', 'g') ~ 'reserva de PV CONFIRMADO'
                      FROM pg_proc WHERE oid = to_regprocedure('public.reservar_estoque(text,uuid,jsonb,integer)')), false)

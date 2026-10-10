@@ -92,8 +92,9 @@ export const respostaSonda = criarRespostaSonda("omie-vendas-sync");
  * Nenhuma pré-condição de banco, nenhuma ordem de deploy.
  * v1.12 (2026-10-09, ATP 3.1) — write-back do PV pela RPC atômica `atp_confirmar_pv` (carimba a reserva).
  * ⚠️ Migration `20261009120000` ANTES deste edge (sem ela: PGRST202 → write-back legado + console.error).
+ * v1.13 (2026-10-09, ATP 3.2) — criar_pedido: erro SEM override do gate (42501/22023) interrompe também o caller antigo (advisory).
  */
-export const VERSAO = "v1.12-write-back-pv-atomico";
+export const VERSAO = "v1.13-gate-sem-override-interrompe";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

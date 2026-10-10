@@ -43,16 +43,22 @@
 -- 0) TRAVA → PRE. md5 de corpo+atributos ∈ {predecessor medido em prod, este}.
 -- ────────────────────────────────────────────────────────────
 DO $trava$
+DECLARE
+  f record;
 BEGIN
-  IF to_regprocedure('public.reservar_estoque(text,uuid,jsonb,integer)') IS NOT NULL THEN
-    ALTER FUNCTION public.reservar_estoque(text, uuid, jsonb, integer) VOLATILE;
-  END IF;
-  IF to_regprocedure('public.liberar_reserva_checkout(uuid,text,text)') IS NOT NULL THEN
-    ALTER FUNCTION public.liberar_reserva_checkout(uuid, text, text) VOLATILE;
-  END IF;
-  IF to_regprocedure('public.atp_reservas_pendentes(integer)') IS NOT NULL THEN
-    ALTER FUNCTION public.atp_reservas_pendentes(integer) STABLE;
-  END IF;
+  -- A trava é um ALTER sem efeito — e "sem efeito" quer dizer com o valor VIVO
+  -- (achado P2 do Codex da 3.2): impor VOLATILE/STABLE aqui normalizaria a deriva
+  -- de volatilidade ANTES de a PRE medi-la, e a PRE aceitaria por cima.
+  FOR f IN
+    SELECT p.oid::regprocedure AS alvo, p.provolatile
+      FROM pg_catalog.pg_proc p
+     WHERE p.oid IN (to_regprocedure('public.reservar_estoque(text,uuid,jsonb,integer)'),
+                     to_regprocedure('public.liberar_reserva_checkout(uuid,text,text)'),
+                     to_regprocedure('public.atp_reservas_pendentes(integer)'))
+  LOOP
+    EXECUTE format('ALTER FUNCTION %s %s', f.alvo,
+                   CASE f.provolatile WHEN 'v' THEN 'VOLATILE' WHEN 's' THEN 'STABLE' ELSE 'IMMUTABLE' END);
+  END LOOP;
 END
 $trava$;
 
