@@ -18,7 +18,9 @@ import { comRegistro, type DbRegistro } from "../_shared/registro-execucao.ts";
 import { criarColetorObservacao, type LinhaObservada } from "./observacao-po.ts";
 import { registroComPrazo } from "./registro-com-prazo.ts";
 import { criarAcumuladorFisico } from "./fisico.ts";
-import { convPendentePorSku, type LinhaEquivalencia, quantidadesEmUnidadeOmie } from "./unidade-omie.ts";
+import {
+  convPendentePorSku, type LinhaEquivalencia, quantidadesEmUnidadeOmie, recusaPorUnidade,
+} from "./unidade-omie.ts";
 import { comPrazo, concluirRun, linhaMarcador, MARKER_FULL, type OpsPublicacao } from "./publicacao.ts";
 
 const corsHeaders = {
@@ -935,11 +937,9 @@ Deno.serve(async (req) => {
       const lerPendente: OpsPublicacao["lerPendente"] = async () => {
         if (empresa === "OBEN") {
           // Unidade desconhecida → recusa ANTES de varrer o Omie (C1: nada é gravado, o par velho fica coerente).
-          if (convPendente === null || convPendente.problemas.length > 0) {
-            const motivo = convPendente === null
-              ? `unidade do PO não lida (sku_embalagem_equivalencia: ${membrosErro})`
-              : `unidade do PO ilegível: ${convPendente.problemas.slice(0, 3).join(" | ")}`;
-            return { pendente: new Map(), confiavel: false, problemas: [motivo], observacao: null };
+          const recusa = recusaPorUnidade(convPendente, membrosErro);
+          if (recusa !== null || convPendente === null) {
+            return { pendente: new Map(), confiavel: false, problemas: [recusa ?? "unidade do PO não lida"], observacao: null };
           }
           const r = await computePendenteViaPedidosCompra(
             appKey, appSecret, habilitadoMap, ehMembro, convPendente.conv, supabase, deadline,

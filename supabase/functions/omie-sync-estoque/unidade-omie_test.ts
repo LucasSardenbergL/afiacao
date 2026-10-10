@@ -1,4 +1,4 @@
-import { convPendentePorSku, quantidadesEmUnidadeOmie, saldoEmUnidadeOmie } from "./unidade-omie.ts";
+import { convPendentePorSku, quantidadesEmUnidadeOmie, recusaPorUnidade, saldoEmUnidadeOmie } from "./unidade-omie.ts";
 import { criarColetorObservacao, observacaoBateComPendente, somarContribuicaoPorSku } from "./observacao-po.ts";
 
 function igual<T>(real: T, esperado: T, msg: string): void {
@@ -91,4 +91,11 @@ Deno.test("a contribuição da observação e o pendente fecham na mesma unidade
   igual(observacaoBateComPendente(col.linhas, pendente), true, "bate");
   igual(observacaoBateComPendente(col.linhas, new Map([[QT, 5], [GL, 2]])), false, "o pendente CRU não bate mais");
   igual([...somarContribuicaoPorSku(col.linhas).entries()], [[QT, 4.05], [GL, 6.48]], "soma por SKU");
+});
+
+Deno.test("recusa: leitura que falhou ou linha ilegível barra o pendente; leitura limpa (mesmo sem WP) não", () => {
+  igual(recusaPorUnidade(null, "timeout")?.startsWith("unidade do PO não lida"), true, "leitura falhou");
+  igual(recusaPorUnidade(convPendentePorSku(wp("0,81", 3.24)), null)?.startsWith("unidade do PO ilegível"), true, "ilegível");
+  igual(recusaPorUnidade(convPendentePorSku(wp()), null), null, "WP legível");
+  igual(recusaPorUnidade(convPendentePorSku([]), null), null, "nenhum grupo cadastrado: nada a converter, publica cru");
 });

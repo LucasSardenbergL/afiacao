@@ -95,3 +95,13 @@ export function quantidadesEmUnidadeOmie(
   if (conv === undefined) return { qtde, recebido };
   return { qtde: saldoEmUnidadeOmie(Math.max(0, qtde - recebido), conv), recebido: 0 };
 }
+
+/**
+ * Motivo para RECUSAR o pendente do PO (C1: nada é gravado), ou null. Sem a equivalência lida — ou com linha
+ * ilegível — não se sabe em que unidade o PO de um concentrado conta: publicar cru é o defeito que este módulo fecha.
+ */
+export function recusaPorUnidade(conv: ConvPendente | null, erroLeitura: string | null): string | null {
+  if (conv === null) return `unidade do PO não lida (sku_embalagem_equivalencia: ${erroLeitura ?? "sem erro informado"})`;
+  if (conv.problemas.length > 0) return `unidade do PO ilegível: ${conv.problemas.slice(0, 3).join(" | ")}`;
+  return null;
+}
