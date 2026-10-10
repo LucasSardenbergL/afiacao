@@ -1,7 +1,9 @@
 // Clientes (admin) — carteira com scoring, lista densa e perfil 360.
 // Composição: useAdminCustomers (queries/loads/handlers) + CustomerListView / Customer360View.
 // God-component split de src/pages/AdminCustomers.tsx (comportamento 1:1).
+import { AlertTriangle, UserX } from 'lucide-react';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
+import { EmptyState } from '@/components/EmptyState';
 import { AddToolDialog } from '@/components/AddToolDialog';
 import { useAdminCustomers } from '@/components/adminCustomers/useAdminCustomers';
 import { CustomerListView } from '@/components/adminCustomers/CustomerListView';
@@ -16,6 +18,10 @@ const AdminCustomers = () => {
     refetch,
     customers,
     scores,
+    buscaNoServidor,
+    buscando,
+    estadoDeepLink,
+    retryDeepLink,
     categories,
     total,
     isCarteira,
@@ -42,6 +48,41 @@ const AdminCustomers = () => {
   }
 
   if (!isStaff) return null;
+
+  // Deep link (/admin/customers/:id) ainda sem ficha: nunca cair silenciosamente na lista.
+  if (!selectedCustomer && estadoDeepLink !== 'nenhum') {
+    if (estadoDeepLink === 'carregando' || estadoDeepLink === 'encontrado') {
+      return <PageSkeleton variant="list" />;
+    }
+    if (estadoDeepLink === 'erro') {
+      return (
+        <div role="alert">
+          <EmptyState
+            icon={AlertTriangle}
+            title="Não foi possível abrir este cliente"
+            description="A leitura do cadastro falhou — não dá pra afirmar que o cliente não existe."
+            actionLabel="Tentar novamente"
+            onAction={retryDeepLink}
+            secondaryActionLabel="Voltar para a lista"
+            onSecondaryAction={handleBack}
+          />
+        </div>
+      );
+    }
+    return (
+      <EmptyState
+        icon={UserX}
+        title={estadoDeepLink === 'fora_do_escopo' ? 'Cliente fora da sua carteira' : 'Cliente não encontrado'}
+        description={
+          estadoDeepLink === 'fora_do_escopo'
+            ? 'Este cliente não faz parte da carteira em exibição.'
+            : 'Nenhum cliente com este identificador está visível para você.'
+        }
+        actionLabel="Voltar para a lista"
+        onAction={handleBack}
+      />
+    );
+  }
 
   return (
     <>
@@ -79,6 +120,8 @@ const AdminCustomers = () => {
           hasNextPage={hasNextPage}
           isFetchingNextPage={isFetchingNextPage}
           onLoadMore={fetchNextPage}
+          buscaNoServidor={buscaNoServidor}
+          buscando={buscando}
         />
       )}
     </>

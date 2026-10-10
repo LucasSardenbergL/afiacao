@@ -485,6 +485,20 @@ O Codex do desenho caiu no guard local de cota (exit 79, janela até 19:30). A `
 - **Também:** a foto passou a ser lida como `pg_temp.motor_unidades_wp_foto`.
 - **Sem achado:** em `cap_teto`, `portal_fator`, anti-dup, preço a jusante e salto da POS no `db:aplicar` (uma transação só).
 
+**Aplicada na prod em 2026-10-09** (PR #2889, merge `793569822`):
+- **Ensaio:** `bun run db:aplicar … --ensaio` rodou inteiro e fez ROLLBACK (`FIM_APLICACAO_OK`).
+- **Apply:** feito com o sim do founder, como tentativa #301, que virou recibo na mesma transação. O sha256 do arquivo é `7896736a…`.
+- **Validação por fora (psql-ro):**
+  - o md5 do motor é `d3f55f2621c27a234925821e06f73dd7` e o do cadastro é `f201f94a74b9371478653ddcb825b86a`, os desta migration;
+  - `anon` não executa o cadastro;
+  - os 28/28 membros ativos da oben estão coerentes: 14 QT = 0,81 e 14 GL = 3,24.
+
+O ACL do motor (PUBLIC/anon com EXECUTE, porque ele é INVOKER) é o de antes, como a POS3 exigiu.
+
+**Quando medir o efeito:** no próximo ciclo com item WP, em `pedido_compra_item` dos SKUs dos 14 grupos, conferir:
+- `preco_unitario ≈ cmc × 0,81` (QT) ou `× 3,24` (GL);
+- `qtde_final = ceil((máx − efetivo) / 0,81)`;
+- `qtde_sugerida` na mesma unidade da `qtde_final`.
 ## O pendente do PO em unidades Omie (2026-10-09, omie-sync-estoque v1.9)
 
 O P1 pré-existente do adversarial do #2849: `sku_estoque_atual.estoque_pendente_entrada` entrava CRU no motor. Nos WP o PO do Omie está em EMBALAGENS (o disparo manda `nQtde = ceil(qtde_final)`, sem unidade, e o Omie grava sob a unidade do produto, L). Dentro da janela de 7 dias a linha do app conta no em trânsito × `conv` e a edge a de-duplica (`dedup_app`). **Fora da janela o MESMO PO passa a contar pela edge** — cru, 2 GL valiam 2 onde eram 6,48 L (recompra indevida) e o QT superestimava ~23%. Nunca disparou (2 POs WP na história, ambos `dedup_app`; 0 WP com pendente em 09/10), mas era alcançável.
