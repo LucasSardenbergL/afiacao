@@ -22,6 +22,16 @@ import {
 
 export type FinanceiroView = 'all' | Company;
 
+/** Dataset cuja LEITURA pode falhar de forma independente — uma aba por dataset. */
+export type DatasetFinanceiro =
+  | 'resumo'
+  | 'contasPagar'
+  | 'contasReceber'
+  | 'aging'
+  | 'dre'
+  | 'fluxoCaixa'
+  | 'inadimplentes';
+
 export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
   const [view, setView] = useState<FinanceiroView>(defaultCompany);
   const [loading, setLoading] = useState(false);
@@ -45,6 +55,22 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
     { nome: string; cnpj: string; total_vencido: number; qtd_titulos: number }[]
   >([]);
   const [lastSync, setLastSync] = useState<string | null>(null);
+
+  // Falha de LEITURA por dataset (não de ação). Cada aba lê a sua — o `error` global
+  // acusava a aba errada e não sumia com a recarga bem-sucedida (spec D2).
+  const [errosCarga, setErrosCarga] = useState<Partial<Record<DatasetFinanceiro, string>>>({});
+  const marcarFalha = useCallback((ds: DatasetFinanceiro, e: unknown) => {
+    const msg = mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.';
+    setErrosCarga((prev) => ({ ...prev, [ds]: msg }));
+  }, []);
+  const limparFalha = useCallback((ds: DatasetFinanceiro) => {
+    setErrosCarga((prev) => {
+      if (!(ds in prev)) return prev;
+      const next = { ...prev };
+      delete next[ds];
+      return next;
+    });
+  }, []);
 
   /**
    * Versão dos dados: toda ação que ESCREVE no banco a incrementa ao terminar, e a tela usa
@@ -77,23 +103,31 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
 
   // Load local data from Supabase
   const loadResumo = useCallback(async () => {
+    const companies: Company[] = view === 'all' 
+      ? ['oben', 'colacor', 'colacor_sc'] 
+      : [view as Company];
     try {
       setLoading(true);
-      const companies: Company[] = view === 'all' 
-        ? ['oben', 'colacor', 'colacor_sc'] 
-        : [view as Company];
       const [data, syncTime] = await Promise.all([
         getResumoFinanceiro(companies),
         getLastSyncTime(),
       ]);
       setResumo(prev => ({ ...prev, ...data }));
       setLastSync(syncTime);
+      limparFalha('resumo');
     } catch (e) {
-      setError(mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.');
+      // Limpa só as empresas pedidas: o resumo anterior dessas pode ser de outra época/filtro;
+      // as demais não foram tocadas por esta carga.
+      setResumo(prev => {
+        const next = { ...prev };
+        for (const co of companies) delete next[co];
+        return next;
+      });
+      marcarFalha('resumo', e);
     } finally {
       setLoading(false);
     }
-  }, [view]);
+  }, [view, limparFalha, marcarFalha]);
 
   const loadContasPagar = useCallback(async (filtros?: {
     status?: string;
@@ -106,12 +140,16 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
       const { rows, total } = await getContasPagar(view === 'all' ? 'all' : view as Company, filtros);
       setContasPagar(rows);
       setContasPagarTotal(total);
+      limparFalha('contasPagar');
     } catch (e) {
-      setError(mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.');
+      // Limpa: o dado anterior pode ser de outra empresa/filtro (mesma razão do fluxo de caixa).
+      setContasPagar([]);
+      setContasPagarTotal(null);
+      marcarFalha('contasPagar', e);
     } finally {
       setLoading(false);
     }
-  }, [view]);
+  }, [view, limparFalha, marcarFalha]);
 
   const loadContasReceber = useCallback(async (filtros?: {
     status?: string;
@@ -124,12 +162,16 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
       const { rows, total } = await getContasReceber(view === 'all' ? 'all' : view as Company, filtros);
       setContasReceber(rows);
       setContasReceberTotal(total);
+      limparFalha('contasReceber');
     } catch (e) {
-      setError(mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.');
+      // Limpa: o dado anterior pode ser de outra empresa/filtro (mesma razão do fluxo de caixa).
+      setContasReceber([]);
+      setContasReceberTotal(null);
+      marcarFalha('contasReceber', e);
     } finally {
       setLoading(false);
     }
-  }, [view]);
+  }, [view, limparFalha, marcarFalha]);
 
   const loadAging = useCallback(async () => {
     // Geração: só a ÚLTIMA carga publica. Sem isto, trocar Oben→Colacor com a carga de Oben
@@ -147,13 +189,14 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
       if (geracao !== agingGeracao.current) return;
       setAgingReceber(ar);
       setAgingPagar(ap);
+      limparFalha('aging');
     } catch (e) {
       // getAging* LANÇA em falha (antes fabricava EMPTY_AGING = "R$0 vencido"): o aging fica
       // null (indisponível), nunca zero.
       if (geracao !== agingGeracao.current) return;
-      setError(mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.');
+      marcarFalha('aging', e);
     }
-  }, [view]);
+  }, [view, limparFalha, marcarFalha]);
 
   const loadDRE = useCallback(async (ano: number, meses?: number[], regime: 'caixa' | 'competencia' = 'competencia') => {
     try {
@@ -170,12 +213,15 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
         const data = await getDRE(view as Company, ano, meses, regime);
         setDre(data);
       }
+      limparFalha('dre');
     } catch (e) {
-      setError(mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.');
+      // Limpa: o DRE anterior pode ser de outra empresa/ano/regime.
+      setDre([]);
+      marcarFalha('dre', e);
     } finally {
       setLoading(false);
     }
-  }, [view]);
+  }, [view, limparFalha, marcarFalha]);
 
   const loadFluxoCaixa = useCallback(async (dataInicio: string, dataFim: string) => {
     try {
@@ -183,26 +229,30 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
       const company = view === 'all' ? 'all' : view as Company;
       const data = await getFluxoCaixa(company, dataInicio, dataFim);
       setFluxoCaixa(data);
+      limparFalha('fluxoCaixa');
     } catch (e) {
       // Manter o previsto anterior é a MESMA mistura do `invalidarFluxoCaixa`: trocar de
       // empresa e falhar na leitura mostrava o fluxo da empresa ANTERIOR sob a âncora da
       // atual. Leitura que falha não é leitura vazia, mas também não é a leitura de antes.
       setFluxoCaixa([]);
-      setError(mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.');
+      marcarFalha('fluxoCaixa', e);
     } finally {
       setLoading(false);
     }
-  }, [view]);
+  }, [view, limparFalha, marcarFalha]);
 
   const loadInadimplentes = useCallback(async () => {
     try {
       const company = view === 'all' ? 'all' : view as Company;
       const data = await getTopInadimplentes(company, 15);
       setInadimplentes(data);
+      limparFalha('inadimplentes');
     } catch (e) {
-      setError(mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.');
+      // Limpa: a lista anterior pode ser de outra empresa.
+      setInadimplentes([]);
+      marcarFalha('inadimplentes', e);
     }
-  }, [view]);
+  }, [view, limparFalha, marcarFalha]);
 
   /**
    * A aba "Fluxo Caixa" combina duas pontas de ÉPOCAS diferentes no MESMO número: a ÂNCORA
@@ -364,6 +414,8 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
     loading,
     syncing,
     error,
+    /** Falha de LEITURA por dataset; `error` fica só para ações (sync/calcular). */
+    errosCarga,
     lastSync,
     
     // Data
