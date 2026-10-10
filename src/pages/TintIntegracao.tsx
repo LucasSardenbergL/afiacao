@@ -16,7 +16,7 @@ const TintApiContract = lazy(() => import("./TintApiContract"));
 const TabFallback = () => <PageSkeleton variant="auto" />;
 
 function KpiCards() {
-  const { data } = useQuery({
+  const { data, isError } = useQuery({
     queryKey: ["tint-integracao-kpis"],
     queryFn: async () => {
       const [total, completos, erros, promoPendente, promoErro] = await Promise.all([
@@ -39,37 +39,48 @@ function KpiCards() {
           .select("id", { count: "exact", head: true })
           .eq("promocao_status", "erro"),
       ]);
+      // Falha LANÇA: antes `count ?? 0` fazia erro de leitura virar "0 erros · 0 pendentes"
+      // — o painel de saúde da integração afirmando verde sobre o que não leu.
+      for (const r of [total, completos, erros, promoPendente, promoErro]) {
+        if (r.error) throw r.error;
+        if (r.count == null) throw new Error("tint-integracao: contagem exata não veio do PostgREST");
+      }
       return {
-        total: total.count ?? 0,
-        completos: completos.count ?? 0,
-        erros: erros.count ?? 0,
-        promoPendente: promoPendente.count ?? 0,
-        promoErro: promoErro.count ?? 0,
+        total: total.count,
+        completos: completos.count,
+        erros: erros.count,
+        promoPendente: promoPendente.count,
+        promoErro: promoErro.count,
       };
     },
   });
 
   const cards = [
-    { label: "Total Sync Runs", value: data?.total ?? 0, icon: RefreshCw },
-    { label: "Completos", value: data?.completos ?? 0, icon: CheckCircle2 },
-    { label: "Erros", value: data?.erros ?? 0, icon: AlertCircle },
-    { label: "Promoção pendente", value: data?.promoPendente ?? 0, icon: Hourglass },
-    { label: "Promoção com erro", value: data?.promoErro ?? 0, icon: CircleX },
+    { label: "Total Sync Runs", value: data?.total, icon: RefreshCw },
+    { label: "Completos", value: data?.completos, icon: CheckCircle2 },
+    { label: "Erros", value: data?.erros, icon: AlertCircle },
+    { label: "Promoção pendente", value: data?.promoPendente, icon: Hourglass },
+    { label: "Promoção com erro", value: data?.promoErro, icon: CircleX },
   ];
 
   return (
+    <div className="space-y-2">
+    {isError && (
+      <p className="text-sm text-status-error">Não consegui ler o estado da integração — os números abaixo estão indisponíveis, não zerados.</p>
+    )}
     <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
       {cards.map((c) => (
         <Card key={c.label} className="border-border">
           <CardContent className="pt-4 flex items-center justify-between">
             <div>
               <div className="text-xs text-muted-foreground">{c.label}</div>
-              <div className="text-2xl font-bold mt-1">{c.value}</div>
+              <div className="text-2xl font-bold mt-1">{c.value ?? "—"}</div>
             </div>
             <c.icon className="h-8 w-8 text-muted-foreground opacity-60" />
           </CardContent>
         </Card>
       ))}
+    </div>
     </div>
   );
 }
