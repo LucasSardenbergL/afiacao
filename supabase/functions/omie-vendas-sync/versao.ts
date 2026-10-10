@@ -92,8 +92,12 @@ export const respostaSonda = criarRespostaSonda("omie-vendas-sync");
  * Nenhuma pré-condição de banco, nenhuma ordem de deploy.
  * v1.12/v1.13 (2026-10-09, ATP 3.1/3.2) — write-back do PV pela RPC atômica `atp_confirmar_pv`; erro do gate
  * SEM override (42501/22023) interrompe também o caller antigo. Migration 20261009120000 antes do edge.
+ * v1.14 (2026-10-10, picking v2 Fase 0.2) — `ListarPedidos` pede a vez na trava compartilhada
+ * `omie_cota_metodo` (_shared/omie-cota.ts) e registra o "aguarde" do Omie para as outras edges; e
+ * nenhum método re-tenta antes do prazo pedido pelo Omie (antes: espera limitada a 15 s, que
+ * renovava a trava). Migration 20261010204708 antes do edge (sem ela: fail-open, como era).
  */
-export const VERSAO = "v1.13-gate-sem-override-interrompe";
+export const VERSAO = "v1.14-cota-omie-compartilhada";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

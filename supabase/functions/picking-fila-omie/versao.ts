@@ -15,8 +15,10 @@ export const respostaSonda = criarRespostaSonda("picking-fila-omie");
  * Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho.
  * v0.1: modo `diagnostico` read-only — por conta (oben, colacor): `ListarEtapasFaturamento`,
  * `ListarPedidos{etapa:'10'}` (1 página) e `ListarProdutos` (1 página, cobertura de EAN).
+ * v0.2 (Fase 0.2): o `ListarPedidos` pede a vez na trava compartilhada `omie_cota_metodo`
+ * (_shared/omie-cota.ts); vez negada vira erro no resumo, sem chamar o Omie.
  */
-export const VERSAO = "v0.1-diagnostico";
+export const VERSAO = "v0.2-cota-omie-compartilhada";
 
 /** Efeito citado no 400 de `probe` ambíguo. */
 export const EFEITO =
