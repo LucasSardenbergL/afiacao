@@ -40,12 +40,7 @@ export function useTintometricoZone() {
     // `try { … } catch { /* */ }` que nem liam o `error` do PostgREST faziam falha virar
     // "0 fórmulas · 0/0 SKUs" — um painel de saúde afirmando vazio em vez de "não li".
     queryFn: async () => {
-      const [formulasRes, skusTotalRes, skusMappedRes, impRes, errsRes] = await Promise.all([
-        supabase
-          .from('tint_formulas')
-          .select('id', { count: 'exact', head: true })
-          .eq('account', ACCOUNT)
-          .is('desativada_em', null),
+      const [skusTotalRes, skusMappedRes, impRes, errsRes] = await Promise.all([
         supabase
           .from('tint_skus')
           .select('id', { count: 'exact', head: true })
@@ -70,15 +65,13 @@ export function useTintometricoZone() {
           .order('created_at', { ascending: false })
           .limit(3),
       ]);
-      if (formulasRes.error) throw formulasRes.error;
       if (skusTotalRes.error) throw skusTotalRes.error;
       if (skusMappedRes.error) throw skusMappedRes.error;
       if (impRes.error) throw impRes.error;
       if (errsRes.error) throw errsRes.error;
-      if (formulasRes.count == null || skusTotalRes.count == null || skusMappedRes.count == null) {
+      if (skusTotalRes.count == null || skusMappedRes.count == null) {
         throw new Error('tintometrico: contagem exata não veio do PostgREST');
       }
-      const totalFormulas = formulasRes.count;
       const skusTotal = skusTotalRes.count;
       const skusMapped = skusMappedRes.count;
       const lastImport = (impRes.data as TintImportRow | null) ?? null;
@@ -98,7 +91,24 @@ export function useTintometricoZone() {
         badge: { label: 'erro', intent: 'error' as const },
       }));
 
-      return { totalFormulas, skusMapped, skusTotal, lastImport, topItems };
+      return { skusMapped, skusTotal, lastImport, topItems };
+    },
+    staleTime: 5 * 60 * 1000,
+    refetchInterval: 5 * 60 * 1000,
+  });
+
+  // Adoção do balcão (RPC tint_adocao_balcao): dos pedidos com cor em 30d, quantos saíram do
+  // seletor do app. Query SEPARADA de propósito: se a RPC falhar (ou ainda não estiver aplicada),
+  // o KPI mostra "—" — nunca "0" — e o resto da zona continua de pé.
+  const { data: adocao } = useQuery({
+    queryKey: ['dashboard', 'tintometrico', 'adocao', applies],
+    enabled: applies,
+    queryFn: async () => {
+      const { data: linhas, error } = await supabase.rpc('tint_adocao_balcao' as never, { p_dias: 30 } as never);
+      if (error) throw error;
+      const linha = (linhas as unknown as Array<{ pedidos_com_cor: number; pelo_app: number }> | null)?.[0];
+      if (!linha) throw new Error('tint_adocao_balcao: RPC não devolveu a linha de contagem');
+      return { comCor: Number(linha.pedidos_com_cor), peloApp: Number(linha.pelo_app) };
     },
     staleTime: 5 * 60 * 1000,
     refetchInterval: 5 * 60 * 1000,
@@ -107,12 +117,17 @@ export function useTintometricoZone() {
   const kpis: KpiSpec[] = useMemo(() => {
     if (!data) return [];
     const lastImport = data.lastImport as { status?: string | null } | null;
+    // "Cor pelo app" substituiu "Fórmulas" (491k, quase estático): é o número que decide a próxima
+    // fase do tintométrico — a grade tem 3 colunas.
     return [
-      { label: 'Fórmulas', value: formatCount(data.totalFormulas) },
+      {
+        label: 'Cor pelo app (30d)',
+        value: adocao ? `${formatCount(adocao.peloApp)}/${formatCount(adocao.comCor)}` : '—',
+      },
       { label: 'SKUs mapeados', value: `${formatCount(data.skusMapped)}/${formatCount(data.skusTotal)}` },
       { label: 'Última import.', value: formatImportStatus(lastImport?.status) },
     ];
-  }, [data]);
+  }, [data, adocao]);
 
   const priority: PriorityCandidate | null = useMemo(() => {
     if (!data) return null;

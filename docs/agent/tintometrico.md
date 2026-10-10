@@ -62,11 +62,12 @@
 
 O fluxo do app (canônica → `get_tint_prices` → `tint_gate_revalida`) só protege o que passa por ele. **Medição 2026-10-10: 171 pedidos com cor nos 90d, 0 com fórmula do app** (6 na vida toda, último 2026-04-22) — o balcão digita a cor no Omie e o `omie-vendas-sync` só parseia o texto da observação. O founder decidiu (2026-10-10) que o balcão **vai** vender pelo app. Sinal decisório = query no banco (o PostHog via 1 usuário em 30d — parque em build sem instrumentação, ver `analytics.md`):
 
-```sql
-SELECT count(*) FILTER (WHERE items::text LIKE '%tint_nome_cor%')   AS pedidos_com_cor,
-       count(*) FILTER (WHERE items::text LIKE '%tint_formula_id%') AS pelo_app
-FROM sales_orders WHERE created_at > now() - interval '30 days';
-```
+**No painel**: KPI "Cor pelo app (30d)" da zona Tintométrico (`useTintometricoZone.ts`) = RPC `tint_adocao_balcao(p_dias)` (migration `20261010220000`, SECURITY INVOKER, prova `db/test-tint-adocao-balcao.sh`). Conta pelo VALOR (`"tint_formula_id": null` não conta) e no universo de VENDA canônico (sem cancelado/rascunho/pendente/orçamento/apagado) — por isso dá 37 (e não 40) em 30d, medido 2026-10-10. Falha da RPC → "—", nunca 0. Só `authenticated`/`service_role` executam — o `psql-ro` (`claude_ro`) leva `permission denied` por desenho; para medir na mão, rode o corpo da função (a CTE `pedidos`) direto.
+
+**Decisões de 2026-10-10 (não reabrir sem dado novo):**
+- **Teto de desconto no `tint_gate_revalida`: SEM teto por ora** (founder). Hoje aceita 0–99,99%. Reavaliar quando houver pedido de cor pelo app para medir a distribuição real.
+- **"Dois writers de preço Omie" NÃO procede como defeito.** São 5 writers de `omie_products` (`omie-sync-metadados` diário = catálogo inteiro, `omie-vendas-sync`, `omie-analytics-sync`, `omie-sync-status-produtos`, `tint-omie-sync` sem cron) e todos espelham os MESMOS campos do Omie com a mesma regra (`ativo` ← `inativo`; `valor_unitario`). `tint-omie-sync` pula inativos (nunca reativa). `valor_unitario||0` não vira preço: `get_tint_price(s)` exige `>0` E `ativo`.
+- **Volume presumido de 1000 ml do corante: ADIADO, com sensor.** A promoção cria stub com `COALESCE(volume_ml, existente, 1000)`; volume errado distorce o custo do corante em silêncio. Hoje 0 dos 14 corantes estão em 1000. Sensor: `SELECT id_corante_sayersystem, descricao FROM tint_corantes WHERE volume_total_ml = 1000;` — linha = conferir o volume real na Sayerlack.
 
 Funil (censurável, só pra achar ONDE trava — `useTintColorSelect.ts`/`TintColorSelectDialog.tsx`): `tint.seletor_aberto` · `tint.base_nao_configurada` · `tint.falha_leitura` · `tint.cor_nao_encontrada_na_base` · `tint.sem_preco{motivo}` · `tint.cor_confirmada{fonte,alternativa,com_desconto}`. **Falha de leitura ≠ "não existe"**: o seletor mostra "não consegui carregar" + "tentar de novo" — antes, erro de rede no SKU virava "esta base não está configurada" e mandava a vendedora de volta pro Omie.
 
