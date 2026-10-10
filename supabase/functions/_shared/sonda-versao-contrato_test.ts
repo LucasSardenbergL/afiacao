@@ -50,6 +50,7 @@ import * as monthlyReport from "../monthly-report/versao.ts";
 import * as carteiraRebuild from "../carteira-rebuild/versao.ts";
 import * as vendasSync from "../omie-vendas-sync/versao.ts";
 import * as nfeReconcile from "../omie-nfe-reconcile/versao.ts";
+import * as pickingFilaOmie from "../picking-fila-omie/versao.ts";
 import * as syncCtes from "../omie-sync-ctes-recebidos/versao.ts";
 import * as syncPedidosCompra from "../omie-sync-pedidos-compra/versao.ts";
 import * as syncSkuItems from "../omie-sync-sku-items/versao.ts";
@@ -263,6 +264,9 @@ const EDGES: Array<{ nome: string; mod: ModSonda }> = [
   // e o log próprio (`whatsapp_webhook_events`) é gravado por toda versão. Medido na entrada: a
   // versão servida era INDETERMINADA entre três bundles históricos.
   { nome: "whatsapp-inbound", mod: whatsappInbound },
+  // 2026-10-10 — nasce instrumentada: a fila do picking v2 (spec 2026-10-10-picking-v2-design.md).
+  // v0.1 só diagnóstico read-only no Omie; o efeito caro é a cota da app_key (REDUNDANT).
+  { nome: "picking-fila-omie", mod: pickingFilaOmie },
 ];
 
 /** As cinco da terceira leva — os gates estruturais abaixo varrem todas. */
