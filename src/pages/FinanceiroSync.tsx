@@ -21,7 +21,15 @@ interface SyncResult {
 }
 
 const FinanceiroSync = () => {
-  const { syncing, syncSpecific, calcularDREAnual, view, setView } = useFinanceiro('all');
+  // `error` desestruturado de propósito. O `catch` do hook devolve `undefined`: `syncSpecific`
+  // captura a exceção, chama `setError(...)` e sai sem relançar — então `result?.results` é
+  // falsy, o `if` abaixo não roda, o `catch` desta página também não (não houve throw), e as
+  // linhas marcadas como `running` ANTES da chamada ficavam `running` PARA SEMPRE. Spinner
+  // eterno por empréstimo: o estado de erro existia, morava no hook, e a tela nunca o lia.
+  // O `calcularDREAnual` é o caso extremo — devolve `void`, engole no catch, e a tela não tinha
+  // nem `result` para olhar: clicar em "Calcular DRE" num dia de falha dava spinner e silêncio.
+  const { syncing, syncSpecific, calcularDREAnual, error: erroFinanceiro, view, setView } =
+    useFinanceiro('all');
   const [results, setResults] = useState<SyncResult[]>([]);
   const [dreAno, setDreAno] = useState(new Date().getFullYear());
   const [globalSyncing, setGlobalSyncing] = useState(false);
@@ -48,6 +56,20 @@ const FinanceiroSync = () => {
 
     try {
       const result = await syncSpecific(action);
+      if (!result?.results) {
+        // Desfecho DESCONHECIDO ≠ sucesso, e ≠ "ainda rodando". O motivo real está no
+        // `erroFinanceiro` (o hook já o guardou); aqui a linha só para de mentir que corre.
+        for (const co of targetCompanies) {
+          setResults(prev => [
+            ...prev.filter(r => !(r.entity === action && r.company === co)),
+            {
+              entity: action, company: co, status: 'error',
+              error: 'O sync não devolveu resultado por empresa — veja o aviso no topo da tela.',
+            },
+          ]);
+        }
+        return;
+      }
       if (result?.results) {
         for (const [co, data] of Object.entries(result.results as Record<string, { error?: string; totalSynced?: number; total?: number }>)) {
           setResults(prev => [
@@ -116,6 +138,17 @@ const FinanceiroSync = () => {
           </Button>
         </div>
       </div>
+
+      {erroFinanceiro && (
+        <div
+          role="alert"
+          data-testid="aviso-sync-financeiro"
+          className="rounded-md border border-status-error/30 bg-status-error/5 p-3 text-sm"
+        >
+          A última ação de sincronização falhou: {erroFinanceiro} — os números das telas
+          financeiras seguem com o dado ANTERIOR, não com o de hoje.
+        </div>
+      )}
 
       {/* Entity cards */}
       <div className="space-y-3">
