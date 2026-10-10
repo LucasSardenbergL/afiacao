@@ -33,6 +33,9 @@ export function VisaoGeralTab({
   inadimplentesIndisponivel?: string | null;
 }) {
   const [showContasZeradas, setShowContasZeradas] = useState(false);
+  // Posição desconhecida (null/ausente) não é "positiva": ícone e cor neutros, nunca o verde.
+  const posicaoLiquida = activeResumo?.posicao_liquida ?? null;
+  const posicaoConhecida = posicaoLiquida !== null;
   // Esconde contas com saldo zerado por padrão (ruído numa lista de ~40 contas).
   // Se TODAS estiverem zeradas, mostra mesmo assim (senão o card ficaria vazio).
   const contasCorrentes = activeResumo?.contas_correntes ?? [];
@@ -117,9 +120,9 @@ export function VisaoGeralTab({
         <KpiCard
           title="Posição Líquida"
           value={activeResumo?.posicao_liquida ?? null}
-          icon={(activeResumo?.posicao_liquida ?? 0) >= 0 ? TrendingUp : TrendingDown}
-          color={(activeResumo?.posicao_liquida ?? 0) >= 0 ? 'text-status-success' : 'text-status-error'}
-          bgColor={(activeResumo?.posicao_liquida ?? 0) >= 0 ? 'bg-status-success-bg' : 'bg-status-error-bg'}
+          icon={posicaoConhecida && posicaoLiquida < 0 ? TrendingDown : TrendingUp}
+          color={!posicaoConhecida ? 'text-muted-foreground' : posicaoLiquida >= 0 ? 'text-status-success' : 'text-status-error'}
+          bgColor={!posicaoConhecida ? 'bg-muted' : posicaoLiquida >= 0 ? 'bg-status-success-bg' : 'bg-status-error-bg'}
         />
         <KpiCard
           title="Saldo Bancário"

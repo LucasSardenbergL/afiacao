@@ -32,7 +32,7 @@ const threeMonthsAhead = new Date(today.getFullYear(), today.getMonth() + 3, 0);
 
 const FinanceiroDashboard = ({ embedded = false }: { embedded?: boolean } = {}) => {
   const {
-    view, setView, loading, syncing, error, lastSync,
+    view, setView, loading, syncing, error, errosCarga, lastSync,
     activeResumo, resumo,
     contasPagar, contasReceber,
     contasPagarTotal, contasReceberTotal,
@@ -168,7 +168,7 @@ const FinanceiroDashboard = ({ embedded = false }: { embedded?: boolean } = {}) 
 
       {error && (
         <div className="bg-status-error-bg border border-status-error/30 rounded-lg p-3 text-sm text-status-error">
-          {error}
+          Falha ao sincronizar/recalcular: {error}
         </div>
       )}
 
@@ -195,6 +195,9 @@ const FinanceiroDashboard = ({ embedded = false }: { embedded?: boolean } = {}) 
             agingReceber={agingReceber}
             agingPagar={agingPagar}
             inadimplentes={inadimplentes}
+            resumoIndisponivel={errosCarga.resumo ?? null}
+            agingIndisponivel={errosCarga.aging ?? null}
+            inadimplentesIndisponivel={errosCarga.inadimplentes ?? null}
           />
         </TabsContent>
 
@@ -210,6 +213,7 @@ const FinanceiroDashboard = ({ embedded = false }: { embedded?: boolean } = {}) 
             contasReceber={contasReceber}
             crTotal={contasReceberTotal}
             crTotals={crTotals}
+            indisponivel={errosCarga.contasReceber ?? null}
             view={view}
             loading={loading}
             onAudit={setAuditTarget}
@@ -228,6 +232,7 @@ const FinanceiroDashboard = ({ embedded = false }: { embedded?: boolean } = {}) 
             contasPagar={contasPagar}
             cpTotal={contasPagarTotal}
             cpTotals={cpTotals}
+            indisponivel={errosCarga.contasPagar ?? null}
             view={view}
             loading={loading}
             onAudit={setAuditTarget}
@@ -238,7 +243,8 @@ const FinanceiroDashboard = ({ embedded = false }: { embedded?: boolean } = {}) 
         <TabsContent value="fluxo-caixa" className="space-y-4 mt-4">
           {/* `syncing` conta como carregando: durante o sync o previsto já foi descartado, e sem
               isso a aba mostraria o empty state "Sincronize os dados primeiro" no meio do sync. */}
-          <FluxoCaixaTab data={fluxoCaixa} loading={loading || syncing} saldoCC={activeResumo?.saldo_total_cc} />
+          <FluxoCaixaTab data={fluxoCaixa} loading={loading || syncing} saldoCC={activeResumo?.saldo_total_cc}
+            indisponivel={errosCarga.fluxoCaixa ?? null} />
         </TabsContent>
 
         {/* ═══════════ TAB: DRE ═══════════ */}
@@ -292,7 +298,7 @@ const FinanceiroDashboard = ({ embedded = false }: { embedded?: boolean } = {}) 
             </div>
           </div>
 
-          <DRETab data={dreConsolidado} view={view} ano={dreAno} />
+          <DRETab data={dreConsolidado} view={view} ano={dreAno} indisponivel={errosCarga.dre ?? null} />
 
           {/* Comparativo por empresa quando consolidado */}
           {view === 'all' && Object.keys(drePorEmpresa).length > 1 && (

@@ -54,6 +54,24 @@ describe('VisaoGeralTab', () => {
     expect(screen.queryByText('Regime Tributário')).toBeNull();
   });
 
+  it('sem posição líquida (activeResumo=null) o KPI usa cor neutra, nunca o verde de "positivo"', () => {
+    renderWithClient(
+      <VisaoGeralTab
+        alerts={[]}
+        activeResumo={null}
+        resumo={{}}
+        view="oben"
+        agingReceber={null}
+        agingPagar={null}
+        inadimplentes={[]}
+      />
+    );
+    const card = screen.getByText('Posição Líquida').closest('[class*="rounded"]') as HTMLElement;
+    expect(card).toBeTruthy();
+    expect(card.innerHTML).not.toContain('text-status-success');
+    expect(card.innerHTML).toContain('text-muted-foreground');
+  });
+
   it('view=all com dados → cards de empresa, indicadores, regime, inadimplentes e contas correntes', () => {
     renderWithClient(
       <VisaoGeralTab
