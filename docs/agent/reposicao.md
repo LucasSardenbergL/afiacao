@@ -85,10 +85,15 @@ Vocabulário que o founder assume ao falar de reposição (antes re-explicado a 
 
 ## Portal Sayerlack (scraping / pedido)
 
-- **[2026-10-10] Janela do portal: fechado de SÁBADO 12:00 até SEGUNDA 06:00** (palavra do founder). O digest
-  matinal de `gerar-pedidos-diario` não sai no domingo (v1.2, #2906). Disparo/retry/watchdog **não** respeitam a
-  janela — sem incidente até aqui (60 dias: nenhum envio Sayerlack nessa faixa, os de sábado foram todos de manhã).
-  Se um dia houver aprovação no fim de semana, o retry gasta as 3 tentativas contra o portal fechado → `erro_nao_retentavel`.
+- **[2026-10-10] Janela do portal: fechado de SÁBADO 12:00 até SEGUNDA 06:00** (palavra do founder). Digest
+  matinal de `gerar-pedidos-diario` não sai no domingo (v1.2, #2906). `disparar-pedidos-aprovados` v1.6
+  (`janela-portal.ts`) barra na janela, ANTES do split e sem write, quem abriria envio NOVO →
+  `status_final=portal_fechado` (sem tentativa, sem e-mail; tela = toast warning). Protocolo em mãos,
+  conciliação e em voo seguem. O retry-órfãos repega a partir de segunda — exceto aprovado há >72h
+  (filtro do motor): esse fica visível na lista p/ "Disparar". **Cron de disparo das 10:00 REMOVIDO**
+  (o founder dispara pelo botão); a expiração de oportunidades foi para a rodada matinal da
+  `gerar-pedidos-diario` (v1.3). Ligar a auto-aprovação (`reposicao_auto_aprovacao_ativa`) exige um
+  disparador de novo — o tick só marca `aprovado_aguardando_disparo`.
 - **[captura de preços F1, jul/2026] 4 pegadinhas do DOM do portal** (custaram 8 spikes; detalhe em `docs/historico/reposicao-embalagem-captura.md`): (1) o portal **auto-grava a linha na seleção do item** (Seq preenche) — não existe "linha só em edição"; o `#btnCancelarItem` REMOVE mas o roundtrip AJAX é lento (poll, nunca sleep fixo); (2) **DataTables renderiza "Nenhum dado disponível na tabela" como `<tr>` real** — contagem de linhas TEM de filtrar `td.dataTables_empty`+texto, senão falso "rascunho sujo"/"cancel não comprovado"; (3) **select2: a 1ª opção do dropdown pode ser item ERRADO** — selecionar por TOKEN exato do código (tokenização `[^A-Z0-9.]`), nunca "a primeira que veio"; (4) `confirm()` nativo: o default do puppeteer DISMISSA → `page.on('dialog', accept)`. Edge `sayerlack-captura-precos` (run-log `sku_preco_captura_run[_item]`, cron mensal 10-12, kill-switch só gateia cron): helpers compartilhados interpolados no Browserless via `${fn.toString()}` (fonte única testada; corpo sem crase/`${`); run falho carrega `trace_tail` no erro.
 - **[2026-09-05] `Preço Venda` da datatable é o TOTAL DA LINHA, não o preço por embalagem** (#2459: `142,2554 × 3 × (1 − 14,9488%) = 362,9698`) — somar `Preço Venda × Qtd UN` inflava o checksum e matava a captura multi-item em silêncio (fail-closed, mas invisível: pedido de 1 item não passa por lá). ✅ **RESOLVIDO (2026-10-05): era o IPI** — 362,97 × 1,0325 = 374,77 (bullet do preço exato abaixo). Antes: o portal cobrou `data.value` **374,77** contra os 362,9698 da linha — R$ 11,80 (3,2510%) de origem não identificada; `delta_rel` no resumo existe para medir se a razão se repete. → `docs/historico/sayerlack-captura-custo-cega.md` §Adendo
 - **[2026-10-05] Preço exato no PO — a "divergência aberta" era o IPI por NCM.** Backtest de 29 pedidos: 13 alíquotas
