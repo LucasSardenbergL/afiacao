@@ -54,7 +54,9 @@ export default function ReposicaoSessionLayout() {
           )}
         </div>
       </div>
-      {semDado && <AvisoLeituraDoCiclo onRetry={tentarNovamente} className="mb-3" />}
+      {semDado && (
+        <AvisoLeituraDoCiclo variante="linha" onRetry={tentarNovamente} className="mb-3" />
+      )}
       {isError && status && (
         <AvisoLeituraDoCiclo stale onRetry={tentarNovamente} className="mb-3" />
       )}

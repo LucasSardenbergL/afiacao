@@ -14,14 +14,28 @@ import { cn } from "@/lib/utils";
  * O contrato do §7 do money-path é um só — "indisponível COM O MOTIVO + retry" sem cache,
  * "último dado bom + aviso de stale" com cache — e texto duplicado em 3 arquivos é exatamente
  * como uma das cópias volta a mentir.
+ *
+ * ⚠️ `variante` existe para a tela não repetir a MESMA mensagem 3×: todas as páginas da sessão
+ * vivem dentro do `ReposicaoSessionLayout`, então o layout (a casca, sempre visível) usa
+ * `"linha"` e quem é dono da REGIÃO DE CONTEÚDO usa `"bloco"` — um aviso de página e um
+ * empty-state de painel, não dois cartões idênticos empilhados.
+ *
+ * Irmão do `AvisoLeituraFalhou` (`@/components/leitura`), que serve a classe vizinha
+ * ("erro colapsado em vazio") e deliberadamente NÃO tem retry, porque lá o react-query
+ * refaz sozinho e um botão que não conserta ensina a clicar e concluir que está tudo bem.
+ * Aqui o retry CONSERTA — `useReposicaoStatus` expõe um `refetch` que relê as duas queries, e
+ * a suíte prova a recuperação ("o retry recarrega de verdade"), não só a presença do botão.
  */
 export function AvisoLeituraDoCiclo({
   stale = false,
+  variante = "bloco",
   onRetry,
   className,
 }: {
   /** `true` = há último dado bom na tela; o aviso só marca que ele pode estar velho. */
   stale?: boolean;
+  /** `"linha"` = casca da sessão (uma linha); `"bloco"` = empty-state da região de conteúdo. */
+  variante?: "linha" | "bloco";
   onRetry: () => void;
   className?: string;
 }) {
@@ -29,12 +43,15 @@ export function AvisoLeituraDoCiclo({
     ? "A última leitura do ciclo falhou — os números abaixo podem estar desatualizados."
     : "Não consegui ler o ciclo de reposição de hoje — a etapa e os números ficam indisponíveis até a leitura voltar.";
 
-  if (stale) {
+  if (stale || variante === "linha") {
     return (
       <div
         role="alert"
         className={cn(
-          "flex items-center gap-2 rounded-md border border-status-warning/30 bg-status-warning/5 px-3 py-2 text-xs text-status-warning",
+          "flex items-center gap-2 rounded-md border px-3 py-2 text-xs",
+          stale
+            ? "border-status-warning/30 bg-status-warning/5 text-status-warning"
+            : "border-status-error/30 bg-status-error/5 text-status-error",
           className,
         )}
       >

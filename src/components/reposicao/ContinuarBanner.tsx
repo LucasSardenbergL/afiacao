@@ -10,9 +10,15 @@ import { REPOSICAO_STEPS } from "./ProcessoComprasStepper";
 
 interface Props {
   currentStep: number;
+  /**
+   * `true` = a etapa vem do ÚLTIMO dado bom, mas a releitura do ciclo falhou. A ressalva mora
+   * aqui, no ponto da AFIRMAÇÃO ("Você está na etapa X"), e não num 4º cartão de aviso na tela
+   * — é esta frase que fica em risco quando a leitura falha (§7 do money-path).
+   */
+  stale?: boolean;
 }
 
-export function ContinuarBanner({ currentStep }: Props) {
+export function ContinuarBanner({ currentStep, stale = false }: Props) {
   const navigate = useNavigate();
   const todayStart = startOfDay(new Date()).toISOString();
 
@@ -67,6 +73,9 @@ export function ContinuarBanner({ currentStep }: Props) {
             <div className="text-xs text-muted-foreground">
               Você está na <span className="font-medium text-foreground">etapa {currentStep}</span>:{" "}
               {stepLabel}
+              {stale && (
+                <span className="text-status-warning"> · a última leitura do ciclo falhou, pode estar desatualizada</span>
+              )}
             </div>
           </div>
         </div>
