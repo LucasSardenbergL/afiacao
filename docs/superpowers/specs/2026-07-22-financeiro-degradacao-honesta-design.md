@@ -95,3 +95,24 @@ Cobertura nova (vitest):
 ## Gates
 
 `heavy bun run typecheck` · `heavy bun run test` · `bun lint` — todos verdes antes do commit (não prever o verde de gate que ainda não fechou). Sem migration, sem edge, sem deploy de banco: é mudança só-frontend (`src/`), então o único passo de produção é **Publish do frontend** no Lovable.
+
+---
+
+## Revisão 2026-10-10 — re-escopo sobre a main atual (1.379 commits depois)
+
+Ao retomar, a main já tinha resolvido parte do spec por outros PRs:
+
+- **D3 resolvido** — `getAgingReceber`/`getAgingPagar` lançam em `error` e em `data=null` (#1564/#2917).
+- **Cockpit e Zone resolvidos** — o cockpit faz `.catch(() => null)` no aging (exibe "—"), a Zone deixa `aging90` null.
+- **D4 resolvido** — `FluxoCaixaTab` com `saldoCC == null` exibe "—" e avisa "sem âncora".
+- **`KpiCard` já aceita `value: number | null`** ("—" para null).
+
+E a main **tomou uma decisão que contradiz o estado `stale` deste spec**: `loadFluxoCaixa` e `loadAging` passaram a **limpar** o dado na falha, com razão documentada — na troca de empresa, o dado "anterior" é de OUTRA empresa e apareceria sob o rótulo da atual (#2459/#2875). O argumento vale igual para `contasPagar`, `contasReceber`, `dre`, `inadimplentes` e as chaves do `resumo`.
+
+**Desenho revisado (substitui as Camadas 1–4):**
+
+1. **Hook** — `errosCarga: Partial<Record<DatasetFinanceiro, string>>`. Cada `loadX`: sucesso limpa a própria chave; falha **limpa o dado daquele dataset** (padrão que a main já adotou em fluxo/aging) e seta a própria chave. O `error` string passa a ser **só de ações** (`syncAll`/`syncSpecific`/`calcularDRE*`) — o banner do topo deixa de acusar a aba errada (D2).
+2. **UI** — cada aba recebe `indisponivel?: string | null` e, quando setado, diz "indisponível — a leitura falhou: <motivo>" no lugar de "Sincronize os dados primeiro" / "Clique em Recalcular" / skeleton eterno / card que some. KPIs da Visão Geral deixam de mandar `|| 0` (passam `?? null`).
+3. **Sem estado `stale`** — descartado por consistência com a main e YAGNI. O helper `statusFrom` sai do escopo.
+
+Fora de escopo (inalterado): `useFinanceiroCockpit`/`useFinanceiroZone`/`usePosicaoAgora` como PR-B — reavaliar na hora, porque parte já foi resolvida na main.
