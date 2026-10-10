@@ -90,7 +90,7 @@ db/test-preco-ausente-nao-e-zero.sh        54
 # Margem por cliente só sobre os últimos 12 meses (decisão 2026-10-09): o item velho não entra, o
 # cliente sem compra no período SOME (NULL, nunca 0), e as regras do universo seguem; a falsificação
 # (janela neutra/13m/11m, deleted_at perdido) roda INLINE, depois de um controle verde na mesma invocação.
-db/test-margem-cliente-janela-12m.sh       19
+db/test-margem-cliente-janela-12m.sh       21
 db/test-check-finitude-money-path.sh       27
 db/test-caca-custo-producao.sh              6
 # O desconto de item: NULL = não apurado ≠ 0 nos TRÊS escritores de order_items, e (§F, 2026-09-10)

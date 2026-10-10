@@ -118,6 +118,13 @@ postcondição da migration + `md5(prosrc)` = `8335b945…` (calculado dos bytes
 (psql-ro): md5 idêntico, `db/valida-margem-cliente-janela-12m.sql` 3 × ✅, e a função real devolve
 **502 clientes · R$ 5,94M · 45,47%**.
 
+
+**Revisão Codex retroativa (2026-10-09, sem P0/P1):** dois ajustes de borda, no PR de acompanhamento.
+(1) A legenda "sem compra nos últimos 12 meses" usava `days_since_last_purchase > 365`, mas o SQL corta
+por INSTANTE e os dias são DATA CIVIL: com 365 dias o pedido já pode ter saído da janela → agora `>= 365`
+(com ≤ 364 nunca saiu, porque 12 meses ≥ 365 dias). (2) O harness não tinha pedido no instante exato do
+corte — `>=`→`>` sobrevivia; agora J5 (seed + consulta na MESMA transação, `now()` fixo) e a 6ª
+sabotagem "corte exclusivo" a derruba (`PASS=21`, C e pt_BR). Ausente→zero nos consumidores: nenhum achado.
 **Quando aparece na tela.** A margem persistida em `farmer_client_scores` só se ajusta no próximo
 cron do `calculate-scores` (06:00/06:25 UTC) depois do apply — sem deploy de edge. As RPCs ao vivo
 (`get_carteira_margem_faixa`, `get_customer_margin_summary`) mudam no instante do apply.
