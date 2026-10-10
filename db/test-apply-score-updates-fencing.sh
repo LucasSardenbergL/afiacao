@@ -57,10 +57,14 @@
 #       do chunk, o claim de B BLOQUEIA até o COMMIT de A. Ordem medida por sequence (determinística),
 #       não por relógio. Sem isto a checagem de ownership seria decorativa: em READ COMMITTED o claim
 #       rival commitaria ENTRE o IF e o UPDATE e a escrita velha passaria assim mesmo.
+#       O lease de A está EXPIRADO: o claim de B é tomada legítima e B termina dono. O bloqueio é
+#       OBSERVADO em `pg_blocking_pids` antes de liberar A — nenhum pg_sleep decide a corrida.
+#   C4  O sentido INVERSO (EPQ): B toma o lease e segura a transação; o apply de A ESPERA e, no
+#       COMMIT de B, o READ COMMITTED reavalia o predicado na versão nova → 55000 sem escrita.
 #
 # ── ZONA F — FALSIFICAÇÃO (baseline verde antes + contagem de vermelhos conferida) ──
 #   F1  remove o bloco de fencing → N1 tem de virar ESCRITA (o run alheio grava). Prova o dente de N1.
-#   F2  troca `FOR SHARE` por SELECT simples → C3 deixa de bloquear (B claima ANTES do commit de A).
+#   F2  troca `FOR SHARE` por SELECT simples → C3 deixa de bloquear E C4 deixa A escrever.
 #       Prova que quem faz o fencing é o LOCK, não o IF. É a sabotagem que mais importa: sem ela eu
 #       teria "o assert passa" sem saber se passa pelo motivo certo (lição #1549: enumere os
 #       mecanismos que sustentam o invariante antes de escrever a falsificação).
@@ -94,7 +98,7 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
-P()  { "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }
 # Ps = setup: executa e DESCARTA a saída. `-q` suprime a tag de comando, não o resultado do SELECT —
 # um `SELECT public.reseed()` continua imprimindo a tabelinha. Dentro de `$(...)` isso ENTRA na
@@ -487,44 +491,62 @@ eq "C1e dado FICOU com o valor de B: gm=53"        "$(Pq -c "SELECT gross_margin
 eq "C1f dado FICOU com o valor de B: itens 3"      "$(Pq -c "SELECT itens_com_custo FROM public.farmer_client_scores WHERE id='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';")" "3"
 eq "C1g dado FICOU com o valor de B: itens_sem 37" "$(Pq -c "SELECT itens_sem_custo FROM public.farmer_client_scores WHERE id='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';")" "37"
 
-# ── C3: o FOR SHARE serializa de verdade (DUAS SESSÕES psql REAIS) ──
-# Sessão A: BEGIN; apply (toma FOR SHARE na linha do lease); dorme; marca 'A_pre_commit'; COMMIT.
-# Sessão B (disparada quando A já está dentro da transação): roda o CLAIM REAL — o mesmo
-# INSERT..ON CONFLICT DO UPDATE da migration 20260728120001 — e marca 'B_claim'.
-# Com FOR SHARE, B só consegue o claim DEPOIS do COMMIT de A ⇒ na trilha, B_claim > A_pre_commit.
-# A ordem é medida por SEQUENCE (não-transacional, determinística), não por relógio.
+# ── C3/C4: o FOR SHARE serializa de verdade (DUAS SESSÕES psql REAIS, nos DOIS sentidos) ──
+# C3 (A trava primeiro): A abre a transação e aplica um chunk com token (toma FOR SHARE na linha do
+#   lease); B roda o CLAIM REAL — o INSERT..ON CONFLICT DO UPDATE transcrito da 20260728120001 —
+#   sobre um lease EXPIRADO (tomada legítima, não um claim que o WHERE recusaria). Com o lock, B
+#   ESPERA o COMMIT de A, e depois vira o dono.
+# C4 (B trava primeiro, o sentido inverso — EPQ): B toma o lease expirado e segura a transação
+#   aberta; A tenta o apply com o token antigo. Com o lock, A ESPERA; quando B commita, o READ
+#   COMMITTED reavalia o predicado sobre a versão NOVA da linha (run_id=run-B) e A recebe 55000 sem
+#   escrever. Sem o lock, A leria a versão velha (ainda run-A) e escreveria.
+#
+# O BLOQUEIO É OBSERVADO, NÃO INFERIDO: o shell espera `pg_blocking_pids` apontar a sessão que tem de
+# esperar, e só então libera a outra. Nenhum `pg_sleep` decide a corrida — a v1 do C3 dependia de
+# `pg_sleep(1.5)` e de B chegar dentro dele (achado do challenge Codex 2026-10-10: verde por
+# escalonamento não prova sobreposição), e o claim de B caía no WHERE (lease fresco) sem tomar nada.
 #
 # ⚠️ A LARGADA NÃO PODE SER OBSERVADA POR DENTRO DO BANCO — este harness já errou aqui, e o erro
 # passava por VERDE. A 1ª versão esperava A aparecer na trilha (`SELECT count(*) ... 'A_apply'`),
 # mas esse INSERT está DENTRO da transação ABERTA de A: nenhuma outra sessão o enxerga antes do
-# COMMIT. O laço batia no timeout de 5s, e só então B largava — com A já commitado. C3 ficava
-# 't' SEMPRE, inclusive sem lock nenhum: media "B começou tarde", não "B bloqueou". Quem denunciou
-# foi a falsificação F2 (assert verde sob sabotagem = a sabotagem não alcança o que o assert mede,
-# lição #1549) — sem ela o harness teria ido pro PR com C3 provando nada.
-# ⇒ o sinal de largada sai do banco: `\!` do psql roda um comando de SHELL, fora da transação.
-# E o timeout devolve a sentinela TIMEOUT em vez de um veredito, para não confundir
+# COMMIT. O laço batia no timeout, e só então B largava — com A já commitado. C3 ficava 't' SEMPRE,
+# inclusive sem lock nenhum: media "B começou tarde", não "B bloqueou". Quem denunciou foi a
+# falsificação F2 (assert verde sob sabotagem = a sabotagem não alcança o que o assert mede, lição
+# #1549). ⇒ os sinais saem do banco por ARQUIVO: `\!` do psql roda SHELL, fora da transação. Todo
+# laço de espera tem teto e devolve a sentinela TIMEOUT em vez de um veredito, para não confundir
 # "não consegui medir" com "medi e é falso".
 C3TMP="$(mktemp -d "/tmp/c3-${SLUG}.XXXXXX")"
-c3_run() {
-  local READY="$C3TMP/a_dentro_da_transacao"
-  rm -f "$READY"
-  Ps -c "DELETE FROM public.trilha; SELECT public.reseed(); SELECT public.set_lease('run-A','syncing');"
-  # heredoc NÃO aspado (precisa interpolar $READY); não há $$ de plpgsql aqui, então é seguro
-  "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 -q >/dev/null 2>&1 <<SQL &
-BEGIN;
-SELECT public.apply_score_updates(jsonb_build_array(public.core_payload() ||
-  jsonb_build_object('gross_margin_pct', 53)), 'run-A');
-\! touch $READY
-SELECT pg_sleep(1.5);
-INSERT INTO public.trilha(run,evento) VALUES ('A','A_pre_commit');
-COMMIT;
-SQL
-  local PID_A=$!
+# espera um arquivo aparecer (teto 10s); usado DE DENTRO das sessões psql via `\!`
+cat > "$C3TMP/espera.sh" <<'SH'
+#!/bin/sh
+i=0
+while [ ! -f "$1" ] && [ "$i" -lt 200 ]; do sleep 0.05; i=$((i+1)); done
+SH
+chmod +x "$C3TMP/espera.sh"
+
+# t = a sessão $1 (application_name) está BLOQUEADA por outra ; f = o cliente dela terminou sem
+# bloquear (arquivo $2 apareceu) ; TIMEOUT = nem um nem outro em 10s
+esperar_bloqueio() {
   local i=0
-  while [ ! -f "$READY" ] && [ $i -lt 100 ]; do sleep 0.05; i=$((i+1)); done
-  if [ ! -f "$READY" ]; then wait "$PID_A" || true; echo "TIMEOUT"; return; fi
-  "$PGBIN/psql" -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 -q >/dev/null 2>&1 <<'SQL'
-INSERT INTO public.sync_state (entity_type, account, status, last_sync_at, total_synced, metadata, updated_at)
+  while [ $i -lt 200 ]; do
+    if [ "$(Pq -c "SELECT count(*) FROM pg_stat_activity WHERE application_name='$1' AND cardinality(pg_blocking_pids(pid)) > 0;")" = "1" ]; then
+      echo t; return
+    fi
+    if [ -f "$2" ]; then echo f; return; fi
+    sleep 0.05; i=$((i+1))
+  done
+  echo TIMEOUT
+}
+
+# prepara o lease de run-A EXPIRADO (20 min > TTL de 15): o claim de B é tomada LEGÍTIMA
+lease_a_expirado() {
+  Ps -c "DELETE FROM public.trilha; SELECT public.reseed(); SELECT public.set_lease('run-A','syncing');
+         UPDATE public.sync_state SET last_sync_at = now() - interval '20 minutes'
+          WHERE entity_type='calculate_scores' AND account='global';"
+}
+
+# o claim REAL de B (transcrito da 20260728120001), seguido da leitura de quem ficou dono
+CLAIM_B="INSERT INTO public.sync_state (entity_type, account, status, last_sync_at, total_synced, metadata, updated_at)
 VALUES ('calculate_scores','global','syncing', now(), 0, jsonb_build_object('run_id','run-B','fase','inicio'), now())
 ON CONFLICT (entity_type, account) DO UPDATE
   SET status='syncing', last_sync_at=now(), total_synced=0,
@@ -532,15 +554,81 @@ ON CONFLICT (entity_type, account) DO UPDATE
   WHERE sync_state.status IS DISTINCT FROM 'syncing'
      OR sync_state.last_sync_at IS NULL
      OR sync_state.last_sync_at < now() - interval '15 minutes'
-     OR (sync_state.metadata->>'run_id') = 'run-B';
-INSERT INTO public.trilha(run,evento) VALUES ('B','B_claim');
+     OR (sync_state.metadata->>'run_id') = 'run-B';"
+
+# C3 — devolve "<B bloqueou>|<B_claim depois de A_pre_commit>|<dono final>"
+c3_run() {
+  local D="$C3TMP/c3"; rm -rf "$D"; mkdir -p "$D"
+  lease_a_expirado
+  PGAPPNAME=c3_A "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 -q >/dev/null 2>&1 <<SQL &
+BEGIN;
+SELECT public.apply_score_updates(jsonb_build_array(public.core_payload() ||
+  jsonb_build_object('gross_margin_pct', 53)), 'run-A');
+\! touch $D/a_dentro
+\! $C3TMP/espera.sh $D/go_a
+INSERT INTO public.trilha(run,evento) VALUES ('A','A_pre_commit');
+COMMIT;
 SQL
-  wait "$PID_A" || true
-  # 't' = B_claim veio DEPOIS de A_pre_commit (bloqueou) ; 'f' = passou na frente
-  Pq -c "SELECT (SELECT seq FROM public.trilha WHERE evento='B_claim')
-              > (SELECT seq FROM public.trilha WHERE evento='A_pre_commit');"
+  local PID_A=$!
+  "$C3TMP/espera.sh" "$D/a_dentro"
+  if [ ! -f "$D/a_dentro" ]; then touch "$D/go_a"; wait "$PID_A" || true; echo "TIMEOUT"; return; fi
+  PGAPPNAME=c3_B "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 -q >/dev/null 2>&1 <<SQL &
+$CLAIM_B
+INSERT INTO public.trilha(run,evento) VALUES ('B','B_claim');
+\! touch $D/b_fim
+SQL
+  local PID_B=$!
+  local BLOQ; BLOQ="$(esperar_bloqueio c3_B "$D/b_fim")"
+  touch "$D/go_a"
+  wait "$PID_A" || true; wait "$PID_B" || true
+  local ORDEM DONO
+  ORDEM="$(Pq -c "SELECT (SELECT seq FROM public.trilha WHERE evento='B_claim')
+                       > (SELECT seq FROM public.trilha WHERE evento='A_pre_commit');")"
+  DONO="$(Pq -c "SELECT metadata->>'run_id' FROM public.sync_state WHERE entity_type='calculate_scores' AND account='global';")"
+  echo "${BLOQ}|${ORDEM}|${DONO}"
 }
-eq "C3 claim rival BLOQUEIA ate o COMMIT do chunk (FOR SHARE serializa)" "$(c3_run)" "t"
+
+# C4 — devolve "<A bloqueou>|<desfecho de A na trilha>|<gross_margin_pct>"
+c4_run() {
+  local D="$C3TMP/c4"; rm -rf "$D"; mkdir -p "$D"
+  lease_a_expirado
+  PGAPPNAME=c4_B "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 -q >/dev/null 2>&1 <<SQL &
+BEGIN;
+$CLAIM_B
+\! touch $D/b_dentro
+\! $C3TMP/espera.sh $D/go_b
+COMMIT;
+SQL
+  local PID_B=$!
+  "$C3TMP/espera.sh" "$D/b_dentro"
+  if [ ! -f "$D/b_dentro" ]; then touch "$D/go_b"; wait "$PID_B" || true; echo "TIMEOUT"; return; fi
+  # A captura SÓ a 55000 (o desfecho esperado) e registra; qualquer outra SQLSTATE re-lança e o
+  # psql sai sem registrar — a trilha fica sem desfecho e o assert falha (sem WHEN OTHERS teatral).
+  # Heredoc: o corpo DO precisa de $$, então o SQL vai aspado e o sinal de fim sai num 2º comando.
+  PGAPPNAME=c4_A "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 -q >/dev/null 2>&1 \
+    -f - -c "\\! touch $D/a_fim" <<'SQL' &
+DO $$
+BEGIN
+  PERFORM public.apply_score_updates(jsonb_build_array(public.core_payload() ||
+    jsonb_build_object('gross_margin_pct', 53)), 'run-A');
+  INSERT INTO public.trilha(run,evento) VALUES ('A','A_escreveu');
+EXCEPTION WHEN SQLSTATE '55000' THEN
+  INSERT INTO public.trilha(run,evento) VALUES ('A','A_barrado_55000');
+END $$;
+SQL
+  local PID_A=$!
+  local BLOQ; BLOQ="$(esperar_bloqueio c4_A "$D/a_fim")"
+  touch "$D/go_b"
+  wait "$PID_B" || true; wait "$PID_A" || true
+  local DESF GM
+  DESF="$(Pq -c "SELECT coalesce(string_agg(evento, ',' ORDER BY seq), '<nenhum>') FROM public.trilha WHERE run='A';")"
+  GM="$(Pq -c "SELECT gross_margin_pct FROM public.farmer_client_scores WHERE id='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';")"
+  echo "${BLOQ}|${DESF}|${GM}"
+}
+eq "C3 A trava primeiro: o claim (tomada legitima de lease expirado) ESPERA o COMMIT do chunk e depois vira dono" \
+   "$(c3_run)" "t|t|run-B"
+eq "C4 B trava primeiro: o apply de A ESPERA, e no COMMIT de B recebe 55000 sem escrever (gm segue 99)" \
+   "$(c4_run)" "t|A_barrado_55000|99"
 
 # ════════════════════════════════════════════════════════════════════════════════════════════════
 # ZONA F — FALSIFICAÇÃO
@@ -650,10 +738,14 @@ BEGIN
 END $fn$;
 SQL
 prova_sabotagem "SABOTAGEM_F2_SEM_LOCK" "F2"
-case "$(c3_run)" in
-  f) ok "F2 sem FOR SHARE o claim rival PASSA NA FRENTE do commit => C3 tem dente (o LOCK e o fencing)"; FALSIF_OK=$((FALSIF_OK+1));;
-  *) bad "F2 removi o FOR SHARE e o claim ainda bloqueou => C3 e teatro (bloqueia por outro motivo)";;
-esac
+# Os DOIS sentidos têm de cair: C3 (o claim não espera mais) e C4 (A lê a versão velha e escreve).
+F2_C3="$(c3_run)"; F2_C4="$(c4_run)"
+if [ "$F2_C3" = "f|f|run-B" ] && [ "$F2_C4" = "f|A_escreveu|53" ]; then
+  ok "F2 sem FOR SHARE: o claim PASSA NA FRENTE (C3=$F2_C3) e o perdedor ESCREVE (C4=$F2_C4) => C3/C4 tem dente (o LOCK e o fencing)"
+  FALSIF_OK=$((FALSIF_OK+1))
+else
+  bad "F2 removi o FOR SHARE e C3/C4 nao cairam como esperado (C3=[$F2_C3] C4=[$F2_C4]) => teatro ou medida quebrada"
+fi
 P -q -f "$MIG" >/dev/null
 
 # a restauração tem de valer: sem isto, um harness verde poderia estar medindo a última sabotagem

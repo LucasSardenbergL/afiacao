@@ -98,6 +98,13 @@
 -- ───────────────────────────────────────────────────────────────────────────────────────────────
 -- 1) Fora a assinatura antiga (ver "POR QUE DROP + CREATE" acima)
 -- ───────────────────────────────────────────────────────────────────────────────────────────────
+-- DROP, CREATE e REVOKE/GRANT numa transação EXPLÍCITA (challenge Codex 2026-10-10): estar no mesmo
+-- arquivo não garante atomicidade — sem o BEGIN, um erro no CREATE deixaria a PROD SEM a função (o
+-- cron das 06:15 quebrado) e um erro depois dele deixaria a função nova com o ACL default (EXECUTE
+-- para PUBLIC). Com o BEGIN, ou tudo entra, ou nada muda. Sob um runner que já abre transação, o
+-- BEGIN só gera WARNING ("already a transaction in progress") — inofensivo.
+BEGIN;
+
 DROP FUNCTION IF EXISTS public.apply_score_updates(jsonb);
 
 -- ───────────────────────────────────────────────────────────────────────────────────────────────
@@ -263,6 +270,14 @@ COMMENT ON FUNCTION public.apply_score_updates(jsonb, text) IS
 -- (relacl de prod: service_role=arwdDxtm, o `w` é o que FOR SHARE exige).
 REVOKE ALL    ON FUNCTION public.apply_score_updates(jsonb, text) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.apply_score_updates(jsonb, text) TO service_role;
+
+-- Recarrega o cache de schema do PostgREST (entregue no COMMIT). Enquanto o cache guarda a assinatura
+-- antiga, a chamada COM p_run_id volta PGRST202 — e PGRST202 é exatamente o sinal que a edge lê como
+-- "migration ainda não aplicada" (challenge Codex 2026-10-10, P1). Encurtar essa janela é o que torna
+-- o fallback da edge seguro na prática; a edge ainda tenta de novo com o token antes de cair.
+NOTIFY pgrst, 'reload schema';
+
+COMMIT;
 
 -- ───────────────────────────────────────────────────────────────────────────────────────────────
 -- 4) Validação pós-apply (read-only) — cole junto e confira ANTES de publicar a edge
