@@ -54,7 +54,7 @@ describe('omie-sync-estoque — observação do conjunto aberto', () => {
   it('o PO contado é anotado com a decisão FINAL do motor (o filtro poNumerosEmTransito do acumulador)', () => {
     // Sem isto, um PO que o acumulador descarta por número (cNumero "" casando um número vazio do app) apareceria
     // como contado, e a soma por SKU poderia fechar por compensação com outro PO (Codex, adversarial do PR0).
-    expect(fonte).toContain('coletor.registrar(cabObs, itensObs, emTransitoNumeros.has(cNumero) ? "dedup_app" : null)');
+    expect(fonte).toContain('coletor.registrar(cabObs, itensObs, emTransitoNumeros.has(cNumero) ? "dedup_app" : null, convDoPo)');
   });
 
   it('a publicação exige coleta íntegra e tem prazo: o limite da cauda, o mesmo da gravação e da inativação', () => {
