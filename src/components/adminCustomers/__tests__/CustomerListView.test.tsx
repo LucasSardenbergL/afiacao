@@ -88,4 +88,34 @@ describe("CustomerListView", () => {
     setup({ customers: [], scores: new Map() });
     expect(screen.getByText("Nenhum cliente na carteira")).toBeTruthy();
   });
+
+  it("busca no servidor: não re-filtra em memória (o servidor casou por coluna que o filtro local não vê)", () => {
+    // O servidor devolveu o cliente pelo termo; refiltrar localmente o esconderia.
+    render(
+      <MemoryRouter initialEntries={["/admin/customers?search=ZZZ"]}>
+        <CustomerListView customers={[customer]} scores={new Map()} loading={false} isError={false} onRetry={vi.fn()} total={1} isCarteira={false} onSelect={vi.fn()} hasNextPage={false} isFetchingNextPage={false} onLoadMore={vi.fn()} buscaNoServidor />
+      </MemoryRouter>,
+    );
+    expect(screen.getByText("Marcenaria Alfa")).toBeTruthy();
+    expect(screen.getByText("Todos os resultados da busca carregados (1)")).toBeTruthy();
+  });
+
+  it("carteira: busca local também casa telefone", () => {
+    render(
+      <MemoryRouter initialEntries={["/admin/customers?search=11999"]}>
+        <CustomerListView customers={[customer]} scores={new Map()} loading={false} isError={false} onRetry={vi.fn()} total={1} isCarteira onSelect={vi.fn()} hasNextPage={false} isFetchingNextPage={false} onLoadMore={vi.fn()} />
+      </MemoryRouter>,
+    );
+    expect(screen.getByText("Marcenaria Alfa")).toBeTruthy();
+  });
+
+  it("filtro sem resultado com páginas pendentes não afirma 'Nenhum cliente'", () => {
+    render(
+      <MemoryRouter initialEntries={["/admin/customers?health=critico"]}>
+        <CustomerListView customers={[customer]} scores={new Map([["c1", score]])} loading={false} isError={false} onRetry={vi.fn()} total={5665} isCarteira={false} onSelect={vi.fn()} hasNextPage isFetchingNextPage={false} onLoadMore={vi.fn()} />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByText("Nenhum cliente com esses filtros")).toBeNull();
+    expect(screen.getByText("Nenhum cliente nas páginas carregadas até agora")).toBeTruthy();
+  });
 });
