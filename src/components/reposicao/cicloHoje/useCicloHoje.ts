@@ -104,7 +104,7 @@ export function useCicloHoje({ user, reviewMode, filteredItems, setFilters }: Us
       // a edge/Browserless em paralelo. Best-effort por item: um erro não aborta os demais.
       // Apura por `tipo`, NÃO por `r.ok`: aprovar=disparar significa que um pedido pode
       // aprovar e o disparo falhar (best-effort) — `{ok:true, tipo:'warning'}` (edge não saiu;
-      // rede de segurança assume) ou `{ok:true, tipo:'error'}` (edge retornou 200 com falha
+      // fica p/ o botão "Disparar") ou `{ok:true, tipo:'error'}` (edge retornou 200 com falha
       // síncrona do Omie → o pedido fica `falha_envio` na lista). Contar isso como
       // "disparado" no resumo enganaria o operador no money-path.
       let disparados = 0;
@@ -114,7 +114,7 @@ export function useCicloHoje({ user, reviewMode, filteredItems, setFilters }: Us
         try {
           const r = await aprovarEDisparar({ pedidoId: id, empresa: EMPRESA, usuario: who });
           if (!r.ok || r.tipo === "error") comErro += 1;
-          else if (r.tipo === "warning") comAviso += 1; // aprovado; disparo ficou p/ a rede de segurança
+          else if (r.tipo === "warning") comAviso += 1; // aprovado; disparo não saiu (portal fechado ou edge falhou)
           else disparados += 1; // success / info (disparado ou nada a disparar)
         } catch {
           comErro += 1;

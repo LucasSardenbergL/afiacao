@@ -8,6 +8,7 @@ import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import { hojeSP } from "../_shared/hoje-sp.ts";
 import { dataPrevisaoOmie } from "./previsao.ts";
+import { MENSAGEM_PORTAL_FECHADO, portalSayerlackFechado } from "./janela-portal.ts";
 import { montarProdutosIncluir } from "./produto-po.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import {
@@ -297,6 +298,8 @@ interface ProcessResult {
   split_total?: number | null;
   // Barrado pelo gate de mínimo de faturamento — benigno, não dispara o e-mail de problema.
   gate_minimo?: boolean;
+  // Desfecho benigno explicado (ex.: portal Sayerlack fora do ar no fim de semana).
+  aviso?: string;
 }
 
 // STATUS_FINAL_SUCESSO (allowlist do que foi ao Omie e ficou REGISTRADO) e STATUS_FINAL_PROBLEMA
@@ -421,7 +424,8 @@ function overridePermitidoNoModo(pedidoId: number | null | undefined): boolean {
 type PortalDispatchResult =
   | { state: "already_sent"; protocolo: string }
   | { state: "queued"; accepted: boolean }
-  | { state: "needs_reconciliation"; status: string };
+  | { state: "needs_reconciliation"; status: string }
+  | { state: "portal_fechado" };
 
 function isSayerlackOben(pedido: PedidoRow): boolean {
   return (
@@ -627,6 +631,14 @@ async function iniciarEnvioPortalSayerlack(
   if (statusPortalAtual === "enviando_portal") {
     console.warn(`[disparar-pedidos] Pedido ${pedidoId}: já enviando_portal — não re-enfileirado`);
     return { state: "queued", accepted: true };
+  }
+
+  // Portal fora do ar (sábado 12h → segunda 6h, SP): não toca na linha — nem pré-claim, nem
+  // tentativa. Toda origem passa por aqui (botão, retry-órfãos */15, conciliação); o retry
+  // repega sozinho a partir de segunda 06:00, o pedido manual o founder dispara de novo.
+  if (portalSayerlackFechado(new Date())) {
+    console.warn(`[disparar-pedidos] Pedido ${pedidoId}: portal Sayerlack fora do ar — não enviado`);
+    return { state: "portal_fechado" };
   }
 
   // Pré-claim do portal via RPC SQL pura — NÃO via PostgREST .update().select():
@@ -1094,6 +1106,13 @@ async function processarPedido(
           .eq("id", pedido.id);
         result.status_final = "aguardando_portal_sayerlack";
         result.canal = "portal_sayerlack";
+        return result;
+      }
+      if (portal.state === "portal_fechado") {
+        // Sem write: a linha fica exatamente como estava (status, status_envio_portal, tentativas).
+        result.status_final = "portal_fechado";
+        result.canal = "portal_sayerlack";
+        result.aviso = MENSAGEM_PORTAL_FECHADO;
         return result;
       }
       if (portal.state === "needs_reconciliation") {
@@ -2078,6 +2097,7 @@ Deno.serve(async (req: Request) => {
 
     const falhas = resultados.filter((r) => r.status_final === "falha_envio").length;
     const aguardandoPortal = resultados.filter((r) => r.status_final === "aguardando_portal_sayerlack").length;
+    const portalFechado = resultados.filter((r) => r.status_final === "portal_fechado").length;
     const disparadosOk = resultados.filter((r) => STATUS_FINAL_SUCESSO.has(r.status_final)).length;
     // Desfechos que NÃO são falha de envio e também NÃO são compra registrada. Contados à parte
     // porque `upserts_count` os somava como sucesso (achado Codex): `nao_disparado` (o claim
@@ -2126,6 +2146,7 @@ Deno.serve(async (req: Request) => {
         aprovados: aprovados.length,
         disparados: disparadosOk,
         aguardando_portal_sayerlack: aguardandoPortal,
+        portal_fechado: portalFechado,
         falhas,
         expirados,
         email_status: emailStatus,
