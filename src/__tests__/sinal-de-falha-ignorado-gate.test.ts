@@ -49,7 +49,7 @@ function listarFontes(dir: string, acc: string[] = []): string[] {
   return acc;
 }
 
-const fontes = () => {
+function lerFontes() {
   const arquivos: { arquivo: string; conteudo: string }[] = [];
   for (const dir of DIRS) {
     for (const arquivo of listarFontes(dir)) {
@@ -57,7 +57,7 @@ const fontes = () => {
     }
   }
   return arquivos;
-};
+}
 
 function contarPorArquivo(hooks: Map<string, HookComSinal>): Map<string, number> {
   const mapa = new Map<string, number>();
@@ -68,17 +68,26 @@ function contarPorArquivo(hooks: Map<string, HookComSinal>): Map<string, number>
   return mapa;
 }
 
-// Fronteira medida em 2026-10-09 (16 sítios / 15 arquivos). Triagem money-path no PR.
+// MEMOIZADO: cada passo custa um parse TS de ~1.1k arquivos. Sem cache os 3 testes pesados
+// faziam 5 varreduras da árvore, e o arquivo estourou o `testTimeout: 20000` quando a suíte
+// inteira concorre por CPU (medido em 2026-10-10: 2 vermelhos por TIMEOUT, não por lógica).
+// A árvore não muda durante a run, então uma leitura serve aos três.
+let cacheFontes: ReturnType<typeof lerFontes> | null = null;
+const fontes = () => (cacheFontes ??= lerFontes());
+
+let cacheHooks: Map<string, HookComSinal> | null = null;
+const hooksDaArvore = () => (cacheHooks ??= mapearHooksComSinal(fontes()));
+
+let cacheContagem: Map<string, number> | null = null;
+const contagemDaArvore = () => (cacheContagem ??= contarPorArquivo(hooksDaArvore()));
+
+// Fronteira medida em 2026-10-09 (16 sítios / 15 arquivos), encolhida pela erradicação dos
+// money-path: o domínio de reposição saiu em 2026-10-10 (5 sítios / 5 arquivos). Resta 11.
 const DIVIDA: ReadonlyMap<string, number> = new Map([
   ['src/components/RequireCaca.tsx', 1],
   ['src/components/dashboard/CommercialDashboard.tsx', 1],
   ['src/components/farmer/locc/OverviewTab.tsx', 1],
-  ['src/components/reposicao/BaixoGiroBadge.tsx', 1],
-  ['src/components/reposicao/EtapaChecklist.tsx', 1],
-  ['src/components/reposicao/EtapasGrid.tsx', 1],
-  ['src/components/reposicao/ReposicaoSessionLayout.tsx', 1],
   ['src/hooks/useRoutePlanner.ts', 1],
-  ['src/pages/AdminReposicaoBaixoGiro.tsx', 1],
   ['src/pages/FarmerCalls.tsx', 2],
   ['src/pages/FarmerGovernance.tsx', 1],
   ['src/pages/FinanceiroSync.tsx', 1],
@@ -86,6 +95,27 @@ const DIVIDA: ReadonlyMap<string, number> = new Map([
   ['src/pages/SavingsDashboard.tsx', 1],
   ['src/pages/UnifiedOrder.tsx', 1],
 ]);
+
+/**
+ * Sítios JÁ quitados, com o PR que os quitou. A `DIVIDA` acima só encolhe; esta lista é o
+ * contrapeso — ela só CRESCE, e cada linha é um controle de regressão na ÁRVORE REAL (os pares
+ * inline provam a assinatura; estes provam o fix). Sem eles, um revert silencioso voltaria a
+ * caber na baseline antiga sem nada ficar vermelho.
+ */
+const QUITADOS: ReadonlyArray<[string, string]> = [
+  ['src/pages/CarteiraBoard.tsx', '#2894'],
+  ['src/pages/FarmerLOCC.tsx', '#2894'],
+  ['src/components/reposicao/ReposicaoSessionLayout.tsx', 'reposição'],
+  ['src/components/reposicao/EtapasGrid.tsx', 'reposição'],
+  ['src/components/reposicao/EtapaChecklist.tsx', 'reposição'],
+  ['src/components/reposicao/BaixoGiroBadge.tsx', 'reposição'],
+  ['src/pages/AdminReposicaoBaixoGiro.tsx', 'reposição'],
+  // Nunca esteve na DIVIDA porque o detector NÃO O VIA: o consumo passava pelo wrapper
+  // `useCurrentStep`, cujo `return { ...q, data: … }` com SPREAD não registra campo de sinal
+  // (só propriedade NOMEADA entra no mapa). O wrapper foi aposentado e o consumo é direto,
+  // então o sítio nasce VIGIADO — e esta linha dá o vermelho nomeado se o fix for desfeito.
+  ['src/pages/AdminReposicaoCockpit.tsx', 'reposição (cegueira do spread)'],
+];
 
 // ── Controles de calibração ───────────────────────────────────────────────────────────
 // A FORMA do CarteiraBoard pré-fix (HEAD~ deste PR). Assinatura que não casa isto é varredura
@@ -124,7 +154,7 @@ describe('gate: sinal de falha exposto e ignorado', () => {
   it('sentinela: o walker enxerga hooks de verdade na árvore', () => {
     // Sem isto, um bug que fizesse `mapearHooksComSinal` devolver vazio deixaria TODA asserção
     // de ausência abaixo verde por vacuidade — o gate viraria decoração.
-    const hooks = mapearHooksComSinal(fontes());
+    const hooks = hooksDaArvore();
     expect(hooks.size, 'nenhum hook com sinal encontrado — o walker não andou').toBeGreaterThan(10);
     expect(hooks.get('useFarmerScoring')?.campo, 'o hook-mãe da classe tem de ser mapeado').toBe('erro');
   });
@@ -152,7 +182,7 @@ describe('gate: sinal de falha exposto e ignorado', () => {
   });
 
   it('nenhum sítio novo além da dívida baselinada', () => {
-    const atual = contarPorArquivo(mapearHooksComSinal(fontes()));
+    const atual = contagemDaArvore();
 
     const reintroducoes: string[] = [];
     for (const [arquivo, n] of atual) {
@@ -177,10 +207,20 @@ describe('gate: sinal de falha exposto e ignorado', () => {
     ).toEqual([]);
   });
 
-  it('os dois consumidores deste PR saíram da dívida e não voltam', () => {
-    // Controle de regressão na ÁRVORE REAL (o par inline prova a assinatura; este prova o fix).
-    const atual = contarPorArquivo(mapearHooksComSinal(fontes()));
-    expect(atual.get('src/pages/CarteiraBoard.tsx') ?? 0, 'CarteiraBoard regrediu').toBe(0);
-    expect(atual.get('src/pages/FarmerLOCC.tsx') ?? 0, 'FarmerLOCC regrediu').toBe(0);
+  it('os consumidores já quitados não voltam para a dívida', () => {
+    const atual = contagemDaArvore();
+    const regressoes = QUITADOS.filter(([arquivo]) => (atual.get(arquivo) ?? 0) > 0)
+      .map(([arquivo, pr]) => `${arquivo} (quitado em ${pr})`);
+    expect(
+      regressoes,
+      'consumidor já quitado voltou a ignorar o sinal do hook — o fix foi desfeito',
+    ).toEqual([]);
+  });
+
+  it('nenhum arquivo aparece ao mesmo tempo na DIVIDA e nos QUITADOS', () => {
+    // Guard da própria contabilidade: um arquivo nos dois lados tornaria o controle de
+    // regressão satisfeito pela baseline (sempre verde) e a quitação, inverificável.
+    const nosDois = QUITADOS.map(([a]) => a).filter((a) => DIVIDA.has(a));
+    expect(nosDois, 'arquivo em DIVIDA e QUITADOS ao mesmo tempo').toEqual([]);
   });
 });

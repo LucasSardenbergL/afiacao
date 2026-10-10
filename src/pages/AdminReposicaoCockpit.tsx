@@ -17,8 +17,8 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useRegisterShortcuts } from "@/components/shell/ShortcutsRegistry";
 import {
   REPOSICAO_EMPRESA,
-  useCurrentStep,
   useItensDoDia,
+  useReposicaoStatus,
 } from "@/hooks/useReposicaoSessao";
 import { downloadCsv, formatBRL, formatDate, logAudit } from "@/lib/reposicao";
 import { createLeadingTrailingThrottle } from "@/lib/leading-trailing-throttle";
@@ -39,7 +39,13 @@ export default function AdminReposicaoCockpit() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
 
-  const { data: currentStep = 3 } = useCurrentStep();
+  // `useCurrentStep()` com `= 3` na destruturação fabricava a etapa DUAS vezes (o wrapper já
+  // devolvia 3 por default) — e o `ContinuarBanner` dizia "Você está na etapa 3: Pedidos" sobre
+  // um ciclo que nunca foi lido, com o botão "Continuar" levando o comprador para lá. §7 do
+  // money-path: sem leitura não há etapa a afirmar. O aviso com motivo + retry é o do
+  // `EtapasGrid` logo abaixo (a casca já dá a linha fina) — não um terceiro cartão igual.
+  const { data: statusCiclo, isError: cicloFalhou } = useReposicaoStatus();
+  const currentStep = statusCiclo?.current ?? null;
   const { data: itensDia = [] } = useItensDoDia();
 
   // Legacy ?tab= deep-links → canonical /sessao/* routes
@@ -331,7 +337,7 @@ export default function AdminReposicaoCockpit() {
         </div>
       </header>
 
-      <ContinuarBanner currentStep={currentStep} />
+      {currentStep != null && <ContinuarBanner currentStep={currentStep} stale={cicloFalhou} />}
 
       <DataHealthBanner source="reposicao_sugestoes" />
       <DataHealthBanner source="estoque_inventario" />

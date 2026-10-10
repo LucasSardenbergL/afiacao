@@ -64,16 +64,6 @@ export type ReposicaoStatus = {
   pedidosDisparados: number;
 };
 
-const DEFAULT: ReposicaoStatus = {
-  current: 3,
-  oportunidadesCount: 0,
-  pedidosTotal: 0,
-  pedidosPendentes: 0,
-  pedidosBloqueados: 0,
-  pedidosAprovados: 0,
-  pedidosDisparados: 0,
-};
-
 /**
  * Pure derivation of the "current step" from cycle metrics. Extracted so it can
  * be unit-tested independently of the Supabase query.
@@ -180,7 +170,11 @@ export function useReposicaoStatus() {
   }, [pedidosQ.data, oportQ.data]);
 
   // Loading/erro seguem os PEDIDOS (eixo do cockpit); o count degrada sem bloquear.
-  return { data, isLoading: pedidosQ.isLoading, isError: pedidosQ.isError };
+  // `refetch` recarrega AS DUAS leituras: é o retry que o §7 do money-path exige na tela
+  // ("falha → retry → último dado bom + aviso de stale"), e sem ele o operador fica preso
+  // no estado de erro — era o que faltava para o layout/grid/checklist pararem de mentir.
+  const refetch = () => Promise.all([oportQ.refetch(), pedidosQ.refetch()]);
+  return { data, isLoading: pedidosQ.isLoading, isError: pedidosQ.isError, refetch };
 }
 
 /**
@@ -222,8 +216,10 @@ export function getStepLocks(status: ReposicaoStatus | undefined): StepLock[] {
   ];
 }
 
-// Backwards-compatible thin wrapper returning just the current step number.
-export function useCurrentStep() {
-  const q = useReposicaoStatus();
-  return { ...q, data: q.data?.current ?? DEFAULT.current };
-}
+// `useCurrentStep` foi APOSENTADO (2026-10-10). Era um wrapper de 2 linhas que fabricava a
+// etapa (`?? DEFAULT.current`, = 3) sob falha de leitura — e, pior, o `return { ...q, … }`
+// com SPREAD escondia o sítio do detector `sinal-de-falha-ignorado`: ele só reconhece campo
+// de sinal em propriedade NOMEADA, então o wrapper nunca entrou no mapa de hooks e o único
+// consumidor (AdminReposicaoCockpit) não contava como dívida. Consumir `useReposicaoStatus`
+// direto devolve o sítio à vigilância do gate — e mata o default duplicado, porque a página
+// ainda repetia `= 3` na própria destruturação.
