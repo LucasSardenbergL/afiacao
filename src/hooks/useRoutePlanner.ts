@@ -189,7 +189,14 @@ export function useRoutePlanner() {
     [],
   );
 
-  const { agenda, clientScores, loading: scoringLoading } = useFarmerScoring();
+  // `erro` desestruturado de propósito e REPASSADO adiante (abaixo, no return): sob falha de
+  // leitura `agenda === []` e `loadCommercialStops` monta o roteiro SEM a dimensão carteira —
+  // dano de ESCOPO, não de total (a lição do corte por ranking em
+  // docs/historico/roteirizador-corte-cidades.md). O nome do campo exposto é `erro` de
+  // propósito: é o que faz o gate `sinal-de-falha-ignorado` VER a página como consumidora e
+  // exigir que ela decida o que mostrar sob falha, em vez de confiar em comentário.
+  const { agenda, clientScores, loading: scoringLoading, erro: erroScoring, recalculate } =
+    useFarmerScoring();
 
   useEffect(() => {
     if (!authLoading && !isStaff) {
@@ -1409,6 +1416,9 @@ export function useRoutePlanner() {
     loading,
     geocodingPendentes,
     scoringLoading,
+    /** Falha da leitura da CARTEIRA (scoring). Sem ela o roteiro comercial sai parcial e calado. */
+    erro: erroScoring,
+    recarregarCarteira: recalculate,
     // mode + period
     planningMode,
     setPlanningMode,

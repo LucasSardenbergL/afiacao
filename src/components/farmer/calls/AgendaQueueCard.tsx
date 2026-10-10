@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { PhoneCall, Loader2, CheckCircle, Phone, FileText } from 'lucide-react';
+import { PhoneCall, Loader2, CheckCircle, Phone, FileText, AlertTriangle, RefreshCw } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Dialer } from '@/components/call/Dialer';
 import type { AgendaItem, ClientScore } from '@/hooks/useFarmerScoring';
@@ -13,14 +13,26 @@ import { AGENDA_TYPE_META } from './types';
 type DialerEndData = { duration: number; state: string; audioLink: string | null };
 
 export function AgendaQueueCard({
-  agenda, clientScores, agendaLoading, onCallEnd, onRegister,
+  agenda, clientScores, agendaLoading, erro, onRetry, onCallEnd, onRegister,
 }: {
   agenda: AgendaItem[];
   clientScores: ClientScore[];
   agendaLoading: boolean;
+  /**
+   * Falha da leitura do scoring (`useFarmerScoring.erro`). Sem ela, `agenda === []` por falha de
+   * transporte caía no empty state de SUCESSO abaixo — um check verde dizendo "Nenhuma ligação
+   * pendente na agenda. Bom trabalho!". Parabenização FABRICADA, na tela cujo propósito é a
+   * fila de ligações (§7 do money-path: nunca zero fabricado; aqui, nunca um elogio fabricado).
+   */
+  erro?: string | null;
+  onRetry?: () => void;
   onCallEnd: (item: AgendaItem, phone: string, data: DialerEndData) => void;
   onRegister: (item: AgendaItem, phone: string | null | undefined) => void;
 }) {
+  // Com fila em mãos o erro é de RELEITURA: mantém a fila e avisa que pode estar velha
+  // (último dado bom + aviso de stale). Sem fila, "indisponível com o motivo" + retry.
+  const semAgendaLida = !!erro && agenda.length === 0;
+  const agendaPodeEstarVelha = !!erro && agenda.length > 0;
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -30,8 +42,41 @@ export function AgendaQueueCard({
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-2">
+        {agendaPodeEstarVelha && (
+          <div
+            role="alert"
+            data-testid="aviso-agenda-stale"
+            className="flex items-center gap-2 rounded-md border border-status-warning/30 bg-status-warning/5 px-3 py-2 text-xs text-status-warning"
+          >
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+            <span className="min-w-0">A última leitura da carteira falhou — a fila abaixo pode estar desatualizada.</span>
+            {onRetry && (
+              <Button size="sm" variant="ghost" className="ml-auto h-6 px-2 text-xs" onClick={onRetry}>
+                <RefreshCw className="h-3 w-3 mr-1" />
+                Tentar novamente
+              </Button>
+            )}
+          </div>
+        )}
         {agendaLoading ? (
           <div className="flex justify-center py-6"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>
+        ) : semAgendaLida ? (
+          <div
+            role="alert"
+            data-testid="aviso-agenda"
+            className="rounded-md border border-status-error/30 bg-status-error/5 p-3 space-y-2"
+          >
+            <p className="text-sm">
+              Não consegui ler a sua carteira — a fila de ligações fica indisponível até a
+              leitura voltar. Isto NÃO quer dizer que não há ninguém para ligar.
+            </p>
+            {onRetry && (
+              <Button size="sm" variant="outline" onClick={onRetry}>
+                <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+                Tentar novamente
+              </Button>
+            )}
+          </div>
         ) : agenda.length === 0 ? (
           <div className="text-center py-6">
             <CheckCircle className="w-6 h-6 mx-auto mb-2 text-primary/60" />

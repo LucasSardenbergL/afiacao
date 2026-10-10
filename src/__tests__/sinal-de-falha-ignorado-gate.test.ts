@@ -82,13 +82,11 @@ let cacheContagem: Map<string, number> | null = null;
 const contagemDaArvore = () => (cacheContagem ??= contarPorArquivo(hooksDaArvore()));
 
 // Fronteira medida em 2026-10-09 (16 sítios / 15 arquivos), encolhida pela erradicação dos
-// money-path: reposição (5 sítios) e preço/pedido (1) saíram em 2026-10-10. Restam 10.
+// money-path: reposição (5 sítios), preço/pedido (1) e carteira/rota (4) saíram em 2026-10-10.
+// Restam 6, e 5 deles são os periféricos + o `FarmerGovernance`, cujo furo é DO HOOK.
 const DIVIDA: ReadonlyMap<string, number> = new Map([
   ['src/components/RequireCaca.tsx', 1],
   ['src/components/dashboard/CommercialDashboard.tsx', 1],
-  ['src/components/farmer/locc/OverviewTab.tsx', 1],
-  ['src/hooks/useRoutePlanner.ts', 1],
-  ['src/pages/FarmerCalls.tsx', 2],
   ['src/pages/FarmerGovernance.tsx', 1],
   ['src/pages/FinanceiroSync.tsx', 1],
   ['src/pages/Index.tsx', 1],
@@ -115,6 +113,14 @@ const QUITADOS: ReadonlyArray<[string, string]> = [
   // então o sítio nasce VIGIADO — e esta linha dá o vermelho nomeado se o fix for desfeito.
   ['src/pages/AdminReposicaoCockpit.tsx', 'reposição (cegueira do spread)'],
   ['src/pages/UnifiedOrder.tsx', 'preço/pedido'],
+  ['src/pages/FarmerCalls.tsx', 'carteira/rota'],
+  ['src/hooks/useRoutePlanner.ts', 'carteira/rota'],
+  // O consumo morreu junto com a contagem fabricada: a aba tinha a sua própria instância do
+  // motor de cross-sell e NUNCA a calculava, então o número era zero constante, não zero por
+  // falha. Fica aqui para que reintroduzir o `useCrossSellEngine()` sem ler o `erro` reprove.
+  ['src/components/farmer/locc/OverviewTab.tsx', 'carteira/rota'],
+  // Nasce vigiado: `useRoutePlanner` passou a EXPOR `erro`, então o gate agora vê a página.
+  ['src/pages/AdminRoutePlanner.tsx', 'carteira/rota'],
 ];
 
 // ── Controles de calibração ───────────────────────────────────────────────────────────
