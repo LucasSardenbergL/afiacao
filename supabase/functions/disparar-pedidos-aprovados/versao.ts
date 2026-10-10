@@ -50,7 +50,7 @@ export const respostaSonda = criarRespostaSonda("disparar-pedidos-aprovados");
  * nValorIpi, sem ela o PO de sempre. A leitura dos itens passou a `select("*")` — sem a migration 20261006120000 as
  * colunas só não vêm. Nenhuma pré-condição de banco para o comportamento de hoje.
  */
-export const VERSAO = "v1.5-ipi-por-item";
+export const VERSAO = "v1.6-portal-fechado-fim-de-semana";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO = "esta edge cria pedido de compra REAL no Omie, inclusive em dry_run";
