@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 592
+-- Total de custom migrations: 594
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -653,7 +653,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261008010000', 'cron_estoque_diario_fora_do_minuto_00', '20261008010000_cron_estoque_diario_fora_do_minuto_00.sql'),
   ('20261009120000', 'atp_fase3_1_elo_pid', '20261009120000_atp_fase3_1_elo_pid.sql'),
   ('20261009120000', 'check_finitude_teto_faixa', '20261009120000_check_finitude_teto_faixa.sql'),
-  ('20261009180000', 'product_costs_cmc_ausente_null', '20261009180000_product_costs_cmc_ausente_null.sql')
+  ('20261009180000', 'product_costs_cmc_ausente_null', '20261009180000_product_costs_cmc_ausente_null.sql'),
+  ('20261009194000', 'motor_unidades_concentrado_wp', '20261009194000_motor_unidades_concentrado_wp.sql'),
+  ('20261009220000', 'margem_cliente_janela_12m', '20261009220000_margem_cliente_janela_12m.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2566,7 +2568,10 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('atp_fase3_1_elo_pid', 'function', 'public', 'atp_reservas_pendentes', ''),
   ('atp_fase3_1_elo_pid', 'function', 'public', 'atp_confirmar_pv', ''),
   ('atp_fase3_1_elo_pid', 'index', 'public', 'idx_estoque_reservas_pv_ativa', 'estoque_reservas'),
-  ('atp_fase3_1_elo_pid', 'trigger', 'public', 'trg_estoque_reservas_pv_write_once', 'estoque_reservas')
+  ('atp_fase3_1_elo_pid', 'trigger', 'public', 'trg_estoque_reservas_pv_write_once', 'estoque_reservas'),
+  ('motor_unidades_concentrado_wp', 'function', 'public', 'reposicao_sincronizar_embalagem_wp', ''),
+  ('motor_unidades_concentrado_wp', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
+  ('margem_cliente_janela_12m', 'function', 'private', 'margem_cliente_agregada', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4527,7 +4532,10 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('atp_fase3_1_elo_pid', 'function', 'public', 'atp_reservas_pendentes', ''),
   ('atp_fase3_1_elo_pid', 'function', 'public', 'atp_confirmar_pv', ''),
   ('atp_fase3_1_elo_pid', 'index', 'public', 'idx_estoque_reservas_pv_ativa', 'estoque_reservas'),
-  ('atp_fase3_1_elo_pid', 'trigger', 'public', 'trg_estoque_reservas_pv_write_once', 'estoque_reservas')
+  ('atp_fase3_1_elo_pid', 'trigger', 'public', 'trg_estoque_reservas_pv_write_once', 'estoque_reservas'),
+  ('motor_unidades_concentrado_wp', 'function', 'public', 'reposicao_sincronizar_embalagem_wp', ''),
+  ('motor_unidades_concentrado_wp', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
+  ('margem_cliente_janela_12m', 'function', 'private', 'margem_cliente_agregada', '')
 )
 SELECT
   e.migration,
@@ -4631,6 +4639,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'gerar_pedidos_sugeridos_ciclo', 28, '20260925210332_reposicao_em_transito_guarda_fantasma_null_safe.sql', '500ea75a69de21db5e08bbfa346f771a'),
   ('public', 'gerar_pedidos_sugeridos_ciclo', 29, '20260925225004_reposicao_em_transito_simulado_e_join_grupo_null_safe.sql', '398616d7fde6f91b15fd32874bcfc50b'),
   ('public', 'gerar_pedidos_sugeridos_ciclo', 30, '20261001023000_hoje_sp_familia_data_ciclo.sql', '722f2c1f8113e32ec38865428f6f10f2'),
+  ('public', 'gerar_pedidos_sugeridos_ciclo', 31, '20261009194000_motor_unidades_concentrado_wp.sql', '878ee028877451245d7e7ebd07ce5dec'),
   ('public', 'envio_portal_lock_candidatos', 1, '20260430005120_ac9adac9-3575-4449-9703-2f88ba333c3f.sql', 'bcdd860ddf768655ce2a5d72fe0e02a7'),
   ('public', 'envio_portal_lock_candidatos', 2, '20260512101121_a96fa007-f688-4c3a-8cd9-43f9d88e5505.sql', 'fd19eefabbdaf5c42ec7d9b8e6a38e7e'),
   ('public', 'envio_portal_lock_candidatos', 3, '20260515010000_99661119-2843-4684-9dba-d21d55bf2ab9.sql', 'b116b7039ef4387546d2b86957b18c50'),
@@ -4982,6 +4991,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('private', 'margem_cliente_agregada', 1, '20260726150000_margem_cliente_helper_compartilhado.sql', 'a4f8e8f9189a9902d8375a1836f75d15'),
   ('private', 'margem_cliente_agregada', 2, '20260726160000_margem_reconciliacao_universo_unico.sql', '56549da47ed4091706a5fdfc2df82037'),
   ('private', 'margem_cliente_agregada', 3, '20260905225613_preco_ausente_nao_e_zero.sql', '4f4f7d8b17ed930e006231a287e9d85a'),
+  ('private', 'margem_cliente_agregada', 4, '20261009220000_margem_cliente_janela_12m.sql', '9b441ed8dda18973dea8097afa96754b'),
   ('public', 'get_carteira_margem_faixa', 1, '20260726170000_fu4f_fase3_carteira_margem_faixa.sql', '075209b91d13be52c58220f6ddc88521'),
   ('public', 'get_carteira_margem_faixa', 2, '20260813234112_carteira_margem_faixa_motivo_gate_custo.sql', '169677feb2e686d3e73ec31426c608b6'),
   ('public', 'farmer_association_rules_substituir', 1, '20260729120000_farmer_association_rules_substituicao_atomica.sql', '248a95f8d50d51f14599d4f9ac5158db'),

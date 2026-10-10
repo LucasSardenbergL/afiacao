@@ -65,7 +65,7 @@ destravam 2 clientes.** Não justifica mutirão.
 
 ## Achado colateral mais caro que a lacuna de cadastro
 
-A `private.margem_cliente_agregada()` **não tem janela temporal** — agrega lifetime, misturando
+A `private.margem_cliente_agregada()` **não tinha janela temporal** (até a decisão de 2026-10-09, abaixo) — agregava lifetime, misturando
 preço de 2022 com 2026. Dos 1.069 clientes com margem, a conta cobre só **58% da receita deles**;
 **415 (39%) têm mais da metade da receita fora da conta**. A margem de 53,49% não está errada, mas
 descreve um mix parcial e envelhecido.
@@ -79,6 +79,42 @@ despenca; escolher é decisão de produto, não técnica):
 | 24 meses | 671 | 88,2% |
 | 12 meses | 530 | 94,9% |
 | 6 meses | 414 | 98,6% |
+
+### ✅ Decisão (2026-10-09): janela de 12 meses móveis
+
+O founder delegou e a decisão foi tomada: **a margem por cliente considera SÓ itens de pedidos dos
+últimos 12 meses móveis** (`AND so.created_at >= now() - interval '12 months'` no CTE `itens` de
+`private.margem_cliente_agregada()`; migration `20261009220000_margem_cliente_janela_12m.sql`, prova
+`db/test-margem-cliente-janela-12m.sh` no núcleo de CI). Nenhuma outra regra mudou (denylist de status,
+`deleted_at`, `excluir_da_carteira`, as 3 pernas computáveis, custo `cost_final`→`cost_price` só se > 0
+e finito).
+
+Medido em prod (psql-ro, 2026-10-09), mesmo universo da função:
+
+| Janela | Clientes c/ margem | Receita computada | Margem ponderada |
+|---|---:|---:|---:|
+| sem janela (até 2026-10-09) | 1.082 | R$ 17,35M | 40,49% |
+| 24 meses | 653 | R$ 10,98M | 43,34% |
+| **12 meses (escolhida)** | **502** | **R$ 5,94M** | **45,47%** |
+| 6 meses | 385 | R$ 3,14M | 48,67% |
+
+**Por quê.** `product_costs` é um retrato do custo ATUAL; aplicá-lo a preço de venda de 2020–2024
+(`sales_orders` vai de 2020-04-08 a hoje) deprime a margem — ~5 p.p. de viés para baixo no agregado.
+12m equilibra precisão e cobertura; 6m é volátil e cobre pouco.
+
+**`created_at` é a data do pedido**, não do import: 0 de 31.783 pedidos divergem > 3 dias de
+`order_date_kpi` (psql-ro, 2026-10-09).
+
+**Os ~580 que perdem margem** (578 em `farmer_client_scores` com margem e > 365 dias sem compra) não
+compraram item com custo nos últimos 12 meses. Ficam **NULL** (ausente ≠ zero), e a tela diz o
+motivo: o Customer 360 mostra "margem: sem compra nos últimos 12 meses" (lido de
+`days_since_last_purchase`, medido), e toda legenda de margem cita a janela — `legendaCobertura`
+("… clientes c/ margem (últimos 12 meses)"), `legendaCoberturaItens` e a dica
+`DICA_COBERTURA_LINHAS` (`src/lib/format.ts` · `src/lib/scoring/margin.ts`).
+
+**Quando aparece na tela.** A margem persistida em `farmer_client_scores` só se ajusta no próximo
+cron do `calculate-scores` (06:00/06:25 UTC) depois do apply — sem deploy de edge. As RPCs ao vivo
+(`get_carteira_margem_faixa`, `get_customer_margin_summary`) mudam no instante do apply.
 
 ### A saída barata (conserto de código de maior alavanca, aditivo)
 

@@ -1,5 +1,3 @@
-import { JANELA_MARGEM_ROTULO } from '@/lib/format';
-
 /**
  * Margem utilizável, ou `null` se desconhecida.
  *
@@ -97,6 +95,13 @@ export function coberturaMargem(valores: Iterable<unknown>): CoberturaMargem {
   }
   return { comMargem, total };
 }
+
+/**
+ * Janela da margem (ver `JANELA_MARGEM_ROTULO` em `@/lib/format`, de quem este é espelho). Não
+ * importa de lá: `format` usa DOM, e `scripts/` (paridade, impacto do gate g) importam este arquivo
+ * e são type-checados sem `lib: dom`. O teste de `legendaCobertura` trava o texto.
+ */
+const JANELA_MARGEM_ROTULO = 'últimos 12 meses';
 
 /**
  * Legenda pronta para acompanhar o KPI. Sem isso, quem lê assume "todos os clientes" — e, desde a
