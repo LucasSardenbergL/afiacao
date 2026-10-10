@@ -1,5 +1,6 @@
 import { syncOrderToOmie } from '@/services/omieService';
 import { logger } from '@/lib/logger';
+import { mensagemDoErroEdge } from '@/lib/invoke-function';
 import { DELIVERY_FEES } from '@/types';
 import type {
   SubmitOrderParams,
@@ -331,7 +332,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
           }
         } else {
           results.push('PV Oben (pendente ERP)');
-          errors.push({ step: 'sync_oben_omie', message: omieError.message || 'Falha ao sincronizar Oben com Omie' });
+          errors.push({ step: 'sync_oben_omie', message: (await mensagemDoErroEdge(omieError)) || omieError.message || 'Falha ao sincronizar Oben com Omie' });
         }
       } catch (e: unknown) {
         const message = e instanceof Error ? e.message : 'Falha ao sincronizar Oben com Omie';
@@ -510,7 +511,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
           }
         } else {
           results.push('PV Colacor (pendente ERP)');
-          errors.push({ step: 'sync_colacor_omie', message: omieError.message || 'Falha ao sincronizar Colacor com Omie' });
+          errors.push({ step: 'sync_colacor_omie', message: (await mensagemDoErroEdge(omieError)) || omieError.message || 'Falha ao sincronizar Colacor com Omie' });
         }
       } catch (e: unknown) {
         const message = e instanceof Error ? e.message : 'Falha ao sincronizar Colacor com Omie';

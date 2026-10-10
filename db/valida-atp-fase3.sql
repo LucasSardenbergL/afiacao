@@ -205,9 +205,12 @@ WITH defs AS (
                    AND pg_get_constraintdef(oid) ~ 'omie_pedido_id IS NOT NULL')
 
   -- ══ FASE 3.3 — a reserva acompanha o PV reconciliado por duplicidade ══════
-  UNION ALL SELECT 48, '3.3 atp_confirmar_pv le os itens do PV reconciliado e ajusta a reserva',
-         (SELECT cpv ~ 'p_omie_response->>''reconciled''' AND cpv ~ 'pv_divergente'
-                 AND cpv ~ 'consulta,pedido_venda_produto,det' FROM defs)
+  -- Atesta a VERSÃO pelo md5 de corpo+atributos (Codex 3.3 P2: presença de texto
+  -- aprovava o ajuste inteiramente desligado — a sabotagem F32 passava aqui).
+  UNION ALL SELECT 48, '3.3 atp_confirmar_pv e EXATAMENTE o corpo entregue (md5 corpo+atributos)',
+         COALESCE((SELECT md5(p.prosrc || '|' || p.prosecdef::text || '|' || p.provolatile::text || '|' || COALESCE(p.proconfig::text, ''))
+                     FROM pg_proc p WHERE p.oid = to_regprocedure('public.atp_confirmar_pv(uuid,text,bigint,text,jsonb,jsonb)'))
+                  = '90a027c2041e20e8e4157c1efe21655f', false)
   -- a reserva criada pelo ajuste nasce SEM par e é carimbada depois (o trigger
   -- write-once recusa o par no INSERT): o INSERT vem ANTES do carimbo
   UNION ALL SELECT 49, '3.3 o ajuste roda ANTES do carimbo do par',
@@ -244,6 +247,7 @@ SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_constraint
        THEN 'FASE 3.2 APLICADA' ELSE 'FASE 3.2 NAO APLICADA (ou parcial)' END AS veredito_3_2;
 
 -- Veredito da 3.3 (linha própria)
-SELECT CASE WHEN COALESCE((SELECT prosrc ~ 'pv_divergente' FROM pg_proc
-                            WHERE oid = to_regprocedure('public.atp_confirmar_pv(uuid,text,bigint,text,jsonb,jsonb)')), false)
+SELECT CASE WHEN COALESCE((SELECT md5(p.prosrc || '|' || p.prosecdef::text || '|' || p.provolatile::text || '|' || COALESCE(p.proconfig::text, ''))
+                              FROM pg_proc p WHERE p.oid = to_regprocedure('public.atp_confirmar_pv(uuid,text,bigint,text,jsonb,jsonb)'))
+                           = '90a027c2041e20e8e4157c1efe21655f', false)
        THEN 'FASE 3.3 APLICADA' ELSE 'FASE 3.3 NAO APLICADA (ou parcial)' END AS veredito_3_3;

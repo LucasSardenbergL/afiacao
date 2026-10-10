@@ -443,9 +443,11 @@ falsifica MIG32 F31 "TRAVA volta a impor valor fixo por funcao (a da versao ante
 # F32 — o ajuste ao PV desligado (o write-back segue firmando o carrinho)
 falsifica MIG33 F32 "ajuste ao PV reconciliado desligado" \
   "  IF v_pv IS NOT NULL THEN
-    FOR v_aj IN" \
+    BEGIN
+      FOR v_aj IN" \
   "  IF false THEN
-    FOR v_aj IN" \
+    BEGIN
+      FOR v_aj IN" \
   "IF false THEN" \
   "D1 a reserva virou a do PV (qtd somada, SKU fora liberado, SKU do PV criado e firme)"
 
@@ -466,9 +468,9 @@ falsifica MIG33 F34 "quantidade do PV sem o teto do CHECK" \
 
 # F35 — sem a guarda de "um checkout com reserva viva": fabrica reserva sem checkout
 falsifica MIG33 F35 "ajuste sem reserva viva do pedido" \
-  "IF v_pv IS NOT NULL AND COALESCE(array_length(v_cks, 1), 0) <> 1 THEN" \
-  "IF false THEN" \
-  "IF false THEN" \
+  "OR COALESCE(array_length(v_cks_sob_lock, 1), 0) <> 1)" \
+  "OR false)" \
+  "v_cks_sob_lock IS DISTINCT FROM v_cks OR false)" \
   "D11 oben SEM reserva viva: nao FABRICA reserva a partir do PV"
 
 # F36 — o SKU que só o PV tem fica fora do lock
@@ -491,6 +493,32 @@ falsifica MIG33 F38 "envio normal tratado como reconciliado" \
   "v_reconciliado boolean := true;" \
   "v_reconciliado boolean := true;" \
   "D7 envio normal (sem reconciled): nao le itens, nao ajusta"
+
+# F40 — sem a subtransação: um erro no ajuste derruba o write-back do PV que existe
+falsifica MIG33 F40 "ajuste sem subtransacao" \
+  "    EXCEPTION WHEN OTHERS THEN
+      -- desfaz SÓ o ajuste; a reserva fica a do carrinho e a falha é exposta
+      v_ajustes := '[]'::jsonb;
+      v_falha := SQLSTATE || ': ' || SQLERRM;
+    END;" \
+  "    END;" \
+  "      END LOOP;
+    END;" \
+  "D14 esperava false/P0001: D14 sabotagem"
+
+# F41 — sem a releitura sob lock: decide pelo checkout lido ANTES de esperar
+falsifica MIG33 F41 "checkout lido antes do lock" \
+  "     AND (v_cks_sob_lock IS DISTINCT FROM v_cks OR COALESCE(array_length(v_cks_sob_lock, 1), 0) <> 1) THEN" \
+  "     AND (COALESCE(array_length(v_cks, 1), 0) <> 1) THEN" \
+  "AND (COALESCE(array_length(v_cks, 1), 0) <> 1) THEN" \
+  "D16 substituicao concorrente: a releitura sob lock aborta o ajuste limpo"
+
+# F42 — item que não movimenta estoque volta a ser reservado
+falsifica MIG33 F42 "nao_movimentar_estoque ignorado" \
+  "WHERE COALESCE(e #>> '{inf_adic,nao_movimentar_estoque}', 'N') <> 'S'" \
+  "WHERE true" \
+  "               WHERE true" \
+  "D15 PV com o 3319 sem movimentar estoque: o 3319 sai da reserva"
 
 # F39 — a PRE da 3.3 aceita qualquer corpo vivo
 falsifica MIG33 F39 "PRE da 3.3 aceita qualquer estado vivo" \

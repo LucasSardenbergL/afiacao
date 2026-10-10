@@ -7,7 +7,14 @@ import { carregarProductMap } from "../_shared/mapas-paginados.ts";
 import { descontoItemOmie } from "../_shared/desconto-omie.ts";
 import { classificarErroAtpGate, classificarRetornoAtpGate } from "../_shared/atp-gate.ts";
 import { classificarEnvioPedido } from "../_shared/reenvio-pedido.ts";
-import { avisoPvReconciliado, classificarConsultaExclusao, classificarErroConsultaExclusao, type ConsultaExclusao } from "../_shared/atp-pv-omie.ts";
+import {
+  avisoPvReconciliado,
+  classificarConsultaExclusao,
+  classificarErroConsultaExclusao,
+  compararCarrinhoPv,
+  type ConsultaExclusao,
+  edicaoBloqueadaPorPvDivergente,
+} from "../_shared/atp-pv-omie.ts";
 import { deltaEdicaoOben } from "../_shared/atp-edicao.ts";
 import { aplicarCorPreservandoItens, apurarSubtotalPedido, precoUnitarioOmie } from "../_shared/omie-pedido.ts";
 import { descontoNaLeituraDoOmie } from "../_shared/edicao-desconto-omie.ts";
@@ -310,6 +317,10 @@ async function callOmieVendasApi(
   }
   return null;
 }
+
+// Exclusão sem PID (ATP 3.3): decisão do gate mais nova que isto = envio ao Omie possivelmente em
+// curso. Cobre com folga a vida de uma invocação da edge (≤ ~400s).
+const JANELA_ENVIO_EM_CURSO_MS = 10 * 60_000;
 
 function getOmieItemIntegrationCode(index: number): number {
   const code = index + 1;
@@ -2212,7 +2223,7 @@ async function criarPedidoVenda(
   let omie_pedido_id: number | null;
   let omie_numero_pedido: string | number;
   let omie_response: unknown = null;
-  let reconciliado = false;
+  let comparacaoPv: "igual" | "divergente" | "ilegivel" | null = null;
   try {
     const result = await callOmieVendasApi(
       "produtos/pedido/",
@@ -2252,7 +2263,7 @@ async function criarPedidoVenda(
     omie_pedido_id = cab.codigo_pedido;
     omie_numero_pedido = cab.numero_pedido ?? cab.codigo_pedido;
     omie_response = { reconciled: true, consulta };
-    reconciliado = true;
+    comparacaoPv = compararCarrinhoPv(items, consulta);
   }
 
   // Write-back ATÔMICO (ATP fase 3.1, migration 20261009120000): a RPC grava o PV em
@@ -2309,11 +2320,11 @@ async function criarPedidoVenda(
   if ((wb as { ok?: unknown } | null)?.ok !== true) {
     throw new Error(`Pedido no Omie (${omie_pedido_id}) mas o write-back não confirmou (resposta ${JSON.stringify(wb)}) — investigar.`);
   }
-  // ATP 3.3 (#1): o PV reconciliado tem os itens da tentativa ANTERIOR. A RPC já ajustou a
-  // reserva a ele (os itens vêm do `consulta` dentro do omie_response); aqui o vendedor fica
-  // sabendo que o carrinho atual NÃO foi ao Omie. Depois do write-back: o vínculo fica gravado.
-  if (reconciliado) {
-    const aviso = avisoPvReconciliado(wb, omie_pedido_id);
+  // ATP 3.3 (#1): o PV reconciliado pode ter os itens da tentativa ANTERIOR. A RPC já ajustou a
+  // RESERVA a ele (lê o `consulta` dentro do omie_response); aqui o vendedor fica sabendo que o
+  // carrinho atual NÃO foi ao Omie. Depois do write-back: o vínculo fica gravado.
+  if (comparacaoPv !== null) {
+    const aviso = avisoPvReconciliado(comparacaoPv, wb, omie_pedido_id);
     if (aviso) throw new Error(aviso);
   }
 
@@ -3140,6 +3151,19 @@ Deno.serve(async (req) => {
         const editAccount: Account = (existingOrder.account === "colacor") ? "colacor" : "oben";
         const editConfig = getAccountConfig(editAccount);
 
+        // ATP 3.3 (Codex P1): pedido vinculado por duplicidade a um PV com OUTROS itens. Os itens
+        // locais são o carrinho, não o PV — o gate de aumento abaixo compararia carrinho × pedido e
+        // liberaria trocar os itens do PV sem reserva. A correção desse pedido é no Omie.
+        if (edicaoBloqueadaPorPvDivergente(
+          (existingOrder as { omie_response?: unknown }).omie_response,
+          ((existingOrder as { items?: Array<{ omie_codigo_produto?: unknown; quantidade?: unknown }> | null }).items ?? [])
+            .map((i) => ({ omie_codigo_produto: Number(i.omie_codigo_produto), quantidade: Number(i.quantidade) })),
+        )) {
+          throw new Error(
+            `Edição recusada: o pedido no Omie (PV ${existingOrder.omie_pedido_id}) foi vinculado por duplicidade e tem itens diferentes dos registrados no app. Corrija direto no Omie.`,
+          );
+        }
+
         // Guard money-path (ativo): aqui, após resolver editAccount e ANTES de consultar/excluir
         // itens no Omie (passo destrutivo). O caminho de edição re-envia itens pré-existentes sem
         // revalidar — é onde um produto desativado depois da criação do PV passaria batido.
@@ -3796,47 +3820,66 @@ Deno.serve(async (req) => {
           }
         } else if (orderAccount === "oben") {
           // ATP 3.3 (#3): sem PID local o PV pode existir mesmo assim (o write-back falhou depois do
-          // IncluirPedido). Apagar soltaria a reserva (FK SET NULL → TTL) com o PV vivo. Só consulta
-          // quem passou pelo gate — rascunho nunca enviado não paga a chamada. A chave PV_<id> é o
-          // registro durável do envio; ambiguidade RECUSA a exclusão (o front desfaz o deleted_at).
+          // IncluirPedido). Apagar soltaria a reserva (FK SET NULL → TTL) com o PV vivo. A chave
+          // PV_<id> é o registro durável do envio: TODO pedido Oben sem PID é consultado (a trilha
+          // ATP não prova ausência de envio — Codex 3.3 P1). Ambiguidade RECUSA a exclusão (o front
+          // desfaz o deleted_at). Nenhuma mutação no Omie aqui: PV achado ⇒ o vínculo é recuperado
+          // e a exclusão recusada, com a instrução de cancelar no Omie.
+          // Envio em curso (Codex 3.3 P1): a consulta antes do IncluirPedido terminar diria
+          // "ausente" e o DELETE deixaria o PV nascer órfão. A janela cobre a vida de uma invocação.
           const { data: rastro, error: rastroErr } = await supabaseAdmin
             .from("atp_decisoes")
-            .select("id")
+            .select("created_at")
             .eq("sales_order_id", soId)
+            .order("created_at", { ascending: false })
             .limit(1);
           if (rastroErr) {
-            throw new Error(`Exclusão recusada: não consegui conferir se o pedido ${soId} chegou ao Omie (${rastroErr.message}).`);
+            throw new Error(`Exclusão recusada: não consegui conferir se o pedido chegou a ser enviado ao Omie (${rastroErr.message}).`);
           }
-          if (rastro && rastro.length > 0) {
-            const cCodIntPed = `PV_${soId}`;
-            let consulta: ConsultaExclusao;
-            try {
-              consulta = classificarConsultaExclusao(await callOmieVendasApi(
-                "produtos/pedido/", "ConsultarPedido", { codigo_pedido_integracao: cCodIntPed }, orderAccount,
-                { throwOnTransient: true },
-              ));
-            } catch (e) {
-              consulta = classificarErroConsultaExclusao(e);
-            }
-            if (consulta.tipo === "indeterminado") {
+          const ultimoGate = rastro?.[0]?.created_at ? Date.parse(rastro[0].created_at as string) : null;
+          if (ultimoGate !== null && Date.now() - ultimoGate < JANELA_ENVIO_EM_CURSO_MS) {
+            throw new Error("Exclusão recusada: o pedido passou pela verificação de estoque há menos de 10 minutos e o envio ao Omie pode estar em andamento. Tente de novo em alguns minutos.");
+          }
+          const cCodIntPed = `PV_${soId}`;
+          let consulta: ConsultaExclusao;
+          try {
+            consulta = classificarConsultaExclusao(await callOmieVendasApi(
+              "produtos/pedido/", "ConsultarPedido", { codigo_pedido_integracao: cCodIntPed }, orderAccount,
+              { throwOnTransient: true },
+            ));
+          } catch (e) {
+            consulta = classificarErroConsultaExclusao(e);
+          }
+          // Passou pelo gate ⇒ o envio pode ter acontecido: só a ausência AFIRMADA libera. Sem rastro
+          // nenhum (rascunho; ou o caso raro de trilha que falhou junto com o write-back) a consulta é
+          // de melhor esforço — travar a exclusão de rascunho por uma resposta que não sabemos ler
+          // seria pior; a mensagem vai ao log para a régua aprender o texto real do Omie.
+          if (consulta.tipo === "indeterminado") {
+            if (ultimoGate !== null) {
               throw new Error(
                 `Exclusão recusada: não deu para confirmar no Omie se o pedido ${cCodIntPed} existe (${consulta.detalhe}). Tente de novo em instantes.`,
               );
             }
-            if (consulta.tipo === "existe") {
-              try {
-                const cancel = await callOmieVendasApi(
-                  "produtos/pedido/", "CancelarPedido", { codigo_pedido: consulta.codigoPedido }, orderAccount,
-                  { throwOnTransient: true },
-                );
-                if (!cancel) throw new Error("o Omie não confirmou o cancelamento");
-              } catch (e) {
-                throw new Error(
-                  `Exclusão recusada: o pedido ${cCodIntPed} existe no Omie (PV ${consulta.codigoPedido}) e o cancelamento falhou (${mensagemDeErro(e)}). Apagar aqui deixaria o pedido vivo no Omie sem reserva de estoque.`,
-                );
-              }
-              console.log(`[Omie Vendas][${orderAccount}] PV órfão ${consulta.codigoPedido} (${cCodIntPed}) cancelado antes da exclusão local`);
-            }
+            console.warn(`[Omie Vendas][${orderAccount}] exclusão sem rastro de envio: consulta de ${cCodIntPed} indeterminada (${consulta.detalhe}) — seguindo`);
+          }
+          if (consulta.tipo === "existe") {
+            const cab = (consulta.consulta as { pedido_venda_produto?: { cabecalho?: { numero_pedido?: unknown } }; cabecalho?: { numero_pedido?: unknown } })
+              ?.pedido_venda_produto?.cabecalho ?? (consulta.consulta as { cabecalho?: { numero_pedido?: unknown } })?.cabecalho;
+            const { error: vincErr } = await supabaseAdmin.rpc("atp_confirmar_pv", {
+              p_sales_order_id: soId,
+              p_account: orderAccount,
+              p_omie_pedido_id: consulta.codigoPedido,
+              p_omie_numero_pedido: String(cab?.numero_pedido ?? consulta.codigoPedido),
+              p_omie_payload: null,
+              p_omie_response: { reconciled: true, consulta: consulta.consulta, origem: "exclusao" },
+            });
+            throw new Error(
+              `Exclusão recusada: o pedido existe no Omie (PV ${consulta.codigoPedido}). ` +
+                (vincErr
+                  ? `O vínculo com o app NÃO pôde ser gravado (${vincErr.message}) — avise o responsável. `
+                  : `O vínculo com o app foi recuperado. `) +
+                `Cancele o pedido no Omie e depois exclua aqui.`,
+            );
           }
         }
 

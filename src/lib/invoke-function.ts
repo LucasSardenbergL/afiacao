@@ -86,3 +86,23 @@ export async function invokeFunction<T = unknown>(
 
   return data as T;
 }
+
+/**
+ * Mensagem REAL de um erro de `supabase.functions.invoke` (o `error.message` do supabase-js é o
+ * genérico "Edge Function returned a non-2xx status code"; o texto da edge vem no corpo, em
+ * `context`). Para quem chama `invoke` direto e precisa mostrar ao usuário o que o servidor disse —
+ * ex.: o aviso de PV reconciliado do `criar_pedido` (ATP 3.3). `null` = sem corpo legível.
+ */
+export async function mensagemDoErroEdge(err: unknown): Promise<string | null> {
+  const ctx = (err as { context?: unknown } | null)?.context;
+  if (!ctx || typeof (ctx as Response).clone !== 'function') return null;
+  try {
+    const parsed: unknown = await (ctx as Response).clone().json();
+    if (parsed && typeof parsed === 'object' && typeof (parsed as { error?: unknown }).error === 'string') {
+      return (parsed as { error: string }).error;
+    }
+  } catch {
+    /* corpo não-JSON ou já consumido */
+  }
+  return null;
+}

@@ -18,15 +18,21 @@
 --     MESMA transação do write-back, ajusta as reservas ativas do pedido ao PV:
 --     quantidade diferente → passa a do PV; SKU fora do PV → 'liberada'; SKU do
 --     PV sem reserva → reserva nova (nasce sem par e é carimbada logo abaixo,
---     pelo único writer do par). O ajuste fica na trilha (atp_decisoes,
---     contexto 'reconciliacao') e volta à edge como pv_divergente, que avisa o
---     vendedor. Itens ilegíveis ⇒ NADA é ajustado (precisão > recall: não se
---     fabrica reserva de leitura duvidosa) e a resposta diz pv_itens_legiveis
---     = false.
---  #3 é fechado na EDGE (omie-vendas-sync v1.14): a exclusão de pedido Oben sem
---     PID que passou pelo gate consulta o Omie pela chave PV_<id> e cancela o PV
---     órfão antes de apagar — a própria chave de integração é o registro durável
---     do envio. Nada a mudar no banco.
+--     pelo único writer do par). Item com nao_movimentar_estoque = 'S' não gera
+--     saída de estoque e não conta. Itens ilegíveis ⇒ NADA é ajustado
+--     (precisão > recall) e a resposta diz pv_itens_legiveis = false.
+--     A RPC só fala de RESERVA (reserva_ajustada); a divergência COMERCIAL
+--     (PV × carrinho, inclusive sem reserva — backorder) é a edge que compara.
+--
+--  Challenge Codex da 3.3 (antes do apply), incorporado aqui:
+--   • o checkout é RELIDO sob o lock: uma substituição concorrente do
+--     reservar_estoque entre a leitura e o lock não vira INSERT em conflito;
+--   • o ajuste roda numa SUBTRANSAÇÃO: qualquer erro nele (conflito, deadlock
+--     com o job de TTL, CHECK) desfaz só o ajuste — o write-back de um PV que
+--     EXISTE no Omie nunca se perde por causa da reserva. A falha volta como
+--     ajuste_falhou e fica na trilha ('verificacao_indisponivel').
+--
+--  #3 é fechado na EDGE (omie-vendas-sync v1.14) — nada a mudar no banco.
 --
 -- Assinatura INALTERADA (CREATE OR REPLACE preserva OID e ACL): a edge v1.13 já
 -- em produção passa a ajustar a reserva no primeiro apply, sem deploy — só não
@@ -63,7 +69,7 @@ BEGIN
            (SELECT md5(p.prosrc || '|' || p.prosecdef::text || '|' || p.provolatile::text || '|' || COALESCE(p.proconfig::text, ''))
               FROM pg_catalog.pg_proc p WHERE p.oid = to_regprocedure(x.alvo)) AS vivo
       FROM (VALUES
-        ('public.atp_confirmar_pv(uuid,text,bigint,text,jsonb,jsonb)', '50606bbb21341e9d53e6b058207c24e9', '54630f915185b953d60dac40c7298dc8')
+        ('public.atp_confirmar_pv(uuid,text,bigint,text,jsonb,jsonb)', '50606bbb21341e9d53e6b058207c24e9', '90a027c2041e20e8e4157c1efe21655f')
       ) AS x(alvo, predecessor, este)
   LOOP
     IF r.vivo IS NULL OR r.vivo NOT IN (r.predecessor, r.este) THEN
@@ -99,9 +105,11 @@ DECLARE
   v_pv jsonb;            -- {sku: quantidade} do PV no Omie, agregado por SKU
   v_legivel boolean;     -- NULL = não se aplica (envio normal ou conta sem reserva)
   v_cks uuid[];
+  v_cks_sob_lock uuid[];
   v_expira timestamptz;
   v_aj record;
   v_ajustes jsonb := '[]'::jsonb;
+  v_falha text;
 BEGIN
   -- Defesa em profundidade: o EXECUTE já é só de service_role (REVOKE da 3.1).
   IF auth.role() IS DISTINCT FROM 'service_role' THEN
@@ -138,12 +146,15 @@ BEGIN
                 ELSE (e #>> '{produto,quantidade}')::numeric > 0 END))
     END;
     IF v_legivel THEN
-      SELECT jsonb_object_agg(s.sku::text, s.qtd),
-             COALESCE(bool_and(s.sku > 0 AND s.qtd > 0 AND s.qtd <= 1000000), false)
+      -- Item que o Omie não baixa do estoque (nao_movimentar_estoque = 'S') não
+      -- é reservado. PV só com esses itens ⇒ {} (o pedido não compromete estoque).
+      SELECT COALESCE(jsonb_object_agg(s.sku::text, s.qtd), '{}'::jsonb),
+             COALESCE(bool_and(s.sku > 0 AND s.qtd > 0 AND s.qtd <= 1000000), true)
         INTO v_pv, v_legivel
         FROM (SELECT (e #>> '{produto,codigo_produto}')::bigint AS sku,
                      sum((e #>> '{produto,quantidade}')::numeric) AS qtd
                 FROM jsonb_array_elements(v_det) e
+               WHERE COALESCE(e #>> '{inf_adic,nao_movimentar_estoque}', 'N') <> 'S'
                GROUP BY 1) s;
     END IF;
     IF NOT v_legivel THEN
@@ -154,13 +165,10 @@ BEGIN
   -- O ajuste só existe sobre reserva viva do pedido, num checkout só (o índice
   -- único da reserva é por checkout; dois checkouts no mesmo pedido = estado
   -- que nenhum writer produz, e então não se ajusta nada).
-  SELECT array_agg(DISTINCT r.checkout_id ORDER BY r.checkout_id), max(r.expira_em)
-    INTO v_cks, v_expira
+  SELECT array_agg(DISTINCT r.checkout_id ORDER BY r.checkout_id)
+    INTO v_cks
     FROM public.estoque_reservas r
    WHERE r.sales_order_id = p_sales_order_id AND r.status = 'ativa';
-  IF v_pv IS NOT NULL AND COALESCE(array_length(v_cks, 1), 0) <> 1 THEN
-    v_pv := NULL;
-  END IF;
 
   -- Serialização com reservar_estoque, na MESMA ordem global dele: checkout(s)
   -- primeiro, depois SKUs em ordem crescente, mesmo namespace. O conjunto de
@@ -183,6 +191,17 @@ BEGIN
     PERFORM pg_advisory_xact_lock(hashtextextended('atp:sku:' || v_lock.pool || ':' || v_lock.sku::text, 0));
   END LOOP;
 
+  -- Releitura SOB o lock (Codex 3.3): a leitura acima foi feita antes de esperar
+  -- o lock do checkout; uma substituição concorrente pode ter trocado o conjunto.
+  SELECT array_agg(DISTINCT r.checkout_id ORDER BY r.checkout_id), max(r.expira_em)
+    INTO v_cks_sob_lock, v_expira
+    FROM public.estoque_reservas r
+   WHERE r.sales_order_id = p_sales_order_id AND r.status = 'ativa';
+  IF v_pv IS NOT NULL
+     AND (v_cks_sob_lock IS DISTINCT FROM v_cks OR COALESCE(array_length(v_cks_sob_lock, 1), 0) <> 1) THEN
+    v_pv := NULL;
+  END IF;
+
   UPDATE public.sales_orders
      SET omie_pedido_id = p_omie_pedido_id,
          omie_numero_pedido = p_omie_numero_pedido,
@@ -200,40 +219,47 @@ BEGIN
 
   -- #1: a reserva passa a ser a do PV. ANTES do carimbo: a reserva criada
   -- aqui nasce sem par (o trigger write-once exige) e é carimbada abaixo.
+  -- Subtransação: o ajuste pode falhar; o write-back acima NÃO.
   IF v_pv IS NOT NULL THEN
-    FOR v_aj IN
-      SELECT COALESCE(r.sku, p.sku) AS sku, r.id, r.quantidade AS antes, p.qtd AS depois
-        FROM (SELECT er.id, er.omie_codigo_produto AS sku, er.quantidade
-                FROM public.estoque_reservas er
-               WHERE er.sales_order_id = p_sales_order_id AND er.status = 'ativa'
-                 AND er.pool = 'oben') r
-        FULL JOIN (SELECT k::bigint AS sku, (v_pv ->> k)::numeric AS qtd
-                     FROM jsonb_object_keys(v_pv) k) p ON p.sku = r.sku
-       WHERE r.quantidade IS DISTINCT FROM p.qtd
-       ORDER BY 1
-    LOOP
-      IF v_aj.id IS NULL THEN
-        INSERT INTO public.estoque_reservas
-          (pool, omie_codigo_produto, quantidade, checkout_id, sales_order_id,
-           status, expira_em, motivo)
-        VALUES
-          ('oben', v_aj.sku, v_aj.depois, v_cks[1], p_sales_order_id,
-           'ativa', v_expira, 'pv_divergente: item do PV no Omie sem reserva');
-      ELSIF v_aj.depois IS NULL THEN
-        UPDATE public.estoque_reservas
-           SET status = 'liberada',
-               motivo = 'pv_divergente: SKU fora do PV no Omie',
-               atualizado_em = now()
-         WHERE id = v_aj.id;
-      ELSE
-        UPDATE public.estoque_reservas
-           SET quantidade = v_aj.depois,
-               atualizado_em = now()
-         WHERE id = v_aj.id;
-      END IF;
-      v_ajustes := v_ajustes || jsonb_build_object(
-        'sku', v_aj.sku, 'antes', COALESCE(v_aj.antes, 0), 'depois', COALESCE(v_aj.depois, 0));
-    END LOOP;
+    BEGIN
+      FOR v_aj IN
+        SELECT COALESCE(r.sku, p.sku) AS sku, r.id, r.quantidade AS antes, p.qtd AS depois
+          FROM (SELECT er.id, er.omie_codigo_produto AS sku, er.quantidade
+                  FROM public.estoque_reservas er
+                 WHERE er.sales_order_id = p_sales_order_id AND er.status = 'ativa'
+                   AND er.pool = 'oben') r
+          FULL JOIN (SELECT k::bigint AS sku, (v_pv ->> k)::numeric AS qtd
+                       FROM jsonb_object_keys(v_pv) k) p ON p.sku = r.sku
+         WHERE r.quantidade IS DISTINCT FROM p.qtd
+         ORDER BY 1
+      LOOP
+        IF v_aj.id IS NULL THEN
+          INSERT INTO public.estoque_reservas
+            (pool, omie_codigo_produto, quantidade, checkout_id, sales_order_id,
+             status, expira_em, motivo)
+          VALUES
+            ('oben', v_aj.sku, v_aj.depois, v_cks_sob_lock[1], p_sales_order_id,
+             'ativa', v_expira, 'pv_divergente: item do PV no Omie sem reserva');
+        ELSIF v_aj.depois IS NULL THEN
+          UPDATE public.estoque_reservas
+             SET status = 'liberada',
+                 motivo = 'pv_divergente: SKU fora do PV no Omie',
+                 atualizado_em = now()
+           WHERE id = v_aj.id;
+        ELSE
+          UPDATE public.estoque_reservas
+             SET quantidade = v_aj.depois,
+                 atualizado_em = now()
+           WHERE id = v_aj.id;
+        END IF;
+        v_ajustes := v_ajustes || jsonb_build_object(
+          'sku', v_aj.sku, 'antes', COALESCE(v_aj.antes, 0), 'depois', COALESCE(v_aj.depois, 0));
+      END LOOP;
+    EXCEPTION WHEN OTHERS THEN
+      -- desfaz SÓ o ajuste; a reserva fica a do carrinho e a falha é exposta
+      v_ajustes := '[]'::jsonb;
+      v_falha := SQLSTATE || ': ' || SQLERRM;
+    END;
   END IF;
 
   -- Carimba SÓ as ativas: reserva já encerrada (expirada/liberada/consumida)
@@ -247,14 +273,17 @@ BEGIN
      AND r.status = 'ativa';
   GET DIAGNOSTICS v_n_res = ROW_COUNT;
 
-  IF jsonb_array_length(v_ajustes) > 0 THEN
+  IF jsonb_array_length(v_ajustes) > 0 OR v_falha IS NOT NULL THEN
     INSERT INTO public.atp_decisoes
       (sales_order_id, checkout_id, pool, account, decisao, contexto, enforcement, atp_snapshot)
     VALUES
-      (p_sales_order_id, v_cks[1], 'oben', p_account, 'reservado', 'reconciliacao', true,
-       jsonb_build_object('pv_divergente', true,
+      (p_sales_order_id, v_cks_sob_lock[1], 'oben', p_account,
+       CASE WHEN v_falha IS NULL THEN 'reservado' ELSE 'verificacao_indisponivel' END,
+       'reconciliacao', true,
+       jsonb_build_object('reserva_ajustada', v_falha IS NULL,
                           'omie_pedido_id', p_omie_pedido_id,
-                          'ajustes', v_ajustes));
+                          'ajustes', v_ajustes,
+                          'ajuste_falhou', v_falha));
   END IF;
 
   RETURN jsonb_build_object('ok', true,
@@ -262,7 +291,8 @@ BEGIN
                             'omie_pedido_id', p_omie_pedido_id,
                             'reservas_firmadas', v_n_res,
                             'pv_itens_legiveis', v_legivel,
-                            'pv_divergente', jsonb_array_length(v_ajustes) > 0,
+                            'reserva_ajustada', jsonb_array_length(v_ajustes) > 0,
+                            'ajuste_falhou', v_falha,
                             'ajustes', v_ajustes);
 END;
 $function$;
@@ -278,7 +308,7 @@ BEGIN
   IF v_cpv IS NULL THEN
     RAISE EXCEPTION 'POS FALHOU: atp_confirmar_pv ausente';
   END IF;
-  IF (SELECT prosrc FROM pg_proc WHERE oid = v_cpv) !~ 'pv_divergente' THEN
+  IF (SELECT prosrc FROM pg_proc WHERE oid = v_cpv) !~ 'reserva_ajustada' THEN
     RAISE EXCEPTION 'POS FALHOU: atp_confirmar_pv sem o ajuste ao PV reconciliado';
   END IF;
   IF EXISTS (SELECT 1 FROM pg_proc WHERE oid = v_cpv
