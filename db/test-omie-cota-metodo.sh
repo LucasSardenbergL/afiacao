@@ -38,6 +38,9 @@ montar() {
   local db="$1" mig="$2"
   "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres "$db"
   Pd "$db" -q -f "$REPO_ROOT/db/stubs-supabase.sql" >/dev/null
+  # Como no Supabase: as 3 roles alcançam o schema public. Sem isto o 42501 do A11b viria do
+  # SCHEMA, não do REVOKE da função — o assert passaria pelo motivo errado.
+  Pd "$db" -q -c "GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;" >/dev/null
   Pd "$db" -q -f "$mig" >/dev/null
 }
 
@@ -199,6 +202,7 @@ else
   else
     "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres f5
     Pd f5 -q -f "$REPO_ROOT/db/stubs-supabase.sql" >/dev/null
+    Pd f5 -q -c "GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;" >/dev/null
     if Pd f5 -q -f "$TMP/f5.sql" >"$TMP/f5.log" 2>&1; then
       bad "F5 GRANT a anon e a migration NÃO abortou — postcondição sem dente"
     elif grep -q "POSTCONDICAO: public.omie_cota_liberar" "$TMP/f5.log"; then
