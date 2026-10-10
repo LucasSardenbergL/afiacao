@@ -7,6 +7,7 @@ import { carregarProductMap } from "../_shared/mapas-paginados.ts";
 import { descontoItemOmie } from "../_shared/desconto-omie.ts";
 import { classificarErroAtpGate, classificarRetornoAtpGate } from "../_shared/atp-gate.ts";
 import { classificarEnvioPedido } from "../_shared/reenvio-pedido.ts";
+import { avisoPvReconciliado, classificarConsultaExclusao, classificarErroConsultaExclusao, type ConsultaExclusao } from "../_shared/atp-pv-omie.ts";
 import { deltaEdicaoOben } from "../_shared/atp-edicao.ts";
 import { aplicarCorPreservandoItens, apurarSubtotalPedido, precoUnitarioOmie } from "../_shared/omie-pedido.ts";
 import { descontoNaLeituraDoOmie } from "../_shared/edicao-desconto-omie.ts";
@@ -2211,6 +2212,7 @@ async function criarPedidoVenda(
   let omie_pedido_id: number | null;
   let omie_numero_pedido: string | number;
   let omie_response: unknown = null;
+  let reconciliado = false;
   try {
     const result = await callOmieVendasApi(
       "produtos/pedido/",
@@ -2250,6 +2252,7 @@ async function criarPedidoVenda(
     omie_pedido_id = cab.codigo_pedido;
     omie_numero_pedido = cab.numero_pedido ?? cab.codigo_pedido;
     omie_response = { reconciled: true, consulta };
+    reconciliado = true;
   }
 
   // Write-back ATÔMICO (ATP fase 3.1, migration 20261009120000): a RPC grava o PV em
@@ -2305,6 +2308,13 @@ async function criarPedidoVenda(
   }
   if ((wb as { ok?: unknown } | null)?.ok !== true) {
     throw new Error(`Pedido no Omie (${omie_pedido_id}) mas o write-back não confirmou (resposta ${JSON.stringify(wb)}) — investigar.`);
+  }
+  // ATP 3.3 (#1): o PV reconciliado tem os itens da tentativa ANTERIOR. A RPC já ajustou a
+  // reserva a ele (os itens vêm do `consulta` dentro do omie_response); aqui o vendedor fica
+  // sabendo que o carrinho atual NÃO foi ao Omie. Depois do write-back: o vínculo fica gravado.
+  if (reconciliado) {
+    const aviso = avisoPvReconciliado(wb, omie_pedido_id);
+    if (aviso) throw new Error(aviso);
   }
 
   return { omie_pedido_id, omie_numero_pedido };
@@ -3783,6 +3793,50 @@ Deno.serve(async (req) => {
           } catch (omieErr) {
             const msg = omieErr instanceof Error ? omieErr.message : String(omieErr);
             console.warn(`[Omie Vendas][${orderAccount}] Erro ao cancelar no Omie (continuando exclusão local):`, msg);
+          }
+        } else if (orderAccount === "oben") {
+          // ATP 3.3 (#3): sem PID local o PV pode existir mesmo assim (o write-back falhou depois do
+          // IncluirPedido). Apagar soltaria a reserva (FK SET NULL → TTL) com o PV vivo. Só consulta
+          // quem passou pelo gate — rascunho nunca enviado não paga a chamada. A chave PV_<id> é o
+          // registro durável do envio; ambiguidade RECUSA a exclusão (o front desfaz o deleted_at).
+          const { data: rastro, error: rastroErr } = await supabaseAdmin
+            .from("atp_decisoes")
+            .select("id")
+            .eq("sales_order_id", soId)
+            .limit(1);
+          if (rastroErr) {
+            throw new Error(`Exclusão recusada: não consegui conferir se o pedido ${soId} chegou ao Omie (${rastroErr.message}).`);
+          }
+          if (rastro && rastro.length > 0) {
+            const cCodIntPed = `PV_${soId}`;
+            let consulta: ConsultaExclusao;
+            try {
+              consulta = classificarConsultaExclusao(await callOmieVendasApi(
+                "produtos/pedido/", "ConsultarPedido", { codigo_pedido_integracao: cCodIntPed }, orderAccount,
+                { throwOnTransient: true },
+              ));
+            } catch (e) {
+              consulta = classificarErroConsultaExclusao(e);
+            }
+            if (consulta.tipo === "indeterminado") {
+              throw new Error(
+                `Exclusão recusada: não deu para confirmar no Omie se o pedido ${cCodIntPed} existe (${consulta.detalhe}). Tente de novo em instantes.`,
+              );
+            }
+            if (consulta.tipo === "existe") {
+              try {
+                const cancel = await callOmieVendasApi(
+                  "produtos/pedido/", "CancelarPedido", { codigo_pedido: consulta.codigoPedido }, orderAccount,
+                  { throwOnTransient: true },
+                );
+                if (!cancel) throw new Error("o Omie não confirmou o cancelamento");
+              } catch (e) {
+                throw new Error(
+                  `Exclusão recusada: o pedido ${cCodIntPed} existe no Omie (PV ${consulta.codigoPedido}) e o cancelamento falhou (${mensagemDeErro(e)}). Apagar aqui deixaria o pedido vivo no Omie sem reserva de estoque.`,
+                );
+              }
+              console.log(`[Omie Vendas][${orderAccount}] PV órfão ${consulta.codigoPedido} (${cCodIntPed}) cancelado antes da exclusão local`);
+            }
           }
         }
 

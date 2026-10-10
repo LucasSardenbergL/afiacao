@@ -2,6 +2,7 @@
 -- Validação PÓS-APPLY — ATP fase 3 (20260808012000_atp_reconciliacao_fase3.sql)
 --                     + fase 3.1 (20261009120000_atp_fase3_1_elo_pid.sql), checks 26+
 --                     + fase 3.2 (20261009233000_atp_fase3_2_corretiva.sql), checks 43+
+--                     + fase 3.3 (20261010150000_atp_fase3_3_pv_divergente.sql), checks 48+
 -- A 3.1 RECRIA o cálculo, o job de TTL e a reconciliação: os checks 7 e 10 aceitam
 -- as duas formas (a propriedade da fase 3 — PV firme isento do relógio, canônica
 -- lida — vale nas duas); sem isso este validador ficaria VERMELHO em prod depois
@@ -202,6 +203,17 @@ WITH defs AS (
                  WHERE conrelid = 'public.estoque_reservas'::regclass
                    AND conname = 'estoque_reservas_pv_par_check'
                    AND pg_get_constraintdef(oid) ~ 'omie_pedido_id IS NOT NULL')
+
+  -- ══ FASE 3.3 — a reserva acompanha o PV reconciliado por duplicidade ══════
+  UNION ALL SELECT 48, '3.3 atp_confirmar_pv le os itens do PV reconciliado e ajusta a reserva',
+         (SELECT cpv ~ 'p_omie_response->>''reconciled''' AND cpv ~ 'pv_divergente'
+                 AND cpv ~ 'consulta,pedido_venda_produto,det' FROM defs)
+  -- a reserva criada pelo ajuste nasce SEM par e é carimbada depois (o trigger
+  -- write-once recusa o par no INSERT): o INSERT vem ANTES do carimbo
+  UNION ALL SELECT 49, '3.3 o ajuste roda ANTES do carimbo do par',
+         (SELECT strpos(cpv, 'INSERT INTO public.estoque_reservas') > 0
+                 AND strpos(cpv, 'INSERT INTO public.estoque_reservas') < strpos(cpv, 'omie_account = p_account')
+            FROM defs)
 )
 SELECT n, CASE WHEN ok THEN 'OK  ' ELSE 'FALHOU' END AS status, item
 FROM checks ORDER BY n;
@@ -230,3 +242,8 @@ SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_constraint
              AND COALESCE((SELECT prosrc ~ 'preservadas_firmes' FROM pg_proc
                             WHERE oid = to_regprocedure('public.liberar_reserva_checkout(uuid,text,text)')), false)
        THEN 'FASE 3.2 APLICADA' ELSE 'FASE 3.2 NAO APLICADA (ou parcial)' END AS veredito_3_2;
+
+-- Veredito da 3.3 (linha própria)
+SELECT CASE WHEN COALESCE((SELECT prosrc ~ 'pv_divergente' FROM pg_proc
+                            WHERE oid = to_regprocedure('public.atp_confirmar_pv(uuid,text,bigint,text,jsonb,jsonb)')), false)
+       THEN 'FASE 3.3 APLICADA' ELSE 'FASE 3.3 NAO APLICADA (ou parcial)' END AS veredito_3_3;

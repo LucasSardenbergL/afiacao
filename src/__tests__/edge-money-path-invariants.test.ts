@@ -4875,3 +4875,39 @@ describe('guardrail money-path: erro sem override do gate ATP nunca segue para o
     expect(ramo.slice(sem, sem + 200), 'a recusa sem override tem de ser throw').toMatch(/throw new Error\(/);
   });
 });
+
+// ── ATP fase 3.3 (2026-10-10): PV reconciliado e exclusão sem PID ──
+// #1: o reenvio reconciliado por duplicidade vincula o PV ANTIGO; a RPC ajusta a reserva a ele e a
+// edge LANÇA quando diverge (o vendedor não pode achar que o carrinho atual foi ao Omie).
+// #3: excluir pedido Oben sem PID consulta o Omie pela chave PV_<id> e cancela o PV órfão ANTES
+// do DELETE local. Comportamento puro: _shared/atp-pv-omie_test.ts; RPC: zona 11 do harness PG17.
+describe('guardrail money-path: PV reconciliado e exclusão sem PID (ATP 3.3)', () => {
+  const src = read('supabase/functions/omie-vendas-sync/index.ts');
+  const ini = src.indexOf('async function criarPedidoVenda(');
+  const fn = removerComentarios(src.slice(ini, src.indexOf('\n}\n', ini)));
+  const ex = src.indexOf('case "excluir_pedido": {');
+  const exclusao = removerComentarios(src.slice(ex, src.indexOf('case "sync_pedidos": {', ex)));
+
+  it('sentinela: recortou o criarPedidoVenda e o excluir_pedido', () => {
+    expect(fn).toContain('"IncluirPedido"');
+    expect(exclusao).toContain('.delete()');
+    expect(exclusao.length).toBeGreaterThan(1500);
+  });
+
+  it('o aviso do PV reconciliado vem DEPOIS da RPC atômica e LANÇA', () => {
+    const rpc = fn.indexOf('.rpc("atp_confirmar_pv"');
+    const aviso = fn.indexOf('avisoPvReconciliado(wb, omie_pedido_id)');
+    expect(aviso, 'REGRESSÃO: PV reconciliado divergente volta a ser sucesso silencioso').toBeGreaterThan(rpc);
+    expect(fn.slice(aviso, aviso + 120)).toMatch(/if \(aviso\) throw new Error\(aviso\)/);
+    expect(fn).toMatch(/reconciled: true, consulta \};\s*reconciliado = true;/);
+  });
+
+  it('a exclusão sem PID consulta a chave PV_<id> e cancela ANTES do DELETE', () => {
+    const consulta = exclusao.indexOf('"ConsultarPedido", { codigo_pedido_integracao: cCodIntPed }');
+    const del = exclusao.indexOf('.delete()');
+    expect(consulta, 'REGRESSÃO: excluir sem PID voltou a apagar sem consultar o Omie').toBeGreaterThan(-1);
+    expect(consulta).toBeLessThan(del);
+    expect(exclusao.indexOf('consulta.tipo === "indeterminado"'), 'ambiguidade tem de recusar').toBeGreaterThan(consulta);
+    expect(exclusao.match(/throwOnTransient: true/g)?.length, 'consulta e cancelamento distinguem transitório de ausência').toBe(2);
+  });
+});
