@@ -639,8 +639,11 @@ func RunCycle(ctx context.Context, cfg *Config) bool {
 	// Determina se é necessário full re-scan (todo domingo, uma vez por semana).
 	needFullRescan := shouldFullRescan(st, originNow)
 	if needFullRescan {
-		logger.Infof("RunCycle: iniciando full re-scan semanal (domingo)")
-		clearAllHWM(st)
+		if iniciarFullRescan(st, originNow) {
+			logger.Infof("RunCycle: iniciando full re-scan semanal (domingo)")
+		} else {
+			logger.Infof("RunCycle: retomando full re-scan de hoje — só re-extrai as entidades que ainda não passaram")
+		}
 	}
 
 	// Executa ciclo de sync por entidade. `failed` lista as entidades que erraram (F7).
@@ -872,7 +875,9 @@ func syncSimpleEntity(
 }
 
 // sendInBatches envia `items` em lotes de ≤batchSize ao servidor.
-// HWM só avança após TODOS os lotes serem aceitos.
+// HWM só avança após TODOS os lotes serem confirmados (loteConfirmado). Lote não
+// confirmado NÃO interrompe os demais (staging é append-only por run e a promoção
+// é upsert por chave — reenviar é seguro), mas a entidade volta como erro de ciclo.
 func sendInBatches(
 	ctx context.Context,
 	cli *Client,
@@ -883,6 +888,7 @@ func sendInBatches(
 	maxDA time.Time,
 ) error {
 	total := len(items)
+	naoConfirmados := 0
 	for start := 0; start < total; start += batchSize {
 		end := start + batchSize
 		if end > total {
@@ -899,14 +905,41 @@ func sendInBatches(
 		if err != nil {
 			return fmt.Errorf("sendInBatches %s lote %d-%d: %w", entity, start, end, err)
 		}
-		if ar != nil && ar.ErrorCount > 0 {
-			logger.Warnf("sendInBatches %s: %d erro(s) de item no lote %d-%d", entity, ar.ErrorCount, start, end)
+		if !loteConfirmado(ar) {
+			naoConfirmados += len(batch)
+			logger.Warnf("sendInBatches %s: lote %d-%d NÃO confirmado (%s) — HWM fica, re-envia no próximo ciclo", entity, start, end, resumoAck(ar))
 		}
 	}
 
-	// HWM avança somente após todos os lotes aceitos.
+	// HWM avança somente após todos os lotes CONFIRMADOS. Antes, 200 com error_count>0
+	// só virava aviso e o HWM avançava: o item rejeitado (ex.: embalagem com volume novo)
+	// nunca mais era re-extraído até um full rescan — o catálogo ficava velho em silêncio.
+	if naoConfirmados > 0 {
+		return fmt.Errorf("sendInBatches %s: %d item(ns) não confirmado(s) pela edge — HWM não avançou", entity, naoConfirmados)
+	}
 	advanceHWM(st, entity, maxDA)
 	return nil
+}
+
+// loteConfirmado: a edge CONFIRMOU o lote inteiro — ok:true E nenhum erro de item.
+// Falha FECHADA em resposta nil, ok:false (corpo vazio/malformado desserializa zerado)
+// e em Errors não-vazio mesmo com ErrorCount=0. A edge não diz de forma confiável
+// QUAIS itens falharam, então o lote inteiro conta como não confirmado. Mesmo
+// contrato do sendFormulasInBatches (Codex review).
+func loteConfirmado(ar *AgentResponse) bool {
+	return ar != nil && ar.OK && ar.ErrorCount == 0 && len(ar.Errors) == 0
+}
+
+// resumoAck descreve um ack não confirmado para o log (ok=… e nº de erros de item).
+func resumoAck(ar *AgentResponse) string {
+	if ar == nil {
+		return "sem resposta"
+	}
+	nerr := ar.ErrorCount
+	if nerr == 0 {
+		nerr = len(ar.Errors)
+	}
+	return fmt.Sprintf("ok=%v, %d erro(s) de item", ar.OK, nerr)
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -1046,7 +1079,7 @@ func syncCorantes(
 	return nil
 }
 
-// sendInBatchesRaw envia `items` em lotes, chamando `onSuccess` somente após TODOS aceitos.
+// sendInBatchesRaw envia `items` em lotes, chamando `onSuccess` somente após TODOS confirmados.
 func sendInBatchesRaw(
 	ctx context.Context,
 	cli *Client,
@@ -1055,6 +1088,7 @@ func sendInBatchesRaw(
 	onSuccess func(),
 ) error {
 	total := len(items)
+	naoConfirmados := 0
 	for start := 0; start < total; start += batchSize {
 		end := start + batchSize
 		if end > total {
@@ -1068,9 +1102,13 @@ func sendInBatchesRaw(
 		if err != nil {
 			return fmt.Errorf("sendInBatchesRaw %s lote %d-%d: %w", entityField, start, end, err)
 		}
-		if ar != nil && ar.ErrorCount > 0 {
-			logger.Warnf("sendInBatchesRaw %s: %d erro(s) no lote %d-%d", entityField, ar.ErrorCount, start, end)
+		if !loteConfirmado(ar) {
+			naoConfirmados += len(batch)
+			logger.Warnf("sendInBatchesRaw %s: lote %d-%d NÃO confirmado (%s) — HWM fica, re-envia no próximo ciclo", entityField, start, end, resumoAck(ar))
 		}
+	}
+	if naoConfirmados > 0 {
+		return fmt.Errorf("sendInBatchesRaw %s: %d item(ns) não confirmado(s) pela edge — HWM não avançou", entityField, naoConfirmados)
 	}
 	onSuccess()
 	return nil
@@ -1391,6 +1429,19 @@ func shouldFullRescan(st *State, originNow time.Time) bool {
 	lastYear, _ := last.ISOWeek()
 	nowYear, _ := originNow.ISOWeek()
 	return lastWeek != nowWeek || lastYear != nowYear
+}
+
+// iniciarFullRescan zera os HWMs só no 1º ciclo do re-scan do dia; nos seguintes (o
+// re-scan não marcou porque alguma entidade falhou) não zera de novo — a entidade que
+// falhou não avançou o HWM, então já re-extrai tudo sozinha. Devolve true se zerou.
+func iniciarFullRescan(st *State, originNow time.Time) bool {
+	hoje := originNow.Format("2006-01-02")
+	if st.FullRescanIniciado == hoje {
+		return false
+	}
+	clearAllHWM(st)
+	st.FullRescanIniciado = hoje
+	return true
 }
 
 // clearAllHWM zera todos os HWMs do state (força full re-scan de todas as entidades).

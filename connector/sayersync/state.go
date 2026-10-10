@@ -30,6 +30,13 @@ type State struct {
 	// UPDATEs na origem que não toquem data_atualizacao.
 	LastFullRescan string `json:"last_full_rescan,omitempty"`
 
+	// FullRescanIniciado é o DIA (YYYY-MM-DD, relógio da origem) em que o full re-scan
+	// em curso zerou os HWMs. Se uma entidade falha, LastFullRescan não marca e o
+	// próximo ciclo do mesmo domingo RETOMA o re-scan sem zerar de novo: as entidades
+	// que já passaram seguem em delta e só a que falhou (HWM ainda zerado) re-extrai
+	// tudo. Antes, cada ciclo do domingo re-extraía e reenviava TODO o catálogo.
+	FullRescanIniciado string `json:"full_rescan_iniciado,omitempty"`
+
 	// UpdateFailCount conta falhas do auto-update para o crash-loop guard.
 	// Ao atingir 3 falhas (a tentativa é 1×/dia → ~3 dias) com a última tentativa
 	// dentro da janela de 24h, o conector restaura o binário anterior (.prev) e
