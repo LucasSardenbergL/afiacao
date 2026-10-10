@@ -9,7 +9,11 @@ import { fmtCompact } from '@/components/financeiro/dashboard/format';
 import { PontoEquilibrioCard } from '@/components/financeiro/dashboard/PontoEquilibrioCard';
 import type { FinDRE } from '@/services/financeiroService';
 
-export function DRETab({ data, view, ano }: { data: FinDRE[]; view: FinanceiroView; ano: number }) {
+export function DRETab({ data, view, ano, indisponivel = null }: {
+  data: FinDRE[]; view: FinanceiroView; ano: number;
+  /** Mensagem do erro de leitura do DRE: falha NÃO é vazio — não mandar "Recalcular". */
+  indisponivel?: string | null;
+}) {
   // F3 — PE operacional (v1 OBEN-only, spec §5; o card é master-only por dentro). Base TTM própria.
   const peCard = view === 'oben' ? <PontoEquilibrioCard company="oben" /> : null;
 
@@ -20,7 +24,13 @@ export function DRETab({ data, view, ano }: { data: FinDRE[]; view: FinanceiroVi
         <Card>
           <CardContent className="py-12 text-center text-muted-foreground">
             <FileText className="w-10 h-10 mx-auto mb-3 opacity-40" />
-            Nenhum DRE calculado para {ano}. Clique em "Recalcular" para gerar.
+            {indisponivel ? (
+              <p role="alert" className="text-status-error">
+                DRE indisponível — a leitura falhou: {indisponivel}
+              </p>
+            ) : (
+              <>Nenhum DRE calculado para {ano}. Clique em "Recalcular" para gerar.</>
+            )}
           </CardContent>
         </Card>
       </div>

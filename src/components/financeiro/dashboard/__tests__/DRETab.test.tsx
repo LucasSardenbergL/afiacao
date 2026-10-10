@@ -33,3 +33,19 @@ describe('DRETab', () => {
     expect(screen.getByText(/CAT_X/)).toBeTruthy();
   });
 });
+
+describe('DRETab — falha de leitura ≠ vazio', () => {
+  it('indisponivel + vazio → alerta com a causa, sem mandar recalcular', () => {
+    render(<DRETab data={[]} view="all" ano={2026} indisponivel="statement timeout" />);
+    const alerta = screen.getByRole('alert');
+    expect(alerta.textContent).toMatch(/indispon/i);
+    expect(alerta.textContent).toMatch(/statement timeout/);
+    expect(screen.queryByText(/Recalcular/)).toBeNull();
+  });
+
+  it('indisponivel ausente + vazio → vazio genuíno mantém "Recalcular"', () => {
+    render(<DRETab data={[]} view="all" ano={2026} />);
+    expect(screen.getByText(/Recalcular/)).toBeTruthy();
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+});
