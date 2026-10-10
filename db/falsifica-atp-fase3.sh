@@ -30,22 +30,25 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MIG3="$REPO_ROOT/supabase/migrations/20260808012000_atp_reconciliacao_fase3.sql"
 MIG31="$REPO_ROOT/supabase/migrations/20261009120000_atp_fase3_1_elo_pid.sql"
 MIG32="$REPO_ROOT/supabase/migrations/20261009233000_atp_fase3_2_corretiva.sql"
+MIG33="$REPO_ROOT/supabase/migrations/20261010150000_atp_fase3_3_pv_divergente.sql"
 TESTE="$REPO_ROOT/db/test-atp-reconciliacao-fase3.sh"
 BAK3="$(mktemp -t atp-fase3-mig.XXXXXX)"
 BAK31="$(mktemp -t atp-fase31-mig.XXXXXX)"
 BAK32="$(mktemp -t atp-fase32-mig.XXXXXX)"
+BAK33="$(mktemp -t atp-fase33-mig.XXXXXX)"
 LOGDIR="${LOGDIR:-$REPO_ROOT/logs/atp-fase3}"
 mkdir -p "$LOGDIR"
 
-cp "$MIG3" "$BAK3"; cp "$MIG31" "$BAK31"; cp "$MIG32" "$BAK32"
+cp "$MIG3" "$BAK3"; cp "$MIG31" "$BAK31"; cp "$MIG32" "$BAK32"; cp "$MIG33" "$BAK33"
 # idempotente: o trap dispara depois da restauração explícita do fim do script
 restaura() {
   [ -f "$BAK3" ] && cp "$BAK3" "$MIG3"
   [ -f "$BAK31" ] && cp "$BAK31" "$MIG31"
   [ -f "$BAK32" ] && cp "$BAK32" "$MIG32"
+  [ -f "$BAK33" ] && cp "$BAK33" "$MIG33"
   return 0
 }
-trap 'restaura; rm -f "$BAK3" "$BAK31" "$BAK32"' EXIT
+trap 'restaura; rm -f "$BAK3" "$BAK31" "$BAK32" "$BAK33"' EXIT
 
 conta() { command grep -c "$1" "$2" || true; }
 
@@ -69,7 +72,7 @@ echo "baseline verde: $TOTAL_ESPERADO OK / 0 ERR (exit 0)"
 VALIDAS=0; INVALIDAS=0; SEM_DENTE=0
 
 # roda uma falsificação:
-#   $1 = arquivo-alvo (MIG3|MIG31|MIG32)   $2 = id   $3 = descrição
+#   $1 = arquivo-alvo (MIG3|MIG31|MIG32|MIG33)   $2 = id   $3 = descrição
 #   $4 = perl (busca)   $5 = perl (troca)   $6 = marca que prova a sabotagem aplicada
 #   $7.. = asserts que TÊM de ficar vermelhos
 # ⚠️ busca/troca vão para dentro de um s/// do perl: não podem conter $ nem @.
@@ -80,6 +83,7 @@ falsifica() {
     MIG3)  mig="$MIG3";  bak="$BAK3" ;;
     MIG31) mig="$MIG31"; bak="$BAK31" ;;
     MIG32) mig="$MIG32"; bak="$BAK32" ;;
+    MIG33) mig="$MIG33"; bak="$BAK33" ;;
     *) echo "alvo desconhecido: $qual"; INVALIDAS=$((INVALIDAS+1)); return ;;
   esac
   echo
@@ -432,10 +436,73 @@ falsifica MIG32 F31 "TRAVA volta a impor valor fixo por funcao (a da versao ante
   "CASE WHEN f.alvo::text LIKE '%pendentes%'" \
   "P6 a TRAVA normalizou a volatilidade trocada e a PRE aceitou"
 
+# ══ FASE 3.3 — a reserva acompanha o PV reconciliado ════════════════════════
+# Toda sabotagem da 3.3 muda o corpo ⇒ T2/P7/P8 (md5) também ficam vermelhos;
+# o que valida é o vermelho do assert de COMPORTAMENTO que ela mira.
+
+# F32 — o ajuste ao PV desligado (o write-back segue firmando o carrinho)
+falsifica MIG33 F32 "ajuste ao PV reconciliado desligado" \
+  "  IF v_pv IS NOT NULL THEN
+    FOR v_aj IN" \
+  "  IF false THEN
+    FOR v_aj IN" \
+  "IF false THEN" \
+  "D1 a reserva virou a do PV (qtd somada, SKU fora liberado, SKU do PV criado e firme)"
+
+# F33 — o código do item deixa de ser conferido: o cast para bigint LANÇA e o
+#       write-back de um PV que existe se perde
+falsifica MIG33 F33 "item com codigo nao inteiro passa pela leitura" \
+  "CASE WHEN COALESCE(e #>> '{produto,codigo_produto}', '') !~" \
+  "CASE WHEN false AND '' !~" \
+  "CASE WHEN false AND '' !~" \
+  "D4 um item ilegivel torna a leitura INTEIRA ilegivel"
+
+# F34 — sem o teto do domínio da reserva: o CHECK estoura e derruba o write-back
+falsifica MIG33 F34 "quantidade do PV sem o teto do CHECK" \
+  "AND s.qtd <= 1000000" \
+  "AND true" \
+  "bool_and(s.sku > 0 AND s.qtd > 0 AND true)" \
+  "D8 quantidade fora do dominio da reserva (> 1e6): ilegivel, sem violar o CHECK"
+
+# F35 — sem a guarda de "um checkout com reserva viva": fabrica reserva sem checkout
+falsifica MIG33 F35 "ajuste sem reserva viva do pedido" \
+  "IF v_pv IS NOT NULL AND COALESCE(array_length(v_cks, 1), 0) <> 1 THEN" \
+  "IF false THEN" \
+  "IF false THEN" \
+  "D11 oben SEM reserva viva: nao FABRICA reserva a partir do PV"
+
+# F36 — o SKU que só o PV tem fica fora do lock
+falsifica MIG33 F36 "lock so dos SKUs ja reservados" \
+  "FROM jsonb_object_keys(COALESCE(v_pv, '{}'::jsonb)) k) x" \
+  "FROM jsonb_object_keys('{}'::jsonb) k) x" \
+  "FROM jsonb_object_keys('{}'::jsonb) k) x" \
+  "D12 a RPC NAO travou o SKU que so o PV tem"
+
+# F37 — a leitura deixa de ser só do pool oben
+falsifica MIG33 F37 "itens lidos em qualquer conta" \
+  "IF v_reconciliado AND p_account = 'oben' THEN" \
+  "IF v_reconciliado THEN" \
+  "IF v_reconciliado THEN" \
+  "D10 colacor reconciliado: fora do pool, nada se aplica"
+
+# F38 — todo envio vira "reconciliado"
+falsifica MIG33 F38 "envio normal tratado como reconciliado" \
+  "v_reconciliado boolean := COALESCE(p_omie_response->>'reconciled', '') = 'true';" \
+  "v_reconciliado boolean := true;" \
+  "v_reconciliado boolean := true;" \
+  "D7 envio normal (sem reconciled): nao le itens, nao ajusta"
+
+# F39 — a PRE da 3.3 aceita qualquer corpo vivo
+falsifica MIG33 F39 "PRE da 3.3 aceita qualquer estado vivo" \
+  "    IF r.vivo IS NULL OR r.vivo NOT IN (r.predecessor, r.este) THEN" \
+  "    IF r.vivo IS NULL OR false THEN" \
+  "IF r.vivo IS NULL OR false THEN" \
+  "P8 a PRE deixou sobrescrever o atp_confirmar_pv de outra sessao"
+
 echo
 echo "=== FALSIFICACAO: $VALIDAS validas / $SEM_DENTE sem dente / $INVALIDAS invalidas ==="
 restaura
-if cmp -s "$MIG3" "$BAK3" && cmp -s "$MIG31" "$BAK31" && cmp -s "$MIG32" "$BAK32"; then
+if cmp -s "$MIG3" "$BAK3" && cmp -s "$MIG31" "$BAK31" && cmp -s "$MIG32" "$BAK32" && cmp -s "$MIG33" "$BAK33"; then
   echo "migrations restauradas (byte-a-byte iguais ao backup)"
 else
   echo "ERRO: migration NAO restaurada"; exit 1
