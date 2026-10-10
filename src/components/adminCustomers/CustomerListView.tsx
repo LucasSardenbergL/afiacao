@@ -35,6 +35,8 @@ export function CustomerListView({
   hasNextPage,
   isFetchingNextPage,
   onLoadMore,
+  buscaNoServidor = false,
+  buscando = false,
 }: {
   customers: Customer[];
   scores: Map<string, ClientScore>;
@@ -48,6 +50,10 @@ export function CustomerListView({
   hasNextPage: boolean;
   isFetchingNextPage: boolean;
   onLoadMore: () => void;
+  /** `customers` já é o resultado da busca feita no servidor — não re-filtrar o texto em memória. */
+  buscaNoServidor?: boolean;
+  /** Resultado do termo anterior à vista enquanto o novo é buscado. */
+  buscando?: boolean;
 }) {
   const sentinelRef = useInfiniteScroll(onLoadMore, hasNextPage && !isFetchingNextPage);
   // Filtros sincronizados com URL (compartilhável, sobrevive a F5)
@@ -86,12 +92,16 @@ export function CustomerListView({
 
   const filtered = useMemo(() => {
     let result = customers;
-    if (searchQuery) {
+    // Base completa: a busca foi ao servidor (filtrar aqui só enxergaria as páginas já
+    // carregadas). Carteira: lida inteira, então o filtro local é completo — mesmas colunas
+    // da busca no servidor (useClientesScope COLUNAS_BUSCA).
+    if (searchQuery && !buscaNoServidor) {
       const q = searchQuery.toLowerCase();
       result = result.filter(c =>
         c.name.toLowerCase().includes(q) ||
         c.document?.includes(q) ||
-        c.email?.toLowerCase().includes(q)
+        c.email?.toLowerCase().includes(q) ||
+        c.phone?.toLowerCase().includes(q)
       );
     }
     if (filterHealth !== 'all') {
@@ -105,7 +115,7 @@ export function CustomerListView({
       });
     }
     return result;
-  }, [customers, searchQuery, filterHealth, scores]);
+  }, [customers, searchQuery, filterHealth, scores, buscaNoServidor]);
 
   if (loading) {
     // PageSkeleton (não Loader2 full-page) — convenção §9; mesma troca feita
@@ -229,11 +239,17 @@ export function CustomerListView({
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
-            placeholder="Buscar por nome, CPF/CNPJ ou e-mail..."
+            placeholder="Buscar por nome, CPF/CNPJ, e-mail ou telefone..."
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
-            className="pl-9 h-9"
+            className="pl-9 pr-9 h-9"
           />
+          {buscando && (
+            <Loader2
+              aria-label="Buscando"
+              className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 animate-spin text-muted-foreground"
+            />
+          )}
         </div>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -364,6 +380,14 @@ export function CustomerListView({
                 onAction={onRetry}
               />
             </div>
+          ) : hasNextPage ? (
+            // Ainda há páginas: "nenhum cliente" seria afirmar sobre a parte NÃO lida. O filtro
+            // de saúde só enxerga o que já foi carregado (os scores não paginam com a base).
+            <EmptyState
+              icon={Search}
+              title="Nenhum cliente nas páginas carregadas até agora"
+              description={`Dos ${customers.length} clientes carregados, nenhum passa no filtro. Carregue mais para continuar procurando no resto da base.`}
+            />
           ) : (
           <EmptyState
             icon={searchQuery || filterHealth !== 'all' ? Search : Users}
@@ -393,7 +417,9 @@ export function CustomerListView({
         )}
         {!hasNextPage && customers.length > 0 && !isCarteira && (
           <p className="text-center text-xs text-muted-foreground py-4 border-t">
-            Todos os clientes carregados ({total})
+            {buscaNoServidor
+              ? `Todos os resultados da busca carregados (${customers.length})`
+              : `Todos os clientes carregados (${total})`}
           </p>
         )}
       </Card>

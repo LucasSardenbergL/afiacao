@@ -402,6 +402,7 @@ export const MODULOS: ModuloApp[] = [
     ],
     testes: [
       "src/pages/__tests__/AdminCustomers.erro-honesto.test.tsx",
+      "src/pages/__tests__/AdminCustomers.busca-deeplink.test.tsx",
       "src/components/customer/__tests__/CustomerProfile360Summary.estados.test.tsx",
       "src/components/customer/__tests__/CustomerTabs.estados.test.tsx",
     ],
