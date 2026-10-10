@@ -48,6 +48,12 @@ Deno.test("grupo de UM membro com u válida também converte (o motor não exige
   igual([...r.conv.entries()], [[QT, 0.81]], "conv do único membro");
 });
 
+Deno.test("coerência EXATA como o numeric do motor: 3,240000001 no GL é incoerente (fallback, cru)", () => {
+  igual(convPendentePorSku(wp(0.81, 3.240000001)).conv.size, 0, "diferença ínfima = incoerente, como no SQL");
+  igual(convPendentePorSku(wp("0.81", "3.2400")).conv.size, 2, "zeros à direita não mudam o valor");
+  igual(convPendentePorSku(wp(0.81, 0.1 + 0.2)).problemas.length, 1, "double com > 15 dígitos: ilegível, não palpite");
+});
+
 Deno.test("razão igual em decimal mas não em double (0,3/3 vs 0,1/1) ainda é coerente", () => {
   const r = convPendentePorSku([
     { grupo_id: "g", sku_codigo_omie: 1, fator_para_base: 1, unidades_omie_por_embalagem: 0.1 },

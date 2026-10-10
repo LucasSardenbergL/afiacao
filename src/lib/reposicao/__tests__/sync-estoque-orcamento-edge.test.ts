@@ -132,8 +132,16 @@ describe('omie-sync-estoque — o par (físico, pendente) e a semântica fatal d
     // (db/test-pendente-po-unidade-omie.sh); aqui, que o handler as liga sem desvio.
     const iMembros = fonte.indexOf('.from("sku_embalagem_equivalencia")', iHandler);
     const leitura = fonte.slice(iMembros, fonte.indexOf(';', iMembros));
-    expect(leitura).toContain('.select("grupo_id, sku_codigo_omie, fator_para_base, unidades_omie_por_embalagem")');
+    expect(leitura).toContain(
+      '.select("grupo_id, sku_codigo_omie, fator_para_base, unidades_omie_por_embalagem", { count: "exact" })',
+    );
     expect(fonte).toContain('convPendente = convPendentePorSku(linhasEquiv);');
+    expect(fonte).toContain('if (membrosTotal !== linhasEquiv.length) {');
+    // A ligação EXATA (Codex: `const conv = new Map()` passava com os textos acima): o mapa que chega à varredura é o
+    // da leitura, e é o MESMO que o coletor e os dois acumuladores usam.
+    expect(fonte.match(/const conv = [^;]+;/g)).toEqual(['const conv = convPendente.conv;']);
+    expect(fonte).toContain('const convDe = (sku: string) => conv.get(sku);');
+    expect(fonte).toContain('...quantidadesEmUnidadeOmie(qtde, recebido, convDe(sku)) });');
     const iRecusa = fonte.indexOf('const recusa = recusaPorUnidade(convPendente, membrosErro);', iHandler);
     const iPo = fonte.indexOf('await computePendenteViaPedidosCompra(', iHandler);
     expect(iRecusa).toBeGreaterThan(iHandler);

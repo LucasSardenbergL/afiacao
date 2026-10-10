@@ -857,9 +857,9 @@ Deno.serve(async (req) => {
       let membrosGrupo = new Set<string>();
       let membrosErro: string | null = null;
       let convPendente: ReturnType<typeof convPendentePorSku> | null = null;
-      const { data: membrosRows, error: membrosErr } = await supabase
+      const { data: membrosRows, error: membrosErr, count: membrosTotal } = await supabase
         .from("sku_embalagem_equivalencia")
-        .select("grupo_id, sku_codigo_omie, fator_para_base, unidades_omie_por_embalagem")
+        .select("grupo_id, sku_codigo_omie, fator_para_base, unidades_omie_por_embalagem", { count: "exact" })
         .eq("empresa", empresa.toLowerCase())
         .eq("ativo", true)
         .gt("fator_para_base", 0);
@@ -869,6 +869,11 @@ Deno.serve(async (req) => {
       } else {
         const linhasEquiv = (membrosRows ?? []) as LinhaEquivalencia[];
         convPendente = convPendentePorSku(linhasEquiv);
+        // Leitura sem prova de completude (teto de linhas do PostgREST): o membro omitido podia ter u NULL e o
+        // motor cair no fallback onde a edge converte — vira problema (recusa), não um grupo "inteiro" de mentira.
+        if (membrosTotal !== linhasEquiv.length) {
+          convPendente.problemas.push(`equivalência incompleta: ${linhasEquiv.length} de ${membrosTotal ?? "?"} linhas`);
+        }
         membrosGrupo = new Set(
           linhasEquiv
             .map((r) => String(r.sku_codigo_omie))

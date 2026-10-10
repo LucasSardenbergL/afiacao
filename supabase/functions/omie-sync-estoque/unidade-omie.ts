@@ -26,40 +26,57 @@ export interface ConvPendente {
   problemas: string[];
 }
 
-// O SQL compara min(u/f) = max(u/f) em numeric exato; aqui é double. Um empate exato em decimal pode diferir no
-// último bit (0,3/3 ≠ 0,1 em double) — a tolerância relativa absorve isso. O caso inverso (desigual no SQL por menos
-// de 1e-9 relativo) não acontece com cadastro de 2 casas decimais.
-const TOLERANCIA_RELATIVA = 1e-9;
+// O SQL compara min(u/f) = max(u/f) em numeric EXATO. Aqui a coerência também é exata, em decimal (BigInt): uma
+// tolerância aceitaria cadastro que o SQL recusa (Codex, adversarial da v1.9: GL u=3.240000001 → a edge converteria
+// 2 GL em 6,48 e o motor, no fallback, contaria o trânsito como 8). O PostgREST entrega numeric como número JSON; o
+// texto mais curto do double é o decimal do banco enquanto couber em 15 dígitos significativos — acima disso o valor
+// pode ter perdido dígitos na ida e vira PROBLEMA (recusa), nunca palpite.
+const DIGITOS_EXATOS = 15;
 
-function numeroOuNull(v: unknown): number | null {
-  if (typeof v === "number") return Number.isFinite(v) ? v : NaN;
+interface Decimal { n: bigint; e: number } // valor = n × 10^-e
+
+function decimalOuNull(v: unknown): Decimal | null | "ilegivel" {
   if (v === null || v === undefined) return null;
-  if (typeof v !== "string") return NaN;
-  const s = v.trim();
-  if (!/^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(s)) return NaN;
-  const n = Number(s);
-  return Number.isFinite(n) ? n : NaN;
+  let texto: string;
+  if (typeof v === "number") {
+    if (!Number.isFinite(v)) return "ilegivel";
+    texto = String(v);
+  } else if (typeof v === "string") texto = v.trim();
+  else return "ilegivel";
+  const m = /^([+-]?)(\d*)(?:\.(\d*))?(?:[eE]([+-]?\d+))?$/.exec(texto);
+  if (!m || (m[2] + (m[3] ?? "")) === "") return "ilegivel";
+  const inteiro = m[2] || "0", frac = m[3] ?? "";
+  const digitos = (inteiro + frac).replace(/^0+/, "").replace(/0+$/, "");
+  if (typeof v === "number" && digitos.length > DIGITOS_EXATOS) return "ilegivel";
+  const n = BigInt(m[1] + inteiro + frac);
+  const e = frac.length - Number(m[4] ?? 0);
+  return e >= 0 ? { n, e } : { n: n * 10n ** BigInt(-e), e: 0 };
 }
 
-function mesmaRazao(u1: number, f1: number, u2: number, f2: number): boolean {
-  const a = u1 * f2, b = u2 * f1;
-  return Math.abs(a - b) <= TOLERANCIA_RELATIVA * Math.max(Math.abs(a), Math.abs(b));
+const paraNumero = (d: Decimal): number => Number(d.n) / 10 ** d.e;
+
+/** u1/f1 = u2/f2 ⇔ u1·f2 = u2·f1, exato. */
+function mesmaRazao(u1: Decimal, f1: Decimal, u2: Decimal, f2: Decimal): boolean {
+  const ladoA = u1.n * f2.n, eA = u1.e + f2.e;
+  const ladoB = u2.n * f1.n, eB = u2.e + f1.e;
+  const e = Math.max(eA, eB);
+  return ladoA * 10n ** BigInt(e - eA) === ladoB * 10n ** BigInt(e - eB);
 }
 
 export function convPendentePorSku(linhas: readonly LinhaEquivalencia[]): ConvPendente {
   const problemas: string[] = [];
-  const grupos = new Map<string, Array<{ sku: string; f: number; u: number | null }>>();
+  const grupos = new Map<string, Array<{ sku: string; f: Decimal; u: Decimal | null }>>();
   for (const l of linhas) {
     const sku = String(l.sku_codigo_omie ?? "").trim();
-    const f = numeroOuNull(l.fator_para_base);
-    const u = numeroOuNull(l.unidades_omie_por_embalagem);
-    // Valor que não se lê (NaN) ou linha sem chave: o motor leria um número que este lado não vê. Ler como "sem
+    const f = decimalOuNull(l.fator_para_base);
+    const u = decimalOuNull(l.unidades_omie_por_embalagem);
+    // Valor que não se lê ou linha sem chave: o motor leria um número que este lado não vê. Ler como "sem
     // cadastro" voltaria ao pendente cru justamente no grupo que o motor converte — a classe deste conserto.
-    if (!sku || f === null || Number.isNaN(f) || Number.isNaN(u ?? 0)) {
+    if (!sku || f === null || f === "ilegivel" || u === "ilegivel") {
       problemas.push(`equivalência ilegível (sku=${sku || "—"} fator=${String(l.fator_para_base)} u=${String(l.unidades_omie_por_embalagem)})`);
       continue;
     }
-    if (!(f > 0)) continue; // fora do recorte do motor
+    if (!(f.n > 0n)) continue; // fora do recorte do motor
     const chave = l.grupo_id === null || l.grupo_id === undefined ? "∅" : String(l.grupo_id);
     const g = grupos.get(chave) ?? [];
     g.push({ sku, f, u });
@@ -67,11 +84,11 @@ export function convPendentePorSku(linhas: readonly LinhaEquivalencia[]): ConvPe
   }
   const conv = new Map<string, number>();
   for (const membros of grupos.values()) {
-    const todosValidos = membros.every((m) => m.u !== null && m.u > 0 && m.u < 1e9);
+    const todosValidos = membros.every((m) => m.u !== null && m.u.n > 0n && paraNumero(m.u) < 1e9);
     if (!todosValidos) continue;
     const [p] = membros;
-    if (!membros.every((m) => mesmaRazao(m.u as number, m.f, p.u as number, p.f))) continue;
-    for (const m of membros) conv.set(m.sku, m.u as number);
+    if (!membros.every((m) => mesmaRazao(m.u as Decimal, m.f, p.u as Decimal, p.f))) continue;
+    for (const m of membros) conv.set(m.sku, paraNumero(m.u as Decimal));
   }
   return { conv, problemas };
 }
