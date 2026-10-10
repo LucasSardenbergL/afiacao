@@ -23,7 +23,7 @@
 --
 -- SEGURANÇA: SECURITY INVOKER — a RLS de quem chama vale em todas as leituras (staff lê contatos,
 -- perfis e a própria carteira; um customer só alcança o próprio perfil). Nada aqui escreve.
--- Zero linhas = desconhecido (telefone com < 8 dígitos, ou nenhum dono).
+-- Zero linhas = desconhecido (telefone com < 8 dígitos, placeholder de dígito repetido, ou nenhum dono).
 --
 -- APLICAR: bun run db:aplicar supabase/migrations/<este arquivo> — o executor fornece a transação
 -- (não há BEGIN/COMMIT aqui). Idempotente. A postcondição no fim aborta tudo se o estado final não for
@@ -52,6 +52,11 @@ DECLARE
   v_escolhido  uuid;
 BEGIN
   IF length(v_sufixo) < 8 THEN
+    RETURN;
+  END IF;
+  -- placeholder (00000000, 99999999…): não identifica ninguém — há 3 perfis assim em prod
+  -- (2026-10-10). Casar por ele gravaria ligação de quem não é cliente.
+  IF v_sufixo ~ '^(\d)\1{7}$' THEN
     RETURN;
   END IF;
 

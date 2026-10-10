@@ -81,6 +81,7 @@ vi.mock('@/integrations/supabase/client', () => ({
   },
 }));
 
+import { toast } from 'sonner';
 import { WebRTCCallProvider } from '../WebRTCCallContext';
 import { useWebRTCCallContext } from '../webrtc-call-context';
 import { SipClient } from '@/lib/sip/sip-client';
@@ -99,9 +100,12 @@ function handler(evento: string) {
   return h as (...args: unknown[]) => unknown;
 }
 
-/** Liga (inbound atendido = sempre grava) e devolve o hook. */
+/** Turnos que a transcrição entrega DEPOIS de conectar (o hook real zera ao conectar e cresce). */
+let conteudoDaLigacao: unknown[] = [];
+
+/** Liga (inbound atendido = sempre grava), conecta, entrega a transcrição e devolve o hook. */
 async function ligacaoAtendida() {
-  const { result } = renderHook(() => useWebRTCCallContext(), { wrapper });
+  const { result, rerender } = renderHook(() => useWebRTCCallContext(), { wrapper });
   await waitFor(() => expect(SipClient).toHaveBeenCalledTimes(1));
   await act(async () => {
     await handler('incomingCall')({ phone: '37977776666', sipCallId: 'sip-1' } as IncomingCallInfo);
@@ -110,13 +114,19 @@ async function ligacaoAtendida() {
   await act(async () => {
     await result.current.acceptIncoming();
   });
-  return result;
+  act(() => handler('stateChange')('established'));
+  act(() => {
+    transcricao.turns = [...conteudoDaLigacao];   // array NOVO, como o setTurns do hook real
+    rerender();
+  });
+  return { result, rerender };
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
   invokeMock.mockResolvedValue({ wsUri: 'wss://x', sipDomain: 'd', username: 'u', password: 'p' });
-  transcricao.turns = [turnoFinal];
+  transcricao.turns = [];
+  conteudoDaLigacao = [turnoFinal];
   const fakeMic = { getTracks: () => [{ kind: 'audio', stop: vi.fn() }] } as unknown as MediaStream;
   Object.defineProperty(navigator, 'mediaDevices', {
     value: { getUserMedia: vi.fn(async () => fakeMic) },
@@ -136,7 +146,7 @@ describe('fim da ligação pelo lado remoto', () => {
   });
 
   it('"Encerrar" + o stateChange terminal que o hangUp dispara: persiste UMA vez, não duas', async () => {
-    const result = await ligacaoAtendida();
+    const { result } = await ligacaoAtendida();
     await act(async () => {
       await result.current.endCall();
     });
@@ -149,11 +159,60 @@ describe('fim da ligação pelo lado remoto', () => {
   });
 
   it('fim remoto sem transcrição nem análise: nada a persistir (regra do endCall mantida)', async () => {
-    transcricao.turns = [];
+    conteudoDaLigacao = [];
     await ligacaoAtendida();
     act(() => handler('stateChange')('ended'));
 
     await act(async () => { await Promise.resolve(); });
     expect(insertMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('revisão adversária (2026-10-10): a sessão não herda nem cede conteúdo', () => {
+  it('ligação seguinte que NÃO conecta não persiste a conversa da anterior (c1)', async () => {
+    const { result, rerender } = await ligacaoAtendida();
+    act(() => handler('stateChange')('ended'));
+    await waitFor(() => expect(insertMock).toHaveBeenCalledTimes(1));
+
+    // B: entra, é atendida, mas cai antes de conectar. O hook de transcrição ainda guarda os turns de
+    // A (só os zera ao conectar) — persistir aqui gravaria a conversa de A no cliente de B.
+    await act(async () => {
+      await handler('incomingCall')({ phone: '37911112222', sipCallId: 'sip-2' } as IncomingCallInfo);
+    });
+    await waitFor(() => expect(result.current.incomingCall?.sipCallId).toBe('sip-2'));
+    await act(async () => {
+      await result.current.acceptIncoming();
+    });
+    // pior caso: os turns velhos de A são reemitidos antes de B conectar — só a trava `estabelecida` segura
+    act(() => {
+      transcricao.turns = [turnoFinal];
+      rerender();
+    });
+    act(() => handler('stateChange')('failed'));
+
+    await act(async () => { await Promise.resolve(); });
+    expect(insertMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('último turno e BYE no MESMO commit: o turno entra no registro (c3)', async () => {
+    conteudoDaLigacao = [];
+    await ligacaoAtendida();
+    act(() => {
+      transcricao.turns = [turnoFinal];          // a transcrição entrega o turno...
+      handler('stateChange')('ended');           // ...e o cliente desliga no mesmo lote
+    });
+
+    await waitFor(() => expect(insertMock).toHaveBeenCalledTimes(1));
+    const payload = insertMock.mock.calls[0][0] as Record<string, unknown>;
+    expect(JSON.stringify(payload)).toContain('pode mandar o orçamento');
+  });
+
+  it('com uma ligação em curso, "Ligar" de novo é recusado em vez de sobrescrever a sessão (c2)', async () => {
+    const { result } = await ligacaoAtendida();
+    await act(async () => {
+      await result.current.makeCall('37933334444');
+    });
+    expect(sipClientMock.makeCall).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledWith('Encerre a ligação atual antes de iniciar outra.');
   });
 });

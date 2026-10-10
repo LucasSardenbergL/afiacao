@@ -33,7 +33,7 @@ export LC_ALL=C LANG=C          # o CLIENTE fica em C (o postmaster aborta sem i
 # controle e virou vermelho aqui, (4) sem ERRO de SQL que o controle não tem.
 # ══════════════════════════════════════════════════════════════════════════════════════════════
 if [ "${1:-}" = "--falsificar" ]; then
-  SABOTAGENS="ilike_cru:A1,A9 staff_vira_cliente:A3 sem_desempate:A5 ambiguo_escolhe:A4"
+  SABOTAGENS="ilike_cru:A1,A9 staff_vira_cliente:A3 sem_desempate:A5 ambiguo_escolhe:A4 aceita_placeholder:A15"
   LOGDIR="$(mktemp -d "/tmp/falsifica-${SLUG}.XXXXXX")"
   porta=$PORT
   executados() { sed -n 's/^PASS=\([0-9][0-9]*\)  FAIL=\([0-9][0-9]*\)$/\1 \2/p' "$1" | awk '{ print $1 + $2 }'; }
@@ -133,6 +133,7 @@ case "${SABOTAGEM:-}" in
   staff_vira_cliente) sabotar "r.role IN ('employee'::public.app_role, 'master'::public.app_role)" "false" ;;
   sem_desempate)      sabotar "a.owner_user_id = auth.uid()" "false" ;;
   ambiguo_escolhe)    sabotar "IF cardinality(v_ids) = 1 THEN" "IF cardinality(v_ids) >= 1 THEN" ;;
+  aceita_placeholder) sabotar "IF v_sufixo ~ '^(\\d)\\1{7}$' THEN" "IF false THEN" ;;
   *) echo "❌ sabotagem desconhecida: ${SABOTAGEM}"; exit 1 ;;
 esac
 
@@ -198,6 +199,8 @@ INSERT INTO public.profiles (user_id, name, phone) VALUES
   ('$C2','Cliente Contato',NULL), ('$C3','Perfil Mesmo Fone','27 3333-4444'),
   ('$C4','Amb A','98765-4321'), ('$C5','Amb B','(11) 98765-4321'),
   ('$C6','Amb Carteira','91234-5678'), ('$C7','Amb Outra','(27) 9 1234-5678');
+INSERT INTO public.user_roles (user_id, role) VALUES ('22222222-0000-0000-0000-000000000008','customer');
+INSERT INTO public.profiles (user_id, name, phone) VALUES ('22222222-0000-0000-0000-000000000008','Placeholder','99999-9999');
 INSERT INTO public.customer_contacts (customer_user_id, phone, nome, cargo, is_primary) VALUES
   ('$C2','(27) 3333-4444','Joana','compras',true);
 INSERT INTO public.carteira_assignments (customer_user_id, owner_user_id, eligible) VALUES
@@ -228,6 +231,7 @@ eq "A3 perfil de staff não é cliente"                         "$(como "$V" '27
 eq "A4 ambíguo fora da carteira: dono NULL, 2 candidatos"     "$(como "$V" '98765-4321')" "NULL|||perfil|2"
 eq "A6 telefone com menos de 8 dígitos: zero linhas"          "$(como "$V" '1234')" "VAZIO"
 eq "A7 número sem dono: zero linhas"                          "$(como "$V" '(11) 90000-0001')" "VAZIO"
+eq "A15 placeholder de dígito repetido não identifica ninguém" "$(como "$V" '(27) 99999-9999')" "VAZIO"
 eq "A5 ambíguo: desempata pelo único candidato na carteira de quem liga" "$(como "$V" '(27) 91234-5678')" "$C6|||perfil|2"
 
 echo "── RLS de quem chama (SECURITY INVOKER) ──"
