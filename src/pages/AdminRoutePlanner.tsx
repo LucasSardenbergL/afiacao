@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Loader2, Navigation, CheckCircle2 } from 'lucide-react';
+import { Loader2, Navigation, CheckCircle2, RotateCw } from 'lucide-react';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -90,6 +91,8 @@ const AdminRoutePlanner = () => {
     loading,
     geocodingPendentes,
     scoringLoading,
+    erro: erroCarteira,
+    recarregarCarteira,
     planningMode,
     setPlanningMode,
     filterPeriod,
@@ -146,6 +149,10 @@ const AdminRoutePlanner = () => {
     removerAlvo,
     detalheDoAlvo,
   } = useRoutePlanner();
+
+  // A carteira só é dimensão do roteiro nestes dois modos — mesmo recorte do `scoringLoading`
+  // logo abaixo. Em logística/prospecção o scoring não entra, e avisar ali seria ruído.
+  const usaCarteira = planningMode === 'comercial' || planningMode === 'hibrido';
 
   // Sheet de detalhe do alvo (contexto campo). alvoAberto = qual alvo está aberto.
   const [alvoAberto, setAlvoAberto] = useState<RouteStop | null>(null);
@@ -413,7 +420,26 @@ const AdminRoutePlanner = () => {
             </Card>
           )}
 
-          {optimizedRoute.length === 0 && !scoringLoading && !loadingProspects && !loading ? (
+          {/* A carteira é dimensão do roteiro nos modos comercial/híbrido: sem ela o que sobra
+              (ferramentas vencidas) NÃO é "a rota de hoje". O aviso vem ANTES do empty state
+              porque o empty state afirma — e chegava a instruir "configure datas de afiação",
+              uma tarefa inventada por uma falha de leitura. */}
+          {erroCarteira && usaCarteira && (
+            <Card role="alert" data-testid="aviso-carteira-rota" className="border-status-error/30 bg-status-error/5">
+              <CardContent className="py-4 space-y-2">
+                <p className="text-sm">
+                  Não consegui ler a sua carteira — as paradas comerciais ficam de fora deste
+                  roteiro. O que está no mapa NÃO é a rota completa de hoje.
+                </p>
+                <Button variant="outline" size="sm" onClick={recarregarCarteira} disabled={scoringLoading}>
+                  {scoringLoading ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <RotateCw className="w-4 h-4 mr-1.5" />}
+                  Tentar novamente
+                </Button>
+              </CardContent>
+            </Card>
+          )}
+
+          {optimizedRoute.length === 0 && !scoringLoading && !loadingProspects && !loading && !(erroCarteira && usaCarteira) ? (
             <Card>
               <CardContent className="py-8 text-center text-muted-foreground">
                 {planningMode === 'logistica' ? 'Nenhum pedido com coleta/entrega pendente.'

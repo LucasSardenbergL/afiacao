@@ -32,7 +32,11 @@ import { MixGapCard } from '@/components/farmer/MixGapCard';
 const FarmerCalls = () => {
   const navigate = useNavigate();
   const { user, isStaff, loading: authLoading } = useAuth();
-  const { agenda, clientScores, loading: agendaLoading } = useFarmerScoring();
+  // `erro` desestruturado de propósito: sem ele `agenda === []` por falha de leitura caía no
+  // empty state de SUCESSO do AgendaQueueCard — "Nenhuma ligação pendente. Bom trabalho!" com
+  // check verde. Elogio FABRICADO por falha de transporte, na tela que É a fila de ligações.
+  const { agenda, clientScores, loading: agendaLoading, erro: erroAgenda, recalculate } =
+    useFarmerScoring();
   // `error` desestruturado de propósito: sem ele o `positivacao &&` lá embaixo esconderia
   // o bloco inteiro — MixGapCard incluso — quando a RPC falhasse, e como as duas saem pelo
   // MESMO PostgREST a falha correlacionada é o caso COMUM. A correção dos três estados do
@@ -46,8 +50,12 @@ const FarmerCalls = () => {
   // duas leituras pausam juntas, então isso era determinístico, não corrida. O rótulo da série
   // mora dentro do `useSinalPositivacao`, onde nenhum host pode inventá-lo (revisão retroativa do
   // #1896, `docs/historico/fase-sem-sinal.md`).
-  const { data: commercialRole } = useMyCommercialRole();
-  const isHunter = commercialRole === 'hunter';
+  // `estado` junto do `data` porque só `'pronta'` autoriza tratar o papel como FATO (está no
+  // doc do hook): sob falha — ou PAUSADA, offline, com `isLoading` false — `commercialRole` é
+  // null e `=== 'hunter'` dá `false` FABRICADO. A tela afirmaria "você é farmer" e mostraria ao
+  // hunter os 7 KPIs de retenção/penetração que a spec decidiu NÃO mostrar a ele.
+  const { data: commercialRole, estado: estadoPapel } = useMyCommercialRole();
+  const isHunter = estadoPapel === 'pronta' && commercialRole === 'hunter';
   // Sensor: emite `carteira.positivacao_vista` em TODO desfecho (o #1886 consertou o que a
   // tela mostra no erro; o que ela mede continuava só no ramo de sucesso).
   useSinalPositivacao();
@@ -462,6 +470,15 @@ const FarmerCalls = () => {
               testId="aviso-positivacao"
             />
           )}
+          {naoConsegui(estadoPapel) && (
+            /* `testId` próprio: esta página já tem avisos de positivação e de agenda, e âncora
+               compartilhada deixa o guard de um passar verde pelo aviso do outro (#1896). */
+            <AvisoLeituraFalhou
+              oque="o seu papel comercial — o placar abaixo é o de farmer, mesmo que o seu não seja"
+              estado={estadoPapel}
+              testId="aviso-papel"
+            />
+          )}
           {positivacao && (
             <>
               <PositivacaoHero kpis={positivacao} isHunter={isHunter} />
@@ -484,6 +501,8 @@ const FarmerCalls = () => {
           agenda={agenda}
           clientScores={clientScores}
           agendaLoading={agendaLoading}
+          erro={erroAgenda}
+          onRetry={recalculate}
           onCallEnd={handleAgendaCallEnd}
           onRegister={handleAgendaRegister}
         />
