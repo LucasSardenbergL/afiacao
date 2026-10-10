@@ -165,11 +165,13 @@ db/test-db-aplicar.sh                      64  falsificar=15
 # Tintométrico: a promoção staging→oficial é tudo-ou-nada — receita corrompida não grava parcial,
 # linha sem `nome_cor` não derruba o run, e linha carimbada pela Fase 5 não é reativada (sem a
 # migration, o 23514 abortava o promote INTEIRO); o UPDATE da Fase 5 aborta a transação toda se o
-# guard de cobertura reprovar. A test-tint-promote.sh é fail-fast (asserção em SQL = RAISE): o
+# guard de cobertura reprovar; e a linha carimbada não muda nem por PATCH direto de staff (trigger
+# da 20261010120000). A test-tint-promote.sh é fail-fast (asserção em SQL = RAISE): o
 # mínimo dela conta os checkpoints ALCANÇADOS, que é o que um truncamento derruba.
 db/test-tint-promote.sh                    24
 db/test-tint-promote-nome-cor.sh            3
 db/test-tint-promote-tombstone-fase5.sh     5
+db/test-tint-tombstone-fase5-imutavel.sh   10
 db/test-tint-fase5-desativacao.sh          37
 
 # ── Eixo 4 — CONCORRÊNCIA / TOCTOU ────────────────────────────────────────────────
