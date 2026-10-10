@@ -124,6 +124,13 @@ Deno.test("ranking: o produto certo entra mesmo FORA dos 1.000 primeiros em orde
   assertEquals(r.semCandidato, 0);
 });
 
+Deno.test("ranking: palavra INTEIRA vence substring, mesmo vindo depois na ordem alfabética", () => {
+  // 'ACOLAMENTO' contém 'cola' como substring; empate de peso cairia no alfabético e ele venceria.
+  const catalogo = [produto(1, "ACOLAMENTO ESPECIAL"), produto(2, "ZINCO COLA BRANCA")];
+  const r = rankearProdutos([{ descricao: "cola", codigo: null }], catalogo, 1);
+  assertEquals(r.candidatos.map((p) => p.id), [id(2)]);
+});
+
 Deno.test("ranking: código transcrito sem pontuação casa (FO056717 ≡ FO05.6717)", () => {
   const catalogo = [produto(1, "SELADORA X", "FO05.6717"), produto(2, "SELADORA Y", "FO05.9999")];
   const r = rankearProdutos([{ descricao: "", codigo: "FO056717" }], catalogo);
