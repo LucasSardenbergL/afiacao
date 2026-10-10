@@ -120,6 +120,38 @@ describe('ItensTable', () => {
     setup({ podeEditar: false, linhas: [linha({ estoque_atual: 5, estoque_fisico: null, estoque_a_caminho: null })] });
     expect(screen.queryByText(/a caminho/)).toBeNull();
   });
+
+  // [COMPROMETIDO] o motor desconta o vendido em pedido aberto no Omie (20261010210000): a conta exibida tem de
+  // fechar com o efetivo — "12 + 0" ao lado de um efetivo 8 esconderia por que o item entrou na compra.
+  it('mostra o vendido em aberto mesmo SEM nada a caminho: "12 − 4 vendido" fecha com o efetivo 8', () => {
+    setup({ podeEditar: false, linhas: [linha({ estoque_atual: 8, estoque_fisico: 12, estoque_a_caminho: 0, estoque_comprometido: 4 })] });
+    const sub = screen.getByText('12 − 4 vendido');
+    expect(sub.parentElement?.textContent).toBe('812 − 4 vendido'); // efetivo 8 + a sublinha, na mesma célula
+    expect(screen.queryByText(/a caminho/)).toBeNull();
+  });
+
+  it('a caminho E vendido: "10 + 2 a caminho − 5 vendido"; efetivo negativo é exibido como é', () => {
+    setup({ podeEditar: false, linhas: [linha({ estoque_atual: 7, estoque_fisico: 10, estoque_a_caminho: 2, estoque_comprometido: 5 })] });
+    expect(screen.getByText('10 + 2 a caminho − 5 vendido')).toBeTruthy();
+  });
+
+  it('vendido 0 ou NULL (desconto sem nada em aberto, ou SKU de grupo) não acrescenta nada', () => {
+    setup({
+      podeEditar: false,
+      linhas: [
+        linha({ id: 1, estoque_atual: 3, estoque_fisico: 2, estoque_a_caminho: 1, estoque_comprometido: 0 }),
+        linha({ id: 2, sku_codigo_omie: '556', estoque_atual: 6, estoque_fisico: 6, estoque_a_caminho: 0, estoque_comprometido: null }),
+      ],
+    });
+    expect(screen.getByText('2 + 1 a caminho')).toBeTruthy();
+    expect(screen.queryByText(/vendido/)).toBeNull();
+  });
+
+  it('o tooltip do efetivo explica o desconto', () => {
+    setup({ podeEditar: false, linhas: [linha({ estoque_atual: 8, estoque_fisico: 12, estoque_a_caminho: 0, estoque_comprometido: 4 })] });
+    const celula = screen.getByText('12 − 4 vendido').parentElement as HTMLElement;
+    expect(celula.getAttribute('title')).toContain('− 4 vendido em pedido aberto no Omie (ainda sem NF');
+  });
 });
 
 describe('ItensTable — múltiplo da embalagem do portal (litro → balde)', () => {

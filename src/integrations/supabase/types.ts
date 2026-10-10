@@ -9394,6 +9394,7 @@ export type Database = {
           economia_estimada_valor: number | null
           estoque_a_caminho: number | null
           estoque_atual: number | null
+          estoque_comprometido: number | null
           estoque_fisico: number | null
           estoque_maximo: number | null
           fator_embalagem_portal: number | null
@@ -9427,6 +9428,7 @@ export type Database = {
           economia_estimada_valor?: number | null
           estoque_a_caminho?: number | null
           estoque_atual?: number | null
+          estoque_comprometido?: number | null
           estoque_fisico?: number | null
           estoque_maximo?: number | null
           fator_embalagem_portal?: number | null
@@ -9460,6 +9462,7 @@ export type Database = {
           economia_estimada_valor?: number | null
           estoque_a_caminho?: number | null
           estoque_atual?: number | null
+          estoque_comprometido?: number | null
           estoque_fisico?: number | null
           estoque_maximo?: number | null
           fator_embalagem_portal?: number | null
