@@ -51,9 +51,12 @@ montar() {
 
 # Duas sessões disputando a MESMA (conta, método): A segura a transação 2 s depois de pegar a vez;
 # B chega no meio. Com FOR UPDATE, B espera o lock e vê o lease de A → 'ocupado'.
+# A linha JÁ EXISTE (o caso de prod depois da 1ª chamada): com a linha nova, o INSERT…ON CONFLICT
+# já serializaria as duas sessões e o FOR UPDATE ficaria sem teste (medido: F1 verde).
 chk_concorrencia() {
   local db="$1"
-  Pd "$db" -q -c "DELETE FROM public.omie_cota_metodo;" >/dev/null
+  Pd "$db" -q -c "DELETE FROM public.omie_cota_metodo;
+                  INSERT INTO public.omie_cota_metodo (conta, metodo) VALUES ('oben','ListarPedidos');" >/dev/null
   ( Pd "$db" -tA -q -c "BEGIN; SELECT ok FROM public.omie_cota_tentar('oben','ListarPedidos','token-sessao-A',60); SELECT pg_sleep(2); COMMIT;" >"$TMP/a.out" 2>&1 ) &
   local pid=$!
   sleep 0.5
