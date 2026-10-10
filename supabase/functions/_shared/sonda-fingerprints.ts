@@ -34,7 +34,7 @@ export const FONTE_SHA256: Record<string, string> = {
   "fin-valor-cockpit": "1ed02206fb6b033ec92d351a8595dc0b92ac39f9e99e485d5491047f8d58aa29",
   "generate-bundle-argument": "c8088c32e078e2bd7ac73103882cec7f41be8675bc36199744f201bc4876b701",
   "generate-tactical-plan": "69ebb00cbc46ffb99302c5332f0cd6ec8597593318b90eecb6db0251c2568b42",
-  "gerar-pedidos-diario": "ed7524d4ffe9de36e6b79c9a9b3832aba427e62d15dcc38076b191ded1f43e0c",
+  "gerar-pedidos-diario": "9d8456cbdabbfbf5b9b09a714b20060fdc0e8e6cab0916942ae826a30b70ec10",
   "identify-tool": "d503dd923e2e73b5e200c0b8fed700b6c938d0313e92ec6d6203b2c4b59f45a9",
   "monthly-report": "578a6e8963a0f1fd0fee9bc8fbd971892b9cdae5128894e40e74d9989cc4d7ab",
   "nvoip-calls": "2b3934215e43fae406b6c270bd6a319f9cef3b91c02d02c25bf6890fe2657435",
