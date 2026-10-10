@@ -18,6 +18,9 @@ import { comRegistro, type DbRegistro } from "../_shared/registro-execucao.ts";
 import { criarColetorObservacao, type LinhaObservada } from "./observacao-po.ts";
 import { registroComPrazo } from "./registro-com-prazo.ts";
 import { criarAcumuladorFisico } from "./fisico.ts";
+import {
+  convDaOrigem, convPendentePorSku, type LinhaEquivalencia, quantidadesEmUnidadeOmie, recusaPorUnidade,
+} from "./unidade-omie.ts";
 import { comPrazo, concluirRun, linhaMarcador, MARKER_FULL, type OpsPublicacao } from "./publicacao.ts";
 
 const corsHeaders = {
@@ -390,6 +393,7 @@ async function computePendenteViaPedidosCompra(
   appKey: string, appSecret: string,
   habilitadoMap: Map<string, string | null>,
   membro: (sku: string) => boolean,
+  conv: ReadonlyMap<string, number>,
   supabase: SupabaseClient,
   deadline: number,
 ): Promise<{
@@ -422,7 +426,12 @@ async function computePendenteViaPedidosCompra(
   let pedidosVistos = 0, pedidosApp = 0, paginasLidas = 0, fim = false;
   // Observação do conjunto que o motor contou (PR0 da baixa de PO): anotada nos MESMOS pontos de decisão abaixo,
   // sem mudar o que conta. 1 registro por PO (coletor) — a reaparição colidiria na PK. O handler publica.
+  // Unidade (unidade-omie.ts): o saldo de um PO DO APP (carimbo AFI-) num SKU com conv entra em unidades Omie no
+  // pendente E na contribuição; PO manual já está em litros e entra cru. O conv é decidido POR PO (convDoPo).
   const coletor = criarColetorObservacao((sku) => habilitadoMap.has(sku) || membro(sku), { parseQtd, parseRecebido });
+  type ConvDoPo = (sku: string) => number | undefined;
+  const itemDoPo = (convDoPo: ConvDoPo, sku: string, poNumero: string, etapa: string, qtde: number, recebido: number): PoItemOmie =>
+    ({ sku, poNumero, etapa, ...quantidadesEmUnidadeOmie(qtde, recebido, convDoPo(sku)) });
 
   for (let pagina = 1; pagina <= MAX_PAGINAS_PED; pagina++) {
     const resp = await callOmiePedidos(appKey, appSecret, pagina, dataDe, dataAte, deadline);
@@ -456,6 +465,7 @@ async function computePendenteViaPedidosCompra(
       if (cNumero) aliases.push(`num:${cNumero}`);
       if (cCodIntPed) aliases.push(`cod:${cCodIntPed}`);
       const cabObs = { nCodPed: Number(nCodPed), cNumero: cNumero || null, cEtapa: etapa || null };
+      const convDoPo = convDaOrigem(cCodIntPed, conv);
       const itensObs = ped?.produtos_consulta ?? [];
       // De-dup vs em_transito: PO do app já é contada pelo em_transito da RPC → NÃO entra no pendente Omie. Pula CEDO
       // (não exige nCodPed: uma PO app não pode congelar o snapshot — [Codex P2 round3]). Registra TODAS as aliases
@@ -510,7 +520,7 @@ async function computePendenteViaPedidosCompra(
         itensComSku++;
         if (!habilitadoMap.has(sku)) {
           if (membro(sku)) {
-            if (quantidadesValidas(qtde, recebido)) itemsMembros.push({ sku, poNumero: cNumero, etapa, qtde, recebido });
+            if (quantidadesValidas(qtde, recebido)) itemsMembros.push(itemDoPo(convDoPo, sku, cNumero, etapa, qtde, recebido));
             else membrosPendenteIlegiveis.add(sku);
           }
           continue;
@@ -519,7 +529,7 @@ async function computePendenteViaPedidosCompra(
           problemas.push(`item inválido (sku=${sku} po=${cNumero} nQtde=${it.nQtde} nQtdeRec=${it.nQtdeRec})`);
           continue;
         }
-        items.push({ sku, poNumero: cNumero, etapa, qtde, recebido });
+        items.push(itemDoPo(convDoPo, sku, cNumero, etapa, qtde, recebido));
       }
       if (itensComSku === 0) {
         problemas.push(`PO aprovada sem item com SKU (po=${cNumero || nCodPed} etapa=${etapa})`);
@@ -527,7 +537,7 @@ async function computePendenteViaPedidosCompra(
       // A decisão FINAL do motor: o acumulador (computePendenteEntradaPorSku) ainda descarta por número o PO cujo
       // cNumero está no em_transito — só alcançável com cNumero "" e um número vazio no app, mas aí a soma por SKU
       // fecharia por compensação com outro PO se a observação o anotasse como contado.
-      coletor.registrar(cabObs, itensObs, emTransitoNumeros.has(cNumero) ? "dedup_app" : null);
+      coletor.registrar(cabObs, itensObs, emTransitoNumeros.has(cNumero) ? "dedup_app" : null, convDoPo);
     }
     await new Promise((r) => setTimeout(r, 1100));   // rate-limit Omie entre páginas
   }
@@ -844,11 +854,14 @@ Deno.serve(async (req) => {
       // 1b) Membros de grupo de equivalência NÃO habilitados: o motor lê o físico deles no GREATEST do grupo, com o
       // MESMO recorte daqui (empresa minúscula, ativo, fator > 0). Leitura que falha não derruba o sync dos
       // habilitados: segue sem membros, e o resumo diz por quê (nunca "0 membros").
+      // A MESMA leitura dá a unidade do pendente do PO (unidade-omie.ts): sem ela, o pendente OBEN não é publicável —
+      // o motor converte o em trânsito do grupo WP e o PO cru entraria em embalagens onde o estoque conta litros.
       let membrosGrupo = new Set<string>();
       let membrosErro: string | null = null;
-      const { data: membrosRows, error: membrosErr } = await supabase
+      let convPendente: ReturnType<typeof convPendentePorSku> | null = null;
+      const { data: membrosRows, error: membrosErr, count: membrosTotal } = await supabase
         .from("sku_embalagem_equivalencia")
-        .select("sku_codigo_omie")
+        .select("grupo_id, sku_codigo_omie, fator_para_base, unidades_omie_por_embalagem", { count: "exact" })
         .eq("empresa", empresa.toLowerCase())
         .eq("ativo", true)
         .gt("fator_para_base", 0);
@@ -856,8 +869,15 @@ Deno.serve(async (req) => {
         membrosErro = String(membrosErr.message).slice(0, 200);
         console.error(`[omie-sync-estoque] ${empresa}: membros de grupo não lidos: ${membrosErro}`);
       } else {
+        const linhasEquiv = (membrosRows ?? []) as LinhaEquivalencia[];
+        convPendente = convPendentePorSku(linhasEquiv);
+        // Leitura sem prova de completude (teto de linhas do PostgREST): o membro omitido podia ter u NULL e o
+        // motor cair no fallback onde a edge converte — vira problema (recusa), não um grupo "inteiro" de mentira.
+        if (membrosTotal !== linhasEquiv.length) {
+          convPendente.problemas.push(`equivalência incompleta: ${linhasEquiv.length} de ${membrosTotal ?? "?"} linhas`);
+        }
         membrosGrupo = new Set(
-          ((membrosRows ?? []) as Array<{ sku_codigo_omie: string | number }>)
+          linhasEquiv
             .map((r) => String(r.sku_codigo_omie))
             .filter((sku) => !habilitadoMap.has(sku)),
         );
@@ -922,7 +942,13 @@ Deno.serve(async (req) => {
       //   agora é fatal como a do PO — a v1.5 a convertia em pendente não confiável, que a v1.6 também recusa publicar.
       const lerPendente: OpsPublicacao["lerPendente"] = async () => {
         if (empresa === "OBEN") {
-          const r = await computePendenteViaPedidosCompra(appKey, appSecret, habilitadoMap, ehMembro, supabase, deadline);
+          // Unidade desconhecida → recusa ANTES de varrer o Omie (C1: nada é gravado, o par velho fica coerente).
+          const recusa = recusaPorUnidade(convPendente, membrosErro);
+          if (recusa !== null || convPendente === null) {
+            return { pendente: new Map(), confiavel: false, problemas: [recusa ?? "unidade do PO não lida"], observacao: null };
+          }
+          const conv = convPendente.conv;
+          const r = await computePendenteViaPedidosCompra(appKey, appSecret, habilitadoMap, ehMembro, conv, supabase, deadline);
           const doMembro = { pendenteMembros: r.pendenteMembros, membrosPendenteIlegiveis: r.membrosPendenteIlegiveis };
           return { pendente: r.pendente, confiavel: r.confiavel, problemas: r.problemas, observacao: r, ...doMembro };
         }

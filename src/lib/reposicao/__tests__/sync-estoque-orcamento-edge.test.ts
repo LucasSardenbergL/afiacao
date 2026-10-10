@@ -63,7 +63,7 @@ describe('omie-sync-estoque — o par (físico, pendente) e a semântica fatal d
     const iPo = fonte.indexOf('await computePendenteViaPedidosCompra(', iHandler);
     expect(fonte.slice(iFimLaco, iPo)).not.toContain('try {');
     expect(fonte).toMatch(
-      /const r = await computePendenteViaPedidosCompra\(appKey, appSecret, habilitadoMap, ehMembro, supabase, deadline\);/,
+      /const r = await computePendenteViaPedidosCompra\(appKey, appSecret, habilitadoMap, ehMembro, conv, supabase, deadline\);/,
     );
     // e na publicação: nenhum try aberto entre o início de concluirRun e a fase do PO, nenhum .catch() nela
     const iConcluir = fontePublicacao.indexOf('export async function concluirRun(');
@@ -118,11 +118,39 @@ describe('omie-sync-estoque — o par (físico, pendente) e a semântica fatal d
     expect(fonte).toContain('criarAcumuladorFisico((sku) => habilitadoMap.has(sku), totalEsperado, ehMembro)');
     expect(fonte).toContain('membros: fisico.membros, membrosIlegiveis: fisico.membrosIlegiveis, membrosErro }');
     // O PAR: o pendente dos membros vem da MESMA varredura (OBEN e COLACOR), e o coletor observa o que o motor conta.
-    expect(fonte).toContain('computePendenteViaPedidosCompra(appKey, appSecret, habilitadoMap, ehMembro, supabase, deadline)');
+    expect(fonte).toContain('computePendenteViaPedidosCompra(appKey, appSecret, habilitadoMap, ehMembro, conv, supabase, deadline)');
     expect(fonte).toContain('computePendenteViaSaldoPendente(appKey, appSecret, habilitadoMap, ehMembro, deadline)');
     expect(fonte).toContain('criarColetorObservacao((sku) => habilitadoMap.has(sku) || membro(sku), { parseQtd, parseRecebido })');
     // Item inválido de membro vai para o conjunto à parte, nunca para `problemas` (que barraria os habilitados).
     expect(fonte).toContain('else membrosPendenteIlegiveis.add(sku);');
+  });
+
+  it('a unidade do PO (v1.9): recusa ANTES da varredura, e o MESMO conv no pendente e na observação', () => {
+    // A conversão e a recusa são testadas no Deno (unidade-omie_test) e atravessadas no PG17 com o motor
+    // (db/test-pendente-po-unidade-omie.sh); aqui, que o handler as liga sem desvio.
+    const iMembros = fonte.indexOf('.from("sku_embalagem_equivalencia")', iHandler);
+    const leitura = fonte.slice(iMembros, fonte.indexOf(';', iMembros));
+    expect(leitura).toContain(
+      '.select("grupo_id, sku_codigo_omie, fator_para_base, unidades_omie_por_embalagem", { count: "exact" })',
+    );
+    expect(fonte).toContain('convPendente = convPendentePorSku(linhasEquiv);');
+    expect(fonte).toContain('if (membrosTotal !== linhasEquiv.length) {');
+    // A ligação EXATA (Codex: `const conv = new Map()` passava com os textos acima): o mapa que chega à varredura é o
+    // da leitura, e é o MESMO que o coletor e os dois acumuladores usam.
+    expect(fonte.match(/const conv = [^;]+;/g)).toEqual(['const conv = convPendente.conv;']);
+    // O conv é decidido POR PO, pela ORIGEM (carimbo AFI- do app = embalagens; manual = litros, cru), e o MESMO
+    // conv vai aos dois acumuladores e à observação do PO contado.
+    expect(fonte).toContain('const convDoPo = convDaOrigem(cCodIntPed, conv);');
+    expect(fonte).toContain('...quantidadesEmUnidadeOmie(qtde, recebido, convDoPo(sku)) });');
+    expect(fonte).toContain('coletor.registrar(cabObs, itensObs, emTransitoNumeros.has(cNumero) ? "dedup_app" : null, convDoPo);');
+    const iRecusa = fonte.indexOf('const recusa = recusaPorUnidade(convPendente, membrosErro);', iHandler);
+    const iPo = fonte.indexOf('await computePendenteViaPedidosCompra(', iHandler);
+    expect(iRecusa).toBeGreaterThan(iHandler);
+    expect(iPo).toBeGreaterThan(iRecusa);
+    expect(fonte.slice(iRecusa, iPo)).toContain('confiavel: false');
+    // Os DOIS acumuladores (habilitados e membros) recebem o item convertido; nenhum push cru sobra.
+    expect(fonte.match(/items(Membros)?\.push\(itemDoPo\(convDoPo, sku, cNumero, etapa, qtde, recebido\)\)/g)).toHaveLength(2);
+    expect(fonte).not.toMatch(/items(Membros)?\.push\(\{/);
   });
 
   it('o erro do ListarPosEstoque ganha página e relógio como SUFIXO — o startsWith("AUTH_ERROR") segue vendo a auth', () => {

@@ -2,6 +2,11 @@
 // PURO: sem I/O. A edge registra no coletor CADA ponto de decisão da varredura do "a caminho" e só publica
 // se observacaoBateComPendente(...) — observação que diverge do pendente calculado não é publicada, porque mediria
 // outra coisa que não o que o motor contou.
+// Unidades: `quantidade`/`quantidade_recebida` são as do PO (embalagens nos concentrados WP); `contribuicao` é o que
+// entrou no estoque_pendente_entrada, na unidade do ESTOQUE do Omie (saldo × conv, ver unidade-omie.ts) — é ela que a
+// 2ª testemunha da RPC soma e compara com o pendente gravado.
+
+import { saldoEmUnidadeOmie } from "./unidade-omie.ts";
 
 export type MotivoExclusaoPedido = "dedup_app" | "etapa_nao_aberta" | "repetido_na_varredura";
 type MotivoExclusao = MotivoExclusaoPedido | "item_sem_sku" | "sku_nao_habilitado" | "quantidade_invalida";
@@ -37,6 +42,9 @@ export interface ParseQuantidades {
   parseRecebido: (v: unknown) => number;
 }
 
+/** Unidades Omie por embalagem do item DESTE PO (unidade-omie.ts: convDaOrigem); undefined = saldo cru. */
+export type ConvDoPedido = (sku: string) => number | undefined;
+
 const EPSILON = 1e-9;
 
 function inteiroOuNull(v: unknown): number | null {
@@ -56,6 +64,7 @@ export function observarPedido(
   exclusaoDoPedido: MotivoExclusaoPedido | null,
   habilitado: (sku: string) => boolean,
   parse: ParseQuantidades,
+  conv?: ConvDoPedido,
 ): LinhaObservada[] {
   return itens.map((it, seq) => {
     const skuTexto = String(it.nCodProd ?? "").trim();
@@ -78,7 +87,7 @@ export function observarPedido(
     if (!Number.isFinite(qtde) || !Number.isFinite(recebido) || qtde < 0 || recebido < 0) {
       return excluido("quantidade_invalida");
     }
-    return { ...base, contribuicao: Math.max(0, qtde - recebido), exclusao: null };
+    return { ...base, contribuicao: saldoEmUnidadeOmie(Math.max(0, qtde - recebido), conv?.(skuTexto)), exclusao: null };
   });
 }
 
@@ -94,7 +103,7 @@ export interface ColetorObservacao {
   /** O 1º motivo de perda de integridade (diagnóstico do resumo da edge), ou null. */
   readonly perda: string | null;
   /** Registra o PO na 1ª aparição. NUNCA lança: o que não sabe anotar vira perda de integridade (e devolve false). */
-  registrar(cab: CabecalhoObservado, itens: unknown, exclusao: MotivoExclusaoPedido | null): boolean;
+  registrar(cab: CabecalhoObservado, itens: unknown, exclusao: MotivoExclusaoPedido | null, conv?: ConvDoPedido): boolean;
 }
 
 function linhaDePresenca(cab: CabecalhoObservado, exclusao: MotivoExclusaoPedido): LinhaObservada {
@@ -131,7 +140,7 @@ export function criarColetorObservacao(
     get perda() {
       return perda;
     },
-    registrar(cab, itens, exclusao) {
+    registrar(cab, itens, exclusao, conv) {
       try {
         if (!Number.isSafeInteger(cab.nCodPed) || cab.nCodPed <= 0) return perder("pedido_sem_ncodped");
         if (vistos.has(cab.nCodPed)) {
@@ -147,7 +156,7 @@ export function criarColetorObservacao(
           return true;
         }
         vistos.add(cab.nCodPed);
-        linhas.push(...observarPedido(cab, itens as ItemPedidoOmie[], exclusao, habilitado, parse));
+        linhas.push(...observarPedido(cab, itens as ItemPedidoOmie[], exclusao, habilitado, parse, conv));
         return true;
       } catch {
         return perder("excecao_na_coleta");

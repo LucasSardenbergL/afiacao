@@ -63,7 +63,15 @@ export const respostaSonda = criarRespostaSonda("omie-sync-estoque");
  * passa a ir para `acoes_execucoes.detalhes` (`CHAVES_REGISTRO`). Antes saía só na resposta HTTP, que o cron
  * descarta: uma falha no lote dos membros (a linha do membro congelando de novo) ficava invisível depois do run.
  */
-export const VERSAO = "v1.8-registro-membros";
+/**
+ * BUMP v1.9 (adversarial Codex do #2849/#2889): o "a caminho" do PO passa a ser gravado na unidade do ESTOQUE do Omie.
+ * Nos concentrados WP o estoque está em litros e o PO em embalagens (QT 0,81 L · GL 3,24 L); enquanto a linha do app
+ * estava no em_transito o motor convertia, mas o PO que saía da janela de 7 dias entrava CRU (2 GL valiam 2, não 6,48).
+ * O saldo × `unidades_omie_por_embalagem` (regra do `equiv` do motor; fallback 1, não o fator) vale no pendente dos
+ * habilitados, no dos membros e na `contribuicao` da observação. Equivalência não lida/ilegível → recusa do run (C1).
+ * Só o PO DO APP (carimbo cCodIntPed AFI-<id>) converte: o PO lançado à mão no Omie já vem em litros (founder).
+ */
+export const VERSAO = "v1.9-pendente-po-app-em-unidade-omie";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
