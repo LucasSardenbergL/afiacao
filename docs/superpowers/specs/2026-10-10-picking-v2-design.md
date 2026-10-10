@@ -13,6 +13,13 @@ Medido em prod (psql-ro, 2026-10-10):
 - Quantidade por item é alta: Colacor média **73 UN/item** (máx 1.000), Oben 10 (máx 2.000). Fracionário é raro (~1,5%): Colacor M²/M, Oben L.
 - Bugs do v1 (sem dano, porque sem uso): `recalcular_picking_task` fecha por **soma global** (A=20,B=0 fecha um pedido A=10,B=10); `confirmar_item_picking` faz UPDATE **absoluto** (evento offline antigo inédito sobrescreve confirmação nova); `ceil` na quantidade; aba Estoque consulta `account='OBEN'` (dado é `oben`) → sempre vazia.
 
+### 1.1 Diagnóstico da Fase 0.1 (edge `picking-fila-omie` v0.1, 2026-10-10 20:39Z, `net._http_response` id 110816)
+
+- **Etapas** (operação 11 — Venda de Produto, iguais nas 2 contas): 00 Proposta (inativa) · **10 Pedido de Venda** · 20 Pedidos Robo · 50 Pedidos Normais · 60 Faturado · 70 Pedidos com Falha · 80 Faturado Robo. Ainda não existe etapa de "separado".
+- **A etapa 10 é um acúmulo, não uma fila:** `ListarPedidos{etapa:'10'}` → **Oben 1.637 pedidos (33 páginas), Colacor 6.213 (125 páginas)**; a 1ª página traz pedidos de **2024 (Oben) e 2020 (Colacor)**. "Todo pedido na etapa 10 é separável" geraria milhares de tasks → a fila precisa de **corte por data** (ou limpeza do kanban) — 🧭 decisão do founder.
+- **Contrato de linha OK** (50 pedidos/conta): `codigo_item` presente e único em 100% das linhas; quantidade válida em 100%; `dAlt/hAlt` em 100%. Fracionário: Oben 4/107 (L), Colacor 0/141 (1 linha M2).
+- **EAN vem no próprio pedido:** `det[].produto.ean` existe na listagem (além de `ListarProdutos.ean`). Amostra do cadastro: Oben 30/50 com EAN (29 EAN-13, 1 EAN-8), Colacor 50/50 (1ª página — não representa os fabricados).
+
 ## 2. Decisões do founder (2026-10-10)
 
 | Tema | Decisão |
