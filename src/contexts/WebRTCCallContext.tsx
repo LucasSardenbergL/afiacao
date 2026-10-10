@@ -422,8 +422,7 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
 
       // PR4 — Reset refs de sessão antes de iniciar nova chamada
       analysisHistoryRef.current = [];
-      turnsRef.current = [];
-      sessaoRef.current = { startedAt: new Date(), phone: normalized, atendimentoId, estabelecida: false };
+        sessaoRef.current = { startedAt: new Date(), phone: normalized, atendimentoId, estabelecida: false };
 
       cleanupAudioResources();
 
@@ -534,7 +533,6 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
 
     // Reset refs de sessão (mesma lógica do makeCall pro persist funcionar)
     analysisHistoryRef.current = [];
-    turnsRef.current = [];
     sessaoRef.current = { startedAt: new Date(), phone: incomingCall.phone, atendimentoId, estabelecida: false };
     // Inbound atendido sempre grava (preroll + transcrição inalterados) → persist habilitado.
     // dialedSipCallIdRef fica null: o fechamento da call_log do inbound é feito pelo
