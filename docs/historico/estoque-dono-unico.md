@@ -484,3 +484,15 @@ O Codex do desenho caiu no guard local de cota (exit 79, janela até 19:30). A `
   - o K3 vácuo, agora com um par WP elegível já cadastrado e a sabotagem `cadastro_sobrescreve`.
 - **Também:** a foto passou a ser lida como `pg_temp.motor_unidades_wp_foto`.
 - **Sem achado:** em `cap_teto`, `portal_fator`, anti-dup, preço a jusante e salto da POS no `db:aplicar` (uma transação só).
+
+## O pendente do PO em unidades Omie (2026-10-09, omie-sync-estoque v1.9)
+
+O P1 pré-existente do adversarial do #2849: `sku_estoque_atual.estoque_pendente_entrada` entrava CRU no motor. Nos WP o PO do Omie está em EMBALAGENS (o disparo manda `nQtde = ceil(qtde_final)`, sem unidade, e o Omie grava sob a unidade do produto, L). Dentro da janela de 7 dias a linha do app conta no em trânsito × `conv` e a edge a de-duplica (`dedup_app`). **Fora da janela o MESMO PO passa a contar pela edge** — cru, 2 GL valiam 2 onde eram 6,48 L (recompra indevida) e o QT superestimava ~23%. Nunca disparou (2 POs WP na história, ambos `dedup_app`; 0 WP com pendente em 09/10), mas era alcançável.
+
+- **Conserto na FONTE, só edge (sem migration):** `unidade-omie.ts` (puro) espelha o `equiv` do motor — `conv = unidades_omie_por_embalagem` com o grupo inteiro válido e coerente — com UM desvio de propósito: o fallback é **1** (o PO cru, a conta de antes), não o fator. Todo SKU fora dos grupos WP sai byte a byte.
+- **Onde vale:** pendente dos habilitados, dos membros de grupo e a `contribuicao` da observação (a 2ª testemunha da RPC `reposicao_po_observado_publicar` soma a contribuição e compara com o pendente gravado — converter só um lado derrubaria a publicação). `quantidade`/`quantidade_recebida` da observação seguem as do PO.
+- **Fail-closed novo:** a leitura de `sku_embalagem_equivalencia` falhou ou tem linha ilegível → o run OBEN é RECUSADO antes da varredura do PO (C1, nada gravado). Antes, a falha só tirava os membros; publicar cru seria o próprio defeito.
+- **Os 3 consumidores do on-order** leem o mesmo `sea.estoque_pendente_entrada`, agora em litros nos WP. Resíduo conhecido: a "posição do impacto" de `atualizar_parametros_numericos_skus` soma o em trânsito CRU (embalagens) — é log de impacto, não decisão de compra.
+- **Premissa registrada:** PO MANUAL de WP no Omie é lido como embalagens. Se alguém digitar litros, conta 0,81×. O item do `PesquisarPedCompra` não traz unidade que distinga.
+
+**Prova** `db/test-pendente-po-unidade-omie.sh` — atravessa as camadas como a produção: PG17 (snapshot + a migration REAL do motor) dá a equivalência e o em trânsito; o código REAL da edge (deno `--no-remote`) calcula pendente e observação; o motor roda. T0 (dentro da janela) == T1 (fora) byte a byte; T2 (cru) compra 9 QT em vez de 7; W1 a RPC aceita (`true|0`); X1 controles sem cadastro/parcial/incoerente/fora da guarda gravam cru. Falsificação: 4 sabotagens vermelhas no assert certo, controle verde de 8, em `LC_ALL=C` e `pt_BR.UTF-8`. A 1ª rodada achou camada mascarada (`parcial_vale` sobreviveu: u NULL já quebra a coerência) → controle BIG98 (coerente, membro ≥ 1e9). Fiação do handler: teste-texto em `sync-estoque-orcamento-edge.test.ts`, falsificado.
