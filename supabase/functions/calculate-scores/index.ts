@@ -4,7 +4,7 @@ import { atenderSondaOptions } from "../_shared/sonda-cron.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 // `leaseIndisponivel` saiu do import: deixou de ser chamado aqui e passou a ser consultado DENTRO
 // de `decidirClaim`, que decide o passo inteiro do claim. Mantê-lo importado viraria símbolo órfão.
-import { decidirClaim, esperaClaimMs } from "../_shared/lease.ts";
+import { aplicarChunkCercado, decidirClaim, ESPERA_CACHE_SCHEMA_MS, esperaClaimMs } from "../_shared/lease.ts";
 import { fetchAll } from "../_shared/paginate.ts";
 // Renormalização testável: componente sem produtor sai do numerador E do denominador. Mora em
 // `_shared` (e não inline aqui) porque este arquivo importa `npm:@supabase/supabase-js` e
@@ -371,6 +371,7 @@ Deno.serve(async (req) => {
   let leaseLiberado = false;
   let leaseStatusFinal: 'complete' | 'error' = 'error';
   let leaseAviso: string | null = null;
+  let fencingAviso: string | null = null;
 
   // Libera o lease e DISTINGUE os três desfechos (achado /codex, P1):
   //   'ok'        → finalizado com ownership;
@@ -699,6 +700,11 @@ Deno.serve(async (req) => {
             });
           }
 
+          // INSERT-ONLY (ignoreDuplicates → ON CONFLICT DO NOTHING): o seed é a ÚNICA escrita da edge
+          // fora do apply_score_updates cercado. Com DO UPDATE, um run que perdeu o lease entre ler os
+          // faltantes e semear sobrescrevia a linha que o run NOVO já tinha criado e calculado (health 0,
+          // 'novo', margem NULL) — commit fora do alcance do fencing (challenge Codex 2026-10-10, P1).
+          // Sem corrida o comportamento é idêntico (a linha não existe, por definição de "faltante").
           // Insere em lotes de 200. F2: coleta os erros (LANÇADOS depois do COMPUTE — não
           // starvar o recompute dos existentes por 1 linha-veneno; achado Codex #5). O
           // fallback one-by-one REGISTRA a falha (antes engolia o singleErr).
@@ -707,14 +713,14 @@ Deno.serve(async (req) => {
             const batch = seedRecords.slice(i, i + 200);
             const { data: inserted, error: insertErr } = await supabase
               .from('farmer_client_scores')
-              .upsert(batch, { onConflict: 'customer_user_id' })
+              .upsert(batch, { onConflict: 'customer_user_id', ignoreDuplicates: true })
               .select('id');
             if (insertErr) {
               console.error(`[calculate-scores] Batch insert error at ${i}:`, insertErr.message);
               for (const record of batch) {
                 const { data: one, error: singleErr } = await supabase
                   .from('farmer_client_scores')
-                  .upsert(record, { onConflict: 'customer_user_id' })
+                  .upsert(record, { onConflict: 'customer_user_id', ignoreDuplicates: true })
                   .select('id');
                 if (singleErr) seedErrors.push(`${record.customer_user_id}: ${singleErr.message}`);
                 else seeded += (one?.length ?? 0);
@@ -999,12 +1005,38 @@ Deno.serve(async (req) => {
     // limita payload/blast-radius (Codex P2). NÃO lança em affected<enviados: é o sinal ESPERADO de linha
     // excluída mid-run (a RPC corretamente não a ressuscita) → loga como drift, não 500 (Codex P2).
     console.log(`[calculate-scores] Updating ${updates.length} client scores via apply_score_updates...`);
+    // FENCING (migration 20261010120000): o runId vai como p_run_id e o BANCO recusa (55000) o chunk
+    // de um run que já não é dono do lease, validado sob FOR SHARE na mesma transação da escrita. Sem
+    // isto o lease era só cooperativo: um run que perdeu o lease por TTL e seguiu vivo gravava o
+    // snapshot velho por cima do run novo — a premissa "a plataforma mata o edge antes do TTL" era
+    // a única cerca. Token SÓ com lease adquirido: no fail-open declarado do claim ('seguir_sem_lease')
+    // não há lease para validar, e a chave é OMITIDA (não `null`) para casar também a assinatura
+    // antiga de 1 argumento. 55000 PARA o laço: os chunks seguintes seriam recusados do mesmo jeito.
     const updateErrors: string[] = [];
     let scoresAffected = 0;
+    // O token é FIXO no run: um PGRST202 NÃO o desliga para os chunks seguintes — PGRST202 também é o
+    // cache de schema velho de um banco que JÁ tem a assinatura (jsonb, text); rebaixar o run inteiro
+    // tiraria a cerca de quem a tem (challenge Codex 2026-10-10, P1). Regras em aplicarChunkCercado.
+    const tokenFencing: string | null = leaseAdquirido ? runId : null;
+    const estadoFencing = { esperouCache: false };
+    const rpcApply = async (args: Record<string, unknown>) => await supabase.rpc('apply_score_updates', args);
     for (let i = 0; i < updates.length; i += 500) {
       const batch = updates.slice(i, i + 500);
-      const { data: affected, error: uErr } = await supabase.rpc('apply_score_updates', { p_updates: batch });
-      if (uErr) { console.error(`[calculate-scores] Batch RPC error at ${i}:`, uErr.message); updateErrors.push(`@${i}: ${uErr.message}`); }
+      const { desfecho, resposta, semFencing } =
+        await aplicarChunkCercado(rpcApply, batch, tokenFencing, estadoFencing, ESPERA_CACHE_SCHEMA_MS);
+      const { data: affected, error: uErr } = resposta;
+      if (semFencing) {
+        // edge nova antes da migration (ou cache do PostgREST velho além da espera): ESTE chunk foi
+        // gravado sem a cerca (= comportamento de hoje). Janela residual declarada no PR.
+        fencingAviso = 'fencing indisponivel (migration 20261010120000 ainda nao aplicada, ou cache do PostgREST velho) — chunk(s) gravado(s) SEM fencing do lease';
+        console.warn(`[calculate-scores] @${i}: ${fencingAviso}`);
+      }
+      if (desfecho === 'lease_perdido') {
+        console.error(`[calculate-scores] FENCING: o banco recusou o chunk @${i} — este run (run_id=${runId}) perdeu o lease; ${scoresAffected} linha(s) já gravadas enquanto ainda era dono. Parando.`);
+        updateErrors.push(`@${i}: lease perdido (fencing 55000) — escrita recusada`);
+        break;
+      }
+      if (desfecho === 'falha') { console.error(`[calculate-scores] Batch RPC error at ${i}:`, uErr?.message); updateErrors.push(`@${i}: ${uErr?.message}`); }
       else { scoresAffected += Number(affected ?? 0); }
     }
     if (updateErrors.length > 0) {
@@ -1060,6 +1092,7 @@ Deno.serve(async (req) => {
       message: `Scores calculated for ${updates.length} clients`,
       weights: { health: hs_w, priority: ps_w },
       lease: leaseAviso,
+      fencing: fencingAviso,
       // 'transport': a escrita está boa, só o selo do lease ficou incerto (auto-expira em 15min).
       // Não é erro do recompute, mas o chamador merece saber que o estado do lease é desconhecido.
       lease_finalize: rel === 'transport' ? 'incerto (auto-expira em 15min)' : 'ok',

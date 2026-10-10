@@ -6,7 +6,15 @@
 // correto em todo o resto). Um FALSO POSITIVO silencia um lease quebrado e reabre a corrida
 // last-writer-wins sem ninguém saber — por isso os negativos abaixo pesam mais que os positivos, e
 // por isso o predicado olha SÓ o código do erro, sem nenhuma heurística de mensagem.
-import { decidirClaim, erroTransitorio, esperaClaimMs, leaseIndisponivel } from "./lease.ts";
+import {
+  aplicarChunkCercado,
+  classificarErroApply,
+  decidirClaim,
+  erroTransitorio,
+  esperaClaimMs,
+  leaseIndisponivel,
+  type RespostaRpc,
+} from "./lease.ts";
 
 function assertEquals(a: unknown, b: unknown, msg?: string) {
   if (JSON.stringify(a) !== JSON.stringify(b)) {
@@ -182,4 +190,108 @@ Deno.test("esperaClaimMs e curta, positiva e cresce", () => {
   if (esperaClaimMs(2) <= esperaClaimMs(1)) throw new Error("a espera precisa crescer");
   // Com 2 tentativas a espera total e 2s — nao move a agulha do wall-clock do edge (150s Free).
   if (esperaClaimMs(1) > 5000) throw new Error("espera longa demais para cobrir so transporte");
+});
+
+// ── classificarErroApply: o FENCING do apply (migration 20261010120000) ──
+// O que pesa aqui: confundir "perdi o lease" com qualquer outra coisa. Ler 55000 como `falha` só
+// troca a mensagem; ler um erro qualquer como `fencing_indisponivel` faria a edge REFAZER o chunk
+// SEM token — contornando a cerca num banco que a tem. Por isso os negativos do atalho pesam mais.
+
+Deno.test("apply sem erro = ok (com e sem token)", () => {
+  assertEquals(classificarErroApply(null, true), "ok");
+  assertEquals(classificarErroApply(undefined, false), "ok");
+});
+
+Deno.test("55000 com token = lease_perdido (o banco recusou: outro run e dono)", () => {
+  assertEquals(classificarErroApply({ code: "55000", message: "x" }, true), "lease_perdido");
+});
+
+Deno.test("55000 SEM token NAO e lease_perdido (a RPC nem consultou o lease)", () => {
+  assertEquals(classificarErroApply({ code: "55000" }, false), "falha");
+});
+
+Deno.test("PGRST202/42883 com token = fencing_indisponivel (edge nova antes da migration)", () => {
+  assertEquals(classificarErroApply({ code: "PGRST202" }, true), "fencing_indisponivel");
+  assertEquals(classificarErroApply({ code: "42883" }, true), "fencing_indisponivel");
+});
+
+Deno.test("PGRST202 SEM token = falha (a RPC inteira sumiu — nao ha para onde cair)", () => {
+  assertEquals(classificarErroApply({ code: "PGRST202" }, false), "falha");
+});
+
+Deno.test("o atalho sem token NAO dispara por erro qualquer (so codigo, zero heuristica de texto)", () => {
+  // cada um destes, lido como fencing_indisponivel, faria a edge reescrever SEM a cerca
+  for (const code of ["22004", "23514", "42501", "57014", "08006", "42P01", ""]) {
+    assertEquals(classificarErroApply({ code, message: "function does not exist" }, true), "falha",
+      `codigo [${code}] nao pode virar fencing_indisponivel`);
+  }
+});
+
+Deno.test("22004 (p_run_id vazio) e falha, nao lease_perdido", () => {
+  assertEquals(classificarErroApply({ code: "22004" }, true), "falha");
+});
+
+// ── aplicarChunkCercado: o fallback sem token NUNCA desliga a cerca do run (challenge Codex P1) ──
+// RPC simulada: registra cada chamada (com ou sem token) e responde por roteiro.
+function rpcRoteiro(respostas: RespostaRpc[]) {
+  const chamadas: string[] = [];
+  const rpc = (args: Record<string, unknown>) => {
+    chamadas.push("p_run_id" in args ? `token:${String(args.p_run_id)}` : "sem_token");
+    const r = respostas.shift();
+    if (!r) throw new Error("roteiro esgotado — chamada a mais");
+    return Promise.resolve(r);
+  };
+  return { rpc, chamadas };
+}
+const OK = (n: number): RespostaRpc => ({ data: n, error: null });
+const E = (code: string): RespostaRpc => ({ data: null, error: { code, message: "x" } });
+const semDormir = () => Promise.resolve();
+
+Deno.test("chunk: cache velho num banco COM a cerca — espera, re-tenta COM token e escreve cercado", async () => {
+  const { rpc, chamadas } = rpcRoteiro([E("PGRST202"), OK(500)]);
+  const esperas: number[] = [];
+  const r = await aplicarChunkCercado(rpc, [1], "run-A", { esperouCache: false }, 2000, (ms) => {
+    esperas.push(ms);
+    return Promise.resolve();
+  });
+  assertEquals([r.desfecho, r.semFencing, chamadas, esperas], ["ok", false, ["token:run-A", "token:run-A"], [2000]]);
+});
+
+Deno.test("chunk: cache velho + o run PERDEU o lease — a re-tentativa com token recebe 55000, nunca grava sem token", async () => {
+  const { rpc, chamadas } = rpcRoteiro([E("PGRST202"), E("55000")]);
+  const r = await aplicarChunkCercado(rpc, [1], "run-A", { esperouCache: false }, 0, semDormir);
+  assertEquals([r.desfecho, r.semFencing, chamadas], ["lease_perdido", false, ["token:run-A", "token:run-A"]]);
+});
+
+Deno.test("run: banco SEM a cerca — 1o chunk espera 1x e cai; o 2o tenta COM token de novo, sem esperar", async () => {
+  const estado = { esperouCache: false };
+  const esperas: number[] = [];
+  const dormir = (ms: number) => { esperas.push(ms); return Promise.resolve(); };
+  const c1 = rpcRoteiro([E("PGRST202"), E("PGRST202"), OK(500)]);
+  const r1 = await aplicarChunkCercado(c1.rpc, [1], "run-A", estado, 2000, dormir);
+  assertEquals([r1.desfecho, r1.semFencing, c1.chamadas], ["ok", true, ["token:run-A", "token:run-A", "sem_token"]]);
+  const c2 = rpcRoteiro([E("PGRST202"), OK(500)]);
+  const r2 = await aplicarChunkCercado(c2.rpc, [1], "run-A", estado, 2000, dormir);
+  assertEquals([r2.desfecho, r2.semFencing, c2.chamadas, esperas], ["ok", true, ["token:run-A", "sem_token"], [2000]]);
+});
+
+Deno.test("run: o cache recarrega no meio do run — o chunk seguinte VOLTA a ser cercado (token nao foi desligado)", async () => {
+  const estado = { esperouCache: true }; // o run já caiu sem token num chunk anterior
+  const c = rpcRoteiro([E("55000")]);
+  const r = await aplicarChunkCercado(c.rpc, [1], "run-A", estado, 0, semDormir);
+  assertEquals([r.desfecho, r.semFencing, c.chamadas], ["lease_perdido", false, ["token:run-A"]]);
+});
+
+Deno.test("chunk: sem lease (token null) — uma chamada SEM a chave, sem espera, sem p_run_id:null", async () => {
+  const c = rpcRoteiro([OK(7)]);
+  const r = await aplicarChunkCercado(c.rpc, [1], null, { esperouCache: false }, 2000, () => {
+    throw new Error("nao devia esperar");
+  });
+  assertEquals([r.desfecho, r.semFencing, c.chamadas], ["ok", false, ["sem_token"]]);
+});
+
+Deno.test("chunk: falha comum com token NAO dispara o fallback sem token", async () => {
+  const c = rpcRoteiro([E("57014")]);
+  const r = await aplicarChunkCercado(c.rpc, [1], "run-A", { esperouCache: false }, 0, semDormir);
+  assertEquals([r.desfecho, r.semFencing, c.chamadas], ["falha", false, ["token:run-A"]]);
 });

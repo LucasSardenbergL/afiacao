@@ -149,3 +149,87 @@ export function decidirClaim(
 export function esperaClaimMs(tentativa: number): number {
   return tentativa * 2000;
 }
+
+/** O que fazer com o resultado de UM chunk de `apply_score_updates`. */
+export type DesfechoApply =
+  | 'ok'                    // escreveu
+  | 'fencing_indisponivel'  // a assinatura com p_run_id não existe (janela de deploy) — refaça SEM token
+  | 'lease_perdido'         // o banco RECUSOU: outro run é dono do lease — pare o laço, fail-closed
+  | 'falha';                // qualquer outro erro — colete e lance (contrato F2 do recompute)
+
+/** Espera, uma vez por run, para o cache de schema do PostgREST recarregar antes de aceitar
+ *  `fencing_indisponivel` (ver classificarErroApply). O NOTIFY da migration recarrega em ~ms. */
+export const ESPERA_CACHE_SCHEMA_MS = 2000;
+
+/**
+ * Classifica o resultado de um chunk do apply quando o FENCING TOKEN (p_run_id) está em jogo.
+ *
+ * O fencing (migration 20261010120000) troca a premissa EXTERNA do #1578 — "a plataforma mata o
+ * edge antes do TTL" — por uma trava no banco: a RPC só escreve se este run ainda é o dono do lease,
+ * validado sob FOR SHARE na mesma transação da escrita, e responde 55000 quando não é.
+ *
+ * `lease_perdido` (55000) SÓ conta com token enviado: sem token a RPC nem consulta o lease, então um
+ * 55000 ali viria de outra coisa e não pode ser lido como "perdi o lease".
+ *
+ * `fencing_indisponivel` reusa `leaseIndisponivel` (42883/PGRST202, SÓ código): a edge nova subiu
+ * antes da migration e a assinatura (jsonb, text) ainda não existe. Refazer o chunk sem token devolve
+ * EXATAMENTE o comportamento de hoje — o banco não tem a cerca, então não há cerca a contornar. É o
+ * mesmo fail-open DECLARADO do claim, pelo mesmo motivo (as duas ordens de publicação manual do
+ * Lovable têm de ser seguras).
+ *
+ * ⚠️ PGRST202 NÃO prova "migration ausente": o PostgREST responde o mesmo código quando a assinatura
+ * já existe no banco mas o CACHE de schema ainda é o velho (challenge Codex 2026-10-10, P1 — esta
+ * docstring afirmava o contrário). Por isso o caller (a) espera ESPERA_CACHE_SCHEMA_MS e tenta de novo
+ * COM o token antes de cair, (b) cai só no CHUNK, nunca desliga o token pelo resto do run, e a
+ * migration emite NOTIFY pgrst. A janela residual (cache velho além da espera E lease perdido nela)
+ * fica declarada; fechá-la de vez exige tirar o DEFAULT NULL, o que quebraria a ordem de deploy.
+ */
+export function classificarErroApply(
+  erro: ErroRpc | null | undefined,
+  enviouToken: boolean,
+): DesfechoApply {
+  if (erro == null) return 'ok';
+  const codigo = typeof erro.code === 'string' ? erro.code : '';
+  if (enviouToken && codigo === '55000') return 'lease_perdido';
+  if (enviouToken && leaseIndisponivel(erro)) return 'fencing_indisponivel';
+  return 'falha';
+}
+
+/** Resposta mínima de `supabase.rpc(...)` que o apply cercado usa. */
+export interface RespostaRpc {
+  data: unknown;
+  error: ErroRpc | null;
+}
+
+/**
+ * Aplica UM chunk via apply_score_updates com o fencing token, e decide o fallback sem token.
+ *
+ * Regras (challenge Codex 2026-10-10, P1):
+ *  - o token é tentado PRIMEIRO em todo chunk — um `fencing_indisponivel` num chunk nunca desliga o
+ *    token dos seguintes (PGRST202 pode ser só cache velho de um banco que JÁ tem a cerca);
+ *  - na 1ª indisponibilidade do run, espera `esperaMs` (o NOTIFY pgrst recarrega o cache) e tenta de
+ *    novo COM o token; só então refaz ESTE chunk sem token (`semFencing`);
+ *  - sem token (lease não adquirido) chama direto sem a chave — nunca manda `p_run_id: null`.
+ * `estado.esperouCache` é do RUN (compartilhado entre chunks): a espera acontece uma vez só.
+ */
+export async function aplicarChunkCercado(
+  rpc: (args: Record<string, unknown>) => Promise<RespostaRpc>,
+  batch: unknown[],
+  token: string | null,
+  estado: { esperouCache: boolean },
+  esperaMs: number,
+  dormir: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
+): Promise<{ desfecho: DesfechoApply; resposta: RespostaRpc; semFencing: boolean }> {
+  const args = (t: string | null) => (t ? { p_updates: batch, p_run_id: t } : { p_updates: batch });
+  let resposta = await rpc(args(token));
+  let desfecho = classificarErroApply(resposta.error, token !== null);
+  if (desfecho === 'fencing_indisponivel' && !estado.esperouCache) {
+    estado.esperouCache = true;
+    await dormir(esperaMs);
+    resposta = await rpc(args(token));
+    desfecho = classificarErroApply(resposta.error, token !== null);
+  }
+  if (desfecho !== 'fencing_indisponivel') return { desfecho, resposta, semFencing: false };
+  resposta = await rpc(args(null));
+  return { desfecho: classificarErroApply(resposta.error, false), resposta, semFencing: true };
+}
