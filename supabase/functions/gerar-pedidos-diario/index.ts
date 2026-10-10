@@ -297,6 +297,23 @@ Deno.serve(async (req: Request) => {
 
     console.log(`[gerar-pedidos-diario] Iniciando ciclo ${empresa} ${dataCiclo}${intraday ? " (intraday)" : ""}`);
 
+    // 0. Expirar OPORTUNIDADES de dias anteriores ainda pendentes. Morava no corte das 10:00 da
+    // disparar-pedidos-aprovados (modo lote), cujo cron saiu em 2026-10-10 — sem isto a oportunidade
+    // vira zumbi e bloqueia o SKU para sempre no NOT EXISTS da RPC normal. Só na rodada matinal,
+    // ANTES da RPC, para o SKU liberado já entrar no ciclo de hoje.
+    if (!intraday) {
+      const { data: expRows, error: expErr } = await db
+        .from("pedido_compra_sugerido")
+        .update({ status: "expirado_sem_aprovacao", atualizado_em: new Date().toISOString() })
+        .eq("empresa", empresa)
+        .lt("data_ciclo", dataCiclo)
+        .eq("status", "pendente_aprovacao")
+        .like("tipo_ciclo", "oportunidade_%")
+        .select("id");
+      if (expErr) console.error("[gerar-pedidos-diario] expirar oportunidades erro:", expErr.message);
+      else console.log(`[gerar-pedidos-diario] ${expRows?.length ?? 0} oportunidade(s) expirada(s)`);
+    }
+
     // 1. RPC de geração
     const { data: rpcRows, error: rpcErr } = await db.rpc(
       "gerar_pedidos_sugeridos_ciclo",

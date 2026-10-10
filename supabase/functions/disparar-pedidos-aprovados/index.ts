@@ -8,7 +8,7 @@ import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import { hojeSP } from "../_shared/hoje-sp.ts";
 import { dataPrevisaoOmie } from "./previsao.ts";
-import { MENSAGEM_PORTAL_FECHADO, portalSayerlackFechado } from "./janela-portal.ts";
+import { abririaEnvioNovoAoPortal, MENSAGEM_PORTAL_FECHADO, portalSayerlackFechado } from "./janela-portal.ts";
 import { montarProdutosIncluir } from "./produto-po.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import {
@@ -1931,6 +1931,31 @@ Deno.serve(async (req: Request) => {
       aprovados = liberados;
     }
 
+    // Portal Sayerlack fora do ar (sáb 12h → seg 6h): barra ANTES do split e de qualquer write — o
+    // split transformaria o pai em filhos `nao_aplicavel` que o retry não repega. Só barra quem abriria
+    // envio NOVO; protocolo em mãos/conciliação/em voo seguem (o Omie funciona no fim de semana).
+    // A checagem dentro de iniciarEnvioPortalSayerlack fica como 2ª camada (run que cruza o meio-dia).
+    const barradosJanela: ProcessResult[] = [];
+    if (modo === "producao" && portalSayerlackFechado(new Date())) {
+      const seguem: PedidoRow[] = [];
+      for (const p of aprovados) {
+        if (isSayerlackOben(p) && abririaEnvioNovoAoPortal(p.status_envio_portal, p.portal_protocolo)) {
+          console.warn(`[disparar-pedidos] Pedido ${p.id}: portal Sayerlack fora do ar — não enviado`);
+          barradosJanela.push({
+            pedido_id: p.id,
+            fornecedor: p.fornecedor_nome,
+            status_final: "portal_fechado",
+            valor: p.valor_total,
+            canal: "portal_sayerlack",
+            aviso: MENSAGEM_PORTAL_FECHADO,
+          });
+        } else {
+          seguem.push(p);
+        }
+      }
+      aprovados = seguem;
+    }
+
     // PR5: divide pedidos Sayerlack/OBEN com >4 itens em filhos menores que
     // caibam na janela de 60s do Browserless. Cada filho vira um pedido
     // independente no banco e segue o caminho normal (portal → Omie).
@@ -1969,7 +1994,7 @@ Deno.serve(async (req: Request) => {
     // diagnóstico (nenhuma decisão a lê): responde "qual execução abriu esta pendência" quando um
     // claim aparecer preso. `windowStart` já é o instante de início do run.
     const origemRun = `${modo}@${windowStart}`;
-    const resultados: ProcessResult[] = [...barradosGate];
+    const resultados: ProcessResult[] = [...barradosGate, ...barradosJanela];
     for (const p of aprovados) {
       const r = await processarPedido(db, p, modo, creds, origemRun);
 

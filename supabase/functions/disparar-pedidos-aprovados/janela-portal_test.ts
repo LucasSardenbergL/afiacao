@@ -1,5 +1,5 @@
 // `eq` local em vez de std/assert remoto: `test:edges` roda com `--no-remote`.
-import { portalSayerlackFechado } from "./janela-portal.ts";
+import { abririaEnvioNovoAoPortal, portalSayerlackFechado } from "./janela-portal.ts";
 
 function eq(atual: unknown, esperado: unknown, msg: string) {
   if (atual !== esperado) throw new Error(`${msg}: esperado ${esperado}, veio ${atual}`);
@@ -23,3 +23,21 @@ for (const [iso, esperado, rotulo] of casos) {
     eq(portalSayerlackFechado(new Date(iso)), esperado, rotulo);
   });
 }
+
+Deno.test("abre envio novo: nao_aplicavel, pendente, erro_retentavel, null", () => {
+  for (const st of ["nao_aplicavel", "pendente_envio_portal", "erro_retentavel", null]) {
+    eq(abririaEnvioNovoAoPortal(st, null), true, String(st));
+  }
+});
+
+Deno.test("NÃO abre envio novo: protocolo em mãos, conciliação, em voo", () => {
+  eq(abririaEnvioNovoAoPortal("sucesso_portal", "123"), false, "sucesso com protocolo");
+  eq(abririaEnvioNovoAoPortal("enviado_portal", "123"), false, "enviado com protocolo");
+  eq(abririaEnvioNovoAoPortal("aceito_portal_sem_protocolo", null), false, "aceito sem protocolo");
+  eq(abririaEnvioNovoAoPortal("indeterminado_requer_conciliacao", null), false, "indeterminado");
+  eq(abririaEnvioNovoAoPortal("enviando_portal", null), false, "em voo");
+});
+
+Deno.test("sucesso SEM protocolo abre envio (espelha iniciarEnvioPortalSayerlack)", () => {
+  eq(abririaEnvioNovoAoPortal("sucesso_portal", null), true, "sucesso sem protocolo");
+});
