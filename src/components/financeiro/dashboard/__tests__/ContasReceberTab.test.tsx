@@ -41,7 +41,7 @@ describe('ContasReceberTab', () => {
         crFilter="ABERTO" setCrFilter={noop}
         crDateFrom="" setCrDateFrom={noop}
         crDateTo="" setCrDateTo={noop}
-        contasReceber={[]} crTotals={totals}
+        contasReceber={[]} crTotal={null} crTotals={totals}
         view="all" loading={false} onAudit={noop}
       />
     );
@@ -57,7 +57,7 @@ describe('ContasReceberTab', () => {
         crFilter="ABERTO" setCrFilter={noop}
         crDateFrom="" setCrDateFrom={noop}
         crDateTo="" setCrDateTo={noop}
-        contasReceber={[cr]} crTotals={totals}
+        contasReceber={[cr]} crTotal={null} crTotals={totals}
         view="all" loading={false} onAudit={noop}
       />
     );
@@ -76,7 +76,7 @@ describe('ContasReceberTab', () => {
         crFilter="ABERTO" setCrFilter={setCrFilter}
         crDateFrom="" setCrDateFrom={noop}
         crDateTo="" setCrDateTo={noop}
-        contasReceber={[cr]} crTotals={totals}
+        contasReceber={[cr]} crTotal={null} crTotals={totals}
         view="all" loading={false} onAudit={onAudit}
       />
     );

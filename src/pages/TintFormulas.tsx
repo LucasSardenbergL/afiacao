@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
-import { ilikeOr, isSearchablePostgrestTerm } from '@/lib/postgrest';
+import { fetchAllPages, ilikeOr, isSearchablePostgrestTerm } from '@/lib/postgrest';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -18,13 +18,18 @@ import { cn } from '@/lib/utils';
 const ACCOUNT = 'oben';
 const PAGE_SIZE = 50;
 
+// Falha de leitura LANÇA em todos os hooks desta página — o `const { data } = await`
+// de antes descartava o `error` e o `?? []` apresentava a falha como catálogo/custo
+// vazio legítimo (filtros mudos, custo de corante "—" e "0 fórmulas" sem aviso).
 function useProdutos() {
   return useQuery({
     queryKey: ['tint-produtos-list'],
     staleTime: 5 * 60 * 1000,
     queryFn: async () => {
-      const { data } = await supabase.from('tint_produtos').select('id, cod_produto, descricao').eq('account', ACCOUNT).order('descricao');
-      return data ?? [];
+      const { data, error } = await supabase.from('tint_produtos').select('id, cod_produto, descricao').eq('account', ACCOUNT).order('descricao');
+      if (error) throw new Error(`Falha ao carregar produtos tintométricos: ${error.message}`);
+      if (data == null) throw new Error('Falha ao carregar produtos tintométricos: data=null sem error');
+      return data;
     },
   });
 }
@@ -35,14 +40,16 @@ function useBases(produtoId: string) {
     enabled: !!produtoId,
     queryFn: async () => {
       // Get distinct bases used in SKUs for this product
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('tint_skus')
         .select('base_id, tint_bases!inner(id, descricao)')
         .eq('account', ACCOUNT)
         .eq('produto_id', produtoId);
+      if (error) throw new Error(`Falha ao carregar bases do produto: ${error.message}`);
+      if (data == null) throw new Error('Falha ao carregar bases do produto: data=null sem error');
       const seen = new Set<string>();
       type BaseRow = { base_id: string; tint_bases: { id: string; descricao: string | null } | null };
-      return ((data ?? []) as unknown as BaseRow[]).filter((d) => {
+      return (data as unknown as BaseRow[]).filter((d) => {
         if (seen.has(d.base_id)) return false;
         seen.add(d.base_id);
         return true;
@@ -55,12 +62,20 @@ function useOmieMap() {
   return useQuery({
     queryKey: ['omie-tint-cost-map'],
     queryFn: async () => {
-      const { data } = await supabase
-        .from('omie_products')
-        .select('id, valor_unitario')
-        .eq('account', ACCOUNT)
-        .eq('is_tintometric', true);
-      return new Map((data ?? []).map(p => [p.id, p.valor_unitario]));
+      // Paginado (fetchAllPages): 145 produtos tintométricos hoje, mas o catálogo cresce
+      // com o staging Sayerlack — na capa de 1.000 o corante fora da página viraria
+      // "sem custo" no detalhe da fórmula (money), em silêncio.
+      const data = await fetchAllPages<{ id: string; valor_unitario: number | null }>((de, ate) =>
+        supabase
+          .from('omie_products')
+          .select('id, valor_unitario')
+          .eq('account', ACCOUNT)
+          .eq('is_tintometric', true)
+          .order('id', { ascending: true })
+          .range(de, ate) as unknown as PromiseLike<{ data: { id: string; valor_unitario: number | null }[] | null; error: unknown }>,
+        'omie_products/tint-cost-map',
+      );
+      return new Map(data.map(p => [p.id, p.valor_unitario]));
     },
   });
 }
@@ -93,7 +108,7 @@ export default function TintFormulas() {
     }
   };
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError } = useQuery({
     queryKey: ['tint-formulas', search, produtoFilter, baseFilter, onlyPersonalizada, page],
     staleTime: 5 * 60 * 1000,
     queryFn: async () => {
@@ -116,8 +131,13 @@ export default function TintFormulas() {
       if (baseFilter) q = q.eq('base_id', baseFilter);
       if (onlyPersonalizada) q = q.eq('personalizada', true);
 
-      const { data: rows, count } = await q;
-      return { rows: rows ?? [], total: count ?? 0 };
+      const { data: rows, count, error } = await q;
+      // Falha LANÇA: o `count ?? 0` de antes fazia erro de leitura virar "0 fórmulas"
+      // na tela — indistinguível de um catálogo realmente vazio.
+      if (error) throw new Error(`Falha ao carregar fórmulas: ${error.message}`);
+      if (rows == null) throw new Error('Falha ao carregar fórmulas: data=null sem error');
+      if (count == null) throw new Error("Falha ao carregar fórmulas: count=null com count:'exact'");
+      return { rows, total: count };
     },
   });
 
@@ -125,7 +145,7 @@ export default function TintFormulas() {
     queryKey: ['tint-formula-detail', expanded],
     enabled: !!expanded,
     queryFn: async () => {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('tint_formula_itens')
         .select(`
           qtd_ml, ordem,
@@ -133,7 +153,9 @@ export default function TintFormulas() {
         `)
         .eq('formula_id', expanded!)
         .order('ordem');
-      return data ?? [];
+      if (error) throw new Error(`Falha ao carregar itens da fórmula: ${error.message}`);
+      if (data == null) throw new Error('Falha ao carregar itens da fórmula: data=null sem error');
+      return data;
     },
   });
 
@@ -201,8 +223,14 @@ export default function TintFormulas() {
         </CardContent>
       </Card>
 
-      {/* Table */}
-      {isLoading ? <Skeleton className="h-60 w-full" /> : (
+      {/* Table — erro NÃO vira "0 fórmulas": estado explícito com o retry do react-query esgotado */}
+      {isError ? (
+        <Card>
+          <CardContent className="py-8 text-center text-sm text-muted-foreground">
+            Não foi possível carregar as fórmulas. Verifique a conexão e tente novamente.
+          </CardContent>
+        </Card>
+      ) : isLoading ? <Skeleton className="h-60 w-full" /> : (
         <Card>
           <CardContent className="pt-4">
             <div className="border rounded-md overflow-x-auto">

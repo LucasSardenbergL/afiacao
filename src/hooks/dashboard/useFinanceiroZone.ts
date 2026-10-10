@@ -21,20 +21,24 @@ export function useFinanceiroZone() {
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey,
     queryFn: async () => {
-      let aging90 = 0;
+      // null = fonte indisponível (KPI mostra '—') — o `let aging90 = 0` + catch vazio
+      // de antes refabricava o zero uma camada acima do service (money-path §7): falha
+      // de leitura virava "Aging >90d R$0" e o alerta de inadimplência crítica calava.
+      let aging90: number | null = null;
       let projecao13Total: number | null = null;
       let confiabilidadePct: number | null = null;
-      let topItems: TopListItem[] = [];
+      let topItems: TopListItem[] | null = null;
 
       try {
         // Campo real do AgingData é vencido_90_plus_valor; 'faixa_90_mais'/'90+' não
         // existem (o cast escondia — aging90 era 0 permanente e o alerta >90d nunca dava).
         const aging = await getAgingReceber('all');
         aging90 = aging.vencido_90_plus_valor ?? 0;
-      } catch { /* */ }
+      } catch { /* aging90 fica null — exibido como indisponível, não como R$0 */ }
 
       try {
         const inadList = await getTopInadimplentes('all', 3);
+        topItems = [];
         const rows = (inadList ?? []) as Array<{
           id?: string | null;
           cliente_nome?: string | null;
@@ -97,7 +101,7 @@ export function useFinanceiroZone() {
   const kpis: KpiSpec[] = useMemo(() => {
     if (!data) return [];
     return [
-      { label: 'Aging >90d', value: fmtBRL(data.aging90) },
+      { label: 'Aging >90d', value: data.aging90 !== null ? fmtBRL(data.aging90) : '—' },
       { label: 'Projeção 13sem', value: data.projecao13Total !== null ? fmtBRL(data.projecao13Total) : '—' },
       { label: 'Confiabilidade', value: data.confiabilidadePct !== null ? `${data.confiabilidadePct}%` : '—' },
     ];
@@ -105,7 +109,7 @@ export function useFinanceiroZone() {
 
   const priority: PriorityCandidate | null = useMemo(() => {
     if (!data) return null;
-    if (data.aging90 > 50_000) {
+    if (data.aging90 !== null && data.aging90 > 50_000) {
       const score = 90;
       return {
         zone: 'financeiro',

@@ -67,7 +67,13 @@ export function useFinanceiroCockpit() {
           logger.warn('Resumo financeiro indisponível', { error: mensagemDeErro(e) ?? '(sem mensagem)' });
           return {};
         }),
-        getAgingReceber('all'),
+        // getAgingReceber agora LANÇA em erro (era EMPTY_AGING silencioso = "R$0 vencido"
+        // fabricado); catch por fonte devolve null — o cockpit já trata aging null como
+        // indisponível ('—'), nunca como carteira sã.
+        getAgingReceber('all').catch((e): AgingData | null => {
+          logger.warn('Aging de recebíveis indisponível', { error: e instanceof Error ? e.message : String(e) });
+          return null;
+        }),
         Promise.all(['oben', 'colacor', 'colacor_sc'].map(co => getDRE(co as Company, ano, undefined, regime))).then(r => r.flat()),
         // getTopInadimplentes agora LANÇA em erro (era [] silencioso = falso
         // "ninguém inadimplente"); catch por fonte pra não derrubar o resto.

@@ -32,6 +32,10 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
   const [resumo, setResumo] = useState<Record<string, FinResumo>>({});
   const [contasPagar, setContasPagar] = useState<FinContaPagar[]>([]);
   const [contasReceber, setContasReceber] = useState<FinContaReceber[]>([]);
+  // Total EXATO do filtro (count do PostgREST) — quando > rows.length, a lista está
+  // truncada pelo `limit` e a tela avisa em vez de apresentar o corte como o todo.
+  const [contasPagarTotal, setContasPagarTotal] = useState<number | null>(null);
+  const [contasReceberTotal, setContasReceberTotal] = useState<number | null>(null);
   const [agingReceber, setAgingReceber] = useState<AgingData | null>(null);
   const [agingPagar, setAgingPagar] = useState<AgingData | null>(null);
   const [dre, setDre] = useState<FinDRE[]>([]);
@@ -98,8 +102,9 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
   }) => {
     try {
       setLoading(true);
-      const data = await getContasPagar(view === 'all' ? 'all' : view as Company, filtros);
-      setContasPagar(data);
+      const { rows, total } = await getContasPagar(view === 'all' ? 'all' : view as Company, filtros);
+      setContasPagar(rows);
+      setContasPagarTotal(total);
     } catch (e) {
       setError(mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.');
     } finally {
@@ -115,8 +120,9 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
   }) => {
     try {
       setLoading(true);
-      const data = await getContasReceber(view === 'all' ? 'all' : view as Company, filtros);
-      setContasReceber(data);
+      const { rows, total } = await getContasReceber(view === 'all' ? 'all' : view as Company, filtros);
+      setContasReceber(rows);
+      setContasReceberTotal(total);
     } catch (e) {
       setError(mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.');
     } finally {
@@ -134,6 +140,10 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
       setAgingReceber(ar);
       setAgingPagar(ap);
     } catch (e) {
+      // getAging* LANÇA em falha (antes fabricava EMPTY_AGING = "R$0 vencido"). Limpa o aging
+      // anterior: numa troca de empresa, o da empresa velha ficaria na tela como se fosse desta.
+      setAgingReceber(null);
+      setAgingPagar(null);
       setError(mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.');
     }
   }, [view]);
@@ -355,6 +365,8 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
     resumoConsolidado,
     contasPagar,
     contasReceber,
+    contasPagarTotal,
+    contasReceberTotal,
     agingReceber,
     agingPagar,
     dre,

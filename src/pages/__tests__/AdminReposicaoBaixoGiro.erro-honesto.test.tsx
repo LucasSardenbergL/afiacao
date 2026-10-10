@@ -53,7 +53,10 @@ function resposta(table: string, chamadas: Set<string>): unknown {
   if (table === 'sku_parametros') {
     if (!chamadas.has('or')) return { data: [], error: null }; // universo do excesso: vazio
     if (falharBaixoGiro) return { data: null, error: ERRO_TIMEOUT };
-    return { data: universoVazio ? [] : PARAMS, error: null };
+    // `count` = o PostgREST real com `count: 'exact'` (o hook pede o total do universo para a
+    // truncagem honesta, e recusa count=null como resposta malformada).
+    const universo = universoVazio ? [] : PARAMS;
+    return { data: universo, error: null, count: universo.length };
   }
   if (table === 'inventory_position') return { data: POSICAO, error: null };
   if (table === 'v_sku_ultima_venda') return { data: ULTIMA_VENDA, error: null };

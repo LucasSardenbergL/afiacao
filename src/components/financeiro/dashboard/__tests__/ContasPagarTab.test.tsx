@@ -41,7 +41,7 @@ describe('ContasPagarTab', () => {
         cpFilter="ABERTO" setCpFilter={noop}
         cpDateFrom="" setCpDateFrom={noop}
         cpDateTo="" setCpDateTo={noop}
-        contasPagar={[]} cpTotals={totals}
+        contasPagar={[]} cpTotal={null} cpTotals={totals}
         view="all" loading={false} onAudit={noop}
       />
     );
@@ -57,7 +57,7 @@ describe('ContasPagarTab', () => {
         cpFilter="ABERTO" setCpFilter={noop}
         cpDateFrom="" setCpDateFrom={noop}
         cpDateTo="" setCpDateTo={noop}
-        contasPagar={[cp]} cpTotals={totals}
+        contasPagar={[cp]} cpTotal={null} cpTotals={totals}
         view="all" loading={false} onAudit={noop}
       />
     );
@@ -76,7 +76,7 @@ describe('ContasPagarTab', () => {
         cpFilter="ABERTO" setCpFilter={setCpFilter}
         cpDateFrom="" setCpDateFrom={noop}
         cpDateTo="" setCpDateTo={noop}
-        contasPagar={[cp]} cpTotals={totals}
+        contasPagar={[cp]} cpTotal={null} cpTotals={totals}
         view="all" loading={false} onAudit={onAudit}
       />
     );

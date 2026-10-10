@@ -338,9 +338,22 @@ function PropostaRow({ cliente, prazo }: { cliente: RouteContactItem; prazo: Pra
 
 export default function RotaPropostas() {
   const workday = useMemo(() => todayIso(), []);
-  const { data, isLoading } = useRouteContactList(workday);
+  const { data, isLoading, isError } = useRouteContactList(workday);
 
   if (isLoading) return <PageSkeleton variant="list" />;
+  // Erro NÃO vira "Nenhum cliente na fila" — falha de leitura ≠ fila vazia (§7 money-path).
+  if (isError) {
+    return (
+      <div className="p-4">
+        <EmptyState
+          icon={MessageSquareText}
+          tone="operational"
+          title="Não foi possível carregar a fila"
+          description="Falha ao ler a agenda de rota. Recarregue a página; se persistir, avise o suporte."
+        />
+      </div>
+    );
+  }
 
   const fila = data?.whatsappQueue ?? [];
   const cidadesLabel = data?.cidades?.length ? data.cidades.join(', ') : null;

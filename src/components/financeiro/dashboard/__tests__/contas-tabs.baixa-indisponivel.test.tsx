@@ -52,12 +52,12 @@ const CP_LIQUIDADO = [{
 const noop = () => {};
 const propsCR = (crTotals: any) => ({
   crFilter: 'all', setCrFilter: noop, crDateFrom: '', setCrDateFrom: noop,
-  crDateTo: '', setCrDateTo: noop, contasReceber: CR_LIQUIDADO, crTotals,
+  crDateTo: '', setCrDateTo: noop, contasReceber: CR_LIQUIDADO, crTotal: null, crTotals,
   view: 'colacor' as const, loading: false, onAudit: noop,
 });
 const propsCP = (cpTotals: any) => ({
   cpFilter: 'all', setCpFilter: noop, cpDateFrom: '', setCpDateFrom: noop,
-  cpDateTo: '', setCpDateTo: noop, contasPagar: CP_LIQUIDADO, cpTotals,
+  cpDateTo: '', setCpDateTo: noop, contasPagar: CP_LIQUIDADO, cpTotal: null, cpTotals,
   view: 'colacor' as const, loading: false, onAudit: noop,
 });
 /* eslint-enable @typescript-eslint/no-explicit-any */

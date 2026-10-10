@@ -15,24 +15,32 @@ export function useBaixoGiro() {
   const query = useQuery({
     queryKey: ["reposicao-baixo-giro", empresa],
     staleTime: 60_000,
-    queryFn: async (): Promise<RowBaixoGiro[]> => {
-      // 1) universo de baixo giro (cap defensivo 1000; baixo giro real < 1000)
-      const { data: base, error } = await supabase
+    queryFn: async (): Promise<{ rows: RowBaixoGiro[]; total: number }> => {
+      // 1) universo de baixo giro — cap defensivo de 1.000 com TRUNCAGEM HONESTA (padrão
+      // useSalesOrders): o count exato vem no MESMO request e a tela avisa quando o universo
+      // estoura o cap. "Baixo giro real < 1000" era premissa sem verificação — se furasse, o
+      // corte saía como se fosse tudo (e o capital parado do KPI, subestimado). `.order`
+      // estável junto do `.range`: sem ele a janela de 1.000 varia entre execuções.
+      const { data: base, error, count } = await supabase
         .from("sku_parametros")
-        .select("sku_codigo_omie, sku_descricao, fornecedor_nome, classe_consolidada, demanda_media_diaria, valor_vendido_90d, estoque_minimo, ponto_pedido, estoque_maximo, habilitado_reposicao_automatica, tipo_reposicao, parametro_cold_start")
+        .select("sku_codigo_omie, sku_descricao, fornecedor_nome, classe_consolidada, demanda_media_diaria, valor_vendido_90d, estoque_minimo, ponto_pedido, estoque_maximo, habilitado_reposicao_automatica, tipo_reposicao, parametro_cold_start", { count: "exact" })
         .eq("empresa", empresa)
         .eq("ativo", true)
         .or(BAIXO_GIRO_OR_FILTER)
+        .order("sku_codigo_omie", { ascending: true })
         .range(0, 999);
       if (error) throw error;
-      const rowsBase = base ?? [];
+      if (base == null) throw new Error("sku_parametros (baixo giro): data=null sem error");
+      if (count == null) throw new Error("sku_parametros (baixo giro): count=null com count:'exact'");
+      const rowsBase = base;
+      const total = count;
       const codes = rowsBase.map((r) => Number(r.sku_codigo_omie));
-      if (codes.length === 0) return [];
+      if (codes.length === 0) return { rows: [], total };
 
       // 2) enriquecimentos (.in) — última venda vem da fonte ALL-TIME (v_sku_ultima_venda):
       // a v_sku_demanda_estatisticas é janelada em 90d e mostrava "nunca" p/ quem vendeu há 4 meses.
       // (cast: a view é da migration 20260731120000 e só entra nos types gerados no próximo type-gen)
-      const [{ data: inv }, demRes, { data: sug }, sbRes] = await Promise.all([
+      const [invRes, demRes, sugRes, sbRes] = await Promise.all([
         supabase.from("inventory_position").select("omie_codigo_produto, saldo, cmc").eq("account", empresa.toLowerCase()).in("omie_codigo_produto", codes),
         supabase.from("v_sku_ultima_venda" as never).select("sku_codigo_omie, ultima_venda_data, vendas_registradas").eq("empresa", empresa).in("sku_codigo_omie", codes) as unknown as PromiseLike<{
           data: { sku_codigo_omie: number; ultima_venda_data: string | null; vendas_registradas: number }[] | null;
@@ -51,6 +59,13 @@ export function useBaixoGiro() {
       // fabricado por falha de transporte). Ausente ≠ zero vale para leitura também.
       if (demRes.error != null) throw demRes.error instanceof Error ? demRes.error : new Error("v_sku_ultima_venda: leitura falhou");
       const dem = demRes.data;
+      // Saldo/CMC e sugestão também LANÇAM: o destructuring antigo descartava os errors e um
+      // enriquecimento falho virava "sem saldo/CMC" em TODOS os SKUs — capital parado
+      // SUBESTIMADO em silêncio no KPI (ausente ≠ zero).
+      if (invRes.error) throw new Error(`inventory_position (baixo giro): ${invRes.error.message}`);
+      if (sugRes.error) throw new Error(`v_sku_parametros_sugeridos (baixo giro): ${sugRes.error.message}`);
+      const inv = invRes.data;
+      const sug = sugRes.data;
       const invMap = new Map((inv ?? []).map((r) => [Number(r.omie_codigo_produto), r]));
       const demMap = new Map((dem ?? []).map((r) => [Number(r.sku_codigo_omie), r]));
       const sbMap = new Map((sbRes.error == null ? (sbRes.data ?? []) : []).map((r) => [Number(r.sku_codigo_omie), r.quadrante]));
@@ -58,7 +73,7 @@ export function useBaixoGiro() {
       const hoje = HOJE_ISO();
 
       // 3) montar rows
-      return rowsBase.map((r) => {
+      const rows = rowsBase.map((r) => {
         const code = Number(r.sku_codigo_omie);
         const iv = invMap.get(code);
         const saldo = iv?.saldo ?? null;
@@ -91,6 +106,7 @@ export function useBaixoGiro() {
           classe_sb: sbMap.get(code) ?? null,
         };
       });
+      return { rows, total };
     },
   });
 
@@ -178,12 +194,15 @@ export function useBaixoGiro() {
   });
 
   const kpis = useMemo(() => {
-    const rows = query.data ?? [];
+    const rows = query.data?.rows ?? [];
     const cap = somarCapitalParado(rows.map((r) => ({ saldo: r.saldo, cmc: r.cmc })));
     const morto = somarCapitalMorto(rows.map((r) => ({ giroMorto: r.giro_morto, saldo: r.saldo, cmc: r.cmc })));
     const soc = somarCapitalParado(rows.filter((r) => r.candidato_sob_encomenda).map((r) => ({ saldo: r.saldo, cmc: r.cmc })));
-    return { ...cap, totalItens: rows.length, morto, sobEncomenda: { totalRs: soc.totalRs, candidatosN: rows.filter((r) => r.candidato_sob_encomenda).length } };
+    return { ...cap, totalItens: query.data?.total ?? rows.length, morto, sobEncomenda: { totalRs: soc.totalRs, candidatosN: rows.filter((r) => r.candidato_sob_encomenda).length } };
   }, [query.data]);
 
-  return { rows: query.data ?? [], kpis, isLoading: query.isLoading, error: query.error, refetch: query.refetch, manterEmEstoque, descontinuar, descontinuarLote, sobEncomendaLote };
+  // truncado: o universo passou do cap de 1.000 — a tela avisa em vez de exibir o corte como o todo.
+  const truncado = query.data != null && query.data.total > query.data.rows.length;
+
+  return { rows: query.data?.rows ?? [], total: query.data?.total ?? null, truncado, kpis, isLoading: query.isLoading, error: query.error, refetch: query.refetch, manterEmEstoque, descontinuar, descontinuarLote, sobEncomendaLote };
 }

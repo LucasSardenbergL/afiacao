@@ -33,12 +33,17 @@ const statusConfig: Record<ConciliacaoStatus, { label: string; color: string; ic
   ignorado: { label: 'Ignorado', color: 'bg-muted text-muted-foreground', icon: Ban },
 };
 
+/** Janela da lista. Truncar é legítimo; truncar em SILÊNCIO não — o count exato do mesmo
+ * filtro acompanha a página e a tela avisa quando há mais (money-path §8). */
+const LISTA_LIMITE = 500;
+
 type ContaCorrenteFiltro = Pick<FinContaCorrenteRow, 'omie_ncodcc' | 'descricao' | 'banco'>;
 
 const FinanceiroConciliacao = () => {
   const [company, setCompany] = useState<Company>('oben');
   const [statusFilter, setStatusFilter] = useState<ConciliacaoStatus | 'todos'>('pendente');
   const [items, setItems] = useState<FinConciliacaoRow[]>([]);
+  const [totalFiltro, setTotalFiltro] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState<Record<ConciliacaoStatus, number>>({
     pendente: 0, conciliado: 0, divergencia: 0, ignorado: 0,
@@ -50,37 +55,58 @@ const FinanceiroConciliacao = () => {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      // Load contas correntes for filter
-      const { data: ccs } = await supabase
+      // Contas correntes do filtro — falha LANÇA (cai no catch com toast): o descarte do
+      // error deixava o seletor de conta MUDO, como se a empresa não tivesse conta cadastrada.
+      const { data: ccs, error: ccsError } = await supabase
         .from('fin_contas_correntes')
         .select('omie_ncodcc, descricao, banco')
         .eq('company', company).eq('ativo', true);
-      setContas(ccs || []);
+      if (ccsError) throw new Error(`Falha ao carregar contas correntes: ${ccsError.message}`);
+      if (ccs == null) throw new Error('Falha ao carregar contas correntes: data=null sem error');
+      setContas(ccs);
 
-      // Load conciliação items
+      // Itens — janela de LISTA_LIMITE com TRUNCAGEM HONESTA: o count exato do mesmo filtro
+      // vem no próprio request, então a tela distingue "é tudo" de "tem mais" (padrão
+      // useSalesOrders). `.order('id')` desempata mov_data repetida.
       let query = supabase
         .from('fin_conciliacao')
-        .select('*')
+        .select('*', { count: 'exact' })
         .eq('company', company)
-        .order('mov_data', { ascending: false });
+        .order('mov_data', { ascending: false })
+        .order('id', { ascending: true });
 
       if (statusFilter !== 'todos') query = query.eq('status', statusFilter);
       if (selectedCC !== 'all') query = query.eq('omie_ncodcc', Number(selectedCC));
 
-      const { data } = await query.limit(500);
-      setItems(data || []);
+      const { data, error, count } = await query.range(0, LISTA_LIMITE - 1);
+      if (error) throw new Error(`Falha ao carregar itens de conciliação: ${error.message}`);
+      if (data == null) throw new Error('Falha ao carregar itens de conciliação: data=null sem error');
+      if (count == null) throw new Error("Falha ao carregar itens de conciliação: count=null com count:'exact'");
+      setItems(data);
+      setTotalFiltro(count);
 
-      // Stats
-      const { data: allItems } = await supabase
-        .from('fin_conciliacao')
-        .select('status')
-        .eq('company', company);
-
+      // Stats contadas NO SERVIDOR (count exact + head), uma por status. Antes a página baixava
+      // `select('status')` da tabela INTEIRA para contar no browser — e fin_conciliacao espelha
+      // fin_movimentacoes (60k), então a capa de 1.000 do PostgREST truncava a contagem: os
+      // cards mostravam um retrato do começo da fila como se fosse o total, e o "% conciliado"
+      // derivava dele.
+      const statusList: ConciliacaoStatus[] = ['pendente', 'conciliado', 'divergencia', 'ignorado'];
+      const contagens = await Promise.all(
+        statusList.map((st) =>
+          supabase
+            .from('fin_conciliacao')
+            .select('id', { count: 'exact', head: true })
+            .eq('company', company)
+            .eq('status', st),
+        ),
+      );
       const s: Record<ConciliacaoStatus, number> = { pendente: 0, conciliado: 0, divergencia: 0, ignorado: 0 };
-      for (const item of allItems || []) {
-        const key = item.status as ConciliacaoStatus;
-        if (s[key] !== undefined) s[key]++;
-      }
+      statusList.forEach((st, idx) => {
+        const res = contagens[idx];
+        if (res.error) throw new Error(`Falha ao contar itens "${st}": ${res.error.message}`);
+        if (res.count == null) throw new Error(`Falha ao contar itens "${st}": count=null com count:'exact'`);
+        s[st] = res.count;
+      });
       setStats(s);
     } catch (e) {
       const message = mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.';
@@ -198,6 +224,15 @@ const FinanceiroConciliacao = () => {
         </Select>
         <Badge variant="secondary">{pctConciliado}% conciliado</Badge>
       </div>
+
+      {/* Truncagem HONESTA: a janela é de LISTA_LIMITE e o filtro tem mais — a busca por
+          descrição cobre só o que está carregado, e dizer isso separa recorte de mentira. */}
+      {totalFiltro !== null && totalFiltro > items.length && (
+        <p className="text-xs text-muted-foreground">
+          Mostrando os primeiros {items.length} de {totalFiltro} itens do filtro — a busca por
+          descrição cobre apenas esses. Refine por status ou conta corrente para ver o resto.
+        </p>
+      )}
 
       {/* Table */}
       <Card>

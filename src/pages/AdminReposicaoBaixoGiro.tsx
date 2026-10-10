@@ -56,7 +56,7 @@ function exportarCsvExcesso(rows: RowExcesso[]) {
 }
 
 export default function AdminReposicaoBaixoGiro() {
-  const { rows, kpis, isLoading, error, refetch, manterEmEstoque, descontinuar, descontinuarLote, sobEncomendaLote } = useBaixoGiro();
+  const { rows, total, truncado, kpis, isLoading, error, refetch, manterEmEstoque, descontinuar, descontinuarLote, sobEncomendaLote } = useBaixoGiro();
   const excesso = useExcessoEstoque();
   const [filtros, setFiltros] = useState<FiltrosBaixoGiro>({ situacao: "todos", estoque: "todos", giro: "todos", busca: "" });
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -107,6 +107,14 @@ export default function AdminReposicaoBaixoGiro() {
         </TabsList>
 
         <TabsContent value="baixo-giro" className="space-y-4">
+          {/* Truncagem HONESTA: o universo passou do cap de 1.000 do hook. Sem isto o corte saía
+              como o todo — inclusive no capital parado, que soma só as linhas carregadas. */}
+          {truncado && (
+            <p className="text-xs text-muted-foreground">
+              Mostrando os primeiros {rows.length} de {total} SKUs de baixo giro — a lista, os
+              filtros e o capital parado cobrem só esses.
+            </p>
+          )}
           {semDado ? (
             <div role="alert" className="rounded-md border border-status-error/30 bg-status-error/5 p-4 space-y-2">
               <p className="text-sm">

@@ -35,6 +35,7 @@ const FinanceiroDashboard = ({ embedded = false }: { embedded?: boolean } = {}) 
     view, setView, loading, syncing, error, lastSync,
     activeResumo, resumo,
     contasPagar, contasReceber,
+    contasPagarTotal, contasReceberTotal,
     agingReceber, agingPagar,
     dreConsolidado, drePorEmpresa,
     fluxoCaixa, inadimplentes, versaoDados,
@@ -207,6 +208,7 @@ const FinanceiroDashboard = ({ embedded = false }: { embedded?: boolean } = {}) 
             crDateTo={crDateTo}
             setCrDateTo={setCrDateTo}
             contasReceber={contasReceber}
+            crTotal={contasReceberTotal}
             crTotals={crTotals}
             view={view}
             loading={loading}
@@ -224,6 +226,7 @@ const FinanceiroDashboard = ({ embedded = false }: { embedded?: boolean } = {}) 
             cpDateTo={cpDateTo}
             setCpDateTo={setCpDateTo}
             contasPagar={contasPagar}
+            cpTotal={contasPagarTotal}
             cpTotals={cpTotals}
             view={view}
             loading={loading}
