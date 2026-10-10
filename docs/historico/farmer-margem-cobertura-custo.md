@@ -112,6 +112,12 @@ motivo: o Customer 360 mostra "margem: sem compra nos últimos 12 meses" (lido d
 ("… clientes c/ margem (últimos 12 meses)"), `legendaCoberturaItens` e a dica
 `DICA_COBERTURA_LINHAS` (`src/lib/format.ts` · `src/lib/scoring/margin.ts`).
 
+**Aplicada em prod em 2026-10-09 pela sessão, dentro do ENVELOPE** (MCP `query_database`): ensaio com
+`RAISE EXCEPTION 'ENSAIO_OK'` (rollback conferido por psql-ro: corpo antigo intacto) → apply real com a
+postcondição da migration + `md5(prosrc)` = `8335b945…` (calculado dos bytes do arquivo). 2ª testemunha
+(psql-ro): md5 idêntico, `db/valida-margem-cliente-janela-12m.sql` 3 × ✅, e a função real devolve
+**502 clientes · R$ 5,94M · 45,47%**.
+
 **Quando aparece na tela.** A margem persistida em `farmer_client_scores` só se ajusta no próximo
 cron do `calculate-scores` (06:00/06:25 UTC) depois do apply — sem deploy de edge. As RPCs ao vivo
 (`get_carteira_margem_faixa`, `get_customer_margin_summary`) mudam no instante do apply.
