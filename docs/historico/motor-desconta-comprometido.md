@@ -59,3 +59,23 @@ esperado" lia a coluna sabotada.
 - "Sincronizar e recalcular" ressincroniza estoque e status de produto, **não** pedidos de venda.
 - As views de exibição `v_reposicao_sku_sem_fornecedor` e `v_sugestao_negociacao_ativa` calculam um "efetivo" próprio
   sem o desconto (fora do escopo; não decidem compra).
+
+## Revisão adversarial e apply
+
+Codex no diff: **aprovar com mudanças, sem P0/P1**; 4 P2, todos corrigidos — a tela arredondava (0,6 − 0,4 virava
+"1 − 0", −0,2 virava "−0") → formatador com fração; a re-medição do ACL deixaria a sabotagem `sem_grant` sem dente → a
+prova REVOGA e AFIRMA (P03) o estado predecessor; a prova fora do CI → entrou no núcleo (`falsificar=fora-do-ci`,
+≈ +5 min); o validador podia sair verde com o motor ausente → bloco `DO` que exige 4/4 e aborta (medido: `exit 3`
+antes do apply, nomeando corpo/coluna/grant).
+
+Apply: `db:aplicar --ensaio` exit 0 → `db:aplicar` exit 0 (recibo #320) → `db/valida-motor-desconta-comprometido.sql`
+por psql-ro: 4/4, exit 0. ACL de prod re-medido (`corpo-vivo-acl.sql`) e carimbo authz gravado; a `deriva:corpo:prod`
+acusa o motor até o merge (DDL aplicada antes do merge — esperado).
+
+Decisão esperada no 1º ciclo (09:15 UTC de 2026-10-11), pela mesma conta do motor: FC.7074QT 12→8 ≤ 9 entra (8);
+DEZ.8014QT 8→5 ≤ 6 entra (8 antes do teto B); FCA.6888LT 7→2 ≤ 4 entra (4); **FCA.7090QT 15→9 > 4 NÃO entra** — já há
+11 a caminho (6 pendentes no Omie + 5 em trânsito no app) cobrindo os 6 vendidos. Estimativa bruta do desconto no
+universo: 21 SKUs viram compra (≈ R$ 29,6 mil antes de teto/mínimo/arredondamento) e +R$ 6,5 mil em 8 que já compravam.
+
+Lição de processo: editar um arquivo que a falsificação em voo LÊ (`corpo-vivo-acl.sql`) produziu um vermelho de
+SINTAXE numa sabotagem — leitura no meio da escrita. A rodada inteira foi refeita sem tocar em nada.
