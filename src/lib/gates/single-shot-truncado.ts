@@ -53,7 +53,11 @@ export const TABELAS_RISCO: ReadonlySet<string> = new Set([
 ]);
 
 /** Delimitadores de cardinalidade: presentes na expressão, a query NÃO pede "tudo". */
-const DELIMITADORES = ['.range(', '.single(', '.maybeSingle(', 'head: true', 'head:true', '.csv('];
+const DELIMITADORES = ['.range(', '.single(', '.maybeSingle('];
+/** `{ head: true }` em qualquer formatação (o prettier quebra linha dentro do objeto). */
+const HEAD_TRUE = /\bhead\s*:\s*true\b/;
+/** `count: 'exact'` — com ele um `.limit(N)` vira truncagem HONESTA (o caller recebe o total). */
+const COUNT_EXACT = /count\s*:\s*['"]exact['"]/;
 
 /** Verbos de escrita — o `.select()` de retorno de write herda a cardinalidade do write. */
 const ESCRITA = ['.insert(', '.update(', '.upsert(', '.delete('];
@@ -62,10 +66,14 @@ const ESCRITA = ['.insert(', '.update(', '.upsert(', '.delete('];
  * `.eq()`/`.in()` sobre coluna de IDENTIDADE delimita semanticamente (uma linha, ou o
  * tamanho do chunk que o caller controla). Coluna CATEGÓRICA (`company`, `status`,
  * `empresa`, `ativo`, `role`) NÃO delimita — é justamente o filtro que dá a falsa
- * sensação de recorte enquanto devolve dezenas de milhares de linhas.
+ * sensação de recorte enquanto devolve dezenas de milhares de linhas. Coluna de
+ * RELACIONAMENTO também não: `.eq('omie_codigo_cliente', c)` sobre recebíveis pode passar
+ * de 1.000 títulos, por isso cliente/CNPJ/documento ficam FORA (achado Codex).
+ * Limite conhecido: `.in('id', lista)` é aceito supondo chunk ≤ 1.000 — o predicado não
+ * enxerga o tamanho da lista.
  */
 const EQ_IN_IDENTIDADE =
-  /\.(?:eq|in)\(\s*['"](?:[a-z_]*_)?(?:id|ids|uuid|codigo_produto|codigo_cliente|codigo_servico|codigo_pedido|sku_codigo_omie|sku_omie|chave_acesso|cnpj[a-z_]*|document|hash[a-z_]*|numero_pedido|endpoint|key|slug)['"]/;
+  /\.(?:eq|in)\(\s*['"](?:[a-z_]*_)?(?:id|ids|uuid|codigo_produto|codigo_servico|codigo_pedido|sku_codigo_omie|sku_omie|chave_acesso|hash[a-z_]*|numero_pedido|endpoint|key|slug)['"]/;
 
 /** `ano` + `mes` juntos recortam UMA competência (um DRE de mês = unidades de linhas). */
 const EQ_ANO = /\.eq\(\s*['"]ano['"]/;
@@ -80,7 +88,24 @@ const EQ_MES = /\.eq\(\s*['"]mes['"]/;
  * helper); falso-negativo é o erro barato aqui, falso-vermelho é o caro.
  */
 const DELEGADO =
-  /\b(?:fetchAllPages|fetchAll|buscarTodasPaginas|coletarPaginado|carregarRpcPaginada|paginateAll)\s*[<(]/;
+  /\b(?:fetchAllPages|fetchAll|buscarTodasPaginas|coletarPaginado|carregarRpcPaginada|paginateAll)\s*[<(]/g;
+
+/** O `.from(` está DENTRO de uma chamada de helper ainda ABERTA (parênteses não fechados)?
+ * Só assim é callback do helper — uma leitura crua logo DEPOIS de um `fetchAllPages(...)`
+ * já encerrado não herda a delegação (achado Codex: a janela cega de 500 chars a escondia). */
+function dentroDeHelperAberto(janela: string): boolean {
+  let m: RegExpExecArray | null;
+  DELEGADO.lastIndex = 0;
+  let ultimo = -1;
+  while ((m = DELEGADO.exec(janela)) !== null) ultimo = m.index;
+  if (ultimo === -1) return false;
+  let saldo = 0;
+  for (const ch of janela.slice(ultimo)) {
+    if (ch === '(') saldo++;
+    else if (ch === ')') saldo--;
+  }
+  return saldo > 0;
+}
 
 export interface SitioSingleShot {
   linha: number;
@@ -108,24 +133,34 @@ export function acharSingleShots(fonteSemComentarios: string): SitioSingleShot[]
   while ((i = fonte.indexOf('.from(', i + 1)) !== -1) {
     const mTab = /^\.from\(\s*['"]([^'"]+)['"]/.exec(fonte.slice(i, i + 120));
     if (!mTab || !TABELAS_RISCO.has(mTab[1])) continue;
-    if (DELEGADO.test(fonte.slice(Math.max(0, i - 500), i))) continue;
+    if (dentroDeHelperAberto(fonte.slice(Math.max(0, i - 500), i))) continue;
 
-    const fim = fonte.indexOf(';', i);
-    const depois = fonte.slice(i, fim === -1 ? Math.min(fonte.length, i + 1200) : fim);
     const janela = fonte.slice(Math.max(0, i - 400), i);
-    const mAwait = /await\s+[^;]*$/.exec(janela);
-    if (!mAwait) continue;
-    const expr = janela.slice(mAwait.index) + depois;
+    if (!/await\s+[^;]*$/.test(janela)) continue;
+
+    // A expressão classificada é SÓ a cadeia desta query: do `.from(` até o `;` ou o próximo
+    // `.from(`/`.rpc(`. Sem o corte, num `Promise.all([q1, q2])` o `.in(...)` de q1 imunizava
+    // q2 — remover o recorte de uma leitura não acusava nada (achado Codex, reproduzido no
+    // useBaixoGiro).
+    const fim = fonte.indexOf(';', i);
+    let corte = fim === -1 ? Math.min(fonte.length, i + 1200) : fim;
+    for (const prox of ['.from(', '.rpc(']) {
+      const k = fonte.indexOf(prox, i + 6);
+      if (k !== -1 && k < corte) corte = k;
+    }
+    const expr = fonte.slice(i, corte);
 
     if (!expr.includes('.select(')) continue;
     if (ESCRITA.some((v) => expr.includes(v))) continue;
     if (DELIMITADORES.some((d) => expr.includes(d))) continue;
+    if (HEAD_TRUE.test(expr)) continue;
 
     // `.limit(N)` literal ≥ 1.000 é a capa disfarçada; qualquer outro `.limit(…)` —
     // inclusive `.limit(variavel)` — é janela que o caller controla.
     const mLimitLiteral = /\.limit\(\s*(\d+)\s*\)/.exec(expr);
     const limitNaCapa = mLimitLiteral != null && Number(mLimitLiteral[1]) >= 1000;
     if (/\.limit\(/.test(expr) && !limitNaCapa) continue;
+    if (limitNaCapa && COUNT_EXACT.test(expr)) continue; // janela + total: truncagem honesta
     if (EQ_IN_IDENTIDADE.test(expr)) continue;
     if (EQ_ANO.test(expr) && EQ_MES.test(expr)) continue;
 

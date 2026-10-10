@@ -2,6 +2,7 @@
 // Extraído de src/pages/FinanceiroDashboard.tsx (god-component split).
 import { useRef, useState } from 'react';
 import { toast } from 'sonner';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -62,7 +63,7 @@ export function ContasPagarTab({
       downloadCSV(exportContasPagarCSV(rows, cpTotals.procedencia), `contas_pagar_${view}_${cpFilter}.csv`);
     } catch (e) {
       // Falha NÃO vira CSV parcial/vazio — o usuário sabe que não exportou.
-      toast.error(`Falha ao exportar CSV: ${e instanceof Error ? e.message : String(e)}`);
+      toast.error(`Falha ao exportar CSV: ${mensagemDeErro(e) ?? "erro sem mensagem — tente de novo"}`);
     } finally {
       setExportando(false);
     }

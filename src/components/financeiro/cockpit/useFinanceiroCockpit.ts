@@ -71,7 +71,7 @@ export function useFinanceiroCockpit() {
         // fabricado); catch por fonte devolve null — o cockpit já trata aging null como
         // indisponível ('—'), nunca como carteira sã.
         getAgingReceber('all').catch((e): AgingData | null => {
-          logger.warn('Aging de recebíveis indisponível', { error: e instanceof Error ? e.message : String(e) });
+          logger.warn('Aging de recebíveis indisponível', { error: mensagemDeErro(e) ?? "erro sem mensagem" });
           return null;
         }),
         Promise.all(['oben', 'colacor', 'colacor_sc'].map(co => getDRE(co as Company, ano, undefined, regime))).then(r => r.flat()),
@@ -186,13 +186,17 @@ export function useFinanceiroCockpit() {
       : riscoLiquidez >= 1 ? 'text-status-success' : riscoLiquidez >= 0.5 ? 'text-status-warning' : 'text-status-error';
 
   // Concentração (do aging)
+  // aging null = fonte INDISPONÍVEL (getAgingReceber lançou) → os derivados também são null e a
+  // tela mostra "—". Antes os `: 0`/`|| 0` refabricavam "0% crítico, R$ 0" uma camada acima do
+  // service — e verde, pela faixa ≤5% (achado Codex na revisão desta entrega).
   const totalAgingCR = aging
     ? aging.a_vencer_valor + aging.vencido_1_30_valor + aging.vencido_31_60_valor + aging.vencido_61_90_valor + aging.vencido_90_plus_valor
-    : 0;
-  const pctCritico = totalAgingCR > 0
-    ? ((aging?.vencido_61_90_valor || 0) + (aging?.vencido_90_plus_valor || 0)) / totalAgingCR * 100
-    : 0;
-  const agingCriticoValor = (aging?.vencido_61_90_valor || 0) + (aging?.vencido_90_plus_valor || 0);
+    : null;
+  const agingCriticoValor = aging ? aging.vencido_61_90_valor + aging.vencido_90_plus_valor : null;
+  // Carteira sem título (total 0) é zero LEGÍTIMO; só a ausência da fonte vira null.
+  const pctCritico =
+    totalAgingCR === null || agingCriticoValor === null ? null
+      : totalAgingCR > 0 ? agingCriticoValor / totalAgingCR * 100 : 0;
 
   return {
     loading,

@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useRef } from 'react';
 import type { Company } from '@/contexts/CompanyContext';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 import {
@@ -38,6 +38,7 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
   const [contasReceberTotal, setContasReceberTotal] = useState<number | null>(null);
   const [agingReceber, setAgingReceber] = useState<AgingData | null>(null);
   const [agingPagar, setAgingPagar] = useState<AgingData | null>(null);
+  const agingGeracao = useRef(0);
   const [dre, setDre] = useState<FinDRE[]>([]);
   const [fluxoCaixa, setFluxoCaixa] = useState<FluxoCaixaDiario[]>([]);
   const [inadimplentes, setInadimplentes] = useState<
@@ -131,19 +132,25 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
   }, [view]);
 
   const loadAging = useCallback(async () => {
+    // Geração: só a ÚLTIMA carga publica. Sem isto, trocar Oben→Colacor com a carga de Oben
+    // ainda em voo deixava a resposta velha chegar DEPOIS e repor o aging de Oben sob
+    // view='colacor' (achado Codex). Limpar no catch não basta — a corrida é entre requests.
+    const geracao = ++agingGeracao.current;
+    setAgingReceber(null);
+    setAgingPagar(null);
     try {
       const company = view === 'all' ? 'all' : view as Company;
       const [ar, ap] = await Promise.all([
         getAgingReceber(company),
         getAgingPagar(company),
       ]);
+      if (geracao !== agingGeracao.current) return;
       setAgingReceber(ar);
       setAgingPagar(ap);
     } catch (e) {
-      // getAging* LANÇA em falha (antes fabricava EMPTY_AGING = "R$0 vencido"). Limpa o aging
-      // anterior: numa troca de empresa, o da empresa velha ficaria na tela como se fosse desta.
-      setAgingReceber(null);
-      setAgingPagar(null);
+      // getAging* LANÇA em falha (antes fabricava EMPTY_AGING = "R$0 vencido"): o aging fica
+      // null (indisponível), nunca zero.
+      if (geracao !== agingGeracao.current) return;
       setError(mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.');
     }
   }, [view]);

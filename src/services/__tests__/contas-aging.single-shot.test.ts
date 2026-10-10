@@ -93,6 +93,14 @@ describe('getContasPagar/Receber — o filtro INTEIRO, não os 1.000 primeiros',
     expect(total).toBe(2500);
   });
 
+  it('ID repetido entre páginas (deriva de offset) LANÇA — CSV não sai com título pulado', async () => {
+    // Retrato do que a deriva produz: K páginas são K instantes, um título reaparece e outro some.
+    const rows = titulos(1500);
+    rows[1200] = { ...rows[1200], id: rows[10].id };
+    state.db.fin_contas_pagar = rows;
+    await expect(getContasPagar('oben')).rejects.toThrow(/mudaram durante a leitura/);
+  });
+
   it('falha de leitura LANÇA — nunca lista vazia com cara de "sem títulos"', async () => {
     state.errors.fin_contas_pagar = { message: 'canceling statement due to statement timeout' };
     await expect(getContasPagar('oben')).rejects.toThrow(/contas a pagar/);

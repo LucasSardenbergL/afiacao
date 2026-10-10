@@ -338,6 +338,17 @@ async function listarContas<T>(
   const rows = (await buscarTodasPaginas(contexto, (from, to) =>
     base().range(from, to),
   )) as unknown as T[];
+  // K páginas são K instantes (§14): se um título muda de vencimento durante a leitura, o
+  // offset desliza — um título é PULADO e outro REPETIDO, e `rows.length` continua batendo
+  // com o total. Este resultado alimenta o CSV anunciado como "o filtro inteiro"; ID repetido
+  // é a prova da deriva, e aí a resposta honesta é falhar e pedir nova tentativa (achado Codex:
+  // 1.500 linhas, 1.499 IDs, CSV somando R$ 1.500 contra R$ 101.499).
+  const ids = new Set(rows.map((r) => (r as { id?: unknown }).id));
+  if (ids.size !== rows.length) {
+    throw new Error(
+      `Falha ao carregar ${contexto}: os títulos mudaram durante a leitura (${rows.length - ids.size} repetido(s)) — tente de novo`,
+    );
+  }
   return { rows, total: rows.length };
 }
 

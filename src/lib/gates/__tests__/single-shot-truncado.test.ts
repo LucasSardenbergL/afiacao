@@ -102,3 +102,51 @@ describe('acharSingleShots — calibração contra o fix real do #1471', () => {
     expect(acharSingleShots(fonte)[0].linha).toBe(4);
   });
 });
+
+describe('acharSingleShots — casos do challenge Codex (2026-10-10)', () => {
+  it('irmão no Promise.all NÃO empresta delimitador (mutação real do useBaixoGiro)', () => {
+    const promiseAll = `
+      const [invRes, sugRes] = await Promise.all([
+        supabase.from("inventory_position").select("omie_codigo_produto, saldo, cmc").eq("account", conta),
+        supabase.from("sku_parametros").select("sku_codigo_omie").eq("empresa", e).in("sku_codigo_omie", codes),
+      ]);`;
+    expect(acharSingleShots(promiseAll).map((a) => a.tabela)).toEqual(['inventory_position']);
+  });
+
+  it('leitura crua logo DEPOIS de um fetchAllPages já fechado NÃO herda a delegação', () => {
+    const depoisDoHelper = `
+      const custos = await fetchAllPages<Row>((de, ate) =>
+        supabase.from('product_costs').select('*').order('id').range(de, ate), 'x');
+      const { data, error } = await supabase.from('profiles').select('user_id');`;
+    expect(acharSingleShots(depoisDoHelper).map((a) => a.tabela)).toEqual(['profiles']);
+  });
+
+  it('coluna de RELACIONAMENTO não delimita (um cliente pode ter >1.000 títulos)', () => {
+    const porCliente = `
+      const { data, error } = await supabase
+        .from('fin_contas_receber').select('*').eq('omie_codigo_cliente', cliente);`;
+    expect(acharSingleShots(porCliente)).toHaveLength(1);
+  });
+
+  it('`head:` quebrado em linha é count-only — não casa', () => {
+    const headMultilinha = `
+      const { count, error } = await supabase.from('sales_orders').select('id', {
+        count: 'exact',
+        head:
+          true,
+      });`;
+    expect(acharSingleShots(headMultilinha)).toEqual([]);
+  });
+
+  it('`.limit(1000)` COM count exato é truncagem honesta — não casa', () => {
+    const honesta = `
+      const { data, error, count } = await supabase
+        .from('sku_parametros').select('*', { count: 'exact' }).eq('empresa', e).limit(1000);`;
+    expect(acharSingleShots(honesta)).toEqual([]);
+  });
+
+  it('`.csv()` muda o formato, não a cardinalidade — casa', () => {
+    const csv = `const { data, error } = await supabase.from('fin_contas_pagar').select('*').csv();`;
+    expect(acharSingleShots(csv)).toHaveLength(1);
+  });
+});

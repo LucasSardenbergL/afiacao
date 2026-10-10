@@ -59,6 +59,7 @@ function medir(): Map<string, number> {
 // Quitados na entrega que criou este gate: financeiroService (mapeamento DRE, categorias
 // Omie), FinanceiroConciliacao (stats), TintFormulas (mapa de custo tintométrico).
 const DIVIDA: ReadonlyMap<string, number> = new Map([
+  ['src/components/customer360/hooks.ts', 1], // 125:customer_preferred_items — veredito: não afetado hoje (máx 132 itens/cliente em prod)
   ['src/components/intelligence/IntelligenceManagerialTab.tsx', 1], // 72:profiles
   ['src/components/intelligence/IntelligenceOperationalTab.tsx', 1], // 64:profiles
   ['src/components/intelligence/IntelligenceStrategicTab.tsx', 2], // 80:order_items(LIMIT1000) 89:profiles
@@ -106,11 +107,12 @@ const DIVIDA: ReadonlyMap<string, number> = new Map([
   ['supabase/functions/fin-suggest-mapping/index.ts', 1], // 124:fin_categoria_dre_mapping
   ['supabase/functions/fin-valor-engine/index.ts', 1], // 276:fin_dre_snapshots
   ['supabase/functions/gerar-pedidos-diario/index.ts', 1], // 348:pedido_compra_sugerido
-  ['supabase/functions/omie-financeiro/index.ts', 6], // 1712:fin_contas_receber 1722:fin_contas_receber 1732:fin_contas_pagar 1740:fin_contas_pagar 1752:fin_categoria_dre_mapping 1763:fin_dre_snapsho
+  ['supabase/functions/omie-financeiro/index.ts', 6], // 1712:fin_contas_receber 1722:fin_contas_receber 1732:fin_contas_pagar 1740:fin_contas_pagar 1752:fin_categoria_dre_mapping 1763:fin_dre_snapshots
   ['supabase/functions/omie-sync-ctes-recebidos/candidatas.ts', 1], // 67:purchase_orders_tracking
   ['supabase/functions/omie-sync-estoque/index.ts', 2], // 356:pedido_compra_sugerido 807:sku_parametros
   ['supabase/functions/omie-sync-vendas-items/index.ts', 1], // 363:venda_items_history
   ['supabase/functions/omie-sync/index.ts', 1], // 1376:omie_servicos
+  ['supabase/functions/omie-vendas-sync/index.ts', 1], // 4192:customer_preferred_items — veredito: não afetado hoje (máx 132 itens/cliente em prod)
   ['supabase/functions/process-recurring-orders/index.ts', 1], // 73:omie_servicos
   ['supabase/functions/scoring-recalc-batch/index.ts', 1], // 117:farmer_calls
   ['supabase/functions/sync-reprocess/index.ts', 1], // 1013:sync_reprocess_log
