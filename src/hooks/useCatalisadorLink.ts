@@ -19,6 +19,7 @@ import {
   keyDeCatalisador,
   type CatalisadorLink,
 } from '@/lib/knowledge-base/catalisador-link';
+import { estadoDeLeitura, type EstadoLeitura } from '@/lib/leitura/estado-de-leitura';
 
 type RpcFn = typeof supabase.rpc;
 
@@ -42,7 +43,7 @@ interface ProdutoRow {
 // 1. useCatalisadorLinksMap — mapa global p/ o selo da venda assistida
 // ─────────────────────────────────────────────────────────────────────────────
 export function useCatalisadorLinksMap() {
-  const { data, isLoading, isError } = useQuery<MapRow[]>({
+  const q = useQuery<MapRow[]>({
     queryKey: ['kb-catalisador-map'],
     staleTime: 5 * 60_000,
     queryFn: async (): Promise<MapRow[]> => {
@@ -72,6 +73,8 @@ export function useCatalisadorLinksMap() {
     },
   });
 
+  const { data, isLoading, isError } = q;
+
   const byKey = useMemo(() => {
     const m = new Map<string, number[]>();
     for (const r of data ?? []) {
@@ -86,7 +89,14 @@ export function useCatalisadorLinksMap() {
   // Sob falha o mapa vazio continua sendo o fallback correto (nunca inventar vínculo —
   // o selo degrada a "sob consulta"), mas a degradação tem de ser DECLARADA: sem isError
   // a UI não distingue "sem casamento confirmado" de "não consegui ler os casamentos".
-  return { byKey, isLoading, isError };
+  //
+  // `estado` sai junto porque `isError` NÃO cobre o quarto estado: com `networkMode:'online'`
+  // (o default do repo) a query PAUSADA tem `isLoading` false, `data` undefined e `error`
+  // null — o mapa sai vazio por CEGUEIRA e quem lê só `isError` cai no ramo do vazio. Num
+  // app de campo offline-first isso não é o caso raro, e aqui o vazio muda o PREÇO que o
+  // vendedor vê. Mapeamento exaustivo em `@/lib/leitura/estado-de-leitura`.
+  const estado: EstadoLeitura = estadoDeLeitura(q);
+  return { byKey, isLoading, isError, estado };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

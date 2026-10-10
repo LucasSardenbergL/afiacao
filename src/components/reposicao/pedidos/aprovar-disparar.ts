@@ -81,12 +81,12 @@ export async function aprovarEDisparar(
     // envio falhou; o lote conta isso como erro, não como sucesso).
     return { ok: true, tipo: feedback.tone, mensagem: feedback.message };
   } catch (e) {
-    logger.error('Pedido aprovado, mas o disparo imediato falhou (cron de corte assume)', { error: e, pedidoId });
+    logger.error('Pedido aprovado, mas o disparo imediato falhou', { error: e, pedidoId });
     return {
       ok: true,
       tipo: 'warning',
       mensagem:
-        'Pedido aprovado. O envio automático não saiu agora — será reprocessado pela rede de segurança (ou use "Disparar").',
+        'Pedido aprovado, mas o envio não saiu agora — use "Disparar" na lista.',
     };
   }
 }

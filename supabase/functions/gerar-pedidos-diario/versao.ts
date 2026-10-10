@@ -12,7 +12,7 @@ import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
 export const respostaSonda = criarRespostaSonda("gerar-pedidos-diario");
 
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.1-data-ciclo-dia-sp";
+export const VERSAO = "v1.3-expira-oportunidades";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
