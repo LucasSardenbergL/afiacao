@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **595** custom migrations totais
-- **1950** objetos esperados (criados por estas migrations)
+- **596** custom migrations totais
+- **1956** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 666
+  - `function`: 668
   - `rls_policy`: 464
   - `index`: 268
   - `cron_job`: 175
   - `table`: 169
   - `view`: 108
-  - `trigger`: 96
+  - `trigger`: 100
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -4877,6 +4877,17 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.reservar_estoque` | — |
 | `function` | `public.liberar_reserva_checkout` | — |
 | `function` | `public.atp_reservas_pendentes` | — |
+
+### `20261010120000_tint_formulas_tombstone_fase5_imutavel.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_formulas_guard_tombstone_fase5` | — |
+| `function` | `public.tint_subcolecoes_guard_tombstone_fase5` | — |
+| `trigger` | `public.trg_tint_formulas_tombstone_fase5_ins` | `tint_formulas` |
+| `trigger` | `public.trg_tint_formulas_tombstone_fase5_upd` | `tint_formulas` |
+| `trigger` | `public.trg_tint_formulas_tombstone_fase5_del` | `tint_formulas` |
+| `trigger` | `public.trg_tint_subcolecoes_tombstone_fase5_upd` | `tint_subcolecoes` |
 
 ## Próximos passos por status
 

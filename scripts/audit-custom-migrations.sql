@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 595
+-- Total de custom migrations: 596
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -656,7 +656,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261009180000', 'product_costs_cmc_ausente_null', '20261009180000_product_costs_cmc_ausente_null.sql'),
   ('20261009194000', 'motor_unidades_concentrado_wp', '20261009194000_motor_unidades_concentrado_wp.sql'),
   ('20261009220000', 'margem_cliente_janela_12m', '20261009220000_margem_cliente_janela_12m.sql'),
-  ('20261009233000', 'atp_fase3_2_corretiva', '20261009233000_atp_fase3_2_corretiva.sql')
+  ('20261009233000', 'atp_fase3_2_corretiva', '20261009233000_atp_fase3_2_corretiva.sql'),
+  ('20261010120000', 'tint_formulas_tombstone_fase5_imutavel', '20261010120000_tint_formulas_tombstone_fase5_imutavel.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2575,7 +2576,13 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('margem_cliente_janela_12m', 'function', 'private', 'margem_cliente_agregada', ''),
   ('atp_fase3_2_corretiva', 'function', 'public', 'reservar_estoque', ''),
   ('atp_fase3_2_corretiva', 'function', 'public', 'liberar_reserva_checkout', ''),
-  ('atp_fase3_2_corretiva', 'function', 'public', 'atp_reservas_pendentes', '')
+  ('atp_fase3_2_corretiva', 'function', 'public', 'atp_reservas_pendentes', ''),
+  ('tint_formulas_tombstone_fase5_imutavel', 'function', 'public', 'tint_formulas_guard_tombstone_fase5', ''),
+  ('tint_formulas_tombstone_fase5_imutavel', 'function', 'public', 'tint_subcolecoes_guard_tombstone_fase5', ''),
+  ('tint_formulas_tombstone_fase5_imutavel', 'trigger', 'public', 'trg_tint_formulas_tombstone_fase5_ins', 'tint_formulas'),
+  ('tint_formulas_tombstone_fase5_imutavel', 'trigger', 'public', 'trg_tint_formulas_tombstone_fase5_upd', 'tint_formulas'),
+  ('tint_formulas_tombstone_fase5_imutavel', 'trigger', 'public', 'trg_tint_formulas_tombstone_fase5_del', 'tint_formulas'),
+  ('tint_formulas_tombstone_fase5_imutavel', 'trigger', 'public', 'trg_tint_subcolecoes_tombstone_fase5_upd', 'tint_subcolecoes')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4542,7 +4549,13 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('margem_cliente_janela_12m', 'function', 'private', 'margem_cliente_agregada', ''),
   ('atp_fase3_2_corretiva', 'function', 'public', 'reservar_estoque', ''),
   ('atp_fase3_2_corretiva', 'function', 'public', 'liberar_reserva_checkout', ''),
-  ('atp_fase3_2_corretiva', 'function', 'public', 'atp_reservas_pendentes', '')
+  ('atp_fase3_2_corretiva', 'function', 'public', 'atp_reservas_pendentes', ''),
+  ('tint_formulas_tombstone_fase5_imutavel', 'function', 'public', 'tint_formulas_guard_tombstone_fase5', ''),
+  ('tint_formulas_tombstone_fase5_imutavel', 'function', 'public', 'tint_subcolecoes_guard_tombstone_fase5', ''),
+  ('tint_formulas_tombstone_fase5_imutavel', 'trigger', 'public', 'trg_tint_formulas_tombstone_fase5_ins', 'tint_formulas'),
+  ('tint_formulas_tombstone_fase5_imutavel', 'trigger', 'public', 'trg_tint_formulas_tombstone_fase5_upd', 'tint_formulas'),
+  ('tint_formulas_tombstone_fase5_imutavel', 'trigger', 'public', 'trg_tint_formulas_tombstone_fase5_del', 'tint_formulas'),
+  ('tint_formulas_tombstone_fase5_imutavel', 'trigger', 'public', 'trg_tint_subcolecoes_tombstone_fase5_upd', 'tint_subcolecoes')
 )
 SELECT
   e.migration,
