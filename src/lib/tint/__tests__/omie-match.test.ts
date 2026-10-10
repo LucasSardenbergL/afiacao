@@ -5,6 +5,7 @@ import {
   casarLinhaProduto,
   ranquearProdutos,
   sugerirMapeamento,
+  descartarSugestoesDisputadas,
   type LinhaSku,
   type ProdutoOmieMatch,
 } from '../omie-match';
@@ -158,5 +159,30 @@ describe('ranquearProdutos', () => {
     expect(r.map((p) => p.id)).toEqual(['exato', 'soCodigo', 'outro']);
     expect(r[0].codigoBateu).toBe(true);
     expect(r[0].embalagemBateu).toBe(true);
+  });
+});
+
+// ── lote de sugestões: produto disputado por 2+ SKUs sai (ambíguo → humano) ──
+describe('descartarSugestoesDisputadas', () => {
+  it('mantém sugestões cujo produto é de um SKU só', () => {
+    const { unicas, disputadas } = descartarSugestoesDisputadas(
+      new Map([['sku-a', 'prod-1'], ['sku-b', 'prod-2']]),
+    );
+    expect([...unicas]).toEqual([['sku-a', 'prod-1'], ['sku-b', 'prod-2']]);
+    expect(disputadas).toBe(0);
+  });
+
+  it('descarta TODAS as linhas que disputam o mesmo produto (não escolhe uma)', () => {
+    const { unicas, disputadas } = descartarSugestoesDisputadas(
+      new Map([['sku-a', 'prod-1'], ['sku-b', 'prod-1'], ['sku-c', 'prod-2']]),
+    );
+    expect([...unicas]).toEqual([['sku-c', 'prod-2']]);
+    expect(disputadas).toBe(2);
+  });
+
+  it('lote vazio → nada', () => {
+    const { unicas, disputadas } = descartarSugestoesDisputadas(new Map());
+    expect(unicas.size).toBe(0);
+    expect(disputadas).toBe(0);
   });
 });

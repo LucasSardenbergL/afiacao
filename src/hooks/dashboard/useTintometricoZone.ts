@@ -36,73 +36,67 @@ export function useTintometricoZone() {
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey,
     enabled: applies,
+    // Leitura que falha LANÇA (react-query → isError → a zona mostra erro). Antes, 4 blocos
+    // `try { … } catch { /* */ }` que nem liam o `error` do PostgREST faziam falha virar
+    // "0 fórmulas · 0/0 SKUs" — um painel de saúde afirmando vazio em vez de "não li".
     queryFn: async () => {
-      let totalFormulas = 0;
-      let skusMapped = 0;
-      let skusTotal = 0;
-      let lastImport: TintImportRow | null = null;
-      let topItems: TopListItem[] = [];
-
-      try {
-        const { count } = await supabase
+      const [formulasRes, skusTotalRes, skusMappedRes, impRes, errsRes] = await Promise.all([
+        supabase
           .from('tint_formulas')
           .select('id', { count: 'exact', head: true })
           .eq('account', ACCOUNT)
-          .is('desativada_em', null);
-        totalFormulas = count ?? 0;
-      } catch { /* */ }
-
-      try {
-        const { count: total } = await supabase
+          .is('desativada_em', null),
+        supabase
           .from('tint_skus')
           .select('id', { count: 'exact', head: true })
-          .eq('account', ACCOUNT);
-        const { count: mapped } = await supabase
+          .eq('account', ACCOUNT),
+        supabase
           .from('tint_skus')
           .select('id', { count: 'exact', head: true })
           .eq('account', ACCOUNT)
-          .not('omie_product_id', 'is', null);
-        skusTotal = total ?? 0;
-        skusMapped = mapped ?? 0;
-      } catch { /* */ }
-
-      try {
-        const { data: imp } = await supabase
+          .not('omie_product_id', 'is', null),
+        supabase
           .from('tint_importacoes')
           .select('id, tipo, arquivo_nome, registros_erro, status, created_at')
           .eq('account', ACCOUNT)
           .order('created_at', { ascending: false })
           .limit(1)
-          .maybeSingle();
-        lastImport = (imp as TintImportRow | null) ?? null;
-      } catch { /* */ }
-
-      try {
-        const { data: errs } = await supabase
+          .maybeSingle(),
+        supabase
           .from('tint_importacoes')
           .select('id, arquivo_nome, registros_erro, created_at')
           .eq('account', ACCOUNT)
           .gt('registros_erro', 0)
           .order('created_at', { ascending: false })
-          .limit(3);
-        if (errs) {
-          const rows = errs as Array<{
-            id: string;
-            arquivo_nome?: string | null;
-            registros_erro?: number | null;
-            created_at?: string | null;
-          }>;
-          topItems = rows.map((e) => ({
-            id: e.id,
-            icon: AlertTriangle,
-            title: e.arquivo_nome ?? 'Importação',
-            subtitle: `${e.registros_erro ?? 0} erro(s)`,
-            path: '/tintometrico',
-            itemType: 'tint_import_error',
-            badge: { label: 'erro', intent: 'error' as const },
-          }));
-        }
-      } catch { /* */ }
+          .limit(3),
+      ]);
+      if (formulasRes.error) throw formulasRes.error;
+      if (skusTotalRes.error) throw skusTotalRes.error;
+      if (skusMappedRes.error) throw skusMappedRes.error;
+      if (impRes.error) throw impRes.error;
+      if (errsRes.error) throw errsRes.error;
+      if (formulasRes.count == null || skusTotalRes.count == null || skusMappedRes.count == null) {
+        throw new Error('tintometrico: contagem exata não veio do PostgREST');
+      }
+      const totalFormulas = formulasRes.count;
+      const skusTotal = skusTotalRes.count;
+      const skusMapped = skusMappedRes.count;
+      const lastImport = (impRes.data as TintImportRow | null) ?? null;
+      const rows = (errsRes.data ?? []) as Array<{
+        id: string;
+        arquivo_nome?: string | null;
+        registros_erro?: number | null;
+        created_at?: string | null;
+      }>;
+      const topItems: TopListItem[] = rows.map((e) => ({
+        id: e.id,
+        icon: AlertTriangle,
+        title: e.arquivo_nome ?? 'Importação',
+        subtitle: `${e.registros_erro ?? 0} erro(s)`,
+        path: '/tintometrico',
+        itemType: 'tint_import_error',
+        badge: { label: 'erro', intent: 'error' as const },
+      }));
 
       return { totalFormulas, skusMapped, skusTotal, lastImport, topItems };
     },

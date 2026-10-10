@@ -49,7 +49,7 @@ function useMappedSkus() {
   return useQuery({
     queryKey: ['tint-skus-pricing'],
     queryFn: async () => {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('tint_skus')
         .select(`
           id, omie_product_id, imposto_pct, margem_pct,
@@ -61,6 +61,8 @@ function useMappedSkus() {
         .eq('account', ACCOUNT)
         .not('omie_product_id', 'is', null)
         .order('created_at');
+      // Erro LANÇA — antes virava tabela vazia, indistinguível de "nenhum SKU mapeado".
+      if (error) throw error;
       return data ?? [];
     },
   });
@@ -149,7 +151,7 @@ function useReceitas(formulaIds: string[]) {
 }
 
 export default function TintPricing() {
-  const { data: skus, isLoading } = useMappedSkus();
+  const { data: skus, isLoading, isError: skusError } = useMappedSkus();
   const queryClient = useQueryClient();
   const [edits, setEdits] = useState<Record<string, { imposto_pct: number; margem_pct: number }>>({});
   const [corSearch, setCorSearch] = useState('');
@@ -160,7 +162,7 @@ export default function TintPricing() {
   // seleção (select-price). Nada de recalcular base×imposto×margem aqui — era
   // o motor paralelo que fabricava número com receita vazia/parcial (Fase 4).
   const formulaIds = resultados.map((f) => f.id);
-  const { data: priceMap, isLoading: pricesLoading } = useTintPrices(formulaIds);
+  const { data: priceMap, isLoading: pricesLoading, isError: pricesError } = useTintPrices(formulaIds);
   const batchCarregando = formulaIds.length > 0 && pricesLoading;
   const { data: skuDesc } = useSkuDescricoes(resultados.map((f) => f.sku_id));
   const { data: receitas } = useReceitas(formulaIds);
@@ -216,6 +218,9 @@ export default function TintPricing() {
           </Button>
         </CardHeader>
         <CardContent>
+          {skusError && (
+            <p className="text-sm text-status-error">Erro ao carregar os SKUs — a tabela abaixo não é a lista real.</p>
+          )}
           {isLoading ? <Skeleton className="h-40 w-full" /> : (
             <div className="border rounded-md overflow-x-auto">
               <Table>
@@ -232,15 +237,20 @@ export default function TintPricing() {
                 </TableHeader>
                 <TableBody>
                   {((skus ?? []) as unknown as TintSkuRow[]).map((sku) => {
-                    const custo = sku.omie_products?.valor_unitario ?? 0;
+                    // Custo AUSENTE ≠ custo zero: SKU sem custo no Omie aparecia como
+                    // "R$ 0.00" de custo e de preço de referência — número fabricado.
+                    const custoOmie = sku.omie_products?.valor_unitario;
+                    const custo = custoOmie != null && custoOmie > 0 ? custoOmie : null;
                     const e = getEdit(sku.id, sku);
-                    const preco = calcPrice(custo, e.imposto_pct, e.margem_pct);
+                    const preco = custo == null ? null : calcPrice(custo, e.imposto_pct, e.margem_pct);
                     return (
                       <TableRow key={sku.id}>
                         <TableCell className="text-sm">{sku.tint_produtos?.descricao}</TableCell>
                         <TableCell className="text-sm max-w-[180px] truncate">{sku.tint_bases?.descricao}</TableCell>
                         <TableCell className="text-sm">{sku.tint_embalagens?.volume_ml}ml</TableCell>
-                        <TableCell className="text-sm">R$ {custo.toFixed(2)}</TableCell>
+                        <TableCell className="text-sm">
+                          {custo == null ? <span className="text-status-warning">sem custo no Omie</span> : `R$ ${custo.toFixed(2)}`}
+                        </TableCell>
                         <TableCell>
                           <Input
                             type="number" step="0.1" className="h-7 w-20 text-sm"
@@ -255,7 +265,7 @@ export default function TintPricing() {
                             onChange={ev => setEdits(prev => ({ ...prev, [sku.id]: { ...e, margem_pct: parseFloat(ev.target.value) || 0 } }))}
                           />
                         </TableCell>
-                        <TableCell className="text-sm font-medium">R$ {preco.toFixed(2)}</TableCell>
+                        <TableCell className="text-sm font-medium">{preco == null ? '—' : `R$ ${preco.toFixed(2)}`}</TableCell>
                       </TableRow>
                     );
                   })}
@@ -281,6 +291,9 @@ export default function TintPricing() {
             <Input placeholder="Buscar por código de cor..." value={corSearch} onChange={e => setCorSearch(e.target.value)} className="pl-9" />
           </div>
 
+          {pricesError && (
+            <p className="text-sm text-status-error">Erro ao calcular os preços — "sem preço" abaixo pode ser falha de cálculo, não ausência de preço.</p>
+          )}
           {searchError && (
             <p className="text-sm text-status-error">Erro ao buscar fórmulas — tente novamente.</p>
           )}

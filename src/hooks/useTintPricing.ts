@@ -46,8 +46,12 @@ export function useTintPrices(formulaIds: string[]) {
       const { data, error } = await supabase
         .rpc('get_tint_prices' as never, { p_formula_ids: ids } as never);
 
-      if (error || !data) return {};
-      return data as unknown as Record<string, TintPriceBreakdownLite>;
+      // Erro PROPAGA (mesmo contrato do single acima): antes `{}` fazia a falha da RPC
+      // aparecer como "sem preço" em todas as embalagens — o caller não distinguia
+      // "não tem preço" de "não consegui calcular". Continua fail-closed (sem preço),
+      // mas agora o `isError` deixa a UI dizer a verdade.
+      if (error) throw error;
+      return (data ?? {}) as unknown as Record<string, TintPriceBreakdownLite>;
     },
   });
 }
