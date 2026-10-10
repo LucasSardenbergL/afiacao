@@ -59,7 +59,8 @@ async function persistCallSession(opts: {
 
     // Reverse-link best-effort: grava atendimento_id em farmer_calls quando disponível.
     // O link primário confiável é sales_orders.atendimento_id — este é auxiliar (só existe
-    // quando endCall tem conteúdo gravável; remote-hangup/sem-transcrição não geram linha).
+    // quando a ligação gravada tem conteúdo — fim pelo endCall OU pelo lado remoto; sem transcrição
+    // não gera linha).
     const payload = buildSessionPayload({
       farmerId: user.id,
       customerUserId,
@@ -242,6 +243,26 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
   useEffect(() => {
     const TERMINAL: WebRTCCallState[] = ['finished', 'noanswer', 'busy', 'failed', 'error'];
     if (!TERMINAL.includes(callState)) return;
+    // Fim pelo lado REMOTO (o cliente desligou, queda): persiste a sessão como o endCall faria. Antes
+    // só o botão "Encerrar" gravava farmer_calls — a ligação que o CLIENTE encerrava (o caso comum)
+    // sumia do histórico e o cliente seguia "nunca contatado". callStartedAtRef não nulo = o endCall
+    // NÃO rodou (ele o zera antes do hangUp). Snapshot antes de zerar atendimentoIdRef abaixo.
+    const startedAtRemoto = callStartedAtRef.current;
+    if (startedAtRemoto) {
+      callStartedAtRef.current = null;
+      const turnsRemoto = [...turnsRef.current];
+      const analysesRemoto = [...analysisHistoryRef.current];
+      if (recordingRef.current && (turnsRemoto.length > 0 || analysesRemoto.length > 0)) {
+        void persistCallSession({
+          startedAt: startedAtRemoto,
+          endedAt: new Date(),
+          turns: turnsRemoto,
+          analyses: analysesRemoto,
+          dialedPhone: dialedPhoneRef.current,
+          atendimentoId: atendimentoIdRef.current,
+        });
+      }
+    }
     // LGPD: libera mic/preroll também quando o fim veio do lado REMOTO (BYE do
     // cliente, falha) — sem isso o rawMic ficava capturado (red dot aceso) até a
     // próxima ação do vendedor. Idempotente com o cleanup do endCall.
@@ -421,6 +442,9 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
     // PR4 — Capturar snapshot ANTES de cleanup (refs/state ainda válidos).
     // Lê turns/analyses via refs pra evitar hoisting com `transcription` (declarado abaixo).
     const startedAt = callStartedAtRef.current;
+    // Consome a sessão ANTES do hangUp: o stateChange terminal que ele dispara encontra o ref nulo e
+    // não persiste de novo (o efeito terminal só persiste o fim que veio do lado REMOTO).
+    callStartedAtRef.current = null;
     const turnsSnapshot = [...turnsRef.current];
     const analysesSnapshot = [...analysisHistoryRef.current];
     const dialedPhone = dialedPhoneRef.current;

@@ -23,7 +23,7 @@ describe('shouldAutoRecord', () => {
 describe('resolveCallParty', () => {
   it('cliente identificado → kind cliente + last8', async () => {
     vi.mocked(resolveCustomerByPhone).mockResolvedValue({
-      customerUserId: 'u1', phoneDialed: '37999998888', contactName: 'João', contactCargo: 'comprador',
+      customerUserId: 'u1', phoneDialed: '37999998888', reconhecido: true, candidatos: 1, contactName: 'João', contactCargo: 'comprador',
     });
     const r = await resolveCallParty('(37) 99999-8888');
     expect(r.kind).toBe('cliente');
@@ -33,7 +33,7 @@ describe('resolveCallParty', () => {
   });
 
   it('não identificado → kind desconhecido + none', async () => {
-    vi.mocked(resolveCustomerByPhone).mockResolvedValue({ customerUserId: null, phoneDialed: '1140028922' });
+    vi.mocked(resolveCustomerByPhone).mockResolvedValue({ customerUserId: null, phoneDialed: '1140028922', reconhecido: false, candidatos: 0 });
     const r = await resolveCallParty('11 4002-8922');
     expect(r.kind).toBe('desconhecido');
     expect(r.customerUserId).toBeNull();

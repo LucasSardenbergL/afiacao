@@ -27,6 +27,8 @@ describe('resolveCallParty', () => {
     mockResolve.mockResolvedValue({
       customerUserId: 'user-1',
       phoneDialed: '37999998888',
+      reconhecido: true,
+      candidatos: 1,
       contactName: 'João',
       contactCargo: 'Comprador',
     });
@@ -42,7 +44,7 @@ describe('resolveCallParty', () => {
   });
 
   it('sem match → desconhecido, sem userId, matchConfidence none, mas preserva o telefone', async () => {
-    mockResolve.mockResolvedValue({ customerUserId: null, phoneDialed: '37999998888' });
+    mockResolve.mockResolvedValue({ customerUserId: null, phoneDialed: '37999998888', reconhecido: false, candidatos: 0 });
     const r = await resolveCallParty('(37) 99999-8888');
     expect(r).toEqual({
       kind: 'desconhecido',
@@ -52,12 +54,22 @@ describe('resolveCallParty', () => {
     });
   });
 
+  it('telefone de vários clientes sem dono único → cliente (grava), dono null', async () => {
+    // Antes o dono ausente rebaixava o número a 'desconhecido' e a ligação não gravava — e 19% dos
+    // telefones de cliente são compartilhados (medido 2026-10-10). Telefone de cliente é de cliente.
+    mockResolve.mockResolvedValue({ customerUserId: null, phoneDialed: '37999998888', reconhecido: true, candidatos: 2 });
+    const r = await resolveCallParty('(37) 99999-8888');
+    expect(r.kind).toBe('cliente');
+    expect(r.customerUserId).toBeNull();
+    expect(shouldAutoRecord(r.kind)).toBe(true);
+  });
+
   it('encadeia com shouldAutoRecord: cadastrado grava, desconhecido não', async () => {
-    mockResolve.mockResolvedValueOnce({ customerUserId: 'u1', phoneDialed: '111' });
+    mockResolve.mockResolvedValueOnce({ customerUserId: 'u1', phoneDialed: '111', reconhecido: true, candidatos: 1 });
     const cliente = await resolveCallParty('111');
     expect(shouldAutoRecord(cliente.kind)).toBe(true);
 
-    mockResolve.mockResolvedValueOnce({ customerUserId: null, phoneDialed: '222' });
+    mockResolve.mockResolvedValueOnce({ customerUserId: null, phoneDialed: '222', reconhecido: false, candidatos: 0 });
     const desconhecido = await resolveCallParty('222');
     expect(shouldAutoRecord(desconhecido.kind)).toBe(false);
   });
