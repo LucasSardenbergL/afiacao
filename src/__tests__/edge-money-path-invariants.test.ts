@@ -818,7 +818,7 @@ describe('guardrail money-path: criar_pedido não confia no espelho legado omie_
       src,
       'o edge deixou de ler customer_user_id/customer_document do pedido local — voltaria a confiar no payload',
     ).toMatch(
-      /select\("account, customer_user_id, customer_document, created_by, checkout_id, omie_pedido_id, hash_payload"\)/,
+      /select\("account, customer_user_id, customer_document, created_by, checkout_id, omie_pedido_id, hash_payload(, deleted_at)?"\)/,
     );
   });
 });
@@ -4873,5 +4873,53 @@ describe('guardrail money-path: erro sem override do gate ATP nunca segue para o
     const sem = ramo.indexOf('if (atpCls.semOverride) {');
     expect(sem, 'REGRESSÃO: caller antigo segue para o Omie mesmo com recusa por contrato').toBeGreaterThan(capaz);
     expect(ramo.slice(sem, sem + 200), 'a recusa sem override tem de ser throw').toMatch(/throw new Error\(/);
+  });
+});
+
+// ── ATP fase 3.3 (2026-10-10): PV reconciliado e exclusão sem PID ──
+// #1: o reenvio reconciliado por duplicidade vincula o PV ANTIGO; a RPC ajusta a reserva a ele e a
+// edge LANÇA quando o PV não é o carrinho (o vendedor não pode achar que o carrinho atual foi).
+// A edição de pedido reconciliado divergente é recusada (Codex 3.3 P1).
+// #3: excluir pedido Oben sem PID consulta o Omie pela chave PV_<id> ANTES do DELETE; PV achado ⇒
+// vínculo recuperado e exclusão RECUSADA (nenhuma mutação nova no Omie). Comportamento puro:
+// _shared/atp-pv-omie_test.ts; RPC: zona 11 do harness PG17.
+describe('guardrail money-path: PV reconciliado e exclusão sem PID (ATP 3.3)', () => {
+  const src = read('supabase/functions/omie-vendas-sync/index.ts');
+  const ini = src.indexOf('async function criarPedidoVenda(');
+  const fn = removerComentarios(src.slice(ini, src.indexOf('\n}\n', ini)));
+  const ex = src.indexOf('case "excluir_pedido": {');
+  const exclusao = removerComentarios(src.slice(ex, src.indexOf('case "sync_pedidos": {', ex)));
+  const ed = src.indexOf('case "alterar_pedido": {');
+  const edicao = removerComentarios(src.slice(ed, src.indexOf('deltaEdicaoOben(', ed)));
+
+  it('sentinela: recortou o criarPedidoVenda, o excluir_pedido e a edição', () => {
+    expect(fn).toContain('"IncluirPedido"');
+    expect(exclusao).toContain('.delete()');
+    expect(exclusao.length).toBeGreaterThan(1500);
+    expect(edicao).toContain('existingOrder');
+  });
+
+  it('o aviso do PV reconciliado compara carrinho × PV e LANÇA depois da RPC atômica', () => {
+    const rpc = fn.indexOf('.rpc("atp_confirmar_pv"');
+    const aviso = fn.indexOf('avisoPvReconciliado(comparacaoPv, wb, omie_pedido_id)');
+    expect(aviso, 'REGRESSÃO: PV reconciliado divergente volta a ser sucesso silencioso').toBeGreaterThan(rpc);
+    expect(fn.slice(aviso, aviso + 120)).toMatch(/if \(aviso\) throw new Error\(aviso\)/);
+    expect(fn).toMatch(/reconciled: true, consulta \};\s*comparacaoPv = compararCarrinhoPv\(items, consulta\);/);
+  });
+
+  it('a edição de pedido reconciliado divergente é recusada antes do gate de aumento', () => {
+    expect(edicao, 'REGRESSÃO: editar pedido com PV divergente compara carrinho × pedido e solta a reserva')
+      .toMatch(/if \(edicaoBloqueadaPorPvDivergente\([\s\S]*?\)\) \{\s*throw new Error\(/);
+  });
+
+  it('a exclusão sem PID consulta a chave PV_<id> ANTES do DELETE e recusa quando o PV existe', () => {
+    const consulta = exclusao.indexOf('"ConsultarPedido", { codigo_pedido_integracao: cCodIntPed }');
+    const del = exclusao.indexOf('.delete()');
+    expect(consulta, 'REGRESSÃO: excluir sem PID voltou a apagar sem consultar o Omie').toBeGreaterThan(-1);
+    expect(consulta).toBeLessThan(del);
+    const existe = exclusao.indexOf('consulta.tipo === "existe"');
+    expect(existe).toBeGreaterThan(consulta);
+    expect(exclusao.slice(existe, del), 'PV achado: recupera o vínculo e LANÇA (não apaga)').toMatch(/\.rpc\("atp_confirmar_pv"[\s\S]*throw new Error\(/);
+    expect(exclusao, 'a janela de envio em curso precede a consulta').toMatch(/JANELA_ENVIO_EM_CURSO_MS[\s\S]*"ConsultarPedido"/);
   });
 });

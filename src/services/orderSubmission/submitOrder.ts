@@ -1,5 +1,6 @@
 import { syncOrderToOmie } from '@/services/omieService';
 import { logger } from '@/lib/logger';
+import { mensagemDoErroEdge } from '@/lib/invoke-function';
 import { DELIVERY_FEES } from '@/types';
 import type {
   SubmitOrderParams,
@@ -207,6 +208,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
 
     let salesOrderId: string;
     let alreadySent: boolean;
+    let pvDivergente = false;
     try {
       const ensured = await ensureSalesOrderRow(supabase, {
         checkoutId, account: 'oben', origem, atendimentoId,
@@ -227,6 +229,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
       });
       salesOrderId = ensured.id;
       alreadySent = ensured.alreadySent;
+      pvDivergente = ensured.pvDivergente === true;
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : 'Erro ao inserir pedido Oben';
       logger.critical('Failed to ensure sales_order in Supabase — aborting', {
@@ -247,7 +250,12 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
       };
     }
 
-    if (alreadySent) {
+    if (alreadySent && pvDivergente) {
+      // ATP 3.3: o PV foi vinculado por duplicidade e tem OUTROS itens — o carrinho atual NÃO
+      // está no Omie. Nunca "já enviado" (limparia o carrinho e imprimiria itens que o ERP não tem).
+      results.push('PV Oben (já no Omie com itens diferentes)');
+      errors.push({ step: 'pv_divergente_oben', message: 'O pedido Oben já existe no Omie com os itens de uma tentativa anterior, diferentes do carrinho atual. Corrija os itens direto no Omie — não reenvie.' });
+    } else if (alreadySent) {
       results.push('PV Oben (já enviado)');
     } else {
       try {
@@ -331,7 +339,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
           }
         } else {
           results.push('PV Oben (pendente ERP)');
-          errors.push({ step: 'sync_oben_omie', message: omieError.message || 'Falha ao sincronizar Oben com Omie' });
+          errors.push({ step: 'sync_oben_omie', message: (await mensagemDoErroEdge(omieError)) || omieError.message || 'Falha ao sincronizar Oben com Omie' });
         }
       } catch (e: unknown) {
         const message = e instanceof Error ? e.message : 'Falha ao sincronizar Oben com Omie';
@@ -363,6 +371,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
 
     let salesOrderId: string;
     let alreadySent: boolean;
+    let pvDivergente = false;
     try {
       const ensured = await ensureSalesOrderRow(supabase, {
         checkoutId, account: 'colacor', origem, atendimentoId,
@@ -381,6 +390,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
       });
       salesOrderId = ensured.id;
       alreadySent = ensured.alreadySent;
+      pvDivergente = ensured.pvDivergente === true;
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : 'Erro ao inserir pedido Colacor';
       logger.critical('Failed to ensure sales_order in Supabase — aborting', {
@@ -401,7 +411,12 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
       };
     }
 
-    if (alreadySent) {
+    if (alreadySent && pvDivergente) {
+      // ATP 3.3: o PV foi vinculado por duplicidade e tem OUTROS itens — o carrinho atual NÃO
+      // está no Omie. Nunca "já enviado" (limparia o carrinho e imprimiria itens que o ERP não tem).
+      results.push('PV Colacor (já no Omie com itens diferentes)');
+      errors.push({ step: 'pv_divergente_colacor', message: 'O pedido Colacor já existe no Omie com os itens de uma tentativa anterior, diferentes do carrinho atual. Corrija os itens direto no Omie — não reenvie.' });
+    } else if (alreadySent) {
       results.push('PV Colacor (já enviado)');
     } else {
       try {
@@ -510,7 +525,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
           }
         } else {
           results.push('PV Colacor (pendente ERP)');
-          errors.push({ step: 'sync_colacor_omie', message: omieError.message || 'Falha ao sincronizar Colacor com Omie' });
+          errors.push({ step: 'sync_colacor_omie', message: (await mensagemDoErroEdge(omieError)) || omieError.message || 'Falha ao sincronizar Colacor com Omie' });
         }
       } catch (e: unknown) {
         const message = e instanceof Error ? e.message : 'Falha ao sincronizar Colacor com Omie';
@@ -669,7 +684,8 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
       e.step === 'sync_oben_omie' || e.step === 'sync_colacor_omie' || e.step === 'sync_os_omie' ||
       e.step === 'bloqueio_credito_oben' || e.step === 'bloqueio_credito_colacor' ||
       e.step === 'bloqueio_tint_oben' || e.step === 'bloqueio_atp_oben' ||
-      e.step === 'bloqueio_desconhecido_oben' || e.step === 'bloqueio_desconhecido_colacor'),
+      e.step === 'bloqueio_desconhecido_oben' || e.step === 'bloqueio_desconhecido_colacor' ||
+      e.step === 'pv_divergente_oben' || e.step === 'pv_divergente_colacor'),
     bloqueiosCredito,
     bloqueioAtp,
   };

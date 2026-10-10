@@ -85,8 +85,6 @@ function contarPorArquivo(): Map<string, number> {
 // enviar-pedido-portal-sayerlack, omie-vendas-sync, omie-financeiro) e têm chip próprio.
 const E1_DIVIDA: ReadonlyMap<string, number> = new Map([
   ['src/components/reposicao/cadeiaLogistica/useCadeiaLogistica.ts', 2],
-  ['src/components/salesOrders/soft-delete.ts', 1],
-  ['src/components/salesOrders/useSalesOrders.ts', 1],
   ['src/contexts/AuthContext.tsx', 2],
   // useBundleArguments.ts QUITADO: o `.update()` que persistia o argumento gerado pela LLM
   // passou a capturar `{ data, error }`. Era o sítio que a migration 20260814223445 tornou

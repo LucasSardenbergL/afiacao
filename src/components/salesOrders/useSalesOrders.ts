@@ -29,6 +29,8 @@ import { montarCompartilhamento } from './compartilhar';
 import { buscarDescontosItens } from '@/components/sales/print/buscarDescontosItens';
 import { leituraDoPedido, mensagemAvisoDesconto, type LeituraDescontosItens } from '@/components/sales/print/descontoCupom';
 import { ehFalhaDePagina } from '@/lib/postgrest';
+import { mensagemDoErroEdge } from '@/lib/invoke-function';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 // O PostgREST capa cada resposta em 1000 linhas → a query drena em páginas até o
 // count (medido em prod: ~2.660 pedidos ≈ 3 requests). Teto de sanidade de
@@ -279,6 +281,7 @@ export function useSalesOrders() {
 
     // 2. Omie exclude sequencial (não floodar). Rollback do deleted_at em falhas.
     const failedIds: string[] = [];
+    const motivos: string[] = [];
     let success = 0;
     for (const o of toDelete) {
       try {
@@ -293,26 +296,34 @@ export function useSalesOrders() {
         success++;
       } catch (e) {
         failedIds.push(o.id);
+        // o texto da edge (ex.: "o pedido existe no Omie — cancele lá") vem no corpo, não no message
+        motivos.push((await mensagemDoErroEdge(e)) ?? mensagemDeErro(e) ?? 'falha ao excluir no Omie');
         console.error(e);
       }
     }
     const failed = failedIds.length;
 
     // Rollback do soft-delete só pros que falharam no Omie
+    let rollbackFalhou: string | null = null;
     if (failedIds.length > 0) {
-      await supabase.from('sales_orders').update({ deleted_at: null }).in('id', failedIds);
+      const { error: rbErr } = await supabase.from('sales_orders').update({ deleted_at: null }).in('id', failedIds);
+      if (rbErr) rollbackFalhou = rbErr.message;
     }
+    const detalhe = [
+      ...new Set(motivos),
+      ...(rollbackFalhou ? [`Os que falharam ficaram OCULTOS no app (falha ao desfazer: ${rollbackFalhou}) — avise o suporte.`] : []),
+    ].join(' · ') || undefined;
 
     if (failed === 0) {
       toast.success(`${success} pedido(s) excluído(s)`);
     } else if (success === 0) {
       reinserirRows(toDelete); // rollback composicional (deleted_at já revertido no DB)
-      toast.error(`Falhou: ${failed} pedido(s) não puderam ser excluídos`);
+      toast.error(`Falhou: ${failed} pedido(s) não puderam ser excluídos`, { description: detalhe });
     } else {
       // Parcial — restaura no cache as rows que falharam (já têm deleted_at=null no DB)
       const failedSet = new Set(failedIds);
       reinserirRows(toDelete.filter((r) => failedSet.has(r.id)));
-      toast.warning(`${success} excluído(s), ${failed} falharam`);
+      toast.warning(`${success} excluído(s), ${failed} falharam`, { description: detalhe });
     }
     // Reconcilia com o servidor em qualquer desfecho do bulk.
     queryClient.invalidateQueries({ queryKey: feedKey });

@@ -90,10 +90,10 @@ export const respostaSonda = criarRespostaSonda("omie-vendas-sync");
  * AlterarPedidoVenda, no `dDtPrevisao` do IncluirOrdemProducao e no `dDataPosicao` do syncEstoque: saíam do
  * dia UTC do servidor, AMANHÃ das 21:00 às 23:59 BRT — e, sem dInc, o data_previsao vira o order_date_kpi.
  * Nenhuma pré-condição de banco, nenhuma ordem de deploy.
- * v1.12/v1.13 (2026-10-09, ATP 3.1/3.2) — write-back do PV pela RPC atômica `atp_confirmar_pv`; erro do gate
- * SEM override (42501/22023) interrompe também o caller antigo. Migration 20261009120000 antes do edge.
+ * v1.12/v1.13/v1.15 (ATP 3.1–3.3) — write-back atômico (`atp_confirmar_pv`); gate sem override interrompe; PV
+ * reconciliado divergente LANÇA e excluir sem PID consulta o Omie. Migrations antes do edge.
  */
-export const VERSAO = "v1.14-cota-omie-compartilhada";
+export const VERSAO = "v1.15-pv-reconciliado-e-exclusao";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

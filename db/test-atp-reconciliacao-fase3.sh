@@ -8,6 +8,8 @@
 # ║    coberta = versão entregue) e a ZONA 9 prova o elo que sobrevive ao DELETE.   ║
 # ║  + FASE 3.2: 20261009233000_atp_fase3_2_corretiva.sql, também na zona 2 — tudo  ║
 # ║    roda sob os corpos da 3.2; a ZONA 10 prova as correções do Codex retroativo. ║
+# ║  + FASE 3.3: 20261010150000_atp_fase3_3_pv_divergente.sql — a ZONA 11 prova que ║
+# ║    a reserva acompanha o PV reconciliado por duplicidade (achado #1).          ║
 # ║                                                                                ║
 # ║  Invariante CENTRAL:                                                           ║
 # ║   • reserva de PV FIRME (pedido com omie_pedido_id) não morre por relógio —     ║
@@ -175,7 +177,12 @@ P -q -1 -f "$MIG31"
 P -q -c "CREATE TABLE public._harness_defs31 AS SELECT pg_get_functiondef(p.oid) AS def FROM pg_proc p WHERE p.oid IN (to_regprocedure('public.reservar_estoque(text,uuid,jsonb,integer)'), to_regprocedure('public.liberar_reserva_checkout(uuid,text,text)'), to_regprocedure('public.atp_reservas_pendentes(integer)'))"
 MIG32="$REPO_ROOT/supabase/migrations/20261009233000_atp_fase3_2_corretiva.sql"
 P -q -1 -f "$MIG32"
-echo "migrations aplicadas: fase1 + fase1.1 + fase2 + fase3 + fase3.1 + fase3.2"
+# A 3.3 recria só o atp_confirmar_pv. O E20 re-aplica a 3.1 (que volta o corpo
+# dele ao da 3.1) e o T1 re-aplica a 3.2 — a ZONA 11 (T2) aplica a 3.3 por cima
+# desse estado, que é o da prod hoje.
+MIG33="$REPO_ROOT/supabase/migrations/20261010150000_atp_fase3_3_pv_divergente.sql"
+P -q -1 -f "$MIG33"
+echo "migrations aplicadas: fase1 + fase1.1 + fase2 + fase3 + fase3.1 + fase3.2 + fase3.3"
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ZONA 3 — SEEDS
@@ -946,6 +953,250 @@ P -q -c "ALTER FUNCTION public.reservar_estoque(text,uuid,jsonb,integer) VOLATIL
 eq "P6 restaurado" "$(md5_32)" "5fe65f8bb3f4c0cc9c0c77a09cbdca86,551e21229425a71a1ea0c2a6b2d36ce0,6f44d06f8fd0888a12a6d33b950c83e0"
 
 # ══════════════════════════════════════════════════════════════════════════════
+# ZONA 11 — FASE 3.3: A RESERVA ACOMPANHA O PV RECONCILIADO (achado #1)
+#  O envio falha DEPOIS de o PV nascer no Omie, o carrinho muda e o reenvio é
+#  reconciliado por duplicidade: o PV vinculado tem os itens ANTIGOS. A reserva
+#  passa a ser a do PV, lida da resposta do ConsultarPedido, na transação do
+#  write-back. Leitura ilegível ⇒ nada é ajustado (precisão > recall).
+#  SKUs 3301-3315, um cenário por checkout.
+# ══════════════════════════════════════════════════════════════════════════════
+echo "-- fase 3.3: a reserva acompanha o PV reconciliado --"
+
+md5_cpv() { Pq -c "SELECT md5(p.prosrc||'|'||p.prosecdef::text||'|'||p.provolatile::text||'|'||coalesce(p.proconfig::text,'')) FROM pg_proc p WHERE p.oid = to_regprocedure('public.atp_confirmar_pv(uuid,text,bigint,text,jsonb,jsonb)')"; }
+MD5_CPV_31="50606bbb21341e9d53e6b058207c24e9"
+MD5_CPV_33="90a027c2041e20e8e4157c1efe21655f"
+
+# ── T2 — a transição da prod: a 3.3 por cima do estado 3.2 (confirmar = corpo da 3.1)
+eq "T2 antes: o atp_confirmar_pv vivo e o da 3.1 (o medido em prod)" "$(md5_cpv)" "$MD5_CPV_31"
+if P -q -1 -f "$MIG33" >/dev/null 2>&1; then ok "T2 a 3.3 aplica sobre o estado 3.2 (a transicao da prod)"
+else bad "T2 a 3.3 NAO aplicou sobre o estado 3.2"; fi
+echo "  (md5 corpo+atributos do atp_confirmar_pv entregue: $(md5_cpv))"
+eq "T2 depois: o corpo vivo e o desta migration" "$(md5_cpv)" "$MD5_CPV_33"
+
+SO_D1='e3300000-0000-0000-0000-000000000001'    # divergente: qtd, SKU a mais, SKU a menos
+SO_D2='e3300000-0000-0000-0000-000000000002'    # PV igual à reserva (controle)
+SO_D3='e3300000-0000-0000-0000-000000000003'    # quantidade como string (ilegível)
+SO_D4='e3300000-0000-0000-0000-000000000004'    # um item válido + um ilegível
+SO_D5='e3300000-0000-0000-0000-000000000005'    # det não é array
+SO_D6='e3300000-0000-0000-0000-000000000006'    # forma consulta.det (sem pedido_venda_produto)
+SO_D7='e3300000-0000-0000-0000-000000000007'    # envio NORMAL (não reconciliado)
+SO_D8='e3300000-0000-0000-0000-000000000008'    # quantidade fora do domínio da reserva
+SO_D9='e3300000-0000-0000-0000-000000000009'    # código 0
+SO_D10='e3300000-0000-0000-0000-000000000010'   # colacor (sem pool)
+SO_D11='e3300000-0000-0000-0000-000000000011'   # oben sem reserva viva
+SO_D12='e3300000-0000-0000-0000-000000000012'   # lock do SKU que só o PV tem
+SO_D13='e3300000-0000-0000-0000-000000000013'   # atomicidade: ajuste + carimbo que falha
+SO_D14='e3300000-0000-0000-0000-000000000014'   # o AJUSTE falha: o write-back fica
+SO_D15='e3300000-0000-0000-0000-000000000015'   # item que não movimenta estoque
+SO_D16='e3300000-0000-0000-0000-000000000016'   # substituição concorrente: releitura sob lock
+P -q <<SQL
+INSERT INTO public.inventory_position (omie_codigo_produto, account, saldo, synced_at)
+SELECT s, a, 10, now() FROM generate_series(3301, 3322) s, unnest(ARRAY['oben','vendas']) a;
+INSERT INTO public.sales_orders (id, checkout_id, account, items, status, origem)
+SELECT ('e3300000-0000-0000-0000-0000000000'||lpad(n::text,2,'0'))::uuid,
+       ('c3300000-0000-0000-0000-0000000000'||lpad(n::text,2,'0'))::uuid,
+       CASE n WHEN 10 THEN 'colacor' ELSE 'oben' END, '[]'::jsonb, 'rascunho', 'web_staff'
+  FROM generate_series(1, 16) n;
+SQL
+ck() { printf 'c3300000-0000-0000-0000-0000000000%02d' "$1"; }
+# reserva de VÁRIOS SKUs num checkout, pela RPC real, vinculada ao pedido (como o gate)
+seed_itens() { # $1=n do cenário $2=itens jsonb
+  Pq <<SQL >/dev/null
+SET test.uid='$STAFF'; SET test.role='authenticated';
+SELECT public.reservar_estoque('oben','$(ck "$1")'::uuid, '$2'::jsonb);
+SQL
+  P -q -c "UPDATE public.estoque_reservas SET sales_order_id='e3300000-0000-0000-0000-0000000000$(printf %02d "$1")' WHERE checkout_id='$(ck "$1")' AND status='ativa'"
+}
+# resposta do caminho RECONCILIADO da edge: { reconciled: true, consulta: <ConsultarPedido> }
+rec() { printf '{"reconciled":true,"consulta":{"pedido_venda_produto":{"det":%s}}}' "$1"; }
+det() { # pares sku:qtd → det do Omie
+  local out="" sep="" par
+  for par in "$@"; do out="$out$sep{\"produto\":{\"codigo_produto\":${par%%:*},\"quantidade\":${par##*:}}}"; sep=","; done
+  printf '[%s]' "$out"
+}
+# devolve legiveis/reserva_ajustada/n_ajustes/firmadas
+confirmar_rec() { # $1=sales_order_id $2=account $3=pid $4=resposta jsonb
+  Pq -q <<SQL
+SET test.role='service_role';
+SELECT COALESCE(r->>'pv_itens_legiveis','NULL')||'/'||(r->>'reserva_ajustada')||'/'||jsonb_array_length(r->'ajustes')||'/'||(r->>'reservas_firmadas')
+  FROM (SELECT public.atp_confirmar_pv('$1'::uuid, '$2', $3, 'N$3', '{"p":1}'::jsonb, '$4'::jsonb) AS r) x;
+SQL
+}
+# sku:qtd:status:pid de cada reserva do checkout
+resv() { Pq -c "SELECT COALESCE(string_agg(omie_codigo_produto||':'||trim_scale(quantidade)::text||':'||status||':'||COALESCE(omie_pedido_id::text,'NULL'), ',' ORDER BY omie_codigo_produto, status), 'NENHUMA') FROM public.estoque_reservas WHERE checkout_id='$1'"; }
+trilha_rec() { Pq -c "SELECT count(*) FROM public.atp_decisoes WHERE sales_order_id='$1' AND contexto='reconciliacao'"; }
+
+seed_itens 1  '[{"omie_codigo_produto":3301,"quantidade":2},{"omie_codigo_produto":3302,"quantidade":3}]'
+seed_itens 2  '[{"omie_codigo_produto":3304,"quantidade":2}]'
+seed_itens 3  '[{"omie_codigo_produto":3305,"quantidade":2}]'
+seed_itens 4  '[{"omie_codigo_produto":3306,"quantidade":2}]'
+seed_itens 5  '[{"omie_codigo_produto":3307,"quantidade":2}]'
+seed_itens 6  '[{"omie_codigo_produto":3308,"quantidade":2}]'
+seed_itens 7  '[{"omie_codigo_produto":3309,"quantidade":2}]'
+seed_itens 8  '[{"omie_codigo_produto":3310,"quantidade":2}]'
+seed_itens 9  '[{"omie_codigo_produto":3311,"quantidade":2}]'
+seed_itens 12 '[{"omie_codigo_produto":3313,"quantidade":2}]'
+seed_itens 13 '[{"omie_codigo_produto":3315,"quantidade":2}]'
+seed_itens 14 '[{"omie_codigo_produto":3316,"quantidade":2}]'
+seed_itens 15 '[{"omie_codigo_produto":3317,"quantidade":2},{"omie_codigo_produto":3319,"quantidade":1}]'
+seed_itens 16 '[{"omie_codigo_produto":3320,"quantidade":2}]'
+
+# ── D1 — o caso do achado: o PV tem quantidade diferente (3301 em DUAS linhas,
+#    2+3), não tem o 3302 e tem o 3303, que o carrinho novo tirou
+eq "D1 RPC: legivel / reserva ajustada / 3 ajustes / 2 firmadas" \
+   "$(confirmar_rec "$SO_D1" oben 9301 "$(rec "$(det 3301:2 3301:3 3303:1)")")" "true/true/3/2"
+eq "D1 a reserva virou a do PV (qtd somada, SKU fora liberado, SKU do PV criado e firme)" \
+   "$(resv "$(ck 1)")" "3301:5:ativa:9301,3302:3:liberada:NULL,3303:1:ativa:9301"
+eq "D1 o calculo desconta o PV, nao o carrinho" "$(reservado 3301)/$(reservado 3302)/$(reservado 3303)" "5/0/1"
+eq "D1 o write-back aconteceu na mesma transacao" \
+   "$(Pq -c "SELECT omie_pedido_id||'/'||status FROM public.sales_orders WHERE id='$SO_D1'")" "9301/enviado"
+eq "D1 a reserva criada pertence ao pedido e ao checkout" \
+   "$(Pq -c "SELECT count(*) FROM public.estoque_reservas WHERE omie_codigo_produto=3303 AND sales_order_id='$SO_D1' AND checkout_id='$(ck 1)'")" "1"
+eq "D1 trilha: 1 decisao de reconciliacao com os 3 ajustes" \
+   "$(Pq -c "SELECT count(*)||'/'||max(jsonb_array_length(atp_snapshot->'ajustes'))||'/'||max(atp_snapshot->>'reserva_ajustada') FROM public.atp_decisoes WHERE sales_order_id='$SO_D1' AND contexto='reconciliacao'")" "1/3/true"
+eq "D1 reconfirmar o MESMO PV e idempotente (nada a ajustar, nada na trilha)" \
+   "$(confirmar_rec "$SO_D1" oben 9301 "$(rec "$(det 3301:2 3301:3 3303:1)")")/$(trilha_rec "$SO_D1")" "true/false/0/2/1"
+
+# ── D2 — controle: PV igual à reserva
+eq "D2 PV igual: legivel, sem divergencia" \
+   "$(confirmar_rec "$SO_D2" oben 9302 "$(rec "$(det 3304:2)")")" "true/false/0/1"
+eq "D2 e nada na trilha de reconciliacao" "$(trilha_rec "$SO_D2")" "0"
+
+# ── D3-D5, D8-D9 — leitura ILEGÍVEL: o write-back acontece, a reserva NÃO muda
+eq "D3 quantidade como string: ilegivel, nada ajustado" \
+   "$(confirmar_rec "$SO_D3" oben 9303 "$(rec '[{"produto":{"codigo_produto":3305,"quantidade":"7"}}]')")" "false/false/0/1"
+eq "D3 a reserva segue a do carrinho, firme" "$(resv "$(ck 3)")" "3305:2:ativa:9303"
+eq "D4 um item ilegivel torna a leitura INTEIRA ilegivel" \
+   "$(confirmar_rec "$SO_D4" oben 9304 "$(rec '[{"produto":{"codigo_produto":3306,"quantidade":5}},{"produto":{"codigo_produto":"abc","quantidade":1}}]')")" "false/false/0/1"
+eq "D4 nem o item legivel foi ajustado" "$(resv "$(ck 4)")" "3306:2:ativa:9304"
+eq "D5 det que nao e array: ilegivel e SEM excecao (o write-back nao se perde)" \
+   "$(confirmar_rec "$SO_D5" oben 9305 '{"reconciled":true,"consulta":{"pedido_venda_produto":{"det":{"x":1}}}}')" "false/false/0/1"
+eq "D5 write-back gravado" "$(Pq -c "SELECT omie_pedido_id FROM public.sales_orders WHERE id='$SO_D5'")" "9305"
+eq "D8 quantidade fora do dominio da reserva (> 1e6): ilegivel, sem violar o CHECK" \
+   "$(confirmar_rec "$SO_D8" oben 9308 "$(rec "$(det 3310:2000000)")")/$(resv "$(ck 8)")" "false/false/0/1/3310:2:ativa:9308"
+eq "D9 codigo 0: ilegivel" \
+   "$(confirmar_rec "$SO_D9" oben 9309 "$(rec "$(det 0:1)")")/$(resv "$(ck 9)")" "false/false/0/1/3311:2:ativa:9309"
+
+# ── D6 — a outra forma da resposta (a edge aceita as duas: consulta.cabecalho)
+eq "D6 forma consulta.det: legivel e ajusta" \
+   "$(confirmar_rec "$SO_D6" oben 9306 '{"reconciled":true,"consulta":{"det":[{"produto":{"codigo_produto":3308,"quantidade":4}}]}}')/$(resv "$(ck 6)")" "true/true/1/1/3308:4:ativa:9306"
+
+# ── D7, D10, D11 — onde o ajuste NÃO se aplica
+eq "D7 envio normal (sem reconciled): nao le itens, nao ajusta" \
+   "$(confirmar_rec "$SO_D7" oben 9307 "$(printf '{"codigo_pedido":9307,"det":%s}' "$(det 3309:9)")")/$(resv "$(ck 7)")" "NULL/false/0/1/3309:2:ativa:9307"
+eq "D10 colacor reconciliado: fora do pool, nada se aplica" \
+   "$(confirmar_rec "$SO_D10" colacor 9310 "$(rec "$(det 3312:1)")")" "NULL/false/0/0"
+eq "D11 oben SEM reserva viva: nao FABRICA reserva a partir do PV" \
+   "$(confirmar_rec "$SO_D11" oben 9311 "$(rec "$(det 3312:1)")")/$(Pq -c "SELECT count(*) FROM public.estoque_reservas WHERE omie_codigo_produto=3312")" "true/false/0/0/0"
+
+# ── D12 — LOCK: o SKU que só o PV tem também é travado (o ajuste CRIA reserva dele)
+P -q -c "SELECT pg_advisory_lock(hashtextextended('atp:sku:oben:3314',0)); SELECT pg_sleep(6);" >/dev/null 2>&1 &
+BG=$!
+for _ in $(seq 1 50); do
+  [ "$(Pq -c "SELECT count(*) FROM pg_locks WHERE locktype='advisory' AND granted")" -ge 1 ] && break
+  sleep 0.1
+done
+V=$(sqlstate_de lock_not_available <<SQL
+PERFORM set_config('test.role','service_role',true);
+PERFORM set_config('lock_timeout','300ms',true);
+PERFORM public.atp_confirmar_pv('$SO_D12'::uuid, 'oben', 9312, 'N', '{}'::jsonb, '$(rec "$(det 3313:2 3314:1)")'::jsonb);
+SQL
+)
+kill "$BG" 2>/dev/null; wait "$BG" 2>/dev/null || true
+P -q -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE query LIKE '%pg_sleep(6)%' AND pid <> pg_backend_pid()" >/dev/null
+for _ in $(seq 1 50); do
+  [ "$(Pq -c "SELECT count(*) FROM pg_locks WHERE locktype='advisory'")" -eq 0 ] && break
+  sleep 0.1
+done
+case "$V" in *SENTINELA_VEIO_O_ESPERADO*) ok "D12 SKU so do PV travado: a RPC espera o lock (55P03)";; *) bad "D12 a RPC NAO travou o SKU que so o PV tem: $V";; esac
+eq "D12 sem lock livre, nada gravado" "$(resv "$(ck 12)")" "3313:2:ativa:NULL"
+eq "D12 controle: lock livre, ajusta" \
+   "$(confirmar_rec "$SO_D12" oben 9312 "$(rec "$(det 3313:2 3314:1)")")/$(resv "$(ck 12)")" "true/true/1/2/3313:2:ativa:9312,3314:1:ativa:9312"
+
+# ── D13 — ATOMICIDADE: o ajuste roda, o carimbo falha (write-once) ⇒ volta TUDO
+confirmar_rec "$SO_D13" oben 9313 '{"r":1}' >/dev/null
+V=$(sqlstate_de check_violation <<SQL
+PERFORM set_config('test.role','service_role',true);
+PERFORM public.atp_confirmar_pv('$SO_D13'::uuid, 'oben', 9399, 'N', '{}'::jsonb, '$(rec "$(det 3315:5)")'::jsonb);
+SQL
+)
+case "$V" in *SENTINELA_VEIO_O_ESPERADO*) ok "D13 PID trocado depois do ajuste -> 23514";; *) bad "D13 esperava 23514: $V";; esac
+eq "D13 e o ajuste de quantidade VOLTOU com o rollback" "$(resv "$(ck 13)")" "3315:2:ativa:9313"
+eq "D13 e nada na trilha" "$(trilha_rec "$SO_D13")" "0"
+
+# ── D14 — o AJUSTE falha (aqui: um trigger que recusa mexer no 3316; em prod,
+#    conflito/deadlock com o job): a subtransação desfaz só o ajuste, o write-back
+#    de um PV que EXISTE no Omie fica, e a falha volta na resposta e na trilha
+P -q <<'SQL'
+CREATE FUNCTION public._harness_d14() RETURNS trigger LANGUAGE plpgsql AS
+$f$ BEGIN IF NEW.omie_codigo_produto = 3316 AND NEW.quantidade = 9 THEN RAISE EXCEPTION 'D14 sabotagem'; END IF; RETURN NEW; END $f$;
+CREATE TRIGGER _harness_d14 BEFORE UPDATE ON public.estoque_reservas FOR EACH ROW EXECUTE FUNCTION public._harness_d14();
+SQL
+R=$(Pq -q <<SQL
+SET test.role='service_role';
+SELECT (r->>'reserva_ajustada')||'/'||COALESCE(r->>'ajuste_falhou','NULL')
+  FROM (SELECT public.atp_confirmar_pv('$SO_D14'::uuid, 'oben', 9314, 'N', '{}'::jsonb, '$(rec "$(det 3316:9)")'::jsonb) AS r) x;
+SQL
+) || true
+P -q -c "DROP TRIGGER _harness_d14 ON public.estoque_reservas; DROP FUNCTION public._harness_d14();"
+case "$R" in "false/P0001: D14 sabotagem") ok "D14 ajuste que falha volta como ajuste_falhou (=$R)";; *) bad "D14 esperava false/P0001: D14 sabotagem, veio [$R]";; esac
+eq "D14 o write-back FICOU (o PV existe no Omie)" \
+   "$(Pq -c "SELECT omie_pedido_id||'/'||status FROM public.sales_orders WHERE id='$SO_D14'")" "9314/enviado"
+eq "D14 a reserva ficou a do carrinho, firme pelo par" "$(resv "$(ck 14)")" "3316:2:ativa:9314"
+eq "D14 a falha esta na trilha" \
+   "$(Pq -c "SELECT count(*) FROM public.atp_decisoes WHERE sales_order_id='$SO_D14' AND decisao='verificacao_indisponivel' AND contexto='reconciliacao' AND atp_snapshot->>'ajuste_falhou' LIKE 'P0001%'")" "1"
+
+# ── D15 — item com nao_movimentar_estoque = 'S' não gera saída: não é reservado
+eq "D15 PV com o 3319 sem movimentar estoque: o 3319 sai da reserva" \
+   "$(confirmar_rec "$SO_D15" oben 9315 "$(rec '[{"produto":{"codigo_produto":3317,"quantidade":2}},{"produto":{"codigo_produto":3319,"quantidade":1},"inf_adic":{"nao_movimentar_estoque":"S"}},{"produto":{"codigo_produto":3318,"quantidade":4},"inf_adic":{"nao_movimentar_estoque":"S"}}]')")/$(resv "$(ck 15)")" \
+   "true/true/1/1/3317:2:ativa:9315,3319:1:liberada:NULL"
+
+# ── D16 — CORRIDA: a substituição do reservar_estoque segura o lock do checkout
+#    e troca o conjunto; a confirmação leu ANTES e espera. Sob o lock ela RELÊ:
+#    o pedido não tem mais reserva viva ⇒ nada a ajustar (sem a releitura, o
+#    INSERT do SKU do PV bateria no índice único do checkout).
+P -q <<SQL >/dev/null 2>&1 &
+SET test.uid='$STAFF'; SET test.role='authenticated';
+BEGIN;
+SELECT public.reservar_estoque('oben','$(ck 16)'::uuid, '[{"omie_codigo_produto":3321,"quantidade":1}]'::jsonb);
+SELECT pg_sleep(3);
+COMMIT;
+SQL
+BG=$!
+for _ in $(seq 1 50); do
+  [ "$(Pq -c "SELECT count(*) FROM pg_locks WHERE locktype='advisory' AND granted")" -ge 1 ] && break
+  sleep 0.1
+done
+R=$(Pq -q <<SQL
+SET test.role='service_role';
+SELECT COALESCE(r->>'reserva_ajustada','NULL')||'/'||COALESCE(r->>'ajuste_falhou','NULL')
+  FROM (SELECT public.atp_confirmar_pv('$SO_D16'::uuid, 'oben', 9316, 'N', '{}'::jsonb, '$(rec "$(det 3321:5)")'::jsonb) AS r) x;
+SQL
+) || true
+wait "$BG" 2>/dev/null || true
+eq "D16 substituicao concorrente: a releitura sob lock aborta o ajuste limpo" "$R" "false/NULL"
+eq "D16 a reserva nova do checkout (sem pedido) ficou intacta" \
+   "$(Pq -c "SELECT string_agg(omie_codigo_produto||':'||trim_scale(quantidade)::text||':'||status, ',' ORDER BY omie_codigo_produto, status) FROM public.estoque_reservas WHERE checkout_id='$(ck 16)'")" "3320:2:liberada,3321:1:ativa"
+
+# ── P7-P8 — as defesas do apply da 3.3
+if P -q -1 -f "$MIG33" >/dev/null 2>&1; then ok "P7 re-aplicar a 3.3 e idempotente"
+else bad "P7 re-aplicar a 3.3 FALHOU"; fi
+P -q <<'SQL'
+CREATE TABLE public._harness_p8 AS
+  SELECT pg_get_functiondef('public.atp_confirmar_pv(uuid,text,bigint,text,jsonb,jsonb)'::regprocedure) AS def;
+DO $$ BEGIN
+  EXECUTE replace((SELECT def FROM public._harness_p8), 'v_n_so integer;', 'v_n_so integer; /* OUTRA_SESSAO_P8 */');
+END $$;
+SQL
+MD5_P8=$(md5_cpv)
+if P -q -1 -f "$MIG33" >/dev/null 2>&1; then bad "P8 a PRE deixou sobrescrever o atp_confirmar_pv de outra sessao"
+else ok "P8 corpo vivo desconhecido: o apply da 3.3 ABORTA na PRE"; fi
+eq "P8 e o corpo da outra sessao SOBREVIVEU" "$(md5_cpv)" "$MD5_P8"
+P -q -c "DO \$\$ BEGIN EXECUTE (SELECT def FROM public._harness_p8); END \$\$;"
+P -q -c "DROP TABLE public._harness_p8"
+eq "P8 restaurado" "$(md5_cpv)" "$MD5_CPV_33"
+
+# ══════════════════════════════════════════════════════════════════════════════
 # ZONA 8 — O VALIDADOR PÓS-APPLY TAMBÉM É CÓDIGO, E TAMBÉM MENTE
 # (money-path §"O VALIDADOR mente": o script que o founder cola no SQL Editor
 #  nasce sem prova de que morde, e erra nos dois sentidos. Aqui ele é EXECUTADO
@@ -963,8 +1214,10 @@ eq "Z1 validador da o veredito da 3.1 APLICADA" \
    "$(printf '%s' "$VAL" | command grep -c 'FASE 3.1 APLICADA' || true)" "1"
 eq "Z1 validador da o veredito da 3.2 APLICADA" \
    "$(printf '%s' "$VAL" | command grep -c 'FASE 3.2 APLICADA' || true)" "1"
-eq "Z1 validador tem os 47 checks (3 + 3.1 + 3.2)" \
-   "$(printf '%s' "$VAL" | command grep -cE '^[0-9]+\|(OK|FALHOU)' || true)" "47"
+eq "Z1 validador da o veredito da 3.3 APLICADA" \
+   "$(printf '%s' "$VAL" | command grep -c 'FASE 3.3 APLICADA' || true)" "1"
+eq "Z1 validador tem os 49 checks (3 + 3.1 + 3.2 + 3.3)" \
+   "$(printf '%s' "$VAL" | command grep -cE '^[0-9]+\|(OK|FALHOU)' || true)" "49"
 
 # Z3 — o CENSO do validador (#43) pega writer intruso escrito com UPDATE ONLY e
 # schema entre aspas — as formas que a regex anterior não via (Codex 3.2).

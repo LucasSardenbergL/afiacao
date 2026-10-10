@@ -1,4 +1,5 @@
 import { supabase } from '@/integrations/supabase/client';
+import { mensagemDoErroEdge } from '@/lib/invoke-function';
 
 export type SoftDeleteResult =
   | { ok: true }
@@ -22,8 +23,13 @@ export async function softDeleteOrder(order: { id: string; omie_pedido_id: numbe
     body: { action: 'excluir_pedido', sales_order_id: order.id, omie_pedido_id: order.omie_pedido_id },
   });
   if (omieErr) {
-    await supabase.from('sales_orders').update({ deleted_at: null }).eq('id', order.id);
-    return { ok: false, stage: 'omie', message: omieErr.message ?? String(omieErr) };
+    const message = (await mensagemDoErroEdge(omieErr)) ?? omieErr.message ?? String(omieErr);
+    const { error: rollbackErr } = await supabase.from('sales_orders').update({ deleted_at: null }).eq('id', order.id);
+    if (rollbackErr) {
+      // o pedido continua no ERP mas ficou ESCONDIDO no app — dizer, nunca engolir
+      return { ok: false, stage: 'omie', message: `${message} — e o pedido ficou oculto no app (falha ao desfazer: ${rollbackErr.message}). Avise o suporte.` };
+    }
+    return { ok: false, stage: 'omie', message };
   }
   return { ok: true };
 }
