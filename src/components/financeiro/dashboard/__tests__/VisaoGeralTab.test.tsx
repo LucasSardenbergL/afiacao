@@ -94,3 +94,55 @@ describe('VisaoGeralTab', () => {
     expect(screen.getByText('metric x')).toBeTruthy();
   });
 });
+
+describe('VisaoGeralTab — leitura indisponível', () => {
+  it('resumo indisponível → aviso e nenhum R$ 0,00 fabricado', () => {
+    renderWithClient(
+      <VisaoGeralTab
+        alerts={[]}
+        activeResumo={null}
+        resumo={{}}
+        view="oben"
+        agingReceber={null}
+        agingPagar={null}
+        inadimplentes={[]}
+        resumoIndisponivel="timeout"
+      />
+    );
+    expect(screen.getAllByRole('alert')[0].textContent).toMatch(/indispon/i);
+    expect(document.body.textContent).not.toMatch(/R\$\s*0,00/);
+  });
+
+  it('aging indisponível → sem skeleton e com aviso de aging', () => {
+    const { container } = renderWithClient(
+      <VisaoGeralTab
+        alerts={[]}
+        activeResumo={resumoCo}
+        resumo={{}}
+        view="oben"
+        agingReceber={null}
+        agingPagar={null}
+        inadimplentes={[]}
+        agingIndisponivel="timeout"
+      />
+    );
+    expect(container.querySelectorAll('[class*="animate-pulse"]').length).toBe(0);
+    expect(screen.getAllByText(/Aging indisponível/).length).toBe(2);
+  });
+
+  it('inadimplentes indisponível → card com aviso (não some)', () => {
+    renderWithClient(
+      <VisaoGeralTab
+        alerts={[]}
+        activeResumo={resumoCo}
+        resumo={{}}
+        view="oben"
+        agingReceber={aging}
+        agingPagar={aging}
+        inadimplentes={[]}
+        inadimplentesIndisponivel="timeout"
+      />
+    );
+    expect(screen.getByText(/inadimplentes indispon/i)).toBeTruthy();
+  });
+});
