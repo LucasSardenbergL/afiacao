@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 594
+-- Total de custom migrations: 595
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -655,7 +655,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261009120000', 'check_finitude_teto_faixa', '20261009120000_check_finitude_teto_faixa.sql'),
   ('20261009180000', 'product_costs_cmc_ausente_null', '20261009180000_product_costs_cmc_ausente_null.sql'),
   ('20261009194000', 'motor_unidades_concentrado_wp', '20261009194000_motor_unidades_concentrado_wp.sql'),
-  ('20261009220000', 'margem_cliente_janela_12m', '20261009220000_margem_cliente_janela_12m.sql')
+  ('20261009220000', 'margem_cliente_janela_12m', '20261009220000_margem_cliente_janela_12m.sql'),
+  ('20261009233000', 'atp_fase3_2_corretiva', '20261009233000_atp_fase3_2_corretiva.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2571,7 +2572,10 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('atp_fase3_1_elo_pid', 'trigger', 'public', 'trg_estoque_reservas_pv_write_once', 'estoque_reservas'),
   ('motor_unidades_concentrado_wp', 'function', 'public', 'reposicao_sincronizar_embalagem_wp', ''),
   ('motor_unidades_concentrado_wp', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
-  ('margem_cliente_janela_12m', 'function', 'private', 'margem_cliente_agregada', '')
+  ('margem_cliente_janela_12m', 'function', 'private', 'margem_cliente_agregada', ''),
+  ('atp_fase3_2_corretiva', 'function', 'public', 'reservar_estoque', ''),
+  ('atp_fase3_2_corretiva', 'function', 'public', 'liberar_reserva_checkout', ''),
+  ('atp_fase3_2_corretiva', 'function', 'public', 'atp_reservas_pendentes', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4535,7 +4539,10 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('atp_fase3_1_elo_pid', 'trigger', 'public', 'trg_estoque_reservas_pv_write_once', 'estoque_reservas'),
   ('motor_unidades_concentrado_wp', 'function', 'public', 'reposicao_sincronizar_embalagem_wp', ''),
   ('motor_unidades_concentrado_wp', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
-  ('margem_cliente_janela_12m', 'function', 'private', 'margem_cliente_agregada', '')
+  ('margem_cliente_janela_12m', 'function', 'private', 'margem_cliente_agregada', ''),
+  ('atp_fase3_2_corretiva', 'function', 'public', 'reservar_estoque', ''),
+  ('atp_fase3_2_corretiva', 'function', 'public', 'liberar_reserva_checkout', ''),
+  ('atp_fase3_2_corretiva', 'function', 'public', 'atp_reservas_pendentes', '')
 )
 SELECT
   e.migration,
@@ -4563,7 +4570,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 124.
+-- Funções redefinidas com corpo extraível: 125.
 -- Fora da seção (4) — o último evento é REMOÇÃO de propósito (DROP / SET SCHEMA / RENAME):
 --   • public.import_tint_formulas — 20260806223407_drop_import_tint_formulas.sql
 --   • public.estimar_impacto_exclusao_outlier — 20260718093248_drop_estimar_impacto_exclusao_outlier_orfa.sql
@@ -5002,6 +5009,9 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('private', 'atp_disponivel', 4, '20261009120000_atp_fase3_1_elo_pid.sql', '3a2ea01c2c910b508b6934ffc3abfd20'),
   ('public', 'reservar_estoque', 1, '20260806101417_atp_reserva_estoque_fase1.sql', 'cb3b97889c2252c8051aef62c942c218'),
   ('public', 'reservar_estoque', 2, '20260806225052_atp_reserva_estoque_fase1_1_hardening.sql', '25e8cd10e4da4c95c0584b6b97d1445c'),
+  ('public', 'reservar_estoque', 3, '20261009233000_atp_fase3_2_corretiva.sql', '732b4fe298fbb2b0714c619464839226'),
+  ('public', 'liberar_reserva_checkout', 1, '20260806101417_atp_reserva_estoque_fase1.sql', '1a73b52ae3c2595434fe586d422bb4bc'),
+  ('public', 'liberar_reserva_checkout', 2, '20261009233000_atp_fase3_2_corretiva.sql', '79122a31844da512f385d80ca1bfd985'),
   ('public', 'expirar_reservas_vencidas', 1, '20260806101417_atp_reserva_estoque_fase1.sql', '9f74c49751e1c6320a625f915afcc8a5'),
   ('public', 'expirar_reservas_vencidas', 2, '20260806225052_atp_reserva_estoque_fase1_1_hardening.sql', 'c82f961257c8bc9de7234aa0810a50f7'),
   ('private', 'expirar_reservas_vencidas_job', 1, '20260806225052_atp_reserva_estoque_fase1_1_hardening.sql', '0cf6163f37d880432bb9ad67d1f99a27'),
@@ -5011,6 +5021,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('private', 'atp_reconciliar_job', 2, '20261009120000_atp_fase3_1_elo_pid.sql', '3b1ceac68d639f99616f58e789682a36'),
   ('public', 'atp_reservas_pendentes', 1, '20260808012000_atp_reconciliacao_fase3.sql', '378b3653de9af53dae833cf14a3c43b5'),
   ('public', 'atp_reservas_pendentes', 2, '20261009120000_atp_fase3_1_elo_pid.sql', '8615e3591021a379328e1f835797305f'),
+  ('public', 'atp_reservas_pendentes', 3, '20261009233000_atp_fase3_2_corretiva.sql', '9186340fd0482b72645a81203c3efebf'),
   ('public', 'farmer_recomendacoes_substituir', 1, '20260814223445_farmer_recomendacoes_geracao_vigente.sql', '39e59cbfb7071472c9eaa0baaf733282'),
   ('public', 'farmer_recomendacoes_substituir', 2, '20260815181500_farmer_geracao_head_sensor.sql', '55e4fc0765dd5cd10ff3e8ee60c4ce45'),
   ('public', 'farmer_recomendacoes_substituir', 3, '20260906164002_captura_authz_escopo_carteira_farmer.sql', 'db77f24d70a09cc45b69e46c7a7b7532'),

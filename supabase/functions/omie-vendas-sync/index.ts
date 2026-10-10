@@ -3037,7 +3037,18 @@ Deno.serve(async (req) => {
               };
               break;
             }
-            // caller antigo: segue como hoje (o registro acima mede o furo)
+            // Erro SEM override (42501/22023) é recusa por contrato, não falha de
+            // transporte: seguir criaria o PV sem reserva nenhuma. Ex. (Codex,
+            // ATP 3.2): o reservar_estoque recusa substituir a reserva firme de um
+            // pedido anterior do MESMO checkout — o caller antigo seguia e o PV novo
+            // nascia sem reserva. Throw (não blocked): caller antigo lê blocked
+            // desconhecido como sucesso, e já trata erro como falha.
+            if (atpCls.semOverride) {
+              throw new Error(
+                `Pedido não enviado: a verificação de estoque recusou o pedido (${atpCls.detalhe ?? "sem detalhe"}). Recarregue a página e tente de novo.`,
+              );
+            }
+            // caller antigo, falha de TRANSPORTE: segue como hoje (o registro acima mede o furo)
           }
         }
         const pedido = await criarPedidoVenda(

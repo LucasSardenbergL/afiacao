@@ -34,6 +34,8 @@ export const REGISTRO_UNIVERSO_PEDIDOS: Readonly<Record<string, EntradaRegistro>
   'private.atp_canonico_da_reserva': { tipo: 'lookup', motivo: 'ATP 3.1: acha a canônica de UMA reserva pelo par próprio (conta, omie_pedido_id) ou pelo vínculo (por id da reserva)' },
   'private.atp_pedido_canonico': { tipo: 'lookup', motivo: 'ATP: acha o gêmeo canônico de um pedido empurrado (por id/omie_pedido_id)' },
   'private.expirar_reservas_vencidas_job': { tipo: 'lookup', motivo: 'ATP: expira reserva cujo pedido não virou Omie (por id)' },
+  'public.liberar_reserva_checkout': { tipo: 'lookup', motivo: 'ATP 3.2: preserva a reserva cujo pedido já virou PV no Omie (por id)' },
+  'public.reservar_estoque': { tipo: 'lookup', motivo: 'ATP 3.2: recusa substituir reserva cujo pedido já virou PV no Omie (por id)' },
   'public.atp_gate_pedido': { tipo: 'lookup', motivo: 'ATP: gate de UM pedido (por id)' },
   'public.atp_reservas_pendentes': { tipo: 'lookup', motivo: 'ATP: lista reservas ativas com o status do pedido vinculado (por id da reserva)' },
   'public.ensure_picking_task_for_sales_order': { tipo: 'lookup', motivo: 'picking: cria a tarefa de UM pedido (por id), com o gate operacional próprio' },
