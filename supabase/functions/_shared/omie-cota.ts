@@ -17,7 +17,7 @@
 import { mensagemDeErro } from "./erro-mensagem.ts";
 
 /** Métodos coordenados pela trava. Só leitura com mais de um consumidor em cron — nada de escrita. */
-export const METODOS_COORDENADOS: ReadonlySet<string> = new Set(["ListarPedidos"]);
+const METODOS_COORDENADOS: ReadonlySet<string> = new Set(["ListarPedidos"]);
 
 export function metodoCoordenado(metodo: string): boolean {
   return METODOS_COORDENADOS.has(metodo);
@@ -27,15 +27,15 @@ export function metodoCoordenado(metodo: string): boolean {
  * Timeout da chamada coordenada ao Omie. O lease (abaixo) é maior: abortar o fetch não prova que o
  * Omie parou de processar, então quem estoura o timeout NÃO devolve a vez — o lease vence sozinho.
  */
-export const TIMEOUT_CHAMADA_COORDENADA_MS = 80_000;
+const TIMEOUT_CHAMADA_COORDENADA_MS = 80_000;
 /** Lease de quem chama: timeout da chamada + folga para o Omie terminar o que já recebeu. */
-export const LEASE_PADRAO_S = 150;
+const LEASE_PADRAO_S = 150;
 /** Prazo de cada RPC da trava. */
-export const PRAZO_RPC_MS = 5_000;
+const PRAZO_RPC_MS = 5_000;
 /** "Bloqueada por consumo indevido" sem prazo legível: o Omie documenta ~30 min. */
-export const BLOQUEIO_INDEVIDO_PADRAO_S = 30 * 60;
+const BLOQUEIO_INDEVIDO_PADRAO_S = 30 * 60;
 /** Margem somada ao "Aguarde N segundos" — relógio do Omie × o nosso. */
-export const MARGEM_AGUARDE_S = 2;
+const MARGEM_AGUARDE_S = 2;
 
 export type FaultCota =
   /** "Consumo redundante detectado. Aguarde N segundos (REDUNDANT)". */
@@ -132,7 +132,7 @@ async function rpcComPrazo(
   }
 }
 
-export async function pedirVez(
+async function pedirVez(
   db: ClienteCota,
   conta: Conta,
   metodo: string,
@@ -150,7 +150,7 @@ export async function pedirVez(
 }
 
 /** Devolve a vez. Nunca lança: o lease vence sozinho. */
-export async function devolverVez(
+async function devolverVez(
   db: ClienteCota,
   conta: Conta,
   metodo: string,
@@ -165,7 +165,7 @@ export async function devolverVez(
  * Registra o "aguarde" do Omie para todas as edges. Nunca lança. Só faults com prazo.
  * Devolve se o prazo ficou CONFIRMADO no banco (fault sem prazo = nada a registrar = true).
  */
-export async function registrarFault(
+async function registrarFault(
   db: ClienteCota,
   conta: Conta,
   metodo: string,
