@@ -98,7 +98,7 @@ const DIVIDA: ReadonlyMap<string, number> = new Map([
   ['src/pages/TintMapping.tsx', 2], // 43:omie_products 79:tint_corantes
   ['src/services/financeiroConciliacao.ts', 1], // 51:fin_movimentacoes
   ['supabase/functions/analyze-services/index.ts', 1], // 147:omie_servicos
-  ['supabase/functions/analyze-unified-order/index.ts', 3], // 370:profiles(LIMIT1000) 481:omie_servicos 493:omie_products(LIMIT1000)
+  ['supabase/functions/analyze-unified-order/index.ts', 1], // 599:omie_servicos (profiles/omie_products saíram: só-imagem em 2 passos, keyset em transcricao.ts)
   ['supabase/functions/calculate-scores/index.ts', 1], // 639:user_roles
   ['supabase/functions/disparar-pedidos-aprovados/index.ts', 1], // 1811:pedido_compra_sugerido
   ['supabase/functions/enviar-pedido-portal-sayerlack/index.ts', 1], // 2333:pedido_compra_sugerido

@@ -82,12 +82,13 @@ export const respostaSonda = criarRespostaSonda("analyze-unified-order");
  * "bump v1.1-corpo-tipado". Um `git revert` deste bump devolveria a sonda a "responde verde sem provar nada".
  * `v1.3-ia-nao-precifica`: a edge deixou de decidir preço (fronteira `montarRespostaAnalise`, canária
  * `ia-nao-precifica-v1`); v1.4 = hotfix do BOOT_ERROR. Por quê: docs/historico/ia-nao-precifica.md.
+ * `v1.6-so-imagem-2-passos`: só-imagem transcreve a foto e ranqueia catálogo/perfis INTEIROS (transcricao.ts).
  */
-export const VERSAO = "v1.5-400-nao-e-recusa";
+export const VERSAO = "v1.6-so-imagem-2-passos";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
-  "esta edge manda o CATÁLOGO INTEIRO de produtos e serviços para o modelo da Anthropic a cada " +
-  "chamada (token pago, e o prefixo estável do #1622 só é cacheado a partir da segunda), e o " +
+  "esta edge manda catálogo e serviços para o modelo da Anthropic (e, no modo só-imagem, faz DUAS " +
+  "chamadas: transcrição e análise) a cada requisição (token pago, e o prefixo estável do #1622 só é cacheado a partir da segunda), e o " +
   "resultado é a lista de itens que o vendedor transforma em pedido — sondar por engano gasta " +
   "token e devolve uma análise de IA onde se esperava um diagnóstico de uma linha";

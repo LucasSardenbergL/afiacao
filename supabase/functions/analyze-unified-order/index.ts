@@ -24,6 +24,23 @@ import {
   pagaEscritaSemNuncaLer,
   resumirUsoCache,
 } from "./prompt-sistema.ts";
+import {
+  carregarCatalogoAtivo,
+  carregarPerfis,
+  interpretarTranscricao,
+  MAX_ITENS_TRANSCRITOS,
+  NOME_TOOL_TRANSCRICAO,
+  PALAVRAS_GENERICAS_CLIENTE,
+  type PerfilMinimo,
+  type ProdutoCatalogoMinimo,
+  rankearClientes,
+  rankearProdutos,
+  type ResultadoRanking,
+  termos,
+  TOOL_TRANSCRICAO,
+  type Transcricao,
+} from "./transcricao.ts";
+import type { BancoPostgrest } from "../_shared/paginate.ts";
 
 // Hit rate acumulado POR VARIANTE, vivo enquanto o isolate durar. Um request
 // isolado não distingue cold miss legítimo (1ª chamada, TTL de 5min vencido) de
@@ -160,6 +177,43 @@ type BlocoConteudo = { type: "text"; text: string } | BlocoImagem;
 /** Modelo e teto de saída — ver convenção de LLM em edge no CLAUDE.md. */
 const MODELO = "claude-sonnet-4-6";
 const MAX_TOKENS = 8000;
+/** Passo 1 do modo só-imagem: só transcrição (até MAX_ITENS_TRANSCRITOS linhas curtas). */
+const MAX_TOKENS_TRANSCRICAO = 4000;
+
+/**
+ * Erro da API da Anthropic → resposta ao vendedor. Compartilhado pelos DOIS passos do modo
+ * só-imagem (transcrição e análise): o mesmo status tem o mesmo significado nos dois.
+ */
+function respostaDeErroAnthropic(e: unknown, passo: string, imagensRejeitadas: ImagemRejeitada[]): Response {
+  const status = (e as { status?: number })?.status;
+  const detalhe = e instanceof Error ? e.message : String(e);
+  console.error(`[analyze-unified-order] erro na API da Anthropic (${passo}):`, status, detalhe);
+
+  // O 402 NÃO desapareceu com o gateway: a Anthropic devolve billing_error.
+  // Sem tratá-lo, a mesma falha que motivou esta migração voltaria como 500
+  // genérico e ninguém saberia que o problema é saldo.
+  const porStatus: Record<number, { http: number; msg: string }> = {
+    // 400 = requisição inválida (defeito nosso), não recusa — mandar trocar de foto esconderia
+    // o bug (ver _shared/anthropic.ts). A recusa do modelo chega como 200 + stop_reason "refusal".
+    400: { http: 500, msg: "Falha na requisição à IA — avise a equipe. Monte o pedido manualmente por enquanto." },
+    402: { http: 402, msg: "Créditos da IA esgotados — avise a equipe. Monte o pedido manualmente por enquanto." },
+    401: { http: 500, msg: "IA mal configurada — avise a equipe." },
+    403: { http: 500, msg: "IA mal configurada — avise a equipe." },
+    404: { http: 500, msg: "IA mal configurada — avise a equipe." },
+    413: { http: 413, msg: "Envio grande demais. Mande menos fotos por vez." },
+    429: { http: 429, msg: "Limite de requisições excedido. Tente novamente." },
+    500: { http: 503, msg: "IA sobrecarregada no momento. Tente de novo em instantes." },
+    503: { http: 503, msg: "IA sobrecarregada no momento. Tente de novo em instantes." },
+    529: { http: 503, msg: "IA sobrecarregada no momento. Tente de novo em instantes." },
+  };
+  const mapeado = status ? porStatus[status] : undefined;
+  if (mapeado) {
+    return new Response(JSON.stringify({ error: mapeado.msg, imagens_rejeitadas: imagensRejeitadas }), {
+      status: mapeado.http, headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+  throw new Error("Erro ao processar com IA");
+}
 
 interface ToolPropertySchema {
   type: string | string[];
@@ -343,6 +397,81 @@ Deno.serve(async (req) => {
 
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
+    const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
+
+    // ─── Modo só-imagem, passo 1: TRANSCREVER a foto (ver transcricao.ts) ───
+    // Antes, este modo lia 1.000 perfis e 1.000 produtos (de 5.668 e 3.223) e despejava as listas
+    // no prompt. Agora a IA transcreve cliente + itens, e o catálogo e os perfis INTEIROS (keyset,
+    // fail-closed) são ranqueados aqui por relevância a cada item/cliente transcrito.
+    let transcricao: Transcricao | null = null;
+    let catalogoRanqueado: ResultadoRanking<ProdutoCatalogoMinimo> | null = null;
+    let perfisRanqueados: PerfilMinimo[] = [];
+    if (allImages.length > 0 && !text) {
+      const preparadasP1 = prepararImagens(allImages, 0);
+      if (preparadasP1.blocos.length === 0) {
+        return new Response(JSON.stringify({
+          products: [], services: [], suggestions: [], customer: null,
+          imagens_rejeitadas: preparadasP1.rejeitadas,
+          error: avisoImagensRejeitadas(preparadasP1.rejeitadas),
+        }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+      let respostaP1;
+      try {
+        respostaP1 = await anthropic.messages.create({
+          model: MODELO,
+          max_tokens: MAX_TOKENS_TRANSCRICAO,
+          system:
+            "Você transcreve fotos de pedidos (papel, quadro, print de conversa). Copie o que está ESCRITO — " +
+            "não corrija, não complete, não invente item nem código. Uma entrada por linha de item, sem omitir nenhuma.",
+          tools: [TOOL_TRANSCRICAO],
+          tool_choice: { type: "tool", name: NOME_TOOL_TRANSCRICAO, disable_parallel_tool_use: true },
+          messages: [{
+            role: "user",
+            content: [{ type: "text", text: "Transcreva o cliente e todos os itens destas imagens:" }, ...preparadasP1.blocos],
+          }],
+        });
+      } catch (e: unknown) {
+        return respostaDeErroAnthropic(e, "transcrição", preparadasP1.rejeitadas);
+      }
+      // Transcrição cortada = lista de itens incompleta com cara de completa (§8 money-path).
+      if (respostaP1.stop_reason === "max_tokens") {
+        console.error(`[analyze-unified-order] transcrição truncada em ${MAX_TOKENS_TRANSCRICAO} tokens`);
+        return new Response(JSON.stringify({
+          products: [], services: [], suggestions: [], customer: null,
+          error: "Pedido grande demais para ler de uma vez. Divida em duas partes e envie de novo.",
+        }), { status: 422, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+      const extraidoP1 = extrairToolUseUnico(respostaP1.content);
+      transcricao = extraidoP1.ok ? interpretarTranscricao(extraidoP1.input) : null;
+      if (transcricao === null) {
+        console.error("[analyze-unified-order] transcrição ausente ou malformada", extraidoP1.ok ? "" : extraidoP1.motivo);
+        return new Response(JSON.stringify({
+          products: [], services: [], suggestions: [], customer: null,
+          error: "A IA não conseguiu ler o pedido nas imagens. Tente de novo ou digite o pedido.",
+        }), { status: 422, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+      // Acima do teto RECUSA — seguir com os primeiros N seria pedido parcial com cara de completo.
+      if (transcricao.itens.length > MAX_ITENS_TRANSCRITOS) {
+        return new Response(JSON.stringify({
+          products: [], services: [], suggestions: [], customer: null,
+          error: `O pedido tem ${transcricao.itens.length} itens (máximo ${MAX_ITENS_TRANSCRITOS} por vez). Divida em partes e envie de novo.`,
+        }), { status: 422, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+      // Cast estrutural: o módulo testável não importa supabase-js (a suíte roda --no-remote).
+      const db = supabase as unknown as BancoPostgrest;
+      const [catalogo, perfis] = await Promise.all([
+        carregarCatalogoAtivo(db),
+        searchCustomer ? carregarPerfis(db) : Promise.resolve([] as PerfilMinimo[]),
+      ]);
+      catalogoRanqueado = rankearProdutos(transcricao.itens, catalogo);
+      perfisRanqueados = rankearClientes(transcricao.cliente, perfis, loggedInUserId);
+      console.log(
+        `[analyze-unified-order] só-imagem: ${transcricao.itens.length} item(ns) transcrito(s), ` +
+          `cliente=${transcricao.cliente ? "sim" : "não"} | catálogo ${catalogo.length} → ` +
+          `${catalogoRanqueado.candidatos.length} candidato(s), ${catalogoRanqueado.semCandidato} item(ns) sem candidato | ` +
+          `perfis ${perfis.length} → ${perfisRanqueados.length} candidato(s)`,
+      );
+    }
 
     // ─── Customer search ───
     let customerSection = "";
@@ -353,42 +482,31 @@ Deno.serve(async (req) => {
       const searchText = text || "";
       
       // Search profiles by name fragments (at least 3 chars)
-      const nameTerms = searchText
-        .split(/[\s,;]+/)
-        .map((t: string) => t.trim())
-        .filter((t: string) => t.length >= 3);
+      // Só-imagem: o nome TRANSCRITO (sem os genéricos "ltda", "comércio"…) alimenta a busca no Omie.
+      const nameTerms = transcricao !== null
+        ? termos(transcricao.cliente ?? "", PALAVRAS_GENERICAS_CLIENTE)
+        : searchText
+          .split(/[\s,;]+/)
+          .map((t: string) => t.trim())
+          .filter((t: string) => t.length >= 3);
 
       const candidateIds = new Set<string>();
 
-      // When we have images but no text, load ALL approved profiles so the AI can match
-      // customer names visible in photos against real database entries
-      if (allImages.length > 0 && nameTerms.length === 0) {
-        console.log("[analyze-unified-order] Image-only mode: loading all profiles for customer matching");
-        try {
-          // Load ALL profiles (including unapproved) — they are valid customers
-          const { data: allProfiles } = await supabase
-            .from("profiles")
-            .select("user_id, name, document, email, phone")
-            .limit(1000);
-          if (allProfiles) {
-            for (const p of allProfiles) {
-              // Exclude the logged-in user — they are the seller, not the customer
-              if (p.user_id === loggedInUserId) continue;
-              candidateIds.add(p.user_id);
-              customerCandidates.push({
-                user_id: p.user_id,
-                nome: p.name,
-                nome_fantasia: p.name,
-                documento: p.document,
-                // P0-B (item 3): NÃO emitir código cross-conta — o espelho é PARCIAL e o código colide entre
-                // contas. A identidade por-conta é derivada na fronteira (edge); handleAICustomerSelect
-                // re-resolve por documento/conta. O código aqui era só display e induzia colacor→oben.
-                codigo_cliente: null,
-              });
-            }
-          }
-        } catch (e) {
-          console.error("Error loading all profiles for image mode:", e);
+      // Modo só-imagem: os candidatos vêm do ranking do nome TRANSCRITO contra os perfis inteiros
+      // (passo 1, acima). Sem nome na foto → nenhum candidato, e o passo 2 devolve cliente null.
+      if (transcricao !== null) {
+        for (const p of perfisRanqueados) {
+          candidateIds.add(p.user_id);
+          customerCandidates.push({
+            user_id: p.user_id,
+            nome: p.name ?? "",
+            nome_fantasia: p.name ?? "",
+            documento: p.document,
+            // P0-B (item 3): NÃO emitir código cross-conta — o espelho é PARCIAL e o código colide entre
+            // contas. A identidade por-conta é derivada na fronteira (edge); handleAICustomerSelect
+            // re-resolve por documento/conta. O código aqui era só display e induzia colacor→oben.
+            codigo_cliente: null,
+          });
         }
       } else {
         // Search in profiles for name matches (text mode). Termo DEGENERADO fica fora ANTES do corte
@@ -488,17 +606,10 @@ Deno.serve(async (req) => {
     let prodList: ProdutoCatalogo[] = [];
     const prodIds = new Set<string>();
 
-    if (allImages.length > 0 && !text) {
-      const { data: allProducts } = await supabase
-        .from("omie_products")
-        .select("id, codigo, descricao, account, valor_unitario, estoque")
-        .eq("ativo", true)
-        .order("descricao")
-        .limit(1000);
-      if (allProducts) {
-        prodList = allProducts;
-        for (const p of allProducts) prodIds.add(p.id);
-      }
+    if (catalogoRanqueado !== null) {
+      // Só-imagem: top-K de relevância por item transcrito, sobre o catálogo ativo INTEIRO.
+      prodList = catalogoRanqueado.candidatos;
+      for (const p of prodList) prodIds.add(p.id);
     } else {
       prodList = (products || []).slice(0, 150);
       for (const p of prodList) prodIds.add(p.id);
@@ -875,8 +986,6 @@ Deno.serve(async (req) => {
       requiredFields.push("customer");
     }
 
-    const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
-
     let resposta;
     try {
       resposta = await anthropic.messages.create({
@@ -910,34 +1019,7 @@ Deno.serve(async (req) => {
         messages: [{ role: "user", content: conteudoUsuario }],
       });
     } catch (e: unknown) {
-      const status = (e as { status?: number })?.status;
-      const detalhe = e instanceof Error ? e.message : String(e);
-      console.error("[analyze-unified-order] erro na API da Anthropic:", status, detalhe);
-
-      // O 402 NÃO desapareceu com o gateway: a Anthropic devolve billing_error.
-      // Sem tratá-lo, a mesma falha que motivou esta migração voltaria como 500
-      // genérico e ninguém saberia que o problema é saldo.
-      const porStatus: Record<number, { http: number; msg: string }> = {
-        // 400 = requisição inválida (defeito nosso), não recusa — mandar trocar de foto esconderia
-        // o bug (ver _shared/anthropic.ts). A recusa do modelo chega como 200 + stop_reason "refusal".
-        400: { http: 500, msg: "Falha na requisição à IA — avise a equipe. Monte o pedido manualmente por enquanto." },
-        402: { http: 402, msg: "Créditos da IA esgotados — avise a equipe. Monte o pedido manualmente por enquanto." },
-        401: { http: 500, msg: "IA mal configurada — avise a equipe." },
-        403: { http: 500, msg: "IA mal configurada — avise a equipe." },
-        404: { http: 500, msg: "IA mal configurada — avise a equipe." },
-        413: { http: 413, msg: "Envio grande demais. Mande menos fotos por vez." },
-        429: { http: 429, msg: "Limite de requisições excedido. Tente novamente." },
-        500: { http: 503, msg: "IA sobrecarregada no momento. Tente de novo em instantes." },
-        503: { http: 503, msg: "IA sobrecarregada no momento. Tente de novo em instantes." },
-        529: { http: 503, msg: "IA sobrecarregada no momento. Tente de novo em instantes." },
-      };
-      const mapeado = status ? porStatus[status] : undefined;
-      if (mapeado) {
-        return new Response(JSON.stringify({ error: mapeado.msg, imagens_rejeitadas: imagensRejeitadas }), {
-          status: mapeado.http, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-      throw new Error("Erro ao processar com IA");
+      return respostaDeErroAnthropic(e, "análise", imagensRejeitadas);
     }
 
     // PROVA do cache, não suposição (foi a crítica do Codex no #1608): sem estes
