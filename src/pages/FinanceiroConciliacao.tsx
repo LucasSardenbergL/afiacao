@@ -77,14 +77,15 @@ const FinanceiroConciliacao = () => {
       let query = supabase
         .from('fin_conciliacao')
         .select('*', { count: 'exact' })
-        .eq('company', company)
-        .order('mov_data', { ascending: false })
-        .order('id', { ascending: true });
+        .eq('company', company);
 
       if (statusFilter !== 'todos') query = query.eq('status', statusFilter);
       if (selectedCC !== 'all') query = query.eq('omie_ncodcc', Number(selectedCC));
 
-      const { data, error, count } = await query.range(0, LISTA_LIMITE - 1);
+      const { data, error, count } = await query
+        .order('mov_data', { ascending: false })
+        .order('id', { ascending: true })
+        .range(0, LISTA_LIMITE - 1);
       if (error) throw new Error(`Falha ao carregar itens de conciliação: ${error.message}`);
       if (data == null) throw new Error('Falha ao carregar itens de conciliação: data=null sem error');
       if (count == null) throw new Error("Falha ao carregar itens de conciliação: count=null com count:'exact'");

@@ -312,9 +312,7 @@ async function listarContas<T>(
   const base = () => {
     let query = supabase
       .from(tabela)
-      .select("*", { count: "exact" })
-      .order("data_vencimento", { ascending: true })
-      .order("id", { ascending: true });
+      .select("*", { count: "exact" });
     if (company !== 'all') query = query.eq("company", company);
     if (filtros?.status) query = query.eq("status_titulo", filtros.status);
     if (filtros?.dataInicio) query = query.gte("data_vencimento", filtros.dataInicio);
@@ -325,7 +323,9 @@ async function listarContas<T>(
   if (filtros?.limit) {
     // Truncagem HONESTA: janela limitada + count exato do filtro no MESMO request —
     // o caller distingue "acabou" de "tem mais" e avisa na tela/CSV.
-    const { data, error, count } = await base().range(0, filtros.limit - 1);
+    const { data, error, count } = await base()
+      .order("data_vencimento", { ascending: true }).order("id", { ascending: true })
+      .range(0, filtros.limit - 1);
     if (error) throw new Error(`Falha ao carregar ${contexto}: ${error.message}`);
     if (data == null) throw new Error(`Falha ao carregar ${contexto}: data=null sem error`);
     if (count == null) throw new Error(`Falha ao carregar ${contexto}: count=null com count:'exact'`);
@@ -336,7 +336,9 @@ async function listarContas<T>(
   // (oben sozinha tem ~11k títulos de CP; single-shot devolvia os 1.000 primeiros
   // por vencimento como se fossem tudo — lista E export CSV nasciam truncados).
   const rows = (await buscarTodasPaginas(contexto, (from, to) =>
-    base().range(from, to),
+    base()
+      .order("data_vencimento", { ascending: true }).order("id", { ascending: true })
+      .range(from, to),
   )) as unknown as T[];
   // K páginas são K instantes (§14): se um título muda de vencimento durante a leitura, o
   // offset desliza — um título é PULADO e outro REPETIDO, e `rows.length` continua batendo
