@@ -32,11 +32,11 @@
 --     EXISTE no Omie nunca se perde por causa da reserva. A falha volta como
 --     ajuste_falhou e fica na trilha ('verificacao_indisponivel').
 --
---  #3 é fechado na EDGE (omie-vendas-sync v1.14) — nada a mudar no banco.
+--  #3 é fechado na EDGE (omie-vendas-sync v1.15) — nada a mudar no banco.
 --
 -- Assinatura INALTERADA (CREATE OR REPLACE preserva OID e ACL): a edge v1.13 já
 -- em produção passa a ajustar a reserva no primeiro apply, sem deploy — só não
--- avisa o vendedor (isso é a v1.14).
+-- avisa o vendedor (isso é a v1.15).
 --
 -- No SQL Editor/MCP: entre BEGIN; … COMMIT;. Pelo db:aplicar: sem envelope.
 -- ============================================================
