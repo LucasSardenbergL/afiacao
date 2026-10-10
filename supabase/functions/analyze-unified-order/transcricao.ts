@@ -27,9 +27,9 @@ import { type BancoPostgrest, fetchAllKeyset } from "../_shared/paginate.ts";
  */
 export const MAX_ITENS_TRANSCRITOS = 40;
 /** Candidatos de catálogo por item que vão ao passo 2. */
-export const TOP_K_POR_ITEM = 8;
+const TOP_K_POR_ITEM = 8;
 /** Candidatos de cliente que vão ao passo 2. */
-export const TOP_K_CLIENTES = 15;
+const TOP_K_CLIENTES = 15;
 
 export const NOME_TOOL_TRANSCRICAO = "transcrever_pedido";
 
