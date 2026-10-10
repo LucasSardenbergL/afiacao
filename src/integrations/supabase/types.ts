@@ -19440,7 +19440,10 @@ export type Database = {
         Args: { p_id: number; p_sha: string; p_sql: string }
         Returns: string
       }
-      apply_score_updates: { Args: { p_updates: Json }; Returns: number }
+      apply_score_updates: {
+        Args: { p_run_id?: string; p_updates: Json }
+        Returns: number
+      }
       apriori_universo_snapshot: {
         Args: {
           p_status_nao_venda: string[]
