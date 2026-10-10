@@ -93,7 +93,7 @@ export const respostaSonda = criarRespostaSonda("omie-vendas-sync");
  * v1.12/v1.13 (2026-10-09, ATP 3.1/3.2) — write-back do PV pela RPC atômica `atp_confirmar_pv`; erro do gate
  * SEM override (42501/22023) interrompe também o caller antigo. Migration 20261009120000 antes do edge.
  */
-export const VERSAO = "v1.13-gate-sem-override-interrompe";
+export const VERSAO = "v1.14-cota-omie-compartilhada";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

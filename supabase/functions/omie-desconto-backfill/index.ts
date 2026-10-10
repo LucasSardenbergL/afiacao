@@ -25,6 +25,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff, corsHeaders } from "../_shared/auth.ts";
 import { atenderSondaOptions } from "../_shared/sonda-cron.ts";
+import { clienteCotaDoAmbiente, comVezOmie, sinalDaChamada } from "../_shared/omie-cota.ts";
 import {
   type CausaNaoClassificada,
   conciliarDescontosPedido,
@@ -64,21 +65,29 @@ function credenciais(account: Account) {
     : { key: Deno.env.get("OMIE_OBEN_APP_KEY"), secret: Deno.env.get("OMIE_OBEN_APP_SECRET") };
 }
 
+// Trava compartilhada do Omie (Fase 0.2 do picking v2) — cliente service_role, uma vez por isolate.
+const clienteCota = clienteCotaDoAmbiente((url, chave) => createClient(url, chave));
+
 async function callOmie(account: Account, endpoint: string, call: string, params: Record<string, unknown>) {
   const creds = credenciais(account);
   if (!creds.key || !creds.secret) throw new Error(`Credenciais (${account}) não configuradas`);
-  const res = await fetch(`${OMIE_API_URL}/${endpoint}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ call, app_key: creds.key, app_secret: creds.secret, param: [params] }),
-  });
-  // HTTP não-2xx LANÇA antes de o corpo virar payload: um 429/5xx cujo corpo parseia sem
-  // `faultstring` seria lido como página vazia, isto é, como FIM — e o backfill terminaria
-  // "com sucesso" tendo lido metade do acervo. Mesma régua do sync.
-  if (!res.ok) throw new Error(`Omie (${account}) HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
-  const json = await res.json();
-  if (json.faultstring) throw new Error(`Omie (${account}): ${json.faultstring}`);
-  return json;
+  // ListarPedidos é coordenado com as outras edges (_shared/omie-cota.ts): pede a vez antes,
+  // devolve depois e registra o "aguarde" do Omie. Vez negada LANÇA (a chamada não foi feita).
+  return await comVezOmie(clienteCota(), account, call, async () => {
+    const res = await fetch(`${OMIE_API_URL}/${endpoint}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ call, app_key: creds.key, app_secret: creds.secret, param: [params] }),
+      signal: sinalDaChamada(call),
+    });
+    // HTTP não-2xx LANÇA antes de o corpo virar payload: um 429/5xx cujo corpo parseia sem
+    // `faultstring` seria lido como página vazia, isto é, como FIM — e o backfill terminaria
+    // "com sucesso" tendo lido metade do acervo. Mesma régua do sync.
+    if (!res.ok) throw new Error(`Omie (${account}) HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
+    const json = await res.json();
+    if (json.faultstring) throw new Error(`Omie (${account}): ${json.faultstring}`);
+    return json;
+  }, () => null);
 }
 
 /** `DD/MM/AAAA` — o formato que o ListarPedidos espera nos filtros de data. */

@@ -6,7 +6,9 @@
 // sem cron. Uma chamada por MÉTODO por conta, com trégua entre elas e SEM retentativa: a trava
 // anti-redundância do Omie morde o método por app_key, e o `vendas-sync-continuacao` (*/6) chama
 // o mesmo `ListarPedidos` — REDUNDANT aqui é reportado, nunca re-tentado.
+import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff, corsHeaders } from "../_shared/auth.ts";
+import { clienteCotaDoAmbiente, comVezOmie, metodoCoordenado } from "../_shared/omie-cota.ts";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import { redigirSegredo } from "../_shared/omie-falha.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
@@ -16,6 +18,9 @@ const OMIE_TIMEOUT_MS = 25_000;
 const TREGUA_MS = 1_500;
 
 type Conta = "oben" | "colacor";
+
+// Trava compartilhada do Omie (Fase 0.2): `ListarPedidos` pede a vez às outras edges antes de chamar.
+const clienteCota = clienteCotaDoAmbiente((url, chave) => createClient(url, chave));
 
 function credenciais(conta: Conta): { key: string; secret: string } | null {
   const prefixo = conta === "oben" ? "OMIE_OBEN" : "OMIE_COLACOR";
@@ -33,8 +38,28 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 type Chamada = { ok: true; corpo: unknown } | { ok: false; erro: string };
 
-/** UMA chamada, sem retentativa. Falha do Omie no corpo (faultstring) com qualquer HTTP volta como erro. */
+/**
+ * UMA chamada, sem retentativa. Falha do Omie no corpo (faultstring) com qualquer HTTP volta como
+ * erro. Método coordenado (`ListarPedidos`) pede a vez na trava; vez negada (ou trava sem resposta —
+ * fail-closed) volta como erro, sem chamar.
+ */
 async function chamarOmie(
+  conta: Conta,
+  cred: { key: string; secret: string },
+  endpoint: string,
+  metodo: string,
+  param: Record<string, unknown>,
+): Promise<Chamada> {
+  try {
+    return await comVezOmie(clienteCota(), conta, metodo, () => chamarOmieSemTrava(cred, endpoint, metodo, param), (r) =>
+      r.ok ? null : r.erro
+    );
+  } catch (e) {
+    return { ok: false, erro: redigirSegredo(mensagemDeErro(e) ?? "trava do Omie sem mensagem") };
+  }
+}
+
+async function chamarOmieSemTrava(
   cred: { key: string; secret: string },
   endpoint: string,
   metodo: string,
@@ -59,6 +84,9 @@ async function chamarOmie(
     if (!res.ok) return { ok: false, erro: `HTTP ${res.status}: ${redigirSegredo(txt.slice(0, 200))}` };
     return { ok: true, corpo };
   } catch (e) {
+    // Timeout do método coordenado sobe para a trava NÃO devolver a vez: o Omie pode seguir
+    // processando o que recebeu (o lease vence sozinho). `chamarOmie` o converte em erro.
+    if (e instanceof DOMException && e.name === "TimeoutError" && metodoCoordenado(metodo)) throw e;
     return { ok: false, erro: redigirSegredo(mensagemDeErro(e) ?? "falha de rede sem mensagem") };
   }
 }
@@ -69,19 +97,19 @@ async function diagnosticarConta(conta: Conta): Promise<Record<string, unknown>>
   const cred = credenciais(conta);
   if (!cred) return { conta, erro: "credenciais ausentes nos secrets" };
 
-  const etapas = await chamarOmie(cred, "produtos/etapafat/", "ListarEtapasFaturamento", {
+  const etapas = await chamarOmie(conta, cred, "produtos/etapafat/", "ListarEtapasFaturamento", {
     pagina: 1,
     registros_por_pagina: 50,
   });
   await esperar(TREGUA_MS);
-  const pedidos = await chamarOmie(cred, "produtos/pedido/", "ListarPedidos", {
+  const pedidos = await chamarOmie(conta, cred, "produtos/pedido/", "ListarPedidos", {
     pagina: 1,
     registros_por_pagina: 50,
     etapa: "10",
     apenas_importado_api: "N",
   });
   await esperar(TREGUA_MS);
-  const produtos = await chamarOmie(cred, "geral/produtos/", "ListarProdutos", {
+  const produtos = await chamarOmie(conta, cred, "geral/produtos/", "ListarProdutos", {
     pagina: 1,
     registros_por_pagina: 50,
     apenas_importado_api: "N",

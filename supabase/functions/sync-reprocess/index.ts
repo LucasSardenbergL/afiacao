@@ -3,6 +3,7 @@ import { descontoItemOmie } from "../_shared/desconto-omie.ts";
 import { normalizarCodigoItemOmie } from "../_shared/omie-codigo-item.ts";
 import { authorizeCron, corsHeaders } from "../_shared/auth.ts";
 import { atenderSondaOptions } from "../_shared/sonda-cron.ts";
+import { clienteCotaDoAmbiente, comVezOmie, sinalDaChamada } from "../_shared/omie-cota.ts";
 import {
   omieEtapaToStatus,
   etapaConhecida,
@@ -161,27 +162,35 @@ function getVendasCredentials(account: Account) {
   };
 }
 
+// Trava compartilhada do Omie (Fase 0.2 do picking v2) — cliente service_role, uma vez por isolate.
+const clienteCota = clienteCotaDoAmbiente((url, chave) => createClient(url, chave));
+
 async function callOmie(account: Account, endpoint: string, call: string, params: Record<string, unknown>) {
   const creds = getVendasCredentials(account);
   if (!creds.key || !creds.secret) throw new Error(`Credenciais (${account}) não configuradas`);
 
   const body = { call, app_key: creds.key, app_secret: creds.secret, param: [params] };
-  const res = await fetch(`${OMIE_API_URL}/${endpoint}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  // HTTP não-2xx LANÇA antes de o corpo virar payload. Sem isto, um 429/5xx cujo corpo parseia
-  // SEM `faultstring` (o `{}` de proxy/gateway) devolvia um objeto sem total e sem lista — e os
-  // três laços deste arquivo leem isso como página vazia no fim declarado, isto é, EOF. Os guards
-  // de _shared/omie-paginacao.ts não alcançam o que o wrapper já entregou como resposta boa:
-  // a classe entra uma camada ACIMA da que eles fecham.
-  if (!res.ok) {
-    throw new Error(`Omie (${account}) HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
-  }
-  const result = await res.json();
-  if (result.faultstring) throw new Error(`Omie (${account}): ${result.faultstring}`);
-  return result;
+  // ListarPedidos é coordenado com as outras edges (_shared/omie-cota.ts): pede a vez antes,
+  // devolve depois e registra o "aguarde" do Omie. Vez negada LANÇA (a chamada não foi feita).
+  return await comVezOmie(clienteCota(), account, call, async () => {
+    const res = await fetch(`${OMIE_API_URL}/${endpoint}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: sinalDaChamada(call),
+    });
+    // HTTP não-2xx LANÇA antes de o corpo virar payload. Sem isto, um 429/5xx cujo corpo parseia
+    // SEM `faultstring` (o `{}` de proxy/gateway) devolvia um objeto sem total e sem lista — e os
+    // três laços deste arquivo leem isso como página vazia no fim declarado, isto é, EOF. Os guards
+    // de _shared/omie-paginacao.ts não alcançam o que o wrapper já entregou como resposta boa:
+    // a classe entra uma camada ACIMA da que eles fecham.
+    if (!res.ok) {
+      throw new Error(`Omie (${account}) HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
+    }
+    const result = await res.json();
+    if (result.faultstring) throw new Error(`Omie (${account}): ${result.faultstring}`);
+    return result;
+  }, () => null);
 }
 
 // ======== LOAD CONFIG ========
