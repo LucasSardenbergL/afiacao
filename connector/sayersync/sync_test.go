@@ -532,6 +532,88 @@ func TestSendInBatches_hwmOnlyAfterAllBatches(t *testing.T) {
 // TestSyncCorantes — merge corantes + preco_corante
 // ─────────────────────────────────────────────────────────────
 
+// Lote aceito com 200 mas NÃO confirmado (item rejeitado, ok:false, Errors sem
+// ErrorCount): o HWM NÃO avança, os demais lotes AINDA são enviados e a entidade
+// volta como erro de ciclo. Antes, isso só virava aviso e o HWM avançava — o item
+// rejeitado nunca mais era re-extraído até um full rescan.
+func TestSendInBatches_loteNaoConfirmadoSeguraHWM(t *testing.T) {
+	casos := map[string]AgentResponse{
+		"error_count":            {OK: true, ErrorCount: 1, Errors: []AgentError{{Index: 0}}},
+		"errors_sem_error_count": {OK: true, Errors: []AgentError{{Index: 0, Message: "x"}}},
+		"ok_false":               {OK: false},
+	}
+	for nome, ruim := range casos {
+		t.Run(nome, func(t *testing.T) {
+			var n atomic.Int32
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if n.Add(1) == 1 {
+					_ = json.NewEncoder(w).Encode(ruim)
+					return
+				}
+				_ = json.NewEncoder(w).Encode(AgentResponse{OK: true})
+			}))
+			defer ts.Close()
+
+			cli := newTestClient(ts.URL)
+			st := &State{HWM: make(map[string]string)}
+			items := make([]map[string]any, 2000) // 2 lotes; o 1º não confirmado
+			for i := range items {
+				items[i] = map[string]any{"id_embalagem": i}
+			}
+			err := sendInBatches(context.Background(), cli, "/catalogs", "embalagens", items, "embalagens", st, time.Now())
+			if err == nil || !strings.Contains(err.Error(), "HWM não avançou") {
+				t.Fatalf("esperava erro de lote não confirmado, got %v", err)
+			}
+			if st.HWM["embalagens"] != "" {
+				t.Error("HWM não pode avançar com lote não confirmado")
+			}
+			if n.Load() != 2 {
+				t.Errorf("os demais lotes devem seguir sendo enviados: esperava 2 POST, got %d", n.Load())
+			}
+		})
+	}
+}
+
+func TestSendInBatchesRaw_loteNaoConfirmadoNaoChamaOnSuccess(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(AgentResponse{OK: true, ErrorCount: 1})
+	}))
+	defer ts.Close()
+
+	chamou := false
+	err := sendInBatchesRaw(context.Background(), newTestClient(ts.URL), "/catalogs", "corantes",
+		[]map[string]any{{"codigo": "AX"}}, func() { chamou = true })
+	if err == nil || !strings.Contains(err.Error(), "HWM não avançou") {
+		t.Fatalf("esperava erro de lote não confirmado, got %v", err)
+	}
+	if chamou {
+		t.Error("onSuccess (avanço de HWM) não pode rodar com lote não confirmado")
+	}
+}
+
+// Re-scan de domingo com uma entidade falhando (Codex P2): o 2º ciclo do MESMO dia
+// não zera de novo os HWMs das entidades que já passaram; no domingo seguinte zera.
+func TestIniciarFullRescan_retomaSemZerarDeNovo(t *testing.T) {
+	domingo := time.Date(2026, 10, 11, 3, 0, 0, 0, time.UTC)
+	st := &State{HWM: map[string]string{"produto": "x", "embalagens": "y"}}
+
+	if !iniciarFullRescan(st, domingo) || len(st.HWM) != 0 {
+		t.Fatalf("1º ciclo do domingo deveria zerar os HWMs, tem %v", st.HWM)
+	}
+	// produto passou (HWM avançou); embalagens falhou (HWM fica zerado).
+	st.HWM["produto"] = "2026-10-11T03:00:00Z"
+
+	if iniciarFullRescan(st, domingo.Add(15*time.Minute)) {
+		t.Fatal("2º ciclo do mesmo domingo não pode zerar de novo")
+	}
+	if st.HWM["produto"] == "" {
+		t.Error("HWM de entidade que já passou no re-scan foi perdido")
+	}
+	if !iniciarFullRescan(st, domingo.AddDate(0, 0, 7)) || len(st.HWM) != 0 {
+		t.Error("domingo seguinte deveria zerar de novo")
+	}
+}
+
 func TestSyncCorantes_mergesPrice(t *testing.T) {
 	srv := &captureServer{}
 	ts := httptest.NewServer(srv)
