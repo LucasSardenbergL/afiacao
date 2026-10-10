@@ -50,12 +50,20 @@ const FarmerCalls = () => {
   // duas leituras pausam juntas, então isso era determinístico, não corrida. O rótulo da série
   // mora dentro do `useSinalPositivacao`, onde nenhum host pode inventá-lo (revisão retroativa do
   // #1896, `docs/historico/fase-sem-sinal.md`).
-  // `estado` junto do `data` porque só `'pronta'` autoriza tratar o papel como FATO (está no
-  // doc do hook): sob falha — ou PAUSADA, offline, com `isLoading` false — `commercialRole` é
-  // null e `=== 'hunter'` dá `false` FABRICADO. A tela afirmaria "você é farmer" e mostraria ao
-  // hunter os 7 KPIs de retenção/penetração que a spec decidiu NÃO mostrar a ele.
+  // `estado` junto do `data`: sob falha — ou PAUSADA, offline, com `isLoading` false —
+  // `commercialRole` é null e `=== 'hunter'` dá `false` FABRICADO. A tela afirmava "você é
+  // farmer" e mostrava ao hunter os 7 KPIs de retenção/penetração que a spec decidiu NÃO
+  // mostrar a ele (os cards que "vazam de farmer", decisão Codex registrada no PositivacaoHero).
+  //
+  // ⚠️ A correção é a DECLARAÇÃO, não um guard em `isHunter`. Gatear o booleano em
+  // `estado === 'pronta'` seria INERTE e foi medido como tal: `data` já é `null` exatamente
+  // quando a leitura não está pronta, então `null === 'hunter'` é `false` nos dois casos — a
+  // sabotagem que removia o guard ficou VERDE na falsificação. Irmã numérica do aviso do §2 do
+  // money-path ("antes de trocar `?? 0` por `?? null`, MEÇA se a ausência chega como null").
+  // O que muda a tela é o aviso abaixo: o placar de farmer continua (é o fallback com mais
+  // informação), mas deixa de se passar por um fato sobre quem está olhando.
   const { data: commercialRole, estado: estadoPapel } = useMyCommercialRole();
-  const isHunter = estadoPapel === 'pronta' && commercialRole === 'hunter';
+  const isHunter = commercialRole === 'hunter';
   // Sensor: emite `carteira.positivacao_vista` em TODO desfecho (o #1886 consertou o que a
   // tela mostra no erro; o que ela mede continuava só no ramo de sucesso).
   useSinalPositivacao();
