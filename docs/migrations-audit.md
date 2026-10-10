@@ -21,7 +21,7 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **596** custom migrations totais
+- **597** custom migrations totais
 - **1956** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 668
@@ -4888,6 +4888,10 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `trigger` | `public.trg_tint_formulas_tombstone_fase5_upd` | `tint_formulas` |
 | `trigger` | `public.trg_tint_formulas_tombstone_fase5_del` | `tint_formulas` |
 | `trigger` | `public.trg_tint_subcolecoes_tombstone_fase5_upd` | `tint_subcolecoes` |
+
+### `20261010150000_remove_cron_disparo_10h.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ## Próximos passos por status
 

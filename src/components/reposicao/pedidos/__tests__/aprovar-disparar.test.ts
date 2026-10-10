@@ -87,7 +87,7 @@ describe('aprovarEDisparar', () => {
 
     const r = await aprovarEDisparar(params);
 
-    // a aprovação valeu (RPC ok); o disparo é a rede de segurança do cron
+    // a aprovação valeu (RPC ok); o envio que não saiu fica para o botão "Disparar"
     expect(r.ok).toBe(true);
     expect(r.tipo).toBe('warning');
     expect(r.mensagem.length).toBeGreaterThan(0);

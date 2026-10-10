@@ -509,6 +509,7 @@ export default function AdminReposicaoPedidos() {
     onSuccess: (data, pedidoId) => {
       const { tone, message } = interpretarRespostaDisparo(data as RespostaDisparo, pedidoId);
       if (tone === 'error') toast.error(message);
+      else if (tone === 'warning') toast.warning(message);
       else if (tone === 'info') toast.info(message);
       else toast.success(message);
       queryClient.invalidateQueries({ queryKey: ['pedidos-ciclo'] });
@@ -532,6 +533,7 @@ export default function AdminReposicaoPedidos() {
     onSuccess: (data, pedidoId) => {
       const { tone, message } = interpretarRespostaDisparo(data as RespostaDisparo, pedidoId);
       if (tone === 'error') toast.error(message);
+      else if (tone === 'warning') toast.warning(message);
       else if (tone === 'info') toast.info(message);
       else toast.success(message);
       queryClient.invalidateQueries({ queryKey: ['pedidos-ciclo'] });

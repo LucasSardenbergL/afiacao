@@ -433,6 +433,82 @@ const G6_ALLOW: ReadonlyMap<string, number> = new Map([
 // o ciclo do §9 — um PR conserta o detector e baselina o revelado, o outro corrige e esvazia.
 const G6_DIVIDA: ReadonlyMap<string, number> = new Map([]);
 
+// ── G7: `.range()` PAGINADO sem `.order()` estável — o repo INTEIRO ───────────────────
+// A 2ª metade da classe (money-path §7): sem ORDER BY o Postgres não garante a mesma
+// sequência entre páginas, e o offset PULA ou DUPLICA linhas mesmo com o `error` tratado.
+// Até aqui ela era vigiada só POR LISTA (`VIGIADAS_ORDER` em
+// supabase/functions/_shared/paginacao-delegada_test.ts — as edges que já tinham doído).
+// Edge nova, ou código de `src/`, que paginasse sem ordem não ficava vermelho em lugar nenhum.
+//
+// O que separa "é da classe" de "não é" é o OFFSET VARIÁVEL, não a sintaxe do laço:
+//   `.range(0, 999)`                → literais → cap de UMA página, sem próxima para desalinhar;
+//   `.range(from, to)` / `(pg*sz, …)` → pagina — em laço OU em callback delegado a helper.
+// Exigir `for`/`while` textual perto do `.range(` (a 1ª versão desta assinatura, nunca
+// mergeada) deixava passar `fetchAll((from, to) => q.range(from, to))`, cujo laço mora DENTRO
+// do helper: o `fin-funding` sabotado ficava vermelho no gate Deno e verde no detector.
+//
+// Bloco da expressão: sobe POR LINHAS até a âncora (`const`/`let`/`return`/`await`/`=>`) —
+// isolar por delimitador corta fora o `.order()` no `}` de `{ ascending: true }` (57 falsos
+// positivos na calibração de 2026-07-23). E segue a REATRIBUIÇÃO da mesma variável
+// (`q = q.order(…)` numa linha, `q = q.range(…)` na seguinte): query montada em etapas é
+// encadeamento, e cortar no `;` perdia o `.order()` do statement anterior.
+const G7_ANCORA = /^\s*(const|let|var|return|await|if|for|while)\b|=>|=\s*await\b/;
+const G7_SUBIDA = 20;
+
+function analisarG7(fonte: string): { semOrdem: number; semAncora: number } {
+  const linhas = fonte.split('\n');
+  let semOrdem = 0;
+  let semAncora = 0;
+  linhas.forEach((linha, i) => {
+    const m = linha.match(/\.range\(([^)]*)\)/);
+    if (!m) return;
+    // Literais puros = cap defensivo de uma página só, não paginação.
+    if (/^\d+\s*,\s*\d+$/.test(m[1].trim())) return;
+    let ini = -1;
+    for (let j = i; j >= 0 && i - j < G7_SUBIDA; j--) {
+      if (!linhas[j].trim()) continue;
+      if (G7_ANCORA.test(linhas[j])) { ini = j; break; }
+      if (j !== i && /[;{}]\s*$/.test(linhas[j].trim())) { ini = j + 1; break; }
+    }
+    if (ini < 0) {
+      // Subida esgotada sem achar o início da expressão: o veredito abaixo seria sobre um
+      // bloco ARBITRÁRIO. Conta para o DENOMINADOR (que exige zero) e julga com o que tem.
+      semAncora++;
+      ini = Math.max(0, i - G7_SUBIDA + 1);
+    }
+    let bloco = linhas.slice(ini, i + 1).join('\n');
+    const alvo = linhas[ini].match(/^\s*(?:(?:const|let|var)\s+)?([A-Za-z_$][\w$]*)\s*=\s*\1\b/);
+    if (alvo) {
+      const nome = alvo[1].replace(/\$/g, '\\$');
+      const mesma = new RegExp(`^\\s*(?:(?:const|let|var)\\s+)?${nome}\\s*=\\s*${nome}\\b`);
+      for (let j = ini - 1; j >= 0 && ini - j < G7_SUBIDA; j--) {
+        if (!linhas[j].trim()) continue;
+        if (!mesma.test(linhas[j])) break;
+        bloco = `${linhas[j]}\n${bloco}`;
+      }
+    }
+    if (!bloco.includes('.order(')) semOrdem++;
+  });
+  return { semOrdem, semAncora };
+}
+
+const contarG7 = (fonte: string): number => analisarG7(fonte).semOrdem;
+
+// Allowlist G7 por CONTAGEM. Dívida REAL medida em 2026-10-10: ZERO — a erradicação foi o
+// #1589 (5 edges) e seguintes. O que fica aqui é falso-positivo ESTRUTURAL: o `.order()`
+// existe e estabiliza, mas é aplicado DENTRO de outra função, e nenhuma assinatura textual
+// sobre o bloco da expressão alcança o corpo de outra função (segui-la seria interpretar o
+// programa). Conferidos por leitura direta. Crescer é REINTRODUÇÃO; encolher REPROVA pedindo
+// atualização.
+const G7_ALLOW: ReadonlyMap<string, number> = new Map([
+  // `.order('customer_user_id', { ascending: true })` (ÚNICA) dentro do closure `baseSelect()`;
+  // os call-sites `baseSelect(true).range(0, PAGE - 1)` e `baseSelect(false).range(f, t)` só o invocam.
+  ['src/queries/useRouteContactList.ts', 2],
+  // `ordenarPorChaveTotal(builder, CHAVE_TOTAL_*)` encadeia um `.order()` por coluna da chave
+  // total (nullsFirst explícito) — a ordem é TOTAL no recorte, só que montada pelo helper.
+  ['src/services/financeiroV2Service.ts', 2],
+]);
+
 describe('gate estrutural: paginação artesanal que trata falha como fim (classe #1338→#1564)', () => {
   it('sentinela: o walker anda de verdade (glob quebrado = verde eterno, ausência de sinal ≠ aprovação)', () => {
     const fontes = DIRS.flatMap((d) => listarFontes(d));
@@ -441,6 +517,96 @@ describe('gate estrutural: paginação artesanal que trata falha como fim (class
     expect(fontes.length, 'walker listou fontes de menos — glob/recursão quebrada').toBeGreaterThan(500);
     expect(fontes, 'o helper das edges sumiu da varredura').toContain('supabase/functions/_shared/paginate.ts');
     expect(fontes, 'o helper de src/ sumiu da varredura').toContain('src/lib/postgrest.ts');
+  });
+
+  it('G7: nenhum `.range()` paginado sem `.order()` estável além da allowlist', () => {
+    const { reintroducoes, quitacoes } = desvios(contarPorArquivo(contarG7), G7_ALLOW);
+    expect(
+      reintroducoes,
+      `REINTRODUÇÃO da classe (2ª metade — \`.range()\` paginado SEM \`.order()\`: o Postgres não ` +
+        `garante a mesma sequência entre páginas, então a paginação PULA/DUPLICA linhas mesmo com ` +
+        `o error tratado). Acrescente \`.order()\` numa coluna ÚNICA no recorte (confira PK/UNIQUE ` +
+        `em prod — coluna não-única NÃO estabiliza). Arquivos (baseline→medido): ${reintroducoes.join(', ')}`,
+    ).toEqual([]);
+    expect(
+      quitacoes,
+      `allowlist G7 encolheu — ATUALIZE a baseline para ela só encolher: ${quitacoes.join(', ')}`,
+    ).toEqual([]);
+  });
+
+  it('G7 (controle de calibração): laço e callback sem `.order()` casam; com ordem, single-shot e por etapas não', () => {
+    // POSITIVO 1 — o laço REAL removido pelo #1563 (sync_addresses): segundo defeito = sem ordem.
+    const laco = `
+        let addrOffset = 0;
+        while (true) {
+          const { data: addrPage, error } = await adminClient
+            .from("addresses")
+            .select("user_id")
+            .range(addrOffset, addrOffset + 999);
+          if (error) throw error;
+        }`;
+    expect(contarG7(laco), 'G7 deixou de casar o laço sem .order()').toBe(1);
+
+    // POSITIVO 2 — paginação DELEGADA a helper, sem laço no texto (forma do fin-funding). É o
+    // par do NEGATIVO 1: mesma forma, só sem `.order()` — isola a causa no `.order()`, e não
+    // na ausência de laço (verde por motivo errado, a armadilha do #1585).
+    const delegado = `
+        const titulos = await fetchAll<Titulo>(db,
+          (from, to) =>
+            db.from("fin_contas_receber")
+              .select("id, saldo")
+              .eq("status_titulo", "ABERTO")
+              .range(from, to),
+          "fin_contas_receber",
+        );`;
+    expect(contarG7(delegado), 'G7 não casa paginação delegada sem .order() — o furo do callback voltou').toBe(1);
+
+    // NEGATIVO 1 — o pós-fix do #1563 (callback com `.order()` na expressão).
+    const comOrdem = delegado.replace('.eq("status_titulo", "ABERTO")', '.eq("status_titulo", "ABERTO")\n              .order("id", { ascending: true })');
+    expect(contarG7(comOrdem), 'G7 casa callback COM .order() — falso positivo').toBe(0);
+
+    // NEGATIVO 2 — single-shot com cap literal (sem próxima página).
+    const singleShot = `
+      const { data: base, error } = await supabase
+        .from("sku_parametros")
+        .select("sku_codigo_omie")
+        .range(0, 999);`;
+    expect(contarG7(singleShot), 'G7 casa single-shot — falso positivo').toBe(0);
+
+    // NEGATIVO 3 — query montada em ETAPAS (forma de useRevisaoParametros): o `.order()` está no
+    // statement anterior, reatribuindo a MESMA variável.
+    const porEtapas = `
+      let q = supabase.from("v_sku_parametros_sugeridos").select("*", { count: "exact" });
+      if (classes.length > 0) q = q.in("classe_consolidada", classes);
+      q = q.order("valor_total_90d", { ascending: false, nullsFirst: false });
+      q = q.range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);`;
+    expect(contarG7(porEtapas), 'G7 casa query por etapas com .order() — falso positivo').toBe(0);
+
+    // POSITIVO 3 — por etapas, mas o `.order()` é de OUTRA variável: a reatribuição não pode
+    // emprestar ordem de uma query alheia.
+    const outraVariavel = `
+      r = r.order("id", { ascending: true });
+      q = q.range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);`;
+    expect(contarG7(outraVariavel), 'G7 emprestou .order() de outra variável').toBe(1);
+  });
+
+  it('DENOMINADOR/G7: toda âncora `.range(` paginada acha o início da expressão dentro da subida', () => {
+    // O veredito do G7 é sobre o BLOCO da expressão. Se a subida de G7_SUBIDA linhas esgota sem
+    // achar `const`/`let`/`return`/`await`/`=>` nem delimitador, o bloco é arbitrário e o
+    // "tem/não tem .order()" não significa nada. A regra do denominador (§9) exige publicar isso:
+    // hoje o alcance é 100%, e uma expressão encadeada longa demais aparece aqui, não em silêncio.
+    const cegos: string[] = [];
+    let ancoras = 0;
+    for (const dir of DIRS) {
+      for (const arquivo of listarFontes(dir)) {
+        const fonte = removerComentarios(readFileSync(resolve(RAIZ, arquivo), 'utf8'));
+        ancoras += (fonte.match(/\.range\(/g) ?? []).length;
+        const { semAncora } = analisarG7(fonte);
+        if (semAncora > 0) cegos.push(`${arquivo} (${semAncora})`);
+      }
+    }
+    expect(ancoras, 'nenhum `.range(` no repo — walker ou removerComentarios quebrado').toBeGreaterThan(50);
+    expect(cegos, `G7 julgou bloco arbitrário (subida de ${G7_SUBIDA} esgotada): ${cegos.join(', ')}`).toEqual([]);
   });
 
   it('G1: nenhum `const { data } = await ....range(` descartando error além da allowlist', () => {

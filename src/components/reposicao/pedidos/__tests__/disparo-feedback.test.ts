@@ -43,4 +43,10 @@ describe('interpretarRespostaDisparo', () => {
     expect(r.tone).toBe('success');
     expect(r.message).toContain('iniciado');
   });
+
+  it('portal fechado (fim de semana) → warning, nunca "disparado"', () => {
+    const r = interpretarRespostaDisparo({ disparados: 0, portal_fechado: 1, falhas: 0 }, 7);
+    expect(r.tone).toBe('warning');
+    expect(r.message).toContain('fora do ar');
+  });
 });

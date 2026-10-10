@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { supabase } from "@/integrations/supabase/client";
 import { logAudit } from "@/lib/reposicao";
 import { calcApprovalSuggestion } from "@/lib/reposicao/approvalSuggestion";
 import type { PedidoItem } from "@/types/reposicao";
@@ -89,6 +88,51 @@ export function useCicloHoje({ user, reviewMode, filteredItems, setFilters }: Us
     queryClient.invalidateQueries({ queryKey: ["reposicao-pedidos"] });
   };
 
+  // Aprova E dispara cada id (trilha canônica). Usado pelo lote selecionado e pelo
+  // "Aprovar elegíveis": sem o cron das 10:00, aprovar sem disparar deixaria o pedido parado.
+  const aprovarEDispararIds = async (ids: number[], who: string, acao: string) => {
+    // APROVAR = DISPARAR NA HORA, por pedido SELECIONADO. Loop da trilha canônica
+    // (RPC + edge { empresa, pedido_id }) em vez de um invoke empresa-wide:
+    // o { empresa } sozinho varreria TODO aprovado_aguardando_disparo do ciclo —
+    // e não existe mais cron de corte (removido 2026-10-10). Aqui disparamos exatamente
+    // os ids dados. Sequencial: não martelar
+    // a edge/Browserless em paralelo. Best-effort por item: um erro não aborta os demais.
+    // Apura por `tipo`, NÃO por `r.ok`: aprovar=disparar significa que um pedido pode
+    // aprovar e o disparo falhar (best-effort) — `{ok:true, tipo:'warning'}` (edge não saiu;
+    // fica p/ o botão "Disparar") ou `{ok:true, tipo:'error'}` (edge retornou 200 com falha
+    // síncrona do Omie → o pedido fica `falha_envio` na lista). Contar isso como
+    // "disparado" no resumo enganaria o operador no money-path.
+    let disparados = 0;
+    let comAviso = 0;
+    let comErro = 0;
+    for (const id of ids) {
+      try {
+        const r = await aprovarEDisparar({ pedidoId: id, empresa: EMPRESA, usuario: who });
+        if (!r.ok || r.tipo === "error") comErro += 1;
+        else if (r.tipo === "warning") comAviso += 1; // aprovado; disparo não saiu (portal fechado ou edge falhou)
+        else disparados += 1; // success / info (disparado ou nada a disparar)
+      } catch {
+        comErro += 1;
+      }
+    }
+    const tudoOk = comErro === 0 && comAviso === 0;
+    await logAudit({
+      userId: user?.id ?? null,
+      action: acao,
+      result: tudoOk
+        ? "Sucesso"
+        : `Parcial: ${disparados} disparado(s), ${comAviso} aguardando, ${comErro} com falha`,
+      metadata: { ids, count: ids.length, disparados, comAviso, comErro },
+    });
+    if (tudoOk) {
+      toast.success(`${disparados} pedido(s) aprovado(s) e disparado(s)`);
+    } else {
+      const resumo = `${disparados} disparado(s), ${comAviso} aguardando, ${comErro} com falha — reveja`;
+      if (comErro > 0) toast.error(resumo);
+      else toast.warning(resumo);
+    }
+  };
+
   const runBatch = async (kind: "approve" | "reject") => {
     if (selected.size === 0 || busy) return;
     setBusy(true);
@@ -96,46 +140,7 @@ export function useCicloHoje({ user, reviewMode, filteredItems, setFilters }: Us
     const who = user?.email ?? user?.id ?? "cockpit";
 
     if (kind === "approve") {
-      // APROVAR = DISPARAR NA HORA, por pedido SELECIONADO. Loop da trilha canônica
-      // (RPC + edge { empresa, pedido_id }) em vez de um invoke empresa-wide:
-      // o { empresa } sozinho varreria TODO aprovado_aguardando_disparo do ciclo —
-      // inclusive os auto-aprovados que devem esperar o cron (runAutoApprove). Aqui
-      // disparamos exatamente o lote que o operador marcou. Sequencial: não martelar
-      // a edge/Browserless em paralelo. Best-effort por item: um erro não aborta os demais.
-      // Apura por `tipo`, NÃO por `r.ok`: aprovar=disparar significa que um pedido pode
-      // aprovar e o disparo falhar (best-effort) — `{ok:true, tipo:'warning'}` (edge não saiu;
-      // rede de segurança assume) ou `{ok:true, tipo:'error'}` (edge retornou 200 com falha
-      // síncrona do Omie → o pedido fica `falha_envio` na lista). Contar isso como
-      // "disparado" no resumo enganaria o operador no money-path.
-      let disparados = 0;
-      let comAviso = 0;
-      let comErro = 0;
-      for (const id of ids) {
-        try {
-          const r = await aprovarEDisparar({ pedidoId: id, empresa: EMPRESA, usuario: who });
-          if (!r.ok || r.tipo === "error") comErro += 1;
-          else if (r.tipo === "warning") comAviso += 1; // aprovado; disparo ficou p/ a rede de segurança
-          else disparados += 1; // success / info (disparado ou nada a disparar)
-        } catch {
-          comErro += 1;
-        }
-      }
-      const tudoOk = comErro === 0 && comAviso === 0;
-      await logAudit({
-        userId: user?.id ?? null,
-        action: "Aprovação em lote",
-        result: tudoOk
-          ? "Sucesso"
-          : `Parcial: ${disparados} disparado(s), ${comAviso} aguardando, ${comErro} com falha`,
-        metadata: { ids, count: ids.length, disparados, comAviso, comErro },
-      });
-      if (tudoOk) {
-        toast.success(`${disparados} pedido(s) aprovado(s) e disparado(s)`);
-      } else {
-        const resumo = `${disparados} disparado(s), ${comAviso} aguardando, ${comErro} com falha — reveja`;
-        if (comErro > 0) toast.error(resumo);
-        else toast.warning(resumo);
-      }
+      await aprovarEDispararIds(ids, who, "Aprovação em lote");
       setSelected(new Set());
       invalidate();
       setBusy(false);
@@ -180,36 +185,11 @@ export function useCicloHoje({ user, reviewMode, filteredItems, setFilters }: Us
     if (eligibleAutoItems.length === 0 || busy) return;
     setBusy(true);
     const ids = eligibleAutoItems.map((item) => item.id);
-    const nowIso = new Date().toISOString();
     const who = user?.email ?? user?.id ?? "cockpit";
     try {
-      const { error } = await supabase
-        .from("pedido_compra_sugerido")
-        .update({
-          aprovado_em: nowIso,
-          aprovado_por: who,
-          status: "aprovado_aguardando_disparo",
-        })
-        .in("id", ids);
-      if (error) throw error;
-      await logAudit({
-        userId: user?.id ?? null,
-        action: "Aprovação automática — critérios atingidos",
-        result: "Sucesso",
-        metadata: { ids, count: ids.length },
-      });
-      toast.success(`${ids.length} pedido(s) aprovado(s) automaticamente`);
+      await aprovarEDispararIds(ids, who, "Aprovação automática — critérios atingidos");
       setConfirmAuto(false);
       invalidate();
-    } catch (err) {
-      const msg = mensagemDeErro(err) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.';
-      await logAudit({
-        userId: user?.id ?? null,
-        action: "Aprovação automática — critérios atingidos",
-        result: `Erro: ${msg}`,
-        metadata: { ids },
-      });
-      toast.error("Falha ao aprovar elegíveis");
     } finally {
       setBusy(false);
     }
