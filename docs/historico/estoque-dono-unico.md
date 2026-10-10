@@ -496,3 +496,17 @@ O P1 pré-existente do adversarial do #2849: `sku_estoque_atual.estoque_pendente
 - **Premissa registrada:** PO MANUAL de WP no Omie é lido como embalagens. Se alguém digitar litros, conta 0,81×. O item do `PesquisarPedCompra` não traz unidade que distinga.
 
 **Prova** `db/test-pendente-po-unidade-omie.sh` — atravessa as camadas como a produção: PG17 (snapshot + a migration REAL do motor) dá a equivalência e o em trânsito; o código REAL da edge (deno `--no-remote`) calcula pendente e observação; o motor roda. T0 (dentro da janela) == T1 (fora) byte a byte; T2 (cru) compra 9 QT em vez de 7; W1 a RPC aceita (`true|0`); X1 controles sem cadastro/parcial/incoerente/fora da guarda gravam cru. Falsificação: 4 sabotagens vermelhas no assert certo, controle verde de 8, em `LC_ALL=C` e `pt_BR.UTF-8`. A 1ª rodada achou camada mascarada (`parcial_vale` sobreviveu: u NULL já quebra a coerência) → controle BIG98 (coerente, membro ≥ 1e9). Fiação do handler: teste-texto em `sync-estoque-orcamento-edge.test.ts`, falsificado.
+
+**Adversarial de código** (Codex gpt-6-astra, xhigh, 230s, 155k tokens): sem P0, e "para os 14 grupos atuais, com PO em embalagens, a conversão está correta". Consertados aqui:
+- **P2 — tolerância ≠ numeric:** com GL `u=3.240000001`, a edge convertia (6,48) e o motor caía no fallback (8). A coerência passou a ser EXATA em decimal (BigInt). Double com mais de 15 dígitos significativos (pode ter perdido dígito na ida pelo PostgREST) vira problema e recusa.
+- **P2 — leitura sem prova de completude:** a query da equivalência não paginava. Um membro com `u` NULL cortado pelo teto do PostgREST faria o grupo parecer inteiro. Agora usa `count: "exact"`, e linhas ≠ total vira recusa.
+- **P2 — o mutante `const conv = new Map()` sobrevivia ao teste-texto.** Agora o assert exige a ligação exata, e o mutante foi falsificado (vermelho). A falsificação PG17 trocou `parcial_vale`, que passou a CRASHAR com o BigInt e por isso não conta como dente, por `sem_guarda_1e9`, um mutante semântico.
+
+Resíduos, não consertados:
+- **P1 condicionado — PO MANUAL de WP digitado em LITROS** seria lido como embalagem (QT ×0,81 sub, GL ×3,24 super). O `cUnidade` do item existe no contrato do `PesquisarPedCompra`, mas o disparo não o envia, e não se sabe como o Omie o preenche. A testemunha não pega isso: pendente e contribuição erram juntos.
+- **P2 — corrida de cadastro:** a edge lê a equivalência no início do run e o motor lê no ciclo dele. É inerente; o cadastro WP muda raramente.
+- **P2 — o laço do handler só tem teste-texto.** É condição anterior desta edge: a varredura chama o Omie direto.
+- **P2 (anterior ao PR) — a "posição do impacto" de `atualizar_parametros_numericos_skus`** mistura unidades. Afeta só o log.
+- **P3 — a recusa só acontece depois da varredura física.** Custa tempo de execução, não precisão.
+
+Sem achado: membro inativo, `grupo_id` nulo e SKU em 2 grupos (o DDL impede), empresa, grupo de 1 membro, fallback 1, recusa do run inteiro e arredondamento a 6 casas (1.000 contribuições fracionárias reproduzidas).
