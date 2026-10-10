@@ -13,14 +13,15 @@
 -- Omie mandar esperar, registra o prazo (`omie_cota_registrar_fault`) e TODOS respeitam.
 --
 -- O QUE NÃO É: limite de taxa. Só serializa e propaga o "aguarde" do próprio Omie. A edge que
--- não consegue falar com o banco segue chamando o Omie (fail-open, como é hoje) — a trava reduz
--- colisão, não é condição de correção de dado.
+-- não consegue falar com a trava NÃO chama o Omie (fail-closed, revisão Codex): adia, como já
+-- adia um rate-limit. Só `ListarPedidos` (leitura) é coordenado — nenhum método de escrita.
 --
 -- SEGURANÇA: tabela com RLS e sem policy; tabela e funções fechadas para PUBLIC, anon e
 -- authenticated. Só o service_role (as edges) usa. SECURITY INVOKER: quem chama precisa do grant.
 --
 -- APLICAR: bun run db:aplicar supabase/migrations/<este arquivo> — o executor fornece a transação.
--- Idempotente. ORDEM DO DEPLOY: esta migration ANTES das edges (edge sem a RPC cai no fail-open).
+-- Idempotente. ORDEM DO DEPLOY: esta migration ANTES das edges — edge nova sem a RPC NÃO lista
+-- pedidos (fail-closed).
 -- ============================================================================================
 
 CREATE TABLE IF NOT EXISTS public.omie_cota_metodo (
@@ -201,6 +202,15 @@ DO $post$
 DECLARE
   v_fn text;
 BEGIN
+  -- As funções são INVOKER sobre tabela com RLS e SEM policy: só funcionam porque o service_role
+  -- tem BYPASSRLS (medido em prod 2026-10-10). Sem isso, toda chamada da trava falharia e as edges
+  -- (fail-closed) parariam de listar pedidos — melhor abortar aqui.
+  IF NOT coalesce((SELECT rolbypassrls FROM pg_roles WHERE rolname = 'service_role'), false) THEN
+    RAISE EXCEPTION 'POSTCONDICAO: service_role sem BYPASSRLS — a trava não funcionaria';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'omie_cota_metodo') THEN
+    RAISE EXCEPTION 'POSTCONDICAO: omie_cota_metodo ganhou policy — o desenho é RLS sem policy (só service_role)';
+  END IF;
   IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = 'public.omie_cota_metodo'::regclass) THEN
     RAISE EXCEPTION 'POSTCONDICAO: omie_cota_metodo sem RLS';
   END IF;

@@ -96,6 +96,22 @@ chk_bloqueio_vence_lease() {
             SELECT motivo FROM public.omie_cota_tentar('oben','ListarPedidos','token-dono-xx',60);" | tail -1
 }
 
+# Lease de X vence ENQUANTO B espera o lock de A: com clock_timestamp() depois do lock, B vê o lease
+# vencido → 'livre'; com now() (congelado no início da transação de B) ainda o veria vivo → 'ocupado'.
+chk_relogio_pos_lock() {
+  local db="$1"
+  Pd "$db" -q -c "DELETE FROM public.omie_cota_metodo;
+                  INSERT INTO public.omie_cota_metodo (conta, metodo, ocupado_ate, ocupado_por)
+                  VALUES ('oben','ListarPedidos', clock_timestamp() + interval '1 second', 'token-de-X-velho');" >/dev/null
+  ( Pd "$db" -tA -q -c "BEGIN; SELECT 1 FROM public.omie_cota_metodo WHERE conta='oben' AND metodo='ListarPedidos' FOR UPDATE; SELECT pg_sleep(2); COMMIT;" >/dev/null 2>&1 ) &
+  local pid=$!
+  sleep 0.3
+  local b
+  b=$(Pq "$db" "SELECT motivo FROM public.omie_cota_tentar('oben','ListarPedidos','token-sessao-B',60);")
+  wait "$pid"
+  echo "$b"
+}
+
 echo "═══ PROVA — migration real ═══"
 montar real "$MIG"
 
@@ -155,8 +171,29 @@ r=$(Pq real "DO \$t\$ BEGIN SET LOCAL ROLE authenticated; PERFORM public.omie_co
 eq "A11b authenticated chamando tentar → 42501" "$r" "NEGADO_42501"
 eq "A11c service_role executa" "$(Pq real "SET ROLE service_role; SELECT motivo FROM public.omie_cota_tentar('colacor','ConsultarPedido','token-servico-1',60);")" "livre"
 
+# A11d/e — as outras duas RPCs também executam como service_role
+eq "A11d service_role registra fault" "$(Pq real "SET ROLE service_role; SELECT (public.omie_cota_registrar_fault('colacor','ConsultarPedido',5,'x') > clock_timestamp())::text;")" "true"
+eq "A11e service_role libera" "$(Pq real "SET ROLE service_role; SELECT public.omie_cota_liberar('colacor','ConsultarPedido','token-servico-1')::text;")" "true"
+
+# A13 — relógio depois do lock: lease que vence durante a espera não bloqueia quem esperou
+eq "A13 lease vencido durante a espera pelo lock → livre" "$(chk_relogio_pos_lock real)" "livre"
+
+# A14 — liberação TARDIA do dono antigo não solta o lease do novo dono
+Pq real "DELETE FROM public.omie_cota_metodo; SELECT 1 FROM public.omie_cota_tentar('oben','ListarPedidos','token-antigo-A',1);" >/dev/null
+sleep 1.3
+Pq real "SELECT 1 FROM public.omie_cota_tentar('oben','ListarPedidos','token-novo-B',60);" >/dev/null
+eq "A14a dono antigo libera tarde → não libera" "$(Pq real "SELECT public.omie_cota_liberar('oben','ListarPedidos','token-antigo-A')::text;")" "false"
+eq "A14b o novo dono segue com a vez" "$(Pq real "SELECT motivo FROM public.omie_cota_tentar('oben','ListarPedidos','token-terceiro-C',60);")" "ocupado"
+
+# A15 — CHECK: lease sem dono (ou dono sem lease) é rejeitado com 23514
+r=$(Pq real "DO \$t\$ BEGIN INSERT INTO public.omie_cota_metodo (conta, metodo, ocupado_ate) VALUES ('oben','XyzMetodo', now());
+             RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='SEM_ERRO_ESPERADO';
+             EXCEPTION WHEN check_violation THEN NULL; WHEN OTHERS THEN RAISE; END \$t\$; SELECT 'CHECK_23514';" 2>&1 || true)
+eq "A15 lease sem dono → 23514" "$r" "CHECK_23514"
+
 # A12 — RLS ligada e sem policy
-eq "A12 RLS ligada" "$(Pq real "SELECT relrowsecurity FROM pg_class WHERE oid='public.omie_cota_metodo'::regclass;")" "t"
+eq "A12a RLS ligada" "$(Pq real "SELECT relrowsecurity FROM pg_class WHERE oid='public.omie_cota_metodo'::regclass;")" "t"
+eq "A12b nenhuma policy" "$(Pq real "SELECT count(*) FROM pg_policies WHERE schemaname='public' AND tablename='omie_cota_metodo';")" "0"
 
 echo
 echo "═══ FALSIFICAÇÃO — controle verde pelo MESMO caminho, depois cada sabotagem VERMELHA ═══"
@@ -164,9 +201,9 @@ echo "═══ FALSIFICAÇÃO — controle verde pelo MESMO caminho, depois cad
 cp "$MIG" "$TMP/controle.sql"
 montar controle "$TMP/controle.sql"
 CTRL_CONC=$(chk_concorrencia controle); CTRL_GRT=$(chk_greatest controle)
-CTRL_ACL=$(chk_acl controle); CTRL_BLQ=$(chk_bloqueio_vence_lease controle)
-if [ "$CTRL_CONC" != "A=t B=false|ocupado" ] || [ "$CTRL_GRT" != "true" ] || [ "$CTRL_ACL" != "false|false" ] || [ "$CTRL_BLQ" != "bloqueado" ]; then
-  bad "CONTROLE não ficou verde ($CTRL_CONC / $CTRL_GRT / $CTRL_ACL / $CTRL_BLQ) — falsificação abortada antes do 1º sed"
+CTRL_ACL=$(chk_acl controle); CTRL_BLQ=$(chk_bloqueio_vence_lease controle); CTRL_REL=$(chk_relogio_pos_lock controle)
+if [ "$CTRL_CONC" != "A=t B=false|ocupado" ] || [ "$CTRL_GRT" != "true" ] || [ "$CTRL_ACL" != "false|false" ] || [ "$CTRL_BLQ" != "bloqueado" ] || [ "$CTRL_REL" != "livre" ]; then
+  bad "CONTROLE não ficou verde ($CTRL_CONC / $CTRL_GRT / $CTRL_ACL / $CTRL_BLQ / $CTRL_REL) — falsificação abortada antes do 1º sed"
 else
   ok "controle verde pelo caminho da sabotagem"
 
@@ -216,21 +253,42 @@ else
     if [ "$v" != "bloqueado" ]; then ok "F4 dono fura o bloqueio → A6 vermelho ($v)"; else bad "F4 dono fura e A6 seguiu verde"; fi
   fi
 
-  # F5 — a postcondição morde: migration com GRANT a anon depois do REVOKE tem de ABORTAR
+  # F6 — now() no lugar de clock_timestamp() após o lock: quem esperou vê um lease já vencido como vivo
+  if sabotar f6_now 's/^  v_agora := clock_timestamp();$/  v_agora := now();/'; then
+    v=$(chk_relogio_pos_lock f6_now)
+    if [ "$v" != "livre" ]; then ok "F6 now() após o lock → A13 vermelho ($v)"; else bad "F6 now() e A13 seguiu verde"; fi
+  fi
+
+  # F5 — a postcondição morde E desfaz tudo: aplicada numa transação única (como o db:aplicar),
+  # migration com GRANT a anon tem de ABORTAR e não deixar NADA para trás (nem a tabela).
   sed 's/^GRANT EXECUTE ON FUNCTION public.omie_cota_liberar(text, text, text) TO service_role;/&\nGRANT EXECUTE ON FUNCTION public.omie_cota_liberar(text, text, text) TO anon;/' "$MIG" > "$TMP/f5.sql"
   if cmp -s "$MIG" "$TMP/f5.sql"; then
     bad "F5: o sed não mudou nada"
   else
     "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres f5
     Pd f5 -q -f "$REPO_ROOT/db/stubs-supabase.sql" >/dev/null
-    Pd f5 -q -c "GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;" >/dev/null
-    if Pd f5 -q -f "$TMP/f5.sql" >"$TMP/f5.log" 2>&1; then
+    Pd f5 -q -c "GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role; ALTER ROLE service_role BYPASSRLS;" >/dev/null
+    if Pd f5 -1 -q -f "$TMP/f5.sql" >"$TMP/f5.log" 2>&1; then
       bad "F5 GRANT a anon e a migration NÃO abortou — postcondição sem dente"
-    elif grep -q "POSTCONDICAO: public.omie_cota_liberar" "$TMP/f5.log"; then
-      ok "F5 GRANT a anon → postcondição abortou a migration"
-    else
+    elif ! grep -q "POSTCONDICAO: public.omie_cota_liberar" "$TMP/f5.log"; then
       bad "F5 abortou por OUTRO motivo: $(head -c 300 "$TMP/f5.log")"
+    else
+      ok "F5 GRANT a anon → postcondição abortou a migration"
+      eq "F5b rollback integral: nem a tabela nem as funções ficaram" \
+        "$(Pq f5 "SELECT (to_regclass('public.omie_cota_metodo') IS NULL AND to_regprocedure('public.omie_cota_tentar(text,text,text,integer)') IS NULL)::text;")" "true"
     fi
+  fi
+
+  # F7 — premissa do BYPASSRLS: sem ele a postcondição aborta (a trava não funcionaria)
+  "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres f7
+  Pd f7 -q -f "$REPO_ROOT/db/stubs-supabase.sql" >/dev/null
+  Pd f7 -q -c "GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role; ALTER ROLE service_role NOBYPASSRLS;" >/dev/null
+  if Pd f7 -1 -q -f "$MIG" >"$TMP/f7.log" 2>&1; then
+    bad "F7 service_role sem BYPASSRLS e a migration passou"
+  elif grep -q "POSTCONDICAO: service_role sem BYPASSRLS" "$TMP/f7.log"; then
+    ok "F7 sem BYPASSRLS → postcondição abortou"
+  else
+    bad "F7 abortou por OUTRO motivo: $(head -c 300 "$TMP/f7.log")"
   fi
 fi
 
