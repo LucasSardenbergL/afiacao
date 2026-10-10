@@ -82,7 +82,7 @@ let cacheContagem: Map<string, number> | null = null;
 const contagemDaArvore = () => (cacheContagem ??= contarPorArquivo(hooksDaArvore()));
 
 // Fronteira medida em 2026-10-09 (16 sítios / 15 arquivos), encolhida pela erradicação dos
-// money-path: o domínio de reposição saiu em 2026-10-10 (5 sítios / 5 arquivos). Resta 11.
+// money-path: reposição (5 sítios) e preço/pedido (1) saíram em 2026-10-10. Restam 10.
 const DIVIDA: ReadonlyMap<string, number> = new Map([
   ['src/components/RequireCaca.tsx', 1],
   ['src/components/dashboard/CommercialDashboard.tsx', 1],
@@ -93,7 +93,6 @@ const DIVIDA: ReadonlyMap<string, number> = new Map([
   ['src/pages/FinanceiroSync.tsx', 1],
   ['src/pages/Index.tsx', 1],
   ['src/pages/SavingsDashboard.tsx', 1],
-  ['src/pages/UnifiedOrder.tsx', 1],
 ]);
 
 /**
@@ -115,6 +114,7 @@ const QUITADOS: ReadonlyArray<[string, string]> = [
   // (só propriedade NOMEADA entra no mapa). O wrapper foi aposentado e o consumo é direto,
   // então o sítio nasce VIGIADO — e esta linha dá o vermelho nomeado se o fix for desfeito.
   ['src/pages/AdminReposicaoCockpit.tsx', 'reposição (cegueira do spread)'],
+  ['src/pages/UnifiedOrder.tsx', 'preço/pedido'],
 ];
 
 // ── Controles de calibração ───────────────────────────────────────────────────────────

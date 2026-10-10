@@ -35,6 +35,8 @@ import { toast } from 'sonner';
 import { ProductItemForm } from '@/components/unified-order/ProductItemForm';
 import { useCurrentSpecsMap } from '@/hooks/useProductSpecLink';
 import { useCatalisadorLinksMap } from '@/hooks/useCatalisadorLink';
+import { naoConsegui } from '@/lib/leitura/estado-de-leitura';
+import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 import { keyDeSku } from '@/lib/knowledge-base/spec-link';
 import { montarSelosVendaAssistida } from '@/lib/venda-assistida/selos';
 import type { ProdutoLinhaOmie } from '@/lib/venda-assistida/montar-embalagens';
@@ -68,7 +70,11 @@ const UnifiedOrder = () => {
   // Fichas técnicas (boletim↔SKU): mapa pequeno (só vínculos confirmados+aprovados), 1 query.
   const { byKey: fichasByKey } = useCurrentSpecsMap();
   // Casamento do catalisador (Fatia 3): mapa global keyDeCatalisador → SKUs (destrava preço catalisado).
-  const { byKey: catalisadorByKey } = useCatalisadorLinksMap();
+  // `estado` é lido de propósito: sob falha (ou offline) o mapa sai VAZIO, o selo degrada a
+  // "sob consulta" e o vendedor não distingue "este produto não tem casamento confirmado" de
+  // "não consegui ler os casamentos" — e as duas pedem ações OPOSTAS (pedir o casamento ao
+  // master × esperar/recarregar). O valor vazio é o fallback certo; o silêncio não era.
+  const { byKey: catalisadorByKey, estado: estadoCatalisador } = useCatalisadorLinksMap();
   // Venda assistida: selo "preparado" por produto. Resolve estado+preço de cada boletim reusando o
   // catálogo JÁ carregado (zero query nova) e espalha por SKU. Vendedor-only.
   const selosByKey = useMemo(() => {
@@ -301,6 +307,16 @@ const UnifiedOrder = () => {
       </div>
 
       <OrderStepper step={h.currentStep} isCustomerMode={isCustomerMode} />
+
+      {/* Só staff vê o selo da venda assistida (`canSeeVendaAssistida={h.isStaff}`), então só
+          staff vê o aviso — alarme para quem não vê o sintoma é ruído. */}
+      {h.isStaff && naoConsegui(estadoCatalisador) && (
+        <AvisoLeituraFalhou
+          oque="os casamentos de catalisador — produtos com catalisador aparecem como “sob consulta” mesmo tendo preço"
+          estado={estadoCatalisador}
+          testId="aviso-catalisador"
+        />
+      )}
 
       {offlineSubmit.showReconnectCta && (
         <div className="rounded-md border border-status-info-bold/30 bg-status-info-bg px-4 py-3 mb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
