@@ -20,6 +20,7 @@ import {
 } from './types';
 import { invalidPricedOrderItemIndices, invalidOrderPriceMessage } from './priceGuard';
 import { totalLinhaOuAusente } from '@/lib/format';
+import { mensagemDoErroEdge } from '@/lib/invoke-function';
 import {
   lerRespostaFormas,
   condicoesDoClienteIndisponiveis,
@@ -382,7 +383,7 @@ export function useSalesOrderEdit() {
           },
         });
         if (error) {
-          toast.error('Erro ao sincronizar com Omie: ' + (error.message || 'Erro desconhecido'));
+          toast.error('Erro ao sincronizar com Omie: ' + ((await mensagemDoErroEdge(error)) || error.message || 'Erro desconhecido'));
           setSaving(false);
           return;
         }

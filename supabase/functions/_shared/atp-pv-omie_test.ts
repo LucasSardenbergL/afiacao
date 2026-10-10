@@ -51,19 +51,31 @@ Deno.test("comparar: qualquer item ilegível torna a leitura inteira ilegível",
 });
 
 Deno.test("aviso: divergente e ilegível LANÇAM com o PID e 'não reenvie'", () => {
-  const d = avisoPvReconciliado("divergente", { ok: true }, 9301);
+  const d = avisoPvReconciliado("divergente", { ok: true, reserva_ajustada: true }, 9301);
   assertMarca(d, "tentativa anterior", "divergente");
   assertMarca(d, "PV 9301", "divergente cita o PID");
   assertMarca(d, "não reenvie", "divergente proíbe reenvio");
+  assertMarca(d, "passou a ser a do pedido do Omie", "divergente com reserva ajustada diz isso");
   assertMarca(avisoPvReconciliado("ilegivel", { ok: true }, 9303), "não deu para conferir", "ilegível");
 });
 
-Deno.test("aviso: ajuste de reserva que falhou no banco LANÇA mesmo com PV igual", () => {
-  assertMarca(avisoPvReconciliado("igual", { ok: true, ajuste_falhou: "23505: duplicate key" }, 9305), "não pôde ser conferida", "falha");
+Deno.test("aviso: backorder divergente (sem reserva) não afirma reserva ajustada", () => {
+  const d = avisoPvReconciliado("divergente", { ok: true, reserva_ajustada: false, ajuste_falhou: null }, 9310);
+  assertMarca(d, "tentativa anterior", "divergente");
+  if (d !== null && d.includes("reserva de estoque passou")) throw new Error(`afirmou reserva inexistente: ${d}`);
 });
 
-Deno.test("aviso: PV igual e reserva ok segue em silêncio", () => {
+Deno.test("aviso: falha do ajuste NUNCA é escondida pela divergência", () => {
+  const d = avisoPvReconciliado("divergente", { ok: true, ajuste_falhou: "23505: duplicate key" }, 9311);
+  assertMarca(d, "tentativa anterior", "divergente");
+  assertMarca(d, "NÃO pôde ser conferida", "falha visível");
+  if (d !== null && d.includes("passou a ser a do pedido")) throw new Error(`afirmou ajuste que falhou: ${d}`);
+  assertMarca(avisoPvReconciliado("igual", { ok: true, ajuste_falhou: "40P01: deadlock" }, 9305), "NÃO pôde ser conferida", "falha com PV igual");
+});
+
+Deno.test("aviso: PV igual segue em silêncio (com ou sem ajuste de reserva)", () => {
   assertEquals(avisoPvReconciliado("igual", { ok: true, reserva_ajustada: false, ajuste_falhou: null }, 9302), null, "igual");
+  assertEquals(avisoPvReconciliado("igual", { ok: true, reserva_ajustada: true, ajuste_falhou: null }, 9302), null, "igual ajustado");
   assertEquals(avisoPvReconciliado("igual", null, 9302), null, "banco sem a 3.3");
 });
 
@@ -74,6 +86,8 @@ Deno.test("edição: bloqueada só quando o PV reconciliado diverge dos itens gr
   assertEquals(edicaoBloqueadaPorPvDivergente({ reconciled: true, consulta: det([1, 2]) }, itens), false, "igual");
   assertEquals(edicaoBloqueadaPorPvDivergente({ codigo_pedido: 1 }, itens), false, "envio normal");
   assertEquals(edicaoBloqueadaPorPvDivergente(null, itens), false, "sem resposta");
+  const comS = { reconciled: true, consulta: { pedido_venda_produto: { det: [{ produto: { codigo_produto: 1, quantidade: 2 }, inf_adic: { nao_movimentar_estoque: "S" } }] } } };
+  assertEquals(edicaoBloqueadaPorPvDivergente(comS, itens), true, "PV com item que não movimenta estoque");
 });
 
 Deno.test("consulta: null (EOF 'Não existem registros') = ausente", () => {

@@ -261,7 +261,9 @@ falsifica MIG31 F20 "reconciliacao volta a varrer so reserva vinculada" \
 
 # F11 — a RPC grava o write-back mas NÃO carimba a reserva (o estado intermediário
 #       "PV criado + reserva por transicionar" que esta fase elimina)
-falsifica MIG31 F11 "RPC nao carimba a reserva" \
+# F11/F14-F18 miram o atp_confirmar_pv: desde a 3.3 o corpo ENTREGUE é o dela
+# (sabotar o da 3.1 faz a PRE da 3.3 abortar no apply — inválida, não medida).
+falsifica MIG33 F11 "RPC nao carimba a reserva" \
   "   WHERE r.sales_order_id = p_sales_order_id
      AND r.status = 'ativa';" \
   "   WHERE r.sales_order_id = p_sales_order_id
@@ -289,7 +291,7 @@ falsifica MIG31 F13 "write-once removido (insert)" \
 
 # F14 — o write-back deixa de exigir 1 linha: PV órfão com "sucesso", e a reserva
 #       carimbada com uma conta que não é a do pedido
-falsifica MIG31 F14 "write-back aceita 0 linhas" \
+falsifica MIG33 F14 "write-back aceita 0 linhas" \
   '  IF v_n_so <> 1 THEN' \
   '  IF false THEN' \
   '  IF false THEN' \
@@ -297,25 +299,23 @@ falsifica MIG31 F14 "write-back aceita 0 linhas" \
   "E8 nada gravado: a reserva ficou SEM par"
 
 # F15 — sem o lock do SKU (a confirmação pode AUMENTAR o reservado)
-falsifica MIG31 F15 "RPC sem lock de SKU" \
-  '    ORDER BY r.omie_codigo_produto, r.pool
+falsifica MIG33 F15 "RPC sem lock de SKU" \
+  '     ORDER BY x.sku, x.pool
   LOOP' \
-  '    ORDER BY r.omie_codigo_produto, r.pool LIMIT 0
+  '     ORDER BY x.sku, x.pool LIMIT 0
   LOOP' \
-  'ORDER BY r.omie_codigo_produto, r.pool LIMIT 0' \
+  'ORDER BY x.sku, x.pool LIMIT 0' \
   "E19 a RPC NAO esperou o lock do SKU"
 
 # F16 — sem o lock do checkout
-falsifica MIG31 F16 "RPC sem lock de checkout" \
-  '    ORDER BY 1
-  LOOP' \
-  '    ORDER BY 1 LIMIT 0
-  LOOP' \
-  'ORDER BY 1 LIMIT 0' \
+falsifica MIG33 F16 "RPC sem lock de checkout" \
+  "FOREACH v_ck IN ARRAY COALESCE(v_cks, '{}'::uuid[])" \
+  "FOREACH v_ck IN ARRAY '{}'::uuid[]" \
+  "FOREACH v_ck IN ARRAY '{}'::uuid[]" \
   "E19 a RPC NAO esperou o lock do checkout"
 
 # F17 — sem o gate próprio (só o catálogo seguraria — e um GRANT acidental abriria)
-falsifica MIG31 F17 "RPC sem gate proprio de service_role" \
+falsifica MIG33 F17 "RPC sem gate proprio de service_role" \
   "  IF auth.role() IS DISTINCT FROM 'service_role' THEN" \
   '  IF false THEN' \
   '  IF false THEN' \
@@ -325,7 +325,7 @@ falsifica MIG31 F17 "RPC sem gate proprio de service_role" \
 #       clique no painel). Acrescentado APÓS a PÓS de propósito: dentro do arquivo a
 #       PÓS abortaria o apply (é a P1) — aqui se prova a OUTRA camada, o assert de
 #       CATÁLOGO, sozinha (uma camada por vez).
-falsifica MIG31 F18 "authenticated ganha EXECUTE na RPC (depois da migration)" \
+falsifica MIG33 F18 "authenticated ganha EXECUTE na RPC (depois da migration)" \
   '@@FIM@@' \
   'GRANT EXECUTE ON FUNCTION public.atp_confirmar_pv(uuid, text, bigint, text, jsonb, jsonb) TO authenticated;' \
   'GRANT EXECUTE ON FUNCTION public.atp_confirmar_pv(uuid, text, bigint, text, jsonb, jsonb) TO authenticated;' \

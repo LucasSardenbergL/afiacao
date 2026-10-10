@@ -54,27 +54,35 @@ export function compararCarrinhoPv(enviados: ItemEnviado[], consulta: unknown): 
 /** Mensagem a LANÇAR depois de um write-back reconciliado, ou `null` quando o PV é o carrinho e a
  *  reserva acompanhou. Lança (não `success` com aviso): caller antigo ignora campo desconhecido e o
  *  vendedor acharia que o carrinho ATUAL foi ao Omie. O vínculo já está gravado, então o reenvio é
- *  recusado pelo guard de reenvio — a mensagem manda conferir, não reenviar. */
+ *  recusado pelo guard de reenvio — a mensagem manda conferir, não reenviar.
+ *  Duas frases independentes (Codex 3.3, 2ª rodada): o que houve com o PEDIDO (PV × carrinho) e o
+ *  que houve com a RESERVA (ajustada, não pôde ser conferida, ou nada a dizer) — uma não esconde a outra. */
 export function avisoPvReconciliado(
   comparacao: "igual" | "divergente" | "ilegivel",
   wb: unknown,
   omiePedidoId: number,
 ): string | null {
-  const r = (wb ?? {}) as { ajuste_falhou?: unknown };
-  if (comparacao === "divergente") {
-    return `O pedido já existia no Omie (PV ${omiePedidoId}) com os itens de uma tentativa anterior, ` +
-      `diferentes do carrinho atual. O pedido foi vinculado e a reserva de estoque passou a ser a do ` +
-      `pedido do Omie. Corrija os itens direto no Omie — não reenvie.`;
-  }
-  if (comparacao === "ilegivel") {
-    return `O pedido já existia no Omie (PV ${omiePedidoId}), mas não deu para conferir os itens dele. ` +
-      `O pedido foi vinculado; confira no Omie se os itens batem com o carrinho — não reenvie.`;
-  }
-  if (typeof r.ajuste_falhou === "string" && r.ajuste_falhou !== "") {
-    return `O pedido já existia no Omie (PV ${omiePedidoId}) e foi vinculado, mas a reserva de estoque ` +
-      `não pôde ser conferida (${r.ajuste_falhou}). Avise o responsável pelo estoque — não reenvie.`;
-  }
-  return null;
+  const r = (wb ?? {}) as { ajuste_falhou?: unknown; reserva_ajustada?: unknown };
+  const falhou = typeof r.ajuste_falhou === "string" && r.ajuste_falhou !== "";
+  const pedido = comparacao === "divergente"
+    ? `O pedido já existia no Omie (PV ${omiePedidoId}) com os itens de uma tentativa anterior, diferentes do carrinho atual, e foi vinculado.`
+    : comparacao === "ilegivel"
+    ? `O pedido já existia no Omie (PV ${omiePedidoId}) e foi vinculado, mas não deu para conferir os itens dele.`
+    : null;
+  const reserva = falhou
+    ? `A reserva de estoque NÃO pôde ser conferida (${r.ajuste_falhou}) — avise o responsável pelo estoque.`
+    : r.reserva_ajustada === true
+    ? `A reserva de estoque passou a ser a do pedido do Omie.`
+    : null;
+  if (pedido === null && reserva === null) return null;
+  if (pedido === null && !falhou) return null; // PV igual e reserva ajustada a ele: nada a avisar
+  const instrucao = comparacao === "divergente"
+    ? "Corrija os itens direto no Omie — não reenvie."
+    : comparacao === "ilegivel"
+    ? "Confira no Omie se os itens batem com o carrinho — não reenvie."
+    : "Não reenvie.";
+  return [pedido ?? `O pedido já existia no Omie (PV ${omiePedidoId}) e foi vinculado.`, reserva, instrucao]
+    .filter(Boolean).join(" ");
 }
 
 /** A edição (`alterar_pedido`) não pode partir do carrinho quando o PV vinculado é OUTRO pedido: o
@@ -86,7 +94,14 @@ export function edicaoBloqueadaPorPvDivergente(
 ): boolean {
   const r = omieResponse as { reconciled?: unknown; consulta?: unknown } | null;
   if (r?.reconciled !== true) return false;
-  return compararCarrinhoPv(itensLocais, r.consulta) !== "igual";
+  if (compararCarrinhoPv(itensLocais, r.consulta) !== "igual") return true;
+  // Item que o Omie não baixa do estoque (nao_movimentar_estoque = 'S') teve a reserva liberada na
+  // reconciliação; a edição recria os itens SEM esse atributo e voltaria a comprometer estoque sem
+  // reserva (Codex 3.3, 2ª rodada). Esse pedido também se corrige no Omie.
+  const c = r.consulta as { pedido_venda_produto?: { det?: unknown }; det?: unknown } | null;
+  const det = c?.pedido_venda_produto?.det ?? c?.det;
+  return Array.isArray(det) &&
+    det.some((e) => (e as { inf_adic?: { nao_movimentar_estoque?: unknown } })?.inf_adic?.nao_movimentar_estoque === "S");
 }
 
 /** Resultado da consulta do PV pela chave de integração antes de excluir. */

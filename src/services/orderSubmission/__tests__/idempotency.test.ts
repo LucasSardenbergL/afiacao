@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { decideSalesOrderAction, ensureSalesOrderRow } from '../idempotency';
+import { decideSalesOrderAction, ensureSalesOrderRow, pvReconciliadoConfere } from '../idempotency';
 import type { SubmitClient } from '../types';
 
 describe('decideSalesOrderAction', () => {
@@ -47,7 +47,7 @@ describe('ensureSalesOrderRow', () => {
   });
   it('existe com omie_pedido_id → skip (alreadySent=true), não muta', async () => {
     const { fake, calls } = makeFakeSupabase({ existing: { id: 'Y', omie_pedido_id: 99 } });
-    expect(await ensureSalesOrderRow(fake, baseArgs)).toEqual({ id: 'Y', alreadySent: true });
+    expect(await ensureSalesOrderRow(fake, baseArgs)).toEqual({ id: 'Y', alreadySent: true, pvDivergente: false });
     expect(calls.inserted).toBe(false); expect(calls.updated).toBe(false);
   });
   it('existe sem omie_pedido_id → reusa (update, alreadySent=false)', async () => {
@@ -83,5 +83,35 @@ describe('ensureSalesOrderRow', () => {
       update() { return { eq: async () => ({ error: null }) }; },
     } as unknown as SubmitClient;
     await expect(ensureSalesOrderRow(fake, baseArgs)).rejects.toThrow(/linha conflitante sumiu/);
+  });
+});
+
+describe('pvReconciliadoConfere (ATP 3.3 — reenvio de PV vinculado por duplicidade)', () => {
+  const rec = (det: unknown) => ({ reconciled: true, consulta: { pedido_venda_produto: { det } } });
+  const linha = (c: unknown, q: unknown) => ({ produto: { codigo_produto: c, quantidade: q } });
+
+  it('envio normal (sem reconciled) confere', () => {
+    expect(pvReconciliadoConfere({ codigo_pedido: 1 }, [{ omie_codigo_produto: 1, quantidade: 9 }])).toBe(true);
+    expect(pvReconciliadoConfere(null, [])).toBe(true);
+  });
+  it('mesmo SKU/quantidade (somando linhas) confere', () => {
+    expect(pvReconciliadoConfere(rec([linha(1, 2), linha(1, 3)]), [{ omie_codigo_produto: 1, quantidade: 5 }])).toBe(true);
+  });
+  it('quantidade, SKU a mais ou a menos NÃO confere', () => {
+    expect(pvReconciliadoConfere(rec([linha(1, 3)]), [{ omie_codigo_produto: 1, quantidade: 2 }])).toBe(false);
+    expect(pvReconciliadoConfere(rec([linha(1, 2), linha(2, 1)]), [{ omie_codigo_produto: 1, quantidade: 2 }])).toBe(false);
+    expect(pvReconciliadoConfere(rec([linha(2, 2)]), [{ omie_codigo_produto: 1, quantidade: 2 }])).toBe(false);
+  });
+  it('PV ilegível NÃO confere (nunca afirma que bate)', () => {
+    expect(pvReconciliadoConfere(rec([linha(1, '2')]), [{ omie_codigo_produto: 1, quantidade: 2 }])).toBe(false);
+    expect(pvReconciliadoConfere(rec({}), [{ omie_codigo_produto: 1, quantidade: 2 }])).toBe(false);
+  });
+  it('ensureSalesOrderRow: linha já no Omie com PV divergente devolve pvDivergente', async () => {
+    const sb = makeFakeSupabase({ existing: { id: 'X', omie_pedido_id: 9, omie_response: rec([linha(1, 3)]) } as never });
+    const r = await ensureSalesOrderRow(sb.fake, {
+      checkoutId: 'c', account: 'oben', origem: null, atendimentoId: null,
+      fields: { customer_user_id: 'u', created_by: 'u', items: [{ omie_codigo_produto: 1, quantidade: 2 }], subtotal: 1, total: 1, notes: null, customer_document: null, customer_address: null, customer_phone: null, ready_by_date: null },
+    });
+    expect(r).toEqual({ id: 'X', alreadySent: true, pvDivergente: true });
   });
 });

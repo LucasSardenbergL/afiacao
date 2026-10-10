@@ -19,6 +19,43 @@ export function decideSalesOrderAction(
   return 'reuse';
 }
 
+/**
+ * O PV vinculado por DUPLICIDADE confere com o carrinho? (ATP 3.3, espelho de
+ * `compararCarrinhoPv` em supabase/functions/_shared/atp-pv-omie.ts.) Quando o reenvio é
+ * reconciliado, a edge vincula o PV que JÁ existia — com os itens de uma tentativa anterior — e
+ * lança avisando. No clique SEGUINTE a linha já tem PID e este módulo PULA a edge: sem esta
+ * conferência o carrinho atual seria dado como enviado (Codex 3.3, 2ª rodada).
+ * `true` = não foi reconciliado, ou foi e o PV tem os mesmos SKU/quantidade.
+ */
+export function pvReconciliadoConfere(omieResponse: unknown, itens: unknown): boolean {
+  const r = omieResponse as { reconciled?: unknown; consulta?: { pedido_venda_produto?: { det?: unknown }; det?: unknown } } | null;
+  if (r?.reconciled !== true) return true;
+  const det = r.consulta?.pedido_venda_produto?.det ?? r.consulta?.det;
+  if (!Array.isArray(det) || det.length === 0 || !Array.isArray(itens)) return false;
+  const soma = (pares: Array<[unknown, unknown]>): Map<number, number> | null => {
+    const m = new Map<number, number>();
+    for (const [c, q] of pares) {
+      if (!/^[0-9]{1,18}$/.test(String(c ?? '')) || Number(c) <= 0) return null;
+      if (typeof q !== 'number' || !Number.isFinite(q) || q <= 0) return null;
+      m.set(Number(c), (m.get(Number(c)) ?? 0) + q);
+    }
+    return m;
+  };
+  const pv = soma(det.map((e) => {
+    const p = (e as { produto?: { codigo_produto?: unknown; quantidade?: unknown } })?.produto;
+    return [p?.codigo_produto, p?.quantidade];
+  }));
+  const carrinho = soma(itens.map((i) => {
+    const x = i as { omie_codigo_produto?: unknown; quantidade?: unknown };
+    return [x?.omie_codigo_produto, x?.quantidade];
+  }));
+  if (!pv || !carrinho || pv.size !== carrinho.size) return false;
+  for (const [sku, q] of carrinho) {
+    if (!pv.has(sku) || Math.abs((pv.get(sku) ?? 0) - q) > 1e-6) return false;
+  }
+  return true;
+}
+
 export interface EnsureSalesOrderArgs {
   checkoutId: string;
   account: string;
@@ -42,21 +79,24 @@ export interface EnsureSalesOrderArgs {
 export async function ensureSalesOrderRow(
   supabase: SubmitClient,
   args: EnsureSalesOrderArgs,
-): Promise<{ id: string; alreadySent: boolean }> {
+): Promise<{ id: string; alreadySent: boolean; pvDivergente?: boolean }> {
   const { checkoutId, account, origem, atendimentoId, fields } = args;
 
-  const findExisting = async (): Promise<{ id: string; omie_pedido_id: number | null } | null> => {
+  type Existente = { id: string; omie_pedido_id: number | null; omie_response?: unknown };
+  const findExisting = async (): Promise<Existente | null> => {
     const { data, error } = await supabase
-      .from('sales_orders').select('id, omie_pedido_id')
+      .from('sales_orders').select('id, omie_pedido_id, omie_response')
       .eq('checkout_id', checkoutId).eq('account', account).maybeSingle();
     if (error) throw error;
-    return (data as { id: string; omie_pedido_id: number | null } | null) ?? null;
+    return (data as Existente | null) ?? null;
   };
 
   const existing = await findExisting();
   const action = decideSalesOrderAction(existing);
 
-  if (action === 'skip') return { id: existing!.id, alreadySent: true };
+  if (action === 'skip') {
+    return { id: existing!.id, alreadySent: true, pvDivergente: !pvReconciliadoConfere(existing!.omie_response, fields.items) };
+  }
 
   if (action === 'reuse') {
     const { error } = await supabase.from('sales_orders').update({

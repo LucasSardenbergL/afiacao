@@ -2924,7 +2924,7 @@ Deno.serve(async (req) => {
         // silenciosamente pra 'oben' — o pedido local é a âncora server-side.
         const { data: soRow, error: soErr } = await supabaseAdmin
           .from("sales_orders")
-          .select("account, customer_user_id, customer_document, created_by, checkout_id, omie_pedido_id, hash_payload")
+          .select("account, customer_user_id, customer_document, created_by, checkout_id, omie_pedido_id, hash_payload, deleted_at")
           .eq("id", sales_order_id)
           .maybeSingle();
         // Guard de REENVIO (achado Codex 2026-08-29) — ANTES do IncluirPedido, porque um CHECK
@@ -2939,6 +2939,11 @@ Deno.serve(async (req) => {
             `Envio recusado [${vereditoEnvio.motivo}] para o pedido ${sales_order_id}: ${vereditoEnvio.detalhe}` +
               (soErr ? ` (leitura do pedido local falhou: ${soErr.message})` : ""),
           );
+        }
+        // ATP 3.3: pedido marcado para exclusão (o front grava deleted_at ANTES de chamar o
+        // excluir_pedido) não vai ao Omie — estreita a corrida exclusão × criação (Codex 3.3).
+        if ((soRow as { deleted_at?: string | null } | null)?.deleted_at) {
+          throw new Error(`Envio recusado: o pedido ${sales_order_id} está sendo excluído.`);
         }
         if (soRow?.account && soRow.account !== account) {
           throw new Error(
