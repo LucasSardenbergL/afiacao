@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 594
+-- Total de custom migrations: 595
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -655,6 +655,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261009120000', 'check_finitude_teto_faixa', '20261009120000_check_finitude_teto_faixa.sql'),
   ('20261009180000', 'product_costs_cmc_ausente_null', '20261009180000_product_costs_cmc_ausente_null.sql'),
   ('20261009194000', 'motor_unidades_concentrado_wp', '20261009194000_motor_unidades_concentrado_wp.sql'),
+  ('20261009220000', 'margem_cliente_janela_12m', '20261009220000_margem_cliente_janela_12m.sql'),
   ('20261009233000', 'atp_fase3_2_corretiva', '20261009233000_atp_fase3_2_corretiva.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
@@ -2571,6 +2572,7 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('atp_fase3_1_elo_pid', 'trigger', 'public', 'trg_estoque_reservas_pv_write_once', 'estoque_reservas'),
   ('motor_unidades_concentrado_wp', 'function', 'public', 'reposicao_sincronizar_embalagem_wp', ''),
   ('motor_unidades_concentrado_wp', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
+  ('margem_cliente_janela_12m', 'function', 'private', 'margem_cliente_agregada', ''),
   ('atp_fase3_2_corretiva', 'function', 'public', 'reservar_estoque', ''),
   ('atp_fase3_2_corretiva', 'function', 'public', 'liberar_reserva_checkout', ''),
   ('atp_fase3_2_corretiva', 'function', 'public', 'atp_reservas_pendentes', '')
@@ -4537,6 +4539,7 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('atp_fase3_1_elo_pid', 'trigger', 'public', 'trg_estoque_reservas_pv_write_once', 'estoque_reservas'),
   ('motor_unidades_concentrado_wp', 'function', 'public', 'reposicao_sincronizar_embalagem_wp', ''),
   ('motor_unidades_concentrado_wp', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
+  ('margem_cliente_janela_12m', 'function', 'private', 'margem_cliente_agregada', ''),
   ('atp_fase3_2_corretiva', 'function', 'public', 'reservar_estoque', ''),
   ('atp_fase3_2_corretiva', 'function', 'public', 'liberar_reserva_checkout', ''),
   ('atp_fase3_2_corretiva', 'function', 'public', 'atp_reservas_pendentes', '')
@@ -4995,6 +4998,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('private', 'margem_cliente_agregada', 1, '20260726150000_margem_cliente_helper_compartilhado.sql', 'a4f8e8f9189a9902d8375a1836f75d15'),
   ('private', 'margem_cliente_agregada', 2, '20260726160000_margem_reconciliacao_universo_unico.sql', '56549da47ed4091706a5fdfc2df82037'),
   ('private', 'margem_cliente_agregada', 3, '20260905225613_preco_ausente_nao_e_zero.sql', '4f4f7d8b17ed930e006231a287e9d85a'),
+  ('private', 'margem_cliente_agregada', 4, '20261009220000_margem_cliente_janela_12m.sql', '9b441ed8dda18973dea8097afa96754b'),
   ('public', 'get_carteira_margem_faixa', 1, '20260726170000_fu4f_fase3_carteira_margem_faixa.sql', '075209b91d13be52c58220f6ddc88521'),
   ('public', 'get_carteira_margem_faixa', 2, '20260813234112_carteira_margem_faixa_motivo_gate_custo.sql', '169677feb2e686d3e73ec31426c608b6'),
   ('public', 'farmer_association_rules_substituir', 1, '20260729120000_farmer_association_rules_substituicao_atomica.sql', '248a95f8d50d51f14599d4f9ac5158db'),

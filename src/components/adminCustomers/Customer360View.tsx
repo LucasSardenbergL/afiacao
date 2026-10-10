@@ -18,7 +18,7 @@ import {
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { cn } from '@/lib/utils';
-import { decodeHtmlEntities, DICA_COBERTURA_LINHAS, formatMargemPct, legendaCoberturaItens } from '@/lib/format';
+import { decodeHtmlEntities, DICA_COBERTURA_LINHAS, formatMargemPct, legendaCoberturaItens, legendaMargemSemCompraNaJanela } from '@/lib/format';
 import { formatBrPhone, whatsappLink } from '@/lib/phone';
 import { CallButton } from '@/components/call/CallButton';
 import { RecommendationsPanel } from '@/components/RecommendationsPanel';
@@ -202,7 +202,9 @@ export function Customer360View({
                   value={formatMargemPct(score.gross_margin_pct)}
                   // itens_* já chegam normalizados por fetchScoresPorCustomer; `?? null` só cobre o
                   // campo opcional ausente (undefined → "não computado"), nunca vira 0.
-                  hint={legendaCoberturaItens({ itensComCusto: score.itens_com_custo ?? null, itensSemCusto: score.itens_sem_custo ?? null })}
+                  // Sem cobertura e sem compra em 12m: o motivo da margem "—" é a janela, e a tela diz.
+                  hint={legendaCoberturaItens({ itensComCusto: score.itens_com_custo ?? null, itensSemCusto: score.itens_sem_custo ?? null })
+                    ?? (score.gross_margin_pct == null ? legendaMargemSemCompraNaJanela(score.days_since_last_purchase) : null)}
                   hintTitle={DICA_COBERTURA_LINHAS}
                 />
                 {/* expansion_score é coluna sem produtor (null em 100% da base hoje) — guard

@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **594** custom migrations totais
-- **1949** objetos esperados (criados por estas migrations)
+- **595** custom migrations totais
+- **1950** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 665
+  - `function`: 666
   - `rls_policy`: 464
   - `index`: 268
   - `cron_job`: 175
@@ -4863,6 +4863,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.reposicao_sincronizar_embalagem_wp` | — |
 | `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
+
+### `20261009220000_margem_cliente_janela_12m.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.margem_cliente_agregada` | — |
 
 ### `20261009233000_atp_fase3_2_corretiva.sql`
 
