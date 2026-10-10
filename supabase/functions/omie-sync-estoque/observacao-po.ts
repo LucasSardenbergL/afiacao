@@ -2,6 +2,11 @@
 // PURO: sem I/O. A edge registra no coletor CADA ponto de decisão da varredura do "a caminho" e só publica
 // se observacaoBateComPendente(...) — observação que diverge do pendente calculado não é publicada, porque mediria
 // outra coisa que não o que o motor contou.
+// Unidades: `quantidade`/`quantidade_recebida` são as do PO (embalagens nos concentrados WP); `contribuicao` é o que
+// entrou no estoque_pendente_entrada, na unidade do ESTOQUE do Omie (saldo × conv, ver unidade-omie.ts) — é ela que a
+// 2ª testemunha da RPC soma e compara com o pendente gravado.
+
+import { saldoEmUnidadeOmie } from "./unidade-omie.ts";
 
 export type MotivoExclusaoPedido = "dedup_app" | "etapa_nao_aberta" | "repetido_na_varredura";
 type MotivoExclusao = MotivoExclusaoPedido | "item_sem_sku" | "sku_nao_habilitado" | "quantidade_invalida";
@@ -35,6 +40,8 @@ export interface CabecalhoObservado {
 export interface ParseQuantidades {
   parseQtd: (v: unknown) => number;
   parseRecebido: (v: unknown) => number;
+  /** Unidades Omie por embalagem do PO (unidade-omie.ts); undefined = a contribuição é o saldo do PO, cru. */
+  conv?: (sku: string) => number | undefined;
 }
 
 const EPSILON = 1e-9;
@@ -78,7 +85,7 @@ export function observarPedido(
     if (!Number.isFinite(qtde) || !Number.isFinite(recebido) || qtde < 0 || recebido < 0) {
       return excluido("quantidade_invalida");
     }
-    return { ...base, contribuicao: Math.max(0, qtde - recebido), exclusao: null };
+    return { ...base, contribuicao: saldoEmUnidadeOmie(Math.max(0, qtde - recebido), parse.conv?.(skuTexto)), exclusao: null };
   });
 }
 
