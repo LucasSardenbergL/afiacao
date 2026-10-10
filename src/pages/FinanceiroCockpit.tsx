@@ -125,9 +125,9 @@ const FinanceiroCockpit = () => {
           color={pctInadimplencia <= 10 ? 'text-status-success' : pctInadimplencia <= 25 ? 'text-status-warning' : 'text-status-error'}
           subtitle={fmtCompact(totalVencidoCR)}
           onClick={() => setDrillDown('inadimplencia')} />
-        <MiniCard label="Aging Crítico (+60d)" value={`${pctCritico.toFixed(1)}%`}
-          color={pctCritico <= 5 ? 'text-status-success' : pctCritico <= 15 ? 'text-status-warning' : 'text-status-error'}
-          subtitle={fmtCompact(agingCriticoValor)}
+        <MiniCard label="Aging Crítico (+60d)" value={pctCritico === null ? '—' : `${pctCritico.toFixed(1)}%`}
+          color={pctCritico === null ? 'text-muted-foreground' : pctCritico <= 5 ? 'text-status-success' : pctCritico <= 15 ? 'text-status-warning' : 'text-status-error'}
+          subtitle={agingCriticoValor === null ? 'aging indisponível' : fmtCompact(agingCriticoValor)}
           onClick={() => setDrillDown('aging_critico')} />
       </div>
 

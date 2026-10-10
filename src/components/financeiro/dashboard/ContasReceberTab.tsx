@@ -1,6 +1,8 @@
 // Conteúdo da aba "Contas a Receber" do dashboard financeiro.
 // Extraído de src/pages/FinanceiroDashboard.tsx (god-component split).
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
+import { toast } from 'sonner';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -10,14 +12,14 @@ import { Clock, AlertTriangle, DollarSign, Download, History, Info } from 'lucid
 import { COMPANIES, type Company } from '@/contexts/CompanyContext';
 import { type FinanceiroView } from '@/hooks/useFinanceiro';
 import {
-  exportContasReceberCSV, downloadCSV, type FinContaReceber,
+  exportContasReceberCSV, downloadCSV, getContasReceber, type FinContaReceber,
 } from '@/services/financeiroService';
 import { fmt, fmtBaixa, fmtDate, statusColor } from '@/components/financeiro/dashboard/format';
 import type { TotaisContas } from '@/lib/financeiro/totais-contas';
 
 export function ContasReceberTab({
   crFilter, setCrFilter, crDateFrom, setCrDateFrom, crDateTo, setCrDateTo,
-  contasReceber, crTotals, view, loading, onAudit,
+  contasReceber, crTotal, crTotals, view, loading, onAudit,
 }: {
   crFilter: string;
   setCrFilter: (s: string) => void;
@@ -31,6 +33,8 @@ export function ContasReceberTab({
    * fabricado que `fin_contas_receber` tem em 100% do acervo. Ver `motivoBaixa`.
    */
   crTotals: TotaisContas;
+  /** Total EXATO do filtro (count do PostgREST, mesmo request) — null enquanto não carregado. */
+  crTotal: number | null;
   view: FinanceiroView;
   loading: boolean;
   onAudit: (t: { table: string; id: string; title: string }) => void;
@@ -44,6 +48,29 @@ export function ContasReceberTab({
   // ⚠️ O gatilho é a PROCEDÊNCIA que o dashboard declarou, nunca `v === 0`: um período em que
   // nada foi recebido é um FATO e tem de aparecer como R$ 0,00, não como "—".
   const baixaIndisponivel = !crTotals.procedencia.ingereBaixa;
+
+  // Truncagem HONESTA (padrão useSalesOrders): a lista vem com `limit`, e o count exato do
+  // mesmo filtro diz se é tudo. Sem ele, o corte era apresentado como o todo.
+  const truncado = crTotal !== null && crTotal > contasReceber.length;
+  const [exportando, setExportando] = useState(false);
+  // O CSV exporta o FILTRO INTEIRO (busca paginada no clique), não as linhas da tela —
+  // exportar o corte como se fosse tudo era a truncagem silenciosa da classe.
+  const exportarCSV = async () => {
+    setExportando(true);
+    try {
+      const { rows } = await getContasReceber(view === 'all' ? 'all' : view as Company, {
+        status: crFilter,
+        ...(crDateFrom ? { dataInicio: crDateFrom } : {}),
+        ...(crDateTo ? { dataFim: crDateTo } : {}),
+      });
+      downloadCSV(exportContasReceberCSV(rows, crTotals.procedencia), `contas_receber_${view}_${crFilter}.csv`);
+    } catch (e) {
+      // Falha NÃO vira CSV parcial/vazio — o usuário sabe que não exportou.
+      toast.error(`Falha ao exportar CSV: ${mensagemDeErro(e) ?? "erro sem mensagem — tente de novo"}`);
+    } finally {
+      setExportando(false);
+    }
+  };
   /** Célula de baixa/saldo POR TÍTULO: mesma coluna, mesma fonte, mesma degradação. */
   const celulaBaixa = (v: number) => fmtBaixa(baixaIndisponivel ? null : v);
 
@@ -105,14 +132,13 @@ export function ContasReceberTab({
           )}
         </div>
         <div className="flex items-center gap-2">
-          <Badge variant="secondary">{contasReceber.length} títulos</Badge>
+          <Badge variant="secondary">
+            {truncado ? `${contasReceber.length} de ${crTotal} títulos` : `${contasReceber.length} títulos`}
+          </Badge>
           {contasReceber.length > 0 && (
-            <Button variant="ghost" size="sm" onClick={() => {
-              const csv = exportContasReceberCSV(contasReceber, crTotals.procedencia);
-              downloadCSV(csv, `contas_receber_${view}_${crFilter}.csv`);
-            }}>
+            <Button variant="ghost" size="sm" disabled={exportando} onClick={exportarCSV}>
               <Download className="w-3.5 h-3.5 mr-1" />
-              CSV
+              {exportando ? 'Exportando…' : 'CSV'}
             </Button>
           )}
         </div>
@@ -131,11 +157,21 @@ export function ContasReceberTab({
         </p>
       )}
 
+      {truncado && (
+        <p className="flex items-start gap-2 text-xs text-muted-foreground px-1">
+          <Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+          <span>
+            Mostrando os primeiros {contasReceber.length} de {crTotal} títulos do filtro — os totalizadores
+            abaixo somam <strong className="font-medium">só os exibidos</strong>; o CSV exporta o filtro inteiro.
+          </span>
+        </p>
+      )}
+
       {/* Totalizadores */}
       {contasReceber.length > 0 && (
         <div className="grid grid-cols-3 gap-3">
           <div className="p-3 rounded-lg bg-muted/50 text-center">
-            <p className="text-xs text-muted-foreground">Valor Total</p>
+            <p className="text-xs text-muted-foreground">{truncado ? 'Valor Total (exibidos)' : 'Valor Total'}</p>
             <p className="text-sm font-bold">{fmt(crTotals.valor)}</p>
           </div>
           <div className="p-3 rounded-lg bg-status-success-bg text-center">

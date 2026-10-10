@@ -286,44 +286,86 @@ export async function getResumoFinanceiro(companies: Company[]): Promise<Record<
   return resumo;
 }
 
+export interface ContasFiltros {
+  status?: string;
+  dataInicio?: string;
+  dataFim?: string;
+  limit?: number;
+}
+
+/** Resultado de listagem com o total EXATO do filtro — `rows.length < total` significa
+ * truncado (o caller avisa; padrão useSalesOrders). Sem `limit`, rows é o filtro inteiro. */
+export interface ContasPage<T> {
+  rows: T[];
+  total: number;
+}
+
+async function listarContas<T>(
+  tabela: "fin_contas_pagar" | "fin_contas_receber",
+  contexto: string,
+  company: Company | 'all',
+  filtros?: ContasFiltros,
+): Promise<ContasPage<T>> {
+  // Builder NOVO por chamada (reusar instância entre requests é bug do supabase-js);
+  // `.order("id")` desempata `data_vencimento` repetida — sem ordem TOTAL o `.range()`
+  // pode repetir/pular linhas entre páginas (a 2ª metade da classe, #1580).
+  const base = () => {
+    let query = supabase
+      .from(tabela)
+      .select("*", { count: "exact" });
+    if (company !== 'all') query = query.eq("company", company);
+    if (filtros?.status) query = query.eq("status_titulo", filtros.status);
+    if (filtros?.dataInicio) query = query.gte("data_vencimento", filtros.dataInicio);
+    if (filtros?.dataFim) query = query.lte("data_vencimento", filtros.dataFim);
+    return query;
+  };
+
+  if (filtros?.limit) {
+    // Truncagem HONESTA: janela limitada + count exato do filtro no MESMO request —
+    // o caller distingue "acabou" de "tem mais" e avisa na tela/CSV.
+    const { data, error, count } = await base()
+      .order("data_vencimento", { ascending: true }).order("id", { ascending: true })
+      .range(0, filtros.limit - 1);
+    if (error) throw new Error(`Falha ao carregar ${contexto}: ${error.message}`);
+    if (data == null) throw new Error(`Falha ao carregar ${contexto}: data=null sem error`);
+    if (count == null) throw new Error(`Falha ao carregar ${contexto}: count=null com count:'exact'`);
+    return { rows: data as unknown as T[], total: count };
+  }
+
+  // Sem limite: o filtro INTEIRO, paginado contra a capa de 1.000 do PostgREST
+  // (oben sozinha tem ~11k títulos de CP; single-shot devolvia os 1.000 primeiros
+  // por vencimento como se fossem tudo — lista E export CSV nasciam truncados).
+  const rows = (await buscarTodasPaginas(contexto, (from, to) =>
+    base()
+      .order("data_vencimento", { ascending: true }).order("id", { ascending: true })
+      .range(from, to),
+  )) as unknown as T[];
+  // K páginas são K instantes (§14): se um título muda de vencimento durante a leitura, o
+  // offset desliza — um título é PULADO e outro REPETIDO, e `rows.length` continua batendo
+  // com o total. Este resultado alimenta o CSV anunciado como "o filtro inteiro"; ID repetido
+  // é a prova da deriva, e aí a resposta honesta é falhar e pedir nova tentativa (achado Codex:
+  // 1.500 linhas, 1.499 IDs, CSV somando R$ 1.500 contra R$ 101.499).
+  const ids = new Set(rows.map((r) => (r as { id?: unknown }).id));
+  if (ids.size !== rows.length) {
+    throw new Error(
+      `Falha ao carregar ${contexto}: os títulos mudaram durante a leitura (${rows.length - ids.size} repetido(s)) — tente de novo`,
+    );
+  }
+  return { rows, total: rows.length };
+}
+
 export async function getContasPagar(
   company: Company | 'all',
-  filtros?: { status?: string; dataInicio?: string; dataFim?: string; limit?: number }
-): Promise<FinContaPagar[]> {
-  let query = supabase
-    .from("fin_contas_pagar")
-    .select("*")
-    .order("data_vencimento", { ascending: true });
-
-  if (company !== 'all') query = query.eq("company", company);
-  if (filtros?.status) query = query.eq("status_titulo", filtros.status);
-  if (filtros?.dataInicio) query = query.gte("data_vencimento", filtros.dataInicio);
-  if (filtros?.dataFim) query = query.lte("data_vencimento", filtros.dataFim);
-  if (filtros?.limit) query = query.limit(filtros.limit);
-
-  const { data, error } = await query;
-  if (error) throw error;
-  return (data || []) as unknown as FinContaPagar[];
+  filtros?: ContasFiltros
+): Promise<ContasPage<FinContaPagar>> {
+  return listarContas<FinContaPagar>("fin_contas_pagar", `contas a pagar (${company})`, company, filtros);
 }
 
 export async function getContasReceber(
   company: Company | 'all',
-  filtros?: { status?: string; dataInicio?: string; dataFim?: string; limit?: number }
-): Promise<FinContaReceber[]> {
-  let query = supabase
-    .from("fin_contas_receber")
-    .select("*")
-    .order("data_vencimento", { ascending: true });
-
-  if (company !== 'all') query = query.eq("company", company);
-  if (filtros?.status) query = query.eq("status_titulo", filtros.status);
-  if (filtros?.dataInicio) query = query.gte("data_vencimento", filtros.dataInicio);
-  if (filtros?.dataFim) query = query.lte("data_vencimento", filtros.dataFim);
-  if (filtros?.limit) query = query.limit(filtros.limit);
-
-  const { data, error } = await query;
-  if (error) throw error;
-  return (data || []) as unknown as FinContaReceber[];
+  filtros?: ContasFiltros
+): Promise<ContasPage<FinContaReceber>> {
+  return listarContas<FinContaReceber>("fin_contas_receber", `contas a receber (${company})`, company, filtros);
 }
 
 export async function getAgingReceber(company: Company | 'all'): Promise<AgingData> {
@@ -331,7 +373,11 @@ export async function getAgingReceber(company: Company | 'all'): Promise<AgingDa
     .from("fin_aging_receber")
     .select("*");
 
-  if (error || !data) return { ...EMPTY_AGING };
+  // Falha LANÇA — o `return EMPTY_AGING` de antes FABRICAVA aging zerado em erro de
+  // leitura ("R$0 vencido" indistinguível de carteira sã). View vazia (data: []) segue
+  // adiante e produz zero LEGÍTIMO (sem títulos = aging zero de verdade).
+  if (error) throw new Error(`Falha ao carregar aging de recebíveis: ${error.message}`);
+  if (data == null) throw new Error("Falha ao carregar aging de recebíveis: data=null sem error");
   if (company === 'all') return consolidateAging(data);
   return pickAgingForCompany(data, company);
 }
@@ -341,7 +387,8 @@ export async function getAgingPagar(company: Company | 'all'): Promise<AgingData
     .from("fin_aging_pagar")
     .select("*");
 
-  if (error || !data) return { ...EMPTY_AGING };
+  if (error) throw new Error(`Falha ao carregar aging de pagáveis: ${error.message}`);
+  if (data == null) throw new Error("Falha ao carregar aging de pagáveis: data=null sem error");
   if (company === 'all') return consolidateAging(data);
   return pickAgingForCompany(data, company);
 }
@@ -776,14 +823,19 @@ export const DRE_LINHAS = [
 export async function getCategoryMappings(
   company: Company | '_default'
 ): Promise<FinCategoriaDREMapping[]> {
-  const { data, error } = await supabase
-    .from("fin_categoria_dre_mapping")
-    .select("*")
-    .in("company", company === '_default' ? ['_default'] : [company, '_default'])
-    .order("omie_codigo", { ascending: true });
-
-  if (error) throw error;
-  return (data || []).map((row) => ({
+  // Paginado: o mapeamento é a ESPINHA do DRE — se passar da capa de 1.000 do
+  // PostgREST, as categorias truncadas somem do DRE em silêncio (número errado,
+  // não erro). Hoje são centenas de linhas; paginar custa um request vazio.
+  const data = await buscarTodasPaginas(`mapeamento DRE (${company})`, (from, to) =>
+    supabase
+      .from("fin_categoria_dre_mapping")
+      .select("*")
+      .in("company", company === '_default' ? ['_default'] : [company, '_default'])
+      .order("omie_codigo", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
+  return data.map((row) => ({
     id: row.id,
     company: row.company,
     omie_codigo: row.omie_codigo,
@@ -817,15 +869,19 @@ export async function getCategoriasOmie(company: Company): Promise<{
   descricao: string;
   tipo: string;
 }[]> {
-  const { data, error } = await supabase
-    .from("fin_categorias")
-    .select("omie_codigo, descricao, tipo")
-    .eq("company", company)
-    .eq("ativo", true)
-    .order("omie_codigo", { ascending: true });
-
-  if (error) throw error;
-  return (data || []).map((c) => ({
+  // Paginado: 508 categorias ativas hoje — meia capa. É a lista de destino do
+  // mapeamento DRE: categoria truncada não aparece para mapear, o lançamento fica
+  // "sem linha de DRE" e some do relatório sem nenhum erro.
+  const data = await buscarTodasPaginas(`categorias Omie (${company})`, (from, to) =>
+    supabase
+      .from("fin_categorias")
+      .select("omie_codigo, descricao, tipo")
+      .eq("company", company)
+      .eq("ativo", true)
+      .order("omie_codigo", { ascending: true })
+      .range(from, to),
+  );
+  return data.map((c) => ({
     omie_codigo: c.omie_codigo,
     descricao: c.descricao,
     tipo: c.tipo ?? '',

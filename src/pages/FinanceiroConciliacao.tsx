@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -33,60 +33,103 @@ const statusConfig: Record<ConciliacaoStatus, { label: string; color: string; ic
   ignorado: { label: 'Ignorado', color: 'bg-muted text-muted-foreground', icon: Ban },
 };
 
+/** Janela da lista. Truncar é legítimo; truncar em SILÊNCIO não — o count exato do mesmo
+ * filtro acompanha a página e a tela avisa quando há mais (money-path §8). */
+const LISTA_LIMITE = 500;
+/** Linhas renderizadas na tabela (sem virtualização) — o 2º corte, coberto pelo mesmo aviso. */
+const EXIBIR_LIMITE = 200;
+
 type ContaCorrenteFiltro = Pick<FinContaCorrenteRow, 'omie_ncodcc' | 'descricao' | 'banco'>;
 
 const FinanceiroConciliacao = () => {
   const [company, setCompany] = useState<Company>('oben');
   const [statusFilter, setStatusFilter] = useState<ConciliacaoStatus | 'todos'>('pendente');
   const [items, setItems] = useState<FinConciliacaoRow[]>([]);
+  const [totalFiltro, setTotalFiltro] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
-  const [stats, setStats] = useState<Record<ConciliacaoStatus, number>>({
-    pendente: 0, conciliado: 0, divergencia: 0, ignorado: 0,
-  });
+  // null = indisponível (leitura falhou ou ainda não carregou) — os cards mostram "—", nunca 0.
+  const [stats, setStats] = useState<Record<ConciliacaoStatus, number> | null>(null);
+  const [falhaLeitura, setFalhaLeitura] = useState(false);
+  const geracao = useRef(0);
   const [search, setSearch] = useState('');
   const [contas, setContas] = useState<ContaCorrenteFiltro[]>([]);
   const [selectedCC, setSelectedCC] = useState<string>('all');
 
   const load = useCallback(async () => {
+    // Geração + publicação ATÔMICA: lista, total e cards saem do MESMO load ou de nenhum. Antes
+    // os itens eram publicados antes dos counts — um count que falhava deixava a lista da
+    // empresa nova sob os cards ("100% conciliado") da empresa anterior (achado Codex).
+    const minha = ++geracao.current;
     setLoading(true);
     try {
-      // Load contas correntes for filter
-      const { data: ccs } = await supabase
+      // Contas correntes do filtro — falha LANÇA (cai no catch com toast): o descarte do
+      // error deixava o seletor de conta MUDO, como se a empresa não tivesse conta cadastrada.
+      const { data: ccs, error: ccsError } = await supabase
         .from('fin_contas_correntes')
         .select('omie_ncodcc, descricao, banco')
         .eq('company', company).eq('ativo', true);
-      setContas(ccs || []);
+      if (ccsError) throw new Error(`Falha ao carregar contas correntes: ${ccsError.message}`);
+      if (ccs == null) throw new Error('Falha ao carregar contas correntes: data=null sem error');
 
-      // Load conciliação items
+      // Itens — janela de LISTA_LIMITE com TRUNCAGEM HONESTA: o count exato do mesmo filtro
+      // vem no próprio request, então a tela distingue "é tudo" de "tem mais" (padrão
+      // useSalesOrders). `.order('id')` desempata mov_data repetida.
       let query = supabase
         .from('fin_conciliacao')
-        .select('*')
-        .eq('company', company)
-        .order('mov_data', { ascending: false });
+        .select('*', { count: 'exact' })
+        .eq('company', company);
 
       if (statusFilter !== 'todos') query = query.eq('status', statusFilter);
       if (selectedCC !== 'all') query = query.eq('omie_ncodcc', Number(selectedCC));
 
-      const { data } = await query.limit(500);
-      setItems(data || []);
+      const { data, error, count } = await query
+        .order('mov_data', { ascending: false })
+        .order('id', { ascending: true })
+        .range(0, LISTA_LIMITE - 1);
+      if (error) throw new Error(`Falha ao carregar itens de conciliação: ${error.message}`);
+      if (data == null) throw new Error('Falha ao carregar itens de conciliação: data=null sem error');
+      if (count == null) throw new Error("Falha ao carregar itens de conciliação: count=null com count:'exact'");
 
-      // Stats
-      const { data: allItems } = await supabase
-        .from('fin_conciliacao')
-        .select('status')
-        .eq('company', company);
-
+      // Stats contadas NO SERVIDOR (count exact + head), uma por status. Antes a página baixava
+      // `select('status')` da tabela INTEIRA para contar no browser — e fin_conciliacao espelha
+      // fin_movimentacoes (60k), então a capa de 1.000 do PostgREST truncava a contagem: os
+      // cards mostravam um retrato do começo da fila como se fosse o total, e o "% conciliado"
+      // derivava dele.
+      const statusList: ConciliacaoStatus[] = ['pendente', 'conciliado', 'divergencia', 'ignorado'];
+      const contagens = await Promise.all(
+        statusList.map((st) =>
+          supabase
+            .from('fin_conciliacao')
+            .select('id', { count: 'exact', head: true })
+            .eq('company', company)
+            .eq('status', st),
+        ),
+      );
       const s: Record<ConciliacaoStatus, number> = { pendente: 0, conciliado: 0, divergencia: 0, ignorado: 0 };
-      for (const item of allItems || []) {
-        const key = item.status as ConciliacaoStatus;
-        if (s[key] !== undefined) s[key]++;
-      }
+      statusList.forEach((st, idx) => {
+        const res = contagens[idx];
+        if (res.error) throw new Error(`Falha ao contar itens "${st}": ${res.error.message}`);
+        if (res.count == null) throw new Error(`Falha ao contar itens "${st}": count=null com count:'exact'`);
+        s[st] = res.count;
+      });
+      if (minha !== geracao.current) return;
+      setContas(ccs);
+      setItems(data);
+      setTotalFiltro(count);
       setStats(s);
+      setFalhaLeitura(false);
     } catch (e) {
+      if (minha !== geracao.current) return;
+      // Falha NÃO preserva o retrato anterior (podia ser de outra empresa/filtro): tudo
+      // indisponível até a próxima leitura boa.
+      setItems([]);
+      setTotalFiltro(null);
+      setStats(null);
+      setFalhaLeitura(true);
       const message = mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.';
       toast.error('Erro', { description: message });
     } finally {
-      setLoading(false);
+      if (minha === geracao.current) setLoading(false);
     }
   }, [company, statusFilter, selectedCC]);
 
@@ -128,8 +171,11 @@ const FinanceiroConciliacao = () => {
     return (i.mov_descricao || '').toLowerCase().includes(s);
   });
 
-  const total = stats.pendente + stats.conciliado + stats.divergencia + stats.ignorado;
-  const pctConciliado = total > 0 ? ((stats.conciliado / total) * 100).toFixed(0) : '0';
+  const total = stats ? stats.pendente + stats.conciliado + stats.divergencia + stats.ignorado : null;
+  // Nota: os 4 counts são requests separados (não um snapshot) — sob conciliação concorrente a
+  // soma pode descasar por instantes. Agregação atômica pediria uma RPC; limite registrado.
+  const pctConciliado = stats && total !== null && total > 0 ? ((stats.conciliado / total) * 100).toFixed(0) : '—';
+  const exibidos = Math.min(filtered.length, EXIBIR_LIMITE);
 
   return (
     <div className="space-y-4 pb-24">
@@ -159,11 +205,11 @@ const FinanceiroConciliacao = () => {
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         <div className="p-3 rounded-lg bg-muted/50 text-center">
           <p className="text-xs text-muted-foreground">Total</p>
-          <p className="text-lg font-bold">{total}</p>
+          <p className="text-lg font-bold">{total ?? '—'}</p>
         </div>
         {Object.entries(statusConfig).map(([key, cfg]) => {
           const Icon = cfg.icon;
-          const count = stats[key as keyof typeof stats] || 0;
+          const count = stats ? stats[key as keyof typeof stats] : '—';
           return (
             <button key={key} onClick={() => setStatusFilter(key as ConciliacaoStatus)}
               className={`p-3 rounded-lg text-center transition-all ${statusFilter === key ? 'ring-2 ring-primary' : ''} ${cfg.color.replace('text-', 'bg-').split(' ')[0]}/30`}>
@@ -196,14 +242,30 @@ const FinanceiroConciliacao = () => {
             ))}
           </SelectContent>
         </Select>
-        <Badge variant="secondary">{pctConciliado}% conciliado</Badge>
+        <Badge variant="secondary">{pctConciliado === '—' ? 'conciliação indisponível' : `${pctConciliado}% conciliado`}</Badge>
       </div>
+
+      {/* Truncagem HONESTA: a janela é de LISTA_LIMITE e o filtro tem mais — a busca por
+          descrição cobre só o que está carregado, e dizer isso separa recorte de mentira. */}
+      {/* Dois cortes existem: a janela do request (LISTA_LIMITE) e o da renderização
+          (EXIBIR_LIMITE) — o aviso tem de cobrir os dois, senão afirma 500 e mostra 200. */}
+      {totalFiltro !== null && (totalFiltro > items.length || filtered.length > exibidos) && (
+        <p className="text-xs text-muted-foreground">
+          Exibindo {exibidos} de {totalFiltro} itens do filtro — a busca por descrição cobre só os
+          {' '}{items.length} carregados. Refine por status ou conta corrente para ver o resto.
+        </p>
+      )}
 
       {/* Table */}
       <Card>
         <CardContent className="p-0">
           {loading ? (
             <PageSkeleton variant="list" className="p-4" />
+          ) : falhaLeitura ? (
+            <div role="alert" className="text-center py-16 text-sm text-status-error">
+              Não foi possível carregar a conciliação — os números acima ficam indisponíveis até a
+              leitura voltar. Recarregue a página.
+            </div>
           ) : filtered.length === 0 ? (
             <div className="text-center py-16 text-muted-foreground">
               {total === 0
@@ -226,7 +288,7 @@ const FinanceiroConciliacao = () => {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filtered.slice(0, 200).map(item => {
+                  {filtered.slice(0, EXIBIR_LIMITE).map(item => {
                     const cfg = statusConfig[item.status as ConciliacaoStatus] || statusConfig.pendente;
                     const Icon = cfg.icon;
                     return (
