@@ -8,13 +8,27 @@ import { agruparSemanasFluxo } from '@/components/financeiro/dashboard/fluxo-cai
 import { spBusinessDate } from '@/lib/time/sp-day';
 import type { FluxoCaixaDiario } from '@/services/financeiroService';
 
-export function FluxoCaixaTab({ data, loading, saldoCC }: {
+export function FluxoCaixaTab({ data, loading, saldoCC, indisponivel = null }: {
   data: FluxoCaixaDiario[];
   loading: boolean;
   /** `null`/ausente = saldo bancário indisponível: a projeção fica sem âncora e degrada. */
   saldoCC?: number | null;
+  /** Mensagem do erro de leitura deste dataset: falha NÃO é vazio — não mandar "sincronizar". */
+  indisponivel?: string | null;
 }) {
   if (loading) return <Skeleton className="h-60" />;
+  if (indisponivel) {
+    return (
+      <Card>
+        <CardContent className="py-12 text-center text-muted-foreground">
+          <BarChart3 className="w-10 h-10 mx-auto mb-3 opacity-40" />
+          <p role="alert" className="text-status-error">
+            Fluxo de caixa indisponível — a leitura falhou: {indisponivel}
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
   if (!data || data.length === 0) {
     return (
       <Card>

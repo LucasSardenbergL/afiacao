@@ -89,3 +89,49 @@ describe('ContasReceberTab', () => {
     );
   });
 });
+
+describe('ContasReceberTab — falha de leitura ≠ lista vazia', () => {
+  it('indisponivel + vazio → alerta com a causa, sem mandar sincronizar', () => {
+    render(
+      <ContasReceberTab
+        crFilter="ABERTO" setCrFilter={noop}
+        crDateFrom="" setCrDateFrom={noop}
+        crDateTo="" setCrDateTo={noop}
+        contasReceber={[]} crTotal={null} crTotals={totals}
+        view="all" loading={false} onAudit={noop} indisponivel="statement timeout"
+      />
+    );
+    const alerta = screen.getByRole('alert');
+    expect(alerta.textContent).toMatch(/indispon/i);
+    expect(alerta.textContent).toMatch(/statement timeout/);
+    expect(screen.queryByText(/Sincronize os dados primeiro/)).toBeNull();
+  });
+
+  it('indisponivel ausente + vazio → vazio genuíno mantém "Sincronize"', () => {
+    render(
+      <ContasReceberTab
+        crFilter="ABERTO" setCrFilter={noop}
+        crDateFrom="" setCrDateFrom={noop}
+        crDateTo="" setCrDateTo={noop}
+        contasReceber={[]} crTotal={null} crTotals={totals}
+        view="all" loading={false} onAudit={noop}
+      />
+    );
+    expect(screen.getByText(/Sincronize os dados primeiro/)).toBeTruthy();
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('badge de contagem não afirma "0 títulos" sob falha', () => {
+    render(
+      <ContasReceberTab
+        crFilter="ABERTO" setCrFilter={noop}
+        crDateFrom="" setCrDateFrom={noop}
+        crDateTo="" setCrDateTo={noop}
+        contasReceber={[]} crTotal={null} crTotals={totals}
+        view="all" loading={false} onAudit={noop} indisponivel="statement timeout"
+      />
+    );
+    expect(screen.queryByText('0 títulos')).toBeNull();
+    expect(screen.getByText('indisponível')).toBeTruthy();
+  });
+});

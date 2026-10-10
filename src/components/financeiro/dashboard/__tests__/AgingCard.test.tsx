@@ -27,3 +27,14 @@ describe('AgingCard', () => {
     expect(screen.getByText(/Total:/)).toBeTruthy();
   });
 });
+
+describe('AgingCard — leitura indisponível', () => {
+  it('data=null + indisponivel → aviso role=alert, sem skeleton', () => {
+    const { container } = render(
+      <AgingCard title="Aging Recebíveis" data={null} type="receber" indisponivel="timeout" />,
+    );
+    const alerta = screen.getByRole('alert');
+    expect(alerta.textContent).toMatch(/Aging indisponível — a leitura falhou: timeout/);
+    expect(container.querySelectorAll('[class*="animate-pulse"]').length).toBe(0);
+  });
+});

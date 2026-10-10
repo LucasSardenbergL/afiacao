@@ -82,3 +82,19 @@ describe('FluxoCaixaTab — saldo projetado na tela', () => {
     expect(screen.getByText('R$ 5.0k')).toBeTruthy();
   });
 });
+
+describe('FluxoCaixaTab — falha de leitura ≠ vazio', () => {
+  it('indisponivel + vazio → alerta com a causa, sem mandar sincronizar', () => {
+    render(<FluxoCaixaTab data={[]} loading={false} indisponivel="statement timeout" />);
+    const alerta = screen.getByRole('alert');
+    expect(alerta.textContent).toMatch(/indispon/i);
+    expect(alerta.textContent).toMatch(/statement timeout/);
+    expect(screen.queryByText(/Sincronize os dados primeiro/)).toBeNull();
+  });
+
+  it('indisponivel ausente + vazio → vazio genuíno mantém "Sincronize"', () => {
+    render(<FluxoCaixaTab data={[]} loading={false} />);
+    expect(screen.getByText(/Sincronize os dados primeiro/)).toBeTruthy();
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+});

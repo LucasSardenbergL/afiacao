@@ -5,7 +5,22 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { fmt, fmtCompact } from '@/components/financeiro/dashboard/format';
 import type { AgingData } from '@/services/financeiroService';
 
-export function AgingCard({ title, data }: { title: string; data: AgingData | null; type: 'receber' | 'pagar' }) {
+export function AgingCard({ title, data, indisponivel = null }: {
+  title: string; data: AgingData | null; type: 'receber' | 'pagar'; indisponivel?: string | null;
+}) {
+  if (!data && indisponivel) return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base">{title}</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <p role="alert" className="text-xs text-status-error">
+          Aging indisponível — a leitura falhou: {indisponivel}
+        </p>
+      </CardContent>
+    </Card>
+  );
+
   if (!data) return (
     <Card>
       <CardHeader className="pb-3">

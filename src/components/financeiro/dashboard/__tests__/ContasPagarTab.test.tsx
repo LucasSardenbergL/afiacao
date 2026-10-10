@@ -89,3 +89,49 @@ describe('ContasPagarTab', () => {
     );
   });
 });
+
+describe('ContasPagarTab — falha de leitura ≠ lista vazia', () => {
+  it('indisponivel + vazio → alerta com a causa, sem mandar sincronizar', () => {
+    render(
+      <ContasPagarTab
+        cpFilter="ABERTO" setCpFilter={noop}
+        cpDateFrom="" setCpDateFrom={noop}
+        cpDateTo="" setCpDateTo={noop}
+        contasPagar={[]} cpTotal={null} cpTotals={totals}
+        view="all" loading={false} onAudit={noop} indisponivel="statement timeout"
+      />
+    );
+    const alerta = screen.getByRole('alert');
+    expect(alerta.textContent).toMatch(/indispon/i);
+    expect(alerta.textContent).toMatch(/statement timeout/);
+    expect(screen.queryByText(/Sincronize os dados primeiro/)).toBeNull();
+  });
+
+  it('indisponivel ausente + vazio → vazio genuíno mantém "Sincronize"', () => {
+    render(
+      <ContasPagarTab
+        cpFilter="ABERTO" setCpFilter={noop}
+        cpDateFrom="" setCpDateFrom={noop}
+        cpDateTo="" setCpDateTo={noop}
+        contasPagar={[]} cpTotal={null} cpTotals={totals}
+        view="all" loading={false} onAudit={noop}
+      />
+    );
+    expect(screen.getByText(/Sincronize os dados primeiro/)).toBeTruthy();
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('badge de contagem não afirma "0 títulos" sob falha', () => {
+    render(
+      <ContasPagarTab
+        cpFilter="ABERTO" setCpFilter={noop}
+        cpDateFrom="" setCpDateFrom={noop}
+        cpDateTo="" setCpDateTo={noop}
+        contasPagar={[]} cpTotal={null} cpTotals={totals}
+        view="all" loading={false} onAudit={noop} indisponivel="statement timeout"
+      />
+    );
+    expect(screen.queryByText('0 títulos')).toBeNull();
+    expect(screen.getByText('indisponível')).toBeTruthy();
+  });
+});

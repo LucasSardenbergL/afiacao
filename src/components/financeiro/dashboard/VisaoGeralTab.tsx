@@ -19,6 +19,7 @@ import { DataHealthBanner } from '@/components/dataHealth/DataHealthBanner';
 
 export function VisaoGeralTab({
   alerts, activeResumo, resumo, view, agingReceber, agingPagar, inadimplentes,
+  resumoIndisponivel = null, agingIndisponivel = null, inadimplentesIndisponivel = null,
 }: {
   alerts: FinAlert[];
   activeResumo: FinResumo | null;
@@ -27,8 +28,14 @@ export function VisaoGeralTab({
   agingReceber: AgingData | null;
   agingPagar: AgingData | null;
   inadimplentes: { nome: string; cnpj: string; total_vencido: number; qtd_titulos: number }[];
+  resumoIndisponivel?: string | null;
+  agingIndisponivel?: string | null;
+  inadimplentesIndisponivel?: string | null;
 }) {
   const [showContasZeradas, setShowContasZeradas] = useState(false);
+  // Posição desconhecida (null/ausente) não é "positiva": ícone e cor neutros, nunca o verde.
+  const posicaoLiquida = activeResumo?.posicao_liquida ?? null;
+  const posicaoConhecida = posicaoLiquida !== null;
   // Esconde contas com saldo zerado por padrão (ruído numa lista de ~40 contas).
   // Se TODAS estiverem zeradas, mostra mesmo assim (senão o card ficaria vazio).
   const contasCorrentes = activeResumo?.contas_correntes ?? [];
@@ -37,8 +44,25 @@ export function VisaoGeralTab({
   const contasVisiveis =
     showContasZeradas || contasComSaldo.length === 0 ? contasCorrentes : contasComSaldo;
 
+  const motivos = [
+    resumoIndisponivel && `Resumo: ${resumoIndisponivel}`,
+    agingIndisponivel && `Aging: ${agingIndisponivel}`,
+    inadimplentesIndisponivel && `Inadimplentes: ${inadimplentesIndisponivel}`,
+  ].filter(Boolean) as string[];
+
   return (
     <>
+      {motivos.length > 0 && (
+        <div role="alert" className="p-3 rounded-lg border bg-status-error-bg border-status-error/30 text-status-error">
+          <p className="text-sm font-medium">
+            Alguns indicadores estão indisponíveis — a leitura falhou. Exibimos "—"; nenhum número foi estimado.
+          </p>
+          <ul className="text-xs mt-0.5 opacity-80">
+            {motivos.map((m) => <li key={m}>{m}</li>)}
+          </ul>
+        </div>
+      )}
+
       {/* Alerts */}
       {alerts.length > 0 && (
         <div className="space-y-2">
@@ -73,7 +97,7 @@ export function VisaoGeralTab({
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <KpiCard
           title="A Receber"
-          value={activeResumo?.total_a_receber || 0}
+          value={activeResumo?.total_a_receber ?? null}
           icon={ArrowDownCircle}
           color="text-status-success"
           bgColor="bg-status-success-bg"
@@ -84,7 +108,7 @@ export function VisaoGeralTab({
         />
         <KpiCard
           title="A Pagar"
-          value={activeResumo?.total_a_pagar || 0}
+          value={activeResumo?.total_a_pagar ?? null}
           icon={ArrowUpCircle}
           color="text-status-error"
           bgColor="bg-status-error-bg"
@@ -95,10 +119,10 @@ export function VisaoGeralTab({
         />
         <KpiCard
           title="Posição Líquida"
-          value={activeResumo?.posicao_liquida || 0}
-          icon={(activeResumo?.posicao_liquida || 0) >= 0 ? TrendingUp : TrendingDown}
-          color={(activeResumo?.posicao_liquida || 0) >= 0 ? 'text-status-success' : 'text-status-error'}
-          bgColor={(activeResumo?.posicao_liquida || 0) >= 0 ? 'bg-status-success-bg' : 'bg-status-error-bg'}
+          value={activeResumo?.posicao_liquida ?? null}
+          icon={posicaoConhecida && posicaoLiquida < 0 ? TrendingDown : TrendingUp}
+          color={!posicaoConhecida ? 'text-muted-foreground' : posicaoLiquida >= 0 ? 'text-status-success' : 'text-status-error'}
+          bgColor={!posicaoConhecida ? 'bg-muted' : posicaoLiquida >= 0 ? 'bg-status-success-bg' : 'bg-status-error-bg'}
         />
         <KpiCard
           title="Saldo Bancário"
@@ -149,8 +173,8 @@ export function VisaoGeralTab({
 
       {/* Aging */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <AgingCard title="Aging Recebíveis" data={agingReceber} type="receber" />
-        <AgingCard title="Aging Pagáveis" data={agingPagar} type="pagar" />
+        <AgingCard title="Aging Recebíveis" data={agingReceber} type="receber" indisponivel={agingIndisponivel} />
+        <AgingCard title="Aging Pagáveis" data={agingPagar} type="pagar" indisponivel={agingIndisponivel} />
       </div>
 
       {/* CFO Indicators */}
@@ -238,7 +262,22 @@ export function VisaoGeralTab({
       )}
 
       {/* Top Inadimplentes */}
-      {inadimplentes.length > 0 && (
+      {inadimplentesIndisponivel && (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-status-error" />
+              Maiores Inadimplentes
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p role="alert" className="text-xs text-status-error">
+              Lista de inadimplentes indisponível — a leitura falhou: {inadimplentesIndisponivel}
+            </p>
+          </CardContent>
+        </Card>
+      )}
+      {!inadimplentesIndisponivel && inadimplentes.length > 0 && (
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-base flex items-center gap-2">

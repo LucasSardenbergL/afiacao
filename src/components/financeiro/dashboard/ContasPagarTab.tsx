@@ -19,7 +19,7 @@ import type { TotaisContas } from '@/lib/financeiro/totais-contas';
 
 export function ContasPagarTab({
   cpFilter, setCpFilter, cpDateFrom, setCpDateFrom, cpDateTo, setCpDateTo,
-  contasPagar, cpTotal, cpTotals, view, loading, onAudit,
+  contasPagar, cpTotal, cpTotals, view, loading, onAudit, indisponivel = null,
 }: {
   cpFilter: string;
   setCpFilter: (s: string) => void;
@@ -37,6 +37,8 @@ export function ContasPagarTab({
   cpTotal: number | null;
   view: FinanceiroView;
   loading: boolean;
+  /** Mensagem do erro de leitura do dataset: falha NÃO é lista vazia — não mandar "sincronizar". */
+  indisponivel?: string | null;
   onAudit: (t: { table: string; id: string; title: string }) => void;
 }) {
   // Virtualização — mesmo racional da ContasReceberTab (tabs gêmeas): acima de
@@ -128,7 +130,7 @@ export function ContasPagarTab({
         </div>
         <div className="flex items-center gap-2">
           <Badge variant="secondary">
-            {truncado ? `${contasPagar.length} de ${cpTotal} títulos` : `${contasPagar.length} títulos`}
+            {indisponivel ? 'indisponível' : truncado ? `${contasPagar.length} de ${cpTotal} títulos` : `${contasPagar.length} títulos`}
           </Badge>
           {contasPagar.length > 0 && (
             <Button variant="ghost" size="sm" disabled={exportando} onClick={exportarCSV}>
@@ -264,7 +266,13 @@ export function ContasPagarTab({
                 {contasPagar.length === 0 && !loading && (
                   <TableRow>
                     <TableCell colSpan={colSpan} className="text-center py-8 text-muted-foreground">
-                      Nenhum título encontrado. Sincronize os dados primeiro.
+                      {indisponivel ? (
+                        <span role="alert" className="text-status-error">
+                          Títulos indisponíveis — a leitura falhou: {indisponivel}
+                        </span>
+                      ) : (
+                        'Nenhum título encontrado. Sincronize os dados primeiro.'
+                      )}
                     </TableCell>
                   </TableRow>
                 )}

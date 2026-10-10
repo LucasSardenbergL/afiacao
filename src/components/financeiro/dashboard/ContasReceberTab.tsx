@@ -19,7 +19,7 @@ import type { TotaisContas } from '@/lib/financeiro/totais-contas';
 
 export function ContasReceberTab({
   crFilter, setCrFilter, crDateFrom, setCrDateFrom, crDateTo, setCrDateTo,
-  contasReceber, crTotal, crTotals, view, loading, onAudit,
+  contasReceber, crTotal, crTotals, view, loading, onAudit, indisponivel = null,
 }: {
   crFilter: string;
   setCrFilter: (s: string) => void;
@@ -37,6 +37,8 @@ export function ContasReceberTab({
   crTotal: number | null;
   view: FinanceiroView;
   loading: boolean;
+  /** Mensagem do erro de leitura do dataset: falha NÃO é lista vazia — não mandar "sincronizar". */
+  indisponivel?: string | null;
   onAudit: (t: { table: string; id: string; title: string }) => void;
 }) {
   // Virtualização: sem limit na query o PostgREST entrega até 1.000 títulos e
@@ -133,7 +135,7 @@ export function ContasReceberTab({
         </div>
         <div className="flex items-center gap-2">
           <Badge variant="secondary">
-            {truncado ? `${contasReceber.length} de ${crTotal} títulos` : `${contasReceber.length} títulos`}
+            {indisponivel ? 'indisponível' : truncado ? `${contasReceber.length} de ${crTotal} títulos` : `${contasReceber.length} títulos`}
           </Badge>
           {contasReceber.length > 0 && (
             <Button variant="ghost" size="sm" disabled={exportando} onClick={exportarCSV}>
@@ -270,7 +272,13 @@ export function ContasReceberTab({
                 {contasReceber.length === 0 && !loading && (
                   <TableRow>
                     <TableCell colSpan={colSpan} className="text-center py-8 text-muted-foreground">
-                      Nenhum título encontrado. Sincronize os dados primeiro.
+                      {indisponivel ? (
+                        <span role="alert" className="text-status-error">
+                          Títulos indisponíveis — a leitura falhou: {indisponivel}
+                        </span>
+                      ) : (
+                        'Nenhum título encontrado. Sincronize os dados primeiro.'
+                      )}
                     </TableCell>
                   </TableRow>
                 )}
