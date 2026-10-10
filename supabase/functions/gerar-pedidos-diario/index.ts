@@ -7,6 +7,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { hojeSP } from "../_shared/hoje-sp.ts";
+import { digestSuprimidoNoDia } from "./digest-dia.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -368,7 +369,9 @@ Deno.serve(async (req: Request) => {
     let emailStatus: "sent" | "skipped" | "failed" = "skipped";
     let emailDetail: string | null = null;
 
-    if (recipient && resendKey && !intraday) {
+    const domingo = digestSuprimidoNoDia(dataCiclo);
+
+    if (recipient && resendKey && !intraday && !domingo) {
       const html = buildEmailHtml(empresa, dataCiclo, rpc, pedidosList);
       const subject = rpc.bloqueados > 0
         ? `⚠ ${empresa} — ${rpc.pedidos_gerados} pedidos (${rpc.bloqueados} bloqueados) — ${dataCiclo}`
@@ -400,6 +403,8 @@ Deno.serve(async (req: Request) => {
     } else {
       emailDetail = intraday
         ? "Rodada intraday (digest suprimido — alerta R$3k cobre o intra-day)"
+        : domingo
+        ? "Domingo (digest suprimido — não há como colocar pedido na Sayerlack)"
         : !recipient
         ? "Sem email_notificacoes cadastrado"
         : "RESEND_API_KEY ausente";
