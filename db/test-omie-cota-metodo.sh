@@ -41,6 +41,9 @@ montar() {
   # Como no Supabase: as 3 roles alcançam o schema public. Sem isto o 42501 do A11b viria do
   # SCHEMA, não do REVOKE da função — o assert passaria pelo motivo errado.
   Pd "$db" -q -c "GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;" >/dev/null
+  # Como no Supabase: service_role tem BYPASSRLS — é por isso que as funções INVOKER escrevem numa
+  # tabela com RLS e sem policy. (O stub não dá; sem isto o A11c mente contra a prod.)
+  Pd "$db" -q -c "ALTER ROLE service_role BYPASSRLS;" >/dev/null
   Pd "$db" -q -f "$mig" >/dev/null
 }
 
@@ -168,11 +171,14 @@ else
     local nome="$1" expr="$2"
     sed "$expr" "$MIG" > "$TMP/$nome.sql"
     if cmp -s "$MIG" "$TMP/$nome.sql"; then bad "F $nome: o sed não mudou nada (sabotagem inerte)"; return 1; fi
-    montar "$nome" "$TMP/$nome.sql"
+    # Sabotagem que nem monta não prova nada — conta como FALHA, nunca como pulo calado.
+    if ! montar "$nome" "$TMP/$nome.sql" >"$TMP/$nome.log" 2>&1; then
+      bad "F $nome: a cópia sabotada não aplicou ($(head -c 200 "$TMP/$nome.log"))"; return 1
+    fi
   }
 
   # F1 — sem FOR UPDATE: B lê o snapshot sem o lease de A e também ganha a vez
-  if sabotar f1_sem_lock '/^   FOR UPDATE;$/d'; then
+  if sabotar f1_sem_lock 's/^   FOR UPDATE;$/   ;/'; then
     v=$(chk_concorrencia f1_sem_lock)
     if [ "$v" != "A=t B=false|ocupado" ]; then ok "F1 sem FOR UPDATE → A9 vermelho ($v)"; else bad "F1 sem FOR UPDATE e A9 seguiu verde — assert sem dente"; fi
   fi
