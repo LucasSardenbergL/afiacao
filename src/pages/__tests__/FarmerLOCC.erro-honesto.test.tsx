@@ -171,3 +171,41 @@ describe('FarmerLOCC — falha de leitura não vira "Health Score 0"', () => {
     ).toBeTruthy();
   });
 });
+
+describe('FarmerLOCC — o card de Recomendações não afirma contagem que ninguém calculou', () => {
+  /**
+   * Sítio da MESMA classe no `OverviewTab` (`useCrossSellEngine`, campo `erro` ignorado), com
+   * um agravante que a leitura do código revelou: o `OverviewTab` tem a sua PRÓPRIA instância
+   * do motor e **nunca chama `calculateRecommendations`** — o hook é `useState([])` puro, sem
+   * efeito de montagem, e só a página `/farmer/recommendations` dispara o cálculo (na instância
+   * DELA). Então a contagem exibida aqui não era "zero por falha de leitura": era **zero
+   * constante desde a origem** (conferido em `git show` do pré-split #249, onde o mesmo
+   * `useCrossSellEngine()` já era chamado sem disparo e o número saía formatado em R$).
+   *
+   * Ler o `erro` não consertaria nada — não há execução para falhar. O que mente é a
+   * CONTAGEM: ausente ≠ zero (CLAUDE.md). O card segue levando para a tela das recomendações,
+   * que calcula de verdade e já lê `erro`/`desatualizado`; o número fabricado sai.
+   */
+  it('DETECTOR: o matcher de dígito está VIVO neste DOM', async () => {
+    renderLocc();
+
+    // Sem este par, `not.toMatch(/\d/)` abaixo passaria num DOM sem número nenhum — ausência
+    // por vacuidade (armadilha do seletor morto, #1585). Os KPIs têm números de verdade.
+    await screen.findByText(/Motor de Diagnóstico/i);
+    expect(screen.getByText('Cap./Dia').parentElement?.textContent).toMatch(/\d/);
+  });
+
+  it('o card existe, leva às recomendações e NÃO afirma um total', async () => {
+    renderLocc();
+
+    const card = await screen.findByTestId('card-recomendacoes');
+    expect(card.textContent, 'o card perdeu o rótulo — o seletor casaria qualquer coisa').toMatch(
+      /Recomenda/i,
+    );
+    expect(
+      card.textContent,
+      'afirmou um total de recomendações que NINGUÉM calculou (a instância do motor desta aba ' +
+        'nunca dispara o cálculo — o número era zero constante)',
+    ).not.toMatch(/\d/);
+  });
+});

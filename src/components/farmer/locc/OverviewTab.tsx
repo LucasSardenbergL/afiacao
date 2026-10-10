@@ -5,7 +5,6 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Loader2, Heart, RefreshCw, Zap, ChevronRight } from 'lucide-react';
-import { useCrossSellEngine } from '@/hooks/useCrossSellEngine';
 import { type FarmerMetrics } from '@/hooks/useFarmerMetrics';
 import { type ScoringSummary } from './types';
 import { fmt, healthColors } from './helpers';
@@ -17,9 +16,20 @@ export const OverviewTab = memo(({ summary, metrics, scoringCalc, recalculate, n
   recalculate: () => void;
   navigate: (path: string) => void;
 }) => {
-  // Cross-sell engine only loaded when overview renders (always on mount)
-  const { recommendations } = useCrossSellEngine();
-
+  // Aqui NÃO há motor de cross-sell, e isso é a correção, não uma omissão.
+  //
+  // Esta aba tinha a sua PRÓPRIA instância de `useCrossSellEngine` e nunca chamava
+  // `calculateRecommendations` — o hook é `useState([])` puro, sem efeito de montagem, e só
+  // `/farmer/recommendations` dispara o cálculo (na instância DELA). Então o total exibido aqui
+  // nunca foi "zero por falha de leitura": era **zero constante desde a origem** (conferido no
+  // pré-split #249, onde o mesmo `useCrossSellEngine()` já era chamado sem disparo e o número
+  // saía formatado em R$). Ler o `erro` do motor não consertaria nada — não há execução para
+  // falhar; o que mentia era a CONTAGEM. Ausente ≠ zero (CLAUDE.md), então ela sai: o card
+  // segue levando para a tela que calcula de verdade e já declara `erro`/`desatualizado`.
+  //
+  // Disparar o motor aqui seria o conserto ERRADO: ele pagina pedidos, scores, catálogo e
+  // perfis, PERSISTE o resultado e move o head da geração vigente — carga e escrita que a aba
+  // de visão geral não pode decidir por conta própria.
   return (
     <>
       {/* Health Summary */}
@@ -80,22 +90,14 @@ export const OverviewTab = memo(({ summary, metrics, scoringCalc, recalculate, n
       </div>
 
       {/* Quick Cross-sell summary */}
-      <Card className="cursor-pointer" onClick={() => navigate('/farmer/recommendations')}>
+      <Card data-testid="card-recomendacoes" className="cursor-pointer" onClick={() => navigate('/farmer/recommendations')}>
         <CardContent className="p-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Zap className="w-4 h-4 text-status-warning" />
               <span className="text-xs font-semibold">Recomendações</span>
             </div>
-            <div className="flex items-center gap-1">
-              {/* Contagem, não moeda: o total antigo somava os LIE em R$, e sem custo no browser
-                  não existe lucro esperado. Formatar o score de afinidade como BRL seria fabricar
-                  número — e a soma nem é comensurável entre cross-sell e up-sell. */}
-              <span className="text-xs font-bold text-status-success">
-                {recommendations.reduce((s, r) => s + r.crossSell.length + r.upSell.length, 0)}
-              </span>
-              <ChevronRight className="w-3 h-3 text-muted-foreground" />
-            </div>
+            <ChevronRight className="w-3 h-3 text-muted-foreground" />
           </div>
         </CardContent>
       </Card>
