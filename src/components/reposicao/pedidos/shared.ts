@@ -44,6 +44,7 @@ export interface RespostaDisparo {
   disparados?: number | null;
   falhas?: number | null;
   aguardando_portal_sayerlack?: number | null;
+  portal_fechado?: number | null;
 }
 
 // Traduz a resposta da edge disparar-pedidos-aprovados num toast.
@@ -53,7 +54,7 @@ export interface RespostaDisparo {
 export function interpretarRespostaDisparo(
   data: RespostaDisparo | null | undefined,
   pedidoId: number,
-): { tone: 'success' | 'error' | 'info'; message: string } {
+): { tone: 'success' | 'error' | 'warning' | 'info'; message: string } {
   const ok = data?.disparados ?? 0;
   const fail = data?.falhas ?? 0;
   const aguardandoPortal = data?.aguardando_portal_sayerlack ?? 0;
@@ -65,6 +66,14 @@ export function interpretarRespostaDisparo(
   }
   if (fail > 0) {
     return { tone: 'error', message: `Pedido #${pedidoId}: falha ao disparar` };
+  }
+  // Portal fora do ar (sáb 12h → seg 6h): nada foi enviado nem gasto; o pedido segue aprovado.
+  // 'warning' e não 'info': no lote do Ciclo de Hoje, 'info' conta como disparado.
+  if ((data?.portal_fechado ?? 0) > 0) {
+    return {
+      tone: 'warning',
+      message: `Pedido #${pedidoId}: portal Sayerlack fora do ar (sábado 12h → segunda 6h). Nada foi enviado — dispare de novo a partir de segunda 06:00`,
+    };
   }
   return { tone: 'info', message: `Pedido #${pedidoId}: nada a disparar` };
 }

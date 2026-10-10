@@ -7,6 +7,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { hojeSP } from "../_shared/hoje-sp.ts";
+import { digestSuprimidoNoDia } from "./digest-dia.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -296,6 +297,23 @@ Deno.serve(async (req: Request) => {
 
     console.log(`[gerar-pedidos-diario] Iniciando ciclo ${empresa} ${dataCiclo}${intraday ? " (intraday)" : ""}`);
 
+    // 0. Expirar OPORTUNIDADES de dias anteriores ainda pendentes. Morava no corte das 10:00 da
+    // disparar-pedidos-aprovados (modo lote), cujo cron saiu em 2026-10-10 — sem isto a oportunidade
+    // vira zumbi e bloqueia o SKU para sempre no NOT EXISTS da RPC normal. Só na rodada matinal,
+    // ANTES da RPC, para o SKU liberado já entrar no ciclo de hoje.
+    if (!intraday) {
+      const { data: expRows, error: expErr } = await db
+        .from("pedido_compra_sugerido")
+        .update({ status: "expirado_sem_aprovacao", atualizado_em: new Date().toISOString() })
+        .eq("empresa", empresa)
+        .lt("data_ciclo", dataCiclo)
+        .eq("status", "pendente_aprovacao")
+        .like("tipo_ciclo", "oportunidade_%")
+        .select("id");
+      if (expErr) console.error("[gerar-pedidos-diario] expirar oportunidades erro:", expErr.message);
+      else console.log(`[gerar-pedidos-diario] ${expRows?.length ?? 0} oportunidade(s) expirada(s)`);
+    }
+
     // 1. RPC de geração
     const { data: rpcRows, error: rpcErr } = await db.rpc(
       "gerar_pedidos_sugeridos_ciclo",
@@ -368,7 +386,9 @@ Deno.serve(async (req: Request) => {
     let emailStatus: "sent" | "skipped" | "failed" = "skipped";
     let emailDetail: string | null = null;
 
-    if (recipient && resendKey && !intraday) {
+    const domingo = digestSuprimidoNoDia(dataCiclo);
+
+    if (recipient && resendKey && !intraday && !domingo) {
       const html = buildEmailHtml(empresa, dataCiclo, rpc, pedidosList);
       const subject = rpc.bloqueados > 0
         ? `⚠ ${empresa} — ${rpc.pedidos_gerados} pedidos (${rpc.bloqueados} bloqueados) — ${dataCiclo}`
@@ -400,6 +420,8 @@ Deno.serve(async (req: Request) => {
     } else {
       emailDetail = intraday
         ? "Rodada intraday (digest suprimido — alerta R$3k cobre o intra-day)"
+        : domingo
+        ? "Domingo (digest suprimido — não há como colocar pedido na Sayerlack)"
         : !recipient
         ? "Sem email_notificacoes cadastrado"
         : "RESEND_API_KEY ausente";
