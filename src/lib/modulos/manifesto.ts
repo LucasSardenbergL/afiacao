@@ -152,6 +152,7 @@ export const MODULOS: ModuloApp[] = [
       "src/services/__tests__/getResumoFinanceiro.test.ts",
       "src/services/__tests__/getTopInadimplentes.test.ts",
       "src/services/__tests__/somarSaldoAberto.test.ts",
+      "src/utils/__tests__/financeiroAlerts.view.test.ts",
     ],
     risco: { moneyPath: true, offlineFirst: false, authSensitive: true },
   },
