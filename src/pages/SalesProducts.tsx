@@ -35,10 +35,13 @@ const COLUNAS_CATALOGO = 'id, codigo, descricao, unidade, valor_unitario, estoqu
  * O catálogo INTEIRO da conta (M-12). Era um `select('*')` single-shot: o PostgREST capa em 1.000
  * linhas sem erro, e com 3.715 SKUs na Oben e 4.339 na Colacor a tela listava 1.000 e dizia
  * "1000 produtos". `fetchAllPages` pagina até a página curta e REJEITA se uma página falha
- * (página perdida ≠ fim do catálogo); `id` desempata a ordem para a paginação não repetir/pular.
+ * (página perdida ≠ fim do catálogo). A paginação ordena SÓ por `id` (imutável): ordenar por
+ * `ativo`/`descricao` no servidor deixaria um produto que o sync inativa entre duas páginas mudar de
+ * posição — relido numa página, outro SKU pulado, sem erro (Codex, revisão do M-12). A ordem de
+ * exibição (ativos primeiro, depois descrição) é aplicada no cliente, sobre o catálogo completo.
  */
-export function buscarCatalogoVendas(account: Account): Promise<Product[]> {
-  return fetchAllPages<Product>(
+export async function buscarCatalogoVendas(account: Account): Promise<Product[]> {
+  const linhas = await fetchAllPages<Product>(
     (de, ate) =>
       supabase
         .from('omie_products')
@@ -50,12 +53,19 @@ export function buscarCatalogoVendas(account: Account): Promise<Product[]> {
         .not('familia', 'ilike', '%jumbos de lixa para discos%')
         .not('familia', 'ilike', 'jumbo%')
         .not('familia', 'ilike', '%material para tingimix%')
-        .order('ativo', { ascending: false })
-        .order('descricao')
         .order('id')
         .range(de, ate) as unknown as PromiseLike<{ data: Product[] | null; error: unknown }>,
     'omie_products/catalogo-vendas',
   );
+  // Um DELETE/INSERT entre páginas ainda pode reler uma linha: o mesmo `id` aparece uma vez só.
+  const porId = new Map(linhas.map((p) => [p.id, p]));
+  return [...porId.values()].sort(ordemDeExibicao);
+}
+
+// A ordem que o servidor dava: ativos primeiro, depois descrição (ambas NOT NULL em prod).
+function ordemDeExibicao(a: Product, b: Product): number {
+  if (a.ativo !== b.ativo) return a.ativo ? -1 : 1;
+  return a.descricao.localeCompare(b.descricao, 'pt-BR');
 }
 
 const chaveCatalogo = (account: Account) => ['catalogo-vendas', account] as const;
