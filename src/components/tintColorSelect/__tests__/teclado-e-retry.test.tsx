@@ -5,7 +5,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, renderHook, act } from '@testing-library/react';
 import { createRef, type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import type { Product } from '@/hooks/useUnifiedOrder';
 import type { FormulaResult } from '../types';
 
 /* ─── Mocks do hook do diálogo e do preço ─── */
@@ -30,7 +29,11 @@ vi.mock('@/hooks/useTintPricing', () => ({
     isFetching: pricingState.isFetching,
     refetch: refetchPricing,
   }),
-  useTintPrices: () => ({ data: undefined, isLoading: false, isError: true, isFetching: false, refetch: refetchAltPrices }),
+  // Erro DEPOIS de um sucesso: o React Query mantém o último mapa bom em `data`.
+  useTintPrices: () => ({
+    data: { 'f-velha': { precoFinal: 999, custoCorantes: 1 } },
+    isLoading: false, isError: true, isFetching: false, refetch: refetchAltPrices,
+  }),
 }));
 
 // Supabase encadeável que sempre responde vazio (as consultas de catálogo não importam aqui).
@@ -47,6 +50,9 @@ vi.mock('@/lib/analytics', () => ({ track: vi.fn() }));
 import { TintColorSelectDialog } from '../../TintColorSelectDialog';
 import { SelectedFormulaCard } from '../SelectedFormulaCard';
 import { useTintColorSelect } from '../useTintColorSelect';
+
+// Tipo pelas props do diálogo — importar de vendas seria aresta nova tintometrico→vendas.
+type Product = React.ComponentProps<typeof TintColorSelectDialog>['product'];
 
 const produto: Product = {
   id: 'prod-base-1', codigo: 'BASE', descricao: 'Base Incolor', unidade: 'GL', valor_unitario: 80,
@@ -167,6 +173,35 @@ describe('SelectedFormulaCard — Enter no desconto e adicionarRef', () => {
       { source: 'calculado', discountPct: 10, precoSemDesconto: 100 });
   });
 
+  it('desconto que zera o preço (R$ 0,00) não adiciona por Enter nem por clique — Codex P2', () => {
+    const { ref, onConfirm } = card({ discountPct: 99.99, precoFinal: 0 });
+    fireEvent.keyDown(screen.getByPlaceholderText('0'), { key: 'Enter' });
+    const botao = screen.getByRole('button', { name: /Adicionar ao Pedido/ }) as HTMLButtonElement;
+    expect(botao.disabled).toBe(true);
+    fireEvent.click(botao);
+    let ok: boolean | undefined;
+    act(() => { ok = ref.current?.(); });
+    expect(ok).toBe(false);
+    expect(onConfirm).not.toHaveBeenCalled();
+    // o campo de desconto continua na tela para a vendedora corrigir
+    expect(screen.getByPlaceholderText('0')).toBeTruthy();
+  });
+
+  it('alternativa com desconto que zera o preço fica desabilitada', () => {
+    const alt = {
+      formulaId: 'fa', skuId: 's2', omieProductId: 'p2', productDescricao: 'Base QT', productCodigo: 'QT',
+      precoFinalCsv: null, product: produto, sameAcabamento: true,
+    };
+    const { onConfirm } = card({
+      alternatives: [alt], altPriceMap: { fa: { precoFinal: 40, custoCorantes: 1 } as never },
+      syncDiscount: true, discountPct: 99.99, precoFinal: 0,
+    });
+    const botaoAlt = screen.getByText('Base QT').closest('button') as HTMLButtonElement;
+    expect(botaoAlt.disabled).toBe(true);
+    fireEvent.click(botaoAlt);
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+
   it('adicionarRef devolve false e não confirma quando o preço está carregando', () => {
     const { ref, onConfirm } = card({ precoCarregando: true, precoFinal: null, precoSemDesconto: null, disponivel: false });
     let ok: boolean | undefined;
@@ -193,6 +228,14 @@ describe('useTintColorSelect.tentarDeNovo — também refaz o preço', () => {
     expect(refetchPricing).toHaveBeenCalledTimes(1);
     expect(refetchAltPrices).toHaveBeenCalledTimes(1);
     expect(result.current.selectedFormula?.id).toBe('f2');
+  });
+
+  it('batch em erro NÃO expõe o mapa antigo (alternativa não confirma preço obsoleto — Codex P1)', () => {
+    hookState.current = { __real: true };
+    const { result } = renderHook(() => useTintColorSelect({ product: produto, open: true }), { wrapper });
+    act(() => { result.current.setSelectedFormula(formulas[1]); });
+    expect(result.current.altPriceError).toBe(true);
+    expect(result.current.altPriceMap).toBeUndefined();
   });
 
   it('refazendo após erro conta como "calculando" (segura o Adicionar, não pisca "sem preço")', () => {

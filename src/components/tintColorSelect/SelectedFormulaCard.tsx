@@ -32,10 +32,15 @@ const MOTIVO_SEM_PRECO: Record<SemPrecoMotivo, string> = {
 const TOQUE_CAMPO = '[@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-24';
 const TOQUE_CHIP = '[@media(pointer:coarse)]:px-3 [@media(pointer:coarse)]:text-sm';
 
-/** Única condição de "Adicionar ao Pedido" — o botão só existe sob ela e o Enter
- *  do teclado a reusa: nunca contorna o fail-closed (carregando/sem preço). */
+/** Única condição de "Adicionar ao Pedido" — o botão só habilita sob ela e o Enter
+ *  do teclado a reusa: nunca contorna o fail-closed (carregando/sem preço/R$ 0).
+ *  Preço final > 0 (Codex P2): desconto de 99,99% arredondava a R$ 0,00 e vendia.
+ *  Não é teto de desconto — é "nunca R$ 0". */
+function precoVendavel(v: number | null | undefined): v is number {
+  return v != null && Number.isFinite(v) && v > 0;
+}
 function podeAdicionarCor(p: { precoCarregando: boolean; disponivel: boolean; precoFinal: number | null }): boolean {
-  return !p.precoCarregando && p.disponivel && p.precoFinal != null;
+  return !p.precoCarregando && p.disponivel && precoVendavel(p.precoFinal);
 }
 
 interface SelectedFormulaCardProps {
@@ -112,7 +117,7 @@ export function SelectedFormulaCard({
 }: SelectedFormulaCardProps) {
   const podeAdicionar = podeAdicionarCor({ precoCarregando, disponivel, precoFinal });
   const tentarAdicionar = (): boolean => {
-    if (!podeAdicionar || precoFinal == null) return false;
+    if (!podeAdicionar || !precoVendavel(precoFinal)) return false;
     onConfirm(
       selectedFormula.id,
       selectedFormula.cor_id,
@@ -175,7 +180,7 @@ export function SelectedFormulaCard({
             <Loader2 className="w-3.5 h-3.5 animate-spin" />
             Calculando preço...
           </div>
-        ) : podeAdicionar ? (
+        ) : disponivel ? (
           <>
             {/* Seletor de fonte quando há mais de uma opção de preço */}
             {fontes.length > 1 && (
@@ -254,7 +259,10 @@ export function SelectedFormulaCard({
               )}
             </div>
 
-            <Button size="touch" onClick={tentarAdicionar}>
+            {!podeAdicionar && (
+              <p className="text-xs text-status-warning">Preço final zerado pelo desconto — ajuste o desconto para adicionar.</p>
+            )}
+            <Button size="touch" disabled={!podeAdicionar} onClick={tentarAdicionar}>
               <Palette className="w-3.5 h-3.5 mr-1.5" />
               Adicionar ao Pedido — {fmt(precoFinal ?? 0)}
             </Button>
@@ -296,6 +304,8 @@ export function SelectedFormulaCard({
                 const altBasePrice = altSel.preco ?? 0;
                 const altDisc = syncDiscount ? discountPct : (altDiscounts[alt.formulaId] || 0);
                 const altPrice = altDisc > 0 ? Math.round(altBasePrice * (1 - altDisc / 100) * 100) / 100 : altBasePrice;
+                // Nunca R$ 0 (Codex P2): o desconto pode zerar o preço arredondado.
+                const altVendavel = altDisponivel && precoVendavel(altPrice);
                 return (
                   <Fragment key={alt.formulaId}>
                     {showDivider && (
@@ -307,8 +317,8 @@ export function SelectedFormulaCard({
                     )}
                     <div className={`rounded-md border transition-all text-xs group ${alt.sameAcabamento ? 'border-primary/30 bg-primary/5' : 'border-border hover:border-primary/50'}`}>
                     <button
-                      disabled={!altDisponivel}
-                      onClick={() => altDisponivel && onConfirm(
+                      disabled={!altVendavel}
+                      onClick={() => altVendavel && onConfirm(
                         alt.formulaId,
                         selectedFormula.cor_id,
                         selectedFormula.nome_cor,
@@ -319,7 +329,7 @@ export function SelectedFormulaCard({
                         { source: altSel.fonte, discountPct: altDisc, precoSemDesconto: altSel.preco },
                         alt.product,
                       )}
-                      className={`w-full flex items-center justify-between gap-2 p-2 ${altDisponivel ? 'hover:bg-primary/5' : 'opacity-60 cursor-not-allowed'}`}
+                      className={`w-full flex items-center justify-between gap-2 p-2 ${altVendavel ? 'hover:bg-primary/5' : 'opacity-60 cursor-not-allowed'}`}
                     >
                       <div className="flex-1 text-left min-w-0">
                         <p className="font-medium group-hover:text-primary transition-colors break-words whitespace-normal">

@@ -367,7 +367,7 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
     [alternatives, globalColorMatches],
   );
   const {
-    data: altPriceMap,
+    data: altPriceMapBruto,
     isLoading: altPriceQueryLoading,
     isError: altPriceError,
     isFetching: altPriceFetching,
@@ -375,6 +375,9 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
   } = useTintPrices(altFormulaIds);
   // Refazendo após erro ("Tentar de novo") conta como carregando: mostra "calculando", não "sem preço".
   const altPriceLoading = altFormulaIds.length > 0 && (altPriceQueryLoading || (altPriceError && altPriceFetching));
+  // Fail-closed (Codex P1): após um erro o React Query MANTÉM o último mapa bom — sem este
+  // corte, as alternativas seguiam confirmáveis com preço obsoleto durante/após o retry.
+  const altPriceMap = altPriceError || altPriceLoading ? undefined : altPriceMapBruto;
 
   // Preço honesto da cor selecionada: motor get_tint_price (base + corantes, NULL quando
   // a base/corante falta) + CSV legado + último preço do cliente. Quando o motor não tem
