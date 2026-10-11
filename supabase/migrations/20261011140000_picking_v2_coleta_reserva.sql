@@ -1,5 +1,5 @@
 -- ============================================================================================
--- 20261011120000 · picking v2 — reserva exclusiva da coleta + janela pela inclusão (Fase 0.5b)
+-- 20261011140000 · picking v2 — reserva exclusiva da coleta + janela pela inclusão (Fase 0.5b)
 -- Prova: db/test-picking-v2.sh (PG17, aplica esta migration depois da 20261011020000)
 -- Spec: docs/superpowers/specs/2026-10-10-picking-v2-design.md §1.3, §3.6 · Codex 0.5b r1–r3
 --

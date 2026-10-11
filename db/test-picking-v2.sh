@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Prova PG17 do picking v2 — supabase/migrations/20261011020000_picking_v2_schema.sql
-#   + 20261011120000_picking_v2_coleta_reserva.sql (reserva exclusiva da coleta, Fase 0.5b)
+#   + 20261011140000_picking_v2_coleta_reserva.sql (reserva exclusiva da coleta, Fase 0.5b)
 #   bash db/test-picking-v2.sh > /tmp/t.log 2>&1; echo "exit=$?"
 #
 # Cada banco nasce do zero (stubs + pré-requisitos de prod + a migration). As RPCs são EXECUTADAS
@@ -27,7 +27,7 @@ trap cleanup EXIT
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "$TMP/pg.log" -w start >/dev/null
 
 MIG="$REPO_ROOT/supabase/migrations/20261011020000_picking_v2_schema.sql"
-MIG2="$REPO_ROOT/supabase/migrations/20261011120000_picking_v2_coleta_reserva.sql"
+MIG2="$REPO_ROOT/supabase/migrations/20261011140000_picking_v2_coleta_reserva.sql"
 
 Pd() { local db="$1"; shift; "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d "$db" -v ON_ERROR_STOP=1 "$@"; }
 Pq() { Pd "$1" -tA -q -c "$2"; }
