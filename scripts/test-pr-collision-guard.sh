@@ -203,6 +203,64 @@ expect_warn "encadeado le o indice (nao o 3-pontos vazio)" "$ENC" \
 expect_warn "encadeado nao e silenciado pelo dedupe (contem create)" "$ENC" \
   'git commit -am "wip" && gh pr create --fill' 'origin/main' 'src/lib/quente.ts'
 
+echo "── gatilho 3: gates:rapidos no gh pr create (M-23) ──"
+# Gates FALSOS (PRCG_GATES_CMD): o hook não roda os 14 gates reais no teste; prova o CONTRATO —
+# nega só com exit 1 + marca, avisa quando não mediu, nunca roda fora do create, respeita a válvula.
+cat >"$stub/gates_reprova" <<'G'
+#!/bin/sh
+pwd -P > "${GATES_PWD_FILE:-/dev/null}"
+printf '  \342\234\223 docs:indice   0.1s\n  \342\234\227 claude:size   0.2s  exit 1\n\nGATES_RAPIDOS_REPROVOU: claude:size\n'
+exit 1
+G
+cat >"$stub/gates_ok" <<'G'
+#!/bin/sh
+pwd -P > "${GATES_PWD_FILE:-/dev/null}"
+echo "GATES_RAPIDOS_OK n=14"; exit 0
+G
+cat >"$stub/gates_crash" <<'G'
+#!/bin/sh
+echo "Segmentation fault"; exit 1
+G
+chmod +x "$stub/gates_reprova" "$stub/gates_ok" "$stub/gates_crash"
+SEMCOL="$M GIT_STUB_GAINED_FILE=$stub/gained_miss.txt GH_STUB_FILE=$stub/prs_miss.json"
+
+expect_deny() {  # deny com o token na razão
+  local nome="$1" out
+  out="$(_hook "$2" "$3")"
+  if printf '%s' "$out" | jq -e '.hookSpecificOutput.permissionDecision == "deny"' >/dev/null 2>&1 \
+     && printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecisionReason' | grep -qF "$4"; then
+    echo "  ok    deny  | $nome"
+  else
+    echo "  FAIL  want deny ($4) | $nome | out='$out'"; fail=1
+  fi
+}
+
+expect_deny  "gate reprovado nega o create" "$SEMCOL PRCG_GATES_CMD=$stub/gates_reprova" \
+  'gh pr create --fill' 'GATES_RAPIDOS_REPROVOU: claude:size'
+expect_deny  "nega tambem no encadeado commit+create" "$SEMCOL PRCG_GATES_CMD=$stub/gates_reprova PRCG_CACHE_DIR=$stub/cache_g3" \
+  'git commit -am "x" && gh pr create --fill' 'claude:size'
+expect_quiet "gates verdes e sem colisao: mudo" "$SEMCOL PRCG_GATES_CMD=$stub/gates_ok" \
+  'gh pr create --fill'
+expect_warn  "exit 1 SEM a marca nao nega: avisa que nao mediu" "$SEMCOL PRCG_GATES_CMD=$stub/gates_crash" \
+  'gh pr create --fill' 'sem veredito'
+expect_quiet "git commit sozinho NAO roda os gates" "$SEMCOL PRCG_GATES_CMD=$stub/gates_reprova PRCG_CACHE_DIR=$stub/cache_g3b" \
+  'git commit -m "x"'
+expect_warn  "valvula GATES_RAPIDOS=pular nao nega e diz que pulou" "$SEMCOL PRCG_GATES_CMD=$stub/gates_reprova" \
+  'GATES_RAPIDOS=pular gh pr create --fill' 'PULADO'
+expect_warn  "cd com variavel: nao sei onde roda, avisa" "$SEMCOL PRCG_GATES_CMD=$stub/gates_reprova" \
+  'cd "$W" && gh pr create --fill' 'NÃO rodou'
+expect_warn  "colisao E gate sem veredito: os dois avisos saem" \
+  "$M GIT_STUB_GAINED_FILE=$stub/gained_hit.txt GH_STUB_FILE=$stub/prs_miss.json PRCG_GATES_CMD=$stub/gates_crash" \
+  'gh pr create --fill' 'origin/main' 'sem veredito'
+# o diretório dos gates é o do `cd` literal que precede o create, não o cwd do hook
+mkdir -p "$stub/alvo"
+_hook "$SEMCOL PRCG_GATES_CMD=$stub/gates_ok GATES_PWD_FILE=$stub/pwd.txt" "cd $stub/alvo && gh pr create --fill" >/dev/null
+if [ "$(cat "$stub/pwd.txt" 2>/dev/null)" = "$(cd "$stub/alvo" && pwd -P)" ]; then
+  echo "  ok    cwd   | gates rodam no diretorio do cd literal"
+else
+  echo "  FAIL  gates rodaram em '$(cat "$stub/pwd.txt" 2>/dev/null)', esperado $stub/alvo"; fail=1
+fi
+
 echo "── fail-open TOTAL: o hook nunca sai não-zero ──"
 if [ -s "$stub/exit-nao-zero.log" ]; then
   echo "  FAIL  hook saiu não-zero: $(head -1 "$stub/exit-nao-zero.log")"; fail=1
