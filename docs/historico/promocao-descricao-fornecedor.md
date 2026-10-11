@@ -49,7 +49,9 @@ auditoria e de gabarito, não de preço.
 leitura boa) / ok, e marca o cache de refetch falho como desatualizado. Tooltips e popover mostram
 **Fornecedor** e **SKU Omie** lado a lado (`DescricoesDoVinculo`); a coluna da tabela virou "Descrição
 (fornecedor)". Dois defeitos preexistentes do mesmo handler, achados pelo Codex: o PATCH do original não era
-aguardado (falhava e os irmãos nasciam com "vinculado" na tela) — agora `mutateAsync` e nada segue sem ele;
+aguardado (falhava e os irmãos nasciam com "vinculado" na tela) — agora `mutateAsync` e nada segue sem ele,
+e a gravação de item (`atualizarItemPromocao`) só é sucesso com **exatamente 1 linha** afetada (o PostgREST
+responde 204 sem erro a PATCH que não casa nada, e o original podia ter sido excluído);
 e a similaridade já confirmada caía no ramo "Pendente" — ganhou ramo próprio. O "Confirmar" da similaridade
 fica travado sem a descrição confiável do SKU: conferir um casamento aproximado exige ver os dois lados.
 
@@ -69,6 +71,12 @@ conferidas linha a linha **no apply** (qualquer uma que não valha mais aborta t
 3. a origem tem descrição NULL **e** `atualizado_em = criado_em` da filha — a última escrita dela foi o UPDATE
    da própria expansão, que não toca a descrição. Logo o original da filha é NULL.
 
+As 17 linhas (12 filhas + 5 origens) são **travadas** (`FOR UPDATE`, em ordem de id) antes de qualquer
+prova ser lida, e a POS4 exige as 12 **presentes** e com o original. Achado do adversarial do Codex (P1),
+reproduzido **por execução** antes do conserto: outra transação que mudasse a observação da filha 8 sem
+tocar a descrição, aberta durante o apply, deixava a migration aplicar sobre a prova vencida — o UPDATE só
+revalida `id` e descrição, e o READ COMMITTED reavalia o `WHERE` sobre a versão nova (prova M9:
+`APLICOU|MUDARAM` → `RECUSOU|intactas`); e filha excluída passava na POS4, que contava só as com texto.
 Filha já saneada é pulada **sem** UPDATE: o gatilho `trg_touch_promocao_item` renovaria `atualizado_em`
 num UPDATE no-op (Codex, P2). Valores "antes" de cada filha estão no próprio manifesto (reversível).
 
@@ -86,11 +94,17 @@ Recuperar qualquer uma exige ler o arquivo-fonte da campanha (Storage) e transcr
 ## Provas
 
 - vitest: `MapeamentoStatusCell.test.tsx` (vínculo, PATCH falho, exibição, similaridade), `descricaoSku.test.ts`,
-  `useDescricoesSkuOmie.test.tsx`, `ItensTab.test.tsx`. 10 sabotagens de UI, cada uma vermelha no teste certo.
-- PG17 `db/test-promocao-descricao-fornecedor.sh`: 29 asserts (C predecessores = prod; A o defeito reproduz;
-  M PRE/backfill/POS sob o executor, cada cenário num **clone** do banco-base; F a chamada do front e do
-  converter), verde em `C` e `pt_BR.UTF-8`; `--falsificar` com 13 sabotagens (as de corpo aplicadas
-  **depois** do apply, para o vermelho vir do comportamento e não do md5).
+  `useDescricoesSkuOmie.test.tsx`, `ItensTab.test.tsx`, `atualizarItemPromocao.test.ts` e
+  `AdminReposicaoPromocaoDetail.gravacao.test.tsx` (a página até o toast). 10 sabotagens de UI, cada uma
+  vermelha no teste certo.
+- PG17 `db/test-promocao-descricao-fornecedor.sh`: 31 asserts (C predecessores = prod; A o defeito reproduz;
+  M PRE/backfill/POS numa transação — `psql -1`, a moldura que o `db:aplicar` dá; não executa o
+  `aplicar_sql` em si —, cada cenário num **clone** do banco-base, M9 com 2 conexões e ordem observada; F a
+  chamada do front e do converter), verde em `C` e `pt_BR.UTF-8`; `--falsificar` com 15 sabotagens (as de
+  corpo aplicadas **depois** do apply, para o vermelho vir do comportamento e não do md5).
+- Codex: desenho (263 s · 111.012 tokens; P1 do prefixo → manifesto) e adversarial no diff (312 s · 190.053
+  tokens; P1 da corrida → trava; P2 PATCH sem linha → `atualizarItemPromocao` exige 1 linha afetada; P2
+  Confirmar com o SKU sem texto → travado).
 
 ## Lições
 
@@ -100,3 +114,6 @@ Recuperar qualquer uma exige ler o arquivo-fonte da campanha (Storage) e transcr
 - **Um casamento único por regra não é filiação.** Backfill de dado de dinheiro sai de manifesto fechado com
   a prova por linha conferida no apply, não de um predicado genérico.
 - **UPDATE no-op não é inofensivo** com gatilho de carimbo: re-aplicar tem de pular a linha, não regravá-la.
+- **Prova lida e UPDATE são instantes diferentes.** Conferir a prova num SELECT e escrever noutro deixa a
+  janela em que a prova vence (o `WHERE` do UPDATE só revalida o que ele cita). Trave as linhas ANTES de ler
+  a prova — e prove a corrida com duas conexões e ordem observada, não com `sleep`.
