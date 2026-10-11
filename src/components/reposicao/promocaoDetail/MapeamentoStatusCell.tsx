@@ -292,25 +292,25 @@ export function MapeamentoStatusCell({
                 if (ids.length === 0) return;
                 setSalvando(true);
                 try {
-                  // Primeiro SKU → atualiza o item original (in-place)
+                  // Primeiro SKU → atualiza o item original (in-place). A descrição NÃO entra:
+                  // descricao_produto_fornecedor é o texto que o fornecedor ofertou, e a do SKU
+                  // escolhido se lê pelo sku_codigo_omie (sobrescrevê-la apagava a auditoria).
                   const primeiroId = ids[0];
-                  const primeiro = selectedSkus[primeiroId];
                   onUpdate({
                     sku_codigo_omie: primeiroId,
-                    descricao_produto_fornecedor: primeiro.descricao,
                     mapeamento_qualidade: "manual_confirmado",
                     confirmado: true,
                   });
 
-                  // Demais → inserir novos itens irmãos (mesmo desconto/volume).
-                  // Para escapar do unique (campanha_id, sku_codigo_fornecedor, volume_minimo),
-                  // sufixamos o código fornecedor com #omie<id>.
+                  // Demais → inserir novos itens irmãos (mesmo desconto/volume e o MESMO texto do
+                  // fornecedor do original). Para escapar do unique (campanha_id,
+                  // sku_codigo_fornecedor, volume_minimo), sufixamos o código fornecedor com #omie<id>.
                   const extras = ids.slice(1);
                   if (extras.length > 0) {
                     const payload = extras.map((omieId) => ({
                       campanha_id: item.campanha_id,
                       sku_codigo_fornecedor: `${item.sku_codigo_fornecedor}#omie${omieId}`,
-                      descricao_produto_fornecedor: selectedSkus[omieId].descricao,
+                      descricao_produto_fornecedor: item.descricao_produto_fornecedor,
                       sku_codigo_omie: omieId,
                       mapeamento_qualidade: "manual_confirmado",
                       desconto_perc: item.desconto_perc,
