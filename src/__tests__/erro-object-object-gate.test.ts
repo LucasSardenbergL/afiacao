@@ -144,7 +144,7 @@ const A_DIVIDA: ReadonlyMap<string, number> = new Map([
   ['supabase/functions/omie-sync-status-produtos/index.ts', 4],
   ['supabase/functions/omie-sync-vendas-items/index.ts', 2],
   ['supabase/functions/omie-sync/index.ts', 4],
-  ['supabase/functions/omie-vendas-sync/index.ts', 10],
+  ['supabase/functions/omie-vendas-sync/index.ts', 9],
   ['supabase/functions/omie-webhook/index.ts', 2],
   ['supabase/functions/pedido-programado-enviar/index.ts', 1],
   ['supabase/functions/pedido-programado-extrair/index.ts', 1],

@@ -139,3 +139,27 @@ export function classificarErroConsultaExclusao(e: unknown): ConsultaExclusao {
   if (!msg.startsWith("OMIE_TRANSIENT") && PEDIDO_NAO_ENCONTRADO.test(msg)) return { tipo: "ausente" };
   return { tipo: "indeterminado", detalhe: msg };
 }
+
+/** Exclusão de pedido que JÁ está no Omie (decisão 2026-10-11, founder + Codex): o app NÃO cancela no
+ *  ERP. `produtos/pedido/` não tem CancelarPedido (a edge chamava um método inexistente, caía no catch
+ *  e apagava só o registro do app); o cancelamento documentado (`pedidovendafat/CancelarPedidoVenda`)
+ *  cancela também NF-e e contas a receber de pedido faturado, sem contrato de etapa nem proteção contra
+ *  o faturamento concorrente no Omie. Então: registro importado nunca sai pelo app; pedido do app sai
+ *  só depois que o sync trouxe o cancelamento feito no Omie. */
+export function vereditoExclusaoNoOmie(linha: {
+  hashPayload: string | null;
+  omiePedidoId: number;
+  statusCanonico: string | null;
+}): { permitido: true } | { permitido: false; motivo: string } {
+  if (typeof linha.hashPayload === "string" && linha.hashPayload.startsWith("omie_")) {
+    return {
+      permitido: false,
+      motivo: `Registro importado do Omie (PV ${linha.omiePedidoId}): o app não cancela pedido no Omie. Cancele direto no Omie — o sync atualiza aqui.`,
+    };
+  }
+  if (linha.statusCanonico === "cancelado") return { permitido: true };
+  return {
+    permitido: false,
+    motivo: `O pedido está no Omie (PV ${linha.omiePedidoId}) e ainda não consta como cancelado. Cancele direto no Omie; depois que o sync trouxer o cancelamento, a exclusão aqui é liberada.`,
+  };
+}
