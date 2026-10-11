@@ -150,7 +150,9 @@ Deno.test("paginar: resposta atrasada não muda a ordem — a página seguinte s
 });
 
 Deno.test("paginar: teto de páginas sem página vazia é erro, não listagem", async () => {
-  const sempre = () => Promise.resolve(pagina(999, [ped(Math.floor(Math.random() * 1e9) + 1)]));
+  // Sem fim; da página 20 em diante dá erro, para o teste FALHAR (e não pendurar) se o teto sumir.
+  const sempre = (n: number): Promise<Pagina> =>
+    Promise.resolve(n < 20 ? pagina(999, [ped(n)]) : { tipo: "erro", erro: "passou do teto" });
   const r = await paginar(sempre, { tetoPaginas: 3 });
   assertEquals([r.ok, r.ok ? null : r.erro], [false, "teto de 3 páginas atingido sem página vazia"]);
 });
