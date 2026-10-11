@@ -1,8 +1,71 @@
 # Plano de melhorias — Afiação (varredura completa de 2026-09-05)
 
-> **Status: proposta** — aguarda decisão do founder nos itens marcados 🧭. Base: `main` em `9fe4e88` (worktree `intelligent-yalow-39d4e7`).
+> **Status: em execução** — decisões do §6 tomadas em 2026-10-10 (ver §0.3); ordem de execução vigente em §0.4. Base original: `main` em `9fe4e88`.
 > Gerado a partir de **8 auditorias read-only por eixo** (frontend · domínio/lib · edges · banco · tooling/CI · testes · docs/backlog herdado · segurança) + **medições próprias** de uso (PostHog/HogQL), banco (`psql-ro`) e health stack. Relatórios íntegros em [`anexos/`](anexos/).
 > Priorização: **score = (Impacto + Risco) × (6 − Esforço)**, cada eixo em 1–5 (skill `engineering:tech-debt`). Precisão > recall: cada achado tem evidência `arquivo:linha` e foi confirmado contra o código de hoje (o que já estava entregue foi descartado, com motivo, nos anexos).
+
+## 0. Revisão de execução — 2026-10-10 (vigente; substitui a ordem do §5)
+
+> Revisado sobre `origin/main` `3d2a3cf87` (693 commits depois do plano), com pareceres independentes do **Fable** e do **Codex** (gpt-5.6-sol). O founder delegou as decisões do §6 a Claude + Codex; elas estão em §0.3. O §4 e o §5 abaixo continuam como diagnóstico e lista de referência, mas **a ordem de execução vale a desta seção**.
+
+### 0.1 Estado verificado
+
+| Estado | Itens |
+|---|---|
+| ✅ feito | M-01 (#2201) · M-02 (#2204) · M-03 (#2205) · M-04 (#2206) · M-11 (#2781) · M-24 (vitest `projects` node/jsdom) · M-25 (gate AST ~60% mais rápido) · M-27 (#2874, snapshot com provas) · M-40 (job `provas-sql`, `db/nucleo-ci.txt` com 92 harnesses) |
+| 🟡 parcial | M-14 (`concurrency` + shellcheck no CI; faltam os lockfiles) · M-21 (preload do `bun test` falha alto) · M-26 (sonda em 63/98 edges, era 40/95) · M-33 (`omie-deadline.ts` em 4+ edges; faltam os 3 enumeradores e o cliente Anthropic) · M-48 (7 wrappers `omieCall`, eram 25) |
+| ❌ aberto | M-05 · M-06 · M-07 · M-08 · M-09 · M-10 · M-12 · M-13 · M-15 · M-16 · M-17 · M-18 · M-22 · M-23 · M-28 · M-29 · M-30 · M-31 · M-36 · M-37 · M-39 · M-41 · M-45 · M-47 |
+
+### 0.2 Regra de execução: ordenar por arquivo tocado, não por score
+
+Fable e Codex discordaram do §5 no mesmo ponto: com dezenas de worktrees paralelas, o que quebra é duas sessões no mesmo arquivo. `ci.yml`, `package.json`, `.claude/hooks/`, `App.tsx`, `manifesto.ts`, `AuthContext.tsx`, `_shared/` e `supabase/migrations/` têm **um dono por vez**: o lote que os toca roda numa sessão só, em sequência. Toda sessão parte de `origin/main`, repete `git fetch && git grep <símbolo> origin/main` + `gh pr list` antes de implementar **e** antes do `gh pr create`, e abandona o item se outra sessão já o entregou.
+
+### 0.3 Decisões (delegadas pelo founder a Claude + Codex em 2026-10-10)
+
+| # | Decisão | Fica assim | Por quê |
+|---|---|---|---|
+| 1 | Módulos sem uso (M-41) | **Congelar por 90 dias** todo módulo com 0 pageview em 90 dias e nada escrevendo nele: loja-afiacao, telefonia/WhatsApp/rota, tarefas, prime, producao, picking, knowledge-base, governanca, admin-crm e as telas de **input** do financeiro. Ativos: plataforma, reposicao, farmer (automação), financeiro (leitura), vendas/sync, tintometrico (motor), recebimento. Congelar = esconder rota + `status: 'congelado'` no manifesto + parar de corrigir. Arquivar só após os 90 dias, se seguir sem uso. | regra `fase-sem-sinal.md`; reversível; o founder veta exceções em vez de decidir uma a uma |
+| 2 | Telas sobre objeto inexistente (M-06) | **Remover** as rotas e o código de `fila_aplicacao_omie`/`gerar_fila_aplicacao_omie` e `quality_checklists` | 0 uso, objetos nunca existiram em prod; o git é o backup |
+| 3 | CI na main após merge (M-22) | **`workflow_dispatch` disparado pelo próprio `auto-merge.yml`**: depois que o PR estiver `MERGED` (o `gh pr merge --auto` só agenda; é preciso esperar/pollar), rodar `gh workflow run ci.yml --ref main`. Exige `permissions: actions: write` no workflow e `concurrency: { group: ci-${{ github.ref }}, cancel-in-progress: true }` no `ci.yml` (conferir se o existente é de job ou de workflow). Merge queue só se conflito semântico entre PRs voltar a derrubar a main. | `workflow_dispatch` é a exceção documentada que o `GITHUB_TOKEN` pode disparar: zero credencial nova e nenhuma mudança no fluxo das worktrees |
+| 4 | Retenção LGPD (M-36) | Gravações, transcrições de ligação e copilot: **90 dias**. Texto de WhatsApp: **90 dias**, com legal hold quando houver disputa identificada. PII em log de edge: **redigir já**. Expurgo por cron, com exceção explícita (legal hold). | a LGPD não fixa prazo e exige retenção ligada à finalidade (ANPD; art. 6º III); a prova fiscal e comercial está em NF-e/Omie, não no chat; e o módulo está dormente |
+| 5 | Upgrades grandes (M-59) | **Nenhum major em 2026**, salvo CVE/EOL; minors à vontade. Vite 8 segue bloqueado por peers. | 5 usuários não pagam o risco |
+| 6 | Tintométrico (M-43) | **Só o barato**: expurgo de `tint_sync_runs`/`tint_sync_errors` + `VACUUM`. Redesenhar o sync apenas se a fatura do Supabase mostrar custo relevante ou houver incidente. | 2,8 GB só importa se virar custo |
+| 7 | Pendências da auditoria de UX | **Adiar**: não criar `nfe_receipt_runs`/`user_segments`; picking congelado (decisão 1) dispensa o redirect mobile; `/unified-order` fica 90 dias com evento e sai se tiver 0 hits | nenhuma tem sinal de uso |
+| — | Harness PG17 no CI (M-40) | **Superada**: já roda (job `provas-sql`) | — |
+
+### 0.4 Lotes (1 lote = 1 sessão · 1 item = 1 PR)
+
+| Lote | Itens, na ordem | Dono de arquivo quente | Bloqueio |
+|---|---|---|---|
+| **A · bugs de dinheiro** | M-07 → M-12 → M-05 → M-10 | `AuthContext.tsx` (só M-10) | nenhum; ritual `/codex` + falsificação em cada |
+| **B · CI e tooling** | M-14 (resto: apagar `bun.lockb` e `package-lock.json`) → M-29 (`deno.lock` + `--frozen`) → M-23 (`gates:rapidos` no pre-PR) → M-22 → M-28 (gate `casts-stale` com baseline) → M-21 (resto) | `ci.yml`, `package.json`, `.claude/hooks/` | nenhum |
+| **C · edges** | M-08 (+ sonda) → M-33 (resto) → M-26 (resto, lotes de ~7, primeiro as com cron/escrita irreversível) → M-48 (7 wrappers) | `_shared/` | founder faz **1 deploy por lote de ~7 edges** |
+| **D · banco** | M-09 → M-15 → M-13 → M-17 → M-18 → M-37 | `supabase/migrations/` | founder cola **uma leva** de SQL no Lovable; cada migration com pós-condição embutida |
+| **E · captura de erros** | M-39 (provocar exceção e ver chegar no PostHog) → M-30 (`ErrorBoundary` por rota) | `App.tsx` | M-30 depende de M-39 |
+| **F · docs** | M-45 (README humano) | — | nenhum |
+| **G · triagem** | M-41 (status no manifesto + esconder rotas) → M-06 → M-16 (crons de módulo congelado) → M-47 → M-31 → M-36 (expurgo) | `manifesto.ts`, `App.tsx` | começa **depois do lote E** (ambos tocam `App.tsx`) |
+
+### 0.5 Cortado (com 5 usuários e 1 dev, é custo sem retorno)
+
+M-19 · M-20 (vira 1 linha no lote F se sobrar tempo) · M-34 · M-35 · M-38 · M-42 (drop de tabelas só após o fim do congelamento) · M-43 redesenho · M-44 · M-46 (vira rotina do `/fecho`, não item) · M-50 · M-52 · M-54 (exceto os 3 índices nomeados, quando o módulo for tocado) · M-55 · M-56 · M-57 · M-59 · M-60. **Fase 3 inteira vira a regra "canônico quando tocar"**: o PR que precisar de um helper canônico (M-49, M-51, M-53) cria o helper e o gate que barra cópia nova, sem migrar o legado.
+
+### 0.6 Quando um item está terminado
+
+PR mergeado **e** prova em produção — sonda de versão para edge, consulta `psql-ro` para banco, bytes do bundle para front (`/lovable-deploy-verify`). Merge sozinho é "mergeado", não "terminado". Verificação por item:
+
+```bash
+git grep -n "company" origin/main -- src/hooks/dashboard/useVendasZone.ts | grep -v queryKey   # M-07: ≥1
+git ls-tree origin/main bun.lockb package-lock.json | wc -l                                      # M-14: 0
+git ls-tree -r --name-only origin/main supabase/functions | grep -c 'deno.lock'                  # M-29: ≥1
+bun run gates:rapidos                                                                            # M-23: exit 0; sabotar 1 gate → ≠0
+git grep -ln "fila_aplicacao_omie\|quality_checklists" origin/main -- src | wc -l               # M-06: 0
+git grep -c "status: 'congelado'" origin/main -- src/lib/modulos/manifesto.ts                    # M-41: nº de módulos congelados
+~/.config/afiacao/psql-ro -c "select count(*) from cron.job where schedule = '* * * * *'"        # M-16: 0
+~/.config/afiacao/psql-ro -c "select to_regclass('public._quarantine_omie_clientes_20260722')"   # M-18: null
+```
+
+Plano fechado = todos os lotes A–G terminados + 0 issues "deploy pendente" por 30 dias.
+
 
 ## TL;DR
 
