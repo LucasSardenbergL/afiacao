@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 599
+-- Total de custom migrations: 604
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -659,8 +659,13 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261009233000', 'atp_fase3_2_corretiva', '20261009233000_atp_fase3_2_corretiva.sql'),
   ('20261010120000', 'apply_score_updates_fencing_lease', '20261010120000_apply_score_updates_fencing_lease.sql'),
   ('20261010120000', 'tint_formulas_tombstone_fase5_imutavel', '20261010120000_tint_formulas_tombstone_fase5_imutavel.sql'),
+  ('20261010150000', 'atp_fase3_3_pv_divergente', '20261010150000_atp_fase3_3_pv_divergente.sql'),
   ('20261010150000', 'remove_cron_disparo_10h', '20261010150000_remove_cron_disparo_10h.sql'),
-  ('20261010163424', 'resolver_cliente_por_telefone', '20261010163424_resolver_cliente_por_telefone.sql')
+  ('20261010163424', 'resolver_cliente_por_telefone', '20261010163424_resolver_cliente_por_telefone.sql'),
+  ('20261010204708', 'omie_cota_metodo', '20261010204708_omie_cota_metodo.sql'),
+  ('20261010210000', 'motor_desconta_comprometido', '20261010210000_motor_desconta_comprometido.sql'),
+  ('20261010220000', 'tint_adocao_balcao', '20261010220000_tint_adocao_balcao.sql'),
+  ('20261011120000', 'tint_grants_escrita_staff', '20261011120000_tint_grants_escrita_staff.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2587,7 +2592,14 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('tint_formulas_tombstone_fase5_imutavel', 'trigger', 'public', 'trg_tint_formulas_tombstone_fase5_upd', 'tint_formulas'),
   ('tint_formulas_tombstone_fase5_imutavel', 'trigger', 'public', 'trg_tint_formulas_tombstone_fase5_del', 'tint_formulas'),
   ('tint_formulas_tombstone_fase5_imutavel', 'trigger', 'public', 'trg_tint_subcolecoes_tombstone_fase5_upd', 'tint_subcolecoes'),
-  ('resolver_cliente_por_telefone', 'function', 'public', 'resolver_cliente_por_telefone', '')
+  ('atp_fase3_3_pv_divergente', 'function', 'public', 'atp_confirmar_pv', ''),
+  ('resolver_cliente_por_telefone', 'function', 'public', 'resolver_cliente_por_telefone', ''),
+  ('omie_cota_metodo', 'function', 'public', 'omie_cota_tentar', ''),
+  ('omie_cota_metodo', 'function', 'public', 'omie_cota_liberar', ''),
+  ('omie_cota_metodo', 'function', 'public', 'omie_cota_registrar_fault', ''),
+  ('omie_cota_metodo', 'table', 'public', 'omie_cota_metodo', ''),
+  ('motor_desconta_comprometido', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
+  ('tint_adocao_balcao', 'function', 'public', 'tint_adocao_balcao', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4562,7 +4574,14 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('tint_formulas_tombstone_fase5_imutavel', 'trigger', 'public', 'trg_tint_formulas_tombstone_fase5_upd', 'tint_formulas'),
   ('tint_formulas_tombstone_fase5_imutavel', 'trigger', 'public', 'trg_tint_formulas_tombstone_fase5_del', 'tint_formulas'),
   ('tint_formulas_tombstone_fase5_imutavel', 'trigger', 'public', 'trg_tint_subcolecoes_tombstone_fase5_upd', 'tint_subcolecoes'),
-  ('resolver_cliente_por_telefone', 'function', 'public', 'resolver_cliente_por_telefone', '')
+  ('atp_fase3_3_pv_divergente', 'function', 'public', 'atp_confirmar_pv', ''),
+  ('resolver_cliente_por_telefone', 'function', 'public', 'resolver_cliente_por_telefone', ''),
+  ('omie_cota_metodo', 'function', 'public', 'omie_cota_tentar', ''),
+  ('omie_cota_metodo', 'function', 'public', 'omie_cota_liberar', ''),
+  ('omie_cota_metodo', 'function', 'public', 'omie_cota_registrar_fault', ''),
+  ('omie_cota_metodo', 'table', 'public', 'omie_cota_metodo', ''),
+  ('motor_desconta_comprometido', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
+  ('tint_adocao_balcao', 'function', 'public', 'tint_adocao_balcao', '')
 )
 SELECT
   e.migration,
@@ -4590,7 +4609,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 125.
+-- Funções redefinidas com corpo extraível: 126.
 -- Fora da seção (4) — o último evento é REMOÇÃO de propósito (DROP / SET SCHEMA / RENAME):
 --   • public.import_tint_formulas — 20260806223407_drop_import_tint_formulas.sql
 --   • public.estimar_impacto_exclusao_outlier — 20260718093248_drop_estimar_impacto_exclusao_outlier_orfa.sql
@@ -4667,6 +4686,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'gerar_pedidos_sugeridos_ciclo', 29, '20260925225004_reposicao_em_transito_simulado_e_join_grupo_null_safe.sql', '398616d7fde6f91b15fd32874bcfc50b'),
   ('public', 'gerar_pedidos_sugeridos_ciclo', 30, '20261001023000_hoje_sp_familia_data_ciclo.sql', '722f2c1f8113e32ec38865428f6f10f2'),
   ('public', 'gerar_pedidos_sugeridos_ciclo', 31, '20261009194000_motor_unidades_concentrado_wp.sql', '878ee028877451245d7e7ebd07ce5dec'),
+  ('public', 'gerar_pedidos_sugeridos_ciclo', 32, '20261010210000_motor_desconta_comprometido.sql', 'ab4672759ad766edcdede12d74ee14bd'),
   ('public', 'envio_portal_lock_candidatos', 1, '20260430005120_ac9adac9-3575-4449-9703-2f88ba333c3f.sql', 'bcdd860ddf768655ce2a5d72fe0e02a7'),
   ('public', 'envio_portal_lock_candidatos', 2, '20260512101121_a96fa007-f688-4c3a-8cd9-43f9d88e5505.sql', 'fd19eefabbdaf5c42ec7d9b8e6a38e7e'),
   ('public', 'envio_portal_lock_candidatos', 3, '20260515010000_99661119-2843-4684-9dba-d21d55bf2ab9.sql', 'b116b7039ef4387546d2b86957b18c50'),
@@ -5084,7 +5104,9 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'expandir_promocao_item', 1, '20260929000234_padrao_like_contem_escapa_curinga.sql', '6a4779419c33db1ffe1f5c6bc6d7670b'),
   ('public', 'expandir_promocao_item', 2, '20260930220148_expandir_promocao_item_overload_similarity_volume.sql', '15cd9b2496f669df8e979de9545b4f98'),
   ('public', 'sales_orders_gemeo_app_derivar', 1, '20261001100001_sales_orders_gemeo_importado_contagem_unica.sql', '858944c47f258a1e33ddd58249316263'),
-  ('public', 'sales_orders_gemeo_app_derivar', 2, '20261005220000_sales_orders_kpi_no_envio.sql', '617b8551f551551b37200cb3ae787fe3')
+  ('public', 'sales_orders_gemeo_app_derivar', 2, '20261005220000_sales_orders_kpi_no_envio.sql', '617b8551f551551b37200cb3ae787fe3'),
+  ('public', 'atp_confirmar_pv', 1, '20261009120000_atp_fase3_1_elo_pid.sql', 'e61393e022cf87f7dd381a622d19b456'),
+  ('public', 'atp_confirmar_pv', 2, '20261010150000_atp_fase3_3_pv_divergente.sql', '7a193063b44c951951c834e9c56a6bdf')
 ),
 deriva_reconhecida (schema_name, object_name, body_md5, motivo) AS (VALUES
   ('public', 'apply_score_updates', '331996f594ff3491f36ce7da9068dbd9', 'cosmética (triagem 2026-10-08)'),
