@@ -240,13 +240,6 @@ DO $$ DECLARE g int; BEGIN
     PERFORM _seed_chave(g, 'BULK' || g, 'c0000000-0000-0000-0000-0000000000ff');
   END LOOP;
 END $$;
--- 10.000 chaves S2X saudáveis: massa do B21 (v2) — a fonte retira TODAS de uma vez e S2 tem de
--- ficar em 'aviso' (a v1 escalava para 'critico' a partir de 10.000).
-DO $$ DECLARE g int; BEGIN
-  FOR g IN 100001..110000 LOOP
-    PERFORM _seed_chave(g, 'S2X' || g, 'c0000000-0000-0000-0000-0000000000ff');
-  END LOOP;
-END $$;
 SQL
 
 # ── alavancas de estado ──
@@ -301,8 +294,11 @@ roda_suite() {
   # precisam devolvê-la — senão o resto da suíte mede a v1 (achado do Codex, 2026-10-10).
   Pq -c "SELECT pg_get_functiondef('public.tint_watchdog_fase5_check()'::regprocedure);" > "$RODADA/_f5wd_vigente.sql"
   volta_vigente() { P -q -f "$RODADA/_f5wd_vigente.sql" >/dev/null; }
-  local s2x="UPDATE public.tint_formulas SET desativada_em=now(), desativada_motivo=NULL WHERE cor_id LIKE 'S2X%' AND desativada_em IS NULL;"
-  local s2x_volta="UPDATE public.tint_formulas SET desativada_em=NULL WHERE cor_id LIKE 'S2X%' AND desativada_motivo IS NULL;"
+  # 10.000 chaves S2X (massa do B21/B22: a v1 escalava S2 para 'critico' a partir de 10.000) nascem
+  # JÁ retiradas pela fonte e morrem logo depois — semeadas o tempo todo, deixavam CADA rodada da
+  # varredura ~40x mais lenta e a prova foi de 11 s para 465 s no CI (estourou a parte 1, 2026-10-11).
+  local s2x="DO \$\$ DECLARE g int; BEGIN FOR g IN 100001..110000 LOOP PERFORM _seed_chave(g, 'S2X' || g, '$CO_OK'); END LOOP; END \$\$; UPDATE public.tint_formulas SET desativada_em=now(), desativada_motivo=NULL WHERE cor_id LIKE 'S2X%' AND desativada_em IS NULL;"
+  local s2x_volta="DELETE FROM public.tint_formula_itens WHERE formula_id IN (SELECT id FROM public.tint_formulas WHERE cor_id LIKE 'S2X%'); DELETE FROM public.tint_formulas WHERE cor_id LIKE 'S2X%';"
 
   # ── B1/B2: tudo saudável -> silêncio, e o marcador avança
   reset_estado
@@ -418,12 +414,10 @@ roda_suite() {
   P -q -c "$s2x"
   roda
   eq "B21 fonte retirada em massa (10000) fica em aviso, nunca critico" "$(sev tint_fase5_fonte_retirada)" "aviso"
-  P -q -c "$s2x_volta"
 
   # B22 (v2) — a TRANSIÇÃO de prod: o alerta 'critico' JÁ ABERTO pela v1 é rebaixado no lugar pela
   # v2 (mesmo id), com a contagem estável — e sem e-mail novo (rebaixar não é piora).
-  reset_estado
-  P -q -c "$s2x"
+  reset_estado                             # a massa S2X do B21 continua retirada
   P -q -f "$MIG" >/dev/null 2>&1           # a v1, como está em prod hoje
   roda
   local id_v1 fila_v1
