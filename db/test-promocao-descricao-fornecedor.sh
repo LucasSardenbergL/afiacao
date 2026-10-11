@@ -71,7 +71,7 @@ if [ "${1:-}" = "--falsificar" ]; then
               pos_sem_oid_acl:Mp3:Mp1,M7a
               pos_sem_backfill:Mp4:Mp1,M7a
               backfill_sem_trava:M9:M4,M7a
-              pos4_conta_so_texto:Mp5:Mp4,M7a"
+              pos_conta_so_texto:Mp5:Mp4,M7a"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-${SLUG}.XXXXXX")"
   porta=$PORT
 
@@ -145,6 +145,7 @@ if [ "${1:-}" = "--falsificar" ]; then
   exit 1
 fi
 SABOTAGEM="${SABOTAGEM:-}"
+SAB_APLICADA=0   # cada ramo que reconhece a sabotagem marca 1; a que nenhum ramo reconhece aborta no fim
 
 # PGBIN: resolvido por plataforma (macOS Homebrew / Linux PGDG) com conferência POSITIVA da major.
 # shellcheck disable=SC1091  # o gate roda sem -x; o helper é versionado ao lado, em db/lib/
@@ -227,7 +228,7 @@ TROCAS = {
   "backfill_sem_trava": (None, [(
     "  PERFORM 1 FROM public.promocao_item\n   WHERE id IN (1, 2, 3, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18)\n   ORDER BY id\n     FOR UPDATE;\n",
     "", 1)]),
-  "pos4_conta_so_texto": (None, [(
+  "pos_conta_so_texto": (None, [(
     "  IF n IS DISTINCT FROM 12 OR n_original IS DISTINCT FROM 12 THEN\n",
     "  IF n - n_original IS DISTINCT FROM 0 THEN\n", 1)]),
   "pos_sem_md5": (None, [("      RAISE EXCEPTION 'POS1 FALHOU", "      RAISE NOTICE 'POS1 FALHOU", 1)]),
@@ -482,6 +483,7 @@ case "$SABOTAGEM" in
   pre_*|backfill_*|pos_*)
     MIG_EFETIVA="$TMPD/mig_sabotada.sql"
     py migration "$MIG" "$SABOTAGEM" "$MIG_EFETIVA" || { echo "❌ SABOTAGEM NAO APLICAVEL ($SABOTAGEM)"; exit 9; }
+    SAB_APLICADA=1
     echo "→ SABOTAGEM ativa: $SABOTAGEM" ;;
 esac
 aplicar() { Pd "$1" -1 -q -f "$2" 2>&1; }
@@ -640,10 +642,12 @@ case "$SABOTAGEM" in
   laco_desc_sku|unico_coalesce)
     recriar f "$MIG" "public.expandir_promocao_item(p_item_id bigint, p_threshold" "$SABOTAGEM" \
       || { echo "❌ SABOTAGEM NAO APLICAVEL ($SABOTAGEM)"; exit 9; }
+    SAB_APLICADA=1
     echo "→ SABOTAGEM ativa: $SABOTAGEM" ;;
   converter_sku_desc)
     recriar f "$MIG" "public.converter_sugestao_em_campanha_flat(p_sugestao_id bigint" "$SABOTAGEM" \
       || { echo "❌ SABOTAGEM NAO APLICAVEL ($SABOTAGEM)"; exit 9; }
+    SAB_APLICADA=1
     echo "→ SABOTAGEM ativa: $SABOTAGEM" ;;
 esac
 
@@ -670,6 +674,13 @@ eq F7 "converter (staff): o item nasce SEM descrição do fornecedor; código, S
    "$(chamar f "$E" "$(conv)" "'ok'" "$(item_conv)")" "ok|VZ.0077|<null>|3003|manual_confirmado|8|true|true"
 eq F8 "converter (sem papel de staff): o gate segue barrando (42501) e nada é criado" \
    "$(chamar f "$N" "$(conv)" "'ok'" "$(item_conv)")" "SQLSTATE=42501|-"
+
+# Sabotagem com nome que nenhum ramo reconhece (ex.: `pos4_…` não casa `pos_*`) rodaria a suíte LIMPA e
+# sairia verde — "sem dente" por erro de digitação, não por assert fraco. Aborta antes do veredito.
+if [ -n "$SABOTAGEM" ] && [ "$SAB_APLICADA" != 1 ]; then
+  echo "❌ SABOTAGEM NAO APLICAVEL ($SABOTAGEM): nenhum ramo a reconheceu"
+  exit 9
+fi
 
 echo
 echo "PASS=$PASS  FAIL=$FAIL"
