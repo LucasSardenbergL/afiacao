@@ -30,7 +30,7 @@ export const FONTE_SHA256: Record<string, string> = {
   "enviar-pedido-portal-sayerlack": "bebeb30068ef02f2eed8ef4087c0ef5f9e0d298e4d73ae7c3ebf5fd3e8643797",
   "enviar-push": "38302707026818b24e43f4936dea80f7648c68b2c1351385c7ddd5e396bdd9d5",
   "fin-cashflow-engine": "23728836f0e8eb9410b85c3ec406ba6ef92b269dcddf040123d208ca3f9e402d",
-  "fin-funding": "710664f5c02945c32c74f1a4847d120575165435d4ee8f6257a98e3673714c6a",
+  "fin-funding": "2ae9a29464b2a55d6f9b799c9f9d6ef95a3469e2eb17ad9163ffcc7718904ee7",
   "fin-valor-cockpit": "1ed02206fb6b033ec92d351a8595dc0b92ac39f9e99e485d5491047f8d58aa29",
   "generate-bundle-argument": "c8088c32e078e2bd7ac73103882cec7f41be8675bc36199744f201bc4876b701",
   "generate-tactical-plan": "69ebb00cbc46ffb99302c5332f0cd6ec8597593318b90eecb6db0251c2568b42",
