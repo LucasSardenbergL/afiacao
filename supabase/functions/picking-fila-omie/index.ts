@@ -1,6 +1,9 @@
 // picking-fila-omie — fila do picking v2 a partir da etapa 10 do Omie.
 // Spec: docs/superpowers/specs/2026-10-10-picking-v2-design.md
 //
+// Modos: `diagnostico` (Fase 0.1) e `coleta` (Fase 0.5a — mede a coleta da fila, SÓ leitura: lista a
+// etapa 10 com o corte de data e devolve números, sem chamar o banco).
+//
 // v0.1 é SÓ o diagnóstico da Fase 0.1: confirma, nas duas contas, os contratos que o picking vai
 // depender (etapas, `ListarPedidos{etapa:'10'}`, EAN no cadastro). Read-only no Omie, sem banco,
 // sem cron. Uma chamada por MÉTODO por conta, com trégua entre elas e SEM retentativa: a trava
@@ -13,9 +16,17 @@ import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import { redigirSegredo } from "../_shared/omie-falha.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { resumirEtapas, resumirPedidos, resumirProdutos } from "./diagnostico.ts";
+import { faultDeFimDePagina, type Pagina, paginar, resumirLeitura } from "./coleta.ts";
+import { hojeSP, paraDataOmie, somarDias } from "../_shared/hoje-sp.ts";
 
 const OMIE_TIMEOUT_MS = 25_000;
 const TREGUA_MS = 1_500;
+/** Corte de admissão (decisão do founder, spec §2.1): pedidos incluídos nos últimos 30 dias. */
+const DIAS_DO_CORTE = 30;
+/** Teto de páginas por conta numa coleta. 50 por página → 2.000 pedidos no filtro de data. */
+const TETO_PAGINAS = 40;
+const POR_PAGINA = 50;
+const ENTRE_PAGINAS_MS = 700;
 
 type Conta = "oben" | "colacor";
 
@@ -91,7 +102,7 @@ async function chamarOmieSemTrava(
   }
 }
 
-const esperar = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const esperar = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 async function diagnosticarConta(conta: Conta): Promise<Record<string, unknown>> {
   const cred = credenciais(conta);
@@ -124,6 +135,52 @@ async function diagnosticarConta(conta: Conta): Promise<Record<string, unknown>>
   };
 }
 
+/** Uma página de `ListarPedidos` como `Pagina` da coleta ("não existem registros" = fim). */
+async function paginaDePedidos(conta: Conta, cred: { key: string; secret: string }, param: Record<string, unknown>): Promise<Pagina> {
+  const r = await chamarOmie(conta, cred, "produtos/pedido/", "ListarPedidos", param);
+  if (r.ok) return { tipo: "corpo", corpo: r.corpo };
+  return faultDeFimDePagina(r.erro) ? { tipo: "fim" } : { tipo: "erro", erro: r.erro };
+}
+
+/**
+ * Modo `coleta` (só leitura): o total da etapa 10 sem filtro (1 registro, 1 chamada) e a listagem
+ * filtrada por data que a escrita vai usar, paginada até o fim — sem tocar o banco.
+ */
+async function medirColeta(conta: Conta, corteIso: string): Promise<Record<string, unknown>> {
+  const cred = credenciais(conta);
+  if (!cred) return { conta, erro: "credenciais ausentes nos secrets" };
+  const inicio = Date.now();
+  const geral = await paginaDePedidos(conta, cred, {
+    pagina: 1,
+    registros_por_pagina: 1,
+    etapa: "10",
+    apenas_importado_api: "N",
+  });
+  const totalGeral = geral.tipo === "corpo"
+    ? (geral.corpo as Record<string, unknown> | null)?.total_de_registros ?? null
+    : geral.tipo === "fim" ? 0 : null;
+  await esperar(TREGUA_MS);
+  const res = await paginar(
+    (pagina) =>
+      paginaDePedidos(conta, cred, {
+        pagina,
+        registros_por_pagina: POR_PAGINA,
+        etapa: "10",
+        apenas_importado_api: "N",
+        filtrar_apenas_inclusao: "N",
+        filtrar_por_data_de: paraDataOmie(corteIso),
+      }),
+    { tetoPaginas: TETO_PAGINAS, entrePaginas: () => esperar(ENTRE_PAGINAS_MS) },
+  );
+  return {
+    conta,
+    etapa_10_total_sem_filtro: totalGeral,
+    etapa_10_total_erro: geral.tipo === "erro" ? geral.erro : null,
+    filtrada: res.ok ? resumirLeitura(res.listagem, corteIso) : { erro: res.erro, paginas: res.paginas },
+    duracao_ms: Date.now() - inicio,
+  };
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   {
@@ -139,8 +196,16 @@ Deno.serve(async (req) => {
   }
 
   const modo = corpoBruto !== null && typeof corpoBruto === "object" ? (corpoBruto as Record<string, unknown>).modo : undefined;
+  if (modo === "coleta") {
+    // Só leitura (Fase 0.5a): mede a coleta sem chamar o banco. Sequencial, com trégua entre contas.
+    const corteIso = somarDias(hojeSP(), -DIAS_DO_CORTE);
+    const oben = await medirColeta("oben", corteIso);
+    await esperar(TREGUA_MS);
+    const colacor = await medirColeta("colacor", corteIso);
+    return jsonResponse({ versao: VERSAO, modo, corte_inclusao_desde: corteIso, contas: [oben, colacor] }, 200);
+  }
   if (modo !== "diagnostico") {
-    return jsonResponse({ versao: VERSAO, error: "só o modo 'diagnostico' existe nesta versão" }, 400);
+    return jsonResponse({ versao: VERSAO, error: "modos desta versão: 'diagnostico', 'coleta'" }, 400);
   }
 
   // Sequencial e com trégua entre as contas: são app_keys distintas, mas não há pressa.
