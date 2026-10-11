@@ -39,6 +39,7 @@
 db/test-security-invoker-views.sh          27
 db/test-views-invoker-off-p0.sh            25
 db/test-authz-revoke-anon-rpc.sh           19
+db/test-sales-price-history-created-at-futuro.sh 13
 db/test-authz-is-not-true-escritas.sh      24
 # Telefonia: quem é o dono do número discado (resolver_cliente_por_telefone, INVOKER). Roda COMO a
 # vendedora sob a RLS copiada da prod: o telefone com hífen casa (a busca antiga reconhecia 4% das
