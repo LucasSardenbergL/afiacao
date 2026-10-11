@@ -1,73 +1,84 @@
-# Welcome to your Lovable project
+# Afiação — sistema operacional B2B do grupo Colacor
 
-## Project info
+App interno (staff) e portal do cliente (loja, afiação, pedidos) do grupo Colacor. Cobre vendas,
+financeiro, reposição/compras, estoque/picking, tintométrico e telefonia, integrado ao ERP Omie.
 
-**URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID
+O grupo opera **3 empresas** com CNPJs distintos, escolhidas em `src/contexts/CompanyContext.tsx`:
 
-## How can I edit this code?
+| Chave | Empresa | O que é |
+|---|---|---|
+| `colacor` | Colacor | indústria de abrasivos |
+| `oben` | Oben Comercial | distribuidora moveleira (compra/revende) |
+| `colacor_sc` | Colacor SC | serviços, Simples Nacional |
 
-There are several ways of editing your application.
+Stack: React 18 + TypeScript (strict) + Vite, shadcn/ui + Tailwind, Supabase (Postgres, RLS, edge
+functions em Deno), hospedado no Lovable Cloud. O que cada empresa significa no banco e nas telas
+está em [docs/agent/mapa-do-app.md](docs/agent/mapa-do-app.md).
 
-**Use Lovable**
+## Setup local
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and start prompting.
+Use **`bun`**, não `npm` — os scripts e o CI rodam com `bun`.
 
-Changes made via Lovable will be committed automatically to this repo.
-
-**Use your preferred IDE**
-
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
-
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
-
-Follow these steps:
-
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
-
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
-
-# Step 3: Install the necessary dependencies.
-npm i
-
-# Step 4: Start the development server with auto-reloading and an instant preview.
-npm run dev
+```bash
+bun install
+bun dev
 ```
 
-**Edit a file directly in GitHub**
+- O **`.env`** já vem versionado com as chaves **públicas** do frontend (`VITE_SUPABASE_URL`,
+  `VITE_SUPABASE_PUBLISHABLE_KEY`, `VITE_SUPABASE_PROJECT_ID`, `VITE_POSTHOG_*`). O modelo das
+  variáveis está em [`.env.example`](.env.example).
+- **Segredo de backend nunca vai para o `.env`** nem para o git: fica em *Supabase → Edge Functions → Secrets*.
+- Prefixo `VITE_` = vai para o bundle, ou seja, é público.
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+## Testar, checar e buildar
 
-**Use GitHub Codespaces**
+Na máquina de desenvolvimento (M2 8GB), prefixe o que é pesado com **`heavy`**, o semáforo de RAM
+compartilhado entre worktrees (instale com `bash scripts/heavy-install.sh`):
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+```bash
+heavy bun run test        # vitest — o mesmo que o CI roda (`bun test` é OUTRO runner)
+heavy bun run typecheck   # tsc do app + tsc de scripts/ e db/
+heavy bun run build       # vite build
+bun lint
+```
 
-## What technologies are used for this project?
+## Do PR à produção
 
-This project is built with:
+1. Abra o PR a partir de um worktree (abaixo). Todo PR **não-draft** auto-mergeia (squash) quando o
+   CI `validate` passa — para segurar, deixe em **draft**.
+2. **Merge na `main` não é produção.** Há 3 camadas de deploy manuais e independentes:
+   - **Migration** → colar o SQL no **SQL Editor** do Lovable (migration de nome custom não auto-aplica);
+   - **Edge function** → deploy pelo **chat do Lovable**, que lê `supabase/functions/<nome>/` do repo;
+   - **Frontend** → **Publish** no editor do Lovable.
+3. O que falta deployar: `bun run pendencias:deploy`.
 
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
+Ordem, armadilhas e verificação: [docs/agent/deploy.md](docs/agent/deploy.md) e
+[docs/runbooks/lovable-supabase.md](docs/runbooks/lovable-supabase.md).
 
-## How can I deploy this project?
+## Worktrees
 
-Simply open [Lovable](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and click on Share -> Publish.
+Várias sessões (humanas e de agente) trabalham em paralelo. **Nunca trabalhe no checkout principal**:
+duas sessões no mesmo diretório trocam a branch uma da outra e podem perder commits. Crie um
+worktree por tarefa, a partir de `origin/main`:
 
-## Can I connect a custom domain to my Lovable project?
+```bash
+bun run wt minha-branch   # cria ../afiacao-minha-branch, já com bun install
+bun run wt:status         # lista worktrees e sessões; wt:clean / wt:reap liberam RAM
+```
 
-Yes, you can!
+Detalhe: [docs/agent/worktrees.md](docs/agent/worktrees.md).
 
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
+## Acesso de leitura ao banco
 
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+Diagnóstico em produção usa o wrapper **`~/.config/afiacao/psql-ro`** (papel `claude_ro`, sessão
+read-only com timeout). A credencial vive só na máquina, **fora do repositório** — peça ao founder;
+nunca a cole em issue, PR ou chat. Escrita em produção não passa por ele. Ver
+[docs/agent/database.md](docs/agent/database.md) §1.
+
+## Mapa de leitura
+
+- [`CLAUDE.md`](CLAUDE.md) — as **regras vivas** do projeto (valem para humanos e agentes). Leia antes do 1º PR.
+- [`docs/agent/`](docs/agent/) — referência operacional por domínio (banco, deploy, sync, money-path,
+  financeiro, reposição…); o índice está no `CLAUDE.md`.
+- [`docs/historico/`](docs/historico/) — diário de PRs e lições.
+- [`docs/superpowers/`](docs/superpowers/) — specs e planos de entregas grandes.
