@@ -71,6 +71,7 @@ CREATE TABLE public.pedido_compra_sugerido (
   omie_pedido_compra_id      text,
   omie_pedido_compra_numero  text,
   disparo_claim_em           timestamptz,
+  portal_recusa_definitiva_em timestamptz,  -- a migration faz ADD COLUMN IF NOT EXISTS; o baseline (corpo velho) precisa dela no seed
   cancelado_por              text,
   cancelado_em               timestamptz,
   justificativa_cancelamento text,
@@ -79,14 +80,6 @@ CREATE TABLE public.pedido_compra_sugerido (
   condicao_origem            text,
   origem_evento_tipo         text,
   atualizado_em              timestamptz DEFAULT now()
-);
-CREATE TABLE public.pedidos_portal_tentativas (
-  id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  pedido_id        bigint NOT NULL,
-  iniciado_em      timestamptz NOT NULL,
-  concluido_em     timestamptz,
-  status_resultado text NOT NULL,
-  evidence         jsonb NOT NULL DEFAULT '{}'
 );
 CREATE TABLE public.analytics_outbox (
   id          bigserial PRIMARY KEY,
@@ -137,48 +130,43 @@ SQL
 # Forma exata do #3169 (efetivarAttempted=false, sem protocolo/Omie), parametrizada.
 EV_FALSE='{"evidence":{"efetivarAttempted":false,"erroTipo":"GRUPO_LEADTIME_MISMATCH"}}'
 semear() {
+  # portal_recusa_definitiva_em = o carimbo que a trigger grava; aqui semeado direto (INSERT não
+  # dispara a trigger de UPDATE). Os cenários de TRANSIÇÃO estão no grupo T, via UPDATE real.
   P -q <<SQL
+ALTER TABLE public.pedido_compra_sugerido DISABLE TRIGGER USER;
 TRUNCATE public.pedido_compra_sugerido;
 INSERT INTO public.pedido_compra_sugerido
-  (id, status, status_envio_portal, portal_erro, portal_resposta, portal_protocolo, omie_pedido_compra_id, omie_pedido_compra_numero, disparo_claim_em, atualizado_em) VALUES
+  (id, status, status_envio_portal, portal_erro, portal_resposta, portal_protocolo, omie_pedido_compra_id, omie_pedido_compra_numero, disparo_claim_em, portal_recusa_definitiva_em, atualizado_em) VALUES
   -- pré-claim
-  (101, 'aprovado_aguardando_disparo', 'nao_aplicavel',                    NULL, NULL, NULL, NULL, NULL, NULL, now()),
-  (102, 'aprovado_aguardando_disparo', 'erro_retentavel',                  'timeout', NULL, NULL, NULL, NULL, NULL, now()),
-  (103, 'aprovado_aguardando_disparo', 'falha_envio_portal',               'x', NULL, NULL, NULL, NULL, NULL, now()),
-  (104, 'aprovado_aguardando_disparo', 'pendente_envio_portal',            NULL, NULL, NULL, NULL, NULL, NULL, now()),
-  (111, 'aprovado_aguardando_disparo', 'erro_nao_retentavel',              'Grupo errado', '$EV_FALSE', NULL, NULL, NULL, NULL, now()),
-  (112, 'aprovado_aguardando_disparo', 'aceito_portal_sem_protocolo',      NULL, NULL, NULL, NULL, NULL, NULL, now()),
-  (113, 'aprovado_aguardando_disparo', 'indeterminado_requer_conciliacao', NULL, NULL, NULL, NULL, NULL, NULL, now()),
-  (114, 'disparado',                   'sucesso_portal',                   NULL, NULL, NULL, NULL, NULL, NULL, now()),
-  (115, 'disparado',                   'enviado_portal',                   NULL, NULL, NULL, NULL, NULL, NULL, now()),
-  (116, 'aprovado_aguardando_disparo', 'enviando_portal',                  NULL, NULL, NULL, NULL, NULL, NULL, now()),
-  (117, 'cancelado_humano',            'nao_aplicavel',                    NULL, NULL, NULL, NULL, NULL, NULL, now()),
-  -- encerramento (atualizado_em é o relógio do prazo)
-  (201, 'aprovado_aguardando_disparo', 'erro_nao_retentavel', 'Grupo errado (Prz 5 != 8)', '$EV_FALSE', NULL, NULL, NULL, NULL, now() - interval '4 days'),
-  (202, 'aprovado_aguardando_disparo', 'erro_nao_retentavel', 'x', '$EV_FALSE', NULL, NULL, NULL, NULL, now() - interval '2 days'),
-  (203, 'aprovado_aguardando_disparo', 'erro_nao_retentavel', 'x', '{"evidence":{"efetivarAttempted":true}}', NULL, NULL, NULL, NULL, now() - interval '4 days'),
-  (204, 'aprovado_aguardando_disparo', 'erro_nao_retentavel', 'x', '{"evidence":{}}', NULL, NULL, NULL, NULL, now() - interval '4 days'),
-  (205, 'aprovado_aguardando_disparo', 'erro_nao_retentavel', 'x', '$EV_FALSE', '2134225', NULL, NULL, NULL, now() - interval '4 days'),
-  (206, 'aprovado_aguardando_disparo', 'erro_nao_retentavel', 'x', '$EV_FALSE', NULL, '999', NULL, NULL, now() - interval '4 days'),
-  (207, 'aprovado_aguardando_disparo', 'erro_nao_retentavel', 'x', '$EV_FALSE', NULL, NULL, NULL, now() - interval '1 hour', now() - interval '4 days'),
-  (208, 'falha_envio',                 'erro_nao_retentavel', 'x', '$EV_FALSE', NULL, NULL, NULL, NULL, now() - interval '4 days'),
-  (209, 'aprovado_aguardando_disparo', 'erro_retentavel',     'x', '$EV_FALSE', NULL, NULL, NULL, NULL, now() - interval '4 days'),
-  (210, 'aprovado_aguardando_disparo', 'erro_nao_retentavel', 'x', '$EV_FALSE', NULL, NULL, '12345', NULL, now() - interval '4 days'),
-  (211, 'aprovado_aguardando_disparo', 'erro_nao_retentavel', NULL, '$EV_FALSE', '  ', NULL, NULL, NULL, now() - interval '4 days'),
-  (212, 'aprovado_aguardando_disparo', 'erro_nao_retentavel', 'x', '{"evidence":{"efetivarAttempted":"false"}}', NULL, NULL, NULL, NULL, now() - interval '4 days'),
-  -- relógio: linha tocada AGORA (ex.: salvou condição de pagamento) mas a recusa foi há 4 dias → encerra
-  (213, 'aprovado_aguardando_disparo', 'erro_nao_retentavel', 'x', '$EV_FALSE', NULL, NULL, NULL, NULL, now()),
-  -- última tentativa NÃO é a recusa definitiva (houve tentativa depois) → intocado
-  (214, 'aprovado_aguardando_disparo', 'erro_nao_retentavel', 'x', '$EV_FALSE', NULL, NULL, NULL, NULL, now() - interval '4 days'),
-  -- sem tentativa registrada → intocado (precisão > recall)
-  (215, 'aprovado_aguardando_disparo', 'erro_nao_retentavel', 'x', '$EV_FALSE', NULL, NULL, NULL, NULL, now() - interval '4 days');
--- Uma tentativa erro_nao_retentavel por candidato, concluída há 4 dias (202: há 2 dias).
-INSERT INTO public.pedidos_portal_tentativas (pedido_id, iniciado_em, concluido_em, status_resultado)
-SELECT id, now() - interval '4 days' - interval '1 min', now() - interval '4 days', 'erro_nao_retentavel'
-  FROM public.pedido_compra_sugerido WHERE id BETWEEN 201 AND 214 AND id <> 202;
-INSERT INTO public.pedidos_portal_tentativas (pedido_id, iniciado_em, concluido_em, status_resultado) VALUES
-  (202, now() - interval '2 days' - interval '1 min', now() - interval '2 days', 'erro_nao_retentavel'),
-  (214, now() - interval '3 days 12 hours' - interval '1 min', now() - interval '3 days 12 hours', 'erro_retentavel');
+  (101, 'aprovado_aguardando_disparo', 'nao_aplicavel',                    NULL, NULL, NULL, NULL, NULL, NULL, NULL, now()),
+  (102, 'aprovado_aguardando_disparo', 'erro_retentavel',                  'timeout', NULL, NULL, NULL, NULL, NULL, NULL, now()),
+  (103, 'aprovado_aguardando_disparo', 'falha_envio_portal',               'x', NULL, NULL, NULL, NULL, NULL, NULL, now()),
+  (104, 'aprovado_aguardando_disparo', 'pendente_envio_portal',            NULL, NULL, NULL, NULL, NULL, NULL, NULL, now()),
+  (111, 'aprovado_aguardando_disparo', 'erro_nao_retentavel',              'Grupo errado', '$EV_FALSE', NULL, NULL, NULL, NULL, now(), now()),
+  (112, 'aprovado_aguardando_disparo', 'aceito_portal_sem_protocolo',      NULL, NULL, NULL, NULL, NULL, NULL, NULL, now()),
+  (113, 'aprovado_aguardando_disparo', 'indeterminado_requer_conciliacao', NULL, NULL, NULL, NULL, NULL, NULL, NULL, now()),
+  (114, 'disparado',                   'sucesso_portal',                   NULL, NULL, NULL, NULL, NULL, NULL, NULL, now()),
+  (115, 'disparado',                   'enviado_portal',                   NULL, NULL, NULL, NULL, NULL, NULL, NULL, now()),
+  (116, 'aprovado_aguardando_disparo', 'enviando_portal',                  NULL, NULL, NULL, NULL, NULL, NULL, NULL, now()),
+  (117, 'cancelado_humano',            'nao_aplicavel',                    NULL, NULL, NULL, NULL, NULL, NULL, NULL, now()),
+  -- encerramento (carimbo da recusa = relógio do prazo)
+  (201, 'aprovado_aguardando_disparo', 'erro_nao_retentavel', 'Grupo errado (Prz 5 != 8)', '$EV_FALSE', NULL, NULL, NULL, NULL, now() - interval '4 days', now() - interval '4 days'),
+  (202, 'aprovado_aguardando_disparo', 'erro_nao_retentavel', 'x', '$EV_FALSE', NULL, NULL, NULL, NULL, now() - interval '2 days', now() - interval '4 days'),
+  (203, 'aprovado_aguardando_disparo', 'erro_nao_retentavel', 'x', '{"evidence":{"efetivarAttempted":true}}', NULL, NULL, NULL, NULL, now() - interval '4 days', now()),
+  (204, 'aprovado_aguardando_disparo', 'erro_nao_retentavel', 'x', '{"evidence":{}}', NULL, NULL, NULL, NULL, now() - interval '4 days', now()),
+  (205, 'aprovado_aguardando_disparo', 'erro_nao_retentavel', 'x', '$EV_FALSE', '2134225', NULL, NULL, NULL, now() - interval '4 days', now()),
+  (206, 'aprovado_aguardando_disparo', 'erro_nao_retentavel', 'x', '$EV_FALSE', NULL, '999', NULL, NULL, now() - interval '4 days', now()),
+  (207, 'aprovado_aguardando_disparo', 'erro_nao_retentavel', 'x', '$EV_FALSE', NULL, NULL, NULL, now() - interval '1 hour', now() - interval '4 days', now()),
+  (208, 'falha_envio',                 'erro_nao_retentavel', 'x', '$EV_FALSE', NULL, NULL, NULL, NULL, now() - interval '4 days', now()),
+  (209, 'aprovado_aguardando_disparo', 'erro_retentavel',     'x', '$EV_FALSE', NULL, NULL, NULL, NULL, now() - interval '4 days', now()),
+  (210, 'aprovado_aguardando_disparo', 'erro_nao_retentavel', 'x', '$EV_FALSE', NULL, NULL, '12345', NULL, now() - interval '4 days', now()),
+  (211, 'aprovado_aguardando_disparo', 'erro_nao_retentavel', NULL, '$EV_FALSE', '  ', NULL, NULL, NULL, now() - interval '4 days', now()),
+  (212, 'aprovado_aguardando_disparo', 'erro_nao_retentavel', 'x', '{"evidence":{"efetivarAttempted":"false"}}', NULL, NULL, NULL, NULL, now() - interval '4 days', now()),
+  -- relógio: linha tocada AGORA (ex.: salvou condição de pagamento), recusa carimbada há 4 dias → encerra
+  (213, 'aprovado_aguardando_disparo', 'erro_nao_retentavel', 'x', '$EV_FALSE', NULL, NULL, NULL, NULL, now() - interval '4 days', now()),
+  -- sem carimbo (legado) → intocado (precisão > recall)
+  (215, 'aprovado_aguardando_disparo', 'erro_nao_retentavel', 'x', '$EV_FALSE', NULL, NULL, NULL, NULL, NULL, now() - interval '4 days');
+ALTER TABLE public.pedido_compra_sugerido ENABLE TRIGGER USER;
 TRUNCATE public.analytics_outbox;
 SQL
 }
@@ -240,7 +228,7 @@ eq "E1j analytics: cancelamento automático emitido como sistema" \
    "$(Pq -c "SELECT props->>'origem_cancelamento' FROM analytics_outbox WHERE chave_dedup='pcs:201:reposicao.sugestao_cancelada';")" "sistema"
 eq "E1k analytics: 3 eventos de cancelamento (1 por encerrado)" \
    "$(Pq -c "SELECT count(*) FROM analytics_outbox WHERE evento='reposicao.sugestao_cancelada';")" "3"
-for id in 202 203 204 205 206 207 208 209 210 212 214 215; do
+for id in 202 203 204 205 206 207 208 209 210 212 215; do
   eq "E2 #$id intocado" "$(campo $id status)/$(campo $id cancelado_em)" "$(Pq -c "SELECT status FROM pedido_compra_sugerido WHERE id=$id;")/<null>"
 done
 eq "E2b <3 dias segue erro_nao_retentavel"     "$(campo 202 status_envio_portal)" "erro_nao_retentavel"
@@ -251,6 +239,30 @@ if P -q -c "SELECT public.reposicao_encerrar_recusas_definitivas(0);" >/dev/null
   bad "E5 p_dias=0 deveria ser recusado"
 elif grep -q 'ENCERRAR-RECUSA' "$RODADA/e5.err"; then ok "E5 p_dias=0 recusado com a marca do ramo"
 else bad "E5 p_dias=0: erro inesperado: $(head -1 "$RODADA/e5.err")"; fi
+
+echo "-- grupo T: carimbo atômico (o cenário do achado Codex) --"
+# T1: Forçar reenvio de um pedido com recusa ANTIGA → nova recusa. Sem linha nova em
+# pedidos_portal_tentativas (auditoria best-effort que falhou/ainda não gravou). O carimbo tem de
+# ser o da NOVA recusa, e o encerramento NÃO pode acontecer.
+semear
+P -q -c "UPDATE public.pedido_compra_sugerido SET status_envio_portal='pendente_envio_portal', portal_erro=NULL WHERE id=201;"   # Forçar reenvio (drawer)
+eq "T0 carimbo antigo sobrevive à saída do estado" "$(Pq -c "SELECT portal_recusa_definitiva_em < now() - interval '3 days' FROM pedido_compra_sugerido WHERE id=201;")" "t"
+P -q -c "UPDATE public.pedido_compra_sugerido SET status_envio_portal='erro_nao_retentavel', portal_erro='Grupo errado de novo' WHERE id=201;"  # nova recusa (writer)
+eq "T1 nova recusa re-carimba agora" "$(Pq -c "SELECT portal_recusa_definitiva_em > now() - interval '1 minute' FROM pedido_compra_sugerido WHERE id=201;")" "t"
+eq "T1b NÃO encerra a recusa recém-ocorrida" "$(Pq -c "SELECT public.reposicao_encerrar_recusas_definitivas(3)->>'ids';")" "[211, 213]"
+eq "T1c #201 segue aprovado" "$(campo 201 status)" "aprovado_aguardando_disparo"
+# T2: UPDATE que não muda o estado (ex.: condição de pagamento) NÃO move o carimbo.
+semear
+P -q -c "UPDATE public.pedido_compra_sugerido SET portal_erro = portal_erro, atualizado_em = now() WHERE id=213;"
+eq "T2 update sem mudar o estado preserva o carimbo" "$(Pq -c "SELECT portal_recusa_definitiva_em < now() - interval '3 days' FROM pedido_compra_sugerido WHERE id=213;")" "t"
+# T3 FALSIFICAÇÃO da trigger: desligada, a nova recusa herda o carimbo velho e é encerrada NA HORA
+# (o bug que ela existe para impedir). Controle = T1b acima, na mesma invocação.
+semear
+P -q -c "ALTER TABLE public.pedido_compra_sugerido DISABLE TRIGGER trg_carimbo_recusa_definitiva;"
+P -q -c "UPDATE public.pedido_compra_sugerido SET status_envio_portal='pendente_envio_portal' WHERE id=201;"
+P -q -c "UPDATE public.pedido_compra_sugerido SET status_envio_portal='erro_nao_retentavel' WHERE id=201;"
+eq "T3 sem a trigger, a nova recusa é encerrada prematuramente (a trigger protege)" "$(Pq -c "SELECT public.reposicao_encerrar_recusas_definitivas(3)->>'ids';")" "[201, 211, 213]"
+P -q -c "ALTER TABLE public.pedido_compra_sugerido ENABLE TRIGGER trg_carimbo_recusa_definitiva;"
 
 echo "-- grupo A: ACL --"
 for r in authenticated anon; do
@@ -288,8 +300,7 @@ SABOTAGENS=(
   "s#AND NULLIF(btrim(portal_protocolo), '') IS NULL##|205"
   "s#AND NULLIF(btrim(omie_pedido_compra_id), '') IS NULL##|206"
   "s#AND NULLIF(btrim(omie_pedido_compra_numero), '') IS NULL##|210"
-  "s#AND ult.concluido_em < now() - make_interval(days => p_dias))#)#|202"
-  "s#WHERE ult.status_resultado = 'erro_nao_retentavel'#WHERE true#|214"
+  "s#AND portal_recusa_definitiva_em < now() - make_interval(days => p_dias)##|202"
   "s#WHERE status = 'aprovado_aguardando_disparo'#WHERE status IN ('aprovado_aguardando_disparo','falha_envio')#|208"
 )
 for s in "${SABOTAGENS[@]}"; do

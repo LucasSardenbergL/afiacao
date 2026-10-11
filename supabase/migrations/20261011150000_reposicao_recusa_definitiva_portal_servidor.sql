@@ -26,14 +26,16 @@
 --     SÓ o pedido que PROVADAMENTE nunca chegou ao fornecedor:
 --       status='aprovado_aguardando_disparo' · status_envio_portal='erro_nao_retentavel' ·
 --       sem portal_protocolo · sem omie_pedido_compra_id/numero · evidence.efetivarAttempted
---       = false EXPLÍCITO (ausente ≠ false) · sem disparo_claim_em · a ÚLTIMA tentativa em
---       pedidos_portal_tentativas é a própria recusa e terminou há > p_dias.
+--       = false EXPLÍCITO (ausente ≠ false) · sem disparo_claim_em · carimbo
+--       portal_recusa_definitiva_em (trigger, atômico com o estado) há > p_dias.
 --     Precisão > recall: na dúvida o pedido fica onde está e o alerta continua tocando.
 --     `falha_envio` fica FORA (a tentativa de Omie aconteceu — conciliar antes).
 --     Mesma higiene do cancelar_pedido_sugerido: status_envio_portal='nao_aplicavel' e
 --     portal_proximo_retry_em=NULL. portal_erro/portal_resposta ficam (rastro forense).
 --     Predicado e escrita numa ÚNICA instrução (EvalPlanQual re-avalia contra a versão nova da
 --     linha se um disparo concorrente a travar — mesmo padrão do guard atômico de 2026-09-05).
+--
+-- (2a) coluna portal_recusa_definitiva_em + trigger que a carimba na mesma escrita do estado.
 --
 -- (3) analytics_outbox_pedido_compra — 'cancelado' passa a emitir reposicao.sugestao_cancelada
 --     (com origem_cancelamento humano|sistema); sem isso os encerramentos automáticos sumiriam do funil.
@@ -73,6 +75,36 @@ BEGIN
 END;
 $function$;
 
+-- (2a) Carimbo da recusa definitiva --------------------------------------------------------------
+-- Gravado por TRIGGER na mesma instrução que põe status_envio_portal='erro_nao_retentavel' — único
+-- relógio atômico com o estado sem tocar a edge enviar-pedido-portal-sayerlack. Re-entrada (Forçar
+-- reenvio → nova recusa) carimba de novo. Sem backfill de propósito: medido 2026-10-11, ZERO linhas
+-- em erro_nao_retentavel; legado sem carimbo nunca é encerrado sozinho (precisão > recall).
+ALTER TABLE public.pedido_compra_sugerido
+  ADD COLUMN IF NOT EXISTS portal_recusa_definitiva_em timestamptz;
+
+COMMENT ON COLUMN public.pedido_compra_sugerido.portal_recusa_definitiva_em IS
+  'Quando o pedido ENTROU em status_envio_portal=erro_nao_retentavel (trigger trg_carimbo_recusa_definitiva). Relógio do encerramento automático (reposicao_encerrar_recusas_definitivas).';
+
+CREATE OR REPLACE FUNCTION public.reposicao__carimbo_recusa_definitiva()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+BEGIN
+  IF NEW.status_envio_portal = 'erro_nao_retentavel'
+     AND OLD.status_envio_portal IS DISTINCT FROM NEW.status_envio_portal THEN
+    NEW.portal_recusa_definitiva_em := now();
+  END IF;
+  RETURN NEW;
+END;
+$function$;
+
+DROP TRIGGER IF EXISTS trg_carimbo_recusa_definitiva ON public.pedido_compra_sugerido;
+CREATE TRIGGER trg_carimbo_recusa_definitiva
+  BEFORE UPDATE ON public.pedido_compra_sugerido
+  FOR EACH ROW EXECUTE FUNCTION public.reposicao__carimbo_recusa_definitiva();
+
 -- (2) ---------------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.reposicao_encerrar_recusas_definitivas(p_dias integer DEFAULT 3)
  RETURNS jsonb
@@ -108,19 +140,13 @@ BEGIN
        AND portal_resposta -> 'evidence' -> 'efetivarAttempted' = 'false'::jsonb
        AND disparo_claim_em IS NULL
        AND cancelado_em IS NULL
-       -- Relógio = a ÚLTIMA tentativa no portal, e ela tem de ser a própria recusa definitiva.
-       -- NÃO `atualizado_em`: salvar condição de pagamento (useDetalhesModal) renova a linha e
-       -- adiaria o encerramento sem nova tentativa (achado Codex). Sem tentativa registrada →
-       -- não encerra (precisão > recall). Índice (pedido_id, iniciado_em DESC) cobre o LIMIT 1.
-       AND EXISTS (
-         SELECT 1
-           FROM (SELECT t.status_resultado, t.concluido_em
-                   FROM public.pedidos_portal_tentativas t
-                  WHERE t.pedido_id = pcs.id
-                  ORDER BY t.iniciado_em DESC
-                  LIMIT 1) ult
-          WHERE ult.status_resultado = 'erro_nao_retentavel'
-            AND ult.concluido_em < now() - make_interval(days => p_dias))
+       -- Relógio = o CARIMBO da recusa (coluna + trigger abaixo), gravado na MESMA escrita que põe
+       -- o pedido em erro_nao_retentavel. Não `atualizado_em` (salvar condição de pagamento renova a
+       -- linha e adiaria o encerramento) e não a última linha de pedidos_portal_tentativas (achado
+       -- Codex): o writer grava o estado ANTES da auditoria, que é best-effort — depois de um
+       -- "Forçar reenvio", a NOVA recusa seria encerrada na hora usando a tentativa antiga. Sem
+       -- carimbo → não encerra (precisão > recall).
+       AND portal_recusa_definitiva_em < now() - make_interval(days => p_dias)
     RETURNING pcs.id
   )
   SELECT COALESCE(array_agg(e.id ORDER BY e.id), '{}') INTO v_ids FROM encerrados e;
@@ -263,6 +289,12 @@ BEGIN
   IF (SELECT prosrc FROM pg_proc WHERE oid = 'public.analytics_outbox_pedido_compra'::regproc)
        !~ 'IN \(''cancelado_humano'', ''cancelado''\)' THEN
     RAISE EXCEPTION 'POST FALHOU [OUTBOX]: o trigger de analytics nao emite cancelamento para status cancelado';
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger
+                  WHERE tgrelid = 'public.pedido_compra_sugerido'::regclass
+                    AND tgname = 'trg_carimbo_recusa_definitiva' AND NOT tgisinternal AND tgenabled = 'O') THEN
+    RAISE EXCEPTION 'POST FALHOU [CARIMBO]: trigger trg_carimbo_recusa_definitiva ausente/desabilitado -- o encerramento nunca teria relogio';
   END IF;
 
   RAISE NOTICE 'pre-claim recusa terminais do portal; encerramento automatico (3 dias, so prova de nao-efetivado) executou sem efeito; cron horario ativo';
