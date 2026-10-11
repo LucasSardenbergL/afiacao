@@ -6,7 +6,7 @@ clicar Publish (lição de 2026-05-31; recorrente no `/fecho`). A API do Lovable
 
 ## Desenho
 
-`.github/workflows/lovable-publish.yml` (push na main + `workflow_dispatch`) → `scripts/lovable-publish.sh`:
+`.github/workflows/lovable-publish.yml` (cron de 15 min + push do bot + `workflow_dispatch`) → `scripts/lovable-publish.sh`:
 
 1. lê o SHA que o ar serve (`__BUILD_SHA__` no entry; 1 carimbo, resolvível, ancestral de HEAD);
 2. intervalo ar..HEAD com `supabase/migrations/` ou `supabase/functions/` → **RETIDO** (o Publish
@@ -26,12 +26,25 @@ clicar Publish (lição de 2026-05-31; recorrente no `/fecho`). A API do Lovable
 - Sem `force` genérico: `liberar_sha` precisa ser o HEAD exato.
 - Filtro de "publicável" invertido: padrão é publicar; `package.json`/lock/config contam.
 
+## Mordido no próprio merge: `push:` não vê merge de PR
+
+O #2958 nasceu só com `on: push` e **nunca rodou** — nem no merge dele (14:43Z, zero runs). O
+auto-merge.yml mergeia com o `GITHUB_TOKEN` (`mergedBy` = app/github-actions), e a proteção
+anti-loop do GitHub não dispara workflow a partir disso: nem `push`, nem `pull_request: closed`. O
+`ci.yml` já documentava o MESMO buraco (o `push:` dele só pega commit direto do bot do Lovable) —
+o mapa existia e eu não perguntei "quem dispara este gatilho?". A suíte com curl falso não podia
+ver isso: ela testa o script, não a fiação. Correção: `schedule` a cada 15 min (o script é
+idempotente; ar em dia = `JA_NO_AR` com 2 leituras), Issues deduplicadas por SHA+veredito, e a
+trava de ambíguo virou aviso (vermelho a cada 15 min seria spam; o alarme é a Issue).
+**Lição:** workflow novo que reage à main — confira no `gh run list` que o evento chega, antes de
+afirmar que "roda a cada merge".
+
 ## Fora de escopo, conscientemente
 
 - O gate é por **diff**, não por banco: não prova migration APLICADA, e front novo chamando RPC
   sem migration no intervalo passa. Fechar isso exige credencial de banco no CI (`pendencias:deploy`
   / `audit-custom-migrations` via psql) — decisão separada.
-- Reconciliação agendada (cron) e compatibilidade de PWA com contrato velho (DDL aditiva).
+- Compatibilidade de PWA com contrato velho (DDL aditiva).
 
 ## Prova
 
