@@ -199,12 +199,13 @@ export function MapeamentoStatusCell({
 
   // ========== similaridade (precisa revisão) ==========
   // Revisar um casamento APROXIMADO exige ver os dois lados: sem a descrição do SKU lida do
-  // catálogo (carregando, erro, fora do catálogo ou cache desatualizado), não há o que conferir.
+  // catálogo (carregando, erro, fora do catálogo, cache desatualizado ou linha sem texto), não há o
+  // que conferir.
   if (
     (q === "unico_por_similaridade" || q === "expandido_por_similaridade") &&
     !isConfirmed
   ) {
-    const podeRevisar = sku.estado === "ok" && sku.desatualizada === null;
+    const podeRevisar = sku.estado === "ok" && sku.desatualizada === null && !!sku.descricao?.trim();
     return (
       <Popover>
         <PopoverTrigger asChild>

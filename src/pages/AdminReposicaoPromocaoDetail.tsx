@@ -27,6 +27,7 @@ import { NegociacaoTab } from "@/components/reposicao/promocaoDetail/NegociacaoT
 import { DetalhesTab } from "@/components/reposicao/promocaoDetail/DetalhesTab";
 import { ItensTab } from "@/components/reposicao/promocaoDetail/ItensTab";
 import { useDescricoesSkuOmie } from "@/components/reposicao/promocaoDetail/useDescricoesSkuOmie";
+import { atualizarItemPromocao } from "@/components/reposicao/promocaoDetail/atualizarItemPromocao";
 
 // ========== PÁGINA PRINCIPAL ==========
 export default function AdminReposicaoPromocaoDetail() {
@@ -220,13 +221,7 @@ export default function AdminReposicaoPromocaoDetail() {
     }: {
       itemId: number;
       changes: Partial<ItemRow>;
-    }) => {
-      const { error } = await supabase
-        .from("promocao_item")
-        .update(changes as never)
-        .eq("id", itemId);
-      if (error) throw error;
-    },
+    }) => atualizarItemPromocao(itemId, changes),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["promocao-itens", id] });
       qc.invalidateQueries({ queryKey: ["promocao-itens-efetivos"] });

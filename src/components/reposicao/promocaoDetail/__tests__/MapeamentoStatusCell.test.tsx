@@ -245,6 +245,8 @@ describe("Similaridade — revisar exige a descrição do SKU", () => {
     ["carregando", { estado: "carregando" }],
     ["fora do catálogo", { estado: "fora_do_catalogo", desatualizada: null }],
     ["cache desatualizado", { estado: "ok", descricao: "THINNER DR.4403LT", codigo: "PRD00411", desatualizada: "erro" }],
+    ["catálogo sem texto", { estado: "ok", descricao: "", codigo: "PRD00411", desatualizada: null }],
+    ["catálogo só com espaço", { estado: "ok", descricao: "  ", codigo: "PRD00411", desatualizada: null }],
   ])("sem a descrição confiável do SKU (%s): Confirmar fica travado", (_caso, sku) => {
     const onUpdate = abrir(sku);
     const botao = screen.getByRole("button", { name: /Confirmar/ });
