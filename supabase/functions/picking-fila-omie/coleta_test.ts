@@ -167,6 +167,24 @@ Deno.test("paginar: registro sem codigo_pedido ou página sem total → incomple
   assertEquals(b.listagem.motivos_incompleta, ["pagina_sem_total_de_registros", "sem_total_de_registros"]);
 });
 
+Deno.test("paginar: filtro vazio legítimo — 'não existem registros' ou página vazia com total 0 na 1ª — é completo com total 0", async () => {
+  const a = await paginar(lister([{ tipo: "fim" }]).listar, { tetoPaginas: 5 });
+  if (!a.ok) throw new Error(a.erro);
+  assertEquals([a.listagem.total_de_registros, a.listagem.completa, a.listagem.paginas], [0, true, 1]);
+  const b = await paginar(lister([pagina(0, [])]).listar, { tetoPaginas: 5 });
+  if (!b.ok) throw new Error(b.erro);
+  assertEquals([b.listagem.total_de_registros, b.listagem.completa], [0, true]);
+});
+
+Deno.test("paginar: 1ª página vazia SEM total, ou vazia com total > 0, não é vazio validado", async () => {
+  const a = await paginar(lister([{ tipo: "corpo", corpo: {} }]).listar, { tetoPaginas: 5 });
+  if (!a.ok) throw new Error(a.erro);
+  assertEquals([a.listagem.completa, a.listagem.motivos_incompleta], [false, ["pagina_sem_total_de_registros", "sem_total_de_registros"]]);
+  const b = await paginar(lister([pagina(7, [])]).listar, { tetoPaginas: 5 });
+  if (!b.ok) throw new Error(b.erro);
+  assertEquals(b.listagem.motivos_incompleta, ["presentes_diferente_do_total"]);
+});
+
 Deno.test("montarLote: corte decide a admissão; acompanhado presente entra mesmo fora do corte; dInc ausente não admite", () => {
   const regs = [ped(10, "11/09/2026"), ped(11, "10/09/2026"), ped(12, "10/09/2026"), ped(13, ""), ped(14, "01/01/2020")];
   const lote = montarLote(regs, "2026-09-11", new Set(["12", "14"]));
@@ -205,4 +223,10 @@ Deno.test("conferirFiltro: recente no corte ausente do filtro é perdido; cobert
   assertEquals([r.amostra_no_corte, r.perdidos_pelo_filtro, r.perdidos_amostra, r.amostra_cobre_a_janela], [2, 1, ["29"], true]);
   const s = conferirFiltro([ped(30, "05/10/2026")], new Set(["30"]), "2026-09-11");
   assertEquals([s.perdidos_pelo_filtro, s.amostra_cobre_a_janela], [0, false], "amostra só de recentes não prova a janela");
+  assertEquals(r.amostra_ordenada_decrescente, true, "30,29,28,27 é decrescente (o 27 sem dInc ainda tem código)");
+});
+
+Deno.test("conferirFiltro: ordenação não confirmada quando o Omie ignora o parâmetro", () => {
+  assertEquals(conferirFiltro([ped(30), ped(29)], new Set(), "2026-01-01").amostra_ordenada_decrescente, true);
+  assertEquals(conferirFiltro([ped(29), ped(30)], new Set(), "2026-01-01").amostra_ordenada_decrescente, false);
 });

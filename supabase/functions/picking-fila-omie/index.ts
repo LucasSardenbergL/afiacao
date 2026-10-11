@@ -181,7 +181,8 @@ async function medirColeta(conta: Conta, corteIso: string): Promise<Record<strin
     etapa: "10",
     apenas_importado_api: "N",
     ordenar_por: "CODIGO",
-    ordem_decrescente: "S",
+    // Grafia da documentação do Omie (sic, "descrescente"); a amostra confere se a ordem veio.
+    ordem_descrescente: "S",
   });
   const prova = !res.ok
     ? { erro: "sem listagem filtrada para comparar" }

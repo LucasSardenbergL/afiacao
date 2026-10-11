@@ -171,13 +171,23 @@ export async function paginar(
     const p = await listar(pagina);
     paginas++;
     if (p.tipo === "erro") return { ok: false, erro: `página ${pagina}: ${p.erro}`, paginas };
-    if (p.tipo === "fim") break;
+    if (p.tipo === "fim") {
+      // "Não existem registros" já na 1ª página = etapa vazia no filtro: total 0 VALIDADO (sem
+      // isso, um filtro vazio legítimo abortaria toda rodada — Codex 0.5b P1-3).
+      if (pagina === 1) totais.add(0);
+      break;
+    }
     const corpo = obj(p.corpo);
     const doLote = lista(corpo?.pedido_venda_produto);
-    if (doLote.length === 0) break;
     const total = corpo?.total_de_registros;
-    if (typeof total === "number" && Number.isInteger(total) && total >= 0) totais.add(total);
-    else semTotal = true;
+    const totalLegivel = typeof total === "number" && Number.isInteger(total) && total >= 0;
+    // Só a página com registros — ou a 1ª, vazia — informa o total: o vazio da 1ª com total 0 é
+    // legítimo; o da página além do fim é só o sinal de parada.
+    if (doLote.length > 0 || pagina === 1) {
+      if (totalLegivel) totais.add(total);
+      else semTotal = true;
+    }
+    if (doLote.length === 0) break;
     for (const r of doLote) {
       registros.push(r);
       const cod = codigoOmie(obj(obj(r)?.cabecalho)?.codigo_pedido);
@@ -190,7 +200,7 @@ export async function paginar(
   if (new Set(presentes).size !== presentes.length) motivos.add("codigo_repetido_entre_paginas");
   const total = totais.size === 0 ? null : [...totais].at(-1) ?? null;
   if (total !== null && presentes.length !== total) motivos.add("presentes_diferente_do_total");
-  if (total === null && registros.length > 0) motivos.add("sem_total_de_registros");
+  if (total === null) motivos.add("sem_total_de_registros");
   return {
     ok: true,
     listagem: {
@@ -311,8 +321,9 @@ export function resumirLeitura(listagem: Listagem, corteIso: string): ResumoLeit
 /**
  * Prova do filtro de data: os pedidos mais RECENTES da etapa 10 (listagem SEM filtro, por código
  * decrescente) com `dInc` no corte têm de estar todos na listagem filtrada. `perdidos_pelo_filtro`
- * > 0 = o filtro não serve para admitir (corta por outra data). A prova só cobre a janela se a
- * amostra alcançar `dInc` anterior ao corte (`amostra_cobre_a_janela`).
+ * > 0 = o filtro não serve para admitir (corta por outra data). É EVIDÊNCIA AMOSTRAL, não prova
+ * universal: só vale com a amostra alcançando `dInc` anterior ao corte (`amostra_cobre_a_janela`),
+ * a ordenação confirmada (`amostra_ordenada_decrescente`) e casos elegíveis (`amostra_no_corte` > 0).
  */
 export function conferirFiltro(amostra: unknown[], filtrados: ReadonlySet<string>, corteIso: string) {
   let noCorte = 0;
@@ -326,8 +337,13 @@ export function conferirFiltro(amostra: unknown[], filtrados: ReadonlySet<string
     noCorte++;
     if (!filtrados.has(cod)) perdidos.push(cod);
   }
+  // A ordenação pedida ao Omie tem de ter vindo de fato (código decrescente), senão a amostra
+  // não é "os mais recentes" (Codex 0.5b P2-8).
+  const codigos = amostra.map((r) => codigoOmie(obj(obj(r)?.cabecalho)?.codigo_pedido));
+  const ordenada = codigos.every((c, i) => c !== null && (i === 0 || BigInt(c) < BigInt(codigos[i - 1] as string)));
   return {
     amostra: amostra.length,
+    amostra_ordenada_decrescente: ordenada,
     amostra_no_corte: noCorte,
     perdidos_pelo_filtro: perdidos.length,
     perdidos_amostra: perdidos.slice(0, 10),
