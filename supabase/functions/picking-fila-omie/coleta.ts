@@ -48,7 +48,7 @@ export function quantidadeTexto(v: unknown): string | null {
   return texto(v);
 }
 
-export interface ItemNormalizado {
+interface ItemNormalizado {
   codigo_item: string | null;
   codigo_produto: string | null;
   codigo: string | null;
@@ -118,7 +118,7 @@ export function dataOmieParaIso(v: unknown): string | null {
 }
 
 /** Data de inclusão do registro (`infoCadastro.dInc`) em ISO; ausente/ilegível = null. */
-export function dataInclusao(registro: unknown): string | null {
+function dataInclusao(registro: unknown): string | null {
   return dataOmieParaIso(obj(obj(registro)?.infoCadastro)?.dInc);
 }
 
