@@ -8347,6 +8347,39 @@ export type Database = {
         }
         Relationships: []
       }
+      omie_cota_metodo: {
+        Row: {
+          atualizado_em: string
+          bloqueado_ate: string | null
+          conta: string
+          metodo: string
+          ocupado_ate: string | null
+          ocupado_por: string | null
+          ultimo_fault: string | null
+          ultimo_fault_em: string | null
+        }
+        Insert: {
+          atualizado_em?: string
+          bloqueado_ate?: string | null
+          conta: string
+          metodo: string
+          ocupado_ate?: string | null
+          ocupado_por?: string | null
+          ultimo_fault?: string | null
+          ultimo_fault_em?: string | null
+        }
+        Update: {
+          atualizado_em?: string
+          bloqueado_ate?: string | null
+          conta?: string
+          metodo?: string
+          ocupado_ate?: string | null
+          ocupado_por?: string | null
+          ultimo_fault?: string | null
+          ultimo_fault_em?: string | null
+        }
+        Relationships: []
+      }
       omie_customer_account_map: {
         Row: {
           account: string
@@ -20528,6 +20561,32 @@ export type Database = {
       }
       norm_cidade: { Args: { t: string }; Returns: string }
       normalizar_cep: { Args: { p: string }; Returns: string }
+      omie_cota_liberar: {
+        Args: { p_conta: string; p_metodo: string; p_token: string }
+        Returns: boolean
+      }
+      omie_cota_registrar_fault: {
+        Args: {
+          p_bloqueio_segundos: number
+          p_conta: string
+          p_fault: string
+          p_metodo: string
+        }
+        Returns: string
+      }
+      omie_cota_tentar: {
+        Args: {
+          p_conta: string
+          p_lease_segundos: number
+          p_metodo: string
+          p_token: string
+        }
+        Returns: {
+          ate: string
+          motivo: string
+          ok: boolean
+        }[]
+      }
       omie_products_codigos_multi_conta: {
         Args: never
         Returns: {
@@ -20981,6 +21040,16 @@ export type Database = {
           piso_markup: number
         }[]
       }
+      resolver_cliente_por_telefone: {
+        Args: { p_telefone: string }
+        Returns: {
+          candidatos: number
+          contato_cargo: string
+          contato_nome: string
+          customer_user_id: string
+          fonte: string
+        }[]
+      }
       resolver_outlier: {
         Args: {
           p_decisao: string
@@ -21095,6 +21164,13 @@ export type Database = {
       tarefas_escalonamento_tick: { Args: never; Returns: undefined }
       tarefas_matcher_tick: { Args: never; Returns: undefined }
       tarefas_materializar_recorrentes: { Args: never; Returns: undefined }
+      tint_adocao_balcao: {
+        Args: { p_dias?: number }
+        Returns: {
+          pedidos_com_cor: number
+          pelo_app: number
+        }[]
+      }
       tint_apply_keys_snapshot: {
         Args: { p_snapshot_id: string }
         Returns: Json
