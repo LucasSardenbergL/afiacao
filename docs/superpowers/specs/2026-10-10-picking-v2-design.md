@@ -1,6 +1,6 @@
 # Picking v2 — separação por bipe no celular (Oben + Colacor)
 
-> Spec de desenho, 2026-10-10. Status: **Fase 0 em andamento** (0.1–0.3 entregues). Etapa de DESTINO no Omie: 🧭 o founder define (vai criá-la no kanban).
+> Spec de desenho, 2026-10-10. Status: **Fase 0 em andamento** (0.1–0.3 entregues). Etapa de DESTINO no Omie: o founder cria e passa o código; a trava de faturamento é pergunta aberta (§2.1).
 
 ## 1. Por que reescrever
 
@@ -75,6 +75,14 @@ Medido em prod (psql-ro, 2026-10-10):
 | Código de caixa novo | Só **master** aprova |
 | Pós-separação | App avança a etapa no Omie (`TrocarEtapaPedido`) para a etapa que o founder vai criar — **Fase 2, modo sombra primeiro** |
 | Aparelho | Recomendado: coletor **Zebra TC22** (DataWedge em modo teclado); 1 unidade no piloto. Alternativa: Galaxy A16 + leitor Elgin EL300 |
+
+### 2.1 Decisões de 2026-10-11 (repassadas pela sessão "Análise do módulo de picking")
+
+| Tema | Decisão |
+|---|---|
+| Corte da fila | **Por data**: só pedidos da etapa 10 **incluídos nos últimos 30 dias** (o acúmulo — Oben 1.637 desde 2024, Colacor 6.213 desde 2020 — fica fora). Sem limpeza do kanban. Destrava o cron da fila (Fase 0.5). O corte decide só a ADMISSÃO (§1.3): tarefa já acompanhada segue recebendo detalhe. |
+| Aparelho | O founder compra **1 Zebra TC22 (SE4710)** para o piloto da Fase 1. |
+| Destino / faturamento | 🧭 **Pergunta de desenho em aberto, não requisito fechado.** O founder quer uma etapa nova no Omie (só para visualização; ele cria e passa o código), o pessoal usando **só o app** para tirar o pedido, e "o pedido só pode ser faturado se foi conferido antes — uma trava em AMBOS, Omie e app". A investigar **antes de prometer**: (a) trava no app = faturamento bloqueado sem `separado` (direto); (b) trava no Omie = não se sabe se o Omie bloqueia faturamento por etapa ou permissão — talvez só dê para DETECTAR (NF emitida de pedido não conferido → alerta), não impedir. Decide-se com o founder + Codex na Fase 2. |
 
 ## 3. Arquitetura
 
