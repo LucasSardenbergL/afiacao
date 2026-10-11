@@ -68,6 +68,22 @@ describe("guardrail money-path: omie-sync-pedidos-compra (réplica purchase_orde
     expect(src, "voltou o retorno-cedo (202/EdgeRuntime/background) — soltaria nfes/ctes/sku antes do espelho → órfãs")
       .not.toMatch(/EdgeRuntime|status:\s*202|background:\s*true/);
   });
+
+  it("todo ponto que conta erro registra o MOTIVO no heartbeat (alerta PARCIAL sem causa, out/2026)", () => {
+    // O log da edge expira em ~10min no Lovable Cloud: se o motivo não chega ao sync_state, o alerta
+    // "1 erro(s), 400 sincronizado(s)" fica sem causa recuperável. Cada `summary.erros` precisa de um
+    // registrarPrimeiroErro nas 2 linhas seguintes.
+    const linhas = removerComentarios(src).split("\n");
+    const pontos = linhas
+      .map((l, i) => ({ l, i }))
+      .filter(({ l }) => /summary\.erros(\+\+|\s*\+=)/.test(l));
+    expect(pontos.length, "nenhum ponto de erro encontrado — o teste perdeu o alvo").toBeGreaterThanOrEqual(5);
+    for (const { l, i } of pontos) {
+      const seguinte = linhas.slice(i + 1, i + 3).join("\n");
+      expect(seguinte, `erro sem motivo registrado: ${l.trim()}`).toMatch(/registrarPrimeiroErro\(/);
+    }
+    expect(src, "heartbeat não grava o motivo").toMatch(/primeiro_erro:\s*s\.primeiro_erro/);
+  });
 });
 
 describe("guardrail: omie-cron-diario sinaliza o step pedidos como cron (on-order jun/2026)", () => {

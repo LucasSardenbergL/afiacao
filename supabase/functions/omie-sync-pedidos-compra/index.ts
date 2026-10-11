@@ -74,6 +74,9 @@ interface EmpresaSummary {
   total_paginas: number;
   pedidos_sincronizados: number;
   erros: number;
+  // Motivo do 1º erro ("pág N: <motivo>"). Sem ele o heartbeat dizia só "1 erro(s)" e o log da edge
+  // expira em ~10min no Lovable Cloud — 13 alertas PARCIAL (jul→out/2026) ficaram sem causa conhecida.
+  primeiro_erro: string | null;
   // v3 publicação diferida (reconciliação PO excluído no Omie):
   janela_de: string | null;    // ISO yyyy-mm-dd da janela REAL do run (não CURRENT_DATE)
   janela_ate: string | null;
@@ -628,6 +631,13 @@ function fingerprintPagina(pedidos: readonly OmiePedido[]): string {
   return `${pedidos.length}:${chave(prim)}:${chave(ult)}`;
 }
 
+// Guarda só o 1º erro do run (é o que abortou a coleta; os seguintes, se houver, são consequência).
+// Truncado: o motivo pode carregar corpo cru do Omie (`Omie HTTP 500: <texto>`).
+function registrarPrimeiroErro(summary: EmpresaSummary, pagina: number, motivo: string): void {
+  if (summary.primeiro_erro !== null) return;
+  summary.primeiro_erro = `pág ${pagina}: ${motivo}`.slice(0, 300);
+}
+
 async function syncEmpresa(
   supabase: SupabaseClient,
   empresa: Empresa,
@@ -641,6 +651,7 @@ async function syncEmpresa(
     total_paginas: 0,
     pedidos_sincronizados: 0,
     erros: 0,
+    primeiro_erro: null,
     janela_de: null,
     janela_ate: null,
     ids_distintos: 0,
@@ -687,6 +698,7 @@ async function syncEmpresa(
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`[sync-pedidos] empresa=${empresa} pagina=${pagina} erro fetch: ${msg}`);
       summary.erros++;
+      registrarPrimeiroErro(summary, pagina, `erro fetch: ${msg}`);
       abortado = true;
       break;
     }
@@ -705,6 +717,7 @@ async function syncEmpresa(
       // publicado como válido envenena a base de verdade que o PR2 usa p/ decidir quem provar por ID).
       console.error(`[sync-pedidos] empresa=${empresa} pagina=${pagina} ${cls.motivo} — abort/invalida publicação`);
       summary.erros++;
+      registrarPrimeiroErro(summary, pagina, `anomalia: ${cls.motivo}`);
       abortado = true;
       break;
     }
@@ -727,6 +740,7 @@ async function syncEmpresa(
     if (fp && fpsVistos.has(fp)) {
       console.error(`[sync-pedidos] empresa=${empresa} REPETIÇÃO de página (pág ${pagina}) — abort anti-loop`);
       summary.erros++;
+      registrarPrimeiroErro(summary, pagina, "repetição de página (anti-loop)");
       abortado = true;
       break;
     }
@@ -764,6 +778,7 @@ async function syncEmpresa(
     const upsertRes = await upsertPedidosLote(supabase, rows);
     summary.pedidos_sincronizados += upsertRes.sincronizados;
     summary.erros += upsertRes.erros;
+    if (upsertRes.erros > 0) registrarPrimeiroErro(summary, pagina, `upsert: ${upsertRes.erros} pedido(s) não gravado(s)`);
 
     summary.total_paginas = pagina;
     await sleep(RATE_LIMIT_DELAY_MS); // rate-limit Omie entre páginas
@@ -776,6 +791,7 @@ async function syncEmpresa(
     // o já capturado (upsert idempotente retoma no próximo ciclo).
     console.error(`[sync-pedidos] empresa=${empresa} excedeu ${MAX_PAGINAS} páginas sem ver fim — abort anti-truncamento`);
     summary.erros++;
+    registrarPrimeiroErro(summary, MAX_PAGINAS, `excedeu ${MAX_PAGINAS} páginas sem ver fim`);
   }
 
   summary.ids_distintos = idsVistos.size;
@@ -842,12 +858,20 @@ async function heartbeatFim(
     updated_at: nowISO,
     total_synced: s.pedidos_sincronizados,
     error_message: s.erros > 0
-      ? (errFatal ?? `${s.erros} erro(s) na coleta, ${s.pedidos_sincronizados} sincronizado(s)`)
+      ? (errFatal ??
+        `${s.erros} erro(s) na coleta, ${s.pedidos_sincronizados} sincronizado(s)` +
+          (s.primeiro_erro ? ` — ${s.primeiro_erro}` : ""))
       : null,
     // metadata.modo é só para VISIBILIDADE (incremental×completo). A CADÊNCIA do completo NÃO mora aqui —
     // vive no marcador dedicado HEARTBEAT_FULL_ENTITY (escrito só por completos bem-sucedidos), p/ não
     // sofrer lost-update de um incremental concorrente regravando o metadata inteiro (Codex 2026-06-26).
-    metadata: { ...meta, finished_at: nowISO, erros: s.erros, total_paginas: s.total_paginas },
+    metadata: {
+      ...meta,
+      finished_at: nowISO,
+      erros: s.erros,
+      total_paginas: s.total_paginas,
+      primeiro_erro: s.primeiro_erro,
+    },
   };
   // last_sync_at só avança quando houve progresso (complete/partial). Em falha total, OMITIMOS a coluna
   // → o upsert não a sobrescreve (mantém o horário do último sucesso). Coluna ausente em 1º run = NULL.
@@ -1105,7 +1129,7 @@ Deno.serve(async (req) => {
         errFatal = err instanceof Error ? err.message : String(err);
         console.error(`[sync-pedidos] empresa=${empresa} erro fatal: ${errFatal}`);
         s = {
-          empresa, total_paginas: 0, pedidos_sincronizados: 0, erros: 1,
+          empresa, total_paginas: 0, pedidos_sincronizados: 0, erros: 1, primeiro_erro: null,
           janela_de: null, janela_ate: null, ids_distintos: 0, varredura_completa: false,
         };
       }
