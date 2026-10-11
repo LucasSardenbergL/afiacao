@@ -2,7 +2,7 @@
 // Classificador da sonda (compartilhado): `_shared/sonda-versao.ts`.
 //
 // Spec: docs/superpowers/specs/2026-10-10-picking-v2-design.md (Fase 0.1 — confirmar contratos).
-// Esta versão é SÓ diagnóstico: lê o Omie (3 métodos distintos por conta) e devolve um resumo.
+// Esta versão só LÊ: diagnóstico (3 métodos por conta) e coleta da fila (ListarPedidos paginado).
 // Não escreve no banco nem no Omie, e não tem cron.
 
 export { classificarSonda, erroSondaAmbigua } from "../_shared/sonda-versao.ts";
@@ -17,11 +17,16 @@ export const respostaSonda = criarRespostaSonda("picking-fila-omie");
  * `ListarPedidos{etapa:'10'}` (1 página) e `ListarProdutos` (1 página, cobertura de EAN).
  * v0.2 (Fase 0.2): o `ListarPedidos` pede a vez na trava compartilhada `omie_cota_metodo`
  * (_shared/omie-cota.ts); vez negada vira erro no resumo, sem chamar o Omie.
+ * v0.3 (Fase 0.5a): modo `coleta`, SÓ leitura — por conta, o total da etapa 10 (1 registro) e a
+ * listagem `ListarPedidos{etapa:'10', filtrar_por_data_de: hoje−30}` paginada até o fim; devolve
+ * números (páginas, completude, corte, itens ilegíveis) e a prova do filtro (os 100 mais recentes
+ * sem filtro têm de estar na filtrada), sem chamar o banco.
  */
-export const VERSAO = "v0.2-cota-omie-compartilhada";
+export const VERSAO = "v0.3-coleta-leitura";
 
 /** Efeito citado no 400 de `probe` ambíguo. */
 export const EFEITO =
-  "esta edge chama o Omie (ListarEtapasFaturamento, ListarPedidos e ListarProdutos em cada conta) — " +
+  "esta edge chama o Omie (ListarEtapasFaturamento, ListarProdutos e ListarPedidos — este paginado no " +
+  "modo coleta — em cada conta) — " +
   "chamada repetida do mesmo método na mesma app_key arrisca o bloqueio REDUNDANT, que derruba os " +
   "syncs vizinhos";
