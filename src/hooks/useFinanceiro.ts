@@ -59,6 +59,9 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
     { nome: string; cnpj: string; total_vencido: number; qtd_titulos: number }[]
   >([]);
   const [lastSync, setLastSync] = useState<string | null>(null);
+  // Motivo quando a leitura do "último sync" falhou — `lastSync` null sozinho seria ambíguo
+  // com "nunca sincronizou".
+  const [lastSyncIndisponivel, setLastSyncIndisponivel] = useState<string | null>(null);
 
   // Falha de LEITURA por dataset (não de ação). Cada aba lê a sua — o `error` global
   // acusava a aba errada e não sumia com a recarga bem-sucedida (spec D2).
@@ -113,13 +116,24 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
     const g = ++geracoes.current.resumo;
     try {
       setLoading(true);
-      const [data, syncTime] = await Promise.all([
+      // allSettled: o "último sync" é METADADO do cabeçalho. Com Promise.all, a falha dele
+      // derrubava a carga inteira e apagava o saldo bancário que tinha sido lido certo.
+      const [rResumo, rSync] = await Promise.allSettled([
         getResumoFinanceiro(companies),
         getLastSyncTime(),
       ]);
       if (g !== geracoes.current.resumo) return;
-      setResumo(prev => ({ ...prev, ...data }));
-      setLastSync(syncTime);
+      if (rSync.status === 'fulfilled') {
+        setLastSync(rSync.value);
+        setLastSyncIndisponivel(null);
+      } else {
+        setLastSync(null);
+        setLastSyncIndisponivel(
+          mensagemDeErro(rSync.reason) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.',
+        );
+      }
+      if (rResumo.status === 'rejected') throw rResumo.reason;
+      setResumo(prev => ({ ...prev, ...rResumo.value }));
       limparFalha('resumo');
     } catch (e) {
       if (g !== geracoes.current.resumo) return;
@@ -240,8 +254,13 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
     }
   }, [view, limparFalha, marcarFalha]);
 
+  // Última carga de fluxo INICIADA — quem baixa o `loading`. É separada da geração de
+  // publicação porque `invalidarFluxoCaixa` avança só a geração: a carga em voo deixa de
+  // publicar, mas o request dela continua em voo e ela ainda é quem encerra o spinner.
+  const ultimaCargaFluxo = useRef(0);
   const loadFluxoCaixa = useCallback(async (dataInicio: string, dataFim: string) => {
     const g = ++geracoes.current.fluxoCaixa;
+    ultimaCargaFluxo.current = g;
     try {
       setLoading(true);
       const company = view === 'all' ? 'all' : view as Company;
@@ -257,7 +276,7 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
       setFluxoCaixa([]);
       marcarFalha('fluxoCaixa', e);
     } finally {
-      if (g === geracoes.current.fluxoCaixa) setLoading(false);
+      if (g === ultimaCargaFluxo.current) setLoading(false);
     }
   }, [view, limparFalha, marcarFalha]);
 
@@ -290,8 +309,14 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
    * sync já entrou no saldo e continuaria contando como entrada futura). Com a invalidação na
    * frente o pior caso é a aba vazia, nunca um número fabricado — precisão > recall,
    * `docs/agent/money-path.md`.
+   *
+   * Avança a geração: uma `loadFluxoCaixa` em voo leu o previsto ANTES do sync e, sem isto,
+   * publicaria esse previsto velho depois — a mesma dupla contagem, pela porta da corrida.
    */
-  const invalidarFluxoCaixa = useCallback(() => setFluxoCaixa([]), []);
+  const invalidarFluxoCaixa = useCallback(() => {
+    geracoes.current.fluxoCaixa++;
+    setFluxoCaixa([]);
+  }, []);
 
   // Sync from Omie
   const syncAll = useCallback(async () => {
@@ -440,6 +465,7 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
     /** Falha de LEITURA por dataset; `error` fica só para ações (sync/calcular). */
     errosCarga,
     lastSync,
+    lastSyncIndisponivel,
     
     // Data
     resumo,

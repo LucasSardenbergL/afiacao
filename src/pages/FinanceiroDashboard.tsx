@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 import { AuditTrailDrawer } from '@/components/financeiro/AuditTrailDrawer';
 import { usePeriodLockHandler } from '@/components/financeiro/PeriodLockGuard';
-import { generateAlerts } from '@/utils/financeiroAlerts';
+import { alertasDaView } from '@/utils/financeiroAlerts';
 import { RegimeToggle } from '@/components/financeiro/RegimeToggle';
 import { FluxoCaixaTab } from '@/components/financeiro/dashboard/FluxoCaixaTab';
 import { DRETab } from '@/components/financeiro/dashboard/DRETab';
@@ -32,7 +32,7 @@ const threeMonthsAhead = new Date(today.getFullYear(), today.getMonth() + 3, 0);
 
 const FinanceiroDashboard = ({ embedded = false }: { embedded?: boolean } = {}) => {
   const {
-    view, setView, loading, syncing, error, errosCarga, lastSync,
+    view, setView, loading, syncing, error, errosCarga, lastSync, lastSyncIndisponivel,
     activeResumo, resumo,
     contasPagar, contasReceber,
     contasPagarTotal, contasReceberTotal,
@@ -59,10 +59,10 @@ const FinanceiroDashboard = ({ embedded = false }: { embedded?: boolean } = {}) 
   const [auditTarget, setAuditTarget] = useState<{ table: string; id: string; title: string } | null>(null);
 
   // Financial alerts
-  const alerts = useMemo(() => {
-    if (Object.keys(resumo).length === 0) return [];
-    return generateAlerts(resumo, agingReceber, agingPagar);
-  }, [resumo, agingReceber, agingPagar]);
+  const alerts = useMemo(
+    () => alertasDaView(resumo, view, agingReceber, agingPagar),
+    [resumo, view, agingReceber, agingPagar],
+  );
 
   // Summary totals for CP/CR.
   //
@@ -131,6 +131,11 @@ const FinanceiroDashboard = ({ embedded = false }: { embedded?: boolean } = {}) 
               {lastSync && (
                 <span className="ml-2 text-xs font-normal opacity-60">
                   · Sync {new Date(lastSync).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                </span>
+              )}
+              {!lastSync && lastSyncIndisponivel && (
+                <span className="ml-2 text-xs font-normal opacity-60" title={lastSyncIndisponivel}>
+                  · Último sync indisponível
                 </span>
               )}
             </p>
