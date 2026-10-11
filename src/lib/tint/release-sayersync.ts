@@ -46,7 +46,7 @@ export function nomeExe(versao: string): string {
   return `sayersync-${versao}.exe`;
 }
 
-export function caminhoExe(versao: string): string {
+function caminhoExe(versao: string): string {
   return `sayersync/${nomeExe(versao)}`;
 }
 
