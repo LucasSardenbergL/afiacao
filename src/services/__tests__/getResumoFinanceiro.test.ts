@@ -35,6 +35,7 @@ function makeBuilder(tabela: string) {
       return builder;
     },
     order: (_col: string) => builder,
+    limit: (_n: number) => builder,
     range: (from: number, to: number) => {
       janela = { from, to };
       return builder;
@@ -62,7 +63,7 @@ vi.mock('@/integrations/supabase/client', () => ({
   supabase: { from: (tabela: string) => makeBuilder(tabela) },
 }));
 
-import { getResumoFinanceiro } from '@/services/financeiroService';
+import { getResumoFinanceiro, getLastSyncTime } from '@/services/financeiroService';
 
 const titulo = (company: string, status: string, saldo: number): Row => ({
   company,
@@ -193,5 +194,24 @@ describe('getResumoFinanceiro (contrato do resumo do dashboard)', () => {
   it('erro nas contas correntes também LANÇA — caixa R$0 falso é tão ruim quanto total truncado', async () => {
     state.errors.fin_contas_correntes = { message: 'tabela indisponível' };
     await expect(getResumoFinanceiro(['oben'])).rejects.toBeInstanceOf(Error);
+  });
+});
+
+describe('getLastSyncTime — erro de leitura LANÇA (não vira "último sync" parcial/null)', () => {
+  beforeEach(() => {
+    state.db = {};
+    state.errors = {};
+  });
+
+  it('erro numa das tabelas lança, mesmo com as outras respondendo', async () => {
+    state.db.fin_contas_receber = [{ updated_at: '2026-10-01T10:00:00Z' }];
+    state.errors.fin_movimentacoes = { message: 'movimentacoes off' };
+    await expect(getLastSyncTime()).rejects.toThrow(/movimentacoes off/);
+  });
+
+  it('sem erro devolve o updated_at mais recente entre as tabelas', async () => {
+    state.db.fin_contas_receber = [{ updated_at: '2026-10-01T10:00:00Z' }];
+    state.db.fin_contas_pagar = [{ updated_at: '2026-10-02T10:00:00Z' }];
+    await expect(getLastSyncTime()).resolves.toBe('2026-10-02T10:00:00Z');
   });
 });

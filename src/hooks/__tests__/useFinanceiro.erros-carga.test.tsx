@@ -189,3 +189,54 @@ describe('useFinanceiro — cargas concorrentes do mesmo dataset (guard de gera�
     expect(result.current.errosCarga.dre).toContain('dre colacor off');
   });
 });
+
+describe('useFinanceiro — sync invalida a carga de fluxo de caixa EM VOO', () => {
+  beforeEach(() => {
+    Object.values(m).forEach((f) => f.mockReset());
+    m.getLastSyncTime.mockResolvedValue(null);
+  });
+
+  it('carga de fluxo iniciada antes do sync NÃO repõe o previsto velho e não prende o loading', async () => {
+    // A carga velha leu o previsto ANTES do sync; publicá-la depois somaria a âncora nova com
+    // o previsto velho — a dupla contagem do #2459.
+    const d = deferred<unknown[]>();
+    m.getFluxoCaixa.mockReturnValueOnce(d.promise);
+    m.triggerFinanceiroSync.mockResolvedValue({});
+    const { result } = renderHook(() => useFinanceiro('oben'));
+
+    let pVelha!: Promise<void>;
+    act(() => { pVelha = result.current.loadFluxoCaixa('2026-01-01', '2026-01-31'); });
+    expect(result.current.loading).toBe(true);
+
+    // syncSpecific não relê nada pelo hook: se o loading depender só da carga velha, é ela
+    // quem tem de baixá-lo.
+    await act(async () => { await result.current.syncSpecific('sync_contas_correntes'); });
+
+    await act(async () => {
+      d.resolve([{ data: '2026-01-10', previsto_entrada: 999 }]);
+      await pVelha;
+    });
+
+    expect(result.current.fluxoCaixa).toEqual([]);
+    expect(result.current.errosCarga.fluxoCaixa).toBeUndefined();
+    expect(result.current.loading).toBe(false);
+  });
+});
+
+describe('useFinanceiro — falha do METADADO lastSync não derruba o resumo', () => {
+  beforeEach(() => {
+    Object.values(m).forEach((f) => f.mockReset());
+  });
+
+  it('getLastSyncTime rejeita: resumo (saldo bancário) fica, só o lastSync degrada', async () => {
+    m.getResumoFinanceiro.mockResolvedValueOnce({ oben: resumoDe('oben') });
+    m.getLastSyncTime.mockRejectedValueOnce(new Error('updated_at off'));
+    const { result } = renderHook(() => useFinanceiro('oben'));
+    await act(async () => { await result.current.loadResumo(); });
+
+    expect(result.current.activeResumo?.saldo_total_cc).toBe(10);
+    expect(result.current.errosCarga.resumo).toBeUndefined();
+    expect(result.current.lastSync).toBeNull();
+    expect(result.current.lastSyncIndisponivel).toContain('updated_at off');
+  });
+});
