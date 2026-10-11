@@ -29,6 +29,7 @@
     "scripts:typecheck": "tsc --noEmit -p tsconfig.scripts.json",
     "edges:afetadas": "bun scripts/edges-afetadas.ts",
     "edges:typecheck": "bun scripts/edges-typecheck-gate.ts",
+    "edges:lock": "bun scripts/edges-typecheck-gate.ts --atualizar-lock",
     "edges:sintaxe": "bun scripts/edges-sintaxe-gate.ts",
     "psql:errorstop": "bun scripts/psql-ro-error-stop-gate.ts",
     "sonda:bump": "bun scripts/sonda-versao-bump-gate.ts",
