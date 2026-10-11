@@ -330,6 +330,12 @@ não achar, ou se um gate não der veredito, **avisa que não checou** — nunca
 --no-verify` é a válvula para quando o GATE estiver errado; use e diga ao founder. Contrato
 completo no cabeçalho do hook; medição e motivo em `docs/historico/gates-no-push.md`.
 
+**No `gh pr create`**, o `pr-collision-guard.sh` roda `bun run gates:rapidos`: 14 gates do CI de
+até ~7 s cada (sonda, canária, authz, bunpin, docs, `claude:size`, knip), em paralelo, ~11 s ao todo.
+Ele **nega** o create só com evidência positiva (exit 1 + `GATES_RAPIDOS_REPROVOU`) e avisa quando
+não conseguiu medir. Os gates rodam no diretório do `cd <literal>` que vier antes do create. A
+válvula para gate errado é `GATES_RAPIDOS=pular gh pr create …`; use e diga ao founder (M-23).
+
 **Depois do push**, quem vigia depende de onde a sessão roda:
 
 - **App desktop (aba Code), o caso comum:** logo depois do `gh pr create`, ligue o **Auto-fix**:
