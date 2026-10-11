@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **599** custom migrations totais
-- **1958** objetos esperados (criados por estas migrations)
+- **604** custom migrations totais
+- **1965** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 670
+  - `function`: 676
   - `rls_policy`: 464
   - `index`: 268
   - `cron_job`: 175
-  - `table`: 169
+  - `table`: 170
   - `view`: 108
   - `trigger`: 100
   - `enum_value`: 4
@@ -4895,6 +4895,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `trigger` | `public.trg_tint_formulas_tombstone_fase5_del` | `tint_formulas` |
 | `trigger` | `public.trg_tint_subcolecoes_tombstone_fase5_upd` | `tint_subcolecoes` |
 
+### `20261010150000_atp_fase3_3_pv_divergente.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.atp_confirmar_pv` | — |
+
 ### `20261010150000_remove_cron_disparo_10h.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
@@ -4904,6 +4910,31 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.resolver_cliente_por_telefone` | — |
+
+### `20261010204708_omie_cota_metodo.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.omie_cota_tentar` | — |
+| `function` | `public.omie_cota_liberar` | — |
+| `function` | `public.omie_cota_registrar_fault` | — |
+| `table` | `public.omie_cota_metodo` | — |
+
+### `20261010210000_motor_desconta_comprometido.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
+
+### `20261010220000_tint_adocao_balcao.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_adocao_balcao` | — |
+
+### `20261011120000_tint_grants_escrita_staff.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ## Próximos passos por status
 
