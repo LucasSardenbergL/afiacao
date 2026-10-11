@@ -56,7 +56,7 @@ export const EDGE = "omie-sync-pedidos-compra";
  * sensor, é o sensor MAIS o eco passivo de `versao` em toda resposta — a metade que faz o deploy
  * se provar pelo tick do cron, sem ninguém chamar nada.
  */
-export const VERSAO = "v1.2-motivo-do-erro-no-marcador";
+export const VERSAO = "v1.3-retry-timeout";
 
 /**
  * O fingerprint da FONTE, para o ECO carregá-lo também — não só a sonda.

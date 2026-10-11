@@ -41,6 +41,7 @@ const MAX_RETRIES = 3;
 // um teto de run truncaria carga legítima, e é este espelho que nfes/ctes leem no step seguinte.
 // A coleira aqui é só por request; o volume segue exatamente como está.
 const FETCH_TIMEOUT_MS = 25_000;
+const MAX_TENTATIVAS_TIMEOUT = 2; // 1 re-tentativa por request que estoura o relógio (ver callOmie)
 
 // [fix paginação+janela 2026-06-26] espelho de omie-sync-estoque (#979/#1009/#1072) — MESMA armadilha Omie:
 // (a) PAGINAÇÃO — o nTotalPaginas SUB-REPORTA em listas grandes → confiar nele PARAVA a captura na 1ª página
@@ -457,16 +458,34 @@ async function callOmie(
   };
 
   let attempt = 0;
+  let timeouts = 0; // contador PRÓPRIO: um 429 antes não pode gastar a re-tentativa do timeout
   while (attempt < MAX_RETRIES) {
     attempt++;
-    const res = await fetch(OMIE_ENDPOINT_PEDIDOS, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-    });
-
-    const text = await res.text();
+    let res: Response;
+    let text: string;
+    try {
+      res = await fetch(OMIE_ENDPOINT_PEDIDOS, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      });
+      text = await res.text(); // o mesmo signal cobre o corpo: o estouro pode cair aqui, não só no fetch
+    } catch (err) {
+      // [2026-10-11] 1 estouro de relógio numa página derrubava o run inteiro para partial (OBEN parada na
+      // pág 5 por ~24h, #2954). Re-tenta SÓ o TimeoutError, no máximo MAX_TENTATIVAS_TIMEOUT vezes (+25s por
+      // re-tentativa — não MAX_RETRIES, que somaria 75s num run de p95 120s). Erro de rede/DNS segue lançando
+      // na 1ª, como antes; se a causa da pág 5 for outra, o "— 1º:" do marcador (#2954) mostra.
+      const timeout = err instanceof DOMException && err.name === "TimeoutError";
+      if (!timeout) throw err;
+      timeouts++;
+      if (timeouts >= MAX_TENTATIVAS_TIMEOUT || attempt >= MAX_RETRIES) throw err;
+      console.warn(
+        `[omie] timeout ${FETCH_TIMEOUT_MS}ms pagina=${pagina} (estouro ${timeouts}/${MAX_TENTATIVAS_TIMEOUT}), re-tentando em ${RETRY_DELAY_MS}ms`,
+      );
+      await sleep(RETRY_DELAY_MS);
+      continue;
+    }
     let json: OmieSearchResponse;
     try {
       json = JSON.parse(text) as OmieSearchResponse;
