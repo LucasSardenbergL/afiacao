@@ -29,12 +29,12 @@ const MOTIVO_SEM_PRECO: Record<SemPrecoMotivo, string> = {
 
 // Alvo de toque do balcão SÓ em ponteiro grosso: no desktop a densidade fica.
 // (Botões já ganham 44px pelo `pointer:coarse` global do index.css; campos não.)
-export const TOQUE_CAMPO = '[@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-24';
-export const TOQUE_CHIP = '[@media(pointer:coarse)]:px-3 [@media(pointer:coarse)]:text-sm';
+const TOQUE_CAMPO = '[@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-24';
+const TOQUE_CHIP = '[@media(pointer:coarse)]:px-3 [@media(pointer:coarse)]:text-sm';
 
 /** Única condição de "Adicionar ao Pedido" — o botão só existe sob ela e o Enter
  *  do teclado a reusa: nunca contorna o fail-closed (carregando/sem preço). */
-export function podeAdicionarCor(p: { precoCarregando: boolean; disponivel: boolean; precoFinal: number | null }): boolean {
+function podeAdicionarCor(p: { precoCarregando: boolean; disponivel: boolean; precoFinal: number | null }): boolean {
   return !p.precoCarregando && p.disponivel && p.precoFinal != null;
 }
 
