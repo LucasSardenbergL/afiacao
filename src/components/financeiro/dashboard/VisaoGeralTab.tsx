@@ -45,7 +45,7 @@ export function VisaoGeralTab({
     showContasZeradas || contasComSaldo.length === 0 ? contasCorrentes : contasComSaldo;
 
   const motivos = [
-    resumoIndisponivel && `Resumo: ${resumoIndisponivel}`,
+    resumoIndisponivel && `Resumo (KPIs e alertas): ${resumoIndisponivel}`,
     agingIndisponivel && `Aging: ${agingIndisponivel}`,
     inadimplentesIndisponivel && `Inadimplentes: ${inadimplentesIndisponivel}`,
   ].filter(Boolean) as string[];

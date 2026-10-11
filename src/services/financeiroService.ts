@@ -975,17 +975,22 @@ export function downloadCSV(content: string, filename: string): void {
 
 // ═══════════════ LAST SYNC ═══════════════
 
+/**
+ * `updated_at` mais recente entre as tabelas financeiras. LANÇA se qualquer leitura falhar:
+ * ignorar o `error` devolvia o máximo só das tabelas que responderam (um "último sync" mais
+ * velho que o real) ou `null`, em silêncio. `null` aqui significa só "tabelas vazias".
+ */
 export async function getLastSyncTime(): Promise<string | null> {
-  // Check most recent updated_at across financial tables
   const tables = ['fin_contas_receber', 'fin_contas_pagar', 'fin_movimentacoes'] as const;
   let latest: string | null = null;
 
   for (const table of tables) {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from(table)
       .select('updated_at')
       .order('updated_at', { ascending: false })
       .limit(1);
+    if (error) throw new Error(`Falha ao ler o último sync (${table}): ${error.message}`);
 
     const updatedAt = data?.[0]?.updated_at;
     if (updatedAt) {

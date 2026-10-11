@@ -129,6 +129,33 @@ sabotagem "corte exclusivo" a derruba (`PASS=21`, C e pt_BR). Ausente→zero nos
 cron do `calculate-scores` (06:00/06:25 UTC) depois do apply — sem deploy de edge. As RPCs ao vivo
 (`get_carteira_margem_faixa`, `get_customer_margin_summary`) mudam no instante do apply.
 
+### Efeito a jusante — o contador `sem_margem_indecidivel` do batch tático (re-medido 2026-10-10)
+
+A janela mudou o que o cron noturno `tactical-plans-batch` publica como tamanho do "pool vivo". O
+contador `sem_margem_indecidivel` (clientes que saem do ranking porque o gate de R$/h fica
+indecidível sem margem) conta `gross_margin_pct IS NULL` sobre a **carteira** (os elegíveis de
+`carteira_assignments`), **não** sobre todos os scores. Re-medido em prod (psql-ro, 2026-10-10):
+
+| Recorte | Clientes |
+|---|---:|
+| scores totais | 6.633 |
+| mascarados (não-elegíveis → vão para `mascarados_ignorados`) | 1.459 |
+| **carteira (elegíveis)** | **5.174** |
+| carteira · com margem (`IS NOT NULL`) | 499 |
+| carteira · NULL, **compra ≤12m** (comprou, item s/ custo/preço — resíduo) | 3 |
+| carteira · NULL, **sem compra ≤12m** (nada a calcular) | 4.672 |
+| **`sem_margem_indecidivel` (NULL na carteira) = 3 + 4.672** | **4.675** |
+
+Dois erros de leitura que o comentário do batch
+(`supabase/functions/tactical-plans-batch/index.ts`) agora previne, trocando a decomposição
+pré-janela de 08/ago (405/670, régua de 180d) pela de cima: (1) o número **não** é ~6.100 — esse é o
+NULL sobre os 6.633 scores (6.131); a diferença (1.456) são mascarados, contados em outro campo. (2)
+o writer **não** está cego: dos 501 elegíveis que compraram em 12m, 498 têm margem computável
+(99,4%) — o análogo moderno do antigo "405 de 406". O contador é alto porque ~90% da carteira não
+comprou nos últimos 12 meses: ausência honesta pela janela de #2898, não writer quebrado. (O pool
+COM margem system-wide caiu de ~1.075 em 08/ago para 502 em 10/out, como a tabela da decisão acima
+prevê.) Mudança de observabilidade apenas — nenhuma lógica alterada.
+
 ### A saída barata (conserto de código de maior alavanca, aditivo)
 
 `get_customer_margin_summary()` **já retorna** `itens_com_custo` e `itens_sem_custo` por cliente, mas
