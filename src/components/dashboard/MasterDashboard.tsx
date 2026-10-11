@@ -3,6 +3,7 @@ import { Target, ChevronRight } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { TeamKpiTiles } from './TeamKpiTiles';
 import { RankingVendedoresCard } from './RankingVendedoresCard';
+import { CrescimentoComparavelCard } from './CrescimentoComparavelCard';
 import { GestorExcecoes } from './GestorExcecoes';
 import { ClosersMtdHero } from './ClosersMtdHero';
 import { DadosVendaParciaisBanner } from './DadosVendaParciaisBanner';
@@ -43,6 +44,9 @@ export function MasterDashboard() {
 
       {/* "Quem/onde explica?" — ranking de vendedores do mês (decomposição do placar) */}
       <RankingVendedoresCard />
+
+      {/* ...e quanto do crescimento é a BASE comprando mais vs. cliente entrando/saindo (trimestre fechado) */}
+      <CrescimentoComparavelCard />
 
       {/* Ferramenta de investigação: master entra na visão de um vendedor (somente leitura) */}
       <ViewAsPicker />

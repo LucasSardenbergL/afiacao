@@ -1,6 +1,6 @@
 # Picking v2 — separação por bipe no celular (Oben + Colacor)
 
-> Spec de desenho, 2026-10-10. Status: **Fase 0 em andamento**. Etapa de DESTINO no Omie: 🧭 o founder define (vai criá-la no kanban).
+> Spec de desenho, 2026-10-10. Status: **Fase 0 em andamento** (0.1–0.3 entregues). Etapa de DESTINO no Omie: 🧭 o founder define (vai criá-la no kanban).
 
 ## 1. Por que reescrever
 
@@ -36,6 +36,31 @@ Medido em prod (psql-ro, 2026-10-10):
 - **Codex:** 3 rodadas — REPROVADO (2 P1 + 2 P2) → REPROVADO (2 P2) → **APROVADO**.
 - **Fora de escopo, pré-existente:** `historico_produtos_cliente` grava o prefixo lido quando a paginação
   para no meio (rate-limit ou trava), sem sinalizar incompletude — não apaga nada.
+
+### 1.3 Fase 0.3 — schema v2 + RPCs (2026-10-11)
+
+- **Migration** `supabase/migrations/20261011020000_picking_v2_schema.sql`: tabelas `picking_tarefas`, `picking_linhas`,
+  `picking_leituras` (imutável), `picking_codigos_barras` (só lida; cadastro = Fase 1), `picking_eventos`,
+  `picking_coleta_estado` + view `picking_linhas_progresso`. RPCs: `picking_sincronizar_fila` (só service_role),
+  `picking_pegar_task`, `picking_registrar_leitura`, `picking_marcar_falta`, `picking_retomar`, `picking_concluir`.
+  As 3 RPCs de escrita v1 perderam o EXECUTE de authenticated.
+- **Prova** `db/test-picking-v2.sh` (núcleo CI): 102 asserts, 16 sabotagens com controle verde e vermelho exato (inclusive cada camada de
+  lock e cada camada de filtro de revisão sozinha), 3 cenários de 2 sessões. Codex do código: rodada 1 (1 P1 + 4 P2) e rodada 2 (1 P1: mesmo EAN em UN e CX) corrigidas.
+- **Codex — desenho REPROVADO (10 P1 + 2 P2), corrigido antes do código.** O que mudou em relação à §3:
+  - **Sem fechamento automático:** `picking_concluir` só fecha quando o servidor já recebeu TODAS as leituras que o
+    aparelho emitiu na atribuição — estorno ou bipe em voo deixaria `separado` com o volume diferente. Estorno cujo
+    original não chegou devolve `pendente` sem gravar.
+  - **Toda volta passa por reconciliação física:** tarefa que já foi pega nunca volta direto a `aguardando` (inclusive
+    `aguardando_ajuste` com o pedido alterado → `suspensa_alteracao`, ≠ §3.1); `picking_retomar` sempre exige
+    `reconciliacao_fisica`; assumir a tarefa de outro operador também.
+  - **`estado_seq`** na tarefa: `pegar`/`retomar` carregam o seq visto — comando atrasado não age sobre outro ciclo.
+  - **Corte de data só decide a admissão:** a sync recusa o lote se uma tarefa acompanhada presente na listagem vier
+    sem detalhe. **EAN entra no hash da linha** (corrigir EAN no Omie exige reconciliação). Código cadastrado tem
+    `unidade` e só aloca em linha da mesma unidade.
+  - **Idempotência amarrada ao comando:** o UUID guarda o comando canônico; reuso com outro conteúdo é 22023; a conta é
+    validada antes do replay.
+  - **Protocolo de ausência:** a edge lista, consulta os ausentes (`ConsultarPedido`, com teto) e faz UMA chamada.
+  - `service_role` (BYPASSRLS) também sem DML direto nas tabelas.
 
 ## 2. Decisões do founder (2026-10-10)
 
@@ -104,8 +129,8 @@ Rodada 1 → a spec fecha **soma global**, **UPDATE absoluto** e **falta faturá
 - **Fase 0 — fundação (sem tela), na ordem do Codex:**
   1. Confirmar contratos/payloads nas 2 contas (read-only, 1 chamada por método): `ListarEtapasFaturamento`, paginação de `ListarPedidos{etapa:'10'}`, estabilidade de `codigo_item`, campo do EAN no cadastro de produto.
   2. Coordenação de cota com o `vendas-sync-continuacao` (§3.6.1) — antes de qualquer cron.
-  3. Schema v2 + RPCs (`picking_sincronizar_fila`, `picking_pegar_task`, `picking_registrar_leitura`, `picking_marcar_falta`, `picking_retomar`) com invariantes, revisões, autorização e recuperação; desativar os caminhos v1 incompatíveis (tabelas vazias — sem migração de progresso).
-  4. Prova PG17: concorrência, replay offline fora de ordem, revisão, isolamento de conta, REVOKE; coletor testado com páginas mutáveis, resposta atrasada e REDUNDANT.
+  3. ✅ Schema v2 + RPCs (`picking_sincronizar_fila`, `picking_pegar_task`, `picking_registrar_leitura`, `picking_marcar_falta`, `picking_retomar`, `picking_concluir`) com invariantes, revisões, autorização e recuperação; caminhos de escrita v1 desativados (§1.3).
+  4. Prova PG17: ✅ RPCs (concorrência, replay offline fora de ordem, revisão, isolamento de conta, REVOKE — §1.3); ⏳ coletor testado com páginas mutáveis, resposta atrasada e REDUNDANT (vai com a edge, Fase 0.5).
   5. Coleta controlada **sem alterar tasks** (modo leitura); só então reconciliação + cron.
 - **Fase 1 — piloto no TC22:** tela mobile v2 (fila, pegar, bipe, manual, falta), `track()` (`picking.task_pega`, `picking.leitura`, `picking.falta`, `picking.separado`), cadastro de código com aprovação master.
 - **Fase 2 — Omie:** modo sombra ("viraria a etapa agora", comparado ao manual), depois `TrocarEtapaPedido` com ledger por passo + reconsulta (money-path, Codex).

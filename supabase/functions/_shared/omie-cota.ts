@@ -111,11 +111,15 @@ export function lerVez(data: unknown): Vez {
   return { tipo: "sem_trava", erro: `omie_cota_tentar devolveu forma inesperada: ${JSON.stringify(r).slice(0, 120)}` };
 }
 
-/** RPC com prazo: banco pendurado vira erro em `prazoMs`, nunca uma espera sem fim. */
+/**
+ * RPC com prazo: banco pendurado vira erro em `prazoMs`, nunca uma espera sem fim. Recebe a
+ * chamada JÁ montada (`() => db.rpc("<nome literal>", …)`): o pré-voo de deploy
+ * (`scripts/edge-rpcs.ts`) só enxerga RPC de nome literal — `db.rpc(fn, args)` aqui deixava a lista
+ * de dependências das 4 edges incompleta e o `pendencias:pacote` recusava a leva (exit 3).
+ */
 async function rpcComPrazo(
-  db: ClienteCota,
   fn: string,
-  args: Record<string, unknown>,
+  chamar: () => PromiseLike<{ data: unknown; error: { message: string } | null }>,
   prazoMs: number,
 ): Promise<{ data: unknown; erro: string | null }> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -123,7 +127,7 @@ async function rpcComPrazo(
     timer = setTimeout(() => rej(new Error(`${fn} sem resposta em ${prazoMs} ms`)), prazoMs);
   });
   try {
-    const { data, error } = await Promise.race([Promise.resolve(db.rpc(fn, args)), prazo]);
+    const { data, error } = await Promise.race([Promise.resolve(chamar()), prazo]);
     return { data, erro: error ? (mensagemDeErro(error) ?? `${fn} falhou sem mensagem`) : null };
   } catch (e) {
     return { data: null, erro: mensagemDeErro(e) ?? `${fn} falhou sem mensagem` };
@@ -139,12 +143,13 @@ async function pedirVez(
   token: string,
   opts: { leaseSegundos?: number; prazoRpcMs?: number } = {},
 ): Promise<Vez> {
-  const { data, erro } = await rpcComPrazo(db, "omie_cota_tentar", {
-    p_conta: conta,
-    p_metodo: metodo,
-    p_token: token,
-    p_lease_segundos: opts.leaseSegundos ?? LEASE_PADRAO_S,
-  }, opts.prazoRpcMs ?? PRAZO_RPC_MS);
+  const { data, erro } = await rpcComPrazo("omie_cota_tentar", () =>
+    db.rpc("omie_cota_tentar", {
+      p_conta: conta,
+      p_metodo: metodo,
+      p_token: token,
+      p_lease_segundos: opts.leaseSegundos ?? LEASE_PADRAO_S,
+    }), opts.prazoRpcMs ?? PRAZO_RPC_MS);
   if (erro) return { tipo: "sem_trava", erro };
   return lerVez(data);
 }
@@ -157,7 +162,8 @@ async function devolverVez(
   token: string,
   prazoRpcMs = PRAZO_RPC_MS,
 ): Promise<void> {
-  const { erro } = await rpcComPrazo(db, "omie_cota_liberar", { p_conta: conta, p_metodo: metodo, p_token: token }, prazoRpcMs);
+  const { erro } = await rpcComPrazo("omie_cota_liberar", () =>
+    db.rpc("omie_cota_liberar", { p_conta: conta, p_metodo: metodo, p_token: token }), prazoRpcMs);
   if (erro) console.warn(`[omie-cota][${conta}] liberar ${metodo} falhou (o lease vence sozinho): ${erro}`);
 }
 
@@ -174,12 +180,13 @@ async function registrarFault(
   prazoRpcMs = PRAZO_RPC_MS,
 ): Promise<boolean> {
   if (fault.tipo === "concorrente") return true;
-  const { erro } = await rpcComPrazo(db, "omie_cota_registrar_fault", {
-    p_conta: conta,
-    p_metodo: metodo,
-    p_bloqueio_segundos: Math.max(1, Math.ceil(fault.segundos)),
-    p_fault: texto.slice(0, 300),
-  }, prazoRpcMs);
+  const { erro } = await rpcComPrazo("omie_cota_registrar_fault", () =>
+    db.rpc("omie_cota_registrar_fault", {
+      p_conta: conta,
+      p_metodo: metodo,
+      p_bloqueio_segundos: Math.max(1, Math.ceil(fault.segundos)),
+      p_fault: texto.slice(0, 300),
+    }), prazoRpcMs);
   if (erro) {
     console.warn(`[omie-cota][${conta}] registrar fault ${metodo} falhou (a vez fica retida até o lease vencer): ${erro}`);
     return false;

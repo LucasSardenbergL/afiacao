@@ -16,6 +16,7 @@ import { TabsContent } from "@/components/ui/tabs";
 import { MapeamentoStatusCell } from "@/components/reposicao/promocaoDetail/MapeamentoStatusCell";
 import { DescontoExtraCell } from "@/components/reposicao/promocaoDetail/DescontoExtraCell";
 import { type ItemRow } from "@/components/reposicao/promocaoDetail/types";
+import type { DescricaoSku } from "@/components/reposicao/promocaoDetail/descricaoSku";
 
 type UpdateItemArgs = { itemId: number; changes: Partial<ItemRow> };
 
@@ -35,6 +36,10 @@ type ItensTabProps = {
   savingNovoItem: boolean;
   onAddItem: () => void;
   onUpdateItem: (args: UpdateItemArgs) => void;
+  /** A gravação AGUARDÁVEL (rejeita na falha) — o vínculo manual não segue sem ela. */
+  onUpdateItemAsync: (args: UpdateItemArgs) => Promise<unknown>;
+  /** A descrição do SKU vinculado, lida do catálogo (useDescricoesSkuOmie). */
+  descricaoSku: (sku: number | null) => DescricaoSku;
   onDeleteItem: (itemId: number) => void;
   onCancelAdd: () => void;
 };
@@ -55,6 +60,8 @@ export function ItensTab({
   savingNovoItem,
   onAddItem,
   onUpdateItem,
+  onUpdateItemAsync,
+  descricaoSku,
   onDeleteItem,
   onCancelAdd,
 }: ItensTabProps) {
@@ -82,7 +89,7 @@ export function ItensTab({
                 <TableHeader>
                   <TableRow>
                     <TableHead>Cód. fornecedor</TableHead>
-                    <TableHead>Descrição</TableHead>
+                    <TableHead>Descrição (fornecedor)</TableHead>
                     <TableHead className="text-right">Desc.%</TableHead>
                     <TableHead>Extra</TableHead>
                     <TableHead className="text-right">Vol. mín.</TableHead>
@@ -188,8 +195,9 @@ export function ItensTab({
                         <TableCell>
                           <MapeamentoStatusCell
                             item={item}
+                            sku={descricaoSku(item.sku_codigo_omie)}
                             onUpdate={(changes) =>
-                              onUpdateItem({ itemId: item.id, changes })
+                              onUpdateItemAsync({ itemId: item.id, changes })
                             }
                           />
                         </TableCell>

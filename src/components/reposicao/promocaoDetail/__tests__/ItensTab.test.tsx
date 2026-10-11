@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { Tabs } from "@/components/ui/tabs";
 import type { ItemRow } from "../types";
+import type { DescricaoSku } from "../descricaoSku";
 
 // Isola ItensTab dos leaf-components reais; os stubs também provam que a
 // fiação onSave/onUpdate → onUpdateItem({itemId, changes}) está correta.
@@ -18,12 +19,17 @@ vi.mock("../DescontoExtraCell", () => ({
 vi.mock("../MapeamentoStatusCell", () => ({
   MapeamentoStatusCell: ({
     onUpdate,
+    sku,
   }: {
-    onUpdate: (c: Partial<ItemRow>) => void;
+    onUpdate: (c: Partial<ItemRow>) => Promise<unknown>;
+    sku: DescricaoSku;
   }) => (
     <button
       data-testid="map-status"
-      onClick={() => onUpdate({ sku_codigo_omie: 123 })}
+      data-sku={sku.estado}
+      onClick={() => {
+        void onUpdate({ sku_codigo_omie: 123 });
+      }}
     >
       map
     </button>
@@ -68,6 +74,8 @@ const baseProps = {
   savingNovoItem: false,
   onAddItem: vi.fn(),
   onUpdateItem: vi.fn(),
+  onUpdateItemAsync: vi.fn().mockResolvedValue(undefined),
+  descricaoSku: (() => ({ estado: "sem_sku" })) as (sku: number | null) => DescricaoSku,
   onDeleteItem: vi.fn(),
   onCancelAdd: vi.fn(),
 };
@@ -129,14 +137,27 @@ describe("ItensTab", () => {
     });
   });
 
-  it("MapeamentoStatusCell.onUpdate é envolvido em {itemId, changes}", () => {
+  it("MapeamentoStatusCell.onUpdate é envolvido em {itemId, changes} na via ASSÍNCRONA (o vínculo aguarda a gravação)", () => {
     const onUpdateItem = vi.fn();
-    renderTab({ onUpdateItem });
+    const onUpdateItemAsync = vi.fn().mockResolvedValue(undefined);
+    renderTab({ onUpdateItem, onUpdateItemAsync });
     fireEvent.click(screen.getByTestId("map-status"));
-    expect(onUpdateItem).toHaveBeenCalledWith({
+    expect(onUpdateItemAsync).toHaveBeenCalledWith({
       itemId: 1,
       changes: { sku_codigo_omie: 123 },
     });
+    expect(onUpdateItem).not.toHaveBeenCalled();
+  });
+
+  it("a célula de mapeamento recebe a descrição do SKU do PRÓPRIO item", () => {
+    const descricaoSku = vi.fn((sku: number | null): DescricaoSku =>
+      sku === 8689717792
+        ? { estado: "ok", descricao: "THINNER DR.4403LT", codigo: "PRD00411", desatualizada: null }
+        : { estado: "sem_sku" },
+    );
+    renderTab({ itens: [makeItem({ sku_codigo_omie: 8689717792 })], descricaoSku });
+    expect(descricaoSku).toHaveBeenCalledWith(8689717792);
+    expect(screen.getByTestId("map-status").getAttribute("data-sku")).toBe("ok");
   });
 
   it("remover item com confirm=true chama onDeleteItem(id)", () => {
