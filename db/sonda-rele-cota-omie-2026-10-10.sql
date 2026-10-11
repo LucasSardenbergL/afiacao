@@ -8,7 +8,7 @@ DECLARE
 BEGIN
   SELECT count(*) INTO v_n
     FROM public.deploy_sonda_disparar(ARRAY['sync-reprocess', 'omie-desconto-backfill', 'omie-vendas-sync']);
-  IF v_n <> 3 THEN
+  IF v_n IS DISTINCT FROM 3 THEN
     RAISE EXCEPTION 'POSTCONDICAO: deploy_sonda_disparar devolveu % disparos, esperava 3', v_n;
   END IF;
   RAISE NOTICE 'SONDA_RELE_DISPAROS=%', v_n;
