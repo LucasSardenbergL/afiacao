@@ -26,6 +26,8 @@ import { EstadoAcoesSidebar } from "@/components/reposicao/promocaoDetail/Estado
 import { NegociacaoTab } from "@/components/reposicao/promocaoDetail/NegociacaoTab";
 import { DetalhesTab } from "@/components/reposicao/promocaoDetail/DetalhesTab";
 import { ItensTab } from "@/components/reposicao/promocaoDetail/ItensTab";
+import { useDescricoesSkuOmie } from "@/components/reposicao/promocaoDetail/useDescricoesSkuOmie";
+import { atualizarItemPromocao } from "@/components/reposicao/promocaoDetail/atualizarItemPromocao";
 
 // ========== PÁGINA PRINCIPAL ==========
 export default function AdminReposicaoPromocaoDetail() {
@@ -77,6 +79,13 @@ export default function AdminReposicaoPromocaoDetail() {
     },
     enabled: !isNew,
   });
+
+  // A descrição do SKU vinculado é LIDA do catálogo (na conta da campanha) — nunca copiada para
+  // descricao_produto_fornecedor, que guarda o texto que o fornecedor ofertou.
+  const descricaoSku = useDescricoesSkuOmie(
+    campanha?.empresa,
+    itens.map((i) => i.sku_codigo_omie),
+  );
 
   const itemIds = useMemo(() => itens.map((i) => i.id), [itens]);
   const { data: itensEfetivos = [] } = useQuery({
@@ -212,13 +221,7 @@ export default function AdminReposicaoPromocaoDetail() {
     }: {
       itemId: number;
       changes: Partial<ItemRow>;
-    }) => {
-      const { error } = await supabase
-        .from("promocao_item")
-        .update(changes as never)
-        .eq("id", itemId);
-      if (error) throw error;
-    },
+    }) => atualizarItemPromocao(itemId, changes),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["promocao-itens", id] });
       qc.invalidateQueries({ queryKey: ["promocao-itens-efetivos"] });
@@ -497,6 +500,8 @@ export default function AdminReposicaoPromocaoDetail() {
               savingNovoItem={savingNovoItem}
               onAddItem={handleAddItem}
               onUpdateItem={(args) => updateItemMut.mutate(args)}
+              onUpdateItemAsync={(args) => updateItemMut.mutateAsync(args)}
+              descricaoSku={descricaoSku}
               onDeleteItem={(itemId) => deleteItemMut.mutate(itemId)}
               onCancelAdd={() => {
                 setAddingItem(false);

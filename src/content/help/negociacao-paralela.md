@@ -231,7 +231,7 @@ A função SQL `converter_sugestao_em_campanha_flat` executa transação atômic
 
 2. Cria linha em `promocao_item` com:
    - `sku_codigo_fornecedor` = o código Sayerlack do dialog
-   - `descricao_produto_fornecedor` = a descrição do SKU
+   - `descricao_produto_fornecedor` fica **vazia**: essa coluna guarda o texto que o fornecedor ofertou, e uma negociação por telefone/canal não tem esse texto. A descrição do SKU aparece na tela pela ligação com o catálogo (`sku_codigo_omie`)
    - `sku_codigo_omie` da sugestão
    - `desconto_perc` = o desconto acordado
    - `mapeamento_qualidade = 'manual_confirmado'` e `confirmado = true` (quem converte conferiu o SKU e o código)

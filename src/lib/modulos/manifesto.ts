@@ -514,6 +514,7 @@ export const MODULOS: ModuloApp[] = [
       "src/pages/__tests__/AdminReposicaoPromocaoDetail.test.tsx",
       "src/pages/__tests__/AdminReposicaoPedidos.alertas-erro-honesto.test.tsx",
       "src/pages/__tests__/AdminReposicaoPromocaoDetail.estados.test.tsx",
+      "src/pages/__tests__/AdminReposicaoPromocaoDetail.gravacao.test.tsx",
       "src/pages/__tests__/AdminReposicaoBaixoGiro.erro-honesto.test.tsx",
       "src/pages/__tests__/AdminReposicaoCockpit.erro-honesto.test.tsx",
       "src/lib/reposicao/__tests__/observacao-po-edge.test.ts",

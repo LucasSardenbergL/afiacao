@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **599** custom migrations totais
-- **1958** objetos esperados (criados por estas migrations)
+- **606** custom migrations totais
+- **1997** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 670
-  - `rls_policy`: 464
-  - `index`: 268
+  - `function`: 689
+  - `rls_policy`: 469
+  - `index`: 273
+  - `table`: 176
   - `cron_job`: 175
-  - `table`: 169
-  - `view`: 108
-  - `trigger`: 100
+  - `view`: 109
+  - `trigger`: 102
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -4895,6 +4895,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `trigger` | `public.trg_tint_formulas_tombstone_fase5_del` | `tint_formulas` |
 | `trigger` | `public.trg_tint_subcolecoes_tombstone_fase5_upd` | `tint_subcolecoes` |
 
+### `20261010150000_atp_fase3_3_pv_divergente.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.atp_confirmar_pv` | — |
+
 ### `20261010150000_remove_cron_disparo_10h.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
@@ -4904,6 +4910,74 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.resolver_cliente_por_telefone` | — |
+
+### `20261010204708_omie_cota_metodo.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.omie_cota_tentar` | — |
+| `function` | `public.omie_cota_liberar` | — |
+| `function` | `public.omie_cota_registrar_fault` | — |
+| `table` | `public.omie_cota_metodo` | — |
+
+### `20261010210000_motor_desconta_comprometido.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
+
+### `20261010220000_tint_adocao_balcao.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_adocao_balcao` | — |
+
+### `20261010224755_promocao_item_descricao_fornecedor_preservada.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.expandir_promocao_item` | — |
+| `function` | `public.converter_sugestao_em_campanha_flat` | — |
+
+### `20261010230000_tint_watchdog_fase5_s2_aviso.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_watchdog_fase5_check` | — |
+
+### `20261011020000_picking_v2_schema.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.picking_leituras_imutavel` | — |
+| `function` | `public.picking_v2_separada` | — |
+| `function` | `public.picking_v2_motivo_invalido` | — |
+| `function` | `public.picking_v2_itens` | — |
+| `function` | `public.picking_sincronizar_fila` | — |
+| `function` | `public.picking_pegar_task` | — |
+| `function` | `public.picking_registrar_leitura` | — |
+| `function` | `public.picking_marcar_falta` | — |
+| `function` | `public.picking_retomar` | — |
+| `function` | `public.picking_concluir` | — |
+| `view` | `public.picking_linhas_progresso` | — |
+| `table` | `public.picking_coleta_estado` | — |
+| `table` | `public.picking_tarefas` | — |
+| `table` | `public.picking_linhas` | — |
+| `table` | `public.picking_leituras` | — |
+| `table` | `public.picking_codigos_barras` | — |
+| `table` | `public.picking_eventos` | — |
+| `index` | `public.picking_leituras_estorno_unico` | `picking_leituras` |
+| `index` | `public.picking_leituras_linha_revisao` | `picking_leituras` |
+| `index` | `public.picking_leituras_tarefa` | `picking_leituras` |
+| `index` | `public.picking_codigos_barras_vigente` | `picking_codigos_barras` |
+| `index` | `public.picking_eventos_tarefa` | `picking_eventos` |
+| `trigger` | `public.picking_leituras_imutavel_linha` | `picking_leituras` |
+| `trigger` | `public.picking_leituras_imutavel_truncate` | `picking_leituras` |
+| `rls_policy` | `public.picking_tarefas_staff_select` | `picking_tarefas` |
+| `rls_policy` | `public.picking_linhas_staff_select` | `picking_linhas` |
+| `rls_policy` | `public.picking_leituras_staff_select` | `picking_leituras` |
+| `rls_policy` | `public.picking_codigos_barras_staff_select` | `picking_codigos_barras` |
+| `rls_policy` | `public.picking_eventos_staff_select` | `picking_eventos` |
 
 ## Próximos passos por status
 

@@ -544,6 +544,8 @@ case "$ID_P" in
 esac
 eq P1 "a campanha flat: tipo, estado, fornecedor, aceite, datas do dia de SP, corte de faturamento, oferta" "$V_P1" \
   "desconto_flat_condicional|negociando|RENNER SAYERLACK S/A|Desconto Flat Condicional - 8689723039|aceita|false|20|unidades|2025-03-10|2025-03-31|2025-03-31|2025-04-30|2025-03-10|Andre|whatsapp|obs P"
+# A descrição do SKU no item é o que ESTA migration (20261001083000) gravava — histórico, não o
+# desejado: a 20261010224755 passa a gravar NULL (prova: db/test-promocao-descricao-fornecedor.sh).
 eq P2 "o item: código aparado, descrição, SKU bigint, manual_confirmado, desconto, confirmado, sem volume" "$V_P2" \
   "1|FO5.6717.00GL|VERNIZ PU FOSCO FO5.6717.00GL|8689723039|manual_confirmado|8.5|true|true|-|true"
 eq P3 "a sugestão fechada: status, link para a campanha, instante da ação, observação" \
