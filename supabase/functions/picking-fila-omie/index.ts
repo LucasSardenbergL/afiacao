@@ -9,14 +9,24 @@
 // sem cron. Uma chamada por MÉTODO por conta, com trégua entre elas e SEM retentativa: a trava
 // anti-redundância do Omie morde o método por app_key, e o `vendas-sync-continuacao` (*/6) chama
 // o mesmo `ListarPedidos` — REDUNDANT aqui é reportado, nunca re-tentado.
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff, corsHeaders } from "../_shared/auth.ts";
 import { clienteCotaDoAmbiente, comVezOmie, metodoCoordenado } from "../_shared/omie-cota.ts";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import { redigirSegredo } from "../_shared/omie-falha.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { resumirEtapas, resumirPedidos, resumirProdutos } from "./diagnostico.ts";
-import { conferirFiltro, faultDeFimDePagina, type Pagina, paginar, resumirLeitura } from "./coleta.ts";
+import {
+  type Acompanhada,
+  conferirFiltro,
+  faultDeFimDePagina,
+  janelaDaListagem,
+  montarLoteSync,
+  type Pagina,
+  paginar,
+  resumirLeitura,
+} from "./coleta.ts";
+import { comRegistro, type DbRegistro } from "../_shared/registro-execucao.ts";
 import { hojeSP, paraDataOmie, somarDias } from "../_shared/hoje-sp.ts";
 
 const OMIE_TIMEOUT_MS = 25_000;
@@ -27,6 +37,11 @@ const DIAS_DO_CORTE = 30;
 const TETO_PAGINAS = 40;
 const POR_PAGINA = 50;
 const ENTRE_PAGINAS_MS = 700;
+/** Prazos do modo escrita, desde o início da invocação. Uma página só COMEÇA até
+ *  `PRAZO_INICIO_PAGINA_MS` (o fetch tem 25 s e a trava espera pouco); a sync só é chamada até
+ *  `PRAZO_APLICAR_MS` — depois disso a rodada aborta e nada vai ao banco (o lease é 150 s). */
+const PRAZO_INICIO_PAGINA_MS = 80_000;
+const PRAZO_APLICAR_MS = 115_000;
 
 type Conta = "oben" | "colacor";
 
@@ -205,12 +220,113 @@ async function medirColeta(conta: Conta, corteIso: string): Promise<Record<strin
   };
 }
 
+type Db = SupabaseClient;
+
+/** Todas as tarefas da conta (paginado, ordem estável): o conjunto ACOMPANHADO. */
+async function lerAcompanhadas(db: Db, conta: Conta): Promise<Acompanhada[]> {
+  const out: Acompanhada[] = [];
+  const PAGINA = 1000;
+  for (let de = 0; ; de += PAGINA) {
+    const { data, error } = await db
+      .from("picking_tarefas")
+      .select("omie_codigo_pedido, status, fora_da_etapa_em, incluido_em, ausente_rodadas")
+      .eq("account", conta)
+      .order("id", { ascending: true })
+      .range(de, de + PAGINA - 1);
+    if (error) throw new Error(`ler tarefas acompanhadas: ${error.message}`);
+    // data nulo sem erro NÃO é fim: um conjunto acompanhado parcial esconderia tarefas da janela.
+    if (data == null) throw new Error("ler tarefas acompanhadas: página sem dados e sem erro");
+    const linhas = data as Array<Record<string, unknown>>;
+    for (const l of linhas) {
+      out.push({
+        omie_codigo_pedido: String(l.omie_codigo_pedido),
+        status: String(l.status),
+        fora_da_etapa_em: (l.fora_da_etapa_em as string | null) ?? null,
+        incluido_em: (l.incluido_em as string | null) ?? null,
+        ausente_rodadas: Number(l.ausente_rodadas),
+      });
+    }
+    if (linhas.length < PAGINA) return out;
+  }
+}
+
+/**
+ * Modo `sincronizar` (Fase 0.5b), UMA conta: reserva exclusiva → acompanhadas → listagem da etapa
+ * 10 desde a janela (prazo duro) → UMA chamada a `picking_sincronizar_fila` com o token. Reserva
+ * negada = rodada pulada, sem nenhuma chamada ao Omie. Erro de página ou prazo = nada vai ao banco.
+ */
+async function sincronizarConta(db: Db, conta: Conta, inicio: number): Promise<Record<string, unknown>> {
+  const cred = credenciais(conta);
+  if (!cred) throw new Error("credenciais ausentes nos secrets");
+
+  const { data: reserva, error: eRes } = await db.rpc("picking_coleta_reservar", { p_account: conta });
+  if (eRes) throw new Error(`reservar: ${eRes.message}`);
+  const r = reserva as { ok?: boolean; token?: string; motivo?: string };
+  if (r?.ok !== true || typeof r.token !== "string") {
+    return { conta, pulada: true, motivo: r?.motivo ?? "reserva_sem_resposta" };
+  }
+
+  const acompanhadas = await lerAcompanhadas(db, conta);
+  const corteIso = somarDias(hojeSP(), -DIAS_DO_CORTE);
+  const janela = janelaDaListagem(corteIso, acompanhadas);
+  if (janela === null) throw new Error("tarefa aberta sem incluido_em — janela da listagem indeterminada");
+
+  const res = await paginar(
+    (pagina) =>
+      Date.now() - inicio > PRAZO_INICIO_PAGINA_MS
+        ? Promise.resolve<Pagina>({ tipo: "erro", erro: `prazo de ${PRAZO_INICIO_PAGINA_MS / 1000} s da listagem estourado` })
+        : paginaDePedidos(conta, cred, {
+          pagina,
+          registros_por_pagina: POR_PAGINA,
+          etapa: "10",
+          apenas_importado_api: "N",
+          filtrar_apenas_inclusao: "N",
+          filtrar_por_data_de: paraDataOmie(janela),
+        }),
+    { tetoPaginas: TETO_PAGINAS, entrePaginas: () => esperar(ENTRE_PAGINAS_MS) },
+  );
+  if (!res.ok) throw new Error(`listagem: ${res.erro}`);
+
+  const lote = montarLoteSync(res.listagem, corteIso, new Set(acompanhadas.map((a) => a.omie_codigo_pedido)));
+  if (!lote) throw new Error("listagem sem total_de_registros legível");
+  // A última página pode ter terminado tarde (fetch e trava): reconfere antes de aplicar.
+  const decorrido = Date.now() - inicio;
+  if (decorrido > PRAZO_APLICAR_MS) throw new Error(`prazo de ${PRAZO_APLICAR_MS / 1000} s estourado antes de aplicar (${decorrido} ms)`);
+
+  const { data: aplicado, error: eSync } = await db.rpc("picking_sincronizar_fila", {
+    p_account: conta,
+    p_lease_token: r.token,
+    p_presentes: lote.p_presentes,
+    p_total_de_registros: lote.p_total_de_registros,
+    p_pedidos: lote.p_pedidos,
+    p_confirmados_fora: lote.p_confirmados_fora,
+    p_listagem_suspeita: lote.p_listagem_suspeita,
+  });
+  if (eSync) throw new Error(`picking_sincronizar_fila: ${eSync.message}`);
+  // Recusa (reserva perdida para outra coleta) é ERRO no registro, não sucesso com motivo no JSON.
+  const aplicou = aplicado as { aplicada?: boolean; motivo?: string } | null;
+  if (aplicou?.aplicada !== true) throw new Error(`picking_sincronizar_fila não aplicou: ${aplicou?.motivo ?? "sem resposta"}`);
+  return {
+    conta,
+    janela_desde: janela,
+    corte_inclusao_desde: corteIso,
+    paginas: res.listagem.paginas,
+    presentes: lote.p_presentes.length,
+    total_de_registros: lote.p_total_de_registros,
+    motivos_incompleta: res.listagem.motivos_incompleta,
+    detalhados: lote.p_pedidos.length,
+    admitidos_pelo_corte: lote.admitidos_pelo_corte,
+    acompanhados_presentes: lote.acompanhados_presentes,
+    fora_do_corte: lote.fora_do_corte,
+    resultado: aplicado,
+    duracao_ms: Date.now() - inicio,
+  };
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
-  {
-    const __auth = await authorizeCronOrStaff(req);
-    if (!__auth.ok) return __auth.response;
-  }
+  const auth = await authorizeCronOrStaff(req);
+  if (!auth.ok) return auth.response;
 
   const corpoBruto: unknown = req.method === "POST" ? await req.json().catch(() => ({})) : {};
   const decisaoSonda = classificarSonda(corpoBruto);
@@ -228,8 +344,29 @@ Deno.serve(async (req) => {
     const colacor = await medirColeta("colacor", corteIso);
     return jsonResponse({ versao: VERSAO, modo, corte_inclusao_desde: corteIso, contas: [oben, colacor] }, 200);
   }
+  if (modo === "sincronizar") {
+    // UMA conta por invocação (prazo de edge; cada conta tem o seu job de cron).
+    const conta = (corpoBruto as Record<string, unknown>).conta;
+    if (conta !== "oben" && conta !== "colacor") {
+      return jsonResponse({ versao: VERSAO, error: "modo 'sincronizar' exige conta 'oben' ou 'colacor'" }, 400);
+    }
+    const inicio = Date.now();
+    const db = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+    try {
+      const resumo = await comRegistro(
+        db as unknown as DbRegistro,
+        `picking_fila.sincronizar_${conta}`,
+        auth.via === "staff" ? { via: "staff", userId: auth.userId } : { via: "cron" },
+        () => sincronizarConta(db, conta, inicio),
+        (r) => r,
+      );
+      return jsonResponse({ versao: VERSAO, modo, ...resumo }, 200);
+    } catch (e) {
+      return jsonResponse({ versao: VERSAO, modo, conta, error: redigirSegredo(mensagemDeErro(e) ?? "falha sem mensagem") }, 500);
+    }
+  }
   if (modo !== "diagnostico") {
-    return jsonResponse({ versao: VERSAO, error: "modos desta versão: 'diagnostico', 'coleta'" }, 400);
+    return jsonResponse({ versao: VERSAO, error: "modos desta versão: 'diagnostico', 'coleta', 'sincronizar'" }, 400);
   }
 
   // Sequencial e com trégua entre as contas: são app_keys distintas, mas não há pressa.
