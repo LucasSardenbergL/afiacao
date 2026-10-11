@@ -168,7 +168,8 @@ export interface CoberturaEmpresa {
 export type Comparabilidade =
   | { estado: 'comparavel' }
   | { estado: 'nao_verificada' }
-  | { estado: 'incomparavel'; account: string; atual: number; base: number };
+  /** `null` numa das pontas = sem DRE naquela janela; o zero conhecido da outra ponta já basta. */
+  | { estado: 'incomparavel'; account: string; atual: number | null; base: number | null };
 
 /**
  * Os pedidos do app não cobrem a receita contábil na mesma proporção em todo período (a Colacor
@@ -177,16 +178,17 @@ export type Comparabilidade =
  * Ausente ≠ zero: cobertura que não deu para medir é "não verificada", nunca "comparável".
  */
 export function avaliarComparabilidade(coberturas: CoberturaEmpresa[]): Comparabilidade {
-  let pior: { account: string; atual: number; base: number; razao: number } | null = null;
+  let pior: { account: string; atual: number | null; base: number | null; razao: number } | null = null;
   let semDado = coberturas.length === 0;
   for (const c of coberturas) {
-    if (c.atual == null || c.base == null) {
+    // O zero CONHECIDO vem antes da ausência: pedidos 0 com DRE positivo = o sync não trouxe a
+    // janela, e a ponte mostraria todo cliente como "saiu". Isso suprime mesmo sem a outra ponta.
+    const zero = c.atual === 0 || c.base === 0;
+    if (!zero && (c.atual == null || c.base == null)) {
       semDado = true;
       continue;
     }
-    // Cobertura 0 com DRE positivo = o sync não trouxe a janela: razão infinita, não "sem dado".
-    const menor = Math.min(c.atual, c.base);
-    const razao = menor <= 0 ? Infinity : Math.max(c.atual, c.base) / menor;
+    const razao = zero ? Infinity : Math.max(c.atual!, c.base!) / Math.min(c.atual!, c.base!);
     if (razao > RAZAO_MAXIMA_COBERTURA && (pior == null || razao > pior.razao)) {
       pior = { account: c.account, atual: c.atual, base: c.base, razao };
     }
@@ -205,10 +207,25 @@ export function mesesDaJanela(janela: Janela): { ano: number; mes: number }[] {
 }
 
 /**
- * Cobertura por empresa que TEM pedido em alguma das janelas: receita de pedidos ÷ receita do
- * DRE. Empresa só de DRE (ex.: colacor_sc, serviços sem pedido) fica fora — não há o que cobrir.
+ * Empresas que vendem por pedido de produto. `colacor_sc` fica FORA por desenho (serviços via NFS-e,
+ * 0 pedido de venda — docs/agent/financeiro.md): não há o que cobrir.
+ */
+export const EMPRESAS_COM_PEDIDO = ['colacor', 'oben'] as const;
+
+/** As empresas que a régua precisa avaliar no escopo — esperadas, não só as que trouxeram pedido. */
+export function empresasDoEscopo(selection: string): string[] {
+  const esperadas: readonly string[] = EMPRESAS_COM_PEDIDO;
+  if (selection === 'all') return [...esperadas];
+  return esperadas.includes(selection) ? [selection] : [];
+}
+
+/**
+ * Cobertura por empresa ESPERADA no escopo (mais qualquer outra que tenha trazido pedido): receita de
+ * pedidos ÷ receita do DRE. Empresa esperada sem pedido algum ainda é avaliada — cobertura 0 com DRE
+ * positivo é o sync morto, e deixá-la de fora aprovaria o grupo só pela outra.
  */
 export function coberturasPorEmpresa(
+  empresas: string[],
   pedidosAtual: { account: string; total: number | null }[],
   pedidosBase: { account: string; total: number | null }[],
   dreAtual: Map<string, number> | null,
@@ -221,9 +238,8 @@ export function coberturasPorEmpresa(
   };
   const a = somar(pedidosAtual);
   const b = somar(pedidosBase);
-  const razao = (pedidos: number | undefined, dre: number | undefined) =>
-    pedidos == null || dre == null || dre <= 0 ? null : pedidos / dre;
-  return [...new Set([...a.keys(), ...b.keys()])].sort().map((account) => ({
+  const razao = (pedidos: number, dre: number | undefined) => (dre == null || dre <= 0 ? null : pedidos / dre);
+  return [...new Set([...empresas, ...a.keys(), ...b.keys()])].sort().map((account) => ({
     account,
     atual: razao(a.get(account) ?? 0, dreAtual?.get(account)),
     base: razao(b.get(account) ?? 0, dreBase?.get(account)),

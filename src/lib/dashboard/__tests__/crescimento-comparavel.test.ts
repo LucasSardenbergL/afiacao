@@ -6,6 +6,7 @@ import {
   avaliarComparabilidade,
   mesesDaJanela,
   coberturasPorEmpresa,
+  empresasDoEscopo,
   rotuloJanela,
   type PedidoCliente,
 } from '../crescimento-comparavel';
@@ -216,6 +217,7 @@ describe('mesesDaJanela', () => {
 describe('coberturasPorEmpresa', () => {
   it('pedidos ÷ DRE por empresa com pedido; empresa só de DRE fica fora', () => {
     const c = coberturasPorEmpresa(
+      ['colacor', 'oben'],
       [{ account: 'oben', total: 135 }, { account: 'colacor', total: 91 }],
       [{ account: 'oben', total: 125 }, { account: 'colacor', total: 49 }],
       new Map([['oben', 100], ['colacor', 100], ['colacor_sc', 50]]),
@@ -228,12 +230,12 @@ describe('coberturasPorEmpresa', () => {
   });
 
   it('DRE indisponível (leitura falhou) ou sem a empresa: cobertura null, não 0', () => {
-    const c = coberturasPorEmpresa([{ account: 'oben', total: 10 }], [], null, new Map());
+    const c = coberturasPorEmpresa(['oben'], [{ account: 'oben', total: 10 }], [], null, new Map());
     expect(c).toEqual([{ account: 'oben', atual: null, base: null }]);
   });
 
   it('empresa sem pedido numa janela mas com DRE: cobertura 0 (sync perdeu tudo) — sinal, não ausência', () => {
-    const c = coberturasPorEmpresa([], [{ account: 'oben', total: 10 }], new Map([['oben', 50]]), new Map([['oben', 50]]));
+    const c = coberturasPorEmpresa(['oben'], [], [{ account: 'oben', total: 10 }], new Map([['oben', 50]]), new Map([['oben', 50]]));
     expect(c).toEqual([{ account: 'oben', atual: 0, base: 0.2 }]);
     expect(avaliarComparabilidade(c)).toEqual({ estado: 'incomparavel', account: 'oben', atual: 0, base: 0.2 });
   });
@@ -244,5 +246,34 @@ describe('rotuloJanela', () => {
     expect(rotuloJanela({ de: '2026-07-01', ate: '2026-10-01' })).toBe('jul–set/26');
     expect(rotuloJanela({ de: '2025-11-01', ate: '2026-02-01' })).toBe('nov/25–jan/26');
     expect(rotuloJanela({ de: '2026-03-01', ate: '2026-04-01' })).toBe('mar/26');
+  });
+});
+
+describe('régua de cobertura — P1 do Codex (rodada 2)', () => {
+  it('zero conhecido vence DRE ausente na outra ponta: incomparável, não "não verificada"', () => {
+    expect(avaliarComparabilidade([{ account: 'oben', atual: 0, base: null }])).toEqual({
+      estado: 'incomparavel',
+      account: 'oben',
+      atual: 0,
+      base: null,
+    });
+  });
+
+  it('empresa esperada SEM pedido nas duas janelas, com DRE: entra na régua e bloqueia o grupo', () => {
+    const c = coberturasPorEmpresa(
+      empresasDoEscopo('all'),
+      [{ account: 'oben', total: 130 }],
+      [{ account: 'oben', total: 125 }],
+      new Map([['oben', 100], ['colacor', 80]]),
+      new Map([['oben', 100], ['colacor', 90]]),
+    );
+    expect(c.map((x) => x.account)).toEqual(['colacor', 'oben']);
+    expect(avaliarComparabilidade(c)).toMatchObject({ estado: 'incomparavel', account: 'colacor' });
+  });
+
+  it('escopo: grupo = empresas com pedido; empresa única = ela; Colacor SC = nenhuma', () => {
+    expect(empresasDoEscopo('all')).toEqual(['colacor', 'oben']);
+    expect(empresasDoEscopo('oben')).toEqual(['oben']);
+    expect(empresasDoEscopo('colacor_sc')).toEqual([]);
   });
 });
