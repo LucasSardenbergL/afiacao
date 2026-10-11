@@ -11,16 +11,22 @@ import {
 describe('AUTHZ_TABELAS_FECHADAS — sanidade do contrato', () => {
   // Lista EXAUSTIVA de propósito: a allowlist é curada, então crescer é decisão, não acidente.
   // Adicionar tabela aqui sem medir prod é o modo de falha que o §5.2 do design descreve.
-  it('tem as três tabelas money-path fechadas por privilégio + o ledger de atestação de deploy', () => {
+  it('tem as tabelas money-path fechadas por privilégio + o ledger de atestação de deploy', () => {
     // `deploy_atestacoes` (2026-09-05): não é money-path — é o instrumento que DECIDE deploy de
     // edge (`bun run pendencias:deploy`). Entrou DEPOIS do apply em prod, de propósito: registrada
     // antes (#2199), o audit de prod crashava em `relation does not exist` e o carimbo não podia
     // ser gravado — o CI ficou vermelho em CARIMBO_CONTRATO_MUDOU sem remédio possível por PR.
+    // As 4 do catálogo tintométrico (PR #2941, 2026-10-11) entraram pelo mesmo caminho: depois do
+    // apply (recibo #344 do db:aplicar) e da 2ª testemunha por psql-ro, com o carimbo regravado.
     expect(Object.keys(AUTHZ_TABELAS_FECHADAS).sort()).toEqual([
       'public.deploy_atestacoes',
       'public.omie_products',
       'public.product_costs',
       'public.sales_orders',
+      'public.tint_corantes',
+      'public.tint_formula_itens',
+      'public.tint_formulas',
+      'public.tint_subcolecoes',
     ]);
   });
 
@@ -45,6 +51,16 @@ describe('AUTHZ_TABELAS_FECHADAS — sanidade do contrato', () => {
     expect(select).not.toContain('omie_payload');
     expect(select).not.toContain('omie_response');
     expect(AUTHZ_TABELAS_FECHADAS['public.sales_orders'].colunasPermitidas?.anon).toBeUndefined();
+  });
+
+  it('em tint_corantes o UPDATE por coluna é SÓ o remapeamento do TintMapping — nunca o volume', () => {
+    // volume_total_ml entra no custo por ml do corante (v_calc) e o piso do gate é LEAST(v_calc, …):
+    // deixá-lo atualizável reabre o P1-a do challenge Codex do #2941.
+    const e = AUTHZ_TABELAS_FECHADAS['public.tint_corantes'];
+    expect(e.colunasPermitidas?.authenticated?.UPDATE).toEqual(['omie_product_id']);
+    expect(e.colunasPermitidas?.authenticated?.INSERT).toBeUndefined();
+    expect(e.colunasPermitidas?.anon).toBeUndefined();
+    expect(e.permitido).toEqual({ anon: [], authenticated: ['SELECT'] });
   });
 });
 

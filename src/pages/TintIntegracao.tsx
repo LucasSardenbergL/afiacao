@@ -6,12 +6,14 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PageSkeleton } from "@/components/ui/page-skeleton";
 import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/contexts/AuthContext";
 
 const TintImport = lazy(() => import("./TintImport"));
 const TintIntegrations = lazy(() => import("./TintIntegrations"));
 const TintSyncRuns = lazy(() => import("./TintSyncRuns"));
 const TintReconciliation = lazy(() => import("./TintReconciliation"));
 const TintApiContract = lazy(() => import("./TintApiContract"));
+const PublicadorReleaseSayersync = lazy(() => import("@/components/tint/PublicadorReleaseSayersync"));
 
 const TabFallback = () => <PageSkeleton variant="auto" />;
 
@@ -87,7 +89,10 @@ function KpiCards() {
 
 export default function TintIntegracao() {
   const [params, setParams] = useSearchParams();
-  const tab = params.get("tab") ?? "integracoes";
+  const { isMaster } = useAuth();
+  const tabPedida = params.get("tab") ?? "integracoes";
+  // Releases do conector é master-only (a RLS do bucket também barra; aqui é só não mostrar).
+  const tab = tabPedida === "releases" && !isMaster ? "integracoes" : tabPedida;
 
   const handleTab = (v: string) => {
     const next = new URLSearchParams(params);
@@ -112,12 +117,13 @@ export default function TintIntegracao() {
       <KpiCards />
 
       <Tabs value={tab} onValueChange={handleTab} className="space-y-4">
-        <TabsList className="grid grid-cols-2 sm:grid-cols-5 w-full">
+        <TabsList className={`grid grid-cols-2 w-full ${isMaster ? "sm:grid-cols-6" : "sm:grid-cols-5"}`}>
           <TabsTrigger value="importar">Produtos Omie</TabsTrigger>
           <TabsTrigger value="integracoes">Integrações</TabsTrigger>
           <TabsTrigger value="sync-runs">Sync Runs</TabsTrigger>
           <TabsTrigger value="reconciliacao">Reconciliação</TabsTrigger>
           <TabsTrigger value="api-contract">API Contract</TabsTrigger>
+          {isMaster && <TabsTrigger value="releases">Releases do conector</TabsTrigger>}
         </TabsList>
 
         <TabsContent value="importar" className="m-0">
@@ -145,6 +151,13 @@ export default function TintIntegracao() {
             <TintApiContract />
           </Suspense>
         </TabsContent>
+        {isMaster && (
+          <TabsContent value="releases" className="m-0">
+            <Suspense fallback={<TabFallback />}>
+              <PublicadorReleaseSayersync />
+            </Suspense>
+          </TabsContent>
+        )}
       </Tabs>
     </div>
   );

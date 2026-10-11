@@ -21,7 +21,7 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **606** custom migrations totais
+- **607** custom migrations totais
 - **1997** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 689
@@ -4978,6 +4978,10 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `rls_policy` | `public.picking_leituras_staff_select` | `picking_leituras` |
 | `rls_policy` | `public.picking_codigos_barras_staff_select` | `picking_codigos_barras` |
 | `rls_policy` | `public.picking_eventos_staff_select` | `picking_eventos` |
+
+### `20261011120000_tint_grants_escrita_staff.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ## Próximos passos por status
 

@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -12,6 +13,7 @@ import { SelectedFormulaCard } from './tintColorSelect/SelectedFormulaCard';
 export function TintColorSelectDialog({ product, open, onClose, onConfirm, customerUserId, initialSearch }: TintColorSelectDialogProps) {
   const {
     search,
+    buscaEstavel,
     onSearchChange,
     loadingSku,
     skuId,
@@ -56,6 +58,35 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
     motivoSemPreco,
   } = useTintColorSelect({ product, open, customerUserId, initialSearch });
 
+  // Teclado contínuo: o foco nunca sai da busca. ↑↓ realçam um resultado, Enter o
+  // seleciona; com a cor selecionada, Enter = "Adicionar ao Pedido" SÓ se o botão
+  // estaria habilitado (o card decide — `adicionarRef` devolve false se não pode).
+  const [realce, setRealce] = useState(0);
+  const adicionarRef = useRef<(() => boolean) | null>(null);
+  const listaVisivel = !!formulas && formulas.length > 0 && !selectedFormula;
+  useEffect(() => { setRealce(0); }, [formulas]);
+
+  const onBuscaKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (listaVisivel && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+      e.preventDefault();
+      const ultimo = formulas!.length - 1;
+      setRealce((r) => (e.key === 'ArrowDown' ? Math.min(ultimo, r + 1) : Math.max(0, r - 1)));
+      return;
+    }
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    if (selectedFormula) {
+      adicionarRef.current?.();
+      return;
+    }
+    // Só seleciona o que está na tela PARA O TEXTO DIGITADO — Enter antes do debounce
+    // pegaria um resultado da busca anterior.
+    if (listaVisivel && buscaEstavel && !loadingFormulas) {
+      const f = formulas![Math.min(realce, formulas!.length - 1)];
+      if (f) setSelectedFormula(f);
+    }
+  };
+
   // Fim do funil: a cor saiu do app pro pedido (≠ do Omie). `fonte` e `alternativa` dizem
   // por qual caminho — o mesmo SKU, outra embalagem/base, ou a busca global.
   const confirmar: typeof onConfirm = (formulaId, corId, nomeCor, precoFinalItem, custo, meta, alternativeProduct) => {
@@ -85,7 +116,7 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
             <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
             <div className="space-y-2">
               <span className="block">Não consegui carregar as cores agora (falha de conexão ou do servidor). Isso não significa que a cor não exista.</span>
-              <Button size="sm" variant="outline" onClick={tentarDeNovo}>Tentar de novo</Button>
+              <Button size="touch" variant="outline" onClick={tentarDeNovo}>Tentar de novo</Button>
             </div>
           </div>
         )}
@@ -103,15 +134,19 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
                 placeholder="Buscar por código ou nome da cor..."
                 value={search}
                 onChange={e => onSearchChange(e.target.value)}
-                className="pl-9 h-9"
+                onKeyDown={onBuscaKeyDown}
+                role="combobox"
+                aria-expanded={listaVisivel}
+                aria-activedescendant={listaVisivel ? `tint-cor-${realce}` : undefined}
+                className="pl-9 h-9 [@media(pointer:coarse)]:h-11"
                 autoFocus
               />
             </div>
 
             {loadingFormulas && <Loader2 className="w-4 h-4 animate-spin mx-auto my-4" />}
 
-            {formulas && formulas.length > 0 && !selectedFormula && (
-              <FormulaSearchResults formulas={formulas} onSelect={setSelectedFormula} />
+            {listaVisivel && (
+              <FormulaSearchResults formulas={formulas!} onSelect={setSelectedFormula} realce={realce} idPrefixo="tint-cor" />
             )}
 
             {colorNotFoundInBase && !loadingGlobalColors && (
@@ -127,10 +162,13 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
               />
             )}
             {loadingGlobalColors && <Loader2 className="w-4 h-4 animate-spin mx-auto my-4" />}
-            {altPriceError && (
-              <p className="text-xs text-status-error">
-                Não consegui calcular o preço das outras embalagens agora — aparecem sem preço até recarregar.
-              </p>
+            {altPriceError && !altPriceLoading && (
+              <div className="space-y-2">
+                <p className="text-xs text-status-error">
+                  Não consegui calcular o preço das outras embalagens agora — aparecem sem preço. Toque em &quot;Tentar de novo&quot;.
+                </p>
+                <Button size="touch" variant="outline" onClick={tentarDeNovo}>Tentar de novo</Button>
+              </div>
             )}
 
             {selectedFormula && (
@@ -164,6 +202,8 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
                 setAltDiscounts={setAltDiscounts}
                 custoCorantes={custoCorantes}
                 onConfirm={confirmar}
+                adicionarRef={adicionarRef}
+                onTentarDeNovo={tentarDeNovo}
               />
             )}
           </>

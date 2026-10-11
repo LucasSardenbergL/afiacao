@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-10-11T12:14:05.793Z",
-  "sourceHead": "13b6e4cd335d0b15ba8e209f718cad844152e598",
+  "medidoEm": "2026-10-11T12:55:36.492Z",
+  "sourceHead": "ca9364d4a00ea5b33739344617d5e7a3596992bf",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -21,9 +21,9 @@
     "grants": {
       "script": "authz:grants:prod",
       "exit": 0,
-      "resumo": "✅ audit-grants — 4 tabela(s) conferida(s); prod bate com o contrato.",
+      "resumo": "✅ audit-grants — 8 tabela(s) conferida(s); prod bate com o contrato.",
       "denominador": null,
-      "contratoFingerprint": "a4dbc69dc15a8f65ef112acd30f8e045416202309c9684939a560ac3059f4734",
+      "contratoFingerprint": "9a7d4477ffac7c1185686d4acca1a2ac59e5ebd2106e93b8d305216a37952188",
       "auditorFingerprint": "b55db338c6c26db92938511d5e8f118e5013c3bffcb770401655e1b7aecac3fe",
       "achados": []
     },
@@ -58,7 +58,7 @@
       "script": "deriva:corpo:prod",
       "exit": 0,
       "resumo": "✅ deriva-corpo — 343 identidade(s) batem com o repo (267 em dia, 68 só cosméticas, 7 aceitas na baseline) e 17 aposentada(s) estão ausentes",
-      "denominador": "🔎 deriva-corpo — 343 identidade(s) conferida(s) · 17 aposentada(s) · ref origin/main@13b6e4cd3 (fetch ok) · prod 2026-10-11 12:14:43.62266Z",
+      "denominador": "🔎 deriva-corpo — 343 identidade(s) conferida(s) · 17 aposentada(s) · ref origin/main@570507e95 (fetch ok) · prod 2026-10-11 12:56:11.968869Z",
       "contratoFingerprint": "8b4beb5b6ac1a69509cf990c47e44dd76d091d0306361dd3dbe80052687c79b3",
       "auditorFingerprint": "4462770b72b5f20416a470aa6c1099d3b34d660cbf9638d2cc977b1203dbc752",
       "achados": []

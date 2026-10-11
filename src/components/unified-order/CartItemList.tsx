@@ -217,7 +217,7 @@ export function CartItemList({
             </div>
             <div className="flex items-center gap-2">
               <div className="flex items-center gap-0.5">
-                <Button size="sm" variant="outline" className="h-6 w-6 p-0" onClick={() => onUpdateQuantity(cartIdx, -1)}>
+                <Button size="sm" variant="outline" className="h-6 w-6 p-0 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11" onClick={() => onUpdateQuantity(cartIdx, -1)}>
                   <Minus className="w-3 h-3" />
                 </Button>
                 <Input
@@ -232,9 +232,9 @@ export function CartItemList({
                     const delta = newQty - item.quantity;
                     if (delta !== 0) onUpdateQuantity(cartIdx, delta);
                   }}
-                  className="h-6 w-12 text-xs text-center p-0"
+                  className="h-6 w-12 text-xs text-center p-0 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-14"
                 />
-                <Button size="sm" variant="outline" className="h-6 w-6 p-0" onClick={() => onUpdateQuantity(cartIdx, 1)}>
+                <Button size="sm" variant="outline" className="h-6 w-6 p-0 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11" onClick={() => onUpdateQuantity(cartIdx, 1)}>
                   <Plus className="w-3 h-3" />
                 </Button>
               </div>

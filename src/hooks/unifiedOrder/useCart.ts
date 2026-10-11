@@ -21,7 +21,14 @@ interface UseCartArgs {
 
 export function useCart({ getProductPrice, getServicePrice, servicos }: UseCartArgs) {
   const [cart, setCart] = useState<CartItem[]>([]);
-  const [tintPendingProduct, setTintPendingProduct] = useState<Product | null>(null);
+  const [tintPendingProduct, setTintPendingProductState] = useState<Product | null>(null);
+  // Quantidade digitada na lista viaja até a confirmação da cor — antes a base
+  // tintométrica abria o diálogo e o item nascia com 1, perdendo a qtd em silêncio.
+  const [tintPendingQty, setTintPendingQty] = useState(1);
+  const setTintPendingProduct = useCallback((product: Product | null, qty: number = 1) => {
+    setTintPendingProductState(product);
+    setTintPendingQty(Number.isFinite(qty) && qty > 0 ? qty : 1);
+  }, []);
   const [activeTab, setActiveTab] = useState('oben');
 
   /* ─── Derived ─── */
@@ -81,7 +88,7 @@ export function useCart({ getProductPrice, getServicePrice, servicos }: UseCartA
     (product: Product, qty: number = 1) => {
       // Tintometric base → open color dialog instead of adding directly
       if (product.is_tintometric && product.tint_type === 'base') {
-        setTintPendingProduct(product);
+        setTintPendingProduct(product, qty);
         return;
       }
       setCart(prev => {
@@ -102,7 +109,7 @@ export function useCart({ getProductPrice, getServicePrice, servicos }: UseCartA
         return [...prev, nascerItemProduto(product, qty, getProductPrice)];
       });
     },
-    [getProductPrice],
+    [getProductPrice, setTintPendingProduct],
   );
 
   const addTintProductToCart = useCallback(
@@ -117,6 +124,7 @@ export function useCart({ getProductPrice, getServicePrice, servicos }: UseCartA
       pricingMeta?: { source: string | null; discountPct: number; precoSemDesconto: number | null },
     ) => {
       const account = (product.account || 'oben') as ProductAccount;
+      const qty = tintPendingQty;
       setCart(prev => {
         const existing = prev.find(
           (c): c is ProductCartItem => c.type === 'product' && c.tint_formula_id === formulaId,
@@ -124,7 +132,7 @@ export function useCart({ getProductPrice, getServicePrice, servicos }: UseCartA
         if (existing) {
           return prev.map(c =>
             c.type === 'product' && (c as ProductCartItem).tint_formula_id === formulaId
-              ? ({ ...c, quantity: c.quantity + 1 } as ProductCartItem)
+              ? ({ ...c, quantity: c.quantity + qty } as ProductCartItem)
               : c,
           );
         }
@@ -133,7 +141,7 @@ export function useCart({ getProductPrice, getServicePrice, servicos }: UseCartA
           {
             type: 'product',
             product,
-            quantity: 1,
+            quantity: qty,
             unit_price: precoFinal,
             account,
             tint_cor_id: corId,
@@ -154,7 +162,7 @@ export function useCart({ getProductPrice, getServicePrice, servicos }: UseCartA
       });
       setTintPendingProduct(null);
     },
-    [],
+    [tintPendingQty, setTintPendingProduct],
   );
 
   /* ─── Service actions ─── */

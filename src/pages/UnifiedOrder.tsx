@@ -202,7 +202,8 @@ const UnifiedOrder = () => {
     setTintQueue(resto);
     // Mesmo motivo do "Pedir de novo": pré-busca pelo código, não pelo rótulo cru.
     setTintInitialSearch(proxima.nomeCor ? termoBuscaCor(proxima.nomeCor) : null);
-    h.setTintPendingProduct(proxima.product);
+    // A qtd do pedido antigo viaja até a confirmação da cor (antes nascia com 1).
+    h.setTintPendingProduct(proxima.product, proxima.quantidade);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [h.tintPendingProduct, tintQueue]);
 
