@@ -148,21 +148,24 @@ go test ./... -count=1        # nunca publique com teste vermelho
 Saída em `dist/`: `sayersync-0.2.0.exe` (binário **imutável e versionado** — evita
 cache stale do CDN do Storage) + `manifest.json` apontando para ele.
 
-### 2. Publicar (Supabase Storage → bucket `releases`, pasta `sayersync/`)
+### 2. Publicar — pelo app (Tintométrico → Integração → aba **Releases do conector**)
 
-Upload **nesta ordem** — o `.exe` ANTES do manifest (senão o conector baixa um alvo
-inexistente, falha o sha256 e conta como falha de update):
-
-1. `dist/sayersync-0.2.0.exe`
-2. `dist/manifest.json` (sobrescreve o ponteiro)
+Master-only. Arraste o `dist/sayersync-X.Y.Z.exe`; a tela calcula o sha256 no browser,
+sobe `sayersync/sayersync-X.Y.Z.exe` (imutável: nunca sobrescreve) e **só depois** grava
+`sayersync/manifest.json` (`{version, sha256, url}`), relendo-o para conferir. Recusa versão
+igual/menor que a do ar. O `dist/manifest.json` do `release.sh` fica só como conferência —
+o que vai pro ar é o que a tela monta (a URL base casa com o `BUCKET_BASE_URL`, travado
+por teste em `src/lib/tint/__tests__/release-sayersync.test.ts`).
 
 ### 3. Ativar (uma vez)
 
-- **Bucket** (global, uma vez): criar o bucket **público read-only** `releases` no
-  Supabase Storage — leitura `anon`, escrita só `service_role`.
+- **Bucket**: `releases` existe desde 2026-10-11 (`db/2026-10-11-bucket-releases-sayersync.sql`)
+  — leitura pública, INSERT/UPDATE só master via RLS, sem DELETE.
 - **config.json** (em cada balcão): preencher `"update_manifest_url":
   "https://fzvklzpomgnyikkfkzai.supabase.co/storage/v1/object/public/releases/sayersync/manifest.json"`.
-  Vazio = auto-update desativado (default seguro).
+  Vazio = auto-update desativado (default seguro). ⚠️ **Só depois de o manifest estar no ar**
+  (`curl -s <url>` devolve `"version"`): falha ao BUSCAR o manifest conta para o crash-loop
+  guard igual a falha de instalação — 3 → restaura `.prev`.
 
 > **Rollout em 2 passos (importante):** o recovery externo só existe a partir de uma
 > versão que já o contenha. Num balcão que rodou `install` de uma versão antiga:
@@ -194,7 +197,7 @@ inexistente, falha o sha256 e conta como falha de update):
 
 - Token armazenado com DPAPI (escopo de MÁQUINA (CRYPTPROTECT_LOCAL_MACHINE) — o serviço descriptografa mesmo rodando como conta de serviço)
 - Serviço roda como `LocalService` (menor privilégio: só localhost + HTTPS outbound)
-- `UpdateManifestURL` aponta para bucket read-only público; escrita = `service_role` apenas
+- `UpdateManifestURL` aponta para bucket de leitura pública; escrita = master (RLS em `storage.objects`), sem DELETE
 - sha256 verificado antes de instalar o binário baixado
 - Crash-loop guard (updater): 3 falhas em 24h → restaura `.prev`; a janela ancora na última falha e **expira** (não trava permanentemente)
 - Recuperação de crash-loop de **boot**: ator externo (recovery-copy) restaura o `.prev` via SCM `run_command` e **quarentena** a versão ruim; o auto-update é gateado pela verificação dessa rede de recuperação

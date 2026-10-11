@@ -68,6 +68,23 @@ describe("guardrail money-path: omie-sync-pedidos-compra (réplica purchase_orde
     expect(src, "voltou o retorno-cedo (202/EdgeRuntime/background) — soltaria nfes/ctes/sku antes do espelho → órfãs")
       .not.toMatch(/EdgeRuntime|status:\s*202|background:\s*true/);
   });
+
+  it("todo ponto que conta erro registra o MOTIVO no heartbeat (alerta PARCIAL sem causa, out/2026 — #2954)", () => {
+    // O log da edge expira em ~10min no Lovable Cloud: se o motivo não chega ao sync_state, o alerta
+    // "1 erro(s), 400 sincronizado(s)" fica sem causa recuperável. Erro do loop entra por anotarErro();
+    // o agregado do upsert (summary.erros +=) precisa herdar o primeiroErro nas linhas seguintes.
+    const linhas = removerComentarios(src).split("\n");
+    expect(linhas.filter((l) => /summary\.erros\s*\+\+/.test(l)), "summary.erros++ cru — erro contado sem motivo (use anotarErro)")
+      .toEqual([]);
+    expect(linhas.filter((l) => /anotarErro\(summary,/.test(l)).length, "anotarErro sumiu dos pontos de erro do loop")
+      .toBeGreaterThanOrEqual(4);
+    const agregados = linhas.map((l, i) => ({ l, i })).filter(({ l }) => /summary\.erros\s*\+=/.test(l));
+    expect(agregados.length, "agregado de erros do upsert não encontrado — o teste perdeu o alvo").toBeGreaterThanOrEqual(1);
+    for (const { l, i } of agregados) {
+      expect(linhas.slice(i + 1, i + 4).join("\n"), `erro agregado sem motivo: ${l.trim()}`).toMatch(/primeiro_erro\s*=/);
+    }
+    expect(src, "heartbeat não grava o motivo no error_message").toMatch(/1º: \$\{s\.primeiro_erro\}/);
+  });
 });
 
 describe("guardrail: omie-cron-diario sinaliza o step pedidos como cron (on-order jun/2026)", () => {

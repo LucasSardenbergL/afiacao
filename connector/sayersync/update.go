@@ -27,6 +27,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -103,6 +104,12 @@ func CheckAndApplyUpdate(ctx context.Context, cfg *Config, st *State) {
 	}
 
 	installed, err := doUpdate(ctx, cfg, st)
+	if errors.Is(err, errManifestIndisponivel) {
+		// Nem incrementa nem zera o guard: nada foi instalado, e zerar apagaria falhas reais
+		// anteriores. LastUpdateAttempt já foi gravado acima (o throttle diário vale).
+		logger.Warnf("update: %v — não conta para o crash-loop guard", err)
+		return
+	}
 	if err != nil {
 		logger.Errorf("update: falha na atualização: %v", err)
 		st.UpdateFailCount++
@@ -196,11 +203,19 @@ func isCrashLoopGuardActive(st *State) bool {
 // doUpdate retorna (installed, err): installed=true só quando um binário novo foi
 // de fato colocado no lugar (dispara o restart em CheckAndApplyUpdate). "Já é a
 // versão mais recente" retorna (false, nil).
+// errManifestIndisponivel marca a falha de BUSCAR o manifesto (rede fora, 404, JSON inválido).
+// Ela NÃO conta para o crash-loop guard: acontece antes de qualquer troca de binário — não há o
+// que reverter —, e o restorePrev troca exe↔.prev sem comparar versão. Contando, 3 dias de rede
+// ou Storage fora (throttle 1×/dia) restauravam um .prev obsoleto: downgrade silencioso no próximo
+// restart. O crash-loop de BOOT já tem o recovery externo do SCM (rollback + quarentena).
+// Decisão de 2026-10-11 (Fable + Codex, unânimes).
+var errManifestIndisponivel = errors.New("manifesto indisponível")
+
 func doUpdate(ctx context.Context, cfg *Config, st *State) (bool, error) {
 	// 1. Busca o manifesto.
 	manifest, err := fetchManifest(ctx, cfg.UpdateManifestURL)
 	if err != nil {
-		return false, fmt.Errorf("doUpdate: buscar manifesto: %w", err)
+		return false, fmt.Errorf("doUpdate: buscar manifesto: %w: %w", errManifestIndisponivel, err)
 	}
 
 	// 2. Compara versões (anti-downgrade: só atualiza se manifest.version > current).

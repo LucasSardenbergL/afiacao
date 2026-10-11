@@ -41,6 +41,11 @@ const MAX_RETRIES = 3;
 // um teto de run truncaria carga legítima, e é este espelho que nfes/ctes leem no step seguinte.
 // A coleira aqui é só por request; o volume segue exatamente como está.
 const FETCH_TIMEOUT_MS = 25_000;
+const MAX_TENTATIVAS_TIMEOUT = 2; // 1 re-tentativa por request que estoura o relógio (ver callOmie)
+// A re-tentativa ganha teto MAIOR: a pág 5 OBEN estourou 25s em 14 rodadas seguidas (10-11/10) — o estouro
+// é determinístico, repetir com o mesmo relógio só gastaria +25s para falhar igual. Pior caso ~175s; o
+// orquestrador trata o próprio timeout de cliente como "background" e a edge segue server-side (sync.md).
+const FETCH_TIMEOUT_RETRY_MS = 60_000;
 
 // [fix paginação+janela 2026-06-26] espelho de omie-sync-estoque (#979/#1009/#1072) — MESMA armadilha Omie:
 // (a) PAGINAÇÃO — o nTotalPaginas SUB-REPORTA em listas grandes → confiar nele PARAVA a captura na 1ª página
@@ -79,6 +84,15 @@ interface EmpresaSummary {
   janela_ate: string | null;
   ids_distintos: number;       // POs distintos vistos na varredura (telemetria + volume_ok)
   varredura_completa: boolean; // true = fim legítimo sem abort/truncamento/ID-inseguro (só então publica)
+  // MOTIVO do 1º erro (página + classe), persistido no error_message do sync_state. Sem ele o marcador dizia só
+  // "1 erro(s)" e o log da edge (retenção ~10 min) era a única fonte — todo episódio parcial ficou sem causa.
+  primeiro_erro: string | null;
+}
+
+// Sem hora/duração: o motivo entra na message do check (fingerprint do push) → texto estável por causa.
+function anotarErro(s: EmpresaSummary, motivo: string): void {
+  s.erros++;
+  if (s.primeiro_erro === null) s.primeiro_erro = motivo.slice(0, 200);
 }
 
 // ===== Omie API shapes (inline — Edge Function não pode importar de @/) =====
@@ -448,16 +462,34 @@ async function callOmie(
   };
 
   let attempt = 0;
+  let timeouts = 0; // contador PRÓPRIO: um 429 antes não pode gastar a re-tentativa do timeout
   while (attempt < MAX_RETRIES) {
     attempt++;
-    const res = await fetch(OMIE_ENDPOINT_PEDIDOS, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-    });
-
-    const text = await res.text();
+    let res: Response;
+    let text: string;
+    try {
+      res = await fetch(OMIE_ENDPOINT_PEDIDOS, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(timeouts > 0 ? FETCH_TIMEOUT_RETRY_MS : FETCH_TIMEOUT_MS),
+      });
+      text = await res.text(); // o mesmo signal cobre o corpo: o estouro pode cair aqui, não só no fetch
+    } catch (err) {
+      // [2026-10-11] 1 estouro de relógio numa página derrubava o run inteiro para partial (OBEN parada na
+      // pág 5 por ~24h, #2954). Re-tenta SÓ o TimeoutError, no máximo MAX_TENTATIVAS_TIMEOUT vezes, a re-tentativa
+      // com FETCH_TIMEOUT_RETRY_MS (não MAX_RETRIES × 25s: o estouro da pág 5 se repete, não é acaso). Erro de rede/DNS segue lançando
+      // na 1ª, como antes; se a causa da pág 5 for outra, o "— 1º:" do marcador (#2954) mostra.
+      const timeout = err instanceof DOMException && err.name === "TimeoutError";
+      if (!timeout) throw err;
+      timeouts++;
+      if (timeouts >= MAX_TENTATIVAS_TIMEOUT || attempt >= MAX_RETRIES) throw err;
+      console.warn(
+        `[omie] timeout pagina=${pagina} (estouro ${timeouts}/${MAX_TENTATIVAS_TIMEOUT}), re-tentando com ${FETCH_TIMEOUT_RETRY_MS}ms em ${RETRY_DELAY_MS}ms`,
+      );
+      await sleep(RETRY_DELAY_MS);
+      continue;
+    }
     let json: OmieSearchResponse;
     try {
       json = JSON.parse(text) as OmieSearchResponse;
@@ -572,10 +604,11 @@ function mapPedidoToRow(empresa: Empresa, pedido: OmiePedido): Record<string, un
 async function upsertPedidosLote(
   supabase: SupabaseClient,
   rows: Record<string, unknown>[],
-): Promise<{ sincronizados: number; erros: number }> {
+): Promise<{ sincronizados: number; erros: number; primeiroErro: string | null }> {
   const nowIso = new Date().toISOString();
   const payload: Record<string, unknown>[] = [];
   let erros = 0;
+  let primeiroErro: string | null = null;
 
   for (const row of rows) {
     // nCodPed ausente → omie_codigo_pedido null não casa o UNIQUE (null≠null no Postgres) → inseriria duplicata
@@ -583,6 +616,7 @@ async function upsertPedidosLote(
     if (row.omie_codigo_pedido === null || row.omie_codigo_pedido === undefined) {
       console.error(`[sync-pedidos] pedido sem nCodPed (numero=${row.numero_pedido ?? "—"}) — pulado`);
       erros++;
+      primeiroErro ??= `pedido sem nCodPed (numero=${row.numero_pedido ?? "—"})`;
       continue;
     }
     const clean: Record<string, unknown> = {};
@@ -593,12 +627,12 @@ async function upsertPedidosLote(
     payload.push(clean);
   }
 
-  if (payload.length === 0) return { sincronizados: 0, erros };
+  if (payload.length === 0) return { sincronizados: 0, erros, primeiroErro };
 
   const { error } = await supabase
     .from("purchase_orders_tracking")
     .upsert(payload, { onConflict: "empresa,omie_codigo_pedido" });
-  if (!error) return { sincronizados: payload.length, erros };
+  if (!error) return { sincronizados: payload.length, erros, primeiroErro };
 
   // Lote falhou (1 linha torta derruba o batch) → individual p/ isolar a culpada e salvar o resto.
   console.error(`[sync-pedidos] erro upsert lote (${payload.length}): ${error.message}. Tentando individual.`);
@@ -610,11 +644,12 @@ async function upsertPedidosLote(
     if (e2) {
       console.error(`[sync-pedidos] erro upsert pedido=${row.omie_codigo_pedido}: ${e2.message}`);
       erros++;
+      primeiroErro ??= `upsert pedido=${row.omie_codigo_pedido}: ${e2.message}`;
     } else {
       sincronizados++;
     }
   }
-  return { sincronizados, erros };
+  return { sincronizados, erros, primeiroErro };
 }
 
 // fingerprint barato de página (anti-loop): mesma página NÃO-VAZIA repetida = Omie em loop → abort FATAL.
@@ -645,6 +680,7 @@ async function syncEmpresa(
     janela_ate: null,
     ids_distintos: 0,
     varredura_completa: false,
+    primeiro_erro: null,
   };
   let registrosVistos = 0;      // LINHAS lidas (observabilidade: linhas × ids_distintos denuncia sobreposição)
 
@@ -686,7 +722,7 @@ async function syncEmpresa(
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`[sync-pedidos] empresa=${empresa} pagina=${pagina} erro fetch: ${msg}`);
-      summary.erros++;
+      anotarErro(summary, `pág ${pagina} erro fetch: ${msg}`);
       abortado = true;
       break;
     }
@@ -704,7 +740,7 @@ async function syncEmpresa(
       // fail-closed: qualquer shape que não seja dados/fim COERENTE invalida a publicação (um sinal parcial
       // publicado como válido envenena a base de verdade que o PR2 usa p/ decidir quem provar por ID).
       console.error(`[sync-pedidos] empresa=${empresa} pagina=${pagina} ${cls.motivo} — abort/invalida publicação`);
-      summary.erros++;
+      anotarErro(summary, `pág ${pagina} anomalia: ${cls.motivo}`);
       abortado = true;
       break;
     }
@@ -726,7 +762,7 @@ async function syncEmpresa(
     const fp = fingerprintPagina(pedidos);
     if (fp && fpsVistos.has(fp)) {
       console.error(`[sync-pedidos] empresa=${empresa} REPETIÇÃO de página (pág ${pagina}) — abort anti-loop`);
-      summary.erros++;
+      anotarErro(summary, `pág ${pagina} repetição de página (anti-loop)`);
       abortado = true;
       break;
     }
@@ -764,6 +800,9 @@ async function syncEmpresa(
     const upsertRes = await upsertPedidosLote(supabase, rows);
     summary.pedidos_sincronizados += upsertRes.sincronizados;
     summary.erros += upsertRes.erros;
+    if (summary.primeiro_erro === null && upsertRes.primeiroErro !== null) {
+      summary.primeiro_erro = `pág ${pagina} ${upsertRes.primeiroErro}`.slice(0, 200);
+    }
 
     summary.total_paginas = pagina;
     await sleep(RATE_LIMIT_DELAY_MS); // rate-limit Omie entre páginas
@@ -775,7 +814,7 @@ async function syncEmpresa(
     // gatilho de compra: dado parcial vale mais que derrubar o sync. Registra erro (sinal no summary) e preserva
     // o já capturado (upsert idempotente retoma no próximo ciclo).
     console.error(`[sync-pedidos] empresa=${empresa} excedeu ${MAX_PAGINAS} páginas sem ver fim — abort anti-truncamento`);
-    summary.erros++;
+    anotarErro(summary, `excedeu ${MAX_PAGINAS} páginas sem ver fim`);
   }
 
   summary.ids_distintos = idsVistos.size;
@@ -842,7 +881,9 @@ async function heartbeatFim(
     updated_at: nowISO,
     total_synced: s.pedidos_sincronizados,
     error_message: s.erros > 0
-      ? (errFatal ?? `${s.erros} erro(s) na coleta, ${s.pedidos_sincronizados} sincronizado(s)`)
+      ? (errFatal ??
+        `${s.erros} erro(s) na coleta, ${s.pedidos_sincronizados} sincronizado(s)` +
+          (s.primeiro_erro ? ` — 1º: ${s.primeiro_erro}` : ""))
       : null,
     // metadata.modo é só para VISIBILIDADE (incremental×completo). A CADÊNCIA do completo NÃO mora aqui —
     // vive no marcador dedicado HEARTBEAT_FULL_ENTITY (escrito só por completos bem-sucedidos), p/ não
@@ -1106,7 +1147,7 @@ Deno.serve(async (req) => {
         console.error(`[sync-pedidos] empresa=${empresa} erro fatal: ${errFatal}`);
         s = {
           empresa, total_paginas: 0, pedidos_sincronizados: 0, erros: 1,
-          janela_de: null, janela_ate: null, ids_distintos: 0, varredura_completa: false,
+          janela_de: null, janela_ate: null, ids_distintos: 0, varredura_completa: false, primeiro_erro: null,
         };
       }
       summary.push(s);

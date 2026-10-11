@@ -138,4 +138,46 @@ export const AUTHZ_TABELAS_FECHADAS: Record<string, TabelaFechada> = {
       'authenticated=r, rls=on, 2 policies; has_table_privilege = SIM só em authenticated/SELECT nos ' +
       '8 privilégios × 2 roles.',
   },
+  // Tintométrico — catálogo de fórmulas fechado à escrita de staff pela API (PR #2941). Registradas
+  // DEPOIS do apply (tentativa #344 do db:aplicar, 2026-10-11 12:09 UTC), na ordem que o #2199
+  // ensinou: com prod já fechada, o carimbo mede o contrato novo em vez de acusar a véspera.
+  'public.tint_formulas': {
+    fechadaPor: '20261011120000_tint_grants_escrita_staff.sql',
+    permitido: { anon: [], authenticated: ['SELECT'] },
+    motivo:
+      'catálogo de fórmulas (money-path: o preco_final_sayersystem dos tombstones da Fase 5 é o piso do ' +
+      'tint_gate_revalida e o rótulo do balcão). Challenge Codex sobre o #2915: com escrita de staff, um INSERT ' +
+      'de linha ATIVA na subcoleção \'1\' numa chave sem legado "fabricava tabela" e derrubava o piso do calculado ' +
+      'para ela (o trigger do #2915 só olha o carimbo). O app só LÊ; os writers são RPCs SECURITY DEFINER do ' +
+      'postgres (tint_promote_sync_run, tint_apply_keys_snapshot). Medido por psql-ro após o apply: anon nada, ' +
+      'authenticated só SELECT nos 8 privilégios.',
+  },
+  'public.tint_formula_itens': {
+    fechadaPor: '20261011120000_tint_grants_escrita_staff.sql',
+    permitido: { anon: [], authenticated: ['SELECT'] },
+    motivo:
+      'receita das fórmulas — qtd_ml entra no v_calc, e o piso do gate é LEAST(v_calc, …): staff que baixa a dose ' +
+      'baixa o piso (P1-a do Codex). Nenhuma FK a referencia, então o TRUNCATE do grant default (que não passa por ' +
+      'RLS) apagaria TODA receita. Só o promote (SECURITY DEFINER) escreve.',
+  },
+  'public.tint_subcolecoes': {
+    fechadaPor: '20261011120000_tint_grants_escrita_staff.sql',
+    permitido: { anon: [], authenticated: ['SELECT'] },
+    motivo:
+      'a view canônica só lê o tombstone na subcoleção id_subcolecao_sayersystem=\'1\' — escrever aqui move o ' +
+      'conjunto do max() do preco_csv_legado (o #2915 barra o rename da \'1\' por trigger; isto fecha o resto). ' +
+      'O único writer é o promote (SECURITY DEFINER, ON CONFLICT DO NOTHING). Leitura por "Authenticated can view".',
+  },
+  'public.tint_corantes': {
+    fechadaPor: '20261011120000_tint_grants_escrita_staff.sql',
+    permitido: { anon: [], authenticated: ['SELECT'] },
+    // TintMapping.tsx:411 remapeia o corante para outro produto Omie — a ÚNICA escrita de staff aqui.
+    // volume_total_ml fica de fora de propósito: entra no custo por ml do corante (v_calc).
+    colunasPermitidas: { authenticated: { UPDATE: ['omie_product_id'] } },
+    motivo:
+      'cadastro de corante — volume_total_ml e omie_product_id entram no custo do corante (v_calc), e o piso ' +
+      'do gate é LEAST(v_calc, …). Fecha o volume; o remapeamento (omie_product_id) segue aberto por ser a ' +
+      'função legítima do TintMapping — RESIDUAL declarado no PR #2941: um remapeamento para Omie mais barato ' +
+      'ainda move v_calc, e o que cabe ali é trilha de auditoria (decisão de produto), não revogação.',
+  },
 };

@@ -5,6 +5,10 @@
 // nenhuma escolha) mora em selectAltPrice, não aqui.
 import type { AltPriceDisplay, AltPriceSource } from '@/lib/tint/select-price';
 
+// Alvo de toque só em ponteiro grosso (mesma regra do card principal; o min-height
+// de 44px vem do `pointer:coarse` global, isto alarga e torna o texto legível).
+const TOQUE_CHIP = '[@media(pointer:coarse)]:px-3 [@media(pointer:coarse)]:text-sm';
+
 // Formata BRL local — não importar o `fmt` de useUnifiedOrder (vendas): aresta nova
 // tintometrico→vendas é barrada pelo gate de fronteiras (a dívida existente é baseline).
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -32,7 +36,7 @@ export function AltPriceSourcePicker({ formulaId, altSel, isSl, setOverride, cla
           key={f.key}
           type="button"
           onClick={() => setOverride(formulaId, f.key)}
-          className={`px-1.5 py-0.5 rounded border text-[10px] transition-all ${altSel.fonte === f.key ? 'border-primary bg-primary/10 text-primary font-semibold' : 'border-border text-muted-foreground hover:border-primary/50'}`}
+          className={`px-1.5 py-0.5 rounded border text-[10px] transition-all ${TOQUE_CHIP} ${altSel.fonte === f.key ? 'border-primary bg-primary/10 text-primary font-semibold' : 'border-border text-muted-foreground hover:border-primary/50'}`}
         >
           {f.label} {fmt(f.preco)}
         </button>

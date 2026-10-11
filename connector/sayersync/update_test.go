@@ -407,23 +407,105 @@ func TestCheckAndApplyUpdate_crashLoopGuardActive(t *testing.T) {
 	}
 }
 
-func TestCheckAndApplyUpdate_manifestError_incrementsFailCount(t *testing.T) {
-	// Manifesto retorna 404 → falha → incrementa contador
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-	}))
-	defer srv.Close()
-
-	// Força a verificação usando data de ontem
-	yesterday := time.Now().UTC().AddDate(0, 0, -1).Format(time.RFC3339)
-	cfg := &Config{UpdateManifestURL: srv.URL}
-	st := &State{
-		UpdateFailCount:   0,
-		LastUpdateAttempt: yesterday,
+// exeComPrev monta um exe "em execução" e um .prev num diretório temporário e aponta
+// executablePath para ele — o restorePrev do guard opera sobre esse par.
+func exeComPrev(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "sayersync.exe")
+	if err := os.WriteFile(exe, []byte("ATUAL"), 0755); err != nil {
+		t.Fatal(err)
 	}
-	CheckAndApplyUpdate(context.Background(), cfg, st)
-	if st.UpdateFailCount != 1 {
-		t.Errorf("falha de manifesto deveria incrementar fail count para 1, got %d", st.UpdateFailCount)
+	if err := os.WriteFile(exe+".prev", []byte("ANTIGO"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	orig := executablePath
+	executablePath = func() (string, error) { return exe, nil }
+	t.Cleanup(func() { executablePath = orig })
+	return exe
+}
+
+// Falha de BUSCAR o manifesto não conta para o crash-loop guard (decisão 2026-10-11): nada foi
+// instalado, e o restorePrev troca exe↔.prev sem comparar versão — contando, 3 dias de rede fora
+// rebaixavam uma versão boa para um .prev obsoleto. Nem incrementa nem zera o contador.
+func TestCheckAndApplyUpdate_manifestIndisponivel_naoContaNoGuard(t *testing.T) {
+	casos := []struct {
+		nome    string
+		handler http.HandlerFunc
+		fechado bool // servidor derrubado antes da chamada: rede recusada
+	}{
+		{nome: "404", handler: func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNotFound) }},
+		{nome: "json_invalido", handler: func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("{nao e json")) }},
+		{nome: "rede_recusada", handler: func(w http.ResponseWriter, r *http.Request) {}, fechado: true},
+	}
+	for _, c := range casos {
+		for _, inicial := range []int{0, 2} {
+			t.Run(fmt.Sprintf("%s/contador_%d", c.nome, inicial), func(t *testing.T) {
+				exe := exeComPrev(t)
+				restarts := withRecordedRestart(t)
+				srv := httptest.NewServer(c.handler)
+				url := srv.URL
+				if c.fechado {
+					srv.Close()
+				} else {
+					defer srv.Close()
+				}
+				yesterday := time.Now().UTC().AddDate(0, 0, -1).Format(time.RFC3339)
+				falhaAnterior := time.Now().UTC().Add(-2 * time.Hour).Format(time.RFC3339)
+				st := &State{UpdateFailCount: inicial, LastUpdateAttempt: yesterday}
+				if inicial > 0 {
+					st.LastUpdateFailure = falhaAnterior
+				}
+				antes := st.LastUpdateFailure
+
+				CheckAndApplyUpdate(context.Background(), &Config{UpdateManifestURL: url}, st)
+
+				if st.UpdateFailCount != inicial {
+					t.Errorf("UpdateFailCount: esperado %d (inalterado), veio %d", inicial, st.UpdateFailCount)
+				}
+				if st.LastUpdateFailure != antes {
+					t.Errorf("LastUpdateFailure mudou: %q -> %q", antes, st.LastUpdateFailure)
+				}
+				if st.LastUpdateAttempt == yesterday {
+					t.Error("LastUpdateAttempt deveria registrar a tentativa de hoje (throttle diario)")
+				}
+				if got, _ := os.ReadFile(exe); string(got) != "ATUAL" {
+					t.Errorf("exe trocado: %q", got)
+				}
+				if _, err := os.Stat(exe + ".prev"); err != nil {
+					t.Errorf(".prev sumiu: %v", err)
+				}
+				if *restarts != 0 {
+					t.Errorf("restart nao esperado, veio %d", *restarts)
+				}
+			})
+		}
+	}
+}
+
+// Contraprova: uma falha REAL (sha256 divergente) com 2 falhas anteriores ainda bate o limiar e
+// restaura o .prev — o guard continua protegendo contra publicação ruim.
+func TestCheckAndApplyUpdate_falhaReal_noLimiar_restauraPrev(t *testing.T) {
+	exe := exeComPrev(t)
+	bin := fakeBinary("new-binary-data")
+	binSrv := serveBinary(t, bin)
+	defer binSrv.Close()
+	mSrv := serveManifest(t, UpdateManifest{
+		Version: "999.0.0",
+		SHA256:  "0000000000000000000000000000000000000000000000000000000000000000",
+		URL:     binSrv.URL,
+	})
+	defer mSrv.Close()
+
+	yesterday := time.Now().UTC().AddDate(0, 0, -1).Format(time.RFC3339)
+	st := &State{UpdateFailCount: 2, LastUpdateAttempt: yesterday}
+	CheckAndApplyUpdate(context.Background(), &Config{UpdateManifestURL: mSrv.URL}, st)
+
+	if st.UpdateFailCount != 3 {
+		t.Errorf("UpdateFailCount: esperado 3, veio %d", st.UpdateFailCount)
+	}
+	if got, _ := os.ReadFile(exe); string(got) != "ANTIGO" {
+		t.Errorf("no limiar o .prev deveria ter sido restaurado; exe = %q", got)
 	}
 }
 

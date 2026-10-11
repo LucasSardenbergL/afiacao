@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Prova PG17 do picking v2 — supabase/migrations/20261011020000_picking_v2_schema.sql
+#   + 20261011140000_picking_v2_coleta_reserva.sql (reserva exclusiva da coleta, Fase 0.5b)
 #   bash db/test-picking-v2.sh > /tmp/t.log 2>&1; echo "exit=$?"
 #
 # Cada banco nasce do zero (stubs + pré-requisitos de prod + a migration). As RPCs são EXECUTADAS
@@ -26,6 +27,7 @@ trap cleanup EXIT
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "$TMP/pg.log" -w start >/dev/null
 
 MIG="$REPO_ROOT/supabase/migrations/20261011020000_picking_v2_schema.sql"
+MIG2="$REPO_ROOT/supabase/migrations/20261011140000_picking_v2_coleta_reserva.sql"
 
 Pd() { local db="$1"; shift; "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d "$db" -v ON_ERROR_STOP=1 "$@"; }
 Pq() { Pd "$1" -tA -q -c "$2"; }
@@ -94,13 +96,30 @@ CREATE FUNCTION t.sep(a text, c bigint, ci bigint) RETURNS numeric LANGUAGE sql 
 CREATE FUNCTION t.it(ci int, cp int, q text, un text, ean text DEFAULT NULL) RETURNS jsonb LANGUAGE sql AS
   $f$ SELECT jsonb_build_object('codigo_item', ci, 'codigo_produto', cp, 'codigo', 'SKU' || cp, 'descricao', 'Produto ' || cp,
                                 'quantidade', q, 'unidade', un, 'ean', ean) $f$;
-CREATE FUNCTION t.ped(c bigint, itens jsonb, dalt text DEFAULT '01/10/2026') RETURNS jsonb LANGUAGE sql AS
+CREATE FUNCTION t.ped(c bigint, itens jsonb, dalt text DEFAULT '01/10/2026', inc text DEFAULT '2026-09-20') RETURNS jsonb LANGUAGE sql AS
   $f$ SELECT jsonb_build_object('codigo_pedido', c, 'numero_pedido', 'N' || c, 'cliente_nome', 'Cliente ' || c,
-                                'd_alt', dalt, 'h_alt', '10:00:00', 'itens', itens) $f$;
+                                'd_alt', dalt, 'h_alt', '10:00:00', 'incluido_em', inc, 'itens', itens) $f$;
+-- Viagem no tempo SÓ do teste: o intervalo mínimo de 90 s entre coletas e o lease de 150 s não
+-- mordem uma suíte que sincroniza várias vezes por segundo.
+CREATE FUNCTION t.viajar(a text) RETURNS void LANGUAGE sql AS
+  $f$ UPDATE public.picking_coleta_estado SET ultima_coleta_iniciada_em = ultima_coleta_iniciada_em - interval '1 hour',
+                                              lease_ate = NULL WHERE account = a $f$;
+CREATE TABLE t.tok (nome text PRIMARY KEY, r jsonb);
+GRANT ALL ON t.tok TO PUBLIC;
+CREATE FUNCTION t.res(nome text, a text) RETURNS jsonb LANGUAGE sql AS
+  $f$ INSERT INTO t.tok VALUES (nome, public.picking_coleta_reservar(a))
+      ON CONFLICT (nome) DO UPDATE SET r = EXCLUDED.r RETURNING r $f$;
+CREATE FUNCTION t.token(nome text) RETURNS uuid LANGUAGE sql AS $f$ SELECT (r->>'token')::uuid FROM t.tok WHERE t.tok.nome = $1 $f$;
 CREATE FUNCTION t.sync(a text, presentes bigint[], pedidos jsonb, fora bigint[] DEFAULT '{}', total int DEFAULT NULL,
-                       coleta timestamptz DEFAULT NULL) RETURNS jsonb LANGUAGE sql AS
-  $f$ SELECT public.picking_sincronizar_fila(a, coalesce(coleta, clock_timestamp()), presentes,
-                                             coalesce(total, cardinality(presentes)), pedidos, fora) $f$;
+                       suspeita boolean DEFAULT false) RETURNS jsonb LANGUAGE plpgsql AS
+  $f$ DECLARE r jsonb;
+      BEGIN
+        PERFORM t.viajar(a);
+        r := public.picking_coleta_reservar(a);
+        IF (r->>'ok')::boolean IS NOT TRUE THEN RAISE EXCEPTION 't.sync: reserva negada %', r; END IF;
+        RETURN public.picking_sincronizar_fila(a, (r->>'token')::uuid, presentes,
+                                               coalesce(total, cardinality(presentes)), pedidos, fora, suspeita);
+      END $f$;
 CREATE FUNCTION t.pegar(u uuid, a text, c bigint, assumir boolean DEFAULT false, rec boolean DEFAULT false,
                         seq int DEFAULT NULL, ev uuid DEFAULT NULL) RETURNS jsonb LANGUAGE sql AS
   $f$ SELECT t.uid(u);
@@ -139,11 +158,12 @@ SQL
 # Cada etapa propaga o erro EXPLICITAMENTE: chamada dentro de `if ! montar`, o bash desliga o
 # errexit da função e uma migration que abortou passaria por "aplicada". A migration vai em
 # transação única (-1), como no db:aplicar — abortou, não sobra objeto nenhum.
-montar() {
-  local db="$1" mig="$2"
+montar() {  # $1 banco, $2 migration da 0.3, $3 migration da 0.5b (padrão: a real)
+  local db="$1" mig="$2" mig2="${3:-$MIG2}"
   "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres "$db" || return 1
   prereq "$db" || return 1
   Pd "$db" -1 -q -f "$mig" >/dev/null || return 1
+  Pd "$db" -1 -q -f "$mig2" >/dev/null || return 1
   helpers "$db" || return 1
 }
 
@@ -235,11 +255,38 @@ chk_incompleta() {
   Pq "$db" "SELECT t.st('oben',9601);"
 }
 
-# Geração monotônica: coleta iniciada antes da última aplicada é recusada sem efeito.
+# Reserva exclusiva (substitui a geração monotônica, Codex 0.5b P1-1): A reserva e abandona
+# (lease vence), B reserva por cima; A — a observação mais VELHA — tenta aplicar e perde; B aplica.
 chk_geracao() {
-  local db="$1"
+  local db="$1" peds
+  peds="jsonb_build_array(t.ped(9701, jsonb_build_array(t.it(1,761,'1','UN','E9701'))), t.ped(9702, jsonb_build_array(t.it(1,762,'1','UN','E9702'))))"
   Pq "$db" "SELECT t.sync('colacor', '{9701}', jsonb_build_array(t.ped(9701, jsonb_build_array(t.it(1,761,'1','UN','E9701')))));" >/dev/null
-  Pq "$db" "SELECT coalesce((t.sync('colacor', '{9701,9702}', jsonb_build_array(t.ped(9701, jsonb_build_array(t.it(1,761,'1','UN','E9701'))), t.ped(9702, jsonb_build_array(t.it(1,762,'1','UN','E9702')))), '{}', NULL, clock_timestamp() - interval '1 hour'))->>'motivo','aplicada') || '|' || (t.tid('colacor',9702) IS NULL);"
+  Pq "$db" "SELECT t.viajar('colacor'); SELECT t.res('A', 'colacor'); SELECT t.viajar('colacor'); SELECT t.res('B', 'colacor');" >/dev/null
+  Pq "$db" "SELECT coalesce(public.picking_sincronizar_fila('colacor', t.token('A'), '{9701,9702}', 2, $peds, '{}', false)->>'motivo', 'aplicada')
+               || '|' || (t.tid('colacor',9702) IS NULL)
+               || '|' || (public.picking_sincronizar_fila('colacor', t.token('B'), '{9701,9702}', 2, $peds, '{}', false)->>'aplicada');"
+}
+
+# Listagem suspeita (paginação viu total mutável/repetição) VETA a ausência — mas admite e revisa.
+chk_suspeita() {
+  local db="$1"
+  Pq "$db" "SELECT t.sync('oben', '{9611}', jsonb_build_array(t.ped(9611, jsonb_build_array(t.it(1,752,'1','UN','E9611')))));
+            SELECT t.sync('oben', '{9612}', jsonb_build_array(t.ped(9612, jsonb_build_array(t.it(1,753,'1','UN','E9612')))), '{9611}', 1, true);" >/dev/null
+  Pq "$db" "SELECT t.st('oben',9611) || '|' || coalesce(t.st('oben',9612), 'SEM_TAREFA');"
+}
+
+# Duas sessões reservando a MESMA conta ao mesmo tempo: só uma leva.
+# A 1ª reserva da conta (sem estado ainda) é o caso duro: os dois INSERTs disputam a chave.
+chk_reserva_concorrente() {
+  local db="$1"
+  Pq "$db" "DELETE FROM public.picking_coleta_estado WHERE account = 'colacor';" >/dev/null
+  ( Pd "$db" -tA -q -c "BEGIN; SELECT t.res('S1', 'colacor'); SELECT pg_sleep(2); COMMIT;" >/dev/null ) &
+  sleep 0.5
+  local err
+  err="$(Pq "$db" "SELECT t.err(\$q\$SELECT t.res('S2', 'colacor')\$q\$);")"
+  wait
+  Pq "$db" "SELECT (SELECT count(*) FROM t.tok WHERE nome IN ('S1','S2') AND (r->>'ok')::boolean) || '|'
+               || coalesce((SELECT r->>'motivo' FROM t.tok WHERE nome = 'S2'), 'SEM_S2') || '|$err';"
 }
 
 # Retomar uma tarefa suspensa exige reconciliação física.
@@ -295,13 +342,73 @@ chk_ean_unidades() {
 }
 
 # ACL da sync (catálogo): anon/authenticated sem EXECUTE.
+# Lease vivo há mais de 90 s (coleta lenta, ainda dentro dos 150 s): outra reserva NÃO rouba.
+chk_ocupada() {
+  local db="$1"
+  Pq "$db" "SELECT t.viajar('colacor'); SELECT t.res('O1', 'colacor');
+            UPDATE public.picking_coleta_estado SET ultima_coleta_iniciada_em = clock_timestamp() - interval '100 seconds' WHERE account = 'colacor';
+            SELECT t.res('O2', 'colacor');" >/dev/null
+  Pq "$db" "SELECT coalesce(r->>'motivo', 'ok') FROM t.tok WHERE nome = 'O2';"
+}
+
+# incluido_em: gravado da 1ª coleta, data impossível vira NULL sem derrubar o lote, e uma coleta
+# sem a data não apaga a já gravada.
+chk_incluido() {
+  local db="$1"
+  Pq "$db" "SELECT t.sync('oben', '{9631,9632}', jsonb_build_array(t.ped(9631, jsonb_build_array(t.it(1,755,'1','UN','E9631')), '01/10/2026', '2026-08-15'),
+                                                               t.ped(9632, jsonb_build_array(t.it(1,756,'1','UN','E9632')), '01/10/2026', '2026-02-31')));
+            SELECT t.sync('oben', '{9631,9632}', jsonb_build_array(t.ped(9631, jsonb_build_array(t.it(1,755,'1','UN','E9631')), '01/10/2026', NULL),
+                                                               t.ped(9632, jsonb_build_array(t.it(1,756,'1','UN','E9632')), '01/10/2026', NULL)));" >/dev/null
+  Pq "$db" "SELECT coalesce((SELECT incluido_em::text FROM public.picking_tarefas WHERE omie_codigo_pedido = 9631), 'NULL')
+               || '|' || coalesce((SELECT incluido_em::text FROM public.picking_tarefas WHERE omie_codigo_pedido = 9632), 'NULL');"
+}
+
+# Ausente do Omie: 1 coleta completa sem o pedido NÃO bloqueia (pode ser troca compensada entre
+# páginas); 2 seguidas bloqueiam toda autorização de trabalho — inclusive do operador que já
+# separa (bipe, concluir) — e o pedido que reaparece volta a valer. A linha (1 un) fica completa
+# ANTES do bloqueio: o concluir bloqueado é o único motivo de não fechar.
+chk_ausente() {
+  local db="$1"
+  Pq "$db" "SELECT t.sync('oben', '{9641,9642}', jsonb_build_array(t.ped(9641, jsonb_build_array(t.it(1,757,'1','UN','E9641'))), t.ped(9642, jsonb_build_array(t.it(1,758,'1','UN','E9642')))));
+            SELECT t.pegar('$U1', 'oben', 9642);
+            SELECT t.sync('oben', '{}', '[]'::jsonb);" >/dev/null
+  local um dois volta
+  um="$(Pq "$db" "SELECT coalesce(t.bipe('$U1', 'oben', 9642, 'E9642')->>'motivo', 'ok');")"
+  Pq "$db" "SELECT t.sync('oben', '{}', '[]'::jsonb);" >/dev/null
+  dois="$(Pq "$db" "SELECT coalesce(t.bipe('$U1', 'oben', 9642, 'E9642')->>'motivo', 'ok') || ',' || coalesce(t.concluir('$U1', 'oben', 9642)->>'motivo', 'ok') || ',' || coalesce(t.pegar('$U2', 'oben', 9641)->>'motivo', 'ok');")"
+  Pq "$db" "SELECT t.sync('oben', '{9641,9642}', jsonb_build_array(t.ped(9641, jsonb_build_array(t.it(1,757,'1','UN','E9641'))), t.ped(9642, jsonb_build_array(t.it(1,758,'1','UN','E9642')))));" >/dev/null
+  volta="$(Pq "$db" "SELECT coalesce(t.concluir('$U1', 'oben', 9642)->>'motivo', 'ok');")"
+  echo "$um|$dois|$volta"
+}
+
+# Bloqueio por ausência nas OUTRAS portas (Codex 0.5b código P2-4): o mesmo operador re-pegando,
+# outro assumindo, leitura manual e retomar ficam bloqueados; o estorno (tira do volume) passa; e
+# o estado_seq sobe ao entrar no bloqueio (a tela relê).
+chk_ausente2() {
+  local db="$1" lid='55555555-5555-5555-5555-555555555555' seq0 seq1 out
+  Pq "$db" "SELECT t.sync('oben', '{9651,9652}', jsonb_build_array(t.ped(9651, jsonb_build_array(t.it(1,759,'2','UN','E9651'))), t.ped(9652, jsonb_build_array(t.it(1,760,'1','UN','E9652')))));
+            SELECT t.pegar('$U1', 'oben', 9651); SELECT t.bipe('$U1', 'oben', 9651, 'E9651', '$lid');
+            SELECT t.pegar('$U1', 'oben', 9652); SELECT t.falta('$U1', 'oben', 9652, 1);" >/dev/null
+  seq0="$(Pq "$db" "SELECT t.seq('oben', 9651);")"
+  Pq "$db" "SELECT t.sync('oben', '{}', '[]'::jsonb);" >/dev/null
+  Pq "$db" "SELECT t.sync('oben', '{}', '[]'::jsonb);" >/dev/null
+  seq1="$(Pq "$db" "SELECT t.seq('oben', 9651);")"
+  out="$(Pq "$db" "SELECT coalesce(t.pegar('$U1', 'oben', 9651)->>'motivo', 'ok') || '|' ||
+                          coalesce(t.pegar('$U2', 'oben', 9651, true, true)->>'motivo', 'ok') || '|' ||
+                          coalesce(t.manual('$U1', 'oben', 9651, t.lin('oben', 9651, 1), 1)->>'motivo', 'ok') || '|' ||
+                          coalesce(t.estorno('$U1', 'oben', 9651, '$lid')->>'motivo', 'ok') || '|' ||
+                          coalesce(t.retomar('$U1', 'oben', 9652, true)->>'motivo', 'ok');")"
+  echo "$out|$((seq1 - seq0))"
+}
+
+SYNC_SIG='public.picking_sincronizar_fila(text,uuid,bigint[],integer,jsonb,bigint[],boolean)'
 chk_acl_sync() {
-  Pq "$1" "SELECT (has_function_privilege('anon','public.picking_sincronizar_fila(text,timestamptz,bigint[],integer,jsonb,bigint[])','EXECUTE')
-                OR has_function_privilege('authenticated','public.picking_sincronizar_fila(text,timestamptz,bigint[],integer,jsonb,bigint[])','EXECUTE'))::text;"
+  Pq "$1" "SELECT bool_or(has_function_privilege('anon', f, 'EXECUTE') OR has_function_privilege('authenticated', f, 'EXECUTE'))::text
+             FROM unnest(ARRAY['$SYNC_SIG', 'public.picking_coleta_reservar(text)']) f;"
 }
 
 echo "═══ PROVA — migration real ═══"
-montar real "$MIG"
+montar real "$MIG" || { echo "❌ a migration real não montou"; exit 1; }
 Q() { Pq real "$1"; }
 
 P1001="t.ped(1001, jsonb_build_array(t.it(1,501,'2','UN','7891000000011'), t.it(2,502,'1','UN',NULL), t.it(3,503,'1.5','L',NULL)))"
@@ -316,16 +423,29 @@ eq "S1 1ª coleta: criadas|bloqueadas|completa" \
    "$(Q "SELECT j->>'criadas' || '|' || (j->>'bloqueadas') || '|' || (j->>'listagem_completa') FROM t.sync('oben','{1001,1002,1003}', jsonb_build_array($P1001,$P1002,$P1003)) j;")" "3|1|true"
 eq "S2 item ilegível bloqueia o pedido inteiro (sem linhas)" "$(Q "SELECT t.st('oben',1003) || '|' || (SELECT count(*) FROM public.picking_linhas WHERE tarefa_id = t.tid('oben',1003));")" "bloqueado_dado|0"
 eq "S3 linhas: qtd decimal, fracionária pela unidade" "$(Q "SELECT string_agg(codigo_item || ':' || trim_scale(quantidade) || ':' || fracionaria, ',' ORDER BY codigo_item) FROM public.picking_linhas WHERE tarefa_id = t.tid('oben',1001);")" "1:2:false,2:1:false,3:1.5:true"
-eq "S4 coleta mais velha que a última → coleta_velha" "$(Q "SELECT t.sync('oben','{1001,1002,1003}', jsonb_build_array($P1001,$P1002,$P1003), '{}', NULL, clock_timestamp() - interval '1 minute')->>'motivo';")" "coleta_velha"
+eq "S4 token já consumido (a reserva é liberada ao aplicar) → reserva_perdida" "$(Q "SELECT public.picking_sincronizar_fila('oben', gen_random_uuid(), '{1001,1002,1003}', 3, jsonb_build_array($P1001,$P1002,$P1003), '{}', false)->>'motivo';")" "reserva_perdida"
 eq "S5 pedido detalhado fora de p_presentes → 22023" "$(Q "SELECT t.err(\$q\$SELECT t.sync('oben','{1001,1002,1003}', jsonb_build_array($P1001,$P1002,$P1003, t.ped(1999, jsonb_build_array(t.it(1,1,'1','UN')))))\$q\$);")" "22023"
 eq "S6 tarefa acompanhada presente sem detalhe (corte) → 22023" "$(Q "SELECT t.err(\$q\$SELECT t.sync('oben','{1001,1002,1003}', jsonb_build_array($P1001,$P1002))\$q\$);")" "22023"
 eq "S7 conta inválida → 22023" "$(Q "SELECT t.err(\$q\$SELECT t.sync('vendas','{}', '[]'::jsonb)\$q\$);")" "22023"
 eq "S8 pedido duplicado no lote → 22023" "$(Q "SELECT t.err(\$q\$SELECT t.sync('oben','{1001,1002,1003}', jsonb_build_array($P1001,$P1001,$P1002,$P1003))\$q\$);")" "22023"
 
+echo "── reserva da coleta (0.5b) ──"
+eq "R1 1ª reserva com a conta sem estado: ok e aplicada_em NULL" "$(Q "SELECT t.res('R1','colacor')->>'ok';")|$(Q "SELECT (aplicada_em IS NULL)::text FROM public.picking_coleta_estado WHERE account = 'colacor';")" "true|true"
+eq "R2 reserva com lease vivo → ocupada" "$(Q "SELECT t.res('R2','colacor')->>'motivo';")" "ocupada"
+eq "R3 lease vencido mas início < 90 s → intervalo_minimo" "$(Q "UPDATE public.picking_coleta_estado SET lease_ate = clock_timestamp() - interval '1 second' WHERE account = 'colacor'; SELECT t.res('R3','colacor')->>'motivo';")" "intervalo_minimo"
+eq "R4 coleta abandonada (lease vencido, início antigo) → nova reserva leva, token novo" "$(Q "UPDATE public.picking_coleta_estado SET lease_ate = clock_timestamp() - interval '1 second', ultima_coleta_iniciada_em = clock_timestamp() - interval '1 hour' WHERE account = 'colacor'; SELECT (t.res('R4','colacor')->>'ok') || '|' || (t.token('R4') <> t.token('R1'))::text;")" "true|true"
+eq "R5 token abandonado (R1) não escreve depois de substituído" "$(Q "SELECT public.picking_sincronizar_fila('colacor', t.token('R1'), '{}', 0, '[]'::jsonb, '{}', false)->>'motivo';")" "reserva_perdida"
+eq "R6 lease vencido SEM substituto: o dono ainda aplica (não há observação mais nova)" "$(Q "UPDATE public.picking_coleta_estado SET lease_ate = clock_timestamp() - interval '1 second' WHERE account = 'colacor'; SELECT public.picking_sincronizar_fila('colacor', t.token('R4'), '{}', 0, '[]'::jsonb, '{}', false)->>'aplicada';")" "true"
+eq "R7 aplicar libera a reserva (token NULL, lease NULL, aplicada_em preenchida)" "$(Q "SELECT (lease_token IS NULL AND lease_ate IS NULL AND aplicada_em IS NOT NULL)::text FROM public.picking_coleta_estado WHERE account = 'colacor';")" "true"
+eq "R8 o mesmo token não aplica duas vezes" "$(Q "SELECT public.picking_sincronizar_fila('colacor', t.token('R4'), '{}', 0, '[]'::jsonb, '{}', false)->>'motivo';")" "reserva_perdida"
+eq "R9 p_listagem_suspeita NULL → 22023" "$(Q "SELECT t.viajar('colacor'); SELECT t.res('R9','colacor'); SELECT t.err(\$q\$SELECT public.picking_sincronizar_fila('colacor', t.token('R9'), '{}', 0, '[]'::jsonb, '{}', NULL)\$q\$);" | tail -1)" "22023"
+
 echo "── ACL / RLS ──"
 eq "A1 catálogo: sync fechada para anon/authenticated" "$(chk_acl_sync real)" "false"
-eq "A2 catálogo: service_role executa a sync" "$(Q "SELECT has_function_privilege('service_role','public.picking_sincronizar_fila(text,timestamptz,bigint[],integer,jsonb,bigint[])','EXECUTE')::text;")" "true"
-eq "A3 authenticated chamando a sync → 42501" "$(Q "SET ROLE authenticated; SELECT t.err(\$q\$SELECT public.picking_sincronizar_fila('oben', clock_timestamp(), '{}', 0, '[]'::jsonb, '{}')\$q\$);")" "42501"
+eq "A2 catálogo: service_role executa a sync e a reserva" "$(Q "SELECT bool_and(has_function_privilege('service_role', f, 'EXECUTE'))::text FROM unnest(ARRAY['$SYNC_SIG', 'public.picking_coleta_reservar(text)']) f;")" "true"
+eq "A3 authenticated chamando a sync → 42501" "$(Q "SET ROLE authenticated; SELECT t.err(\$q\$SELECT public.picking_sincronizar_fila('oben', gen_random_uuid(), '{}', 0, '[]'::jsonb, '{}', false)\$q\$);")" "42501"
+eq "A3b authenticated reservando a coleta → 42501" "$(Q "SET ROLE authenticated; SELECT t.err(\$q\$SELECT public.picking_coleta_reservar('oben')\$q\$);")" "42501"
+eq "A3c assinatura antiga da sync não existe mais" "$(Q "SELECT (to_regprocedure('public.picking_sincronizar_fila(text,timestamptz,bigint[],integer,jsonb,bigint[])') IS NULL)::text;")" "true"
 eq "A4 catálogo: anon sem EXECUTE nas 5 RPCs do aparelho; authenticated com" \
    "$(Q "SELECT bool_or(has_function_privilege('anon', f, 'EXECUTE'))::text || '|' || bool_and(has_function_privilege('authenticated', f, 'EXECUTE'))::text
          FROM unnest(ARRAY['public.picking_pegar_task(uuid,text,uuid,integer,boolean,boolean)',
@@ -424,7 +544,13 @@ eq "C4 fecha por linha" "$(chk_por_linha real)" "linhas_incompletas"
 eq "C5 idempotência por UUID" "$(chk_idempotencia real)" "SEM_ERRO|true|1"
 eq "C6 conta errada → 22023" "$(chk_conta real)" "22023"
 eq "C7 listagem incompleta não interrompe" "$(chk_incompleta real)" "aguardando"
-eq "C8 geração monotônica" "$(chk_geracao real)" "coleta_velha|true"
+eq "C8 reserva substituída: a coleta velha não escreve, a nova sim" "$(chk_geracao real)" "reserva_perdida|true|true"
+eq "C14 listagem suspeita veta a ausência mas cria tarefa" "$(chk_suspeita real)" "aguardando|aguardando"
+eq "C15 2 sessões reservando a mesma conta → só uma leva" "$(chk_reserva_concorrente real)" "1|ocupada|SEM_ERRO"
+eq "C16 lease vivo há > 90 s não é roubado" "$(chk_ocupada real)" "ocupada"
+eq "C17 incluido_em gravado; data impossível → NULL; coleta sem data não apaga" "$(chk_incluido real)" "2026-08-15|NULL"
+eq "C19 ausente bloqueia re-pegar/assumir/manual/retomar; estorno passa; estado_seq sobe 1" "$(chk_ausente2 real)" "ausente_do_omie|ausente_do_omie|ausente_do_omie|ok|ausente_do_omie|1"
+eq "C18 ausente: 1 coleta não bloqueia; 2 seguidas bloqueiam bipe/concluir/pegar; reaparece e volta" "$(chk_ausente real)" "ok|ausente_do_omie,ausente_do_omie,ausente_do_omie|ok"
 eq "C9 retomar exige reconciliação" "$(chk_reconciliacao real)" "exige_reconciliacao_fisica"
 eq "C10 concluir exige todas as leituras" "$(chk_pendentes real)" "leituras_pendentes"
 eq "C11 código cadastrado x EAN da linha com fator diferente → ambíguo" "$(chk_ambiguo real)" "codigo_ambiguo"
@@ -434,19 +560,32 @@ eq "C12 mesmo UUID de evento em 2 tarefas ao mesmo tempo → 22023" "$(chk_event
 echo
 echo "═══ FALSIFICAÇÃO — controle verde pelo MESMO caminho, depois cada sabotagem VERMELHA ═══"
 cp "$MIG" "$TMP/controle.sql"
-montar controle "$TMP/controle.sql"
-CTRL="$(chk_concorrencia controle)/$(chk_sync_vs_leitura controle)/$(chk_revisao controle)/$(chk_por_linha controle)/$(chk_idempotencia controle)/$(chk_conta controle)/$(chk_incompleta controle)/$(chk_geracao controle)/$(chk_reconciliacao controle)/$(chk_pendentes controle)/$(chk_acl_sync controle)/$(chk_ambiguo controle)/$(chk_evento_concorrente controle)/$(chk_ean_unidades controle)"
-CTRL_ESPERADO="excesso|1/tarefa_fora_de_separacao|suspensa_alteracao/suspensa_alteracao|0|4/linhas_incompletas/SEM_ERRO|true|1/22023/aguardando/coleta_velha|true/exige_reconciliacao_fisica/leituras_pendentes/false/codigo_ambiguo/22023/codigo_ambiguo"
+cp "$MIG2" "$TMP/controle2.sql"
+montar controle "$TMP/controle.sql" "$TMP/controle2.sql" || bad "controle não montou"
+CTRL="$(chk_concorrencia controle)/$(chk_sync_vs_leitura controle)/$(chk_revisao controle)/$(chk_por_linha controle)/$(chk_idempotencia controle)/$(chk_conta controle)/$(chk_incompleta controle)/$(chk_geracao controle)/$(chk_reconciliacao controle)/$(chk_pendentes controle)/$(chk_acl_sync controle)/$(chk_ambiguo controle)/$(chk_evento_concorrente controle)/$(chk_ean_unidades controle)/$(chk_suspeita controle)/$(chk_ocupada controle)/$(chk_incluido controle)/$(chk_ausente controle)/$(chk_ausente2 controle)/$(chk_reserva_concorrente controle)"
+CTRL_ESPERADO="excesso|1/tarefa_fora_de_separacao|suspensa_alteracao/suspensa_alteracao|0|4/linhas_incompletas/SEM_ERRO|true|1/22023/aguardando/reserva_perdida|true|true/exige_reconciliacao_fisica/leituras_pendentes/false/codigo_ambiguo/22023/codigo_ambiguo/aguardando|aguardando/ocupada/2026-08-15|NULL/ok|ausente_do_omie,ausente_do_omie,ausente_do_omie|ok/ausente_do_omie|ausente_do_omie|ausente_do_omie|ok|ausente_do_omie|1/1|ocupada|SEM_ERRO"
 if [ "$CTRL" != "$CTRL_ESPERADO" ]; then
   bad "CONTROLE não ficou verde ($CTRL) — falsificação abortada antes do 1º sed"
 else
   ok "controle verde pelo caminho da sabotagem"
 
-  sabotar() {  # $1 nome, $2 programa sed; exige que o sed MUDE o arquivo e que a cópia aplique
+  # $1 nome, $2 programa sed — aplicado às DUAS migrations: a 0.5b substitui leitura, pegar,
+  # retomar e concluir, então a sabotagem tem de alcançar a cópia que fica viva. Exige que o sed
+  # MUDE a migration da 0.3 e que as cópias apliquem.
+  sabotar() {
     local nome="$1" prog="$2"
     sed "$prog" "$MIG" > "$TMP/$nome.sql"
+    sed "$prog" "$MIG2" > "$TMP/${nome}_2.sql"
     if cmp -s "$MIG" "$TMP/$nome.sql"; then bad "F $nome: o sed não mudou nada (sabotagem inerte)"; return 1; fi
-    if ! montar "$nome" "$TMP/$nome.sql" >"$TMP/$nome.log" 2>&1; then
+    if ! montar "$nome" "$TMP/$nome.sql" "$TMP/${nome}_2.sql" >"$TMP/$nome.log" 2>&1; then
+      bad "F $nome: a cópia sabotada não aplicou ($(grep -m1 -E 'ERROR|ERRO' "$TMP/$nome.log" | head -c 300))"; return 1
+    fi
+  }
+  sabotar2() {  # idem, sabotando a migration da 0.5b (a 0.3 vai intacta)
+    local nome="$1" prog="$2"
+    sed "$prog" "$MIG2" > "$TMP/$nome.sql"
+    if cmp -s "$MIG2" "$TMP/$nome.sql"; then bad "F $nome: o sed não mudou nada (sabotagem inerte)"; return 1; fi
+    if ! montar "$nome" "$MIG" "$TMP/$nome.sql" >"$TMP/$nome.log" 2>&1; then
       bad "F $nome: a cópia sabotada não aplicou ($(grep -m1 -E 'ERROR|ERRO' "$TMP/$nome.log" | head -c 300))"; return 1
     fi
   }
@@ -494,18 +633,66 @@ else
 
   # X5 — pegar sem a checagem de conta.
   # shellcheck disable=SC2016  # \$function\$ é o dollar-quote LITERAL do SQL, não expansão do bash
-  if sabotar x5_sem_conta '/^CREATE OR REPLACE FUNCTION public.picking_pegar_task(/,/^\$function\$;$/{/^  IF v_t.account <> p_account THEN$/,/^  END IF;$/d;}'; then
+  # shellcheck disable=SC2016  # \$function\$ é o dollar-quote LITERAL do SQL, não expansão do bash
+  if sabotar2 x5_sem_conta '/^CREATE OR REPLACE FUNCTION public.picking_pegar_task(/,/^\$function\$;$/{/^  IF v_t.account <> p_account THEN$/,/^  END IF;$/d;}'; then
     vermelho "X5 pegar sem validar a conta (C6)" "$(chk_conta x5_sem_conta)" "22023" "SEM_ERRO"
   fi
 
   # X6 — listagem tratada como completa sempre.
-  if sabotar x6_sempre_completa 's/^  v_completa := cardinality(p_presentes) = p_total_de_registros$/  v_completa := true OR cardinality(p_presentes) = p_total_de_registros/'; then
+  if sabotar2 x6_sempre_completa 's/^  v_completa := cardinality(p_presentes) = p_total_de_registros$/  v_completa := true OR cardinality(p_presentes) = p_total_de_registros/'; then
     vermelho "X6 listagem sempre completa (C7)" "$(chk_incompleta x6_sempre_completa)" "aguardando" "interrompida_externa"
   fi
 
-  # X7 — sem a geração monotônica.
-  if sabotar x7_sem_geracao 's/^  IF v_ultima IS NOT NULL AND p_coleta_iniciada_em <= v_ultima THEN$/  IF false THEN/'; then
-    vermelho "X7 sem geração monotônica (C8)" "$(chk_geracao x7_sem_geracao)" "coleta_velha|true" "aplicada|false"
+  # X7 — sync sem conferir o token da reserva: a coleta velha (A) aplica por cima e a nova perde.
+  if sabotar2 x7_sem_token 's/^  IF NOT v_achou OR (v_token = p_lease_token) IS NOT TRUE THEN$/  IF NOT v_achou THEN/'; then
+    vermelho "X7 sync sem conferir o token (C8)" "$(chk_geracao x7_sem_token)" "reserva_perdida|true|true" "aplicada|false|true"
+  fi
+
+  # X15 — sem o veto da listagem suspeita.
+  if sabotar2 x15_sem_veto 's/^                AND NOT p_listagem_suspeita;$/                AND true;/'; then
+    vermelho "X15 sem veto de listagem suspeita (C14)" "$(chk_suspeita x15_sem_veto)" "aguardando|aguardando" "interrompida_externa|aguardando"
+  fi
+
+  # X16 — reservar sem respeitar o lease vivo.
+  if sabotar2 x16_sem_ocupada 's/^  IF v_e.lease_ate IS NOT NULL AND v_e.lease_ate > v_agora THEN$/  IF false THEN/'; then
+    vermelho "X16 reserva rouba lease vivo (C16)" "$(chk_ocupada x16_sem_ocupada)" "ocupada" "ok"
+  fi
+
+  # X17 — uma camada do bloqueio por vez: leitura, concluir e pegar.
+  if sabotar2 x17a_leitura_ausente 's/^  ELSIF v_t.ausente_rodadas >= 2 AND p_tipo <> .estorno. THEN$/  ELSIF false THEN/'; then
+    vermelho "X17a leitura sem bloqueio de ausente (C18)" "$(chk_ausente x17a_leitura_ausente)" "ok|ausente_do_omie,ausente_do_omie,ausente_do_omie|ok" "ok|excesso,ausente_do_omie,ausente_do_omie|ok"
+  fi
+  # shellcheck disable=SC2016  # \$function\$ é o dollar-quote LITERAL do SQL, não expansão do bash
+  if sabotar2 x17b_concluir_ausente '/^CREATE OR REPLACE FUNCTION public.picking_concluir(/,/^\$function\$;$/s/^  ELSIF v_t.ausente_rodadas >= 2 THEN$/  ELSIF false THEN/'; then
+    vermelho "X17b concluir sem bloqueio de ausente (C18)" "$(chk_ausente x17b_concluir_ausente)" "ok|ausente_do_omie,ausente_do_omie,ausente_do_omie|ok" "ok|ausente_do_omie,ok,ausente_do_omie|tarefa_fora_de_separacao"
+  fi
+  # shellcheck disable=SC2016  # \$function\$ é o dollar-quote LITERAL do SQL, não expansão do bash
+  if sabotar2 x17c_pegar_ausente '/^CREATE OR REPLACE FUNCTION public.picking_pegar_task(/,/^\$function\$;$/s/^  ELSIF v_t.ausente_rodadas >= 2 THEN$/  ELSIF false THEN/'; then
+    vermelho "X17c pegar sem bloqueio de ausente (C18)" "$(chk_ausente x17c_pegar_ausente)" "ok|ausente_do_omie,ausente_do_omie,ausente_do_omie|ok" "ok|ausente_do_omie,ausente_do_omie,ok|ok"
+  fi
+  # shellcheck disable=SC2016  # \$function\$ é o dollar-quote LITERAL do SQL, não expansão do bash
+  if sabotar2 x17d_retomar_ausente '/^CREATE OR REPLACE FUNCTION public.picking_retomar(/,/^\$function\$;$/s/^  ELSIF v_t.ausente_rodadas >= 2 THEN$/  ELSIF false THEN/'; then
+    vermelho "X17d retomar sem bloqueio de ausente (C19)" "$(chk_ausente2 x17d_retomar_ausente)" "ausente_do_omie|ausente_do_omie|ausente_do_omie|ok|ausente_do_omie|1" "ausente_do_omie|ausente_do_omie|ausente_do_omie|ok|ok|1"
+  fi
+  # X21 — entrar no bloqueio sem subir o estado_seq (a tela não relê).
+  if sabotar2 x21_bloqueio_sem_seq 's/^               estado_seq = t.estado_seq + CASE WHEN t.ausente_rodadas + 1 = 2 THEN 1 ELSE 0 END$/               estado_seq = t.estado_seq/'; then
+    vermelho "X21 bloqueio sem estado_seq (C19)" "$(chk_ausente2 x21_bloqueio_sem_seq)" "ausente_do_omie|ausente_do_omie|ausente_do_omie|ok|ausente_do_omie|1" "ausente_do_omie|ausente_do_omie|ausente_do_omie|ok|ausente_do_omie|0"
+  fi
+  # X20 — bloqueio já na 1ª ausência (sem a tolerância à troca compensada).
+  if sabotar2 x20_bloqueio_imediato 's/^  ELSIF v_t.ausente_rodadas >= 2 AND p_tipo <> .estorno. THEN$/  ELSIF v_t.ausente_rodadas >= 1 AND p_tipo <> '"'"'estorno'"'"' THEN/'; then
+    vermelho "X20 leitura bloqueada na 1ª ausência (C18)" "$(chk_ausente x20_bloqueio_imediato)" "ok|ausente_do_omie,ausente_do_omie,ausente_do_omie|ok" "ausente_do_omie|ausente_do_omie,ausente_do_omie,ausente_do_omie|linhas_incompletas"
+  fi
+
+  # X19 — incluido_em sem o coalesce: uma coleta sem a data apaga a gravada.
+  if sabotar2 x19_incluido_sem_coalesce 's/^           incluido_em   = coalesce(public.picking_v2_data(v_ped ->> .incluido_em.), t.incluido_em)$/           incluido_em   = public.picking_v2_data(v_ped ->> '"'"'incluido_em'"'"')/'; then
+    vermelho "X19 incluido_em apagado por coleta sem data (C17)" "$(chk_incluido x19_incluido_sem_coalesce)" "2026-08-15|NULL" "NULL|NULL"
+  fi
+
+  # X18 — reservar sem o lock da conta: na 1ª reserva não há linha para o FOR UPDATE travar — os
+  # dois INSERTs colidem (23505) em vez de um ver `ocupada`. O lock da conta é dente, não redundância.
+  # shellcheck disable=SC2016  # \$function\$ é o dollar-quote LITERAL do SQL, não expansão do bash
+  if sabotar2 x18_reserva_sem_lock '/^CREATE OR REPLACE FUNCTION public.picking_coleta_reservar(/,/^\$function\$;$/s/^  PERFORM pg_advisory_xact_lock(hashtextextended(.picking_v2_conta:. || p_account, 0));$/  NULL;/'; then
+    vermelho "X18 reserva sem o lock da conta (C15, 1ª reserva)" "$(chk_reserva_concorrente x18_reserva_sem_lock)" "1|ocupada|SEM_ERRO" "1|SEM_S2|23505"
   fi
 
   # X8 — retomar sem exigir reconciliação física.
@@ -519,7 +706,7 @@ else
   fi
 
   # X10 — sync sem REVOKE de authenticated (a postcondição cai junto, senão a cópia nem aplica).
-  if sabotar x10_sync_aberta '/^REVOKE ALL ON FUNCTION public.picking_sincronizar_fila(/,/^  FROM PUBLIC, anon, authenticated;$/s/FROM PUBLIC, anon, authenticated;/FROM PUBLIC, anon;/; /POSTCONDICAO: % executável por anon\/authenticated., v_fn;$/s/RAISE EXCEPTION/RAISE NOTICE/'; then
+  if sabotar2 x10_sync_aberta '/^REVOKE ALL ON FUNCTION public.picking_sincronizar_fila(/,/^  FROM PUBLIC, anon, authenticated;$/s/FROM PUBLIC, anon, authenticated;/FROM PUBLIC, anon;/; /POSTCONDICAO: % executável por anon\/authenticated., v_fn;$/s/RAISE EXCEPTION/RAISE NOTICE/'; then
     vermelho "X10 sync executável por authenticated (A1)" "$(chk_acl_sync x10_sync_aberta)" "false" "true"
   fi
 
@@ -530,7 +717,8 @@ else
 
   # X13 — pegar sem ON CONFLICT: o UUID concorrente sai 23505 cru.
   # shellcheck disable=SC2016  # \$function\$ é o dollar-quote LITERAL do SQL, não expansão do bash
-  if sabotar x13_evento_sem_on_conflict '/^CREATE OR REPLACE FUNCTION public.picking_pegar_task(/,/^\$function\$;$/{s/^  ON CONFLICT (id) DO NOTHING;$/  ;/;}'; then
+  # shellcheck disable=SC2016  # \$function\$ é o dollar-quote LITERAL do SQL, não expansão do bash
+  if sabotar2 x13_evento_sem_on_conflict '/^CREATE OR REPLACE FUNCTION public.picking_pegar_task(/,/^\$function\$;$/{s/^  ON CONFLICT (id) DO NOTHING;$/  ;/;}'; then
     vermelho "X13 evento sem ON CONFLICT (C12)" "$(chk_evento_concorrente x13_evento_sem_on_conflict)" "22023" "23505"
   fi
 
