@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, act } from '@testing-library/react';
 import {
   avaliarComparabilidade,
   decomporCrescimento,
@@ -80,6 +80,21 @@ describe('CrescimentoComparavelCard', () => {
     render(<CrescimentoComparavelCard />);
     expect(screen.getByText(/jul–set\/26 vs abr–jun\/26/)).toBeTruthy();
     expect(screen.getByText('Base comparável')).toBeTruthy();
+    expect(screen.getByText(/Ano anterior indisponível por diferença de cobertura/)).toBeTruthy();
+  });
+
+  it('[CC-ESCOLHA] escolha manual dos 3 meses não mostra o aviso de fallback', () => {
+    comDados(ok, ok);
+    render(<CrescimentoComparavelCard />);
+    fireEvent.click(screen.getByText('3 meses antes'));
+    expect(screen.queryByText(/Ano anterior indisponível/)).toBeNull();
+  });
+
+  it('[CC-INCOMP-NULL] sem DRE numa ponta e zero na outra: o motivo é dito sem "—%"', () => {
+    comDados([{ account: 'colacor', atual: 0, base: null }], ok);
+    render(<CrescimentoComparavelCard />);
+    fireEvent.click(screen.getByText('ano anterior'));
+    expect(screen.getByText(/uma receita contábil sem registro em jul–set\/25 e 0% da receita contábil em jul–set\/26/)).toBeTruthy();
   });
 
   it('[CC-INCOMP] cobertura incompatível suprime os percentuais e diz por quê', () => {
@@ -106,6 +121,46 @@ describe('CrescimentoComparavelCard', () => {
     expect(screen.getByText(/cadastros não unificados entre empresas/)).toBeTruthy();
   });
 
+  it('[CC-SENSOR-ERRO] dado em cache com a UI mostrando erro: o sensor NÃO dispara', () => {
+    comDados(ok, ok);
+    estado = { ...estado, isError: true };
+    render(<CrescimentoComparavelCard />);
+    expect(screen.getByText(/leitura dos pedidos falhou/)).toBeTruthy();
+    expect(track).not.toHaveBeenCalled();
+  });
+
+  it('[CC-SENSOR-50] callback do observer abaixo de 50% visível não conta como visto', () => {
+    const callbacks: ((e: { isIntersecting: boolean; intersectionRatio: number }[]) => void)[] = [];
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        constructor(cb: (e: { isIntersecting: boolean; intersectionRatio: number }[]) => void) {
+          callbacks.push(cb);
+        }
+        observe() {}
+        disconnect() {}
+      },
+    );
+    try {
+      comDados(ok, ok);
+      render(<CrescimentoComparavelCard />);
+      act(() => callbacks.at(-1)!([{ isIntersecting: true, intersectionRatio: 0.1 }]));
+      expect(track).not.toHaveBeenCalled();
+      act(() => callbacks.at(-1)!([{ isIntersecting: true, intersectionRatio: 0.6 }]));
+      expect(track).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('[CC-SC] Colacor SC (serviços, sem pedido) explica em vez de mostrar ponte vazia', () => {
+    selection = 'colacor_sc';
+    estado = { isLoading: false, isError: false };
+    render(<CrescimentoComparavelCard />);
+    expect(screen.getByText(/sem pedido de produto/)).toBeTruthy();
+    expect(track).not.toHaveBeenCalled();
+  });
+
   it('[CC-SENSOR] dispara 1x por comparação, com o estado; voltar à mesma não repete', () => {
     comDados([{ account: 'colacor', atual: 0.91, base: 0.49 }], ok);
     const { rerender } = render(<CrescimentoComparavelCard />);
@@ -114,6 +169,7 @@ describe('CrescimentoComparavelCard', () => {
       selection: 'oben',
       comparacao: 'meses_anteriores',
       estado: 'comparavel',
+      origem: 'padrao',
     });
     fireEvent.click(screen.getByText('ano anterior'));
     expect(track).toHaveBeenCalledTimes(2);
@@ -121,6 +177,7 @@ describe('CrescimentoComparavelCard', () => {
       selection: 'oben',
       comparacao: 'ano_anterior',
       estado: 'incomparavel',
+      origem: 'manual',
     });
     fireEvent.click(screen.getByText('3 meses antes'));
     rerender(<CrescimentoComparavelCard />);

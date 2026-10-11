@@ -5,6 +5,7 @@ import {
   avaliarComparabilidade,
   coberturasPorEmpresa,
   decomporCrescimento,
+  empresasDoEscopo,
   janelasTrimestreFechado,
   porEmpresaCliente,
   type Comparabilidade,
@@ -41,6 +42,8 @@ export function useCrescimentoComparavel() {
   const janelas = janelasTrimestreFechado(hojeSP());
   return useQuery({
     queryKey: ['crescimento-comparavel', selection, janelas.atual.de, janelas.atual.ate],
+    // Colacor SC não tem pedido de produto: o card explica em vez de buscar.
+    enabled: empresasDoEscopo(selection).length > 0,
     // Meses fechados: o número muda pouco ao longo do dia.
     staleTime: 30 * 60_000,
     gcTime: 60 * 60_000,
@@ -56,7 +59,7 @@ export function useCrescimentoComparavel() {
       ]);
       const atualCliente = porEmpresaCliente(pAtual);
       const comparar = (base: Janela, pBase: typeof pAtual, dBase: Map<string, number> | null): Comparacao => {
-        const coberturas = coberturasPorEmpresa(pAtual, pBase, dAtual, dBase);
+        const coberturas = coberturasPorEmpresa(empresasDoEscopo(selection), pAtual, pBase, dAtual, dBase);
         return {
           base,
           decomposicao: decomporCrescimento(atualCliente, porEmpresaCliente(pBase)),

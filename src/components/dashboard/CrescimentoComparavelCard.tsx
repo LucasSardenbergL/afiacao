@@ -14,7 +14,7 @@ import { COMPANIES, useCompany, type Company } from '@/contexts/CompanyContext';
 import { formatBRL, formatarFracaoPct } from '@/components/customer360/format';
 import { track } from '@/lib/analytics';
 import { cn } from '@/lib/utils';
-import { rotuloJanela, type CoberturaEmpresa } from '@/lib/dashboard/crescimento-comparavel';
+import { empresasDoEscopo, rotuloJanela, type CoberturaEmpresa } from '@/lib/dashboard/crescimento-comparavel';
 import { useCrescimentoComparavel, type TipoComparacao } from '@/hooks/dashboard/useCrescimentoComparavel';
 
 const nomeEmpresa = (account: string) => COMPANIES[account as Company]?.shortName ?? account;
@@ -40,6 +40,11 @@ function LinhaPonte({ rotulo, valor, sinal, forte }: { rotulo: string; valor: nu
   );
 }
 
+/** "49% da receita contábil", ou o motivo quando não há DRE naquela janela. */
+function coberturaTexto(v: number | null): string {
+  return v == null ? 'uma receita contábil sem registro' : `${formatarFracaoPct(v)} da receita contábil`;
+}
+
 function rotuloCobertura(c: CoberturaEmpresa, atual: string, base: string): string {
   return `${nomeEmpresa(c.account)}: ${formatarFracaoPct(c.atual)} em ${atual} · ${formatarFracaoPct(c.base)} em ${base}`;
 }
@@ -55,30 +60,57 @@ export function CrescimentoComparavelCard() {
     (data?.comparacoes.ano_anterior.comparabilidade.estado === 'incomparavel' ? 'meses_anteriores' : 'ano_anterior');
   const escopo = selection === 'all' ? 'todas as empresas' : companyInfo.shortName;
 
-  // Sensor de uso: 1x por (empresa, comparação), só com dado carregado E o card na tela.
+  const fallback = escolhido == null && tipo === 'meses_anteriores';
+
+  // Sensor de uso: 1x por (empresa, comparação), só com dado na tela (≥50% visível DE FATO — o
+  // callback do observer também dispara abaixo do threshold) e nunca durante loading/erro. A
+  // visibilidade é reavaliada a cada troca de empresa: trocar com o card fora da tela não conta.
   const ref = useRef<HTMLDivElement>(null);
   const [visivel, setVisivel] = useState(false);
   const enviados = useRef(new Set<string>());
+  const renderizouDados = !isLoading && !isError && data != null;
   useEffect(() => {
     const el = ref.current;
-    if (!el || visivel) return;
+    if (!el || !renderizouDados) {
+      setVisivel(false);
+      return;
+    }
     if (typeof IntersectionObserver === 'undefined') {
       setVisivel(true);
       return;
     }
-    const obs = new IntersectionObserver(([e]) => e.isIntersecting && setVisivel(true), { threshold: 0.5 });
+    const obs = new IntersectionObserver(
+      ([e]) => setVisivel(e.isIntersecting && e.intersectionRatio >= 0.5),
+      { threshold: [0, 0.5] },
+    );
     obs.observe(el);
     return () => obs.disconnect();
-  }, [visivel, data]);
+  }, [renderizouDados, selection]);
   const estado = data?.comparacoes[tipo].comparabilidade.estado;
   useEffect(() => {
-    if (!visivel || !estado) return;
+    if (!visivel || !renderizouDados || !estado) return;
     const chave = `${selection}|${tipo}`;
     if (enviados.current.has(chave)) return;
     enviados.current.add(chave);
-    track('dashboard.crescimento_comparavel_visto', { selection, comparacao: tipo, estado });
-  }, [visivel, estado, selection, tipo]);
+    track('dashboard.crescimento_comparavel_visto', {
+      selection,
+      comparacao: tipo,
+      estado,
+      origem: escolhido == null ? 'padrao' : 'manual',
+    });
+  }, [visivel, renderizouDados, estado, selection, tipo, escolhido]);
 
+  if (empresasDoEscopo(selection).length === 0) {
+    return (
+      <Card className="p-4 text-xs text-muted-foreground">
+        <div className="flex items-center gap-2">
+          <Scale className="w-4 h-4" />
+          Crescimento na base comparável
+        </div>
+        <p className="mt-2">{escopo} fatura serviços (NFS-e), sem pedido de produto: não há base de clientes por pedido para comparar.</p>
+      </Card>
+    );
+  }
   if (isLoading) {
     return (
       <Card className="p-6 flex justify-center">
@@ -136,14 +168,20 @@ export function CrescimentoComparavelCard() {
         <div className="px-4 pb-4 text-xs text-muted-foreground leading-relaxed">
           <p className="font-medium text-status-warning">Comparação indisponível.</p>
           <p className="mt-1">
-            Na {nomeEmpresa(comp.account)}, os pedidos do app cobriam {formatarFracaoPct(comp.base)} da receita
-            contábil em {rBase} e {formatarFracaoPct(comp.atual)} em {rAtual}. A variação mediria o sync de
-            pedidos, não o negócio.
+            Na {nomeEmpresa(comp.account)}, os pedidos do app cobriam {coberturaTexto(comp.base)} em {rBase} e{' '}
+            {coberturaTexto(comp.atual)} em {rAtual}. A variação pode refletir essa diferença de cobertura do
+            sync, não o negócio.
             {tipo === 'ano_anterior' ? ' Veja a comparação com os 3 meses antes.' : ''}
           </p>
         </div>
       ) : (
         <div className="px-4 pb-3 space-y-3">
+          {fallback && (
+            <p className="text-2xs text-status-warning">
+              Ano anterior indisponível por diferença de cobertura. Exibindo os 3 meses anteriores, sujeitos à
+              sazonalidade.
+            </p>
+          )}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <div className="text-2xs text-muted-foreground">Total</div>
@@ -192,7 +230,7 @@ export function CrescimentoComparavelCard() {
               </p>
             )}
             {c.coberturas.length > 0 && comp.estado === 'comparavel' && (
-              <p title="Receita de pedidos ÷ receita por competência (DRE). Parecidas nas duas janelas = comparação justa.">
+              <p title="Receita de pedidos ÷ receita por competência (DRE). Cobertura agregada semelhante nas duas janelas é indicador de consistência, não prova de que a comparação é justa.">
                 Cobertura dos pedidos: {c.coberturas.map((x) => rotuloCobertura(x, rAtual, rBase)).join(' · ')}
               </p>
             )}
