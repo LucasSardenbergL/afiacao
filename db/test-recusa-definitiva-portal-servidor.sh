@@ -291,37 +291,62 @@ P -q -c "REVOKE EXECUTE ON FUNCTION public.reposicao_encerrar_recusas_definitiva
 
 # ── F: FALSIFICAÇÃO — uma condição por vez, controle verde na MESMA invocação ─
 echo "-- grupo F: falsificação --"
-# formato: "<expressão sed s#…#…#>|<id que passa a ser encerrado indevidamente>". Cada uma desliga
-# UMA condição; a substituição tem de acontecer exatamente 1 vez (conferido), senão a sabotagem é teatro.
-SABOTAGENS=(
-  "__CONTROLE__|"
-  "s#AND portal_resposta -> 'evidence' -> 'efetivarAttempted' = 'false'::jsonb##|203"
-  "s#AND disparo_claim_em IS NULL##|207"
-  "s#AND NULLIF(btrim(portal_protocolo), '') IS NULL##|205"
-  "s#AND NULLIF(btrim(omie_pedido_compra_id), '') IS NULL##|206"
-  "s#AND NULLIF(btrim(omie_pedido_compra_numero), '') IS NULL##|210"
-  "s#AND portal_recusa_definitiva_em < now() - make_interval(days => p_dias)##|202"
-  "s#WHERE status = 'aprovado_aguardando_disparo'#WHERE status IN ('aprovado_aguardando_disparo','falha_envio')#|208"
-)
-for s in "${SABOTAGENS[@]}"; do
-  expr="${s%%|*}"; vitima="${s##*|}"
-  COPIA="$RODADA/sab.sql"
-  # Só o CREATE da função de encerramento (sem cron/postcondição: a sabotagem não é da migration).
-  # shellcheck disable=SC2016  # `$function$` é a TAG de dollar-quote do SQL: tem de ficar literal.
-  sed -n '/^CREATE OR REPLACE FUNCTION public.reposicao_encerrar_recusas_definitivas/,/^\$function\$;/p' "$MIG" > "$COPIA"
-  [ -s "$COPIA" ] || { echo "INFRA: não extraí a função do .sql"; exit 1; }
-  if [ "$expr" = "__CONTROLE__" ]; then
-    P -q -f "$COPIA"; semear
-    eq "F0 controle (função intacta extraída): só [201, 211, 213]" "$(Pq -c "SELECT public.reposicao_encerrar_recusas_definitivas(3)->>'ids';")" "[201, 211, 213]"
-    continue
-  fi
+# Idioma do núcleo (scripts/falsificar-exige-assert-gate.ts, R1/R2): cada sabotagem DECLARA o assert
+# que TEM de acusá-la — `E2_<id>`, "o pedido <id> fica intocado" — e o veredito exige esse assert
+# VERDE no controle e VERMELHO na rodada sabotada. "Algum vermelho" não conta.
+SABOTAGENS="efetivar:E2_203 claim:E2_207 protocolo:E2_205 omie_id:E2_206 omie_num:E2_210 prazo:E2_202 status:E2_208"
+registradas=""
+registra() {
+  case " $registradas " in *" $1 "*) echo "registra: nome REPETIDO ($1)" >&2; exit 2 ;; esac
+  registradas="$registradas $1"; printf -v "expr_$1" '%s' "$2"
+}
+registra efetivar  "s#AND portal_resposta -> 'evidence' -> 'efetivarAttempted' = 'false'::jsonb##"
+registra claim     "s#AND disparo_claim_em IS NULL##"
+registra protocolo "s#AND NULLIF(btrim(portal_protocolo), '') IS NULL##"
+registra omie_id   "s#AND NULLIF(btrim(omie_pedido_compra_id), '') IS NULL##"
+registra omie_num  "s#AND NULLIF(btrim(omie_pedido_compra_numero), '') IS NULL##"
+registra prazo     "s#AND portal_recusa_definitiva_em < now() - make_interval(days => p_dias)##"
+registra status    "s#WHERE status = 'aprovado_aguardando_disparo'#WHERE status IN ('aprovado_aguardando_disparo','falha_envio')#"
+
+# Os asserts E2_<id> da rodada: roda o encerramento e diz, por pedido que NÃO pode ser encerrado,
+# se ele ficou intocado (ok) ou foi encerrado (FALHA).
+intocados() {
+  local ids id
+  ids=$(Pq -c "SELECT public.reposicao_encerrar_recusas_definitivas(3)->>'ids';")
+  for id in 202 203 204 205 206 207 208 209 210 212 215; do
+    if echo "$ids" | grep -qE "(\[|, )$id(,|\])"; then echo "  FALHA E2_$id"; else echo "  ok E2_$id"; fi
+  done
+}
+
+COPIA="$RODADA/sab.sql"
+# Só o CREATE da função de encerramento (sem cron/postcondição: a sabotagem não é da migration).
+# shellcheck disable=SC2016  # `$function$` é a TAG de dollar-quote do SQL: tem de ficar literal.
+sed -n '/^CREATE OR REPLACE FUNCTION public.reposicao_encerrar_recusas_definitivas/,/^\$function\$;/p' "$MIG" > "$COPIA"
+[ -s "$COPIA" ] || { echo "INFRA: não extraí a função do .sql"; exit 1; }
+
+# CONTROLE na MESMA invocação: a função intacta extraída deixa TODOS os E2 verdes.
+ctl="$RODADA/controle.log"
+P -q -f "$COPIA"; semear; intocados > "$ctl"
+if grep -q "FALHA" "$ctl"; then bad "F0 controle: a função intacta extraída já encerra indevidamente ($(grep FALHA "$ctl" | tr '\n' ' '))"
+else ok "F0 controle: função intacta extraída, todos os E2 verdes"; fi
+
+for item in $SABOTAGENS; do
+  sab="${item%%:*}"; exigidos="${item#*:}"
+  v="expr_$sab"; expr="${!v-}"
+  if [ -z "$expr" ]; then bad "F $sab: na lista SABOTAGENS e SEM registro — nada foi sabotado"; continue; fi
   sed "$expr" "$COPIA" > "$COPIA.n"
   mudou=$(diff "$COPIA" "$COPIA.n" | grep -c '^<' || true)
-  [ "$mudou" = "1" ] || { bad "F sabotagem não alterou exatamente 1 linha ($mudou): $expr"; continue; }
-  P -q -f "$COPIA.n"; semear
-  ids=$(Pq -c "SELECT public.reposicao_encerrar_recusas_definitivas(3)->>'ids';")
-  if echo "$ids" | grep -qE "(\[|, )$vitima(,|\])"; then ok "F [$expr] → #$vitima encerrado indevidamente (a condição protege) ids=$ids"
-  else bad "F [$expr] → #$vitima NÃO foi encerrado: condição redundante ou caso inalcançado (ids=$ids)"; fi
+  [ "$mudou" = "1" ] || { bad "F $sab: sabotagem não alterou exatamente 1 linha ($mudou) — vazia ou ampla"; continue; }
+  log="$RODADA/sab-$sab.log"
+  P -q -f "$COPIA.n"; semear; intocados > "$log"
+  faltam=""
+  for exigido in ${exigidos//,/ }; do
+    if ! grep -Eq "^  ok ($exigido)$" "$ctl" || ! grep -Eq "^  FALHA ($exigido)$" "$log"; then
+      faltam="$faltam $exigido"
+    fi
+  done
+  if [ -z "$faltam" ]; then ok "F $sab → $exigidos vermelho (verde no controle): a condição protege"
+  else bad "F $sab: não acusou$faltam — condição redundante ou caso inalcançado"; fi
 done
 # Restaura a função verdadeira (o laço deixa a última sabotagem instalada).
 P -q -f "$MIG"
