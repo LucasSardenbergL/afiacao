@@ -2561,8 +2561,10 @@ func TestRunCycle_autoUpdatePersistsDespitePGFailure(t *testing.T) {
 	if st.LastUpdateAttempt == "" {
 		t.Error("LastUpdateAttempt deveria ter sido persistido apesar do early-return do RunCycle")
 	}
-	if st.UpdateFailCount != 1 {
-		t.Errorf("UpdateFailCount esperado 1 (manifesto 404), got %d", st.UpdateFailCount)
+	// Manifesto 404 NÃO conta para o crash-loop guard (decisão 2026-10-11, update.go
+	// errManifestIndisponivel): o contador fica em 0; o que esta prova exige é a persistência.
+	if st.UpdateFailCount != 0 {
+		t.Errorf("UpdateFailCount esperado 0 (manifesto 404 nao conta no guard), got %d", st.UpdateFailCount)
 	}
 }
 
