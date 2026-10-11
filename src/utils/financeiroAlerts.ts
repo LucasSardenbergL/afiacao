@@ -10,7 +10,7 @@ export interface FinAlert {
   icon: LucideIcon;
 }
 
-export function generateAlerts(
+function generateAlerts(
   resumo: Record<string, FinResumo>,
   agingReceber?: AgingData | null,
   _agingPagar?: AgingData | null,
