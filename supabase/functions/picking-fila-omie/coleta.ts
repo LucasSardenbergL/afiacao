@@ -35,7 +35,8 @@ const CODIGO = /^[1-9][0-9]{0,17}$/;
 export function codigoOmie(v: unknown): string | null {
   if (typeof v === "number") return Number.isSafeInteger(v) && v > 0 ? String(v) : null;
   const t = texto(v);
-  return t !== null && CODIGO.test(t) ? t : null;
+  // Também o texto fica no inteiro seguro do JS: o lote vai ao banco como número (JSON).
+  return t !== null && CODIGO.test(t) && BigInt(t) <= BigInt(Number.MAX_SAFE_INTEGER) ? t : null;
 }
 
 /**
@@ -64,6 +65,8 @@ export interface PedidoNormalizado {
   cliente_nome: string | null;
   d_alt: string | null;
   h_alt: string | null;
+  /** `infoCadastro.dInc` em ISO — a sync grava em `picking_tarefas.incluido_em` (janela da listagem). */
+  incluido_em: string | null;
   itens: ItemNormalizado[];
 }
 
@@ -98,6 +101,7 @@ export function normalizarPedido(registro: unknown): PedidoNormalizado | null {
     cliente_nome: null,
     d_alt: texto(info?.dAlt),
     h_alt: texto(info?.hAlt),
+    incluido_em: dataOmieParaIso(info?.dInc),
     itens,
   };
 }
@@ -349,5 +353,70 @@ export function conferirFiltro(amostra: unknown[], filtrados: ReadonlySet<string
     perdidos_amostra: perdidos.slice(0, 10),
     amostra_dinc_mais_antigo: maisAntigo,
     amostra_cobre_a_janela: maisAntigo !== null && maisAntigo < corteIso,
+  };
+}
+
+// ─── Escrita (Fase 0.5b) ─────────────────────────────────────────────────────────────────────
+
+/** Tarefa acompanhada como a edge a lê do banco (só o que decide janela e detalhe). */
+export interface Acompanhada {
+  omie_codigo_pedido: string;
+  status: string;
+  fora_da_etapa_em: string | null;
+  incluido_em: string | null;
+  ausente_rodadas: number;
+}
+
+/** Ausente em tantas coletas completas seguidas sai do cálculo da janela (segue BLOQUEADA). */
+export const AUSENCIAS_PARA_SAIR_DA_JANELA = 10;
+
+/**
+ * 1º dia da listagem: o corte de admissão, ou a inclusão da tarefa ABERTA mais antiga — assim a
+ * acompanhada nunca some da listagem por idade (o corte decide só a ADMISSÃO). Aberta = não
+ * interrompida, sem saída confirmada e ausente há menos de N coletas: a que sumiu há muito não
+ * segura a janela no passado (se reaparecer e a listagem não a vir, ela só continua bloqueada —
+ * o erro possível é para o lado seguro). `incluido_em` NULL numa aberta = sem garantia → null
+ * (quem chama aborta a rodada).
+ */
+export function janelaDaListagem(corteIso: string, acompanhadas: Acompanhada[]): string | null {
+  let janela = corteIso;
+  for (const a of acompanhadas) {
+    if (a.status === "interrompida_externa" || a.fora_da_etapa_em !== null) continue;
+    if (a.ausente_rodadas >= AUSENCIAS_PARA_SAIR_DA_JANELA) continue;
+    if (a.incluido_em === null) return null;
+    if (a.incluido_em < janela) janela = a.incluido_em;
+  }
+  return janela;
+}
+
+interface LoteSync {
+  p_presentes: number[];
+  p_total_de_registros: number;
+  p_pedidos: PedidoNormalizado[];
+  p_confirmados_fora: number[];
+  p_listagem_suspeita: boolean;
+  admitidos_pelo_corte: number;
+  acompanhados_presentes: number;
+  fora_do_corte: number;
+}
+
+/**
+ * Argumentos de `picking_sincronizar_fila` a partir da listagem. `null` = listagem sem total
+ * legível (não há como afirmar completude nem mandar o total — a rodada aborta). Os presentes vão
+ * COM a repetição entre páginas; qualquer motivo de incompletude vira `p_listagem_suspeita`
+ * (veta a ausência no banco). Sem ConsultarPedido nesta fase: `p_confirmados_fora` vazio.
+ */
+export function montarLoteSync(listagem: Listagem, corteIso: string, acompanhados: ReadonlySet<string>): LoteSync | null {
+  if (listagem.total_de_registros === null) return null;
+  const lote = montarLote(listagem.registros, corteIso, acompanhados);
+  return {
+    p_presentes: listagem.presentes.map(Number),
+    p_total_de_registros: listagem.total_de_registros,
+    p_pedidos: lote.pedidos,
+    p_confirmados_fora: [],
+    p_listagem_suspeita: !listagem.completa,
+    admitidos_pelo_corte: lote.admitidos_pelo_corte,
+    acompanhados_presentes: lote.acompanhados_presentes,
+    fora_do_corte: lote.fora_do_corte,
   };
 }

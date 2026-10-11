@@ -56,6 +56,17 @@ export function versaoDoNomeDoArquivo(nome: string): string | null {
   return m && semverValido(m[1]) ? m[1] : null;
 }
 
+/**
+ * O `.exe` como `application/octet-stream`, com os MESMOS bytes. O navegador marca o arquivo como
+ * `application/x-msdownload`, e o supabase-js, quando recebe um Blob/File, sobe em multipart com o
+ * tipo do PRÓPRIO arquivo — a opção `contentType` do upload é ignorada nesse caminho. O bucket só
+ * aceita octet-stream/json, então o upload falhava com "mime type application/x-msdownload is not
+ * supported" (1ª publicação real, 2026-10-11).
+ */
+export function comoOctetStream(arquivo: Blob): Blob {
+  return arquivo.slice(0, arquivo.size, "application/octet-stream");
+}
+
 export function montarManifest(versao: string, sha256: string): ManifestSayersync {
   if (!semverValido(versao)) throw new Error(`versão inválida: '${versao}'`);
   if (!SHA256_RE.test(sha256)) throw new Error("sha256 inválido (esperado hex minúsculo de 64 chars)");

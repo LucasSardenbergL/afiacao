@@ -11,6 +11,7 @@ import { UltimaExecucao } from "@/components/execucoes/UltimaExecucao";
 import { supabase } from "@/integrations/supabase/client";
 import { track } from "@/lib/analytics";
 import {
+  comoOctetStream,
   BUCKET_RELEASES,
   CAMINHO_MANIFEST,
   URL_MANIFEST,
@@ -38,7 +39,7 @@ const deps: DepsPublicacao = {
   lerManifest: () => lerManifestPublicado(),
   enviarExe: async (caminho, arquivo) => {
     // upsert=false: binário publicado é imutável (e o bucket não tem policy de DELETE).
-    const { error } = await supabase.storage.from(BUCKET_RELEASES).upload(caminho, arquivo, {
+    const { error } = await supabase.storage.from(BUCKET_RELEASES).upload(caminho, comoOctetStream(arquivo), {
       contentType: "application/octet-stream",
       cacheControl: "31536000",
       upsert: false,

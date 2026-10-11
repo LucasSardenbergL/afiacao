@@ -1,0 +1,119 @@
+name: Lovable publish
+
+# Publish do frontend pela API do Lovable a cada push na main — a camada 2 de "merge ≠ produção"
+# (docs/agent/deploy.md). O GATE de ordem (DDL → edges → Publish) e a prova pelo ar vivem em
+# scripts/lovable-publish.sh (+ test-lovable-publish.sh); aqui só a fiação e as Issues.
+#
+# Desfechos:
+#   RETIDO (10)   → job VERDE + Issue `lovable-publish-retido`: o intervalo publicado..main tem
+#                   migration/edge. Aplique as camadas e rode à mão (Run workflow) com
+#                   `liberar_sha` = o SHA da main atual — vale só para ESSE SHA.
+#   AMBIGUO (20)  → job vermelho + Issue `lovable-publish-ambiguo`, que TRAVA os runs seguintes até
+#                   ser FECHADA por quem conferiu o que o ar serve (pode ter publicado e não sei).
+#   21/22/6       → job vermelho + Issue `lovable-publish-falhou`.
+#   publicado     → fecha a Issue de RETIDO aberta, se houver.
+# Sem o secret LOVABLE_API_KEY o workflow só avisa e sai verde (a API exige plano Business).
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      liberar_sha:
+        description: "SHA COMPLETO da main cujas migrations/edges você JÁ aplicou (libera só esse SHA)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: lovable-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Secret presente?
+        id: chave
+        env:
+          LOVABLE_API_KEY: ${{ secrets.LOVABLE_API_KEY }}
+        run: |
+          if [ -z "$LOVABLE_API_KEY" ]; then
+            echo "::notice::LOVABLE_API_KEY não configurado — Publish automático desligado."
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v5
+        if: steps.chave.outputs.ok == 'true'
+        with:
+          fetch-depth: 0 # o intervalo publicado..main pode ser longo; merge-base precisa da história
+
+      - name: Trava de resultado ambíguo
+        if: steps.chave.outputs.ok == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          aberta="$(gh issue list --state open --label lovable-publish-ambiguo --json number --jq '.[0].number // empty')"
+          if [ -n "$aberta" ]; then
+            echo "::error::Publish travado: a Issue #$aberta (resultado ambíguo) segue aberta. Confira o ar e feche-a."
+            exit 1
+          fi
+
+      - name: Publish
+        id: pub
+        if: steps.chave.outputs.ok == 'true'
+        env:
+          LOVABLE_API_KEY: ${{ secrets.LOVABLE_API_KEY }}
+          LP_LIBERAR_SHA: ${{ inputs.liberar_sha }}
+        run: |
+          set +e
+          bash scripts/lovable-publish.sh "$GITHUB_SHA" > saida.txt 2>&1
+          rc=$?
+          cat saida.txt
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          echo "veredito=$(tail -1 saida.txt | sed -n 's/^VEREDITO=//p')" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Issue / desfecho
+        if: steps.chave.outputs.ok == 'true' && steps.pub.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RC: ${{ steps.pub.outputs.rc }}
+          VEREDITO: ${{ steps.pub.outputs.veredito }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          # abre ou comenta (dedupe por label, como o lovable-watch)
+          registra() {
+            local label="$1" titulo="$2" corpo
+            corpo="$(printf '**%s** em `%s` — [run](%s)\n\n```\n%s\n```\n' "$VEREDITO" "${GITHUB_SHA:0:8}" "$RUN_URL" "$(tail -c 6000 saida.txt)")"
+            gh label create "$label" --color B60205 --force >/dev/null
+            n="$(gh issue list --state open --label "$label" --json number --jq '.[0].number // empty')"
+            if [ -n "$n" ]; then gh issue comment "$n" --body "$corpo"
+            else gh issue create --title "$titulo" --label "$label" --body "$corpo"; fi
+          }
+          case "$RC" in
+            0)
+              echo "::notice::$VEREDITO"
+              if [ "$VEREDITO" = PUBLICADO ] || [ "$VEREDITO" = PUBLICADO_ADIANTE ] || [ "$VEREDITO" = JA_NO_AR ]; then
+                for n in $(gh issue list --state open --label lovable-publish-retido --json number --jq '.[].number'); do
+                  gh issue close "$n" --comment "Resolvido: $VEREDITO em \`${GITHUB_SHA:0:8}\` — [run]($RUN_URL)"
+                done
+              fi ;;
+            10)
+              registra lovable-publish-retido "Publish retido: migration/edge pendente antes do front"
+              echo "::warning::RETIDO — aplique as camadas e rode com liberar_sha=$GITHUB_SHA" ;;
+            20)
+              registra lovable-publish-ambiguo "Publish AMBÍGUO — confira o ar e feche esta Issue para destravar"
+              exit 1 ;;
+            *)
+              registra lovable-publish-falhou "Publish falhou: $VEREDITO"
+              exit 1 ;;
+          esac
