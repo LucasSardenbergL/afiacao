@@ -74,6 +74,15 @@ function StatusBadge({ status }: { status: string | null }) {
 }
 
 /* ─── KPIs ─── */
+/**
+ * Conta do ESTOQUE da empresa escolhida no seletor. A posição de inventário usa os nomes de conta
+ * do Omie (`vendas`, `colacor_vendas`), não `OBEN`/`COLACOR` — comparar com o valor do seletor
+ * zerava a aba Estoque e o KPI de zerados nas duas empresas. `syncInventory` é o dono dessas duas
+ * contas (src/lib/gates/estoque-escritores-registro.ts); `oben`/`colacor` são espelhos com o MESMO
+ * saldo (medido 2026-10-11: 864/864 iguais) — somar duplicaria cada produto.
+ */
+const CONTA_ESTOQUE: Record<string, string> = { OBEN: "vendas", COLACOR: "colacor_vendas" };
+
 function KpiCards({ account }: { account: string }) {
   // Os quatro cards ENGOLIAM o erro (`const { count } = await supabase…; return count ?? 0`). A
   // leitura que falha deixa `data === undefined`, o `?? 0` do render a converte em "0", e o
@@ -119,7 +128,7 @@ function KpiCards({ account }: { account: string }) {
         // fabricando "nenhum SKU crítico" (o anti-padrão count-exact-vira-0-silencioso).
         .from("inventory_position_operacional" as never)
         .select("*", { count: "exact", head: true })
-        .eq("account", account)
+        .eq("account", CONTA_ESTOQUE[account] ?? account.toLowerCase())
         .lte("saldo", 0);
       // O comentário acima já NOMEAVA este anti-padrão e a query mesmo assim não lançava: sem o
       // `throw`, a negativa de permissão que ele descreve virava o "0" que ele condena.
@@ -569,7 +578,7 @@ function EstoqueTab({ account }: { account: string }) {
         // useNegociacaoParalela.ts); regenerar após o apply da migration em prod.
         .from("inventory_position_operacional" as never)
         .select("omie_codigo_produto, saldo, synced_at" as never)
-        .eq("account", account)
+        .eq("account", CONTA_ESTOQUE[account] ?? account.toLowerCase())
         .order("saldo", { ascending: true })
         .limit(500);
       if (error) throw error;
