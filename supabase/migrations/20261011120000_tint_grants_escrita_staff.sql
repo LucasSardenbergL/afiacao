@@ -31,8 +31,10 @@
 --   tint_corantes → idem, mais UPDATE só na coluna omie_product_id (a que o TintMapping grava). Fecha
 --     o lado volume do P1-a.
 --   tint_skus → perde só TRUNCATE e TRIGGER (as escritas do app ficam).
---   Registradas em scripts/authz-tabelas-fechadas.ts (gate estático do CI + audit de prod): uma
---   migration futura que reabra o grant é barrada no PR.
+--   O registro em scripts/authz-tabelas-fechadas.ts (gate estático do CI + audit de prod, que barra
+--   migration futura que reabra o grant) entra no PR SEGUINTE, depois do apply: registrar antes deixa
+--   o CI vermelho sem remédio, porque o carimbo exige re-medir prod já fechada (lição do #2199,
+--   registrada no próprio arquivo).
 --
 -- O que NÃO fecha (residual registrado no PR — decisão de produto, não de grant):
 --   * remapear o corante (tint_corantes.omie_product_id) ou a base (tint_skus.omie_product_id) para
@@ -75,6 +77,9 @@ DECLARE
                           'public.tint_subcolecoes', 'public.tint_corantes'];
   v_privs text[] := ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE',
                           'REFERENCES', 'TRIGGER', 'MAINTAIN'];
+  v_oid   oid;
+  v_rel   text;
+  v_col   name;
   v_ruim  text[] := '{}';
 BEGIN
   FOREACH v_tab IN ARRAY v_tabs LOOP
@@ -89,6 +94,28 @@ BEGIN
     IF NOT has_table_privilege('authenticated', v_tab, 'SELECT') THEN
       v_ruim := v_ruim || format('authenticated PERDEU SELECT em %s', v_tab);
     END IF;
+  END LOOP;
+
+  -- Exclusividade por COLUNA (Codex P2-1): REVOKE de tabela não alcança grant de coluna dado por
+  -- outro caminho (grupo, outro concedente). Varre TODA coluna das 4: authenticated só pode SELECT,
+  -- mais UPDATE em tint_corantes.omie_product_id; anon nada.
+  FOR v_oid, v_rel, v_col IN
+    SELECT c.oid, c.relname::text, a.attname
+      FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+     WHERE c.oid = ANY (ARRAY['public.tint_formulas', 'public.tint_formula_itens',
+                              'public.tint_subcolecoes', 'public.tint_corantes']::regclass[])
+       AND a.attnum > 0 AND NOT a.attisdropped
+  LOOP
+    FOREACH v_priv IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE', 'REFERENCES'] LOOP
+      IF has_column_privilege('anon', v_oid, v_col, v_priv) THEN
+        v_ruim := v_ruim || format('anon tem %s na coluna %s.%s', v_priv, v_rel, v_col);
+      END IF;
+      IF v_priv <> 'SELECT'
+         AND NOT (v_priv = 'UPDATE' AND v_rel = 'tint_corantes' AND v_col = 'omie_product_id')
+         AND has_column_privilege('authenticated', v_oid, v_col, v_priv) THEN
+        v_ruim := v_ruim || format('authenticated tem %s na coluna %s.%s', v_priv, v_rel, v_col);
+      END IF;
+    END LOOP;
   END LOOP;
 
   -- a coluna do volume entra no custo do corante (v_calc): GRANT de coluna não pode tê-la

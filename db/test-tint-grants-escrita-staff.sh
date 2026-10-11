@@ -18,17 +18,19 @@
 #   M3    P1-a, lado corante: tint_corantes.volume_total_ml 810→8100 → manual 101 em K1
 #   D1    DELETE da fórmula SL de K31
 #   TR    TRUNCATE de tint_formula_itens (TRUNCATE não passa por RLS: apagaria TODA receita)
-#   L1    legítimo — TintMapping:411 grava tint_corantes.omie_product_id (TEM de seguir passando)
-#   L2    legítimo — TintPricing grava tint_skus.margem_pct (TEM de seguir passando)
+#   L1    legítimo — TintMapping:411 REMAPEIA o corante para outro produto Omie (TEM de seguir passando)
+#   L2    legítimo — TintPricing MUDA tint_skus.margem_pct (TEM de seguir passando)
 #   S1    leitura de staff segue (K31 tem 2 linhas visíveis)
 #   GK31/GK1  controle sem DML: os manuais 80 e 101 são BARRADOS sem ataque (prova que o gate morde)
 #
 # Cenários (todos na MESMA invocação — o controle verde vem antes de qualquer sabotagem):
 #   B0  baseline SEM a migration: M1/M1API/M2/M3 = PASSOU/aceito (o furo reproduzido), D1/TR passam
 #   T0  migration REAL: aplica com o marcador; M*/D1/TR = NEGADO, L1/L2 passam, gate barra
-#   T1-T5  CAMADA 1 (o detector): migration sabotada por sed tem de ABORTAR na pós-condição —
+#   T1-T6  CAMADA 1 (o detector): migration sabotada por sed tem de ABORTAR na pós-condição —
 #          T1 esquece tint_formulas · T2 tira o GRANT da coluna do TintMapping · T3 revoga UPDATE
-#          de tint_skus (quebraria o TintPricing) · T4 esquece anon · T5 tira o SELECT (balcão vazio)
+#          de tint_skus (quebraria o TintPricing) · T4 esquece anon · T5 tira o SELECT (balcão vazio) ·
+#          T6 grant de COLUNA escondido (o mutante do Codex). Rodam em --single-transaction e exigem
+#          que a ACL volte ao estado ABERTO: prova rollback integral, não só "parou"
 #   F1-F5  CAMADA 2 (as sondas): sobre a migration real, devolve UM privilégio e exige que caia
 #          EXATAMENTE a sonda daquele privilégio (contada contra o contrato do T0)
 #
@@ -97,7 +99,8 @@ INSERT INTO public.tint_subcolecoes (id, account, id_subcolecao_sayersystem, des
   ('0d000000-0000-0000-0000-000000000001','oben','1','SAYERLACK');
 INSERT INTO public.omie_products (id, omie_codigo_produto, codigo, descricao, valor_unitario, ativo, account, is_tintometric, tint_type) VALUES
   ('0b000000-0000-0000-0000-00000000ba5e', 900001,'BASE-OK','Base OK',   100, true, 'oben', true, 'base'),
-  ('0c000000-0000-0000-0000-0000000c0c01', 900003,'COR-OK','Corante OK', 200, true, 'oben', true, 'corante');
+  ('0c000000-0000-0000-0000-0000000c0c01', 900003,'COR-OK','Corante OK', 200, true, 'oben', true, 'corante'),
+  ('0c000000-0000-0000-0000-0000000c0c03', 900005,'COR-OK2','Corante OK 2', 250, true, 'oben', true, 'corante');
 INSERT INTO public.tint_corantes (id, account, id_corante_sayersystem, descricao, volume_total_ml, omie_product_id) VALUES
   ('c0000000-0000-0000-0000-000000000001','oben','WPOK','Corante OK', 810, '0c000000-0000-0000-0000-0000000c0c01');
 INSERT INTO public.tint_produtos   (id, account, cod_produto, descricao) VALUES ('a0000000-0000-0000-0000-000000000001','oben','P1','Produto 1');
@@ -202,8 +205,8 @@ roda_sondas() {
   sonda "$db" M3    staff dml   "UPDATE public.tint_corantes SET volume_total_ml = 8100 WHERE id = 'c0000000-0000-0000-0000-000000000001'" "$ITEM_K1"
   sonda "$db" D1    staff dml   "DELETE FROM public.tint_formulas WHERE id = 'f0310000-0000-0000-0000-00000000005a'" -
   sonda "$db" TR    staff trunc "TRUNCATE public.tint_formula_itens" -
-  sonda "$db" L1    staff dml   "UPDATE public.tint_corantes SET omie_product_id = omie_product_id WHERE id = 'c0000000-0000-0000-0000-000000000001'" -
-  sonda "$db" L2    staff dml   "UPDATE public.tint_skus SET margem_pct = margem_pct WHERE id = '50000000-0000-0000-0000-00000000000a'" -
+  sonda "$db" L1    staff dml   "UPDATE public.tint_corantes SET omie_product_id = '0c000000-0000-0000-0000-0000000c0c03' WHERE id = 'c0000000-0000-0000-0000-000000000001'" -
+  sonda "$db" L2    staff dml   "UPDATE public.tint_skus SET margem_pct = 12.5 WHERE id = '50000000-0000-0000-0000-00000000000a'" -
 }
 
 # Contratos (rótulo=veredito). O do T0 é o contrato PROTEGIDO, contra o qual F1-F5 são contados.
@@ -248,42 +251,57 @@ if [ "$FALHAS" -gt 0 ]; then
   echo "✗ controle não está verde — falsificações NÃO rodadas"; echo "RESULTADO: $PASSOU ok / $FALHAS fail"; exit 1
 fi
 
-echo "▶ T1-T5 — CAMADA 1: a pós-condição tem de ABORTAR a migration sabotada"
+echo "▶ T1-T6 — CAMADA 1: a pós-condição tem de ABORTAR a migration sabotada"
 # $1 rótulo · $2 expressão sed · $3 trecho que a pós-condição tem de citar
 detector() {
-  local rot="$1" expr="$2" cita="$3" sab="$TMP/sab-$1.sql" out rc
+  local rot="$1" expr="$2" cita="$3" sab="$TMP/sab-$1.sql" out rc db acl
   sed -E "$expr" "$MIG" > "$sab"
   if cmp -s "$MIG" "$sab"; then bad "$rot: o sed não mudou nada — sabotagem inerte"; return; fi
-  novo_db tpl_base "d_$(echo "$rot" | tr '[:upper:]' '[:lower:]')"
-  out="$(PA -d "d_$(echo "$rot" | tr '[:upper:]' '[:lower:]')" -tA -f "$sab" 2>&1)" && rc=0 || rc=$?
+  db="d_$(echo "$rot" | tr '[:upper:]' '[:lower:]')"
+  novo_db tpl_base "$db"
+  # --single-transaction como o executor real: o aborto tem de desfazer TUDO, não só parar.
+  out="$(PA -d "$db" -tA --single-transaction -f "$sab" 2>&1)" && rc=0 || rc=$?
+  acl="$(PA -d "$db" -tA -c "SELECT has_table_privilege('authenticated','public.tint_formula_itens','INSERT')::text
+                             || '/' || has_table_privilege('anon','public.tint_formulas','SELECT')::text
+                             || '/' || has_table_privilege('authenticated','public.tint_skus','TRUNCATE')::text")"
   if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q 'pós-condição tint_grants_escrita_staff:' \
-     && printf '%s' "$out" | grep -qF "$cita" && ! printf '%s' "$out" | grep -q 'TINT_GRANTS_ESCRITA_STAFF_OK'; then
-    ok "$rot: abortou citando \"$cita\""
-  else bad "$rot: esperava abortar citando \"$cita\" (rc=$rc): $(printf '%s' "$out" | grep -E 'ERROR|ERRO' | head -2)"; fi
+     && printf '%s' "$out" | grep -qF "$cita" && ! printf '%s' "$out" | grep -q 'TINT_GRANTS_ESCRITA_STAFF_OK' \
+     && [ "$acl" = "true/true/true" ]; then
+    ok "$rot: abortou citando \"$cita\" e a ACL voltou ao estado aberto (rollback integral)"
+  else bad "$rot: esperava abortar citando \"$cita\" com rollback integral (rc=$rc, acl=$acl): $(printf '%s' "$out" | grep -E 'ERROR|ERRO' | head -2)"; fi
 }
 detector T1 's/^REVOKE ALL ON TABLE public\.tint_formulas, /REVOKE ALL ON TABLE /' 'em public.tint_formulas'
 detector T2 '/^GRANT UPDATE \(omie_product_id\)/d' 'PERDEU UPDATE de tint_corantes.omie_product_id'
 detector T3 's/^REVOKE TRUNCATE, TRIGGER ON public\.tint_skus FROM/REVOKE TRUNCATE, TRIGGER, UPDATE ON public.tint_skus FROM/' 'PERDEU UPDATE em public.tint_skus'
 detector T4 's/^  FROM PUBLIC, anon, authenticated;/  FROM PUBLIC, authenticated;/' 'anon ainda tem'
 detector T5 '/^GRANT SELECT ON TABLE public\.tint_formulas/,/TO authenticated;/d' 'authenticated PERDEU SELECT'
+detector T6 's/^(GRANT UPDATE \(omie_product_id\) ON public\.tint_corantes TO authenticated;)/\1 GRANT UPDATE (corante_id) ON public.tint_formula_itens TO authenticated;/' 'authenticated tem UPDATE na coluna tint_formula_itens.corante_id'
 
 echo "▶ F1-F5 — CAMADA 2: devolver UM privilégio derruba EXATAMENTE a sonda dele"
 # $1 rótulo · $2 GRANT que reabre · $3 rótulos que têm de divergir do contrato T0 (ordem do roda_sondas)
 falsifica() {
-  local rot="$1" grant="$2" esperado="$3" db s d
+  local rot="$1" grant="$2" sobrescreve="$3" db s d esperado par rotulos=""
+  # contrato esperado = o protegido (T0) com as sondas do privilégio devolvido trocadas pelo valor
+  # VULNERÁVEL exato — um ERRO qualquer diferente de NEGADO não conta como "o ataque passou"
+  esperado=""
+  for par in $ESP_T0; do
+    for sub in $sobrescreve; do [ "${sub%%=*}" = "${par%%=*}" ] && par="$sub"; done
+    esperado="$esperado $par"
+  done
+  for sub in $sobrescreve; do rotulos="$rotulos,${sub%%=*}"; done; rotulos="${rotulos#,}"
   db="f_$(echo "$rot" | tr '[:upper:]' '[:lower:]')"
   novo_db tpl_mig "$db"
   PA -q -d "$db" -c "$grant" >/dev/null
   s="$(roda_sondas "$db")"
   d="$(diverge "$s" "$ESP_T0")"
-  if [ "$d" = "$esperado" ]; then ok "$rot ($grant) → derruba exatamente {$d}"
-  else bad "$rot ($grant): esperava derrubar {$esperado}, derrubou {${d:-nada}}"; printf '%s\n' "$s" | sed 's/^/      /'; fi
+  if [ "$d" = "$rotulos" ] && [ -z "$(diverge "$s" "$esperado")" ]; then ok "$rot ($grant) → derruba exatamente {$d}, com o valor do ataque"
+  else bad "$rot ($grant): esperava {$sobrescreve}; divergiu em {${d:-nada}}"; printf '%s\n' "$s" | sed 's/^/      /'; fi
 }
-falsifica F1 "GRANT INSERT ON public.tint_formulas TO authenticated"                   "M1,M1API"
-falsifica F2 "GRANT UPDATE ON public.tint_formula_itens TO authenticated"              "M2"
-falsifica F3 "GRANT UPDATE (volume_total_ml) ON public.tint_corantes TO authenticated" "M3"
-falsifica F4 "GRANT DELETE ON public.tint_formulas TO authenticated"                   "D1"
-falsifica F5 "GRANT TRUNCATE ON public.tint_formula_itens TO authenticated"            "TR"
+falsifica F1 "GRANT INSERT ON public.tint_formulas TO authenticated"                   "M1=PASSOU/aceito M1API=PASSOU/aceito"
+falsifica F2 "GRANT UPDATE ON public.tint_formula_itens TO authenticated"              "M2=PASSOU/aceito"
+falsifica F3 "GRANT UPDATE (volume_total_ml) ON public.tint_corantes TO authenticated" "M3=PASSOU/aceito"
+falsifica F4 "GRANT DELETE ON public.tint_formulas TO authenticated"                   "D1=PASSOU/-"
+falsifica F5 "GRANT TRUNCATE ON public.tint_formula_itens TO authenticated"            "TR=PASSOU/-"
 
 echo
 echo "RESULTADO: $PASSOU ok / $FALHAS fail"
