@@ -2,8 +2,14 @@
 // leitura em voo por tarefa, para `picking_registrar_leitura`. O `leitura_id` nasce NA CAPTURA
 // e é a idempotência do servidor: reenviar é sempre seguro (mesmo comando → mesmo resultado).
 //
-// Não usa o `offline-queue` (localStorage, genérico): aqui a ordem por tarefa e a lista de UUIDs
-// da atribuição (que `picking_concluir` exige) são o contrato.
+// Contratos (Codex Fase 1):
+//   - durável ou nada: sem IndexedDB a separação NÃO começa (memória perderia leitura no reload);
+//   - a leitura só conta como capturada depois do COMMIT da transação (`oncomplete`);
+//   - `seq` é alocado na MESMA transação readwrite que grava o item (IndexedDB serializa as
+//     transações readwrite do mesmo store → duas capturas nunca pegam o mesmo seq);
+//   - cada item tem DONO (`operador_id`): só a sessão do mesmo usuário envia — outra identidade
+//     transformaria as leituras em `atribuicao_antiga` definitiva;
+//   - rejeição de leitura prevista como aceita fica marcada até o operador ver.
 
 type TipoLeitura = "bipe" | "manual" | "estorno";
 
@@ -26,6 +32,8 @@ type EstadoItem = "pendente" | "aceita" | "rejeitada" | "falhou";
 export interface ItemFila {
   seq: number;
   comando: Comando;
+  /** Usuário REAL que capturou (nunca o da lente). Só ele envia. */
+  operador_id: string;
   estado: EstadoItem;
   tentativas: number;
   /** Resposta do servidor (aceita/rejeitada) ou mensagem do erro permanente (falhou). */
@@ -34,12 +42,16 @@ export interface ItemFila {
   unidades: number | null;
   /** Previsão local no momento da captura (validacao-local) — conta no progresso até o servidor responder. */
   previsto: { linha_id: string; unidades: number } | null;
+  /** Servidor discordou da previsão (ou falhou) e o operador ainda não viu. */
+  divergente_nao_visto: boolean;
 }
 
-/** Armazenamento da fila — IndexedDB no app, memória no teste. */
+/** Armazenamento da fila — IndexedDB no app, memória no teste. Toda escrita resolve no COMMIT. */
 export interface ArmazemFila {
   todos(): Promise<ItemFila[]>;
   gravar(item: ItemFila): Promise<void>;
+  /** Aloca o próximo `seq` e grava, atomicamente. Rejeita UUID repetido. */
+  enfileirar(novo: Omit<ItemFila, "seq">): Promise<ItemFila>;
 }
 
 /** Resposta de `picking_registrar_leitura` (jsonb). */
@@ -57,23 +69,35 @@ export type ResultadoEnvio =
   | { tipo: "transitorio"; erro: string }
   | { tipo: "permanente"; erro: string };
 
+/** Motivos que significam "esta atribuição não vale mais": a captura tem de parar. */
+export const MOTIVOS_PERDA_DE_AUTORIZACAO: ReadonlySet<string> = new Set([
+  "atribuicao_antiga",
+  "revisao_antiga",
+  "tarefa_fora_de_separacao",
+  "ausente_do_omie",
+]);
+
 /**
- * Próximos a enviar: o 1º `pendente` de cada tarefa, em ordem de `seq`. Um estorno cujo
- * original da MESMA tarefa ainda está pendente espera — a ordem por tarefa já garante isso.
+ * Próximos a enviar: o 1º `pendente` de cada tarefa, em ordem de `seq`, só do `operador`. Item
+ * pendente de OUTRO operador na frente trava a tarefa (a ordem não pode ser furada).
  */
-export function proximosEnvios(itens: ItemFila[]): ItemFila[] {
-  const porTarefa = new Map<string, ItemFila>();
+export function proximosEnvios(itens: ItemFila[], operador: string): ItemFila[] {
+  const porTarefa = new Map<string, ItemFila | null>();
   for (const it of [...itens].sort((a, b) => a.seq - b.seq)) {
     if (it.estado !== "pendente") continue;
-    if (!porTarefa.has(it.comando.tarefa_id)) porTarefa.set(it.comando.tarefa_id, it);
+    const t = it.comando.tarefa_id;
+    if (porTarefa.has(t)) continue;
+    porTarefa.set(t, it.operador_id === operador ? it : null);
   }
-  return [...porTarefa.values()];
+  return [...porTarefa.values()].filter((i): i is ItemFila => i !== null);
 }
 
 /** Aplica o resultado de um envio ao item; transitório e `pendente` do servidor mantêm o item pendente. */
 export function aplicarResultado(item: ItemFila, r: ResultadoEnvio): ItemFila {
   if (r.tipo === "transitorio") return { ...item, tentativas: item.tentativas + 1, motivo: r.erro };
-  if (r.tipo === "permanente") return { ...item, estado: "falhou", tentativas: item.tentativas + 1, motivo: r.erro };
+  if (r.tipo === "permanente") {
+    return { ...item, estado: "falhou", tentativas: item.tentativas + 1, motivo: r.erro, divergente_nao_visto: true };
+  }
   const res = r.resposta;
   // `original_nao_recebido` (pendente): o servidor NÃO gravou — continua pendente.
   if (res.pendente) return { ...item, tentativas: item.tentativas + 1, motivo: res.motivo };
@@ -84,6 +108,7 @@ export function aplicarResultado(item: ItemFila, r: ResultadoEnvio): ItemFila {
     motivo: res.motivo,
     linha_id: res.linha_id,
     unidades: res.unidades,
+    divergente_nao_visto: (item.previsto !== null) !== res.ok,
   };
 }
 
@@ -93,8 +118,9 @@ export function backoffMs(tentativas: number): number {
 }
 
 /**
- * Todos os UUIDs emitidos pelo aparelho numa atribuição — o que `picking_concluir` exige.
- * Inclui rejeitadas (o servidor as gravou). `falhou` impede concluir: o servidor não tem o UUID.
+ * Todos os UUIDs emitidos numa atribuição — o que `picking_concluir` exige. Inclui rejeitadas (o
+ * servidor as gravou). `prontas` só com todas respondidas; `falhou` impede concluir.
+ * Chame com a fila RELIDA do armazém, nunca com um retrato de tela.
  */
 export function leiturasDaAtribuicao(itens: ItemFila[], atribuicaoId: string): { ids: string[]; prontas: boolean } {
   const da = itens.filter((i) => i.comando.atribuicao_id === atribuicaoId).sort((a, b) => a.seq - b.seq);
@@ -104,32 +130,16 @@ export function leiturasDaAtribuicao(itens: ItemFila[], atribuicaoId: string): {
   };
 }
 
-/** Uma leitura nova na fila (seq = maior + 1). */
-export async function enfileirar(
-  armazem: ArmazemFila,
-  comando: Comando,
-  previsto: ItemFila["previsto"] = null,
-): Promise<ItemFila> {
-  const itens = await armazem.todos();
-  if (itens.some((i) => i.comando.leitura_id === comando.leitura_id)) {
-    throw new Error(`fila: leitura ${comando.leitura_id} já enfileirada`);
-  }
-  const seq = itens.reduce((m, i) => Math.max(m, i.seq), 0) + 1;
-  const item: ItemFila = { seq, comando, estado: "pendente", tentativas: 0, motivo: null, linha_id: null, unidades: null, previsto };
-  await armazem.gravar(item);
-  return item;
-}
-
 /**
  * Uma volta do laço de envio: manda o próximo de cada tarefa (em paralelo entre tarefas, em série
- * dentro da tarefa) e grava o resultado. Devolve quantos saíram da fila e se houve transitório
- * (quem chama espera o backoff antes da próxima volta).
+ * dentro da tarefa) e grava o resultado. Devolve os resolvidos e se houve transitório.
  */
 export async function enviarRodada(
   armazem: ArmazemFila,
   enviar: (c: Comando) => Promise<ResultadoEnvio>,
+  operador: string,
 ): Promise<{ resolvidos: ItemFila[]; transitorio: boolean; maxTentativas: number }> {
-  const proximos = proximosEnvios(await armazem.todos());
+  const proximos = proximosEnvios(await armazem.todos(), operador);
   const resolvidos: ItemFila[] = [];
   let transitorio = false;
   let maxTentativas = 0;
@@ -146,7 +156,11 @@ export async function enviarRodada(
   return { resolvidos, transitorio, maxTentativas };
 }
 
-/** Armazém em memória (testes e fallback quando o IndexedDB não abre). */
+function proximoSeq(itens: ItemFila[]): number {
+  return itens.reduce((m, i) => Math.max(m, i.seq), 0) + 1;
+}
+
+/** Armazém em memória — SÓ para teste (não é fallback: memória perde leitura no reload). */
 export function armazemMemoria(inicial: ItemFila[] = []): ArmazemFila {
   const m = new Map(inicial.map((i) => [i.comando.leitura_id, i]));
   return {
@@ -155,33 +169,74 @@ export function armazemMemoria(inicial: ItemFila[] = []): ArmazemFila {
       m.set(i.comando.leitura_id, i);
       return Promise.resolve();
     },
+    enfileirar: (novo) => {
+      // Ler e gravar no mesmo tique: atômico no event loop.
+      if (m.has(novo.comando.leitura_id)) return Promise.reject(new Error(`fila: leitura ${novo.comando.leitura_id} já enfileirada`));
+      const item: ItemFila = { ...novo, seq: proximoSeq([...m.values()]) };
+      m.set(item.comando.leitura_id, item);
+      return Promise.resolve(item);
+    },
   };
 }
 
 const DB = "picking-v2";
 const STORE = "leituras";
 
-/** Armazém IndexedDB: chave = `leitura_id`. Rejeita se o IndexedDB não abrir (quem chama decide). */
+/** Armazém IndexedDB: chave = `leitura_id`; toda escrita resolve no `oncomplete` da transação. */
 export function abrirArmazemIndexedDB(): Promise<ArmazemFila> {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB, 1);
+    if (typeof indexedDB === "undefined") {
+      reject(new Error("IndexedDB indisponível"));
+      return;
+    }
+    const req = indexedDB.open(DB, 2);
     req.onupgradeneeded = () => {
-      req.result.createObjectStore(STORE, { keyPath: "comando.leitura_id" });
+      if (!req.result.objectStoreNames.contains(STORE)) req.result.createObjectStore(STORE, { keyPath: "comando.leitura_id" });
     };
     req.onerror = () => reject(req.error ?? new Error("IndexedDB não abriu"));
     req.onsuccess = () => {
       const db = req.result;
-      const tx = <T,>(modo: IDBTransactionMode, fn: (s: IDBObjectStore) => IDBRequest<T>) =>
+      const transacao = <T,>(
+        modo: IDBTransactionMode,
+        corpo: (s: IDBObjectStore, fim: (v: T) => void, falha: (e: Error) => void) => void,
+      ) =>
         new Promise<T>((res, rej) => {
-          const r = fn(db.transaction(STORE, modo).objectStore(STORE));
-          r.onsuccess = () => res(r.result);
-          r.onerror = () => rej(r.error ?? new Error("IndexedDB: operação falhou"));
+          const tx = db.transaction(STORE, modo);
+          let valor: T | undefined;
+          let erro: Error | null = null;
+          corpo(tx.objectStore(STORE), (v) => (valor = v), (e) => {
+            erro = e;
+            tx.abort();
+          });
+          tx.oncomplete = () => (erro ? rej(erro) : res(valor as T));
+          tx.onerror = () => rej(erro ?? tx.error ?? new Error("IndexedDB: transação falhou"));
+          tx.onabort = () => rej(erro ?? tx.error ?? new Error("IndexedDB: transação abortada"));
         });
       resolve({
-        todos: () => tx<ItemFila[]>("readonly", (s) => s.getAll() as IDBRequest<ItemFila[]>),
-        gravar: async (item) => {
-          await tx("readwrite", (s) => s.put(item));
-        },
+        todos: () =>
+          transacao<ItemFila[]>("readonly", (s, fim) => {
+            const r = s.getAll();
+            r.onsuccess = () => fim(r.result as ItemFila[]);
+          }),
+        gravar: (item) =>
+          transacao<void>("readwrite", (s, fim) => {
+            s.put(item);
+            fim(undefined);
+          }),
+        enfileirar: (novo) =>
+          transacao<ItemFila>("readwrite", (s, fim, falha) => {
+            const r = s.getAll();
+            r.onsuccess = () => {
+              const itens = r.result as ItemFila[];
+              if (itens.some((i) => i.comando.leitura_id === novo.comando.leitura_id)) {
+                falha(new Error(`fila: leitura ${novo.comando.leitura_id} já enfileirada`));
+                return;
+              }
+              const item: ItemFila = { ...novo, seq: proximoSeq(itens) };
+              s.add(item);
+              fim(item);
+            };
+          }),
       });
     };
   });

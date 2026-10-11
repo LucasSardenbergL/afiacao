@@ -88,10 +88,23 @@ describe("protocolo do leitor (keystroke DataWedge)", () => {
     expect(rodar(rajada("", 0)).saidas).toMatchObject([{ tipo: "invalida", bruto: "" }]);
   });
 
-  it("buffer acima do teto é inválido e encerra a captura", () => {
+  it("buffer acima do teto é inválido e o resto do quadro é descartado (engolido)", () => {
     const r = rodar(rajada("1".repeat(81), 0, 1, null));
     expect(r.saidas).toMatchObject([{ tipo: "invalida" }]);
-    expect(r.estado.fase).toBe("ocioso");
+    expect(r.estado.fase).toBe("descartando");
+    const resto = rodar([{ tipo: "tecla", key: "2", t: 90 }, { tipo: "tecla", key: "Enter", t: 91 }], r.estado);
+    expect([resto.passaram, resto.estado.fase]).toEqual([[], "ocioso"]);
+  });
+
+  it("ENTER atrasado de uma leitura truncada é ENGOLIDO (não aciona o botão focado)", () => {
+    const r = rodar([...rajada("789", 0, 3, null), { tipo: "tempo", t: 400 }, { tipo: "tecla", key: "Enter", t: 450 }]);
+    expect(r.saidas).toMatchObject([{ tipo: "truncada", parcial: "789" }]);
+    expect([r.engolidas.at(-1), r.passaram]).toEqual(["Enter", []]);
+  });
+
+  it("depois do descarte, digitação normal volta a passar", () => {
+    const r = rodar([...rajada("789", 0, 3, null), { tipo: "tempo", t: 400 }, { tipo: "tecla", key: "5", t: 2000 }]);
+    expect(r.passaram).toEqual(["5"]);
   });
 
   it("teclas não imprimíveis (Shift) durante a captura são engolidas e não entram no código", () => {

@@ -1,4 +1,4 @@
-// Acesso ao picking v2 (tabelas e RPCs da migration 20261011020000 + 20261011120000).
+// Acesso ao picking v2 (tabelas e RPCs da migration 20261011020000 + 20261011140000).
 // Leitura: RLS staff. Escrita: só RPCs SECURITY DEFINER — o aparelho nunca grava tabela direto.
 import { supabase } from "@/integrations/supabase/client";
 import { classificarErro } from "./erro-rpc";

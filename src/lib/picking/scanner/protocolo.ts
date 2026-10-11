@@ -15,16 +15,20 @@ export const PADRAO_PROTOCOLO = {
   truncarMs: 300,
   duplicataMs: 250,
   maxCaracteres: 80,
+  /** Depois de truncada/estourada, o resto do quadro (inclusive o ENTER atrasado) é engolido
+   *  por este tempo — não pode cair no campo focado nem acionar botão (Codex Fase 1 P2-12). */
+  descarteMs: 1_000,
 } as const;
 
-export type OpcoesProtocolo = typeof PADRAO_PROTOCOLO;
+export type OpcoesProtocolo = { [K in keyof typeof PADRAO_PROTOCOLO]: number };
 
 const VALIDO = /^(\][A-Za-z0-9]{2})?[0-9A-Za-z\-.]{1,64}$/;
 
 export type EstadoProtocolo =
   | { fase: "ocioso"; ultima: { codigo: string; t: number } | null }
   | { fase: "prefixo"; t0: number; ultima: { codigo: string; t: number } | null }
-  | { fase: "capturando"; t0: number; tUltima: number; buffer: string; ultima: { codigo: string; t: number } | null };
+  | { fase: "capturando"; t0: number; tUltima: number; buffer: string; ultima: { codigo: string; t: number } | null }
+  | { fase: "descartando"; ate: number; ultima: { codigo: string; t: number } | null };
 
 export const ESTADO_INICIAL: EstadoProtocolo = { fase: "ocioso", ultima: null };
 
@@ -83,7 +87,13 @@ function vencer(estado: EstadoProtocolo, t: number, opts: OpcoesProtocolo): { es
     return { estado: { fase: "ocioso", ultima: estado.ultima }, saidas: [] };
   }
   if (estado.fase === "capturando" && t - estado.tUltima > opts.truncarMs) {
-    return { estado: { fase: "ocioso", ultima: estado.ultima }, saidas: [{ tipo: "truncada", parcial: estado.buffer, t }] };
+    return {
+      estado: { fase: "descartando", ate: t + opts.descarteMs, ultima: estado.ultima },
+      saidas: [{ tipo: "truncada", parcial: estado.buffer, t }],
+    };
+  }
+  if (estado.fase === "descartando" && t >= estado.ate) {
+    return { estado: { fase: "ocioso", ultima: estado.ultima }, saidas: [] };
   }
   return { estado, saidas: [] };
 }
@@ -104,6 +114,12 @@ export function passo(estado: EstadoProtocolo, entrada: Entrada, opts: OpcoesPro
       }
       // Não era leitura: o `~` já foi engolido; a tecla atual segue para o campo.
       return { estado: { fase: "ocioso", ultima: e.ultima }, saidas: v.saidas, engolir: false };
+    case "descartando":
+      // Resto de um quadro cortado: engole até o ENTER dele (ou até o tempo vencer). Um `~` é o
+      // começo de uma leitura NOVA.
+      if (key === "~") return { estado: { fase: "prefixo", t0: t, ultima: e.ultima }, saidas: v.saidas, engolir: true };
+      if (key === "Enter") return { estado: { fase: "ocioso", ultima: e.ultima }, saidas: v.saidas, engolir: true };
+      return { estado: e, saidas: v.saidas, engolir: true };
     case "capturando": {
       if (key === "Enter") {
         const fim = concluir(e, t, opts);
@@ -115,7 +131,11 @@ export function passo(estado: EstadoProtocolo, entrada: Entrada, opts: OpcoesPro
       }
       const buffer = e.buffer + key;
       if (buffer.length > opts.maxCaracteres) {
-        return { estado: { fase: "ocioso", ultima: e.ultima }, saidas: [...v.saidas, { tipo: "invalida", bruto: buffer, t }], engolir: true };
+        return {
+          estado: { fase: "descartando", ate: t + opts.descarteMs, ultima: e.ultima },
+          saidas: [...v.saidas, { tipo: "invalida", bruto: buffer, t }],
+          engolir: true,
+        };
       }
       return { estado: { ...e, tUltima: t, buffer }, saidas: v.saidas, engolir: true };
     }
@@ -126,5 +146,6 @@ export function passo(estado: EstadoProtocolo, entrada: Entrada, opts: OpcoesPro
 export function proximoVencimento(estado: EstadoProtocolo, opts: OpcoesProtocolo = PADRAO_PROTOCOLO): number | null {
   if (estado.fase === "prefixo") return estado.t0 + opts.armarMs + 1;
   if (estado.fase === "capturando") return estado.tUltima + opts.truncarMs + 1;
+  if (estado.fase === "descartando") return estado.ate;
   return null;
 }

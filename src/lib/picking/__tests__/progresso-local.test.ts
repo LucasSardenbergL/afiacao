@@ -10,6 +10,8 @@ function item(id: string, estado: ItemFila["estado"], extra: Partial<ItemFila> =
     seq: 1,
     comando: { leitura_id: id, account: "oben", tarefa_id: "T", atribuicao_id: "A", tarefa_revisao: 1, tipo: "bipe", lido_em: "x" },
     estado,
+    operador_id: "U1",
+    divergente_nao_visto: false,
     tentativas: 0,
     motivo: null,
     linha_id: null,
@@ -46,5 +48,19 @@ describe("progresso local", () => {
     expect(linhaAtual(ls)?.id).toBe("L2");
     expect(tudoSeparado(ls)).toBe(false);
     expect(tudoSeparado([])).toBe(false);
+  });
+
+  it("decimal exato: 0,1 + 0,2 fecha a linha de 0,3 L (ponto flutuante não fecharia)", () => {
+    const L = { ...L1, quantidade: 0.3, fracionaria: true };
+    const ls = [
+      { id: "a", linha_id: "L1", linha_revisao: 2, unidades: 0.1, aceita: true },
+      { id: "b", linha_id: "L1", linha_revisao: 2, unidades: 0.2, aceita: true },
+    ];
+    const r = progressoLocal([L], ls, []);
+    expect([r[0].separada, tudoSeparado(r), linhaAtual(r)]).toEqual([0.3, true, null]);
+  });
+
+  it("a mesma leitura vinda em duas páginas conta UMA vez", () => {
+    expect(progressoLocal([L1], [lida("a"), lida("a")], [])[0].separada).toBe(1);
   });
 });

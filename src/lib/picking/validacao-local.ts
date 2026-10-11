@@ -6,6 +6,8 @@
 // (supabase/migrations/20261011020000_picking_v2_schema.sql, `picking_registrar_leitura`).
 // Mudou lá → muda aqui (o teste `validacao-local.test.ts` lista os motivos um a um).
 
+import { micro } from "./decimal";
+
 export interface LinhaLocal {
   id: string;
   codigo_item: number;
@@ -44,7 +46,8 @@ export type Previsao =
   | { ok: true; linha_id: string; unidades: number }
   | { ok: false; motivo: MotivoRejeicao; linha_id: string | null };
 
-const saldo = (l: LinhaLocal) => l.quantidade - l.separada;
+/** Saldo em milionésimos inteiros (decimal exato, como o `numeric` do servidor). */
+const saldo = (l: LinhaLocal) => micro(l.quantidade) - micro(l.separada);
 
 /**
  * Bipe: `cadastro` = o código em `picking_codigos_barras` da conta (não revogado), se houver.
@@ -80,7 +83,7 @@ export function preverBipe(codigo: string, linhas: LinhaLocal[], cadastro: Codig
   if (candidatas.length === 0) return { ok: false, motivo: "linha_fracionaria_exige_manual", linha_id: null };
   const linha = candidatas.find((l) => saldo(l) > 0);
   if (!linha) return { ok: false, motivo: "excesso", linha_id: null };
-  if (fator > saldo(linha)) return { ok: false, motivo: "excesso", linha_id: linha.id };
+  if (micro(fator) > saldo(linha)) return { ok: false, motivo: "excesso", linha_id: linha.id };
   return { ok: true, linha_id: linha.id, unidades: fator };
 }
 
@@ -96,6 +99,6 @@ export function preverManual(linha: LinhaLocal, quantidade: number, aprovadosDoP
     aprovadosDoProduto.some((c) => c.status === "aprovado" && c.omie_codigo_produto === linha.omie_codigo_produto && c.unidade === linha.unidade);
   if (!linha.fracionaria && temCodigo) return { ok: false, motivo: "manual_nao_permitido", linha_id: linha.id };
   if (!linha.fracionaria && !Number.isInteger(quantidade)) return { ok: false, motivo: "quantidade_nao_inteira", linha_id: linha.id };
-  if (quantidade > saldo(linha)) return { ok: false, motivo: "excesso", linha_id: linha.id };
+  if (micro(quantidade) > saldo(linha)) return { ok: false, motivo: "excesso", linha_id: linha.id };
   return { ok: true, linha_id: linha.id, unidades: quantidade };
 }

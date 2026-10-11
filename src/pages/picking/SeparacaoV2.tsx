@@ -17,17 +17,8 @@ import { useUrlState } from "@/hooks/useUrlState";
 import { track } from "@/lib/analytics";
 import { cn } from "@/lib/utils";
 import { PADROES } from "@/lib/picking/feedback";
-import {
-  concluirTarefa,
-  type Conta,
-  lerTarefa,
-  listarFila,
-  marcarFalta,
-  pegarTarefa,
-  retomarTarefa,
-  type TarefaV2,
-} from "@/lib/picking/v2-api";
-import { type Atribuicao, destravarSom, rotuloMotivo, useSeparacao } from "@/hooks/picking/useSeparacao";
+import { type Conta, lerTarefa, listarFila, pegarTarefa, retomarTarefa, type TarefaV2 } from "@/lib/picking/v2-api";
+import { type Atribuicao, destravarSom, rotuloMotivo, useMotorFila, useSeparacao } from "@/hooks/picking/useSeparacao";
 import { useWakeLock } from "@/hooks/picking/useWakeLock";
 
 const ROTULO_STATUS: Record<TarefaV2["status"], string> = {
@@ -40,12 +31,40 @@ const ROTULO_STATUS: Record<TarefaV2["status"], string> = {
   bloqueado_dado: "Dado do Omie ilegível",
 };
 
+type Ativa = { tarefa: TarefaV2; atribuicao: Atribuicao; operador: string };
+const CHAVE_ATIVA = "picking-v2:ativa";
+
+/** A separação em curso sobrevive ao reload (o motor da fila também) — só para o MESMO usuário. */
+function lerAtiva(operador: string | undefined): Ativa | null {
+  try {
+    const a = JSON.parse(localStorage.getItem(CHAVE_ATIVA) ?? "null") as Ativa | null;
+    return a && operador && a.operador === operador ? a : null;
+  } catch {
+    return null;
+  }
+}
+function gravarAtiva(a: Ativa | null) {
+  try {
+    if (a) localStorage.setItem(CHAVE_ATIVA, JSON.stringify(a));
+    else localStorage.removeItem(CHAVE_ATIVA);
+  } catch {
+    /* sem storage: a separação só não volta sozinha depois do reload */
+  }
+}
+
 export default function SeparacaoV2() {
   const { user } = useAuth();
   const [filtros, setFiltros] = useUrlState({ conta: "oben" });
   const conta: Conta = filtros.conta === "colacor" ? "colacor" : "oben";
   const qc = useQueryClient();
-  const [ativa, setAtiva] = useState<{ tarefa: TarefaV2; atribuicao: Atribuicao } | null>(null);
+  // Motor da fila configurado na RAIZ: envia também com a lista aberta (Codex Fase 1 P2-13).
+  const { estado: motorEstado, lente } = useMotorFila();
+  const [ativa, setAtivaEstado] = useState<Ativa | null>(() => lerAtiva(user?.id));
+  const setAtiva = useCallback((a: Ativa | null) => {
+    gravarAtiva(a);
+    setAtivaEstado(a);
+  }, []);
+  const pendentesDaAba = motorEstado.itens.filter((i) => i.estado === "pendente").length;
 
   const filaQ = useQuery({
     queryKey: ["picking-v2", "fila", conta],
@@ -57,6 +76,10 @@ export default function SeparacaoV2() {
   const entrar = useCallback(
     async (t: TarefaV2, acao: "pegar" | "assumir" | "retomar", reconciliacao = false) => {
       destravarSom(); // gesto do usuário: o navegador libera o áudio aqui
+      if (lente) {
+        toast.error(rotuloMotivo("lente_ver_como"));
+        return;
+      }
       try {
         const r = acao === "retomar"
           ? await retomarTarefa(t, reconciliacao)
@@ -68,12 +91,13 @@ export default function SeparacaoV2() {
         }
         track("picking.task_pega", { acao, conta });
         const atual = await lerTarefa(t.id);
-        setAtiva({ tarefa: atual, atribuicao: { atribuicao_id: r.atribuicao_id, tarefa_revisao: r.tarefa_revisao } });
+        if (!user?.id) return;
+        setAtiva({ tarefa: atual, atribuicao: { atribuicao_id: r.atribuicao_id, tarefa_revisao: r.tarefa_revisao }, operador: user.id });
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Falha ao pegar a tarefa");
       }
     },
-    [conta, qc],
+    [conta, qc, lente, user?.id, setAtiva],
   );
 
   if (ativa) {
@@ -101,6 +125,12 @@ export default function SeparacaoV2() {
           ))}
         </div>
       </header>
+      {motorEstado.erroArmazem && (
+        <p className="text-status-error">Este aparelho não consegue guardar leituras ({motorEstado.erroArmazem}). Não separe por ele.</p>
+      )}
+      {pendentesDaAba > 0 && (
+        <p className="text-sm text-status-warning">{pendentesDaAba} leitura(s) deste aparelho ainda não chegaram ao servidor.</p>
+      )}
       {filaQ.isLoading ? (
         <PageSkeleton variant="list" />
       ) : filaQ.error ? (
@@ -125,7 +155,10 @@ function CartaoTarefa({
 }) {
   const [reconferi, setReconferi] = useState(false);
   const ausente = t.ausente_rodadas >= 2;
-  const precisaReconciliar = t.status === "suspensa_alteracao" || (t.status === "em_separacao" && !minha);
+  // Toda volta de tarefa já pega exige reconciliação física — inclusive depois de uma falta (o
+  // volume pode ter peças que o banco não conta).
+  const precisaReconciliar =
+    t.status === "suspensa_alteracao" || t.status === "aguardando_ajuste" || (t.status === "em_separacao" && !minha);
   return (
     <div className="rounded-md border bg-card p-3">
       <div className="flex items-start justify-between gap-2">
@@ -161,11 +194,7 @@ function CartaoTarefa({
             </Button>
           )}
           {(t.status === "suspensa_alteracao" || t.status === "aguardando_ajuste") && (
-            <Button
-              size="touch"
-              disabled={t.status === "suspensa_alteracao" && !reconferi}
-              onClick={() => aoEntrar(t, "retomar", t.status === "suspensa_alteracao" ? reconferi : true)}
-            >
+            <Button size="touch" disabled={!reconferi} onClick={() => aoEntrar(t, "retomar", reconferi)}>
               Retomar
             </Button>
           )}
@@ -198,35 +227,39 @@ function Separando({ tarefa, atribuicao, aoSair }: { tarefa: TarefaV2; atribuica
 
   const cor = sep.ultimo && agora - sep.ultimo.em < 1500 ? PADROES[sep.ultimo.tipo].cor : null;
   const atual = sep.atual;
-  const podeConcluir = sep.completo && sep.pendentes === 0 && sep.leiturasDaAtribuicao.prontas;
   const ordenadas = useMemo(() => [...sep.linhas].sort((a, b) => a.codigo_item - b.codigo_item), [sep.linhas]);
+  const [ocupado, setOcupado] = useState(false);
 
   const concluir = async () => {
+    setOcupado(true);
     try {
-      const r = await concluirTarefa(tarefa, atribuicao.atribuicao_id, atribuicao.tarefa_revisao, sep.leiturasDaAtribuicao.ids);
+      const r = await sep.concluir();
       if (!r.ok) {
         sep.sinalizar("divergencia", rotuloMotivo(r.motivo ?? "nao_concluiu"));
         return;
       }
-      track("picking.separado", { conta: tarefa.account, linhas: sep.linhas.length });
       sep.sinalizar("pedido_completo", "Separado");
       aoSair();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Falha ao concluir");
+    } finally {
+      setOcupado(false);
     }
   };
 
   const falta = async (linhaId: string) => {
+    setOcupado(true);
     try {
-      const r = await marcarFalta(tarefa, atribuicao.atribuicao_id, linhaId);
+      const r = await sep.falta(linhaId);
       if (!r.ok) {
         toast.error(rotuloMotivo(r.motivo ?? "nao_marcou"));
         return;
       }
-      track("picking.falta", { conta: tarefa.account });
       aoSair();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Falha ao marcar falta");
+    } finally {
+      setOcupado(false);
     }
   };
 
@@ -259,8 +292,21 @@ function Separando({ tarefa, atribuicao, aoSair }: { tarefa: TarefaV2; atribuica
 
         {sep.ultimo && <p className="text-center text-base font-medium">{sep.ultimo.texto}</p>}
         {sep.pendentes > 0 && <p className="text-center text-sm text-muted-foreground">{sep.pendentes} leitura(s) enviando…</p>}
-        {sep.falhas.length > 0 && (
-          <p className="text-center text-sm text-status-error">{sep.falhas.length} leitura(s) recusada(s) pelo servidor — chame o supervisor.</p>
+        {sep.bloqueio && (
+          <p className="rounded-md border border-status-error p-3 text-center text-base font-medium text-status-error">
+            Separação parada: {rotuloMotivo(sep.bloqueio)}
+          </p>
+        )}
+        {sep.divergentes.length > 0 && (
+          <div className="rounded-md border border-status-error bg-status-error/10 p-3">
+            <p className="text-sm font-medium text-status-error">
+              {sep.divergentes.length} leitura(s) que o aparelho deu como certas foram recusadas pelo servidor
+              ({[...new Set(sep.divergentes.map((d) => rotuloMotivo(d.motivo ?? "erro")))].join(", ")}). Confira o volume.
+            </p>
+            <Button size="touch" variant="outline" className="mt-2" onClick={() => void sep.reconhecer()}>
+              Entendi
+            </Button>
+          </div>
         )}
 
         <ul className="flex flex-col gap-2">
@@ -306,7 +352,7 @@ function Separando({ tarefa, atribuicao, aoSair }: { tarefa: TarefaV2; atribuica
                       </Button>
                     </>
                   )}
-                  <Button size="touch" variant="outline" onClick={() => void falta(l.id)}>
+                  <Button size="touch" variant="outline" disabled={!sep.capturando || ocupado} onClick={() => void falta(l.id)}>
                     Falta
                   </Button>
                 </div>
@@ -315,7 +361,7 @@ function Separando({ tarefa, atribuicao, aoSair }: { tarefa: TarefaV2; atribuica
           ))}
         </ul>
 
-        <Button size="balcao" disabled={!podeConcluir} onClick={() => void concluir()}>
+        <Button size="balcao" disabled={!sep.podeConcluir || ocupado} onClick={() => void concluir()}>
           Concluir separação
         </Button>
       </div>
