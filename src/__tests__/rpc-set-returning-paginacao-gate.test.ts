@@ -212,6 +212,12 @@ const BASELINE = new Map<string, Waiver>([
     { tipo: 'estrutural', teto: 1, prova: '`RETURN QUERY SELECT v_pedidos, v_skus, v_valor, v_bloqueados` — variáveis, sem FROM' }],
   ['reverter_run_auto @ src/hooks/useParamAutoMudancas.ts',
     { tipo: 'estrutural', teto: 1, prova: 'um `RETURN NEXT` fora de laço' }],
+  // 2026-10-11: entraram quando o types.ts regenerado (pós-migration 20261010204708) passou a
+  // declarar as duas — aplicadas antes por SQL, estavam fora do types. Corpo lido da PROD (psql-ro).
+  ['resolver_cliente_por_telefone @ src/lib/call-session/resolve-customer.ts',
+    { tipo: 'estrutural', teto: 1, prova: 'único `RETURN QUERY … FROM (SELECT 1) um LEFT JOIN LATERAL (… LIMIT 1)` — os outros caminhos são `RETURN;` vazio' }],
+  ['tint_adocao_balcao @ src/hooks/dashboard/useTintometricoZone.ts',
+    { tipo: 'estrutural', teto: 1, prova: '`SELECT count(*) FILTER …, count(*) FILTER … FROM pedidos` — agregado sem GROUP BY' }],
   ['ciclo_oportunidade_do_dia @ src/pages/AdminReposicaoOportunidades.tsx',
     { tipo: 'estrutural', teto: 1, prova: 'dois `RETURN QUERY SELECT <escalares>` em ramos exclusivos (o primeiro seguido de `RETURN;`)' }],
   ['staff_get_sales_order_payload @ src/components/salesOrderEdit/useSalesOrderEdit.ts',
