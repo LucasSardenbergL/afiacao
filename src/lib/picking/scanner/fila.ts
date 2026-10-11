@@ -5,7 +5,7 @@
 // Não usa o `offline-queue` (localStorage, genérico): aqui a ordem por tarefa e a lista de UUIDs
 // da atribuição (que `picking_concluir` exige) são o contrato.
 
-export type TipoLeitura = "bipe" | "manual" | "estorno";
+type TipoLeitura = "bipe" | "manual" | "estorno";
 
 export interface Comando {
   leitura_id: string;
@@ -21,7 +21,7 @@ export interface Comando {
   lido_em: string;
 }
 
-export type EstadoItem = "pendente" | "aceita" | "rejeitada" | "falhou";
+type EstadoItem = "pendente" | "aceita" | "rejeitada" | "falhou";
 
 export interface ItemFila {
   seq: number;
@@ -32,6 +32,8 @@ export interface ItemFila {
   motivo: string | null;
   linha_id: string | null;
   unidades: number | null;
+  /** Previsão local no momento da captura (validacao-local) — conta no progresso até o servidor responder. */
+  previsto: { linha_id: string; unidades: number } | null;
 }
 
 /** Armazenamento da fila — IndexedDB no app, memória no teste. */
@@ -103,13 +105,17 @@ export function leiturasDaAtribuicao(itens: ItemFila[], atribuicaoId: string): {
 }
 
 /** Uma leitura nova na fila (seq = maior + 1). */
-export async function enfileirar(armazem: ArmazemFila, comando: Comando): Promise<ItemFila> {
+export async function enfileirar(
+  armazem: ArmazemFila,
+  comando: Comando,
+  previsto: ItemFila["previsto"] = null,
+): Promise<ItemFila> {
   const itens = await armazem.todos();
   if (itens.some((i) => i.comando.leitura_id === comando.leitura_id)) {
     throw new Error(`fila: leitura ${comando.leitura_id} já enfileirada`);
   }
   const seq = itens.reduce((m, i) => Math.max(m, i.seq), 0) + 1;
-  const item: ItemFila = { seq, comando, estado: "pendente", tentativas: 0, motivo: null, linha_id: null, unidades: null };
+  const item: ItemFila = { seq, comando, estado: "pendente", tentativas: 0, motivo: null, linha_id: null, unidades: null, previsto };
   await armazem.gravar(item);
   return item;
 }

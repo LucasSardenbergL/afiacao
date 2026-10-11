@@ -68,7 +68,7 @@ describe("fila de leituras", () => {
   });
 
   it("`original_nao_recebido` (pendente) não resolve: o estorno continua na fila", () => {
-    const it0 = { seq: 1, comando: cmd("e1", "T1", { tipo: "estorno" }), estado: "pendente" as const, tentativas: 0, motivo: null, linha_id: null, unidades: null };
+    const it0 = { seq: 1, comando: cmd("e1", "T1", { tipo: "estorno" }), estado: "pendente" as const, tentativas: 0, motivo: null, linha_id: null, unidades: null, previsto: null };
     const novo = aplicarResultado(it0, {
       tipo: "resposta",
       resposta: { ok: false, motivo: "original_nao_recebido", linha_id: null, unidades: null, pendente: true },

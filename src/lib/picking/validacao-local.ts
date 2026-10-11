@@ -27,7 +27,7 @@ export interface CodigoCadastrado {
   status: "pendente" | "aprovado";
 }
 
-export type MotivoRejeicao =
+type MotivoRejeicao =
   | "tarefa_fora_de_separacao"
   | "codigo_pendente_aprovacao"
   | "codigo_ambiguo"
