@@ -2,6 +2,11 @@ import { describe, it, expect } from 'vitest';
 import {
   decomporCrescimento,
   janelasTrimestreFechado,
+  porEmpresaCliente,
+  avaliarComparabilidade,
+  mesesDaJanela,
+  coberturasPorEmpresa,
+  rotuloJanela,
   type PedidoCliente,
 } from '../crescimento-comparavel';
 
@@ -139,5 +144,105 @@ describe('janelasTrimestreFechado', () => {
       anterior: { de: '2025-08-01', ate: '2025-11-01' },
       anoAnterior: { de: '2024-11-01', ate: '2025-02-01' },
     });
+  });
+});
+
+describe('porEmpresaCliente', () => {
+  it('o mesmo cliente em duas empresas vira dois vínculos (não se fundem na base comparável)', () => {
+    const atual = porEmpresaCliente([{ account: 'oben', customer_user_id: 'X', total: 10 }]);
+    const base = porEmpresaCliente([{ account: 'colacor', customer_user_id: 'X', total: 10 }]);
+    const d = decomporCrescimento(atual, base);
+    expect(d.comparavel.clientes).toBe(0);
+    expect(d.entraram.clientes).toBe(1);
+    expect(d.sairam.clientes).toBe(1);
+  });
+
+  it('cliente nulo continua nulo (não vira "oben:null")', () => {
+    expect(porEmpresaCliente([{ account: 'oben', customer_user_id: null, total: 5 }])).toEqual([
+      { customer_user_id: null, total: 5 },
+    ]);
+  });
+});
+
+describe('avaliarComparabilidade', () => {
+  it('coberturas próximas nas duas janelas: comparável (os casos medidos na prod)', () => {
+    expect(
+      avaliarComparabilidade([
+        { account: 'oben', atual: 1.35, base: 1.25 },
+        { account: 'colacor', atual: 0.91, base: 1.02 },
+      ]),
+    ).toEqual({ estado: 'comparavel' });
+  });
+
+  it('cobertura que mudou demais: incomparável, apontando a empresa e as duas coberturas', () => {
+    expect(
+      avaliarComparabilidade([
+        { account: 'oben', atual: 1.35, base: 1.25 },
+        { account: 'colacor', atual: 0.91, base: 0.49 },
+      ]),
+    ).toEqual({ estado: 'incomparavel', account: 'colacor', atual: 0.91, base: 0.49 });
+  });
+
+  it('no limite exato ainda é comparável; acima dele não', () => {
+    expect(avaliarComparabilidade([{ account: 'o', atual: 1.2, base: 1 }]).estado).toBe('comparavel');
+    expect(avaliarComparabilidade([{ account: 'o', atual: 1.21, base: 1 }]).estado).toBe('incomparavel');
+  });
+
+  it('ausente ≠ comparável: sem DRE numa janela, ou lista vazia, é "não verificada"', () => {
+    expect(avaliarComparabilidade([{ account: 'o', atual: 1, base: null }])).toEqual({ estado: 'nao_verificada' });
+    expect(avaliarComparabilidade([])).toEqual({ estado: 'nao_verificada' });
+  });
+
+  it('incomparável vence não-verificada: o defeito provado aparece mesmo com outra empresa sem dado', () => {
+    expect(
+      avaliarComparabilidade([
+        { account: 'oben', atual: null, base: 1 },
+        { account: 'colacor', atual: 0.9, base: 0.4 },
+      ]).estado,
+    ).toBe('incomparavel');
+  });
+});
+
+describe('mesesDaJanela', () => {
+  it('lista os meses inteiros da janela, atravessando o ano', () => {
+    expect(mesesDaJanela({ de: '2025-11-01', ate: '2026-02-01' })).toEqual([
+      { ano: 2025, mes: 11 },
+      { ano: 2025, mes: 12 },
+      { ano: 2026, mes: 1 },
+    ]);
+  });
+});
+
+describe('coberturasPorEmpresa', () => {
+  it('pedidos ÷ DRE por empresa com pedido; empresa só de DRE fica fora', () => {
+    const c = coberturasPorEmpresa(
+      [{ account: 'oben', total: 135 }, { account: 'colacor', total: 91 }],
+      [{ account: 'oben', total: 125 }, { account: 'colacor', total: 49 }],
+      new Map([['oben', 100], ['colacor', 100], ['colacor_sc', 50]]),
+      new Map([['oben', 100], ['colacor', 100]]),
+    );
+    expect(c).toEqual([
+      { account: 'colacor', atual: 0.91, base: 0.49 },
+      { account: 'oben', atual: 1.35, base: 1.25 },
+    ]);
+  });
+
+  it('DRE indisponível (leitura falhou) ou sem a empresa: cobertura null, não 0', () => {
+    const c = coberturasPorEmpresa([{ account: 'oben', total: 10 }], [], null, new Map());
+    expect(c).toEqual([{ account: 'oben', atual: null, base: null }]);
+  });
+
+  it('empresa sem pedido numa janela mas com DRE: cobertura 0 (sync perdeu tudo) — sinal, não ausência', () => {
+    const c = coberturasPorEmpresa([], [{ account: 'oben', total: 10 }], new Map([['oben', 50]]), new Map([['oben', 50]]));
+    expect(c).toEqual([{ account: 'oben', atual: 0, base: 0.2 }]);
+    expect(avaliarComparabilidade(c)).toEqual({ estado: 'incomparavel', account: 'oben', atual: 0, base: 0.2 });
+  });
+});
+
+describe('rotuloJanela', () => {
+  it('mesmo ano, virada de ano e mês único', () => {
+    expect(rotuloJanela({ de: '2026-07-01', ate: '2026-10-01' })).toBe('jul–set/26');
+    expect(rotuloJanela({ de: '2025-11-01', ate: '2026-02-01' })).toBe('nov/25–jan/26');
+    expect(rotuloJanela({ de: '2026-03-01', ate: '2026-04-01' })).toBe('mar/26');
   });
 });
