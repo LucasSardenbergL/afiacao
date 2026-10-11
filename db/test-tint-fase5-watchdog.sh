@@ -168,7 +168,12 @@ echo "=== view real aplicada ==="
 MIG="$REPO_ROOT/supabase/migrations/20260730120000_tint_watchdog_fase5_chave.sql"
 [ -f "$MIG" ] || { echo "migration nao encontrada: $MIG"; exit 1; }
 P -q -f "$MIG"
-echo "=== migration aplicada ==="
+# v2 (20261010230000): S2 com teto 'aviso'. A prod tem as DUAS aplicadas, nesta ordem — e a
+# falsificação sabota a v2 (é ela que define a função vigente).
+MIG2="$REPO_ROOT/supabase/migrations/20261010230000_tint_watchdog_fase5_s2_aviso.sql"
+[ -f "$MIG2" ] || { echo "migration nao encontrada: $MIG2"; exit 1; }
+P -q -f "$MIG2"
+echo "=== migrations aplicadas (v1 + v2) ==="
 
 P -q -c "CREATE TABLE _bkp AS SELECT pg_get_functiondef('public.tint_watchdog_fase5_check()'::regprocedure) AS def;"
 restaura() { Pq -c "SELECT def FROM _bkp;" > "$RODADA/_f5wd_real.sql"; P -q -f "$RODADA/_f5wd_real.sql"; }
@@ -285,6 +290,15 @@ espera_lock() {
 # ══ ZONA 4 — a suíte ══
 roda_suite() {
   PASS=0; FAIL=0; FALHAS=()
+  # A função SOB TESTE desta rodada (v2 real ou a sabotada): o B22 e o B15 re-aplicam a v1 e
+  # precisam devolvê-la — senão o resto da suíte mede a v1 (achado do Codex, 2026-10-10).
+  Pq -c "SELECT pg_get_functiondef('public.tint_watchdog_fase5_check()'::regprocedure);" > "$RODADA/_f5wd_vigente.sql"
+  volta_vigente() { P -q -f "$RODADA/_f5wd_vigente.sql" >/dev/null; }
+  # 10.000 chaves S2X (massa do B21/B22: a v1 escalava S2 para 'critico' a partir de 10.000) nascem
+  # JÁ retiradas pela fonte e morrem logo depois — semeadas o tempo todo, deixavam CADA rodada da
+  # varredura ~40x mais lenta e a prova foi de 11 s para 465 s no CI (estourou a parte 1, 2026-10-11).
+  local s2x="DO \$\$ DECLARE g int; BEGIN FOR g IN 100001..110000 LOOP PERFORM _seed_chave(g, 'S2X' || g, '$CO_OK'); END LOOP; END \$\$; UPDATE public.tint_formulas SET desativada_em=now(), desativada_motivo=NULL WHERE cor_id LIKE 'S2X%' AND desativada_em IS NULL;"
+  local s2x_volta="DELETE FROM public.tint_formula_itens WHERE formula_id IN (SELECT id FROM public.tint_formulas WHERE cor_id LIKE 'S2X%'); DELETE FROM public.tint_formulas WHERE cor_id LIKE 'S2X%';"
 
   # ── B1/B2: tudo saudável -> silêncio, e o marcador avança
   reset_estado
@@ -392,6 +406,32 @@ roda_suite() {
   fi
   wait "$lockpid" 2>/dev/null || true
 
+  # B21 (v2, 2026-10-10): "a fonte retirou a chave" NUNCA é crítico — é higiene do carimbo, não
+  # venda perdida. 10.000 chaves retiradas de uma vez: a v1 dava 'critico' (e dispensar não colava).
+  # ANTES do B15 de propósito: o B15 RE-APLICA a v1 (testa a semeadura do marcador) e, daí em
+  # diante, a função vigente volta a ser a v1 — inclusive por cima da sabotagem F6.
+  reset_estado
+  P -q -c "$s2x"
+  roda
+  eq "B21 fonte retirada em massa (10000) fica em aviso, nunca critico" "$(sev tint_fase5_fonte_retirada)" "aviso"
+
+  # B22 (v2) — a TRANSIÇÃO de prod: o alerta 'critico' JÁ ABERTO pela v1 é rebaixado no lugar pela
+  # v2 (mesmo id), com a contagem estável — e sem e-mail novo (rebaixar não é piora).
+  reset_estado                             # a massa S2X do B21 continua retirada
+  P -q -f "$MIG" >/dev/null 2>&1           # a v1, como está em prod hoje
+  roda
+  local id_v1 fila_v1
+  id_v1="$(Pq -c "SELECT COALESCE(max(id::text),'AUSENTE') FROM public.fin_alertas WHERE tipo='tint_fase5_fonte_retirada' AND dismissed_at IS NULL;")"
+  fila_v1="$(Pq -c "SELECT count(*) FROM public.fornecedor_alerta;")"
+  eq "B22pre a v1 abre o alerta de S2 em critico" "$(sev tint_fase5_fonte_retirada)" "critico"
+  volta_vigente                            # aplica a v2 (ou a sabotada) por cima
+  roda
+  eq "B22a v2 rebaixa o critico aberto para aviso" "$(sev tint_fase5_fonte_retirada)" "aviso"
+  eq "B22b rebaixa NO LUGAR (mesmo alerta, nao abre outro)" \
+     "$(Pq -c "SELECT COALESCE(max(id::text),'AUSENTE') FROM public.fin_alertas WHERE tipo='tint_fase5_fonte_retirada' AND dismissed_at IS NULL;")" "$id_v1"
+  eq "B22c rebaixar nao manda e-mail" "$(( $(Pq -c "SELECT count(*) FROM public.fornecedor_alerta;") - fila_v1 ))" "0"
+  P -q -c "$s2x_volta"
+
   # ══ asserts dos FIXES do challenge Codex sobre este diff (2026-07-28) ══
 
   # B15 [P0] A MIGRATION SEMEIA o marcador. Sem isto, uma camada que falhe SEMPRE
@@ -407,6 +447,10 @@ roda_suite() {
   P -q -c "UPDATE public.sync_state SET status='complete' WHERE entity_type='tint_watchdog_fase5';"
   P -q -f "$MIG" >/dev/null 2>&1
   eq "B15c re-apply NAO rebaixa marcador vivo" "$(marcador)" "complete"
+  # o B15 deixou a v1 vigente: devolve a função sob teste ANTES do B16..B20/B17 (achado do Codex)
+  volta_vigente
+  eq "B15d a funcao sob teste volta a vigorar (B16+ nao medem a v1)" \
+     "$(Pq -c "SELECT (prosrc LIKE '%tint_watchdog_fase5 guard v2%')::text FROM pg_proc WHERE oid='public.tint_watchdog_fase5_check()'::regprocedure;")" "true"
 
   # B16 [P1] HISTERESE do e-mail. S2 cresce ~60 chaves/dia por DESENHO da fonte; com
   # re-emissao a cada incremento seriam ~4 e-mails/dia ate alguem limpar, e a familia
@@ -518,7 +562,7 @@ sabota_e_mede() {   # $1=rotulo  $2=busca  $3=troca  $4..=asserts esperados
   # `if !` e nao `cmd; if [ $? -ne 0 ]`: com `set -euo pipefail` ativo e esta funcao chamada NUA
   # (`sabota_e_mede "F1" \`), o python3 saindo !=0 abortava o script AQUI — o bloco de erro abaixo
   # era INALCANCAVEL e o FALSIF_ERR nunca contava (medido 2026-08-28). `if !` suspende o `set -e`.
-  if ! python3 - "$MIG" "$sab" "$busca" "$troca" <<'PY'
+  if ! python3 - "$MIG2" "$sab" "$busca" "$troca" <<'PY'
 import sys
 src, dst, busca, troca = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 s = open(src).read()
@@ -590,14 +634,19 @@ sabota_e_mede "F1" \
 sabota_e_mede "F2" \
   "v_conta, 'tint_fase5_fonte_retirada', v_s2," \
   "v_conta, 'tint_fase5_chave_sem_preco', v_s2," \
-  B6
+  B6 B21 B22a B22c
+# ^ B21/B22 por CASCATA (medido 2026-10-10): sem tipo proprio, o alerta de S2 nem existe — a
+#   severidade do B21 vira AUSENTE; no B22 o critico da v1 fica orfao (nao rebaixa) e a 2a
+#   classe abre alerta NOVO, que manda e-mail.
 
 # F3 — mata o vigia de cardinalidade: o universo pode sumir sem ninguém saber
 #      (o "verde por vacuidade" que o Codex apontou).
 sabota_e_mede "F3" \
   "IF v_max > 0 AND v_universo < v_max THEN" \
   "IF false THEN" \
-  B10 B12
+  B10 B12 B20
+# ^ B20 desde 2026-10-10: antes o B15 deixava a v1 vigente e o B20 media a v1 (cego a esta
+#   sabotagem); com o volta_vigente ele passou a medir a funcao sob teste — dente novo, medido.
 
 # F4 — grava o marcador sob outro nome: o dead-man cruzado que o PR 1 já tem em
 #      prod continuaria inerte, e "sem alerta" seguiria indistinguível de "morto".
@@ -605,7 +654,7 @@ sabota_e_mede "F3" \
 sabota_e_mede "F4" \
   "VALUES ('tint_watchdog_fase5', v_conta, clock_timestamp(), 'complete', NULL," \
   "VALUES ('tint_watchdog_NOME_ERRADO', v_conta, clock_timestamp(), 'complete', NULL," \
-  B2 B10 B12 B13a B13b
+  B2 B10 B12 B13a B13b B20
 # ^ B10/B12 entram por CASCATA: o high-water-mark (universo_max/ancora_em) e LIDO do
 #   MESMO marcador sync_state que a sabotagem renomeia. Sem marcador, v_max=0, a
 #   guarda `v_max > 0` nunca passa e o vigia de cardinalidade fica mudo. Ou seja: o
@@ -621,6 +670,16 @@ sabota_e_mede "F5" \
   "IF false THEN" \
   B14
 
+# F6 (v2) — devolve o CASE da v1: S2 volta a escalar para 'critico' em >=10.000. Caem o B21 e o
+#      B22a (o critico aberto pela v1 nao rebaixa).
+sabota_e_mede "F6" \
+  "CASE WHEN v_s2 >= 100 THEN 'aviso' ELSE 'info' END," \
+  "CASE WHEN v_s2 >= 10000 THEN 'crit' || 'ico' WHEN v_s2 >= 100 THEN 'aviso' ELSE 'info' END," \
+  B21 B22a
+# ^ 'crit' || 'ico' e nao o literal: a postcondicao P2 da v2 barra o literal 'critico' no S2 por
+#   TEXTO (o apply aborta — dente da camada textual, medido 2026-10-10). A F6 mede a OUTRA camada,
+#   o comportamento (B21), entao a sabotagem tem de passar pela textual com a mesma semantica.
+
 # ══ fecho: re-roda a suíte na versão REAL e exige verde ══
 echo "=== VERIFICACAO FINAL (migration real restaurada) ==="
 roda_suite
@@ -632,4 +691,4 @@ if [ "$FAIL" -ne 0 ] || [ "$FALSIF_ERR" -ne 0 ]; then
   echo "RESULTADO: VERMELHO"
   exit 1
 fi
-echo "RESULTADO: VERDE — $PASS asserts + 5 falsificacoes com conjunto exato"
+echo "RESULTADO: VERDE — $PASS asserts + 6 falsificacoes com conjunto exato"
