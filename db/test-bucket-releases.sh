@@ -130,7 +130,7 @@ BEGIN
   UPDATE storage.objects SET conteudo = 'pwn' WHERE bucket_id = 'releases';
   GET DIAGNOSTICS n = ROW_COUNT;
   RESET ROLE;
-  IF n <> 0 THEN RAISE EXCEPTION 'FALHA employee: UPDATE mutou % linha(s)', n; END IF;
+  IF n IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'FALHA employee: UPDATE mutou % linha(s)', n; END IF;
 END $a$;
 RESET ROLE;
 
@@ -143,7 +143,7 @@ BEGIN
   DELETE FROM storage.objects WHERE bucket_id = 'releases';
   GET DIAGNOSTICS n = ROW_COUNT;
   RESET ROLE;
-  IF n <> 0 THEN RAISE EXCEPTION 'FALHA master: DELETE apagou % linha(s)', n; END IF;
+  IF n IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'FALHA master: DELETE apagou % linha(s)', n; END IF;
 END $a$;
 RESET ROLE;
 

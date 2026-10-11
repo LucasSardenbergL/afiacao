@@ -78,7 +78,7 @@ BEGIN
      AND policyname IN ('releases_select_master', 'releases_insert_master', 'releases_update_master')
      AND roles = '{authenticated}'::name[]
      AND coalesce(qual, '') || coalesce(with_check, '') LIKE '%has_role%master%';
-  IF v_n <> 3 THEN
+  IF v_n IS DISTINCT FROM 3 THEN
     RAISE EXCEPTION 'postcondicao: esperava 3 policies releases_* master-only em storage.objects, achei %', v_n;
   END IF;
 
@@ -87,7 +87,7 @@ BEGIN
    WHERE schemaname = 'storage' AND tablename = 'objects'
      AND policyname NOT LIKE 'releases\_%'
      AND coalesce(qual, '') || coalesce(with_check, '') LIKE '%''releases''%';
-  IF v_soltas <> 0 THEN
+  IF v_soltas IS DISTINCT FROM 0 THEN
     RAISE EXCEPTION 'postcondicao: % policy(ies) alheias citam o bucket releases', v_soltas;
   END IF;
 END
