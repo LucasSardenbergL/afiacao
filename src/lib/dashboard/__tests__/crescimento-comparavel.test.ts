@@ -1,0 +1,279 @@
+import { describe, it, expect } from 'vitest';
+import {
+  decomporCrescimento,
+  janelasTrimestreFechado,
+  porEmpresaCliente,
+  avaliarComparabilidade,
+  mesesDaJanela,
+  coberturasPorEmpresa,
+  empresasDoEscopo,
+  rotuloJanela,
+  type PedidoCliente,
+} from '../crescimento-comparavel';
+
+const p = (cliente: string | null, total: number | null): PedidoCliente => ({
+  customer_user_id: cliente,
+  total,
+});
+
+describe('decomporCrescimento', () => {
+  it('separa base comparável, entraram e saíram', () => {
+    const base = [p('a', 100), p('b', 50), p('c', 30)];
+    const atual = [p('a', 120), p('b', 40), p('d', 70)];
+    const d = decomporCrescimento(atual, base);
+
+    expect(d.totalAtual).toBe(230);
+    expect(d.totalBase).toBe(180);
+    expect(d.comparavel).toEqual({ atual: 160, base: 150, clientes: 2 });
+    expect(d.entraram).toEqual({ receita: 70, clientes: 1 });
+    expect(d.sairam).toEqual({ receita: 30, clientes: 1 });
+    expect(d.variacaoTotal).toBeCloseTo(50 / 180);
+    expect(d.variacaoComparavel).toBeCloseTo(10 / 150);
+    expect(d.participacaoComparavel.atual).toBeCloseTo(160 / 230);
+    expect(d.participacaoComparavel.base).toBeCloseTo(150 / 180);
+  });
+
+  it('soma vários pedidos do mesmo cliente antes de classificar', () => {
+    const d = decomporCrescimento([p('a', 10), p('a', 15)], [p('a', 5), p('a', 5)]);
+    expect(d.comparavel).toEqual({ atual: 25, base: 10, clientes: 1 });
+    expect(d.entraram.clientes).toBe(0);
+    expect(d.sairam.clientes).toBe(0);
+  });
+
+  it('pedido sem cliente nunca entra na base comparável: fica em balde próprio', () => {
+    const d = decomporCrescimento([p(null, 40), p('a', 10)], [p(null, 25), p('a', 10)]);
+    expect(d.comparavel).toEqual({ atual: 10, base: 10, clientes: 1 });
+    expect(d.semCliente).toEqual({ atual: 40, base: 25 });
+    expect(d.entraram.clientes).toBe(0);
+  });
+
+  it('coorte é por PRESENÇA de pedido válido: pedido de R$ 0 ainda faz o cliente comparável', () => {
+    const d = decomporCrescimento([p('a', 0)], [p('a', 100)]);
+    expect(d.comparavel).toEqual({ atual: 0, base: 100, clientes: 1 });
+    expect(d.sairam.clientes).toBe(0);
+    expect(d.variacaoComparavel).toBe(-1);
+  });
+
+  it('sem interseção nenhuma: base comparável vazia e variação comparável null', () => {
+    const d = decomporCrescimento([p('a', 10)], [p('b', 20)]);
+    expect(d.comparavel).toEqual({ atual: 0, base: 0, clientes: 0 });
+    expect(d.variacaoComparavel).toBeNull();
+    expect(d.participacaoComparavel).toEqual({ atual: 0, base: 0 });
+  });
+
+  it('só pedidos sem cliente: tudo no balde próprio, nenhum cliente classificado', () => {
+    const d = decomporCrescimento([p(null, 10)], [p(null, 30)]);
+    expect(d.semCliente).toEqual({ atual: 10, base: 30 });
+    expect(d.comparavel.clientes + d.entraram.clientes + d.sairam.clientes).toBe(0);
+    expect(d.variacaoTotal).toBeCloseTo(-2 / 3);
+  });
+
+  it('ausente ≠ zero: sem base, as variações são null (nunca "+100%" fabricado)', () => {
+    const d = decomporCrescimento([p('a', 80)], []);
+    expect(d.variacaoTotal).toBeNull();
+    expect(d.variacaoComparavel).toBeNull();
+    expect(d.entraram).toEqual({ receita: 80, clientes: 1 });
+  });
+
+  it('sem receita atual, a participação da base comparável é null (não 0%)', () => {
+    const d = decomporCrescimento([], [p('a', 80)]);
+    expect(d.participacaoComparavel).toEqual({ atual: null, base: 0 });
+    expect(d.variacaoTotal).toBe(-1);
+  });
+
+  it('pedidos sem valor são contados, não somados em silêncio', () => {
+    const d = decomporCrescimento([p('a', null), p('a', 10)], [p('a', 10), p('b', null)]);
+    expect(d.pedidosSemValor).toEqual({ atual: 1, base: 1 });
+    expect(d.totalAtual).toBe(10);
+  });
+
+  it('identidade da ponte vale para qualquer entrada: Δtotal = Δcomparável + entraram − saíram + ΔsemCliente', () => {
+    // Gerador semeado (determinístico): falha reproduzível, sem dependência nova.
+    let seed = 20261010;
+    const rnd = () => {
+      seed = (seed * 1103515245 + 12345) % 2 ** 31;
+      return seed / 2 ** 31;
+    };
+    const gerar = (n: number): PedidoCliente[] =>
+      Array.from({ length: n }, () => {
+        const r = rnd();
+        const cliente = r < 0.1 ? null : `c${Math.floor(rnd() * 25)}`;
+        const total = rnd() < 0.05 ? null : rnd() < 0.05 ? 0 : Math.round(rnd() * 100_000) / 100;
+        return p(cliente, total);
+      });
+
+    for (let caso = 0; caso < 300; caso++) {
+      const atual = gerar(Math.floor(rnd() * 60));
+      const base = gerar(Math.floor(rnd() * 60));
+      const d = decomporCrescimento(atual, base);
+      const ponte =
+        d.comparavel.atual -
+        d.comparavel.base +
+        d.entraram.receita -
+        d.sairam.receita +
+        d.semCliente.atual -
+        d.semCliente.base;
+      expect(d.totalAtual - d.totalBase, `caso ${caso}`).toBeCloseTo(ponte, 6);
+      expect(d.totalAtual, `caso ${caso}`).toBeCloseTo(
+        d.comparavel.atual + d.entraram.receita + d.semCliente.atual,
+        6,
+      );
+      expect(d.totalBase, `caso ${caso}`).toBeCloseTo(
+        d.comparavel.base + d.sairam.receita + d.semCliente.base,
+        6,
+      );
+    }
+  });
+});
+
+describe('janelasTrimestreFechado', () => {
+  it('últimos 3 meses FECHADOS, o trimestre anterior e o mesmo trimestre do ano anterior', () => {
+    expect(janelasTrimestreFechado('2026-10-10')).toEqual({
+      atual: { de: '2026-07-01', ate: '2026-10-01' },
+      anterior: { de: '2026-04-01', ate: '2026-07-01' },
+      anoAnterior: { de: '2025-07-01', ate: '2025-10-01' },
+    });
+  });
+
+  it('no dia 1 o mês corrente ainda não fechou e fica fora', () => {
+    expect(janelasTrimestreFechado('2026-10-01').atual).toEqual({ de: '2026-07-01', ate: '2026-10-01' });
+  });
+
+  it('atravessa a virada do ano', () => {
+    expect(janelasTrimestreFechado('2026-02-15')).toEqual({
+      atual: { de: '2025-11-01', ate: '2026-02-01' },
+      anterior: { de: '2025-08-01', ate: '2025-11-01' },
+      anoAnterior: { de: '2024-11-01', ate: '2025-02-01' },
+    });
+  });
+});
+
+describe('porEmpresaCliente', () => {
+  it('o mesmo cliente em duas empresas vira dois vínculos (não se fundem na base comparável)', () => {
+    const atual = porEmpresaCliente([{ account: 'oben', customer_user_id: 'X', total: 10 }]);
+    const base = porEmpresaCliente([{ account: 'colacor', customer_user_id: 'X', total: 10 }]);
+    const d = decomporCrescimento(atual, base);
+    expect(d.comparavel.clientes).toBe(0);
+    expect(d.entraram.clientes).toBe(1);
+    expect(d.sairam.clientes).toBe(1);
+  });
+
+  it('cliente nulo continua nulo (não vira "oben:null")', () => {
+    expect(porEmpresaCliente([{ account: 'oben', customer_user_id: null, total: 5 }])).toEqual([
+      { customer_user_id: null, total: 5 },
+    ]);
+  });
+});
+
+describe('avaliarComparabilidade', () => {
+  it('coberturas próximas nas duas janelas: comparável (os casos medidos na prod)', () => {
+    expect(
+      avaliarComparabilidade([
+        { account: 'oben', atual: 1.35, base: 1.25 },
+        { account: 'colacor', atual: 0.91, base: 1.02 },
+      ]),
+    ).toEqual({ estado: 'comparavel' });
+  });
+
+  it('cobertura que mudou demais: incomparável, apontando a empresa e as duas coberturas', () => {
+    expect(
+      avaliarComparabilidade([
+        { account: 'oben', atual: 1.35, base: 1.25 },
+        { account: 'colacor', atual: 0.91, base: 0.49 },
+      ]),
+    ).toEqual({ estado: 'incomparavel', account: 'colacor', atual: 0.91, base: 0.49 });
+  });
+
+  it('no limite exato ainda é comparável; acima dele não', () => {
+    expect(avaliarComparabilidade([{ account: 'o', atual: 1.2, base: 1 }]).estado).toBe('comparavel');
+    expect(avaliarComparabilidade([{ account: 'o', atual: 1.21, base: 1 }]).estado).toBe('incomparavel');
+  });
+
+  it('ausente ≠ comparável: sem DRE numa janela, ou lista vazia, é "não verificada"', () => {
+    expect(avaliarComparabilidade([{ account: 'o', atual: 1, base: null }])).toEqual({ estado: 'nao_verificada' });
+    expect(avaliarComparabilidade([])).toEqual({ estado: 'nao_verificada' });
+  });
+
+  it('incomparável vence não-verificada: o defeito provado aparece mesmo com outra empresa sem dado', () => {
+    expect(
+      avaliarComparabilidade([
+        { account: 'oben', atual: null, base: 1 },
+        { account: 'colacor', atual: 0.9, base: 0.4 },
+      ]).estado,
+    ).toBe('incomparavel');
+  });
+});
+
+describe('mesesDaJanela', () => {
+  it('lista os meses inteiros da janela, atravessando o ano', () => {
+    expect(mesesDaJanela({ de: '2025-11-01', ate: '2026-02-01' })).toEqual([
+      { ano: 2025, mes: 11 },
+      { ano: 2025, mes: 12 },
+      { ano: 2026, mes: 1 },
+    ]);
+  });
+});
+
+describe('coberturasPorEmpresa', () => {
+  it('pedidos ÷ DRE por empresa com pedido; empresa só de DRE fica fora', () => {
+    const c = coberturasPorEmpresa(
+      ['colacor', 'oben'],
+      [{ account: 'oben', total: 135 }, { account: 'colacor', total: 91 }],
+      [{ account: 'oben', total: 125 }, { account: 'colacor', total: 49 }],
+      new Map([['oben', 100], ['colacor', 100], ['colacor_sc', 50]]),
+      new Map([['oben', 100], ['colacor', 100]]),
+    );
+    expect(c).toEqual([
+      { account: 'colacor', atual: 0.91, base: 0.49 },
+      { account: 'oben', atual: 1.35, base: 1.25 },
+    ]);
+  });
+
+  it('DRE indisponível (leitura falhou) ou sem a empresa: cobertura null, não 0', () => {
+    const c = coberturasPorEmpresa(['oben'], [{ account: 'oben', total: 10 }], [], null, new Map());
+    expect(c).toEqual([{ account: 'oben', atual: null, base: null }]);
+  });
+
+  it('empresa sem pedido numa janela mas com DRE: cobertura 0 (sync perdeu tudo) — sinal, não ausência', () => {
+    const c = coberturasPorEmpresa(['oben'], [], [{ account: 'oben', total: 10 }], new Map([['oben', 50]]), new Map([['oben', 50]]));
+    expect(c).toEqual([{ account: 'oben', atual: 0, base: 0.2 }]);
+    expect(avaliarComparabilidade(c)).toEqual({ estado: 'incomparavel', account: 'oben', atual: 0, base: 0.2 });
+  });
+});
+
+describe('rotuloJanela', () => {
+  it('mesmo ano, virada de ano e mês único', () => {
+    expect(rotuloJanela({ de: '2026-07-01', ate: '2026-10-01' })).toBe('jul–set/26');
+    expect(rotuloJanela({ de: '2025-11-01', ate: '2026-02-01' })).toBe('nov/25–jan/26');
+    expect(rotuloJanela({ de: '2026-03-01', ate: '2026-04-01' })).toBe('mar/26');
+  });
+});
+
+describe('régua de cobertura — P1 do Codex (rodada 2)', () => {
+  it('zero conhecido vence DRE ausente na outra ponta: incomparável, não "não verificada"', () => {
+    expect(avaliarComparabilidade([{ account: 'oben', atual: 0, base: null }])).toEqual({
+      estado: 'incomparavel',
+      account: 'oben',
+      atual: 0,
+      base: null,
+    });
+  });
+
+  it('empresa esperada SEM pedido nas duas janelas, com DRE: entra na régua e bloqueia o grupo', () => {
+    const c = coberturasPorEmpresa(
+      empresasDoEscopo('all'),
+      [{ account: 'oben', total: 130 }],
+      [{ account: 'oben', total: 125 }],
+      new Map([['oben', 100], ['colacor', 80]]),
+      new Map([['oben', 100], ['colacor', 90]]),
+    );
+    expect(c.map((x) => x.account)).toEqual(['colacor', 'oben']);
+    expect(avaliarComparabilidade(c)).toMatchObject({ estado: 'incomparavel', account: 'colacor' });
+  });
+
+  it('escopo: grupo = empresas com pedido; empresa única = ela; Colacor SC = nenhuma', () => {
+    expect(empresasDoEscopo('all')).toEqual(['colacor', 'oben']);
+    expect(empresasDoEscopo('oben')).toEqual(['oben']);
+    expect(empresasDoEscopo('colacor_sc')).toEqual([]);
+  });
+});
