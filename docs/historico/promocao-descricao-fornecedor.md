@@ -117,3 +117,7 @@ Recuperar qualquer uma exige ler o arquivo-fonte da campanha (Storage) e transcr
 - **Prova lida e UPDATE são instantes diferentes.** Conferir a prova num SELECT e escrever noutro deixa a
   janela em que a prova vence (o `WHERE` do UPDATE só revalida o que ele cita). Trave as linhas ANTES de ler
   a prova — e prove a corrida com duas conexões e ordem observada, não com `sleep`.
+- **Sabotagem que não entra é verde "sem dente" pelo motivo errado.** A falsificação acusou a da POS4 por
+  presença: o nome `pos4_…` não casava o `pos_*` do `case` que aplica sabotagens de migration, a suíte rodou
+  limpa e saiu verde. O assert estava certo; o mutante é que nunca nasceu. O harness agora marca
+  `SAB_APLICADA` em cada ramo e aborta (`exit 9`) a sabotagem que nenhum ramo reconheceu.
