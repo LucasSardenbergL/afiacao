@@ -23,13 +23,65 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { EMPRESA, type ItemRow } from "./types";
+import type { DescricaoSku } from "./descricaoSku";
+
+function textoDoSku(sku: DescricaoSku): string {
+  switch (sku.estado) {
+    case "ok": {
+      const texto = sku.descricao?.trim() ? sku.descricao : "sem descrição no catálogo";
+      return sku.desatualizada ? `${texto} (leitura desatualizada)` : texto;
+    }
+    case "fora_do_catalogo":
+      return sku.desatualizada ? "fora do catálogo da conta (leitura desatualizada)" : "fora do catálogo da conta";
+    case "indisponivel":
+      return `descrição indisponível (${sku.motivo === "sem-rede" ? "sem conexão" : "erro ao ler o catálogo"})`;
+    case "carregando":
+      return "carregando…";
+    case "sem_sku":
+      return "—";
+  }
+}
+
+/**
+ * O par que a promoção vincula: o texto que o FORNECEDOR ofertou (a coluna, intocada pelo
+ * vínculo) e o SKU Omie que recebe o desconto, com a descrição LIDA do catálogo. Fornecedor
+ * sem texto registrado é dito como tal — nunca preenchido com a descrição do SKU.
+ */
+export function DescricoesDoVinculo({ item, sku }: { item: ItemRow; sku: DescricaoSku }) {
+  return (
+    <div className="space-y-1 text-xs">
+      <div data-testid="descricao-fornecedor">
+        <span className="text-muted-foreground">Fornecedor: </span>
+        {item.descricao_produto_fornecedor?.trim() ? (
+          item.descricao_produto_fornecedor
+        ) : (
+          <span className="italic text-muted-foreground">sem descrição registrada</span>
+        )}
+      </div>
+      <div data-testid="descricao-sku">
+        <span className="text-muted-foreground">SKU Omie: </span>
+        <span className="font-mono">{item.sku_codigo_omie ?? "—"}</span>
+        {" · "}
+        {sku.estado === "ok" && !sku.desatualizada && sku.descricao?.trim() ? (
+          textoDoSku(sku)
+        ) : (
+          <span className="italic text-muted-foreground">{textoDoSku(sku)}</span>
+        )}
+      </div>
+    </div>
+  );
+}
 
 export function MapeamentoStatusCell({
   item,
+  sku,
   onUpdate,
 }: {
   item: ItemRow;
-  onUpdate: (changes: Partial<ItemRow>) => void;
+  /** A descrição do SKU vinculado, lida do catálogo (useDescricoesSkuOmie). */
+  sku: DescricaoSku;
+  /** Rejeita quando a gravação falha — o vínculo manual depende disso para não seguir. */
+  onUpdate: (changes: Partial<ItemRow>) => Promise<unknown>;
 }) {
   const qc = useQueryClient();
   const [searchOpen, setSearchOpen] = useState(false);
@@ -88,10 +140,7 @@ export function MapeamentoStatusCell({
             </Badge>
           </TooltipTrigger>
           <TooltipContent className="max-w-xs">
-            <div className="space-y-1 text-xs">
-              <div className="font-mono">{item.sku_codigo_omie}</div>
-              <div>{item.descricao_produto_fornecedor || "—"}</div>
-            </div>
+            <DescricoesDoVinculo item={item} sku={sku} />
           </TooltipContent>
         </Tooltip>
       </TooltipProvider>
@@ -112,10 +161,9 @@ export function MapeamentoStatusCell({
             </Badge>
           </TooltipTrigger>
           <TooltipContent className="max-w-xs">
-            <div className="space-y-1 text-xs">
-              <div className="font-mono">{item.sku_codigo_omie}</div>
-              <div>{item.descricao_produto_fornecedor || "—"}</div>
-              <div className="text-muted-foreground italic">
+            <div className="space-y-1">
+              <DescricoesDoVinculo item={item} sku={sku} />
+              <div className="text-xs text-muted-foreground italic">
                 Expandido automaticamente de {item.sku_codigo_fornecedor}
               </div>
             </div>
@@ -125,11 +173,38 @@ export function MapeamentoStatusCell({
     );
   }
 
+  // ========== similaridade já confirmada ==========
+  if (
+    (q === "unico_por_similaridade" || q === "expandido_por_similaridade") &&
+    isConfirmed
+  ) {
+    return (
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Badge
+              variant="outline"
+              className="bg-status-success/15 text-status-success border-status-success/30 cursor-default"
+            >
+              <Check className="h-3 w-3 mr-1" /> Similaridade
+            </Badge>
+          </TooltipTrigger>
+          <TooltipContent className="max-w-xs">
+            <DescricoesDoVinculo item={item} sku={sku} />
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    );
+  }
+
   // ========== similaridade (precisa revisão) ==========
+  // Revisar um casamento APROXIMADO exige ver os dois lados: sem a descrição do SKU lida do
+  // catálogo (carregando, erro, fora do catálogo ou cache desatualizado), não há o que conferir.
   if (
     (q === "unico_por_similaridade" || q === "expandido_por_similaridade") &&
     !isConfirmed
   ) {
+    const podeRevisar = sku.estado === "ok" && sku.desatualizada === null;
     return (
       <Popover>
         <PopoverTrigger asChild>
@@ -142,23 +217,20 @@ export function MapeamentoStatusCell({
         </PopoverTrigger>
         <PopoverContent className="w-80">
           <div className="space-y-3">
-            <div>
-              <div className="text-xs text-muted-foreground">SKU Omie</div>
-              <div className="font-mono text-sm">{item.sku_codigo_omie}</div>
-            </div>
-            <div>
-              <div className="text-xs text-muted-foreground">Descrição</div>
-              <div className="text-sm">
-                {item.descricao_produto_fornecedor || "—"}
-              </div>
-            </div>
+            <DescricoesDoVinculo item={item} sku={sku} />
             <p className="text-xs italic text-muted-foreground">
-              Resolvido por busca aproximada. Confirme se está correto.
+              {podeRevisar
+                ? "Resolvido por busca aproximada. Confirme se está correto."
+                : "Sem a descrição do SKU lida do catálogo não dá para conferir — aguarde ou recarregue."}
             </p>
             <Button
               size="sm"
               className="w-full"
-              onClick={() => onUpdate({ confirmado: true })}
+              disabled={!podeRevisar}
+              onClick={() => {
+                // O erro da gravação sai no toast do onError da mutation; aqui só não vaza.
+                onUpdate({ confirmado: true }).catch(() => undefined);
+              }}
             >
               <Check className="h-4 w-4" /> Confirmar
             </Button>
@@ -182,10 +254,7 @@ export function MapeamentoStatusCell({
             </Badge>
           </TooltipTrigger>
           <TooltipContent className="max-w-xs">
-            <div className="space-y-1 text-xs">
-              <div className="font-mono">{item.sku_codigo_omie}</div>
-              <div>{item.descricao_produto_fornecedor || "—"}</div>
-            </div>
+            <DescricoesDoVinculo item={item} sku={sku} />
           </TooltipContent>
         </Tooltip>
       </TooltipProvider>
@@ -295,12 +364,18 @@ export function MapeamentoStatusCell({
                   // Primeiro SKU → atualiza o item original (in-place). A descrição NÃO entra:
                   // descricao_produto_fornecedor é o texto que o fornecedor ofertou, e a do SKU
                   // escolhido se lê pelo sku_codigo_omie (sobrescrevê-la apagava a auditoria).
+                  // AGUARDADO: com o PATCH falho, irmão nenhum nasce e a tela não anuncia o
+                  // vínculo (o erro em si já sai no toast do onError da mutation).
                   const primeiroId = ids[0];
-                  onUpdate({
-                    sku_codigo_omie: primeiroId,
-                    mapeamento_qualidade: "manual_confirmado",
-                    confirmado: true,
-                  });
+                  try {
+                    await onUpdate({
+                      sku_codigo_omie: primeiroId,
+                      mapeamento_qualidade: "manual_confirmado",
+                      confirmado: true,
+                    });
+                  } catch {
+                    return;
+                  }
 
                   // Demais → inserir novos itens irmãos (mesmo desconto/volume e o MESMO texto do
                   // fornecedor do original). Para escapar do unique (campanha_id,
@@ -322,7 +397,12 @@ export function MapeamentoStatusCell({
                     const { error } = await supabase
                       .from("promocao_item")
                       .insert(payload as never);
-                    if (error) throw error;
+                    if (error) {
+                      // O original JÁ foi vinculado: o erro diz o estado parcial, não "falhou tudo".
+                      throw new Error(
+                        `Produto vinculado, mas ${extras.length === 1 ? "a embalagem extra não foi gravada" : `as ${extras.length} embalagens extras não foram gravadas`}: ${error.message}`,
+                      );
+                    }
                     toast.success(`${ids.length} embalagens vinculadas`);
                   } else {
                     toast.success("Produto vinculado");

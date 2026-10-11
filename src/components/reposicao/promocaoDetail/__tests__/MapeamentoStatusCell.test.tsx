@@ -1,7 +1,10 @@
 import { describe, it, expect, vi, beforeAll, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { toast } from "sonner";
+import type React from "react";
 import type { ItemRow } from "../types";
+import type { DescricaoSku } from "../descricaoSku";
 
 // O vínculo manual promoção → SKU Omie. `descricao_produto_fornecedor` é a ENTRADA do fornecedor
 // (o texto da campanha): confirmar o SKU não pode trocá-la pela descrição do SKU escolhido, nem no
@@ -45,7 +48,9 @@ vi.mock("@/integrations/supabase/client", () => {
   };
 });
 
-import { MapeamentoStatusCell } from "../MapeamentoStatusCell";
+vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+
+import { DescricoesDoVinculo, MapeamentoStatusCell } from "../MapeamentoStatusCell";
 
 // Radix Popover/Checkbox usam APIs ausentes no jsdom.
 beforeAll(() => {
@@ -62,6 +67,8 @@ beforeAll(() => {
 
 beforeEach(() => {
   insertSpy.mockClear();
+  vi.mocked(toast.success).mockClear();
+  vi.mocked(toast.error).mockClear();
 });
 
 const TEXTO_FORNECEDOR = "THINNER P/ PU - OFERTA 5L E 18L";
@@ -87,12 +94,15 @@ const itemNaoEncontrado = (over: Partial<ItemRow> = {}): ItemRow => ({
 });
 
 /** Abre a busca, marca as embalagens NESTA ordem e confirma. */
-async function vincular(item: ItemRow, descricoesNaOrdem: string[]) {
-  const onUpdate = vi.fn();
+async function vincular(
+  item: ItemRow,
+  descricoesNaOrdem: string[],
+  onUpdate = vi.fn().mockResolvedValue(undefined),
+) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={qc}>
-      <MapeamentoStatusCell item={item} onUpdate={onUpdate} />
+      <MapeamentoStatusCell item={item} sku={{ estado: "sem_sku" }} onUpdate={onUpdate} />
     </QueryClientProvider>,
   );
   fireEvent.click(screen.getByText("Não encontrado"));
@@ -151,5 +161,101 @@ describe("MapeamentoStatusCell — vínculo manual preserva a entrada do fornece
     const [irmao] = insertSpy.mock.calls[0][0] as Array<Record<string, unknown>>;
     expect(irmao.sku_codigo_omie).toBe(8689744102);
     expect(irmao.descricao_produto_fornecedor).toBeNull();
+  });
+
+  it("o PATCH do original falha: nenhum irmão é gravado e a tela não anuncia o vínculo", async () => {
+    const onUpdate = vi.fn().mockRejectedValue(new Error("rede caiu no PATCH"));
+    await vincular(itemNaoEncontrado(), ["THINNER DR.4403LT", "THINNER DR.4403L5"], onUpdate);
+
+    // O handler terminou quando o botão sai do "salvando" — ou some, se o sucesso fechou o popover.
+    await waitFor(() => {
+      const botao = screen.queryByRole("button", { name: /Confirmar/ });
+      expect(botao === null || !botao.hasAttribute("disabled")).toBe(true);
+    });
+    expect(insertSpy).not.toHaveBeenCalled();
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: /Confirmar/ })).toBeEnabled();
+  });
+});
+
+// ── A descrição do SKU se LÊ pelo sku_codigo_omie; a do fornecedor é a coluna. As duas, lado a lado. ──
+
+const SKU_OK: DescricaoSku = { estado: "ok", descricao: "THINNER DR.4403LT", codigo: "PRD00411", desatualizada: null };
+
+function comQc(ui: React.ReactElement) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
+}
+
+function textoDe(testId: string) {
+  return screen.getByTestId(testId).textContent ?? "";
+}
+
+describe("DescricoesDoVinculo — fornecedor × SKU Omie", () => {
+  const vinculado = itemNaoEncontrado({ sku_codigo_omie: 8689717792, mapeamento_qualidade: "manual_confirmado", confirmado: true });
+
+  it("mostra o texto do fornecedor e, à parte, o SKU com a descrição do catálogo", () => {
+    render(<DescricoesDoVinculo item={vinculado} sku={SKU_OK} />);
+    expect(textoDe("descricao-fornecedor")).toBe(`Fornecedor: ${TEXTO_FORNECEDOR}`);
+    expect(textoDe("descricao-sku")).toBe("SKU Omie: 8689717792 · THINNER DR.4403LT");
+  });
+
+  it("fornecedor sem texto registrado: diz isso — nunca empresta a descrição do SKU", () => {
+    render(<DescricoesDoVinculo item={{ ...vinculado, descricao_produto_fornecedor: null }} sku={SKU_OK} />);
+    expect(textoDe("descricao-fornecedor")).toBe("Fornecedor: sem descrição registrada");
+  });
+
+  it.each<[string, DescricaoSku, string]>([
+    ["leitura falhou", { estado: "indisponivel", motivo: "erro" }, "SKU Omie: 8689717792 · descrição indisponível (erro ao ler o catálogo)"],
+    ["sem rede", { estado: "indisponivel", motivo: "sem-rede" }, "SKU Omie: 8689717792 · descrição indisponível (sem conexão)"],
+    ["carregando", { estado: "carregando" }, "SKU Omie: 8689717792 · carregando…"],
+    ["fora do catálogo", { estado: "fora_do_catalogo", desatualizada: null }, "SKU Omie: 8689717792 · fora do catálogo da conta"],
+    ["catálogo sem texto", { estado: "ok", descricao: " ", codigo: "PRD00411", desatualizada: null }, "SKU Omie: 8689717792 · sem descrição no catálogo"],
+    ["cache de refetch falho", { estado: "ok", descricao: "THINNER DR.4403LT", codigo: "PRD00411", desatualizada: "erro" }, "SKU Omie: 8689717792 · THINNER DR.4403LT (leitura desatualizada)"],
+  ])("SKU — %s", (_caso, sku, esperado) => {
+    render(<DescricoesDoVinculo item={vinculado} sku={sku} />);
+    expect(textoDe("descricao-sku")).toBe(esperado);
+  });
+});
+
+describe("Similaridade — revisar exige a descrição do SKU", () => {
+  const porSimilaridade = itemNaoEncontrado({
+    sku_codigo_omie: 8689717792,
+    mapeamento_qualidade: "unico_por_similaridade",
+    confirmado: false,
+    descricao_produto_fornecedor: null,
+  });
+
+  function abrir(sku: DescricaoSku, onUpdate = vi.fn().mockResolvedValue(undefined)) {
+    comQc(<MapeamentoStatusCell item={porSimilaridade} sku={sku} onUpdate={onUpdate} />);
+    fireEvent.click(screen.getByText("Revisar — similaridade"));
+    return onUpdate;
+  }
+
+  it("com a descrição do SKU lida: mostra fornecedor e SKU, e Confirmar grava a confirmação", () => {
+    const onUpdate = abrir(SKU_OK);
+    expect(textoDe("descricao-fornecedor")).toBe("Fornecedor: sem descrição registrada");
+    expect(textoDe("descricao-sku")).toBe("SKU Omie: 8689717792 · THINNER DR.4403LT");
+    fireEvent.click(screen.getByRole("button", { name: /Confirmar/ }));
+    expect(onUpdate).toHaveBeenCalledWith({ confirmado: true });
+  });
+
+  it.each<[string, DescricaoSku]>([
+    ["leitura falhou", { estado: "indisponivel", motivo: "erro" }],
+    ["carregando", { estado: "carregando" }],
+    ["fora do catálogo", { estado: "fora_do_catalogo", desatualizada: null }],
+    ["cache desatualizado", { estado: "ok", descricao: "THINNER DR.4403LT", codigo: "PRD00411", desatualizada: "erro" }],
+  ])("sem a descrição confiável do SKU (%s): Confirmar fica travado", (_caso, sku) => {
+    const onUpdate = abrir(sku);
+    const botao = screen.getByRole("button", { name: /Confirmar/ });
+    expect(botao).toBeDisabled();
+    fireEvent.click(botao);
+    expect(onUpdate).not.toHaveBeenCalled();
+  });
+
+  it("similaridade JÁ confirmada não volta a 'Pendente' (o ramo de busca manual)", () => {
+    comQc(<MapeamentoStatusCell item={{ ...porSimilaridade, confirmado: true }} sku={SKU_OK} onUpdate={vi.fn()} />);
+    expect(screen.queryByText("Pendente")).toBeNull();
+    expect(screen.getByText("Similaridade")).toBeInTheDocument();
   });
 });
