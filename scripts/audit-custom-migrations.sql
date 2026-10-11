@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 607
+-- Total de custom migrations: 610
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -45,7 +45,7 @@
 --   • index public.idx_customer_metrics_mv_uid (recencia_mv_order_date_kpi) — MV movida para private (20261001014100_universo_pedidos_recencia); o índice vive em private.customer_metrics_mv
 --   • function public.omie_cliente_upsert_mapping (omie_identidade_por_conta) — drop — 20260718091409_drop_omie_cliente_upsert_mapping_orfa (PR #1409)
 --   • rls_policy public.ss_allowlist_gestor_iud (selfservice_pr01_allowlist_gate) — split → ss_allowlist_select/insert/update/delete (20260718190000_authz_capability_matrix_e2)
---   • trigger public.trg_omie_clientes_to_ledger (carteira_membership_ledger_fatia0) — tabela renomeada → _quarantine_omie_clientes_20260722 (20260722110000_quarentena_omie_clientes_espelho); o trigger foi junto
+--   • trigger public.trg_omie_clientes_to_ledger (carteira_membership_ledger_fatia0) — tabela renomeada → _quarantine_omie_clientes_20260722 (20260722110000_quarentena_omie_clientes_espelho); o trigger foi junto; a quarentena foi dropada em 20261011120500_drop_quarentena_omie_clientes (M-18)
 --   • function public.estimar_impacto_exclusao_outlier (outliers_leadtime_stack_efetivo) — drop — 20260718093248_drop_estimar_impacto_exclusao_outlier_orfa
 --   • function public.carteira_visivel_para (carteira_visivel_para_filtra_eligible) — SET SCHEMA private — 20260718150000_fu7_helpers_rls_schema_privado
 --   • rls_policy public.estoque_reservas_service_all (atp_reserva_estoque_fase1) — drop — 20260806225052_atp_reserva_estoque_fase1_1_hardening (decorativa: service_role tem BYPASSRLS) → estoque_reservas_service_select
@@ -668,7 +668,10 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261010224755', 'promocao_item_descricao_fornecedor_preservada', '20261010224755_promocao_item_descricao_fornecedor_preservada.sql'),
   ('20261010230000', 'tint_watchdog_fase5_s2_aviso', '20261010230000_tint_watchdog_fase5_s2_aviso.sql'),
   ('20261011020000', 'picking_v2_schema', '20261011020000_picking_v2_schema.sql'),
-  ('20261011120000', 'tint_grants_escrita_staff', '20261011120000_tint_grants_escrita_staff.sql')
+  ('20261011120000', 'tint_grants_escrita_staff', '20261011120000_tint_grants_escrita_staff.sql'),
+  ('20261011120000', 'tint_watchdog_fase5_cron_timeout', '20261011120000_tint_watchdog_fase5_cron_timeout.sql'),
+  ('20261011120500', 'drop_quarentena_omie_clientes', '20261011120500_drop_quarentena_omie_clientes.sql'),
+  ('20261011140000', 'picking_v2_coleta_reserva', '20261011140000_picking_v2_coleta_reserva.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2634,7 +2637,15 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('picking_v2_schema', 'rls_policy', 'public', 'picking_linhas_staff_select', 'picking_linhas'),
   ('picking_v2_schema', 'rls_policy', 'public', 'picking_leituras_staff_select', 'picking_leituras'),
   ('picking_v2_schema', 'rls_policy', 'public', 'picking_codigos_barras_staff_select', 'picking_codigos_barras'),
-  ('picking_v2_schema', 'rls_policy', 'public', 'picking_eventos_staff_select', 'picking_eventos')
+  ('picking_v2_schema', 'rls_policy', 'public', 'picking_eventos_staff_select', 'picking_eventos'),
+  ('tint_watchdog_fase5_cron_timeout', 'cron_job', 'cron', 'tint-watchdog-fase5-6h', ''),
+  ('picking_v2_coleta_reserva', 'function', 'public', 'picking_v2_data', ''),
+  ('picking_v2_coleta_reserva', 'function', 'public', 'picking_coleta_reservar', ''),
+  ('picking_v2_coleta_reserva', 'function', 'public', 'picking_sincronizar_fila', ''),
+  ('picking_v2_coleta_reserva', 'function', 'public', 'picking_pegar_task', ''),
+  ('picking_v2_coleta_reserva', 'function', 'public', 'picking_registrar_leitura', ''),
+  ('picking_v2_coleta_reserva', 'function', 'public', 'picking_retomar', ''),
+  ('picking_v2_coleta_reserva', 'function', 'public', 'picking_concluir', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4648,7 +4659,15 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('picking_v2_schema', 'rls_policy', 'public', 'picking_linhas_staff_select', 'picking_linhas'),
   ('picking_v2_schema', 'rls_policy', 'public', 'picking_leituras_staff_select', 'picking_leituras'),
   ('picking_v2_schema', 'rls_policy', 'public', 'picking_codigos_barras_staff_select', 'picking_codigos_barras'),
-  ('picking_v2_schema', 'rls_policy', 'public', 'picking_eventos_staff_select', 'picking_eventos')
+  ('picking_v2_schema', 'rls_policy', 'public', 'picking_eventos_staff_select', 'picking_eventos'),
+  ('tint_watchdog_fase5_cron_timeout', 'cron_job', 'cron', 'tint-watchdog-fase5-6h', ''),
+  ('picking_v2_coleta_reserva', 'function', 'public', 'picking_v2_data', ''),
+  ('picking_v2_coleta_reserva', 'function', 'public', 'picking_coleta_reservar', ''),
+  ('picking_v2_coleta_reserva', 'function', 'public', 'picking_sincronizar_fila', ''),
+  ('picking_v2_coleta_reserva', 'function', 'public', 'picking_pegar_task', ''),
+  ('picking_v2_coleta_reserva', 'function', 'public', 'picking_registrar_leitura', ''),
+  ('picking_v2_coleta_reserva', 'function', 'public', 'picking_retomar', ''),
+  ('picking_v2_coleta_reserva', 'function', 'public', 'picking_concluir', '')
 )
 SELECT
   e.migration,
@@ -4676,7 +4695,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 127.
+-- Funções redefinidas com corpo extraível: 132.
 -- Fora da seção (4) — o último evento é REMOÇÃO de propósito (DROP / SET SCHEMA / RENAME):
 --   • public.import_tint_formulas — 20260806223407_drop_import_tint_formulas.sql
 --   • public.estimar_impacto_exclusao_outlier — 20260718093248_drop_estimar_impacto_exclusao_outlier_orfa.sql
@@ -5177,7 +5196,17 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'sales_orders_gemeo_app_derivar', 1, '20261001100001_sales_orders_gemeo_importado_contagem_unica.sql', '858944c47f258a1e33ddd58249316263'),
   ('public', 'sales_orders_gemeo_app_derivar', 2, '20261005220000_sales_orders_kpi_no_envio.sql', '617b8551f551551b37200cb3ae787fe3'),
   ('public', 'atp_confirmar_pv', 1, '20261009120000_atp_fase3_1_elo_pid.sql', 'e61393e022cf87f7dd381a622d19b456'),
-  ('public', 'atp_confirmar_pv', 2, '20261010150000_atp_fase3_3_pv_divergente.sql', '7a193063b44c951951c834e9c56a6bdf')
+  ('public', 'atp_confirmar_pv', 2, '20261010150000_atp_fase3_3_pv_divergente.sql', '7a193063b44c951951c834e9c56a6bdf'),
+  ('public', 'picking_sincronizar_fila', 1, '20261011020000_picking_v2_schema.sql', '8e8c7aaa9eceb1990417ff5fca0040d6'),
+  ('public', 'picking_sincronizar_fila', 2, '20261011140000_picking_v2_coleta_reserva.sql', 'e8deab1408e7b2d0b2c24378de95f11c'),
+  ('public', 'picking_pegar_task', 1, '20261011020000_picking_v2_schema.sql', '965004d3106eae870e476b5a0ea37603'),
+  ('public', 'picking_pegar_task', 2, '20261011140000_picking_v2_coleta_reserva.sql', '192a1ff4dc4ab34e3edcfe160042afec'),
+  ('public', 'picking_registrar_leitura', 1, '20261011020000_picking_v2_schema.sql', 'efc53d2f03f5347766db4332ed279c27'),
+  ('public', 'picking_registrar_leitura', 2, '20261011140000_picking_v2_coleta_reserva.sql', '4e1215f894b623d5f72e537a4c72489d'),
+  ('public', 'picking_retomar', 1, '20261011020000_picking_v2_schema.sql', '2f7ed4aa67431d59bafd177319bfe8c9'),
+  ('public', 'picking_retomar', 2, '20261011140000_picking_v2_coleta_reserva.sql', '7c295ca7fb57cc73891c636cc20c6aff'),
+  ('public', 'picking_concluir', 1, '20261011020000_picking_v2_schema.sql', 'e0a222a4a1dc02a7957eedcda9c5934a'),
+  ('public', 'picking_concluir', 2, '20261011140000_picking_v2_coleta_reserva.sql', '5395b2ccef54177a66cd98728a8ff507')
 ),
 deriva_reconhecida (schema_name, object_name, body_md5, motivo) AS (VALUES
   ('public', 'apply_score_updates', '331996f594ff3491f36ce7da9068dbd9', 'cosmética (triagem 2026-10-08)'),

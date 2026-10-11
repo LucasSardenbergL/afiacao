@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **607** custom migrations totais
-- **1997** objetos esperados (criados por estas migrations)
+- **610** custom migrations totais
+- **2005** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 689
+  - `function`: 696
   - `rls_policy`: 469
   - `index`: 273
   - `table`: 176
-  - `cron_job`: 175
+  - `cron_job`: 176
   - `view`: 109
   - `trigger`: 102
   - `enum_value`: 4
@@ -4982,6 +4982,28 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20261011120000_tint_grants_escrita_staff.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20261011120000_tint_watchdog_fase5_cron_timeout.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.tint-watchdog-fase5-6h` | — |
+
+### `20261011120500_drop_quarentena_omie_clientes.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20261011140000_picking_v2_coleta_reserva.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.picking_v2_data` | — |
+| `function` | `public.picking_coleta_reservar` | — |
+| `function` | `public.picking_sincronizar_fila` | — |
+| `function` | `public.picking_pegar_task` | — |
+| `function` | `public.picking_registrar_leitura` | — |
+| `function` | `public.picking_retomar` | — |
+| `function` | `public.picking_concluir` | — |
 
 ## Próximos passos por status
 
