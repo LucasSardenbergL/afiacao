@@ -282,10 +282,11 @@ chk_reserva_concorrente() {
   Pq "$db" "DELETE FROM public.picking_coleta_estado WHERE account = 'colacor';" >/dev/null
   ( Pd "$db" -tA -q -c "BEGIN; SELECT t.res('S1', 'colacor'); SELECT pg_sleep(2); COMMIT;" >/dev/null ) &
   sleep 0.5
-  Pq "$db" "SELECT t.res('S2', 'colacor');" >/dev/null 2>&1 || true
+  local err
+  err="$(Pq "$db" "SELECT t.err(\$q\$SELECT t.res('S2', 'colacor')\$q\$);")"
   wait
   Pq "$db" "SELECT (SELECT count(*) FROM t.tok WHERE nome IN ('S1','S2') AND (r->>'ok')::boolean) || '|'
-               || coalesce((SELECT r->>'motivo' FROM t.tok WHERE nome = 'S2'), 'SEM_S2');"
+               || coalesce((SELECT r->>'motivo' FROM t.tok WHERE nome = 'S2'), 'SEM_S2') || '|$err';"
 }
 
 # Retomar uma tarefa suspensa exige reconciliação física.
@@ -378,6 +379,26 @@ chk_ausente() {
   Pq "$db" "SELECT t.sync('oben', '{9641,9642}', jsonb_build_array(t.ped(9641, jsonb_build_array(t.it(1,757,'1','UN','E9641'))), t.ped(9642, jsonb_build_array(t.it(1,758,'1','UN','E9642')))));" >/dev/null
   volta="$(Pq "$db" "SELECT coalesce(t.concluir('$U1', 'oben', 9642)->>'motivo', 'ok');")"
   echo "$um|$dois|$volta"
+}
+
+# Bloqueio por ausência nas OUTRAS portas (Codex 0.5b código P2-4): o mesmo operador re-pegando,
+# outro assumindo, leitura manual e retomar ficam bloqueados; o estorno (tira do volume) passa; e
+# o estado_seq sobe ao entrar no bloqueio (a tela relê).
+chk_ausente2() {
+  local db="$1" lid='55555555-5555-5555-5555-555555555555' seq0 seq1 out
+  Pq "$db" "SELECT t.sync('oben', '{9651,9652}', jsonb_build_array(t.ped(9651, jsonb_build_array(t.it(1,759,'2','UN','E9651'))), t.ped(9652, jsonb_build_array(t.it(1,760,'1','UN','E9652')))));
+            SELECT t.pegar('$U1', 'oben', 9651); SELECT t.bipe('$U1', 'oben', 9651, 'E9651', '$lid');
+            SELECT t.pegar('$U1', 'oben', 9652); SELECT t.falta('$U1', 'oben', 9652, 1);" >/dev/null
+  seq0="$(Pq "$db" "SELECT t.seq('oben', 9651);")"
+  Pq "$db" "SELECT t.sync('oben', '{}', '[]'::jsonb);" >/dev/null
+  Pq "$db" "SELECT t.sync('oben', '{}', '[]'::jsonb);" >/dev/null
+  seq1="$(Pq "$db" "SELECT t.seq('oben', 9651);")"
+  out="$(Pq "$db" "SELECT coalesce(t.pegar('$U1', 'oben', 9651)->>'motivo', 'ok') || '|' ||
+                          coalesce(t.pegar('$U2', 'oben', 9651, true, true)->>'motivo', 'ok') || '|' ||
+                          coalesce(t.manual('$U1', 'oben', 9651, t.lin('oben', 9651, 1), 1)->>'motivo', 'ok') || '|' ||
+                          coalesce(t.estorno('$U1', 'oben', 9651, '$lid')->>'motivo', 'ok') || '|' ||
+                          coalesce(t.retomar('$U1', 'oben', 9652, true)->>'motivo', 'ok');")"
+  echo "$out|$((seq1 - seq0))"
 }
 
 SYNC_SIG='public.picking_sincronizar_fila(text,uuid,bigint[],integer,jsonb,bigint[],boolean)'
@@ -525,9 +546,10 @@ eq "C6 conta errada → 22023" "$(chk_conta real)" "22023"
 eq "C7 listagem incompleta não interrompe" "$(chk_incompleta real)" "aguardando"
 eq "C8 reserva substituída: a coleta velha não escreve, a nova sim" "$(chk_geracao real)" "reserva_perdida|true|true"
 eq "C14 listagem suspeita veta a ausência mas cria tarefa" "$(chk_suspeita real)" "aguardando|aguardando"
-eq "C15 2 sessões reservando a mesma conta → só uma leva" "$(chk_reserva_concorrente real)" "1|ocupada"
+eq "C15 2 sessões reservando a mesma conta → só uma leva" "$(chk_reserva_concorrente real)" "1|ocupada|SEM_ERRO"
 eq "C16 lease vivo há > 90 s não é roubado" "$(chk_ocupada real)" "ocupada"
 eq "C17 incluido_em gravado; data impossível → NULL; coleta sem data não apaga" "$(chk_incluido real)" "2026-08-15|NULL"
+eq "C19 ausente bloqueia re-pegar/assumir/manual/retomar; estorno passa; estado_seq sobe 1" "$(chk_ausente2 real)" "ausente_do_omie|ausente_do_omie|ausente_do_omie|ok|ausente_do_omie|1"
 eq "C18 ausente: 1 coleta não bloqueia; 2 seguidas bloqueiam bipe/concluir/pegar; reaparece e volta" "$(chk_ausente real)" "ok|ausente_do_omie,ausente_do_omie,ausente_do_omie|ok"
 eq "C9 retomar exige reconciliação" "$(chk_reconciliacao real)" "exige_reconciliacao_fisica"
 eq "C10 concluir exige todas as leituras" "$(chk_pendentes real)" "leituras_pendentes"
@@ -540,8 +562,8 @@ echo "═══ FALSIFICAÇÃO — controle verde pelo MESMO caminho, depois cad
 cp "$MIG" "$TMP/controle.sql"
 cp "$MIG2" "$TMP/controle2.sql"
 montar controle "$TMP/controle.sql" "$TMP/controle2.sql" || bad "controle não montou"
-CTRL="$(chk_concorrencia controle)/$(chk_sync_vs_leitura controle)/$(chk_revisao controle)/$(chk_por_linha controle)/$(chk_idempotencia controle)/$(chk_conta controle)/$(chk_incompleta controle)/$(chk_geracao controle)/$(chk_reconciliacao controle)/$(chk_pendentes controle)/$(chk_acl_sync controle)/$(chk_ambiguo controle)/$(chk_evento_concorrente controle)/$(chk_ean_unidades controle)/$(chk_suspeita controle)/$(chk_ocupada controle)/$(chk_incluido controle)/$(chk_ausente controle)"
-CTRL_ESPERADO="excesso|1/tarefa_fora_de_separacao|suspensa_alteracao/suspensa_alteracao|0|4/linhas_incompletas/SEM_ERRO|true|1/22023/aguardando/reserva_perdida|true|true/exige_reconciliacao_fisica/leituras_pendentes/false/codigo_ambiguo/22023/codigo_ambiguo/aguardando|aguardando/ocupada/2026-08-15|NULL/ok|ausente_do_omie,ausente_do_omie,ausente_do_omie|ok"
+CTRL="$(chk_concorrencia controle)/$(chk_sync_vs_leitura controle)/$(chk_revisao controle)/$(chk_por_linha controle)/$(chk_idempotencia controle)/$(chk_conta controle)/$(chk_incompleta controle)/$(chk_geracao controle)/$(chk_reconciliacao controle)/$(chk_pendentes controle)/$(chk_acl_sync controle)/$(chk_ambiguo controle)/$(chk_evento_concorrente controle)/$(chk_ean_unidades controle)/$(chk_suspeita controle)/$(chk_ocupada controle)/$(chk_incluido controle)/$(chk_ausente controle)/$(chk_ausente2 controle)/$(chk_reserva_concorrente controle)"
+CTRL_ESPERADO="excesso|1/tarefa_fora_de_separacao|suspensa_alteracao/suspensa_alteracao|0|4/linhas_incompletas/SEM_ERRO|true|1/22023/aguardando/reserva_perdida|true|true/exige_reconciliacao_fisica/leituras_pendentes/false/codigo_ambiguo/22023/codigo_ambiguo/aguardando|aguardando/ocupada/2026-08-15|NULL/ok|ausente_do_omie,ausente_do_omie,ausente_do_omie|ok/ausente_do_omie|ausente_do_omie|ausente_do_omie|ok|ausente_do_omie|1/1|ocupada|SEM_ERRO"
 if [ "$CTRL" != "$CTRL_ESPERADO" ]; then
   bad "CONTROLE não ficou verde ($CTRL) — falsificação abortada antes do 1º sed"
 else
@@ -648,6 +670,14 @@ else
   if sabotar2 x17c_pegar_ausente '/^CREATE OR REPLACE FUNCTION public.picking_pegar_task(/,/^\$function\$;$/s/^  ELSIF v_t.ausente_rodadas >= 2 THEN$/  ELSIF false THEN/'; then
     vermelho "X17c pegar sem bloqueio de ausente (C18)" "$(chk_ausente x17c_pegar_ausente)" "ok|ausente_do_omie,ausente_do_omie,ausente_do_omie|ok" "ok|ausente_do_omie,ausente_do_omie,ok|ok"
   fi
+  # shellcheck disable=SC2016  # \$function\$ é o dollar-quote LITERAL do SQL, não expansão do bash
+  if sabotar2 x17d_retomar_ausente '/^CREATE OR REPLACE FUNCTION public.picking_retomar(/,/^\$function\$;$/s/^  ELSIF v_t.ausente_rodadas >= 2 THEN$/  ELSIF false THEN/'; then
+    vermelho "X17d retomar sem bloqueio de ausente (C19)" "$(chk_ausente2 x17d_retomar_ausente)" "ausente_do_omie|ausente_do_omie|ausente_do_omie|ok|ausente_do_omie|1" "ausente_do_omie|ausente_do_omie|ausente_do_omie|ok|ok|1"
+  fi
+  # X21 — entrar no bloqueio sem subir o estado_seq (a tela não relê).
+  if sabotar2 x21_bloqueio_sem_seq 's/^               estado_seq = t.estado_seq + CASE WHEN t.ausente_rodadas + 1 = 2 THEN 1 ELSE 0 END$/               estado_seq = t.estado_seq/'; then
+    vermelho "X21 bloqueio sem estado_seq (C19)" "$(chk_ausente2 x21_bloqueio_sem_seq)" "ausente_do_omie|ausente_do_omie|ausente_do_omie|ok|ausente_do_omie|1" "ausente_do_omie|ausente_do_omie|ausente_do_omie|ok|ausente_do_omie|0"
+  fi
   # X20 — bloqueio já na 1ª ausência (sem a tolerância à troca compensada).
   if sabotar2 x20_bloqueio_imediato 's/^  ELSIF v_t.ausente_rodadas >= 2 AND p_tipo <> .estorno. THEN$/  ELSIF v_t.ausente_rodadas >= 1 AND p_tipo <> '"'"'estorno'"'"' THEN/'; then
     vermelho "X20 leitura bloqueada na 1ª ausência (C18)" "$(chk_ausente x20_bloqueio_imediato)" "ok|ausente_do_omie,ausente_do_omie,ausente_do_omie|ok" "ausente_do_omie|ausente_do_omie,ausente_do_omie,ausente_do_omie|linhas_incompletas"
@@ -662,7 +692,7 @@ else
   # dois INSERTs colidem (23505) em vez de um ver `ocupada`. O lock da conta é dente, não redundância.
   # shellcheck disable=SC2016  # \$function\$ é o dollar-quote LITERAL do SQL, não expansão do bash
   if sabotar2 x18_reserva_sem_lock '/^CREATE OR REPLACE FUNCTION public.picking_coleta_reservar(/,/^\$function\$;$/s/^  PERFORM pg_advisory_xact_lock(hashtextextended(.picking_v2_conta:. || p_account, 0));$/  NULL;/'; then
-    vermelho "X18 reserva sem o lock da conta (C15, 1ª reserva)" "$(chk_reserva_concorrente x18_reserva_sem_lock)" "1|ocupada" "1|SEM_S2"
+    vermelho "X18 reserva sem o lock da conta (C15, 1ª reserva)" "$(chk_reserva_concorrente x18_reserva_sem_lock)" "1|ocupada|SEM_ERRO" "1|SEM_S2|23505"
   fi
 
   # X8 — retomar sem exigir reconciliação física.
