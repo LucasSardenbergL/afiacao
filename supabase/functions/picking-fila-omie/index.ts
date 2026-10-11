@@ -16,7 +16,7 @@ import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import { redigirSegredo } from "../_shared/omie-falha.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { resumirEtapas, resumirPedidos, resumirProdutos } from "./diagnostico.ts";
-import { faultDeFimDePagina, type Pagina, paginar, resumirLeitura } from "./coleta.ts";
+import { conferirFiltro, faultDeFimDePagina, type Pagina, paginar, resumirLeitura } from "./coleta.ts";
 import { hojeSP, paraDataOmie, somarDias } from "../_shared/hoje-sp.ts";
 
 const OMIE_TIMEOUT_MS = 25_000;
@@ -143,8 +143,9 @@ async function paginaDePedidos(conta: Conta, cred: { key: string; secret: string
 }
 
 /**
- * Modo `coleta` (só leitura): o total da etapa 10 sem filtro (1 registro, 1 chamada) e a listagem
- * filtrada por data que a escrita vai usar, paginada até o fim — sem tocar o banco.
+ * Modo `coleta` (só leitura): o total da etapa 10 sem filtro (1 registro, 1 chamada), a listagem
+ * filtrada por data que a escrita vai usar, paginada até o fim, e a prova do filtro (os 100 mais
+ * recentes sem filtro, 1 chamada) — sem tocar o banco.
  */
 async function medirColeta(conta: Conta, corteIso: string): Promise<Record<string, unknown>> {
   const cred = credenciais(conta);
@@ -172,8 +173,30 @@ async function medirColeta(conta: Conta, corteIso: string): Promise<Record<strin
       }),
     { tetoPaginas: TETO_PAGINAS, entrePaginas: () => esperar(ENTRE_PAGINAS_MS) },
   );
+  // Prova do filtro: os 100 mais recentes da etapa 10 SEM filtro têm de estar na filtrada.
+  await esperar(TREGUA_MS);
+  const recentes = await paginaDePedidos(conta, cred, {
+    pagina: 1,
+    registros_por_pagina: 100,
+    etapa: "10",
+    apenas_importado_api: "N",
+    ordenar_por: "CODIGO",
+    ordem_decrescente: "S",
+  });
+  const prova = !res.ok
+    ? { erro: "sem listagem filtrada para comparar" }
+    : recentes.tipo === "corpo"
+    ? conferirFiltro(
+      Array.isArray((recentes.corpo as Record<string, unknown> | null)?.pedido_venda_produto)
+        ? (recentes.corpo as Record<string, unknown[]>).pedido_venda_produto
+        : [],
+      new Set(res.listagem.presentes),
+      corteIso,
+    )
+    : { erro: recentes.tipo === "erro" ? recentes.erro : "etapa 10 vazia" };
   return {
     conta,
+    prova_do_filtro: prova,
     etapa_10_total_sem_filtro: totalGeral,
     etapa_10_total_erro: geral.tipo === "erro" ? geral.erro : null,
     filtrada: res.ok ? resumirLeitura(res.listagem, corteIso) : { erro: res.erro, paginas: res.paginas },

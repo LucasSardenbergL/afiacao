@@ -19,7 +19,8 @@ export const respostaSonda = criarRespostaSonda("picking-fila-omie");
  * (_shared/omie-cota.ts); vez negada vira erro no resumo, sem chamar o Omie.
  * v0.3 (Fase 0.5a): modo `coleta`, SÓ leitura — por conta, o total da etapa 10 (1 registro) e a
  * listagem `ListarPedidos{etapa:'10', filtrar_por_data_de: hoje−30}` paginada até o fim; devolve
- * números (páginas, completude, corte, itens ilegíveis), sem chamar o banco.
+ * números (páginas, completude, corte, itens ilegíveis) e a prova do filtro (os 100 mais recentes
+ * sem filtro têm de estar na filtrada), sem chamar o banco.
  */
 export const VERSAO = "v0.3-coleta-leitura";
 

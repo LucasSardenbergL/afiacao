@@ -307,3 +307,31 @@ export function resumirLeitura(listagem: Listagem, corteIso: string): ResumoLeit
   }
   return res;
 }
+
+/**
+ * Prova do filtro de data: os pedidos mais RECENTES da etapa 10 (listagem SEM filtro, por código
+ * decrescente) com `dInc` no corte têm de estar todos na listagem filtrada. `perdidos_pelo_filtro`
+ * > 0 = o filtro não serve para admitir (corta por outra data). A prova só cobre a janela se a
+ * amostra alcançar `dInc` anterior ao corte (`amostra_cobre_a_janela`).
+ */
+export function conferirFiltro(amostra: unknown[], filtrados: ReadonlySet<string>, corteIso: string) {
+  let noCorte = 0;
+  let maisAntigo: string | null = null;
+  const perdidos: string[] = [];
+  for (const r of amostra) {
+    const cod = codigoOmie(obj(obj(r)?.cabecalho)?.codigo_pedido);
+    const d = dataInclusao(r);
+    if (d !== null && (maisAntigo === null || d < maisAntigo)) maisAntigo = d;
+    if (cod === null || d === null || d < corteIso) continue;
+    noCorte++;
+    if (!filtrados.has(cod)) perdidos.push(cod);
+  }
+  return {
+    amostra: amostra.length,
+    amostra_no_corte: noCorte,
+    perdidos_pelo_filtro: perdidos.length,
+    perdidos_amostra: perdidos.slice(0, 10),
+    amostra_dinc_mais_antigo: maisAntigo,
+    amostra_cobre_a_janela: maisAntigo !== null && maisAntigo < corteIso,
+  };
+}

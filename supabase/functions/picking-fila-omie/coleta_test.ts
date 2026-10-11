@@ -1,6 +1,7 @@
 // Roda com: deno test --no-remote supabase/functions/picking-fila-omie/coleta_test.ts
 import {
   codigoOmie,
+  conferirFiltro,
   dataOmieParaIso,
   faultDeFimDePagina,
   montarLote,
@@ -196,4 +197,12 @@ Deno.test("resumirLeitura: conta itens ilegíveis e o dInc anterior ao corte que
   const r = resumirLeitura(listagem, "2026-09-11");
   assertEquals([r.admitidos_pelo_corte, r.fora_do_corte, r.dinc_antes_do_corte, r.dinc_mais_antigo], [2, 1, 1, "2026-08-15"]);
   assertEquals([r.linhas, r.linhas_sem_unidade, r.linhas_com_ean, r.pedidos_sem_itens], [2, 1, 1, 1]);
+});
+
+Deno.test("conferirFiltro: recente no corte ausente do filtro é perdido; cobertura exige dInc anterior ao corte", () => {
+  const amostra = [ped(30, "05/10/2026"), ped(29, "20/09/2026"), ped(28, "01/09/2026"), ped(27, "")];
+  const r = conferirFiltro(amostra, new Set(["30"]), "2026-09-11");
+  assertEquals([r.amostra_no_corte, r.perdidos_pelo_filtro, r.perdidos_amostra, r.amostra_cobre_a_janela], [2, 1, ["29"], true]);
+  const s = conferirFiltro([ped(30, "05/10/2026")], new Set(["30"]), "2026-09-11");
+  assertEquals([s.perdidos_pelo_filtro, s.amostra_cobre_a_janela], [0, false], "amostra só de recentes não prova a janela");
 });
