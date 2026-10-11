@@ -74,7 +74,28 @@ CREATE TABLE public.pedido_compra_sugerido (
   cancelado_por              text,
   cancelado_em               timestamptz,
   justificativa_cancelamento text,
+  aprovado_por               text,
+  aprovado_em                timestamptz,
+  condicao_origem            text,
+  origem_evento_tipo         text,
   atualizado_em              timestamptz DEFAULT now()
+);
+CREATE TABLE public.pedidos_portal_tentativas (
+  id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  pedido_id        bigint NOT NULL,
+  iniciado_em      timestamptz NOT NULL,
+  concluido_em     timestamptz,
+  status_resultado text NOT NULL,
+  evidence         jsonb NOT NULL DEFAULT '{}'
+);
+CREATE TABLE public.analytics_outbox (
+  id          bigserial PRIMARY KEY,
+  evento      text NOT NULL,
+  distinct_id text NOT NULL,
+  user_id     uuid,
+  props       jsonb NOT NULL DEFAULT '{}',
+  chave_dedup text NOT NULL UNIQUE,
+  ocorrido_em timestamptz NOT NULL DEFAULT now()
 );
 GRANT USAGE ON SCHEMA public TO authenticated, anon;
 GRANT SELECT, UPDATE ON public.pedido_compra_sugerido TO authenticated, anon;
@@ -144,7 +165,21 @@ INSERT INTO public.pedido_compra_sugerido
   (209, 'aprovado_aguardando_disparo', 'erro_retentavel',     'x', '$EV_FALSE', NULL, NULL, NULL, NULL, now() - interval '4 days'),
   (210, 'aprovado_aguardando_disparo', 'erro_nao_retentavel', 'x', '$EV_FALSE', NULL, NULL, '12345', NULL, now() - interval '4 days'),
   (211, 'aprovado_aguardando_disparo', 'erro_nao_retentavel', NULL, '$EV_FALSE', '  ', NULL, NULL, NULL, now() - interval '4 days'),
-  (212, 'aprovado_aguardando_disparo', 'erro_nao_retentavel', 'x', '{"evidence":{"efetivarAttempted":"false"}}', NULL, NULL, NULL, NULL, now() - interval '4 days');
+  (212, 'aprovado_aguardando_disparo', 'erro_nao_retentavel', 'x', '{"evidence":{"efetivarAttempted":"false"}}', NULL, NULL, NULL, NULL, now() - interval '4 days'),
+  -- relógio: linha tocada AGORA (ex.: salvou condição de pagamento) mas a recusa foi há 4 dias → encerra
+  (213, 'aprovado_aguardando_disparo', 'erro_nao_retentavel', 'x', '$EV_FALSE', NULL, NULL, NULL, NULL, now()),
+  -- última tentativa NÃO é a recusa definitiva (houve tentativa depois) → intocado
+  (214, 'aprovado_aguardando_disparo', 'erro_nao_retentavel', 'x', '$EV_FALSE', NULL, NULL, NULL, NULL, now() - interval '4 days'),
+  -- sem tentativa registrada → intocado (precisão > recall)
+  (215, 'aprovado_aguardando_disparo', 'erro_nao_retentavel', 'x', '$EV_FALSE', NULL, NULL, NULL, NULL, now() - interval '4 days');
+-- Uma tentativa erro_nao_retentavel por candidato, concluída há 4 dias (202: há 2 dias).
+INSERT INTO public.pedidos_portal_tentativas (pedido_id, iniciado_em, concluido_em, status_resultado)
+SELECT id, now() - interval '4 days' - interval '1 min', now() - interval '4 days', 'erro_nao_retentavel'
+  FROM public.pedido_compra_sugerido WHERE id BETWEEN 201 AND 214 AND id <> 202;
+INSERT INTO public.pedidos_portal_tentativas (pedido_id, iniciado_em, concluido_em, status_resultado) VALUES
+  (202, now() - interval '2 days' - interval '1 min', now() - interval '2 days', 'erro_nao_retentavel'),
+  (214, now() - interval '3 days 12 hours' - interval '1 min', now() - interval '3 days 12 hours', 'erro_retentavel');
+TRUNCATE public.analytics_outbox;
 SQL
 }
 claim()  { Pq -c "SELECT public.iniciar_envio_portal_pre_claim($1)::text;"; }
@@ -161,6 +196,7 @@ eq "B1b corpo VELHO: virou pendente_envio_portal" "$(campo 111 status_envio_port
 
 # ── migration real ──────────────────────────────────────────────────────────────
 P -q -f "$MIG"
+P -q -c "CREATE TRIGGER trg_analytics_outbox_pedido_compra AFTER INSERT OR UPDATE ON public.pedido_compra_sugerido FOR EACH ROW EXECUTE FUNCTION public.analytics_outbox_pedido_compra();"
 echo "migration aplicada: $(basename "$MIG")"
 ok "M1 postcondição do .sql passou (ON_ERROR_STOP)"
 P -q -f "$MIG"
@@ -191,7 +227,7 @@ eq "N7 cancelado RECUSADO (já era)"            "$(claim 117)" "false"
 echo "-- grupo E: encerramento automático --"
 semear
 R=$(encerrar 3)
-eq "E1 só o #3169-like (e os 2 com protocolo em branco/'') encerrados" "$(echo "$R" | sed 's/.*"ids": \(\[[^]]*\]\).*/\1/')" "[201, 211]"
+eq "E1 só o #3169-like, o de protocolo só com espaços e o de linha recém-tocada encerrados" "$(Pq -c "SELECT '$R'::jsonb->>'ids';")" "[201, 211, 213]"
 eq "E1b status cancelado"                      "$(campo 201 status)" "cancelado"
 eq "E1c autor sistema"                         "$(campo 201 cancelado_por)" "sistema:recusa_portal"
 eq "E1d higiene: portal nao_aplicavel"         "$(campo 201 status_envio_portal)" "nao_aplicavel"
@@ -199,12 +235,17 @@ eq "E1e cancelado_em carimbado"                "$(Pq -c "SELECT cancelado_em IS 
 eq "E1f justificativa cita o motivo do portal" "$(Pq -c "SELECT position('Grupo errado (Prz 5 != 8)' in justificativa_cancelamento) > 0 FROM pedido_compra_sugerido WHERE id=201;")" "t"
 eq "E1g portal_erro preservado (rastro)"       "$(campo 201 portal_erro)" "Grupo errado (Prz 5 != 8)"
 eq "E1h portal_erro NULL não anula a justificativa" "$(Pq -c "SELECT position('(não registrado)' in justificativa_cancelamento) > 0 FROM pedido_compra_sugerido WHERE id=211;")" "t"
-for id in 202 203 204 205 206 207 208 209 210 212; do
+eq "E1i relógio = tentativa, não atualizado_em (#213 tocado agora, recusa há 4 dias)" "$(campo 213 status)" "cancelado"
+eq "E1j analytics: cancelamento automático emitido como sistema" \
+   "$(Pq -c "SELECT props->>'origem_cancelamento' FROM analytics_outbox WHERE chave_dedup='pcs:201:reposicao.sugestao_cancelada';")" "sistema"
+eq "E1k analytics: 3 eventos de cancelamento (1 por encerrado)" \
+   "$(Pq -c "SELECT count(*) FROM analytics_outbox WHERE evento='reposicao.sugestao_cancelada';")" "3"
+for id in 202 203 204 205 206 207 208 209 210 212 214 215; do
   eq "E2 #$id intocado" "$(campo $id status)/$(campo $id cancelado_em)" "$(Pq -c "SELECT status FROM pedido_compra_sugerido WHERE id=$id;")/<null>"
 done
 eq "E2b <3 dias segue erro_nao_retentavel"     "$(campo 202 status_envio_portal)" "erro_nao_retentavel"
 eq "E3 idempotente: 2ª chamada encerra 0"      "$(Pq -c "SELECT (public.reposicao_encerrar_recusas_definitivas(3)->>'encerrados');")" "0"
-eq "E4 prazo menor alcança o de 2 dias"        "$(Pq -c "SELECT public.reposicao_encerrar_recusas_definitivas(1)->>'ids';")" "[202]"
+eq "E4 prazo menor alcança o de 2 dias (e não os sem tentativa/retentável depois)" "$(Pq -c "SELECT public.reposicao_encerrar_recusas_definitivas(1)->>'ids';")" "[202]"
 
 if P -q -c "SELECT public.reposicao_encerrar_recusas_definitivas(0);" >/dev/null 2>"$RODADA/e5.err"; then
   bad "E5 p_dias=0 deveria ser recusado"
@@ -238,40 +279,38 @@ P -q -c "REVOKE EXECUTE ON FUNCTION public.reposicao_encerrar_recusas_definitiva
 
 # ── F: FALSIFICAÇÃO — uma condição por vez, controle verde na MESMA invocação ─
 echo "-- grupo F: falsificação --"
-# formato: "<regex da linha a remover>|<id que deve passar a ser encerrado indevidamente>"
+# formato: "<expressão sed s#…#…#>|<id que passa a ser encerrado indevidamente>". Cada uma desliga
+# UMA condição; a substituição tem de acontecer exatamente 1 vez (conferido), senão a sabotagem é teatro.
 SABOTAGENS=(
   "__CONTROLE__|"
-  "efetivarAttempted' = 'false'::jsonb|203"
-  "AND disparo_claim_em IS NULL|207"
-  "NULLIF(btrim(portal_protocolo), '') IS NULL|205"
-  "NULLIF(btrim(omie_pedido_compra_id), '') IS NULL|206"
-  "NULLIF(btrim(omie_pedido_compra_numero), '') IS NULL|210"
-  "AND atualizado_em < now() - make_interval|202"
-  "WHERE status = 'aprovado_aguardando_disparo'|208"
+  "s#AND portal_resposta -> 'evidence' -> 'efetivarAttempted' = 'false'::jsonb##|203"
+  "s#AND disparo_claim_em IS NULL##|207"
+  "s#AND NULLIF(btrim(portal_protocolo), '') IS NULL##|205"
+  "s#AND NULLIF(btrim(omie_pedido_compra_id), '') IS NULL##|206"
+  "s#AND NULLIF(btrim(omie_pedido_compra_numero), '') IS NULL##|210"
+  "s#AND ult.concluido_em < now() - make_interval(days => p_dias))#)#|202"
+  "s#WHERE ult.status_resultado = 'erro_nao_retentavel'#WHERE true#|214"
+  "s#WHERE status = 'aprovado_aguardando_disparo'#WHERE status IN ('aprovado_aguardando_disparo','falha_envio')#|208"
 )
 for s in "${SABOTAGENS[@]}"; do
-  alvo="${s%%|*}"; vitima="${s##*|}"
+  expr="${s%%|*}"; vitima="${s##*|}"
   COPIA="$RODADA/sab.sql"
   # Só o CREATE da função de encerramento (sem cron/postcondição: a sabotagem não é da migration).
+  # shellcheck disable=SC2016  # `$function$` é a TAG de dollar-quote do SQL: tem de ficar literal.
   sed -n '/^CREATE OR REPLACE FUNCTION public.reposicao_encerrar_recusas_definitivas/,/^\$function\$;/p' "$MIG" > "$COPIA"
   [ -s "$COPIA" ] || { echo "INFRA: não extraí a função do .sql"; exit 1; }
-  if [ "$alvo" = "__CONTROLE__" ]; then
+  if [ "$expr" = "__CONTROLE__" ]; then
     P -q -f "$COPIA"; semear
-    eq "F0 controle (função intacta extraída): só [201, 211]" "$(Pq -c "SELECT public.reposicao_encerrar_recusas_definitivas(3)->>'ids';")" "[201, 211]"
+    eq "F0 controle (função intacta extraída): só [201, 211, 213]" "$(Pq -c "SELECT public.reposicao_encerrar_recusas_definitivas(3)->>'ids';")" "[201, 211, 213]"
     continue
   fi
-  antes=$(wc -l < "$COPIA")
-  if [ "$alvo" = "WHERE status = 'aprovado_aguardando_disparo'" ]; then
-    sed -i.bak "s/WHERE status = 'aprovado_aguardando_disparo'/WHERE status IN ('aprovado_aguardando_disparo','falha_envio')/" "$COPIA"
-    [ "$(grep -c "status IN ('aprovado_aguardando_disparo','falha_envio')" "$COPIA")" = "1" ] || { bad "F sabotagem não aplicada: $alvo"; continue; }
-  else
-    grep -vF "$alvo" "$COPIA" > "$COPIA.n" && mv "$COPIA.n" "$COPIA"
-    [ "$(wc -l < "$COPIA")" -eq $((antes - 1)) ] || { bad "F sabotagem não removeu exatamente 1 linha: $alvo"; continue; }
-  fi
-  P -q -f "$COPIA"; semear
+  sed "$expr" "$COPIA" > "$COPIA.n"
+  mudou=$(diff "$COPIA" "$COPIA.n" | grep -c '^<' || true)
+  [ "$mudou" = "1" ] || { bad "F sabotagem não alterou exatamente 1 linha ($mudou): $expr"; continue; }
+  P -q -f "$COPIA.n"; semear
   ids=$(Pq -c "SELECT public.reposicao_encerrar_recusas_definitivas(3)->>'ids';")
-  if echo "$ids" | grep -qE "(\[|, )$vitima(,|\])"; then ok "F sem [$alvo] → #$vitima encerrado indevidamente (a condição protege) ids=$ids"
-  else bad "F sem [$alvo] → #$vitima NÃO foi encerrado: condição redundante ou caso inalcançado (ids=$ids)"; fi
+  if echo "$ids" | grep -qE "(\[|, )$vitima(,|\])"; then ok "F [$expr] → #$vitima encerrado indevidamente (a condição protege) ids=$ids"
+  else bad "F [$expr] → #$vitima NÃO foi encerrado: condição redundante ou caso inalcançado (ids=$ids)"; fi
 done
 # Restaura a função verdadeira (o laço deixa a última sabotagem instalada).
 P -q -f "$MIG"

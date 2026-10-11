@@ -8,7 +8,7 @@ import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import { hojeSP } from "../_shared/hoje-sp.ts";
 import { dataPrevisaoOmie } from "./previsao.ts";
-import { abririaEnvioNovoAoPortal, MENSAGEM_PORTAL_FECHADO, portalSayerlackFechado } from "./janela-portal.ts";
+import { abririaEnvioNovoAoPortal, ehRecusaDefinitivaPortal, MENSAGEM_PORTAL_FECHADO, mensagemRecusaDefinitiva, portalSayerlackFechado } from "./janela-portal.ts";
 import { montarProdutosIncluir } from "./produto-po.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import {
@@ -632,7 +632,7 @@ async function iniciarEnvioPortalSayerlack(
   // edge respondia "envio iniciado". Agora a RPC também recusa (migration 20261011150000) e a
   // resposta diz a verdade. A saída consciente é o "Forçar reenvio" do drawer (grava pendente
   // ANTES de disparar) ou cancelar; o encerramento automático fecha o pedido após 3 dias.
-  if (statusPortalAtual === "erro_nao_retentavel") {
+  if (ehRecusaDefinitivaPortal(statusPortalAtual)) {
     console.warn(`[disparar-pedidos] Pedido ${pedidoId}: recusa definitiva do portal — NÃO reenviado`);
     return { state: "recusa_definitiva", erro: pre?.portal_erro ?? null };
   }
@@ -1124,7 +1124,7 @@ async function processarPedido(
         // Sem write: o pedido segue exatamente como estava (status, status_envio_portal, portal_erro).
         result.status_final = "portal_recusa_definitiva";
         result.canal = "portal_sayerlack";
-        result.aviso = `Recusa definitiva do portal Sayerlack${portal.erro ? `: ${portal.erro}` : ""}. Nada foi enviado — cancele o pedido ou corrija o cadastro e use "Forçar reenvio".`;
+        result.aviso = mensagemRecusaDefinitiva(portal.erro);
         return result;
       }
       if (portal.state === "portal_fechado") {
@@ -1880,6 +1880,31 @@ Deno.serve(async (req: Request) => {
     // menores que NÃO podem ser barrados (split_parent_id isenta no re-disparo individual);
     // (b) pedido < régua com >4 itens não escapa via filhos. Cobre todos os caminhos de
     // disparo (corte em lote, aprovar-e-disparar, re-disparo individual, motor de retry).
+    // Recusa DEFINITIVA do portal (#3169) sai ANTES do gate de mínimo e da janela do portal — o
+    // gate a converteria em falha_envio (tirando-a do encerramento automático) e a janela a
+    // esconderia como "portal fechado". Sem write. A checagem em iniciarEnvioPortalSayerlack fica
+    // como 2ª camada (run que relê a linha), e a RPC de pré-claim como 3ª.
+    const barradosRecusa: ProcessResult[] = [];
+    {
+      const seguem: PedidoRow[] = [];
+      for (const p of aprovados) {
+        if (isSayerlackOben(p) && ehRecusaDefinitivaPortal(p.status_envio_portal)) {
+          console.warn(`[disparar-pedidos] Pedido ${p.id}: recusa definitiva do portal — NÃO reenviado`);
+          barradosRecusa.push({
+            pedido_id: p.id,
+            fornecedor: p.fornecedor_nome,
+            status_final: "portal_recusa_definitiva",
+            valor: p.valor_total,
+            canal: "portal_sayerlack",
+            aviso: mensagemRecusaDefinitiva(null),
+          });
+        } else {
+          seguem.push(p);
+        }
+      }
+      aprovados = seguem;
+    }
+
     const barradosGate: ProcessResult[] = [];
     {
       const { data: gateCfgRows, error: gateCfgErr } = await db
@@ -2013,7 +2038,7 @@ Deno.serve(async (req: Request) => {
     // diagnóstico (nenhuma decisão a lê): responde "qual execução abriu esta pendência" quando um
     // claim aparecer preso. `windowStart` já é o instante de início do run.
     const origemRun = `${modo}@${windowStart}`;
-    const resultados: ProcessResult[] = [...barradosGate, ...barradosJanela];
+    const resultados: ProcessResult[] = [...barradosRecusa, ...barradosGate, ...barradosJanela];
     for (const p of aprovados) {
       const r = await processarPedido(db, p, modo, creds, origemRun);
 
