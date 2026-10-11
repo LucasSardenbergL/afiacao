@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 604
+-- Total de custom migrations: 606
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -665,7 +665,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261010204708', 'omie_cota_metodo', '20261010204708_omie_cota_metodo.sql'),
   ('20261010210000', 'motor_desconta_comprometido', '20261010210000_motor_desconta_comprometido.sql'),
   ('20261010220000', 'tint_adocao_balcao', '20261010220000_tint_adocao_balcao.sql'),
-  ('20261010224755', 'promocao_item_descricao_fornecedor_preservada', '20261010224755_promocao_item_descricao_fornecedor_preservada.sql')
+  ('20261010224755', 'promocao_item_descricao_fornecedor_preservada', '20261010224755_promocao_item_descricao_fornecedor_preservada.sql'),
+  ('20261010230000', 'tint_watchdog_fase5_s2_aviso', '20261010230000_tint_watchdog_fase5_s2_aviso.sql'),
+  ('20261011020000', 'picking_v2_schema', '20261011020000_picking_v2_schema.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2601,7 +2603,37 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('motor_desconta_comprometido', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
   ('tint_adocao_balcao', 'function', 'public', 'tint_adocao_balcao', ''),
   ('promocao_item_descricao_fornecedor_preservada', 'function', 'public', 'expandir_promocao_item', ''),
-  ('promocao_item_descricao_fornecedor_preservada', 'function', 'public', 'converter_sugestao_em_campanha_flat', '')
+  ('promocao_item_descricao_fornecedor_preservada', 'function', 'public', 'converter_sugestao_em_campanha_flat', ''),
+  ('tint_watchdog_fase5_s2_aviso', 'function', 'public', 'tint_watchdog_fase5_check', ''),
+  ('picking_v2_schema', 'function', 'public', 'picking_leituras_imutavel', ''),
+  ('picking_v2_schema', 'function', 'public', 'picking_v2_separada', ''),
+  ('picking_v2_schema', 'function', 'public', 'picking_v2_motivo_invalido', ''),
+  ('picking_v2_schema', 'function', 'public', 'picking_v2_itens', ''),
+  ('picking_v2_schema', 'function', 'public', 'picking_sincronizar_fila', ''),
+  ('picking_v2_schema', 'function', 'public', 'picking_pegar_task', ''),
+  ('picking_v2_schema', 'function', 'public', 'picking_registrar_leitura', ''),
+  ('picking_v2_schema', 'function', 'public', 'picking_marcar_falta', ''),
+  ('picking_v2_schema', 'function', 'public', 'picking_retomar', ''),
+  ('picking_v2_schema', 'function', 'public', 'picking_concluir', ''),
+  ('picking_v2_schema', 'view', 'public', 'picking_linhas_progresso', ''),
+  ('picking_v2_schema', 'table', 'public', 'picking_coleta_estado', ''),
+  ('picking_v2_schema', 'table', 'public', 'picking_tarefas', ''),
+  ('picking_v2_schema', 'table', 'public', 'picking_linhas', ''),
+  ('picking_v2_schema', 'table', 'public', 'picking_leituras', ''),
+  ('picking_v2_schema', 'table', 'public', 'picking_codigos_barras', ''),
+  ('picking_v2_schema', 'table', 'public', 'picking_eventos', ''),
+  ('picking_v2_schema', 'index', 'public', 'picking_leituras_estorno_unico', 'picking_leituras'),
+  ('picking_v2_schema', 'index', 'public', 'picking_leituras_linha_revisao', 'picking_leituras'),
+  ('picking_v2_schema', 'index', 'public', 'picking_leituras_tarefa', 'picking_leituras'),
+  ('picking_v2_schema', 'index', 'public', 'picking_codigos_barras_vigente', 'picking_codigos_barras'),
+  ('picking_v2_schema', 'index', 'public', 'picking_eventos_tarefa', 'picking_eventos'),
+  ('picking_v2_schema', 'trigger', 'public', 'picking_leituras_imutavel_linha', 'picking_leituras'),
+  ('picking_v2_schema', 'trigger', 'public', 'picking_leituras_imutavel_truncate', 'picking_leituras'),
+  ('picking_v2_schema', 'rls_policy', 'public', 'picking_tarefas_staff_select', 'picking_tarefas'),
+  ('picking_v2_schema', 'rls_policy', 'public', 'picking_linhas_staff_select', 'picking_linhas'),
+  ('picking_v2_schema', 'rls_policy', 'public', 'picking_leituras_staff_select', 'picking_leituras'),
+  ('picking_v2_schema', 'rls_policy', 'public', 'picking_codigos_barras_staff_select', 'picking_codigos_barras'),
+  ('picking_v2_schema', 'rls_policy', 'public', 'picking_eventos_staff_select', 'picking_eventos')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4585,7 +4617,37 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('motor_desconta_comprometido', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
   ('tint_adocao_balcao', 'function', 'public', 'tint_adocao_balcao', ''),
   ('promocao_item_descricao_fornecedor_preservada', 'function', 'public', 'expandir_promocao_item', ''),
-  ('promocao_item_descricao_fornecedor_preservada', 'function', 'public', 'converter_sugestao_em_campanha_flat', '')
+  ('promocao_item_descricao_fornecedor_preservada', 'function', 'public', 'converter_sugestao_em_campanha_flat', ''),
+  ('tint_watchdog_fase5_s2_aviso', 'function', 'public', 'tint_watchdog_fase5_check', ''),
+  ('picking_v2_schema', 'function', 'public', 'picking_leituras_imutavel', ''),
+  ('picking_v2_schema', 'function', 'public', 'picking_v2_separada', ''),
+  ('picking_v2_schema', 'function', 'public', 'picking_v2_motivo_invalido', ''),
+  ('picking_v2_schema', 'function', 'public', 'picking_v2_itens', ''),
+  ('picking_v2_schema', 'function', 'public', 'picking_sincronizar_fila', ''),
+  ('picking_v2_schema', 'function', 'public', 'picking_pegar_task', ''),
+  ('picking_v2_schema', 'function', 'public', 'picking_registrar_leitura', ''),
+  ('picking_v2_schema', 'function', 'public', 'picking_marcar_falta', ''),
+  ('picking_v2_schema', 'function', 'public', 'picking_retomar', ''),
+  ('picking_v2_schema', 'function', 'public', 'picking_concluir', ''),
+  ('picking_v2_schema', 'view', 'public', 'picking_linhas_progresso', ''),
+  ('picking_v2_schema', 'table', 'public', 'picking_coleta_estado', ''),
+  ('picking_v2_schema', 'table', 'public', 'picking_tarefas', ''),
+  ('picking_v2_schema', 'table', 'public', 'picking_linhas', ''),
+  ('picking_v2_schema', 'table', 'public', 'picking_leituras', ''),
+  ('picking_v2_schema', 'table', 'public', 'picking_codigos_barras', ''),
+  ('picking_v2_schema', 'table', 'public', 'picking_eventos', ''),
+  ('picking_v2_schema', 'index', 'public', 'picking_leituras_estorno_unico', 'picking_leituras'),
+  ('picking_v2_schema', 'index', 'public', 'picking_leituras_linha_revisao', 'picking_leituras'),
+  ('picking_v2_schema', 'index', 'public', 'picking_leituras_tarefa', 'picking_leituras'),
+  ('picking_v2_schema', 'index', 'public', 'picking_codigos_barras_vigente', 'picking_codigos_barras'),
+  ('picking_v2_schema', 'index', 'public', 'picking_eventos_tarefa', 'picking_eventos'),
+  ('picking_v2_schema', 'trigger', 'public', 'picking_leituras_imutavel_linha', 'picking_leituras'),
+  ('picking_v2_schema', 'trigger', 'public', 'picking_leituras_imutavel_truncate', 'picking_leituras'),
+  ('picking_v2_schema', 'rls_policy', 'public', 'picking_tarefas_staff_select', 'picking_tarefas'),
+  ('picking_v2_schema', 'rls_policy', 'public', 'picking_linhas_staff_select', 'picking_linhas'),
+  ('picking_v2_schema', 'rls_policy', 'public', 'picking_leituras_staff_select', 'picking_leituras'),
+  ('picking_v2_schema', 'rls_policy', 'public', 'picking_codigos_barras_staff_select', 'picking_codigos_barras'),
+  ('picking_v2_schema', 'rls_policy', 'public', 'picking_eventos_staff_select', 'picking_eventos')
 )
 SELECT
   e.migration,
@@ -4613,7 +4675,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 126.
+-- Funções redefinidas com corpo extraível: 127.
 -- Fora da seção (4) — o último evento é REMOÇÃO de propósito (DROP / SET SCHEMA / RENAME):
 --   • public.import_tint_formulas — 20260806223407_drop_import_tint_formulas.sql
 --   • public.estimar_impacto_exclusao_outlier — 20260718093248_drop_estimar_impacto_exclusao_outlier_orfa.sql
@@ -5049,6 +5111,8 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'get_carteira_margem_faixa', 2, '20260813234112_carteira_margem_faixa_motivo_gate_custo.sql', '169677feb2e686d3e73ec31426c608b6'),
   ('public', 'farmer_association_rules_substituir', 1, '20260729120000_farmer_association_rules_substituicao_atomica.sql', '248a95f8d50d51f14599d4f9ac5158db'),
   ('public', 'farmer_association_rules_substituir', 2, '20260821200000_farmer_assoc_rules_segmento.sql', '55cf64cac2239c7a9a5de12e6b965141'),
+  ('public', 'tint_watchdog_fase5_check', 1, '20260730120000_tint_watchdog_fase5_chave.sql', '3299e9aca3ff70d6c2c76efa40278ed9'),
+  ('public', 'tint_watchdog_fase5_check', 2, '20261010230000_tint_watchdog_fase5_s2_aviso.sql', '1b5320651c53a321324640e5f545f84a'),
   ('private', 'atp_disponivel', 1, '20260806101417_atp_reserva_estoque_fase1.sql', 'aeb0989efc8aae6130bfe73f2dd3d397'),
   ('private', 'atp_disponivel', 2, '20260806225052_atp_reserva_estoque_fase1_1_hardening.sql', '271e2acd633a4ceddd8a73cd988cfe49'),
   ('private', 'atp_disponivel', 3, '20260808012000_atp_reconciliacao_fase3.sql', '8326d00deff699c3730acadd7ee359a4'),
