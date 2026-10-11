@@ -312,6 +312,32 @@ de pé. Os três testes passam nela — 98 linhas, `columns` com 11 campos, e
 zero de tabela sozinho continuaria não se provando; o que o promove a fato é o **acordo** com
 `events`.
 
+### `$exception`: o cano está VIVO — o zero é de OCORRÊNCIA, não de captura (2026-10-11, M-39)
+
+O zero acima provava que não havia `$exception` gravado, **não** que um erro chegaria se acontecesse.
+Medido em 2026-10-11: 0 em 90 dias, contra 520 eventos `$lib='web'` de 4 aparelhos em 30 dias
+(o SDK em si entrega). A pergunta "o cano funciona?" só se responde **provocando** — e há DOIS
+canos, que não se provam um pelo outro:
+
+| cano | quem emite | sonda em prod (`/auth`, build `index-DRyEhwmP`) | chegou |
+|---|---|---|---|
+| autocaptura (`window.onerror` + `unhandledrejection`) | o SDK, ligado pela config REMOTA (`autocaptureExceptions: true`, `suppressionRules: []`, lida em `us-assets.i.posthog.com/array/<phc>/config.js`) | `setTimeout(() => { throw … })` + `Promise.reject(…)` | ✅ 2/2 em ~1 min, `handled=false` |
+| `ErrorBoundary` → `captureException` do `@/lib/analytics` | nosso wrapper (`withPosthog`) | fibra React com `type` trocado por um componente que lança + `dispatch` de estado | ✅ em ~2 min, `handled=true`, `rota=/auth`, `componentStack`, `build_id` |
+
+⚠️ **O segundo cano NÃO é coberto pelo primeiro.** Em React 18 de produção, erro de render pego por
+uma boundary **não** sobe para o `window.onerror` — a autocaptura nunca o vê. Provar só o
+`throw` no console daria verde a um caminho que não é o da tela quebrada.
+
+⚠️ **`window.posthog` não existe** (import ESM via `import('posthog-js')`): não dá para chamar o SDK
+pelo console. A sonda da boundary é a troca de `fiber.type` (ache `__reactFiber$…` num `<input>`,
+suba `.return` até um componente com `memoizedState.queue.dispatch`, troque `type`/`alternate.type`
+por `() => { throw new Error('M39_EB_…') }` e despache um estado novo). Não altera dado — só a aba.
+
+**Leitura do zero, daqui em diante:** com os dois canos provados, `$exception = 0` é ausência real
+de erro capturável **nos aparelhos que emitem** — o bloqueador de rastreador (§4) continua censurando
+o resto, então o zero vale para os 4 aparelhos visíveis, não para a frota. As sondas ficaram no
+PostHog com prefixo `M39_` (filtrar `properties.$exception_list[1].value NOT LIKE 'M39_%'`).
+
 ## 5. Sensores de frontend já instalados
 
 `carteira.mixgap_visto` (`estado`, `total_com_gap`, `desatualizado`) ·
