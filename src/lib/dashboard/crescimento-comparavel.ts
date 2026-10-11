@@ -210,7 +210,7 @@ export function mesesDaJanela(janela: Janela): { ano: number; mes: number }[] {
  * Empresas que vendem por pedido de produto. `colacor_sc` fica FORA por desenho (serviços via NFS-e,
  * 0 pedido de venda — docs/agent/financeiro.md): não há o que cobrir.
  */
-export const EMPRESAS_COM_PEDIDO = ['colacor', 'oben'] as const;
+const EMPRESAS_COM_PEDIDO = ['colacor', 'oben'] as const;
 
 /** As empresas que a régua precisa avaliar no escopo — esperadas, não só as que trouxeram pedido. */
 export function empresasDoEscopo(selection: string): string[] {

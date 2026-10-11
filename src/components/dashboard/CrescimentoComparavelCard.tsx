@@ -71,7 +71,7 @@ export function CrescimentoComparavelCard() {
   const renderizouDados = !isLoading && !isError && data != null;
   useEffect(() => {
     const el = ref.current;
-    if (!el || !renderizouDados) {
+    if (!el) {
       setVisivel(false);
       return;
     }

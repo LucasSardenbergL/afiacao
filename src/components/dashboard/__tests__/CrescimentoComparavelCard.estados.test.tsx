@@ -129,6 +129,17 @@ describe('CrescimentoComparavelCard', () => {
     expect(track).not.toHaveBeenCalled();
   });
 
+  it('[CC-SENSOR-CORRIDA] troca de empresa e erro no MESMO render: nada de evento para a empresa que não apareceu', () => {
+    comDados(ok, ok);
+    const { rerender } = render(<CrescimentoComparavelCard />);
+    expect(track).toHaveBeenCalledTimes(1);
+    selection = 'colacor';
+    estado = { ...estado, isError: true };
+    rerender(<CrescimentoComparavelCard />);
+    expect(screen.getByText(/leitura dos pedidos falhou/)).toBeTruthy();
+    expect(track).toHaveBeenCalledTimes(1);
+  });
+
   it('[CC-SENSOR-50] callback do observer abaixo de 50% visível não conta como visto', () => {
     const callbacks: ((e: { isIntersecting: boolean; intersectionRatio: number }[]) => void)[] = [];
     vi.stubGlobal(
