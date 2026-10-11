@@ -62,6 +62,22 @@ Medido em prod (psql-ro, 2026-10-10):
   - **Protocolo de ausência:** a edge lista, consulta os ausentes (`ConsultarPedido`, com teto) e faz UMA chamada.
   - `service_role` (BYPASSRLS) também sem DML direto nas tabelas.
 
+### 1.4 Fase 0.5 — coleta da fila (2026-10-11, #2948 + #2961)
+
+- **0.5a (leitura, #2948):** modo `coleta` da edge mede a listagem filtrada por data, com a prova amostral do filtro (os 100 mais recentes da etapa 10 sem filtro têm de estar na filtrada). Gate para ligar a escrita: listagem completa, `perdidos_pelo_filtro = 0`, cobertura da janela, ordenação confirmada e casos elegíveis — nas duas contas.
+- **0.5b (escrita, #2961, Codex r1–r6):** reserva exclusiva por conta (`picking_coleta_reservar`, lease 150 s, intervalo 90 s) com token validado pela sync; `p_listagem_suspeita` veta a ausência; janela da listagem = min(hoje−30, `incluido_em` da tarefa aberta mais antiga) — acompanhada nunca sai por idade.
+- **Sem `ConsultarPedido`:** coordenar esse método com o `vendas-sync` fica para depois (risco de bloqueio da app_key, Codex r3). Até lá, ausência **não interrompe** nada: 2 coletas completas seguidas sem o pedido (`ausente_rodadas ≥ 2`) **bloqueiam** pegar/assumir/leitura positiva/retomar/concluir (`ausente_do_omie`); reaparecer desbloqueia. 1 ausência não bloqueia (troca compensada entre páginas). Ausente há ≥ 10 coletas sai da janela e segue bloqueada.
+- Cron (0.5c) só depois da 1ª escrita manual conferida por conta.
+
+### 1.5 Fase 1 — leitor e tela (desenho aprovado pelo founder em 2026-10-11)
+
+- **Hardware de referência:** Zebra WT6400 (braço, versão GMS) + RS6100 (anel Bluetooth via DataWedge), hands-free; TC22/TC53e/MC3400 pelo mesmo caminho. App segue **PWA no Chrome**; DataWedge por **keystroke**. Plano B (Capacitor + Intent) só se o piloto medir perda.
+- **Protocolo sem heurística de velocidade:** DataWedge envia `~~` + AIM symbology id + código + ENTER. `~~` em ≤ 50 ms arma a captura; sem ENTER em ~300 ms = truncada (descartada com aviso); alfabeto `^(]..)?[0-9A-Za-z\-.]{1,64}$`; mesmo código em ≤ 250 ms = double-decode ignorado. Captura no `window` em fase de captura (fora do React), com qualquer foco; digitação manual só pelo campo dedicado. Perfil exato: `docs/runbooks/datawedge-picking.md`.
+- **Fluxo:** captura → `leitura_id` (UUID) gerado NA CAPTURA → fila FIFO em IndexedDB → **previsão local** (mesmos motivos do servidor; o servidor é a autoridade) → som + vibração em < 50 ms → envio em ordem, uma por tarefa, com backoff, para `picking_registrar_leitura` (idempotente pelo UUID). Servidor discordou da previsão = tom de alerta + correção da tela. `picking_concluir` recebe todos os UUIDs da atribuição.
+- **Tela "olhar só se der erro":** fundo verde/vermelho/âmbar em tela cheia + número grande; sem `alert()`/`confirm()`/modal no fluxo; Wake Lock. Sons sintetizados (Web Audio) e destravados no toque de "pegar".
+- **Medição (`track()`):** `picking.task_pega`, `picking.leitura` (motivo, divergência da previsão, tentativas), `picking.leitura_capturada` (latência captura→feedback), `picking.leitura_duplicata`, `picking.leitura_falhou`, `picking.falta`, `picking.separado`.
+- **Cadastro de código com aprovação master:** RPCs próprias (migration da Fase 1), revisadas pelo Codex.
+
 ## 2. Decisões do founder (2026-10-10)
 
 | Tema | Decisão |
@@ -138,9 +154,9 @@ Rodada 1 → a spec fecha **soma global**, **UPDATE absoluto** e **falta faturá
   1. Confirmar contratos/payloads nas 2 contas (read-only, 1 chamada por método): `ListarEtapasFaturamento`, paginação de `ListarPedidos{etapa:'10'}`, estabilidade de `codigo_item`, campo do EAN no cadastro de produto.
   2. Coordenação de cota com o `vendas-sync-continuacao` (§3.6.1) — antes de qualquer cron.
   3. ✅ Schema v2 + RPCs (`picking_sincronizar_fila`, `picking_pegar_task`, `picking_registrar_leitura`, `picking_marcar_falta`, `picking_retomar`, `picking_concluir`) com invariantes, revisões, autorização e recuperação; caminhos de escrita v1 desativados (§1.3).
-  4. Prova PG17: ✅ RPCs (concorrência, replay offline fora de ordem, revisão, isolamento de conta, REVOKE — §1.3); ⏳ coletor testado com páginas mutáveis, resposta atrasada e REDUNDANT (vai com a edge, Fase 0.5).
-  5. Coleta controlada **sem alterar tasks** (modo leitura); só então reconciliação + cron.
-- **Fase 1 — piloto no TC22:** tela mobile v2 (fila, pegar, bipe, manual, falta), `track()` (`picking.task_pega`, `picking.leitura`, `picking.falta`, `picking.separado`), cadastro de código com aprovação master.
+  4. Prova PG17: ✅ RPCs (concorrência, replay offline fora de ordem, revisão, isolamento de conta, REVOKE — §1.3); ✅ coletor testado com páginas mutáveis, resposta atrasada e REDUNDANT (Deno, §1.4).
+  5. ✅ Coleta controlada **sem alterar tasks** (modo leitura, #2948); ✅ escrita com reserva (#2961, §1.4); ⏳ cron.
+- **Fase 1 — piloto (WT6400/TC22, §1.5):** tela mobile v2 (fila, pegar, bipe, manual, falta, retomar, concluir), `track()`, cadastro de código com aprovação master.
 - **Fase 2 — Omie:** modo sombra ("viraria a etapa agora", comparado ao manual), depois `TrocarEtapaPedido` com ledger por passo + reconsulta (money-path, Codex).
 - **Depois:** etiqueta interna para itens sem EAN; endereço de prateleira e rota.
 
