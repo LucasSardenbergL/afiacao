@@ -19,7 +19,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
-import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Clock, CloudDownload, Eye, Loader2, Zap } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Clock, CloudDownload, Eye, Loader2, XCircle, Zap } from 'lucide-react';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { estadoDeLeitura, naoConsegui, desatualizado, type EstadoSemLeitura } from '@/lib/leitura/estado-de-leitura';
 import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
@@ -39,7 +39,7 @@ import { CancelarModal } from '@/components/reposicao/pedidos/CancelarModal';
 import { PortalDrawer } from '@/components/reposicao/pedidos/PortalDrawer';
 import { CiclosAnteriores } from '@/components/reposicao/pedidos/CiclosAnteriores';
 import { OverrideMinimoButton } from '@/components/reposicao/pedidos/OverrideMinimoButton';
-import { ehGateMinimoFaturamento, particionarAtencao } from '@/components/reposicao/pedidos/shared';
+import { acaoLinhaAtencao, particionarAtencao } from '@/components/reposicao/pedidos/shared';
 import { AbaixoMinimoCard } from '@/components/reposicao/pedidos/AbaixoMinimoCard';
 import { PoSumidoCard } from '@/components/reposicao/pedidos/PoSumidoCard';
 import { ehAcessoNegado, frescorDoDetector, normalizarCandidatos, normalizarMarcador, ordenarCandidatos, type Frescor, type MarcadorPos, type PoCandidato } from '@/components/reposicao/pedidos/po-sumido';
@@ -808,7 +808,8 @@ export default function AdminReposicaoPedidos() {
             <p className="text-sm text-muted-foreground">
               Pedidos travados que exigem ação humana (falha no Omie, conciliação do portal ou
               falha definitiva), de qualquer ciclo. Abra os detalhes para resolver — a conciliação
-              do portal está em "Ver portal".
+              do portal está em "Ver portal". Recusa definitiva do portal: cancele (o ciclo regrava
+              os itens que ainda faltarem) — não dispare de novo.
             </p>
           </CardHeader>
           <CardContent>
@@ -847,7 +848,13 @@ export default function AdminReposicaoPedidos() {
                         <Button size="sm" variant="ghost" onClick={() => setDetalhesPedido(p)}>
                           <Eye className="w-4 h-4 mr-1" />Detalhes
                         </Button>
-                        {podeOverride && ehGateMinimoFaturamento(p) ? (
+                        {acaoLinhaAtencao(p, podeOverride) === 'cancelar' ? (
+                          // Recusa definitiva do portal: a saída é cancelar (o ciclo regrava). NUNCA
+                          // "Disparar" aqui — ver acaoLinhaAtencao (#3169).
+                          <Button size="sm" variant="outline" onClick={() => setCancelarPedido(p)}>
+                            <XCircle className="w-4 h-4 mr-1" />Cancelar
+                          </Button>
+                        ) : acaoLinhaAtencao(p, podeOverride) === 'override' ? (
                           // Preso pelo gate de mínimo de faturamento → "Disparar mesmo assim"
                           // no lugar do "Re-disparar" (que só re-bateria no gate).
                           <OverrideMinimoButton
@@ -856,7 +863,7 @@ export default function AdminReposicaoPedidos() {
                             onConfirm={() => dispararOverrideMutation.mutate(p.id)}
                             disabled={disparandoLinha(p.id) || p.status_envio_portal === 'enviando_portal'}
                           />
-                        ) : (p.status === 'aprovado_aguardando_disparo' || p.status === 'falha_envio') ? (
+                        ) : acaoLinhaAtencao(p, podeOverride) === 'disparar' ? (
                           <Button
                             size="sm"
                             variant={p.status === 'falha_envio' ? 'outline' : 'default'}

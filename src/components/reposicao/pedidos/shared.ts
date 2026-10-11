@@ -227,6 +227,37 @@ export function podeCancelarPorRecusaDefinitiva(p: {
   return p.status_envio_portal === 'erro_nao_retentavel' && podeCancelarPeloHumano(p.status);
 }
 
+/* ─── Ação primária da linha na fila "Precisam de atenção" ─── */
+//
+// Até 2026-10 a linha só oferecia "Disparar"/"Re-disparar", e a saída da recusa definitiva
+// (`podeCancelarPorRecusaDefinitiva`) ficava escondida no drawer do portal. Caso real: #3169
+// (aprovado + erro_nao_retentavel por GRUPO_LEADTIME_MISMATCH) ficou 11 dias na fila, com o alerta
+// `reposicao_portal_humano` disparando, enquanto o ciclo seguinte (#3174) já tinha recomprado 10 dos
+// 13 itens — o motor exclui esse pedido-fantasma do `em_transito`. Ali "Disparar" é a ação ERRADA:
+// o pré-claim rebaixa o erro terminal para `pendente_envio_portal` e reenvia os mesmos itens (nada
+// deduplica entre pedidos); no melhor caso repete a recusa.
+//
+// Por isso: com `erro_nao_retentavel` a linha NUNCA oferece disparo. O "Forçar reenvio" (para motivo
+// de CADASTRO já corrigido) continua no drawer, admin-only e com confirmação — de propósito longe da
+// linha. Aprovado → Cancelar direto na linha; `falha_envio` + erro_nao_retentavel → só o drawer.
+export type AcaoLinhaAtencao = 'override' | 'cancelar' | 'disparar' | 'nenhuma';
+
+export function acaoLinhaAtencao(
+  p: {
+    status: string;
+    status_envio_portal: StatusEnvioPortal | null | undefined;
+    resposta_canal: { gate?: unknown; [key: string]: unknown } | null | undefined;
+  },
+  podeOverride: boolean,
+): AcaoLinhaAtencao {
+  if (p.status_envio_portal === 'erro_nao_retentavel') {
+    return podeCancelarPorRecusaDefinitiva(p) ? 'cancelar' : 'nenhuma';
+  }
+  if (podeOverride && ehGateMinimoFaturamento(p)) return 'override';
+  if (p.status === 'aprovado_aguardando_disparo' || p.status === 'falha_envio') return 'disparar';
+  return 'nenhuma';
+}
+
 /* ─── "Precisa de atenção" — fila cross-ciclo (Fase 3 · 3c) ─── */
 //
 // Pedidos que EXIGEM ação humana, em QUALQUER ciclo (a lista "ciclo de hoje" não
