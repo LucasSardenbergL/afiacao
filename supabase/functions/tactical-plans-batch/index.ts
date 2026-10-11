@@ -365,14 +365,21 @@ Deno.serve(async (req) => {
       // reprovação no gate. NÃO é disjunto de `ja_na_fila`: é contado sobre a carteira toda
       // de propósito, para que encher a fila não o faça "melhorar" sozinho.
       //
-      // ⚠️ NÃO leia este número como "o batch está cego" — a versão anterior deste comentário
-      // dizia isso, e a medição desmente. Cruzamento em prod (2026-08-08, 6.633 scores):
-      //     compra nos 180d + margem: 405  |  compra sem margem:   1
-      //     sem compra      + margem: 670  |  sem compra, s/margem: 5.557
-      // O writer de gross_margin_pct FUNCIONA — cobre 405 dos 406 clientes com compra (99,8%).
-      // O número é alto porque a carteira é ~94% INATIVA, e sem compra nos 180 dias não há
-      // margem a calcular. Ausência honesta, não writer quebrado. Tratá-la como bug levaria a
-      // "consertar" um writer que está certo; o que este número mede é o tamanho do pool vivo.
+      // ⚠️ NÃO leia este número como "o batch está cego" — a medição desmente. Ele conta a
+      // CARTEIRA (os elegíveis de carteira_assignments), não todos os scores: `gross_margin_pct
+      // IS NULL` sobre a carteira. Cruzamento em prod (psql-ro 2026-10-10 · 6.633 scores · 1.459
+      // mascarados ⇒ 5.174 na carteira):
+      //     NULL, compra ≤12m:     3      (comprou, mas item sem custo/preço — resíduo)
+      //     NULL, sem compra ≤12m: 4.672  (sem compra no período ⇒ nada a calcular)
+      //   ⇒ sem_margem_indecidivel = 4.675. Sobre os 6.633 scores o NULL é 6.131; a diferença
+      //     (1.456) são mascarados, contados em `mascarados_ignorados`, NÃO aqui.
+      // A JANELA DE 12 MESES de #2898 (2026-10-09: margem só de pedidos dos últimos 12m — custo
+      // ATUAL não vale para preço antigo) derrubou o pool COM margem de ~1.075 (08/ago) para 502
+      // em 10/out — queda DELIBERADA, não regressão (dos 502, `>0`=501; 1 de margem NEGATIVA é
+      // veredito REAL, CONHECIDO, e não entra aqui). O writer FUNCIONA: dos 501 elegíveis que
+      // compraram em 12m, 498 têm margem (99,4%). O número é alto porque ~90% da carteira não
+      // comprou nos últimos 12 meses — ausência honesta, não writer quebrado. Tratá-la como bug
+      // levaria a "consertar" um writer que está certo; o que este número mede é o tamanho do pool vivo.
       sem_margem_indecidivel: semMargemIndecidivel,
       // clientes que não disputaram vaga por JÁ TEREM plano aberto na janela. Antes eram
       // regerados e viravam cópia; agora são pulados ANTES da chamada paga à IA. Publicado
