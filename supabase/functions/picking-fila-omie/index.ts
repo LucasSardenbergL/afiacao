@@ -234,7 +234,9 @@ async function lerAcompanhadas(db: Db, conta: Conta): Promise<Acompanhada[]> {
       .order("id", { ascending: true })
       .range(de, de + PAGINA - 1);
     if (error) throw new Error(`ler tarefas acompanhadas: ${error.message}`);
-    const linhas = (data ?? []) as Array<Record<string, unknown>>;
+    // data nulo sem erro NÃO é fim: um conjunto acompanhado parcial esconderia tarefas da janela.
+    if (data == null) throw new Error("ler tarefas acompanhadas: página sem dados e sem erro");
+    const linhas = data as Array<Record<string, unknown>>;
     for (const l of linhas) {
       out.push({
         omie_codigo_pedido: String(l.omie_codigo_pedido),
