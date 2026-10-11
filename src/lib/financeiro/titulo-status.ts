@@ -36,7 +36,7 @@
 export const OPEN_TITLE_STATUSES = ['A VENCER', 'ATRASADO', 'VENCE HOJE', 'ABERTO', 'VENCIDO', 'PARCIAL'] as const;
 
 /** Aberto mas NÃO vencido (exclui 'ATRASADO'/'VENCIDO'). Usado só p/ adiantamentos. */
-const OPEN_NOT_OVERDUE_TITLE_STATUSES = ['A VENCER', 'VENCE HOJE', 'ABERTO'] as const;
+export const OPEN_NOT_OVERDUE_TITLE_STATUSES = ['A VENCER', 'VENCE HOJE', 'ABERTO'] as const;
 
 /** Liquidados (NÃO entram em aberto — saldo é bogus por causa do #396). */
 const SETTLED_TITLE_STATUSES = ['RECEBIDO', 'PAGO', 'LIQUIDADO'] as const;
