@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   BASE_PUBLICA_SAYERSYNC,
+  comoOctetStream,
   compararSemver,
   lerManifestPublicado,
   montarManifest,
@@ -172,5 +173,21 @@ describe("publicarRelease — ordem .exe → manifest", () => {
     let n = 0;
     deps.lerManifest = async () => (++n === 1 ? ler() : NO_AR);
     await expect(publicarRelease(deps, args)).rejects.toThrow("a releitura não confere");
+  });
+});
+
+describe("upload do .exe", () => {
+  it("reembala como application/octet-stream sem tocar nos bytes (o navegador marca x-msdownload)", async () => {
+    const bytes = new Uint8Array([0x4d, 0x5a, 0x90, 0x00, 0x03]);
+    const doNavegador = new File([bytes], "sayersync-0.2.2.exe", { type: "application/x-msdownload" });
+    const enviado = comoOctetStream(doNavegador);
+    expect(enviado.type).toBe("application/octet-stream");
+    expect(enviado.size).toBe(bytes.length);
+    expect(new Uint8Array(await enviado.arrayBuffer())).toEqual(bytes);
+  });
+
+  it("o componente sobe o .exe pelo helper (nunca o File cru)", () => {
+    const fonte = readFileSync(resolve(__dirname, "../../../components/tint/PublicadorReleaseSayersync.tsx"), "utf8");
+    expect(fonte).toContain(".upload(caminho, comoOctetStream(arquivo),");
   });
 });
