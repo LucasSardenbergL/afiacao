@@ -166,4 +166,6 @@ Custo estimado da rodada completa: 470 itens × 3 chamadas ≈ 1,2 M tokens de e
 - 🧭 Adjudicação cega das 32 fichas endereçáveis (formulário entregue na sessão; o mapa de respostas vive em
   `scripts/jev/.dados/adjudicacao-mapa.json`, fora do git) — transforma a prata em ouro e dá gabarito ao
   resíduo.
-- Promoção: a confirmação preservar a descrição original do fornecedor (pré-requisito do PR7).
+- ✅ Promoção: a confirmação preservar a descrição original do fornecedor (pré-requisito do PR7) — feito em
+  2026-10-10 ([promocao-descricao-fornecedor.md](promocao-descricao-fornecedor.md)). O legado de 29 linhas com texto de
+  catálogo (13 `manual_confirmado`, 3 `unico`, 13 filhas ad-hoc da campanha 23) **não** entra no gabarito do PR7.
