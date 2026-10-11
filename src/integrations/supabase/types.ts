@@ -10176,6 +10176,133 @@ export type Database = {
         }
         Relationships: []
       }
+      picking_codigos_barras: {
+        Row: {
+          account: string
+          aprovado_em: string | null
+          aprovado_por: string | null
+          codigo: string
+          criado_em: string
+          criado_por: string | null
+          id: string
+          omie_codigo_produto: number
+          origem: string
+          status: string
+          unidade: string
+          unidades_por_leitura: number
+        }
+        Insert: {
+          account: string
+          aprovado_em?: string | null
+          aprovado_por?: string | null
+          codigo: string
+          criado_em?: string
+          criado_por?: string | null
+          id?: string
+          omie_codigo_produto: number
+          origem: string
+          status: string
+          unidade: string
+          unidades_por_leitura: number
+        }
+        Update: {
+          account?: string
+          aprovado_em?: string | null
+          aprovado_por?: string | null
+          codigo?: string
+          criado_em?: string
+          criado_por?: string | null
+          id?: string
+          omie_codigo_produto?: number
+          origem?: string
+          status?: string
+          unidade?: string
+          unidades_por_leitura?: number
+        }
+        Relationships: []
+      }
+      picking_coleta_estado: {
+        Row: {
+          account: string
+          aplicada_em: string
+          ultima_coleta_iniciada_em: string
+          ultimo_resumo: Json | null
+        }
+        Insert: {
+          account: string
+          aplicada_em: string
+          ultima_coleta_iniciada_em: string
+          ultimo_resumo?: Json | null
+        }
+        Update: {
+          account?: string
+          aplicada_em?: string
+          ultima_coleta_iniciada_em?: string
+          ultimo_resumo?: Json | null
+        }
+        Relationships: []
+      }
+      picking_eventos: {
+        Row: {
+          account: string
+          criado_em: string
+          de_status: string | null
+          detalhe: Json
+          id: string
+          linha_id: string | null
+          operador_id: string | null
+          para_status: string | null
+          tarefa_id: string
+          tipo: string
+        }
+        Insert: {
+          account: string
+          criado_em?: string
+          de_status?: string | null
+          detalhe?: Json
+          id?: string
+          linha_id?: string | null
+          operador_id?: string | null
+          para_status?: string | null
+          tarefa_id: string
+          tipo: string
+        }
+        Update: {
+          account?: string
+          criado_em?: string
+          de_status?: string | null
+          detalhe?: Json
+          id?: string
+          linha_id?: string | null
+          operador_id?: string | null
+          para_status?: string | null
+          tarefa_id?: string
+          tipo?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "picking_eventos_linha_fk"
+            columns: ["linha_id", "tarefa_id", "account"]
+            isOneToOne: false
+            referencedRelation: "picking_linhas"
+            referencedColumns: ["id", "tarefa_id", "account"]
+          },
+          {
+            foreignKeyName: "picking_eventos_linha_fk"
+            columns: ["linha_id", "tarefa_id", "account"]
+            isOneToOne: false
+            referencedRelation: "picking_linhas_progresso"
+            referencedColumns: ["id", "tarefa_id", "account"]
+          },
+          {
+            foreignKeyName: "picking_eventos_tarefa_fk"
+            columns: ["tarefa_id", "account"]
+            isOneToOne: false
+            referencedRelation: "picking_tarefas"
+            referencedColumns: ["id", "account"]
+          },
+        ]
+      }
       picking_events: {
         Row: {
           created_at: string
@@ -10229,6 +10356,229 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      picking_leituras: {
+        Row: {
+          account: string
+          aceita: boolean
+          atribuicao_id: string | null
+          codigo_lido: string | null
+          comando: Json
+          estorna_leitura_id: string | null
+          id: string
+          lido_em: string | null
+          linha_id: string | null
+          linha_revisao: number | null
+          motivo_rejeicao: string | null
+          operador_id: string
+          recebido_em: string
+          tarefa_id: string
+          tarefa_revisao: number
+          tipo: string
+          unidades: number | null
+        }
+        Insert: {
+          account: string
+          aceita: boolean
+          atribuicao_id?: string | null
+          codigo_lido?: string | null
+          comando: Json
+          estorna_leitura_id?: string | null
+          id: string
+          lido_em?: string | null
+          linha_id?: string | null
+          linha_revisao?: number | null
+          motivo_rejeicao?: string | null
+          operador_id: string
+          recebido_em?: string
+          tarefa_id: string
+          tarefa_revisao: number
+          tipo: string
+          unidades?: number | null
+        }
+        Update: {
+          account?: string
+          aceita?: boolean
+          atribuicao_id?: string | null
+          codigo_lido?: string | null
+          comando?: Json
+          estorna_leitura_id?: string | null
+          id?: string
+          lido_em?: string | null
+          linha_id?: string | null
+          linha_revisao?: number | null
+          motivo_rejeicao?: string | null
+          operador_id?: string
+          recebido_em?: string
+          tarefa_id?: string
+          tarefa_revisao?: number
+          tipo?: string
+          unidades?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "picking_leituras_estorna_leitura_id_fkey"
+            columns: ["estorna_leitura_id"]
+            isOneToOne: false
+            referencedRelation: "picking_leituras"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "picking_leituras_linha_fk"
+            columns: ["linha_id", "tarefa_id", "account"]
+            isOneToOne: false
+            referencedRelation: "picking_linhas"
+            referencedColumns: ["id", "tarefa_id", "account"]
+          },
+          {
+            foreignKeyName: "picking_leituras_linha_fk"
+            columns: ["linha_id", "tarefa_id", "account"]
+            isOneToOne: false
+            referencedRelation: "picking_linhas_progresso"
+            referencedColumns: ["id", "tarefa_id", "account"]
+          },
+          {
+            foreignKeyName: "picking_leituras_tarefa_fk"
+            columns: ["tarefa_id", "account"]
+            isOneToOne: false
+            referencedRelation: "picking_tarefas"
+            referencedColumns: ["id", "account"]
+          },
+        ]
+      }
+      picking_linhas: {
+        Row: {
+          account: string
+          ativa: boolean
+          atualizado_em: string
+          codigo_item: number
+          codigo_produto: string | null
+          criado_em: string
+          descricao: string | null
+          ean: string | null
+          fracionaria: boolean
+          hash_linha: string
+          id: string
+          omie_codigo_produto: number
+          quantidade: number
+          revisao: number
+          tarefa_id: string
+          unidade: string
+        }
+        Insert: {
+          account: string
+          ativa?: boolean
+          atualizado_em?: string
+          codigo_item: number
+          codigo_produto?: string | null
+          criado_em?: string
+          descricao?: string | null
+          ean?: string | null
+          fracionaria: boolean
+          hash_linha: string
+          id?: string
+          omie_codigo_produto: number
+          quantidade: number
+          revisao?: number
+          tarefa_id: string
+          unidade: string
+        }
+        Update: {
+          account?: string
+          ativa?: boolean
+          atualizado_em?: string
+          codigo_item?: number
+          codigo_produto?: string | null
+          criado_em?: string
+          descricao?: string | null
+          ean?: string | null
+          fracionaria?: boolean
+          hash_linha?: string
+          id?: string
+          omie_codigo_produto?: number
+          quantidade?: number
+          revisao?: number
+          tarefa_id?: string
+          unidade?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "picking_linhas_tarefa_fk"
+            columns: ["tarefa_id", "account"]
+            isOneToOne: false
+            referencedRelation: "picking_tarefas"
+            referencedColumns: ["id", "account"]
+          },
+        ]
+      }
+      picking_tarefas: {
+        Row: {
+          account: string
+          atribuicao_id: string | null
+          atualizado_em: string
+          ausente_desde: string | null
+          cliente_nome: string | null
+          criado_em: string
+          estado_seq: number
+          fora_da_etapa_em: string | null
+          hash_fisico: string | null
+          id: string
+          motivo_bloqueio: string | null
+          numero_pedido: string | null
+          omie_codigo_pedido: number
+          operador_id: string | null
+          pega_em: string | null
+          revisao: number
+          separado_em: string | null
+          status: string
+          ultima_coleta_em: string
+          versao_omie: string | null
+        }
+        Insert: {
+          account: string
+          atribuicao_id?: string | null
+          atualizado_em?: string
+          ausente_desde?: string | null
+          cliente_nome?: string | null
+          criado_em?: string
+          estado_seq?: number
+          fora_da_etapa_em?: string | null
+          hash_fisico?: string | null
+          id?: string
+          motivo_bloqueio?: string | null
+          numero_pedido?: string | null
+          omie_codigo_pedido: number
+          operador_id?: string | null
+          pega_em?: string | null
+          revisao?: number
+          separado_em?: string | null
+          status: string
+          ultima_coleta_em: string
+          versao_omie?: string | null
+        }
+        Update: {
+          account?: string
+          atribuicao_id?: string | null
+          atualizado_em?: string
+          ausente_desde?: string | null
+          cliente_nome?: string | null
+          criado_em?: string
+          estado_seq?: number
+          fora_da_etapa_em?: string | null
+          hash_fisico?: string | null
+          id?: string
+          motivo_bloqueio?: string | null
+          numero_pedido?: string | null
+          omie_codigo_pedido?: number
+          operador_id?: string | null
+          pega_em?: string | null
+          revisao?: number
+          separado_em?: string | null
+          status?: string
+          ultima_coleta_em?: string
+          versao_omie?: string | null
+        }
+        Relationships: []
       }
       picking_task_items: {
         Row: {
@@ -17548,6 +17898,34 @@ export type Database = {
         }
         Relationships: []
       }
+      picking_linhas_progresso: {
+        Row: {
+          account: string | null
+          ativa: boolean | null
+          codigo_item: number | null
+          codigo_produto: string | null
+          descricao: string | null
+          ean: string | null
+          fracionaria: boolean | null
+          id: string | null
+          omie_codigo_produto: number | null
+          quantidade: number | null
+          revisao: number | null
+          saldo: number | null
+          separada: number | null
+          tarefa_id: string | null
+          unidade: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "picking_linhas_tarefa_fk"
+            columns: ["tarefa_id", "account"]
+            isOneToOne: false
+            referencedRelation: "picking_tarefas"
+            referencedColumns: ["id", "account"]
+          },
+        ]
+      }
       referrals_for_referrer: {
         Row: {
           converted_at: string | null
@@ -20639,6 +21017,95 @@ export type Database = {
         Returns: undefined
       }
       pedidos_programados_watchdog_claims: { Args: never; Returns: number }
+      picking_concluir: {
+        Args: {
+          p_account: string
+          p_atribuicao_id: string
+          p_evento_id: string
+          p_leituras: string[]
+          p_tarefa_id: string
+          p_tarefa_revisao: number
+        }
+        Returns: Json
+      }
+      picking_marcar_falta: {
+        Args: {
+          p_account: string
+          p_atribuicao_id: string
+          p_evento_id: string
+          p_linha_id: string
+          p_observacao?: string
+          p_tarefa_id: string
+        }
+        Returns: Json
+      }
+      picking_pegar_task: {
+        Args: {
+          p_account: string
+          p_assumir?: boolean
+          p_estado_seq: number
+          p_evento_id: string
+          p_reconciliacao_fisica?: boolean
+          p_tarefa_id: string
+        }
+        Returns: Json
+      }
+      picking_registrar_leitura: {
+        Args: {
+          p_account: string
+          p_atribuicao_id: string
+          p_codigo_lido?: string
+          p_estorna_leitura_id?: string
+          p_leitura_id: string
+          p_lido_em?: string
+          p_linha_id?: string
+          p_quantidade?: number
+          p_tarefa_id: string
+          p_tarefa_revisao: number
+          p_tipo: string
+        }
+        Returns: Json
+      }
+      picking_retomar: {
+        Args: {
+          p_account: string
+          p_estado_seq: number
+          p_evento_id: string
+          p_reconciliacao_fisica?: boolean
+          p_tarefa_id: string
+        }
+        Returns: Json
+      }
+      picking_sincronizar_fila: {
+        Args: {
+          p_account: string
+          p_coleta_iniciada_em: string
+          p_confirmados_fora?: number[]
+          p_pedidos: Json
+          p_presentes: number[]
+          p_total_de_registros: number
+        }
+        Returns: Json
+      }
+      picking_v2_itens: {
+        Args: { p_pedido: Json }
+        Returns: {
+          codigo_item: number
+          codigo_produto: string
+          descricao: string
+          ean: string
+          fracionaria: boolean
+          hash_linha: string
+          omie_codigo_produto: number
+          quantidade: number
+          unidade: string
+        }[]
+      }
+      picking_v2_motivo_invalido: { Args: { p_pedido: Json }; Returns: string }
+      picking_v2_separada: {
+        Args: { p_linha_id: string; p_revisao: number }
+        Returns: number
+      }
       pode_ler_custo: { Args: never; Returns: boolean }
       pode_ver_carteira_completa: { Args: { _uid: string }; Returns: boolean }
       preencher_parametros_faltantes_skus: {
