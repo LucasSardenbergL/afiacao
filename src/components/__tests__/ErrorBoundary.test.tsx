@@ -21,7 +21,6 @@ vi.mock('../AppShell', () => ({
     </div>
   ),
 }));
-vi.mock('../call/IncomingCallModal', () => ({ IncomingCallModal: () => null }));
 vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({ isStaff: false }) }));
 
 function Boom(): JSX.Element { throw new Error('explodiu'); }
