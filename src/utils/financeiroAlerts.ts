@@ -1,5 +1,5 @@
 import type { FinResumo, AgingData } from '@/services/financeiroService';
-import { COMPANIES, type Company } from '@/contexts/CompanyContext';
+import { COMPANIES, ALL_COMPANIES, type Company } from '@/contexts/CompanyContext';
 import { AlertTriangle, TrendingDown, Clock, ShieldAlert, type LucideIcon } from 'lucide-react';
 
 export interface FinAlert {
@@ -10,7 +10,7 @@ export interface FinAlert {
   icon: LucideIcon;
 }
 
-export function generateAlerts(
+function generateAlerts(
   resumo: Record<string, FinResumo>,
   agingReceber?: AgingData | null,
   _agingPagar?: AgingData | null,
@@ -83,4 +83,25 @@ export function generateAlerts(
   // Sort by severity
   const severityOrder = { critical: 0, warning: 1, info: 2 };
   return alerts.sort((a, b) => severityOrder[a.severity] - severityOrder[b.severity]);
+}
+
+/**
+ * Alertas da tela, escopados às empresas da `view`. O mapa `resumo` do hook acumula empresas de
+ * cargas anteriores (outras views): passá-lo inteiro punha alerta da Colacor sob o rótulo da
+ * Oben quando o resumo da Oben falhava. Resumo da view incompleto (algum CNPJ sem leitura) →
+ * nenhum alerta de resumo: ausente não é "sem alerta", e o motivo já aparece no aviso de
+ * indisponível da Visão Geral. O aging já é carregado por view, então continua valendo.
+ */
+export function alertasDaView(
+  resumo: Record<string, FinResumo>,
+  view: 'all' | Company,
+  agingReceber?: AgingData | null,
+  agingPagar?: AgingData | null,
+): FinAlert[] {
+  const empresas: Company[] = view === 'all' ? ALL_COMPANIES : [view];
+  const completo = empresas.every((co) => resumo[co] !== undefined);
+  const daView: Record<string, FinResumo> = completo
+    ? Object.fromEntries(empresas.map((co) => [co, resumo[co]]))
+    : {};
+  return generateAlerts(daView, agingReceber, agingPagar);
 }
