@@ -242,7 +242,13 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
   const globalColorExists = globalColorData?.colorExists ?? false;
 
   // Pricing breakdown for selected formula (motor honesto get_tint_price)
-  const { data: pricing, isLoading: pricingLoading, isError: pricingError } = useTintPricing(selectedFormula?.id || null);
+  const {
+    data: pricing,
+    isLoading: pricingLoading,
+    isError: pricingError,
+    isFetching: pricingFetching,
+    refetch: refetchPricing,
+  } = useTintPricing(selectedFormula?.id || null);
 
   // Último preço PRATICADO do cliente — Fase 3: a inferência crua (50 pedidos
   // sem filtro de status) virou a RPC tint_ultimo_preco_cliente, ENDURECIDA
@@ -360,8 +366,15 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
     () => [...(alternatives ?? []), ...globalColorMatches].map((a) => a.formulaId),
     [alternatives, globalColorMatches],
   );
-  const { data: altPriceMap, isLoading: altPriceQueryLoading, isError: altPriceError } = useTintPrices(altFormulaIds);
-  const altPriceLoading = altFormulaIds.length > 0 && altPriceQueryLoading;
+  const {
+    data: altPriceMap,
+    isLoading: altPriceQueryLoading,
+    isError: altPriceError,
+    isFetching: altPriceFetching,
+    refetch: refetchAltPrices,
+  } = useTintPrices(altFormulaIds);
+  // Refazendo após erro ("Tentar de novo") conta como carregando: mostra "calculando", não "sem preço".
+  const altPriceLoading = altFormulaIds.length > 0 && (altPriceQueryLoading || (altPriceError && altPriceFetching));
 
   // Preço honesto da cor selecionada: motor get_tint_price (base + corantes, NULL quando
   // a base/corante falta) + CSV legado + último preço do cliente. Quando o motor não tem
@@ -395,13 +408,14 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
   // "calculando" e segura o "Adicionar"). Fase 3: o último-preço do cliente
   // NÃO trava mais o preço seguro — deixou de ser default (é chip opt-in);
   // lentidão/falha da RPC de histórico não pode impedir calc/tabela (Codex P2).
-  const precoCarregando = !!selectedFormula && pricingLoading;
+  // Refetch pós-ERRO ("Tentar de novo") também segura: a cor fica, o preço volta a "calculando".
+  const precoCarregando = !!selectedFormula && (pricingLoading || (pricingError && pricingFetching));
 
   // A RPC de preço pode FALHAR (erro/permissão/runtime) e o hook devolve pricing null igual a
   // "carregando". Sem distinguir, a seleção cairia no CSV legado/preço-cliente e venderia base/
   // corante inativo que a RPC barra. Fail-closed: fórmula selecionada + parou de carregar + a RPC
   // não confirmou breakdown (erro ou sem dado) ⇒ motor falhou ⇒ sem preço (regra 0 de select-price).
-  const motorFalhou = !!selectedFormula && !pricingLoading && (pricingError || pricing == null);
+  const motorFalhou = !!selectedFormula && !precoCarregando && (pricingError || pricing == null);
 
   const selection = selectTintPrice({
     lastPracticedPrice: lastPracticedPrice?.price ?? null,
@@ -433,7 +447,9 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
   // Aviso de recálculo só quando a fonte mostrada é o cálculo que subiu vs o importado.
   const recalculado = priceSource === 'calculado' && selection.recalculado;
   const precoImportadoAnterior = recalculado ? selection.precoImportadoAnterior : null;
-  const motivoSemPreco = disponivel ? null : selection.motivoSemPreco;
+  // Carregando ≠ sem preço: sem o motor ter respondido, o select devolve 'receita' — e o
+  // evento tint.sem_preco disparava com motivo FALSO a cada cor selecionada.
+  const motivoSemPreco = disponivel || precoCarregando ? null : selection.motivoSemPreco;
 
   const precoFinal = precoSemDesconto == null
     ? null
@@ -447,6 +463,10 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
     if (formulasError) void refetchFormulas();
     if (globalError) void refetchGlobal();
     if (alternativesError) void refetchAlternatives();
+    // O preço também: antes só o catálogo voltava e a cor seguia "sem preço até recarregar".
+    // Refetch mantém a cor selecionada (a queryKey é a mesma fórmula).
+    if (motorFalhou) void refetchPricing();
+    if (altPriceError) void refetchAltPrices();
   };
 
   // ── Telemetria de jornada do balcão (PR de adoção, 2026-10-10) ───────────────────
@@ -486,6 +506,8 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
 
   return {
     search,
+    // Texto digitado == texto já buscado (debounce assentou): o Enter só seleciona aí.
+    buscaEstavel: search === debouncedSearch,
     onSearchChange,
     loadingSku,
     skuId,

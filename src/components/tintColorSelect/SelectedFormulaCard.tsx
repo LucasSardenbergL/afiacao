@@ -1,6 +1,6 @@
 // Card de detalhe da cor selecionada: preço, fonte, desconto e embalagens alternativas.
 // Extraído verbatim de src/components/TintColorSelectDialog.tsx (god-component split).
-import { Fragment } from 'react';
+import { Fragment, useEffect, type MutableRefObject } from 'react';
 import { Loader2, History, Package, Palette, Info, AlertTriangle } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -26,6 +26,17 @@ const MOTIVO_SEM_PRECO: Record<SemPrecoMotivo, string> = {
   receita: 'A receita desta cor está incompleta. Avise o tintométrico.',
   indisponivel: 'Não foi possível calcular o preço agora (motor de preço indisponível). Tente de novo; se persistir, avise o suporte.',
 };
+
+// Alvo de toque do balcão SÓ em ponteiro grosso: no desktop a densidade fica.
+// (Botões já ganham 44px pelo `pointer:coarse` global do index.css; campos não.)
+export const TOQUE_CAMPO = '[@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-24';
+export const TOQUE_CHIP = '[@media(pointer:coarse)]:px-3 [@media(pointer:coarse)]:text-sm';
+
+/** Única condição de "Adicionar ao Pedido" — o botão só existe sob ela e o Enter
+ *  do teclado a reusa: nunca contorna o fail-closed (carregando/sem preço). */
+export function podeAdicionarCor(p: { precoCarregando: boolean; disponivel: boolean; precoFinal: number | null }): boolean {
+  return !p.precoCarregando && p.disponivel && p.precoFinal != null;
+}
 
 interface SelectedFormulaCardProps {
   selectedFormula: FormulaResult;
@@ -60,6 +71,10 @@ interface SelectedFormulaCardProps {
   setAltDiscounts: React.Dispatch<React.SetStateAction<Record<string, number>>>;
   custoCorantes: number;
   onConfirm: (formulaId: string, corId: string, nomeCor: string, precoFinal: number, custoCorantes: number, pricingMeta: TintPricingMeta, alternativeProduct?: Product) => void;
+  /** Enter no campo de busca do diálogo: chama isto; devolve false se não podia adicionar. */
+  adicionarRef?: MutableRefObject<(() => boolean) | null>;
+  /** Refaz catálogo + preço quando o motor falhou (motivo 'indisponivel'). */
+  onTentarDeNovo?: () => void;
 }
 
 export function SelectedFormulaCard({
@@ -92,7 +107,30 @@ export function SelectedFormulaCard({
   setAltDiscounts,
   custoCorantes,
   onConfirm,
+  adicionarRef,
+  onTentarDeNovo,
 }: SelectedFormulaCardProps) {
+  const podeAdicionar = podeAdicionarCor({ precoCarregando, disponivel, precoFinal });
+  const tentarAdicionar = (): boolean => {
+    if (!podeAdicionar || precoFinal == null) return false;
+    onConfirm(
+      selectedFormula.id,
+      selectedFormula.cor_id,
+      selectedFormula.nome_cor,
+      precoFinal,
+      custoCorantes,
+      // Fase 3: o item carrega a fonte escolhida + desconto — o gate
+      // do submit revalida exatamente ESTA decisão contra o estado atual.
+      { source: priceSource, discountPct, precoSemDesconto },
+    );
+    return true;
+  };
+  useEffect(() => {
+    if (!adicionarRef) return;
+    adicionarRef.current = tentarAdicionar;
+    return () => { adicionarRef.current = null; };
+  });
+
   // Fontes de preço disponíveis (com valor), para a vendedora escolher manualmente.
   // Rótulo CONDICIONAL restaurado (decisão do founder 2026-07-20): a migration
   // 20260722100002 garante na VIEW que, quando a canônica é SL, o CSV vem só de
@@ -137,7 +175,7 @@ export function SelectedFormulaCard({
             <Loader2 className="w-3.5 h-3.5 animate-spin" />
             Calculando preço...
           </div>
-        ) : disponivel ? (
+        ) : podeAdicionar ? (
           <>
             {/* Seletor de fonte quando há mais de uma opção de preço */}
             {fontes.length > 1 && (
@@ -148,7 +186,7 @@ export function SelectedFormulaCard({
                     <button
                       key={f.key}
                       onClick={() => setPriceSourceOverride(f.key)}
-                      className={`flex items-center gap-1 px-2 py-1 rounded-md border text-xs transition-all ${priceSource === f.key ? 'border-primary bg-primary/10 text-primary font-semibold' : 'border-border hover:border-primary/50'}`}
+                      className={`flex items-center gap-1 px-2 py-1 rounded-md border text-xs transition-all ${TOQUE_CHIP} ${priceSource === f.key ? 'border-primary bg-primary/10 text-primary font-semibold' : 'border-border hover:border-primary/50'}`}
                     >
                       {f.key === 'cliente' && <History className="w-3 h-3" />}
                       {f.label} {fmt(f.preco)}
@@ -192,7 +230,9 @@ export function SelectedFormulaCard({
                   step={1}
                   value={discountPct || ''}
                   onChange={(e) => setDiscountPct(Math.min(99.99, Math.max(0, Number(e.target.value) || 0)))}
-                  className="h-7 w-20 text-xs text-right"
+                  // Enter = Adicionar, sob a MESMA condição do botão (fluxo: digita o desconto, Enter).
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); tentarAdicionar(); } }}
+                  className={`h-7 w-20 text-xs text-right ${TOQUE_CAMPO}`}
                   placeholder="0"
                 />
                 {discountPct > 0 && precoSemDesconto != null && (
@@ -214,19 +254,7 @@ export function SelectedFormulaCard({
               )}
             </div>
 
-            <Button
-              size="sm"
-              onClick={() => onConfirm(
-                selectedFormula.id,
-                selectedFormula.cor_id,
-                selectedFormula.nome_cor,
-                precoFinal ?? 0,
-                custoCorantes,
-                // Fase 3: o item carrega a fonte escolhida + desconto — o gate
-                // do submit revalida exatamente ESTA decisão contra o estado atual.
-                { source: priceSource, discountPct, precoSemDesconto },
-              )}
-            >
+            <Button size="touch" onClick={tentarAdicionar}>
               <Palette className="w-3.5 h-3.5 mr-1.5" />
               Adicionar ao Pedido — {fmt(precoFinal ?? 0)}
             </Button>
@@ -238,6 +266,9 @@ export function SelectedFormulaCard({
             <div>
               <p className="text-sm font-semibold text-status-warning-foreground">Sem preço para esta cor</p>
               <p className="text-xs text-status-warning mt-1">{MOTIVO_SEM_PRECO[motivoSemPreco ?? 'indisponivel']}</p>
+              {(motivoSemPreco ?? 'indisponivel') === 'indisponivel' && onTentarDeNovo && (
+                <Button size="touch" variant="outline" className="mt-2" onClick={onTentarDeNovo}>Tentar de novo</Button>
+              )}
             </div>
           </div>
         )}
@@ -334,7 +365,7 @@ export function SelectedFormulaCard({
                             step={1}
                             value={altDisc || ''}
                             onChange={(e) => setAltDiscounts(prev => ({ ...prev, [alt.formulaId]: Math.min(99.99, Math.max(0, Number(e.target.value) || 0)) }))}
-                            className="h-6 w-16 text-[10px] text-right"
+                            className={`h-6 w-16 text-[10px] text-right ${TOQUE_CAMPO}`}
                             placeholder="0"
                           />
                         </div>
