@@ -479,3 +479,4 @@ db/test-universo-pedidos-classe.sh         118  falsificar=fora-do-ci  # 18 roda
 # Sem modo --falsificar: as 9 sabotagens (concorrência em camadas, relógio pós-lock, GREATEST,
 # REVOKE, bloqueio × dono, rollback integral, BYPASSRLS) rodam em TODA execução, com controle verde.
 db/test-omie-cota-metodo.sh                 44
+db/test-picking-v2.sh                       102
