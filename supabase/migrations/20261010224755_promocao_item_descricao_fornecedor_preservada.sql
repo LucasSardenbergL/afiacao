@@ -28,7 +28,8 @@
 --      tem descrição NULL e não foi escrita desde a expansão (atualizado_em = criado_em da filha:
 --      a última escrita dela é o UPDATE da própria expansão, que não toca a descrição), e a
 --      observação da filha registra a variante gravada. Logo o original da filha é NULL. A
---      migration CONFERE essas provas linha a linha e aborta se alguma não valer mais.
+--      migration TRAVA as 17 linhas, CONFERE essas provas linha a linha e aborta se alguma não
+--      valer mais; a POS exige as 12 presentes e com o original.
 --   FICAM FORA (o original não é recuperável do banco — só lendo o arquivo-fonte da campanha):
 --   as 13 filhas da campanha 23 (escritor ad-hoc fora do código, 2026-05-13: sem observação que
 --   prove a variante), as 13 'manual_confirmado' (ids 119 e 151-162) e as 3 'unico' (5, 133, 134).
@@ -321,10 +322,17 @@ $function$;
 -- Backfill por MANIFESTO FECHADO: (filha, origem, descrição de catálogo que a filha tem hoje).
 -- Cada linha só muda se TODAS as provas do original valem agora; senão a migration inteira aborta
 -- (funções incluídas). Filha já saneada (NULL) é pulada sem UPDATE.
+-- As 17 linhas (12 filhas + 5 origens) são TRAVADAS antes de qualquer prova ser lida, em ordem de id:
+-- sem a trava, uma transação concorrente que mudasse a observação ou a origem (sem tocar a descrição)
+-- deixaria a prova vencida e o UPDATE seguiria mesmo assim (Codex P1; prova M9).
 DO $backfill$
 DECLARE
   r record;
 BEGIN
+  PERFORM 1 FROM public.promocao_item
+   WHERE id IN (1, 2, 3, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18)
+   ORDER BY id
+     FOR UPDATE;
   FOR r IN
     SELECT m.filha, m.origem, m.antes,
            f.id AS f_id, f.campanha_id AS f_campanha, f.sku_codigo_fornecedor AS f_codigo,
@@ -380,12 +388,13 @@ BEGIN
 END
 $backfill$;
 
--- POS: os dois corpos são ESTES (md5), com os mesmos atributos, OID e ACL de antes; e nenhuma filha
--- do manifesto ficou com texto de catálogo.
+-- POS: os dois corpos são ESTES (md5), com os mesmos atributos, OID e ACL de antes; e as 12 filhas do
+-- manifesto estão PRESENTES e com o original (NULL) — contar só as com texto passaria por ausência.
 DO $pos$
 DECLARE
   r record;
   n int;
+  n_original int;
 BEGIN
   FOR r IN
     SELECT x.alvo, x.este, x.chave, x.secdef, x.config, p.oid, md5(p.prosrc) AS vivo, p.prosecdef,
@@ -408,10 +417,11 @@ BEGIN
       RAISE EXCEPTION 'POS3 FALHOU: % trocou de OID ou de ACL (DROP+CREATE ou GRANT/REVOKE no caminho)', r.alvo;
     END IF;
   END LOOP;
-  SELECT count(*) INTO n FROM public.promocao_item
-   WHERE id IN (7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18) AND descricao_produto_fornecedor IS NOT NULL;
-  IF n IS DISTINCT FROM 0 THEN
-    RAISE EXCEPTION 'POS4 FALHOU: % filha(s) do manifesto ainda com texto de catálogo', n;
+  SELECT count(*), count(*) FILTER (WHERE descricao_produto_fornecedor IS NULL) INTO n, n_original
+    FROM public.promocao_item
+   WHERE id IN (7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18);
+  IF n IS DISTINCT FROM 12 OR n_original IS DISTINCT FROM 12 THEN
+    RAISE EXCEPTION 'POS4 FALHOU: das 12 filhas do manifesto, % presentes e % com o original (NULL)', n, n_original;
   END IF;
   RAISE NOTICE 'POS OK: os 2 corpos, atributos, OID e ACL conferidos; manifesto de 12 filhas saneado';
 END

@@ -466,9 +466,11 @@ db/test-converter-campanha-flat.sh          25  falsificar=19
 # fornecedor pela descrição do SKU (filha herda o da origem; o ramo único não preenche o NULL) e o converter
 # grava NULL. Snapshot fixado de 2026-10-09 + predecessores = md5 de prod (C); o defeito reproduz (A); cada
 # cenário M num CLONE do banco-base (PRE recusa deriva/ausência; o backfill por manifesto recusa filha
-# editada, origem reescrita e observação que não prova, desfazendo funções e dados; POS por camada;
-# re-aplicar não toca atualizado_em); F pela chamada do front e do converter (staff e não-staff).
-db/test-promocao-descricao-fornecedor.sh    29  falsificar=13
+# editada, origem reescrita e observação que não prova, desfazendo funções e dados; M9 = CORRIDA com
+# outra transação, ordem observada por pg_stat_activity: as linhas travadas antes das provas; POS por
+# camada, a POS4 por PRESENÇA; re-aplicar não toca atualizado_em); F pela chamada do front e do
+# converter (staff e não-staff).
+db/test-promocao-descricao-fornecedor.sh    31  falsificar=15
 
 # ── Eixo 9 — UNIVERSO DE PEDIDOS (o que conta como VENDA) ──────────────────────────────────
 # A autoridade: status NOT IN ('cancelado','rascunho','pendente','orcamento') + deleted_at IS NULL

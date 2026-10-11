@@ -42,9 +42,9 @@ MIG_LIKE="$REPO_ROOT/supabase/migrations/20260929000234_padrao_like_contem_escap
 # migration, e o pré-estado que ela transforma sumiria do snapshot vivo. Sem o histórico (fetch-depth: 0),
 # INFRA alto — nunca um snapshot errado em silêncio.
 SNAP_COMMIT=990fed2f5
-# Denominador: C1-C3 · A1-A3 · M1a M1b M2 M3 M4 M5 M6 Mp1-Mp4 M7a M7b M7c M8 · F1-F8.
+# Denominador: C1-C3 · A1-A3 · M1a M1b M2 M3 M4 M5 M6 M9 Mp1-Mp5 M7a M7b M7c M8 · F1-F8.
 # Menos asserts executados é vermelho: FAIL=0 com PASS encolhido é a prova truncada que aprova tudo.
-TOTAL_ESPERADO=29
+TOTAL_ESPERADO=31
 
 # ══════════════════════════════════════════════════════════════════════════════
 # MODO --falsificar: prova que os asserts têm DENTE.
@@ -69,7 +69,9 @@ if [ "${1:-}" = "--falsificar" ]; then
               pos_sem_md5:Mp1:Mp2,M7a
               pos_sem_atributos:Mp2:Mp1,M7a
               pos_sem_oid_acl:Mp3:Mp1,M7a
-              pos_sem_backfill:Mp4:Mp1,M7a"
+              pos_sem_backfill:Mp4:Mp1,M7a
+              backfill_sem_trava:M9:M4,M7a
+              pos4_conta_so_texto:Mp5:Mp4,M7a"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-${SLUG}.XXXXXX")"
   porta=$PORT
 
@@ -222,6 +224,12 @@ TROCAS = {
   "backfill_regrava_nulo": (None, [(
     "    IF r.f_descricao IS NULL THEN\n      CONTINUE;\n    END IF;\n",
     "    IF r.f_descricao IS NULL THEN\n      UPDATE public.promocao_item SET descricao_produto_fornecedor = NULL WHERE id = r.filha;\n      CONTINUE;\n    END IF;\n", 1)]),
+  "backfill_sem_trava": (None, [(
+    "  PERFORM 1 FROM public.promocao_item\n   WHERE id IN (1, 2, 3, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18)\n   ORDER BY id\n     FOR UPDATE;\n",
+    "", 1)]),
+  "pos4_conta_so_texto": (None, [(
+    "  IF n IS DISTINCT FROM 12 OR n_original IS DISTINCT FROM 12 THEN\n",
+    "  IF n - n_original IS DISTINCT FROM 0 THEN\n", 1)]),
   "pos_sem_md5": (None, [("      RAISE EXCEPTION 'POS1 FALHOU", "      RAISE NOTICE 'POS1 FALHOU", 1)]),
   "pos_sem_atributos": (None, [("      RAISE EXCEPTION 'POS2 FALHOU", "      RAISE NOTICE 'POS2 FALHOU", 1)]),
   "pos_sem_oid_acl": (None, [("      RAISE EXCEPTION 'POS3 FALHOU", "      RAISE NOTICE 'POS3 FALHOU", 1)]),
@@ -233,6 +241,9 @@ TROCAS = {
   "var_drop_create": (None, [(
     "CREATE OR REPLACE FUNCTION public.expandir_promocao_item(p_item_id bigint, p_threshold_similaridade numeric DEFAULT 0.5)",
     "DROP FUNCTION public.expandir_promocao_item(bigint, numeric);\nCREATE OR REPLACE FUNCTION public.expandir_promocao_item(p_item_id bigint, p_threshold_similaridade numeric DEFAULT 0.5)", 1)]),
+  "var_sem_checagem_ausencia": (None, [(
+    "      RAISE EXCEPTION 'BACKFILL FALHOU: a filha % ou a origem % não existe', r.filha, r.origem;\n",
+    "      CONTINUE;\n", 1)]),
   "var_sem_backfill": (None, [(
     "    UPDATE public.promocao_item\n       SET descricao_produto_fornecedor = r.o_descricao\n",
     "    PERFORM 1;\n    UPDATE public.promocao_item\n       SET descricao_produto_fornecedor = descricao_produto_fornecedor\n", 1)]),
@@ -529,7 +540,71 @@ clonar m6
 Pd m6 -q -c "SET session_replication_role = replica; UPDATE public.promocao_item SET observacoes = ' [Expandido automaticamente do código FL.6269.02 — variante: OUTRA COISA]' WHERE id = 10;"
 eq M6 "observação que não prova a variante: o backfill recusa" "$(veredito m6 "$MIG_EFETIVA" 'BACKFILL FALHOU: a observa')" "RECUSOU"
 
-# Mp1-Mp4 — a POS, uma camada por variante; cada recusa vem da camada CERTA (o rótulo), e desfaz tudo.
+# M9 — CORRIDA (Codex P1): outra transação muda a observação da filha 8 SEM tocar a descrição e fica
+# aberta enquanto a migration roda. Sem trava, o backfill leria a versão velha, a prova passaria, e o
+# UPDATE (que revalida só id e descrição) seguiria sobre a prova vencida quando a outra commitasse. Com
+# as linhas travadas ANTES das provas, a migration espera, relê a observação nova e recusa. Ordem
+# OBSERVADA, não por tempo (desenho do M5 da 20260930220148): C segura uma trava de liberação; B grava
+# a linha 8, sinaliza com um advisory de TRANSAÇÃO e fica preso na trava de C; A (a migration) só é
+# lançado quando B sinalizou, e C só solta quando A está ESPERANDO lock (pg_stat_activity).
+esperar_advisory() {   # <db> <objid> → 0 quando concedido; 1 se não aparecer em ~10 s
+  local _i
+  for _i in $(seq 1 100); do
+    [ "$(Pq "$1" -c "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = $2 AND granted;")" = 1 ] && return 0
+    sleep 0.1
+  done
+  return 1
+}
+esperando_lock() {   # <db> <application_name> → 0 quando a sessão está parada esperando um lock
+  local _i
+  for _i in $(seq 1 100); do
+    [ "$(Pq "$1" -c "SELECT count(*) FROM pg_stat_activity WHERE application_name = '$2' AND wait_event_type = 'Lock';")" = 1 ] && return 0
+    sleep 0.1
+  done
+  return 1
+}
+clonar m9
+( Pd m9 -q -c "SELECT pg_advisory_lock(727272); SELECT pg_sleep(600);" ) > "$TMPD/m9-c.log" 2>&1 &
+m9_c=$!
+m9_a=""; m9_b=""; r9="BARREIRA NAO OBSERVADA (C)"
+if esperar_advisory m9 727272; then
+  ( Pd m9 -q <<'SQL'
+BEGIN;
+UPDATE public.promocao_item SET observacoes = ' [Expandido automaticamente do código DR.4403 — variante: OUTRA]' WHERE id = 8;
+SELECT pg_advisory_xact_lock(727273);
+SELECT pg_advisory_xact_lock(727272);
+COMMIT;
+SQL
+  ) > "$TMPD/m9-b.log" 2>&1 &
+  m9_b=$!
+  r9="BARREIRA NAO OBSERVADA (B)"
+  if esperar_advisory m9 727273; then
+    ( PGAPPNAME=m9_aplica Pd m9 -1 -q -f "$MIG_EFETIVA" > "$TMPD/m9-a.log" 2>&1; echo "RC=$?" >> "$TMPD/m9-a.log" ) &
+    m9_a=$!
+    if esperando_lock m9 m9_aplica; then
+      r9="SOLTA"
+    else
+      r9="A NAO ESPEROU LOCK: $(head -c 200 "$TMPD/m9-a.log" 2>/dev/null)"
+    fi
+  fi
+fi
+Pq m9 -c "SELECT pg_terminate_backend(pid) FROM pg_locks WHERE locktype = 'advisory' AND objid = 727272 AND granted;" >/dev/null 2>&1 || true
+wait "$m9_c" 2>/dev/null || true
+if [ -n "$m9_b" ]; then wait "$m9_b" 2>/dev/null || true; fi
+if [ -n "$m9_a" ]; then wait "$m9_a" 2>/dev/null || true; fi
+case "$r9" in
+  SOLTA)
+    saida9="$(cat "$TMPD/m9-a.log")"
+    if printf '%s' "$saida9" | grep -q '^RC=0$'; then v9="APLICOU"
+    elif printf '%s\n' "$saida9" | grep -qE "(ERROR|ERRO): +BACKFILL FALHOU: a observa"; then v9="RECUSOU"
+    else v9="RECUSOU_POR_OUTRO $(printf '%s\n' "$saida9" | grep -E '(ERROR|ERRO): ' | head -1 | tr -d ':' | head -c 150)"
+    fi
+    eq M9 "corrida: observação mudada por outra transação durante o apply — a migration espera, relê e recusa (veredito|funções)" \
+       "$v9|$([ "$(funcs m9)" = "$(funcs base)" ] && echo intactas || echo MUDARAM)" "RECUSOU|intactas" ;;
+  *) erro_exec M9 "sem corrida válida: [$(printf '%s' "$r9" | tr '\n' ' ' | head -c 200)]" ;;
+esac
+
+# Mp1-Mp5 — a POS, uma camada por variante; cada recusa vem da camada CERTA (o rótulo), e desfaz tudo.
 clonar mp1; v="$(veredito mp1 "$(variante var_corpo_editado)" 'POS1 FALHOU')"
 eq Mp1 "corpo instalado editado (1 espaço): a POS1 recusa e nada muda" "$v|$([ "$(retrato mp1)" = "$retrato_pred" ] && echo igual || echo MUDOU)" "RECUSOU|igual"
 clonar mp2; v="$(veredito mp2 "$(variante var_secdef)" 'POS2 FALHOU')"
@@ -538,6 +613,9 @@ clonar mp3; v="$(veredito mp3 "$(variante var_drop_create)" 'POS3 FALHOU')"
 eq Mp3 "DROP+CREATE da expansão (OID e ACL novos): a POS3 recusa e nada muda" "$v|$([ "$(retrato mp3)" = "$retrato_pred" ] && echo igual || echo MUDOU)" "RECUSOU|igual"
 clonar mp4; v="$(veredito mp4 "$(variante var_sem_backfill)" 'POS4 FALHOU')"
 eq Mp4 "backfill que não grava: a POS4 recusa e nada muda" "$v|$([ "$(retrato mp4)" = "$retrato_pred" ] && echo igual || echo MUDOU)" "RECUSOU|igual"
+clonar mp5; Pd mp5 -q -c "DELETE FROM public.promocao_item WHERE id = 8;"; retrato_mp5="$(retrato mp5)"
+v="$(veredito mp5 "$(variante var_sem_checagem_ausencia)" 'POS4 FALHOU')"
+eq Mp5 "filha do manifesto AUSENTE e a checagem de existência desligada: a POS4 (presença) recusa e nada muda" "$v|$([ "$(retrato mp5)" = "$retrato_mp5" ] && echo igual || echo MUDOU)" "RECUSOU|igual"
 
 # M7/M8 — aplica e re-aplica. Esperado: os 2 corpos NOVOS com a MESMA config, secdef, OID e ACL; só as
 # 12 filhas do manifesto mudam (para NULL); re-aplicar não toca linha nenhuma (atualizado_em igual).
