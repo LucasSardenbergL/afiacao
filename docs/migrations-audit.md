@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **607** custom migrations totais
-- **1997** objetos esperados (criados por estas migrations)
+- **609** custom migrations totais
+- **2000** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 689
-  - `rls_policy`: 469
+  - `rls_policy`: 471
   - `index`: 273
   - `table`: 176
-  - `cron_job`: 175
+  - `cron_job`: 176
   - `view`: 109
   - `trigger`: 102
   - `enum_value`: 4
@@ -4982,6 +4982,19 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20261011120000_tint_grants_escrita_staff.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20261011120000_tint_watchdog_fase5_cron_timeout.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.tint-watchdog-fase5-6h` | — |
+
+### `20261011120100_reposicao_logs_insert_cap_compras.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `rls_policy` | `public.reposicao_motor_run_ins` | `reposicao_motor_run` |
+| `rls_policy` | `public.estoque_nao_confirmado_log_ins` | `reposicao_estoque_nao_confirmado_log` |
 
 ## Próximos passos por status
 
