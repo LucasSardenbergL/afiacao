@@ -85,7 +85,11 @@ export const respostaSonda = criarRespostaSonda("sync-reprocess");
 // v1.18 (2026-10-10, picking v2 Fase 0.2) — `ListarPedidos` pede a vez na trava `omie_cota_metodo`
 // (_shared/omie-cota.ts); vez negada LANÇA (chamada não feita). Migration 20261010204708 antes.
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.18-cota-omie-compartilhada";
+// v1.19 (2026-10-11) — ação `reprocess_operational_orders`: só pedidos, gravada como `operational`
+// e sob o mesmo `operational_enabled`. Existe para o cron da COLACOR, cujo status de pedido estava
+// congelado desde jun/2026 (o reconciliador só rodava para a Oben). Não chama reprocessInventory:
+// para a Colacor isso seria um escritor a mais de product_costs. Nenhuma ação existente mudou.
+export const VERSAO = "v1.19-pedidos-operacional";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO = // v1.12 (2026-09-27, P2 Codex): run de pedidos que ABORTA grava o metadata apurado até o abort (não apurado = null, nunca 0) — ./apuracao-pedidos.ts. Nota aqui e não na linha do VERSAO: `scripts/sonda-versao-sql.ts` exige aquela linha limpa até o fim.
