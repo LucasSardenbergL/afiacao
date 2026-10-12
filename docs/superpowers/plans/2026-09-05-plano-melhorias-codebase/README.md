@@ -12,9 +12,9 @@
 
 | Estado | Itens |
 |---|---|
-| ✅ feito | M-39 (✅ #2969, cano `$exception` provado em prod) · M-01 (#2201) · M-02 (#2204) · M-03 (#2205) · M-04 (#2206) · M-11 (#2781) · M-24 (vitest `projects` node/jsdom) · M-25 (gate AST ~60% mais rápido) · M-27 (#2874, snapshot com provas) · M-40 (job `provas-sql`, `db/nucleo-ci.txt` com 92 harnesses) · M-45 (✅ #2965, README humano) |
+| ✅ feito | M-30 (✅ #2979, `ErrorBoundary` por rota no shell) · M-39 (✅ #2969, cano `$exception` provado em prod) · M-01 (#2201) · M-02 (#2204) · M-03 (#2205) · M-04 (#2206) · M-11 (#2781) · M-24 (vitest `projects` node/jsdom) · M-25 (gate AST ~60% mais rápido) · M-27 (#2874, snapshot com provas) · M-40 (job `provas-sql`, `db/nucleo-ci.txt` com 92 harnesses) · M-45 (✅ #2965, README humano) |
 | 🟡 parcial | M-14 (`concurrency` + shellcheck no CI; faltam os lockfiles) · M-21 (preload do `bun test` falha alto) · M-26 (sonda em 63/98 edges, era 40/95) · M-33 (`omie-deadline.ts` em 4+ edges; faltam os 3 enumeradores e o cliente Anthropic) · M-48 (7 wrappers `omieCall`, eram 25) |
-| ❌ aberto | M-05 · M-06 · M-07 · M-08 · M-09 · M-10 · M-12 · M-13 · M-15 · M-16 · M-17 · M-18 · M-22 · M-23 · M-28 · M-29 · M-30 · M-31 · M-36 · M-37 · M-41 · M-47 |
+| ❌ aberto | M-05 · M-06 · M-07 · M-08 · M-09 · M-10 · M-12 · M-13 · M-15 · M-16 · M-17 · M-18 · M-22 · M-23 · M-28 · M-29 · M-31 · M-36 · M-37 · M-41 · M-47 |
 
 ### 0.2 Regra de execução: ordenar por arquivo tocado, não por score
 
