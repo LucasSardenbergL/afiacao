@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 607
+-- Total de custom migrations: 609
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -668,7 +668,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261010224755', 'promocao_item_descricao_fornecedor_preservada', '20261010224755_promocao_item_descricao_fornecedor_preservada.sql'),
   ('20261010230000', 'tint_watchdog_fase5_s2_aviso', '20261010230000_tint_watchdog_fase5_s2_aviso.sql'),
   ('20261011020000', 'picking_v2_schema', '20261011020000_picking_v2_schema.sql'),
-  ('20261011120000', 'tint_grants_escrita_staff', '20261011120000_tint_grants_escrita_staff.sql')
+  ('20261011120000', 'tint_grants_escrita_staff', '20261011120000_tint_grants_escrita_staff.sql'),
+  ('20261011120000', 'tint_watchdog_fase5_cron_timeout', '20261011120000_tint_watchdog_fase5_cron_timeout.sql'),
+  ('20261011120100', 'reposicao_logs_insert_cap_compras', '20261011120100_reposicao_logs_insert_cap_compras.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2634,7 +2636,10 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('picking_v2_schema', 'rls_policy', 'public', 'picking_linhas_staff_select', 'picking_linhas'),
   ('picking_v2_schema', 'rls_policy', 'public', 'picking_leituras_staff_select', 'picking_leituras'),
   ('picking_v2_schema', 'rls_policy', 'public', 'picking_codigos_barras_staff_select', 'picking_codigos_barras'),
-  ('picking_v2_schema', 'rls_policy', 'public', 'picking_eventos_staff_select', 'picking_eventos')
+  ('picking_v2_schema', 'rls_policy', 'public', 'picking_eventos_staff_select', 'picking_eventos'),
+  ('tint_watchdog_fase5_cron_timeout', 'cron_job', 'cron', 'tint-watchdog-fase5-6h', ''),
+  ('reposicao_logs_insert_cap_compras', 'rls_policy', 'public', 'reposicao_motor_run_ins', 'reposicao_motor_run'),
+  ('reposicao_logs_insert_cap_compras', 'rls_policy', 'public', 'estoque_nao_confirmado_log_ins', 'reposicao_estoque_nao_confirmado_log')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4648,7 +4653,10 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('picking_v2_schema', 'rls_policy', 'public', 'picking_linhas_staff_select', 'picking_linhas'),
   ('picking_v2_schema', 'rls_policy', 'public', 'picking_leituras_staff_select', 'picking_leituras'),
   ('picking_v2_schema', 'rls_policy', 'public', 'picking_codigos_barras_staff_select', 'picking_codigos_barras'),
-  ('picking_v2_schema', 'rls_policy', 'public', 'picking_eventos_staff_select', 'picking_eventos')
+  ('picking_v2_schema', 'rls_policy', 'public', 'picking_eventos_staff_select', 'picking_eventos'),
+  ('tint_watchdog_fase5_cron_timeout', 'cron_job', 'cron', 'tint-watchdog-fase5-6h', ''),
+  ('reposicao_logs_insert_cap_compras', 'rls_policy', 'public', 'reposicao_motor_run_ins', 'reposicao_motor_run'),
+  ('reposicao_logs_insert_cap_compras', 'rls_policy', 'public', 'estoque_nao_confirmado_log_ins', 'reposicao_estoque_nao_confirmado_log')
 )
 SELECT
   e.migration,
