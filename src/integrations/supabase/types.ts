@@ -10,7 +10,7 @@ export type Database = {
   // Allows to automatically instantiate createClient with right options
   // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
   __InternalSupabase: {
-    PostgrestVersion: "14.5"
+    PostgrestVersion: "14.1"
   }
   public: {
     Tables: {
@@ -9626,6 +9626,7 @@ export type Database = {
           portal_erro: string | null
           portal_protocolo: string | null
           portal_proximo_retry_em: string | null
+          portal_recusa_definitiva_em: string | null
           portal_recusa_motivo: string | null
           portal_resposta: Json | null
           portal_screenshot_url: string | null
@@ -9688,6 +9689,7 @@ export type Database = {
           portal_erro?: string | null
           portal_protocolo?: string | null
           portal_proximo_retry_em?: string | null
+          portal_recusa_definitiva_em?: string | null
           portal_recusa_motivo?: string | null
           portal_resposta?: Json | null
           portal_screenshot_url?: string | null
@@ -9750,6 +9752,7 @@ export type Database = {
           portal_erro?: string | null
           portal_protocolo?: string | null
           portal_proximo_retry_em?: string | null
+          portal_recusa_definitiva_em?: string | null
           portal_recusa_motivo?: string | null
           portal_resposta?: Json | null
           portal_screenshot_url?: string | null
@@ -10224,19 +10227,25 @@ export type Database = {
       picking_coleta_estado: {
         Row: {
           account: string
-          aplicada_em: string
+          aplicada_em: string | null
+          lease_ate: string | null
+          lease_token: string | null
           ultima_coleta_iniciada_em: string
           ultimo_resumo: Json | null
         }
         Insert: {
           account: string
-          aplicada_em: string
+          aplicada_em?: string | null
+          lease_ate?: string | null
+          lease_token?: string | null
           ultima_coleta_iniciada_em: string
           ultimo_resumo?: Json | null
         }
         Update: {
           account?: string
-          aplicada_em?: string
+          aplicada_em?: string | null
+          lease_ate?: string | null
+          lease_token?: string | null
           ultima_coleta_iniciada_em?: string
           ultimo_resumo?: Json | null
         }
@@ -10517,12 +10526,14 @@ export type Database = {
           atribuicao_id: string | null
           atualizado_em: string
           ausente_desde: string | null
+          ausente_rodadas: number
           cliente_nome: string | null
           criado_em: string
           estado_seq: number
           fora_da_etapa_em: string | null
           hash_fisico: string | null
           id: string
+          incluido_em: string | null
           motivo_bloqueio: string | null
           numero_pedido: string | null
           omie_codigo_pedido: number
@@ -10539,12 +10550,14 @@ export type Database = {
           atribuicao_id?: string | null
           atualizado_em?: string
           ausente_desde?: string | null
+          ausente_rodadas?: number
           cliente_nome?: string | null
           criado_em?: string
           estado_seq?: number
           fora_da_etapa_em?: string | null
           hash_fisico?: string | null
           id?: string
+          incluido_em?: string | null
           motivo_bloqueio?: string | null
           numero_pedido?: string | null
           omie_codigo_pedido: number
@@ -10561,12 +10574,14 @@ export type Database = {
           atribuicao_id?: string | null
           atualizado_em?: string
           ausente_desde?: string | null
+          ausente_rodadas?: number
           cliente_nome?: string | null
           criado_em?: string
           estado_seq?: number
           fora_da_etapa_em?: string | null
           hash_fisico?: string | null
           id?: string
+          incluido_em?: string | null
           motivo_bloqueio?: string | null
           numero_pedido?: string | null
           omie_codigo_pedido?: number
@@ -21017,6 +21032,7 @@ export type Database = {
         Returns: undefined
       }
       pedidos_programados_watchdog_claims: { Args: never; Returns: number }
+      picking_coleta_reservar: { Args: { p_account: string }; Returns: Json }
       picking_concluir: {
         Args: {
           p_account: string
@@ -21079,14 +21095,16 @@ export type Database = {
       picking_sincronizar_fila: {
         Args: {
           p_account: string
-          p_coleta_iniciada_em: string
-          p_confirmados_fora?: number[]
+          p_confirmados_fora: number[]
+          p_lease_token: string
+          p_listagem_suspeita: boolean
           p_pedidos: Json
           p_presentes: number[]
           p_total_de_registros: number
         }
         Returns: Json
       }
+      picking_v2_data: { Args: { p: string }; Returns: string }
       picking_v2_itens: {
         Args: { p_pedido: Json }
         Returns: {
@@ -21394,6 +21412,10 @@ export type Database = {
           motivo: string
           selo_ok: boolean
         }[]
+      }
+      reposicao_encerrar_recusas_definitivas: {
+        Args: { p_dias?: number }
+        Returns: Json
       }
       reposicao_marco_pre_omie: { Args: never; Returns: string }
       reposicao_param_auto_resumo_tick: { Args: never; Returns: undefined }
