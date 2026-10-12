@@ -6,6 +6,8 @@ import { Button } from '@/components/ui/button';
 import { Search, Palette, ChevronDown, ChevronUp, Loader2, Plus } from 'lucide-react';
 import { format } from 'date-fns';
 import type { CorDoCliente, OcorrenciaCor } from '@/lib/tint/cores-do-cliente';
+import { fmt } from '@/hooks/useUnifiedOrder';
+import { chaveUmToque, type EstadoUmToque, type UmToquePronto } from '@/hooks/unifiedOrder/useCoresDoClienteUmToque';
 
 interface CoresDoClienteCardProps {
   cores: CorDoCliente[];
@@ -15,6 +17,10 @@ interface CoresDoClienteCardProps {
   isLoading: boolean;
   /** Re-pedido: clique numa ocorrência (cor + base daquela vez). */
   onRepetirCor: (cor: CorDoCliente, ocorrencia: OcorrenciaCor) => void;
+  /** Fase 2A: estado do 1 toque por ocorrência (`chaveUmToque`). Ausente = só o diálogo. */
+  umToque?: Record<string, EstadoUmToque>;
+  /** 1 toque: a cor entra no pedido com o preço do motor já calculado. */
+  onAdicionarUmToque?: (pronto: UmToquePronto, ocorrencia: OcorrenciaCor) => void;
 }
 
 const empresaLabel = (account: string) =>
@@ -36,7 +42,7 @@ const fmtData = (iso: string) => {
  * Não renderiza nada quando o cliente não tem cor no histórico.
  */
 export function CoresDoClienteCard({
-  cores, coresFiltradas, busca, onBuscaChange, isLoading, onRepetirCor,
+  cores, coresFiltradas, busca, onBuscaChange, isLoading, onRepetirCor, umToque, onAdicionarUmToque,
 }: CoresDoClienteCardProps) {
   const [aberto, setAberto] = useState(true);
 
@@ -84,7 +90,10 @@ export function CoresDoClienteCard({
                       </span>
                     </p>
                     <div className="mt-1 space-y-1">
-                      {cor.ocorrencias.slice(0, 4).map((oc, i) => (
+                      {cor.ocorrencias.slice(0, 4).map((oc, i) => {
+                        const estado = umToque?.[chaveUmToque(cor.nome, i)];
+                        const pronto = typeof estado === 'object' && onAdicionarUmToque ? estado : null;
+                        return (
                         <div key={i} className="flex items-center justify-between gap-2">
                           <div className="min-w-0 flex-1 text-[11px] text-muted-foreground">
                             <span className="font-tabular text-foreground">{fmtData(oc.data)}</span>
@@ -94,16 +103,46 @@ export function CoresDoClienteCard({
                             {oc.pv && <> · PV <span className="font-tabular">{oc.pv}</span></>}
                             <Badge variant="outline" className="text-[9px] px-1 py-0 ml-1">{empresaLabel(oc.account)}</Badge>
                           </div>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="h-6 text-[11px] shrink-0 px-2"
-                            onClick={() => onRepetirCor(cor, oc)}
-                          >
-                            <Plus className="w-3 h-3 mr-0.5" /> Pedir de novo
-                          </Button>
+                          {pronto ? (
+                            <div className="flex items-center gap-1 shrink-0">
+                              {/* 1 toque: preço do MOTOR já calculado (regra do maior, sem desconto).
+                                  "Ajustar" abre o diálogo completo (fonte, desconto, outra embalagem). */}
+                              <Button
+                                size="sm"
+                                className="h-6 text-[11px] px-2"
+                                title={`${pronto.corId} – ${pronto.nomeCor}`}
+                                aria-label={`Adicionar ${pronto.corId} por ${fmt(pronto.preco)}`}
+                                onClick={() => onAdicionarUmToque!(pronto, oc)}
+                              >
+                                <Plus className="w-3 h-3 mr-0.5" /> {fmt(pronto.preco)}
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-6 text-[11px] px-1.5"
+                                onClick={() => onRepetirCor(cor, oc)}
+                              >
+                                Ajustar
+                              </Button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1 shrink-0">
+                              {estado === 'carregando' && (
+                                <span className="text-[10px] text-muted-foreground">calculando…</span>
+                              )}
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-6 text-[11px] px-2"
+                                onClick={() => onRepetirCor(cor, oc)}
+                              >
+                                <Plus className="w-3 h-3 mr-0.5" /> Pedir de novo
+                              </Button>
+                            </div>
+                          )}
                         </div>
-                      ))}
+                        );
+                      })}
                       {cor.ocorrencias.length > 4 && (
                         <p className="text-[10px] text-muted-foreground">
                           + {cor.ocorrencias.length - 4} pedidos anteriores

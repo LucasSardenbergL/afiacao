@@ -122,9 +122,12 @@ export function useCart({ getProductPrice, getServicePrice, servicos }: UseCartA
       custoCorantes: number,
       // Fase 3: fonte escolhida + desconto declarado (o gate do submit revalida)
       pricingMeta?: { source: string | null; discountPct: number; precoSemDesconto: number | null },
+      // Fase 2A: entrada SEM diálogo pendente (1 toque das "Cores do cliente") traz a própria qtd;
+      // sem ela, vale a qtd pendente do diálogo (Fase 1).
+      qtyOverride?: number,
     ) => {
       const account = (product.account || 'oben') as ProductAccount;
-      const qty = tintPendingQty;
+      const qty = qtyOverride != null && Number.isFinite(qtyOverride) && qtyOverride > 0 ? qtyOverride : tintPendingQty;
       setCart(prev => {
         const existing = prev.find(
           (c): c is ProductCartItem => c.type === 'product' && c.tint_formula_id === formulaId,

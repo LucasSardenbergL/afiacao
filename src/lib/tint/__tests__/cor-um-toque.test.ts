@@ -1,0 +1,84 @@
+// Fase 2A — "Cores do cliente" em 1 toque. O que estes testes travam é o FAIL-CLOSED do
+// atalho: ele só existe com fórmula inequívoca E preço vendável do MOTOR; qualquer dúvida
+// devolve null (o card cai no diálogo). E o preço é o MESMO das outras embalagens.
+import { describe, it, expect } from 'vitest';
+import { decidirUmToque, escolherFormulaUmToque, ehCodigoDeCor, type CandidataUmToque } from '../cor-um-toque';
+import { selectAltPrice, type TintPriceBreakdownLite } from '../select-price';
+import { aplicarDesconto, podeAdicionarCor, precoVendavel } from '../pode-adicionar';
+
+const cand = (over: Partial<CandidataUmToque>): CandidataUmToque => ({
+  id: 'f1', sku_id: 'sku-A', cor_id: '346J', nome_cor: 'PLATINA BIANCO', preco_csv_legado: null, ...over,
+});
+
+const motor = (precoFinal: number | null): TintPriceBreakdownLite =>
+  ({ precoFinal, custoCorantes: 3.2 } as unknown as TintPriceBreakdownLite);
+
+describe('escolherFormulaUmToque — fórmula inequívoca ou nada', () => {
+  it('código exato na MESMA base → a fórmula (caixa do histórico não importa)', () => {
+    const f = escolherFormulaUmToque('sku-A', '346j', [cand({}), cand({ id: 'f2', sku_id: 'sku-B' })]);
+    expect(f?.id).toBe('f1');
+  });
+
+  it('cor só por NOME (sem dígito) nunca vira 1 toque', () => {
+    expect(ehCodigoDeCor('PLATINA')).toBe(false);
+    expect(escolherFormulaUmToque('sku-A', 'PLATINA', [cand({ cor_id: 'PLATINA' })])).toBeNull();
+  });
+
+  it('código de OUTRA base não serve (a base é a da compra)', () => {
+    expect(escolherFormulaUmToque('sku-A', '346J', [cand({ sku_id: 'sku-B' })])).toBeNull();
+  });
+
+  it('2 fórmulas para o mesmo (base, código) → ambíguo → null', () => {
+    expect(escolherFormulaUmToque('sku-A', '346J', [cand({}), cand({ id: 'f2' })])).toBeNull();
+  });
+
+  it('casamento é EXATO, não por prefixo/substring', () => {
+    expect(escolherFormulaUmToque('sku-A', '346', [cand({})])).toBeNull();
+  });
+});
+
+describe('decidirUmToque — preço do motor ou nada', () => {
+  it('sem breakdown do motor (carregando/erro) → null, mesmo com CSV', () => {
+    expect(decidirUmToque(150, undefined)).toBeNull();
+    expect(decidirUmToque(150, null)).toBeNull();
+  });
+
+  it('motor sem preço confiável (precoFinal null) → null, o CSV não fura', () => {
+    expect(decidirUmToque(150, motor(null))).toBeNull();
+  });
+
+  it('preço R$ 0 → null (nunca vende a zero)', () => {
+    expect(decidirUmToque(null, motor(0))).toBeNull();
+  });
+
+  it('paridade com as outras embalagens: regra do maior via selectAltPrice', () => {
+    const d = decidirUmToque(150.01, motor(120));
+    const alt = selectAltPrice(Math.ceil(150.01 * 10) / 10, motor(120), null);
+    expect(d).toEqual({ preco: alt.preco, fonte: alt.fonte, custoCorantes: 3.2 });
+    expect(d?.fonte).toBe('tabela');
+    expect(d?.preco).toBe(150.1);
+  });
+
+  it('cálculo maior que a tabela → fonte calculado', () => {
+    expect(decidirUmToque(100, motor(130.04))).toEqual({ preco: 130.1, fonte: 'calculado', custoCorantes: 3.2 });
+  });
+});
+
+describe('pode-adicionar — a regra ÚNICA das portas de cor', () => {
+  it('precoVendavel: só número finito > 0', () => {
+    expect([null, undefined, 0, -1, NaN, Infinity].map(precoVendavel)).toEqual([false, false, false, false, false, false]);
+    expect(precoVendavel(0.01)).toBe(true);
+  });
+
+  it('podeAdicionarCor: carregando ou indisponível segura, mesmo com número', () => {
+    expect(podeAdicionarCor({ precoCarregando: true, disponivel: true, precoFinal: 100 })).toBe(false);
+    expect(podeAdicionarCor({ precoCarregando: false, disponivel: false, precoFinal: 100 })).toBe(false);
+    expect(podeAdicionarCor({ precoCarregando: false, disponivel: true, precoFinal: 100 })).toBe(true);
+  });
+
+  it('desconto que arredonda a R$ 0,00 não vende — sem teto de desconto', () => {
+    expect(aplicarDesconto(0.4, 99.99)).toBe(0);
+    expect(podeAdicionarCor({ precoCarregando: false, disponivel: true, precoFinal: aplicarDesconto(0.4, 99.99) })).toBe(false);
+    expect(aplicarDesconto(100, 99)).toBe(1);
+  });
+});

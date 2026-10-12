@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { CheckCircle, Building2, Scissors, Wifi } from 'lucide-react';
+import { CheckCircle, Building2, Scissors, Wifi, Palette } from 'lucide-react';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { Badge } from '@/components/ui/badge';
 import { track } from '@/lib/analytics';
@@ -9,6 +9,7 @@ import { RecommendationsPanel } from '@/components/RecommendationsPanel';
 import { AddToolDialog } from '@/components/AddToolDialog';
 import { UnifiedAIAssistant } from '@/components/UnifiedAIAssistant';
 import { TintColorSelectDialog } from '@/components/TintColorSelectDialog';
+import { CorPrimeiroDialog } from '@/components/tintColorSelect/CorPrimeiroDialog';
 import { OrderSuccessDialog } from '@/components/OrderSuccessDialog';
 import { AtpBackorderDialog } from '@/components/unified-order/AtpBackorderDialog';
 import { cn } from '@/lib/utils';
@@ -27,6 +28,12 @@ import { ExcecaoCreditoDialog } from '@/components/unified-order/ExcecaoCreditoD
 import type { BloqueioCreditoPedido } from '@/services/orderSubmission';
 import { CoresDoClienteCard } from '@/components/unified-order/CoresDoClienteCard';
 import { useCoresDoCliente } from '@/hooks/unifiedOrder/useCoresDoCliente';
+import {
+  chaveUmToque,
+  useCoresDoClienteUmToque,
+  type AlvoUmToque,
+  type UmToquePronto,
+} from '@/hooks/unifiedOrder/useCoresDoClienteUmToque';
 import type { CorDoCliente, OcorrenciaCor } from '@/lib/tint/cores-do-cliente';
 import { termoBuscaCor } from '@/lib/tint/cores-do-cliente';
 import { montarPlanoReplicacao, type ItemTinta } from '@/lib/pedido/replicar-pedido';
@@ -99,13 +106,48 @@ const UnifiedOrder = () => {
   const [tintInitialSearch, setTintInitialSearch] = useState<string | null>(null);
   // Trava de crédito (Fase 2): bloqueio selecionado no painel de resultado → dialog de exceção.
   const [excecaoBloqueio, setExcecaoBloqueio] = useState<BloqueioCreditoPedido | null>(null);
-  const handleRepetirCor = (cor: CorDoCliente, oc: OcorrenciaCor) => {
+  // Produto-base de uma ocorrência do histórico, se ainda for base tintométrica no catálogo.
+  const baseDaOcorrencia = (oc: OcorrenciaCor) => {
     const pool = oc.account === 'colacor' ? h.colacorProducts : h.obenProducts;
     const product =
       oc.omieCodigoProduto != null
         ? pool.find((p) => p.omie_codigo_produto === oc.omieCodigoProduto)
         : undefined;
-    if (product?.is_tintometric && product.tint_type === 'base') {
+    return product?.is_tintometric && product.tint_type === 'base' ? product : undefined;
+  };
+  // Fase 2A — "Cores do cliente" em 1 toque: só as ocorrências VISÍVEIS (as mesmas
+  // 4 por cor que o card mostra) e só da Oben (o tintométrico só existe lá).
+  const alvosUmToque = useMemo<AlvoUmToque[]>(() => {
+    const out: AlvoUmToque[] = [];
+    for (const cor of coresDoCliente.coresFiltradas.slice(0, 20)) {
+      cor.ocorrencias.slice(0, 4).forEach((oc, i) => {
+        const product = oc.account === 'oben' ? baseDaOcorrencia(oc) : undefined;
+        if (product) out.push({ key: chaveUmToque(cor.nome, i), product, codigo: termoBuscaCor(cor.nome) });
+      });
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- baseDaOcorrencia só lê os pools abaixo
+  }, [coresDoCliente.coresFiltradas, h.obenProducts, h.colacorProducts]);
+  const umToque = useCoresDoClienteUmToque(alvosUmToque);
+  const handleAdicionarUmToque = (pronto: UmToquePronto, oc: OcorrenciaCor) => {
+    track('tint.cor_confirmada', { fonte: pronto.fonte, alternativa: false, com_desconto: false, entrada: 'um_toque' });
+    h.addTintProductToCart(
+      pronto.product,
+      pronto.formulaId,
+      pronto.corId,
+      pronto.nomeCor,
+      pronto.preco,
+      pronto.custoCorantes,
+      // Fonte do default (regra do maior), sem desconto: o gate revalida esta decisão.
+      { source: pronto.fonte, discountPct: 0, precoSemDesconto: pronto.preco },
+      oc.quantidade > 0 ? oc.quantidade : 1,
+    );
+    toast.success(`${pronto.corId} adicionada`, { description: pronto.product.descricao });
+  };
+  const [corPrimeiroAberto, setCorPrimeiroAberto] = useState(false);
+  const handleRepetirCor = (cor: CorDoCliente, oc: OcorrenciaCor) => {
+    const product = baseDaOcorrencia(oc);
+    if (product) {
       track('pedido.repetir_cor');
       // Busca pelo CÓDIGO da cor, não pelo rótulo cru do histórico ("346J -
       // PLATINA BIANCA 900ML") — o rótulo não casa com cor_id/nome_cor do catálogo.
@@ -380,7 +422,17 @@ const UnifiedOrder = () => {
               onBuscaChange={coresDoCliente.setBusca}
               isLoading={coresDoCliente.isLoading}
               onRepetirCor={handleRepetirCor}
+              umToque={umToque}
+              onAdicionarUmToque={handleAdicionarUmToque}
             />
+          )}
+
+          {/* Fase 2A: entrada pela COR (a base sai da embalagem escolhida) — staff */}
+          {showCustomerSearch && customerReady && (
+            <Button variant="outline" className="w-full justify-start gap-2" onClick={() => setCorPrimeiroAberto(true)}>
+              <Palette className="w-4 h-4" /> Pedir por cor
+              <span className="text-xs text-muted-foreground font-normal">cor → produto → embalagem</span>
+            </Button>
           )}
 
           {/* Item selection — adapted by role */}
@@ -581,6 +633,18 @@ const UnifiedOrder = () => {
           onDiscard={handleDiscardDraft}
         />
       )}
+
+      <CorPrimeiroDialog
+        open={corPrimeiroAberto}
+        onClose={() => setCorPrimeiroAberto(false)}
+        onConfirm={(formulaId, corId, nomeCor, precoFinal, custoCorantes, pricingMeta, product) => {
+          // A base é a da embalagem escolhida — nunca há produto pendente nesta entrada.
+          if (!product) return;
+          h.addTintProductToCart(product, formulaId, corId, nomeCor, precoFinal, custoCorantes, pricingMeta, 1);
+          setCorPrimeiroAberto(false);
+          toast.success(`${corId} adicionada`, { description: product.descricao });
+        }}
+      />
 
       {h.tintPendingProduct && (
         <TintColorSelectDialog

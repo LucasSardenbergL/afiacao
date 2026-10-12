@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import type { Product } from '@/hooks/useUnifiedOrder';
 import { fmt } from '@/hooks/useUnifiedOrder';
 import { selectAltPrice, type AltPriceSource, type TintPriceBreakdownLite } from '@/lib/tint/select-price';
+import { precoVendavel } from '@/lib/tint/pode-adicionar';
 import { AltPriceSourcePicker } from './AltPriceSourcePicker';
 import type { AlternativePackaging, TintPricingMeta } from './types';
 
@@ -70,7 +71,8 @@ export function GlobalColorMatches({ product, matches, colorExists, precoMap, pr
             // Preço honesto da base alternativa (motor batch): calc vs CSV; null = sem preço.
             // Fase 2b-fix: a escolha manual da vendedora (quando houver) entra como override validado.
             const altSel = selectAltPrice(alt.precoFinalCsv, precoMap?.[alt.formulaId] ?? null, altPriceSourceOverrides[alt.formulaId] ?? null);
-            const altDisponivel = altSel.preco != null;
+            // Regra única (pode-adicionar): preço do motor E > 0 — nunca R$ 0.
+            const altDisponivel = precoVendavel(altSel.preco);
             return (
               <div key={alt.formulaId} className="rounded-md border border-border hover:border-primary/50 transition-all text-xs">
                 <button

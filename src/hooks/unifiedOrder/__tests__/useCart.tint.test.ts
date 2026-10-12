@@ -133,3 +133,32 @@ describe('useCart — quantidade da base tintométrica até a confirmação da c
     expect(result.current.productItems[0].quantity).toBe(1);
   });
 });
+
+// Fase 2A: o 1 toque das "Cores do cliente" entra SEM diálogo pendente — traz a própria
+// qtd (a da compra repetida) e a decisão de preço que o gate revalida.
+describe('useCart — 1 toque (qtd explícita, sem diálogo pendente)', () => {
+  it('qtd explícita vence a pendente e o item carrega fonte/desconto/preço-base', () => {
+    const { result } = setup();
+    act(() => {
+      result.current.addTintProductToCart(
+        baseTint, 'f-1', '346J', 'PLATINA BIANCO', 150.1, 3,
+        { source: 'tabela', discountPct: 0, precoSemDesconto: 150.1 }, 4,
+      );
+    });
+    expect(result.current.productItems[0]).toMatchObject({
+      quantity: 4, unit_price: 150.1, tint_formula_id: 'f-1',
+      tint_price_source: 'tabela', tint_discount_pct: 0, tint_preco_sem_desconto: 150.1,
+    });
+  });
+
+  it('qtd explícita inválida (0/NaN) cai na pendente (1), nunca item com 0', () => {
+    const { result } = setup();
+    act(() => {
+      result.current.addTintProductToCart(baseTint, 'f-1', '346J', 'X', 10, 0, undefined, 0);
+    });
+    act(() => {
+      result.current.addTintProductToCart(baseTint, 'f-2', '347J', 'Y', 10, 0, undefined, Number.NaN);
+    });
+    expect(result.current.productItems.map((i) => i.quantity)).toEqual([1, 1]);
+  });
+});
