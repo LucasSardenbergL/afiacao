@@ -4952,6 +4952,8 @@ describe('guardrail money-path: excluir pedido não finge cancelar no Omie', () 
   it('a identidade vem do banco: leitura que falha RECUSA (sem default de conta)', () => {
     expect(exclusao).toMatch(/if \(orderErr\) throw new Error\(/);
     expect(exclusao, 'o default "oben" por omissão voltou').not.toMatch(/=== "colacor"\) \? "colacor" : "oben"/);
+  });
+});
 
 describe('guardrail money-path: `reprocess_operational_orders` (cron da Colacor) é SÓ pedidos', () => {
   // O status dos pedidos da Colacor ficou congelado de jun a out/2026 porque o reconciliador só
