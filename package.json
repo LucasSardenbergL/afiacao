@@ -57,6 +57,7 @@
     "docs:indice": "bun scripts/docs-indice-gate-check.ts",
     "docs:links": "bun scripts/docs-links-gate-check.ts",
     "gates:frescura": "bun scripts/gates-frescura-check.ts",
+    "gates:rapidos": "bun scripts/gates-rapidos.ts",
     "ordem:declaracao": "bun scripts/ordem-entre-edges-declaracao.ts",
     "gate:ambiente": "bun scripts/diretiva-ambiente-gate.ts",
     "medir:footprint": "bash scripts/medir-footprint.sh",
