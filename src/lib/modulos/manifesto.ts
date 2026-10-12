@@ -204,6 +204,7 @@ export const MODULOS: ModuloApp[] = [
     testes: [
       "src/__tests__/edge-money-path-invariants.test.ts",
       "src/components/unified-order/__tests__/TierClienteBadge.estados.test.tsx",
+      "src/pages/__tests__/SalesProducts.catalogo-paginado.test.tsx",
       "src/hooks/__tests__/cross-sell-custo-fora-do-browser.test.tsx",
       "src/hooks/__tests__/cross-sell-vendaveis-erro-de-codigo.test.tsx",
       "src/hooks/__tests__/cross-sell-identidade-account.test.tsx",

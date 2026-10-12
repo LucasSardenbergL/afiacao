@@ -39,5 +39,22 @@ export function abririaEnvioNovoAoPortal(
   if ((st === "enviado_portal" || st === "sucesso_portal") && portalProtocolo) return false;
   if (st === "aceito_portal_sem_protocolo" || st === "indeterminado_requer_conciliacao") return false;
   if (st === "enviando_portal") return false;
+  if (ehRecusaDefinitivaPortal(st)) return false;
   return true;
+}
+
+/**
+ * Recusa DEFINITIVA do portal (#3169): reenviar repete a recusa ou — se o cadastro mudou — compra
+ * de novo itens que o ciclo seguinte já recomprou (o motor exclui o pedido do em_transito; nada
+ * deduplica entre pedidos). O disparo a classifica ANTES do gate de mínimo e da janela do portal:
+ * o gate a converteria em `falha_envio` (tirando-a do encerramento automático da migration
+ * 20261011150000) e a janela a esconderia como "portal fechado". Saída consciente: "Forçar
+ * reenvio" do drawer (grava pendente ANTES do disparo) ou cancelar.
+ */
+export function ehRecusaDefinitivaPortal(statusEnvioPortal: string | null | undefined): boolean {
+  return statusEnvioPortal === "erro_nao_retentavel";
+}
+
+export function mensagemRecusaDefinitiva(portalErro: string | null | undefined): string {
+  return `Recusa definitiva do portal Sayerlack${portalErro ? `: ${portalErro}` : ""}. Nada foi enviado — cancele o pedido ou corrija o cadastro e use "Forçar reenvio".`;
 }

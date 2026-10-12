@@ -16,6 +16,20 @@ name: Auto-merge
 on:
   pull_request:
     types: [opened, reopened, ready_for_review, synchronize]
+  # CI na main DEPOIS do merge (M-22, decisão 3 do §0.3 do plano de melhorias de 2026-09-05).
+  # O merge feito pelo auto-merge NÃO dispara o `push:` do ci.yml (o ator é o GITHUB_TOKEN, e o
+  # anti-loop do GitHub cala os eventos dele), então a main só era validada pelo cron diário e por
+  # dispatch MANUAL (56 em 30 dias, quase todos do `/fecho`). `workflow_dispatch` é a exceção
+  # documentada que o GITHUB_TOKEN PODE disparar: zero credencial nova.
+  #
+  # Por que `workflow_run` e não esperar dentro do job de `pull_request`: o `gh pr merge --auto` só
+  # AGENDA o merge, e a mediana PR→merge medida em 2026-10-11 foi 30 min (p80 57). Esperar ali
+  # seguraria um runner OCIOSO por PR aberto (~8 abertos = 40% dos 20 jobs simultâneos do plano
+  # Free). O `workflow_run` acorda quando o CI do PR TERMINA verde, segundos antes do auto-merge,
+  # e espera ~1 min. Ele dispara porque o CI do PR nasceu de um push humano, não do token.
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
 
 permissions:
   contents: write
@@ -31,7 +45,7 @@ permissions:
 jobs:
   enable-auto-merge:
     runs-on: ubuntu-latest
-    if: github.event.pull_request.draft == false
+    if: github.event_name == 'pull_request' && github.event.pull_request.draft == false
     steps:
       - name: Habilita auto-merge (squash)
         env:
@@ -40,3 +54,54 @@ jobs:
         run: |
           gh pr merge --auto --squash "$PR" \
             || echo "::notice::auto-merge não habilitável agora (conflito/estado não-mergeável) — segue sem bloquear; re-tenta no próximo push"
+
+  # Espera o PR do CI que acabou de ficar verde virar MERGED e dispara o CI na main. Roda no
+  # contexto da main e NÃO faz checkout de código do PR: só lê o estado e chama a API.
+  ci-na-main-pos-merge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Só o CI de PR que terminou VERDE. O run do próprio dispatch (event=workflow_dispatch), o do
+    # cron e o do push do Lovable ficam fora — sem isso, cada CI da main dispararia outro (laço).
+    if: >-
+      github.event_name == 'workflow_run'
+      && github.event.workflow_run.event == 'pull_request'
+      && github.event.workflow_run.conclusion == 'success'
+    permissions:
+      actions: write        # `gh workflow run` (workflow_dispatch)
+      pull-requests: read
+      contents: read
+    concurrency:
+      group: ci-pos-merge-${{ github.event.workflow_run.head_branch }}
+      cancel-in-progress: true
+    steps:
+      - name: Espera o merge e dispara o CI na main
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ github.event.workflow_run.head_branch }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -u
+          # O número do PR vem pela branch: `workflow_run.pull_requests` chega VAZIO em PR de fork e
+          # às vezes no de mesma origem. Casa também o head SHA: o verde tem de ser do head atual.
+          pr="$(gh pr list --repo "$REPO" --head "$BRANCH" --state all --limit 5 \
+                --json number,headRefOid,state -q "[.[] | select(.headRefOid == \"$SHA\")][0].number")" || pr=""
+          if [ -z "$pr" ] || [ "$pr" = "null" ]; then
+            echo "::notice::nenhum PR com head $SHA na branch $BRANCH — nada a esperar"; exit 0
+          fi
+          # Até ~10 min: o auto-merge age segundos depois do `validate`; folga para fila da API.
+          for _ in $(seq 1 40); do
+            st="$(gh pr view "$pr" --repo "$REPO" --json state -q .state 2>/dev/null)" || st=""
+            case "$st" in
+              MERGED)
+                gh workflow run ci.yml --repo "$REPO" --ref main
+                echo "✅ PR #$pr mergeado → CI disparado na main (workflow_dispatch)"
+                exit 0 ;;
+              CLOSED)
+                echo "::notice::PR #$pr fechado sem merge — nada a disparar"; exit 0 ;;
+            esac
+            sleep 15
+          done
+          # Draft, conflito ou outro check exigido: o PR não mergeou. Não é falha deste job — o
+          # próximo CI verde do PR re-arma. O cron diário do ci.yml segue como rede.
+          echo "::notice::PR #$pr ainda $st após ~10 min — não disparei; o próximo CI verde re-arma"
