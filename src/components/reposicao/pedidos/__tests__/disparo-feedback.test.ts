@@ -23,6 +23,17 @@ describe('interpretarRespostaDisparo', () => {
     expect(r.message).toContain('falha');
   });
 
+  // #3169: a edge v1.7 recusa reenviar pedido com recusa definitiva do portal. Antes disso o toast
+  // dizia "envio iniciado" sobre um pedido que nunca seria enviado.
+  it('portal_recusa_definitiva>0 → warning, diz que nada foi enviado e aponta cancelar', () => {
+    const r = interpretarRespostaDisparo({ portal_recusa_definitiva: 1 }, 3169);
+    expect(r.tone).toBe('warning');
+    expect(r.message).toContain('#3169');
+    expect(r.message).toContain('Nada foi enviado');
+    expect(r.message).toContain('cancele');
+    expect(r.message).not.toContain('iniciado');
+  });
+
   it('vazio/null → info "nada a disparar"', () => {
     expect(interpretarRespostaDisparo(null, 1).tone).toBe('info');
     expect(interpretarRespostaDisparo(undefined, 1).tone).toBe('info');

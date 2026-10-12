@@ -53,9 +53,10 @@ function chain(table: string): unknown {
 }
 
 vi.mock('@/integrations/supabase/client', () => ({ supabase: { from: (t: string) => chain(t) } }));
-vi.mock('@/hooks/useDashboardCompany', () => ({
-  useDashboardCompany: () => ({ companies: ['oben'], mode: 'single', primary: 'oben' }),
-}));
+type Selecao = { companies: string[]; mode: 'single' | 'all'; primary: string };
+const SO_OBEN: Selecao = { companies: ['oben'], mode: 'single', primary: 'oben' };
+let selecao: Selecao = SO_OBEN;
+vi.mock('@/hooks/useDashboardCompany', () => ({ useDashboardCompany: () => selecao }));
 vi.mock('@/hooks/dashboard/useCockpitChannel', () => ({ useCockpitChannel: () => ({ isLive: false }) }));
 vi.mock('@/contexts/DashboardPersonaContext', () => ({ useDashboardPersonaContext: () => ({ persona: 'master' }) }));
 vi.mock('@/lib/analytics', () => ({ track: vi.fn(), captureException: vi.fn() }));
@@ -95,6 +96,7 @@ function montarZona(qc = novoQc()) {
 const VENDA_DE_HOJE = () => [{ total: 1500, status: 'faturado', order_date_kpi: hojeSP() }];
 
 beforeEach(() => {
+  selecao = SO_OBEN;
   leituraVendas = 'ok';
   vendas = [];
   chamadas = [];
@@ -130,6 +132,43 @@ describe('useVendasZone — falha da leitura de vendas', () => {
     expect(leitura?.metodos).toContainEqual(['not', ['status', 'in', STATUS_NAO_VENDA_POSTGREST]]);
     expect(leitura?.metodos).toContainEqual(['is', ['deleted_at', null]]);
     expect(result.current.kpis[0]).toMatchObject({ label: 'Faturado hoje', value: 'R$ 2k' });
+  });
+});
+
+// M-07: `companies` vivia só na queryKey — trocar de empresa trocava a chave e trazia o MESMO grupo,
+// e o "Faturado hoje" da Oben somava a Colacor. O filtro é provado pelo ARGUMENTO que chega ao
+// PostgREST (o mock não filtra), e o faturado só sai do que a leitura recortada devolveu.
+describe('useVendasZone — "Faturado hoje" é da empresa do seletor', () => {
+  const filtroDeEmpresa = () =>
+    chamadas.find((c) => c.table === 'sales_orders')?.metodos.filter(([m, a]) => m === 'in' && a[0] === 'account');
+
+  it('empresa única: a leitura pede SÓ a conta selecionada (colacor), não o grupo', async () => {
+    selecao = { companies: ['colacor'], mode: 'single', primary: 'colacor' };
+    vendas = VENDA_DE_HOJE();
+    const { result } = montarHook();
+    await waitFor(() => expect(result.current.kpis.length).toBeGreaterThan(0));
+    expect(filtroDeEmpresa()).toEqual([['in', ['account', ['colacor']]]]);
+  });
+
+  it('trocar de empresa refaz a leitura com a OUTRA conta — chave e filtro andam juntos', async () => {
+    selecao = { companies: ['oben'], mode: 'single', primary: 'oben' };
+    vendas = VENDA_DE_HOJE();
+    const { result, rerender } = montarHook();
+    await waitFor(() => expect(result.current.kpis.length).toBeGreaterThan(0));
+    expect(filtroDeEmpresa()).toEqual([['in', ['account', ['oben']]]]);
+
+    chamadas = [];
+    selecao = { companies: ['colacor'], mode: 'single', primary: 'colacor' };
+    rerender();
+    await waitFor(() => expect(filtroDeEmpresa()).toEqual([['in', ['account', ['colacor']]]]));
+  });
+
+  it("'all': a leitura pede as 3 contas do grupo (equivale a sem filtro — account NOT NULL)", async () => {
+    selecao = { companies: ['oben', 'colacor', 'colacor_sc'], mode: 'all', primary: 'oben' };
+    vendas = VENDA_DE_HOJE();
+    const { result } = montarHook();
+    await waitFor(() => expect(result.current.kpis.length).toBeGreaterThan(0));
+    expect(filtroDeEmpresa()).toEqual([['in', ['account', ['oben', 'colacor', 'colacor_sc']]]]);
   });
 });
 

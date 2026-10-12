@@ -1,7 +1,13 @@
 // Roda com: deno test --no-remote supabase/functions/picking-fila-omie/coleta_test.ts
 import {
+  type Acompanhada,
+  AUSENCIAS_PARA_SAIR_DA_JANELA,
   codigoOmie,
   conferirFiltro,
+  ordemDosCodigos,
+  paginasDaCauda,
+  janelaDaListagem,
+  montarLoteSync,
   dataOmieParaIso,
   faultDeFimDePagina,
   montarLote,
@@ -223,10 +229,79 @@ Deno.test("conferirFiltro: recente no corte ausente do filtro é perdido; cobert
   assertEquals([r.amostra_no_corte, r.perdidos_pelo_filtro, r.perdidos_amostra, r.amostra_cobre_a_janela], [2, 1, ["29"], true]);
   const s = conferirFiltro([ped(30, "05/10/2026")], new Set(["30"]), "2026-09-11");
   assertEquals([s.perdidos_pelo_filtro, s.amostra_cobre_a_janela], [0, false], "amostra só de recentes não prova a janela");
-  assertEquals(r.amostra_ordenada_decrescente, true, "30,29,28,27 é decrescente (o 27 sem dInc ainda tem código)");
+  assertEquals(r.amostra_ordem, "decrescente", "30,29,28,27 é decrescente (o 27 sem dInc ainda tem código)");
 });
 
-Deno.test("conferirFiltro: ordenação não confirmada quando o Omie ignora o parâmetro", () => {
-  assertEquals(conferirFiltro([ped(30), ped(29)], new Set(), "2026-01-01").amostra_ordenada_decrescente, true);
-  assertEquals(conferirFiltro([ped(29), ped(30)], new Set(), "2026-01-01").amostra_ordenada_decrescente, false);
+Deno.test("ordemDosCodigos: MEDE a ordem (crescente/decrescente/desordenada) — nunca confia no pedido", () => {
+  assertEquals(ordemDosCodigos(["27", "28", "30"]), "crescente");
+  assertEquals(ordemDosCodigos(["30", "29"]), "decrescente");
+  assertEquals(ordemDosCodigos(["29", "31", "30"]), "desordenada");
+  assertEquals(ordemDosCodigos(["29", null]), "desordenada");
+  assertEquals(ordemDosCodigos(["29"]), "desordenada", "um só código não prova ordem");
+  // códigos do Omie passam de 2^53: comparação em BigInt
+  assertEquals(ordemDosCodigos(["12195014263", "12195017026"]), "crescente");
+});
+
+Deno.test("paginasDaCauda: as duas últimas páginas (a cauda = os mais novos na ordem padrão)", () => {
+  assertEquals(paginasDaCauda(1637, 100), [16, 17]);
+  assertEquals(paginasDaCauda(6213, 100), [62, 63]);
+  assertEquals(paginasDaCauda(200, 100), [1, 2]);
+  assertEquals(paginasDaCauda(37, 100), [1]);
+  assertEquals(paginasDaCauda(0, 100), []);
+});
+
+function acomp(cod: string, incluido_em: string | null, extra: Partial<Acompanhada> = {}): Acompanhada {
+  return { omie_codigo_pedido: cod, status: "aguardando", fora_da_etapa_em: null, incluido_em, ausente_rodadas: 0, ...extra };
+}
+
+Deno.test("janelaDaListagem: o corte, ou a inclusão da acompanhada ABERTA mais antiga", () => {
+  assertEquals(janelaDaListagem("2026-09-11", []), "2026-09-11");
+  assertEquals(janelaDaListagem("2026-09-11", [acomp("1", "2026-09-20"), acomp("2", "2026-08-01")]), "2026-08-01");
+});
+
+Deno.test("janelaDaListagem: interrompida, saída confirmada e ausente há N coletas não seguram a janela", () => {
+  const velhas = [
+    acomp("1", "2025-01-01", { status: "interrompida_externa" }),
+    acomp("2", "2025-01-01", { fora_da_etapa_em: "2026-10-01T00:00:00Z" }),
+    acomp("3", "2025-01-01", { ausente_rodadas: AUSENCIAS_PARA_SAIR_DA_JANELA }),
+  ];
+  assertEquals(janelaDaListagem("2026-09-11", velhas), "2026-09-11");
+  assertEquals(
+    janelaDaListagem("2026-09-11", [acomp("4", "2026-01-01", { ausente_rodadas: AUSENCIAS_PARA_SAIR_DA_JANELA - 1 })]),
+    "2026-01-01",
+    "ausente há menos de N coletas ainda segura",
+  );
+});
+
+Deno.test("janelaDaListagem: aberta sem incluido_em = janela indeterminada (null → a rodada aborta)", () => {
+  assertEquals(janelaDaListagem("2026-09-11", [acomp("1", null)]), null);
+  assertEquals(janelaDaListagem("2026-09-11", [acomp("1", null, { status: "interrompida_externa" })]), "2026-09-11");
+});
+
+Deno.test("codigoOmie: texto acima do inteiro seguro do JS é recusado (o lote vai como número)", () => {
+  assertEquals([codigoOmie("9007199254740991"), codigoOmie("9007199254740992")], ["9007199254740991", null]);
+});
+
+Deno.test("normalizarPedido: leva a inclusão (dInc) em ISO para a sync gravar", () => {
+  assertEquals(normalizarPedido(ped(5, "05/10/2026"))?.incluido_em, "2026-10-05");
+  assertEquals(normalizarPedido(ped(5, "31/02/2026"))?.incluido_em, null);
+});
+
+Deno.test("montarLoteSync: presentes COM repetição, suspeita = qualquer motivo, sem confirmação de saída", async () => {
+  const r = await paginar(lister([pagina(3, [ped(1), ped(2)]), pagina(3, [ped(2), ped(3, "01/01/2020")])]).listar, { tetoPaginas: 5 });
+  if (!r.ok) throw new Error(r.erro);
+  const lote = montarLoteSync(r.listagem, "2026-09-11", new Set(["3"]));
+  if (!lote) throw new Error("lote null");
+  assertEquals(lote.p_presentes, [1, 2, 2, 3]);
+  assertEquals([lote.p_total_de_registros, lote.p_listagem_suspeita, lote.p_confirmados_fora], [3, true, []]);
+  assertEquals(lote.p_pedidos.map((p) => p.codigo_pedido), ["1", "2", "3"], "o 3 é antigo mas acompanhado: vai detalhado");
+});
+
+Deno.test("montarLoteSync: listagem completa não é suspeita; sem total legível = null (aborta)", async () => {
+  const a = await paginar(lister([pagina(2, [ped(1), ped(2)])]).listar, { tetoPaginas: 5 });
+  if (!a.ok) throw new Error(a.erro);
+  assertEquals(montarLoteSync(a.listagem, "2026-09-11", new Set())?.p_listagem_suspeita, false);
+  const b = await paginar(lister([{ tipo: "corpo", corpo: { pedido_venda_produto: [ped(1)] } }]).listar, { tetoPaginas: 5 });
+  if (!b.ok) throw new Error(b.erro);
+  assertEquals(montarLoteSync(b.listagem, "2026-09-11", new Set()), null);
 });

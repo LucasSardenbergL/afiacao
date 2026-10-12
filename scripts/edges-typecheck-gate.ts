@@ -59,6 +59,18 @@
  *       deno check --no-lock --node-modules-dir=none --minimum-dependency-age=2026-08-14T17:27:00Z x.ts
  *     → falha sem a env var, passa com ela.
  *
+ * LOCKFILE CONGELADO (M-29, 2026-10-11). Até aqui o gate rodava `--no-lock`: cada run resolvia o
+ *   registry AO VIVO, e o `npm:@supabase/supabase-js@2` virava a versão 2.x do dia. Duas mains
+ *   vermelhas sem commit culpado vieram dessa classe (a armadilha 4 é uma delas). Agora o grafo
+ *   resolvido está em `scripts/edges-typecheck.deno.lock` e o CI roda `--frozen`: dep nova ou range
+ *   que resolveria diferente falha com `The lockfile is out of date`, que o gate classifica à parte
+ *   (motivo `lock-desatualizado`) e manda rodar `bun run edges:lock`. O lock mora FORA de
+ *   `supabase/functions/` de propósito: lá o bundler do deploy das edges poderia auto-detectá-lo,
+ *   e um lockfile que a toolchain do Supabase não aceite quebraria o DEPLOY, que o CI não vê.
+ *   Ele trava só o que o gate type-checa; o runtime do Supabase continua resolvendo sozinho.
+ *   O `edges:lock` usa `deno cache`, não `deno check --frozen=false`: o check falha pela dívida
+ *   tolerada de tipos e, falhando, o Deno não grava o lock.
+ *
  * FAIL-CLOSED (CLAUDE.md: "ausência de sinal NÃO é aprovação"):
  *   exit 0                              → passa
  *   exit≠0 + marcador de type-check     → parseia e classifica; bloqueia só se houver classe-crash
@@ -76,7 +88,7 @@
  * Spec: docs/superpowers/specs/2026-07-21-edges-typecheck-gate-design.md
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 
 /**
@@ -107,7 +119,21 @@ export interface Ocorrencia {
 export type Veredito =
   | { tipo: 'passa'; toleradas: Ocorrencia[] }
   | { tipo: 'bloqueia'; motivo: 'classe-crash'; bloqueantes: Ocorrencia[]; toleradas: Ocorrencia[] }
-  | { tipo: 'bloqueia'; motivo: 'infra'; detalhe: string };
+  | { tipo: 'bloqueia'; motivo: 'infra'; detalhe: string }
+  | { tipo: 'bloqueia'; motivo: 'lock-desatualizado'; detalhe: string };
+
+/** Lockfile do grafo das edges, relativo à raiz (ver "LOCKFILE CONGELADO" no cabeçalho). */
+export const LOCK_EDGES = 'scripts/edges-typecheck.deno.lock';
+
+/** Marcador do `--frozen` quando a resolução diverge do lock (deno 2.9.2). */
+const MARCADOR_LOCK_DESATUALIZADO = 'The lockfile is out of date';
+
+/** Argumentos do deno: `check` congelado no lock (gate) ou `cache` regravando-o (`--atualizar-lock`). */
+export function argsDeno(edges: string[], modo: 'checar' | 'atualizar-lock'): string[] {
+  return modo === 'checar'
+    ? ['check', `--lock=${LOCK_EDGES}`, '--frozen', '--node-modules-dir=none', ...edges]
+    : ['cache', `--lock=${LOCK_EDGES}`, '--node-modules-dir=none', ...edges];
+}
 
 // O ESC vai como `\x1b` escapado, não como o byte cru: o byte literal dispara `no-control-regex` no
 // ESLint (e fica invisível em diff/review). O deno só emite ANSI quando a saída é TTY — no CI, via
@@ -158,6 +184,14 @@ export function classificar(saida: string, exitCode: number, raiz = ''): Veredit
 
   // Armadilha 2 + fail-closed: sem o marcador, o Deno não chegou a type-checar. Rede, resolução
   // (`Could not find a matching package`), permissão, binário ausente… Não sabemos ≠ está limpo.
+  if (limpa.includes(MARCADOR_LOCK_DESATUALIZADO)) {
+    return {
+      tipo: 'bloqueia',
+      motivo: 'lock-desatualizado',
+      detalhe: limpa.slice(limpa.indexOf(MARCADOR_LOCK_DESATUALIZADO)).split('\n').slice(0, 12).join('\n'),
+    };
+  }
+
   if (!limpa.includes(MARCADOR_TYPECHECK)) {
     const primeiraLinhaErro = limpa
       .split('\n')
@@ -242,7 +276,23 @@ function main(): number {
     return 1;
   }
 
-  const args = ['check', '--no-lock', '--node-modules-dir=none', ...edges];
+  if (process.argv.includes('--atualizar-lock')) {
+    // Regrava do zero: o `deno cache` só ACRESCENTA ao lock, e dep removida ficaria lá para sempre.
+    rmSync(join(raiz, LOCK_EDGES), { force: true });
+    const r = spawnSync('deno', argsDeno(edges, 'atualizar-lock'), {
+      cwd: raiz,
+      stdio: 'inherit',
+      env: ambienteDeno(),
+    });
+    if (r.status !== 0 || !existsSync(join(raiz, LOCK_EDGES))) {
+      console.error(`❌ edges:lock — deno cache falhou (exit ${r.status}); ${LOCK_EDGES} não foi regravado.`);
+      return 1;
+    }
+    console.log(`✅ ${LOCK_EDGES} regravado (${edges.length} edges). Commite-o junto da mudança de import.`);
+    return 0;
+  }
+
+  const args = argsDeno(edges, 'checar');
   const proc = spawnSync('deno', args, {
     cwd: raiz,
     encoding: 'utf8',
@@ -264,9 +314,19 @@ function main(): number {
   }
 
   console.log(
-    `🔎 edges-typecheck-gate — ${edges.length} edges · deno check ${args.slice(1, 3).join(' ')}` +
+    `🔎 edges-typecheck-gate — ${edges.length} edges · deno check ${args.slice(1, 4).join(' ')}` +
       ' · DENO_NO_PACKAGE_JSON=1',
   );
+
+  if (veredito.tipo === 'bloqueia' && veredito.motivo === 'lock-desatualizado') {
+    console.error(
+      `\n❌ O grafo das edges não bate com ${LOCK_EDGES} (import npm: novo, removido ou com range novo).\n` +
+        `${veredito.detalhe}\n\n` +
+        '   Conserto: `bun run edges:lock` e commitar o lock junto da mudança de import.\n' +
+        '   (Não use o `--frozen=false` que o Deno sugere: com a dívida de tipos ele não grava o lock.)',
+    );
+    return 1;
+  }
 
   if (veredito.tipo === 'bloqueia' && veredito.motivo === 'infra') {
     console.error(

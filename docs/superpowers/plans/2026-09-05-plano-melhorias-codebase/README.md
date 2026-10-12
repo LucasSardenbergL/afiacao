@@ -12,9 +12,9 @@
 
 | Estado | Itens |
 |---|---|
-| ✅ feito | M-01 (#2201) · M-02 (#2204) · M-03 (#2205) · M-04 (#2206) · M-11 (#2781) · M-24 (vitest `projects` node/jsdom) · M-25 (gate AST ~60% mais rápido) · M-27 (#2874, snapshot com provas) · M-40 (job `provas-sql`, `db/nucleo-ci.txt` com 92 harnesses) |
+| ✅ feito | M-07 (✅ #2980, "Faturado hoje" filtra a empresa) · M-12 (✅ #2982, catálogo paginado, falha visível) · M-05 (✅ #2985, drill-down "indisponível"/janela sem Total) · M-10 (✅ #2989, logout limpa cache e sessão) · M-30 (✅ #2979, `ErrorBoundary` por rota no shell) · M-39 (✅ #2969, cano `$exception` provado em prod) · M-01 (#2201) · M-02 (#2204) · M-03 (#2205) · M-04 (#2206) · M-11 (#2781) · M-24 (vitest `projects` node/jsdom) · M-25 (gate AST ~60% mais rápido) · M-27 (#2874, snapshot com provas) · M-40 (job `provas-sql`, `db/nucleo-ci.txt` com 92 harnesses) · M-45 (✅ #2965, README humano) |
 | 🟡 parcial | M-14 (`concurrency` + shellcheck no CI; faltam os lockfiles) · M-21 (preload do `bun test` falha alto) · M-26 (sonda em 63/98 edges, era 40/95) · M-33 (`omie-deadline.ts` em 4+ edges; faltam os 3 enumeradores e o cliente Anthropic) · M-48 (7 wrappers `omieCall`, eram 25) |
-| ❌ aberto | M-05 · M-06 · M-07 · M-08 · M-09 · M-10 · M-12 · M-13 · M-15 · M-16 · M-17 · M-18 · M-22 · M-23 · M-28 · M-29 · M-30 · M-31 · M-36 · M-37 · M-39 · M-41 · M-45 · M-47 |
+| ❌ aberto | M-06 · M-08 · M-09 · M-13 · M-15 · M-16 · M-17 · M-18 · M-22 · M-23 · M-28 · M-29 · M-31 · M-36 · M-37 · M-41 · M-47 |
 
 ### 0.2 Regra de execução: ordenar por arquivo tocado, não por score
 
@@ -144,12 +144,12 @@ Plano fechado = todos os lotes A–G terminados + 0 issues "deploy pendente" por
 | Rejeição em lote sem guard de status | P1 | aberto | `useCicloHoje.ts:146-155` | M-02 |
 | Editor de qty grava `num_skus`, não itens | P1 | aberto | `PedidoRow.tsx:64-69` | M-03 |
 | "Aprovar e disparar" descarta `precoEdits` só-preço | P1 | parcial | `useDetalhesModal.ts:231` | M-03 (mesmo PR) |
-| "Faturado hoje" não filtra empresa | P1 | aberto | `useVendasZone.ts:47-52` | M-07 |
+| "Faturado hoje" não filtra empresa | P1 | ✅ #2980 | `useVendasZone.ts:47-52` | M-07 |
 | "Gap de Margem" soma `.limit(100)` | P1 | aberto | `IntelligenceStrategicTab.tsx:34,93` | M-11 |
 | Customer360 sem `deleted_at`/status, engole erro | P1 | aberto | `customer360/hooks.ts:140-146` | M-35 (gate) + PR próprio |
 | `handleRestore` não trava cliente do rascunho | P1 | aberto | `UnifiedOrder.tsx:262-270` | PR próprio na Fase 0 |
 | SW não cacheia `picking_task_items`/`nfe_lotes_escaneados` | P1 | aberto | `vite.config.ts:207` | condicionado a M-41 (picking) |
-| `signOut` sem `queryClient.clear()` | P1 | aberto | `AuthContext.tsx:368-373` | M-10 |
+| `signOut` sem `queryClient.clear()` | P1 | ✅ #2989 | `AuthContext.tsx:368-373` | M-10 |
 | `makeCall` sobrescreve sessão SIP sem `terminate()` | P1 | aberto | `sip-client.ts:119-133` | condicionado a M-41 (telefonia) |
 | Datas UTC como "hoje" (29 sítios) | sist. | parcial | `visitas/today.ts:3`, `FluxoCaixaTab:22`… | M-49 |
 | Drill-down "Total" `.limit(500)` · `getAging*` → R$0 · lock TTL 5 min · `submitQuote` sem ref-guard | P2 | aberto | `CockpitDrillDown:105-141` · `financeiroService:308-313` · `useUnifiedOrder:744` | M-05 + PRs próprios |
@@ -179,19 +179,19 @@ Legenda: **I** impacto · **R** risco de deixar como está · **E** esforço (1 
 | 2 | M-02 | 0 | Rejeição em lote da reposição sem guard de status (`.in("id", ids)` sem `.eq('status')`) | reposição · money-path | 4 | 3 | 1 | **35** | ✅ #2204 · backlog 07-04 (aberto)|
 | 3 | M-03 | 0 | Editor de quantidade grava `num_skus` em vez dos itens do pedido | reposição · money-path | 4 | 3 | 1 | **35** | ✅ #2205 · backlog 07-04 (aberto)|
 | 4 | M-04 | 0 | `margin.ts` fabrica margem negativa: `unit_price \|\| 0` (assimétrico com o custo) | vendas · money-path | 4 | 3 | 1 | **35** | ✅ #2206 · domínio A3|
-| 5 | M-05 | 0 | `CockpitDrillDown` soma "Total" no cliente sobre `.limit(500)` e descarta `error` (zero fabricado) | reposição · money-path | 5 | 3 | 2 | **32** | frontend FE-02 · P2 desde 07-04 |
+| 5 | M-05 | 0 | `CockpitDrillDown` soma "Total" no cliente sobre `.limit(500)` e descarta `error` (zero fabricado) | reposição · money-path | 5 | 3 | 2 | **32** | ✅ #2985 · frontend FE-02 · P2 desde 07-04 |
 | 6 | M-28 | 1 | Gate `casts-stale`: 79 dos 89 `.from/.rpc('x' as never)` apontam para nomes que `types.ts` JÁ tipa — o cast desliga a checagem de coluna (foi assim que #6 passou no typecheck) | tipos | 4 | 4 | 2 | **32** | domínio A1/A15 |
-| 7 | M-07 | 0 | "Faturado hoje" não filtra empresa (`companies` está na queryKey, não na query) | vendas · money-path | 3 | 3 | 1 | **30** | backlog 07-04 (aberto) |
+| 7 | M-07 | 0 | "Faturado hoje" não filtra empresa (`companies` está na queryKey, não na query) | vendas · money-path | 3 | 3 | 1 | **30** | ✅ #2980 · backlog 07-04 (aberto) |
 | 8 | M-08 | 0 | `fin-funding` ainda filtra `status_titulo='ABERTO'` (valor morto; cashflow já corrigido) | financeiro · money-path | 3 | 3 | 1 | **30** | backlog 07-04 (parcial) |
 | 9 | M-09 | 0 | Policies `INSERT WITH CHECK (true)` para `authenticated` em `reposicao_motor_run` e `reposicao_estoque_nao_confirmado_log` | segurança | 3 | 3 | 1 | **30** | segurança A1 · banco B09 |
-| 10 | M-10 | 0 | `signOut` sem `queryClient.clear()` — cache de outro usuário sobrevive à troca de sessão | auth | 3 | 3 | 1 | **30** | backlog 07-04 (aberto) |
+| 10 | M-10 | 0 | `signOut` sem `queryClient.clear()` — cache de outro usuário sobrevive à troca de sessão | auth | 3 | 3 | 1 | **30** | ✅ #2989 · backlog 07-04 (aberto) |
 | 11 | M-39 | 1 | Verificar o cano `$exception` do PostHog: 0 exceções em 30 dias com telas quebradas em prod é suspeito | observabilidade | 3 | 3 | 1 | **30** | medição própria (HogQL) |
 | 12 | M-06 | 0 | Telas roteadas sobre objetos que NÃO existem em prod: `fila_aplicacao_omie` + RPC `gerar_fila_aplicacao_omie` e `quality_checklists` | reposição/loja · correção | 4 | 3 | 2 | **28** | domínio A2 · banco B03 · confirmado via psql-ro |
 | 13 | M-25 | 1 | Gate AST `erro-colapsado-em-vazio` custa 37s contra teto de 20s — pré-filtro textual antes do parse, sem subir teto | testes | 4 | 3 | 2 | **28** | testes A1 · única falha da rodada |
 | 14 | M-27 | 1 | Snapshot de schema: regerar com `db/refresh-snapshot.sh` (3 provas) + gate `wc -l` × manifest — o snapshot de 05/09 veio pelo bot do Lovable sem provas e o manifest está em 28/08 | banco · DR | 4 | 3 | 2 | **28** | banco B01 |
 | 15 | M-33 | 1 | `omie-deadline.ts` nos 3 enumeradores Omie sem teto de relógio (`omie-vendas-sync`, `omie-analytics-sync`, `omie-sync`) + `_shared/anthropic-cliente.ts` com `timeout`/`maxRetries` nas 15 edges LLM | edges · robustez | 4 | 3 | 2 | **28** | edges E01/E02 |
 | 16 | M-11 | 0 | "Gap de Margem" soma `.limit(100)` de um log append-only | farmer · money-path | 3 | 2 | 1 | **25** | backlog 07-04 (aberto) |
-| 17 | M-12 | 0 | `SalesProducts` lê `omie_products` com `.select('*')` sem `.range` (capa silenciosa de 1.000) | vendas | 3 | 2 | 1 | **25** | frontend FE-03 |
+| 17 | M-12 | 0 | `SalesProducts` lê `omie_products` com `.select('*')` sem `.range` (capa silenciosa de 1.000) | vendas | 3 | 2 | 1 | **25** | ✅ #2982 · frontend FE-03 |
 | 18 | M-17 | 0 | Retenção de `health_score_history` + `priority_score_log` (446 MB, +800k linhas/30d, sem expurgo) | banco | 3 | 2 | 1 | **25** | medição própria |
 | 19 | M-22 | 1 | CI na main após merge — hoje só o bot do Lovable dispara `push`; 56 dispatches manuais/30d pelo `/fecho` | CI | 4 | 2 | 2 | **24** | tooling T01 |
 | 20 | M-24 | 1 | vitest `environmentMatchGlobs`: `.test.ts` → node, `.test.tsx` → jsdom (+31 overrides `@vitest-environment jsdom`) | testes · perf | 4 | 2 | 2 | **24** | testes A2 · tooling T02 |

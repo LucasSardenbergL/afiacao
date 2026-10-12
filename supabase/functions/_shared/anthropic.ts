@@ -92,3 +92,36 @@ export function objetoDaTool(input: unknown): Record<string, unknown> | null {
   if (!input || typeof input !== "object" || Array.isArray(input)) return null;
   return input as Record<string, unknown>;
 }
+
+// ── Coleira do cliente (M-33) ─────────────────────────────────────────────────────────────────
+// `new Anthropic({ apiKey })` herda os defaults do SDK: 10 MINUTOS por tentativa e 2 retentativas.
+// Numa edge, isso é um socket sem teto de relógio: a plataforma mata o isolate em ~150s e a
+// resposta vira um 5xx genérico, sem passar pelo `traduzirErroAnthropic` — a mesma família de
+// falha que o `omie-deadline.ts` fechou para o Omie (#2017).
+//
+// 120s fica ABAIXO do kill, então quem responde é a própria edge, com o erro mapeado. Uma
+// retentativa cobre o 429/529 que volta em segundos; depois de um TIMEOUT ela morre no kill da
+// plataforma, que é o desfecho de hoje — sem piora. O cliente em si mora em
+// `anthropic-cliente.ts` (que importa o SDK); aqui ficam só os números, testáveis sem rede.
+
+/** Teto de relógio de UMA tentativa — abaixo do kill de ~150s da edge. */
+export const TIMEOUT_ANTHROPIC_MS = 120_000;
+
+/** Retentativas do SDK (o default dele é 2). */
+export const MAX_RETRIES_ANTHROPIC = 1;
+
+/** Opções do construtor do SDK. Recusa ajuste que desfaça a coleira (sem teto ou acima do kill). */
+export function opcoesClienteAnthropic(
+  apiKey: string,
+  ajuste: { timeoutMs?: number; maxRetries?: number } = {},
+): { apiKey: string; timeout: number; maxRetries: number } {
+  const timeout = ajuste.timeoutMs ?? TIMEOUT_ANTHROPIC_MS;
+  const maxRetries = ajuste.maxRetries ?? MAX_RETRIES_ANTHROPIC;
+  if (!Number.isFinite(timeout) || timeout <= 0 || timeout > TIMEOUT_ANTHROPIC_MS) {
+    throw new Error(`timeout do cliente Anthropic fora da coleira: ${timeout}ms (máx. ${TIMEOUT_ANTHROPIC_MS})`);
+  }
+  if (!Number.isInteger(maxRetries) || maxRetries < 0 || maxRetries > MAX_RETRIES_ANTHROPIC) {
+    throw new Error(`maxRetries do cliente Anthropic fora da coleira: ${maxRetries} (máx. ${MAX_RETRIES_ANTHROPIC})`);
+  }
+  return { apiKey, timeout, maxRetries };
+}

@@ -39,6 +39,10 @@
 db/test-security-invoker-views.sh          27
 db/test-views-invoker-off-p0.sh            25
 db/test-authz-revoke-anon-rpc.sh           19
+db/test-sales-price-history-created-at-futuro.sh 13
+db/test-drop-quarentena-omie-clientes.sh    11
+db/test-wa-owner-efetivo-gate-staff.sh     25
+db/test-reposicao-logs-insert-cap-compras.sh 15
 db/test-authz-is-not-true-escritas.sh      24
 # Telefonia: quem é o dono do número discado (resolver_cliente_por_telefone, INVOKER). Roda COMO a
 # vendedora sob a RLS copiada da prod: o telefone com hífen casa (a busca antiga reconhecia 4% das
@@ -146,6 +150,10 @@ db/test-sayerlack-ipi-po.sh                95
 # "Guard fora da escrita não é guard": o predicado tem de estar DENTRO do `WHERE`
 # que grava (ou no trigger), nunca num SELECT anterior.
 db/test-cancelar-pedido-guard-atomico.sh   48
+# Recusa definitiva do portal (#3169): o pré-claim não reabre erro_nao_retentavel/conciliáveis e o
+# encerramento automático só toca o pedido PROVADAMENTE não-efetivado (7 condições, cada uma
+# sabotada inline com controle verde na mesma invocação; baseline do corpo velho reabrindo o terminal).
+db/test-recusa-definitiva-portal-servidor.sh 64
 db/test-apply-score-updates.sh             32
 db/test-sales_orders_omie_hash_unique.sh    5
 # O write-back da EDIÇÃO: cabeçalho E linhas do pedido na MESMA transação. O mínimo é 54 de
@@ -190,6 +198,7 @@ db/test-tint-fase5-desativacao.sh          37
 db/test-claim-disparo-cenario-b.sh         76
 db/test-disparado-simulado-pos-disparo.sh  59
 db/test-fin-sync-lease.sh                  22
+db/test-fin-sync-kick-skipped-busy.sh      18
 db/test-pedido-venda-coerencia.sh          31
 # Tintométrico: a promoção saiu do HTTP para uma fila — tick concorrente PULA (try-lock), FIFO
 # estrito com backoff, statement_timeout capturado desfaz o parcial. O `--falsificar` (12
@@ -493,4 +502,4 @@ db/test-universo-pedidos-classe.sh         118  falsificar=fora-do-ci  # 18 roda
 # Sem modo --falsificar: as 9 sabotagens (concorrência em camadas, relógio pós-lock, GREATEST,
 # REVOKE, bloqueio × dono, rollback integral, BYPASSRLS) rodam em TODA execução, com controle verde.
 db/test-omie-cota-metodo.sh                 44
-db/test-picking-v2.sh                       102
+db/test-picking-v2.sh                       129

@@ -2,8 +2,7 @@
 // Classificador da sonda (compartilhado): `_shared/sonda-versao.ts`.
 //
 // Spec: docs/superpowers/specs/2026-10-10-picking-v2-design.md (Fase 0.1 — confirmar contratos).
-// Esta versão só LÊ: diagnóstico (3 métodos por conta) e coleta da fila (ListarPedidos paginado).
-// Não escreve no banco nem no Omie, e não tem cron.
+// Modos: diagnóstico e coleta só LEEM; `sincronizar` ESCREVE a fila no banco (nunca no Omie).
 
 export { classificarSonda, erroSondaAmbigua } from "../_shared/sonda-versao.ts";
 import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
@@ -21,8 +20,14 @@ export const respostaSonda = criarRespostaSonda("picking-fila-omie");
  * listagem `ListarPedidos{etapa:'10', filtrar_por_data_de: hoje−30}` paginada até o fim; devolve
  * números (páginas, completude, corte, itens ilegíveis) e a prova do filtro (os 100 mais recentes
  * sem filtro têm de estar na filtrada), sem chamar o banco.
+ * v0.4 (Fase 0.5b): modo `sincronizar` (uma conta por chamada) — ESCREVE no banco: reserva
+ * exclusiva (`picking_coleta_reservar`), listagem desde a inclusão da tarefa aberta mais antiga
+ * (ou hoje−30), UMA `picking_sincronizar_fila` com o token. Sem ConsultarPedido.
+ * v0.5: a prova do filtro da `coleta` usa a CAUDA da etapa 10 (as duas últimas páginas na ordem
+ * padrão) e MEDE a ordem — a 1ª página com `ordem_descrescente` eram os 100 mais ANTIGOS (o Omie
+ * ordena só dentro da página; `amostra_no_corte` = 0 nas duas contas em 2026-10-12).
  */
-export const VERSAO = "v0.3-coleta-leitura";
+export const VERSAO = "v0.5-prova-pela-cauda";
 
 /** Efeito citado no 400 de `probe` ambíguo. */
 export const EFEITO =

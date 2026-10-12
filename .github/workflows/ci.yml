@@ -89,6 +89,8 @@ on:
   # como `workflow_dispatch` na main também dá `github.ref == 'refs/heads/main'`, ele exercita os
   # mesmos dois steps de alerta que o `schedule` vai exercitar — sem isso, a primeira prova de que a
   # Issue abre/fecha só viria no primeiro cron.
+  # Desde o M-22 (2026-10-11) o `auto-merge.yml` dispara este gatilho SOZINHO depois de cada merge
+  # de PR (job `ci-na-main-pos-merge`), e o cron diário fica como rede. Coalescência no `concurrency:`.
   workflow_dispatch:
 
 # ┌─ FAN-OUT (2026-09-07) ─────────────────────────────────────────────────────────────────────────┐
@@ -145,12 +147,19 @@ on:
 # Fora de PR (push/schedule/dispatch na main), cada run é o SEU grupo (`run_id`): nada é cancelado
 # nem enfileirado. É o que o ci-validate-timeout-15min.md descartou — `cancel-in-progress` na main
 # cancelaria o run legítimo do `/fecho` — e continua descartado. A deduplicação dos disparos da main
-# mora no próprio `/fecho` (reaproveita o run do mesmo SHA em vez de disparar outro).
+# é a coalescência do `workflow_dispatch`, logo abaixo; o `/fecho` só procura o run, não dispara.
 #
 # O `validate` (`if: always()`) ainda roda no run cancelado e reprova o commit SUPERADO — inócuo: o
 # PR só olha o head.
+#
+# `workflow_dispatch` (desde o M-22, 2026-10-11) COALESCE num grupo por ref, SEM cancel-in-progress:
+# o `auto-merge.yml` dispara um CI na main a cada merge (~30 em 7 h num dia cheio), e cada run usa
+# ~11 jobs dos 20 simultâneos do plano Free. Com o grupo, o GitHub mantém 1 rodando + 1 PENDENTE e
+# troca o pendente pelo mais novo — o run em andamento NUNCA é cancelado (a regra acima segue), e o
+# que roda por último valida o HEAD da main, que contém todos os merges anteriores. O pendente
+# substituído nunca começou: não roda o alerta de main vermelha nem o agregador.
 concurrency:
-  group: ${{ github.event_name == 'pull_request' && format('ci-pr-{0}', github.event.pull_request.number) || format('ci-{0}-{1}', github.event_name, github.run_id) }}
+  group: ${{ github.event_name == 'pull_request' && format('ci-pr-{0}', github.event.pull_request.number) || github.event_name == 'workflow_dispatch' && format('ci-dispatch-{0}', github.ref) || format('ci-{0}-{1}', github.event_name, github.run_id) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -370,7 +379,7 @@ jobs:
       #
       # Sem `actions/cache` de propósito: o DENO_DIR fica em 681 MB (677 de tarballs npm) e
       # economizaria ~30s dos 48s consumindo ~7% do budget de 10 GB do repo, mais drift de chave —
-      # e não há `deno.lock` versionado (está no .gitignore) para chavear. Roda DEPOIS de
+      # e o lock que versionamos (abaixo) é só da resolução, não do DENO_DIR. Roda DEPOIS de
       # typecheck+vitest+test:edges pelo mesmo motivo que o `test:edges`: PR quebrado no comum falha
       # antes de pagar a rede.
       #
@@ -379,6 +388,11 @@ jobs:
       # outras 141 (dívida de tipos gerados do Supabase) são reportadas sem falhar. O porquê da
       # escolha, os números e os follow-ups estão no cabeçalho do script e no spec:
       # docs/superpowers/specs/2026-07-21-edges-typecheck-gate-design.md
+      #
+      # Congelado no lock desde o M-29 (2026-10-11): `deno check --lock=scripts/edges-typecheck.deno.lock
+      # --frozen`. Antes era `--no-lock`, e o registry resolvido AO VIVO deu mains vermelhas sem commit
+      # culpado. Import `npm:` novo/alterado sem lock atualizado falha com motivo próprio e manda
+      # rodar `bun run edges:lock`. A rede segue necessária para baixar os tarballs, não para resolver.
       - name: Type check (edge functions — Deno)
         run: bun run edges:typecheck
 
@@ -476,6 +490,13 @@ jobs:
           # Build precisa do mesmo ambiente que Lovable produção.
           # Se algum VITE_* for required no futuro, adicionar aqui.
           NODE_ENV: production
+
+      # A prova de ponta a ponta do build-id contra o `dist/index.html` REAL (M-21): no job `testes` ela
+      # é o "1 skipped" (lá não há build). Aqui roda logo depois do build, e `dist/` ausente reprova
+      # em vez de pular. Script e não `bunx` direto: depende do dist/ deste job, e o motor de
+      # exclusividade não tem como medi-lo sozinho (detalhe no cabeçalho do script).
+      - name: Build-id — paridade contra o dist/ real
+        run: bash scripts/build-id-dist-prova.sh
 
       # Bloqueia em errors (0 hoje); warnings não falham (eslint default).
       - name: Lint
@@ -742,6 +763,14 @@ jobs:
       # `](../Historico/x.md)` passaria no laptop para quebrar aqui e no GitHub. Estático, sem rede.
       - name: Docs links gate (link relativo de .md resolve)
         run: bun run docs:links
+
+      # `.from('x' as never)`/`.rpc('x' as never)` sobre nome que o types.ts JÁ tipa (M-28): o cast velho
+      # desliga a checagem de coluna/argumento/retorno, e com ele uma tela sobre tabela que NÃO existe
+      # em prod tem a mesma cara de uma sobre tabela real (M-06). Ratchet por contagem em
+      # scripts/casts-stale-baseline.json (2026-10-11: 49 from + 48 rpc): subir reprova, descer pede
+      # baixar o número no mesmo PR. Pisos de nomes/fontes/casts contra varredura cega. Offline, ~1 s.
+      - name: Casts velhos (as never sobre nome já tipado)
+        run: bun run casts:stale
 
       # Frescura do manual: o CLAUDE.md e a maquinaria conferem um ao outro nos DOIS sentidos.
       # (1) nome citado que nao aponta para nada — `manifesto.gate` era citado como comando e nao

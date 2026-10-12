@@ -1,0 +1,134 @@
+name: Lovable publish
+
+# Publish do frontend pela API do Lovable quando a main anda (cron de 15 min + push do bot) — a camada 2 de "merge ≠ produção"
+# (docs/agent/deploy.md). O GATE de ordem (DDL → edges → Publish) e a prova pelo ar vivem em
+# scripts/lovable-publish.sh (+ test-lovable-publish.sh); aqui só a fiação e as Issues.
+#
+# Desfechos:
+#   RETIDO (10)   → job VERDE + Issue `lovable-publish-retido`: o intervalo publicado..main tem
+#                   migration/edge. Aplique as camadas e rode à mão (Run workflow) com
+#                   `liberar_sha` = o SHA da main atual — vale só para ESSE SHA.
+#   AMBIGUO (20)  → job vermelho + Issue `lovable-publish-ambiguo`, que TRAVA os runs seguintes até
+#                   ser FECHADA por quem conferiu o que o ar serve (pode ter publicado e não sei) —
+#                   enquanto isso cada run sai com aviso, sem Publish.
+#   21/22/6       → job vermelho + Issue `lovable-publish-falhou` (1 comentário por SHA+veredito).
+#   publicado     → fecha a Issue de RETIDO aberta, se houver.
+# Sem o secret LOVABLE_API_KEY o workflow só avisa e sai verde (a API exige plano Business).
+
+# ⚠️ GATILHO: o `push:` SOZINHO NÃO PEGA merge de PR. O auto-merge.yml mergeia com o GITHUB_TOKEN
+# (`mergedBy` = app/github-actions) e, pela proteção anti-loop do GitHub, isso não dispara workflow
+# nenhum — nem `push`, nem `pull_request: closed` (mesmo buraco documentado no ci.yml). Medido no
+# próprio #2958: mergeado às 14:43Z, zero runs. O `push:` só vê os commits diretos do bot do
+# Lovable; quem pega os merges é o `schedule`. O script é idempotente (ar em dia → JA_NO_AR com 2
+# leituras), e as Issues deduplicam por SHA+veredito, então o cron não repete o mesmo aviso.
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+    inputs:
+      liberar_sha:
+        description: "SHA COMPLETO da main cujas migrations/edges você JÁ aplicou (libera só esse SHA)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: lovable-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Secret presente?
+        id: chave
+        env:
+          LOVABLE_API_KEY: ${{ secrets.LOVABLE_API_KEY }}
+        run: |
+          if [ -z "$LOVABLE_API_KEY" ]; then
+            echo "::notice::LOVABLE_API_KEY não configurado — Publish automático desligado."
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v5
+        if: steps.chave.outputs.ok == 'true'
+        with:
+          fetch-depth: 0 # o intervalo publicado..main pode ser longo; merge-base precisa da história
+
+      - name: Trava de resultado ambíguo
+        id: trava
+        if: steps.chave.outputs.ok == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          aberta="$(gh issue list --state open --label lovable-publish-ambiguo --json number --jq '.[0].number // empty')"
+          if [ -n "$aberta" ]; then
+            # aviso, não vermelho: o cron passaria por aqui a cada 15 min, e o alarme já é a Issue
+            echo "::warning::Publish travado: a Issue #$aberta (resultado ambíguo) segue aberta. Confira o ar e feche-a."
+            echo "travado=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish
+        id: pub
+        if: steps.chave.outputs.ok == 'true' && steps.trava.outputs.travado != 'true'
+        env:
+          LOVABLE_API_KEY: ${{ secrets.LOVABLE_API_KEY }}
+          LP_LIBERAR_SHA: ${{ inputs.liberar_sha }}
+        run: |
+          set +e
+          bash scripts/lovable-publish.sh "$GITHUB_SHA" > saida.txt 2>&1
+          rc=$?
+          cat saida.txt
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          echo "veredito=$(tail -1 saida.txt | sed -n 's/^VEREDITO=//p')" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Issue / desfecho
+        if: steps.chave.outputs.ok == 'true' && steps.pub.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RC: ${{ steps.pub.outputs.rc }}
+          VEREDITO: ${{ steps.pub.outputs.veredito }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          # abre ou comenta (dedupe por label, como o lovable-watch)
+          registra() {
+            local label="$1" titulo="$2" corpo
+            corpo="$(printf '**%s** em `%s` — [run](%s)\n\n```\n%s\n```\n' "$VEREDITO" "${GITHUB_SHA:0:8}" "$RUN_URL" "$(tail -c 6000 saida.txt)")"
+            gh label create "$label" --color B60205 --force >/dev/null
+            n="$(gh issue list --state open --label "$label" --json number --jq '.[0].number // empty')"
+            # dedupe: o cron repete o mesmo desfecho a cada 15 min — só comenta o que é NOVO
+            marca="**$VEREDITO** em \`${GITHUB_SHA:0:8}\`"
+            if [ -n "$n" ] && gh issue view "$n" --json body,comments --jq '[.body] + [.comments[].body] | .[]' | grep -qF "$marca"; then
+              echo "Issue #$n já registra $VEREDITO em ${GITHUB_SHA:0:8} — sem comentário novo"
+            elif [ -n "$n" ]; then gh issue comment "$n" --body "$corpo"
+            else gh issue create --title "$titulo" --label "$label" --body "$corpo"; fi
+          }
+          case "$RC" in
+            0)
+              echo "::notice::$VEREDITO"
+              if [ "$VEREDITO" = PUBLICADO ] || [ "$VEREDITO" = PUBLICADO_ADIANTE ] || [ "$VEREDITO" = JA_NO_AR ]; then
+                for n in $(gh issue list --state open --label lovable-publish-retido --json number --jq '.[].number'); do
+                  gh issue close "$n" --comment "Resolvido: $VEREDITO em \`${GITHUB_SHA:0:8}\` — [run]($RUN_URL)"
+                done
+              fi ;;
+            10)
+              registra lovable-publish-retido "Publish retido: migration/edge pendente antes do front"
+              echo "::warning::RETIDO — aplique as camadas e rode com liberar_sha=$GITHUB_SHA" ;;
+            20)
+              registra lovable-publish-ambiguo "Publish AMBÍGUO — confira o ar e feche esta Issue para destravar"
+              exit 1 ;;
+            *)
+              registra lovable-publish-falhou "Publish falhou: $VEREDITO"
+              exit 1 ;;
+          esac

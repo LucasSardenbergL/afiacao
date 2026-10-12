@@ -1,5 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
-import Anthropic from "npm:@anthropic-ai/sdk@^0.93.0";
+import { criarClienteAnthropic } from "../_shared/anthropic-cliente.ts";
 import {
   extrairToolUseUnico,
   MODELO_PADRAO,
@@ -94,7 +94,7 @@ Deno.serve(async (req) => {
 
     const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
     if (!ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY is not configured");
-    const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
+    const anthropic = criarClienteAnthropic(ANTHROPIC_API_KEY);
 
     // Corpo ilegível relança AQUI, depois do gate: antes da sonda o `await req.json()` ficava neste
     // ponto, então quem não passa no auth continua tomando 401 — e não uma mensagem de parse.
