@@ -231,7 +231,7 @@ describe('useCart — conflito devolve resultado e preserva a pendência', () =>
 // Codex P1 (rodada 4): o espelho síncrono só da tinta atropelava outra mutação do MESMO batch.
 // Agora toda escrita passa pelo setter único — batches mistos preservam as duas mudanças.
 describe('useCart — batch misto (tinta + outra mutação no mesmo tick)', () => {
-  const comum: Product = { ...baseTint, id: 'prod-comum', descricao: 'Lixa', is_tintometric: false, tint_type: null };
+  const comum: Product = { ...baseTint, id: 'prod-comum', descricao: 'Lixa', is_tintometric: false, tint_type: undefined };
   const meta = { source: 'calculado', discountPct: 0, precoSemDesconto: 100 };
 
   it('add de produto comum + tinta no mesmo act → os dois ficam', () => {
