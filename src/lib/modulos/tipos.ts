@@ -22,7 +22,7 @@ export type ModuloApp = {
   rotasCongeladas?: Congelamento & { prefixos: string[] };
 };
 
-export type StatusModulo = "ativo" | "congelado" | "arquivado";
+type StatusModulo = "ativo" | "congelado" | "arquivado";
 
 /** Datas ISO (AAAA-MM-DD). `ate` = `desde` + 90 dias (o gate confere). */
 export type Congelamento = { desde: string; ate: string; motivo: string };
