@@ -21,11 +21,11 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **610** custom migrations totais
-- **2005** objetos esperados (criados por estas migrations)
+- **611** custom migrations totais
+- **2007** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 696
-  - `rls_policy`: 469
+  - `rls_policy`: 471
   - `index`: 273
   - `table`: 176
   - `cron_job`: 176
@@ -4988,6 +4988,13 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `cron_job` | `cron.tint-watchdog-fase5-6h` | — |
+
+### `20261011120100_reposicao_logs_insert_cap_compras.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `rls_policy` | `public.reposicao_motor_run_ins` | `reposicao_motor_run` |
+| `rls_policy` | `public.estoque_nao_confirmado_log_ins` | `reposicao_estoque_nao_confirmado_log` |
 
 ### `20261011120500_drop_quarentena_omie_clientes.sql`
 
