@@ -128,15 +128,24 @@ export function useCart({ getProductPrice, getServicePrice, servicos }: UseCartA
     ) => {
       const account = (product.account || 'oben') as ProductAccount;
       const qty = qtyOverride != null && Number.isFinite(qtyOverride) && qtyOverride > 0 ? qtyOverride : tintPendingQty;
+      // Codex P1 (Fase 2A): só SOMA na linha existente quando a decisão de preço é a MESMA
+      // (preço, fonte, desconto, preço-base). Antes somava por fórmula e as unidades novas
+      // herdavam o desconto antigo sem escolha ativa — o gate aceitava (metadados coerentes).
+      // Decisão diferente → linha própria (o carrinho é indexado por posição).
+      const fonte = pricingMeta?.source ?? null;
+      const desconto = fonte ? pricingMeta!.discountPct : undefined;
+      const precoBase = fonte ? pricingMeta!.precoSemDesconto ?? undefined : undefined;
+      const mesmaDecisao = (c: ProductCartItem) =>
+        c.tint_formula_id === formulaId &&
+        c.unit_price === precoFinal &&
+        (c.tint_price_source ?? null) === fonte &&
+        c.tint_discount_pct === desconto &&
+        c.tint_preco_sem_desconto === precoBase;
       setCart(prev => {
-        const existing = prev.find(
-          (c): c is ProductCartItem => c.type === 'product' && c.tint_formula_id === formulaId,
-        );
-        if (existing) {
-          return prev.map(c =>
-            c.type === 'product' && (c as ProductCartItem).tint_formula_id === formulaId
-              ? ({ ...c, quantity: c.quantity + qty } as ProductCartItem)
-              : c,
+        const idx = prev.findIndex((c) => c.type === 'product' && mesmaDecisao(c as ProductCartItem));
+        if (idx >= 0) {
+          return prev.map((c, i) =>
+            i === idx ? ({ ...c, quantity: c.quantity + qty } as ProductCartItem) : c,
           );
         }
         return [

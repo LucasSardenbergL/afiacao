@@ -123,6 +123,20 @@ export function orFilter(...clauses: string[]): string {
   return clauses.join(',');
 }
 
+/**
+ * Igualdade EXATA sem distinção de caixa, para vários valores numa coluna:
+ * `col.ilike.v1,col.ilike.v2` (ILIKE sem `%` = igualdade case-insensitive). Valor que
+ * contém metacaractere do `.or()`/LIKE é DESCARTADO (não "limpo": limpar mudaria o valor
+ * e casaria outra coisa). `''` ⇔ nenhum valor útil — o caller não consulta.
+ */
+export function ilikeExatoOr(column: string, values: string[]): string {
+  return values
+    .map((v) => v.trim())
+    .filter((v) => v !== '' && sanitizeForPostgrestOr(v) === v)
+    .map((v) => `${column}.ilike.${v}`)
+    .join(',');
+}
+
 // Variantes acentuadas do pt-BR por letra-base. O catálogo tintométrico grava "AÇÚCAR",
 // "PÊSSEGO", "ALGODÃO" (499 de 8.692 cores com acento, medido 2026-10-11) e o ILIKE é
 // sensível a acento: "acucar" achava 0. Sem a extensão `unaccent` no banco, a classe de

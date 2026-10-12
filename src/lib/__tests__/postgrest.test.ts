@@ -24,6 +24,7 @@ import {
   eqText,
   orFilter,
   imatchTokensSemAcento,
+  ilikeExatoOr,
   tokensDeBusca,
   fetchAllPages,
   POSTGREST_PAGE_SIZE,
@@ -607,5 +608,15 @@ describe('imatchTokensSemAcento — busca de cor por palavra, sem acento', () =>
 
   it('busca degenerada (só pontuação) → nenhuma cláusula (o caller não filtra)', () => {
     expect(imatchTokensSemAcento(['nome_cor'], ' -*%, ')).toEqual([]);
+  });
+});
+
+describe('ilikeExatoOr — igualdade sem caixa (código de cor do 1 toque)', () => {
+  it('ILIKE SEM curinga, um por valor', () => {
+    expect(ilikeExatoOr('cor_id', ['346J', ' H109 '])).toBe('cor_id.ilike.346J,cor_id.ilike.H109');
+  });
+  it('valor com metacaractere do .or()/LIKE é DESCARTADO, não limpo (limpar casaria outra cor)', () => {
+    expect(ilikeExatoOr('cor_id', ['34%', '3_6J', 'a,b', 'x)', '*'])).toBe('');
+    expect(ilikeExatoOr('cor_id', ['34%', '346J'])).toBe('cor_id.ilike.346J');
   });
 });

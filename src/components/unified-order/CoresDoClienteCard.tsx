@@ -7,7 +7,19 @@ import { Search, Palette, ChevronDown, ChevronUp, Loader2, Plus } from 'lucide-r
 import { format } from 'date-fns';
 import type { CorDoCliente, OcorrenciaCor } from '@/lib/tint/cores-do-cliente';
 import { fmt } from '@/hooks/useUnifiedOrder';
-import { chaveUmToque, type EstadoUmToque, type UmToquePronto } from '@/hooks/unifiedOrder/useCoresDoClienteUmToque';
+
+/** O que o card precisa saber do 1 toque — o cálculo (fórmula + preço do motor) mora no
+ *  tintométrico (`useTintCoresDoClienteUmToque`); aqui é só exibição. */
+export interface UmToqueNoCard {
+  corId: string;
+  nomeCor: string;
+  preco: number;
+}
+
+/** Chave de uma ocorrência na tela — a MESMA no card e em quem calcula o 1 toque. */
+export function chaveOcorrenciaCor(corNome: string, indiceOcorrencia: number): string {
+  return `${corNome}#${indiceOcorrencia}`;
+}
 
 interface CoresDoClienteCardProps {
   cores: CorDoCliente[];
@@ -17,10 +29,10 @@ interface CoresDoClienteCardProps {
   isLoading: boolean;
   /** Re-pedido: clique numa ocorrência (cor + base daquela vez). */
   onRepetirCor: (cor: CorDoCliente, ocorrencia: OcorrenciaCor) => void;
-  /** Fase 2A: estado do 1 toque por ocorrência (`chaveUmToque`). Ausente = só o diálogo. */
-  umToque?: Record<string, EstadoUmToque>;
+  /** Fase 2A: estado do 1 toque por ocorrência (`chaveOcorrenciaCor`). Ausente = só o diálogo. */
+  umToque?: Record<string, UmToqueNoCard | 'carregando'>;
   /** 1 toque: a cor entra no pedido com o preço do motor já calculado. */
-  onAdicionarUmToque?: (pronto: UmToquePronto, ocorrencia: OcorrenciaCor) => void;
+  onAdicionarUmToque?: (chave: string, ocorrencia: OcorrenciaCor) => void;
 }
 
 const empresaLabel = (account: string) =>
@@ -91,7 +103,8 @@ export function CoresDoClienteCard({
                     </p>
                     <div className="mt-1 space-y-1">
                       {cor.ocorrencias.slice(0, 4).map((oc, i) => {
-                        const estado = umToque?.[chaveUmToque(cor.nome, i)];
+                        const chave = chaveOcorrenciaCor(cor.nome, i);
+                        const estado = umToque?.[chave];
                         const pronto = typeof estado === 'object' && onAdicionarUmToque ? estado : null;
                         return (
                         <div key={i} className="flex items-center justify-between gap-2">
@@ -112,7 +125,7 @@ export function CoresDoClienteCard({
                                 className="h-6 text-[11px] px-2"
                                 title={`${pronto.corId} – ${pronto.nomeCor}`}
                                 aria-label={`Adicionar ${pronto.corId} por ${fmt(pronto.preco)}`}
-                                onClick={() => onAdicionarUmToque!(pronto, oc)}
+                                onClick={() => onAdicionarUmToque!(chave, oc)}
                               >
                                 <Plus className="w-3 h-3 mr-0.5" /> {fmt(pronto.preco)}
                               </Button>

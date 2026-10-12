@@ -13,7 +13,7 @@ import { CorPrimeiroDialog } from '@/components/tintColorSelect/CorPrimeiroDialo
 import { OrderSuccessDialog } from '@/components/OrderSuccessDialog';
 import { AtpBackorderDialog } from '@/components/unified-order/AtpBackorderDialog';
 import { cn } from '@/lib/utils';
-import { useUnifiedOrder } from '@/hooks/useUnifiedOrder';
+import { useUnifiedOrder, type Product } from '@/hooks/useUnifiedOrder';
 import { useOrderDeepLink } from '@/hooks/useOrderDeepLink';
 import { useOrderDraft } from '@/hooks/useOrderDraft';
 import { useAuth } from '@/contexts/AuthContext';
@@ -26,14 +26,9 @@ import { AlertaCreditoCliente } from '@/components/unified-order/AlertaCreditoCl
 import { TierClienteBadge } from '@/components/unified-order/TierClienteBadge';
 import { ExcecaoCreditoDialog } from '@/components/unified-order/ExcecaoCreditoDialog';
 import type { BloqueioCreditoPedido } from '@/services/orderSubmission';
-import { CoresDoClienteCard } from '@/components/unified-order/CoresDoClienteCard';
+import { CoresDoClienteCard, chaveOcorrenciaCor } from '@/components/unified-order/CoresDoClienteCard';
 import { useCoresDoCliente } from '@/hooks/unifiedOrder/useCoresDoCliente';
-import {
-  chaveUmToque,
-  useCoresDoClienteUmToque,
-  type AlvoUmToque,
-  type UmToquePronto,
-} from '@/hooks/unifiedOrder/useCoresDoClienteUmToque';
+import { useTintCoresDoClienteUmToque, type AlvoUmToque } from '@/hooks/useTintCoresDoClienteUmToque';
 import type { CorDoCliente, OcorrenciaCor } from '@/lib/tint/cores-do-cliente';
 import { termoBuscaCor } from '@/lib/tint/cores-do-cliente';
 import { montarPlanoReplicacao, type ItemTinta } from '@/lib/pedido/replicar-pedido';
@@ -117,19 +112,22 @@ const UnifiedOrder = () => {
   };
   // Fase 2A — "Cores do cliente" em 1 toque: só as ocorrências VISÍVEIS (as mesmas
   // 4 por cor que o card mostra) e só da Oben (o tintométrico só existe lá).
-  const alvosUmToque = useMemo<AlvoUmToque[]>(() => {
-    const out: AlvoUmToque[] = [];
+  const alvosUmToque = useMemo<AlvoUmToque<Product>[]>(() => {
+    const out: AlvoUmToque<Product>[] = [];
     for (const cor of coresDoCliente.coresFiltradas.slice(0, 20)) {
       cor.ocorrencias.slice(0, 4).forEach((oc, i) => {
         const product = oc.account === 'oben' ? baseDaOcorrencia(oc) : undefined;
-        if (product) out.push({ key: chaveUmToque(cor.nome, i), product, codigo: termoBuscaCor(cor.nome) });
+        if (product) out.push({ key: chaveOcorrenciaCor(cor.nome, i), product, codigo: termoBuscaCor(cor.nome) });
       });
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- baseDaOcorrencia só lê os pools abaixo
   }, [coresDoCliente.coresFiltradas, h.obenProducts, h.colacorProducts]);
-  const umToque = useCoresDoClienteUmToque(alvosUmToque);
-  const handleAdicionarUmToque = (pronto: UmToquePronto, oc: OcorrenciaCor) => {
+  const umToque = useTintCoresDoClienteUmToque(alvosUmToque);
+  const handleAdicionarUmToque = (chave: string, oc: OcorrenciaCor) => {
+    const pronto = umToque[chave];
+    // Fail-closed: o estado pode ter mudado entre o render e o toque (preço recarregando).
+    if (typeof pronto !== 'object') return;
     track('tint.cor_confirmada', { fonte: pronto.fonte, alternativa: false, com_desconto: false, entrada: 'um_toque' });
     h.addTintProductToCart(
       pronto.product,

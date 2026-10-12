@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { fetchAllPages, ilikeExatoOr } from '@/lib/postgrest';
 import { useTintPrices } from '@/hooks/useTintPricing';
 import {
   decidirUmToque,
@@ -10,29 +11,32 @@ import {
   type CandidataUmToque,
 } from '@/lib/tint/cor-um-toque';
 import type { AltPriceSource } from '@/lib/tint/select-price';
-import type { Product } from '@/hooks/useUnifiedOrder';
 
-export interface AlvoUmToque {
+/** Produto-base: genérico de propósito — o tipo concreto é de vendas, e importá-lo daqui
+ *  seria aresta tintometrico→vendas. Só o `id` (produto Omie) importa para resolver o SKU. */
+type ProdutoBase = { id: string };
+
+export interface AlvoUmToque<P extends ProdutoBase = ProdutoBase> {
   /** Chave da ocorrência na tela (cor + índice). */
   key: string;
   /** Produto-base daquela compra, já resolvido no catálogo (tintométrico, Oben). */
-  product: Product;
+  product: P;
   /** Código da cor extraído do histórico (`termoBuscaCor`). */
   codigo: string;
 }
 
-export interface UmToquePronto {
+export interface UmToquePronto<P extends ProdutoBase = ProdutoBase> {
   formulaId: string;
   corId: string;
   nomeCor: string;
   preco: number;
   fonte: AltPriceSource;
   custoCorantes: number;
-  product: Product;
+  product: P;
 }
 
 /** `'carregando'` = ainda resolvendo (a UI diz "calculando"); ausente = sem 1 toque (abre o diálogo). */
-export type EstadoUmToque = UmToquePronto | 'carregando';
+export type EstadoUmToque<P extends ProdutoBase = ProdutoBase> = UmToquePronto<P> | 'carregando';
 
 /**
  * "Cores do cliente" em 1 toque: para cada ocorrência visível, acha a fórmula ÚNICA da
@@ -41,13 +45,10 @@ export type EstadoUmToque = UmToquePronto | 'carregando';
  * ambígua, R$ 0 — a ocorrência fica sem atalho e o botão abre o diálogo de sempre.
  * O tintométrico só existe na Oben (`account='oben'` fixo, como no seletor).
  */
-export function useCoresDoClienteUmToque(alvos: AlvoUmToque[]): Record<string, EstadoUmToque> {
+export function useTintCoresDoClienteUmToque<P extends ProdutoBase>(alvos: AlvoUmToque<P>[]): Record<string, EstadoUmToque<P>> {
   const elegiveis = useMemo(() => alvos.filter((a) => ehCodigoDeCor(a.codigo)), [alvos]);
   const productIds = useMemo(() => [...new Set(elegiveis.map((a) => a.product.id))].sort(), [elegiveis]);
-  const codigos = useMemo(
-    () => [...new Set(elegiveis.flatMap((a) => [a.codigo.trim(), normalizarCodigoCor(a.codigo)]))].sort(),
-    [elegiveis],
-  );
+  const codigos = useMemo(() => [...new Set(elegiveis.map((a) => normalizarCodigoCor(a.codigo)))].sort(), [elegiveis]);
 
   const { data: leitura, isLoading, isError } = useQuery({
     queryKey: ['tint-um-toque-formulas', productIds, codigos],
@@ -62,21 +63,34 @@ export function useCoresDoClienteUmToque(alvos: AlvoUmToque[]): Record<string, E
         .eq('account', 'oben')
         .order('id', { ascending: true });
       if (skusErr) throw skusErr;
-      const skuPorProduto = new Map<string, string>();
+      // Codex P1 (Fase 2A): produto com 2+ SKUs → o histórico não diz qual foi; o seletor
+      // desempata pelo menor id, o ATALHO não (fica sem 1 toque). 0 casos em prod (2026-10-10).
+      const skusDoProduto = new Map<string, string[]>();
       for (const s of skus ?? []) {
-        if (s.omie_product_id && !skuPorProduto.has(s.omie_product_id)) skuPorProduto.set(s.omie_product_id, s.id);
+        if (!s.omie_product_id) continue;
+        skusDoProduto.set(s.omie_product_id, [...(skusDoProduto.get(s.omie_product_id) ?? []), s.id]);
       }
+      const skuPorProduto = new Map<string, string>();
+      for (const [prod, ids] of skusDoProduto) if (ids.length === 1) skuPorProduto.set(prod, ids[0]);
       const skuIds = [...new Set(skuPorProduto.values())];
-      if (skuIds.length === 0) return { skuPorProduto, candidatas: [] as CandidataUmToque[] };
+      const filtroCodigo = ilikeExatoOr('cor_id', codigos);
+      if (skuIds.length === 0 || !filtroCodigo) return { skuPorProduto, candidatas: [] as CandidataUmToque[] };
 
-      const { data, error } = await supabase
-        .from('v_tint_formula_canonica')
-        .select('id, sku_id, cor_id, nome_cor, preco_csv_legado')
-        .eq('account', 'oben')
-        .in('sku_id', skuIds)
-        .in('cor_id', codigos)
-        .order('id', { ascending: true });
-      if (error) throw error;
+      // Codex P1/P2: código por igualdade SEM caixa (`346J` e `346j` chegam os dois e a
+      // unicidade os vê) e TODAS as páginas (a capa de 1.000 linhas truncava em silêncio —
+      // e uma concorrente fora da página fabricava falsa unicidade).
+      const data = await fetchAllPages(
+        (de, ate) =>
+          supabase
+            .from('v_tint_formula_canonica')
+            .select('id, sku_id, cor_id, nome_cor, preco_csv_legado')
+            .eq('account', 'oben')
+            .in('sku_id', skuIds)
+            .or(filtroCodigo)
+            .order('id', { ascending: true })
+            .range(de, ate),
+        'tint-um-toque-formulas',
+      );
       const candidatas = (data ?? []).filter(
         (r): r is CandidataUmToque =>
           r.id != null && r.sku_id != null && r.cor_id != null && r.nome_cor != null,
@@ -110,7 +124,7 @@ export function useCoresDoClienteUmToque(alvos: AlvoUmToque[]): Record<string, E
   const precos = precoErro || precoCarregando ? undefined : precosBrutos;
 
   return useMemo(() => {
-    const out: Record<string, EstadoUmToque> = {};
+    const out: Record<string, EstadoUmToque<P>> = {};
     if (isError) return out;
     for (const a of elegiveis) {
       if (isLoading) {
@@ -139,7 +153,3 @@ export function useCoresDoClienteUmToque(alvos: AlvoUmToque[]): Record<string, E
   }, [elegiveis, escolhidas, isLoading, isError, precoCarregando, precos]);
 }
 
-/** Chave de uma ocorrência na tela — a MESMA no card e no cálculo do 1 toque. */
-export function chaveUmToque(corNome: string, indiceOcorrencia: number): string {
-  return `${corNome}#${indiceOcorrencia}`;
-}

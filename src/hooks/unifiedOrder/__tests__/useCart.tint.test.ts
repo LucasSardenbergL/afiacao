@@ -162,3 +162,26 @@ describe('useCart — 1 toque (qtd explícita, sem diálogo pendente)', () => {
     expect(result.current.productItems.map((i) => i.quantity)).toEqual([1, 1]);
   });
 });
+
+// Codex P1 (Fase 2A): somar por fórmula fazia a unidade NOVA herdar o desconto antigo.
+describe('useCart — mesma fórmula só consolida com a MESMA decisão de preço', () => {
+  const comDesconto = { source: 'calculado', discountPct: 50, precoSemDesconto: 100 };
+  const semDesconto = { source: 'calculado', discountPct: 0, precoSemDesconto: 100 };
+
+  it('decisão diferente (1 toque sem desconto sobre item com 50%) → linha própria', () => {
+    const { result } = setup();
+    act(() => { result.current.addTintProductToCart(baseTint, 'f-1', '346J', 'X', 50, 0, comDesconto, 1); });
+    act(() => { result.current.addTintProductToCart(baseTint, 'f-1', '346J', 'X', 100, 0, semDesconto, 4); });
+    expect(result.current.productItems.map((i) => [i.quantity, i.unit_price, i.tint_discount_pct])).toEqual([
+      [1, 50, 50],
+      [4, 100, 0],
+    ]);
+  });
+
+  it('mesma decisão → soma a quantidade na linha existente (comportamento da Fase 1)', () => {
+    const { result } = setup();
+    act(() => { result.current.addTintProductToCart(baseTint, 'f-1', '346J', 'X', 50, 0, comDesconto, 1); });
+    act(() => { result.current.addTintProductToCart(baseTint, 'f-1', '346J', 'X', 50, 0, comDesconto, 2); });
+    expect(result.current.productItems.map((i) => i.quantity)).toEqual([3]);
+  });
+});

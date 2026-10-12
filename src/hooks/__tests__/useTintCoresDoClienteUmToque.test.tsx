@@ -5,7 +5,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
-import type { Product } from '@/hooks/useUnifiedOrder';
 
 const respostas: Record<string, { data: unknown; error: unknown }> = {};
 vi.mock('@/integrations/supabase/client', () => {
@@ -23,10 +22,13 @@ vi.mock('@/integrations/supabase/client', () => {
 const precos = { data: undefined as unknown, isLoading: false, isError: false, isFetching: false };
 vi.mock('@/hooks/useTintPricing', () => ({ useTintPrices: () => precos }));
 
-import { useCoresDoClienteUmToque, type AlvoUmToque } from '../useCoresDoClienteUmToque';
+import { useTintCoresDoClienteUmToque, type AlvoUmToque } from '../useTintCoresDoClienteUmToque';
 
-const product = { id: 'p1', descricao: 'BASE GL', account: 'oben' } as Product;
-const alvos: AlvoUmToque[] = [
+// Tipo local (importar de vendas seria aresta tintometrico→vendas).
+type Product = { id: string; descricao: string; account: string };
+
+const product: Product = { id: 'p1', descricao: 'BASE GL', account: 'oben' };
+const alvos: AlvoUmToque<Product>[] = [
   { key: 'a#0', product, codigo: '346J' },
   { key: 'b#0', product, codigo: 'PLATINA' }, // só nome → nunca 1 toque
 ];
@@ -34,7 +36,7 @@ const alvos: AlvoUmToque[] = [
 function setup() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={qc}>{children}</QueryClientProvider>;
-  return renderHook(() => useCoresDoClienteUmToque(alvos), { wrapper });
+  return renderHook(() => useTintCoresDoClienteUmToque(alvos), { wrapper });
 }
 
 beforeEach(() => {
@@ -67,6 +69,26 @@ describe('useCoresDoClienteUmToque', () => {
     Object.assign(precos, { isError: true, isFetching: true });
     const { result } = setup();
     await waitFor(() => expect(result.current['a#0']).toBe('carregando'));
+  });
+
+  it('produto Omie com 2 SKUs → sem atalho (o histórico não diz qual; nunca desempata por UUID)', async () => {
+    respostas.tint_skus = { data: [{ id: 'sku-1', omie_product_id: 'p1' }, { id: 'sku-2', omie_product_id: 'p1' }], error: null };
+    const { result } = setup();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(result.current['a#0']).toBeUndefined();
+  });
+
+  it('o mesmo código em caixas diferentes na base → ambíguo → sem atalho', async () => {
+    respostas.v_tint_formula_canonica = {
+      data: [
+        { id: 'f1', sku_id: 'sku-1', cor_id: '346J', nome_cor: 'PLATINA BIANCO', preco_csv_legado: 100 },
+        { id: 'f9', sku_id: 'sku-1', cor_id: '346j', nome_cor: 'PLATINA OUTRA', preco_csv_legado: 90 },
+      ],
+      error: null,
+    };
+    const { result } = setup();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(result.current['a#0']).toBeUndefined();
   });
 
   it('leitura do catálogo falhou → nenhum atalho', async () => {
