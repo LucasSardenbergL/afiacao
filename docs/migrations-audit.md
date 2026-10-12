@@ -21,7 +21,7 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **613** custom migrations totais
+- **614** custom migrations totais
 - **2018** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 702
@@ -5010,6 +5010,10 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `index` | `public.idx_health_history_calculated_at` | `health_score_history` |
 | `index` | `public.idx_priority_log_score_date` | `priority_score_log` |
 | `cron_job` | `cron.expurgo-scores-farmer` | — |
+
+### `20261011120500_drop_quarentena_omie_clientes.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ### `20261011140000_picking_v2_coleta_reserva.sql`
 

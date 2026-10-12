@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 613
+-- Total de custom migrations: 614
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -45,7 +45,7 @@
 --   • index public.idx_customer_metrics_mv_uid (recencia_mv_order_date_kpi) — MV movida para private (20261001014100_universo_pedidos_recencia); o índice vive em private.customer_metrics_mv
 --   • function public.omie_cliente_upsert_mapping (omie_identidade_por_conta) — drop — 20260718091409_drop_omie_cliente_upsert_mapping_orfa (PR #1409)
 --   • rls_policy public.ss_allowlist_gestor_iud (selfservice_pr01_allowlist_gate) — split → ss_allowlist_select/insert/update/delete (20260718190000_authz_capability_matrix_e2)
---   • trigger public.trg_omie_clientes_to_ledger (carteira_membership_ledger_fatia0) — tabela renomeada → _quarantine_omie_clientes_20260722 (20260722110000_quarentena_omie_clientes_espelho); o trigger foi junto
+--   • trigger public.trg_omie_clientes_to_ledger (carteira_membership_ledger_fatia0) — tabela renomeada → _quarantine_omie_clientes_20260722 (20260722110000_quarentena_omie_clientes_espelho); o trigger foi junto; a quarentena foi dropada em 20261011120500_drop_quarentena_omie_clientes (M-18)
 --   • function public.estimar_impacto_exclusao_outlier (outliers_leadtime_stack_efetivo) — drop — 20260718093248_drop_estimar_impacto_exclusao_outlier_orfa
 --   • function public.carteira_visivel_para (carteira_visivel_para_filtra_eligible) — SET SCHEMA private — 20260718150000_fu7_helpers_rls_schema_privado
 --   • rls_policy public.estoque_reservas_service_all (atp_reserva_estoque_fase1) — drop — 20260806225052_atp_reserva_estoque_fase1_1_hardening (decorativa: service_role tem BYPASSRLS) → estoque_reservas_service_select
@@ -673,6 +673,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261011120100', 'reposicao_logs_insert_cap_compras', '20261011120100_reposicao_logs_insert_cap_compras.sql'),
   ('20261011120200', 'wa_owner_efetivo_gate_staff', '20261011120200_wa_owner_efetivo_gate_staff.sql'),
   ('20261011120400', 'retencao_scores_farmer', '20261011120400_retencao_scores_farmer.sql'),
+  ('20261011120500', 'drop_quarentena_omie_clientes', '20261011120500_drop_quarentena_omie_clientes.sql'),
   ('20261011140000', 'picking_v2_coleta_reserva', '20261011140000_picking_v2_coleta_reserva.sql'),
   ('20261011150000', 'reposicao_recusa_definitiva_portal_servidor', '20261011150000_reposicao_recusa_definitiva_portal_servidor.sql')
 ),

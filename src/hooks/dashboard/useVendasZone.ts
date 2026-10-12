@@ -43,9 +43,15 @@ export function useVendasZone() {
       // ⚠️ A falha LANÇA (money-path §7): antes o erro era descartado e o `catch` devolvia R$ 0 —
       // "não consegui ler" virava "não vendemos nada hoje". Agora a zona mostra o card de erro com
       // retry (`CockpitCardError`), nunca um faturado zero fabricado.
+      // Empresa do seletor (M-07): `companies` só na queryKey trocava a chave e trazia o MESMO grupo —
+      // "Faturado hoje" da Oben somava a Colacor. Em 'all' `companies` = ALL_COMPANIES, equivalente ao
+      // "sem filtro" do dashboard Master (`fetch-pedidos-mtd`): `account` é NOT NULL e só tem esses
+      // valores. Filtro inline (não builder em variável) para a leitura seguir visível ao
+      // `single-shot-truncado-gate`.
       const { data: pedidos, error: erroPedidos } = await supabase
         .from('sales_orders')
         .select('total, status, order_date_kpi')
+        .in('account', companies)
         .not('status', 'in', STATUS_NAO_VENDA_POSTGREST)
         .is('deleted_at', null)
         .gte('order_date_kpi', ontem)
