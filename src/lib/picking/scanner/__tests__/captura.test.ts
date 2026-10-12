@@ -55,8 +55,10 @@ describe("captura no window", () => {
       t += 2;
       teclar(k);
     }
+    t += 400;
+    vi.advanceTimersByTime(400); // trunca → descarte de 1 s
     t += 5_000;
-    vi.advanceTimersByTime(5_000);
+    vi.advanceTimersByTime(5_000); // descarte venceu: o protocolo já não engole o ENTER
     const botao = document.createElement("button");
     document.body.appendChild(botao);
     const noBotao = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });

@@ -14,11 +14,22 @@ const aceita: ResultadoEnvio = { tipo: "resposta", resposta: { ok: true, motivo:
 const espera = () => new Promise((r) => setTimeout(r, 0));
 
 /** Ambiente mutável: o teste troca a sessão e a lente como o app trocaria (sem página montada). */
-async function montar(enviar: (c: Comando) => Promise<ResultadoEnvio>, itens: string[], dono = "U1", inicio: { sessao?: string | null; lente?: boolean } = {}) {
+type Valor<T> = T | ((n: number) => T);
+const ler = <T,>(v: Valor<T>, n: number): T => (typeof v === "function" ? (v as (n: number) => T)(n) : v);
+
+/** `sessao`/`lente` podem variar pela N-ésima leitura — para provar cada camada da guarda sozinha. */
+async function montar(
+  enviar: (c: Comando) => Promise<ResultadoEnvio>,
+  itens: string[],
+  dono = "U1",
+  inicio: { sessao?: Valor<string | null>; lente?: Valor<boolean> } = {},
+) {
   const a = armazemMemoria();
   for (const id of itens) await a.enfileirar(item(id, dono));
   const enviados: string[] = [];
-  const amb = { sessao: "U1" as string | null, lente: false, aoEnviar: () => {}, ...inicio };
+  const amb: { sessao: Valor<string | null>; lente: Valor<boolean>; aoEnviar: () => void } = { sessao: "U1", lente: false, aoEnviar: () => {}, ...inicio };
+  let nSessao = 0;
+  let nLente = 0;
   const motor = criarMotor(
     (c) => {
       enviados.push(c.leitura_id);
@@ -27,7 +38,7 @@ async function montar(enviar: (c: Comando) => Promise<ResultadoEnvio>, itens: st
     },
     () => Promise.resolve(a),
     () => {},
-    { sessao: () => Promise.resolve(amb.sessao), lente: () => amb.lente },
+    { sessao: () => Promise.resolve(ler(amb.sessao, ++nSessao)), lente: () => ler(amb.lente, ++nLente) },
   );
   await espera();
   return { motor, enviados, a, amb };
@@ -55,16 +66,26 @@ describe("motor da fila", () => {
     expect(enviados).toEqual([]);
   });
 
-  it("sessão trocada NO MEIO da rodada: o 2º item não sai com a identidade nova", async () => {
-    const { motor, enviados, amb, a } = await montar(() => Promise.resolve(aceita), ["u1", "u2"], "U1", { lente: true });
-    amb.aoEnviar = () => {
-      amb.sessao = "U2";
-    };
+  it("sessão trocada entre a seleção e o envio: a guarda POR ENVIO segura (camada interna)", async () => {
+    // Lente ligada na criação: o laço de fundo não lê a sessão. Depois: leitura 1 (drenar) e 2
+    // (rodada) veem U1 — passam pelas guardas externas —, a 3ª (no envio) já vê U2.
+    const { motor, enviados, amb, a } = await montar(() => Promise.resolve(aceita), ["u1"], "U1", { lente: true });
     amb.lente = false;
-    await motor.drenar("T1");
-    expect(enviados).toEqual(["u1"]);
-    const u2 = (await a.todos()).find((i) => i.comando.leitura_id === "u2");
-    expect(u2?.estado).toBe("pendente");
+    amb.sessao = (n) => (n <= 2 ? "U1" : "U2");
+    expect(await motor.drenar("T1")).toBe(false);
+    expect(enviados).toEqual([]);
+    expect((await a.todos())[0].estado).toBe("pendente");
+  });
+
+  it("lente ligada entre a seleção e o envio: a guarda POR ENVIO segura (camada interna)", async () => {
+    const { motor, enviados, amb } = await montar(() => Promise.resolve(aceita), ["u1"], "U1", { lente: true });
+    let base = 0;
+    amb.lente = (n) => {
+      if (base === 0) base = n; // 1ª leitura depois de religar = drenar
+      return n - base >= 2; // drenar e rodada veem desligada; o envio vê ligada
+    };
+    expect(await motor.drenar("T1")).toBe(false);
+    expect(enviados).toEqual([]);
   });
 
   it("offline: drenar devolve false sem marcar nada como resolvido", async () => {
