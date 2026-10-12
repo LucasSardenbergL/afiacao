@@ -80,6 +80,7 @@ MIG_F2C="$REPO_ROOT/supabase/migrations/20260722100002_tint_canonica_csv_legado_
 MIG_F2D="$REPO_ROOT/supabase/migrations/20260724130000_tint_canonica_csv_legado_allowlist.sql"
 MIGRATION="$REPO_ROOT/supabase/migrations/20260722100001_tint_gate_revalida_submit.sql"
 MIG_PISO="$REPO_ROOT/supabase/migrations/20260726160000_tint_canonica_piso_legado.sql"
+MIG_IMPL="$REPO_ROOT/supabase/migrations/20261012150000_tint_gate_tabela_implausivel.sql"
 export PGVER=17   # consumido pelo db/lib/pg-harness.sh via source
 # shellcheck disable=SC1091  # o gate roda sem -x; o helper e versionado ao lado, em db/lib/
 . "$REPO_ROOT/db/lib/pg-harness.sh"   # exporta PGBIN — fail-CLOSED, confere a major POSITIVAMENTE
@@ -88,7 +89,7 @@ DATA="$(mktemp -d /tmp/pgtest-tintgate.XXXXXX)/data"
 RODADA="$(dirname "$DATA")"   # dir ÚNICO desta rodada (o trap apaga): temporário mora aqui, nunca em /tmp/<nome-fixo>
 export LC_ALL=C LANG=C
 
-for f in "$MIG_F2" "$MIG_F2B" "$MIG_F2C" "$MIG_F2D" "$MIGRATION" "$MIG_PISO"; do
+for f in "$MIG_F2" "$MIG_F2B" "$MIG_F2C" "$MIG_F2D" "$MIGRATION" "$MIG_PISO" "$MIG_IMPL"; do
   [ -f "$f" ] || { echo "migration ausente: $f"; exit 1; }
 done
 
@@ -142,12 +143,14 @@ P -q -f "$MIG_F2C" >/dev/null || { echo "FALHA: migration fix semântico não ap
 P -q -f "$MIG_F2D" >/dev/null || { echo "FALHA: migration allowlist não aplicou"; exit 1; }
 P -q -f "$MIGRATION" >/dev/null || { echo "FALHA: migration Fase 3 (gate) não aplicou"; exit 1; }
 P -q -f "$MIG_PISO" >/dev/null || { echo "FALHA: migration piso legado não aplicou"; exit 1; }
+P -q -f "$MIG_IMPL" >/dev/null || { echo "FALHA: migration rótulo implausível não aplicou"; exit 1; }
 
 # A migration do piso recria a VIEW (14 colunas) E o gate — restaurar as duas na
 # ordem de prod, senão o gate volta lendo uma view que não tem mais a coluna.
 restore_gate() {
   P -q -f "$MIGRATION" >/dev/null || { echo "FALHA: restore_gate não re-aplicou a migration"; exit 1; }
   P -q -f "$MIG_PISO"  >/dev/null || { echo "FALHA: restore_gate não re-aplicou o piso"; exit 1; }
+  P -q -f "$MIG_IMPL"  >/dev/null || { echo "FALHA: restore_gate não re-aplicou o rótulo implausível"; exit 1; }
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -972,6 +975,130 @@ case "$OUT" in
 esac
 restore_gate
 
+# ══════════════════════════════════════════════════════════════════
+# G40–G43 — RÓTULO IMPLAUSÍVEL (migration 20261012150000, 2026-10-12)
+# CSV legado < 50% do calculado (ceil10 × ceil10, estrito) é o preço SÓ DOS
+# CORANTES (export sem a base). Ele deixa de existir como fonte: 'tabela'
+# bloqueia com motivo próprio e o piso de 'manual' volta a v_calc.
+#   K40 IMPLAUS: calc 102.5 × CSV 0.6824 (ceil10 0.7) — o caso real 360V-BS 405ML
+#   K41 LIMITE:  calc 102.4 (9,5 ml) × CSV 51.2 — EXATAMENTE 50% ⇒ elegível
+#   K42 ABAIXO:  calc 102.4 (9,5 ml) × CSV 51.1 — 0,1 abaixo ⇒ implausível
+# Os asserts ACUMULAM (não abortam no 1º): cada falsificação declara o CONJUNTO
+# EXATO que derruba — "vermelho certo, e só ele" é afirmação sobre conjunto.
+# ══════════════════════════════════════════════════════════════════
+P -q <<'SQL' || { echo "FALHA no seed G40–G43"; exit 1; }
+INSERT INTO public.tint_formulas (id, account, cor_id, nome_cor, produto_id, base_id, embalagem_id, subcolecao_id, sku_id, preco_final_sayersystem) VALUES
+  ('f0400000-0000-0000-0000-00000000005a','oben','K40','IMPLAUS','a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000002','a0000000-0000-0000-0000-0000000000e1','5c000000-0000-0000-0000-000000000001','50000000-0000-0000-0000-00000000000a',NULL),
+  ('f0400000-0000-0000-0000-000000000019','oben','K40','IMPLAUS','a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000002','a0000000-0000-0000-0000-0000000000e1','0d000000-0000-0000-0000-000000000001','50000000-0000-0000-0000-00000000000a',0.6824),
+  ('f0410000-0000-0000-0000-00000000005a','oben','K41','LIMITE','a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000002','a0000000-0000-0000-0000-0000000000e1','5c000000-0000-0000-0000-000000000001','50000000-0000-0000-0000-00000000000a',NULL),
+  ('f0410000-0000-0000-0000-000000000019','oben','K41','LIMITE','a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000002','a0000000-0000-0000-0000-0000000000e1','0d000000-0000-0000-0000-000000000001','50000000-0000-0000-0000-00000000000a',51.2),
+  ('f0420000-0000-0000-0000-00000000005a','oben','K42','ABAIXO','a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000002','a0000000-0000-0000-0000-0000000000e1','5c000000-0000-0000-0000-000000000001','50000000-0000-0000-0000-00000000000a',NULL),
+  ('f0420000-0000-0000-0000-000000000019','oben','K42','ABAIXO','a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000002','a0000000-0000-0000-0000-0000000000e1','0d000000-0000-0000-0000-000000000001','50000000-0000-0000-0000-00000000000a',51.1);
+-- só a SL leva receita (rank 0 ⇒ canônica); 9,5 ml ⇒ 100 + 9,5×200/810 = 102,3457 ⇒ ceil10 102,4
+INSERT INTO public.tint_formula_itens (formula_id, corante_id, ordem, qtd_ml) VALUES
+  ('f0400000-0000-0000-0000-00000000005a','c0000000-0000-0000-0000-000000000001',1,10),
+  ('f0410000-0000-0000-0000-00000000005a','c0000000-0000-0000-0000-000000000001',1,9.5),
+  ('f0420000-0000-0000-0000-00000000005a','c0000000-0000-0000-0000-000000000001',1,9.5);
+SQL
+
+run_implausivel() {
+  P -tA 2>&1 <<'SQL'
+SET ROLE service_role;
+DO $$
+DECLARE r jsonb; b jsonb; f text[] := '{}';
+  cliente  CONSTANT uuid := '33333333-3333-3333-3333-333333333333';
+  so_empty CONSTANT uuid := 'a5000000-0000-0000-0000-000000000012';
+BEGIN
+  -- pré-condição do seed (a view entrega o que os asserts supõem)
+  IF (SELECT preco_csv_legado FROM public.v_tint_formula_canonica WHERE cor_id = 'K40') IS DISTINCT FROM 0.6824
+     OR (SELECT id FROM public.v_tint_formula_canonica WHERE cor_id = 'K40') <> 'f0400000-0000-0000-0000-00000000005a' THEN
+    RAISE EXCEPTION 'G40pre FALHOU: canonica/CSV de K40 nao e o semeado'; END IF;
+
+  -- G40a 'tabela' a 0,70 com calc 102,5 ⇒ bloqueia COM O MOTIVO PRÓPRIO
+  r := public.tint_gate_revalida('oben', cliente, so_empty, 'criacao',
+    '[{"omie_codigo_produto":900001,"tint_cor_id":"K40","tint_formula_id":"f0400000-0000-0000-0000-00000000005a","valor_unitario":0.7,"tint_price_source":"tabela"}]');
+  IF (r->>'ok')::boolean IS DISTINCT FROM false OR r->'bloqueios'->0->>'motivo' IS DISTINCT FROM 'tabela_implausivel' THEN
+    f := f || 'G40a'::text; END IF;
+
+  -- G40b 'manual' a 0,70 ⇒ o piso é o CALCULADO (102,5), não o CSV
+  r := public.tint_gate_revalida('oben', cliente, so_empty, 'criacao',
+    '[{"omie_codigo_produto":900001,"tint_cor_id":"K40","valor_unitario":0.7,"tint_price_source":"manual"}]');
+  b := r->'bloqueios'->0;
+  IF (r->>'ok')::boolean IS DISTINCT FROM false OR b->>'motivo' IS DISTINCT FROM 'preco_obsoleto'
+     OR (b->>'esperado_minimo')::float8 IS DISTINCT FROM 102.5 THEN
+    f := f || 'G40b'::text; END IF;
+
+  -- G40c 'calculado' 102,5 segue passando (a regra não toca a fonte honesta)
+  r := public.tint_gate_revalida('oben', cliente, so_empty, 'criacao',
+    '[{"omie_codigo_produto":900001,"tint_cor_id":"K40","tint_formula_id":"f0400000-0000-0000-0000-00000000005a","valor_unitario":102.5,"tint_price_source":"calculado"}]');
+  IF (r->>'ok')::boolean IS DISTINCT FROM true THEN
+    f := f || 'G40c'::text; END IF;
+
+  -- G41 EXATAMENTE 50% (51,2 × 102,4) ⇒ elegível: a comparação é ESTRITA
+  r := public.tint_gate_revalida('oben', cliente, so_empty, 'criacao',
+    '[{"omie_codigo_produto":900001,"tint_cor_id":"K41","tint_formula_id":"f0410000-0000-0000-0000-00000000005a","valor_unitario":51.2,"tint_price_source":"tabela"}]');
+  IF (r->>'ok')::boolean IS DISTINCT FROM true THEN
+    f := f || 'G41'::text; END IF;
+
+  -- G42 0,1 abaixo de 50% (51,1 × 102,4) ⇒ implausível
+  r := public.tint_gate_revalida('oben', cliente, so_empty, 'criacao',
+    '[{"omie_codigo_produto":900001,"tint_cor_id":"K42","tint_formula_id":"f0420000-0000-0000-0000-00000000005a","valor_unitario":51.1,"tint_price_source":"tabela"}]');
+  IF (r->>'ok')::boolean IS DISTINCT FROM false OR r->'bloqueios'->0->>'motivo' IS DISTINCT FROM 'tabela_implausivel' THEN
+    f := f || 'G42'::text; END IF;
+
+  -- G43 payload misto: só o item implausível bloqueia (K1 'tabela' 150 > calc segue legítimo)
+  r := public.tint_gate_revalida('oben', cliente, so_empty, 'criacao',
+    '[{"omie_codigo_produto":900001,"tint_cor_id":"K1","tint_formula_id":"f1000000-0000-0000-0000-00000000005a","valor_unitario":150,"tint_price_source":"tabela"},
+      {"omie_codigo_produto":900001,"tint_cor_id":"K40","tint_formula_id":"f0400000-0000-0000-0000-00000000005a","valor_unitario":0.7,"tint_price_source":"tabela"}]');
+  IF jsonb_array_length(COALESCE(r->'bloqueios','[]'::jsonb)) <> 1 OR r->'bloqueios'->0->>'cor_id' IS DISTINCT FROM 'K40' THEN
+    f := f || 'G43'::text; END IF;
+
+  IF cardinality(f) = 0 THEN RAISE NOTICE 'IMPL_OK';
+  ELSE RAISE NOTICE 'IMPL_FALHAS=%', array_to_string(f, ','); END IF;
+END $$;
+RESET ROLE;
+SQL
+}
+
+# confere_impl <rótulo> <saída> <conjunto esperado | OK>: casa o conjunto EXATO
+confere_impl() {
+  local esperado="IMPL_FALHAS=$3"; [ "$3" = "OK" ] && esperado="IMPL_OK"
+  local veio; veio="$(printf '%s\n' "$2" | grep -oE 'IMPL_(OK|FALHAS=[A-Za-z0-9,]*)' | head -1)"
+  if [ "$veio" = "$esperado" ]; then ok "$1 ($veio)"; else bad "$1 — esperado [$esperado], veio [${veio:-$(printf '%s' "$2" | tr '\n' ' ' | cut -c1-200)}]"; fi
+}
+
+sabota_impl() {  # $1 = expressão sed sobre a migration real; aplica só o gate sabotado
+  local tmp; tmp="$(mktemp "$RODADA/sab-impl.XXXXXX")"
+  sed "$1" "$MIG_IMPL" > "$tmp"
+  if cmp -s "$tmp" "$MIG_IMPL"; then rm -f "$tmp"; echo "SED_INOCUO"; return 1; fi
+  P -q -f "$tmp" >/dev/null; rm -f "$tmp"
+}
+
+echo ""
+echo "════════ G40–G43 — rótulo implausível (CONTROLE verde nesta invocação) ════════"
+confere_impl "G40–G43 controle: migration real" "$(run_implausivel)" "OK"
+
+echo ""
+echo "════════ F15 — sabotagem: regra desligada (o estado de antes) ════════"
+if sabota_impl 's/v_tab < 0\.5 \* v_calc/false/'; then
+  confere_impl "F15 regra desligada derruba EXATAMENTE G40a,G40b,G42,G43" "$(run_implausivel)" "G40a,G40b,G42,G43"
+else bad "F15 sed inócuo — a sabotagem não mudou nada"; fi
+P -q -f "$MIG_IMPL" >/dev/null || { echo "FALHA: não restaurou a migration do rótulo implausível"; exit 1; }
+
+echo ""
+echo "════════ F16 — sabotagem: corte NÃO estrito (<=) ════════"
+if sabota_impl 's/v_tab < 0\.5 \* v_calc/v_tab <= 0.5 * v_calc/'; then
+  confere_impl "F16 '<=' derruba EXATAMENTE G41 (o limite de 50%)" "$(run_implausivel)" "G41"
+else bad "F16 sed inócuo — a sabotagem não mudou nada"; fi
+P -q -f "$MIG_IMPL" >/dev/null || { echo "FALHA: não restaurou a migration do rótulo implausível"; exit 1; }
+
+echo ""
+echo "════════ F17 — sabotagem: bloqueia a 'tabela' mas NÃO anula v_tab (o piso fica no CSV) ════════"
+if sabota_impl 's/      v_tab := NULL;/      NULL;/'; then
+  confere_impl "F17 sem anular v_tab derruba EXATAMENTE G40b (o piso de 'manual')" "$(run_implausivel)" "G40b"
+else bad "F17 sed inócuo — a sabotagem não mudou nada"; fi
+P -q -f "$MIG_IMPL" >/dev/null || { echo "FALHA: não restaurou a migration do rótulo implausível"; exit 1; }
+
 echo ""
 echo "════════ R — restauração: migration real ⇒ baseline verde de novo ════════"
 OUT="$(run_central)"
@@ -979,6 +1106,7 @@ case "$OUT" in
   *CENTRAL_OK*) ok "R bloco central verde com a migration real re-aplicada" ;;
   *) bad "R restauração falhou: $(printf '%s' "$OUT" | tr '\n' ' ' | cut -c1-300)" ;;
 esac
+confere_impl "R2b G40–G43 verdes após todas as sabotagens" "$(run_implausivel)" "OK"
 OUT="$(gq "SELECT (public.tint_ultimo_preco_cliente('33333333-3333-3333-3333-333333333333','0b000000-0000-0000-0000-00000000ba5e','K1','a5000000-0000-0000-0000-000000000011'))->>'price';")"
 eq "R2 ultimo_preco restaurado (95 com exclude do SO-EDIT)" "$OUT" "95"
 

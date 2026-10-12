@@ -61,6 +61,25 @@ const arredonda = (v: number) => Math.ceil(v * 10) / 10;
 /** Tolerância de "batem" entre calc e CSV (arredondamento/centavos). */
 const TOLERANCIA = 0.1;
 
+/** Razão mínima tabela ÷ calculado para a fonte 'tabela' EXISTIR (2026-10-12).
+ *  Abaixo dela o CSV legado é o preço SÓ DOS CORANTES — o export Sayersystem da
+ *  geração '1' veio sem a base (medido em prod: 53.626 chaves vendáveis; ex.
+ *  360V-BS 405ML tabela R$ 0,70 × calculado R$ 102,20). Oferecer era uma venda a
+ *  centavos a 1 toque, e o piso de 'manual' caía junto.
+ *  ⚠️ ESPELHO de `tint_gate_revalida` (migration 20261012150000): mesma comparação,
+ *  ceil10 × ceil10, estrita (`<`) — exatamente 50% ainda é elegível. Mudar aqui
+ *  sem mudar lá faz o chip oferecer o que o submit barra (ou esconder o que passa). */
+export const RAZAO_MINIMA_TABELA = 0.5;
+
+/** CSV legado (bruto) que pode virar a fonte 'tabela', ou null quando é implausível
+ *  frente ao calculado. Sem calculado (carregando / motor sem preço) devolve o CSV:
+ *  quem decide aí é o motor — carregando segura a venda, precoFinal NULL bloqueia tudo. */
+export function csvTabelaElegivel(precoCsv: number | null | undefined, precoCalc: number | null | undefined): number | null {
+  if (precoCsv == null || !(precoCsv > 0)) return null;
+  if (precoCalc == null) return precoCsv;
+  return arredonda(precoCsv) < RAZAO_MINIMA_TABELA * arredonda(precoCalc) ? null : precoCsv;
+}
+
 const semPreco = (motivo: SemPrecoMotivo): TintPriceSelection => ({
   source: null,
   precoSemDesconto: null,
@@ -96,7 +115,8 @@ export function selectTintPrice(input: {
   //    preço honesto; cair no importado aqui venderia justamente o que a RPC poderia estar barrando.
   if (input.motorFalhou) return semPreco('indisponivel');
 
-  const csv = input.precoCsv != null && input.precoCsv > 0 ? arredonda(input.precoCsv) : null;
+  const csvElegivel = csvTabelaElegivel(input.precoCsv, pricing?.precoFinal);
+  const csv = csvElegivel != null ? arredonda(csvElegivel) : null;
   const calc = pricing?.precoFinal != null ? arredonda(pricing.precoFinal) : null;
 
   // 1. Motor honesto JÁ respondeu e SEM preço confiável (precoFinal null = base ausente/zero OU
@@ -166,7 +186,8 @@ export function selectAltPrice(
   if (sel.precoSemDesconto == null) return ALT_SEM_PRECO(custoCorantes);
 
   const precoCalc = pricing.precoFinal != null ? arredonda(pricing.precoFinal) : null;
-  const precoTabela = precoCsv != null && precoCsv > 0 ? arredonda(precoCsv) : null;
+  const csvElegivel = csvTabelaElegivel(precoCsv, pricing.precoFinal);
+  const precoTabela = csvElegivel != null ? arredonda(csvElegivel) : null;
   const porFonte: Record<AltPriceSource, number | null> = { calculado: precoCalc, tabela: precoTabela };
 
   const fonteDefault: AltPriceSource | null =

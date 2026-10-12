@@ -6,7 +6,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { ilikeOr, isSearchablePostgrestTerm } from '@/lib/postgrest';
 import { useTintPricing, useTintPrices } from '@/hooks/useTintPricing';
 import { track } from '@/lib/analytics';
-import { selectTintPrice, type TintPriceSource, type AltPriceSource } from '@/lib/tint/select-price';
+import { selectTintPrice, csvTabelaElegivel, type TintPriceSource, type AltPriceSource } from '@/lib/tint/select-price';
 import type { Product } from '@/hooks/useUnifiedOrder';
 import type { FormulaResult, AlternativePackaging } from './types';
 
@@ -385,7 +385,10 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
   // Fase 2b: o CSV considerado é o da CHAVE (preco_csv_legado) — desde a migration
   // 20260722100002 a view GARANTE que, na canônica SL, ele vem só de linhas não-SL
   // (a VERSÃO ANTERIOR da tinta); a vendedora escolhe entre novo × anterior.
-  const rawCsv = selectedFormula?.preco_csv_legado ?? null;
+  // CSV implausível frente ao calculado (só corantes, sem a base) NÃO vira fonte — nem no
+  // chip "Tabela" nem no "−x% da tabela": filtrado AQUI, na origem, com a regra espelho do
+  // gate (csvTabelaElegivel). Filtrar só no selectTintPrice deixava o override oferecer R$ 0,70.
+  const rawCsv = csvTabelaElegivel(selectedFormula?.preco_csv_legado ?? null, pricing?.precoFinal);
   const custoCorantes = pricing?.custoCorantes || 0;
 
   const [priceSourceOverride, setPriceSourceOverride] = useState<TintPriceSource | null>(null);

@@ -10,7 +10,7 @@
 // precisa ver e as alternativas do balcão omitem. Paridade provada por teste
 // contra selectAltPrice; divergir daqui = motor paralelo de volta.
 
-import { selectTintPrice, type TintPriceBreakdownLite } from './select-price';
+import { selectTintPrice, csvTabelaElegivel, type TintPriceBreakdownLite } from './select-price';
 
 export interface SimuladorPrecoView {
   /** carregando = batch ainda sem resposta (nunca mostrar CSV nesse meio-tempo). */
@@ -76,6 +76,9 @@ export function precoSimulador(input: {
     };
   }
 
+  // CSV implausível (só corantes, < 50% do calc) não aparece nem como referência —
+  // mesma regra do balcão e do gate (csvTabelaElegivel).
+  const csvElegivel = csvTabelaElegivel(precoCsv, pricing?.precoFinal);
   return {
     status: 'com-preco',
     preco: sel.precoSemDesconto,
@@ -83,7 +86,7 @@ export function precoSimulador(input: {
     recalculado: sel.recalculado,
     precoImportadoAnterior: sel.recalculado ? sel.precoImportadoAnterior : null,
     precoCalc: pricing?.precoFinal != null ? arredonda(pricing.precoFinal) : null,
-    precoTabela: precoCsv != null && precoCsv > 0 ? arredonda(precoCsv) : null,
+    precoTabela: csvElegivel != null ? arredonda(csvElegivel) : null,
     motivo: null,
   };
 }
