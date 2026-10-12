@@ -13,8 +13,17 @@ export const MODULOS: ModuloApp[] = [
     id: "loja-afiacao",
     nome: "Loja / Afiação (cliente)",
     kind: "negocio",
-    rotaPrefixos: ["/", "/orders", "/new-order", "/tools", "/loyalty", "/gamification", "/training", "/savings"],
+    rotaPrefixos: [
+      "/", "/orders", "/new-order", "/tools", "/loyalty", "/gamification", "/training", "/savings",
+      "/central", "/recurring-schedules", "/admin/loyalty", "/admin/gamification", "/admin/training",
+    ],
     gates: [],
+    status: "congelado",
+    congelamento: {
+      desde: "2026-10-12",
+      ate: "2027-01-10",
+      motivo: "0 linha em orders/loyalty_points/gamification_scores/recurring_schedules/user_tools (psql-ro 2026-10-12); a home (/) fica",
+    },
     codigo: [
       "src/lib/afiacao/**",
       "src/lib/tools/**",
@@ -72,6 +81,12 @@ export const MODULOS: ModuloApp[] = [
     kind: "negocio",
     rotaPrefixos: ["/admin/prime"],
     gates: ["RequireStaff"],
+    status: "congelado",
+    congelamento: {
+      desde: "2026-10-12",
+      ate: "2027-01-10",
+      motivo: "0 linha em prime_assinaturas/prime_planos/prime_beneficio_uso (psql-ro 2026-10-12)",
+    },
     codigo: [
       "src/lib/prime/competencia.ts",
       "src/lib/prime/erros.ts",
@@ -91,6 +106,12 @@ export const MODULOS: ModuloApp[] = [
     kind: "negocio",
     rotaPrefixos: ["/tarefas"],
     gates: [],
+    status: "congelado",
+    congelamento: {
+      desde: "2026-10-12",
+      ate: "2027-01-10",
+      motivo: "0 linha em tarefas/tarefa_templates/tarefa_eventos — os 3 crons tarefas-* rodam sobre o vazio (psql-ro 2026-10-12)",
+    },
     codigo: [
       "src/lib/tarefas/**",
       "src/components/tarefas/**",
@@ -108,6 +129,22 @@ export const MODULOS: ModuloApp[] = [
     kind: "negocio",
     rotaPrefixos: ["/financeiro"],
     gates: ["RequireFinanceiroAccess"],
+    status: "ativo",
+    rotasCongeladas: {
+      prefixos: [
+        "/financeiro/endividamento",
+        "/financeiro/orcamento",
+        "/financeiro/antecipacao",
+        "/financeiro/fechamento",
+        "/financeiro/conciliacao",
+        "/financeiro/intercompany",
+        "/financeiro/regime-tributario",
+        "/financeiro/funding",
+      ],
+      desde: "2026-10-12",
+      ate: "2027-01-10",
+      motivo: "telas de INPUT: 0 linha em fin_dividas/fin_orcamento/fin_forecast/fin_antecipacoes/fin_fechamentos/fin_conciliacao/fin_ic_matches; fin_funding_inputs e fin_regime_inputs parados desde 2026-05 (psql-ro 2026-10-12). A leitura segue ativa",
+    },
     codigo: [
       "src/lib/financeiro/**",
       "src/components/financeiro/**",
@@ -162,6 +199,7 @@ export const MODULOS: ModuloApp[] = [
     kind: "negocio",
     rotaPrefixos: ["/sales", "/unified-order", "/pedidos-programados"],
     gates: ["RequireStaff"],
+    status: "ativo",
     codigo: [
       "src/lib/unified-order/**",
       "src/lib/venda-assistida/**",
@@ -238,6 +276,7 @@ export const MODULOS: ModuloApp[] = [
     kind: "negocio",
     rotaPrefixos: ["/farmer", "/meu-dia", "/coaching", "/intelligence", "/executive/dashboard", "/radar"],
     gates: ["RequireStaff"],
+    status: "ativo",
     codigo: [
       "src/lib/scoring/**",
       "src/lib/tactical/**",
@@ -369,6 +408,7 @@ export const MODULOS: ModuloApp[] = [
     kind: "negocio",
     rotaPrefixos: ["/caca"],
     gates: ["RequireCaca"],
+    status: "ativo",
     codigo: ["src/lib/caca/**", "src/components/caca/**", "src/pages/Caca.tsx", "src/hooks/useCaca.ts"],
     testes: [],
     risco: { moneyPath: false, offlineFirst: false, authSensitive: true },
@@ -379,6 +419,7 @@ export const MODULOS: ModuloApp[] = [
     kind: "negocio",
     rotaPrefixos: ["/admin"],
     gates: ["RequireStaff"],
+    status: "ativo",
     codigo: [
       "src/lib/clientes-nao-vinculados/**",
       "src/lib/customer-contact/**",
@@ -422,6 +463,7 @@ export const MODULOS: ModuloApp[] = [
     kind: "negocio",
     rotaPrefixos: ["/tintometrico"],
     gates: ["RequireStaff"],
+    status: "ativo",
     codigo: [
       "src/lib/tint/**",
       "src/components/tint/**",
@@ -447,6 +489,7 @@ export const MODULOS: ModuloApp[] = [
     kind: "negocio",
     rotaPrefixos: [],
     gates: [],
+    status: "ativo",
     codigo: ["src/lib/projeto-verificado/*.ts"],
     testes: ["src/lib/projeto-verificado/__tests__/**"],
     risco: { moneyPath: true, offlineFirst: false, authSensitive: false },
@@ -457,6 +500,15 @@ export const MODULOS: ModuloApp[] = [
     kind: "negocio",
     rotaPrefixos: ["/admin/estoque", "/recebimento"],
     gates: ["RequireStaff"],
+    status: "ativo",
+    rotasCongeladas: {
+      prefixos: [
+        "/admin/estoque/picking",
+      ],
+      desde: "2026-10-12",
+      ate: "2027-01-10",
+      motivo: "picking: 0 linha em picking_tasks/picking_task_items/picking_events (psql-ro 2026-10-12); o recebimento segue ativo",
+    },
     codigo: [
       "src/lib/picking/**",
       "src/lib/recebimento/**",
@@ -505,6 +557,7 @@ export const MODULOS: ModuloApp[] = [
     kind: "negocio",
     rotaPrefixos: ["/admin/reposicao", "/admin/sku-mapeamento"],
     gates: ["RequireStaff"],
+    status: "ativo",
     codigo: [
       "src/lib/reposicao/**",
       "src/lib/reposicao.ts",
@@ -540,6 +593,12 @@ export const MODULOS: ModuloApp[] = [
     kind: "negocio",
     rotaPrefixos: ["/producao"],
     gates: ["RequireStaff"],
+    status: "congelado",
+    congelamento: {
+      desde: "2026-10-12",
+      ate: "2027-01-10",
+      motivo: "0 linha em production_orders (psql-ro 2026-10-12)",
+    },
     codigo: [
       "src/lib/pcp/**",
       "src/services/pcp-apontamento.ts",
@@ -555,6 +614,7 @@ export const MODULOS: ModuloApp[] = [
     kind: "negocio",
     rotaPrefixos: ["/governance", "/gestao"],
     gates: ["RequireStaff"],
+    status: "ativo",
     codigo: [
       "src/lib/governanca/**",
       "src/lib/dataHealth/**",
@@ -598,6 +658,12 @@ export const MODULOS: ModuloApp[] = [
     kind: "negocio",
     rotaPrefixos: ["/admin/knowledge-base", "/admin/standard-processes"],
     gates: ["RequireStaff"],
+    status: "congelado",
+    congelamento: {
+      desde: "2026-10-12",
+      ate: "2027-01-10",
+      motivo: "standard_processes vazia; a única escrita em kb_documents nos 90 dias é o backfill único de 2026-08-22 (#1139), 119 linhas no mesmo instante",
+    },
     codigo: [
       "src/lib/knowledge-base/**",
       "src/lib/rag/**",
@@ -637,8 +703,14 @@ export const MODULOS: ModuloApp[] = [
     id: "telefonia-whatsapp-rota",
     nome: "Telefonia / WhatsApp / Rota",
     kind: "negocio",
-    rotaPrefixos: ["/telefonia", "/whatsapp", "/rota"],
+    rotaPrefixos: ["/telefonia", "/whatsapp", "/rota", "/admin/route-planner", "/admin/sip-credentials"],
     gates: ["RequireStaff"],
+    status: "congelado",
+    congelamento: {
+      desde: "2026-10-12",
+      ate: "2027-01-10",
+      motivo: "0 linha em whatsapp_messages/whatsapp_conversations/farmer_calls/route_visits; call_log parado desde 2026-06-09 (psql-ro 2026-10-12)",
+    },
     codigo: [
       "src/lib/call/**",
       "src/lib/call-log/**",
@@ -712,6 +784,7 @@ export const MODULOS: ModuloApp[] = [
     kind: "plataforma",
     rotaPrefixos: ["/auth", "/settings", "/docs", "/design-system", "/ai-ops", "/admin/ajuda"],
     gates: [],
+    status: "ativo",
     codigo: [
       "src/App.tsx",
       "src/App.css",
@@ -738,6 +811,7 @@ export const MODULOS: ModuloApp[] = [
       "src/components/EmptyState.tsx",
       "src/components/ErrorBoundary.tsx",
       "src/components/ForgotPasswordDialog.tsx",
+      "src/components/GuardModuloCongelado.tsx",
       "src/components/NotificationPrompt.tsx",
       "src/components/OnboardingWizard.tsx",
       "src/components/PhotoUpload.tsx",

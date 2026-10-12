@@ -11,6 +11,7 @@ const mod = (id: string, kind: "negocio" | "plataforma", codigo: string[]): Modu
   codigo,
   testes: [],
   risco: { moneyPath: false, offlineFirst: false, authSensitive: false },
+  status: "ativo",
 });
 
 const MODS = [

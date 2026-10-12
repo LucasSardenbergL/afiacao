@@ -72,6 +72,8 @@ import { useMissedCount } from '@/hooks/useCallLog';
 import { useMinhasTarefas } from '@/hooks/useTarefas';
 import { useWhatsappSlaBadge } from '@/queries/useWhatsappSla';
 import { Star } from 'lucide-react';
+import { MODULOS } from '@/lib/modulos/manifesto';
+import { rotaCongelada } from '@/lib/modulos/congelamento';
 
 /* ─── Navigation config ─── */
 interface NavItem {
@@ -220,6 +222,16 @@ const docNavSection: { title: string; items: NavItem[] } = {
     { icon: BookOpen, label: 'UX Rules', path: '/ux-rules' },
   ],
 };
+
+/** M-41: item de módulo congelado some da navegação (a rota já redireciona no GuardModuloCongelado). */
+const navSections = [...unifiedNavSections, docNavSection]
+  .map((s) => ({ ...s, items: s.items.filter((it) => !rotaCongelada(it.path, MODULOS)) }))
+  .filter((s) => s.items.length > 0);
+
+// Badges de módulo congelado não fazem poll: o item sumiu da navegação e a tabela não tem uso.
+const TELEFONIA_CONGELADA = rotaCongelada('/telefonia', MODULOS) !== null;
+const WHATSAPP_CONGELADO = rotaCongelada('/whatsapp', MODULOS) !== null;
+const TAREFAS_CONGELADAS = rotaCongelada('/tarefas', MODULOS) !== null;
 
 /* ─── Sidebar — seções secundárias colapsadas por padrão ─── */
 const SECONDARY_SECTIONS = ['Performance', 'Inteligência', 'Automação', 'Documentação'];
@@ -509,12 +521,12 @@ const AppSidebar = React.memo(function AppSidebar({ collapsed, onToggle }: { col
   // Badge de perdidas não-lidas na Central de Telefonia (refetch a cada 30s).
   // Na lente "Ver como", conta as do ALVO (effectiveUserId) — coerente com o
   // histórico da própria tela; fora da lente é o próprio usuário.
-  const { data: missedCallsCount } = useMissedCount(effectiveUserId ?? undefined);
+  const { data: missedCallsCount } = useMissedCount(TELEFONIA_CONGELADA ? undefined : (effectiveUserId ?? undefined));
 
   // Badge de tarefas abertas da vendedora (reusa useMinhasTarefas → mesmo
   // cache do card de "Meu dia": 1 request, 2 consumidores; refetch 60s +
   // invalidação nas mutations do módulo mantêm badge e card sempre iguais).
-  const { data: minhasTarefas } = useMinhasTarefas();
+  const { data: minhasTarefas } = useMinhasTarefas({ enabled: !TAREFAS_CONGELADAS });
   const tarefasCount = minhasTarefas?.length ?? 0;
 
   // Badge vermelho de WhatsApp: clientes MEUS com SLA vencido (vermelho).
@@ -523,7 +535,7 @@ const AppSidebar = React.memo(function AppSidebar({ collapsed, onToggle }: { col
   // SEM o !isSalesOnly do enableStaffPolls: a vendedora sales-only VÊ o item
   // /whatsapp (allowlist) e é justamente o público-alvo do SLA (#587) — o
   // poll dela é 1 view/60s que ela já paga ao abrir o inbox.
-  const { data: waSlaMeusVermelhos } = useWhatsappSlaBadge(user?.id, isStaff);
+  const { data: waSlaMeusVermelhos } = useWhatsappSlaBadge(user?.id, isStaff && !WHATSAPP_CONGELADO);
 
   // Badge de melhorias abertas: a fila é master-only (item de nav masterOnly),
   // então o poll só roda pro master REAL — um employee polando contaria só os
@@ -531,7 +543,7 @@ const AppSidebar = React.memo(function AppSidebar({ collapsed, onToggle }: { col
   const { data: melhoriasAbertas } = useMelhoriasBadge(enableStaffPolls && isMaster);
 
   const sectionsWithBadges = React.useMemo(
-    () => [...unifiedNavSections, docNavSection].map((s) => ({
+    () => navSections.map((s) => ({
       ...s,
       items: s.items.map((it) => {
         if (isImpersonating) return it; // na lente, sem badges (refletiriam dado do master)
@@ -810,7 +822,7 @@ const MobileNav = React.memo(function MobileNav({ open, onClose }: { open: boole
               </span>
             </div>
           ) : (
-          [...unifiedNavSections, docNavSection].map((section) => {
+          navSections.map((section) => {
             // Espelha o filtro do desktop: sales-only por ITEM (allowlist), não por seção.
             const visibleItems = section.items.filter(item =>
               (!isSalesOnly || itemVisivelParaSalesOnly(section.title, item.path)) &&
