@@ -23,7 +23,9 @@
 // EXCEÇÃO money-path: resposta truncada (stop_reason=max_tokens) NÃO grava —
 // lista parcial de descontos gravada como completa é pior que não gravar.
 
-import Anthropic from "npm:@anthropic-ai/sdk@^0.93.0";
+import type Anthropic from "npm:@anthropic-ai/sdk@^0.93.0";
+import { criarClienteAnthropic } from "../_shared/anthropic-cliente.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 // ⚠️ usar npm: (igual a kb-extract-specs/tarefa-extrair-voz/etc.). O esm.sh/@supabase/supabase-js
 // falhava em resolver no boot do edge runtime → RUNTIME_ERROR sem linha/stack.
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
@@ -425,11 +427,6 @@ Deno.serve(async (req: Request) => {
     );
   }
 
-  const supabase = createClient(
-    Deno.env.get("SUPABASE_URL")!,
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-  );
-
   let body: Record<string, unknown>;
   try {
     body = await req.json();
@@ -440,27 +437,27 @@ Deno.serve(async (req: Request) => {
     });
   }
 
-  // CANÁRIA DE VERSÃO (docs/agent/deploy.md): no Lovable Cloud não há PAT, então o
-  // deploy de edge não tem prova de VERSÃO — só "foi servida". Este probe é a prova:
-  // `{ probe: true }` responde qual motor está no ar sem chamar o modelo (custo zero).
-  //   curl -s -X POST <url> -H "Authorization: Bearer <jwt staff>" \
-  //        -H 'content-type: application/json' -d '{"probe":true}'
-  //   → {"ok":true,"motor":"anthropic",...}  = versão nova no ar
-  //   → 400 "arquivo_base64 obrigatório"     = ainda a versão velha (gateway Lovable)
-  if (body.probe === true) {
-    return new Response(
-      JSON.stringify({
-        ok: true,
-        motor: "anthropic",
-        modelo: MODELO,
-        tools: [TOOL_PROMOCAO.name, TOOL_AUMENTO.name],
-      }),
-      {
-        status: 200,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      },
-    );
+  // Sonda de versão (docs/agent/deploy.md): `{ probe: true }` responde a versão no ar sem tocar
+  // storage nem modelo. `classificarSonda` decide fail-closed — a string "true" do SQL Editor é
+  // ambígua e recebe 400, nunca cai no fluxo real. Ver versao.ts / _shared/sonda-versao.ts.
+  const decisaoSonda = classificarSonda(body);
+  if (decisaoSonda.tipo === "sonda") {
+    return new Response(JSON.stringify(respostaSonda(VERSAO)), {
+      status: 200,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   }
+  if (decisaoSonda.tipo === "ambiguo") {
+    return new Response(JSON.stringify({ versao: VERSAO, error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }), {
+      status: 400,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
+  const supabase = createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+  );
 
   const empresa = (body.empresa as string) ?? "OBEN";
   const fornecedorNomeFallback =
@@ -515,7 +512,7 @@ Deno.serve(async (req: Request) => {
   }
   const arquivoUrl = uploadErr ? null : fileName;
 
-  const client = new Anthropic({ apiKey });
+  const client = criarClienteAnthropic(apiKey);
 
   // ===== FLUXO AUMENTO =====
   if (tipoDocumento === "aumento") {
