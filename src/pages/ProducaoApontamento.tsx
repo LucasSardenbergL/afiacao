@@ -18,12 +18,11 @@ import { Play, CheckCircle2, Factory, PackageMinus, WifiOff, Clock, AlertTriangl
 import { toast } from 'sonner';
 import { decodeHtmlEntities } from '@/lib/utils';
 import { useOfflineMutation } from '@/hooks/useOfflineMutation';
-import { registerOfflineHandler } from '@/hooks/useOfflineFlush';
 import { subscribeToOfflineQueue } from '@/lib/offline-queue';
 import { getDeviceId, nextDeviceSeq } from '@/lib/pcp/device';
 import {
-  iniciarOP, finalizarOP, registrarConsumo, registrarRefugo,
-  type ApontarVars, type ConsumoVars, type RefugoVars,
+  despacharApontamento,
+  type AcaoApontamento, type ApontarVars, type ConsumoVars,
 } from '@/services/pcp-apontamento';
 
 // production_orders + estado_projetado (coluna nova do M1, ainda fora dos types gerados) → cast.
@@ -36,23 +35,6 @@ interface OP {
   unidade: string | null;
   status: string | null;
   estado_projetado: string | null;
-}
-
-// Ação discriminada que trafega pela fila offline (um único kind 'pcp.apontar').
-type AcaoApontamento =
-  | ({ acao: 'iniciar' } & ApontarVars)
-  | ({ acao: 'finalizar' } & ApontarVars)
-  | ({ acao: 'consumo' } & ConsumoVars)
-  | ({ acao: 'refugo' } & RefugoVars);
-
-// Despacha para a RPC certa. Compartilhada entre a mutação online e o handler de drenagem offline.
-async function despachar(a: AcaoApontamento): Promise<string> {
-  switch (a.acao) {
-    case 'iniciar': return iniciarOP(a);
-    case 'finalizar': return finalizarOP(a);
-    case 'consumo': return registrarConsumo(a);
-    case 'refugo': return registrarRefugo(a);
-  }
 }
 
 const QK = ['pcp-apontamento-ops'] as const;
@@ -89,18 +71,14 @@ export default function ProducaoApontamento() {
     refetchInterval: 30000,
   });
 
-  // Drena a fila offline enquanto a tela está aberta; revalida a lista ao drenar.
-  useEffect(() => registerOfflineHandler<AcaoApontamento>(
-    'pcp.apontar',
-    async (v) => { await despachar(v); return true; },
-    [QK],
-  ), []);
+  // O handler de drenagem offline ('pcp.apontar') é registrado no BOOT (offline-handlers.ts):
+  // registrá-lo aqui o desregistraria no unmount, e o item ficava sem handler fora desta tela.
 
   useEffect(() => subscribeToOfflineQueue(setFila), []);
 
   const apontar = useOfflineMutation<string, AcaoApontamento>({
     kind: 'pcp.apontar',
-    mutationFn: despachar,
+    mutationFn: despacharApontamento,
   });
 
   const executar = async (op: OP, montar: (base: ApontarVars) => AcaoApontamento) => {

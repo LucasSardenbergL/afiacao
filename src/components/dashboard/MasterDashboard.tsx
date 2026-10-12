@@ -6,7 +6,7 @@ import { RankingVendedoresCard } from './RankingVendedoresCard';
 import { CrescimentoComparavelCard } from './CrescimentoComparavelCard';
 import { GestorExcecoes } from './GestorExcecoes';
 import { ClosersMtdHero } from './ClosersMtdHero';
-import { DadosVendaParciaisBanner } from './DadosVendaParciaisBanner';
+import { PedidosSemNotaBanner } from './PedidosSemNotaBanner';
 import { ViewAsPicker } from '@/components/impersonation/ViewAsPicker';
 import { MinhasTarefasCard } from '@/components/tarefas/MinhasTarefasCard';
 import { AtivarNotificacoesCard } from '@/components/push/AtivarNotificacoesCard';
@@ -32,8 +32,8 @@ export function MasterDashboard() {
         </p>
       </div>
 
-      {/* Receita/positivação vêm de sales_orders, hoje parcial (backfill pendente) → aviso honesto */}
-      <DadosVendaParciaisBanner />
+      {/* ~27% da venda do último ano é pedido sem nota no Omie e conta como venda → aviso MEDIDO */}
+      <PedidosSemNotaBanner />
 
       {/* "Estamos ganhando?" — placar de time (receita MTD + trend, ativos) */}
       <TeamKpiTiles />

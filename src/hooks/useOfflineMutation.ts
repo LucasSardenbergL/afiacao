@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useMutation, type UseMutationOptions } from '@tanstack/react-query';
+import { useAuth } from '@/contexts/AuthContext';
 import { enqueue } from '@/lib/offline-queue';
 
 /**
@@ -48,7 +49,7 @@ export interface UseOfflineMutationReturn<TData, TVars> {
 
 /**
  * Envolve useMutation com fallback offline: se navigator.onLine === false
- * OU mutationFn falha com erro de rede, chama `enqueue(kind, variables)`.
+ * OU mutationFn falha com erro de rede, chama `enqueue(kind, variables, user.id)`.
  * Retorna `null` quando enfileira (caller decide UX).
  *
  * Padrão de uso:
@@ -66,9 +67,24 @@ export function useOfflineMutation<TData, TVars>({
   onError,
 }: UseOfflineMutationOptions<TData, TVars>): UseOfflineMutationReturn<TData, TVars> {
   const [queued, setQueued] = useState(false);
+  // Dono do item da fila = a identidade REAL (`useAuth().user`). Nunca o display da lente
+  // "Ver como": quem envia no flush é a sessão, e só a sessão do dono envia o item.
+  const { user } = useAuth();
+  const userId = user?.id ?? null;
+
+  // Sem usuário não há dono — `enqueue` lançaria; aqui devolvemos o erro ORIGINAL (ou um de
+  // rede) em vez de dizer "salvo offline" sobre algo que ninguém poderá enviar.
+  const enfileirar = async (vars: TVars, erroOriginal: unknown): Promise<null> => {
+    if (!userId) throw erroOriginal;
+    await enqueue(kind, vars, userId);
+    setQueued(true);
+    return null;
+  };
 
   const mutation = useMutation<TData, Error, TVars>({
-    mutationFn,
+    // Só `vars`: os services aceitam um 2º arg (`cliente`, o do dono no flush offline) — se o
+    // react-query passar o contexto da mutação como 2º arg, ele não pode cair ali.
+    mutationFn: (vars) => mutationFn(vars),
     onSuccess,
     onError,
   });
@@ -78,9 +94,7 @@ export function useOfflineMutation<TData, TVars>({
     // `=== false` pelo mesmo motivo do guard de `isNetworkError`: com `onLine` ausente,
     // `!undefined` faria o hook enfileirar SEM SEQUER TENTAR a mutação.
     if (typeof navigator !== 'undefined' && navigator.onLine === false) {
-      await enqueue(kind, vars);
-      setQueued(true);
-      return null;
+      return enfileirar(vars, new Error('Sem conexão e sem sessão — a ação não foi salva offline.'));
     }
 
     // 2. Online → tenta. Cai pra fila se erro de rede.
@@ -88,11 +102,7 @@ export function useOfflineMutation<TData, TVars>({
       setQueued(false);
       return await mutation.mutateAsync(vars);
     } catch (err) {
-      if (isNetworkError(err)) {
-        await enqueue(kind, vars);
-        setQueued(true);
-        return null;
-      }
+      if (isNetworkError(err)) return enfileirar(vars, err);
       throw err;
     }
   };

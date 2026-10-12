@@ -57,8 +57,9 @@ export const REGISTRO: readonly EntradaRegistro[] = [
   // ── sincronização ───────────────────────────────────────────────────────────────────────────
   { arquivo: 'supabase/functions/omie-vendas-sync/index.ts', forma: 'select·in(hash_payload)', categoria: 'sincronizacao', motivo: 'dedup do importador por hash do payload' },
   { arquivo: 'supabase/functions/omie-vendas-sync/index.ts', forma: 'select·eq(account)·eq(omie_pedido_id)', categoria: 'sincronizacao', motivo: 'reconcilia pela chave do Omie' },
-  { arquivo: 'supabase/functions/omie-vendas-sync/index.ts', forma: 'select·eq(id)·maybeSingle', categoria: 'sincronizacao', motivo: 'UM pedido por id (criar/alterar no Omie)' },
-  { arquivo: 'supabase/functions/omie-vendas-sync/index.ts', forma: 'select·eq(id)·single', n: 2, categoria: 'sincronizacao', motivo: 'UM pedido por id (criar/alterar no Omie)' },
+  { arquivo: 'supabase/functions/omie-vendas-sync/index.ts', forma: 'select·eq(id)·maybeSingle', n: 2, categoria: 'sincronizacao', motivo: 'UM pedido por id (criar/excluir no Omie)' },
+  { arquivo: 'supabase/functions/omie-vendas-sync/index.ts', forma: 'select·eq(id)·single', categoria: 'sincronizacao', motivo: 'UM pedido por id (alterar no Omie)' },
+  { arquivo: 'supabase/functions/omie-vendas-sync/index.ts', forma: 'select·eq(account)·eq(hash_payload)·maybeSingle', categoria: 'lookup', motivo: 'a linha canônica de UM PV por hash exato (excluir só depois do cancelamento feito no Omie)' },
   { arquivo: 'supabase/functions/omie-desconto-backfill/index.ts', forma: 'select·eq(account)·in(hash_payload)', categoria: 'sincronizacao', motivo: 'backfill de desconto casa o pedido pelo hash' },
   { arquivo: 'supabase/functions/omie-desconto-backfill/index.ts', forma: 'select·is(desconto_valor)·eq(sales_orders.account)·gte(sales_orders.order_date_kpi)', categoria: 'sincronizacao', motivo: 'alvo do backfill de desconto (denominador da cobertura): apura TODO item da janela, cancelado inclusive — o dado é do item, não da venda' },
   // ── propósito ───────────────────────────────────────────────────────────────────────────────
@@ -70,6 +71,7 @@ export const REGISTRO: readonly EntradaRegistro[] = [
   { arquivo: 'src/components/adminCustomers/useAdminCustomers.ts', forma: 'select·eq(customer_user_id)·is(deleted_at)·order(created_at)·limit', categoria: 'proposito', motivo: 'feed de pedidos do cliente no admin, com badge de status' },
   { arquivo: 'src/pages/SalesQuotes.tsx', forma: 'select·eq(status)·is(deleted_at)·order(created_at)', categoria: 'proposito', motivo: 'a lista de ORÇAMENTOS (`eq(status,orcamento)`): o complemento do universo, de propósito' },
   { arquivo: 'src/components/customer360/hooks.ts', forma: 'select·eq(customer_user_id)·is(deleted_at)·order(created_at)·limit', categoria: 'proposito', motivo: '"Pedidos recentes" do Customer 360: feed com badge de status (o faturamento sai de useCustomerFaturamento12m, canônico)' },
+  { arquivo: 'src/lib/dashboard/fetch-pedidos-sem-nota.ts', forma: 'select·not(status)·is(deleted_at)·in(status)·gte(order_date_kpi)·lt(order_date_kpi)·eq(account)·gt(id)·order(id)·limit', categoria: 'proposito', motivo: 'aviso de pedidos SEM NOTA no Omie: o universo de venda canônico estreitado a importado/separacao/enviado — a pergunta é "quanto da venda ainda não virou nota?" (PedidosSemNotaBanner, 2026-10-12)' },
   // ── dívida (2026-10-01) — cada PR de domínio quita as suas ──────────────────────────────────
 ];
 

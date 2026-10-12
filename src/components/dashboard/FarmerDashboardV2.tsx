@@ -15,7 +15,7 @@ import { useMyPositivacao } from '@/hooks/useMyPositivacao';
 import { useSinalPositivacao } from '@/hooks/useSinalPositivacao';
 import { estadoDeLeitura, naoConsegui } from '@/lib/leitura/estado-de-leitura';
 import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
-import { DadosVendaParciaisBanner } from './DadosVendaParciaisBanner';
+import { PedidosSemNotaBanner } from './PedidosSemNotaBanner';
 import { AtivarNotificacoesCard } from '@/components/push/AtivarNotificacoesCard';
 import { ChamadasPendentesNudge } from '@/components/farmer/ChamadasPendentesNudge';
 
@@ -55,8 +55,8 @@ export function FarmerDashboardV2() {
       {/* Opt-in de Web Push — some quando ativo/negado/sem suporte/dispensado */}
       <AtivarNotificacoesCard />
 
-      {/* Receita/positivação vêm de sales_orders, hoje parcial (backfill pendente) → aviso honesto */}
-      <DadosVendaParciaisBanner />
+      {/* ~27% da venda do último ano é pedido sem nota no Omie e conta como venda → aviso MEDIDO */}
+      <PedidosSemNotaBanner />
 
       {/* Placar do mês (KPIs da carteira) — o norte da farmer.
           O aviso vem ANTES e FORA do `&&`: sem ele o placar sumia calado no erro/offline, e numa

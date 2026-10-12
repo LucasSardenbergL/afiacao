@@ -4,13 +4,15 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
+import { useSaidaComFilaPendente } from '@/components/shell/SaidaComFilaPendente';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
 }
 
 export const ProtectedRoute = ({ children }: ProtectedRouteProps) => {
-  const { user, loading, signOut, isApproved, refetchRole } = useAuth();
+  const { user, loading, isApproved, refetchRole } = useAuth();
+  const { pedirSaida, dialogoSaida } = useSaidaComFilaPendente();
   const location = useLocation();
 
   if (loading) {
@@ -39,12 +41,13 @@ export const ProtectedRoute = ({ children }: ProtectedRouteProps) => {
                 <RefreshCw className="w-4 h-4" />
                 Verificar novamente
               </Button>
-              <Button variant="outline" onClick={() => signOut()} className="w-full">
+              <Button variant="outline" onClick={pedirSaida} className="w-full">
                 Sair
               </Button>
             </div>
           </CardContent>
         </Card>
+        {dialogoSaida}
       </div>
     );
   }

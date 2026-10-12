@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { CheckCircle, Building2, Scissors, Wifi } from 'lucide-react';
+import { CheckCircle, Building2, Scissors, Wifi, Palette } from 'lucide-react';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { Badge } from '@/components/ui/badge';
 import { track } from '@/lib/analytics';
@@ -9,10 +9,11 @@ import { RecommendationsPanel } from '@/components/RecommendationsPanel';
 import { AddToolDialog } from '@/components/AddToolDialog';
 import { UnifiedAIAssistant } from '@/components/UnifiedAIAssistant';
 import { TintColorSelectDialog } from '@/components/TintColorSelectDialog';
+import { CorPrimeiroDialog } from '@/components/tintColorSelect/CorPrimeiroDialog';
 import { OrderSuccessDialog } from '@/components/OrderSuccessDialog';
 import { AtpBackorderDialog } from '@/components/unified-order/AtpBackorderDialog';
 import { cn } from '@/lib/utils';
-import { useUnifiedOrder } from '@/hooks/useUnifiedOrder';
+import { useUnifiedOrder, type Product } from '@/hooks/useUnifiedOrder';
 import { useOrderDeepLink } from '@/hooks/useOrderDeepLink';
 import { useOrderDraft } from '@/hooks/useOrderDraft';
 import { useAuth } from '@/contexts/AuthContext';
@@ -26,7 +27,9 @@ import { TierClienteBadge } from '@/components/unified-order/TierClienteBadge';
 import { ExcecaoCreditoDialog } from '@/components/unified-order/ExcecaoCreditoDialog';
 import type { BloqueioCreditoPedido } from '@/services/orderSubmission';
 import { CoresDoClienteCard } from '@/components/unified-order/CoresDoClienteCard';
+import { chaveOcorrenciaCor } from '@/lib/unified-order/chave-ocorrencia-cor';
 import { useCoresDoCliente } from '@/hooks/unifiedOrder/useCoresDoCliente';
+import { useTintCoresDoClienteUmToque, type AlvoUmToque } from '@/hooks/useTintCoresDoClienteUmToque';
 import type { CorDoCliente, OcorrenciaCor } from '@/lib/tint/cores-do-cliente';
 import { termoBuscaCor } from '@/lib/tint/cores-do-cliente';
 import { montarPlanoReplicacao, type ItemTinta } from '@/lib/pedido/replicar-pedido';
@@ -99,13 +102,60 @@ const UnifiedOrder = () => {
   const [tintInitialSearch, setTintInitialSearch] = useState<string | null>(null);
   // Trava de crédito (Fase 2): bloqueio selecionado no painel de resultado → dialog de exceção.
   const [excecaoBloqueio, setExcecaoBloqueio] = useState<BloqueioCreditoPedido | null>(null);
-  const handleRepetirCor = (cor: CorDoCliente, oc: OcorrenciaCor) => {
+  // Produto-base de uma ocorrência do histórico, se ainda for base tintométrica no catálogo.
+  const baseDaOcorrencia = (oc: OcorrenciaCor) => {
     const pool = oc.account === 'colacor' ? h.colacorProducts : h.obenProducts;
     const product =
       oc.omieCodigoProduto != null
         ? pool.find((p) => p.omie_codigo_produto === oc.omieCodigoProduto)
         : undefined;
-    if (product?.is_tintometric && product.tint_type === 'base') {
+    return product?.is_tintometric && product.tint_type === 'base' ? product : undefined;
+  };
+  // Fase 2A — "Cores do cliente" em 1 toque: só as ocorrências VISÍVEIS (as mesmas
+  // 4 por cor que o card mostra) e só da Oben (o tintométrico só existe lá).
+  const alvosUmToque = useMemo<AlvoUmToque<Product>[]>(() => {
+    const out: AlvoUmToque<Product>[] = [];
+    for (const cor of coresDoCliente.coresFiltradas.slice(0, 20)) {
+      cor.ocorrencias.slice(0, 4).forEach((oc, i) => {
+        const product = oc.account === 'oben' ? baseDaOcorrencia(oc) : undefined;
+        if (!product) return;
+        // Identidade exata quando o item nasceu no app; do rótulo livre, o código extraído
+        // só vale com nome compatível (Codex P1 rodada 2).
+        out.push(
+          oc.corId
+            ? { key: chaveOcorrenciaCor(cor.nome, i), product, codigo: oc.corId, rotulo: null }
+            : { key: chaveOcorrenciaCor(cor.nome, i), product, codigo: termoBuscaCor(cor.nome), rotulo: cor.nome },
+        );
+      });
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- baseDaOcorrencia só lê os pools abaixo
+  }, [coresDoCliente.coresFiltradas, h.obenProducts, h.colacorProducts]);
+  const umToque = useTintCoresDoClienteUmToque(alvosUmToque);
+  const handleAdicionarUmToque = (chave: string, oc: OcorrenciaCor) => {
+    const pronto = umToque[chave];
+    // Fail-closed: o estado pode ter mudado entre o render e o toque (preço recarregando).
+    if (typeof pronto !== 'object') return;
+    const resultado = h.addTintProductToCart(
+      pronto.product,
+      pronto.formulaId,
+      pronto.corId,
+      pronto.nomeCor,
+      pronto.preco,
+      pronto.custoCorantes,
+      // Fonte do default (regra do maior), sem desconto: o gate revalida esta decisão.
+      { source: pronto.fonte, discountPct: 0, precoSemDesconto: pronto.preco },
+      oc.quantidade > 0 ? oc.quantidade : 1,
+    );
+    // Só anuncia (e conta) o que entrou de fato — o conflito já avisou por conta própria.
+    if (resultado !== 'adicionado') return;
+    track('tint.cor_confirmada', { fonte: pronto.fonte, alternativa: false, com_desconto: false, entrada: 'um_toque' });
+    toast.success(`${pronto.corId} adicionada`, { description: pronto.product.descricao });
+  };
+  const [corPrimeiroAberto, setCorPrimeiroAberto] = useState(false);
+  const handleRepetirCor = (cor: CorDoCliente, oc: OcorrenciaCor) => {
+    const product = baseDaOcorrencia(oc);
+    if (product) {
       track('pedido.repetir_cor');
       // Busca pelo CÓDIGO da cor, não pelo rótulo cru do histórico ("346J -
       // PLATINA BIANCA 900ML") — o rótulo não casa com cor_id/nome_cor do catálogo.
@@ -380,7 +430,17 @@ const UnifiedOrder = () => {
               onBuscaChange={coresDoCliente.setBusca}
               isLoading={coresDoCliente.isLoading}
               onRepetirCor={handleRepetirCor}
+              umToque={umToque}
+              onAdicionarUmToque={handleAdicionarUmToque}
             />
+          )}
+
+          {/* Fase 2A: entrada pela COR (a base sai da embalagem escolhida) — staff */}
+          {showCustomerSearch && customerReady && (
+            <Button variant="outline" className="w-full justify-start gap-2" onClick={() => setCorPrimeiroAberto(true)}>
+              <Palette className="w-4 h-4" /> Pedir por cor
+              <span className="text-xs text-muted-foreground font-normal">cor → produto → embalagem</span>
+            </Button>
           )}
 
           {/* Item selection — adapted by role */}
@@ -582,6 +642,23 @@ const UnifiedOrder = () => {
         />
       )}
 
+      <CorPrimeiroDialog
+        open={corPrimeiroAberto}
+        onClose={() => setCorPrimeiroAberto(false)}
+        onConfirm={(formulaId, corId, nomeCor, precoFinal, custoCorantes, pricingMeta, product) => {
+          // A base é a da embalagem escolhida — nunca há produto pendente nesta entrada.
+          // Defesa em profundidade (Codex P1): só base tintométrica da Oben entra por aqui (o
+          // diálogo já barra com `ehBaseTintometricaOben`; repetido inline para não criar aresta).
+          if (!product || product.account !== 'oben' || !product.is_tintometric || product.tint_type !== 'base') return;
+          // Conflito → o diálogo fica aberto com a escolha (Codex P1 rodada 3).
+          const resultado = h.addTintProductToCart(product, formulaId, corId, nomeCor, precoFinal, custoCorantes, pricingMeta, 1);
+          if (resultado !== 'adicionado') return resultado;
+          setCorPrimeiroAberto(false);
+          toast.success(`${corId} adicionada`, { description: product.descricao });
+          return resultado;
+        }}
+      />
+
       {h.tintPendingProduct && (
         <TintColorSelectDialog
           product={h.tintPendingProduct}
@@ -590,8 +667,11 @@ const UnifiedOrder = () => {
           customerUserId={h.customerUserId}
           initialSearch={tintInitialSearch}
           onConfirm={(formulaId, corId, nomeCor, precoFinal, custoCorantes, pricingMeta, alternativeProduct) => {
-            h.addTintProductToCart(alternativeProduct || h.tintPendingProduct!, formulaId, corId, nomeCor, precoFinal, custoCorantes, pricingMeta);
+            // Conflito → pendência intacta: o diálogo segue aberto e a fila de "Repetir pedido" não avança.
+            const resultado = h.addTintProductToCart(alternativeProduct || h.tintPendingProduct!, formulaId, corId, nomeCor, precoFinal, custoCorantes, pricingMeta);
+            if (resultado !== 'adicionado') return resultado;
             setTintInitialSearch(null);
+            return resultado;
           }}
         />
       )}

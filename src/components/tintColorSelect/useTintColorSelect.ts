@@ -3,10 +3,10 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
-import { ilikeOr, isSearchablePostgrestTerm } from '@/lib/postgrest';
+import { imatchTokensSemAcento } from '@/lib/postgrest';
 import { useTintPricing, useTintPrices } from '@/hooks/useTintPricing';
 import { track } from '@/lib/analytics';
-import { selectTintPrice, type TintPriceSource, type AltPriceSource } from '@/lib/tint/select-price';
+import { selectTintPrice, csvTabelaElegivel, type TintPriceSource, type AltPriceSource } from '@/lib/tint/select-price';
 import type { Product } from '@/hooks/useUnifiedOrder';
 import type { FormulaResult, AlternativePackaging } from './types';
 
@@ -111,15 +111,18 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
     staleTime: 5 * 60 * 1000,
     enabled: !!skuId && debouncedSearch.length >= 2,
     queryFn: async () => {
-      if (!isSearchablePostgrestTerm(debouncedSearch)) return []; // só-wildcard → match-all (#1062); busca vazia
+      // Fase 2A: uma cláusula POR PALAVRA, sem acento ("acucar cristal" acha "AÇÚCAR CRISTAL").
+      const palavras = imatchTokensSemAcento(['cor_id', 'nome_cor'], debouncedSearch);
+      if (palavras.length === 0) return []; // só pontuação: sem palavra, sem busca (#1062)
       // Erro (timeout/RLS/cache do PostgREST sem a view) LANÇA — senão vira
       // lista vazia e a UI mente "cor não encontrada" (achado Codex no diff).
-      const { data, error } = await supabase
+      let q = supabase
         .from('v_tint_formula_canonica')
         .select('id, cor_id, nome_cor, preco_final_sayersystem, preco_csv_legado, is_sl')
         .eq('account', 'oben')
-        .eq('sku_id', skuId!)
-        .or(ilikeOr(['cor_id', 'nome_cor'], debouncedSearch))
+        .eq('sku_id', skuId!);
+      for (const p of palavras) q = q.or(p);
+      const { data, error } = await q
         .order('cor_id', { ascending: true })
         .order('id', { ascending: true })
         .limit(20);
@@ -138,15 +141,17 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
     // família e mostra todas as bases vendáveis — nunca esconde a cor em silêncio.
     enabled: !!colorNotFoundInBase,
     queryFn: async (): Promise<{ matches: AlternativePackaging[]; colorExists: boolean }> => {
-      // só-wildcard → `.or()` match-all (#1062); busca vazia não acha cor nenhuma
-      if (!isSearchablePostgrestTerm(debouncedSearch)) return { matches: [], colorExists: false };
+      // só pontuação → sem palavra útil (#1062); busca vazia não acha cor nenhuma
+      const palavras = imatchTokensSemAcento(['cor_id', 'nome_cor'], debouncedSearch);
+      if (palavras.length === 0) return { matches: [], colorExists: false };
       // Search formulas across all SKUs — canônica (a view já filtra ativas
       // com sku e resolve a gêmea SL×SAYERLACK por chave)
-      const { data: globalRaw, error: globalErr } = await supabase
+      let qGlobal = supabase
         .from('v_tint_formula_canonica')
         .select('id, cor_id, nome_cor, sku_id, preco_final_sayersystem, preco_csv_legado, is_sl')
-        .eq('account', 'oben')
-        .or(ilikeOr(['cor_id', 'nome_cor'], debouncedSearch))
+        .eq('account', 'oben');
+      for (const p of palavras) qGlobal = qGlobal.or(p);
+      const { data: globalRaw, error: globalErr } = await qGlobal
         .order('cor_id', { ascending: true })
         .order('id', { ascending: true })
         .limit(50);
@@ -385,7 +390,10 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
   // Fase 2b: o CSV considerado é o da CHAVE (preco_csv_legado) — desde a migration
   // 20260722100002 a view GARANTE que, na canônica SL, ele vem só de linhas não-SL
   // (a VERSÃO ANTERIOR da tinta); a vendedora escolhe entre novo × anterior.
-  const rawCsv = selectedFormula?.preco_csv_legado ?? null;
+  // CSV implausível frente ao calculado (só corantes, sem a base) NÃO vira fonte — nem no
+  // chip "Tabela" nem no "−x% da tabela": filtrado AQUI, na origem, com a regra espelho do
+  // gate (csvTabelaElegivel). Filtrar só no selectTintPrice deixava o override oferecer R$ 0,70.
+  const rawCsv = csvTabelaElegivel(selectedFormula?.preco_csv_legado ?? null, pricing?.precoFinal);
   const custoCorantes = pricing?.custoCorantes || 0;
 
   const [priceSourceOverride, setPriceSourceOverride] = useState<TintPriceSource | null>(null);

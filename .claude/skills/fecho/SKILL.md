@@ -505,28 +505,29 @@ main JUNTOS — conflito semântico, que o git mescla sem reclamar. Não é hip�
 2026-08-06 o #1670 (gate de índice de docs) e o #1212 (que trazia um `.md` de julho, sem
 linha no índice) mergearam com **135 segundos** de diferença e derrubaram a main por ~5h.
 
-⚠️ **`gh run list --branch main` NÃO serve para isso.** O `auto-merge.yml` usa
-`secrets.GITHUB_TOKEN` e, pela proteção anti-loop do GitHub, o push dele **não aciona
-workflow nenhum** — o último run de `push` na main costuma ser de semanas atrás (só a via do
-bot do Lovable cai ali). Consultar isso dá "verde por ausência de dado". O que vale é um run do CI
-**no commit de AGORA da main**, que contém os merges desta sessão.
+⚠️ **`gh run list --branch main` sem `--commit` NÃO serve para isso.** O merge do auto-merge não
+aciona o `push:` do CI (o ator é o `GITHUB_TOKEN`, e o anti-loop do GitHub cala os eventos dele).
+Desde o M-22 (2026-10-11) **quem dispara o CI na main é o próprio `auto-merge.yml`** (job
+`ci-na-main-pos-merge`, ~1 min depois de cada merge, via `workflow_dispatch`). Esses disparos
+**coalescem**: 1 rodando + 1 pendente, e o pendente é trocado pelo mais novo. Por isso o run que
+vale é o do commit de AGORA da main **ou de um mais novo**, que contém os merges desta sessão.
 
-**Antes de disparar, reaproveite.** Outra sessão (ou o `schedule`) pode já ter disparado para o
-MESMO commit: de 25/09 a 01/10, 31 dos 76 disparos (41%) caíram num SHA que já tinha outro run, e
-cada run da main soma ~1h45 de runner (medido no #2752) que vira fila para os PRs. Só dispare se a
-lista vier VAZIA:
+**Não dispare à mão por rotina.** Procure o run:
 
 ```bash
 sha=$(git ls-remote origin refs/heads/main | cut -f1)   # a main de AGORA, não a cópia local
-gh run list --workflow CI --branch main --commit "$sha" --json databaseId,status,conclusion,event
-gh workflow run CI --ref main            # SÓ com a lista acima vazia: o botão "validar a main agora"
-sleep 30 && gh run list --workflow CI --branch main --commit "$sha" --json databaseId,status,conclusion
+gh run list --workflow CI --branch main --event workflow_dispatch --limit 5 \
+  --json databaseId,headSha,status,conclusion,createdAt
 ```
 
-Lista vazia DEPOIS do disparo = a main andou entre o `sha=` e o disparo (outro merge): refaça a
-partir do `sha=`. O run do commit mais novo também contém os seus merges. Tempo: o `validate` sai
-em ~20 min; o run inteiro só conclui depois do `mutation-check`, que na main roda todos os
-contratos (até ~45 min).
+Tem run no `$sha` → acompanhe esse. Tem run `queued`/`in_progress` num SHA anterior → o pendente
+do `$sha` ainda vai nascer, ou um mais novo o substitui: espere e repita a consulta. Disparo manual
+(`gh workflow run CI --ref main`) **só** se, 5 min depois do último merge, não houver run
+nenhum no `$sha` nem rodando/pendente. Nesse caso o `ci-na-main-pos-merge` falhou: veja
+`gh run list --workflow Auto-merge --event workflow_run --limit 5` e diga isso no fecho.
+
+Tempo: o `validate` sai em ~20 min; o run inteiro só conclui depois do `mutation-check`, que na main
+roda todos os contratos (até ~45 min).
 
 - `success` → ✅ pode fechar.
 - `failure` → ❌ **investigue antes de fechar.**

@@ -198,6 +198,16 @@
       "md5": "4d88eebd9dea026346d706befca0fced",
       "md5Tokens": "d5e193d18d19c8d10b802aaf10bba8f1",
       "desde": "2026-10-08"
+    },
+    {
+      "funcao": "_data_health_compute",
+      "identidade": "",
+      "classe": "EDICAO_MANUAL",
+      "esperadaNoAceite": "20261005220100_data_health_venda_empurrada_conta_pelo_app.sql",
+      "motivo": "Aplicada em prod pelo ENVELOPE db/2026-10-11-cron-reconciliar-pedidos-colacor.sql (recibo #369): patch por ÂNCORA no pg_get_functiondef vivo — a linha ('colacor','status_produtos',…) 1x e, logo abaixo, a chave VIGIADA ('colacor','operational','orders', 4h) no catálogo do sync_reprocess_saude, para o cron sync-reprocess-pedidos-colacor-2h (jobid 198) nascer vigiado. Nada mais no corpo mudou. Diário: docs/historico/status-pedidos-colacor-congelado.md.",
+      "md5": "ca824f4f04b38e57402320a9f354b169",
+      "md5Tokens": "70f4d4dc4f639a56b0d0b63067de55b6",
+      "desde": "2026-10-12"
     }
   ]
 }

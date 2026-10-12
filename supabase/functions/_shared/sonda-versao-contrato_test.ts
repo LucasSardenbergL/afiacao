@@ -64,6 +64,13 @@ import * as omieWebhook from "../omie-webhook/versao.ts";
 import * as aplicarParametros from "../omie-aplicar-parametros/versao.ts";
 import * as recurringOrders from "../process-recurring-orders/versao.ts";
 import * as programadoExtrair from "../pedido-programado-extrair/versao.ts";
+import * as promocaoVision from "../promocao-extrair-via-vision/versao.ts";
+import * as tintOmieSync from "../tint-omie-sync/versao.ts";
+import * as verifyEmployee from "../verify-employee/versao.ts";
+import * as scoringRecalc from "../scoring-recalc-client/versao.ts";
+import * as visitScoreRecalc from "../visit-score-recalc-client/versao.ts";
+import * as biometricAuth from "../biometric-auth/versao.ts";
+import * as gmailWebhook from "../gmail-webhook-receiver/versao.ts";
 import * as cmcBackfill from "../cmc-snapshot-backfill/versao.ts";
 import * as whatsappSend from "../whatsapp-send/versao.ts";
 import * as whatsappTemplate from "../whatsapp-send-template/versao.ts";
@@ -235,6 +242,16 @@ const EDGES: Array<{ nome: string; mod: ModSonda }> = [
   // 12ª leva, 2ª metade: o lado PEDIDO/COMPRA da mesma classe cega.
   { nome: "process-recurring-orders", mod: recurringOrders },
   { nome: "pedido-programado-extrair", mod: programadoExtrair },
+  // Lote C (M-33): ganhou sonda ao trocar de cliente Anthropic — a canária antiga era `=== true` cru.
+  { nome: "promocao-extrair-via-vision", mod: promocaoVision },
+  // M-26, 1ª leva do Lote C: escrita no nosso banco, sem prova de deploy até aqui.
+  { nome: "tint-omie-sync", mod: tintOmieSync },
+  { nome: "verify-employee", mod: verifyEmployee },
+  { nome: "scoring-recalc-client", mod: scoringRecalc },
+  { nome: "visit-score-recalc-client", mod: visitScoreRecalc },
+  // M-26, 2ª leva: gate próprio que não aceita cron (pré-login público; segredo de webhook).
+  { nome: "biometric-auth", mod: biometricAuth },
+  { nome: "gmail-webhook-receiver", mod: gmailWebhook },
   { nome: "cmc-snapshot-backfill", mod: cmcBackfill },
   // 11ª leva (#2170) — as 5 de efeito FORA do nosso banco. Elas ganharam `versao.ts` e entraram no
   // mapa de fingerprints, mas ficaram fora DESTE arquivo: instrumentadas e sem gate de FORMA
@@ -325,6 +342,19 @@ const ESCRITA_NOSSO_BANCO = [
   // que o motor de reposição e o DRE consomem.
   "process-recurring-orders",
   "pedido-programado-extrair",
+  // Lote C (M-33): `promocao-extrair-via-vision` sobe o anexo ao storage, paga token da Anthropic e
+  // grava a campanha/aumento extraído (promocao_*), que entra no custo da reposição.
+  "promocao-extrair-via-vision",
+  // M-26, 1ª leva: `tint-omie-sync` faz upsert em omie_products; `verify-employee` reescreve o papel
+  // (profiles/user_roles); os dois `*-recalc-client` gravam score e consomem a fila de recálculo.
+  "tint-omie-sync",
+  "verify-employee",
+  "scoring-recalc-client",
+  "visit-score-recalc-client",
+  // M-26, 2ª leva: `biometric-auth` grava a credencial WebAuthn; `gmail-webhook-receiver` grava o log
+  // e abre o alerta de compra (fornecedor_alerta).
+  "biometric-auth",
+  "gmail-webhook-receiver",
   "cmc-snapshot-backfill",
   // 11ª leva: entram na varredura estrutural pelo mesmo motivo da nona (`monthly-report`) — o preço
   // de um `probe` mal grafado caindo no fluxo real. Aqui ele é irreversível FORA do nosso banco:
@@ -477,6 +507,9 @@ const GATE_PROPRIO = [
   // 13ª leva: a gêmea de canal da `omie-webhook` — o gate dela é o `x-whatsapp-secret`
   // compartilhado com a 360dialog, que o `net.http_post` do SQL Editor não emite.
   "whatsapp-inbound",
+  // M-26, 2ª leva: pré-login público (só rate limit) e segredo de webhook no Bearer.
+  "biometric-auth",
+  "gmail-webhook-receiver",
 ];
 
 /** As pastas que TÊM `versao.ts` — a verdade da árvore, não a lista declarada aqui. */
@@ -641,11 +674,11 @@ Deno.test("generate-bundle-argument: a sonda decide por classificarSonda, não p
 
 Deno.test("generate-bundle-argument: a sonda responde ANTES do createClient e do modelo", () => {
   // O valor da sonda é ser o único caminho sem custo. Se ela migrar para depois do `createClient`
-  // ou do `new Anthropic`, deixa de ser barata e volta a haver motivo para não rodá-la.
+  // ou da criação do cliente do modelo (`criarClienteAnthropic`), deixa de ser barata e volta a haver motivo para não rodá-la.
   const codigo = codigoDaEdge("generate-bundle-argument");
   const posSonda = codigo.indexOf("classificarSonda(");
   const posCliente = codigo.indexOf("createClient(");
-  const posModelo = codigo.indexOf("new Anthropic(");
+  const posModelo = codigo.indexOf("criarClienteAnthropic(");
   if (posSonda < 0 || posCliente < 0 || posModelo < 0) {
     throw new Error("âncoras não encontradas — o gate mediu o arquivo errado (controle positivo vazio)");
   }
@@ -926,6 +959,8 @@ const BEARER_NO_HANDLER = [
   "analyze-services",
   "copilot-analyze",
   "elevenlabs-transcribe",
+  // M-26: `verify-employee` exige Bearer + getUser no handler; a sonda vem antes.
+  "verify-employee",
 ];
 
 /**

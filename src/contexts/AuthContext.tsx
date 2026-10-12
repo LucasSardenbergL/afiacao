@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, ReactNode } from 'react';
 import { User, Session } from '@supabase/supabase-js';
+import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { logger } from '@/lib/logger';
 import { limparPushDoDevice } from '@/lib/push/device';
@@ -80,7 +81,21 @@ export const useAuth = () => {
   return context;
 };
 
+/**
+ * Apaga a sessão do Supabase guardada no localStorage (`sb-<ref>-auth-token` e o code-verifier do
+ * PKCE), sem rede. Só para o logout cujas duas chamadas ao servidor falharam.
+ */
+function apagarSessaoPersistida() {
+  // `key(i)` e não `Object.keys`: a API do Storage é a portátil; de trás pra frente porque remover
+  // reindexa.
+  for (let i = localStorage.length - 1; i >= 0; i--) {
+    const chave = localStorage.key(i);
+    if (chave && /^sb-.+-auth-token(-code-verifier)?$/.test(chave)) localStorage.removeItem(chave);
+  }
+}
+
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
+  const queryClient = useQueryClient();
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
@@ -245,8 +260,14 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         setUser(session?.user ?? null);
 
         if (event === 'SIGNED_OUT') {
+          // O cache do react-query é do USUÁRIO, não do navegador (M-10): sem isto, quem entra
+          // depois no mesmo aparelho via o dado em cache de quem saiu (gcTime 15 min). No EVENTO,
+          // não só no `signOut()`: cobre logout por outra aba e refresh token revogado. Antes dos
+          // setters — `clear()` não dispara refetch, e nenhum render sai com o dado anterior.
+          queryClient.clear();
           setRole(null);
           setIsApproved(false);
+          setCommercialRole(null);
           finishLoading();
           return;
         }
@@ -289,7 +310,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       clearTimeout(loadingFailsafe);
       subscription.unsubscribe();
     };
-  }, []);
+  }, [queryClient]);
 
   const createProfileIfNotExists = async (userId: string, email?: string) => {
     try {
@@ -370,11 +391,28 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     // device — senão quem logar depois neste navegador recebe os pushes de
     // quem saiu. Best-effort (nunca lança, não trava o logout).
     await limparPushDoDevice();
-    await supabase.auth.signOut();
+    // O `{ error }` era ignorado: com a revogação falhando (rede), a sessão FICAVA no navegador e a
+    // tela seguia como se tivesse saído. A intenção é "sair DESTE aparelho". O `scope: 'local'`
+    // TAMBÉM chama a rede no SDK (auth-js 2.95: `admin.signOut` antes do `_removeSession`) e, se
+    // falhar, não apaga nada (Codex, revisão do M-10) — então a última instância apaga a sessão
+    // persistida à mão: quem pegar o aparelho e recarregar não herda as credenciais de quem saiu.
+    const { error } = await supabase.auth.signOut();
+    if (error) {
+      logger.warn('[auth] signOut global falhou — saindo só deste navegador', { error: error.message });
+      const { error: erroLocal } = await supabase.auth.signOut({ scope: 'local' });
+      if (erroLocal) {
+        logger.warn('[auth] signOut local falhou — apagando a sessão guardada no aparelho', { error: erroLocal.message });
+        apagarSessaoPersistida();
+        setSession(null);
+        setUser(null);
+      }
+    }
+    // Defesa se o evento não vier: limpar de novo é idempotente.
+    queryClient.clear();
     setRole(null);
     setIsApproved(false);
     setCommercialRole(null);
-  }, []);
+  }, [queryClient]);
 
   const refetchRole = useCallback(async () => {
     if (user) {

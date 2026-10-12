@@ -4,7 +4,8 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { useNetworkStatus } from '@/hooks/useNetworkStatus';
 import { useDisplayAccess } from '@/hooks/useDisplayAccess';
 import { cn } from '@/lib/utils';
-import { getOfflineQueueDepth, subscribeToOfflineQueue } from '@/lib/offline-queue';
+import { useAuth } from '@/contexts/AuthContext';
+import { contarFila, getOfflineQueueDepth, subscribeToOfflineQueue } from '@/lib/offline-queue';
 
 /**
  * Indicador de rede — aparece SÓ quando há algo a comunicar.
@@ -26,18 +27,26 @@ export function NetworkStatusIndicator() {
   // legível (Offline / lenta / fila) fica p/ todos; só Tipo/RTT são staff-only.
   const { displayIsStaff } = useDisplayAccess();
   const [queueDepth, setQueueDepth] = useState(0);
+  // Retidos = itens de OUTRA pessoa (ou sem dono) neste aparelho: o flush desta sessão não os
+  // envia. Pela identidade REAL — a lente não muda de quem são os itens.
+  const { user } = useAuth();
+  const userIdReal = user?.id ?? null;
+  const [retidos, setRetidos] = useState({ deOutros: 0, semDono: 0 });
 
   useEffect(() => {
     let mounted = true;
     getOfflineQueueDepth().then((d) => mounted && setQueueDepth(d));
     const unsub = subscribeToOfflineQueue((depth) => {
-      if (mounted) setQueueDepth(depth);
+      if (!mounted) return;
+      setQueueDepth(depth);
+      const { deOutros, semDono } = contarFila(userIdReal);
+      setRetidos({ deOutros, semDono });
     });
     return () => {
       mounted = false;
       unsub();
     };
-  }, []);
+  }, [userIdReal]);
 
   // Some no estado normal (online + fila vazia): o indicador só tem valor quando
   // há algo a comunicar — offline, conexão lenta ou operação pendente na fila.
@@ -109,7 +118,33 @@ export function NetworkStatusIndicator() {
               {queueDepth}
             </dd>
           </div>
+          {retidos.deOutros > 0 && (
+            <div className="flex justify-between">
+              <dt>De outro usuário (retidas)</dt>
+              <dd className="font-mono text-status-warning">{retidos.deOutros}</dd>
+            </div>
+          )}
+          {retidos.semDono > 0 && (
+            <div className="flex justify-between">
+              <dt>Sem identificação (retidas)</dt>
+              <dd className="font-mono text-status-warning">{retidos.semDono}</dd>
+            </div>
+          )}
         </dl>
+        {retidos.deOutros > 0 && (
+          <p className="text-xs text-status-warning pt-1 border-t border-border">
+            {retidos.deOutros === 1 ? '1 operação feita' : `${retidos.deOutros} operações feitas`} por
+            outra pessoa neste aparelho {retidos.deOutros === 1 ? 'fica guardada' : 'ficam guardadas'}:
+            só quem as fez pode enviá-las, entrando de novo aqui.
+          </p>
+        )}
+        {retidos.semDono > 0 && (
+          <p className="text-xs text-status-warning pt-1 border-t border-border">
+            {retidos.semDono === 1 ? '1 operação antiga' : `${retidos.semDono} operações antigas`} sem
+            identificação de quem fez {retidos.semDono === 1 ? 'fica guardada' : 'ficam guardadas'} e não
+            {retidos.semDono === 1 ? 'será enviada' : 'serão enviadas'} automaticamente. Avise a equipe.
+          </p>
+        )}
         {status.quality === 'offline' && (
           <p className="text-xs text-status-error pt-1 border-t border-border">
             <CloudOff className="inline w-3 h-3 mr-1" />

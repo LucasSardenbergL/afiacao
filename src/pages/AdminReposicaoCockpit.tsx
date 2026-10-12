@@ -53,7 +53,6 @@ export default function AdminReposicaoCockpit() {
     if (!tabParam) return;
     const map: Record<string, string> = {
       ciclohoje: "/admin/reposicao/sessao/pedidos",
-      aplicaromie: "/admin/reposicao/sessao/aplicacao",
       confirmacao: "/admin/reposicao/sessao/confirmacao",
       anteriores: "/admin/reposicao/sessao/historico",
       oportunidades: "/admin/reposicao/oportunidades",
@@ -76,10 +75,9 @@ export default function AdminReposicaoCockpit() {
       "cockpit-itens-dia",
       "cockpit-historico-chart",
       "reposicao-pedidos",
-      "reposicao-aplicacao",
       "reposicao-historico",
     ];
-    const KEYS_SKU_PARAMETROS = ["cockpit-current-step", "reposicao-aplicacao"];
+    const KEYS_SKU_PARAMETROS = ["cockpit-current-step"];
     const pending = new Set<string>();
     const throttle = createLeadingTrailingThrottle(() => {
       pending.forEach((key) => queryClient.invalidateQueries({ queryKey: [key] }));
@@ -190,7 +188,6 @@ export default function AdminReposicaoCockpit() {
     queryClient.invalidateQueries({ queryKey: ["cockpit-current-step"] });
     queryClient.invalidateQueries({ queryKey: ["cockpit-historico-chart"] });
     queryClient.invalidateQueries({ queryKey: ["reposicao-pedidos"] });
-    queryClient.invalidateQueries({ queryKey: ["reposicao-aplicacao"] });
     queryClient.invalidateQueries({ queryKey: ["reposicao-historico"] });
     toast("Atualizando...", { duration: 1200 });
   };
@@ -286,8 +283,7 @@ export default function AdminReposicaoCockpit() {
         { keys: "1", label: "Etapa 1: Mercado", group: "Reposição", handler: () => navigate("/admin/reposicao/sessao/mercado") },
         { keys: "2", label: "Etapa 2: Parâmetros", group: "Reposição", handler: () => navigate("/admin/reposicao/sessao/parametros") },
         { keys: "3", label: "Etapa 3: Pedidos", group: "Reposição", handler: () => navigate("/admin/reposicao/sessao/pedidos") },
-        { keys: "4", label: "Etapa 4: Aplicação Omie", group: "Reposição", handler: () => navigate("/admin/reposicao/sessao/aplicacao") },
-        { keys: "5", label: "Etapa 5: Confirmação", group: "Reposição", handler: () => navigate("/admin/reposicao/sessao/confirmacao") },
+        { keys: "4", label: "Etapa 4: Confirmação", group: "Reposição", handler: () => navigate("/admin/reposicao/sessao/confirmacao") },
       ],
       // eslint-disable-next-line react-hooks/exhaustive-deps
       [navigate],

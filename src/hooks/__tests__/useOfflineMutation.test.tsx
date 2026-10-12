@@ -7,6 +7,10 @@ vi.mock('@/lib/offline-queue', () => ({
   enqueue: vi.fn().mockResolvedValue('mock-id'),
 }));
 
+// Identidade REAL (useAuth().user) — é ela que vira o dono do item da fila.
+const authState = vi.hoisted(() => ({ user: { id: 'user-real' } as { id: string } | null }));
+vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({ user: authState.user }) }));
+
 import { enqueue } from '@/lib/offline-queue';
 import { useOfflineMutation } from '../useOfflineMutation';
 
@@ -21,6 +25,7 @@ function wrapper({ children }: { children: ReactNode }) {
 
 beforeEach(() => {
   mockedEnqueue.mockClear();
+  authState.user = { id: 'user-real' };
   // Default online
   Object.defineProperty(navigator, 'onLine', { value: true, configurable: true });
 });
@@ -62,7 +67,7 @@ describe('useOfflineMutation', () => {
       await result.current.mutateAsync({ foo: 'bar' });
     });
 
-    expect(mockedEnqueue).toHaveBeenCalledWith('test.action', { foo: 'bar' });
+    expect(mockedEnqueue).toHaveBeenCalledWith('test.action', { foo: 'bar' }, 'user-real');
     expect(mutationFn).not.toHaveBeenCalled();
     expect(result.current.queued).toBe(true);
   });
@@ -83,7 +88,7 @@ describe('useOfflineMutation', () => {
     });
 
     expect(mutationFn).toHaveBeenCalled();
-    expect(mockedEnqueue).toHaveBeenCalledWith('test.action', { foo: 'bar' });
+    expect(mockedEnqueue).toHaveBeenCalledWith('test.action', { foo: 'bar' }, 'user-real');
     expect(result.current.queued).toBe(true);
   });
 
@@ -109,5 +114,39 @@ describe('useOfflineMutation', () => {
 
     expect(mutationFn).toHaveBeenCalled();
     expect(mockedEnqueue).not.toHaveBeenCalled();
+  });
+
+  describe('sem usuário (sessão caiu): nunca diz "salvo offline"', () => {
+    it('offline imediato → NÃO enfileira e lança', async () => {
+      authState.user = null;
+      Object.defineProperty(navigator, 'onLine', { value: false, configurable: true });
+      const mutationFn = vi.fn();
+      const { result } = renderHook(() => useOfflineMutation({ kind: 'test.action', mutationFn }), { wrapper });
+
+      let erro: unknown;
+      await act(async () => {
+        try { await result.current.mutateAsync({ foo: 'bar' }); } catch (e) { erro = e; }
+      });
+
+      expect(String(erro)).toContain('sem sessão');
+      expect(mockedEnqueue).not.toHaveBeenCalled();
+      expect(result.current.queued).toBe(false);
+    });
+
+    it('falha de rede online → NÃO enfileira e propaga o erro ORIGINAL', async () => {
+      authState.user = null;
+      const original = new TypeError('Failed to fetch');
+      const mutationFn = vi.fn().mockRejectedValue(original);
+      const { result } = renderHook(() => useOfflineMutation({ kind: 'test.action', mutationFn }), { wrapper });
+
+      let erro: unknown;
+      await act(async () => {
+        try { await result.current.mutateAsync({ foo: 'bar' }); } catch (e) { erro = e; }
+      });
+
+      expect(erro).toBe(original);
+      expect(mockedEnqueue).not.toHaveBeenCalled();
+      expect(result.current.queued).toBe(false);
+    });
   });
 });

@@ -14,39 +14,6 @@ export type Database = {
   }
   public: {
     Tables: {
-      _quarantine_omie_clientes_20260722: {
-        Row: {
-          created_at: string
-          empresa_omie: string
-          id: string
-          omie_codigo_cliente: number
-          omie_codigo_cliente_integracao: string | null
-          omie_codigo_vendedor: number | null
-          updated_at: string
-          user_id: string
-        }
-        Insert: {
-          created_at?: string
-          empresa_omie?: string
-          id?: string
-          omie_codigo_cliente: number
-          omie_codigo_cliente_integracao?: string | null
-          omie_codigo_vendedor?: number | null
-          updated_at?: string
-          user_id: string
-        }
-        Update: {
-          created_at?: string
-          empresa_omie?: string
-          id?: string
-          omie_codigo_cliente?: number
-          omie_codigo_cliente_integracao?: string | null
-          omie_codigo_vendedor?: number | null
-          updated_at?: string
-          user_id?: string
-        }
-        Relationships: []
-      }
       abc_xyz_classification: {
         Row: {
           classe_abc: Database["public"]["Enums"]["classe_abc"] | null

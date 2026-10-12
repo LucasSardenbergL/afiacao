@@ -123,6 +123,64 @@ export function orFilter(...clauses: string[]): string {
   return clauses.join(',');
 }
 
+/**
+ * Igualdade EXATA sem distinção de caixa, para vários valores numa coluna:
+ * `col.ilike."v1",col.ilike."v2"` (ILIKE sem curinga = igualdade case-insensitive; aspas
+ * porque o valor pode ter espaço/ponto). Com `tambemPrimeiraPalavra`, casa também
+ * `"v *"` — o valor como 1ª palavra (o `cor_id` do catálogo é "H109 - BS"; o código é "H109").
+ * Valor com metacaractere do `.or()`/LIKE é DESCARTADO (não "limpo": limpar mudaria o valor
+ * e casaria outra coisa). `''` ⇔ nenhum valor útil — o caller não consulta.
+ */
+export function ilikeExatoOr(column: string, values: string[], opts: { tambemPrimeiraPalavra?: boolean } = {}): string {
+  return values
+    .map((v) => v.trim())
+    .filter((v) => v !== '' && sanitizeForPostgrestOr(v) === v)
+    .flatMap((v) => (opts.tambemPrimeiraPalavra ? [`${column}.ilike."${v}"`, `${column}.ilike."${v} *"`] : [`${column}.ilike."${v}"`]))
+    .join(',');
+}
+
+// Variantes acentuadas do pt-BR por letra-base. O catálogo tintométrico grava "AÇÚCAR",
+// "PÊSSEGO", "ALGODÃO" (499 de 8.692 cores com acento, medido 2026-10-11) e o ILIKE é
+// sensível a acento: "acucar" achava 0. Sem a extensão `unaccent` no banco, a classe de
+// caracteres na regex resolve no cliente — e o índice trigram de `nome_cor` segue útil.
+const VARIANTES_ACENTO: Record<string, string> = {
+  a: 'aáàâãäAÁÀÂÃÄ',
+  c: 'cçCÇ',
+  e: 'eéèêëEÉÈÊË',
+  i: 'iíìîïIÍÌÎÏ',
+  o: 'oóòôõöOÓÒÔÕÖ',
+  u: 'uúùûüUÚÙÛÜ',
+  n: 'nñNÑ',
+};
+
+/**
+ * Palavras de uma busca, sem acento e em minúsculas. Tudo que não é letra/dígito
+ * separa palavras — e por isso nenhum metacaractere (de regex, LIKE ou do `.or()`)
+ * sobrevive. `[]` = busca degenerada (só pontuação): o caller não filtra nada.
+ */
+export function tokensDeBusca(term: string): string[] {
+  return term
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+}
+
+/**
+ * Busca TOKENIZADA e SEM ACENTO: um predicado `.or()` POR PALAVRA, cada um casando a
+ * palavra (em qualquer acentuação) em qualquer das colunas — `c1.imatch."…",c2.imatch."…"`.
+ * O caller aplica cada item num `.or()` separado; o PostgREST combina vários `or` com AND
+ * ⇒ "verde afiacao" acha "AFIAÇÃO VERDE" (ordem livre). `[]` ⇔ termo sem palavra útil.
+ * A regex só contém [a-z0-9] e classes `[…]` de letras — nada a escapar dentro das aspas.
+ */
+export function imatchTokensSemAcento(columns: string[], term: string): string[] {
+  return tokensDeBusca(term).map((tok) => {
+    const regex = [...tok].map((ch) => (VARIANTES_ACENTO[ch] ? `[${VARIANTES_ACENTO[ch]}]` : ch)).join('');
+    return columns.map((c) => `${c}.imatch."${regex}"`).join(',');
+  });
+}
+
 /** Tamanho da página do PostgREST — é também a capa por request (CLAUDE.md §9b). */
 export const POSTGREST_PAGE_SIZE = 1000;
 

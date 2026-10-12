@@ -3,7 +3,6 @@ import {
   Lightbulb,
   SlidersHorizontal,
   ClipboardCheck,
-  Upload,
   CheckCircle2,
   ChevronRight,
   Check,
@@ -27,7 +26,6 @@ const STEP_META: { label: string; icon: Step["icon"] }[] = [
   { label: "Mercado", icon: Lightbulb },
   { label: "Parâmetros", icon: SlidersHorizontal },
   { label: "Pedidos", icon: ClipboardCheck },
-  { label: "Aplicação Omie", icon: Upload },
   { label: "Confirmação", icon: CheckCircle2 },
 ];
 

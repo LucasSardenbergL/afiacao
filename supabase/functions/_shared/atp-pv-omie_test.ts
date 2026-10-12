@@ -12,6 +12,7 @@ import {
   classificarErroConsultaExclusao,
   compararCarrinhoPv,
   edicaoBloqueadaPorPvDivergente,
+  vereditoExclusaoNoOmie,
 } from "./atp-pv-omie.ts";
 
 function assertEquals(a: unknown, b: unknown, msg?: string) {
@@ -127,5 +128,22 @@ Deno.test("erro: outra entidade, duplicata, transitório e desconhecido = indete
     "fetch failed",
   ]) {
     assertEquals(classificarErroConsultaExclusao(new Error(m)).tipo, "indeterminado", m);
+  }
+});
+
+Deno.test("exclusão no Omie: registro importado nunca sai pelo app", () => {
+  const v = vereditoExclusaoNoOmie({ hashPayload: "omie_oben_9001", omiePedidoId: 9001, statusCanonico: "cancelado" });
+  assertEquals(v.permitido, false, "importado mesmo cancelado");
+  assertMarca(v.permitido ? null : v.motivo, "Registro importado do Omie", "marca");
+  assertMarca(v.permitido ? null : v.motivo, "inclusive os cancelados", "explica que importado fica");
+});
+
+Deno.test("exclusão no Omie: pedido do app só sai com a canônica CANCELADA", () => {
+  assertEquals(vereditoExclusaoNoOmie({ hashPayload: null, omiePedidoId: 9002, statusCanonico: "cancelado" }), { permitido: true }, "cancelado");
+  for (const st of [null, "importado", "enviado", "separacao", "faturado", "CANCELADO"]) {
+    const v = vereditoExclusaoNoOmie({ hashPayload: null, omiePedidoId: 9002, statusCanonico: st });
+    assertEquals(v.permitido, false, String(st));
+    assertMarca(v.permitido ? null : v.motivo, "Cancele direto no Omie", String(st));
+    assertMarca(v.permitido ? null : v.motivo, "avise o suporte", String(st));
   }
 });

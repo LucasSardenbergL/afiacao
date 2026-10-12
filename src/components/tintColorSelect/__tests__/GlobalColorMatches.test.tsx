@@ -63,7 +63,7 @@ describe('GlobalColorMatches', () => {
   it('usa o preço calculado do mapa quando disponível (base + corantes)', () => {
     const onConfirm = vi.fn();
     const precoMap = { f1: { custoBase: 152.1, baseDisponivel: true, custoCorantes: 18.06, corantesCompletos: true, precoFinal: 170.16 } };
-    render(<GlobalColorMatches product={product} altPriceSourceOverrides={{}} setAltPriceSourceOverride={() => {}} matches={[alt({ precoFinalCsv: 13.7 })]} precoMap={precoMap} onConfirm={onConfirm} />);
+    render(<GlobalColorMatches product={product} altPriceSourceOverrides={{}} setAltPriceSourceOverride={() => {}} matches={[alt({ precoFinalCsv: 120 })]} precoMap={precoMap} onConfirm={onConfirm} />);
     fireEvent.click(screen.getByText('Base Branca 3.6L'));
     expect(onConfirm).toHaveBeenCalledWith(
       'f1', 'RAL9010', 'Branco', 170.2, 18.06,
@@ -94,24 +94,30 @@ describe('GlobalColorMatches', () => {
 
   it('calc e CSV presentes → oferece o seletor de fonte; clique registra o override da fórmula', () => {
     const setOverride = vi.fn();
-    render(<GlobalColorMatches product={product} altPriceSourceOverrides={{}} setAltPriceSourceOverride={setOverride} matches={[alt({ precoFinalCsv: 13.7 })]} precoMap={precoMapAmbos} onConfirm={() => {}} />);
+    render(<GlobalColorMatches product={product} altPriceSourceOverrides={{}} setAltPriceSourceOverride={setOverride} matches={[alt({ precoFinalCsv: 120 })]} precoMap={precoMapAmbos} onConfirm={() => {}} />);
     fireEvent.click(screen.getByRole('button', { name: /Tabela/ }));
     expect(setOverride).toHaveBeenCalledWith('f1', 'tabela');
   });
 
+  it('CSV implausível (< 50% do calc: só corantes, sem a base) → NÃO oferece "Tabela" a 1 toque', () => {
+    // 2026-10-12: o chip "Tabela (versão anterior) R$ 0,70" do QA da Fase 2A — o gate barra (G40a).
+    render(<GlobalColorMatches product={product} altPriceSourceOverrides={{}} setAltPriceSourceOverride={() => {}} matches={[alt({ precoFinalCsv: 0.7, isSl: true })]} precoMap={precoMapAmbos} onConfirm={() => {}} />);
+    expect(screen.queryByRole('button', { name: /Tabela/ })).toBeNull();
+  });
+
   it('match SL → o picker rotula a fonte CSV como "Tabela (versão anterior)" (repasse do isSl)', () => {
-    render(<GlobalColorMatches product={product} altPriceSourceOverrides={{}} setAltPriceSourceOverride={() => {}} matches={[alt({ precoFinalCsv: 13.7, isSl: true })]} precoMap={precoMapAmbos} onConfirm={() => {}} />);
+    render(<GlobalColorMatches product={product} altPriceSourceOverrides={{}} setAltPriceSourceOverride={() => {}} matches={[alt({ precoFinalCsv: 120, isSl: true })]} precoMap={precoMapAmbos} onConfirm={() => {}} />);
     expect(screen.getByRole('button', { name: /Tabela \(versão anterior\)/ })).toBeTruthy();
   });
 
   it('override "tabela" aplicado → confirma com o preço do CSV, não o calculado', () => {
     const onConfirm = vi.fn();
-    render(<GlobalColorMatches product={product} altPriceSourceOverrides={{ f1: 'tabela' }} setAltPriceSourceOverride={() => {}} matches={[alt({ precoFinalCsv: 13.7 })]} precoMap={precoMapAmbos} onConfirm={onConfirm} />);
+    render(<GlobalColorMatches product={product} altPriceSourceOverrides={{ f1: 'tabela' }} setAltPriceSourceOverride={() => {}} matches={[alt({ precoFinalCsv: 120 })]} precoMap={precoMapAmbos} onConfirm={onConfirm} />);
     fireEvent.click(screen.getByText('Base Branca 3.6L'));
     // Fase 3: o meta carrega a fonte EFETIVA do override (tabela) — é isto que o gate revalida
     expect(onConfirm).toHaveBeenCalledWith(
-      'f1', 'RAL9010', 'Branco', 13.7, 18.06,
-      { source: 'tabela', discountPct: 0, precoSemDesconto: 13.7 },
+      'f1', 'RAL9010', 'Branco', 120, 18.06,
+      { source: 'tabela', discountPct: 0, precoSemDesconto: 120 },
       expect.objectContaining({ id: 'op1' }),
     );
   });

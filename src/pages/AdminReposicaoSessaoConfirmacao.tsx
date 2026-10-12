@@ -7,12 +7,12 @@ export default function AdminReposicaoSessaoConfirmacao() {
   return (
     <div className="space-y-6">
       <EtapaHeader
-        step={5}
+        step={4}
         icon={CheckCircle2}
         title="Confirmação"
         subtitle="Resumo e linha do tempo do ciclo de reposição de hoje"
       />
-      <EtapaChecklist step={5} />
+      <EtapaChecklist step={4} />
       <ConfirmacaoPanel />
     </div>
   );

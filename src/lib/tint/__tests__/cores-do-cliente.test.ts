@@ -175,3 +175,18 @@ describe('termoBuscaCor', () => {
     expect(termoBuscaCor('   ')).toBe('');
   });
 });
+
+// Fase 2A: o item nascido no app carrega `tint_cor_id` — é a identidade EXATA da cor para o
+// 1 toque (o rótulo livre do Omie só dá um código extraído, que exige nome compatível).
+describe('extrairCoresDoHistorico — corId exato do item do app', () => {
+  it('tint_cor_id vira corId; item sem ele (digitado no Omie) fica null', () => {
+    const cores = extrairCoresDoHistorico([
+      { id: 'p1', omie_pedido_id: 1, omie_numero_pedido: '0001', created_at: '2026-09-01T10:00:00Z', account: 'oben',
+        items: [{ descricao: 'BASE GL', quantidade: 2, tint_nome_cor: 'PLATINA BIANCO', tint_cor_id: ' 346J ', omie_codigo_produto: 9001 }] },
+      { id: 'p2', omie_pedido_id: 2, omie_numero_pedido: '0002', created_at: '2026-09-02T10:00:00Z', account: 'oben',
+        items: [{ descricao: 'BASE GL', quantidade: 1, tint_nome_cor: 'H109 PALHA', omie_codigo_produto: 9001 }] },
+    ]);
+    const porNome = Object.fromEntries(cores.map((c) => [c.nome, c.ocorrencias[0].corId]));
+    expect(porNome).toEqual({ 'PLATINA BIANCO': '346J', 'H109 PALHA': null });
+  });
+});

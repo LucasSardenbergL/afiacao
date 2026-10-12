@@ -124,7 +124,6 @@ const BASELINE = new Map<string, number>([
   ["src/components/knowledge-base/RendimentoCalculator.tsx", 1],
   ["src/components/knowledge-base/VersionHistory.tsx", 1],
   ["src/components/radar/RadarMapa.tsx", 1],
-  ["src/components/reposicao/aplicacao/useAplicacaoFila.ts", 2],
   ["src/components/reposicao/cadeiaLogistica/useCadeiaLogistica.ts", 1],
   ["src/components/reposicao/pedidos/useDetalhesModal.ts", 1],
   ["src/components/reposicao/slaFornecedor/useSlaFornecedor.ts", 1],

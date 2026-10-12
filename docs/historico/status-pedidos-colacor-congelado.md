@@ -38,6 +38,32 @@ cobertura pedidos ÷ DRE do card de crescimento comparável (`crescimento-base-c
    ('colacor','operational','orders', 4h) no `sync_reprocess_saude`, por patch de âncora no corpo vivo
    (`db/2026-10-11-cron-reconciliar-pedidos-colacor.sql`).
 
+## No ar (2026-10-12)
+
+- **Edge v1.19:** deploy pela sessão (MCP, pacote `3efd5c2bd254`, 25/25 sha256 conferidos contra
+  `44ca8e5cd`), **atestada pela sonda** via relé (`db/2026-10-12-sonda-rele-sync-reprocess-v1.19.sql`,
+  recibo #365) — o cron de sonda tinha rodado 2 min ANTES do deploy.
+- **Cron + chave vigiada:** `db/2026-10-11-cron-reconciliar-pedidos-colacor.sql`, recibo #369, job 198
+  (`postgres`, '40 */2 * * *'). 1ª execução `complete` em 4,1 s, 0 falha, 0 correção (a rodada de ontem
+  já tinha alinhado); nenhuma linha de inventory/products da Colacor — custo intocado.
+- **Deriva:** `_data_health_compute` aceita no `db/deriva-corpo-baseline.json` (md5 `ca824f4f…`,
+  md5Tokens calculado do corpo vivo com o md5 local batendo com a prod); auditor sai 0 (347 identidades).
+
+## 12 meses e o aviso medido (2026-10-12)
+
+- **Hipótese errada, corrigida pelo dado:** depois da rodada de 165 dias, 368 pedidos da Colacor de
+  out/2025–abr/2026 seguiam "sem nota", e eu os tratei como status congelado. Rodada de 365 dias
+  (`db/2026-10-12-reconciliar-pedidos-colacor-12-meses.sql`, recibo #373: 16 páginas, 88 s, 0 falha;
+  810 de 812 pedidos relidos) mudou **1 status** e 3 totais (Δ −R$ 14,60): o Omie confirma que eles
+  estão ABERTOS lá. Antes de junho o status da Colacor já estava certo (nascia faturado ou aberto).
+- **O número que importa:** nas duas empresas, ~27–28% da venda do último ano (excluídos os 30 dias
+  recentes) é pedido que nunca virou nota no Omie — Colacor 551 pedidos / R$ 206k; Oben 1.187 / R$ 1,30M.
+  Contam como venda no universo do app (positivação, ranking, crescimento).
+- **O aviso falso saiu:** `DadosVendaParciaisBanner` ("dados parciais, backfill pendente, números
+  SUBESTIMADOS") virou `PedidosSemNotaBanner`, com o número medido por empresa
+  (`src/lib/dashboard/pedidos-sem-nota.ts`, `src/hooks/dashboard/usePedidosSemNota.ts`) nos dashboards
+  Master, Hunter e Farmer. Régua de receita inalterada (decisão do founder: mostrar).
+
 ## Lições
 
 - **"Merge do reconciliador" ≠ "reconciliador rodando para todos":** o código suportava a Colacor desde
@@ -49,3 +75,11 @@ cobertura pedidos ÷ DRE do card de crescimento comparável (`crescimento-base-c
 - **Oben (dado do negócio, não bug):** ~90 pedidos/mês (~R$ 110k) ficam abertos no Omie e nunca viram
   nota — inclusive de um ano atrás; o faturado da Oben bate com o DRE. Decisão do founder: mostrar, não
   mudar a régua de receita.
+- **Sensor de edição do Lovable deu EDICAO_DETECTADA num deploy limpo:** o MCP devolveu `edit_id` e
+  `commit_sha`, e o `commit_sha` era o do commit que SÓ regenera `types.ts` (o efeito colateral tolerado
+  — a coluna nova que ele trouxe existe na prod). O eixo 1 do sensor assume "deploy puro não traz esses
+  campos"; aqui trouxe. Lido à mão: nenhum arquivo de edge/`src/` tocado. Sem máquina nova (nada de
+  incidente), só o registro para quem bater no mesmo veredito.
+- **`sync-reprocess/versao.ts` está no PISO do sentinela de limpeza** (9 linhas de código / 90 = 0,1000):
+  qualquer linha de comentário a mais reprova, e comentário na linha do `VERSAO` quebra o extrator da
+  sonda (exige a linha terminando no `;`). Nota de versão nova vai no `index.ts` ou no diário.

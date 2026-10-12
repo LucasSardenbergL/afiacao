@@ -3,6 +3,7 @@ import { confirmUnit, type ConfirmUnitVars } from '@/services/recebimento-confir
 import { reportDivergencia, type ReportDivergenciaVars } from '@/services/recebimento-divergencia';
 import { addCte, type AddCteVars } from '@/services/recebimento-cte';
 import { confirmPickItem, type ConfirmPickItemVars } from '@/services/picking-confirm';
+import { despacharApontamento, type AcaoApontamento } from '@/services/pcp-apontamento';
 
 /**
  * Registra TODOS os handlers de flush por kind, uma única vez, no boot do app.
@@ -19,22 +20,28 @@ export function registerAllOfflineHandlers(): () => void {
   // — assim o que foi confirmado offline aparece na UI sem esperar refetch natural.
   // Keys por prefixo (casam ['nfe_conferencia', id] etc.).
   const unsubs = [
-    registerOfflineHandler<ConfirmUnitVars>('recebimento.confirm-unit', async (v) => {
-      await confirmUnit(v);
+    registerOfflineHandler<ConfirmUnitVars>('recebimento.confirm-unit', async (v, cliente) => {
+      await confirmUnit(v, cliente);
       return true;
     }, [['nfe_conferencia'], ['nfe_lotes']]),
-    registerOfflineHandler<ReportDivergenciaVars>('recebimento.report-divergencia', async (v) => {
-      await reportDivergencia(v);
+    registerOfflineHandler<ReportDivergenciaVars>('recebimento.report-divergencia', async (v, cliente) => {
+      await reportDivergencia(v, cliente);
       return true;
     }, [['nfe_conferencia']]),
-    registerOfflineHandler<AddCteVars>('recebimento.add-cte', async (v) => {
-      await addCte(v);
+    registerOfflineHandler<AddCteVars>('recebimento.add-cte', async (v, cliente) => {
+      await addCte(v, cliente);
       return true;
     }, [['nfe_conferencia']]),
-    registerOfflineHandler<ConfirmPickItemVars>('picking.confirm-item', async (v) => {
-      await confirmPickItem(v);
+    registerOfflineHandler<ConfirmPickItemVars>('picking.confirm-item', async (v, cliente) => {
+      await confirmPickItem(v, cliente);
       return true;
     }, [['touch-pk-items'], ['touch-pk-tasks']]),
+    // PCP no boot também (antes só com a tela de apontamento aberta: sair dela deixava o item
+    // sem handler, e voltar a entrar não drenava).
+    registerOfflineHandler<AcaoApontamento>('pcp.apontar', async (v, cliente) => {
+      await despacharApontamento(v, cliente);
+      return true;
+    }, [['pcp-apontamento-ops']]),
   ];
   return () => unsubs.forEach((u) => u());
 }

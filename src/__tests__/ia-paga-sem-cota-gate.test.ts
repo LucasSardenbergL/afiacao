@@ -53,8 +53,10 @@ import { temAuthzDominante } from '@/lib/gates/authz-dominante';
 const RAIZ = resolve(__dirname, '../..');
 const DIR_EDGES = 'supabase/functions';
 
+// `criarClienteAnthropic(` (M-33): a edge que usa o cliente com coleira de `_shared/anthropic-cliente.ts`
+// não importa mais o SDK no próprio `index.ts` — sem este termo ela SAIRIA da população em silêncio.
 const PROVEDOR_PAGO =
-  /api\.elevenlabs\.io|api\.anthropic\.com|api\.openai\.com|generativelanguage\.googleapis|ai\.gateway\.lovable\.dev|@anthropic-ai\/sdk/;
+  /api\.elevenlabs\.io|api\.anthropic\.com|api\.openai\.com|generativelanguage\.googleapis|ai\.gateway\.lovable\.dev|@anthropic-ai\/sdk|\bcriarClienteAnthropic\s*\(/;
 const CONSOME_COTA = /\bconsumirCota\s*\(/;
 
 interface Edge {
