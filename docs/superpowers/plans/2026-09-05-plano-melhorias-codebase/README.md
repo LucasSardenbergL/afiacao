@@ -12,9 +12,9 @@
 
 | Estado | Itens |
 |---|---|
-| ✅ feito | M-07 (✅ #2980, "Faturado hoje" filtra a empresa) · M-12 (✅ #2982, catálogo paginado, falha visível) · M-05 (✅ #2985, drill-down "indisponível"/janela sem Total) · M-10 (✅ #2989, logout limpa cache e sessão) · M-30 (✅ #2979, `ErrorBoundary` por rota no shell) · M-39 (✅ #2969, cano `$exception` provado em prod) · M-01 (#2201) · M-02 (#2204) · M-03 (#2205) · M-04 (#2206) · M-11 (#2781) · M-24 (vitest `projects` node/jsdom) · M-25 (gate AST ~60% mais rápido) · M-27 (#2874, snapshot com provas) · M-40 (job `provas-sql`, `db/nucleo-ci.txt` com 92 harnesses) · M-45 (✅ #2965, README humano) |
-| 🟡 parcial | M-14 (`concurrency` + shellcheck no CI; faltam os lockfiles) · M-21 (preload do `bun test` falha alto) · M-26 (sonda em 63/98 edges, era 40/95) · M-33 (`omie-deadline.ts` em 4+ edges; faltam os 3 enumeradores e o cliente Anthropic) · M-48 (7 wrappers `omieCall`, eram 25) |
-| ❌ aberto | M-06 · M-08 · M-09 · M-13 · M-15 · M-16 · M-17 · M-18 · M-22 · M-23 · M-28 · M-29 · M-31 · M-36 · M-37 · M-41 · M-47 |
+| ✅ feito | M-14 (✅ #2966, lockfiles mortos apagados) · M-29 (✅ #2971, `deno.lock` + `--frozen` no `edges:typecheck`) · M-23 (✅ #2978, `gates:rapidos` no pré-PR) · M-22 (✅ #2984, CI na main pós-merge via `workflow_run`) · M-28 (✅ #2986, gate `casts:stale`) · M-21 (✅ #2988, build-id contra o `dist/` real + tetos do `priceGuard` removidos) · M-07 (✅ #2980, "Faturado hoje" filtra a empresa) · M-12 (✅ #2982, catálogo paginado, falha visível) · M-05 (✅ #2985, drill-down "indisponível"/janela sem Total) · M-10 (✅ #2989, logout limpa cache e sessão) · M-30 (✅ #2979, `ErrorBoundary` por rota no shell) · M-39 (✅ #2969, cano `$exception` provado em prod) · M-01 (#2201) · M-02 (#2204) · M-03 (#2205) · M-04 (#2206) · M-11 (#2781) · M-24 (vitest `projects` node/jsdom) · M-25 (gate AST ~60% mais rápido) · M-27 (#2874, snapshot com provas) · M-40 (job `provas-sql`, `db/nucleo-ci.txt` com 92 harnesses) · M-45 (✅ #2965, README humano) |
+| 🟡 parcial | M-26 (sonda em 63/98 edges, era 40/95) · M-33 (`omie-deadline.ts` em 4+ edges; faltam os 3 enumeradores e o cliente Anthropic) · M-48 (7 wrappers `omieCall`, eram 25) |
+| ❌ aberto | M-06 · M-08 · M-09 · M-13 · M-15 · M-16 · M-17 · M-18 · M-31 · M-36 · M-37 · M-41 · M-47 |
 
 ### 0.2 Regra de execução: ordenar por arquivo tocado, não por score
 
@@ -56,8 +56,10 @@ PR mergeado **e** prova em produção — sonda de versão para edge, consulta `
 ```bash
 git grep -n "company" origin/main -- src/hooks/dashboard/useVendasZone.ts | grep -v queryKey   # M-07: ≥1
 git ls-tree origin/main bun.lockb package-lock.json | wc -l                                      # M-14: 0
-git ls-tree -r --name-only origin/main supabase/functions | grep -c 'deno.lock'                  # M-29: ≥1
+git ls-tree origin/main scripts/edges-typecheck.deno.lock | wc -l                                # M-29: 1 (fora de supabase/functions — não vai pro deploy)
 bun run gates:rapidos                                                                            # M-23: exit 0; sabotar 1 gate → ≠0
+gh run list --workflow CI --branch main --event workflow_dispatch --limit 3                        # M-22: run no SHA do último merge
+bun run casts:stale                                                                              # M-28: CASTS-STALE-OK
 git grep -ln "fila_aplicacao_omie\|quality_checklists" origin/main -- src | wc -l               # M-06: 0
 git grep -c "status: 'congelado'" origin/main -- src/lib/modulos/manifesto.ts                    # M-41: nº de módulos congelados
 ~/.config/afiacao/psql-ro -c "select count(*) from cron.job where schedule = '* * * * *'"        # M-16: 0

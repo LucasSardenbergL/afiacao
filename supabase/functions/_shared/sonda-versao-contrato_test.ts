@@ -65,6 +65,10 @@ import * as aplicarParametros from "../omie-aplicar-parametros/versao.ts";
 import * as recurringOrders from "../process-recurring-orders/versao.ts";
 import * as programadoExtrair from "../pedido-programado-extrair/versao.ts";
 import * as promocaoVision from "../promocao-extrair-via-vision/versao.ts";
+import * as tintOmieSync from "../tint-omie-sync/versao.ts";
+import * as verifyEmployee from "../verify-employee/versao.ts";
+import * as scoringRecalc from "../scoring-recalc-client/versao.ts";
+import * as visitScoreRecalc from "../visit-score-recalc-client/versao.ts";
 import * as biometricAuth from "../biometric-auth/versao.ts";
 import * as gmailWebhook from "../gmail-webhook-receiver/versao.ts";
 import * as cmcBackfill from "../cmc-snapshot-backfill/versao.ts";
@@ -240,6 +244,11 @@ const EDGES: Array<{ nome: string; mod: ModSonda }> = [
   { nome: "pedido-programado-extrair", mod: programadoExtrair },
   // Lote C (M-33): ganhou sonda ao trocar de cliente Anthropic — a canária antiga era `=== true` cru.
   { nome: "promocao-extrair-via-vision", mod: promocaoVision },
+  // M-26, 1ª leva do Lote C: escrita no nosso banco, sem prova de deploy até aqui.
+  { nome: "tint-omie-sync", mod: tintOmieSync },
+  { nome: "verify-employee", mod: verifyEmployee },
+  { nome: "scoring-recalc-client", mod: scoringRecalc },
+  { nome: "visit-score-recalc-client", mod: visitScoreRecalc },
   // M-26, 2ª leva: gate próprio que não aceita cron (pré-login público; segredo de webhook).
   { nome: "biometric-auth", mod: biometricAuth },
   { nome: "gmail-webhook-receiver", mod: gmailWebhook },
@@ -336,6 +345,12 @@ const ESCRITA_NOSSO_BANCO = [
   // Lote C (M-33): `promocao-extrair-via-vision` sobe o anexo ao storage, paga token da Anthropic e
   // grava a campanha/aumento extraído (promocao_*), que entra no custo da reposição.
   "promocao-extrair-via-vision",
+  // M-26, 1ª leva: `tint-omie-sync` faz upsert em omie_products; `verify-employee` reescreve o papel
+  // (profiles/user_roles); os dois `*-recalc-client` gravam score e consomem a fila de recálculo.
+  "tint-omie-sync",
+  "verify-employee",
+  "scoring-recalc-client",
+  "visit-score-recalc-client",
   // M-26, 2ª leva: `biometric-auth` grava a credencial WebAuthn; `gmail-webhook-receiver` grava o log
   // e abre o alerta de compra (fornecedor_alerta).
   "biometric-auth",
@@ -944,6 +959,8 @@ const BEARER_NO_HANDLER = [
   "analyze-services",
   "copilot-analyze",
   "elevenlabs-transcribe",
+  // M-26: `verify-employee` exige Bearer + getUser no handler; a sonda vem antes.
+  "verify-employee",
 ];
 
 /**

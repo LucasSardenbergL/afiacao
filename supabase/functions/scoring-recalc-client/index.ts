@@ -9,6 +9,7 @@
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { authorizeCronOrStaff, corsHeaders } from '../_shared/auth.ts';
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 // --- Inline: decay.ts ---
 const HALF_LIFE_DAYS = 30;
@@ -462,12 +463,30 @@ Deno.serve(async (req) => {
   const auth = await authorizeCronOrStaff(req);
   if (!auth.ok) return auth.response;
 
+  // Sonda de versão (M-26; docs/agent/deploy.md): `{ probe: true }` responde a versão no ar sem
+  // tocar banco nem Omie. `classificarSonda` decide fail-closed — a string "true" do SQL Editor é
+  // ambígua e recebe 400, nunca cai no fluxo real. Corpo lido UMA vez e reaproveitado abaixo.
+  const corpoBruto: Record<string, unknown> = await req.json().catch(() => ({}));
+  const decisaoSonda = classificarSonda(corpoBruto);
+  if (decisaoSonda.tipo === "sonda") {
+    return new Response(JSON.stringify(respostaSonda(VERSAO)), {
+      status: 200,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+  if (decisaoSonda.tipo === "ambiguo") {
+    return new Response(JSON.stringify({ versao: VERSAO, error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }), {
+      status: 400,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
   const supabase = createClient(
     Deno.env.get('SUPABASE_URL')!,
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
   );
 
-  const body: RecalcRequest = await req.json().catch(() => ({}));
+  const body = corpoBruto as RecalcRequest;
 
   // Mode B: drain queue
   if (body.drain_queue) {
