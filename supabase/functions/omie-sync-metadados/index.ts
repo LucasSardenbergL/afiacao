@@ -1,6 +1,16 @@
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCron, corsHeaders } from "../_shared/auth.ts";
 import { avaliarPagina, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
+import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
+import { fetchAll } from "../_shared/paginate.ts";
+import {
+  avaliarCompletudeCatalogo,
+  codigoValido,
+  type CompletudeListagem,
+  type ConjuntoAnterior,
+  ENTITY_AUSENTES,
+  planejarInativacao,
+} from "./ausentes.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 const OMIE_API_URL = "https://app.omie.com.br/api/v1";
@@ -66,6 +76,122 @@ async function callOmie(
   return result;
 }
 
+// Invalida a confirmação do próximo run (codigos null) e registra o motivo. Chamado quando a etapa
+// de ausentes falha E quando a conta inteira aborta no laço: um abort deixava o conjunto ANTERIOR
+// elegível — ausente → reaparece numa varredura que aborta → ausente de novo seria "confirmado"
+// sem que as duas ausências fossem consecutivas (Codex no desenho, 2026-10-12).
+async function invalidarAusentes(db: SupabaseClient, acctValue: string, motivo: string) {
+  const agora = new Date().toISOString();
+  const { error } = await db.from("sync_state").upsert(
+    {
+      entity_type: ENTITY_AUSENTES,
+      account: acctValue,
+      status: "erro",
+      error_message: motivo.slice(0, 500),
+      total_synced: 0,
+      last_sync_at: agora,
+      updated_at: agora,
+      metadata: { codigos: null, run_at: null },
+    },
+    { onConflict: "entity_type,account" },
+  );
+  if (error) console.error(`[metadados ${acctValue}] invalidação do conjunto de ausentes falhou:`, error.message);
+}
+
+// Inativa quem SUMIU do cadastro do Omie — regra pura e guardas em ausentes.ts. Só roda depois do
+// upsert do catálogo inteiro; lê o conjunto de ausentes do run anterior na linha DEDICADA
+// sync_state(ENTITY_AUSENTES) — escritor único, esta edge — e inativa só a interseção. Nunca DELETE
+// (pedidos referenciam o produto); o upsert do próximo run reativa quem reaparecer na listagem.
+// Qualquer falha de leitura LANÇA antes de inativar; o caller isola o erro (o sync já gravou).
+async function inativarAusentes(
+  db: SupabaseClient,
+  acctValue: string,
+  completude: CompletudeListagem,
+  listados: ReadonlySet<number>,
+  inicioVarredura: string,
+) {
+  const agora = new Date();
+  const { data: linhaAnterior, error: erroAnterior } = await db
+    .from("sync_state")
+    .select("metadata")
+    .eq("entity_type", ENTITY_AUSENTES)
+    .eq("account", acctValue)
+    .maybeSingle();
+  if (erroAnterior) throw new Error(`leitura do conjunto anterior de ausentes: ${erroAnterior.message}`);
+  const anterior = (linhaAnterior?.metadata ?? null) as ConjuntoAnterior | null;
+
+  // Só lê os ativos se a listagem é completa — incompleta não decide nada (economiza a leitura).
+  const ativosLocais = completude.completa
+    ? (await fetchAll<{ omie_codigo_produto: number }>(
+      (f, t) =>
+        db
+          .from("omie_products")
+          .select("omie_codigo_produto")
+          .eq("account", acctValue)
+          .eq("ativo", true)
+          .order("omie_codigo_produto", { ascending: true })
+          .range(f, t),
+      `omie_products:ativos:${acctValue}`,
+    )).map((r) => r.omie_codigo_produto)
+    : [];
+
+  const plano = planejarInativacao({ completude, listados, ativosLocais, anterior, agoraMs: agora.getTime() });
+
+  const inativados: number[] = [];
+  const CHUNK = 200;
+  for (let i = 0; i < plano.aInativar.length; i += CHUNK) {
+    const lote = plano.aInativar.slice(i, i + CHUNK);
+    // `.eq("ativo", true)`: só vira false quem ainda está ativo (o trigger de reposição dispara
+    // uma vez). `.lt("updated_at", inicioVarredura)`: CAS — linha que QUALQUER writer tocou depois
+    // que a varredura começou (outro sync viu o produto, alguém o reativou) fica de fora; o ausente
+    // de verdade está congelado (os 4 de 2026-10 tinham updated_at parado há 10 dias). O `.select`
+    // devolve o que de fato mudou — o registro conta o efeito, não a intenção.
+    const { data, error } = await db
+      .from("omie_products")
+      .update({ ativo: false })
+      .eq("account", acctValue)
+      .eq("ativo", true)
+      .lt("updated_at", inicioVarredura)
+      .in("omie_codigo_produto", lote)
+      .select("omie_codigo_produto");
+    if (error) throw new Error(`inativação de ausentes (lote ${i / CHUNK + 1}): ${error.message}`);
+    for (const r of data ?? []) inativados.push(Number(r.omie_codigo_produto));
+  }
+
+  const { error: erroRegistro } = await db.from("sync_state").upsert(
+    {
+      entity_type: ENTITY_AUSENTES,
+      account: acctValue,
+      status: plano.status,
+      error_message: plano.motivo,
+      total_synced: inativados.length,
+      last_sync_at: agora.toISOString(),
+      updated_at: agora.toISOString(),
+      metadata: {
+        // `codigos` + `run_at` = o que o PRÓXIMO run usa para confirmar; null invalida a confirmação.
+        codigos: plano.conjuntoNovo,
+        run_at: plano.conjuntoNovo ? agora.toISOString() : null,
+        ausentes: plano.ausentes.length,
+        ativos_locais: ativosLocais.length,
+        inativados,
+      },
+    },
+    { onConflict: "entity_type,account" },
+  );
+  // LANÇA (não só loga): sem o conjunto NOVO gravado, o de ONTEM seguiria elegível — X reapareceu
+  // hoje, o registro falhou, um retry minutos depois omite X por deslize e o confirma com o conjunto
+  // velho (o CAS não pega: o updated_at de X é anterior ao retry). O catch do caller invalida.
+  // Achado do Codex no adversarial (2026-10-12). A inativação deste run, se houve, já valeu.
+  if (erroRegistro) {
+    throw new Error(`registro do conjunto de ausentes (inativados=${inativados.length}): ${erroRegistro.message}`);
+  }
+
+  console.log(
+    `[metadados ${acctValue}] ausentes: status=${plano.status} ausentes=${plano.ausentes.length} inativados=${inativados.length}${plano.motivo ? ` motivo="${plano.motivo}"` : ""}`,
+  );
+  return { status: plano.status, ausentes: plano.ausentes.length, inativados, motivo: plano.motivo };
+}
+
 async function syncMetadadosAccount(
   db: SupabaseClient,
   account: OmieAccount,
@@ -78,6 +204,13 @@ async function syncMetadadosAccount(
   let typedCount = 0;   // produtos com tipo_produto classificado (não-null)
   let tipo04Count = 0;  // produtos classificados como Produto Acabado (04, fabricado)
   const t0 = Date.now();
+  const inicioVarredura = new Date(t0).toISOString();
+  // Insumos da completude (ausentes.ts): itens crus por página não-vazia, códigos listados (inclusive
+  // inativo='S' — inativo no Omie ainda EXISTE), itens sem código utilizável e o total declarado.
+  const tamanhos: number[] = [];
+  const listados = new Set<number>();
+  let codigosInvalidos = 0;
+  let totalDeclarado: number | undefined;
 
   while (pagina <= totalPaginas) {
     const result = await callOmie(account, "geral/produtos/", "ListarProdutos", {
@@ -87,6 +220,7 @@ async function syncMetadadosAccount(
       filtrar_apenas_omiepdv: "N",
     }) as Record<string, unknown> & {
       total_de_paginas?: number;
+      total_de_registros?: number;
       produto_servico_cadastro?: Array<Record<string, unknown>>;
     };
 
@@ -100,6 +234,15 @@ async function syncMetadadosAccount(
       throw new Error(`página ${pagina}/${totalPaginas} do ListarProdutos veio vazia antes do fim declarado — abortando (retrato parcial)`);
     }
     if (veredicto === "fim") break;
+
+    tamanhos.push(produtos.length);
+    const declarado = Number(result.total_de_registros);
+    if (Number.isFinite(declarado) && declarado > 0) totalDeclarado = Math.max(totalDeclarado ?? 0, declarado);
+    for (const p of produtos) {
+      const cod = codigoValido(p.codigo_produto);
+      if (cod === null) codigosInvalidos++;
+      else listados.add(cod);
+    }
 
     const rows = produtos.map((p: Record<string, unknown> & { imagens?: Array<{ url_imagem?: string }> }) => {
       const inativoFlag = p.inativo === "S";
@@ -181,6 +324,25 @@ async function syncMetadadosAccount(
   // alertar (o cron diário tint-marcar-bases-diario/jobid 132 segue como rede de
   // segurança). tint_marcar_bases_mixmachine() é idempotente/aditiva, nunca desmarca.
   // Falha aqui NÃO pode derrubar o sync (produtos já gravados) → try/catch isolado.
+  // Inativação de quem sumiu do Omie. Falha aqui NÃO derruba o sync (catálogo já gravado e
+  // sync_state carimbado) — surfaça no resultado e na linha dedicada (status 'erro').
+  let ausentes: Awaited<ReturnType<typeof inativarAusentes>> | { status: "erro"; motivo: string };
+  try {
+    const completude = avaliarCompletudeCatalogo({
+      tamanhos,
+      porPagina: PAGE_SIZE,
+      codigosInvalidos,
+      unicos: listados.size,
+      totalDeclarado,
+    });
+    ausentes = await inativarAusentes(db, acctValue, completude, listados, inicioVarredura);
+  } catch (e) {
+    const motivo = mensagemDeErro(e) ?? "erro sem mensagem utilizável";
+    console.error(`[metadados ${account}] inativação de ausentes não rodou (sync preservado): ${motivo}`);
+    ausentes = { status: "erro", motivo };
+    await invalidarAusentes(db, acctValue, motivo);
+  }
+
   let basesTintMarcadas: number | null = null;
   if (acctValue === "oben") {
     try {
@@ -208,6 +370,7 @@ async function syncMetadadosAccount(
     classificados: typedCount,
     produto_acabado_04: tipo04Count,
     bases_tint_marcadas: basesTintMarcadas,
+    ausentes,
     tempo_ms: Date.now() - t0,
   };
 }
@@ -266,6 +429,7 @@ Deno.serve(async (req) => {
       } catch (err) {
         console.error(`[metadados] falhou para ${acct}:`, err);
         results.push({ account: acct, error: String(err) });
+        await invalidarAusentes(supabaseAdmin, getCredentials(acct).label, `conta abortou: ${mensagemDeErro(err) ?? "erro sem mensagem utilizável"}`);
       }
     }
 

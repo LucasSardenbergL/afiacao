@@ -307,11 +307,16 @@ async function sincronizarEmpresa(supabase: DB, empresa: Empresa): Promise<SyncS
         "sku_status_omie:espelho",
       );
 
-      const inativos = encontradosStatus
+      // Só espelha quem foi ENCONTRADO NESTE RUN. A tabela guarda status histórico: um produto
+      // excluído no Omie mantém `ativo_no_omie=true` stale (se não é mais alvo, para sempre; se é,
+      // até o passo 3 abaixo virá-lo null) — e reativá-lo aqui desfazia, todo dia, a inativação de
+      // ausentes do omie-sync-metadados (ausentes.ts). Achado do Codex no desenho (2026-10-12).
+      const doRun = encontradosStatus.filter((r) => encontrados.has(String(r.sku_codigo_omie)));
+      const inativos = doRun
         .filter((r) => r.ativo_no_omie === false)
         .map((r) => Number(r.sku_codigo_omie))
         .filter((n) => Number.isFinite(n));
-      const ativos = encontradosStatus
+      const ativos = doRun
         .filter((r) => r.ativo_no_omie === true)
         .map((r) => Number(r.sku_codigo_omie))
         .filter((n) => Number.isFinite(n));
