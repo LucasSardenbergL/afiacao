@@ -37,6 +37,7 @@ export const GATES_RAPIDOS: readonly string[] = [
   'authz:check',
   'authz:carimbo',
   'bunpin:check',
+  'casts:stale',
   'docs:indice',
   'docs:citacoes',
   'docs:links',
