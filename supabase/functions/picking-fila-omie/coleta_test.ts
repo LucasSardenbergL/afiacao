@@ -4,6 +4,8 @@ import {
   AUSENCIAS_PARA_SAIR_DA_JANELA,
   codigoOmie,
   conferirFiltro,
+  ordemDosCodigos,
+  paginasDaCauda,
   janelaDaListagem,
   montarLoteSync,
   dataOmieParaIso,
@@ -227,12 +229,25 @@ Deno.test("conferirFiltro: recente no corte ausente do filtro é perdido; cobert
   assertEquals([r.amostra_no_corte, r.perdidos_pelo_filtro, r.perdidos_amostra, r.amostra_cobre_a_janela], [2, 1, ["29"], true]);
   const s = conferirFiltro([ped(30, "05/10/2026")], new Set(["30"]), "2026-09-11");
   assertEquals([s.perdidos_pelo_filtro, s.amostra_cobre_a_janela], [0, false], "amostra só de recentes não prova a janela");
-  assertEquals(r.amostra_ordenada_decrescente, true, "30,29,28,27 é decrescente (o 27 sem dInc ainda tem código)");
+  assertEquals(r.amostra_ordem, "decrescente", "30,29,28,27 é decrescente (o 27 sem dInc ainda tem código)");
 });
 
-Deno.test("conferirFiltro: ordenação não confirmada quando o Omie ignora o parâmetro", () => {
-  assertEquals(conferirFiltro([ped(30), ped(29)], new Set(), "2026-01-01").amostra_ordenada_decrescente, true);
-  assertEquals(conferirFiltro([ped(29), ped(30)], new Set(), "2026-01-01").amostra_ordenada_decrescente, false);
+Deno.test("ordemDosCodigos: MEDE a ordem (crescente/decrescente/desordenada) — nunca confia no pedido", () => {
+  assertEquals(ordemDosCodigos(["27", "28", "30"]), "crescente");
+  assertEquals(ordemDosCodigos(["30", "29"]), "decrescente");
+  assertEquals(ordemDosCodigos(["29", "31", "30"]), "desordenada");
+  assertEquals(ordemDosCodigos(["29", null]), "desordenada");
+  assertEquals(ordemDosCodigos(["29"]), "desordenada", "um só código não prova ordem");
+  // códigos do Omie passam de 2^53: comparação em BigInt
+  assertEquals(ordemDosCodigos(["12195014263", "12195017026"]), "crescente");
+});
+
+Deno.test("paginasDaCauda: as duas últimas páginas (a cauda = os mais novos na ordem padrão)", () => {
+  assertEquals(paginasDaCauda(1637, 100), [16, 17]);
+  assertEquals(paginasDaCauda(6213, 100), [62, 63]);
+  assertEquals(paginasDaCauda(200, 100), [1, 2]);
+  assertEquals(paginasDaCauda(37, 100), [1]);
+  assertEquals(paginasDaCauda(0, 100), []);
 });
 
 function acomp(cod: string, incluido_em: string | null, extra: Partial<Acompanhada> = {}): Acompanhada {

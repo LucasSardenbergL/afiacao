@@ -157,7 +157,7 @@ const AdminReposicaoEmbalagem = lazy(() => import("./pages/AdminReposicaoEmbalag
 const ParamAutoMudancas = lazy(() => import("./pages/ParamAutoMudancas"));
 const AdminEstoqueRecebimento = lazy(() => import("./pages/AdminEstoqueRecebimento"));
 const AdminEstoquePicking = lazy(() => import("./pages/AdminEstoquePicking"));
-const TouchPickingView = lazy(() => import("./pages/picking/TouchPickingView"));
+const SeparacaoV2 = lazy(() => import("./pages/picking/SeparacaoV2"));
 const FinanceiroGestao = lazy(() => import("./pages/FinanceiroGestao"));
 const FinanceiroAnalise = lazy(() => import("./pages/FinanceiroAnalise"));
 const TintCatalogo = lazy(() => import("./pages/TintCatalogo"));
@@ -404,7 +404,7 @@ const App = () => {
                 <Route path="admin/reposicao/mudancas-automaticas" element={<ParamAutoMudancas />} />
                 <Route path="admin/estoque/recebimento" element={<AdminEstoqueRecebimento />} />
                 <Route path="admin/estoque/picking" element={<AdminEstoquePicking />} />
-                <Route path="admin/estoque/picking/mobile" element={<TouchPickingView />} />
+                <Route path="admin/estoque/picking/mobile" element={<SeparacaoV2 />} />
                 <Route path="tintometrico/catalogo" element={<TintCatalogo />} />
                 <Route path="tintometrico/integracao" element={<TintIntegracao />} />
                 <Route path="performance" element={<PerformanceHub />} />

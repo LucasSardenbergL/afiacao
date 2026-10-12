@@ -1,0 +1,15 @@
+# Defeitos de cast velho — o denominador de `casts:stale` (M-28, 2026-10-12).
+#
+# A classe: `.rpc('x' as never)`/`.from('x' as never)` sobre nome que o types.ts JÁ tipa. O cast
+# compila, a suíte fica verde e o typecheck não vê nada — é exatamente o que ele desliga. Por isso
+# o alvo é um sítio onde o cast NÃO quebra o tsc (medido à mão em 2026-10-12: `typecheck:app` exit
+# 0 com o defeito aplicado): o client já é visto como `rpc(fn: string)`, e `never` cabe em `string`.
+# Se o defeito quebrasse o tsc, mediria o tsc, não o gate (regra 2 do README).
+#
+# Alvo: `src/hooks/useCarteiraSaude.ts`, cuja RPC `get_carteira_saude` entrou no types.ts depois do
+# cast-no-boundary que o arquivo ainda carrega — o mesmo caminho pelo qual os 97 casts da baseline
+# nasceram.
+
+# @origem: docs/superpowers/plans/2026-09-05-plano-melhorias-codebase/README.md (M-28)
+# @suspeito: casts:stale
+cast-velho-em-rpc-tipada | src/hooks/useCarteiraSaude.ts | s/\}\)\.rpc\('get_carteira_saude'\);/}).rpc('get_carteira_saude' as never);/

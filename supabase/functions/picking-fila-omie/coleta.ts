@@ -323,11 +323,16 @@ export function resumirLeitura(listagem: Listagem, corteIso: string): ResumoLeit
 }
 
 /**
- * Prova do filtro de data: os pedidos mais RECENTES da etapa 10 (listagem SEM filtro, por código
- * decrescente) com `dInc` no corte têm de estar todos na listagem filtrada. `perdidos_pelo_filtro`
- * > 0 = o filtro não serve para admitir (corta por outra data). É EVIDÊNCIA AMOSTRAL, não prova
- * universal: só vale com a amostra alcançando `dInc` anterior ao corte (`amostra_cobre_a_janela`),
- * a ordenação confirmada (`amostra_ordenada_decrescente`) e casos elegíveis (`amostra_no_corte` > 0).
+ * Prova do filtro de data: os pedidos mais RECENTES da etapa 10 (listagem SEM filtro) com `dInc`
+ * no corte têm de estar todos na listagem filtrada. `perdidos_pelo_filtro` > 0 = o filtro não serve
+ * para admitir (corta por outra data). É EVIDÊNCIA AMOSTRAL, não prova universal: só vale com a
+ * amostra alcançando `dInc` anterior ao corte (`amostra_cobre_a_janela`), a ordem por código
+ * MEDIDA crescente (`amostra_ordem`) e casos elegíveis (`amostra_no_corte` > 0).
+ *
+ * A amostra são as ÚLTIMAS páginas na ordem padrão, não a 1ª com `ordem_descrescente`: medido em
+ * produção (2026-10-12, v0.4), o Omie ordena SÓ DENTRO da página — a 1ª página "decrescente" eram
+ * os 100 pedidos MAIS ANTIGOS (dInc 2024/2020), com `amostra_no_corte` = 0 nas duas contas.
+ * Por isso a ordem é MEDIDA aqui, nunca pedida.
  */
 export function conferirFiltro(amostra: unknown[], filtrados: ReadonlySet<string>, corteIso: string) {
   let noCorte = 0;
@@ -341,19 +346,31 @@ export function conferirFiltro(amostra: unknown[], filtrados: ReadonlySet<string
     noCorte++;
     if (!filtrados.has(cod)) perdidos.push(cod);
   }
-  // A ordenação pedida ao Omie tem de ter vindo de fato (código decrescente), senão a amostra
-  // não é "os mais recentes" (Codex 0.5b P2-8).
-  const codigos = amostra.map((r) => codigoOmie(obj(obj(r)?.cabecalho)?.codigo_pedido));
-  const ordenada = codigos.every((c, i) => c !== null && (i === 0 || BigInt(c) < BigInt(codigos[i - 1] as string)));
   return {
     amostra: amostra.length,
-    amostra_ordenada_decrescente: ordenada,
+    amostra_ordem: ordemDosCodigos(amostra.map((r) => codigoOmie(obj(obj(r)?.cabecalho)?.codigo_pedido))),
     amostra_no_corte: noCorte,
     perdidos_pelo_filtro: perdidos.length,
     perdidos_amostra: perdidos.slice(0, 10),
     amostra_dinc_mais_antigo: maisAntigo,
     amostra_cobre_a_janela: maisAntigo !== null && maisAntigo < corteIso,
   };
+}
+
+/** Ordem MEDIDA dos códigos (estrita); código ausente = `desordenada`. */
+export function ordemDosCodigos(codigos: (string | null)[]): "crescente" | "decrescente" | "desordenada" {
+  if (codigos.length < 2 || codigos.some((c) => c === null)) return "desordenada";
+  const n = codigos.map((c) => BigInt(c as string));
+  if (n.every((c, i) => i === 0 || c > n[i - 1])) return "crescente";
+  if (n.every((c, i) => i === 0 || c < n[i - 1])) return "decrescente";
+  return "desordenada";
+}
+
+/** Páginas (de `porPagina`) que formam a cauda da listagem: as duas últimas, em ordem. */
+export function paginasDaCauda(total: number, porPagina: number): number[] {
+  const ultima = Math.ceil(total / porPagina);
+  if (ultima <= 0) return [];
+  return ultima === 1 ? [1] : [ultima - 1, ultima];
 }
 
 // ─── Escrita (Fase 0.5b) ─────────────────────────────────────────────────────────────────────

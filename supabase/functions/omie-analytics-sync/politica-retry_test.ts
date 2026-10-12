@@ -19,9 +19,12 @@
 // não afirma comportamento nenhum, e diz isso.
 import {
   decidirRetentativaOmie,
+  FETCH_TIMEOUT_OMIE_MS,
   MAX_TENTATIVAS_OMIE,
   mensagemCorpoNaoJson,
   mensagemFalhaOmie,
+  ORCAMENTO_CHAMADA_OMIE_MS,
+  tetoDaTentativa,
 } from "./politica-retry.ts";
 import { classificarFaultstring, redigirSegredo } from "../_shared/omie-falha.ts";
 
@@ -237,10 +240,15 @@ Deno.test("GATE — o callOmie delega a política, em vez de reimplementá-la fo
   // Os três pontos de delegação. `mensagemCorpoNaoJson` é o que mais importa amarrar aqui: ele é
   // o único cujo COMPORTAMENTO os testes acima cobrem mas cuja CHAMADA depende de o `res.json()`
   // continuar dentro de um try — e essa parte só existe no index.ts.
-  for (const simbolo of ["decidirRetentativaOmie", "mensagemFalhaOmie", "mensagemCorpoNaoJson"]) {
+  for (const simbolo of ["decidirRetentativaOmie", "mensagemFalhaOmie", "mensagemCorpoNaoJson", "tetoDaTentativa", "AbortSignal.timeout"]) {
     if (!new RegExp(`${simbolo}\\s*\\(`).test(FONTE_EDGE)) {
       throw new Error(`o callOmie não chama mais \`${simbolo}\` — a decisão saiu do alcance do teste`);
     }
+  }
+  // M-33: a decisão de retentar tem de receber o relógio da chamada — sem ele, `decidirRetentativaOmie`
+  // cai no ramo sem prazo e retenta mesmo sem tempo de chamar depois (falsificação pegou este furo).
+  if (!/decidirRetentativaOmie\s*\([^\n]*\bdeadline\b/.test(FONTE_EDGE)) {
+    throw new Error("o callOmie chama decidirRetentativaOmie SEM o prazo — a retentativa ignora o relógio da chamada");
   }
   // Classificar/atrasar por conta própria é o que este PR remove; reintroduzir devolve a decisão
   // para um arquivo que nenhum teste consegue importar.
@@ -250,4 +258,30 @@ Deno.test("GATE — o callOmie delega a política, em vez de reimplementá-la fo
   if (inline) {
     throw new Error(`classificação/atraso reimplementados dentro da edge (${inline.join(", ")}) — mova para politica-retry.ts`);
   }
+});
+
+// ── Relógio da CHAMADA (M-33) ──
+// A mensagem é a que o Deno REALMENTE lança no abort de `AbortSignal.timeout` (medido com
+// `deno eval`): se o classificador deixar de vê-la como transitória, o socket pendurado — a
+// classe do #2017 — passa a derrubar a enumeração inteira na 1ª tentativa.
+const MSG_TIMEOUT_DENO = "The operation was aborted due to timeout";
+
+Deno.test("RELÓGIO — o abort por timeout do Deno é transitório e retenta com tempo de sobra", () => {
+  const d = decidirRetentativaOmie(MSG_TIMEOUT_DENO, 1, MAX_TENTATIVAS_OMIE, { agora: 0, deadline: ORCAMENTO_CHAMADA_OMIE_MS });
+  assertEquals([d.classe, d.retentar], ["transitorio", true]);
+});
+
+Deno.test("RELÓGIO — sem tempo para dormir E chamar depois, NÃO retenta", () => {
+  // tentativa 3 → backoff 3,2s; sobra 4s < 3,2s + piso de 2s.
+  const d = decidirRetentativaOmie(MSG_TIMEOUT_DENO, 3, MAX_TENTATIVAS_OMIE, { agora: 0, deadline: 4_000 });
+  assertEquals([d.retentar, d.atrasoMs], [false, 0]);
+  // Sem `prazo`, o comportamento antigo fica intacto (retenta).
+  assertEquals(decidirRetentativaOmie(MSG_TIMEOUT_DENO, 3).retentar, true);
+});
+
+Deno.test("RELÓGIO — teto por tentativa: cheio no começo, encurta no fim, 0 abaixo do piso", () => {
+  assertEquals(tetoDaTentativa(0, ORCAMENTO_CHAMADA_OMIE_MS), FETCH_TIMEOUT_OMIE_MS);
+  assertEquals(tetoDaTentativa(0, 10_000), 10_000);
+  assertEquals(tetoDaTentativa(0, 1_500), 0);
+  if (!(ORCAMENTO_CHAMADA_OMIE_MS < 150_000)) throw new Error("o relógio da chamada passou do orçamento do worker");
 });
