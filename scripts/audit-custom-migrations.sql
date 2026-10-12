@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 610
+-- Total de custom migrations: 611
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -670,6 +670,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261011020000', 'picking_v2_schema', '20261011020000_picking_v2_schema.sql'),
   ('20261011120000', 'tint_grants_escrita_staff', '20261011120000_tint_grants_escrita_staff.sql'),
   ('20261011120000', 'tint_watchdog_fase5_cron_timeout', '20261011120000_tint_watchdog_fase5_cron_timeout.sql'),
+  ('20261011120100', 'reposicao_logs_insert_cap_compras', '20261011120100_reposicao_logs_insert_cap_compras.sql'),
   ('20261011120400', 'retencao_scores_farmer', '20261011120400_retencao_scores_farmer.sql'),
   ('20261011140000', 'picking_v2_coleta_reserva', '20261011140000_picking_v2_coleta_reserva.sql')
 ),
@@ -2639,6 +2640,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('picking_v2_schema', 'rls_policy', 'public', 'picking_codigos_barras_staff_select', 'picking_codigos_barras'),
   ('picking_v2_schema', 'rls_policy', 'public', 'picking_eventos_staff_select', 'picking_eventos'),
   ('tint_watchdog_fase5_cron_timeout', 'cron_job', 'cron', 'tint-watchdog-fase5-6h', ''),
+  ('reposicao_logs_insert_cap_compras', 'rls_policy', 'public', 'reposicao_motor_run_ins', 'reposicao_motor_run'),
+  ('reposicao_logs_insert_cap_compras', 'rls_policy', 'public', 'estoque_nao_confirmado_log_ins', 'reposicao_estoque_nao_confirmado_log'),
   ('retencao_scores_farmer', 'function', 'private', 'expurgar_scores_antigos', ''),
   ('retencao_scores_farmer', 'index', 'public', 'idx_health_history_calculated_at', 'health_score_history'),
   ('retencao_scores_farmer', 'index', 'public', 'idx_priority_log_score_date', 'priority_score_log'),
@@ -4665,6 +4668,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('picking_v2_schema', 'rls_policy', 'public', 'picking_codigos_barras_staff_select', 'picking_codigos_barras'),
   ('picking_v2_schema', 'rls_policy', 'public', 'picking_eventos_staff_select', 'picking_eventos'),
   ('tint_watchdog_fase5_cron_timeout', 'cron_job', 'cron', 'tint-watchdog-fase5-6h', ''),
+  ('reposicao_logs_insert_cap_compras', 'rls_policy', 'public', 'reposicao_motor_run_ins', 'reposicao_motor_run'),
+  ('reposicao_logs_insert_cap_compras', 'rls_policy', 'public', 'estoque_nao_confirmado_log_ins', 'reposicao_estoque_nao_confirmado_log'),
   ('retencao_scores_farmer', 'function', 'private', 'expurgar_scores_antigos', ''),
   ('retencao_scores_farmer', 'index', 'public', 'idx_health_history_calculated_at', 'health_score_history'),
   ('retencao_scores_farmer', 'index', 'public', 'idx_priority_log_score_date', 'priority_score_log'),
