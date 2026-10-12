@@ -7,6 +7,7 @@ import { Search, Palette, ChevronDown, ChevronUp, Loader2, Plus } from 'lucide-r
 import { format } from 'date-fns';
 import type { CorDoCliente, OcorrenciaCor } from '@/lib/tint/cores-do-cliente';
 import { fmt } from '@/hooks/useUnifiedOrder';
+import { chaveOcorrenciaCor } from '@/lib/unified-order/chave-ocorrencia-cor';
 
 /** O que o card precisa saber do 1 toque — o cálculo (fórmula + preço do motor) mora no
  *  tintométrico (`useTintCoresDoClienteUmToque`); aqui é só exibição. */
@@ -16,10 +17,6 @@ export interface UmToqueNoCard {
   preco: number;
 }
 
-/** Chave de uma ocorrência na tela — a MESMA no card e em quem calcula o 1 toque. */
-export function chaveOcorrenciaCor(corNome: string, indiceOcorrencia: number): string {
-  return `${corNome}#${indiceOcorrencia}`;
-}
 
 interface CoresDoClienteCardProps {
   cores: CorDoCliente[];

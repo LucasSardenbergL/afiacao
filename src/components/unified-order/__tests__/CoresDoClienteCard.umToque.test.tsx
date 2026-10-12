@@ -3,7 +3,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import type { ComponentProps } from 'react';
-import { CoresDoClienteCard, chaveOcorrenciaCor, type UmToqueNoCard } from '../CoresDoClienteCard';
+import { CoresDoClienteCard, type UmToqueNoCard } from '../CoresDoClienteCard';
+import { chaveOcorrenciaCor } from '@/lib/unified-order/chave-ocorrencia-cor';
 
 // Tipo pelas props do card — importar de lib/tint seria aresta vendas→tintometrico.
 type CorDoCliente = ComponentProps<typeof CoresDoClienteCard>['cores'][number];

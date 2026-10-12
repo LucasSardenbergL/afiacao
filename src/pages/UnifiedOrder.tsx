@@ -26,7 +26,8 @@ import { AlertaCreditoCliente } from '@/components/unified-order/AlertaCreditoCl
 import { TierClienteBadge } from '@/components/unified-order/TierClienteBadge';
 import { ExcecaoCreditoDialog } from '@/components/unified-order/ExcecaoCreditoDialog';
 import type { BloqueioCreditoPedido } from '@/services/orderSubmission';
-import { CoresDoClienteCard, chaveOcorrenciaCor } from '@/components/unified-order/CoresDoClienteCard';
+import { CoresDoClienteCard } from '@/components/unified-order/CoresDoClienteCard';
+import { chaveOcorrenciaCor } from '@/lib/unified-order/chave-ocorrencia-cor';
 import { useCoresDoCliente } from '@/hooks/unifiedOrder/useCoresDoCliente';
 import { useTintCoresDoClienteUmToque, type AlvoUmToque } from '@/hooks/useTintCoresDoClienteUmToque';
 import type { CorDoCliente, OcorrenciaCor } from '@/lib/tint/cores-do-cliente';
