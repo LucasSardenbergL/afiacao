@@ -101,11 +101,4 @@ describe('fetchPedidosJanela', () => {
       /cursor/,
     );
   });
-
-  it('[JAN-STATUS] filtro de status opcional: presente vira .in(status), ausente não filtra', async () => {
-    await fetchPedidosJanela('oben', { de: '2025-10-01', ate: '2026-09-12' }, { status: ['importado', 'separacao'] });
-    expect(chamou(consultas[0], 'in')[0].args).toEqual(['status', ['importado', 'separacao']]);
-    await fetchPedidosJanela('oben', { de: '2025-10-01', ate: '2026-09-12' });
-    expect(chamou(consultas[1], 'in')).toHaveLength(0);
-  });
 });

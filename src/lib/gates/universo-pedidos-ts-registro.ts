@@ -70,6 +70,7 @@ export const REGISTRO: readonly EntradaRegistro[] = [
   { arquivo: 'src/components/adminCustomers/useAdminCustomers.ts', forma: 'select·eq(customer_user_id)·is(deleted_at)·order(created_at)·limit', categoria: 'proposito', motivo: 'feed de pedidos do cliente no admin, com badge de status' },
   { arquivo: 'src/pages/SalesQuotes.tsx', forma: 'select·eq(status)·is(deleted_at)·order(created_at)', categoria: 'proposito', motivo: 'a lista de ORÇAMENTOS (`eq(status,orcamento)`): o complemento do universo, de propósito' },
   { arquivo: 'src/components/customer360/hooks.ts', forma: 'select·eq(customer_user_id)·is(deleted_at)·order(created_at)·limit', categoria: 'proposito', motivo: '"Pedidos recentes" do Customer 360: feed com badge de status (o faturamento sai de useCustomerFaturamento12m, canônico)' },
+  { arquivo: 'src/lib/dashboard/fetch-pedidos-sem-nota.ts', forma: 'select·not(status)·is(deleted_at)·in(status)·gte(order_date_kpi)·lt(order_date_kpi)·eq(account)·gt(id)·order(id)·limit', categoria: 'proposito', motivo: 'aviso de pedidos SEM NOTA no Omie: o universo de venda canônico estreitado a importado/separacao/enviado — a pergunta é "quanto da venda ainda não virou nota?" (PedidosSemNotaBanner, 2026-10-12)' },
   // ── dívida (2026-10-01) — cada PR de domínio quita as suas ──────────────────────────────────
 ];
 
