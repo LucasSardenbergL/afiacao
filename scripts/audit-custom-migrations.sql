@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 613
+-- Total de custom migrations: 614
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -674,7 +674,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261011120200', 'wa_owner_efetivo_gate_staff', '20261011120200_wa_owner_efetivo_gate_staff.sql'),
   ('20261011120500', 'drop_quarentena_omie_clientes', '20261011120500_drop_quarentena_omie_clientes.sql'),
   ('20261011140000', 'picking_v2_coleta_reserva', '20261011140000_picking_v2_coleta_reserva.sql'),
-  ('20261011150000', 'reposicao_recusa_definitiva_portal_servidor', '20261011150000_reposicao_recusa_definitiva_portal_servidor.sql')
+  ('20261011150000', 'reposicao_recusa_definitiva_portal_servidor', '20261011150000_reposicao_recusa_definitiva_portal_servidor.sql'),
+  ('20261012130954', 'fin_sync_kick_skipped_busy_e_perdido', '20261012130954_fin_sync_kick_skipped_busy_e_perdido.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2657,7 +2658,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('reposicao_recusa_definitiva_portal_servidor', 'function', 'public', 'reposicao_encerrar_recusas_definitivas', ''),
   ('reposicao_recusa_definitiva_portal_servidor', 'function', 'public', 'analytics_outbox_pedido_compra', ''),
   ('reposicao_recusa_definitiva_portal_servidor', 'trigger', 'public', 'trg_carimbo_recusa_definitiva', 'pedido_compra_sugerido'),
-  ('reposicao_recusa_definitiva_portal_servidor', 'cron_job', 'cron', 'reposicao-encerrar-recusas-definitivas', '')
+  ('reposicao_recusa_definitiva_portal_servidor', 'cron_job', 'cron', 'reposicao-encerrar-recusas-definitivas', ''),
+  ('fin_sync_kick_skipped_busy_e_perdido', 'function', 'public', 'fin_sync_kicks_perdidos', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4688,7 +4690,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('reposicao_recusa_definitiva_portal_servidor', 'function', 'public', 'reposicao_encerrar_recusas_definitivas', ''),
   ('reposicao_recusa_definitiva_portal_servidor', 'function', 'public', 'analytics_outbox_pedido_compra', ''),
   ('reposicao_recusa_definitiva_portal_servidor', 'trigger', 'public', 'trg_carimbo_recusa_definitiva', 'pedido_compra_sugerido'),
-  ('reposicao_recusa_definitiva_portal_servidor', 'cron_job', 'cron', 'reposicao-encerrar-recusas-definitivas', '')
+  ('reposicao_recusa_definitiva_portal_servidor', 'cron_job', 'cron', 'reposicao-encerrar-recusas-definitivas', ''),
+  ('fin_sync_kick_skipped_busy_e_perdido', 'function', 'public', 'fin_sync_kicks_perdidos', '')
 )
 SELECT
   e.migration,
@@ -4716,7 +4719,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 134.
+-- Funções redefinidas com corpo extraível: 135.
 -- Fora da seção (4) — o último evento é REMOÇÃO de propósito (DROP / SET SCHEMA / RENAME):
 --   • public.import_tint_formulas — 20260806223407_drop_import_tint_formulas.sql
 --   • public.estimar_impacto_exclusao_outlier — 20260718093248_drop_estimar_impacto_exclusao_outlier_orfa.sql
@@ -5114,6 +5117,8 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'get_defasagem_cliente', 3, '20261001014210_universo_pedidos_preco.sql', 'fbe6a5aa78a32deed6860218a9b68d7c'),
   ('public', 'venda_gate_credito', 1, '20260702233000_trava_credito_fase2.sql', '72e6d3ff4dd4a438d5ca84cb9d214ec8'),
   ('public', 'venda_gate_credito', 2, '20260703140000_trava_credito_gate_excecao_por_par.sql', '1fb9610a4c6f70fb2a67d5d01396c767'),
+  ('public', 'fin_sync_kicks_perdidos', 1, '20260704102000_fin_sync_retry_kick_perdido.sql', '9f591fc2a7b823b7195085b816db6713'),
+  ('public', 'fin_sync_kicks_perdidos', 2, '20261012130954_fin_sync_kick_skipped_busy_e_perdido.sql', '02449e1f106d9c090db8d0b0ff6942ad'),
   ('public', 'medir_abaixo_piso_tier', 1, '20260704120000_preco_por_tier.sql', '0e2c798dc7098adb3c67cb923087cefa'),
   ('public', 'medir_abaixo_piso_tier', 2, '20260718190000_authz_capability_matrix_e2.sql', 'cae48dfdd1ecb9b983b065f06edfdbbf'),
   ('public', 'medir_abaixo_piso_tier', 3, '20260927172443_hoje_sp_sessao_utc_precos_piso.sql', '7044b253b88286338d34cabb8ce9461b'),

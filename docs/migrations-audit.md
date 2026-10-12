@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **613** custom migrations totais
-- **2014** objetos esperados (criados por estas migrations)
+- **614** custom migrations totais
+- **2015** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 701
+  - `function`: 702
   - `rls_policy`: 471
   - `index`: 273
   - `cron_job`: 177
@@ -5028,6 +5028,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.analytics_outbox_pedido_compra` | — |
 | `trigger` | `public.trg_carimbo_recusa_definitiva` | `pedido_compra_sugerido` |
 | `cron_job` | `cron.reposicao-encerrar-recusas-definitivas` | — |
+
+### `20261012130954_fin_sync_kick_skipped_busy_e_perdido.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_sync_kicks_perdidos` | — |
 
 ## Próximos passos por status
 
