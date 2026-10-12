@@ -49,6 +49,21 @@ cobertura pedidos ÷ DRE do card de crescimento comparável (`crescimento-base-c
 - **Deriva:** `_data_health_compute` aceita no `db/deriva-corpo-baseline.json` (md5 `ca824f4f…`,
   md5Tokens calculado do corpo vivo com o md5 local batendo com a prod); auditor sai 0 (347 identidades).
 
+## 12 meses e o aviso medido (2026-10-12)
+
+- **Hipótese errada, corrigida pelo dado:** depois da rodada de 165 dias, 368 pedidos da Colacor de
+  out/2025–abr/2026 seguiam "sem nota", e eu os tratei como status congelado. Rodada de 365 dias
+  (`db/2026-10-12-reconciliar-pedidos-colacor-12-meses.sql`, recibo #373: 16 páginas, 88 s, 0 falha;
+  810 de 812 pedidos relidos) mudou **1 status** e 3 totais (Δ −R$ 14,60): o Omie confirma que eles
+  estão ABERTOS lá. Antes de junho o status da Colacor já estava certo (nascia faturado ou aberto).
+- **O número que importa:** nas duas empresas, ~27–28% da venda do último ano (excluídos os 30 dias
+  recentes) é pedido que nunca virou nota no Omie — Colacor 551 pedidos / R$ 206k; Oben 1.187 / R$ 1,30M.
+  Contam como venda no universo do app (positivação, ranking, crescimento).
+- **O aviso falso saiu:** `DadosVendaParciaisBanner` ("dados parciais, backfill pendente, números
+  SUBESTIMADOS") virou `PedidosSemNotaBanner`, com o número medido por empresa
+  (`src/lib/dashboard/pedidos-sem-nota.ts`, `src/hooks/dashboard/usePedidosSemNota.ts`) nos dashboards
+  Master, Hunter e Farmer. Régua de receita inalterada (decisão do founder: mostrar).
+
 ## Lições
 
 - **"Merge do reconciliador" ≠ "reconciliador rodando para todos":** o código suportava a Colacor desde

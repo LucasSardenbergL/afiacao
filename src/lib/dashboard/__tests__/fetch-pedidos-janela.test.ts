@@ -14,7 +14,7 @@ function builder() {
   const chamadas: Chamada[] = [];
   consultas.push(chamadas);
   const b: Record<string, unknown> = {};
-  for (const m of ['select', 'not', 'is', 'gte', 'lt', 'gt', 'order', 'limit', 'eq']) {
+  for (const m of ['select', 'not', 'is', 'gte', 'lt', 'gt', 'order', 'limit', 'eq', 'in']) {
     b[m] = (...args: unknown[]) => {
       chamadas.push({ metodo: m, args });
       return b;
