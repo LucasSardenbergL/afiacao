@@ -86,8 +86,11 @@ export const useAuth = () => {
  * PKCE), sem rede. Só para o logout cujas duas chamadas ao servidor falharam.
  */
 function apagarSessaoPersistida() {
-  for (const chave of Object.keys(localStorage)) {
-    if (/^sb-.+-auth-token(-code-verifier)?$/.test(chave)) localStorage.removeItem(chave);
+  // `key(i)` e não `Object.keys`: a API do Storage é a portátil; de trás pra frente porque remover
+  // reindexa.
+  for (let i = localStorage.length - 1; i >= 0; i--) {
+    const chave = localStorage.key(i);
+    if (chave && /^sb-.+-auth-token(-code-verifier)?$/.test(chave)) localStorage.removeItem(chave);
   }
 }
 
