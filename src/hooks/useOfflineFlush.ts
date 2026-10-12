@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { useQueryClient, type QueryKey } from '@tanstack/react-query';
-import { flush, subscribeToOfflineQueue, type QueuedMutation } from '@/lib/offline-queue';
+import { contadorDeEnqueues, flush, subscribeToOfflineQueue, type QueuedMutation } from '@/lib/offline-queue';
 import { supabase } from '@/integrations/supabase/client';
 import { logger } from '@/lib/logger';
 import {
@@ -26,6 +26,9 @@ interface HandlerEntry {
 
 /** Registry global de handlers por kind. */
 const handlers = new Map<string, HandlerEntry>();
+
+/** Espera antes de tentar de novo uma rodada que não atendeu o pedido (ver `reagendado`). */
+export const REAGENDAR_EM_CURSO_MS = 3000;
 
 /**
  * Registra um handler que processará mutations enfileiradas de um determinado kind.
@@ -63,6 +66,12 @@ export function useOfflineFlush(): void {
     // re-dispara o flush → loop infinito martelando o backend. O guard garante que o
     // re-emit disparado pelo próprio flush seja ignorado enquanto ele roda.
     let flushing = false;
+    // O pedido de drenar não pode morrer quando a rodada não o atende: (a) recusada porque outra
+    // (desta aba ou de outra) estava em curso — essa trabalha sobre o snapshot DELA; (b) item
+    // enfileirado DURANTE a própria rodada (o re-emit dele caiu no guard `flushing`). Tenta de
+    // novo; a tentativa recusada é local (Web Lock), sem rede. Item que só FALHA não reagenda
+    // (nem emCurso nem enqueue novo) — sem loop martelando o backend.
+    let reagendado: ReturnType<typeof setTimeout> | null = null;
     const runFlush = async () => {
       if (flushing) return;
       flushing = true;
@@ -94,7 +103,15 @@ export function useOfflineFlush(): void {
       };
       try {
         // Só os itens do dono da credencial atual saem, assinados com ELA — o resto fica retido.
-        await flush(dispatcher, credencialDaSessao);
+        const enqueuesAntes = contadorDeEnqueues();
+        const resultado = await flush(dispatcher, credencialDaSessao);
+        const chegouDurante = contadorDeEnqueues() !== enqueuesAntes;
+        if ((resultado.emCurso || chegouDurante) && reagendado === null) {
+          reagendado = setTimeout(() => {
+            reagendado = null;
+            void runFlush();
+          }, REAGENDAR_EM_CURSO_MS);
+        }
         // Revalidação pós-flush (non-blocking): reconcilia o cache com o servidor
         // pros kinds que efetivamente drenaram. Sem isto, o que foi confirmado
         // offline só aparecia no próximo refetch natural (dívida corrigida).
@@ -134,6 +151,7 @@ export function useOfflineFlush(): void {
       window.removeEventListener('online', onOnline);
       subscription.unsubscribe();
       unsub();
+      if (reagendado !== null) clearTimeout(reagendado);
     };
   }, [queryClient]);
 }

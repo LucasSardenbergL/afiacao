@@ -5,10 +5,12 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 const mockFlushImpl = vi.fn();
 const mockSubscribe = vi.fn();
+let enqueuesFeitos = 0;
 
 vi.mock('@/lib/offline-queue', () => ({
   flush: (...args: unknown[]) => mockFlushImpl(...args),
   subscribeToOfflineQueue: (...args: unknown[]) => mockSubscribe(...args),
+  contadorDeEnqueues: () => enqueuesFeitos,
 }));
 
 vi.mock('@/integrations/supabase/client', () => ({
@@ -20,7 +22,12 @@ vi.mock('@/lib/offline-cliente-do-dono', () => ({
   criarClienteDoDono: () => clienteFalso,
 }));
 
-import { useOfflineFlush, registerOfflineHandler, __clearHandlersForTest } from '../useOfflineFlush';
+import {
+  useOfflineFlush,
+  registerOfflineHandler,
+  __clearHandlersForTest,
+  REAGENDAR_EM_CURSO_MS,
+} from '../useOfflineFlush';
 
 const credencial = { userId: 'user-a', accessToken: 'tok-a' };
 
@@ -35,6 +42,7 @@ beforeEach(() => {
   mockSubscribe.mockReset();
   mockSubscribe.mockReturnValue(() => undefined);
   __clearHandlersForTest();
+  enqueuesFeitos = 0;
   Object.defineProperty(navigator, 'onLine', { value: true, configurable: true });
 });
 
@@ -91,5 +99,69 @@ describe('useOfflineFlush', () => {
 
     await waitFor(() => expect(mockFlushImpl).toHaveBeenCalled());
     // (não dá pra checar o retorno diretamente, mas garantimos que não crashou)
+  });
+});
+
+describe('useOfflineFlush — pedido de drenar não morre', () => {
+  async function rodadaOnline() {
+    await act(async () => {
+      window.dispatchEvent(new Event('online'));
+    });
+  }
+
+  it('rodada recusada (emCurso, outra aba com a vaga) é reagendada', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      mockFlushImpl
+        .mockResolvedValueOnce({ success: 0, failed: 0, retidos: 0, emCurso: true })
+        .mockResolvedValue({ success: 1, failed: 0, retidos: 0 });
+      renderHook(() => useOfflineFlush(), { wrapper });
+      await rodadaOnline();
+      expect(mockFlushImpl).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(REAGENDAR_EM_CURSO_MS);
+      });
+      expect(mockFlushImpl).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('item enfileirado DURANTE a rodada é drenado por outra rodada', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      mockFlushImpl
+        .mockImplementationOnce(async () => {
+          enqueuesFeitos++; // enqueue nesta aba enquanto o handler estava em voo
+          return { success: 1, failed: 0, retidos: 0 };
+        })
+        .mockResolvedValue({ success: 1, failed: 0, retidos: 0 });
+      renderHook(() => useOfflineFlush(), { wrapper });
+      await rodadaOnline();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(REAGENDAR_EM_CURSO_MS);
+      });
+      expect(mockFlushImpl).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('controle: item que só FALHA não reagenda (sem loop martelando o backend)', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      mockFlushImpl.mockResolvedValue({ success: 0, failed: 1, retidos: 0 });
+      renderHook(() => useOfflineFlush(), { wrapper });
+      await rodadaOnline();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(REAGENDAR_EM_CURSO_MS * 3);
+      });
+      expect(mockFlushImpl).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

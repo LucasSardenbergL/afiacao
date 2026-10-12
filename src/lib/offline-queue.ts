@@ -15,7 +15,9 @@
  *    `offline-cliente-do-dono.ts`); só envia o que é do dono dela. O resto fica RETIDO intacto
  *    (sem attempts++) e visível no contador;
  *  - item legado sem dono (gravado antes desta versão, na chave v1) NUNCA é adotado por quem
- *    estiver logado — adotar é exatamente o bug. É movido para a v2 SEM dono: retido e visível;
+ *    estiver logado — adotar é exatamente o bug. A v1 é só LIDA (contada como sem dono: retida e
+ *    visível), nunca reescrita nem removida: migrar exigia ler-e-regravar a v1 e a v2 sem trava
+ *    entre abas, e um build antigo gravando a v1 (ou um `enqueue` noutra aba) perdia o item;
  *  - uma rodada de flush por vez (no módulo e, com Web Locks, entre abas): duas rodadas
  *    simultâneas despachavam o mesmo item duas vezes.
  * Nenhum caminho daqui APAGA item de outro dono.
@@ -38,7 +40,7 @@ import { track } from '@/lib/analytics';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 const STORAGE_KEY = 'offline_queue_v2';
-/** Chave dos builds sem dono. Lida só para MIGRAR (itens viram sem dono = retidos). */
+/** Chave dos builds sem dono. SÓ LEITURA: os itens contam como sem dono (retidos), nunca saem. */
 const STORAGE_KEY_LEGADO = 'offline_queue_v1';
 
 export interface QueuedMutation<TVars = unknown> {
@@ -50,7 +52,7 @@ export interface QueuedMutation<TVars = unknown> {
   attempts: number;
   lastError?: string;
   /**
-   * Quem enfileirou (auth.uid). Opcional no TIPO só porque itens gravados antes do M-10 não
+   * Quem enfileirou (auth.uid). Opcional no TIPO só porque itens gravados antes de 2026-10-12 não
    * têm — `enqueue` sempre grava. Ausente = sem dono = retido para sempre (ver `donoDe`).
    */
   userId?: string;
@@ -110,36 +112,49 @@ function lerChave(chave: string): QueuedMutation[] {
   }
 }
 
-/**
- * Move os itens da v1 para a v2 SEM dono (fail-closed: nenhum build antigo atestou dono, então
- * nenhum `userId` vindo de lá é aceito). Roda a cada leitura: um build antigo aberto noutra aba
- * pode voltar a escrever na v1.
- */
-function migrarLegado(): void {
-  const legado = lerChave(STORAGE_KEY_LEGADO);
-  if (localStorage.getItem(STORAGE_KEY_LEGADO) === null) return;
-  const semDono = legado.map(({ userId: _descartado, ...resto }) => resto as QueuedMutation);
-  const atuais = lerChave(STORAGE_KEY);
-  const ids = new Set(atuais.map((m) => m.id));
-  localStorage.setItem(STORAGE_KEY, JSON.stringify([...atuais, ...semDono.filter((m) => !ids.has(m.id))]));
-  localStorage.removeItem(STORAGE_KEY_LEGADO);
-  if (semDono.length > 0) track('offline.legado_sem_dono_migrado', { itens: semDono.length });
-}
-
+/** Fila v2 — a única que o flush despacha e que este build escreve. */
 function readQueue(): QueuedMutation[] {
   if (typeof localStorage === 'undefined') return [];
-  try {
-    migrarLegado();
-  } catch {
-    // storage cheio/bloqueado: a v1 fica onde está (nada é apagado) e a v2 segue legível
-  }
   return lerChave(STORAGE_KEY);
+}
+
+let legadoReportado = false;
+
+/**
+ * Itens da v1 (builds sem dono), SEM `userId` (fail-closed: nenhum build antigo atestou dono,
+ * então nenhum `userId` vindo de lá é aceito). Só para CONTAR: nunca enviados, nunca apagados.
+ */
+function lerLegado(): QueuedMutation[] {
+  if (typeof localStorage === 'undefined') return [];
+  const legado = lerChave(STORAGE_KEY_LEGADO).map(
+    ({ userId: _descartado, ...resto }) => resto as QueuedMutation,
+  );
+  if (legado.length > 0 && !legadoReportado) {
+    legadoReportado = true;
+    track('offline.legado_sem_dono', { itens: legado.length });
+  }
+  return legado;
+}
+
+/** Tudo o que está no aparelho: v2 + legado sem dono. */
+function lerTudo(): QueuedMutation[] {
+  return [...readQueue(), ...lerLegado()];
 }
 
 function writeQueue(items: QueuedMutation[]): void {
   if (typeof localStorage === 'undefined') return;
   localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
-  emit(items.length);
+  emit(items.length + lerLegado().length);
+}
+
+let enqueuesFeitos = 0;
+
+/**
+ * Quantos `enqueue` esta aba já fez. Quem dispara o flush compara antes e depois da rodada: item
+ * enfileirado DURANTE ela não estava no snapshot e precisa de outra rodada.
+ */
+export function contadorDeEnqueues(): number {
+  return enqueuesFeitos;
 }
 
 export async function enqueue<TVars>(kind: string, variables: TVars, userId: string): Promise<string> {
@@ -160,18 +175,19 @@ export async function enqueue<TVars>(kind: string, variables: TVars, userId: str
     userId,
   });
   writeQueue(items);
+  enqueuesFeitos++;
   track('offline.queued', { kind, queue_depth: items.length });
   return id;
 }
 
 /** Total de itens no APARELHO (de todos os donos). */
 export async function getOfflineQueueDepth(): Promise<number> {
-  return readQueue().length;
+  return lerTudo().length;
 }
 
 /** Fila do aparelho dividida entre os itens de `userId` e os retidos (outro dono / sem dono). */
 export function contarFila(userId: string | null): ContagemFila {
-  const items = readQueue();
+  const items = lerTudo();
   const meus = items.filter((m) => ehDe(m, userId)).length;
   const semDono = items.filter((m) => donoDe(m) === null).length;
   return { meus, retidos: items.length - meus, deOutros: items.length - meus - semDono, semDono };
@@ -293,7 +309,7 @@ async function rodarFlush<C extends { userId: string }>(
 export function subscribeToOfflineQueue(listener: Listener): () => void {
   listeners.add(listener);
   // dispara estado atual imediatamente
-  listener(readQueue().length);
+  listener(lerTudo().length);
   return () => {
     listeners.delete(listener);
   };

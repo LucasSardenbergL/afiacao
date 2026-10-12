@@ -118,35 +118,50 @@ describe('fila offline com dono — dois usuários no mesmo aparelho', () => {
 });
 
 describe('itens legados (v1, sem dono)', () => {
-  it('migram para a v2 SEM dono, nunca são enviados por ninguém e seguem visíveis', async () => {
-    localStorage.setItem(V1, JSON.stringify([
+  it('v1 é só LIDA: contados como sem dono, nunca enviados por ninguém, nunca apagados', async () => {
+    const v1 = JSON.stringify([
       { id: 'leg-1', kind: 'recebimento.confirm-unit', variables: { x: 1 }, enqueuedAt: 'x', attempts: 0 },
       // Um `userId` vindo da v1 NÃO é aceito: nenhum build antigo atestou dono.
       { id: 'leg-2', kind: 'picking.confirm-item', variables: { x: 2 }, enqueuedAt: 'x', attempts: 3, userId: A },
-    ]));
+    ]);
+    localStorage.setItem(V1, v1);
     const handler = vi.fn(async () => true);
 
     await flush(handler, sessao(A).ler);
     await flush(handler, sessao(B).ler);
 
     expect(handler).not.toHaveBeenCalled();
-    expect(localStorage.getItem(V1)).toBeNull();
-    expect(filaCrua().map((m) => [m.id, m.userId, m.attempts])).toEqual([
-      ['leg-1', undefined, 0],
-      ['leg-2', undefined, 3],
-    ]);
+    // Byte a byte: nada reescrito, nada removido, nada copiado para a v2.
+    expect(localStorage.getItem(V1)).toBe(v1);
+    expect(filaCrua()).toEqual([]);
     expect(contarFila(A)).toEqual({ meus: 0, retidos: 2, deOutros: 0, semDono: 2 });
+    expect(await getOfflineQueueDepth()).toBe(2);
     expect(getQueuedByKind('picking.confirm-item', A)).toEqual([]);
   });
 
-  it('build antigo que volta a escrever na v1 é migrado de novo, sem perder os itens da v2', async () => {
+  it('build antigo gravando a v1 e enqueue na v2 não se atropelam (nenhuma escrita cruzada)', async () => {
+    localStorage.setItem(V1, JSON.stringify([{ id: 'leg-3', kind: 'k', variables: { n: 'velho' }, enqueuedAt: 'x', attempts: 0 }]));
+    expect(contarFila(A).semDono).toBe(1); // leitura no meio: antes migrava (lia+regravava as duas)
     await enqueue('k', { n: 'novo' }, A);
+    // O build antigo acrescenta outro item à v1 depois da nossa leitura.
     localStorage.setItem(V1, JSON.stringify([
       { id: 'leg-3', kind: 'k', variables: { n: 'velho' }, enqueuedAt: 'x', attempts: 0 },
+      { id: 'leg-4', kind: 'k', variables: { n: 'velho-2' }, enqueuedAt: 'x', attempts: 0 },
     ]));
 
-    expect(contarFila(A)).toEqual({ meus: 1, retidos: 1, deOutros: 0, semDono: 1 });
-    expect(filaCrua().map((m) => m.variables)).toEqual([{ n: 'novo' }, { n: 'velho' }]);
+    expect(contarFila(A)).toEqual({ meus: 1, retidos: 2, deOutros: 0, semDono: 2 });
+    expect(filaCrua().map((m) => m.variables)).toEqual([{ n: 'novo' }]);
+  });
+
+  it('item SEM dono dentro da v2 (corrompido) também nunca é adotado', async () => {
+    localStorage.setItem(V2, JSON.stringify([{ id: 'x', kind: 'k', variables: {}, enqueuedAt: 'x', attempts: 0 }]));
+    const handler = vi.fn(async () => true);
+
+    const r = await flush(handler, sessao(A).ler);
+
+    expect(handler).not.toHaveBeenCalled();
+    expect(r).toEqual({ success: 0, failed: 0, retidos: 1 });
+    expect(filaCrua()).toHaveLength(1);
   });
 });
 
