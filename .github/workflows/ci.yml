@@ -147,7 +147,7 @@ on:
 # Fora de PR (push/schedule/dispatch na main), cada run é o SEU grupo (`run_id`): nada é cancelado
 # nem enfileirado. É o que o ci-validate-timeout-15min.md descartou — `cancel-in-progress` na main
 # cancelaria o run legítimo do `/fecho` — e continua descartado. A deduplicação dos disparos da main
-# mora no próprio `/fecho` (reaproveita o run do mesmo SHA em vez de disparar outro).
+# é a coalescência do `workflow_dispatch`, logo abaixo; o `/fecho` só procura o run, não dispara.
 #
 # O `validate` (`if: always()`) ainda roda no run cancelado e reprova o commit SUPERADO — inócuo: o
 # PR só olha o head.
