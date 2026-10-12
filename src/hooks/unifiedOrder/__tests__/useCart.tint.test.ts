@@ -178,6 +178,15 @@ describe('useCart — mesma fórmula só consolida com a MESMA decisão de preç
     ]);
   });
 
+  it('sem metadados de preço, preço diferente da mesma fórmula → linha própria', () => {
+    // Sem fonte/desconto declarados, o PREÇO é a única marca da decisão (o gate barra o item
+    // sem lastro; aqui o que se trava é o carrinho não fundir preços diferentes).
+    const { result } = setup();
+    act(() => { result.current.addTintProductToCart(baseTint, 'f-1', '346J', 'X', 50, 0, undefined, 1); });
+    act(() => { result.current.addTintProductToCart(baseTint, 'f-1', '346J', 'X', 100, 0, undefined, 1); });
+    expect(result.current.productItems.map((i) => i.unit_price)).toEqual([50, 100]);
+  });
+
   it('mesma decisão → soma a quantidade na linha existente (comportamento da Fase 1)', () => {
     const { result } = setup();
     act(() => { result.current.addTintProductToCart(baseTint, 'f-1', '346J', 'X', 50, 0, comDesconto, 1); });
