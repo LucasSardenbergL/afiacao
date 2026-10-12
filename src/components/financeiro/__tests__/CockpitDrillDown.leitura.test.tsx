@@ -7,12 +7,17 @@ import { fireEvent, render, screen } from '@testing-library/react';
 // janela menor que o universo (`count`) → "Mostrando N de X · Total: —".
 
 type Resposta = { data: unknown[] | null; error: unknown; count: number | null };
-let respostas: Resposta[] = [];
+// Uma entrada pode ser uma leitura que nunca volta (o tipo novo ainda carregando).
+let respostas: Array<Resposta | Promise<Resposta>> = [];
 let leituras = 0;
 
 function proxima(): Promise<Resposta> {
   leituras += 1;
   return Promise.resolve(respostas.length > 1 ? (respostas.shift() as Resposta) : respostas[0]);
+}
+
+function pendente(): Promise<Resposta> {
+  return new Promise(() => {});
 }
 
 vi.mock('@/integrations/supabase/client', () => {
@@ -73,6 +78,16 @@ describe('CockpitDrillDown — a leitura que falha ou não cabe na janela não v
     expect(await screen.findByText('Mostrando 2 de 659 · Total: —')).toBeTruthy();
     expect(screen.getByTestId('drill-janela')).toBeTruthy();
     expect(screen.queryByText(/2 registros/)).toBeNull();
+  });
+
+  it('trocar CR→Caixa: as linhas de CR nunca são desenhadas na tabela de Caixa', async () => {
+    respostas = [{ data: [cr(1)], error: null, count: 1 }, pendente()];
+    const { rerender } = render(<CockpitDrillDown type="cr_vencido" onClose={() => {}} />);
+    expect(await screen.findByText('Cliente 1')).toBeTruthy();
+
+    rerender(<CockpitDrillDown type="caixa" onClose={() => {}} />);
+    expect(screen.getByText('carregando…')).toBeTruthy();
+    expect(screen.queryByText('Cliente 1')).toBeNull();
   });
 
   it('erro no caixa: "indisponível" — o caixa nunca sai R$ 0,00 por falha de leitura', async () => {

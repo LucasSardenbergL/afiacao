@@ -75,13 +75,14 @@ const JANELA = 500;
  */
 type Leitura = { rows: DrillRow[]; total: number | null; universo: number | null };
 
+/** `tipo` = de QUAL drill-down é a leitura: o estado de um tipo nunca é desenhado sob outro. */
 type Estado =
   | { fase: 'carregando' }
-  | { fase: 'erro' }
-  | ({ fase: 'pronta' } & Leitura);
+  | { fase: 'erro'; tipo: DrillDownType }
+  | ({ fase: 'pronta'; tipo: DrillDownType } & Leitura);
 
 export function CockpitDrillDown({ type, onClose }: Props) {
-  const [estado, setEstado] = useState<Estado>({ fase: 'carregando' });
+  const [lido, setEstado] = useState<Estado>({ fase: 'carregando' });
   /** "Tentar novamente" relê bumpando isto — o efeito não tem retry próprio. */
   const [tentativa, setTentativa] = useState(0);
 
@@ -92,12 +93,12 @@ export function CockpitDrillDown({ type, onClose }: Props) {
     let vigente = true;
     setEstado({ fase: 'carregando' });
     loadData(type).then(
-      (leitura) => { if (vigente) setEstado({ fase: 'pronta', ...leitura }); },
+      (leitura) => { if (vigente) setEstado({ fase: 'pronta', tipo: type, ...leitura }); },
       (erro: unknown) => {
         // A falha era DESCARTADA (`const { data } = …` → `data ?? []`): "0 registros · Total R$ 0,00"
         // no caixa. Agora a tela diz que não leu (money-path: ausente ≠ zero).
         console.error('[CockpitDrillDown] leitura falhou', erro);
-        if (vigente) setEstado({ fase: 'erro' });
+        if (vigente) setEstado({ fase: 'erro', tipo: type });
       },
     );
     return () => { vigente = false; };
@@ -105,6 +106,10 @@ export function CockpitDrillDown({ type, onClose }: Props) {
 
   if (!type) return null;
 
+  // O efeito só reseta DEPOIS do render: trocar CR→Caixa desenharia 1 quadro com as linhas de CR na
+  // tabela de Caixa (`saldo_atual` undefined → `fmt` lança; Codex, revisão do M-05). Estado de
+  // outro tipo conta como "carregando".
+  const estado: Estado = lido.fase !== 'carregando' && lido.tipo === type ? lido : { fase: 'carregando' };
   const loading = estado.fase === 'carregando';
   const data = estado.fase === 'pronta' ? estado.rows : [];
   const total = estado.fase === 'pronta' ? estado.total : null;
