@@ -462,6 +462,11 @@ export const AUTHZ_FUNCOES_FECHADAS: Record<string, FuncaoFechada> = {
     permitido: PORTA_FECHADA,
     motivo: 'pré-claim antes do disparo — edge disparar-pedidos-aprovados',
   },
+  'public.reposicao_encerrar_recusas_definitivas': {
+    fechadaPor: '20261011150000_reposicao_recusa_definitiva_portal_servidor.sql',
+    permitido: PORTA_FECHADA,
+    motivo: 'encerra recusa definitiva do portal após 3 dias (#3169) — cron reposicao-encerrar-recusas-definitivas',
+  },
   'public.reposicao_persistir_qtde_inteira': {
     fechadaPor: '20260606190000_reposicao_qtde_inteira_persist.sql',
     permitido: PORTA_FECHADA,

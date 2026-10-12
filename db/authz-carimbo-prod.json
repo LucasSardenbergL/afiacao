@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-10-11T12:55:36.492Z",
-  "sourceHead": "ca9364d4a00ea5b33739344617d5e7a3596992bf",
+  "medidoEm": "2026-10-11T17:16:30.945Z",
+  "sourceHead": "2e251c17aa5f1e12844364cc395ed797faa5cde9",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -11,12 +11,19 @@
   "audits": {
     "funcoes": {
       "script": "authz:funcoes:prod",
-      "exit": 0,
-      "resumo": "✅ o EXECUTE de prod bate com o contrato nas 62 função(ões) da allowlist. ⚠️ 1 delas têm o fecho FORA do repo (fechadaPor=null) e portanto NÃO são vigiadas pelo CI: public.aplicar_sql.",
-      "denominador": "🔎 authz:funcoes:prod — 63 definição(ões) lida(s) para 62 chave(s) da allowlist.",
-      "contratoFingerprint": "899e7cf2a26789ea6cf2bb2f4b619ec99a3dc5d4b6f6a6e22f8fa51f089e681c",
+      "exit": 1,
+      "resumo": "authz:funcoes:prod — 1 divergência(s) de EXECUTE. Ver scripts/authz-funcoes-fechadas.ts.",
+      "denominador": "🔎 authz:funcoes:prod — 63 definição(ões) lida(s) para 63 chave(s) da allowlist.",
+      "contratoFingerprint": "a3e41845e92d912bb2bd33274dd58bd9f096ae6557c9349aa7b14a67c04d9b1d",
       "auditorFingerprint": "8971003ee5ae2343ff6129fe9569b7afb3b5cfd5bab5abed86c6e27520c8358f",
-      "achados": []
+      "achados": [
+        {
+          "id": "ff8594e99ea0798e",
+          "linha": "❌ public.reposicao_encerrar_recusas_definitivas — [FUNCAO_AUSENTE_EM_PROD] public.reposicao_encerrar_recusas_definitivas está na allowlist e NÃO existe no banco — foi removida, renomeada, ou a allowlist ficou obsoleta.",
+          "primeiraVez": "2026-10-11",
+          "ultimaVez": "2026-10-11"
+        }
+      ]
     },
     "grants": {
       "script": "authz:grants:prod",
@@ -57,8 +64,8 @@
     "corpo": {
       "script": "deriva:corpo:prod",
       "exit": 0,
-      "resumo": "✅ deriva-corpo — 343 identidade(s) batem com o repo (267 em dia, 68 só cosméticas, 7 aceitas na baseline) e 17 aposentada(s) estão ausentes",
-      "denominador": "🔎 deriva-corpo — 343 identidade(s) conferida(s) · 17 aposentada(s) · ref origin/main@570507e95 (fetch ok) · prod 2026-10-11 12:56:11.968869Z",
+      "resumo": "✅ deriva-corpo — 345 identidade(s) batem com o repo (269 em dia, 68 só cosméticas, 7 aceitas na baseline) e 18 aposentada(s) estão ausentes",
+      "denominador": "🔎 deriva-corpo — 345 identidade(s) conferida(s) · 18 aposentada(s) · ref origin/main@327b1ed3f (fetch ok) · prod 2026-10-11 17:17:05.599075Z",
       "contratoFingerprint": "8b4beb5b6ac1a69509cf990c47e44dd76d091d0306361dd3dbe80052687c79b3",
       "auditorFingerprint": "4462770b72b5f20416a470aa6c1099d3b34d660cbf9638d2cc977b1203dbc752",
       "achados": []
