@@ -73,7 +73,8 @@ BEGIN
     END IF;
     IF v_job.command NOT LIKE '%/functions/v1/picking-fila-omie''%'
        OR v_job.command NOT LIKE '%x-cron-secret%'
-       OR v_job.command NOT LIKE '%''modo'', ''sincronizar'', ''conta'', ''' || v_conta || '''%'
+       -- strpos, não LIKE montado com valor (sem curinga a escapar — docs/historico/like-cru-camada-sql.md)
+       OR strpos(v_job.command, format('''modo'', ''sincronizar'', ''conta'', %L', v_conta)) = 0
        OR v_job.command NOT LIKE '%timeout_milliseconds := 150000%' THEN
       RAISE EXCEPTION 'A3 FALHOU: picking-fila-% não chama a edge com x-cron-secret, modo sincronizar, conta % e timeout de 150 s', v_conta, v_conta;
     END IF;
