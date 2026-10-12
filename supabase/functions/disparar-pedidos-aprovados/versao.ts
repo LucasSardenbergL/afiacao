@@ -49,8 +49,14 @@ export const respostaSonda = criarRespostaSonda("disparar-pedidos-aprovados");
  * decomposição provada pelo portal (preco_unitario_sem_ipi_portal + valor_ipi_portal) vai nValUnit sem IPI +
  * nValorIpi, sem ela o PO de sempre. A leitura dos itens passou a `select("*")` — sem a migration 20261006120000 as
  * colunas só não vêm. Nenhuma pré-condição de banco para o comportamento de hoje.
+ *
+ * v1.7 (2026-10-11) — recusa definitiva do portal não reenvia (#3169): pedido com
+ * status_envio_portal='erro_nao_retentavel' devolve `portal_recusa_definitiva` (contado em
+ * `portal_recusa_definitiva` na resposta), sem write e sem pré-claim. Antes o pré-claim o rebaixava a
+ * pendente e a edge respondia "envio iniciado". Nenhuma pré-condição de banco (a migration
+ * 20261011150000 fecha a mesma porta na RPC, de forma independente).
  */
-export const VERSAO = "v1.6-portal-fechado-fim-de-semana";
+export const VERSAO = "v1.7-recusa-definitiva-nao-reenvia";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO = "esta edge cria pedido de compra REAL no Omie, inclusive em dry_run";

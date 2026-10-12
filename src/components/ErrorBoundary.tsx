@@ -5,6 +5,12 @@ import { stripQueryString } from '@/lib/posthog-error/sanitize-route';
 
 interface Props {
   children: ReactNode;
+  /**
+   * `app` (padrão): a boundary global acima de `<Routes>` — fallback de tela cheia.
+   * `rota`: a boundary em volta do `<Outlet/>` do shell (M-30) — fallback inline, o menu e
+   * a navegação seguem vivos. Vai no `captureException` para separar as duas no PostHog.
+   */
+  escopo?: 'app' | 'rota';
 }
 
 interface State {
@@ -27,6 +33,7 @@ export class ErrorBoundary extends Component<Props, State> {
     captureException(error, {
       rota: stripQueryString(typeof window !== 'undefined' ? window.location.pathname : ''),
       componentStack: errorInfo.componentStack,
+      escopo: this.props.escopo ?? 'app',
     });
   }
 
@@ -35,6 +42,34 @@ export class ErrorBoundary extends Component<Props, State> {
   };
 
   render() {
+    if (this.state.hasError && this.props.escopo === 'rota') {
+      return (
+        <div role="alert" className="flex min-h-[50vh] items-center justify-center px-4 py-10">
+          <div className="max-w-sm w-full text-center space-y-4">
+            <AlertTriangle className="w-8 h-8 text-destructive mx-auto" />
+            <div className="space-y-1">
+              <h2 className="text-base font-semibold text-foreground">Esta tela encontrou um erro</h2>
+              <p className="text-sm text-muted-foreground">
+                O restante do app continua funcionando — use o menu para ir a outra tela ou recarregue esta.
+              </p>
+            </div>
+            {this.state.error && (
+              <pre className="text-xs text-muted-foreground bg-muted rounded-md p-3 overflow-auto max-h-32 text-left">
+                {this.state.error.message}
+              </pre>
+            )}
+            <button
+              onClick={this.handleReload}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-primary text-primary-foreground font-medium text-sm hover:opacity-90 transition-opacity"
+            >
+              <RefreshCw className="w-4 h-4" />
+              Recarregar tela
+            </button>
+          </div>
+        </div>
+      );
+    }
+
     if (this.state.hasError) {
       return (
         <div className="min-h-screen flex items-center justify-center bg-background px-4">
