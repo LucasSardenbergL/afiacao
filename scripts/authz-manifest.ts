@@ -476,6 +476,7 @@ export const ACKNOWLEDGED_SENSITIVE = new Set<string>([
   'public.sayerlack_aplicar_custo_portal', // custo do portal em 1 transação (CAS omie IS NULL + itens tudo-ou-nada) — edge `enviar-pedido-portal-sayerlack`, service_role
   'public.envio_portal_claim_ids', // claim por lista positiva de ids — edges `disparar-pedidos-aprovados` e `enviar-pedido-portal-sayerlack`
   'public.iniciar_envio_portal_pre_claim', // pré-claim antes do disparo — edge `disparar-pedidos-aprovados`
+  'public.reposicao_encerrar_recusas_definitivas', // encerra recusa definitiva do portal após 3 dias (#3169) — cron `reposicao-encerrar-recusas-definitivas`; REVOKE PUBLIC/anon/authenticated + postcondição has_function_privilege na migration 20261011150000
   'public.reposicao_persistir_qtde_inteira', // arredonda/persiste qtde inteira do pedido — edge `disparar-pedidos-aprovados`
   'public.reposicao_claim_disparo', // claim antes do IncluirPedCompra (Cenário B do TOCTOU) — edge `disparar-pedidos-aprovados`, service_role
   // Observação do conjunto aberto (PR0 da baixa de PO, migration 20261005131331): lê

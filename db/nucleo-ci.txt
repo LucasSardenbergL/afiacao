@@ -147,6 +147,10 @@ db/test-sayerlack-ipi-po.sh                95
 # "Guard fora da escrita não é guard": o predicado tem de estar DENTRO do `WHERE`
 # que grava (ou no trigger), nunca num SELECT anterior.
 db/test-cancelar-pedido-guard-atomico.sh   48
+# Recusa definitiva do portal (#3169): o pré-claim não reabre erro_nao_retentavel/conciliáveis e o
+# encerramento automático só toca o pedido PROVADAMENTE não-efetivado (7 condições, cada uma
+# sabotada inline com controle verde na mesma invocação; baseline do corpo velho reabrindo o terminal).
+db/test-recusa-definitiva-portal-servidor.sh 64
 db/test-apply-score-updates.sh             32
 db/test-sales_orders_omie_hash_unique.sh    5
 # O write-back da EDIÇÃO: cabeçalho E linhas do pedido na MESMA transação. O mínimo é 54 de

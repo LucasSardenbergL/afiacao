@@ -24,7 +24,7 @@ export const FONTE_SHA256: Record<string, string> = {
   "cmc-snapshot-backfill": "4fba1259c114fb955430b440f65e8344c6e9bc29ca92292d094c3c4b4e601d06",
   "conciliar-pedido-portal": "c5e8f0f688486a6dcedfdc459e675e8827db712668d26c14dd197ad8db49ee6d",
   "copilot-analyze": "df49e9763781f176b91808c5cf98b2d9f5d70b276b00977c31c5227d62886e0a",
-  "disparar-pedidos-aprovados": "a22c2408a9acfc8a19499285c2ab0880b684aded8e198f5425b7f1090e6b3dc6",
+  "disparar-pedidos-aprovados": "001e25c45deb553883a5b4241a9da3d0eb35a907a91d1f4ce17e1edc4637f0c3",
   "dispatch-notifications": "b46aa29eabbd5164d1270768ebd65b31a09bdf1da9359c3f4f2c92b5ef6a8f89",
   "elevenlabs-transcribe": "c61046b0523d8e2196fd8eda02e4238040180b1a14be68aab4ca5135fbcbb0e0",
   "enviar-pedido-portal-sayerlack": "bebeb30068ef02f2eed8ef4087c0ef5f9e0d298e4d73ae7c3ebf5fd3e8643797",
