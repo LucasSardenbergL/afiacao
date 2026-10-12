@@ -53,12 +53,15 @@ describe('paridade com verify-frontend.sh', () => {
   });
 });
 
-// Prova de ponta a ponta contra o HTML que o Vite REALMENTE gera. Pula sem `dist/`
-// (o CI não builda antes de testar) — por isso o guard de paridade acima, que roda
-// sempre, é quem sustenta a garantia no CI.
+// Prova de ponta a ponta contra o HTML que o Vite REALMENTE gera. Na suíte comum pula sem `dist/`
+// (o job `testes` não builda). O CI a roda DEPOIS do build, no job `edges-e-build`, com
+// `BUILD_ID_EXIGE_DIST=1` (M-21): ali `dist/` ausente é VERMELHO, não skip — senão um build que
+// mudasse de lugar faria a prova sumir calada, exatamente o "1 skipped" que ela era antes.
 const DIST = join(process.cwd(), 'dist/index.html');
-describe.skipIf(!existsSync(DIST))('contra o dist/ real', () => {
+const EXIGE_DIST = process.env.BUILD_ID_EXIGE_DIST === '1';
+describe.skipIf(!existsSync(DIST) && !EXIGE_DIST)('contra o dist/ real', () => {
   it('acha o entry no index.html gerado pelo build de produção', () => {
+    expect(existsSync(DIST), `${DIST} não existe — o build não rodou antes desta prova`).toBe(true);
     const doc = document.implementation.createHTMLDocument('dist');
     doc.documentElement.innerHTML = readFileSync(DIST, 'utf8');
     const id = resolverBuildId(doc);
