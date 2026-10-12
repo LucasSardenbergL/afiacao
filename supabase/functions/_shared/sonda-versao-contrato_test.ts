@@ -65,6 +65,8 @@ import * as aplicarParametros from "../omie-aplicar-parametros/versao.ts";
 import * as recurringOrders from "../process-recurring-orders/versao.ts";
 import * as programadoExtrair from "../pedido-programado-extrair/versao.ts";
 import * as promocaoVision from "../promocao-extrair-via-vision/versao.ts";
+import * as biometricAuth from "../biometric-auth/versao.ts";
+import * as gmailWebhook from "../gmail-webhook-receiver/versao.ts";
 import * as cmcBackfill from "../cmc-snapshot-backfill/versao.ts";
 import * as whatsappSend from "../whatsapp-send/versao.ts";
 import * as whatsappTemplate from "../whatsapp-send-template/versao.ts";
@@ -238,6 +240,9 @@ const EDGES: Array<{ nome: string; mod: ModSonda }> = [
   { nome: "pedido-programado-extrair", mod: programadoExtrair },
   // Lote C (M-33): ganhou sonda ao trocar de cliente Anthropic — a canária antiga era `=== true` cru.
   { nome: "promocao-extrair-via-vision", mod: promocaoVision },
+  // M-26, 2ª leva: gate próprio que não aceita cron (pré-login público; segredo de webhook).
+  { nome: "biometric-auth", mod: biometricAuth },
+  { nome: "gmail-webhook-receiver", mod: gmailWebhook },
   { nome: "cmc-snapshot-backfill", mod: cmcBackfill },
   // 11ª leva (#2170) — as 5 de efeito FORA do nosso banco. Elas ganharam `versao.ts` e entraram no
   // mapa de fingerprints, mas ficaram fora DESTE arquivo: instrumentadas e sem gate de FORMA
@@ -331,6 +336,10 @@ const ESCRITA_NOSSO_BANCO = [
   // Lote C (M-33): `promocao-extrair-via-vision` sobe o anexo ao storage, paga token da Anthropic e
   // grava a campanha/aumento extraído (promocao_*), que entra no custo da reposição.
   "promocao-extrair-via-vision",
+  // M-26, 2ª leva: `biometric-auth` grava a credencial WebAuthn; `gmail-webhook-receiver` grava o log
+  // e abre o alerta de compra (fornecedor_alerta).
+  "biometric-auth",
+  "gmail-webhook-receiver",
   "cmc-snapshot-backfill",
   // 11ª leva: entram na varredura estrutural pelo mesmo motivo da nona (`monthly-report`) — o preço
   // de um `probe` mal grafado caindo no fluxo real. Aqui ele é irreversível FORA do nosso banco:
@@ -483,6 +492,9 @@ const GATE_PROPRIO = [
   // 13ª leva: a gêmea de canal da `omie-webhook` — o gate dela é o `x-whatsapp-secret`
   // compartilhado com a 360dialog, que o `net.http_post` do SQL Editor não emite.
   "whatsapp-inbound",
+  // M-26, 2ª leva: pré-login público (só rate limit) e segredo de webhook no Bearer.
+  "biometric-auth",
+  "gmail-webhook-receiver",
 ];
 
 /** As pastas que TÊM `versao.ts` — a verdade da árvore, não a lista declarada aqui. */

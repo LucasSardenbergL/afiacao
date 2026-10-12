@@ -16,6 +16,8 @@
 // }
 
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
+import { authorizeCronOrStaff } from "../_shared/auth.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -113,6 +115,22 @@ Deno.serve(async (req: Request) => {
     return jsonResponse(405, { error: "Method not allowed" });
   }
 
+  // Corpo lido ANTES do segredo só para a sonda; a falha de parse continua virando 400 depois do
+  // segredo (requisição sem segredo segue recebendo 401, como antes).
+  let parseFalhou = false;
+  const corpoBruto: unknown = await req.json().catch(() => { parseFalhou = true; return null; });
+  // Sonda de versão (M-26; docs/agent/deploy.md): `{ probe: true }` responde a versão no ar sem
+  // tocar banco. `classificarSonda` decide fail-closed (a string "true" do SQL Editor é ambígua → 400).
+  // GATE PRÓPRIO: o gate desta edge não aceita `x-cron-secret`, então só um corpo de SONDA desvia para
+  // `authorizeCronOrStaff`; o fluxo normal segue exatamente como antes. Corpo lido UMA vez.
+  const decisaoSonda = classificarSonda(corpoBruto);
+  if (decisaoSonda.tipo !== "disparo") {
+    const authSonda = await authorizeCronOrStaff(req);
+    if (!authSonda.ok) return authSonda.response;
+    if (decisaoSonda.tipo === "sonda") return jsonResponse(200, respostaSonda(VERSAO));
+    return jsonResponse(400, { versao: VERSAO, error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) });
+  }
+
   // 1. Validação do shared secret
   if (!GMAIL_WEBHOOK_SECRET) {
     console.error("[gmail-webhook] GMAIL_WEBHOOK_SECRET não configurado");
@@ -127,12 +145,8 @@ Deno.serve(async (req: Request) => {
   }
 
   // 2. Parse + validação básica do body
-  let body: WebhookBody;
-  try {
-    body = (await req.json()) as WebhookBody;
-  } catch {
-    return jsonResponse(400, { error: "JSON inválido" });
-  }
+  if (parseFalhou) return jsonResponse(400, { error: "JSON inválido" });
+  const body = corpoBruto as WebhookBody;
 
   if (!body?.messageId || !body?.fromAddress) {
     return jsonResponse(400, {
