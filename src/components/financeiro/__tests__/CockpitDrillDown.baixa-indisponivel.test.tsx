@@ -35,7 +35,8 @@ vi.mock('@/integrations/supabase/client', () => {
   for (const m of ['select', 'eq', 'in', 'lt', 'order']) {
     builder[m] = () => builder;
   }
-  builder.limit = () => Promise.resolve({ data: estado.rows, error: null });
+  // `count` = linhas na janela: o universo inteiro coube, e o total pode ser afirmado.
+  builder.limit = () => Promise.resolve({ data: estado.rows, error: null, count: estado.rows.length });
   return { supabase: { from: () => builder } };
 });
 

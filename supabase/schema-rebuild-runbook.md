@@ -16,35 +16,16 @@ Complemento do **`supabase/schema-snapshot.sql`** (#244/#247), que é o retrato 
 5. **Crons:** recriar (ver §abaixo).
 6. **Plataforma (dashboard):** habilitar `pg_cron`, `pg_net`, `pg_stat_statements`, `supabase_vault` se ainda não estiverem.
 
-## Recriar os 33 crons (env-specific)
-Não vão hardcoded no repo (têm URL do projeto + secrets). No projeto de ORIGEM, exportar:
-```sql
-SELECT 'SELECT cron.schedule(' || quote_literal(jobname) || ', ' || quote_literal(schedule) || ', ' || quote_literal(command) || ');' AS stmt
-FROM cron.job ORDER BY jobname;
-```
-No projeto NOVO: trocar `https://<REF_ANTIGO>.supabase.co` pela URL nova, e o **JWT anon hardcoded** do cron `sayerlack-portal-watchdog` pelo anon key novo (ver `schema-security-report.md`). Colar no SQL Editor.
+## Recriar os crons (env-specific)
+A fonte é **`supabase/cron-jobs-snapshot.tsv`**: o `cron.job` de prod capturado pelo `bash db/refresh-snapshot.sh`
+(ou só ele, em segundos: `--so-cron`). Uma linha por job (jobname, schedule, active, username, database, command
+com `\n`/`\t`/`\\` escapados). O CI (`scripts/cron-jobs-snapshot-gate.test.ts`) barra captura truncada,
+segredo literal no command e job de prod que nenhuma migration recria. O inventário estático de 33 crons que
+vivia aqui (2026-05-24) foi aposentado no M-37 — prod tinha 99 em 2026-10-11.
 
-Inventário (jobname / schedule):
-
-| jobname | schedule | | jobname | schedule |
-|---|---|---|---|---|
-| afiacao_ciclo_oportunidade_diario | `5 11 * * *` | | omie-sync-estoque-diario | `0 9 * * *` |
-| afiacao_dispatch_notificacoes_diario | `10 11 * * *` | | omie-sync-metadados-daily | `30 8 * * *` |
-| afiacao_estados_eventos_diarios | `0 11 * * *` | | omie-sync-status-produtos-diario | `30 6 * * *` |
-| afiacao_limpeza_sugestoes_mensal | `0 6 1 * *` | | process-recurring-orders-daily | `0 7 * * *` |
-| afiacao_omie_oben_sku_items_history_daily | `0 7 * * *` | | sayerlack-portal-watchdog | `*/5 * * * *` |
-| afiacao_omie_oben_sync_incremental_2h | `15 */2 * * *` | | scoring-recalc-batch-nightly | `0 6 * * *` |
-| afiacao_ranking_refresh_semanal | `0 10 * * 1` | | sync-colacor-vendas-products | `15 6 * * *` |
-| afiacao_sugestoes_diarias | `0 10 * * *` | | sync-inventory-vendas-30m | `*/30 * * * *` |
-| call-log-missed-backstop | `* * * * *` | | sync-omie-services-hourly | `0 * * * *` |
-| compute-association-rules-daily | `30 7 * * *` | | sync-orders-vendas-2h | `0 */2 * * *` |
-| compute-costs-daily | `0 7 * * *` | | sync-products-customers-daily | `0 6 * * *` |
-| daily-calculate-scores | `0 6 * * *` | | sync-reprocess-operational | `15 */2 * * *` |
-| detectar-outliers-diario | `30 7 * * *` | | sync-reprocess-strategic | `30 2 * * *` |
-| ~~disparar-pedidos-aprovados-oben~~ (removido 2026-10-10) | — | | visit-score-recalc-batch-nightly | `0 7 * * *` |
-| fin-cashflow-snapshot-diario | `0 10 * * *` | | weekly-algorithm-a-audit | `0 3 * * 0` |
-| fin-ic-reconcile-daily | `0 9 * * *` | | gerar-pedidos-diario-oben | `15 9 * * *` |
-| monthly-tool-report | `0 9 1 * *` | | | |
+No projeto NOVO: gerar um `cron.schedule` por linha ativa do TSV (desescapando o command), trocar
+`https://<REF_ANTIGO>.supabase.co` pela URL nova e conferir que os secrets do Vault (`CRON_SECRET` etc.)
+existem — o snapshot não carrega segredo, só a referência ao vault. Colar no SQL Editor.
 
 ## Verificação de replay
 **Replay sintático/ordem validado em 2026-05-24** via `db/verify-snapshot-replay.sh` (Postgres 17 local + `db/stubs-supabase.sql`): prelude + stubs + snapshot em transação única (`ON_ERROR_STOP`) rodaram limpo e as contagens batem 1:1 com produção (212/37/4/86/76/14/474). Níveis:

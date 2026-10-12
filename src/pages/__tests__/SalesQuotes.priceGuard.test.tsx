@@ -70,27 +70,27 @@ beforeEach(() => {
 });
 
 describe('SalesQuotes — guard de preço na conversão de orçamento (4ª via money-path)', () => {
-  // Timeout de 15s no teste, mas findByRole/waitFor têm default PRÓPRIO de 1s —
-  // sob suíte completa (jsdom saturando a RAM) o 1s estoura antes de a página montar
-  // (flaky observado em 2026-07-06). O timeout folgado precisa ir nos waiters internos.
-  const FOLGA = { timeout: 10_000 };
+  // Sem teto local (M-21, 2026-10-11): os tetos de 15s/10s vieram do flaky de 2026-07-06, quando o
+  // findByRole/waitFor ainda usava o default de 1s. Hoje os defaults GLOBAIS cobrem: `testTimeout`
+  // 20s (vitest.config.ts) e `asyncUtilTimeout` 5s (src/test/setup-dom.ts). Medido em 10 runs do
+  // CI com a suíte completa: o arquivo inteiro levou 149–353 ms, 14× abaixo do teto do waiter.
 
   it('NÃO envia ao Omie quando o orçamento tem item a preço ≤ 0', async () => {
     h.quotes = [makeQuote(0)];
     renderPage();
-    const btn = await screen.findByRole('button', { name: /Enviar Pedido/i }, FOLGA);
+    const btn = await screen.findByRole('button', { name: /Enviar Pedido/i });
     fireEvent.click(btn);
-    await waitFor(() => expect(h.toastError).toHaveBeenCalled(), FOLGA);
+    await waitFor(() => expect(h.toastError).toHaveBeenCalled());
     expect(h.invoke).not.toHaveBeenCalled();
     expect(String(h.toastError.mock.calls[0][0]).toLowerCase()).toContain('preço');
-  }, 15000);
+  });
 
   it('envia ao Omie normalmente quando todos os preços são positivos', async () => {
     h.quotes = [makeQuote(10)];
     renderPage();
-    const btn = await screen.findByRole('button', { name: /Enviar Pedido/i }, FOLGA);
+    const btn = await screen.findByRole('button', { name: /Enviar Pedido/i });
     fireEvent.click(btn);
-    await waitFor(() => expect(h.invoke).toHaveBeenCalled(), FOLGA);
+    await waitFor(() => expect(h.invoke).toHaveBeenCalled());
     expect(h.toastError).not.toHaveBeenCalled();
-  }, 15000);
+  });
 });

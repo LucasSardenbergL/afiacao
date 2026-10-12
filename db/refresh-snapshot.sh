@@ -15,8 +15,14 @@
 # transforma "re-gerar" numa operação sem risco.
 #
 # Pré-requisitos: brew install postgresql@17 pgvector  +  ~/.config/afiacao/claude_ro.pgpass
-# Uso:  bash db/refresh-snapshot.sh            # dump + 3 provas + instala
+# Uso:  bash db/refresh-snapshot.sh            # dump + 3 provas + cron.job + instala
 #       bash db/refresh-snapshot.sh --dry-run  # tudo, menos instalar
+#       bash db/refresh-snapshot.sh --so-cron  # só re-captura supabase/cron-jobs-snapshot.tsv (segundos)
+#
+# cron.job (M-37): o dump é --schema-only e NÃO leva as linhas de cron.job — um DR recriaria o
+# schema sem os crons de prod. Elas saem em supabase/cron-jobs-snapshot.tsv (db/cron-jobs-snapshot.sql),
+# validado aqui (marcador de fim, 6 campos, zero segredo literal) e no CI
+# (scripts/cron-jobs-snapshot-gate.test.ts: todo job de prod tem migration que o recria).
 #
 # Compatível com o bash 3.2 do macOS (sem `mapfile`, sem array associativo).
 set -euo pipefail
@@ -30,14 +36,48 @@ TARGET="$REPO_ROOT/supabase/schema-snapshot.sql"
 # públicos e já documentados em docs/agent/database.md.
 CONN="host=aws-1-eu-west-1.pooler.supabase.com port=5432 dbname=postgres user=claude_ro.fzvklzpomgnyikkfkzai sslmode=require"
 
-DRY_RUN=0
+CRON_TARGET="$REPO_ROOT/supabase/cron-jobs-snapshot.tsv"
+
+DRY_RUN=0; SO_CRON=0
 [ "${1:-}" = "--dry-run" ] && DRY_RUN=1
+[ "${1:-}" = "--so-cron" ] && SO_CRON=1
 
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/snaprefresh.XXXXXX")"
 cleanup() { rm -rf "$TMP"; }
 trap cleanup EXIT
 
 fail() { echo "❌ $*" >&2; exit 1; }
+
+# Captura cron.job em "$TMP/cron.tsv" e só aceita com evidência POSITIVA de completude: marcador
+# "#fim<TAB>n" no fim, n igual ao nº de linhas de job, 6 campos em todas. Segredo literal no command
+# (JWT, Bearer <valor>) ABORTA — o arquivo vai para o git e a transcrição; o padrão é o mesmo do gate.
+capturar_cron() {
+  "$PSQLRO" -v ON_ERROR_STOP=1 -At -f "$REPO_ROOT/db/cron-jobs-snapshot.sql" > "$TMP/cron.raw" 2> "$TMP/cron.err" \
+    || { cat "$TMP/cron.err" >&2; fail "captura de cron.job falhou"; }
+  grep -v '^SET$' "$TMP/cron.raw" > "$TMP/cron.tsv" || true
+  local fim n_decl n_lin campos_ruins
+  fim="$(tail -n 1 "$TMP/cron.tsv")"
+  case "$fim" in "#fim	"*) ;; *) fail "cron.job: sem marcador de fim (saída truncada?) — última linha: ${fim:0:80}" ;; esac
+  n_decl="${fim#\#fim	}"
+  n_lin=$(( $(wc -l < "$TMP/cron.tsv") - 2 ))
+  [ "$n_decl" = "$n_lin" ] || fail "cron.job: marcador diz $n_decl jobs, vieram $n_lin linhas"
+  [ "$n_lin" -gt 0 ] || fail "cron.job: 0 jobs — prod sem cron é anomalia, não snapshot"
+  campos_ruins=$(awk -F'\t' 'NR > 1 && !/^#fim\t/ && NF != 6' "$TMP/cron.tsv" | wc -l | tr -d ' ')
+  [ "$campos_ruins" = "0" ] || fail "cron.job: $campos_ruins linha(s) sem 6 campos"
+  if grep -qE 'eyJ[A-Za-z0-9_-]{10,}|[Bb]earer[[:space:]]+[A-Za-z0-9]' "$TMP/cron.tsv"; then
+    fail "cron.job: segredo LITERAL em command (jobs: $(grep -E 'eyJ[A-Za-z0-9_-]{10,}|[Bb]earer[[:space:]]+[A-Za-z0-9]' "$TMP/cron.tsv" | cut -f1 | tr '\n' ' ')) — mova para o vault antes de capturar"
+  fi
+  echo "   ok — $n_lin jobs capturados"
+}
+
+if [ "$SO_CRON" = "1" ]; then
+  [ -x "$PSQLRO" ] || fail "wrapper read-only ausente: $PSQLRO"
+  echo "→ cron.job (só)…"
+  capturar_cron
+  cp "$TMP/cron.tsv" "$CRON_TARGET"
+  echo "   instalado em supabase/cron-jobs-snapshot.tsv — confira: git diff supabase/cron-jobs-snapshot.tsv"
+  exit 0
+fi
 
 [ -x "$PGBIN/pg_dump" ] || fail "pg_dump 17 ausente: brew install postgresql@17 pgvector"
 [ -r "$PGPASS" ]        || fail "credencial ausente: $PGPASS"
@@ -117,6 +157,9 @@ else
   fail "replay falhou — dump NÃO instalado"
 fi
 
+echo "→ 4b   cron.job (o dump --schema-only não leva as linhas)…"
+capturar_cron
+
 # ─────────────────────────────────────────────────────────────────────────────
 if [ "$DRY_RUN" = "1" ]; then
   echo "→ 5/5  --dry-run: NÃO instalado. Dump validado em: $DUMP"
@@ -128,6 +171,8 @@ echo "→ 5/5  instalando em supabase/schema-snapshot.sql…"
 ANTES="$(wc -l < "$TARGET" 2>/dev/null | tr -d ' ' || echo 0)"
 cp "$DUMP" "$TARGET"
 echo "   ok — $ANTES → $LINHAS linhas"
+cp "$TMP/cron.tsv" "$CRON_TARGET"
+echo "   ok — supabase/cron-jobs-snapshot.tsv"
 
 # Números prontos para o manifest. NÃO edito o manifest automaticamente: ele é uma
 # NARRATIVA datada (o que mudou e por quê), não um relatório gerado — e o valor dele
@@ -145,7 +190,7 @@ Para o supabase/schema-snapshot.manifest.md (escreva o "por quê" você mesmo):
 | \`CREATE POLICY\` | $(grep -cE '^CREATE POLICY ' "$TARGET") |
 | \`ENABLE ROW LEVEL SECURITY\` | $(grep -cE 'ENABLE ROW LEVEL SECURITY' "$TARGET") |
 
-⚠️ Confira o diff antes de commitar: \`git diff --stat supabase/schema-snapshot.sql\`.
+⚠️ Confira o diff antes de commitar: \`git diff --stat supabase/schema-snapshot.sql supabase/cron-jobs-snapshot.tsv\`.
    Objeto REMOVIDO em prod some do dump — o diff é a revisão do drift.
 ────────────────────────────────────────────────────────────
 RESUMO
