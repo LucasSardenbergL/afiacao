@@ -131,7 +131,8 @@ export function useCart({ getProductPrice, getServicePrice, servicos }: UseCartA
       // Codex P1 (Fase 2A): só SOMA na linha existente quando a decisão de preço é a MESMA
       // (preço, fonte, desconto, preço-base). Antes somava por fórmula e as unidades novas
       // herdavam o desconto antigo sem escolha ativa — o gate aceitava (metadados coerentes).
-      // Decisão diferente → linha própria (o carrinho é indexado por posição).
+      // Decisão DIFERENTE para a mesma fórmula → RECUSA com aviso (rodada 2: uma 2ª linha da
+      // mesma fórmula duplicava a chave do carrinho e misturava a margem entre as linhas).
       const fonte = pricingMeta?.source ?? null;
       const desconto = fonte ? pricingMeta!.discountPct : undefined;
       const precoBase = fonte ? pricingMeta!.precoSemDesconto ?? undefined : undefined;
@@ -141,6 +142,16 @@ export function useCart({ getProductPrice, getServicePrice, servicos }: UseCartA
         (c.tint_price_source ?? null) === fonte &&
         c.tint_discount_pct === desconto &&
         c.tint_preco_sem_desconto === precoBase;
+      const conflito = cart.some(
+        (c) => c.type === 'product' && (c as ProductCartItem).tint_formula_id === formulaId && !mesmaDecisao(c as ProductCartItem),
+      );
+      if (conflito) {
+        toast.warning('Esta cor já está no carrinho com outro preço', {
+          description: 'Ajuste a quantidade (ou o preço) na linha que já existe.',
+        });
+        setTintPendingProduct(null);
+        return;
+      }
       setCart(prev => {
         const idx = prev.findIndex((c) => c.type === 'product' && mesmaDecisao(c as ProductCartItem));
         if (idx >= 0) {
@@ -148,6 +159,9 @@ export function useCart({ getProductPrice, getServicePrice, servicos }: UseCartA
             i === idx ? ({ ...c, quantity: c.quantity + qty } as ProductCartItem) : c,
           );
         }
+        // Mesma checagem sobre o estado ATUAL (o `cart` da closure pode estar 1 tick atrás):
+        // nunca nasce 2ª linha da mesma fórmula.
+        if (prev.some((c) => c.type === 'product' && (c as ProductCartItem).tint_formula_id === formulaId)) return prev;
         return [
           ...prev,
           {
@@ -174,7 +188,7 @@ export function useCart({ getProductPrice, getServicePrice, servicos }: UseCartA
       });
       setTintPendingProduct(null);
     },
-    [tintPendingQty, setTintPendingProduct],
+    [cart, tintPendingQty, setTintPendingProduct],
   );
 
   /* ─── Service actions ─── */

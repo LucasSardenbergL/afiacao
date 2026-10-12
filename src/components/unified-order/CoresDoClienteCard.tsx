@@ -115,6 +115,12 @@ export function CoresDoClienteCard({
                             {' · '}{oc.quantidade}un
                             {oc.pv && <> · PV <span className="font-tabular">{oc.pv}</span></>}
                             <Badge variant="outline" className="text-[9px] px-1 py-0 ml-1">{empresaLabel(oc.account)}</Badge>
+                            {/* A cor do CATÁLOGO que o 1 toque vai adicionar — a vendedora vê antes de tocar. */}
+                            {pronto && (
+                              <span className="block text-[10px] text-foreground">
+                                → <span className="font-mono">{pronto.corId}</span> {pronto.nomeCor}
+                              </span>
+                            )}
                           </div>
                           {pronto ? (
                             <div className="flex items-center gap-1 shrink-0">

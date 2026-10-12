@@ -10,6 +10,7 @@ import { AddToolDialog } from '@/components/AddToolDialog';
 import { UnifiedAIAssistant } from '@/components/UnifiedAIAssistant';
 import { TintColorSelectDialog } from '@/components/TintColorSelectDialog';
 import { CorPrimeiroDialog } from '@/components/tintColorSelect/CorPrimeiroDialog';
+import { ehBaseTintometricaOben } from '@/lib/tint/pode-adicionar';
 import { OrderSuccessDialog } from '@/components/OrderSuccessDialog';
 import { AtpBackorderDialog } from '@/components/unified-order/AtpBackorderDialog';
 import { cn } from '@/lib/utils';
@@ -117,7 +118,14 @@ const UnifiedOrder = () => {
     for (const cor of coresDoCliente.coresFiltradas.slice(0, 20)) {
       cor.ocorrencias.slice(0, 4).forEach((oc, i) => {
         const product = oc.account === 'oben' ? baseDaOcorrencia(oc) : undefined;
-        if (product) out.push({ key: chaveOcorrenciaCor(cor.nome, i), product, codigo: termoBuscaCor(cor.nome) });
+        if (!product) return;
+        // Identidade exata quando o item nasceu no app; do rótulo livre, o código extraído
+        // só vale com nome compatível (Codex P1 rodada 2).
+        out.push(
+          oc.corId
+            ? { key: chaveOcorrenciaCor(cor.nome, i), product, codigo: oc.corId, rotulo: null }
+            : { key: chaveOcorrenciaCor(cor.nome, i), product, codigo: termoBuscaCor(cor.nome), rotulo: cor.nome },
+        );
       });
     }
     return out;
@@ -637,7 +645,8 @@ const UnifiedOrder = () => {
         onClose={() => setCorPrimeiroAberto(false)}
         onConfirm={(formulaId, corId, nomeCor, precoFinal, custoCorantes, pricingMeta, product) => {
           // A base é a da embalagem escolhida — nunca há produto pendente nesta entrada.
-          if (!product) return;
+          // Defesa em profundidade (Codex P1): só base tintométrica da Oben entra por aqui.
+          if (!ehBaseTintometricaOben(product)) return;
           h.addTintProductToCart(product, formulaId, corId, nomeCor, precoFinal, custoCorantes, pricingMeta, 1);
           setCorPrimeiroAberto(false);
           toast.success(`${corId} adicionada`, { description: product.descricao });

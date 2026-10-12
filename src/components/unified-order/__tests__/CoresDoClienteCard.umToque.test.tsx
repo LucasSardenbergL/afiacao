@@ -9,7 +9,7 @@ import { CoresDoClienteCard, chaveOcorrenciaCor, type UmToqueNoCard } from '../C
 type CorDoCliente = ComponentProps<typeof CoresDoClienteCard>['cores'][number];
 
 const oc = (pv: string) => ({
-  data: '2026-09-01T10:00:00Z', baseDescricao: 'WFOB.7666 BASE BRANCA GL', quantidade: 2, pv, account: 'oben', omieCodigoProduto: 9001,
+  data: '2026-09-01T10:00:00Z', baseDescricao: 'WFOB.7666 BASE BRANCA GL', quantidade: 2, pv, account: 'oben', omieCodigoProduto: 9001, corId: null,
 });
 const cor: CorDoCliente = { nome: '346J - PLATINA BIANCO', ocorrencias: [oc('101'), oc('102'), oc('103')] };
 const pronto: UmToqueNoCard = { corId: '346J', nomeCor: 'PLATINA BIANCO', preco: 150.1 };

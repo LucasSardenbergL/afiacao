@@ -21,8 +21,11 @@ export interface AlvoUmToque<P extends ProdutoBase = ProdutoBase> {
   key: string;
   /** Produto-base daquela compra, já resolvido no catálogo (tintométrico, Oben). */
   product: P;
-  /** Código da cor extraído do histórico (`termoBuscaCor`). */
+  /** Código da cor: o `tint_cor_id` exato do item do app, ou o extraído do rótulo (`termoBuscaCor`). */
   codigo: string;
+  /** Rótulo livre do histórico quando o código foi EXTRAÍDO dele (exige nome compatível);
+   *  null quando o código é a identidade exata. */
+  rotulo: string | null;
 }
 
 export interface UmToquePronto<P extends ProdutoBase = ProdutoBase> {
@@ -105,7 +108,7 @@ export function useTintCoresDoClienteUmToque<P extends ProdutoBase>(alvos: AlvoU
     for (const a of elegiveis) {
       const skuId = leitura.skuPorProduto.get(a.product.id);
       if (!skuId) continue;
-      const f = escolherFormulaUmToque(skuId, a.codigo, leitura.candidatas);
+      const f = escolherFormulaUmToque(skuId, a.codigo, leitura.candidatas, a.rotulo);
       if (f) m.set(a.key, f);
     }
     return m;

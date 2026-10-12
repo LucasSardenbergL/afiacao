@@ -12,7 +12,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }));
+vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() } }));
+import { toast } from 'sonner';
 
 import { useCart } from '../useCart';
 import type { Product } from '@/hooks/useUnifiedOrder';
@@ -168,23 +169,22 @@ describe('useCart — mesma fórmula só consolida com a MESMA decisão de preç
   const comDesconto = { source: 'calculado', discountPct: 50, precoSemDesconto: 100 };
   const semDesconto = { source: 'calculado', discountPct: 0, precoSemDesconto: 100 };
 
-  it('decisão diferente (1 toque sem desconto sobre item com 50%) → linha própria', () => {
+  it('decisão diferente (1 toque sem desconto sobre item com 50%) → RECUSA com aviso, carrinho intacto', () => {
     const { result } = setup();
     act(() => { result.current.addTintProductToCart(baseTint, 'f-1', '346J', 'X', 50, 0, comDesconto, 1); });
     act(() => { result.current.addTintProductToCart(baseTint, 'f-1', '346J', 'X', 100, 0, semDesconto, 4); });
-    expect(result.current.productItems.map((i) => [i.quantity, i.unit_price, i.tint_discount_pct])).toEqual([
-      [1, 50, 50],
-      [4, 100, 0],
-    ]);
+    // nem soma (herdaria o desconto) nem 2ª linha (chave duplicada no carrinho — Codex rodada 2)
+    expect(result.current.productItems.map((i) => [i.quantity, i.unit_price, i.tint_discount_pct])).toEqual([[1, 50, 50]]);
+    expect(vi.mocked(toast.warning)).toHaveBeenCalled();
   });
 
-  it('sem metadados de preço, preço diferente da mesma fórmula → linha própria', () => {
+  it('sem metadados de preço, preço diferente da mesma fórmula → recusa (não funde preços)', () => {
     // Sem fonte/desconto declarados, o PREÇO é a única marca da decisão (o gate barra o item
     // sem lastro; aqui o que se trava é o carrinho não fundir preços diferentes).
     const { result } = setup();
     act(() => { result.current.addTintProductToCart(baseTint, 'f-1', '346J', 'X', 50, 0, undefined, 1); });
     act(() => { result.current.addTintProductToCart(baseTint, 'f-1', '346J', 'X', 100, 0, undefined, 1); });
-    expect(result.current.productItems.map((i) => i.unit_price)).toEqual([50, 100]);
+    expect(result.current.productItems.map((i) => [i.unit_price, i.quantity])).toEqual([[50, 1]]);
   });
 
   it('mesma decisão → soma a quantidade na linha existente (comportamento da Fase 1)', () => {

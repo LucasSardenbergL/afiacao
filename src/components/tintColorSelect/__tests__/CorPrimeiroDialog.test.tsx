@@ -16,7 +16,9 @@ vi.mock('@/lib/analytics', () => ({ track: vi.fn() }));
 import { CorPrimeiroDialog } from '../CorPrimeiroDialog';
 import { coresDistintas } from '../useCorPrimeiro';
 
-const base = { id: 'prod-gl', codigo: 'WFOB.7666 GL', descricao: 'BASE BRANCA GL', account: 'oben' } as EmbalagemDaCor['product'];
+const base = {
+  id: 'prod-gl', codigo: 'WFOB.7666 GL', descricao: 'BASE BRANCA GL', account: 'oben', is_tintometric: true, tint_type: 'base',
+} as EmbalagemDaCor['product'];
 const emb: EmbalagemDaCor = {
   formulaId: 'f-gl', skuId: 'sku-gl', omieProductId: 'prod-gl', productDescricao: 'BASE BRANCA GL', productCodigo: 'WFOB.7666 GL',
   precoFinalCsv: null, product: base, sameAcabamento: false, corId: '346J', nomeCor: 'PLATINA BIANCO', isSl: true,
@@ -70,6 +72,18 @@ describe('CorPrimeiroDialog', () => {
 
   it('desconto que zera o preço → não vende (nunca R$ 0), sem teto de desconto', () => {
     estado.current = estadoBase({ precos: { 'f-gl': { precoFinal: 0.4, custoCorantes: 0 } }, descontos: { 'f-gl': 99.99 } });
+    render(<CorPrimeiroDialog open onClose={() => {}} onConfirm={vi.fn()} />);
+    expect(botao()).toBeDisabled();
+  });
+});
+
+describe('CorPrimeiroDialog — só base tintométrica da Oben', () => {
+  it.each([
+    ['Colacor', { account: 'colacor' }],
+    ['não tintométrico', { is_tintometric: false }],
+    ['não é base', { tint_type: 'corante' }],
+  ])('%s → "Adicionar" desabilitado mesmo com preço', (_n, over) => {
+    estado.current = estadoBase({ embalagens: [{ ...emb, product: { ...base, ...over } }] });
     render(<CorPrimeiroDialog open onClose={() => {}} onConfirm={vi.fn()} />);
     expect(botao()).toBeDisabled();
   });

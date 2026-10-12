@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { track } from '@/lib/analytics';
 import { selectAltPrice } from '@/lib/tint/select-price';
-import { aplicarDesconto, podeAdicionarCor } from '@/lib/tint/pode-adicionar';
+import { aplicarDesconto, ehBaseTintometricaOben, podeAdicionarCor } from '@/lib/tint/pode-adicionar';
 import { AltPriceSourcePicker } from './AltPriceSourcePicker';
 import { FormulaSearchResults } from './FormulaSearchResults';
 import { useCorPrimeiro } from './useCorPrimeiro';
@@ -137,7 +137,9 @@ export function CorPrimeiroDialog({ open, onClose, onConfirm }: CorPrimeiroDialo
                 const desconto = s.descontos[emb.formulaId] ?? 0;
                 const precoFinal = altSel.preco != null ? aplicarDesconto(altSel.preco, desconto) : null;
                 // Regra ÚNICA de adicionar (a mesma do card da cor selecionada).
-                const pode = podeAdicionarCor({ precoCarregando: s.precoCarregando, disponivel: altSel.preco != null, precoFinal });
+                const pode =
+                  ehBaseTintometricaOben(emb.product) &&
+                  podeAdicionarCor({ precoCarregando: s.precoCarregando, disponivel: altSel.preco != null, precoFinal });
                 const cabecalho = emb.grupo !== grupoAnterior ? emb.grupo : null;
                 grupoAnterior = emb.grupo;
                 return (

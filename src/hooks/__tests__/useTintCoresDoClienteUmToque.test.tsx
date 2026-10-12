@@ -29,8 +29,10 @@ type Product = { id: string; descricao: string; account: string };
 
 const product: Product = { id: 'p1', descricao: 'BASE GL', account: 'oben' };
 const alvos: AlvoUmToque<Product>[] = [
-  { key: 'a#0', product, codigo: '346J' },
-  { key: 'b#0', product, codigo: 'PLATINA' }, // só nome → nunca 1 toque
+  { key: 'a#0', product, codigo: '346J', rotulo: '346J - PLATINA BIANCA 900ML' },
+  { key: 'b#0', product, codigo: 'PLATINA', rotulo: 'PLATINA BIANCA' }, // só nome → nunca 1 toque
+  { key: 'c#0', product, codigo: '346J', rotulo: '346J - ACRIL BS' }, // código truncado de OUTRA cor
+  { key: 'd#0', product, codigo: '346J', rotulo: null }, // item do app: tint_cor_id exato
 ];
 
 function setup() {
@@ -54,6 +56,10 @@ describe('useCoresDoClienteUmToque', () => {
     await waitFor(() => expect(typeof result.current['a#0']).toBe('object'));
     expect(result.current['a#0']).toMatchObject({ formulaId: 'f1', preco: 130.1, fonte: 'calculado', product });
     expect(result.current['b#0']).toBeUndefined();
+    // Codex P1 rodada 2: o rótulo "346J - ACRIL BS" não fala de PLATINA → não é esta cor.
+    expect(result.current['c#0']).toBeUndefined();
+    // Identidade exata (tint_cor_id do item do app) dispensa o casamento de nome.
+    expect(result.current['d#0']).toMatchObject({ formulaId: 'f1' });
   });
 
   it('preço em ERRO com mapa velho no cache → nenhum atalho (Codex P1 da Fase 1)', async () => {

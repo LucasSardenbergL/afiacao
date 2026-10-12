@@ -14,6 +14,14 @@ export function podeAdicionarCor(p: { precoCarregando: boolean; disponivel: bool
   return !p.precoCarregando && p.disponivel && precoVendavel(p.precoFinal);
 }
 
+/** O tintométrico só existe na Oben, e só BASE recebe cor: produto fora disso iria ao
+ *  carrinho sem os metadados que o gate tint revalida (Codex P1, Fase 2A rodada 2). */
+export function ehBaseTintometricaOben<T extends { account?: string | null; is_tintometric?: boolean | null; tint_type?: string | null }>(
+  p: T | null | undefined,
+): p is T {
+  return !!p && p.account === 'oben' && p.is_tintometric === true && p.tint_type === 'base';
+}
+
 /** Desconto % sobre o preço da fonte, com o arredondamento ao centavo de sempre
  *  (`Math.round` — o gate espelha em float8, ver tintometrico.md §Fronteira do SUBMIT). */
 export function aplicarDesconto(precoSemDesconto: number, discountPct: number): number {

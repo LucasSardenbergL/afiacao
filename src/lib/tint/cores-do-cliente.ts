@@ -28,6 +28,9 @@ export interface OcorrenciaCor {
   account: string;
   /** Código Omie do produto-base — usado pra reabrir a base no catálogo. */
   omieCodigoProduto: number | null;
+  /** `cor_id` EXATO quando o item nasceu no app (Fase 3 grava `tint_cor_id`); null no
+   *  histórico digitado no Omie, que só tem o rótulo livre. */
+  corId: string | null;
 }
 
 export interface CorDoCliente {
@@ -50,6 +53,7 @@ interface ItemJson {
   descricao?: unknown;
   quantidade?: unknown;
   tint_nome_cor?: unknown;
+  tint_cor_id?: unknown;
   omie_codigo_produto?: unknown;
 }
 
@@ -94,6 +98,7 @@ export function extrairCoresDoHistorico(pedidos: PedidoHistorico[]): CorDoClient
         pv,
         account: p.account ?? '',
         omieCodigoProduto: typeof raw.omie_codigo_produto === 'number' ? raw.omie_codigo_produto : null,
+        corId: typeof raw.tint_cor_id === 'string' && raw.tint_cor_id.trim() ? raw.tint_cor_id.trim() : null,
       });
     }
   }

@@ -2,6 +2,7 @@
 // sem abrir o seletor — MAS só quando a fórmula é inequívoca e o MOTOR deu preço vendável.
 // Qualquer dúvida (cor só por nome, 0 ou 2+ fórmulas, motor carregando/falhou, R$ 0) cai
 // no diálogo, que é o caminho completo. Precisão > recall: o atalho nunca adivinha.
+import { tokensDeBusca } from '@/lib/postgrest';
 import { precoVendavel } from './pode-adicionar';
 import { selectAltPrice, type AltPriceSource, type TintPriceBreakdownLite } from './select-price';
 
@@ -24,17 +25,34 @@ export interface CandidataUmToque {
   preco_csv_legado: number | null;
 }
 
+// Palavras do rótulo do histórico que NÃO identificam cor (embalagem, sufixo de base).
+const PALAVRAS_SEM_COR = new Set(['bs', 'ml', 'gl', 'qt', 'lt', 'litro', 'litros', 'galao', 'lata', 'para', 'com', 'de', 'da', 'do']);
+const palavrasDeCor = (s: string) =>
+  tokensDeBusca(s).filter((w) => w.length >= 3 && !/\d/.test(w) && !PALAVRAS_SEM_COR.has(w));
+
+/** Codex P1 (rodada 2): o código extraído do rótulo livre ("346J - ACRIL BS" → "346J") pode
+ *  casar com OUTRA cor de mesmo código. Do texto, só aceita quando o nome do catálogo divide
+ *  ≥1 palavra de cor com o rótulo comprado ("PLATINA BIANCA 900ML" × "PLATINA BIANCO"). */
+export function nomeCompativel(rotuloHistorico: string, nomeCatalogo: string): boolean {
+  const doRotulo = new Set(palavrasDeCor(rotuloHistorico));
+  return palavrasDeCor(nomeCatalogo).some((w) => doRotulo.has(w));
+}
+
 /** A fórmula do 1 toque: a ÚNICA da base (sku) cujo `cor_id` é exatamente o código.
- *  0 ou 2+ ⇒ null (o caller abre o diálogo). */
+ *  `rotuloHistorico` null = o código É a identidade (item do app, `tint_cor_id`); senão o
+ *  nome do catálogo precisa ser compatível com o rótulo. 0 ou 2+ ⇒ null (abre o diálogo). */
 export function escolherFormulaUmToque(
   skuId: string,
   codigo: string,
   candidatas: CandidataUmToque[],
+  rotuloHistorico: string | null,
 ): CandidataUmToque | null {
   if (!ehCodigoDeCor(codigo)) return null;
   const alvo = normalizarCodigoCor(codigo);
   const casam = candidatas.filter((c) => c.sku_id === skuId && normalizarCodigoCor(c.cor_id) === alvo);
-  return casam.length === 1 ? casam[0] : null;
+  if (casam.length !== 1) return null;
+  if (rotuloHistorico != null && !nomeCompativel(rotuloHistorico, casam[0].nome_cor)) return null;
+  return casam[0];
 }
 
 export interface DecisaoUmToque {

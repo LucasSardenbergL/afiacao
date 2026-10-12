@@ -135,6 +135,11 @@ export function useCorPrimeiro(open: boolean) {
           .select('id, codigo, descricao, unidade, valor_unitario, estoque, ativo, omie_codigo_produto, account, is_tintometric, tint_type')
           // money-path: não oferecer produto-base desativado no Omie (UX; o gate final é no submit)
           .eq('ativo', true)
+          // Codex P1 (rodada 2): só base tintométrica DA OBEN — um vínculo errado para produto
+          // Colacor/comum iria ao carrinho sem os metadados que o gate tint revalida.
+          .eq('account', 'oben')
+          .eq('is_tintometric', true)
+          .eq('tint_type', 'base')
           .in('id', skus.map((s) => s.omie_product_id!)),
       ]);
       if (produtosR.error) throw produtosR.error;
