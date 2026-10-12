@@ -978,3 +978,7 @@ de `docs/agent/money-path.md`.
 **Lição transferível:** dívida de tipo se agrupa pelo **tipo-alvo da mensagem**, não pelo código de
 erro nem pelo arquivo — 19 erros em 10 edges eram DUAS linhas de anotação repetidas. Gate que resume
 por código esconde exatamente esse agrupamento; o `--json` existe para isso.
+
+## `edges:typecheck` congelado no lock (M-29, 2026-10-11)
+
+O `deno check` do gate rodava `--no-lock` e resolvia o registry ao vivo a cada run (`npm:@supabase/supabase-js@2` = o 2.x do dia), o que já deu main vermelha sem commit culpado. Agora roda `--lock=scripts/edges-typecheck.deno.lock --frozen`. O lock tem 9 especificadores `npm:` e nenhuma URL remota. Ele fica fora de `supabase/functions/` para o bundler do deploy das edges não o auto-detectar, e trava só o type-check, não o runtime. Import novo → `bun run edges:lock` (usa `deno cache`, porque o `deno check` que falha pela dívida de tipos não grava o lock). Falsificado: `import "npm:is-odd@3.0.1"` numa edge → exit 1 com o motivo `lock-desatualizado`; controle verde, exit 0, na mesma rodada; `edges:lock` regenera um lock idêntico.

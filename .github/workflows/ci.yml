@@ -379,7 +379,7 @@ jobs:
       #
       # Sem `actions/cache` de propósito: o DENO_DIR fica em 681 MB (677 de tarballs npm) e
       # economizaria ~30s dos 48s consumindo ~7% do budget de 10 GB do repo, mais drift de chave —
-      # e não há `deno.lock` versionado (está no .gitignore) para chavear. Roda DEPOIS de
+      # e o lock que versionamos (abaixo) é só da resolução, não do DENO_DIR. Roda DEPOIS de
       # typecheck+vitest+test:edges pelo mesmo motivo que o `test:edges`: PR quebrado no comum falha
       # antes de pagar a rede.
       #
@@ -388,6 +388,11 @@ jobs:
       # outras 141 (dívida de tipos gerados do Supabase) são reportadas sem falhar. O porquê da
       # escolha, os números e os follow-ups estão no cabeçalho do script e no spec:
       # docs/superpowers/specs/2026-07-21-edges-typecheck-gate-design.md
+      #
+      # Congelado no lock desde o M-29 (2026-10-11): `deno check --lock=scripts/edges-typecheck.deno.lock
+      # --frozen`. Antes era `--no-lock`, e o registry resolvido AO VIVO deu mains vermelhas sem commit
+      # culpado. Import `npm:` novo/alterado sem lock atualizado falha com motivo próprio e manda
+      # rodar `bun run edges:lock`. A rede segue necessária para baixar os tarballs, não para resolver.
       - name: Type check (edge functions — Deno)
         run: bun run edges:typecheck
 
