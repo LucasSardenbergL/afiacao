@@ -21,7 +21,7 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **615** custom migrations totais
+- **616** custom migrations totais
 - **2019** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 703
@@ -5001,6 +5001,10 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.wa_owner_efetivo` | — |
+
+### `20261011120300_sales_price_history_created_at_futuro.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ### `20261011120400_retencao_scores_farmer.sql`
 

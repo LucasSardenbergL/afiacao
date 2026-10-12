@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 615
+-- Total de custom migrations: 616
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -672,6 +672,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261011120000', 'tint_watchdog_fase5_cron_timeout', '20261011120000_tint_watchdog_fase5_cron_timeout.sql'),
   ('20261011120100', 'reposicao_logs_insert_cap_compras', '20261011120100_reposicao_logs_insert_cap_compras.sql'),
   ('20261011120200', 'wa_owner_efetivo_gate_staff', '20261011120200_wa_owner_efetivo_gate_staff.sql'),
+  ('20261011120300', 'sales_price_history_created_at_futuro', '20261011120300_sales_price_history_created_at_futuro.sql'),
   ('20261011120400', 'retencao_scores_farmer', '20261011120400_retencao_scores_farmer.sql'),
   ('20261011120500', 'drop_quarentena_omie_clientes', '20261011120500_drop_quarentena_omie_clientes.sql'),
   ('20261011140000', 'picking_v2_coleta_reserva', '20261011140000_picking_v2_coleta_reserva.sql'),
