@@ -122,5 +122,10 @@ describe("época da tarefa entre abas", () => {
     localStorage.clear();
     abrirBarreira("T1");
     expect(lerEpoca("T1", Date.now() + 121_000)).toEqual({ n: 1, aberta: false });
+    // Relógio volta para dentro da janela: a época já expirada NÃO reabre (Codex r6).
+    expect(lerEpoca("T1", Date.now())).toEqual({ n: 1, aberta: false });
+    // Uma barreira NOVA (outra época) abre normalmente.
+    expect(fecharBarreira("T1").n).toBe(2);
+    expect(abrirBarreira("T1")).toEqual({ n: 3, aberta: true });
   });
 });

@@ -188,13 +188,19 @@ export interface Epoca {
   aberta: boolean;
 }
 
+/** Época ímpar que ESTA aba já viu expirar, por tarefa: expirou, não reabre (Codex r6). */
+const expiradas = new Map<string, number>();
+
 export function lerEpoca(tarefaId: string, agora = Date.now()): Epoca {
   try {
     const [n, desde] = (localStorage.getItem(chaveEpoca(tarefaId)) ?? "0:0").split(":").map(Number);
     const num = Number.isInteger(n) && n > 0 ? n : 0;
+    if (num % 2 === 0 || expiradas.get(tarefaId) === num) return { n: num, aberta: false };
     // Entre abas não há relógio monotônico comum: |diferença| limita a espera também quando a
-    // hora do aparelho recua (a barreira de uma aba morta não fica aberta para sempre).
-    return { n: num, aberta: num % 2 === 1 && Math.abs(agora - (desde || 0)) < BARREIRA_MAX_MS };
+    // hora do aparelho recua; vista expirada uma vez, a época fica expirada nesta aba.
+    if (Math.abs(agora - (desde || 0)) < BARREIRA_MAX_MS) return { n: num, aberta: true };
+    expiradas.set(tarefaId, num);
+    return { n: num, aberta: false };
   } catch {
     return { n: 0, aberta: false };
   }
