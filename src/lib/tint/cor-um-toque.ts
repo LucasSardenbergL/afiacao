@@ -14,7 +14,7 @@ export function normalizarCodigoCor(s: string): string {
 /** O CÓDIGO dentro do `cor_id` do catálogo: a 1ª palavra. Medido em 2026-10-12: 7.168 das
  *  8.692 cores Oben têm `cor_id` "CÓDIGO - BS" ("H109 - BS"), 714 só o código, 783 o código
  *  + linha ("012S - ACRIL BS"). 195 códigos repetem entre linhas — a unicidade é por BASE. */
-export function codigoDoCorId(corId: string): string {
+function codigoDoCorId(corId: string): string {
   return normalizarCodigoCor(corId).split(' ')[0] ?? '';
 }
 

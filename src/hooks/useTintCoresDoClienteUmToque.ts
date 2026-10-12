@@ -28,7 +28,7 @@ export interface AlvoUmToque<P extends ProdutoBase = ProdutoBase> {
   rotulo: string | null;
 }
 
-export interface UmToquePronto<P extends ProdutoBase = ProdutoBase> {
+interface UmToquePronto<P extends ProdutoBase = ProdutoBase> {
   formulaId: string;
   corId: string;
   nomeCor: string;

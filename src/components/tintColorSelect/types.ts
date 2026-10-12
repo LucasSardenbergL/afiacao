@@ -15,7 +15,7 @@ export interface TintPricingMeta {
   precoSemDesconto: number | null;
 }
 
-export type ResultadoConfirmacaoCor = 'adicionado' | 'conflito';
+type ResultadoConfirmacaoCor = 'adicionado' | 'conflito';
 
 export interface TintColorSelectDialogProps {
   product: Product;
