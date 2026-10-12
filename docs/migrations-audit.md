@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **609** custom migrations totais
-- **2000** objetos esperados (criados por estas migrations)
+- **611** custom migrations totais
+- **2008** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 689
+  - `function`: 697
   - `rls_policy`: 471
   - `index`: 273
   - `table`: 176
@@ -4995,6 +4995,24 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `rls_policy` | `public.reposicao_motor_run_ins` | `reposicao_motor_run` |
 | `rls_policy` | `public.estoque_nao_confirmado_log_ins` | `reposicao_estoque_nao_confirmado_log` |
+
+### `20261011120200_wa_owner_efetivo_gate_staff.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.wa_owner_efetivo` | — |
+
+### `20261011140000_picking_v2_coleta_reserva.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.picking_v2_data` | — |
+| `function` | `public.picking_coleta_reservar` | — |
+| `function` | `public.picking_sincronizar_fila` | — |
+| `function` | `public.picking_pegar_task` | — |
+| `function` | `public.picking_registrar_leitura` | — |
+| `function` | `public.picking_retomar` | — |
+| `function` | `public.picking_concluir` | — |
 
 ## Próximos passos por status
 
