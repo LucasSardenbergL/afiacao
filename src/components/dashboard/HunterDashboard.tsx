@@ -6,7 +6,7 @@ import { useMyPositivacao } from '@/hooks/useMyPositivacao';
 import { useSinalPositivacao } from '@/hooks/useSinalPositivacao';
 import { estadoDeLeitura, naoConsegui } from '@/lib/leitura/estado-de-leitura';
 import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
-import { DadosVendaParciaisBanner } from './DadosVendaParciaisBanner';
+import { PedidosSemNotaBanner } from './PedidosSemNotaBanner';
 
 /**
  * Dashboard Hunter (aquisição) — Meu Dia do hunter.
@@ -35,8 +35,8 @@ export function HunterDashboard() {
         </p>
       </div>
 
-      {/* Receita/novos vêm de sales_orders, hoje parcial (backfill pendente) → aviso honesto */}
-      <DadosVendaParciaisBanner />
+      {/* ~27% da venda do último ano é pedido sem nota no Omie e conta como venda → aviso MEDIDO */}
+      <PedidosSemNotaBanner />
 
       {/* Placar de aquisição — o norte do hunter (proxy honesto, não-OTE ainda).
           O aviso vem ANTES e FORA do `&&`: sem ele o placar sumia calado no erro/offline, e a

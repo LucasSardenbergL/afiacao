@@ -22,6 +22,8 @@ export const PAGINA_JANELA = 1000;
 export async function fetchPedidosJanela(
   selection: CompanySelection,
   janela: Janela,
+  /** Restringe a estes status (dentro do universo de venda). Ausente = o universo inteiro. */
+  opcoes: { status?: readonly string[] } = {},
 ): Promise<PedidoJanelaRow[]> {
   const out: PedidoJanelaRow[] = [];
   let cursor: string | null = null;
@@ -34,6 +36,7 @@ export async function fetchPedidosJanela(
       .gte('order_date_kpi', janela.de)
       .lt('order_date_kpi', janela.ate);
     if (selection !== 'all') q = q.eq('account', selection);
+    if (opcoes.status) q = q.in('status', [...opcoes.status]);
     if (cursor != null) q = q.gt('id', cursor);
     const { data, error } = await q.order('id', { ascending: true }).limit(PAGINA_JANELA);
     if (error) throw new Error(error.message);

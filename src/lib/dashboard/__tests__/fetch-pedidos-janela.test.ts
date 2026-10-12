@@ -14,7 +14,7 @@ function builder() {
   const chamadas: Chamada[] = [];
   consultas.push(chamadas);
   const b: Record<string, unknown> = {};
-  for (const m of ['select', 'not', 'is', 'gte', 'lt', 'gt', 'order', 'limit', 'eq']) {
+  for (const m of ['select', 'not', 'is', 'gte', 'lt', 'gt', 'order', 'limit', 'eq', 'in']) {
     b[m] = (...args: unknown[]) => {
       chamadas.push({ metodo: m, args });
       return b;
@@ -100,5 +100,12 @@ describe('fetchPedidosJanela', () => {
     await expect(fetchPedidosJanela('oben', { de: '2026-07-01', ate: '2026-10-01' })).rejects.toThrow(
       /cursor/,
     );
+  });
+
+  it('[JAN-STATUS] filtro de status opcional: presente vira .in(status), ausente não filtra', async () => {
+    await fetchPedidosJanela('oben', { de: '2025-10-01', ate: '2026-09-12' }, { status: ['importado', 'separacao'] });
+    expect(chamou(consultas[0], 'in')[0].args).toEqual(['status', ['importado', 'separacao']]);
+    await fetchPedidosJanela('oben', { de: '2025-10-01', ate: '2026-09-12' });
+    expect(chamou(consultas[1], 'in')).toHaveLength(0);
   });
 });
