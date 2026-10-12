@@ -38,7 +38,10 @@ export function PedidoRow({
   // como re-disparar pela UI (precisava flip de status no banco). Suprimido quando o
   // override está disponível (senão 2 botões de disparo confusos na mesma linha).
   const podeReDisparar = p.status === 'falha_envio' && !mostrarOverride;
-  const podeDisparar = p.status === 'aprovado_aguardando_disparo' || podeReDisparar;
+  // Recusa DEFINITIVA do portal (#3169): disparar de novo repete a recusa ou reenvia itens que o
+  // ciclo seguinte já recomprou. Saída = Cancelar (aqui) ou "Forçar reenvio" no drawer (admin).
+  const recusaDefinitiva = p.status_envio_portal === 'erro_nao_retentavel';
+  const podeDisparar = !recusaDefinitiva && (p.status === 'aprovado_aguardando_disparo' || podeReDisparar);
   // Guard de concorrência: enquanto o envio ao portal está em voo (após "aprovar e
   // disparar" ou um disparo manual), trava o botão pra não abrir uma 2ª sessão no
   // Browserless e gerar PO duplicado no fornecedor.
@@ -93,7 +96,7 @@ export function PedidoRow({
             />
           )}
           {podeCancelar && (
-            <Button size="sm" variant="outline" onClick={onCancelar}>
+            <Button size="sm" variant="outline" onClick={onCancelar} aria-label="Cancelar pedido" title="Cancelar pedido">
               <XCircle className="w-4 h-4" />
             </Button>
           )}
