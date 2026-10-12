@@ -15,6 +15,7 @@
 // consulta. O teste passa a medir COMPORTAMENTO (dada a mensagem e a tentativa, retenta? quanto
 // dorme? o texto sai redigido?) em vez de procurar palavras no fonte.
 import { atrasoRetentativaMs, type ClasseFalhaOmie, classificarFaultstring, redigirSegredo } from "../_shared/omie-falha.ts";
+import { cabeEspera, timeoutRequestMs } from "../_shared/omie-deadline.ts";
 
 export interface DecisaoRetentativa {
   retentar: boolean;
@@ -24,6 +25,33 @@ export interface DecisaoRetentativa {
 
 /** Teto de tentativas por chamada — 1 original + 3 retentativas (backoff 0,8s / 1,6s / 3,2s). */
 export const MAX_TENTATIVAS_OMIE = 4;
+
+// ── Relógio da CHAMADA (M-33) ─────────────────────────────────────────────────────────────────
+// O `fetch` do `callOmie` não tinha teto: um socket pendurado segurava o run até o kill — a classe
+// do #2017 (`_shared/omie-deadline.ts`). O relógio aqui é da CHAMADA LÓGICA (as 4 tentativas e os
+// backoffs), não do run: esta edge não tem orçamento de run e várias ações rodam em `waitUntil`,
+// sem medida de quanto o run legítimo dura — um deadline de run chutado transformaria sync
+// completo em parcial. O escopo que se CONHECE é o da chamada.
+
+// Os números NÃO são os das irmãs (20–25s), de propósito — duas rodadas de challenge do Codex:
+// sem latência medida por método, QUALQUER teto abaixo do kill da plataforma piora algum caso
+// legítimo (25s: página de 30s vira 4 aborts; 60s: resposta de 65s, que hoje sucede, aborta). O
+// único teto que não piora nada sem medição é o do PRÓPRIO worker (~150s, o mesmo orçamento medido
+// no `decidirRetentativaOmie` acima): tudo que hoje termina antes do kill termina igual, e o que hoje
+// já MORRE — o isolate cai sem passar pelo catch e o `sync_state` fica órfão em `running` — passa a
+// lançar a tempo de o catch registrar o erro. Apertar o teto (e o orçamento por RUN do laço de
+// `ConsultarEstrutura`) exige medir a duração real primeiro — follow-up.
+
+/** Teto de UM request ao Omie: o orçamento do worker menos a margem para o catch registrar o erro. */
+export const FETCH_TIMEOUT_OMIE_MS = 140_000;
+
+/** Relógio da chamada lógica inteira (tentativas + backoffs): o mesmo teto — nunca além do kill. */
+export const ORCAMENTO_CHAMADA_OMIE_MS = 140_000;
+
+/** Teto da próxima tentativa; **0 = não chamar** (sobra abaixo do piso viável — ver omie-deadline). */
+export function tetoDaTentativa(agora: number, deadline: number): number {
+  return timeoutRequestMs(agora, deadline, FETCH_TIMEOUT_OMIE_MS);
+}
 
 /**
  * Decide se a chamada ao Omie deve ser repetida.
@@ -48,9 +76,13 @@ export function decidirRetentativaOmie(
   mensagem: string,
   tentativa: number,
   maxTentativas: number = MAX_TENTATIVAS_OMIE,
+  prazo?: { agora: number; deadline: number },
 ): DecisaoRetentativa {
   const classe = classificarFaultstring(mensagem);
-  const retentar = classe === "transitorio" && tentativa < maxTentativas;
+  // Com `prazo`, só retenta se o backoff E uma chamada viável depois dele couberem no relógio da
+  // chamada — dormir para depois não ter tempo de chamar só adia a falha (`cabeEspera`).
+  const retentar = classe === "transitorio" && tentativa < maxTentativas &&
+    (prazo == null || cabeEspera(prazo.agora, prazo.deadline, atrasoRetentativaMs(tentativa)));
   // ⚠️ `atrasoRetentativaMs` SEM a faultstring, de propósito: com ela, o helper honra o
   // "Aguarde N segundos" do rate-limit do Omie (teto de 5s POR TENTATIVA), e o challenge do Codex
   // mediu o efeito — "Aguarde 3 segundos" leva o total de 5,6s para 10,5s, e "Aguarde 90" para

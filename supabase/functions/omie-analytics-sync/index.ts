@@ -30,6 +30,8 @@ import {
   MAX_TENTATIVAS_OMIE,
   mensagemCorpoNaoJson,
   mensagemFalhaOmie,
+  ORCAMENTO_CHAMADA_OMIE_MS,
+  tetoDaTentativa,
 } from "./politica-retry.ts";
 
 const corsHeaders = {
@@ -209,13 +211,19 @@ async function callOmie(account: OmieAccount, endpoint: string, call: string, pa
   // gates que liam o fonte atrás de tokens; o challenge do Codex passou pelos três com mutações
   // triviais. Decisão de money-path não se prova por token: mora onde o teste a EXECUTA.
   const maxAttempts = MAX_TENTATIVAS_OMIE;
+  // Relógio da CHAMADA (M-33, `politica-retry.ts`): cada tentativa tem teto e a retentativa só
+  // acontece se couber. O abort por timeout é "transitorio" no `omie-falha` → vira retentativa.
+  const deadline = Date.now() + ORCAMENTO_CHAMADA_OMIE_MS;
   let lastErr: Error | null = null;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const timeoutMs = tetoDaTentativa(Date.now(), deadline);
+    if (timeoutMs === 0) break; // sem tempo viável: não abre socket condenado; cai no throw abaixo
     try {
       const res = await fetch(`${OMIE_API_URL}/${endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
+        signal: AbortSignal.timeout(timeoutMs),
       });
       // ⚠️ O parse vem ANTES do guard de status (a faultstring é mais acionável que o código), e
       // é por isso que ele precisa do próprio catch: um 5xx de gateway com corpo de TEXTO estoura
@@ -255,7 +263,7 @@ async function callOmie(account: OmieAccount, endpoint: string, call: string, pa
     } catch (e) {
       const erro = e instanceof Error ? e : new Error(String(e));
       lastErr = erro;
-      const decisao = decidirRetentativaOmie(erro.message, attempt, maxAttempts);
+      const decisao = decidirRetentativaOmie(erro.message, attempt, maxAttempts, { agora: Date.now(), deadline });
       if (decisao.retentar) {
         await new Promise((r) => setTimeout(r, decisao.atrasoMs));
         continue;
