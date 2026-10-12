@@ -235,6 +235,7 @@ export const FRONTEIRAS_BASELINE: Aresta[] = [
   { de: "src/queries/useRadarCidadesRota.ts", para: "src/lib/route/cidades-cache.ts", deModulo: "farmer-inteligencia", paraModulo: "telefonia-whatsapp-rota", kind: "runtime" },
   { de: "src/queries/useRegistrarContato.ts", para: "src/lib/route/route-outcome.ts", deModulo: "farmer-inteligencia", paraModulo: "telefonia-whatsapp-rota", kind: "type" },
   { de: "src/services/orderSubmission/buildPrintData.ts", para: "src/components/OrderPrintLayout.tsx", deModulo: "vendas", paraModulo: "loja-afiacao", kind: "type" },
+  { de: "src/services/orderSubmission/tabelaTint.ts", para: "src/lib/tint/select-price.ts", deModulo: "vendas", paraModulo: "tintometrico", kind: "runtime" },
   { de: "src/services/orderSubmission/types.ts", para: "src/components/OrderPrintLayout.tsx", deModulo: "vendas", paraModulo: "loja-afiacao", kind: "type" },
   { de: "src/services/whatsappProposta/enviarProposta.ts", para: "src/lib/pricing/mergeCustomerPrices.ts", deModulo: "telefonia-whatsapp-rota", paraModulo: "vendas", kind: "runtime" },
 ];
