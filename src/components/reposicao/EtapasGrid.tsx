@@ -23,10 +23,6 @@ function describe(step: number, s: ReposicaoStatus): string {
         ? `${s.pedidosPendentes} pedido(s) aguardando revisão`
         : `${s.pedidosTotal} pedido(s) revisado(s)`;
     case 4:
-      return s.pedidosAprovados > 0
-        ? `${s.pedidosAprovados} aprovado(s) prontos para Omie`
-        : "Nada para aplicar";
-    case 5:
       return s.pedidosTotal > 0
         ? `${s.pedidosDisparados}/${s.pedidosTotal} disparado(s)`
         : "Aguardando geração";

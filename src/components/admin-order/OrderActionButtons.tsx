@@ -1,4 +1,3 @@
-import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import {
   AlertDialog,
@@ -11,10 +10,9 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
-import { Loader2, Save, RefreshCw, CheckCircle, Trash2 } from 'lucide-react';
+import { Loader2, Save, RefreshCw, Trash2 } from 'lucide-react';
 
 interface Props {
-  orderId: string;
   saving: boolean;
   syncingOmie: boolean;
   deleting: boolean;
@@ -22,21 +20,9 @@ interface Props {
   onDelete: () => void;
 }
 
-export const OrderActionButtons = ({ orderId, saving, syncingOmie, deleting, onSave, onDelete }: Props) => {
-  const navigate = useNavigate();
-
+export const OrderActionButtons = ({ saving, syncingOmie, deleting, onSave, onDelete }: Props) => {
   return (
     <div className="space-y-3 mb-6">
-      <Button
-        variant="outline"
-        className="w-full"
-        size="lg"
-        onClick={() => navigate(`/admin/orders/${orderId}/quality`)}
-      >
-        <CheckCircle className="w-4 h-4 mr-2" />
-        Checklist de Qualidade
-      </Button>
-
       <Button
         className="w-full"
         size="lg"

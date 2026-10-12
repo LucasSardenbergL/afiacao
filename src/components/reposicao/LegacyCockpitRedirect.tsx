@@ -2,7 +2,6 @@ import { Navigate, useSearchParams } from "react-router-dom";
 
 const TAB_TO_ROUTE: Record<string, string> = {
   ciclohoje: "/admin/reposicao/sessao/pedidos",
-  aplicaromie: "/admin/reposicao/sessao/aplicacao",
   confirmacao: "/admin/reposicao/sessao/confirmacao",
   anteriores: "/admin/reposicao/sessao/historico",
   oportunidades: "/admin/reposicao/oportunidades",

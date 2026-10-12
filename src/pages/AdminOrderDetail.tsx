@@ -94,7 +94,6 @@ const AdminOrderDetail = () => {
         </Card>
 
         <OrderActionButtons
-          orderId={order.id}
           saving={saving}
           syncingOmie={syncingOmie}
           deleting={deleting}

@@ -1,7 +1,7 @@
 import { useParams, useNavigate } from 'react-router-dom';
-import { Phone, MessageCircle, Copy, Check, RefreshCw, Camera, Loader2, AlertTriangle, ExternalLink } from 'lucide-react';
+import { Phone, MessageCircle, Copy, Check, RefreshCw, Loader2, AlertTriangle, ExternalLink } from 'lucide-react';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 
 // Shape de cada item do pedido (jsonb em orders.items). Só campos consumidos no UI.
 interface OrderItemShape {
@@ -20,7 +20,6 @@ import { OrderChat } from '@/components/OrderChat';
 import { OrderReview } from '@/components/OrderReview';
 import { StatusBadge } from '@/components/StatusBadge';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { TOOL_CATEGORIES, SERVICE_TYPES, DELIVERY_OPTIONS } from '@/types';
 import { supabase } from '@/integrations/supabase/client';
@@ -56,13 +55,6 @@ const STATUS_LABELS: Record<string, string> = {
   entregue: 'Entregue',
 };
 
-interface QualityData {
-  item_index: number;
-  before_photos: string[];
-  after_photos: string[];
-  approved: boolean;
-}
-
 function buildWhatsAppUrl(orderNumber: string, status: string) {
   const statusText = STATUS_LABELS[status] || status;
   const msg = encodeURIComponent(
@@ -75,7 +67,6 @@ const OrderDetail = () => {
   const { id } = useParams();
   const navigate = useNavigate();
   const [copied, setCopied] = useState(false);
-  const [qualityData, setQualityData] = useState<QualityData[]>([]);
 
   // Desestruturação DIRETA nomeando as chaves de erro: um `const q = useX()` faria o sítio
   // sumir do gate da classe por CEGUEIRA, não por conserto.
@@ -143,23 +134,6 @@ const OrderDetail = () => {
       }),
   });
 
-  useEffect(() => {
-    if (id) loadQualityData();
-  }, [id]);
-
-  const loadQualityData = async () => {
-    if (!id) return;
-    try {
-      const { data } = await supabase
-        .from('quality_checklists' as never)
-        .select('item_index, before_photos, after_photos, approved')
-        .eq('order_id', id);
-      if (data) setQualityData(data as QualityData[]);
-    } catch (error) {
-      console.error('Error loading quality data:', error);
-    }
-  };
-
   if (isLoading) {
     return (
       <div className="min-h-screen bg-background pb-24">
@@ -199,11 +173,6 @@ const OrderDetail = () => {
   const needsApproval = order.status === 'orcamento_enviado';
   const isDelivered = order.status === 'entregue';
   const whatsAppUrl = buildWhatsAppUrl(order.orderNumber, order.status);
-
-  // Collect all quality photos for the "Resultado do Serviço" section
-  const allQualityPhotos = qualityData.filter(
-    qd => qd.before_photos.length > 0 || qd.after_photos.length > 0
-  );
 
   return (
     <div className="min-h-screen bg-background pb-24">
@@ -346,68 +315,6 @@ const OrderDetail = () => {
             ))}
           </div>
         </section>
-
-        {/* ═══ QUALITY PHOTOS — Resultado do Serviço ═══ */}
-        {allQualityPhotos.length > 0 && (
-          <section className="mb-6">
-            <h3 className="font-display font-bold mb-3">Resultado do Serviço</h3>
-            <div className="space-y-3">
-              {allQualityPhotos.map((qd, qi) => (
-                <Card key={qi} className="overflow-hidden">
-                  <CardContent className="p-4">
-                    <div className="flex items-center gap-2 mb-3">
-                      <Camera className="w-4 h-4 text-primary" />
-                      <span className="text-sm font-semibold text-foreground">
-                        {order.items[qd.item_index]
-                          ? TOOL_CATEGORIES[order.items[qd.item_index].category as keyof typeof TOOL_CATEGORIES] || order.items[qd.item_index].category
-                          : `Item ${qd.item_index + 1}`}
-                      </span>
-                      {qd.approved && (
-                        <Badge variant="outline" className="text-[10px] ml-auto border-status-success/60 text-status-success bg-status-success-bg">
-                          ✓ Qualidade aprovada
-                        </Badge>
-                      )}
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      {/* Before */}
-                      {qd.before_photos.length > 0 && (
-                        <div>
-                          <p className="text-xs font-medium text-muted-foreground mb-1.5">Antes</p>
-                          <div className="grid grid-cols-2 gap-1.5">
-                            {qd.before_photos.map((photo, pi) => (
-                              <img
-                                key={pi}
-                                src={photo}
-                                alt="Antes do serviço"
-                                className="w-full aspect-square object-cover rounded-lg border border-border"
-                              />
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                      {/* After */}
-                      {qd.after_photos.length > 0 && (
-                        <div>
-                          <p className="text-xs font-medium text-primary mb-1.5">Depois</p>
-                          <div className="grid grid-cols-2 gap-1.5">
-                            {qd.after_photos.map((photo, pi) => (
-                              <img
-                                key={pi}
-                                src={photo}
-                                alt="Depois do serviço"
-                                className="w-full aspect-square object-cover rounded-lg border-2 border-primary/30"
-                              />
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          </section>
-        )}
 
         {/* Delivery info */}
         <section className="mb-6">

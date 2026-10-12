@@ -7,7 +7,7 @@ import type { PedidoItem } from "@/types/reposicao";
 export const REPOSICAO_EMPRESA = "OBEN";
 
 /**
- * Paths canônicos das 5 etapas da sessão de Reposição, em ordem.
+ * Paths canônicos das 4 etapas da sessão de Reposição, em ordem.
  * Single source of truth — ProcessoComprasStepper importa daqui para montar
  * REPOSICAO_STEPS (label + ícone + to).
  */
@@ -15,7 +15,6 @@ export const REPOSICAO_STEP_PATHS = [
   "/admin/reposicao/sessao/mercado",
   "/admin/reposicao/sessao/parametros",
   "/admin/reposicao/sessao/pedidos",
-  "/admin/reposicao/sessao/aplicacao",
   "/admin/reposicao/sessao/confirmacao",
 ] as const;
 
@@ -81,8 +80,7 @@ export function deriveCurrentStep(m: {
   // null (count indisponível) NÃO força a etapa 1 — degrada para o fluxo de pedidos.
   if ((m.oportunidadesCount ?? 0) > 0) return 1;
   if (m.pedidosPendentes > 0) return 3;
-  if (m.pedidosAprovados > 0) return 4;
-  if (m.pedidosDisparados > 0) return 5;
+  if (m.pedidosAprovados > 0 || m.pedidosDisparados > 0) return 4;
   return 3;
 }
 
@@ -185,7 +183,7 @@ export function useReposicaoStatus() {
 export type StepLock = { locked: boolean; reason?: string };
 
 export function getStepLocks(status: ReposicaoStatus | undefined): StepLock[] {
-  if (!status) return Array.from({ length: 5 }, () => ({ locked: false }));
+  if (!status) return Array.from({ length: REPOSICAO_STEP_PATHS.length }, () => ({ locked: false }));
   const s = status;
   return [
     { locked: false },
@@ -196,15 +194,6 @@ export function getStepLocks(status: ReposicaoStatus | undefined): StepLock[] {
         s.pedidosTotal === 0
           ? "Nenhum pedido foi gerado para hoje. Rode 'Gerar agora' primeiro."
           : undefined,
-    },
-    {
-      locked: s.pedidosTotal === 0 || s.pedidosPendentes > 0,
-      reason:
-        s.pedidosTotal === 0
-          ? "Nenhum pedido foi gerado para hoje."
-          : s.pedidosPendentes > 0
-            ? `Ainda há ${s.pedidosPendentes} pedido(s) aguardando revisão na etapa 3.`
-            : undefined,
     },
     {
       locked: s.pedidosDisparados === 0 && s.pedidosAprovados === 0,

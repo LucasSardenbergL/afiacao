@@ -71,17 +71,7 @@ export function buildEtapaChecklist(step: number, s: ReposicaoStatus): Checklist
       };
     case 4:
       return {
-        title: "Para concluir a Etapa 4: Aplicação Omie",
-        items: [
-          {
-            label: `Confirmar aplicação no Omie (${s.pedidosAprovados} aprovado(s) aguardando)`,
-            done: s.pedidosAprovados === 0 && s.pedidosDisparados > 0,
-          },
-        ],
-      };
-    case 5:
-      return {
-        title: "Para concluir a Etapa 5: Confirmação",
+        title: "Para concluir a Etapa 4: Confirmação",
         items: [
           {
             label: `${s.pedidosDisparados} de ${s.pedidosTotal} pedido(s) disparado(s)`,
