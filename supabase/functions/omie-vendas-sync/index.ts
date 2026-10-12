@@ -14,6 +14,7 @@ import {
   compararCarrinhoPv,
   type ConsultaExclusao,
   edicaoBloqueadaPorPvDivergente,
+  vereditoExclusaoNoOmie,
 } from "../_shared/atp-pv-omie.ts";
 import { deltaEdicaoOben } from "../_shared/atp-edicao.ts";
 import { aplicarCorPreservandoItens, apurarSubtotalPedido, precoUnitarioOmie } from "../_shared/omie-pedido.ts";
@@ -3836,29 +3837,45 @@ Deno.serve(async (req) => {
         const { omie_pedido_id: pedidoId, sales_order_id: soId } = params;
         if (!soId) throw new Error("ID do pedido é obrigatório");
 
-        // Determine the account of this order
-        const { data: orderData } = await supabaseAdmin
+        // Identidade do BANCO, nunca do request (Codex 2026-10-11): conta, PID e origem vêm da linha.
+        // Falha de leitura ou conta desconhecida RECUSA — o default 'oben' daqui decidia por omissão.
+        const { data: orderData, error: orderErr } = await supabaseAdmin
           .from("sales_orders")
-          .select("account")
+          .select("account, omie_pedido_id, hash_payload")
           .eq("id", soId)
-          .single();
-        const orderAccount: Account = (orderData?.account === "colacor") ? "colacor" : "oben";
+          .maybeSingle();
+        if (orderErr) throw new Error(`Exclusão recusada: leitura do pedido falhou (${orderErr.message}).`);
+        if (!orderData) {
+          result = { success: true }; // já não existe: exclusão idempotente
+          break;
+        }
+        if (orderData.account !== "oben" && orderData.account !== "colacor") {
+          throw new Error(`Exclusão recusada: conta do pedido desconhecida (${String(orderData.account)}).`);
+        }
+        const orderAccount = orderData.account as Account;
+        const pidLocal = Number(orderData.omie_pedido_id) > 0 ? Number(orderData.omie_pedido_id) : null;
+        if (pidLocal !== null && pedidoId && Number(pedidoId) > 0 && Number(pedidoId) !== pidLocal) {
+          throw new Error(`Exclusão recusada: o PV informado (${pedidoId}) diverge do registrado (${pidLocal}). Recarregue a página.`);
+        }
 
-        // Try to cancel in Omie if it was synced
-        if (pedidoId && Number(pedidoId) > 0) {
-          try {
-            await callOmieVendasApi(
-              "produtos/pedido/",
-              "CancelarPedido",
-              { codigo_pedido: Number(pedidoId) },
-              orderAccount
-            );
-            console.log(`[Omie Vendas][${orderAccount}] Pedido ${pedidoId} cancelado no Omie`);
-          } catch (omieErr) {
-            const msg = omieErr instanceof Error ? omieErr.message : String(omieErr);
-            console.warn(`[Omie Vendas][${orderAccount}] Erro ao cancelar no Omie (continuando exclusão local):`, msg);
-          }
-        } else if (orderAccount === "oben") {
+        if (pidLocal !== null) {
+          // O app NÃO cancela no Omie (decisão 2026-10-11, ver vereditoExclusaoNoOmie): sai daqui só o
+          // pedido cujo cancelamento — feito no Omie — o sync já trouxe para a linha canônica.
+          const { data: canon, error: canonErr } = await supabaseAdmin
+            .from("sales_orders")
+            .select("status")
+            .eq("account", orderAccount)
+            .eq("hash_payload", `omie_${orderAccount}_${pidLocal}`)
+            .maybeSingle();
+          if (canonErr) throw new Error(`Exclusão recusada: não consegui ler o status do pedido no Omie (${canonErr.message}).`);
+          const veredito = vereditoExclusaoNoOmie({
+            hashPayload: (orderData.hash_payload as string | null) ?? null,
+            omiePedidoId: pidLocal,
+            statusCanonico: (canon?.status as string | null) ?? null,
+          });
+          if (!veredito.permitido) throw new Error(`Exclusão recusada: ${veredito.motivo}`);
+        } else {
+          // Vale para as DUAS contas (Codex 2026-10-11: Colacor sem PID apagava com PV vivo).
           // ATP 3.3 (#3): sem PID local o PV pode existir mesmo assim (o write-back falhou depois do
           // IncluirPedido). Apagar soltaria a reserva (FK SET NULL → TTL) com o PV vivo. A chave
           // PV_<id> é o registro durável do envio: TODO pedido Oben sem PID é consultado (a trilha

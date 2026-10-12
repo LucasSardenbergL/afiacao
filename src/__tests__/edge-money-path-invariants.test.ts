@@ -4924,6 +4924,37 @@ describe('guardrail money-path: PV reconciliado e exclusão sem PID (ATP 3.3)', 
   });
 });
 
+// ── Exclusão de pedido no Omie (2026-10-11, founder + Codex): o app NÃO cancela no ERP ──
+// `produtos/pedido/` não tem CancelarPedido: a edge chamava um método inexistente, caía no catch e
+// apagava só o registro do app com o PV vivo. O cancelamento documentado cancela NF-e/contas a receber
+// de pedido faturado, sem proteção contra o faturamento concorrente. Comportamento: atp-pv-omie_test.ts.
+describe('guardrail money-path: excluir pedido não finge cancelar no Omie', () => {
+  const src = read('supabase/functions/omie-vendas-sync/index.ts');
+  const ex = src.indexOf('case "excluir_pedido": {');
+  const exclusao = removerComentarios(src.slice(ex, src.indexOf('case "sync_pedidos": {', ex)));
+
+  it('sentinela: recortou o excluir_pedido', () => {
+    expect(exclusao).toContain('.delete()');
+  });
+
+  it('nenhuma chamada de cancelamento/exclusão no Omie dentro do excluir_pedido', () => {
+    expect(exclusao, 'REGRESSÃO: voltou a chamar método de cancelamento/exclusão no Omie')
+      .not.toMatch(/"(CancelarPedido|CancelarPedidoVenda|ExcluirPedido)"/);
+  });
+
+  it('pedido com PID só sai com o veredito (canônica cancelada; importado nunca), ANTES do DELETE', () => {
+    const v = exclusao.indexOf('vereditoExclusaoNoOmie(');
+    expect(v).toBeGreaterThan(-1);
+    expect(v).toBeLessThan(exclusao.indexOf('.delete()'));
+    expect(exclusao).toMatch(/if \(!veredito\.permitido\) throw new Error\(/);
+  });
+
+  it('a identidade vem do banco: leitura que falha RECUSA (sem default de conta)', () => {
+    expect(exclusao).toMatch(/if \(orderErr\) throw new Error\(/);
+    expect(exclusao, 'o default "oben" por omissão voltou').not.toMatch(/=== "colacor"\) \? "colacor" : "oben"/);
+  });
+});
+
 describe('guardrail money-path: `reprocess_operational_orders` (cron da Colacor) é SÓ pedidos', () => {
   // O status dos pedidos da Colacor ficou congelado de jun a out/2026 porque o reconciliador só
   // rodava para a Oben (docs/historico/status-pedidos-colacor-congelado.md). O cron dela usa esta
