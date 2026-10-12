@@ -22,7 +22,7 @@ interface CorPrimeiroDialogProps {
   open: boolean;
   onClose: () => void;
   /** Mesmo contrato do seletor por base; aqui o produto (a base derivada) vem SEMPRE. */
-  onConfirm: (...args: Parameters<TintColorSelectDialogProps['onConfirm']>) => void;
+  onConfirm: TintColorSelectDialogProps['onConfirm'];
 }
 
 export function CorPrimeiroDialog({ open, onClose, onConfirm }: CorPrimeiroDialogProps) {
@@ -196,13 +196,7 @@ export function CorPrimeiroDialog({ open, onClose, onConfirm }: CorPrimeiroDialo
                         disabled={!pode}
                         onClick={() => {
                           if (!pode || precoFinal == null) return;
-                          track('tint.cor_confirmada', {
-                            fonte: altSel.fonte ?? 'nenhuma',
-                            alternativa: true,
-                            com_desconto: desconto > 0,
-                            entrada: 'cor_primeiro',
-                          });
-                          onConfirm(
+                          const resultado = onConfirm(
                             emb.formulaId,
                             emb.corId ?? s.cor!.corId,
                             emb.nomeCor ?? s.cor!.nomeCor,
@@ -213,6 +207,14 @@ export function CorPrimeiroDialog({ open, onClose, onConfirm }: CorPrimeiroDialo
                             { source: altSel.fonte, discountPct: desconto, precoSemDesconto: altSel.preco },
                             emb.product,
                           );
+                          // Só conta o que ENTROU: conflito no carrinho não é confirmação (Codex P2).
+                          if (resultado === 'conflito') return;
+                          track('tint.cor_confirmada', {
+                            fonte: altSel.fonte ?? 'nenhuma',
+                            alternativa: true,
+                            com_desconto: desconto > 0,
+                            entrada: 'cor_primeiro',
+                          });
                         }}
                       >
                         <Plus className="w-3.5 h-3.5 mr-1" /> Adicionar ao pedido

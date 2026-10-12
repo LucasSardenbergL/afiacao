@@ -651,9 +651,11 @@ const UnifiedOrder = () => {
           // diálogo já barra com `ehBaseTintometricaOben`; repetido inline para não criar aresta).
           if (!product || product.account !== 'oben' || !product.is_tintometric || product.tint_type !== 'base') return;
           // Conflito → o diálogo fica aberto com a escolha (Codex P1 rodada 3).
-          if (h.addTintProductToCart(product, formulaId, corId, nomeCor, precoFinal, custoCorantes, pricingMeta, 1) !== 'adicionado') return;
+          const resultado = h.addTintProductToCart(product, formulaId, corId, nomeCor, precoFinal, custoCorantes, pricingMeta, 1);
+          if (resultado !== 'adicionado') return resultado;
           setCorPrimeiroAberto(false);
           toast.success(`${corId} adicionada`, { description: product.descricao });
+          return resultado;
         }}
       />
 
@@ -666,8 +668,10 @@ const UnifiedOrder = () => {
           initialSearch={tintInitialSearch}
           onConfirm={(formulaId, corId, nomeCor, precoFinal, custoCorantes, pricingMeta, alternativeProduct) => {
             // Conflito → pendência intacta: o diálogo segue aberto e a fila de "Repetir pedido" não avança.
-            if (h.addTintProductToCart(alternativeProduct || h.tintPendingProduct!, formulaId, corId, nomeCor, precoFinal, custoCorantes, pricingMeta) !== 'adicionado') return;
+            const resultado = h.addTintProductToCart(alternativeProduct || h.tintPendingProduct!, formulaId, corId, nomeCor, precoFinal, custoCorantes, pricingMeta);
+            if (resultado !== 'adicionado') return resultado;
             setTintInitialSearch(null);
+            return resultado;
           }}
         />
       )}

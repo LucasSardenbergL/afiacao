@@ -11,7 +11,8 @@ vi.mock('../useCorPrimeiro', async (importOriginal) => {
   const real = await importOriginal<typeof import('../useCorPrimeiro')>();
   return { ...real, useCorPrimeiro: () => estado.current };
 });
-vi.mock('@/lib/analytics', () => ({ track: vi.fn() }));
+const trackMock = vi.fn();
+vi.mock('@/lib/analytics', () => ({ track: (...a: unknown[]) => trackMock(...a) }));
 
 import { CorPrimeiroDialog } from '../CorPrimeiroDialog';
 import { coresDistintas } from '../useCorPrimeiro';
@@ -51,6 +52,19 @@ describe('CorPrimeiroDialog', () => {
       base,
     );
     expect(screen.getByText('PU ACETINADO')).toBeInTheDocument();
+  });
+
+  it('conflito no carrinho → sem evento de confirmação; sucesso → 1 evento (Codex P2)', () => {
+    trackMock.mockClear();
+    const onConfirm = vi.fn().mockReturnValue('conflito');
+    const { unmount } = render(<CorPrimeiroDialog open onClose={() => {}} onConfirm={onConfirm} />);
+    fireEvent.click(botao());
+    expect(trackMock.mock.calls.filter((c) => c[0] === 'tint.cor_confirmada')).toHaveLength(0);
+    unmount();
+    onConfirm.mockReturnValue('adicionado');
+    render(<CorPrimeiroDialog open onClose={() => {}} onConfirm={onConfirm} />);
+    fireEvent.click(botao());
+    expect(trackMock.mock.calls.filter((c) => c[0] === 'tint.cor_confirmada')).toHaveLength(1);
   });
 
   it('motor recarregando: botão desabilitado e nenhum preço mostrado', () => {

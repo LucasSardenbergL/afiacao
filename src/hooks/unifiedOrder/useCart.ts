@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useRef } from 'react';
+import { useState, useMemo, useCallback, useRef, type SetStateAction } from 'react';
 import { toast } from 'sonner';
 import type { OmieServico } from '@/services/omieService';
 import type {
@@ -20,10 +20,18 @@ interface UseCartArgs {
 }
 
 export function useCart({ getProductPrice, getServicePrice, servicos }: UseCartArgs) {
-  const [cart, setCart] = useState<CartItem[]>([]);
-  // Espelho síncrono do carrinho para decisões que precisam do estado ATUAL (tinta, Fase 2A).
-  const cartRef = useRef<CartItem[]>(cart);
-  cartRef.current = cart;
+  const [cart, setCartState] = useState<CartItem[]>([]);
+  // Codex P1 (Fase 2A, rodada 4): TODA escrita do carrinho passa por este setter ÚNICO, que
+  // aplica a mudança sobre o espelho síncrono (`cartRef`) e grava o estado com o resultado.
+  // Assim a decisão da tinta ('adicionado'|'conflito') vê o estado ATUAL mesmo dentro de um
+  // batch, sem atropelar outra mutação do mesmo tick (antes só a tinta escrevia o ref e o
+  // `setCart(proximo)` dela apagava um add/remove/qtd pendente). Mesma assinatura do setState.
+  const cartRef = useRef<CartItem[]>([]);
+  const setCart = useCallback((acao: SetStateAction<CartItem[]>) => {
+    const proximo = typeof acao === 'function' ? acao(cartRef.current) : acao;
+    cartRef.current = proximo;
+    setCartState(proximo);
+  }, []);
   const [tintPendingProduct, setTintPendingProductState] = useState<Product | null>(null);
   // Quantidade digitada na lista viaja até a confirmação da cor — antes a base
   // tintométrica abria o diálogo e o item nascia com 1, perdendo a qtd em silêncio.
@@ -112,7 +120,7 @@ export function useCart({ getProductPrice, getServicePrice, servicos }: UseCartA
         return [...prev, nascerItemProduto(product, qty, getProductPrice)];
       });
     },
-    [getProductPrice, setTintPendingProduct],
+    [getProductPrice, setTintPendingProduct, setCart],
   );
 
   const addTintProductToCart = useCallback(
@@ -185,12 +193,11 @@ export function useCart({ getProductPrice, getServicePrice, servicos }: UseCartA
                   : {}),
               } as ProductCartItem,
             ];
-      cartRef.current = proximo;
       setCart(proximo);
       setTintPendingProduct(null);
       return 'adicionado';
     },
-    [tintPendingQty, setTintPendingProduct],
+    [tintPendingQty, setTintPendingProduct, setCart],
   );
 
   /* ─── Service actions ─── */
@@ -211,7 +218,7 @@ export function useCart({ getProductPrice, getServicePrice, servicos }: UseCartA
         toast.success('Já adicionada', { description: 'Esta ferramenta já está no carrinho.' });
       }
     },
-    [],
+    [setCart],
   );
 
   const updateServiceServico = useCallback(
@@ -225,7 +232,7 @@ export function useCart({ getProductPrice, getServicePrice, servicos }: UseCartA
         ),
       );
     },
-    [servicos],
+    [servicos, setCart],
   );
 
   const updateServiceNotes = useCallback((toolId: string, newNotes: string) => {
@@ -236,7 +243,7 @@ export function useCart({ getProductPrice, getServicePrice, servicos }: UseCartA
           : c,
       ),
     );
-  }, []);
+  }, [setCart]);
 
   const updateServicePhotos = useCallback((toolId: string, photos: string[]) => {
     setCart(prev =>
@@ -246,7 +253,7 @@ export function useCart({ getProductPrice, getServicePrice, servicos }: UseCartA
           : c,
       ),
     );
-  }, []);
+  }, [setCart]);
 
   /* ─── Generic ─── */
   const updateQuantity = useCallback(
@@ -266,7 +273,7 @@ export function useCart({ getProductPrice, getServicePrice, servicos }: UseCartA
         }),
       );
     },
-    [],
+    [setCart],
   );
 
   const updateProductPrice = useCallback((index: number, price: number) => {
@@ -275,15 +282,15 @@ export function useCart({ getProductPrice, getServicePrice, servicos }: UseCartA
         i === index && c.type === 'product' ? ({ ...c, unit_price: price } as ProductCartItem) : c,
       ),
     );
-  }, []);
+  }, [setCart]);
 
   const removeFromCart = useCallback((index: number) => {
     setCart(prev => prev.filter((_, i) => i !== index));
-  }, []);
+  }, [setCart]);
 
   const clearCart = useCallback(() => {
     setCart([]);
-  }, []);
+  }, [setCart]);
 
   return {
     // state

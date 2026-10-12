@@ -227,3 +227,43 @@ describe('useCart — conflito devolve resultado e preserva a pendência', () =>
     expect(result.current.productItems.map((i) => i.unit_price)).toEqual([50]);
   });
 });
+
+// Codex P1 (rodada 4): o espelho síncrono só da tinta atropelava outra mutação do MESMO batch.
+// Agora toda escrita passa pelo setter único — batches mistos preservam as duas mudanças.
+describe('useCart — batch misto (tinta + outra mutação no mesmo tick)', () => {
+  const comum: Product = { ...baseTint, id: 'prod-comum', descricao: 'Lixa', is_tintometric: false, tint_type: null };
+  const meta = { source: 'calculado', discountPct: 0, precoSemDesconto: 100 };
+
+  it('add de produto comum + tinta no mesmo act → os dois ficam', () => {
+    const { result } = setup();
+    act(() => {
+      result.current.addProductToCart(comum, 2);
+      result.current.addTintProductToCart(baseTint, 'f-1', '346J', 'X', 100, 0, meta, 1);
+    });
+    expect(result.current.productItems.map((i) => [i.product.id, i.quantity])).toEqual([
+      ['prod-comum', 2],
+      ['prod-base-1', 1],
+    ]);
+  });
+
+  it('mudar qtd + tinta no mesmo act → a qtd nova sobrevive', () => {
+    const { result } = setup();
+    act(() => { result.current.addProductToCart(comum, 2); });
+    act(() => {
+      result.current.updateQuantity(0, 3);
+      result.current.addTintProductToCart(baseTint, 'f-1', '346J', 'X', 100, 0, meta, 1);
+    });
+    expect(result.current.productItems[0].quantity).toBe(5);
+    expect(result.current.productItems).toHaveLength(2);
+  });
+
+  it('remover + tinta no mesmo act → o removido NÃO volta', () => {
+    const { result } = setup();
+    act(() => { result.current.addProductToCart(comum, 2); });
+    act(() => {
+      result.current.removeFromCart(0);
+      result.current.addTintProductToCart(baseTint, 'f-1', '346J', 'X', 100, 0, meta, 1);
+    });
+    expect(result.current.productItems.map((i) => i.product.id)).toEqual(['prod-base-1']);
+  });
+});
