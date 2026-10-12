@@ -106,7 +106,7 @@ describe('SelectedFormulaCard', () => {
   it('alternativa: usa o preço calculado do mapa e o custoCorantes DA própria fórmula (1b)', () => {
     const altProduct = { id: 'op2', valor_unitario: 152.1 } as unknown as Product;
     const alternatives: AlternativePackaging[] = [
-      { formulaId: 'fa', skuId: 's2', omieProductId: 'op2', productDescricao: 'Base 3.6L', productCodigo: 'B36', precoFinalCsv: 13.7, product: altProduct, sameAcabamento: false },
+      { formulaId: 'fa', skuId: 's2', omieProductId: 'op2', productDescricao: 'Base 3.6L', productCodigo: 'B36', precoFinalCsv: 120, product: altProduct, sameAcabamento: false },
     ];
     const altPriceMap = {
       fa: { custoBase: 152.1, baseDisponivel: true, custoCorantes: 18.06, corantesCompletos: true, precoFinal: 170.16 },
@@ -193,7 +193,7 @@ describe('SelectedFormulaCard', () => {
   const altComAmbasFontes = () => {
     const altProduct = { id: 'op2', valor_unitario: 152.1 } as unknown as Product;
     const alternatives: AlternativePackaging[] = [
-      { formulaId: 'fa', skuId: 's2', omieProductId: 'op2', productDescricao: 'Base 3.6L', productCodigo: 'B36', precoFinalCsv: 13.7, product: altProduct, sameAcabamento: false },
+      { formulaId: 'fa', skuId: 's2', omieProductId: 'op2', productDescricao: 'Base 3.6L', productCodigo: 'B36', precoFinalCsv: 120, product: altProduct, sameAcabamento: false },
     ];
     const altPriceMap = {
       fa: { custoBase: 152.1, baseDisponivel: true, custoCorantes: 18.06, corantesCompletos: true, precoFinal: 170.16 },
@@ -219,8 +219,8 @@ describe('SelectedFormulaCard', () => {
     const props = setup({ alternatives, altPriceMap, altPriceSourceOverrides: { fa: 'tabela' } });
     fireEvent.click(screen.getByText('Base 3.6L'));
     expect(props.onConfirm).toHaveBeenCalledWith(
-      'fa', 'RAL5005', 'Azul Sinal', 13.7, 18.06, // Fase 3: fonte efetiva do override viaja no meta
-      { source: 'tabela', discountPct: 0, precoSemDesconto: 13.7 },
+      'fa', 'RAL5005', 'Azul Sinal', 120, 18.06, // Fase 3: fonte efetiva do override viaja no meta
+      { source: 'tabela', discountPct: 0, precoSemDesconto: 120 },
       altProduct,
     );
   });
