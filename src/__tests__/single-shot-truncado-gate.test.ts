@@ -92,7 +92,6 @@ const DIVIDA: ReadonlyMap<string, number> = new Map([
   ['src/pages/GovernanceUsers.tsx', 1], // 54:profiles
   ['src/pages/Recebimento.tsx', 1], // 129:nfe_recebimentos
   ['src/pages/SalesPrintDashboard.tsx', 1], // 91:sales_orders
-  ['src/pages/SalesProducts.tsx', 1], // 55:omie_products
   ['src/pages/SalesQuotes.tsx', 1], // 62:sales_orders
   ['src/pages/TintCorantes.tsx', 2], // 15:tint_corantes 29:omie_products
   ['src/services/financeiroConciliacao.ts', 1], // 51:fin_movimentacoes
