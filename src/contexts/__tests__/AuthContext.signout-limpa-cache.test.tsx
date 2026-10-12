@@ -85,4 +85,25 @@ describe('AuthContext — sair limpa o cache do usuário', () => {
     expect(signOut).toHaveBeenNthCalledWith(2, { scope: 'local' });
     expect(queryClient.getQueryData(CHAVE)).toBeUndefined();
   });
+
+  it('sem rede, até o scope local falha: a sessão guardada no aparelho é apagada mesmo assim', async () => {
+    // auth-js: o scope 'local' também chama a rede e, falhando, NÃO remove a sessão. Quem pegasse
+    // o aparelho e recarregasse a página voltaria logado como quem saiu.
+    localStorage.setItem('sb-projeto-auth-token', '{"access_token":"de-quem-saiu"}');
+    localStorage.setItem('sb-projeto-auth-token-code-verifier', 'x');
+    localStorage.setItem('preferencia-do-app', 'fica');
+    signOut.mockResolvedValue({ error: { message: 'Failed to fetch' } });
+    const { queryClient, result } = montar();
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    await act(async () => {
+      await result.current.signOut();
+    });
+
+    expect(localStorage.getItem('sb-projeto-auth-token')).toBeNull();
+    expect(localStorage.getItem('sb-projeto-auth-token-code-verifier')).toBeNull();
+    expect(localStorage.getItem('preferencia-do-app')).toBe('fica');
+    expect(result.current.user).toBeNull();
+    expect(queryClient.getQueryData(CHAVE)).toBeUndefined();
+  });
 });

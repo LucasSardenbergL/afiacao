@@ -81,6 +81,16 @@ export const useAuth = () => {
   return context;
 };
 
+/**
+ * Apaga a sessão do Supabase guardada no localStorage (`sb-<ref>-auth-token` e o code-verifier do
+ * PKCE), sem rede. Só para o logout cujas duas chamadas ao servidor falharam.
+ */
+function apagarSessaoPersistida() {
+  for (const chave of Object.keys(localStorage)) {
+    if (/^sb-.+-auth-token(-code-verifier)?$/.test(chave)) localStorage.removeItem(chave);
+  }
+}
+
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const queryClient = useQueryClient();
   const [user, setUser] = useState<User | null>(null);
@@ -378,13 +388,21 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     // device — senão quem logar depois neste navegador recebe os pushes de
     // quem saiu. Best-effort (nunca lança, não trava o logout).
     await limparPushDoDevice();
-    // O `{ error }` era ignorado: com a revogação global falhando (rede), a sessão FICAVA no
-    // navegador e a tela seguia como se tivesse saído. A intenção é "sair DESTE aparelho" — o
-    // escopo local só apaga a sessão guardada (sem rede) e dispara o SIGNED_OUT acima.
+    // O `{ error }` era ignorado: com a revogação falhando (rede), a sessão FICAVA no navegador e a
+    // tela seguia como se tivesse saído. A intenção é "sair DESTE aparelho". O `scope: 'local'`
+    // TAMBÉM chama a rede no SDK (auth-js 2.95: `admin.signOut` antes do `_removeSession`) e, se
+    // falhar, não apaga nada (Codex, revisão do M-10) — então a última instância apaga a sessão
+    // persistida à mão: quem pegar o aparelho e recarregar não herda as credenciais de quem saiu.
     const { error } = await supabase.auth.signOut();
     if (error) {
       logger.warn('[auth] signOut global falhou — saindo só deste navegador', error);
-      await supabase.auth.signOut({ scope: 'local' });
+      const { error: erroLocal } = await supabase.auth.signOut({ scope: 'local' });
+      if (erroLocal) {
+        logger.warn('[auth] signOut local falhou — apagando a sessão guardada no aparelho', erroLocal);
+        apagarSessaoPersistida();
+        setSession(null);
+        setUser(null);
+      }
     }
     // Defesa se o evento não vier: limpar de novo é idempotente.
     queryClient.clear();
