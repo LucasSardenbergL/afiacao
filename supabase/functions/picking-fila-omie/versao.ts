@@ -23,8 +23,11 @@ export const respostaSonda = criarRespostaSonda("picking-fila-omie");
  * v0.4 (Fase 0.5b): modo `sincronizar` (uma conta por chamada) — ESCREVE no banco: reserva
  * exclusiva (`picking_coleta_reservar`), listagem desde a inclusão da tarefa aberta mais antiga
  * (ou hoje−30), UMA `picking_sincronizar_fila` com o token. Sem ConsultarPedido.
+ * v0.5: a prova do filtro da `coleta` usa a CAUDA da etapa 10 (as duas últimas páginas na ordem
+ * padrão) e MEDE a ordem — a 1ª página com `ordem_descrescente` eram os 100 mais ANTIGOS (o Omie
+ * ordena só dentro da página; `amostra_no_corte` = 0 nas duas contas em 2026-10-12).
  */
-export const VERSAO = "v0.4-coleta-escrita";
+export const VERSAO = "v0.5-prova-pela-cauda";
 
 /** Efeito citado no 400 de `probe` ambíguo. */
 export const EFEITO =

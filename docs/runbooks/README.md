@@ -7,4 +7,5 @@ Passo-a-passo estável pra tocar áreas sensíveis. **Leia o runbook relevante A
 | Runbook | Quando ler |
 | --- | --- |
 | [lovable-supabase.md](lovable-supabase.md) | tocar **banco, migration, edge function, deploy do frontend, cron, schema** no Lovable/Supabase |
+| [datawedge-picking.md](datawedge-picking.md) | configurar o **leitor Zebra (DataWedge)** para o picking v2: perfil KEYSTROKE com prefixo `~~` + AIM id + ENTER, e o teste do aparelho |
 | [tint-sync-corte-csv.md](tint-sync-corte-csv.md) | **aposentar o CSV manual** do catálogo tintométrico e ligar o sync SayerSystem em tempo real (faxina → re-scan → reconciliação → flip). ⚠️ money-path: o **flip** é a operação de risco — só depois da reconciliação provar divergência ~zero |
