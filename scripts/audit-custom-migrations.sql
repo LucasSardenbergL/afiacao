@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 611
+-- Total de custom migrations: 614
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -45,7 +45,7 @@
 --   • index public.idx_customer_metrics_mv_uid (recencia_mv_order_date_kpi) — MV movida para private (20261001014100_universo_pedidos_recencia); o índice vive em private.customer_metrics_mv
 --   • function public.omie_cliente_upsert_mapping (omie_identidade_por_conta) — drop — 20260718091409_drop_omie_cliente_upsert_mapping_orfa (PR #1409)
 --   • rls_policy public.ss_allowlist_gestor_iud (selfservice_pr01_allowlist_gate) — split → ss_allowlist_select/insert/update/delete (20260718190000_authz_capability_matrix_e2)
---   • trigger public.trg_omie_clientes_to_ledger (carteira_membership_ledger_fatia0) — tabela renomeada → _quarantine_omie_clientes_20260722 (20260722110000_quarentena_omie_clientes_espelho); o trigger foi junto
+--   • trigger public.trg_omie_clientes_to_ledger (carteira_membership_ledger_fatia0) — tabela renomeada → _quarantine_omie_clientes_20260722 (20260722110000_quarentena_omie_clientes_espelho); o trigger foi junto; a quarentena foi dropada em 20261011120500_drop_quarentena_omie_clientes (M-18)
 --   • function public.estimar_impacto_exclusao_outlier (outliers_leadtime_stack_efetivo) — drop — 20260718093248_drop_estimar_impacto_exclusao_outlier_orfa
 --   • function public.carteira_visivel_para (carteira_visivel_para_filtra_eligible) — SET SCHEMA private — 20260718150000_fu7_helpers_rls_schema_privado
 --   • rls_policy public.estoque_reservas_service_all (atp_reserva_estoque_fase1) — drop — 20260806225052_atp_reserva_estoque_fase1_1_hardening (decorativa: service_role tem BYPASSRLS) → estoque_reservas_service_select
@@ -672,7 +672,10 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261011120000', 'tint_watchdog_fase5_cron_timeout', '20261011120000_tint_watchdog_fase5_cron_timeout.sql'),
   ('20261011120100', 'reposicao_logs_insert_cap_compras', '20261011120100_reposicao_logs_insert_cap_compras.sql'),
   ('20261011120200', 'wa_owner_efetivo_gate_staff', '20261011120200_wa_owner_efetivo_gate_staff.sql'),
-  ('20261011140000', 'picking_v2_coleta_reserva', '20261011140000_picking_v2_coleta_reserva.sql')
+  ('20261011120500', 'drop_quarentena_omie_clientes', '20261011120500_drop_quarentena_omie_clientes.sql'),
+  ('20261011140000', 'picking_v2_coleta_reserva', '20261011140000_picking_v2_coleta_reserva.sql'),
+  ('20261011150000', 'reposicao_recusa_definitiva_portal_servidor', '20261011150000_reposicao_recusa_definitiva_portal_servidor.sql'),
+  ('20261012130954', 'fin_sync_kick_skipped_busy_e_perdido', '20261012130954_fin_sync_kick_skipped_busy_e_perdido.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2649,7 +2652,14 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('picking_v2_coleta_reserva', 'function', 'public', 'picking_pegar_task', ''),
   ('picking_v2_coleta_reserva', 'function', 'public', 'picking_registrar_leitura', ''),
   ('picking_v2_coleta_reserva', 'function', 'public', 'picking_retomar', ''),
-  ('picking_v2_coleta_reserva', 'function', 'public', 'picking_concluir', '')
+  ('picking_v2_coleta_reserva', 'function', 'public', 'picking_concluir', ''),
+  ('reposicao_recusa_definitiva_portal_servidor', 'function', 'public', 'iniciar_envio_portal_pre_claim', ''),
+  ('reposicao_recusa_definitiva_portal_servidor', 'function', 'public', 'reposicao__carimbo_recusa_definitiva', ''),
+  ('reposicao_recusa_definitiva_portal_servidor', 'function', 'public', 'reposicao_encerrar_recusas_definitivas', ''),
+  ('reposicao_recusa_definitiva_portal_servidor', 'function', 'public', 'analytics_outbox_pedido_compra', ''),
+  ('reposicao_recusa_definitiva_portal_servidor', 'trigger', 'public', 'trg_carimbo_recusa_definitiva', 'pedido_compra_sugerido'),
+  ('reposicao_recusa_definitiva_portal_servidor', 'cron_job', 'cron', 'reposicao-encerrar-recusas-definitivas', ''),
+  ('fin_sync_kick_skipped_busy_e_perdido', 'function', 'public', 'fin_sync_kicks_perdidos', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4674,7 +4684,14 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('picking_v2_coleta_reserva', 'function', 'public', 'picking_pegar_task', ''),
   ('picking_v2_coleta_reserva', 'function', 'public', 'picking_registrar_leitura', ''),
   ('picking_v2_coleta_reserva', 'function', 'public', 'picking_retomar', ''),
-  ('picking_v2_coleta_reserva', 'function', 'public', 'picking_concluir', '')
+  ('picking_v2_coleta_reserva', 'function', 'public', 'picking_concluir', ''),
+  ('reposicao_recusa_definitiva_portal_servidor', 'function', 'public', 'iniciar_envio_portal_pre_claim', ''),
+  ('reposicao_recusa_definitiva_portal_servidor', 'function', 'public', 'reposicao__carimbo_recusa_definitiva', ''),
+  ('reposicao_recusa_definitiva_portal_servidor', 'function', 'public', 'reposicao_encerrar_recusas_definitivas', ''),
+  ('reposicao_recusa_definitiva_portal_servidor', 'function', 'public', 'analytics_outbox_pedido_compra', ''),
+  ('reposicao_recusa_definitiva_portal_servidor', 'trigger', 'public', 'trg_carimbo_recusa_definitiva', 'pedido_compra_sugerido'),
+  ('reposicao_recusa_definitiva_portal_servidor', 'cron_job', 'cron', 'reposicao-encerrar-recusas-definitivas', ''),
+  ('fin_sync_kick_skipped_busy_e_perdido', 'function', 'public', 'fin_sync_kicks_perdidos', '')
 )
 SELECT
   e.migration,
@@ -4702,7 +4719,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 133.
+-- Funções redefinidas com corpo extraível: 135.
 -- Fora da seção (4) — o último evento é REMOÇÃO de propósito (DROP / SET SCHEMA / RENAME):
 --   • public.import_tint_formulas — 20260806223407_drop_import_tint_formulas.sql
 --   • public.estimar_impacto_exclusao_outlier — 20260718093248_drop_estimar_impacto_exclusao_outlier_orfa.sql
@@ -4974,6 +4991,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'envio_portal_claim_ids', 3, '20260906170000_reposicao_selo_aprovacao_m1_expandir.sql', 'e1a13c15d8126faae634aaa1a225cdaa'),
   ('public', 'iniciar_envio_portal_pre_claim', 1, '20260605140000_iniciar_envio_portal_pre_claim.sql', '5d0cd338f8f5de150180892ffe4c28fe'),
   ('public', 'iniciar_envio_portal_pre_claim', 2, '20260906170000_reposicao_selo_aprovacao_m1_expandir.sql', '9dc44a3bbba378f186954b5bca5b2e1c'),
+  ('public', 'iniciar_envio_portal_pre_claim', 3, '20261011150000_reposicao_recusa_definitiva_portal_servidor.sql', 'b51bedad55a79734ed50e63d5b234caf'),
   ('public', 'reposicao_param_auto_resumo_tick', 1, '20260605140000_param_auto_wrapper_revert_cron.sql', '0046fdda082d4afc1098417576a57f15'),
   ('public', 'reposicao_param_auto_resumo_tick', 2, '20260619120000_param_auto_resumo_descricao.sql', 'c463e7a8d461c0489bede982f39cad86'),
   ('public', 'reposicao_param_auto_resumo_tick', 3, '20260711193000_param_auto_resumo_altas_reducoes_segurado.sql', '662e947efa18b1bd09adebe74ccea066'),
@@ -5099,6 +5117,8 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'get_defasagem_cliente', 3, '20261001014210_universo_pedidos_preco.sql', 'fbe6a5aa78a32deed6860218a9b68d7c'),
   ('public', 'venda_gate_credito', 1, '20260702233000_trava_credito_fase2.sql', '72e6d3ff4dd4a438d5ca84cb9d214ec8'),
   ('public', 'venda_gate_credito', 2, '20260703140000_trava_credito_gate_excecao_por_par.sql', '1fb9610a4c6f70fb2a67d5d01396c767'),
+  ('public', 'fin_sync_kicks_perdidos', 1, '20260704102000_fin_sync_retry_kick_perdido.sql', '9f591fc2a7b823b7195085b816db6713'),
+  ('public', 'fin_sync_kicks_perdidos', 2, '20261012130954_fin_sync_kick_skipped_busy_e_perdido.sql', '02449e1f106d9c090db8d0b0ff6942ad'),
   ('public', 'medir_abaixo_piso_tier', 1, '20260704120000_preco_por_tier.sql', '0e2c798dc7098adb3c67cb923087cefa'),
   ('public', 'medir_abaixo_piso_tier', 2, '20260718190000_authz_capability_matrix_e2.sql', 'cae48dfdd1ecb9b983b065f06edfdbbf'),
   ('public', 'medir_abaixo_piso_tier', 3, '20260927172443_hoje_sp_sessao_utc_precos_piso.sql', '7044b253b88286338d34cabb8ce9461b'),
@@ -5170,6 +5190,8 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'farmer_bundle_recomendacoes_substituir', 3, '20260906164002_captura_authz_escopo_carteira_farmer.sql', '3b68a4bda4fc43e049d07a37659ee55c'),
   ('public', 'farmer_melhor_individual_por_cliente', 1, '20260820124611_farmer_melhor_individual_bulk.sql', '82340cc6187de27edf766fdb7fad7c77'),
   ('public', 'farmer_melhor_individual_por_cliente', 2, '20260820133119_farmer_melhor_individual_atomico.sql', '988141c4ddcb0e43ff59b66491c5dc6a'),
+  ('public', 'analytics_outbox_pedido_compra', 1, '20260825214545_analytics_outbox.sql', '1a5296f315a5bea55d6203f31ef46448'),
+  ('public', 'analytics_outbox_pedido_compra', 2, '20261011150000_reposicao_recusa_definitiva_portal_servidor.sql', 'a59e45c8502d3f1e90fae636b5131d67'),
   ('public', 'analytics_ledger_registrar', 1, '20260825214545_analytics_outbox.sql', 'cb48e471a07a312d89d94c3a0dbd6455'),
   ('public', 'analytics_ledger_registrar', 2, '20260907223901_analytics_ledger_navegacao_rota_servida.sql', '49fadd1175a717f40fc4430e7bb670dd'),
   ('public', 'analytics_ledger_registrar', 3, '20260908055405_analytics_ledger_navegacao_postcondicao_corrigida.sql', '49fadd1175a717f40fc4430e7bb670dd'),

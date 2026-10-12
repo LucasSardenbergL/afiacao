@@ -6,7 +6,7 @@
 // ele derrubou as 7 edges que serve, e o batch noturno de planos táticos — o maior
 // consumidor, 59 chamadas/dia — parou por completo (0 planos de 27/07 a 29/07).
 // Contrato de request/response inalterado: o front (useTacticalPlan) não muda.
-import Anthropic from "npm:@anthropic-ai/sdk@^0.93.0";
+import { criarClienteAnthropic } from "../_shared/anthropic-cliente.ts";
 // ⚠️ usar npm: (não esm.sh) — esm.sh/@supabase/supabase-js falhava em resolver no boot
 // do edge runtime, dando RUNTIME_ERROR sem linha/stack (lição do #1592).
 import { createClient } from "npm:@supabase/supabase-js@2";
@@ -323,7 +323,7 @@ ${JSON.stringify(diagnosticData || {}, null, 2)}
 Objeções históricas do cluster:
 ${JSON.stringify(historicalObjections || [], null, 2)}`;
 
-    const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
+    const anthropic = criarClienteAnthropic(ANTHROPIC_API_KEY);
 
     let resposta;
     try {

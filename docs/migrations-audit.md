@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **611** custom migrations totais
-- **2008** objetos esperados (criados por estas migrations)
+- **614** custom migrations totais
+- **2015** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 697
+  - `function`: 702
   - `rls_policy`: 471
   - `index`: 273
+  - `cron_job`: 177
   - `table`: 176
-  - `cron_job`: 176
   - `view`: 109
-  - `trigger`: 102
+  - `trigger`: 103
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -5002,6 +5002,10 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.wa_owner_efetivo` | — |
 
+### `20261011120500_drop_quarentena_omie_clientes.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
 ### `20261011140000_picking_v2_coleta_reserva.sql`
 
 | Tipo | Objeto | Parent |
@@ -5013,6 +5017,23 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.picking_registrar_leitura` | — |
 | `function` | `public.picking_retomar` | — |
 | `function` | `public.picking_concluir` | — |
+
+### `20261011150000_reposicao_recusa_definitiva_portal_servidor.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.iniciar_envio_portal_pre_claim` | — |
+| `function` | `public.reposicao__carimbo_recusa_definitiva` | — |
+| `function` | `public.reposicao_encerrar_recusas_definitivas` | — |
+| `function` | `public.analytics_outbox_pedido_compra` | — |
+| `trigger` | `public.trg_carimbo_recusa_definitiva` | `pedido_compra_sugerido` |
+| `cron_job` | `cron.reposicao-encerrar-recusas-definitivas` | — |
+
+### `20261012130954_fin_sync_kick_skipped_busy_e_perdido.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_sync_kicks_perdidos` | — |
 
 ## Próximos passos por status
 

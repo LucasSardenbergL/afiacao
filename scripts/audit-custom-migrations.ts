@@ -58,7 +58,7 @@ const OBSOLETE: Record<string, string> = {
   // SET SCHEMA). Cada substituto CONFERIDO EXISTINDO em prod via psql-ro no mesmo dia (pg_policies,
   // pg_indexes, pg_trigger, pg_proc, pg_constraint) — ausência + substituto vivo = não é bug.
   'atp_reserva_estoque_fase1::estoque_reservas_service_all': 'drop — 20260806225052_atp_reserva_estoque_fase1_1_hardening (decorativa: service_role tem BYPASSRLS) → estoque_reservas_service_select',
-  'carteira_membership_ledger_fatia0::trg_omie_clientes_to_ledger': 'tabela renomeada → _quarantine_omie_clientes_20260722 (20260722110000_quarentena_omie_clientes_espelho); o trigger foi junto',
+  'carteira_membership_ledger_fatia0::trg_omie_clientes_to_ledger': 'tabela renomeada → _quarantine_omie_clientes_20260722 (20260722110000_quarentena_omie_clientes_espelho); o trigger foi junto; a quarentena foi dropada em 20261011120500_drop_quarentena_omie_clientes (M-18)',
   'carteira_omie_fase1::carteira_visivel_para': 'SET SCHEMA private — 20260718150000_fu7_helpers_rls_schema_privado',
   'carteira_visivel_para_filtra_eligible::carteira_visivel_para': 'SET SCHEMA private — 20260718150000_fu7_helpers_rls_schema_privado',
   'markup_policy::uq_markup_policy_conta': 'drop — 20260704120000_preco_por_tier → constraint markup_policy_escopo_tier_uq',
