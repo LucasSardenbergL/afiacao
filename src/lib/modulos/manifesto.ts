@@ -501,14 +501,6 @@ export const MODULOS: ModuloApp[] = [
     rotaPrefixos: ["/admin/estoque", "/recebimento"],
     gates: ["RequireStaff"],
     status: "ativo",
-    rotasCongeladas: {
-      prefixos: [
-        "/admin/estoque/picking",
-      ],
-      desde: "2026-10-12",
-      ate: "2027-01-10",
-      motivo: "picking: 0 linha em picking_tasks/picking_task_items/picking_events (psql-ro 2026-10-12); o recebimento segue ativo",
-    },
     codigo: [
       "src/lib/picking/**",
       "src/lib/recebimento/**",

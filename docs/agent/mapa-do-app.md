@@ -33,7 +33,7 @@ Tudo autenticado vive em `<ProtectedRoute><AppShellLayout>` e se divide em faixa
 | Farmer / Inteligência | `/farmer/*`, `/meu-dia`, `/coaching`, `/intelligence`, `/executive/dashboard`, `/radar` | staff | plano tático, bundles, IPF, radar de empresas | ✅ |
 | Admin / CRM | `/admin/*` (customers, orders, approvals, price-table, demand-forecast) | staff | clientes, aprovações, tabela de preço, previsão de demanda | ✅ (ingestão diária do Omie) |
 | Tintométrico | `/tintometrico/*` | staff | catálogo, integração, fórmulas | ✅ |
-| Estoque / Recebimento | `/admin/estoque/*`, `/recebimento/*` | staff | picking, recebimento (offline-first) | ✅ recebimento · 🧊 picking até 10/01/2027 |
+| Estoque / Recebimento | `/admin/estoque/*`, `/recebimento/*` | staff | picking, recebimento (offline-first) | ✅ (picking v2 em piloto desde o #2994) |
 | Produção | `/producao/*` | staff | ordens de produção | 🧊 até 10/01/2027 |
 | Reposição / Compras | `/admin/reposicao/*`, `/admin/sku-mapeamento` | staff | pedidos do ciclo, sessão de compra, de-para Sayerlack | ✅ |
 | Governança / Gestão | `/governance/*`, `/gestao/*` | staff | saúde de dados, melhorias, grupos de cliente | ✅ (edge/cron escrevem) |
