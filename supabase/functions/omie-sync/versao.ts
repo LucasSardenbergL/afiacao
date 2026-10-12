@@ -26,8 +26,10 @@ export const respostaSonda = criarRespostaSonda("omie-sync");
 // v1.1 (2026-10-01) — o dia de SP no vencimento das parcelas da OS (`./parcelas-os.ts`, classe ii do fuso,
 // fase 3): o `getDate()` do servidor UTC fazia a OS criada das 21:00 às 23:59 BRT vencer tudo um dia
 // adiante (a à vista, amanhã). Prazos e percentuais iguais; nenhuma pré-condição de banco.
+// v1.3 (2026-10-12) — teto de relógio de 140s no fetch ao Omie (M-33 p3, `_shared/omie-chamada-relogio.ts`):
+// falha de ESCRITA sai como OMIE_ESCRITA_INDETERMINADA (o Omie pode ter gravado). Nenhuma pré-condição de banco.
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.2-cors-origem-fixa";
+export const VERSAO = "v1.3-relogio-escrita-indeterminada";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

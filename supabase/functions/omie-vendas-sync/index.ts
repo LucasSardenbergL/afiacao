@@ -26,6 +26,8 @@ import type { BancoPostgrest } from "../_shared/paginate.ts";
 import { avaliarPagina, MAX_PAGINAS_LISTAGEM, MAX_PAGINAS_PEDIDOS, MAX_PAGINAS_POS_ESTOQUE, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
 import { atenderSondaOptions } from '../_shared/sonda-cron.ts';
 import { clienteCotaDoAmbiente, comVezOmie, CotaOmieIndisponivel, metodoCoordenado, sinalDaChamada } from "../_shared/omie-cota.ts";
+import { chamarComRelogio, prazoDaChamadaOmie } from "../_shared/omie-chamada-relogio.ts";
+import { cabeEspera } from "../_shared/omie-deadline.ts";
 
 type OmieGenericResponse = Record<string, unknown> & { faultstring?: string; codigo_status?: number | string; descricao_status?: string };
 
@@ -259,6 +261,11 @@ async function callOmieVendasApi(
 
   console.log(`[Omie Vendas][${account}] Chamando ${endpoint} - ${call}`);
 
+  // Relógio da CHAMADA LÓGICA (M-33 p3, molde do #3001): as tentativas e os backoffs abaixo
+  // dividem um prazo só de 140s. Cada request herda o que sobra dele; a falha de uma ESCRITA sai
+  // marcada como indeterminada (o Omie pode ter gravado) e nunca entra no retry deste laço, que
+  // só reage a faultstring de uma resposta RECEBIDA — ver _shared/omie-chamada-relogio.ts.
+  const deadline = prazoDaChamadaOmie(Date.now());
   const maxRetries = 3;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     // Método coordenado (ListarPedidos): pede a vez na trava compartilhada com as outras edges
@@ -267,22 +274,26 @@ async function callOmieVendasApi(
     let response: Response;
     let result: OmieGenericResponse;
     try {
-      ({ response, result } = await comVezOmie(
-        clienteCota(),
-        account,
-        call,
-        async () => {
-          const response = await fetch(`${OMIE_API_URL}/${endpoint}`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(body),
-            // timeout só no método coordenado (menor que o lease); os demais seguem sem, como eram
-            signal: sinalDaChamada(call),
-          });
-          const result = (await response.json()) as OmieGenericResponse;
-          return { response, result };
-        },
-        (r) => (r.result?.faultstring ? String(r.result.faultstring) : null),
+      ({ response, result } = await chamarComRelogio(
+        (signal) =>
+          comVezOmie(
+            clienteCota(),
+            account,
+            call,
+            async () => {
+              const response = await fetch(`${OMIE_API_URL}/${endpoint}`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(body),
+                // o teto da chamada; no método coordenado, também os 80s da trava (o 1º a disparar vence)
+                signal,
+              });
+              const result = (await response.json()) as OmieGenericResponse;
+              return { response, result };
+            },
+            (r) => (r.result?.faultstring ? String(r.result.faultstring) : null),
+          ),
+        { metodo: call, conta: account, deadline, sinalExtra: sinalDaChamada(call) },
       ));
     } catch (e) {
       if (!(e instanceof CotaOmieIndisponivel)) throw e;
@@ -314,8 +325,10 @@ async function callOmieVendasApi(
         // como eram: a edição de pedido (exclui itens → reinclui) e o cancelamento dependem desse
         // retry para não parar no meio (revisão Codex 2026-10-10).
         const prazoCabe = !metodoCoordenado(call) || !waitMatch || requestedDelay + 2 <= 15;
-        if (attempt < maxRetries && prazoCabe) {
-          const delay = Math.min(requestedDelay + 2, 15) * 1000;
+        const delay = Math.min(requestedDelay + 2, 15) * 1000;
+        // Dormir só se, depois do sono, ainda sobrar uma chamada viável no relógio da chamada —
+        // senão é o mesmo "esgotou" de sempre (null / OMIE_TRANSIENT), sem adiar o kill.
+        if (attempt < maxRetries && prazoCabe && cabeEspera(Date.now(), deadline, delay)) {
           console.log(`[Omie Vendas][${account}] ${isRateLimit ? 'Rate limit' : 'Transient error'}, waiting ${delay/1000}s (attempt ${attempt + 1}/${maxRetries})`);
           await new Promise(r => setTimeout(r, delay));
           continue;
