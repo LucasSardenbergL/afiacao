@@ -91,7 +91,7 @@ export function useTintCoresDoClienteUmToque<P extends ProdutoBase>(alvos: AlvoU
             .range(de, ate),
         'tint-um-toque-formulas',
       );
-      const candidatas = (data ?? []).filter(
+      const candidatas = data.filter(
         (r): r is CandidataUmToque =>
           r.id != null && r.sku_id != null && r.cor_id != null && r.nome_cor != null,
       );
