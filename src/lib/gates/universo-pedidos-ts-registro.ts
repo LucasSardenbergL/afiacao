@@ -57,8 +57,9 @@ export const REGISTRO: readonly EntradaRegistro[] = [
   // ── sincronização ───────────────────────────────────────────────────────────────────────────
   { arquivo: 'supabase/functions/omie-vendas-sync/index.ts', forma: 'select·in(hash_payload)', categoria: 'sincronizacao', motivo: 'dedup do importador por hash do payload' },
   { arquivo: 'supabase/functions/omie-vendas-sync/index.ts', forma: 'select·eq(account)·eq(omie_pedido_id)', categoria: 'sincronizacao', motivo: 'reconcilia pela chave do Omie' },
-  { arquivo: 'supabase/functions/omie-vendas-sync/index.ts', forma: 'select·eq(id)·maybeSingle', categoria: 'sincronizacao', motivo: 'UM pedido por id (criar/alterar no Omie)' },
-  { arquivo: 'supabase/functions/omie-vendas-sync/index.ts', forma: 'select·eq(id)·single', n: 2, categoria: 'sincronizacao', motivo: 'UM pedido por id (criar/alterar no Omie)' },
+  { arquivo: 'supabase/functions/omie-vendas-sync/index.ts', forma: 'select·eq(id)·maybeSingle', n: 2, categoria: 'sincronizacao', motivo: 'UM pedido por id (criar/excluir no Omie)' },
+  { arquivo: 'supabase/functions/omie-vendas-sync/index.ts', forma: 'select·eq(id)·single', categoria: 'sincronizacao', motivo: 'UM pedido por id (alterar no Omie)' },
+  { arquivo: 'supabase/functions/omie-vendas-sync/index.ts', forma: 'select·eq(account)·eq(hash_payload)·maybeSingle', categoria: 'lookup', motivo: 'a linha canônica de UM PV por hash exato (excluir só depois do cancelamento feito no Omie)' },
   { arquivo: 'supabase/functions/omie-desconto-backfill/index.ts', forma: 'select·eq(account)·in(hash_payload)', categoria: 'sincronizacao', motivo: 'backfill de desconto casa o pedido pelo hash' },
   { arquivo: 'supabase/functions/omie-desconto-backfill/index.ts', forma: 'select·is(desconto_valor)·eq(sales_orders.account)·gte(sales_orders.order_date_kpi)', categoria: 'sincronizacao', motivo: 'alvo do backfill de desconto (denominador da cobertura): apura TODO item da janela, cancelado inclusive — o dado é do item, não da venda' },
   // ── propósito ───────────────────────────────────────────────────────────────────────────────
