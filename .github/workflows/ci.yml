@@ -482,7 +482,8 @@ jobs:
           # Se algum VITE_* for required no futuro, adicionar aqui.
           NODE_ENV: production
 
-      # A prova de ponta a ponta do build-id contra o `dist/index.html` REAL (M-21). No job `testes` ela
+      # A prova de ponta a ponta do build-id contra o `dist/index.html` REAL (M-21). É o MESMO gate
+      # `test` (vitest), restrito ao arquivo que precisa do build: no job `testes` ela
       # é o "1 skipped" (lá não há build); aqui roda logo depois do build, e `BUILD_ID_EXIGE_DIST=1`
       # faz `dist/` ausente reprovar em vez de pular. `--reporter verbose` + o grep da marca exigem
       # que o teste tenha RODADO: arquivo não achado ou teste pulado não passam por verde.
@@ -491,7 +492,7 @@ jobs:
           BUILD_ID_EXIGE_DIST: '1'
         run: |
           set -o pipefail
-          bunx vitest run src/lib/__tests__/build-id-paridade.test.ts --reporter verbose 2>&1 | tee /tmp/build-id.log
+          bun run test -- src/lib/__tests__/build-id-paridade.test.ts --reporter verbose 2>&1 | tee /tmp/build-id.log
           grep -qF 'acha o entry no index.html gerado pelo build' /tmp/build-id.log
           if grep -qE '[0-9]+ skipped' /tmp/build-id.log; then echo "::error::a prova contra o dist/ foi PULADA"; exit 1; fi
 
