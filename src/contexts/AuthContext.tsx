@@ -398,10 +398,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     // persistida à mão: quem pegar o aparelho e recarregar não herda as credenciais de quem saiu.
     const { error } = await supabase.auth.signOut();
     if (error) {
-      logger.warn('[auth] signOut global falhou — saindo só deste navegador', error);
+      logger.warn('[auth] signOut global falhou — saindo só deste navegador', { error: error.message });
       const { error: erroLocal } = await supabase.auth.signOut({ scope: 'local' });
       if (erroLocal) {
-        logger.warn('[auth] signOut local falhou — apagando a sessão guardada no aparelho', erroLocal);
+        logger.warn('[auth] signOut local falhou — apagando a sessão guardada no aparelho', { error: erroLocal.message });
         apagarSessaoPersistida();
         setSession(null);
         setUser(null);
