@@ -65,6 +65,10 @@ import * as aplicarParametros from "../omie-aplicar-parametros/versao.ts";
 import * as recurringOrders from "../process-recurring-orders/versao.ts";
 import * as programadoExtrair from "../pedido-programado-extrair/versao.ts";
 import * as promocaoVision from "../promocao-extrair-via-vision/versao.ts";
+import * as tintOmieSync from "../tint-omie-sync/versao.ts";
+import * as verifyEmployee from "../verify-employee/versao.ts";
+import * as scoringRecalc from "../scoring-recalc-client/versao.ts";
+import * as visitScoreRecalc from "../visit-score-recalc-client/versao.ts";
 import * as cmcBackfill from "../cmc-snapshot-backfill/versao.ts";
 import * as whatsappSend from "../whatsapp-send/versao.ts";
 import * as whatsappTemplate from "../whatsapp-send-template/versao.ts";
@@ -238,6 +242,11 @@ const EDGES: Array<{ nome: string; mod: ModSonda }> = [
   { nome: "pedido-programado-extrair", mod: programadoExtrair },
   // Lote C (M-33): ganhou sonda ao trocar de cliente Anthropic — a canária antiga era `=== true` cru.
   { nome: "promocao-extrair-via-vision", mod: promocaoVision },
+  // M-26, 1ª leva do Lote C: escrita no nosso banco, sem prova de deploy até aqui.
+  { nome: "tint-omie-sync", mod: tintOmieSync },
+  { nome: "verify-employee", mod: verifyEmployee },
+  { nome: "scoring-recalc-client", mod: scoringRecalc },
+  { nome: "visit-score-recalc-client", mod: visitScoreRecalc },
   { nome: "cmc-snapshot-backfill", mod: cmcBackfill },
   // 11ª leva (#2170) — as 5 de efeito FORA do nosso banco. Elas ganharam `versao.ts` e entraram no
   // mapa de fingerprints, mas ficaram fora DESTE arquivo: instrumentadas e sem gate de FORMA
@@ -331,6 +340,12 @@ const ESCRITA_NOSSO_BANCO = [
   // Lote C (M-33): `promocao-extrair-via-vision` sobe o anexo ao storage, paga token da Anthropic e
   // grava a campanha/aumento extraído (promocao_*), que entra no custo da reposição.
   "promocao-extrair-via-vision",
+  // M-26, 1ª leva: `tint-omie-sync` faz upsert em omie_products; `verify-employee` reescreve o papel
+  // (profiles/user_roles); os dois `*-recalc-client` gravam score e consomem a fila de recálculo.
+  "tint-omie-sync",
+  "verify-employee",
+  "scoring-recalc-client",
+  "visit-score-recalc-client",
   "cmc-snapshot-backfill",
   // 11ª leva: entram na varredura estrutural pelo mesmo motivo da nona (`monthly-report`) — o preço
   // de um `probe` mal grafado caindo no fluxo real. Aqui ele é irreversível FORA do nosso banco:
@@ -932,6 +947,8 @@ const BEARER_NO_HANDLER = [
   "analyze-services",
   "copilot-analyze",
   "elevenlabs-transcribe",
+  // M-26: `verify-employee` exige Bearer + getUser no handler; a sonda vem antes.
+  "verify-employee",
 ];
 
 /**
