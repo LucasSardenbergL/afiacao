@@ -10,9 +10,10 @@
 # falha rápido — divergência deliberada, a conta está no doc do `decidirRetentativaOmie`. Por isso
 # as duas mutações de `retentavel` abaixo esperam PEGA com o sinal TROCADO em relação ao outro .mut.
 PEGA      | defeito nº1 volta: dígito HTTP cru        | s/const classe = classificarFaultstring\(mensagem\);/const classe = \/50[0-9]|429\/.test(mensagem) ? "transitorio" : classificarFaultstring(mensagem);/
-PEGA      | indeterminada passa a retentar            | s/const retentar = classe === "transitorio" && tentativa < maxTentativas;/const retentar = classe !== "permanente" && tentativa < maxTentativas;/
-PEGA      | transitorio para de retentar              | s/const retentar = classe === "transitorio" && tentativa < maxTentativas;/const retentar = classe === "permanente" && tentativa < maxTentativas;/
-PEGA      | 'Aguarde N' passa a alongar o sleep       | s/atrasoRetentativaMs\(tentativa\)/atrasoRetentativaMs(tentativa, mensagem)/
+PEGA      | indeterminada passa a retentar            | s/const retentar = classe === "transitorio" && tentativa < maxTentativas &&/const retentar = classe !== "permanente" \&\& tentativa < maxTentativas \&\&/
+PEGA      | transitorio para de retentar              | s/const retentar = classe === "transitorio" && tentativa < maxTentativas &&/const retentar = classe === "permanente" \&\& tentativa < maxTentativas \&\&/
+PEGA      | 'Aguarde N' passa a alongar o sleep       | s/atrasoMs: retentar \? atrasoRetentativaMs\(tentativa\) : 0/atrasoMs: retentar ? atrasoRetentativaMs(tentativa, mensagem) : 0/
+PEGA      | prazo da chamada ignorado na retentativa  | s/\(prazo == null \|\| cabeEspera\(prazo\.agora, prazo\.deadline, atrasoRetentativaMs\(tentativa\)\)\)/true/
 PEGA      | teto de tentativas 4 -> 3                 | s/MAX_TENTATIVAS_OMIE = 4;/MAX_TENTATIVAS_OMIE = 3;/
 PEGA      | redação da faultstring removida           | s/redigirSegredo\(String\(texto\)\)/String(texto)/
 PEGA      | status do corpo não-JSON perde a âncora   | s/: HTTP \$\{status\} \(corpo/: codigo \${status} (corpo/
