@@ -99,6 +99,9 @@ BEGIN
   IF has_function_privilege('anon', v_fn, 'EXECUTE') THEN
     RAISE EXCEPTION 'postcondição: anon executa fin_sync_kicks_perdidos (ACL aberto)';
   END IF;
+  IF has_function_privilege('authenticated', v_fn, 'EXECUTE') THEN
+    RAISE EXCEPTION 'postcondição: authenticated executa fin_sync_kicks_perdidos (ACL aberto)';
+  END IF;
   IF NOT has_function_privilege('service_role', v_fn, 'EXECUTE') THEN
     RAISE EXCEPTION 'postcondição: service_role perdeu EXECUTE em fin_sync_kicks_perdidos';
   END IF;

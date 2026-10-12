@@ -142,8 +142,9 @@ eq "C7 running de 20min atrás não segura" "$(kicks "$MOV")" "1"
 incidente; P -q -c "INSERT INTO public.fin_sync_kick_retry(company,resource,janela) VALUES ('colacor','movimentacoes','2026-10-12 08:40:00+00');"
 eq "C8 retry já feito na janela → guard (c), sem laço" "$(kicks "$MOV")" "0"
 incidente; log movimentacoes oben skipped_busy '2026-10-12 08:40:03+00'; log movimentacoes oben complete '2026-10-12 08:41:00+00'
-eq "C9 skipped_busy de outra empresa não vaza" "$(kicks " WHERE company='oben' AND resource='movimentacoes'")" "0"
-incidente; P -q -c "UPDATE public.fin_sync_cursor SET next_page=5, updated_at='2026-10-12 08:45:00+00';"
+eq "C9a complete da oben não cobre a colacor (filtro de empresa)" "$(kicks "$MOV")" "1"
+eq "C9b skipped_busy+complete da oben → oben bloqueia" "$(kicks " WHERE company='oben' AND resource='movimentacoes'")" "0"
+incidente; P -q -c "UPDATE public.fin_sync_cursor SET next_page=5;"   # updated_at segue PRÉ-janela: só o next_page bloqueia
 eq "C10 cursor pendente → continuador cobre (guard b)" "$(kicks "$MOV")" "0"
 
 echo "── postcondição tem dente ──"
@@ -155,6 +156,10 @@ P -q -c "GRANT EXECUTE ON FUNCTION public.fin_sync_kicks_perdidos(timestamptz) T
 if OUT=$(P -q -f "$MIG" 2>&1); then bad "PC2 ACL aberto passou na postcondição"; else
   case "$OUT" in *"anon executa"*) ok "PC2 ACL aberto → postcondição aborta";; *) bad "PC2 abortou pelo motivo errado: $OUT";; esac; fi
 P -q -c "REVOKE EXECUTE ON FUNCTION public.fin_sync_kicks_perdidos(timestamptz) FROM anon;"
+P -q -c "GRANT EXECUTE ON FUNCTION public.fin_sync_kicks_perdidos(timestamptz) TO authenticated;"
+if OUT=$(P -q -f "$MIG" 2>&1); then bad "PC3 authenticated com EXECUTE passou na postcondição"; else
+  case "$OUT" in *"authenticated executa"*) ok "PC3 authenticated com EXECUTE → postcondição aborta";; *) bad "PC3 abortou pelo motivo errado: $OUT";; esac; fi
+P -q -c "REVOKE EXECUTE ON FUNCTION public.fin_sync_kicks_perdidos(timestamptz) FROM authenticated;"
 P -q -f "$MIG"
 
 echo "── falsificação: corpo ANTIGO (any-status) → vermelho ──"
