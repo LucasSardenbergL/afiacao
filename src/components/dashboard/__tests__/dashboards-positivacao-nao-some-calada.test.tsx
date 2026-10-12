@@ -111,6 +111,9 @@ vi.mock('@/components/fila/FilaDoDia', () => ({ FilaDoDia: () => <div /> }));
 vi.mock('@/components/dashboard/KpisToday', () => ({ KpisToday: () => <div /> }));
 vi.mock('@/components/dashboard/AgendaTodayList', () => ({ AgendaTodayList: () => <div /> }));
 vi.mock('@/components/farmer/ChamadasPendentesNudge', () => ({ ChamadasPendentesNudge: () => <div /> }));
+// O aviso de pedidos sem nota lê a empresa do seletor (CompanyProvider) e tem teste próprio
+// (PedidosSemNotaBanner.estados.test.tsx); aqui o alvo é o placar de positivação.
+vi.mock('@/components/dashboard/PedidosSemNotaBanner', () => ({ PedidosSemNotaBanner: () => <div /> }));
 
 const track = vi.fn();
 vi.mock('@/lib/analytics', () => ({
