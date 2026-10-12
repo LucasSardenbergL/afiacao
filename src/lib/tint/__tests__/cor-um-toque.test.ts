@@ -38,6 +38,17 @@ describe('escolherFormulaUmToque — fórmula inequívoca ou nada', () => {
     expect(escolherFormulaUmToque('sku-A', '346J', [cand({})], '346J - ACRIL BS')).toBeNull();
   });
 
+  it('nomeCompativel: TODA palavra de cor do catálogo precisa estar no rótulo (Codex P1 rodada 5)', () => {
+    expect(nomeCompativel('H109 - VERDE AGUA 900ML', 'VERDE FOLHA')).toBe(false);
+    expect(nomeCompativel('346J - ACRIL BS | NÃO USAR PLATINA', 'PLATINA BIANCO')).toBe(false);
+    expect(nomeCompativel('346J PLATINA BIANCA (perola urbana)', 'PLATINA BIANCO')).toBe(true);
+    expect(nomeCompativel('346J PLATINA', 'PLATINA BIANCO')).toBe(false);
+    // 1 letra de diferença só em palavra longa: "OURO" × "OUROS" não é tolerado
+    expect(nomeCompativel('345J OUROS', 'OURO')).toBe(false);
+    // catálogo sem palavra de cor (só código) não é verificável
+    expect(nomeCompativel('H109 PALHA', 'H109 - BS')).toBe(false);
+  });
+
   it('nomeCompativel ignora embalagem/sufixo (BS, ML, GL, galão, números)', () => {
     expect(nomeCompativel('346J - BS 900ML GALÃO', 'PLATINA BIANCO - BS')).toBe(false);
     expect(nomeCompativel('H109 PALHA 3,6 GALÃO', 'PALHA')).toBe(true);

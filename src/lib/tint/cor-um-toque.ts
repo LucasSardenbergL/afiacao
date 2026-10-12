@@ -37,12 +37,34 @@ const PALAVRAS_SEM_COR = new Set(['bs', 'ml', 'gl', 'qt', 'lt', 'litro', 'litros
 const palavrasDeCor = (s: string) =>
   tokensDeBusca(s).filter((w) => w.length >= 3 && !/\d/.test(w) && !PALAVRAS_SEM_COR.has(w));
 
-/** Codex P1 (rodada 2): o código extraído do rótulo livre ("346J - ACRIL BS" → "346J") pode
- *  casar com OUTRA cor de mesmo código. Do texto, só aceita quando o nome do catálogo divide
- *  ≥1 palavra de cor com o rótulo comprado ("PLATINA BIANCA 900ML" × "PLATINA BIANCO"). */
+/** Distância de edição ≤ 1 (troca, inserção ou remoção de UMA letra). */
+function quaseIgual(a: string, b: string): boolean {
+  if (a === b) return true;
+  if (Math.abs(a.length - b.length) > 1) return false;
+  let i = 0;
+  let j = 0;
+  let difs = 0;
+  while (i < a.length && j < b.length) {
+    if (a[i] === b[j]) { i++; j++; continue; }
+    if (++difs > 1) return false;
+    if (a.length > b.length) i++;
+    else if (b.length > a.length) j++;
+    else { i++; j++; }
+  }
+  return difs + (a.length - i) + (b.length - j) <= 1;
+}
+
+/** Codex P1 (rodadas 2 e 5): o código extraído do rótulo livre pode casar com OUTRA cor
+ *  (código digitado errado no Omie). Do texto, só aceita quando TODA palavra de cor do nome
+ *  do catálogo aparece no rótulo comprado — igual, ou com 1 letra de diferença em palavra de
+ *  5+ letras ("PLATINA BIANCA 900ML" × "PLATINA BIANCO"). "VERDE AGUA" × "VERDE FOLHA" não
+ *  passa. Observação após `|` não conta ("…| NÃO USAR PLATINA"). Nome do catálogo sem
+ *  palavra de cor (só código) não é verificável → false. */
 export function nomeCompativel(rotuloHistorico: string, nomeCatalogo: string): boolean {
-  const doRotulo = new Set(palavrasDeCor(rotuloHistorico));
-  return palavrasDeCor(nomeCatalogo).some((w) => doRotulo.has(w));
+  const doRotulo = palavrasDeCor(rotuloHistorico.split('|')[0]);
+  const doCatalogo = palavrasDeCor(nomeCatalogo);
+  if (doCatalogo.length === 0) return false;
+  return doCatalogo.every((w) => doRotulo.some((r) => r === w || (w.length >= 5 && r.length >= 5 && quaseIgual(r, w))));
 }
 
 /** A fórmula do 1 toque: a ÚNICA da base (sku) cujo `cor_id` é exatamente o código.
