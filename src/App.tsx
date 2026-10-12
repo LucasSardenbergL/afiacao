@@ -43,7 +43,6 @@ const AdminLoyalty = lazy(() => import("./pages/AdminLoyalty"));
 const AdminPrime = lazy(() => import("./pages/AdminPrime"));
 const AdminGamification = lazy(() => import("./pages/AdminGamification"));
 const Gamification = lazy(() => import("./pages/Gamification"));
-const QualityChecklist = lazy(() => import("./pages/QualityChecklist"));
 const RecurringSchedules = lazy(() => import("./pages/RecurringSchedules"));
 const SavingsDashboard = lazy(() => import("./pages/SavingsDashboard"));
 const CentralFerramenta = lazy(() => import("./pages/CentralFerramenta"));
@@ -147,7 +146,6 @@ const AdminReposicaoCockpit = lazy(() => import("./pages/AdminReposicaoCockpit")
 const AdminReposicaoParametros = lazy(() => import("./pages/AdminReposicaoParametros"));
 const AdminReposicaoMercado = lazy(() => import("./pages/AdminReposicaoMercado"));
 const AdminReposicaoSessaoPedidos = lazy(() => import("./pages/AdminReposicaoSessaoPedidos"));
-const AdminReposicaoSessaoAplicacao = lazy(() => import("./pages/AdminReposicaoSessaoAplicacao"));
 const AdminReposicaoSessaoConfirmacao = lazy(() => import("./pages/AdminReposicaoSessaoConfirmacao"));
 const AdminReposicaoSessaoHistorico = lazy(() => import("./pages/AdminReposicaoSessaoHistorico"));
 const ReposicaoSessionLayout = lazy(() => import("./components/reposicao/ReposicaoSessionLayout"));
@@ -301,7 +299,6 @@ const App = () => {
                 <Route path="admin/customers/:customerId" element={<AdminCustomers />} />
                 <Route path="admin/customers/:customerId/360" element={<Customer360 />} />
                 <Route path="admin/orders/:id" element={<AdminOrderDetail />} />
-                <Route path="admin/orders/:id/quality" element={<QualityChecklist />} />
                 <Route path="admin/demand-forecast" element={<AdminDemandForecast />} />
                 <Route path="admin/route-planner" element={<AdminRoutePlanner />} />
                 <Route path="admin/monthly-reports" element={<AdminMonthlyReports />} />
@@ -371,7 +368,6 @@ const App = () => {
                 <Route path="admin/reposicao/revisao" element={<Navigate to="/admin/reposicao/sessao/parametros?tab=ajuste" replace />} />
                 <Route path="admin/reposicao/historico" element={<AdminReposicaoHistorico />} />
                 <Route path="admin/reposicao/alertas" element={<AdminReposicaoAlertas />} />
-                <Route path="admin/reposicao/aplicacao" element={<Navigate to="/admin/reposicao/sessao/aplicacao" replace />} />
                 <Route path="admin/reposicao/grupos-producao" element={<AdminReposicaoGruposProducao />} />
                 <Route path="admin/reposicao/cadeia-logistica" element={<AdminReposicaoCadeiaLogistica />} />
                 <Route path="admin/reposicao/pedidos" element={<AdminReposicaoPedidos />} />
@@ -392,7 +388,6 @@ const App = () => {
                   <Route path="admin/reposicao/sessao/mercado" element={<AdminReposicaoMercado />} />
                   <Route path="admin/reposicao/sessao/parametros" element={<AdminReposicaoParametros />} />
                   <Route path="admin/reposicao/sessao/pedidos" element={<AdminReposicaoSessaoPedidos />} />
-                  <Route path="admin/reposicao/sessao/aplicacao" element={<AdminReposicaoSessaoAplicacao />} />
                   <Route path="admin/reposicao/sessao/confirmacao" element={<AdminReposicaoSessaoConfirmacao />} />
                   <Route path="admin/reposicao/sessao/historico" element={<AdminReposicaoSessaoHistorico />} />
                 </Route>

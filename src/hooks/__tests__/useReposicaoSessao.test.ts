@@ -43,8 +43,8 @@ describe("deriveCurrentStep", () => {
     expect(deriveCurrentStep({ ...m, pedidosAprovados: 4 })).toBe(4);
   });
 
-  it("returns 5 when only dispatched remain", () => {
-    expect(deriveCurrentStep({ ...m, pedidosDisparados: 7 })).toBe(5);
+  it("returns 4 (Confirmação) when only dispatched remain", () => {
+    expect(deriveCurrentStep({ ...m, pedidosDisparados: 7 })).toBe(4);
   });
 
   it("defaults to 3 when nothing is pending", () => {
@@ -67,14 +67,14 @@ describe("deriveCurrentStep", () => {
     expect(deriveCurrentStep({ ...m, oportunidadesCount: null })).toBe(3);
     expect(deriveCurrentStep({ ...m, oportunidadesCount: null, pedidosPendentes: 2 })).toBe(3);
     expect(deriveCurrentStep({ ...m, oportunidadesCount: null, pedidosAprovados: 4 })).toBe(4);
-    expect(deriveCurrentStep({ ...m, oportunidadesCount: null, pedidosDisparados: 7 })).toBe(5);
+    expect(deriveCurrentStep({ ...m, oportunidadesCount: null, pedidosDisparados: 7 })).toBe(4);
   });
 });
 
 describe("getStepLocks", () => {
-  it("returns 5 unlocked steps when status is undefined", () => {
+  it("returns 4 unlocked steps when status is undefined", () => {
     const locks = getStepLocks(undefined);
-    expect(locks).toHaveLength(5);
+    expect(locks).toHaveLength(4);
     expect(locks.every((l) => !l.locked)).toBe(true);
   });
 
@@ -95,38 +95,18 @@ describe("getStepLocks", () => {
     expect(locks[2].locked).toBe(false);
   });
 
-  it("locks step 4 while pedidos are still pending review", () => {
-    const locks = getStepLocks({
-      ...baseStatus,
-      pedidosTotal: 10,
-      pedidosPendentes: 3,
-    });
-    expect(locks[3].locked).toBe(true);
-    expect(locks[3].reason).toMatch(/aguardando revis/i);
-  });
-
-  it("unlocks step 4 when all pedidos are reviewed", () => {
-    const locks = getStepLocks({
-      ...baseStatus,
-      pedidosTotal: 10,
-      pedidosPendentes: 0,
-      pedidosAprovados: 10,
-    });
-    expect(locks[3].locked).toBe(false);
-  });
-
-  it("locks step 5 when nothing is approved or dispatched", () => {
+  it("locks step 4 (Confirmação) when nothing is approved or dispatched", () => {
     const locks = getStepLocks({ ...baseStatus, pedidosTotal: 10 });
-    expect(locks[4].locked).toBe(true);
+    expect(locks[3].locked).toBe(true);
   });
 
-  it("unlocks step 5 once there are approved or dispatched pedidos", () => {
+  it("unlocks step 4 (Confirmação) once there are approved or dispatched pedidos", () => {
     const locks = getStepLocks({
       ...baseStatus,
       pedidosTotal: 10,
       pedidosAprovados: 5,
     });
-    expect(locks[4].locked).toBe(false);
+    expect(locks[3].locked).toBe(false);
   });
 });
 
@@ -135,8 +115,7 @@ describe("deriveActiveStep", () => {
     expect(deriveActiveStep("/admin/reposicao/sessao/mercado")).toBe(1);
     expect(deriveActiveStep("/admin/reposicao/sessao/parametros")).toBe(2);
     expect(deriveActiveStep("/admin/reposicao/sessao/pedidos")).toBe(3);
-    expect(deriveActiveStep("/admin/reposicao/sessao/aplicacao")).toBe(4);
-    expect(deriveActiveStep("/admin/reposicao/sessao/confirmacao")).toBe(5);
+    expect(deriveActiveStep("/admin/reposicao/sessao/confirmacao")).toBe(4);
   });
 
   it("ignores query strings and trailing slashes", () => {
@@ -157,7 +136,6 @@ describe("deriveActiveStep", () => {
       "/admin/reposicao/sessao/mercado",
       "/admin/reposicao/sessao/parametros",
       "/admin/reposicao/sessao/pedidos",
-      "/admin/reposicao/sessao/aplicacao",
       "/admin/reposicao/sessao/confirmacao",
     ]);
   });

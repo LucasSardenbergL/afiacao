@@ -3,7 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { addDias, hojeSP } from "@/lib/time/sp-day";
-import { Database, ShoppingCart, Network, Layers, Send, Building2, AlertTriangle, Link2 } from "lucide-react";
+import { Database, ShoppingCart, Network, Layers, Building2, AlertTriangle, Link2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PageSkeleton } from "@/components/ui/page-skeleton";
@@ -24,7 +24,6 @@ import { ReposicaoEmpresaProvider, useReposicaoEmpresa } from "@/contexts/Reposi
 // Reaproveita as telas originais para tabs auxiliares — mesmas queries Supabase.
 const AdminReposicaoCadeiaLogistica = lazy(() => import("./AdminReposicaoCadeiaLogistica"));
 const AdminReposicaoGruposProducao = lazy(() => import("./AdminReposicaoGruposProducao"));
-const AdminReposicaoAplicacao = lazy(() => import("./AdminReposicaoAplicacao"));
 const AdminSkuMapeamento = lazy(() => import("./AdminSkuMapeamento"));
 
 const TabFallback = () => <PageSkeleton variant="auto" />;
@@ -75,23 +74,7 @@ function KpiCards() {
     staleTime: 30000,
   });
 
-  // (c) Fila de aplicação Omie pendente
-  const { data: filaPendente } = useQuery({
-    queryKey: ["cadastros-fila-pendente", empresa],
-    queryFn: async () => {
-      const { count, error } = await supabase
-        .from("fila_aplicacao_omie" as never)
-        .select("*", { count: "exact", head: true })
-        .eq("empresa", empresa)
-        .eq("status", "pendente");
-      if (error) return 0;
-      return count ?? 0;
-    },
-    refetchInterval: 60000,
-    staleTime: 30000,
-  });
-
-  // (d) Grupos de produção ativos
+  // (c) Grupos de produção ativos
   const { data: gruposAtivos } = useQuery({
     queryKey: ["cadastros-grupos-ativos", empresa],
     queryFn: async () => {
@@ -122,13 +105,6 @@ function KpiCards() {
       border: skusSemCadeia && skusSemCadeia > 0 ? "border-warning/40" : "border-border",
     },
     {
-      label: "Fila de aplicação Omie",
-      value: filaPendente ?? 0,
-      icon: Send,
-      tone: filaPendente && filaPendente > 0 ? "text-primary" : "text-muted-foreground",
-      border: filaPendente && filaPendente > 0 ? "border-primary/40" : "border-border",
-    },
-    {
       label: "Grupos de produção",
       value: gruposAtivos ?? 0,
       icon: Layers,
@@ -138,7 +114,7 @@ function KpiCards() {
   ];
 
   return (
-    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+    <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
       {cards.map((c) => (
         <Card key={c.label} className={c.border}>
           <CardContent className="pt-4 flex items-center justify-between">
@@ -195,7 +171,7 @@ export default function AdminReposicaoCadastros() {
         <KpiCards />
 
         <Tabs value={tab} onValueChange={handleTab} className="space-y-4">
-          <TabsList className="grid grid-cols-2 sm:grid-cols-5 w-full">
+          <TabsList className="grid grid-cols-2 sm:grid-cols-4 w-full">
             <TabsTrigger value="pedidos">
               <ShoppingCart className="h-4 w-4 mr-1" /> Pedidos
             </TabsTrigger>
@@ -207,9 +183,6 @@ export default function AdminReposicaoCadastros() {
             </TabsTrigger>
             <TabsTrigger value="mapeamento">
               <Link2 className="h-4 w-4 mr-1" /> Mapeamento de SKUs
-            </TabsTrigger>
-            <TabsTrigger value="aplicacao">
-              <Send className="h-4 w-4 mr-1" /> Aplicação Omie
             </TabsTrigger>
           </TabsList>
 
@@ -232,12 +205,6 @@ export default function AdminReposicaoCadastros() {
           <TabsContent value="mapeamento" className="m-0">
             <Suspense fallback={<TabFallback />}>
               <AdminSkuMapeamento />
-            </Suspense>
-          </TabsContent>
-
-          <TabsContent value="aplicacao" className="m-0">
-            <Suspense fallback={<TabFallback />}>
-              <AdminReposicaoAplicacao />
             </Suspense>
           </TabsContent>
         </Tabs>

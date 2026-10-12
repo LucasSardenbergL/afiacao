@@ -61,27 +61,15 @@ describe("buildEtapaChecklist", () => {
     expect(def.items[1].label).toMatch(/2 pedido.*bloquead/i);
   });
 
-  it("Etapa 4: done only when nothing approved-awaiting and something dispatched", () => {
-    const notDone = buildEtapaChecklist(4, { ...baseStatus, pedidosAprovados: 3 });
-    expect(notDone.items[0].done).toBe(false);
-
-    const done = buildEtapaChecklist(4, {
-      ...baseStatus,
-      pedidosAprovados: 0,
-      pedidosDisparados: 5,
-    });
-    expect(done.items[0].done).toBe(true);
-  });
-
-  it("Etapa 5: done only when every pedido is dispatched", () => {
-    const partial = buildEtapaChecklist(5, {
+  it("Etapa 4 (Confirmação): done only when every pedido is dispatched", () => {
+    const partial = buildEtapaChecklist(4, {
       ...baseStatus,
       pedidosTotal: 10,
       pedidosDisparados: 7,
     });
     expect(partial.items[0].done).toBe(false);
 
-    const full = buildEtapaChecklist(5, {
+    const full = buildEtapaChecklist(4, {
       ...baseStatus,
       pedidosTotal: 10,
       pedidosDisparados: 10,
