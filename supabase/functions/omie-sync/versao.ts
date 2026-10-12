@@ -27,7 +27,7 @@ export const respostaSonda = criarRespostaSonda("omie-sync");
 // fase 3): o `getDate()` do servidor UTC fazia a OS criada das 21:00 às 23:59 BRT vencer tudo um dia
 // adiante (a à vista, amanhã). Prazos e percentuais iguais; nenhuma pré-condição de banco.
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.1-hoje-sp-parcelas-os";
+export const VERSAO = "v1.2-cors-origem-fixa";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
