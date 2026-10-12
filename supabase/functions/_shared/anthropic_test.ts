@@ -2,6 +2,9 @@
 // Roda com: deno test --no-remote supabase/functions/_shared/
 import {
   extrairToolUseUnico,
+  MAX_RETRIES_ANTHROPIC,
+  opcoesClienteAnthropic,
+  TIMEOUT_ANTHROPIC_MS,
   objetoDaTool,
   statusDoErro,
   traduzirErroAnthropic,
@@ -107,5 +110,23 @@ Deno.test("objetoDaTool: só objeto passa", () => {
   assertEquals(objetoDaTool({ a: 1 }), { a: 1 });
   for (const v of [null, undefined, "texto", 42, [], [1, 2], true]) {
     assertEquals(objetoDaTool(v), null, `entrada ${JSON.stringify(v)}`);
+  }
+});
+
+// ── Coleira do cliente (M-33) ──
+
+Deno.test("opcoesClienteAnthropic: default tem teto abaixo do kill e retentativa menor que a do SDK", () => {
+  const o = opcoesClienteAnthropic("k");
+  assertEquals(o, { apiKey: "k", timeout: TIMEOUT_ANTHROPIC_MS, maxRetries: MAX_RETRIES_ANTHROPIC });
+  if (!(o.timeout < 150_000)) throw new Error("timeout default não fica abaixo do kill de ~150s");
+  if (!(o.maxRetries < 2)) throw new Error("maxRetries default não é menor que o do SDK (2)");
+});
+
+Deno.test("opcoesClienteAnthropic: aperta à vontade, afrouxar é recusado com a marca", () => {
+  assertEquals(opcoesClienteAnthropic("k", { timeoutMs: 30_000, maxRetries: 0 }).timeout, 30_000);
+  for (const ajuste of [{ timeoutMs: 600_000 }, { timeoutMs: 0 }, { timeoutMs: NaN }, { maxRetries: 2 }, { maxRetries: -1 }, { maxRetries: 0.5 }]) {
+    let msg = "";
+    try { opcoesClienteAnthropic("k", ajuste); } catch (e) { msg = (e as Error).message; }
+    if (!msg.includes("fora da coleira")) throw new Error(`ajuste ${JSON.stringify(ajuste)} não foi recusado pela coleira: "${msg}"`);
   }
 });

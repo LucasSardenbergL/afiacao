@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import type { ReactNode } from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 // Supabase auth que NUNCA resolve: getSession pendente pra sempre e nenhum
 // evento de auth disparado. Reproduz a trava de bootstrap (lock do
@@ -21,8 +22,15 @@ vi.mock('@/integrations/supabase/client', () => ({
 
 import { AuthProvider, useAuth } from '@/contexts/AuthContext';
 
+// O AuthProvider limpa o cache do react-query no logout (M-10): em App.tsx ele vive DENTRO do
+// QueryClientProvider, e o teste reproduz essa árvore.
+const queryClient = new QueryClient();
 function wrapper({ children }: { children: ReactNode }) {
-  return <AuthProvider>{children}</AuthProvider>;
+  return (
+    <QueryClientProvider client={queryClient}>
+      <AuthProvider>{children}</AuthProvider>
+    </QueryClientProvider>
+  );
 }
 
 describe('AuthContext loading failsafe', () => {

@@ -1,7 +1,11 @@
 import { describe, it, expect } from 'vitest';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   CLASSES_BLOQUEANTES,
+  LOCK_EDGES,
   ambienteDeno,
+  argsDeno,
   classificar,
   enumerarEdges,
   extrairOcorrencias,
@@ -151,6 +155,33 @@ describe('classificar — fail-closed ("ausência de sinal NÃO é aprovação")
     expect(v.tipo).toBe('bloqueia');
     if (v.tipo !== 'bloqueia' || v.motivo !== 'infra') throw new Error('esperava infra');
     expect(v.detalhe).toContain('formato de saída mudou');
+  });
+});
+
+describe('classificar — lockfile congelado (M-29)', () => {
+  it('lock desatualizado tem motivo PRÓPRIO, não infra genérica', () => {
+    // Saída real do deno 2.9.2 com `import "npm:is-odd@3.0.1"` numa edge e o lock sem ele.
+    const s =
+      'Download https://registry.npmjs.org/is-odd\n' +
+      'error: The lockfile is out of date. Run `deno install --frozen=false`, or rerun with `--frozen=false` to update it.\n' +
+      'changes:\n   9 | +    "npm:is-odd@3.0.1": "3.0.1",\n';
+    const v = classificar(s, 1, RAIZ);
+    if (v.tipo !== 'bloqueia' || v.motivo !== 'lock-desatualizado') throw new Error(`esperava lock-desatualizado, veio ${JSON.stringify(v)}`);
+    expect(v.detalhe).toContain('npm:is-odd@3.0.1');
+  });
+
+  it('o gate roda congelado no lock, e o lock existe no repo', () => {
+    const args = argsDeno(['supabase/functions/x/index.ts'], 'checar');
+    expect(args.slice(0, 3)).toEqual(['check', `--lock=${LOCK_EDGES}`, '--frozen']);
+    expect(args).not.toContain('--no-lock');
+    expect(existsSync(join(process.cwd(), LOCK_EDGES))).toBe(true);
+    expect(LOCK_EDGES.startsWith('supabase/')).toBe(false);
+  });
+
+  it('o atualizar-lock usa `deno cache` (o check não grava o lock quando falha por tipo)', () => {
+    const args = argsDeno(['supabase/functions/x/index.ts'], 'atualizar-lock');
+    expect(args[0]).toBe('cache');
+    expect(args).not.toContain('--frozen');
   });
 });
 
