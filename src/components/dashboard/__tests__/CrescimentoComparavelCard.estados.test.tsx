@@ -164,6 +164,33 @@ describe('CrescimentoComparavelCard', () => {
     }
   });
 
+  it('[CC-SENSOR-LIMIAR] cruzamento de 50% reportado como 0,4999 conta; observer com vários limiares', () => {
+    // Prod, 2026-10-12: o founder rolou o card inteiro e o sensor não disparou. Com [0, 0,5] o navegador
+    // avisa UMA vez no cruzamento — e pode reportar 0,4999 por arredondamento de pixel.
+    const callbacks: ((e: { isIntersecting: boolean; intersectionRatio: number }[]) => void)[] = [];
+    const opcoes: { threshold?: number | number[] }[] = [];
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        constructor(cb: (e: { isIntersecting: boolean; intersectionRatio: number }[]) => void, o: { threshold?: number | number[] }) {
+          callbacks.push(cb);
+          opcoes.push(o);
+        }
+        observe() {}
+        disconnect() {}
+      },
+    );
+    try {
+      comDados(ok, ok);
+      render(<CrescimentoComparavelCard />);
+      expect((opcoes.at(-1)!.threshold as number[]).length).toBeGreaterThan(2);
+      act(() => callbacks.at(-1)!([{ isIntersecting: true, intersectionRatio: 0.4999 }]));
+      expect(track).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('[CC-SC] Colacor SC (serviços, sem pedido) explica em vez de mostrar ponte vazia', () => {
     selection = 'colacor_sc';
     estado = { isLoading: false, isError: false };
