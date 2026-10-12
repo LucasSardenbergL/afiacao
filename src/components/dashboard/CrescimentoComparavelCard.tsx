@@ -17,6 +17,10 @@ import { cn } from '@/lib/utils';
 import { empresasDoEscopo, rotuloJanela, type CoberturaEmpresa } from '@/lib/dashboard/crescimento-comparavel';
 import { useCrescimentoComparavel, type TipoComparacao } from '@/hooks/dashboard/useCrescimentoComparavel';
 
+/** Fração do card na tela que conta como "visto", e a folga para o arredondamento do navegador. */
+const VISIVEL_MIN = 0.5;
+const VISIVEL_TOLERANCIA = 0.02;
+
 const nomeEmpresa = (account: string) => COMPANIES[account as Company]?.shortName ?? account;
 
 function Variacao({ v }: { v: number | null }) {
@@ -79,9 +83,13 @@ export function CrescimentoComparavelCard() {
       setVisivel(true);
       return;
     }
+    // Vários limiares, e tolerância na comparação: o navegador só chama o callback ao CRUZAR um limiar, e
+    // no cruzamento de 0,5 pode reportar 0,4999 (arredondamento de pixel). Com [0, 0,5] isso era a ÚNICA
+    // chance — e o card rolado inteiro na tela nunca contou como visto (prod, 2026-10-12: 0 eventos com o
+    // founder vendo o card). Com mais limiares, quem continua rolando ganha novos callbacks bem acima de 0,5.
     const obs = new IntersectionObserver(
-      ([e]) => setVisivel(e.isIntersecting && e.intersectionRatio >= 0.5),
-      { threshold: [0, 0.5] },
+      ([e]) => setVisivel(e.isIntersecting && e.intersectionRatio >= VISIVEL_MIN - VISIVEL_TOLERANCIA),
+      { threshold: [0, 0.25, 0.5, 0.75, 1] },
     );
     obs.observe(el);
     return () => obs.disconnect();
