@@ -125,15 +125,17 @@ export function orFilter(...clauses: string[]): string {
 
 /**
  * Igualdade EXATA sem distinção de caixa, para vários valores numa coluna:
- * `col.ilike.v1,col.ilike.v2` (ILIKE sem `%` = igualdade case-insensitive). Valor que
- * contém metacaractere do `.or()`/LIKE é DESCARTADO (não "limpo": limpar mudaria o valor
+ * `col.ilike."v1",col.ilike."v2"` (ILIKE sem curinga = igualdade case-insensitive; aspas
+ * porque o valor pode ter espaço/ponto). Com `tambemPrimeiraPalavra`, casa também
+ * `"v *"` — o valor como 1ª palavra (o `cor_id` do catálogo é "H109 - BS"; o código é "H109").
+ * Valor com metacaractere do `.or()`/LIKE é DESCARTADO (não "limpo": limpar mudaria o valor
  * e casaria outra coisa). `''` ⇔ nenhum valor útil — o caller não consulta.
  */
-export function ilikeExatoOr(column: string, values: string[]): string {
+export function ilikeExatoOr(column: string, values: string[], opts: { tambemPrimeiraPalavra?: boolean } = {}): string {
   return values
     .map((v) => v.trim())
     .filter((v) => v !== '' && sanitizeForPostgrestOr(v) === v)
-    .map((v) => `${column}.ilike.${v}`)
+    .flatMap((v) => (opts.tambemPrimeiraPalavra ? [`${column}.ilike."${v}"`, `${column}.ilike."${v} *"`] : [`${column}.ilike."${v}"`]))
     .join(',');
 }
 

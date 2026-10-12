@@ -49,7 +49,11 @@ export type EstadoUmToque<P extends ProdutoBase = ProdutoBase> = UmToquePronto<P
  * O tintométrico só existe na Oben (`account='oben'` fixo, como no seletor).
  */
 export function useTintCoresDoClienteUmToque<P extends ProdutoBase>(alvos: AlvoUmToque<P>[]): Record<string, EstadoUmToque<P>> {
-  const elegiveis = useMemo(() => alvos.filter((a) => ehCodigoDeCor(a.codigo)), [alvos]);
+  // Código extraído do rótulo precisa ter cara de código; o tint_cor_id exato (rotulo null) não.
+  const elegiveis = useMemo(
+    () => alvos.filter((a) => (a.rotulo == null ? a.codigo.trim() !== '' : ehCodigoDeCor(a.codigo))),
+    [alvos],
+  );
   const productIds = useMemo(() => [...new Set(elegiveis.map((a) => a.product.id))].sort(), [elegiveis]);
   const codigos = useMemo(() => [...new Set(elegiveis.map((a) => normalizarCodigoCor(a.codigo)))].sort(), [elegiveis]);
 
@@ -76,7 +80,7 @@ export function useTintCoresDoClienteUmToque<P extends ProdutoBase>(alvos: AlvoU
       const skuPorProduto = new Map<string, string>();
       for (const [prod, ids] of skusDoProduto) if (ids.length === 1) skuPorProduto.set(prod, ids[0]);
       const skuIds = [...new Set(skuPorProduto.values())];
-      const filtroCodigo = ilikeExatoOr('cor_id', codigos);
+      const filtroCodigo = ilikeExatoOr('cor_id', codigos, { tambemPrimeiraPalavra: true });
       if (skuIds.length === 0 || !filtroCodigo) return { skuPorProduto, candidatas: [] as CandidataUmToque[] };
 
       // Codex P1/P2: código por igualdade SEM caixa (`346J` e `346j` chegam os dois e a

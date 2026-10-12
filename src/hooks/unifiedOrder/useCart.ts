@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useRef } from 'react';
 import { toast } from 'sonner';
 import type { OmieServico } from '@/services/omieService';
 import type {
@@ -21,6 +21,9 @@ interface UseCartArgs {
 
 export function useCart({ getProductPrice, getServicePrice, servicos }: UseCartArgs) {
   const [cart, setCart] = useState<CartItem[]>([]);
+  // Espelho síncrono do carrinho para decisões que precisam do estado ATUAL (tinta, Fase 2A).
+  const cartRef = useRef<CartItem[]>(cart);
+  cartRef.current = cart;
   const [tintPendingProduct, setTintPendingProductState] = useState<Product | null>(null);
   // Quantidade digitada na lista viaja até a confirmação da cor — antes a base
   // tintométrica abria o diálogo e o item nascia com 1, perdendo a qtd em silêncio.
@@ -125,7 +128,7 @@ export function useCart({ getProductPrice, getServicePrice, servicos }: UseCartA
       // Fase 2A: entrada SEM diálogo pendente (1 toque das "Cores do cliente") traz a própria qtd;
       // sem ela, vale a qtd pendente do diálogo (Fase 1).
       qtyOverride?: number,
-    ) => {
+    ): 'adicionado' | 'conflito' => {
       const account = (product.account || 'oben') as ProductAccount;
       const qty = qtyOverride != null && Number.isFinite(qtyOverride) && qtyOverride > 0 ? qtyOverride : tintPendingQty;
       // Codex P1 (Fase 2A): só SOMA na linha existente quando a decisão de preço é a MESMA
@@ -142,53 +145,52 @@ export function useCart({ getProductPrice, getServicePrice, servicos }: UseCartA
         (c.tint_price_source ?? null) === fonte &&
         c.tint_discount_pct === desconto &&
         c.tint_preco_sem_desconto === precoBase;
-      const conflito = cart.some(
-        (c) => c.type === 'product' && (c as ProductCartItem).tint_formula_id === formulaId && !mesmaDecisao(c as ProductCartItem),
-      );
+      // Codex P1 (rodada 3): a decisão é tomada SÍNCRONA sobre o estado atual (`cartRef`, que
+      // também recebe a escrita na hora — 2 confirmações no mesmo batch não se atropelam) e
+      // DEVOLVIDA: só 'adicionado' fecha o diálogo / avança a fila / anuncia sucesso. Em
+      // 'conflito' a pendência (base + qtd) fica intacta e o diálogo segue aberto.
+      const atual = cartRef.current;
+      const idx = atual.findIndex((c) => c.type === 'product' && mesmaDecisao(c as ProductCartItem));
+      const conflito =
+        idx < 0 && atual.some((c) => c.type === 'product' && (c as ProductCartItem).tint_formula_id === formulaId);
       if (conflito) {
         toast.warning('Esta cor já está no carrinho com outro preço', {
-          description: 'Ajuste a quantidade (ou o preço) na linha que já existe.',
+          description: 'Some a quantidade na linha que já existe, ou remova-a e adicione de novo com o preço novo.',
         });
-        setTintPendingProduct(null);
-        return;
+        return 'conflito';
       }
-      setCart(prev => {
-        const idx = prev.findIndex((c) => c.type === 'product' && mesmaDecisao(c as ProductCartItem));
-        if (idx >= 0) {
-          return prev.map((c, i) =>
-            i === idx ? ({ ...c, quantity: c.quantity + qty } as ProductCartItem) : c,
-          );
-        }
-        // Mesma checagem sobre o estado ATUAL (o `cart` da closure pode estar 1 tick atrás):
-        // nunca nasce 2ª linha da mesma fórmula.
-        if (prev.some((c) => c.type === 'product' && (c as ProductCartItem).tint_formula_id === formulaId)) return prev;
-        return [
-          ...prev,
-          {
-            type: 'product',
-            product,
-            quantity: qty,
-            unit_price: precoFinal,
-            account,
-            tint_cor_id: corId,
-            tint_nome_cor: nomeCor,
-            tint_custo_corantes: custoCorantes,
-            tint_formula_id: formulaId,
-            ...(pricingMeta?.source
-              ? {
-                  tint_price_source: pricingMeta.source,
-                  tint_discount_pct: pricingMeta.discountPct,
-                  ...(pricingMeta.precoSemDesconto != null
-                    ? { tint_preco_sem_desconto: pricingMeta.precoSemDesconto }
-                    : {}),
-                }
-              : {}),
-          } as ProductCartItem,
-        ];
-      });
+      const proximo: CartItem[] =
+        idx >= 0
+          ? atual.map((c, i) => (i === idx ? ({ ...c, quantity: c.quantity + qty } as ProductCartItem) : c))
+          : [
+              ...atual,
+              {
+                type: 'product',
+                product,
+                quantity: qty,
+                unit_price: precoFinal,
+                account,
+                tint_cor_id: corId,
+                tint_nome_cor: nomeCor,
+                tint_custo_corantes: custoCorantes,
+                tint_formula_id: formulaId,
+                ...(pricingMeta?.source
+                  ? {
+                      tint_price_source: pricingMeta.source,
+                      tint_discount_pct: pricingMeta.discountPct,
+                      ...(pricingMeta.precoSemDesconto != null
+                        ? { tint_preco_sem_desconto: pricingMeta.precoSemDesconto }
+                        : {}),
+                    }
+                  : {}),
+              } as ProductCartItem,
+            ];
+      cartRef.current = proximo;
+      setCart(proximo);
       setTintPendingProduct(null);
+      return 'adicionado';
     },
-    [cart, tintPendingQty, setTintPendingProduct],
+    [tintPendingQty, setTintPendingProduct],
   );
 
   /* ─── Service actions ─── */

@@ -145,10 +145,7 @@ export function CoresDoClienteCard({
                               </Button>
                             </div>
                           ) : (
-                            <div className="flex items-center gap-1 shrink-0">
-                              {estado === 'carregando' && (
-                                <span className="text-[10px] text-muted-foreground">calculando…</span>
-                              )}
+                            <div className="flex flex-col items-end gap-0.5 shrink-0">
                               <Button
                                 size="sm"
                                 variant="outline"
@@ -157,6 +154,9 @@ export function CoresDoClienteCard({
                               >
                                 <Plus className="w-3 h-3 mr-0.5" /> Pedir de novo
                               </Button>
+                              {estado === 'carregando' && (
+                                <span className="text-[10px] text-muted-foreground">calculando preço…</span>
+                              )}
                             </div>
                           )}
                         </div>

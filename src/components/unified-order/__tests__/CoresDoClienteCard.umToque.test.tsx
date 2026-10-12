@@ -46,6 +46,6 @@ describe('CoresDoClienteCard — 1 toque', () => {
     renderCard();
     expect(screen.getAllByRole('button', { name: /Adicionar 346J/ })).toHaveLength(1);
     expect(screen.getAllByRole('button', { name: /Pedir de novo/ })).toHaveLength(2);
-    expect(screen.getByText('calculando…')).toBeInTheDocument();
+    expect(screen.getByText('calculando preço…')).toBeInTheDocument();
   });
 });

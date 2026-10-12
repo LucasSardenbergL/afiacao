@@ -194,3 +194,36 @@ describe('useCart — mesma fórmula só consolida com a MESMA decisão de preç
     expect(result.current.productItems.map((i) => i.quantity)).toEqual([3]);
   });
 });
+
+// Codex P1 (rodada 3): a recusa NÃO pode parecer sucesso — o resultado volta ao chamador e a
+// pendência (base + qtd do diálogo / fila do "Repetir pedido") fica intacta.
+describe('useCart — conflito devolve resultado e preserva a pendência', () => {
+  const a = { source: 'calculado', discountPct: 50, precoSemDesconto: 100 };
+  const b = { source: 'calculado', discountPct: 0, precoSemDesconto: 100 };
+
+  it('conflito → "conflito", base e qtd pendentes continuam; sucesso → "adicionado" e limpa', () => {
+    const { result } = setup();
+    let r1 = '';
+    act(() => { r1 = result.current.addTintProductToCart(baseTint, 'f-1', '346J', 'X', 50, 0, a, 1); });
+    expect(r1).toBe('adicionado');
+    act(() => { result.current.setTintPendingProduct(baseTint, 4); });
+    let r2 = '';
+    act(() => { r2 = result.current.addTintProductToCart(baseTint, 'f-1', '346J', 'X', 100, 0, b); });
+    expect(r2).toBe('conflito');
+    expect(result.current.tintPendingProduct?.id).toBe('prod-base-1');
+    expect(result.current.productItems.map((i) => i.quantity)).toEqual([1]);
+  });
+
+  it('2 decisões diferentes no MESMO batch: a 2ª é conflito COM aviso, nunca descarte calado', () => {
+    const { result } = setup();
+    vi.mocked(toast.warning).mockClear();
+    const rs: string[] = [];
+    act(() => {
+      rs.push(result.current.addTintProductToCart(baseTint, 'f-1', '346J', 'X', 50, 0, a, 1));
+      rs.push(result.current.addTintProductToCart(baseTint, 'f-1', '346J', 'X', 100, 0, b, 1));
+    });
+    expect(rs).toEqual(['adicionado', 'conflito']);
+    expect(vi.mocked(toast.warning)).toHaveBeenCalledTimes(1);
+    expect(result.current.productItems.map((i) => i.unit_price)).toEqual([50]);
+  });
+});

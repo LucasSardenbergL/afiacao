@@ -135,8 +135,7 @@ const UnifiedOrder = () => {
     const pronto = umToque[chave];
     // Fail-closed: o estado pode ter mudado entre o render e o toque (preço recarregando).
     if (typeof pronto !== 'object') return;
-    track('tint.cor_confirmada', { fonte: pronto.fonte, alternativa: false, com_desconto: false, entrada: 'um_toque' });
-    h.addTintProductToCart(
+    const resultado = h.addTintProductToCart(
       pronto.product,
       pronto.formulaId,
       pronto.corId,
@@ -147,6 +146,9 @@ const UnifiedOrder = () => {
       { source: pronto.fonte, discountPct: 0, precoSemDesconto: pronto.preco },
       oc.quantidade > 0 ? oc.quantidade : 1,
     );
+    // Só anuncia (e conta) o que entrou de fato — o conflito já avisou por conta própria.
+    if (resultado !== 'adicionado') return;
+    track('tint.cor_confirmada', { fonte: pronto.fonte, alternativa: false, com_desconto: false, entrada: 'um_toque' });
     toast.success(`${pronto.corId} adicionada`, { description: pronto.product.descricao });
   };
   const [corPrimeiroAberto, setCorPrimeiroAberto] = useState(false);
@@ -647,7 +649,8 @@ const UnifiedOrder = () => {
           // Defesa em profundidade (Codex P1): só base tintométrica da Oben entra por aqui (o
           // diálogo já barra com `ehBaseTintometricaOben`; repetido inline para não criar aresta).
           if (!product || product.account !== 'oben' || !product.is_tintometric || product.tint_type !== 'base') return;
-          h.addTintProductToCart(product, formulaId, corId, nomeCor, precoFinal, custoCorantes, pricingMeta, 1);
+          // Conflito → o diálogo fica aberto com a escolha (Codex P1 rodada 3).
+          if (h.addTintProductToCart(product, formulaId, corId, nomeCor, precoFinal, custoCorantes, pricingMeta, 1) !== 'adicionado') return;
           setCorPrimeiroAberto(false);
           toast.success(`${corId} adicionada`, { description: product.descricao });
         }}
@@ -661,7 +664,8 @@ const UnifiedOrder = () => {
           customerUserId={h.customerUserId}
           initialSearch={tintInitialSearch}
           onConfirm={(formulaId, corId, nomeCor, precoFinal, custoCorantes, pricingMeta, alternativeProduct) => {
-            h.addTintProductToCart(alternativeProduct || h.tintPendingProduct!, formulaId, corId, nomeCor, precoFinal, custoCorantes, pricingMeta);
+            // Conflito → pendência intacta: o diálogo segue aberto e a fila de "Repetir pedido" não avança.
+            if (h.addTintProductToCart(alternativeProduct || h.tintPendingProduct!, formulaId, corId, nomeCor, precoFinal, custoCorantes, pricingMeta) !== 'adicionado') return;
             setTintInitialSearch(null);
           }}
         />

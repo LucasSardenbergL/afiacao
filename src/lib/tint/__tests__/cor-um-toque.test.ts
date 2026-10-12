@@ -21,7 +21,8 @@ describe('escolherFormulaUmToque — fórmula inequívoca ou nada', () => {
 
   it('cor só por NOME (sem dígito) nunca vira 1 toque', () => {
     expect(ehCodigoDeCor('PLATINA')).toBe(false);
-    expect(escolherFormulaUmToque('sku-A', 'PLATINA', [cand({ cor_id: 'PLATINA' })], null)).toBeNull();
+    // rótulo livre do Omie sem código → nunca atalho (o código extraído seria uma palavra qualquer)
+    expect(escolherFormulaUmToque('sku-A', 'PLATINA', [cand({ cor_id: 'PLATINA' })], 'PLATINA BIANCO')).toBeNull();
   });
 
   it('código de OUTRA base não serve (a base é a da compra)', () => {
@@ -41,6 +42,22 @@ describe('escolherFormulaUmToque — fórmula inequívoca ou nada', () => {
     expect(nomeCompativel('346J - BS 900ML GALÃO', 'PLATINA BIANCO - BS')).toBe(false);
     expect(nomeCompativel('H109 PALHA 3,6 GALÃO', 'PALHA')).toBe(true);
     expect(nomeCompativel('AÇÚCAR CRISTAL', 'ACUCAR CRISTAL - BS')).toBe(true);
+  });
+
+  it('código do rótulo casa com o cor_id "CÓDIGO - BS" do catálogo vivo; linha distinta só pela base', () => {
+    const h109 = cand({ id: 'fh', cor_id: 'H109 - BS', nome_cor: 'PALHA H109 - BS' });
+    expect(escolherFormulaUmToque('sku-A', 'H109', [h109], 'PALHA H109 - BS 3,6 GALÃO')?.id).toBe('fh');
+    // mesmo código em 2 linhas NA MESMA base → ambíguo
+    const acril = cand({ id: 'fa', cor_id: 'H109 - ACRIL BS', nome_cor: 'PALHA H109 - ACRIL BS' });
+    expect(escolherFormulaUmToque('sku-A', 'H109', [h109, acril], 'PALHA H109 - BS')).toBeNull();
+    // "H1090 - BS" não é "H109"
+    expect(escolherFormulaUmToque('sku-A', 'H109', [cand({ cor_id: 'H1090 - BS', nome_cor: 'PALHA' })], 'PALHA H109')).toBeNull();
+  });
+
+  it('identidade exata (tint_cor_id) compara o cor_id INTEIRO', () => {
+    const h109 = cand({ id: 'fh', cor_id: 'H109 - BS' });
+    const acril = cand({ id: 'fa', cor_id: 'H109 - ACRIL BS' });
+    expect(escolherFormulaUmToque('sku-A', 'h109 - acril bs', [h109, acril], null)?.id).toBe('fa');
   });
 
   it('casamento é EXATO, não por prefixo/substring', () => {

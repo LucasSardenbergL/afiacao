@@ -8,7 +8,14 @@ import { selectAltPrice, type AltPriceSource, type TintPriceBreakdownLite } from
 
 /** Normaliza código de cor para o casamento EXATO (o histórico grava "346j" ou "346J"). */
 export function normalizarCodigoCor(s: string): string {
-  return s.trim().toUpperCase();
+  return s.trim().replace(/\s+/g, ' ').toUpperCase();
+}
+
+/** O CÓDIGO dentro do `cor_id` do catálogo: a 1ª palavra. Medido em 2026-10-12: 7.168 das
+ *  8.692 cores Oben têm `cor_id` "CÓDIGO - BS" ("H109 - BS"), 714 só o código, 783 o código
+ *  + linha ("012S - ACRIL BS"). 195 códigos repetem entre linhas — a unicidade é por BASE. */
+export function codigoDoCorId(corId: string): string {
+  return normalizarCodigoCor(corId).split(' ')[0] ?? '';
 }
 
 /** O termo extraído do histórico só serve ao 1 toque quando é CÓDIGO (tem dígito):
@@ -47,9 +54,16 @@ export function escolherFormulaUmToque(
   candidatas: CandidataUmToque[],
   rotuloHistorico: string | null,
 ): CandidataUmToque | null {
-  if (!ehCodigoDeCor(codigo)) return null;
   const alvo = normalizarCodigoCor(codigo);
-  const casam = candidatas.filter((c) => c.sku_id === skuId && normalizarCodigoCor(c.cor_id) === alvo);
+  if (!alvo) return null;
+  // Identidade exata (tint_cor_id do item do app) compara o cor_id INTEIRO; código extraído
+  // do rótulo compara com o código do cor_id ("H109" × "H109 - BS").
+  if (rotuloHistorico != null && !ehCodigoDeCor(codigo)) return null;
+  const casam = candidatas.filter(
+    (c) =>
+      c.sku_id === skuId &&
+      (rotuloHistorico == null ? normalizarCodigoCor(c.cor_id) === alvo : codigoDoCorId(c.cor_id) === alvo),
+  );
   if (casam.length !== 1) return null;
   if (rotuloHistorico != null && !nomeCompativel(rotuloHistorico, casam[0].nome_cor)) return null;
   return casam[0];
