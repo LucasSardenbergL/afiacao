@@ -32,10 +32,12 @@ export interface ConfirmUnitVars {
  * PostgREST respondia PGRST204 em TODA unidade confirmada; o typecheck não via porque o
  * `insert` do postgrest-js é genérico (`Row extends Insert`) e aceita coluna a mais calado.
  * Os `satisfies` abaixo devolvem essa checagem. `nfeId` segue nas vars (contrato da fila
- * `offline_queue_v1`) porque a promoção da NF-e a 'em_conferencia' precisa dele.
+ * offline) porque a promoção da NF-e a 'em_conferencia' precisa dele.
+ *
+ * `cliente`: no flush offline, o cliente VINCULADO ao token do dono do item (ver useOfflineFlush).
  */
-export async function confirmUnit(vars: ConfirmUnitVars): Promise<{ ok: true }> {
-  const { error: e1 } = await supabase
+export async function confirmUnit(vars: ConfirmUnitVars, cliente: typeof supabase = supabase): Promise<{ ok: true }> {
+  const { error: e1 } = await cliente
     .from('nfe_lotes_escaneados')
     .insert({
       nfe_recebimento_item_id: vars.itemId,
@@ -47,7 +49,7 @@ export async function confirmUnit(vars: ConfirmUnitVars): Promise<{ ok: true }> 
     } satisfies TablesInsert<'nfe_lotes_escaneados'>);
   if (e1) throw e1;
 
-  const { error: e2 } = await supabase
+  const { error: e2 } = await cliente
     .from('nfe_recebimento_itens')
     .update({
       quantidade_conferida: vars.newConferida,
@@ -57,7 +59,7 @@ export async function confirmUnit(vars: ConfirmUnitVars): Promise<{ ok: true }> 
   if (e2) throw e2;
 
   if (vars.updateNfeStatusToEmConferencia) {
-    const { error: e3 } = await supabase
+    const { error: e3 } = await cliente
       .from('nfe_recebimentos')
       .update({ status: 'em_conferencia' } satisfies TablesUpdate<'nfe_recebimentos'>)
       .eq('id', vars.nfeId);

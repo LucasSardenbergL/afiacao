@@ -29,9 +29,11 @@ type RpcClient = { rpc(fn: string, p?: Record<string, unknown>): Promise<{ error
  *  - o recálculo do pai é função pura do estado atual dos itens.
  * `userId` é derivado server-side (`auth.uid()`); `quantidade`/`loteEsperado` da interface seguem
  * no payload (usados pelo optimistic-merge) mas a RPC lê o item server-side (anti-spoof).
+ *
+ * `cliente`: no flush offline, o cliente VINCULADO ao token do dono do item (ver useOfflineFlush).
  */
-export async function confirmPickItem(vars: ConfirmPickItemVars): Promise<{ ok: true }> {
-  const { error } = await (supabase as unknown as RpcClient).rpc('confirmar_item_picking', {
+export async function confirmPickItem(vars: ConfirmPickItemVars, cliente: typeof supabase = supabase): Promise<{ ok: true }> {
+  const { error } = await (cliente as unknown as RpcClient).rpc('confirmar_item_picking', {
     p_event_id: vars.eventId,
     p_task_id: vars.pickingTaskId,
     p_item_id: vars.pickingTaskItemId,

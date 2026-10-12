@@ -34,6 +34,7 @@ import { CommandPalette } from '@/components/shell/CommandPalette';
 import { CommandPaletteTrigger } from '@/components/shell/CommandPaletteTrigger';
 import { CompanySwitcher } from '@/components/shell/CompanySwitcher';
 import { NetworkStatusIndicator } from '@/components/shell/NetworkStatusIndicator';
+import { useSaidaComFilaPendente } from '@/components/shell/SaidaComFilaPendente';
 import { DataHealthBadge } from '@/components/shell/DataHealthBadge';
 import { ThemeToggle } from '@/components/shell/ThemeToggle';
 import { PageViewTracker } from '@/components/shell/PageViewTracker';
@@ -708,7 +709,7 @@ const AppSidebar = React.memo(function AppSidebar({ collapsed, onToggle }: { col
 /* ─── Topbar ─── */
 const AppTopbar = React.memo(function AppTopbar({ sidebarCollapsed, onMobileMenuToggle }: { sidebarCollapsed: boolean; onMobileMenuToggle: () => void }) {
   const navigate = useNavigate();
-  const { signOut } = useAuth();
+  const { pedirSaida, dialogoSaida } = useSaidaComFilaPendente();
   const { isImpersonating } = useImpersonation();
   const { displayIsStaff } = useDisplayAccess();
 
@@ -762,13 +763,13 @@ const AppTopbar = React.memo(function AppTopbar({ sidebarCollapsed, onMobileMenu
               <User className="w-4 h-4 mr-2" /> Meu perfil
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => signOut()} className="text-destructive">
+            <DropdownMenuItem onClick={pedirSaida} className="text-destructive">
               <LogOut className="w-4 h-4 mr-2" /> Sair
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
-
+      {dialogoSaida}
     </header>
   );
 });

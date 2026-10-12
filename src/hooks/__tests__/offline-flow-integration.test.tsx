@@ -10,7 +10,21 @@ import { renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 vi.mock('@/lib/analytics', () => ({ track: vi.fn() }));
-vi.mock('@/integrations/supabase/client', () => ({ supabase: { rpc: vi.fn() } }));
+vi.mock('@/integrations/supabase/client', () => ({
+  supabase: {
+    rpc: vi.fn(),
+    auth: { onAuthStateChange: () => ({ data: { subscription: { unsubscribe: () => undefined } } }) },
+  },
+}));
+// A sessão do aparelho é do dono dos itens; o cliente do dono reaproveita o mock do rpc. A
+// assinatura por token é provada com o SDK real em src/lib/__tests__/offline-cliente-do-dono.test.tsx.
+vi.mock('@/lib/offline-cliente-do-dono', async () => {
+  const { supabase } = await import('@/integrations/supabase/client');
+  return {
+    credencialDaSessao: async () => ({ userId: 'user-1', accessToken: 'tok-user-1' }),
+    criarClienteDoDono: () => supabase,
+  };
+});
 
 import { supabase } from '@/integrations/supabase/client';
 import { enqueue, getOfflineQueueDepth } from '@/lib/offline-queue';
@@ -57,7 +71,7 @@ describe('ciclo offline→reconnect do picking', () => {
     registerAllOfflineHandlers();
 
     // 2. Separador confirma item OFFLINE → item entra na fila.
-    await enqueue('picking.confirm-item', vars);
+    await enqueue('picking.confirm-item', vars, 'user-1');
     expect(await getOfflineQueueDepth()).toBe(1);
 
     // 3. Reconecta: montar useOfflineFlush dispara o flush (fila não-vazia + online).
@@ -82,7 +96,7 @@ describe('ciclo offline→reconnect do picking', () => {
     mockedRpc.mockResolvedValue({ error: { code: '42501', message: 'rls' } });
 
     registerAllOfflineHandlers();
-    await enqueue('picking.confirm-item', vars);
+    await enqueue('picking.confirm-item', vars, 'user-1');
 
     renderHook(() => useOfflineFlush(), { wrapper });
 
