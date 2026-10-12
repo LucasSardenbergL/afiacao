@@ -89,6 +89,8 @@ on:
   # como `workflow_dispatch` na main também dá `github.ref == 'refs/heads/main'`, ele exercita os
   # mesmos dois steps de alerta que o `schedule` vai exercitar — sem isso, a primeira prova de que a
   # Issue abre/fecha só viria no primeiro cron.
+  # Desde o M-22 (2026-10-11) o `auto-merge.yml` dispara este gatilho SOZINHO depois de cada merge
+  # de PR (job `ci-na-main-pos-merge`), e o cron diário fica como rede. Coalescência no `concurrency:`.
   workflow_dispatch:
 
 # ┌─ FAN-OUT (2026-09-07) ─────────────────────────────────────────────────────────────────────────┐
@@ -149,8 +151,15 @@ on:
 #
 # O `validate` (`if: always()`) ainda roda no run cancelado e reprova o commit SUPERADO — inócuo: o
 # PR só olha o head.
+#
+# `workflow_dispatch` (desde o M-22, 2026-10-11) COALESCE num grupo por ref, SEM cancel-in-progress:
+# o `auto-merge.yml` dispara um CI na main a cada merge (~30 em 7 h num dia cheio), e cada run usa
+# ~11 jobs dos 20 simultâneos do plano Free. Com o grupo, o GitHub mantém 1 rodando + 1 PENDENTE e
+# troca o pendente pelo mais novo — o run em andamento NUNCA é cancelado (a regra acima segue), e o
+# que roda por último valida o HEAD da main, que contém todos os merges anteriores. O pendente
+# substituído nunca começou: não roda o alerta de main vermelha nem o agregador.
 concurrency:
-  group: ${{ github.event_name == 'pull_request' && format('ci-pr-{0}', github.event.pull_request.number) || format('ci-{0}-{1}', github.event_name, github.run_id) }}
+  group: ${{ github.event_name == 'pull_request' && format('ci-pr-{0}', github.event.pull_request.number) || github.event_name == 'workflow_dispatch' && format('ci-dispatch-{0}', github.ref) || format('ci-{0}-{1}', github.event_name, github.run_id) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
