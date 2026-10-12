@@ -336,7 +336,15 @@ por `() => { throw new Error('M39_EB_…') }` e despache um estado novo). Não a
 **Leitura do zero, daqui em diante:** com os dois canos provados, `$exception = 0` é ausência real
 de erro capturável **nos aparelhos que emitem** — o bloqueador de rastreador (§4) continua censurando
 o resto, então o zero vale para os 4 aparelhos visíveis, não para a frota. As sondas ficaram no
-PostHog com prefixo `M39_` (filtrar `properties.$exception_list[1].value NOT LIKE 'M39_%'`).
+PostHog com prefixo `M39_`/`M30_` (filtrar `value NOT LIKE 'M39_%' AND value NOT LIKE 'M30_%'`, com
+`value = properties.$exception_list[1].value`).
+
+**O Chrome logado do founder também é censurado (medido 2026-10-12, sonda do M-30):** o `$lib='web'`
+do usuário dele para em 2026-10-10 23:30 e nada dele chega depois — só o `analytics-outbox`. No
+navegador, `fetch('https://us.i.posthog.com/flags/')` responde (401) e `fetch('…/i/v0/e/')` dá
+`Failed to fetch`: o bloqueador corta só o endpoint de eventos. Sonda de `$exception` roda, então,
+em navegador **sem extensão** (o embutido do app, anônimo na `/auth`); a do shell logado prova a
+tela (menu de pé, fallback inline), não o evento. O `escopo` chegou em prod (`app`, build `index-CEjSHyYN`).
 
 ## 5. Sensores de frontend já instalados
 

@@ -163,9 +163,9 @@ describe('o corpo REAL do repo', () => {
     expect(r.arquivosComVinculo).toBe(17);
   });
 
-  it('os sítios que leem por `-f` são o do #2167 e o exportador do Jev, e TODOS têm ON_ERROR_STOP', () => {
+  it('os sítios que leem por `-f` são o do #2167, a captura de cron.job do refresh-snapshot (M-37) e o exportador do Jev, e TODOS têm ON_ERROR_STOP', () => {
     const porArquivo = r.sitios.filter((s) => s.temF);
-    expect(porArquivo.map((s) => s.arquivo)).toEqual(['db/audit-anon-dml-bypass.sh', 'scripts/jev/exportar.ts']);
+    expect(porArquivo.map((s) => s.arquivo)).toEqual(['db/audit-anon-dml-bypass.sh', 'db/refresh-snapshot.sh', 'scripts/jev/exportar.ts']);
     for (const s of porArquivo) expect(s.temErrorStop).toBe(true);
   });
 
