@@ -154,12 +154,12 @@ export function vereditoExclusaoNoOmie(linha: {
   if (typeof linha.hashPayload === "string" && linha.hashPayload.startsWith("omie_")) {
     return {
       permitido: false,
-      motivo: `Registro importado do Omie (PV ${linha.omiePedidoId}): o app não cancela pedido no Omie. Cancele direto no Omie — o sync atualiza aqui.`,
+      motivo: `Registro importado do Omie (PV ${linha.omiePedidoId}): registros importados ficam no app, inclusive os cancelados — ele espelha o Omie. Para cancelar o pedido, cancele direto no Omie.`,
     };
   }
   if (linha.statusCanonico === "cancelado") return { permitido: true };
   return {
     permitido: false,
-    motivo: `O pedido está no Omie (PV ${linha.omiePedidoId}) e ainda não consta como cancelado. Cancele direto no Omie; depois que o sync trouxer o cancelamento, a exclusão aqui é liberada.`,
+    motivo: `O pedido está no Omie (PV ${linha.omiePedidoId}) e ainda não consta como cancelado aqui. Cancele direto no Omie; quando o sync trouxer o cancelamento, a exclusão é liberada. Se já cancelou e o pedido segue bloqueado depois do próximo sync, avise o suporte (o pedido pode não ter sido importado).`,
   };
 }

@@ -3874,7 +3874,8 @@ Deno.serve(async (req) => {
             statusCanonico: (canon?.status as string | null) ?? null,
           });
           if (!veredito.permitido) throw new Error(`Exclusão recusada: ${veredito.motivo}`);
-        } else if (orderAccount === "oben") {
+        } else {
+          // Vale para as DUAS contas (Codex 2026-10-11: Colacor sem PID apagava com PV vivo).
           // ATP 3.3 (#3): sem PID local o PV pode existir mesmo assim (o write-back falhou depois do
           // IncluirPedido). Apagar soltaria a reserva (FK SET NULL → TTL) com o PV vivo. A chave
           // PV_<id> é o registro durável do envio: TODO pedido Oben sem PID é consultado (a trilha
