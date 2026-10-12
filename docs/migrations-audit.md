@@ -21,13 +21,13 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **615** custom migrations totais
-- **2015** objetos esperados (criados por estas migrations)
+- **616** custom migrations totais
+- **2019** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 702
+  - `function`: 703
   - `rls_policy`: 471
-  - `index`: 273
-  - `cron_job`: 177
+  - `index`: 275
+  - `cron_job`: 178
   - `table`: 176
   - `view`: 109
   - `trigger`: 103
@@ -5005,6 +5005,15 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20261011120300_sales_price_history_created_at_futuro.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20261011120400_retencao_scores_farmer.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.expurgar_scores_antigos` | — |
+| `index` | `public.idx_health_history_calculated_at` | `health_score_history` |
+| `index` | `public.idx_priority_log_score_date` | `priority_score_log` |
+| `cron_job` | `cron.expurgo-scores-farmer` | — |
 
 ### `20261011120500_drop_quarentena_omie_clientes.sql`
 

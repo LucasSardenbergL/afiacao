@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 615
+-- Total de custom migrations: 616
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -673,6 +673,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261011120100', 'reposicao_logs_insert_cap_compras', '20261011120100_reposicao_logs_insert_cap_compras.sql'),
   ('20261011120200', 'wa_owner_efetivo_gate_staff', '20261011120200_wa_owner_efetivo_gate_staff.sql'),
   ('20261011120300', 'sales_price_history_created_at_futuro', '20261011120300_sales_price_history_created_at_futuro.sql'),
+  ('20261011120400', 'retencao_scores_farmer', '20261011120400_retencao_scores_farmer.sql'),
   ('20261011120500', 'drop_quarentena_omie_clientes', '20261011120500_drop_quarentena_omie_clientes.sql'),
   ('20261011140000', 'picking_v2_coleta_reserva', '20261011140000_picking_v2_coleta_reserva.sql'),
   ('20261011150000', 'reposicao_recusa_definitiva_portal_servidor', '20261011150000_reposicao_recusa_definitiva_portal_servidor.sql'),
@@ -2647,6 +2648,10 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('reposicao_logs_insert_cap_compras', 'rls_policy', 'public', 'reposicao_motor_run_ins', 'reposicao_motor_run'),
   ('reposicao_logs_insert_cap_compras', 'rls_policy', 'public', 'estoque_nao_confirmado_log_ins', 'reposicao_estoque_nao_confirmado_log'),
   ('wa_owner_efetivo_gate_staff', 'function', 'public', 'wa_owner_efetivo', ''),
+  ('retencao_scores_farmer', 'function', 'private', 'expurgar_scores_antigos', ''),
+  ('retencao_scores_farmer', 'index', 'public', 'idx_health_history_calculated_at', 'health_score_history'),
+  ('retencao_scores_farmer', 'index', 'public', 'idx_priority_log_score_date', 'priority_score_log'),
+  ('retencao_scores_farmer', 'cron_job', 'cron', 'expurgo-scores-farmer', ''),
   ('picking_v2_coleta_reserva', 'function', 'public', 'picking_v2_data', ''),
   ('picking_v2_coleta_reserva', 'function', 'public', 'picking_coleta_reservar', ''),
   ('picking_v2_coleta_reserva', 'function', 'public', 'picking_sincronizar_fila', ''),
@@ -4679,6 +4684,10 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('reposicao_logs_insert_cap_compras', 'rls_policy', 'public', 'reposicao_motor_run_ins', 'reposicao_motor_run'),
   ('reposicao_logs_insert_cap_compras', 'rls_policy', 'public', 'estoque_nao_confirmado_log_ins', 'reposicao_estoque_nao_confirmado_log'),
   ('wa_owner_efetivo_gate_staff', 'function', 'public', 'wa_owner_efetivo', ''),
+  ('retencao_scores_farmer', 'function', 'private', 'expurgar_scores_antigos', ''),
+  ('retencao_scores_farmer', 'index', 'public', 'idx_health_history_calculated_at', 'health_score_history'),
+  ('retencao_scores_farmer', 'index', 'public', 'idx_priority_log_score_date', 'priority_score_log'),
+  ('retencao_scores_farmer', 'cron_job', 'cron', 'expurgo-scores-farmer', ''),
   ('picking_v2_coleta_reserva', 'function', 'public', 'picking_v2_data', ''),
   ('picking_v2_coleta_reserva', 'function', 'public', 'picking_coleta_reservar', ''),
   ('picking_v2_coleta_reserva', 'function', 'public', 'picking_sincronizar_fila', ''),
