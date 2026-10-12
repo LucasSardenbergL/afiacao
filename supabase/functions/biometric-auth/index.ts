@@ -1,5 +1,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { verifyAuthenticationResponse } from "npm:@simplewebauthn/server@10.0.1";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
+import { authorizeCronOrStaff } from "../_shared/auth.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -46,12 +48,25 @@ Deno.serve(async (req) => {
     );
   }
 
+  const corpoBruto: unknown = await req.json().catch(() => null);
+  // Sonda de versão (M-26; docs/agent/deploy.md): `{ probe: true }` responde a versão no ar sem
+  // tocar banco. `classificarSonda` decide fail-closed (a string "true" do SQL Editor é ambígua → 400).
+  // GATE PRÓPRIO: o gate desta edge não aceita `x-cron-secret`, então só um corpo de SONDA desvia para
+  // `authorizeCronOrStaff`; o fluxo normal segue exatamente como antes. Corpo lido UMA vez.
+  const decisaoSonda = classificarSonda(corpoBruto);
+  if (decisaoSonda.tipo !== "disparo") {
+    const authSonda = await authorizeCronOrStaff(req);
+    if (!authSonda.ok) return authSonda.response;
+    if (decisaoSonda.tipo === "sonda") return new Response(JSON.stringify(respostaSonda(VERSAO)), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    return new Response(JSON.stringify({ versao: VERSAO, error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
+
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    const body = await req.json();
+    const body = corpoBruto as Record<string, unknown> | null;
     const { action, credentialId } = body ?? {};
 
     if (!action || typeof action !== "string") {
