@@ -52,7 +52,7 @@ export const FONTE_SHA256: Record<string, string> = {
   "omie-sync": "0f675337b50a933d3cfbd87a42346e15c25d195d6ffcce2d546fd75d94945e87",
   "omie-sync-ctes-recebidos": "bc8533b737d175adbca4a6ab49f2ec1dc385670f919368db53fe9b4f00c8d9b2",
   "omie-sync-estoque": "80a8ff4386f1224a59f3a7d6ea82a062c2115217df1984577820c9ee4d974040",
-  "omie-sync-metadados": "b942f5f23cf78d244d3399cca69bee2a8fcf68e57a8da8b885604ffd89ed1bfb",
+  "omie-sync-metadados": "3addcc35c348be88ef3a459a23eab6bb5619b56dadbe1eae82b256f7040e34b0",
   "omie-sync-nfes-recebidas": "9fdb19a30bf3e0c0b295de056da98f1b387519bf8d549b6f62d362ac223388c6",
   "omie-sync-pedidos-compra": "d6cfd8e198d9f9d529a33af6a341c491d0d29e8fcca2da65b8bae39d21c90d56",
   "omie-sync-sku-items": "8c321a930cf54fb8fc62464337542cf5e679f0d05c28b0f5b9931e985e4a6091",

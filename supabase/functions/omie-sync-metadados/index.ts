@@ -178,8 +178,12 @@ async function inativarAusentes(
     },
     { onConflict: "entity_type,account" },
   );
+  // LANÇA (não só loga): sem o conjunto NOVO gravado, o de ONTEM seguiria elegível — X reapareceu
+  // hoje, o registro falhou, um retry minutos depois omite X por deslize e o confirma com o conjunto
+  // velho (o CAS não pega: o updated_at de X é anterior ao retry). O catch do caller invalida.
+  // Achado do Codex no adversarial (2026-10-12). A inativação deste run, se houve, já valeu.
   if (erroRegistro) {
-    console.error(`[metadados ${acctValue}] registro de ausentes falhou (inativação já aplicada):`, erroRegistro.message);
+    throw new Error(`registro do conjunto de ausentes (inativados=${inativados.length}): ${erroRegistro.message}`);
   }
 
   console.log(
