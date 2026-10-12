@@ -9,6 +9,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import type { Product } from '@/hooks/useUnifiedOrder';
 import { fmt } from '@/hooks/useUnifiedOrder';
+import { podeAdicionarCor, precoVendavel } from '@/lib/tint/pode-adicionar';
 import { selectAltPrice, type TintPriceSource, type AltPriceSource, type SemPrecoMotivo, type TintPriceBreakdownLite } from '@/lib/tint/select-price';
 import { AltPriceSourcePicker } from './AltPriceSourcePicker';
 import type { FormulaResult, AlternativePackaging, TintPricingMeta } from './types';
@@ -32,16 +33,8 @@ const MOTIVO_SEM_PRECO: Record<SemPrecoMotivo, string> = {
 const TOQUE_CAMPO = '[@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-24';
 const TOQUE_CHIP = '[@media(pointer:coarse)]:px-3 [@media(pointer:coarse)]:text-sm';
 
-/** Única condição de "Adicionar ao Pedido" — o botão só habilita sob ela e o Enter
- *  do teclado a reusa: nunca contorna o fail-closed (carregando/sem preço/R$ 0).
- *  Preço final > 0 (Codex P2): desconto de 99,99% arredondava a R$ 0,00 e vendia.
- *  Não é teto de desconto — é "nunca R$ 0". */
-function precoVendavel(v: number | null | undefined): v is number {
-  return v != null && Number.isFinite(v) && v > 0;
-}
-function podeAdicionarCor(p: { precoCarregando: boolean; disponivel: boolean; precoFinal: number | null }): boolean {
-  return !p.precoCarregando && p.disponivel && precoVendavel(p.precoFinal);
-}
+// "Adicionar ao Pedido" (botão e Enter via adicionarRef) usa a regra ÚNICA de
+// `@/lib/tint/pode-adicionar` — a mesma das outras portas de cor.
 
 interface SelectedFormulaCardProps {
   selectedFormula: FormulaResult;

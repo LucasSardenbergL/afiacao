@@ -89,13 +89,16 @@ export function TintColorSelectDialog({ product, open, onClose, onConfirm, custo
 
   // Fim do funil: a cor saiu do app pro pedido (≠ do Omie). `fonte` e `alternativa` dizem
   // por qual caminho — o mesmo SKU, outra embalagem/base, ou a busca global.
+  // Só conta o que ENTROU: conflito no carrinho (Fase 2A) não é confirmação (Codex P2).
   const confirmar: typeof onConfirm = (formulaId, corId, nomeCor, precoFinalItem, custo, meta, alternativeProduct) => {
+    const resultado = onConfirm(formulaId, corId, nomeCor, precoFinalItem, custo, meta, alternativeProduct);
+    if (resultado === 'conflito') return resultado;
     track('tint.cor_confirmada', {
       fonte: meta.source ?? 'nenhuma',
       alternativa: !!alternativeProduct,
       com_desconto: meta.discountPct > 0,
     });
-    onConfirm(formulaId, corId, nomeCor, precoFinalItem, custo, meta, alternativeProduct);
+    return resultado;
   };
 
   return (

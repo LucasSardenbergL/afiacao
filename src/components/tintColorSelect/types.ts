@@ -15,11 +15,15 @@ export interface TintPricingMeta {
   precoSemDesconto: number | null;
 }
 
+type ResultadoConfirmacaoCor = 'adicionado' | 'conflito';
+
 export interface TintColorSelectDialogProps {
   product: Product;
   open: boolean;
   onClose: () => void;
-  onConfirm: (formulaId: string, corId: string, nomeCor: string, precoFinal: number, custoCorantes: number, pricingMeta: TintPricingMeta, alternativeProduct?: Product) => void;
+  /** Fase 2A: o consumidor pode devolver 'conflito' (o carrinho recusou) — aí o diálogo não
+   *  registra confirmação. `void` = legado (edição), tratado como adicionado. */
+  onConfirm: (formulaId: string, corId: string, nomeCor: string, precoFinal: number, custoCorantes: number, pricingMeta: TintPricingMeta, alternativeProduct?: Product) => ResultadoConfirmacaoCor | void;
   customerUserId?: string | null;
   /** Pré-preenche a busca de cor ao abrir (re-pedido via "Cores do cliente"). */
   initialSearch?: string | null;

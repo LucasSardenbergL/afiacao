@@ -23,6 +23,9 @@ import {
   eqInt,
   eqText,
   orFilter,
+  imatchTokensSemAcento,
+  ilikeExatoOr,
+  tokensDeBusca,
   fetchAllPages,
   POSTGREST_PAGE_SIZE,
 } from '../postgrest';
@@ -552,5 +555,69 @@ describe('fetchAllPages — a capa de 1.000 do PostgREST é silenciosa', () => {
     await expect(
       fetchAllPages<{ id: number }>(() => Promise.resolve({ data: null, error: null }), 'teste/capa'),
     ).rejects.toThrow(/data null sem error/);
+  });
+});
+
+// Fase 2A do pedido com cor: busca de cor TOKENIZADA e SEM ACENTO (o ILIKE cru achava 0
+// para "acucar" num catálogo que grava "AÇÚCAR"). A regex gerada é avaliada aqui com o
+// mesmo sentido do `~*` do Postgres (flag `i`), e cada palavra exige casar (AND).
+describe('imatchTokensSemAcento — busca de cor por palavra, sem acento', () => {
+  const casa = (texto: string, termo: string) =>
+    imatchTokensSemAcento(['nome_cor'], termo).every((clausula) => {
+      const m = clausula.match(/^nome_cor\.imatch\."(.*)"$/);
+      if (!m) throw new Error(`cláusula fora do formato: ${clausula}`);
+      return new RegExp(m[1], 'i').test(texto);
+    });
+
+  it('acha a cor acentuada digitada sem acento (e vice-versa)', () => {
+    expect(casa('AÇÚCAR CRISTAL - BS', 'acucar')).toBe(true);
+    expect(casa('80 PÊSSEGO - BS', 'pessego')).toBe(true);
+    expect(casa('ALGODAO EG', 'algodão')).toBe(true);
+  });
+
+  it('acento digitado vira a MESMA palavra sem acento — não quebra a palavra em pedaços', () => {
+    // Sem tirar o diacrítico, o combinante do NFD virava separador: "são" → "sa"+"o",
+    // e o "o" solto casava qualquer cor com O (busca frouxa, não só "diferente").
+    expect(tokensDeBusca('Açúcar Algodão São')).toEqual(['acucar', 'algodao', 'sao']);
+    expect(casa('SALMÃO ROSA', 'são')).toBe(false);
+  });
+
+  it('ordem livre das palavras: "verde afiacao" acha "AFIAÇÃO VERDE"', () => {
+    expect(casa('AFIAÇÃO VERDE', 'verde afiacao')).toBe(true);
+    expect(casa('AFIAÇÃO VERDE', 'afiação verde')).toBe(true);
+  });
+
+  it('todas as palavras precisam casar (AND, não OR)', () => {
+    expect(casa('AÇÚCAR CRISTAL', 'acucar refinado')).toBe(false);
+    expect(imatchTokensSemAcento(['cor_id', 'nome_cor'], 'verde afiacao')).toHaveLength(2);
+  });
+
+  it('cada palavra casa em QUALQUER das colunas (OR dentro da cláusula)', () => {
+    const [c] = imatchTokensSemAcento(['cor_id', 'nome_cor'], '346j');
+    expect(c).toBe('cor_id.imatch."346j",nome_cor.imatch."346j"');
+  });
+
+  it('metacaractere do .or()/regex/LIKE nunca sobrevive — vira separador', () => {
+    const clausulas = imatchTokensSemAcento(['nome_cor'], 'a,b)"(*%_\\.[x]|y');
+    for (const c of clausulas) {
+      const regex = c.slice('nome_cor.imatch."'.length, -1);
+      expect(regex).toMatch(/^([0-9a-z]|\[[^\]"\\,()]+\])+$/i);
+    }
+    expect(tokensDeBusca('a,b)"(*%_\\.[x]|y')).toEqual(['a', 'b', 'x', 'y']);
+  });
+
+  it('busca degenerada (só pontuação) → nenhuma cláusula (o caller não filtra)', () => {
+    expect(imatchTokensSemAcento(['nome_cor'], ' -*%, ')).toEqual([]);
+  });
+});
+
+describe('ilikeExatoOr — igualdade sem caixa (código de cor do 1 toque)', () => {
+  it('ILIKE SEM curinga, um por valor', () => {
+    expect(ilikeExatoOr('cor_id', ['346J', ' H109 '])).toBe('cor_id.ilike."346J",cor_id.ilike."H109"');
+    expect(ilikeExatoOr('cor_id', ['H109'], { tambemPrimeiraPalavra: true })).toBe('cor_id.ilike."H109",cor_id.ilike."H109 *"');
+  });
+  it('valor com metacaractere do .or()/LIKE é DESCARTADO, não limpo (limpar casaria outra cor)', () => {
+    expect(ilikeExatoOr('cor_id', ['34%', '3_6J', 'a,b', 'x)', '*'])).toBe('');
+    expect(ilikeExatoOr('cor_id', ['34%', '346J'])).toBe('cor_id.ilike."346J"');
   });
 });

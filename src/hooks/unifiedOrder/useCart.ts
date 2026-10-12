@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useRef, type SetStateAction } from 'react';
 import { toast } from 'sonner';
 import type { OmieServico } from '@/services/omieService';
 import type {
@@ -20,7 +20,18 @@ interface UseCartArgs {
 }
 
 export function useCart({ getProductPrice, getServicePrice, servicos }: UseCartArgs) {
-  const [cart, setCart] = useState<CartItem[]>([]);
+  const [cart, setCartState] = useState<CartItem[]>([]);
+  // Codex P1 (Fase 2A, rodada 4): TODA escrita do carrinho passa por este setter ÚNICO, que
+  // aplica a mudança sobre o espelho síncrono (`cartRef`) e grava o estado com o resultado.
+  // Assim a decisão da tinta ('adicionado'|'conflito') vê o estado ATUAL mesmo dentro de um
+  // batch, sem atropelar outra mutação do mesmo tick (antes só a tinta escrevia o ref e o
+  // `setCart(proximo)` dela apagava um add/remove/qtd pendente). Mesma assinatura do setState.
+  const cartRef = useRef<CartItem[]>([]);
+  const setCart = useCallback((acao: SetStateAction<CartItem[]>) => {
+    const proximo = typeof acao === 'function' ? acao(cartRef.current) : acao;
+    cartRef.current = proximo;
+    setCartState(proximo);
+  }, []);
   const [tintPendingProduct, setTintPendingProductState] = useState<Product | null>(null);
   // Quantidade digitada na lista viaja até a confirmação da cor — antes a base
   // tintométrica abria o diálogo e o item nascia com 1, perdendo a qtd em silêncio.
@@ -109,7 +120,7 @@ export function useCart({ getProductPrice, getServicePrice, servicos }: UseCartA
         return [...prev, nascerItemProduto(product, qty, getProductPrice)];
       });
     },
-    [getProductPrice, setTintPendingProduct],
+    [getProductPrice, setTintPendingProduct, setCart],
   );
 
   const addTintProductToCart = useCallback(
@@ -122,47 +133,71 @@ export function useCart({ getProductPrice, getServicePrice, servicos }: UseCartA
       custoCorantes: number,
       // Fase 3: fonte escolhida + desconto declarado (o gate do submit revalida)
       pricingMeta?: { source: string | null; discountPct: number; precoSemDesconto: number | null },
-    ) => {
+      // Fase 2A: entrada SEM diálogo pendente (1 toque das "Cores do cliente") traz a própria qtd;
+      // sem ela, vale a qtd pendente do diálogo (Fase 1).
+      qtyOverride?: number,
+    ): 'adicionado' | 'conflito' => {
       const account = (product.account || 'oben') as ProductAccount;
-      const qty = tintPendingQty;
-      setCart(prev => {
-        const existing = prev.find(
-          (c): c is ProductCartItem => c.type === 'product' && c.tint_formula_id === formulaId,
-        );
-        if (existing) {
-          return prev.map(c =>
-            c.type === 'product' && (c as ProductCartItem).tint_formula_id === formulaId
-              ? ({ ...c, quantity: c.quantity + qty } as ProductCartItem)
-              : c,
-          );
-        }
-        return [
-          ...prev,
-          {
-            type: 'product',
-            product,
-            quantity: qty,
-            unit_price: precoFinal,
-            account,
-            tint_cor_id: corId,
-            tint_nome_cor: nomeCor,
-            tint_custo_corantes: custoCorantes,
-            tint_formula_id: formulaId,
-            ...(pricingMeta?.source
-              ? {
-                  tint_price_source: pricingMeta.source,
-                  tint_discount_pct: pricingMeta.discountPct,
-                  ...(pricingMeta.precoSemDesconto != null
-                    ? { tint_preco_sem_desconto: pricingMeta.precoSemDesconto }
-                    : {}),
-                }
-              : {}),
-          } as ProductCartItem,
-        ];
-      });
+      const qty = qtyOverride != null && Number.isFinite(qtyOverride) && qtyOverride > 0 ? qtyOverride : tintPendingQty;
+      // Codex P1 (Fase 2A): só SOMA na linha existente quando a decisão de preço é a MESMA
+      // (preço, fonte, desconto, preço-base). Antes somava por fórmula e as unidades novas
+      // herdavam o desconto antigo sem escolha ativa — o gate aceitava (metadados coerentes).
+      // Decisão DIFERENTE para a mesma fórmula → RECUSA com aviso (rodada 2: uma 2ª linha da
+      // mesma fórmula duplicava a chave do carrinho e misturava a margem entre as linhas).
+      const fonte = pricingMeta?.source ?? null;
+      const desconto = fonte ? pricingMeta!.discountPct : undefined;
+      const precoBase = fonte ? pricingMeta!.precoSemDesconto ?? undefined : undefined;
+      const mesmaDecisao = (c: ProductCartItem) =>
+        c.tint_formula_id === formulaId &&
+        c.unit_price === precoFinal &&
+        (c.tint_price_source ?? null) === fonte &&
+        c.tint_discount_pct === desconto &&
+        c.tint_preco_sem_desconto === precoBase;
+      // Codex P1 (rodada 3): a decisão é tomada SÍNCRONA sobre o estado atual (`cartRef`, que
+      // também recebe a escrita na hora — 2 confirmações no mesmo batch não se atropelam) e
+      // DEVOLVIDA: só 'adicionado' fecha o diálogo / avança a fila / anuncia sucesso. Em
+      // 'conflito' a pendência (base + qtd) fica intacta e o diálogo segue aberto.
+      const atual = cartRef.current;
+      const idx = atual.findIndex((c) => c.type === 'product' && mesmaDecisao(c as ProductCartItem));
+      const conflito =
+        idx < 0 && atual.some((c) => c.type === 'product' && (c as ProductCartItem).tint_formula_id === formulaId);
+      if (conflito) {
+        toast.warning('Esta cor já está no carrinho com outro preço', {
+          description: 'Some a quantidade na linha que já existe, ou remova-a e adicione de novo com o preço novo.',
+        });
+        return 'conflito';
+      }
+      const proximo: CartItem[] =
+        idx >= 0
+          ? atual.map((c, i) => (i === idx ? ({ ...c, quantity: c.quantity + qty } as ProductCartItem) : c))
+          : [
+              ...atual,
+              {
+                type: 'product',
+                product,
+                quantity: qty,
+                unit_price: precoFinal,
+                account,
+                tint_cor_id: corId,
+                tint_nome_cor: nomeCor,
+                tint_custo_corantes: custoCorantes,
+                tint_formula_id: formulaId,
+                ...(pricingMeta?.source
+                  ? {
+                      tint_price_source: pricingMeta.source,
+                      tint_discount_pct: pricingMeta.discountPct,
+                      ...(pricingMeta.precoSemDesconto != null
+                        ? { tint_preco_sem_desconto: pricingMeta.precoSemDesconto }
+                        : {}),
+                    }
+                  : {}),
+              } as ProductCartItem,
+            ];
+      setCart(proximo);
       setTintPendingProduct(null);
+      return 'adicionado';
     },
-    [tintPendingQty, setTintPendingProduct],
+    [tintPendingQty, setTintPendingProduct, setCart],
   );
 
   /* ─── Service actions ─── */
@@ -183,7 +218,7 @@ export function useCart({ getProductPrice, getServicePrice, servicos }: UseCartA
         toast.success('Já adicionada', { description: 'Esta ferramenta já está no carrinho.' });
       }
     },
-    [],
+    [setCart],
   );
 
   const updateServiceServico = useCallback(
@@ -197,7 +232,7 @@ export function useCart({ getProductPrice, getServicePrice, servicos }: UseCartA
         ),
       );
     },
-    [servicos],
+    [servicos, setCart],
   );
 
   const updateServiceNotes = useCallback((toolId: string, newNotes: string) => {
@@ -208,7 +243,7 @@ export function useCart({ getProductPrice, getServicePrice, servicos }: UseCartA
           : c,
       ),
     );
-  }, []);
+  }, [setCart]);
 
   const updateServicePhotos = useCallback((toolId: string, photos: string[]) => {
     setCart(prev =>
@@ -218,7 +253,7 @@ export function useCart({ getProductPrice, getServicePrice, servicos }: UseCartA
           : c,
       ),
     );
-  }, []);
+  }, [setCart]);
 
   /* ─── Generic ─── */
   const updateQuantity = useCallback(
@@ -238,7 +273,7 @@ export function useCart({ getProductPrice, getServicePrice, servicos }: UseCartA
         }),
       );
     },
-    [],
+    [setCart],
   );
 
   const updateProductPrice = useCallback((index: number, price: number) => {
@@ -247,15 +282,15 @@ export function useCart({ getProductPrice, getServicePrice, servicos }: UseCartA
         i === index && c.type === 'product' ? ({ ...c, unit_price: price } as ProductCartItem) : c,
       ),
     );
-  }, []);
+  }, [setCart]);
 
   const removeFromCart = useCallback((index: number) => {
     setCart(prev => prev.filter((_, i) => i !== index));
-  }, []);
+  }, [setCart]);
 
   const clearCart = useCallback(() => {
     setCart([]);
-  }, []);
+  }, [setCart]);
 
   return {
     // state
