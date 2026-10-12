@@ -13,6 +13,7 @@ import { cn } from '@/lib/utils';
 import { useBiometricAuth } from '@/hooks/useBiometricAuth';
 import { useProfile, useProfileStats } from '@/queries/useProfile';
 import { useQueryClient } from '@tanstack/react-query';
+import { useSaidaComFilaPendente } from '@/components/shell/SaidaComFilaPendente';
 
 
 const Profile = () => {
@@ -121,6 +122,8 @@ const Profile = () => {
       });
     }
   };
+  // Ações offline pendentes deste usuário → avisa antes de sair (ficam retidas, nunca apagadas).
+  const { pedirSaida, dialogoSaida } = useSaidaComFilaPendente(handleLogout);
 
   const handleEditClick = () => {
     setEditName(profile?.name || '');
@@ -425,7 +428,7 @@ const Profile = () => {
         <Button 
           variant="outline" 
           className="w-full text-destructive hover:text-destructive hover:bg-destructive/10"
-          onClick={handleLogout}
+          onClick={pedirSaida}
         >
           <LogOut className="w-4 h-4 mr-2" />
           Sair da conta
@@ -435,7 +438,7 @@ const Profile = () => {
           Versão 1.0.0
         </p>
       </main>
-
+      {dialogoSaida}
     </div>
   );
 };

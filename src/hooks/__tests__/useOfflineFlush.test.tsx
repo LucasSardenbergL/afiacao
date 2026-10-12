@@ -11,7 +11,18 @@ vi.mock('@/lib/offline-queue', () => ({
   subscribeToOfflineQueue: (...args: unknown[]) => mockSubscribe(...args),
 }));
 
+vi.mock('@/integrations/supabase/client', () => ({
+  supabase: { auth: { onAuthStateChange: () => ({ data: { subscription: { unsubscribe: () => undefined } } }) } },
+}));
+const clienteFalso = { tag: 'cliente-do-dono' };
+vi.mock('@/lib/offline-cliente-do-dono', () => ({
+  credencialDaSessao: vi.fn(),
+  criarClienteDoDono: () => clienteFalso,
+}));
+
 import { useOfflineFlush, registerOfflineHandler, __clearHandlersForTest } from '../useOfflineFlush';
+
+const credencial = { userId: 'user-a', accessToken: 'tok-a' };
 
 // useOfflineFlush usa useQueryClient() → precisa do provider.
 const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -51,8 +62,8 @@ describe('useOfflineFlush', () => {
     registerOfflineHandler('test.kind', handler);
 
     // O hook passa um wrapper que despacha por kind. Vamos chamar o wrapper diretamente.
-    mockFlushImpl.mockImplementation(async (wrapper: (m: { kind: string; variables: unknown }) => Promise<boolean>) => {
-      const ok = await wrapper({ kind: 'test.kind', variables: { x: 1 } });
+    mockFlushImpl.mockImplementation(async (wrapper: (m: { kind: string; variables: unknown }, c: typeof credencial) => Promise<boolean>) => {
+      const ok = await wrapper({ kind: 'test.kind', variables: { x: 1 } }, credencial);
       return { success: ok ? 1 : 0, failed: ok ? 0 : 1 };
     });
 
@@ -62,12 +73,13 @@ describe('useOfflineFlush', () => {
       window.dispatchEvent(new Event('online'));
     });
 
-    await waitFor(() => expect(handler).toHaveBeenCalledWith({ x: 1 }));
+    // O handler recebe o cliente VINCULADO ao token do dono, nunca o singleton.
+    await waitFor(() => expect(handler).toHaveBeenCalledWith({ x: 1 }, clienteFalso));
   });
 
   it('returns false for unknown kind (item stays in queue)', async () => {
-    mockFlushImpl.mockImplementation(async (wrapper: (m: { kind: string; variables: unknown }) => Promise<boolean>) => {
-      const ok = await wrapper({ kind: 'no.handler', variables: {} });
+    mockFlushImpl.mockImplementation(async (wrapper: (m: { kind: string; variables: unknown }, c: typeof credencial) => Promise<boolean>) => {
+      const ok = await wrapper({ kind: 'no.handler', variables: {} }, credencial);
       return { success: ok ? 1 : 0, failed: ok ? 0 : 1 };
     });
 

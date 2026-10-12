@@ -1,10 +1,22 @@
 import { useEffect } from 'react';
 import { useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { flush, subscribeToOfflineQueue, type QueuedMutation } from '@/lib/offline-queue';
+import { supabase } from '@/integrations/supabase/client';
 import { logger } from '@/lib/logger';
+import {
+  credencialDaSessao,
+  criarClienteDoDono,
+  type ClienteSupabase,
+  type CredencialDoDono,
+} from '@/lib/offline-cliente-do-dono';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 
-type Handler = (variables: unknown) => Promise<boolean>;
+/**
+ * `cliente` assina com o token do DONO do item (conferido pelo `flush`) — o handler deve usar
+ * ESTE cliente, nunca o singleton `supabase`: o singleton relê a sessão do aparelho a cada
+ * requisição e pode sair com a identidade de outra pessoa.
+ */
+type Handler = (variables: unknown, cliente: ClienteSupabase) => Promise<boolean>;
 
 interface HandlerEntry {
   handler: Handler;
@@ -31,7 +43,7 @@ const handlers = new Map<string, HandlerEntry>();
  */
 export function registerOfflineHandler<TVars>(
   kind: string,
-  handler: (variables: TVars) => Promise<boolean>,
+  handler: (variables: TVars, cliente: ClienteSupabase) => Promise<boolean>,
   invalidateKeys?: readonly QueryKey[],
 ): () => void {
   handlers.set(kind, { handler: handler as Handler, invalidateKeys });
@@ -57,14 +69,19 @@ export function useOfflineFlush(): void {
       // Kinds que drenaram nesta rodada → suas query keys são revalidadas ao fim,
       // pra UI refletir a verdade do servidor após a fila esvaziar.
       const succeededKinds = new Set<string>();
-      const dispatcher = async (m: QueuedMutation): Promise<boolean> => {
+      // Um cliente por token: a credencial muda (refresh, outra pessoa) → cliente novo.
+      let clienteDoDono: { token: string; cliente: ClienteSupabase } | null = null;
+      const dispatcher = async (m: QueuedMutation, credencial: CredencialDoDono): Promise<boolean> => {
         const entry = handlers.get(m.kind);
         if (!entry) {
           logger.warn('Offline flush: nenhum handler para kind', { kind: m.kind });
           return false;
         }
+        if (clienteDoDono?.token !== credencial.accessToken) {
+          clienteDoDono = { token: credencial.accessToken, cliente: criarClienteDoDono(credencial.accessToken) };
+        }
         try {
-          const ok = await entry.handler(m.variables);
+          const ok = await entry.handler(m.variables, clienteDoDono.cliente);
           if (ok) succeededKinds.add(m.kind);
           return ok;
         } catch (e) {
@@ -76,7 +93,8 @@ export function useOfflineFlush(): void {
         }
       };
       try {
-        await flush(dispatcher);
+        // Só os itens do dono da credencial atual saem, assinados com ELA — o resto fica retido.
+        await flush(dispatcher, credencialDaSessao);
         // Revalidação pós-flush (non-blocking): reconcilia o cache com o servidor
         // pros kinds que efetivamente drenaram. Sem isto, o que foi confirmado
         // offline só aparecia no próximo refetch natural (dívida corrigida).
@@ -96,6 +114,15 @@ export function useOfflineFlush(): void {
 
     window.addEventListener('online', onOnline);
 
+    // Quem volta a entrar no aparelho drena os itens DELE que ficaram retidos enquanto outra
+    // pessoa estava logada (a fila não emite nada no login — sem isto, só no próximo 'online').
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'SIGNED_IN' && typeof navigator !== 'undefined' && navigator.onLine) {
+        // Fora do callback: chamar o client de dentro do onAuthStateChange trava o auth-js.
+        setTimeout(() => void runFlush(), 0);
+      }
+    });
+
     // Ao montar, se já tem itens E está online, tenta flush imediatamente.
     const unsub = subscribeToOfflineQueue((depth) => {
       if (depth > 0 && typeof navigator !== 'undefined' && navigator.onLine) {
@@ -105,6 +132,7 @@ export function useOfflineFlush(): void {
 
     return () => {
       window.removeEventListener('online', onOnline);
+      subscription.unsubscribe();
       unsub();
     };
   }, [queryClient]);

@@ -161,17 +161,19 @@ function ActiveTaskView({
   });
 
   // Confirms enfileirados desta task (overlay optimista). Recalcula quando a fila muda:
-  // subscribeToOfflineQueue dispara no mount e a cada enqueue/flush.
+  // subscribeToOfflineQueue dispara no mount e a cada enqueue/flush. Só os DESTE usuário:
+  // confirm de outra pessoa no mesmo aparelho fica retido e não pode aparecer como feito.
+  const userIdReal = user?.id ?? null;
   const [queuedVars, setQueuedVars] = useState<ConfirmPickItemVars[]>([]);
   useEffect(() => {
     const recompute = () =>
       setQueuedVars(
-        getQueuedByKind<ConfirmPickItemVars>('picking.confirm-item')
+        getQueuedByKind<ConfirmPickItemVars>('picking.confirm-item', userIdReal)
           .map((q) => q.variables)
           .filter((v) => v.pickingTaskId === taskId),
       );
     return subscribeToOfflineQueue(recompute);
-  }, [taskId]);
+  }, [taskId, userIdReal]);
 
   // Overlay: mescla confirms enfileirados sobre as linhas do servidor.
   const { items: mergedItems, pendingIds } = useMemo(

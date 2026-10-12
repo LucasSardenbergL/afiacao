@@ -14,9 +14,11 @@ export interface AddCteVars {
  *   constraint por (nfe_recebimento_id, chave_acesso_cte) garantida nesta camada).
  *   Aceita pq duplicatas são detectáveis visualmente pelo conferente e o impacto
  *   é baixo (apenas listagem). Resolução futura: unique constraint no schema.
+ *
+ * `cliente`: no flush offline, o cliente VINCULADO ao token do dono do item (ver useOfflineFlush).
  */
-export async function addCte(vars: AddCteVars): Promise<{ ok: true }> {
-  const { error } = await supabase
+export async function addCte(vars: AddCteVars, cliente: typeof supabase = supabase): Promise<{ ok: true }> {
+  const { error } = await cliente
     .from('cte_associados')
     .insert({
       nfe_recebimento_id: vars.nfeId,

@@ -25,9 +25,11 @@ export interface ReportDivergenciaVars {
  * literal com ao menos UMA coluna válida passa no typecheck carregando coluna inexistente — foi
  * assim que `observacao` (a tabela só tem `observacao_divergencia`) virou PGRST204 em runtime.
  * O `satisfies` devolve a checagem de propriedade excedente.
+ *
+ * `cliente`: no flush offline, o cliente VINCULADO ao token do dono do item (ver useOfflineFlush).
  */
-export async function reportDivergencia(vars: ReportDivergenciaVars): Promise<{ ok: true }> {
-  const { error: e1 } = await supabase
+export async function reportDivergencia(vars: ReportDivergenciaVars, cliente: typeof supabase = supabase): Promise<{ ok: true }> {
+  const { error: e1 } = await cliente
     .from('nfe_recebimento_itens')
     .update({
       status_item: 'divergencia',
@@ -36,7 +38,7 @@ export async function reportDivergencia(vars: ReportDivergenciaVars): Promise<{ 
     .eq('id', vars.itemId);
   if (e1) throw e1;
 
-  const { error: e2 } = await supabase
+  const { error: e2 } = await cliente
     .from('nfe_recebimentos')
     .update({ status: 'divergencia' } satisfies TablesUpdate<'nfe_recebimentos'>)
     .eq('id', vars.nfeId);
