@@ -12,9 +12,9 @@
 
 | Estado | Itens |
 |---|---|
-| ✅ feito | M-30 (✅ #2979, `ErrorBoundary` por rota no shell) · M-39 (✅ #2969, cano `$exception` provado em prod) · M-01 (#2201) · M-02 (#2204) · M-03 (#2205) · M-04 (#2206) · M-11 (#2781) · M-24 (vitest `projects` node/jsdom) · M-25 (gate AST ~60% mais rápido) · M-27 (#2874, snapshot com provas) · M-40 (job `provas-sql`, `db/nucleo-ci.txt` com 92 harnesses) · M-45 (✅ #2965, README humano) |
+| ✅ feito | M-09 (✅ #2970, INSERT dos logs da reposição sob `cap_compras`) · M-15 (✅ #2974, gate em `wa_owner_efetivo`; `timingSafeEq` fica com o Lote C) · M-13 (✅ #2975, CHECK `created_at` não-futuro) · M-17 (✅ #2976, expurgo mensal 90d por cron) · M-18 (✅ #2977, quarentena dropada com backup) · M-37 (✅ #2981, `supabase/cron-jobs-snapshot.tsv` + gate) · M-30 (✅ #2979, `ErrorBoundary` por rota no shell) · M-39 (✅ #2969, cano `$exception` provado em prod) · M-01 (#2201) · M-02 (#2204) · M-03 (#2205) · M-04 (#2206) · M-11 (#2781) · M-24 (vitest `projects` node/jsdom) · M-25 (gate AST ~60% mais rápido) · M-27 (#2874, snapshot com provas) · M-40 (job `provas-sql`, `db/nucleo-ci.txt` com 92 harnesses) · M-45 (✅ #2965, README humano) |
 | 🟡 parcial | M-14 (`concurrency` + shellcheck no CI; faltam os lockfiles) · M-21 (preload do `bun test` falha alto) · M-26 (sonda em 63/98 edges, era 40/95) · M-33 (`omie-deadline.ts` em 4+ edges; faltam os 3 enumeradores e o cliente Anthropic) · M-48 (7 wrappers `omieCall`, eram 25) |
-| ❌ aberto | M-05 · M-06 · M-07 · M-08 · M-09 · M-10 · M-12 · M-13 · M-15 · M-16 · M-17 · M-18 · M-22 · M-23 · M-28 · M-29 · M-31 · M-36 · M-37 · M-41 · M-47 |
+| ❌ aberto | M-05 · M-06 · M-07 · M-08 · M-10 · M-12 · M-16 · M-22 · M-23 · M-28 · M-29 · M-31 · M-36 · M-41 · M-47 |
 
 ### 0.2 Regra de execução: ordenar por arquivo tocado, não por score
 
@@ -183,7 +183,7 @@ Legenda: **I** impacto · **R** risco de deixar como está · **E** esforço (1 
 | 6 | M-28 | 1 | Gate `casts-stale`: 79 dos 89 `.from/.rpc('x' as never)` apontam para nomes que `types.ts` JÁ tipa — o cast desliga a checagem de coluna (foi assim que #6 passou no typecheck) | tipos | 4 | 4 | 2 | **32** | domínio A1/A15 |
 | 7 | M-07 | 0 | "Faturado hoje" não filtra empresa (`companies` está na queryKey, não na query) | vendas · money-path | 3 | 3 | 1 | **30** | backlog 07-04 (aberto) |
 | 8 | M-08 | 0 | `fin-funding` ainda filtra `status_titulo='ABERTO'` (valor morto; cashflow já corrigido) | financeiro · money-path | 3 | 3 | 1 | **30** | backlog 07-04 (parcial) |
-| 9 | M-09 | 0 | Policies `INSERT WITH CHECK (true)` para `authenticated` em `reposicao_motor_run` e `reposicao_estoque_nao_confirmado_log` | segurança | 3 | 3 | 1 | **30** | segurança A1 · banco B09 |
+| 9 | M-09 | 0 | Policies `INSERT WITH CHECK (true)` para `authenticated` em `reposicao_motor_run` e `reposicao_estoque_nao_confirmado_log` | segurança | 3 | 3 | 1 | **30** | ✅ #2970 · segurança A1 · banco B09 |
 | 10 | M-10 | 0 | `signOut` sem `queryClient.clear()` — cache de outro usuário sobrevive à troca de sessão | auth | 3 | 3 | 1 | **30** | backlog 07-04 (aberto) |
 | 11 | M-39 | 1 | Verificar o cano `$exception` do PostHog: 0 exceções em 30 dias com telas quebradas em prod é suspeito | observabilidade | 3 | 3 | 1 | **30** | medição própria (HogQL) |
 | 12 | M-06 | 0 | Telas roteadas sobre objetos que NÃO existem em prod: `fila_aplicacao_omie` + RPC `gerar_fila_aplicacao_omie` e `quality_checklists` | reposição/loja · correção | 4 | 3 | 2 | **28** | domínio A2 · banco B03 · confirmado via psql-ro |
@@ -192,7 +192,7 @@ Legenda: **I** impacto · **R** risco de deixar como está · **E** esforço (1 
 | 15 | M-33 | 1 | `omie-deadline.ts` nos 3 enumeradores Omie sem teto de relógio (`omie-vendas-sync`, `omie-analytics-sync`, `omie-sync`) + `_shared/anthropic-cliente.ts` com `timeout`/`maxRetries` nas 15 edges LLM | edges · robustez | 4 | 3 | 2 | **28** | edges E01/E02 |
 | 16 | M-11 | 0 | "Gap de Margem" soma `.limit(100)` de um log append-only | farmer · money-path | 3 | 2 | 1 | **25** | backlog 07-04 (aberto) |
 | 17 | M-12 | 0 | `SalesProducts` lê `omie_products` com `.select('*')` sem `.range` (capa silenciosa de 1.000) | vendas | 3 | 2 | 1 | **25** | frontend FE-03 |
-| 18 | M-17 | 0 | Retenção de `health_score_history` + `priority_score_log` (446 MB, +800k linhas/30d, sem expurgo) | banco | 3 | 2 | 1 | **25** | medição própria |
+| 18 | M-17 | 0 | Retenção de `health_score_history` + `priority_score_log` (446 MB, +800k linhas/30d, sem expurgo) | banco | 3 | 2 | 1 | **25** | ✅ #2976 · medição própria |
 | 19 | M-22 | 1 | CI na main após merge — hoje só o bot do Lovable dispara `push`; 56 dispatches manuais/30d pelo `/fecho` | CI | 4 | 2 | 2 | **24** | tooling T01 |
 | 20 | M-24 | 1 | vitest `environmentMatchGlobs`: `.test.ts` → node, `.test.tsx` → jsdom (+31 overrides `@vitest-environment jsdom`) | testes · perf | 4 | 2 | 2 | **24** | testes A2 · tooling T02 |
 | 21 | M-26 | 1 | Sonda de versão (`versao.ts`) nas 26 edges sem sonda — 9 com cron e 17 chamadas pelo browser, inclusive escritas irreversíveis (`omie-aplicar-parametros`, `whatsapp-send*`, `omie-sync`, `enviar-push`) | deploy · edges | 4 | 2 | 2 | **24** | edges E04 · issues #2129/#2147/#2140 |
@@ -205,16 +205,16 @@ Legenda: **I** impacto · **R** risco de deixar como está · **E** esforço (1 
 | 28 | M-41 | 2 | 🧭 Triagem de superfície, módulo a módulo — ativar com sensor · congelar (esconder rota, manter código) · arquivar (remover código + tabelas + crons + edges): loja-afiacao (10,8k LOC, `orders` 0 linhas), telefonia/whatsapp/rota (14,2k), tarefas (3,8k), prime (2,4k), produção (1k), picking (~3k), knowledge-base (5,3k), governança (10,7k), admin-crm (6,7k), telas de INPUT do financeiro (25 tabelas `fin_*` jamais escritas) | produto · decisão do founder | 5 | 2 | 3 | **21** | medição própria (PostHog + banco + manifesto) |
 | 29 | M-43 | 2 | `tint_*` = 2,8 GB (67% do banco) com reescrita contínua: 1,86M inserts/30d, 213M deletes acumulados, `tint_sync_errors` 20k/30d — delta-sync por hash em vez de rewrite; limpar staging; expurgo de `tint_sync_runs/errors` | banco · perf · custo | 4 | 3 | 3 | **21** | medição própria |
 | 30 | M-58 | 4 | Edges monólitos: extrair ~2,5k LOC puras + testes Deno — começar por `disparar-pedidos-aprovados` (1.923 LOC, cria pedido na Omie, só contrato de sonda), `fin-valor-engine`, `fin-cashflow-engine` (26 fn/708 LOC), `omie-financeiro` (31 fn/767 LOC) | edges · money-path | 4 | 3 | 3 | **21** | edges E05 · testes A4 |
-| 31 | M-13 | 0 | `sales_price_history` com 5 linhas datadas de 2120-10-25 | dados | 2 | 2 | 1 | **20** | medição própria (psql-ro) |
+| 31 | M-13 | 0 | `sales_price_history` com 5 linhas datadas de 2120-10-25 | dados | 2 | 2 | 1 | **20** | ✅ #2975 · medição própria (psql-ro) |
 | 32 | M-14 | 0 | Lote de higiene de 1 dia: apagar `bun.lockb` + `package-lock.json`; `.env` fora do git (allowlist); `concurrency` no `ci.yml`; `tsc -p tsconfig.node.json` no typecheck; shellcheck no CI (destravar #2093 com `--exclude=SC2317`) | tooling | 3 | 1 | 1 | **20** | tooling T05/T06/T08/T14 · segurança A7/A13 |
-| 33 | M-15 | 0 | `timingSafeEq` centralizado em `_shared/auth.ts` + `REVOKE EXECUTE` de `wa_owner_efetivo` (grant a `authenticated` confirmado em prod) | segurança | 2 | 2 | 1 | **20** | segurança A9/A10 · confirmado via psql-ro |
+| 33 | M-15 | 0 | `timingSafeEq` centralizado em `_shared/auth.ts` + `REVOKE EXECUTE` de `wa_owner_efetivo` (grant a `authenticated` confirmado em prod) | segurança | 2 | 2 | 1 | **20** | ✅ #2974 · segurança A9/A10 · confirmado via psql-ro |
 | 34 | M-16 | 0 | Crons de features sem dado: `call-log-missed-backstop` roda a cada minuto (10.080×/semana) para `call_log` com 20 linhas; watchdogs `atp-*`, `pedidos-programados-watchdog`, `tint-watchdog-corante-5min` | infra · banco | 3 | 1 | 1 | **20** | medição própria (cron.job_run_details 7d) |
 | 35 | M-19 | 0 | Docs: mover `analytics.md` §6 (600 linhas de diário), `ONDA1_*`, `handoff-cost-proxy-fix.md`, `docs/handoff/*` para `docs/historico/`; trocar contagens mortas por comandos ("119 rotas"→180, "30 worktrees"→79, "32/93 edges"→95) | docs | 3 | 1 | 1 | **20** | docs D4/D9/D1-D3 |
 | 36 | M-21 | 0 | Testes: preload que lança "use `bun run test`"; step `build-id-paridade` após o build (hoje é o `1 skipped`); remover tetos `15000`/`waitFor 10_000` do `priceGuard` | testes | 2 | 2 | 1 | **20** | testes A9/A10/A11 |
 | 37 | M-23 | 1 | `bun run gates:rapidos` (~5s) disparado pelo `pr-collision-guard` antes do `gh pr create` — 36% das falhas de CI em 60d são gates de 0–2s | CI · DX | 4 | 1 | 2 | **20** | tooling T03 |
 | 38 | M-29 | 1 | `deno.lock` para o `edges:typecheck` — único gate com rede resolve o registry ao vivo (2 mains vermelhas sem culpado em 3 semanas) | CI | 3 | 2 | 2 | **20** | tooling T04 |
 | 39 | M-34 | 1 | Lint ratchet `--max-warnings 74` + `no-floating-promises` (`checkThenables`) só em services/hooks/queries | lint | 3 | 2 | 2 | **20** | tooling T07 |
-| 40 | M-37 | 1 | `cron.job` capturado no snapshot/DR — runbook diz 33 crons, prod tem 93 | banco · DR | 3 | 2 | 2 | **20** | banco B08 · medição própria |
+| 40 | M-37 | 1 | `cron.job` capturado no snapshot/DR — runbook diz 33 crons, prod tem 93 | banco · DR | 3 | 2 | 2 | **20** | ✅ #2981 · banco B08 · medição própria |
 | 41 | M-42 | 2 | Dropar as tabelas jamais escritas (162) que a triagem liberar — migration reversível após `git grep` + `pg_stat` | banco | 3 | 2 | 2 | **20** | medição própria · banco B12 |
 | 42 | M-45 | 2 | README humano (~80 linhas): bun, `.env.example`, PR → auto-merge → 3 deploys manuais, worktrees, `psql-ro` — hoje é boilerplate Lovable com `REPLACE_WITH_PROJECT_ID` ×3 e `npm i` | docs · onboarding | 4 | 1 | 2 | **20** | docs R1/D10 |
 | 43 | M-46 | 2 | Worktrees: 79 vivas, 22 `node_modules` = 16,7 GB, 70 anteriores a setembro | infra local | 2 | 2 | 1 | **20** | tooling T09 |
@@ -228,7 +228,7 @@ Legenda: **I** impacto · **R** risco de deixar como está · **E** esforço (1 
 | 51 | M-44 | 2 | `docs/superpowers/` congelado (372/446 órfãos, 1 plan/mês) + `INDEX.md` + arquivo por trimestre; skill `lovable-deploy-verify` (984 linhas / 86 KB por invocação) fatiada | docs | 3 | 1 | 2 | **16** | docs S1/K1 |
 | 52 | M-50 | 3 | Paginação PostgREST: 1 helper canônico (11 hoje, 6 fora do pin G2) + assinatura de `fetchAllPages` que elimina os 24 `as unknown as PromiseLike` | domínio | 2 | 2 | 2 | **16** | domínio A10/A11 |
 | 53 | M-54 | 3 | Índices: 116/204 FKs sem índice (priorizar `tint_staging_*.sync_run_id`, `tint_formula_itens.corante_id`, `picking_events`) e 18 redundantes (7 duplicatas exatas) | banco · perf | 3 | 1 | 2 | **16** | banco B05/B06 |
-| 54 | M-18 | 0 | Dropar `_quarantine_omie_clientes_20260722` (quarentena de 7 dias concluída em 27/07) | banco · higiene | 2 | 1 | 1 | **15** | banco B10 · memória 27/07 |
+| 54 | M-18 | 0 | Dropar `_quarantine_omie_clientes_20260722` (quarentena de 7 dias concluída em 27/07) | banco · higiene | 2 | 1 | 1 | **15** | ✅ #2977 · banco B10 · memória 27/07 |
 | 55 | M-20 | 0 | `CLAUDE.md`/`deploy.md` descrevem o gateway Lovable/Gemini como legado em uso — 0 edges usam (15 Anthropic direto) | docs | 2 | 1 | 1 | **15** | edges E10 |
 | 56 | M-47 | 2 | Edges órfãs (`verify-employee`, `gmail-webhook-receiver`) e `omie-sync` (1.676 LOC, 29 `case`, sem sonda/teste/timeout/lease) — provar lado prod e aposentar/decompor | edges · higiene | 2 | 1 | 1 | **15** | edges E12/E11 |
 | 57 | M-52 | 3 | Harness PG17: lib compartilhada de bootstrap (267 cópias de `initdb`/stub `auth.uid`; `safeupdate` em 1/270) | testes · db | 3 | 2 | 3 | **15** | banco B07 |
@@ -263,7 +263,7 @@ Regras de execução: **1 item = 1 PR** (auto-merge no CI verde), com o ritual `
 - **M-08** (30) — `fin-funding` ainda filtra `status_titulo='ABERTO'` (valor morto; cashflow já corrigido)
   - Evidência: `fin-funding/index.ts:555` · Origem: backlog 07-04 (parcial)
   - Ação: Alinhar ao filtro do `fin-cashflow-engine:399` + sonda bump.
-- **M-09** (30) — Policies `INSERT WITH CHECK (true)` para `authenticated` em `reposicao_motor_run` e `reposicao_estoque_nao_confirmado_log`
+- ✅ #2970 · **M-09** (30) — Policies `INSERT WITH CHECK (true)` para `authenticated` em `reposicao_motor_run` e `reposicao_estoque_nao_confirmado_log`
   - Evidência: policies `*_ins` no snapshot; leitor `AdminReposicaoPedidos.tsx:268-278` · Origem: segurança A1 · banco B09
   - Ação: `WITH CHECK (private.cap_compras_escrever(auth.uid()))` ou remover (service_role bypassa); prova `SET ROLE authenticated` exigindo 42501.
 - **M-10** (30) — `signOut` sem `queryClient.clear()` — cache de outro usuário sobrevive à troca de sessão
@@ -278,16 +278,16 @@ Regras de execução: **1 item = 1 PR** (auto-merge no CI verde), com o ritual `
 - **M-12** (25) — `SalesProducts` lê `omie_products` com `.select('*')` sem `.range` (capa silenciosa de 1.000)
   - Evidência: `SalesProducts.tsx:54-66` (mesma tabela paginada em `useFarmerScoring.ts:360`) · Origem: frontend FE-03
   - Ação: Usar o helper de paginação canônico + colunas enumeradas.
-- **M-17** (25) — Retenção de `health_score_history` + `priority_score_log` (446 MB, +800k linhas/30d, sem expurgo)
+- ✅ #2976 · **M-17** (25) — Retenção de `health_score_history` + `priority_score_log` (446 MB, +800k linhas/30d, sem expurgo)
   - Evidência: 1,05M + 1,04M linhas; 398k inserts/30d cada · Origem: medição própria
   - Ação: Job mensal de expurgo (>90d) + índice por data; ou agregar por semana.
-- **M-13** (20) — `sales_price_history` com 5 linhas datadas de 2120-10-25
+- ✅ #2975 · **M-13** (20) — `sales_price_history` com 5 linhas datadas de 2120-10-25
   - Evidência: `select count(*) ... where created_at > now()` = 5 · Origem: medição própria (psql-ro)
   - Ação: Corrigir as linhas + CHECK `created_at <= now() + interval '1 day'`; achar o writer.
 - **M-14** (20) — Lote de higiene de 1 dia: apagar `bun.lockb` + `package-lock.json`; `.env` fora do git (allowlist); `concurrency` no `ci.yml`; `tsc -p tsconfig.node.json` no typecheck; shellcheck no CI (destravar #2093 com `--exclude=SC2317`)
   - Evidência: 3 lockfiles; `ci.yml` sem `concurrency`; `grep shellcheck ci.yml` = 0 · Origem: tooling T05/T06/T08/T14 · segurança A7/A13
   - Ação: 1 PR por item (auto-merge).
-- **M-15** (20) — `timingSafeEq` centralizado em `_shared/auth.ts` + `REVOKE EXECUTE` de `wa_owner_efetivo` (grant a `authenticated` confirmado em prod)
+- ✅ #2974 · **M-15** (20) — `timingSafeEq` centralizado em `_shared/auth.ts` + `REVOKE EXECUTE` de `wa_owner_efetivo` (grant a `authenticated` confirmado em prod)
   - Evidência: `_shared/auth.ts:33,52,62`; `proacl` = `authenticated=X` · Origem: segurança A9/A10 · confirmado via psql-ro
   - Ação: Revoke nomeando roles (padrão `revoke-que-nao-revoga.md`) + comparação constant-time.
 - **M-16** (20) — Crons de features sem dado: `call-log-missed-backstop` roda a cada minuto (10.080×/semana) para `call_log` com 20 linhas; watchdogs `atp-*`, `pedidos-programados-watchdog`, `tint-watchdog-corante-5min`
@@ -299,7 +299,7 @@ Regras de execução: **1 item = 1 PR** (auto-merge no CI verde), com o ritual `
 - **M-21** (20) — Testes: preload que lança "use `bun run test`"; step `build-id-paridade` após o build (hoje é o `1 skipped`); remover tetos `15000`/`waitFor 10_000` do `priceGuard`
   - Evidência: `bunfig.toml:1-2`; `ci.yml:153` < `:285`; `SalesQuotes.priceGuard.test.tsx:74,84,93` · Origem: testes A9/A10/A11
   - Ação: 3 PRs pequenos.
-- **M-18** (15) — Dropar `_quarantine_omie_clientes_20260722` (quarentena de 7 dias concluída em 27/07)
+- ✅ #2977 · **M-18** (15) — Dropar `_quarantine_omie_clientes_20260722` (quarentena de 7 dias concluída em 27/07)
   - Evidência: 6.909 linhas; RLS ligada em prod (o "sem RLS" era artefato do snapshot) · Origem: banco B10 · memória 27/07
   - Ação: Migration `DROP TABLE` reversível (backup em `docs/historico`).
 - **M-20** (15) — `CLAUDE.md`/`deploy.md` descrevem o gateway Lovable/Gemini como legado em uso — 0 edges usam (15 Anthropic direto)
@@ -353,7 +353,7 @@ Regras de execução: **1 item = 1 PR** (auto-merge no CI verde), com o ritual `
 - **M-34** (20) — Lint ratchet `--max-warnings 74` + `no-floating-promises` (`checkThenables`) só em services/hooks/queries
   - Evidência: 74 warnings (todos `exhaustive-deps`); classe "thenable preguiçoso" em `database.md:142` · Origem: tooling T07
   - Ação: Ratchet primeiro; regra nova com baseline.
-- **M-37** (20) — `cron.job` capturado no snapshot/DR — runbook diz 33 crons, prod tem 93
+- ✅ #2981 · **M-37** (20) — `cron.job` capturado no snapshot/DR — runbook diz 33 crons, prod tem 93
   - Evidência: `refresh-snapshot.sh` sem `cron.job` · Origem: banco B08 · medição própria
   - Ação: Dump de `cron.job` no refresh + diff no CI.
 - **M-40** (18) — Job `db-harness` no CI: `services: postgres:17`, allowlist de 8–12 harnesses money-path em PR que toca `db/`/migrations + nightly — 270 harnesses (84k LOC) hoje só rodam à mão
