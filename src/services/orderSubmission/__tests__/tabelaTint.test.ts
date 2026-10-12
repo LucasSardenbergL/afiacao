@@ -23,8 +23,25 @@ describe('coresTabelaInvalida — elegibilidade da fonte tint "tabela" no orçam
   });
 
   it('exatamente 50% passa; 0,1 abaixo bloqueia (mesma régua do gate)', () => {
-    expect(coresTabelaInvalida([item({ tint_formula_id: 'f2', tint_cor_id: 'K41' })], csv, calc)).toEqual([]);
-    expect(coresTabelaInvalida([item({ tint_formula_id: 'f3', tint_cor_id: 'K42' })], csv, calc)).toEqual(['K42']);
+    expect(coresTabelaInvalida([item({ tint_formula_id: 'f2', tint_cor_id: 'K41', unit_price: 51.2 })], csv, calc)).toEqual([]);
+    expect(coresTabelaInvalida([item({ tint_formula_id: 'f3', tint_cor_id: 'K42', unit_price: 51.1 })], csv, calc)).toEqual(['K42']);
+  });
+
+  it('valor: CSV elegível mas unit_price ≠ tabela → bloqueia (Codex P1: 0,70 com CSV 120)', () => {
+    const c = new Map<string, number | null>([['f4', 120]]);
+    const k = new Map<string, number | null>([['f4', 170.16]]);
+    const it4 = (over: Partial<ProductCartItem>) => item({ tint_formula_id: 'f4', tint_cor_id: 'V', ...over });
+    expect(coresTabelaInvalida([it4({ unit_price: 0.7 })], c, k)).toEqual(['V']);
+    expect(coresTabelaInvalida([it4({ unit_price: 120 })], c, k)).toEqual([]);
+    // desconto: round2(ceil10(CSV) × (1 − d/100)), mesma conta do gate; tolerância 0,005
+    expect(coresTabelaInvalida([it4({ unit_price: 108, tint_discount_pct: 10 })], c, k)).toEqual([]);
+    expect(coresTabelaInvalida([it4({ unit_price: 107.99, tint_discount_pct: 10 })], c, k)).toEqual(['V']);
+    // ceil10 do rótulo: CSV 119,91 → 120,0
+    const c2 = new Map<string, number | null>([['f4', 119.91]]);
+    expect(coresTabelaInvalida([it4({ unit_price: 120 })], c2, k)).toEqual([]);
+    // desconto inválido → bloqueia (fail-closed, como desconto_invalido no gate)
+    expect(coresTabelaInvalida([it4({ unit_price: 0, tint_discount_pct: 100 })], c, k)).toEqual(['V']);
+    expect(coresTabelaInvalida([it4({ unit_price: 120, tint_discount_pct: -1 })], c, k)).toEqual(['V']);
   });
 
   it('fontes que não são "tabela" ficam fora (o gate da conversão as valida)', () => {
@@ -65,7 +82,12 @@ describe('bloqueioTabelaTint — leitura do estado atual', () => {
 
   it('CSV plausível → segue (null)', async () => {
     const { client } = mkClient({ csv: 120, precoFinal: 170.16 });
-    expect(await bloqueioTabelaTint(client, [item({})])).toBeNull();
+    expect(await bloqueioTabelaTint(client, [item({ unit_price: 120 })])).toBeNull();
+  });
+
+  it('CSV plausível mas valor salvo ≠ tabela → bloqueia', async () => {
+    const { client } = mkClient({ csv: 120, precoFinal: 170.16 });
+    expect(await bloqueioTabelaTint(client, [item({ unit_price: 0.7 })])).toMatch(/Preço de tabela inválido para 360V - BS/);
   });
 
   it('erro de leitura (PostgrestError, não Error) → bloqueia com a mensagem do banco', async () => {

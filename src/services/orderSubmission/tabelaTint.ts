@@ -12,10 +12,24 @@ import type { SubmitClient } from './types';
  * um item 'tabela' a centavos. Aqui revalidamos a ELEGIBILIDADE contra o estado atual
  * (CSV da canônica + motor), com a MESMA regra do gate (`csvTabelaElegivel`).
  *
- * Escopo: só a fonte 'tabela' (o buraco medido). O preço exato de cada fonte segue
- * validado no gate da conversão. Na dúvida (fórmula sem id, fora da canônica, motor
- * sem preço, erro de leitura) BLOQUEIA — reprecificar no balcão resolve.
+ * Escopo: só a fonte 'tabela' (o buraco medido) — elegibilidade E valor: o
+ * `unit_price` tem de bater com round2(ceil10(CSV) × (1 − desconto/100)), a mesma
+ * conta do ramo 'tabela' do gate (tolerância 0,005). As demais fontes seguem
+ * validadas só no gate da conversão. Na dúvida (fórmula sem id, fora da canônica —
+ * inclusive id antigo de fórmula recanonizada, que o gate aceitaria com warning —,
+ * motor sem preço, desconto inválido, erro de leitura) BLOQUEIA: reprecificar no
+ * balcão resolve.
  */
+
+const ceil10 = (v: number) => Math.ceil(v * 10) / 10;
+const round2 = (v: number) => Math.floor(v * 100 + 0.5) / 100;
+
+/** Valor esperado do item 'tabela' (espelho do gate), ou null se o desconto é inválido. */
+function esperadoTabela(csv: number, descontoPct: unknown): number | null {
+  const d = descontoPct == null ? 0 : descontoPct;
+  if (typeof d !== 'number' || !Number.isFinite(d) || d < 0 || d >= 100) return null;
+  return round2(ceil10(csv) * (1 - d / 100));
+}
 
 /** Pura: dado o CSV e o calculado atuais por fórmula, as cores cujo item 'tabela' não pode seguir. */
 export function coresTabelaInvalida(
@@ -31,7 +45,11 @@ export function coresTabelaInvalida(
     if (!id || !csvPorFormula.has(id)) { out.push(cor); continue; }
     const calc = calcPorFormula.get(id) ?? null;
     // Motor sem preço também barra no gate (sem_preco_motor): nunca aceitar 'tabela' sem calc.
-    if (calc == null || csvTabelaElegivel(csvPorFormula.get(id), calc) == null) out.push(cor);
+    const csv = calc == null ? null : csvTabelaElegivel(csvPorFormula.get(id), calc);
+    if (csv == null) { out.push(cor); continue; }
+    // Valor: rótulo elegível não basta — o preço salvo tem de SER o da tabela (Codex P1).
+    const esperado = esperadoTabela(csv, c.tint_discount_pct);
+    if (esperado == null || !(Math.abs(c.unit_price - esperado) <= 0.005)) out.push(cor);
   }
   return [...new Set(out)];
 }
@@ -69,5 +87,5 @@ export async function bloqueioTabelaTint(supabase: SubmitClient, itens: ProductC
 
   const cores = coresTabelaInvalida(tabela, csvPorFormula, calcPorFormula);
   if (cores.length === 0) return null;
-  return `Preço de tabela inválido para ${cores.join(', ')} (tabela antiga sem a base) — reprecifique a cor no balcão de tinta antes de salvar o orçamento.`;
+  return `Preço de tabela inválido para ${cores.join(', ')} (tabela antiga sem a base, ou valor diferente da tabela) — reprecifique a cor no balcão de tinta antes de salvar o orçamento.`;
 }
