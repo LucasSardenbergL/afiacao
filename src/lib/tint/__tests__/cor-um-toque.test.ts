@@ -41,6 +41,8 @@ describe('escolherFormulaUmToque — fórmula inequívoca ou nada', () => {
   it('nomeCompativel: TODA palavra de cor do catálogo precisa estar no rótulo (Codex P1 rodada 5)', () => {
     expect(nomeCompativel('H109 - VERDE AGUA 900ML', 'VERDE FOLHA')).toBe(false);
     expect(nomeCompativel('346J - ACRIL BS | NÃO USAR PLATINA', 'PLATINA BIANCO')).toBe(false);
+    // a observação (após |) cita a cor INTEIRA — ainda assim não identifica o que foi comprado
+    expect(nomeCompativel('346J - ACRIL BS | trocar por PLATINA BIANCO', 'PLATINA BIANCO')).toBe(false);
     expect(nomeCompativel('346J PLATINA BIANCA (perola urbana)', 'PLATINA BIANCO')).toBe(true);
     expect(nomeCompativel('346J PLATINA', 'PLATINA BIANCO')).toBe(false);
     // 1 letra de diferença só em palavra longa: "OURO" × "OUROS" não é tolerado
