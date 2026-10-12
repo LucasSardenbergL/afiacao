@@ -1,5 +1,6 @@
 // Classificação do erro de uma RPC do picking v2 para a fila de leituras: transitório (tenta de
 // novo com backoff — o UUID garante que não conta duas vezes) ou permanente (marca `falhou`).
+import { mensagemDeErro } from "@/lib/erro-mensagem";
 import { isNetworkError } from "@/hooks/useOfflineMutation";
 import type { ResultadoEnvio } from "./scanner/fila";
 
@@ -8,7 +9,7 @@ const PERMANENTES = new Set(["22023", "42501", "P0002", "23505", "23503", "23514
 
 /** Erro de uma RPC → transitório (fila tenta de novo) ou permanente (marca `falhou`). */
 export function classificarErro(err: unknown): ResultadoEnvio {
-  const msg = err && typeof err === "object" && "message" in err ? String((err as { message: unknown }).message) : String(err);
+  const msg = mensagemDeErro(err) ?? "erro sem mensagem";
   if (isNetworkError(err)) return { tipo: "transitorio", erro: msg };
   const code = err && typeof err === "object" && "code" in err ? String((err as { code: unknown }).code) : "";
   if (PERMANENTES.has(code)) return { tipo: "permanente", erro: `${code}: ${msg}` };

@@ -6,6 +6,7 @@
 // Identidade e lente são lidas do AMBIENTE a cada envio (sessão do Supabase e guard global da
 // lente), nunca de uma configuração feita pela página (Codex Fase 1 r2): com a página desmontada,
 // logout/login ou desligar a lente continuam valendo. Pausa é transitória — o laço volta sozinho.
+import { mensagemDeErro } from "@/lib/erro-mensagem";
 import {
   type ArmazemFila,
   backoffMs,
@@ -81,7 +82,7 @@ export function criarMotor(
       set({ pronto: true, itens: await a.todos() });
       cutucar();
     },
-    (e: unknown) => set({ erroArmazem: e instanceof Error ? e.message : String(e) }),
+    (e: unknown) => set({ erroArmazem: mensagemDeErro(e) ?? "armazenamento do aparelho não abriu" }),
   );
 
   async function recarregar(): Promise<ItemFila[]> {
