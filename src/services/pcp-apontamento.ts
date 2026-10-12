@@ -29,7 +29,7 @@ export interface ConsumoVars extends ApontarVars {
   nota?: string | null;
 }
 
-export interface RefugoVars extends ApontarVars {
+interface RefugoVars extends ApontarVars {
   quantidade: number;
   nota?: string | null;
 }
@@ -42,21 +42,21 @@ async function callRpc(fn: string, params: Record<string, unknown>, cliente: Cli
   return (data as string) ?? '';
 }
 
-export function iniciarOP(v: ApontarVars, cliente: Cliente = supabase): Promise<string> {
+function iniciarOP(v: ApontarVars, cliente: Cliente = supabase): Promise<string> {
   return callRpc('fn_pcp_iniciar_apontamento', {
     p_event_id: v.eventId, p_op_id: v.opId, p_device_id: v.deviceId,
     p_device_seq: v.deviceSeq, p_client_ts: v.clientTs,
   }, cliente);
 }
 
-export function finalizarOP(v: ApontarVars, cliente: Cliente = supabase): Promise<string> {
+function finalizarOP(v: ApontarVars, cliente: Cliente = supabase): Promise<string> {
   return callRpc('fn_pcp_finalizar_apontamento', {
     p_event_id: v.eventId, p_op_id: v.opId, p_device_id: v.deviceId,
     p_device_seq: v.deviceSeq, p_client_ts: v.clientTs,
   }, cliente);
 }
 
-export function registrarConsumo(v: ConsumoVars, cliente: Cliente = supabase): Promise<string> {
+function registrarConsumo(v: ConsumoVars, cliente: Cliente = supabase): Promise<string> {
   return callRpc('fn_pcp_registrar_evento', {
     p_event_id: v.eventId, p_op_id: v.opId, p_tipo: 'consumo_mp', p_device_id: v.deviceId,
     p_device_seq: v.deviceSeq, p_client_ts: v.clientTs, p_motivo: v.motivo,
@@ -65,7 +65,7 @@ export function registrarConsumo(v: ConsumoVars, cliente: Cliente = supabase): P
   }, cliente);
 }
 
-export function registrarRefugo(v: RefugoVars, cliente: Cliente = supabase): Promise<string> {
+function registrarRefugo(v: RefugoVars, cliente: Cliente = supabase): Promise<string> {
   return callRpc('fn_pcp_registrar_evento', {
     p_event_id: v.eventId, p_op_id: v.opId, p_tipo: 'refugo', p_device_id: v.deviceId,
     p_device_seq: v.deviceSeq, p_client_ts: v.clientTs, p_quantidade: v.quantidade, p_nota: v.nota ?? null,

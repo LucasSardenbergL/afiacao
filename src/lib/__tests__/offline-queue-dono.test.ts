@@ -70,11 +70,11 @@ describe('fila offline com dono — dois usuários no mesmo aparelho', () => {
   it('na mesma rodada, B envia só o que é de B e retém o de A (controle positivo)', async () => {
     await enqueue('k', { de: 'A' }, A);
     await enqueue('k', { de: 'B' }, B);
-    const handler = vi.fn(async () => true);
+    const handler = vi.fn(async (_m: QueuedMutation, _c: Cred) => true);
 
     const r = await flush(handler, sessao(B).ler);
 
-    expect(handler.mock.calls.map(([m]) => (m as QueuedMutation).userId)).toEqual([B]);
+    expect(handler.mock.calls.map(([m]) => m.userId)).toEqual([B]);
     expect(r).toEqual({ success: 1, failed: 0, retidos: 1 });
     expect(filaCrua().map((m) => m.userId)).toEqual([A]);
   });

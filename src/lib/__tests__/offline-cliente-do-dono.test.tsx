@@ -15,7 +15,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 // singleton, criado no import). Nada deste arquivo pode sair para a rede de verdade.
 const { fetchMock } = vi.hoisted(() => {
   const fetchMock = vi.fn(
-    async () => new Response('[]', { status: 200, headers: { 'content-type': 'application/json' } }),
+    async (_url: RequestInfo | URL, _init?: RequestInit) => new Response('[]', { status: 200, headers: { 'content-type': 'application/json' } }),
   );
   globalThis.fetch = fetchMock as unknown as typeof fetch;
   return { fetchMock };
