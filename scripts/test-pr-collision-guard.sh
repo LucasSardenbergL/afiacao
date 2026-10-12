@@ -247,6 +247,7 @@ expect_quiet "git commit sozinho NAO roda os gates" "$SEMCOL PRCG_GATES_CMD=$stu
   'git commit -m "x"'
 expect_warn  "valvula GATES_RAPIDOS=pular nao nega e diz que pulou" "$SEMCOL PRCG_GATES_CMD=$stub/gates_reprova" \
   'GATES_RAPIDOS=pular gh pr create --fill' 'PULADO'
+# shellcheck disable=SC2016  # o $W LITERAL (sem expandir) e o caso de teste
 expect_warn  "cd com variavel: nao sei onde roda, avisa" "$SEMCOL PRCG_GATES_CMD=$stub/gates_reprova" \
   'cd "$W" && gh pr create --fill' 'NÃO rodou'
 expect_warn  "colisao E gate sem veredito: os dois avisos saem" \
