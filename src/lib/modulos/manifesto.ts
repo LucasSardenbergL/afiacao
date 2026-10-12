@@ -852,6 +852,7 @@ export const MODULOS: ModuloApp[] = [
       "src/components/__tests__/RequireFinanceiroAccess.test.tsx",
       "src/components/__tests__/RequireStaff.test.tsx",
       "src/contexts/__tests__/AuthContext.failsafe.test.tsx",
+      "src/contexts/__tests__/AuthContext.signout-limpa-cache.test.tsx",
       "src/contexts/__tests__/DashboardPersonaContext.test.tsx",
       "src/contexts/__tests__/ImpersonationContext.test.tsx",
       "src/hooks/__tests__/offline-flow-integration.test.tsx",
