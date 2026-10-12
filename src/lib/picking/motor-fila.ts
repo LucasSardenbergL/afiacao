@@ -192,7 +192,9 @@ export function lerEpoca(tarefaId: string, agora = Date.now()): Epoca {
   try {
     const [n, desde] = (localStorage.getItem(chaveEpoca(tarefaId)) ?? "0:0").split(":").map(Number);
     const num = Number.isInteger(n) && n > 0 ? n : 0;
-    return { n: num, aberta: num % 2 === 1 && agora - (desde || 0) < BARREIRA_MAX_MS };
+    // Entre abas não há relógio monotônico comum: |diferença| limita a espera também quando a
+    // hora do aparelho recua (a barreira de uma aba morta não fica aberta para sempre).
+    return { n: num, aberta: num % 2 === 1 && Math.abs(agora - (desde || 0)) < BARREIRA_MAX_MS };
   } catch {
     return { n: 0, aberta: false };
   }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bloqueioDaTarefa, type InsumosBloqueio } from "../autorizacao";
+import { bloqueioDaTarefa, type InsumosBloqueio, tique } from "../autorizacao";
 import type { TarefaV2 } from "../v2-api";
 
 const tarefa = { status: "em_separacao", atribuicao_id: "A1", operador_id: "U1", revisao: 3, ausente_rodadas: 0 } as TarefaV2;
@@ -47,5 +47,11 @@ describe("bloqueio da captura", () => {
     expect(com({ operador: "U2" })).toBe("atribuicao_antiga");
     expect(com({ tarefa: { ...tarefa, revisao: 4 } as TarefaV2 })).toBe("revisao_antiga");
     expect(com({ tarefa: { ...tarefa, ausente_rodadas: 2 } as TarefaV2 })).toBe("ausente_do_omie");
+  });
+
+  it("a ordem vem de um contador monotônico, não do relógio civil (Codex r5)", () => {
+    const a = tique();
+    const b = tique();
+    expect(b).toBeGreaterThan(a);
   });
 });

@@ -4,6 +4,16 @@
 import type { Epoca } from "./motor-fila";
 import type { TarefaV2 } from "./v2-api";
 
+let ultimoTique = 0;
+/**
+ * Marca de ORDEM da aba (monotônica): início de consulta, mount e negativa do servidor são
+ * ordenados por ela, nunca pelo relógio civil — ajuste de hora no aparelho não pode liberar
+ * captura nem travá-la (Codex Fase 1 r5).
+ */
+export function tique(): number {
+  return ++ultimoTique;
+}
+
 export interface AtribuicaoLocal {
   atribuicao_id: string;
   tarefa_revisao: number;
@@ -16,11 +26,11 @@ export interface InsumosBloqueio {
   /** Época vista quando a releitura em `leituraIniciadaEm` começou; null = sem dado. */
   epocaLida: number | null;
   epocaAtual: Epoca;
-  /** INÍCIO da consulta que produziu a tarefa em mãos (só consultas BEM-SUCEDIDAS geram dado). */
+  /** `tique()` do INÍCIO da consulta que produziu a tarefa em mãos (só consultas BEM-SUCEDIDAS geram dado). */
   leituraIniciadaEm: number | null;
-  /** Quando a tela montou: só vale leitura que COMEÇOU depois (cache/erro não autorizam). */
+  /** `tique()` do mount: só vale leitura que COMEÇOU depois (cache/erro não autorizam). */
   montadoEm: number;
-  /** Quando o servidor respondeu `ausente_do_omie` pela última vez (ms); null = nunca. */
+  /** `tique()` da última resposta `ausente_do_omie`; null = nunca. */
   ausenteEm: number | null;
 }
 

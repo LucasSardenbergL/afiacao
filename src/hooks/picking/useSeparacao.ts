@@ -18,7 +18,7 @@ import { criarTocador, feedbackDoMotivo, type TipoFeedback } from "@/lib/picking
 import { supabase } from "@/integrations/supabase/client";
 import { isLensActive } from "@/lib/impersonation/lens-write-guard";
 import { quantidadeRepresentavel } from "@/lib/picking/decimal";
-import { type AtribuicaoLocal, bloqueioDaTarefa } from "@/lib/picking/autorizacao";
+import { type AtribuicaoLocal, bloqueioDaTarefa, tique } from "@/lib/picking/autorizacao";
 import { abrirBarreira, comTrava, criarMotor, ehChaveEpoca, fecharBarreira, lerEpoca, type Motor, travaDaTarefa } from "@/lib/picking/motor-fila";
 import { linhaAtual, progressoLocal, tudoSeparado } from "@/lib/picking/progresso-local";
 import { abrirArmazemIndexedDB, type ItemFila, leiturasDaAtribuicao, MOTIVOS_PERDA_DE_AUTORIZACAO } from "@/lib/picking/scanner/fila";
@@ -97,7 +97,7 @@ export function useSeparacao(tarefaInicial: TarefaV2, atribuicao: Atribuicao) {
   const tarefaQ = useQuery({
     queryKey: ["picking-v2", "tarefa", tarefaId],
     queryFn: async () => {
-      const iniciadaEm = Date.now();
+      const iniciadaEm = tique();
       const epoca = lerEpoca(tarefaId).n;
       return { tarefa: await lerTarefa(tarefaId), epoca, iniciadaEm };
     },
@@ -106,7 +106,7 @@ export function useSeparacao(tarefaInicial: TarefaV2, atribuicao: Atribuicao) {
     refetchInterval: 30_000,
   });
   const tarefa = tarefaQ.data?.tarefa ?? tarefaInicial;
-  const [montadoEm] = useState(() => Date.now());
+  const [montadoEm] = useState(tique);
   const epocaLida = tarefaQ.data?.epoca ?? null;
   const leituraIniciadaEm = tarefaQ.data?.iniciadaEm ?? null;
   // A cada releitura, a época vista é refeita: uma barreira aberta por aba que morreu expira
@@ -164,19 +164,20 @@ export function useSeparacao(tarefaInicial: TarefaV2, atribuicao: Atribuicao) {
     const daAtribuicao = fila.filter((i) => i.estado === "rejeitada" && i.comando.atribuicao_id === atribuicao.atribuicao_id);
     const novasAusencias = daAtribuicao.filter((i) => i.motivo === "ausente_do_omie" && !ausenciasVistas.current.has(i.comando.leitura_id));
     novasAusencias.forEach((i) => ausenciasVistas.current.add(i.comando.leitura_id));
-    if (novasAusencias.length > 0) setAusenteEm(Date.now());
+    if (novasAusencias.length > 0) setAusenteEm(tique());
     const perda = daAtribuicao.find((i) => i.motivo && MOTIVOS_PERDA_DE_AUTORIZACAO.has(i.motivo));
     if (perda && perdeu === null) setPerdeu(perda.motivo);
     if ((perda && perdeu === null) || novasAusencias.length > 0) void qc.invalidateQueries({ queryKey: ["picking-v2", "tarefa", tarefaId] });
   }, [fila, atribuicao.atribuicao_id, perdeu, qc, tarefaId]);
   // Vivacidade: consulta deduplicada com uma que começou ANTES do mount/da negativa não prova
-  // nada — quando ela termina e nada está buscando, dispara uma nova (sem esperar os 30 s).
+  // nada — quando ela termina COM SUCESSO e nada está buscando, dispara uma nova. Em erro, não:
+  // a recuperação fica com o intervalo de 30 s (sem laço de retentativas — Codex r5).
   const leituraVelha =
     leituraIniciadaEm !== null && (leituraIniciadaEm < montadoEm || (ausenteEm !== null && leituraIniciadaEm <= ausenteEm));
-  const { fetchStatus: buscaTarefa, refetch: reler } = tarefaQ;
+  const { fetchStatus: buscaTarefa, status: situacaoTarefa, refetch: reler } = tarefaQ;
   useEffect(() => {
-    if (leituraVelha && buscaTarefa === "idle") void reler();
-  }, [leituraVelha, buscaTarefa, reler]);
+    if (leituraVelha && buscaTarefa === "idle" && situacaoTarefa === "success") void reler();
+  }, [leituraVelha, buscaTarefa, situacaoTarefa, reler]);
   // Leituras resolvidas: o progresso do servidor muda.
   const resolvidas = fila.filter((i) => i.estado !== "pendente").length;
   useEffect(() => {
