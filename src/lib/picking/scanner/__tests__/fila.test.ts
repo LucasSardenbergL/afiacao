@@ -7,8 +7,10 @@ import {
   enviarRodada,
   type ItemFila,
   leiturasDaAtribuicao,
+  MOTIVOS_PERDA_DE_AUTORIZACAO,
   proximosEnvios,
   type ResultadoEnvio,
+  sentidoDivergencia,
 } from "../fila";
 
 function cmd(id: string, tarefa = "T1", extra: Partial<Comando> = {}): Comando {
@@ -119,5 +121,27 @@ describe("fila de leituras", () => {
 
   it("backoff dobra até 30 s", () => {
     expect([1, 2, 3, 6, 20].map(backoffMs)).toEqual([1000, 2000, 4000, 30000, 30000]);
+  });
+});
+
+describe("divergência e perda de autorização (Codex r2)", () => {
+  const rejeita = (motivo: string): ResultadoEnvio => ({ tipo: "resposta", resposta: { ok: false, motivo, linha_id: null, unidades: null } });
+
+  it("o sentido da divergência segue o que o servidor fez, não a previsão", () => {
+    const previstoOk = { ...novo("a"), seq: 1 };
+    const previstoRecusa = { ...novo("b", "T1", {}, "U1", null), seq: 2 };
+    const r1 = aplicarResultado(previstoOk, rejeita("excesso"));
+    const r2 = aplicarResultado(previstoRecusa, aceita);
+    const r3 = aplicarResultado(previstoOk, { tipo: "permanente", erro: "42501" });
+    expect([r1, r2, r3].map((r) => [r.divergente_nao_visto, sentidoDivergencia(r)])).toEqual([
+      [true, "recusada_apos_ok"],
+      [true, "aceita_apos_recusa"],
+      [true, "falhou"],
+    ]);
+  });
+
+  it("ausente_do_omie NÃO trava a atribuição (é temporário); as perdas definitivas travam", () => {
+    expect(MOTIVOS_PERDA_DE_AUTORIZACAO.has("ausente_do_omie")).toBe(false);
+    expect(["atribuicao_antiga", "revisao_antiga", "tarefa_fora_de_separacao"].every((m) => MOTIVOS_PERDA_DE_AUTORIZACAO.has(m))).toBe(true);
   });
 });

@@ -69,13 +69,24 @@ export type ResultadoEnvio =
   | { tipo: "transitorio"; erro: string }
   | { tipo: "permanente"; erro: string };
 
-/** Motivos que significam "esta atribuição não vale mais": a captura tem de parar. */
+/**
+ * Motivos que significam "esta atribuição não vale mais": a captura tem de parar. `ausente_do_omie`
+ * fica de fora de propósito: é temporário (o pedido pode voltar à etapa) e quem decide é a
+ * releitura da tarefa (`ausente_rodadas`), não a rejeição histórica (Codex Fase 1 r2).
+ */
 export const MOTIVOS_PERDA_DE_AUTORIZACAO: ReadonlySet<string> = new Set([
   "atribuicao_antiga",
   "revisao_antiga",
   "tarefa_fora_de_separacao",
-  "ausente_do_omie",
 ]);
+
+/** Sentido da divergência entre a previsão local e o servidor — o aviso diz o que de fato houve. */
+export type SentidoDivergencia = "recusada_apos_ok" | "aceita_apos_recusa" | "falhou";
+
+export function sentidoDivergencia(item: ItemFila): SentidoDivergencia {
+  if (item.estado === "falhou") return "falhou";
+  return item.estado === "aceita" ? "aceita_apos_recusa" : "recusada_apos_ok";
+}
 
 /**
  * Próximos a enviar: o 1º `pendente` de cada tarefa, em ordem de `seq`, só do `operador`. Item
@@ -190,8 +201,32 @@ export function abrirArmazemIndexedDB(): Promise<ArmazemFila> {
       return;
     }
     const req = indexedDB.open(DB, 2);
-    req.onupgradeneeded = () => {
-      if (!req.result.objectStoreNames.contains(STORE)) req.result.createObjectStore(STORE, { keyPath: "comando.leitura_id" });
+    req.onupgradeneeded = (ev) => {
+      if (!req.result.objectStoreNames.contains(STORE)) {
+        req.result.createObjectStore(STORE, { keyPath: "comando.leitura_id" });
+        return;
+      }
+      // v1 → v2: itens da versão anterior não têm dono. Ninguém pode enviá-los com segurança
+      // (a identidade é desconhecida) e, pendentes, travariam a tarefa para sempre: viram falha
+      // VISÍVEL, que impede concluir e manda chamar o supervisor (Codex Fase 1 r2).
+      if (ev.oldVersion < 2 && req.transaction) {
+        const cursor = req.transaction.objectStore(STORE).openCursor();
+        cursor.onsuccess = () => {
+          const c = cursor.result;
+          if (!c) return;
+          const it = c.value as Partial<ItemFila>;
+          if (!it.operador_id) {
+            c.update({
+              ...it,
+              operador_id: "",
+              estado: it.estado === "pendente" ? "falhou" : it.estado,
+              motivo: it.estado === "pendente" ? "sem_dono_versao_anterior" : (it.motivo ?? null),
+              divergente_nao_visto: it.estado === "pendente" ? true : (it.divergente_nao_visto ?? false),
+            });
+          }
+          c.continue();
+        };
+      }
     };
     req.onerror = () => reject(req.error ?? new Error("IndexedDB não abriu"));
     req.onsuccess = () => {

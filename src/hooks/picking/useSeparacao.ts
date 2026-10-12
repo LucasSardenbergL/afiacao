@@ -5,16 +5,22 @@
 //     sob a lente "Ver como", durante as barreiras de concluir/falta e depois de qualquer resposta
 //     do servidor que retire a autorização;
 //   - concluir e marcar falta: barreira (captura parada + trava da tarefa entre abas) → drena a
-//     fila → RELÊ o armazém → RPC. Leitura não recebida nunca fica de fora do concluir.
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+//     fila → RELÊ o armazém → RPC. Leitura não recebida nunca fica de fora do concluir;
+//   - a barreira AVANÇA a época da tarefa (motor-fila): captura de outra aba que esperou a trava
+//     atravessando a barreira é recusada, e a aba que vê a época mudar só volta a capturar depois
+//     de reler a tarefa — a mesma regra vale no mount (retrato do localStorage não autoriza nada).
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { useImpersonation } from "@/contexts/ImpersonationContext";
 import { track } from "@/lib/analytics";
 import { criarTocador, feedbackDoMotivo, type TipoFeedback } from "@/lib/picking/feedback";
-import { comTrava, criarMotor, type Motor, travaDaTarefa } from "@/lib/picking/motor-fila";
+import { supabase } from "@/integrations/supabase/client";
+import { isLensActive } from "@/lib/impersonation/lens-write-guard";
+import { quantidadeRepresentavel } from "@/lib/picking/decimal";
+import { avancarEpoca, comTrava, criarMotor, ehChaveEpoca, lerEpoca, type Motor, travaDaTarefa } from "@/lib/picking/motor-fila";
 import { linhaAtual, progressoLocal, tudoSeparado } from "@/lib/picking/progresso-local";
-import { type ItemFila, leiturasDaAtribuicao, MOTIVOS_PERDA_DE_AUTORIZACAO } from "@/lib/picking/scanner/fila";
+import { abrirArmazemIndexedDB, type ItemFila, leiturasDaAtribuicao, MOTIVOS_PERDA_DE_AUTORIZACAO } from "@/lib/picking/scanner/fila";
 import type { Saida } from "@/lib/picking/scanner/protocolo";
 import { type CodigoCadastrado, preverBipe, preverManual, type Previsao } from "@/lib/picking/validacao-local";
 import {
@@ -36,7 +42,8 @@ export const destravarSom = () => tocador.destravar();
 let motorDaAba: Motor | null = null;
 /** O motor da fila desta aba (criado no 1º uso; vive enquanto a aba vive). */
 function motor(): Motor {
-  motorDaAba ??= criarMotor(enviarLeitura, undefined, (resolvidos) => {
+  if (motorDaAba) return motorDaAba;
+  motorDaAba = criarMotor(enviarLeitura, abrirArmazemIndexedDB, (resolvidos) => {
     for (const it of resolvidos) {
       track("picking.leitura", {
         tipo: it.comando.tipo,
@@ -47,17 +54,23 @@ function motor(): Motor {
       });
     }
     if (resolvidos.some((i) => i.divergente_nao_visto)) tocador.tocar("divergencia");
+  }, {
+    // Identidade e lente lidas NA HORA do envio — não dependem de página montada (Codex r2).
+    sessao: async () => (await supabase.auth.getSession()).data.session?.user.id ?? null,
+    lente: isLensActive,
   });
-  return motorDaAba;
+  const m = motorDaAba;
+  supabase.auth.onAuthStateChange(() => m.cutucar());
+  return m;
 }
 
-/** Estado do motor (fila inteira da aba), reativo. Configura identidade real + lente a cada render. */
+/** Estado do motor (fila inteira da aba), reativo. Mudar usuário/lente só CUTUCA: o motor relê sozinho. */
 export function useMotorFila() {
   const { user } = useAuth();
   const { isImpersonating } = useImpersonation();
   const m = motor();
   useEffect(() => {
-    m.configurar(user?.id ?? null, isImpersonating);
+    m.cutucar();
   }, [m, user?.id, isImpersonating]);
   const estado = useSyncExternalStore(m.assinar, m.estado);
   return { m, estado, operador: user?.id ?? null, lente: isImpersonating };
@@ -88,13 +101,43 @@ export function useSeparacao(tarefaInicial: TarefaV2, atribuicao: Atribuicao) {
   const { m, estado, operador, lente } = useMotorFila();
   const tarefaId = tarefaInicial.id;
 
+  // Época da tarefa entre abas: a vista agora e a da última releitura DESTE mount. Só captura com
+  // as duas iguais — o retrato que veio do localStorage/lista nunca autoriza sozinho (Codex r2).
+  const [epocaAtual, setEpocaAtual] = useState(() => lerEpoca(tarefaId));
+  const [epocaLida, setEpocaLida] = useState<number | null>(null);
   const tarefaQ = useQuery({
     queryKey: ["picking-v2", "tarefa", tarefaId],
-    queryFn: () => lerTarefa(tarefaId),
-    initialData: tarefaInicial,
+    queryFn: async () => {
+      const e = lerEpoca(tarefaId);
+      const t = await lerTarefa(tarefaId);
+      setEpocaLida(e);
+      return t;
+    },
+    staleTime: 0,
+    refetchOnMount: "always",
     refetchInterval: 30_000,
   });
-  const tarefa = tarefaQ.data;
+  const tarefa = tarefaQ.data ?? tarefaInicial;
+  useEffect(() => {
+    const aoMudar = (e: StorageEvent) => {
+      if (!ehChaveEpoca(e.key, tarefaId)) return;
+      setEpocaAtual(lerEpoca(tarefaId));
+      void qc.invalidateQueries({ queryKey: ["picking-v2", "tarefa", tarefaId] });
+    };
+    window.addEventListener("storage", aoMudar);
+    return () => window.removeEventListener("storage", aoMudar);
+  }, [qc, tarefaId]);
+  // Áudio: depois de um reload a tela abre direto em "Separando", sem o toque de "Entrar" que
+  // destrava o AudioContext — qualquer toque ou tecla (inclusive o gatilho do leitor) destrava.
+  useEffect(() => {
+    const destravar = () => tocador.destravar();
+    window.addEventListener("pointerdown", destravar, { capture: true });
+    window.addEventListener("keydown", destravar, { capture: true });
+    return () => {
+      window.removeEventListener("pointerdown", destravar, { capture: true });
+      window.removeEventListener("keydown", destravar, { capture: true });
+    };
+  }, []);
   const linhasQ = useQuery({ queryKey: ["picking-v2", "linhas", tarefaId], queryFn: () => lerLinhas(tarefaId) });
   const leiturasQ = useQuery({ queryKey: ["picking-v2", "leituras", tarefaId], queryFn: () => lerLeituras(tarefaId) });
   const produtos = useMemo(() => [...new Set((linhasQ.data ?? []).map((l) => l.omie_codigo_produto))], [linhasQ.data]);
@@ -117,12 +160,16 @@ export function useSeparacao(tarefaInicial: TarefaV2, atribuicao: Atribuicao) {
   }, []);
 
   // Resposta do servidor que retira a autorização → a captura para e o contexto é relido.
+  // `ausente_do_omie` é TEMPORÁRIO (o pedido pode voltar à etapa): não trava a atribuição — só
+  // força a releitura, e `autoriza()` decide com `ausente_rodadas` atual (Codex r2).
+  const ausenciasVistas = useRef(new Set<string>());
   useEffect(() => {
-    const perda = fila.find((i) => i.estado === "rejeitada" && i.motivo && MOTIVOS_PERDA_DE_AUTORIZACAO.has(i.motivo) && i.comando.atribuicao_id === atribuicao.atribuicao_id);
-    if (perda && perdeu === null) {
-      setPerdeu(perda.motivo);
-      void qc.invalidateQueries({ queryKey: ["picking-v2", "tarefa", tarefaId] });
-    }
+    const daAtribuicao = fila.filter((i) => i.estado === "rejeitada" && i.comando.atribuicao_id === atribuicao.atribuicao_id);
+    const novasAusencias = daAtribuicao.filter((i) => i.motivo === "ausente_do_omie" && !ausenciasVistas.current.has(i.comando.leitura_id));
+    novasAusencias.forEach((i) => ausenciasVistas.current.add(i.comando.leitura_id));
+    const perda = daAtribuicao.find((i) => i.motivo && MOTIVOS_PERDA_DE_AUTORIZACAO.has(i.motivo));
+    if (perda && perdeu === null) setPerdeu(perda.motivo);
+    if ((perda && perdeu === null) || novasAusencias.length > 0) void qc.invalidateQueries({ queryKey: ["picking-v2", "tarefa", tarefaId] });
   }, [fila, atribuicao.atribuicao_id, perdeu, qc, tarefaId]);
   // Leituras resolvidas: o progresso do servidor muda.
   const resolvidas = fila.filter((i) => i.estado !== "pendente").length;
@@ -136,16 +183,23 @@ export function useSeparacao(tarefaInicial: TarefaV2, atribuicao: Atribuicao) {
       : "carregando_fila"
     : lente
       ? "lente_ver_como"
-      : perdeu ?? autoriza(tarefa, atribuicao, operador);
+      : perdeu ?? (epocaLida === null || epocaLida !== epocaAtual ? "conferindo_tarefa" : autoriza(tarefa, atribuicao, operador));
   const capturando = bloqueio === null && !barreira && !linhasQ.isLoading && !leiturasQ.isLoading;
 
   const registrar = useCallback(
     async (tipo: "bipe" | "manual", previsao: Previsao, extra: { codigo_lido?: string; linha_id?: string; quantidade?: number }) => {
       const a = m.armazem();
       if (!a || !operador) return false;
+      const epoca = epocaAtual;
+      let atravessou = false;
       try {
-        await comTrava(travaDaTarefa(tarefaId), () =>
-          a.enfileirar({
+        await comTrava(travaDaTarefa(tarefaId), async () => {
+          // Esperou a trava enquanto outra aba concluía/marcava falta: a captura é de antes.
+          if (lerEpoca(tarefaId) !== epoca) {
+            atravessou = true;
+            return;
+          }
+          await a.enfileirar({
             comando: {
               leitura_id: crypto.randomUUID(),
               account: tarefa.account,
@@ -164,17 +218,22 @@ export function useSeparacao(tarefaInicial: TarefaV2, atribuicao: Atribuicao) {
             unidades: null,
             previsto: previsao.ok ? { linha_id: previsao.linha_id, unidades: previsao.unidades } : null,
             divergente_nao_visto: false,
-          }),
-        );
+          });
+        });
       } catch {
         sinalizar("divergencia", "Leitura NÃO gravada no aparelho — bipe de novo");
+        return false;
+      }
+      if (atravessou) {
+        setEpocaAtual(lerEpoca(tarefaId));
+        sinalizar("divergencia", "A tarefa mudou em outro aparelho/aba — leitura NÃO gravada");
         return false;
       }
       await m.recarregar();
       m.cutucar();
       return true;
     },
-    [m, operador, tarefa.account, tarefaId, atribuicao, sinalizar],
+    [m, operador, epocaAtual, tarefa.account, tarefaId, atribuicao, sinalizar],
   );
 
   const feedbackAcerto = useCallback(
@@ -219,6 +278,10 @@ export function useSeparacao(tarefaInicial: TarefaV2, atribuicao: Atribuicao) {
       if (!capturando) return;
       const linha = linhas.find((l) => l.id === linhaId);
       if (!linha) return;
+      if (!quantidadeRepresentavel(quantidade)) {
+        sinalizar("divergencia", "Quantidade inválida — use no máximo 6 casas decimais");
+        return;
+      }
       const aprovados: CodigoCadastrado[] = (codigosQ.data ?? []).filter((c) => c.omie_codigo_produto === linha.omie_codigo_produto);
       const previsao = preverManual(linha, quantidade, aprovados);
       void registrar("manual", previsao, { linha_id: linhaId, quantidade }).then((gravou) => {
@@ -236,15 +299,18 @@ export function useSeparacao(tarefaInicial: TarefaV2, atribuicao: Atribuicao) {
       setBarreira(true);
       try {
         return await comTrava(travaDaTarefa(tarefaId), async () => {
+          // Dentro da trava: quem esperava por ela com uma captura antiga vai ver a época nova.
+          setEpocaAtual(avancarEpoca(tarefaId));
           if (!(await m.drenar(tarefaId))) return "nao_drenou" as const;
           const relida = (await m.recarregar()).filter((i) => i.comando.tarefa_id === tarefaId);
           return acao(relida);
         });
       } finally {
         setBarreira(false);
+        void qc.invalidateQueries({ queryKey: ["picking-v2", "tarefa", tarefaId] });
       }
     },
-    [m, tarefaId],
+    [m, qc, tarefaId],
   );
 
   const concluir = useCallback(async (): Promise<{ ok: boolean; motivo?: string }> => {
@@ -324,6 +390,8 @@ const ROTULOS: Record<string, string> = {
   lente_ver_como: "Lente 'Ver como' ativa — separação pausada",
   armazenamento_indisponivel: "Aparelho sem armazenamento — não dá para separar",
   carregando_fila: "Carregando a fila do aparelho…",
+  conferindo_tarefa: "Conferindo a tarefa no servidor…",
+  sem_dono_versao_anterior: "Leitura de versão anterior do app — chame o supervisor",
 };
 
 export function rotuloMotivo(motivo: string): string {

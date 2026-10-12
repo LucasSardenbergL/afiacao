@@ -11,3 +11,12 @@ export function micro(x: number): number {
 export function deMicro(m: number): number {
   return m / ESCALA;
 }
+
+/**
+ * A quantidade manual cabe em 6 casas? Confere a representação que vai no JSON (a mesma que o
+ * `numeric` do servidor recebe): `0,9999996` seria aceito lá e arredondado aqui, escondendo um
+ * resto impossível de lançar (Codex Fase 1 r2). Só positiva e finita.
+ */
+export function quantidadeRepresentavel(x: number): boolean {
+  return x > 0 && /^\d+(\.\d{1,6})?$/.test(JSON.stringify(x));
+}

@@ -10,6 +10,11 @@ export interface OpcoesCaptura {
   agora?: () => number;
 }
 
+function ehCampoDeTexto(alvo: EventTarget | null): boolean {
+  const el = alvo as { tagName?: string; isContentEditable?: boolean } | null;
+  return !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable === true);
+}
+
 /** Liga a captura; devolve a função que desliga. */
 export function iniciarCaptura({ aoSaida, protocolo = PADRAO_PROTOCOLO, alvo = window, agora = () => performance.now() }: OpcoesCaptura): () => void {
   let estado = ESTADO_INICIAL;
@@ -36,6 +41,10 @@ export function iniciarCaptura({ aoSaida, protocolo = PADRAO_PROTOCOLO, alvo = w
     if (p.engolir) {
       e.preventDefault();
       e.stopPropagation();
+    } else if (e.key === "Enter" && !ehCampoDeTexto(e.target)) {
+      // ENTER de um quadro cortado pode chegar DEPOIS da janela de descarte; com a captura ligada
+      // ele nunca aciona o botão focado ("Falta", "Concluir") — botão é toque (Codex Fase 1 r2).
+      e.preventDefault();
     }
     p.saidas.forEach(aoSaida);
     agendar();

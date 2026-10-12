@@ -17,6 +17,7 @@ import { useUrlState } from "@/hooks/useUrlState";
 import { track } from "@/lib/analytics";
 import { cn } from "@/lib/utils";
 import { PADROES } from "@/lib/picking/feedback";
+import { type SentidoDivergencia, sentidoDivergencia } from "@/lib/picking/scanner/fila";
 import { type Conta, lerTarefa, listarFila, pegarTarefa, retomarTarefa, type TarefaV2 } from "@/lib/picking/v2-api";
 import { type Atribuicao, destravarSom, rotuloMotivo, useMotorFila, useSeparacao } from "@/hooks/picking/useSeparacao";
 import { useWakeLock } from "@/hooks/picking/useWakeLock";
@@ -209,6 +210,13 @@ function descricao(l: { codigo_item: number }): string {
   return (l as { descricao?: string | null }).descricao ?? `Item ${l.codigo_item}`;
 }
 
+/** O aviso diz o que de fato aconteceu — nunca "recusada" para leitura que o servidor aceitou. */
+const TEXTO_DIVERGENCIA: Record<SentidoDivergencia, string> = {
+  recusada_apos_ok: "leitura(s) que o aparelho deu como certas foram RECUSADAS pelo servidor — tire do volume",
+  aceita_apos_recusa: "leitura(s) que o aparelho recusou foram ACEITAS pelo servidor — elas contam no volume",
+  falhou: "leitura(s) NÃO registradas por erro — chame o supervisor",
+};
+
 const COR_FUNDO = {
   verde: "bg-status-success/25",
   vermelho: "bg-status-error/30",
@@ -299,10 +307,16 @@ function Separando({ tarefa, atribuicao, aoSair }: { tarefa: TarefaV2; atribuica
         )}
         {sep.divergentes.length > 0 && (
           <div className="rounded-md border border-status-error bg-status-error/10 p-3">
-            <p className="text-sm font-medium text-status-error">
-              {sep.divergentes.length} leitura(s) que o aparelho deu como certas foram recusadas pelo servidor
-              ({[...new Set(sep.divergentes.map((d) => rotuloMotivo(d.motivo ?? "erro")))].join(", ")}). Confira o volume.
-            </p>
+            {(Object.keys(TEXTO_DIVERGENCIA) as SentidoDivergencia[]).map((sentido) => {
+              const grupo = sep.divergentes.filter((d) => sentidoDivergencia(d) === sentido);
+              if (grupo.length === 0) return null;
+              return (
+                <p key={sentido} className="text-sm font-medium text-status-error">
+                  {grupo.length} {TEXTO_DIVERGENCIA[sentido]}
+                  {sentido !== "aceita_apos_recusa" && <> ({[...new Set(grupo.map((d) => rotuloMotivo(d.motivo ?? "erro")))].join(", ")})</>}.
+                </p>
+              );
+            })}
             <Button size="touch" variant="outline" className="mt-2" onClick={() => void sep.reconhecer()}>
               Entendi
             </Button>
