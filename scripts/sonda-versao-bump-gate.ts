@@ -279,6 +279,11 @@ export function auditarBump(edges: EstadoEdge[]): Achado[] {
     // Edge que NASCE instrumentada nesta fatia: o marcador inicial já nomeia o que ela é.
     if (e.versaoBase === null) continue;
 
+    // Edge APAGADA inteira (o `index.ts` saiu no HEAD): não há bundle para a sonda provar. Só o
+    // entrypoint ausente conta — apagar o `versao.ts` e manter o `index.ts` continua reprovando.
+    const removida = e.corpo.some((a) => a.caminho === `${RAIZ_EDGES}/${e.edge}/index.ts` && a.head === null);
+    if (e.versaoHead === null && removida) continue;
+
     if (e.versaoHead === null) {
       achados.push({ edge: e.edge, versao: e.versaoBase, motivo: 'marcador-ilegivel', arquivos });
       continue;

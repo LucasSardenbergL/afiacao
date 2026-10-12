@@ -134,7 +134,6 @@ const E1_DIVIDA: ReadonlyMap<string, number> = new Map([
   ['supabase/functions/melhoria-triagem/index.ts', 1],
   ['supabase/functions/nvoip-calls/index.ts', 2],
   ['supabase/functions/omie-analytics-sync/index.ts', 3],
-  ['supabase/functions/omie-aplicar-parametros/index.ts', 2],
   ['supabase/functions/omie-financeiro/index.ts', 1],
   ['supabase/functions/omie-malha-sync/index.ts', 2],
   ['supabase/functions/omie-nfe-recebimento/index.ts', 4],
@@ -154,7 +153,6 @@ const E1_DIVIDA: ReadonlyMap<string, number> = new Map([
   ['supabase/functions/scoring-recalc-client/index.ts', 1],
   ['supabase/functions/sync-reprocess/index.ts', 1],
   ['supabase/functions/tint-sync-agent/index.ts', 3], // 6→3 (2026-09-25): completeSyncRun confere o UPDATE; saíram os 2 update({status:'error'}) do promote no HTTP
-  ['supabase/functions/verify-employee/index.ts', 2],
   ['supabase/functions/visit-score-recalc-client/index.ts', 1],
   ['supabase/functions/whatsapp-inbound/index.ts', 4],
   ['supabase/functions/whatsapp-send-template/index.ts', 2],
