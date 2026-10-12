@@ -17,6 +17,7 @@ import { RequireStaff } from '@/components/RequireStaff';
 import { RequireCaca } from '@/components/RequireCaca';
 import { NotificationPrompt } from "@/components/NotificationPrompt";
 import { AppShellLayout } from "@/components/AppShellLayout";
+import { GuardModuloCongelado } from "@/components/GuardModuloCongelado";
 import { PageSkeleton } from "@/components/ui/page-skeleton";
 
 // Lazy-loaded pages
@@ -235,6 +236,9 @@ const App = () => {
 
             {/* All authenticated routes inside AppShell */}
             <Route element={<ProtectedRoute><AppShellLayout /></ProtectedRoute>}>
+              {/* M-41: rota de módulo congelado volta para "/" com aviso (o gate confere que
+                  TODA rota autenticada passa por aqui). */}
+              <Route element={<GuardModuloCongelado />}>
               {/* ─── Abertas (cliente + staff) — sem RequireStaff ─── */}
               <Route index element={<Index />} />
               <Route path="orders" element={<Orders />} />
@@ -437,6 +441,7 @@ const App = () => {
                 <Route element={<RequireCaca />}>
                   <Route path="caca" element={<Caca />} />
                 </Route>
+              </Route>
               </Route>
             </Route>
 

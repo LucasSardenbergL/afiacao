@@ -11,7 +11,21 @@ export type ModuloApp = {
   /** Globs dos arquivos de teste do módulo (para rodar isolado e p/ atribuição no boletim). */
   testes: string[];
   risco: { moneyPath: boolean; offlineFirst: boolean; authSensitive: boolean };
+  /**
+   * Ciclo de vida (M-41). `congelado` = rota e navegação escondidas, código intacto, sem correção.
+   * `arquivado` = só depois do fim do congelamento, se seguir sem uso. Ver congelamento.ts.
+   */
+  status: StatusModulo;
+  /** Obrigatório quando `status !== "ativo"` — prazo e motivo, nunca congelamento sem fim. */
+  congelamento?: Congelamento;
+  /** Congelamento PARCIAL de um módulo ativo (ex.: picking dentro do estoque-recebimento). */
+  rotasCongeladas?: Congelamento & { prefixos: string[] };
 };
+
+type StatusModulo = "ativo" | "congelado" | "arquivado";
+
+/** Datas ISO (AAAA-MM-DD). `ate` = `desde` + 90 dias (o gate confere). */
+export type Congelamento = { desde: string; ate: string; motivo: string };
 
 /** Dívida de classificação VISÍVEL e datada — nunca bucket silencioso. */
 export type NaoClassificado = { path: string; motivo: string; desde: string };

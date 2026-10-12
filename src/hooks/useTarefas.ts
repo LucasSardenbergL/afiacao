@@ -13,14 +13,14 @@ import type { TarefaEstado } from '@/lib/tarefas/types';
 const sel = () => (supabase.from('v_tarefas_estado' as never) as any);
 
 /** Tarefas da vendedora logada (do responsável efetivo: assigned_to OU cobertura). A RLS já filtra. */
-export function useMinhasTarefas() {
+export function useMinhasTarefas({ enabled = true }: { enabled?: boolean } = {}) {
   const { user } = useAuth();
   const { isImpersonating, effectiveUserId } = useImpersonation();
   // Impersonation-aware: no "Ver como", o master lê (RLS permite) e filtramos pro alvo.
   const targetId = isImpersonating && effectiveUserId ? effectiveUserId : (user?.id ?? null);
   return useQuery({
     queryKey: ['minhas-tarefas', isImpersonating ? `as:${effectiveUserId}` : user?.id],
-    enabled: !!targetId,
+    enabled: enabled && !!targetId,
     staleTime: 30_000,
     refetchInterval: 60_000,
     refetchIntervalInBackground: false,

@@ -24,23 +24,25 @@ Tudo autenticado vive em `<ProtectedRoute><AppShellLayout>` e se divide em faixa
 
 ## Módulos → prefixo → o que é
 
-| Módulo | Prefixo de rota | Gate | Telas-chave |
-|---|---|---|---|
-| Afiação / Loja (cliente) | `/`, `/orders`, `/new-order`, `/tools`, `/loyalty`, `/gamification`, `/training`, `/savings` | aberto | pedido de afiação, histórico de ferramenta, fidelidade, treinamento |
-| Tarefas | `/tarefas`, `/tarefas/templates` | aberto | tarefas operacionais + templates |
-| Financeiro | `/financeiro/*` | `RequireFinanceiroAccess` | `capital-giro` (fluxo 13s/NCG), DRE, `tributario`, `mapping` de categoria, fechamento |
-| Vendas | `/sales/*` | staff | pipeline / venda assistida por IA |
-| Farmer / Inteligência | `/farmer/*`, `/meu-dia`, `/coaching`, `/intelligence`, `/executive/dashboard`, `/radar` | staff | plano tático, bundles, IPF, radar de empresas |
-| Admin / CRM | `/admin/*` (customers, orders, approvals, price-table, demand-forecast) | staff | clientes, aprovações, tabela de preço, previsão de demanda |
-| Tintométrico | `/tintometrico/*` | staff | catálogo, integração, fórmulas |
-| Estoque / Recebimento | `/admin/estoque/*`, `/recebimento/*` | staff | picking, recebimento (offline-first) |
-| Produção | `/producao/*` | staff | ordens de produção |
-| Reposição / Compras | `/admin/reposicao/*`, `/admin/sku-mapeamento` | staff | pedidos do ciclo, sessão de compra, de-para Sayerlack |
-| Governança / Gestão | `/governance/*`, `/gestao/*` | staff | saúde de dados, melhorias, grupos de cliente |
-| Base de Conhecimento / Processos | `/admin/knowledge-base/*`, `/admin/standard-processes/*` | staff | boletim↔SKU, processos-padrão |
-| Telefonia / WhatsApp / Rota | `/telefonia`, `/whatsapp/*`, `/rota/*` | staff | discador WebRTC, atendimento, roteirização |
-| Caça (prospecção) | `/caca` | `RequireCaca` | prospecção de leads |
-| Plataforma (config/design/docs) | `/ai-ops`, `/design-system`, `/settings`, `/docs`, `/admin/ajuda` | staff | ai-ops, design system, docs técnicas, ajuda |
+| Módulo | Prefixo de rota | Gate | Telas-chave | Status |
+|---|---|---|---|---|
+| Afiação / Loja (cliente) | `/`, `/orders`, `/new-order`, `/tools`, `/loyalty`, `/gamification`, `/training`, `/savings` | aberto | pedido de afiação, histórico de ferramenta, fidelidade, treinamento | 🧊 até 10/01/2027 (a home `/` fica) |
+| Tarefas | `/tarefas`, `/tarefas/templates` | aberto | tarefas operacionais + templates | 🧊 até 10/01/2027 |
+| Financeiro | `/financeiro/*` | `RequireFinanceiroAccess` | `capital-giro` (fluxo 13s/NCG), DRE, `tributario`, `mapping` de categoria, fechamento | ✅ leitura · 🧊 telas de input até 10/01/2027 |
+| Vendas | `/sales/*` | staff | pipeline / venda assistida por IA | ✅ |
+| Farmer / Inteligência | `/farmer/*`, `/meu-dia`, `/coaching`, `/intelligence`, `/executive/dashboard`, `/radar` | staff | plano tático, bundles, IPF, radar de empresas | ✅ |
+| Admin / CRM | `/admin/*` (customers, orders, approvals, price-table, demand-forecast) | staff | clientes, aprovações, tabela de preço, previsão de demanda | ✅ (ingestão diária do Omie) |
+| Tintométrico | `/tintometrico/*` | staff | catálogo, integração, fórmulas | ✅ |
+| Estoque / Recebimento | `/admin/estoque/*`, `/recebimento/*` | staff | picking, recebimento (offline-first) | ✅ (picking v2 em piloto desde o #2994) |
+| Produção | `/producao/*` | staff | ordens de produção | 🧊 até 10/01/2027 |
+| Reposição / Compras | `/admin/reposicao/*`, `/admin/sku-mapeamento` | staff | pedidos do ciclo, sessão de compra, de-para Sayerlack | ✅ |
+| Governança / Gestão | `/governance/*`, `/gestao/*` | staff | saúde de dados, melhorias, grupos de cliente | ✅ (edge/cron escrevem) |
+| Base de Conhecimento / Processos | `/admin/knowledge-base/*`, `/admin/standard-processes/*` | staff | boletim↔SKU, processos-padrão | 🧊 até 10/01/2027 |
+| Telefonia / WhatsApp / Rota | `/telefonia`, `/whatsapp/*`, `/rota/*` | staff | discador WebRTC, atendimento, roteirização | 🧊 até 10/01/2027 |
+| Caça (prospecção) | `/caca` | `RequireCaca` | prospecção de leads | ✅ |
+| Plataforma (config/design/docs) | `/ai-ops`, `/design-system`, `/settings`, `/docs`, `/admin/ajuda` | staff | ai-ops, design system, docs técnicas, ajuda | ✅ |
+
+**Status (M-41, 2026-10-12):** 🧊 = **congelado por 90 dias**. A rota volta para `/` com aviso e some da navegação, e o código fica no repo sem receber correção. A fonte é `status`/`rotasCongeladas` em `src/lib/modulos/manifesto.ts`, e o gate é `congelamento.gate.test.ts`. O critério foi **escrita real no banco nos 90 dias** (`psql-ro`), não pageview: o PostHog é censurado por bloqueador ([analytics.md](analytics.md) §4). Cron que só mantém o estado do próprio módulo sobre tabela vazia não conta como uso. Em 10/01/2027: arquivar (`status: "arquivado"`) o que seguir sem uso, ou descongelar o que tiver evento `modulo.congelado_acesso` ou escrita. Para descongelar antes, troque o status no manifesto.
 
 ## "Onde eu faço X?" (por intenção → módulo)
 

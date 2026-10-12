@@ -19,6 +19,7 @@ const mod = (id: string, codigo: string[], testes: string[] = []): ModuloApp => 
   codigo,
   testes,
   risco: { moneyPath: false, offlineFirst: false, authSensitive: false },
+  status: "ativo",
 });
 
 describe("contarArquivos", () => {
