@@ -21,13 +21,13 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **616** custom migrations totais
-- **2019** objetos esperados (criados por estas migrations)
+- **619** custom migrations totais
+- **2022** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 703
+  - `function`: 704
   - `rls_policy`: 471
   - `index`: 275
-  - `cron_job`: 178
+  - `cron_job`: 180
   - `table`: 176
   - `view`: 109
   - `trigger`: 103
@@ -5047,6 +5047,23 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.fin_sync_kicks_perdidos` | — |
+
+### `20261012150000_tint_gate_tabela_implausivel.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_gate_revalida` | — |
+
+### `20261012160000_picking_v2_cron_fila.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.picking-fila-oben` | — |
+| `cron_job` | `cron.picking-fila-colacor` | — |
+
+### `20261012203227_crons_modulos_congelados.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ## Próximos passos por status
 
