@@ -18,7 +18,7 @@ export interface PickItem {
   lote_separado: string | null;
 }
 
-export interface ConfirmPayload {
+interface ConfirmPayload {
   quantidadeSeparada: number;
   loteInformado: string | null;
   justificativa: string | null;
