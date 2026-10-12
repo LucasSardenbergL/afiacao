@@ -36,8 +36,8 @@ export const MAX_IDADE_ANTERIOR_MS = 30 * 60 * 60 * 1000;
  * Acima de max(MIN, ⌈FRACAO × ativos⌉) ausentes a listagem é suspeita: nada é inativado. Churn real
  * medido: 4 numa recriação em lote (colacor, 2227 ativos). 2%/10 dá oben 20, colacor 45.
  */
-export const LIMITE_AUSENTES_MIN = 10;
-export const LIMITE_AUSENTES_FRACAO = 0.02;
+const LIMITE_AUSENTES_MIN = 10;
+const LIMITE_AUSENTES_FRACAO = 0.02;
 
 export function limiteAusentes(nAtivos: number): number {
   return Math.max(LIMITE_AUSENTES_MIN, Math.ceil(nAtivos * LIMITE_AUSENTES_FRACAO));
@@ -89,7 +89,7 @@ export interface ConjuntoAnterior {
   run_at: unknown;
 }
 
-export type StatusAusentes = "complete" | "incompleta" | "teto_excedido";
+type StatusAusentes = "complete" | "incompleta" | "teto_excedido";
 
 export interface PlanoInativacao {
   status: StatusAusentes;
