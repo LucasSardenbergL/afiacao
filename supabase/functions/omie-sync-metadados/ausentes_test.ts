@@ -152,7 +152,9 @@ Deno.test("completude do catálogo: intermediária curta, última cheia, código
   assertEquals(buraco.completa, false);
   const ultimaCheia = avaliarCompletudeCatalogo({ ...base, tamanhos: [100, 100], unicos: 200, totalDeclarado: 200 });
   assertEquals(ultimaCheia.completa, false);
-  const invalido = avaliarCompletudeCatalogo({ ...base, tamanhos: [100, 35], codigosInvalidos: 1, unicos: 134, totalDeclarado: 135 });
+  // unicos == declarado de propósito: o guard de código inválido tem de morder SOZINHO (sem ele a
+  // contagem fecharia e a linha local do item sem código pareceria ausente).
+  const invalido = avaliarCompletudeCatalogo({ ...base, tamanhos: [100, 35], codigosInvalidos: 1, unicos: 135, totalDeclarado: 135 });
   assertEquals(invalido.completa, false);
   const truncada = avaliarCompletudeCatalogo({ ...base, tamanhos: [100, 35], unicos: 135, totalDeclarado: 4335 });
   assertEquals(truncada.completa, false);
