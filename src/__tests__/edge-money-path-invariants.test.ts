@@ -4923,3 +4923,29 @@ describe('guardrail money-path: PV reconciliado e exclusão sem PID (ATP 3.3)', 
     expect(exclusao, 'a janela de envio em curso precede a consulta').toMatch(/JANELA_ENVIO_EM_CURSO_MS[\s\S]*"ConsultarPedido"/);
   });
 });
+
+describe('guardrail money-path: `reprocess_operational_orders` (cron da Colacor) é SÓ pedidos', () => {
+  // O status dos pedidos da Colacor ficou congelado de jun a out/2026 porque o reconciliador só
+  // rodava para a Oben (docs/historico/status-pedidos-colacor-congelado.md). O cron dela usa esta
+  // ação, e não `reprocess_operational`, porque esta NÃO pode tocar estoque nem custo: o
+  // `reprocessInventory` faz upsert em product_costs, e para a Colacor seria um escritor a mais do
+  // CMC (o dono é o syncInventory). Se alguém "simplificar" a ação chamando o inventário, o CMC da
+  // Colacor ganha um segundo escritor sem alarme nenhum.
+  const src = removerComentarios(read('supabase/functions/sync-reprocess/index.ts'));
+  const ini = src.indexOf('case "reprocess_operational_orders"');
+  const corpo = src.slice(ini, src.indexOf('case "', ini + 10));
+
+  it('existe, e roda só reprocessOrders gravando como operational', () => {
+    expect(ini, 'a ação reprocess_operational_orders sumiu da edge').toBeGreaterThan(-1);
+    expect(corpo).toMatch(/reprocessOrders\(\s*supabaseAdmin,\s*account as Account,\s*windowDays,\s*"operational"\s*\)/);
+  });
+
+  it('NUNCA chama inventário nem produtos (escritores de product_costs)', () => {
+    expect(corpo).not.toContain('reprocessInventory');
+    expect(corpo).not.toContain('reprocessProducts');
+  });
+
+  it('respeita o mesmo kill switch do operacional', () => {
+    expect(corpo).toContain('cfg.operational_enabled');
+  });
+});

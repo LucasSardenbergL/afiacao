@@ -18,6 +18,13 @@ import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { hojeSP } from "../_shared/hoje-sp.ts";
 
+// ⚠️ ESPELHO de OPEN_NOT_OVERDUE_TITLE_STATUSES em src/lib/financeiro/titulo-status.ts (paridade
+// travada em src/lib/financeiro/__tests__/titulo-status-paridade.test.ts). Antecipável = em aberto
+// e NÃO vencido: 'ATRASADO'/'VENCIDO' ficam de fora mesmo com vencimento futuro (dado incoerente do
+// Omie não vira recomendação de antecipar), e liquidados ficam de fora porque o `saldo` deles é o
+// valor cheio (#396). Editou aqui? Edite lá também.
+const STATUS_ANTECIPAVEIS = ["A VENCER", "VENCE HOJE", "ABERTO"] as const;
+
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
@@ -555,7 +562,9 @@ Deno.serve(async (req: Request) => {
           .from("fin_contas_receber")
           .select("id, nome_cliente, saldo, data_vencimento, status_titulo")
           .eq("company", company)
-          .eq("status_titulo", "ABERTO")
+          // Vocabulário NATIVO do Omie. O filtro antigo casava só o status `ABERTO`, valor
+          // que o Omie nunca manda → 0 títulos em prod e "nada a antecipar" sempre (M-08).
+          .in("status_titulo", [...STATUS_ANTECIPAVEIS])
           .gt("saldo", 0)
           .gt("data_vencimento", hojeISO)
           // Ordem estável pela PK (conferida em prod): sem ela o `.range()` pula/duplica títulos

@@ -18,7 +18,7 @@ import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
 export const respostaSonda = criarRespostaSonda("fin-funding");
 
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.2-tipos-client";
+export const VERSAO = "v1.3-status-nativo-omie";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

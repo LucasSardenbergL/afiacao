@@ -950,6 +950,22 @@ Deno.serve(async (req) => {
         break;
       }
 
+      case "reprocess_operational_orders": {
+        // SÓ PEDIDOS, gravando como `operational` — o cron da COLACOR (status congelado desde
+        // jun/2026: criar_pedidos_com_itens é ON CONFLICT DO NOTHING e o reconciliador só rodava para a
+        // Oben; docs/historico/status-pedidos-colacor-congelado.md). O `reprocess_operational` também
+        // roda `reprocessInventory`, que faz upsert em product_costs: para a Colacor seria um escritor
+        // a mais do CMC, cujo dono é o syncInventory (colacor_vendas). Mesmo kill switch do operacional.
+        if (!cfg.operational_enabled) {
+          result = { skipped: true, reason: "Operational reprocessing disabled" };
+          break;
+        }
+        const windowDays = cfg.operational_window_days || 7;
+        const orders = await reprocessOrders(supabaseAdmin, account as Account, windowDays, "operational");
+        result = { orders, window_days: windowDays };
+        break;
+      }
+
       case "reprocess_strategic": {
         if (!cfg.strategic_enabled) {
           result = { skipped: true, reason: "Strategic reprocessing disabled" };
