@@ -10,7 +10,6 @@ import { AddToolDialog } from '@/components/AddToolDialog';
 import { UnifiedAIAssistant } from '@/components/UnifiedAIAssistant';
 import { TintColorSelectDialog } from '@/components/TintColorSelectDialog';
 import { CorPrimeiroDialog } from '@/components/tintColorSelect/CorPrimeiroDialog';
-import { ehBaseTintometricaOben } from '@/lib/tint/pode-adicionar';
 import { OrderSuccessDialog } from '@/components/OrderSuccessDialog';
 import { AtpBackorderDialog } from '@/components/unified-order/AtpBackorderDialog';
 import { cn } from '@/lib/utils';
@@ -645,8 +644,9 @@ const UnifiedOrder = () => {
         onClose={() => setCorPrimeiroAberto(false)}
         onConfirm={(formulaId, corId, nomeCor, precoFinal, custoCorantes, pricingMeta, product) => {
           // A base é a da embalagem escolhida — nunca há produto pendente nesta entrada.
-          // Defesa em profundidade (Codex P1): só base tintométrica da Oben entra por aqui.
-          if (!ehBaseTintometricaOben(product)) return;
+          // Defesa em profundidade (Codex P1): só base tintométrica da Oben entra por aqui (o
+          // diálogo já barra com `ehBaseTintometricaOben`; repetido inline para não criar aresta).
+          if (!product || product.account !== 'oben' || !product.is_tintometric || product.tint_type !== 'base') return;
           h.addTintProductToCart(product, formulaId, corId, nomeCor, precoFinal, custoCorantes, pricingMeta, 1);
           setCorPrimeiroAberto(false);
           toast.success(`${corId} adicionada`, { description: product.descricao });
