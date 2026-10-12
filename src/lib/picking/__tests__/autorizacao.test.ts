@@ -9,8 +9,9 @@ const base: InsumosBloqueio = {
   operador: "U1",
   epocaLida: 2,
   epocaAtual: { n: 2, aberta: false },
+  leituraIniciadaEm: 1_000,
+  montadoEm: 500,
   ausenteEm: null,
-  tarefaLidaEm: 1_000,
 };
 const com = (p: Partial<InsumosBloqueio>) => bloqueioDaTarefa({ ...base, ...p });
 
@@ -19,8 +20,10 @@ describe("bloqueio da captura", () => {
     expect(com({})).toBeNull();
   });
 
-  it("sem releitura neste mount (reload com retrato velho) não autoriza", () => {
-    expect(com({ epocaLida: null })).toBe("conferindo_tarefa");
+  it("sem releitura que COMEÇOU depois do mount não autoriza: reload, cache, consulta em voo herdada, releitura falhando (Codex r4)", () => {
+    expect(com({ leituraIniciadaEm: null, epocaLida: null })).toBe("conferindo_tarefa");
+    expect(com({ leituraIniciadaEm: 400 })).toBe("conferindo_tarefa");
+    expect(com({ leituraIniciadaEm: 500 })).toBeNull();
   });
 
   it("barreira aberta em outra aba bloqueia, mesmo com a releitura em dia (Codex r3-B)", () => {
@@ -31,10 +34,11 @@ describe("bloqueio da captura", () => {
     expect(com({ epocaAtual: { n: 4, aberta: false } })).toBe("conferindo_tarefa");
   });
 
-  it("negativa `ausente_do_omie` bloqueia até uma releitura BEM-SUCEDIDA posterior (Codex r3-C)", () => {
-    expect(com({ ausenteEm: 1_500, tarefaLidaEm: 1_000 })).toBe("ausente_do_omie");
-    expect(com({ ausenteEm: 1_500, tarefaLidaEm: 1_500 })).toBe("ausente_do_omie");
-    expect(com({ ausenteEm: 1_500, tarefaLidaEm: 2_000 })).toBeNull();
+  it("negativa `ausente_do_omie` bloqueia até uma releitura que COMEÇOU depois dela (Codex r3-C/r4)", () => {
+    // Consulta iniciada antes da negativa e respondida depois ainda carrega o retrato velho.
+    expect(com({ ausenteEm: 1_500, leituraIniciadaEm: 1_000 })).toBe("ausente_do_omie");
+    expect(com({ ausenteEm: 1_500, leituraIniciadaEm: 1_500 })).toBe("ausente_do_omie");
+    expect(com({ ausenteEm: 1_500, leituraIniciadaEm: 1_501 })).toBeNull();
   });
 
   it("espelha a RPC: status, atribuição, operador, revisão e ausente_rodadas", () => {

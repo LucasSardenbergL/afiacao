@@ -97,15 +97,18 @@ export function useSeparacao(tarefaInicial: TarefaV2, atribuicao: Atribuicao) {
   const tarefaQ = useQuery({
     queryKey: ["picking-v2", "tarefa", tarefaId],
     queryFn: async () => {
+      const iniciadaEm = Date.now();
       const epoca = lerEpoca(tarefaId).n;
-      return { tarefa: await lerTarefa(tarefaId), epoca };
+      return { tarefa: await lerTarefa(tarefaId), epoca, iniciadaEm };
     },
     staleTime: 0,
     refetchOnMount: "always",
     refetchInterval: 30_000,
   });
   const tarefa = tarefaQ.data?.tarefa ?? tarefaInicial;
-  const epocaLida = tarefaQ.isFetchedAfterMount && tarefaQ.data ? tarefaQ.data.epoca : null;
+  const [montadoEm] = useState(() => Date.now());
+  const epocaLida = tarefaQ.data?.epoca ?? null;
+  const leituraIniciadaEm = tarefaQ.data?.iniciadaEm ?? null;
   // A cada releitura, a época vista é refeita: uma barreira aberta por aba que morreu expira
   // (BARREIRA_MAX_MS) sem precisar de evento novo.
   useEffect(() => {
@@ -166,6 +169,14 @@ export function useSeparacao(tarefaInicial: TarefaV2, atribuicao: Atribuicao) {
     if (perda && perdeu === null) setPerdeu(perda.motivo);
     if ((perda && perdeu === null) || novasAusencias.length > 0) void qc.invalidateQueries({ queryKey: ["picking-v2", "tarefa", tarefaId] });
   }, [fila, atribuicao.atribuicao_id, perdeu, qc, tarefaId]);
+  // Vivacidade: consulta deduplicada com uma que começou ANTES do mount/da negativa não prova
+  // nada — quando ela termina e nada está buscando, dispara uma nova (sem esperar os 30 s).
+  const leituraVelha =
+    leituraIniciadaEm !== null && (leituraIniciadaEm < montadoEm || (ausenteEm !== null && leituraIniciadaEm <= ausenteEm));
+  const { fetchStatus: buscaTarefa, refetch: reler } = tarefaQ;
+  useEffect(() => {
+    if (leituraVelha && buscaTarefa === "idle") void reler();
+  }, [leituraVelha, buscaTarefa, reler]);
   // Leituras resolvidas: o progresso do servidor muda.
   const resolvidas = fila.filter((i) => i.estado !== "pendente").length;
   useEffect(() => {
@@ -178,7 +189,7 @@ export function useSeparacao(tarefaInicial: TarefaV2, atribuicao: Atribuicao) {
       : "carregando_fila"
     : lente
       ? "lente_ver_como"
-      : perdeu ?? bloqueioDaTarefa({ tarefa, atribuicao, operador, epocaLida, epocaAtual, ausenteEm, tarefaLidaEm: tarefaQ.dataUpdatedAt });
+      : perdeu ?? bloqueioDaTarefa({ tarefa, atribuicao, operador, epocaLida, epocaAtual, leituraIniciadaEm, montadoEm, ausenteEm });
   const capturando = bloqueio === null && !barreira && !linhasQ.isLoading && !leiturasQ.isLoading;
 
   const registrar = useCallback(

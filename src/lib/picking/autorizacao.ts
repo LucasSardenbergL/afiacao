@@ -13,22 +13,25 @@ export interface InsumosBloqueio {
   tarefa: TarefaV2;
   atribuicao: AtribuicaoLocal;
   operador: string | null;
-  /** Época vista na releitura da tarefa feita NESTE mount; null = ainda não houve. */
+  /** Época vista quando a releitura em `leituraIniciadaEm` começou; null = sem dado. */
   epocaLida: number | null;
   epocaAtual: Epoca;
+  /** INÍCIO da consulta que produziu a tarefa em mãos (só consultas BEM-SUCEDIDAS geram dado). */
+  leituraIniciadaEm: number | null;
+  /** Quando a tela montou: só vale leitura que COMEÇOU depois (cache/erro não autorizam). */
+  montadoEm: number;
   /** Quando o servidor respondeu `ausente_do_omie` pela última vez (ms); null = nunca. */
   ausenteEm: number | null;
-  /** Quando a tarefa foi relida com SUCESSO pela última vez (ms). */
-  tarefaLidaEm: number;
 }
 
 /** Motivo do bloqueio, ou null quando pode capturar. */
 export function bloqueioDaTarefa(x: InsumosBloqueio): string | null {
   if (x.epocaAtual.aberta) return "barreira_em_andamento";
+  // Comparar o INÍCIO da consulta (não a chegada): resposta de consulta anterior ao mount ou à
+  // negativa — em voo, de cache, ou com a releitura nova falhando — não prova nada (Codex r4).
+  if (x.leituraIniciadaEm === null || x.leituraIniciadaEm < x.montadoEm) return "conferindo_tarefa";
   if (x.epocaLida === null || x.epocaLida !== x.epocaAtual.n) return "conferindo_tarefa";
-  // Negativa do servidor conhecida e ainda não relida com sucesso: não autoriza com o retrato
-  // velho (a releitura que falha por rede mantém o bloqueio).
-  if (x.ausenteEm !== null && x.tarefaLidaEm <= x.ausenteEm) return "ausente_do_omie";
+  if (x.ausenteEm !== null && x.leituraIniciadaEm <= x.ausenteEm) return "ausente_do_omie";
   const t = x.tarefa;
   if (t.status !== "em_separacao") return "tarefa_fora_de_separacao";
   if (t.atribuicao_id !== x.atribuicao.atribuicao_id || t.operador_id !== x.operador) return "atribuicao_antiga";
