@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -10,6 +11,9 @@ import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { Search, RefreshCw, Package, ShoppingCart, BarChart3, Building2, ChevronLeft } from 'lucide-react';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
+import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
+import { fetchAllPages } from '@/lib/postgrest';
+import { desatualizado, estadoDeLeitura, naoConsegui } from '@/lib/leitura/estado-de-leitura';
 
 type Account = 'oben' | 'colacor';
 
@@ -21,18 +25,57 @@ interface Product {
   valor_unitario: number;
   estoque: number;
   ativo: boolean;
-  omie_codigo_produto: number;
   metadata: Record<string, unknown>;
-  account?: string;
 }
+
+/** Só o que a tela mostra — `select('*')` puxava o `metadata` inteiro de ~4k SKUs à toa. */
+const COLUNAS_CATALOGO = 'id, codigo, descricao, unidade, valor_unitario, estoque, ativo, metadata';
+
+/**
+ * O catálogo INTEIRO da conta (M-12). Era um `select('*')` single-shot: o PostgREST capa em 1.000
+ * linhas sem erro, e com 3.715 SKUs na Oben e 4.339 na Colacor a tela listava 1.000 e dizia
+ * "1000 produtos". `fetchAllPages` pagina até a página curta e REJEITA se uma página falha
+ * (página perdida ≠ fim do catálogo). A paginação ordena SÓ por `id` (imutável): ordenar por
+ * `ativo`/`descricao` no servidor deixaria um produto que o sync inativa entre duas páginas mudar de
+ * posição — relido numa página, outro SKU pulado, sem erro (Codex, revisão do M-12). A ordem de
+ * exibição (ativos primeiro, depois descrição) é aplicada no cliente, sobre o catálogo completo.
+ */
+export async function buscarCatalogoVendas(account: Account): Promise<Product[]> {
+  const linhas = await fetchAllPages<Product>(
+    (de, ate) =>
+      supabase
+        .from('omie_products')
+        .select(COLUNAS_CATALOGO)
+        .eq('account', account)
+        .not('familia', 'ilike', '%imobilizado%')
+        .not('familia', 'ilike', '%uso e consumo%')
+        .not('familia', 'ilike', '%matérias primas para conversão de cintas%')
+        .not('familia', 'ilike', '%jumbos de lixa para discos%')
+        .not('familia', 'ilike', 'jumbo%')
+        .not('familia', 'ilike', '%material para tingimix%')
+        .order('id')
+        .range(de, ate) as unknown as PromiseLike<{ data: Product[] | null; error: unknown }>,
+    'omie_products/catalogo-vendas',
+  );
+  // Um DELETE/INSERT entre páginas ainda pode reler uma linha: o mesmo `id` aparece uma vez só.
+  const porId = new Map(linhas.map((p) => [p.id, p]));
+  return [...porId.values()].sort(ordemDeExibicao);
+}
+
+// A ordem que o servidor dava: ativos primeiro, depois descrição (ambas NOT NULL em prod).
+function ordemDeExibicao(a: Product, b: Product): number {
+  if (a.ativo !== b.ativo) return a.ativo ? -1 : 1;
+  return a.descricao.localeCompare(b.descricao, 'pt-BR');
+}
+
+const chaveCatalogo = (account: Account) => ['catalogo-vendas', account] as const;
 
 const SalesProducts = () => {
   const navigate = useNavigate();
   const { isStaff, loading: authLoading } = useAuth();
 
+  const queryClient = useQueryClient();
   const [account, setAccount] = useState<Account>('oben');
-  const [products, setProducts] = useState<Product[]>([]);
-  const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [syncingStock, setSyncingStock] = useState(false);
   const [search, setSearch] = useState('');
@@ -44,34 +87,17 @@ const SalesProducts = () => {
     }
   }, [authLoading, role, isStaff, navigate]);
 
-  useEffect(() => {
-    if (isStaff) loadProducts();
-  }, [isStaff, account]);
-
-  const loadProducts = async () => {
-    setLoading(true);
-    try {
-      const { data, error } = await supabase
-        .from('omie_products')
-        .select('*')
-        .eq('account', account)
-        .not('familia', 'ilike', '%imobilizado%')
-        .not('familia', 'ilike', '%uso e consumo%')
-        .not('familia', 'ilike', '%matérias primas para conversão de cintas%')
-        .not('familia', 'ilike', '%jumbos de lixa para discos%')
-        .not('familia', 'ilike', 'jumbo%')
-        .not('familia', 'ilike', '%material para tingimix%')
-        .order('ativo', { ascending: false })
-        .order('descricao');
-
-      if (error) throw error;
-      setProducts((data || []) as Product[]);
-    } catch (error) {
-      console.error('Erro ao carregar produtos:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
+  // Uma chave POR CONTA: a lista exibida é sempre a da aba atual, e a resposta de uma leitura
+  // antiga (sync da outra conta que termina depois da troca de aba) só toca o cache DELA — antes
+  // um `setProducts` atrasado punha o catálogo da Colacor sob a aba Oben (Codex, desenho do M-12).
+  const catalogo = useQuery({
+    queryKey: chaveCatalogo(account),
+    queryFn: () => buscarCatalogoVendas(account),
+    enabled: isStaff,
+  });
+  const products = catalogo.data ?? [];
+  const estado = estadoDeLeitura(catalogo);
+  const avisoCache = desatualizado(catalogo, catalogo.data !== undefined);
 
   const syncProducts = async () => {
     setSyncing(true);
@@ -92,7 +118,7 @@ const SalesProducts = () => {
         description: `${totalSynced} produtos sincronizados (${account === 'oben' ? 'Oben' : 'Colacor'}).`,
       });
 
-      await loadProducts();
+      await queryClient.invalidateQueries({ queryKey: chaveCatalogo(account) });
     } catch (error) {
       console.error('Erro ao sincronizar:', error);
       toast.error('Erro na sincronização', {
@@ -120,7 +146,7 @@ const SalesProducts = () => {
       toast.success('Estoque atualizado!', {
         description: `${totalUpdated} produtos com estoque atualizado (${account === 'oben' ? 'Oben' : 'Colacor'}).`,
       });
-      await loadProducts();
+      await queryClient.invalidateQueries({ queryKey: chaveCatalogo(account) });
     } catch (error) {
       console.error('Erro ao sincronizar estoque:', error);
       toast.error('Erro ao atualizar estoque', {
@@ -137,7 +163,8 @@ const SalesProducts = () => {
       p.codigo.toLowerCase().includes(search.toLowerCase())
   );
 
-  if (authLoading || loading) {
+  // 'desabilitada' = papel ainda não resolvido (não-staff é redirecionado acima): esqueleto, não "0 produtos".
+  if (authLoading || estado === 'carregando' || estado === 'desabilitada') {
     return (
       <PageSkeleton variant="list" />
     );
@@ -208,6 +235,19 @@ const SalesProducts = () => {
         </Button>
       </div>
 
+      {/* Leitura que NÃO aconteceu: sem catálogo em mãos, nem contador nem "Nenhum produto
+          sincronizado" — os dois afirmariam um catálogo vazio que ninguém leu. */}
+      {naoConsegui(estado) && catalogo.data === undefined ? (
+        <AvisoLeituraFalhou oque={`o catálogo da ${account === 'oben' ? 'Oben' : 'Colacor'}`} estado={estado} variante="bloco" />
+      ) : (
+      <>
+      {avisoCache && (
+        <AvisoLeituraFalhou
+          oque={`o catálogo atualizado da ${account === 'oben' ? 'Oben' : 'Colacor'} — a lista abaixo é da última leitura`}
+          estado={avisoCache}
+        />
+      )}
+
       {/* Stats */}
       <div className="flex gap-3">
         <Badge variant="secondary" className="gap-1">
@@ -270,6 +310,8 @@ const SalesProducts = () => {
             </Card>
           ))}
         </div>
+      )}
+      </>
       )}
     </div>
   );

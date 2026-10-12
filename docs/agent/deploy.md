@@ -35,7 +35,7 @@ tinham no repo inteiro. Não edite o bloco à mão sem rodar o gate: ele confere
 
 **Rodam no CI mas NÃO reprovam** (3, informativos por desenho): `mutcheck` · `mutcheck:escopo` · `mutcheck:selftest`.
 
-**Hooks que NEGAM a chamada de ferramenta** (5, deny dentro de hookSpecificOutput com hookEventName): `destructive-bash-guard.sh` · `heavy-guard.sh` · `migration-collision-guard.sh` · `migration-immutability-guard.sh` · `push-gates-guard.sh`.
+**Hooks que NEGAM a chamada de ferramenta** (6, deny dentro de hookSpecificOutput com hookEventName): `destructive-bash-guard.sh` · `heavy-guard.sh` · `migration-collision-guard.sh` · `migration-immutability-guard.sh` · `pr-collision-guard.sh` (só o gatilho 3: gates rápidos reprovados no create do PR) · `push-gates-guard.sh`.
 
 <!--gates:frescura fim-->
 

@@ -57,14 +57,16 @@ export function IncomingCallModal() {
 
   // Tenta identificar cliente + contato pelo telefone, e o dono efetivo (realce)
   useEffect(() => {
-    if (!incomingCall) {
-      setResolvedCompany(null);
-      setContactName(null);
-      setContactCargo(null);
-      setRealce('desconhecido');
-      setDonoNome(null);
-      return;
-    }
+    // Zera SEMPRE no início, não só quando a chamada some: uma chamada pode
+    // substituir outra direto (sem passar por incomingCall=null) e, se a busca
+    // do novo dono falhar, o nome do dono ANTERIOR ficaria na tela — afirmando
+    // "cliente da Regina" sobre a chamada errada.
+    setResolvedCompany(null);
+    setContactName(null);
+    setContactCargo(null);
+    setRealce('desconhecido');
+    setDonoNome(null);
+    if (!incomingCall) return;
     let cancelled = false;
     (async () => {
       try {
@@ -87,8 +89,16 @@ export function IncomingCallModal() {
         }
 
         // Frente 1 degradada: dono efetivo (com cobertura de férias) → realça meu/outro/sem-dono
-        const { data: ownerId } = await supabase.rpc('wa_owner_efetivo', { p_customer: resolved.customerUserId });
+        const { data: ownerId, error: ownerErr } = await supabase.rpc('wa_owner_efetivo', { p_customer: resolved.customerUserId });
         if (cancelled) return;
+        // ⚠️ supabase-js NÃO lança em erro de RPC — devolve {data,error} (lição #1387).
+        // O catch abaixo não cobre 42501/timeout/RAISE. Sem checar `error`, uma FALHA
+        // viraria data=null e seria classificada como 'sem_dono' — afirmar "não tem
+        // dono" sobre cliente que tem. Erro ≠ ausência: degrada p/ 'desconhecido'.
+        if (ownerErr) {
+          setRealce('desconhecido');
+          return;
+        }
         const owner = (ownerId as string | null) ?? null;
         setRealce(classificarRealceDono({ ownerUserId: owner, currentUserId: user?.id ?? null, customerUserId: resolved.customerUserId }));
         if (owner && owner !== user?.id) {

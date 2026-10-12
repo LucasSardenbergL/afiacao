@@ -3,6 +3,7 @@ import { Outlet, useLocation } from 'react-router-dom';
 import { AppShell } from './AppShell';
 import { IncomingCallModal } from './call/IncomingCallModal';
 import { useAuth } from '@/contexts/AuthContext';
+import { ErrorBoundary } from './ErrorBoundary';
 
 /**
  * CallCopilotHud arrasta TranscriptionPanel → framer-motion (~41KB gzip) e o
@@ -105,9 +106,14 @@ function LazyCallExtras() {
 
 export function AppShellLayout() {
   useRadixScrollLockCleanup();
+  const { pathname } = useLocation();
   return (
     <AppShell>
-      <Outlet />
+      {/* M-30: tela quebrada derruba só o conteúdo, não o shell (menu/navegação seguem vivos).
+          `key` = pathname remonta a boundary ao navegar — sem ela o erro grudaria em toda rota. */}
+      <ErrorBoundary escopo="rota" key={pathname}>
+        <Outlet />
+      </ErrorBoundary>
       {/* PR-INBOUND-CALLS: modal global pra chamadas inbound em qualquer tela autenticada */}
       <IncomingCallModal />
       <LazyCallExtras />

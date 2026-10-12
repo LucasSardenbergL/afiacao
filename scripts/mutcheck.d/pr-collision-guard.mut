@@ -31,4 +31,7 @@ PEGA      | commit ignora staged (so 3-pontos)   | if (!$done) { $done = s{^if \
 
 # --- achados da 2ª opinião adversária (Codex, 2026-08-19), portados do irmão ---
 PEGA      | encadeado volta a casar como `create` | s{^if \[ -n "\$tem_commit" \]; then}{if [ -n "\$tem_commit" ] && [ -z "\$tem_create" ]; then}
-PEGA      | sem avisos o hook sai 1 (fail-closed) | s{^\[ -n "\$avisos" \] \|\| exit 0}{[ -n "\$avisos" ] || exit 1}
+PEGA      | sem avisos o hook sai 1 (fail-closed) | s{^\[ -n "\$avisos" \] \|\| sair_sem_colisao}{[ -n "\$avisos" ] || exit 1}
+# --- gatilho 3 (M-23, 2026-10-11): gates:rapidos no gh pr create ---
+PEGA      | nega sem exigir a marca de reprovacao | s{if \[ "\$grc" -eq 1 \] && printf '%s' "\$gsaida" \| grep -qF 'GATES_RAPIDOS_REPROVOU'; then}{if [ "\$grc" -eq 1 ]; then}
+PEGA      | gate reprovado vira allow             | s{permissionDecision:"deny",permissionDecisionReason}{permissionDecision:"allow",permissionDecisionReason}
