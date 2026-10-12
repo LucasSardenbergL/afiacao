@@ -5,7 +5,7 @@
 // Auth: staff (UI) ou service_role/cron.
 // ESPELHO: validarExtracao e tipos vêm de src/lib/pedidosProgramados/helpers.ts (verbatim).
 import { createClient } from "npm:@supabase/supabase-js@2";
-import Anthropic from "npm:@anthropic-ai/sdk@^0.93.0";
+import { criarClienteAnthropic } from "../_shared/anthropic-cliente.ts";
 import { authorizeCronOrStaff, corsHeaders } from "../_shared/auth.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
@@ -167,7 +167,7 @@ Deno.serve(async (req) => {
     const pdfBase64 = btoa(bin);
 
     // 2. Anthropic forced tool-use com o PDF como documento
-    const client = new Anthropic({ apiKey });
+    const client = criarClienteAnthropic(apiKey);
     const response = await client.messages.create({
       model: "claude-sonnet-4-6",
       max_tokens: 8192,

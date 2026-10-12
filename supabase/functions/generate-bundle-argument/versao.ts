@@ -41,7 +41,7 @@ export const respostaSonda = criarRespostaSonda("generate-bundle-argument");
  * ⚠️ O sensor só prova versões A PARTIR DE SI MESMO: ausência do campo `versao` na resposta é
  * bundle pré-marcador, não "versão errada".
  */
-export const VERSAO = "v1.2-sonda-cron-onda3";
+export const VERSAO = "v1.3-cliente-ia-com-coleira";
 
 /** Efeito citado no 400 de `probe` ambíguo. */
 export const EFEITO =
