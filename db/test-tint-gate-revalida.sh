@@ -1011,7 +1011,7 @@ DECLARE r jsonb; b jsonb; f text[] := '{}';
 BEGIN
   -- pré-condição do seed (a view entrega o que os asserts supõem)
   IF (SELECT preco_csv_legado FROM public.v_tint_formula_canonica WHERE cor_id = 'K40') IS DISTINCT FROM 0.6824
-     OR (SELECT id FROM public.v_tint_formula_canonica WHERE cor_id = 'K40') <> 'f0400000-0000-0000-0000-00000000005a' THEN
+     OR (SELECT id FROM public.v_tint_formula_canonica WHERE cor_id = 'K40') IS DISTINCT FROM 'f0400000-0000-0000-0000-00000000005a'::uuid THEN
     RAISE EXCEPTION 'G40pre FALHOU: canonica/CSV de K40 nao e o semeado'; END IF;
 
   -- G40a 'tabela' a 0,70 com calc 102,5 ⇒ bloqueia COM O MOTIVO PRÓPRIO
@@ -1050,7 +1050,7 @@ BEGIN
   r := public.tint_gate_revalida('oben', cliente, so_empty, 'criacao',
     '[{"omie_codigo_produto":900001,"tint_cor_id":"K1","tint_formula_id":"f1000000-0000-0000-0000-00000000005a","valor_unitario":150,"tint_price_source":"tabela"},
       {"omie_codigo_produto":900001,"tint_cor_id":"K40","tint_formula_id":"f0400000-0000-0000-0000-00000000005a","valor_unitario":0.7,"tint_price_source":"tabela"}]');
-  IF jsonb_array_length(COALESCE(r->'bloqueios','[]'::jsonb)) <> 1 OR r->'bloqueios'->0->>'cor_id' IS DISTINCT FROM 'K40' THEN
+  IF jsonb_array_length(COALESCE(r->'bloqueios','[]'::jsonb)) IS DISTINCT FROM 1 OR r->'bloqueios'->0->>'cor_id' IS DISTINCT FROM 'K40' THEN
     f := f || 'G43'::text; END IF;
 
   IF cardinality(f) = 0 THEN RAISE NOTICE 'IMPL_OK';
