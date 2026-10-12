@@ -574,6 +574,13 @@ describe('imatchTokensSemAcento — busca de cor por palavra, sem acento', () =>
     expect(casa('ALGODAO EG', 'algodão')).toBe(true);
   });
 
+  it('acento digitado vira a MESMA palavra sem acento — não quebra a palavra em pedaços', () => {
+    // Sem tirar o diacrítico, o combinante do NFD virava separador: "são" → "sa"+"o",
+    // e o "o" solto casava qualquer cor com O (busca frouxa, não só "diferente").
+    expect(tokensDeBusca('Açúcar Algodão São')).toEqual(['acucar', 'algodao', 'sao']);
+    expect(casa('SALMÃO ROSA', 'são')).toBe(false);
+  });
+
   it('ordem livre das palavras: "verde afiacao" acha "AFIAÇÃO VERDE"', () => {
     expect(casa('AFIAÇÃO VERDE', 'verde afiacao')).toBe(true);
     expect(casa('AFIAÇÃO VERDE', 'afiação verde')).toBe(true);
