@@ -18,7 +18,8 @@ import { criarTocador, feedbackDoMotivo, type TipoFeedback } from "@/lib/picking
 import { supabase } from "@/integrations/supabase/client";
 import { isLensActive } from "@/lib/impersonation/lens-write-guard";
 import { quantidadeRepresentavel } from "@/lib/picking/decimal";
-import { avancarEpoca, comTrava, criarMotor, ehChaveEpoca, lerEpoca, type Motor, travaDaTarefa } from "@/lib/picking/motor-fila";
+import { type AtribuicaoLocal, bloqueioDaTarefa } from "@/lib/picking/autorizacao";
+import { abrirBarreira, comTrava, criarMotor, ehChaveEpoca, fecharBarreira, lerEpoca, type Motor, travaDaTarefa } from "@/lib/picking/motor-fila";
 import { linhaAtual, progressoLocal, tudoSeparado } from "@/lib/picking/progresso-local";
 import { abrirArmazemIndexedDB, type ItemFila, leiturasDaAtribuicao, MOTIVOS_PERDA_DE_AUTORIZACAO } from "@/lib/picking/scanner/fila";
 import type { Saida } from "@/lib/picking/scanner/protocolo";
@@ -76,10 +77,7 @@ export function useMotorFila() {
   return { m, estado, operador: user?.id ?? null, lente: isImpersonating };
 }
 
-export interface Atribuicao {
-  atribuicao_id: string;
-  tarefa_revisao: number;
-}
+export type Atribuicao = AtribuicaoLocal;
 
 export interface UltimoFeedback {
   tipo: TipoFeedback;
@@ -87,37 +85,32 @@ export interface UltimoFeedback {
   em: number;
 }
 
-/** A tarefa autoriza trabalho desta atribuição? (espelho do que a RPC exige; ela decide). */
-function autoriza(t: TarefaV2, a: Atribuicao, operador: string | null): string | null {
-  if (t.status !== "em_separacao") return "tarefa_fora_de_separacao";
-  if (t.atribuicao_id !== a.atribuicao_id || t.operador_id !== operador) return "atribuicao_antiga";
-  if (t.revisao !== a.tarefa_revisao) return "revisao_antiga";
-  if (t.ausente_rodadas >= 2) return "ausente_do_omie";
-  return null;
-}
-
 export function useSeparacao(tarefaInicial: TarefaV2, atribuicao: Atribuicao) {
   const qc = useQueryClient();
   const { m, estado, operador, lente } = useMotorFila();
   const tarefaId = tarefaInicial.id;
 
-  // Época da tarefa entre abas: a vista agora e a da última releitura DESTE mount. Só captura com
-  // as duas iguais — o retrato que veio do localStorage/lista nunca autoriza sozinho (Codex r2).
+  // Época da tarefa entre abas: a vista agora e a da última releitura feita DEPOIS deste mount
+  // (`isFetchedAfterMount` vale também para a consulta em voo herdada de um mount anterior). Só
+  // captura com as duas iguais — o retrato do localStorage/lista nunca autoriza sozinho (Codex r2/r3).
   const [epocaAtual, setEpocaAtual] = useState(() => lerEpoca(tarefaId));
-  const [epocaLida, setEpocaLida] = useState<number | null>(null);
   const tarefaQ = useQuery({
     queryKey: ["picking-v2", "tarefa", tarefaId],
     queryFn: async () => {
-      const e = lerEpoca(tarefaId);
-      const t = await lerTarefa(tarefaId);
-      setEpocaLida(e);
-      return t;
+      const epoca = lerEpoca(tarefaId).n;
+      return { tarefa: await lerTarefa(tarefaId), epoca };
     },
     staleTime: 0,
     refetchOnMount: "always",
     refetchInterval: 30_000,
   });
-  const tarefa = tarefaQ.data ?? tarefaInicial;
+  const tarefa = tarefaQ.data?.tarefa ?? tarefaInicial;
+  const epocaLida = tarefaQ.isFetchedAfterMount && tarefaQ.data ? tarefaQ.data.epoca : null;
+  // A cada releitura, a época vista é refeita: uma barreira aberta por aba que morreu expira
+  // (BARREIRA_MAX_MS) sem precisar de evento novo.
+  useEffect(() => {
+    setEpocaAtual(lerEpoca(tarefaId));
+  }, [tarefaQ.dataUpdatedAt, tarefaId]);
   useEffect(() => {
     const aoMudar = (e: StorageEvent) => {
       if (!ehChaveEpoca(e.key, tarefaId)) return;
@@ -163,10 +156,12 @@ export function useSeparacao(tarefaInicial: TarefaV2, atribuicao: Atribuicao) {
   // `ausente_do_omie` é TEMPORÁRIO (o pedido pode voltar à etapa): não trava a atribuição — só
   // força a releitura, e `autoriza()` decide com `ausente_rodadas` atual (Codex r2).
   const ausenciasVistas = useRef(new Set<string>());
+  const [ausenteEm, setAusenteEm] = useState<number | null>(null);
   useEffect(() => {
     const daAtribuicao = fila.filter((i) => i.estado === "rejeitada" && i.comando.atribuicao_id === atribuicao.atribuicao_id);
     const novasAusencias = daAtribuicao.filter((i) => i.motivo === "ausente_do_omie" && !ausenciasVistas.current.has(i.comando.leitura_id));
     novasAusencias.forEach((i) => ausenciasVistas.current.add(i.comando.leitura_id));
+    if (novasAusencias.length > 0) setAusenteEm(Date.now());
     const perda = daAtribuicao.find((i) => i.motivo && MOTIVOS_PERDA_DE_AUTORIZACAO.has(i.motivo));
     if (perda && perdeu === null) setPerdeu(perda.motivo);
     if ((perda && perdeu === null) || novasAusencias.length > 0) void qc.invalidateQueries({ queryKey: ["picking-v2", "tarefa", tarefaId] });
@@ -183,19 +178,20 @@ export function useSeparacao(tarefaInicial: TarefaV2, atribuicao: Atribuicao) {
       : "carregando_fila"
     : lente
       ? "lente_ver_como"
-      : perdeu ?? (epocaLida === null || epocaLida !== epocaAtual ? "conferindo_tarefa" : autoriza(tarefa, atribuicao, operador));
+      : perdeu ?? bloqueioDaTarefa({ tarefa, atribuicao, operador, epocaLida, epocaAtual, ausenteEm, tarefaLidaEm: tarefaQ.dataUpdatedAt });
   const capturando = bloqueio === null && !barreira && !linhasQ.isLoading && !leiturasQ.isLoading;
 
   const registrar = useCallback(
     async (tipo: "bipe" | "manual", previsao: Previsao, extra: { codigo_lido?: string; linha_id?: string; quantidade?: number }) => {
       const a = m.armazem();
       if (!a || !operador) return false;
-      const epoca = epocaAtual;
+      const epoca = epocaAtual.n;
       let atravessou = false;
       try {
         await comTrava(travaDaTarefa(tarefaId), async () => {
           // Esperou a trava enquanto outra aba concluía/marcava falta: a captura é de antes.
-          if (lerEpoca(tarefaId) !== epoca) {
+          const agora = lerEpoca(tarefaId);
+          if (agora.n !== epoca || agora.aberta) {
             atravessou = true;
             return;
           }
@@ -299,11 +295,16 @@ export function useSeparacao(tarefaInicial: TarefaV2, atribuicao: Atribuicao) {
       setBarreira(true);
       try {
         return await comTrava(travaDaTarefa(tarefaId), async () => {
-          // Dentro da trava: quem esperava por ela com uma captura antiga vai ver a época nova.
-          setEpocaAtual(avancarEpoca(tarefaId));
-          if (!(await m.drenar(tarefaId))) return "nao_drenou" as const;
-          const relida = (await m.recarregar()).filter((i) => i.comando.tarefa_id === tarefaId);
-          return acao(relida);
+          // Dentro da trava: abre a barreira (outras abas param de capturar) e só a FECHA depois
+          // da RPC — quem esperava a trava com uma captura de antes vê a época nova e é recusado.
+          setEpocaAtual(abrirBarreira(tarefaId));
+          try {
+            if (!(await m.drenar(tarefaId))) return "nao_drenou" as const;
+            const relida = (await m.recarregar()).filter((i) => i.comando.tarefa_id === tarefaId);
+            return await acao(relida);
+          } finally {
+            setEpocaAtual(fecharBarreira(tarefaId));
+          }
         });
       } finally {
         setBarreira(false);
@@ -391,6 +392,7 @@ const ROTULOS: Record<string, string> = {
   armazenamento_indisponivel: "Aparelho sem armazenamento — não dá para separar",
   carregando_fila: "Carregando a fila do aparelho…",
   conferindo_tarefa: "Conferindo a tarefa no servidor…",
+  barreira_em_andamento: "Concluindo/registrando falta — aguarde",
   sem_dono_versao_anterior: "Leitura de versão anterior do app — chame o supervisor",
 };
 

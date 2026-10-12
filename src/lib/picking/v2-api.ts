@@ -142,9 +142,16 @@ export async function lerCodigos(conta: Conta, produtos: number[]): Promise<Codi
 
 // ─── RPCs ────────────────────────────────────────────────────────────────────────────────────
 
-/** Envio de UMA leitura da fila (idempotente pelo `leitura_id`). */
-export async function enviarLeitura(c: Comando): Promise<ResultadoEnvio> {
+/**
+ * Envio de UMA leitura da fila (idempotente pelo `leitura_id`), autenticado como `dono`: o token
+ * vai FIXO no cabeçalho, da mesma sessão conferida aqui — sem isso o SDK faria outro
+ * `getSession()` e, se outra aba trocou o login no meio, a leitura de U1 sairia como U2 e viraria
+ * `atribuicao_antiga` definitiva (Codex Fase 1 r3).
+ */
+export async function enviarLeitura(c: Comando, dono: string): Promise<ResultadoEnvio> {
   try {
+    const sessao = (await supabase.auth.getSession()).data.session;
+    if (!sessao || sessao.user.id !== dono) return { tipo: "transitorio", erro: "sessão de outro usuário — envio pausado" };
     const { data, error } = await supabase.rpc("picking_registrar_leitura", {
       p_leitura_id: c.leitura_id,
       p_account: c.account,
@@ -157,7 +164,7 @@ export async function enviarLeitura(c: Comando): Promise<ResultadoEnvio> {
       p_quantidade: c.quantidade ?? undefined,
       p_estorna_leitura_id: c.estorna_leitura_id ?? undefined,
       p_lido_em: c.lido_em,
-    });
+    }).setHeader("Authorization", `Bearer ${sessao.access_token}`);
     if (error) return classificarErro(error);
     const r = (data ?? {}) as Record<string, unknown>;
     const resposta: RespostaLeitura = {

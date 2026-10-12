@@ -58,7 +58,8 @@ export interface Motor {
 }
 
 export function criarMotor(
-  enviar: (c: Comando) => Promise<ResultadoEnvio>,
+  /** Envia autenticado como `dono` — o transporte TEM de usar o token dessa sessão. */
+  enviar: (c: Comando, dono: string) => Promise<ResultadoEnvio>,
   abrir: () => Promise<ArmazemFila>,
   aoResolver: (resolvidos: ItemFila[]) => void,
   ambiente: AmbienteMotor,
@@ -112,7 +113,7 @@ export function criarMotor(
   async function enviarSePermitido(c: Comando, dono: string): Promise<ResultadoEnvio> {
     if (ambiente.lente()) return { tipo: "transitorio", erro: "lente Ver como ativa — envio pausado" };
     if ((await ambiente.sessao()) !== dono) return { tipo: "transitorio", erro: "sessão de outro usuário — envio pausado" };
-    return enviar(c);
+    return enviar(c, dono);
   }
 
   async function laco() {
@@ -173,28 +174,49 @@ export function criarMotor(
   };
 }
 
-// Época da tarefa entre abas (Codex Fase 1 r2): concluir/falta AVANÇA a época dentro da trava da
-// tarefa. Captura feita numa época e gravada noutra (esperou a trava enquanto outra aba mudava a
-// tarefa) é recusada; a aba que vê a época mudar para de capturar até reler a tarefa. Sem
-// localStorage a época fica parada em 0: vale só a trava + releitura da própria aba.
+// Época da tarefa entre abas (Codex Fase 1 r2/r3): concluir/falta ABRE a barreira (época ímpar)
+// e a FECHA (par) dentro da trava da tarefa, depois da RPC. Captura só com a barreira fechada; a
+// captura feita numa época e gravada noutra (esperou a trava enquanto outra aba mudava a tarefa) é
+// recusada. Barreira aberta há mais de BARREIRA_MAX_MS = aba que morreu no meio: não trava ninguém
+// para sempre (a nova época ainda invalida as capturas antigas). Sem localStorage tudo fica em 0:
+// vale só a trava + releitura da própria aba.
 const chaveEpoca = (tarefaId: string) => `picking-v2:epoca:${tarefaId}`;
+const BARREIRA_MAX_MS = 120_000;
 
-export function lerEpoca(tarefaId: string): number {
+export interface Epoca {
+  n: number;
+  aberta: boolean;
+}
+
+export function lerEpoca(tarefaId: string, agora = Date.now()): Epoca {
   try {
-    return Number(localStorage.getItem(chaveEpoca(tarefaId)) ?? 0) || 0;
+    const [n, desde] = (localStorage.getItem(chaveEpoca(tarefaId)) ?? "0:0").split(":").map(Number);
+    const num = Number.isInteger(n) && n > 0 ? n : 0;
+    return { n: num, aberta: num % 2 === 1 && agora - (desde || 0) < BARREIRA_MAX_MS };
   } catch {
-    return 0;
+    return { n: 0, aberta: false };
   }
 }
 
-export function avancarEpoca(tarefaId: string): number {
-  const nova = lerEpoca(tarefaId) + 1;
+function gravarEpoca(tarefaId: string, n: number): Epoca {
   try {
-    localStorage.setItem(chaveEpoca(tarefaId), String(nova));
+    localStorage.setItem(chaveEpoca(tarefaId), `${n}:${Date.now()}`);
   } catch {
     // sem armazenamento local: ver comentário acima
   }
   return lerEpoca(tarefaId);
+}
+
+/** Abre a barreira: próxima época ímpar. */
+export function abrirBarreira(tarefaId: string): Epoca {
+  const { n } = lerEpoca(tarefaId);
+  return gravarEpoca(tarefaId, n % 2 === 0 ? n + 1 : n + 2);
+}
+
+/** Fecha a barreira: próxima época par. */
+export function fecharBarreira(tarefaId: string): Epoca {
+  const { n } = lerEpoca(tarefaId);
+  return gravarEpoca(tarefaId, n % 2 === 1 ? n + 1 : n + 2);
 }
 
 export const ehChaveEpoca = (chave: string | null, tarefaId: string) => chave === chaveEpoca(tarefaId);

@@ -2,7 +2,7 @@
  * @vitest-environment jsdom
  */
 import { describe, expect, it } from "vitest";
-import { avancarEpoca, criarMotor, ehChaveEpoca, lerEpoca } from "../motor-fila";
+import { abrirBarreira, criarMotor, ehChaveEpoca, fecharBarreira, lerEpoca } from "../motor-fila";
 import { armazemMemoria, type Comando, type ItemFila, type ResultadoEnvio } from "../scanner/fila";
 
 function item(id: string, dono = "U1", tarefa = "T1"): Omit<ItemFila, "seq"> {
@@ -107,13 +107,20 @@ describe("motor da fila", () => {
 });
 
 describe("época da tarefa entre abas", () => {
-  it("avança por tarefa e a chave do evento storage identifica a tarefa certa", () => {
+  it("abrir = ímpar (aberta), fechar = par; por tarefa; a chave do storage identifica a tarefa", () => {
     localStorage.clear();
-    expect(lerEpoca("T1")).toBe(0);
-    expect(avancarEpoca("T1")).toBe(1);
-    expect(avancarEpoca("T1")).toBe(2);
-    expect(lerEpoca("T2")).toBe(0);
+    expect(lerEpoca("T1")).toEqual({ n: 0, aberta: false });
+    expect(abrirBarreira("T1")).toEqual({ n: 1, aberta: true });
+    expect(fecharBarreira("T1")).toEqual({ n: 2, aberta: false });
+    expect(abrirBarreira("T1").n).toBe(3);
+    expect(lerEpoca("T2").n).toBe(0);
     expect(ehChaveEpoca("picking-v2:epoca:T1", "T1")).toBe(true);
     expect(ehChaveEpoca("picking-v2:epoca:T1", "T2")).toBe(false);
+  });
+
+  it("barreira aberta por aba que morreu expira (não trava ninguém para sempre)", () => {
+    localStorage.clear();
+    abrirBarreira("T1");
+    expect(lerEpoca("T1", Date.now() + 121_000)).toEqual({ n: 1, aberta: false });
   });
 });
