@@ -45,6 +45,7 @@ export interface RespostaDisparo {
   falhas?: number | null;
   aguardando_portal_sayerlack?: number | null;
   portal_fechado?: number | null;
+  portal_recusa_definitiva?: number | null;
 }
 
 // Traduz a resposta da edge disparar-pedidos-aprovados num toast.
@@ -73,6 +74,13 @@ export function interpretarRespostaDisparo(
     return {
       tone: 'warning',
       message: `Pedido #${pedidoId}: portal Sayerlack fora do ar (sábado 12h → segunda 6h). Nada foi enviado — dispare de novo a partir de segunda 06:00`,
+    };
+  }
+  // Recusa definitiva do portal (edge v1.7, #3169): nada foi enviado nem reaberto.
+  if ((data?.portal_recusa_definitiva ?? 0) > 0) {
+    return {
+      tone: 'warning',
+      message: `Pedido #${pedidoId}: recusa definitiva do portal Sayerlack. Nada foi enviado — cancele o pedido (o ciclo regrava) ou corrija o cadastro e use "Forçar reenvio" no portal`,
     };
   }
   return { tone: 'info', message: `Pedido #${pedidoId}: nada a disparar` };

@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 611
+-- Total de custom migrations: 613
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -671,8 +671,10 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261011120000', 'tint_grants_escrita_staff', '20261011120000_tint_grants_escrita_staff.sql'),
   ('20261011120000', 'tint_watchdog_fase5_cron_timeout', '20261011120000_tint_watchdog_fase5_cron_timeout.sql'),
   ('20261011120100', 'reposicao_logs_insert_cap_compras', '20261011120100_reposicao_logs_insert_cap_compras.sql'),
+  ('20261011120200', 'wa_owner_efetivo_gate_staff', '20261011120200_wa_owner_efetivo_gate_staff.sql'),
   ('20261011120400', 'retencao_scores_farmer', '20261011120400_retencao_scores_farmer.sql'),
-  ('20261011140000', 'picking_v2_coleta_reserva', '20261011140000_picking_v2_coleta_reserva.sql')
+  ('20261011140000', 'picking_v2_coleta_reserva', '20261011140000_picking_v2_coleta_reserva.sql'),
+  ('20261011150000', 'reposicao_recusa_definitiva_portal_servidor', '20261011150000_reposicao_recusa_definitiva_portal_servidor.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2642,6 +2644,7 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('tint_watchdog_fase5_cron_timeout', 'cron_job', 'cron', 'tint-watchdog-fase5-6h', ''),
   ('reposicao_logs_insert_cap_compras', 'rls_policy', 'public', 'reposicao_motor_run_ins', 'reposicao_motor_run'),
   ('reposicao_logs_insert_cap_compras', 'rls_policy', 'public', 'estoque_nao_confirmado_log_ins', 'reposicao_estoque_nao_confirmado_log'),
+  ('wa_owner_efetivo_gate_staff', 'function', 'public', 'wa_owner_efetivo', ''),
   ('retencao_scores_farmer', 'function', 'private', 'expurgar_scores_antigos', ''),
   ('retencao_scores_farmer', 'index', 'public', 'idx_health_history_calculated_at', 'health_score_history'),
   ('retencao_scores_farmer', 'index', 'public', 'idx_priority_log_score_date', 'priority_score_log'),
@@ -2652,7 +2655,13 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('picking_v2_coleta_reserva', 'function', 'public', 'picking_pegar_task', ''),
   ('picking_v2_coleta_reserva', 'function', 'public', 'picking_registrar_leitura', ''),
   ('picking_v2_coleta_reserva', 'function', 'public', 'picking_retomar', ''),
-  ('picking_v2_coleta_reserva', 'function', 'public', 'picking_concluir', '')
+  ('picking_v2_coleta_reserva', 'function', 'public', 'picking_concluir', ''),
+  ('reposicao_recusa_definitiva_portal_servidor', 'function', 'public', 'iniciar_envio_portal_pre_claim', ''),
+  ('reposicao_recusa_definitiva_portal_servidor', 'function', 'public', 'reposicao__carimbo_recusa_definitiva', ''),
+  ('reposicao_recusa_definitiva_portal_servidor', 'function', 'public', 'reposicao_encerrar_recusas_definitivas', ''),
+  ('reposicao_recusa_definitiva_portal_servidor', 'function', 'public', 'analytics_outbox_pedido_compra', ''),
+  ('reposicao_recusa_definitiva_portal_servidor', 'trigger', 'public', 'trg_carimbo_recusa_definitiva', 'pedido_compra_sugerido'),
+  ('reposicao_recusa_definitiva_portal_servidor', 'cron_job', 'cron', 'reposicao-encerrar-recusas-definitivas', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4670,6 +4679,7 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('tint_watchdog_fase5_cron_timeout', 'cron_job', 'cron', 'tint-watchdog-fase5-6h', ''),
   ('reposicao_logs_insert_cap_compras', 'rls_policy', 'public', 'reposicao_motor_run_ins', 'reposicao_motor_run'),
   ('reposicao_logs_insert_cap_compras', 'rls_policy', 'public', 'estoque_nao_confirmado_log_ins', 'reposicao_estoque_nao_confirmado_log'),
+  ('wa_owner_efetivo_gate_staff', 'function', 'public', 'wa_owner_efetivo', ''),
   ('retencao_scores_farmer', 'function', 'private', 'expurgar_scores_antigos', ''),
   ('retencao_scores_farmer', 'index', 'public', 'idx_health_history_calculated_at', 'health_score_history'),
   ('retencao_scores_farmer', 'index', 'public', 'idx_priority_log_score_date', 'priority_score_log'),
@@ -4680,7 +4690,13 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('picking_v2_coleta_reserva', 'function', 'public', 'picking_pegar_task', ''),
   ('picking_v2_coleta_reserva', 'function', 'public', 'picking_registrar_leitura', ''),
   ('picking_v2_coleta_reserva', 'function', 'public', 'picking_retomar', ''),
-  ('picking_v2_coleta_reserva', 'function', 'public', 'picking_concluir', '')
+  ('picking_v2_coleta_reserva', 'function', 'public', 'picking_concluir', ''),
+  ('reposicao_recusa_definitiva_portal_servidor', 'function', 'public', 'iniciar_envio_portal_pre_claim', ''),
+  ('reposicao_recusa_definitiva_portal_servidor', 'function', 'public', 'reposicao__carimbo_recusa_definitiva', ''),
+  ('reposicao_recusa_definitiva_portal_servidor', 'function', 'public', 'reposicao_encerrar_recusas_definitivas', ''),
+  ('reposicao_recusa_definitiva_portal_servidor', 'function', 'public', 'analytics_outbox_pedido_compra', ''),
+  ('reposicao_recusa_definitiva_portal_servidor', 'trigger', 'public', 'trg_carimbo_recusa_definitiva', 'pedido_compra_sugerido'),
+  ('reposicao_recusa_definitiva_portal_servidor', 'cron_job', 'cron', 'reposicao-encerrar-recusas-definitivas', '')
 )
 SELECT
   e.migration,
@@ -4708,7 +4724,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 132.
+-- Funções redefinidas com corpo extraível: 134.
 -- Fora da seção (4) — o último evento é REMOÇÃO de propósito (DROP / SET SCHEMA / RENAME):
 --   • public.import_tint_formulas — 20260806223407_drop_import_tint_formulas.sql
 --   • public.estimar_impacto_exclusao_outlier — 20260718093248_drop_estimar_impacto_exclusao_outlier_orfa.sql
@@ -4973,11 +4989,14 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'tarefas_materializar_recorrentes', 2, '20260605130000_tarefas_leitura_na_instancia.sql', 'e1762fd5b59fd5203b22871be8ef1364'),
   ('public', 'listar_pedidos_a_separar', 1, '20260604120000_picking_bridge.sql', 'bcf62e7e9ec993e44518bae7bd60ee7e'),
   ('public', 'listar_pedidos_a_separar', 2, '20260929001651_hoje_sp_sessao_utc_sete_funcoes.sql', '0e81f25c2733ba452fa7f215a8013856'),
+  ('public', 'wa_owner_efetivo', 1, '20260604130000_whatsapp_sla.sql', '824acf75828c49c2c467f55aac127589'),
+  ('public', 'wa_owner_efetivo', 2, '20261011120200_wa_owner_efetivo_gate_staff.sql', '7c435f42a800432f543799ee50bef726'),
   ('public', 'envio_portal_claim_ids', 1, '20260604150000_envio_portal_claim_ids.sql', 'a4eb797178f7d5edba455c1dc68fca0b'),
   ('public', 'envio_portal_claim_ids', 2, '20260604180000_envio_portal_claim_ids_lista_positiva.sql', '43d2c6f6944c71866c15159c9b8ce6b2'),
   ('public', 'envio_portal_claim_ids', 3, '20260906170000_reposicao_selo_aprovacao_m1_expandir.sql', 'e1a13c15d8126faae634aaa1a225cdaa'),
   ('public', 'iniciar_envio_portal_pre_claim', 1, '20260605140000_iniciar_envio_portal_pre_claim.sql', '5d0cd338f8f5de150180892ffe4c28fe'),
   ('public', 'iniciar_envio_portal_pre_claim', 2, '20260906170000_reposicao_selo_aprovacao_m1_expandir.sql', '9dc44a3bbba378f186954b5bca5b2e1c'),
+  ('public', 'iniciar_envio_portal_pre_claim', 3, '20261011150000_reposicao_recusa_definitiva_portal_servidor.sql', 'b51bedad55a79734ed50e63d5b234caf'),
   ('public', 'reposicao_param_auto_resumo_tick', 1, '20260605140000_param_auto_wrapper_revert_cron.sql', '0046fdda082d4afc1098417576a57f15'),
   ('public', 'reposicao_param_auto_resumo_tick', 2, '20260619120000_param_auto_resumo_descricao.sql', 'c463e7a8d461c0489bede982f39cad86'),
   ('public', 'reposicao_param_auto_resumo_tick', 3, '20260711193000_param_auto_resumo_altas_reducoes_segurado.sql', '662e947efa18b1bd09adebe74ccea066'),
@@ -5174,6 +5193,8 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'farmer_bundle_recomendacoes_substituir', 3, '20260906164002_captura_authz_escopo_carteira_farmer.sql', '3b68a4bda4fc43e049d07a37659ee55c'),
   ('public', 'farmer_melhor_individual_por_cliente', 1, '20260820124611_farmer_melhor_individual_bulk.sql', '82340cc6187de27edf766fdb7fad7c77'),
   ('public', 'farmer_melhor_individual_por_cliente', 2, '20260820133119_farmer_melhor_individual_atomico.sql', '988141c4ddcb0e43ff59b66491c5dc6a'),
+  ('public', 'analytics_outbox_pedido_compra', 1, '20260825214545_analytics_outbox.sql', '1a5296f315a5bea55d6203f31ef46448'),
+  ('public', 'analytics_outbox_pedido_compra', 2, '20261011150000_reposicao_recusa_definitiva_portal_servidor.sql', 'a59e45c8502d3f1e90fae636b5131d67'),
   ('public', 'analytics_ledger_registrar', 1, '20260825214545_analytics_outbox.sql', 'cb48e471a07a312d89d94c3a0dbd6455'),
   ('public', 'analytics_ledger_registrar', 2, '20260907223901_analytics_ledger_navegacao_rota_servida.sql', '49fadd1175a717f40fc4430e7bb670dd'),
   ('public', 'analytics_ledger_registrar', 3, '20260908055405_analytics_ledger_navegacao_postcondicao_corrigida.sql', '49fadd1175a717f40fc4430e7bb670dd'),

@@ -47,6 +47,21 @@ describe('PedidoRow — re-disparo de falha_envio', () => {
     expect(screen.queryByRole('button', { name: /Re-disparar/i })).toBeNull();
   });
 
+  // #3169: aprovado + recusa definitiva do portal — "Disparar" reabria o terminal e reenviava itens
+  // já recomprados. A saída é Cancelar (na linha) ou o "Forçar reenvio" do drawer (admin).
+  it('aprovado + erro_nao_retentavel → NÃO oferece Disparar, mantém Cancelar', () => {
+    renderRow(
+      ped({ id: 4, status: 'aprovado_aguardando_disparo', status_envio_portal: 'erro_nao_retentavel', fornecedor_nome: 'RENNER SAYERLACK S/A', num_skus: 13, valor_total: 12414.42 }),
+    );
+    expect(screen.queryByRole('button', { name: /disparar/i })).toBeNull();
+    expect(screen.getByRole('button', { name: /cancelar/i })).toBeTruthy();
+  });
+
+  it('falha_envio + erro_nao_retentavel → NÃO oferece Re-disparar', () => {
+    renderRow(ped({ id: 5, status: 'falha_envio', status_envio_portal: 'erro_nao_retentavel', fornecedor_nome: 'X', num_skus: 1, valor_total: 1 }));
+    expect(screen.queryByRole('button', { name: /disparar/i })).toBeNull();
+  });
+
   it('não mostra botão de disparo quando status é disparado', () => {
     renderRow(
       ped({ id: 3, status: 'disparado', fornecedor_nome: 'X', num_skus: 3, valor_total: 50, omie_pedido_compra_numero: '123' }),

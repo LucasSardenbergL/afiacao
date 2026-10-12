@@ -1,5 +1,5 @@
 // `eq` local em vez de std/assert remoto: `test:edges` roda com `--no-remote`.
-import { abririaEnvioNovoAoPortal, portalSayerlackFechado } from "./janela-portal.ts";
+import { abririaEnvioNovoAoPortal, ehRecusaDefinitivaPortal, portalSayerlackFechado } from "./janela-portal.ts";
 
 function eq(atual: unknown, esperado: unknown, msg: string) {
   if (atual !== esperado) throw new Error(`${msg}: esperado ${esperado}, veio ${atual}`);
@@ -40,4 +40,14 @@ Deno.test("NÃO abre envio novo: protocolo em mãos, conciliação, em voo", () 
 
 Deno.test("sucesso SEM protocolo abre envio (espelha iniciarEnvioPortalSayerlack)", () => {
   eq(abririaEnvioNovoAoPortal("sucesso_portal", null), true, "sucesso sem protocolo");
+});
+
+// #3169: recusa definitiva não abre envio novo — nem no fim de semana ela vira "portal fechado",
+// nem o gate de mínimo a converte em falha_envio (o que a tiraria do encerramento automático).
+Deno.test("recusa definitiva: classificada e NÃO abre envio novo", () => {
+  eq(ehRecusaDefinitivaPortal("erro_nao_retentavel"), true, "erro_nao_retentavel");
+  for (const st of ["erro_retentavel", "falha_envio_portal", "nao_aplicavel", "pendente_envio_portal", null, undefined]) {
+    eq(ehRecusaDefinitivaPortal(st), false, String(st));
+  }
+  eq(abririaEnvioNovoAoPortal("erro_nao_retentavel", null), false, "erro_nao_retentavel não abre envio");
 });
