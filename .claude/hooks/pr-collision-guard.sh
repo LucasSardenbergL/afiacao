@@ -28,6 +28,14 @@
 # melhor que nada); gh falha → checa só a main. AVISA via additionalContext com
 # permissionDecision=allow — NUNCA bloqueia (re-create legítimo sobre domínio quente existe;
 # zero-FP bloqueante é o padrão dos guards deste repo). Testes: scripts/test-pr-collision-guard.sh.
+#
+# GATILHO 3 — `bun run gates:rapidos` no `gh pr create` (M-23, 2026-10-11): os ~14 gates baratos do
+# CI (sonda/canária/authz/bunpin/docs/claude:size/knip, ~11 s em paralelo). ÚNICA parte que NEGA, e
+# só com EVIDÊNCIA POSITIVA: exit 1 **e** a marca `GATES_RAPIDOS_REPROVOU`. Gate vermelho é veredito
+# determinístico, não julgamento; a colisão continua só avisando. Sem veredito (bun ausente,
+# timeout, `cd` que não sei resolver, worktree antigo sem o script) → AVISA que não checou, nunca
+# cala. Válvula: `GATES_RAPIDOS=pular gh pr create …` (diga ao founder). O diretório dos gates é o
+# do `cd <literal>` que precede o `gh pr create` no comando, senão o cwd do hook.
 set -u
 
 command -v jq  >/dev/null 2>&1 || exit 0
@@ -61,6 +69,89 @@ elif [ -n "$tem_create" ]; then
 fi
 [ -n "$modo" ] || exit 0
 
+# ── Gatilho 3: gates rápidos (só quando o comando contém `gh pr create`) ──────────────────────────
+aviso_gates=""
+if [ -n "$tem_create" ]; then
+  if printf '%s' "$cmd" | grep -qF 'GATES_RAPIDOS=pular'; then
+    aviso_gates="⚠️ gates:rapidos PULADO por GATES_RAPIDOS=pular — o PR vai ao CI sem a checagem local."
+  else
+    # Diretório efetivo: segue os `cd <literal>` ANTES do `gh pr create` (o cwd do hook é o da
+    # sessão, que pode ser outro worktree). `cd` com `$`/crase → não sei onde roda → não julgo.
+    gdir="$PWD"; gincerto=""
+    pre=""
+    command -v perl >/dev/null 2>&1 && pre="$(printf '%s' "$cmd" | perl -0777 -ne 'print $1 if /\A(.*?)\bgh\s+(?:-{1,2}\S+\s+(?:[^-\s]\S*\s+)?)*pr\s+create\b/s' 2>/dev/null)"
+    while IFS= read -r seg; do
+      seg="$(printf '%s' "$seg" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
+      case "$seg" in
+        cd) gdir="$HOME" ;;
+        cd\ *)
+          alvo="${seg#cd }"; alvo="$(printf '%s' "$alvo" | sed -E 's/^[[:space:]]+//')"
+          case "$alvo" in
+            \"*\") alvo="${alvo#\"}"; alvo="${alvo%\"}" ;;
+            \'*\') alvo="${alvo#\'}"; alvo="${alvo%\'}" ;;
+          esac
+          case "$alvo" in
+            *'$'*|*'`'*|*\"*|*\'*|*' '*) gincerto=1 ;;
+            '~'*) gdir="$HOME${alvo#\~}" ;;
+            /*) gdir="$alvo" ;;
+            *) gdir="$gdir/$alvo" ;;
+          esac ;;
+      esac
+    done <<SEGS
+$(printf '%s' "$pre" | perl -pe 's/&&|\|\||;/\n/g' 2>/dev/null)
+SEGS
+    groot=""
+    [ -n "$gincerto" ] || groot="$(git -C "$gdir" rev-parse --show-toplevel 2>/dev/null)" || groot=""
+    gcmd="${PRCG_GATES_CMD:-}"
+    if [ -n "$gincerto" ]; then
+      aviso_gates="⚠️ gates:rapidos NÃO rodou: não consegui resolver o \`cd\` antes do gh pr create. Rode \`bun run gates:rapidos\` no worktree do PR."
+    elif [ -z "$gcmd" ] && { [ -z "$groot" ] || [ ! -f "$groot/scripts/gates-rapidos.ts" ]; }; then
+      :   # worktree sem o script (anterior ao M-23) ou fora de git: nada a rodar, sem ruído
+    else
+      if [ -z "$gcmd" ]; then
+        bun_bin="$(command -v bun 2>/dev/null)"
+        if [ -z "$bun_bin" ]; then
+          for cand in "$HOME/.bun/bin/bun" /opt/homebrew/bin/bun /usr/local/bin/bun; do
+            [ -x "$cand" ] && { bun_bin="$cand"; break; }
+          done
+        fi
+        [ -n "$bun_bin" ] && gcmd="$bun_bin run gates:rapidos"
+      fi
+      if [ -z "$gcmd" ]; then
+        aviso_gates="⚠️ gates:rapidos NÃO rodou: bun não encontrado no PATH do hook. Rode \`bun run gates:rapidos\` antes do PR."
+      else
+        tmo=""
+        if command -v timeout >/dev/null 2>&1; then tmo="timeout ${PRCG_GATES_TIMEOUT:-40}"
+        elif command -v gtimeout >/dev/null 2>&1; then tmo="gtimeout ${PRCG_GATES_TIMEOUT:-40}"; fi
+        # shellcheck disable=SC2086  # $tmo e $gcmd são listas de palavras controladas por este hook/teste
+        gsaida="$(cd "${groot:-$gdir}" && GATES_RAPIDOS_TETO_MS=35000 $tmo $gcmd 2>&1)"; grc=$?
+        if [ "$grc" -eq 1 ] && printf '%s' "$gsaida" | grep -qF 'GATES_RAPIDOS_REPROVOU'; then
+          reprov="$(printf '%s' "$gsaida" | grep -F '✗' | head -14)"
+          marca="$(printf '%s' "$gsaida" | grep -F 'GATES_RAPIDOS_REPROVOU' | tail -1)"
+          razao="🛑 gates:rapidos REPROVOU antes do gh pr create (mesmos gates do CI, rodados em ${groot:-$gdir}):
+$reprov
+$marca
+
+O CI ficaria vermelho por isso em ~7 min. Rode \`bun run gates:rapidos\` nesse worktree para ver a saída de cada gate, conserte, faça o push e repita o create. Se o GATE estiver errado: \`GATES_RAPIDOS=pular gh pr create …\` e avise o founder."
+          jq -n --arg r "$razao" \
+            '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:$r}}'
+          exit 0
+        elif [ "$grc" -ne 0 ]; then
+          aviso_gates="⚠️ gates:rapidos sem veredito (exit $grc): $(printf '%s' "$gsaida" | grep -F 'GATES_RAPIDOS_' | tail -1)
+O PR segue, mas esses gates NÃO foram checados localmente (timeout, crash ou script ausente)."
+        fi
+      fi
+    fi
+  fi
+fi
+
+# Sai sem colisão: se o gatilho 3 tem aviso, ele não pode morrer calado junto.
+sair_sem_colisao() {
+  [ -n "$aviso_gates" ] && jq -n --arg m "$aviso_gates" \
+    '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"allow",additionalContext:$m}}'
+  exit 0
+}
+
 # Refs frescas — rede pode falhar/pendurar → timeout curto e segue com o que há localmente.
 if command -v timeout >/dev/null 2>&1; then
   timeout 8 git fetch origin main --quiet >/dev/null 2>&1 || true
@@ -69,7 +160,7 @@ else
 fi
 
 # Meus arquivos desde a merge-base (3 pontos, HEAD por último). Sem diff próprio → nada a colidir.
-mine="$(git diff --name-only origin/main...HEAD 2>/dev/null)" || exit 0
+mine="$(git diff --name-only origin/main...HEAD 2>/dev/null)" || sair_sem_colisao
 # No commit o trabalho ainda NÃO está commitado: o 3-pontos é vazio no primeiro commit (#1764
 # tinha 1 commit só) — some o que está STAGED e o que está modificado na árvore.
 if [ "$modo" = "commit" ]; then
@@ -83,7 +174,7 @@ if [ "$modo" = "commit" ]; then
     "$(git diff --name-only --cached 2>/dev/null)" \
     "$wt" | grep -v '^$')"
 fi
-[ -n "$mine" ] || exit 0
+[ -n "$mine" ] || sair_sem_colisao
 mine_sorted="$(printf '%s\n' "$mine" | sort -u)"
 
 avisos=""
@@ -125,7 +216,7 @@ $col_prs"
   fi
 fi
 
-[ -n "$avisos" ] || exit 0
+[ -n "$avisos" ] || sair_sem_colisao
 
 # Anti-alarm-fatigue (só no commit): avisa 1x por (branch, conjunto colidente). Commit é
 # frequente — repetir o MESMO aviso cega o leitor. Colisão nova = assinatura nova = avisa.
@@ -157,7 +248,9 @@ fi
 msg="⚠️ Colisão multi-sessão detectada $quando (re-conferência automática — worktrees.md §Colisão de CÓDIGO).
 $avisos
 
-$acao Para inspecionar: gh pr list --search \"<domínio>\" e git log origin/main -- <arquivo>."
+$acao Para inspecionar: gh pr list --search \"<domínio>\" e git log origin/main -- <arquivo>.${aviso_gates:+
+
+$aviso_gates}"
 jq -n --arg m "$msg" \
   '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"allow",additionalContext:$m}}'
 exit 0

@@ -1,5 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
-import Anthropic from "npm:@anthropic-ai/sdk@^0.93.0";
+import { criarClienteAnthropic } from "../_shared/anthropic-cliente.ts";
 import {
   avisoImagensRejeitadas,
   type BlocoImagem,
@@ -397,7 +397,7 @@ Deno.serve(async (req) => {
 
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
-    const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
+    const anthropic = criarClienteAnthropic(ANTHROPIC_API_KEY);
 
     // ─── Modo só-imagem, passo 1: TRANSCREVER a foto (ver transcricao.ts) ───
     // Antes, este modo lia 1.000 perfis e 1.000 produtos (de 5.668 e 3.223) e despejava as listas
