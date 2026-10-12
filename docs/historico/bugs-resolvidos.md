@@ -1073,3 +1073,14 @@ empty state diz "nenhum nas páginas carregadas até agora", não "nenhum client
 **Falsificação.** 3 sabotagens, uma por vez, cada uma vermelha; controle verde. A da corrida
 ("não encontrado" antes da lista) ficou VERDE no teste de página — a página mostra skeleton enquanto a
 lista carrega e mascara a corrida; o teste foi movido para o contrato do hook (`renderHook`).
+
+## 2026-10-12 — secret `ALLOWED_ORIGIN=123456` calou 5 edges para o navegador
+
+**Sintoma:** "Atualizar análise da carteira" → toast "Erro ao atualizar análise"; `acoes_execucoes.detalhes`
+= `Failed to send a request to the Edge Function` em ~0,4s (o fetch nem chega).
+**Causa:** `ai-ops-agent`, `calculate-scores`, `copilot-analyze`, `omie-sync` e `process-nfe` liam
+`Deno.env.get("ALLOWED_ORIGIN") || "*"`; o secret valia `123456` em prod → preflight respondia
+`access-control-allow-origin: 123456` e o navegador rejeitava. Atingia também o Novo pedido (`omie-sync`).
+**Diagnóstico em 1 comando:** `curl -si -X OPTIONS -H 'Origin: https://x' <edge> | grep -i allow-origin`.
+**Correção:** founder apagou o secret (efeito imediato, sem deploy); PR fixa `"*"` no código (igual ao
+`_shared/auth.ts` — auth é Bearer, não cookie) para um secret errado não derrubar de novo.

@@ -17,7 +17,9 @@ import {
   valorMedido,
 } from "../_shared/score-ponderado.ts";
 
-const ALLOWED_ORIGIN = Deno.env.get("ALLOWED_ORIGIN") || "*";
+// Origem fixa "*" (igual ao `_shared/auth.ts`; a auth é por Bearer, não cookie): o secret ALLOWED_ORIGIN
+// valia "123456" em prod e o navegador rejeitava todo preflight — 5 edges mudas para o app (2026-10-12).
+const ALLOWED_ORIGIN = "*";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': ALLOWED_ORIGIN,
