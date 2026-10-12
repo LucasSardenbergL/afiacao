@@ -20,6 +20,8 @@ interface MakeSupabaseOpts {
   produtosInativos?: string[];
   /** Força erro na query do preflight de vendabilidade (fail-closed). */
   preflightError?: unknown;
+  /** Estado atual da fórmula tint lido pelo preflight da fonte 'tabela'. */
+  tint?: { csv: number | null; precoFinal: number | null };
 }
 function makeSupabase(opts: MakeSupabaseOpts = {}) {
   const insert = vi.fn().mockImplementation((payload: { account?: string }) =>
@@ -39,11 +41,20 @@ function makeSupabase(opts: MakeSupabaseOpts = {}) {
         }),
       };
     }
+    if (table === 'v_tint_formula_canonica') {
+      return {
+        select: () => ({
+          in: (_col: string, ids: string[]) =>
+            Promise.resolve({ data: ids.map((id) => ({ id, preco_csv_legado: opts.tint?.csv ?? null })), error: null }),
+        }),
+      };
+    }
     return { insert };
   });
   const invoke = vi.fn();
-  const client = { from, functions: { invoke } } as unknown as SubmitClient;
-  return { client, from, insert, invoke };
+  const rpc = vi.fn().mockResolvedValue({ data: { precoFinal: opts.tint?.precoFinal ?? null }, error: null });
+  const client = { from, functions: { invoke }, rpc } as unknown as SubmitClient;
+  return { client, from, insert, invoke, rpc };
 }
 
 const customer = {
@@ -103,6 +114,32 @@ describe('submitQuote', () => {
     expect(r.errors[0].step).toBe('validate_vendabilidade');
     expect(r.errors[0].message).toContain('C1');
     expect(insert).not.toHaveBeenCalled();
+  });
+
+  it('item tint "tabela" com CSV implausível → bloqueia (validate_tint_tabela), sem insert', async () => {
+    const { client, insert } = makeSupabase({ tint: { csv: 0.6824, precoFinal: 102.47 } });
+    const tinta = { ...obenItem(), quantity: 1, unit_price: 0.7, tint_cor_id: '360V - BS', tint_formula_id: 'f1', tint_price_source: 'tabela' } as ProductCartItem;
+    const r = await submitQuote(makeParams({
+      supabase: client,
+      cart: { obenProductItems: [tinta], colacorProductItems: [] },
+      subtotals: { oben: 0.7, colacor: 0 },
+    }));
+    expect(r.success).toBe(false);
+    expect(r.errors[0].step).toBe('validate_tint_tabela');
+    expect(r.errors[0].message).toContain('360V - BS');
+    expect(insert).not.toHaveBeenCalled();
+  });
+
+  it('item tint "tabela" com CSV plausível e valor da tabela → salva', async () => {
+    const { client, insert } = makeSupabase({ tint: { csv: 120, precoFinal: 170.16 } });
+    const tinta = { ...obenItem(), quantity: 1, unit_price: 120, tint_cor_id: 'V', tint_formula_id: 'f1', tint_price_source: 'tabela' } as ProductCartItem;
+    const r = await submitQuote(makeParams({
+      supabase: client,
+      cart: { obenProductItems: [tinta], colacorProductItems: [] },
+      subtotals: { oben: 120, colacor: 0 },
+    }));
+    expect(r.success).toBe(true);
+    expect(insert).toHaveBeenCalledTimes(1);
   });
 
   it('Oben ok → success + insert status orcamento', async () => {

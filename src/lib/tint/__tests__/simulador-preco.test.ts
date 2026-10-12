@@ -87,6 +87,17 @@ describe('precoSimulador — o simulador admin mostra o preço do BALCÃO (Fase 
     expect(r.preco).toBe(r.precoCalc); // o escolhido é o maior (regra 3)
   });
 
+  it('CSV implausível (< 50% do calc: só corantes) → NÃO expõe candidato "tabela" (2026-10-12)', () => {
+    const r = precoSimulador({
+      precoCsv: 0.6824,
+      pricing: pricing({ precoFinal: 102.47 }),
+      batchCarregando: false,
+      temReceita: true,
+    });
+    expect(r.precoCalc).toBe(102.5);
+    expect(r.precoTabela).toBeNull();
+  });
+
   it('sem-preco NÃO expõe candidato nenhum — o balcão bloqueia TODAS as fontes', () => {
     // semPrecoConfiavel no balcão zera calc/tabela/cliente; mostrar o CSV aqui
     // seria exibir número que a venda não pode usar (desinformação de volta).

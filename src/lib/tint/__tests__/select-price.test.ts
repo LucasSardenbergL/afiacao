@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { selectTintPrice, selectAltPrice } from '../select-price';
+import { selectTintPrice, selectAltPrice, csvTabelaElegivel, RAZAO_MINIMA_TABELA } from '../select-price';
 import type { TintPriceBreakdown } from '../compute-price';
 
 // Helper: monta um breakdown do motor honesto (get_tint_price) para os testes.
@@ -53,16 +53,16 @@ describe('selectTintPrice — seleção honesta da fonte de preço (Passo 2, mon
   });
 
   it('Grupo B (calc > CSV): usa o calc e marca recalculado, guardando o importado anterior', () => {
-    // CSV esqueceu a base; calc inclui. Sobe → aviso no balcão.
+    // Calc subiu acima do importado (ainda plausível: ≥ 50%). Sobe → aviso no balcão.
     const r = selectTintPrice({
       lastPracticedPrice: null,
-      precoCsv: 13.68,
+      precoCsv: 120,
       pricing: pricing({ custoBase: 152.1, custoCorantes: 18.06, precoFinal: 170.16 }),
     });
     expect(r.source).toBe('calculado');
     expect(r.precoSemDesconto).toBe(170.2); // arredonda pra cima R$0,10 (paridade CSV)
     expect(r.recalculado).toBe(true);
-    expect(r.precoImportadoAnterior).toBe(13.7); // CSV arredondado, para o "antes R$X"
+    expect(r.precoImportadoAnterior).toBe(120); // CSV arredondado, para o "antes R$X"
   });
 
   it('Grupo A (calc ≈ CSV, dentro da tolerância): usa o calc, sem aviso (mesmo preço)', () => {
@@ -170,7 +170,7 @@ describe('selectTintPrice — seleção honesta da fonte de preço (Passo 2, mon
 
 describe('selectAltPrice — preço de embalagem alternativa (1b)', () => {
   it('Grupo B (calc > CSV): usa o calc, marca recalculado e traz o custoCorantes DA fórmula', () => {
-    const r = selectAltPrice(13.68, pricing({ custoBase: 152.1, custoCorantes: 18.06, precoFinal: 170.16 }));
+    const r = selectAltPrice(120, pricing({ custoBase: 152.1, custoCorantes: 18.06, precoFinal: 170.16 }));
     expect(r.preco).toBe(170.2);
     expect(r.fonte).toBe('calculado');
     expect(r.recalculado).toBe(true);
@@ -225,14 +225,14 @@ describe('selectAltPrice — override de fonte da vendedora (Fase 2b-fix, altern
   });
 
   it('override "tabela" quando o default é calc (calc > CSV): mostra o CSV sem o aviso de recálculo', () => {
-    const r = selectAltPrice(13.68, pricing({ custoBase: 152.1, custoCorantes: 18.06, precoFinal: 170.16 }), 'tabela');
-    expect(r.preco).toBe(13.7);
+    const r = selectAltPrice(120, pricing({ custoBase: 152.1, custoCorantes: 18.06, precoFinal: 170.16 }), 'tabela');
+    expect(r.preco).toBe(120);
     expect(r.fonte).toBe('tabela');
     expect(r.recalculado).toBe(false); // o preço exibido não é o recalculado
   });
 
   it('override "calculado" coincidindo com o default preserva o aviso de recálculo', () => {
-    const r = selectAltPrice(13.68, pricing({ custoBase: 152.1, custoCorantes: 18.06, precoFinal: 170.16 }), 'calculado');
+    const r = selectAltPrice(120, pricing({ custoBase: 152.1, custoCorantes: 18.06, precoFinal: 170.16 }), 'calculado');
     expect(r.preco).toBe(170.2);
     expect(r.fonte).toBe('calculado');
     expect(r.recalculado).toBe(true);
@@ -255,5 +255,53 @@ describe('selectAltPrice — override de fonte da vendedora (Fase 2b-fix, altern
     const r = selectAltPrice(200, null, 'tabela');
     expect(r.preco).toBeNull();
     expect(r.fonte).toBeNull();
+  });
+});
+
+// CSV legado IMPLAUSÍVEL (2026-10-12): < 50% do calculado = preço só dos corantes
+// (export Sayersystem sem a base). Espelho de tint_gate_revalida (migration
+// 20261012150000, provada em db/test-tint-gate-revalida.sh G40–G43): o balcão
+// não pode oferecer o que o submit barra.
+describe('csvTabelaElegivel — CSV implausível não vira fonte (espelho do gate)', () => {
+  it('o caso real 360V-BS 405ML: CSV 0,6824 × calc 102,47 → não elegível', () => {
+    expect(csvTabelaElegivel(0.6824, 102.47)).toBeNull();
+  });
+
+  it('EXATAMENTE 50% (ceil10 × ceil10) segue elegível — o corte é estrito, como no gate (G41)', () => {
+    expect(RAZAO_MINIMA_TABELA).toBe(0.5);
+    // calc 102,3457 → ceil10 102,4; metade 51,2 = CSV 51,2
+    expect(csvTabelaElegivel(51.2, 102.3457)).toBe(51.2);
+    expect(csvTabelaElegivel(51.1, 102.3457)).toBeNull(); // G42
+  });
+
+  it('compara os valores ARREDONDADOS (ceil10), não os brutos', () => {
+    // bruto 51,15 < 51,2, mas ceil10(51,15) = 51,2 → elegível (o gate vê 51,2)
+    expect(csvTabelaElegivel(51.15, 102.3457)).toBe(51.15);
+  });
+
+  it('sem calculado (carregando / motor sem preço) devolve o CSV — quem decide aí é o motor', () => {
+    expect(csvTabelaElegivel(0.6824, null)).toBe(0.6824);
+    expect(csvTabelaElegivel(0.6824, undefined)).toBe(0.6824);
+  });
+
+  it('CSV ausente ou ≤ 0 → null', () => {
+    expect(csvTabelaElegivel(null, 100)).toBeNull();
+    expect(csvTabelaElegivel(undefined, 100)).toBeNull();
+    expect(csvTabelaElegivel(0, 100)).toBeNull();
+  });
+
+  it('selectTintPrice: CSV implausível some — calc sem aviso de recálculo nem "antes R$ 0,70"', () => {
+    const r = selectTintPrice({ lastPracticedPrice: null, precoCsv: 0.6824, pricing: pricing({ precoFinal: 102.47 }) });
+    expect(r.source).toBe('calculado');
+    expect(r.precoSemDesconto).toBe(102.5);
+    expect(r.recalculado).toBe(false);
+    expect(r.precoImportadoAnterior).toBeNull();
+  });
+
+  it('selectAltPrice: o override "tabela" a 1 toque NÃO oferece R$ 0,70 — cai no calculado', () => {
+    const r = selectAltPrice(0.6824, pricing({ precoFinal: 102.47 }), 'tabela');
+    expect(r.precoTabela).toBeNull();
+    expect(r.fonte).toBe('calculado');
+    expect(r.preco).toBe(102.5);
   });
 });

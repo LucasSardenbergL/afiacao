@@ -3,6 +3,7 @@ import { logger } from '@/lib/logger';
 import { formatCustomerAddress, resolveCustomerPhone } from './helpers';
 import { validarVendabilidade, bloqueioVendabilidade } from './vendabilidade';
 import { findInvalidPricedProductItems, invalidPriceMessage } from './priceGuard';
+import { bloqueioTabelaTint } from './tabelaTint';
 
 /**
  * Saves cart as quotes (orcamento) — no Omie sync.
@@ -31,6 +32,13 @@ export async function submitQuote(params: SubmitQuoteParams): Promise<SubmitQuot
   const bloqueioVend = bloqueioVendabilidade(vend);
   if (bloqueioVend) {
     return { success: false, results: [], errors: [{ step: 'validate_vendabilidade', message: bloqueioVend }] };
+  }
+
+  // Fonte tint 'tabela' implausível (CSV sem a base, < 50% do calculado): o orçamento
+  // não cruza o gate do edge, mas é impresso ao cliente — revalida aqui (fail-closed).
+  const bloqueioTabela = await bloqueioTabelaTint(supabase, [...obenProductItems, ...colacorProductItems]);
+  if (bloqueioTabela) {
+    return { success: false, results: [], errors: [{ step: 'validate_tint_tabela', message: bloqueioTabela }] };
   }
 
   const storedAddress = formatCustomerAddress(delivery.selectedAddress, customer);
