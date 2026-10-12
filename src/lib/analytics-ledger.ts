@@ -46,7 +46,13 @@ export type EventoLedger =
    * ⚠️ `servido`, não `visto`: prova que o app RENDERIZOU a rota. Aba aberta e
    * ignorada conta igual.
    */
-  | 'navegacao.rota_servida';
+  | 'navegacao.rota_servida'
+  /**
+   * O card "Crescimento na base comparável" ficou ≥50% visível, 1x por (empresa, comparação) e dia.
+   * É o sinal que libera a fase seguinte do card (ranking normalizado) — e o PostHog é censurado no
+   * Chrome do founder, o principal leitor (2026-10-12: boots em `telemetria_probes`, zero evento web).
+   */
+  | 'dashboard.crescimento_comparavel_servido';
 
 /**
  * Registra um evento decisório no ledger server-side.
