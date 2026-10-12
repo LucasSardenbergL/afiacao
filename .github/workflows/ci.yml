@@ -764,6 +764,14 @@ jobs:
       - name: Docs links gate (link relativo de .md resolve)
         run: bun run docs:links
 
+      # `.from('x' as never)`/`.rpc('x' as never)` sobre nome que o types.ts JÁ tipa (M-28): o cast velho
+      # desliga a checagem de coluna/argumento/retorno, e com ele uma tela sobre tabela que NÃO existe
+      # em prod tem a mesma cara de uma sobre tabela real (M-06). Ratchet por contagem em
+      # scripts/casts-stale-baseline.json (2026-10-11: 49 from + 48 rpc): subir reprova, descer pede
+      # baixar o número no mesmo PR. Pisos de nomes/fontes/casts contra varredura cega. Offline, ~1 s.
+      - name: Casts velhos (as never sobre nome já tipado)
+        run: bun run casts:stale
+
       # Frescura do manual: o CLAUDE.md e a maquinaria conferem um ao outro nos DOIS sentidos.
       # (1) nome citado que nao aponta para nada — `manifesto.gate` era citado como comando e nao
       # existe em package.json nem em workflow; (2) gate que reprova e o manual nao cita — foi o
