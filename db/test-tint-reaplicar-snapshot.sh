@@ -97,6 +97,12 @@ P -q <<'SQL'
 CREATE ROLE anon NOLOGIN; CREATE ROLE authenticated NOLOGIN;
 -- role NEUTRA: não recebe grant nenhum. Serve para A13 ver a ponta PUBLIC do REVOKE.
 CREATE ROLE role_neutra NOLOGIN;
+-- ⚠️ ISTO É O QUE TORNA A SABOTAGEM `acl_aberta` ALCANÇÁVEL, e a 1ª versão da prova não tinha:
+-- no PG cru, `anon` só tem EXECUTE VIA PUBLIC, então `REVOKE ... FROM anon` é no-op e remover
+-- essa linha não quebrava nada (medido: suíte ficou VERDE). Em prod não é no-op — o Supabase dá
+-- grant EXPLÍCITO a anon/authenticated (é a armadilha do CLAUDE.md: "REVOKE FROM PUBLIC NÃO tira
+-- anon/authenticated"). Sem reproduzir o grant explícito aqui, a prova media outro ambiente.
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO anon, authenticated;
 CREATE TABLE public.tint_keys_snapshots (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   setting_id uuid,
