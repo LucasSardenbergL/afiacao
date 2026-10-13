@@ -10,6 +10,13 @@ import type {
   UserTool,
 } from '@/hooks/useUnifiedOrder';
 import { nascerItemProduto } from './nascimento-item';
+import {
+  aplicarDescontoNasCores,
+  mesmoDesconto,
+  renegociarPorDesconto,
+  renegociarPorPreco,
+  type Renegociacao,
+} from '@/lib/tint/renegociar';
 
 const VOLUME_UNITS = ['5L', 'GL', 'LT', 'BD', 'BH'];
 
@@ -151,7 +158,7 @@ export function useCart({ getProductPrice, getServicePrice, servicos }: UseCartA
         c.tint_formula_id === formulaId &&
         c.unit_price === precoFinal &&
         (c.tint_price_source ?? null) === fonte &&
-        c.tint_discount_pct === desconto &&
+        mesmoDesconto(c.tint_discount_pct, desconto) &&
         c.tint_preco_sem_desconto === precoBase;
       // Codex P1 (rodada 3): a decisão é tomada SÍNCRONA sobre o estado atual (`cartRef`, que
       // também recebe a escrita na hora — 2 confirmações no mesmo batch não se atropelam) e
@@ -276,13 +283,65 @@ export function useCart({ getProductPrice, getServicePrice, servicos }: UseCartA
     [setCart],
   );
 
-  const updateProductPrice = useCallback((index: number, price: number) => {
+  // Fase 2B: linha COM COR não aceita só `unit_price` — o gate recomputa o preço pela fonte
+  // + desconto declarados, e editar só o preço deixava a decisão antiga (recusa no envio).
+  // Toda edição regrava a decisão inteira (`renegociar`) ou é recusada NA HORA com o motivo.
+  // Decide sobre o espelho síncrono (`cartRef`), como a tinta da 2A.
+  const renegociarLinha = useCallback(
+    (index: number, calcular: (item: ProductCartItem) => Renegociacao): boolean => {
+      const atual = cartRef.current;
+      const item = atual[index];
+      if (!item || item.type !== 'product') return false;
+      const r = calcular(item as ProductCartItem);
+      if (!r.ok) {
+        toast.error('Preço da cor não alterado', { description: r.motivo });
+        return false;
+      }
+      setCart(atual.map((c, i) => (i === index ? ({ ...c, ...r.decisao } as ProductCartItem) : c)));
+      return true;
+    },
+    [setCart],
+  );
+
+  const updateProductPrice = useCallback((index: number, price: number): boolean => {
+    const item = cartRef.current[index];
+    if (item?.type === 'product' && (item as ProductCartItem).tint_cor_id) {
+      return renegociarLinha(index, (it) => renegociarPorPreco(it, price));
+    }
     setCart(prev =>
       prev.map((c, i) =>
         i === index && c.type === 'product' ? ({ ...c, unit_price: price } as ProductCartItem) : c,
       ),
     );
-  }, [setCart]);
+    return true;
+  }, [setCart, renegociarLinha]);
+
+  const updateTintDiscount = useCallback(
+    (index: number, descontoPct: number): boolean =>
+      renegociarLinha(index, (it) => renegociarPorDesconto(it, descontoPct)),
+    [renegociarLinha],
+  );
+
+  // Fase 2B (4): desconto do PEDIDO = o mesmo % em todas as linhas com cor, numa ação
+  // EXPLÍCITA sobre o que já está no carrinho (tudo-ou-nada). Não vira estado ambiente:
+  // cor adicionada DEPOIS entra sem desconto (o seletor zera por abertura e o 1 toque
+  // nunca herda desconto — regras da Fase 3/2A); para incluí-la, aplica-se de novo.
+  const aplicarDescontoCores = useCallback(
+    (descontoPct: number): { aplicadas: number } | null => {
+      const r = aplicarDescontoNasCores(cartRef.current.map((c) => c as ProductCartItem), descontoPct);
+      if (!r.ok) {
+        const cores = r.falhas.map((f) => f.cor).join(', ');
+        toast.error('Desconto não aplicado em nenhuma cor', {
+          description: `${cores}: ${r.falhas[0].motivo}`,
+        });
+        return null;
+      }
+      if (r.aplicadas === 0) return { aplicadas: 0 };
+      setCart(r.linhas as CartItem[]);
+      return { aplicadas: r.aplicadas };
+    },
+    [setCart],
+  );
 
   const removeFromCart = useCallback((index: number) => {
     setCart(prev => prev.filter((_, i) => i !== index));
@@ -323,6 +382,8 @@ export function useCart({ getProductPrice, getServicePrice, servicos }: UseCartA
     updateServicePhotos,
     updateQuantity,
     updateProductPrice,
+    updateTintDiscount,
+    aplicarDescontoCores,
     removeFromCart,
     clearCart,
   };

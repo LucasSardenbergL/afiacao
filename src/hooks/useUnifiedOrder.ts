@@ -328,7 +328,7 @@ export function useUnifiedOrder() {
     obenSubtotal, colacorProdSubtotal, serviceSubtotal, totalEstimated,
     addProductToCart, addTintProductToCart, addServiceToCart,
     updateServiceServico, updateServiceNotes, updateServicePhotos,
-    updateQuantity, updateProductPrice, removeFromCart, clearCart,
+    updateQuantity, updateProductPrice, updateTintDiscount, aplicarDescontoCores, removeFromCart, clearCart,
   } = cartHook;
 
   // Reprecificação da FRONTEIRA (Codex P1-A): um item de produto comum pode nascer ANTES de
@@ -1042,7 +1042,7 @@ export function useUnifiedOrder() {
     addProductToCart, addTintProductToCart, addServiceToCart,
     tintPendingProduct, setTintPendingProduct,
     updateServiceServico, updateServiceNotes, updateServicePhotos,
-    updateQuantity, updateProductPrice, removeFromCart,
+    updateQuantity, updateProductPrice, updateTintDiscount, aplicarDescontoCores, removeFromCart,
     getProductPrice, getServicePrice,
     // Totals
     obenSubtotal, colacorProdSubtotal, serviceSubtotal, totalEstimated,
