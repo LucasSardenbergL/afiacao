@@ -33,10 +33,13 @@ export function PriceInput({
 }: PriceInputProps) {
   const [draft, setDraft] = useState<string | null>(null);
   const inicial = useRef<string>('');
+  // Codex P2: redigitar o MESMO texto ("10,12" sobre o 10,12% exibido arredondado) é edição
+  // explícita e confirma; só foco+saída sem digitar não regrava o valor exato.
+  const editou = useRef(false);
   const display = draft ?? (formatar ? formatar(value) : value ? String(value) : '');
 
   const confirmar = () => {
-    if (draft !== null && draft !== inicial.current) {
+    if (draft !== null && (editou.current || draft !== inicial.current)) {
       const parsed = parseDecimalBR(draft);
       if (parsed !== null) onValueChange(parsed);
     }
@@ -53,12 +56,14 @@ export function PriceInput({
       aria-label={ariaLabel}
       onFocus={(e) => {
         inicial.current = display;
+        editou.current = false;
         setDraft(display);
         e.target.select();
       }}
       onChange={(e) => {
         const raw = e.target.value;
         setDraft(raw);
+        editou.current = true;
         if (confirmarAoSair) return;
         const parsed = parseDecimalBR(raw);
         if (parsed !== null) onValueChange(parsed);

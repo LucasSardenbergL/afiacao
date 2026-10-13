@@ -78,7 +78,7 @@ export function renegociarPorPreco(item: LinhaTintNegociavel, preco: number): Re
       motivo: `O preço desta cor parte de ${brl(partida)}: no carrinho dá para dar desconto, não para subir. Para outro preço, remova a linha e escolha a cor de novo.`,
     };
   }
-  const descontoPct = centavos >= partida ? 0 : (1 - centavos / partida) * 100;
+  const descontoPct = centavos >= partida ? 0 : descontoLimpo(partida, centavos);
   // Prova de ida e volta: o gate recomputa o preço a partir do desconto declarado. Se a
   // aritmética de ponto flutuante não devolver o centavo digitado, recusa (nunca envia
   // um par preço×desconto que o servidor rejeitaria).
@@ -111,6 +111,24 @@ export function aplicarDescontoNasCores<T extends LinhaTintNegociavel & { tint_c
   });
   if (falhas.length > 0) return { ok: false, falhas };
   return { ok: true, linhas: novas, aplicadas };
+}
+
+/** Desconto que reproduz o centavo: o mais "limpo" possível (2, depois 4 casas) e só então o
+ *  exato. Codex P2: R$ 120 → R$ 108 derivava 9,999999999999998%, que depois não casava com
+ *  os 10% explícitos do seletor (falso conflito na mesma fórmula). */
+function descontoLimpo(partida: number, centavos: number): number {
+  const exato = (1 - centavos / partida) * 100;
+  for (const casas of [100, 10_000]) {
+    const d = Math.round(exato * casas) / casas;
+    if (d > 0 && d < 100 && Math.abs(aplicarDesconto(partida, d) - centavos) <= 0.005) return d;
+  }
+  return exato;
+}
+
+/** Mesmo desconto a menos do ruído de ponto flutuante (o gate lê o valor, não a grafia). */
+export function mesmoDesconto(a: number | undefined, b: number | undefined): boolean {
+  if (a === undefined || b === undefined) return a === b;
+  return Math.abs(a - b) < 1e-9;
 }
 
 function brl(v: number): string {

@@ -63,6 +63,17 @@ describe('PriceInput', () => {
       expect(onValueChange).not.toHaveBeenCalled();
     });
 
+    it('Codex P2: apagar e redigitar o MESMO texto exibido confirma (é edição explícita)', () => {
+      const onValueChange = vi.fn();
+      render(<PriceInput value={10.116} formatar={(v) => v.toFixed(2).replace('.', ',')} onValueChange={onValueChange} confirmarAoSair aria-label="pct" />);
+      const input = screen.getByLabelText('pct');
+      fireEvent.focus(input);
+      fireEvent.change(input, { target: { value: '' } });
+      fireEvent.change(input, { target: { value: '10,12' } });
+      fireEvent.blur(input);
+      expect(onValueChange).toHaveBeenCalledWith(10.12);
+    });
+
     it('recusado pelo dono: ao sair, o campo volta ao valor vigente', () => {
       render(<PriceInput value={120} onValueChange={() => {}} confirmarAoSair aria-label="preco" />);
       const input = screen.getByLabelText('preco') as HTMLInputElement;

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   aplicarDescontoNasCores,
+  mesmoDesconto,
   precoDePartida,
   renegociarPorDesconto,
   renegociarPorPreco,
@@ -53,8 +54,15 @@ describe('renegociarPorPreco', () => {
     if (!r.ok) return;
     expect(r.decisao.unit_price).toBe(100);
     expect(r.decisao.tint_preco_sem_desconto).toBe(120);
-    expect(r.decisao.tint_discount_pct).toBeCloseTo(16.6667, 3);
+    expect(r.decisao.tint_discount_pct).toBe(16.67); // desconto limpo que reproduz o centavo
     expect(gateAceita({ ...linha(), ...r.decisao }, 120)).toBe(true);
+  });
+  it('Codex P2: R$ 120 → R$ 108 grava 10 (não 9,999…), e casa com os 10% do seletor', () => {
+    const r = renegociarPorPreco(linha(), 108);
+    expect(r.ok && r.decisao.tint_discount_pct).toBe(10);
+    expect(mesmoDesconto(9.999999999999998, 10)).toBe(true);
+    expect(mesmoDesconto(10.01, 10)).toBe(false);
+    expect(mesmoDesconto(undefined, 0)).toBe(false);
   });
   it('voltar ao preço de partida zera o desconto', () => {
     const r = renegociarPorPreco(linha({ unit_price: 100, tint_discount_pct: 16.67 }), 120);

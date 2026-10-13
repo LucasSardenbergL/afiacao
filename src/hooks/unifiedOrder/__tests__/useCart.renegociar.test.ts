@@ -99,7 +99,7 @@ describe('Fase 2B — editar a linha com cor no carrinho', () => {
     expect(ok).toBe(true);
     const item = result.current.productItems[0];
     expect(item).toMatchObject({ unit_price: 150, tint_price_source: 'calculado', tint_preco_sem_desconto: 160.7 });
-    expect(item.tint_discount_pct).toBeCloseTo(6.6584, 3);
+    expect(item.tint_discount_pct).toBe(6.66);
 
     const [enviado] = await payloadDoEnvio(result.current.obenProductItems);
     expect(enviado).toMatchObject({ valor_unitario: 150, tint_formula_id: 'f-1', tint_price_source: 'calculado', tint_preco_sem_desconto: 160.7 });
@@ -132,6 +132,19 @@ describe('Fase 2B — editar a linha com cor no carrinho', () => {
     act(() => { result.current.updateTintDiscount(0, 99.99); });
     expect(result.current.productItems[0].unit_price).toBe(20);
     expect(toast.error).toHaveBeenCalled();
+  });
+
+  it('Codex P2: depois de editar o preço, readicionar a MESMA cor com o desconto equivalente SOMA (sem falso conflito)', () => {
+    const { result } = setup();
+    addCor(result, base('b1', 9001), 'f-1', 'H109', 120);
+    act(() => { result.current.updateProductPrice(0, 108); });
+    let r: string = '';
+    act(() => {
+      r = result.current.addTintProductToCart(base('b1', 9001), 'f-1', 'H109', 'H109', 108, 5, { source: 'calculado', discountPct: 10, precoSemDesconto: 120 }, 1);
+    });
+    expect(r).toBe('adicionado');
+    expect(result.current.productItems).toHaveLength(1);
+    expect(result.current.productItems[0].quantity).toBe(3);
   });
 
   it('linha SEM cor segue com a edição livre de antes', () => {

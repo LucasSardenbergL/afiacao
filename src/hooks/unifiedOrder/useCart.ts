@@ -12,6 +12,7 @@ import type {
 import { nascerItemProduto } from './nascimento-item';
 import {
   aplicarDescontoNasCores,
+  mesmoDesconto,
   renegociarPorDesconto,
   renegociarPorPreco,
   type Renegociacao,
@@ -157,7 +158,7 @@ export function useCart({ getProductPrice, getServicePrice, servicos }: UseCartA
         c.tint_formula_id === formulaId &&
         c.unit_price === precoFinal &&
         (c.tint_price_source ?? null) === fonte &&
-        c.tint_discount_pct === desconto &&
+        mesmoDesconto(c.tint_discount_pct, desconto) &&
         c.tint_preco_sem_desconto === precoBase;
       // Codex P1 (rodada 3): a decisão é tomada SÍNCRONA sobre o estado atual (`cartRef`, que
       // também recebe a escrita na hora — 2 confirmações no mesmo batch não se atropelam) e
