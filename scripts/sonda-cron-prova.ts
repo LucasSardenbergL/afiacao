@@ -468,7 +468,9 @@ export function main(argv: string[], raiz = process.cwd()): number {
 
     if (argv.includes('--falsificar')) {
       const sint = resolve(raiz, HARNESS, 'sinteticos');
-      const devemPassar = new Set(['gate-ignorado', 'ramo-morto', 'padrao']);
+      // `espera-no-handler` e `date-sem-new-no-options` (2026-10-13): inofensivos ao OPTIONS, com o
+      // controle visto — o primeiro só passa com os timers nativos no controle.
+      const devemPassar = new Set(['gate-ignorado', 'ramo-morto', 'padrao', 'espera-no-handler', 'date-sem-new-no-options']);
       // Esperado EXATO por sintético — o binário "PASSA vs resto" não distingue as duas classes
       // que a onda 4 introduziu, e é justamente a distinção entre elas que precisa ser vigiada:
       // `nao-compila` DISPENSA (bundle inválido nunca bootou) e `import-irresolvivel` BARRA
@@ -477,6 +479,19 @@ export function main(argv: string[], raiz = process.cwd()): number {
       const classeExata = new Map<string, Classe>([
         ['nao-compila', 'NAO_COMPILA'],
         ['import-irresolvivel', 'INVERIFICAVEL'],
+        // Os `controle-*` (challenge Codex, 2026-10-13) NÃO fazem I/O na execução real: o controle
+        // honesto não sobe, e o veredito correto é INVERIFICAVEL. Se algum virar PASSA, o controle
+        // FABRICOU o efeito — exatamente a regressão que cada um prende.
+        ['controle-ordem-dos-timers', 'INVERIFICAVEL'],
+        ['controle-relogio-observavel', 'INVERIFICAVEL'],
+        ['controle-relogio-capturado', 'INVERIFICAVEL'],
+        ['controle-corrida-nativa', 'INVERIFICAVEL'],
+        ['controle-intervalo-watchdog', 'INVERIFICAVEL'],
+        ['controle-cancelamento-cruzado', 'INVERIFICAVEL'],
+        ['controle-waituntil-watchdog', 'INVERIFICAVEL'],
+        // Fidelidade da fila de (a)/(b): o fetch recebe `undefined`, lança antes de contar e o
+        // OPTIONS segue zerado como no harness anterior; o POST devolve 401 → controle inconclusivo.
+        ['options-timeout-com-args', 'INVERIFICAVEL'],
       ]);
       let vermelhos = 0;
       for (const nome of readdirSync(sint).sort()) {
