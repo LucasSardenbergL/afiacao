@@ -31,6 +31,7 @@ import {
   TETO_CHAMADA_OMIE_MS,
 } from "./omie-chamada-relogio.ts";
 import { classificarFaultCota } from "./omie-cota.ts";
+import { mensagemDeErro } from "./erro-mensagem.ts";
 import { cabeEspera } from "./omie-deadline.ts";
 import { atrasoRetentativaMs, classificarFaultstring } from "./omie-falha.ts";
 
@@ -219,7 +220,7 @@ export async function chamarOmie(p: PedidoOmie, o: OpcoesChamada): Promise<Respo
       if (escrita || ultima) throw erro;
       const espera = atrasoMs(tentativa, { erro });
       if (!cabeEspera(agora(), deadline, espera, o.minimoMs)) throw erro;
-      o.aoRepetir?.({ tentativa, atrasoMs: espera, motivo: erro instanceof Error ? erro.message : String(erro) });
+      o.aoRepetir?.({ tentativa, atrasoMs: espera, motivo: mensagemDeErro(erro) ?? "erro sem mensagem" });
       await dormir(espera);
       continue;
     }

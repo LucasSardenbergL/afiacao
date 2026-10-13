@@ -104,3 +104,37 @@ describe('gate: chamada ao Omie só pelo _shared/omie-cliente.ts (M-48)', () => 
     expect(velhas, 'já migrou — tire do LEGADO').toEqual([]);
   });
 });
+
+// A correção de dinheiro do M-48 mora no adaptador do omie-nfe-recebimento: a escrita
+// indeterminada (ConcluirRecebimento sem resposta/5xx) tem de chegar ao passo como FALHA sem
+// marcar a flag `_ok` e sem passar pelo `erroBenigno` — que, casando "já concluído", a
+// transformaria em sucesso fabricado. O núcleo é provado no Deno; isto prova a fiação.
+describe('fiação: omie-nfe-recebimento trata a escrita indeterminada como falha do passo', () => {
+  const rel = `${FUNCOES}/omie-nfe-recebimento/index.ts`;
+  const src = fontes.find((f) => f.rel === rel)?.src ?? '';
+  const fatia = (de: string, ate: string) => {
+    const i = src.indexOf(de);
+    const f = i >= 0 ? src.indexOf(ate, i) : -1;
+    return i >= 0 && f > i ? src.slice(i, f) : '';
+  };
+  const adaptador = fatia('async function chamadaOmie(', '\n}\n');
+  const passo = fatia('const executarPasso = async', '\n      };\n');
+
+  it('sentinela: as fatias existem', () => {
+    expect(adaptador.length, 'adaptador mudou de nome ou de forma').toBeGreaterThan(0);
+    expect(passo.length, 'executarPasso mudou de forma').toBeGreaterThan(0);
+  });
+
+  it('o adaptador marca a indeterminada em vez de devolvê-la como erro comum', () => {
+    expect(adaptador).toMatch(/if \(ehEscritaIndeterminada\(err\)\) return \{ error: true, indeterminada: true,/);
+  });
+
+  it('o passo sai como falha ANTES do erroBenigno e sem marcar a flag', () => {
+    const i = passo.indexOf('if (res.error && res.indeterminada)');
+    expect(i, 'o ramo da indeterminada sumiu').toBeGreaterThan(-1);
+    expect(i, 'o erroBenigno roda antes do ramo da indeterminada').toBeLessThan(passo.indexOf('erroBenigno('));
+    const ramo = passo.slice(i, passo.indexOf('const cls = classificarRespostaOmie(', i));
+    expect(ramo).toContain('return false;');
+    expect(ramo, 'a indeterminada marcou a flag _ok').not.toContain('[flagCol]: true');
+  });
+});
