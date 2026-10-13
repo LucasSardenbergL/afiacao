@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 628
+-- Total de custom migrations: 631
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -688,8 +688,11 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261013094000', 'fin_movimentacoes_resumo_encargos', '20261013094000_fin_movimentacoes_resumo_encargos.sql'),
   ('20261013120000', 'tint_watchdog_fase5_s2_persistente', '20261013120000_tint_watchdog_fase5_s2_persistente.sql'),
   ('20261013120000', 'watchdog_diario_so_problema', '20261013120000_watchdog_diario_so_problema.sql'),
+  ('20261013150000', 'tint_promote_nao_ressuscita_fantasma', '20261013150000_tint_promote_nao_ressuscita_fantasma.sql'),
   ('20261013180000', 'tint_reaplicar_snapshot_cron', '20261013180000_tint_reaplicar_snapshot_cron.sql'),
-  ('20261013210000', 'tint_watchdog_fase5_v4_fonte_viva', '20261013210000_tint_watchdog_fase5_v4_fonte_viva.sql')
+  ('20261013200000', 'tint_remove_cron_reaplicar_snapshot', '20261013200000_tint_remove_cron_reaplicar_snapshot.sql'),
+  ('20261013210000', 'tint_watchdog_fase5_v4_fonte_viva', '20261013210000_tint_watchdog_fase5_v4_fonte_viva.sql'),
+  ('20261013220000', 'tint_promote_snapshot_ref_por_generated_at', '20261013220000_tint_promote_snapshot_ref_por_generated_at.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),

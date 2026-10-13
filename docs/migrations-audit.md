@@ -21,7 +21,7 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **628** custom migrations totais
+- **631** custom migrations totais
 - **2035** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 711
@@ -5107,12 +5107,20 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.fin_sync_watchdog_diario` | — |
 | `cron_job` | `cron.fin-sync-heartbeat` | — |
 
+### `20261013150000_tint_promote_nao_ressuscita_fantasma.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
 ### `20261013180000_tint_reaplicar_snapshot_cron.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.tint_reaplicar_snapshot_tick` | — |
 | `cron_job` | `cron.tint-reaplicar-snapshot-6h` | — |
+
+### `20261013200000_tint_remove_cron_reaplicar_snapshot.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ### `20261013210000_tint_watchdog_fase5_v4_fonte_viva.sql`
 
@@ -5121,6 +5129,10 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public._tint_watchdog_fase5_transicao` | — |
 | `function` | `public.tint_watchdog_fase5_check` | — |
 | `table` | `public.tint_watchdog_fase5_amostras` | — |
+
+### `20261013220000_tint_promote_snapshot_ref_por_generated_at.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ## Próximos passos por status
 
