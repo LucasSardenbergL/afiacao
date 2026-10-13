@@ -36,7 +36,7 @@ precedente aplicado em prod (`20261011120000` ×2, `20261010150000` ×2). Renome
   P2-6 janela por snapshot inteiro, não por chunk; P2-7 erro SQL na suíte vira o vermelho `ERRO_SQL` e a
   falsificação exige todos os asserts executados.
 - P2-3 (o helper v2 amplia e-mail do `tint_promocao_watchdog` numa oscilação 10→9→10): mantido por decisão, com o
-  histórico medido (1 alerta em toda a história) — fica para o founder.
+  histórico medido (1 alerta em toda a história) — **decisão do founder (2026-10-13): mantém o comportamento novo também para a promoção.**
 
 ## Prova
 41 asserts; `--falsificar` roda o controle verde e 21 sabotagens de conjunto exato (3 de pós-condição que exigem o
