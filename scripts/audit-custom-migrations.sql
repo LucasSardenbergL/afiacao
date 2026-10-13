@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 616
+-- Total de custom migrations: 619
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -677,7 +677,10 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261011120500', 'drop_quarentena_omie_clientes', '20261011120500_drop_quarentena_omie_clientes.sql'),
   ('20261011140000', 'picking_v2_coleta_reserva', '20261011140000_picking_v2_coleta_reserva.sql'),
   ('20261011150000', 'reposicao_recusa_definitiva_portal_servidor', '20261011150000_reposicao_recusa_definitiva_portal_servidor.sql'),
-  ('20261012130954', 'fin_sync_kick_skipped_busy_e_perdido', '20261012130954_fin_sync_kick_skipped_busy_e_perdido.sql')
+  ('20261012130954', 'fin_sync_kick_skipped_busy_e_perdido', '20261012130954_fin_sync_kick_skipped_busy_e_perdido.sql'),
+  ('20261012150000', 'tint_gate_tabela_implausivel', '20261012150000_tint_gate_tabela_implausivel.sql'),
+  ('20261012160000', 'picking_v2_cron_fila', '20261012160000_picking_v2_cron_fila.sql'),
+  ('20261012205652', 'retencao_lgpd_conversas', '20261012205652_retencao_lgpd_conversas.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2665,7 +2668,12 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('reposicao_recusa_definitiva_portal_servidor', 'function', 'public', 'analytics_outbox_pedido_compra', ''),
   ('reposicao_recusa_definitiva_portal_servidor', 'trigger', 'public', 'trg_carimbo_recusa_definitiva', 'pedido_compra_sugerido'),
   ('reposicao_recusa_definitiva_portal_servidor', 'cron_job', 'cron', 'reposicao-encerrar-recusas-definitivas', ''),
-  ('fin_sync_kick_skipped_busy_e_perdido', 'function', 'public', 'fin_sync_kicks_perdidos', '')
+  ('fin_sync_kick_skipped_busy_e_perdido', 'function', 'public', 'fin_sync_kicks_perdidos', ''),
+  ('tint_gate_tabela_implausivel', 'function', 'public', 'tint_gate_revalida', ''),
+  ('picking_v2_cron_fila', 'cron_job', 'cron', 'picking-fila-oben', ''),
+  ('picking_v2_cron_fila', 'cron_job', 'cron', 'picking-fila-colacor', ''),
+  ('retencao_lgpd_conversas', 'function', 'private', 'expurgar_conteudo_conversas', ''),
+  ('retencao_lgpd_conversas', 'cron_job', 'cron', 'lgpd-expurgo-conversas-diario', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4701,7 +4709,12 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('reposicao_recusa_definitiva_portal_servidor', 'function', 'public', 'analytics_outbox_pedido_compra', ''),
   ('reposicao_recusa_definitiva_portal_servidor', 'trigger', 'public', 'trg_carimbo_recusa_definitiva', 'pedido_compra_sugerido'),
   ('reposicao_recusa_definitiva_portal_servidor', 'cron_job', 'cron', 'reposicao-encerrar-recusas-definitivas', ''),
-  ('fin_sync_kick_skipped_busy_e_perdido', 'function', 'public', 'fin_sync_kicks_perdidos', '')
+  ('fin_sync_kick_skipped_busy_e_perdido', 'function', 'public', 'fin_sync_kicks_perdidos', ''),
+  ('tint_gate_tabela_implausivel', 'function', 'public', 'tint_gate_revalida', ''),
+  ('picking_v2_cron_fila', 'cron_job', 'cron', 'picking-fila-oben', ''),
+  ('picking_v2_cron_fila', 'cron_job', 'cron', 'picking-fila-colacor', ''),
+  ('retencao_lgpd_conversas', 'function', 'private', 'expurgar_conteudo_conversas', ''),
+  ('retencao_lgpd_conversas', 'cron_job', 'cron', 'lgpd-expurgo-conversas-diario', '')
 )
 SELECT
   e.migration,
@@ -5150,6 +5163,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'tint_ultimo_preco_cliente', 2, '20261001014210_universo_pedidos_preco.sql', '0c7e130232ec818b66a2c0827e55b54c'),
   ('public', 'tint_gate_revalida', 1, '20260722100001_tint_gate_revalida_submit.sql', 'b46bd0dc7e83094a608ed8554a4c9bfb'),
   ('public', 'tint_gate_revalida', 2, '20260726160000_tint_canonica_piso_legado.sql', '67947c3b37e874638ebe013d90bdfcb4'),
+  ('public', 'tint_gate_revalida', 3, '20261012150000_tint_gate_tabela_implausivel.sql', '66f4d84b5f078ba58e26c9f9901faef4'),
   ('public', 'ciclo_oportunidade_do_dia', 1, '20260722110000_ciclo_oportunidade_registra_execucao.sql', 'e9b625fa0078e96ecae422debbe16dab'),
   ('public', 'ciclo_oportunidade_do_dia', 2, '20261001023000_hoje_sp_familia_data_ciclo.sql', '193eb913efb92a886539b065cf3e55b7'),
   ('public', 'get_customer_margin_summary', 1, '20260723150000_farmer_margem_server_side.sql', '4bec72709f6cbaeea10e3ac63c2063b9'),
