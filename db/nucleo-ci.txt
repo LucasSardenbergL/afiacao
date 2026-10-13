@@ -104,9 +104,9 @@ db/test-margem-cliente-janela-12m.sh       21
 db/test-check-finitude-money-path.sh       27
 # Encargo por título (2026-10-13): o resumo do Omie tipado sem `?? 0` e a v_titulo_encargos_cr — versão do
 # título por última observação, baixa duplicada por versão, CC de inclusão zerado, baixa cancelada →
-# `divergente` (nunca encargo efetivo), ausente = NULL. 40 asserts + 14 sabotagens INLINE (controle verde
+# `divergente` (nunca encargo efetivo), ausente = NULL. 41 asserts + 15 sabotagens INLINE (controle verde
 # antes, alvo exato, baseline restaurado depois); ~24 s local.
-db/test-fin-encargos-titulo.sh             40
+db/test-fin-encargos-titulo.sh             41
 db/test-caca-custo-producao.sh              6
 # O desconto de item: NULL = não apurado ≠ 0 nos TRÊS escritores de order_items, e (§F, 2026-09-10)
 # o total LÍQUIDO atravessando as RPCs intocadas — com o G5 sabotado pela tolerância maior que o

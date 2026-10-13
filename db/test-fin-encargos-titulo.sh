@@ -293,6 +293,11 @@ asserts_acl() {
   eq "G2 authenticated com SELECT" "$(Pq -c "SELECT has_table_privilege('authenticated','public.v_titulo_encargos_cr','SELECT')")" "t"
 }
 
+asserts_validador() {
+  eq "V1 validador pos-apply verde no banco bom" \
+     "$(Pq -F'|' -f "$REPO_ROOT/db/validacao-fin-encargos-titulo.sql")" "13|t|t|f"
+}
+
 asserts_check() {
   R=$(P -tA 2>&1 <<'SQL' || true
 DO $$
@@ -313,6 +318,7 @@ PRE=$PASS
 asserts_logica
 asserts_rls
 asserts_acl
+asserts_validador
 asserts_check
 BASE_PASS=$((PASS-PRE)); BASE_FAIL=$FAIL
 echo "baseline: $BASE_PASS ok / $BASE_FAIL fail"
@@ -404,10 +410,13 @@ falsifica_post "S11 sem REVOKE de anon" \
 
 # S12: RLS de verdade (fora da migration): view lendo como owner → o sem-permissão passa a ver.
 P -c "ALTER VIEW v_titulo_encargos_cr SET (security_invoker = off)" >/dev/null
-out=$(PASS=0; FAIL=0; asserts_rls)
+out=$(PASS=0; FAIL=0; asserts_rls; asserts_validador)
 if printf '%s\n' "$out" | grep -F "FAIL R3 autenticado sem permissao financeira ve 0" >/dev/null; then
   echo "  DENTE  S12 security_invoker off -> vermelho em [R3]"; FALS_OK=$((FALS_OK+1))
 else echo "  SEM-DENTE S12 -> R3 seguiu verde"; FALS_RUIM=$((FALS_RUIM+1)); fi
+if printf '%s\n' "$out" | grep -F "FAIL V1 validador" >/dev/null; then
+  echo "  DENTE  S12b validador acusa security_invoker off -> vermelho em [V1]"; FALS_OK=$((FALS_OK+1))
+else echo "  SEM-DENTE S12b -> validador seguiu verde com a view lendo como owner"; FALS_RUIM=$((FALS_RUIM+1)); fi
 restaurar
 
 # S13: sem o CHECK, NaN entra.
@@ -429,10 +438,10 @@ P -c "ALTER TABLE fin_movimentacoes ALTER COLUMN resumo_juros DROP DEFAULT" >/de
 # Depois de restaurar tudo, o baseline tem de voltar INTEIRO (a falsificação não pode deixar sujeira).
 PASS=0; FAIL=0
 restaurar
-asserts_logica >/dev/null; asserts_rls >/dev/null; asserts_acl >/dev/null; asserts_check >/dev/null
+asserts_logica >/dev/null; asserts_rls >/dev/null; asserts_acl >/dev/null; asserts_validador >/dev/null; asserts_check >/dev/null
 eq "Z1 baseline intacto apos a falsificacao (total)" "$PASS/$FAIL" "$BASE_PASS/0"
 
 echo "------------------------------"
-echo "ASSERTS: $BASE_PASS ok no baseline  |  FALSIFICACAO: $FALS_OK com dente / $FALS_RUIM sem dente ou invalidas (esperado 14/0)"
-if [ "$FAIL" != "0" ] || [ "$FALS_RUIM" != "0" ] || [ "$FALS_OK" != "14" ]; then echo "HARNESS VERMELHO"; exit 1; fi
+echo "ASSERTS: $BASE_PASS ok no baseline  |  FALSIFICACAO: $FALS_OK com dente / $FALS_RUIM sem dente ou invalidas (esperado 15/0)"
+if [ "$FAIL" != "0" ] || [ "$FALS_RUIM" != "0" ] || [ "$FALS_OK" != "15" ]; then echo "HARNESS VERMELHO"; exit 1; fi
 echo "HARNESS VERDE"

@@ -41,3 +41,15 @@
 - **Cascata:** 5 engines caem no **fallback de vencimento** quando a baixa é NULL — DRE-caixa marca **"estimado"** (degradação honesta, não erro silencioso). PMR/PMP (≈ DSO/DPO) só da baixa derivada **com flag de confiança**; senão degrada. Spec: `docs/superpowers/specs/2026-05-27-omie-baixa-date-root-fix-design.md`.
 - Vocabulário de status de título é **nativo do Omie** — usar `OPEN_TITLE_STATUSES` de `src/lib/financeiro/titulo-status.ts` (ver `docs/agent/database.md`).
   - ⚠️ **Em PROJEÇÃO de caixa o aberto canônico não serve às duas pontas.** `'ABERTO'`/`'VENCIDO'` são o fallback do ingest para status que o Omie não mandou, e `'PARCIAL'` sem a baixa gravada (#396) tem `saldo` = documento cheio. Numa soma, excluir o ambíguo também afirma um número: escolha o erro conservador pela **direção** — entrada prevista só com status nativo, saída prevista com o canônico (`getFluxoCaixa`, decisão do founder 2026-09-10). Status ambíguo nunca infla o caixa projetado. [base](../historico/status-ambiguo-e-direcao-do-dinheiro.md)
+
+## Encargo recebido (juros/multa/desconto) por título — `ListarMovimentos`, não `ListarContasReceber`
+
+> Medido em prod 2026-10-13. Migration `20261013094000`, view `v_titulo_encargos_cr`, prova `db/test-fin-encargos-titulo.sh`. Diário: `docs/historico/encargos-recebidos-por-titulo.md`.
+
+- ⚠️ **`fin_contas_receber.valor_juros/multa/desconto` são 0/NULL por CONTRATO** (o LIST não traz). A fonte é o `resumo` da ótica do título (`CONTA_A_RECEBER`) no `ListarMovimentos`, agora em colunas `resumo_*` de `fin_movimentacoes`. Identidade (172/172): `nValLiquido = nValPago − nDesconto + nJuros + nMulta`; `nValPago` é **principal**, não dinheiro recebido.
+- ⚠️ **O banco devolve multa+juros SOMADOS em `nJuros`** (`nMulta=0`): 165,00 com 5d de atraso → 6,05 = 2% + 10%·5/30. Número de decisão = `encargo_recebido` (soma); nunca afirme "multa recebida = 0".
+- ⚠️ **Somar `fin_movimentacoes` por título soma VERSÕES.** O `omie_ncodmov` é hash de campos mutáveis: título que muda vira linha nova e a velha fica congelada (2.591/16.443 títulos). Versão atual = **última observação dentro do título** (5.231/5.234 velhas nunca mais tocadas). `updated_at` sozinho NÃO prova vigência — o incremental só revisita 3 meses.
+- ⚠️ **CC de valor 0,00 não é recebimento:** `CONTA_CORRENTE_REC` com origem de inclusão (APIR/MANR/VENR/DEVR/RPTR) é sempre 0 (3.146/3.146). Caixa = BAXR/APBR. E **baixa cancelada fica no espelho** (12097272930) → a view marca `divergente` e não promove o encargo.
+- ⚠️ **Atraso pela data do TÍTULO (`dDtPagamento`)**, nunca pela CC: a CC é liquidação bancária (+1 dia útil; sexta→segunda = +3) e inflaria o atraso para além da carência.
+- **Confiança da view:** só `alta`/`erp_sem_caixa`/`erp_nao_quitado` expõem `encargo_recebido`; `so_diferenca_caixa` expõe `diferenca_caixa_documento`, que **não** é encargo (adiantamento, baixa fora do caixa e juros 50 com desconto 50 mudam o número). Política de cobrança (2% + 10% a.m., carência 3d) fica FORA da view.
+
