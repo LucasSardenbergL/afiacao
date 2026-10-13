@@ -46,6 +46,7 @@ if [ "${1:-}" = "--falsificar" ]; then
     fi
   done
   echo "── $n_sab sabotagens, $falhas fora do alvo ──"
+  echo "SABOTAGENS: $((n_sab - falhas)) vermelhas / $falhas falhas"   # recibo exigido por db/roda-nucleo-ci.sh
   [ "$falhas" -eq 0 ] && exit 0 || exit 1
 fi
 
