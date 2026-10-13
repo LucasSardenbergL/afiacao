@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **624** custom migrations totais
-- **2026** objetos esperados (criados por estas migrations)
+- **625** custom migrations totais
+- **2027** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 706
   - `rls_policy`: 471
   - `index`: 275
   - `cron_job`: 182
   - `table`: 176
-  - `view`: 109
+  - `view`: 110
   - `trigger`: 103
   - `enum_value`: 4
 
@@ -5087,6 +5087,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.analytics_ledger_registrar` | — |
+
+### `20261013094000_fin_movimentacoes_resumo_encargos.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.v_titulo_encargos_cr` | — |
 
 ### `20261013150000_tint_promote_nao_ressuscita_fantasma.sql`
 
