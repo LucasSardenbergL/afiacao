@@ -18,7 +18,7 @@ if [ "${1:-}" = "--falsificar" ]; then
   LOGDIR="$(mktemp -d "/tmp/falsifica-watchdog-diario.XXXXXX")"
   echo "══ CONTROLE ══"
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
-    echo "❌ controle VERMELHO — falsificação abortada (log: $LOGDIR/controle.log)"; exit 1
+    echo "❌ controle VERMELHO — falsificação abortada (log: $LOGDIR/controle.log)"; tail -15 "$LOGDIR/controle.log"; exit 1
   fi
   echo "✅ controle verde"
   falhas=0
@@ -36,10 +36,13 @@ if [ "${1:-}" = "--falsificar" ]; then
       echo "❌ $s: vermelho, mas não no $a (log: $LOGDIR/$s.log)"; falhas=$((falhas+1))
     fi
   done
-  [ "$falhas" -eq 0 ] && { echo "FALSIFICACAO_OK"; exit 0; } || { echo "FALSIFICACAO_FALHOU=$falhas"; exit 1; }
+  n_sab=0; for _ in $SABOTAGENS; do n_sab=$((n_sab+1)); done
+  echo "SABOTAGENS: $((n_sab - falhas)) vermelhas / $falhas falhas"   # recibo exigido por db/roda-nucleo-ci.sh
+  [ "$falhas" -eq 0 ] && exit 0 || exit 1
 fi
 
 export PGVER=17
+# shellcheck disable=SC1091  # caminho resolvido em runtime a partir de REPO_ROOT
 . "$REPO_ROOT/db/lib/pg-harness.sh"
 PORT="${PGPORT_TEST:-5487}"
 DATA="$(mktemp -d "/tmp/pgtest-watchdog-diario.XXXXXX")/data"
