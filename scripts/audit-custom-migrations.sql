@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 623
+-- Total de custom migrations: 624
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -684,7 +684,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261012203227', 'crons_modulos_congelados', '20261012203227_crons_modulos_congelados.sql'),
   ('20261012205652', 'retencao_lgpd_conversas', '20261012205652_retencao_lgpd_conversas.sql'),
   ('20261012233000', 'picking_cron_fora_do_minuto_15', '20261012233000_picking_cron_fora_do_minuto_15.sql'),
-  ('20261012233500', 'analytics_ledger_crescimento_comparavel', '20261012233500_analytics_ledger_crescimento_comparavel.sql')
+  ('20261012233500', 'analytics_ledger_crescimento_comparavel', '20261012233500_analytics_ledger_crescimento_comparavel.sql'),
+  ('20261013094000', 'fin_movimentacoes_resumo_encargos', '20261013094000_fin_movimentacoes_resumo_encargos.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2679,7 +2680,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('cron_sync_reprocess_pedidos_colacor_dr', 'cron_job', 'cron', 'sync-reprocess-pedidos-colacor-2h', ''),
   ('retencao_lgpd_conversas', 'function', 'private', 'expurgar_conteudo_conversas', ''),
   ('retencao_lgpd_conversas', 'cron_job', 'cron', 'lgpd-expurgo-conversas-diario', ''),
-  ('analytics_ledger_crescimento_comparavel', 'function', 'public', 'analytics_ledger_registrar', '')
+  ('analytics_ledger_crescimento_comparavel', 'function', 'public', 'analytics_ledger_registrar', ''),
+  ('fin_movimentacoes_resumo_encargos', 'view', 'public', 'v_titulo_encargos_cr', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4722,7 +4724,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('cron_sync_reprocess_pedidos_colacor_dr', 'cron_job', 'cron', 'sync-reprocess-pedidos-colacor-2h', ''),
   ('retencao_lgpd_conversas', 'function', 'private', 'expurgar_conteudo_conversas', ''),
   ('retencao_lgpd_conversas', 'cron_job', 'cron', 'lgpd-expurgo-conversas-diario', ''),
-  ('analytics_ledger_crescimento_comparavel', 'function', 'public', 'analytics_ledger_registrar', '')
+  ('analytics_ledger_crescimento_comparavel', 'function', 'public', 'analytics_ledger_registrar', ''),
+  ('fin_movimentacoes_resumo_encargos', 'view', 'public', 'v_titulo_encargos_cr', '')
 )
 SELECT
   e.migration,

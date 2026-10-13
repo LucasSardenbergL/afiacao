@@ -22,6 +22,7 @@ import {
   desfechoVarreduraReversa,
   fingerprintPagina,
 } from "../_shared/omie-paginacao.ts";
+import { colunasResumo, type ColunasResumo } from "./resumo-movimento.ts";
 
 // Extrai a LISTA de uma resposta do Omie exigindo que ela seja um ARRAY DE VERDADE.
 // O `(result.x as T[] | undefined) || []` histórico é o mesmo furo do `data ?? []` do
@@ -320,6 +321,9 @@ interface OmieMovimentoDetalhes {
   dDtVenc?: string;
   dDtEmissao?: string;
   nValorTitulo?: number;
+  cTipo?: string;
+  nCodBaixa?: number;
+  dDtCredito?: string;
 }
 
 interface OmieMovimentoResumo {
@@ -328,6 +332,8 @@ interface OmieMovimentoResumo {
   nDesconto?: number;
   nJuros?: number;
   nMulta?: number;
+  nValAberto?: number;
+  cLiquidado?: string;
 }
 
 interface OmieMovimento {
@@ -335,7 +341,9 @@ interface OmieMovimento {
   resumo?: OmieMovimentoResumo;
 }
 
-interface MovimentoRow {
+// O resumo (pago/líquido/desconto/juros/multa) vai em COLUNAS TIPADAS (ColunasResumo), não no
+// jsonb: é sinal money-path (encargo efetivamente recebido — v_titulo_encargos_cr).
+interface MovimentoRow extends ColunasResumo {
   company: Company;
   omie_ncodmov: string;
   omie_ncodcc: number | null;
@@ -348,7 +356,8 @@ interface MovimentoRow {
   conciliado: boolean;
   omie_codigo_lancamento: number | null;
   natureza: string | null;
-  metadata: null; // antes {detalhes, resumo} bruto; agora não persistido (peso morto)
+  metadata: null; // antes {detalhes, resumo} bruto; o útil agora vai tipado (ColunasResumo)
+  resumo_lido_em: string;
   updated_at: string;
 }
 
@@ -1164,6 +1173,7 @@ async function syncMovimentacoes(
       throw new Error(`[Fin][${company}] Mov p${pagina}/${totalPaginas}: página vazia dentro do intervalo declarado (anomalia Omie) — abortando sem completar parcial`);
     }
 
+    const agoraIso = new Date().toISOString();
     const rows = movs
       .map((mov): MovimentoRow | null => {
         const detalhes = mov?.detalhes || {};
@@ -1194,7 +1204,11 @@ async function syncMovimentacoes(
           // acima). Peso morto que engordava o upsert por página. Null daqui pra
           // frente; sem backfill (~8MB nas ~8k linhas antigas é irrelevante).
           metadata: null,
-          updated_at: new Date().toISOString(),
+          // Ausente = null (nunca `?? 0`): ver resumo-movimento.ts. `resumo_lido_em` separa
+          // "o Omie não mandou" (colunas null, lido_em preenchido) de "linha nunca relida".
+          ...colunasResumo(resumo, detalhes),
+          resumo_lido_em: agoraIso,
+          updated_at: agoraIso,
         };
       })
       .filter((r): r is MovimentoRow => r !== null);
