@@ -143,14 +143,8 @@ const AdminReposicaoOportunidades = lazy(() => import("./pages/AdminReposicaoOpo
 const AdminReposicaoNegociacaoParalela = lazy(() => import("./pages/AdminReposicaoNegociacaoParalela"));
 const AdminReposicaoBaixoGiro = lazy(() => import("./pages/AdminReposicaoBaixoGiro"));
 const AdminReposicaoVendaPerdida = lazy(() => import("./pages/AdminReposicaoVendaPerdida"));
-const AdminReposicaoCockpit = lazy(() => import("./pages/AdminReposicaoCockpit"));
 const AdminReposicaoParametros = lazy(() => import("./pages/AdminReposicaoParametros"));
 const AdminReposicaoMercado = lazy(() => import("./pages/AdminReposicaoMercado"));
-const AdminReposicaoSessaoPedidos = lazy(() => import("./pages/AdminReposicaoSessaoPedidos"));
-const AdminReposicaoSessaoConfirmacao = lazy(() => import("./pages/AdminReposicaoSessaoConfirmacao"));
-const AdminReposicaoSessaoHistorico = lazy(() => import("./pages/AdminReposicaoSessaoHistorico"));
-const ReposicaoSessionLayout = lazy(() => import("./components/reposicao/ReposicaoSessionLayout"));
-const LegacyCockpitRedirect = lazy(() => import("./components/reposicao/LegacyCockpitRedirect"));
 const AdminReposicaoCadastros = lazy(() => import("./pages/AdminReposicaoCadastros"));
 const AdminReposicaoEmbalagem = lazy(() => import("./pages/AdminReposicaoEmbalagem"));
 const ParamAutoMudancas = lazy(() => import("./pages/ParamAutoMudancas"));
@@ -387,15 +381,15 @@ const App = () => {
                 <Route path="admin/reposicao/negociacao-paralela" element={<AdminReposicaoNegociacaoParalela />} />
                 <Route path="admin/reposicao/baixo-giro" element={<AdminReposicaoBaixoGiro />} />
                 <Route path="admin/reposicao/venda-perdida" element={<AdminReposicaoVendaPerdida />} />
-                <Route element={<ReposicaoSessionLayout />}>
-                  <Route path="admin/reposicao/sessao" element={<AdminReposicaoCockpit />} />
-                  <Route path="admin/reposicao/sessao/mercado" element={<AdminReposicaoMercado />} />
-                  <Route path="admin/reposicao/sessao/parametros" element={<AdminReposicaoParametros />} />
-                  <Route path="admin/reposicao/sessao/pedidos" element={<AdminReposicaoSessaoPedidos />} />
-                  <Route path="admin/reposicao/sessao/confirmacao" element={<AdminReposicaoSessaoConfirmacao />} />
-                  <Route path="admin/reposicao/sessao/historico" element={<AdminReposicaoSessaoHistorico />} />
-                </Route>
-                <Route path="admin/reposicao/cockpit" element={<LegacyCockpitRedirect />} />
+                {/* Cockpit "Ciclo diário" e etapas 3/4 aposentados (uso real: 0 aprovações em 90d — todas em
+                    /admin/reposicao/pedidos). As URLs antigas redirecionam para a tela de trabalho. */}
+                <Route path="admin/reposicao/sessao" element={<Navigate to="/admin/reposicao/pedidos" replace />} />
+                <Route path="admin/reposicao/sessao/mercado" element={<AdminReposicaoMercado />} />
+                <Route path="admin/reposicao/sessao/parametros" element={<AdminReposicaoParametros />} />
+                <Route path="admin/reposicao/sessao/pedidos" element={<Navigate to="/admin/reposicao/pedidos" replace />} />
+                <Route path="admin/reposicao/sessao/confirmacao" element={<Navigate to="/admin/reposicao/pedidos" replace />} />
+                <Route path="admin/reposicao/sessao/historico" element={<Navigate to="/admin/reposicao/pedidos" replace />} />
+                <Route path="admin/reposicao/cockpit" element={<Navigate to="/admin/reposicao/pedidos" replace />} />
                 <Route path="admin/reposicao/mercado" element={<Navigate to="/admin/reposicao/sessao/mercado" replace />} />
                 <Route path="admin/reposicao/parametros" element={<Navigate to="/admin/reposicao/sessao/parametros" replace />} />
                 <Route path="admin/reposicao/cadastros" element={<AdminReposicaoCadastros />} />

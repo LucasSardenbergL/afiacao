@@ -138,7 +138,7 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
   {
     title: 'Reposição',
     items: [
-      { icon: LayoutDashboard, label: 'Cockpit', path: '/admin/reposicao/sessao', staffOnly: true },
+      { icon: LayoutDashboard, label: 'Pedidos de compra', path: '/admin/reposicao/pedidos', staffOnly: true },
       { icon: TrendingUp, label: 'Mercado', path: '/admin/reposicao/sessao/mercado', staffOnly: true },
       { icon: Settings, label: 'Parâmetros', path: '/admin/reposicao/sessao/parametros', staffOnly: true },
       { icon: Database, label: 'Cadastros', path: '/admin/reposicao/cadastros', staffOnly: true },
@@ -476,9 +476,8 @@ const AppSidebar = React.memo(function AppSidebar({ collapsed, onToggle }: { col
     refetchIntervalInBackground: false,
   });
 
-  // Contador de oportunidades econômicas ativas hoje (OBEN) — fonte compartilhada
-  // com o cockpit (useReposicaoStatus) via mesma queryKey → o react-query DEDUPLICA
-  // (1 request/60s na view cara, antes eram 2). Degrada honesto p/ null em erro →
+  // Contador de oportunidades econômicas ativas hoje (OBEN) — hook único com queryKey
+  // estável (1 request/60s na view cara). Degrada honesto p/ null em erro →
   // badge oculto, não fabrica "0". Detalhe em useReposicaoSessao.ts.
   const { data: oportunidadesAtivas } = useOportunidadesAtivasCount({ enabled: enableStaffPolls });
 

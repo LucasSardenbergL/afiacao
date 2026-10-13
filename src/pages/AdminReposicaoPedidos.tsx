@@ -45,6 +45,9 @@ import { PoSumidoCard } from '@/components/reposicao/pedidos/PoSumidoCard';
 import { ehAcessoNegado, frescorDoDetector, normalizarCandidatos, normalizarMarcador, ordenarCandidatos, type Frescor, type MarcadorPos, type PoCandidato } from '@/components/reposicao/pedidos/po-sumido';
 import { useAuth } from '@/contexts/AuthContext';
 import { track } from '@/lib/analytics';
+import { DataHealthBanner } from '@/components/dataHealth/DataHealthBanner';
+import { ForaDoMotorBadge } from '@/components/reposicao/foraDoMotor/ForaDoMotorBadge';
+import { BaixoGiroBadge } from '@/components/reposicao/BaixoGiroBadge';
 
 type SkuSemFornecedor = {
   sku_codigo_omie: string;
@@ -678,6 +681,15 @@ export default function AdminReposicaoPedidos() {
           </AlertDialog>
           <UltimaExecucao acao="reposicao.sincronizar_recalcular" />
         </div>
+      </div>
+
+      {/* Vindos do cockpit "Ciclo diário" (aposentado): frescor das fontes + SKUs que o motor não vê. */}
+      <DataHealthBanner source="reposicao_sugestoes" />
+      <DataHealthBanner source="estoque_inventario" />
+      {/* empty:hidden — sem nenhum aviso, a div vazia não ganha o espaçamento do space-y. */}
+      <div className="flex items-center gap-2 flex-wrap empty:hidden">
+        <ForaDoMotorBadge />
+        <BaixoGiroBadge />
       </div>
 
       {pedidosSemLeitura && (
