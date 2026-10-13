@@ -35,7 +35,7 @@ import { mensagemDeErro } from "./erro-mensagem.ts";
 import { cabeEspera } from "./omie-deadline.ts";
 import { atrasoRetentativaMs, classificarFaultstring } from "./omie-falha.ts";
 
-export interface CredenciaisOmie {
+interface CredenciaisOmie {
   appKey: string;
   appSecret: string;
 }
@@ -67,7 +67,7 @@ export interface RespostaOmie {
  */
 export type ClasseResposta = "final" | "transitorio" | "rate_limit";
 
-function texto(v: unknown): string | null {
+function campoTextoOmie(v: unknown): string | null {
   if (typeof v === "string") return v.trim() || null;
   if (typeof v === "number") return String(v);
   return null;
@@ -87,8 +87,8 @@ export function lerResposta(status: number, corpoTexto: string): RespostaOmie {
     ok: status >= 200 && status < 300,
     texto: corpoTexto,
     corpo,
-    faultstring: texto(corpo?.faultstring),
-    faultcode: texto(corpo?.faultcode),
+    faultstring: campoTextoOmie(corpo?.faultstring),
+    faultcode: campoTextoOmie(corpo?.faultcode),
   };
 }
 
