@@ -178,7 +178,8 @@ export interface OpcoesChamada extends Omit<OpcoesTentativa, "deadline" | "envio
   maxTentativas?: number;
   /**
    * Classificação própria da edge (ex.: `SOAP-ENV:Client` = produto inexistente, definitivo).
-   * Só decide LEITURA e rate-limit: numa escrita, `decidirFaultTransitorio` continua mandando.
+   * Só vale para LEITURA: numa escrita é IGNORADA — um classificador que chamasse de `final` um 5xx
+   * ambíguo apagaria a indeterminada. Escrita usa sempre `classificarResposta` + `decidirFaultTransitorio`.
    */
   classificar?: (r: RespostaOmie) => ClasseResposta;
   /** Espera antes da tentativa `tentativa + 1`. Padrão: `atrasoRetentativaMs` (honra "Aguarde N segundos"). */
@@ -225,7 +226,7 @@ export async function chamarOmie(p: PedidoOmie, o: OpcoesChamada): Promise<Respo
       continue;
     }
 
-    const classe = classificar(resposta);
+    const classe = escrita ? classificarResposta(resposta) : classificar(resposta);
     if (classe === "final") return resposta;
 
     const rateLimit = classe === "rate_limit";

@@ -8,8 +8,11 @@
 // 1. declarar um wrapper `omieCall` fora de `_shared/` — zero tolerado (os 7 migraram);
 // 2. `fetch(` cujo 1º argumento é o host do Omie (`app.omie.com.br` literal ou constante `OMIE_*`)
 //    fora de `_shared/` — só no LEGADO, que só encolhe.
-// Limite conhecido: `fetch(url` com a URL vinda de parâmetro não é visto pela porta 2 (é o caso de
-// `omie-sync-sku-items/consulta.ts` e `omie-sonda-recebimento`); a porta 1 e a revisão cobrem.
+// Limites conhecidos (revisão adversarial do M-48): a porta 1 casa o NOME, e a porta 2 só o 1º
+// argumento — `fetch(url` com a URL vinda de parâmetro (`omie-sync-sku-items/consulta.ts`,
+// `omie-sonda-recebimento`), constante sem `OMIE_` ou `fetch(base + x)` escapam. Um sinal
+// estrutural (corpo com `app_secret`) foi medido e descartado: casa também os leitores de
+// credencial. O gate barra o caminho usual; o resto é revisão.
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { resolve, join } from 'node:path';
@@ -19,30 +22,31 @@ const RAIZ = resolve(__dirname, '../..');
 const FUNCOES = 'supabase/functions';
 const NUCLEO = 'supabase/functions/_shared/';
 
-const LEGADO: Record<string, string> = {
-  'supabase/functions/analyze-unified-order/index.ts': 'fetch cru ao Omie',
-  'supabase/functions/cmc-snapshot-backfill/index.ts': 'fetch cru ao Omie',
-  'supabase/functions/cmc-snapshot-smoke/index.ts': 'fetch cru ao Omie',
-  'supabase/functions/omie-analytics-sync/index.ts': 'relógio próprio (#3001)',
-  'supabase/functions/omie-cliente/index.ts': 'fetch cru ao Omie',
-  'supabase/functions/omie-desconto-backfill/index.ts': 'fetch cru ao Omie',
-  'supabase/functions/omie-financeiro/index.ts': 'fetch cru ao Omie',
-  'supabase/functions/omie-sync/index.ts': 'relógio de escrita (#3028)',
-  'supabase/functions/omie-sync-ctes-recebidos/index.ts': 'fetch cru ao Omie',
-  'supabase/functions/omie-sync-estoque/index.ts': 'fetch cru ao Omie',
-  'supabase/functions/omie-sync-metadados/index.ts': 'fetch cru ao Omie',
-  'supabase/functions/omie-sync-nfes-recebidas/index.ts': 'fetch cru ao Omie',
-  'supabase/functions/omie-sync-pedidos-compra/index.ts': 'fetch cru ao Omie',
-  'supabase/functions/omie-vendas-sync/index.ts': 'relógio de escrita (#3028)',
-  'supabase/functions/picking-fila-omie/index.ts': 'fetch cru ao Omie',
-  'supabase/functions/process-nfe/index.ts': 'fetch cru ao Omie',
-  'supabase/functions/sync-reprocess/index.ts': 'fetch cru ao Omie',
-  'supabase/functions/tint-omie-sync/index.ts': 'fetch cru ao Omie',
+// Chamadas `fetch` cruas ao Omie POR ARQUIVO (não só o arquivo: um legado não pode ganhar mais).
+const LEGADO: Record<string, number> = {
+  'supabase/functions/analyze-unified-order/index.ts': 1,
+  'supabase/functions/cmc-snapshot-backfill/index.ts': 1,
+  'supabase/functions/cmc-snapshot-smoke/index.ts': 1,
+  'supabase/functions/omie-analytics-sync/index.ts': 1,
+  'supabase/functions/omie-cliente/index.ts': 1,
+  'supabase/functions/omie-desconto-backfill/index.ts': 1,
+  'supabase/functions/omie-financeiro/index.ts': 1,
+  'supabase/functions/omie-sync-ctes-recebidos/index.ts': 1,
+  'supabase/functions/omie-sync-estoque/index.ts': 2,
+  'supabase/functions/omie-sync-metadados/index.ts': 1,
+  'supabase/functions/omie-sync-nfes-recebidas/index.ts': 1,
+  'supabase/functions/omie-sync-pedidos-compra/index.ts': 1,
+  'supabase/functions/omie-sync/index.ts': 1,
+  'supabase/functions/omie-vendas-sync/index.ts': 1,
+  'supabase/functions/picking-fila-omie/index.ts': 1,
+  'supabase/functions/process-nfe/index.ts': 1,
+  'supabase/functions/sync-reprocess/index.ts': 1,
+  'supabase/functions/tint-omie-sync/index.ts': 1,
 };
 
 const IGNORAR = /(_test\.ts$|\.test\.ts$|\.d\.ts$)/;
 const WRAPPER = /\bfunction\s+omieCall\b|\b(?:const|let|var)\s+omieCall\s*=/;
-const FETCH_OMIE = /\bfetch\(\s*(?:["'`]https?:\/\/app\.omie\.com\.br|`\$\{\s*OMIE_[A-Z0-9_]*\s*\}|OMIE_[A-Z0-9_]+\b)/;
+const FETCH_OMIE = /\bfetch\(\s*(?:["'`]https?:\/\/app\.omie\.com\.br|`\$\{\s*OMIE_[A-Z0-9_]*\s*\}|OMIE_[A-Z0-9_]+\b)/g;
 
 function listarFontes(dir: string, acc: string[] = []): string[] {
   for (const nome of readdirSync(resolve(RAIZ, dir))) {
@@ -58,16 +62,19 @@ const fontes = listarFontes(FUNCOES).map((rel) => ({
   src: removerComentarios(readFileSync(resolve(RAIZ, rel), 'utf8')),
 }));
 const foraDoNucleo = fontes.filter((f) => !f.rel.startsWith(NUCLEO));
+const fetchesOmie = (src: string) => (src.match(FETCH_OMIE) ?? []).length;
+const temFetchOmie = (src: string) => fetchesOmie(src) > 0;
 
 describe('gate: chamada ao Omie só pelo _shared/omie-cliente.ts (M-48)', () => {
   it('sentinela: os padrões têm dente e o gate enxerga o legado (senão está cego)', () => {
     expect(WRAPPER.test('async function omieCall(url: string) {')).toBe(true);
     expect(WRAPPER.test('const omieCall = async () => {}')).toBe(true);
-    expect(FETCH_OMIE.test('await fetch("https://app.omie.com.br/api/v1/geral/clientes/", {')).toBe(true);
-    expect(FETCH_OMIE.test('await fetch(`${OMIE_API_URL}/${endpoint}`, {')).toBe(true);
-    expect(FETCH_OMIE.test('await fetch(OMIE_ENDPOINT, {')).toBe(true);
-    expect(FETCH_OMIE.test('await fetch(`${SUPA_URL}/auth/v1/user`)')).toBe(false);
-    expect(foraDoNucleo.filter((f) => FETCH_OMIE.test(f.src)).length).toBeGreaterThan(0);
+    expect(temFetchOmie('await fetch("https://app.omie.com.br/api/v1/geral/clientes/", {')).toBe(true);
+    expect(temFetchOmie('await fetch(`${OMIE_API_URL}/${endpoint}`, {')).toBe(true);
+    expect(temFetchOmie('await fetch(OMIE_ENDPOINT, {')).toBe(true);
+    expect(temFetchOmie('await fetch(`${SUPA_URL}/auth/v1/user`)')).toBe(false);
+    expect(fetchesOmie('fetch(OMIE_A, x); fetch(OMIE_B, y)')).toBe(2);
+    expect(foraDoNucleo.filter((f) => temFetchOmie(f.src)).length).toBeGreaterThan(0);
   });
 
   it('sentinela: o núcleo existe e as edges migradas passam por ele', () => {
@@ -93,15 +100,19 @@ describe('gate: chamada ao Omie só pelo _shared/omie-cliente.ts (M-48)', () => 
     expect(intrusos, 'use chamarOmie/enviarOmie de _shared/omie-cliente.ts').toEqual([]);
   });
 
-  it('nenhum fetch cru ao Omie fora do _shared e do legado', () => {
-    const intrusos = foraDoNucleo.filter((f) => FETCH_OMIE.test(f.src) && !(f.rel in LEGADO)).map((f) => f.rel);
+  it('nenhum fetch cru ao Omie novo — fora do _shared, nem a mais num arquivo do legado', () => {
+    const intrusos = foraDoNucleo
+      .filter((f) => fetchesOmie(f.src) > (LEGADO[f.rel] ?? 0))
+      .map((f) => `${f.rel} (${LEGADO[f.rel] ?? 0}→${fetchesOmie(f.src)})`);
     expect(intrusos, 'use chamarOmie/enviarOmie de _shared/omie-cliente.ts').toEqual([]);
   });
 
-  it('o legado só encolhe: entrada migrada sai da lista', () => {
-    const comFetch = new Set(foraDoNucleo.filter((f) => FETCH_OMIE.test(f.src)).map((f) => f.rel));
-    const velhas = Object.keys(LEGADO).filter((f) => !comFetch.has(f));
-    expect(velhas, 'já migrou — tire do LEGADO').toEqual([]);
+  it('o legado só encolhe: chamada migrada baixa a contagem (arquivo zerado sai da lista)', () => {
+    const porArquivo = new Map(foraDoNucleo.map((f) => [f.rel, fetchesOmie(f.src)]));
+    const velhas = Object.entries(LEGADO)
+      .filter(([f, n]) => (porArquivo.get(f) ?? 0) < n)
+      .map(([f, n]) => `${f} (${n}→${porArquivo.get(f) ?? 0})`);
+    expect(velhas, 'já migrou — baixe a contagem no LEGADO').toEqual([]);
   });
 });
 

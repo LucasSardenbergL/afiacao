@@ -277,7 +277,8 @@ async function chamadaOmie(
       },
     );
     const data: unknown = res.corpo ?? { raw: res.texto };
-    return res.ok ? { error: false, data } : { error: true, status: res.status, data };
+    // 2xx ilegível (já repetido pelo núcleo) é FALHA: como sucesso, a lista ausente virava fim.
+    return res.ok && res.corpo !== null ? { error: false, data } : { error: true, status: res.status, data };
   } catch (err) {
     // classificarRespostaOmie só extrai texto de `faultstring` — sem este warn a recusa sai no
     // relatório como "HTTP ???" e some. Não fabricamos um faultstring: o Omie não disse nada.

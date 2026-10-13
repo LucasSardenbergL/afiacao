@@ -166,6 +166,15 @@ Deno.test("ESCRITA: classificador da edge não reabre o reenvio (decidirFaultTra
   assertEquals(corpos.length, 1);
 });
 
+Deno.test("ESCRITA: classificador da edge que diz 'final' NÃO apaga a indeterminada de um 5xx", async () => {
+  const { fetchImpl, corpos } = roteiro([S503, OK]);
+  const e = await capturar(chamarOmie(pedido("ConcluirRecebimento"), {
+    conta: "OB", fetchImpl, dormir: semSono, classificar: () => "final",
+  }));
+  assertEquals(ehEscritaIndeterminada(e), true, `esperava indeterminada, veio: ${e.message}`);
+  assertEquals(corpos.length, 1);
+});
+
 // ── LEITURA ──────────────────────────────────────────────────────────────────────────────────
 
 Deno.test("LEITURA: repete 5xx e devolve a resposta boa", async () => {
