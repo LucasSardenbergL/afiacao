@@ -54,3 +54,10 @@ de **paridade** banco × `EventoLedger` (o ledger é fail-open: evento fora da a
 **Lição:** sinal que decide fase seguinte nasce no ledger, não só no PostHog — a regra já estava no
 `analytics.md`; o card a violou na origem, e o custo foi um dia de sensor mudo. "Superfície nasce com
 o sensor" exige o sensor **no canal que o usuário principal não bloqueia**.
+
+**Prova de ponta a ponta (2026-10-13):** #3021 publicado (bundle `MeuDia-*.js` com o evento; o carimbo
+saiu `dev`, caso previsto no `vite.config.ts`, então a prova foi pelo conteúdo). Com zero linhas antes,
+o founder abriu `/meu-dia` no Chrome que bloqueia o PostHog: outbox #2132 (00:45:57Z, oben, `ano_anterior`,
+origem `padrao`) e #2133 (00:48:22Z, `meses_anteriores`, origem `manual` — ele trocou o modo). O drain das
+00:50 aceitou as duas, e o PostHog tem exatamente as duas (`$lib=analytics-outbox`, mesmo `distinct_id`).
+O sensor do card mede. O #4 (ranking normalizado) espera algumas semanas desse sinal.
