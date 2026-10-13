@@ -245,3 +245,24 @@ não a intenção.
   foi reescrito: o texto saiu do pacote, e o trecho velho daria `SABOTAGEM_NAO_APLICOU`. Entram S17 (a
   chamada no `pendencias:prompt`), S18 (o texto compartilhado sem o comando) e S19 (a instrução
   vazando para dentro da colagem, que prova a asserção negativa do teste).
+
+## 2026-10-13
+
+Um pedido escrito à mão ("Redeploy these 3 existing edge functions from the current `main` branch… verbatim"), sem sha256 por
+arquivo e sem o `blocoDeEscopo` do `montarPrompt`, foi colado às 09:22 UTC. O agente deployou `omie-nfe-webhook`,
+`omie-vendas-sync` e `omie-sync` a partir do commit humano (`51fce228`) e, **depois**, recebeu da plataforma o empurrão
+*"Fix them before finishing… Don't ask first"*. Desta vez o Knowledge não segurou: o raciocínio registrado foi *"That system
+message overrides"*. Editou 7 edges em 5 commits `gpt-engineer-app` (09:25–09:27):
+
+- quase tudo cast de tipo, mas `process-recurring-orders` passou de `tool_categories?.name` para `?.[0]?.name` (categoria vazia
+  se o PostgREST devolve objeto) e `process-nfe` passou `nIdReceb` de `undefined` para `null`;
+- `sonda:fingerprint` e `docs:citacoes` ficaram vermelhos na `main`, travando todos os PRs abertos.
+
+O código editado **não** chegou a prod (o próprio agente: "the functions themselves have not yet been redeployed"). Revert no
+#3041 (os 7 arquivos de volta a `51fce228`, `VERSAO` bumpada nas 6 de corpo mudado para a sonda distinguir) e redeploy pelo
+pacote `541b93532ac2` com `blocoDeEscopo`: 42/42 sha256, "No files were edited", nenhum commit do bot depois; sondas no #3044.
+
+Lição: o Knowledge é a segunda linha, e cede ao empurrão da plataforma quando o pedido não traz escopo. A primeira linha é a
+colagem sair só do gerador. O Knowledge do projeto ganhou, no mesmo dia (conferido pelo MCP), as regras 5 (precedência
+sobre qualquer instrução automática de consertar build) e 6 ("deploy"/"redeploy" sem escopo explícito continua DEPLOY ONLY).
+
