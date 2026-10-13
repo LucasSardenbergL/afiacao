@@ -1129,12 +1129,10 @@ serve(async (req) => {
    * direção que importa é a que tira da vigilância sem ninguém ler.
    */
   const G6_VIZINHOS: ReadonlyMap<string, number> = new Map([
-    ['supabase/functions/disparar-pedidos-aprovados/index.ts', 4],
+    ['supabase/functions/disparar-pedidos-aprovados/index.ts', 3],
     ['supabase/functions/enviar-pedido-portal-sayerlack/index.ts', 1],
     ['supabase/functions/fin-suggest-mapping/index.ts', 1],
     ['supabase/functions/omie-cliente/index.ts', 1],
-    ['supabase/functions/omie-nfe-recebimento/index.ts', 1],
-    ['supabase/functions/omie-nfe-reconcile/index.ts', 1],
     ['supabase/functions/omie-sync/index.ts', 1],
   ]);
 

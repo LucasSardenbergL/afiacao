@@ -55,7 +55,7 @@ export const EDGE = "omie-sync-vendas-items";
  * sensor, é o sensor MAIS o eco passivo de `versao` em toda resposta — a metade que faz o deploy
  * se provar pelo tick do cron, sem ninguém chamar nada.
  */
-export const VERSAO = "v1.1-eco-identidade-fonte";
+export const VERSAO = "v1.2-omie-cliente-compartilhado";
 
 /**
  * O fingerprint da FONTE, para o ECO carregá-lo também — não só a sonda.

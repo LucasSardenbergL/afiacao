@@ -37,7 +37,7 @@ export const respostaSonda = criarRespostaSonda("omie-nfe-recebimento-sync");
  * `por_armazem` com o desfecho da consulta (o sensor do cron), mesmo quando algo quebra no meio. O
  * laço mora em rodada.ts, testado no Deno com falsos.
  */
-export const VERSAO = "v1.3-listagem-com-detalhes";
+export const VERSAO = "v1.4-omie-cliente-compartilhado";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

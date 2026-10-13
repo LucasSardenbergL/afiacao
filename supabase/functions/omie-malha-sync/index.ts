@@ -4,6 +4,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { avaliarPagina, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
+import { chamarOmie, classificarResposta } from "../_shared/omie-cliente.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 const corsHeaders = {
@@ -37,41 +38,34 @@ function omieCreds() {
 }
 
 // Retorna o objeto da malha, OU null quando o Omie sinaliza FIM de paginação (não é erro).
-async function omieCall(call: string, params: Record<string, unknown>): Promise<Record<string, unknown> | null> {
+// Transporte, teto de relógio e retentativa: núcleo compartilhado (_shared/omie-cliente.ts, M-48).
+// Os marcadores DESTA edge decidem a classe: FIM nunca é repetido; TRANSITORIO e corpo ilegível
+// (resposta cortada) repetem; o resto é definitivo e lança (run "erro" VISÍVEL, nunca "ok").
+async function chamadaOmie(call: string, params: Record<string, unknown>): Promise<Record<string, unknown> | null> {
   const creds = omieCreds();
-  const body = { call, app_key: creds.key, app_secret: creds.secret, param: [params] };
-  const MAX = 4;
-  let lastErr: Error | null = null;
-  for (let tentativa = 1; tentativa <= MAX; tentativa++) {
-    try {
-      const resp = await fetch(`${OMIE_API_URL}/geral/malha/`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const text = await resp.text();
-      const parsed = JSON.parse(text) as Record<string, unknown>;
-      const fault = typeof parsed.faultstring === "string" ? parsed.faultstring : "";
-      if (fault) {
-        const f = fault.toLowerCase();
-        if (FIM_PAGINACAO.some((m) => f.includes(m))) return null; // fim normal — NÃO é erro
-        throw new Error(`Omie ${call}: ${fault}`);                 // erro de negócio (classificado no catch)
-      }
-      if (!resp.ok) throw new Error(`Omie ${call} HTTP ${resp.status}: ${text.slice(0, 300)}`);
-      return parsed;
-    } catch (e) {
-      lastErr = e instanceof Error ? e : new Error(String(e));
-      const m = lastErr.message.toLowerCase();
-      // transitório (inclui JSON malformado/resposta cortada) re-tenta; permanente (credencial/validação) falha já
-      const transitorio = TRANSITORIO.some((t) => m.includes(t)) || m.includes("json") || m.includes("unexpected");
-      if (transitorio && tentativa < MAX) {
-        await new Promise((r) => setTimeout(r, 800 * Math.pow(2, tentativa - 1)));
-        continue;
-      }
-      throw lastErr;
-    }
+  const res = await chamarOmie(
+    { url: `${OMIE_API_URL}/geral/malha/`, metodo: call, param: params, credenciais: { appKey: creds.key, appSecret: creds.secret } },
+    {
+      conta: "colacor",
+      maxTentativas: 4,
+      atrasoMs: (tentativa) => 800 * Math.pow(2, tentativa - 1),
+      classificar: (r) => {
+        const f = (r.faultstring ?? "").toLowerCase();
+        if (f && FIM_PAGINACAO.some((m) => f.includes(m))) return "final";
+        if (f && TRANSITORIO.some((t) => f.includes(t))) return "transitorio";
+        return classificarResposta(r);
+      },
+    },
+  );
+  const fault = res.faultstring ?? "";
+  if (fault) {
+    const f = fault.toLowerCase();
+    if (FIM_PAGINACAO.some((m) => f.includes(m))) return null; // fim normal — NÃO é erro
+    throw new Error(`Omie ${call}: ${fault}`);                 // erro de negócio
   }
-  throw lastErr ?? new Error(`Omie ${call}: falha após ${MAX} tentativas`);
+  if (!res.ok) throw new Error(`Omie ${call} HTTP ${res.status}: ${res.texto.slice(0, 300)}`);
+  if (res.corpo === null) throw new Error(`Omie ${call}: resposta não-JSON após retentativas`);
+  return res.corpo;
 }
 
 // Total DECLARADO da resposta, quando presente (nome varia por versão da API, como extractLista).
@@ -151,7 +145,7 @@ Deno.serve(async (req) => {
   let runId: number | null = null;
   try {
     if (action === "probe") {
-      const resp = await omieCall("ListarEstruturas", { nPagina: 1, nRegPorPagina: 2 });
+      const resp = await chamadaOmie("ListarEstruturas", { nPagina: 1, nRegPorPagina: 2 });
       if (resp === null) {
         return new Response(JSON.stringify({ aviso: "Omie sinalizou fim/vazio já na página 1 (catálogo sem estruturas?)" },
           null, 2), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -190,7 +184,7 @@ Deno.serve(async (req) => {
     // Resume é o seguro raro, não o caminho normal; o próximo sync completo re-protege.
     let totalDeclarado = 1;
     for (let pagina = desdePagina; pagina <= MAX_PAGINAS; pagina++) {
-      const resp = await omieCall("ListarEstruturas", { nPagina: pagina, nRegPorPagina: REG_POR_PAGINA });
+      const resp = await chamadaOmie("ListarEstruturas", { nPagina: pagina, nRegPorPagina: REG_POR_PAGINA });
       if (resp === null) { fimVisto = true; break; } // Omie sinalizou FIM via faultstring (não é erro)
       totalDeclarado = proximoTotalPaginas(totalDeclarado, extractTotalPaginas(resp), MAX_PAGINAS);
       const lista = extractLista(resp);

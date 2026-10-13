@@ -56,7 +56,7 @@ export const respostaSonda = criarRespostaSonda("disparar-pedidos-aprovados");
  * pendente e a edge respondia "envio iniciado". Nenhuma pré-condição de banco (a migration
  * 20261011150000 fecha a mesma porta na RPC, de forma independente).
  */
-export const VERSAO = "v1.7-recusa-definitiva-nao-reenvia";
+export const VERSAO = "v1.8-omie-cliente-compartilhado";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO = "esta edge cria pedido de compra REAL no Omie, inclusive em dry_run";
