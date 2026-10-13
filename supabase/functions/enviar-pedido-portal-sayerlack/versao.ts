@@ -22,7 +22,7 @@ export const respostaSonda = criarRespostaSonda("enviar-pedido-portal-sayerlack"
  * v1.7 enviado = aprovado na quantidade (NULL lê-se 1:1; qtde fora do múltiplo recusa; normalização sai) ·
  * v1.8 itens+de-para por caminho único (a RPC inexistente e a instrumentação `[DEBUG_*]` saíram) · v1.9 prova sem mudança e sensor do unitário · v1.10 IPI por NCM: a prova soma o IPI e a RPC grava a decomposição.
  */
-export const VERSAO = "v1.10-ipi-por-ncm";
+export const VERSAO = "v1.11-reverte-bot-lovable";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
