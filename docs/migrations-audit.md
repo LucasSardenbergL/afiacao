@@ -21,13 +21,13 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **625** custom migrations totais
-- **2027** objetos esperados (criados por estas migrations)
+- **626** custom migrations totais
+- **2029** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 706
+  - `function`: 707
   - `rls_policy`: 471
   - `index`: 275
-  - `cron_job`: 182
+  - `cron_job`: 183
   - `table`: 176
   - `view`: 110
   - `trigger`: 103
@@ -5093,6 +5093,13 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `view` | `public.v_titulo_encargos_cr` | — |
+
+### `20261013120000_watchdog_diario_so_problema.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_sync_watchdog_diario` | — |
+| `cron_job` | `cron.fin-sync-heartbeat` | — |
 
 ### `20261013150000_tint_promote_nao_ressuscita_fantasma.sql`
 

@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 625
+-- Total de custom migrations: 626
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -686,6 +686,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261012233000', 'picking_cron_fora_do_minuto_15', '20261012233000_picking_cron_fora_do_minuto_15.sql'),
   ('20261012233500', 'analytics_ledger_crescimento_comparavel', '20261012233500_analytics_ledger_crescimento_comparavel.sql'),
   ('20261013094000', 'fin_movimentacoes_resumo_encargos', '20261013094000_fin_movimentacoes_resumo_encargos.sql'),
+  ('20261013120000', 'watchdog_diario_so_problema', '20261013120000_watchdog_diario_so_problema.sql'),
   ('20261013150000', 'tint_promote_nao_ressuscita_fantasma', '20261013150000_tint_promote_nao_ressuscita_fantasma.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
@@ -2682,7 +2683,9 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('retencao_lgpd_conversas', 'function', 'private', 'expurgar_conteudo_conversas', ''),
   ('retencao_lgpd_conversas', 'cron_job', 'cron', 'lgpd-expurgo-conversas-diario', ''),
   ('analytics_ledger_crescimento_comparavel', 'function', 'public', 'analytics_ledger_registrar', ''),
-  ('fin_movimentacoes_resumo_encargos', 'view', 'public', 'v_titulo_encargos_cr', '')
+  ('fin_movimentacoes_resumo_encargos', 'view', 'public', 'v_titulo_encargos_cr', ''),
+  ('watchdog_diario_so_problema', 'function', 'public', 'fin_sync_watchdog_diario', ''),
+  ('watchdog_diario_so_problema', 'cron_job', 'cron', 'fin-sync-heartbeat', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4726,7 +4729,9 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('retencao_lgpd_conversas', 'function', 'private', 'expurgar_conteudo_conversas', ''),
   ('retencao_lgpd_conversas', 'cron_job', 'cron', 'lgpd-expurgo-conversas-diario', ''),
   ('analytics_ledger_crescimento_comparavel', 'function', 'public', 'analytics_ledger_registrar', ''),
-  ('fin_movimentacoes_resumo_encargos', 'view', 'public', 'v_titulo_encargos_cr', '')
+  ('fin_movimentacoes_resumo_encargos', 'view', 'public', 'v_titulo_encargos_cr', ''),
+  ('watchdog_diario_so_problema', 'function', 'public', 'fin_sync_watchdog_diario', ''),
+  ('watchdog_diario_so_problema', 'cron_job', 'cron', 'fin-sync-heartbeat', '')
 )
 SELECT
   e.migration,
