@@ -395,10 +395,12 @@ async function carregarDados(
   // e vai em Promise.all. Tudo em paralelo.
   const [crsData, cpsData, baixaCrData, [ccRes, recRes, evRes, configRes, estoqueRes, dreRes, folhaCatRes, prazosRes]] = await Promise.all([
     fetchAll<Record<string, unknown>>((from, to) =>
+      // @ts-expect-error - fin_contas_receber may not be in generated supabase types yet
       supabase.from('fin_contas_receber').select('id, saldo, valor_documento, valor_recebido, data_emissao, data_vencimento, data_recebimento, status_titulo, omie_codigo_cliente, omie_codigo_lancamento, nome_cliente, categoria_codigo')
         .eq('company', company).neq('status_titulo', 'CANCELADO').order('id', { ascending: true }).range(from, to)
     , 'fin_contas_receber'),
     fetchAll<Record<string, unknown>>((from, to) =>
+      // @ts-expect-error - fin_contas_pagar may not be in generated supabase types yet
       supabase.from('fin_contas_pagar').select('id, saldo, valor_documento, valor_pago, data_emissao, data_vencimento, data_pagamento, status_titulo, categoria_codigo')
         .eq('company', company).neq('status_titulo', 'CANCELADO').order('id', { ascending: true }).range(from, to)
     , 'fin_contas_pagar'),
@@ -407,27 +409,36 @@ async function carregarDados(
     // cobertura cairia falsa). order estável; usado SÓ na calibração, PMR/PMP/dias_
     // cobertura do engine ficam intactos (sem regressão, sem novo viés do colacor).
     fetchAll<Record<string, unknown>>((from, to) =>
+      // @ts-expect-error - v_titulo_baixas (view nova) não está nos types gerados
       supabase.from('v_titulo_baixas').select('omie_codigo_lancamento, data_baixa_final')
         .eq('company', company).eq('tipo', 'CR').order('omie_codigo_lancamento', { ascending: true }).range(from, to)
     , 'v_titulo_baixas'),
     Promise.all([
+      // @ts-expect-error - fin_contas_correntes may not be in generated supabase types yet
       supabase.from('fin_contas_correntes').select('saldo_atual')
         .eq('company', company).eq('ativo', true),
+      // @ts-expect-error - fin_eventos_recorrentes not in generated supabase types yet (A1 table)
       supabase.from('fin_eventos_recorrentes').select('id, descricao, valor, tipo, categoria_dre, is_folha, dia_do_mes, inicio, fim')
         .eq('company', company).eq('ativo', true),
+      // @ts-expect-error - fin_eventos_eventuais not in generated supabase types yet (A1 table)
       supabase.from('fin_eventos_eventuais').select('id, descricao, valor, tipo, categoria_dre, data_prevista, status')
         .eq('company', company).in('status', ['previsto', 'confirmado']),
+      // @ts-expect-error - fin_config_cashflow not in generated supabase types yet (A1 table)
       supabase.from('fin_config_cashflow').select('overrides_cenario, thresholds, adiantamento_categorias_codigos')
         .eq('company', company).maybeSingle(),
+      // @ts-expect-error - fin_estoque_valor (Onda 1) não está nos types gerados
       supabase.from('fin_estoque_valor').select('valor, data_ref')
         .eq('company', company).order('data_ref', { ascending: false }).limit(1).maybeSingle(),
+      // @ts-expect-error - fin_dre_snapshots não está nos types gerados
       supabase.from('fin_dre_snapshots').select('cmv, ano, mes')
         .eq('company', company).eq('regime', 'competencia'),
+      // @ts-expect-error - folha_categorias_codigos é coluna OPCIONAL (Onda 2). Se não
       // existir, PostgREST devolve { data: null, error } — não rejeita; cai em [] e o
       // guard de folha fica inerte (comportamento atual preservado, sem migration obrigatória).
       supabase.from('fin_config_cashflow').select('folha_categorias_codigos')
         .eq('company', company).maybeSingle(),
       // Fase 3 (B): PMR/PMP + cobertura da baixa derivada (view v_capital_giro_prazos).
+      // @ts-expect-error - v_capital_giro_prazos (view nova) não está nos types gerados
       supabase.from('v_capital_giro_prazos').select('pmr, pmp, pmr_cobertura, pmp_cobertura')
         .eq('company', company).maybeSingle(),
     ]),
@@ -1336,6 +1347,7 @@ async function calcular(
   if (save) {
     await escritaCritica(
       'fin_projecao_snapshots.insert',
+      // @ts-expect-error - fin_projecao_snapshots not in generated supabase types yet (A1 table)
       supabase.from('fin_projecao_snapshots').insert({
         company,
         cenario,
@@ -1399,6 +1411,7 @@ async function calcular(
       } else {
         await escritaCritica(
           'fin_alertas.insert',
+          // @ts-expect-error - fin_alertas not in supabase types yet
           supabase.from('fin_alertas').insert({
             company, tipo: a.tipo, severidade: a.severidade, mensagem: a.mensagem,
             valor: a.valor, threshold: a.threshold, contexto: a.contexto,
