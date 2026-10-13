@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 619
+-- Total de custom migrations: 621
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -680,7 +680,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261012130954', 'fin_sync_kick_skipped_busy_e_perdido', '20261012130954_fin_sync_kick_skipped_busy_e_perdido.sql'),
   ('20261012150000', 'tint_gate_tabela_implausivel', '20261012150000_tint_gate_tabela_implausivel.sql'),
   ('20261012160000', 'picking_v2_cron_fila', '20261012160000_picking_v2_cron_fila.sql'),
-  ('20261012203227', 'crons_modulos_congelados', '20261012203227_crons_modulos_congelados.sql')
+  ('20261012173000', 'cron_sync_reprocess_pedidos_colacor_dr', '20261012173000_cron_sync_reprocess_pedidos_colacor_dr.sql'),
+  ('20261012203227', 'crons_modulos_congelados', '20261012203227_crons_modulos_congelados.sql'),
+  ('20261012233000', 'picking_cron_fora_do_minuto_15', '20261012233000_picking_cron_fora_do_minuto_15.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2671,7 +2673,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('fin_sync_kick_skipped_busy_e_perdido', 'function', 'public', 'fin_sync_kicks_perdidos', ''),
   ('tint_gate_tabela_implausivel', 'function', 'public', 'tint_gate_revalida', ''),
   ('picking_v2_cron_fila', 'cron_job', 'cron', 'picking-fila-oben', ''),
-  ('picking_v2_cron_fila', 'cron_job', 'cron', 'picking-fila-colacor', '')
+  ('picking_v2_cron_fila', 'cron_job', 'cron', 'picking-fila-colacor', ''),
+  ('cron_sync_reprocess_pedidos_colacor_dr', 'cron_job', 'cron', 'sync-reprocess-pedidos-colacor-2h', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4710,7 +4713,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('fin_sync_kick_skipped_busy_e_perdido', 'function', 'public', 'fin_sync_kicks_perdidos', ''),
   ('tint_gate_tabela_implausivel', 'function', 'public', 'tint_gate_revalida', ''),
   ('picking_v2_cron_fila', 'cron_job', 'cron', 'picking-fila-oben', ''),
-  ('picking_v2_cron_fila', 'cron_job', 'cron', 'picking-fila-colacor', '')
+  ('picking_v2_cron_fila', 'cron_job', 'cron', 'picking-fila-colacor', ''),
+  ('cron_sync_reprocess_pedidos_colacor_dr', 'cron_job', 'cron', 'sync-reprocess-pedidos-colacor-2h', '')
 )
 SELECT
   e.migration,
