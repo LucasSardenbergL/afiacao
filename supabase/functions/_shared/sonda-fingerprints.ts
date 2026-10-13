@@ -47,7 +47,7 @@ export const FONTE_SHA256: Record<string, string> = {
   "omie-cliente": "fade69529ee1b7d62c65c640c98af721bf9df1030c078c93ec5c9dd55eaae92f",
   "omie-cron-diario": "0bc7f2b02ce1be0d11b791a665bf5ba44494e90488205474ad38a49fa14fa4f3",
   "omie-desconto-backfill": "fb1d3848853b3bf4b7022c172d278e577788fd530b6ba8de9a97870038be2168",
-  "omie-financeiro": "c2d0cb4f1a98d55e2eb71098906c4a98953f883d801d474f8f2a9f4e958eef93",
+  "omie-financeiro": "21353114859a5c5430d2b3a42ddd4a5dbc6b0adb0e2b735bc1d28688455dbde2",
   "omie-malha-sync": "9f52b63f4440b10115102699fefb6489845c9551f6926de8329080a8290b4c43",
   "omie-nfe-recebimento": "93564f52ed474bdc48844b4b5f58628bf5393ec4681a2a327cea04d82f405768",
   "omie-nfe-recebimento-sync": "086e27710be9848299c727ddbc1fee9614011c35ccf0f145ee789fcc8019e774",
