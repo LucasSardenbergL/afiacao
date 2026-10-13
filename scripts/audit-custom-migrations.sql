@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 626
+-- Total de custom migrations: 627
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -687,7 +687,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261012233500', 'analytics_ledger_crescimento_comparavel', '20261012233500_analytics_ledger_crescimento_comparavel.sql'),
   ('20261013094000', 'fin_movimentacoes_resumo_encargos', '20261013094000_fin_movimentacoes_resumo_encargos.sql'),
   ('20261013120000', 'watchdog_diario_so_problema', '20261013120000_watchdog_diario_so_problema.sql'),
-  ('20261013150000', 'tint_promote_nao_ressuscita_fantasma', '20261013150000_tint_promote_nao_ressuscita_fantasma.sql')
+  ('20261013150000', 'tint_promote_nao_ressuscita_fantasma', '20261013150000_tint_promote_nao_ressuscita_fantasma.sql'),
+  ('20261013180000', 'tint_reaplicar_snapshot_cron', '20261013180000_tint_reaplicar_snapshot_cron.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2685,7 +2686,9 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('analytics_ledger_crescimento_comparavel', 'function', 'public', 'analytics_ledger_registrar', ''),
   ('fin_movimentacoes_resumo_encargos', 'view', 'public', 'v_titulo_encargos_cr', ''),
   ('watchdog_diario_so_problema', 'function', 'public', 'fin_sync_watchdog_diario', ''),
-  ('watchdog_diario_so_problema', 'cron_job', 'cron', 'fin-sync-heartbeat', '')
+  ('watchdog_diario_so_problema', 'cron_job', 'cron', 'fin-sync-heartbeat', ''),
+  ('tint_reaplicar_snapshot_cron', 'function', 'public', 'tint_reaplicar_snapshot_tick', ''),
+  ('tint_reaplicar_snapshot_cron', 'cron_job', 'cron', 'tint-reaplicar-snapshot-6h', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4731,7 +4734,9 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('analytics_ledger_crescimento_comparavel', 'function', 'public', 'analytics_ledger_registrar', ''),
   ('fin_movimentacoes_resumo_encargos', 'view', 'public', 'v_titulo_encargos_cr', ''),
   ('watchdog_diario_so_problema', 'function', 'public', 'fin_sync_watchdog_diario', ''),
-  ('watchdog_diario_so_problema', 'cron_job', 'cron', 'fin-sync-heartbeat', '')
+  ('watchdog_diario_so_problema', 'cron_job', 'cron', 'fin-sync-heartbeat', ''),
+  ('tint_reaplicar_snapshot_cron', 'function', 'public', 'tint_reaplicar_snapshot_tick', ''),
+  ('tint_reaplicar_snapshot_cron', 'cron_job', 'cron', 'tint-reaplicar-snapshot-6h', '')
 )
 SELECT
   e.migration,

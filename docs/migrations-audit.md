@@ -21,13 +21,13 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **626** custom migrations totais
-- **2029** objetos esperados (criados por estas migrations)
+- **627** custom migrations totais
+- **2031** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 707
+  - `function`: 708
   - `rls_policy`: 471
   - `index`: 275
-  - `cron_job`: 183
+  - `cron_job`: 184
   - `table`: 176
   - `view`: 110
   - `trigger`: 103
@@ -5104,6 +5104,13 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20261013150000_tint_promote_nao_ressuscita_fantasma.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20261013180000_tint_reaplicar_snapshot_cron.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_reaplicar_snapshot_tick` | — |
+| `cron_job` | `cron.tint-reaplicar-snapshot-6h` | — |
 
 ## Próximos passos por status
 
