@@ -40,7 +40,7 @@ export const FONTE_SHA256: Record<string, string> = {
   "gerar-pedidos-diario": "1494440f221d1b45418c7a73fdaca80690d4b77277ab869025165a7523bd1101",
   "gmail-webhook-receiver": "cc47dc5aa76bccfc02e124d260967e5c6cf10ee1958b5e460c152b110f7f333b",
   "identify-tool": "953b25d2551d44bd9a7898ca2b2c8c7c7aa981eabfd882e3defc4bfbe269fc85",
-  "melhoria-triagem": "3e86491355af4e850ef94012c63045ff4811319d7039052713110f4a258ad0f5",
+  "melhoria-triagem": "35cbe72aa5011af552a1d0f8bc2771983dc2a13161f454f9d3d2c3537aa7ad8d",
   "monthly-report": "578a6e8963a0f1fd0fee9bc8fbd971892b9cdae5128894e40e74d9989cc4d7ab",
   "nvoip-calls": "2b3934215e43fae406b6c270bd6a319f9cef3b91c02d02c25bf6890fe2657435",
   "omie-analytics-sync": "8863994e5bba06e346fd48dafe06eaceaad6ea666ee6acf2b7cda7e781c9a83b",
