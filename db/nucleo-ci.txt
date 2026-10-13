@@ -505,3 +505,14 @@ db/test-universo-pedidos-classe.sh         118  falsificar=fora-do-ci  # 18 roda
 db/test-omie-cota-metodo.sh                 44
 db/test-picking-v2.sh                       129
 db/test-cron-dr-sync-reprocess-pedidos-colacor.sh 10
+# O promote para de ressuscitar fórmula de cor que a FONTE retirou (20261013150000) — money-path. Em
+# 13/10, 26.180 fórmulas de 6.545 cores ausentes do snapshot de chaves estavam ATIVAS, canônicas e
+# com receita válida (9.164 com preço final no balcão): o promote reexpandia o staging antigo do par
+# e desfazia o apply do snapshot todo dia. Corpo testado BYTE-IDÊNTICO ao de prod (v6 + 5b#1 + seção 3
+# da promoção assíncrona); o snapshot é aplicado pelo tint_apply_keys_snapshot REAL, que é o que prova
+# o formato da chave. Sem modo --falsificar: as 3 sabotagens (filtro neutro, sem critério temporal,
+# chave em formato errado) rodam em TODA execução, depois do controle verde.
+# No FIM de propósito: inserir no meio desloca a posição de todas as provas abaixo e re-sorteia a
+# parte de cada uma no round-robin (k mod N) — com a parte 3 a ~1 min do teto de 20, isso poderia
+# reprovar a main por motivo alheio. Aqui ela cai na parte 1 (k=91, N=3), a mais folgada.
+db/test-tint-promote-fantasma.sh            11
