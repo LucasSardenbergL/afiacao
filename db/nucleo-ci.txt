@@ -518,6 +518,8 @@ db/test-cron-dr-sync-reprocess-pedidos-colacor.sh 10
 # o formato da chave. Sem modo --falsificar: as 3 sabotagens (filtro neutro, sem critério temporal,
 # chave em formato errado) rodam em TODA execução, depois do controle verde.
 # No FIM de propósito: inserir no meio desloca a posição de todas as provas abaixo e re-sorteia a
-# parte de cada uma no round-robin (k mod N) — com a parte 3 a ~1 min do teto de 20, isso poderia
-# reprovar a main por motivo alheio. Aqui ela cai na parte 1 (k=91, N=3), a mais folgada.
+# parte de cada uma no round-robin (k mod N). ⚠️ Mesmo no fim a posição NÃO é estável: o #3042 entrou
+# na frente durante este PR e a empurrou de k=91 (parte mais leve com N=3) para k=92 — a parte 3, que
+# levava 18m57s contra o teto de 20. Por isso este PR leva junto a matriz de 4 partes (ci.yml), e com
+# N=4 ela cai na parte 0. A posição de uma prova no manifesto é uma decisão de CI, não de organização.
 db/test-tint-promote-fantasma.sh            11
