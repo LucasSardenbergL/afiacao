@@ -5220,7 +5220,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'tint_watchdog_fase5_check', 1, '20260730120000_tint_watchdog_fase5_chave.sql', '3299e9aca3ff70d6c2c76efa40278ed9'),
   ('public', 'tint_watchdog_fase5_check', 2, '20261010230000_tint_watchdog_fase5_s2_aviso.sql', '1b5320651c53a321324640e5f545f84a'),
   ('public', 'tint_watchdog_fase5_check', 3, '20261013120000_tint_watchdog_fase5_s2_persistente.sql', '4ac14c2f65c8e1dd996bf48877f2b276'),
-  ('public', 'tint_watchdog_fase5_check', 4, '20261013210000_tint_watchdog_fase5_v4_fonte_viva.sql', 'e85f793c6f3d4712137c093f6b391d6b'),
+  ('public', 'tint_watchdog_fase5_check', 4, '20261013210000_tint_watchdog_fase5_v4_fonte_viva.sql', '0783718e1ef4267293fec13feda7d58b'),
   ('private', 'atp_disponivel', 1, '20260806101417_atp_reserva_estoque_fase1.sql', 'aeb0989efc8aae6130bfe73f2dd3d397'),
   ('private', 'atp_disponivel', 2, '20260806225052_atp_reserva_estoque_fase1_1_hardening.sql', '271e2acd633a4ceddd8a73cd988cfe49'),
   ('private', 'atp_disponivel', 3, '20260808012000_atp_reconciliacao_fase3.sql', '8326d00deff699c3730acadd7ee359a4'),

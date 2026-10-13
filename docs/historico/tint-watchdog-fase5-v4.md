@@ -26,9 +26,21 @@ A v3 e o `20261013120000_watchdog_diario_so_problema.sql` (#3049) têm a mesma v
 não registra as custom (as `20261013*` não estão lá); o `audit-custom-migrations` lista por arquivo; e já há
 precedente aplicado em prod (`20261011120000` ×2, `20261010150000` ×2). Renomear quebraria o vínculo do recibo #401.
 
+## Challenge Codex (gpt-6-astra · max, 426s): REPROVADO 2 P1 + 5 P2, sem P0 — todos integrados menos o P2-3
+- P1-1: referência por `aplicado_em` deixava um snapshot ANTIGO re-aplicado e pulado virar o "último". Agora:
+  o aplicado de maior `generated_at` (a ordem do próprio apply). ⚠️ O #3051 (promote) escolhe por `aplicado_em`
+  e herda o furo — o S5 é quem o acusaria.
+- P1-2: staging e fórmulas eram lidos em statements diferentes (READ COMMITTED = fotografias diferentes, com
+  minutos entre elas): cor nova promovida no meio virava fantasma. Agora tudo num statement só.
+- P2-4 encerramento por critério só com referência; P2-5 retroativo pelo ID do alerta (data não prova causa);
+  P2-6 janela por snapshot inteiro, não por chunk; P2-7 erro SQL na suíte vira o vermelho `ERRO_SQL` e a
+  falsificação exige todos os asserts executados.
+- P2-3 (o helper v2 amplia e-mail do `tint_promocao_watchdog` numa oscilação 10→9→10): mantido por decisão, com o
+  histórico medido (1 alerta em toda a história) — fica para o founder.
+
 ## Prova
-36 asserts; `--falsificar` roda o controle verde e 16 sabotagens de conjunto exato (3 de pós-condição que exigem o
-apply abortar), nos locales C e pt_BR.UTF-8. ~7s normal, ~36s falsificando (laptop). Os conjuntos foram MEDIDOS:
+41 asserts; `--falsificar` roda o controle verde e 21 sabotagens de conjunto exato (3 de pós-condição que exigem o
+apply abortar), nos locales C e pt_BR.UTF-8. ~8s normal, ~54s falsificando (laptop). Os conjuntos foram MEDIDOS:
 4 divergiram da previsão e ensinaram — o filtro de status do snapshot é redundante quando `aplicado_em` é NULL
 (NULLS LAST já descarta); o relógio `aplicado_em` derruba também a igualdade; a pós-condição da tabela nova só morde
 no 1º apply (tabela fresca, default privilege do Supabase).

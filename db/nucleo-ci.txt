@@ -528,8 +528,9 @@ db/test-tint-reaplicar-snapshot.sh          16  falsificar=6
 # num snapshot APLICADO dos últimos 7 dias, ausente do último), S5 novo de FANTASMA (fórmula ativa que
 # a fonte não tem, sem staging posterior — cor nova não conta; relógio = created_at, nunca aplicado_em),
 # helper v2 (fator 1.0 compara com o ciclo anterior; subida de severidade sempre notifica), encerramento
-# por mudança de critério anotado, série em tint_watchdog_fase5_amostras. Arquivo PRÓPRIO de propósito: a
-# prova v1+v2 acima re-roda a suíte inteira por sabotagem e chegou a 396 s na v3. Aqui: universo de 1.000
-# chaves (5%/20% inteiros), ~7 s no modo normal e ~36 s no --falsificar (controle verde + 16 sabotagens de
+# por mudança de critério anotado, série em tint_watchdog_fase5_amostras. Referência = snapshot aplicado de
+# maior generated_at, e TUDO numa fotografia só (challenge Codex). Arquivo PRÓPRIO de propósito: a prova
+# v1+v2 acima re-roda a suíte inteira por sabotagem e chegou a 396 s na v3. Aqui: universo de 1.000 chaves
+# (5%/20% inteiros), ~8 s no modo normal e ~54 s no --falsificar (controle verde + 21 sabotagens de
 # conjunto exato, 3 delas de pós-condição que exigem o apply ABORTAR), medido no laptop.
-db/test-tint-fase5-watchdog-v4.sh           36  falsificar=16
+db/test-tint-fase5-watchdog-v4.sh           41  falsificar=21
