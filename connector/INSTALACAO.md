@@ -53,6 +53,10 @@ Ele vai fazer **4 perguntas**. Responda assim:
 
 No final deve aparecer: **`Serviço SayerSync instalado e iniciado com sucesso.`**
 
+> **Reinstalando numa loja que já tem `config.json`?** (ex.: refazer a rede de recuperação, trocar o .exe à mão) — cada pergunta já vem com o valor atual entre colchetes: aperte **Enter** em tudo para manter. O token atual é mantido com Enter (só cole um token se quiser TROCAR). O `update_manifest_url` (auto-update) e o `intervalo_min` são preservados.
+> Sem perguntas nenhuma (suporte remoto): `C:\SayerSync\sayersync.exe install --manter-config` — não toca no config.json, só registra o serviço e a rede de recuperação.
+> Se o `config.json` estiver corrompido, o install **para com erro** e não grava nada (para não perder o token): corrija ou renomeie o arquivo e rode de novo.
+
 > O token fica guardado **criptografado** no computador (DPAPI do Windows) — ninguém consegue lê-lo abrindo os arquivos.
 
 ---
@@ -98,7 +102,7 @@ O Prompt precisa estar aberto **como Administrador** (passo 2).
 ### A loja aparece Offline / sem heartbeat no app
 - Confira se o computador está ligado e com internet
 - Rode `C:\SayerSync\sayersync.exe once` e leia a mensagem de erro na tela
-- Token errado? Copie de novo do app (Tintométrico → Integração → Integrações) e rode `install` outra vez (pode repetir sem medo — ele só atualiza a configuração)
+- Token errado? Copie de novo do app (Tintométrico → Integração → Integrações) e rode `install` outra vez, cole o token novo na pergunta do token e aperte Enter no resto (pode repetir sem medo — Enter mantém cada valor atual)
 
 ### "Não foi possível conectar ao banco de dados"
 - Verifique se o SayerSystem está instalado nesta máquina (o banco roda junto, porta 5986)

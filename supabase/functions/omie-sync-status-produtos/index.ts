@@ -6,6 +6,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { fetchAll } from "../_shared/paginate.ts";
+import { chamarOmie, classificarResposta } from "../_shared/omie-cliente.ts";
 import { resolverEmpresas, type Empresa } from "../_shared/empresas.ts";
 import { coletarProdutosAlvo, type OmieProduto } from "./paginacao.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
@@ -56,75 +57,56 @@ interface SyncSummary {
   error?: string;
 }
 
-async function omieCall(
+// Transporte, teto de relógio e retentativa: núcleo compartilhado (_shared/omie-cliente.ts, M-48).
+// Só leitura (ListarProdutos). As regras DESTA edge entram pelo classificador e pelo atraso:
+// 401/403 e `SOAP-ENV:Client` são definitivos (nunca repetidos); 429 recua ~20s com JITTER — o
+// jitter desincroniza os N workers do pool (sem ele, todos voltam a martelar o Omie juntos).
+// Nenhuma espera nem request cruza o `deadline` do run (mantém o run < kill de 150s).
+async function chamadaOmie(
   appKey: string,
   appSecret: string,
   call: string,
   param: Record<string, unknown>,
   deadline: number, // timestamp absoluto: NUNCA dormir/re-tentar além dele (mantém o run < kill de 150s)
-  attempt = 1,
+  conta: string,
 ): Promise<Record<string, unknown>> {
-  try {
-    const res = await fetch(OMIE_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        call,
-        app_key: appKey,
-        app_secret: appSecret,
-        param: [param],
-      }),
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-    });
+  const authErro = (status: number) => status === 401 || status === 403;
+  const naoEncontrado = (status: number, texto: string) => status === 500 && texto.includes("SOAP-ENV:Client");
+  const res = await chamarOmie(
+    { url: OMIE_URL, metodo: call, param, credenciais: { appKey, appSecret } },
+    {
+      conta,
+      deadline,
+      tetoPorRequestMs: FETCH_TIMEOUT_MS,
+      maxTentativas: MAX_RETRIES,
+      classificar: (r) => (authErro(r.status) || naoEncontrado(r.status, r.texto) ? "final" : classificarResposta(r)),
+      atrasoMs: (tentativa, m) =>
+        m.resposta?.status === 429 ? RATE_LIMIT_COOLDOWN_MS * (0.5 + Math.random()) : 500 * Math.pow(2, tentativa),
+    },
+  );
 
-    if (res.status === 401 || res.status === 403) {
-      throw new Error(`AUTH_ERROR: Omie retornou ${res.status} (verifique secrets)`);
-    }
-
-    // 429 = rate limit do Omie. Como paginamos em POOL (sem delay proativo), este é o freio
-    // reativo: recua ~20s (com JITTER) e re-tenta. O jitter desincroniza os N workers do pool —
-    // sem ele, todos recuam o mesmo tempo e voltam a martelar o Omie juntos (retry herd).
-    if (res.status === 429) {
-      const jitter = RATE_LIMIT_COOLDOWN_MS * (0.5 + Math.random());
-      // Não dormir ALÉM do deadline do run (senão o sleep+retry cruza o kill de 150s → log órfão).
-      if (attempt >= MAX_RETRIES || Date.now() + jitter >= deadline) {
-        throw new Error("Omie 429: rate limit excedido (retries/deadline)");
-      }
-      await new Promise((r) => setTimeout(r, jitter));
-      return omieCall(appKey, appSecret, call, param, deadline, attempt + 1);
-    }
-
-    if (!res.ok) {
-      const text = await res.text();
-      // 404/425 etc — produto inexistente em ConsultarProduto
-      if (res.status === 500 && text.includes("SOAP-ENV:Client")) {
-        return { __not_found: true, raw: text };
-      }
-      throw new Error(`HTTP ${res.status}: ${text.slice(0, 200)}`);
-    }
-
-    const json = (await res.json()) as Record<string, unknown> & {
-      faultstring?: string;
-      faultcode?: string;
-    };
-    // Omie sinaliza erro de aplicação com HTTP 200 + faultcode/faultstring (NÃO !res.ok). A irmã
-    // omie-sync-estoque já rejeita isto; sem rejeitar, um fault transiente viraria
-    // `produto_servico_cadastro` ausente → [] → "página vazia" → paginação para cedo (money-path P1).
-    if (json.faultstring || json.faultcode) {
-      throw new Error(
-        `Omie fault ${json.faultcode ?? ""}: ${String(json.faultstring ?? "").slice(0, 200)}`,
-      );
-    }
-    return json;
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    if (msg.startsWith("AUTH_ERROR")) throw err;
-    const backoff = 500 * Math.pow(2, attempt);
-    // Idem 429: não re-tentar/dormir além do deadline do run.
-    if (attempt >= MAX_RETRIES || Date.now() + backoff >= deadline) throw err;
-    await new Promise((r) => setTimeout(r, backoff));
-    return omieCall(appKey, appSecret, call, param, deadline, attempt + 1);
+  if (authErro(res.status)) {
+    throw new Error(`AUTH_ERROR: Omie retornou ${res.status} (verifique secrets)`);
   }
+  if (res.status === 429) {
+    throw new Error("Omie 429: rate limit excedido (retries/deadline)");
+  }
+  if (!res.ok) {
+    // 404/425 etc — produto inexistente em ConsultarProduto
+    if (naoEncontrado(res.status, res.texto)) {
+      return { __not_found: true, raw: res.texto };
+    }
+    throw new Error(`HTTP ${res.status}: ${res.texto.slice(0, 200)}`);
+  }
+  // Omie sinaliza erro de aplicação com HTTP 200 + faultcode/faultstring (NÃO !res.ok). A irmã
+  // omie-sync-estoque já rejeita isto; sem rejeitar, um fault transiente viraria
+  // `produto_servico_cadastro` ausente → [] → "página vazia" → paginação para cedo (money-path P1).
+  if (res.faultstring || res.faultcode) {
+    throw new Error(`Omie fault ${res.faultcode ?? ""}: ${(res.faultstring ?? "").slice(0, 200)}`);
+  }
+  // 2xx ilegível (já repetido pelo núcleo) NUNCA vira `{}` — seria página vazia = fim fabricado.
+  if (res.corpo === null) throw new Error(`Omie ${call}: resposta não-JSON`);
+  return res.corpo;
 }
 
 // Sincroniza UMA empresa. Cria seu próprio log em sync_reprocess_log (granularidade por
@@ -218,15 +200,15 @@ async function sincronizarEmpresa(supabase: DB, empresa: Empresa): Promise<SyncS
     // escrita concorrente. Antes: série + 700ms/página → 95–148s (timeout intermitente); agora ~25–40s.
     let sucessos = 0;
     let falhas = 0;
-    const deadline = startedAt + MAX_DURACAO_MS; // teto absoluto do run (compartilhado pool + omieCall)
+    const deadline = startedAt + MAX_DURACAO_MS; // teto absoluto do run (compartilhado pool + chamadaOmie)
     const { produtos, encontrados, paginasProcessadas } = await coletarProdutosAlvo(
       async (pagina) => {
-        const resp = await omieCall(appKey, appSecret, "ListarProdutos", {
+        const resp = await chamadaOmie(appKey, appSecret, "ListarProdutos", {
           pagina,
           registros_por_pagina: PAGE_SIZE,
           apenas_importado_api: "N",
           filtrar_apenas_omiepdv: "N",
-        }, deadline);
+        }, deadline, empresa);
         return {
           produtos:
             (resp as { produto_servico_cadastro?: OmieProduto[] }).produto_servico_cadastro ?? [],
