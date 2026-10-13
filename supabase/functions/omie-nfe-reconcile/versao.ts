@@ -54,7 +54,7 @@ export const respostaSonda = criarRespostaSonda("omie-nfe-reconcile");
  * `contrato` de uma canária não impediu a `carteira-rebuild` e a `omie-vendas-sync` de nascerem em
  * `v1.0-sensor-inicial`.
  */
-export const VERSAO = "v1.0-sensor-inicial";
+export const VERSAO = "v1.1-omie-cliente-compartilhado";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

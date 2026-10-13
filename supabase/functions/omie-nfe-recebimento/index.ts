@@ -2,6 +2,8 @@ import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { statusHttpEfetivacao } from "./resposta.ts";
+import { chamarOmie } from "../_shared/omie-cliente.ts";
+import { ehEscritaIndeterminada } from "../_shared/omie-chamada-relogio.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -19,6 +21,8 @@ interface OmieCallSuccess {
 interface OmieCallError {
   error: true;
   status?: number;
+  /** Escrita com desfecho DESCONHECIDO no Omie (pode ter gravado) — `data.message` diz o quê. */
+  indeterminada?: true;
   data: unknown;
 }
 
@@ -275,49 +279,35 @@ async function registrarTentativa(
   }
 }
 
-// ── Retry with exponential backoff ──
-async function omieCall(
+// ── Chamada ao Omie: núcleo compartilhado (_shared/omie-cliente.ts, M-48) + adaptador legado ──
+// O wrapper antigo REENVIAVA em 5xx/rede qualquer método — inclusive o `ConcluirRecebimento`, que
+// não é escrita de SET: um 5xx com o recebimento já concluído no Omie virava segundo envio. Agora
+// a política é a do núcleo: leitura repete transitório; `Alterar*` (SET) repete; `Concluir*` sai
+// INDETERMINADA na hora, sem reenvio. A indeterminada volta como falha do passo (a flag `_ok` não
+// é marcada) com a mensagem de vocabulário fixo — e a próxima efetivação CONSULTA antes de
+// escrever: se o Omie já concluiu, a bifurcação reconcilia em vez de reenviar.
+async function chamadaOmie(
   url: string,
-  payload: Record<string, unknown>,
-  maxRetries = 3,
+  call: string,
+  param: Record<string, unknown>,
+  creds: { appKey: string; appSecret: string },
+  conta: string,
 ): Promise<OmieCallResult> {
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const text = await res.text();
-      let data: unknown;
-      try {
-        data = JSON.parse(text);
-      } catch {
-        data = { raw: text };
-      }
-      if (!res.ok) {
-        // Omie returns 500 for many transient errors
-        if (attempt < maxRetries && res.status >= 500) {
-          const delay = Math.pow(2, attempt) * 500;
-          console.warn(`[omie-nfe-recebimento] Omie ${res.status}, retry ${attempt}/${maxRetries} in ${delay}ms`);
-          await new Promise((r) => setTimeout(r, delay));
-          continue;
-        }
-        return { error: true, status: res.status, data };
-      }
-      return { error: false, data };
-    } catch (err) {
-      if (attempt < maxRetries) {
-        const delay = Math.pow(2, attempt) * 500;
-        console.warn(`[omie-nfe-recebimento] Network error, retry ${attempt}/${maxRetries} in ${delay}ms:`, err);
-        await new Promise((r) => setTimeout(r, delay));
-        continue;
-      }
-      return { error: true, data: { message: String(err) } };
-    }
+  try {
+    const res = await chamarOmie(
+      { url, metodo: call, param, credenciais: creds },
+      {
+        conta,
+        aoRepetir: ({ tentativa, atrasoMs }) =>
+          console.warn(`[omie-nfe-recebimento] ${call} transitório, retry ${tentativa} in ${atrasoMs}ms`),
+      },
+    );
+    const data: unknown = res.corpo ?? { raw: res.texto };
+    return res.ok ? { error: false, data } : { error: true, status: res.status, data };
+  } catch (err) {
+    if (ehEscritaIndeterminada(err)) return { error: true, indeterminada: true, data: { message: err.message } };
+    return { error: true, data: { message: String(err) } };
   }
-  // Unreachable — loop always returns inside; satisfies TS control flow analysis.
-  return { error: true, data: { message: "exhausted retries" } };
 }
 
 // ── Credential mapping by warehouse code ──
@@ -441,14 +431,12 @@ Deno.serve(async (req) => {
         return jsonRes({ error: `Credenciais Omie não configuradas para warehouse ${whCode}` }, 500);
       }
       console.log(`[omie-nfe-recebimento] DIAGNÓSTICO read-only nIdReceb=${nfeDiag.omie_id_receb}`);
-      const consultaRes = await omieCall(
+      const consultaRes = await chamadaOmie(
         "https://app.omie.com.br/api/v1/produtos/recebimentonfe/",
-        {
-          call: "ConsultarRecebimento",
-          app_key: credD.appKey,
-          app_secret: credD.appSecret,
-          param: [{ nIdReceb: nfeDiag.omie_id_receb }],
-        },
+        "ConsultarRecebimento",
+        { nIdReceb: nfeDiag.omie_id_receb },
+        credD,
+        whCode,
       );
       const cls = classificarRespostaOmie({
         httpOk: !consultaRes.error,
@@ -525,7 +513,7 @@ Deno.serve(async (req) => {
       const nIdReceb = nfe.omie_id_receb as number;
       const chaveAcesso = (nfe.chave_acesso as string) ?? "";
       const callReceb = (call: string, param: Record<string, unknown>) =>
-        omieCall(RECEB_URL, { call, app_key: creds.appKey, app_secret: creds.appSecret, param: [param] });
+        chamadaOmie(RECEB_URL, call, param, creds, whCode);
 
       const persistir = async (status: string, erro: string | null) => {
         const patch: Record<string, unknown> = { status, efetivacao_erro: erro };
@@ -631,6 +619,14 @@ Deno.serve(async (req) => {
       const falhas: { operacao: string; erro: string }[] = [];
       const executarPasso = async (operacao: string, flagCol: string, run: () => Promise<OmieCallResult>): Promise<boolean> => {
         const res = await run();
+        if (res.error && res.indeterminada) {
+          // Desfecho desconhecido: NÃO marca a flag e NÃO passa pelo erroBenigno — a próxima
+          // efetivação consulta antes de escrever e reconcilia se o Omie já aplicou.
+          const erro = asStr(asRecord(res.data).message) ?? "escrita indeterminada no Omie";
+          await registrarTentativa(supabase, { nfe_recebimento_id: nfeRecebimentoId, tentativa, operacao, sucesso: false, erro, omie_status: null });
+          falhas.push({ operacao, erro });
+          return false;
+        }
         const cls = classificarRespostaOmie({ httpOk: !res.error, status: res.error ? res.status : 200, body: res.data });
         let sucesso = cls.sucesso;
         if (!sucesso && erroBenigno(cls.erro, operacao)) sucesso = true;

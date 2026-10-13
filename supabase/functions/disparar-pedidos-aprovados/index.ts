@@ -6,6 +6,7 @@
 // o resumo quando algo exige ação — a régua mora em ./email-politica.ts.
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
+import { chamarOmie } from "../_shared/omie-cliente.ts";
 import { hojeSP } from "../_shared/hoje-sp.ts";
 import { dataPrevisaoOmie } from "./previsao.ts";
 import { abririaEnvioNovoAoPortal, ehRecusaDefinitivaPortal, MENSAGEM_PORTAL_FECHADO, mensagemRecusaDefinitiva, portalSayerlackFechado } from "./janela-portal.ts";
@@ -150,33 +151,29 @@ function getEmailAprovador(empresa: string): string | null {
   return trimmed ? trimmed : null;
 }
 
-async function omieCall(
+// Transporte e teto de relógio: núcleo compartilhado (_shared/omie-cliente.ts, M-48). Uma tentativa
+// só, como antes. `IncluirPedCompra` que cai no transporte, recebe 5xx sem faultstring ou fault
+// transitória sai `OmieEscritaIndeterminada` (vocabulário fixo, que o `isOmiePedidoJaCadastrado`
+// NÃO casa): o PO pode existir no Omie — o próximo disparo reusa o `cCodIntPed` AFI-<id> e cai
+// no "já cadastrado" → reconciliação por ConsultarPedCompra.
+async function chamadaOmie(
   url: string,
   call: string,
   param: unknown,
   creds: { app_key: string; app_secret: string },
 ): Promise<OmieGenericResponse> {
-  const r = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      call,
-      app_key: creds.app_key,
-      app_secret: creds.app_secret,
-      param: [param],
-    }),
-  });
-  const text = await r.text();
-  let json: OmieGenericResponse;
-  try {
-    json = JSON.parse(text) as OmieGenericResponse;
-  } catch {
-    throw new Error(`Omie ${call} resposta não-JSON: ${text.slice(0, 300)}`);
+  const r = await chamarOmie(
+    { url, metodo: call, param, credenciais: { appKey: creds.app_key, appSecret: creds.app_secret } },
+    { conta: "compras", maxTentativas: 1 },
+  );
+  if (r.corpo === null) {
+    throw new Error(`Omie ${call} resposta não-JSON: ${r.texto.slice(0, 300)}`);
   }
+  const json = r.corpo as OmieGenericResponse;
   if (!r.ok || json?.faultstring) {
     throw new Error(
       `Omie ${call} erro [${r.status}]: ${
-        json?.faultstring ?? text.slice(0, 300)
+        json?.faultstring ?? r.texto.slice(0, 300)
       }`,
     );
   }
@@ -224,7 +221,7 @@ async function resolveCodigoFornecedor(
   }
 
   // 2. Busca no Omie por razão social parcial
-  const resp = await omieCall(
+  const resp = await chamadaOmie(
     OMIE_CLIENTES_URL,
     "ListarClientes",
     {
@@ -1249,7 +1246,7 @@ async function processarPedido(
     // dedutível ("o PO não existia antes deste instante"). Ler depois, ou do relógio da edge, é o
     // defeito que a migration 20260814022626 corrige. Ver lerMarcoPreOmie().
     const marcoPreOmie = await lerMarcoPreOmie(db, pedido.id);
-    const resp = await omieCall(
+    const resp = await chamadaOmie(
       OMIE_PEDIDO_COMPRA_URL,
       "IncluirPedCompra",
       param,
@@ -1318,7 +1315,7 @@ async function processarPedido(
       let existente: { id: string; numero: string } | null = null;
       let consultaErro: string | null = null;
       try {
-        const consulta = await omieCall(
+        const consulta = await chamadaOmie(
           OMIE_PEDIDO_COMPRA_URL,
           "ConsultarPedCompra",
           { cCodIntPed: `AFI-${pedido.id}` },

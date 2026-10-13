@@ -25,7 +25,7 @@ import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
 export const respostaSonda = criarRespostaSonda("omie-sync-status-produtos");
 
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.1-espelho-so-do-run";
+export const VERSAO = "v1.2-omie-cliente-compartilhado";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

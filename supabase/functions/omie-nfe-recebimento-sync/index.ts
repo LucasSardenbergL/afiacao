@@ -2,6 +2,7 @@ import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import { redigirSegredo } from "../_shared/omie-falha.ts";
+import { chamarOmie, enviarOmie } from "../_shared/omie-cliente.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { mapearItensRecebimento, type OmieRecebimentoItem } from "./itens.ts";
 import { mapearCabecalho } from "./cabecalho.ts";
@@ -83,33 +84,34 @@ function getCredentials(): OmieCredentials[] {
   return creds;
 }
 
-async function omieCall(
-  appKey: string,
-  appSecret: string,
+// Núcleo compartilhado (_shared/omie-cliente.ts, M-48): teto de relógio por chamada (o fetch
+// antigo não tinha nenhum) e uma tentativa só, como antes — a rodada decide o que repetir.
+async function chamadaOmie(
+  cred: OmieCredentials,
   endpoint: string,
   method: string,
   params: OmieCallParams,
 ): Promise<unknown> {
-  const res = await fetch(`https://app.omie.com.br/api/v1/${endpoint}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      call: method,
-      app_key: appKey,
-      app_secret: appSecret,
-      param: [params],
-    }),
-  });
+  const res = await chamarOmie(
+    {
+      url: `https://app.omie.com.br/api/v1/${endpoint}`,
+      metodo: method,
+      param: params,
+      credenciais: { appKey: cred.appKey, appSecret: cred.appSecret },
+    },
+    { conta: cred.warehouseCode, maxTentativas: 1 },
+  );
   if (!res.ok) {
-    const txt = await res.text();
     // O corpo decide antes do status: o Omie manda "não existem registros" e outras falhas de negócio
     // com HTTP 500 (CC, 2026-10-05). Com `faultstring`, o corpo volta e o chamador classifica
     // (interpretarPaginaListagem / falhaNoCorpo); sem ela, é falha de transporte.
-    const corpoDeFalha = corpoDeFalhaOmie(txt);
+    const corpoDeFalha = corpoDeFalhaOmie(res.texto);
     if (corpoDeFalha !== null) return corpoDeFalha;
-    throw new Error(`Omie ${method} HTTP ${res.status}: ${redigirSegredo(txt.slice(0, 300))}`);
+    throw new Error(`Omie ${method} HTTP ${res.status}: ${redigirSegredo(res.texto.slice(0, 300))}`);
   }
-  return await res.json();
+  // 2xx ilegível lançava no `res.json()` — continua lançando, nunca vira corpo vazio.
+  if (res.corpo === null) throw new Error(`Omie ${method} HTTP ${res.status}: resposta não-JSON`);
+  return res.corpo;
 }
 
 /** Lote de chaves por `.in()`: 44 dígitos cada — as ~150 de uma rodada numa URL só passariam do seguro. */
@@ -118,9 +120,9 @@ const LOTE_CHAVES = 50;
 /** O Omie e o banco REAIS da rodada de uma conta (ver rodada.ts). */
 function depsDaConta(supabase: SupabaseClient, cred: OmieCredentials, warehouseId: string): DepsRodada {
   return {
-    listar: (params) => omieCall(cred.appKey, cred.appSecret, "produtos/recebimentonfe/", "ListarRecebimentos", params),
+    listar: (params) => chamadaOmie(cred, "produtos/recebimentonfe/", "ListarRecebimentos", params),
     consultar: (nIdReceb) =>
-      omieCall(cred.appKey, cred.appSecret, "produtos/recebimentonfe/", "ConsultarRecebimento", { nIdReceb }),
+      chamadaOmie(cred, "produtos/recebimentonfe/", "ConsultarRecebimento", { nIdReceb }),
     jaImportados: async (ids, chaves) => {
       const idsJa = new Set<number>();
       const chavesJa = new Set<string>();
@@ -236,24 +238,18 @@ async function importarPorChave(supabase: SupabaseClient, corpo: Record<string, 
   let httpStatus: number;
   let corpoOmie: unknown;
   try {
-    const res = await fetch("https://app.omie.com.br/api/v1/produtos/recebimentonfe/", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        call: "ConsultarRecebimento",
-        app_key: cred.appKey,
-        app_secret: cred.appSecret,
-        param: [{ cChaveNFe: chave }],
-      }),
-      signal: AbortSignal.timeout(OMIE_TIMEOUT_POR_CHAVE_MS),
-    });
+    // Uma tentativa só (o botão é do operador; repetir é dele), com o teto de relógio do núcleo.
+    const res = await enviarOmie(
+      {
+        url: "https://app.omie.com.br/api/v1/produtos/recebimentonfe/",
+        metodo: "ConsultarRecebimento",
+        param: { cChaveNFe: chave },
+        credenciais: { appKey: cred.appKey, appSecret: cred.appSecret },
+      },
+      { conta: cred.warehouseCode, deadline: Date.now() + OMIE_TIMEOUT_POR_CHAVE_MS, tetoPorRequestMs: OMIE_TIMEOUT_POR_CHAVE_MS },
+    );
     httpStatus = res.status;
-    const texto = await res.text();
-    try {
-      corpoOmie = JSON.parse(texto);
-    } catch {
-      corpoOmie = texto;
-    }
+    corpoOmie = res.corpo ?? res.texto;
   } catch (e) {
     const motivo = redigirSegredo(mensagemDeErro(e) ?? "falha de rede sem mensagem");
     return responder({ status: "erro_omie", error: `não consegui consultar o Omie: ${motivo}` }, 502);
