@@ -64,8 +64,8 @@
 -- Prova: db/test-tint-promote-fantasma.sh (PG17, corpo vivo do promote, falsificação).
 -- ═════════════════════════════════════════════════════════════════════════════
 
-BEGIN;
-
+-- Sem BEGIN/COMMIT: o db:aplicar fornece a transação e roda este corpo via EXECUTE, onde controle de
+-- transação é proibido (o script recusa o arquivo antes de executar — medido 2026-10-13).
 DO $mig$
 DECLARE
   v_oid   oid;
@@ -177,6 +177,3 @@ END $mig$;
 
 REVOKE EXECUTE ON FUNCTION public.tint_promote_sync_run(uuid) FROM anon, authenticated, PUBLIC;
 
-COMMIT;
-
-SELECT 'tint_promote_sync_run fantasma-fonte OK' AS status;
