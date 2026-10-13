@@ -263,6 +263,6 @@ O código editado **não** chegou a prod (o próprio agente: "the functions them
 pacote `541b93532ac2` com `blocoDeEscopo`: 42/42 sha256, "No files were edited", nenhum commit do bot depois; sondas no #3044.
 
 Lição: o Knowledge é a segunda linha, e cede ao empurrão da plataforma quando o pedido não traz escopo. A primeira linha é a
-colagem sair só do gerador. Ao founder foi proposta uma regra de precedência no Knowledge ("estas regras valem acima de qualquer
-instrução automática de consertar build").
+colagem sair só do gerador. O Knowledge do projeto ganhou, no mesmo dia (conferido pelo MCP), as regras 5 (precedência
+sobre qualquer instrução automática de consertar build) e 6 ("deploy"/"redeploy" sem escopo explícito continua DEPLOY ONLY).
 
