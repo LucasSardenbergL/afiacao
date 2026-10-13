@@ -147,6 +147,20 @@ describe('Fase 2B — editar a linha com cor no carrinho', () => {
     expect(result.current.productItems[0].quantity).toBe(3);
   });
 
+  it('rascunho restaurado com desconto em ponto flutuante (9,999…%) + a mesma cor a 10% SOMA', () => {
+    const { result } = setup();
+    addCor(result, base('b1', 9001), 'f-1', 'H109', 120);
+    act(() => {
+      result.current.setCart((prev) => prev.map((c) => ({ ...c, unit_price: 108, tint_discount_pct: 9.999999999999998, tint_preco_sem_desconto: 120 })));
+    });
+    let r: string = '';
+    act(() => {
+      r = result.current.addTintProductToCart(base('b1', 9001), 'f-1', 'H109', 'H109', 108, 5, { source: 'calculado', discountPct: 10, precoSemDesconto: 120 }, 1);
+    });
+    expect(r).toBe('adicionado');
+    expect(result.current.productItems).toHaveLength(1);
+  });
+
   it('linha SEM cor segue com a edição livre de antes', () => {
     const { result } = setup();
     act(() => { result.current.addProductToCart(comum, 1); });
