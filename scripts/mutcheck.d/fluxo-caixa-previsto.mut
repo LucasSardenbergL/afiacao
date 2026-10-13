@@ -15,7 +15,7 @@
 #   - `saldo || valor_documento` COM a coluna de volta no select (2 linhas); aqui vai a forma de 1
 #     linha, que no teste vira NaN e também reprova;
 #   - piso zero aplicado na soma do DIA em vez de por título (2 linhas);
-#   - remover o `.range()`: `buscarTodasPaginas` não tem guard de página que nunca encolhe, então
+#   - remover o `.range()`: `fetchAllPages` não tem guard de página que nunca encolhe, então
 #     o laço não termina — travamento, não vermelho limpo.
 #
 # O compila-check padrão (`bun build` com bundle) empacota a árvore inteira do serviço e passa de
