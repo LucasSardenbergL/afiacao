@@ -8,6 +8,7 @@ import {
   lerManifestPublicado,
   montarManifest,
   parseManifest,
+  proximaVersaoPatch,
   publicarRelease,
   semverValido,
   sha256Hex,
@@ -49,6 +50,21 @@ describe("semver", () => {
     expect(versaoDoNomeDoArquivo("sayersync-0.2.1.exe")).toBe("0.2.1");
     expect(versaoDoNomeDoArquivo("sayersync.exe")).toBeNull();
     expect(versaoDoNomeDoArquivo("sayersync-01.2.1.exe")).toBeNull();
+  });
+});
+
+describe("proximaVersaoPatch", () => {
+  it("sugere patch+1 da versão no ar", () => {
+    expect(proximaVersaoPatch(montarManifest("0.2.3", SHA))).toBe("0.2.4");
+    expect(proximaVersaoPatch(montarManifest("1.9.9", SHA))).toBe("1.9.10");
+  });
+  it("a sugestão passa na validação contra o manifest no ar", () => {
+    const noAr = montarManifest("0.2.3", SHA);
+    expect(validarVersao(proximaVersaoPatch(noAr) as string, noAr)).toBeNull();
+  });
+  it("sem manifest ou com versão inválida → null (sem base para sugerir)", () => {
+    expect(proximaVersaoPatch(null)).toBeNull();
+    expect(proximaVersaoPatch({ version: "v0.2.3", sha256: SHA, url: "x" })).toBeNull();
   });
 });
 
