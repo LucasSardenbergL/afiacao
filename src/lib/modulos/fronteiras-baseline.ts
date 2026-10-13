@@ -194,7 +194,7 @@ export const FRONTEIRAS_BASELINE: Aresta[] = [
   { de: "src/pages/AdminKnowledgeBase.tsx", para: "src/hooks/useCompletude.ts", deModulo: "knowledge-base", paraModulo: "admin-crm", kind: "runtime" },
   { de: "src/pages/AdminOrderDetail.tsx", para: "src/components/OrderChat.tsx", deModulo: "admin-crm", paraModulo: "loja-afiacao", kind: "runtime" },
   { de: "src/pages/AdminOrderDetail.tsx", para: "src/components/SendingQualityChecklist.tsx", deModulo: "admin-crm", paraModulo: "loja-afiacao", kind: "runtime" },
-  { de: "src/pages/AdminReposicaoCockpit.tsx", para: "src/components/dataHealth/DataHealthBanner.tsx", deModulo: "reposicao", paraModulo: "governanca", kind: "runtime" },
+  { de: "src/pages/AdminReposicaoPedidos.tsx", para: "src/components/dataHealth/DataHealthBanner.tsx", deModulo: "reposicao", paraModulo: "governanca", kind: "runtime" },
   { de: "src/pages/Customer360.tsx", para: "src/components/tarefas/VozTarefaDialog.tsx", deModulo: "farmer-inteligencia", paraModulo: "tarefas", kind: "runtime" },
   { de: "src/pages/Customer360.tsx", para: "src/hooks/useCustomerContacts.ts", deModulo: "farmer-inteligencia", paraModulo: "admin-crm", kind: "runtime" },
   { de: "src/pages/Customer360.tsx", para: "src/hooks/useReguaPreco360.ts", deModulo: "farmer-inteligencia", paraModulo: "vendas", kind: "runtime" },

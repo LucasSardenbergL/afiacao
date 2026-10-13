@@ -174,17 +174,7 @@ describe('fronteira: nenhum caminho humano grava cancelamento por UPDATE cru nem
     expect(src, `${nome}: não passa por rejeitarPedidos`).toContain('rejeitarPedidos(');
   };
 
-  it('useCicloHoje (rejeição em lote) — via lote', () => {
-    const src = ler('src/components/reposicao/cicloHoje/useCicloHoje.ts');
-    semUpdateCru(src, 'useCicloHoje');
-    expect(src).toMatch(/via:\s*["']lote["']/);
-  });
-
-  it('PedidoRow do ciclo (rejeição inline) — via individual', () => {
-    const src = ler('src/components/reposicao/cicloHoje/PedidoRow.tsx');
-    semUpdateCru(src, 'cicloHoje/PedidoRow');
-    expect(src).toMatch(/via:\s*["']individual["']/);
-  });
+  // (useCicloHoje/cicloHoje/PedidoRow saíram com o cockpit aposentado — o CancelarModal é o caminho humano.)
 
   it('CancelarModal (lista de pedidos) — mesma fronteira; a recusa da RPC vira erro, não "Pedido cancelado"', () => {
     const src = ler('src/components/reposicao/pedidos/CancelarModal.tsx');

@@ -3,8 +3,8 @@ import { resolveBreadcrumbs } from "@/hooks/useBreadcrumbs";
 
 describe("resolveBreadcrumbs", () => {
   it("builds an ancestor trail from the registry for a leaf route", () => {
-    const trail = resolveBreadcrumbs("/admin/reposicao/sessao/pedidos");
-    expect(trail.map((t) => t.crumb)).toEqual(["Reposição", "Pedidos"]);
+    const trail = resolveBreadcrumbs("/admin/reposicao/sessao/mercado");
+    expect(trail.map((t) => t.crumb)).toEqual(["Reposição", "Mercado"]);
     expect(trail[trail.length - 1].isCurrent).toBe(true);
   });
 

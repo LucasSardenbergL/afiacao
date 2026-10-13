@@ -59,7 +59,7 @@ export function useReposicaoZone() {
             icon: AlertTriangle,
             title: a.sku_descricao ?? a.tipo ?? 'Alerta',
             subtitle: `Severidade ${a.severidade ?? 'média'}`,
-            path: '/admin/reposicao/sessao',
+            path: '/admin/reposicao/alertas',
             itemType: 'outlier_event',
             badge: a.severidade === 'alta' || a.severidade === 'critica'
               ? { label: a.severidade, intent: 'error' as const }
@@ -104,7 +104,7 @@ export function useReposicaoZone() {
           icon: ShoppingBag,
           title: `${data.sugeridosProntos} pedido(s) de compra prontos para aplicar`,
           description: 'Sessão de reposição concluiu sugestões. Revisar e enviar ao Omie.',
-          cta: { label: 'Abrir cockpit', path: '/admin/reposicao/sessao' },
+          cta: { label: 'Abrir pedidos de compra', path: '/admin/reposicao/pedidos' },
           metadata: { source: 'reposicao.sugerido_pronto' },
         },
       };

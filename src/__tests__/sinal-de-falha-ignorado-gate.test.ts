@@ -104,16 +104,10 @@ const DIVIDA: ReadonlyMap<string, number> = new Map([
 const QUITADOS: ReadonlyArray<[string, string]> = [
   ['src/pages/CarteiraBoard.tsx', '#2894'],
   ['src/pages/FarmerLOCC.tsx', '#2894'],
-  ['src/components/reposicao/ReposicaoSessionLayout.tsx', 'reposição'],
-  ['src/components/reposicao/EtapasGrid.tsx', 'reposição'],
-  ['src/components/reposicao/EtapaChecklist.tsx', 'reposição'],
   ['src/components/reposicao/BaixoGiroBadge.tsx', 'reposição'],
   ['src/pages/AdminReposicaoBaixoGiro.tsx', 'reposição'],
-  // Nunca esteve na DIVIDA porque o detector NÃO O VIA: o consumo passava pelo wrapper
-  // `useCurrentStep`, cujo `return { ...q, data: … }` com SPREAD não registra campo de sinal
-  // (só propriedade NOMEADA entra no mapa). O wrapper foi aposentado e o consumo é direto,
-  // então o sítio nasce VIGIADO — e esta linha dá o vermelho nomeado se o fix for desfeito.
-  ['src/pages/AdminReposicaoCockpit.tsx', 'reposição (cegueira do spread)'],
+  // (ReposicaoSessionLayout/EtapasGrid/EtapaChecklist/AdminReposicaoCockpit saíram daqui junto com
+  // as telas: o cockpit de reposição foi aposentado — arquivo que não existe não regride.)
   ['src/pages/UnifiedOrder.tsx', 'preço/pedido'],
   ['src/pages/FarmerCalls.tsx', 'carteira/rota'],
   ['src/hooks/useRoutePlanner.ts', 'carteira/rota'],

@@ -133,7 +133,6 @@ const BASELINE = new Map<string, number>([
   ["src/components/tintColorSelect/useTintColorSelect.ts", 1],
   ["src/components/unified-order/ExcecaoCreditoDialog.tsx", 1],
   ["src/components/whatsapp/SlaCardMeuDia.tsx", 1],
-  ["src/hooks/useReposicaoSessao.ts", 1],
   ["src/hooks/useSinalPositivacao.ts", 1],
   ["src/hooks/useUnifiedOrder.ts", 2],
   ["src/pages/AdminReposicaoAlertas.tsx", 1],

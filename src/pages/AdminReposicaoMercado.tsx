@@ -187,7 +187,7 @@ export default function AdminReposicaoMercado() {
 
   return (
     <ReposicaoEmpresaProvider value={{ empresa, setEmpresa }}>
-      <div className="space-y-6">
+      <div className="container mx-auto px-4 sm:px-6 pt-4 sm:pt-6 pb-24 max-w-7xl space-y-6">
         <header className="flex flex-col sm:flex-row sm:items-center gap-3 justify-between">
           <div className="flex items-center gap-3">
             <TrendingUp className="h-6 w-6 text-primary" />
