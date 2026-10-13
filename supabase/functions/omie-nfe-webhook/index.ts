@@ -186,7 +186,7 @@ Deno.serve(async (req) => {
         quantidade_conferida: 0,
         quantidade_esperada: quantidadeEsperada,
         status_item: "pendente",
-        produto_omie_id: produtoOmieId ? parseInt(produtoOmieId) : null,
+        produto_omie_id: produtoOmieId ? parseInt(String(produtoOmieId)) : null,
       };
     });
 
