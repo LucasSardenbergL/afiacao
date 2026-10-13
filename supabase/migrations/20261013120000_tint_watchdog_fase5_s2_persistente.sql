@@ -118,10 +118,13 @@ BEGIN
   -- correção de bug. Se um dia duplicar, o universo inflaria e uma queda real poderia
   -- ser mascarada por duplicidade.
   SELECT count(*) FILTER (WHERE k.tem_ativa AND v.account IS NULL),
-         count(DISTINCT (k.account, k.sku_id, k.cor_id))
-           FILTER (WHERE NOT k.tem_ativa
-                     AND k.sem_ativa_desde < now() - interval '30 days'),
-         count(DISTINCT (k.account, k.sku_id, k.cor_id)) FILTER (WHERE NOT k.tem_ativa),
+         -- count(*) e nao count(DISTINCT): toda chave contada aqui tem NOT tem_ativa, e sem
+         -- formula ativa ela nao aparece na view => o LEFT JOIN nao a duplica. O DISTINCT so
+         -- pagaria sort/hash (medido: 181s -> 415s na prova do CI). O universo abaixo mantem o
+         -- DISTINCT, onde o hardening e real.
+         count(*) FILTER (WHERE NOT k.tem_ativa
+                            AND k.sem_ativa_desde < now() - interval '30 days'),
+         count(*) FILTER (WHERE NOT k.tem_ativa),
          count(DISTINCT (k.account, k.sku_id, k.cor_id))
     INTO v_s1, v_s2, v_s2_bruto, v_universo
   FROM (

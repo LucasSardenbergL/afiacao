@@ -588,8 +588,8 @@ roda_suite() {
   roda
   eq "B33 a MESMA chave conta ao passar de 30 dias"            "$(meta fonte_retirada)" "1"
   eq "B34 e so ai o alerta de S2 abre"                         "$(ativos tint_fase5_fonte_retirada)" "1"
-  devolve_fonte "$SL1"
-  roda
+  devolve_fonte "$SL1"   # sem `roda` aqui: o reset_estado do bloco seguinte ja limpa os alertas,
+                         # e cada varredura extra custa ~2s x 10 rodadas da suite no CI
 
   # S4: COLAPSO do bruto — o vao que o corte de 30d abre para o evento AGUDO. Um snapshot
   # truncado hoje so apareceria em S2 daqui a 30 dias, com o balcao sem vender no intervalo.
