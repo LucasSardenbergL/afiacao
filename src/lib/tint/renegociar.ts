@@ -29,7 +29,7 @@ export interface LinhaTintNegociavel {
 }
 
 /** Decisão coerente para gravar na linha (os 3 campos SEMPRE juntos). */
-export interface DecisaoTint {
+interface DecisaoTint {
   unit_price: number;
   tint_discount_pct: number;
   tint_preco_sem_desconto: number;
