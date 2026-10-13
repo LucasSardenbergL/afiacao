@@ -109,7 +109,7 @@ export function ehEscritaIndeterminada(e: unknown): e is OmieEscritaIndeterminad
  * vendas já trata como PAUSA (não marca completo), e "timeout" a faz transitória para o
  * `classificarFaultstring`. Lança SEMPRE — devolver `null` seria fim de página fabricado.
  */
-export function erroLeituraSemResposta(metodo: string, conta: string, causa: unknown): Error {
+function erroLeituraSemResposta(metodo: string, conta: string, causa: unknown): Error {
   return new Error(
     `OMIE_TRANSIENT (${conta}): timeout — ${metodo} sem resposta dentro do teto da chamada — não dá pra afirmar ausência`,
     { cause: causa },
@@ -117,7 +117,7 @@ export function erroLeituraSemResposta(metodo: string, conta: string, causa: unk
 }
 
 /** A chamada NÃO foi feita: não sobrou tempo viável no relógio da chamada. Afirmação segura, até para escrita. */
-export function erroSemTempo(metodo: string, conta: string): Error {
+function erroSemTempo(metodo: string, conta: string): Error {
   return new Error(
     `OMIE_TRANSIENT (${conta}): sem tempo para chamar ${metodo} dentro do teto da chamada — a chamada NÃO foi feita`,
   );
