@@ -71,9 +71,80 @@ falhas: **0 dos 5 últimos** tinham leitura; dos 40, 27. Lendo só os 5 últimos
 "desconhecido" exatamente na situação para a qual foi feito.
 
 É o padrão de *sonda que emudece justo quando o alarme importa* — e a defesa não foi olhar mais
-fundo por chute, e sim uma propriedade do dado: **enquanto `resets_at` está no futuro a janela é a
-mesma, e dentro de uma janela o consumo só sobe** ⇒ uma leitura antiga é **PISO** do saldo de agora.
-Piso é o lado certo de errar num guard: nunca libera o que devia barrar.
+fundo por chute, e sim uma propriedade do dado: ~~enquanto `resets_at` está no futuro a janela é a
+mesma, e dentro de uma janela o consumo só sobe ⇒ uma leitura antiga é **PISO** do saldo de agora.
+Piso é o lado certo de errar num guard: nunca libera o que devia barrar.~~
+**⚠️ A frase riscada acima está ERRADA e custou ~9h de bloqueio em 13/10/2026** — a janela é ROLANTE
+e `resets_at` anda para frente sozinho. Mantida riscada de propósito: ela é plausível, foi escrita com
+convicção e sobreviveu a uma revisão. Refutação medida na seção *A premissa do PISO era falsa* abaixo.
+
+---
+
+## A premissa do PISO era falsa (2026-10-13)
+
+A defesa acima — "leitura antiga é piso do saldo de agora" — **virou o defeito**. O sensor recusou
+duas consultas com `SALDO_ALTO: a cota está em 95.0%` enquanto o saldo real era **3%**.
+
+| leitura (local) | used_percent | resets_at | rollout |
+|---|---|---|---|
+| 12/10 13:32 | 91,0% | 18/10 08:58 | `rollout-2026-10-12T13-32-30-…` |
+| 12/10 21:00 | 94,0% | 18/10 08:58 | `rollout-2026-10-12T21-00-03-…` |
+| 12/10 21:14 | **95,0%** | **18/10 08:58** | `rollout-2026-10-12T21-14-33-…` |
+| 13/10 06:33 | **3,0%** | **20/10 06:33** | `rollout-2026-10-13T06-33-10-…` |
+
+Em 12/10 21:48 o sensor leu os 95% / reset 18/10 (ainda no FUTURO ⇒ a armadilha da "leitura obsoleta"
+não descartou) e recusou. Em 13/10 06:32 **repetiu a mesma leitura obsoleta**. Só saiu do caminho com
+`CODEX_ASYNC_TETO_SALDO=0` — que desliga o sensor INTEIRO. As duas chamadas que então rodaram
+nasceram reportando 3% com reset 20/10: a janela havia rolado, e o sensor barrou ~9h de trabalho
+legítimo contra uma cota praticamente VAZIA. **O custo é o oposto exato do que ele existe para
+evitar.**
+
+### Por que a premissa é falsa
+
+`resets_at` de uma janela ROLANTE **anda para frente sozinho** — a janela nova é CONCEDIDA, não só
+consumo velho envelhecendo (a janela nova nasce com `used_percent` 0 e `resets_at` = agora +
+exatamente `window_minutes`). Logo **duas leituras podem AMBAS ter `resets_at` no futuro e pertencer
+a janelas DIFERENTES** — e aí a antiga não é piso de nada: é de outra janela.
+
+### A medição (1.959 rollouts · 28.986 leituras · mai–out/2026)
+
+- **`primary` não é sempre o mesmo bucket:** `window_minutes` 300 (5h, dominante mai–jun), 10080
+  (7 dias, desde jul), 43200 (30 dias, 63 leituras em ago). Uma janela é a dupla
+  `(window_minutes, resets_at)` — e qualquer texto que diga "janela de 7 dias" fixo erra 1/3 do corpus.
+- **O piso vale DENTRO da janela e NADA entre janelas:** nas 19.602 leituras do bucket de 7 dias,
+  das 16 violações de piso ≥10pp, **16 de 16 coincidem com `resets_at` mudando — ZERO dentro de uma
+  mesma janela.** A premissa não era "quase certa": era certa num escopo e aplicada em outro.
+- **O erro mora na IDADE da leitura:** violações ≥50pp só aparecem a partir de 9,3h (+95pp, este
+  incidente), 9,6h (+83pp) e 43,6h (+95pp). Mas o teto de idade **limita, não elimina** — mediu-se
+  +53pp com 42 min.
+- **Teto de idade quase não custa onde o sensor se paga:** em regime alto (`pct`≥85) 99,3% das
+  leituras têm antecessora de ≤2h (99,1% ≤1h) — quando a recusa importa, a leitura é densa.
+- **O preço do teto, honesto:** entre 14/09 19:46 e 19/09 13:21 houve **113,6h** com a cota de fato
+  em 100% e ZERO leitura nova (12 rollouts abertos no período, **nenhum** com medidor — a parede do
+  429). Ali o teto faz cada tentativa gastar UMA chamada em vez de ser barrada. É o lado certo de
+  errar: cota esgotada sai em `exit 75` NA HORA, sem retry, citando o `try again at` do servidor —
+  uma chamada rápida que devolve a verdade autoritativa, contra ~9h de bloqueio.
+- **Janela é `resets_at` EXATO, sem tolerância:** o servidor recalcula `resets_at` por requisição e o
+  mesmo ciclo aparece com 1s de diferença, mas o jitter (até 0,97h) **encosta** na rolagem real
+  (mínima 1,01h) — não há corte que separe. Replay incremental das 28.986 leituras: sem tolerância,
+  19 momentos (de ~29k) passam com piso 84% onde o agrupamento recusaria com 85% (**1 pp**, na margem
+  do teto); com tolerância de 1h, importa-se até **+75 pp** de janela já descartada — isto é,
+  reintroduz-se este incidente com 75× o tamanho do erro oposto.
+
+### O conserto
+
+`scripts/codex-async.sh` (suíte: `scripts/test-codex-async.sh`, 4 casos novos + falsificação):
+
+1. **A leitura escolhida é a mais FRESCA pelo `timestamp` da própria LINHA do rollout**, não "a
+   primeira de reset futuro na ordem dos nomes". Nome de arquivo é hora de ABERTURA da sessão: uma
+   sessão longa ainda escrevendo carrega medidor mais fresco num arquivo de nome mais ANTIGO. A ordem
+   por nome errava **nos dois sentidos** — recusava com 95% de janela vencida *e* passava com 20%
+   onde o piso da janela era 94%.
+2. **O saldo é o MAIOR `used_percent` da janela escolhida** (o piso, agora no escopo em que vale).
+   Leitura de `resets_at` menor é de outra janela e **não entra**.
+3. **Teto de idade** (`CODEX_ASYNC_IDADE_MAX_SALDO`, default 120 min): acima dele degrada para
+   `SALDO_DESCONHECIDO` e **SEGUE com aviso** — nunca recusa. Tem válvula PRÓPRIA, porque em 13/10 a
+   única saída era desligar o sensor inteiro.
 
 ## Regras
 
@@ -85,3 +156,11 @@ Piso é o lado certo de errar num guard: nunca libera o que devia barrar.
 4. **2ª opinião só morde com o substrato junto** — mande o caminho dos dados e peça re-medição.
 5. **Sensor de recurso esgotável: teste no estado ESGOTADO**, que é quando ele precisa falar. A suíte
    sintética passa; é o estado real que denuncia.
+6. **Janela ROLANTE: "o prazo ainda não venceu" NÃO prova que a janela é a mesma.** O `resets_at` de
+   uma janela rolante anda para frente sozinho — duas leituras podem ter o prazo no futuro e ser de
+   ciclos diferentes. Uma leitura só é piso do estado de AGORA se pertencer à MESMA janela, e a
+   identidade da janela é um campo do dado (`(window_minutes, resets_at)`), não a validade do prazo.
+7. **Em sensor, leitura sem IDADE é leitura sem confiança.** Dado velho que decide com confiança é
+   pior que dado ausente: ausente degrada e avisa, velho **recusa**. Date a leitura na fonte (aqui, o
+   `timestamp` da linha) e ponha teto de idade **com válvula própria** — se a única saída for desligar
+   o sensor inteiro, a válvula não existe.

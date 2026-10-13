@@ -157,6 +157,34 @@ a="    --sandbox read-only \"$prompt\" >\"$out\" 2>\"$err\" &\n"
 assert s.count(a)==1
 io.open(p,"w",encoding="utf-8").write(s.replace(a,a[:-2]+"<&0 &\n"))'
 
+  # (7) o sensor de saldo volta a decidir com leitura de OUTRA janela: o piso passa a varrer
+  # toda leitura de reset futuro, não só a da janela escolhida. É o defeito de 13/10 de volta
+  # (recusou com 95% de uma janela já rolada contra uma cota real de 3%).
+  sabotar saldo_janela janela-rolante '
+import io,os
+p=os.environ["ALVO"]; s=io.open(p,encoding="utf-8").read()
+a="      for (i = 1; i <= n; i++) if (W[i] == bucket && R[i] == janela) {"
+assert s.count(a)==1, s.count(a)
+io.open(p,"w",encoding="utf-8").write(s.replace(a,"      for (i = 1; i <= n; i++) if (W[i] == bucket && R[i] > agora) {"))'
+
+  # (8) tirar o teto de IDADE: a leitura de 9h volta a sustentar recusa sozinha. Era a outra
+  # metade do 13/10 — às 06:32 a leitura nova ainda não existia, e (7) sozinho não cobre isso.
+  sabotar saldo_idade leitura-envelhecida '
+import io,os
+p=os.environ["ALVO"]; s=io.open(p,encoding="utf-8").read()
+a="(idade_max > 0 && idade > idade_max) ? \"velha\" : \"ok\""
+assert s.count(a)==1, s.count(a)
+io.open(p,"w",encoding="utf-8").write(s.replace(a,"\"ok\""))'
+
+  # (9) o piso da janela vira o MENOR used_percent nela: uma leitura fresca mais baixa na
+  # MESMA janela destrancaria o que já se mediu alto — falha ABERTA, e o oposto do piso.
+  sabotar saldo_piso piso-da-janela '
+import io,os
+p=os.environ["ALVO"]; s=io.open(p,encoding="utf-8").read()
+a="        if (piso == \"\" || P[i] + 0 > piso + 0) piso = P[i]"
+assert s.count(a)==1, s.count(a)
+io.open(p,"w",encoding="utf-8").write(s.replace(a,"        if (piso == \"\" || P[i] + 0 < piso + 0) piso = P[i]"))'
+
   echo
   if [ "$falhas" -eq 0 ]; then echo "PASS — toda sabotagem ficou vermelha pela marca certa"; else echo "FALHOU"; fi
   exit "$falhas"
@@ -729,9 +757,23 @@ run_saldo() { # home teto modo args...
     CODEX_HOME="$tmp/$home" CODEX_STUB_MODE="$mode" CODEX_STUB_COUNT="$tmp/count" \
     CODEX_STUB_ARGS="$tmp/args" LC_ALL="${LC_ALL:-C}" CODEX_ASYNC_TETO_SALDO="$teto" CODEX_ASYNC_BACKOFFS="0 0 0" bash "$ASYNC" "$@" </dev/null
 }
-limites() { printf '{"rate_limits":{"primary":{"used_percent":%s,"window_minutes":10080,"resets_at":%s}}}' "$1" "$2"; }
-futuro=$(( $(date +%s) + 86400 ))
-passado=$(( $(date +%s) - 86400 ))
+# ISO-8601 UTC como o codex escreve. BSD quer `-r EPOCH`, GNU quer `-d @EPOCH` — o mesmo
+# par de formas que o wrapper usa ao imprimir a reabertura da janela.
+iso_utc() { date -u -r "$1" '+%Y-%m-%dT%H:%M:%S.000Z' 2>/dev/null \
+         || date -u -d "@$1" '+%Y-%m-%dT%H:%M:%S.000Z' 2>/dev/null; }
+# A linha do rollout INTEIRA, com o `timestamp` que data a leitura — sem ele o sensor não
+# tem como saber a IDADE do que leu, e era essa cegueira que sustentava a recusa de 13/10.
+limites() { # used_percent  resets_at  [epoch_da_leitura=agora]  [window_minutes=10080]
+  printf '{"timestamp":"%s","ordinal":9,"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1}}},"rate_limits":{"limit_id":"codex","limit_name":null,"primary":{"used_percent":%s,"window_minutes":%s,"resets_at":%s}}}' \
+    "$(iso_utc "${3:-$(date +%s)}")" "$1" "${4:-10080}" "$2"
+}
+agora_epoch=$(date +%s)
+futuro=$(( agora_epoch + 86400 ))
+passado=$(( agora_epoch - 86400 ))
+futuro_2d=$(( agora_epoch + 2 * 86400 ))
+futuro_7d=$(( agora_epoch + 7 * 86400 ))
+ha_30min=$(( agora_epoch - 30 * 60 ))
+ha_9h=$(( agora_epoch - 9 * 3600 ))
 
 novo_home codexhome_alto;  mk_rollout codexhome_alto  14 10 "$(limites 94.0 "$futuro")"
 run_saldo codexhome_alto 85 ok "x" >/dev/null 2>&1
@@ -769,6 +811,94 @@ caso_exit "rollout recente sem medidor → acha o anterior → 79" 79 $?
 
 run_saldo codexhome_alto 0 ok "x" >/dev/null 2>&1
 caso_exit "CODEX_ASYNC_TETO_SALDO=0 desliga o sensor" 0 $?
+
+# (e) JANELA ROLANTE — o ponto cego MEDIDO em 13/10/2026 (leituras reais dos rollouts do
+# founder). Duas leituras, AS DUAS com `resets_at` no futuro (⇒ a armadilha (b) não
+# descarta nenhuma), mas de janelas DIFERENTES:
+#     95,0%  reset 18/10 08:58   medida 12/10 21:16
+#      3,0%  reset 20/10 06:33   medida 13/10 06:33   ← a janela ROLOU
+# O fixture inverte o nome do arquivo de propósito: a leitura VELHA mora no rollout de nome
+# MAIS NOVO. É o que a ordem por nome não enxerga — o medidor mais fresco pode estar num
+# arquivo de nome mais antigo (sessão longa ainda escrevendo), e aí "o primeiro com reset no
+# futuro" devolve o saldo de OUTRA janela e recusa com 95% uma cota que está em 3%.
+novo_home codexhome_rolou
+mk_rollout codexhome_rolou 14 10 "$(limites  3.0 "$futuro_7d" "$agora_epoch")"
+mk_rollout codexhome_rolou 18 19 "$(limites 95.0 "$futuro_2d" "$ha_30min")"
+saida="$(run_saldo codexhome_rolou 85 ok "x" 2>&1)"; rc=$?
+caso_exit "janela rolou: a leitura de 3% (janela de agora) vence a de 95% (janela velha)" 0 "$rc"
+if printf '%s' "$saida" | grep -q "saldo da cota: 3.0% usado"; then
+  echo "  ok    …e o saldo reportado e o da janela de AGORA (3.0%)"
+else
+  echo "  FAIL [janela-rolante]  nao reportou 3.0% usado — o sensor decidiu com leitura de OUTRA janela"; fail=1
+fi
+if [ "$(invocacoes)" -eq 1 ]; then echo "  ok    …e a consulta ACONTECEU (1 invocacao) — nao barrou trabalho legitimo"
+else echo "  FAIL [janela-rolante]  $(invocacoes) invocacoes — a consulta nao rodou"; fail=1; fi
+
+# Piso DENTRO da mesma janela: o que vale é o MAIOR used_percent já visto nela, não o último
+# lido. Medido hoje (19.602 leituras do bucket de 7 dias): ZERO violações de piso dentro de
+# uma mesma janela — dentro dela o consumo só sobe. Então uma leitura fresca de 20% na MESMA
+# janela em que já se viu 94% não destranca nada: o piso continua 94%.
+novo_home codexhome_piso
+mk_rollout codexhome_piso 14 10 "$(limites 94.0 "$futuro_2d" "$ha_30min")"
+mk_rollout codexhome_piso 18 19 "$(limites 20.0 "$futuro_2d" "$agora_epoch")"
+run_saldo codexhome_piso 85 ok "x" >/dev/null 2>&1
+rc=$?
+if [ "$rc" -eq 79 ]; then echo "  ok    exit 79 | piso da janela: 94% ja visto nao cai para os 20% da leitura nova"
+else echo "  FAIL [piso-da-janela]  want exit 79, got $rc — o piso da janela nao foi respeitado"; fail=1; fi
+
+# (f) LEITURA ENVELHECIDA — a camada que o caso (e) NÃO cobre: na recusa real das 06:32 de
+# 13/10 a leitura nova AINDA NÃO EXISTIA (os rollouts de 3% nasceram das chamadas que só
+# rodaram depois, com CODEX_ASYNC_TETO_SALDO=0). Com uma única leitura de 9h atrás não há
+# como saber se a janela rolou ⇒ degrada para SALDO_DESCONHECIDO e SEGUE com aviso; recusar
+# com confiança sobre dado de 9h atrás foi o que bloqueou ~9h de trabalho contra cota vazia.
+novo_home codexhome_velha_demais
+mk_rollout codexhome_velha_demais 14 10 "$(limites 95.0 "$futuro_2d" "$ha_9h")"
+saida="$(run_saldo codexhome_velha_demais 85 ok "x" 2>&1)"; rc=$?
+caso_exit "leitura de 9h atras nao sustenta recusa: degrada e segue" 0 "$rc"
+if printf '%s' "$saida" | grep -q "SALDO_DESCONHECIDO"; then
+  echo "  ok    …e DIZ que a leitura envelheceu (degradar nao e silenciar)"
+else
+  echo "  FAIL [leitura-envelhecida]  recusou (ou seguiu calado) com leitura de 9h — dado velho decidindo com confianca"; fail=1
+fi
+
+# Controle do teto de idade: ele NÃO pode matar o sensor. Leitura FRESCA de 94% segue
+# recusando — é o caso que o #2516 nasceu para cobrir.
+novo_home codexhome_fresco_alto
+mk_rollout codexhome_fresco_alto 14 10 "$(limites 94.0 "$futuro_2d" "$agora_epoch")"
+run_saldo codexhome_fresco_alto 85 ok "x" >/dev/null 2>&1
+rc=$?
+if [ "$rc" -eq 79 ]; then echo "  ok    exit 79 | controle: leitura FRESCA de 94% continua recusando"
+else echo "  FAIL [teto-idade-matou-sensor]  want exit 79, got $rc — o teto de idade cegou o sensor no caso que importa"; fail=1; fi
+
+# O teto de idade é configurável e `0` o desliga (o sensor volta a confiar em leitura de
+# qualquer idade) — a válvula que faltava em 13/10, quando a ÚNICA saída era
+# CODEX_ASYNC_TETO_SALDO=0, que desliga o sensor INTEIRO e perde a proteção real.
+rc=0
+env -i PATH="$tmp/bin:/usr/bin:/bin" HOME="$HOME" TMPDIR="$tmp" \
+  CODEX_HOME="$tmp/codexhome_velha_demais" CODEX_STUB_MODE=ok CODEX_STUB_COUNT="$tmp/count" \
+  CODEX_STUB_ARGS="$tmp/args" LC_ALL="${LC_ALL:-C}" CODEX_ASYNC_TETO_SALDO=85 \
+  CODEX_ASYNC_IDADE_MAX_SALDO=0 CODEX_ASYNC_BACKOFFS="0 0 0" bash "$ASYNC" "x" >/dev/null 2>&1 || rc=$?
+if [ "$rc" -eq 79 ]; then echo "  ok    exit 79 | CODEX_ASYNC_IDADE_MAX_SALDO=0 desliga o teto de idade (sem desligar o sensor)"
+else echo "  FAIL [idade-max-configuravel]  want exit 79, got $rc — a valvula do teto de idade nao funciona"; fail=1; fi
+
+# …e um valor QUEBRADO não pode esvaziar o teto em silêncio. `$(( 2h * 60 ))` falha, `idade_max`
+# sai VAZIO e `idade_max > 0` fica falso ⇒ sem teto, recusando sobre leitura velha outra vez.
+# Presente-porém-quebrada é o modo que esvazia guard sem avisar (CLAUDE.md §sonda ausente).
+rc=0
+saida="$(env -i PATH="$tmp/bin:/usr/bin:/bin" HOME="$HOME" TMPDIR="$tmp" \
+  CODEX_HOME="$tmp/codexhome_velha_demais" CODEX_STUB_MODE=ok CODEX_STUB_COUNT="$tmp/count" \
+  CODEX_STUB_ARGS="$tmp/args" LC_ALL="${LC_ALL:-C}" CODEX_ASYNC_TETO_SALDO=85 \
+  CODEX_ASYNC_IDADE_MAX_SALDO=2h CODEX_ASYNC_BACKOFFS="0 0 0" bash "$ASYNC" "x" 2>&1)" || rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$saida" | grep -q "SALDO_DESCONHECIDO"; then
+  echo "  ok    exit 0 | teto de idade QUEBRADO (=2h) nao esvazia o teto: cai no default e degrada"
+else
+  echo "  FAIL [idade-max-quebrada]  exit $rc — valor nao-numerico esvaziou o teto em silencio"; fail=1
+fi
+if printf '%s' "$saida" | grep -q "AVISO: CODEX_ASYNC_IDADE_MAX_SALDO"; then
+  echo "  ok    …e AVISA do valor invalido (nao corrige calado)"
+else
+  echo "  FAIL [idade-max-quebrada]  corrigiu calado — o operador segue achando que o teto e 2h"; fail=1
+fi
 
 echo "── fan-out multi-agente: 1 invocação = 1 execução cobrada ──"
 # O defeito (medido 2026-09-20 sobre ~/.codex/sessions de 04–18/09): o codex-cli 0.153.4 dá ao
