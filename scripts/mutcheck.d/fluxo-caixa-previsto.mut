@@ -7,8 +7,9 @@
 # os 3 status NATIVOS do Omie; saída (CP) com o aberto canônico de `isOpenTitleStatus`. Status
 # ambíguo nunca infla o caixa projetado. As mutações S7 sabotam cada lado e cada status.
 #
-# Linhas de query do CR e do CP são idênticas: as mutações de bloco usam a flag `$f`, ligada na
-# âncora do bloco ("CR do fluxo de caixa" / "CP do fluxo de caixa") e desligada no fim dele —
+# Linhas de query do CR e do CP são idênticas: as mutações de bloco usam a flag `$f`. O rótulo
+# (`fonte` do fetchAllPages) fica no FIM de cada bloco, então: CR = do `Promise.all` até o rótulo
+# "CR do fluxo de caixa"; CP = do rótulo do CR até "CP do fluxo de caixa" —
 # como no desconto-omie.mut. Sem ela o padrão casaria 2 linhas e o mutcheck o daria INVÁLIDO.
 #
 # Fora deste contrato (cobertos pela falsificação estrita do PR, que casa título + mensagem):
@@ -62,21 +63,21 @@ PEGA      | S8 CR: sem piso zero por título              | s/day\.entradas_prev
 PEGA      | S8 CP: sem piso zero por título              | s/day\.saidas_previstas \+= Math\.max\(0, cp\.saldo \?\? 0\);/day.saidas_previstas += cp.saldo ?? 0;/
 
 # ── Empresa: caixa é por CNPJ, não fungível ──
-PEGA      | empresa CR: sem filtro                       | $f=1 if /CR do fluxo de caixa/; $f=0 if /CP do fluxo de caixa/; s/if \(company !== 'all'\) q = q\.eq\("company", company\);// if $f
-PEGA      | empresa CP: sem filtro                       | $f=1 if /CP do fluxo de caixa/; $f=0 if /^  \]\);/; s/if \(company !== 'all'\) q = q\.eq\("company", company\);// if $f
+PEGA      | empresa CR: sem filtro                       | $f=1 if /const \[crData, cpData\] = await Promise\.all/; $f=0 if /CR do fluxo de caixa/; s/if \(company !== 'all'\) q = q\.eq\("company", company\);// if $f
+PEGA      | empresa CP: sem filtro                       | $f=1 if /CR do fluxo de caixa/; $f=0 if /CP do fluxo de caixa/; s/if \(company !== 'all'\) q = q\.eq\("company", company\);// if $f
 PEGA      | empresa realizado: sem filtro                | s/if \(company !== 'all'\) q = q\.eq\('company', company\);//
 
 # ── Janela: inclusiva nas duas pontas, nada de fora ──
-PEGA      | janela CR: sem limite inferior               | $f=1 if /CR do fluxo de caixa/; $f=0 if /CP do fluxo de caixa/; s/\.gte\("data_vencimento", dataInicio\)// if $f
-PEGA      | janela CR: sem limite superior               | $f=1 if /CR do fluxo de caixa/; $f=0 if /CP do fluxo de caixa/; s/\.lte\("data_vencimento", dataFim\);/;/ if $f
-PEGA      | janela CP: sem limite inferior               | $f=1 if /CP do fluxo de caixa/; $f=0 if /^  \]\);/; s/\.gte\("data_vencimento", dataInicio\)// if $f
-PEGA      | janela CP: sem limite superior               | $f=1 if /CP do fluxo de caixa/; $f=0 if /^  \]\);/; s/\.lte\("data_vencimento", dataFim\);/;/ if $f
+PEGA      | janela CR: sem limite inferior               | $f=1 if /const \[crData, cpData\] = await Promise\.all/; $f=0 if /CR do fluxo de caixa/; s/\.gte\("data_vencimento", dataInicio\)// if $f
+PEGA      | janela CR: sem limite superior               | $f=1 if /const \[crData, cpData\] = await Promise\.all/; $f=0 if /CR do fluxo de caixa/; s/\.lte\("data_vencimento", dataFim\);/;/ if $f
+PEGA      | janela CP: sem limite inferior               | $f=1 if /CR do fluxo de caixa/; $f=0 if /CP do fluxo de caixa/; s/\.gte\("data_vencimento", dataInicio\)// if $f
+PEGA      | janela CP: sem limite superior               | $f=1 if /CR do fluxo de caixa/; $f=0 if /CP do fluxo de caixa/; s/\.lte\("data_vencimento", dataFim\);/;/ if $f
 PEGA      | janela realizado: sem limite inferior        | s/\.gte\('data_movimento', dataInicio\)//
 PEGA      | janela realizado: sem limite superior        | s/\.lte\('data_movimento', dataFim\);/;/
 
 # ── Ordem total acima da capa de 1.000 (valor distinto por título: pulo/duplicata desloca a soma) ──
-PEGA      | ordem CR: sem .order("id")                   | $f=1 if /CR do fluxo de caixa/; $f=0 if /CP do fluxo de caixa/; s/return q\.order\("id"\)\.range\(from, to\);/return q.range(from, to);/ if $f
-PEGA      | ordem CP: sem .order("id")                   | $f=1 if /CP do fluxo de caixa/; $f=0 if /^  \]\);/; s/return q\.order\("id"\)\.range\(from, to\);/return q.range(from, to);/ if $f
+PEGA      | ordem CR: sem .order("id")                   | $f=1 if /const \[crData, cpData\] = await Promise\.all/; $f=0 if /CR do fluxo de caixa/; s/return q\.order\("id"\)\.range\(from, to\);/return q.range(from, to);/ if $f
+PEGA      | ordem CP: sem .order("id")                   | $f=1 if /CR do fluxo de caixa/; $f=0 if /CP do fluxo de caixa/; s/return q\.order\("id"\)\.range\(from, to\);/return q.range(from, to);/ if $f
 
 # ── Centavos: nenhum arredondamento no caminho ──
 PEGA      | centavos CR: trunca                          | s/Math\.max\(0, cr\.saldo \?\? 0\)/Math.max(0, Math.trunc(cr.saldo ?? 0))/
