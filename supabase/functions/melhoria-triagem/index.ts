@@ -136,11 +136,10 @@ function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 }
 
-// Fix 1 (P2-1): mapa explícito tool→RPC — nome inesperado nunca executa RPC.
-const RPC_POR_TOOL: Record<string, string> = {
-  clientes_por_produto: "melhoria_clientes_por_produto",
-  produtos_relacionados: "melhoria_produtos_relacionados",
-};
+// Fix 1 (P2-1): lista FECHADA tool→RPC (o `switch` no laço) — nome inesperado nunca executa RPC.
+// O nome da RPC fica LITERAL em cada `case` (não `rpc(variavel)`): é o que deixa o
+// `preflight:rpcs`/`pendencias:pacote` enxergar as dependências de banco desta edge — com
+// indireção o pacote de deploy não sai (molde: #2400).
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
@@ -278,11 +277,19 @@ Avalie e finalize chamando a tool "triar".`;
       // Tool de dados: executa a RPC com o JWT do caller (escopo de carteira correto).
       // Mapa explícito + guard: nome inesperado OU tools desabilitadas NUNCA executam RPC
       // (defesa em profundidade do anti-vazamento — spec §5).
-      const rpcName = toolsDadosHabilitadas ? RPC_POR_TOOL[toolUse.name] : undefined;
-      if (!rpcName) break; // triagem fica null → marcarErro (degradação honesta)
-
       const input = toolUse.input as { p_termo?: string };
-      const { data: rpcData, error: rpcErr } = await userClient.rpc(rpcName, { p_termo: String(input?.p_termo ?? "") });
+      const argsRpc = { p_termo: String(input?.p_termo ?? "") };
+      let respostaRpc;
+      switch (toolsDadosHabilitadas ? toolUse.name : "") {
+        case "clientes_por_produto":
+          respostaRpc = await userClient.rpc("melhoria_clientes_por_produto", argsRpc);
+          break;
+        case "produtos_relacionados":
+          respostaRpc = await userClient.rpc("melhoria_produtos_relacionados", argsRpc);
+          break;
+      }
+      if (!respostaRpc) break; // triagem fica null → marcarErro (degradação honesta)
+      const { data: rpcData, error: rpcErr } = respostaRpc;
       const resultado = rpcErr ? { erro: rpcErr.message } : rpcData;
       if (!rpcErr) dadosExecutados.push({ tool: toolUse.name, input: { p_termo: input?.p_termo }, resultado });
 
