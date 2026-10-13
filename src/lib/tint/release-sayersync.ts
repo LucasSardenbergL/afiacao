@@ -42,6 +42,16 @@ export function compararSemver(a: string, b: string): number {
   return 0;
 }
 
+/**
+ * Próxima versão sugerida = patch+1 da versão no ar (0.2.3 → 0.2.4). Sem manifest no ar
+ * (ou com versão fora do semver estrito) → null: não há base para sugerir.
+ */
+export function proximaVersaoPatch(manifestAtual: ManifestSayersync | null): string | null {
+  const m = manifestAtual ? SEMVER_RE.exec(manifestAtual.version) : null;
+  if (!m) return null;
+  return `${m[1]}.${m[2]}.${Number(m[3]) + 1}`;
+}
+
 export function nomeExe(versao: string): string {
   return `sayersync-${versao}.exe`;
 }
