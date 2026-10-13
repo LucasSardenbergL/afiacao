@@ -20,6 +20,8 @@ let selection = 'oben';
 const track = vi.fn();
 vi.mock('@/hooks/dashboard/useCrescimentoComparavel', () => ({ useCrescimentoComparavel: () => estado }));
 vi.mock('@/lib/analytics', () => ({ track: (...a: unknown[]) => track(...a) }));
+const ledger = vi.fn();
+vi.mock('@/lib/analytics-ledger', () => ({ registrarNoLedger: (...a: unknown[]) => ledger(...a) }));
 vi.mock('@/contexts/CompanyContext', () => ({
   useCompany: () => ({ selection, companyInfo: { shortName: 'Oben' } }),
   COMPANIES: { oben: { shortName: 'Oben' }, colacor: { shortName: 'Colacor' } },
@@ -53,6 +55,7 @@ const ok: CoberturaEmpresa[] = [{ account: 'oben', atual: 1.3, base: 1.25 }];
 
 beforeEach(() => {
   track.mockReset();
+  ledger.mockReset();
   selection = 'oben';
 });
 
@@ -189,6 +192,25 @@ describe('CrescimentoComparavelCard', () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+
+  it('[CC-LEDGER] o mesmo sinal vai ao ledger imune ao bloqueador, com a chave (empresa|comparação)', () => {
+    comDados(ok, ok);
+    render(<CrescimentoComparavelCard />);
+    expect(ledger).toHaveBeenCalledTimes(1);
+    expect(ledger).toHaveBeenCalledWith('dashboard.crescimento_comparavel_servido', 'oben|ano_anterior', {
+      selection: 'oben',
+      comparacao: 'ano_anterior',
+      estado: 'comparavel',
+      origem: 'padrao',
+    });
+  });
+
+  it('[CC-LEDGER-ERRO] com a UI em erro, nem o PostHog nem o ledger recebem', () => {
+    comDados(ok, ok);
+    estado = { ...estado, isError: true };
+    render(<CrescimentoComparavelCard />);
+    expect(ledger).not.toHaveBeenCalled();
   });
 
   it('[CC-SC] Colacor SC (serviços, sem pedido) explica em vez de mostrar ponte vazia', () => {

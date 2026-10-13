@@ -30,3 +30,27 @@ Colacor (0,49 vs 0,91 = 1,86×) e deixa os outros três cortes (1,08–1,12×).
 - **Teste cujo nome contradiz a asserção é defeito no código, não no teste:** "cobertura 0 é sinal, não
   ausência" esperava "não verificada" — a regra tratava sync que perdeu a janela inteira como dúvida, e a
   ponte mostraria todo cliente como "saiu". Virou "incomparável".
+
+## O sensor que não media (2026-10-12)
+
+O card foi visto com números (confirmado pelo founder, com `/meu-dia` rolado a 100%) e o PostHog tinha
+**zero** `dashboard.crescimento_comparavel_visto`. Eram dois defeitos empilhados, e o segundo só apareceu
+depois de consertar o primeiro:
+
+1. **Limiar único** (#3006): `threshold: [0, 0.5]` + `ratio >= 0.5`. O navegador chama o callback só ao
+   CRUZAR um limiar, e no cruzamento pode reportar 0,4999 — era a única chance. Agora são cinco limiares
+   e tolerância de 0,02, com teste de regressão e as duas sabotagens vermelhas.
+2. **Canal censurado:** o Chrome do founder bloqueia `us.i.posthog.com` (já documentado em
+   `docs/agent/analytics.md`). A prova veio do par imune: `telemetria_probes` registrou os boots
+   (23:25/23:27 UTC, build novo) e o PostHog, nenhum evento web. Uma exceção no bloqueador funcionou
+   por alguns minutos e não sobreviveu à reabertura das abas.
+
+**Conserto do 2:** o card grava também no **ledger** (`analytics_ledger_registrar`), que escreve pelo
+domínio do app. Migration `20261012233500` (allowlist + postcondição que exige os três eventos), aplicada
+pelo `db:aplicar` (recibo #384) com md5 do corpo na prod = o da migration; prova PG17 nos dois locales
+(`db/test-analytics-ledger-crescimento.sh`, 10 asserts, 2 sabotagens abortadas pela postcondição). Teste
+de **paridade** banco × `EventoLedger` (o ledger é fail-open: evento fora da allowlist sumiria calado).
+
+**Lição:** sinal que decide fase seguinte nasce no ledger, não só no PostHog — a regra já estava no
+`analytics.md`; o card a violou na origem, e o custo foi um dia de sensor mudo. "Superfície nasce com
+o sensor" exige o sensor **no canal que o usuário principal não bloqueia**.
