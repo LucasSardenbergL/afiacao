@@ -510,3 +510,7 @@ db/test-universo-pedidos-classe.sh         118  falsificar=fora-do-ci  # 18 roda
 db/test-omie-cota-metodo.sh                 44
 db/test-picking-v2.sh                       129
 db/test-cron-dr-sync-reprocess-pedidos-colacor.sh 10
+# Watchdog diário (2026-10-13): o e-mail das 08:00 só sai com problema (listando causa e correção de cada um)
+# ou, sem problema, às SEGUNDAS em Brasília como prova de vida. Defeito aqui = silêncio com sistema
+# quebrado (o founder deixa de ser avisado) ou ruído diário. Esquema mínimo, sem snapshot (~5 s/rodada).
+db/test-watchdog-diario-so-problema.sh      22  falsificar=6
