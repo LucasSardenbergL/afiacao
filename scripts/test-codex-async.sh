@@ -157,6 +157,34 @@ a="    --sandbox read-only \"$prompt\" >\"$out\" 2>\"$err\" &\n"
 assert s.count(a)==1
 io.open(p,"w",encoding="utf-8").write(s.replace(a,a[:-2]+"<&0 &\n"))'
 
+  # (7) o sensor de saldo volta a decidir com leitura de OUTRA janela: o piso passa a varrer
+  # toda leitura de reset futuro, não só a da janela escolhida. É o defeito de 13/10 de volta
+  # (recusou com 95% de uma janela já rolada contra uma cota real de 3%).
+  sabotar saldo_janela janela-rolante '
+import io,os
+p=os.environ["ALVO"]; s=io.open(p,encoding="utf-8").read()
+a="      for (i = 1; i <= n; i++) if (W[i] == bucket && R[i] == janela) {"
+assert s.count(a)==1, s.count(a)
+io.open(p,"w",encoding="utf-8").write(s.replace(a,"      for (i = 1; i <= n; i++) if (W[i] == bucket && R[i] > agora) {"))'
+
+  # (8) tirar o teto de IDADE: a leitura de 9h volta a sustentar recusa sozinha. Era a outra
+  # metade do 13/10 — às 06:32 a leitura nova ainda não existia, e (7) sozinho não cobre isso.
+  sabotar saldo_idade leitura-envelhecida '
+import io,os
+p=os.environ["ALVO"]; s=io.open(p,encoding="utf-8").read()
+a="(idade_max > 0 && idade > idade_max) ? \"velha\" : \"ok\""
+assert s.count(a)==1, s.count(a)
+io.open(p,"w",encoding="utf-8").write(s.replace(a,"\"ok\""))'
+
+  # (9) o piso da janela vira o MENOR used_percent nela: uma leitura fresca mais baixa na
+  # MESMA janela destrancaria o que já se mediu alto — falha ABERTA, e o oposto do piso.
+  sabotar saldo_piso piso-da-janela '
+import io,os
+p=os.environ["ALVO"]; s=io.open(p,encoding="utf-8").read()
+a="        if (piso == \"\" || P[i] + 0 > piso + 0) piso = P[i]"
+assert s.count(a)==1, s.count(a)
+io.open(p,"w",encoding="utf-8").write(s.replace(a,"        if (piso == \"\" || P[i] + 0 < piso + 0) piso = P[i]"))'
+
   echo
   if [ "$falhas" -eq 0 ]; then echo "PASS — toda sabotagem ficou vermelha pela marca certa"; else echo "FALHOU"; fi
   exit "$falhas"
@@ -852,6 +880,25 @@ env -i PATH="$tmp/bin:/usr/bin:/bin" HOME="$HOME" TMPDIR="$tmp" \
   CODEX_ASYNC_IDADE_MAX_SALDO=0 CODEX_ASYNC_BACKOFFS="0 0 0" bash "$ASYNC" "x" >/dev/null 2>&1 || rc=$?
 if [ "$rc" -eq 79 ]; then echo "  ok    exit 79 | CODEX_ASYNC_IDADE_MAX_SALDO=0 desliga o teto de idade (sem desligar o sensor)"
 else echo "  FAIL [idade-max-configuravel]  want exit 79, got $rc — a valvula do teto de idade nao funciona"; fail=1; fi
+
+# …e um valor QUEBRADO não pode esvaziar o teto em silêncio. `$(( 2h * 60 ))` falha, `idade_max`
+# sai VAZIO e `idade_max > 0` fica falso ⇒ sem teto, recusando sobre leitura velha outra vez.
+# Presente-porém-quebrada é o modo que esvazia guard sem avisar (CLAUDE.md §sonda ausente).
+rc=0
+saida="$(env -i PATH="$tmp/bin:/usr/bin:/bin" HOME="$HOME" TMPDIR="$tmp" \
+  CODEX_HOME="$tmp/codexhome_velha_demais" CODEX_STUB_MODE=ok CODEX_STUB_COUNT="$tmp/count" \
+  CODEX_STUB_ARGS="$tmp/args" LC_ALL="${LC_ALL:-C}" CODEX_ASYNC_TETO_SALDO=85 \
+  CODEX_ASYNC_IDADE_MAX_SALDO=2h CODEX_ASYNC_BACKOFFS="0 0 0" bash "$ASYNC" "x" 2>&1)" || rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$saida" | grep -q "SALDO_DESCONHECIDO"; then
+  echo "  ok    exit 0 | teto de idade QUEBRADO (=2h) nao esvazia o teto: cai no default e degrada"
+else
+  echo "  FAIL [idade-max-quebrada]  exit $rc — valor nao-numerico esvaziou o teto em silencio"; fail=1
+fi
+if printf '%s' "$saida" | grep -q "AVISO: CODEX_ASYNC_IDADE_MAX_SALDO"; then
+  echo "  ok    …e AVISA do valor invalido (nao corrige calado)"
+else
+  echo "  FAIL [idade-max-quebrada]  corrigiu calado — o operador segue achando que o teto e 2h"; fail=1
+fi
 
 echo "── fan-out multi-agente: 1 invocação = 1 execução cobrada ──"
 # O defeito (medido 2026-09-20 sobre ~/.codex/sessions de 04–18/09): o codex-cli 0.153.4 dá ao

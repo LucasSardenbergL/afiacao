@@ -309,7 +309,18 @@ saldo_de_cota() {
   local s="${CODEX_HOME:-$HOME/.codex}/sessions" f idade_max
   local -a arqs=()
   [ -d "$s" ] || return 0
-  idade_max=$(( ${CODEX_ASYNC_IDADE_MAX_SALDO:-120} * 60 ))
+  # Valor QUEBRADO não pode esvaziar o teto em silêncio: `$(( 2h * 60 ))` falha, e daí em
+  # diante `idade_max` fica sem valor — com `set -u` a função morre e o sensor inteiro cega.
+  # Presente-porém-quebrada é o modo que esvazia guard sem avisar (CLAUDE.md §sonda ausente):
+  # exige-se dígitos, cai no default e DIZ — corrigir calado deixaria o operador achando que
+  # o teto que ele pediu está em vigor.
+  idade_max="${CODEX_ASYNC_IDADE_MAX_SALDO:-120}"
+  case "$idade_max" in
+    ''|*[!0-9]*)
+      echo "AVISO: CODEX_ASYNC_IDADE_MAX_SALDO='$idade_max' não é um número de minutos — usando 120." >&2
+      idade_max=120 ;;
+  esac
+  idade_max=$(( idade_max * 60 ))
   # (c) `sort` lexicográfico = cronológico; o `tail -40` é a profundidade de (d).
   while IFS= read -r f; do [ -n "$f" ] && [ -r "$f" ] && arqs+=("$f"); done \
     <<< "$(find "$s" -name 'rollout-*.jsonl' -type f 2>/dev/null | sort | tail -40)"
