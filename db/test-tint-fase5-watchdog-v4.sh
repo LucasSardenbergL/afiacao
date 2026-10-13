@@ -295,7 +295,7 @@ suite() {
          ('oben','tint_fase5_fonte_retirada','aviso','x','{\"_n\":12386}', '2026-09-28 12:00+00', '2026-10-13 12:00+00'),
          ('oben','tint_fase5_fonte_retirada','aviso','y','{\"_n\":548}',   '2026-08-11 12:00+00', '2026-08-14 12:00+00'),
          ('oben','tint_fase5_fonte_retirada','aviso','z','{\"_n\":1}',     '2026-09-28 12:00+00', '2026-10-13 08:00+00');" >/dev/null
-  P -f "$mig"
+  P -1 -f "$mig"
   eq R6a "$(Pq -c "SELECT COALESCE(contexto->>'encerrado_por','-') || '/' || COALESCE(contexto->>'criterio_de','-') FROM fin_alertas WHERE mensagem='x'")" "mudanca_criterio/v2"
   eq R6b "$(Pq -c "SELECT COALESCE(contexto->>'encerrado_por','-') FROM fin_alertas WHERE mensagem='y'")" "-"
   eq R6c "$(Pq -c "SELECT COALESCE(contexto->>'encerrado_por','-') FROM fin_alertas WHERE mensagem='z'")" "-"
@@ -377,8 +377,11 @@ suite() {
   P -c "UPDATE tint_staging_formulas SET created_at = (SELECT t FROM _t) - interval '3 seconds';" >/dev/null
   roda
   eq F3 "$(meta fantasmas)/$(meta cor_nova)" "1/0"
-  # F4: um snapshot MAIS NOVO mas só 'pendente', sem COR1: a referência é o último APLICADO
-  P -c "SELECT _reset(); SELECT _snap('aaaaaaaa-0000-0000-0000-000000000003', now(), NULL, 'pendente', '{COR1}');" >/dev/null
+  # F4: um snapshot MAIS NOVO, sem COR1, com aplicado_em preenchido mas status 'erro' (um re-apply que
+  # falhou; o #3054 também re-marca 'pendente' sem limpar aplicado_em). A referência é o último APLICADO.
+  # Medido na 1ª falsificação: com aplicado_em NULL o filtro de status era REDUNDANTE (o NULLS LAST da
+  # ordenação já descartava) — o caso que só o filtro pega é este.
+  P -c "SELECT _reset(); SELECT _snap('aaaaaaaa-0000-0000-0000-000000000003', now(), now(), 'erro', '{COR1}');" >/dev/null
   roda
   eq F4 "$(ativos tint_fase5_fonte_fantasma)/$(meta fantasmas)" "0/0"
   # F7: 1.000 fórmulas fantasma = limiar de 'critico' NA igualdade
@@ -450,9 +453,13 @@ PY
   fi
   echo "── sabotagem $rot (esperado: $esp) ──"
   case "$esp" in
-    APPLY:*)
-      local marca="${esp#APPLY:}" saida
-      if saida="$(P -f "$alvo" 2>&1)"; then
+    APPLY:*|APPLYFRESCO:*)
+      local marca="${esp#*:}" saida
+      # APPLYFRESCO: a tabela nova ainda não existe (o 1º apply em prod) — é quando o default
+      # privilege do Supabase a faz nascer aberta. Com ela já criada, o IF NOT EXISTS não a recria e
+      # a pós-condição não teria o que pegar (medido na 1ª falsificação).
+      case "$esp" in APPLYFRESCO:*) P -c "DROP TABLE public.tint_watchdog_fase5_amostras;" ;; esac
+      if saida="$(P -1 -f "$alvo" 2>&1)"; then
         SAB_F=$((SAB_F+1)); echo "!! $rot: o apply sabotado PASSOU — a pós-condição não morde"
       elif printf '%s' "$saida" | grep -qF "$marca"; then
         SAB_V=$((SAB_V+1)); echo "   vermelho exato: apply abortou com '$marca'"
@@ -469,7 +476,7 @@ PY
         SAB_F=$((SAB_F+1)); echo "!! $rot: esperado {$esp}, veio {$veio}"; grep -E '^  XX' "$RODADA/sab_${rot}.log" || true
       fi ;;
   esac
-  P -f "$MIG4"   # restaura a real (o pré-guard aceita v4 por cima de v4)
+  P -1 -f "$MIG4"   # restaura a real (o pré-guard aceita v4 por cima de v4)
 }
 
 echo "── CONTROLE: suíte contra a migration REAL, na MESMA invocação ──"
@@ -493,7 +500,7 @@ sabota janela_sem_aplicado "R3" \
 sabota janela_sem_7_dias "R2a" \
   "       AND ks.created_at >= now() - interval '7 days'" \
   "       AND true"
-sabota relogio_aplicado_em "F2" \
+sabota relogio_aplicado_em "F2 F2b" \
   "  SELECT ks.snapshot_id, max(ks.created_at)
     INTO v_snap_id, v_snap_rec" \
   "  SELECT ks.snapshot_id, max(ks.aplicado_em)
@@ -507,7 +514,7 @@ sabota igualdade_estrita "F2b" \
   "sf.created_at >= v_snap_rec" "sf.created_at > v_snap_rec"
 sabota s5_ausente_vira_saudavel "F6a" \
   "  IF v_fant IS NULL THEN" "  IF false THEN"
-sabota s2_sem_criterio_no_ctx "R5c" \
+sabota s2_sem_criterio_no_ctx "R1b R5c" \
   "      jsonb_build_object('criterio', v_criterio, 'chaves', v_s2," \
   "      jsonb_build_object('chaves', v_s2,"
 sabota helper_v1 "H1 H2 H5" \
@@ -530,7 +537,7 @@ sabota retroativo_sem_corte "R6b R6c" \
 # pós-condições: o apply tem de ABORTAR — a sabotagem preserva todo literal que as OUTRAS exigem
 sabota p4_instrucao_proibida "APPLY:P4 FALHOU" \
   "'SayerSystem. NAO mexa no tombstone" "'SayerSystem. Faca recarimbar/limpar o tombstone"
-sabota p8_tabela_aberta "APPLY:P8 FALHOU" \
+sabota p8_tabela_aberta "APPLYFRESCO:P8 FALHOU" \
   "REVOKE ALL ON TABLE public.tint_watchdog_fase5_amostras FROM PUBLIC, anon, authenticated;" "-- (sem revoke)"
 sabota p2b_corte_30d_volta "APPLY:P2b FALHOU" \
   "       AND ks.created_at >= now() - interval '7 days'" "       AND ks.created_at >= now() - interval '30 days'"
