@@ -218,3 +218,14 @@ func TestMascararSenhaPG(t *testing.T) {
 		t.Fatalf("formato keyword vazou senha: %q", got)
 	}
 }
+
+func TestMesclarInstall_DefaultMascaradoColadoNaoViraSenha(t *testing.T) {
+	atual := configDaLoja()
+	novo, err := mesclarConfigInstall(atual, respostasInstall{PGConn: mascararSenhaPG(atual.PGConn)}, "", "v")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if novo.PGConn != atual.PGConn {
+		t.Fatalf("default mascarado colado virou pg_conn gravada: %q", novo.PGConn)
+	}
+}

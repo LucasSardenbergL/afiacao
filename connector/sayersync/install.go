@@ -67,7 +67,8 @@ func mesclarConfigInstall(atual *Config, r respostasInstall, tokenEnc, versao st
 	if v := strings.TrimSpace(r.StoreCode); v != "" {
 		novo.StoreCode = v
 	}
-	if v := strings.TrimSpace(r.PGConn); v != "" {
+	// Colar de volta o default EXIBIDO (mascarado) = Enter — senão "***" vira a senha.
+	if v := strings.TrimSpace(r.PGConn); v != "" && v != mascararSenhaPG(novo.PGConn) {
 		novo.PGConn = v
 	}
 	if tokenEnc != "" {
