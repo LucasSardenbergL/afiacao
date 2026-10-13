@@ -246,14 +246,27 @@ func assistenteInstall(atual *Config) *Config {
 	fmt.Println()
 
 	var r respostasInstall
-	r.AppURL = promptCru(reader, "URL do app", base.AppURL)
-	r.StoreCode = promptCru(reader, "store_code (ex: colacor-divinopolis)", base.StoreCode)
-	if temTokenSalvo(atual) {
-		r.Token = promptCru(reader, "Token de sync (Enter mantém o token atual; cole um novo para trocar)", "")
-	} else {
-		r.Token = promptCru(reader, "Token de sync (copiado de /tintometrico/integracao)", "")
+	perguntas := []struct {
+		destino *string
+		texto   string
+		exibido string
+	}{
+		{&r.AppURL, "URL do app", base.AppURL},
+		{&r.StoreCode, "store_code (ex: colacor-divinopolis)", base.StoreCode},
+		{&r.Token, "Token de sync (copiado de /tintometrico/integracao)", ""},
+		{&r.PGConn, "String de conexão PostgreSQL", mascararSenhaPG(base.PGConn)},
 	}
-	r.PGConn = promptCru(reader, "String de conexão PostgreSQL", mascararSenhaPG(base.PGConn))
+	if temTokenSalvo(atual) {
+		perguntas[2].texto = "Token de sync (Enter mantém o token atual; cole um novo para trocar)"
+	}
+	for _, p := range perguntas {
+		v, err := promptCru(reader, p.texto, p.exibido)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "\nERRO: %v. Nada foi gravado.\n", err)
+			os.Exit(1)
+		}
+		*p.destino = v
+	}
 
 	// Protege o token NOVO com DPAPI (escopo de máquina — LocalService descriptografa).
 	tokenEnc := ""
@@ -271,7 +284,20 @@ func assistenteInstall(atual *Config) *Config {
 		fmt.Fprintf(os.Stderr, "ERRO: %v. Nada foi gravado.\n", err)
 		os.Exit(1)
 	}
-	if err := SaveConfig(cfg); err != nil {
+	// Mescla sobre o JSON cru: chaves que esta versão não conhece sobrevivem.
+	var raw []byte
+	if atual != nil {
+		if raw, err = os.ReadFile(configPath()); err != nil {
+			fmt.Fprintf(os.Stderr, "ERRO ao reler config.json: %v. Nada foi gravado.\n", err)
+			os.Exit(1)
+		}
+	}
+	data, err := configJSONPreservandoDesconhecidos(raw, cfg)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ERRO ao serializar config.json: %v. Nada foi gravado.\n", err)
+		os.Exit(1)
+	}
+	if err := salvarConfigBytes(data); err != nil {
 		fmt.Fprintf(os.Stderr, "ERRO ao salvar config.json: %v\n", err)
 		os.Exit(1)
 	}
@@ -457,18 +483,6 @@ func runOneCycle(ctx context.Context, cfg *Config) bool {
 // ──────────────────────────────────────────────
 // helpers
 // ──────────────────────────────────────────────
-
-// promptCru mostra o default (que pode estar mascarado) e devolve a resposta CRUA:
-// "" = Enter. Quem aplica o default é mesclarConfigInstall.
-func promptCru(r *bufio.Reader, question, shownDefault string) string {
-	if shownDefault != "" {
-		fmt.Printf("%s [%s]: ", question, shownDefault)
-	} else {
-		fmt.Printf("%s: ", question)
-	}
-	line, _ := r.ReadString('\n')
-	return strings.TrimSpace(line)
-}
 
 // exeDir retorna o diretório do executável atual (para gravar config/state/schema).
 func exeDir() string {

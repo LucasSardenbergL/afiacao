@@ -10,10 +10,13 @@
 package main
 
 import (
+	"bufio"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
 	"net/url"
+	"regexp"
 	"strings"
 )
 
@@ -113,20 +116,69 @@ func temFlag(args []string, flag string) bool {
 	return false
 }
 
+var reSenhaKeyword = regexp.MustCompile(`(?i)(password\s*=\s*)('(?:[^'\\]|\\.)*'|\S+)`)
+
 // mascararSenhaPG esconde a senha da pg_conn no default exibido pelo prompt (a
-// string real continua sendo o default). Não-URL volta inalterada só se não
-// parecer conter credencial.
+// string real continua sendo o default). Cobre userinfo e ?password= da URL e o
+// formato keyword (password = x, com ou sem aspas).
 func mascararSenhaPG(conn string) string {
 	u, err := url.Parse(conn)
-	if err != nil || u.User == nil {
-		if strings.Contains(conn, "password=") {
-			return "(conexão atual — senha oculta)"
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return reSenhaKeyword.ReplaceAllString(conn, "${1}***")
+	}
+	if u.User != nil {
+		if _, temSenha := u.User.Password(); temSenha {
+			u.User = url.UserPassword(u.User.Username(), "***")
 		}
-		return conn
 	}
-	if _, temSenha := u.User.Password(); !temSenha {
-		return conn
+	q := u.Query()
+	for k := range q {
+		if strings.EqualFold(k, "password") {
+			q.Set(k, "***")
+		}
 	}
-	u.User = url.UserPassword(u.User.Username(), "***")
-	return strings.Replace(u.String(), "%2A%2A%2A", "***", 1)
+	u.RawQuery = q.Encode()
+	return strings.ReplaceAll(u.String(), "%2A%2A%2A", "***")
+}
+
+// promptCru mostra o default (que pode estar mascarado) e devolve a resposta CRUA:
+// "" = Enter. Qualquer erro de leitura — inclusive EOF com bytes parciais — é
+// devolvido: o assistente ABORTA antes de cifrar/gravar/mexer no serviço (stdin
+// cortado no meio não pode virar "Enter em tudo" nem um fragmento de token). (Codex P1)
+func promptCru(r *bufio.Reader, question, shownDefault string) (string, error) {
+	if shownDefault != "" {
+		fmt.Printf("%s [%s]: ", question, shownDefault)
+	} else {
+		fmt.Printf("%s: ", question)
+	}
+	line, err := r.ReadString('\n')
+	if err != nil {
+		return "", fmt.Errorf("entrada interrompida em %q: %w", question, err)
+	}
+	return strings.TrimSpace(line), nil
+}
+
+// configJSONPreservandoDesconhecidos serializa cfg SOBRE o JSON cru anterior:
+// chaves que a struct Config não conhece (escritas por outra versão) sobrevivem ao
+// install. rawAnterior vazio = só a struct. (Codex P2)
+func configJSONPreservandoDesconhecidos(rawAnterior []byte, cfg *Config) ([]byte, error) {
+	conhecido, err := json.Marshal(cfg)
+	if err != nil {
+		return nil, err
+	}
+	if len(rawAnterior) == 0 {
+		return json.MarshalIndent(cfg, "", "  ")
+	}
+	var mapa map[string]json.RawMessage
+	if err := json.Unmarshal(rawAnterior, &mapa); err != nil {
+		return nil, fmt.Errorf("config.json anterior ilegível: %w", err)
+	}
+	var novos map[string]json.RawMessage
+	if err := json.Unmarshal(conhecido, &novos); err != nil {
+		return nil, err
+	}
+	for k, v := range novos {
+		mapa[k] = v
+	}
+	return json.MarshalIndent(mapa, "", "  ")
 }

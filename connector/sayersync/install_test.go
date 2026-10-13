@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -227,5 +228,73 @@ func TestMesclarInstall_DefaultMascaradoColadoNaoViraSenha(t *testing.T) {
 	}
 	if novo.PGConn != atual.PGConn {
 		t.Fatalf("default mascarado colado virou pg_conn gravada: %q", novo.PGConn)
+	}
+}
+
+// Codex P1: stdin cortado no meio (EOF, com ou sem bytes parciais) ABORTA — não
+// vira "Enter em tudo" nem um fragmento de token gravado.
+func TestPromptCru_EOFAborta(t *testing.T) {
+	r := bufio.NewReader(strings.NewReader("\n\nTOKEN-PARCIAL"))
+	for i := 0; i < 2; i++ {
+		if v, err := promptCru(r, "q", ""); err != nil || v != "" {
+			t.Fatalf("linha %d: Enter → (\"\",nil); veio (%q,%v)", i, v, err)
+		}
+	}
+	if v, err := promptCru(r, "token", ""); err == nil {
+		t.Fatalf("EOF com bytes parciais deve dar erro; veio %q", v)
+	}
+	if _, err := promptCru(bufio.NewReader(strings.NewReader("")), "q", ""); err == nil {
+		t.Fatal("stdin vazio (EOF) deve dar erro, não Enter")
+	}
+	if v, err := promptCru(bufio.NewReader(strings.NewReader("  M01 \r\n")), "q", ""); err != nil || v != "M01" {
+		t.Fatalf("linha normal: veio (%q,%v)", v, err)
+	}
+}
+
+// Codex P2: chave que esta versão não conhece (escrita por outra) sobrevive.
+func TestConfigJSON_PreservaChavesDesconhecidas(t *testing.T) {
+	raw := []byte(`{"store_code":"M01","token_dpapi":"t","update_manifest_url":"u","opcao_futura":{"x":1}}`)
+	cfg := configDaLoja()
+	data, err := configJSONPreservandoDesconhecidos(raw, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := m["opcao_futura"]; !ok {
+		t.Fatalf("chave desconhecida perdida: %s", data)
+	}
+	if m["update_manifest_url"] != manifestURLLoja || m["built_version"] != "0.2.2" {
+		t.Fatalf("campos conhecidos não vieram da struct: %s", data)
+	}
+	var volta Config
+	if err := json.Unmarshal(data, &volta); err != nil || volta.StoreCode != "M01" {
+		t.Fatalf("resultado não relê como Config: %v", err)
+	}
+	if limpo, err := configJSONPreservandoDesconhecidos(nil, cfg); err != nil || strings.Contains(string(limpo), "opcao_futura") {
+		t.Fatalf("sem raw anterior → só a struct; veio (%s,%v)", limpo, err)
+	}
+}
+
+func TestMascararSenhaPG_FormatosPgx(t *testing.T) {
+	for _, conn := range []string{
+		"host=localhost password = segredo dbname=x",
+		"host=localhost password='seg redo' dbname=x",
+		"postgres://integra@localhost/db?password=segredo",
+		"postgres://integra:segredo@localhost/db?sslmode=disable",
+	} {
+		got := mascararSenhaPG(conn)
+		if strings.Contains(got, "segredo") || strings.Contains(got, "redo") {
+			t.Fatalf("senha vazou ao mascarar %q → %q", conn, got)
+		}
+		// colar de volta o exibido continua sendo Enter
+		atual := configDaLoja()
+		atual.PGConn = conn
+		novo, err := mesclarConfigInstall(atual, respostasInstall{PGConn: got}, "", "v")
+		if err != nil || novo.PGConn != conn {
+			t.Fatalf("colar o mascarado de %q gravou %q", conn, novo.PGConn)
+		}
 	}
 }

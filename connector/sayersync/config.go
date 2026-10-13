@@ -90,7 +90,11 @@ func SaveConfig(cfg *Config) error {
 	if err != nil {
 		return fmt.Errorf("erro ao serializar config: %w", err)
 	}
+	return salvarConfigBytes(data)
+}
 
+// salvarConfigBytes grava o config.json já serializado (tmp → rename atômico).
+func salvarConfigBytes(data []byte) error {
 	path := configPath()
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, data, 0600); err != nil {
