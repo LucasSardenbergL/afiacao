@@ -5,6 +5,8 @@ import { janelaTTM, calcularDsoDpo, type DsoDpoResult } from "@/lib/financeiro/d
 import { OPEN_TITLE_STATUSES, isOpenTitleStatus } from "@/lib/financeiro/titulo-status";
 import { baixaOuIndisponivel, type ProcedenciaBaixa } from "@/lib/financeiro/procedencia-baixa";
 import { spBusinessDate } from "@/lib/time/sp-day";
+import { fetchAllPages, ehFalhaDePagina } from "@/lib/postgrest";
+import { mensagemDeErro, erroComCausa } from "@/lib/erro-mensagem";
 import type {
   FinAgingPagarView,
   FinAgingReceberView,
@@ -191,44 +193,34 @@ export async function triggerFinanceiroSync(
 // Vencidos = só 'ATRASADO' (vocabulário nativo do Omie; subconjunto de OPEN_TITLE_STATUSES).
 const VENCIDO_TITLE_STATUSES = ['ATRASADO'] as const;
 
-type PaginaResult<T> = { data: T[] | null; error: { message: string } | null };
-
 /**
- * Busca TODAS as linhas de uma query paginando em janelas de 1000 — sem
- * `.range()` o PostgREST capa em 1000 linhas e tudo que deriva delas sai
- * truncado silenciosamente (bug #719/#720; a oben tem ~11k títulos de CR
- * aberto). Para somas puras use somarSaldoPorStatus; este helper é pra quando
- * as LINHAS individuais importam (vencimento pra projeção, nome pra ranking).
- * O callback DEVE aplicar `.order()` estável (id) + `.range(from, to)`: offset
- * sem ORDER BY pula/duplica linha entre páginas (o sync de CR/CP grava a cada
- * 10min). Erro de qualquer página LANÇA Error real — nunca lista parcial.
- * ⚠️ Limitação conhecida (codex, pós-#722): a leitura paginada NÃO é snapshot —
- * se o sync gravar ENTRE as páginas de uma mesma leitura, uma linha pode ser
- * pulada/duplicada (distorção transitória de 1 refresh; autocorrige no load
- * seguinte). Aceito: a janela é de segundos a cada load vs sync a cada ~10min,
- * e o erro residual é ínfimo perto do truncamento de 90% que este helper
- * corrige. Consolidação atômica = RPC SQL agregada (evolução, se virar dor).
+ * Lê TODAS as páginas pelo `fetchAllPages` — o paginador canônico de `@/lib/postgrest`: capa de
+ * 1.000, rejeição de página perdida e de `data: null`, telemetria por `fonte`, tudo mora LÁ — e
+ * só TRADUZ a falha de leitura para a mensagem de domínio que a aba exibe no banner
+ * (`useFinanceiro` → `mensagemDeErro`). Sem a tradução o dono leria
+ * "fetchAllPages: página 0 (0-999) falhou" no lugar de
+ * "Falha ao carregar contas a pagar (oben): canceling statement due to statement timeout" —
+ * perde O QUE falhou e POR QUÊ (money-path §7: a correção só termina na tela).
+ * Não pagina nada: o callback DEVE aplicar `.order()` estável + `.range(de, ate)`, como em
+ * qualquer caller do `fetchAllPages`. Só traduz o que o helper ASSINOU (`ehFalhaDePagina`):
+ * bug de código (TypeError do builder) passa intocado. O erro assinado fica em `cause`.
+ * ⚠️ Limitação conhecida (codex, pós-#722): a leitura paginada NÃO é snapshot — se o sync gravar
+ * ENTRE as páginas, uma linha pode ser pulada/duplicada (ver a checagem de ID em listarContas).
  */
-async function buscarTodasPaginas<T>(
+async function lerTodasAsPaginas<T>(
+  buscarPagina: (de: number, ate: number) => PromiseLike<{ data: T[] | null; error: unknown }>,
   contexto: string,
-  fetchPage: (from: number, to: number) => PromiseLike<PaginaResult<T>>,
 ): Promise<T[]> {
-  const PAGE = 1000;
-  const out: T[] = [];
-  for (let from = 0; ; from += PAGE) {
-    const { data, error } = await fetchPage(from, from + PAGE - 1);
-    if (error) throw new Error(`Falha ao carregar ${contexto}: ${error.message}`);
-    // `data == null` sem `error` é resposta MALFORMADA do PostgREST — não é fim da tabela.
-    // O `?? []` de antes a convertia em página vazia → `0 < PAGE` → laço encerrado → o
-    // acumulado PARCIAL voltava como se fosse a tabela inteira (o defeito que o
-    // fetchAllPages de src/lib/postgrest.ts já rejeita; este helper prometia o mesmo no
-    // JSDoc e não cumpria). Fim LEGÍTIMO é `data: []` — array vazio, que segue adiante.
-    if (data == null) throw new Error(`Falha ao carregar ${contexto}: data=null sem error`);
-    const rows = data;
-    out.push(...rows);
-    if (rows.length < PAGE) break;
+  try {
+    return await fetchAllPages(buscarPagina, contexto);
+  } catch (e) {
+    if (!ehFalhaDePagina(e)) throw e;
+    const detalhe =
+      e.motivo === 'data_null_sem_error'
+        ? 'resposta sem dados e sem erro (data null sem error)'
+        : (mensagemDeErro(e.cause) ?? 'erro sem mensagem');
+    throw erroComCausa(`Falha ao carregar ${contexto}: ${detalhe}`, e);
   }
-  return out;
 }
 
 export async function getResumoFinanceiro(companies: Company[]): Promise<Record<string, FinResumo>> {
@@ -335,10 +327,11 @@ async function listarContas<T>(
   // Sem limite: o filtro INTEIRO, paginado contra a capa de 1.000 do PostgREST
   // (oben sozinha tem ~11k títulos de CP; single-shot devolvia os 1.000 primeiros
   // por vencimento como se fossem tudo — lista E export CSV nasciam truncados).
-  const rows = (await buscarTodasPaginas(contexto, (from, to) =>
+  const rows = (await lerTodasAsPaginas((from, to) =>
     base()
       .order("data_vencimento", { ascending: true }).order("id", { ascending: true })
       .range(from, to),
+    contexto,
   )) as unknown as T[];
   // K páginas são K instantes (§14): se um título muda de vencimento durante a leitura, o
   // offset desliza — um título é PULADO e outro REPETIDO, e `rows.length` continua batendo
@@ -440,7 +433,7 @@ export async function getFluxoCaixa(
   // sumiam na visão "todas". E o `error` descartado fazia falha de consulta virar
   // "nada a vencer": uma projeção menor não se anuncia como incompleta.
   const [crData, cpData] = await Promise.all([
-    buscarTodasPaginas(`CR do fluxo de caixa (${company})`, (from, to) => {
+    lerTodasAsPaginas((from, to) => {
       let q = supabase
         .from("fin_contas_receber")
         .select("data_vencimento, saldo, status_titulo")
@@ -448,8 +441,8 @@ export async function getFluxoCaixa(
         .lte("data_vencimento", dataFim);
       if (company !== 'all') q = q.eq("company", company);
       return q.order("id").range(from, to);
-    }),
-    buscarTodasPaginas(`CP do fluxo de caixa (${company})`, (from, to) => {
+    }, `CR do fluxo de caixa (${company})`),
+    lerTodasAsPaginas((from, to) => {
       let q = supabase
         .from("fin_contas_pagar")
         .select("data_vencimento, saldo, status_titulo")
@@ -457,7 +450,7 @@ export async function getFluxoCaixa(
         .lte("data_vencimento", dataFim);
       if (company !== 'all') q = q.eq("company", company);
       return q.order("id").range(from, to);
-    }),
+    }, `CP do fluxo de caixa (${company})`),
   ]);
 
   // Agrupar por dia
@@ -546,8 +539,7 @@ export async function getFluxoCaixa(
   // 100,0% das linhas da janela dividem o dia com outra (maior dia = 305, média
   // ~90), então toda fronteira de página cai dentro de um empate e o offset pula
   // e duplica linhas, sem erro nenhum. O `id` (PK) fecha a ordem.
-  const movimentos = await buscarTodasPaginas(
-    `movimentações do fluxo de caixa (${company})`,
+  const movimentos = await lerTodasAsPaginas(
     (from, to) => {
       // ALLOWLIST POSITIVA de ótica. O Omie devolve o MESMO pagamento duas vezes — uma como
       // lançamento do TÍTULO (`CONTA_A_*`) e outra como lançamento na CONTA CORRENTE
@@ -574,6 +566,7 @@ export async function getFluxoCaixa(
       if (company !== 'all') q = q.eq('company', company);
       return q.order('data_movimento', { ascending: true }).order('id').range(from, to);
     },
+    `movimentações do fluxo de caixa (${company})`,
   );
 
   const realizadoPorDia = agregarRealizadoPorDia(movimentos);
@@ -609,14 +602,14 @@ export async function getTopInadimplentes(
   // Linhas individuais (o ranking precisa de nome/cnpj por título), paginadas:
   // truncado em 1000 pelo PostgREST, um devedor grande "depois" da 1ª página
   // sumia do top. Erro LANÇA (era [] silencioso = falso "ninguém inadimplente").
-  const data = await buscarTodasPaginas(`inadimplentes (${company})`, (from, to) => {
+  const data = await lerTodasAsPaginas((from, to) => {
     let query = supabase
       .from("fin_contas_receber")
       .select("nome_cliente, cnpj_cpf, saldo")
       .in("status_titulo", [...VENCIDO_TITLE_STATUSES]);
     if (company !== 'all') query = query.eq("company", company);
     return query.order("id").range(from, to);
-  });
+  }, `inadimplentes (${company})`);
 
   // Agrupar por cliente (nome_cliente como chave primária; cnpj_cpf como fallback)
   const map = new Map<string, { nome: string; cnpj: string; total: number; qtd: number }>();
@@ -695,7 +688,7 @@ export async function getCapitalDeGiro(company: Company | 'all'): Promise<Capita
     // (irmão do #719/#720). `saldo` é coluna gerada (documento − recebido/pago)
     // — mesma fonte do resumo, então total_cr/cp_aberto bate com o cockpit.
     const [crAberto, cpAberto] = await Promise.all([
-      buscarTodasPaginas(`CR aberto (${co})`, (from, to) =>
+      lerTodasAsPaginas((from, to) =>
         supabase
           .from("fin_contas_receber")
           .select("saldo, data_vencimento, nome_cliente")
@@ -703,8 +696,9 @@ export async function getCapitalDeGiro(company: Company | 'all'): Promise<Capita
           .in("status_titulo", [...OPEN_TITLE_STATUSES])
           .order("id")
           .range(from, to),
+        `CR aberto (${co})`,
       ),
-      buscarTodasPaginas(`CP aberto (${co})`, (from, to) =>
+      lerTodasAsPaginas((from, to) =>
         supabase
           .from("fin_contas_pagar")
           .select("saldo, data_vencimento, nome_fornecedor")
@@ -712,6 +706,7 @@ export async function getCapitalDeGiro(company: Company | 'all'): Promise<Capita
           .in("status_titulo", [...OPEN_TITLE_STATUSES])
           .order("id")
           .range(from, to),
+        `CP aberto (${co})`,
       ),
     ]);
 
@@ -826,7 +821,7 @@ export async function getCategoryMappings(
   // Paginado: o mapeamento é a ESPINHA do DRE — se passar da capa de 1.000 do
   // PostgREST, as categorias truncadas somem do DRE em silêncio (número errado,
   // não erro). Hoje são centenas de linhas; paginar custa um request vazio.
-  const data = await buscarTodasPaginas(`mapeamento DRE (${company})`, (from, to) =>
+  const data = await lerTodasAsPaginas((from, to) =>
     supabase
       .from("fin_categoria_dre_mapping")
       .select("*")
@@ -834,6 +829,7 @@ export async function getCategoryMappings(
       .order("omie_codigo", { ascending: true })
       .order("id", { ascending: true })
       .range(from, to),
+    `mapeamento DRE (${company})`,
   );
   return data.map((row) => ({
     id: row.id,
@@ -872,7 +868,7 @@ export async function getCategoriasOmie(company: Company): Promise<{
   // Paginado: 508 categorias ativas hoje — meia capa. É a lista de destino do
   // mapeamento DRE: categoria truncada não aparece para mapear, o lançamento fica
   // "sem linha de DRE" e some do relatório sem nenhum erro.
-  const data = await buscarTodasPaginas(`categorias Omie (${company})`, (from, to) =>
+  const data = await lerTodasAsPaginas((from, to) =>
     supabase
       .from("fin_categorias")
       .select("omie_codigo, descricao, tipo")
@@ -880,6 +876,7 @@ export async function getCategoriasOmie(company: Company): Promise<{
       .eq("ativo", true)
       .order("omie_codigo", { ascending: true })
       .range(from, to),
+    `categorias Omie (${company})`,
   );
   return data.map((c) => ({
     omie_codigo: c.omie_codigo,
@@ -1034,7 +1031,7 @@ export async function somarSaldoPorStatus(
       .range(from, from + PAGE - 1);
     if (error) throw new Error(`Falha ao somar saldo (${tabela}/${company}): ${error.message}`);
     // data null SEM error = malformada, não fim (classe #1338→#1564, mesmo contrato do
-    // buscarTodasPaginas acima): tratá-la como fim devolvia SOMA PARCIAL como total a
+    // fetchAllPages de @/lib/postgrest): tratá-la como fim devolvia SOMA PARCIAL como total a
     // receber/pagar — alimenta DSO, KPIs de /financeiro/gestao e o resumo.
     if (data == null) throw new Error(`Falha ao somar saldo (${tabela}/${company}): data=null sem error`);
     const rows = data as Array<{ saldo: number | null }>;
