@@ -32,3 +32,28 @@ Codex (gpt-6-astra, xhigh) em duas rodadas: metodologia (`logs/encargos/codex-co
 ## Leitura provisória (pré-backfill)
 
 Ver o corpo do PR: classificação dos títulos atrasados de liquidação única por "cobrado conforme a política / não cobrado / parcial / desconto". A política bate **ao centavo** nos casos cobrados, o que valida a fórmula e a data. O número definitivo, com filtro de boleto e desconto separado do encargo, sai depois do backfill.
+
+## Resposta medida (pós-backfill, 2026-10-13 16:32Z)
+
+Deploy: migration aplicada pelo `db:aplicar` (recibo #413), edge v1.4 pelo conector Lovable (sonda `DEPLOY CONFIRMADO`, fonte = main), backfill desde 2020 (recibos #420/#421) concluído nas 3 empresas às 16:31Z. Cobertura da view nos boletos atrasados: **100% em confiança que expõe encargo** (nenhum `divergente`/`sem_dado`).
+
+Recorte: `tipo_documento='BOL'`, baixa nos 12 meses, atraso > 3 dias, devido = documento × (2% + 10% × dias/30), atraso pela `dDtPagamento` do título. Query: `db/consulta-encargos-boleto-12m.sql` (read-only, roda no psql-ro).
+
+| CNPJ | boletos | devido | recebido | % | conforme | não cobrado (devido) | parcial (faltou) | desconto em pago atrasado |
+|---|---|---|---|---|---|---|---|---|
+| oben | 512 | R$ 24.909,50 | R$ 20.009,33 | **80,3%** | 378 | 47 (R$ 4.138,99) | 87 (R$ 731,86) | 1 · R$ 2,40 |
+| colacor | 110 | R$ 2.709,37 | R$ 2.063,75 | **76,2%** | 88 | 9 (R$ 621,00) | 13 (R$ 19,67) | 0 |
+| colacor_sc | 38 | R$ 631,71 | R$ 555,11 | **87,9%** | 32 | 5 (R$ 75,90) | 1 (R$ 0,27) | 0 |
+
+**Fora do núcleo, separados de propósito:**
+- **Baixa sem caixa** (líquido 0, o "desconto" é 100% do documento — abatimento/perdão/compensação, não desconto comercial): oben 67 títulos · R$ 39.278,82; colacor_sc 4 · R$ 1.027,57; colacor 1 · R$ 307,00. Somá-los como "desconto concedido" inventaria uma política de desconto que não existe.
+- **Atraso > 180 dias** (cobrança/renegociação; a política linear daria 347% do principal): colacor 1 título de R$ 920 (vencido em 2023).
+
+**Leitura:** onde há encargo, ele bate com a política ao centavo (378+88+32 títulos). A perda é **não cobrar** (61 títulos) e, na oben, as 67 baixas sem caixa de boletos atrasados — que pedem leitura humana (devolução? acordo?). A medição retratada (44% / −R$ 84,6k) misturava versões, CC zerado, todos os meios de pagamento, liquidação CC como data e baixas sem caixa.
+
+## DRE caixa da colacor 2026 (pedido do founder, 2026-10-13)
+
+Primeira gravação (não havia snapshot caixa da colacor em ano nenhum; nenhum mês de 2026 fechado). `db/2026-10-13-dre-caixa-colacor-2026.sql` (recibo #424, trava que recusa durante backfill — provada) gravou jan–jul e a edge foi cortada no wall-clock (~27 s/mês × 10 meses passa do teto pós-desconexão); `…-meses-8-10.sql` (recibo #426) fechou ago–out. Log `complete` 16:53Z.
+
+⚠️ **O número NÃO é receita da colacor:** R$ 567,7k de receita bruta caixa em jan–out contra ~R$ 17,8M/ano na fonte canônica (`fin_dre_competencia_base`, `docs/agent/financeiro.md`). Cada mês acusa 11–24 categorias **sem mapeamento** (`fin_categoria_dre_mapping`), e o competência gravado em maio tem a mesma escala ⇒ defeito ANTERIOR do motor de snapshot para a colacor, não efeito do backfill. Não usar `fin_dre_snapshots` da colacor para decisão até o mapeamento ser completado.
+
