@@ -69,6 +69,12 @@ import * as scoringRecalc from "../scoring-recalc-client/versao.ts";
 import * as visitScoreRecalc from "../visit-score-recalc-client/versao.ts";
 import * as biometricAuth from "../biometric-auth/versao.ts";
 import * as gmailWebhook from "../gmail-webhook-receiver/versao.ts";
+import * as tintSyncAgent from "../tint-sync-agent/versao.ts";
+import * as finIcReconcile from "../fin-ic-reconcile/versao.ts";
+import * as radarIngest from "../radar-ingest/versao.ts";
+import * as finPeriodOverride from "../fin-period-override/versao.ts";
+import * as posthogErrorWebhook from "../posthog-error-webhook/versao.ts";
+import * as melhoriaTriagem from "../melhoria-triagem/versao.ts";
 import * as cmcBackfill from "../cmc-snapshot-backfill/versao.ts";
 import * as whatsappSend from "../whatsapp-send/versao.ts";
 import * as whatsappTemplate from "../whatsapp-send-template/versao.ts";
@@ -248,6 +254,13 @@ const EDGES: Array<{ nome: string; mod: ModSonda }> = [
   // M-26, 2ª leva: gate próprio que não aceita cron (pré-login público; segredo de webhook).
   { nome: "biometric-auth", mod: biometricAuth },
   { nome: "gmail-webhook-receiver", mod: gmailWebhook },
+  // M-26, 3ª leva: edges ativas com escrita (a tint-sync-agent responde na rota raiz).
+  { nome: "tint-sync-agent", mod: tintSyncAgent },
+  { nome: "fin-ic-reconcile", mod: finIcReconcile },
+  { nome: "radar-ingest", mod: radarIngest },
+  { nome: "fin-period-override", mod: finPeriodOverride },
+  { nome: "posthog-error-webhook", mod: posthogErrorWebhook },
+  { nome: "melhoria-triagem", mod: melhoriaTriagem },
   { nome: "cmc-snapshot-backfill", mod: cmcBackfill },
   // 11ª leva (#2170) — as 5 de efeito FORA do nosso banco. Elas ganharam `versao.ts` e entraram no
   // mapa de fingerprints, mas ficaram fora DESTE arquivo: instrumentadas e sem gate de FORMA
@@ -347,6 +360,13 @@ const ESCRITA_NOSSO_BANCO = [
   // e abre o alerta de compra (fornecedor_alerta).
   "biometric-auth",
   "gmail-webhook-receiver",
+  // M-26, 3ª leva: as 6 edges ATIVAS com escrita que ainda não provavam o deploy.
+  "tint-sync-agent",
+  "fin-ic-reconcile",
+  "radar-ingest",
+  "fin-period-override",
+  "posthog-error-webhook",
+  "melhoria-triagem",
   "cmc-snapshot-backfill",
   // 11ª leva: entram na varredura estrutural pelo mesmo motivo da nona (`monthly-report`) — o preço
   // de um `probe` mal grafado caindo no fluxo real. Aqui ele é irreversível FORA do nosso banco:
@@ -502,6 +522,9 @@ const GATE_PROPRIO = [
   // M-26, 2ª leva: pré-login público (só rate limit) e segredo de webhook no Bearer.
   "biometric-auth",
   "gmail-webhook-receiver",
+  // M-26, 3ª leva: rota raiz de edge roteada por path (token do agente/JWT) e segredo do PostHog.
+  "tint-sync-agent",
+  "posthog-error-webhook",
 ];
 
 /** As pastas que TÊM `versao.ts` — a verdade da árvore, não a lista declarada aqui. */

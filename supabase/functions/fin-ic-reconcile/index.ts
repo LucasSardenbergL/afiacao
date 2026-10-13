@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 // =============================================================
 // Helper de autorização inlineado (de _shared/auth.ts)
@@ -103,6 +104,16 @@ Deno.serve(async (req: Request) => {
   const auth = await authorizeCronOrStaff(req);
   if (!auth.ok) {
     return auth.response;
+  }
+
+  // Sonda de versão (M-26; docs/agent/deploy.md): `{ probe: true }` responde a versão no ar sem tocar
+  // banco. O fluxo real não lê corpo, então ler aqui não muda nada para o cron (corpo `{}` = disparo).
+  const decisaoSonda = classificarSonda(await req.json().catch(() => null));
+  if (decisaoSonda.tipo === "sonda") {
+    return new Response(JSON.stringify(respostaSonda(VERSAO)), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
+  if (decisaoSonda.tipo === "ambiguo") {
+    return new Response(JSON.stringify({ versao: VERSAO, error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 
   const supabase = createClient(SUPABASE_URL, SERVICE_ROLE);

@@ -6,6 +6,7 @@
 import Anthropic from "npm:@anthropic-ai/sdk@^0.93.0";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff, corsHeaders } from "../_shared/auth.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -146,16 +147,25 @@ Deno.serve(async (req) => {
 
   const auth = await authorizeCronOrStaff(req);
   if (!auth.ok) return auth.response;
+
+  // Sonda de versão (M-26; docs/agent/deploy.md): `{ probe: true }` responde a versão no ar sem tocar
+  // banco nem IA — antes da exigência de staff (o cron do SQL Editor passa no gate acima). Corpo UMA vez.
+  const corpoBruto: unknown = await req.json().catch(() => null);
+  const decisaoSonda = classificarSonda(corpoBruto);
+  if (decisaoSonda.tipo === "sonda") return jsonResponse(respostaSonda(VERSAO), 200);
+  if (decisaoSonda.tipo === "ambiguo") return jsonResponse({ versao: VERSAO, error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }, 400);
+
   // Triagem é sempre disparada por um usuário; cron/service_role não se aplicam aqui.
   if (auth.via !== "staff" || !auth.userId) return jsonResponse({ error: "Apenas staff" }, 403);
 
   const admin = createClient(SUPABASE_URL, SERVICE_ROLE);
 
   let itemId = "";
-  try {
-    const body = await req.json();
+  {
+    // Já parseado acima (para a sonda); corpo inválido virou `null` e cai no guard abaixo.
+    const body = corpoBruto as { item_id?: unknown } | null;
     itemId = String(body?.item_id ?? "").trim();
-  } catch { /* body inválido cai no guard abaixo */ }
+  }
   if (!itemId) return jsonResponse({ error: "item_id obrigatório" }, 400);
 
   // Fix 4 (P3-1): item_id não-UUID vira 400, não 500 (evita query desnecessária com input malformado).
