@@ -257,7 +257,6 @@ const TechnicalDocs = () => {
               <tr className="border-b"><td className="p-2 font-mono">monthly-report</td><td className="p-2">Geração de relatórios mensais consolidados</td><td className="p-2">JWT</td></tr>
               <tr className="border-b"><td className="p-2 font-mono">process-recurring-orders</td><td className="p-2">Processa agendamentos recorrentes de pedidos</td><td className="p-2">JWT</td></tr>
               <tr className="border-b"><td className="p-2 font-mono">sync-reprocess</td><td className="p-2">Reprocessamento de sincronização com janela móvel</td><td className="p-2">JWT</td></tr>
-              <tr className="border-b"><td className="p-2 font-mono">verify-employee</td><td className="p-2">Verifica código de funcionário no cadastro</td><td className="p-2">JWT</td></tr>
               <tr className="border-b"><td className="p-2 font-mono">biometric-auth</td><td className="p-2">Registro e verificação de credenciais WebAuthn</td><td className="p-2">JWT</td></tr>
               <tr className="border-b"><td className="p-2 font-mono">elevenlabs-transcribe</td><td className="p-2">Transcrição de áudio via ElevenLabs</td><td className="p-2">JWT</td></tr>
               <tr className="border-b"><td className="p-2 font-mono">elevenlabs-scribe-token</td><td className="p-2">Geração de token para Scribe em tempo real</td><td className="p-2">JWT</td></tr>
