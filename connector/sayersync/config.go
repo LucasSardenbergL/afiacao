@@ -61,7 +61,13 @@ func configPath() string {
 // LoadConfig carrega o config.json. Retorna erro se o arquivo não existir ou
 // estiver malformado.
 func LoadConfig() (*Config, error) {
-	path := configPath()
+	return loadConfigDe(configPath())
+}
+
+// loadConfigDe carrega um config.json de um caminho explícito. O erro de leitura é
+// embrulhado com %w: o install distingue "não existe" (errors.Is fs.ErrNotExist →
+// instalação limpa) de "existe mas não carrega" (aborta).
+func loadConfigDe(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("config.json não encontrado em %s: %w", path, err)
