@@ -20,6 +20,7 @@ import { ptBR } from 'date-fns/locale';
 import { findInvalidPricedOmieItems, invalidOmieItemPriceMessage } from '@/services/orderSubmission/priceGuard';
 import { cn } from '@/lib/utils';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
+import { mensagemDoErroEdge } from '@/lib/invoke-function';
 import { formatPrecoOuAusente } from '@/lib/format';
 
 // `fmt` era `(v: number) => v.toLocaleString(...)` — sem guard. Com `valor_unitario` podendo
@@ -148,7 +149,10 @@ const SalesQuotes = () => {
       });
       if (omieError) {
         // Inclui o fail-closed da derivação (identidade não provada). Orçamento intacto p/ retry.
-        toast.error('Não foi possível enviar ao Omie: ' + (omieError.message || 'erro desconhecido'));
+        // O texto da edge vem no CORPO: o `omieError.message` é o genérico "non-2xx" e escondia o
+        // OMIE_ESCRITA_INDETERMINADA ("o Omie PODE ter gravado") — lido como "não foi" (M-33 p3).
+        const doServidor = await mensagemDoErroEdge(omieError);
+        toast.error('Não foi possível confirmar o envio ao Omie: ' + (doServidor ?? omieError.message ?? 'erro desconhecido'));
         return;
       }
       if ((omieData as { blocked?: string } | null)?.blocked === 'credito') {

@@ -1,6 +1,7 @@
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { classificarFaultstring, redigirSegredo } from "../_shared/omie-falha.ts";
+import { chamarComRelogio, prazoDaChamadaOmie } from "../_shared/omie-chamada-relogio.ts";
 import { montarParcelasOS } from "./parcelas-os.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 // Resend usado via fetch direto à REST API (https://api.resend.com/emails) para evitar dep npm
@@ -116,15 +117,24 @@ async function callOmieApi(
   // chamada diagnosticável é o `param`, e ele não tem credencial — é o que se loga.
   console.log(`[Omie API] Param:`, JSON.stringify(body.param, null, 2));
 
-  const response = await fetch(`${OMIE_API_URL}/${endpoint}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-  });
-
-  const result = await response.json();
+  // Teto de relógio (M-33 p3, molde do #3001): 140s por chamada, uma tentativa só (não há retry
+  // aqui). Falha de ESCRITA (IncluirOS/AlterarOS/ExcluirOS/IncluirCliente) sai marcada como
+  // indeterminada — o Omie pode ter gravado — e nunca como "não existe" (ver osAusenteNoOmie) nem
+  // como transitória. ⚠️ A chave do IncluirOS (`cCodIntOS` com Date.now()) NÃO é idempotente: um
+  // reenvio manual após a indeterminada pode duplicar a OS. Módulo congelado (loja-afiacao, 0 OS
+  // em 90 dias) — a mensagem manda conferir antes; a chave fica como está. _shared/omie-chamada-relogio.ts
+  const { response, result } = await chamarComRelogio(async (signal) => {
+    const response = await fetch(`${OMIE_API_URL}/${endpoint}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+      signal,
+    });
+    const result = await response.json();
+    return { response, result };
+  }, { metodo: call, conta: "colacor_sc", deadline: prazoDaChamadaOmie(Date.now()) });
   console.log(`[Omie API] Resposta:`, JSON.stringify(result, null, 2));
 
   // `faultstring` ANTES do status (ordem canônica do #1614 — docs/agent/sync.md): o EOF do

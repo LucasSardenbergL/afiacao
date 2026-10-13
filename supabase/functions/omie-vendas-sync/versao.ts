@@ -91,9 +91,9 @@ export const respostaSonda = criarRespostaSonda("omie-vendas-sync");
  * dia UTC do servidor, AMANHÃ das 21:00 às 23:59 BRT — e, sem dInc, o data_previsao vira o order_date_kpi.
  * Nenhuma pré-condição de banco, nenhuma ordem de deploy.
  * v1.12/13/15/16 (ATP 3.1–3.3) — write-back atômico; PV reconciliado divergente LANÇA; excluir só após o
- * cancelamento feito no Omie (o app não cancela). Migrations antes do edge.
+ * cancelamento feito no Omie (o app não cancela). Migrations antes do edge. v1.17 (M-33 p3): relógio 140s; escrita = INDETERMINADA.
  */
-export const VERSAO = "v1.16-exclusao-nao-finge-cancelar";
+export const VERSAO = "v1.17-relogio-escrita-indeterminada";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
