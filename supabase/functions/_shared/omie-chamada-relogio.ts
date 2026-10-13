@@ -21,7 +21,7 @@
 // A idempotência de cada escrita continua sendo de quem a chama (chave determinística como
 // `PV_<id>` no IncluirPedido, lookup por documento antes do IncluirCliente, re-edição que relê o
 // pedido). Este módulo garante a outra metade: que nenhuma camada leia a falha como "não gravou".
-import { timeoutRequestMs } from "./omie-deadline.ts";
+import { MIN_REQUEST_MS, tempoRestanteMs, timeoutRequestMs } from "./omie-deadline.ts";
 
 /** Teto de UM request e da chamada lógica inteira: o orçamento do worker (~150s) menos a margem do catch (#3001). */
 export const TETO_CHAMADA_OMIE_MS = 140_000;
@@ -33,6 +33,44 @@ const PREFIXOS_LEITURA = ["Listar", "Consultar", "Pesquisar", "Obter"];
 
 export function ehEscritaOmie(metodo: string): boolean {
   return !PREFIXOS_LEITURA.some((p) => metodo.length > p.length && metodo.startsWith(p) && /[A-Z]/.test(metodo[p.length]));
+}
+
+// Escrita de SET: repetir aplica o mesmo estado (cabeçalho do pedido, totalização, etapa da OS).
+// `Incluir*`/`Excluir*`/`Cancelar*` NÃO estão aqui: repetir um `IncluirItemPedido` aplicado pode
+// criar o item duas vezes — o Omie deduplicar o `codigo_item_integracao` no mesmo pedido não é
+// contrato conhecido (challenge Codex, M-33 p3).
+const PREFIXOS_ESCRITA_REPETIVEL = ["Alterar", "Totalizar"];
+
+export function escritaRepetivel(metodo: string): boolean {
+  return PREFIXOS_ESCRITA_REPETIVEL.some((p) => metodo.length > p.length && metodo.startsWith(p) && /[A-Z]/.test(metodo[p.length]));
+}
+
+/**
+ * Faultstring TRANSITÓRIA numa resposta recebida: repetir ou parar como indeterminada?
+ *
+ * Rate-limit ("Já existe uma requisição desse método", "Consumo redundante") é o Omie RECUSANDO a
+ * chamada — repetir é seguro. Os demais transitórios (`SOAP-ERROR`, `Broken response`,
+ * `Application Server`, `timeout`) são AMBÍGUOS quanto ao efeito: numa escrita não-repetível,
+ * repetir pode duplicar o documento, então a chamada para e sai indeterminada.
+ */
+export function decidirFaultTransitorio(metodo: string, rateLimit: boolean): "repetir" | "indeterminada" {
+  if (rateLimit || !ehEscritaOmie(metodo) || escritaRepetivel(metodo)) return "repetir";
+  return "indeterminada";
+}
+
+/** Escrita que recebeu fault transitória AMBÍGUA (e não pode ou não conseguiu repetir). */
+export function erroEscritaAmbigua(metodo: string, conta: string, fault: string): OmieEscritaIndeterminada {
+  return new OmieEscritaIndeterminada(metodo, conta, "recebeu erro transitório ambíguo do Omie", fault);
+}
+
+/**
+ * Teto da espera pela trava compartilhada (`obterVez`, `_shared/omie-cota.ts`) que ainda deixa
+ * uma chamada viável no prazo: sem isto o teto da chamada contava a espera mas não a interrompia
+ * (challenge Codex). 0 = não esperar (trava ocupada → `CotaOmieIndisponivel`, a chamada não é
+ * feita). Residual: os RPCs da trava têm prazo próprio de 5s, fora deste cálculo.
+ */
+export function tetoEsperaTravaMs(agora: number, deadline: number, tetoPadraoMs = 20_000, minimoMs = MIN_REQUEST_MS): number {
+  return Math.max(0, Math.min(tetoPadraoMs, tempoRestanteMs(agora, deadline) - minimoMs));
 }
 
 /** Prazo da chamada lógica que começa em `agora`. */
@@ -93,6 +131,12 @@ export interface OpcoesRelogio {
   /** Sinal que já existia (o timeout da trava do `ListarPedidos`); o primeiro a disparar vence. */
   sinalExtra?: AbortSignal;
   agora?: () => number;
+  /**
+   * Uma tentativa ANTERIOR desta escrita recebeu resposta ambígua (pode ter gravado). Sem tempo
+   * para a próxima, o desfecho da chamada lógica é indeterminado — e não "a chamada NÃO foi
+   * feita", que apagaria a incerteza da anterior (challenge Codex, M-33 p3).
+   */
+  envioAnteriorAmbiguo?: boolean;
   /** Só para teste: teto e piso em ms pequenos, com abort REAL. */
   tetoMs?: number;
   minimoMs?: number;
@@ -112,7 +156,12 @@ export interface OpcoesRelogio {
 export async function chamarComRelogio<T>(fazer: (signal: AbortSignal) => Promise<T>, o: OpcoesRelogio): Promise<T> {
   const agora = (o.agora ?? Date.now)();
   const teto = timeoutRequestMs(agora, o.deadline, o.tetoMs ?? TETO_CHAMADA_OMIE_MS, o.minimoMs);
-  if (teto === 0) throw erroSemTempo(o.metodo, o.conta);
+  if (teto === 0) {
+    if (o.envioAnteriorAmbiguo && ehEscritaOmie(o.metodo)) {
+      throw new OmieEscritaIndeterminada(o.metodo, o.conta, "teve resposta ambígua e não houve tempo de repetir", null);
+    }
+    throw erroSemTempo(o.metodo, o.conta);
+  }
   const sinalTeto = AbortSignal.timeout(teto);
   const signal = o.sinalExtra ? AbortSignal.any([o.sinalExtra, sinalTeto]) : sinalTeto;
   try {

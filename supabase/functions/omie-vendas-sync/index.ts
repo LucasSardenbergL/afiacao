@@ -26,7 +26,14 @@ import type { BancoPostgrest } from "../_shared/paginate.ts";
 import { avaliarPagina, MAX_PAGINAS_LISTAGEM, MAX_PAGINAS_PEDIDOS, MAX_PAGINAS_POS_ESTOQUE, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
 import { atenderSondaOptions } from '../_shared/sonda-cron.ts';
 import { clienteCotaDoAmbiente, comVezOmie, CotaOmieIndisponivel, metodoCoordenado, sinalDaChamada } from "../_shared/omie-cota.ts";
-import { chamarComRelogio, prazoDaChamadaOmie } from "../_shared/omie-chamada-relogio.ts";
+import {
+  chamarComRelogio,
+  decidirFaultTransitorio,
+  ehEscritaOmie,
+  erroEscritaAmbigua,
+  prazoDaChamadaOmie,
+  tetoEsperaTravaMs,
+} from "../_shared/omie-chamada-relogio.ts";
 import { cabeEspera } from "../_shared/omie-deadline.ts";
 
 type OmieGenericResponse = Record<string, unknown> & { faultstring?: string; codigo_status?: number | string; descricao_status?: string };
@@ -264,8 +271,12 @@ async function callOmieVendasApi(
   // Relógio da CHAMADA LÓGICA (M-33 p3, molde do #3001): as tentativas e os backoffs abaixo
   // dividem um prazo só de 140s. Cada request herda o que sobra dele; a falha de uma ESCRITA sai
   // marcada como indeterminada (o Omie pode ter gravado) e nunca entra no retry deste laço, que
-  // só reage a faultstring de uma resposta RECEBIDA — ver _shared/omie-chamada-relogio.ts.
+  // só reage a faultstring de uma resposta RECEBIDA — e, numa escrita, só repete o rate-limit (ou
+  // um SET Alterar*/Totalizar*) — ver _shared/omie-chamada-relogio.ts.
   const deadline = prazoDaChamadaOmie(Date.now());
+  // Uma tentativa anterior desta ESCRITA recebeu fault transitória ambígua (pode ter gravado):
+  // a partir daí, "esgotou"/"sem tempo" é desfecho INDETERMINADO, nunca "não foi feita".
+  let envioAmbiguo = false;
   const maxRetries = 3;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     // Método coordenado (ListarPedidos): pede a vez na trava compartilhada com as outras edges
@@ -292,8 +303,10 @@ async function callOmieVendasApi(
               return { response, result };
             },
             (r) => (r.result?.faultstring ? String(r.result.faultstring) : null),
+            // a espera pela trava também respeita o prazo da chamada (não só a conta)
+            { tetoEsperaMs: tetoEsperaTravaMs(Date.now(), deadline) },
           ),
-        { metodo: call, conta: account, deadline, sinalExtra: sinalDaChamada(call) },
+        { metodo: call, conta: account, deadline, sinalExtra: sinalDaChamada(call), envioAnteriorAmbiguo: envioAmbiguo },
       ));
     } catch (e) {
       if (!(e instanceof CotaOmieIndisponivel)) throw e;
@@ -317,6 +330,10 @@ async function callOmieVendasApi(
         || fs.includes("timeout")
         || fs.includes("Timeout");
       if (isRateLimit || isTransient) {
+        // Escrita NÃO-repetível (Incluir*/Excluir*/Cancelar*) com transitório AMBÍGUO: repetir pode
+        // duplicar o documento — para aqui, indeterminada. Rate-limit (o Omie recusou) segue repetindo.
+        if (decidirFaultTransitorio(call, isRateLimit) === "indeterminada") throw erroEscritaAmbigua(call, account, fs);
+        if (!isRateLimit && ehEscritaOmie(call)) envioAmbiguo = true;
         const waitMatch = fs.match(/Aguarde (\d+) segundos/);
         const requestedDelay = waitMatch ? parseInt(waitMatch[1]) : (attempt + 1) * 5;
         // Método COORDENADO (só leitura): se o Omie pediu mais do que a espera cabe, re-tentar ANTES
@@ -333,6 +350,7 @@ async function callOmieVendasApi(
           await new Promise(r => setTimeout(r, delay));
           continue;
         }
+        if (envioAmbiguo) throw erroEscritaAmbigua(call, account, fs);
         if (opts?.throwOnTransient) {
           throw new Error(`OMIE_TRANSIENT (${account}): ${isRateLimit ? 'rate limit' : 'erro transitório'} persistiu após ${maxRetries} tentativas — não dá pra afirmar ausência`);
         }

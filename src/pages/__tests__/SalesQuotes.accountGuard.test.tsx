@@ -149,6 +149,26 @@ describe('SalesQuotes — conversão de orçamento deriva a identidade na FRONTE
     expect(h.updateSalesOrder).not.toHaveBeenCalled();
   });
 
+  it('escrita INDETERMINADA no Omie → o toast mostra o aviso do CORPO ("PODE ter gravado"), não o "non-2xx" genérico (M-33 p3)', async () => {
+    h.quotes = [makeQuote('oben')];
+    // Forma real do supabase-js num 500: `message` genérico, texto da edge no corpo (`context`).
+    const corpo = {
+      error: 'OMIE_ESCRITA_INDETERMINADA (oben): IncluirPedido sem resposta dentro do teto da chamada — o Omie PODE ter gravado; confira no Omie antes de repetir',
+    };
+    const erro = {
+      message: 'Edge Function returned a non-2xx status code',
+      context: new Response(JSON.stringify(corpo), { status: 500 }),
+    };
+    h.invoke.mockResolvedValueOnce({ data: null, error: erro as { message: string } });
+    renderPage();
+    await clickEnviar();
+    await waitFor(() => expect(h.toastError).toHaveBeenCalled());
+    const texto = String((h.toastError.mock.calls[0] as unknown[])[0]);
+    expect(texto).toContain('PODE ter gravado');
+    expect(texto).not.toContain('non-2xx');
+    expect(h.updateSalesOrder).not.toHaveBeenCalled();
+  });
+
   it('edge bloqueou por crédito → aviso e NÃO marca rascunho (não foi criado PV)', async () => {
     h.quotes = [makeQuote('colacor')];
     h.invoke.mockResolvedValueOnce({ data: { blocked: 'credito' }, error: null });
