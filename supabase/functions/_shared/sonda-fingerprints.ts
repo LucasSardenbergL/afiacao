@@ -49,7 +49,7 @@ export const FONTE_SHA256: Record<string, string> = {
   "omie-nfe-recebimento": "e69f5f4fe0c581043237e33d55bef413b245f7e264ae88138f5439a1f49cdb4c",
   "omie-nfe-recebimento-sync": "e4290e7b6610824d367b256198280d1acd846cf5af83443143fc0a001712aef7",
   "omie-nfe-reconcile": "844e96d1d018a01374951da346d5d3d267b12431ebab1f7b8f032d117414e3c0",
-  "omie-nfe-webhook": "c2267dae835b18c9f4214a6c9621f530a384e150e345cbbcecb7b2eca0e5d319",
+  "omie-nfe-webhook": "8c35f6a86a14ad695dce7219fd8b1961cd4e2173f4d37cfa4fe9e2cc17215c2b",
   "omie-sync": "18c2428045dd77e8f1c9f3c26d680c75b7bb06aa072d080be9088a6d1ec1745b",
   "omie-sync-ctes-recebidos": "bc8533b737d175adbca4a6ab49f2ec1dc385670f919368db53fe9b4f00c8d9b2",
   "omie-sync-estoque": "80a8ff4386f1224a59f3a7d6ea82a062c2115217df1984577820c9ee4d974040",
