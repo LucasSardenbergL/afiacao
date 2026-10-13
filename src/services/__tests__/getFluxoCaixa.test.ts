@@ -303,10 +303,10 @@ describe('getFluxoCaixa — caixa REALIZADO (fin_movimentacoes)', () => {
     );
     state.dataNullNaRequisicao.fin_movimentacoes = 2;
 
-    // Ancorado em `data=null sem error`, trecho EXCLUSIVO deste ramo: os dois guards
-    // compartilham o prefixo `Falha ao carregar <contexto>`, então casar o prefixo
-    // passaria verde com este ramo sabotado (lição do #1524, money-path §6).
-    await expect(getFluxoCaixa('oben', INICIO, FIM)).rejects.toThrow(/data=null sem error/);
+    // Ancorado em `data null sem error`, trecho EXCLUSIVO deste ramo: os dois guards compartilham
+    // o prefixo `Falha ao carregar <contexto>` (a tradução de lerTodasAsPaginas), então casar o
+    // prefixo passaria verde com este ramo sabotado (lição do #1524, money-path §6).
+    await expect(getFluxoCaixa('oben', INICIO, FIM)).rejects.toThrow(/data null sem error/);
   });
 
   it('múltiplo exato da capa: página vazia (data:[]) é fim LEGÍTIMO, não malformação', async () => {
@@ -375,7 +375,7 @@ describe('getFluxoCaixa — caixa PREVISTO (fin_contas_receber / fin_contas_paga
     state.db.fin_contas_receber = [titulo(0, '2026-03-01', 10)];
     state.dataNullNaRequisicao.fin_contas_receber = 1;
 
-    await expect(getFluxoCaixa('oben', INICIO, FIM)).rejects.toThrow(/data=null sem error/);
+    await expect(getFluxoCaixa('oben', INICIO, FIM)).rejects.toThrow(/data null sem error/);
   });
 
   it('CR acima da capa de 1.000 não sai truncado (prod: 4.094 títulos na janela)', async () => {
