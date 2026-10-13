@@ -74,18 +74,18 @@ Deno.serve(async (req) => {
           .select('*')
           .eq('inativo', false);
 
-        const orderItems = tools.map((tool: { id: string; generated_name?: string | null; custom_name?: string | null; tool_categories?: { name?: string } | null }) => {
-          const categoryName = tool.tool_categories?.name?.toLowerCase() || '';
+        const orderItems = tools.map((tool: { id: string; generated_name?: string | null; custom_name?: string | null; tool_categories?: { name?: string }[] | null }) => {
+          const categoryName = tool.tool_categories?.[0]?.name?.toLowerCase() || '';
           const matchingService = (servicos || []).find((s: { descricao: string; omie_codigo_servico?: string }) => 
             s.descricao.toLowerCase().includes(categoryName)
           );
 
           return {
-            category: matchingService?.descricao || tool.tool_categories?.name || '',
+            category: matchingService?.descricao || tool.tool_categories?.[0]?.name || '',
             quantity: 1,
             omie_codigo_servico: matchingService?.omie_codigo_servico,
             userToolId: tool.id,
-            toolName: tool.generated_name || tool.custom_name || tool.tool_categories?.name || '',
+            toolName: tool.generated_name || tool.custom_name || tool.tool_categories?.[0]?.name || '',
             photos: [],
           };
         });

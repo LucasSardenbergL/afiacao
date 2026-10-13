@@ -164,7 +164,7 @@ Deno.serve(async (req) => {
       const ncm = item.ncm ?? item.NCM ?? null;
       const ean = item.ean ?? item.cEAN ?? null;
       const unidadeNfe = item.unidade_nfe ?? item.uCom ?? item.unidade ?? "UN";
-      const quantidadeNfe = parseFloat(item.quantidade_nfe ?? item.qCom ?? item.quantidade ?? 0);
+      const quantidadeNfe = parseFloat(String(item.quantidade_nfe ?? item.qCom ?? item.quantidade ?? 0));
       const valorUnitario = item.valor_unitario ?? item.vUnCom ?? item.preco ?? null;
       const valorTotalItem = item.valor_total ?? item.vProd ?? null;
       const produtoOmieId = item.produto_omie_id ?? item.nCodProd ?? null;
@@ -179,8 +179,8 @@ Deno.serve(async (req) => {
         ean,
         unidade_nfe: unidadeNfe,
         quantidade_nfe: quantidadeNfe,
-        valor_unitario: valorUnitario ? parseFloat(valorUnitario) : null,
-        valor_total: valorTotalItem ? parseFloat(valorTotalItem) : null,
+        valor_unitario: valorUnitario ? parseFloat(String(valorUnitario)) : null,
+        valor_total: valorTotalItem ? parseFloat(String(valorTotalItem)) : null,
         unidade_estoque: null,
         quantidade_convertida: null,
         quantidade_conferida: 0,
