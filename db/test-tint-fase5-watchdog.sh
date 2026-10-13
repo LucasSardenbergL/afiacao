@@ -25,12 +25,33 @@
 # ║   B13 chave com OUTRO fallback válido não conta — e PASSA a contar quando o    ║
 # ║       fallback some (prova positiva: o assert mede o fallback, não o silêncio) ║
 # ║   B14 anti-sobreposição: lock tomado -> sai SEM avançar o marcador             ║
+# ║   B21/B22 (v2) S2 nunca é crítico, e o crítico aberto pela v1 rebaixa no lugar ║
+# ║   B15-B20 (v1 pós-Codex) semeadura do marcador, histerese do e-mail, escalada  ║
+# ║  v3 (20261013120000) — S2 mede PERSISTÊNCIA, não o churn do snapshot:          ║
+# ║   B30 chave retirada AGORA não conta em S2 (é churn do conector)               ║
+# ║   B31 mas ENTRA no bruto, que é métrica no marcador e não alerta               ║
+# ║   B32 churn não abre alerta de S2                                              ║
+# ║   B33 a MESMA chave conta ao passar de 30 dias (prova POSITIVA do corte)       ║
+# ║   B34 e só aí o alerta de S2 abre                                              ║
+# ║   B35 colapso do bruto (~10% do universo) alarma tint_fase5_fonte_colapso      ║
+# ║   B36 o colapso alarma com S2 persistente em ZERO — são sinais independentes   ║
+# ║   B37/B39 os dois degraus do S4: ~10% -> aviso, >=20% -> critico               ║
+# ║   B38 bruto normal -> dismiss do colapso                                       ║
 # ║  FALSIFICAÇÕES (cada uma declara o CONJUNTO EXATO que derruba):                ║
 # ║   F1 anti-join ignora receita_valida    -> S1 cega                             ║
 # ║   F2 junta as 2 classes no MESMO tipo   -> reproduz o bug que o Codex apontou  ║
 # ║   F3 mata o vigia de cardinalidade      -> {B10,B12}                           ║
 # ║   F4 marcador sob outro nome            -> {B2,B10,B12,B13a,B13b}              ║
 # ║   F5 tira a anti-sobreposição (lock)    -> {B14}                               ║
+# ║   F6 devolve o 'critico' do S2 da v1    -> {B21,B22a}                          ║
+# ║   F7 neutraliza o corte de 30d (v3)     -> {B30,B32,B36}                       ║
+# ║   F8 mata o guarda de colapso S4 (v3)   -> {B35,B37,B39}                       ║
+# ║                                                                                ║
+# ║  O SEED DA '1' CARIMBADA NASCE COM 90 DIAS, e isso é parte da prova: a v3 mede ║
+# ║  "há quanto tempo a chave está sem NENHUMA ativa" por max(desativada_em) sobre ║
+# ║  o grupo — com a '1' em now(), o max era sempre recente, nenhuma chave         ║
+# ║  conseguia parecer antiga e 8 asserts caíam. Em prod a Fase 5 carimbou em      ║
+# ║  2026-07-22. Seed infiel na DATA falsifica por acidente, não por desenho.      ║
 # ╚══════════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
 
@@ -173,7 +194,13 @@ P -q -f "$MIG"
 MIG2="$REPO_ROOT/supabase/migrations/20261010230000_tint_watchdog_fase5_s2_aviso.sql"
 [ -f "$MIG2" ] || { echo "migration nao encontrada: $MIG2"; exit 1; }
 P -q -f "$MIG2"
-echo "=== migrations aplicadas (v1 + v2) ==="
+# v3 (20261013120000): S2 passa a contar so a chave sem ativa HA MAIS DE 30 DIAS; o bruto vira
+# metrica e o S4 vigia colapso. A prod tem as TRES aplicadas, nesta ordem — e a falsificacao
+# sabota a v3 (e ela que define a funcao vigente).
+MIG3="$REPO_ROOT/supabase/migrations/20261013120000_tint_watchdog_fase5_s2_persistente.sql"
+[ -f "$MIG3" ] || { echo "migration nao encontrada: $MIG3"; exit 1; }
+P -q -f "$MIG3"
+echo "=== migrations aplicadas (v1 + v2 + v3) ==="
 
 P -q -c "CREATE TABLE _bkp AS SELECT pg_get_functiondef('public.tint_watchdog_fase5_check()'::regprocedure) AS def;"
 restaura() { Pq -c "SELECT def FROM _bkp;" > "$RODADA/_f5wd_real.sql"; P -q -f "$RODADA/_f5wd_real.sql"; }
@@ -207,7 +234,7 @@ BEGIN
   INSERT INTO public.tint_formulas (id, account, sku_id, cor_id, subcolecao_id,
                                     preco_final_sayersystem, desativada_em, desativada_motivo)
   VALUES (v_leg, 'oben', v_sku, p_cor, '50000000-0000-0000-0000-0000000000a2',
-          100, now(), 'fase5_geracao_legada');
+          100, now() - interval '90 days', 'fase5_geracao_legada');
   -- a gêmea SL que a substituiu
   INSERT INTO public.tint_formulas (id, account, sku_id, cor_id, subcolecao_id,
                                     preco_final_sayersystem)
@@ -245,6 +272,7 @@ SQL
 # ── alavancas de estado ──
 CO_OK='c0000000-0000-0000-0000-0000000000ff'
 CO_RUIM='c0000000-0000-0000-0000-0000000000bb'
+SL1='51000000-0000-0000-0000-000000000001'
 SL2='51000000-0000-0000-0000-000000000002'
 SL3='51000000-0000-0000-0000-000000000003'
 SL_BULK1='51000000-0000-0000-0000-000000001001'
@@ -252,7 +280,17 @@ FALLBACK4='52000000-0000-0000-0000-000000000004'
 
 degrada()       { P -q -c "UPDATE public.tint_formula_itens SET corante_id='$CO_RUIM' WHERE formula_id='$1';"; }
 sara()          { P -q -c "UPDATE public.tint_formula_itens SET corante_id='$CO_OK'  WHERE formula_id='$1';"; }
-retira_fonte()  { P -q -c "UPDATE public.tint_formulas SET desativada_em=now(), desativada_motivo=NULL WHERE id='$1';"; }
+# v3: a retirada "de verdade" e a que passou de 30 dias. As alavancas de S2 que ja existiam
+# (B6/B7/B8b/B16*/B18*/B19/B21/B22*) passam a nascer ANTIGAS — provam o mesmo invariante de
+# sempre ("a fonte retirou e o alerta pega"), agora na semantica que a v3 mede.
+D31="now() - interval '31 days'"
+retira_fonte()  { P -q -c "UPDATE public.tint_formulas SET desativada_em=$D31, desativada_motivo=NULL WHERE id='$1';"; }
+# churn: sai AGORA. A v3 NAO deve contar isto em S2 (99,4% do que a v2 alarmava era isto).
+retira_churn()  { P -q -c "UPDATE public.tint_formulas SET desativada_em=now(), desativada_motivo=NULL WHERE id='$1';"; }
+envelhece()     { P -q -c "UPDATE public.tint_formulas SET desativada_em=$D31 WHERE id='$1' AND desativada_em IS NOT NULL;"; }
+# retira N chaves BULK AGORA (churn): alimenta o bruto sem alimentar o S2 persistente — e o bruto
+# e o que o S4 (colapso) vigia.
+retira_bulk_agora() { P -q -c "UPDATE public.tint_formulas SET desativada_em=now(), desativada_motivo=NULL WHERE id IN (SELECT id FROM public.tint_formulas WHERE cor_id LIKE 'BULK%' AND subcolecao_id='50000000-0000-0000-0000-0000000000a1' AND desativada_em IS NULL ORDER BY id LIMIT $1);"; }
 devolve_fonte() { P -q -c "UPDATE public.tint_formulas SET desativada_em=NULL WHERE id='$1';"; }
 degrada_bulk()  { P -q -c "UPDATE public.tint_formula_itens SET corante_id='$CO_RUIM' WHERE formula_id IN (SELECT id FROM public.tint_formulas WHERE cor_id LIKE 'BULK%' AND subcolecao_id='50000000-0000-0000-0000-0000000000a1');"; }
 sara_bulk()     { P -q -c "UPDATE public.tint_formula_itens SET corante_id='$CO_OK'  WHERE formula_id IN (SELECT id FROM public.tint_formulas WHERE cor_id LIKE 'BULK%' AND subcolecao_id='50000000-0000-0000-0000-0000000000a1');"; }
@@ -297,7 +335,7 @@ roda_suite() {
   # 10.000 chaves S2X (massa do B21/B22: a v1 escalava S2 para 'critico' a partir de 10.000) nascem
   # JÁ retiradas pela fonte e morrem logo depois — semeadas o tempo todo, deixavam CADA rodada da
   # varredura ~40x mais lenta e a prova foi de 11 s para 465 s no CI (estourou a parte 1, 2026-10-11).
-  local s2x="DO \$\$ DECLARE g int; BEGIN FOR g IN 100001..110000 LOOP PERFORM _seed_chave(g, 'S2X' || g, '$CO_OK'); END LOOP; END \$\$; UPDATE public.tint_formulas SET desativada_em=now(), desativada_motivo=NULL WHERE cor_id LIKE 'S2X%' AND desativada_em IS NULL;"
+  local s2x="DO \$\$ DECLARE g int; BEGIN FOR g IN 100001..110000 LOOP PERFORM _seed_chave(g, 'S2X' || g, '$CO_OK'); END LOOP; END \$\$; UPDATE public.tint_formulas SET desativada_em=now() - interval '31 days', desativada_motivo=NULL WHERE cor_id LIKE 'S2X%' AND desativada_em IS NULL;"
   local s2x_volta="DELETE FROM public.tint_formula_itens WHERE formula_id IN (SELECT id FROM public.tint_formulas WHERE cor_id LIKE 'S2X%'); DELETE FROM public.tint_formulas WHERE cor_id LIKE 'S2X%';"
 
   # ── B1/B2: tudo saudável -> silêncio, e o marcador avança
@@ -422,14 +460,14 @@ roda_suite() {
   roda
   local id_v1 fila_v1
   id_v1="$(Pq -c "SELECT COALESCE(max(id::text),'AUSENTE') FROM public.fin_alertas WHERE tipo='tint_fase5_fonte_retirada' AND dismissed_at IS NULL;")"
-  fila_v1="$(Pq -c "SELECT count(*) FROM public.fornecedor_alerta;")"
+  fila_v1="$(emails 'fonte retirou')"
   eq "B22pre a v1 abre o alerta de S2 em critico" "$(sev tint_fase5_fonte_retirada)" "critico"
   volta_vigente                            # aplica a v2 (ou a sabotada) por cima
   roda
   eq "B22a v2 rebaixa o critico aberto para aviso" "$(sev tint_fase5_fonte_retirada)" "aviso"
   eq "B22b rebaixa NO LUGAR (mesmo alerta, nao abre outro)" \
      "$(Pq -c "SELECT COALESCE(max(id::text),'AUSENTE') FROM public.fin_alertas WHERE tipo='tint_fase5_fonte_retirada' AND dismissed_at IS NULL;")" "$id_v1"
-  eq "B22c rebaixar nao manda e-mail" "$(( $(Pq -c "SELECT count(*) FROM public.fornecedor_alerta;") - fila_v1 ))" "0"
+  eq "B22c rebaixar nao manda e-mail" "$(( $(emails 'fonte retirou') - fila_v1 ))" "0"
   P -q -c "$s2x_volta"
 
   # ══ asserts dos FIXES do challenge Codex sobre este diff (2026-07-28) ══
@@ -450,7 +488,7 @@ roda_suite() {
   # o B15 deixou a v1 vigente: devolve a função sob teste ANTES do B16..B20/B17 (achado do Codex)
   volta_vigente
   eq "B15d a funcao sob teste volta a vigorar (B16+ nao medem a v1)" \
-     "$(Pq -c "SELECT (prosrc LIKE '%tint_watchdog_fase5 guard v2%')::text FROM pg_proc WHERE oid='public.tint_watchdog_fase5_check()'::regprocedure;")" "true"
+     "$(Pq -c "SELECT (prosrc LIKE '%tint_watchdog_fase5 guard v3%')::text FROM pg_proc WHERE oid='public.tint_watchdog_fase5_check()'::regprocedure;")" "true"
 
   # B16 [P1] HISTERESE do e-mail. S2 cresce ~60 chaves/dia por DESENHO da fonte; com
   # re-emissao a cada incremento seriam ~4 e-mails/dia ate alguem limpar, e a familia
@@ -533,6 +571,40 @@ roda_suite() {
      "$(Pq -c "SELECT metadata->>'universo_max' FROM public.sync_state WHERE entity_type='tint_watchdog_fase5';")" "$umax0"
   # restaura o carimbo: a suite inteira re-roda em cada falsificacao
   P -q -c "UPDATE public.tint_formulas SET desativada_motivo='fase5_geracao_legada' WHERE desativada_em IS NOT NULL AND desativada_motivo IS NULL AND id IN (SELECT id FROM public.tint_formulas WHERE desativada_em IS NOT NULL);"
+
+  # ══ v3 (20261013120000) — S2 mede PERSISTENCIA, nao o churn do snapshot ══
+  # Medido em prod 2026-10-13: bruto 12.386 · >=1d 12.386 · >=3d 3.694 · >=7d 79 · >=30d ZERO.
+  # Toda cor que sai do catalogo volta antes de 30 dias ⇒ 99,4% do que a v2 alarmava era atrito
+  # do conector. B30-B34 provam que o corte separa churn de dano, com prova POSITIVA (a MESMA
+  # chave muda de lado quando envelhece) — medir so o silencio nao distingue "o corte funcionou"
+  # de "nada foi avaliado".
+  reset_estado
+  retira_churn "$SL1"
+  roda
+  eq "B30 chave retirada AGORA nao conta em S2 (e churn)"      "$(meta fonte_retirada)" "0"
+  eq "B31 mas ENTRA no bruto, que e metrica e nao alerta"      "$(meta fonte_retirada_bruto)" "1"
+  eq "B32 churn nao abre alerta de S2"                         "$(ativos tint_fase5_fonte_retirada)" "0"
+  envelhece "$SL1"
+  roda
+  eq "B33 a MESMA chave conta ao passar de 30 dias"            "$(meta fonte_retirada)" "1"
+  eq "B34 e so ai o alerta de S2 abre"                         "$(ativos tint_fase5_fonte_retirada)" "1"
+  devolve_fonte "$SL1"
+  roda
+
+  # S4: COLAPSO do bruto — o vao que o corte de 30d abre para o evento AGUDO. Um snapshot
+  # truncado hoje so apareceria em S2 daqui a 30 dias, com o balcao sem vender no intervalo.
+  reset_estado
+  retira_bulk_agora 100                    # ~10% de 1004 chaves: faixa do 'aviso' (5%..20%)
+  roda
+  eq "B35 colapso do bruto (10%) alarma"                       "$(ativos tint_fase5_fonte_colapso)" "1"
+  eq "B36 colapso alarma com S2 persistente em ZERO (independentes)" "$(meta fonte_retirada)" "0"
+  eq "B37 colapso de ~10% fica em aviso (critico e >=20%)"     "$(sev tint_fase5_fonte_colapso)" "aviso"
+  retira_bulk_agora 200                    # +200 => ~30%: cruza o degrau do 'critico'
+  roda
+  eq "B39 colapso >=20% escala para critico"                   "$(sev tint_fase5_fonte_colapso)" "critico"
+  P -q -c "UPDATE public.tint_formulas SET desativada_em=NULL, desativada_motivo=NULL WHERE cor_id LIKE 'BULK%' AND subcolecao_id='50000000-0000-0000-0000-0000000000a1' AND desativada_em IS NOT NULL;"
+  roda
+  eq "B38 bruto normal nao alarma colapso (dismiss)"           "$(ativos tint_fase5_fonte_colapso)" "0"
 }
 
 echo "=== BASELINE (migration real) ==="
@@ -562,7 +634,7 @@ sabota_e_mede() {   # $1=rotulo  $2=busca  $3=troca  $4..=asserts esperados
   # `if !` e nao `cmd; if [ $? -ne 0 ]`: com `set -euo pipefail` ativo e esta funcao chamada NUA
   # (`sabota_e_mede "F1" \`), o python3 saindo !=0 abortava o script AQUI — o bloco de erro abaixo
   # era INALCANCAVEL e o FALSIF_ERR nunca contava (medido 2026-08-28). `if !` suspende o `set -e`.
-  if ! python3 - "$MIG2" "$sab" "$busca" "$troca" <<'PY'
+  if ! python3 - "$MIG3" "$sab" "$busca" "$troca" <<'PY'
 import sys
 src, dst, busca, troca = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 s = open(src).read()
@@ -634,7 +706,9 @@ sabota_e_mede "F1" \
 sabota_e_mede "F2" \
   "v_conta, 'tint_fase5_fonte_retirada', v_s2," \
   "v_conta, 'tint_fase5_chave_sem_preco', v_s2," \
-  B6 B21 B22a B22c
+  B6 B21 B22a B22c B34
+# ^ B34 entra porque ele mede a ABERTURA do alerta de S2: com as classes no mesmo tipo, o tipo
+#   tint_fase5_fonte_retirada nunca abre. Medido, nao previsto.
 # ^ B21/B22 por CASCATA (medido 2026-10-10): sem tipo proprio, o alerta de S2 nem existe — a
 #   severidade do B21 vira AUSENTE; no B22 o critico da v1 fica orfao (nao rebaixa) e a 2a
 #   classe abre alerta NOVO, que manda e-mail.
@@ -654,7 +728,9 @@ sabota_e_mede "F3" \
 sabota_e_mede "F4" \
   "VALUES ('tint_watchdog_fase5', v_conta, clock_timestamp(), 'complete', NULL," \
   "VALUES ('tint_watchdog_NOME_ERRADO', v_conta, clock_timestamp(), 'complete', NULL," \
-  B2 B10 B12 B13a B13b B20
+  B2 B10 B12 B13a B13b B20 B30 B31 B33 B36
+# ^ B30/B31/B33/B36 (v3) entram pela MESMA cascata: eles leem fonte_retirada /
+#   fonte_retirada_bruto do metadata DESSE marcador, que a sabotagem renomeia.
 # ^ B10/B12 entram por CASCATA: o high-water-mark (universo_max/ancora_em) e LIDO do
 #   MESMO marcador sync_state que a sabotagem renomeia. Sem marcador, v_max=0, a
 #   guarda `v_max > 0` nunca passa e o vigia de cardinalidade fica mudo. Ou seja: o
@@ -680,6 +756,24 @@ sabota_e_mede "F6" \
 #   TEXTO (o apply aborta — dente da camada textual, medido 2026-10-10). A F6 mede a OUTRA camada,
 #   o comportamento (B21), entao a sabotagem tem de passar pela textual com a mesma semantica.
 
+# F7 (v3) — NEUTRALIZA o corte de 30 dias: o S2 volta a contar o bruto, que e exatamente o que
+#      a v2 fazia e que a medicao de prod mostrou ser 99,4% churn do snapshot. O `OR true` em vez
+#      de trocar o intervalo: a postcondicao P2 da v3 exige o TEXTO do corte por regex (o apply
+#      abortaria), entao a sabotagem precisa passar pela camada textual para medir a camada de
+#      COMPORTAMENTO — mesma licao do F6.
+sabota_e_mede "F7" \
+  "                     AND k.sem_ativa_desde < now() - interval '30 days')," \
+  "                     AND (k.sem_ativa_desde < now() - interval '30 days' OR true))," \
+  B30 B32 B36
+
+# F8 (v3) — mata o guarda de COLAPSO: o vao que o corte de 30 dias abre para o evento agudo volta
+#      a existir. `IF false` mantem o literal tint_fase5_fonte_colapso no corpo (a postcondicao P3
+#      o exige por texto), logo mede comportamento, nao presenca de string.
+sabota_e_mede "F8" \
+  "IF v_universo > 0 AND v_s2_bruto::numeric / v_universo >= 0.05 THEN" \
+  "IF false THEN" \
+  B35 B37 B39
+
 # ══ fecho: re-roda a suíte na versão REAL e exige verde ══
 echo "=== VERIFICACAO FINAL (migration real restaurada) ==="
 roda_suite
@@ -691,4 +785,4 @@ if [ "$FAIL" -ne 0 ] || [ "$FALSIF_ERR" -ne 0 ]; then
   echo "RESULTADO: VERMELHO"
   exit 1
 fi
-echo "RESULTADO: VERDE — $PASS asserts + 6 falsificacoes com conjunto exato"
+echo "RESULTADO: VERDE — $PASS asserts + 8 falsificacoes com conjunto exato"
