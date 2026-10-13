@@ -481,7 +481,7 @@ fi
 # contagem também é conferida: conjunto EXATO). `APPLY!MARCA` = sabotagem de pós-condição: o apply em
 # transação única TEM de abortar com aquela marca (`_` vira espaço). Conjuntos MEDIDOS na 1ª rodada,
 # não previstos — as 4 divergências da previsão estão explicadas nos comentários da suíte e no PR.
-SABOTAGENS="ref_sem_aplicado:F4,F6b ordem_por_aplicado_em:F8 janela_sem_aplicado:R3 janela_sem_7_dias:R2a janela_por_recebimento:R7 janela_por_chunk:R8 relogio_aplicado_em:F2,F2b relogio_min_chunk:F3 igualdade_estrita:F2b s5_ausente_vira_saudavel:F6a sem_nulo_sem_ref:F6b,R5d criterio_sem_guarda:R5d s2_sem_criterio_no_ctx:R1b,R5c helper_v1:H1,H2,H5 s4_limiar_desloca:T50,T51 s4_critico_estrito:T200 s5_critico_estrito:F7 retroativo_por_data:R6d p4_instrucao_proibida:APPLY!P4_FALHOU p8_tabela_aberta:APPLY!P8_FALHOU p2b_corte_30d_volta:APPLY!P2b_FALHOU"
+SABOTAGENS="ref_sem_aplicado:F4,F6b,R5d ordem_por_aplicado_em:F8,R7 janela_sem_aplicado:R3 janela_sem_7_dias:R2a,R7 janela_por_recebimento:R7 janela_por_chunk:R7,R8 relogio_aplicado_em:F2,F2b relogio_min_chunk:F3 igualdade_estrita:F2b s5_ausente_vira_saudavel:F6a s2_sem_nulo_sem_ref:F6b,R5d criterio_sem_guarda:R5d s2_sem_criterio_no_ctx:R1b,R5c helper_v1:H1,H2,H5 s4_limiar_desloca:T50,T51 s4_critico_estrito:T200 s5_critico_estrito:F7 retroativo_por_data:R6d p4_instrucao_proibida:APPLY!P4_FALHOU p8_tabela_aberta:APPLY!P8_FALHOU p2b_corte_30d_volta:APPLY!P2b_FALHOU"
 
 # As trocas textuais de cada sabotagem (busca, troca, …). Cada busca tem de casar EXATAMENTE 1 vez.
 pares_de() {
@@ -504,10 +504,9 @@ pares_de() {
     relogio_min_chunk) PARES=("    SELECT ks.snapshot_id, max(ks.created_at) AS rec" "    SELECT ks.snapshot_id, min(ks.created_at) AS rec") ;;
     igualdade_estrita) PARES=("sf.created_at >= (SELECT rec FROM ref)" "sf.created_at > (SELECT rec FROM ref)") ;;
     s5_ausente_vira_saudavel) PARES=("  IF v_fant IS NULL THEN" "  IF false THEN") ;;
-    sem_nulo_sem_ref) PARES=(
-"    v_s2 := NULL; v_ret_fonte := NULL;
-    v_fant := NULL; v_fant_vend := NULL; v_fant_fonte := NULL; v_cor_nova := NULL;"
-"    NULL;") ;;
+    # só o nulo do S2: tirar também o do S5 faz a mensagem dele virar NULL e a função ABORTAR (NOT NULL
+    # em fin_alertas.mensagem) — falha alta, medida na 2ª rodada como ERRO_SQL, não um assert
+    s2_sem_nulo_sem_ref) PARES=("    v_s2 := NULL; v_ret_fonte := NULL;" "    v_ret_fonte := NULL;") ;;
     criterio_sem_guarda) PARES=(
 "     AND (contexto->>'criterio') IS DISTINCT FROM v_criterio
      -- só quando o critério novo PODE avaliar (Codex v4 P2-4): sem referência, nada é tocado
