@@ -1,9 +1,9 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { authorizeCron } from "../_shared/auth.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-const CRON_SECRET = Deno.env.get("CRON_SECRET") ?? "";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -17,8 +17,7 @@ const CNPJ_RE = /^\d{14}$/;
 
 // Espelho fino do authorizeCronOrStaff: cron-secret OU staff master via JWT.
 async function autorizado(req: Request): Promise<boolean> {
-  const secret = req.headers.get("x-cron-secret");
-  if (secret && CRON_SECRET && secret === CRON_SECRET) return true;
+  if (authorizeCron(req).ok) return true;
   const auth = req.headers.get("Authorization");
   if (!auth?.startsWith("Bearer ")) return false;
   const supa = createClient(SUPABASE_URL, SERVICE_KEY, { global: { headers: { Authorization: auth } } });

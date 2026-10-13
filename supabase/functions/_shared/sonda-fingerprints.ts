@@ -71,7 +71,7 @@ export const FONTE_SHA256: Record<string, string> = {
   "process-nfe": "51b2583095bc1fb1fe11ec70465b82563753462f583ebd53fb7a7a1eafe95f8f",
   "process-recurring-orders": "f7860da917f827ccbec9a52a069e618b6fadd18fe31491a97f1757971cbc534c",
   "promocao-extrair-via-vision": "f2b6ce0c3b6e50833d077b177f35ac6d76d7a28819ce483342a124856da0ab94",
-  "radar-ingest": "5e7d14e0be9f91ed193a6fe77a61f46b5039d1ab11c41428a5b9fae0fa84bace",
+  "radar-ingest": "0f68967e6a85d98cfce89ff278b843dc6d0f75d1e852507e108d0514d7bc78cf",
   "recommend": "ecaa23882a393d5f46f0bd1d36c1e97467cf5f743f6821d22716f28e9da749ea",
   "reposicao-depara-sayerlack-auto": "d08f9e56ca21f97883c52e148c615626f9429ff4a59c34256ea0eb0cf3d3f60a",
   "sayerlack-captura-precos": "067de5a255cf9b09e7d73995f2f6986d14cf1869dbfaf7242317866b3a263e1c",
