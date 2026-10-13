@@ -41,9 +41,12 @@ DATA="$TMP/data"
 MIG="$REPO_ROOT/supabase/migrations/20261013150000_tint_promote_nao_ressuscita_fantasma.sql"
 MIG_5B1="$REPO_ROOT/supabase/migrations/20260924120000_tint_promote_tombstone_fase5.sql"
 MIG_V6="$REPO_ROOT/supabase/migrations/20260726120000_tint_promote_error_details_completo.sql"
+# Ajuste do #3051 (20261013220000): o snapshot de referência sai da ORDEM DO APPLY (generated_at), não
+# de aplicado_em — um reapply pulado ("fora de ordem") regrava aplicado_em de um snapshot ANTIGO.
+MIG_REF="$REPO_ROOT/supabase/migrations/20261013220000_tint_promote_snapshot_ref_por_generated_at.sql"
 export LC_ALL=C LANG=C
 
-for f in "$MIG" "$MIG_5B1" "$MIG_V6"; do [ -f "$f" ] || { echo "migration ausente: $f"; exit 1; }; done
+for f in "$MIG" "$MIG_REF" "$MIG_5B1" "$MIG_V6"; do [ -f "$f" ] || { echo "migration ausente: $f"; exit 1; }; done
 
 cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$TMP"; }
 trap cleanup EXIT
@@ -147,6 +150,20 @@ SQL
 APPLY="$(T -tA -c "SELECT (tint_apply_keys_snapshot('5a000000-0000-0000-0000-000000000001')->>'desativadas')")"
 [ "$APPLY" = "2" ] || { echo "✗ seed: o apply real tinha de desativar exatamente A e C (2), veio [$APPLY]"; exit 1; }
 T -q -c "UPDATE tint_keys_snapshots SET aplicacao_status='aplicado', aplicado_em = now() - interval '1 day' WHERE snapshot_id='5a000000-0000-0000-0000-000000000001'" >/dev/null
+# S0 — o cenário do ajuste 20261013220000: snapshot ANTIGO (gerado/recebido há 3 dias, ainda COM A e C)
+# que alguém reaplicou DEPOIS do S1. O apply real o pula ("fora de ordem": generated_at <= último
+# aplicado) mas o tick o marca 'aplicado' e regrava aplicado_em = agora. Ordenando por aplicado_em, S0
+# viraria a referência, A apareceria PRESENTE e o staging velho de A a ressuscitaria. Ordenando por
+# generated_at (a ordem do próprio apply), a referência segue S1 e nada muda na suíte.
+T -q <<'SQL0' >/dev/null
+INSERT INTO tint_keys_snapshots (setting_id, account, store_code, snapshot_id, entity, generated_at, total_chunks, chunk_index, keys, created_at, aplicacao_status, aplicado_em)
+VALUES ('aaaaaaaa-0000-0000-0000-000000000001','oben','L1','5a000000-0000-0000-0000-000000000000','formulas',
+        now() - interval '3 days', 1, 0,
+        (SELECT jsonb_agg(c || '|P1|B1|false') FROM unnest(ARRAY['B1','B2','B3','B4','B5','B6','B7','B8','A','C']) c),
+        now() - interval '3 days', 'aplicado', now());
+SQL0
+PULO="$(T -tA -c "SELECT (tint_apply_keys_snapshot('5a000000-0000-0000-0000-000000000000')->>'skipped')")"
+[ "$PULO" = "snapshot fora de ordem" ] || { echo "✗ seed: o apply real tinha de PULAR o S0 antigo ('snapshot fora de ordem'), veio [$PULO]"; exit 1; }
 
 T -q <<'SQL' >/dev/null
 -- R3 fórmulas (AGORA): C volta à fonte e D é cor nova — o run toca o par P1/B1 e reexpande o latest
@@ -201,6 +218,7 @@ suite() {   # $1 = banco já com a migration (real ou sabotada) aplicada
 echo "════ T1 — com a migration ════"
 novo_db t1
 PA -d t1 -q -f "$MIG" >/dev/null
+PA -d t1 -q -f "$MIG_REF" >/dev/null
 suite t1
 
 # ── T2: sem snapshot APLICADO, o filtro não age ────────────────────────────────────────────────
@@ -208,12 +226,14 @@ echo "════ T2 — snapshot só recebido (não aplicado) ════"
 novo_db t2
 PA -d t2 -q -c "UPDATE tint_keys_snapshots SET aplicacao_status='pendente', aplicado_em=NULL" >/dev/null
 PA -d t2 -q -f "$MIG" >/dev/null
+PA -d t2 -q -f "$MIG_REF" >/dev/null
 promove_r3 t2 >/dev/null
 afirma "T2 sem referência aplicada, comportamento anterior (A reativa)" "T2 A: $(estado t2 A)" [ "$(estado t2 A)" = "ATIVA" ]
 # ── T3: re-apply idempotente ───────────────────────────────────────────────────────────────────
 echo "════ T3 — re-apply ════"
 H1="$(PA -d t1 -tA -c "SELECT md5(pg_get_functiondef('public.tint_promote_sync_run(uuid)'::regprocedure))")"
 PA -d t1 -q -f "$MIG" >/dev/null 2>&1
+PA -d t1 -q -f "$MIG_REF" >/dev/null 2>&1
 H2="$(PA -d t1 -tA -c "SELECT md5(pg_get_functiondef('public.tint_promote_sync_run(uuid)'::regprocedure))")"
 afirma "T3 re-apply é no-op (corpo inalterado)" "T3 re-apply mudou o corpo" [ "$H1" = "$H2" ]
 echo "─── controle: $PASSOU ok / $FALHAS falhas ───"
@@ -237,7 +257,7 @@ PY
   then echo "  ✗ $rot: sabotagem NÃO aplicou (âncora) — inválida"; FALSIF_ERR=$((FALSIF_ERR + 1)); return; fi
   local db; db="f_$(printf %s "$rot" | tr "[:upper:]" "[:lower:]")"   # identificador sem aspas vira minusculas no PG
   novo_db "$db"
-  if ! PA -d "$db" -q -f "$TMP/sab_$rot.sql" >"$TMP/sab_$rot.log" 2>&1; then
+  if ! { PA -d "$db" -q -f "$TMP/sab_$rot.sql" && PA -d "$db" -q -f "$MIG_REF"; } >"$TMP/sab_$rot.log" 2>&1; then
     echo "  ✗ $rot: a migration sabotada não aplicou — $(tail -c 300 "$TMP/sab_$rot.log" | tr '\n' ' ')"
     FALSIF_ERR=$((FALSIF_ERR + 1)); return
   fi
@@ -261,7 +281,17 @@ falsifica F2 "      AND sf.created_at < v_snap_recebido' || E'\\n' ||" "      AN
 #     (as presentes já estavam ativas e seguem; o dano seria barrar a reativação legítima delas).
 falsifica F3 "                             || (CASE WHEN eu.personalizada THEN ''true'' ELSE ''false'' END));' || E'\\n' ||" "                             );' || E'\\n' ||" A6 A7
 
+# F4: SEM o ajuste 20261013220000 (o #3051 puro, como foi aplicado em prod). Com o S0 reaplicado e
+#     pulado no seed, a referência vira o snapshot ANTIGO: A ressuscita, E nasce (o staging dela é mais
+#     novo que o S0) e o contador zera. Não é uma sabotagem textual: é a versão anterior REAL.
+novo_db f_f4
+PA -d f_f4 -q -f "$MIG" >/dev/null
+saida_f4="$(FALHAS=0; PASSOU=0; suite f_f4 2>&1)"
+caidos_f4="$(printf '%s\n' "$saida_f4" | sed -n 's/^  ✗ \([A-Z][0-9]*\) .*/\1/p' | sort | tr '\n' ' ' | sed 's/ $//')"
+if [ "$caidos_f4" = "A1 A2 A6 A7" ]; then echo "  ✓ F4 derrubou EXATAMENTE [$caidos_f4]"
+else echo "  ✗ F4: esperado [A1 A2 A6 A7], veio [$caidos_f4]"; FALSIF_ERR=$((FALSIF_ERR + 1)); fi
+
 echo "─── controle $CONTROLE_OK ok | falsificações inválidas/erradas: $FALSIF_ERR ───"
 echo "PASS=$CONTROLE_OK  FAIL=$FALSIF_ERR"
 if [ "$FALSIF_ERR" -ne 0 ]; then echo "RESULTADO: VERMELHO"; exit 1; fi
-echo "RESULTADO: VERDE — $CONTROLE_OK asserts + 3 falsificações com conjunto exato"
+echo "RESULTADO: VERDE — $CONTROLE_OK asserts + 4 falsificações com conjunto exato"
