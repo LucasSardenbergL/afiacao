@@ -528,9 +528,10 @@ db/test-watchdog-diario-so-problema.sh      22  falsificar=6
 # fixe aqui a parte em que ela cai: cada prova anexada depois a desloca (já mudou duas vezes durante
 # este PR — k=91, 92, 93, 94). Confira com `NUCLEO_PARTE=i/N bash db/roda-nucleo-ci.sh --lista`.
 db/test-tint-promote-fantasma.sh            11
-# Remoção da mitigação do #3054 (20261013200000): desagenda o cron tint-reaplicar-snapshot-6h, que
-# com o #3051 aplicado desativaria a cor NOVA que o critério temporal deixa passar. A guarda ABORTA se
-# o promote vivo não tiver o #3051 (remover sem o conserto reabriria a exposição) — é o que F1 sabota.
+# Remoção da mitigação do #3054 (20261013200000): desagenda o cron tint-reaplicar-snapshot-6h. O cron é
+# INÓCUO (medido: o reapply cai em "fora de ordem", deletes=0), mas dispara alarme falso de fila
+# atrasada a cada 6h. A guarda ABORTA se o promote vivo não tiver o #3051 (a ordem que o #3054 pede) —
+# é o que F1 sabota.
 # A prova do #3054 (db/test-tint-reaplicar-snapshot.sh) saiu daqui junto com o cron, como o
 # comentário dela pedia; o arquivo e a migration seguem no repo como histórico aplicado.
 db/test-tint-remove-cron-reaplicar.sh       3
