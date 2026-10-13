@@ -1,4 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { authorizeCronOrStaff } from "../_shared/auth.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 // FASE 1d: builders PUROS payload→staging (testáveis com deno test --no-remote).
 // O contrato (expected_item_count, is_base_pura, id pré-gerado, preservação de
 // item inválido) vive em staging-rows.ts — NÃO reimplementar inline aqui.
@@ -97,6 +99,21 @@ const MAX_PAYLOAD_BYTES = 5 * 1024 * 1024;
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+
+  // Sonda de versão (M-26; docs/agent/deploy.md) — só na ROTA RAIZ (`/tint-sync-agent`): é onde o
+  // gerador da sonda bate, e nenhuma rota do agente/staff mora ali (o bundle pré-sensor responde o
+  // `404 Unknown endpoint`). As rotas nomeadas seguem intactas — o corpo delas não é lido aqui.
+  // GATE PRÓPRIO: os gates desta edge (token do agente, JWT staff) não aceitam `x-cron-secret`,
+  // então só um corpo de SONDA desvia para `authorizeCronOrStaff`. Raiz sem sonda cai no 404 de antes.
+  if ((new URL(req.url).pathname.split("/").pop() || "") === "tint-sync-agent") {
+    const decisaoSonda = classificarSonda(await req.json().catch(() => null));
+    if (decisaoSonda.tipo !== "disparo") {
+      const authSonda = await authorizeCronOrStaff(req);
+      if (!authSonda.ok) return authSonda.response;
+      if (decisaoSonda.tipo === "sonda") return json(respostaSonda(VERSAO));
+      return json({ versao: VERSAO, error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }, 400);
+    }
+  }
 
   const url = new URL(req.url);
   const path = url.pathname.split("/").pop() || "";

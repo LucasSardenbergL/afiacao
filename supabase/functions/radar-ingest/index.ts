@@ -1,8 +1,9 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { authorizeCron } from "../_shared/auth.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-const CRON_SECRET = Deno.env.get("CRON_SECRET") ?? "";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -16,8 +17,7 @@ const CNPJ_RE = /^\d{14}$/;
 
 // Espelho fino do authorizeCronOrStaff: cron-secret OU staff master via JWT.
 async function autorizado(req: Request): Promise<boolean> {
-  const secret = req.headers.get("x-cron-secret");
-  if (secret && CRON_SECRET && secret === CRON_SECRET) return true;
+  if (authorizeCron(req).ok) return true;
   const auth = req.headers.get("Authorization");
   if (!auth?.startsWith("Bearer ")) return false;
   const supa = createClient(SUPABASE_URL, SERVICE_KEY, { global: { headers: { Authorization: auth } } });
@@ -32,9 +32,14 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   if (!(await autorizado(req))) return json({ error: "unauthorized" }, 401);
 
-  const admin = createClient(SUPABASE_URL, SERVICE_KEY);
   let body: Record<string, unknown>;
   try { body = await req.json(); } catch { return json({ error: "body inválido" }, 400); }
+  // Sonda de versão (M-26; docs/agent/deploy.md): `{ probe: true }` responde a versão no ar sem tocar
+  // banco — antes do client. O `autorizado` acima já aceita `x-cron-secret`.
+  const decisaoSonda = classificarSonda(body);
+  if (decisaoSonda.tipo === "sonda") return json(respostaSonda(VERSAO), 200);
+  if (decisaoSonda.tipo === "ambiguo") return json({ versao: VERSAO, error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }, 400);
+  const admin = createClient(SUPABASE_URL, SERVICE_KEY);
   const action = String(body.action ?? "");
   const mes = String(body.mes ?? "");
 
