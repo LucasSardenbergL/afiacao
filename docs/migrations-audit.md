@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **624** custom migrations totais
-- **2027** objetos esperados (criados por estas migrations)
+- **626** custom migrations totais
+- **2030** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 707
+  - `function`: 708
   - `rls_policy`: 471
   - `index`: 275
-  - `cron_job`: 182
+  - `cron_job`: 183
   - `table`: 176
-  - `view`: 109
+  - `view`: 110
   - `trigger`: 103
   - `enum_value`: 4
 
@@ -5088,11 +5088,24 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.analytics_ledger_registrar` | — |
 
+### `20261013094000_fin_movimentacoes_resumo_encargos.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.v_titulo_encargos_cr` | — |
+
 ### `20261013120000_tint_watchdog_fase5_s2_persistente.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.tint_watchdog_fase5_check` | — |
+
+### `20261013120000_watchdog_diario_so_problema.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_sync_watchdog_diario` | — |
+| `cron_job` | `cron.fin-sync-heartbeat` | — |
 
 ## Próximos passos por status
 

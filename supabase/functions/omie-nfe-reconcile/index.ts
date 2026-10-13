@@ -27,7 +27,8 @@
 
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff, corsHeaders } from "../_shared/auth.ts";
-import { cabeEspera, timeoutRequestMs } from "../_shared/omie-deadline.ts";
+import { cabeEspera } from "../_shared/omie-deadline.ts";
+import { chamarOmie, classificarResposta } from "../_shared/omie-cliente.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 function jsonRes(body: Record<string, unknown>, status = 200) {
@@ -250,69 +251,40 @@ async function registrarTentativa(
   }
 }
 
-// ── Retry with exponential backoff — PARA em REDUNDANT (re-tentar renova a trava) ──
-async function omieCall(
+// ── Chamada ao Omie: núcleo compartilhado (_shared/omie-cliente.ts, M-48) + adaptador legado ──
+// Só LEITURA (ListarRecebimentos). O deadline é o do RUN (#2017): nenhum request nem backoff o
+// cruza, e sem tempo viável o request nem sai — a recusa volta como falha da janela (httpOk:false),
+// NUNCA como página vazia/fim. REDUNDANT para na hora: re-tentar só renova a trava do Omie.
+async function chamadaOmie(
   url: string,
   deadline: number, // timestamp absoluto do run: nenhum request nem backoff pode cruzá-lo
-  payload: Record<string, unknown>,
-  maxRetries = 3,
+  call: string,
+  param: Record<string, unknown>,
+  creds: { appKey: string; appSecret: string },
+  conta: string,
 ): Promise<OmieCallResult> {
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    // Coleira de RELÓGIO (#2017): o guard desta edge era só de CONTAGEM
-    // (MAX_CHAMADAS_LISTAGEM), e contagem não limita tempo — um socket pendurado consumiu
-    // 149.905ms dos 150s do cron com o Omie saudável. `timeoutMs === 0` = sem tempo viável
-    // antes do deadline: recusa honesta, que classificarRespostaOmie lê como falha da janela
-    // (httpOk:false) — NUNCA como página vazia/fim de paginação.
-    const timeoutMs = timeoutRequestMs(Date.now(), deadline, FETCH_TIMEOUT_MS);
-    if (timeoutMs === 0) {
-      // classificarRespostaOmie só extrai texto de `faultstring` — sem este warn a recusa sai no
-      // relatório como "HTTP ???" e some. Não fabricamos um faultstring: o Omie não disse nada.
-      console.warn(`[omie-nfe-reconcile] deadline do run atingido — request recusado sem abrir socket (tentativa ${attempt})`);
-      return { error: true, data: { message: "sem tempo viável antes do deadline do run" } };
-    }
-    try {
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(timeoutMs),
-      });
-      const text = await res.text();
-      let data: unknown;
-      try {
-        data = JSON.parse(text);
-      } catch {
-        data = { raw: text };
-      }
-      if (!res.ok) {
-        const faultstring = asStr(asRecord(data).faultstring);
-        if (ehErroRedundante(faultstring)) {
-          // trava anti-redundância: retry só renova o timer — devolve na hora
-          return { error: true, status: res.status, data };
-        }
-        const delayHttp = Math.pow(2, attempt) * 500;
-        if (attempt < maxRetries && res.status >= 500 && cabeEspera(Date.now(), deadline, delayHttp)) {
-          console.warn(`[omie-nfe-reconcile] Omie ${res.status}, retry ${attempt}/${maxRetries} in ${delayHttp}ms`);
-          await new Promise((r) => setTimeout(r, delayHttp));
-          continue;
-        }
-        return { error: true, status: res.status, data };
-      }
-      return { error: false, data };
-    } catch (err) {
-      // O abort do AbortSignal.timeout chega aqui como TimeoutError. Re-tentar é legítimo (o
-      // socket pode ter travado só naquela conexão), mas SÓ com tempo para o sleep E para a
-      // chamada seguinte — senão o retry apenas adia o kill dentro do mesmo teto.
-      const delayRede = Math.pow(2, attempt) * 500;
-      if (attempt < maxRetries && cabeEspera(Date.now(), deadline, delayRede)) {
-        console.warn(`[omie-nfe-reconcile] Network error, retry ${attempt}/${maxRetries} in ${delayRede}ms:`, err);
-        await new Promise((r) => setTimeout(r, delayRede));
-        continue;
-      }
-      return { error: true, data: { message: String(err) } };
-    }
+  try {
+    const res = await chamarOmie(
+      { url, metodo: call, param, credenciais: creds },
+      {
+        conta,
+        deadline,
+        tetoPorRequestMs: FETCH_TIMEOUT_MS,
+        atrasoMs: (tentativa) => Math.pow(2, tentativa) * 500,
+        classificar: (r) => (ehErroRedundante(r.faultstring) ? "final" : classificarResposta(r)),
+        aoRepetir: ({ tentativa, atrasoMs, motivo }) =>
+          console.warn(`[omie-nfe-reconcile] ${motivo}, retry ${tentativa} in ${atrasoMs}ms`),
+      },
+    );
+    const data: unknown = res.corpo ?? { raw: res.texto };
+    // 2xx ilegível (já repetido pelo núcleo) é FALHA: como sucesso, a lista ausente virava fim.
+    return res.ok && res.corpo !== null ? { error: false, data } : { error: true, status: res.status, data };
+  } catch (err) {
+    // classificarRespostaOmie só extrai texto de `faultstring` — sem este warn a recusa sai no
+    // relatório como "HTTP ???" e some. Não fabricamos um faultstring: o Omie não disse nada.
+    console.warn(`[omie-nfe-reconcile] ${call} sem resposta utilizável:`, err);
+    return { error: true, data: { message: String(err) } };
   }
-  return { error: true, data: { message: "exhausted retries" } };
 }
 
 // ── Credential mapping by warehouse code — SEM fallback (Codex v2 P1: conta exata) ──
@@ -352,7 +324,7 @@ const MAX_DURACAO_MS = 120_000;
 const FETCH_TIMEOUT_MS = 25_000; // bound de CADA request (padrão da irmã omie-sync-status-produtos)
 
 Deno.serve(async (req) => {
-  const deadline = Date.now() + MAX_DURACAO_MS; // relógio ÚNICO do run: laços, tréguas e omieCall
+  const deadline = Date.now() + MAX_DURACAO_MS; // relógio ÚNICO do run: laços, tréguas e chamadaOmie
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
@@ -491,16 +463,13 @@ Deno.serve(async (req) => {
           }
           if (nPagina > 1) await new Promise((r) => setTimeout(r, TREGUA_LISTAGEM_MS));
           chamadasListagem++;
-          const lst = await omieCall(RECEB_URL, deadline, {
-            call: "ListarRecebimentos",
-            app_key: creds.appKey,
-            app_secret: creds.appSecret,
+          const lst = await chamadaOmie(RECEB_URL, deadline, "ListarRecebimentos",
             // cExibirDetalhes:'S' — SEM ele a listagem NÃO retorna infoCadastro (provado em
             // prod 2026-07-17 via diagnostico_listagem: keys_registro sem infoCadastro,
             // cRecebido null, com as NFs em cEtapa=80). Com o flag, cRecebido=S volta a vir
             // e o cruzamento forte reconcilia. Parse permanece fail-closed se faltar.
-            param: [{ nPagina, nRegistrosPorPagina: REGISTROS_POR_PAGINA, dtEmissaoDe: formatarDataOmie(janela.de), dtEmissaoAte: formatarDataOmie(janela.ate), cExibirDetalhes: "S" }],
-          });
+            { nPagina, nRegistrosPorPagina: REGISTROS_POR_PAGINA, dtEmissaoDe: formatarDataOmie(janela.de), dtEmissaoAte: formatarDataOmie(janela.ate), cExibirDetalhes: "S" },
+            creds, whCode);
           const cls = classificarRespostaOmie({ httpOk: !lst.error, status: lst.error ? lst.status : 200, body: lst.data });
           if (!cls.sucesso) {
             const msg = `${whCode} janela ${formatarDataOmie(janela.de)}–${formatarDataOmie(janela.ate)} p${nPagina}: ${cls.erro ?? "erro"}`;

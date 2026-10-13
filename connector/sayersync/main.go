@@ -4,7 +4,7 @@
 //
 // Subcomandos:
 //
-//	install    — configura interativamente e registra o serviço Windows SayerSync
+//	install    — configura (reaproveitando o config.json) e registra o serviço Windows SayerSync
 //	uninstall  — remove o serviço Windows
 //	run        — entry-point do serviço (chamado pelo SCM do Windows)
 //	once       — executa 1 ciclo de sync no console (dev/debug)
@@ -133,7 +133,8 @@ func printUsage() {
 Uso: sayersync <comando>
 
 Comandos:
-  install    Configurar e registrar o serviço Windows SayerSync
+  install    Configurar e registrar o serviço Windows SayerSync (reaproveita o config.json;
+             --manter-config = só registra serviço + recovery, sem perguntas)
   uninstall  Remover o serviço Windows SayerSync
   run        Entry-point do serviço (chamado pelo Windows SCM)
   once       Executar 1 ciclo de sync no console (teste/debug)
@@ -154,54 +155,29 @@ func cmdInstall() {
 		os.Exit(1)
 	}
 
-	reader := bufio.NewReader(os.Stdin)
-
-	fmt.Println("=== sayersync — configuração do serviço ===")
-	fmt.Println()
-
-	appURL := prompt(reader,
-		"URL do app (Enter para usar o padrão)",
-		"https://fzvklzpomgnyikkfkzai.supabase.co/functions/v1/tint-sync-agent",
-	)
-
-	storeCode := prompt(reader, "store_code (ex: colacor-divinopolis)", "")
-	if storeCode == "" {
-		fmt.Fprintln(os.Stderr, "ERRO: store_code é obrigatório.")
-		os.Exit(1)
-	}
-
-	token := prompt(reader, "Token de sync (copiado de /tintometrico/integracao)", "")
-	if token == "" {
-		fmt.Fprintln(os.Stderr, "ERRO: token é obrigatório.")
-		os.Exit(1)
-	}
-
-	pgConn := prompt(reader,
-		"String de conexão PostgreSQL (Enter para usar o padrão)",
-		"postgres://integra:integra@localhost:5986/client_industrial_sayerlack",
-	)
-
-	// Protege o token com DPAPI (escopo de máquina — LocalService consegue descriptografar).
-	tokenEnc, err := encryptToken(token)
+	// O config.json existente é a BASE (Enter mantém; campos não perguntados —
+	// update_manifest_url, intervalo_min — são preservados). Malformado → aborta:
+	// sobrescrever às cegas perderia o token e o auto-update. Ver install.go.
+	atual, err := carregarConfigParaInstall(LoadConfig)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "ERRO ao proteger o token com DPAPI: %v\n", err)
+		fmt.Fprintf(os.Stderr, "ERRO: %v\n", err)
+		fmt.Fprintf(os.Stderr, "       O install NÃO sobrescreve um config.json ilegível (perderia o token e o update_manifest_url).\n")
+		fmt.Fprintf(os.Stderr, "       Corrija o arquivo %s ou renomeie-o para instalar do zero.\n", configPath())
 		os.Exit(1)
 	}
 
-	cfg := &Config{
-		AppURL:       appURL,
-		StoreCode:    storeCode,
-		TokenEnc:     tokenEnc,
-		PGConn:       pgConn,
-		IntervaloMin: 10,
-		BuiltVersion: Version,
+	var cfg *Config
+	if temFlag(os.Args[2:], "--manter-config") {
+		// Não interativo (suporte remoto / refazer recovery-copy): não toca no config.
+		if err := validarConfigParaManter(atual); err != nil {
+			fmt.Fprintf(os.Stderr, "ERRO: %v\n", err)
+			os.Exit(1)
+		}
+		cfg = atual
+		fmt.Println("--manter-config: config.json mantido como está; registrando o serviço.")
+	} else {
+		cfg = assistenteInstall(atual)
 	}
-
-	if err := SaveConfig(cfg); err != nil {
-		fmt.Fprintf(os.Stderr, "ERRO ao salvar config.json: %v\n", err)
-		os.Exit(1)
-	}
-	fmt.Println("config.json salvo.")
 
 	// Registra o serviço Windows.
 	svcConfig := svcConfig(cfg)
@@ -255,6 +231,78 @@ func cmdInstall() {
 	}
 	fmt.Println()
 	fmt.Println("Próximo passo: verifique o heartbeat em /tintometrico/integracao → Integrações.")
+}
+
+// assistenteInstall pergunta os campos (defaults = config atual, se houver), mescla
+// e grava o config.json. Sai do processo em erro — nada é gravado nesse caso.
+func assistenteInstall(atual *Config) *Config {
+	reader := bufio.NewReader(os.Stdin)
+	base := baseDoInstall(atual)
+
+	fmt.Println("=== sayersync — configuração do serviço ===")
+	if atual != nil {
+		fmt.Println("config.json existente encontrado: Enter mantém cada valor atual.")
+	}
+	fmt.Println()
+
+	var r respostasInstall
+	perguntas := []struct {
+		destino *string
+		texto   string
+		exibido string
+	}{
+		{&r.AppURL, "URL do app", base.AppURL},
+		{&r.StoreCode, "store_code (ex: colacor-divinopolis)", base.StoreCode},
+		{&r.Token, "Token de sync (copiado de /tintometrico/integracao)", ""},
+		{&r.PGConn, "String de conexão PostgreSQL", mascararSenhaPG(base.PGConn)},
+	}
+	if temTokenSalvo(atual) {
+		perguntas[2].texto = "Token de sync (Enter mantém o token atual; cole um novo para trocar)"
+	}
+	for _, p := range perguntas {
+		v, err := promptCru(reader, p.texto, p.exibido)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "\nERRO: %v. Nada foi gravado.\n", err)
+			os.Exit(1)
+		}
+		*p.destino = v
+	}
+
+	// Protege o token NOVO com DPAPI (escopo de máquina — LocalService descriptografa).
+	tokenEnc := ""
+	if strings.TrimSpace(r.Token) != "" {
+		enc, err := encryptToken(strings.TrimSpace(r.Token))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ERRO ao proteger o token com DPAPI: %v\n", err)
+			os.Exit(1)
+		}
+		tokenEnc = enc
+	}
+
+	cfg, err := mesclarConfigInstall(atual, r, tokenEnc, Version)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ERRO: %v. Nada foi gravado.\n", err)
+		os.Exit(1)
+	}
+	// Mescla sobre o JSON cru: chaves que esta versão não conhece sobrevivem.
+	var raw []byte
+	if atual != nil {
+		if raw, err = os.ReadFile(configPath()); err != nil {
+			fmt.Fprintf(os.Stderr, "ERRO ao reler config.json: %v. Nada foi gravado.\n", err)
+			os.Exit(1)
+		}
+	}
+	data, err := configJSONPreservandoDesconhecidos(raw, cfg)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ERRO ao serializar config.json: %v. Nada foi gravado.\n", err)
+		os.Exit(1)
+	}
+	if err := salvarConfigBytes(data); err != nil {
+		fmt.Fprintf(os.Stderr, "ERRO ao salvar config.json: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println("config.json salvo.")
+	return cfg
 }
 
 // ──────────────────────────────────────────────
@@ -435,20 +483,6 @@ func runOneCycle(ctx context.Context, cfg *Config) bool {
 // ──────────────────────────────────────────────
 // helpers
 // ──────────────────────────────────────────────
-
-func prompt(r *bufio.Reader, question, defaultVal string) string {
-	if defaultVal != "" {
-		fmt.Printf("%s [%s]: ", question, defaultVal)
-	} else {
-		fmt.Printf("%s: ", question)
-	}
-	line, _ := r.ReadString('\n')
-	line = strings.TrimSpace(line)
-	if line == "" {
-		return defaultVal
-	}
-	return line
-}
 
 // exeDir retorna o diretório do executável atual (para gravar config/state/schema).
 func exeDir() string {

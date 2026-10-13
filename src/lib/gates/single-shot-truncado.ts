@@ -88,7 +88,7 @@ const EQ_MES = /\.eq\(\s*['"]mes['"]/;
  * helper); falso-negativo é o erro barato aqui, falso-vermelho é o caro.
  */
 const DELEGADO =
-  /\b(?:fetchAllPages|fetchAll|buscarTodasPaginas|coletarPaginado|carregarRpcPaginada|paginateAll)\s*[<(]/g;
+  /\b(?:fetchAllPages|fetchAll|lerTodasAsPaginas|coletarPaginado|carregarRpcPaginada|paginateAll)\s*[<(]/g;
 
 /** O `.from(` está DENTRO de uma chamada de helper ainda ABERTA (parênteses não fechados)?
  * Só assim é callback do helper — uma leitura crua logo DEPOIS de um `fetchAllPages(...)`

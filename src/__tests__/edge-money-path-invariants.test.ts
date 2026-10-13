@@ -4590,7 +4590,7 @@ describe('guardrail: omie-nfe-recebimento-sync não conta NF-e como importada qu
   const manual = fatia('async function importarPorChave(', '\n}\n');
   const handler = fatia('Deno.serve(', '\n});');
   const deps = fatia('function depsDaConta(', '\n}\n');
-  const omie = fatia('async function omieCall(', '\n}\n');
+  const omie = fatia('async function chamadaOmie(', '\n}\n');
   const gravacao = fatiaDe(rodada, 'async function gravar(', '\n}\n');
 
   it('sentinela: leu a edge real e a rodada, e o stripper não comeu nem deixou de limpar os arquivos', () => {
@@ -4649,7 +4649,7 @@ describe('guardrail: omie-nfe-recebimento-sync não conta NF-e como importada qu
     expect(handler, 'o sensor saiu da resposta').toContain('por_armazem: porArmazem');
     expect(handler).toContain('porArmazem[cred.warehouseCode] = rodada.resumo');
     expect(deps, 'a listagem tem de repassar INTACTOS os parâmetros da rodada (cExibirDetalhes)').toMatch(
-      /listar:\s*\(params\)\s*=>\s*omieCall\([^)]*"ListarRecebimentos",\s*params\)/,
+      /listar:\s*\(params\)\s*=>\s*chamadaOmie\([^)]*"ListarRecebimentos",\s*params\)/,
     );
   });
 
@@ -4660,7 +4660,7 @@ describe('guardrail: omie-nfe-recebimento-sync não conta NF-e como importada qu
     expect(handler).toContain('totalSkipped += rodada.puladas');
     expect(handler, 'a vez do rodízio não chega à rodada').toMatch(/rodadaDaConta\([^;]*,\s*dtDe,\s*vez\)/);
     expect(deps, 'a consulta tem de ir ao id que a rodada escolheu').toMatch(
-      /consultar:\s*\(nIdReceb\)\s*=>\s*omieCall\([^)]*"ConsultarRecebimento",\s*\{ nIdReceb \}\)/,
+      /consultar:\s*\(nIdReceb\)\s*=>\s*chamadaOmie\([^)]*"ConsultarRecebimento",\s*\{ nIdReceb \}\)/,
     );
     expect(deps, 'o id é por CONTA do Omie: sem o filtro de armazém, o de outra conta vira "já importada"').toContain(
       '.eq("warehouse_id", warehouseId)',

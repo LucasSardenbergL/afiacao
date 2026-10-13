@@ -18,6 +18,7 @@ import {
   BASE_PUBLICA_SAYERSYNC,
   lerManifestPublicado,
   nomeExe,
+  proximaVersaoPatch,
   publicarRelease,
   sha256Hex,
   validarVersao,
@@ -205,7 +206,7 @@ export default function PublicadorReleaseSayersync() {
             <Label htmlFor="sayersync-versao">Versão</Label>
             <Input
               id="sayersync-versao"
-              placeholder="0.2.1"
+              placeholder={proximaVersaoPatch(manifest) ?? "X.Y.Z"}
               value={versao}
               onChange={(e) => setVersao(e.target.value.trim())}
               className="font-mono"

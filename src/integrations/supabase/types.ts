@@ -5360,17 +5360,30 @@ export type Database = {
           company: string
           conciliado: boolean | null
           created_at: string | null
+          data_credito_omie: string | null
           data_movimento: string
+          data_pagamento_omie: string | null
           descricao: string | null
           id: string
           metadata: Json | null
           natureza: string | null
           omie_codigo_lancamento: number | null
+          omie_ncodbaixa: number | null
           omie_ncodcc: number | null
           omie_ncodmov: number
+          resumo_desconto: number | null
+          resumo_juros: number | null
+          resumo_lido_em: string | null
+          resumo_liquidado: boolean | null
+          resumo_multa: number | null
+          resumo_val_aberto: number | null
+          resumo_val_liquido: number | null
+          resumo_val_pago: number | null
           tipo: string | null
+          tipo_documento: string | null
           updated_at: string | null
           valor: number
+          valor_titulo: number | null
         }
         Insert: {
           categoria_codigo?: string | null
@@ -5378,17 +5391,30 @@ export type Database = {
           company: string
           conciliado?: boolean | null
           created_at?: string | null
+          data_credito_omie?: string | null
           data_movimento: string
+          data_pagamento_omie?: string | null
           descricao?: string | null
           id?: string
           metadata?: Json | null
           natureza?: string | null
           omie_codigo_lancamento?: number | null
+          omie_ncodbaixa?: number | null
           omie_ncodcc?: number | null
           omie_ncodmov: number
+          resumo_desconto?: number | null
+          resumo_juros?: number | null
+          resumo_lido_em?: string | null
+          resumo_liquidado?: boolean | null
+          resumo_multa?: number | null
+          resumo_val_aberto?: number | null
+          resumo_val_liquido?: number | null
+          resumo_val_pago?: number | null
           tipo?: string | null
+          tipo_documento?: string | null
           updated_at?: string | null
           valor: number
+          valor_titulo?: number | null
         }
         Update: {
           categoria_codigo?: string | null
@@ -5396,17 +5422,30 @@ export type Database = {
           company?: string
           conciliado?: boolean | null
           created_at?: string | null
+          data_credito_omie?: string | null
           data_movimento?: string
+          data_pagamento_omie?: string | null
           descricao?: string | null
           id?: string
           metadata?: Json | null
           natureza?: string | null
           omie_codigo_lancamento?: number | null
+          omie_ncodbaixa?: number | null
           omie_ncodcc?: number | null
           omie_ncodmov?: number
+          resumo_desconto?: number | null
+          resumo_juros?: number | null
+          resumo_lido_em?: string | null
+          resumo_liquidado?: boolean | null
+          resumo_multa?: number | null
+          resumo_val_aberto?: number | null
+          resumo_val_liquido?: number | null
+          resumo_val_pago?: number | null
           tipo?: string | null
+          tipo_documento?: string | null
           updated_at?: string | null
           valor?: number
+          valor_titulo?: number | null
         }
         Relationships: []
       }
@@ -19504,6 +19543,36 @@ export type Database = {
         }
         Relationships: []
       }
+      v_titulo_encargos_cr: {
+        Row: {
+          cnpj_cpf: string | null
+          company: string | null
+          confianca: string | null
+          data_baixa: string | null
+          data_emissao: string | null
+          data_vencimento: string | null
+          desconto_concedido: number | null
+          dias_atraso: number | null
+          diferenca_caixa_documento: number | null
+          encargo_recebido: number | null
+          fonte: string | null
+          fonte_data_baixa: string | null
+          juros_informado_omie: number | null
+          multa_informada_omie: number | null
+          n_baixas: number | null
+          numero_documento: string | null
+          omie_codigo_lancamento: number | null
+          resumo_lido_em: string | null
+          soma_baixas: number | null
+          status_titulo: string | null
+          tipo_documento: string | null
+          valor_documento: number | null
+          valor_liquido_recebido: number | null
+          valor_pago_principal: number | null
+          versoes_titulo: number | null
+        }
+        Relationships: []
+      }
       v_venda_items_history_efetivo: {
         Row: {
           cfop: string | null
@@ -20448,6 +20517,7 @@ export type Database = {
       }
       fin_sync_retry_tick: { Args: never; Returns: undefined }
       fin_sync_watchdog_check: { Args: never; Returns: undefined }
+      fin_sync_watchdog_diario: { Args: { p_agora?: string }; Returns: string }
       fin_user_can_access: {
         Args: { check_company?: string }
         Returns: boolean

@@ -24,6 +24,8 @@ import { isInvalidProductPrice } from '@/services/orderSubmission/priceGuard';
 import { estadoDeLeitura, naoConsegui, desatualizado } from '@/lib/leitura/estado-de-leitura';
 import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 import { PriceInput } from './PriceInput';
+import { DescontoCoresPedido } from './DescontoCoresPedido';
+import { fmtPct } from './fmt-pct';
 
 interface CartItemListProps {
   cart: { length: number };
@@ -38,6 +40,10 @@ interface CartItemListProps {
   selectedTimeSlot: string;
   onUpdateQuantity: (idx: number, delta: number) => void;
   onUpdateProductPrice: (idx: number, price: number) => void;
+  /** Fase 2B: desconto % de uma linha COM COR (regrava a decisão coerente para o gate). */
+  onUpdateTintDiscount?: (idx: number, descontoPct: number) => void;
+  /** Fase 2B: o mesmo desconto em todas as cores do pedido (tudo-ou-nada). */
+  onAplicarDescontoCores?: (descontoPct: number) => { aplicadas: number } | null;
   onRemoveFromCart: (idx: number) => void;
   getServicePrice: (item: ServiceCartItem) => number | null;
   getCartIndex: (item: ProductCartItem | ServiceCartItem) => number;
@@ -50,7 +56,7 @@ export function CartItemList({
   cart, obenProductItems, colacorProductItems, serviceItems,
   obenSubtotal, colacorProdSubtotal, serviceSubtotal, totalEstimated,
   deliveryOption, selectedTimeSlot,
-  onUpdateQuantity, onUpdateProductPrice, onRemoveFromCart,
+  onUpdateQuantity, onUpdateProductPrice, onUpdateTintDiscount, onAplicarDescontoCores, onRemoveFromCart,
   getServicePrice, getCartIndex,
   customerUserId, customerName, condicaoPrazoOben,
 }: CartItemListProps) {
@@ -240,10 +246,28 @@ export function CartItemList({
               </div>
               <div className="flex items-center gap-0.5 flex-1">
                 <span className="text-[10px] text-muted-foreground">R$</span>
-                <PriceInput value={item.unit_price} invalid={invalidPrice} onValueChange={(preco) => onUpdateProductPrice(cartIdx, preco)} className={cn('h-6 text-xs', invalidPrice && 'border-status-error focus-visible:ring-status-error')} />
+                <PriceInput value={item.unit_price} invalid={invalidPrice} onValueChange={(preco) => onUpdateProductPrice(cartIdx, preco)} confirmarAoSair={!!item.tint_cor_id} aria-label={item.tint_cor_id ? `Preço da cor ${item.tint_cor_id}` : undefined} className={cn('h-6 text-xs', invalidPrice && 'border-status-error focus-visible:ring-status-error')} />
+                {item.tint_cor_id && onUpdateTintDiscount && (
+                  <>
+                    <PriceInput
+                      value={item.tint_discount_pct ?? 0}
+                      formatar={fmtPct}
+                      confirmarAoSair
+                      onValueChange={(pct) => onUpdateTintDiscount(cartIdx, pct)}
+                      aria-label={`Desconto da cor ${item.tint_cor_id} (%)`}
+                      className="h-6 w-14 text-xs text-right"
+                    />
+                    <span className="text-[10px] text-muted-foreground">%</span>
+                  </>
+                )}
               </div>
               <span className="text-xs font-semibold shrink-0">{fmt(item.quantity * item.unit_price)}</span>
             </div>
+            {item.tint_cor_id && (item.tint_discount_pct ?? 0) > 0 && item.tint_preco_sem_desconto != null && (
+              <p className="text-[10px] text-muted-foreground">
+                {fmtPct(item.tint_discount_pct ?? 0)}% de desconto sobre {fmt(item.tint_preco_sem_desconto)}
+              </p>
+            )}
           </div>
         );
       })}
@@ -273,6 +297,12 @@ export function CartItemList({
               />
             )}
             {obenProductItems.length > 0 && renderProductGroup(obenProductItems, 'Oben', <Building2 className="w-3 h-3 inline mr-1" />)}
+            {onAplicarDescontoCores && obenProductItems.filter((i) => i.tint_cor_id).length >= 2 && (
+              <DescontoCoresPedido
+                nCores={obenProductItems.filter((i) => i.tint_cor_id).length}
+                onAplicar={onAplicarDescontoCores}
+              />
+            )}
 
             {colacorProductItems.length > 0 && (
               <>

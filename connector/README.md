@@ -87,6 +87,7 @@ go test ./... -v -count=1 -timeout 120s
 |---|---|
 | `main.go` | Ponto de entrada, serviço Windows via `kardianos/service`, comandos CLI |
 | `config.go` | Carrega/salva `config.json`; protege token com DPAPI |
+| `install.go` | Lógica pura do `install`: config.json existente vira a base (Enter mantém; preserva `update_manifest_url`/`intervalo_min`), malformado aborta, `--manter-config` |
 | `state.go` | Persiste HWMs, datas de snapshot/rescan, contadores de falha |
 | `pg.go` | Extrator PostgreSQL (implementação real do `Extractor`) |
 | `sync.go` | Orquestrador `RunCycle`; mapeadores de entidade; lógica de batch |
@@ -170,8 +171,10 @@ por teste em `src/lib/tint/__tests__/release-sayersync.test.ts`).
 > **Rollout em 2 passos (importante):** o recovery externo só existe a partir de uma
 > versão que já o contenha. Num balcão que rodou `install` de uma versão antiga:
 > **(1)** faça um redeploy manual desta versão (rollback-capable) e rode
-> `sayersync.exe install` de novo — idempotente: recria a recovery-copy e as failure
-> actions `[restart, restart, run_command]`; **(2)** só então preencha o
+> `sayersync.exe install --manter-config` (ou `install` apertando Enter em tudo) —
+> idempotente: recria a recovery-copy e as failure actions `[restart, restart, run_command]`
+> **sem tocar no config.json** (a partir da 0.2.3; até a 0.2.2 o assistente reescrevia o
+> config do zero e APAGAVA o `update_manifest_url`); **(2)** só então preencha o
 > `update_manifest_url`. Ativar o manifesto antes disso deixaria o primeiro auto-update
 > sem rede de recuperação. (O updater também verifica/repara as failure actions e pula
 > o update se faltarem — mas não conte com isso para o bootstrap.)

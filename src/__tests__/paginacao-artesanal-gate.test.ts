@@ -661,7 +661,7 @@ describe('gate estrutural: paginação artesanal que trata falha como fim (class
       reintroducoes,
       `REINTRODUÇÃO da classe (F3 — \`?? []\` sobre página dentro de laço: data:null sem error vira ` +
         `EOF falso e o acumulado PARCIAL passa por completo). Lance em data==null ou use um helper ` +
-        `canônico (fetchAllPages/fetchAll/buscarTodasPaginas/coletarPaginado/paginateAll). ` +
+        `canônico (fetchAllPages/fetchAll/coletarPaginado/paginateAll). ` +
         `Arquivos (baseline→medido): ${reintroducoes.join(', ')}`,
     ).toEqual([]);
     expect(
@@ -1129,12 +1129,10 @@ serve(async (req) => {
    * direção que importa é a que tira da vigilância sem ninguém ler.
    */
   const G6_VIZINHOS: ReadonlyMap<string, number> = new Map([
-    ['supabase/functions/disparar-pedidos-aprovados/index.ts', 4],
+    ['supabase/functions/disparar-pedidos-aprovados/index.ts', 3],
     ['supabase/functions/enviar-pedido-portal-sayerlack/index.ts', 1],
     ['supabase/functions/fin-suggest-mapping/index.ts', 1],
     ['supabase/functions/omie-cliente/index.ts', 1],
-    ['supabase/functions/omie-nfe-recebimento/index.ts', 1],
-    ['supabase/functions/omie-nfe-reconcile/index.ts', 1],
     ['supabase/functions/omie-sync/index.ts', 1],
   ]);
 
@@ -1231,11 +1229,9 @@ serve(async (req) => {
       presente: /if \(data == null\) throw new Error\(`\$\{fn\} pág\.\$\{pg\}: data null sem error/,
       motivo: 'o espelho carregarRpcPaginada voltaria a engolir data:null (o src/ lança e o edge nao)',
     },
-    {
-      arquivo: 'src/services/financeiroService.ts',
-      presente: /if \(data == null\) throw new Error\(`Falha ao carregar \$\{contexto\}: data=null sem error/,
-      motivo: 'buscarTodasPaginas perderia o fix do #1564 (o ?? [] fechava o laco parcial)',
-    },
+    // financeiroService.ts: o pin do `buscarTodasPaginas` (fix do #1564) saiu junto com o helper —
+    // os 9 call-sites delegam ao `fetchAllPages` (via a tradução de mensagem `lerTodasAsPaginas`), cuja rejeição de data:null é o pin abaixo. Um laço
+    // local que volte a nascer no arquivo cai no G3 (coalescência) e no single-shot.
     {
       arquivo: 'src/lib/postgrest.ts',
       presente: /devolveu data null sem error/,

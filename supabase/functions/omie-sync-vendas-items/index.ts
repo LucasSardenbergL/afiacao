@@ -7,7 +7,7 @@
 
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { avaliarPagina, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
-import { cabeEspera, timeoutRequestMs } from "../_shared/omie-deadline.ts";
+import { chamarOmie, classificarResposta } from "../_shared/omie-cliente.ts";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import { classificarSonda, EDGE, EFEITO, erroSondaAmbigua, FONTE, respostaSonda, VERSAO } from "./versao.ts";
 
@@ -183,91 +183,67 @@ interface OmieCallResult {
   apiBlocked?: boolean;
 }
 
-async function omieCall(
+// Transporte, teto de relógio e retentativa: núcleo compartilhado (_shared/omie-cliente.ts, M-48),
+// sob o deadline do RUN — o teto do request ENCOLHE conforme o run se aproxima dele, e sem tempo
+// viável nem abrimos socket. Toda falha volta `ok:false`: o caller LANÇA em `!result.ok`
+// (fail-closed), nunca lê isto como fim da fonte. 425 e o "processo bloqueado" do Omie são
+// definitivos (apiBlocked); 429 recua 2s×tentativa; rede 1s×tentativa.
+async function chamadaOmie(
   app_key: string,
   app_secret: string,
   call: string,
   param: Record<string, unknown>,
   deadline: number,
+  conta: string,
 ): Promise<OmieCallResult> {
-  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-    // O teto do request ENCOLHE conforme o run se aproxima do deadline — 3 tentativas de 20s mais
-    // os backoffs passariam MUITO do TIMEOUT_GUARD_MS de 25s. 0 = não sobra tempo viável, e aí nem
-    // abrimos socket: o caller LANÇA em `!result.ok` (fail-closed), nunca lê isto como fim da fonte.
-    const timeoutMs = timeoutRequestMs(Date.now(), deadline, FETCH_TIMEOUT_MS);
-    if (timeoutMs === 0) {
-      return { ok: false, status: 0, error: "deadline do run atingido antes da chamada Omie" };
-    }
-    try {
-      const res = await fetch(OMIE_NF_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          call,
-          app_key,
-          app_secret,
-          param: [param],
-        }),
-        signal: AbortSignal.timeout(timeoutMs),
-      });
-
-      if (res.status === 425) {
-        return {
-          ok: false,
-          status: 425,
-          error: "MISUSE_API_PROCESS",
-          apiBlocked: true,
-        };
-      }
-
-      if (res.status === 429) {
-        const wait = 2000 * (attempt + 1);
-        if (!cabeEspera(Date.now(), deadline, wait)) {
-          return { ok: false, status: 429, error: "rate limit Omie sem tempo de espera antes do deadline do run" };
-        }
-        console.warn(`429 received, waiting ${wait}ms (attempt ${attempt + 1})`);
-        await sleep(wait);
-        continue;
-      }
-
-      const text = await res.text();
-      let data: OmieNfResponseData;
-      try {
-        data = JSON.parse(text) as OmieNfResponseData;
-      } catch {
-        return { ok: false, status: res.status, error: `invalid JSON: ${text.slice(0, 200)}` };
-      }
-
-      if (data?.faultstring || data?.faultcode) {
-        const fs = String(data.faultstring ?? "");
-        // Soft-throttle messages from Omie
-        if (/processo/i.test(fs) && /bloqueado|aguard/i.test(fs)) {
-          return { ok: false, status: 425, error: fs, apiBlocked: true };
-        }
-        return { ok: false, status: res.status, error: fs || "Omie fault" };
-      }
-
-      // Só 425 e 429 tinham ramo próprio: qualquer OUTRO status não-2xx (500/502/503) cujo corpo
-      // parseasse SEM `faultstring` chegava aqui como `ok:true` com `data` vazio — e o laço, que
-      // agora LANÇA em `!result.ok`, não via falha nenhuma: lista e total ausentes viravam fim da
-      // fonte pelo `avaliarPagina`. O guard de paginação não alcança o que o wrapper já aprovou.
-      if (!res.ok) {
-        return { ok: false, status: res.status, error: `HTTP ${res.status}: ${text.slice(0, 200)}` };
-      }
-      return { ok: true, status: res.status, data };
-    } catch (err) {
-      console.error(`omieCall network error attempt ${attempt + 1}:`, err);
-      const wait = 1000 * (attempt + 1);
-      if (!cabeEspera(Date.now(), deadline, wait)) {
-        // mensagemDeErro, não String(err): o erro do supabase-js é objeto PLANO e String() nele
-        // rende "[object Object]" — o motivo vai para log e para o resumo do run (gate #1642).
-        const detalhe = mensagemDeErro(err) ?? "erro de rede sem mensagem";
-        return { ok: false, status: 0, error: `erro de rede sem tempo de retry antes do deadline do run: ${detalhe}` };
-      }
-      await sleep(wait);
-    }
+  const processoBloqueado = (fs: string | null) => !!fs && /processo/i.test(fs) && /bloqueado|aguard/i.test(fs);
+  let res;
+  try {
+    res = await chamarOmie(
+      { url: OMIE_NF_URL, metodo: call, param, credenciais: { appKey: app_key, appSecret: app_secret } },
+      {
+        conta,
+        deadline,
+        tetoPorRequestMs: FETCH_TIMEOUT_MS,
+        maxTentativas: MAX_RETRIES,
+        classificar: (r) => (r.status === 425 || processoBloqueado(r.faultstring) ? "final" : classificarResposta(r)),
+        atrasoMs: (tentativa, m) => (m.resposta?.status === 429 ? 2000 : 1000) * tentativa,
+        aoRepetir: ({ tentativa, atrasoMs, motivo }) =>
+          console.warn(`chamadaOmie transitório (${motivo}), aguardando ${atrasoMs}ms (tentativa ${tentativa})`),
+      },
+    );
+  } catch (err) {
+    // mensagemDeErro, não String(err): o erro do supabase-js é objeto PLANO e String() nele
+    // rende "[object Object]" — o motivo vai para log e para o resumo do run (gate #1642).
+    const detalhe = mensagemDeErro(err) ?? "erro de rede sem mensagem";
+    console.error(`chamadaOmie sem resposta:`, detalhe);
+    return { ok: false, status: 0, error: `erro de rede ou sem tempo antes do deadline do run: ${detalhe}` };
   }
-  return { ok: false, status: 0, error: "max retries exceeded" };
+
+  if (res.status === 425) {
+    return { ok: false, status: 425, error: "MISUSE_API_PROCESS", apiBlocked: true };
+  }
+  if (res.status === 429) {
+    return { ok: false, status: 429, error: "rate limit Omie persistiu (retentativas ou deadline do run)" };
+  }
+  if (res.corpo === null) {
+    return { ok: false, status: res.status, error: `invalid JSON: ${res.texto.slice(0, 200)}` };
+  }
+  if (res.faultstring || res.faultcode) {
+    const fs = res.faultstring ?? "";
+    // Soft-throttle messages from Omie
+    if (processoBloqueado(fs)) {
+      return { ok: false, status: 425, error: fs, apiBlocked: true };
+    }
+    return { ok: false, status: res.status, error: fs || "Omie fault" };
+  }
+  // Qualquer status não-2xx sem `faultstring` (500/502/503 com corpo `{}` de proxy) é FALHA —
+  // lido como `ok:true` com `data` vazio, lista e total ausentes viravam fim da fonte pelo
+  // `avaliarPagina`. O guard de paginação não alcança o que o wrapper já aprovou.
+  if (!res.ok) {
+    return { ok: false, status: res.status, error: `HTTP ${res.status}: ${res.texto.slice(0, 200)}` };
+  }
+  return { ok: true, status: res.status, data: res.corpo as OmieNfResponseData };
 }
 
 async function authorizeCronOrStaff(req: Request): Promise<boolean> {
@@ -328,7 +304,7 @@ Deno.serve(async (req) => {
   }
 
   const startedAt = Date.now();
-  // Relógio ÚNICO do run: todo request e todo backoff do omieCall se medem contra ESTE instante,
+  // Relógio ÚNICO do run: todo request e todo backoff do chamadaOmie se medem contra ESTE instante,
   // o mesmo que o TIMEOUT_GUARD_MS do laço de paginação usa. Teto por request isolado não bastaria
   // — a última tentativa poderia COMEÇAR faltando 1s para o guard e morrer no meio, sem catch.
   const deadline = startedAt + TIMEOUT_GUARD_MS;
@@ -413,7 +389,7 @@ Deno.serve(async (req) => {
         ordenar_por: "CODIGO",
       };
 
-      const result = await omieCall(creds.app_key, creds.app_secret, "ListarNF", param, deadline);
+      const result = await chamadaOmie(creds.app_key, creds.app_secret, "ListarNF", param, deadline, empresa);
       consultas_detalhadas++;
 
       if (result.apiBlocked) {
