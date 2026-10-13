@@ -23,8 +23,8 @@
 // EXCEÇÃO money-path: resposta truncada (stop_reason=max_tokens) NÃO grava —
 // lista parcial de descontos gravada como completa é pior que não gravar.
 
-import type Anthropic from "npm:@anthropic-ai/sdk@^0.93.0";
 import { criarClienteAnthropic } from "../_shared/anthropic-cliente.ts";
+type Anthropic = ReturnType<typeof criarClienteAnthropic>;
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 // ⚠️ usar npm: (igual a kb-extract-specs/tarefa-extrair-voz/etc.). O esm.sh/@supabase/supabase-js
 // falhava em resolver no boot do edge runtime → RUNTIME_ERROR sem linha/stack.
