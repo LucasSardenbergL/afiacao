@@ -77,7 +77,7 @@ export const respostaSonda = criarRespostaSonda("omie-analytics-sync");
  * nas duas ordens de deploy (aceita 0 na transição). Após o deploy, o próximo computeCosts
  * converte os zeros sozinho (mede-se: `count(*) FILTER (WHERE cmc = 0)` deve cair a ~0).
  */
-export const VERSAO = "v1.10-relogio-da-chamada-omie";
+export const VERSAO = "v1.11-reverte-bot-lovable";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
