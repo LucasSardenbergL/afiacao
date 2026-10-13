@@ -119,8 +119,8 @@ export interface TabelaRls {
 }
 
 /**
- * Estado medido em prod (psql-ro, 2026-08-27 + 2026-08-28; PG 17.6). 21 tabelas · 54 policies
- * (1ª rodada: 7 · 19; 2ª: +10 · +19; 3ª: +3 · +12 — cada rodada marcada pelos separadores abaixo).
+ * Estado medido em prod (psql-ro, 2026-08-27 + 2026-08-28 + 2026-10-12; PG 17.6). 30 tabelas · 71 policies
+ * (5ª rodada, M-31: +9 · +17; 1ª rodada: 7 · 19; 2ª: +10 · +19; 3ª: +3 · +12 — cada rodada marcada pelos separadores abaixo).
  *
  * ⚠️ Os md5 se REPETEM entre tabelas quando o predicado é literalmente o mesmo texto — p.ex.
  * `8ddd30b6…` é `has_role(auth.uid(), 'master'::app_role)` em `profiles` E em `user_roles`. O md5
@@ -906,6 +906,233 @@ export const AUTHZ_RLS_ESPERADO: Record<string, TabelaRls> = {
     },
   },
 
+  // ── 5ª rodada (M-31, plano 2026-09-05; psql-ro 2026-10-12) — 2º fator, receita, PII e config ──
+  // Critério ALARGADO de propósito, e declarado: (iv) 2º fator e (v) PII de conversa entram mesmo
+  // sem dinheiro, porque a sentinela existia e não os via (relatório de segurança A3). Telefonia e
+  // WhatsApp estão CONGELADOS (M-41) e as tabelas estão vazias: o que o contrato guarda é a FORMA,
+  // como em `fin_permissoes` — o alarme é a policy afrouxada antes do descongelamento.
+  'public.webauthn_credentials': {
+    forceRls: false,
+    motivo:
+      'O 2º FATOR: a chave pública que o `biometric-auth` aceita como prova de identidade. Uma ' +
+      'policy de INSERT/UPDATE afrouxada deixa alguém registrar a PRÓPRIA chave na conta de outro ' +
+      'usuário e entrar como ele, sem senha. Membro (iii), raiz: entra vazia.',
+    policies: {
+      'Users can view their own credentials': {
+        cmd: 'r',
+        permissiva: true,
+        roles: ['PUBLIC'],
+        qualMd5: '19300d155780585259ede73ac370586c',
+        withCheckMd5: null,
+        motivo: '`auth.uid() = user_id` — cada um só vê as próprias; anon tem uid nulo e não vê nada.',
+      },
+      'Users can create their own credentials': {
+        cmd: 'a',
+        permissiva: true,
+        roles: ['PUBLIC'],
+        qualMd5: null,
+        withCheckMd5: '19300d155780585259ede73ac370586c',
+        motivo: 'a porta do ataque acima: o `WITH CHECK` é o que impede gravar `user_id` alheio.',
+      },
+      'Users can update their own credentials': {
+        cmd: 'w',
+        permissiva: true,
+        roles: ['PUBLIC'],
+        qualMd5: '19300d155780585259ede73ac370586c',
+        withCheckMd5: null,
+        motivo:
+          'sem `WITH CHECK` o PG reaplica o `USING` na linha nova — trocar o `user_id` para o de ' +
+          'outro reprova. Ganhar um `WITH CHECK (true)` aqui abriria exatamente essa troca.',
+      },
+      'Users can delete their own credentials': {
+        cmd: 'd',
+        permissiva: true,
+        roles: ['PUBLIC'],
+        qualMd5: '19300d155780585259ede73ac370586c',
+        withCheckMd5: null,
+        motivo: 'apagar a credencial alheia derruba o 2º fator dela (negação de acesso).',
+      },
+    },
+  },
+
+  'public.tint_formula_itens': {
+    forceRls: false,
+    motivo:
+      'A RECEITA: os 3,48 mi de itens de fórmula do tintométrico (corante × quantidade) que viram ' +
+      'preço e consumo de corante. Membro (ii), custo/preço, com linha em prod.',
+    policies: {
+      'Staff can manage tint_formula_itens': {
+        cmd: '*',
+        permissiva: true,
+        roles: ['authenticated'],
+        qualMd5: '45ad0946ce322aefa63a18a15417ba0c',
+        withCheckMd5: '45ad0946ce322aefa63a18a15417ba0c',
+        motivo:
+          '`master OR employee` nos DOIS lados, mesmo md5 — FOR ALL simétrico. Customer não lê nem ' +
+          'escreve a receita.',
+      },
+    },
+  },
+
+  'public.company_config': {
+    forceRls: false,
+    motivo:
+      'CONFIG que comanda dinheiro e operação: SLA, hora e dias do WhatsApp (`push_sla_tick`) e ' +
+      'parâmetros que edges e crons leem como verdade. Escrita só de master.',
+    policies: {
+      'Only admins can manage company config': {
+        cmd: '*',
+        permissiva: true,
+        roles: ['PUBLIC'],
+        qualMd5: '8ddd30b6b5137ea748cd7a8508a16675',
+        withCheckMd5: '8ddd30b6b5137ea748cd7a8508a16675',
+        motivo: '`has_role(auth.uid(),master)` nos dois lados — o mesmo md5 da raiz `user_roles`.',
+      },
+      company_config_staff_select: {
+        cmd: 'r',
+        permissiva: true,
+        roles: ['authenticated'],
+        qualMd5: 'f0bb0ea348b482004bccf4646c00cead',
+        withCheckMd5: null,
+        motivo: 'leitura broad-staff (`employee OR master`); customer não lê a config.',
+      },
+    },
+  },
+
+  'public.farmer_calls': {
+    forceRls: false,
+    motivo:
+      'PII de ligação (cliente, telefone, transcrição e entidades extraídas pelo copilot). Sai da ' +
+      'lacuna em bloco de `cap_carteira_ler` — o runner recalcula a lacuna derivada sozinho.',
+    policies: {
+      fcall_select_carteira: {
+        cmd: 'r',
+        permissiva: true,
+        roles: ['authenticated'],
+        qualMd5: '3e6d44046f30e603a5068b5028e53e60',
+        withCheckMd5: null,
+        motivo: '`cap_carteira_ler` OU a própria ligação (`farmer_id` = uid).',
+      },
+      fcall_insert_own_or_gestor: {
+        cmd: 'a',
+        permissiva: true,
+        roles: ['authenticated'],
+        qualMd5: null,
+        withCheckMd5: 'e674af85831f3ebeeec81c0e2f9cc0a7',
+        motivo: '`cap_carteira_escrever` OU a própria — ninguém registra ligação em nome de outro.',
+      },
+      fcall_update_own_or_gestor: {
+        cmd: 'w',
+        permissiva: true,
+        roles: ['authenticated'],
+        qualMd5: 'e674af85831f3ebeeec81c0e2f9cc0a7',
+        withCheckMd5: 'e674af85831f3ebeeec81c0e2f9cc0a7',
+        motivo: 'mesmo predicado no USING e no WITH CHECK.',
+      },
+      fcall_delete_own_or_gestor: {
+        cmd: 'd',
+        permissiva: true,
+        roles: ['authenticated'],
+        qualMd5: 'e674af85831f3ebeeec81c0e2f9cc0a7',
+        withCheckMd5: null,
+        motivo: 'DELETE com o mesmo USING do UPDATE (database.md §4: o DELETE só consulta o USING).',
+      },
+    },
+  },
+
+  'public.whatsapp_conversations': {
+    forceRls: false,
+    motivo:
+      'PII: conversa de WhatsApp com cliente (telefone, nome, atendente). Módulo congelado (M-41), ' +
+      'tabela vazia — o contrato guarda a forma até o descongelamento.',
+    policies: {
+      wa_conv_staff_all: {
+        cmd: '*',
+        permissiva: true,
+        roles: ['authenticated'],
+        qualMd5: 'fd92922d6bd3404e2dd35416729d2622',
+        withCheckMd5: 'fd92922d6bd3404e2dd35416729d2622',
+        motivo: 'staff (`user_roles` employee/master) nos dois lados, FOR ALL simétrico.',
+      },
+    },
+  },
+
+  'public.whatsapp_messages': {
+    forceRls: false,
+    motivo:
+      'PII: o CORPO das mensagens trocadas com o cliente, inclusive mídia. Mesmo gate da ' +
+      'conversa, e o mais sensível do grupo.',
+    policies: {
+      wa_msg_staff_all: {
+        cmd: '*',
+        permissiva: true,
+        roles: ['authenticated'],
+        qualMd5: 'fd92922d6bd3404e2dd35416729d2622',
+        withCheckMd5: 'fd92922d6bd3404e2dd35416729d2622',
+        motivo: 'staff (employee/master) nos dois lados, FOR ALL simétrico; customer não lê.',
+      },
+    },
+  },
+
+  'public.whatsapp_webhook_events': {
+    forceRls: false,
+    motivo:
+      'PII: payload CRU do webhook da Meta (telefone e texto, antes de qualquer tratamento). ' +
+      'Escrita só por service_role.',
+    policies: {
+      wa_events_staff_select: {
+        cmd: 'r',
+        permissiva: true,
+        roles: ['authenticated'],
+        qualMd5: 'fd92922d6bd3404e2dd35416729d2622',
+        withCheckMd5: null,
+        motivo: 'staff lê; não há policy de escrita para `authenticated` — o alarme é ela aparecer.',
+      },
+    },
+  },
+
+  'public.whatsapp_template_sends': {
+    forceRls: false,
+    motivo:
+      'PII: para quem (telefone, cliente) cada template foi disparado, e quando. Escrita só por ' +
+      'service_role.',
+    policies: {
+      wts_staff_read: {
+        cmd: 'r',
+        permissiva: true,
+        roles: ['authenticated'],
+        qualMd5: 'fd92922d6bd3404e2dd35416729d2622',
+        withCheckMd5: null,
+        motivo: 'staff lê; sem policy de escrita para `authenticated`.',
+      },
+    },
+  },
+
+  'public.whatsapp_templates': {
+    forceRls: false,
+    motivo:
+      'O TEXTO que sai em nome da empresa para o cliente pelo WhatsApp oficial. Escrita só de ' +
+      'master: um template adulterado fala com a carteira inteira.',
+    policies: {
+      wt_master_write: {
+        cmd: '*',
+        permissiva: true,
+        roles: ['authenticated'],
+        qualMd5: 'c964881c0e3c951d287729d8ae6436da',
+        withCheckMd5: 'c964881c0e3c951d287729d8ae6436da',
+        motivo: '`user_roles` master nos dois lados — employee lê, mas não reescreve o texto.',
+      },
+      wt_staff_read: {
+        cmd: 'r',
+        permissiva: true,
+        roles: ['authenticated'],
+        qualMd5: 'fd92922d6bd3404e2dd35416729d2622',
+        withCheckMd5: null,
+        motivo: 'staff lê os templates para escolher o disparo; customer não lê.',
+      },
+    },
+  },
+
 };
 
 /**
@@ -934,6 +1161,11 @@ export const AUTHZ_RLS_ESPERADO: Record<string, TabelaRls> = {
  * armadilha de novo, só que com duas fontes para divergir.
  */
 export const LACUNAS_DECLARADAS: Record<string, string> = {
+  'public.whatsapp_sla_digest_log':
+    'Medida na 5ª rodada (M-31, 2026-10-12): RLS ligada e ZERO policy, então só service_role lê ' +
+    'as 51 linhas do digest de SLA. O eixo curado exige ao menos uma policy por entrada, e um ' +
+    'contrato vazio não acrescenta nada ao INTERRUPTOR universal, que já acusa a RLS desligada. ' +
+    'Gatilho de reentrada: a 1ª policy criada nela.',
   'public.carteira_assignments':
     'É raiz de verdade — `private.carteira_visivel_para` a lê —, mas raiz de INTELIGÊNCIA ' +
     'COMERCIAL, não de dinheiro/custo. ⚠️ A razão original dizia que "o predicado dela não fica ' +
