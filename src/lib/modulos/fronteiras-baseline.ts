@@ -127,6 +127,7 @@ export const FRONTEIRAS_BASELINE: Aresta[] = [
   { de: "src/hooks/__tests__/lens-engines-ia.test.tsx", para: "src/hooks/useCrossSellEngine.ts", deModulo: "farmer-inteligencia", paraModulo: "vendas", kind: "runtime" },
   { de: "src/hooks/__tests__/offline-flow-integration.test.tsx", para: "src/services/picking-confirm.ts", deModulo: "plataforma", paraModulo: "estoque-recebimento", kind: "type" },
   { de: "src/hooks/dashboard/useFinanceiroZone.ts", para: "src/services/financeiroService.ts", deModulo: "farmer-inteligencia", paraModulo: "financeiro", kind: "runtime" },
+  { de: "src/hooks/unifiedOrder/useCart.ts", para: "src/lib/tint/renegociar.ts", deModulo: "vendas", paraModulo: "tintometrico", kind: "runtime" },
   { de: "src/hooks/unifiedOrder/useCoresDoCliente.ts", para: "src/lib/tint/cores-do-cliente.ts", deModulo: "vendas", paraModulo: "tintometrico", kind: "runtime" },
   { de: "src/hooks/useAdminOrderDetail.ts", para: "src/hooks/usePriceHistory.ts", deModulo: "admin-crm", paraModulo: "vendas", kind: "runtime" },
   { de: "src/hooks/useAdminOrderDetail.ts", para: "src/hooks/usePricingEngine.ts", deModulo: "admin-crm", paraModulo: "vendas", kind: "runtime" },

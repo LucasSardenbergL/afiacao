@@ -536,6 +536,7 @@ const UnifiedOrder = () => {
             serviceSubtotal={h.serviceSubtotal} totalEstimated={h.totalEstimated}
             deliveryOption={h.deliveryOption} selectedTimeSlot={h.selectedTimeSlot}
             onUpdateQuantity={h.updateQuantity} onUpdateProductPrice={h.updateProductPrice}
+            onUpdateTintDiscount={h.updateTintDiscount} onAplicarDescontoCores={h.aplicarDescontoCores}
             onRemoveFromCart={h.removeFromCart} getServicePrice={h.getServicePrice}
             getCartIndex={(item) => h.cart.indexOf(item)}
             customerUserId={h.customerUserId}

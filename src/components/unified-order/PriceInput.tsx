@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Input } from '@/components/ui/input';
 import { parseDecimalBR } from '@/lib/preco/parse-decimal-br';
 
@@ -8,6 +8,12 @@ interface PriceInputProps {
   invalid?: boolean;
   className?: string;
   'aria-label'?: string;
+  /** Confirma só ao sair do campo ou no Enter (e só se o texto mudou). Para valores que o
+   *  dono pode RECUSAR (linha com cor, Fase 2B): a cada tecla, "130" passaria por "1" e
+   *  "13", e uma recusa no fim deixaria o item preso no valor intermediário. */
+  confirmarAoSair?: boolean;
+  /** Texto exibido fora da edição (padrão: o número cru; 0 vira vazio). */
+  formatar?: (value: number) => string;
 }
 
 /**
@@ -22,9 +28,20 @@ export function PriceInput({
   invalid,
   className,
   'aria-label': ariaLabel,
+  confirmarAoSair = false,
+  formatar,
 }: PriceInputProps) {
   const [draft, setDraft] = useState<string | null>(null);
-  const display = draft ?? (value ? String(value) : '');
+  const inicial = useRef<string>('');
+  const display = draft ?? (formatar ? formatar(value) : value ? String(value) : '');
+
+  const confirmar = () => {
+    if (draft !== null && draft !== inicial.current) {
+      const parsed = parseDecimalBR(draft);
+      if (parsed !== null) onValueChange(parsed);
+    }
+    setDraft(null);
+  };
 
   return (
     <Input
@@ -35,16 +52,21 @@ export function PriceInput({
       aria-invalid={invalid}
       aria-label={ariaLabel}
       onFocus={(e) => {
+        inicial.current = display;
         setDraft(display);
         e.target.select();
       }}
       onChange={(e) => {
         const raw = e.target.value;
         setDraft(raw);
+        if (confirmarAoSair) return;
         const parsed = parseDecimalBR(raw);
         if (parsed !== null) onValueChange(parsed);
       }}
-      onBlur={() => setDraft(null)}
+      onKeyDown={(e) => {
+        if (confirmarAoSair && e.key === 'Enter') e.currentTarget.blur();
+      }}
+      onBlur={() => (confirmarAoSair ? confirmar() : setDraft(null))}
       className={className}
     />
   );
