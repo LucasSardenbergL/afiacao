@@ -214,6 +214,34 @@ describe('auditarBump — fail-CLOSED: sem marcador legível o gate REPROVA, nã
     expect(achados[0].motivo).toBe('marcador-ilegivel');
   });
 
+  it('edge APAGADA inteira (index.ts e versao.ts fora do HEAD) → fora do gate (M-47)', () => {
+    const achados = auditarBump([
+      estado({
+        edge: 'verify-employee',
+        versaoBase: 'v1.0-x',
+        versaoHead: null,
+        corpo: [{ caminho: 'supabase/functions/verify-employee/index.ts', base: 'const a = 1;', head: null }],
+      }),
+    ]);
+    expect(achados).toEqual([]);
+  });
+
+  it('marcador apagado com o index.ts MANTIDO continua reprovando (não é edge removida)', () => {
+    const achados = auditarBump([
+      estado({
+        edge: 'recommend',
+        versaoBase: 'v1.0-x',
+        versaoHead: null,
+        corpo: [
+          { caminho: 'supabase/functions/recommend/index.ts', base: 'const a = 1;', head: 'const a = 2;' },
+          { caminho: 'supabase/functions/recommend/helper.ts', base: 'const b = 1;', head: null },
+        ],
+      }),
+    ]);
+    expect(achados).toHaveLength(1);
+    expect(achados[0].motivo).toBe('marcador-ilegivel');
+  });
+
   it('o achado do #1938 é do motivo `sem-bump`, não do fail-closed — motivos distintos', () => {
     const achados = auditarBump([
       estado({

@@ -21,7 +21,7 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **619** custom migrations totais
+- **621** custom migrations totais
 - **2023** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 704
@@ -5066,6 +5066,14 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `cron_job` | `cron.sync-reprocess-pedidos-colacor-2h` | — |
+
+### `20261012203227_crons_modulos_congelados.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20261012233000_picking_cron_fora_do_minuto_15.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ## Próximos passos por status
 

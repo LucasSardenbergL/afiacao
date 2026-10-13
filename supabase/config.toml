@@ -12,9 +12,6 @@ verify_jwt = false
 [functions.biometric-auth]
 verify_jwt = false
 
-[functions.verify-employee]
-verify_jwt = false
-
 [functions.identify-tool]
 verify_jwt = false
 
@@ -88,9 +85,6 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.omie-sync-status-produtos]
-verify_jwt = false
-
-[functions.omie-aplicar-parametros]
 verify_jwt = false
 
 [functions.omie-sync-estoque]
