@@ -431,52 +431,60 @@ if [ "$MODO" = normal ]; then
 fi
 
 # ══ --falsificar ══
-# sabota <rótulo> <esperado: IDs ordenados separados por espaço | APPLY:<marca>> <busca> <troca> [<busca> <troca>]...
-SAB_V=0; SAB_F=0
-sabota() {
-  local rot="$1" esp="$2"; shift 2
-  local alvo="$RODADA/sab_${rot}.sql"
-  if ! python3 - "$MIG4" "$alvo" "$@" <<'PY'
-import sys
-src, dst, pares = sys.argv[1], sys.argv[2], sys.argv[3:]
-s = open(src).read()
-for i in range(0, len(pares), 2):
-    busca, troca = pares[i], pares[i + 1]
-    n = s.count(busca)
-    if n != 1:
-        sys.stderr.write("âncora casou %d vez(es): %r\n" % (n, busca)); sys.exit(4)
-    s = s.replace(busca, troca)
-open(dst, "w").write(s)
-PY
-  then
-    SAB_F=$((SAB_F+1)); echo "!! $rot: sabotagem NÃO aplicou (âncora)"; return
-  fi
-  echo "── sabotagem $rot (esperado: $esp) ──"
-  case "$esp" in
-    APPLY:*|APPLYFRESCO:*)
-      local marca="${esp#*:}" saida
-      # APPLYFRESCO: a tabela nova ainda não existe (o 1º apply em prod) — é quando o default
-      # privilege do Supabase a faz nascer aberta. Com ela já criada, o IF NOT EXISTS não a recria e
-      # a pós-condição não teria o que pegar (medido na 1ª falsificação).
-      case "$esp" in APPLYFRESCO:*) P -c "DROP TABLE public.tint_watchdog_fase5_amostras;" ;; esac
-      if saida="$(P -1 -f "$alvo" 2>&1)"; then
-        SAB_F=$((SAB_F+1)); echo "!! $rot: o apply sabotado PASSOU — a pós-condição não morde"
-      elif printf '%s' "$saida" | grep -qF "$marca"; then
-        SAB_V=$((SAB_V+1)); echo "   vermelho exato: apply abortou com '$marca'"
-      else
-        SAB_F=$((SAB_F+1)); echo "!! $rot: abortou com OUTRA marca: $saida"
-      fi ;;
-    *)
-      suite "$alvo" > "$RODADA/sab_${rot}.log" 2>&1 || true
-      local veio
-      veio="$(sort "$VERM" | tr '\n' ' ' | sed 's/ $//')"
-      if [ "$veio" = "$esp" ]; then
-        SAB_V=$((SAB_V+1)); echo "   vermelho exato: {$veio}"
-      else
-        SAB_F=$((SAB_F+1)); echo "!! $rot: esperado {$esp}, veio {$veio}"; grep -E '^  XX' "$RODADA/sab_${rot}.log" || true
-      fi ;;
+# Cada entrada: nome:VERMELHOS — os IDs (unidos por ',') que TÊM de ficar vermelhos, e SÓ eles (a
+# contagem também é conferida: conjunto EXATO). `APPLY!MARCA` = sabotagem de pós-condição: o apply em
+# transação única TEM de abortar com aquela marca (`_` vira espaço). Conjuntos MEDIDOS na 1ª rodada,
+# não previstos — as 4 divergências da previsão estão explicadas nos comentários da suíte e no PR.
+SABOTAGENS="ref_sem_aplicado:F4,F6b janela_sem_aplicado:R3 janela_sem_7_dias:R2a relogio_aplicado_em:F2,F2b relogio_min_chunk:F3 igualdade_estrita:F2b s5_ausente_vira_saudavel:F6a s2_sem_criterio_no_ctx:R1b,R5c helper_v1:H1,H2,H5 s4_limiar_desloca:T50,T51 s4_critico_estrito:T200 s5_critico_estrito:F7 retroativo_sem_corte:R6b,R6c p4_instrucao_proibida:APPLY!P4_FALHOU p8_tabela_aberta:APPLY!P8_FALHOU p2b_corte_30d_volta:APPLY!P2b_FALHOU"
+
+# As trocas textuais de cada sabotagem (busca, troca, …). Cada busca tem de casar EXATAMENTE 1 vez.
+pares_de() {
+  case "$1" in
+    ref_sem_aplicado) PARES=(
+"   WHERE ks.account = v_conta AND ks.entity = 'formulas'
+     AND ks.aplicacao_status = 'aplicado'
+   GROUP BY ks.snapshot_id"
+"   WHERE ks.account = v_conta AND ks.entity = 'formulas'
+   GROUP BY ks.snapshot_id") ;;
+    janela_sem_aplicado) PARES=(
+"       AND ks.aplicacao_status = 'aplicado'
+       AND ks.snapshot_id <> v_snap_id"
+"       AND ks.snapshot_id <> v_snap_id") ;;
+    janela_sem_7_dias) PARES=("       AND ks.created_at >= now() - interval '7 days'" "       AND true") ;;
+    relogio_aplicado_em) PARES=(
+"  SELECT ks.snapshot_id, max(ks.created_at)
+    INTO v_snap_id, v_snap_rec"
+"  SELECT ks.snapshot_id, max(ks.aplicado_em)
+    INTO v_snap_id, v_snap_rec") ;;
+    relogio_min_chunk) PARES=(
+"  SELECT ks.snapshot_id, max(ks.created_at)
+    INTO v_snap_id, v_snap_rec"
+"  SELECT ks.snapshot_id, min(ks.created_at)
+    INTO v_snap_id, v_snap_rec") ;;
+    igualdade_estrita) PARES=("sf.created_at >= v_snap_rec" "sf.created_at > v_snap_rec") ;;
+    s5_ausente_vira_saudavel) PARES=("  IF v_fant IS NULL THEN" "  IF false THEN") ;;
+    s2_sem_criterio_no_ctx) PARES=(
+"      jsonb_build_object('criterio', v_criterio, 'chaves', v_s2,"
+"      jsonb_build_object('chaves', v_s2,") ;;
+    helper_v1) PARES=(
+"  v_emitir := v_subiu_sev
+              OR CASE WHEN p_fator <= 1.0
+                      THEN p_n > v_ant
+                      ELSE p_n >= GREATEST(v_ant_email * p_fator, v_ant_email + 1) AND p_n > v_ant
+                 END;"
+"  v_emitir := v_subiu_sev OR p_n >= GREATEST(v_ant_email * p_fator, v_ant_email + 1);"
+"  IF v_upd IS NOT NULL AND v_emitir THEN"
+"  IF v_upd IS NOT NULL AND v_emitir AND p_n > v_ant THEN") ;;
+    s4_limiar_desloca) PARES=("v_s2_bruto::numeric / v_universo >= 0.05 THEN" "v_s2_bruto::numeric / v_universo >= 0.06 THEN") ;;
+    s4_critico_estrito) PARES=("v_s2_bruto::numeric / v_universo >= 0.20 THEN 'critico'" "v_s2_bruto::numeric / v_universo > 0.20 THEN 'critico'") ;;
+    s5_critico_estrito) PARES=("WHEN v_fant >= 1000 THEN 'critico'" "WHEN v_fant > 1000 THEN 'critico'") ;;
+    retroativo_sem_corte) PARES=("   AND dismissed_at >= timestamptz '2026-10-13 09:17:17+00'" "   AND dismissed_at IS NOT NULL") ;;
+    # pós-condições: a sabotagem preserva todo literal que as OUTRAS pós-condições exigem
+    p4_instrucao_proibida) PARES=("'SayerSystem. NAO mexa no tombstone" "'SayerSystem. Faca recarimbar/limpar o tombstone") ;;
+    p8_tabela_aberta) PARES=("REVOKE ALL ON TABLE public.tint_watchdog_fase5_amostras FROM PUBLIC, anon, authenticated;" "-- (sem revoke)") ;;
+    p2b_corte_30d_volta) PARES=("       AND ks.created_at >= now() - interval '7 days'" "       AND ks.created_at >= now() - interval '30 days'") ;;
+    *) return 1 ;;
   esac
-  P -1 -f "$MIG4"   # restaura a real (o pré-guard aceita v4 por cima de v4)
 }
 
 echo "── CONTROLE: suíte contra a migration REAL, na MESMA invocação ──"
@@ -487,60 +495,60 @@ if [ "$FAIL" -ne 0 ] || [ "$PASS" -eq 0 ]; then
 fi
 N_CONTROLE="$PASS"
 
-sabota ref_sem_aplicado "F4 F6b" \
-  "   WHERE ks.account = v_conta AND ks.entity = 'formulas'
-     AND ks.aplicacao_status = 'aplicado'
-   GROUP BY ks.snapshot_id" \
-  "   WHERE ks.account = v_conta AND ks.entity = 'formulas'
-   GROUP BY ks.snapshot_id"
-sabota janela_sem_aplicado "R3" \
-  "       AND ks.aplicacao_status = 'aplicado'
-       AND ks.snapshot_id <> v_snap_id" \
-  "       AND ks.snapshot_id <> v_snap_id"
-sabota janela_sem_7_dias "R2a" \
-  "       AND ks.created_at >= now() - interval '7 days'" \
-  "       AND true"
-sabota relogio_aplicado_em "F2 F2b" \
-  "  SELECT ks.snapshot_id, max(ks.created_at)
-    INTO v_snap_id, v_snap_rec" \
-  "  SELECT ks.snapshot_id, max(ks.aplicado_em)
-    INTO v_snap_id, v_snap_rec"
-sabota relogio_min_chunk "F3" \
-  "  SELECT ks.snapshot_id, max(ks.created_at)
-    INTO v_snap_id, v_snap_rec" \
-  "  SELECT ks.snapshot_id, min(ks.created_at)
-    INTO v_snap_id, v_snap_rec"
-sabota igualdade_estrita "F2b" \
-  "sf.created_at >= v_snap_rec" "sf.created_at > v_snap_rec"
-sabota s5_ausente_vira_saudavel "F6a" \
-  "  IF v_fant IS NULL THEN" "  IF false THEN"
-sabota s2_sem_criterio_no_ctx "R1b R5c" \
-  "      jsonb_build_object('criterio', v_criterio, 'chaves', v_s2," \
-  "      jsonb_build_object('chaves', v_s2,"
-sabota helper_v1 "H1 H2 H5" \
-  "  v_emitir := v_subiu_sev
-              OR CASE WHEN p_fator <= 1.0
-                      THEN p_n > v_ant
-                      ELSE p_n >= GREATEST(v_ant_email * p_fator, v_ant_email + 1) AND p_n > v_ant
-                 END;" \
-  "  v_emitir := v_subiu_sev OR p_n >= GREATEST(v_ant_email * p_fator, v_ant_email + 1);" \
-  "  IF v_upd IS NOT NULL AND v_emitir THEN" \
-  "  IF v_upd IS NOT NULL AND v_emitir AND p_n > v_ant THEN"
-sabota s4_limiar_desloca "T50 T51" \
-  "v_s2_bruto::numeric / v_universo >= 0.05 THEN" "v_s2_bruto::numeric / v_universo >= 0.06 THEN"
-sabota s4_critico_estrito "T200" \
-  "v_s2_bruto::numeric / v_universo >= 0.20 THEN 'critico'" "v_s2_bruto::numeric / v_universo > 0.20 THEN 'critico'"
-sabota s5_critico_estrito "F7" \
-  "WHEN v_fant >= 1000 THEN 'critico'" "WHEN v_fant > 1000 THEN 'critico'"
-sabota retroativo_sem_corte "R6b R6c" \
-  "   AND dismissed_at >= timestamptz '2026-10-13 09:17:17+00'" "   AND dismissed_at IS NOT NULL"
-# pós-condições: o apply tem de ABORTAR — a sabotagem preserva todo literal que as OUTRAS exigem
-sabota p4_instrucao_proibida "APPLY:P4 FALHOU" \
-  "'SayerSystem. NAO mexa no tombstone" "'SayerSystem. Faca recarimbar/limpar o tombstone"
-sabota p8_tabela_aberta "APPLYFRESCO:P8 FALHOU" \
-  "REVOKE ALL ON TABLE public.tint_watchdog_fase5_amostras FROM PUBLIC, anon, authenticated;" "-- (sem revoke)"
-sabota p2b_corte_30d_volta "APPLY:P2b FALHOU" \
-  "       AND ks.created_at >= now() - interval '7 days'" "       AND ks.created_at >= now() - interval '30 days'"
+SAB_V=0; SAB_F=0
+for par in $SABOTAGENS; do
+  s="${par%%:*}"; verm="${par#*:}"
+  alvo="$RODADA/sab_${s}.sql"
+  PARES=()
+  if ! pares_de "$s" || ! python3 - "$MIG4" "$alvo" "${PARES[@]}" <<'PY2'
+import sys
+src, dst, pares = sys.argv[1], sys.argv[2], sys.argv[3:]
+if not pares or len(pares) % 2:
+    sys.stderr.write("pares inválidos\n"); sys.exit(4)
+t = open(src).read()
+for i in range(0, len(pares), 2):
+    n = t.count(pares[i])
+    if n != 1:
+        sys.stderr.write("âncora casou %d vez(es): %r\n" % (n, pares[i])); sys.exit(4)
+    t = t.replace(pares[i], pares[i + 1])
+open(dst, "w").write(t)
+PY2
+  then
+    SAB_F=$((SAB_F+1)); echo "!! $s: sabotagem NÃO aplicou (âncora)"; continue
+  fi
+  echo "── sabotagem $s (declarado: $verm) ──"
+  case "$verm" in
+    APPLY!*)
+      marca="${verm#APPLY!}"; marca="${marca//_/ }"
+      # APPLY da tabela nova: ela ainda não pode existir (o 1º apply em prod) — é quando o default
+      # privilege do Supabase a faz nascer aberta. Já criada, o IF NOT EXISTS não a recria e a
+      # pós-condição não teria o que pegar (medido na 1ª falsificação).
+      if [ "$s" = p8_tabela_aberta ]; then P -c "DROP TABLE public.tint_watchdog_fase5_amostras;"; fi
+      if saida="$(P -1 -f "$alvo" 2>&1)"; then
+        SAB_F=$((SAB_F+1)); echo "!! $s: o apply sabotado PASSOU — a pós-condição não morde"
+      elif printf '%s\n' "$saida" | grep -qF "$marca"; then
+        SAB_V=$((SAB_V+1)); echo "   vermelho exato: apply abortou com '$marca'"
+      else
+        SAB_F=$((SAB_F+1)); echo "!! $s: abortou com OUTRA marca: $saida"
+      fi ;;
+    *)
+      suite "$alvo" > "$RODADA/sab_${s}.log" 2>&1 || true
+      faltou=""; n_decl=0
+      for id in ${verm//,/ }; do
+        n_decl=$((n_decl+1))
+        grep -qx "$id" "$VERM" || faltou="$faltou $id"
+      done
+      n_veio="$(grep -c . "$VERM" || true)"
+      if [ -z "$faltou" ] && [ "$n_veio" -eq "$n_decl" ]; then
+        SAB_V=$((SAB_V+1)); echo "   vermelho exato: {$verm}"
+      else
+        SAB_F=$((SAB_F+1))
+        echo "!! $s: declarado {$verm}, veio {$(sort "$VERM" | tr '\n' ',' | sed 's/,$//')} (faltou:${faltou:- nada})"
+        grep -E '^  XX' "$RODADA/sab_${s}.log" || true
+      fi ;;
+  esac
+  P -1 -f "$MIG4"   # restaura a real (o pré-guard aceita v4 por cima de v4)
+done
 
 echo "controle: $N_CONTROLE asserts verdes"
 echo "SABOTAGENS: $SAB_V vermelhas / $SAB_F falhas"
