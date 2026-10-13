@@ -2285,7 +2285,8 @@ async function criarPedidoVenda(
     informacoes_adicionais,
   };
 
-  console.log(`[Omie Vendas][${account}] Payload PedidoVenda:`, JSON.stringify(payload, null, 2));
+  // Só a forma do pedido: o payload traz CPF/CNPJ e endereço do cliente (PII — M-36, LGPD).
+  console.log(`[Omie Vendas][${account}] Payload PedidoVenda (campos):`, Object.keys(payload ?? {}).join(","));
 
   let omie_pedido_id: number | null;
   let omie_numero_pedido: string | number;
@@ -2957,7 +2958,7 @@ Deno.serve(async (req) => {
         if (cep) clienteParams.cep = String(cep).replace(/\D/g, "");
         if (telefone) clienteParams.telefone1_numero = telefone;
         if (contato) clienteParams.contato = contato;
-        console.log(`[Omie Vendas][${account}] Criando cliente: ${razao_social} (${docClean})`);
+        console.log(`[Omie Vendas][${account}] Criando cliente (${docClean.length === 11 ? "CPF" : "CNPJ"})`); // sem nome/documento: PII (M-36)
         const createRes = await callOmieVendasApi("geral/clientes/", "IncluirCliente", clienteParams, account);
         const createResTyped = createRes as { codigo_cliente_omie?: number; nCodCli?: number } | null;
         result = {

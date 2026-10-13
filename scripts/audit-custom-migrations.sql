@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 621
+-- Total de custom migrations: 623
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -682,7 +682,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261012160000', 'picking_v2_cron_fila', '20261012160000_picking_v2_cron_fila.sql'),
   ('20261012173000', 'cron_sync_reprocess_pedidos_colacor_dr', '20261012173000_cron_sync_reprocess_pedidos_colacor_dr.sql'),
   ('20261012203227', 'crons_modulos_congelados', '20261012203227_crons_modulos_congelados.sql'),
-  ('20261012233000', 'picking_cron_fora_do_minuto_15', '20261012233000_picking_cron_fora_do_minuto_15.sql')
+  ('20261012205652', 'retencao_lgpd_conversas', '20261012205652_retencao_lgpd_conversas.sql'),
+  ('20261012233000', 'picking_cron_fora_do_minuto_15', '20261012233000_picking_cron_fora_do_minuto_15.sql'),
+  ('20261012233500', 'analytics_ledger_crescimento_comparavel', '20261012233500_analytics_ledger_crescimento_comparavel.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2674,7 +2676,10 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('tint_gate_tabela_implausivel', 'function', 'public', 'tint_gate_revalida', ''),
   ('picking_v2_cron_fila', 'cron_job', 'cron', 'picking-fila-oben', ''),
   ('picking_v2_cron_fila', 'cron_job', 'cron', 'picking-fila-colacor', ''),
-  ('cron_sync_reprocess_pedidos_colacor_dr', 'cron_job', 'cron', 'sync-reprocess-pedidos-colacor-2h', '')
+  ('cron_sync_reprocess_pedidos_colacor_dr', 'cron_job', 'cron', 'sync-reprocess-pedidos-colacor-2h', ''),
+  ('retencao_lgpd_conversas', 'function', 'private', 'expurgar_conteudo_conversas', ''),
+  ('retencao_lgpd_conversas', 'cron_job', 'cron', 'lgpd-expurgo-conversas-diario', ''),
+  ('analytics_ledger_crescimento_comparavel', 'function', 'public', 'analytics_ledger_registrar', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4714,7 +4719,10 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('tint_gate_tabela_implausivel', 'function', 'public', 'tint_gate_revalida', ''),
   ('picking_v2_cron_fila', 'cron_job', 'cron', 'picking-fila-oben', ''),
   ('picking_v2_cron_fila', 'cron_job', 'cron', 'picking-fila-colacor', ''),
-  ('cron_sync_reprocess_pedidos_colacor_dr', 'cron_job', 'cron', 'sync-reprocess-pedidos-colacor-2h', '')
+  ('cron_sync_reprocess_pedidos_colacor_dr', 'cron_job', 'cron', 'sync-reprocess-pedidos-colacor-2h', ''),
+  ('retencao_lgpd_conversas', 'function', 'private', 'expurgar_conteudo_conversas', ''),
+  ('retencao_lgpd_conversas', 'cron_job', 'cron', 'lgpd-expurgo-conversas-diario', ''),
+  ('analytics_ledger_crescimento_comparavel', 'function', 'public', 'analytics_ledger_registrar', '')
 )
 SELECT
   e.migration,
@@ -5219,6 +5227,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'analytics_ledger_registrar', 1, '20260825214545_analytics_outbox.sql', 'cb48e471a07a312d89d94c3a0dbd6455'),
   ('public', 'analytics_ledger_registrar', 2, '20260907223901_analytics_ledger_navegacao_rota_servida.sql', '49fadd1175a717f40fc4430e7bb670dd'),
   ('public', 'analytics_ledger_registrar', 3, '20260908055405_analytics_ledger_navegacao_postcondicao_corrigida.sql', '49fadd1175a717f40fc4430e7bb670dd'),
+  ('public', 'analytics_ledger_registrar', 4, '20261012233500_analytics_ledger_crescimento_comparavel.sql', '70af721a1852fa66b67ebadff5c5b57e'),
   ('public', 'analytics_outbox_purgar', 1, '20260825214545_analytics_outbox.sql', '4746bb5a3ede491d961438a4163b0432'),
   ('public', 'analytics_outbox_purgar', 2, '20260829012000_analytics_outbox_perda_visivel.sql', '4daf67a757579017038757a16c5c31c3'),
   ('public', 'cockpit_itens_snapshot', 1, '20260830123820_snapshot_atomico_universo_itens.sql', '88bd481f1d36ab3ba72e7d9df1f1d206'),

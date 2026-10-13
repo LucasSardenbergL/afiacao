@@ -90,7 +90,9 @@ Deno.serve(async (req) => {
         !Array.isArray(corpoBruto)
       ? corpoBruto
       : {};
-    console.log("[omie-nfe-webhook] Payload recebido:", JSON.stringify(payload).slice(0, 500));
+    // Só os NOMES dos campos: o payload da NF-e traz CPF/CNPJ, nome e endereço do destinatário (M-36,
+    // LGPD) — o log da edge não é lugar de dado pessoal.
+    console.log("[omie-nfe-webhook] Payload recebido, campos:", Object.keys(payload).join(","));
 
     const chaveAcesso: string | undefined =
       payload.chave_acesso ?? payload.chNFe ?? payload.nfe?.chave_acesso ?? payload.nfe?.chNFe;
