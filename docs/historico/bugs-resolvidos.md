@@ -1084,3 +1084,18 @@ lista carrega e mascara a corrida; o teste foi movido para o contrato do hook (`
 **Diagnóstico em 1 comando:** `curl -si -X OPTIONS -H 'Origin: https://x' <edge> | grep -i allow-origin`.
 **Correção:** founder apagou o secret (efeito imediato, sem deploy); PR fixa `"*"` no código (igual ao
 `_shared/auth.ts` — auth é Bearer, não cookie) para um secret errado não derrubar de novo.
+
+## 2026-10-12 — cron do picking no minuto :15 travava o reprocesso Omie (oben)
+
+**Sintoma:** e-mail urgente `sync_reprocess_saude` — "Reprocesso Omie PARADO: operational/orders (oben)"
+(e inventory sem linha), auto-resolvido 4h depois.
+**Causa:** `picking-fila-oben` (#3004, nascido 15:09 UTC) em `3-59/6` cai em :15, o minuto do
+`sync-reprocess-operational` (`15 */2`). Ambos pedem a vez do `ListarPedidos` em `omie_cota_metodo`; o
+2º recebe "ocupado até aquisição+150 s" > teto de espera de 20 s do `obterVez` e desiste
+(`OMIE_COTA … chamada não feita`). Falhou 16:15 e 18:15 UTC; venceu a corrida 20:15.
+**Correção:** agenda `1-59/6` (único offset de `/6` fora de :00/:06…, :05, :15, :20, :40) — aplicada
+pelo founder no SQL Editor e versionada em `20261012233000_picking_cron_fora_do_minuto_15.sql`.
+**Lição:** cron novo que chama método coordenado precisa varrer TODOS os `cron.job` com minuto fixo
+(`select schedule, jobname from cron.job where active order by 1`), não só os que o PR lembra. E o
+"ocupado" do `obterVez` sempre carrega o fim do lease (150 s), então qualquer sobreposição vira erro
+— a espera curta só vale para o "aguarde" do Omie.
