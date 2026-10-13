@@ -514,3 +514,13 @@ db/test-cron-dr-sync-reprocess-pedidos-colacor.sh 10
 # ou, sem problema, às SEGUNDAS em Brasília como prova de vida. Defeito aqui = silêncio com sistema
 # quebrado (o founder deixa de ser avisado) ou ruído diário. Esquema mínimo, sem snapshot (~5 s/rodada).
 db/test-watchdog-diario-so-problema.sh      22  falsificar=6
+# MITIGAÇÃO TEMPORÁRIA do #3051 (20261013180000): re-marca o snapshot de chaves aplicado mais recente
+# como `pendente` de 6 em 6h, para o apply voltar a desativar as fórmulas de cor que a FONTE retirou.
+# Em 13/10 havia 26.180 fórmulas ativas de 6.545 cores ausentes do snapshot, 9.164 com preço final no
+# balcão. As 3 guardas SÃO o conserto, não higiene: obsolescência de 36h (conector parado NÃO vira
+# apply de catálogo velho), não-empilhar, e zerar aplicacao_tentativas (o tick não zera no sucesso e o
+# teto é 3 — sem isso a 1ª falha real ia direto para `erro`, sem retry). Esquema mínimo, sem
+# schema-snapshot (~5 s/rodada). A sabotagem `acl_aberta` é cobrada no `P6 FALHOU` da própria
+# migration, não num assert — está explicado no cabeçalho da prova.
+# ⚠️ Esta linha SAI junto com o cron quando o #3051 for aplicado em prod.
+db/test-tint-reaplicar-snapshot.sh          16  falsificar=6
