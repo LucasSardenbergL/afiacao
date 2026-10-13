@@ -2097,7 +2097,7 @@ async function processarPedido(
   if (envStatus === "sucesso_portal") {
     const r = await aplicarTransicao("sucesso_portal", {
       erro: null,
-      protocolo: envelope.protocolo ?? null,
+      protocolo: (envelope.protocolo as string | undefined) ?? null,
       enviadoPortalEm: true,
     });
     // Captura de custo do portal (best-effort; idempotente — só antes do PO Omie existir).
@@ -2205,13 +2205,13 @@ async function processarPedido(
     // exige conciliacao para obter o protocolo.
     return await aplicarTransicao("aceito_portal_sem_protocolo", {
       erro: "Portal aceitou o pedido sem protocolo — requer conciliacao",
-      protocolo: envelope.protocolo ?? null,
+      protocolo: (envelope.protocolo as string | undefined) ?? null,
     });
   }
 
   if (envStatus === "indeterminado_requer_conciliacao") {
     return await aplicarTransicao("indeterminado_requer_conciliacao", {
-      erro: evidence?.erro ?? "Resultado ambiguo — requer conciliacao manual",
+      erro: (evidence?.erro as string | undefined) ?? "Resultado ambiguo — requer conciliacao manual",
     });
   }
 
@@ -2685,7 +2685,7 @@ Deno.serve(async (req) => {
       { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 500 },
     );
   }
-  const claimedSyncIds = new Set((claimedSync ?? []).map((r) => (r as { id: number }).id));
+  const claimedSyncIds = new Set((claimedSync ?? []).map((r: unknown) => (r as { id: number }).id));
   const candidatosSync = candidatos.filter((c) => claimedSyncIds.has(c.id));
   const { detalhes, sucesso, falhasDef, falhasTmp, indeterminados } = await processCandidatos(supabase, candidatosSync);
 
