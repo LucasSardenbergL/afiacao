@@ -1,6 +1,6 @@
 # Encargo recebido por título (juros/multa/desconto) — 2026-10-13
 
-> Migration `20261013094000_fin_movimentacoes_resumo_encargos.sql` · view `v_titulo_encargos_cr` · edge `omie-financeiro` v1.4 (`resumo-movimento.ts`) · prova `db/test-fin-encargos-titulo.sh` (40 asserts, 14 sabotagens). Lição curta em `docs/agent/financeiro.md` §"Encargo recebido".
+> Migration `20261013094000_fin_movimentacoes_resumo_encargos.sql` · view `v_titulo_encargos_cr` · edge `omie-financeiro` v1.4 (`resumo-movimento.ts`) · prova `db/test-fin-encargos-titulo.sh` (47 asserts, 19 sabotagens). Lição curta em `docs/agent/financeiro.md` §"Encargo recebido".
 
 ## A pergunta
 

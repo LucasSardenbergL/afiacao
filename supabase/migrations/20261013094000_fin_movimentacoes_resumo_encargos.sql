@@ -160,26 +160,44 @@ baixa_linhas AS (
      AND m.tipo = 'E'
      AND m.omie_codigo_lancamento IS NOT NULL
 ),
--- Uma baixa é VERSÃO VELHA de outra quando existe linha do MESMO título, conta, data e valor,
--- observada depois — salvo se as duas têm nCodBaixa conhecido e DIFERENTE (duas baixas iguais
--- legítimas). Linha sem nCodBaixa (pré-backfill) cede à mais nova do grupo. Baixa cancelada com
--- outro conteúdo NÃO é detectável aqui: ela sobra na soma e a confiança vira `divergente`.
-baixa_atual AS (
+-- Dedup de VERSÕES da mesma baixa, em duas camadas (achados do challenge Codex):
+--  (a) com nCodBaixa: a identidade MANDA — uma linha por (título, nCodBaixa), a observada por
+--      último, mesmo que data/conta/valor tenham mudado entre as versões;
+--  (b) sem nCodBaixa (pré-backfill, ou versão que nunca foi relida): cede a qualquer linha do MESMO
+--      conteúdo (título, conta, data, valor) que tenha nCodBaixa, ou que seja sem ID e mais nova.
+--      Linha sem ID NUNCA elimina linha com ID — senão vira curinga e apaga baixa legítima por
+--      transitividade (401 → NULL → 402 sobrava só 402).
+-- Baixa cancelada com outro conteúdo NÃO é detectável aqui: ela sobra na soma e a confiança vira
+-- `divergente`.
+baixa_com_id AS (
+  SELECT DISTINCT ON (b.company, b.cod, b.omie_ncodbaixa) b.*
+    FROM baixa_linhas b
+   WHERE b.omie_ncodbaixa IS NOT NULL
+   ORDER BY b.company, b.cod, b.omie_ncodbaixa,
+            b.updated_at DESC NULLS LAST, b.created_at DESC NULLS LAST, b.id DESC
+),
+baixa_sem_id AS (
   SELECT b.*
     FROM baixa_linhas b
-   WHERE NOT EXISTS (
-     SELECT 1
-       FROM baixa_linhas n
-      WHERE n.company = b.company
-        AND n.cod = b.cod
-        AND n.omie_ncodcc IS NOT DISTINCT FROM b.omie_ncodcc
-        AND n.data_movimento = b.data_movimento
-        AND n.valor = b.valor
-        AND n.id <> b.id
-        AND (COALESCE(n.updated_at, '-infinity'), COALESCE(n.created_at, '-infinity'), n.id)
-          > (COALESCE(b.updated_at, '-infinity'), COALESCE(b.created_at, '-infinity'), b.id)
-        AND (b.omie_ncodbaixa IS NULL OR n.omie_ncodbaixa IS NULL OR n.omie_ncodbaixa = b.omie_ncodbaixa)
-   )
+   WHERE b.omie_ncodbaixa IS NULL
+     AND NOT EXISTS (
+       SELECT 1
+         FROM baixa_linhas n
+        WHERE n.company = b.company
+          AND n.cod = b.cod
+          AND n.omie_ncodcc IS NOT DISTINCT FROM b.omie_ncodcc
+          AND n.data_movimento = b.data_movimento
+          AND n.valor = b.valor
+          AND n.id <> b.id
+          AND (n.omie_ncodbaixa IS NOT NULL
+               OR (COALESCE(n.updated_at, '-infinity'), COALESCE(n.created_at, '-infinity'), n.id)
+                > (COALESCE(b.updated_at, '-infinity'), COALESCE(b.created_at, '-infinity'), b.id))
+     )
+),
+baixa_atual AS (
+  SELECT * FROM baixa_com_id
+  UNION ALL
+  SELECT * FROM baixa_sem_id
 ),
 baixa_titulo AS (
   SELECT company, cod,
@@ -231,7 +249,11 @@ base AS (
 ),
 avaliado AS (
   SELECT b.*,
+         -- Igualdade aritmética não valida o DOMÍNIO: juros −10 com líquido 90 fecha a conta e
+         -- viraria encargo negativo `alta` (achado Codex). Componente negativo = inconsistente.
          COALESCE(b.resumo_completo
+           AND b.resumo_val_pago >= 0 AND b.resumo_val_liquido >= 0 AND b.resumo_desconto >= 0
+           AND b.resumo_juros >= 0 AND b.resumo_multa >= 0
            AND abs(b.resumo_val_liquido
                    - (b.resumo_val_pago - b.resumo_desconto + b.resumo_juros + b.resumo_multa)) <= 0.01,
            false)                                           AS identidade_ok,

@@ -61,6 +61,8 @@ Deno.test("valorOmie: rejeita o que fabricaria número", () => {
   assertEquals(valorOmie(undefined), null);
   assertEquals(valorOmie(1e13), null, "estoura numeric(15,2) e derrubaria a página");
   assertEquals(valorOmie(9999999999999.99), 9999999999999.99);
+  assertEquals(valorOmie(9999999999999.998), null, "arredonda para 1e13 no Postgres e estoura");
+  assertEquals(valorOmie(6.054), 6.05, "grava o que o Postgres gravaria");
   assertEquals(valorOmie(-12.5), -12.5);
   assertEquals(valorOmie(0), 0);
 });

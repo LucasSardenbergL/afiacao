@@ -146,7 +146,11 @@ INSERT INTO fin_contas_receber (company, omie_codigo_lancamento, valor_documento
  ('oben',   10, 400.00,   '2026-03-01', 'RECEBIDO'),   -- T10 resumo sem nJuros (ausente)
  ('oben',   11, 250.00,   '2026-03-01', 'RECEBIDO'),   -- T11 ERP sem caixa
  ('oben',   12, 999.00,   '2026-03-01', 'ATRASADO'),   -- T12 não recebido: fora da view
- ('colacor_sc', 13, 100.00, '2026-03-01', 'RECEBIDO'); -- T13 RLS por empresa
+ ('colacor_sc', 13, 100.00, '2026-03-01', 'RECEBIDO'), -- T13 RLS por empresa
+ ('oben',   14, 600.00,   '2026-03-01', 'RECEBIDO'),   -- T14 caixa bate mas o Omie NAO diz liquidado
+ ('oben',   15, 100.00,   '2026-03-01', 'RECEBIDO'),   -- T15 juros NEGATIVO com identidade fechando
+ ('oben',   16, 1000.00,  '2026-03-01', 'RECEBIDO'),   -- T16 401 -> NULL -> 402 (curinga)
+ ('oben',   17, 500.00,   '2026-03-01', 'RECEBIDO');   -- T17 mesmo nCodBaixa, data mudou
 
 -- T1: CR com resumo real; CC BAXR liquidado D+1; CC de INCLUSÃO zerado (MANR 0,00) que NÃO é caixa.
 INSERT INTO fin_movimentacoes (company, omie_ncodmov, omie_ncodcc, data_movimento, tipo, valor, categoria_descricao, omie_codigo_lancamento, natureza,
@@ -228,6 +232,22 @@ INSERT INTO fin_movimentacoes (company, omie_ncodmov, omie_ncodcc, data_moviment
 INSERT INTO fin_movimentacoes (company, omie_ncodmov, omie_ncodcc, data_movimento, tipo, valor, categoria_descricao, omie_codigo_lancamento, natureza) VALUES
  ('colacor_sc', h(), 130, '2026-03-02', 'E', 100, 'CONTA_CORRENTE_REC', 13, 'BAXR');
 
+-- T14..T17 (achados do challenge Codex, rodada 2)
+INSERT INTO fin_movimentacoes (company, omie_ncodmov, omie_ncodcc, data_movimento, tipo, valor, categoria_descricao, omie_codigo_lancamento, natureza,
+  resumo_val_pago, resumo_val_liquido, resumo_desconto, resumo_juros, resumo_multa, resumo_val_aberto, resumo_liquidado, valor_titulo, data_pagamento_omie) VALUES
+ ('oben', h(), 140, '2026-03-01', 'E', 600,  'CONTA_A_RECEBER', 14, 'VENR', 600,  600,  0, 0,   0, 0, false, 600,  '2026-03-01'),
+ ('oben', h(), 150, '2026-03-01', 'E', 100,  'CONTA_A_RECEBER', 15, 'VENR', 100,  90,   0, -10, 0, 0, true,  100,  '2026-03-01'),
+ ('oben', h(), 160, '2026-03-01', 'E', 1000, 'CONTA_A_RECEBER', 16, 'VENR', 1000, 1000, 0, 0,   0, 0, true,  1000, '2026-03-01'),
+ ('oben', h(), 170, '2026-03-01', 'E', 500,  'CONTA_A_RECEBER', 17, 'VENR', 500,  500,  0, 0,   0, 0, true,  500,  '2026-03-01');
+INSERT INTO fin_movimentacoes (company, omie_ncodmov, omie_ncodcc, data_movimento, tipo, valor, categoria_descricao, omie_codigo_lancamento, natureza, omie_ncodbaixa, updated_at) VALUES
+ ('oben', h(), 140, '2026-03-02', 'E', 600, 'CONTA_CORRENTE_REC', 14, 'BAXR', 1401, '2026-03-02'),
+ ('oben', h(), 150, '2026-03-02', 'E', 90,  'CONTA_CORRENTE_REC', 15, 'BAXR', 1501, '2026-03-02'),
+ ('oben', h(), 160, '2026-03-02', 'E', 500, 'CONTA_CORRENTE_REC', 16, 'BAXR', 401,  '2026-06-01'),
+ ('oben', h(), 160, '2026-03-02', 'E', 500, 'CONTA_CORRENTE_REC', 16, 'BAXR', NULL, '2026-06-02'),
+ ('oben', h(), 160, '2026-03-02', 'E', 500, 'CONTA_CORRENTE_REC', 16, 'BAXR', 402,  '2026-06-03'),
+ ('oben', h(), 170, '2026-10-01', 'E', 500, 'CONTA_CORRENTE_REC', 17, 'BAXR', 1701, '2026-10-02'),
+ ('oben', h(), 170, '2026-10-03', 'E', 500, 'CONTA_CORRENTE_REC', 17, 'BAXR', 1701, '2026-10-05');
+
 INSERT INTO auth.users(id) VALUES ('11111111-1111-1111-1111-111111111111'), ('22222222-2222-2222-2222-222222222222'), ('33333333-3333-3333-3333-333333333333');
 INSERT INTO user_roles VALUES ('11111111-1111-1111-1111-111111111111', 'employee');
 INSERT INTO fin_permissoes VALUES ('22222222-2222-2222-2222-222222222222', false, ARRAY['colacor_sc']);
@@ -273,6 +293,12 @@ asserts_logica() {
   eq "A10 nJuros ausente: encargo NULL"               "$(v 10 encargo_recebido)"    "<null>"
   eq "A11 ERP sem caixa"                              "$(v 11 confianca)"           "erp_sem_caixa"
   eq "A11 ERP sem caixa: encargo do resumo"           "$(v 11 encargo_recebido)"    "5.00"
+  eq "A14 caixa bate sem quitacao: nao e alta"        "$(v 14 confianca)"           "erp_nao_quitado"
+  eq "A15 juros negativo: inconsistente"              "$(v 15 confianca)"           "inconsistente"
+  eq "A15 juros negativo: encargo NULL"               "$(v 15 encargo_recebido)"    "<null>"
+  eq "A16 linha sem ID nao apaga baixa com ID (401,NULL,402)" "$(v 16 soma_baixas)" "1000.00"
+  eq "A17 mesmo nCodBaixa com data mudada conta uma vez" "$(v 17 soma_baixas)"     "500.00"
+  eq "A17 confianca"                                  "$(v 17 confianca)"           "alta"
   eq "A12 titulo ATRASADO fora da view"               "$(Pq -c "SELECT count(*) FROM v_titulo_encargos_cr WHERE omie_codigo_lancamento = 12")" "0"
 }
 
@@ -378,11 +404,12 @@ echo "-- falsificacao --"
 falsifica "S1 versao mais VELHA vence" \
   "c.updated_at DESC NULLS LAST, c.created_at DESC NULLS LAST" "c.updated_at ASC NULLS LAST, c.created_at ASC NULLS LAST" \
   asserts_logica "A2 versao ATUAL vence: desconto"
-falsifica "S2 sem dedup de versao da baixa" \
-  $'FROM baixa_linhas b\n   WHERE NOT EXISTS (' $'FROM baixa_linhas b\n   WHERE true OR NOT EXISTS (' \
+falsifica "S2 sem dedup de versao da baixa sem ID" \
+  $'   WHERE b.omie_ncodbaixa IS NULL\n     AND NOT EXISTS (' $'   WHERE b.omie_ncodbaixa IS NULL\n     AND 1=1 OR b.omie_ncodbaixa IS NULL AND NOT EXISTS (' \
   asserts_logica "A3 baixa duplicada por versao conta uma vez"
-falsifica "S3 dedup ignora nCodBaixa" \
-  "AND (b.omie_ncodbaixa IS NULL OR n.omie_ncodbaixa IS NULL OR n.omie_ncodbaixa = b.omie_ncodbaixa)" "AND true" \
+falsifica "S3 dedup por conteudo em vez de nCodBaixa" \
+  $'SELECT DISTINCT ON (b.company, b.cod, b.omie_ncodbaixa) b.*\n    FROM baixa_linhas b\n   WHERE b.omie_ncodbaixa IS NOT NULL\n   ORDER BY b.company, b.cod, b.omie_ncodbaixa,' \
+  $'SELECT DISTINCT ON (b.company, b.cod, b.data_movimento, b.valor) b.*\n    FROM baixa_linhas b\n   WHERE b.omie_ncodbaixa IS NOT NULL\n   ORDER BY b.company, b.cod, b.data_movimento, b.valor,' \
   asserts_logica "A4 duas baixas iguais legitimas"
 falsifica "S4 CC de inclusao conta como baixa" \
   "AND m.natureza IN ('BAXR', 'APBR')" "AND m.natureza IS NOT NULL" \
@@ -403,6 +430,20 @@ falsifica "S9 identidade nao verificada" \
   "                   - (b.resumo_val_pago - b.resumo_desconto + b.resumo_juros + b.resumo_multa)) <= 0.01," \
   "                   - (b.resumo_val_pago - b.resumo_desconto + b.resumo_juros + b.resumo_multa)) <= 1e9," \
   asserts_logica "A9 identidade quebrada"
+falsifica "S15 alta sem exigir quitacao" \
+  "WHEN a.identidade_ok AND a.quitado " "WHEN a.identidade_ok " \
+  asserts_logica "A14 caixa bate sem quitacao: nao e alta"
+falsifica "S16 componente negativo aceito" \
+  "AND b.resumo_juros >= 0 AND b.resumo_multa >= 0" "AND true" \
+  asserts_logica "A15 juros negativo: inconsistente"
+falsifica "S17 versao de baixa com ID agrupada por data" \
+  $'SELECT DISTINCT ON (b.company, b.cod, b.omie_ncodbaixa) b.*\n    FROM baixa_linhas b\n   WHERE b.omie_ncodbaixa IS NOT NULL\n   ORDER BY b.company, b.cod, b.omie_ncodbaixa,' \
+  $'SELECT DISTINCT ON (b.company, b.cod, b.omie_ncodbaixa, b.data_movimento) b.*\n    FROM baixa_linhas b\n   WHERE b.omie_ncodbaixa IS NOT NULL\n   ORDER BY b.company, b.cod, b.omie_ncodbaixa, b.data_movimento,' \
+  asserts_logica "A17 mesmo nCodBaixa com data mudada conta uma vez"
+falsifica "S18 linha sem ID vira curinga e elimina linha com ID" \
+  $'   WHERE b.omie_ncodbaixa IS NOT NULL\n   ORDER BY' \
+  $'   WHERE b.omie_ncodbaixa IS NOT NULL\n     AND NOT EXISTS (SELECT 1 FROM baixa_linhas n WHERE n.company = b.company AND n.cod = b.cod AND n.data_movimento = b.data_movimento AND n.valor = b.valor AND n.id <> b.id AND n.updated_at > b.updated_at AND (n.omie_ncodbaixa IS NULL OR n.omie_ncodbaixa = b.omie_ncodbaixa))\n   ORDER BY' \
+  asserts_logica "A16 linha sem ID nao apaga baixa com ID"
 falsifica_post "S10 view sem security_invoker" \
   "WITH (security_invoker = on) AS" "WITH (security_invoker = off) AS" "sem security_invoker=on"
 falsifica_post "S11 sem REVOKE de anon" \
@@ -442,6 +483,6 @@ asserts_logica >/dev/null; asserts_rls >/dev/null; asserts_acl >/dev/null; asser
 eq "Z1 baseline intacto apos a falsificacao (total)" "$PASS/$FAIL" "$BASE_PASS/0"
 
 echo "------------------------------"
-echo "ASSERTS: $BASE_PASS ok no baseline  |  FALSIFICACAO: $FALS_OK com dente / $FALS_RUIM sem dente ou invalidas (esperado 15/0)"
-if [ "$FAIL" != "0" ] || [ "$FALS_RUIM" != "0" ] || [ "$FALS_OK" != "15" ]; then echo "HARNESS VERMELHO"; exit 1; fi
+echo "ASSERTS: $BASE_PASS ok no baseline  |  FALSIFICACAO: $FALS_OK com dente / $FALS_RUIM sem dente ou invalidas (esperado 19/0)"
+if [ "$FAIL" != "0" ] || [ "$FALS_RUIM" != "0" ] || [ "$FALS_OK" != "19" ]; then echo "HARNESS VERMELHO"; exit 1; fi
 echo "HARNESS VERDE"

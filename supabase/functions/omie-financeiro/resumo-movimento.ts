@@ -48,11 +48,16 @@ export interface ColunasResumo {
 // página inteira LANÇA — melhor degradar só o campo.
 const TETO_NUMERIC_15_2 = 1e13;
 
-/** Número monetário do Omie ou `null`. Só aceita `number` finito dentro do typmod da coluna. */
+/**
+ * Número monetário do Omie ou `null`. Só aceita `number` finito dentro do typmod da coluna — medido
+ * DEPOIS do arredondamento a centavos, porque o Postgres arredonda antes de checar a precisão:
+ * 9999999999999.998 vira 10000000000000.00 e estoura numeric(15,2) (achado Codex).
+ */
 export function valorOmie(v: unknown): number | null {
   if (typeof v !== "number" || !Number.isFinite(v)) return null;
-  if (Math.abs(v) >= TETO_NUMERIC_15_2) return null;
-  return v;
+  const centavos = Math.round(v * 100) / 100;
+  if (!Number.isFinite(centavos) || Math.abs(centavos) >= TETO_NUMERIC_15_2) return null;
+  return centavos;
 }
 
 /** cLiquidado "S"/"N" → boolean; qualquer outra coisa → null (não "não liquidado"). */
