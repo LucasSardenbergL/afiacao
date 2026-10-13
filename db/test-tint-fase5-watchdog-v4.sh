@@ -53,7 +53,15 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp -c autovacuum=off" -l "$RODADA/pg.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
-P()  { "$PGBIN/psql" -X -q -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
+# Dentro da suíte (EM_SUITE=1), um erro SQL é REGISTRADO como o vermelho ERRO_SQL: no --falsificar a suíte
+# roda sem errexit, e um passo que falhasse deixaria os asserts seguintes lendo o estado ANTERIOR e
+# passando (challenge Codex v4, P2-7). ERRO_SQL nunca é declarado, então derruba o "conjunto exato".
+P()  {
+  if ! "$PGBIN/psql" -X -q -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; then
+    if [ -n "${EM_SUITE:-}" ]; then echo ERRO_SQL >> "$VERM"; fi
+    return 1
+  fi
+}
 Pq() { P -tA "$@"; }
 
 MIG1="$REPO_ROOT/supabase/migrations/20260730120000_tint_watchdog_fase5_chave.sql"
@@ -238,7 +246,7 @@ CREATE FUNCTION _reset() RETURNS void LANGUAGE plpgsql AS $f$ BEGIN
   DELETE FROM public.fin_alertas; DELETE FROM public.fornecedor_alerta; DELETE FROM public.sync_state;
   DELETE FROM public.tint_watchdog_fase5_amostras;
   DELETE FROM public.tint_keys_snapshots; DELETE FROM public.tint_staging_formulas;
-  DELETE FROM public.tint_formulas WHERE cor_id LIKE 'X%';
+  DELETE FROM public.tint_formulas WHERE cor_id LIKE 'X%'; DELETE FROM _fonte WHERE cor LIKE 'X%';
   UPDATE public.tint_formulas SET desativada_em = NULL
    WHERE subcolecao_id = '50000000-0000-0000-0000-0000000000a1' AND desativada_em IS NOT NULL;
   UPDATE public.tint_formula_itens SET corante_id = 'c0000000-0000-0000-0000-0000000000ff'
@@ -287,18 +295,22 @@ eq() {   # $1=ID  $2=veio  $3=esperado
 # ══ A SUÍTE — $1 = migration a aplicar por cima (a real ou a sabotada) ══
 suite() {
   local mig="$1" id1 id2
-  PASS=0; FAIL=0; : > "$VERM"
+  PASS=0; FAIL=0; : > "$VERM"; EM_SUITE=1
 
   # P2c retroativo: os 3 alertas de S2 que importam, semeados ANTES do apply
   P -c "SELECT _reset();
         INSERT INTO public.fin_alertas (company, tipo, severidade, mensagem, contexto, criado_em, dismissed_at) VALUES
-         ('oben','tint_fase5_fonte_retirada','aviso','x','{\"_n\":12386}', '2026-09-28 12:00+00', '2026-10-13 12:00+00'),
+         ('oben','tint_fase5_fonte_retirada','aviso','w','{\"_n\":5}',     '2026-09-28 12:00+00', '2026-10-13 12:00+00'),
          ('oben','tint_fase5_fonte_retirada','aviso','y','{\"_n\":548}',   '2026-08-11 12:00+00', '2026-08-14 12:00+00'),
          ('oben','tint_fase5_fonte_retirada','aviso','z','{\"_n\":1}',     '2026-09-28 12:00+00', '2026-10-13 08:00+00');" >/dev/null
+  P -c "INSERT INTO public.fin_alertas (id, company, tipo, severidade, mensagem, contexto, criado_em, dismissed_at) VALUES
+        ('c3928bd1-986b-4112-8832-7bcb105670ef','oben','tint_fase5_fonte_retirada','aviso','x','{\"_n\":12386}','2026-09-28 12:00+00','2026-10-13 12:00:00.787+00');" >/dev/null
   P -1 -f "$mig"
   eq R6a "$(Pq -c "SELECT COALESCE(contexto->>'encerrado_por','-') || '/' || COALESCE(contexto->>'criterio_de','-') FROM fin_alertas WHERE mensagem='x'")" "mudanca_criterio/v2"
   eq R6b "$(Pq -c "SELECT COALESCE(contexto->>'encerrado_por','-') FROM fin_alertas WHERE mensagem='y'")" "-"
   eq R6c "$(Pq -c "SELECT COALESCE(contexto->>'encerrado_por','-') FROM fin_alertas WHERE mensagem='z'")" "-"
+  # R6d: MESMAS datas, outro alerta (um dismiss manual, por exemplo) — data não prova causa (Codex v4 P2-5)
+  eq R6d "$(Pq -c "SELECT COALESCE(contexto->>'encerrado_por','-') FROM fin_alertas WHERE mensagem='w'")" "-"
 
   # ── A: estado saudável ──
   P -c "SELECT _reset();" >/dev/null
@@ -333,7 +345,8 @@ suite() {
   eq R5c "$mesmo/$(emails 'fonte retirou')" "mesmo/1"
   # R2: a retirada é ANTIGA — o único snapshot que tinha COR3 tem 8 dias: métrica sim, alerta não
   P -c "SELECT _reset(); SELECT _ult_sem('{COR3}'); SELECT _apply_tira('{COR3}');
-        UPDATE tint_keys_snapshots SET created_at = created_at - interval '5 days' WHERE snapshot_id='aaaaaaaa-0000-0000-0000-000000000001';" >/dev/null
+        UPDATE tint_keys_snapshots SET created_at = created_at - interval '5 days', generated_at = generated_at - interval '5 days'
+         WHERE snapshot_id='aaaaaaaa-0000-0000-0000-000000000001';" >/dev/null
   roda
   eq R2a "$(ativos tint_fase5_fonte_retirada)/$(meta fonte_retirada)/$(meta fonte_retirada_bruto)" "0/0/2"
   # R3: o snapshot da janela que tinha COR3 NÃO foi aplicado (erro): não é evidência de presença
@@ -351,6 +364,29 @@ suite() {
   roda
   eq R5a "$(ativos tint_fase5_fonte_retirada)" 0
   eq R5b "$(Pq -c "SELECT contexto->>'encerrado_por' || '/' || (contexto->>'criterio_de') || '/' || (contexto->>'criterio_para') FROM fin_alertas WHERE mensagem='v3'")" "mudanca_criterio/v3/v4"
+  # R5d: o mesmo alerta da v3, mas SEM snapshot aplicado — o critério novo não pode avaliar, então não
+  # fecha nada (Codex v4 P2-4)
+  P -c "SELECT _reset(); UPDATE tint_keys_snapshots SET aplicacao_status='pendente';
+        INSERT INTO fin_alertas (company, tipo, severidade, mensagem, contexto)
+        VALUES ('oben','tint_fase5_fonte_retirada','aviso','v3b','{\"_n\":7}');" >/dev/null
+  roda
+  eq R5d "$(ativos tint_fase5_fonte_retirada)/$(meta fonte_retirada)" "1/AUSENTE"
+  # R7: snapshot VELHO (gerado há 10 dias) recebido AGORA e pulado pelo apply ("fora de ordem", mas
+  # marcado aplicado) não é evidência de presença recente: a janela é por generated_at (Codex v4 P1-1)
+  P -c "SELECT _reset(); SELECT _ult_sem('{COR3}'); SELECT _apply_tira('{COR3}');
+        DELETE FROM tint_keys_snapshots WHERE snapshot_id='aaaaaaaa-0000-0000-0000-000000000001';
+        SELECT _snap('aaaaaaaa-0000-0000-0000-000000000001', now() - interval '3 days', now() - interval '3 days', 'aplicado', '{COR3}');
+        SELECT _snap('aaaaaaaa-0000-0000-0000-000000000004', now(), now(), 'aplicado', '{}');
+        UPDATE tint_keys_snapshots SET generated_at = now() - interval '10 days' WHERE snapshot_id='aaaaaaaa-0000-0000-0000-000000000004';" >/dev/null
+  roda
+  eq R7 "$(ativos tint_fase5_fonte_retirada)/$(meta fonte_retirada)/$(meta snapshot_id)" "0/0/aaaaaaaa-0000-0000-0000-000000000002"
+  # R8: a janela é do SNAPSHOT inteiro, não do chunk (Codex v4 P2-6): o S_ant foi gerado dentro dos 7 dias
+  # mas o chunk 0 (o das BULK) foi RECEBIDO fora deles. BULK0001 sumiu do último — é retirada nova.
+  P -c "SELECT _reset(); SELECT _ult_sem('{BULK0001}'); SELECT _apply_tira('{BULK0001}');
+        UPDATE tint_keys_snapshots SET created_at = now() - interval '8 days'
+         WHERE snapshot_id='aaaaaaaa-0000-0000-0000-000000000001' AND chunk_index = 0;" >/dev/null
+  roda
+  eq R8 "$(ativos tint_fase5_fonte_retirada)/$(meta fonte_retirada)" "1/1"
 
   # ── S5: fantasma × cor nova ──
   # F1: fórmula ATIVA cuja chave-fonte o último snapshot não tem, sem staging posterior (2 embalagens)
@@ -384,6 +420,15 @@ suite() {
   P -c "SELECT _reset(); SELECT _snap('aaaaaaaa-0000-0000-0000-000000000003', now(), now(), 'erro', '{COR1}');" >/dev/null
   roda
   eq F4 "$(ativos tint_fase5_fonte_fantasma)/$(meta fantasmas)" "0/0"
+  # F8: o snapshot ANTIGO (S_ant, que tinha XVELHA) é re-aplicado e PULADO pelo apply: fica 'aplicado' com
+  # aplicado_em NOVO. A referência é o de maior generated_at (S_ult, sem XVELHA) — XVELHA ativa é fantasma.
+  # Por aplicado_em, S_ant viraria a referência e o fantasma sumiria (Codex v4 P1-1).
+  P -c "SELECT _reset(); INSERT INTO _fonte VALUES ('XVELHA');
+        DELETE FROM tint_keys_snapshots WHERE snapshot_id='aaaaaaaa-0000-0000-0000-000000000001';
+        SELECT _snap('aaaaaaaa-0000-0000-0000-000000000001', now() - interval '3 days', now(), 'aplicado', '{}');
+        DELETE FROM _fonte WHERE cor='XVELHA'; SELECT _ativa_extra(9021, 'XVELHA');" >/dev/null
+  roda
+  eq F8 "$(meta fantasmas)/$(meta snapshot_id)" "1/aaaaaaaa-0000-0000-0000-000000000002"
   # F7: 1.000 fórmulas fantasma = limiar de 'critico' NA igualdade
   P -c "SELECT _reset(); SELECT _ult_sem(ARRAY(SELECT cor FROM _fonte));" >/dev/null
   roda
@@ -421,6 +466,7 @@ suite() {
   H th6 100 aviso 1.0; H th6 0 info 1.0; H th6 50 aviso 1.0
   eq H6 "$(emails 'HT th6')/$(ativos th6)" "2/1"
 
+  EM_SUITE=
   echo "PASS=$PASS FAIL=$FAIL"
 }
 
@@ -435,34 +481,38 @@ fi
 # contagem também é conferida: conjunto EXATO). `APPLY!MARCA` = sabotagem de pós-condição: o apply em
 # transação única TEM de abortar com aquela marca (`_` vira espaço). Conjuntos MEDIDOS na 1ª rodada,
 # não previstos — as 4 divergências da previsão estão explicadas nos comentários da suíte e no PR.
-SABOTAGENS="ref_sem_aplicado:F4,F6b janela_sem_aplicado:R3 janela_sem_7_dias:R2a relogio_aplicado_em:F2,F2b relogio_min_chunk:F3 igualdade_estrita:F2b s5_ausente_vira_saudavel:F6a s2_sem_criterio_no_ctx:R1b,R5c helper_v1:H1,H2,H5 s4_limiar_desloca:T50,T51 s4_critico_estrito:T200 s5_critico_estrito:F7 retroativo_sem_corte:R6b,R6c p4_instrucao_proibida:APPLY!P4_FALHOU p8_tabela_aberta:APPLY!P8_FALHOU p2b_corte_30d_volta:APPLY!P2b_FALHOU"
+SABOTAGENS="ref_sem_aplicado:F4,F6b ordem_por_aplicado_em:F8 janela_sem_aplicado:R3 janela_sem_7_dias:R2a janela_por_recebimento:R7 janela_por_chunk:R8 relogio_aplicado_em:F2,F2b relogio_min_chunk:F3 igualdade_estrita:F2b s5_ausente_vira_saudavel:F6a sem_nulo_sem_ref:F6b,R5d criterio_sem_guarda:R5d s2_sem_criterio_no_ctx:R1b,R5c helper_v1:H1,H2,H5 s4_limiar_desloca:T50,T51 s4_critico_estrito:T200 s5_critico_estrito:F7 retroativo_por_data:R6d p4_instrucao_proibida:APPLY!P4_FALHOU p8_tabela_aberta:APPLY!P8_FALHOU p2b_corte_30d_volta:APPLY!P2b_FALHOU"
 
 # As trocas textuais de cada sabotagem (busca, troca, …). Cada busca tem de casar EXATAMENTE 1 vez.
 pares_de() {
   case "$1" in
     ref_sem_aplicado) PARES=(
-"   WHERE ks.account = v_conta AND ks.entity = 'formulas'
-     AND ks.aplicacao_status = 'aplicado'
-   GROUP BY ks.snapshot_id"
-"   WHERE ks.account = v_conta AND ks.entity = 'formulas'
-   GROUP BY ks.snapshot_id") ;;
+"       AND ks.aplicacao_status = 'aplicado'
+     GROUP BY ks.snapshot_id
+     ORDER BY"
+"     GROUP BY ks.snapshot_id
+     ORDER BY") ;;
+    ordem_por_aplicado_em) PARES=("ORDER BY max(ks.generated_at) DESC NULLS LAST" "ORDER BY max(ks.aplicado_em) DESC NULLS LAST") ;;
     janela_sem_aplicado) PARES=(
 "       AND ks.aplicacao_status = 'aplicado'
-       AND ks.snapshot_id <> v_snap_id"
-"       AND ks.snapshot_id <> v_snap_id") ;;
-    janela_sem_7_dias) PARES=("       AND ks.created_at >= now() - interval '7 days'" "       AND true") ;;
-    relogio_aplicado_em) PARES=(
-"  SELECT ks.snapshot_id, max(ks.created_at)
-    INTO v_snap_id, v_snap_rec"
-"  SELECT ks.snapshot_id, max(ks.aplicado_em)
-    INTO v_snap_id, v_snap_rec") ;;
-    relogio_min_chunk) PARES=(
-"  SELECT ks.snapshot_id, max(ks.created_at)
-    INTO v_snap_id, v_snap_rec"
-"  SELECT ks.snapshot_id, min(ks.created_at)
-    INTO v_snap_id, v_snap_rec") ;;
-    igualdade_estrita) PARES=("sf.created_at >= v_snap_rec" "sf.created_at > v_snap_rec") ;;
+       AND ks.snapshot_id <> (SELECT snapshot_id FROM ref)"
+"       AND ks.snapshot_id <> (SELECT snapshot_id FROM ref)") ;;
+    janela_sem_7_dias) PARES=("    HAVING max(ks.generated_at) >= now() - interval '7 days'" "    HAVING true") ;;
+    janela_por_recebimento) PARES=("    HAVING max(ks.generated_at) >= now() - interval '7 days'" "    HAVING max(ks.created_at) >= now() - interval '7 days'") ;;
+    janela_por_chunk) PARES=("    HAVING max(ks.generated_at) >= now() - interval '7 days'" "    HAVING min(ks.created_at) >= now() - interval '7 days'") ;;
+    relogio_aplicado_em) PARES=("    SELECT ks.snapshot_id, max(ks.created_at) AS rec" "    SELECT ks.snapshot_id, max(ks.aplicado_em) AS rec") ;;
+    relogio_min_chunk) PARES=("    SELECT ks.snapshot_id, max(ks.created_at) AS rec" "    SELECT ks.snapshot_id, min(ks.created_at) AS rec") ;;
+    igualdade_estrita) PARES=("sf.created_at >= (SELECT rec FROM ref)" "sf.created_at > (SELECT rec FROM ref)") ;;
     s5_ausente_vira_saudavel) PARES=("  IF v_fant IS NULL THEN" "  IF false THEN") ;;
+    sem_nulo_sem_ref) PARES=(
+"    v_s2 := NULL; v_ret_fonte := NULL;
+    v_fant := NULL; v_fant_vend := NULL; v_fant_fonte := NULL; v_cor_nova := NULL;"
+"    NULL;") ;;
+    criterio_sem_guarda) PARES=(
+"     AND (contexto->>'criterio') IS DISTINCT FROM v_criterio
+     -- só quando o critério novo PODE avaliar (Codex v4 P2-4): sem referência, nada é tocado
+     AND v_s2 IS NOT NULL;"
+"     AND (contexto->>'criterio') IS DISTINCT FROM v_criterio;") ;;
     s2_sem_criterio_no_ctx) PARES=(
 "      jsonb_build_object('criterio', v_criterio, 'chaves', v_s2,"
 "      jsonb_build_object('chaves', v_s2,") ;;
@@ -478,11 +528,11 @@ pares_de() {
     s4_limiar_desloca) PARES=("v_s2_bruto::numeric / v_universo >= 0.05 THEN" "v_s2_bruto::numeric / v_universo >= 0.06 THEN") ;;
     s4_critico_estrito) PARES=("v_s2_bruto::numeric / v_universo >= 0.20 THEN 'critico'" "v_s2_bruto::numeric / v_universo > 0.20 THEN 'critico'") ;;
     s5_critico_estrito) PARES=("WHEN v_fant >= 1000 THEN 'critico'" "WHEN v_fant > 1000 THEN 'critico'") ;;
-    retroativo_sem_corte) PARES=("   AND dismissed_at >= timestamptz '2026-10-13 09:17:17+00'" "   AND dismissed_at IS NOT NULL") ;;
+    retroativo_por_data) PARES=("WHERE id = 'c3928bd1-986b-4112-8832-7bcb105670ef'   -- o alerta do diagnóstico (psql-ro 13/10)" "WHERE true") ;;
     # pós-condições: a sabotagem preserva todo literal que as OUTRAS pós-condições exigem
     p4_instrucao_proibida) PARES=("'SayerSystem. NAO mexa no tombstone" "'SayerSystem. Faca recarimbar/limpar o tombstone") ;;
     p8_tabela_aberta) PARES=("REVOKE ALL ON TABLE public.tint_watchdog_fase5_amostras FROM PUBLIC, anon, authenticated;" "-- (sem revoke)") ;;
-    p2b_corte_30d_volta) PARES=("       AND ks.created_at >= now() - interval '7 days'" "       AND ks.created_at >= now() - interval '30 days'") ;;
+    p2b_corte_30d_volta) PARES=("    HAVING max(ks.generated_at) >= now() - interval '7 days'" "    HAVING max(ks.generated_at) >= now() - interval '30 days'") ;;
     *) return 1 ;;
   esac
 }
@@ -539,6 +589,8 @@ PY2
         grep -qx "$id" "$VERM" || faltou="$faltou $id"
       done
       n_veio="$(grep -c . "$VERM" || true)"
+      # a suíte sabotada tem de ter EXECUTADO todo assert do controle (truncada = não mediu)
+      if [ $((PASS + FAIL)) -ne "$N_CONTROLE" ]; then faltou="$faltou (executou $((PASS + FAIL)) de $N_CONTROLE asserts)"; fi
       if [ -z "$faltou" ] && [ "$n_veio" -eq "$n_decl" ]; then
         SAB_V=$((SAB_V+1)); echo "   vermelho exato: {$verm}"
       else

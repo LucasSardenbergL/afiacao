@@ -38,8 +38,8 @@
 --   · Fantasma ≠ cor nova: staging RECEBIDO depois do último snapshot aplicado é evidência nova de
 --     presença (cor que a fonte acabou de cadastrar) e não conta. Mesmo critério temporal do
 --     20261013150000, relógio do SERVIDOR nos dois lados (`created_at` do staging × max(`created_at`)
---     do snapshot). `aplicado_em` só ORDENA a escolha do snapshot, nunca é relógio de presença: um
---     re-apply skipado regrava `aplicado_em` sem mudar o snapshot.
+--     do snapshot). `aplicado_em` não decide NADA: o apply que pula um snapshot "fora de ordem" o marca
+--     'aplicado' e regrava `aplicado_em` sem ter governado o catálogo.
 --   · Limpar ou recarimbar o tombstone da Fase 5 segue PROIBIDO (rejeitado em 20260924120000,
 --     barrado por trigger desde 20261010120000); a pós-condição P4 barra o texto que mandava fazê-lo.
 --
@@ -49,9 +49,16 @@
 --   (ativas da conta com produto e base resolvidos) — o sensor não pode alarmar o que o apply nunca
 --   desativaria.
 --
--- SNAPSHOT DE REFERÊNCIA: o último APLICADO da conta (como no 20261013150000). Recebido e não
---   aplicado pode estar incompleto. Sem snapshot aplicado nenhum, S2 e S5 ficam NULL no marcador e
---   os alertas deles NÃO são tocados (ausência de dado ≠ saudável; não abre, não fecha).
+-- SNAPSHOT DE REFERÊNCIA: o APLICADO de maior `generated_at` — a ordem do próprio apply, que só
+--   governa o catálogo quando generated_at > last_keys_snapshot_at (challenge Codex v4, P1-1: por
+--   `aplicado_em`, um snapshot ANTIGO re-aplicado e pulado virava a referência). ⚠️ O 20261013150000
+--   escolhe por `aplicado_em` e herda esse furo; o S5 é justamente quem o acusaria. Recebido e não
+--   aplicado pode estar incompleto. Sem snapshot aplicado nenhum, S2 e S5 ficam NULL no marcador e os
+--   alertas deles NÃO são tocados — nem o encerramento por troca de critério (ausência ≠ saudável).
+--
+-- UMA FOTOGRAFIA: referência, janela, staging, universo carimbado e ativas saem de UM statement
+--   (challenge Codex v4, P1-2). Em READ COMMITTED cada statement tem snapshot próprio e a varredura
+--   leva minutos; staging e fórmulas lidos em queries separadas viravam cor nova em fantasma.
 --
 -- CUSTO (prod, psql-ro 2026-10-13): S5 = 2,6s (517 mil ativas × 122.842 chaves; staging pós-snapshot
 --   é pequena: 347 linhas de 134.351); retirada nova = 1,1s (52 chaves-fonte na janela). A varredura
@@ -262,84 +269,72 @@ BEGIN
     RETURN;
   END IF;
 
-  -- ── A FONTE: o último snapshot de chaves APLICADO ─────────────────────────────────────────
-  -- aplicado_em só ORDENA (o mais recente aplicado); a presença é medida por created_at.
-  SELECT ks.snapshot_id, max(ks.created_at)
-    INTO v_snap_id, v_snap_rec
-    FROM tint_keys_snapshots ks
-   WHERE ks.account = v_conta AND ks.entity = 'formulas'
-     AND ks.aplicacao_status = 'aplicado'
-   GROUP BY ks.snapshot_id
-   ORDER BY max(ks.aplicado_em) DESC NULLS LAST, max(ks.created_at) DESC
-   LIMIT 1;
-
-  -- Temporárias sempre criadas (vazias sem snapshot) para a varredura não depender do ramo.
-  -- Qualificadas por pg_temp na LEITURA: com search_path 'public','pg_temp', uma tabela homônima
-  -- em public venceria.
-  DROP TABLE IF EXISTS pg_temp._wd5_snap, pg_temp._wd5_retirada, pg_temp._wd5_k_retirada, pg_temp._wd5_novo;
-  CREATE TEMP TABLE _wd5_snap      (chave text PRIMARY KEY) ON COMMIT DROP;
-  CREATE TEMP TABLE _wd5_retirada  (chave text PRIMARY KEY) ON COMMIT DROP;
-  CREATE TEMP TABLE _wd5_k_retirada (account text NOT NULL, sku_id uuid NOT NULL, cor_id text NOT NULL,
-                                     PRIMARY KEY (account, sku_id, cor_id)) ON COMMIT DROP;
-  CREATE TEMP TABLE _wd5_novo      (chave text PRIMARY KEY) ON COMMIT DROP;
-
-  IF v_snap_id IS NOT NULL THEN
-    INSERT INTO pg_temp._wd5_snap
-    SELECT DISTINCT c.chave
-      FROM tint_keys_snapshots ks, jsonb_array_elements_text(ks.keys) AS c(chave)
-     WHERE ks.snapshot_id = v_snap_id AND ks.entity = 'formulas' AND c.chave IS NOT NULL;
-
-    -- RETIRADA NOVA: chave-fonte presente em algum snapshot APLICADO dos últimos 7 dias e ausente
-    -- do último aplicado.
-    INSERT INTO pg_temp._wd5_retirada
-    SELECT DISTINCT c.chave
-      FROM tint_keys_snapshots ks, jsonb_array_elements_text(ks.keys) AS c(chave)
+  -- ── UMA FOTOGRAFIA SÓ (challenge Codex v4, P1-2) ──────────────────────────────────────────
+  -- Referência da fonte, janela de retirada, staging posterior, universo carimbado e fórmulas
+  -- ativas saem do MESMO statement: em READ COMMITTED cada statement de uma função VOLATILE tem
+  -- snapshot próprio, e a varredura leva minutos — staging lido numa query e fórmulas lidas noutra,
+  -- com uma promoção no meio, transformavam cor nova legítima em "fantasma".
+  --
+  -- REFERÊNCIA = o snapshot APLICADO de maior generated_at (P1-1). É a ordem do PRÓPRIO apply: ele
+  -- só aplica de fato quando generated_at > last_keys_snapshot_at, e o que ele pula como "fora de
+  -- ordem" é marcado 'aplicado' com aplicado_em NOVO sem ter governado nada. Ordenar por aplicado_em
+  -- deixava um snapshot ANTIGO re-aplicado virar a referência. aplicado_em não decide nada aqui.
+  -- O relógio da PRESENÇA (staging × snapshot) é created_at nos dois lados, como no 20261013150000.
+  --
+  -- JANELA DA RETIRADA NOVA = snapshots APLICADOS inteiros (por snapshot_id, nunca por chunk — P2-6)
+  -- gerados nos últimos 7 dias. generated_at é o relógio do conector; numa janela de dias, skew de
+  -- minutos é irrelevante, e é ele que exclui o snapshot velho recebido atrasado.
+  WITH ref AS MATERIALIZED (
+    SELECT ks.snapshot_id, max(ks.created_at) AS rec
+      FROM tint_keys_snapshots ks
      WHERE ks.account = v_conta AND ks.entity = 'formulas'
        AND ks.aplicacao_status = 'aplicado'
-       AND ks.snapshot_id <> v_snap_id
-       AND ks.created_at >= now() - interval '7 days'
-       AND c.chave IS NOT NULL
-       AND NOT EXISTS (SELECT 1 FROM pg_temp._wd5_snap s WHERE s.chave = c.chave);
-    GET DIAGNOSTICS v_ret_fonte = ROW_COUNT;
-
-    -- As chaves (account, sku_id, cor_id) que expandem essas chaves-fonte (N embalagens por fonte).
-    -- Pré-filtro por cor_id (índice account, cor_id, …); a comparação que decide é a chave inteira.
-    INSERT INTO pg_temp._wd5_k_retirada
+     GROUP BY ks.snapshot_id
+     ORDER BY max(ks.generated_at) DESC NULLS LAST, max(ks.created_at) DESC
+     LIMIT 1
+  ), snap AS MATERIALIZED (
+    SELECT DISTINCT c.chave
+      FROM tint_keys_snapshots ks
+      JOIN ref ON ref.snapshot_id = ks.snapshot_id,
+           jsonb_array_elements_text(ks.keys) AS c(chave)
+     WHERE ks.entity = 'formulas' AND c.chave IS NOT NULL
+  ), janela AS MATERIALIZED (
+    SELECT ks.snapshot_id
+      FROM tint_keys_snapshots ks
+     WHERE ks.account = v_conta AND ks.entity = 'formulas'
+       AND ks.aplicacao_status = 'aplicado'
+       AND ks.snapshot_id <> (SELECT snapshot_id FROM ref)
+     GROUP BY ks.snapshot_id
+    HAVING max(ks.generated_at) >= now() - interval '7 days'
+  ), retirada AS MATERIALIZED (
+    -- chave-fonte presente em algum snapshot aplicado da janela e ausente da referência
+    SELECT DISTINCT c.chave
+      FROM tint_keys_snapshots ks
+      JOIN janela j ON j.snapshot_id = ks.snapshot_id,
+           jsonb_array_elements_text(ks.keys) AS c(chave)
+     WHERE ks.entity = 'formulas' AND c.chave IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM snap s WHERE s.chave = c.chave)
+  ), k_ret AS MATERIALIZED (
+    -- as chaves (account, sku_id, cor_id) que expandem essas chaves-fonte (N embalagens por fonte).
+    -- Pré-filtro por cor_id (índice account, cor_id, …); quem decide é a chave inteira.
     SELECT DISTINCT f.account, f.sku_id, f.cor_id
       FROM tint_formulas f
       JOIN tint_produtos p ON p.id = f.produto_id
       JOIN tint_bases    b ON b.id = f.base_id
      WHERE f.account = v_conta AND f.sku_id IS NOT NULL
-       AND f.cor_id IN (SELECT split_part(r.chave, '|', 1) FROM pg_temp._wd5_retirada r)
+       AND f.cor_id IN (SELECT split_part(r.chave, '|', 1) FROM retirada r)
        AND (f.cor_id || '|' || p.cod_produto || '|' || b.id_base_sayersystem || '|'
             || (CASE WHEN f.personalizada THEN 'true' ELSE 'false' END))
-           IN (SELECT r.chave FROM pg_temp._wd5_retirada r);
-
-    -- COR NOVA: staging RECEBIDO a partir do snapshot (mesmo critério do 20261013150000, que barra
-    -- só `created_at < v_snap_recebido`).
-    INSERT INTO pg_temp._wd5_novo
+           IN (SELECT r.chave FROM retirada r)
+  ), novo AS MATERIALIZED (
+    -- COR NOVA: staging RECEBIDO a partir da referência (o 20261013150000 só barra created_at < rec)
     SELECT DISTINCT x.chave
       FROM (SELECT sf.cor_id || '|' || sf.cod_produto || '|' || sf.id_base || '|'
                    || (CASE WHEN sf.personalizada THEN 'true' ELSE 'false' END) AS chave
               FROM tint_staging_formulas sf
-             WHERE sf.account = v_conta AND sf.created_at >= v_snap_rec) x
-     WHERE x.chave IS NOT NULL;
-
-    ANALYZE pg_temp._wd5_snap;
-    ANALYZE pg_temp._wd5_k_retirada;
-    ANALYZE pg_temp._wd5_novo;
-  END IF;
-
-  -- ── VARREDURA ÚNICA do universo carimbado (S1, S2, bruto, universo) ─────────────────────────
-  -- count(DISTINCT ...) no universo, não count(*): a unicidade da view por chave é propriedade
-  -- dela, não invariante imposta aqui (Codex [P1]).
-  SELECT count(*) FILTER (WHERE k.tem_ativa AND v.account IS NULL),
-         count(DISTINCT (k.account, k.sku_id, k.cor_id))
-           FILTER (WHERE NOT k.tem_ativa AND kr.cor_id IS NOT NULL),
-         count(DISTINCT (k.account, k.sku_id, k.cor_id)) FILTER (WHERE NOT k.tem_ativa),
-         count(DISTINCT (k.account, k.sku_id, k.cor_id))
-    INTO v_s1, v_s2, v_s2_bruto, v_universo
-  FROM (
+             WHERE sf.account = v_conta AND sf.created_at >= (SELECT rec FROM ref)) x
+     WHERE x.chave IS NOT NULL
+  ), k AS (
     -- as chaves carimbadas pela Fase 5, com "ainda tem fórmula ativa?" por agregação
     SELECT f.account, f.sku_id, f.cor_id,
            bool_or(f.desativada_em IS NULL AND f.sku_id IS NOT NULL) AS tem_ativa
@@ -349,34 +344,55 @@ BEGIN
                FROM tint_formulas
               WHERE desativada_motivo = 'fase5_geracao_legada')
      GROUP BY f.account, f.sku_id, f.cor_id
-  ) k
-  LEFT JOIN (
-    -- o oráculo: o que o balcão consegue precificar hoje
-    SELECT account, sku_id, cor_id
-      FROM v_tint_formula_canonica
-     WHERE receita_valida
-  ) v ON v.account = k.account AND v.sku_id = k.sku_id AND v.cor_id = k.cor_id
-  LEFT JOIN pg_temp._wd5_k_retirada kr
-         ON kr.account = k.account AND kr.sku_id = k.sku_id AND kr.cor_id = k.cor_id;
+  ), o AS (
+    -- S5: o universo do apply (ativas da conta com produto e base resolvidos)
+    SELECT f.sku_id,
+           (f.cor_id || '|' || p.cod_produto || '|' || b.id_base_sayersystem || '|'
+            || (CASE WHEN f.personalizada THEN 'true' ELSE 'false' END)) AS chave
+      FROM tint_formulas f
+      JOIN tint_produtos p ON p.id = f.produto_id
+      JOIN tint_bases    b ON b.id = f.base_id
+     WHERE f.account = v_conta AND f.desativada_em IS NULL
+  )
+  SELECT (SELECT snapshot_id FROM ref), (SELECT rec FROM ref), (SELECT count(*) FROM retirada),
+         u.s1, u.s2, u.bruto, u.universo,
+         f5.fant, f5.fant_vend, f5.fant_fonte, f5.cor_nova
+    INTO v_snap_id, v_snap_rec, v_ret_fonte,
+         v_s1, v_s2, v_s2_bruto, v_universo,
+         v_fant, v_fant_vend, v_fant_fonte, v_cor_nova
+    FROM (
+      -- count(DISTINCT ...) no universo, não count(*): a unicidade da view por chave é propriedade
+      -- dela, não invariante imposta aqui (Codex [P1]).
+      SELECT count(*) FILTER (WHERE k.tem_ativa AND v.account IS NULL) AS s1,
+             count(DISTINCT (k.account, k.sku_id, k.cor_id))
+               FILTER (WHERE NOT k.tem_ativa AND kr.cor_id IS NOT NULL) AS s2,
+             count(DISTINCT (k.account, k.sku_id, k.cor_id)) FILTER (WHERE NOT k.tem_ativa) AS bruto,
+             count(DISTINCT (k.account, k.sku_id, k.cor_id)) AS universo
+        FROM k
+        LEFT JOIN (
+          -- o oráculo: o que o balcão consegue precificar hoje
+          SELECT account, sku_id, cor_id
+            FROM v_tint_formula_canonica
+           WHERE receita_valida
+        ) v ON v.account = k.account AND v.sku_id = k.sku_id AND v.cor_id = k.cor_id
+        LEFT JOIN k_ret kr
+               ON kr.account = k.account AND kr.sku_id = k.sku_id AND kr.cor_id = k.cor_id
+    ) u,
+    (
+      SELECT count(*) FILTER (WHERE n.chave IS NULL) AS fant,
+             count(*) FILTER (WHERE n.chave IS NULL AND o.sku_id IS NOT NULL) AS fant_vend,
+             count(DISTINCT o.chave) FILTER (WHERE n.chave IS NULL) AS fant_fonte,
+             count(*) FILTER (WHERE n.chave IS NOT NULL) AS cor_nova
+        FROM o
+        LEFT JOIN novo n ON n.chave = o.chave
+       WHERE NOT EXISTS (SELECT 1 FROM snap s WHERE s.chave = o.chave)
+    ) f5;
 
-  -- ── S5: fórmula ATIVA que a fonte não tem (o universo é o do apply) ─────────────────────────
-  IF v_snap_id IS NOT NULL THEN
-    SELECT count(*) FILTER (WHERE n.chave IS NULL),
-           count(*) FILTER (WHERE n.chave IS NULL AND o.sku_id IS NOT NULL),
-           count(DISTINCT o.chave) FILTER (WHERE n.chave IS NULL),
-           count(*) FILTER (WHERE n.chave IS NOT NULL)
-      INTO v_fant, v_fant_vend, v_fant_fonte, v_cor_nova
-      FROM (SELECT f.sku_id,
-                   (f.cor_id || '|' || p.cod_produto || '|' || b.id_base_sayersystem || '|'
-                    || (CASE WHEN f.personalizada THEN 'true' ELSE 'false' END)) AS chave
-              FROM tint_formulas f
-              JOIN tint_produtos p ON p.id = f.produto_id
-              JOIN tint_bases    b ON b.id = f.base_id
-             WHERE f.account = v_conta AND f.desativada_em IS NULL) o
-      LEFT JOIN pg_temp._wd5_novo n ON n.chave = o.chave
-     WHERE NOT EXISTS (SELECT 1 FROM pg_temp._wd5_snap s WHERE s.chave = o.chave);
-  ELSE
-    v_s2 := NULL;   -- sem referência da fonte: ausente, não zero
+  -- Sem referência da fonte: S2 e S5 são AUSENTES, não zero (com snap vazio o S5 contaria TODA
+  -- ativa como fantasma, e o S2 zeraria por vacuidade).
+  IF v_snap_id IS NULL THEN
+    v_s2 := NULL; v_ret_fonte := NULL;
+    v_fant := NULL; v_fant_vend := NULL; v_fant_fonte := NULL; v_cor_nova := NULL;
   END IF;
 
   -- ── S3: CARDINALIDADE do universo (o vigia de vacuidade) — corpo da v3 ──────────────────────
@@ -466,7 +482,9 @@ BEGIN
                                           'criterio_para', v_criterio,
                                           'encerrado_em', now())
    WHERE company = v_conta AND tipo = 'tint_fase5_fonte_retirada' AND dismissed_at IS NULL
-     AND (contexto->>'criterio') IS DISTINCT FROM v_criterio;
+     AND (contexto->>'criterio') IS DISTINCT FROM v_criterio
+     -- só quando o critério novo PODE avaliar (Codex v4 P2-4): sem referência, nada é tocado
+     AND v_s2 IS NOT NULL;
 
   IF v_s2 IS NULL THEN
     NULL;   -- sem snapshot aplicado: não abre nem fecha (ausência de dado ≠ saudável)
@@ -583,9 +601,9 @@ REVOKE EXECUTE ON FUNCTION public._tint_watchdog_fase5_transicao(text,text,bigin
 
 -- ── P2c RETROATIVO: o encerramento v2→v3 do S2 ───────────────────────────────────────────────
 -- A v3 (aplicada em 2026-10-13 09:17:17 UTC, recibo #401) zerou o S2 por CONSTRUÇÃO, e a 1ª rodada
--- dela dismissou o alerta aberto desde 2026-09-28 (12.386 chaves) como se fosse resolução. Alerta
--- ABERTO antes da v3 e FECHADO depois dela = fechado pela troca de critério. Idempotente (não
--- re-anota) e não toca alerta fechado sob a v2.
+-- dela dismissou o alerta aberto desde 2026-09-28 (12.386 chaves) como se fosse resolução. Data sozinha
+-- não prova causa (um dismiss manual depois do deploy seria anotado errado — Codex v4 P2-5): a correção
+-- é do REGISTRO identificado no diagnóstico, e só se ele foi fechado no 1º ciclo da v3. Idempotente.
 UPDATE public.fin_alertas
    SET contexto = COALESCE(contexto, '{}'::jsonb)
                   || jsonb_build_object('encerrado_por', 'mudanca_criterio',
@@ -593,9 +611,11 @@ UPDATE public.fin_alertas
                                         'anotado_por', '20261013210000',
                                         'nota', 'a v3 contava so chave sem ativa ha >30 dias, numero que '
                                                 || 'zerava por construcao; o fechamento nao foi resolucao')
- WHERE tipo = 'tint_fase5_fonte_retirada'
-   AND criado_em    <  timestamptz '2026-10-13 09:17:17+00'
+ WHERE id = 'c3928bd1-986b-4112-8832-7bcb105670ef'   -- o alerta do diagnóstico (psql-ro 13/10)
+   AND company = 'oben' AND tipo = 'tint_fase5_fonte_retirada'
+   -- e fechado pela 1ª rodada do cron sob a v3 (12:00 UTC), não por um clique depois
    AND dismissed_at >= timestamptz '2026-10-13 09:17:17+00'
+   AND dismissed_at <  timestamptz '2026-10-13 12:10:00+00'
    AND NOT (COALESCE(contexto, '{}'::jsonb) ? 'encerrado_por');
 
 DO $post$
