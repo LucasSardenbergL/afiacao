@@ -2283,10 +2283,11 @@ async function computeAssociationRules(db: SupabaseClient) {
     .rpc("omie_products_codigos_multi_conta")
     .returns<{ omie_codigo_produto: string; contas: number }[]>();
   if (erroAmbiguo) throw new Error(`omie_products/codigo-multi-conta: ${erroAmbiguo.message}`);
-  if ((codigosAmbiguos ?? []).length > 0) {
-    const amostra = (codigosAmbiguos ?? []).slice(0, 5).map((c) => c.omie_codigo_produto).join(", ");
+  const listaAmbiguos = (codigosAmbiguos ?? []) as { omie_codigo_produto: string; contas: number }[];
+  if (listaAmbiguos.length > 0) {
+    const amostra = listaAmbiguos.slice(0, 5).map((c) => c.omie_codigo_produto).join(", ");
     throw new Error(
-      `${codigosAmbiguos!.length} código(s) de produto existem em mais de uma conta (ex.: ${amostra}). ` +
+      `${listaAmbiguos.length} código(s) de produto existem em mais de uma conta (ex.: ${amostra}). ` +
         `O MixGap casa o histórico por código quando product_id é nulo, SEM qualificar a conta — ` +
         `publicar regras segmentadas agora faria regra de uma conta alcançar cliente da outra.`,
     );
@@ -2567,13 +2568,13 @@ Deno.serve(async (req) => {
         });
       }
       case "sync_products":
-        result = await syncProducts(supabaseAdmin, account, start_page || 1, max_pages || MAX_PAGINAS_PRODUTOS);
+        result = await syncProducts(supabaseAdmin, account as OmieAccount, start_page || 1, max_pages || MAX_PAGINAS_PRODUTOS);
         break;
       case "sync_orders":
-        result = await syncOrdersIncremental(supabaseAdmin, account);
+        result = await syncOrdersIncremental(supabaseAdmin, account as OmieAccount);
         break;
       case "sync_inventory":
-        result = await syncInventory(supabaseAdmin, account);
+        result = await syncInventory(supabaseAdmin, account as OmieAccount);
         break;
       case "sync_inventory_full": {
         // Guard de UX "já em andamento" (não duplica o trabalho de catálogo se um run ainda roda).
