@@ -21,9 +21,9 @@ if [ "${1:-}" = "--falsificar" ]; then
     echo "❌ controle VERMELHO — falsificação abortada (log: $LOGDIR/controle.log)"; tail -15 "$LOGDIR/controle.log"; exit 1
   fi
   echo "✅ controle verde"
-  falhas=0
+  falhas=0; n_sab=0
   for par in $SABOTAGENS; do
-    s="${par%%:*}"; a="${par##*:}"
+    s="${par%%:*}"; a="${par#*:}"; n_sab=$((n_sab+1))
     if SABOTAGEM="$s" bash "$0" > "$LOGDIR/$s.log" 2>&1; then
       echo "❌ $s: suíte ficou VERDE"; falhas=$((falhas+1)); continue
     fi
@@ -36,7 +36,6 @@ if [ "${1:-}" = "--falsificar" ]; then
       echo "❌ $s: vermelho, mas não no $a (log: $LOGDIR/$s.log)"; falhas=$((falhas+1))
     fi
   done
-  n_sab=0; for _ in $SABOTAGENS; do n_sab=$((n_sab+1)); done
   echo "SABOTAGENS: $((n_sab - falhas)) vermelhas / $falhas falhas"   # recibo exigido por db/roda-nucleo-ci.sh
   [ "$falhas" -eq 0 ] && exit 0 || exit 1
 fi
