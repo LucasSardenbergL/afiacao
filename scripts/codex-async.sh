@@ -21,6 +21,9 @@
 #   - preflight (binário + auth + SALDO da cota) ANTES de gastar tempo/quota, com instrução clara;
 #   - saldo acima do teto → exit 79 SEM gastar a chamada, dizendo quando a janela reabre
 #     (≠ 75, que é ter BATIDO na parede: a diferença permite contar o que o sensor poupou);
+#     a recusa só vale com leitura da janela de AGORA e recente (teto em
+#     CODEX_ASYNC_IDADE_MAX_SALDO, default 120 min) — leitura velha ou de outra janela degrada
+#     para SALDO_DESCONHECIDO e a consulta SEGUE (barrou ~9h de cota VAZIA em 13/10/2026);
 #   - retry com backoff (20s/60s) só em transitório (rate limit/timeout/overload),
 #     classificado SEM o eco do prompt no stderr (senão o texto do prompt decide o fluxo);
 #   - cota esgotada NÃO é transitório → falha na hora instruindo o Caminho B, e mostra QUANDO a
@@ -205,10 +208,11 @@ plano_do_token() {
 
 # --- sensor de SALDO da cota (preflight) --------------------------------------
 # Todo rollout do codex carrega o medidor OFICIAL da cota, que o wrapper ignorava:
-#   "primary":{"used_percent":94.0,"window_minutes":10080,"resets_at":1789834903}
-# (10080 min = 7 dias = a janela rolante do plano). Medido 2026-09-18: `resets_at`
-# 1789834903 → 19/09 13:21:43, IDÊNTICO ao "try again at Sep 19th, 2026 1:21 PM" que o
-# servidor devolve no 429 — é a mesma verdade, só que ANTES de gastar a chamada.
+#   {"timestamp":"2026-10-13T11:59:24.886Z",…,"rate_limits":{…,"primary":{
+#     "used_percent":94.0,"window_minutes":10080,"resets_at":1789834903}}}
+# Medido 2026-09-18: `resets_at` 1789834903 → 19/09 13:21:43, IDÊNTICO ao "try again at Sep
+# 19th, 2026 1:21 PM" que o servidor devolve no 429 — é a mesma verdade, só que ANTES de
+# gastar a chamada.
 # Por que isto existe: entre 10/09 e 15/09 foram 36 chamadas mortas contra uma cota já
 # em 100% (bateu 14/09 19:40, reabriu só 19/09 13:21). Cada uma custou minutos de espera
 # e um parecer que nunca veio. Ver docs/historico/cota-codex-medida-em-tokens.md.
@@ -217,64 +221,200 @@ plano_do_token() {
 # aviso). O oposto — fail-closed — trancaria o ritual inteiro por um arquivo ilegível.
 # Mas "seguir" nunca é SILENCIOSO: quem chama imprime o ramo que não conseguiu medir.
 #
-# Quatro armadilhas, cada uma com caso na suíte:
+# ⚠️ `primary` NÃO é sempre o mesmo bucket. Medido 2026-10-13 sobre 1.959 rollouts /
+# 28.986 leituras desta máquina: `window_minutes` 300 (5h, dominante mai–jun), 10080
+# (7 dias, desde jul) e 43200 (30 dias, 63 leituras em ago). ⇒ uma janela é a DUPLA
+# (window_minutes, resets_at), e o texto da recusa NOMEIA a janela que leu em vez de
+# afirmar "7 dias".
+#
+# Seis armadilhas, cada uma com caso na suíte:
 #  (a) `"primary":null` (37 de 2.821 linhas em setembro — 1,3%): é AUSÊNCIA de leitura,
 #      não saldo zero. O padrão casa só `{`, então null não vira "0% livre, pode ir".
 #  (b) LEITURA OBSOLETA: um saldo de 100% lido antes do reset trancaria o wrapper PARA
 #      SEMPRE, mesmo com a janela já virada. Por isso `resets_at` no passado descarta a
 #      leitura (degrada para vazio) em vez de recusar — o sensor não sabe o saldo NOVO.
 #  (c) ORDEM dos arquivos: nada de `ls -t`/`stat` (BSD×GNU divergem). O caminho é
-#      AAAA/MM/DD/rollout-<ISO>-<id>.jsonl, então `sort` lexicográfico JÁ é cronológico.
+#      AAAA/MM/DD/rollout-<ISO>-<id>.jsonl, então `sort` lexicográfico JÁ é cronológico —
+#      é assim que se escolhe QUAIS 40 arquivos ler.
 #  (d) O PONTO CEGO que a 1ª versão tinha, e que só o teste ao vivo pegou: a sessão que
 #      BATE na parede não recebe medidor nenhum — o 429 vem antes. Com a cota estourada
 #      os rollouts mais recentes são todos falhas, e olhar só os 5 últimos devolvia
 #      "desconhecido" JUSTAMENTE quando o sensor mais importa (medido 2026-09-18: os 5
 #      mais recentes, 0 com bloco; dos 40, 27). Daí a profundidade de 40.
-# Por que uma leitura ANTIGA ainda serve: enquanto `resets_at` está no futuro a janela é
-# A MESMA, e dentro de uma janela o consumo só sobe — a leitura é um PISO do saldo de
-# agora. Piso é o lado certo de errar num guard: nunca deixa passar o que devia barrar;
-# no máximo barra cedo demais, e aí `CODEX_ASYNC_TETO_SALDO=0` destranca.
-# Imprime "<used_percent> <resets_at>" ou NADA.
+#  (e) SALDO DE OUTRA JANELA (medido 2026-10-13 — a nota logo abaixo): a leitura escolhida
+#      é a mais FRESCA pelo `timestamp` da PRÓPRIA LINHA, nunca "a primeira de reset
+#      futuro na ordem dos nomes". Nome de arquivo é a hora de ABERTURA da sessão: uma
+#      sessão longa ainda escrevendo carrega medidor mais fresco num arquivo de nome mais
+#      ANTIGO — e aí a ordem por nome decide pela leitura errada, nos dois sentidos (medido
+#      na suíte: recusa com 95% de janela vencida, e passa com 20% onde o piso é 94%).
+#      Dentro da janela escolhida o saldo é o MAIOR used_percent já visto NELA.
+#  (f) IDADE da leitura: acima de CODEX_ASYNC_IDADE_MAX_SALDO minutos (default 120) a
+#      leitura não sustenta recusa — degrada para vazio e SEGUE com aviso.
+#
+# ⚠️ HISTÓRICO DESTA NOTA — o que ficava aqui estava ERRADO, e era a parte mais perigosa do
+# arquivo: ensinava a confiar na leitura antiga. O texto era:
+#     "Por que uma leitura ANTIGA ainda serve: enquanto `resets_at` está no futuro a janela
+#      é A MESMA, e dentro de uma janela o consumo só sobe — a leitura é um PISO do saldo de
+#      agora. Piso é o lado certo de errar num guard: nunca deixa passar o que devia barrar;
+#      no máximo barra cedo demais, e aí `CODEX_ASYNC_TETO_SALDO=0` destranca."
+# As duas frases que o sustentavam são falsas, e a 2ª é a que custou:
+#   · "`resets_at` no futuro ⇒ a janela é A MESMA" — NÃO. `resets_at` ANDA PARA FRENTE
+#     sozinho: a janela nova é CONCEDIDA, não só consumo velho envelhecendo (medido: a
+#     janela nova nasce com used_percent 0 e resets_at = agora + exatamente window_minutes).
+#     Nas 19.602 leituras do bucket de 7 dias: 102 janelas distintas e 16 violações de piso
+#     ≥10pp — 16 de 16 coincidem com `resets_at` MUDANDO, ZERO dentro de uma mesma janela.
+#     ⇒ o piso vale DENTRO da janela (é por isso que (e) o usa) e não vale NADA entre elas.
+#   · "no máximo barra cedo demais, e aí TETO_SALDO=0 destranca" — esse "no máximo" é o
+#     incidente. Em 12/10 21:48 o sensor leu 95% / reset 18/10 08:58 (futuro ⇒ (b) não
+#     descartou) e recusou; em 13/10 06:32 repetiu a MESMA leitura obsoleta. O saldo real
+#     era 3%: a janela havia rolado para reset 20/10 06:33, e o sensor barrou ~9h de
+#     trabalho legítimo contra uma cota praticamente VAZIA — o oposto exato do que ele
+#     existe para evitar. E "destranca" custava desligar o sensor INTEIRO (TETO_SALDO=0),
+#     perdendo a proteção real; daí (f) ter válvula PRÓPRIA.
+# Por que um teto de IDADE e não só a identidade de janela de (e): às 06:32 de 13/10 a
+# leitura nova AINDA NÃO EXISTIA (os rollouts de 3% nasceram das chamadas que só rodaram
+# depois). Com uma leitura só, de 9h, não há como saber que a janela rolou — e (e) sozinho
+# teria repetido a recusa. Por que 120 min, medido hoje:
+#   · onde a recusa IMPORTA a leitura é DENSA: em regime alto (pct≥85) 99,3% das leituras
+#     têm antecessora de ≤2h (99,1% ≤1h) ⇒ o teto quase não custa justamente onde o sensor
+#     se paga;
+#   · as violações catastróficas moram na idade: ≥50pp só aparecem a partir de 9,3h
+#     (+95pp — este incidente), 9,6h (+83pp) e 43,6h (+95pp);
+#   · o teto LIMITA, não elimina: mediu-se +53pp com 42 min de idade. Quem remove o erro
+#     SISTEMÁTICO é (e); o teto só limita por quanto tempo UMA leitura não corroborada
+#     sustenta uma recusa.
+# Por que a janela é `resets_at` EXATO, sem tolerância — a pergunta aparece na primeira
+# leitura dos dados, porque o servidor recalcula `resets_at` a cada requisição e o mesmo
+# ciclo lógico aparece com 1s de diferença (bucket de 7 dias: 117 valores distintos de
+# `resets_at`, 85 dos 116 gaps ≤1h e a maioria de 1s). Agrupar por proximidade é tentador e
+# está ERRADO aqui, porque o jitter (até 0,97h) encosta na rolagem real (mínima medida:
+# 1,01h) — não há corte que separe os dois. Replay incremental das 28.986 leituras, teto 85:
+#   · sem tolerância: 19 momentos (de ~29k) em que uma leitura FRESCA passa com piso 84% onde
+#     o agrupamento recusaria com 85% — erro de 1 pp, na margem do teto;
+#   · com tolerância de 1h: importa até +75 pp de piso de uma janela que o exato já havia
+#     descartado — isto é, REINTRODUZ este incidente, com 75× o tamanho do erro oposto.
+# ⇒ exato. O resíduo conhecido é o de cima: o jitter pode partir um ciclo lógico em dois
+# grupos e o piso cair para o do grupo de reset maior. Erra para o lado de PASSAR, que é o
+# barato (uma chamada que sai em 75 na hora), nunca para o de barrar trabalho.
+#
+# O preço, honesto: entre 14/09 19:46 e 19/09 13:21 houve 113,6h com a cota de fato em 100%
+# e ZERO leitura nova (12 rollouts abertos no período, NENHUM com medidor — a parede do 429
+# da armadilha (d)). Com o teto, cada tentativa ali gasta UMA chamada em vez de ser barrada.
+# É o lado certo de errar: cota esgotada sai em exit 75 NA HORA, sem retry, citando o "try
+# again at" do servidor — uma chamada rápida que devolve a verdade autoritativa, contra as
+# ~9h de bloqueio que o erro oposto custou.
+# Imprime "<estado> <used_percent> <resets_at> <idade_s> <window_minutes>" ou NADA.
+# estado: `ok` = leitura usável · `velha` = passou do teto de idade (quem chama só avisa).
 saldo_de_cota() {
-  local s="${CODEX_HOME:-$HOME/.codex}/sessions" f bloco pct reset agora
+  local s="${CODEX_HOME:-$HOME/.codex}/sessions" f idade_max
+  local -a arqs=()
   [ -d "$s" ] || return 0
-  agora="$(date +%s)"
-  while IFS= read -r f; do
-    [ -r "$f" ] || continue
-    bloco="$(grep -o '"primary":{[^}]*}' "$f" 2>/dev/null | tail -1)"
-    [ -n "$bloco" ] || continue
-    pct="$(printf '%s' "$bloco"   | sed -n 's/.*"used_percent"[[:space:]]*:[[:space:]]*\([0-9][0-9.]*\).*/\1/p')"
-    reset="$(printf '%s' "$bloco" | sed -n 's/.*"resets_at"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p')"
-    [ -n "$pct" ] && [ -n "$reset" ] || continue
-    [ "$reset" -gt "$agora" ] || return 0   # (b) janela já virou: leitura obsoleta
-    printf '%s %s' "$pct" "$reset"
-    return 0
-  done <<< "$(find "$s" -name 'rollout-*.jsonl' -type f 2>/dev/null | sort | tail -40 | sed '1!G;h;$!d')"
+  idade_max=$(( ${CODEX_ASYNC_IDADE_MAX_SALDO:-120} * 60 ))
+  # (c) `sort` lexicográfico = cronológico; o `tail -40` é a profundidade de (d).
+  while IFS= read -r f; do [ -n "$f" ] && [ -r "$f" ] && arqs+=("$f"); done \
+    <<< "$(find "$s" -name 'rollout-*.jsonl' -type f 2>/dev/null | sort | tail -40)"
+  [ "${#arqs[@]}" -gt 0 ] || return 0
+  # UMA passada de awk sobre as 40: a escolha é GLOBAL (a leitura mais fresca pode estar em
+  # qualquer uma delas), então não há mais ordem de iteração para acertar — o eixo que
+  # errava deixa de existir, em vez de ser reordenado.
+  # Por que o epoch sai de aritmética e não de `date`: converter ISO→epoch com `date` pede
+  # `-j -f` no BSD e `-d` no GNU — a MESMA divergência que (c) evita. Aqui é inteiro puro
+  # (days_from_civil), igual nos dois.
+  cat -- "${arqs[@]}" 2>/dev/null | awk -v agora="$(date +%s)" -v idade_max="$idade_max" '
+    function num(t, chave,   r) {
+      if (match(t, "\"" chave "\"[ \t]*:[ \t]*[0-9]+(\\.[0-9]+)?") == 0) return ""
+      r = substr(t, RSTART, RLENGTH); sub(/^[^:]*:[ \t]*/, "", r); return r
+    }
+    function epoch_utc(iso,   y, m, d, hh, mm, ss, a, era, yoe, doy, doe, dias) {
+      y  = substr(iso,  1, 4) + 0; m  = substr(iso,  6, 2) + 0; d  = substr(iso,  9, 2) + 0
+      hh = substr(iso, 12, 2) + 0; mm = substr(iso, 15, 2) + 0; ss = substr(iso, 18, 2) + 0
+      a = y - (m <= 2 ? 1 : 0)
+      era = int(a / 400); yoe = a - era * 400
+      doy = int((153 * (m + (m > 2 ? -3 : 9)) + 2) / 5) + d - 1
+      doe = yoe * 365 + int(yoe / 4) - int(yoe / 100) + doy
+      dias = era * 146097 + doe - 719468
+      return dias * 86400 + hh * 3600 + mm * 60 + ss
+    }
+    # (a) o padrão casa só `{`: `"primary":null` não entra, e não vira 0%.
+    match($0, /"primary":\{[^}]*\}/) {
+      bloco = substr($0, RSTART, RLENGTH)      # ANTES de qualquer outro match (RSTART é global)
+      pct = num(bloco, "used_percent"); rst = num(bloco, "resets_at")
+      if (pct == "" || rst == "") next
+      win = num(bloco, "window_minutes")
+      # (e) a leitura se data pelo `timestamp` da própria linha — medido 2026-10-13: das
+      # 3.561 linhas com medidor nos 300 rollouts mais recentes, 100% em
+      # AAAA-MM-DDThh:mm:ss.sssZ e NENHUMA sem ele. Sem data a leitura não entra: não
+      # poderia ser nem ordenada nem envelhecida, e entrar sem isso é voltar ao defeito.
+      if (match($0, /"timestamp"[ \t]*:[ \t]*"[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]/) == 0) next
+      iso = substr($0, RSTART, RLENGTH); sub(/.*"/, "", iso)
+      visto = epoch_utc(iso)
+      n++; V[n] = visto; P[n] = pct; R[n] = rst + 0; W[n] = win
+      if (visto > fresco) { fresco = visto; bucket = win }   # bucket = o da leitura mais fresca
+    }
+    END {
+      if (n == 0) exit 0
+      # (b)+(e) a janela de AGORA é o maior `resets_at` ainda no FUTURO dentro do bucket
+      # atual. Leitura de reset MENOR é de janela anterior: não entra no piso de agora.
+      for (i = 1; i <= n; i++)
+        if (W[i] == bucket && R[i] > agora && R[i] > janela) janela = R[i]
+      if (janela == 0) exit 0                  # (b): toda leitura do bucket já venceu
+      piso = ""; ultimo = 0
+      for (i = 1; i <= n; i++) if (W[i] == bucket && R[i] == janela) {
+        if (piso == "" || P[i] + 0 > piso + 0) piso = P[i]
+        if (V[i] > ultimo) ultimo = V[i]
+      }
+      idade = agora - ultimo; if (idade < 0) idade = 0
+      printf "%s %s %d %d %s\n", (idade_max > 0 && idade > idade_max) ? "velha" : "ok",
+             piso, janela, idade, bucket
+    }
+  '
 }
 
 # Guard: recusa ANTES de gastar a chamada quando o saldo já passou do teto.
 # Teto em CODEX_ASYNC_TETO_SALDO (default 85; `0` desliga o sensor por completo).
 # 85 e não 99: acima disso não cabe um adversarial money-path inteiro (mediana medida
 # 2026-09-18: ~1,4 pp por consulta no astra/max), e o que resta deve ficar pro money-path.
+idade_legivel() { # segundos → "42 min" / "9h18"
+  if [ "$1" -lt 3600 ]; then printf '%s min' "$(( $1 / 60 ))"
+  else printf '%sh%02d' "$(( $1 / 3600 ))" "$(( $1 % 3600 / 60 ))"; fi
+}
+janela_legivel() { # window_minutes → "de 7 dias"/"de 5h"/… (nunca fixo: medido 300/10080/43200)
+  case "${1:-}" in
+    '') printf 'de duração não informada' ;;
+    *[!0-9]*) printf 'de duração não informada' ;;
+    *) if [ $(( $1 % 1440 )) -eq 0 ]; then printf 'de %s dias' "$(( $1 / 1440 ))"
+       elif [ $(( $1 % 60 )) -eq 0 ]; then printf 'de %sh' "$(( $1 / 60 ))"
+       else printf 'de %s min' "$1"; fi ;;
+  esac
+}
 teto_saldo="${CODEX_ASYNC_TETO_SALDO:-85}"
 if [ "$teto_saldo" != "0" ]; then
   leitura="$(saldo_de_cota)"
   if [ -z "$leitura" ]; then
     echo "SALDO_DESCONHECIDO: não consegui ler used_percent de nenhum rollout recente — seguindo sem o sensor." >&2
   else
-    saldo="${leitura%% *}"; reset_epoch="${leitura##* }"
+    read -r estado_saldo saldo reset_epoch idade_s janela_min <<< "$leitura"
+    quando="$(date -r "$reset_epoch" '+%d/%m %H:%M' 2>/dev/null \
+           || date -d "@$reset_epoch" '+%d/%m %H:%M' 2>/dev/null || echo "epoch $reset_epoch")"
+    if [ "$estado_saldo" = "velha" ]; then
+      # (f) leitura velha NÃO sustenta recusa: a janela pode ter rolado sem ninguém ver — foi
+      # exatamente isso em 13/10. Degrada e SEGUE, dizendo o que viu e de quando é.
+      echo "SALDO_DESCONHECIDO: a leitura mais fresca da cota é de $(idade_legivel "$idade_s") atrás (${saldo}% usado," >&2
+      echo "  janela $(janela_legivel "$janela_min") reabrindo em $quando) — velha demais para sustentar uma recusa:" >&2
+      echo "  a janela pode ter rolado desde então (medido 13/10/2026: 95% → 3% em 9h, janela nova)." >&2
+      echo "  Seguindo sem o sensor. Teto de idade: CODEX_ASYNC_IDADE_MAX_SALDO=${CODEX_ASYNC_IDADE_MAX_SALDO:-120} min (0 desliga só o teto)." >&2
     # compara com o teto em inteiro (o shell não faz float; used_percent vem como 94.0)
-    if [ "${saldo%%.*}" -ge "$teto_saldo" ]; then
-      quando="$(date -r "$reset_epoch" '+%d/%m %H:%M' 2>/dev/null \
-             || date -d "@$reset_epoch" '+%d/%m %H:%M' 2>/dev/null || echo "epoch $reset_epoch")"
-      echo "SALDO_ALTO: a cota está em ${saldo}% (teto $teto_saldo%) e a janela de 7 dias só reabre em $quando." >&2
+    elif [ "${saldo%%.*}" -ge "$teto_saldo" ]; then
+      echo "SALDO_ALTO: a cota está em ${saldo}% (teto $teto_saldo%) e a janela $(janela_legivel "$janela_min") só reabre em $quando." >&2
+      echo "  (leitura de $(idade_legivel "$idade_s") atrás, da MESMA janela que reabre em $quando)" >&2
       echo "  Não gastei a chamada. Opções:" >&2
       echo "  1) Caminho B (seguir sem 2ª opinião, registrando no PR que o Codex não foi consultado);" >&2
       echo "  2) esperar o reset e re-rodar;" >&2
       echo "  3) CODEX_ASYNC_TETO_SALDO=0 pra ignorar o sensor (só se a consulta valer o resto da cota)." >&2
       exit 79
+    else
+      echo "saldo da cota: ${saldo}% usado (teto $teto_saldo%, leitura de $(idade_legivel "$idade_s") atrás)" >&2
     fi
-    echo "saldo da cota: ${saldo}% usado (teto $teto_saldo%)" >&2
   fi
 fi
 
