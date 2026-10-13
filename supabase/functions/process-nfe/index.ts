@@ -253,7 +253,7 @@ Deno.serve(async (req) => {
           const numNfeClean = String(Number(numNfe) || numNfe);
           
           if (numNfe === String(nf_number) || numNfeClean === nfNumberClean || numNfe === nfNumberClean) {
-            nIdReceb = cabec.nIdReceb ?? null;
+            nIdReceb = cabec.nIdReceb;
             cChaveNfe = cabec.cChaveNfe || null;
             const fornecedor = cabec.cNome || cabec.cRazaoSocial || "Fornecedor";
             steps.push({

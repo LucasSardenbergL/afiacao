@@ -2097,7 +2097,7 @@ async function processarPedido(
   if (envStatus === "sucesso_portal") {
     const r = await aplicarTransicao("sucesso_portal", {
       erro: null,
-      protocolo: (envelope.protocolo as string | undefined) ?? null,
+      protocolo: envelope.protocolo ?? null,
       enviadoPortalEm: true,
     });
     // Captura de custo do portal (best-effort; idempotente — só antes do PO Omie existir).
@@ -2205,25 +2205,25 @@ async function processarPedido(
     // exige conciliacao para obter o protocolo.
     return await aplicarTransicao("aceito_portal_sem_protocolo", {
       erro: "Portal aceitou o pedido sem protocolo — requer conciliacao",
-      protocolo: (envelope.protocolo as string | undefined) ?? null,
+      protocolo: envelope.protocolo ?? null,
     });
   }
 
   if (envStatus === "indeterminado_requer_conciliacao") {
     return await aplicarTransicao("indeterminado_requer_conciliacao", {
-      erro: (evidence?.erro as string | undefined) ?? "Resultado ambiguo — requer conciliacao manual",
+      erro: evidence?.erro ?? "Resultado ambiguo — requer conciliacao manual",
     });
   }
 
   if (envStatus === "erro_nao_retentavel") {
     // Erro logico do automador (login / senha / cliente / sku invalido).
-    const erroTipo: string = (evidence?.erroTipo as string | undefined) ?? "UNKNOWN";
-    const erroMsg: string = (evidence?.erro as string | undefined) ?? "Falha logica do automador";
+    const erroTipo: string = evidence?.erroTipo ?? "UNKNOWN";
+    const erroMsg: string = evidence?.erro ?? "Falha logica do automador";
     const r = await aplicarTransicao("erro_nao_retentavel", { erro: erroMsg });
     r.erro_tipo = erroTipo;
     await alertarFornecedor(supabase, erroTipo, pedido.id, {
       esgotado: true,
-      origemDivergente: (evidence?.posLoginCheck as { origemDivergente?: boolean } | undefined)?.origemDivergente === true,
+      origemDivergente: evidence?.posLoginCheck?.origemDivergente === true,
     });
     return r;
   }
@@ -2231,16 +2231,16 @@ async function processarPedido(
   // erro_retentavel (default): só chega aqui com efetivarAttempted === false
   // (Efetivar nunca clicado → nenhum pedido colocado), seguro retentar. Status
   // desconhecido já foi endurecido pra indeterminado na rede de segurança acima.
-  const erroMsg: string = (evidence?.erro as string | undefined) ?? "Falha do automador (retentavel)";
+  const erroMsg: string = evidence?.erro ?? "Falha do automador (retentavel)";
   const esgotado = novasTentativas >= MAX_TENTATIVAS;
   // O incidente de 2026-08-20 morreu AQUI: 3 tentativas idênticas, o pedido parou
   // por esgotamento e nenhum alerta saiu — o insert só existia no ramo acima. Causa
   // possivelmente transitória alerta ao ESGOTAR (antes disso seria ruído que
   // dessensibiliza); `decidirAlertaPortal` decide, e devolve null quando não há o
   // que dizer.
-  await alertarFornecedor(supabase, (evidence?.erroTipo as string | undefined) ?? null, pedido.id, {
+  await alertarFornecedor(supabase, evidence?.erroTipo ?? null, pedido.id, {
     esgotado,
-    origemDivergente: (evidence?.posLoginCheck as { origemDivergente?: boolean } | undefined)?.origemDivergente === true,
+    origemDivergente: evidence?.posLoginCheck?.origemDivergente === true,
   });
   const rFinal = await aplicarTransicao(
     esgotado ? "erro_nao_retentavel" : "erro_retentavel",
@@ -2249,7 +2249,7 @@ async function processarPedido(
       proximoRetryEm: esgotado ? null : new Date(Date.now() + 15 * 60 * 1000).toISOString(),
     },
   );
-  rFinal.erro_tipo = (evidence?.erroTipo as string | undefined) ?? null;
+  rFinal.erro_tipo = evidence?.erroTipo ?? null;
   return rFinal;
 }
 
@@ -2265,7 +2265,7 @@ async function alertarFornecedor(
   supabase: SupabaseClient,
   erroTipo: string | null,
   pedidoId: number,
-  ctx: { esgotado: boolean; origemDivergente?: boolean },
+  ctx: { esgotado: boolean },
 ): Promise<void> {
   const alerta = decidirAlertaPortal(erroTipo, {
     esgotado: ctx.esgotado,
@@ -2619,7 +2619,7 @@ Deno.serve(async (req) => {
         { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 500 },
       );
     }
-    const claimedIds = new Set((claimedRows ?? []).map((r: unknown) => (r as { id: number }).id));
+    const claimedIds = new Set((claimedRows ?? []).map((r) => (r as { id: number }).id));
     const candidatosClaimed = candidatos.filter((c) => claimedIds.has(c.id));
     const jaEmVoo = candidatos.length - candidatosClaimed.length;
     if (jaEmVoo > 0) {
@@ -2685,7 +2685,7 @@ Deno.serve(async (req) => {
       { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 500 },
     );
   }
-  const claimedSyncIds = new Set((claimedSync ?? []).map((r: unknown) => (r as { id: number }).id));
+  const claimedSyncIds = new Set((claimedSync ?? []).map((r) => (r as { id: number }).id));
   const candidatosSync = candidatos.filter((c) => claimedSyncIds.has(c.id));
   const { detalhes, sucesso, falhasDef, falhasTmp, indeterminados } = await processCandidatos(supabase, candidatosSync);
 
