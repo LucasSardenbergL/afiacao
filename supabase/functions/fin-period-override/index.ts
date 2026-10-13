@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 // =============================================================
 // Helper de autorização inlineado (de _shared/auth.ts)
@@ -80,6 +81,17 @@ Deno.serve(async (req: Request) => {
   const auth = await authorizeCronOrStaff(req);
   if (!auth.ok) return auth.response;
 
+  // Sonda de versão (M-26; docs/agent/deploy.md): `{ probe: true }` responde a versão no ar sem tocar
+  // banco — antes do client. O corpo é lido UMA vez aqui; o JSON inválido segue no 400 de antes.
+  const corpoBruto: unknown = await req.json().catch(() => undefined);
+  const decisaoSonda = classificarSonda(corpoBruto ?? null);
+  if (decisaoSonda.tipo === "sonda") {
+    return new Response(JSON.stringify(respostaSonda(VERSAO)), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+  }
+  if (decisaoSonda.tipo === "ambiguo") {
+    return new Response(JSON.stringify({ versao: VERSAO, error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+  }
+
   const supabase = createClient(SUPABASE_URL, SERVICE_ROLE);
 
   let userId: string | null = null;
@@ -102,9 +114,9 @@ Deno.serve(async (req: Request) => {
   }
 
   let payload: OverridePayload;
-  try {
-    payload = await req.json();
-  } catch {
+  if (corpoBruto !== undefined) {
+    payload = corpoBruto as OverridePayload;
+  } else {
     return new Response(JSON.stringify({ error: 'invalid JSON' }), {
       status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });

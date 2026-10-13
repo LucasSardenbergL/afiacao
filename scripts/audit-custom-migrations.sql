@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 621
+-- Total de custom migrations: 624
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -680,8 +680,11 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261012130954', 'fin_sync_kick_skipped_busy_e_perdido', '20261012130954_fin_sync_kick_skipped_busy_e_perdido.sql'),
   ('20261012150000', 'tint_gate_tabela_implausivel', '20261012150000_tint_gate_tabela_implausivel.sql'),
   ('20261012160000', 'picking_v2_cron_fila', '20261012160000_picking_v2_cron_fila.sql'),
+  ('20261012173000', 'cron_sync_reprocess_pedidos_colacor_dr', '20261012173000_cron_sync_reprocess_pedidos_colacor_dr.sql'),
   ('20261012203227', 'crons_modulos_congelados', '20261012203227_crons_modulos_congelados.sql'),
+  ('20261012205652', 'retencao_lgpd_conversas', '20261012205652_retencao_lgpd_conversas.sql'),
   ('20261012233000', 'picking_cron_fora_do_minuto_15', '20261012233000_picking_cron_fora_do_minuto_15.sql'),
+  ('20261012233500', 'analytics_ledger_crescimento_comparavel', '20261012233500_analytics_ledger_crescimento_comparavel.sql'),
   ('20261013120000', 'tint_watchdog_fase5_s2_persistente', '20261013120000_tint_watchdog_fase5_s2_persistente.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
@@ -2674,6 +2677,10 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('tint_gate_tabela_implausivel', 'function', 'public', 'tint_gate_revalida', ''),
   ('picking_v2_cron_fila', 'cron_job', 'cron', 'picking-fila-oben', ''),
   ('picking_v2_cron_fila', 'cron_job', 'cron', 'picking-fila-colacor', ''),
+  ('cron_sync_reprocess_pedidos_colacor_dr', 'cron_job', 'cron', 'sync-reprocess-pedidos-colacor-2h', ''),
+  ('retencao_lgpd_conversas', 'function', 'private', 'expurgar_conteudo_conversas', ''),
+  ('retencao_lgpd_conversas', 'cron_job', 'cron', 'lgpd-expurgo-conversas-diario', ''),
+  ('analytics_ledger_crescimento_comparavel', 'function', 'public', 'analytics_ledger_registrar', ''),
   ('tint_watchdog_fase5_s2_persistente', 'function', 'public', 'tint_watchdog_fase5_check', '')
 ),
 obj_status AS (
@@ -4714,6 +4721,10 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('tint_gate_tabela_implausivel', 'function', 'public', 'tint_gate_revalida', ''),
   ('picking_v2_cron_fila', 'cron_job', 'cron', 'picking-fila-oben', ''),
   ('picking_v2_cron_fila', 'cron_job', 'cron', 'picking-fila-colacor', ''),
+  ('cron_sync_reprocess_pedidos_colacor_dr', 'cron_job', 'cron', 'sync-reprocess-pedidos-colacor-2h', ''),
+  ('retencao_lgpd_conversas', 'function', 'private', 'expurgar_conteudo_conversas', ''),
+  ('retencao_lgpd_conversas', 'cron_job', 'cron', 'lgpd-expurgo-conversas-diario', ''),
+  ('analytics_ledger_crescimento_comparavel', 'function', 'public', 'analytics_ledger_registrar', ''),
   ('tint_watchdog_fase5_s2_persistente', 'function', 'public', 'tint_watchdog_fase5_check', '')
 )
 SELECT
@@ -5186,7 +5197,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'farmer_association_rules_substituir', 2, '20260821200000_farmer_assoc_rules_segmento.sql', '55cf64cac2239c7a9a5de12e6b965141'),
   ('public', 'tint_watchdog_fase5_check', 1, '20260730120000_tint_watchdog_fase5_chave.sql', '3299e9aca3ff70d6c2c76efa40278ed9'),
   ('public', 'tint_watchdog_fase5_check', 2, '20261010230000_tint_watchdog_fase5_s2_aviso.sql', '1b5320651c53a321324640e5f545f84a'),
-  ('public', 'tint_watchdog_fase5_check', 3, '20261013120000_tint_watchdog_fase5_s2_persistente.sql', '4ac14c2f65c8e1dd996bf48877f2b276'),
+  ('public', 'tint_watchdog_fase5_check', 3, '20261013120000_tint_watchdog_fase5_s2_persistente.sql', '5728606bc66886e29112cd931c8cda91'),
   ('private', 'atp_disponivel', 1, '20260806101417_atp_reserva_estoque_fase1.sql', 'aeb0989efc8aae6130bfe73f2dd3d397'),
   ('private', 'atp_disponivel', 2, '20260806225052_atp_reserva_estoque_fase1_1_hardening.sql', '271e2acd633a4ceddd8a73cd988cfe49'),
   ('private', 'atp_disponivel', 3, '20260808012000_atp_reconciliacao_fase3.sql', '8326d00deff699c3730acadd7ee359a4'),
@@ -5220,6 +5231,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'analytics_ledger_registrar', 1, '20260825214545_analytics_outbox.sql', 'cb48e471a07a312d89d94c3a0dbd6455'),
   ('public', 'analytics_ledger_registrar', 2, '20260907223901_analytics_ledger_navegacao_rota_servida.sql', '49fadd1175a717f40fc4430e7bb670dd'),
   ('public', 'analytics_ledger_registrar', 3, '20260908055405_analytics_ledger_navegacao_postcondicao_corrigida.sql', '49fadd1175a717f40fc4430e7bb670dd'),
+  ('public', 'analytics_ledger_registrar', 4, '20261012233500_analytics_ledger_crescimento_comparavel.sql', '70af721a1852fa66b67ebadff5c5b57e'),
   ('public', 'analytics_outbox_purgar', 1, '20260825214545_analytics_outbox.sql', '4746bb5a3ede491d961438a4163b0432'),
   ('public', 'analytics_outbox_purgar', 2, '20260829012000_analytics_outbox_perda_visivel.sql', '4daf67a757579017038757a16c5c31c3'),
   ('public', 'cockpit_itens_snapshot', 1, '20260830123820_snapshot_atomico_universo_itens.sql', '88bd481f1d36ab3ba72e7d9df1f1d206'),

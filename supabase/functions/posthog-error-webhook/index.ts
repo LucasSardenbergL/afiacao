@@ -2,6 +2,8 @@
 // valida segredo, e delega à RPC enfileirar_erro_app (dedupe + anti-tempestade + insert atômico).
 // Helpers ESPELHADOS verbatim de src/lib/posthog-error/* (Deno não importa de src).
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import { authorizeCronOrStaff } from '../_shared/auth.ts';
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -83,14 +85,27 @@ Deno.serve(async (req) => {
   if (req.method !== 'POST') return new Response('method not allowed', { status: 405, headers: corsHeaders });
 
   // auth: segredo no header, constant-time
+  // Corpo lido UMA vez (antes, logo abaixo do gate): a sonda precisa dele antes do segredo.
+  let raw: unknown = null;
+  let rawText = '';
+  try { rawText = await req.text(); raw = JSON.parse(rawText); } catch { raw = null; }
+
+  // Sonda de versão (M-26; docs/agent/deploy.md): GATE PRÓPRIO — o segredo do PostHog não é emitido
+  // pelo SQL Editor, então só um corpo de SONDA desvia para `authorizeCronOrStaff`; o fluxo do
+  // webhook segue exatamente como antes.
+  const decisaoSonda = classificarSonda(raw);
+  if (decisaoSonda.tipo !== 'disparo') {
+    const authSonda = await authorizeCronOrStaff(req);
+    if (!authSonda.ok) return authSonda.response;
+    if (decisaoSonda.tipo === 'sonda') return new Response(JSON.stringify(respostaSonda(VERSAO)), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    return new Response(JSON.stringify({ versao: VERSAO, error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+  }
+
   const provided = req.headers.get('x-posthog-webhook-secret') ?? '';
   if (!WEBHOOK_SECRET || !constantTimeEqual(provided, WEBHOOK_SECRET)) {
     return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   }
 
-  let raw: unknown = null;
-  let rawText = '';
-  try { rawText = await req.text(); raw = JSON.parse(rawText); } catch { raw = null; }
   console.log('[posthog-error-webhook] payload:', rawText.slice(0, 2000)); // modo descoberta
 
   const info = parsePosthogIssuePayload(raw);

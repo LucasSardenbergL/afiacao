@@ -221,6 +221,39 @@ EXCEPTION WHEN OTHERS THEN
     ELSE '/?' END;
 END $f$;
 SQL
+  # pg_cron não roda no PG local, e o stubs-supabase.sql só cria as TABELAS de cron. Migration da cadeia
+  # que agenda job (a 20261012205652, retenção LGPD, faz DDL em whatsapp_conversations e agenda o expurgo)
+  # precisa das funções — mesma assinatura do pg_cron, gravando em cron.job, para a pós-condição dela medir.
+  P -v ON_ERROR_STOP=1 -q <<'SQL'
+CREATE OR REPLACE FUNCTION cron.schedule(job_name text, schedule text, command text)
+RETURNS bigint LANGUAGE plpgsql AS $f$
+DECLARE v_id bigint;
+BEGIN
+  SELECT j.jobid INTO v_id FROM cron.job j WHERE j.jobname = job_name;
+  IF v_id IS NULL THEN
+    SELECT coalesce(max(j.jobid), 0) + 1 INTO v_id FROM cron.job j;
+    INSERT INTO cron.job (jobid, jobname, schedule, command, active) VALUES (v_id, job_name, schedule, command, true);
+  ELSE
+    UPDATE cron.job j SET schedule = cron.schedule.schedule, command = cron.schedule.command, active = true
+     WHERE j.jobid = v_id;
+  END IF;
+  RETURN v_id;
+END $f$;
+CREATE OR REPLACE FUNCTION cron.unschedule(job_name text)
+RETURNS boolean LANGUAGE plpgsql AS $f$
+BEGIN
+  DELETE FROM cron.job j WHERE j.jobname = job_name;
+  RETURN FOUND;
+END $f$;
+CREATE OR REPLACE FUNCTION cron.alter_job(job_id bigint, schedule text DEFAULT NULL, command text DEFAULT NULL,
+  database text DEFAULT NULL, username text DEFAULT NULL, active boolean DEFAULT NULL)
+RETURNS void LANGUAGE sql AS $f$
+  UPDATE cron.job j SET schedule = coalesce(alter_job.schedule, j.schedule),
+                        command  = coalesce(alter_job.command, j.command),
+                        active   = coalesce(alter_job.active, j.active)
+   WHERE j.jobid = job_id;
+$f$;
+SQL
   if declare -F cv_antes_da_cadeia > /dev/null; then
     echo "  → predecessores que a cadeia não alcança (cv_antes_da_cadeia):"
     cv_antes_da_cadeia || { echo "cv_montar: cv_antes_da_cadeia falhou" >&2; return 1; }

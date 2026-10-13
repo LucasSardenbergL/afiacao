@@ -1,6 +1,7 @@
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { classificarFaultstring, redigirSegredo } from "../_shared/omie-falha.ts";
+import { chamarComRelogio, prazoDaChamadaOmie } from "../_shared/omie-chamada-relogio.ts";
 import { montarParcelasOS } from "./parcelas-os.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 // Resend usado via fetch direto à REST API (https://api.resend.com/emails) para evitar dep npm
@@ -113,19 +114,30 @@ async function callOmieApi(
   // RETIDO e visível no painel do Supabase/Lovable — a cada invocação. Publicar credencial em
   // log não é diagnóstico, é vazamento (mesmo corolário de privacidade que obrigou o
   // `redigirSegredo` na faultstring logo abaixo: money-path §"O MARCADOR mente"). O que torna a
-  // chamada diagnosticável é o `param`, e ele não tem credencial — é o que se loga.
-  console.log(`[Omie API] Param:`, JSON.stringify(body.param, null, 2));
+  // chamada diagnosticável é o `param` — mas ele carrega CPF/CNPJ, nome e endereço de cliente (M-36,
+  // LGPD), então só os NOMES dos campos vão para o log, nunca os valores.
+  console.log(`[Omie API] Param (campos):`, body.param.map((p) => Object.keys(p ?? {}).join(",")).join(" | "));
 
-  const response = await fetch(`${OMIE_API_URL}/${endpoint}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-  });
-
-  const result = await response.json();
-  console.log(`[Omie API] Resposta:`, JSON.stringify(result, null, 2));
+  // Teto de relógio (M-33 p3, molde do #3001): 140s por chamada, uma tentativa só (não há retry
+  // aqui). Falha de ESCRITA (IncluirOS/AlterarOS/ExcluirOS/IncluirCliente) sai marcada como
+  // indeterminada — o Omie pode ter gravado — e nunca como "não existe" (ver osAusenteNoOmie) nem
+  // como transitória. ⚠️ A chave do IncluirOS (`cCodIntOS` com Date.now()) NÃO é idempotente: um
+  // reenvio manual após a indeterminada pode duplicar a OS. Módulo congelado (loja-afiacao, 0 OS
+  // em 90 dias) — a mensagem manda conferir antes; a chave fica como está. _shared/omie-chamada-relogio.ts
+  const { response, result } = await chamarComRelogio(async (signal) => {
+    const response = await fetch(`${OMIE_API_URL}/${endpoint}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+      signal,
+    });
+    const result = await response.json();
+    return { response, result };
+  }, { metodo: call, conta: "colacor_sc", deadline: prazoDaChamadaOmie(Date.now()) });
+  // Só a forma da resposta: o corpo traz cadastro de cliente/pedido (PII — M-36, LGPD).
+  console.log(`[Omie API] Resposta (campos):`, Object.keys(result ?? {}).join(","));
 
   // `faultstring` ANTES do status (ordem canônica do #1614 — docs/agent/sync.md): o EOF do
   // contrato Omie chega às vezes acompanhado de 5xx, e lê-lo como falha de transporte trocaria
@@ -417,7 +429,7 @@ async function syncClienteOmie(
   // Cliente cru correspondente (há exatamente 1 match não-ambíguo aqui) — preserva o integração no write-back.
   const cliente = (searchResult.clientes_cadastro ?? []).find((c) => c.codigo_cliente_omie === omieCodigoCliente);
 
-  console.log(`[Omie] Cliente encontrado no Omie: ${omieCodigoCliente} - ${cliente?.razao_social ?? ''}`);
+  console.log(`[Omie] Cliente encontrado no Omie: ${omieCodigoCliente}`); // sem razão social: PII (M-36)
   console.log(`[Omie] Vendedor associado: ${omieCodigoVendedor ?? 'Nenhum'}`);
 
   // [P0-B-bis Fatia 4] O write-back saiu do espelho poluído `omie_clientes` (que gravava SEM conta, sob
@@ -1118,7 +1130,7 @@ Deno.serve(async (req) => {
             if (telefone) clienteParams.telefone1_numero = telefone;
             if (contato) clienteParams.contato = contato;
 
-            console.log(`[Omie] Criando cliente na conta afiação: ${razao_social} (${docClean})`);
+            console.log(`[Omie] Criando cliente na conta afiação (${docClean.length === 11 ? "CPF" : "CNPJ"})`); // sem nome/documento: PII (M-36)
             const createResult = await callOmieApi(
               "geral/clientes/",
               "IncluirCliente",

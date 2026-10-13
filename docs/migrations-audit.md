@@ -21,13 +21,13 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **621** custom migrations totais
-- **2023** objetos esperados (criados por estas migrations)
+- **624** custom migrations totais
+- **2027** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 705
+  - `function`: 707
   - `rls_policy`: 471
   - `index`: 275
-  - `cron_job`: 180
+  - `cron_job`: 182
   - `table`: 176
   - `view`: 109
   - `trigger`: 103
@@ -5061,13 +5061,32 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `cron_job` | `cron.picking-fila-oben` | — |
 | `cron_job` | `cron.picking-fila-colacor` | — |
 
+### `20261012173000_cron_sync_reprocess_pedidos_colacor_dr.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.sync-reprocess-pedidos-colacor-2h` | — |
+
 ### `20261012203227_crons_modulos_congelados.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
+### `20261012205652_retencao_lgpd_conversas.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.expurgar_conteudo_conversas` | — |
+| `cron_job` | `cron.lgpd-expurgo-conversas-diario` | — |
+
 ### `20261012233000_picking_cron_fora_do_minuto_15.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20261012233500_analytics_ledger_crescimento_comparavel.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.analytics_ledger_registrar` | — |
 
 ### `20261013120000_tint_watchdog_fase5_s2_persistente.sql`
 

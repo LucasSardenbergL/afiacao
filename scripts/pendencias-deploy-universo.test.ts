@@ -40,16 +40,18 @@ describe('lerUniverso — o denominador HONESTO, medido na ref real (#2824)', ()
   it('uma edge que ESCREVE e não tem marcador está na lista, classificada como quem escreve', () => {
     // O controle era a `tint-omie-sync`, a QUINTA edge do #2824 (grava no tintométrico — por isso
     // deixá-la fora do relatório era money-path invisível). Ela ganhou sonda no M-26 (1ª leva do
-    // Lote C) e foi para o teste de baixo. O controle vivo passou a `fin-period-override`
-    // (insert via PostgREST, módulo congelado pelo §0.3 do plano de melhorias — estável sem marcador).
-    const controle = u.semMarcador.find((e) => e.edge === 'fin-period-override');
+    // Lote C) e foi para o teste de baixo. Depois foi a `fin-period-override`, que também ganhou
+    // sonda (M-26, 3ª leva — ela é do financeiro, ATIVO; o "congelado" daqui estava errado). O
+    // controle vivo passou a `kb-ingest-document` (insert via PostgREST, knowledge-base CONGELADO
+    // no manifesto — estável sem marcador até alguém descongelar o módulo).
+    const controle = u.semMarcador.find((e) => e.edge === 'kb-ingest-document');
     expect(controle, 'o controle saiu da lista — se foi instrumentado, troque por outra edge que escreve').toBeDefined();
     expect(controle?.escrita).toBe('postgrest');
   });
 
   it('as instrumentadas (as 4 do #2824 + a `tint-omie-sync`, do M-26) NÃO aparecem aqui', () => {
     const nomes = u.semMarcador.map((e) => e.edge);
-    for (const e of ['omie-analytics-sync', 'omie-sync-metadados', 'omie-vendas-sync', 'sync-reprocess', 'tint-omie-sync']) {
+    for (const e of ['omie-analytics-sync', 'omie-sync-metadados', 'omie-vendas-sync', 'sync-reprocess', 'tint-omie-sync', 'fin-period-override']) {
       expect(nomes).not.toContain(e);
     }
   });

@@ -13,6 +13,7 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { COMPANIES, useCompany, type Company } from '@/contexts/CompanyContext';
 import { formatBRL, formatarFracaoPct } from '@/components/customer360/format';
 import { track } from '@/lib/analytics';
+import { registrarNoLedger } from '@/lib/analytics-ledger';
 import { cn } from '@/lib/utils';
 import { empresasDoEscopo, rotuloJanela, type CoberturaEmpresa } from '@/lib/dashboard/crescimento-comparavel';
 import { useCrescimentoComparavel, type TipoComparacao } from '@/hooks/dashboard/useCrescimentoComparavel';
@@ -100,12 +101,11 @@ export function CrescimentoComparavelCard() {
     const chave = `${selection}|${tipo}`;
     if (enviados.current.has(chave)) return;
     enviados.current.add(chave);
-    track('dashboard.crescimento_comparavel_visto', {
-      selection,
-      comparacao: tipo,
-      estado,
-      origem: escolhido == null ? 'padrao' : 'manual',
-    });
+    const props = { selection, comparacao: tipo, estado, origem: escolhido == null ? 'padrao' : 'manual' };
+    track('dashboard.crescimento_comparavel_visto', props);
+    // O mesmo sinal pelo ledger do banco: o PostHog é censurado por bloqueador de rastreador, e este
+    // é o sinal que DECIDE a fase seguinte (docs/agent/analytics.md §"A amostra é CENSURADA").
+    void registrarNoLedger('dashboard.crescimento_comparavel_servido', chave, props);
   }, [visivel, renderizouDados, estado, selection, tipo, escolhido]);
 
   if (empresasDoEscopo(selection).length === 0) {

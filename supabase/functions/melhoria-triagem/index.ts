@@ -6,6 +6,7 @@
 import Anthropic from "npm:@anthropic-ai/sdk@^0.93.0";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff, corsHeaders } from "../_shared/auth.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -135,27 +136,35 @@ function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 }
 
-// Fix 1 (P2-1): mapa explícito tool→RPC — nome inesperado nunca executa RPC.
-const RPC_POR_TOOL: Record<string, string> = {
-  clientes_por_produto: "melhoria_clientes_por_produto",
-  produtos_relacionados: "melhoria_produtos_relacionados",
-};
+// Fix 1 (P2-1): lista FECHADA tool→RPC (o `switch` no laço) — nome inesperado nunca executa RPC.
+// O nome da RPC fica LITERAL em cada `case` (não `rpc(variavel)`): é o que deixa o
+// `preflight:rpcs`/`pendencias:pacote` enxergar as dependências de banco desta edge — com
+// indireção o pacote de deploy não sai (molde: #2400).
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   const auth = await authorizeCronOrStaff(req);
   if (!auth.ok) return auth.response;
+
+  // Sonda de versão (M-26; docs/agent/deploy.md): `{ probe: true }` responde a versão no ar sem tocar
+  // banco nem IA — antes da exigência de staff (o cron do SQL Editor passa no gate acima). Corpo UMA vez.
+  const corpoBruto: unknown = await req.json().catch(() => null);
+  const decisaoSonda = classificarSonda(corpoBruto);
+  if (decisaoSonda.tipo === "sonda") return jsonResponse(respostaSonda(VERSAO), 200);
+  if (decisaoSonda.tipo === "ambiguo") return jsonResponse({ versao: VERSAO, error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }, 400);
+
   // Triagem é sempre disparada por um usuário; cron/service_role não se aplicam aqui.
   if (auth.via !== "staff" || !auth.userId) return jsonResponse({ error: "Apenas staff" }, 403);
 
   const admin = createClient(SUPABASE_URL, SERVICE_ROLE);
 
   let itemId = "";
-  try {
-    const body = await req.json();
+  {
+    // Já parseado acima (para a sonda); corpo inválido virou `null` e cai no guard abaixo.
+    const body = corpoBruto as { item_id?: unknown } | null;
     itemId = String(body?.item_id ?? "").trim();
-  } catch { /* body inválido cai no guard abaixo */ }
+  }
   if (!itemId) return jsonResponse({ error: "item_id obrigatório" }, 400);
 
   // Fix 4 (P3-1): item_id não-UUID vira 400, não 500 (evita query desnecessária com input malformado).
@@ -268,11 +277,19 @@ Avalie e finalize chamando a tool "triar".`;
       // Tool de dados: executa a RPC com o JWT do caller (escopo de carteira correto).
       // Mapa explícito + guard: nome inesperado OU tools desabilitadas NUNCA executam RPC
       // (defesa em profundidade do anti-vazamento — spec §5).
-      const rpcName = toolsDadosHabilitadas ? RPC_POR_TOOL[toolUse.name] : undefined;
-      if (!rpcName) break; // triagem fica null → marcarErro (degradação honesta)
-
       const input = toolUse.input as { p_termo?: string };
-      const { data: rpcData, error: rpcErr } = await userClient.rpc(rpcName, { p_termo: String(input?.p_termo ?? "") });
+      const argsRpc = { p_termo: String(input?.p_termo ?? "") };
+      let respostaRpc;
+      switch (toolsDadosHabilitadas ? toolUse.name : "") {
+        case "clientes_por_produto":
+          respostaRpc = await userClient.rpc("melhoria_clientes_por_produto", argsRpc);
+          break;
+        case "produtos_relacionados":
+          respostaRpc = await userClient.rpc("melhoria_produtos_relacionados", argsRpc);
+          break;
+      }
+      if (!respostaRpc) break; // triagem fica null → marcarErro (degradação honesta)
+      const { data: rpcData, error: rpcErr } = respostaRpc;
       const resultado = rpcErr ? { erro: rpcErr.message } : rpcData;
       if (!rpcErr) dadosExecutados.push({ tool: toolUse.name, input: { p_termo: input?.p_termo }, resultado });
 

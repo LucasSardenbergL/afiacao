@@ -2708,6 +2708,8 @@ export type Database = {
           follow_up_duration_seconds: number | null
           id: string
           is_whatsapp: boolean | null
+          legal_hold: boolean
+          legal_hold_motivo: string | null
           linked_sales_order_id: string | null
           margin_generated: number | null
           notes: string | null
@@ -2734,6 +2736,8 @@ export type Database = {
           follow_up_duration_seconds?: number | null
           id?: string
           is_whatsapp?: boolean | null
+          legal_hold?: boolean
+          legal_hold_motivo?: string | null
           linked_sales_order_id?: string | null
           margin_generated?: number | null
           notes?: string | null
@@ -2760,6 +2764,8 @@ export type Database = {
           follow_up_duration_seconds?: number | null
           id?: string
           is_whatsapp?: boolean | null
+          legal_hold?: boolean
+          legal_hold_motivo?: string | null
           linked_sales_order_id?: string | null
           margin_generated?: number | null
           notes?: string | null
@@ -3012,6 +3018,8 @@ export type Database = {
           final_intent: string | null
           final_phase: string | null
           id: string
+          legal_hold: boolean
+          legal_hold_motivo: string | null
           margin_generated: number | null
           result: string | null
           revenue_generated: number | null
@@ -3033,6 +3041,8 @@ export type Database = {
           final_intent?: string | null
           final_phase?: string | null
           id?: string
+          legal_hold?: boolean
+          legal_hold_motivo?: string | null
           margin_generated?: number | null
           result?: string | null
           revenue_generated?: number | null
@@ -3054,6 +3064,8 @@ export type Database = {
           final_intent?: string | null
           final_phase?: string | null
           id?: string
+          legal_hold?: boolean
+          legal_hold_motivo?: string | null
           margin_generated?: number | null
           result?: string | null
           revenue_generated?: number | null
@@ -17449,6 +17461,8 @@ export type Database = {
           last_inbound_at: string | null
           last_message_at: string | null
           last_outbound_at: string | null
+          legal_hold: boolean
+          legal_hold_motivo: string | null
           opt_in_status: string
           phone_e164: string | null
           phone_key: string
@@ -17463,6 +17477,8 @@ export type Database = {
           last_inbound_at?: string | null
           last_message_at?: string | null
           last_outbound_at?: string | null
+          legal_hold?: boolean
+          legal_hold_motivo?: string | null
           opt_in_status?: string
           phone_e164?: string | null
           phone_key: string
@@ -17477,6 +17493,8 @@ export type Database = {
           last_inbound_at?: string | null
           last_message_at?: string | null
           last_outbound_at?: string | null
+          legal_hold?: boolean
+          legal_hold_motivo?: string | null
           opt_in_status?: string
           phone_e164?: string | null
           phone_key?: string
