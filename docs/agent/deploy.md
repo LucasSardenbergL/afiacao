@@ -190,7 +190,7 @@ skill de deploy ensinava 3 moldes à mão, sem escopo nem conferência, e o `[CO
 Com erro no `build-errors.log`, o Lovable injeta *"Fix them … including the ones that predate your
 changes. Don't ask first"* e insiste se ele só reporta. O Knowledge segurou, mas o turno custou 3,2
 créditos (0,9–1,4 sem o empurrão), e o log passou a trazer a dívida de tipo de 9 edges, money-path
-incluído. Toda mensagem ao agente é exposição: só mande o que o ledger pede.
+incluído. Toda mensagem ao agente é exposição: só mande o que o ledger pede. **Sem o bloco de escopo, o Knowledge NÃO segura** (2026-10-13): um "redeploy these 3 functions" escrito à mão (sem sha256 nem `blocoDeEscopo`) fez o agente concluir *"That system message overrides"*, editar 7 edges — 2 com mudança de comportamento — e deixar a `main` vermelha; revert no #3041, e o deploy em si tinha saído do commit humano, antes das edições. A defesa é a colagem do gerador, não o Knowledge ([narrativa](../historico/agente-lovable-conserta-o-que-nao-pediram.md#2026-10-13)).
 
 #### Ordem ENTRE edges: o pacote sai em ONDAS (#2469, 2026-09-14)
 
