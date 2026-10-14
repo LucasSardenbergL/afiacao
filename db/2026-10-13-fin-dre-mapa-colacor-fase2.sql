@@ -15,6 +15,11 @@
 -- a fornecedor, 2.05.99 devolução de cheques, 2.06.06 contribuição social, 2.06.94 ICMS ST,
 -- 2.06.95 ICMS DIFAL, e os ambíguos 2.11.85/88/90, 2.12.87/89/92, 2.05.01, 2.05.02, 2.04.13.
 --
+-- ⚠️ A precondição prova só a PRODUTORA (omie-financeiro tem sonda). Os consumidores que leem
+--    `resultado_provisorio` (fin-regime-tributario, fin-valor-engine — sem sonda) e o Publish do front
+--    têm de estar no ar ANTES deste script: verificado pela sessão (resposta deles já traz
+--    `motivo_incompleto`/`resultado_provisorio`) e registrado no PR. Sem isso, a edge antiga recomenda
+--    regime sobre lucro provisório (Codex challenge P1, 2026-10-13).
 -- ⚠️ `v_fonte_esperada` = hash de `omie-financeiro` em supabase/functions/_shared/sonda-fingerprints.ts
 --    no commit que vai para prod. Mudou a edge → regrave o fingerprint E este literal.
 -- ============================================================================================
@@ -77,7 +82,7 @@ INSERT INTO public.fin_categoria_dre_mapping (company, omie_codigo, dre_linha, n
   ('colacor', '2.09.05', 'deducoes', 'DRE fase 2: devolução de clientes')
 ON CONFLICT (company, omie_codigo) DO NOTHING;
 
--- ── postcondição: os 24 pares EXATOS existem e nada fora_dre vazou para outra empresa ──
+-- ── postcondição: os 24 pares EXATOS existem e nada fora_dre no _default ──
 DO $post$
 DECLARE
   v_ok int;
@@ -95,7 +100,8 @@ BEGIN
     ) e(cod, linha) ON m.omie_codigo = e.cod AND m.dre_linha = e.linha
    WHERE m.company = 'colacor';
   IF v_ok IS DISTINCT FROM 24 THEN RAISE EXCEPTION 'postcondicao: % de 24 pares colacor (codigo ja mapeado para outra linha?)', v_ok; END IF;
-  SELECT count(*) INTO v_vazou FROM public.fin_categoria_dre_mapping WHERE dre_linha = 'fora_dre' AND company <> 'colacor';
-  IF v_vazou IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'postcondicao: % mapa(s) fora_dre fora da colacor', v_vazou; END IF;
+  -- fora_dre de OUTRA empresa pode ser decisão legítima dela; o proibido é o _default (vale para todas).
+  SELECT count(*) INTO v_vazou FROM public.fin_categoria_dre_mapping WHERE dre_linha = 'fora_dre' AND company = '_default';
+  IF v_vazou IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'postcondicao: % mapa(s) fora_dre no _default', v_vazou; END IF;
 END
 $post$;

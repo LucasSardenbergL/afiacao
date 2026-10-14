@@ -105,6 +105,8 @@ sabotada "check-sem-csll" "s/'das', 'irpj', 'csll',\$/'das', 'irpj',/"
 sabotada "default-zero" "s/ADD COLUMN IF NOT EXISTS fora_dre numeric(15,2);/ADD COLUMN IF NOT EXISTS fora_dre numeric(15,2) DEFAULT 0;/"
 sabotada "provisorio-default-false" "s/ADD COLUMN IF NOT EXISTS resultado_provisorio boolean;/ADD COLUMN IF NOT EXISTS resultado_provisorio boolean DEFAULT false;/"
 sabotada "sem-check-default" "s/CHECK (NOT (company = '_default' AND dre_linha = 'fora_dre'))/CHECK (true)/"
+sabotada "gatilho-so-delete" "s/  BEFORE INSERT OR UPDATE ON public.fin_dre_snapshots/  BEFORE DELETE ON public.fin_dre_snapshots/"
+sabotada "gatilho-nao-zera" "s/    NEW.fora_dre := NULL;/    NULL;/"
 sabotada "check-default-so-oben" "s/CHECK (NOT (company = '_default' AND dre_linha = 'fora_dre'))/CHECK (NOT (company = 'oben' AND dre_linha = 'fora_dre'))/"
 
 # ZONA 2 — a migration REAL (controle verde) + reaplicação (idempotência)
@@ -146,9 +148,16 @@ aceita "A4b _default aceita imposto em linha própria" _default "5.01.99" ded_pi
 eq "A5 snapshot legado: fora_dre NULL (ausente ≠ 0)" "$(Pq -c "SELECT coalesce(fora_dre::text,'NULL') FROM public.fin_dre_snapshots WHERE mes=1;")" "NULL"
 eq "A5b snapshot legado: provisório NULL" "$(Pq -c "SELECT coalesce(resultado_provisorio::text,'NULL') FROM public.fin_dre_snapshots WHERE mes=1;")" "NULL"
 eq "A5c resultado legado intacto" "$(Pq -c "SELECT resultado_liquido FROM public.fin_dre_snapshots WHERE mes=1;")" "-12345.67"
-P -q -c "INSERT INTO public.fin_dre_snapshots (company, ano, mes, regime, resultado_liquido, fora_dre, resultado_provisorio) VALUES ('colacor',2026,2,'caixa',39217.95,260988.784,true);"
+P -q -c "INSERT INTO public.fin_dre_snapshots (company, ano, mes, regime, resultado_liquido, detalhamento, fora_dre, resultado_provisorio) VALUES ('colacor',2026,2,'caixa',39217.95,'{\"contrato\":{\"versao\":\"dre-fora-dre-v1\"}}',260988.784,true);"
 eq "A6 fora_dre grava com 2 casas" "$(Pq -c "SELECT fora_dre FROM public.fin_dre_snapshots WHERE mes=2;")" "260988.78"
 eq "A6b provisório grava" "$(Pq -c "SELECT resultado_provisorio FROM public.fin_dre_snapshots WHERE mes=2;")" "t"
+# rollback do motor: o upsert legado (sem contrato) reescreve o resultado e NÃO pode herdar o metadado
+P -q -c "UPDATE public.fin_dre_snapshots SET resultado_liquido = -221770.83, detalhamento = '{\"receitas\":{}}' WHERE mes=2;"
+eq "A7 writer legado sobre snapshot fase 2: fora_dre vira NULL" "$(Pq -c "SELECT coalesce(fora_dre::text,'NULL') FROM public.fin_dre_snapshots WHERE mes=2;")" "NULL"
+eq "A7b writer legado: provisório vira NULL (não false)" "$(Pq -c "SELECT coalesce(resultado_provisorio::text,'NULL') FROM public.fin_dre_snapshots WHERE mes=2;")" "NULL"
+P -q -c "UPDATE public.fin_dre_snapshots SET detalhamento = '{\"contrato\":{}}', fora_dre = 10, resultado_provisorio = true WHERE mes=2;"
+eq "A7c writer novo (com contrato) grava de novo" "$(Pq -c "SELECT fora_dre FROM public.fin_dre_snapshots WHERE mes=2;")" "10.00"
+eq "A7d linha de prova da postcondição não ficou (ano 1900)" "$(Pq -c "SELECT count(*) FROM public.fin_dre_snapshots WHERE ano=1900;")" "0"
 
 # ZONA 5b — FALSIFICAÇÃO dos asserts negativos: tira a defesa, exige que o assert VIRE vermelho.
 P -q -c "ALTER TABLE public.fin_categoria_dre_mapping DROP CONSTRAINT fin_categoria_dre_mapping_fora_dre_por_empresa_check;"

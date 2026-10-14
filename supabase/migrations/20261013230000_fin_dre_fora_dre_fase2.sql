@@ -18,6 +18,8 @@ BEGIN;
 --      NULLABLE e SEM default: NULL = snapshot pré-fase 2 (nada segregado, nada declarado).
 --      Ausente ≠ zero: um default 0/false afirmaria "sem pendência" em mês que o motor novo
 --      nunca calculou. Writer único: calcularDRE (upsert company,ano,mes,regime).
+--   4. Gatilho: gravação SEM `detalhamento.contrato` (motor legado, rollback) zera as duas colunas
+--      para NULL — o metadado nunca sobrevive a um resultado recalculado por outro motor.
 --
 -- ORDEM DE DEPLOY: esta migration ANTES da edge omie-financeiro nova (o upsert dela grava as
 -- colunas — sem elas o PostgREST recusa e o cálculo FALHA ALTO, não silencioso). O mapa colacor
@@ -49,12 +51,35 @@ COMMENT ON COLUMN public.fin_dre_snapshots.fora_dre IS
 COMMENT ON COLUMN public.fin_dre_snapshots.resultado_provisorio IS
   'DRE fase 2: true = há movimentação fora_dre com composição pendente (principal × juros) — resultado provisório. false = sem pendência fora_dre identificada (NÃO é lucro validado). NULL = pré-fase 2.';
 
+-- Writer SEM o contrato fase 2 (rollback do omie-financeiro para v1.4) não pode herdar o metadado de
+-- outra apuração: o upsert antigo só reescreve as colunas que conhece, e `fora_dre=0`/`provisorio=false`
+-- de um cálculo novo ficariam ao lado de um resultado legado (empréstimo de volta como despesa). Sem
+-- `detalhamento.contrato` ⇒ as duas colunas viram NULL = "não declarado", nunca "sem pendência".
+CREATE OR REPLACE FUNCTION public.fin_dre_snapshots_contrato_fase2()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public
+AS $f$
+BEGIN
+  IF NEW.detalhamento IS NULL OR NOT (NEW.detalhamento ? 'contrato') THEN
+    NEW.fora_dre := NULL;
+    NEW.resultado_provisorio := NULL;
+  END IF;
+  RETURN NEW;
+END
+$f$;
+CREATE OR REPLACE TRIGGER trg_fin_dre_snapshots_contrato_fase2
+  BEFORE INSERT OR UPDATE ON public.fin_dre_snapshots
+  FOR EACH ROW EXECUTE FUNCTION public.fin_dre_snapshots_contrato_fase2();
+
 -- ── postcondição: aborta a transação se qualquer peça não pegou ──
 DO $post$
 DECLARE
   v_def text;
   v_falta text[];
   v_cols int;
+  v_fd numeric;
+  v_prov boolean;
 BEGIN
   SELECT pg_get_constraintdef(oid) INTO v_def FROM pg_constraint
    WHERE conrelid = 'public.fin_categoria_dre_mapping'::regclass
@@ -88,6 +113,29 @@ BEGIN
      AND ((column_name = 'fora_dre' AND data_type = 'numeric' AND numeric_precision = 15 AND numeric_scale = 2)
        OR (column_name = 'resultado_provisorio' AND data_type = 'boolean'))
      AND is_nullable = 'YES' AND column_default IS NULL;
+  -- gatilho por COMPORTAMENTO: grava como o writer legado (sem contrato) e exige NULL; o sub-bloco
+  -- termina num RAISE próprio (P0099) que desfaz a linha de prova — qualquer outro erro sobe.
+  BEGIN
+    INSERT INTO public.fin_dre_snapshots (company, ano, mes, regime, detalhamento, fora_dre, resultado_provisorio)
+      VALUES ('colacor', 1900, 1, 'caixa', '{"receitas":{}}'::jsonb, 1, false)
+      RETURNING fora_dre, resultado_provisorio INTO v_fd, v_prov;
+    IF v_fd IS NOT NULL OR v_prov IS NOT NULL THEN
+      RAISE EXCEPTION 'postcondicao: writer sem contrato manteve fora_dre/provisorio (gatilho ausente)';
+    END IF;
+    RAISE EXCEPTION 'desfaz linha de prova' USING ERRCODE = 'P0099';
+  EXCEPTION WHEN SQLSTATE 'P0099' THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO public.fin_dre_snapshots (company, ano, mes, regime, detalhamento, fora_dre, resultado_provisorio)
+      VALUES ('colacor', 1900, 1, 'caixa', '{"contrato":{"versao":"dre-fora-dre-v1"}}'::jsonb, 1, true)
+      RETURNING fora_dre, resultado_provisorio INTO v_fd, v_prov;
+    IF v_fd IS DISTINCT FROM 1 OR v_prov IS DISTINCT FROM true THEN
+      RAISE EXCEPTION 'postcondicao: writer com contrato perdeu fora_dre/provisorio';
+    END IF;
+    RAISE EXCEPTION 'desfaz linha de prova' USING ERRCODE = 'P0099';
+  EXCEPTION WHEN SQLSTATE 'P0099' THEN NULL;
+  END;
+
   IF v_cols IS DISTINCT FROM 2 THEN RAISE EXCEPTION 'postcondicao: colunas fase 2 de fin_dre_snapshots erradas (% de 2)', v_cols; END IF;
 END
 $post$;
