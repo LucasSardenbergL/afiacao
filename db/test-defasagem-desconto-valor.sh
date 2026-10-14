@@ -15,7 +15,8 @@
 #   DV3  desconto_valor = 0 (Omie informou 0)  → defasado (o zero NÃO é engolido pelo guard)
 #   DV4  mesmo dia: uma linha 0 + uma NULL     → neutro/desconto_nao_provado (basta uma)
 #   DV5  desconto_valor negativo (lixo)        → neutro/desconto_nao_provado
-#   DV6  desconto_valor 'NaN'                  → neutro/desconto_nao_provado
+#   DV6  desconto_valor 'NaN'                  → neutro/desconto_nao_provado (sem sabotagem própria: no PG
+#        NaN > 0 é TRUE, então até a régua antiga `COALESCE(…,0) > 0` o pega — 1ª falsificação mostrou)
 #   DV7  legado discount > 0, desconto_valor 0 → defasado (a coluna legada não é mais lida)
 #   DV8  desconto só numa compra ANTERIOR       → defasado (só o dia da âncora conta)
 #   G1   não-staff                             → 42501 (gate intacto)
@@ -42,7 +43,7 @@ TOTAL_ESPERADO=13
 # provam o dente DELA (MIG vermelho).
 if [ "${1:-}" = "--falsificar" ]; then
   SABOTAGENS="legado:DV1,DV2,DV4,DV7:DV3,DV8,G1
-              null_vira_zero:DV2,DV4,DV5,DV6:DV1,DV3,DV7
+              null_vira_zero:DV2,DV4,DV5:DV1,DV3,DV6,DV7
               zero_conta:DV3,DV7,DV8:DV1,G1
               sem_gate:G1:DV1,DV3
               pos_legado:MIG:
@@ -63,6 +64,7 @@ if [ "${1:-}" = "--falsificar" ]; then
     if SABOTAGEM="$nome" PGPORT_TEST="$((PORT+i))" bash "$0" > "$log" 2>&1; then
       echo "❌ $nome: harness VERDE com a sabotagem — assert sem dente"; falhas=$((falhas+1)); continue
     fi
+    antes=$falhas
     for a in ${reds//,/ }; do
       grep -q "^  ❌ $a " "$log" || { echo "❌ $nome: $a devia estar VERMELHO"; falhas=$((falhas+1)); }
     done
@@ -70,6 +72,7 @@ if [ "${1:-}" = "--falsificar" ]; then
       [ -n "$a" ] || continue
       grep -q "^  ✅ $a " "$log" || { echo "❌ $nome: $a (controle) devia seguir VERDE"; falhas=$((falhas+1)); }
     done
+    [ "$falhas" = "$antes" ] || continue
     echo "  ✅ $nome → vermelho em [$reds]${greens:+, verde em [$greens]}"
   done
   [ "$falhas" = 0 ] || { echo "❌ FALSIFICAÇÃO FALHOU ($falhas)"; exit 1; }
