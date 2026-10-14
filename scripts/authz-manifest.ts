@@ -473,6 +473,7 @@ export const ACKNOWLEDGED_SENSITIVE = new Set<string>([
   'public.reposicao_pedido_auto_aprovavel', // veredito de auto-aprovação; chamada SÓ pelo tick acima (medido em pg_proc.prosrc), nunca direto
   'public.reposicao_aplicar_depara_sayerlack_auto', // de-para automático do boletim Sayerlack — edge `reposicao-depara-sayerlack-auto` (cron → edge, service_role)
   'public.envio_portal_lock_candidatos', // lock dos candidatos a envio — edge `enviar-pedido-portal-sayerlack`
+  'public.sayerlack_importar_pedido_portal', // importa pedido digitado direto no portal (pedido+itens+custo tudo-ou-nada) — edge `sayerlack-importar-pedido-portal`, service_role
   'public.sayerlack_aplicar_custo_portal', // custo do portal em 1 transação (CAS omie IS NULL + itens tudo-ou-nada) — edge `enviar-pedido-portal-sayerlack`, service_role
   'public.envio_portal_claim_ids', // claim por lista positiva de ids — edges `disparar-pedidos-aprovados` e `enviar-pedido-portal-sayerlack`
   'public.iniciar_envio_portal_pre_claim', // pré-claim antes do disparo — edge `disparar-pedidos-aprovados`

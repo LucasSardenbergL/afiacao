@@ -512,6 +512,13 @@ async function dividirPedidosGrandesSayerlack(
       expandido.push(pedido);
       continue;
     }
+    // Já tem protocolo do portal (ex.: pedido digitado direto no portal e importado pelo número): ele EXISTE
+    // inteiro na Sayerlack como UM pedido — dividir em lotes criaria filhos sem protocolo que reabririam envio
+    // ao portal (pedido duplicado no fornecedor). Vai inteiro para o Omie.
+    if (pedido.portal_protocolo != null && String(pedido.portal_protocolo).trim() !== "") {
+      expandido.push(pedido);
+      continue;
+    }
 
     const { count: itensCount, error: countErr } = await db
       .from("pedido_compra_item")

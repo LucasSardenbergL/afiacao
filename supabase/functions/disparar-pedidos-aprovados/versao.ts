@@ -55,8 +55,9 @@ export const respostaSonda = criarRespostaSonda("disparar-pedidos-aprovados");
  * `portal_recusa_definitiva` na resposta), sem write e sem pré-claim. Antes o pré-claim o rebaixava a
  * pendente e a edge respondia "envio iniciado". Nenhuma pré-condição de banco (a migration
  * 20261011150000 fecha a mesma porta na RPC, de forma independente).
+ * v1.9 (2026-10-14) — pedido Sayerlack COM protocolo (ex.: importado do portal) não é dividido em lotes de 20.
  */
-export const VERSAO = "v1.8-omie-cliente-compartilhado";
+export const VERSAO = "v1.9-split-respeita-protocolo";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO = "esta edge cria pedido de compra REAL no Omie, inclusive em dry_run";
