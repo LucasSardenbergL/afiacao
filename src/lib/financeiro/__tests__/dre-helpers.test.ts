@@ -352,6 +352,13 @@ describe('acumularForaDRE / aplicarPendenciasConfianca (fase 2)', () => {
     expect(acc.por_codigo['2.05.03']).toEqual({ saidas: 0, entradas: 0 });
   });
 
+  it('lançamento só negativo (estorno) também deixa a composição pendente', () => {
+    const acc = novoForaDRE();
+    acumularForaDRE(acc, '2.06.90', -500, false);
+    expect(acc.composicao_pendente).toBe(true);
+    expect(acc.saidas).toBe(-500);
+  });
+
   it('só lançamentos zerados não geram pendência; entrada e saída ficam separadas', () => {
     const acc = novoForaDRE();
     acumularForaDRE(acc, '2.07.01', 0, false);
