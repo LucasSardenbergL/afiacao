@@ -55,6 +55,7 @@ function EmpresaCard({ company, modo }: { company: string; modo: 'reportado' | '
           </p>
         )}
         {data.reportado.incremental.aviso && <p className="text-xs text-muted-foreground">{data.reportado.incremental.aviso}</p>}
+        {data.resultado_provisorio && <p className="text-xs text-status-warning">Resultado provisório: há saída fora do DRE com composição principal × juros pendente — EBIT/ROIC são estimativa.</p>}
         {modo === 'normalizado' && !data.normalizado.aplicado && <p className="text-xs text-status-warning">Sem inputs de normalização — igual ao reportado.</p>}
         {modo === 'normalizado' && data.normalizado.nopat_aproximado && <p className="text-xs text-muted-foreground">NOPAT normalizado é aproximado: o imposto absoluto (IRPJ+CSLL) não é recalculado sobre o EBIT ajustado.</p>}
         {data.confianca.motivos.length > 0 && (
