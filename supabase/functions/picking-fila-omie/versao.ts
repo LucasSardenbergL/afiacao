@@ -26,8 +26,10 @@ export const respostaSonda = criarRespostaSonda("picking-fila-omie");
  * v0.5: a prova do filtro da `coleta` usa a CAUDA da etapa 10 (as duas últimas páginas na ordem
  * padrão) e MEDE a ordem — a 1ª página com `ordem_descrescente` eram os 100 mais ANTIGOS (o Omie
  * ordena só dentro da página; `amostra_no_corte` = 0 nas duas contas em 2026-10-12).
+ * v0.6: o preflight `OPTIONS` atende a sonda de deploy por cron (`atenderSondaOptions`) e sai antes
+ * do gate de auth — a edge passa a ser atestada pelo cron, sem sonda manual. Fora da sonda, nada muda.
  */
-export const VERSAO = "v0.5-prova-pela-cauda";
+export const VERSAO = "v0.6-sonda-cron";
 
 /** Efeito citado no 400 de `probe` ambíguo. */
 export const EFEITO =
