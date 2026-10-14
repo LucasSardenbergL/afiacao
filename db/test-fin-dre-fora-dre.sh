@@ -194,10 +194,11 @@ n_mapa() { Pq -c "SELECT count(*) FROM public.fin_categoria_dre_mapping WHERE no
 roda_mapa() { # $1 rótulo · $2 sentinela esperada (precondicao|postcondicao|OK) · $3 arquivo (opcional)
   local out f="${3:-$MAPA}"
   if out=$(P -q --single-transaction -f "$f" 2>&1); then
-    [ "$2" = OK ] && ok "$1" || bad "$1 — devia falhar com $2 e PASSOU"
+    if [ "$2" = OK ]; then ok "$1"; else bad "$1 — devia falhar com $2 e PASSOU"; fi
+  elif [ "$2" = OK ]; then
+    bad "$1 — falhou: ${out:0:200}"
   else
-    case "$out" in *"$2:"*) [ "$2" != OK ] && ok "$1 ($2 abortou)" || bad "$1 — falhou: ${out:0:200}" ;;
-      *) bad "$1 — falhou por outro motivo: ${out:0:200}" ;; esac
+    case "$out" in *"$2:"*) ok "$1 ($2 abortou)" ;; *) bad "$1 — falhou por outro motivo: ${out:0:200}" ;; esac
   fi
 }
 # motor velho servido (v1.4) → nada entra
