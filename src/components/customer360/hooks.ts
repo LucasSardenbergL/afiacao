@@ -2,6 +2,8 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { STATUS_NAO_VENDA_POSTGREST } from '@/lib/farmer/universo-pedidos';
 import { fetchAllPages } from '@/lib/postgrest';
+import { buscarMargemScore } from '@/lib/scoring/margemScores';
+import { captureException } from '@/lib/analytics';
 import { addDias, hojeSP } from '@/lib/time/sp-day';
 import { canalToKind, canalToLabel, canalToTone, type CanalInteracao } from '@/lib/carteira/interacoes';
 import { LIMITE_FEED_PEDIDOS } from './format';
@@ -57,6 +59,11 @@ export function useCustomerMetrics(customerId: string | undefined) {
   });
 }
 
+// Sem `gross_margin_pct`: a coluna é fechada para authenticated (migration 20261014120100) e listá-la
+// derruba a query inteira com 42501. A margem vem de `buscarMargemScore`.
+const COLUNAS_SCORE_C360 =
+  'health_score, health_class, churn_risk, expansion_score, priority_score, itens_com_custo, itens_sem_custo, avg_monthly_spend_180d, days_since_last_purchase, category_count, avg_repurchase_interval, revenue_potential, sales_history_status';
+
 export function useCustomerScore(customerId: string | undefined, farmerId: string | undefined) {
   return useQuery({
     queryKey: ['c360-score', customerId, farmerId],
@@ -66,18 +73,31 @@ export function useCustomerScore(customerId: string | undefined, farmerId: strin
       // Tenta o score do farmer atual primeiro; cai pra qualquer score se não existir
       const { data: own } = await supabase
         .from('farmer_client_scores')
-        .select('health_score, health_class, churn_risk, expansion_score, priority_score, gross_margin_pct, itens_com_custo, itens_sem_custo, avg_monthly_spend_180d, days_since_last_purchase, category_count, avg_repurchase_interval, revenue_potential, sales_history_status')
+        .select(COLUNAS_SCORE_C360)
         .eq('customer_user_id', customerId!)
         .eq('farmer_id', farmerId!)
         .maybeSingle();
-      if (own) return own;
-      const { data: fallback } = await supabase
+      const linha = own ?? (await supabase
         .from('farmer_client_scores')
-        .select('health_score, health_class, churn_risk, expansion_score, priority_score, gross_margin_pct, itens_com_custo, itens_sem_custo, avg_monthly_spend_180d, days_since_last_purchase, category_count, avg_repurchase_interval, revenue_potential, sales_history_status')
+        .select(COLUNAS_SCORE_C360)
         .eq('customer_user_id', customerId!)
         .limit(1)
-        .maybeSingle();
-      return fallback;
+        .maybeSingle()).data;
+      if (!linha) return linha;
+      // A margem NÃO vem da tabela: a coluna é fechada para authenticated (FU4-F) e sai pela RPC com
+      // gate de projeção. `margem_oculta` separa "o servidor não concedeu" de "não apurada" — sem ele
+      // o hero diria "sem compra na janela" sobre quem compra todo mês.
+      // Falha da RPC NÃO derruba o score: health/churn/cobertura foram lidos e seguem na tela; só a
+      // margem some (`margem_oculta`), sem legenda que afirme algo sobre o cliente (achado Codex).
+      const margem = await buscarMargemScore(customerId!).catch((e: unknown) => {
+        captureException(e, { fonte: 'get_scores_margem/c360' });
+        return undefined;
+      });
+      return {
+        ...linha,
+        gross_margin_pct: margem?.margem ?? null,
+        margem_oculta: margem ? !margem.visivel : true,
+      };
     },
   });
 }

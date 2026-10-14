@@ -27,6 +27,10 @@ let scoresGerencial = false;
 let falharAudit = false;
 let falharReco = false;
 let recoComDesfecho = false;
+/** O servidor não concede a margem (caller sem cap_custo_ler — FU4-F). */
+let margemOculta = false;
+/** A RPC concede 35% ao c1 (o DETECTOR do caso acima). */
+let margemC1 = false;
 
 /** Métodos do query-builder por chamada — discrimina `.limit(500)` solto de paginação ordenada. */
 type Chamada = { table: string; metodos: string[] };
@@ -97,9 +101,27 @@ function chain(table: string): unknown {
   return c;
 }
 
+/** A margem sai pela RPC `get_scores_margem` desde o fecho da coluna (FU4-F); espelha as linhas servidas. */
+function rpc(fn: string): unknown {
+  const c: Record<string, unknown> = { order: () => c, range: () => c };
+  c.then = (resolve: (v: unknown) => void) => {
+    if (fn !== 'get_scores_margem') return resolve({ data: null, error: null });
+    const r = resposta('farmer_client_scores');
+    if (r.error) return resolve(r);
+    const linhas = (r.data as Array<{ customer_user_id: string; gross_margin_pct?: number | null }>).map((l) => ({
+      customer_user_id: l.customer_user_id,
+      gross_margin_pct: margemOculta ? null : margemC1 && l.customer_user_id === 'c1' ? 35 : (l.gross_margin_pct ?? null),
+      margem_visivel: !margemOculta,
+    }));
+    return resolve({ data: linhas, error: null });
+  };
+  return c;
+}
+
 vi.mock('@/integrations/supabase/client', () => ({
   supabase: {
     from: (t: string) => chain(t),
+    rpc: (fn: string) => rpc(fn),
     functions: { invoke: vi.fn().mockResolvedValue({ data: null, error: null }) },
   },
 }));
@@ -139,6 +161,8 @@ beforeEach(() => {
   falharAudit = false;
   falharReco = false;
   recoComDesfecho = false;
+  margemOculta = false;
+  margemC1 = false;
   chamadas = [];
   vi.clearAllMocks();
 });
@@ -404,5 +428,34 @@ describe('IntelligenceManagerialTab — adoção de recomendações honesta', ()
 
     const linha = screen.getByText(/^f1/).closest('tr');
     expect(linha!.textContent, '1 aceito de 2 recomendações = 50%').toMatch(/50%/);
+  });
+});
+
+/**
+ * FU4-F: gestor SEM cap_custo_ler (gerencial) — o servidor não concede a margem. A coluna não pode
+ * mostrar o número, nem "0 de 2 apuradas" (seria um fato falso sobre a carteira): mostra "—" e diz
+ * que é restrição. O DETECTOR prova que a mesma fixture, concedida, mostra o número.
+ */
+describe('IntelligenceManagerialTab — margem não concedida (sem cap_custo_ler)', () => {
+  beforeEach(() => { falharScores = false; scoresGerencial = true; });
+
+  it('a coluna de margem mostra "—" com a legenda de restrição, nunca o número', async () => {
+    margemOculta = true;
+    margemC1 = true;
+    renderWithClient(<IntelligenceManagerialTab />);
+    await screen.findByText('Comparativo por Vendedor');
+
+    const linha = screen.getByText(/^f1/).closest('tr')!;
+    expect(linha.textContent).not.toMatch(/35\.0%/);
+    expect(linha.querySelector('[title="margem restrita a quem lê custo"]')).toBeTruthy();
+  });
+
+  it('DETECTOR: com a margem concedida, a mesma linha mostra 35.0%', async () => {
+    margemC1 = true;
+    renderWithClient(<IntelligenceManagerialTab />);
+    await screen.findByText('Comparativo por Vendedor');
+
+    const linha = screen.getByText(/^f1/).closest('tr')!;
+    expect(linha.textContent).toMatch(/35\.0%/);
   });
 });

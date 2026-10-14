@@ -197,7 +197,9 @@ export function Customer360View({
               <div className="grid grid-cols-3 md:grid-cols-5 gap-3">
                 {/* Sem `* 100`: a coluna já é percentual. Com a margem calculada no servidor,
                     53,47 viraria "5347.0%" — e `null` virava "0.0%", afirmando margem nula. */}
-                <ScoreItem
+                {/* Sem cap_custo_ler o servidor não concede a margem (FU4-F): o item some, em vez de
+                    mostrar "—" com a legenda de "sem compra na janela", que seria falsa. */}
+                {!score.margem_oculta && <ScoreItem
                   label="Margem"
                   value={formatMargemPct(score.gross_margin_pct)}
                   // itens_* já chegam normalizados por fetchScoresPorCustomer; `?? null` só cobre o
@@ -206,7 +208,7 @@ export function Customer360View({
                   hint={legendaCoberturaItens({ itensComCusto: score.itens_com_custo ?? null, itensSemCusto: score.itens_sem_custo ?? null })
                     ?? (score.gross_margin_pct == null ? legendaMargemSemCompraNaJanela(score.days_since_last_purchase) : null)}
                   hintTitle={DICA_COBERTURA_LINHAS}
-                />
+                />}
                 {/* expansion_score é coluna sem produtor (null em 100% da base hoje) — guard
                     `== null` com fallback '—' em vez de afirmar "0.0" para quem não foi avaliado. */}
                 <ScoreItem label="Expansão" value={score.expansion_score == null ? '—' : score.expansion_score.toFixed(1)} />

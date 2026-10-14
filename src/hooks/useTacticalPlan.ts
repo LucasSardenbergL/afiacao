@@ -8,7 +8,7 @@ import { ehJaGeradoHoje } from '@/lib/tactical/plano-duplicata';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { eventoDaCarga, type SaidaDaCarga } from '@/lib/tactical/telemetria-fila-plano';
 import { track } from '@/lib/analytics';
-import { fetchAllPages } from '@/lib/postgrest';
+import { buscarMargemScore, buscarMargensScores } from '@/lib/scoring/margemScores';
 import { ownersAtivosDoAlvo } from '@/lib/carteira/escopo-clientes';
 import { useAuth } from '@/contexts/AuthContext';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
@@ -128,12 +128,16 @@ interface TacticalPlanRow {
   generated_at: string;
 }
 
+// Sem `gross_margin_pct`: a coluna é fechada para authenticated (FU4-F) e listá-la (ou `*`) derruba a
+// query com 42501. A margem vem de `buscarMargemScore`/`buscarMargensScores` (RPC com gate de projeção).
+const COLUNAS_SCORE_PLANO =
+  'farmer_id, health_score, churn_risk, avg_monthly_spend_180d, category_count, days_since_last_purchase, expansion_score, revenue_potential, sales_history_status';
+
 interface ClientScoreFull {
   farmer_id: string | null; // dono da carteira-Omie (Opção A) — escopa o cluster de margem
   health_score: number | string | null;
   churn_risk: number | string | null;
   avg_monthly_spend_180d: number | string | null;
-  gross_margin_pct: number | string | null;
   category_count: number | string | null;
   days_since_last_purchase: number | string | null;
   expansion_score: number | string | null;
@@ -224,9 +228,11 @@ export interface EfficiencyCheck {
    * Por que o R$/h é indecidível. `sem_margem` = o cliente não tem margem apurada — fato
    * sobre o dado dele. `indisponivel` = a consulta falhou (timeout, RLS, 500) e não sabemos
    * nada — afirmar "margem não apurada" aqui alegaria um fato sobre o cliente a partir de
-   * uma falha nossa. Ausente quando o R$/h foi calculado.
+   * uma falha nossa. `margem_restrita` = o servidor não concede a margem a este usuário (sem
+   * `cap_custo_ler`, FU4-F) — o gate não se aplica a ele, e o R$/h não pode sair: com o gasto
+   * médio conhecido, ele inverte a margem exata. Ausente quando o R$/h foi calculado.
    */
-  motivo?: 'sem_margem' | 'indisponivel';
+  motivo?: 'sem_margem' | 'indisponivel' | 'margem_restrita';
 }
 
 const objectiveLabels: Record<string, string> = {
@@ -510,12 +516,13 @@ export const useTacticalPlan = () => {
 
     const { data: score, error: erroScore } = (await supabase
       .from('farmer_client_scores')
-      .select('revenue_potential, avg_monthly_spend_180d, gross_margin_pct')
+      // Sem gross_margin_pct: fechada para authenticated (FU4-F); a margem vem da RPC abaixo.
+      .select('revenue_potential, avg_monthly_spend_180d')
       // Opção A: 1 linha por cliente (customer_user_id único). NÃO filtrar por farmer_id —
       // quebrava sob a lente / cliente de outro dono → "sem score" falso; RLS gateia a visibilidade.
       .eq('customer_user_id', customerId)
       .single()) as unknown as {
-        data: Pick<ClientScoreFull, 'revenue_potential' | 'avg_monthly_spend_180d' | 'gross_margin_pct'> | null;
+        data: Pick<ClientScoreFull, 'revenue_potential' | 'avg_monthly_spend_180d'> | null;
         error: unknown };
 
     // FALHA DE CONSULTA ≠ MARGEM NÃO APURADA. O `error` era descartado, então timeout/RLS/500
@@ -524,6 +531,16 @@ export const useTacticalPlan = () => {
     // Os dois estados são indistinguíveis pelos campos numéricos; só `motivo` os separa.
     if (erroScore || !score) {
       return { estimatedProfitPerHour: null, threshold: PROFIT_PER_HOUR_THRESHOLD, isAboveThreshold: null, motivo: 'indisponivel' };
+    }
+    // Margem pela RPC com gate de projeção. Falha da RPC é `indisponivel`, nunca "sem margem".
+    let margemScore;
+    try {
+      margemScore = await buscarMargemScore(customerId);
+    } catch {
+      return { estimatedProfitPerHour: null, threshold: PROFIT_PER_HOUR_THRESHOLD, isAboveThreshold: null, motivo: 'indisponivel' };
+    }
+    if (!margemScore || !margemScore.visivel) {
+      return { estimatedProfitPerHour: null, threshold: PROFIT_PER_HOUR_THRESHOLD, isAboveThreshold: null, motivo: 'margem_restrita' };
     }
 
     // Tri-estado explícito: revenue_potential é NULL em 6.633/6.633 linhas (nenhum writer o
@@ -535,7 +552,7 @@ export const useTacticalPlan = () => {
     // Margem desconhecida → R$/h INDECIDÍVEL, não zero. Com `|| 0` o gate reprovava o cliente por
     // omissão, e "não sei" ficava indistinguível de "não vale a ligação" na tela da vendedora.
     // Espelha profitPerHora de supabase/functions/_shared/tactical-margem.ts.
-    const marginPct = margemConhecida(score.gross_margin_pct);
+    const marginPct = margemScore.margem;
     const avgCallMinutes = 15;
     // Base do cálculo: o potencial quando MEDIDO e positivo; senão o gasto médio observado.
     // Potencial ausente e potencial 0 caem ambos no avgSpend — comportamento PRESERVADO desta
@@ -569,7 +586,8 @@ export const useTacticalPlan = () => {
         { data: recencyCapRow },
       ] = await Promise.all([
         // Opção A: lookup por customer_user_id (único); sem farmer_id (RLS gateia). Ver checkEfficiency.
-        supabase.from('farmer_client_scores').select('*').eq('customer_user_id', customerId).single() as unknown as Promise<{ data: ClientScoreFull | null }>,
+        // Lista explícita: `select('*')` inclui gross_margin_pct, fechada para authenticated (FU4-F).
+        supabase.from('farmer_client_scores').select(COLUNAS_SCORE_PLANO).eq('customer_user_id', customerId).single() as unknown as Promise<{ data: ClientScoreFull | null }>,
         supabase.from('profiles').select('name, customer_type, cnae').eq('user_id', customerId).single() as unknown as Promise<{ data: ProfileLite | null }>,
         // Teto de recência (hs_recency_cap_days) — fronteira reativacao/recuperacao em selectObjective
         // ACOMPANHA o teto do modelo (não hardcode). Ausente → clampRecencyCapDays default 180. limit(1)
@@ -597,7 +615,10 @@ export const useTacticalPlan = () => {
       const healthScore = Number(score.health_score || 0);
       const churnRisk = Number(score.churn_risk ?? 0); // ?? (não ||): churn=0 é valor real, não ausência
       const avgSpend = Number(score.avg_monthly_spend_180d || 0);
-      const marginPct = margemConhecida(score.gross_margin_pct);
+      // Margem e cluster pela RPC com gate de projeção: sem cap_custo_ler os dois chegam null e o plano
+      // segue o ramo "margem desconhecida" — o número não vai ao prompt nem fica gravado no plano.
+      const margemCliente = await buscarMargemScore(customerId);
+      const marginPct = margemCliente?.margem ?? null;
       const categoryCount = Number(score.category_count || 0);
       const daysSince = Number(score.days_since_last_purchase || 0);
       // [money-path "ausente ≠ zero"] Espelha a edge generate-tactical-plan: estas duas colunas
@@ -629,26 +650,19 @@ export const useTacticalPlan = () => {
       // paginação pula e repete linha entre páginas.
       let clusterMargin: number | null = null;
       {
-        // Falha de página REJEITA — garantido pelo contrato de `fetchAllPages`, não por guard
+        // Falha de página REJEITA — garantido pelo contrato de `fetchAllPages` (usado por
+        // `buscarMargensScores`), não por guard
         // local (o guard que vivia aqui virou redundante quando o helper passou a exigir
         // `error` e falhar alto; duas camadas fazendo a mesma coisa só escondem qual vale).
         // Importa especialmente aqui: a régua decide entre `upsell_premium` e
         // `consolidacao_margem`, entra no prompt da IA e fica gravada no plano — um cluster
         // calculado sobre páginas faltantes troca o VEREDITO de forma plausível e silenciosa.
-        const peers = await fetchAllPages<Pick<ClientScoreFull, 'gross_margin_pct'>>((de, ate) =>
-          supabase
-            .from('farmer_client_scores')
-            .select('gross_margin_pct')
-            .eq('farmer_id', ownerId)
-            .neq('customer_user_id', customerId)
-            .order('customer_user_id', { ascending: true })
-            .range(de, ate) as unknown as PromiseLike<{
-            data: Pick<ClientScoreFull, 'gross_margin_pct'>[] | null;
-            error: unknown;
-          }>,
-          'farmer_client_scores/cluster-margem',
-        );
-        clusterMargin = mediaMargensConhecidas(peers.map((r) => r.gross_margin_pct));
+        // O escopo de linha (carteira do dono, inclusive sob cobertura) é o mesmo de fcs_select_carteira
+        // — a RPC o espelha. Exclui o próprio cliente (peer benchmark).
+        const peers = [...(await buscarMargensScores({ farmerId: ownerId })).entries()]
+          .filter(([cid]) => cid !== customerId)
+          .map(([, m]) => m.margem);
+        clusterMargin = mediaMargensConhecidas(peers);
       }
 
       // Bundle pendente do cliente sob a carteira do DONO (ownerId), não do viewer. A tabela é
