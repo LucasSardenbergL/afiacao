@@ -1,0 +1,153 @@
+import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { fireEvent, render, screen, within } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
+import type { ResumoCliente } from '@/lib/financeiro/ciclo-cliente-helpers';
+
+const resumoMock = vi.fn();
+const coorteMock = vi.fn();
+const receitaMock = vi.fn();
+const projMock = vi.fn();
+const titulosMock = vi.fn();
+
+vi.mock('@/hooks/useFinanceiroCiclo', () => ({
+  hojeSp: () => '2026-10-14',
+  useCicloResumo: () => resumoMock(),
+  useCicloCoorte: () => coorteMock(),
+  useReceitaDiariaTtm: () => receitaMock(),
+  useCicloTitulosCliente: () => titulosMock(),
+}));
+vi.mock('@/hooks/useCashflowProjection', () => ({
+  useCashflowProjection: (company: string) => projMock(company),
+}));
+vi.mock('@/lib/analytics', () => ({ track: vi.fn() }));
+
+import { CicloTab } from '@/components/financeiro/cashflow/ciclo/CicloTab';
+import { montarSerieTendencia } from '@/components/financeiro/cashflow/ciclo/ciclo-format';
+
+const ok = <T,>(data: T) => ({ data, isLoading: false, error: null });
+const cli = (o: Partial<ResumoCliente>): ResumoCliente => ({
+  company: 'oben', omieCodigoCliente: 1, nomeCliente: 'ACME', nParcelas: 8, nDocumentos: 8, valorPago: 1000,
+  valorPagoSemBaixa: null, prazoConcedidoPond: 30, prazoRealPond: 30, atrasoPond: 0, atrasoP50: 0, atrasoP80: 0,
+  atrasoP80Valor: 0, atrasoMaxObservado: 0, excessoCarenciaPond: 0, pctValorAtrasado: 0, ultimaBaixa: '2026-10-01',
+  nVencidas: null, saldoVencido: null, saldoVencido90: null, diasVencidoMax: null, volumeEmitido12m: 36500,
+  primeiraEmissao: '2025-10-20', nStatusAmbiguo: null, ...o,
+});
+const proj = { prazo_medio_recebimento: 31, prazo_medio_pagamento: 12, prazo_medio_estoque: 40, cash_conversion_cycle: 59 };
+
+const renderTab = (url = '/') => render(<MemoryRouter initialEntries={[url]}><CicloTab /></MemoryRouter>);
+
+beforeEach(() => {
+  coorteMock.mockReturnValue(ok([]));
+  receitaMock.mockReturnValue(ok({ oben: 11300, colacor: 2100, colacor_sc: null }));
+  titulosMock.mockReturnValue({ data: [], isLoading: false, error: null });
+  projMock.mockImplementation(() => ok({ indicadores: proj, confianca_dados: { motivos: [] } }));
+});
+
+describe('CicloTab', () => {
+  it('erro de leitura do resumo mostra erro, não estado vazio', () => {
+    resumoMock.mockReturnValue({ data: undefined, isLoading: false, error: new Error('boom') });
+    renderTab();
+    expect(screen.getByText(/não foi possível ler/i)).toBeInTheDocument();
+    expect(screen.queryByText(/sem títulos/i)).not.toBeInTheDocument();
+  });
+
+  it('sucesso vazio mostra EmptyState', () => {
+    resumoMock.mockReturnValue(ok([]));
+    renderTab();
+    expect(screen.getByText(/sem títulos/i)).toBeInTheDocument();
+  });
+
+  it('mesmo nome em 2 empresas renderiza 2 linhas (chave composta)', () => {
+    resumoMock.mockReturnValue(ok([cli({ company: 'oben' }), cli({ company: 'colacor' })]));
+    renderTab('/?cicloEmpresa=all');
+    expect(screen.getAllByText('ACME')).toHaveLength(2);
+  });
+
+  it('cliente só-vencido aparece como estoque vencido a recuperar', () => {
+    resumoMock.mockReturnValue(ok([cli({ nParcelas: null, nDocumentos: null, atrasoP80: null, atrasoP80Valor: null, ultimaBaixa: null, saldoVencido: 500 })]));
+    renderTab();
+    expect(screen.getByText(/vencidos/)).toBeInTheDocument();
+    expect(screen.getByText(/estoque vencido a recuperar/)).toBeInTheDocument();
+  });
+
+  it('degrau_prazo sem degrau (parcelado): mostra texto e motivo, sem R$ no cenário', () => {
+    resumoMock.mockReturnValue(ok([cli({ nParcelas: 16, nDocumentos: 8 })]));
+    renderTab();
+    expect(screen.getByText(/Parcelado/)).toBeInTheDocument();
+    expect(screen.getByText(/parcelado: média não é condição/)).toBeInTheDocument();
+    expect(screen.getByText(/não é previsão/)).toBeInTheDocument();
+  });
+
+  it('cenário com R$ vem sempre com o rótulo "não é previsão"', () => {
+    resumoMock.mockReturnValue(ok([cli({ prazoConcedidoPond: 60 })]));
+    renderTab();
+    expect(screen.getByText(/R\$\s*[\d.]+/, { selector: 'div.font-mono' })).toBeInTheDocument();
+    expect(screen.getByText(/não é previsão/)).toBeInTheDocument();
+  });
+
+  it('engine falha numa empresa: só ela vira "—", as outras seguem', () => {
+    resumoMock.mockReturnValue(ok([]));
+    projMock.mockImplementation((c: string) =>
+      c === 'colacor' ? { data: undefined, isLoading: false, error: new Error('500') } : ok({ indicadores: proj, confianca_dados: { motivos: [] } }));
+    renderTab();
+    expect(screen.getByTestId('ciclo-card-colacor')).toHaveTextContent('—');
+    expect(screen.getByTestId('ciclo-card-oben')).toHaveTextContent('31d');
+  });
+
+  it('receita TTM ausente aparece como "—", nunca R$ 0', () => {
+    resumoMock.mockReturnValue(ok([]));
+    renderTab();
+    expect(screen.getByTestId('ciclo-card-colacor_sc')).toHaveTextContent('— (sem receita TTM)');
+    expect(screen.getByTestId('ciclo-card-colacor_sc')).not.toHaveTextContent('R$');
+  });
+
+  it('mostra o caveat fixo', () => {
+    resumoMock.mockReturnValue(ok([]));
+    renderTab();
+    expect(screen.getByText(/Todo R\$ é cenário, não previsão/)).toBeInTheDocument();
+  });
+
+  it('custo acima do teto mostra o motivo no input; custo válido mostra desconto', () => {
+    resumoMock.mockReturnValue(ok([]));
+    renderTab('/?cicloCusto=35');
+    expect(screen.getByText(/até 20% a\.m\./)).toBeInTheDocument();
+  });
+
+  it('custo válido calcula o desconto máximo', () => {
+    resumoMock.mockReturnValue(ok([]));
+    renderTab('/?cicloCusto=2,5');
+    expect(screen.getByText('30 dias')).toBeInTheDocument();
+    expect(screen.queryByText(/até 20% a\.m\./)).not.toBeInTheDocument();
+  });
+
+  it('tendência marca os meses parciais (rótulo com "*" e flag), sem preencher ausente', () => {
+    const m = (mes: string, mesParcial: boolean, prazoReal: number | null) => ({
+      company: 'oben' as const, mes, valorVencido: 1, valorPago: 1, valorEmAberto: 0, pctValorPago: null,
+      prazoConcedido: 30, prazoReal, atraso: null, mesParcial,
+    });
+    const serie = montarSerieTendencia([m('2025-10-01', true, 33), m('2025-11-01', false, null), m('2026-10-01', true, 31)], 'oben');
+    expect(serie.map((p) => p.mes)).toEqual(['2025-10*', '2025-11', '2026-10*']);
+    expect(serie.map((p) => p.parcial)).toEqual([true, false, true]);
+    expect(serie[1].real).toBeNull();
+    expect(serie[1].pago).toBeNull();
+  });
+
+  it('drill: NF ausente vira "—" e todas as situações têm rótulo legível', () => {
+    resumoMock.mockReturnValue(ok([cli({})]));
+    const t = (lancamento: number, situacao: string, documento: string | null) => ({
+      lancamento, documento, emissao: '2026-01-01', vencimento: '2026-02-01', baixa: null, valor: 100, saldo: 100,
+      situacao, prazoConcedido: 30, prazoReal: null, atraso: null, diasVencido: situacao === 'vencida_aberta' ? 12 : null,
+    });
+    titulosMock.mockReturnValue(ok([
+      t(1, 'paga', null), t(2, 'paga_sem_baixa', 'NF-2'), t(3, 'vencida_aberta', 'NF-3'), t(4, 'status_ambiguo', 'NF-4'),
+    ]));
+    renderTab();
+    fireEvent.click(screen.getByText('ACME'));
+    const dlg = screen.getByRole('dialog');
+    expect(within(dlg).getByText('Paga (sem data de baixa)')).toBeInTheDocument();
+    expect(within(dlg).getByText(/Vencida em aberto há 12d/)).toBeInTheDocument();
+    expect(within(dlg).getByText('Status ambíguo')).toBeInTheDocument();
+    const linha1 = within(dlg).getByText('Paga').closest('tr') as HTMLElement;
+    expect(within(linha1).getAllByText('—').length).toBeGreaterThan(0);
+  });
+});

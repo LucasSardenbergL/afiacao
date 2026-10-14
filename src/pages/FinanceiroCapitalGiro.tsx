@@ -7,6 +7,7 @@ import { NcgDecomposicao } from '@/components/financeiro/cashflow/NcgDecomposica
 import { ConfigCashflowDialog } from '@/components/financeiro/cashflow/ConfigCashflowDialog';
 import { Button } from '@/components/ui/button';
 import { Settings } from 'lucide-react';
+import { CicloTab } from '@/components/financeiro/cashflow/ciclo/CicloTab';
 import { useAuth } from '@/contexts/AuthContext';
 
 export default function FinanceiroCapitalGiro() {
@@ -30,12 +31,14 @@ export default function FinanceiroCapitalGiro() {
           <TabsTrigger value="fluxo">Fluxo 13 semanas</TabsTrigger>
           <TabsTrigger value="ncg">NCG</TabsTrigger>
           <TabsTrigger value="eventos">Eventos</TabsTrigger>
+          {isMaster && <TabsTrigger value="ciclo">Ciclo</TabsTrigger>}
         </TabsList>
 
         <TabsContent value="posicao"><PosicaoAgora /></TabsContent>
         <TabsContent value="fluxo"><Fluxo13Semanas /></TabsContent>
         <TabsContent value="ncg"><NcgDecomposicao /></TabsContent>
         <TabsContent value="eventos"><EventosManager /></TabsContent>
+        {isMaster && <TabsContent value="ciclo"><CicloTab /></TabsContent>}
       </Tabs>
 
       <ConfigCashflowDialog open={showConfig} onOpenChange={setShowConfig} />
