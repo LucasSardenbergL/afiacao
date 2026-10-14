@@ -46,7 +46,8 @@ if [ "${1:-}" = "--falsificar" ]; then
               null_vira_zero:DV2,DV4,DV5:DV1,DV3,DV6,DV7
               zero_conta:DV3,DV7,DV8:DV1,G1
               sem_gate:G1:DV1,DV3
-              pos_legado:MIG!POS_DESC_LEGADO
+              pos_legado:MIG!POS_DESC_FONTE
+              pos_legado_extra:MIG!POS_DESC_LEGADO
               pos_null_vira_zero:MIG!POS_DESC_NULL
               pre_volatil:MIG!PRE_VOLATIL"
   falhas=0
@@ -146,12 +147,16 @@ sabotar() { # $1 = sed; exige que o sed MUDE o arquivo (sabotagem que não casa 
 desliga_pos() { sabotar "s/RAISE EXCEPTION 'POS/RAISE NOTICE 'POS/g"; }
 case "${SABOTAGEM:-}" in
   "") ;;
-  legado)             sabotar 's/oi\.desconto_valor AS disc_item/oi.discount AS disc_item/'; desliga_pos ;;
-  null_vira_zero)     sabotar 's/disc_item IS DISTINCT FROM 0 OR/COALESCE(disc_item,0) > 0 OR/'; desliga_pos ;;
-  zero_conta)         sabotar 's/disc_item IS DISTINCT FROM 0 OR/disc_item IS NOT NULL OR/'; desliga_pos ;;
+  # As seds ancoram na linha do CORPO (indentação + início): sem âncora elas reescreviam também a
+  # string que a POS procura, e a checagem sabotada junto com o corpo passava (pego na 2ª rodada).
+  legado)             sabotar 's/^( +)oi\.desconto_valor AS disc_item,/\1oi.discount AS disc_item,/'; desliga_pos ;;
+  null_vira_zero)     sabotar 's/^( +)bool_or\(disc_item IS DISTINCT FROM 0 OR/\1bool_or(COALESCE(disc_item,0) > 0 OR/'; desliga_pos ;;
+  zero_conta)         sabotar 's/^( +)bool_or\(disc_item IS DISTINCT FROM 0 OR/\1bool_or(disc_item IS NOT NULL OR/'; desliga_pos ;;
   sem_gate)           sabotar 's/IF NOT \(auth\.uid\(\) IS NOT NULL/IF false AND NOT (auth.uid() IS NOT NULL/'; desliga_pos ;;
-  pos_legado)         sabotar 's/oi\.desconto_valor AS disc_item/oi.discount AS disc_item/' ;;
-  pos_null_vira_zero) sabotar 's/disc_item IS DISTINCT FROM 0 OR/COALESCE(disc_item,0) > 0 OR/' ;;
+  pos_legado)         sabotar 's/^( +)oi\.desconto_valor AS disc_item,/\1oi.discount AS disc_item,/' ;;
+  # lê as DUAS colunas: a fonte nova continua lá, mas a legada voltou — só POS_DESC_LEGADO pega
+  pos_legado_extra)   sabotar 's/^( +)oi\.desconto_valor AS disc_item,/\1oi.desconto_valor AS disc_item, oi.discount AS disc_legado,/' ;;
+  pos_null_vira_zero) sabotar 's/^( +)bool_or\(disc_item IS DISTINCT FROM 0 OR/\1bool_or(COALESCE(disc_item,0) > 0 OR/' ;;
   # predecessor VOLATILE (mesmo prosrc): o PRE tem de recusar em vez de a trava normalizar em silêncio
   pre_volatil)        P -q -c "ALTER FUNCTION public.get_defasagem_cliente(jsonb,uuid) VOLATILE" ;;
   *) echo "INFRA: sabotagem desconhecida $SABOTAGEM"; exit 2 ;;
