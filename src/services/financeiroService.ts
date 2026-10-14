@@ -988,7 +988,17 @@ export function exportDRECSV(data: FinDRE[]): string {
       return typeof v === 'number' ? v : 0;
     })
   ]);
-  return [toCsvRow(header), ...rows.map(toCsvRow)].join('\n');
+  // DRE fase 2: o CSV sai da tela — o aviso de resultado provisório tem de ir junto com o número.
+  // Ausente (snapshot pré-fase 2) é "n/d", nunca 0.
+  const foraDre = [
+    'fora_dre (composição pendente)',
+    ...data.map(d => (typeof d.fora_dre === 'number' ? (d.fora_dre_parcial ? `${d.fora_dre} (parcial)` : d.fora_dre) : 'n/d')),
+  ];
+  const provisorio = [
+    'status_resultado',
+    ...data.map(d => (d.resultado_provisorio === true ? 'PROVISÓRIO' : d.resultado_provisorio === false ? 'sem pendência fora do DRE' : 'n/d (calculado antes da segregação)')),
+  ];
+  return [toCsvRow(header), ...rows.map(toCsvRow), toCsvRow(foraDre), toCsvRow(provisorio)].join('\n');
 }
 
 export function downloadCSV(content: string, filename: string): void {
