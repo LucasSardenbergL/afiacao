@@ -5,6 +5,7 @@
 // conta quando vira RECORRENTE com evidência registrada (CHECK no banco).
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { fetchAllPagesComMensagem } from '@/lib/postgrest';
 import { useAuth } from '@/contexts/AuthContext';
 import type { Database } from '@/integrations/supabase/types';
 
@@ -111,27 +112,22 @@ export function resumirIceberg(iniciativas: IniciativaIceberg[]): ResumoIceberg 
   };
 }
 
-const PAGE = 1000;
-
-/** Pagina além da capa silenciosa de 1.000 linhas do PostgREST (KPIs somam — nunca truncar). */
-async function fetchIniciativas(): Promise<IniciativaIceberg[]> {
-  const out: IniciativaIceberg[] = [];
-  for (let from = 0; ; from += PAGE) {
-    const { data, error } = await supabase
-      .from('gov_iniciativas')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .order('id', { ascending: true })
-      .range(from, from + PAGE - 1);
-    if (error) throw new Error(error.message);
-    // data null SEM error = malformada, não fim (classe #1338→#1564): tratá-la como fim
-    // somava os KPIs R$/mês do iceberg sobre um PREFIXO da tabela.
-    if (data == null) throw new Error('gov_iniciativas: data null sem error — malformada, não é fim');
-    const rows = data as IniciativaIceberg[];
-    out.push(...rows);
-    if (rows.length < PAGE) break;
-  }
-  return out;
+/**
+ * Pagina além da capa silenciosa de 1.000 linhas do PostgREST pelo canônico (KPIs somam — nunca
+ * truncar): página perdida LANÇA (somaria os R$/mês sobre um PREFIXO da tabela) e é medida.
+ */
+function fetchIniciativas(): Promise<IniciativaIceberg[]> {
+  return fetchAllPagesComMensagem<IniciativaIceberg>(
+    (de, ate) =>
+      supabase
+        .from('gov_iniciativas')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: true })
+        .range(de, ate) as unknown as PromiseLike<{ data: IniciativaIceberg[] | null; error: unknown }>,
+    'gov_iniciativas/iceberg',
+    'gov_iniciativas',
+  );
 }
 
 const QUERY_KEY = ['gov-iniciativas'] as const;

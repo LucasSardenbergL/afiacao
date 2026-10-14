@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { format, subDays } from 'date-fns';
 import { supabase } from '@/integrations/supabase/client';
+import { fetchAllPagesComMensagem } from '@/lib/postgrest';
 import { OPEN_TITLE_STATUSES } from '@/lib/financeiro/titulo-status';
 
 /**
@@ -98,31 +99,27 @@ export function computeAlertaCredito(
   return { vencido, titulos: titulos.length, vencimentoMaisAntigo, syncAt, dadoDefasado };
 }
 
-const PAGE = 1000;
-
-/** Pagina além da capa silenciosa de 1.000 linhas do PostgREST (nunca truncar soma money-path). */
-async function fetchTitulosVencidosPar(par: ParCliente, corte: string): Promise<TituloVencidoRow[]> {
-  const out: TituloVencidoRow[] = [];
-  for (let from = 0; ; from += PAGE) {
-    const { data, error } = await supabase
-      .from('fin_contas_receber')
-      .select('saldo, data_vencimento')
-      .eq('company', par.company)
-      .eq('omie_codigo_cliente', par.codigo)
-      .in('status_titulo', [...OPEN_TITLE_STATUSES])
-      .lt('data_vencimento', corte)
-      .gt('saldo', 0)
-      .order('id', { ascending: true })
-      .range(from, from + PAGE - 1);
-    if (error) throw new Error(error.message);
-    // data null SEM error = resposta malformada, não fim: o `?? []` de antes encerrava o
-    // laço e o vencido 60+ saía SUBESTIMADO como soma firme (classe #1338→#1564).
-    if (data == null) throw new Error('fin_contas_receber: data null sem error — malformada, não é fim');
-    const rows = data as TituloVencidoRow[];
-    out.push(...rows);
-    if (rows.length < PAGE) break;
-  }
-  return out;
+/**
+ * Pagina além da capa silenciosa de 1.000 linhas do PostgREST pelo canônico (nunca truncar soma
+ * money-path): página com error ou `data: null` sem error LANÇA — o vencido 60+ sairia SUBESTIMADO
+ * como soma firme — e a página perdida é medida pela fonte.
+ */
+function fetchTitulosVencidosPar(par: ParCliente, corte: string): Promise<TituloVencidoRow[]> {
+  return fetchAllPagesComMensagem<TituloVencidoRow>(
+    (de, ate) =>
+      supabase
+        .from('fin_contas_receber')
+        .select('saldo, data_vencimento')
+        .eq('company', par.company)
+        .eq('omie_codigo_cliente', par.codigo)
+        .in('status_titulo', [...OPEN_TITLE_STATUSES])
+        .lt('data_vencimento', corte)
+        .gt('saldo', 0)
+        .order('id', { ascending: true })
+        .range(de, ate),
+    'fin_contas_receber/alerta-credito',
+    'fin_contas_receber',
+  );
 }
 
 export function useAlertaCreditoCliente(cliente: ClienteComCodigos | null | undefined) {

@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 // =============================================================
 // Helper de autorização inlineado (de _shared/auth.ts)
@@ -110,6 +111,20 @@ Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
   const auth = await authorizeCronOrStaff(req);
   if (!auth.ok) return auth.response;
+
+  // Sonda de versão — DEPOIS do gate (que já aceita `x-cron-secret`) e antes de qualquer IO.
+  // O front chama por GET com query string; a sonda é um POST com corpo `{ "probe": true }`.
+  if (req.method === 'POST') {
+    const corpoBruto = await req.json().catch(() => ({}));
+    const decisaoSonda = classificarSonda(corpoBruto);
+    if (decisaoSonda.tipo !== 'disparo') {
+      const corpo = decisaoSonda.tipo === 'sonda' ? respostaSonda(VERSAO) : { error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) };
+      return new Response(JSON.stringify(corpo), {
+        status: decisaoSonda.tipo === 'sonda' ? 200 : 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+  }
 
   const url = new URL(req.url);
   const company = url.searchParams.get('company');

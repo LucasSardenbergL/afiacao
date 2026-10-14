@@ -18,6 +18,11 @@ function builder() {
   return b;
 }
 vi.mock('@/integrations/supabase/client', () => ({ supabase: { from: () => builder() } }));
+const captureExceptionMock = vi.fn();
+vi.mock('@/lib/analytics', () => ({
+  captureException: (...a: unknown[]) => captureExceptionMock(...a),
+}));
+
 
 import { fetchReceitaCompetencia } from '../fetch-receita-competencia';
 
@@ -26,6 +31,7 @@ const r = (company: string, ano: number, mes: number, valor_total: number) => ({
 beforeEach(() => {
   chamadas = [];
   respostas = [];
+  captureExceptionMock.mockClear();
 });
 
 describe('fetchReceitaCompetencia', () => {
@@ -60,5 +66,12 @@ describe('fetchReceitaCompetencia', () => {
     await expect(fetchReceitaCompetencia('oben', { de: '2026-07-01', ate: '2026-10-01' })).rejects.toThrow('rls');
     respostas = [{ data: null, error: null }];
     await expect(fetchReceitaCompetencia('oben', { de: '2026-07-01', ate: '2026-10-01' })).rejects.toThrow(/malformada/);
+  });
+
+  it('[DRE-TELEMETRIA] página perdida é MEDIDA pela fonte (paginador canônico)', async () => {
+    respostas = [{ data: null, error: { message: 'rls' } }];
+    await expect(fetchReceitaCompetencia('oben', { de: '2026-07-01', ate: '2026-10-01' })).rejects.toThrow('rls');
+    expect(captureExceptionMock).toHaveBeenCalledTimes(1);
+    expect(captureExceptionMock.mock.calls[0][1]).toMatchObject({ fonte: 'fin_dre_competencia_base/dashboard-receita', pagina: 0 });
   });
 });

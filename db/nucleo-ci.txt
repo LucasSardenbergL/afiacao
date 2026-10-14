@@ -45,6 +45,10 @@ db/test-drop-quarentena-omie-clientes.sh    11
 db/test-wa-owner-efetivo-gate-staff.sh     25
 db/test-reposicao-logs-insert-cap-compras.sh 15
 db/test-authz-is-not-true-escritas.sh      24
+# FU4-F: a margem por cliente (farmer_client_scores.gross_margin_pct) fechada por privilégio de COLUNA para
+# authenticated/anon, com get_scores_margem como via (gate de projeção por cap_custo_ler). Linha de base com o
+# ACL de prod prova o furo; as 7 sabotagens rodam inline (sem modo --falsificar) e cada uma exige o seu vermelho.
+db/test-fcs-margem-coluna-fechada.sh       63
 # Telefonia: quem é o dono do número discado (resolver_cliente_por_telefone, INVOKER). Roda COMO a
 # vendedora sob a RLS copiada da prod: o telefone com hífen casa (a busca antiga reconhecia 4% das
 # carteiras), staff não é cliente, ambíguo fica sem dono em vez de cair num cliente ao acaso, um

@@ -213,3 +213,16 @@ describe('ItensTable — seleção em massa', () => {
     expect(screen.queryAllByRole('checkbox')).toHaveLength(0);
   });
 });
+
+describe('ItensTable — teto de cobertura', () => {
+  it('linha capada: explica por que a final ficou abaixo da sugerida', () => {
+    setup({ linhas: [linha({ qtde_sugerida: 5, qtde_final: 1, _qtd: 1, estoque_maximo: 6, qtde_sem_teto: 5, teto_cobertura_aplicado: true })] });
+    const aviso = screen.getByText('limitado pelo teto de cobertura');
+    expect(aviso.getAttribute('title')).toContain('Para chegar ao estoque máximo (6) seriam 5');
+  });
+
+  it('linha sem cap: nenhum aviso', () => {
+    setup({ linhas: [linha({ teto_cobertura_aplicado: false })] });
+    expect(screen.queryByText('limitado pelo teto de cobertura')).toBeNull();
+  });
+});

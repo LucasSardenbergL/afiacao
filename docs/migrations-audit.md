@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **634** custom migrations totais
-- **2038** objetos esperados (criados por estas migrations)
+- **636** custom migrations totais
+- **2039** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 713
+  - `function`: 714
   - `rls_policy`: 471
   - `index`: 275
   - `cron_job`: 184
@@ -5144,6 +5144,16 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.fin_dre_snapshots_contrato_fase2` | — |
 | `trigger` | `public.trg_fin_dre_snapshots_contrato_fase2` | `fin_dre_snapshots` |
+
+### `20261014120000_fcs_margem_rpc_projecao.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_scores_margem` | — |
+
+### `20261014120100_fcs_margem_fecha_coluna.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ### `20261014211500_defasagem_desconto_valor.sql`
 

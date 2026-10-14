@@ -11,7 +11,7 @@ interface EfficiencyAlertDialogProps {
    * `profitPerHour: null` = R$/h INDECIDÍVEL, não baixo. `motivo` diz qual dos dois: margem
    * não apurada (fato sobre o cliente) ou consulta que falhou (fato sobre nós).
    */
-  alert: { customerId: string; profitPerHour: number | null; motivo?: 'sem_margem' | 'indisponivel'; planType: PlanType } | null;
+  alert: { customerId: string; profitPerHour: number | null; motivo?: 'sem_margem' | 'indisponivel' | 'margem_restrita'; planType: PlanType } | null;
   onClose: () => void;
   onConfirm: () => void;
 }

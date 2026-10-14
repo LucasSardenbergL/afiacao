@@ -246,6 +246,27 @@ fixar o limiar mas o compara **consigo mesmo** (`lucroConfiavel({… cobertura: 
 Assert que referencia a própria constante é tautologia quanto ao **valor**: prova a coerência
 interna e nada sobre o número. Para pinar um limiar é preciso um caso com o valor **literal**.
 
+### 12. A margem persistida furava o gate de PROJEÇÃO — e privilégio de coluna é por PAPEL (2026-10-14)
+
+O #1543 pôs `margem_pct` atrás de `cap_custo_ler` na **saída** de `get_carteira_margem_faixa()`, mas
+`farmer_client_scores.gross_margin_pct` seguia legível pela RLS da carteira (medido: `has_column_privilege`
+= `t`, 502 linhas com valor). A vendedora lia o número direto da tabela; cliente de 1 SKU → custo unitário.
+Fechado por REVOKE SELECT de tabela + GRANT das 30 outras colunas (o idioma do `sales_orders`), com a RPC
+`get_scores_margem` (gate de projeção + `margem_visivel`) como via legítima — migrations
+`20261014120000` (A, aditiva) → Publish → `20261014120100` (B, o fecho).
+
+- **Privilégio de coluna não distingue usuário**: o master perdeu a leitura direta junto. Toda tela que
+  mostra margem passou a ler pela RPC — não existe "REVOKE só para a vendedora".
+- **Medir antes de escolher**: as edges leem com `service_role` (inventário: 0 edges afetadas), e não há
+  write do browser — por isso o REVOKE de coluna fecha sem deploy de edge, enquanto mover a margem para
+  outra tabela exigiria trocar o writer `calculate-scores`.
+- **"Não concedido" ≠ "não apurado"**: sem `margem_visivel`, o NULL do gate virava "sem compra na janela"
+  no Customer 360 — fato fabricado. E o R$/h do diálogo de eficiência (`receita × margem × k`) inverte a
+  margem com o gasto médio conhecido: sem cap ele não sai (`motivo: 'margem_restrita'`).
+- **Vias que este fecho NÃO cobre** (medidas no mesmo dia): `farmer_tactical_plans.current_margin_pct`
+  (984/984 planos, policy staff-wide sem escopo de carteira) e o **texto** do plano gerado pelo LLM
+  (826/984 citam "margem … N%"). São entrega própria.
+
 ## Limite honesto herdado do #1465
 
 `get_preco_cockpit` mascara o número mas continua sendo **oráculo por bisseção**: o caller escolhe o
@@ -295,3 +316,6 @@ negativo**: a proteção vem da delegação (variante da lição 10).
   (linhas 125-135), então aplicar a `20260725130000` em prod **não** o deixa vermelho — depois do
   apply a mensagem dele ("a porta segue aberta até lá") fica verdadeira no fixture e falsa em prod.
   Corrigir o `L1` continua sendo follow-up do apply, não pré-requisito dele.
+- `db/test-fcs-margem-coluna-fechada.sh` — 63 asserts, 7 falsificações com vermelho EXATO (GRANT de tabela devolvido, margem
+  na lista do GRANT, projeção, escopo, fail-closed, EXECUTE de anon, policy aberta). Linha de base L1 prova
+  o furo com o ACL de prod antes das migrations.

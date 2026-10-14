@@ -42,7 +42,10 @@ let rpcErro: { message: string } | null = null;
 
 function recordRpc(fn: string, args: Record<string, unknown>) {
   rpcCalls.push({ fn, args });
-  const r = rpcErro ? { data: null, error: rpcErro } : { data: 'plan-1', error: null };
+  // A margem vem da RPC `get_scores_margem` desde o fecho da coluna (FU4-F): sem linha = sem margem.
+  const r = fn === 'get_scores_margem'
+    ? { data: [], error: null }
+    : rpcErro ? { data: null, error: rpcErro } : { data: 'plan-1', error: null };
   // A leitura de vendáveis é PAGINADA (`fetchAllPages`) desde que o cap de 1.000 do PostgREST
   // truncou a RPC em prod — e o builder de `.rpc()` expõe `.order()`/`.range()` como o de
   // `.from()`. O dublê precisa expor também, senão testa uma API que não existe.
@@ -56,7 +59,7 @@ function recordRpc(fn: string, args: Record<string, unknown>) {
 
 const scoreRow = () => ({
   farmer_id: OWNER,
-  health_score: 55, churn_risk: 12, avg_monthly_spend_180d: 1000, gross_margin_pct: 22,
+  health_score: 55, churn_risk: 12, avg_monthly_spend_180d: 1000,
   category_count: 4, days_since_last_purchase: 10, expansion_score: 30, revenue_potential: 5000,
   sales_history_status: 'ok',
 });

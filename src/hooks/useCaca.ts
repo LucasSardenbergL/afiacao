@@ -18,6 +18,7 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { fetchAllPagesComMensagem } from '@/lib/postgrest';
 import { montarFilaCaca } from '@/lib/caca/fila';
 import { empresasSemLucroConfiavel } from '@/lib/caca/melhores';
 import type {
@@ -26,7 +27,6 @@ import type {
   CandidatoRow,
 } from '@/lib/caca/types';
 
-const PAGE = 1000;
 
 // v_caca_* não estão no types.ts gerado → cast (mesmo padrão de useRouteContactList).
 type PgRes = { data: unknown; error: { message: string } | null };
@@ -49,25 +49,20 @@ const CANDIDATOS_SEL =
  * Pagina uma view inteira via `.range()`. Ordena por `(documento, ordem2)` —
  * chave ÚNICA por grão (documento NÃO é único: há 1 linha por documento×empresa)
  * → paginação estável (sem pular/duplicar na fronteira de página).
- * Lança em erro de DB (chamador trata via TanStack `error`).
+ * Pelo canônico: lança em erro de DB ou `data: null` sem error (truncaria a fila de caça, ~10k
+ * candidatos, em silêncio) — chamador trata via TanStack `error` — e a página perdida é medida.
  */
-async function paginarView<T>(view: string, sel: string, ordem2: string): Promise<T[]> {
-  const out: T[] = [];
-  for (let from = 0; ; from += PAGE) {
-    const res = (await cacaFrom(view)
-      .select(sel)
-      .order('documento', { ascending: true })
-      .order(ordem2, { ascending: true })
-      .range(from, from + PAGE - 1)) as PgRes;
-    if (res.error) throw new Error(res.error.message);
-    // data null SEM error = malformada, não fim (classe #1338→#1564): tratá-la como fim
-    // truncava a fila de caça (~10k candidatos) em silêncio.
-    if (res.data == null) throw new Error(`${view}: data null sem error — malformada, não é fim`);
-    const rows = res.data as T[];
-    out.push(...rows);
-    if (rows.length < PAGE) break;
-  }
-  return out;
+function paginarView<T>(view: string, sel: string, ordem2: string): Promise<T[]> {
+  return fetchAllPagesComMensagem<T>(
+    (de, ate) =>
+      cacaFrom(view)
+        .select(sel)
+        .order('documento', { ascending: true })
+        .order(ordem2, { ascending: true })
+        .range(de, ate) as PromiseLike<{ data: T[] | null; error: unknown }>,
+    `${view}/fila-caca`,
+    view,
+  );
 }
 
 /**

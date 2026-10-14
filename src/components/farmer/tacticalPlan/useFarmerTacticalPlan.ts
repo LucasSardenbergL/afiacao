@@ -42,7 +42,7 @@ export function useFarmerTacticalPlan() {
   const [expandedPlan, setExpandedPlan] = useState<string | null>(null);
   const [copiedText, setCopiedText] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
-  const [efficiencyAlert, setEfficiencyAlert] = useState<{ customerId: string; profitPerHour: number | null; motivo?: 'sem_margem' | 'indisponivel'; planType: PlanType } | null>(null);
+  const [efficiencyAlert, setEfficiencyAlert] = useState<{ customerId: string; profitPerHour: number | null; motivo?: 'sem_margem' | 'indisponivel' | 'margem_restrita'; planType: PlanType } | null>(null);
 
   useEffect(() => {
     if (user?.id && isStaff) loadPlans(filtroFila);
@@ -114,6 +114,12 @@ export function useFarmerTacticalPlan() {
 
   const handleGenerateWithCheck = async (customerId: string, planType: PlanType) => {
     const check = await checkEfficiency(customerId);
+    // Sem cap_custo_ler o gate de R$/h não se aplica (o servidor não concede a margem, e o R$/h a
+    // inverteria): gera direto, como faria um cliente acima do limiar — sem diálogo a cada plano.
+    if (check.motivo === 'margem_restrita') {
+      generatePlan(customerId, planType);
+      return;
+    }
     // `isAboveThreshold` é tri-estado: false (reprovou) e null (indecidível) ambos abrem o dialog,
     // que distingue os dois na mensagem. Só `true` gera direto.
     if (check.isAboveThreshold !== true) {

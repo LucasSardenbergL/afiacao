@@ -14,6 +14,7 @@ import { useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
+import { fetchAllPagesComMensagem } from '@/lib/postgrest';
 import {
   normalizarCatalisador,
   keyDeCatalisador,
@@ -47,29 +48,20 @@ export function useCatalisadorLinksMap() {
     queryKey: ['kb-catalisador-map'],
     staleTime: 5 * 60_000,
     queryFn: async (): Promise<MapRow[]> => {
-      // Pagina (PostgREST capa em 1000 linhas SILENCIOSO — database.md): sem isto, vínculos além da
-      // 1ª página somem do mapa e o selo degrada a "sob consulta" mesmo com casamento (Codex P1).
-      const PAGE = 1000;
-      const all: MapRow[] = [];
-      for (let from = 0; ; from += PAGE) {
-        const { data: rows, error } = (await supabase
-          .from('kb_catalisador_links' as never)
-          .select('catalisador_codigo_norm, account, omie_codigo_produto')
-          .eq('status', 'confirmed')
-          .order('id')
-          .range(from, from + PAGE - 1)) as {
-          data: MapRow[] | null;
-          error: { message: string } | null;
-        };
-        if (error) throw new Error(error.message);
-        // data null SEM error = malformada, não fim (classe #1338→#1564): tratá-la como
-        // fim sumia com vínculos e o selo degradava a "sob consulta" sem aviso.
-        if (rows == null) throw new Error('kb_catalisador_links: data null sem error — malformada, não é fim');
-        const batch = rows;
-        all.push(...batch);
-        if (batch.length < PAGE) break;
-      }
-      return all;
+      // Pagina pelo canônico (PostgREST capa em 1000 linhas SILENCIOSO — database.md): sem isto,
+      // vínculos além da 1ª página somem do mapa e o selo degrada a "sob consulta" mesmo com
+      // casamento (Codex P1). Página perdida LANÇA (nunca mapa parcial) e é medida pela fonte.
+      return fetchAllPagesComMensagem<MapRow>(
+        (de, ate) =>
+          supabase
+            .from('kb_catalisador_links' as never)
+            .select('catalisador_codigo_norm, account, omie_codigo_produto')
+            .eq('status', 'confirmed')
+            .order('id')
+            .range(de, ate) as unknown as PromiseLike<{ data: MapRow[] | null; error: unknown }>,
+        'kb_catalisador_links/selo-venda-assistida',
+        'kb_catalisador_links',
+      );
     },
   });
 
