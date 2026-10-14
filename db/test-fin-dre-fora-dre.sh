@@ -105,6 +105,7 @@ sabotada "check-sem-csll" "s/'das', 'irpj', 'csll',\$/'das', 'irpj',/"
 sabotada "default-zero" "s/ADD COLUMN IF NOT EXISTS fora_dre numeric(15,2);/ADD COLUMN IF NOT EXISTS fora_dre numeric(15,2) DEFAULT 0;/"
 sabotada "provisorio-default-false" "s/ADD COLUMN IF NOT EXISTS resultado_provisorio boolean;/ADD COLUMN IF NOT EXISTS resultado_provisorio boolean DEFAULT false;/"
 sabotada "sem-check-default" "s/CHECK (NOT (company = '_default' AND dre_linha = 'fora_dre'))/CHECK (true)/"
+sabotada "check-default-so-oben" "s/CHECK (NOT (company = '_default' AND dre_linha = 'fora_dre'))/CHECK (NOT (company = 'oben' AND dre_linha = 'fora_dre'))/"
 
 # ZONA 2 — a migration REAL (controle verde) + reaplicação (idempotência)
 P -q -f "$MIG" && ok "A0 migration real aplicou (postcondição verde)"
@@ -112,18 +113,26 @@ P -q -f "$MIG" && ok "A0b reaplicação idempotente"
 
 echo "── asserts ──"
 # NEGATIVO com SQLSTATE: 23514 check_violation; qualquer outro erro relança.
-rejeita_check() { # $1 rótulo · $2 company · $3 linha
+recusa() { # 0 se o INSERT deu 23514 · 1 se aceitou · outro erro relança (sai ≠ 0 e ≠ 1 vira "outro")
   local out
   out=$(P -tA 2>&1 <<SQL
 DO \$t\$ BEGIN
-  INSERT INTO public.fin_categoria_dre_mapping (company, omie_codigo, dre_linha) VALUES ('$2','9.99.99','$3');
+  INSERT INTO public.fin_categoria_dre_mapping (company, omie_codigo, dre_linha) VALUES ('$1','9.99.99','$2');
   RAISE NOTICE 'SENTINELA-ACEITOU';
 EXCEPTION WHEN check_violation THEN RAISE NOTICE 'SENTINELA-23514';
           WHEN OTHERS THEN RAISE;
 END \$t\$;
 SQL
-)
-  case "$out" in *SENTINELA-23514*) ok "$1 (23514)" ;; *) bad "$1 — veio: ${out:0:200}" ;; esac
+) || { echo "outro: ${out:0:200}"; return 2; }
+  case "$out" in *SENTINELA-23514*) return 0 ;; *SENTINELA-ACEITOU*) return 1 ;; *) echo "outro: ${out:0:200}"; return 2 ;; esac
+}
+rejeita_check() { # $1 rótulo · $2 company · $3 linha
+  local rc=0; recusa "$2" "$3" || rc=$?
+  if [ "$rc" = 0 ]; then ok "$1 (23514)"; else bad "$1 — rc=$rc"; fi
+}
+dente() { # $1 rótulo · $2 company · $3 linha — com a defesa SABOTADA, o INSERT tem de ser ACEITO
+  local rc=0; recusa "$2" "$3" || rc=$?
+  if [ "$rc" = 1 ]; then ok "$1: sem a defesa o assert fica vermelho (tem dente)"; else bad "$1: assert SEM dente (rc=$rc)"; fi
 }
 aceita() { # $1 rótulo · $2 company · $3 codigo · $4 linha
   if P -q -c "INSERT INTO public.fin_categoria_dre_mapping (company, omie_codigo, dre_linha) VALUES ('$2','$3','$4');"; then ok "$1"; else bad "$1 — recusado"; fi
@@ -143,15 +152,13 @@ eq "A6b provisório grava" "$(Pq -c "SELECT resultado_provisorio FROM public.fin
 
 # ZONA 5b — FALSIFICAÇÃO dos asserts negativos: tira a defesa, exige que o assert VIRE vermelho.
 P -q -c "ALTER TABLE public.fin_categoria_dre_mapping DROP CONSTRAINT fin_categoria_dre_mapping_fora_dre_por_empresa_check;"
-F0=$FAIL; rejeita_check "F-A4 (sabotado: sem CHECK por empresa) — TEM de falhar" _default "fora_dre"
-if [ "$FAIL" = "$((F0+1))" ]; then FAIL=$F0; PASS=$((PASS-0)); ok "F-A4 assert tem dente (ficou vermelho sem a defesa)"; else bad "F-A4 assert SEM dente"; fi
+dente "F-A4" _default "fora_dre"
 P -q -c "DELETE FROM public.fin_categoria_dre_mapping WHERE company='_default' AND dre_linha='fora_dre';"
 P -q -f "$MIG" && ok "F-A4 restaurado (migration reaplicada)"
 rejeita_check "A4 de novo após restaurar" _default "fora_dre"
 
 P -q -c "ALTER TABLE public.fin_categoria_dre_mapping DROP CONSTRAINT fin_categoria_dre_mapping_dre_linha_check;"
-F0=$FAIL; rejeita_check "F-A3 (sabotado: sem CHECK de linha) — TEM de falhar" colacor "despesa_inventada"
-if [ "$FAIL" = "$((F0+1))" ]; then FAIL=$F0; ok "F-A3 assert tem dente"; else bad "F-A3 assert SEM dente"; fi
+dente "F-A3" colacor "despesa_inventada"
 P -q -c "DELETE FROM public.fin_categoria_dre_mapping WHERE dre_linha='despesa_inventada';"
 P -q -f "$MIG" && ok "F-A3 restaurado"
 rejeita_check "A3 de novo após restaurar" colacor "despesa_inventada"

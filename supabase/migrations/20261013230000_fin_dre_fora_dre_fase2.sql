@@ -74,6 +74,14 @@ BEGIN
                     AND convalidated) THEN
     RAISE EXCEPTION 'postcondicao: CHECK fora_dre por empresa ausente ou nao validado';
   END IF;
+  -- comportamento, não só existência: um CHECK com o nome certo e corpo frouxo passaria acima.
+  -- O INSERT de prova vive num sub-bloco; check_violation o desfaz, qualquer outro erro sobe.
+  BEGIN
+    INSERT INTO public.fin_categoria_dre_mapping (company, omie_codigo, dre_linha)
+      VALUES ('_default', '__postcondicao_fase2__', 'fora_dre');
+    RAISE EXCEPTION 'postcondicao: _default aceitou fora_dre';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
 
   SELECT count(*) INTO v_cols FROM information_schema.columns
    WHERE table_schema = 'public' AND table_name = 'fin_dre_snapshots'
