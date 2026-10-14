@@ -1052,8 +1052,10 @@ export async function getLastSyncTime(): Promise<string | null> {
  * subtração client-side, sem depender de baixar as duas colunas.
  * Pagina ORDENADO por id: offset sem ORDER BY não é estável entre páginas
  * (o sync de CR/CP grava a cada 10min → linha pulada/duplicada silenciosa).
- * Erro de qualquer página LANÇA Error real — nunca soma parcial silenciosa,
- * e os consumidores exibem `e.message` (objeto cru viraria "[object Object]").
+ * Pagina pelo `lerTodasAsPaginas` (→ `fetchAllPages`): erro de qualquer página ou
+ * `data: null` sem error LANÇA Error real com a mensagem de domínio — nunca soma parcial
+ * silenciosa — e a página perdida é medida (captureException com fonte/página). Materializar
+ * só a coluna `saldo` (~11k números no pior caso) custa nada perto de manter um laço à mão.
  * Contrato travado em src/services/__tests__/somarSaldoAberto.test.ts.
  */
 export async function somarSaldoPorStatus(
@@ -1061,27 +1063,19 @@ export async function somarSaldoPorStatus(
   company: Company,
   statuses: readonly string[],
 ): Promise<number> {
-  const PAGE = 1000;
-  let from = 0;
+  const rows = await lerTodasAsPaginas<{ saldo: number | null }>(
+    (de, ate) =>
+      supabase
+        .from(tabela)
+        .select('saldo')
+        .eq('company', company)
+        .in('status_titulo', [...statuses])
+        .order('id')
+        .range(de, ate),
+    `saldo de ${tabela} (${company})`,
+  );
   let total = 0;
-  for (;;) {
-    const { data, error } = await supabase
-      .from(tabela)
-      .select('saldo')
-      .eq('company', company)
-      .in('status_titulo', [...statuses])
-      .order('id')
-      .range(from, from + PAGE - 1);
-    if (error) throw new Error(`Falha ao somar saldo (${tabela}/${company}): ${error.message}`);
-    // data null SEM error = malformada, não fim (classe #1338→#1564, mesmo contrato do
-    // fetchAllPages de @/lib/postgrest): tratá-la como fim devolvia SOMA PARCIAL como total a
-    // receber/pagar — alimenta DSO, KPIs de /financeiro/gestao e o resumo.
-    if (data == null) throw new Error(`Falha ao somar saldo (${tabela}/${company}): data=null sem error`);
-    const rows = data as Array<{ saldo: number | null }>;
-    for (const r of rows) total += r.saldo ?? 0;
-    if (rows.length < PAGE) break;
-    from += PAGE;
-  }
+  for (const r of rows) total += r.saldo ?? 0;
   return total;
 }
 
