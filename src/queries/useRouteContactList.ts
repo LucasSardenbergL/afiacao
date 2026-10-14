@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { fetchAllPagesComMensagem } from '@/lib/postgrest';
 import { normalizeCityKey, cityKeyEquals } from '@/lib/whatsapp/route-city';
 import { resolvePrepForWorkday } from '@/lib/whatsapp/route-schedule';
 import type { RouteScheduleRow, RouteOverrideRow } from '@/lib/whatsapp/route-schedule';
@@ -89,19 +90,24 @@ function routeFrom(table: string): RouteBuilder {
 interface ContactLogRow { customer_user_id: string; status: string; created_at: string; data_rota: string; }
 const LOG_SEL = 'customer_user_id, status, created_at, data_rota';
 
-/** Pagina uma query de route_contact_log (re-monta o builder por página até receber < PAGE). */
-async function paginarLog(build: (from: number) => PromiseLike<PgRes>, sink: ContactLogRow[]): Promise<void> {
-  for (let from = 0; ; from += PAGE) {
-    const res = await build(from);
-    if (res.error) throw new Error(res.error.message);
-    // data null SEM error = malformada, não fim (classe #1338→#1564): tratá-la como fim
-    // encerrava o log parcial SEM ligar o fail-open do chamador (que só dispara no throw)
-    // — a cadência saía calculada de histórico incompleto.
-    if (res.data == null) throw new Error('route_contact_log: data null sem error — malformada, não é fim');
-    const got = res.data as ContactLogRow[];
-    sink.push(...got);
-    if (got.length < PAGE) break;
-  }
+/**
+ * Pagina uma query de route_contact_log pelo canônico (re-monta o builder por página). Página com
+ * error ou `data: null` sem error LANÇA — tratá-la como fim encerrava o log parcial SEM ligar o
+ * fail-open do chamador (que só dispara no throw) e a cadência saía de histórico incompleto — e a
+ * página perdida é medida pela fonte.
+ */
+async function paginarLog(
+  build: (de: number, ate: number) => PromiseLike<PgRes>,
+  fonte: string,
+  sink: ContactLogRow[],
+): Promise<void> {
+  sink.push(
+    ...(await fetchAllPagesComMensagem(
+      build as (de: number, ate: number) => PromiseLike<{ data: ContactLogRow[] | null; error: unknown }>,
+      fonte,
+      'route_contact_log',
+    )),
+  );
 }
 
 /**
@@ -120,12 +126,15 @@ async function fetchContactLog(ids: string[]): Promise<Map<string, ContatoLog[]>
     // (single-thread) e o derivarSinaisContato não depende da ordem global
     // (já era intercalada por ramo na versão serial); o dedupe abaixo cobre.
     await Promise.all([
-      paginarLog(from => routeFrom('route_contact_log').select(LOG_SEL).eq('canal', 'ligacao')
+      // `created_at` não é único → desempate por `id` (PK): sem ordem total o offset pula/duplica.
+      paginarLog((de, ate) => routeFrom('route_contact_log').select(LOG_SEL).eq('canal', 'ligacao')
         .in('customer_user_id', chunk).eq('status', 'opt_out')
-        .order('created_at', { ascending: true }).range(from, from + PAGE - 1) as PromiseLike<PgRes>, rows),
-      paginarLog(from => routeFrom('route_contact_log').select(LOG_SEL).eq('canal', 'ligacao')
+        .order('created_at', { ascending: true }).order('id', { ascending: true })
+        .range(de, ate) as PromiseLike<PgRes>, 'route_contact_log/fila-opt-out', rows),
+      paginarLog((de, ate) => routeFrom('route_contact_log').select(LOG_SEL).eq('canal', 'ligacao')
         .in('customer_user_id', chunk).gte('created_at', cutoff90)
-        .order('created_at', { ascending: true }).range(from, from + PAGE - 1) as PromiseLike<PgRes>, rows),
+        .order('created_at', { ascending: true }).order('id', { ascending: true })
+        .range(de, ate) as PromiseLike<PgRes>, 'route_contact_log/fila-cadencia', rows),
     ]);
   }
   // dedup por (cliente|created_at|status) — opt_out recente aparece nas 2 queries

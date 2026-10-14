@@ -27,6 +27,8 @@ import {
   ilikeExatoOr,
   tokensDeBusca,
   fetchAllPages,
+  fetchAllPagesComMensagem,
+  ehFalhaDePagina,
   POSTGREST_PAGE_SIZE,
 } from '../postgrest';
 
@@ -453,6 +455,65 @@ describe('fetchAllPages — instrumentação da página perdida', () => {
       'x/y',
     );
     expect(captureExceptionMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('fetchAllPagesComMensagem — a falha de leitura com a mensagem de DOMÍNIO', () => {
+  beforeEach(() => captureExceptionMock.mockClear());
+
+  const pagina = (n: number, base = 0) => ({
+    data: Array.from({ length: n }, (_, i) => ({ id: base + i })),
+    error: null,
+  });
+
+  it('pagina igual ao fetchAllPages e devolve TODAS as linhas', async () => {
+    const linhas = await fetchAllPagesComMensagem<{ id: number }>(
+      (de) => Promise.resolve(de === 0 ? pagina(POSTGREST_PAGE_SIZE) : pagina(3, de)),
+      'x/y',
+      'Falha ao carregar x',
+    );
+    expect(linhas).toHaveLength(POSTGREST_PAGE_SIZE + 3);
+  });
+
+  it('página com error: mensagem `<rótulo>: <causa>`, causa ASSINADA e a perda MEDIDA pela fonte', async () => {
+    const erro = await fetchAllPagesComMensagem<{ id: number }>(
+      (de) =>
+        Promise.resolve(
+          de === 0 ? pagina(POSTGREST_PAGE_SIZE) : { data: null, error: { code: '57014', message: 'statement timeout' } },
+        ),
+      'sales_orders/mtd',
+      'sales_orders (MTD)',
+    ).catch((e: unknown) => e);
+    expect(erro).toBeInstanceOf(Error);
+    expect((erro as Error).message).toBe('sales_orders (MTD): statement timeout');
+    // O erro assinado do canônico fica em `cause` — o plantão discrimina por ele.
+    expect(ehFalhaDePagina((erro as { cause?: unknown }).cause)).toBe(true);
+    expect(captureExceptionMock).toHaveBeenCalledTimes(1);
+    expect((captureExceptionMock.mock.calls[0] as [unknown, Record<string, unknown>])[1]).toMatchObject({
+      fonte: 'sales_orders/mtd',
+      pagina: 1,
+      linhas_lidas_antes_da_falha: POSTGREST_PAGE_SIZE,
+    });
+  });
+
+  it('data null sem error: mensagem diz malformada (≠ fim) e também é medida', async () => {
+    await expect(
+      fetchAllPagesComMensagem(() => Promise.resolve({ data: null, error: null }), 'a/b', 'tabela_x'),
+    ).rejects.toThrow('tabela_x: data null sem error — malformada, não é fim');
+    expect(captureExceptionMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('error sem message utilizável não vira "[object Object]"', async () => {
+    await expect(
+      fetchAllPagesComMensagem(() => Promise.resolve({ data: null, error: { code: '42501' } }), 'a/b', 'tabela_x'),
+    ).rejects.toThrow('tabela_x: erro sem mensagem');
+  });
+
+  it('bug de código (rejeição NÃO assinada) sobe CRU — nunca vira falha de leitura', async () => {
+    const bug = new TypeError('supabase.from(...).order is not a function');
+    await expect(
+      fetchAllPagesComMensagem(() => Promise.reject(bug), 'a/b', 'tabela_x'),
+    ).rejects.toBe(bug);
   });
 });
 

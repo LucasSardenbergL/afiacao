@@ -5,6 +5,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { coberturaCustoCliente, margemConhecida, valorMedido } from '@/lib/scoring/margin';
 import { churnConhecido } from '@/lib/scoring/churn';
 import type { Customer, ClientScore } from '@/components/adminCustomers/types';
+import { fetchAllPagesComMensagem } from '@/lib/postgrest';
 
 export interface DisplayFlags {
   displayIsMaster: boolean;
@@ -40,22 +41,6 @@ export function ordenarPorNome<T extends { name: string }>(items: T[]): T[] {
   return [...items].sort((a, b) =>
     (a.name ?? '').localeCompare(b.name ?? '', 'pt-BR', { sensitivity: 'base' }),
   );
-}
-
-/** Pagina via fetchPage(from,to) até a página vir menor que pageSize. */
-export async function paginarTudo<T>(
-  fetchPage: (from: number, to: number) => Promise<T[]>,
-  pageSize = 1000,
-): Promise<T[]> {
-  const all: T[] = [];
-  let from = 0;
-  for (;;) {
-    const page = await fetchPage(from, from + pageSize - 1);
-    all.push(...page);
-    if (page.length < pageSize) break;
-    from += pageSize;
-  }
-  return all;
 }
 
 /** Quebra ids em lotes e concatena os resultados, em ordem. Propaga erro de qualquer lote. */
@@ -124,8 +109,10 @@ export async function fetchCarteiraClientes(opts: {
     ownerFilter = ownersAtivosDoAlvo(cov ?? [], opts.effectiveUserId, new Date().toISOString());
   }
 
-  const assignments = await paginarTudo<{ customer_user_id: string; owner_user_id: string }>(
-    async (from, to) => {
+  // Pelo canônico: página com error ou `data: null` sem error LANÇA (a carteira PARCIAL trocaria o
+  // escopo do cálculo) e a página perdida é medida pela fonte. `customer_user_id` é a chave.
+  const assignments = await fetchAllPagesComMensagem<{ customer_user_id: string; owner_user_id: string }>(
+    (de, ate) => {
       let q = supabase
         .from('carteira_assignments')
         .select('customer_user_id, owner_user_id')
@@ -133,13 +120,10 @@ export async function fetchCarteiraClientes(opts: {
       if (ownerFilter) {
         q = q.in('owner_user_id', ownerFilter);
       }
-      const { data, error } = await q.order('customer_user_id').range(from, to);
-      if (error) throw error;
-      // data null SEM error = malformada, não página vazia (classe #1338→#1564): devolvê-la
-      // ao paginarTudo encerraria o laço com a carteira PARCIAL.
-      if (data == null) throw new Error('carteira_assignments: data null sem error — malformada, não é fim');
-      return data;
+      return q.order('customer_user_id').range(de, ate);
     },
+    'carteira_assignments/escopo-clientes',
+    'carteira_assignments',
   );
 
   const ownerById = new Map(
