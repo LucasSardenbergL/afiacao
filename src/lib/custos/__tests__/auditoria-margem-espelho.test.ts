@@ -33,8 +33,8 @@ describe('paridade edge algorithm-a-audit ↔ src auditoria-margem (núcleo)', (
 
   it('o núcleo espelhado tem a fórmula de R$ da linha e não a percentual legada', () => {
     const nucleo = bloco(src, 'src');
-    expect(nucleo).toContain('const actualPrice = up - desc / qty;');
-    expect(nucleo).toContain('if (desc > qty * up) continue;');
+    expect(nucleo).toContain('const actualPrice = Math.max(0, up - desc / qty);');
+    expect(nucleo).toContain('if (Math.round(desc * 100) > Math.round(qty * up * 100)) continue;');
     expect(nucleo).not.toMatch(/\/\s*100\)/);
     expect(nucleo).not.toMatch(/\bo\.discount\b/);
   });

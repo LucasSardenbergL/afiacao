@@ -16,11 +16,19 @@
 -- Única mudança de corpo: 2 linhas (o alias disc_item e o bool_or). Assinatura, retorno,
 -- volatilidade, SECURITY DEFINER, search_path, dono e ACL intactos (CREATE OR REPLACE preserva).
 -- Molde TRAVA → PRE → CREATE → PÓS (lovable-db-operator, "Recriar objeto VIVO"): a trava prende a
--- linha de pg_proc antes de medir; PRE aceita o predecessor medido em prod ou este corpo (re-colar é
+-- linha de pg_proc antes de medir (e a volatilidade é lida ANTES dela, porque ela a escreve); PRE aceita o predecessor medido em prod ou este corpo (re-colar é
 -- seguro); PÓS: semântica → md5 → retrato de config/ACL igual ao de antes.
 -- Prova: db/test-defasagem-desconto-valor.sh.
 
 BEGIN;
+
+-- A trava abaixo (ALTER … STABLE) ESCREVE a volatilidade: guardar a de antes, senão um predecessor
+-- VOLATILE seria normalizado em silêncio e o retrato da PÓS já nasceria com o valor novo (Codex P2).
+CREATE TEMP TABLE IF NOT EXISTS defasagem_desc_volatil (provolatile text);
+TRUNCATE pg_temp.defasagem_desc_volatil;
+INSERT INTO pg_temp.defasagem_desc_volatil
+  SELECT p.provolatile::text FROM pg_catalog.pg_proc p
+   WHERE p.oid = to_regprocedure('public.get_defasagem_cliente(jsonb,uuid)');
 
 ALTER FUNCTION public.get_defasagem_cliente(jsonb,uuid) STABLE;
 
@@ -35,6 +43,10 @@ BEGIN
   END IF;
   SELECT md5(p.prosrc) INTO v_md5 FROM pg_catalog.pg_proc p
    WHERE p.oid = to_regprocedure('public.get_defasagem_cliente(jsonb,uuid)');
+  IF (SELECT provolatile FROM pg_temp.defasagem_desc_volatil) IS DISTINCT FROM 's' THEN
+    RAISE EXCEPTION 'PRE: get_defasagem_cliente não era STABLE antes da trava (provolatile=%) — prod medida é STABLE',
+      (SELECT provolatile FROM pg_temp.defasagem_desc_volatil);
+  END IF;
   IF v_md5 IS DISTINCT FROM 'a03eb600ef0d2a946e550aa55bba415e' AND v_md5 IS DISTINCT FROM '2ed6e15998b5c48e7b4de590e5dbbaf3' THEN
     RAISE EXCEPTION 'PRE: get_defasagem_cliente deriva — md5(prosrc)=% não é o predecessor (a03eb600…) nem este corpo', v_md5;
   END IF;
@@ -310,5 +322,6 @@ BEGIN
 END $pos$;
 
 DROP TABLE IF EXISTS pg_temp.defasagem_desc_retrato;
+DROP TABLE IF EXISTS pg_temp.defasagem_desc_volatil;
 
 COMMIT;

@@ -152,7 +152,7 @@ describe('calcularAuditoriaMargemCliente — desconto_valor é R$ da LINHA, e de
     expect(r.linhas_desconto_desconhecido).toBe(0);
   });
 
-  it('desconto NULL (não apurado) NÃO vira 0: a linha sai das somas e é CONTADA', () => {
+  it('desconto NULL (não apurado) NÃO vira 0: o agregado do cliente fica DESCONHECIDO (null), não parcial', () => {
     const r = calcularAuditoriaMargemCliente({
       orders: [
         { product_id: 'A', unit_price: 80, desconto_valor: 0, quantity: 1 },     // conhecida: leak 20
@@ -161,11 +161,37 @@ describe('calcularAuditoriaMargemCliente — desconto_valor é R$ da LINHA, e de
       custoPorProduto: () => realRow(10),
       bestPrice: bestOf({ A: 100, B: 100 }),
     });
-    // Se o null virasse 0, B somaria leak (100-50)*3 = 150 e o gap seria 170.
-    expect(r.margin_gap).toBe(20);
-    expect(r.gap_pct).toBe(20);                  // 20 / 100 — o bestRevenue de B também não entra
-    expect(r.margin_real).toBe(70);
+    // Null→0 daria gap 170; somar só o conhecido daria 20 com cara de completo. Os dois mentem.
+    expect(r.margin_gap).toBeNull();
+    expect(r.gap_pct).toBeNull();
+    expect(r.margin_real).toBeNull();
+    expect(r.margin_potential).toBeNull();
     expect(r.linhas_desconto_desconhecido).toBe(1);
+    // o vazamento da linha CONHECIDA continua listado — é fato
+    expect(r.top_gap_products).toEqual([{ product_id: 'A', gap: 20 }]);
+  });
+
+  it('cliente só com linha de desconto desconhecido NÃO vira "gap 0" (Codex P1)', () => {
+    const r = calcularAuditoriaMargemCliente({
+      orders: [{ product_id: 'B', unit_price: 50, desconto_valor: null, quantity: 100 }],
+      custoPorProduto: () => null,
+      bestPrice: bestOf({ B: 100 }),
+    });
+    expect(r.margin_gap).toBeNull();
+    expect(r.gap_pct).toBeNull();
+  });
+
+  it('desconto integral com float inexato (3 × 19,90 = 59,699999…) é GRÁTIS, não lixo (Codex P2)', () => {
+    const r = calcularAuditoriaMargemCliente({
+      orders: [
+        { product_id: 'A', unit_price: 100, desconto_valor: 0, quantity: 1 },     // margem 50
+        { product_id: 'B', unit_price: 19.9, desconto_valor: 59.7, quantity: 3 }, // grátis: leak 59,70
+      ],
+      custoPorProduto: (id) => realRow(id === 'A' ? 50 : 10),
+      bestPrice: bestOf({ A: 100, B: 19.9 }),
+    });
+    expect(r.margin_gap).toBe(59.7);
+    expect(r.margin_real).toBe(20);              // 50 + (0-10)*3
   });
 
   it.each([
@@ -179,7 +205,7 @@ describe('calcularAuditoriaMargemCliente — desconto_valor é R$ da LINHA, e de
       custoPorProduto: () => realRow(10),
       bestPrice: bestOf({ A: 100 }),
     });
-    expect(r.margin_gap).toBe(0);
+    expect(r.margin_gap).toBeNull();
     expect(r.gap_pct).toBeNull();
     expect(r.linhas_desconto_desconhecido).toBe(1);
   });
@@ -187,7 +213,7 @@ describe('calcularAuditoriaMargemCliente — desconto_valor é R$ da LINHA, e de
   it('desconto undefined (coluna fora do select) também é desconhecido, nunca 0', () => {
     const linha = { product_id: 'A', unit_price: 80, quantity: 1 } as unknown as AuditOrderLine;
     const r = calcularAuditoriaMargemCliente({ orders: [linha], custoPorProduto: () => realRow(10), bestPrice: bestOf({ A: 100 }) });
-    expect(r.margin_gap).toBe(0);
+    expect(r.margin_gap).toBeNull();
     expect(r.linhas_desconto_desconhecido).toBe(1);
   });
 
@@ -212,5 +238,6 @@ describe('calcularAuditoriaMargemCliente — desconto_valor é R$ da LINHA, e de
       bestPrice: bestOf({ A: 100 }),
     });
     expect(r.linhas_desconto_desconhecido).toBe(0);
+    expect(r.margin_gap).toBe(0);                // devolução não torna o cliente desconhecido
   });
 });

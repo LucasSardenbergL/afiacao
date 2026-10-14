@@ -18,11 +18,11 @@ export type AuditOrderLine = {
 export type AuditoriaCliente = {
   margin_real: number | null;
   margin_potential: number | null;
-  margin_gap: number;
+  margin_gap: number | null;
   gap_pct: number | null;
   top_gap_products: { product_id: string; gap: number }[];
   cobertura_custo: number;
-  /** Linhas de VENDA (qty>0) que ficaram FORA de todas as somas porque o desconto não é conhecido. */
+  /** Linhas de VENDA (qty>0) com desconto desconhecido. > 0 ⇒ margin_real/potential/gap/gap_pct = null. */
   linhas_desconto_desconhecido: number;
 };
 const COBERTURA_CUSTO_MIN = 0.85;
@@ -45,13 +45,14 @@ export function calcularAuditoriaMargemCliente(input: {
     // Desconto é R$ da LINHA, não percentual: preço unitário líquido = up − desconto/qty (a fórmula
     // antiga `up × (1 − d/100)` lia a coluna legada `discount`, sempre 0). Desconto desconhecido
     // (null = não apurado, NaN, ±Infinity, negativo) NÃO vira 0 — isso devolveria o preço CHEIO,
-    // idêntico ao "Omie informou zero", e esconderia o vazamento. A linha sai das somas e é contada.
+    // idêntico ao "Omie informou zero", e esconderia o vazamento. A linha é contada e o cliente fica null.
     const desc = o.desconto_valor === null || o.desconto_valor === undefined ? NaN : Number(o.desconto_valor);
     if (!Number.isFinite(desc) || desc < 0) { descontoDesconhecido++; continue; }
     // Guard DIMENSIONAL: desconto maior que a linha bruta = preço líquido negativo = lixo. Item GRÁTIS
     // (desconto = linha inteira, preço 0) FICA — é leakage real (Codex #3 sinal, #7 item grátis).
-    if (desc > qty * up) continue;
-    const actualPrice = up - desc / qty;
+    // Em CENTAVOS: em float, 3 × 19,90 = 59,699999… e o desconto integral de 59,70 cairia como lixo.
+    if (Math.round(desc * 100) > Math.round(qty * up * 100)) continue;
+    const actualPrice = Math.max(0, up - desc / qty);
     const bp = input.bestPrice(o.product_id);
     // bestPrice>0 obrigatório: 0/negativo/NaN é dado ruim → fallback actualPrice (não poisona gap).
     const bestPrice = typeof bp === 'number' && Number.isFinite(bp) && bp > 0 ? bp : actualPrice;
@@ -71,11 +72,16 @@ export function calcularAuditoriaMargemCliente(input: {
   topGap.sort((a, b) => b.gap - a.gap);
   const cobertura_custo = receita > 0 ? receitaComCusto / receita : 0;
   const temCobertura = cobertura_custo >= COBERTURA_CUSTO_MIN;
+  // Uma venda com desconto desconhecido deixa TODO agregado do cliente incompleto: somar só o resto
+  // gravaria em margin_audit_log um número parcial com a cara de um completo (só a linha
+  // desconhecida ⇒ gap 0, "sem vazamento"). Desconhecido ⇒ null, que a aba já mostra como parcial
+  // (Codex challenge P1). top_gap_products fica: cada vazamento listado é de linha conhecida.
+  const completo = descontoDesconhecido === 0;
   return {
-    margin_real: temCobertura ? round2(marginRealKnown) : null,
-    margin_potential: temCobertura ? round2(marginPotentialKnown) : null,
-    margin_gap: round2(marginGap),
-    gap_pct: bestRevenue > 0 ? round2((marginGap / bestRevenue) * 100) : null,
+    margin_real: completo && temCobertura ? round2(marginRealKnown) : null,
+    margin_potential: completo && temCobertura ? round2(marginPotentialKnown) : null,
+    margin_gap: completo ? round2(marginGap) : null,
+    gap_pct: completo && bestRevenue > 0 ? round2((marginGap / bestRevenue) * 100) : null,
     top_gap_products: topGap.slice(0, 5),
     cobertura_custo,
     linhas_desconto_desconhecido: descontoDesconhecido,

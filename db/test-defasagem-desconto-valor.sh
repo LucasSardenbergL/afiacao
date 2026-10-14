@@ -47,7 +47,8 @@ if [ "${1:-}" = "--falsificar" ]; then
               zero_conta:DV3,DV7,DV8:DV1,G1
               sem_gate:G1:DV1,DV3
               pos_legado:MIG:
-              pos_null_vira_zero:MIG:"
+              pos_null_vira_zero:MIG:
+              pre_volatil:MIG:"
   falhas=0
   echo "═══ CONTROLE (sem sabotagem) ═══"
   if ! PGPORT_TEST="$PORT" bash "$0" > "/tmp/falsif-${SLUG}-controle.log" 2>&1; then
@@ -143,6 +144,8 @@ case "${SABOTAGEM:-}" in
   sem_gate)           sabotar 's/IF NOT \(auth\.uid\(\) IS NOT NULL/IF false AND NOT (auth.uid() IS NOT NULL/'; desliga_pos ;;
   pos_legado)         sabotar 's/oi\.desconto_valor AS disc_item/oi.discount AS disc_item/' ;;
   pos_null_vira_zero) sabotar 's/disc_item IS DISTINCT FROM 0 OR/COALESCE(disc_item,0) > 0 OR/' ;;
+  # predecessor VOLATILE (mesmo prosrc): o PRE tem de recusar em vez de a trava normalizar em silêncio
+  pre_volatil)        P -q -c "ALTER FUNCTION public.get_defasagem_cliente(jsonb,uuid) VOLATILE" ;;
   *) echo "INFRA: sabotagem desconhecida $SABOTAGEM"; exit 2 ;;
 esac
 # A POS compara md5 do corpo com o desta migration: sabotagem de corpo com POS desligada passa;
