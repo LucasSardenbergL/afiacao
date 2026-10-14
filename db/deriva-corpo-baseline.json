@@ -92,6 +92,26 @@
       "desde": "2026-09-26"
     },
     {
+      "funcao": "tint_promote_sync_run",
+      "identidade": "uuid",
+      "classe": "PATCH",
+      "patch": "20261013150000_tint_promote_nao_ressuscita_fantasma.sql",
+      "efeito": "ALTERA",
+      "motivo": "#3051: o promote para de ressuscitar fórmula de cor que a fonte retirou — staging recebido antes do último snapshot aplicado, de chave ausente dele, sai do _expand_uniq (intermediário; o estado final é o da 20261013220000).",
+      "desde": "2026-10-13"
+    },
+    {
+      "funcao": "tint_promote_sync_run",
+      "identidade": "uuid",
+      "classe": "PATCH",
+      "patch": "20261013220000_tint_promote_snapshot_ref_por_generated_at.sql",
+      "efeito": "ALTERA",
+      "motivo": "ajuste do #3051: snapshot de referência por max(generated_at), a ordem do apply, e não por aplicado_em (reapply pulado regravava aplicado_em de snapshot antigo). Conferido em prod em 2026-10-13: md5 do banco = md5 recalculado do prosrc em hex (xmin 11953844).",
+      "md5": "42d09d510b02afdd4167e34ff04b2ce4",
+      "md5Tokens": "767be95407db0a541db09ad1c72856c9",
+      "desde": "2026-10-13"
+    },
+    {
       "funcao": "has_role",
       "identidade": "uuid,app_role",
       "classe": "PATCH",

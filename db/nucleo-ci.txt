@@ -514,3 +514,34 @@ db/test-cron-dr-sync-reprocess-pedidos-colacor.sh 10
 # ou, sem problema, às SEGUNDAS em Brasília como prova de vida. Defeito aqui = silêncio com sistema
 # quebrado (o founder deixa de ser avisado) ou ruído diário. Esquema mínimo, sem snapshot (~5 s/rodada).
 db/test-watchdog-diario-so-problema.sh      22  falsificar=6
+# Tintométrico, watchdog da Fase 5 v4 (20261013210000): S2 vira RETIRADA NOVA pela fonte (chave-fonte
+# num snapshot APLICADO dos últimos 7 dias, ausente do último), S5 novo de FANTASMA (fórmula ativa que
+# a fonte não tem, sem staging posterior — cor nova não conta; relógio = created_at, nunca aplicado_em),
+# helper v2 (fator 1.0 compara com o ciclo anterior; subida de severidade sempre notifica), encerramento
+# por mudança de critério anotado, série em tint_watchdog_fase5_amostras. Referência = snapshot aplicado de
+# maior generated_at, e TUDO numa fotografia só (challenge Codex). Arquivo PRÓPRIO de propósito: a prova
+# v1+v2 acima re-roda a suíte inteira por sabotagem e chegou a 396 s na v3. Aqui: universo de 1.000 chaves
+# (5%/20% inteiros), ~8 s no modo normal e ~54 s no --falsificar (controle verde + 21 sabotagens de
+# conjunto exato, 3 delas de pós-condição que exigem o apply ABORTAR), medido no laptop.
+db/test-tint-fase5-watchdog-v4.sh           41  falsificar=21
+# O promote para de ressuscitar fórmula de cor que a FONTE retirou (20261013150000) — money-path. Em
+# 13/10, 26.180 fórmulas de 6.545 cores ausentes do snapshot de chaves estavam ATIVAS, canônicas e
+# com receita válida (9.164 com preço final no balcão): o promote reexpandia o staging antigo do par
+# e desfazia o apply do snapshot todo dia. Corpo testado BYTE-IDÊNTICO ao de prod (v6 + 5b#1 + seção 3
+# da promoção assíncrona); o snapshot é aplicado pelo tint_apply_keys_snapshot REAL, que é o que prova
+# o formato da chave. Sem modo --falsificar: as 3 sabotagens (filtro neutro, sem critério temporal,
+# chave em formato errado) rodam em TODA execução, depois do controle verde.
+# No FIM de propósito: inserir no meio desloca a posição de todas as provas abaixo e re-sorteia a
+# parte de cada uma no round-robin (k mod N). ⚠️ Mesmo no fim a posição NÃO é estável: o #3042 entrou
+# na frente durante este PR e a empurrou de k=91 (parte mais leve com N=3) para k=92 — a parte 3, que
+# levava 18m57s contra o teto de 20. Por isso este PR leva junto a matriz de 4 partes (ci.yml). NÃO
+# fixe aqui a parte em que ela cai: cada prova anexada depois a desloca (já mudou duas vezes durante
+# este PR — k=91, 92, 93, 94, 95). Confira com `NUCLEO_PARTE=i/N bash db/roda-nucleo-ci.sh --lista`.
+db/test-tint-promote-fantasma.sh            11
+# Remoção da mitigação do #3054 (20261013200000): desagenda o cron tint-reaplicar-snapshot-6h. O cron é
+# INÓCUO (medido: o reapply cai em "fora de ordem", deletes=0), mas dispara alarme falso de fila
+# atrasada a cada 6h. A guarda ABORTA se o promote vivo não tiver o #3051 (a ordem que o #3054 pede) —
+# é o que F1 sabota.
+# A prova do #3054 (db/test-tint-reaplicar-snapshot.sh) saiu daqui junto com o cron, como o
+# comentário dela pedia; o arquivo e a migration seguem no repo como histórico aplicado.
+db/test-tint-remove-cron-reaplicar.sh       3

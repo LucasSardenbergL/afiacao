@@ -133,7 +133,6 @@ const BASELINE = new Map<string, number>([
   ["src/components/tintColorSelect/useTintColorSelect.ts", 1],
   ["src/components/unified-order/ExcecaoCreditoDialog.tsx", 1],
   ["src/components/whatsapp/SlaCardMeuDia.tsx", 1],
-  ["src/hooks/useReposicaoSessao.ts", 1],
   ["src/hooks/useSinalPositivacao.ts", 1],
   ["src/hooks/useUnifiedOrder.ts", 2],
   ["src/pages/AdminReposicaoAlertas.tsx", 1],
@@ -145,7 +144,9 @@ const BASELINE = new Map<string, number>([
   // alias de `data`, sem uma linha de silêncio corrigida (medido no caminho deste PR). O gate
   // não distingue "consertado" de "cegado" — quem encolhe a baseline precisa provar qual dos
   // dois é, e a prova é o `temErro` do sítio.
-  ["src/pages/AdminReposicaoPedidos.tsx", 1],
+  // QUITADO (Gerir pedidos vira tela única, pós-#3058): a fila `atencao` desestrutura `isError` e o
+  // "Tudo em dia" só aparece com a leitura OK — falha vira "Não consegui checar a fila de atenção"
+  // + retry (prova: `atencaoFalhou` no render, e o teste `AdminReposicaoPedidos.alertas-erro-honesto`).
   ["src/pages/FinanceiroMapping.tsx", 1],
   ["src/pages/GovernanceMathParams.tsx", 1],
   ["src/pages/GovernancePermissions.tsx", 1],

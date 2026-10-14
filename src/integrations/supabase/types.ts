@@ -16741,6 +16741,54 @@ export type Database = {
           },
         ]
       }
+      tint_watchdog_fase5_amostras: {
+        Row: {
+          cor_nova: number | null
+          criterio: string
+          duracao_s: number | null
+          fantasmas: number | null
+          fantasmas_vendaveis: number | null
+          id: number
+          medido_em: string
+          s1_sem_preco: number
+          s2_retirada_nova: number | null
+          sem_ativa_bruto: number
+          snapshot_id: string | null
+          snapshot_recebido_em: string | null
+          universo: number
+        }
+        Insert: {
+          cor_nova?: number | null
+          criterio: string
+          duracao_s?: number | null
+          fantasmas?: number | null
+          fantasmas_vendaveis?: number | null
+          id?: never
+          medido_em?: string
+          s1_sem_preco: number
+          s2_retirada_nova?: number | null
+          sem_ativa_bruto: number
+          snapshot_id?: string | null
+          snapshot_recebido_em?: string | null
+          universo: number
+        }
+        Update: {
+          cor_nova?: number | null
+          criterio?: string
+          duracao_s?: number | null
+          fantasmas?: number | null
+          fantasmas_vendaveis?: number | null
+          id?: never
+          medido_em?: string
+          s1_sem_preco?: number
+          s2_retirada_nova?: number | null
+          sem_ativa_bruto?: number
+          snapshot_id?: string | null
+          snapshot_recebido_em?: string | null
+          universo?: number
+        }
+        Relationships: []
+      }
       tool_categories: {
         Row: {
           created_at: string
@@ -21749,6 +21797,7 @@ export type Database = {
       tint_promocao_tick: { Args: never; Returns: Json }
       tint_promocao_watchdog: { Args: never; Returns: Json }
       tint_promote_sync_run: { Args: { p_sync_run_id: string }; Returns: Json }
+      tint_reaplicar_snapshot_tick: { Args: never; Returns: Json }
       tint_recalc_preco_oficial: {
         Args: {
           p_account: string

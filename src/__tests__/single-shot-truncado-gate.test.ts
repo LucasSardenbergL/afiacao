@@ -65,8 +65,6 @@ const DIVIDA: ReadonlyMap<string, number> = new Map([
   ['src/components/intelligence/IntelligenceStrategicTab.tsx', 2], // 80:order_items(LIMIT1000) 89:profiles
   ['src/components/intelligence/IntelligenceUserSimulator.tsx', 1], // 16:profiles
   ['src/components/loyalty/useAdminLoyalty.ts', 1], // 48:profiles
-  ['src/components/reposicao/ConfirmacaoPanel.tsx', 1], // 48:pedido_compra_sugerido
-  ['src/components/reposicao/HistoricoComChart.tsx', 2], // 38:pedido_compra_sugerido 99:pedido_compra_sugerido
   ['src/components/reposicao/aumentoDetail/MapeamentoDialog.tsx', 1], // 50:omie_products(LIMIT1000)
   ['src/components/reposicao/aumentoDetail/SkuPickerDialog.tsx', 1], // 37:omie_products(LIMIT1000)
   ['src/components/reposicao/pedidos/CiclosAnteriores.tsx', 1], // 18:pedido_compra_sugerido
@@ -77,7 +75,6 @@ const DIVIDA: ReadonlyMap<string, number> = new Map([
   ['src/hooks/useDepartmentsAdmin.ts', 1], // 23:profiles
   ['src/hooks/useExcecaoCredito.ts', 1], // 75:user_roles
   ['src/hooks/usePontoEquilibrio.ts', 2], // 227:fin_categorias 376:fin_categorias
-  ['src/hooks/useReposicaoSessao.ts', 2], // 42:pedido_compra_sugerido 133:pedido_compra_sugerido
   ['src/hooks/useRoutePlanner.ts', 1], // 333:profiles
   ['src/hooks/useTeamKpis.ts', 1], // 57:farmer_calls
   ['src/hooks/useUnifiedOrder.ts', 1], // 122:omie_servicos

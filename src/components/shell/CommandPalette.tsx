@@ -97,8 +97,7 @@ export function CommandPalette() {
       { id: 'nav.recebimento', label: 'Recebimento NF-e', group: 'Estoque', icon: FileCheck, perform: go('/recebimento') },
       { id: 'nav.estoque-recebimento', label: 'Recebimento (gestão)', group: 'Estoque', icon: Boxes, perform: go('/admin/estoque/recebimento') },
       // Reposição
-      { id: 'nav.repo-cockpit', label: 'Cockpit de Reposição', group: 'Reposição', icon: LayoutDashboard, keywords: ['compras', 'comprador'], perform: go('/admin/reposicao/cockpit') },
-      { id: 'nav.repo-pedidos', label: 'Pedidos de compra sugeridos', group: 'Reposição', icon: Truck, perform: go('/admin/reposicao/pedidos') },
+            { id: 'nav.repo-pedidos', label: 'Pedidos de compra sugeridos', group: 'Reposição', icon: Truck, keywords: ['compras', 'comprador', 'cockpit'], perform: go('/admin/reposicao/pedidos') },
       { id: 'nav.repo-alertas', label: 'Alertas de reposição', group: 'Reposição', icon: BarChart3, perform: go('/admin/reposicao/alertas') },
       { id: 'nav.repo-venda-perdida', label: 'Registrar venda perdida', group: 'Reposição', icon: BarChart3, keywords: ['faltou', 'sem estoque', 'ruptura'], perform: go('/admin/reposicao/venda-perdida') },
       // Financeiro

@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 624
+-- Total de custom migrations: 631
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -685,7 +685,14 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261012205652', 'retencao_lgpd_conversas', '20261012205652_retencao_lgpd_conversas.sql'),
   ('20261012233000', 'picking_cron_fora_do_minuto_15', '20261012233000_picking_cron_fora_do_minuto_15.sql'),
   ('20261012233500', 'analytics_ledger_crescimento_comparavel', '20261012233500_analytics_ledger_crescimento_comparavel.sql'),
-  ('20261013094000', 'fin_movimentacoes_resumo_encargos', '20261013094000_fin_movimentacoes_resumo_encargos.sql')
+  ('20261013094000', 'fin_movimentacoes_resumo_encargos', '20261013094000_fin_movimentacoes_resumo_encargos.sql'),
+  ('20261013120000', 'tint_watchdog_fase5_s2_persistente', '20261013120000_tint_watchdog_fase5_s2_persistente.sql'),
+  ('20261013120000', 'watchdog_diario_so_problema', '20261013120000_watchdog_diario_so_problema.sql'),
+  ('20261013150000', 'tint_promote_nao_ressuscita_fantasma', '20261013150000_tint_promote_nao_ressuscita_fantasma.sql'),
+  ('20261013180000', 'tint_reaplicar_snapshot_cron', '20261013180000_tint_reaplicar_snapshot_cron.sql'),
+  ('20261013200000', 'tint_remove_cron_reaplicar_snapshot', '20261013200000_tint_remove_cron_reaplicar_snapshot.sql'),
+  ('20261013210000', 'tint_watchdog_fase5_v4_fonte_viva', '20261013210000_tint_watchdog_fase5_v4_fonte_viva.sql'),
+  ('20261013220000', 'tint_promote_snapshot_ref_por_generated_at', '20261013220000_tint_promote_snapshot_ref_por_generated_at.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2681,7 +2688,15 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('retencao_lgpd_conversas', 'function', 'private', 'expurgar_conteudo_conversas', ''),
   ('retencao_lgpd_conversas', 'cron_job', 'cron', 'lgpd-expurgo-conversas-diario', ''),
   ('analytics_ledger_crescimento_comparavel', 'function', 'public', 'analytics_ledger_registrar', ''),
-  ('fin_movimentacoes_resumo_encargos', 'view', 'public', 'v_titulo_encargos_cr', '')
+  ('fin_movimentacoes_resumo_encargos', 'view', 'public', 'v_titulo_encargos_cr', ''),
+  ('tint_watchdog_fase5_s2_persistente', 'function', 'public', 'tint_watchdog_fase5_check', ''),
+  ('watchdog_diario_so_problema', 'function', 'public', 'fin_sync_watchdog_diario', ''),
+  ('watchdog_diario_so_problema', 'cron_job', 'cron', 'fin-sync-heartbeat', ''),
+  ('tint_reaplicar_snapshot_cron', 'function', 'public', 'tint_reaplicar_snapshot_tick', ''),
+  ('tint_reaplicar_snapshot_cron', 'cron_job', 'cron', 'tint-reaplicar-snapshot-6h', ''),
+  ('tint_watchdog_fase5_v4_fonte_viva', 'function', 'public', '_tint_watchdog_fase5_transicao', ''),
+  ('tint_watchdog_fase5_v4_fonte_viva', 'function', 'public', 'tint_watchdog_fase5_check', ''),
+  ('tint_watchdog_fase5_v4_fonte_viva', 'table', 'public', 'tint_watchdog_fase5_amostras', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4725,7 +4740,15 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('retencao_lgpd_conversas', 'function', 'private', 'expurgar_conteudo_conversas', ''),
   ('retencao_lgpd_conversas', 'cron_job', 'cron', 'lgpd-expurgo-conversas-diario', ''),
   ('analytics_ledger_crescimento_comparavel', 'function', 'public', 'analytics_ledger_registrar', ''),
-  ('fin_movimentacoes_resumo_encargos', 'view', 'public', 'v_titulo_encargos_cr', '')
+  ('fin_movimentacoes_resumo_encargos', 'view', 'public', 'v_titulo_encargos_cr', ''),
+  ('tint_watchdog_fase5_s2_persistente', 'function', 'public', 'tint_watchdog_fase5_check', ''),
+  ('watchdog_diario_so_problema', 'function', 'public', 'fin_sync_watchdog_diario', ''),
+  ('watchdog_diario_so_problema', 'cron_job', 'cron', 'fin-sync-heartbeat', ''),
+  ('tint_reaplicar_snapshot_cron', 'function', 'public', 'tint_reaplicar_snapshot_tick', ''),
+  ('tint_reaplicar_snapshot_cron', 'cron_job', 'cron', 'tint-reaplicar-snapshot-6h', ''),
+  ('tint_watchdog_fase5_v4_fonte_viva', 'function', 'public', '_tint_watchdog_fase5_transicao', ''),
+  ('tint_watchdog_fase5_v4_fonte_viva', 'function', 'public', 'tint_watchdog_fase5_check', ''),
+  ('tint_watchdog_fase5_v4_fonte_viva', 'table', 'public', 'tint_watchdog_fase5_amostras', '')
 )
 SELECT
   e.migration,
@@ -4753,7 +4776,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 135.
+-- Funções redefinidas com corpo extraível: 136.
 -- Fora da seção (4) — o último evento é REMOÇÃO de propósito (DROP / SET SCHEMA / RENAME):
 --   • public.import_tint_formulas — 20260806223407_drop_import_tint_formulas.sql
 --   • public.estimar_impacto_exclusao_outlier — 20260718093248_drop_estimar_impacto_exclusao_outlier_orfa.sql
@@ -5195,8 +5218,12 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'get_carteira_margem_faixa', 2, '20260813234112_carteira_margem_faixa_motivo_gate_custo.sql', '169677feb2e686d3e73ec31426c608b6'),
   ('public', 'farmer_association_rules_substituir', 1, '20260729120000_farmer_association_rules_substituicao_atomica.sql', '248a95f8d50d51f14599d4f9ac5158db'),
   ('public', 'farmer_association_rules_substituir', 2, '20260821200000_farmer_assoc_rules_segmento.sql', '55cf64cac2239c7a9a5de12e6b965141'),
+  ('public', '_tint_watchdog_fase5_transicao', 1, '20260730120000_tint_watchdog_fase5_chave.sql', 'd4dc06f6433a2e83bc19241bafd8302d'),
+  ('public', '_tint_watchdog_fase5_transicao', 2, '20261013210000_tint_watchdog_fase5_v4_fonte_viva.sql', 'e4e060ea99b82be72604d5af62f2e20e'),
   ('public', 'tint_watchdog_fase5_check', 1, '20260730120000_tint_watchdog_fase5_chave.sql', '3299e9aca3ff70d6c2c76efa40278ed9'),
   ('public', 'tint_watchdog_fase5_check', 2, '20261010230000_tint_watchdog_fase5_s2_aviso.sql', '1b5320651c53a321324640e5f545f84a'),
+  ('public', 'tint_watchdog_fase5_check', 3, '20261013120000_tint_watchdog_fase5_s2_persistente.sql', '4ac14c2f65c8e1dd996bf48877f2b276'),
+  ('public', 'tint_watchdog_fase5_check', 4, '20261013210000_tint_watchdog_fase5_v4_fonte_viva.sql', '0783718e1ef4267293fec13feda7d58b'),
   ('private', 'atp_disponivel', 1, '20260806101417_atp_reserva_estoque_fase1.sql', 'aeb0989efc8aae6130bfe73f2dd3d397'),
   ('private', 'atp_disponivel', 2, '20260806225052_atp_reserva_estoque_fase1_1_hardening.sql', '271e2acd633a4ceddd8a73cd988cfe49'),
   ('private', 'atp_disponivel', 3, '20260808012000_atp_reconciliacao_fase3.sql', '8326d00deff699c3730acadd7ee359a4'),

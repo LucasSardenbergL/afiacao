@@ -10,6 +10,7 @@ import { PedidoSugerido, PedidoItem, CondicaoPagamento } from './types';
 import { aprovarEDisparar } from './aprovar-disparar';
 import { montarUpdateItem, podeEditarPrecoPedido, precoEditValido } from './preco-edit';
 import { removerItensDoPedido, type ResultadoRemocao } from './remover-itens-pedido';
+import { motivoBloqueioAprovacao } from './fila-do-dia';
 import { quantidadeCompraInteira } from '@/lib/reposicao/compras-otimizador-helpers';
 import { quantidadeCompraCanonica } from '@/lib/reposicao/qtde-portal';
 import {
@@ -57,7 +58,7 @@ export function useDetalhesModal({ pedido, open, onOpenChange, onApproved }: Use
     enabled: !!pedido && open,
   });
 
-  const { data: itens, isLoading } = useQuery({
+  const { data: itens, isLoading, isError: itensFalhou, refetch: refetchItens } = useQuery({
     queryKey: ['pedido-itens', pedido?.id],
     queryFn: async () => {
       if (!pedido) return [] as PedidoItem[];
@@ -236,12 +237,20 @@ export function useDetalhesModal({ pedido, open, onOpenChange, onApproved }: Use
     },
   });
 
+  // Estado da leitura dos itens: erro com cache velho ainda é "erro" — o operador precisa
+  // saber que o que vê pode não ser o que vai sair.
+  const itensEstado: 'carregando' | 'erro' | 'ok' = isLoading ? 'carregando' : itensFalhou ? 'erro' : 'ok';
+  const motivoBloqueioAprov = motivoBloqueioAprovacao({
+    itensEstado,
+    nItens: itens?.length ?? 0,
+    condicaoSelecionada: !!condicaoSelecionada,
+  });
+
   const aprovarMutation = useMutation({
     mutationFn: async () => {
       if (!pedido) return;
-      if (!condicaoSelecionada) {
-        throw new Error('Selecione uma condição de pagamento antes de aprovar');
-      }
+      // Mesma regra do botão, reforçada aqui: aprova-se o que se conferiu (itens LIDOS).
+      if (motivoBloqueioAprov) throw new Error(motivoBloqueioAprov);
       // Salvar ajustes primeiro se houver — de QUANTIDADE ou de PREÇO. Só olhar `edits` descartava
       // a edição só-de-preço no "Aprovar e disparar", e o disparo lia o preço velho do banco (M-03).
       if (Object.keys(edits).length > 0 || Object.keys(precoEdits).length > 0) {
@@ -440,6 +449,9 @@ export function useDetalhesModal({ pedido, open, onOpenChange, onApproved }: Use
     condicoes,
     itens,
     isLoading,
+    itensEstado,
+    refetchItens,
+    motivoBloqueioAprov,
     edits,
     onEditQty,
     onBlurQty,

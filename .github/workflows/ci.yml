@@ -1015,7 +1015,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        parte: [1, 2, 3]
+        # 3 -> 4 partes (2026-10-13): na main a parte 3 levava 18m57s contra o teto de 20 — 1 minuto
+        # de folga, ou seja a PRÓXIMA prova a crescer reprovava a main, de quem quer que fosse. Foi o
+        # que aconteceu no #3032 (a prova do watchdog da Fase 5 passou, com asserts=47, e o job foi
+        # cancelado em seguida). O ci.yml já prescrevia a saída desde o #2685: "a próxima prova a
+        # estourar pedia PARALELIZAR, não subir o teto de novo". Com N=4 as 90 provas do manifesto
+        # caem para ~22 por parte (round-robin em db/roda-nucleo-ci.sh; nenhuma parte vazia, medido).
+        parte: [1, 2, 3, 4]
     permissions:
       contents: read
 

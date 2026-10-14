@@ -33,8 +33,6 @@ export const ROUTE_CRUMBS: RouteCrumb[] = [
   { path: "/admin/reposicao/sessao", crumb: "Reposição" },
   { path: "/admin/reposicao/sessao/mercado", crumb: "Mercado" },
   { path: "/admin/reposicao/sessao/parametros", crumb: "Parâmetros" },
-  { path: "/admin/reposicao/sessao/pedidos", crumb: "Pedidos" },
-  { path: "/admin/reposicao/sessao/confirmacao", crumb: "Confirmação" },
 
   // Financeiro
   { path: "/financeiro/cockpit", crumb: "Financeiro" },

@@ -12,7 +12,7 @@ export interface ZoneMeta {
 export const ZONE_META: Record<ZoneId, ZoneMeta> = {
   vendas:       { id: 'vendas', label: 'Vendas', caption: 'Pipeline operacional', icon: TrendingUp, cockpitPath: '/sales' },
   estoque:      { id: 'estoque', label: 'Estoque', caption: 'Recebimento e picking', icon: Package, cockpitPath: '/admin/estoque/picking' },
-  reposicao:    { id: 'reposicao', label: 'Reposição', caption: 'Sugestões e alertas', icon: ShoppingBag, cockpitPath: '/admin/reposicao/sessao' },
+  reposicao:    { id: 'reposicao', label: 'Reposição', caption: 'Sugestões e alertas', icon: ShoppingBag, cockpitPath: '/admin/reposicao/pedidos' },
   financeiro:   { id: 'financeiro', label: 'Financeiro', caption: 'Aging e fluxo', icon: DollarSign, cockpitPath: '/financeiro/cockpit' },
   tintometrico: { id: 'tintometrico', label: 'Tintométrico', caption: 'Fórmulas Oben', icon: Palette, cockpitPath: '/tintometrico' },
   sistema:      { id: 'sistema', label: 'Sistema', caption: 'Aprovações e integrações', icon: Activity, cockpitPath: '/admin/approvals' },

@@ -49,7 +49,7 @@ describe('itemVisivelParaSalesOnly', () => {
   });
 
   it.each([
-    ['Reposição', '/admin/reposicao/sessao'],
+    ['Reposição', '/admin/reposicao/pedidos'],
     ['Financeiro', '/financeiro/cockpit'],
     ['Estoque', '/admin/estoque/picking'],
     ['Documentação', '/docs'],
