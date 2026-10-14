@@ -107,6 +107,12 @@ db/test-check-finitude-money-path.sh       27
 # `divergente` (nunca encargo efetivo), ausente = NULL. 47 asserts + 19 sabotagens INLINE (controle verde
 # antes, alvo exato, baseline restaurado depois); ~24 s local.
 db/test-fin-encargos-titulo.sh             47
+# DRE fase 2 (2026-10-13): CHECK do mapa ampliado (impostos em linha própria + fora_dre), fora_dre
+# proibido em _default (provado pelo COMPORTAMENTO na postcondição), colunas fora_dre/provisório SEM
+# default (ausente ≠ 0), e o script do mapa colacor só entra com a omie-financeiro v1.5 servida (ledger +
+# janela viva, observação mais recente) — M0 amarra o hash do script ao fingerprint versionado. 56 asserts
+# com 8 sabotagens INLINE (controle verde na mesma invocação); ~6 s local.
+db/test-fin-dre-fora-dre.sh                56
 db/test-caca-custo-producao.sh              6
 # O desconto de item: NULL = não apurado ≠ 0 nos TRÊS escritores de order_items, e (§F, 2026-09-10)
 # o total LÍQUIDO atravessando as RPCs intocadas — com o G5 sabotado pela tolerância maior que o
