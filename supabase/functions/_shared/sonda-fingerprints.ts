@@ -75,7 +75,7 @@ export const FONTE_SHA256: Record<string, string> = {
   "recommend": "ecaa23882a393d5f46f0bd1d36c1e97467cf5f743f6821d22716f28e9da749ea",
   "reposicao-depara-sayerlack-auto": "d08f9e56ca21f97883c52e148c615626f9429ff4a59c34256ea0eb0cf3d3f60a",
   "sayerlack-captura-precos": "067de5a255cf9b09e7d73995f2f6986d14cf1869dbfaf7242317866b3a263e1c",
-  "sayerlack-importar-pedido-portal": "cad8d891509a8c5432c1ee8021180fcf64756ddb6b681fc162c7b3cbab3386dc",
+  "sayerlack-importar-pedido-portal": "34bc9ecaef2ba0e2f3f0a5abd6bd8e30cdc0afc2d272a720c74c0fa26f343f02",
   "scoring-recalc-batch": "3899eef2be43073b93b47445f4b36f29860c29f00b6d244cd2cffd0092bce4c6",
   "scoring-recalc-client": "f98c463750baa862a5072f00bac1400d7d77ff3c5e7a544c79873cadab296295",
   "sonda-relay": "18f452eb3fe28ea21389d3501ff9825e7053af2d05b36db88c0681fc7a0404a6",

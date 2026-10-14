@@ -112,6 +112,13 @@ CREATE TABLE IF NOT EXISTS public.sku_fornecedor_externo (
   fator_conversao numeric NOT NULL DEFAULT 1,
   ativo boolean NOT NULL DEFAULT true
 );
+-- Espelho dos POs do Omie (em prod `empresa` é enum; a RPC compara por ::text).
+CREATE TABLE IF NOT EXISTS public.purchase_orders_tracking (
+  id bigserial PRIMARY KEY,
+  empresa text NOT NULL,
+  numero_pedido text,
+  numero_contrato_fornecedor text
+);
 GRANT SELECT ON public.pedido_compra_sugerido, public.pedido_compra_item, public.omie_products TO service_role;
 SQL
 
@@ -123,7 +130,10 @@ eq "M0 a migration é re-aplicável (idempotente, postcondição verde na 2ª co
 # ZONA 3 — seed. DFA.4080LT = o pedido real 2140603 (16 LT, R$ 4.865,5584 + IPI 6,5% = R$ 5.181,82).
 seed() {
 P -q <<'SQL'
-TRUNCATE public.pedido_compra_item, public.pedido_compra_sugerido, public.omie_products, public.sku_fornecedor_externo RESTART IDENTITY CASCADE;
+TRUNCATE public.pedido_compra_item, public.pedido_compra_sugerido, public.omie_products, public.sku_fornecedor_externo, public.purchase_orders_tracking RESTART IDENTITY CASCADE;
+INSERT INTO public.purchase_orders_tracking (empresa, numero_pedido, numero_contrato_fornecedor) VALUES
+  ('OBEN',    '1278', '7000001'),   -- PO lançado direto no Omie com o nº do portal no contrato
+  ('COLACOR', '9999', '7000002');   -- outra empresa: não bloqueia a OBEN
 INSERT INTO public.sku_fornecedor_externo (empresa, fornecedor_nome, sku_omie, sku_portal, unidade_portal, fator_conversao, ativo) VALUES
   ('OBEN',    'RENNER SAYERLACK S/A', '12101724100', 'DFA.4080LT',  'LT', 1,   true),
   ('OBEN',    'RENNER SAYERLACK S/A', '8689743214',  'WJOI.7585GL', 'GL', 1,   true),
@@ -213,6 +223,7 @@ r "A5 IP005 SKU repetido"                    "'4000008', $ENT, 200, '[{\"sku_por
 r "A5 CP006 NCM fora da tabela de IPI"       "'4000009', $ENT, 100, '[{\"sku_portal\":\"SEM.NCM\",\"qtde_portal\":1,\"valor_mercadoria\":100}]'::jsonb" "IMP_ERR_CP006"
 r "A5 CP007 total 8 centavos acima do cobrado" "'4000010', $ENT, 5181.90, '$DFA'::jsonb" "IMP_ERR_CP007"
 r "A5 CP007 total SEM o IPI (mercadoria pura)" "'4000011', $ENT, 4865.56, '$DFA'::jsonb" "IMP_ERR_CP007"
+r "A5 IP006 já há PO OBEN no Omie com este nº no contrato" "'7000001', $ENT, 5181.82, '$DFA'::jsonb" "IMP_ERR_IP006"
 r "A5 IP001 protocolo não numérico"          "'21406O3', $ENT, 5181.82, '$DFA'::jsonb" "IMP_ERR_IP001"
 r "A5 IP001 sem data de entrega"             "'4000012', NULL, 5181.82, '$DFA'::jsonb" "IMP_ERR_IP001"
 r "A5 IP001 total zero"                      "'4000013', $ENT, 0, '$DFA'::jsonb" "IMP_ERR_IP001"
@@ -220,6 +231,7 @@ r "A5 IP001 sem itens"                       "'4000014', $ENT, 5181.82, '[]'::js
 r "A5 IP001 qtde como string"                "'4000015', $ENT, 5181.82, '[{\"sku_portal\":\"DFA.4080LT\",\"qtde_portal\":\"16\",\"valor_mercadoria\":4865.5584}]'::jsonb" "IMP_ERR_IP001"
 r "A5 IP001 qtde zero"                       "'4000016', $ENT, 5181.82, '[{\"sku_portal\":\"DFA.4080LT\",\"qtde_portal\":0,\"valor_mercadoria\":4865.5584}]'::jsonb" "IMP_ERR_IP001"
 eq "A5 nenhuma recusa gravou nada" "$(contagem)" "$ANTES"
+r "A5 controle IP006: contrato de OUTRA empresa não bloqueia" "'7000002', $ENT, 5181.82, '$DFA'::jsonb" "IMP_OK_novo_7000002"
 r "A5 controle: o mesmo payload com o total certo grava" "'4000010', $ENT, 5181.82, '$DFA'::jsonb" "IMP_OK_novo_4000010"
 
 # A6 — authz: só service_role executa; customer barrado pelo gate de papel mesmo com EXECUTE.
@@ -253,6 +265,9 @@ restaura
 sabota 's/^  IF v_existente IS NOT NULL THEN$/  IF false THEN/'
 P -q -c "INSERT INTO public.pedido_compra_sugerido (id, empresa, fornecedor_nome, status, status_envio_portal, portal_protocolo) VALUES (500, 'OBEN', 'RENNER SAYERLACK S/A', 'disparado', 'sucesso_portal', '2140604')"
 dente "F4 sem o 'já existe', o índice UNIQUE ainda barra o 2º pedido (23505)" "$(imp "'2140604', $ENT, 5181.82, '$DFA'::jsonb")" "IMP_ERR_23505"
+restaura
+sabota 's/^  IF v_po_omie IS NOT NULL THEN$/  IF false THEN/'
+dente "F8 sem o IP006, o PO lançado no Omie ganha um 2º PO" "$(imp "'7000001', $ENT, 5181.82, '$DFA'::jsonb")" "IMP_OK_novo_7000001"
 restaura
 sabota 's/^  v_atualizados := public\.sayerlack_aplicar_custo_portal(v_pedido_id, v_payload, p_valor_total);$/  v_atualizados := v_n;/'
 dente "F5 sem a prova de custo, total errado grava (A5 CP007)" "$(imp "'6000005', $ENT, 9999.99, '$DFA'::jsonb")" "IMP_OK_novo_6000005"

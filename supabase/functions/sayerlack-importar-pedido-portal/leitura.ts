@@ -103,6 +103,7 @@ export function lerCabecalho(linhas: LinhaConsultaRaw[], protocolo: string): { o
   const vlrTotal = numeroBR(coluna(l, "Vlr Total"));
   const faltando = [
     !cliente && "Cliente",
+    !situacao && "Situação",
     !dataEntrega && "Data Entrega",
     !(vlrMerc != null && vlrMerc > 0) && "Vlr Mercadoria",
     !(vlrTotal != null && vlrTotal > 0) && "Vlr Total",
@@ -187,6 +188,7 @@ const MENSAGEM_SQLSTATE: Readonly<Record<string, string>> = {
   IP003: "Quantidade do portal não vira quantidade inteira no Omie (confira o fator do de-para).",
   IP004: "O de-para aponta para um fornecedor que não é a Sayerlack.",
   IP005: "O mesmo SKU aparece duas vezes no pedido do portal.",
+  IP006: "Já existe pedido de compra no Omie com este número do portal no contrato (lançado direto no Omie).",
   CP006: "Item sem alíquota de IPI conhecida para o NCM (cadastre o NCM e importe de novo).",
   CP007: "O total com IPI calculado não bate com o Vlr Total do portal.",
   CP004: "Itens divergentes ao aplicar o custo.",

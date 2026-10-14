@@ -160,7 +160,7 @@ db/test-sayerlack-ipi-po.sh                95
 # Importar pedido digitado direto no portal Sayerlack: de-para inverso (ambíguo/inativo/outra empresa = sem de-para),
 # qtde inteira no Omie (÷ fator), custo pela MESMA prova da RPC acima na MESMA transação (recusa = nada gravado),
 # idempotência por protocolo (lock + UNIQUE), authz, falsificação por camada.
-db/test-sayerlack-importar-pedido-portal.sh 46
+db/test-sayerlack-importar-pedido-portal.sh 49
 
 # ── Eixo 3 — ATOMICIDADE ──────────────────────────────────────────────────────────
 # "Guard fora da escrita não é guard": o predicado tem de estar DENTRO do `WHERE`

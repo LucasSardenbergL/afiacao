@@ -19,7 +19,8 @@
 -- SQLSTATEs (classe IP):
 --   IP001 payload inválido · IP002 SKU do portal sem de-para ativo (lista) ·
 --   IP003 quantidade do portal não vira quantidade INTEIRA no Omie (lista) ·
---   IP004 de-para aponta fornecedores diferentes / não-Sayerlack · IP005 SKU repetido no pedido.
+--   IP004 de-para aponta fornecedores diferentes / não-Sayerlack · IP005 SKU repetido no pedido ·
+--   IP006 já existe PO no Omie com este nº no contrato (lançado direto no Omie).
 --   As do custo (CP001–CP007) sobem da RPC de custo sem tradução.
 -- ============================================================================================
 
@@ -56,6 +57,7 @@ DECLARE
   v_pedido_id   bigint;
   v_payload     jsonb;
   v_atualizados integer;
+  v_po_omie     text;
 BEGIN
   -- Gate de papel (defesa em profundidade; a tranca é o privilégio: só service_role executa).
   IF auth.uid() IS NOT NULL AND NOT (public.has_role(auth.uid(), 'employee'::app_role) OR public.has_role(auth.uid(), 'master'::app_role)) THEN
@@ -99,6 +101,16 @@ BEGIN
   SELECT id INTO v_existente FROM public.pedido_compra_sugerido WHERE portal_protocolo = p_protocolo;
   IF v_existente IS NOT NULL THEN
     RETURN jsonb_build_object('pedido_id', v_existente, 'ja_existia', true);
+  END IF;
+
+  -- IP006 — PO lançado DIRETO no Omie com este nº do portal no contrato (sem passar pelo app: 210 Sayerlack
+  -- assim em 2026-10-14). Importar criaria um 2º PO com outra chave AFI-<id>. Codex 2026-10-14, P1.
+  -- Limite: o espelho `purchase_orders_tracking` tem a defasagem do sync — PO digitado no Omie minutos antes escapa.
+  SELECT string_agg(coalesce(t.numero_pedido, '?'), ', ') INTO v_po_omie
+    FROM public.purchase_orders_tracking t
+   WHERE t.empresa::text = 'OBEN' AND btrim(t.numero_contrato_fornecedor) = p_protocolo;
+  IF v_po_omie IS NOT NULL THEN
+    RAISE EXCEPTION 'importar_portal: já existe pedido de compra no Omie com o contrato % (PO %)', p_protocolo, v_po_omie USING ERRCODE = 'IP006';
   END IF;
 
   v_n := jsonb_array_length(p_itens);

@@ -135,7 +135,8 @@ export default async ({ page, context }) => {
     const temForm = await page.waitForSelector('#getFilterData', { timeout: budgetFor('form-consulta', 15000) }).then(() => true).catch(() => false);
     if (!temForm) return await falha('CONSULTA_INDISPONIVEL', 'Tela Consulta Pedidos sem o botão Filtrar');
 
-    // Filtros: cliente OBEN, nº início = fim, situação/exibir = todos, datas desde 2020 (o default é só o último mês).
+    // Filtros: cliente OBEN, nº início = fim, só PEDIDO (não proposta), qualquer situação (decisão do founder),
+    // datas desde 2020 (o default é só o último mês).
     const filtro = await page.evaluate((cod, nr) => {
       const jq = window.jQuery;
       const set = (sel, v) => {
@@ -145,16 +146,20 @@ export default async ({ page, context }) => {
         return true;
       };
       const r = {
-        cliente: set('#cliente', String(cod)), situacao: set('#situacao', 'todos'), exibir: set('#exibir', 'todos'),
+        cliente: set('#cliente', String(cod)), situacao: set('#situacao', 'todos'), exibir: set('#exibir', '1'),
         ini: set('#num_ped_ini', String(nr)), fim: set('#num_ped_fim', String(nr)),
         emissao: set('#data_emissao_ini', '2020-01-01'), entrega: set('#data_entrega_ini', '2020-01-01'),
       };
       const val = (sel) => { const el = document.querySelector(sel); return el ? String(el.value) : null; };
-      return { set: r, cliente: val('#cliente'), ini: val('#num_ped_ini'), fim: val('#num_ped_fim') };
+      return { set: r, cliente: val('#cliente'), exibir: val('#exibir'), ini: val('#num_ped_ini'), fim: val('#num_ped_fim') };
     }, clienteCodigo, protocolo);
     trace.push({ step: 'filtros', filtro, t: Date.now() - t0 });
     if (filtro.cliente !== String(clienteCodigo)) {
       return await falha('CLIENTE_INDISPONIVEL', 'Cliente ' + clienteCodigo + ' não está disponível no filtro da consulta', { filtro });
+    }
+    // Exibir = '1' (Pedido): proposta NÃO é pedido efetivado e não pode virar PO (Codex 2026-10-14, P1).
+    if (filtro.exibir !== '1') {
+      return await falha('FILTRO_NAO_APLICADO', 'Filtro Exibir = Pedido não ficou aplicado', { filtro });
     }
     if (filtro.ini !== String(protocolo) || filtro.fim !== String(protocolo)) {
       return await falha('FILTRO_NAO_APLICADO', 'Número do pedido não ficou no filtro', { filtro });

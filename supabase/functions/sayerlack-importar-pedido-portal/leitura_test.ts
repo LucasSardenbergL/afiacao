@@ -49,6 +49,11 @@ Deno.test("cliente que não é a OBEN é recusado", () => {
   assertEquals(r.ok ? "ok" : r.motivo, "consulta_incompleta");
 });
 
+Deno.test("situação ausente é recusada (não dá para saber o que é a linha)", () => {
+  const r = lerCabecalho([{ ...LINHA_REAL, "Situação": "" }], "2140603");
+  assertEquals(r.ok ? "ok" : r.motivo, "consulta_incompleta");
+});
+
 Deno.test("Vlr Total ilegível: ausente ≠ zero, recusa", () => {
   const r = lerCabecalho([{ ...LINHA_REAL, "Vlr Total": "" }], "2140603");
   assertEquals(r.ok ? "ok" : r.motivo, "consulta_incompleta");
