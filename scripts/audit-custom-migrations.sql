@@ -2698,7 +2698,9 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('tint_reaplicar_snapshot_cron', 'cron_job', 'cron', 'tint-reaplicar-snapshot-6h', ''),
   ('tint_watchdog_fase5_v4_fonte_viva', 'function', 'public', '_tint_watchdog_fase5_transicao', ''),
   ('tint_watchdog_fase5_v4_fonte_viva', 'function', 'public', 'tint_watchdog_fase5_check', ''),
-  ('tint_watchdog_fase5_v4_fonte_viva', 'table', 'public', 'tint_watchdog_fase5_amostras', '')
+  ('tint_watchdog_fase5_v4_fonte_viva', 'table', 'public', 'tint_watchdog_fase5_amostras', ''),
+  ('fin_dre_fora_dre_fase2', 'function', 'public', 'fin_dre_snapshots_contrato_fase2', ''),
+  ('fin_dre_fora_dre_fase2', 'trigger', 'public', 'trg_fin_dre_snapshots_contrato_fase2', 'fin_dre_snapshots')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4750,7 +4752,9 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('tint_reaplicar_snapshot_cron', 'cron_job', 'cron', 'tint-reaplicar-snapshot-6h', ''),
   ('tint_watchdog_fase5_v4_fonte_viva', 'function', 'public', '_tint_watchdog_fase5_transicao', ''),
   ('tint_watchdog_fase5_v4_fonte_viva', 'function', 'public', 'tint_watchdog_fase5_check', ''),
-  ('tint_watchdog_fase5_v4_fonte_viva', 'table', 'public', 'tint_watchdog_fase5_amostras', '')
+  ('tint_watchdog_fase5_v4_fonte_viva', 'table', 'public', 'tint_watchdog_fase5_amostras', ''),
+  ('fin_dre_fora_dre_fase2', 'function', 'public', 'fin_dre_snapshots_contrato_fase2', ''),
+  ('fin_dre_fora_dre_fase2', 'trigger', 'public', 'trg_fin_dre_snapshots_contrato_fase2', 'fin_dre_snapshots')
 )
 SELECT
   e.migration,

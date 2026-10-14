@@ -22,15 +22,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 ## Resumo
 
 - **633** custom migrations totais
-- **2035** objetos esperados (criados por estas migrations)
+- **2037** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 711
+  - `function`: 712
   - `rls_policy`: 471
   - `index`: 275
   - `cron_job`: 184
   - `table`: 177
   - `view`: 110
-  - `trigger`: 103
+  - `trigger`: 104
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -5140,7 +5140,10 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 ### `20261013230000_fin_dre_fora_dre_fase2.sql`
 
-> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_dre_snapshots_contrato_fase2` | — |
+| `trigger` | `public.trg_fin_dre_snapshots_contrato_fase2` | `fin_dre_snapshots` |
 
 ## Próximos passos por status
 
