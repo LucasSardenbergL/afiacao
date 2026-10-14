@@ -77,7 +77,7 @@ export function useReceitaDiariaTtm() {
       const inicio = (a - 1) * 100 + m; // mesmo mês do ano anterior (incluído)
       const linhas = await fetchAllPages<Record<string, unknown>>(
         (de, ate) =>
-          supabase.from('fin_dre_competencia_base' as never).select('company, ano, mes, categoria_codigo, valor_total')
+          supabase.from('fin_dre_competencia_base').select('company, ano, mes, categoria_codigo, valor_total')
             .eq('origem', 'CR').gte('ano', a - 1)
             // chave única da view: (origem, company, ano, mes, categoria_codigo, categoria_descricao); as 2 últimas aceitam NULL
             .order('company', { ascending: true }).order('ano', { ascending: true })
