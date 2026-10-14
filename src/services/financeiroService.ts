@@ -5,6 +5,7 @@ import { janelaTTM, calcularDsoDpo, type DsoDpoResult } from "@/lib/financeiro/d
 import { OPEN_TITLE_STATUSES, isOpenTitleStatus } from "@/lib/financeiro/titulo-status";
 import { baixaOuIndisponivel, type ProcedenciaBaixa } from "@/lib/financeiro/procedencia-baixa";
 import { spBusinessDate } from "@/lib/time/sp-day";
+import { linhasDreMapeaveis } from "@/lib/financeiro/dre-helpers";
 import { fetchAllPages, ehFalhaDePagina } from "@/lib/postgrest";
 import { mensagemDeErro, erroComCausa } from "@/lib/erro-mensagem";
 import type {
@@ -814,6 +815,29 @@ export const DRE_LINHAS = [
   { value: 'outras_despesas', label: 'Outras Despesas', tipo: 'D' },
   { value: 'impostos', label: 'Impostos', tipo: 'D' },
 ] as const;
+
+// DRE fase 2: linhas que só existem no MAPEAMENTO (a grade do orçamento segue sendo DRE_LINHAS).
+const DRE_LINHAS_SO_MAPA = [
+  { value: 'ded_icms', label: '(-) ICMS', tipo: 'R' },
+  { value: 'ded_iss', label: '(-) ISS', tipo: 'R' },
+  { value: 'ded_pis', label: '(-) PIS', tipo: 'R' },
+  { value: 'ded_cofins', label: '(-) COFINS', tipo: 'R' },
+  { value: 'ded_ipi', label: '(-) IPI', tipo: 'R' },
+  { value: 'das', label: '(-) DAS (Simples)', tipo: 'R' },
+  { value: 'irpj', label: 'IRPJ', tipo: 'D' },
+  { value: 'csll', label: 'CSLL', tipo: 'D' },
+  { value: 'fora_dre', label: 'Fora do DRE (composição pendente)', tipo: 'D' },
+] as const;
+
+type OpcaoLinhaDRE = { value: string; label: string; tipo: 'R' | 'D' };
+const TODAS_LINHAS_MAPA: readonly OpcaoLinhaDRE[] = [...DRE_LINHAS, ...DRE_LINHAS_SO_MAPA];
+export const DRE_LINHA_LABEL: Record<string, string> = Object.fromEntries(TODAS_LINHAS_MAPA.map((l) => [l.value, l.label]));
+
+/** Opções do Select de mapeamento para um escopo — filtradas por regime e sem fora_dre no _default. */
+export function opcoesMapeamentoDRE(company: Company | '_default' | string): OpcaoLinhaDRE[] {
+  const permitidas = new Set(linhasDreMapeaveis(company));
+  return TODAS_LINHAS_MAPA.filter((l) => permitidas.has(l.value));
+}
 
 export async function getCategoryMappings(
   company: Company | '_default'

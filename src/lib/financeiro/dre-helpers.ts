@@ -327,6 +327,26 @@ export function aplicarPendenciasConfianca(confianca: Confianca, input: { foraDR
   return { ...confianca, nivel, motivos };
 }
 
+// ── Fase 2: o que a tela de mapeamento oferece por escopo (não espelhado no edge) ──
+// Base = as 11 linhas de sempre. Imposto em linha própria segue o regime da empresa: Simples só
+// DAS (IRPJ/CSLL lá dentro sumiriam do resultado), presumido os específicos. `_default` vale para
+// TODAS as empresas (inclusive a do Simples) e sair do DRE é decisão POR EMPRESA ⇒ no `_default`
+// só o legado 'impostos' (normalizado pelo regime no motor), nunca fora_dre.
+const LINHAS_MAPA_BASE = [
+  'receita_bruta', 'deducoes', 'cmv', 'despesas_operacionais', 'despesas_administrativas',
+  'despesas_comerciais', 'despesas_financeiras', 'receitas_financeiras', 'outras_receitas',
+  'outras_despesas', 'impostos',
+];
+export function linhasDreMapeaveis(company: string): string[] {
+  if (company === '_default') return [...LINHAS_MAPA_BASE];
+  const regime = REGIME_POR_EMPRESA[company];
+  if (regime === undefined) return [...LINHAS_MAPA_BASE];
+  const impostos = regime === 'simples'
+    ? ['das']
+    : ['ded_icms', 'ded_iss', 'ded_pis', 'ded_cofins', 'ded_ipi', 'irpj', 'csll'];
+  return [...LINHAS_MAPA_BASE, ...impostos, 'fora_dre'];
+}
+
 export type ReceitaMensal = { ano: number; mes: number; receita_bruta: number };
 
 // RBT12 = soma da receita bruta dos 12 meses ANTERIORES ao mês de apuração (exclusivo).

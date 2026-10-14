@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { classificarLinhaDRE, REGIME_POR_EMPRESA, resolverDataCaixa, valorCaixaEfetivo, dedupePorCodigo, bucketizarCaixa, montarDRE, scoreConfianca, calcularRBT12, aliquotaEfetivaSimples, anexoPorFatorR, impostoTeoricoSimples, impostoTeoricoPresumido, normalizarConfigTributario, novoForaDRE, acumularForaDRE, aplicarPendenciasConfianca } from '../dre-helpers';
+import { classificarLinhaDRE, REGIME_POR_EMPRESA, resolverDataCaixa, valorCaixaEfetivo, dedupePorCodigo, bucketizarCaixa, montarDRE, scoreConfianca, calcularRBT12, aliquotaEfetivaSimples, anexoPorFatorR, impostoTeoricoSimples, impostoTeoricoPresumido, normalizarConfigTributario, novoForaDRE, acumularForaDRE, aplicarPendenciasConfianca, linhasDreMapeaveis } from '../dre-helpers';
 
 const M = (pairs: Array<[string, string]>) => new Map<string, string>(pairs);
 
@@ -384,5 +384,36 @@ describe('acumularForaDRE / aplicarPendenciasConfianca (fase 2)', () => {
     const r = aplicarPendenciasConfianca(alta, { foraDRE: novoForaDRE(), mapeamentosInvalidos: 2, regime: 'competencia' });
     expect(r.nivel).toBe('baixa');
     expect(r.motivos.join(' ')).toContain('inválido');
+  });
+});
+
+describe('linhasDreMapeaveis (tela de mapeamento, fase 2)', () => {
+  it('_default: nunca fora_dre nem imposto específico (vale para a empresa do Simples também)', () => {
+    const l = linhasDreMapeaveis('_default');
+    expect(l).not.toContain('fora_dre');
+    expect(l).not.toContain('irpj');
+    expect(l).not.toContain('das');
+    expect(l).toContain('impostos');
+  });
+  it('presumido (colacor): específicos + fora_dre, sem DAS', () => {
+    const l = linhasDreMapeaveis('colacor');
+    expect(l).toEqual(expect.arrayContaining(['ded_icms', 'ded_pis', 'ded_cofins', 'ded_iss', 'ded_ipi', 'irpj', 'csll', 'fora_dre']));
+    expect(l).not.toContain('das');
+  });
+  it('Simples (colacor_sc): DAS + fora_dre, sem IRPJ/CSLL', () => {
+    const l = linhasDreMapeaveis('colacor_sc');
+    expect(l).toContain('das');
+    expect(l).toContain('fora_dre');
+    expect(l).not.toContain('irpj');
+    expect(l).not.toContain('csll');
+  });
+  it('tudo que a tela oferece o motor honra (nenhuma linha vira mapa inválido)', () => {
+    for (const c of ['_default', 'colacor', 'oben', 'colacor_sc']) {
+      const regime = c === 'colacor_sc' ? 'simples' : 'presumido';
+      for (const linha of linhasDreMapeaveis(c)) {
+        const r = classificarLinhaDRE({ categoria_codigo: '9.01', categoria_descricao: '', isReceita: false, regime, mapping: M([['9.01', linha]]) });
+        expect(r.mapeamentoInvalido, `${c}/${linha}`).toBeNull();
+      }
+    }
   });
 });

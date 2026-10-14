@@ -9,7 +9,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { COMPANIES, ALL_COMPANIES, type Company } from '@/contexts/CompanyContext';
 import {
   getCategoryMappings, upsertCategoryMapping, deleteCategoryMapping,
-  getCategoriasOmie, DRE_LINHAS,
+  getCategoriasOmie, DRE_LINHA_LABEL, opcoesMapeamentoDRE,
   type FinCategoriaDREMapping,
 } from '@/services/financeiroService';
 import {
@@ -22,7 +22,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 
-const dreLabelMap = Object.fromEntries(DRE_LINHAS.map(l => [l.value, l.label]));
+const dreLabelMap = DRE_LINHA_LABEL;
 
 const FinanceiroMapping = () => {
   const [company, setCompany] = useState<Company | '_default'>('_default');
@@ -232,6 +232,7 @@ const FinanceiroMapping = () => {
                     <UnmappedRow
                       key={cat.omie_codigo}
                       cat={cat}
+                      company={company}
                       saving={saving === cat.omie_codigo}
                       onSave={(dre_linha) => handleSave(cat.omie_codigo, dre_linha, cat.descricao)}
                     />
@@ -344,7 +345,16 @@ const FinanceiroMapping = () => {
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
-                            {DRE_LINHAS.map(l => (
+                            {/* Valor gravado que este escopo não oferece (desconhecido ou fora do regime):
+                                aparece, desabilitado, em vez de o Select mostrar vazio e o 1º clique sobrescrever. */}
+                            {!opcoesMapeamentoDRE(m.company).some(l => l.value === m.dre_linha) && (
+                              <SelectItem value={m.dre_linha} disabled>
+                                {DRE_LINHA_LABEL[m.dre_linha]
+                                  ? `${DRE_LINHA_LABEL[m.dre_linha]} (não vale neste escopo)`
+                                  : `valor desconhecido: ${m.dre_linha}`}
+                              </SelectItem>
+                            )}
+                            {opcoesMapeamentoDRE(m.company).map(l => (
                               <SelectItem key={l.value} value={l.value}>
                                 <span className={l.tipo === 'R' ? 'text-status-success' : 'text-status-error'}>
                                   {l.label}
@@ -411,8 +421,9 @@ const FinanceiroMapping = () => {
   );
 };
 
-function UnmappedRow({ cat, saving, onSave }: {
+function UnmappedRow({ cat, company, saving, onSave }: {
   cat: { omie_codigo: string; descricao: string; tipo: string };
+  company: Company | '_default';
   saving: boolean;
   onSave: (dre_linha: string) => void;
 }) {
@@ -433,7 +444,7 @@ function UnmappedRow({ cat, saving, onSave }: {
             <SelectValue placeholder="Selecionar linha..." />
           </SelectTrigger>
           <SelectContent>
-            {DRE_LINHAS.map(l => (
+            {opcoesMapeamentoDRE(company).map(l => (
               <SelectItem key={l.value} value={l.value}>
                 {l.label}
               </SelectItem>
