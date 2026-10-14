@@ -8,7 +8,8 @@
 -- Semântica: a âncora só serve de preço CHEIO quando TODA linha do dia dela tem desconto apurado = 0.
 -- Desconto > 0, NULL (não apurado), NaN ou negativo → neutro/desconto_nao_provado.
 --
--- Efeito medido na prod (psql-ro, 2026-10-14; 24.211 pares cliente×produto×empresa, db/medicao no PR):
+-- Efeito medido na prod (psql-ro, 2026-10-14; 24.211 pares cliente×produto×empresa,
+-- db/medicao-defasagem-desconto-valor.sql):
 --   status que o vendedor vê como alerta/"em dia" (calculável, sem_alta, prejuizo_ancora):
 --     só desconto > 0 → 172 pares; com NULL também → 176 pares.
 --   o resto dos 19.202 pares com NULL já era neutro/sem custo (âncora antiga, sem snapshot de cmc).
