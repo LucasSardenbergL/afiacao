@@ -1,0 +1,2 @@
+{ "formato": "deploy-ordem/1",
+  "depoisDe": [{ "edge": "disparar-pedidos-aprovados", "motivo": "na ordem inversa o disparo v1.8 divide em lotes de 20 o pedido importado (já com protocolo) e o filho sem protocolo reabre envio ao portal — pedido duplicado no fornecedor", "pr": 3075 }] }

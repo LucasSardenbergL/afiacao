@@ -42,6 +42,7 @@ import { OverrideMinimoButton } from '@/components/reposicao/pedidos/OverrideMin
 import { acaoLinhaAtencao, particionarAtencao } from '@/components/reposicao/pedidos/shared';
 import { AbaixoMinimoCard } from '@/components/reposicao/pedidos/AbaixoMinimoCard';
 import { PoSumidoCard } from '@/components/reposicao/pedidos/PoSumidoCard';
+import { ImportarPedidoPortalDialog } from '@/components/reposicao/pedidos/ImportarPedidoPortalDialog';
 import { ehAcessoNegado, frescorDoDetector, normalizarCandidatos, normalizarMarcador, ordenarCandidatos, type Frescor, type MarcadorPos, type PoCandidato } from '@/components/reposicao/pedidos/po-sumido';
 import { useAuth } from '@/contexts/AuthContext';
 import { track } from '@/lib/analytics';
@@ -761,6 +762,7 @@ export default function AdminReposicaoPedidos() {
             </AlertDialogContent>
           </AlertDialog>
           <UltimaExecucao acao="reposicao.sincronizar_recalcular" />
+          <ImportarPedidoPortalDialog />
         </div>
       </div>
 

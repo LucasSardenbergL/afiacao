@@ -97,6 +97,7 @@ Vocabulário que o founder assume ao falar de reposição (antes re-explicado a 
 
 ## Portal Sayerlack (scraping / pedido)
 
+- **[2026-10-14] Importar pedido digitado DIRETO no portal pelo número** (Gerir pedidos → "Importar do portal"; edge `sayerlack-importar-pedido-portal`, RPC `sayerlack_importar_pedido_portal`). Portal = **só leitura** (consulta `/order-viewer` + `GET /order-creation/busca-itens-pedido/<nº>`; a página de detalhe é tela de EDIÇÃO — só GET, nunca clique). A semântica POSICIONAL dos itens é provada a cada pedido em `leitura.ts`; custo pela MESMA prova (`sayerlack_aplicar_custo_portal`, Vlr Total da consulta) na mesma transação; um protocolo = um pedido (UNIQUE parcial). Pedido com protocolo **não** é dividido no disparo (v1.9). → `docs/historico/importar-pedido-portal-sayerlack.md`
 - **[2026-10-10] Janela do portal: fechado de SÁBADO 12:00 até SEGUNDA 06:00** (palavra do founder). Digest
   matinal de `gerar-pedidos-diario` não sai no domingo (v1.2, #2906). `disparar-pedidos-aprovados` v1.6
   (`janela-portal.ts`) barra na janela, ANTES do split e sem write, quem abriria envio NOVO →
