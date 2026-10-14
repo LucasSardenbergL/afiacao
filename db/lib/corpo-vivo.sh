@@ -130,8 +130,12 @@ cv_cadeia() {
 # o próprio PRE, é a fonte da versão, não um fixture). Sai quando um re-dump absorver as duas (avançar CV_INICIO).
 #   · 20261010210000 (o motor desconta o comprometido) entra na cadeia de quem guarda sales_orders pelo GRANT de
 #     uma coluna; o PRE dela exige o motor d3f55…, que só a 20261009194000 (unidades WP) produz sobre o snapshot.
+#   · 20261014120100 (fecho da coluna gross_margin_pct, FU4-F) entra na cadeia de quem guarda farmer_client_scores
+#     pelo REVOKE/GRANT de tabela; o PRE dela exige a RPC get_scores_margem, que só a 20261014120000 cria — e esta
+#     não faz DDL sobre objeto guardado (só LÊ a tabela), então a seleção textual não a leva sozinha.
 CV_PREDECESSORAS=(
   "20261010210000_motor_desconta_comprometido.sql:20261009194000_motor_unidades_concentrado_wp.sql"
+  "20261014120100_fcs_margem_fecha_coluna.sql:20261014120000_fcs_margem_rpc_projecao.sql"
 )
 
 # cv_aplicar_cadeia <dir de migrations> — aplica a cadeia no banco de `P`, em ordem, e conta.
