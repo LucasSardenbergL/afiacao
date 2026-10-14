@@ -21,7 +21,7 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **631** custom migrations totais
+- **633** custom migrations totais
 - **2035** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 711
@@ -5118,6 +5118,10 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.tint_reaplicar_snapshot_tick` | — |
 | `cron_job` | `cron.tint-reaplicar-snapshot-6h` | — |
 
+### `20261013191942_deploy_sonda_alvos_onda6.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
 ### `20261013200000_tint_remove_cron_reaplicar_snapshot.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
@@ -5131,6 +5135,10 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `table` | `public.tint_watchdog_fase5_amostras` | — |
 
 ### `20261013220000_tint_promote_snapshot_ref_por_generated_at.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20261013230000_fin_dre_fora_dre_fase2.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 

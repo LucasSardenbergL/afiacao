@@ -1,5 +1,5 @@
 -- Validação pós-apply de 20261013230000_fin_dre_fora_dre_fase2.sql (read-only).
--- Esperado depois do Run: t | t | 2 | 0. Antes do apply: f | f | 0 | (n de snapshots).
+-- Esperado depois do Run: t | t | 2 | 0. Antes do apply: ERRO "column fora_dre does not exist" (pré-voo 2026-10-13).
 SELECT
   (SELECT position('''fora_dre''' IN pg_get_constraintdef(oid)) > 0 AND position('''csll''' IN pg_get_constraintdef(oid)) > 0
      FROM pg_constraint WHERE conrelid = 'public.fin_categoria_dre_mapping'::regclass
