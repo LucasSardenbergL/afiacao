@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **633** custom migrations totais
-- **2037** objetos esperados (criados por estas migrations)
+- **634** custom migrations totais
+- **2038** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 712
+  - `function`: 713
   - `rls_policy`: 471
   - `index`: 275
   - `cron_job`: 184
@@ -5144,6 +5144,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.fin_dre_snapshots_contrato_fase2` | — |
 | `trigger` | `public.trg_fin_dre_snapshots_contrato_fase2` | `fin_dre_snapshots` |
+
+### `20261014211500_defasagem_desconto_valor.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_defasagem_cliente` | — |
 
 ## Próximos passos por status
 

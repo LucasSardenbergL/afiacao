@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 633
+-- Total de custom migrations: 634
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -694,7 +694,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261013200000', 'tint_remove_cron_reaplicar_snapshot', '20261013200000_tint_remove_cron_reaplicar_snapshot.sql'),
   ('20261013210000', 'tint_watchdog_fase5_v4_fonte_viva', '20261013210000_tint_watchdog_fase5_v4_fonte_viva.sql'),
   ('20261013220000', 'tint_promote_snapshot_ref_por_generated_at', '20261013220000_tint_promote_snapshot_ref_por_generated_at.sql'),
-  ('20261013230000', 'fin_dre_fora_dre_fase2', '20261013230000_fin_dre_fora_dre_fase2.sql')
+  ('20261013230000', 'fin_dre_fora_dre_fase2', '20261013230000_fin_dre_fora_dre_fase2.sql'),
+  ('20261014211500', 'defasagem_desconto_valor', '20261014211500_defasagem_desconto_valor.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2700,7 +2701,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('tint_watchdog_fase5_v4_fonte_viva', 'function', 'public', 'tint_watchdog_fase5_check', ''),
   ('tint_watchdog_fase5_v4_fonte_viva', 'table', 'public', 'tint_watchdog_fase5_amostras', ''),
   ('fin_dre_fora_dre_fase2', 'function', 'public', 'fin_dre_snapshots_contrato_fase2', ''),
-  ('fin_dre_fora_dre_fase2', 'trigger', 'public', 'trg_fin_dre_snapshots_contrato_fase2', 'fin_dre_snapshots')
+  ('fin_dre_fora_dre_fase2', 'trigger', 'public', 'trg_fin_dre_snapshots_contrato_fase2', 'fin_dre_snapshots'),
+  ('defasagem_desconto_valor', 'function', 'public', 'get_defasagem_cliente', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4754,7 +4756,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('tint_watchdog_fase5_v4_fonte_viva', 'function', 'public', 'tint_watchdog_fase5_check', ''),
   ('tint_watchdog_fase5_v4_fonte_viva', 'table', 'public', 'tint_watchdog_fase5_amostras', ''),
   ('fin_dre_fora_dre_fase2', 'function', 'public', 'fin_dre_snapshots_contrato_fase2', ''),
-  ('fin_dre_fora_dre_fase2', 'trigger', 'public', 'trg_fin_dre_snapshots_contrato_fase2', 'fin_dre_snapshots')
+  ('fin_dre_fora_dre_fase2', 'trigger', 'public', 'trg_fin_dre_snapshots_contrato_fase2', 'fin_dre_snapshots'),
+  ('defasagem_desconto_valor', 'function', 'public', 'get_defasagem_cliente', '')
 )
 SELECT
   e.migration,
@@ -5178,6 +5181,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'get_defasagem_cliente', 1, '20260627180100_get_defasagem_cliente.sql', '1a06e51e5eae154d94216eee56471734'),
   ('public', 'get_defasagem_cliente', 2, '20260905225613_preco_ausente_nao_e_zero.sql', '7856c3052596d66a6f5ac8eb0a06c1c0'),
   ('public', 'get_defasagem_cliente', 3, '20261001014210_universo_pedidos_preco.sql', 'fbe6a5aa78a32deed6860218a9b68d7c'),
+  ('public', 'get_defasagem_cliente', 4, '20261014211500_defasagem_desconto_valor.sql', '66bea8e4923ed3d289d72aae2e66c8b5'),
   ('public', 'venda_gate_credito', 1, '20260702233000_trava_credito_fase2.sql', '72e6d3ff4dd4a438d5ca84cb9d214ec8'),
   ('public', 'venda_gate_credito', 2, '20260703140000_trava_credito_gate_excecao_por_par.sql', '1fb9610a4c6f70fb2a67d5d01396c767'),
   ('public', 'fin_sync_kicks_perdidos', 1, '20260704102000_fin_sync_retry_kick_perdido.sql', '9f591fc2a7b823b7195085b816db6713'),
