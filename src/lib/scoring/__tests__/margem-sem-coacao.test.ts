@@ -104,16 +104,20 @@ describe('o guard textual tem dente', () => {
 // Medido em prod (2026-07-21): os três farmers têm 3.858 / 1.528 / 1.246 clientes — todos
 // acima do cap —, e as telas liam 500 de 6.632.
 describe('consumidores de margem paginam a base inteira', () => {
+  // Desde o fecho da coluna (FU4-F) a margem sai da RPC `get_scores_margem`, e quem pagina é o helper
+  // `buscarMargensScores` (ele usa fetchAllPages). O cluster do plano tático não lê mais a tabela: o que
+  // se exige dele é passar pelo helper; e do helper, paginar.
   const PAGINADOS = [
-    ['src/hooks/useTacticalPlan.ts', 'cluster de pares (a régua do veredito de margem)'],
-    ['src/components/intelligence/IntelligenceManagerialTab.tsx', 'comparativo entre vendedores'],
-    ['src/components/intelligence/IntelligenceStrategicTab.tsx', 'margem bruta média global'],
+    ['src/hooks/useTacticalPlan.ts', 'cluster de pares (a régua do veredito de margem)', 'buscarMargensScores'],
+    ['src/lib/scoring/margemScores.ts', 'a RPC de margem que todos os consumidores usam', 'fetchAllPages'],
+    ['src/components/intelligence/IntelligenceManagerialTab.tsx', 'comparativo entre vendedores', 'fetchAllPages'],
+    ['src/components/intelligence/IntelligenceStrategicTab.tsx', 'margem bruta média global', 'fetchAllPages'],
   ] as const;
 
-  it.each(PAGINADOS)('%s usa fetchAllPages — %s', (relativo) => {
+  it.each(PAGINADOS)('%s pagina — %s (via %s)', (relativo, _motivo, token) => {
     const fonte = removerComentarios(readFileSync(resolve(RAIZ, relativo), 'utf8'));
     expect(
-      fonte.includes('fetchAllPages'),
+      fonte.includes(token),
       `${relativo} deixou de paginar. Consulta a farmer_client_scores sem fetchAllPages ` +
         'lê no máximo 1.000 linhas (cap do PostgREST) sem erro nenhum — a média sai de uma ' +
         'amostra e nada na tela indica isso.',

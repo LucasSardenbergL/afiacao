@@ -20870,6 +20870,14 @@ export type Database = {
         Args: { p_customer: string; p_omie_codigos: number[] }
         Returns: Json
       }
+      get_scores_margem: {
+        Args: { p_customer_ids?: string[]; p_farmer_id?: string }
+        Returns: {
+          customer_user_id: string
+          gross_margin_pct: number
+          margem_visivel: boolean
+        }[]
+      }
       get_sku_ranking_negociacao_paralela: {
         Args: { p_empresa?: string }
         Returns: unknown[]

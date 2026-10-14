@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 634
+-- Total de custom migrations: 636
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -695,7 +695,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261013210000', 'tint_watchdog_fase5_v4_fonte_viva', '20261013210000_tint_watchdog_fase5_v4_fonte_viva.sql'),
   ('20261013220000', 'tint_promote_snapshot_ref_por_generated_at', '20261013220000_tint_promote_snapshot_ref_por_generated_at.sql'),
   ('20261013230000', 'fin_dre_fora_dre_fase2', '20261013230000_fin_dre_fora_dre_fase2.sql'),
-  ('20261014120000', 'sayerlack_importar_pedido_portal', '20261014120000_sayerlack_importar_pedido_portal.sql')
+  ('20261014120000', 'fcs_margem_rpc_projecao', '20261014120000_fcs_margem_rpc_projecao.sql'),
+  ('20261014120000', 'sayerlack_importar_pedido_portal', '20261014120000_sayerlack_importar_pedido_portal.sql'),
+  ('20261014120100', 'fcs_margem_fecha_coluna', '20261014120100_fcs_margem_fecha_coluna.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2702,6 +2704,7 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('tint_watchdog_fase5_v4_fonte_viva', 'table', 'public', 'tint_watchdog_fase5_amostras', ''),
   ('fin_dre_fora_dre_fase2', 'function', 'public', 'fin_dre_snapshots_contrato_fase2', ''),
   ('fin_dre_fora_dre_fase2', 'trigger', 'public', 'trg_fin_dre_snapshots_contrato_fase2', 'fin_dre_snapshots'),
+  ('fcs_margem_rpc_projecao', 'function', 'public', 'get_scores_margem', ''),
   ('sayerlack_importar_pedido_portal', 'function', 'public', 'sayerlack_importar_pedido_portal', ''),
   ('sayerlack_importar_pedido_portal', 'index', 'public', 'ux_pedido_compra_sugerido_portal_protocolo', 'pedido_compra_sugerido')
 ),
@@ -4758,6 +4761,7 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('tint_watchdog_fase5_v4_fonte_viva', 'table', 'public', 'tint_watchdog_fase5_amostras', ''),
   ('fin_dre_fora_dre_fase2', 'function', 'public', 'fin_dre_snapshots_contrato_fase2', ''),
   ('fin_dre_fora_dre_fase2', 'trigger', 'public', 'trg_fin_dre_snapshots_contrato_fase2', 'fin_dre_snapshots'),
+  ('fcs_margem_rpc_projecao', 'function', 'public', 'get_scores_margem', ''),
   ('sayerlack_importar_pedido_portal', 'function', 'public', 'sayerlack_importar_pedido_portal', ''),
   ('sayerlack_importar_pedido_portal', 'index', 'public', 'ux_pedido_compra_sugerido_portal_protocolo', 'pedido_compra_sugerido')
 )

@@ -1,11 +1,11 @@
 import { useMutation } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { fetchAllPagesComMensagem } from '@/lib/postgrest';
 import { track } from '@/lib/analytics';
 import { toCsv, type NaoVinculadoCsvRow } from '@/lib/clientes-nao-vinculados/csv';
 import { hojeSP } from '@/lib/time/sp-day';
 
 const EMPRESA = 'oben';
-const PAGE = 1000;
 
 // View nova não está no types.ts → cast por shape mínimo (sem any).
 type PgRange = PromiseLike<{ data: unknown; error: { message: string } | null }> & {
@@ -20,24 +20,18 @@ export function useExportNaoVinculados() {
   return useMutation({
     mutationFn: async (): Promise<number> => {
       const client = supabase as unknown as { from: (t: string) => { select: (c: string) => PgRange } };
-      const all: NaoVinculadoCsvRow[] = [];
-      let from = 0;
-      while (true) {
-        const { data, error } = await client
-          .from('v_clientes_nao_vinculados_atual')
-          .select('omie_codigo_cliente, cnpj_cpf, razao_social, nome_fantasia, cidade, uf, codigo_vendedor')
-          .eq('empresa', EMPRESA)
-          .order('omie_codigo_cliente', { ascending: true })
-          .range(from, from + PAGE - 1);
-        if (error) throw new Error(error.message);
-        // data null SEM error = malformada, não fim (classe #1338→#1564): tratá-la como
-        // fim exportava CSV PARCIAL sem aviso.
-        if (data == null) throw new Error('v_clientes_nao_vinculados_atual: data null sem error — malformada, não é fim');
-        const rows = data as NaoVinculadoCsvRow[];
-        all.push(...rows);
-        if (rows.length < PAGE) break;
-        from += PAGE;
-      }
+      // Pelo canônico: página perdida LANÇA (nunca CSV PARCIAL sem aviso) e é medida pela fonte.
+      const all = await fetchAllPagesComMensagem<NaoVinculadoCsvRow>(
+        (de, ate) =>
+          client
+            .from('v_clientes_nao_vinculados_atual')
+            .select('omie_codigo_cliente, cnpj_cpf, razao_social, nome_fantasia, cidade, uf, codigo_vendedor')
+            .eq('empresa', EMPRESA)
+            .order('omie_codigo_cliente', { ascending: true })
+            .range(de, ate) as unknown as PromiseLike<{ data: NaoVinculadoCsvRow[] | null; error: unknown }>,
+        'v_clientes_nao_vinculados_atual/export-csv',
+        'v_clientes_nao_vinculados_atual',
+      );
 
       // BOM UTF-8 → Excel mostra acentos corretamente.
       const blob = new Blob(['﻿' + toCsv(all)], { type: 'text/csv;charset=utf-8;' });

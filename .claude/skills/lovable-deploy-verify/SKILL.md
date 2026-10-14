@@ -659,7 +659,7 @@ Passo 4b** — o maior sinal sem o founder continua sendo este, pelos bytes.
        **mês ANTERIOR**, fechado
        (`supabase/functions/carteira-positivacao-snapshot/index.ts:70`<!--cita: nowBrt.getMonth() - 1-->),
        não o corrente. A distinção não é cosmética: o consumidor é o UTI de contas
-       (`src/hooks/useUtiContas.ts:254`<!--cita: .from('carteira_positivacao_snapshot')-->), que lê
+       (`src/hooks/useUtiContas.ts:237`<!--cita: .from('carteira_positivacao_snapshot')-->), que lê
        os 2 meses mais recentes com snapshot para decidir entrada — um parcial do mês CORRENTE teria
        custo money-path; reescrever o anterior, fechado, não. Empírico: o probe (`request_id` 69358)
        voltou `{"ok":true,"probe":true,"versao":"v1.1-pedidos-do-mes-keyset",…}` **sem** os campos

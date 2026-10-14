@@ -13,7 +13,7 @@ import { Minus } from 'lucide-react';
 import { directionConfig, suggestionTypeIcons, fallbackSuggestionIcon } from './config';
 import type { InputMode } from './types';
 import type { MotorVozScribeProps } from './MotorVozScribe';
-import { margemConhecida } from '@/lib/scoring/margin';
+import { buscarMargemScore } from '@/lib/scoring/margemScores';
 
 export function useFarmerCopilot() {
   const navigate = useNavigate();
@@ -91,9 +91,12 @@ export function useFarmerCopilot() {
       // mas o score é único por cliente, e filtrar por user.id quebrava sob a lente. RLS gateia.
       const { data: score } = await supabase
         .from('farmer_client_scores')
-        .select('*')
+        // Lista explícita: `select('*')` inclui gross_margin_pct, fechada para authenticated (FU4-F) —
+        // a query inteira cairia com 42501. A margem vem da RPC com gate de projeção, abaixo.
+        .select('health_score, avg_monthly_spend_180d, category_count, days_since_last_purchase, churn_risk')
         .eq('customer_user_id', selectedCustomer)
         .single();
+      const margem = await buscarMargemScore(selectedCustomer);
 
       const { data: profile } = await supabase
         .from('profiles')
@@ -108,12 +111,13 @@ export function useFarmerCopilot() {
         customerType: profile?.customer_type,
         healthScore: score?.health_score,
         avgMonthlySpend: score?.avg_monthly_spend_180d,
-        // Vai para o prompt da IA. `margemConhecida` garante null EXPLÍCITO (em vez de
+        // Vai para o prompt da IA. `buscarMargemScore` garante null EXPLÍCITO (em vez de
         // undefined, que some do JSON, ou de uma string numérica): o modelo precisa
         // distinguir "margem 0%" de "margem não apurada" para não sugerir desconto nem
         // discurso de rentabilidade em cima de um número que ninguém mediu.
         // Unidade: PERCENTUAL 0-100.
-        grossMarginPct: margemConhecida(score?.gross_margin_pct),
+        // Sem cap_custo_ler o servidor devolve null: a IA trata como "não apurada" e não cita número.
+        grossMarginPct: margem?.margem ?? null,
         categoryCount: score?.category_count,
         daysSinceLastPurchase: score?.days_since_last_purchase,
         churnRisk: score?.churn_risk,

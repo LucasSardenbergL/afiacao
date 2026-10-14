@@ -43,6 +43,8 @@ export interface ClientScore {
   category_count: number;
   /** PERCENTUAL (0–100, negativo válido). `null` = não apurada — jamais tratar como 0. */
   gross_margin_pct: number | null;
+  /** `true` = o servidor NÃO concedeu a margem (sem `cap_custo_ler`, FU4-F) — não é "não apurada". */
+  margem_oculta?: boolean;
   /** Linhas de pedido com custo conhecido (base da margem). `null` = cobertura não computada. */
   itens_com_custo?: number | null;
   /** Linhas de pedido NÃO computáveis na margem. `null` = cobertura não computada. */

@@ -1,6 +1,7 @@
 // Acesso ao picking v2 (tabelas e RPCs da migration 20261011020000 + 20261011140000).
 // Leitura: RLS staff. Escrita: só RPCs SECURITY DEFINER — o aparelho nunca grava tabela direto.
 import { supabase } from "@/integrations/supabase/client";
+import { fetchAllPagesComMensagem } from "@/lib/postgrest";
 import { classificarErro } from "./erro-rpc";
 import type { Comando, RespostaLeitura, ResultadoEnvio } from "./scanner/fila";
 import type { CodigoCadastrado } from "./validacao-local";
@@ -38,27 +39,16 @@ export interface LinhaV2 extends LinhaServidor {
   descricao: string | null;
 }
 
-const PAGINA = 1000;
-
-/** Lê tudo em páginas (o PostgREST corta em 1.000 em silêncio). `consulta(de, ate)` com ordem estável. */
-async function lerTudo<T>(consulta: (de: number, ate: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>): Promise<T[]> {
-  const out: T[] = [];
-  for (let de = 0; ; de += PAGINA) {
-    const { data, error } = await consulta(de, de + PAGINA - 1);
-    if (error) throw new Error(error.message);
-    // data nulo sem erro NÃO é fim de lista: devolver o parcial como completo é a classe #1338.
-    if (data == null) throw new Error("página sem dados e sem erro");
-    out.push(...data);
-    if (data.length < PAGINA) return out;
-  }
-}
+// Leituras paginadas pelo canônico (o PostgREST corta em 1.000 em silêncio): página com error ou
+// `data: null` sem error LANÇA — devolver o parcial como completo é a classe #1338 — e a página
+// perdida é medida pela fonte. Ordem estável com chave total em todas.
 
 const COLUNAS_TAREFA =
   "id, account, omie_codigo_pedido, numero_pedido, cliente_nome, status, revisao, estado_seq, operador_id, atribuicao_id, motivo_bloqueio, ausente_rodadas, incluido_em";
 
 /** Fila da conta: tudo que não terminou (separado e interrompida ficam de fora). */
 export function listarFila(conta: Conta): Promise<TarefaV2[]> {
-  return lerTudo<TarefaV2>((de, ate) =>
+  return fetchAllPagesComMensagem<TarefaV2>((de, ate) =>
     supabase
       .from("picking_tarefas")
       .select(COLUNAS_TAREFA)
@@ -67,6 +57,8 @@ export function listarFila(conta: Conta): Promise<TarefaV2[]> {
       .order("incluido_em", { ascending: true, nullsFirst: false })
       .order("id", { ascending: true })
       .range(de, ate) as unknown as PromiseLike<{ data: TarefaV2[] | null; error: { message: string } | null }>,
+    "picking_tarefas/fila-v2",
+    "picking_tarefas",
   );
 }
 
@@ -77,13 +69,15 @@ export async function lerTarefa(id: string): Promise<TarefaV2> {
 }
 
 export async function lerLinhas(tarefaId: string): Promise<LinhaV2[]> {
-  const linhas = await lerTudo<Record<string, unknown>>((de, ate) =>
+  const linhas = await fetchAllPagesComMensagem<Record<string, unknown>>((de, ate) =>
     supabase
       .from("picking_linhas")
       .select("id, codigo_item, omie_codigo_produto, codigo_produto, descricao, quantidade, unidade, ean, fracionaria, ativa, revisao")
       .eq("tarefa_id", tarefaId)
       .order("codigo_item", { ascending: true })
       .range(de, ate) as unknown as PromiseLike<{ data: Record<string, unknown>[] | null; error: { message: string } | null }>,
+    "picking_linhas/tarefa-v2",
+    "picking_linhas",
   );
   return linhas.map((l) => ({
     id: String(l.id),
@@ -101,13 +95,15 @@ export async function lerLinhas(tarefaId: string): Promise<LinhaV2[]> {
 }
 
 export async function lerLeituras(tarefaId: string): Promise<LeituraServidor[]> {
-  const ls = await lerTudo<Record<string, unknown>>((de, ate) =>
+  const ls = await fetchAllPagesComMensagem<Record<string, unknown>>((de, ate) =>
     supabase
       .from("picking_leituras")
       .select("id, linha_id, linha_revisao, unidades, aceita")
       .eq("tarefa_id", tarefaId)
       .order("id", { ascending: true })
       .range(de, ate) as unknown as PromiseLike<{ data: Record<string, unknown>[] | null; error: { message: string } | null }>,
+    "picking_leituras/tarefa-v2",
+    "picking_leituras",
   );
   return ls.map((l) => ({
     id: String(l.id),
@@ -121,7 +117,7 @@ export async function lerLeituras(tarefaId: string): Promise<LeituraServidor[]> 
 /** Códigos cadastrados (não revogados) dos produtos da tarefa — base da previsão local do bipe. */
 export async function lerCodigos(conta: Conta, produtos: number[]): Promise<CodigoCadastrado[]> {
   if (produtos.length === 0) return [];
-  const cs = await lerTudo<Record<string, unknown>>((de, ate) =>
+  const cs = await fetchAllPagesComMensagem<Record<string, unknown>>((de, ate) =>
     supabase
       .from("picking_codigos_barras")
       .select("codigo, omie_codigo_produto, unidade, unidades_por_leitura, status")
@@ -129,7 +125,10 @@ export async function lerCodigos(conta: Conta, produtos: number[]): Promise<Codi
       .neq("status", "revogado")
       .in("omie_codigo_produto", produtos)
       .order("codigo", { ascending: true })
+      .order("id", { ascending: true })
       .range(de, ate) as unknown as PromiseLike<{ data: Record<string, unknown>[] | null; error: { message: string } | null }>,
+    "picking_codigos_barras/previsao-bipe",
+    "picking_codigos_barras",
   );
   return cs.map((c) => ({
     codigo: String(c.codigo),

@@ -21,7 +21,7 @@ import { renderHook, act } from '@testing-library/react';
 const MASTER = 'master-id';
 const CUSTOMER = 'cliente-x';
 
-type ModoScore = 'margem_conhecida' | 'margem_zero' | 'sem_margem' | 'falha_consulta';
+type ModoScore = 'margem_conhecida' | 'margem_zero' | 'sem_margem' | 'falha_consulta' | 'margem_restrita' | 'falha_rpc';
 let modo: ModoScore = 'margem_conhecida';
 
 const BASE = { revenue_potential: 5000, avg_monthly_spend_180d: 1000 };
@@ -34,12 +34,10 @@ function result(q: Q): { data: unknown; error: unknown } {
       case 'falha_consulta':
         // O que o PostgREST devolve num statement timeout: data null + error preenchido.
         return { data: null, error: { message: 'canceling statement due to statement timeout', code: '57014' } };
-      case 'sem_margem':
-        return { data: { ...BASE, gross_margin_pct: null }, error: null };
-      case 'margem_zero':
-        return { data: { ...BASE, gross_margin_pct: 0 }, error: null };
       default:
-        return { data: { ...BASE, gross_margin_pct: 50 }, error: null };
+        // A margem NÃO vem mais desta linha (coluna fechada para authenticated, FU4-F): vem da RPC
+        // com gate de projeção, mockada em `@/lib/scoring/margemScores` abaixo.
+        return { data: BASE, error: null };
     }
   }
   return { data: [], error: null };
@@ -61,6 +59,15 @@ vi.mock('@/integrations/supabase/client', () => ({
     rpc: () => Promise.resolve({ data: null, error: null }),
     functions: { invoke: vi.fn().mockResolvedValue({ data: {}, error: null }) },
   },
+}));
+vi.mock('@/lib/scoring/margemScores', () => ({
+  buscarMargemScore: async () => {
+    if (modo === 'falha_rpc') throw new Error('fetchAllPages: página 0 (0-999) falhou');
+    if (modo === 'margem_restrita') return { margem: null, visivel: false };
+    const margem = modo === 'sem_margem' ? null : modo === 'margem_zero' ? 0 : 50;
+    return { margem, visivel: true };
+  },
+  buscarMargensScores: async () => new Map(),
 }));
 vi.mock('@/contexts/ImpersonationContext', () => ({ useImpersonation: () => ({ isImpersonating: false, effectiveUserId: MASTER }) }));
 vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({ user: { id: MASTER }, isStaff: true }) }));
@@ -114,6 +121,21 @@ describe('checkEfficiency — falha de consulta ≠ ausência de margem ≠ marg
     expect(r.estimatedProfitPerHour).toBeCloseTo(1000, 6);
     expect(r.motivo).toBeUndefined();
     expect(r.isAboveThreshold).toBe(true);
+  });
+
+  it('falha da RPC de margem ⇒ "indisponivel", não "sem_margem" (falha nossa não vira fato do cliente)', async () => {
+    modo = 'falha_rpc';
+    const r = await checar();
+    expect(r.motivo).toBe('indisponivel');
+    expect(r.estimatedProfitPerHour).toBeNull();
+  });
+
+  it('sem cap_custo_ler ⇒ "margem_restrita": nem R$/h (inverteria a margem) nem "sem custo" (seria falso)', async () => {
+    modo = 'margem_restrita';
+    const r = await checar();
+    expect(r.motivo).toBe('margem_restrita');
+    expect(r.estimatedProfitPerHour).toBeNull();
+    expect(r.isAboveThreshold).toBeNull();
   });
 
   it('os dois estados indecidíveis são indistinguíveis SEM `motivo` — por isso ele existe', async () => {
