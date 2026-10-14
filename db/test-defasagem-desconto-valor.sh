@@ -120,10 +120,13 @@ GRANT EXECUTE ON FUNCTION public.get_defasagem_cliente(jsonb,uuid) TO authentica
 SQL
 echo "═══ setup pronto (PG17 :$PORT, LC_ALL=$LC_ALL${SABOTAGEM:+, SABOTAGEM=$SABOTAGEM}) ═══"
 
-# H0 — o predecessor do snapshot é o corpo medido em prod (senão a prova testa outra coisa)
-eq H0 "predecessor = md5 medido na prod" \
-  "$(Pq -c "SELECT md5(prosrc) FROM pg_proc WHERE oid='public.get_defasagem_cliente(jsonb,uuid)'::regprocedure")" \
-  "a03eb600ef0d2a946e550aa55bba415e"
+# H0 — o snapshot traz o predecessor medido em prod (a03eb600…) ou, depois do re-dump que absorver
+# esta migration, já o corpo dela (2ed6e159…). Qualquer outro md5 = a prova testaria outra coisa.
+MD5_SNAP="$(Pq -c "SELECT md5(prosrc) FROM pg_proc WHERE oid='public.get_defasagem_cliente(jsonb,uuid)'::regprocedure")"
+case "$MD5_SNAP" in
+  a03eb600ef0d2a946e550aa55bba415e|2ed6e15998b5c48e7b4de590e5dbbaf3) ok "H0 snapshot = predecessor de prod ou este corpo (=$MD5_SNAP)" ;;
+  *) bad "H0 snapshot com corpo inesperado — md5 [$MD5_SNAP]" ;;
+esac
 ACL_ANTES="$(Pq -c "SELECT provolatile::text||'|'||prosecdef::text||'|'||coalesce(array_to_string(proconfig,','),'-')||'|'||coalesce((SELECT string_agg(a::text, ',' ORDER BY a::text) FROM unnest(proacl) a),'NULL') FROM pg_proc WHERE oid='public.get_defasagem_cliente(jsonb,uuid)'::regprocedure")"
 
 # ZONA 2 — a migration REAL (cópia, onde a sabotagem age)
