@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 631
+-- Total de custom migrations: 633
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -690,9 +690,11 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261013120000', 'watchdog_diario_so_problema', '20261013120000_watchdog_diario_so_problema.sql'),
   ('20261013150000', 'tint_promote_nao_ressuscita_fantasma', '20261013150000_tint_promote_nao_ressuscita_fantasma.sql'),
   ('20261013180000', 'tint_reaplicar_snapshot_cron', '20261013180000_tint_reaplicar_snapshot_cron.sql'),
+  ('20261013191942', 'deploy_sonda_alvos_onda6', '20261013191942_deploy_sonda_alvos_onda6.sql'),
   ('20261013200000', 'tint_remove_cron_reaplicar_snapshot', '20261013200000_tint_remove_cron_reaplicar_snapshot.sql'),
   ('20261013210000', 'tint_watchdog_fase5_v4_fonte_viva', '20261013210000_tint_watchdog_fase5_v4_fonte_viva.sql'),
-  ('20261013220000', 'tint_promote_snapshot_ref_por_generated_at', '20261013220000_tint_promote_snapshot_ref_por_generated_at.sql')
+  ('20261013220000', 'tint_promote_snapshot_ref_por_generated_at', '20261013220000_tint_promote_snapshot_ref_por_generated_at.sql'),
+  ('20261013230000', 'fin_dre_fora_dre_fase2', '20261013230000_fin_dre_fora_dre_fase2.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2696,7 +2698,9 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('tint_reaplicar_snapshot_cron', 'cron_job', 'cron', 'tint-reaplicar-snapshot-6h', ''),
   ('tint_watchdog_fase5_v4_fonte_viva', 'function', 'public', '_tint_watchdog_fase5_transicao', ''),
   ('tint_watchdog_fase5_v4_fonte_viva', 'function', 'public', 'tint_watchdog_fase5_check', ''),
-  ('tint_watchdog_fase5_v4_fonte_viva', 'table', 'public', 'tint_watchdog_fase5_amostras', '')
+  ('tint_watchdog_fase5_v4_fonte_viva', 'table', 'public', 'tint_watchdog_fase5_amostras', ''),
+  ('fin_dre_fora_dre_fase2', 'function', 'public', 'fin_dre_snapshots_contrato_fase2', ''),
+  ('fin_dre_fora_dre_fase2', 'trigger', 'public', 'trg_fin_dre_snapshots_contrato_fase2', 'fin_dre_snapshots')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4748,7 +4752,9 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('tint_reaplicar_snapshot_cron', 'cron_job', 'cron', 'tint-reaplicar-snapshot-6h', ''),
   ('tint_watchdog_fase5_v4_fonte_viva', 'function', 'public', '_tint_watchdog_fase5_transicao', ''),
   ('tint_watchdog_fase5_v4_fonte_viva', 'function', 'public', 'tint_watchdog_fase5_check', ''),
-  ('tint_watchdog_fase5_v4_fonte_viva', 'table', 'public', 'tint_watchdog_fase5_amostras', '')
+  ('tint_watchdog_fase5_v4_fonte_viva', 'table', 'public', 'tint_watchdog_fase5_amostras', ''),
+  ('fin_dre_fora_dre_fase2', 'function', 'public', 'fin_dre_snapshots_contrato_fase2', ''),
+  ('fin_dre_fora_dre_fase2', 'trigger', 'public', 'trg_fin_dre_snapshots_contrato_fase2', 'fin_dre_snapshots')
 )
 SELECT
   e.migration,

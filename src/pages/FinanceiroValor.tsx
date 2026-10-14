@@ -55,6 +55,7 @@ function EmpresaCard({ company, modo }: { company: string; modo: 'reportado' | '
           </p>
         )}
         {data.reportado.incremental.aviso && <p className="text-xs text-muted-foreground">{data.reportado.incremental.aviso}</p>}
+        {data.resultado_provisorio && <p className="text-xs text-status-warning">Resultado provisório: há saída fora do DRE com composição principal × juros pendente — EBIT/ROIC são estimativa.</p>}
         {modo === 'normalizado' && !data.normalizado.aplicado && <p className="text-xs text-status-warning">Sem inputs de normalização — igual ao reportado.</p>}
         {modo === 'normalizado' && data.normalizado.nopat_aproximado && <p className="text-xs text-muted-foreground">NOPAT normalizado é aproximado: o imposto absoluto (IRPJ+CSLL) não é recalculado sobre o EBIT ajustado.</p>}
         {data.confianca.motivos.length > 0 && (
@@ -81,17 +82,31 @@ function Ranking({ modo }: { modo: 'reportado' | 'normalizado' }) {
     incr: (q.data as ValorEmpresaResult | undefined)?.reportado.roic_incremental ?? null,
     spread: (q.data as ValorEmpresaResult | undefined)?.[modo].spread ?? null,
   }));
-  const byIncr = [...rows].sort((a, b) => (b.incr ?? -Infinity) - (a.incr ?? -Infinity));
+  // DRE fase 2: base provisória (fora_dre com composição pendente) não é comparável — sem ordem
+  // recomendatória; os números ficam como exploratórios.
+  // Só ordena quando as 3 responderam E declararam explicitamente `false`: consulta falha/pendente
+  // ou edge anterior (sem o campo) é "não verificado", não "comparável".
+  const provisorias = queries.filter(({ q }) => (q.data as ValorEmpresaResult | undefined)?.resultado_provisorio === true).map(({ company }) => NOME[company]);
+  const naoVerificadas = queries.filter(({ q }) => (q.data as ValorEmpresaResult | undefined)?.resultado_provisorio !== false && (q.data as ValorEmpresaResult | undefined)?.resultado_provisorio !== true).map(({ company }) => NOME[company]);
+  const suspenso = provisorias.length > 0 || naoVerificadas.length > 0;
+  const byIncr = suspenso ? rows : [...rows].sort((a, b) => (b.incr ?? -Infinity) - (a.incr ?? -Infinity));
   return (
     <Card>
       <CardHeader><CardTitle className="text-base">Ranking — onde o próximo R$1 rende mais</CardTitle></CardHeader>
       <CardContent className="text-sm space-y-1">
         {byIncr.map((row, i) => (
           <div key={row.company} className="flex justify-between border-b border-border py-1 last:border-0">
-            <span>{i + 1}. {NOME[row.company]}</span>
+            <span>{suspenso ? '' : `${i + 1}. `}{NOME[row.company]}</span>
             <span className="font-mono">ROIC incr. {pct(row.incr)} · spread {pct(row.spread)}</span>
           </div>
         ))}
+        {suspenso && (
+          <p className="text-xs text-status-warning pt-2">
+            Ranking suspenso — números exploratórios, sem ordem de recomendação.
+            {provisorias.length > 0 && <> Resultado provisório em {provisorias.join(', ')} (saída fora do DRE com composição principal × juros pendente).</>}
+            {naoVerificadas.length > 0 && <> Base não verificada em {naoVerificadas.join(', ')} (consulta pendente/falhou).</>}
+          </p>
+        )}
         <p className="text-xs text-muted-foreground pt-2">ROIC incremental = ΔNOPAT / Δcapital (TTM atual vs −12m). "—" = histórico insuficiente ou Δcapital pequeno/negativo.</p>
       </CardContent>
     </Card>

@@ -11,3 +11,4 @@ PEGA      | elegib borda 4.8M (> -> >=) [fechado]   | s/rba > TETO_RBA/rba >= TE
 PEGA      | elegib borda 3.6M (> -> >=) [fechado]   | s/rba > SUBLIMITE_RBA/rba >= SUBLIMITE_RBA/
 SOBREVIVE | banda erro < -> <= (borda heuristica)   | s/< opts\.bandaErro/<= opts.bandaErro/
 SOBREVIVE | real lt <= 0 -> < 0 (lt=0 da imposto 0) | s/if \(lt <= 0\) continue/if (lt < 0) continue/
+PEGA | DRE fase 2: lucro provisório suspende a recomendação (gate neutralizado) | s/if \(opts\.lucroProvisorio\) return/if (false) return/

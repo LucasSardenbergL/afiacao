@@ -21,6 +21,15 @@ export interface MesDRE {
   linha_administrativas: number;
   linha_comerciais: number;
   linha_financeiras: number;
+  /**
+   * DRE fase 2 — detalhamento.composicao_despesas do PRÓPRIO snapshot: chave do `despesas` →
+   * linha → R$. Presente ⇒ o PE usa só o que o motor pôs nas 5 linhas operacionais (fora_dre,
+   * impostos e outras_despesas saem, expostos à parte). Ausente/null ⇒ snapshot pré-fase 2:
+   * comportamento de antes, inclusive o gate 4.
+   */
+  composicao_despesas?: Record<string, Record<string, number>> | null;
+  /** DRE fase 2 — true = composição fora_dre pendente: resultado do mês é provisório. */
+  resultado_provisorio?: boolean | null;
 }
 
 export type MotivoPE =
@@ -35,7 +44,8 @@ export type MotivoPE =
   | 'deducoes_coluna_inesperada'
   | 'valor_negativo_inesperado'
   | 'custo_compartilhado_pendente' // F3 v2 — exige rateio e não foi lançado
-  | 'custo_compartilhado_possivel_duplicidade'; // F3 v2 — folha já no snapshot da própria empresa
+  | 'custo_compartilhado_possivel_duplicidade' // F3 v2 — folha já no snapshot da própria empresa
+  | 'resultado_provisorio'; // DRE fase 2 — mês com saída fora do DRE de composição pendente
 
 /** Custo fixo compartilhado lançado pelo master (parcela da folha de outra empresa do grupo). */
 export interface CustoCompartilhado {
@@ -88,6 +98,11 @@ export interface PontoEquilibrioResult {
   custo_compartilhado_origem: string | null;
   /** Pendência de rateio SOB outra degradação (o card avisa "além disto, falta ratear"). C8. */
   custo_compartilhado_pendente_latente: boolean;
+  /** DRE fase 2 — TTM tirado do PE pela composição do snapshot (disclosure, não entra no PE). */
+  excluido_fora_dre_ttm: number;
+  excluido_deducoes_ttm: number; // ICMS/PIS/COFINS/2.09… do CP: já entram via deducoes_col
+  excluido_imposto_lucro_ttm: number; // IRPJ/CSLL
+  excluido_outras_ttm: number; // outras_despesas e qualquer linha fora das 5
   /** Contrato C10: === (motivo==='ok'). false ⇒ pe_receita e margem_seguranca são null. */
   can_show_break_even: boolean;
   detalhes: string[];
@@ -106,13 +121,81 @@ export interface PontoEquilibrioInput {
 const MESES_ABREV = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
 const rotuloMes = (m: MesDRE) => `${MESES_ABREV[m.mes - 1] ?? '??'}/${m.ano}`;
 
+/**
+ * DRE fase 2: o detalhamento do mês SEM a parte que o motor pôs fora do DRE (pela composição do
+ * próprio snapshot). Legado (sem composição) devolve o detalhamento como está. Ex.: 2.03.76
+ * distribuição de lucros mora na família 2.03 mas não é folha — não pode entrar em referência de rateio.
+ */
+export function despesasNoDRE(m: MesDRE): Record<string, number> {
+  const comp = m.composicao_despesas;
+  if (comp == null) return m.despesas;
+  const out: Record<string, number> = {};
+  for (const [k, v] of Object.entries(m.despesas)) {
+    const semFora = v - (comp[k]?.fora_dre ?? 0);
+    if (semFora !== 0) out[k] = semFora;
+  }
+  return out;
+}
+
 /** Σ TTM dos valores cujo código começa com algum dos prefixos (sinal anti-duplicidade da folha). */
 export function somaCodigosPorPrefixo(meses: MesDRE[], prefixos: string[]): number {
   let total = 0;
   for (const m of meses)
-    for (const [cod, v] of Object.entries(m.despesas))
+    for (const [cod, v] of Object.entries(despesasNoDRE(m)))
       if (Number.isFinite(v) && prefixos.some((p) => cod.startsWith(p))) total += v;
   return total;
+}
+
+const LINHAS_PE = ['cmv', 'despesas_operacionais', 'despesas_administrativas', 'despesas_comerciais', 'despesas_financeiras'] as const;
+const LINHAS_DEDUCAO = new Set(['deducoes', 'ded_icms', 'ded_iss', 'ded_pis', 'ded_cofins', 'ded_ipi', 'das']);
+const LINHAS_IMPOSTO_LUCRO = new Set(['irpj', 'csll']);
+const TOL_COMPOSICAO = 0.01; // R$ — arredondamento de centavos
+
+/**
+ * Universo do PE de um mês fase 2: por chave, só o que o motor pôs nas 5 linhas. Devolve null
+ * (⇒ snapshot_inconsistente) se a composição não fecha com `despesas` chave a chave, se falta
+ * chave, se tem chave a mais, ou se a soma por linha não bate a coluna oficial daquele mês.
+ */
+function universoOperacional(m: MesDRE): {
+  despesas: Record<string, number>;
+  excluido: { fora_dre: number; deducoes: number; imposto_lucro: number; outras: number };
+} | null {
+  const comp = m.composicao_despesas;
+  if (comp == null || typeof comp !== 'object') return null;
+  const chavesDesp = Object.keys(m.despesas);
+  const chavesComp = Object.keys(comp);
+  if (chavesDesp.length !== chavesComp.length) return null;
+  const despesas: Record<string, number> = {};
+  const excluido = { fora_dre: 0, deducoes: 0, imposto_lucro: 0, outras: 0 };
+  const porLinha: Record<string, number> = {};
+  for (const k of chavesDesp) {
+    const linhas = comp[k];
+    if (linhas == null || typeof linhas !== 'object') return null;
+    let soma = 0;
+    let operacional = 0;
+    for (const [linha, v] of Object.entries(linhas)) {
+      if (!Number.isFinite(v)) return null;
+      soma += v;
+      if ((LINHAS_PE as readonly string[]).includes(linha)) { operacional += v; porLinha[linha] = (porLinha[linha] ?? 0) + v; }
+      else if (linha === 'fora_dre') excluido.fora_dre += v;
+      else if (LINHAS_DEDUCAO.has(linha)) excluido.deducoes += v;
+      else if (LINHAS_IMPOSTO_LUCRO.has(linha)) excluido.imposto_lucro += v;
+      else excluido.outras += v;
+    }
+    if (Math.abs(soma - m.despesas[k]) > TOL_COMPOSICAO) return null;
+    if (operacional !== 0) despesas[k] = operacional;
+  }
+  // por linha, no MÊS (erros de meses distintos podem se cancelar no TTM)
+  const oficial: Record<string, number> = {
+    cmv: m.linha_cmv, despesas_operacionais: m.linha_operacionais, despesas_administrativas: m.linha_administrativas,
+    despesas_comerciais: m.linha_comerciais, despesas_financeiras: m.linha_financeiras,
+  };
+  for (const l of LINHAS_PE) {
+    const a = porLinha[l] ?? 0;
+    const b = oficial[l];
+    if (Math.abs(a - b) > Math.max(TOL_COMPOSICAO, 0.01 * Math.max(Math.abs(a), Math.abs(b)))) return null;
+  }
+  return { despesas, excluido };
 }
 
 export function pontoEquilibrio(input: PontoEquilibrioInput): PontoEquilibrioResult {
@@ -141,6 +224,10 @@ export function pontoEquilibrio(input: PontoEquilibrioInput): PontoEquilibrioRes
     custo_compartilhado_ttm: 0,
     custo_compartilhado_mensal: 0,
     custo_compartilhado_origem: null,
+    excluido_fora_dre_ttm: 0,
+    excluido_deducoes_ttm: 0,
+    excluido_imposto_lucro_ttm: 0,
+    excluido_outras_ttm: 0,
     // latente só quando a degradação NÃO é o próprio pendente (nem sem_dados).
     custo_compartilhado_pendente_latente:
       rateioPendente && motivo !== 'custo_compartilhado_pendente' && motivo !== 'sem_dados',
@@ -151,12 +238,33 @@ export function pontoEquilibrio(input: PontoEquilibrioInput): PontoEquilibrioRes
 
   if (meses.length === 0) return degradar('sem_dados');
 
+  // ── DRE fase 2: universo do PE por mês, pela composição do PRÓPRIO snapshot ─────────────────
+  // Nunca o mapa atual reinterpretando mês antigo. Composição incompleta/divergente ⇒ inconsistente.
+  const excl = { fora_dre: 0, deducoes: 0, imposto_lucro: 0, outras: 0 };
+  let composicaoInvalida = false;
+  let deducoesColLegadoTTM = 0;
+  let receitaLegadoTTM = 0;
+  const mesesPE: MesDRE[] = meses.map((m) => {
+    if (m.composicao_despesas == null) {
+      deducoesColLegadoTTM += m.deducoes_col;
+      receitaLegadoTTM += m.receita_bruta;
+      return m;
+    }
+    const r = universoOperacional(m);
+    if (r == null) { composicaoInvalida = true; return m; }
+    excl.fora_dre += r.excluido.fora_dre;
+    excl.deducoes += r.excluido.deducoes;
+    excl.imposto_lucro += r.excluido.imposto_lucro;
+    excl.outras += r.excluido.outras;
+    return { ...m, despesas: r.despesas };
+  });
+
   // ── Agrega TTM por categoria (materialidade é por-código) ───────────────────────────────────
   const porCodigo = new Map<string, number>();
   let receitaTTM = 0;
   let deducoesColTTM = 0;
   let negativosTTM = 0; // Σ das parcelas negativas (sinal — delta-E7)
-  for (const m of meses) {
+  for (const m of mesesPE) {
     receitaTTM += m.receita_bruta;
     deducoesColTTM += m.deducoes_col;
     for (const [cod, valor] of Object.entries(m.despesas)) {
@@ -185,7 +293,7 @@ export function pontoEquilibrio(input: PontoEquilibrioInput): PontoEquilibrioRes
     }
   }
 
-  const recente = meses[meses.length - 1];
+  const recente = mesesPE[mesesPE.length - 1];
   const naoOpRecente = Object.entries(recente.despesas).reduce(
     (s, [cod, v]) => s + (classificacao[cod] === 'nao_operacional' ? v : 0),
     0,
@@ -201,7 +309,14 @@ export function pontoEquilibrio(input: PontoEquilibrioInput): PontoEquilibrioRes
     excluido_nao_operacional_recente: naoOpRecente,
     nao_operacional_share_pct: share,
     periodo_label: label,
+    excluido_fora_dre_ttm: excl.fora_dre,
+    excluido_deducoes_ttm: excl.deducoes,
+    excluido_imposto_lucro_ttm: excl.imposto_lucro,
+    excluido_outras_ttm: excl.outras,
   };
+
+  // 0. Fase 2: composição do snapshot não fecha com o detalhamento ⇒ não dá p/ separar o universo.
+  if (composicaoInvalida) return degradar('snapshot_inconsistente', ctx);
 
   // ── Gates em precedência: integridade → precondição → classificação → economia ──────────────
   // 1. Sinal (delta-E7): despesa negativa material infla a margem por acidente.
@@ -218,11 +333,18 @@ export function pontoEquilibrio(input: PontoEquilibrioInput): PontoEquilibrioRes
   if (Math.abs(despesasTTM - linhasTTM) / baseReconc > cfg.reconcTolRel)
     return degradar('snapshot_inconsistente', ctx);
 
+  // 2b. Fase 2: mês com fora_dre de composição pendente — os juros/encargos dentro da parcela
+  // seriam despesa financeira (fixo, se classificada assim) e estão fora: PE seria otimista.
+  if (meses.some((m) => m.resultado_provisorio === true)) return degradar('resultado_provisorio', ctx);
+
   // 3. Sem receita → PE indefinido.
   if (!(receitaTTM > 0)) return degradar('sem_receita', ctx);
 
   // 4. Double-count de deduções (delta-E5): o design pressupõe imposto no BALDE, não na coluna.
-  if (deducoesColTTM / receitaTTM > cfg.deducoesTolRel) return degradar('deducoes_coluna_inesperada', ctx);
+  // Fase 2: só vale para meses LEGADOS. Com composição, o imposto saiu do balde por construção e
+  // entra uma única vez via deducoes_col — um mês novo não libera a janela inteira.
+  if (receitaLegadoTTM > 0 && deducoesColLegadoTTM / receitaLegadoTTM > cfg.deducoesTolRel)
+    return degradar('deducoes_coluna_inesperada', ctx);
 
   // 5. Cobertura / código não classificado material → inconclusivo (P1-D4: não vira "fixo conservador").
   const materialDesp = cfg.materialDespesaPct * despesasTTM;
@@ -240,7 +362,7 @@ export function pontoEquilibrio(input: PontoEquilibrioInput): PontoEquilibrioRes
   if (!(mcPct > 0)) return degradar('mc_negativa', ctx);
 
   // 8. MC% instável (P1-D8): mede a base OPERACIONAL mês a mês (sem nao_operacional).
-  const mcMensais = meses
+  const mcMensais = mesesPE
     .filter((m) => m.receita_bruta > 0)
     .map((m) => {
       let varMes = m.deducoes_col;
@@ -291,6 +413,10 @@ export function pontoEquilibrio(input: PontoEquilibrioInput): PontoEquilibrioRes
     custo_compartilhado_ttm: custoCompartilhadoTtm,
     custo_compartilhado_mensal: rateioValido ? rateio!.valor_mensal : 0,
     custo_compartilhado_origem: rateioValido ? rateio!.origem : null,
+    excluido_fora_dre_ttm: excl.fora_dre,
+    excluido_deducoes_ttm: excl.deducoes,
+    excluido_imposto_lucro_ttm: excl.imposto_lucro,
+    excluido_outras_ttm: excl.outras,
     custo_compartilhado_pendente_latente: false,
     can_show_break_even: true,
     detalhes: [],

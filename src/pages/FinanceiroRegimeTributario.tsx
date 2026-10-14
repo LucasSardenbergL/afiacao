@@ -105,7 +105,9 @@ function EmpresaCard({ emp }: { emp: RegimeEmpresaResult }) {
           <p className={`font-medium ${statusClasses(emp.status)}`}>{STATUS_LABEL[emp.status]}</p>
           {emp.status === 'incompleto' && (
             <p className="text-xs text-status-warning">
-              Estimativa incompleta — informe a folha / 12 meses de DRE para a recomendação.
+              {emp.motivo_incompleto === 'resultado_provisorio'
+                ? 'Recomendação suspensa — o lucro da DRE é provisório: há saída fora do DRE (empréstimo/parcelamento/investimento) com composição principal × juros pendente. As simulações abaixo são exploratórias.'
+                : 'Estimativa incompleta — informe a folha / 12 meses de DRE para a recomendação.'}
             </p>
           )}
           {emp.economia_anual != null && emp.economia_anual > 0 && (
@@ -201,7 +203,7 @@ export default function FinanceiroRegimeTributario() {
 
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0">
-              <CardTitle className="text-base">Consolidado (3 empresas)</CardTitle>
+              <CardTitle className="text-base">Consolidado ({data.por_empresa.length} de 3 empresas com DRE)</CardTitle>
               <span className={`text-xs px-2 py-0.5 rounded ${nivelClasses(data.consolidado.confianca)}`}>
                 confiança {data.consolidado.confianca}
               </span>
@@ -221,6 +223,12 @@ export default function FinanceiroRegimeTributario() {
                   {brl(data.consolidado.economia_total)}
                 </span>
               </div>
+              {(data.consolidado.empresas_incompletas?.length ?? 0) > 0 && (
+                <p className="mt-2 text-xs text-status-warning">
+                  Economia é subtotal das empresas comparáveis — fora: {data.consolidado.empresas_incompletas!.join(', ')}{' '}
+                  (sem DRE ou recomendação incompleta, entra com economia zero). Não é o total do grupo.
+                </p>
+              )}
             </CardContent>
           </Card>
 

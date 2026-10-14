@@ -14,3 +14,11 @@ PEGA | impostoPorKeyword: gate regime Simples->DAS (=== -> !==) | s/if \(regime 
 PEGA | calcularRBT12: janela 12m anteriores exclusiva (< vira <=) | s/idx < idxApuracao/idx <= idxApuracao/
 PEGA | faixaPorRBT12: 1ª faixa rbt12<=ate (<= vira >=)     | s/if \(rbt12 <= f\.ate\) return f/if (rbt12 >= f.ate) return f/
 PEGA | scoreConfianca: fallback>20% rebaixa p/ baixa (> vira <) | s/input\.fallback_pct > 0\.2\) rebaixar/input.fallback_pct < 0.2) rebaixar/
+PEGA | fase 2: linha não-herdável corta a herança por prefixo (break neutralizado) | s/if \(LINHAS_NAO_HERDAVEIS\.has\(raw\)\) break;/if (false) break;/
+PEGA | fase 2: valor desconhecido no mapa vira inválido (gate neutralizado) | s/if \(!DRE_LINHAS_VALIDAS\.has\(raw\)\) return 'valor_desconhecido'/if (false) return 'valor_desconhecido'/
+PEGA | fase 2: IRPJ/CSLL inválido só no Simples (=== vira !==) | s/if \(regime === 'simples' && \(raw === 'irpj'/if (regime !== 'simples' \&\& (raw === 'irpj'/
+PEGA | fase 2: mapa inválido NÃO vira mapeado (desvio para heurística neutralizado) | s/if \(motivo\) return \{ \.\.\.heuristicaDRE/if (false) return { ...heuristicaDRE/
+PEGA | fase 2: pendência = lançamento ≠ 0, não só positivo (!== vira >) | s/if \(valor !== 0\) acc\.lancamentos_nao_zero/if (valor > 0) acc.lancamentos_nao_zero/
+PEGA | fase 2: entrada fora_dre não vira saída (isReceita invertido) | s/if \(isReceita\) \{ acc\.entradas/if (!isReceita) { acc.entradas/
+PEGA | fase 2: pendência fora_dre rebaixa para baixa (baixa vira media) | s/if \(motivoFora\) \{ nivel = 'baixa'/if (motivoFora) { nivel = 'media'/
+PEGA | fase 2: mapa inválido rebaixa (> 0 vira > 5) | s/if \(input\.mapeamentosInvalidos > 0\) \{/if (input.mapeamentosInvalidos > 5) {/

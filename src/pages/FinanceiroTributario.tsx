@@ -91,10 +91,23 @@ const FinanceiroTributario = () => {
       </div>
 
       {ALL_COMPANIES.map(co => {
+        // Carga = TODAS as sub-linhas de imposto do snapshot (ICMS/ISS/PIS/COFINS/IPI/DAS/IRPJ/CSLL).
+        // `d.impostos` é só IRPJ+CSLL (0 no Simples): usado sozinho subestimava a carga, e com o
+        // imposto agora em linha própria (DRE fase 2) o ICMS/PIS/COFINS sumiria do painel.
+        // Snapshot sem sub-linhas (legado) cai no `impostos` da coluna.
+        const cargaMes = (d: FinDRE) => {
+          const det = d.detalhamento?.impostos;
+          return det ? Object.values(det).reduce((a, v) => a + (v ?? 0), 0) : d.impostos;
+        };
+        const federalMes = (d: FinDRE) => {
+          const det = d.detalhamento?.impostos;
+          return det ? (det.irpj ?? 0) + (det.csll ?? 0) + (det.ded_pis ?? 0) + (det.ded_cofins ?? 0) : d.impostos;
+        };
         const dre = dreData[co] || [];
         const regime = COMPANIES[co].regime;
         const receitaAnual = dre.reduce((s, d) => s + d.receita_bruta, 0);
-        const impostosAnual = dre.reduce((s, d) => s + d.impostos, 0);
+        const impostosAnual = dre.reduce((s, d) => s + cargaMes(d), 0);
+        const federalAnual = dre.reduce((s, d) => s + federalMes(d), 0);
         const aliqEfetiva = receitaAnual > 0 ? (impostosAnual / receitaAnual) * 100 : 0;
 
         // Regime-specific analysis
@@ -135,7 +148,7 @@ const FinanceiroTributario = () => {
                   <p className="text-lg font-bold">{fmtCompact(receitaAnual)}</p>
                 </div>
                 <div className="p-3 rounded-lg bg-status-error-bg text-center">
-                  <p className="text-xs text-muted-foreground">Impostos Pagos</p>
+                  <p className="text-xs text-muted-foreground">Impostos (competência)</p>
                   <p className="text-lg font-bold text-status-error">{fmtCompact(impostosAnual)}</p>
                 </div>
                 <div className="p-3 rounded-lg bg-status-warning-bg text-center">
@@ -186,12 +199,12 @@ const FinanceiroTributario = () => {
                       {receitaAnual > 0 ? (lpBreakdown.total / receitaAnual * 100).toFixed(2) : '0'}%
                     </span>
                   </div>
-                  {Math.abs(lpBreakdown.total - impostosAnual) > 1000 && impostosAnual > 0 && (
+                  {Math.abs(lpBreakdown.total - federalAnual) > 1000 && federalAnual > 0 && (
                     <div className="flex items-start gap-2 p-2 rounded bg-status-warning-bg border border-status-warning/30 mt-2">
                       <AlertTriangle className="w-3.5 h-3.5 text-status-warning mt-0.5 shrink-0" />
                       <p className="text-xs text-status-warning">
-                        Diferença de {fmtCompact(Math.abs(lpBreakdown.total - impostosAnual))} entre estimado e pago.
-                        Pode indicar ISS, ICMS, ou categorização incorreta.
+                        Diferença de {fmtCompact(Math.abs(lpBreakdown.total - federalAnual))} entre o estimado e o
+                        IRPJ/CSLL/PIS/COFINS da DRE. Pode indicar competência/recolhimento ou categorização incorreta.
                       </p>
                     </div>
                   )}
@@ -214,12 +227,12 @@ const FinanceiroTributario = () => {
                       </TableHeader>
                       <TableBody>
                         {dre.sort((a, b) => a.mes - b.mes).map(d => {
-                          const aliq = d.receita_bruta > 0 ? (d.impostos / d.receita_bruta) * 100 : 0;
+                          const aliq = d.receita_bruta > 0 ? (cargaMes(d) / d.receita_bruta) * 100 : 0;
                           return (
                             <TableRow key={d.mes}>
                               <TableCell className="text-sm">{meses[d.mes - 1]}</TableCell>
                               <TableCell className="text-right text-sm">{fmtCompact(d.receita_bruta)}</TableCell>
-                              <TableCell className="text-right text-sm text-status-error">{fmtCompact(d.impostos)}</TableCell>
+                              <TableCell className="text-right text-sm text-status-error">{fmtCompact(cargaMes(d))}</TableCell>
                               <TableCell className={`text-right text-sm font-medium ${aliq > 15 ? 'text-status-error' : 'text-status-warning'}`}>
                                 {aliq.toFixed(2)}%
                               </TableCell>

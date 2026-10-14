@@ -1127,11 +1127,15 @@ serve(async (req) => {
    * gate de staff, não ao Omie — sair do radar do G6 não esconde chamada nenhuma ao ERP. Note o
    * mecanismo, que vale para a próxima vez: **inserir código move fetch entre as faixas**, e a
    * direção que importa é a que tira da vigilância sem ninguém ler.
+   *
+   * 2026-10-13 — saiu `fin-suggest-mapping` (1→0): o tipo `DreLinha` da DRE fase 2 ganhou 9 linhas
+   * e empurrou a menção a "Omie" (comentário do handler) para além da faixa. Foi LIDO: os dois
+   * `fetch` são `${SUPABASE_URL}/auth/v1/user` e a consulta de role do gate de staff — Supabase,
+   * não Omie. Sair do radar não esconde chamada nenhuma ao ERP.
    */
   const G6_VIZINHOS: ReadonlyMap<string, number> = new Map([
     ['supabase/functions/disparar-pedidos-aprovados/index.ts', 3],
     ['supabase/functions/enviar-pedido-portal-sayerlack/index.ts', 1],
-    ['supabase/functions/fin-suggest-mapping/index.ts', 1],
     ['supabase/functions/omie-cliente/index.ts', 1],
     ['supabase/functions/omie-sync/index.ts', 1],
   ]);

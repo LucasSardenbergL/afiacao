@@ -196,11 +196,24 @@ export interface Achado {
  * `leitura-pura` é FALSIFICADA pelo gate contra o corpo da edge. Se a edge passar a escrever
  * depois, o teste-sentinela de estado (no `.test.ts`) cobra a saída da lista.
  *
- * Vazia hoje de propósito: ela cobre o que NASCE daqui para a frente, e as 55 não-instrumentadas
- * que já existiam não passam por este gate — retroalimentá-la seria inventar assinatura de
- * decisão que ninguém tomou.
+ * Começou vazia de propósito: as não-instrumentadas que já existiam só entram quando um PR mexe
+ * nelas e DECIDE (retroalimentar seria inventar assinatura de decisão que ninguém tomou).
  */
-export const DISPENSAS: Record<string, Dispensa> = {};
+export const DISPENSAS: Record<string, Dispensa> = {
+  // DRE fase 2 (PR #3063, 2026-10-13) — as três mudaram de comportamento, nenhuma escreve no banco.
+  'fin-regime-tributario': {
+    motivo: 'leitura-pura',
+    porque: 'Claude/DRE fase 2: só lê fin_dre_snapshots/fin_regime_inputs e devolve JSON ao master. O deploy dela é conferido pela sessão antes do script do mapa (resposta já traz `motivo_incompleto`), registrado no PR.',
+  },
+  'fin-valor-engine': {
+    motivo: 'leitura-pura',
+    porque: 'Claude/DRE fase 2: só lê snapshots de DRE/NCG/inputs e devolve JSON ao master. Deploy conferido pela sessão antes do script do mapa (resposta já traz `resultado_provisorio`), registrado no PR.',
+  },
+  'fin-suggest-mapping': {
+    motivo: 'leitura-via-rpc',
+    porque: 'Claude/DRE fase 2: só lê o mapa e a RPC fin_categorias_sem_mapping (STABLE, sem INSERT/UPDATE/DELETE no corpo — pg_proc em prod 2026-10-13); a sugestão é aplicada por humano na tela. Edge antiga no ar só sugere menos (nunca fora_dre), sem dano.',
+  },
+};
 
 /**
  * ⚠️ LIMITE das duas detecções abaixo: elas leem o corpo da PASTA da edge, não o fecho transitivo

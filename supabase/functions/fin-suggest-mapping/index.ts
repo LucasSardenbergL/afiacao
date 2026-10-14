@@ -70,7 +70,22 @@ type DreLinha =
   | 'receita_bruta' | 'deducoes' | 'cmv'
   | 'despesas_operacionais' | 'despesas_administrativas' | 'despesas_comerciais'
   | 'despesas_financeiras' | 'receitas_financeiras'
-  | 'outras_receitas' | 'outras_despesas' | 'impostos';
+  | 'outras_receitas' | 'outras_despesas' | 'impostos'
+  // DRE fase 2 — existem no mapa (CHECK), mas só por decisão da própria empresa:
+  | 'ded_icms' | 'ded_iss' | 'ded_pis' | 'ded_cofins' | 'ded_ipi' | 'das' | 'irpj' | 'csll' | 'fora_dre';
+
+// Sugestão cruzada (o que OUTRA empresa mapeou) só copia linha que vale para a empresa-alvo:
+// fora_dre NUNCA (sair do DRE é decisão de natureza por empresa) e imposto específico só se o
+// regime da alvo for o mesmo (IRPJ/CSLL no Simples sumiriam do resultado; DAS no presumido não existe).
+const REGIME_POR_EMPRESA: Record<string, 'simples' | 'presumido'> = { colacor: 'presumido', oben: 'presumido', colacor_sc: 'simples' };
+const SO_PRESUMIDO = new Set<string>(['ded_icms', 'ded_iss', 'ded_pis', 'ded_cofins', 'ded_ipi', 'irpj', 'csll']);
+function sugerivelPara(linha: string, company: string): boolean {
+  if (linha === 'fora_dre') return false;
+  const regime = REGIME_POR_EMPRESA[company];
+  if (SO_PRESUMIDO.has(linha)) return regime === 'presumido';
+  if (linha === 'das') return regime === 'simples';
+  return true;
+}
 
 type Suggestion = {
   omie_codigo: string;
@@ -120,9 +135,14 @@ Deno.serve(async (req: Request) => {
     });
   }
 
-  const { data: mappings } = await supabase
+  const { data: mappings, error: mapErr } = await supabase
     .from('fin_categoria_dre_mapping')
     .select('company, omie_codigo, dre_linha');
+  if (mapErr || mappings == null) {
+    return new Response(JSON.stringify({ error: mapErr?.message ?? 'fin_categoria_dre_mapping: data null sem error' }), {
+      status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
 
   const byCodigo = new Map<string, { dre_linha: DreLinha; company: string }[]>();
   for (const m of (mappings ?? []) as Array<{ company: string; omie_codigo: string; dre_linha: DreLinha }>) {
@@ -133,7 +153,7 @@ Deno.serve(async (req: Request) => {
   const suggestions: Suggestion[] = ((pendentes ?? []) as Array<{
     omie_codigo: string; categoria_nome: string; valor_periodo: number;
   }>).map(p => {
-    const matchesByCode = byCodigo.get(p.omie_codigo)?.filter(m => m.company !== company);
+    const matchesByCode = byCodigo.get(p.omie_codigo)?.filter(m => m.company !== company && sugerivelPara(m.dre_linha, company));
     if (matchesByCode && matchesByCode.length > 0) {
       const top = matchesByCode[0];
       return {

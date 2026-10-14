@@ -176,8 +176,10 @@ export function compararRegimes(input: {
   });
 }
 
-export function recomendarRegime(comparados: RegimeComparado[], regimeAtual: RegimeNome, opts: { bandaErro: number; dadosCompletos?: boolean }):
+export function recomendarRegime(comparados: RegimeComparado[], regimeAtual: RegimeNome, opts: { bandaErro: number; dadosCompletos?: boolean; lucroProvisorio?: boolean }):
   { recomendado: RegimeNome | null; economia_anual: number | null; status: StatusRecomendacao } {
+  // DRE fase 2: lucro provisório (fora_dre com composição pendente) ⇒ comparação suspensa.
+  if (opts.lucroProvisorio) return { recomendado: null, economia_anual: null, status: 'incompleto' };
   const elegiveis = comparados.filter((c) => c.elegivel);
   if (elegiveis.length === 0) return { recomendado: null, economia_anual: null, status: 'incompleto' };
   const melhor = elegiveis[0];
