@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { CUSTO_MENSAL_MAX, descontoMaximo, parseCustoMensal } from '@/lib/financeiro/ciclo-cliente-helpers';
@@ -10,11 +10,12 @@ const N_CENARIOS = [10, 20, 30] as const;
 function CustoEmpresa({ company, texto, onCusto }: { company: Company; texto: string; onCusto: (t: string) => void }) {
   const parsed = parseCustoMensal(texto);
   const valido = parsed.ok ? parsed.c : null;
-  const ultimo = useRef<number | null>(valido); // valor da montagem não conta como "simulação"
-  useEffect(() => {
+  const ultimo = useRef<number | null>(valido); // último valor já contado; o da montagem não conta como "simulação"
+  // Dispara no blur (não a cada tecla), e só se o valor válido mudou desde o último evento.
+  const aoSair = () => {
     if (valido !== null && valido !== ultimo.current) track('financeiro.ciclo_desconto_simulado', { custo_pct: valido * 100, empresa: company });
     ultimo.current = valido;
-  }, [valido, company]);
+  };
   const idErro = `ciclo-custo-erro-${company}`;
   const invalido = !parsed.ok && parsed.motivo === 'custo_invalido';
   return (
@@ -24,7 +25,7 @@ function CustoEmpresa({ company, texto, onCusto }: { company: Company; texto: st
         <Input
           className="w-24" inputMode="decimal" value={texto} placeholder="ex.: 2,5"
           aria-invalid={invalido} aria-describedby={!parsed.ok ? idErro : undefined}
-          onChange={(e) => onCusto(e.target.value)}
+          onChange={(e) => onCusto(e.target.value)} onBlur={aoSair}
         />
       </label>
       {!parsed.ok && (

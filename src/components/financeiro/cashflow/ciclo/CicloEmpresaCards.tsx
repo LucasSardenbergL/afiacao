@@ -16,8 +16,8 @@ function pond(meses: CoorteMes[], campo: 'prazoConcedido' | 'prazoReal') {
   return w > 0 ? s / w : null;
 }
 
-export function CicloEmpresaCard({ company, coorte, receitaDia, receitaErro, resumo, resumoErro, hoje }: {
-  company: Company; coorte: CoorteMes[]; receitaDia: number | null; receitaErro?: boolean;
+export function CicloEmpresaCard({ company, coorte, receitaDia, receitaMeses, receitaErro, resumo, resumoErro, hoje }: {
+  company: Company; coorte: CoorteMes[]; receitaDia: number | null; receitaMeses?: number; receitaErro?: boolean;
   resumo: ResumoCliente[] | undefined; resumoErro?: boolean; hoje: string;
 }) {
   const { data, error, isLoading } = useCashflowProjection(company);
@@ -50,6 +50,7 @@ export function CicloEmpresaCard({ company, coorte, receitaDia, receitaErro, res
         </div>
         <div className="text-xs text-muted-foreground">
           1 dia de PMR = {receitaErro ? '— (erro de leitura da receita TTM)' : receitaDia === null ? '— (sem receita TTM)' : brl(receitaDia)}
+          {receitaDia !== null && receitaMeses !== undefined && receitaMeses < 12 && ` (base: ${receitaMeses} de 12 meses)`}
         </div>
         <div className="text-xs text-muted-foreground" data-testid={`ciclo-cobertura-${company}`}>
           Cobertura: {cobTexto} do valor pago vem de clientes com confiança média

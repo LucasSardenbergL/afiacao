@@ -20,7 +20,7 @@ export function CicloTendencia({ coorte, company }: { coorte: CoorteMes[]; compa
       <CardHeader className="pb-2">
         <CardTitle className="text-sm">{COMPANIES[company].shortName} — prazo por mês de vencimento</CardTitle>
         <p className="text-xs text-muted-foreground">
-          * e círculo vazio = mês parcial (primeiro/último da janela). Coortes recentes têm parte ainda em aberto (% pago no tooltip) e parecem melhores do que são.
+          * e círculo vazio = mês parcial (primeiro/último da janela). Coortes recentes têm parte ainda em aberto (% pago no tooltip) e parecem melhores do que são. % pago = % do valor de títulos liquidados (parcial de vencidos não entra).
         </p>
       </CardHeader>
       <CardContent className="h-56">
@@ -37,7 +37,7 @@ export function CicloTendencia({ coorte, company }: { coorte: CoorteMes[]; compa
                 labelFormatter={(rotulo: unknown, itens) => {
                   const p = itens?.[0]?.payload as Ponto | undefined;
                   const pago = p?.pago;
-                  return `${String(rotulo)} — ${pago == null ? '—' : `${pago}%`} do valor já pago${p?.parcial ? ' (mês parcial)' : ''}`;
+                  return `${String(rotulo)} — ${pago == null ? '—' : `${pago}%`} do valor de títulos liquidados${p?.parcial ? ' (mês parcial)' : ''}`;
                 }}
               />
               <Legend />

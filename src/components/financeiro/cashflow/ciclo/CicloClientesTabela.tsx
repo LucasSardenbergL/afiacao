@@ -25,12 +25,12 @@ export function CicloClientesTabela({ clientes, hoje, empresa, perfilFiltro, onA
       <TableHeader><TableRow>
         <TableHead>Cliente</TableHead><TableHead>Empresa</TableHead><TableHead className="text-right">Vencido aberto</TableHead>
         <TableHead className="text-right">Docs</TableHead><TableHead className="text-right">Concedido</TableHead><TableHead className="text-right">Real</TableHead>
-        <TableHead className="text-right">Atraso p80 (qtd | R$)</TableHead><TableHead>Perfil</TableHead><TableHead>Alavanca</TableHead>
+        <TableHead className="text-right">Atraso p80 (qtd | R$)</TableHead><TableHead className="text-right">% valor atrasado</TableHead><TableHead>Perfil</TableHead><TableHead>Alavanca</TableHead>
         <TableHead className="text-right">Cenário</TableHead><TableHead>Confiança</TableHead>
       </TableRow></TableHeader>
       <TableBody>
         {linhas.length === 0 && (
-          <TableRow><TableCell colSpan={11} className="text-sm text-muted-foreground">Nenhum cliente neste filtro.</TableCell></TableRow>
+          <TableRow><TableCell colSpan={12} className="text-sm text-muted-foreground">Nenhum cliente neste filtro.</TableCell></TableRow>
         )}
         {linhas.map(({ c, s, p, conf }) => (
           <TableRow
@@ -45,6 +45,7 @@ export function CicloClientesTabela({ clientes, hoje, empresa, perfilFiltro, onA
             <TableCell className="text-right font-mono">{dias(c.prazoConcedidoPond)}</TableCell>
             <TableCell className="text-right font-mono">{dias(c.prazoRealPond)}</TableCell>
             <TableCell className="text-right font-mono">{dias(c.atrasoP80)} | {dias(c.atrasoP80Valor)}</TableCell>
+            <TableCell className="text-right font-mono">{c.pctValorAtrasado === null ? '—' : `${(c.pctValorAtrasado * 100).toFixed(0)}%`}</TableCell>
             <TableCell>{ROTULO_PERFIL[p.perfil]}</TableCell>
             <TableCell className="text-xs">
               {s.texto || '—'}

@@ -44,7 +44,7 @@ export function CicloTab() {
 
       <div className="grid gap-3 md:grid-cols-3">
         {ALL_COMPANIES.map((c) => (
-          <CicloEmpresaCard key={c} company={c} coorte={coorteDados} receitaDia={receita.data?.[c] ?? null} receitaErro={receita.error !== null && receita.error !== undefined}
+          <CicloEmpresaCard key={c} company={c} coorte={coorteDados} receitaDia={receita.data?.[c].porDia ?? null} receitaMeses={receita.data?.[c].mesesComDado} receitaErro={receita.error !== null && receita.error !== undefined}
             resumo={resumo.data} resumoErro={resumo.error !== null && resumo.error !== undefined} hoje={hoje} />
         ))}
       </div>

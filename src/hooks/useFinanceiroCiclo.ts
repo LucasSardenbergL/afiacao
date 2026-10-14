@@ -63,11 +63,14 @@ export function useCicloCoorte() {
   });
 }
 
-/** Receita por competência TTM (12 meses fechados) / 365, por empresa. Sem linha → null. */
+export type ReceitaTtm = { porDia: number | null; mesesComDado: number };
+
+/** Receita por competência TTM (12 meses cheios anteriores ao corrente) / 365, por empresa.
+ *  `mesesComDado` = meses DISTINTOS da janela com valor_total não-nulo; 0 → porDia null (nunca 0). */
 export function useReceitaDiariaTtm() {
   return useQuery({
     queryKey: ['financeiro', 'ciclo', 'receita-ttm', hojeSp().slice(0, 7)],
-    queryFn: async (): Promise<Record<Company, number | null>> => {
+    queryFn: async (): Promise<Record<Company, ReceitaTtm>> => {
       const hoje = hojeSp();
       const [a, m] = hoje.split('-').map(Number);
       const fimExclusivo = a * 100 + m; // mês corrente (excluído)
@@ -85,6 +88,7 @@ export function useReceitaDiariaTtm() {
         'fin_dre_competencia_base/ciclo-ttm',
       );
       const soma: Record<Company, number | null> = { oben: null, colacor: null, colacor_sc: null };
+      const meses: Record<Company, Set<number>> = { oben: new Set(), colacor: new Set(), colacor_sc: new Set() };
       for (const l of linhas) {
         const ano = num(l.ano);
         const mes = num(l.mes);
@@ -93,11 +97,15 @@ export function useReceitaDiariaTtm() {
         if (ym < inicio || ym >= fimExclusivo) continue;
         const c = l.company as Company;
         const v = num(l.valor_total);
-        if (!ALL_COMPANIES.includes(c) || v === null) continue;
+        if (!ALL_COMPANIES.includes(c) || v === null) continue; // valor ausente não conta como mês com dado
         soma[c] = (soma[c] ?? 0) + v;
+        meses[c].add(ym);
       }
-      const out = { ...soma };
-      for (const c of ALL_COMPANIES) out[c] = soma[c] === null ? null : (soma[c] as number) / 365;
+      const out = {} as Record<Company, ReceitaTtm>;
+      for (const c of ALL_COMPANIES) {
+        const total = soma[c];
+        out[c] = { porDia: total === null ? null : total / 365, mesesComDado: meses[c].size };
+      }
       return out;
     },
   });

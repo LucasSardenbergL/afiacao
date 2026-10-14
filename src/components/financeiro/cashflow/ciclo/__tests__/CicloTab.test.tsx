@@ -38,7 +38,7 @@ const renderTab = (url = '/') => render(<MemoryRouter initialEntries={[url]}><Ci
 
 beforeEach(() => {
   coorteMock.mockReturnValue(ok([]));
-  receitaMock.mockReturnValue(ok({ oben: 11300, colacor: 2100, colacor_sc: null }));
+  receitaMock.mockReturnValue(ok({ oben: { porDia: 11300, mesesComDado: 12 }, colacor: { porDia: 2100, mesesComDado: 9 }, colacor_sc: { porDia: null, mesesComDado: 0 } }));
   titulosMock.mockReturnValue({ data: [], isLoading: false, error: null });
   projMock.mockImplementation(() => ok({ indicadores: proj, confianca_dados: { motivos: [] } }));
 });
@@ -66,7 +66,7 @@ describe('CicloTab', () => {
   it('cliente só-vencido aparece como estoque vencido a recuperar', () => {
     resumoMock.mockReturnValue(ok([cli({ nParcelas: null, nDocumentos: null, atrasoP80: null, atrasoP80Valor: null, ultimaBaixa: null, saldoVencido: 500 })]));
     renderTab();
-    expect(screen.getByText(/vencidos/)).toBeInTheDocument();
+    expect(screen.getByText(/R\$\s*500 vencidos/)).toBeInTheDocument();
     expect(screen.getByText(/estoque vencido a recuperar/)).toBeInTheDocument();
   });
 
@@ -234,5 +234,52 @@ describe('CicloTab', () => {
     resumoMock.mockReturnValue(ok([cli({ saldoVencido: 0 })]));
     renderTab();
     expect(screen.getByRole('button', { name: /ACME/ })).toHaveTextContent(/R\$\s*0/);
+  });
+
+  it('saldo vencido null mostra "—" (não R$ 0)', () => {
+    resumoMock.mockReturnValue(ok([cli({ saldoVencido: null })]));
+    renderTab();
+    const linha = screen.getByRole('button', { name: /ACME/ });
+    expect(linha).not.toHaveTextContent(/R\$\s*0/);
+    expect(within(linha).getAllByRole('cell')[2]).toHaveTextContent('—');
+  });
+
+  it('coluna "% valor atrasado": valor e null', () => {
+    resumoMock.mockReturnValue(ok([cli({ nomeCliente: 'COM', pctValorAtrasado: 0.35 }), cli({ omieCodigoCliente: 2, nomeCliente: 'SEM', pctValorAtrasado: null })]));
+    renderTab();
+    expect(screen.getByText('% valor atrasado')).toBeInTheDocument();
+    expect(within(screen.getByRole('button', { name: /COM/ })).getAllByRole('cell')[7]).toHaveTextContent('35%');
+    expect(within(screen.getByRole('button', { name: /SEM/ })).getAllByRole('cell')[7]).toHaveTextContent('—');
+  });
+
+  it('card: "(base: N de 12 meses)" só quando N < 12', () => {
+    resumoMock.mockReturnValue(ok([]));
+    renderTab();
+    expect(screen.getByTestId('ciclo-card-oben')).not.toHaveTextContent('base:');
+    expect(screen.getByTestId('ciclo-card-colacor')).toHaveTextContent('(base: 9 de 12 meses)');
+    expect(screen.getByTestId('ciclo-card-colacor_sc')).not.toHaveTextContent('base:');
+  });
+
+  it('track de desconto simulado dispara no blur, não a cada tecla, e só se o valor mudou', async () => {
+    const { track } = await import('@/lib/analytics');
+    (track as ReturnType<typeof vi.fn>).mockClear();
+    resumoMock.mockReturnValue(ok([]));
+    renderTab('/?cicloEmpresa=oben');
+    const input = within(screen.getByTestId('ciclo-desconto-oben')).getByRole('textbox');
+    fireEvent.change(input, { target: { value: '2' } });
+    fireEvent.change(input, { target: { value: '2,5' } });
+    expect(track).not.toHaveBeenCalledWith('financeiro.ciclo_desconto_simulado', expect.anything());
+    fireEvent.blur(input);
+    expect(vi.mocked(track).mock.calls.filter((c) => c[0] === 'financeiro.ciclo_desconto_simulado')).toHaveLength(1);
+    fireEvent.blur(input);
+    expect(vi.mocked(track).mock.calls.filter((c) => c[0] === 'financeiro.ciclo_desconto_simulado')).toHaveLength(1);
+  });
+
+  it('drill: descrição cobre as 4 situações e a conta aberta do cenário de cobrança', () => {
+    resumoMock.mockReturnValue(ok([cli({ prazoRealPond: 45, atrasoPond: 15, atrasoP80: 20, atrasoP80Valor: 20, excessoCarenciaPond: 10, pctValorAtrasado: 0.8, volumeEmitido12m: 36500 })]));
+    renderTab();
+    fireEvent.click(screen.getByRole('button', { name: /ACME/ }));
+    expect(screen.getByRole('dialog')).toHaveTextContent(/sem data de baixa.*vencidas em aberto.*status ambíguo/);
+    expect(screen.getByTestId('ciclo-drill-conta')).toHaveTextContent(/excesso 10,0 d × R\$\s*100,00\/dia = R\$\s*1\.000 \(cenário, não é previsão\)/);
   });
 });

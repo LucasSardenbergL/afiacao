@@ -98,7 +98,7 @@ export function degrauAbaixo(prazo: number): number | null {
   return null;
 }
 
-function porDia(volume: number | null): number | null {
+export function porDia(volume: number | null): number | null {
   return volume === null || volume <= 0 ? null : volume / 365;
 }
 
