@@ -39,19 +39,25 @@ export function useCicloCoorte() {
       const { data, error } = await supabase.from('v_ciclo_empresa_coorte' as never).select('*')
         .order('company', { ascending: true }).order('mes_vencimento', { ascending: true });
       if (error) throw error;
-      // `?? 0` seguro: a view usa coalesce(…, 0) nestas 3 colunas (zero REAL de soma); error já lançou.
-      return ((data ?? []) as unknown as Record<string, unknown>[]).map((r) => ({
-        company: r.company as Company,
-        mes: String(r.mes_vencimento),
-        valorVencido: num(r.valor_vencido_no_mes) ?? 0,
-        valorPago: num(r.valor_pago) ?? 0,
-        valorEmAberto: num(r.valor_em_aberto) ?? 0,
-        pctValorPago: num(r.pct_valor_pago),
-        prazoConcedido: num(r.prazo_concedido_pond),
-        prazoReal: num(r.prazo_real_pond_pagas),
-        atraso: num(r.atraso_pond_pagas),
-        mesParcial: r.mes_parcial === true,
-      }));
+      // Linha com dinheiro/chave ausente é DESCARTADA (nunca default fabricado): as 3 colunas vêm de coalesce(…,0) na view.
+      const out: CoorteMes[] = [];
+      for (const r of (data ?? []) as unknown as Record<string, unknown>[]) {
+        const valorVencido = num(r.valor_vencido_no_mes);
+        const valorPago = num(r.valor_pago);
+        const valorEmAberto = num(r.valor_em_aberto);
+        if (valorVencido === null || valorPago === null || valorEmAberto === null) continue;
+        out.push({
+          company: r.company as Company,
+          mes: String(r.mes_vencimento),
+          valorVencido, valorPago, valorEmAberto,
+          pctValorPago: num(r.pct_valor_pago),
+          prazoConcedido: num(r.prazo_concedido_pond),
+          prazoReal: num(r.prazo_real_pond_pagas),
+          atraso: num(r.atraso_pond_pagas),
+          mesParcial: r.mes_parcial === true,
+        });
+      }
+      return out;
     },
   });
 }
@@ -59,7 +65,7 @@ export function useCicloCoorte() {
 /** Receita por competência TTM (12 meses fechados) / 365, por empresa. Sem linha → null. */
 export function useReceitaDiariaTtm() {
   return useQuery({
-    queryKey: ['financeiro', 'ciclo', 'receita-ttm'],
+    queryKey: ['financeiro', 'ciclo', 'receita-ttm', hojeSp().slice(0, 7)],
     queryFn: async (): Promise<Record<Company, number | null>> => {
       const hoje = hojeSp();
       const [a, m] = hoje.split('-').map(Number);
@@ -68,9 +74,12 @@ export function useReceitaDiariaTtm() {
       const linhas = await fetchAllPages<Record<string, unknown>>(
         (de, ate) =>
           supabase.from('fin_dre_competencia_base' as never).select('company, ano, mes, categoria_codigo, valor_total')
-            .eq('origem', 'CR')
+            .eq('origem', 'CR').gte('ano', a - 1)
+            // chave única da view: (origem, company, ano, mes, categoria_codigo, categoria_descricao); as 2 últimas aceitam NULL
             .order('company', { ascending: true }).order('ano', { ascending: true })
-            .order('mes', { ascending: true }).order('categoria_codigo', { ascending: true })
+            .order('mes', { ascending: true })
+            .order('categoria_codigo', { ascending: true, nullsFirst: true })
+            .order('categoria_descricao', { ascending: true, nullsFirst: true })
             .range(de, ate) as unknown as PromiseLike<{ data: Record<string, unknown>[] | null; error: unknown }>,
         'fin_dre_competencia_base/ciclo-ttm',
       );
@@ -113,16 +122,23 @@ export function useCicloTitulosCliente(company: Company | null, cliente: number 
             .range(de, ate) as unknown as PromiseLike<{ data: Record<string, unknown>[] | null; error: unknown }>,
         'v_ciclo_cr_titulos/cliente',
       );
-      // `valor`/`prazoConcedido` ?? 0 seguros: a view filtra valor_documento>0 finito e datas NOT NULL.
-      return linhas.map((r) => ({
-        lancamento: num(r.omie_codigo_lancamento) ?? -1,
-        documento: typeof r.numero_documento === 'string' ? r.numero_documento : null,
-        emissao: String(r.data_emissao), vencimento: String(r.data_vencimento),
-        baixa: typeof r.data_baixa === 'string' ? r.data_baixa : null,
-        valor: num(r.valor_documento) ?? 0, saldo: num(r.saldo), situacao: String(r.situacao),
-        prazoConcedido: num(r.prazo_concedido_dias) ?? 0,
-        prazoReal: num(r.prazo_real_dias), atraso: num(r.atraso_dias), diasVencido: num(r.dias_vencido),
-      }));
+      // Título sem chave/valor/prazo concedido (a view garante, mas ausente ≠ zero) é DESCARTADO, nunca default fabricado.
+      const out: TituloCliente[] = [];
+      for (const r of linhas) {
+        const lancamento = num(r.omie_codigo_lancamento);
+        const valor = num(r.valor_documento);
+        const prazoConcedido = num(r.prazo_concedido_dias);
+        if (lancamento === null || valor === null || prazoConcedido === null) continue;
+        out.push({
+          lancamento,
+          documento: typeof r.numero_documento === 'string' ? r.numero_documento : null,
+          emissao: String(r.data_emissao), vencimento: String(r.data_vencimento),
+          baixa: typeof r.data_baixa === 'string' ? r.data_baixa : null,
+          valor, saldo: num(r.saldo), situacao: String(r.situacao), prazoConcedido,
+          prazoReal: num(r.prazo_real_dias), atraso: num(r.atraso_dias), diasVencido: num(r.dias_vencido),
+        });
+      }
+      return out;
     },
   });
 }
