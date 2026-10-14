@@ -11,6 +11,7 @@
 // o mesmo `ListarPedidos` — REDUNDANT aqui é reportado, nunca re-tentado.
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff, corsHeaders } from "../_shared/auth.ts";
+import { atenderSondaOptions } from "../_shared/sonda-cron.ts";
 import { clienteCotaDoAmbiente, comVezOmie, metodoCoordenado } from "../_shared/omie-cota.ts";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import { redigirSegredo } from "../_shared/omie-falha.ts";
@@ -324,7 +325,15 @@ async function sincronizarConta(db: Db, conta: Conta, inicio: number): Promise<R
 }
 
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+  // A sonda de deploy por cron responde o marcador e SAI antes do gate de auth, do `createClient`
+  // e de qualquer chamada ao Omie: esta edge escreve a fila (`sincronizar`), e uma sonda que caísse
+  // no fluxo normal faria uma coleta de verdade. Mora DENTRO do bloco OPTIONS porque é a forma que
+  // o `gateG1` de `scripts/sonda-cron-prova.ts` mede. Fora da sonda, o preflight segue `"ok"`.
+  if (req.method === "OPTIONS") {
+    const sonda = await atenderSondaOptions(req, respostaSonda, VERSAO);
+    if (sonda) return sonda;
+    return new Response("ok", { headers: corsHeaders });
+  }
   const auth = await authorizeCronOrStaff(req);
   if (!auth.ok) return auth.response;
 
