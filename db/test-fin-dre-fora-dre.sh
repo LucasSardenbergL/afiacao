@@ -163,6 +163,69 @@ P -q -c "DELETE FROM public.fin_categoria_dre_mapping WHERE dre_linha='despesa_i
 P -q -f "$MIG" && ok "F-A3 restaurado"
 rejeita_check "A3 de novo após restaurar" colacor "despesa_inventada"
 
+# ══════════════════════════════════════════════════════════════════════════════
+# PROVA 2: db/2026-10-13-fin-dre-mapa-colacor-fase2.sql (mapa colacor) — precondição de deploy
+#   servido (ledger + janela viva, observação MAIS RECENTE) e postcondição dos 24 pares exatos.
+#   Roda como o db:aplicar: UMA transação (--single-transaction), arquivo sem BEGIN/COMMIT.
+# ══════════════════════════════════════════════════════════════════════════════
+MAPA="$REPO_ROOT/db/2026-10-13-fin-dre-mapa-colacor-fase2.sql"
+V_OK="v1.5-dre-fora-dre-composicao"
+F_OK=$(sed -n "s/^  v_fonte_esperada  constant text := '\([0-9a-f]*\)';$/\1/p" "$MAPA")
+eq "M0 hash esperado do script = fingerprint versionado da omie-financeiro" \
+  "$F_OK" "$(sed -n 's/^  "omie-financeiro": "\([0-9a-f]*\)",$/\1/p' "$REPO_ROOT/supabase/functions/_shared/sonda-fingerprints.ts")"
+P -q <<'SQL'
+ALTER TABLE public.fin_categoria_dre_mapping ADD COLUMN notas text;
+CREATE TABLE public.deploy_atestacoes (request_id bigint, observado_em timestamptz, edge text, versao text, fonte text, via text);
+CREATE TABLE public._janela (request_id bigint, observado_em timestamptz, edge text, versao text, fonte text, via text);
+CREATE FUNCTION public.deploy_atestacoes_janela_viva()
+  RETURNS TABLE(request_id bigint, observado_em timestamptz, edge text, versao text, fonte text, via text)
+  LANGUAGE sql STABLE AS $f$ SELECT request_id, observado_em, edge, versao, fonte, via FROM public._janela $f$;
+SQL
+n_mapa() { Pq -c "SELECT count(*) FROM public.fin_categoria_dre_mapping WHERE notas LIKE 'DRE fase 2:%';"; }
+roda_mapa() { # $1 rótulo · $2 sentinela esperada (precondicao|postcondicao|OK) · $3 arquivo (opcional)
+  local out f="${3:-$MAPA}"
+  if out=$(P -q --single-transaction -f "$f" 2>&1); then
+    [ "$2" = OK ] && ok "$1" || bad "$1 — devia falhar com $2 e PASSOU"
+  else
+    case "$out" in *"$2:"*) [ "$2" != OK ] && ok "$1 ($2 abortou)" || bad "$1 — falhou: ${out:0:200}" ;;
+      *) bad "$1 — falhou por outro motivo: ${out:0:200}" ;; esac
+  fi
+}
+# motor velho servido (v1.4) → nada entra
+P -q -c "INSERT INTO public.deploy_atestacoes VALUES (1, now() - interval '2 hours', 'omie-financeiro', 'v1.4-resumo-movimento-tipado', 'aaa', 'sonda');"
+roda_mapa "M1 motor v1.4 servido: precondição barra" precondicao
+eq "M1b nada inserido" "$(n_mapa)" "0"
+# v1.5 com hash ERRADO → barra
+P -q -c "INSERT INTO public.deploy_atestacoes VALUES (2, now() - interval '1 hour', 'omie-financeiro', '$V_OK', 'hash-de-outro-bundle', 'sonda');"
+roda_mapa "M2 versão certa, fonte errada: barra" precondicao
+# v1.5 certo no ledger, mas a janela viva tem observação MAIS NOVA divergente (rollback) → barra
+P -q -c "INSERT INTO public.deploy_atestacoes VALUES (3, now() - interval '30 minutes', 'omie-financeiro', '$V_OK', '$F_OK', 'sonda');"
+P -q -c "INSERT INTO public._janela VALUES (4, now() - interval '1 minute', 'omie-financeiro', 'v1.4-resumo-movimento-tipado', 'aaa', 'eco');"
+roda_mapa "M3 observação mais nova divergente (janela viva): barra" precondicao
+eq "M3b nada inserido" "$(n_mapa)" "0"
+# FALSIFICAÇÃO da precondição: sem o IF, o mesmo estado (rollback) deixaria o mapa entrar
+sed "s/  IF v.versao IS DISTINCT FROM v_versao_esperada OR v.fonte IS DISTINCT FROM v_fonte_esperada THEN/  IF false THEN/" "$MAPA" > "$TMPD/mapa-sab.sql"
+if cmp -s "$TMPD/mapa-sab.sql" "$MAPA"; then bad "F-M3 sed não aplicou"; else
+  roda_mapa "F-M3 precondição sabotada: o mapa ENTRA (o assert M3 tem dente)" OK "$TMPD/mapa-sab.sql"
+  P -q -c "DELETE FROM public.fin_categoria_dre_mapping WHERE notas LIKE 'DRE fase 2:%';"
+fi
+# motor certo é o mais recente → entra
+P -q -c "DELETE FROM public._janela; INSERT INTO public._janela VALUES (5, now(), 'omie-financeiro', '$V_OK', '$F_OK', 'cron');"
+roda_mapa "M4 motor v1.5 com a fonte esperada servido: aplica" OK
+eq "M4b 24 pares" "$(n_mapa)" "24"
+eq "M4c 14 fora_dre colacor" "$(Pq -c "SELECT count(*) FROM public.fin_categoria_dre_mapping WHERE notas LIKE 'DRE fase 2:%' AND dre_linha='fora_dre' AND company='colacor';")" "14"
+eq "M4d 2.06.01 → ded_icms" "$(Pq -c "SELECT dre_linha FROM public.fin_categoria_dre_mapping WHERE company='colacor' AND omie_codigo='2.06.01';")" "ded_icms"
+eq "M4e 2.09 pai NÃO mapeado (não herda por prefixo)" "$(Pq -c "SELECT count(*) FROM public.fin_categoria_dre_mapping WHERE omie_codigo='2.09';")" "0"
+roda_mapa "M5 reaplicação idempotente" OK
+eq "M5b ainda 24" "$(n_mapa)" "24"
+# postcondição: código já mapeado para OUTRA linha → aborta em vez de conviver
+P -q -c "DELETE FROM public.fin_categoria_dre_mapping WHERE notas LIKE 'DRE fase 2:%'; INSERT INTO public.fin_categoria_dre_mapping (company, omie_codigo, dre_linha) VALUES ('colacor','2.06.01','despesas_administrativas');"
+roda_mapa "M6 conflito pré-existente (2.06.01 administrativas): postcondição aborta" postcondicao
+eq "M6b rollback: nenhum par fase 2" "$(n_mapa)" "0"
+# FALSIFICAÇÃO da postcondição: sem o IF dos 24, o conflito conviveria em silêncio
+sed "s/  IF v_ok IS DISTINCT FROM 24 THEN/  IF false THEN/" "$MAPA" > "$TMPD/mapa-sab2.sql"
+roda_mapa "F-M6 postcondição sabotada: conflito PASSA (o assert M6 tem dente)" OK "$TMPD/mapa-sab2.sql"
+
 # ── veredito ──
 echo "──────────────────────────────"
 echo "RESULTADO: $PASS ok / $FAIL fail"

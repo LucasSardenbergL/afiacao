@@ -14,7 +14,7 @@ export const REGIME_POR_EMPRESA: Record<string, RegimeTributario> = {
 
 // Linhas de imposto regime-aware + linhas estruturais. Deduções (sobre receita) ficam
 // acima da receita líquida; das é linha própria (Simples); irpj/csll abaixo (presumido).
-export type DreLinha =
+type DreLinha =
   | 'receita_bruta' | 'deducoes' | 'receitas_financeiras' | 'outras_receitas'
   | 'cmv' | 'despesas_operacionais' | 'despesas_administrativas' | 'despesas_comerciais'
   | 'despesas_financeiras' | 'outras_despesas'
@@ -41,7 +41,7 @@ const LINHAS_NAO_HERDAVEIS = new Set<string>([
 
 // Mapa explícito que o motor não pode honrar. Nunca vira mapeado:true (fabricaria resultado
 // com selo de mapeado) nem sobe para o ancestral: cai na heurística e rebaixa a confiança.
-export type MapeamentoInvalido = {
+type MapeamentoInvalido = {
   codigo: string;          // código do mapa (o exato ou o ancestral)
   valor: string;           // dre_linha gravada
   origem: 'exato' | 'prefixo';
@@ -306,7 +306,7 @@ export function acumularForaDRE(acc: ForaDRE, codigo: string, valor: number, isR
   acc.composicao_pendente = acc.lancamentos_nao_zero > 0;
 }
 
-export function motivoForaDRE(acc: ForaDRE, regime: 'caixa' | 'competencia'): string | null {
+function motivoForaDRE(acc: ForaDRE, regime: 'caixa' | 'competencia'): string | null {
   if (!acc.composicao_pendente) return null;
   const brl = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
   const oque = regime === 'caixa' ? 'movimentado' : 'em títulos segregados';

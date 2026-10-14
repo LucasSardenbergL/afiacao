@@ -4,6 +4,7 @@
 // Helpers espelhados VERBATIM de src/lib/financeiro/regime-tributario-helpers.ts (+ dre-tabelas-tributarias.ts
 // e aliquotaEfetivaSimples/faixaPorRBT12 de dre-helpers.ts). Estilo de leitura espelhado de fin-valor-engine.
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -594,7 +595,7 @@ Deno.serve(async (req: Request) => {
     }
   } catch (e) {
     // Leitura falhou: resposta 500 com CORS (um throw cru vira erro de rede opaco na tela).
-    return jsonResponse({ error: e instanceof Error ? e.message : String(e) }, 500);
+    return jsonResponse({ error: mensagemDeErro(e) ?? "Falha ao ler a DRE (sem mensagem)." }, 500);
   }
 
   // Consolidado.

@@ -140,7 +140,7 @@ const TOL_COMPOSICAO = 0.01; // R$ — arredondamento de centavos
  * (⇒ snapshot_inconsistente) se a composição não fecha com `despesas` chave a chave, se falta
  * chave, se tem chave a mais, ou se a soma por linha não bate a coluna oficial daquele mês.
  */
-export function universoOperacional(m: MesDRE): {
+function universoOperacional(m: MesDRE): {
   despesas: Record<string, number>;
   excluido: { fora_dre: number; deducoes: number; imposto_lucro: number; outras: number };
 } | null {

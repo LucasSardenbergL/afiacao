@@ -88,7 +88,7 @@ BEGIN
      AND ((column_name = 'fora_dre' AND data_type = 'numeric' AND numeric_precision = 15 AND numeric_scale = 2)
        OR (column_name = 'resultado_provisorio' AND data_type = 'boolean'))
      AND is_nullable = 'YES' AND column_default IS NULL;
-  IF v_cols <> 2 THEN RAISE EXCEPTION 'postcondicao: colunas fase 2 de fin_dre_snapshots erradas (% de 2)', v_cols; END IF;
+  IF v_cols IS DISTINCT FROM 2 THEN RAISE EXCEPTION 'postcondicao: colunas fase 2 de fin_dre_snapshots erradas (% de 2)', v_cols; END IF;
 END
 $post$;
 COMMIT;
