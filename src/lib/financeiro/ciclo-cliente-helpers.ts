@@ -4,20 +4,20 @@
 // Princípios: ausente ≠ zero (null + motivo); todo R$ é CENÁRIO rotulado, nunca previsão;
 // estoque vencido nunca soma ao recorrente; desconto só com custo do dinheiro informado.
 
-export const CARENCIA_DIAS = 3;
-export const LIMITE_ATRASO_LEVE = 7;
-export const LIMITE_FOLGA = -3;
-export const MIN_DOCUMENTOS = 6;
-export const RECENCIA_MAX_DIAS = 90;
+const CARENCIA_DIAS = 3;
+const LIMITE_ATRASO_LEVE = 7;
+const LIMITE_FOLGA = -3;
+const MIN_DOCUMENTOS = 6;
+const RECENCIA_MAX_DIAS = 90;
 /** Teto de sanidade do custo do dinheiro (% a.m.) — acima disso o input é erro de digitação. */
 export const CUSTO_MENSAL_MAX = 0.2;
 const NP = ' — não é previsão';
-export const DEGRAUS_PRAZO: readonly number[] = [90, 75, 60, 56, 45, 42, 35, 30, 28, 21, 14, 7];
+const DEGRAUS_PRAZO: readonly number[] = [90, 75, 60, 56, 45, 42, 35, 30, 28, 21, 14, 7];
 
 export type Perfil = 'folga' | 'pontual' | 'atraso_leve' | 'atraso_cronico' | 'misto' | 'sem_dado';
 export type Confianca = 'media' | 'baixa';
-export type Alavanca = 'recuperar_vencido' | 'cobrar_atraso' | 'degrau_prazo' | 'nenhuma';
-export type Cenario = { reais: number | null; motivo: string; rotulo: string };
+type Alavanca = 'recuperar_vencido' | 'cobrar_atraso' | 'degrau_prazo' | 'nenhuma';
+type Cenario = { reais: number | null; motivo: string; rotulo: string };
 export type SugestaoCliente = {
   alavanca: Alavanca;
   texto: string;
@@ -128,10 +128,10 @@ export function sugerirAlavanca(r: ResumoCliente, hojeSp: string): SugestaoClien
     const excesso = r.excessoCarenciaPond;
     const cenario: Cenario =
       dia === null
-        ? { reais: null, motivo: 'sem volume na janela', rotulo: `cenário: atraso cai à carência de 3d${NP}` }
+        ? { reais: null, motivo: 'sem volume na janela', rotulo: `cenário: atraso cai à carência de ${CARENCIA_DIAS}d${NP}` }
         : excesso === null
-          ? { reais: null, motivo: 'sem atraso medido', rotulo: `cenário: atraso cai à carência de 3d${NP}` }
-          : { reais: excesso * dia, motivo: 'excesso sobre a carência × volume diário', rotulo: `cenário: atraso cai à carência de 3d${NP}` };
+          ? { reais: null, motivo: 'sem atraso medido', rotulo: `cenário: atraso cai à carência de ${CARENCIA_DIAS}d${NP}` }
+          : { reais: excesso * dia, motivo: 'excesso sobre a carência × volume diário', rotulo: `cenário: atraso cai à carência de ${CARENCIA_DIAS}d${NP}` };
     return {
       ...nada,
       alavanca: 'cobrar_atraso',

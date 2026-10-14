@@ -15,7 +15,7 @@ import { CicloClientesTabela } from './CicloClientesTabela';
 import { CicloClienteDrill } from './CicloClienteDrill';
 import { CicloDescontoPainel } from './CicloDescontoPainel';
 
-export const CAVEAT_CICLO =
+const CAVEAT_CICLO =
   'Direcional. Prazo concedido = vencimento − emissão de cada parcela (vencimento vigente; renegociação apaga o original). Todo R$ é cenário, não previsão — não há piloto medido.';
 
 const PERFIS: Array<[string, string]> = [
