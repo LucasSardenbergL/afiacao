@@ -7,6 +7,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Users, AlertTriangle, Layers } from 'lucide-react';
 import { mediaMargensConhecidas, coberturaMargem, legendaCobertura } from '@/lib/scoring/margin';
 import { fetchAllPages } from '@/lib/postgrest';
+import { anexarMargens, buscarMargensScores, MARGEM_RESTRITA } from '@/lib/scoring/margemScores';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer } from 'recharts';
 import { KpiCard } from './KpiCard';
 
@@ -17,6 +18,8 @@ interface ScoreLinha {
   health_class: string | null;
   /** PERCENTUAL (0–100, negativo válido). `null` = não apurada. Ver @/lib/scoring/margin. */
   gross_margin_pct: number | null;
+  /** `true` = o servidor não concedeu o número (sem cap_custo_ler) — não é "não apurada". */
+  margem_oculta: boolean;
   category_count: number | null;
   sales_history_status: string | null;
 }
@@ -46,15 +49,19 @@ function IntelligenceManagerialTabImpl() {
     // ENTRE VENDEDORES. Não dá para declarar a cobertura da margem em cima disso sem mentir
     // sobre o denominador. Ordem por `customer_user_id` (UNIQUE): paginação sem ordem estável
     // pula e repete linha entre páginas.
-    queryFn: () =>
-      fetchAllPages<ScoreLinha>((de, ate) =>
+    // A margem NÃO vem da tabela: a coluna é fechada para authenticated (FU4-F) e sai pela RPC
+    // com gate de projeção — sem cap_custo_ler vem `margem_oculta` e a tela mostra "—" restrito.
+    queryFn: async () => {
+      const linhas = await fetchAllPages<Omit<ScoreLinha, 'gross_margin_pct' | 'margem_oculta'>>((de, ate) =>
         supabase
           .from('farmer_client_scores')
-          .select('customer_user_id, farmer_id, health_score, health_class, gross_margin_pct, category_count, sales_history_status')
+          .select('customer_user_id, farmer_id, health_score, health_class, category_count, sales_history_status')
           .order('customer_user_id', { ascending: true })
-          .range(de, ate) as unknown as PromiseLike<{ data: ScoreLinha[] | null; error: unknown }>,
+          .range(de, ate) as unknown as PromiseLike<{ data: Omit<ScoreLinha, 'gross_margin_pct' | 'margem_oculta'>[] | null; error: unknown }>,
         'farmer_client_scores/intel-gerencial',
-      ),
+      );
+      return anexarMargens(linhas, await buscarMargensScores());
+    },
   });
 
   const { data: allPerformance } = useQuery({
@@ -133,6 +140,8 @@ function IntelligenceManagerialTabImpl() {
     // cobertura de custo, não desempenho. `null` → a coluna mostra "—".
     const avgMargin = mediaMargensConhecidas(clients.map(c => c.gross_margin_pct));
     const cobertura = coberturaMargem(clients.map(c => c.gross_margin_pct));
+    // Sem cap_custo_ler o servidor não concede margem (FU4-F): "—" restrito, nunca "0 de N apuradas".
+    const margemOculta = clients.some(c => c.margem_oculta);
     const avgCategories = clients.reduce((a, c) => a + Number(c.category_count || 0), 0) / clients.length;
     const adoption = recoAdoption[farmerId];
     // `null` = taxa NÃO APURÁVEL → a coluna mostra "—". `!adoption` cobre as duas origens de
@@ -149,7 +158,7 @@ function IntelligenceManagerialTabImpl() {
     const adoptionPct = !adoption
       ? null
       : (adoption.accepted / adoption.total) * 100;
-    return { farmerId, clientCount: clients.length, avgHealth, atRisk, avgMargin, cobertura, avgCategories, adoptionPct };
+    return { farmerId, clientCount: clients.length, avgHealth, atRisk, avgMargin, cobertura, margemOculta, avgCategories, adoptionPct };
   });
 
   const globalAvgCategories = allScores?.length
@@ -238,8 +247,8 @@ function IntelligenceManagerialTabImpl() {
                     {/* title carrega a COBERTURA: sem ela, a coluna compara vendedores como se
                         as médias falassem da carteira inteira de cada um — e elas falam de
                         fatias diferentes, porque a apuração de custo não é uniforme. */}
-                    <td className="text-center py-2" title={legendaCobertura(fm.cobertura)}>
-                      {fm.avgMargin == null
+                    <td className="text-center py-2" title={fm.margemOculta ? MARGEM_RESTRITA : legendaCobertura(fm.cobertura)}>
+                      {fm.margemOculta || fm.avgMargin == null
                         ? <span className="text-muted-foreground">—</span>
                         : `${fm.avgMargin.toFixed(1)}%`}
                     </td>

@@ -6,8 +6,7 @@ import { OPEN_TITLE_STATUSES, isOpenTitleStatus } from "@/lib/financeiro/titulo-
 import { baixaOuIndisponivel, type ProcedenciaBaixa } from "@/lib/financeiro/procedencia-baixa";
 import { spBusinessDate } from "@/lib/time/sp-day";
 import { linhasDreMapeaveis } from "@/lib/financeiro/dre-helpers";
-import { fetchAllPages, ehFalhaDePagina } from "@/lib/postgrest";
-import { mensagemDeErro, erroComCausa } from "@/lib/erro-mensagem";
+import { fetchAllPagesComMensagem } from "@/lib/postgrest";
 import type {
   FinAgingPagarView,
   FinAgingReceberView,
@@ -204,7 +203,7 @@ export async function triggerFinanceiroSync(
 const VENCIDO_TITLE_STATUSES = ['ATRASADO'] as const;
 
 /**
- * Lê TODAS as páginas pelo `fetchAllPages` — o paginador canônico de `@/lib/postgrest`: capa de
+ * Lê TODAS as páginas pelo `fetchAllPagesComMensagem` (→ `fetchAllPages`) — o paginador canônico de `@/lib/postgrest`: capa de
  * 1.000, rejeição de página perdida e de `data: null`, telemetria por `fonte`, tudo mora LÁ — e
  * só TRADUZ a falha de leitura para a mensagem de domínio que a aba exibe no banner
  * (`useFinanceiro` → `mensagemDeErro`). Sem a tradução o dono leria
@@ -221,16 +220,7 @@ async function lerTodasAsPaginas<T>(
   buscarPagina: (de: number, ate: number) => PromiseLike<{ data: T[] | null; error: unknown }>,
   contexto: string,
 ): Promise<T[]> {
-  try {
-    return await fetchAllPages(buscarPagina, contexto);
-  } catch (e) {
-    if (!ehFalhaDePagina(e)) throw e;
-    const detalhe =
-      e.motivo === 'data_null_sem_error'
-        ? 'resposta sem dados e sem erro (data null sem error)'
-        : (mensagemDeErro(e.cause) ?? 'erro sem mensagem');
-    throw erroComCausa(`Falha ao carregar ${contexto}: ${detalhe}`, e);
-  }
+  return fetchAllPagesComMensagem(buscarPagina, contexto, `Falha ao carregar ${contexto}`);
 }
 
 export async function getResumoFinanceiro(companies: Company[]): Promise<Record<string, FinResumo>> {

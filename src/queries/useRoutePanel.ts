@@ -1,28 +1,27 @@
 // src/queries/useRoutePanel.ts
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { fetchAllPagesComMensagem } from '@/lib/postgrest';
 import { spBusinessDate } from '@/lib/time/sp-day';
 import { agregarPainel } from '@/lib/route/painel/agregar';
 import type { SnapshotRow, ContatoRow, PainelAgregado } from '@/lib/route/painel/types';
 
-const PAGE = 1000;
-
-async function lerTudo<T>(tabela: string, cols: string, desdeISO: string): Promise<T[]> {
-  const out: T[] = [];
-  for (let from = 0; ; from += PAGE) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data, error } = await (supabase.from(tabela as never) as any)
-      .select(cols).gte('data_rota', desdeISO)
-      .order('data_rota', { ascending: true }).range(from, from + PAGE - 1);
-    if (error) throw error;
-    // data null SEM error = malformada, não fim (classe #1338→#1564): tratá-la como fim
-    // deixava o painel (valor da ligação) somado sobre um PREFIXO da janela.
-    if (data == null) throw new Error(`${tabela}: data null sem error — malformada, não é fim`);
-    const arr = data as T[];
-    out.push(...arr);
-    if (arr.length < PAGE) break;
-  }
-  return out;
+// Pagina pelo canônico: página com error ou `data: null` sem error LANÇA (o painel somaria o valor
+// da ligação sobre um PREFIXO da janela) e a página perdida é medida pela fonte. `data_rota` não é
+// único → desempate por `id` (PK nas duas tabelas), senão o offset pula/duplica na fronteira.
+function lerTudo<T>(tabela: string, cols: string, desdeISO: string): Promise<T[]> {
+  return fetchAllPagesComMensagem<T>(
+    (de, ate) =>
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (supabase.from(tabela as never) as any)
+        .select(cols)
+        .gte('data_rota', desdeISO)
+        .order('data_rota', { ascending: true })
+        .order('id', { ascending: true })
+        .range(de, ate),
+    `${tabela}/painel-rota`,
+    tabela,
+  );
 }
 
 /** dias = janela (default 30) terminando hoje (SP). */

@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **634** custom migrations totais
-- **2040** objetos esperados (criados por estas migrations)
+- **636** custom migrations totais
+- **2041** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 712
+  - `function`: 713
   - `rls_policy`: 471
   - `index`: 275
   - `cron_job`: 184
@@ -5145,6 +5145,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.fin_dre_snapshots_contrato_fase2` | — |
 | `trigger` | `public.trg_fin_dre_snapshots_contrato_fase2` | `fin_dre_snapshots` |
 
+### `20261014120000_fcs_margem_rpc_projecao.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_scores_margem` | — |
+
 ### `20261014120000_fin_ciclo_cliente_views.sql`
 
 | Tipo | Objeto | Parent |
@@ -5152,6 +5158,10 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `view` | `public.v_ciclo_cr_titulos` | — |
 | `view` | `public.v_ciclo_cliente_resumo` | — |
 | `view` | `public.v_ciclo_empresa_coorte` | — |
+
+### `20261014120100_fcs_margem_fecha_coluna.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ## Próximos passos por status
 

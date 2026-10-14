@@ -1,4 +1,5 @@
 import { captureException } from '@/lib/analytics';
+import { erroComCausa, mensagemDeErro } from '@/lib/erro-mensagem';
 
 /**
  * Helpers pra montar predicados do `.or()` do PostgREST (supabase-js) SEM abrir
@@ -264,6 +265,38 @@ export async function fetchAllPages<T>(
     }
     todas.push(...data);
     if (data.length < POSTGREST_PAGE_SIZE) return todas;
+  }
+}
+
+/**
+ * `fetchAllPages` + a TRADUÇÃO da falha de leitura para a mensagem de DOMÍNIO que o caller
+ * exibe (`e.message` em banner/toast/teste). A mensagem do canônico é deliberadamente opaca
+ * ("fetchAllPages: página 0 (0-999) falhou") — boa para o plantão, inútil na tela: o usuário
+ * perde O QUE falhou e POR QUÊ. Antes deste helper, cada laço manual de `src/` copiava o
+ * contrato à mão só para manter `new Error(error.message)` — e ficava SEM a telemetria.
+ *
+ * Mensagem: `<rotulo>: <message da causa PostgREST>` ou `<rotulo>: data null sem error —
+ * malformada, não é fim`. A telemetria continua a do canônico (`fonte`, sem a mensagem crua);
+ * a mensagem de domínio só vai para quem a exibe — a mesma exposição do `new Error(error.message)`
+ * que os laços manuais já faziam. O erro assinado fica em `cause`.
+ *
+ * Só traduz o que o canônico ASSINOU (`ehFalhaDePagina`): bug de código (TypeError do builder,
+ * rejeição de origem desconhecida) sobe CRU, com stack e mensagem verdadeiras.
+ */
+export async function fetchAllPagesComMensagem<T>(
+  buscarPagina: (de: number, ate: number) => PromiseLike<{ data: T[] | null; error: unknown }>,
+  fonte: string,
+  rotulo: string,
+): Promise<T[]> {
+  try {
+    return await fetchAllPages(buscarPagina, fonte);
+  } catch (e) {
+    if (!ehFalhaDePagina(e)) throw e;
+    const detalhe =
+      e.motivo === 'data_null_sem_error'
+        ? 'data null sem error — malformada, não é fim'
+        : (mensagemDeErro(e.cause) ?? 'erro sem mensagem');
+    throw erroComCausa(`${rotulo}: ${detalhe}`, e);
   }
 }
 

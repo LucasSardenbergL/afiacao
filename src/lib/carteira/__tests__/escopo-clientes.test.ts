@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  resolveModoEscopo, chunk, marcarCobertura, ordenarPorNome, paginarTudo, coletarEmLotes,
+  resolveModoEscopo, chunk, marcarCobertura, ordenarPorNome, coletarEmLotes,
   hashIds, ownersAtivosDoAlvo,
 } from '@/lib/carteira/escopo-clientes';
 
@@ -42,25 +42,6 @@ describe('ordenarPorNome', () => {
   it('ordena respeitando acento e caixa pt-BR', () => {
     const out = ordenarPorNome([{ name: 'Bruno' }, { name: 'Ávila' }, { name: 'ana' }]);
     expect(out.map((x) => x.name)).toEqual(['ana', 'Ávila', 'Bruno']);
-  });
-});
-
-describe('paginarTudo', () => {
-  it('junta páginas até uma incompleta', async () => {
-    const pages = [
-      Array.from({ length: 1000 }, (_, i) => i),
-      Array.from({ length: 1000 }, (_, i) => 1000 + i),
-      [2000, 2001],
-    ];
-    let call = 0;
-    const all = await paginarTudo(async () => pages[call++] ?? [], 1000);
-    expect(all).toHaveLength(2002);
-  });
-  it('para na página vazia quando o total é múltiplo do pageSize', async () => {
-    const pages = [[1, 2], [3, 4], []];
-    let call = 0;
-    const all = await paginarTudo(async () => pages[call++] ?? [], 2);
-    expect(all).toEqual([1, 2, 3, 4]);
   });
 });
 

@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { format, subDays, subMonths } from 'date-fns';
 import { supabase } from '@/integrations/supabase/client';
+import { fetchAllPagesComMensagem } from '@/lib/postgrest';
 import { OPEN_TITLE_STATUSES } from '@/lib/financeiro/titulo-status';
 
 /**
@@ -61,26 +62,6 @@ interface UtiFrescor {
 export interface UtiContasResult {
   contas: UtiConta[];
   frescor: UtiFrescor;
-}
-
-const PAGE = 1000;
-
-/** Pagina além da capa silenciosa de 1.000 linhas do PostgREST (ordem estável obrigatória). */
-async function fetchAll<T>(
-  build: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
-): Promise<T[]> {
-  const out: T[] = [];
-  for (let from = 0; ; from += PAGE) {
-    const { data, error } = await build(from, from + PAGE - 1);
-    if (error) throw new Error(error.message);
-    // data null SEM error = malformada, não fim (classe #1338→#1564; mesmo contrato do
-    // fetchAllPages canônico): tratá-la como fim truncava scores/títulos/snapshots da UTI.
-    if (data == null) throw new Error('fetchAll (UTI): data null sem error — malformada, não é fim');
-    const rows = data;
-    out.push(...rows);
-    if (rows.length < PAGE) break;
-  }
-  return out;
 }
 
 function chunk<T>(arr: T[], size: number): T[][] {
@@ -230,16 +211,18 @@ export function useUtiContas(enabled: boolean) {
       const corteVencido = format(subDays(hoje, UTI_CRITERIOS.diasVencidoMin), 'yyyy-MM-dd');
       const cortePositivacao = format(subMonths(hoje, 3), 'yyyy-MM-01');
 
+      // Paginam pelo canônico (ordem estável obrigatória): página perdida LANÇA — truncaria
+      // scores/títulos/snapshots da UTI — e é medida pela fonte.
       const [scores, titulos, snapshots, syncRes] = await Promise.all([
-        fetchAll<ScoreRow>((from, to) =>
+        fetchAllPagesComMensagem<ScoreRow>((from, to) =>
           supabase
             .from('farmer_client_scores')
             .select('customer_user_id, farmer_id, health_score, health_class, priority_score, churn_risk, days_since_last_purchase, calculated_at')
             .order('customer_user_id', { ascending: true })
             .order('id', { ascending: true })
             .range(from, to),
-        ),
-        fetchAll<TituloRow>((from, to) =>
+        'farmer_client_scores/uti', 'farmer_client_scores'),
+        fetchAllPagesComMensagem<TituloRow>((from, to) =>
           supabase
             .from('fin_contas_receber')
             .select('cnpj_cpf, saldo')
@@ -248,15 +231,15 @@ export function useUtiContas(enabled: boolean) {
             .gt('saldo', 0)
             .order('id', { ascending: true })
             .range(from, to),
-        ),
-        fetchAll<SnapshotRow>((from, to) =>
+        'fin_contas_receber/uti-vencidos', 'fin_contas_receber'),
+        fetchAllPagesComMensagem<SnapshotRow>((from, to) =>
           supabase
             .from('carteira_positivacao_snapshot')
             .select('customer_user_id, mes, eligible, had_order_in_month')
             .gte('mes', cortePositivacao)
             .order('id', { ascending: true })
             .range(from, to),
-        ),
+        'carteira_positivacao_snapshot/uti', 'carteira_positivacao_snapshot'),
         supabase
           .from('fin_sync_log')
           .select('completed_at')

@@ -2,6 +2,10 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { removerComentarios } from '@/lib/gates/limpeza-fonte';
+import tsInterop from 'typescript';
+// `import =` e não `const` (o porquê em src/lib/gates/erro-colapsado-em-vazio.ts: o Proxy de
+// interop do vite-node).
+import ts = tsInterop;
 
 // ── GATE ESTRUTURAL da classe "laço de paginação artesanal que trata página com falha
 // como fim da lista" (money-path §6/§7/§8) ─────────────────────────────────────────────
@@ -1389,5 +1393,150 @@ serve(async (req) => {
       'voltou o .order(farmer_id): coluna MUTÁVEL na chave de paginação — o trigger de carteira ' +
         'move a linha entre páginas e o cliente some ou duplica no TOP_N',
     ).toBe(false);
+  });
+});
+
+// ── G8: laço de paginação MANUAL fora do canônico — `src/` converge no `fetchAllPages` ────
+// A classe #1338→#1564 fechou laço a laço, cada um com o seu `if (data == null) throw` copiado à
+// mão — e SEM a telemetria que só o canônico tem (captureException com fonte, página, linhas lidas
+// antes da falha e código PostgREST; money-path §7). Página perdida lançava e ninguém media a
+// frequência; laço novo continuava nascendo com o guard copiado — sinal de que o padrão
+// proliferava. A convergência (#3068 e seguinte) levou os laços de `src/` ao `fetchAllPages` /
+// `fetchAllPagesComMensagem`; este gate impede que voltem a nascer.
+//
+// Por AST (compilador TS), não regex nem ESLint: o laço é "paginação manual" quando, SEM atravessar
+// fronteira de função (o callback de `fetchAllPages(…)` é função — não conta) nem laço aninhado,
+//   (a) tem um `.range(` no corpo; ou
+//   (b) tem `await` no corpo E termina por página curta (`x.length < y`) — o clone genérico que
+//       recebe o builder por callback (`fetchAll(build)`, `lerTudo(consulta)`), sem `.range(` dentro.
+// O `no-restricted-syntax` do ESLint não exprime "sem atravessar função": o seletor de descendente
+// casaria o callback do `fetchAllPages` chamado dentro de um laço de CHUNK de `.in()` (outro
+// contrato, fora daqui).
+//
+// Medido em 2026-10-14 sobre `src/` (antes da convergência): 18 arquivos, ZERO falso-positivo —
+// a regra (b) sem o "página curta" casava workers (`while (true) { await … }`) e o motor da fila;
+// com ele, só paginação. LIMITE DECLARADO: um laço de chunk que aguarde E compare `x.length < y`
+// no próprio corpo casa a (b) sem paginar — zero ocorrências na medição; se aparecer, allowlist
+// com o motivo.
+function lacosPaginadosManuais(fonte: string, arquivo: string): number {
+  const sf = ts.createSourceFile(
+    arquivo,
+    fonte,
+    ts.ScriptTarget.Latest,
+    true,
+    arquivo.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+  );
+  const noCorpo = (laco: ts.Node, pred: (n: ts.Node) => boolean): boolean => {
+    let achou = false;
+    const v = (n: ts.Node) => {
+      if (achou || ts.isFunctionLike(n) || ts.isIterationStatement(n, false)) return;
+      if (pred(n)) {
+        achou = true;
+        return;
+      }
+      ts.forEachChild(n, v);
+    };
+    ts.forEachChild(laco, v);
+    return achou;
+  };
+  const ehRange = (n: ts.Node) =>
+    ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && n.expression.name.text === 'range';
+  const ehPaginaCurta = (n: ts.Node) =>
+    ts.isBinaryExpression(n) &&
+    n.operatorToken.kind === ts.SyntaxKind.LessThanToken &&
+    ts.isPropertyAccessExpression(n.left) &&
+    n.left.name.text === 'length';
+  let total = 0;
+  const visita = (n: ts.Node) => {
+    if (
+      ts.isIterationStatement(n, false) &&
+      (noCorpo(n, ehRange) || (noCorpo(n, ts.isAwaitExpression) && noCorpo(n, ehPaginaCurta)))
+    ) {
+      total++;
+    }
+    ts.forEachChild(n, visita);
+  };
+  visita(sf);
+  return total;
+}
+
+// Allowlist G8 (por CONTAGEM, lista só encolhe — mesma mecânica de G1/G7). Cada entrada é um
+// paginador com CONTRATO que o `fetchAllPages` não tem; convergir exigiria estender o canônico.
+const G8_ALLOW: ReadonlyMap<string, number> = new Map([
+  // O próprio canônico.
+  ['src/lib/postgrest.ts', 1],
+  // `coletarPaginado`: teto de páginas que LANÇA (backstop de cartesiano) — o canônico não tem teto.
+  ['src/lib/scoring/rpcPaginada.ts', 1],
+  // `paginateAll`: teto `maxPages` que LANÇA (#1562, money-path §8; pin G2 acima).
+  ['src/hooks/unifiedOrder/catalog-helpers.ts', 1],
+  // `paginarPorId`: KEYSET (cursor por id, aborta se o cursor não avança) — o canônico é offset.
+  ['src/lib/dashboard/paginar-por-id.ts', 1],
+  // `coletarTitulosEntidade`: chunk de `.in()` × páginas com teto de coleta e `truncado` DECLARADO
+  // ao chamador (drill v2 do orçamento) — truncar é desfecho legítimo ali, não falha.
+  ['src/lib/financeiro/orcamento-entidade-helpers.ts', 1],
+  // Drain do feed de pedidos: count na 1ª página + teto FEED_MAX_PAGES + re-drain quando
+  // rows < count (escrita concorrente). Contrato de truncamento HONESTO ("mostrando 1000 de N").
+  ['src/components/salesOrders/useSalesOrders.ts', 1],
+]);
+
+function contarG8(): Map<string, number> {
+  const mapa = new Map<string, number>();
+  for (const arquivo of listarFontes('src')) {
+    const n = lacosPaginadosManuais(readFileSync(resolve(RAIZ, arquivo), 'utf8'), arquivo);
+    if (n > 0) mapa.set(arquivo, n);
+  }
+  return mapa;
+}
+
+describe('G8: laço de paginação manual fora do fetchAllPages (src/)', () => {
+  it('nenhum laço de paginação manual em src/ além da allowlist — use fetchAllPages/fetchAllPagesComMensagem', () => {
+    const { reintroducoes, quitacoes } = desvios(contarG8(), G8_ALLOW);
+    expect(
+      reintroducoes,
+      `laço de paginação manual NOVO (pagine pelo \`fetchAllPages\`/\`fetchAllPagesComMensagem\` de ` +
+        `@/lib/postgrest — ganha o contrato E a telemetria de página perdida): ${reintroducoes.join(', ')}`,
+    ).toEqual([]);
+    expect(
+      quitacoes,
+      `laço da allowlist saiu — encolha a G8_ALLOW (registrado): ${quitacoes.join(', ')}`,
+    ).toEqual([]);
+  });
+
+  it('G8 (controle de calibração): laço manual e clone por callback casam; callback do canônico, chunk e worker não', () => {
+    const casa = (fonte: string) => lacosPaginadosManuais(fonte, 'x.ts');
+    // Forma-mãe: offset à mão com `.range(` no corpo.
+    expect(
+      casa(`async function f() { for (let from = 0; ; from += PAGE) {
+        const { data, error } = await q.order('id').range(from, from + PAGE - 1);
+        if (error) throw error; if (data == null) throw new Error('x');
+        out.push(...data); if (data.length < PAGE) break; } }`),
+    ).toBe(1);
+    // while(true) com `.range(` (useExportNaoVinculados pré-convergência).
+    expect(casa(`async function f() { while (true) { const r = await q.range(a, b); if (!r) break; } }`)).toBe(1);
+    // Clone genérico por callback, sem `.range(` dentro (fetchAll da UTI, lerTudo do picking).
+    expect(
+      casa(`async function f(build) { for (let from = 0; ; from += PAGE) {
+        const { data } = await build(from, from + PAGE - 1); out.push(...data);
+        if (data.length < PAGE) break; } }`),
+    ).toBe(1);
+    // NÃO casa: o callback do canônico (fronteira de função), mesmo dentro de laço de chunk.
+    expect(
+      casa(`async function f() { for (const lote of lotes) {
+        out.push(...(await fetchAllPages((de, ate) => q.in('id', lote).order('id').range(de, ate), 'x/y'))); } }`),
+    ).toBe(0);
+    // NÃO casa: worker de fila (await sem término por página curta) e laço de chunk sem paginação.
+    expect(casa(`async function w() { while (true) { const i = n++; if (i >= xs.length) break; await up(xs[i]); } }`)).toBe(0);
+    expect(casa(`async function c() { for (let i = 0; i < ids.length; i += 200) { await q.in('id', ids.slice(i, i + 200)); } }`)).toBe(0);
+    // Laço aninhado conta UMA vez (o de dentro): o de fora é o chunk.
+    expect(
+      casa(`async function f() { for (const lote of lotes) { for (let o = 0; ; o += P) {
+        const rows = await page(lote, o); if (rows.length < P) break; } } }`),
+    ).toBe(1);
+  });
+
+  it('DENOMINADOR/G8: o walker vê o repo (glob quebrado = verde eterno) e a allowlist aponta para arquivo vivo', () => {
+    const fontes = listarFontes('src');
+    expect(fontes.length).toBeGreaterThan(1000);
+    for (const arquivo of G8_ALLOW.keys()) expect(fontes, `allowlist G8 aponta para arquivo inexistente: ${arquivo}`).toContain(arquivo);
   });
 });
