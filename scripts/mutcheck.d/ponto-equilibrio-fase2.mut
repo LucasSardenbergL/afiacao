@@ -1,0 +1,12 @@
+# @src: src/lib/financeiro/ponto-equilibrio-helpers.ts
+# @test: src/lib/financeiro/__tests__/ponto-equilibrio-helpers.test.ts
+# DRE fase 2 no PE: universo pela composição do PRÓPRIO snapshot (por mês e por linha), gate 4 só
+# nos meses legados, e suspensão com resultado provisório (juros dentro da parcela fora_dre).
+PEGA | fase 2: resultado provisório suspende o PE (gate neutralizado) | s/if \(meses\.some\(\(m\) => m\.resultado_provisorio === true\)\)/if (false)/
+PEGA | fase 2: composição que não fecha com o detalhamento (tolerância neutralizada) | s/if \(Math\.abs\(soma - m\.despesas\[k\]\) > TOL_COMPOSICAO\) return null;/if (false) return null;/
+PEGA | fase 2: chave do detalhamento ausente na composição (contagem neutralizada) | s/if \(chavesDesp\.length !== chavesComp\.length\) return null;/if (false) return null;/
+PEGA | fase 2: reconciliação por mês e por linha (neutralizada) | s/0\.01 \* Math\.max\(Math\.abs\(a\), Math\.abs\(b\)\)\)\) return null;/0.01 * Math.max(Math.abs(a), Math.abs(b))) \&\& false) return null;/
+PEGA | fase 2: composição inválida degrada (gate 0 neutralizado) | s/if \(composicaoInvalida\) return degradar/if (false) return degradar/
+PEGA | fase 2: gate 4 segue valendo nos meses legados (receita legado > 0 vira < 0) | s/if \(receitaLegadoTTM > 0 && deducoesColLegadoTTM/if (receitaLegadoTTM < 0 \&\& deducoesColLegadoTTM/
+PEGA | fase 2: fora_dre não entra no universo do PE (vira operacional) | s/else if \(linha === 'fora_dre'\) excluido\.fora_dre \+= v;/else if (linha === 'fora_dre') { operacional += v; porLinha.despesas_operacionais = (porLinha.despesas_operacionais ?? 0) + v; }/
+PEGA | fase 2: mês legado mantém o detalhamento inteiro (composição null tratada como vazia) | s/if \(m\.composicao_despesas == null\) \{/if (m.composicao_despesas === undefined) {/
