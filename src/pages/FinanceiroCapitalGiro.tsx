@@ -11,9 +11,13 @@ import { CicloTab } from '@/components/financeiro/cashflow/ciclo/CicloTab';
 import { useUrlState } from '@/hooks/useUrlState';
 import { useAuth } from '@/contexts/AuthContext';
 
+const ABAS_VALIDAS = ['posicao', 'fluxo', 'ncg', 'eventos', 'ciclo'];
+
 export default function FinanceiroCapitalGiro() {
   const { isMaster } = useAuth();
   const [{ aba }, setUrl] = useUrlState({ aba: 'posicao' });
+  // Aba inválida ou 'ciclo' sem ser master cai em 'posicao' (sem reescrever a URL).
+  const abaEfetiva = ABAS_VALIDAS.includes(aba) && (aba !== 'ciclo' || isMaster) ? aba : 'posicao';
   const [showConfig, setShowConfig] = useState(false);
 
   return (
@@ -27,7 +31,7 @@ export default function FinanceiroCapitalGiro() {
         )}
       </div>
 
-      <Tabs value={aba} onValueChange={(v) => setUrl({ aba: v })}>
+      <Tabs value={abaEfetiva} onValueChange={(v) => setUrl({ aba: v })}>
         <TabsList>
           <TabsTrigger value="posicao">Posição agora</TabsTrigger>
           <TabsTrigger value="fluxo">Fluxo 13 semanas</TabsTrigger>
