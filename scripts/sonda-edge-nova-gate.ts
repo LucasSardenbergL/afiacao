@@ -200,19 +200,10 @@ export interface Achado {
  * nelas e DECIDE (retroalimentar seria inventar assinatura de decisão que ninguém tomou).
  */
 export const DISPENSAS: Record<string, Dispensa> = {
-  // DRE fase 2 (PR #3063, 2026-10-13) — as três mudaram de comportamento, nenhuma escreve no banco.
-  'fin-regime-tributario': {
-    motivo: 'leitura-pura',
-    porque: 'Claude/DRE fase 2: só lê fin_dre_snapshots/fin_regime_inputs e devolve JSON ao master. O deploy dela é conferido pela sessão antes do script do mapa (resposta já traz `motivo_incompleto`), registrado no PR.',
-  },
-  'fin-valor-engine': {
-    motivo: 'leitura-pura',
-    porque: 'Claude/DRE fase 2: só lê snapshots de DRE/NCG/inputs e devolve JSON ao master. Deploy conferido pela sessão antes do script do mapa (resposta já traz `resultado_provisorio`), registrado no PR.',
-  },
-  'fin-suggest-mapping': {
-    motivo: 'leitura-via-rpc',
-    porque: 'Claude/DRE fase 2: só lê o mapa e a RPC fin_categorias_sem_mapping (STABLE, sem INSERT/UPDATE/DELETE no corpo — pg_proc em prod 2026-10-13); a sugestão é aplicada por humano na tela. Edge antiga no ar só sugere menos (nunca fora_dre), sem dano.',
-  },
+  // 2026-10-14: as três dispensas da DRE fase 2 (#3063) — `fin-regime-tributario`,
+  // `fin-valor-engine` e `fin-suggest-mapping` — saíram por decisão do founder: as quatro do
+  // financeiro de leitura ganharam sonda. "Leitura pura" garante que chamar é barato, e é muda
+  // sobre QUAL bundle responde — o argumento do `fin-valor-cockpit/versao.ts`.
 };
 
 /**

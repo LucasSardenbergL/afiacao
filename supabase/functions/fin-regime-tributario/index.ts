@@ -5,6 +5,8 @@
 // e aliquotaEfetivaSimples/faixaPorRBT12 de dre-helpers.ts). Estilo de leitura espelhado de fin-valor-engine.
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
+import { authorizeCronOrStaff } from "../_shared/auth.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -584,6 +586,24 @@ const NIVEL_NUM: Record<"alta" | "media" | "baixa", number> = { baixa: 1, media:
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+
+  // Sonda de versão — ANTES do gate normal e de qualquer IO, com gate PRÓPRIO (GATE_PROPRIO):
+  // o gate normal exige Bearer + role e o caminho do SQL Editor (`x-cron-secret`) morreria nele.
+  // Ver versao.ts / _shared/sonda-versao.ts.
+  let corpoBruto: unknown = {};
+  try {
+    corpoBruto = await req.json();
+  } catch {
+    // sem corpo (o front chama sem body): segue como disparo
+  }
+  const decisaoSonda = classificarSonda(corpoBruto);
+  if (decisaoSonda.tipo !== "disparo") {
+    const authSonda = await authorizeCronOrStaff(req);
+    if (!authSonda.ok) return authSonda.response;
+    if (decisaoSonda.tipo === "sonda") return jsonResponse(respostaSonda(VERSAO), 200);
+    return jsonResponse({ error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }, 400);
+  }
+
   const auth = await authorizeMaster(req);
   if (!auth.ok) return auth.response;
 

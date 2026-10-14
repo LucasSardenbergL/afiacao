@@ -1,6 +1,8 @@
 // supabase/functions/fin-next-best-action/index.ts
 // A4 — Próxima Melhor Ação. Gate gestor+master. Compõe A1/A2/A3 via service_role.
 // Helper espelhado VERBATIM de src/lib/financeiro/next-best-action-helpers.ts.
+import { authorizeCronOrStaff } from "../_shared/auth.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -111,6 +113,24 @@ async function invoke<T>(fn: string, body: unknown): Promise<T | null> {
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+
+  // Sonda de versão — ANTES do gate normal e de qualquer IO, com gate PRÓPRIO (GATE_PROPRIO):
+  // o gate normal exige Bearer + role e o caminho do SQL Editor (`x-cron-secret`) morreria nele.
+  // Ver versao.ts / _shared/sonda-versao.ts.
+  let corpoBruto: unknown = {};
+  try {
+    corpoBruto = await req.json();
+  } catch {
+    // sem corpo (o front chama sem body): segue como disparo
+  }
+  const decisaoSonda = classificarSonda(corpoBruto);
+  if (decisaoSonda.tipo !== "disparo") {
+    const authSonda = await authorizeCronOrStaff(req);
+    if (!authSonda.ok) return authSonda.response;
+    if (decisaoSonda.tipo === "sonda") return jsonResponse(respostaSonda(VERSAO), 200);
+    return jsonResponse({ error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }, 400);
+  }
+
   const auth = await authorizeGestorOuMaster(req);
   if (!auth.ok) return auth.response;
 
