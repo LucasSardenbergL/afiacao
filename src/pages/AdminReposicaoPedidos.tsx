@@ -111,7 +111,18 @@ export default function AdminReposicaoPedidos() {
   const [cancelarPedido, setCancelarPedido] = useState<PedidoSugerido | null>(null);
   const [portalPedido, setPortalPedido] = useState<PedidoSugerido | null>(null);
   const [historicoData, setHistoricoData] = useState<string>(() => format(new Date(), 'yyyy-MM-dd'));
-  const [mostrarAtencao, setMostrarAtencao] = useState(false);
+  // Prévia de itens aberta na linha (só-leitura), por pedido.
+  const [itensAbertos, setItensAbertos] = useState<ReadonlySet<number>>(() => new Set());
+  const alternarItens = (id: number) => {
+    setItensAbertos((atual) => {
+      const novo = new Set(atual);
+      const abrir = !novo.has(id);
+      if (abrir) novo.add(id);
+      else novo.delete(id);
+      track('reposicao.itens_inline_toggle', { pedido_id: id, abrir });
+      return novo;
+    });
+  };
   const [histAberto, setHistAberto] = useState(false);
 
   // Vira a queryKey na meia-noite SEM re-render por minuto: setState com a MESMA
@@ -654,6 +665,28 @@ export default function AdminReposicaoPedidos() {
     }
   }, [ultimoRunId, supUltimoRun.length, supLinhaQtd, supGrupoQtd, supTotal24h]);
 
+  // PO sumido só sobe para "Precisa de ação" quando há candidato ou a apuração falhou; sem nada, o
+  // card (que mostra o frescor do detector) fica nos avisos.
+  const poSumidoCandidatos = negadoPosSumidos ? [] : ordenarCandidatos(posSumidos ?? []);
+  const poSumidoPedeAcao = poSumidoCandidatos.length > 0 || falhouListaPos;
+  // ACESSO NEGADO esconde os dados: o servidor acabou de dizer que este usuário não pode vê-los, e
+  // o react-query preserva o `data` do último sucesso — deixá-lo na tela seria falha ABERTA.
+  // FALHA DE APURAÇÃO (rede, RPC quebrada) mantém a última lista BOA e mostra o aviso junto: como a
+  // chave é escopada pelo usuário, esses dados são dele mesmo, e apagá-los tiraria da tela pedido,
+  // protocolo e valor legítimos por causa de um erro transitório. Sumir não é mais honesto que
+  // avisar — o card diz que a informação pode estar desatualizada.
+  const poSumidoCard = (
+    <PoSumidoCard
+      candidatos={poSumidoCandidatos}
+      frescor={frescorDetector}
+      falhaApuracao={falhouListaPos}
+      // As DUAS apurações entram no "apurando…": se a lista já voltou vazia mas o marcador ainda
+      // está em voo, o frescor seria lido como não-apurado e o card diria "não foi possível
+      // conferir" sobre uma consulta que apenas não terminou. Carregando não é falha.
+      apurando={apurandoPosSumidos || apurandoMarcador}
+    />
+  );
+
   return (
     <div className="container mx-auto py-6 space-y-6 max-w-7xl">
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
@@ -667,11 +700,12 @@ export default function AdminReposicaoPedidos() {
           {atencaoCount > 0 ? (
             <Button
               variant="outline"
+              // A fila de atenção agora está SEMPRE na tela ("Precisa de ação", acima da fila do dia) —
+              // antes ela só aparecia depois deste clique. O botão vira atalho de rolagem.
               onClick={() => {
-                track('reposicao.atencao_toggle', { abrir: !mostrarAtencao, n: atencaoCount });
-                setMostrarAtencao((v) => !v);
+                track('reposicao.atencao_ir', { n: atencaoCount });
+                document.getElementById('precisa-de-acao')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
               }}
-              aria-pressed={mostrarAtencao}
               className="border-status-warning/40 bg-status-warning/10 text-status-warning hover:bg-status-warning/20 hover:text-status-warning"
             >
               <AlertTriangle className="w-4 h-4 mr-1" />
@@ -760,98 +794,115 @@ export default function AdminReposicaoPedidos() {
         </Alert>
       )}
 
-      {mostrarAtencao && atencaoCount > 0 && (
-        <Card className="border-status-warning/40">
-          <CardHeader>
-            <CardTitle className="text-base flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4 text-status-warning" />
-              Precisam de atenção ({atencaoCount}) — todos os ciclos
-            </CardTitle>
-            <p className="text-sm text-muted-foreground">
-              Pedidos travados que exigem ação humana (falha no Omie, conciliação do portal ou
-              falha definitiva), de qualquer ciclo. Abra os detalhes para resolver — a conciliação
-              do portal está em "Ver portal". Recusa definitiva do portal: cancele (o ciclo regrava
-              os itens que ainda faltarem) — não dispare de novo.
-            </p>
-          </CardHeader>
-          <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Ciclo</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Fornecedor / Grupo</TableHead>
-                  <TableHead className="text-right">Nº SKUs</TableHead>
-                  <TableHead className="text-right">Valor</TableHead>
-                  <TableHead>Portal</TableHead>
-                  <TableHead className="text-right">Ações</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {atencaoVermelha.map((p) => (
-                  <TableRow key={p.id}>
-                    <TableCell className="text-xs tabular-nums whitespace-nowrap">
-                      {format(new Date(p.data_ciclo + 'T12:00:00'), 'dd/MM/yyyy')}
-                    </TableCell>
-                    <TableCell>
-                      <StatusComMotivo pedido={p} />
-                    </TableCell>
-                    <TableCell>
-                      <div className="font-medium">{p.fornecedor_nome}</div>
-                      <div className="text-xs text-muted-foreground">{p.grupo_codigo ?? '—'}</div>
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">{p.num_skus}</TableCell>
-                    <TableCell className="text-right tabular-nums font-medium">{formatBRL(p.valor_total)}</TableCell>
-                    <TableCell>
-                      <PortalBadge pedido={p} onClick={() => setPortalPedido(p)} />
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex justify-end gap-1">
-                        <Button size="sm" variant="ghost" onClick={() => abrirDetalhes(p, 'atencao')}>
-                          <Eye className="w-4 h-4 mr-1" />Detalhes
-                        </Button>
-                        {acaoLinhaAtencao(p, podeOverride) === 'cancelar' ? (
-                          // Recusa definitiva do portal: a saída é cancelar (o ciclo regrava). NUNCA
-                          // "Disparar" aqui — ver acaoLinhaAtencao (#3169).
-                          <Button size="sm" variant="outline" onClick={() => setCancelarPedido(p)}>
-                            <XCircle className="w-4 h-4 mr-1" />Cancelar
-                          </Button>
-                        ) : acaoLinhaAtencao(p, podeOverride) === 'override' ? (
-                          // Preso pelo gate de mínimo de faturamento → "Disparar mesmo assim"
-                          // no lugar do "Re-disparar" (que só re-bateria no gate).
-                          <OverrideMinimoButton
-                            fornecedorNome={p.fornecedor_nome}
-                            valorTotal={p.valor_total}
-                            onConfirm={() => dispararOverrideMutation.mutate(p.id)}
-                            disabled={disparandoLinha(p.id) || p.status_envio_portal === 'enviando_portal'}
-                          />
-                        ) : acaoLinhaAtencao(p, podeOverride) === 'disparar' ? (
-                          <Button
-                            size="sm"
-                            variant={p.status === 'falha_envio' ? 'outline' : 'default'}
-                            onClick={() => dispararMutation.mutate(p.id)}
-                            disabled={
-                              disparandoLinha(p.id) ||
-                              p.status_envio_portal === 'enviando_portal'
-                            }
-                          >
-                            {disparandoLinha(p.id) ||
-                            p.status_envio_portal === 'enviando_portal' ? (
-                              <Loader2 className="w-4 h-4 mr-1 animate-spin" />
-                            ) : (
-                              <Zap className="w-4 h-4 mr-1" />
-                            )}
-                            {p.status === 'falha_envio' ? 'Re-disparar' : 'Disparar'}
-                          </Button>
-                        ) : null}
-                      </div>
-                    </TableCell>
+      {/* Precisa de ação — UMA seção, sempre visível quando há algo: o que trava dinheiro e espera o
+          humano (fila de atenção cross-ciclo, barrados pelo mínimo, PO que sumiu do Omie). Cada bloco
+          mantém a SUA regra de ação (ex.: `acaoLinhaAtencao`, que nunca oferece disparo em recusa
+          definitiva do portal — #3169); juntar as tabelas numa só mudaria essa regra. */}
+      {(atencaoCount > 0 || atencaoAbaixoMinimo.length > 0 || poSumidoPedeAcao) && (
+        <section id="precisa-de-acao" className="space-y-4 scroll-mt-4" aria-labelledby="precisa-de-acao-titulo">
+          <h2 id="precisa-de-acao-titulo" className="text-sm font-medium text-status-warning">Precisa de ação</h2>
+        {atencaoCount > 0 && (
+          <Card className="border-status-warning/40">
+            <CardHeader>
+              <CardTitle className="text-base flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-status-warning" />
+                Precisam de atenção ({atencaoCount}) — todos os ciclos
+              </CardTitle>
+              <p className="text-sm text-muted-foreground">
+                Pedidos travados que exigem ação humana (falha no Omie, conciliação do portal ou
+                falha definitiva), de qualquer ciclo. Abra os detalhes para resolver — a conciliação
+                do portal está em "Ver portal". Recusa definitiva do portal: cancele (o ciclo regrava
+                os itens que ainda faltarem) — não dispare de novo.
+              </p>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Ciclo</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Fornecedor / Grupo</TableHead>
+                    <TableHead className="text-right">Nº SKUs</TableHead>
+                    <TableHead className="text-right">Valor</TableHead>
+                    <TableHead>Portal</TableHead>
+                    <TableHead className="text-right">Ações</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
+                </TableHeader>
+                <TableBody>
+                  {atencaoVermelha.map((p) => (
+                    <TableRow key={p.id}>
+                      <TableCell className="text-xs tabular-nums whitespace-nowrap">
+                        {format(new Date(p.data_ciclo + 'T12:00:00'), 'dd/MM/yyyy')}
+                      </TableCell>
+                      <TableCell>
+                        <StatusComMotivo pedido={p} />
+                      </TableCell>
+                      <TableCell>
+                        <div className="font-medium">{p.fornecedor_nome}</div>
+                        <div className="text-xs text-muted-foreground">{p.grupo_codigo ?? '—'}</div>
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">{p.num_skus}</TableCell>
+                      <TableCell className="text-right tabular-nums font-medium">{formatBRL(p.valor_total)}</TableCell>
+                      <TableCell>
+                        <PortalBadge pedido={p} onClick={() => setPortalPedido(p)} />
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex justify-end gap-1">
+                          <Button size="sm" variant="ghost" onClick={() => abrirDetalhes(p, 'atencao')}>
+                            <Eye className="w-4 h-4 mr-1" />Detalhes
+                          </Button>
+                          {acaoLinhaAtencao(p, podeOverride) === 'cancelar' ? (
+                            // Recusa definitiva do portal: a saída é cancelar (o ciclo regrava). NUNCA
+                            // "Disparar" aqui — ver acaoLinhaAtencao (#3169).
+                            <Button size="sm" variant="outline" onClick={() => setCancelarPedido(p)}>
+                              <XCircle className="w-4 h-4 mr-1" />Cancelar
+                            </Button>
+                          ) : acaoLinhaAtencao(p, podeOverride) === 'override' ? (
+                            // Preso pelo gate de mínimo de faturamento → "Disparar mesmo assim"
+                            // no lugar do "Re-disparar" (que só re-bateria no gate).
+                            <OverrideMinimoButton
+                              fornecedorNome={p.fornecedor_nome}
+                              valorTotal={p.valor_total}
+                              onConfirm={() => dispararOverrideMutation.mutate(p.id)}
+                              disabled={disparandoLinha(p.id) || p.status_envio_portal === 'enviando_portal'}
+                            />
+                          ) : acaoLinhaAtencao(p, podeOverride) === 'disparar' ? (
+                            <Button
+                              size="sm"
+                              variant={p.status === 'falha_envio' ? 'outline' : 'default'}
+                              onClick={() => dispararMutation.mutate(p.id)}
+                              disabled={
+                                disparandoLinha(p.id) ||
+                                p.status_envio_portal === 'enviando_portal'
+                              }
+                            >
+                              {disparandoLinha(p.id) ||
+                              p.status_envio_portal === 'enviando_portal' ? (
+                                <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                              ) : (
+                                <Zap className="w-4 h-4 mr-1" />
+                              )}
+                              {p.status === 'falha_envio' ? 'Re-disparar' : 'Disparar'}
+                            </Button>
+                          ) : null}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        )}
+        <AbaixoMinimoCard
+          pedidos={atencaoAbaixoMinimo}
+          podeOverride={podeOverride}
+          onDetalhes={(p) => abrirDetalhes(p, 'abaixo_minimo')}
+          onOverride={(id) => dispararOverrideMutation.mutate(id)}
+          disparandoLinha={disparandoLinha}
+        />
+          {poSumidoPedeAcao && poSumidoCard}
+        </section>
       )}
 
       <Tabs defaultValue="hoje" onValueChange={(aba) => track('reposicao.pedidos_aba', { aba })}>
@@ -922,6 +973,9 @@ export default function AdminReposicaoPedidos() {
                         onDisparar={() => dispararMutation.mutate(p.id)}
                         onDispararIgnorandoMinimo={podeOverride ? () => dispararOverrideMutation.mutate(p.id) : undefined}
                         disparando={disparandoLinha(p.id)}
+                        expandido={itensAbertos.has(p.id)}
+                        onAlternarItens={() => alternarItens(p.id)}
+                        colunas={7}
                       />
                     ))}
                   </TableBody>
@@ -1091,29 +1145,7 @@ export default function AdminReposicaoPedidos() {
 
       <CaixaCompraCard pedidos={pedidos ?? []} />
 
-      {/* ACESSO NEGADO esconde os dados: o servidor acabou de dizer que este usuário não pode vê-los, e
-          o react-query preserva o `data` do último sucesso — deixá-lo na tela seria falha ABERTA.
-          FALHA DE APURAÇÃO (rede, RPC quebrada) mantém a última lista BOA e mostra o aviso junto: como a
-          chave é escopada pelo usuário, esses dados são dele mesmo, e apagá-los tiraria da tela pedido,
-          protocolo e valor legítimos por causa de um erro transitório. Sumir não é mais honesto que
-          avisar — o card diz que a informação pode estar desatualizada. */}
-      <PoSumidoCard
-        candidatos={negadoPosSumidos ? [] : ordenarCandidatos(posSumidos ?? [])}
-        frescor={frescorDetector}
-        falhaApuracao={falhouListaPos}
-        // As DUAS apurações entram no "apurando…": se a lista já voltou vazia mas o marcador ainda
-        // está em voo, o frescor seria lido como não-apurado e o card diria "não foi possível
-        // conferir" sobre uma consulta que apenas não terminou. Carregando não é falha.
-        apurando={apurandoPosSumidos || apurandoMarcador}
-      />
-
-      <AbaixoMinimoCard
-        pedidos={atencaoAbaixoMinimo}
-        podeOverride={podeOverride}
-        onDetalhes={(p) => abrirDetalhes(p, 'abaixo_minimo')}
-        onOverride={(id) => dispararOverrideMutation.mutate(id)}
-        disparandoLinha={disparandoLinha}
-      />
+      {!poSumidoPedeAcao && poSumidoCard}
 
       </section>
 

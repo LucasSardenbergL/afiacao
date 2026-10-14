@@ -1,12 +1,13 @@
 import { Button } from '@/components/ui/button';
 import { TableCell, TableRow } from '@/components/ui/table';
-import { Eye, ExternalLink, Loader2, XCircle, Zap } from 'lucide-react';
+import { ChevronDown, ChevronRight, Eye, Loader2, XCircle, Zap } from 'lucide-react';
 import { format } from 'date-fns';
 import { PedidoSugerido } from './types';
 import { formatBRL, ehGateMinimoFaturamento } from './shared';
 import { StatusComMotivo, SplitInfo, PortalBadge } from './badges';
 import { OverrideMinimoButton } from './OverrideMinimoButton';
 import { podeCancelarPeloHumano } from './rejeitar-pedido';
+import { ItensPreviewLinha } from './ItensPreviewLinha';
 
 export function PedidoRow({
   p,
@@ -16,6 +17,9 @@ export function PedidoRow({
   onDisparar,
   onDispararIgnorandoMinimo,
   disparando,
+  expandido = false,
+  onAlternarItens,
+  colunas = 7,
 }: {
   p: PedidoSugerido;
   onVerDetalhes: () => void;
@@ -27,6 +31,11 @@ export function PedidoRow({
   // mesmo assim" nem aparece (não-gestor cai no "Re-disparar" normal, que re-bate no gate).
   onDispararIgnorandoMinimo?: () => void;
   disparando: boolean;
+  /** Prévia dos itens aberta na própria linha (só-leitura). Sem `onAlternarItens`, não há chevron. */
+  expandido?: boolean;
+  onAlternarItens?: () => void;
+  /** Nº de colunas da tabela, para a linha da prévia ocupar a largura toda. */
+  colunas?: number;
 }) {
   const podeAprovar = p.status === 'pendente_aprovacao' || p.status === 'bloqueado_guardrail';
   const podeCancelar = podeCancelarPeloHumano(p.status);
@@ -50,9 +59,23 @@ export function PedidoRow({
   const showAprovacao = p.status === 'aprovado_aguardando_disparo' || p.status === 'disparado';
 
   return (
+    <>
     <TableRow className={p.status === 'bloqueado_guardrail' ? 'bg-destructive/5' : ''}>
       <TableCell>
         <div className="flex flex-wrap items-center gap-1">
+          {onAlternarItens && (
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-6 w-6 -ml-1"
+              onClick={onAlternarItens}
+              aria-expanded={expandido}
+              aria-label={expandido ? 'Esconder itens' : 'Ver itens'}
+              title={expandido ? 'Esconder itens' : 'Ver itens sem abrir os detalhes'}
+            >
+              {expandido ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+            </Button>
+          )}
           <StatusComMotivo pedido={p} />
           <SplitInfo pedido={p} />
         </div>
@@ -100,15 +123,16 @@ export function PedidoRow({
               <XCircle className="w-4 h-4" />
             </Button>
           )}
+          {/* O link antigo "Omie" abria a home do Omie, não o PO — clique sem valor. Fica o número. */}
           {p.status === 'disparado' && p.omie_pedido_compra_numero && (
-            <Button size="sm" variant="ghost" asChild>
-              <a href={`https://app.omie.com.br/`} target="_blank" rel="noreferrer">
-                <ExternalLink className="w-4 h-4 mr-1" />Omie
-              </a>
-            </Button>
+            <span className="self-center text-xs text-muted-foreground tabular-nums whitespace-nowrap" title="Nº do pedido de compra no Omie">
+              PO {p.omie_pedido_compra_numero}
+            </span>
           )}
         </div>
       </TableCell>
     </TableRow>
+    {expandido && <ItensPreviewLinha pedidoId={p.id} colunas={colunas} onAbrirDetalhes={onVerDetalhes} />}
+    </>
   );
 }
