@@ -23,37 +23,60 @@ function resolverCustoConfiavel(row: CostRow | null | undefined): number | null 
   return null;
 }
 // ======== AUDIT CORE (espelho VERBATIM de src/lib/custos/auditoria-margem.ts — manter idêntico) ========
-type AuditOrderLine = { product_id: string | null; unit_price: number | null; discount: number | null; quantity: number | null };
-type AuditoriaCliente = {
-  margin_real: number | null; margin_potential: number | null; margin_gap: number;
-  gap_pct: number | null; top_gap_products: { product_id: string; gap: number }[]; cobertura_custo: number;
+// MIRROR-START auditoria-margem core
+export type AuditOrderLine = {
+  product_id: string | null;
+  unit_price: number | null;
+  /** Desconto da LINHA em R$ (`order_items.desconto_valor`). null = NÃO APURADO, que é ≠ de 0. */
+  desconto_valor: number | null;
+  quantity: number | null;
+};
+export type AuditoriaCliente = {
+  margin_real: number | null;
+  margin_potential: number | null;
+  margin_gap: number;
+  gap_pct: number | null;
+  top_gap_products: { product_id: string; gap: number }[];
+  cobertura_custo: number;
+  /** Linhas de VENDA (qty>0) que ficaram FORA de todas as somas porque o desconto não é conhecido. */
+  linhas_desconto_desconhecido: number;
 };
 const COBERTURA_CUSTO_MIN = 0.85;
 const round2 = (x: number) => Math.round(x * 100) / 100;
-function calcularAuditoriaMargemCliente(input: {
+export function calcularAuditoriaMargemCliente(input: {
   orders: AuditOrderLine[];
   custoPorProduto: (productId: string) => CostRow | null | undefined;
   bestPrice: (productId: string) => number | null | undefined;
 }): AuditoriaCliente {
   let marginGap = 0, bestRevenue = 0, receita = 0, marginRealKnown = 0, marginPotentialKnown = 0, receitaComCusto = 0;
+  let descontoDesconhecido = 0;
   const topGap: { product_id: string; gap: number }[] = [];
   for (const o of input.orders) {
     if (!o.product_id) continue;
     const qty = Number(o.quantity);
     const up = Number(o.unit_price);
     if (!Number.isFinite(qty) || !Number.isFinite(up)) continue;
-    const actualPrice = up * (1 - Number(o.discount || 0) / 100);
-    // Só venda válida (qty>0, preço líquido>=0): devolução(qty<0)/discount>100(preço<0) saem; item
-    // grátis (0) FICA (leakage real). Excluir só o inválido evita quebrar cobertura/gap (Codex #3,#7).
-    if (!(qty > 0) || actualPrice < 0) continue;
+    // Só VENDA (qty>0): devolução sai antes de olhar o desconto.
+    if (!(qty > 0)) continue;
+    // Desconto é R$ da LINHA, não percentual: preço unitário líquido = up − desconto/qty (a fórmula
+    // antiga `up × (1 − d/100)` lia a coluna legada `discount`, sempre 0). Desconto desconhecido
+    // (null = não apurado, NaN, ±Infinity, negativo) NÃO vira 0 — isso devolveria o preço CHEIO,
+    // idêntico ao "Omie informou zero", e esconderia o vazamento. A linha sai das somas e é contada.
+    const desc = o.desconto_valor === null || o.desconto_valor === undefined ? NaN : Number(o.desconto_valor);
+    if (!Number.isFinite(desc) || desc < 0) { descontoDesconhecido++; continue; }
+    // Guard DIMENSIONAL: desconto maior que a linha bruta = preço líquido negativo = lixo. Item GRÁTIS
+    // (desconto = linha inteira, preço 0) FICA — é leakage real (Codex #3 sinal, #7 item grátis).
+    if (desc > qty * up) continue;
+    const actualPrice = up - desc / qty;
     const bp = input.bestPrice(o.product_id);
     // bestPrice>0 obrigatório: 0/negativo/NaN é dado ruim → fallback actualPrice (não poisona gap).
-    const bestPrice = typeof bp === "number" && Number.isFinite(bp) && bp > 0 ? bp : actualPrice;
+    const bestPrice = typeof bp === 'number' && Number.isFinite(bp) && bp > 0 ? bp : actualPrice;
     const leak = (bestPrice - actualPrice) * qty;
     marginGap += leak;
     bestRevenue += bestPrice * qty;
     receita += actualPrice * qty;
     if (leak > 0) topGap.push({ product_id: o.product_id, gap: leak });
+    // níveis absolutos: só com custo REAL (proxy/UNKNOWN/null não conta)
     const custo = resolverCustoConfiavel(input.custoPorProduto(o.product_id));
     if (custo != null) {
       marginRealKnown += (actualPrice - custo) * qty;
@@ -71,8 +94,10 @@ function calcularAuditoriaMargemCliente(input: {
     gap_pct: bestRevenue > 0 ? round2((marginGap / bestRevenue) * 100) : null,
     top_gap_products: topGap.slice(0, 5),
     cobertura_custo,
+    linhas_desconto_desconhecido: descontoDesconhecido,
   };
 }
+// MIRROR-END auditoria-margem core
 // ======== /AUDIT CORE ========
 
 const corsHeaders = {
@@ -102,7 +127,7 @@ interface OrderItemRow {
   product_id: string | null;
   quantity: number | null;
   unit_price: number | null;
-  discount: number | null;
+  desconto_valor: number | null;
   sales_order_id: string;
 }
 
@@ -203,7 +228,7 @@ Deno.serve(async (req) => {
     const recentOrders = await fetchAll<OrderItemRow>(
       (from, to) => supabase
         .from('order_items')
-        .select('customer_user_id, product_id, quantity, unit_price, discount, sales_order_id')
+        .select('customer_user_id, product_id, quantity, unit_price, desconto_valor, sales_order_id')
         .gte('created_at', periodStartDate.toISOString())
         .order('id', { ascending: true })
         .range(from, to),
@@ -302,6 +327,10 @@ Deno.serve(async (req) => {
     // execução pelos lotes — `src/components/intelligence/auditoria-margem-execucao.ts`.
     const calculadoEm = new Date().toISOString();
     const auditRecords: AuditRecord[] = [];
+    // Linhas de venda com desconto DESCONHECIDO (desconto_valor null = não apurado) ficam fora da
+    // margem do cliente — nunca entram como desconto 0. A contagem vai na resposta para a lacuna ser
+    // legível: "margem de N linhas, M fora por desconto não apurado" (régua de desconto-omie.ts).
+    let linhasDescontoDesconhecido = 0;
 
     for (const client of clients) {
       const orders = customerOrders[client.customer_user_id] || [];
@@ -312,6 +341,7 @@ Deno.serve(async (req) => {
         custoPorProduto: (id) => costMap[id] ?? null,
         bestPrice: (id) => bestPriceMap[id] ?? null,
       });
+      linhasDescontoDesconhecido += aud.linhas_desconto_desconhecido;
 
       auditRecords.push({
         customer_user_id: client.customer_user_id,
@@ -340,7 +370,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    console.log(`[algorithm-a-audit] Done! Processed ${auditRecords.length} clients`);
+    console.log(`[algorithm-a-audit] Done! Processed ${auditRecords.length} clients (${linhasDescontoDesconhecido} linhas fora por desconto desconhecido)`);
 
     return new Response(JSON.stringify({
       message: `Algorithm A processed ${auditRecords.length} clients`,
@@ -348,6 +378,7 @@ Deno.serve(async (req) => {
       calculado_em: calculadoEm,
       totalClients: clients.length,
       clientsWithOrders: auditRecords.length,
+      linhas_desconto_desconhecido: linhasDescontoDesconhecido,
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
