@@ -233,6 +233,12 @@ export const SONDA_CRON_ALVOS: readonly AlvoSondaCron[] = [
   // closures novos saíram INVERIFICAVEL — com a sonda ainda em zero efeito. `dry_run: true` é o fluxo
   // real SEM escrita, e serve também aos closures velhos (eles liam `dry_run` com padrão).
   { edge: "omie-desconto-backfill", desde: null, controles: [SEM_CREDENCIAL, comCorpo(CRON, '{"dry_run":true}', "v1.5: sem dry_run explícito o corpo é 400 antes do createClient; dry_run:true é o fluxo real sem escrita"), BEARER] },
+  // ONDA 6 (2026-10-13): picking-fila-omie ESCREVE a fila do picking (`sincronizar`) e chama o
+  // Omie em todo modo. Os closures passam por `authorizeCronOrStaff`; com `{}` todos devolvem 400
+  // ANTES de qualquer IO (o `modo` é obrigatório desde a v0.1), e o controle sairia inerte — medido:
+  // 0/6 INVERIFICAVEL com `{}`. `{"modo":"diagnostico"}` existe em toda a história e chama o Omie
+  // (ListarEtapasFaturamento/ListarPedidos/ListarProdutos) sem escrever no banco.
+  { edge: "picking-fila-omie", desde: null, controles: [comCorpo(CRON, '{"modo":"diagnostico"}', "o modo é obrigatório; diagnostico existe em toda a história e chama o Omie sem escrever")] },
   // ⛔ CANDIDATAS QUE A PROVA AINDA NÃO APROVOU. A coluna da direita é o resultado da ONDA 3,
   // depois que a sonda de corpos mediu o degrau de controle de cada uma:
   //   omie-vendas-sync         127/188 → 189/189  ✅ entrou (corpo {"action":"sync_products"})

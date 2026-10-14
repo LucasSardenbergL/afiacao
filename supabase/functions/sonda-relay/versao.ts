@@ -5,7 +5,9 @@ import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
 export const respostaSonda = criarRespostaSonda("sonda-relay");
 
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.1-alvos-da-onda-1";
+// v1.2 (onda 6, 2026-10-13): a allowlist ganha `picking-fila-omie` — o relé só a aceita em runtime
+// depois do deploy desta versão.
+export const VERSAO = "v1.2-alvos-da-onda-6";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
