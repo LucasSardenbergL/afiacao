@@ -25,7 +25,7 @@ type Resposta = { data: unknown; error: { message: string } | null };
 const ERRO = { message: 'permission denied' };
 
 /** Qual das leituras falha nesta rodada — nomeadas, porque as duas alimentam alertas distintos. */
-let falha: 'nenhuma' | 'pedidos' | 'sem-fornecedor' = 'nenhuma';
+let falha: 'nenhuma' | 'pedidos' | 'sem-fornecedor' | 'atencao' = 'nenhuma';
 let pedidosDoCiclo: unknown[] = [];
 let skusSemFornecedor: unknown[] = [];
 
@@ -46,6 +46,11 @@ const sku = (over: Record<string, unknown> = {}) => ({
  * esconderia qual delas o alerta de guardrail realmente consome.
  */
 function resposta(tabela: string, colunas: string[]): Resposta {
+  // A fila cross-ciclo de atenção também ORDENA por data_ciclo — o discriminador dela é o `.or()`
+  // de estados de atenção, que só ela aplica. Sem este ramo, ela recebia os pedidos do ciclo.
+  if (tabela === 'pedido_compra_sugerido' && colunas.some((c) => c.startsWith('status.eq.falha_envio'))) {
+    return falha === 'atencao' ? { data: null, error: ERRO } : { data: [], error: null };
+  }
   if (tabela === 'pedido_compra_sugerido' && colunas.includes('data_ciclo')) {
     return falha === 'pedidos' ? { data: null, error: ERRO } : { data: pedidosDoCiclo, error: null };
   }
@@ -79,6 +84,12 @@ vi.mock('@/integrations/supabase/client', () => ({
     from: (t: string) => chain(t),
     rpc: () => Promise.resolve({ data: null, error: null }),
     functions: { invoke: () => Promise.resolve({ data: null, error: null }) },
+    // Realtime da fila: o teste não exercita eventos, só precisa do canal inerte.
+    channel: () => {
+      const ch = { on: () => ch, subscribe: () => ch };
+      return ch;
+    },
+    removeChannel: () => Promise.resolve('ok'),
   },
 }));
 // `user` nasce DENTRO da factory (vi.mock é içado; um const de fora cairia na TDZ) e precisa ser
@@ -209,5 +220,37 @@ describe('AdminReposicaoPedidos — "nada ficou de fora da compra" também preci
     renderPagina();
     const aviso = await screen.findByTestId('aviso-leitura-sem-fornecedor');
     expect(aviso.getAttribute('data-estado')).toBe('sem-rede');
+  });
+});
+
+describe('AdminReposicaoPedidos — "Tudo em dia" só com a fila de atenção LIDA', () => {
+  it('leitura OK e fila vazia: "Tudo em dia"', async () => {
+    pedidosDoCiclo = [pedido()];
+    renderPagina();
+    expect(await screen.findByText(/Tudo em dia/)).toBeTruthy();
+    expect(screen.queryByTestId('atencao-sem-leitura')).toBeNull();
+  });
+
+  it('ERRO na fila de atenção: NÃO afirma "Tudo em dia" — fala e oferece retry', async () => {
+    falha = 'atencao';
+    pedidosDoCiclo = [pedido()];
+    renderPagina();
+    expect(await screen.findByTestId('atencao-sem-leitura')).toBeTruthy();
+    expect(screen.queryByText(/Tudo em dia/)).toBeNull();
+  });
+});
+
+describe('AdminReposicaoPedidos — fila do dia na ordem do que falta fazer', () => {
+  it('a aprovar vem antes do disparado, mesmo com fornecedor alfabeticamente depois', async () => {
+    pedidosDoCiclo = [
+      pedido({ id: 1, fornecedor_nome: 'Alfa Disparado', status: 'disparado', valor_total: 10 }),
+      pedido({ id: 2, fornecedor_nome: 'Zeta Pendente', status: 'pendente_aprovacao', valor_total: 20 }),
+    ];
+    renderPagina();
+    const zeta = await screen.findByText('Zeta Pendente');
+    const alfa = screen.getByText('Alfa Disparado');
+    // DOCUMENT_POSITION_FOLLOWING = 4: alfa aparece DEPOIS de zeta no documento.
+    expect(zeta.compareDocumentPosition(alfa) & 4).toBe(4);
+    expect(screen.getByTestId('resumo-fila-do-dia').textContent).toMatch(/1 a aprovar.*1 disparado hoje/);
   });
 });
