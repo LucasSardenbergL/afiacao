@@ -316,6 +316,6 @@ negativo**: a proteção vem da delegação (variante da lição 10).
   (linhas 125-135), então aplicar a `20260725130000` em prod **não** o deixa vermelho — depois do
   apply a mensagem dele ("a porta segue aberta até lá") fica verdadeira no fixture e falsa em prod.
   Corrigir o `L1` continua sendo follow-up do apply, não pré-requisito dele.
-- `db/test-fcs-margem-coluna-fechada.sh` — 64 asserts, 7 falsificações (GRANT de tabela devolvido, margem
+- `db/test-fcs-margem-coluna-fechada.sh` — 63 asserts, 7 falsificações com vermelho EXATO (GRANT de tabela devolvido, margem
   na lista do GRANT, projeção, escopo, fail-closed, EXECUTE de anon, policy aberta). Linha de base L1 prova
   o furo com o ACL de prod antes das migrations.
