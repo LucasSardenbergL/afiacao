@@ -338,6 +338,23 @@ describe('pontoEquilibrio — DRE fase 2 (composição do snapshot)', () => {
     expect(pontoEquilibrio({ meses: cruzado, classificacao: CLASS }).motivo).toBe('snapshot_inconsistente');
   });
 
+  it('legado como o hook entrega (composição null, provisório null) segue no caminho antigo: PE 750', () => {
+    const r = pontoEquilibrio({ meses: doze(() => ({ composicao_despesas: null, resultado_provisorio: null })), classificacao: CLASS });
+    expect(r.motivo).toBe('ok');
+    expect(r.pe_receita).toBeCloseTo(750, 2);
+  });
+
+  it('composição com chave a MAIS que o detalhamento ⇒ snapshot_inconsistente', () => {
+    const sobra = dozeFase2((m) => (m === 6 ? { composicao_despesas: { '2.01.01': { cmv: 60 }, '2.04.01': { despesas_operacionais: 25 }, '2.06.01': { ded_icms: 5 }, '2.05.03': { fora_dre: 10 }, '2.07.01': { fora_dre: 40 } } } : {}));
+    expect(pontoEquilibrio({ meses: sobra, classificacao: CLASS }).motivo).toBe('snapshot_inconsistente');
+  });
+
+  it('composição malformada (vazia) num mês que reconciliaria pelo caminho antigo ⇒ snapshot_inconsistente', () => {
+    // mês 7 só tem CMV+aluguel (reconcilia com as linhas): sem o gate 0 ele passaria como legado.
+    const vazio = dozeFase2((m) => (m === 7 ? { despesas: { '2.01.01': 60, '2.04.01': 25 }, composicao_despesas: {} } : {}));
+    expect(pontoEquilibrio({ meses: vazio, classificacao: CLASS }).motivo).toBe('snapshot_inconsistente');
+  });
+
   it('janela mista: gate 4 segue valendo nos meses legados', () => {
     const misto = [...dozeFase2().slice(0, 6), ...Array.from({ length: 6 }, (_, i) => mesUniforme(2026, i + 7, { deducoes_col: 5, despesas: { '2.01.01': 60, '2.04.01': 25 } }))];
     expect(pontoEquilibrio({ meses: misto, classificacao: CLASS }).motivo).toBe('deducoes_coluna_inesperada');
