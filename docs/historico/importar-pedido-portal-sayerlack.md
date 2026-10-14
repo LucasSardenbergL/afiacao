@@ -47,3 +47,11 @@ O ledger é a própria coluna: `SELECT count(*) FROM pedido_compra_sugerido WHER
 
 `db/test-sayerlack-importar-pedido-portal.sh` (49 asserts, 2 locales, 8 falsificações, no núcleo do CI) ·
 `leitura_test.ts` (12, Deno) · `importar-portal.test.ts` (vitest).
+
+## Deploy — banco (2026-10-14)
+
+Migration `20261014120000` aplicada pela sessão via `db:aplicar` após o merge do #3075: ensaio (rollback) ok →
+apply = tentativa **#449** com recibo (sha256 `658bf9f2…`). 2ª testemunha por `psql-ro`: função, índice UNIQUE
+válido, colunas e ACL (anon/authenticated sem EXECUTE, service_role com) ✅; `md5(prosrc)` = md5 do corpo do arquivo
+(`e7294d18…`). Carimbo de authz re-medido: os 6 audits de prod exit 0 (o achado `FUNCAO_AUSENTE_EM_PROD` sumiu).
+Pendente: edges (`disparar-pedidos-aprovados` v1.9 ANTES de `sayerlack-importar-pedido-portal`) e Publish.
