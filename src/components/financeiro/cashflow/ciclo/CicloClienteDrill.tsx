@@ -31,10 +31,9 @@ export function CicloClienteDrill({ cliente, hoje, onFechar }: { cliente: Resumo
                 {s.cenario.rotulo} — {s.cenario.reais === null ? `— (${s.cenario.motivo})` : `${brl(s.cenario.reais)} (${s.cenario.motivo})`}
               </div>
             )}
-            {s.degrau && (
-              <div className="text-xs">
-                Aplicar ao calendário de parcelas (ex.: 30/60/90 → {s.degrau.para}/{s.degrau.para * 2}/{s.degrau.para * 3}), não à média.
-              </div>
+            {s.degrau && <div className="text-xs">Prazo {s.degrau.de}d → {s.degrau.para}d (parcela única).</div>}
+            {s.alavanca === 'degrau_prazo' && !s.degrau && s.cenario && (
+              <div className="text-xs">Sem degrau numérico: {s.cenario.motivo}.</div>
             )}
           </div>
         )}
@@ -60,7 +59,9 @@ export function CicloClienteDrill({ cliente, hoje, onFechar }: { cliente: Resumo
                         : ROTULO_SITUACAO[t.situacao] ?? t.situacao.replace(/_/g, ' ')}
                   </TableCell>
                   <TableCell className="text-right font-mono">
-                    {t.situacao === 'vencida_aberta' && t.saldo !== null ? brl(t.saldo, 2) : brl(t.valor, 2)}
+                    {t.situacao === 'vencida_aberta' && t.saldo === null
+                      ? <>{brl(t.valor, 2)} <span className="text-xs text-muted-foreground">(valor original; saldo ausente)</span></>
+                      : brl(t.situacao === 'vencida_aberta' ? t.saldo : t.valor, 2)}
                   </TableCell>
                   <TableCell className="text-right font-mono">{t.prazoConcedido}d</TableCell>
                   <TableCell className={`text-right font-mono ${t.atraso !== null && t.atraso > 3 ? 'text-status-warning' : ''}`}>

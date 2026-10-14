@@ -22,7 +22,8 @@ export function useCicloResumo() {
             .range(de, ate) as unknown as PromiseLike<{ data: ResumoClienteRow[] | null; error: unknown }>,
         'v_ciclo_cliente_resumo',
       );
-      return linhas.map(normalizarResumo);
+      // Linha sem omie_codigo_cliente é descartada (sem chave não há cliente; evita a chave -1 do normalizador).
+      return linhas.filter((l) => num(l.omie_codigo_cliente) !== null).map(normalizarResumo);
     },
   });
 }

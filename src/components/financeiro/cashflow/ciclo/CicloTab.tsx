@@ -8,6 +8,7 @@ import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { track } from '@/lib/analytics';
 import type { ResumoCliente } from '@/lib/financeiro/ciclo-cliente-helpers';
+import { CHAVE_CUSTO } from './ciclo-format';
 import { CicloEmpresaCard } from './CicloEmpresaCards';
 import { CicloTendencia } from './CicloTendencia';
 import { CicloClientesTabela } from './CicloClientesTabela';
@@ -27,7 +28,7 @@ export function CicloTab() {
   const resumo = useCicloResumo();
   const coorte = useCicloCoorte();
   const receita = useReceitaDiariaTtm();
-  const [filtros, setFiltros] = useUrlState({ cicloEmpresa: 'oben', cicloPerfil: 'todos', cicloCusto: '' });
+  const [filtros, setFiltros] = useUrlState({ cicloEmpresa: 'oben', cicloPerfil: 'todos', cicloCustoOben: '', cicloCustoColacor: '', cicloCustoColacorSc: '' });
   const [aberto, setAberto] = useState<ResumoCliente | null>(null);
 
   useEffect(() => { track('financeiro.ciclo_aberto'); }, []);
@@ -43,7 +44,8 @@ export function CicloTab() {
 
       <div className="grid gap-3 md:grid-cols-3">
         {ALL_COMPANIES.map((c) => (
-          <CicloEmpresaCard key={c} company={c} coorte={coorteDados} receitaDia={receita.data?.[c] ?? null} />
+          <CicloEmpresaCard key={c} company={c} coorte={coorteDados} receitaDia={receita.data?.[c] ?? null} receitaErro={receita.error !== null && receita.error !== undefined}
+            resumo={resumo.data} resumoErro={resumo.error !== null && resumo.error !== undefined} hoje={hoje} />
         ))}
       </div>
       {receita.error && <p className="text-status-error text-sm">Não foi possível ler a receita TTM (valor de 1 dia de PMR indisponível).</p>}
@@ -72,14 +74,21 @@ export function CicloTab() {
       {resumo.data && resumo.data.length === 0 && (
         <EmptyState tone="operational" icon={Inbox} title="Sem títulos pagos ou vencidos" description="Nenhum título pago em 12 meses nem vencido em aberto." />
       )}
-      {resumo.data && resumo.data.length > 0 && (
-        <CicloClientesTabela
-          clientes={resumo.data} hoje={hoje} empresa={empresa} perfilFiltro={filtros.cicloPerfil}
-          onAbrir={(c) => { setAberto(c); track('financeiro.ciclo_cliente_drill', { empresa: c.company }); }}
-        />
-      )}
+      {resumo.data && resumo.data.length > 0 && tendencias.map((c) => (
+        <section key={c} className="space-y-2" aria-label={`Fila ${COMPANIES[c].shortName}`}>
+          {empresa === 'all' && <h3 className="text-sm font-medium">{COMPANIES[c].shortName}</h3>}
+          <CicloClientesTabela
+            clientes={resumo.data} hoje={hoje} empresa={c} perfilFiltro={filtros.cicloPerfil}
+            onAbrir={(cl) => { setAberto(cl); track('financeiro.ciclo_cliente_drill', { empresa: cl.company }); }}
+          />
+        </section>
+      ))}
 
-      <CicloDescontoPainel custoTexto={filtros.cicloCusto} onCusto={(t) => setFiltros({ cicloCusto: t })} />
+      <CicloDescontoPainel
+        empresas={tendencias}
+        custos={{ oben: filtros.cicloCustoOben, colacor: filtros.cicloCustoColacor, colacor_sc: filtros.cicloCustoColacorSc }}
+        onCusto={(c, t) => setFiltros({ [CHAVE_CUSTO[c]]: t })}
+      />
       <CicloClienteDrill cliente={aberto} hoje={hoje} onFechar={() => setAberto(null)} />
     </div>
   );

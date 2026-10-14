@@ -109,13 +109,13 @@ describe('CicloTab', () => {
 
   it('custo acima do teto mostra o motivo no input; custo válido mostra desconto', () => {
     resumoMock.mockReturnValue(ok([]));
-    renderTab('/?cicloCusto=35');
+    renderTab('/?cicloCustoOben=35');
     expect(screen.getByText(/até 20% a\.m\./)).toBeInTheDocument();
   });
 
   it('custo válido calcula o desconto máximo', () => {
     resumoMock.mockReturnValue(ok([]));
-    renderTab('/?cicloCusto=2,5');
+    renderTab('/?cicloCustoOben=2,5');
     expect(screen.getByText('30 dias')).toBeInTheDocument();
     expect(screen.queryByText(/até 20% a\.m\./)).not.toBeInTheDocument();
   });
@@ -149,5 +149,90 @@ describe('CicloTab', () => {
     expect(within(dlg).getByText('Status ambíguo')).toBeInTheDocument();
     const linha1 = within(dlg).getByText('Paga').closest('tr') as HTMLElement;
     expect(within(linha1).getAllByText('—').length).toBeGreaterThan(0);
+  });
+
+  it('drill: degrau mostra "45d → 42d" sem calendário inventado', () => {
+    resumoMock.mockReturnValue(ok([cli({ prazoConcedidoPond: 45 })]));
+    renderTab();
+    fireEvent.click(screen.getByText('ACME'));
+    const dlg = screen.getByRole('dialog');
+    expect(within(dlg).getByText(/45d → 42d/)).toBeInTheDocument();
+    expect(dlg).not.toHaveTextContent('84');
+  });
+
+  it('drill: parcelado sem degrau mostra texto e motivo do helper', () => {
+    resumoMock.mockReturnValue(ok([cli({ nParcelas: 16, nDocumentos: 8 })]));
+    renderTab();
+    fireEvent.click(screen.getByText('ACME'));
+    expect(within(screen.getByRole('dialog')).getByText(/Sem degrau numérico: parcelado: média não é condição/)).toBeInTheDocument();
+  });
+
+  it('drill: vencida_aberta sem saldo mostra valor original com indicação', () => {
+    resumoMock.mockReturnValue(ok([cli({})]));
+    titulosMock.mockReturnValue(ok([{
+      lancamento: 9, documento: null, emissao: '2026-01-01', vencimento: '2026-02-01', baixa: null, valor: 100, saldo: null,
+      situacao: 'vencida_aberta', prazoConcedido: 30, prazoReal: null, atraso: null, diasVencido: 5,
+    }]));
+    renderTab();
+    fireEvent.click(screen.getByText('ACME'));
+    expect(within(screen.getByRole('dialog')).getByText(/valor original; saldo ausente/)).toBeInTheDocument();
+  });
+
+  it('cobertura por valor é por empresa: média / total do valor pago', () => {
+    resumoMock.mockReturnValue(ok([
+      cli({ omieCodigoCliente: 1, valorPago: 750 }),
+      cli({ omieCodigoCliente: 2, valorPago: 250, nDocumentos: 2 }), // baixa
+      cli({ omieCodigoCliente: 3, company: 'colacor', valorPago: 100, nDocumentos: 2 }),
+    ]));
+    renderTab();
+    expect(screen.getByTestId('ciclo-cobertura-oben')).toHaveTextContent('Cobertura: 75% do valor pago');
+    expect(screen.getByTestId('ciclo-cobertura-colacor')).toHaveTextContent('Cobertura: 0%');
+    expect(screen.getByTestId('ciclo-cobertura-colacor_sc')).toHaveTextContent('— (sem valor pago em 12 meses)');
+  });
+
+  it('erro na receita TTM diz "erro de leitura", não "sem receita"', () => {
+    resumoMock.mockReturnValue(ok([]));
+    receitaMock.mockReturnValue({ data: undefined, isLoading: false, error: new Error('x') });
+    renderTab();
+    expect(screen.getByTestId('ciclo-card-oben')).toHaveTextContent('erro de leitura da receita TTM');
+    expect(screen.getByTestId('ciclo-card-oben')).not.toHaveTextContent('sem receita TTM');
+  });
+
+  it('custo é por empresa: em "Todas" há um input por empresa e cada c vale só para a sua', () => {
+    resumoMock.mockReturnValue(ok([]));
+    renderTab('/?cicloEmpresa=all&cicloCustoColacor=2,5');
+    expect(screen.getByTestId('ciclo-desconto-oben')).toHaveTextContent('Informe o custo');
+    expect(screen.getByTestId('ciclo-desconto-colacor')).toHaveTextContent('30 dias');
+    expect(screen.getByTestId('ciclo-desconto-colacor_sc')).toHaveTextContent('Informe o custo');
+  });
+
+  it('input de custo inválido tem aria-invalid e aria-describedby para a mensagem', () => {
+    resumoMock.mockReturnValue(ok([]));
+    renderTab('/?cicloCustoOben=35');
+    const input = within(screen.getByTestId('ciclo-desconto-oben')).getByRole('textbox');
+    expect(input).toHaveAttribute('aria-invalid', 'true');
+    const id = input.getAttribute('aria-describedby') as string;
+    expect(document.getElementById(id)).toHaveTextContent(/até 20% a\.m\./);
+  });
+
+  it('"Todas": fila agrupada por empresa, uma seção cada', () => {
+    resumoMock.mockReturnValue(ok([cli({ company: 'oben' }), cli({ company: 'colacor', nomeCliente: 'BETA' })]));
+    renderTab('/?cicloEmpresa=all');
+    expect(within(screen.getByRole('region', { name: 'Fila Oben' })).getByText('ACME')).toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'Fila Colacor' })).getByText('BETA')).toBeInTheDocument();
+  });
+
+  it('linha abre o drill por teclado (Enter e Espaço)', () => {
+    resumoMock.mockReturnValue(ok([cli({})]));
+    renderTab();
+    const linha = screen.getByRole('button', { name: /ACME/ });
+    fireEvent.keyDown(linha, { key: 'Enter' });
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
+
+  it('saldo vencido 0 mostra R$ 0; null mostra "—"', () => {
+    resumoMock.mockReturnValue(ok([cli({ saldoVencido: 0 })]));
+    renderTab();
+    expect(screen.getByRole('button', { name: /ACME/ })).toHaveTextContent(/R\$\s*0/);
   });
 });

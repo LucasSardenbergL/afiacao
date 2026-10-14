@@ -2,7 +2,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useCashflowProjection } from '@/hooks/useCashflowProjection';
 import { COMPANIES, type Company } from '@/contexts/CompanyContext';
 import type { CoorteMes } from '@/hooks/useFinanceiroCiclo';
-import { brl, dias } from './ciclo-format';
+import type { ResumoCliente } from '@/lib/financeiro/ciclo-cliente-helpers';
+import { brl, coberturaPorValor, dias } from './ciclo-format';
 
 /** Média ponderada pelo valor pago; sem peso → null (nunca 0). */
 function pond(meses: CoorteMes[], campo: 'prazoConcedido' | 'prazoReal') {
@@ -15,7 +16,10 @@ function pond(meses: CoorteMes[], campo: 'prazoConcedido' | 'prazoReal') {
   return w > 0 ? s / w : null;
 }
 
-export function CicloEmpresaCard({ company, coorte, receitaDia }: { company: Company; coorte: CoorteMes[]; receitaDia: number | null }) {
+export function CicloEmpresaCard({ company, coorte, receitaDia, receitaErro, resumo, resumoErro, hoje }: {
+  company: Company; coorte: CoorteMes[]; receitaDia: number | null; receitaErro?: boolean;
+  resumo: ResumoCliente[] | undefined; resumoErro?: boolean; hoje: string;
+}) {
   const { data, error, isLoading } = useCashflowProjection(company);
   const ind = error ? null : data?.indicadores;
   const motivos = error ? [] : data?.confianca_dados?.motivos ?? [];
@@ -24,6 +28,8 @@ export function CicloEmpresaCard({ company, coorte, receitaDia }: { company: Com
   const real = pond(meses, 'prazoReal');
   const pmr = ind?.prazo_medio_recebimento ?? null;
   const divergem = pmr !== null && real !== null && Math.abs(pmr - real) > 3;
+  const cob = resumo === undefined ? null : coberturaPorValor(resumo, company, hoje);
+  const cobTexto = resumoErro ? '— (erro de leitura)' : cob === null ? '— (carregando)' : cob.ok ? `${cob.pct.toFixed(0)}%` : `— (${cob.motivo})`;
   const valores: Array<[string, number | null | undefined]> = [
     ['PME', ind?.prazo_medio_estoque],
     ['PMR', ind?.prazo_medio_recebimento],
@@ -43,7 +49,10 @@ export function CicloEmpresaCard({ company, coorte, receitaDia }: { company: Com
           ))}
         </div>
         <div className="text-xs text-muted-foreground">
-          1 dia de PMR = {receitaDia === null ? '— (sem receita TTM)' : brl(receitaDia)}
+          1 dia de PMR = {receitaErro ? '— (erro de leitura da receita TTM)' : receitaDia === null ? '— (sem receita TTM)' : brl(receitaDia)}
+        </div>
+        <div className="text-xs text-muted-foreground" data-testid={`ciclo-cobertura-${company}`}>
+          Cobertura: {cobTexto} do valor pago vem de clientes com confiança média
         </div>
         {concedido !== null && real !== null && (
           <div className="text-xs">

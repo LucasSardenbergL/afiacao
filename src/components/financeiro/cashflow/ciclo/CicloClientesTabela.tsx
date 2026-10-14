@@ -33,10 +33,14 @@ export function CicloClientesTabela({ clientes, hoje, empresa, perfilFiltro, onA
           <TableRow><TableCell colSpan={11} className="text-sm text-muted-foreground">Nenhum cliente neste filtro.</TableCell></TableRow>
         )}
         {linhas.map(({ c, s, p, conf }) => (
-          <TableRow key={`${c.company}:${c.omieCodigoCliente}`} className="cursor-pointer" onClick={() => onAbrir(c)}>
+          <TableRow
+            key={`${c.company}:${c.omieCodigoCliente}`} className="cursor-pointer" role="button" tabIndex={0}
+            onClick={() => onAbrir(c)}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onAbrir(c); } }}
+          >
             <TableCell>{c.nomeCliente ?? `#${c.omieCodigoCliente}`}</TableCell>
             <TableCell>{COMPANIES[c.company as Company]?.shortName ?? c.company}</TableCell>
-            <TableCell className="text-right font-mono">{c.saldoVencido ? <span className="text-status-error">{brl(c.saldoVencido)}</span> : '—'}</TableCell>
+            <TableCell className="text-right font-mono">{c.saldoVencido !== null ? <span className="text-status-error">{brl(c.saldoVencido)}</span> : '—'}</TableCell>
             <TableCell className="text-right font-mono">{c.nDocumentos ?? '—'}</TableCell>
             <TableCell className="text-right font-mono">{dias(c.prazoConcedidoPond)}</TableCell>
             <TableCell className="text-right font-mono">{dias(c.prazoRealPond)}</TableCell>
