@@ -35,6 +35,10 @@ import * as syncNfes from "../omie-sync-nfes-recebidas/versao.ts";
 import * as nfeWebhook from "../omie-nfe-webhook/versao.ts";
 import * as analyticsSync from "../omie-analytics-sync/versao.ts";
 import * as valorCockpit from "../fin-valor-cockpit/versao.ts";
+import * as valorEngine from "../fin-valor-engine/versao.ts";
+import * as nextBestAction from "../fin-next-best-action/versao.ts";
+import * as regimeTributario from "../fin-regime-tributario/versao.ts";
+import * as suggestMapping from "../fin-suggest-mapping/versao.ts";
 import * as finFunding from "../fin-funding/versao.ts";
 import * as algoAudit from "../algorithm-a-audit/versao.ts";
 import * as positivacao from "../carteira-positivacao-snapshot/versao.ts";
@@ -148,6 +152,11 @@ const EDGES: Array<{ nome: string; mod: ModSonda }> = [
   // (docs/historico/deploy-no-op-por-desenho.md). Barato de chamar e possível de verificar são
   // propriedades diferentes; só o marcador dá a segunda.
   { nome: "fin-valor-cockpit", mod: valorCockpit },
+  // As 4 do financeiro de leitura (2026-10-14): sem sonda, nenhum deploy delas tinha prova.
+  { nome: "fin-valor-engine", mod: valorEngine },
+  { nome: "fin-next-best-action", mod: nextBestAction },
+  { nome: "fin-regime-tributario", mod: regimeTributario },
+  { nome: "fin-suggest-mapping", mod: suggestMapping },
   { nome: "fin-funding", mod: finFunding },
   { nome: "algorithm-a-audit", mod: algoAudit },
   { nome: "carteira-positivacao-snapshot", mod: positivacao },
@@ -415,6 +424,11 @@ const FORMA_NORMALIZADA = [
   ...ESCRITA_NOSSO_BANCO,
   "fin-valor-cockpit",
   "fin-funding",
+  // Financeiro de leitura (2026-10-14): nasceram já nesta forma.
+  "fin-valor-engine",
+  "fin-next-best-action",
+  "fin-regime-tributario",
+  "fin-suggest-mapping",
   "algorithm-a-audit",
   "carteira-positivacao-snapshot",
   "omie-financeiro",
@@ -464,6 +478,10 @@ const FORMA_NORMALIZADA = [
  * que é o desfecho certo: melhor um gate que para do que um que mede a coisa errada.
  */
 const ANCORA_CLIENT: Record<string, string> = {
+  // `fin-next-best-action` não cria client: o IO dela começa na primeira invocação de outra edge
+  // (`invoke<…>(…)`, fetch com service_role para fin-cashflow-engine/fin-valor-engine). A sonda
+  // tem de responder antes dessas sete invocações pesadas.
+  "fin-next-best-action": "invoke<",
   "omie-sync-status-produtos": "makeClient(",
   // A `omie-webhook` é o outro desvio, e por causa oposta: o client não nasce no handler NENHUM —
   // é `const supabase = createClient(...)` no TOPO do módulo. `trechoDoHandler` corta a partir do
@@ -503,6 +521,12 @@ const ANCORA_CLIENT: Record<string, string> = {
 // compartilhado com o Omie, que o `net.http_post` do SQL Editor não emite. Sem gate próprio a
 // sonda ficaria inalcançável exatamente para quem precisa dela.
 const GATE_PROPRIO = [
+  // Financeiro de leitura (2026-10-14): o gate das três é Bearer + role (`authorizeMaster` /
+  // `authorizeGestorOuMaster`) e nunca leu `x-cron-secret`. A quarta, `fin-suggest-mapping`, fica
+  // FORA: o gate dela já é `authorizeCronOrStaff`.
+  "fin-valor-engine",
+  "fin-next-best-action",
+  "fin-regime-tributario",
   "omie-cliente",
   "omie-nfe-webhook",
   "omie-webhook",

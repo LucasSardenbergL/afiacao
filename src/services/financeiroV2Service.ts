@@ -622,42 +622,33 @@ export async function getCategoriasCompetenciaRaw(
   meses: number[],
 ): Promise<DimRowRaw[]> {
   if (meses.length === 0) return [];
-  const PAGE = 1000;
-  const out: DimRowRaw[] = [];
-  let from = 0;
-  for (;;) {
-    const { data, error } = await supabase
-      .from('fin_dre_competencia_base')
-      .select('categoria_codigo, categoria_descricao, mes, valor_total')
-      .eq('company', company)
-      .eq('ano', ano)
-      .in('mes', meses)
-      // Ordem TOTAL no recorte. O grão da view inclui categoria_descricao (o GROUP BY da
-      // migration 20260328200600 agrupa por ela TAMBÉM — achado Codex xhigh): duas
-      // descrições do mesmo código/mês/origem empatariam e trocariam de posição entre
-      // requests. Sem ordem total, offset entre páginas pula/duplica linha.
-      .order('categoria_codigo', { ascending: true })
-      .order('categoria_descricao', { ascending: true })
-      .order('mes', { ascending: true })
-      .order('origem', { ascending: true })
-      .range(from, from + PAGE - 1);
-    if (error) throw error;
-    // data null SEM error = malformada, não fim (classe #1338→#1564): tratá-la como fim
-    // entregava o drill de variância por categoria PARCIAL.
-    if (data == null) throw new Error('fin_dre_competencia_base: data null sem error — malformada, não é fim');
-    const rows = data;
-    for (const r of rows) {
-      out.push({
-        categoria_codigo: r.categoria_codigo,
-        categoria_descricao: r.categoria_descricao,
-        mes: r.mes,
-        valor: r.valor_total ?? 0,
-      });
-    }
-    if (rows.length < PAGE) break;
-    from += PAGE;
-  }
-  return out;
+  // Paginador canônico: página com error ou `data: null` sem error LANÇA (drill parcial
+  // reconciliaria errado contra o snapshot) e a página perdida é medida pela fonte.
+  const rows = await fetchAllPages(
+    (de, ate) =>
+      supabase
+        .from('fin_dre_competencia_base')
+        .select('categoria_codigo, categoria_descricao, mes, valor_total')
+        .eq('company', company)
+        .eq('ano', ano)
+        .in('mes', meses)
+        // Ordem TOTAL no recorte. O grão da view inclui categoria_descricao (o GROUP BY da
+        // migration 20260328200600 agrupa por ela TAMBÉM — achado Codex xhigh): duas
+        // descrições do mesmo código/mês/origem empatariam e trocariam de posição entre
+        // requests. Sem ordem total, offset entre páginas pula/duplica linha.
+        .order('categoria_codigo', { ascending: true })
+        .order('categoria_descricao', { ascending: true })
+        .order('mes', { ascending: true })
+        .order('origem', { ascending: true })
+        .range(de, ate),
+    'fin_dre_competencia_base/drill-orcamento',
+  );
+  return rows.map((r) => ({
+    categoria_codigo: r.categoria_codigo,
+    categoria_descricao: r.categoria_descricao,
+    mes: r.mes,
+    valor: r.valor_total ?? 0,
+  }));
 }
 
 /**

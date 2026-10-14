@@ -42,6 +42,13 @@ vi.mock('@/integrations/supabase/client', () => ({
   },
 }));
 
+// Telemetria de página perdida: só existe no paginador canônico (`fetchAllPages`). O laço
+// manual que a soma tinha antes LANÇAVA certo, mas ninguém media a frequência (money-path §7).
+const captureExceptionMock = vi.fn();
+vi.mock('@/lib/analytics', () => ({
+  captureException: (...a: unknown[]) => captureExceptionMock(...a),
+}));
+
 import { somarSaldoAberto, somarSaldoPorStatus } from '@/services/financeiroService';
 
 const page = (n: number, saldo = 10): { data: Row[]; error: null } => ({
@@ -53,6 +60,7 @@ describe('somarSaldoAberto (contrato do B1)', () => {
   beforeEach(() => {
     state.pages = [];
     state.calls = [];
+    captureExceptionMock.mockClear();
   });
 
   it('filtra pelos status NATIVOS de aberto (A VENCER/ATRASADO/VENCE HOJE), na tabela e empresa pedidas', async () => {
@@ -106,6 +114,37 @@ describe('somarSaldoAberto (contrato do B1)', () => {
     await expect(somarSaldoAberto('fin_contas_receber', 'oben')).rejects.toBeInstanceOf(Error);
     state.pages = [page(1000, 2), { data: null, error: { message: 'RLS negou' } }];
     await expect(somarSaldoAberto('fin_contas_receber', 'oben')).rejects.toThrow(/RLS negou/);
+  });
+});
+
+describe('somarSaldoPorStatus pagina pelo fetchAllPages (telemetria de página perdida)', () => {
+  beforeEach(() => {
+    state.pages = [];
+    state.calls = [];
+    captureExceptionMock.mockClear();
+  });
+
+  it('página com error é MEDIDA: captureException com fonte tabela/empresa, página e linhas perdidas', async () => {
+    state.pages = [page(1000, 2), { data: null, error: { message: 'RLS negou' } }];
+    await expect(somarSaldoAberto('fin_contas_receber', 'oben')).rejects.toThrow(/RLS negou/);
+    expect(captureExceptionMock).toHaveBeenCalledTimes(1);
+    expect(captureExceptionMock.mock.calls[0][1]).toMatchObject({
+      fonte: 'saldo de fin_contas_receber (oben)',
+      pagina: 1,
+      linhas_lidas_antes_da_falha: 1000,
+    });
+  });
+
+  it('data null sem error também é medida — e a mensagem diz que foi resposta malformada', async () => {
+    state.pages = [{ data: null, error: null }];
+    await expect(somarSaldoPorStatus('fin_contas_pagar', 'colacor', ['ATRASADO'])).rejects.toThrow(
+      /data null sem error/,
+    );
+    expect(captureExceptionMock).toHaveBeenCalledTimes(1);
+    expect(captureExceptionMock.mock.calls[0][1]).toMatchObject({
+      fonte: 'saldo de fin_contas_pagar (colacor)',
+      pagina: 0,
+    });
   });
 });
 

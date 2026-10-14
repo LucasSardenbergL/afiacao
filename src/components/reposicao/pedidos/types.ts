@@ -106,4 +106,8 @@ export interface PedidoItem {
   // qtde_final ao múltiplo da embalagem (36 L → 40 L = 8 baldes). null/undefined = não arredondou. 1 escritor:
   // gerar_pedidos_sugeridos_ciclo. Só visual (badge); a compra física é garantida pela edge no envio.
   fator_embalagem_portal?: number | null;
+  // Rastro do TETO DE COBERTURA (B/C) do motor: a linha foi capada abaixo do "encher até o Emax".
+  // qtde_sem_teto = o que o motor compraria sem o cap. Só visual (explica final < sugerida).
+  teto_cobertura_aplicado?: boolean | null;
+  qtde_sem_teto?: number | null;
 }
