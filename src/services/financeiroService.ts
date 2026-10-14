@@ -93,6 +93,12 @@ export interface FinDRE {
   resultado_antes_impostos: number;
   impostos: number;
   resultado_liquido: number;
+  /** DRE fase 2 — saídas fora do DRE (fora de todo subtotal). null = snapshot pré-fase 2. */
+  fora_dre?: number | null;
+  /** DRE fase 2 — true = composição fora_dre pendente (resultado provisório); null = pré-fase 2/desconhecido. */
+  resultado_provisorio?: boolean | null;
+  /** Só no consolidado: alguma empresa do mês sem o dado (pré-fase 2) ⇒ fora_dre é soma parcial. */
+  fora_dre_parcial?: boolean;
   detalhamento: {
     receitas: Record<string, number>;
     despesas: Record<string, number>;
@@ -105,6 +111,9 @@ export interface FinDRE {
     imposto_teorico?: Record<string, number | null> | null;
     delta_imposto_pct?: number | null;
     config_tributaria_completa?: boolean;
+    // DRE fase 2
+    fora_dre?: { saidas: number; entradas: number; por_codigo: Record<string, { saidas: number; entradas: number }>; composicao_pendente: boolean; motivo: string | null };
+    mapeamentos_invalidos?: Array<{ codigo: string; valor: string; origem: 'exato' | 'prefixo'; motivo: string; codigo_titulo: string; valor_afetado: number }>;
   };
 }
 

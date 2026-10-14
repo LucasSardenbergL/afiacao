@@ -331,7 +331,7 @@ describe('pontoEquilibrio — DRE fase 2 (composição do snapshot)', () => {
 
   it('erro de linha num mês não é compensado por outro mês (reconciliação por mês e por linha)', () => {
     // mês 2: 5 do aluguel declarados em cmv na composição; mês 4: o inverso. TTM fecha, mês não.
-    const cruzado = dozeFase2((m) =>
+    const cruzado = dozeFase2((m): Partial<MesDRE> =>
       m === 2 ? { composicao_despesas: { '2.01.01': { cmv: 60 }, '2.04.01': { cmv: 5, despesas_operacionais: 20 }, '2.06.01': { ded_icms: 5 }, '2.05.03': { fora_dre: 10 } } }
       : m === 4 ? { composicao_despesas: { '2.01.01': { cmv: 55, despesas_operacionais: 5 }, '2.04.01': { despesas_operacionais: 25 }, '2.06.01': { ded_icms: 5 }, '2.05.03': { fora_dre: 10 } } }
       : {});

@@ -1,6 +1,7 @@
 import { useState, useCallback, useMemo, useRef } from 'react';
 import type { Company } from '@/contexts/CompanyContext';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
+import { provisorioConsolidado, foraDreConsolidado } from '@/lib/financeiro/dre-helpers';
 import {
   triggerFinanceiroSync,
   getResumoFinanceiro,
@@ -432,14 +433,32 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
       'outras_receitas', 'outras_despesas', 'resultado_antes_impostos',
       'impostos', 'resultado_liquido'
     ] as const satisfies readonly (keyof FinDRE)[];
+    const rowsPorMes = new Map<number, FinDRE[]>();
     for (const row of dre) {
       if (!byMonth.has(row.mes)) {
         byMonth.set(row.mes, { ...row, company: 'consolidado' });
+        rowsPorMes.set(row.mes, [row]);
       } else {
         const c = byMonth.get(row.mes)!;
+        rowsPorMes.get(row.mes)!.push(row);
         for (const f of numFields) {
           (c[f] as number) = ((c[f] as number) || 0) + ((row[f] as number) || 0);
         }
+      }
+    }
+    // DRE fase 2: provisório tri-state, fora_dre soma dos conhecidos (parcial sinalizado) e a
+    // confiança do consolidado é a PIOR das empresas (antes ficava a da 1ª linha).
+    const NIVEL = { baixa: 1, media: 2, alta: 3 } as const;
+    for (const [mes, c] of byMonth) {
+      const rows = rowsPorMes.get(mes)!;
+      c.resultado_provisorio = provisorioConsolidado(rows.map((r) => r.resultado_provisorio));
+      const fd = foraDreConsolidado(rows.map((r) => r.fora_dre));
+      c.fora_dre = fd.valor;
+      c.fora_dre_parcial = fd.parcial;
+      const confs = rows.map((r) => r.detalhamento?.confianca).filter((x): x is NonNullable<typeof x> => x != null);
+      if (confs.length > 0 && c.detalhamento) {
+        const pior = confs.reduce((a, b) => (NIVEL[b.nivel] < NIVEL[a.nivel] ? b : a));
+        c.detalhamento = { ...c.detalhamento, confianca: { ...pior, motivos: confs.flatMap((x) => x.motivos) } };
       }
     }
     return Array.from(byMonth.values()).sort((a, b) => a.mes - b.mes);

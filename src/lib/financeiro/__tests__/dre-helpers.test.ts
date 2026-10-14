@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { classificarLinhaDRE, REGIME_POR_EMPRESA, resolverDataCaixa, valorCaixaEfetivo, dedupePorCodigo, bucketizarCaixa, montarDRE, scoreConfianca, calcularRBT12, aliquotaEfetivaSimples, anexoPorFatorR, impostoTeoricoSimples, impostoTeoricoPresumido, normalizarConfigTributario, novoForaDRE, acumularForaDRE, aplicarPendenciasConfianca, linhasDreMapeaveis } from '../dre-helpers';
+import { classificarLinhaDRE, REGIME_POR_EMPRESA, resolverDataCaixa, valorCaixaEfetivo, dedupePorCodigo, bucketizarCaixa, montarDRE, scoreConfianca, calcularRBT12, aliquotaEfetivaSimples, anexoPorFatorR, impostoTeoricoSimples, impostoTeoricoPresumido, normalizarConfigTributario, novoForaDRE, acumularForaDRE, aplicarPendenciasConfianca, linhasDreMapeaveis, provisorioConsolidado, foraDreConsolidado } from '../dre-helpers';
 
 const M = (pairs: Array<[string, string]>) => new Map<string, string>(pairs);
 
@@ -415,5 +415,19 @@ describe('linhasDreMapeaveis (tela de mapeamento, fase 2)', () => {
         expect(r.mapeamentoInvalido, `${c}/${linha}`).toBeNull();
       }
     }
+  });
+});
+
+describe('consolidado fase 2 (provisório tri-state, fora_dre parcial)', () => {
+  it('provisório: true vence; todos false ⇒ false; NULL no meio ⇒ null (não vira false)', () => {
+    expect(provisorioConsolidado([false, true, null])).toBe(true);
+    expect(provisorioConsolidado([false, false])).toBe(false);
+    expect(provisorioConsolidado([false, null])).toBeNull();
+    expect(provisorioConsolidado([])).toBeNull();
+  });
+  it('fora_dre: soma conhecidos, marca parcial; todos ausentes ⇒ null (ausente ≠ 0)', () => {
+    expect(foraDreConsolidado([100, 50])).toEqual({ valor: 150, parcial: false });
+    expect(foraDreConsolidado([100, null])).toEqual({ valor: 100, parcial: true });
+    expect(foraDreConsolidado([null, undefined])).toEqual({ valor: null, parcial: true });
   });
 });

@@ -327,6 +327,21 @@ export function aplicarPendenciasConfianca(confianca: Confianca, input: { foraDR
   return { ...confianca, nivel, motivos };
 }
 
+// ── Fase 2: consolidado de empresas/meses (não espelhado no edge) ──
+// Provisório: algum true ⇒ true; todos explicitamente false ⇒ false; resto (NULL de snapshot
+// pré-fase 2, lista vazia) ⇒ null — OR simples apagaria o desconhecimento.
+export function provisorioConsolidado(valores: Array<boolean | null | undefined>): boolean | null {
+  if (valores.some((v) => v === true)) return true;
+  if (valores.length > 0 && valores.every((v) => v === false)) return false;
+  return null;
+}
+// fora_dre: soma dos conhecidos; null se nenhum conhecido; `parcial` se faltou algum.
+export function foraDreConsolidado(valores: Array<number | null | undefined>): { valor: number | null; parcial: boolean } {
+  const conhecidos = valores.filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
+  if (conhecidos.length === 0) return { valor: null, parcial: valores.length > 0 };
+  return { valor: conhecidos.reduce((a, b) => a + b, 0), parcial: conhecidos.length < valores.length };
+}
+
 // ── Fase 2: o que a tela de mapeamento oferece por escopo (não espelhado no edge) ──
 // Base = as 11 linhas de sempre. Imposto em linha própria segue o regime da empresa: Simples só
 // DAS (IRPJ/CSLL lá dentro sumiriam do resultado), presumido os específicos. `_default` vale para
