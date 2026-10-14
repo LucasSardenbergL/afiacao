@@ -19,6 +19,9 @@ function bloco(source: string, arquivo: string): string {
   return source.slice(a, b + FIM.length);
 }
 
+// Só comentário de LINHA (`// …`, fora de string) — o núcleo não usa `/* */` nem `//` dentro de literal.
+const removerComentarios = (s: string): string => s.replace(/(^|[^:'"])\/\/.*$/gm, '$1');
+
 const normalizar = (s: string): string =>
   s.split('\n').map((l) => l.trimEnd()).join('\n');
 
@@ -32,7 +35,8 @@ describe('paridade edge algorithm-a-audit ↔ src auditoria-margem (núcleo)', (
   });
 
   it('o núcleo espelhado tem a fórmula de R$ da linha e não a percentual legada', () => {
-    const nucleo = bloco(src, 'src');
+    // Os negativos rodam sobre o CÓDIGO: o comentário do núcleo cita a fórmula antiga de propósito.
+    const nucleo = removerComentarios(bloco(src, 'src'));
     expect(nucleo).toContain('const actualPrice = Math.max(0, up - desc / qty);');
     expect(nucleo).toContain('if (Math.round(desc * 100) > Math.round(qty * up * 100)) continue;');
     expect(nucleo).not.toMatch(/\/\s*100\)/);
@@ -43,6 +47,6 @@ describe('paridade edge algorithm-a-audit ↔ src auditoria-margem (núcleo)', (
     expect(edge).toContain(
       ".select('customer_user_id, product_id, quantity, unit_price, desconto_valor, sales_order_id')",
     );
-    expect(edge).not.toMatch(/select\([^)]*\bdiscount\b/);
+    expect(removerComentarios(edge)).not.toMatch(/select\([^)]*\bdiscount\b/);
   });
 });
