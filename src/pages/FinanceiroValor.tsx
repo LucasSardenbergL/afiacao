@@ -81,17 +81,27 @@ function Ranking({ modo }: { modo: 'reportado' | 'normalizado' }) {
     incr: (q.data as ValorEmpresaResult | undefined)?.reportado.roic_incremental ?? null,
     spread: (q.data as ValorEmpresaResult | undefined)?.[modo].spread ?? null,
   }));
-  const byIncr = [...rows].sort((a, b) => (b.incr ?? -Infinity) - (a.incr ?? -Infinity));
+  // DRE fase 2: base provisória (fora_dre com composição pendente) não é comparável — sem ordem
+  // recomendatória; os números ficam como exploratórios.
+  const provisorias = queries.filter(({ q }) => (q.data as ValorEmpresaResult | undefined)?.resultado_provisorio === true).map(({ company }) => NOME[company]);
+  const suspenso = provisorias.length > 0;
+  const byIncr = suspenso ? rows : [...rows].sort((a, b) => (b.incr ?? -Infinity) - (a.incr ?? -Infinity));
   return (
     <Card>
       <CardHeader><CardTitle className="text-base">Ranking — onde o próximo R$1 rende mais</CardTitle></CardHeader>
       <CardContent className="text-sm space-y-1">
         {byIncr.map((row, i) => (
           <div key={row.company} className="flex justify-between border-b border-border py-1 last:border-0">
-            <span>{i + 1}. {NOME[row.company]}</span>
+            <span>{suspenso ? '' : `${i + 1}. `}{NOME[row.company]}</span>
             <span className="font-mono">ROIC incr. {pct(row.incr)} · spread {pct(row.spread)}</span>
           </div>
         ))}
+        {suspenso && (
+          <p className="text-xs text-status-warning pt-2">
+            Ranking suspenso: resultado provisório em {provisorias.join(', ')} (saída fora do DRE com composição
+            principal × juros pendente). Números exploratórios, sem ordem de recomendação.
+          </p>
+        )}
         <p className="text-xs text-muted-foreground pt-2">ROIC incremental = ΔNOPAT / Δcapital (TTM atual vs −12m). "—" = histórico insuficiente ou Δcapital pequeno/negativo.</p>
       </CardContent>
     </Card>

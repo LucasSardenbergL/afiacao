@@ -1121,6 +1121,8 @@ export interface ValorEmpresaResult {
   company: string;
   regime: 'simples' | 'presumido';
   ttm: { ano_mes_fim: string; meses: number; tem_anterior: boolean };
+  /** DRE fase 2 — algum mês dos 2 TTMs com resultado provisório (fora_dre pendente). Ausente em edge anterior. */
+  resultado_provisorio?: boolean;
   reportado: {
     ebit: number; nopat: number; imposto_operacional_nopat: number; carga_tributaria_regime_total: number;
     margem_operacional_pre_imposto: number; receita_liquida_ttm: number;
