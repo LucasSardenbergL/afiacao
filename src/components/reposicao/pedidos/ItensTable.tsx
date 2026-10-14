@@ -185,7 +185,19 @@ export function ItensTable({
             <TableCell className="text-right tabular-nums text-muted-foreground">{minimo.toFixed(0)}</TableCell>
             <TableCell className="text-right tabular-nums">{pp.toFixed(0)}</TableCell>
             <TableCell className="text-right tabular-nums">{Number(l.estoque_maximo ?? 0).toFixed(0)}</TableCell>
-            <TableCell className="text-right tabular-nums text-muted-foreground">{sugerida.toFixed(0)}</TableCell>
+            <TableCell className="text-right tabular-nums text-muted-foreground">
+              {sugerida.toFixed(0)}
+              {/* [TETO DE COBERTURA] o motor capou a linha abaixo do "encher até o Emax" (B/C): sem este
+                  aviso, final < sugerida parece erro. A conta do cap vive em docs/agent/reposicao.md. */}
+              {l.teto_cobertura_aplicado && (
+                <div
+                  className="text-[10px] font-normal text-status-info leading-tight cursor-help"
+                  title={`Para chegar ao estoque máximo (${Number(l.estoque_maximo ?? 0).toFixed(0)}) seriam ${Number(l.qtde_sem_teto ?? sugerida).toFixed(0)}, mas o teto de cobertura limitou a compra: em itens classe B/C, o pedido não deixa mais estoque do que o limite de dias de venda configurado para a empresa (o produto gira devagar). O ponto de pedido é sempre preservado — nunca falta abaixo dele. Se quiser comprar mais mesmo assim, edite a Qtde final.`}
+                >
+                  limitado pelo teto de cobertura
+                </div>
+              )}
+            </TableCell>
             <TableCell className="text-right">
               {podeEditar ? (
                 <Input
