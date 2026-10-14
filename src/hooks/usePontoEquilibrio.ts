@@ -58,6 +58,23 @@ function coerceDespesas(d: Record<string, unknown> | null | undefined): Record<s
   return out;
 }
 
+/**
+ * DRE fase 2: composição chave → linha → R$. Ausente ⇒ null (snapshot legado). Presente mas
+ * malformada ⇒ objeto parcial/vazio, que o helper REJEITA (snapshot_inconsistente) — nunca some.
+ */
+function coerceComposicao(c: unknown): Record<string, Record<string, number>> | null {
+  if (c === undefined || c === null) return null;
+  const out: Record<string, Record<string, number>> = {};
+  if (typeof c !== 'object') return out;
+  for (const [k, linhas] of Object.entries(c as Record<string, unknown>)) {
+    if (linhas == null || typeof linhas !== 'object') continue;
+    const l: Record<string, number> = {};
+    for (const [linha, v] of Object.entries(linhas as Record<string, unknown>)) l[linha] = Number(v);
+    out[k] = l;
+  }
+  return out;
+}
+
 /** Últimos 12 snapshots de DRE (competência), mapeados p/ MesDRE. */
 function useSnapshotsTTM(company: string | null) {
   return useQuery({
@@ -68,7 +85,7 @@ function useSnapshotsTTM(company: string | null) {
       const { data, error } = await supabase
         .from('fin_dre_snapshots')
         .select(
-          'ano,mes,receita_bruta,deducoes,cmv,despesas_operacionais,despesas_administrativas,despesas_comerciais,despesas_financeiras,detalhamento',
+          'ano,mes,receita_bruta,deducoes,cmv,despesas_operacionais,despesas_administrativas,despesas_comerciais,despesas_financeiras,detalhamento,resultado_provisorio',
         )
         .eq('company', company!)
         .eq('regime', 'competencia')
@@ -87,7 +104,8 @@ function useSnapshotsTTM(company: string | null) {
           despesas_administrativas: number | null;
           despesas_comerciais: number | null;
           despesas_financeiras: number | null;
-          detalhamento: { despesas?: Record<string, unknown> } | null;
+          detalhamento: { despesas?: Record<string, unknown>; composicao_despesas?: unknown } | null;
+          resultado_provisorio: boolean | null;
         };
         return {
           ano: row.ano,
@@ -100,6 +118,8 @@ function useSnapshotsTTM(company: string | null) {
           linha_administrativas: Number(row.despesas_administrativas ?? 0),
           linha_comerciais: Number(row.despesas_comerciais ?? 0),
           linha_financeiras: Number(row.despesas_financeiras ?? 0),
+          composicao_despesas: coerceComposicao(row.detalhamento?.composicao_despesas),
+          resultado_provisorio: row.resultado_provisorio,
         };
       });
     },
