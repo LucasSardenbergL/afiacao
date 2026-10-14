@@ -1359,6 +1359,8 @@ export interface RegimeEmpresaResult {
   recomendado: RegimeNome | null;
   economia_anual: number | null;
   status: StatusRecomendacao;
+  /** DRE fase 2 — causa do 'incompleto' quando não é folha/meses. Ausente em edge anterior. */
+  motivo_incompleto?: 'resultado_provisorio' | null;
   break_even: { margem_real_vs_presumido: number | null; fator_r: number };
   eixo_indireto: { icms_iss_ipi_simples: number | null; observacao: string };
   confianca: { nivel: 'alta' | 'media' | 'baixa'; motivos: string[] };
@@ -1367,6 +1369,13 @@ export interface RegimeEmpresaResult {
 
 export interface RegimeTributarioResult {
   por_empresa: RegimeEmpresaResult[];
-  consolidado: { imposto_atual_total: number; imposto_otimizado_total: number; economia_total: number; confianca: 'alta' | 'media' | 'baixa' };
+  consolidado: {
+    imposto_atual_total: number;
+    imposto_otimizado_total: number;
+    economia_total: number;
+    confianca: 'alta' | 'media' | 'baixa';
+    /** Empresas em 'incompleto' (entram com economia 0): o total é subtotal das comparáveis. */
+    empresas_incompletas?: string[];
+  };
   gerado_em: string;
 }
