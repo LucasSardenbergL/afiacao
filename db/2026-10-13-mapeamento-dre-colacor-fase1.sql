@@ -1,5 +1,11 @@
 -- Mapeamento DRE da colacor — FASE 1 (operação de dados, NÃO migration) — 2026-10-13
 --
+-- ⚠️ Bytes APLICADOS (db:aplicar, recibo #433, sha256 a6e1e0cbe494c5eca4ce98a5e854ab29d2bfe552a711479be78819dc9c3af746) tinham `IF v_n <> 97` /
+-- `IF v_fora <> 0` na postcondição; trocados depois por IS DISTINCT FROM (gate
+-- assert-verde-por-ausencia: .sql novo nasce limpo). Comportamento idêntico — os dois são count(*),
+-- nunca NULL. Este arquivo NÃO deve ser reaplicado (o INSERT é ON CONFLICT DO NOTHING, mas o
+-- ledger já tem o recibo).
+--
 -- Pedido do founder: mapear as categorias da colacor. Só entra aqui o que é INEQUÍVOCO pelo nome
 -- E fica DENTRO das 5 linhas de despesa que o ponto de equilíbrio reconcilia (cmv, operacionais,
 -- administrativas, comerciais, financeiras) — mover entre elas não muda resultado nem a
@@ -129,8 +135,8 @@ BEGIN
   SELECT count(*) INTO v_fora FROM public.fin_categoria_dre_mapping
    WHERE company = 'colacor' AND notas LIKE 'fase1 2026-10-13:%'
      AND dre_linha NOT IN ('cmv','despesas_operacionais','despesas_administrativas','despesas_comerciais','despesas_financeiras');
-  IF v_n <> 97 THEN RAISE EXCEPTION 'POSTCONDICAO: esperado 97 mapeamentos fase1 da colacor, ha %', v_n; END IF;
-  IF v_fora <> 0 THEN RAISE EXCEPTION 'POSTCONDICAO: % mapeamento(s) fora das 5 linhas reconciliadas', v_fora; END IF;
+  IF v_n IS DISTINCT FROM 97 THEN RAISE EXCEPTION 'POSTCONDICAO: esperado 97 mapeamentos fase1 da colacor, ha %', v_n; END IF;
+  IF v_fora IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'POSTCONDICAO: % mapeamento(s) fora das 5 linhas reconciliadas', v_fora; END IF;
   RAISE NOTICE 'fase1: 97 categorias da colacor mapeadas dentro das 5 linhas de despesa';
 END
 $post$;
