@@ -23,8 +23,14 @@ const MASTER = 'master-id';
 const CUSTOMER = 'cliente-x';
 
 const PAGINA = 1000;
-const PRIMEIRA_PAGINA = Array.from({ length: PAGINA }, () => ({ gross_margin_pct: 10 }));
-const SEGUNDA_PAGINA = Array.from({ length: 500 }, () => ({ gross_margin_pct: 90 }));
+// Desde o fecho da coluna (FU4-F) os pares vêm da RPC `get_scores_margem` (filtro por dono), que
+// devolve TAMBÉM o próprio cliente — a exclusão é do hook. Ele entra na 2ª página com margem 1.000:
+// se não fosse excluído, o cluster sairia ~37,3 em vez de 36,67.
+const PRIMEIRA_PAGINA = Array.from({ length: PAGINA }, (_, i) => ({ customer_user_id: `p${i}`, gross_margin_pct: 10, margem_visivel: true }));
+const SEGUNDA_PAGINA = [
+  ...Array.from({ length: 500 }, (_, i) => ({ customer_user_id: `q${i}`, gross_margin_pct: 90, margem_visivel: true })),
+  { customer_user_id: CUSTOMER, gross_margin_pct: 1000, margem_visivel: true },
+];
 /** (1000×10 + 500×90) / 1500 = 36,666… — só alcançável lendo AS DUAS páginas. */
 const CLUSTER_COMPLETO = (PAGINA * 10 + 500 * 90) / (PAGINA + 500);
 
@@ -40,7 +46,7 @@ let queries: Q[] = [];
 
 const SCORE_ROW = {
   farmer_id: SCORE_OWNER,
-  health_score: 55, churn_risk: 12, avg_monthly_spend_180d: 1000, gross_margin_pct: 22,
+  health_score: 55, churn_risk: 12, avg_monthly_spend_180d: 1000,
   category_count: 4, days_since_last_purchase: 10, expansion_score: 30, revenue_potential: 5000,
 };
 
@@ -53,20 +59,7 @@ let falhaNaSegundaPagina = false;
 
 function result(q: Q): { data: unknown; error: unknown } {
   const hasCustomerEq = q.eq.some(([c]) => c === 'customer_user_id');
-  const hasFarmerEq = q.eq.some(([c]) => c === 'farmer_id');
   if (q.table === 'farmer_client_scores' && hasCustomerEq && q.single) return { data: SCORE_ROW, error: null };
-  if (q.table === 'farmer_client_scores' && hasFarmerEq && !q.single) {
-    // Serve a página pedida. Sem `.range()`, `de` fica undefined e cai no `?? 0` — que é
-    // exatamente o comportamento da versão quebrada (lê só o primeiro lote e para).
-    const de = q.ranges.at(-1)?.[0] ?? 0;
-    if (de === 0) return { data: PRIMEIRA_PAGINA, error: null };
-    if (de === PAGINA) {
-      return falhaNaSegundaPagina
-        ? { data: null, error: { message: 'canceling statement due to statement timeout', code: '57014' } }
-        : { data: SEGUNDA_PAGINA, error: null };
-    }
-    return { data: [], error: null };
-  }
   if (q.table === 'profiles' && q.single) return { data: { name: 'Cliente X' }, error: null };
   if (q.table === 'farmer_algorithm_config') return { data: { value: 180 }, error: null };
   if (q.table === 'farmer_tactical_plans' && q.single) return { data: { id: 'plan-1' }, error: null };
@@ -89,7 +82,23 @@ function chain(table: string): unknown {
   return c;
 }
 
-let rpcCalls: Array<{ fn: string; args: Record<string, unknown> }> = [];
+let rpcCalls: Array<{ fn: string; args: Record<string, unknown>; ranges: Array<[number, number]>; orders: string[] }> = [];
+
+/** Serve a RPC de margem: 1 cliente (`p_customer_ids`) ou a carteira do dono (`p_farmer_id`), paginada. */
+function margemRpc(args: Record<string, unknown>, ranges: Array<[number, number]>): { data: unknown; error: unknown } {
+  const de = ranges.at(-1)?.[0] ?? 0;
+  if (Array.isArray(args.p_customer_ids)) {
+    return { data: de === 0 ? [{ customer_user_id: CUSTOMER, gross_margin_pct: 22, margem_visivel: true }] : [], error: null };
+  }
+  // Sem `.range()`, `de` fica 0 para sempre — o comportamento da versão quebrada (só o 1º lote).
+  if (de === 0) return { data: PRIMEIRA_PAGINA, error: null };
+  if (de === PAGINA) {
+    return falhaNaSegundaPagina
+      ? { data: null, error: { message: 'canceling statement due to statement timeout', code: '57014' } }
+      : { data: SEGUNDA_PAGINA, error: null };
+  }
+  return { data: [], error: null };
+}
 // O hook usa invokeFunction (não supabase.functions.invoke cru), para que o
 // motivo REAL da edge — créditos esgotados, geração truncada — chegue ao
 // usuário em vez do genérico "non-2xx". O helper devolve o corpo direto.
@@ -99,7 +108,16 @@ vi.mock('@/integrations/supabase/client', () => ({
   supabase: {
     from: (t: string) => chain(t),
     rpc: (fn: string, args: Record<string, unknown>) => {
-      rpcCalls.push({ fn, args });
+      const call = { fn, args, ranges: [] as Array<[number, number]>, orders: [] as string[] };
+      rpcCalls.push(call);
+      if (fn === 'get_scores_margem') {
+        const m: Record<string, unknown> = {
+          order: (col: string) => { call.orders.push(col); return m; },
+          range: (de: number, ate: number) => { call.ranges.push([de, ate]); return m; },
+          then: (resolve: (v: unknown) => void) => resolve(margemRpc(args, call.ranges)),
+        };
+        return m;
+      }
       const r = { data: 'plan-1', error: null };
       // A leitura de vendáveis é PAGINADA (`fetchAllPages`) desde que o cap de 1.000 do
       // PostgREST truncou a RPC em prod — e o builder de `.rpc()` expõe `.order()`/`.range()`
@@ -122,7 +140,7 @@ import { useTacticalPlan } from '../useTacticalPlan';
 
 beforeEach(() => { queries = []; rpcCalls = []; falhaNaSegundaPagina = false; vi.clearAllMocks(); });
 
-const peersQueries = () => queries.filter((q) => q.table === 'farmer_client_scores' && q.eq.some(([c]) => c === 'farmer_id') && !q.single);
+const peersQueries = () => rpcCalls.filter((c) => c.fn === 'get_scores_margem' && c.args.p_farmer_id != null);
 const clusterPersistido = () => {
   const call = rpcCalls.find((x) => x.fn === 'criar_plano_tatico');
   expect(call).toBeTruthy();
@@ -175,10 +193,11 @@ describe('generatePlan — cluster de pares pagina além da capa de 1.000 do Pos
     await act(async () => { await r.current.generatePlan(CUSTOMER); });
 
     const peers = peersQueries();
-    expect(peers.length).toBeGreaterThan(1); // provou que paginou
-    for (const q of peers) {
-      expect(q.eq.find(([c]) => c === 'farmer_id')?.[1]).toBe(SCORE_OWNER);
-      expect(q.neq.some(([c, v]) => c === 'customer_user_id' && v === CUSTOMER)).toBe(true);
-    }
+    expect(peers.flatMap((q) => q.ranges).length).toBeGreaterThan(1); // provou que paginou
+    for (const q of peers) expect(q.args.p_farmer_id).toBe(SCORE_OWNER);
+    // Exclusão do próprio cliente: ele vem na 2ª página com margem 1.000 e NÃO pode entrar.
+    expect(clusterPersistido()).toBeCloseTo(CLUSTER_COMPLETO, 2);
+    // E nenhuma leitura de pares voltou a ir à TABELA (a coluna é fechada para authenticated).
+    expect(queries.some((q) => q.table === 'farmer_client_scores' && q.eq.some(([c]) => c === 'farmer_id'))).toBe(false);
   });
 });

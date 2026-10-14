@@ -347,7 +347,8 @@ export const useCrossSellEngine = () => {
       const fetchAllScores = (filterFarmerId?: string): Promise<ClientScoreRow[]> =>
         fetchAllPages<ClientScoreRow>(
           (de, ate) => {
-            let q = supabase.from('farmer_client_scores').select('*');
+            // Lista explícita: `select('*')` inclui gross_margin_pct, fechada para authenticated (FU4-F).
+            let q = supabase.from('farmer_client_scores').select('customer_user_id, health_score, answer_rate_60d, whatsapp_reply_rate_60d');
             if (filterFarmerId) q = q.eq('farmer_id', filterFarmerId);
             return q.order('customer_user_id', { ascending: true }).range(de, ate) as unknown as
               PromiseLike<{ data: ClientScoreRow[] | null; error: unknown }>;

@@ -34,14 +34,17 @@ let queries: Q[] = [];
 // Pós-#1037 + split de RLS: a escrita é via supabase.rpc (criar_plano_tatico/registrar_resultado_plano),
 // não mais .insert/.update. Registramos as chamadas RPC p/ os asserts de posse.
 let rpcCalls: Array<{ fn: string; args: Record<string, unknown> }> = [];
-function recordRpc(fn: string, args: Record<string, unknown>): Promise<{ data: unknown; error: null }> {
+function recordRpc(fn: string, args: Record<string, unknown>): unknown {
   rpcCalls.push({ fn, args });
-  return Promise.resolve({ data: 'plan-1', error: null });
+  // A margem vem da RPC `get_scores_margem` (paginada) desde o fecho da coluna (FU4-F).
+  const r = fn === 'get_scores_margem' ? { data: [], error: null } : { data: 'plan-1', error: null };
+  const b: Record<string, unknown> = { order: () => b, range: () => b, then: (resolve: (v: unknown) => void) => resolve(r) };
+  return b;
 }
 
 const scoreRow = () => ({
   farmer_id: scoreFarmerId,
-  health_score: 55, churn_risk: 12, avg_monthly_spend_180d: 1000, gross_margin_pct: 22,
+  health_score: 55, churn_risk: 12, avg_monthly_spend_180d: 1000,
   category_count: 4, days_since_last_purchase: 10, expansion_score: 30, revenue_potential: 5000,
 });
 

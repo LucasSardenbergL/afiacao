@@ -23,7 +23,7 @@ let queries: Q[] = [];
 
 const SCORE_ROW = {
   farmer_id: SCORE_OWNER,
-  health_score: 55, churn_risk: 12, avg_monthly_spend_180d: 1000, gross_margin_pct: 22,
+  health_score: 55, churn_risk: 12, avg_monthly_spend_180d: 1000,
   category_count: 4, days_since_last_purchase: 10, expansion_score: 30, revenue_potential: 5000,
 };
 
@@ -56,9 +56,25 @@ function chain(table: string): unknown {
 
 // Pós-#1037 + split de RLS: a escrita do plano é via supabase.rpc('criar_plano_tatico'), não .insert.
 let rpcCalls: Array<{ fn: string; args: Record<string, unknown> }> = [];
-function recordRpc(fn: string, args: Record<string, unknown>): Promise<{ data: unknown; error: null }> {
+function recordRpc(fn: string, args: Record<string, unknown>): unknown {
   rpcCalls.push({ fn, args });
-  return Promise.resolve({ data: 'plan-1', error: null });
+  // A margem vem da RPC `get_scores_margem` desde o fecho da coluna (FU4-F). A carteira do dono
+  // devolve SÓ o próprio cliente: excluí-lo deixa o cluster sem par (→ null); não excluir daria 22.
+  const r = fn === 'get_scores_margem'
+    ? { data: [{ customer_user_id: CUSTOMER, gross_margin_pct: 22, margem_visivel: true }], error: null }
+    : { data: 'plan-1', error: null };
+  let servida = false;
+  const b: Record<string, unknown> = {
+    order: () => b,
+    range: () => b,
+    then: (resolve: (v: unknown) => void) => {
+      // paginação: a 2ª página da RPC de margem vem vazia
+      const out = fn === 'get_scores_margem' && servida ? { data: [], error: null } : r;
+      servida = true;
+      resolve(out);
+    },
+  };
+  return b;
 }
 // O hook usa invokeFunction (não supabase.functions.invoke cru), para que o
 // motivo REAL da edge — créditos esgotados, geração truncada — chegue ao
@@ -80,12 +96,14 @@ describe('generatePlan — clusterMargin escopado ao DONO (cobertura #980) + deg
   it('o agregado de cluster filtra pelo DONO do score (não o viewer) e exclui o próprio cliente', async () => {
     const { result: r } = renderHook(() => useTacticalPlan());
     await act(async () => { await r.current.generatePlan(CUSTOMER); });
-    const peers = queries.find((q) => q.table === 'farmer_client_scores' && q.eq.some(([c]) => c === 'farmer_id') && !q.single);
+    const peers = rpcCalls.find((x) => x.fn === 'get_scores_margem' && x.args.p_farmer_id != null);
     expect(peers).toBeTruthy();
-    expect(peers!.eq.find(([c]) => c === 'farmer_id')?.[1]).toBe(SCORE_OWNER);
-    expect(peers!.eq.find(([c]) => c === 'farmer_id')?.[1]).not.toBe(MASTER);
-    // peer benchmark: exclui o próprio cliente (senão cluster == própria margem)
-    expect(peers!.neq.some(([c, v]) => c === 'customer_user_id' && v === CUSTOMER)).toBe(true);
+    expect(peers!.args.p_farmer_id).toBe(SCORE_OWNER);
+    expect(peers!.args.p_farmer_id).not.toBe(MASTER);
+    // peer benchmark: exclui o próprio cliente (senão cluster == própria margem). A RPC devolve só
+    // ele na carteira do dono — excluído, o cluster fica sem par.
+    const plano = rpcCalls.find((x) => x.fn === 'criar_plano_tatico');
+    expect((plano!.args._payload as Record<string, unknown>).cluster_avg_margin_pct).not.toBe(22);
   });
 
   it('sem pares na carteira do dono → persiste cluster_avg_margin_pct null (não 25 fabricado)', async () => {

@@ -31,7 +31,10 @@ export function CustomerHero({
   const coberturaItens = legendaCoberturaItens(coberturaCustoCliente(s));
   // Sem margem E sem cobertura: se o motivo é a janela (nenhuma compra em 12m), a tela diz — em vez
   // de sumir com a margem como se nunca tivesse existido, ou de mostrar um número velho.
-  const semCompraNaJanela = s?.gross_margin_pct == null && !coberturaItens
+  // Sem `cap_custo_ler` o servidor não concede o número (FU4-F): a tela não fala de margem — nem
+  // "não apurada" nem "sem compra na janela", que seriam afirmações falsas sobre o cliente.
+  const margemOculta = s?.margem_oculta === true;
+  const semCompraNaJanela = !margemOculta && s?.gross_margin_pct == null && !coberturaItens
     ? legendaMargemSemCompraNaJanela(s?.days_since_last_purchase)
     : null;
   const waHref = whatsappLink(customer.phone);
@@ -168,7 +171,7 @@ export function CustomerHero({
                   nenhuma) linha com custo. Antes este caso sumia da tela, indistinguível de "sem
                   venda" — e é justamente o que o cadastro de custo resolveria. Neutro, não vermelho:
                   margem desconhecida não é margem ruim. */}
-              {s?.gross_margin_pct == null && coberturaItens && (
+              {!margemOculta && s?.gross_margin_pct == null && coberturaItens && (
                 <span
                   title={DICA_COBERTURA_LINHAS}
                   className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md border bg-muted text-muted-foreground"

@@ -18,7 +18,8 @@ export function IntelligenceOperationalTab({ farmerId }: OperationalTabProps) {
     queryFn: async () => {
       let query = supabase
         .from('farmer_client_scores')
-        .select('*')
+        // Lista explícita: `select('*')` inclui gross_margin_pct, fechada para authenticated (FU4-F).
+        .select('id, customer_user_id, health_score, health_class, priority_score, sales_history_status')
         .order('priority_score', { ascending: false })
         .limit(50);
       if (farmerId) query = query.eq('farmer_id', farmerId);

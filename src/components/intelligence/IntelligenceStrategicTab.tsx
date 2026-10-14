@@ -15,6 +15,7 @@ import {
 import { toast } from 'sonner';
 import { mediaMargensConhecidas, coberturaMargem, legendaCobertura } from '@/lib/scoring/margin';
 import { fetchAllPages } from '@/lib/postgrest';
+import { anexarMargens, buscarMargensScores, MARGEM_RESTRITA } from '@/lib/scoring/margemScores';
 import { KpiCard } from './KpiCard';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 
@@ -22,6 +23,8 @@ interface ScoreLinha {
   customer_user_id: string;
   /** PERCENTUAL (0–100, negativo válido). `null` = não apurada. Ver @/lib/scoring/margin. */
   gross_margin_pct: number | null;
+  /** `true` = o servidor não concedeu o número (sem cap_custo_ler) — não é "não apurada". */
+  margem_oculta: boolean;
   avg_monthly_spend_180d: number | null;
   avg_repurchase_interval: number | null;
   revenue_potential: number | null;
@@ -46,15 +49,19 @@ export function IntelligenceStrategicTab() {
     // Base COMPLETA, paginada. Era `.limit(500)` de 6.632 e SEM `.order()` — o Postgres não
     // garante ordem sem ORDER BY, então as 500 eram um recorte não determinístico: dois
     // carregamentos podiam produzir KPIs diferentes da mesma base, sem nada na tela indicando.
-    queryFn: () =>
-      fetchAllPages<ScoreLinha>((de, ate) =>
+    // A margem NÃO vem da tabela: a coluna é fechada para authenticated (FU4-F) e sai pela RPC
+    // com gate de projeção — sem cap_custo_ler vem `margem_oculta` e a tela mostra "—" restrito.
+    queryFn: async () => {
+      const linhas = await fetchAllPages<Omit<ScoreLinha, 'gross_margin_pct' | 'margem_oculta'>>((de, ate) =>
         supabase
           .from('farmer_client_scores')
-          .select('customer_user_id, gross_margin_pct, avg_monthly_spend_180d, avg_repurchase_interval, revenue_potential')
+          .select('customer_user_id, avg_monthly_spend_180d, avg_repurchase_interval, revenue_potential')
           .order('customer_user_id', { ascending: true })
-          .range(de, ate) as unknown as PromiseLike<{ data: ScoreLinha[] | null; error: unknown }>,
+          .range(de, ate) as unknown as PromiseLike<{ data: Omit<ScoreLinha, 'gross_margin_pct' | 'margem_oculta'>[] | null; error: unknown }>,
         'farmer_client_scores/intel-estrategico',
-      ),
+      );
+      return anexarMargens(linhas, await buscarMargensScores());
+    },
   });
 
   const { data: salesOrders } = useQuery({
@@ -137,6 +144,8 @@ export function IntelligenceStrategicTab() {
   // server-side, o KPI estratégico viraria uma medida de cobertura de custo disfarçada de margem.
   const avgGrossMargin = mediaMargensConhecidas((allScores ?? []).map(c => c.gross_margin_pct));
   const coberturaGrossMargin = coberturaMargem((allScores ?? []).map(c => c.gross_margin_pct));
+  // Sem cap_custo_ler o servidor não concede margem (FU4-F): "—" restrito, nunca "0 de N apuradas".
+  const margemOculta = (allScores ?? []).some(c => c.margem_oculta);
 
   const [runningAlgoA, setRunningAlgoA] = useState(false);
   const runAlgoA = async () => {
@@ -273,9 +282,9 @@ export function IntelligenceStrategicTab() {
         <KpiCard title="Concentração Top 20%" value={scoresIndisponivel || concentracaoIndisponivel ? '—' : `${concentrationPct.toFixed(1)}%`} icon={PieChart} subtitle={scoresIndisponivel ? 'base indisponível' : concentracaoIndisponivel ? 'potencial não medido' : 'da receita total'} />
         <KpiCard
           title="Margem Bruta Média"
-          value={scoresIndisponivel || avgGrossMargin == null ? '—' : `${avgGrossMargin.toFixed(1)}%`}
+          value={scoresIndisponivel || margemOculta || avgGrossMargin == null ? '—' : `${avgGrossMargin.toFixed(1)}%`}
           icon={Percent}
-          subtitle={scoresIndisponivel ? 'base indisponível' : legendaCobertura(coberturaGrossMargin)}
+          subtitle={scoresIndisponivel ? 'base indisponível' : margemOculta ? MARGEM_RESTRITA : legendaCobertura(coberturaGrossMargin)}
         />
       </div>
 

@@ -3,7 +3,7 @@ import { supabase } from '@/integrations/supabase/client';
 import type { Json } from '@/integrations/supabase/types';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { toast } from 'sonner';
-import { margemConhecida } from '@/lib/scoring/margin';
+import { buscarMargensScores } from '@/lib/scoring/margemScores';
 import { ehFalhaDePagina, fetchAllPages } from '@/lib/postgrest';
 import { erroComCausa, mensagemDeErro } from '@/lib/erro-mensagem';
 import { captureException } from '@/lib/analytics';
@@ -106,7 +106,6 @@ interface ClientScoreRow {
   answer_rate_60d: number | string | null;
   whatsapp_reply_rate_60d: number | string | null;
   avg_monthly_spend_180d: number | string | null;
-  gross_margin_pct: number | string | null;
   category_count: number | string | null;
   days_since_last_purchase: number | string | null;
 }
@@ -313,7 +312,9 @@ export const useBundleEngine = () => {
       const fetchAllScores = (filterFarmerId?: string): Promise<ClientScoreRow[]> =>
         fetchAllPages<ClientScoreRow>(
           (de, ate) => {
-            let q = supabase.from('farmer_client_scores').select('*');
+            // Lista explícita: `select('*')` inclui gross_margin_pct, fechada para authenticated (FU4-F) —
+            // a query inteira cairia com 42501. A margem vem da RPC com gate de projeção (margensDaCarteira).
+            let q = supabase.from('farmer_client_scores').select('customer_user_id, health_score, answer_rate_60d, whatsapp_reply_rate_60d, avg_monthly_spend_180d, category_count, days_since_last_purchase');
             if (filterFarmerId) q = q.eq('farmer_id', filterFarmerId);
             return q.order('customer_user_id', { ascending: true }).range(de, ate) as unknown as
               PromiseLike<{ data: ClientScoreRow[] | null; error: unknown }>;
@@ -330,6 +331,8 @@ export const useBundleEngine = () => {
       // gêmea deste bundle deixou 12 linhas de março sob um farmer que não era o dono de
       // nenhum dos 4 clientes. Carteira vazia → lista vazia (tratada logo abaixo).
       const clientScores = await fetchAllScores(effectiveUserId);
+      // Mesmo recorte (farmer_id = effectiveUserId); o escopo de linha e o gate do número são da RPC.
+      const margensDaCarteira = await buscarMargensScores({ farmerId: effectiveUserId });
 
       // As duas paginadas estouram a capa de 1.000 do PostgREST (3.108 SKUs ativos, 5.668
       // perfis) e vinham truncadas em silêncio: o profileMap deixava a maioria dos clientes sem
@@ -1057,7 +1060,8 @@ export const useBundleEngine = () => {
             bundles: topBundles,
             individuais,
             avgMonthlySpend: Number(score.avg_monthly_spend_180d || 0),
-            grossMarginPct: margemConhecida(score.gross_margin_pct),
+            // Sem cap_custo_ler a RPC devolve null: o perfil do cliente segue o ramo "margem desconhecida".
+            grossMarginPct: margensDaCarteira.get(cid)?.margem ?? null,
             categoryCount: Number(score.category_count || 0),
             daysSinceLastPurchase: Number(score.days_since_last_purchase || 0),
             cnae: profile.cnae || '',
