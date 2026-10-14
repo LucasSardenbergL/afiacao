@@ -3,6 +3,8 @@
 // NCG (fin_projecao_snapshots.ncg) e inputs manuais (fin_config_cashflow.valor_inputs),
 // e devolve o bloco "valor" por empresa. Helpers espelhados VERBATIM de src/lib/financeiro/valor-helpers.ts.
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { authorizeCronOrStaff } from "../_shared/auth.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -250,11 +252,31 @@ type ValorInputsRaw = {
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+
+  // Sonda de versão — ANTES do gate normal e de qualquer IO, com gate PRÓPRIO (GATE_PROPRIO):
+  // o gate normal exige Bearer + role e o caminho do SQL Editor (`x-cron-secret`) morreria nele.
+  // Ver versao.ts / _shared/sonda-versao.ts.
+  let corpoBruto: unknown = {};
+  let corpoJsonInvalido = false;
+  try {
+    corpoBruto = await req.json();
+  } catch {
+    corpoJsonInvalido = true;
+  }
+  const decisaoSonda = classificarSonda(corpoBruto);
+  if (decisaoSonda.tipo !== "disparo") {
+    const authSonda = await authorizeCronOrStaff(req);
+    if (!authSonda.ok) return authSonda.response;
+    if (decisaoSonda.tipo === "sonda") return jsonResponse(respostaSonda(VERSAO), 200);
+    return jsonResponse({ error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }, 400);
+  }
+
   const auth = await authorizeMaster(req);
   if (!auth.ok) return auth.response;
 
-  let payload: Input;
-  try { payload = await req.json(); } catch { return jsonResponse({ error: "invalid JSON" }, 400); }
+  // O corpo de um Request só se lê UMA vez: `corpoBruto` já foi lido pela sonda acima.
+  if (corpoJsonInvalido) return jsonResponse({ error: "invalid JSON" }, 400);
+  const payload = corpoBruto as Input;
   const company = payload.company;
   if (!company) return jsonResponse({ error: "company obrigatório" }, 400);
 
