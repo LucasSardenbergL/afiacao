@@ -168,6 +168,13 @@ const FinanceiroOrcamento = () => {
     return buildOrcadoForecast(draft);
   }, [draft]);
 
+  // DRE fase 2: o adaptador do forecast só leva as linhas; a pendência viaja à parte e vira aviso
+  // (realizado, forecast e "sugerir do ano anterior" partem de resultado provisório).
+  const mesesProvisorios = useMemo(
+    () => [...dre, ...dreAnoAnterior].filter(d => d.resultado_provisorio === true).map(d => `${String(d.mes).padStart(2, '0')}/${d.ano}`),
+    [dre, dreAnoAnterior],
+  );
+
   // Forecast de aterrissagem
   const dreAtualMesDRE = useMemo((): MesDRE[] => {
     return dre.map(d => {
@@ -362,6 +369,14 @@ const FinanceiroOrcamento = () => {
           )}
         </div>
       </div>
+
+      {mesesProvisorios.length > 0 && (
+        <div role="status" className="p-3 rounded-lg bg-status-warning-bg border border-status-warning/30 text-xs text-status-warning-fg">
+          Resultado provisório em {mesesProvisorios.join(', ')}: saídas fora do DRE (empréstimo/parcelamento/investimento)
+          têm composição principal × juros pendente — os juros não estão nas despesas financeiras. Realizado, forecast e
+          resultado projetado abaixo herdam essa pendência.
+        </div>
+      )}
 
       {/* YTD Summary */}
       <Card>

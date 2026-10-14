@@ -266,7 +266,12 @@ export type DreLinha =
   | 'despesas_financeiras' | 'receitas_financeiras'
   | 'outras_receitas' | 'outras_despesas' | 'impostos';
 
-/** As 11 linhas, na ordem do tipo `DreLinha` de supabase/functions/fin-suggest-mapping/index.ts. */
+/**
+ * As 11 linhas que a SUGESTÃO por keyword usa, na ordem do tipo `DreLinha` de
+ * supabase/functions/fin-suggest-mapping/index.ts. As da DRE fase 2 (imposto específico, fora_dre)
+ * existem no mapa, mas só por decisão da própria empresa — ficam fora deste vocabulário ("nenhuma"
+ * continua sendo a resposta certa para empréstimo/imobilizado).
+ */
 export const LINHAS_DRE: ReadonlyArray<{ chave: DreLinha; descricao: string }> = [
   { chave: 'receita_bruta', descricao: 'Receita bruta: venda de mercadorias, de produtos e prestação de serviços.' },
   { chave: 'deducoes', descricao: 'Deduções da receita: devoluções, cancelamentos e descontos incondicionais sobre vendas.' },

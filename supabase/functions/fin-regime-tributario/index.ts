@@ -4,6 +4,9 @@
 // Helpers espelhados VERBATIM de src/lib/financeiro/regime-tributario-helpers.ts (+ dre-tabelas-tributarias.ts
 // e aliquotaEfetivaSimples/faixaPorRBT12 de dre-helpers.ts). Estilo de leitura espelhado de fin-valor-engine.
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
+import { authorizeCronOrStaff } from "../_shared/auth.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -296,8 +299,10 @@ function compararRegimes(input: {
   });
 }
 
-function recomendarRegime(comparados: RegimeComparado[], regimeAtual: RegimeNome, opts: { bandaErro: number; dadosCompletos?: boolean }):
+function recomendarRegime(comparados: RegimeComparado[], regimeAtual: RegimeNome, opts: { bandaErro: number; dadosCompletos?: boolean; lucroProvisorio?: boolean }):
   { recomendado: RegimeNome | null; economia_anual: number | null; status: StatusRecomendacao } {
+  // DRE fase 2: lucro provisório (fora_dre com composição pendente) ⇒ comparação suspensa.
+  if (opts.lucroProvisorio) return { recomendado: null, economia_anual: null, status: "incompleto" };
   const elegiveis = comparados.filter((c) => c.elegivel);
   if (elegiveis.length === 0) return { recomendado: null, economia_anual: null, status: "incompleto" };
   const melhor = elegiveis[0];
@@ -350,6 +355,9 @@ const RECEITA_TRIBUTAVEL_PIS_COFINS_PCT_DEFAULT = 1;
 type DreRow = {
   ano: number; mes: number;
   receita_bruta: number; receitas_financeiras: number; resultado_antes_impostos: number;
+  // DRE fase 2: true = saída fora do DRE com composição pendente (lucro provisório);
+  // NULL = snapshot pré-fase 2.
+  resultado_provisorio: boolean | null;
 };
 
 // Shape cru (defensivo) do JSONB regime_inputs.
@@ -375,12 +383,14 @@ function numOrNull(x: unknown): number | null {
 type RegimeEmpresaResult = {
   empresa: string; regime_atual: RegimeNome; ttm: { ano_mes_fim: string; meses: number };
   comparados: RegimeComparado[]; recomendado: RegimeNome | null; economia_anual: number | null; status: StatusRecomendacao;
+  /** Causa do 'incompleto' quando NÃO é falta de folha/meses — a tela troca o texto. */
+  motivo_incompleto: "resultado_provisorio" | null;
   break_even: { margem_real_vs_presumido: number | null; fator_r: number };
   eixo_indireto: { icms_iss_ipi_simples: number | null; observacao: string };
   confianca: { nivel: "alta" | "media" | "baixa"; motivos: string[] };
   regime_inputs: { folha_cpp_anual: number | null; massa_fator_r_anual: number | null; encargo_patronal_pct: number | null; presuncao_irpj: number | null; presuncao_csll: number | null; credito_pis_cofins_estimado: number | null; receita_tributavel_pis_cofins_pct: number | null; anexo_simples: string | null };
 };
-type RegimeTributarioResult = { por_empresa: RegimeEmpresaResult[]; consolidado: { imposto_atual_total: number; imposto_otimizado_total: number; economia_total: number; confianca: "alta" | "media" | "baixa" }; gerado_em: string };
+type RegimeTributarioResult = { por_empresa: RegimeEmpresaResult[]; consolidado: { imposto_atual_total: number; imposto_otimizado_total: number; economia_total: number; confianca: "alta" | "media" | "baixa"; empresas_incompletas: string[] }; gerado_em: string };
 
 type DbClient = ReturnType<typeof createClient>;
 
@@ -389,11 +399,15 @@ async function calcularEmpresa(db: DbClient, empresa: Company): Promise<RegimeEm
   const defaults = DEFAULTS_POR_EMPRESA[empresa];
 
   // 1) DRE TTM (regime competência), ordenada por ano,mes
-  const { data: dreRows } = await db.from("fin_dre_snapshots")
-    .select("ano, mes, receita_bruta, receitas_financeiras, resultado_antes_impostos")
+  const { data: dreRows, error: dreError } = await db.from("fin_dre_snapshots")
+    .select("ano, mes, receita_bruta, receitas_financeiras, resultado_antes_impostos, resultado_provisorio")
     .eq("company", empresa).eq("regime", "competencia")
     .order("ano", { ascending: true }).order("mes", { ascending: true });
-  const allRows = (dreRows ?? []) as DreRow[];
+  // Falha de DB / resposta malformada NÃO é "empresa sem DRE": coalescer para [] sumia a empresa
+  // da comparação (e do consolidado) sem sinal.
+  if (dreError) throw new Error(`fin_dre_snapshots ${empresa}: ${dreError.message}`);
+  if (dreRows == null) throw new Error(`fin_dre_snapshots ${empresa}: data null sem error (resposta malformada)`);
+  const allRows = dreRows as DreRow[];
   if (allRows.length === 0) return null;
 
   // Pega os 12 meses mais recentes (cronológico, ordenado por ano*12+mes).
@@ -434,8 +448,10 @@ async function calcularEmpresa(db: DbClient, empresa: Company): Promise<RegimeEm
   engineFlags.push("RBA aproximada por TTM.");
 
   // 4) Parse inputs + defaults.
-  const { data: inputsRow } = await db.from("fin_regime_inputs")
+  const { data: inputsRow, error: inputsError } = await db.from("fin_regime_inputs")
     .select("regime_inputs").eq("company", empresa).maybeSingle();
+  // Falha de leitura NÃO é "inputs não cadastrados": defaults silenciosos virariam simulação.
+  if (inputsError) throw new Error(`fin_regime_inputs ${empresa}: ${inputsError.message}`);
   const ri = ((inputsRow as { regime_inputs?: Record<string, unknown> } | null)?.regime_inputs ?? {}) as RegimeInputsRaw;
 
   const folhaCppAnual = numOrNull(ri.folha_cpp_anual);
@@ -505,8 +521,19 @@ async function calcularEmpresa(db: DbClient, empresa: Company): Promise<RegimeEm
     }
   }
 
+  // 8c) DRE fase 2: lucro provisório (saída fora do DRE com composição principal × juros pendente).
+  // O Real depende do lucro; Simples/Presumido não, mas a recomendação é COMPARAÇÃO → suspende.
+  // As simulações seguem visíveis; o Real fica marcado.
+  const mesesProvisorios = window.filter((r) => r.resultado_provisorio === true).length;
+  const mesesLegados = window.filter((r) => r.resultado_provisorio == null).length;
+  if (mesesProvisorios > 0) {
+    for (const c of comparados) {
+      if (c.regime === "real") c.flags.push(`Lucro provisório em ${mesesProvisorios} mês(es): há saída fora do DRE com composição pendente (juros dentro de parcelas) — Real não comparável.`);
+    }
+  }
+
   // 9) Recomendação.
-  const rec = recomendarRegime(comparados, regime_atual, { bandaErro: 0.05, dadosCompletos });
+  const rec = recomendarRegime(comparados, regime_atual, { bandaErro: 0.05, dadosCompletos, lucroProvisorio: mesesProvisorios > 0 });
 
   // 10) Confiança.
   const semFlagsFortes = folhaConhecida && recTribInformado && encargoInformado && elegSimples.status_elegibilidade === "elegivel";
@@ -516,6 +543,13 @@ async function calcularEmpresa(db: DbClient, empresa: Company): Promise<RegimeEm
   if (!recTribInformado) conf.motivos.push("Receita tributável PIS/COFINS assumida 100% (monofásico/ST/alíquota-zero não segregados).");
   // Anexa as flags de nível-engine aos motivos da confiança.
   conf.motivos.push(...engineFlags);
+  if (mesesProvisorios > 0) {
+    conf.nivel = "baixa";
+    conf.motivos.push(`Recomendação suspensa: ${mesesProvisorios} mês(es) da janela com resultado provisório (composição fora do DRE pendente).`);
+  } else if (mesesLegados > 0 && mesesLegados < window.length) {
+    if (conf.nivel === "alta") conf.nivel = "media";
+    conf.motivos.push(`Janela mista: ${mesesLegados} mês(es) calculados antes da segregação fora do DRE — lucro de bases diferentes.`);
+  }
 
   return {
     empresa,
@@ -525,6 +559,7 @@ async function calcularEmpresa(db: DbClient, empresa: Company): Promise<RegimeEm
     recomendado: rec.recomendado,
     economia_anual: rec.economia_anual,
     status: rec.status,
+    motivo_incompleto: mesesProvisorios > 0 ? "resultado_provisorio" : null,
     break_even: {
       margem_real_vs_presumido: breakEvenMargemReal({ presuncaoIrpj, presuncaoCsll }),
       fator_r: 0.28,
@@ -551,22 +586,52 @@ const NIVEL_NUM: Record<"alta" | "media" | "baixa", number> = { baixa: 1, media:
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+
+  // Sonda de versão — ANTES do gate normal e de qualquer IO, com gate PRÓPRIO (GATE_PROPRIO):
+  // o gate normal exige Bearer + role e o caminho do SQL Editor (`x-cron-secret`) morreria nele.
+  // Ver versao.ts / _shared/sonda-versao.ts.
+  let corpoBruto: unknown = {};
+  try {
+    corpoBruto = await req.json();
+  } catch {
+    // sem corpo (o front chama sem body): segue como disparo
+  }
+  const decisaoSonda = classificarSonda(corpoBruto);
+  if (decisaoSonda.tipo !== "disparo") {
+    const authSonda = await authorizeCronOrStaff(req);
+    if (!authSonda.ok) return authSonda.response;
+    if (decisaoSonda.tipo === "sonda") return jsonResponse(respostaSonda(VERSAO), 200);
+    return jsonResponse({ error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }, 400);
+  }
+
   const auth = await authorizeMaster(req);
   if (!auth.ok) return auth.response;
 
   const db: DbClient = createClient(SUPABASE_URL, SERVICE_ROLE);
 
   const por_empresa: RegimeEmpresaResult[] = [];
-  for (const empresa of EMPRESAS) {
-    const res = await calcularEmpresa(db, empresa);
-    if (res) por_empresa.push(res);
+  // Empresa sem snapshot não some em silêncio: o consolidado deixa de ser das 3 e precisa dizer.
+  const empresas_sem_dre: string[] = [];
+  try {
+    for (const empresa of EMPRESAS) {
+      const res = await calcularEmpresa(db, empresa);
+      if (res) por_empresa.push(res);
+      else empresas_sem_dre.push(empresa);
+    }
+  } catch (e) {
+    // Leitura falhou: resposta 500 com CORS (um throw cru vira erro de rede opaco na tela).
+    return jsonResponse({ error: mensagemDeErro(e) ?? "Falha ao ler a DRE (sem mensagem)." }, 500);
   }
 
   // Consolidado.
   let imposto_atual_total = 0;
   let imposto_otimizado_total = 0;
   let confianca_pior = 3;
+  // Empresa incompleta entra com otimizado = atual (economia 0): o total é SUBTOTAL das comparáveis,
+  // e a tela precisa dizer quais ficaram de fora.
+  const empresas_incompletas: string[] = [...empresas_sem_dre];
   for (const e of por_empresa) {
+    if (e.status === "incompleto") empresas_incompletas.push(e.empresa);
     const atualComp = e.comparados.find((c) => c.regime === e.regime_atual);
     const atualValor = atualComp ? atualComp.total_federal_cpp : 0;
     imposto_atual_total += atualValor;
@@ -581,11 +646,12 @@ Deno.serve(async (req: Request) => {
     if (n < confianca_pior) confianca_pior = n;
   }
   const economia_total = Math.max(0, imposto_atual_total - imposto_otimizado_total);
+  if (empresas_sem_dre.length > 0) confianca_pior = 1;
   const confianca: "alta" | "media" | "baixa" = confianca_pior === 1 ? "baixa" : confianca_pior === 2 ? "media" : "alta";
 
   const result: RegimeTributarioResult = {
     por_empresa,
-    consolidado: { imposto_atual_total, imposto_otimizado_total, economia_total, confianca },
+    consolidado: { imposto_atual_total, imposto_otimizado_total, economia_total, confianca, empresas_incompletas },
     gerado_em: new Date().toISOString(),
   };
   return jsonResponse(result, 200);

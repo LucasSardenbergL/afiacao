@@ -201,3 +201,20 @@ describe('scoreConfiancaRegime — TTM incompleto', () => {
     expect(c.nivel).toBe('baixa');
   });
 });
+
+describe('recomendarRegime — DRE fase 2: lucro provisório suspende a comparação', () => {
+  const comparados = () => compararRegimes({
+    simples: { total_federal_cpp: 40000, das_total: 50000, icms_iss_ipi: 10000, aproximado: true },
+    elegSimples: { status_elegibilidade: 'elegivel', motivo_inelegivel: null },
+    presumido: { irpj: 30000, csll: 20000, pis: 0, cofins: 0, cpp: 10000, total_federal_cpp: 60000 },
+    real: { irpj: 10000, csll: 5000, pis_cofins: 40000, cpp: 10000, total_federal_cpp: 65000, credito_aplicado: 0, lucro_usado: 0 },
+  });
+  it('com lucro provisório: incompleto, sem recomendado e sem economia (mesmo com dados completos)', () => {
+    const r = recomendarRegime(comparados(), 'presumido', { bandaErro: 0.05, dadosCompletos: true, lucroProvisorio: true });
+    expect(r).toEqual({ recomendado: null, economia_anual: null, status: 'incompleto' });
+  });
+  it('controle: o mesmo caso sem lucro provisório recomenda', () => {
+    const r = recomendarRegime(comparados(), 'presumido', { bandaErro: 0.05, dadosCompletos: true, lucroProvisorio: false });
+    expect(r.status).toBe('recomenda');
+  });
+});

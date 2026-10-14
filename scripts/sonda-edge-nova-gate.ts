@@ -196,11 +196,15 @@ export interface Achado {
  * `leitura-pura` é FALSIFICADA pelo gate contra o corpo da edge. Se a edge passar a escrever
  * depois, o teste-sentinela de estado (no `.test.ts`) cobra a saída da lista.
  *
- * Vazia hoje de propósito: ela cobre o que NASCE daqui para a frente, e as 55 não-instrumentadas
- * que já existiam não passam por este gate — retroalimentá-la seria inventar assinatura de
- * decisão que ninguém tomou.
+ * Começou vazia de propósito: as não-instrumentadas que já existiam só entram quando um PR mexe
+ * nelas e DECIDE (retroalimentar seria inventar assinatura de decisão que ninguém tomou).
  */
-export const DISPENSAS: Record<string, Dispensa> = {};
+export const DISPENSAS: Record<string, Dispensa> = {
+  // 2026-10-14: as três dispensas da DRE fase 2 (#3063) — `fin-regime-tributario`,
+  // `fin-valor-engine` e `fin-suggest-mapping` — saíram por decisão do founder: as quatro do
+  // financeiro de leitura ganharam sonda. "Leitura pura" garante que chamar é barato, e é muda
+  // sobre QUAL bundle responde — o argumento do `fin-valor-cockpit/versao.ts`.
+};
 
 /**
  * ⚠️ LIMITE das duas detecções abaixo: elas leem o corpo da PASTA da edge, não o fecho transitivo

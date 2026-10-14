@@ -119,7 +119,7 @@ const FinanceiroCockpit = () => {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 stagger-children">
         <MiniCard label="Margem Bruta" value={`${margemBruta.toFixed(1)}%`}
           color={margemBruta >= 30 ? 'text-status-success' : 'text-status-warning'} />
-        <MiniCard label="Margem Operacional" value={`${margemOp.toFixed(1)}%`}
+        <MiniCard label={dreConsolidado.some((d) => d.resultado_provisorio === true) ? 'Margem Operacional (provisória)' : 'Margem Operacional'} value={`${margemOp.toFixed(1)}%`}
           color={margemOp >= 10 ? 'text-status-success' : margemOp >= 0 ? 'text-status-warning' : 'text-status-error'} />
         <MiniCard label="Inadimplência" value={`${pctInadimplencia.toFixed(1)}%`}
           color={pctInadimplencia <= 10 ? 'text-status-success' : pctInadimplencia <= 25 ? 'text-status-warning' : 'text-status-error'}

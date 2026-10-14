@@ -15,6 +15,7 @@ import { estadoDeLeitura, naoConsegui } from '@/lib/leitura/estado-de-leitura';
 import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 import { Link } from 'react-router-dom';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
+import { provisorioConsolidado } from '@/lib/financeiro/dre-helpers';
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
@@ -29,6 +30,9 @@ const FinanceiroIntercompany = () => {
   const [regras, setRegras] = useState<EliminacaoRegra[]>([]);
   const [loading, setLoading] = useState(true);
   const [consolidado, setConsolidado] = useState<ConsolidadoRow[]>([]);
+  // DRE fase 2: a RPC soma resultado sem carregar a pendência — o estado vem dos snapshots do mês.
+  // 'erro' = não deu para ler; null = snapshots pré-fase 2 (nada declarado) — nenhum dos dois é "sem pendência".
+  const [provisorioMes, setProvisorioMes] = useState<boolean | null | 'erro'>(null);
   const [ano, setAno] = useState(new Date().getFullYear());
   const [mes, setMes] = useState(new Date().getMonth() + 1);
   const icDivQuery = useIcMatches('divergencia_valor');
@@ -61,6 +65,12 @@ const FinanceiroIntercompany = () => {
         );
         setConsolidado((cons as unknown as ConsolidadoRow[]) || []);
       } catch { /* RPC may not exist */ }
+      const { data: snaps, error: snapsErr } = await supabase
+        .from('fin_dre_snapshots')
+        .select('company, resultado_provisorio')
+        .eq('ano', ano).eq('mes', mes).eq('regime', 'competencia')
+        .limit(3);
+      setProvisorioMes(snapsErr || snaps == null ? 'erro' : provisorioConsolidado(snaps.map((r) => r.resultado_provisorio)));
     } catch (e) {
       const message = mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.';
       toast.error('Erro', { description: message });
@@ -156,6 +166,12 @@ const FinanceiroIntercompany = () => {
             <CardTitle className="text-base flex items-center gap-2">
               <BarChart3 className="w-4 h-4" />
               DRE Consolidado — {['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'][mes - 1]}/{ano}
+              {provisorioMes === true && (
+                <span className="text-xs font-normal text-status-warning">resultado provisório (fora do DRE com composição pendente)</span>
+              )}
+              {provisorioMes === 'erro' && (
+                <span className="text-xs font-normal text-muted-foreground">status de composição indisponível (leitura falhou)</span>
+              )}
             </CardTitle>
           </CardHeader>
           <CardContent className="p-0">

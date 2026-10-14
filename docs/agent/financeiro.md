@@ -65,3 +65,13 @@
 - Todo R$ da aba é **cenário rotulado**; encurtar prazo de quem paga ANTES do vencimento pode liberar zero (sem R$).
 - ⚠️ **`numero_documento` vem como `''` (string vazia) na oben** (2 valores distintos em 5,5k títulos de 12m): `coalesce` não pega `''`. A chave de documento é `coalesce(nullif(btrim(numero_documento_fiscal),''), nullif(btrim(numero_documento),''))`. Sem isso, nenhum cliente da oben passava de confiança baixa (pré-voo: 0 → 153 clientes com ≥6 NFs).
 - **'VENCE HOJE' é status Omie legítimo**, não ambíguo; título aberto (A VENCER/VENCE HOJE) com vencimento < `hoje_sp` e saldo > 0 conta como vencido (lag de sync).
+
+## DRE fase 2 — `fora_dre` (composição pendente) e imposto em linha própria
+
+> 2026-10-13. Migration `20261013230000`, mapa `db/2026-10-13-fin-dre-mapa-colacor-fase2.sql`, prova `db/test-fin-dre-fora-dre.sh`. Diário: `docs/historico/dre-fora-dre-fase2.md`.
+
+- **`fora_dre` sai de TODO subtotal, mas não some:** continua em `detalhamento.despesas`, no universo de confiança (`valorTotal`/`valorMapeado`/fallback) e no caixa. Toda movimentação `fora_dre ≠ 0` ⇒ `resultado_provisorio=true` (a parcela mistura principal e juros que o Omie não separa). `false` = "sem pendência identificada", **nunca** "lucro validado"; `NULL` = snapshot pré-fase 2.
+- ⚠️ **Consumidor de `resultado_*` TEM de ler `resultado_provisorio`** (coluna, 1 writer = `calcularDRE`): PE suspende, regime tributário não recomenda, ranking de valor não ordena, telas/CSV carregam o selo. Consolidado é **tri-state** (algum true → true; todos false → false; resto → NULL) — OR simples apagaria o desconhecimento.
+- ⚠️ **Linhas não-herdáveis por prefixo:** `fora_dre`, `ded_*`, `das`, `irpj`, `csll` só valem pelo código EXATO (um filho novo de 2.07 não sai do DRE sem decisão). Mapa com valor que o motor não honra (desconhecido; IRPJ/CSLL no Simples) cai na heurística com `mapeado:false` e confiança baixa — nunca mais "mapeado" por fallback.
+- **Reconciliar pelo MESMO universo:** `detalhamento.composicao_despesas` (chave do detalhamento → linha → R$) é o que o motor usou; consumidor filtra por ela, por mês e por linha, em vez de reclassificar com o mapa atual.
+- **Ordem de deploy:** migration → edge `omie-financeiro` (atestada) → mapa (a precondição do script confere versão+fonte servidas na mesma transação) → recálculo caixa **e** competência.

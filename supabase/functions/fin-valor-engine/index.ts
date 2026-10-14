@@ -3,6 +3,8 @@
 // NCG (fin_projecao_snapshots.ncg) e inputs manuais (fin_config_cashflow.valor_inputs),
 // e devolve o bloco "valor" por empresa. Helpers espelhados VERBATIM de src/lib/financeiro/valor-helpers.ts.
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { authorizeCronOrStaff } from "../_shared/auth.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -197,6 +199,8 @@ type DreRow = {
   ano: number; mes: number;
   receita_liquida: number; resultado_operacional: number; receitas_financeiras: number; despesas_financeiras: number;
   detalhamento: { impostos?: Record<string, number>; confianca?: { nivel?: "alta" | "media" | "baixa" } } | null;
+  // DRE fase 2: true = fora_dre com composição pendente (resultado provisório). NULL = pré-fase 2.
+  resultado_provisorio: boolean | null;
 };
 
 function somaJanela(rows: DreRow[], idxFim: number, meses = 12) {
@@ -204,13 +208,14 @@ function somaJanela(rows: DreRow[], idxFim: number, meses = 12) {
   const acc = {
     receita_liquida: 0, resultado_operacional: 0, receitas_financeiras: 0, despesas_financeiras: 0,
     irpj: 0, csll: 0, das: 0, ded_pis: 0, ded_cofins: 0, ded_icms: 0, ded_iss: 0, ded_ipi: 0,
-    confianca_pior: 3, count: 0,
+    confianca_pior: 3, count: 0, provisorios: 0,
   };
   const nivelNum = (n?: string) => (n === "baixa" ? 1 : n === "media" ? 2 : 3);
   for (const r of rows) {
     const idx = r.ano * 12 + r.mes;
     if (idx < idxFim - (meses - 1) || idx > idxFim) continue;
     acc.count++;
+    if (r.resultado_provisorio === true) acc.provisorios++;
     acc.receita_liquida += r.receita_liquida ?? 0;
     acc.resultado_operacional += r.resultado_operacional ?? 0;
     acc.receitas_financeiras += r.receitas_financeiras ?? 0;
@@ -247,11 +252,31 @@ type ValorInputsRaw = {
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+
+  // Sonda de versão — ANTES do gate normal e de qualquer IO, com gate PRÓPRIO (GATE_PROPRIO):
+  // o gate normal exige Bearer + role e o caminho do SQL Editor (`x-cron-secret`) morreria nele.
+  // Ver versao.ts / _shared/sonda-versao.ts.
+  let corpoBruto: unknown = {};
+  let corpoJsonInvalido = false;
+  try {
+    corpoBruto = await req.json();
+  } catch {
+    corpoJsonInvalido = true;
+  }
+  const decisaoSonda = classificarSonda(corpoBruto);
+  if (decisaoSonda.tipo !== "disparo") {
+    const authSonda = await authorizeCronOrStaff(req);
+    if (!authSonda.ok) return authSonda.response;
+    if (decisaoSonda.tipo === "sonda") return jsonResponse(respostaSonda(VERSAO), 200);
+    return jsonResponse({ error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }, 400);
+  }
+
   const auth = await authorizeMaster(req);
   if (!auth.ok) return auth.response;
 
-  let payload: Input;
-  try { payload = await req.json(); } catch { return jsonResponse({ error: "invalid JSON" }, 400); }
+  // O corpo de um Request só se lê UMA vez: `corpoBruto` já foi lido pela sonda acima.
+  if (corpoJsonInvalido) return jsonResponse({ error: "invalid JSON" }, 400);
+  const payload = corpoBruto as Input;
   const company = payload.company;
   if (!company) return jsonResponse({ error: "company obrigatório" }, 400);
 
@@ -273,10 +298,13 @@ Deno.serve(async (req: Request) => {
   const imposto_teorico_parcial = !configCompleta;
 
   // 2) DRE TTM (regime competência)
-  const { data: dreRows } = await db.from("fin_dre_snapshots")
-    .select("ano, mes, receita_liquida, resultado_operacional, receitas_financeiras, despesas_financeiras, detalhamento")
+  const { data: dreRows, error: dreError } = await db.from("fin_dre_snapshots")
+    .select("ano, mes, receita_liquida, resultado_operacional, receitas_financeiras, despesas_financeiras, detalhamento, resultado_provisorio")
     .eq("company", company).eq("regime", "competencia");
-  const rows = (dreRows ?? []) as DreRow[];
+  // Falha de DB / resposta malformada NÃO é "sem snapshots" (422 enganoso): lança.
+  if (dreError) return jsonResponse({ error: `fin_dre_snapshots ${company}: ${dreError.message}` }, 500);
+  if (dreRows == null) return jsonResponse({ error: `fin_dre_snapshots ${company}: data null sem error (resposta malformada)` }, 500);
+  const rows = dreRows as DreRow[];
   if (rows.length === 0) {
     return jsonResponse({ error: "Sem snapshots de DRE (competência) para esta empresa. Rode a DRE primeiro." }, 422);
   }
@@ -284,7 +312,12 @@ Deno.serve(async (req: Request) => {
   const ttm = somaJanela(rows, idxFim, 12);
   const ttmAnterior = somaJanela(rows, idxFim - 12, 12);
   const ano_mes_fim = `${Math.floor((idxFim - 1) / 12)}-${String(((idxFim - 1) % 12) + 1).padStart(2, "0")}`;
-  const dre_confianca: "alta" | "media" | "baixa" = ttm.confianca_pior === 1 ? "baixa" : ttm.confianca_pior === 2 ? "media" : "alta";
+  // O ROIC incremental usa os DOIS TTMs: a qualidade é a pior das duas janelas (a anterior só se existir).
+  const confPior = ttmAnterior.count > 0 ? Math.min(ttm.confianca_pior, ttmAnterior.confianca_pior) : ttm.confianca_pior;
+  const dre_confianca: "alta" | "media" | "baixa" = confPior === 1 ? "baixa" : confPior === 2 ? "media" : "alta";
+  // DRE fase 2: EBIT exclui fora_dre por natureza, mas a composição pendente pode esconder juros/
+  // tributo dentro da parcela — estimativa PROVISÓRIA, e a tela não ranqueia "onde o próximo R$1 rende".
+  const mesesProvisorios = ttm.provisorios + ttmAnterior.provisorios;
 
   // 3) Capital de giro: snapshots crus da engine A1. Resolução (ausente ≠ R$0 + frescor + −12m) na
   // composta pura `resolverCapitalParaValor`, chamada na seção 6 (depende de ativo_fixo/ajustes).
@@ -369,10 +402,14 @@ Deno.serve(async (req: Request) => {
   const nopat_normalizado_aproximado = cg.aplicado && (cg.ajuste_prolabore !== 0 || cg.ajuste_aluguel !== 0);
   // Motivo de NCG ausente/defasado vem estruturado de capRep.motivos / scoreConfiancaValor (não mais inline).
   const motivos = [...capRep.motivos, ...waccBase.motivos, ...cg.motivos];
+  if (mesesProvisorios > 0) {
+    motivos.push(`${mesesProvisorios} mês(es) de DRE com resultado provisório (saída fora do DRE com composição principal × juros pendente) — EBIT/ROIC são estimativa provisória.`);
+  }
 
   const result = {
     company, regime,
     ttm: { ano_mes_fim, meses: ttm.count, tem_anterior: nopatAnterior != null && capAnterior != null },
+    resultado_provisorio: mesesProvisorios > 0,
     reportado: {
       ebit: nopatAtual.ebit, nopat: nopatAtual.nopat,
       imposto_operacional_nopat: nopatAtual.imposto_operacional_nopat,

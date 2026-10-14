@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   pontoEquilibrio,
   somaCodigosPorPrefixo,
+  despesasNoDRE,
   type MesDRE,
   type TipoCusto,
 } from '../ponto-equilibrio-helpers';
@@ -272,5 +273,104 @@ describe('pontoEquilibrio — F3 v2: rateio de custo fixo compartilhado', () => 
       },
     ];
     expect(somaCodigosPorPrefixo(meses, ['2.03'])).toBeCloseTo(12, 2); // 10+2, ignora 2.01.01
+  });
+});
+
+// ── DRE fase 2: universo do PE pela composição do PRÓPRIO snapshot ─────────────────────────────
+// Mês fase 2: receita 100; CP = CMV 60 + aluguel 25 + ICMS 5 (ded_icms) + empréstimo 10 (fora_dre).
+// O motor pôs ICMS nas deduções (deducoes_col=5) e o empréstimo fora: linhas cmv=60, op=25.
+function mesFase2(mes: number, over: Partial<MesDRE> = {}): MesDRE {
+  return mesUniforme(2026, mes, {
+    deducoes_col: 5,
+    despesas: { '2.01.01': 60, '2.04.01': 25, '2.06.01': 5, '2.05.03': 10 },
+    composicao_despesas: {
+      '2.01.01': { cmv: 60 },
+      '2.04.01': { despesas_operacionais: 25 },
+      '2.06.01': { ded_icms: 5 },
+      '2.05.03': { fora_dre: 10 },
+    },
+    resultado_provisorio: false,
+    ...over,
+  });
+}
+const dozeFase2 = (over?: (mes: number) => Partial<MesDRE>) =>
+  Array.from({ length: 12 }, (_, i) => mesFase2(i + 1, over?.(i + 1)));
+
+describe('pontoEquilibrio — DRE fase 2 (composição do snapshot)', () => {
+  it('imposto e fora_dre saem do universo; reconcilia; ICMS entra 1× via deducoes_col (sem gate 4)', () => {
+    const r = pontoEquilibrio({ meses: dozeFase2(), classificacao: CLASS });
+    expect(r.motivo).toBe('ok');
+    // variáveis = deduções 60 + CMV 720 = 780; MC% = 420/1200 = 0,35; fixos 300 → PE 857,14
+    expect(r.custos_variaveis).toBeCloseTo(780, 2);
+    expect(r.mc_pct).toBeCloseTo(0.35, 4);
+    expect(r.pe_receita).toBeCloseTo(300 / 0.35, 2);
+    expect(r.excluido_deducoes_ttm).toBeCloseTo(60, 2);
+    expect(r.excluido_fora_dre_ttm).toBeCloseTo(120, 2);
+    expect(r.cobertura_pct).toBeCloseTo(1, 4); // 2.06.01/2.05.03 não precisam de classificação
+  });
+
+  it('o mesmo snapshot SEM composição (legado) cai no gate 4 — controle do caminho antigo', () => {
+    const legado = dozeFase2(() => ({ composicao_despesas: null }));
+    expect(pontoEquilibrio({ meses: legado, classificacao: CLASS }).motivo).not.toBe('ok');
+  });
+
+  it('mês com resultado provisório suspende o PE', () => {
+    const r = pontoEquilibrio({ meses: dozeFase2((m) => (m === 12 ? { resultado_provisorio: true } : {})), classificacao: CLASS });
+    expect(r.motivo).toBe('resultado_provisorio');
+    expect(r.pe_receita).toBeNull();
+  });
+
+  it('composição que não fecha com o detalhamento ⇒ snapshot_inconsistente', () => {
+    const torto = dozeFase2((m) => (m === 3 ? { composicao_despesas: { '2.01.01': { cmv: 60 }, '2.04.01': { despesas_operacionais: 25 }, '2.06.01': { ded_icms: 5 }, '2.05.03': { fora_dre: 9 } } } : {}));
+    expect(pontoEquilibrio({ meses: torto, classificacao: CLASS }).motivo).toBe('snapshot_inconsistente');
+  });
+
+  it('composição sem uma chave do detalhamento ⇒ snapshot_inconsistente (código não some)', () => {
+    const falta = dozeFase2((m) => (m === 5 ? { composicao_despesas: { '2.01.01': { cmv: 60 }, '2.04.01': { despesas_operacionais: 25 }, '2.06.01': { ded_icms: 5 } } } : {}));
+    expect(pontoEquilibrio({ meses: falta, classificacao: CLASS }).motivo).toBe('snapshot_inconsistente');
+  });
+
+  it('erro de linha num mês não é compensado por outro mês (reconciliação por mês e por linha)', () => {
+    // mês 2: 5 do aluguel declarados em cmv na composição; mês 4: o inverso. TTM fecha, mês não.
+    const cruzado = dozeFase2((m): Partial<MesDRE> =>
+      m === 2 ? { composicao_despesas: { '2.01.01': { cmv: 60 }, '2.04.01': { cmv: 5, despesas_operacionais: 20 }, '2.06.01': { ded_icms: 5 }, '2.05.03': { fora_dre: 10 } } }
+      : m === 4 ? { composicao_despesas: { '2.01.01': { cmv: 55, despesas_operacionais: 5 }, '2.04.01': { despesas_operacionais: 25 }, '2.06.01': { ded_icms: 5 }, '2.05.03': { fora_dre: 10 } } }
+      : {});
+    expect(pontoEquilibrio({ meses: cruzado, classificacao: CLASS }).motivo).toBe('snapshot_inconsistente');
+  });
+
+  it('legado como o hook entrega (composição null, provisório null) segue no caminho antigo: PE 750', () => {
+    const r = pontoEquilibrio({ meses: doze(() => ({ composicao_despesas: null, resultado_provisorio: null })), classificacao: CLASS });
+    expect(r.motivo).toBe('ok');
+    expect(r.pe_receita).toBeCloseTo(750, 2);
+  });
+
+  it('composição com chave a MAIS que o detalhamento ⇒ snapshot_inconsistente', () => {
+    const sobra = dozeFase2((m) => (m === 6 ? { composicao_despesas: { '2.01.01': { cmv: 60 }, '2.04.01': { despesas_operacionais: 25 }, '2.06.01': { ded_icms: 5 }, '2.05.03': { fora_dre: 10 }, '2.07.01': { fora_dre: 40 } } } : {}));
+    expect(pontoEquilibrio({ meses: sobra, classificacao: CLASS }).motivo).toBe('snapshot_inconsistente');
+  });
+
+  it('composição malformada (vazia) num mês que reconciliaria pelo caminho antigo ⇒ snapshot_inconsistente', () => {
+    // mês 7 só tem CMV+aluguel (reconcilia com as linhas): sem o gate 0 ele passaria como legado.
+    const vazio = dozeFase2((m) => (m === 7 ? { despesas: { '2.01.01': 60, '2.04.01': 25 }, composicao_despesas: {} } : {}));
+    expect(pontoEquilibrio({ meses: vazio, classificacao: CLASS }).motivo).toBe('snapshot_inconsistente');
+  });
+
+  it('janela mista: gate 4 segue valendo nos meses legados', () => {
+    const misto = [...dozeFase2().slice(0, 6), ...Array.from({ length: 6 }, (_, i) => mesUniforme(2026, i + 7, { deducoes_col: 5, despesas: { '2.01.01': 60, '2.04.01': 25 } }))];
+    expect(pontoEquilibrio({ meses: misto, classificacao: CLASS }).motivo).toBe('deducoes_coluna_inesperada');
+  });
+});
+
+describe('despesasNoDRE / somaCodigosPorPrefixo — fase 2 tira o fora_dre da família da folha', () => {
+  it('2.03.76 (distribuição de lucros, fora_dre) não entra no sinal de folha; legado segue bruto', () => {
+    const novo = mesUniforme(2026, 1, {
+      despesas: { '2.03.01': 10, '2.03.76': 50 },
+      composicao_despesas: { '2.03.01': { despesas_administrativas: 10 }, '2.03.76': { fora_dre: 50 } },
+    });
+    expect(despesasNoDRE(novo)).toEqual({ '2.03.01': 10 });
+    expect(somaCodigosPorPrefixo([novo], ['2.03'])).toBe(10);
+    const legado = mesUniforme(2025, 1, { despesas: { '2.03.01': 10, '2.03.76': 50 } });
+    expect(somaCodigosPorPrefixo([legado], ['2.03'])).toBe(60);
   });
 });

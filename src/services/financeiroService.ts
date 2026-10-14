@@ -5,6 +5,7 @@ import { janelaTTM, calcularDsoDpo, type DsoDpoResult } from "@/lib/financeiro/d
 import { OPEN_TITLE_STATUSES, isOpenTitleStatus } from "@/lib/financeiro/titulo-status";
 import { baixaOuIndisponivel, type ProcedenciaBaixa } from "@/lib/financeiro/procedencia-baixa";
 import { spBusinessDate } from "@/lib/time/sp-day";
+import { linhasDreMapeaveis } from "@/lib/financeiro/dre-helpers";
 import { fetchAllPages, ehFalhaDePagina } from "@/lib/postgrest";
 import { mensagemDeErro, erroComCausa } from "@/lib/erro-mensagem";
 import type {
@@ -92,6 +93,12 @@ export interface FinDRE {
   resultado_antes_impostos: number;
   impostos: number;
   resultado_liquido: number;
+  /** DRE fase 2 — saídas fora do DRE (fora de todo subtotal). null = snapshot pré-fase 2. */
+  fora_dre?: number | null;
+  /** DRE fase 2 — true = composição fora_dre pendente (resultado provisório); null = pré-fase 2/desconhecido. */
+  resultado_provisorio?: boolean | null;
+  /** Só no consolidado: alguma empresa do mês sem o dado (pré-fase 2) ⇒ fora_dre é soma parcial. */
+  fora_dre_parcial?: boolean;
   detalhamento: {
     receitas: Record<string, number>;
     despesas: Record<string, number>;
@@ -104,6 +111,9 @@ export interface FinDRE {
     imposto_teorico?: Record<string, number | null> | null;
     delta_imposto_pct?: number | null;
     config_tributaria_completa?: boolean;
+    // DRE fase 2
+    fora_dre?: { saidas: number; entradas: number; por_codigo: Record<string, { saidas: number; entradas: number }>; composicao_pendente: boolean; motivo: string | null };
+    mapeamentos_invalidos?: Array<{ codigo: string; valor: string; origem: 'exato' | 'prefixo'; motivo: string; codigo_titulo: string; valor_afetado: number; empresa?: string }>;
   };
 }
 
@@ -815,6 +825,29 @@ export const DRE_LINHAS = [
   { value: 'impostos', label: 'Impostos', tipo: 'D' },
 ] as const;
 
+// DRE fase 2: linhas que só existem no MAPEAMENTO (a grade do orçamento segue sendo DRE_LINHAS).
+const DRE_LINHAS_SO_MAPA = [
+  { value: 'ded_icms', label: '(-) ICMS', tipo: 'R' },
+  { value: 'ded_iss', label: '(-) ISS', tipo: 'R' },
+  { value: 'ded_pis', label: '(-) PIS', tipo: 'R' },
+  { value: 'ded_cofins', label: '(-) COFINS', tipo: 'R' },
+  { value: 'ded_ipi', label: '(-) IPI', tipo: 'R' },
+  { value: 'das', label: '(-) DAS (Simples)', tipo: 'R' },
+  { value: 'irpj', label: 'IRPJ', tipo: 'D' },
+  { value: 'csll', label: 'CSLL', tipo: 'D' },
+  { value: 'fora_dre', label: 'Fora do DRE (composição pendente)', tipo: 'D' },
+] as const;
+
+type OpcaoLinhaDRE = { value: string; label: string; tipo: 'R' | 'D' };
+const TODAS_LINHAS_MAPA: readonly OpcaoLinhaDRE[] = [...DRE_LINHAS, ...DRE_LINHAS_SO_MAPA];
+export const DRE_LINHA_LABEL: Record<string, string> = Object.fromEntries(TODAS_LINHAS_MAPA.map((l) => [l.value, l.label]));
+
+/** Opções do Select de mapeamento para um escopo — filtradas por regime e sem fora_dre no _default. */
+export function opcoesMapeamentoDRE(company: Company | '_default' | string): OpcaoLinhaDRE[] {
+  const permitidas = new Set(linhasDreMapeaveis(company));
+  return TODAS_LINHAS_MAPA.filter((l) => permitidas.has(l.value));
+}
+
 export async function getCategoryMappings(
   company: Company | '_default'
 ): Promise<FinCategoriaDREMapping[]> {
@@ -955,7 +988,17 @@ export function exportDRECSV(data: FinDRE[]): string {
       return typeof v === 'number' ? v : 0;
     })
   ]);
-  return [toCsvRow(header), ...rows.map(toCsvRow)].join('\n');
+  // DRE fase 2: o CSV sai da tela — o aviso de resultado provisório tem de ir junto com o número.
+  // Ausente (snapshot pré-fase 2) é "n/d", nunca 0.
+  const foraDre = [
+    'fora_dre (composição pendente)',
+    ...data.map(d => (typeof d.fora_dre === 'number' ? (d.fora_dre_parcial ? `${d.fora_dre} (parcial)` : d.fora_dre) : 'n/d')),
+  ];
+  const provisorio = [
+    'status_resultado',
+    ...data.map(d => (d.resultado_provisorio === true ? 'PROVISÓRIO' : d.resultado_provisorio === false ? 'sem pendência fora do DRE' : 'n/d (calculado antes da segregação)')),
+  ];
+  return [toCsvRow(header), ...rows.map(toCsvRow), toCsvRow(foraDre), toCsvRow(provisorio)].join('\n');
 }
 
 export function downloadCSV(content: string, filename: string): void {
@@ -1009,8 +1052,10 @@ export async function getLastSyncTime(): Promise<string | null> {
  * subtração client-side, sem depender de baixar as duas colunas.
  * Pagina ORDENADO por id: offset sem ORDER BY não é estável entre páginas
  * (o sync de CR/CP grava a cada 10min → linha pulada/duplicada silenciosa).
- * Erro de qualquer página LANÇA Error real — nunca soma parcial silenciosa,
- * e os consumidores exibem `e.message` (objeto cru viraria "[object Object]").
+ * Pagina pelo `lerTodasAsPaginas` (→ `fetchAllPages`): erro de qualquer página ou
+ * `data: null` sem error LANÇA Error real com a mensagem de domínio — nunca soma parcial
+ * silenciosa — e a página perdida é medida (captureException com fonte/página). Materializar
+ * só a coluna `saldo` (~11k números no pior caso) custa nada perto de manter um laço à mão.
  * Contrato travado em src/services/__tests__/somarSaldoAberto.test.ts.
  */
 export async function somarSaldoPorStatus(
@@ -1018,27 +1063,19 @@ export async function somarSaldoPorStatus(
   company: Company,
   statuses: readonly string[],
 ): Promise<number> {
-  const PAGE = 1000;
-  let from = 0;
+  const rows = await lerTodasAsPaginas<{ saldo: number | null }>(
+    (de, ate) =>
+      supabase
+        .from(tabela)
+        .select('saldo')
+        .eq('company', company)
+        .in('status_titulo', [...statuses])
+        .order('id')
+        .range(de, ate),
+    `saldo de ${tabela} (${company})`,
+  );
   let total = 0;
-  for (;;) {
-    const { data, error } = await supabase
-      .from(tabela)
-      .select('saldo')
-      .eq('company', company)
-      .in('status_titulo', [...statuses])
-      .order('id')
-      .range(from, from + PAGE - 1);
-    if (error) throw new Error(`Falha ao somar saldo (${tabela}/${company}): ${error.message}`);
-    // data null SEM error = malformada, não fim (classe #1338→#1564, mesmo contrato do
-    // fetchAllPages de @/lib/postgrest): tratá-la como fim devolvia SOMA PARCIAL como total a
-    // receber/pagar — alimenta DSO, KPIs de /financeiro/gestao e o resumo.
-    if (data == null) throw new Error(`Falha ao somar saldo (${tabela}/${company}): data=null sem error`);
-    const rows = data as Array<{ saldo: number | null }>;
-    for (const r of rows) total += r.saldo ?? 0;
-    if (rows.length < PAGE) break;
-    from += PAGE;
-  }
+  for (const r of rows) total += r.saldo ?? 0;
   return total;
 }
 
@@ -1121,6 +1158,8 @@ export interface ValorEmpresaResult {
   company: string;
   regime: 'simples' | 'presumido';
   ttm: { ano_mes_fim: string; meses: number; tem_anterior: boolean };
+  /** DRE fase 2 — algum mês dos 2 TTMs com resultado provisório (fora_dre pendente). Ausente em edge anterior. */
+  resultado_provisorio?: boolean;
   reportado: {
     ebit: number; nopat: number; imposto_operacional_nopat: number; carga_tributaria_regime_total: number;
     margem_operacional_pre_imposto: number; receita_liquida_ttm: number;
@@ -1359,6 +1398,8 @@ export interface RegimeEmpresaResult {
   recomendado: RegimeNome | null;
   economia_anual: number | null;
   status: StatusRecomendacao;
+  /** DRE fase 2 — causa do 'incompleto' quando não é folha/meses. Ausente em edge anterior. */
+  motivo_incompleto?: 'resultado_provisorio' | null;
   break_even: { margem_real_vs_presumido: number | null; fator_r: number };
   eixo_indireto: { icms_iss_ipi_simples: number | null; observacao: string };
   confianca: { nivel: 'alta' | 'media' | 'baixa'; motivos: string[] };
@@ -1367,6 +1408,13 @@ export interface RegimeEmpresaResult {
 
 export interface RegimeTributarioResult {
   por_empresa: RegimeEmpresaResult[];
-  consolidado: { imposto_atual_total: number; imposto_otimizado_total: number; economia_total: number; confianca: 'alta' | 'media' | 'baixa' };
+  consolidado: {
+    imposto_atual_total: number;
+    imposto_otimizado_total: number;
+    economia_total: number;
+    confianca: 'alta' | 'media' | 'baixa';
+    /** Empresas em 'incompleto' (entram com economia 0): o total é subtotal das comparáveis. */
+    empresas_incompletas?: string[];
+  };
   gerado_em: string;
 }

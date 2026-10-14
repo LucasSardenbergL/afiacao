@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { classificarLinhaDRE, REGIME_POR_EMPRESA, resolverDataCaixa, valorCaixaEfetivo, dedupePorCodigo, bucketizarCaixa, montarDRE, scoreConfianca, calcularRBT12, aliquotaEfetivaSimples, anexoPorFatorR, impostoTeoricoSimples, impostoTeoricoPresumido, normalizarConfigTributario } from '../dre-helpers';
+import { classificarLinhaDRE, REGIME_POR_EMPRESA, resolverDataCaixa, valorCaixaEfetivo, dedupePorCodigo, bucketizarCaixa, montarDRE, scoreConfianca, calcularRBT12, aliquotaEfetivaSimples, anexoPorFatorR, impostoTeoricoSimples, impostoTeoricoPresumido, normalizarConfigTributario, novoForaDRE, acumularForaDRE, aplicarPendenciasConfianca, linhasDreMapeaveis, provisorioConsolidado, foraDreConsolidado } from '../dre-helpers';
 
 const M = (pairs: Array<[string, string]>) => new Map<string, string>(pairs);
 
@@ -277,5 +277,157 @@ describe('normalizarConfigTributario', () => {
     const c = normalizarConfigTributario('colacor_sc', { regime: 'simples', anexo: 'III' });
     expect(c.anexo).toBe('III');
     expect(c.completa).toBe(true);
+  });
+});
+
+// ── Fase 2: fora_dre (composição pendente), imposto em linha própria, mapa inválido ──
+describe('classificarLinhaDRE — fora_dre (fase 2)', () => {
+  const mapa = M([['2.05.03', 'fora_dre'], ['2.07', 'fora_dre'], ['2.06.01', 'ded_icms'], ['2.06', 'despesas_administrativas']]);
+  const cls = (cod: string, regime: 'presumido' | 'simples' = 'presumido', m = mapa) =>
+    classificarLinhaDRE({ categoria_codigo: cod, categoria_descricao: cod, isReceita: false, regime, mapping: m });
+
+  it('código EXATO mapeado fora_dre sai do DRE e conta como mapeado', () => {
+    const r = cls('2.05.03');
+    expect(r.linha).toBe('fora_dre');
+    expect(r.mapeado).toBe(true);
+    expect(r.mapeamentoInvalido).toBeNull();
+  });
+
+  it('fora_dre NÃO é herdado por prefixo: filho novo de 2.07 fica sem mapa (heurística)', () => {
+    const r = cls('2.07.88');
+    expect(r.linha).toBe('despesas_operacionais');
+    expect(r.mapeado).toBe(false);
+    expect(r.viaFallback).toBe(true);
+  });
+
+  it('imposto em linha própria por código exato; filho do imposto não herda', () => {
+    expect(cls('2.06.01').linha).toBe('ded_icms');
+    expect(cls('2.06.01').mapeado).toBe(true);
+    const filho = cls('2.06.01.07');
+    expect(filho.mapeado).toBe(false);
+    expect(filho.linha).not.toBe('ded_icms');
+  });
+
+  it('linha herdável segue herdando (2.06.50 ← 2.06 administrativas)', () => {
+    const r = cls('2.06.50');
+    expect(r.linha).toBe('despesas_administrativas');
+    expect(r.mapeado).toBe(true);
+  });
+
+  it('valor desconhecido no mapa NÃO vira mapeado:true nem sobe ao ancestral válido', () => {
+    const r = cls('2.06.77', 'presumido', M([['2.06.77', 'linha_que_nao_existe'], ['2.06', 'despesas_administrativas']]));
+    expect(r.mapeado).toBe(false);
+    expect(r.viaFallback).toBe(true);
+    expect(r.mapeamentoInvalido).toEqual({ codigo: '2.06.77', valor: 'linha_que_nao_existe', origem: 'exato', motivo: 'valor_desconhecido' });
+  });
+
+  it('IRPJ/CSLL mapeado no Simples é inválido por regime (sumiria do resultado)', () => {
+    const r = cls('2.06.05', 'simples', M([['2.06.05', 'irpj']]));
+    expect(r.mapeado).toBe(false);
+    expect(r.mapeamentoInvalido?.motivo).toBe('regime');
+    expect(cls('2.06.05', 'presumido', M([['2.06.05', 'irpj']])).linha).toBe('irpj');
+  });
+});
+
+describe('montarDRE — fora_dre não entra em subtotal e imposto vai para deduções (fase 2)', () => {
+  it('fora_dre nos totais não altera nenhuma linha; ICMS/PIS/COFINS saem das operacionais', () => {
+    const base = { receita_bruta: 100000, cmv: 40000, despesas_operacionais: 20000 };
+    const antes = montarDRE({ regime: 'presumido', totais: tot(base) });
+    const depois = montarDRE({ regime: 'presumido', totais: tot({ ...base, fora_dre: 50000 }) });
+    expect(depois).toEqual(antes);
+    const comImposto = montarDRE({ regime: 'presumido', totais: tot({ ...base, ded_icms: 4700, ded_pis: 240, ded_cofins: 125 }) });
+    expect(comImposto.deducoes).toBe(5065);
+    expect(comImposto.despesas_operacionais).toBe(20000);
+    expect(comImposto.resultado_liquido).toBe(antes.resultado_liquido - 5065);
+  });
+});
+
+describe('acumularForaDRE / aplicarPendenciasConfianca (fase 2)', () => {
+  it('pendência = existe lançamento ≠ 0, mesmo quando a soma líquida zera', () => {
+    const acc = novoForaDRE();
+    acumularForaDRE(acc, '2.05.03', 1000, false);
+    acumularForaDRE(acc, '2.05.03', -1000, false);
+    expect(acc.saidas).toBe(0);
+    expect(acc.composicao_pendente).toBe(true);
+    expect(acc.por_codigo['2.05.03']).toEqual({ saidas: 0, entradas: 0 });
+  });
+
+  it('lançamento só negativo (estorno) também deixa a composição pendente', () => {
+    const acc = novoForaDRE();
+    acumularForaDRE(acc, '2.06.90', -500, false);
+    expect(acc.composicao_pendente).toBe(true);
+    expect(acc.saidas).toBe(-500);
+  });
+
+  it('só lançamentos zerados não geram pendência; entrada e saída ficam separadas', () => {
+    const acc = novoForaDRE();
+    acumularForaDRE(acc, '2.07.01', 0, false);
+    expect(acc.composicao_pendente).toBe(false);
+    acumularForaDRE(acc, '1.09.01', 300, true);
+    expect(acc.entradas).toBe(300);
+    expect(acc.saidas).toBe(0);
+    expect(acc.composicao_pendente).toBe(true);
+  });
+
+  it('pendência rebaixa para baixa com motivo de resultado provisório; sem pendência não mexe', () => {
+    const alta = scoreConfianca({ pct_mapeado_valor: 1, fallback_pct: 0, share_generico: 0, tem_imposto_nao_mapeado: false });
+    const acc = novoForaDRE();
+    expect(aplicarPendenciasConfianca(alta, { foraDRE: acc, mapeamentosInvalidos: 0, regime: 'caixa' })).toEqual(alta);
+    acumularForaDRE(acc, '2.05.03', 191421.87, false);
+    const r = aplicarPendenciasConfianca(alta, { foraDRE: acc, mapeamentosInvalidos: 0, regime: 'caixa' });
+    expect(r.nivel).toBe('baixa');
+    expect(r.motivos.join(' ')).toContain('resultado provisório');
+  });
+
+  it('mapa inválido rebaixa para baixa mesmo sem fora_dre', () => {
+    const alta = scoreConfianca({ pct_mapeado_valor: 1, fallback_pct: 0, share_generico: 0, tem_imposto_nao_mapeado: false });
+    const r = aplicarPendenciasConfianca(alta, { foraDRE: novoForaDRE(), mapeamentosInvalidos: 2, regime: 'competencia' });
+    expect(r.nivel).toBe('baixa');
+    expect(r.motivos.join(' ')).toContain('inválido');
+  });
+});
+
+describe('linhasDreMapeaveis (tela de mapeamento, fase 2)', () => {
+  it('_default: nunca fora_dre nem imposto específico (vale para a empresa do Simples também)', () => {
+    const l = linhasDreMapeaveis('_default');
+    expect(l).not.toContain('fora_dre');
+    expect(l).not.toContain('irpj');
+    expect(l).not.toContain('das');
+    expect(l).toContain('impostos');
+  });
+  it('presumido (colacor): específicos + fora_dre, sem DAS', () => {
+    const l = linhasDreMapeaveis('colacor');
+    expect(l).toEqual(expect.arrayContaining(['ded_icms', 'ded_pis', 'ded_cofins', 'ded_iss', 'ded_ipi', 'irpj', 'csll', 'fora_dre']));
+    expect(l).not.toContain('das');
+  });
+  it('Simples (colacor_sc): DAS + fora_dre, sem IRPJ/CSLL', () => {
+    const l = linhasDreMapeaveis('colacor_sc');
+    expect(l).toContain('das');
+    expect(l).toContain('fora_dre');
+    expect(l).not.toContain('irpj');
+    expect(l).not.toContain('csll');
+  });
+  it('tudo que a tela oferece o motor honra (nenhuma linha vira mapa inválido)', () => {
+    for (const c of ['_default', 'colacor', 'oben', 'colacor_sc']) {
+      const regime = c === 'colacor_sc' ? 'simples' : 'presumido';
+      for (const linha of linhasDreMapeaveis(c)) {
+        const r = classificarLinhaDRE({ categoria_codigo: '9.01', categoria_descricao: '', isReceita: false, regime, mapping: M([['9.01', linha]]) });
+        expect(r.mapeamentoInvalido, `${c}/${linha}`).toBeNull();
+      }
+    }
+  });
+});
+
+describe('consolidado fase 2 (provisório tri-state, fora_dre parcial)', () => {
+  it('provisório: true vence; todos false ⇒ false; NULL no meio ⇒ null (não vira false)', () => {
+    expect(provisorioConsolidado([false, true, null])).toBe(true);
+    expect(provisorioConsolidado([false, false])).toBe(false);
+    expect(provisorioConsolidado([false, null])).toBeNull();
+    expect(provisorioConsolidado([])).toBeNull();
+  });
+  it('fora_dre: soma conhecidos, marca parcial; todos ausentes ⇒ null (ausente ≠ 0)', () => {
+    expect(foraDreConsolidado([100, 50])).toEqual({ valor: 150, parcial: false });
+    expect(foraDreConsolidado([100, null])).toEqual({ valor: 100, parcial: true });
+    expect(foraDreConsolidado([null, undefined])).toEqual({ valor: null, parcial: true });
   });
 });

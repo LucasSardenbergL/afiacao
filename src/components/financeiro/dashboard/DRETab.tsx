@@ -46,6 +46,12 @@ export function DRETab({ data, view, ano, indisponivel = null }: {
   );
   const uniqueUnmapped = [...new Set(unmappedCats)];
 
+  // DRE fase 2: saída fora do DRE com composição pendente ⇒ resultado PROVISÓRIO no mês.
+  const mesesProvisorios = rows.filter((r) => r.resultado_provisorio === true);
+  const temFaseDois = rows.some((r) => r.fora_dre != null);
+  const foraDreTotal = rows.reduce((s, r) => s + (r.fora_dre ?? 0), 0);
+  const invalidos = rows.flatMap((r) => r.detalhamento?.mapeamentos_invalidos ?? []);
+
   const meses = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
 
   const dreLines: { label: string; field: keyof FinDRE & ('receita_bruta' | 'deducoes' | 'receita_liquida' | 'cmv' | 'lucro_bruto' | 'despesas_operacionais' | 'despesas_administrativas' | 'despesas_comerciais' | 'despesas_financeiras' | 'receitas_financeiras' | 'resultado_operacional' | 'impostos' | 'resultado_liquido'); bold: boolean; color: string }[] = [
@@ -67,6 +73,31 @@ export function DRETab({ data, view, ano, indisponivel = null }: {
   return (
     <div className="space-y-3">
       {peCard}
+      {mesesProvisorios.length > 0 && (
+        <div role="status" className="flex items-start gap-2 p-3 rounded-lg bg-status-warning-bg border border-status-warning/30">
+          <AlertTriangle className="w-4 h-4 text-status-warning mt-0.5 shrink-0" />
+          <div>
+            <p className="text-sm font-medium text-status-warning-fg">
+              Resultado provisório em {mesesProvisorios.length} mês(es) — {fmtCompact(foraDreTotal)} fora do DRE
+            </p>
+            <p className="text-xs text-status-warning mt-1">
+              Empréstimos, parcelamentos e investimentos saíram do resultado (não são despesa do período), mas a
+              parcela mistura principal e juros/encargos que o Omie não separa — os juros deveriam estar nas
+              despesas financeiras. O resultado e as margens abaixo são provisórios até a composição ser resolvida.
+            </p>
+          </div>
+        </div>
+      )}
+      {invalidos.length > 0 && (
+        <div role="alert" className="flex items-start gap-2 p-3 rounded-lg bg-status-error-bg border border-status-error/30">
+          <AlertTriangle className="w-4 h-4 text-status-error mt-0.5 shrink-0" />
+          <p className="text-xs text-status-error">
+            {invalidos.length} mapeamento(s) DRE inválido(s) para o motor/regime — classificados por heurística:{' '}
+            <span className="font-mono">{[...new Set(invalidos.map((i) => `${i.empresa ? `${i.empresa}:` : ''}${i.codigo}→${i.valor}`))].slice(0, 6).join(', ')}</span>.
+            Corrija em <span className="font-medium">Mapeamento DRE</span>.
+          </p>
+        </div>
+      )}
       {/* Ponto 5: unmapped warning */}
       {uniqueUnmapped.length > 0 && (
         <div className="flex items-start gap-2 p-3 rounded-lg bg-status-warning-bg border border-status-warning/30">
@@ -92,6 +123,7 @@ export function DRETab({ data, view, ano, indisponivel = null }: {
             DRE Regime de Caixa — {ano}
             {view === 'all' && <Badge variant="secondary" className="ml-2">Consolidado</Badge>}
             <Badge variant="outline" className="ml-2 text-[10px]">Regime de Caixa</Badge>
+            {mesesProvisorios.length > 0 && <Badge variant="outline" className="ml-2 text-[10px] text-status-warning border-status-warning/40">Resultado provisório</Badge>}
           </CardTitle>
         </CardHeader>
       <CardContent className="p-0">
@@ -102,7 +134,7 @@ export function DRETab({ data, view, ano, indisponivel = null }: {
                 <TableHead className="sticky left-0 bg-background min-w-[180px]">Linha</TableHead>
                 {rows.map((r) => (
                   <TableHead key={r.mes} className="text-right min-w-[100px]">
-                    {meses[r.mes - 1]}
+                    {meses[r.mes - 1]}{r.resultado_provisorio === true ? '*' : ''}
                   </TableHead>
                 ))}
               </TableRow>
@@ -126,6 +158,19 @@ export function DRETab({ data, view, ano, indisponivel = null }: {
                   })}
                 </TableRow>
               ))}
+              {/* DRE fase 2: fora de todo subtotal — desembolso real, não despesa do período. */}
+              {temFaseDois && (
+                <TableRow>
+                  <TableCell className="sticky left-0 bg-background text-sm text-muted-foreground">
+                    Fora do DRE (composição pendente)
+                  </TableCell>
+                  {rows.map((r) => (
+                    <TableCell key={r.mes} className="text-right text-sm text-muted-foreground">
+                      {r.fora_dre == null ? '—' : `${fmtCompact(r.fora_dre)}${r.fora_dre_parcial ? ' (parcial)' : ''}`}
+                    </TableCell>
+                  ))}
+                </TableRow>
+              )}
               {/* Margem bruta % */}
               <TableRow className="border-t-2">
                 <TableCell className="sticky left-0 bg-background text-sm font-medium text-muted-foreground">

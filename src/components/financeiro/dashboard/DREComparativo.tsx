@@ -27,7 +27,9 @@ export function DREComparativo({ data, ano }: { data: Record<string, FinDRE[]>; 
     );
     const margemBruta = total.receita_liquida > 0 ? (total.lucro_bruto / total.receita_liquida) * 100 : 0;
     const margemLiquida = total.receita_liquida > 0 ? (total.resultado_liquido / total.receita_liquida) * 100 : 0;
-    return { company: co, ...total, margemBruta, margemLiquida };
+    // DRE fase 2: o total anual herda a pendência de qualquer mês (resultado e margens provisórios).
+    const provisorio = rows.some((r) => r.resultado_provisorio === true);
+    return { company: co, ...total, margemBruta, margemLiquida, provisorio };
   });
 
   const lines: { label: string; field: 'receita_liquida' | 'lucro_bruto' | 'margemBruta' | 'resultado_operacional' | 'impostos' | 'resultado_liquido' | 'margemLiquida'; format: 'currency' | 'pct' }[] = [
@@ -57,7 +59,7 @@ export function DREComparativo({ data, ano }: { data: Record<string, FinDRE[]>; 
                 {annualTotals.map(t => (
                   <TableHead key={t.company} className="text-right min-w-[120px]">
                     <div className="flex flex-col items-end">
-                      <span>{COMPANIES[t.company as Company]?.shortName || t.company}</span>
+                      <span>{COMPANIES[t.company as Company]?.shortName || t.company}{t.provisorio ? '*' : ''}</span>
                       <Badge variant="outline" className="text-[10px] mt-0.5">
                         {COMPANIES[t.company as Company]?.regime === 'simples' ? 'SN' : 'LP'}
                       </Badge>
@@ -103,6 +105,11 @@ export function DREComparativo({ data, ano }: { data: Record<string, FinDRE[]>; 
             </TableBody>
           </Table>
         </div>
+        {annualTotals.some((t) => t.provisorio) && (
+          <p className="px-4 py-2 text-xs text-status-warning">
+            * Resultado e margens provisórios: há saída fora do DRE com composição principal × juros pendente.
+          </p>
+        )}
       </CardContent>
     </Card>
   );

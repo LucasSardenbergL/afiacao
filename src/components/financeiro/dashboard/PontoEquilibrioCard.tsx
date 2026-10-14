@@ -52,6 +52,10 @@ const MOTIVO_MSG: Record<Exclude<MotivoPE, 'ok'>, { titulo: string; texto: strin
     titulo: 'Possível dupla contagem da folha',
     texto: 'Há folha (2.03.*) no próprio snapshot desta empresa — somar o rateio dobraria o custo. Revise a classificação ou zere o rateio.',
   },
+  resultado_provisorio: {
+    titulo: 'Resultado provisório',
+    texto: 'Há saída fora do DRE (empréstimo/parcelamento/investimento) com composição pendente: os juros dentro da parcela ainda não estão separados. PE suspenso até a composição ser resolvida.',
+  },
   custo_compartilhado_pendente: {
     titulo: 'Falta ratear a folha',
     texto: 'A folha desta operação roda em outra empresa do grupo e ainda não foi rateada.',
@@ -169,6 +173,15 @@ export function PontoEquilibrioCard({ company }: { company: string }) {
                     caixa positivo — ver <strong>Endividamento</strong>.
                   </p>
                 </div>
+              )}
+
+              {/* DRE fase 2: o que a composição do snapshot tirou do universo do PE (imposto já entra pelas deduções). */}
+              {data.excluido_deducoes_ttm + data.excluido_imposto_lucro_ttm + data.excluido_outras_ttm !== 0 && (
+                <p className="text-xs text-muted-foreground">
+                  Fora das despesas do PE, pela classificação da DRE: {fmt(data.excluido_deducoes_ttm)} em impostos
+                  sobre a receita (já contados nas deduções), {fmt(data.excluido_imposto_lucro_ttm)} em IRPJ/CSLL e{' '}
+                  {fmt(data.excluido_outras_ttm)} em outras despesas (12 meses).
+                </p>
               )}
 
               {/* Disclosure positivo (F3 v2): o PE já considera a folha rateada; é custo econômico, não caixa da OBEN. */}
