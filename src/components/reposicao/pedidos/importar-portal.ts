@@ -3,14 +3,14 @@
 
 export const PROTOCOLO_PORTAL_RE = /^\d{3,12}$/;
 
-export interface ItemImportado {
+interface ItemImportado {
   sku_portal: string;
   descricao: string;
   qtde_portal: number;
   valor_mercadoria: number;
 }
 
-export interface RespostaImportacao {
+interface RespostaImportacao {
   ok?: boolean;
   etapa?: 'leitura' | 'importacao' | 'omie' | 'concluido';
   mensagem?: string;
@@ -24,7 +24,7 @@ export interface RespostaImportacao {
   itens?: ItemImportado[];
 }
 
-export type TomResultado = 'sucesso' | 'aviso' | 'erro';
+type TomResultado = 'sucesso' | 'aviso' | 'erro';
 
 export interface ResultadoTela {
   tom: TomResultado;
