@@ -31,7 +31,26 @@ fallback (código sem descrição não casa keyword). ICMS/PIS/COFINS (≈ R$ 51
 - PG17: a postcondição da migration aceitava `CHECK (true)` com o nome certo. Passou a provar o CHECK
   por COMPORTAMENTO (INSERT proibido num sub-bloco que exige `check_violation`).
 
-## Antes × depois (caixa colacor 2026)
+## Deploy (2026-10-14)
 
-_(preencher após o recálculo — receita igual, fora_dre ≈ 260.988,78 segregado, deduções ≈ 54.853,49,
-resultado provisório ≈ +39.217,95)_
+Migration recibo #438 (validação por fora `t|t|2|0`, gatilho ativo) → 4 edges numa mensagem do
+conector (15/15 hashes, Active, sensor `SEM_EDICAO`) → sonda `omie-financeiro` **DEPLOY CONFIRMADO**
+(`v1.5-dre-fora-dre-composicao`, fonte = hash do script) recibo #439 → mapa colacor recibo #441
+(24 pares) → recálculo caixa #442 e competência #443 (jan–out, 2 levas cada).
+Decisões do founder: 2.03.78/2.08.01/2.05.99/2.06.06/2.06.94/2.06.95 sem mapa; 2.03.76 fora_dre;
+fechamento com resultado provisório **só avisa** (aviso na tela de fechamento: pendente).
+
+## Antes × depois (colacor 2026, psql-ro)
+
+| caixa jan–out | antes | depois |
+|---|---|---|
+| receita bruta | 567.670,77 | 567.670,77 (igual) |
+| deduções | 0,00 | 54.853,49 |
+| Σ 5 linhas (CMV+op+adm+com+fin) | 789.441,60 | 473.599,33 |
+| fora do DRE | — | 260.988,78 (coluna = JSON) |
+| resultado líquido | −221.770,83 | **+39.217,95 provisório** |
+| meses provisórios | — | 8 de 10 (set/out sem fora_dre) |
+
+Bateu centavo a centavo com o previsto no contrato. Competência: antes 5 meses (receita 331.662,01,
+resultado −245.468,64); depois jan–out, receita 598.252,12, deduções 211.909,38, fora do DRE
+273.380,83, IRPJ+CSLL 13.255,61, resultado −129.529,18 provisório (10/10). Nenhum mapa inválido.
