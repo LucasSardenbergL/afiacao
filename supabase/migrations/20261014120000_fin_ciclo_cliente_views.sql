@@ -24,7 +24,8 @@ WITH base AS (
          b.prazo_ponderado_dias,
          (b.omie_codigo_lancamento IS NOT NULL AND b.prazo_ponderado_dias IS NOT NULL
           AND b.prazo_ponderado_dias <> 'NaN'
-          AND b.prazo_ponderado_dias < 'Infinity') AS tem_baixa,
+          AND b.prazo_ponderado_dias < 'Infinity'
+          AND b.prazo_ponderado_dias > '-Infinity') AS tem_baixa,
          (now() AT TIME ZONE 'America/Sao_Paulo')::date AS hoje_sp
   FROM public.fin_contas_receber r
   LEFT JOIN public.v_titulo_baixas b

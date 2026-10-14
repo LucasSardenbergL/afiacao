@@ -102,10 +102,12 @@ BEGIN
   -- Cliente 7 (oben): baixa com prazo NaN / Infinity nao conta como baixa => paga_sem_baixa.
   INSERT INTO fin_contas_receber VALUES
     ('oben',7,'CLI SETE',701,'I1',h-50,h-20,40,0,'RECEBIDO'),
-    ('oben',7,'CLI SETE',702,'I2',h-50,h-20,40,0,'RECEBIDO');
+    ('oben',7,'CLI SETE',702,'I2',h-50,h-20,40,0,'RECEBIDO'),
+    ('oben',7,'CLI SETE',703,'I3',h-50,h-20,40,0,'RECEBIDO');
   INSERT INTO v_titulo_baixas VALUES
     ('oben',701,'CR',h-10,40,1,'NaN','titulo'),
-    ('oben',702,'CR',h-10,40,1,'Infinity','titulo');
+    ('oben',702,'CR',h-10,40,1,'Infinity','titulo'),
+    ('oben',703,'CR',h-10,40,1,'-Infinity','titulo');
   -- Cliente 8 (colacor): coorte de um mes fechado (mes de h-200), dia 6 do mes. concedido 30 em todas.
   --   801 paga R$100 prazo real 40 (+10) | 802 paga R$300 prazo real 20 (-10)
   --   803 ATRASADO R$200 saldo 150 | 804 RECEBIDO sem baixa R$50
@@ -151,7 +153,7 @@ suite() {
   ok "SELECT count(*) FROM v_ciclo_cr_titulos WHERE omie_codigo_lancamento=401" "0" "paga fora da janela de vencimento nao entra"
   ok "SELECT atraso_dias FROM v_ciclo_cr_titulos WHERE omie_codigo_lancamento=102" "10" "atraso = prazo_real - concedido"
   ok "SELECT dias_vencido FROM v_ciclo_cr_titulos WHERE omie_codigo_lancamento=202" "120" "dias_vencido"
-  ok "SELECT count(*) FROM v_ciclo_cr_titulos WHERE omie_codigo_lancamento IN (701,702) AND situacao <> 'paga_sem_baixa'" "0" "prazo NaN ou inf nao conta como baixa"
+  ok "SELECT count(*) FROM v_ciclo_cr_titulos WHERE omie_codigo_lancamento IN (701,702,703) AND situacao <> 'paga_sem_baixa'" "0" "prazo NaN ou inf nao conta como baixa"
   ok "SELECT situacao||'|'||dias_vencido FROM v_ciclo_cr_titulos WHERE omie_codigo_lancamento=601" "vencida_aberta|5" "a vencer com vencimento passado vira vencida"
   ok "SELECT count(*) FROM v_ciclo_cr_titulos WHERE omie_codigo_lancamento=602" "0" "vence hoje nao e ambiguo nem vencido"
   ok "SELECT n_documentos FROM v_ciclo_cliente_resumo WHERE omie_codigo_cliente=5" "5" "n_documentos com NF compartilhada e vazios"
@@ -214,6 +216,11 @@ sabotar "nullif da NF (fiscal)" "s/nullif(btrim(r.numero_documento_fiscal), '')/
 sabotar "nullif do numero_documento" "s/nullif(btrim(r.numero_documento), '')/r.numero_documento/" "n_documentos com NF compartilhada e vazios"
 sabotar "prazo infinito como baixa" "s/AND b.prazo_ponderado_dias < 'Infinity'//" "prazo NaN ou inf nao conta como baixa"
 sabotar "coorte valor_em_aberto" "s/sum(saldo) FILTER (WHERE situacao = 'vencida_aberta')/sum(saldo) FILTER (WHERE situacao = 'paga_sem_baixa')/" "coorte valores do mes"
-sabotar "mes_parcial 1o mes da janela" "s/OR (date_trunc('month', data_vencimento)::date = date_trunc('month', h - 365)::date AND (h - 365) <> date_trunc('month', h - 365)::date)//" "mes_parcial no primeiro mes da janela"
+if [ "$(Pq -c "SELECT ($HOJE - 365) = date_trunc('month', $HOJE - 365)::date")" = "t" ]; then
+  echo "sabotagem pulada: h-365 e dia 1 (vacua)"
+else
+  sabotar "mes_parcial 1o mes da janela" "s/OR (date_trunc('month', data_vencimento)::date = date_trunc('month', h - 365)::date AND (h - 365) <> date_trunc('month', h - 365)::date)//" "mes_parcial no primeiro mes da janela"
+fi
+sabotar "prazo -infinito como baixa" "s/AND b.prazo_ponderado_dias > '-Infinity'//" "prazo NaN ou inf nao conta como baixa"
 
 echo "PROVA-CICLO-CLIENTE-OK"
