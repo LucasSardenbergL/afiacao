@@ -45,6 +45,8 @@ import { PoSumidoCard } from '@/components/reposicao/pedidos/PoSumidoCard';
 import { ehAcessoNegado, frescorDoDetector, normalizarCandidatos, normalizarMarcador, ordenarCandidatos, type Frescor, type MarcadorPos, type PoCandidato } from '@/components/reposicao/pedidos/po-sumido';
 import { useAuth } from '@/contexts/AuthContext';
 import { track } from '@/lib/analytics';
+import { createLeadingTrailingThrottle } from '@/lib/leading-trailing-throttle';
+import { ordenarFilaDoDia, resumirFilaDoDia } from '@/components/reposicao/pedidos/fila-do-dia';
 import { DataHealthBanner } from '@/components/dataHealth/DataHealthBanner';
 import { ForaDoMotorBadge } from '@/components/reposicao/foraDoMotor/ForaDoMotorBadge';
 import { BaixoGiroBadge } from '@/components/reposicao/BaixoGiroBadge';
@@ -153,7 +155,7 @@ export default function AdminReposicaoPedidos() {
   // Key sob o prefixo 'pedidos-ciclo' de propósito: todo mutation da tela invalida
   // ['pedidos-ciclo'] (disparo/conciliação/aprovação) e o React Query casa por prefixo
   // → a fila de atenção se atualiza junto, sem precisar editar cada componente filho.
-  const { data: atencao } = useQuery({
+  const { data: atencao, isError: atencaoFalhou, isLoading: atencaoCarregando, refetch: refetchAtencao } = useQuery({
     queryKey: ['pedidos-ciclo', 'atencao', EMPRESA],
     queryFn: async () => {
       const { data, error } = await supabase
@@ -186,7 +188,38 @@ export default function AdminReposicaoPedidos() {
   // recolhido). Os terminais — cancelado/cancelado_humano/expirado_sem_aprovacao — são o
   // "lixo do dia" que a geração não varre; tirá-los da lista principal limpa a poluição
   // sem apagar nada do banco.
-  const { ativos, historico } = particionarCicloHoje(pedidosCiclo);
+  const { ativos: ativosBrutos, historico } = particionarCicloHoje(pedidosCiclo);
+  // Ordem do que falta fazer (a aprovar → falhou → aprovado sem disparo → disparado), não alfabética.
+  const ativos = ordenarFilaDoDia(ativosBrutos);
+  const resumo = resumirFilaDoDia(ativos);
+
+  // Realtime: o cron de geração, o disparo e o retorno do portal mudam `pedido_compra_sugerido`
+  // por fora desta tela. Sem isso a lista esperava o poll de 30s — e um botão "Enviando…" ficava
+  // travado depois de o portal já ter respondido. Throttle leading+trailing: a geração mexe em
+  // LOTE e cada linha é um evento; o flush colapsa a rajada numa revalidação por janela de 2,5s.
+  // O prefixo ['pedidos-ciclo'] cobre lista, atenção, suprimidos e marcador.
+  useEffect(() => {
+    const throttle = createLeadingTrailingThrottle(() => {
+      void queryClient.invalidateQueries({ queryKey: ['pedidos-ciclo'] });
+    }, 2500);
+    const channel = supabase
+      .channel('gerir-pedidos-realtime')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'pedido_compra_sugerido', filter: `empresa=eq.${EMPRESA}` },
+        () => throttle.fire(),
+      )
+      .subscribe();
+    return () => {
+      throttle.cancel();
+      void supabase.removeChannel(channel);
+    };
+  }, [queryClient]);
+
+  const abrirDetalhes = (p: PedidoSugerido, origem: 'fila' | 'historico_hoje' | 'atencao' | 'abaixo_minimo') => {
+    track('reposicao.pedido_detalhes_aberto', { pedido_id: p.id, status: p.status, origem });
+    setDetalhesPedido(p);
+  };
 
   // A fila de atenção é cross-ciclo; o pai split (status='split_em_filhos') por
   // construção nunca entra (pedidoPrecisaAtencao só dispara em falha_envio/portal),
@@ -634,14 +667,28 @@ export default function AdminReposicaoPedidos() {
           {atencaoCount > 0 ? (
             <Button
               variant="outline"
-              onClick={() => setMostrarAtencao((v) => !v)}
+              onClick={() => {
+                track('reposicao.atencao_toggle', { abrir: !mostrarAtencao, n: atencaoCount });
+                setMostrarAtencao((v) => !v);
+              }}
               aria-pressed={mostrarAtencao}
               className="border-status-warning/40 bg-status-warning/10 text-status-warning hover:bg-status-warning/20 hover:text-status-warning"
             >
               <AlertTriangle className="w-4 h-4 mr-1" />
               {atencaoCount} precisa{atencaoCount > 1 ? 'm' : ''} de atenção
             </Button>
-          ) : (
+          ) : atencaoFalhou ? (
+            // "Tudo em dia" sob leitura falha era afirmar uma fila vazia que ninguém leu.
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void refetchAtencao()}
+              className="text-status-warning"
+              data-testid="atencao-sem-leitura"
+            >
+              <AlertTriangle className="w-4 h-4 mr-1" /> Não consegui checar a fila de atenção — tentar de novo
+            </Button>
+          ) : atencaoCarregando ? null : (
             <span className="inline-flex items-center gap-1 text-xs text-status-success">
               <CheckCircle2 className="w-3.5 h-3.5" /> Tudo em dia
             </span>
@@ -686,12 +733,6 @@ export default function AdminReposicaoPedidos() {
       {/* Vindos do cockpit "Ciclo diário" (aposentado): frescor das fontes + SKUs que o motor não vê. */}
       <DataHealthBanner source="reposicao_sugestoes" />
       <DataHealthBanner source="estoque_inventario" />
-      {/* empty:hidden — sem nenhum aviso, a div vazia não ganha o espaçamento do space-y. */}
-      <div className="flex items-center gap-2 flex-wrap empty:hidden">
-        <ForaDoMotorBadge />
-        <BaixoGiroBadge />
-      </div>
-
       {pedidosSemLeitura && (
         <AvisoLeituraFalhou
           oque="os pedidos deste ciclo — inclusive os bloqueados por guardrail"
@@ -718,6 +759,246 @@ export default function AdminReposicaoPedidos() {
           </AlertDescription>
         </Alert>
       )}
+
+      {mostrarAtencao && atencaoCount > 0 && (
+        <Card className="border-status-warning/40">
+          <CardHeader>
+            <CardTitle className="text-base flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-status-warning" />
+              Precisam de atenção ({atencaoCount}) — todos os ciclos
+            </CardTitle>
+            <p className="text-sm text-muted-foreground">
+              Pedidos travados que exigem ação humana (falha no Omie, conciliação do portal ou
+              falha definitiva), de qualquer ciclo. Abra os detalhes para resolver — a conciliação
+              do portal está em "Ver portal". Recusa definitiva do portal: cancele (o ciclo regrava
+              os itens que ainda faltarem) — não dispare de novo.
+            </p>
+          </CardHeader>
+          <CardContent>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Ciclo</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Fornecedor / Grupo</TableHead>
+                  <TableHead className="text-right">Nº SKUs</TableHead>
+                  <TableHead className="text-right">Valor</TableHead>
+                  <TableHead>Portal</TableHead>
+                  <TableHead className="text-right">Ações</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {atencaoVermelha.map((p) => (
+                  <TableRow key={p.id}>
+                    <TableCell className="text-xs tabular-nums whitespace-nowrap">
+                      {format(new Date(p.data_ciclo + 'T12:00:00'), 'dd/MM/yyyy')}
+                    </TableCell>
+                    <TableCell>
+                      <StatusComMotivo pedido={p} />
+                    </TableCell>
+                    <TableCell>
+                      <div className="font-medium">{p.fornecedor_nome}</div>
+                      <div className="text-xs text-muted-foreground">{p.grupo_codigo ?? '—'}</div>
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">{p.num_skus}</TableCell>
+                    <TableCell className="text-right tabular-nums font-medium">{formatBRL(p.valor_total)}</TableCell>
+                    <TableCell>
+                      <PortalBadge pedido={p} onClick={() => setPortalPedido(p)} />
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex justify-end gap-1">
+                        <Button size="sm" variant="ghost" onClick={() => abrirDetalhes(p, 'atencao')}>
+                          <Eye className="w-4 h-4 mr-1" />Detalhes
+                        </Button>
+                        {acaoLinhaAtencao(p, podeOverride) === 'cancelar' ? (
+                          // Recusa definitiva do portal: a saída é cancelar (o ciclo regrava). NUNCA
+                          // "Disparar" aqui — ver acaoLinhaAtencao (#3169).
+                          <Button size="sm" variant="outline" onClick={() => setCancelarPedido(p)}>
+                            <XCircle className="w-4 h-4 mr-1" />Cancelar
+                          </Button>
+                        ) : acaoLinhaAtencao(p, podeOverride) === 'override' ? (
+                          // Preso pelo gate de mínimo de faturamento → "Disparar mesmo assim"
+                          // no lugar do "Re-disparar" (que só re-bateria no gate).
+                          <OverrideMinimoButton
+                            fornecedorNome={p.fornecedor_nome}
+                            valorTotal={p.valor_total}
+                            onConfirm={() => dispararOverrideMutation.mutate(p.id)}
+                            disabled={disparandoLinha(p.id) || p.status_envio_portal === 'enviando_portal'}
+                          />
+                        ) : acaoLinhaAtencao(p, podeOverride) === 'disparar' ? (
+                          <Button
+                            size="sm"
+                            variant={p.status === 'falha_envio' ? 'outline' : 'default'}
+                            onClick={() => dispararMutation.mutate(p.id)}
+                            disabled={
+                              disparandoLinha(p.id) ||
+                              p.status_envio_portal === 'enviando_portal'
+                            }
+                          >
+                            {disparandoLinha(p.id) ||
+                            p.status_envio_portal === 'enviando_portal' ? (
+                              <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                            ) : (
+                              <Zap className="w-4 h-4 mr-1" />
+                            )}
+                            {p.status === 'falha_envio' ? 'Re-disparar' : 'Disparar'}
+                          </Button>
+                        ) : null}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      )}
+
+      <Tabs defaultValue="hoje" onValueChange={(aba) => track('reposicao.pedidos_aba', { aba })}>
+        <TabsList>
+          <TabsTrigger value="hoje">Ciclo de hoje</TabsTrigger>
+          <TabsTrigger value="historico">Ciclos anteriores</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="hoje">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Pedidos do dia ({ativos.length})</CardTitle>
+              {!isLoading && ativos.length > 0 && (
+                // Resumo de 1 linha: responde "o que falta e o que já saiu" sem varrer a tabela.
+                <p className="text-sm text-muted-foreground tabular-nums" data-testid="resumo-fila-do-dia">
+                  <span className="text-foreground font-medium">{resumo.aAprovar} a aprovar</span>
+                  {resumo.aAprovar > 0 && (
+                    <>
+                      {' '}
+                      ({resumo.valorAAprovar == null
+                        ? 'valor indisponível'
+                        : `${resumo.valorAAprovarParcial ? 'ao menos ' : ''}${formatBRL(resumo.valorAAprovar)}`})
+                    </>
+                  )}
+                  {resumo.falhou > 0 && (
+                    <>
+                      {' · '}
+                      <span className="text-status-error">{resumo.falhou} com falha no envio</span>
+                    </>
+                  )}
+                  {' · '}
+                  {resumo.aguardandoDisparo} aprovado{resumo.aguardandoDisparo === 1 ? '' : 's'} sem disparo
+                  {' · '}
+                  {resumo.disparados} disparado{resumo.disparados === 1 ? '' : 's'} hoje
+                </p>
+              )}
+            </CardHeader>
+            <CardContent>
+              {isLoading ? (
+                <PageSkeleton variant="list" />
+              ) : ativos.length === 0 ? (
+                <div className="text-center py-12 text-muted-foreground">
+                  {historico.length > 0
+                    ? 'Nenhum pedido ativo hoje — veja o Histórico de hoje abaixo.'
+                    : 'Nenhum pedido gerado para o ciclo de hoje. Use "Sincronizar e recalcular" para criar.'}
+                </div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Fornecedor / Grupo</TableHead>
+                      <TableHead className="text-right">Nº SKUs</TableHead>
+                      <TableHead className="text-right">Valor</TableHead>
+                      <TableHead>Portal</TableHead>
+                      <TableHead>Aprovado em</TableHead>
+                      <TableHead className="text-right">Ações</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {ativos.map((p) => (
+                      <PedidoRow
+                        key={p.id}
+                        p={p}
+                        onVerDetalhes={() => abrirDetalhes(p, 'fila')}
+                        onCancelar={() => setCancelarPedido(p)}
+                        onVerPortal={() => setPortalPedido(p)}
+                        onDisparar={() => dispararMutation.mutate(p.id)}
+                        onDispararIgnorandoMinimo={podeOverride ? () => dispararOverrideMutation.mutate(p.id) : undefined}
+                        disparando={disparandoLinha(p.id)}
+                      />
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+
+              {!isLoading && historico.length > 0 && (
+                <Collapsible
+                  open={histAberto}
+                  onOpenChange={(v) => {
+                    track('reposicao.historico_hoje_toggle', { abrir: v, n: historico.length });
+                    setHistAberto(v);
+                  }}
+                  className="mt-4 border-t pt-2"
+                >
+                  <CollapsibleTrigger asChild>
+                    <button
+                      type="button"
+                      className="w-full flex items-center justify-between py-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+                    >
+                      <span className="font-medium">Histórico de hoje ({historico.length})</span>
+                      {histAberto ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                    </button>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent>
+                    <p className="text-xs text-muted-foreground pb-2">
+                      Pedidos cancelados ou expirados de hoje. Ficam aqui só pra registro — não saem do banco.
+                    </p>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Status</TableHead>
+                          <TableHead>Fornecedor / Grupo</TableHead>
+                          <TableHead className="text-right">Nº SKUs</TableHead>
+                          <TableHead className="text-right">Valor</TableHead>
+                          <TableHead>Portal</TableHead>
+                          <TableHead>Aprovado em</TableHead>
+                          <TableHead className="text-right">Ações</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {historico.map((p) => (
+                          <PedidoRow
+                            key={p.id}
+                            p={p}
+                            onVerDetalhes={() => abrirDetalhes(p, 'historico_hoje')}
+                            onCancelar={() => setCancelarPedido(p)}
+                            onVerPortal={() => setPortalPedido(p)}
+                            onDisparar={() => dispararMutation.mutate(p.id)}
+                            onDispararIgnorandoMinimo={podeOverride ? () => dispararOverrideMutation.mutate(p.id) : undefined}
+                            disparando={disparandoLinha(p.id)}
+                          />
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </CollapsibleContent>
+                </Collapsible>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="historico">
+          <CiclosAnteriores data={historicoData} onChange={setHistoricoData} />
+        </TabsContent>
+      </Tabs>
+
+      {/* Avisos do ciclo — ABAIXO da fila de propósito: a tela abre para decidir o que dispara, e a
+          fila era o último bloco da página (passava-se por ~10 cartões antes dela). O que trava a
+          decisão (leitura falha, guardrail, fila de atenção, saúde das fontes) segue acima. */}
+      <section className="space-y-4" aria-labelledby="avisos-do-ciclo">
+        <h2 id="avisos-do-ciclo" className="text-sm font-medium text-muted-foreground">Avisos do ciclo</h2>
+      {/* empty:hidden — sem nenhum aviso, a div vazia não ganha o espaçamento do space-y. */}
+      <div className="flex items-center gap-2 flex-wrap empty:hidden">
+        <ForaDoMotorBadge />
+        <BaixoGiroBadge />
+      </div>
 
       {semFornecedorSemLeitura && (
         <AvisoLeituraFalhou
@@ -810,100 +1091,6 @@ export default function AdminReposicaoPedidos() {
 
       <CaixaCompraCard pedidos={pedidos ?? []} />
 
-      {mostrarAtencao && atencaoCount > 0 && (
-        <Card className="border-status-warning/40">
-          <CardHeader>
-            <CardTitle className="text-base flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4 text-status-warning" />
-              Precisam de atenção ({atencaoCount}) — todos os ciclos
-            </CardTitle>
-            <p className="text-sm text-muted-foreground">
-              Pedidos travados que exigem ação humana (falha no Omie, conciliação do portal ou
-              falha definitiva), de qualquer ciclo. Abra os detalhes para resolver — a conciliação
-              do portal está em "Ver portal". Recusa definitiva do portal: cancele (o ciclo regrava
-              os itens que ainda faltarem) — não dispare de novo.
-            </p>
-          </CardHeader>
-          <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Ciclo</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Fornecedor / Grupo</TableHead>
-                  <TableHead className="text-right">Nº SKUs</TableHead>
-                  <TableHead className="text-right">Valor</TableHead>
-                  <TableHead>Portal</TableHead>
-                  <TableHead className="text-right">Ações</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {atencaoVermelha.map((p) => (
-                  <TableRow key={p.id}>
-                    <TableCell className="text-xs tabular-nums whitespace-nowrap">
-                      {format(new Date(p.data_ciclo + 'T12:00:00'), 'dd/MM/yyyy')}
-                    </TableCell>
-                    <TableCell>
-                      <StatusComMotivo pedido={p} />
-                    </TableCell>
-                    <TableCell>
-                      <div className="font-medium">{p.fornecedor_nome}</div>
-                      <div className="text-xs text-muted-foreground">{p.grupo_codigo ?? '—'}</div>
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">{p.num_skus}</TableCell>
-                    <TableCell className="text-right tabular-nums font-medium">{formatBRL(p.valor_total)}</TableCell>
-                    <TableCell>
-                      <PortalBadge pedido={p} onClick={() => setPortalPedido(p)} />
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex justify-end gap-1">
-                        <Button size="sm" variant="ghost" onClick={() => setDetalhesPedido(p)}>
-                          <Eye className="w-4 h-4 mr-1" />Detalhes
-                        </Button>
-                        {acaoLinhaAtencao(p, podeOverride) === 'cancelar' ? (
-                          // Recusa definitiva do portal: a saída é cancelar (o ciclo regrava). NUNCA
-                          // "Disparar" aqui — ver acaoLinhaAtencao (#3169).
-                          <Button size="sm" variant="outline" onClick={() => setCancelarPedido(p)}>
-                            <XCircle className="w-4 h-4 mr-1" />Cancelar
-                          </Button>
-                        ) : acaoLinhaAtencao(p, podeOverride) === 'override' ? (
-                          // Preso pelo gate de mínimo de faturamento → "Disparar mesmo assim"
-                          // no lugar do "Re-disparar" (que só re-bateria no gate).
-                          <OverrideMinimoButton
-                            fornecedorNome={p.fornecedor_nome}
-                            valorTotal={p.valor_total}
-                            onConfirm={() => dispararOverrideMutation.mutate(p.id)}
-                            disabled={disparandoLinha(p.id) || p.status_envio_portal === 'enviando_portal'}
-                          />
-                        ) : acaoLinhaAtencao(p, podeOverride) === 'disparar' ? (
-                          <Button
-                            size="sm"
-                            variant={p.status === 'falha_envio' ? 'outline' : 'default'}
-                            onClick={() => dispararMutation.mutate(p.id)}
-                            disabled={
-                              disparandoLinha(p.id) ||
-                              p.status_envio_portal === 'enviando_portal'
-                            }
-                          >
-                            {disparandoLinha(p.id) ||
-                            p.status_envio_portal === 'enviando_portal' ? (
-                              <Loader2 className="w-4 h-4 mr-1 animate-spin" />
-                            ) : (
-                              <Zap className="w-4 h-4 mr-1" />
-                            )}
-                            {p.status === 'falha_envio' ? 'Re-disparar' : 'Disparar'}
-                          </Button>
-                        ) : null}
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
-      )}
-
       {/* ACESSO NEGADO esconde os dados: o servidor acabou de dizer que este usuário não pode vê-los, e
           o react-query preserva o `data` do último sucesso — deixá-lo na tela seria falha ABERTA.
           FALHA DE APURAÇÃO (rede, RPC quebrada) mantém a última lista BOA e mostra o aviso junto: como a
@@ -923,114 +1110,12 @@ export default function AdminReposicaoPedidos() {
       <AbaixoMinimoCard
         pedidos={atencaoAbaixoMinimo}
         podeOverride={podeOverride}
-        onDetalhes={setDetalhesPedido}
+        onDetalhes={(p) => abrirDetalhes(p, 'abaixo_minimo')}
         onOverride={(id) => dispararOverrideMutation.mutate(id)}
         disparandoLinha={disparandoLinha}
       />
 
-      <Tabs defaultValue="hoje">
-        <TabsList>
-          <TabsTrigger value="hoje">Ciclo de hoje</TabsTrigger>
-          <TabsTrigger value="historico">Ciclos anteriores</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="hoje">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Pedidos do dia ({ativos.length})</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {isLoading ? (
-                <PageSkeleton variant="list" />
-              ) : ativos.length === 0 ? (
-                <div className="text-center py-12 text-muted-foreground">
-                  {historico.length > 0
-                    ? 'Nenhum pedido ativo hoje — veja o Histórico de hoje abaixo.'
-                    : 'Nenhum pedido gerado para o ciclo de hoje. Use "Sincronizar e recalcular" para criar.'}
-                </div>
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Fornecedor / Grupo</TableHead>
-                      <TableHead className="text-right">Nº SKUs</TableHead>
-                      <TableHead className="text-right">Valor</TableHead>
-                      <TableHead>Portal</TableHead>
-                      <TableHead>Aprovado em</TableHead>
-                      <TableHead className="text-right">Ações</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {ativos.map((p) => (
-                      <PedidoRow
-                        key={p.id}
-                        p={p}
-                        onVerDetalhes={() => setDetalhesPedido(p)}
-                        onCancelar={() => setCancelarPedido(p)}
-                        onVerPortal={() => setPortalPedido(p)}
-                        onDisparar={() => dispararMutation.mutate(p.id)}
-                        onDispararIgnorandoMinimo={podeOverride ? () => dispararOverrideMutation.mutate(p.id) : undefined}
-                        disparando={disparandoLinha(p.id)}
-                      />
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
-
-              {!isLoading && historico.length > 0 && (
-                <Collapsible open={histAberto} onOpenChange={setHistAberto} className="mt-4 border-t pt-2">
-                  <CollapsibleTrigger asChild>
-                    <button
-                      type="button"
-                      className="w-full flex items-center justify-between py-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
-                    >
-                      <span className="font-medium">Histórico de hoje ({historico.length})</span>
-                      {histAberto ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-                    </button>
-                  </CollapsibleTrigger>
-                  <CollapsibleContent>
-                    <p className="text-xs text-muted-foreground pb-2">
-                      Pedidos cancelados ou expirados de hoje. Ficam aqui só pra registro — não saem do banco.
-                    </p>
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Status</TableHead>
-                          <TableHead>Fornecedor / Grupo</TableHead>
-                          <TableHead className="text-right">Nº SKUs</TableHead>
-                          <TableHead className="text-right">Valor</TableHead>
-                          <TableHead>Portal</TableHead>
-                          <TableHead>Aprovado em</TableHead>
-                          <TableHead className="text-right">Ações</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {historico.map((p) => (
-                          <PedidoRow
-                            key={p.id}
-                            p={p}
-                            onVerDetalhes={() => setDetalhesPedido(p)}
-                            onCancelar={() => setCancelarPedido(p)}
-                            onVerPortal={() => setPortalPedido(p)}
-                            onDisparar={() => dispararMutation.mutate(p.id)}
-                            onDispararIgnorandoMinimo={podeOverride ? () => dispararOverrideMutation.mutate(p.id) : undefined}
-                            disparando={disparandoLinha(p.id)}
-                          />
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </CollapsibleContent>
-                </Collapsible>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="historico">
-          <CiclosAnteriores data={historicoData} onChange={setHistoricoData} />
-        </TabsContent>
-      </Tabs>
+      </section>
 
       <DetalhesModal
         pedido={detalhesPedido}

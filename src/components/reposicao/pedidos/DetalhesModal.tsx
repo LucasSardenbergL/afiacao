@@ -4,6 +4,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { AlertTriangle, Loader2, Trash2 } from 'lucide-react';
 import { PedidoSugerido } from './types';
+import { track } from '@/lib/analytics';
 import { formatBRL, formatTime } from './shared';
 import { StatusBadge, SplitInfo } from './badges';
 import { useDetalhesModal } from './useDetalhesModal';
@@ -29,6 +30,9 @@ export function DetalhesModal({
   const {
     condicoes,
     isLoading,
+    itensEstado,
+    refetchItens,
+    motivoBloqueioAprov,
     edits,
     onEditQty,
     onBlurQty,
@@ -118,6 +122,17 @@ export function DetalhesModal({
           <div className="flex items-center justify-center py-12">
             <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
           </div>
+        ) : itensEstado === 'erro' ? (
+          <Alert variant="destructive" data-testid="aviso-itens-falhou">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertTitle>Não consegui carregar os itens deste pedido</AlertTitle>
+            <AlertDescription className="flex flex-wrap items-center gap-2">
+              Sem os itens não dá para conferir o que vai sair — a aprovação fica travada até ler de novo.
+              <Button size="sm" variant="outline" onClick={() => void refetchItens()}>
+                Tentar de novo
+              </Button>
+            </AlertDescription>
+          </Alert>
         ) : (
           <>
             {linhas.some((l) => l.inativo_no_omie) && (
@@ -200,9 +215,12 @@ export function DetalhesModal({
           )}
           {podeEditar && (
             <Button
-              disabled={aprovarMutation.isPending || !condicaoSelecionada}
-              onClick={() => aprovarMutation.mutate()}
-              title={!condicaoSelecionada ? 'Selecione a condição de pagamento antes de aprovar' : ''}
+              disabled={aprovarMutation.isPending || !!motivoBloqueioAprov}
+              onClick={() => {
+                track('reposicao.pedido_aprovar_click', { pedido_id: pedido.id, n_itens: linhas.length });
+                aprovarMutation.mutate();
+              }}
+              title={motivoBloqueioAprov ?? ''}
             >
               {aprovarMutation.isPending && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}
               ✓ Aprovar e disparar agora
