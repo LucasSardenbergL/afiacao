@@ -446,8 +446,10 @@ async function calcularEmpresa(db: DbClient, empresa: Company): Promise<RegimeEm
   engineFlags.push("RBA aproximada por TTM.");
 
   // 4) Parse inputs + defaults.
-  const { data: inputsRow } = await db.from("fin_regime_inputs")
+  const { data: inputsRow, error: inputsError } = await db.from("fin_regime_inputs")
     .select("regime_inputs").eq("company", empresa).maybeSingle();
+  // Falha de leitura NÃO é "inputs não cadastrados": defaults silenciosos virariam simulação.
+  if (inputsError) throw new Error(`fin_regime_inputs ${empresa}: ${inputsError.message}`);
   const ri = ((inputsRow as { regime_inputs?: Record<string, unknown> } | null)?.regime_inputs ?? {}) as RegimeInputsRaw;
 
   const folhaCppAnual = numOrNull(ri.folha_cpp_anual);
@@ -588,10 +590,13 @@ Deno.serve(async (req: Request) => {
   const db: DbClient = createClient(SUPABASE_URL, SERVICE_ROLE);
 
   const por_empresa: RegimeEmpresaResult[] = [];
+  // Empresa sem snapshot não some em silêncio: o consolidado deixa de ser das 3 e precisa dizer.
+  const empresas_sem_dre: string[] = [];
   try {
     for (const empresa of EMPRESAS) {
       const res = await calcularEmpresa(db, empresa);
       if (res) por_empresa.push(res);
+      else empresas_sem_dre.push(empresa);
     }
   } catch (e) {
     // Leitura falhou: resposta 500 com CORS (um throw cru vira erro de rede opaco na tela).
@@ -604,7 +609,7 @@ Deno.serve(async (req: Request) => {
   let confianca_pior = 3;
   // Empresa incompleta entra com otimizado = atual (economia 0): o total é SUBTOTAL das comparáveis,
   // e a tela precisa dizer quais ficaram de fora.
-  const empresas_incompletas: string[] = [];
+  const empresas_incompletas: string[] = [...empresas_sem_dre];
   for (const e of por_empresa) {
     if (e.status === "incompleto") empresas_incompletas.push(e.empresa);
     const atualComp = e.comparados.find((c) => c.regime === e.regime_atual);
@@ -621,6 +626,7 @@ Deno.serve(async (req: Request) => {
     if (n < confianca_pior) confianca_pior = n;
   }
   const economia_total = Math.max(0, imposto_atual_total - imposto_otimizado_total);
+  if (empresas_sem_dre.length > 0) confianca_pior = 1;
   const confianca: "alta" | "media" | "baixa" = confianca_pior === 1 ? "baixa" : confianca_pior === 2 ? "media" : "alta";
 
   const result: RegimeTributarioResult = {

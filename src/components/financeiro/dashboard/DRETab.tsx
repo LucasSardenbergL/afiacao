@@ -93,7 +93,7 @@ export function DRETab({ data, view, ano, indisponivel = null }: {
           <AlertTriangle className="w-4 h-4 text-status-error mt-0.5 shrink-0" />
           <p className="text-xs text-status-error">
             {invalidos.length} mapeamento(s) DRE inválido(s) para o motor/regime — classificados por heurística:{' '}
-            <span className="font-mono">{[...new Set(invalidos.map((i) => `${i.codigo}→${i.valor}`))].slice(0, 6).join(', ')}</span>.
+            <span className="font-mono">{[...new Set(invalidos.map((i) => `${i.empresa ? `${i.empresa}:` : ''}${i.codigo}→${i.valor}`))].slice(0, 6).join(', ')}</span>.
             Corrija em <span className="font-medium">Mapeamento DRE</span>.
           </p>
         </div>

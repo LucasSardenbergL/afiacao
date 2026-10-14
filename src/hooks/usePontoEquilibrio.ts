@@ -13,6 +13,7 @@ import { mensagemDeErro } from '@/lib/erro-mensagem';
 import {
   pontoEquilibrio,
   somaCodigosPorPrefixo,
+  despesasNoDRE,
   type MesDRE,
   type TipoCusto,
   type CustoCompartilhado,
@@ -407,7 +408,7 @@ export function useFolhaReferencia(origem: string): {
     const n = snaps.data.length || 1;
     const porCod = new Map<string, number>();
     for (const m of snaps.data)
-      for (const [cod, v] of Object.entries(m.despesas))
+      for (const [cod, v] of Object.entries(despesasNoDRE(m)))
         if (FAMILIA_FOLHA.some((p) => cod.startsWith(p))) porCod.set(cod, (porCod.get(cod) ?? 0) + v);
     const desc = cats.data ?? {};
     const linhas = [...porCod.entries()]

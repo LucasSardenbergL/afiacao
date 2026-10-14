@@ -113,7 +113,7 @@ export interface FinDRE {
     config_tributaria_completa?: boolean;
     // DRE fase 2
     fora_dre?: { saidas: number; entradas: number; por_codigo: Record<string, { saidas: number; entradas: number }>; composicao_pendente: boolean; motivo: string | null };
-    mapeamentos_invalidos?: Array<{ codigo: string; valor: string; origem: 'exato' | 'prefixo'; motivo: string; codigo_titulo: string; valor_afetado: number }>;
+    mapeamentos_invalidos?: Array<{ codigo: string; valor: string; origem: 'exato' | 'prefixo'; motivo: string; codigo_titulo: string; valor_afetado: number; empresa?: string }>;
   };
 }
 

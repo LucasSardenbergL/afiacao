@@ -203,7 +203,7 @@ export default function FinanceiroRegimeTributario() {
 
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0">
-              <CardTitle className="text-base">Consolidado (3 empresas)</CardTitle>
+              <CardTitle className="text-base">Consolidado ({data.por_empresa.length} de 3 empresas com DRE)</CardTitle>
               <span className={`text-xs px-2 py-0.5 rounded ${nivelClasses(data.consolidado.confianca)}`}>
                 confiança {data.consolidado.confianca}
               </span>
@@ -226,7 +226,7 @@ export default function FinanceiroRegimeTributario() {
               {(data.consolidado.empresas_incompletas?.length ?? 0) > 0 && (
                 <p className="mt-2 text-xs text-status-warning">
                   Economia é subtotal das empresas comparáveis — fora: {data.consolidado.empresas_incompletas!.join(', ')}{' '}
-                  (recomendação incompleta, entra com economia zero). Não é o total do grupo.
+                  (sem DRE ou recomendação incompleta, entra com economia zero). Não é o total do grupo.
                 </p>
               )}
             </CardContent>

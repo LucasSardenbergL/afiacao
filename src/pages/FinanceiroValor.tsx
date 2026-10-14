@@ -84,8 +84,11 @@ function Ranking({ modo }: { modo: 'reportado' | 'normalizado' }) {
   }));
   // DRE fase 2: base provisória (fora_dre com composição pendente) não é comparável — sem ordem
   // recomendatória; os números ficam como exploratórios.
+  // Só ordena quando as 3 responderam E declararam explicitamente `false`: consulta falha/pendente
+  // ou edge anterior (sem o campo) é "não verificado", não "comparável".
   const provisorias = queries.filter(({ q }) => (q.data as ValorEmpresaResult | undefined)?.resultado_provisorio === true).map(({ company }) => NOME[company]);
-  const suspenso = provisorias.length > 0;
+  const naoVerificadas = queries.filter(({ q }) => (q.data as ValorEmpresaResult | undefined)?.resultado_provisorio !== false && (q.data as ValorEmpresaResult | undefined)?.resultado_provisorio !== true).map(({ company }) => NOME[company]);
+  const suspenso = provisorias.length > 0 || naoVerificadas.length > 0;
   const byIncr = suspenso ? rows : [...rows].sort((a, b) => (b.incr ?? -Infinity) - (a.incr ?? -Infinity));
   return (
     <Card>
@@ -99,8 +102,9 @@ function Ranking({ modo }: { modo: 'reportado' | 'normalizado' }) {
         ))}
         {suspenso && (
           <p className="text-xs text-status-warning pt-2">
-            Ranking suspenso: resultado provisório em {provisorias.join(', ')} (saída fora do DRE com composição
-            principal × juros pendente). Números exploratórios, sem ordem de recomendação.
+            Ranking suspenso — números exploratórios, sem ordem de recomendação.
+            {provisorias.length > 0 && <> Resultado provisório em {provisorias.join(', ')} (saída fora do DRE com composição principal × juros pendente).</>}
+            {naoVerificadas.length > 0 && <> Base não verificada em {naoVerificadas.join(', ')} (consulta pendente/falhou).</>}
           </p>
         )}
         <p className="text-xs text-muted-foreground pt-2">ROIC incremental = ΔNOPAT / Δcapital (TTM atual vs −12m). "—" = histórico insuficiente ou Δcapital pequeno/negativo.</p>

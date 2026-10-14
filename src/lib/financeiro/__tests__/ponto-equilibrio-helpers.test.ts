@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   pontoEquilibrio,
   somaCodigosPorPrefixo,
+  despesasNoDRE,
   type MesDRE,
   type TipoCusto,
 } from '../ponto-equilibrio-helpers';
@@ -358,5 +359,18 @@ describe('pontoEquilibrio — DRE fase 2 (composição do snapshot)', () => {
   it('janela mista: gate 4 segue valendo nos meses legados', () => {
     const misto = [...dozeFase2().slice(0, 6), ...Array.from({ length: 6 }, (_, i) => mesUniforme(2026, i + 7, { deducoes_col: 5, despesas: { '2.01.01': 60, '2.04.01': 25 } }))];
     expect(pontoEquilibrio({ meses: misto, classificacao: CLASS }).motivo).toBe('deducoes_coluna_inesperada');
+  });
+});
+
+describe('despesasNoDRE / somaCodigosPorPrefixo — fase 2 tira o fora_dre da família da folha', () => {
+  it('2.03.76 (distribuição de lucros, fora_dre) não entra no sinal de folha; legado segue bruto', () => {
+    const novo = mesUniforme(2026, 1, {
+      despesas: { '2.03.01': 10, '2.03.76': 50 },
+      composicao_despesas: { '2.03.01': { despesas_administrativas: 10 }, '2.03.76': { fora_dre: 50 } },
+    });
+    expect(despesasNoDRE(novo)).toEqual({ '2.03.01': 10 });
+    expect(somaCodigosPorPrefixo([novo], ['2.03'])).toBe(10);
+    const legado = mesUniforme(2025, 1, { despesas: { '2.03.01': 10, '2.03.76': 50 } });
+    expect(somaCodigosPorPrefixo([legado], ['2.03'])).toBe(60);
   });
 });

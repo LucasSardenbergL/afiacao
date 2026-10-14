@@ -121,11 +121,27 @@ export interface PontoEquilibrioInput {
 const MESES_ABREV = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
 const rotuloMes = (m: MesDRE) => `${MESES_ABREV[m.mes - 1] ?? '??'}/${m.ano}`;
 
+/**
+ * DRE fase 2: o detalhamento do mês SEM a parte que o motor pôs fora do DRE (pela composição do
+ * próprio snapshot). Legado (sem composição) devolve o detalhamento como está. Ex.: 2.03.76
+ * distribuição de lucros mora na família 2.03 mas não é folha — não pode entrar em referência de rateio.
+ */
+export function despesasNoDRE(m: MesDRE): Record<string, number> {
+  const comp = m.composicao_despesas;
+  if (comp == null) return m.despesas;
+  const out: Record<string, number> = {};
+  for (const [k, v] of Object.entries(m.despesas)) {
+    const semFora = v - (comp[k]?.fora_dre ?? 0);
+    if (semFora !== 0) out[k] = semFora;
+  }
+  return out;
+}
+
 /** Σ TTM dos valores cujo código começa com algum dos prefixos (sinal anti-duplicidade da folha). */
 export function somaCodigosPorPrefixo(meses: MesDRE[], prefixos: string[]): number {
   let total = 0;
   for (const m of meses)
-    for (const [cod, v] of Object.entries(m.despesas))
+    for (const [cod, v] of Object.entries(despesasNoDRE(m)))
       if (Number.isFinite(v) && prefixos.some((p) => cod.startsWith(p))) total += v;
   return total;
 }

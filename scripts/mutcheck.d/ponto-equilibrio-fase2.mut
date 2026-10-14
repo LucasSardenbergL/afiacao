@@ -10,3 +10,4 @@ PEGA | fase 2: composição inválida degrada (gate 0 neutralizado) | s/if \(com
 PEGA | fase 2: gate 4 segue valendo nos meses legados (receita legado > 0 vira < 0) | s/if \(receitaLegadoTTM > 0 && deducoesColLegadoTTM/if (receitaLegadoTTM < 0 \&\& deducoesColLegadoTTM/
 PEGA | fase 2: fora_dre não entra no universo do PE (vira operacional) | s/else if \(linha === 'fora_dre'\) excluido\.fora_dre \+= v;/else if (linha === 'fora_dre') { operacional += v; porLinha.despesas_operacionais = (porLinha.despesas_operacionais ?? 0) + v; }/
 PEGA | fase 2: mês legado mantém o detalhamento inteiro (composição null tratada como vazia) | s/if \(m\.composicao_despesas == null\) \{/if (m.composicao_despesas === undefined) {/
+PEGA | fase 2: referência de folha desconta fora_dre (subtração neutralizada) | s/const semFora = v - \(comp\[k\]\?\.fora_dre \?\? 0\);/const semFora = v;/
