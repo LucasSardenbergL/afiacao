@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-10-13T22:59:58.771Z",
-  "sourceHead": "9fbad4ce77b85803f903b3a2dda4aa8cae77cea2",
+  "medidoEm": "2026-10-14T23:01:24.350Z",
+  "sourceHead": "71db0f65d22a17b0bff4071340618d4b7efa789b",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -11,12 +11,19 @@
   "audits": {
     "funcoes": {
       "script": "authz:funcoes:prod",
-      "exit": 0,
-      "resumo": "✅ o EXECUTE de prod bate com o contrato nas 63 função(ões) da allowlist. ⚠️ 1 delas têm o fecho FORA do repo (fechadaPor=null) e portanto NÃO são vigiadas pelo CI: public.aplicar_sql.",
-      "denominador": "🔎 authz:funcoes:prod — 64 definição(ões) lida(s) para 63 chave(s) da allowlist.",
-      "contratoFingerprint": "a3e41845e92d912bb2bd33274dd58bd9f096ae6557c9349aa7b14a67c04d9b1d",
+      "exit": 1,
+      "resumo": "authz:funcoes:prod — 1 divergência(s) de EXECUTE. Ver scripts/authz-funcoes-fechadas.ts.",
+      "denominador": "🔎 authz:funcoes:prod — 64 definição(ões) lida(s) para 64 chave(s) da allowlist.",
+      "contratoFingerprint": "08b629ce113579818cde9e40660cd1a0ca1882e4d65b3f6d797a7d58d34d9b37",
       "auditorFingerprint": "8971003ee5ae2343ff6129fe9569b7afb3b5cfd5bab5abed86c6e27520c8358f",
-      "achados": []
+      "achados": [
+        {
+          "id": "f5c43c29d4fbd0bb",
+          "linha": "❌ public.sayerlack_importar_pedido_portal — [FUNCAO_AUSENTE_EM_PROD] public.sayerlack_importar_pedido_portal está na allowlist e NÃO existe no banco — foi removida, renomeada, ou a allowlist ficou obsoleta.",
+          "primeiraVez": "2026-10-14",
+          "ultimaVez": "2026-10-14"
+        }
+      ]
     },
     "grants": {
       "script": "authz:grants:prod",
@@ -57,8 +64,8 @@
     "corpo": {
       "script": "deriva:corpo:prod",
       "exit": 0,
-      "resumo": "✅ deriva-corpo — 349 identidade(s) batem com o repo (272 em dia, 68 só cosméticas, 8 aceitas na baseline) e 18 aposentada(s) estão ausentes",
-      "denominador": "🔎 deriva-corpo — 349 identidade(s) conferida(s) · 18 aposentada(s) · ref origin/main@443f8e4f7 (fetch ok) · prod 2026-10-13 23:00:30.03375Z",
+      "resumo": "✅ deriva-corpo — 351 identidade(s) batem com o repo (274 em dia, 68 só cosméticas, 8 aceitas na baseline) e 18 aposentada(s) estão ausentes",
+      "denominador": "🔎 deriva-corpo — 351 identidade(s) conferida(s) · 18 aposentada(s) · ref origin/main@ba60ffc9a (fetch ok) · prod 2026-10-14 23:01:51.718915Z",
       "contratoFingerprint": "8bae0f63a85db5b5b8f06c1a491f7582801a0c525a8ad5340126654b28e8f3fc",
       "auditorFingerprint": "68cc6b1ece6ec412435dc7b688263fae7ae6d72e4a9a4085b20e114eddb6575d",
       "achados": []

@@ -21,12 +21,12 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **636** custom migrations totais
-- **2041** objetos esperados (criados por estas migrations)
+- **637** custom migrations totais
+- **2043** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 713
+  - `function`: 714
   - `rls_policy`: 471
-  - `index`: 275
+  - `index`: 276
   - `cron_job`: 184
   - `table`: 177
   - `view`: 113
@@ -5158,6 +5158,13 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `view` | `public.v_ciclo_cr_titulos` | — |
 | `view` | `public.v_ciclo_cliente_resumo` | — |
 | `view` | `public.v_ciclo_empresa_coorte` | — |
+
+### `20261014120000_sayerlack_importar_pedido_portal.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.sayerlack_importar_pedido_portal` | — |
+| `index` | `public.ux_pedido_compra_sugerido_portal_protocolo` | `pedido_compra_sugerido` |
 
 ### `20261014120100_fcs_margem_fecha_coluna.sql`
 
