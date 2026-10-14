@@ -4730,6 +4730,7 @@ export type Database = {
           despesas_financeiras: number | null
           despesas_operacionais: number | null
           detalhamento: Json | null
+          fora_dre: number | null
           id: string
           impostos: number | null
           lucro_bruto: number | null
@@ -4744,6 +4745,7 @@ export type Database = {
           resultado_antes_impostos: number | null
           resultado_liquido: number | null
           resultado_operacional: number | null
+          resultado_provisorio: boolean | null
         }
         Insert: {
           ano: number
@@ -4756,6 +4758,7 @@ export type Database = {
           despesas_financeiras?: number | null
           despesas_operacionais?: number | null
           detalhamento?: Json | null
+          fora_dre?: number | null
           id?: string
           impostos?: number | null
           lucro_bruto?: number | null
@@ -4770,6 +4773,7 @@ export type Database = {
           resultado_antes_impostos?: number | null
           resultado_liquido?: number | null
           resultado_operacional?: number | null
+          resultado_provisorio?: boolean | null
         }
         Update: {
           ano?: number
@@ -4782,6 +4786,7 @@ export type Database = {
           despesas_financeiras?: number | null
           despesas_operacionais?: number | null
           detalhamento?: Json | null
+          fora_dre?: number | null
           id?: string
           impostos?: number | null
           lucro_bruto?: number | null
@@ -4796,6 +4801,7 @@ export type Database = {
           resultado_antes_impostos?: number | null
           resultado_liquido?: number | null
           resultado_operacional?: number | null
+          resultado_provisorio?: boolean | null
         }
         Relationships: []
       }
