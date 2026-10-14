@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 636
+-- Total de custom migrations: 637
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -696,6 +696,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261013220000', 'tint_promote_snapshot_ref_por_generated_at', '20261013220000_tint_promote_snapshot_ref_por_generated_at.sql'),
   ('20261013230000', 'fin_dre_fora_dre_fase2', '20261013230000_fin_dre_fora_dre_fase2.sql'),
   ('20261014120000', 'fcs_margem_rpc_projecao', '20261014120000_fcs_margem_rpc_projecao.sql'),
+  ('20261014120000', 'fin_ciclo_cliente_views', '20261014120000_fin_ciclo_cliente_views.sql'),
   ('20261014120000', 'sayerlack_importar_pedido_portal', '20261014120000_sayerlack_importar_pedido_portal.sql'),
   ('20261014120100', 'fcs_margem_fecha_coluna', '20261014120100_fcs_margem_fecha_coluna.sql')
 ),
@@ -2705,6 +2706,9 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('fin_dre_fora_dre_fase2', 'function', 'public', 'fin_dre_snapshots_contrato_fase2', ''),
   ('fin_dre_fora_dre_fase2', 'trigger', 'public', 'trg_fin_dre_snapshots_contrato_fase2', 'fin_dre_snapshots'),
   ('fcs_margem_rpc_projecao', 'function', 'public', 'get_scores_margem', ''),
+  ('fin_ciclo_cliente_views', 'view', 'public', 'v_ciclo_cr_titulos', ''),
+  ('fin_ciclo_cliente_views', 'view', 'public', 'v_ciclo_cliente_resumo', ''),
+  ('fin_ciclo_cliente_views', 'view', 'public', 'v_ciclo_empresa_coorte', ''),
   ('sayerlack_importar_pedido_portal', 'function', 'public', 'sayerlack_importar_pedido_portal', ''),
   ('sayerlack_importar_pedido_portal', 'index', 'public', 'ux_pedido_compra_sugerido_portal_protocolo', 'pedido_compra_sugerido')
 ),
@@ -4762,6 +4766,9 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('fin_dre_fora_dre_fase2', 'function', 'public', 'fin_dre_snapshots_contrato_fase2', ''),
   ('fin_dre_fora_dre_fase2', 'trigger', 'public', 'trg_fin_dre_snapshots_contrato_fase2', 'fin_dre_snapshots'),
   ('fcs_margem_rpc_projecao', 'function', 'public', 'get_scores_margem', ''),
+  ('fin_ciclo_cliente_views', 'view', 'public', 'v_ciclo_cr_titulos', ''),
+  ('fin_ciclo_cliente_views', 'view', 'public', 'v_ciclo_cliente_resumo', ''),
+  ('fin_ciclo_cliente_views', 'view', 'public', 'v_ciclo_empresa_coorte', ''),
   ('sayerlack_importar_pedido_portal', 'function', 'public', 'sayerlack_importar_pedido_portal', ''),
   ('sayerlack_importar_pedido_portal', 'index', 'public', 'ux_pedido_compra_sugerido_portal_protocolo', 'pedido_compra_sugerido')
 )

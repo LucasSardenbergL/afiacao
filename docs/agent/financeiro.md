@@ -54,6 +54,18 @@
 - **Confiança da view:** só `alta`/`erp_sem_caixa`/`erp_nao_quitado` expõem `encargo_recebido`; `so_diferenca_caixa` expõe `diferenca_caixa_documento`, que **não** é encargo (adiantamento, baixa fora do caixa e juros 50 com desconto 50 mudam o número). Política de cobrança (2% + 10% a.m., carência 3d) fica FORA da view.
 
 
+## Ciclo por cliente (aba "Ciclo", master) — fatos em `v_ciclo_*`, regra em `ciclo-cliente-helpers.ts`
+
+> 2026-10-14. Spec `docs/superpowers/specs/2026-10-14-ciclo-financeiro-cockpit-cliente-design.md`. Prova `db/test-fin-ciclo-cliente.sh`. Diário `docs/historico/ciclo-financeiro-cliente.md`.
+
+- **Prazo concedido = `vencimento − emissão` da PARCELA** (não há condição de pagamento persistida por cliente; vencimento é o VIGENTE — renegociação apaga o original). Média de 30/60/90 = 60 ≠ condição "60": proposta sempre por calendário de parcelas.
+- ⚠️ **Amostra só de pagos é viés de sobrevivência**: o vencido em aberto (oben ~R$262k / 103 clientes, pré-voo 2026-10-14 com as views finais; antes da correção do status eram ~116 clientes / R$268k / 408 títulos) é a 2ª população, nunca média com os pagos. Tendência por **mês de VENCIMENTO** com `% pago` — por mês de baixa, recuperar dívida velha "piora" o gráfico.
+- ⚠️ **Desconto: `d_max = 1 − (1+c)^(−N/30)`**, não `(1+c)^(N/30) − 1` (achado Codex P0). N = antecipação incremental de CENÁRIO, nunca o atraso histórico.
+- **Excesso sobre a carência = média de `max(0, atraso−3)`**, não `max(0, média−3)` — antecipação não cancela atraso.
+- Todo R$ da aba é **cenário rotulado**; encurtar prazo de quem paga ANTES do vencimento pode liberar zero (sem R$).
+- ⚠️ **`numero_documento` vem como `''` (string vazia) na oben** (2 valores distintos em 5,5k títulos de 12m): `coalesce` não pega `''`. A chave de documento é `coalesce(nullif(btrim(numero_documento_fiscal),''), nullif(btrim(numero_documento),''))`. Sem isso, nenhum cliente da oben passava de confiança baixa (pré-voo: 0 → 153 clientes com ≥6 NFs).
+- **'VENCE HOJE' é status Omie legítimo**, não ambíguo; título aberto (A VENCER/VENCE HOJE) com vencimento < `hoje_sp` e saldo > 0 conta como vencido (lag de sync).
+
 ## DRE fase 2 — `fora_dre` (composição pendente) e imposto em linha própria
 
 > 2026-10-13. Migration `20261013230000`, mapa `db/2026-10-13-fin-dre-mapa-colacor-fase2.sql`, prova `db/test-fin-dre-fora-dre.sh`. Diário: `docs/historico/dre-fora-dre-fase2.md`.

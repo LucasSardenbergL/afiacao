@@ -7,10 +7,17 @@ import { NcgDecomposicao } from '@/components/financeiro/cashflow/NcgDecomposica
 import { ConfigCashflowDialog } from '@/components/financeiro/cashflow/ConfigCashflowDialog';
 import { Button } from '@/components/ui/button';
 import { Settings } from 'lucide-react';
+import { CicloTab } from '@/components/financeiro/cashflow/ciclo/CicloTab';
+import { useUrlState } from '@/hooks/useUrlState';
 import { useAuth } from '@/contexts/AuthContext';
+
+const ABAS_VALIDAS = ['posicao', 'fluxo', 'ncg', 'eventos', 'ciclo'];
 
 export default function FinanceiroCapitalGiro() {
   const { isMaster } = useAuth();
+  const [{ aba }, setUrl] = useUrlState({ aba: 'posicao' });
+  // Aba inválida ou 'ciclo' sem ser master cai em 'posicao' (sem reescrever a URL).
+  const abaEfetiva = ABAS_VALIDAS.includes(aba) && (aba !== 'ciclo' || isMaster) ? aba : 'posicao';
   const [showConfig, setShowConfig] = useState(false);
 
   return (
@@ -24,18 +31,20 @@ export default function FinanceiroCapitalGiro() {
         )}
       </div>
 
-      <Tabs defaultValue="posicao">
+      <Tabs value={abaEfetiva} onValueChange={(v) => setUrl({ aba: v })}>
         <TabsList>
           <TabsTrigger value="posicao">Posição agora</TabsTrigger>
           <TabsTrigger value="fluxo">Fluxo 13 semanas</TabsTrigger>
           <TabsTrigger value="ncg">NCG</TabsTrigger>
           <TabsTrigger value="eventos">Eventos</TabsTrigger>
+          {isMaster && <TabsTrigger value="ciclo">Ciclo</TabsTrigger>}
         </TabsList>
 
         <TabsContent value="posicao"><PosicaoAgora /></TabsContent>
         <TabsContent value="fluxo"><Fluxo13Semanas /></TabsContent>
         <TabsContent value="ncg"><NcgDecomposicao /></TabsContent>
         <TabsContent value="eventos"><EventosManager /></TabsContent>
+        {isMaster && <TabsContent value="ciclo"><CicloTab /></TabsContent>}
       </Tabs>
 
       <ConfigCashflowDialog open={showConfig} onOpenChange={setShowConfig} />
