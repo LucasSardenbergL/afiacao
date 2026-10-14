@@ -283,6 +283,9 @@ async function dispararOmie(pedidoId: number): Promise<{ httpStatus: number; bod
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
+  const auth = await authorizeCronOrStaff(req);
+  if (!auth.ok) return auth.response;
+
   let body: { protocolo?: unknown } = {};
   try {
     body = (await req.json()) as { protocolo?: unknown };
@@ -290,15 +293,13 @@ Deno.serve(async (req: Request) => {
     return json({ ok: false, mensagem: "Body JSON inválido" }, 400);
   }
 
-  // ⚠️ SONDA DE VERSÃO — único caminho sem efeito colateral, por isso antes de tudo (ver versao.ts).
+  // ⚠️ SONDA DE VERSÃO — depois do gate de credencial (anônimo não lê versão), antes de qualquer leitura/escrita
+  // ou do portal: é o único caminho sem efeito colateral (ver versao.ts).
   const decisaoSonda = classificarSonda(body);
   if (decisaoSonda.tipo === "sonda") return json(respostaSonda(VERSAO));
   if (decisaoSonda.tipo === "ambiguo") {
     return json({ ok: false, versao: VERSAO, error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }, 400);
   }
-
-  const auth = await authorizeCronOrStaff(req);
-  if (!auth.ok) return auth.response;
   // Importar é ação de PESSOA: cron não importa pedido de ninguém.
   if (auth.via === "cron") return json({ ok: false, mensagem: "Importação de pedido do portal é só para staff." }, 403);
   const operador = auth.userId ?? null;

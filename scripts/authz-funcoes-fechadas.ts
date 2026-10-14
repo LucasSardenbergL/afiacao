@@ -447,6 +447,11 @@ export const AUTHZ_FUNCOES_FECHADAS: Record<string, FuncaoFechada> = {
     permitido: PORTA_FECHADA,
     motivo: 'custo do portal em 1 transação (CAS omie IS NULL + pedido inteiro + IPI conferido contra ipi_aliquota_ncm + prova contra o total cobrado + decomposição sem IPI/IPI e custo com IPI) — edge enviar-pedido-portal-sayerlack, service_role',
   },
+  'public.sayerlack_importar_pedido_portal': {
+    fechadaPor: '20261014120000_sayerlack_importar_pedido_portal.sql',
+    permitido: PORTA_FECHADA,
+    motivo: 'importa pedido digitado direto no portal Sayerlack (de-para inverso + pedido + itens + custo pela RPC de custo, tudo-ou-nada, idempotente por protocolo) — edge sayerlack-importar-pedido-portal, service_role',
+  },
   'public.sayerlack_ipi_itens': {
     fechadaPor: '20261006120000_preco_exato_po_sayerlack_ipi.sql',
     permitido: PORTA_FECHADA,
