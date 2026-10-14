@@ -8,7 +8,8 @@
 --   a margem inverte o custo unitário.
 --
 -- Esta migration é ADITIVA (só cria a RPC). A B (20261014120100) é a que fecha a coluna.
--- ORDEM DE APPLY: (1) esta → (2) Publish do front que lê a margem por aqui → (3) a B.
+-- ORDEM DE APPLY: (1) esta → (2) Publish do front que lê a margem por aqui → (3) ADOÇÃO do build novo pelo
+-- staff (build_id, analytics.md §6 — o PWA só troca de build no aceite) → (4) a B.
 -- Aplicar a B antes do Publish derruba as telas que ainda leem a coluna (o staff É authenticated).
 --
 -- Contrato:

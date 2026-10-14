@@ -4,6 +4,10 @@
 --     precisa existir (a PRE abaixo aborta sem ela) — E (2) o Publish do front que lê a margem pela RPC
 --     e NÃO faz mais `select('*')` nem lista gross_margin_pct em farmer_client_scores. O REVOKE abaixo
 --     derruba toda leitura que ainda toque a coluna, e o staff/master É 'authenticated'.
+--     E Publish NÃO basta: o PWA segue executando o build velho até o usuário aceitar a atualização
+--     (deploy.md, "4ª camada") — e o build velho lê a coluna. Antes de aplicar, medir a ADOÇÃO pelo
+--     `build_id` dos eventos de staff (docs/agent/analytics.md §6): staff ativo ainda no build anterior
+--     recebe 42501 em Customer 360, Intelligence, copiloto, plano tático e bundles até recarregar.
 --
 -- Forma (medido por psql-ro, 2026-10-14): authenticated e anon têm SELECT *table-level* (relacl
 -- arwdDxtm) e nenhum attacl. REVOKE de UMA coluna é NO-OP enquanto o table-level existe. Por isso:

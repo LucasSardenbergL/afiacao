@@ -3,6 +3,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { STATUS_NAO_VENDA_POSTGREST } from '@/lib/farmer/universo-pedidos';
 import { fetchAllPages } from '@/lib/postgrest';
 import { buscarMargemScore } from '@/lib/scoring/margemScores';
+import { captureException } from '@/lib/analytics';
 import { addDias, hojeSP } from '@/lib/time/sp-day';
 import { canalToKind, canalToLabel, canalToTone, type CanalInteracao } from '@/lib/carteira/interacoes';
 import { LIMITE_FEED_PEDIDOS } from './format';
@@ -86,7 +87,12 @@ export function useCustomerScore(customerId: string | undefined, farmerId: strin
       // A margem NÃO vem da tabela: a coluna é fechada para authenticated (FU4-F) e sai pela RPC com
       // gate de projeção. `margem_oculta` separa "o servidor não concedeu" de "não apurada" — sem ele
       // o hero diria "sem compra na janela" sobre quem compra todo mês.
-      const margem = await buscarMargemScore(customerId!);
+      // Falha da RPC NÃO derruba o score: health/churn/cobertura foram lidos e seguem na tela; só a
+      // margem some (`margem_oculta`), sem legenda que afirme algo sobre o cliente (achado Codex).
+      const margem = await buscarMargemScore(customerId!).catch((e: unknown) => {
+        captureException(e, { fonte: 'get_scores_margem/c360' });
+        return undefined;
+      });
       return {
         ...linha,
         gross_margin_pct: margem?.margem ?? null,

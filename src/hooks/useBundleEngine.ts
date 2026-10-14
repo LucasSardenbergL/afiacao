@@ -3,7 +3,7 @@ import { supabase } from '@/integrations/supabase/client';
 import type { Json } from '@/integrations/supabase/types';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { toast } from 'sonner';
-import { buscarMargensScores } from '@/lib/scoring/margemScores';
+import { buscarMargensScores, type MargemScore } from '@/lib/scoring/margemScores';
 import { ehFalhaDePagina, fetchAllPages } from '@/lib/postgrest';
 import { erroComCausa, mensagemDeErro } from '@/lib/erro-mensagem';
 import { captureException } from '@/lib/analytics';
@@ -332,7 +332,13 @@ export const useBundleEngine = () => {
       // nenhum dos 4 clientes. Carteira vazia → lista vazia (tratada logo abaixo).
       const clientScores = await fetchAllScores(effectiveUserId);
       // Mesmo recorte (farmer_id = effectiveUserId); o escopo de linha e o gate do número são da RPC.
-      const margensDaCarteira = await buscarMargensScores({ farmerId: effectiveUserId });
+      // A margem só alimenta o ARGUMENTO do card (perfil do cliente), não o bundle: falha da RPC não
+      // derruba a geração — o perfil cai no ramo "margem desconhecida", que não afirma número, e a
+      // falha vai para o captureException em vez de morrer calada.
+      const margensDaCarteira = await buscarMargensScores({ farmerId: effectiveUserId }).catch((e: unknown) => {
+        captureException(e, { fonte: 'get_scores_margem/bundle' });
+        return new Map<string, MargemScore>();
+      });
 
       // As duas paginadas estouram a capa de 1.000 do PostgREST (3.108 SKUs ativos, 5.668
       // perfis) e vinham truncadas em silêncio: o profileMap deixava a maioria dos clientes sem

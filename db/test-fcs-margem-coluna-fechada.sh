@@ -254,8 +254,12 @@ eq "I1 após re-apply, vendedora segue barrada" \
 # Cada sabotagem recria UMA defesa na versão furada, re-roda o assert que a protege e EXIGE vermelho;
 # depois restaura reaplicando a migration real. Sabotagem que segue verde = assert sem dente.
 echo "-- K. falsificação --"
-exige_vermelho() { # <rótulo> <valor obtido> <valor do verde>
-  if [ "$2" = "$3" ]; then bad "$1 — SABOTADO e seguiu verde [$2]: assert sem dente"; else ok "$1 — sabotado ficou vermelho [$2]"; fi
+# Exige o vermelho CERTO, não "qualquer coisa ≠ verde": um erro inesperado da sabotagem (relação
+# inexistente, sintaxe) também difere do verde e aprovaria o assert sem provar dente (achado Codex).
+exige_vermelho() { # <rótulo> <valor obtido> <valor do verde> <vermelho esperado>
+  if [ "$2" = "$3" ]; then bad "$1 — SABOTADO e seguiu verde [$2]: assert sem dente"
+  elif [ "$2" = "$4" ]; then ok "$1 — sabotado ficou vermelho [$2]"
+  else bad "$1 — sabotagem deu resultado inesperado [$2], esperava o vermelho [$4]"; fi
 }
 sabota_a() { # <sed expr> — aplica a migration A com o corpo sabotado
   sed -E "$1" "$MIG_A" > "$RODADA/a-sabotada.sql"
@@ -268,32 +272,32 @@ sabota_a() { # <sed expr> — aplica a migration A com o corpo sabotado
 
 # K1 — B furada: o GRANT de tabela volta (o "aperto" revertido por um GRANT colado no SQL Editor).
 P -q -c "GRANT SELECT ON public.farmer_client_scores TO authenticated;"
-exige_vermelho "K1 GRANT de tabela devolvido → C1" "$(veredito_nega "$(nega $A false "SELECT gross_margin_pct FROM public.farmer_client_scores")")" "barrado"
+exige_vermelho "K1 GRANT de tabela devolvido → C1" "$(veredito_nega "$(nega $A false "SELECT gross_margin_pct FROM public.farmer_client_scores")")" "barrado" "vazou"
 P -q -f "$MIG_B"
 eq "K1r restaurado" "$(veredito_nega "$(nega $A false "SELECT gross_margin_pct FROM public.farmer_client_scores")")" "barrado"
 
 # K2 — B furada por COLUNA: a margem entra na lista do GRANT → C4 (oráculo por filtro).
 P -q -c "GRANT SELECT (gross_margin_pct) ON public.farmer_client_scores TO authenticated;"
-exige_vermelho "K2 margem na lista do GRANT → C4 filtro" "$(veredito_nega "$(nega $A false "SELECT count(*) FROM public.farmer_client_scores WHERE gross_margin_pct > 30")")" "barrado"
+exige_vermelho "K2 margem na lista do GRANT → C4 filtro" "$(veredito_nega "$(nega $A false "SELECT count(*) FROM public.farmer_client_scores WHERE gross_margin_pct > 30")")" "barrado" "vazou"
 P -q -c "REVOKE SELECT (gross_margin_pct) ON public.farmer_client_scores FROM authenticated;"
 eq "K2r restaurado" "$(veredito_nega "$(nega $A false "SELECT count(*) FROM public.farmer_client_scores WHERE gross_margin_pct > 30")")" "barrado"
 
 # K3 — A sem gate de PROJEÇÃO → R2.
 sabota_a 's/CASE WHEN v_pode_num THEN s\.gross_margin_pct END/s.gross_margin_pct/'
 exige_vermelho "K3 projeção removida → R2" \
-  "$(como $A false false "SELECT coalesce(gross_margin_pct::text,'(null)')||'|'||margem_visivel FROM public.get_scores_margem(ARRAY['$C1']::uuid[]);")" "(null)|false"
+  "$(como $A false false "SELECT coalesce(gross_margin_pct::text,'(null)')||'|'||margem_visivel FROM public.get_scores_margem(ARRAY['$C1']::uuid[]);")" "(null)|false" "12.5|false"
 P -q -f "$MIG_A"
 
 # K4 — A sem escopo de carteira → R3b.
 sabota_a 's/AND \(v_cap_todo OR COALESCE\(private\.carteira_visivel_para\(s\.customer_user_id, v_uid\), false\)\)/AND true/'
 exige_vermelho "K4 escopo removido → R3b" \
-  "$(como $A true false "SELECT count(*) FROM public.get_scores_margem(ARRAY['$C3']::uuid[]);")" "0"
+  "$(como $A true false "SELECT count(*) FROM public.get_scores_margem(ARRAY['$C3']::uuid[]);")" "0" "1"
 P -q -f "$MIG_A"
 
 # K5 — A sem fail-closed de uid → R3d (com cap_carteira permissiva, só o RETURN defende).
 sabota_a 's/^  IF v_uid IS NULL THEN$/  IF false THEN/'
 exige_vermelho "K5 fail-closed removido → R3d" \
-  "$(P -tA -q -c "SET test.uid=''; SET test.cap_carteira='true'; SET test.cap_custo='true'; SET ROLE authenticated; SELECT count(*) FROM public.get_scores_margem();" 2>&1)" "0"
+  "$(P -tA -q -c "SET test.uid=''; SET test.cap_carteira='true'; SET test.cap_custo='true'; SET ROLE authenticated; SELECT count(*) FROM public.get_scores_margem();" 2>&1)" "0" "3"
 P -q -f "$MIG_A"
 
 # K6 — A sem REVOKE de anon → R4.
@@ -308,13 +312,13 @@ EXCEPTION WHEN insufficient_privilege THEN RAISE NOTICE 'MARCA_BARRADO_7Q';
 END $x$;
 SQL
 )
-exige_vermelho "K6 anon com EXECUTE → R4" "$(veredito_nega "$K6")" "barrado"
+exige_vermelho "K6 anon com EXECUTE → R4" "$(veredito_nega "$K6")" "barrado" "vazou"
 P -q -f "$MIG_A"
 
 # K7 — policy de SELECT aberta → S2. Prova que o negativo de RLS é da POLICY, não do privilégio.
 P -q -c "ALTER POLICY fcs_select_carteira ON public.farmer_client_scores USING (true);"
 exige_vermelho "K7 policy aberta → S2" \
-  "$(como $A false false "SELECT count(*) FROM public.farmer_client_scores WHERE customer_user_id='$C3';")" "0"
+  "$(como $A false false "SELECT count(*) FROM public.farmer_client_scores WHERE customer_user_id='$C3';")" "0" "1"
 P -q -c "ALTER POLICY fcs_select_carteira ON public.farmer_client_scores USING (( SELECT private.cap_carteira_ler(( SELECT auth.uid() AS uid)) AS cap_carteira_ler) OR private.carteira_visivel_para(customer_user_id, ( SELECT auth.uid() AS uid)));"
 
 echo "-- pós-falsificação: tudo restaurado volta verde --"
