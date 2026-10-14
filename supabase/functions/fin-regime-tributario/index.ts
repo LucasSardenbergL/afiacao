@@ -587,9 +587,14 @@ Deno.serve(async (req: Request) => {
   const db: DbClient = createClient(SUPABASE_URL, SERVICE_ROLE);
 
   const por_empresa: RegimeEmpresaResult[] = [];
-  for (const empresa of EMPRESAS) {
-    const res = await calcularEmpresa(db, empresa);
-    if (res) por_empresa.push(res);
+  try {
+    for (const empresa of EMPRESAS) {
+      const res = await calcularEmpresa(db, empresa);
+      if (res) por_empresa.push(res);
+    }
+  } catch (e) {
+    // Leitura falhou: resposta 500 com CORS (um throw cru vira erro de rede opaco na tela).
+    return jsonResponse({ error: e instanceof Error ? e.message : String(e) }, 500);
   }
 
   // Consolidado.
