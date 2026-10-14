@@ -9,6 +9,9 @@ export const LIMITE_ATRASO_LEVE = 7;
 export const LIMITE_FOLGA = -3;
 export const MIN_DOCUMENTOS = 6;
 export const RECENCIA_MAX_DIAS = 90;
+/** Teto de sanidade do custo do dinheiro (% a.m.) — acima disso o input é erro de digitação. */
+export const CUSTO_MENSAL_MAX = 0.2;
+const NP = ' — não é previsão';
 export const DEGRAUS_PRAZO: readonly number[] = [90, 75, 60, 56, 45, 42, 35, 30, 28, 21, 14, 7];
 
 export type Perfil = 'folga' | 'pontual' | 'atraso_leve' | 'atraso_cronico' | 'misto' | 'sem_dado';
@@ -20,6 +23,7 @@ export type SugestaoCliente = {
   texto: string;
   cenario: Cenario | null;
   descontoCandidato: boolean;
+  /** null quando não há degrau numérico (parcelado, ausente ou já no menor degrau). */
   degrau: { de: number; para: number } | null;
 };
 
@@ -103,12 +107,13 @@ export function sugerirAlavanca(r: ResumoCliente, hojeSp: string): SugestaoClien
 
   // (0) Estoque vencido — qualquer perfil/confiança; nunca somado ao recorrente.
   if (r.saldoVencido !== null && r.saldoVencido > 0) {
-    const acima90 = r.saldoVencido90 ?? 0;
+    const brl = (v: number) => `R$ ${v.toLocaleString('pt-BR', { maximumFractionDigits: 2 })}`;
+    const parte90 = r.saldoVencido90 === null ? '' : ` (${brl(r.saldoVencido90)} > 90d)`;
     return {
       ...nada,
       alavanca: 'recuperar_vencido',
-      texto: acima90 > 0 ? 'Recuperar vencidos — parte há mais de 90 dias' : 'Recuperar vencidos',
-      cenario: { reais: r.saldoVencido, motivo: 'saldo vencido em aberto', rotulo: 'estoque vencido a recuperar (não é recorrente nem lucro)' },
+      texto: `${brl(r.saldoVencido)} vencidos${parte90}`,
+      cenario: { reais: r.saldoVencido, motivo: 'saldo vencido em aberto', rotulo: `estoque vencido a recuperar (não é recorrente nem lucro)${NP}` },
     };
   }
 
@@ -123,10 +128,10 @@ export function sugerirAlavanca(r: ResumoCliente, hojeSp: string): SugestaoClien
     const excesso = r.excessoCarenciaPond;
     const cenario: Cenario =
       dia === null
-        ? { reais: null, motivo: 'sem volume na janela', rotulo: 'cenário: atraso cai à carência de 3d' }
+        ? { reais: null, motivo: 'sem volume na janela', rotulo: `cenário: atraso cai à carência de 3d${NP}` }
         : excesso === null
-          ? { reais: null, motivo: 'sem atraso medido', rotulo: 'cenário: atraso cai à carência de 3d' }
-          : { reais: excesso * dia, motivo: 'excesso sobre a carência × volume diário', rotulo: 'cenário: atraso cai à carência de 3d — não é previsão' };
+          ? { reais: null, motivo: 'sem atraso medido', rotulo: `cenário: atraso cai à carência de 3d${NP}` }
+          : { reais: excesso * dia, motivo: 'excesso sobre a carência × volume diário', rotulo: `cenário: atraso cai à carência de 3d${NP}` };
     return {
       ...nada,
       alavanca: 'cobrar_atraso',
@@ -139,6 +144,24 @@ export function sugerirAlavanca(r: ResumoCliente, hojeSp: string): SugestaoClien
   // pontual / folga → degrau
   const prazo = r.prazoConcedidoPond;
   if (prazo === null) return nada;
+  const rotuloDegrau = `cenário: se continuar pagando no vencimento${NP}`;
+
+  // Média ponderada só é a CONDIÇÃO quando toda NF tem parcela única (spec §5.3).
+  if (r.nParcelas === null || r.nDocumentos === null) {
+    return {
+      ...nada, alavanca: 'degrau_prazo',
+      texto: 'Degrau de prazo — sem contagem de parcelas/documentos para validar',
+      cenario: { reais: null, motivo: 'sem contagem de parcelas/documentos', rotulo: rotuloDegrau },
+    };
+  }
+  if (r.nParcelas > r.nDocumentos) {
+    return {
+      ...nada, alavanca: 'degrau_prazo',
+      texto: `Parcelado: prazo médio ${Math.round(prazo)} d não é a condição — revisar o calendário de parcelas no drill`,
+      cenario: { reais: null, motivo: 'parcelado: média não é condição', rotulo: rotuloDegrau },
+    };
+  }
+
   const para = degrauAbaixo(prazo);
   if (para === null) return { ...nada, texto: 'Prazo já no menor degrau usual' };
   const de = Math.round(prazo);
@@ -147,15 +170,16 @@ export function sugerirAlavanca(r: ResumoCliente, hojeSp: string): SugestaoClien
     return {
       ...nada, alavanca: 'degrau_prazo', degrau,
       texto: `Candidato a degrau ${de}→${para} dias`,
-      cenario: { reais: null, motivo: 'benefício depende de piloto', rotulo: 'paga antes do vencimento — encurtar pode liberar zero' },
+      cenario: { reais: null, motivo: 'benefício depende de piloto', rotulo: `paga antes do vencimento — encurtar pode liberar zero${NP}` },
     };
   }
   return {
     ...nada, alavanca: 'degrau_prazo', degrau,
     texto: `Degrau ${de}→${para} dias (hipótese)`,
+    // R$ usa o prazo CRU; o arredondamento é só do texto.
     cenario: dia === null
-      ? { reais: null, motivo: 'sem volume na janela', rotulo: 'cenário: se continuar pagando no vencimento' }
-      : { reais: (de - para) * dia, motivo: 'dias a menos × volume diário', rotulo: 'cenário: se continuar pagando no vencimento' },
+      ? { reais: null, motivo: 'sem volume na janela', rotulo: rotuloDegrau }
+      : { reais: (prazo - para) * dia, motivo: 'dias a menos × volume diário', rotulo: rotuloDegrau },
   };
 }
 
@@ -179,6 +203,6 @@ export function parseCustoMensal(texto: string):
   if (t === '') return { ok: false, motivo: 'custo_ausente' };
   if (!/^\d+([.,]\d+)?$/.test(t)) return { ok: false, motivo: 'custo_invalido' };
   const pct = Number(t.replace(',', '.'));
-  if (!Number.isFinite(pct) || pct <= 0) return { ok: false, motivo: 'custo_invalido' };
+  if (!Number.isFinite(pct) || pct <= 0 || pct / 100 > CUSTO_MENSAL_MAX) return { ok: false, motivo: 'custo_invalido' };
   return { ok: true, c: pct / 100 };
 }

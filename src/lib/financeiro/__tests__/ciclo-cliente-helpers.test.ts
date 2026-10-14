@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   num, perfilPorP80, perfilCliente, confiancaCliente, degrauAbaixo, sugerirAlavanca,
-  descontoMaximo, parseCustoMensal, normalizarResumo, type ResumoCliente,
+  descontoMaximo, parseCustoMensal, CUSTO_MENSAL_MAX, normalizarResumo, type ResumoCliente,
 } from '@/lib/financeiro/ciclo-cliente-helpers';
 
 const HOJE = '2026-10-14';
@@ -19,7 +19,7 @@ const base = (o: Partial<ResumoCliente> = {}): ResumoCliente => ({
 describe('num', () => {
   it('aceita number e string numérica', () => { expect(num(2)).toBe(2); expect(num('2.5')).toBe(2.5); });
   it('ausente/inválido vira null, nunca 0', () => {
-    for (const x of [null, undefined, '', 'abc', NaN, Infinity, -Infinity]) expect(num(x)).toBeNull();
+    for (const x of [null, undefined, '', 'abc', 'NaN', 'Infinity', '-Infinity', NaN, Infinity, -Infinity]) expect(num(x)).toBeNull();
   });
 });
 
@@ -53,7 +53,7 @@ describe('confiancaCliente', () => {
 });
 
 describe('degrauAbaixo', () => {
-  it.each([[30, 28], [31, 30], [28, 21], [8, 7], [7, null], [3, null], [120, 90]] as const)(
+  it.each([[30, 28], [31, 30], [28, 21], [8, 7], [7, null], [3, null], [120, 90], [7.4, null], [7.6, 7]] as const)(
     '%s → %s', (de, para) => { expect(degrauAbaixo(de)).toBe(para); });
 });
 
@@ -61,12 +61,14 @@ describe('sugerirAlavanca', () => {
   it('vencida aberta vence tudo, e não soma ao recorrente', () => {
     const s = sugerirAlavanca(base({ saldoVencido: 1000, saldoVencido90: 600, atrasoP80: 10, atrasoP80Valor: 10, excessoCarenciaPond: 5 }), HOJE);
     expect(s.alavanca).toBe('recuperar_vencido');
+    expect(s.texto).toBe('R$ 1.000 vencidos (R$ 600 > 90d)');
     expect(s.cenario?.reais).toBe(1000);
     expect(s.cenario?.rotulo).toMatch(/estoque vencido/);
   });
   it('cliente só-vencido (sem pagas) → recuperar_vencido', () => {
     const s = sugerirAlavanca(base({ nParcelas: null, nDocumentos: null, valorPago: null, atrasoP80: null, atrasoP80Valor: null, ultimaBaixa: null, saldoVencido: 100 }), HOJE);
     expect(s.alavanca).toBe('recuperar_vencido');
+    expect(s.texto).toBe('R$ 100 vencidos');
   });
   it('atraso crônico → cenário = excesso × volume/365', () => {
     const s = sugerirAlavanca(base({ atrasoP80: 10, atrasoP80Valor: 10, excessoCarenciaPond: 5, volumeEmitido12m: 36500 }), HOJE);
@@ -103,6 +105,45 @@ describe('sugerirAlavanca', () => {
   it('misto → nenhuma', () => {
     expect(sugerirAlavanca(base({ atrasoP80: 0, atrasoP80Valor: 10 }), HOJE).alavanca).toBe('nenhuma');
   });
+  it('parcelado (18 parcelas, 6 NFs) → média não é condição, sem degrau nem R$', () => {
+    const s = sugerirAlavanca(base({ nParcelas: 18, nDocumentos: 6, prazoConcedidoPond: 60 }), HOJE);
+    expect(s.alavanca).toBe('degrau_prazo');
+    expect(s.degrau).toBeNull();
+    expect(s.cenario?.reais).toBeNull();
+    expect(s.cenario?.motivo).toBe('parcelado: média não é condição');
+    expect(s.texto).toBe('Parcelado: prazo médio 60 d não é a condição — revisar o calendário de parcelas no drill');
+    expect(s.texto).not.toMatch(/56/);
+  });
+  it('parcela única (parcelas = documentos) mantém degrau numérico', () => {
+    const s = sugerirAlavanca(base({ nParcelas: 8, nDocumentos: 8 }), HOJE);
+    expect(s.degrau).toEqual({ de: 30, para: 28 });
+  });
+  it('contagem de parcelas ausente → reais null com motivo', () => {
+    const s = sugerirAlavanca(base({ nParcelas: null }), HOJE);
+    expect(s.cenario?.reais).toBeNull();
+    expect(s.cenario?.motivo).toBe('sem contagem de parcelas/documentos');
+  });
+  it('R$ do degrau usa prazo cru: 30,4 → 2,4×dia (texto arredondado)', () => {
+    const s = sugerirAlavanca(base({ prazoConcedidoPond: 30.4 }), HOJE);
+    expect(s.cenario?.reais).toBeCloseTo(240, 6);
+    expect(s.degrau).toEqual({ de: 30, para: 28 });
+  });
+  it('todo cenário tem rótulo "não é previsão", inclusive com reais null', () => {
+    const casos = [
+      base({ saldoVencido: 5 }),
+      base({ atrasoP80: 10, atrasoP80Valor: 10, excessoCarenciaPond: 5, volumeEmitido12m: null }),
+      base({ atrasoP80: 10, atrasoP80Valor: 10, excessoCarenciaPond: 5 }),
+      base({ atrasoP80: -5, atrasoP80Valor: -5 }),
+      base({ nParcelas: 18, nDocumentos: 6 }),
+      base({ volumeEmitido12m: null }),
+      base(),
+    ];
+    for (const c of casos) expect(sugerirAlavanca(c, HOJE).cenario?.rotulo).toMatch(/não é previsão/);
+  });
+  it('misto → texto explica a divergência', () => {
+    expect(sugerirAlavanca(base({ atrasoP80: 0, atrasoP80Valor: 10 }), HOJE).texto)
+      .toBe('Frequência e valor do atraso divergem — sem sugestão automática');
+  });
   it('prazo 7 pontual → sem degrau (nunca 7→0)', () => {
     const s = sugerirAlavanca(base({ prazoConcedidoPond: 7 }), HOJE);
     expect(s.alavanca).toBe('nenhuma');
@@ -130,6 +171,12 @@ describe('parseCustoMensal (input BR)', () => {
   it('"2,5" → 0.025 e "2.5" → 0.025', () => {
     expect(parseCustoMensal('2,5')).toEqual({ ok: true, c: 0.025 });
     expect(parseCustoMensal(' 2.5 ')).toEqual({ ok: true, c: 0.025 });
+  });
+  it('teto: 20 → ok no limite; acima (500, 20,01) → custo_invalido', () => {
+    expect(CUSTO_MENSAL_MAX).toBe(0.2);
+    expect(parseCustoMensal('20')).toEqual({ ok: true, c: 0.2 });
+    expect(parseCustoMensal('500')).toEqual({ ok: false, motivo: 'custo_invalido' });
+    expect(parseCustoMensal('20,01')).toEqual({ ok: false, motivo: 'custo_invalido' });
   });
   it('vazio → custo_ausente', () => { expect(parseCustoMensal('  ')).toEqual({ ok: false, motivo: 'custo_ausente' }); });
   it.each(['abc', '-1', '0', '1e999'])('"%s" → custo_invalido', (t) => {
