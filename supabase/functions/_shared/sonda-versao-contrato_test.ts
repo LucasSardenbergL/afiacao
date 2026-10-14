@@ -25,6 +25,7 @@ import * as argumento from "../generate-bundle-argument/versao.ts";
 import * as nfeRecebimento from "../omie-nfe-recebimento/versao.ts";
 import * as processNfe from "../process-nfe/versao.ts";
 import * as capturaPrecos from "../sayerlack-captura-precos/versao.ts";
+import * as importarPedidoPortal from "../sayerlack-importar-pedido-portal/versao.ts";
 import * as deparaAuto from "../reposicao-depara-sayerlack-auto/versao.ts";
 import * as omieCliente from "../omie-cliente/versao.ts";
 import * as recommendMod from "../recommend/versao.ts";
@@ -293,6 +294,9 @@ const EDGES: Array<{ nome: string; mod: ModSonda }> = [
   // 2026-10-10 — nasce instrumentada: a fila do picking v2 (spec 2026-10-10-picking-v2-design.md).
   // v0.1 só diagnóstico read-only no Omie; o efeito caro é a cota da app_key (REDUNDANT).
   { nome: "picking-fila-omie", mod: pickingFilaOmie },
+  // 2026-10-14 — nasce instrumentada: importar pedido digitado direto no portal Sayerlack pelo número. Lê o
+  // portal do fornecedor (Browserless), grava o pedido no app e cria PO REAL no Omie (via disparar).
+  { nome: "sayerlack-importar-pedido-portal", mod: importarPedidoPortal },
 ];
 
 /** As cinco da terceira leva — os gates estruturais abaixo varrem todas. */
@@ -743,6 +747,13 @@ Deno.test("process-nfe: o EFEITO precisa avisar que NÃO existe dry_run", () => 
   // caminho seguro no corpo do arquivo não vai achar, e precisa descobrir isso pela recusa.
   if (!/dry_run/.test(processNfe.EFEITO)) {
     throw new Error(`EFEITO não menciona a ausência de dry_run: ${processNfe.EFEITO}`);
+  }
+});
+
+Deno.test("sayerlack-importar-pedido-portal: o EFEITO diz portal do FORNECEDOR e PO REAL no Omie", () => {
+  // Ela LÊ o portal, mas o efeito caro é o PO no Omie (via disparar) — a recusa da sonda tem de dizer os dois.
+  if (!/fornecedor/i.test(importarPedidoPortal.EFEITO) || !/omie/i.test(importarPedidoPortal.EFEITO)) {
+    throw new Error(`EFEITO não menciona fornecedor e Omie: ${importarPedidoPortal.EFEITO}`);
   }
 });
 
