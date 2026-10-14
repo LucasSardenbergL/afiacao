@@ -6,19 +6,25 @@
 BEGIN;
 
 -- ── 1. Por parcela ───────────────────────────────────────────────────────────
+-- numero_documento = NF (numero_documento_fiscal) com fallback no numero_documento; '' (comum na oben) vira NULL.
 -- 'paga'           : baixa derivada + vencimento em [hoje_sp−365, hoje_sp) (coorte por VENCIMENTO).
 -- 'paga_sem_baixa' : RECEBIDO na janela sem baixa derivada — só cobertura, nunca média.
--- 'vencida_aberta' : ATRASADO com saldo, QUALQUER idade (envelhecimento em dias_vencido).
--- 'status_ambiguo' : status fora do vocabulário nativo (fallback do ingest) — só contado.
+-- 'vencida_aberta' : sem baixa, saldo finito > 0 e (ATRASADO, ou A VENCER/VENCE HOJE já com vencimento
+--                    passado = lag de sync), QUALQUER idade (envelhecimento em dias_vencido).
+-- 'status_ambiguo' : status fora do vocabulário nativo do Omie (RECEBIDO, A VENCER, VENCE HOJE, ATRASADO,
+--                    CANCELADO; o resto é fallback do ingest) — só contado.
 -- prazo_real = v_titulo_baixas.prazo_ponderado_dias (média dos movimentos; cobre parcial).
 CREATE OR REPLACE VIEW public.v_ciclo_cr_titulos WITH (security_invoker=on) AS
 WITH base AS (
   SELECT r.company, r.omie_codigo_cliente, r.nome_cliente, r.omie_codigo_lancamento,
-         r.numero_documento, r.data_emissao, r.data_vencimento, r.valor_documento, r.saldo,
+         coalesce(nullif(btrim(r.numero_documento_fiscal), ''), nullif(btrim(r.numero_documento), '')) AS numero_documento,
+         r.data_emissao, r.data_vencimento, r.valor_documento, r.saldo,
          r.status_titulo, b.data_baixa_final,
          b.prazo_ponderado_dias - (r.data_vencimento - r.data_emissao) AS atraso_calc,
          b.prazo_ponderado_dias,
-         (b.omie_codigo_lancamento IS NOT NULL AND b.prazo_ponderado_dias IS NOT NULL) AS tem_baixa,
+         (b.omie_codigo_lancamento IS NOT NULL AND b.prazo_ponderado_dias IS NOT NULL
+          AND b.prazo_ponderado_dias <> 'NaN'
+          AND b.prazo_ponderado_dias < 'Infinity') AS tem_baixa,
          (now() AT TIME ZONE 'America/Sao_Paulo')::date AS hoje_sp
   FROM public.fin_contas_receber r
   LEFT JOIN public.v_titulo_baixas b
@@ -33,12 +39,14 @@ WITH base AS (
   SELECT base.*,
     CASE
       WHEN status_titulo IS NULL
-        OR status_titulo NOT IN ('RECEBIDO','A VENCER','ATRASADO','CANCELADO') THEN 'status_ambiguo'
+        OR status_titulo NOT IN ('RECEBIDO','A VENCER','VENCE HOJE','ATRASADO','CANCELADO') THEN 'status_ambiguo'
       WHEN tem_baixa AND data_vencimento >= hoje_sp - 365 AND data_vencimento < hoje_sp THEN 'paga'
       WHEN NOT tem_baixa AND status_titulo = 'RECEBIDO'
         AND data_vencimento >= hoje_sp - 365 AND data_vencimento < hoje_sp THEN 'paga_sem_baixa'
-      WHEN NOT tem_baixa AND status_titulo = 'ATRASADO'
-        AND saldo IS NOT NULL AND saldo <> 'NaN' AND saldo < 'Infinity' AND saldo > 0 THEN 'vencida_aberta'
+      WHEN NOT tem_baixa
+        AND saldo IS NOT NULL AND saldo <> 'NaN' AND saldo < 'Infinity' AND saldo > 0
+        AND (status_titulo = 'ATRASADO'
+        OR (status_titulo IN ('A VENCER','VENCE HOJE') AND data_vencimento < hoje_sp)) THEN 'vencida_aberta'
     END AS situacao
   FROM base
 )
@@ -60,7 +68,7 @@ hoje AS (SELECT (now() AT TIME ZONE 'America/Sao_Paulo')::date AS h),
 pagas AS (
   SELECT t.company, t.omie_codigo_cliente,
          count(*)::int AS n_parcelas,
-         count(DISTINCT coalesce(t.numero_documento, t.omie_codigo_lancamento::text))::int AS n_documentos,
+         count(DISTINCT coalesce('d:' || t.numero_documento, 'l:' || t.omie_codigo_lancamento::text))::int AS n_documentos,
          sum(t.valor_documento) AS valor_pago,
          sum(t.valor_documento * t.prazo_concedido_dias) / sum(t.valor_documento) AS prazo_concedido_pond,
          sum(t.valor_documento * t.prazo_real_dias) / sum(t.valor_documento) AS prazo_real_pond,
@@ -140,8 +148,11 @@ LEFT JOIN ambiguos a  USING (company, omie_codigo_cliente)
 LEFT JOIN volume vol  USING (company, omie_codigo_cliente);
 
 -- ── 3. Por empresa × mês de VENCIMENTO (coorte com censura) ─────────────────
+-- mes_parcial = true nos DOIS extremos da janela [hoje_sp−365, hoje_sp): o mês corrente e o mês de
+-- hoje_sp−365 quando a janela não começa no dia 1 (mês cortado no início).
 CREATE OR REPLACE VIEW public.v_ciclo_empresa_coorte WITH (security_invoker=on) AS
-WITH t AS (
+WITH hoje AS (SELECT (now() AT TIME ZONE 'America/Sao_Paulo')::date AS h),
+t AS (
   SELECT * FROM public.v_ciclo_cr_titulos
   WHERE situacao IN ('paga','paga_sem_baixa','vencida_aberta')
     AND data_vencimento >= (now() AT TIME ZONE 'America/Sao_Paulo')::date - 365
@@ -160,10 +171,10 @@ SELECT company,
          / nullif(sum(valor_documento) FILTER (WHERE situacao = 'paga'), 0) AS prazo_real_pond_pagas,
        sum(valor_documento * atraso_dias) FILTER (WHERE situacao = 'paga')
          / nullif(sum(valor_documento) FILTER (WHERE situacao = 'paga'), 0) AS atraso_pond_pagas,
-       date_trunc('month', data_vencimento)::date
-         = date_trunc('month', (now() AT TIME ZONE 'America/Sao_Paulo')::date)::date AS mes_parcial
-FROM t
-GROUP BY company, date_trunc('month', data_vencimento);
+       (date_trunc('month', data_vencimento)::date = date_trunc('month', h)::date
+        OR (date_trunc('month', data_vencimento)::date = date_trunc('month', h - 365)::date AND (h - 365) <> date_trunc('month', h - 365)::date)) AS mes_parcial
+FROM t, hoje
+GROUP BY company, date_trunc('month', data_vencimento), h;
 
 -- ── 4. Grants (anon fora; RLS das bases via security_invoker) ───────────────
 REVOKE ALL ON public.v_ciclo_cr_titulos, public.v_ciclo_cliente_resumo, public.v_ciclo_empresa_coorte FROM PUBLIC, anon;
