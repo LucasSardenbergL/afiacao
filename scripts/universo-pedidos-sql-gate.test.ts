@@ -80,9 +80,14 @@ describe('universo de pedidos — calibração com as formas REAIS', () => {
 
   it('os 13 corpos PÓS-fix (as 4 migrations) passam, cada um', async () => {
     const modelo = await modelarCedendo(lerMigrations(RAIZ));
+    // Redefinição POSTERIOR legítima de um corpo corrigido: a origem muda, o juízo do universo abaixo
+    // continua valendo sobre o corpo NOVO (é ele que a prod executa).
+    const POSTERIORES: Readonly<Record<string, RegExp>> = {
+      'public.get_defasagem_cliente': /^20261014211500_defasagem_desconto_valor\.sql$/,
+    };
     for (const o of CORRIGIDOS) {
       const d = modelo.get(o)!;
-      expect(d.migration, o).toMatch(/^20261001014(000|100|210|220)_universo_pedidos_/);
+      expect(d.migration, o).toMatch(POSTERIORES[o] ?? /^20261001014(000|100|210|220)_universo_pedidos_/);
       expect(julgarDefinicao(d, AUT), o).toEqual([]);
     }
   });

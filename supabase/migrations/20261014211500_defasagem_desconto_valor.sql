@@ -45,7 +45,7 @@ BEGIN
   SELECT md5(p.prosrc) INTO v_md5 FROM pg_catalog.pg_proc p
    WHERE p.oid = to_regprocedure('public.get_defasagem_cliente(jsonb,uuid)');
   IF (SELECT provolatile FROM pg_temp.defasagem_desc_volatil) IS DISTINCT FROM 's' THEN
-    RAISE EXCEPTION 'PRE: get_defasagem_cliente não era STABLE antes da trava (provolatile=%) — prod medida é STABLE',
+    RAISE EXCEPTION 'PRE_VOLATIL: get_defasagem_cliente não era STABLE antes da trava (provolatile=%) — prod medida é STABLE',
       (SELECT provolatile FROM pg_temp.defasagem_desc_volatil);
   END IF;
   IF v_md5 IS DISTINCT FROM 'a03eb600ef0d2a946e550aa55bba415e' AND v_md5 IS DISTINCT FROM '2ed6e15998b5c48e7b4de590e5dbbaf3' THEN
@@ -304,13 +304,13 @@ BEGIN
   IF v_src IS NULL THEN RAISE EXCEPTION 'POS: get_defasagem_cliente sumiu'; END IF;
   -- semântica primeiro (diz O QUE está errado); o md5 depois (só diz QUE está)
   IF position('oi.desconto_valor AS disc_item' IN v_src) = 0 THEN
-    RAISE EXCEPTION 'POS: a âncora não lê order_items.desconto_valor';
+    RAISE EXCEPTION 'POS_DESC_FONTE: a âncora não lê order_items.desconto_valor';
   END IF;
   IF v_src ~* 'oi\.discount\M' THEN
-    RAISE EXCEPTION 'POS: a âncora ainda lê a coluna legada order_items.discount';
+    RAISE EXCEPTION 'POS_DESC_LEGADO: a âncora ainda lê a coluna legada order_items.discount';
   END IF;
   IF position('disc_item IS DISTINCT FROM 0' IN v_src) = 0 THEN
-    RAISE EXCEPTION 'POS: desconto NULL (não apurado) não é tratado como não provado';
+    RAISE EXCEPTION 'POS_DESC_NULL: desconto NULL (não apurado) não é tratado como não provado';
   END IF;
   IF md5(v_src) IS DISTINCT FROM '2ed6e15998b5c48e7b4de590e5dbbaf3' THEN
     RAISE EXCEPTION 'POS: md5(prosrc)=% não é o corpo desta migration', md5(v_src);

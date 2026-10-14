@@ -46,9 +46,9 @@ if [ "${1:-}" = "--falsificar" ]; then
               null_vira_zero:DV2,DV4,DV5:DV1,DV3,DV6,DV7
               zero_conta:DV3,DV7,DV8:DV1,G1
               sem_gate:G1:DV1,DV3
-              pos_legado:MIG:
-              pos_null_vira_zero:MIG:
-              pre_volatil:MIG:"
+              pos_legado:MIG!POS_DESC_LEGADO
+              pos_null_vira_zero:MIG!POS_DESC_NULL
+              pre_volatil:MIG!PRE_VOLATIL"
   falhas=0
   echo "═══ CONTROLE (sem sabotagem) ═══"
   if ! PGPORT_TEST="$PORT" bash "$0" > "/tmp/falsif-${SLUG}-controle.log" 2>&1; then
@@ -60,14 +60,19 @@ if [ "${1:-}" = "--falsificar" ]; then
   i=0
   for linha in $SABOTAGENS; do
     i=$((i+1))
-    nome="${linha%%:*}"; resto="${linha#*:}"; reds="${resto%%:*}"; greens="${resto#*:}"
+    nome="${linha%%:*}"; resto="${linha#*:}"; reds="${resto%%:*}"
+    case "$resto" in *:*) greens="${resto#*:}" ;; *) greens="" ;; esac
     log="/tmp/falsif-${SLUG}-${nome}.log"
     if SABOTAGEM="$nome" PGPORT_TEST="$((PORT+i))" bash "$0" > "$log" 2>&1; then
       echo "❌ $nome: harness VERDE com a sabotagem — assert sem dente"; falhas=$((falhas+1)); continue
     fi
     antes=$falhas
     for a in ${reds//,/ }; do
-      grep -q "^  ❌ $a " "$log" || { echo "❌ $nome: $a devia estar VERMELHO"; falhas=$((falhas+1)); }
+      case "$a" in
+        *!*) id="${a%%!*}"; marca="${a#*!}"   # vermelho de EXECUÇÃO: o erro tem de trazer a marca
+             grep -q "^  ❌ $id .*ERROR:  $marca:" "$log" || { echo "❌ $nome: $id devia falhar com a marca $marca"; falhas=$((falhas+1)); } ;;
+        *)   grep -q "^  ❌ $a " "$log" || { echo "❌ $nome: $a devia estar VERMELHO"; falhas=$((falhas+1)); } ;;
+      esac
     done
     for a in ${greens//,/ }; do
       [ -n "$a" ] || continue
@@ -82,7 +87,7 @@ if [ "${1:-}" = "--falsificar" ]; then
 fi
 
 # ── arranque PG17 descartável ────────────────────────────────────────────────────────────────
-# shellcheck source=db/lib/pg-harness.sh
+# shellcheck disable=SC1091  # caminho dinâmico ($REPO_ROOT); o gate roda sem -x, como nas demais provas
 . "$REPO_ROOT/db/lib/pg-harness.sh"
 TMPD="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")"
 DATA="$TMPD/data"
