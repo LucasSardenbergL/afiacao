@@ -12,6 +12,10 @@ export function preVoo(fatos, agora) {
   return falhas;
 }
 
+export function hojeSP(agora) {
+  return agora.toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' });
+}
+
 export function resumo(retrato) {
   const porCategoria = {};
   let n = 0;
@@ -31,7 +35,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     console.error('PRÉ-VOO FALHOU:\n- ' + falhas.join('\n- '));
     process.exit(2);
   }
-  const hoje = hojeArg ?? new Date().toISOString().slice(0, 10);
+  const hoje = hojeArg ?? hojeSP(new Date());
   const retrato = classificar(fatos, hoje);
   retrato.meta = { ...retrato.meta, hoje, resumo: resumo(retrato) };
   writeFileSync(saida, JSON.stringify(retrato));

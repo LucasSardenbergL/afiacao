@@ -22,3 +22,9 @@ test('resumo soma por categoria', () => {
   assert.equal(r.n, 3);
   assert.equal(r.valor, 16);
 });
+
+import { hojeSP } from './gerar.mjs';
+test('hojeSP usa o dia de São Paulo, não o de UTC', () => {
+  assert.equal(hojeSP(new Date('2026-10-15T00:30:00Z')), '2026-10-14');
+  assert.equal(hojeSP(new Date('2026-10-15T12:00:00Z')), '2026-10-15');
+});

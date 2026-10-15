@@ -105,3 +105,13 @@ test('parseValorBR', () => {
   assert.equal(parseValorBR(null), null);
   assert.equal(parseValorBR(42), 42);
 });
+
+test('listaTroca leva o fornecedor (informado vence o do cadastro) e ordena por fornecedor', () => {
+  const itens = classificar({ meta: {}, itens: [
+    base({ sku: 1, cmc: 9, fornecedor: 'SAPIRANGA' }),
+    base({ sku: 2, cmc: 1, fornecedor: 'RENNER SAYERLACK S/A' }),
+    base({ sku: 3, cmc: 5, fornecedor: null }),
+  ] }, HOJE).itens;
+  const l = listaTroca(itens, { 1: { destino: 'trocar' }, 2: { destino: 'trocar' }, 3: { destino: 'trocar', fornecedor_informado: 'ACRE' } });
+  assert.deepEqual(l.map((x) => [x.fornecedor, x.sku]), [['ACRE', 3], ['RENNER SAYERLACK S/A', 2], ['SAPIRANGA', 1]]);
+});

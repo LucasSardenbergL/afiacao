@@ -1,0 +1,224 @@
+<title>Raio-X estoque parado</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Newsreader:opsz,wght@6..72,500&display=swap">
+<style>
+/* Layout: placar no topo, fila de cards de SKU por valor; neutros frios com viés azul (design system v3 do app) */
+:root{--bg:#f8f9fb;--fg:#15181e;--muted:#646b78;--card:#fff;--line:#e3e6eb;--accent:#2f5bd3;--ok:#3f7d5a;--warn:#a26a1f;--bad:#b0463f;
+  --f-body:"Geist",ui-sans-serif,system-ui,sans-serif;--f-display:"Newsreader",Georgia,serif;color-scheme:light}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0e1014;--fg:#e8eaee;--muted:#9097a3;--card:#161920;--line:#262a33;--accent:#7d9cf0;--ok:#7fbf98;--warn:#d6a35a;--bad:#e08a83;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#0e1014;--fg:#e8eaee;--muted:#9097a3;--card:#161920;--line:#262a33;--accent:#7d9cf0;--ok:#7fbf98;--warn:#d6a35a;--bad:#e08a83;color-scheme:dark}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 var(--f-body)}
+main{max-width:960px;margin:0 auto;padding-block:16px 48px;padding-inline:16px}
+h1{font:500 26px/1.2 var(--f-display);margin:0 0 4px;text-wrap:balance}
+button:focus-visible,select:focus-visible,input:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.card{min-width:0}.card h3{overflow-wrap:anywhere}#dlgCorpo{overflow-x:auto}.muted{color:var(--muted)}.num{font-variant-numeric:tabular-nums}
+.placar{display:grid;gap:8px;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));margin:12px 0}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:10px}.kpi b{display:block;font-size:18px}
+.barra{height:6px;background:var(--line);border-radius:3px;overflow:hidden}.barra i{display:block;height:100%;background:var(--accent)}
+.tabs,.filtros{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}
+button,select,input{font:inherit;color:inherit;background:var(--card);border:1px solid var(--line);border-radius:6px;padding:8px 10px;min-height:40px}
+button[aria-pressed="true"]{border-color:var(--accent);color:var(--accent);font-weight:600}
+.card{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:12px;margin:8px 0}
+.card h3{font-size:15px;margin:0 0 4px}.linha{display:flex;gap:12px;flex-wrap:wrap}.tag{font-size:12px;padding:2px 6px;border-radius:4px;border:1px solid var(--line)}
+.tag.top{border-color:var(--accent);color:var(--accent)}.decidido{border-left:3px solid var(--ok)}
+.acoes{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}.acoes button{font-size:13px}
+.aviso{padding:10px;border:1px solid var(--warn);border-radius:6px;color:var(--warn);margin:8px 0}
+details summary{cursor:pointer;color:var(--accent);margin-top:6px}
+table{width:100%;border-collapse:collapse}td,th{padding:4px 6px;border-bottom:1px solid var(--line);text-align:left}
+dialog{position:fixed;inset:0;margin:auto;height:fit-content;max-height:calc(100% - 32px);overflow:auto;max-width:min(720px,calc(100% - 32px));width:100%;background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:6px}
+</style>
+<main>
+  <h1>Raio-X do estoque parado</h1>
+  <p class="muted" id="meta"></p>
+  <div id="aviso"></div>
+  <section class="placar" id="placar"></section>
+  <div class="tabs">
+    <button data-aba="merc" aria-pressed="true">Mercadoria</button>
+    <button data-aba="cont" aria-pressed="false">Contagem física e reclassificação</button>
+    <button id="btnTroca">Lista de troca</button>
+    <button id="btnVenda">Venda dirigida por cliente</button>
+  </div>
+  <div class="filtros" id="filtros">
+    <select id="fDestino"><option value="">Todos os destinos sugeridos</option></select>
+    <select id="fForn"><option value="">Todos os fornecedores</option></select>
+    <select id="fEstado"><option value="">Pendentes e decididos</option><option value="pend">Pendentes</option><option value="dec">Decididos</option></select>
+    <label><input type="checkbox" id="fTop"> Só Top 61</label>
+  </div>
+  <div id="lista"></div>
+  <button id="mais" hidden>Mostrar mais</button>
+  <dialog id="dlg"><div id="dlgCorpo"></div><div class="acoes"><button id="dlgCopiar">Copiar</button><button id="dlgFechar">Fechar</button></div></dialog>
+</main>
+<script type="module">
+import { placar, listaTroca, vendaDirigidaPorCliente, diffContagem, parseValorBR, DESTINOS, ROTULOS } from './logica.mjs';
+
+const brl = (v) => v == null ? '—' : v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 });
+const num = (v, d = 1) => v == null ? '—' : Number(v).toLocaleString('pt-BR', { maximumFractionDigits: d });
+const dt = (s) => s ? new Date(s + (s.length === 10 ? 'T12:00:00' : '')).toLocaleDateString('pt-BR') : '—';
+const el = (tag, attrs = {}, ...filhos) => { const e = document.createElement(tag); for (const [k, v] of Object.entries(attrs)) { if (k === 'class') e.className = v; else if (k.startsWith('on')) e.addEventListener(k.slice(2), v); else e.setAttribute(k, v); } for (const f of filhos) e.append(f ?? ''); return e; };
+
+const retrato = await (await fetch('retrato.json')).json();
+const itens = retrato.itens;
+let decisoes = {};
+let db = null;
+let uid = null;
+let somenteLeitura = true;
+let aba = 'merc';
+let limite = 100;
+
+document.getElementById('meta').textContent =
+  `Retrato de ${dt(retrato.meta.hoje)} · estoque sincronizado em ${new Date(retrato.meta.synced_at_max).toLocaleString('pt-BR')} · vendas: sem venda em 12 meses = desde ${dt(String(retrato.meta.historico_desde).slice(0, 10))} · ${retrato.meta.sem_custo.n} SKU(s) sem custo, não avaliados`;
+
+const fDestino = document.getElementById('fDestino');
+for (const d of [...DESTINOS, 'novo_aguarde', 'revisar']) fDestino.append(el('option', { value: d }, ROTULOS[d]));
+const fForn = document.getElementById('fForn');
+for (const f of [...new Set(itens.filter((i) => i.categoria === 'mercadoria').map((i) => i.fornecedor ?? '?'))].sort()) fForn.append(el('option', { value: f }, f));
+
+function renderPlacar() {
+  const p = placar(itens, decisoes);
+  const pct = p.total ? Math.round((p.decidido / p.total) * 100) : 0;
+  const box = document.getElementById('placar');
+  box.replaceChildren(
+    el('div', { class: 'kpi' }, 'Decidido', el('b', { class: 'num' }, `${brl(p.decidido)} / ${brl(p.total)}`), el('div', { class: 'barra' }, el('i', { style: `width:${pct}%` }))),
+    el('div', { class: 'kpi' }, 'Top 61 decidido', el('b', { class: 'num' }, `${brl(p.topDecidido)} / ${brl(p.topTotal)}`)),
+    ...DESTINOS.map((d) => el('div', { class: 'kpi' }, ROTULOS[d], el('b', { class: 'num' }, brl(p.porDestino[d] ?? 0)))),
+  );
+}
+
+async function salvar(sku, patch) {
+  if (!db || somenteLeitura) return;
+  const atual = decisoes[sku] ?? {};
+  const corpo = { ...atual, ...patch, decidido_por: uid, decidido_em: new Date().toISOString() };
+  try {
+    await db.collection('decisoes').doc(String(sku)).set(corpo);
+  } catch (e) {
+    if (e?.code === 'invalid_argument') { somenteLeitura = true; avisar('Você não tem permissão para registrar decisões nesta página.'); render(); }
+    else avisar(`Não salvou (${e?.code ?? 'erro'}). Tente de novo.`);
+  }
+}
+
+function avisar(msg) { document.getElementById('aviso').replaceChildren(msg ? el('div', { class: 'aviso' }, msg) : ''); }
+
+function filtrados() {
+  const dest = fDestino.value, forn = fForn.value, est = document.getElementById('fEstado').value, top = document.getElementById('fTop').checked;
+  return itens.filter((i) => {
+    if (aba === 'merc' ? i.categoria !== 'mercadoria' : i.categoria === 'mercadoria') return false;
+    if (aba !== 'merc') return true;
+    const dec = DESTINOS.includes(decisoes[i.sku]?.destino);
+    if (dest && i.destino_sugerido !== dest) return false;
+    if (forn && (i.fornecedor ?? '?') !== forn) return false;
+    if (est === 'pend' && dec) return false;
+    if (est === 'dec' && !dec) return false;
+    if (top && !i.top) return false;
+    return true;
+  });
+}
+
+function cardMercadoria(i) {
+  const d = decisoes[i.sku] ?? {};
+  const escolhido = DESTINOS.includes(d.destino) ? d.destino : null;
+  const card = el('article', { class: 'card' + (escolhido ? ' decidido' : '') },
+    el('h3', {}, `${i.codigo ?? i.sku} · ${i.descricao}`),
+    el('div', { class: 'linha muted' },
+      i.top ? el('span', { class: 'tag top' }, 'Top 61') : '',
+      el('span', {}, i.familia ?? '—'), el('span', {}, i.fornecedor ?? 'fornecedor ?')),
+    el('div', { class: 'linha num' },
+      el('span', {}, `saldo ${num(i.saldo)}`), el('b', {}, brl(i.valor)),
+      el('span', {}, `última venda ${dt(i.ult_venda)}`), el('span', {}, `cobertura ${i.cobertura == null ? 'sem venda em 12m' : num(i.cobertura, 0) + ' d'}`)),
+    el('div', {}, el('b', {}, `Sugestão: ${ROTULOS[i.destino_sugerido]}`), ' — ', el('span', { class: 'muted' }, i.motivo_destino)),
+  );
+  if (i.clientes?.length) {
+    const t = el('table', {}, el('tr', {}, el('th', {}, 'Cliente'), el('th', {}, 'Última'), el('th', {}, 'Qtd 12m')));
+    for (const c of i.clientes) t.append(el('tr', {}, el('td', {}, c.nome), el('td', {}, dt(c.ult)), el('td', { class: 'num' }, num(c.qtd))));
+    card.append(el('details', {}, el('summary', {}, `Quem comprou (${i.ncli})`), t));
+  }
+  if (!somenteLeitura) {
+    const acoes = el('div', { class: 'acoes' });
+    for (const dst of DESTINOS) {
+      acoes.append(el('button', { 'aria-pressed': String(escolhido === dst), onclick: () => salvar(i.sku, { destino: dst }) },
+        (escolhido === null && i.destino_sugerido === dst ? '★ ' : '') + ROTULOS[dst]));
+    }
+    card.append(acoes);
+    card.append(el('input', { placeholder: 'Observação', value: d.observacao ?? '', onchange: (ev) => salvar(i.sku, { observacao: ev.target.value }) }));
+    if (!i.fornecedor || i.fornecedor.startsWith('marca:')) {
+      card.append(el('input', { placeholder: 'Fornecedor (se souber)', value: d.fornecedor_informado ?? '', onchange: (ev) => salvar(i.sku, { fornecedor_informado: ev.target.value }) }));
+    }
+    if (escolhido === 'trocar') {
+      card.append(el('input', { placeholder: 'Troca concluída: crédito R$', inputmode: 'decimal', value: d.credito_troca ?? '',
+        onchange: (ev) => { const v = parseValorBR(ev.target.value); if (ev.target.value && v === null) { avisar('Crédito inválido — use por exemplo 1.234,56'); return; } salvar(i.sku, { credito_troca: v }); } }));
+    }
+  } else if (escolhido) {
+    card.append(el('div', {}, `Decidido: ${ROTULOS[escolhido]}`));
+  }
+  return card;
+}
+
+function cardContagem(i) {
+  const d = decisoes[i.sku] ?? {};
+  const dif = diffContagem(i, d.qtd_contada);
+  const card = el('article', { class: 'card' },
+    el('h3', {}, `${i.codigo ?? i.sku} · ${i.descricao}`),
+    el('div', { class: 'linha muted' }, el('span', { class: 'tag' }, i.categoria === 'nao_mercadoria' ? 'Reclassificar com contador' : 'Contagem física'), el('span', {}, i.motivo_categoria)),
+    el('div', { class: 'linha num' }, el('span', {}, `saldo Omie ${num(i.saldo)}`), el('b', {}, brl(i.valor)),
+      dif ? el('span', { style: `color:var(${dif.dif_un < 0 ? '--bad' : '--ok'})` }, `diferença ${num(dif.dif_un)} un · ${brl(dif.dif_valor)}`) : ''),
+  );
+  if (!somenteLeitura) {
+    card.append(el('input', { placeholder: 'Quantidade contada', inputmode: 'decimal', value: d.qtd_contada ?? '',
+      onchange: (ev) => { const v = parseValorBR(ev.target.value); salvar(i.sku, { qtd_contada: v }); } }));
+  }
+  return card;
+}
+
+function render() {
+  renderPlacar();
+  document.getElementById('filtros').hidden = aba !== 'merc';
+  const lista = filtrados();
+  const box = document.getElementById('lista');
+  box.replaceChildren(...lista.slice(0, limite).map((i) => (aba === 'merc' ? cardMercadoria(i) : cardContagem(i))));
+  document.getElementById('mais').hidden = lista.length <= limite;
+}
+
+function abrirDialogo(titulo, linhas, texto) {
+  const corpo = document.getElementById('dlgCorpo');
+  corpo.replaceChildren(el('h3', {}, titulo), ...linhas);
+  document.getElementById('dlgCopiar').onclick = () => {
+    const b = document.getElementById('dlgCopiar');
+    Promise.resolve(navigator.clipboard?.writeText(texto)).then(() => { b.textContent = 'Copiado'; })
+      .catch(() => { const s = getSelection(); s.removeAllRanges(); const r = document.createRange(); r.selectNodeContents(corpo); s.addRange(r); b.textContent = 'Selecionado — use Copiar do sistema'; });
+  };
+  document.getElementById('dlgCopiar').textContent = 'Copiar';
+  document.getElementById('dlg').showModal();
+}
+
+document.getElementById('btnTroca').onclick = () => {
+  const l = listaTroca(itens, decisoes);
+  const t = el('table', {}, el('tr', {}, el('th', {}, 'Fornecedor'), el('th', {}, 'Código'), el('th', {}, 'Descrição'), el('th', {}, 'Qtd'), el('th', {}, 'Valor')));
+  for (const r of l) t.append(el('tr', {}, el('td', {}, r.fornecedor), el('td', {}, r.codigo), el('td', {}, r.descricao), el('td', { class: 'num' }, num(r.saldo)), el('td', { class: 'num' }, brl(r.valor))));
+  const texto = l.map((r) => `${r.fornecedor}\t${r.codigo}\t${r.descricao}\t${r.saldo}\t${r.valor.toFixed(2)}`).join('\n');
+  abrirDialogo(`Troca por crédito — ${l.length} SKUs · ${brl(l.reduce((s, r) => s + r.valor, 0))}`, [t], texto);
+};
+document.getElementById('btnVenda').onclick = () => {
+  const g = vendaDirigidaPorCliente(itens, decisoes);
+  const blocos = g.map((c) => el('details', {}, el('summary', {}, `${c.cliente} — ${c.itens.length} SKU(s) · ${brl(c.valor)}`),
+    el('ul', {}, ...c.itens.map((x) => el('li', {}, `${x.codigo} · ${x.descricao} · saldo ${num(x.saldo)}`)))));
+  const texto = g.map((c) => `${c.cliente}\n` + c.itens.map((x) => `  ${x.codigo}\t${x.descricao}\t${x.saldo}`).join('\n')).join('\n\n');
+  abrirDialogo(`Venda dirigida — ${g.length} cliente(s)`, blocos, texto);
+};
+document.getElementById('dlgFechar').onclick = () => document.getElementById('dlg').close();
+for (const b of document.querySelectorAll('[data-aba]')) b.onclick = () => { aba = b.dataset.aba; limite = 100; for (const x of document.querySelectorAll('[data-aba]')) x.setAttribute('aria-pressed', String(x === b)); render(); };
+for (const id of ['fDestino', 'fForn', 'fEstado', 'fTop']) document.getElementById(id).onchange = () => { limite = 100; render(); };
+document.getElementById('mais').onclick = () => { limite += 100; render(); };
+
+render(); // primeiro desenho sem db (modo leitura)
+
+(async () => {
+  db = await window.claude?.use?.('db') ?? null;
+  const user = await window.claude?.use?.('user') ?? null;
+  if (!db) { avisar('Decisões indisponíveis nesta visualização — mostrando só o retrato.'); return; }
+  uid = user ? await user.id() : null;
+  const pode = user ? await user.can('data.write') : null;
+  somenteLeitura = pode === false;
+  db.collection('decisoes').limit(1000).onSnapshot(
+    (snap) => { decisoes = Object.fromEntries(snap.docs.map((d) => [d.id, d.data()])); render(); },
+    (e) => avisar(`Conexão com as decisões caiu (${e.code}). Recarregue a página.`),
+  );
+})();
+</script>

@@ -91,8 +91,10 @@ export function placar(itens, decisoes) {
 export function listaTroca(itens, decisoes) {
   return itens
     .filter((i) => decisoes[i.sku]?.destino === 'trocar')
-    .map(({ sku, codigo, descricao, saldo, valor }) => ({ sku, codigo, descricao, saldo, valor }))
-    .sort((a, b) => b.valor - a.valor);
+    .map(({ sku, codigo, descricao, saldo, valor, fornecedor }) => ({
+      sku, codigo, descricao, saldo, valor, fornecedor: decisoes[sku].fornecedor_informado || fornecedor || '?',
+    }))
+    .sort((a, b) => a.fornecedor.localeCompare(b.fornecedor) || b.valor - a.valor);
 }
 
 export function vendaDirigidaPorCliente(itens, decisoes) {
