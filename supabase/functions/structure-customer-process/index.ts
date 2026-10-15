@@ -1,5 +1,6 @@
 import Anthropic from "npm:@anthropic-ai/sdk@^0.93.0";
 import { authorizeCronOrStaff, corsHeaders } from "../_shared/auth.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 const SYSTEM_PROMPT = `Você estrutura processos produtivos de clientes da Colacor (distribuidora Sayerlack) em etapas técnicas precisas.
 
@@ -82,6 +83,23 @@ Deno.serve(async (req) => {
   const auth = await authorizeCronOrStaff(req);
   if (!auth.ok) return auth.response;
 
+  // Sonda de versão — depois do gate (que aceita `x-cron-secret`) e antes da chave e do modelo.
+  // O corpo de um Request só se lê UMA vez: lido aqui e reaproveitado abaixo. Ver versao.ts.
+  let corpoBruto: unknown = {};
+  let corpoJsonInvalido = false;
+  try {
+    corpoBruto = await req.json();
+  } catch {
+    corpoJsonInvalido = true;
+  }
+  const decisaoSonda = classificarSonda(corpoBruto);
+  if (decisaoSonda.tipo !== "disparo") {
+    const corpo = decisaoSonda.tipo === "sonda" ? respostaSonda(VERSAO) : { error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) };
+    return new Response(JSON.stringify(corpo), {
+      status: decisaoSonda.tipo === "sonda" ? 200 : 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
   const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
   if (!apiKey) {
     return new Response(JSON.stringify({ error: "ANTHROPIC_API_KEY not configured" }), {
@@ -89,12 +107,12 @@ Deno.serve(async (req) => {
     });
   }
 
-  let body;
-  try { body = await req.json(); } catch {
+  if (corpoJsonInvalido) {
     return new Response(JSON.stringify({ error: "Invalid JSON" }), {
       status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
+  const body = (corpoBruto ?? {}) as { descricao_livre?: unknown };
   if (!body.descricao_livre || typeof body.descricao_livre !== "string") {
     return new Response(JSON.stringify({ error: "descricao_livre required (string)" }), {
       status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },

@@ -1,5 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -12,6 +13,20 @@ Deno.serve(async (req) => {
   }
   const __auth = await authorizeCronOrStaff(req);
   if (!__auth.ok) return __auth.response;
+
+  // Sonda de versão — depois do gate (que aceita `x-cron-secret`) e ANTES do `startsWith("Bearer ")`
+  // de usuário logo abaixo, que barraria o SQL Editor (BEARER_NO_HANDLER). Ver versao.ts.
+  {
+    const corpoBruto = await req.json().catch(() => ({}));
+    const decisaoSonda = classificarSonda(corpoBruto);
+    if (decisaoSonda.tipo !== 'disparo') {
+      const corpo = decisaoSonda.tipo === 'sonda' ? respostaSonda(VERSAO) : { error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) };
+      return new Response(JSON.stringify(corpo), {
+        status: decisaoSonda.tipo === 'sonda' ? 200 : 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+  }
 
   try {
     // Authentication
