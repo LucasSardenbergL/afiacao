@@ -35,7 +35,7 @@
 --     "p.p." vira "pp" antes de partir (senão o ponto da abreviação separa o número da palavra).
 --     Medido em prod com a regra exata (só agregados, 2026-10-15): remove 1.699 de 35.922 frases (4,7%);
 --     34 dos 35 planos vivos têm ao menos uma frase removida. Resíduo nos dois detectores independentes:
---     valor literal da margem do próprio plano com 2 casas ("37,73") 546 → 0 planos; "margem|cluster|
+--     valor literal da margem do próprio plano ou dos pares com 2 casas ("37,73") 551 → 0; "margem|cluster|
 --     pares" a ≤80 caracteres de N%/pp, nos dois sentidos, 916 → 0 planos (é o POS8 abaixo).
 --   · private.sanear_jsonb_margem(jsonb): a mesma regra em cada folha string (perguntas, objeções, riscos);
 --     número, booleano e estrutura ficam intactos (a `probability` da objeção não é texto).
