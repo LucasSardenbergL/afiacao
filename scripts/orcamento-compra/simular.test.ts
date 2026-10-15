@@ -72,6 +72,17 @@ describe('simularCiclo', () => {
     const r = simularCiclo({ ...fatos, snapshots: [{ ...fatos.snapshots[0], snapshot_at: '2026-10-01T13:00:00Z' }] }, 1, cfg);
     expect(r.estado.tipo === 'indeterminado' && r.estado.camadas).toContain('snapshot');
   });
+  it('R8: título não-Sayerlack FORA de [início, início+horizonte) não desconta o ritmo do mês', () => {
+    // horizonte 91 a partir de 01/10 = até 30/12; o título de 31/12 cai no fim da trajetória mas
+    // não pode abater o ritmo de dezembro (senão a saída some em dobro do lado do ritmo).
+    const piso = (saidas: { data: string; valor: number }[]) => {
+      const snap = { ...fatos.snapshots[0], dados: [{ inicio: '2026-12-28', fim: '2026-12-31', saidas, entradas: [] }] };
+      const r = simularCiclo({ ...fatos, snapshots: [snap] }, 1, cfg);
+      if (r.estado.tipo !== 'viavel') throw new Error('esperava viável');
+      return r.estado.piso;
+    };
+    expect(piso([{ data: '2026-12-31', valor: 100 }])).toBeCloseTo(piso([]) - 100, 6);
+  });
   it('estoque reconstruído ancora em HOJE, não no fim da janela histórica', () => {
     // estoque de hoje 50, 1/dia de demanda: no ciclo (14 dias antes de hoje) o estoque era > 50, nunca censurado
     const r = simularCiclo(fatos, 1, cfg);
