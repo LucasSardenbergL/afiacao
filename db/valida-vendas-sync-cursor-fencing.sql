@@ -33,8 +33,11 @@ SELECT CASE
     THEN '❌ RPC cercada executavel por anon/authenticated'
   WHEN EXISTS (SELECT 1 FROM src WHERE fn LIKE '%acquire_fenced%' AND corpo !~ 'lease_token\s*=\s*gen_random_uuid\(\)')
     THEN '❌ acquire cercado nao emite token novo'
-  WHEN EXISTS (SELECT 1 FROM src WHERE fn ~ '_fenced' AND fn !~ 'acquire' AND corpo !~ 'AND lease_token = p_lease_token')
-    THEN '❌ heartbeat/finish/release cercado nao exige o token do dono'
+  -- A cerca tem de estar NO PRÓPRIO UPDATE ([^;]* = sem fechar o statement antes): token conferido
+  -- num SELECT preliminar e UPDATE sem ele é o check-then-act que a corrida C1 pega (Codex P4).
+  WHEN EXISTS (SELECT 1 FROM src WHERE fn ~ '_fenced' AND fn !~ 'acquire'
+                                   AND corpo !~ 'UPDATE public\.vendas_sync_cursor[^;]*AND lease_token = p_lease_token')
+    THEN '❌ heartbeat/finish/release cercado nao exige o token do dono no UPDATE'
   WHEN EXISTS (SELECT 1 FROM src JOIN antigas USING (fn) WHERE corpo !~ 'AND lease_token IS NULL')
     THEN '❌ RPC antiga ainda age sobre lease cercado'
   WHEN coalesce((SELECT prosrc FROM pg_proc WHERE oid = to_regprocedure('public.vendas_sync_lease_acquire(text,date,date)')), '')

@@ -211,7 +211,8 @@ Pq -c "SELECT public.vendas_sync_finish('oben','2026-09-01',(DATE '2026-09-01' +
 eq "L2 fluxo ANTIGO completo segue funcionando sozinho" "$(estado 2026-09-01)" "null/false/true/null"
 
 echo "-- A: fronteira de EXECUTE --"
-R=$(P -q -tA 2>&1 <<'SQL'
+negadas_authenticated() {  # quantas das 4 RPCs cercadas o authenticated NÃO executa (42501)
+  P -q -tA 2>&1 <<'SQL'
 SET ROLE authenticated;
 DO $$
 DECLARE n int := 0;
@@ -227,7 +228,8 @@ BEGIN
   RAISE NOTICE 'NEGADAS_AUTHENTICATED=%', n;
 END $$;
 SQL
-)
+}
+R=$(negadas_authenticated)
 case "$R" in *NEGADAS_AUTHENTICATED=4*) ok "A1 authenticated nao executa as 4 RPCs cercadas (42501)" ;; *) bad "A1 — veio: $R" ;; esac
 R=$(Pq -c "SET ROLE service_role; SELECT public.vendas_sync_heartbeat_fenced('oben','2026-01-01','2026-01-31',NULL,1);" | tail -1)
 eq "A2 service_role executa (a edge consegue)" "$R" "f"
@@ -373,7 +375,9 @@ DO $$ BEGIN
 EXCEPTION WHEN insufficient_privilege THEN RAISE NOTICE 'AINDA_BARRA'; END $$;
 SQL
 )
-case "$R" in *EXECUTOU_SEM_BARRAR*) ok "F8 com GRANT o authenticated executa — A1 tem dente" ;; *) bad "F8 concedi e A1 seguiu barrando: $R" ;; esac
+case "$R" in *EXECUTOU_SEM_BARRAR*) ok "F8 com GRANT o authenticated executa (efeito do furo)" ;; *) bad "F8 concedi e o authenticated seguiu barrado: $R" ;; esac
+R=$(negadas_authenticated)
+case "$R" in *NEGADAS_AUTHENTICATED=3*) ok "F8 o PROPRIO assert A1 cai para 3/4 — A1 tem dente" ;; *) bad "F8 o assert A1 nao viu o GRANT: $R" ;; esac
 valida_reprova "F8b validador reprova RPC cercada aberta a authenticated" "executavel por anon/authenticated"
 P -q -c "REVOKE EXECUTE ON FUNCTION public.vendas_sync_heartbeat_fenced(text,date,date,uuid,integer) FROM authenticated;" >/dev/null
 restaura
@@ -394,6 +398,24 @@ END $f$;
 SQL
 cen_corrida 2027-08-01
 case "$OUT" in bloqueio_observado\|t\|50) ok "F9 check-then-act: o zumbi grava pagina 50 por cima do roubo ($OUT) — C1 tem dente" ;; *) bad "F9 sabotei e C1 nao mudou ($OUT)" ;; esac
+restaura
+
+# F10 → V (+C1): a cerca mora num SELECT preliminar e o UPDATE não a repete (Codex P4)
+P -q <<'SQL'
+CREATE OR REPLACE FUNCTION public.vendas_sync_heartbeat_fenced(p_account text, p_date_from date, p_date_to date, p_lease_token uuid, p_page integer)
+RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $f$
+BEGIN
+  PERFORM 1 FROM public.vendas_sync_cursor
+   WHERE account=p_account AND date_from=p_date_from AND date_to=p_date_to AND lease_token = p_lease_token;
+  IF NOT FOUND THEN RETURN false; END IF;
+  UPDATE public.vendas_sync_cursor SET heartbeat_at=now(), next_page=p_page, updated_at=now()
+   WHERE account=p_account AND date_from=p_date_from AND date_to=p_date_to AND running_since IS NOT NULL;
+  RETURN FOUND;
+END $f$;
+SQL
+valida_reprova "F10 validador reprova cerca fora do UPDATE" "nao exige o token do dono no UPDATE"
+cen_corrida 2027-10-01
+case "$OUT" in bloqueio_observado\|t\|50) ok "F10 e a corrida C1 pega o mesmo furo ($OUT)" ;; *) bad "F10 a corrida nao viu a cerca fora do UPDATE ($OUT)" ;; esac
 restaura
 
 # Pós-restauração: a versão REAL voltou (o validador aprova e o zumbi volta a ser barrado).

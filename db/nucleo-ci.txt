@@ -225,8 +225,8 @@ db/test-fin-sync-lease.sh                  22
 # Backfill de pedidos (vendas_sync_cursor): o lease ganhou FENCING TOKEN — o zumbi que perdeu o lease
 # (>3 min sem heartbeat, substituído pelo cron) não rebobina/solta/fecha a janela do sucessor. Corrida
 # real com 2 sessões e bloqueio OBSERVADO (EPQ); o caminho antigo (edge velha) não toca lease cercado;
-# 9 sabotagens inline, cada uma com o seu vermelho, e o validador pós-apply reprova 5 delas.
-db/test-vendas-sync-cursor-fencing.sh      44
+# 10 sabotagens inline, cada uma com o seu vermelho, e o validador pós-apply reprova 6 delas.
+db/test-vendas-sync-cursor-fencing.sh      47
 db/test-fin-sync-kick-skipped-busy.sh      18
 db/test-pedido-venda-coerencia.sh          31
 # Tintométrico: a promoção saiu do HTTP para uma fila — tick concorrente PULA (try-lock), FIFO
