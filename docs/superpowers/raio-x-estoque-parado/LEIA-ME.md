@@ -3,6 +3,8 @@
 Spec: `docs/superpowers/specs/2026-10-14-raio-x-estoque-parado-design.md` · Plano: `docs/superpowers/plans/2026-10-14-raio-x-estoque-parado.md`
 Artifact: https://claude.ai/artifact/MyvzRxHFpMnhfAufb6zg3p (retrato de 2026-10-14)
 
+Gerar um retrato novo: `node gerar.mjs --banco $RAIOX_OUT [AAAA-MM-DD]` (psql-ro, read-only; pré-voo exige sync < 24h).
+
 Medição (a partir de 2026-11-25), tudo read-only:
 1. `Artifact read url=<URL> path=retrato.json` → salvar em `$RAIOX_OUT/retrato.json`.
 2. `ArtifactData list collection=decisoes` → salvar como `{"<sku>": {...}}` em `$RAIOX_OUT/decisoes.json`.

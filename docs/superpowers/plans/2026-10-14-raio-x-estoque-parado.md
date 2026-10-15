@@ -10,6 +10,8 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-14-raio-x-estoque-parado-design.md`
 
+> **Nota pós-execução (2026-10-15):** o `gerar.sh` da Task 2 virou o modo `node gerar.mjs --banco <dir-saida> [hoje]` — todo `.sh` rastreado precisa estar no universo dos fiscais de shell (`psql-local-X-gate`, `shell-variavel-colada-gate`), e `docs/` não está. Mesmo SQL, mesmo marcador `fim|ok`, mesmo pré-voo.
+
 ## Global Constraints
 
 - **Zero escrita** em Supabase, Omie ou app: só `psql-ro`. Nada em `src/`, `supabase/`, `db/`.
