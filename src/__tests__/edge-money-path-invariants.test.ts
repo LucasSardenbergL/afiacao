@@ -1490,11 +1490,15 @@ describe('guardrail money-path: backfill de pedidos usa o lease CERCADO (fencing
     expect(lease).not.toMatch(antigas);
   });
 
-  it('o laço PARA quando o heartbeat volta perdido', () => {
+  it('o laço PARA quando o heartbeat não confirma a posse (perdido OU erro)', () => {
+    // Ancorado como a 1ª instrução do `while` da paginação: um `break` embrulhado em outro bloco
+    // (`do { … } while (false)`) sairia só do bloco e a paginação seguiria (challenge Codex, P3).
     expect(
       edge,
-      'REGRESSÃO: o syncPedidos não para o laço no lease perdido — o zumbi seguiria trabalhando na janela do sucessor',
-    ).toMatch(/heartbeatVendasCursor\([^)]*cursor\.lease, pagina\)\)\s*===\s*'perdido'\)\s*\{\s*leasePerdido = true;\s*break;/);
+      'REGRESSÃO: o syncPedidos não para o laço sem posse confirmada — o zumbi seguiria trabalhando na janela do sucessor',
+    ).toMatch(
+      /while \(pagesProcessed < maxPages\) \{\s*if \(cursor\) \{\s*const posse = await heartbeatVendasCursor\([^)]*cursor\.lease, pagina\);\s*if \(posse === 'perdido'\) \{ leasePerdido = true; break; \}\s*if \(posse === 'erro'\) \{ lastErrorKind = 'transient'; break; \}/,
+    );
     expect(edge, 'lease perdido não pode contar como janela completa').toContain('const complete = reachedEnd && !leasePerdido;');
   });
 

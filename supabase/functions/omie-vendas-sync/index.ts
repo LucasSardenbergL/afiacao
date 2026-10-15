@@ -1290,12 +1290,16 @@ async function syncPedidos(
   while (pagesProcessed < maxPages) {
     // Modo cursor: renova o lease + persiste progresso (next_page := pagina em curso)
     // ANTES da página longa (~40s/pág + lookups). Crash → retoma daqui, não do run-start.
-    // CERCADO: se o banco diz que o lease agora é de OUTRO worker (este ficou >3 min sem
-    // heartbeat e foi substituído), PARA aqui — continuar seria trabalhar em dobro sobre a janela
-    // do sucessor. `erro` (sem confirmação) segue best-effort, como antes; o finish é cercado.
-    if (cursor && (await heartbeatVendasCursor(supabase, account, cursor.df, cursor.dt, cursor.lease, pagina)) === 'perdido') {
-      leasePerdido = true;
-      break;
+    // CERCADO — o heartbeat é a conferência de POSSE antes de cada página:
+    //  • 'perdido': o banco diz que o lease agora é de OUTRO worker (este ficou >3 min sem heartbeat
+    //    e foi substituído) → PARA; continuar seria trabalhar em dobro sobre a janela do sucessor.
+    //  • 'erro': sem confirmação de posse → PARA também, como pausa 'transient' (retoma da página
+    //    em curso no próximo ciclo, ≤6 min; não conta para o terminal). Seguir best-effort deixava
+    //    um zumbi escrever VÁRIAS páginas depois do takeover (challenge Codex 2026-10-15, P2).
+    if (cursor) {
+      const posse = await heartbeatVendasCursor(supabase, account, cursor.df, cursor.dt, cursor.lease, pagina);
+      if (posse === 'perdido') { leasePerdido = true; break; }
+      if (posse === 'erro') { lastErrorKind = 'transient'; break; }
     }
 
     const listParams: Record<string, unknown> = { pagina, registros_por_pagina: 50, filtrar_apenas_inclusao: "N" };
