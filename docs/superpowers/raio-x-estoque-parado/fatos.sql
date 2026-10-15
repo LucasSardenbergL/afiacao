@@ -25,7 +25,7 @@ rec as (
   where ri.produto_omie_id is not null
   order by ri.produto_omie_id::text, r.data_emissao desc),
 base as (
-  select e.sku, p.codigo, p.descricao, p.familia, p.ativo, p.created_at::date cadastro_em,
+  select e.sku, p.codigo, p.descricao, p.familia, p.tipo_produto, p.ativo, p.created_at::date cadastro_em,
          p.unidade unidade_estoque, coalesce(v.unidades, '{}') unidades_venda,
          coalesce(sp.fornecedor_nome, rec.forn_rec, 'marca: ' || nullif(p.metadata->>'marca', '')) fornecedor,
          rec.ult_entrada, e.saldo, e.cmc, sp.sku_codigo_omie is not null motor, sp.classe_abc,

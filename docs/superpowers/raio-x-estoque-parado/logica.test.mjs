@@ -194,3 +194,23 @@ test('I4: lerNumero distingue vazio de inválido', () => {
   assert.equal(lerNumero('abc').erro, true);
   assert.equal(lerNumero('12.5').erro, true);
 });
+
+import { categoriaEfetiva, aplicarCategorias } from './logica.mjs';
+test('categorizar usa o tipo do item do Omie: 07/01/03 → uso_consumo, 08 → nao_mercadoria, 00/04 seguem', () => {
+  assert.equal(categorizar(base({ tipo_produto: '07', descricao: 'REBOLO AFIADORA UNIVERSAL' })).categoria, 'uso_consumo');
+  assert.equal(categorizar(base({ tipo_produto: '01', descricao: 'SOLUCAO PRETA 1352' })).categoria, 'uso_consumo');
+  assert.equal(categorizar(base({ tipo_produto: '03' })).categoria, 'uso_consumo');
+  assert.equal(categorizar(base({ tipo_produto: '08', q12: 3 })).categoria, 'nao_mercadoria');
+  assert.equal(categorizar(base({ tipo_produto: '04' })).categoria, 'mercadoria');
+  assert.equal(categorizar(base({ tipo_produto: '00' })).categoria, 'mercadoria');
+});
+test('categoria informada na decisão vence a do retrato e sai do placar de mercadoria', () => {
+  const itens = classificar({ meta: {}, itens: [base({ sku: 1, tipo_produto: '00' }), base({ sku: 2 })] }, HOJE).itens;
+  const dec = { 1: { categoria_informada: 'uso_consumo' } };
+  assert.equal(categoriaEfetiva(itens.find((i) => i.sku === 1), dec), 'uso_consumo');
+  const ef = aplicarCategorias(itens, dec);
+  assert.equal(ef.find((i) => i.sku === 1).categoria, 'uso_consumo');
+  assert.equal(ef.find((i) => i.sku === 1).motivo_categoria, 'marcado como uso e consumo na página');
+  assert.equal(placar(ef, dec).total, 50);
+  assert.equal(itens.find((i) => i.sku === 1).categoria, 'mercadoria'); // não muta o retrato
+});

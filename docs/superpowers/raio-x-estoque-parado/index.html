@@ -33,7 +33,7 @@ dialog{position:fixed;inset:0;margin:auto;height:fit-content;max-height:calc(100
   <section class="placar" id="placar"></section>
   <div class="tabs">
     <button data-aba="merc" aria-pressed="true">Mercadoria</button>
-    <button data-aba="cont" aria-pressed="false">Contagem física e reclassificação</button>
+    <button data-aba="cont" aria-pressed="false">Uso e consumo, contagem e reclassificação</button>
     <button id="btnTroca">Lista de troca</button>
     <button id="btnVenda">Venda dirigida por cliente</button>
   </div>
@@ -48,7 +48,7 @@ dialog{position:fixed;inset:0;margin:auto;height:fit-content;max-height:calc(100
   <dialog id="dlg"><div id="dlgCorpo"></div><div class="acoes"><button id="dlgCopiar">Copiar</button><button id="dlgFechar">Fechar</button></div></dialog>
 </main>
 <script type="module">
-import { placar, listaTroca, vendaDirigidaPorCliente, diffContagem, lerNumero, mesclarDecisao, DESTINOS, ROTULOS } from './logica.mjs';
+import { placar, listaTroca, vendaDirigidaPorCliente, diffContagem, lerNumero, mesclarDecisao, aplicarCategorias, DESTINOS, ROTULOS } from './logica.mjs';
 
 const brl = (v) => v == null ? '—' : v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 });
 const num = (v, d = 1) => v == null ? '—' : Number(v).toLocaleString('pt-BR', { maximumFractionDigits: d });
@@ -56,7 +56,8 @@ const dt = (s) => s ? new Date(s + (s.length === 10 ? 'T12:00:00' : '')).toLocal
 const el = (tag, attrs = {}, ...filhos) => { const e = document.createElement(tag); for (const [k, v] of Object.entries(attrs)) { if (k === 'class') e.className = v; else if (k.startsWith('on')) e.addEventListener(k.slice(2), v); else e.setAttribute(k, v); } for (const f of filhos) e.append(f ?? ''); return e; };
 
 const retrato = await (await fetch('retrato.json')).json();
-const itens = retrato.itens;
+const base = retrato.itens;
+let itens = base; // com a categoria marcada à mão aplicada (uso e consumo sai da lista)
 let decisoes = {};
 let db = null;
 let uid = null;
@@ -88,7 +89,7 @@ function salvar(sku, patch) {
   if (!db || somenteLeitura) return;
   const corpo = mesclarDecisao(decisoes[sku] ?? {}, patch, uid, new Date().toISOString());
   decisoes = { ...decisoes, [sku]: corpo }; // otimista: o próximo patch parte daqui, não do snapshot velho
-  if ('destino' in patch) render();
+  if ('destino' in patch || 'categoria_informada' in patch) render();
   const p = (filas.get(sku) ?? Promise.resolve()).then(() => db.collection('decisoes').doc(String(sku)).set(corpo)).catch((e) => {
     if (e?.code === 'invalid_argument') { somenteLeitura = true; avisar('Você não tem permissão para registrar decisões nesta página.'); render(); }
     else avisar(`Não salvou (${e?.code ?? 'erro'}). Recarregue a página e confira este SKU.`);
@@ -138,6 +139,7 @@ function cardMercadoria(i) {
         (escolhido === null && i.destino_sugerido === dst ? '★ ' : '') + ROTULOS[dst]));
     }
     card.append(acoes);
+    card.append(el('div', { class: 'acoes' }, el('button', { onclick: () => salvar(i.sku, { categoria_informada: 'uso_consumo' }) }, 'É uso e consumo · tirar da lista')));
     card.append(el('input', { placeholder: 'Observação', value: d.observacao ?? '', onchange: (ev) => salvar(i.sku, { observacao: ev.target.value }) }));
     if (!i.fornecedor || i.fornecedor.startsWith('marca:')) {
       card.append(el('input', { placeholder: 'Fornecedor (se souber)', value: d.fornecedor_informado ?? '', onchange: (ev) => salvar(i.sku, { fornecedor_informado: ev.target.value }) }));
@@ -157,18 +159,20 @@ function cardContagem(i) {
   const dif = diffContagem(i, d.qtd_contada);
   const card = el('article', { class: 'card' },
     el('h3', {}, `${i.codigo ?? i.sku} · ${i.descricao}`),
-    el('div', { class: 'linha muted' }, el('span', { class: 'tag' }, i.categoria === 'nao_mercadoria' ? 'Reclassificar com contador' : 'Contagem física'), el('span', {}, i.motivo_categoria)),
+    el('div', { class: 'linha muted' }, el('span', { class: 'tag' }, i.categoria === 'nao_mercadoria' ? 'Reclassificar com contador' : i.categoria === 'uso_consumo' ? 'Uso e consumo · fora da desova' : 'Contagem física'), el('span', {}, i.motivo_categoria)),
     el('div', { class: 'linha num' }, el('span', {}, `saldo Omie ${num(i.saldo)}`), el('b', {}, brl(i.valor)),
       dif ? el('span', { style: `color:var(${dif.dif_un < 0 ? '--bad' : '--ok'})` }, `diferença ${num(dif.dif_un)} un · ${brl(dif.dif_valor)}`) : ''),
   );
   if (!somenteLeitura) {
     card.append(el('input', { placeholder: 'Quantidade contada', inputmode: 'decimal', value: d.qtd_contada ?? '',
       onchange: (ev) => { const r = lerNumero(ev.target.value); if (r.erro) { avisar('Quantidade inválida — use número inteiro ou com vírgula, por exemplo 12,5'); return; } avisar(''); salvar(i.sku, { qtd_contada: r.valor }); render(); } }));
+    if (d.categoria_informada) card.append(el('div', { class: 'acoes' }, el('button', { onclick: () => salvar(i.sku, { categoria_informada: null }) }, 'Voltar para a lista de mercadoria')));
   }
   return card;
 }
 
 function render() {
+  itens = aplicarCategorias(base, decisoes);
   renderPlacar();
   document.getElementById('filtros').hidden = aba !== 'merc';
   const lista = filtrados();
