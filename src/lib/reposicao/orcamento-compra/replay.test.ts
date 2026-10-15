@@ -69,6 +69,19 @@ describe('déficit da remoção e semântica (R16–R18)', () => {
     expect(replaySku({ ...base, estoqueInicial: 5, demanda: [1, Number.NaN] }).indeterminado).toBe(true);
     expect(replaySku({ ...base, estoqueInicial: Number.NaN, demanda: [1] }).indeterminado).toBe(true);
   });
+  it('estoque médio nunca negativo mesmo com déficit da remoção', () => {
+    const r = replaySku({ estoqueInicial: 0, demanda: [1, 1, 1], recebimentos: [], removido: { dia: 0, qtde: 10 }, politica: null });
+    expect(r.estoqueMedio).toBe(0);
+  });
+  it('lead time 0 chega em t+1', () => {
+    const r = replaySku({ estoqueInicial: 3, demanda: [1, 1, 1, 1, 1], recebimentos: [], removido: { dia: 0, qtde: 1 }, politica: { pontoPedido: 3, leadTimeDias: 0 } });
+    expect(r.primeiroDiaRuptura).toBe(3);
+    expect(r.unidadesPerdidas).toBe(2);
+  });
+  it('política preenchida sem removido não aciona reposição própria', () => {
+    const r = replaySku({ estoqueInicial: 3, demanda: [1, 1, 1], recebimentos: [], removido: null, politica: { pontoPedido: 9, leadTimeDias: 1 } });
+    expect(r.reposicaoPropria).toBe(false);
+  });
   it('série vazia => estoqueMedio null', () => {
     expect(replaySku({ estoqueInicial: 5, demanda: [], recebimentos: [], removido: null, politica: null }).estoqueMedio).toBeNull();
   });

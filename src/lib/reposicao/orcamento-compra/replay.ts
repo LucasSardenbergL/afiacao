@@ -48,7 +48,7 @@ export function replaySku(e: EntradaReplay): SaidaReplay {
       chegadaPropria = t + Math.max(1, Math.ceil(e.politica.leadTimeDias));
       reposicaoPropria = true;
     }
-    somaEstoque += estoque;
+    somaEstoque += Math.max(estoque, 0);
   }
   return {
     rompeu: perdidas > 0,
