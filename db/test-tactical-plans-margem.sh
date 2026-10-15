@@ -20,7 +20,7 @@
 # ║   · COLUNA: ninguém authenticated lê/filtra/ordena as 3 colunas — nem o master ║
 # ║   · writers intactos: criar_plano_tatico e registrar_resultado_plano seguem    ║
 # ║     gravando depois do fecho; service_role lê; a RLS segue mordendo            ║
-# ║   · FALSIFICAÇÃO: 13 sabotagens, cada uma exige o seu vermelho EXATO           ║
+# ║   · FALSIFICAÇÃO: 15 sabotagens, cada uma exige o seu vermelho EXATO           ║
 # ╚══════════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
 
@@ -161,7 +161,7 @@ VALUES
   '{"likely_margin": 48, "best_case_margin": 55.23, "worst_case_margin": 40.97}',
   E'Cliente ativo com compra recente. O risco de churn de 62% pede abordagem consultiva. Sua margem bruta é de 37,73%. A média do cluster é 55,25%. A sua está em 37%. Das 36 categorias, quais têm maior margem?\n\nFoque em ciclo de afiação.',
   'Gap de margem de ~19pp em relação ao cluster.',
-  'Recuperar 4 p.p. de margem equivale a R\$ 1.350/mês. Quanto custa a parada de máquina?',
+  'Recuperar 4 p.p. de margem muda o resultado. Quanto custa a parada de máquina?',
   E'Posso te mostrar como clientes parecidos resolvem isso?\nVamos lá.',
   '[{"question": "Quantas peças por ferramenta?", "purpose": "Medir rendimento.", "expected_insight": "Abre conversa sobre margem de 37,73%."}]',
   '[{"objection": "Já tenho fornecedor.", "probability": 55, "economic_response": "Clientes do cluster têm 55,25% de margem. O custo por peça cai.", "technical_response": "Análise de ciclo de vida."}]',
@@ -210,12 +210,21 @@ texto() { P -tA -q -c "SELECT $1 FROM public.farmer_tactical_plans WHERE id='$2'
 
 # grava_c2 — grava um plano NOVO para C2 pela RPC-writer de prod (caminho service_role = edge
 # self-contained), com texto vazando a margem. Apaga o plano anterior de C2 antes (a RPC recusa 2 abertos).
+# Os campos de approach_strategy_b em diante são os escapes que o challenge do Codex construiu contra a 1ª
+# versão do saneador (contexto sem número; sequência de 3 frases; R$ de margem; por extenso) e o caso que
+# NÃO pode cair (a sequência termina numa frase mantida sem margem).
 PAYLOAD_VAZA='{"plan_type": "estrategico", "current_margin_pct": 37.73, "cluster_avg_margin_pct": 55.25,
   "approach_strategy": "O risco de churn de 62% pede cuidado. Sua margem bruta é de 37,73%. A média do cluster é 55,25%. A sua está em 37%. Foque no ciclo.",
+  "approach_strategy_b": "A margem dos pares é 55%. Aqui foi 37% no trimestre anterior. Hoje está em 37,73%. Reforce o serviço.",
+  "implication_question": "A margem está comprimida. Hoje, fica em 37,73%.",
+  "offer_transition": "São R$ 380 de margem sobre R$ 1.000 de vendas. Vamos revisar o mix.",
+  "diagnostic_questions": [{"question": "Qual etapa para mais?", "purpose": "A margem é de trinta e oito por cento.", "expected_insight": "Gargalo."}],
+  "operational_risks": ["Qual a margem? Foque no ciclo. O churn é 62%."],
   "probable_objections": [{"objection": "Caro.", "probability": 55, "economic_response": "Sua margem de 37,73% permite flexibilizar."}]}'
 grava_c2() {
   P -q -c "DELETE FROM public.farmer_tactical_plans WHERE customer_user_id='$C2';"
-  P -tA -q -c "SET test.role='service_role'; SELECT public.criar_plano_tatico('$C2', '$A', \$j\$${PAYLOAD_VAZA}\$j\$::jsonb) IS NOT NULL;" 2>&1
+  # SET ROLE de verdade: o caminho das edges é o PostgREST como service_role, não o superuser.
+  P -tA -q -c "SET test.role='service_role'; SET ROLE service_role; SELECT public.criar_plano_tatico('$C2', '$A', \$j\$${PAYLOAD_VAZA}\$j\$::jsonb) IS NOT NULL;" 2>&1
 }
 c2() { P -tA -q -c "SELECT $1 FROM public.farmer_tactical_plans WHERE customer_user_id='$C2';"; }
 
@@ -270,6 +279,15 @@ asserts_gravacao() {
   eq "G2 a frase seguinte com % ('A sua está em 37%') também não" "$(c2 "approach_strategy ~ 'A sua est'")" "f"
   eq "G3 jsonb: objeção sem o número, probability intacta" "$(c2 "(probable_objections::text ~ '37,73') || '|' || (probable_objections->0->>'probability')")" "false|55"
   eq "G4 o resto do texto chega" "$(c2 "approach_strategy")" "O risco de churn de 62% pede cuidado. Foque no ciclo."
+  eq "G5 frase de contexto SEM número abre a sequência: o número da seguinte cai" \
+     "$(c2 "implication_question")" "A margem está comprimida."
+  eq "G6 sequência de 3 frases com número cai inteira; a frase sem número fica" \
+     "$(c2 "approach_strategy_b")" "Reforce o serviço."
+  eq "G7 'R\$ 380 de margem' cai" "$(c2 "offer_transition")" "Vamos revisar o mix."
+  eq "G8 percentual por extenso ('trinta e oito por cento') cai" \
+     "$(c2 "diagnostic_questions->0->>'purpose'")" "[trecho removido: citava a margem]"
+  eq "G9 a sequência TERMINA na frase mantida sem margem: o churn fica, texto byte a byte" \
+     "$(c2 "operational_risks->>0")" "Qual a margem? Foque no ciclo. O churn é 62%."
 }
 asserts_gravacao
 
@@ -416,10 +434,24 @@ grava_c2 >/dev/null
 exige_vermelho "K8 contexto sem 'margem' → G1" "$(c2 "approach_strategy ~ '37,73'")" "f" "t"
 P -q -f "$MIG_A"
 
-# K9 — saneador sem a regra de contiguidade → G2.
-sabota_a 's/IF v_fala OR \(v_tem_numero AND v_anterior_fala\) THEN/IF v_fala THEN/'
+# K9 — saneador sem a sequência (só a própria frase decide) → G2.
+sabota_a 's/v_cai := v_tem_numero AND \(v_contexto OR v_em_sequencia\);/v_cai := v_tem_numero AND v_contexto;/'
 grava_c2 >/dev/null
-exige_vermelho "K9 sem contiguidade → G2" "$(c2 "approach_strategy ~ 'A sua est'")" "f" "t"
+exige_vermelho "K9 sem sequência → G2" "$(c2 "approach_strategy ~ 'A sua est'")" "f" "t"
+P -q -f "$MIG_A"
+
+# K14 — sequência só aberta por frase COM número (a regra da 1ª versão) → G5.
+sabota_a 's/v_em_sequencia := v_contexto OR v_cai;/v_em_sequencia := v_cai;/'
+grava_c2 >/dev/null
+exige_vermelho "K14 contexto sem número não abre sequência → G5" "$(c2 "implication_question")" \
+  "A margem está comprimida." "A margem está comprimida. Hoje, fica em 37,73%."
+P -q -f "$MIG_A"
+
+# K15 — R$ fora da unidade de margem → G7.
+sabota_a 's/\|R\\\$\\s\*\[0-9\]//'
+grava_c2 >/dev/null
+exige_vermelho "K15 sem R\$ como unidade → G7" "$(c2 "offer_transition")" \
+  "Vamos revisar o mix." "São R\$ 380 de margem sobre R\$ 1.000 de vendas. Vamos revisar o mix."
 P -q -f "$MIG_A"
 
 # K10 — saneador de jsonb sem descer em objeto → G3 (a objeção leva o número).
@@ -441,7 +473,7 @@ UPDATE public.farmer_tactical_plans p SET approach_strategy = o.approach_strateg
 DELETE FROM private.farmer_tactical_plans_texto_original WHERE plan_id = '$P1';
 ALTER TABLE public.farmer_tactical_plans ENABLE TRIGGER trg_tactical_plan_saneia_margem;
 SQL
-sabota_a 's/UPDATE public\.farmer_tactical_plans p\n   SET approach_strategy    = .*? WHERE p\.id IN \(SELECT o\.plan_id FROM private\.farmer_tactical_plans_texto_original o\);//s'
+sabota_a 's/UPDATE public\.farmer_tactical_plans p\n   SET approach_strategy    = .*? WHERE o\.plan_id = p\.id;//s'
 exige_vermelho "K11 backfill sem UPDATE → T8" \
   "$(texto "concat_ws(' ', approach_strategy, approach_strategy_b, implication_question, offer_transition, diagnostic_questions::text, probable_objections::text, operational_risks::text) ~ '(37,73|55,25)'" $P1)" "f" "t"
 P -q -f "$MIG_A"
@@ -459,7 +491,7 @@ ALTER TABLE public.farmer_tactical_plans ENABLE TRIGGER trg_tactical_plan_saneia
 SQL
 sabota_a "s/regexp_replace\(p_texto, '\\\\mp\\\\.\\\\s\?p\\\\.', 'pp', 'gi'\)/p_texto/"
 exige_vermelho "K12 sem normalizar p.p. → T2" "$(texto implication_question $P1)" \
-  "Quanto custa a parada de máquina?" "Recuperar 4 p.p. de margem equivale a R\$ 1.350/mês. Quanto custa a parada de máquina?"
+  "Quanto custa a parada de máquina?" "Recuperar 4 p.p. de margem muda o resultado. Quanto custa a parada de máquina?"
 P -q -f "$MIG_A"
 eq "K12r restaurado" "$(texto implication_question $P1)" "Quanto custa a parada de máquina?"
 
@@ -471,13 +503,17 @@ ALTER TABLE public.farmer_tactical_plans DISABLE TRIGGER trg_tactical_plan_sanei
 UPDATE public.farmer_tactical_plans SET approach_strategy = 'Sua margem bruta é de 37,73%.' WHERE id = '$P1';
 ALTER TABLE public.farmer_tactical_plans ENABLE TRIGGER trg_tactical_plan_saneia_margem;
 SQL
-perl -0pe 's/UPDATE public\.farmer_tactical_plans p\n   SET approach_strategy    = .*? WHERE p\.id IN \(SELECT o\.plan_id FROM private\.farmer_tactical_plans_texto_original o\);//s' \
+perl -0pe 's/UPDATE public\.farmer_tactical_plans p\n   SET approach_strategy    = .*? WHERE o\.plan_id = p\.id;//s' \
   "$MIG_A" > "$RODADA/a-sem-update.sql"
-K13=$(P -q -f "$RODADA/a-sem-update.sql" 2>&1 || true)
+P -q -c "DELETE FROM private.farmer_tactical_plans_texto_original WHERE plan_id = '$P1';"
+# -1: uma transação só, como o db:aplicar e o BEGIN/COMMIT do SQL Editor. O aborto tem de DESFAZER o resto.
+K13=$(P -q -1 -f "$RODADA/a-sem-update.sql" 2>&1 || true)
 case "$K13" in
   *"POS8 FALHOU: 1 plano(s) seguem citando margem com numero"*) ok "K13 POS8 aborta o apply com resíduo — vermelho exato" ;;
   *) bad "K13 POS8 não abortou com a mensagem esperada: [$K13]" ;;
 esac
+eq "K13b o aborto DESFEZ o apply: o INSERT do backup (anterior ao POS8) não ficou" \
+   "$(P -tA -q -c "SELECT count(*) FROM private.farmer_tactical_plans_texto_original WHERE plan_id='$P1';")" "0"
 P -q -f "$MIG_A"
 eq "K13r restaurado" "$(texto "approach_strategy ~ '37,73'" $P1)" "f"
 

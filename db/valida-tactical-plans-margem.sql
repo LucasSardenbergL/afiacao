@@ -51,7 +51,7 @@ WITH folhas AS (
    WHERE f.t IS NOT NULL
 )
 SELECT
-  count(DISTINCT id) FILTER (WHERE t ~* '((margem|cluster|pares)[^.]{0,80}[0-9]+([.,][0-9]+)?\s*(%|pp|pontos)|[0-9]+([.,][0-9]+)?\s*(%|pp|pontos)[^.]{0,40}(margem|cluster|pares))') AS residuo_detector,
+  count(DISTINCT id) FILTER (WHERE t ~* '((margem|cluster|pares)[^.!?;]{0,80}[0-9]+([.,][0-9]+)?\s*(%|pp|pontos)|[0-9]+([.,][0-9]+)?\s*(%|pp|pontos)[^.!?;]{0,40}(margem|cluster|pares))') AS residuo_detector,
   count(DISTINCT id) FILTER (WHERE (cm IS NOT NULL AND t ~ ('\m' || replace(to_char(cm, 'FM990.00'), '.', ',') || '\M'))
                                 OR (cl IS NOT NULL AND t ~ ('\m' || replace(to_char(cl, 'FM990.00'), '.', ',') || '\M'))) AS residuo_literal,
   (SELECT count(*) FROM pg_class WHERE oid = to_regclass('private.farmer_tactical_plans_texto_original')) AS backup_criado

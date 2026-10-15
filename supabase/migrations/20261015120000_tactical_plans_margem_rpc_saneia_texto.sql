@@ -27,16 +27,22 @@
 --   · sem ids → zero linhas (não é via de dump); saída ordenada por id, nunca pela margem.
 --
 -- Metade 2 — saneamento do texto:
---   · private.sanear_texto_margem(text): parte o texto em frases e remove a frase que tem um número com
---     unidade de margem (`%`, "por cento", "pontos", "p.p.") E fala de margem/rentabilidade/lucro/
---     cluster/pares — e também a frase seguinte, se ela tiver número com unidade ("…a média dos pares é
---     55%. A sua está em 37%."). Texto sem frase removida volta BYTE A BYTE igual. Campo que fica vazio
---     vira um aviso, para a tela não mostrar um campo em branco como se a IA não tivesse escrito nada.
---     "p.p." vira "pp" antes de partir (senão o ponto da abreviação separa o número da palavra).
---     Medido em prod com a regra exata (só agregados, 2026-10-15): remove 1.699 de 35.922 frases (4,7%);
---     34 dos 35 planos vivos têm ao menos uma frase removida. Resíduo nos dois detectores independentes:
---     valor literal da margem do próprio plano ou dos pares com 2 casas ("37,73") 551 → 0; "margem|cluster|
---     pares" a ≤80 caracteres de N%/pp, nos dois sentidos, 916 → 0 planos (é o POS8 abaixo).
+--   · private.sanear_texto_margem(text): parte o texto em frases e remove a frase que tem número com
+--     unidade de margem (`%`, "pp"/"p.p.", "pontos", `R$`, "por cento" e "pontos percentuais" mesmo por
+--     extenso) quando ela fala de margem/rentabilidade/lucro/cluster/pares OU está numa SEQUÊNCIA que fala:
+--     a sequência começa numa frase que menciona margem (com ou sem número — "A margem está comprimida.
+--     Hoje, fica em 37,73%.") e só termina numa frase mantida que não fala de margem ("…pares é 55%. Aqui
+--     foi 37%. Hoje está em 37,73%." cai inteira). Texto sem frase removida volta BYTE A BYTE igual. Campo
+--     que fica vazio vira um aviso, para a tela não mostrar um campo em branco como se a IA não tivesse
+--     escrito nada. "p.p." vira "pp" antes de partir (senão o ponto da abreviação separa o número da palavra).
+--     Medido em prod com a regra exata (só agregados, 2026-10-15): remove 1.747 de 35.922 frases (4,9%), 89
+--     delas só pela sequência. Resíduo, por detectores independentes da regra: valor literal da margem do
+--     plano ou dos pares com 2 casas ("37,73") 551 → 0 planos; "margem|cluster|pares" a ≤80 caracteres de
+--     N%/pp, nos dois sentidos, 916 → 0 (é o POS8 abaixo); "R$ … de margem", fração "0,38" e "por cento"
+--     junto de margem/lucro 87 → 0. O inteiro arredondado da margem seguido de % sobra em 22 planos — todos
+--     conferidos: coincidência com churn ("churn de 64%") ou vida útil ("30% mais"), nenhum é margem.
+--     Desenho revisto no challenge do Codex (a primeira versão só olhava UMA frase adiante e exigia número
+--     na frase de contexto).
 --   · private.sanear_jsonb_margem(jsonb): a mesma regra em cada folha string (perguntas, objeções, riscos);
 --     número, booleano e estrutura ficam intactos (a `probability` da objeção não é texto).
 --   · trigger BEFORE INSERT/UPDATE: toda gravação passa pelo saneador, qualquer que seja o writer
@@ -78,18 +84,20 @@ AS $function$
 DECLARE
   -- Fala de margem. `\mpares\M` com borda de palavra: "comparação" não conta.
   c_contexto constant text := '(margem|margens|rentabil|lucrativ|lucro|cluster|\mpares\M)';
-  -- Número com unidade de margem. "36 categorias" e "R$ 8.070" não casam; "9,3 pp", "~19pp", "4 p.p." e
-  -- "14 pontos percentuais" casam.
-  c_numero   constant text := '[0-9]+([.,][0-9]+)?\s*(%|por cento|pontos?|p\.?\s?p(\M|\.))';
+  -- Número com unidade de margem. "36 categorias" não casa; "9,3 pp", "~19pp", "4 p.p.", "14 pontos
+  -- percentuais", "R$ 380" e "trinta e oito por cento" casam. `R$` sozinho não derruba a frase: só cai
+  -- junto de margem ou dentro de uma sequência que fala de margem ("R$ 380 de margem sobre R$ 1.000").
+  c_numero   constant text := '([0-9]+([.,][0-9]+)?\s*(%|por cento|pontos?|p\.?\s?p(\M|\.))|R\$\s*[0-9]|\mpor cento\M|pontos percentuais)';
   v_frase        text;
   v_saida        text[] := '{}';
   v_tirou        boolean := false;
-  v_anterior_fala boolean := false;
-  v_fala         boolean;
+  v_em_sequencia boolean := false;
+  v_contexto     boolean;
   v_tem_numero   boolean;
+  v_cai          boolean;
 BEGIN
-  -- Sem dígito não há número a remover: devolve o texto como veio (inclusive NULL e '').
-  IF p_texto IS NULL OR p_texto !~ '[0-9]' THEN
+  -- Sem dígito e sem número por extenso não há o que remover: devolve como veio (inclusive NULL e '').
+  IF p_texto IS NULL OR p_texto !~* '([0-9]|por cento|percentua)' THEN
     RETURN p_texto;
   END IF;
 
@@ -99,16 +107,17 @@ BEGIN
   -- frase cai; sem queda o texto volta como veio.
   FOREACH v_frase IN ARRAY regexp_split_to_array(regexp_replace(p_texto, '\mp\.\s?p\.', 'pp', 'gi'), '(?<=[.!?;])\s+') LOOP
     v_tem_numero := v_frase ~* c_numero;
-    v_fala := v_tem_numero AND v_frase ~* c_contexto;
-    -- A frase cai se fala de margem com número, ou se tem número com unidade logo depois de uma que
-    -- falava ("…a média dos pares é 55%. A sua está em 37%."). A contiguidade é de UM passo, contra a
-    -- frase anterior ORIGINAL — é a regra que foi medida em prod.
-    IF v_fala OR (v_tem_numero AND v_anterior_fala) THEN
+    v_contexto   := v_frase ~* c_contexto;
+    -- Cai a frase com número que fala de margem, ou que está numa sequência aberta por uma que falava.
+    v_cai := v_tem_numero AND (v_contexto OR v_em_sequencia);
+    IF v_cai THEN
       v_tirou := true;
     ELSE
       v_saida := v_saida || v_frase;
     END IF;
-    v_anterior_fala := v_fala;
+    -- A sequência segue enquanto a frase fala de margem ou caiu; uma frase MANTIDA que não fala de margem
+    -- a encerra ("Churn de 62%." depois de "Qual a margem? Foque no ciclo." fica).
+    v_em_sequencia := v_contexto OR v_cai;
   END LOOP;
 
   IF NOT v_tirou THEN
@@ -220,16 +229,21 @@ SELECT p.id, p.approach_strategy, p.approach_strategy_b, p.implication_question,
     OR p.operational_risks    IS DISTINCT FROM private.sanear_jsonb_margem(p.operational_risks)
 ON CONFLICT (plan_id) DO NOTHING;
 
+-- Saneia a partir do ORIGINAL guardado, não do texto atual: se esta migration for reaplicada com uma regra
+-- melhor, ela recalcula do que a IA escreveu — sanear o já-saneado não recupera o que uma regra fraca
+-- deixou passar (achado do harness, K12r). Seguro porque os campos de texto só são escritos na criação do
+-- plano (criar_plano_tatico); registrar_resultado_plano não os toca.
 -- `updated_at` fica como está: o plano não mudou de conteúdo comercial, só perdeu o número.
 UPDATE public.farmer_tactical_plans p
-   SET approach_strategy    = private.sanear_texto_margem(p.approach_strategy),
-       approach_strategy_b  = private.sanear_texto_margem(p.approach_strategy_b),
-       implication_question = private.sanear_texto_margem(p.implication_question),
-       offer_transition     = private.sanear_texto_margem(p.offer_transition),
-       diagnostic_questions = private.sanear_jsonb_margem(p.diagnostic_questions),
-       probable_objections  = private.sanear_jsonb_margem(p.probable_objections),
-       operational_risks    = private.sanear_jsonb_margem(p.operational_risks)
- WHERE p.id IN (SELECT o.plan_id FROM private.farmer_tactical_plans_texto_original o);
+   SET approach_strategy    = private.sanear_texto_margem(o.approach_strategy),
+       approach_strategy_b  = private.sanear_texto_margem(o.approach_strategy_b),
+       implication_question = private.sanear_texto_margem(o.implication_question),
+       offer_transition     = private.sanear_texto_margem(o.offer_transition),
+       diagnostic_questions = private.sanear_jsonb_margem(o.diagnostic_questions),
+       probable_objections  = private.sanear_jsonb_margem(o.probable_objections),
+       operational_risks    = private.sanear_jsonb_margem(o.operational_risks)
+  FROM private.farmer_tactical_plans_texto_original o
+ WHERE o.plan_id = p.id;
 
 -- ═══════════════════════════ Metade 1 — RPC com gate de projeção ═══════════════════════════
 
@@ -329,7 +343,9 @@ BEGIN
    ) folha
    -- "p.p." normalizado como no saneador: com o ponto, "4 p.p. de margem" escapa dos dois sentidos.
    WHERE regexp_replace(folha.t, '\mp\.\s?p\.', 'pp', 'gi')
-         ~* '((margem|cluster|pares)[^.]{0,80}[0-9]+([.,][0-9]+)?\s*(%|pp|pontos)|[0-9]+([.,][0-9]+)?\s*(%|pp|pontos)[^.]{0,40}(margem|cluster|pares))';
+         -- `[^.!?;]`: o detector não atravessa fim de frase (o saneador parte nos mesmos quatro sinais); com
+         -- `[^.]`, "Qual a margem? O churn é 62%." abortaria o apply sem citar margem (achado do Codex).
+         ~* '((margem|cluster|pares)[^.!?;]{0,80}[0-9]+([.,][0-9]+)?\s*(%|pp|pontos)|[0-9]+([.,][0-9]+)?\s*(%|pp|pontos)[^.!?;]{0,40}(margem|cluster|pares))';
   IF v_n <> 0 THEN
     RAISE EXCEPTION 'POS8 FALHOU: % plano(s) seguem citando margem com numero apos o saneamento', v_n;
   END IF;

@@ -51,8 +51,8 @@ db/test-authz-is-not-true-escritas.sh      24
 db/test-fcs-margem-coluna-fechada.sh       63
 # FU4-F (plano tático): a margem sai de farmer_tactical_plans por COLUNA (current/cluster/expected_result, REVOKE
 # de tabela + GRANT de 38) e por TEXTO (saneador + trigger + backup privado). Linha de base prova os dois furos;
-# writers de prod (fixture) seguem gravando; 13 sabotagens inline, cada uma exige o seu vermelho exato.
-db/test-tactical-plans-margem.sh           98
+# writers de prod (fixture) seguem gravando; 15 sabotagens inline, cada uma exige o seu vermelho exato.
+db/test-tactical-plans-margem.sh           116
 # Telefonia: quem é o dono do número discado (resolver_cliente_por_telefone, INVOKER). Roda COMO a
 # vendedora sob a RLS copiada da prod: o telefone com hífen casa (a busca antiga reconhecia 4% das
 # carteiras), staff não é cliente, ambíguo fica sem dono em vez de cair num cliente ao acaso, um
