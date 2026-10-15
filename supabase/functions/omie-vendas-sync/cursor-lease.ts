@@ -129,3 +129,75 @@ export async function releaseVendasCursor(
   if (desfecho === "perdido") console.warn(`[sync_pedidos][${account}] release RECUSADO — o lease ja era de outro worker`);
   return desfecho;
 }
+
+// ─── Falha honesta (migration 20261015221700) ───────────────────────────────────────────────
+// criar_pedidos_com_itens devolve em `failed[]` os pedidos que NÃO gravou (subtransação desfeita —
+// o pedido não existe no banco depois). Antes isso só virava log e a janela fechava "completa" com
+// pedido perdido. Agora cada página registra os seus falhos na janela; o finish cercado só completa
+// sem falhos (1ª vez re-arma a janela sozinho; 2ª vez vira terminal com a lista, para o staff ver).
+
+export interface PedidoFalho {
+  codigo_pedido: number | string | null;
+  hash: string | null;
+  sqlstate: string | null;
+  erro: string | null;
+  pagina: number;
+}
+
+const MAX_ERRO = 200;
+
+/** Normaliza o `failed[]` da RPC para o que a janela guarda (só o necessário, mensagem truncada). */
+export function falhasDaPagina(fails: unknown[], pagina: number): PedidoFalho[] {
+  return fails.map((f) => {
+    const o = (f !== null && typeof f === "object" ? f : {}) as Record<string, unknown>;
+    const codigo = o.codigo_pedido;
+    return {
+      codigo_pedido: typeof codigo === "number" || typeof codigo === "string" ? codigo : null,
+      hash: typeof o.hash === "string" ? o.hash : null,
+      sqlstate: typeof o.sqlstate === "string" ? o.sqlstate : null,
+      erro: typeof o.erro === "string" ? o.erro.slice(0, MAX_ERRO) : null,
+      pagina,
+    };
+  });
+}
+
+/** Registra os falhos da página na janela, SÓ se este worker ainda for o dono do lease. */
+export async function registrarFalhasVendasCursor(
+  db: ClienteRpc, account: string, dfIso: string, dtIso: string, lease: LeaseCursor, falhas: PedidoFalho[],
+): Promise<DesfechoCercado> {
+  const { data, error } = await db.rpc("vendas_sync_registrar_falhas_fenced", {
+    p_account: account, p_date_from: dfIso, p_date_to: dtIso, p_lease_token: lease.leaseToken, p_falhas: falhas,
+  });
+  const desfecho = interpretarCercado(data, error);
+  if (desfecho === "erro") console.error(`[sync_pedidos][${account}] registrar falhos falhou:`, error?.message ?? JSON.stringify(data));
+  if (desfecho === "perdido") console.warn(`[sync_pedidos][${account}] registrar falhos RECUSADO — o lease ja era de outro worker`);
+  return desfecho;
+}
+
+/**
+ * PRÉ-REGISTRO (2º challenge Codex, P2): a identidade de cada pedido do lote entra na janela ANTES de
+ * criar_pedidos_com_itens. Só os que a RPC PODE criar — espelho do G7 dela (`it->>'omie_codigo_produto'
+ * IS NOT NULL` em `itens`): pedido sem item válido nunca vira pai, e ficaria pendente para sempre.
+ * O banco poda pela existência em sales_orders; o que gravou sai da lista sozinho.
+ */
+export function pendenciasDoLote(lote: unknown[], pagina: number): PedidoFalho[] {
+  const out: PedidoFalho[] = [];
+  for (const p of lote) {
+    if (p === null || typeof p !== "object") continue;
+    const o = p as Record<string, unknown>;
+    const itens = Array.isArray(o.itens) ? o.itens : [];
+    const criavel = itens.some((it) =>
+      it !== null && typeof it === "object" && (it as Record<string, unknown>).omie_codigo_produto != null
+    );
+    if (!criavel) continue;
+    const codigo = o.omie_pedido_id;
+    out.push({
+      codigo_pedido: typeof codigo === "number" || typeof codigo === "string" ? codigo : null,
+      hash: typeof o.hash_payload === "string" ? o.hash_payload : null,
+      sqlstate: null,
+      erro: null,
+      pagina,
+    });
+  }
+  return out;
+}

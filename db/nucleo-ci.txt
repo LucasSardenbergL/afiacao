@@ -227,6 +227,11 @@ db/test-fin-sync-lease.sh                  22
 # real com 2 sessões e bloqueio OBSERVADO (EPQ); o caminho antigo (edge velha) não toca lease cercado;
 # 10 sabotagens inline, cada uma com o seu vermelho, e o validador pós-apply reprova 6 delas.
 db/test-vendas-sync-cursor-fencing.sh      47
+# ... e a FALHA HONESTA sobre o mesmo cursor: a janela só completa com a PROVA em sales_orders de que
+# nenhum pedido ficou para trás (pré-registro antes de gravar, poda pela existência, re-arme que não
+# apaga a lista), erro persistente → terminal, terminal sai do cron/acquire/semear, re-armar só staff.
+# 16 sabotagens inline, cada uma com o seu vermelho; o validador pós-apply reprova 13 delas.
+db/test-vendas-sync-cursor-falha-honesta.sh 72
 db/test-fin-sync-kick-skipped-busy.sh      18
 db/test-pedido-venda-coerencia.sh          31
 # Tintométrico: a promoção saiu do HTTP para uma fila — tick concorrente PULA (try-lock), FIFO

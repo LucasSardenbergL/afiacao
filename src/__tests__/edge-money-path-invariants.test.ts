@@ -1481,7 +1481,8 @@ describe('guardrail money-path: backfill de pedidos usa o lease CERCADO (fencing
     for (const nome of ['lease_acquire', 'heartbeat', 'finish', 'release']) {
       expect(lease, `cursor-lease.ts não chama vendas_sync_${nome}_fenced`).toContain(`db.rpc("vendas_sync_${nome}_fenced"`);
     }
-    expect(count(lease, 'p_lease_token: lease.leaseToken'), 'heartbeat/finish/release têm de mandar o token').toBe(3);
+    expect(lease, 'cursor-lease.ts não chama vendas_sync_registrar_falhas_fenced').toContain('db.rpc("vendas_sync_registrar_falhas_fenced"');
+    expect(count(lease, 'p_lease_token: lease.leaseToken'), 'heartbeat/finish/release/registrar têm de mandar o token').toBe(4);
   });
 
   it('nenhuma chamada às RPCs ANTIGAS (sem cerca) sobrou na edge ou no módulo', () => {
@@ -1500,6 +1501,29 @@ describe('guardrail money-path: backfill de pedidos usa o lease CERCADO (fencing
       /while \(pagesProcessed < maxPages\) \{\s*if \(cursor\) \{\s*const posse = await heartbeatVendasCursor\([^)]*cursor\.lease, pagina\);\s*if \(posse === 'perdido'\) \{ leasePerdido = true; break; \}\s*if \(posse === 'erro'\) \{ lastErrorKind = 'transient'; break; \}/,
     );
     expect(edge, 'lease perdido não pode contar como janela completa').toContain('const complete = reachedEnd && !leasePerdido;');
+  });
+
+  it('falha honesta: o failed[] da página é REGISTRADO na janela e, sem confirmação, a invocação LANÇA', () => {
+    expect(lease, 'cursor-lease.ts não chama a RPC cercada de registro').toContain('db.rpc("vendas_sync_registrar_falhas_fenced"');
+    expect(
+      edge,
+      'REGRESSÃO: os pedidos falhos voltaram a ser só log — a janela fecharia completa com pedido perdido',
+    ).toMatch(
+      /if \(cursor && fails\.length > 0\) \{\s*const registro = await registrarFalhasVendasCursor\([^)]*falhasDaPagina\(fails, pagina\)\);\s*if \(registro === 'perdido'\) \{ leasePerdido = true; break; \}\s*if \(registro === 'erro'\) \{\s*throw new Error\(/,
+    );
+  });
+
+  it('pendência PROVADA: o lote é pré-registrado ANTES de criar_pedidos_com_itens (2º challenge Codex, P2)', () => {
+    const iPre = edge.indexOf('pendenciasDoLote(pedidosRpc, pagina)');
+    const iRpc = edge.indexOf("supabase.rpc('criar_pedidos_com_itens', { p_pedidos: pedidosRpc })");
+    expect(iPre, 'REGRESSÃO: sumiu o pré-registro das pendências do lote').toBeGreaterThan(-1);
+    expect(iRpc, 'sentinela: a chamada da RPC de pedidos mudou de forma').toBeGreaterThan(-1);
+    expect(iPre, 'REGRESSÃO: o pré-registro foi para DEPOIS da gravação — volta o intervalo em que o pedido some').toBeLessThan(iRpc);
+    // Forma EXATA, ancorada no início do bloco da RPC: `if (cursor && false)` ou outro desvio deixaria o
+    // pré-registro inalcançável com o texto ainda presente (3º challenge Codex, P7).
+    expect(edge, 'o pré-registro tem de rodar em TODO lote do modo cursor, e sem confirmação LANÇAR antes de gravar').toMatch(
+      /if \(pedidosRpc\.length > 0\) \{\s*if \(cursor\) \{\s*const pendencias = pendenciasDoLote\(pedidosRpc, pagina\);\s*if \(pendencias\.length > 0\) \{\s*const pre = await registrarFalhasVendasCursor\(supabase, account, cursor\.df, cursor\.dt, cursor\.lease, pendencias\);\s*if \(pre === 'perdido'\) \{ leasePerdido = true; break; \}\s*if \(pre === 'erro'\) \{\s*throw new Error\(/,
+    );
   });
 
   it('o finish NÃO é chamado com lease perdido', () => {

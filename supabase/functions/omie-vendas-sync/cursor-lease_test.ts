@@ -7,10 +7,13 @@
 import {
   acquireVendasLease,
   type ClienteRpc,
+  falhasDaPagina,
   finishVendasCursor,
   heartbeatVendasCursor,
   interpretarAcquire,
   interpretarCercado,
+  pendenciasDoLote,
+  registrarFalhasVendasCursor,
   releaseVendasCursor,
 } from "./cursor-lease.ts";
 
@@ -124,4 +127,58 @@ Deno.test("releaseVendasCursor: chama a RPC cercada com o token", async () => {
     nome: "vendas_sync_release_fenced",
     args: { p_account: "oben", p_date_from: "2026-01-01", p_date_to: "2026-06-30", p_lease_token: TOKEN, p_last_error_kind: "error" },
   }]);
+});
+
+// ── falha honesta: o failed[] da RPC vira registro na janela, pelo dono do lease ──
+Deno.test("falhasDaPagina: guarda código/hash/sqlstate/erro + a página, e trunca a mensagem", () => {
+  const longa = "x".repeat(500);
+  const r = falhasDaPagina([{ codigo_pedido: 123, hash: "omie_oben_123", sqlstate: "23505", erro: longa, extra: "fora" }], 7);
+  assertEquals(r.length, 1);
+  assertEquals(r[0].codigo_pedido, 123);
+  assertEquals(r[0].hash, "omie_oben_123");
+  assertEquals(r[0].sqlstate, "23505");
+  assertEquals(r[0].erro?.length, 200);
+  assertEquals(r[0].pagina, 7);
+  assertEquals(Object.keys(r[0]).sort(), ["codigo_pedido", "erro", "hash", "pagina", "sqlstate"]);
+});
+Deno.test("falhasDaPagina: entrada malformada vira registro com null (não some — ausente ≠ sem falha)", () => {
+  assertEquals(falhasDaPagina([null, "lixo", { codigo_pedido: { x: 1 } }], 2), [
+    { codigo_pedido: null, hash: null, sqlstate: null, erro: null, pagina: 2 },
+    { codigo_pedido: null, hash: null, sqlstate: null, erro: null, pagina: 2 },
+    { codigo_pedido: null, hash: null, sqlstate: null, erro: null, pagina: 2 },
+  ]);
+});
+Deno.test("registrarFalhasVendasCursor: chama a RPC cercada com token e a lista; false → perdido", async () => {
+  const { db, chamadas } = cliente({ data: false, error: null });
+  const falhas = falhasDaPagina([{ codigo_pedido: 9, sqlstate: "40P01" }], 3);
+  assertEquals(await registrarFalhasVendasCursor(db, "oben", "2026-01-01", "2026-06-30", LEASE, falhas), "perdido");
+  assertEquals(chamadas, [{
+    nome: "vendas_sync_registrar_falhas_fenced",
+    args: { p_account: "oben", p_date_from: "2026-01-01", p_date_to: "2026-06-30", p_lease_token: TOKEN, p_falhas: falhas },
+  }]);
+});
+Deno.test("registrarFalhasVendasCursor: erro de RPC → erro (o caller lança, não segue sem o registro)", async () => {
+  const { db } = cliente({ data: null, error: { message: "boom" } });
+  assertEquals(await registrarFalhasVendasCursor(db, "oben", "a", "b", LEASE, []), "erro");
+});
+
+// ── pré-registro: espelho do G7 da RPC (só entra o pedido que a RPC pode criar) ──
+Deno.test("pendenciasDoLote: entra o pedido com ≥1 item com omie_codigo_produto, com hash e código", () => {
+  const lote = [
+    { omie_pedido_id: 501, hash_payload: "omie_oben_501", itens: [{ omie_codigo_produto: 9 }] },
+    { omie_pedido_id: 502, hash_payload: "omie_oben_502", itens: [{ omie_codigo_produto: null }, { omie_codigo_produto: 7 }] },
+  ];
+  assertEquals(pendenciasDoLote(lote, 4), [
+    { codigo_pedido: 501, hash: "omie_oben_501", sqlstate: null, erro: null, pagina: 4 },
+    { codigo_pedido: 502, hash: "omie_oben_502", sqlstate: null, erro: null, pagina: 4 },
+  ]);
+});
+Deno.test("pendenciasDoLote: pedido SEM item válido fica fora (a RPC nunca cria o pai — ficaria pendente para sempre)", () => {
+  const lote = [
+    { omie_pedido_id: 601, hash_payload: "omie_oben_601", itens: [] },
+    { omie_pedido_id: 602, hash_payload: "omie_oben_602", itens: [{ omie_codigo_produto: null }, {}] },
+    { omie_pedido_id: 603, hash_payload: "omie_oben_603" },
+    null,
+  ];
+  assertEquals(pendenciasDoLote(lote, 1), []);
 });

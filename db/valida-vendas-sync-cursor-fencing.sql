@@ -31,7 +31,7 @@ SELECT CASE
   WHEN EXISTS (SELECT 1 FROM novas WHERE has_function_privilege('authenticated', fn, 'EXECUTE')
                                       OR has_function_privilege('anon', fn, 'EXECUTE'))
     THEN '❌ RPC cercada executavel por anon/authenticated'
-  WHEN EXISTS (SELECT 1 FROM src WHERE fn LIKE '%acquire_fenced%' AND corpo !~ 'lease_token\s*=\s*gen_random_uuid\(\)')
+  WHEN EXISTS (SELECT 1 FROM src WHERE fn LIKE '%acquire_fenced%' AND corpo !~ 'lease_token\s*=\s*(CASE [^;]*ELSE\s+)?gen_random_uuid\(\)')
     THEN '❌ acquire cercado nao emite token novo'
   -- A cerca tem de estar NO PRÓPRIO UPDATE ([^;]* = sem fechar o statement antes): token conferido
   -- num SELECT preliminar e UPDATE sem ele é o check-then-act que a corrida C1 pega (Codex P4).

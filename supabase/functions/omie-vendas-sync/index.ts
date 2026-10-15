@@ -22,7 +22,7 @@ import { descontoNaLeituraDoOmie } from "../_shared/edicao-desconto-omie.ts";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import { hojeSP, paraDataOmie } from "../_shared/hoje-sp.ts";
 import { avaliarAssinaturaA2, CONTRATO_A2 } from "./assinatura-a2.ts";
-import { acquireVendasLease, finishVendasCursor, heartbeatVendasCursor, type LeaseCursor, releaseVendasCursor } from "./cursor-lease.ts";
+import { acquireVendasLease, falhasDaPagina, finishVendasCursor, heartbeatVendasCursor, type LeaseCursor, pendenciasDoLote, registrarFalhasVendasCursor, releaseVendasCursor } from "./cursor-lease.ts";
 import type { BancoPostgrest } from "../_shared/paginate.ts";
 import { avaliarPagina, MAX_PAGINAS_LISTAGEM, MAX_PAGINAS_PEDIDOS, MAX_PAGINAS_POS_ESTOQUE, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
 import { atenderSondaOptions } from '../_shared/sonda-cron.ts';
@@ -1571,6 +1571,20 @@ async function syncPedidos(
     // (órfão de cabeçalho compatível) / skip (completo ou divergente). Ver migration
     // 20260617160000_criar_pedidos_com_itens.sql + prove em db/test-criar-pedidos-com-itens.sh.
     if (pedidosRpc.length > 0) {
+      // Modo cursor: PRÉ-REGISTRA a identidade de cada pedido do lote ANTES de gravar. A janela só
+      // completa quando o banco PROVA (sales_orders) que todos existem — não há mais intervalo entre
+      // "gravar" e "anotar" em que um pedido some (2º challenge Codex, P2). Sem confirmação, LANÇA
+      // antes de escrever: o release preserva a página em curso e a próxima passada a refaz.
+      if (cursor) {
+        const pendencias = pendenciasDoLote(pedidosRpc, pagina);
+        if (pendencias.length > 0) {
+          const pre = await registrarFalhasVendasCursor(supabase, account, cursor.df, cursor.dt, cursor.lease, pendencias);
+          if (pre === 'perdido') { leasePerdido = true; break; }
+          if (pre === 'erro') {
+            throw new Error(`[sync_pedidos][${account}] sem confirmação do pré-registro de ${pendencias.length} pedido(s) da pág ${pagina} — não gravo sem a pendência anotada`);
+          }
+        }
+      }
       const { data: rpcRes, error: rpcErr } = await supabase.rpc('criar_pedidos_com_itens', { p_pedidos: pedidosRpc });
       if (rpcErr) {
         // Money-path: a RPC é o ÚNICO caminho de escrita agora. Se ela falha (migration não
@@ -1587,6 +1601,16 @@ async function syncPedidos(
         totalFailed += fails.length;
         if (divs.length > 0) console.warn(`[sync_pedidos][${account}] ${divs.length} pedido(s) com cabeçalho divergente (Fase 2, NÃO reconciliado):`, JSON.stringify(divs.slice(0, 5)));
         if (fails.length > 0) console.error(`[sync_pedidos][${account}] ${fails.length} pedido(s) FALHARAM na RPC pág ${pagina}:`, JSON.stringify(fails.slice(0, 5)));
+        // Modo cursor: anexa o SQLSTATE/mensagem aos pedidos falhos (já pré-registrados acima) — é o
+        // diagnóstico que o staff vê no card. A completude NÃO depende disto: depende da prova em
+        // sales_orders. Sem confirmação, LANÇA (a página é refeita e anotada de novo).
+        if (cursor && fails.length > 0) {
+          const registro = await registrarFalhasVendasCursor(supabase, account, cursor.df, cursor.dt, cursor.lease, falhasDaPagina(fails, pagina));
+          if (registro === 'perdido') { leasePerdido = true; break; }
+          if (registro === 'erro') {
+            throw new Error(`[sync_pedidos][${account}] sem confirmação do registro de ${fails.length} pedido(s) falho(s) da pág ${pagina} — a janela não segue sem eles`);
+          }
+        }
         console.log(`[sync_pedidos][${account}] RPC pág ${pagina}: inserted=${r.inserted || 0} repaired=${r.repaired || 0} items=${r.items || 0} skip_completo=${r.skipped_complete || 0} skip_sem_item=${r.skipped_no_items || 0} divergencia=${divs.length} falhas=${fails.length} itens_com_codigo_item=${itensComIdentidade}/${itensLidos} identidade_ambigua=${pedidosIdentidadeAmbigua}`);
       }
     }

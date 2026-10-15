@@ -91,13 +91,9 @@ export const respostaSonda = criarRespostaSonda("omie-vendas-sync");
  * dia UTC do servidor, AMANHÃ das 21:00 às 23:59 BRT — e, sem dInc, o data_previsao vira o order_date_kpi.
  * Nenhuma pré-condição de banco, nenhuma ordem de deploy.
  * v1.12/13/15/16 (ATP 3.1–3.3) — write-back atômico; PV reconciliado divergente LANÇA; excluir só após o
- * cancelamento feito no Omie (o app não cancela). Migrations antes do edge. v1.17 (M-33 p3): relógio 140s; escrita = INDETERMINADA.
- * v1.19 (2026-10-15) — lease CERCADO do backfill (`sync_pedidos` com `use_cursor`): acquire/heartbeat/finish/
- * release passam às RPCs `vendas_sync_*_fenced` com fencing token (./cursor-lease.ts); heartbeat recusado ⇒ o
- * laço PARA e o finish não é chamado. ⚠️ PRÉ-CONDIÇÃO DE BANCO: migration 20261015221600 ANTES do edge (sem as
- * RPCs cercadas o acquire falha e o backfill fica no-op, sem rodar sem cerca). Não toca `_shared/`.
+ * cancelamento feito no Omie (o app não cancela). Migrations antes do edge. v1.17 (M-33 p3): relógio 140s; escrita = INDETERMINADA. v1.19: lease CERCADO + falha honesta (./cursor-lease.ts) — migrations 20261015221600+221700 ANTES do edge.
  */
-export const VERSAO = "v1.19-lease-cercado";
+export const VERSAO = "v1.19-lease-cercado-falha-honesta";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

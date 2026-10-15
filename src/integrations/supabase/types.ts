@@ -17320,11 +17320,17 @@ export type Database = {
           completed_at: string | null
           date_from: string
           date_to: string
+          falhas_consecutivas: number
+          falhou_em: string | null
           heartbeat_at: string | null
           last_error_kind: string | null
           lease_token: string | null
+          motivo_falha: string | null
           next_page: number | null
+          pausas_sem_progresso: number
+          pedidos_falhos: Json
           running_since: string | null
+          tentativas_falha: number
           updated_at: string
         }
         Insert: {
@@ -17332,11 +17338,17 @@ export type Database = {
           completed_at?: string | null
           date_from: string
           date_to: string
+          falhas_consecutivas?: number
+          falhou_em?: string | null
           heartbeat_at?: string | null
           last_error_kind?: string | null
           lease_token?: string | null
+          motivo_falha?: string | null
           next_page?: number | null
+          pausas_sem_progresso?: number
+          pedidos_falhos?: Json
           running_since?: string | null
+          tentativas_falha?: number
           updated_at?: string
         }
         Update: {
@@ -17344,11 +17356,17 @@ export type Database = {
           completed_at?: string | null
           date_from?: string
           date_to?: string
+          falhas_consecutivas?: number
+          falhou_em?: string | null
           heartbeat_at?: string | null
           last_error_kind?: string | null
           lease_token?: string | null
+          motivo_falha?: string | null
           next_page?: number | null
+          pausas_sem_progresso?: number
+          pedidos_falhos?: Json
           running_since?: string | null
+          tentativas_falha?: number
           updated_at?: string
         }
         Relationships: []
@@ -22078,6 +22096,20 @@ export type Database = {
       vendas_sync_lease_acquire_fenced: {
         Args: { p_account: string; p_date_from: string; p_date_to: string }
         Returns: Json
+      }
+      vendas_sync_rearmar_janela: {
+        Args: { p_account: string; p_date_from: string; p_date_to: string }
+        Returns: Json
+      }
+      vendas_sync_registrar_falhas_fenced: {
+        Args: {
+          p_account: string
+          p_date_from: string
+          p_date_to: string
+          p_falhas: Json
+          p_lease_token: string
+        }
+        Returns: boolean
       }
       vendas_sync_release: {
         Args: {
