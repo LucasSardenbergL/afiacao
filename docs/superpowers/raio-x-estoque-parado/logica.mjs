@@ -127,3 +127,34 @@ export function parseValorBR(s) {
   if (!/^\d{1,3}(\.\d{3})*(,\d+)?$|^\d+(,\d+)?$/.test(limpo)) return null;
   return Number(limpo.replace(/\./g, '').replace(',', '.'));
 }
+
+const CONTRADICAO = ['trocar', 'liquidar', 'manter_suspender_recompra'];
+const LIMIAR_LIQUIDACAO = 0.9;
+
+export function medir(retrato, decisoes, atual) {
+  const m = { vendido: 0, liquidado: 0, margem_sacrificada: 0, trocado: 0, caixa_liberado: 0, parado: 0,
+    reclassificado_nao_caixa: 0, contradicoes: [], sem_medicao: [] };
+  for (const i of retrato.itens) {
+    if (i.categoria === 'nao_mercadoria') { m.reclassificado_nao_caixa += i.valor; continue; }
+    if (i.categoria !== 'mercadoria') continue;
+    const d = decisoes[i.sku] ?? {};
+    const a = atual[i.sku];
+    if (!a) { m.sem_medicao.push(i.sku); m.parado += i.valor; continue; }
+    const qtd = Math.min(a.qtd_vendida, i.saldo);
+    const custo = qtd * i.cmc;
+    const precoPeriodo = a.qtd_vendida > 0 ? a.receita / a.qtd_vendida : null;
+    if (precoPeriodo !== null && i.preco_medio_12m && precoPeriodo < LIMIAR_LIQUIDACAO * i.preco_medio_12m) {
+      m.liquidado += custo;
+      m.margem_sacrificada += qtd * i.preco_medio_12m - (a.receita * qtd) / a.qtd_vendida;
+    } else {
+      m.vendido += custo;
+    }
+    if (d.destino === 'trocar' && typeof d.credito_troca === 'number') m.trocado += d.credito_troca;
+    m.parado += Math.min(a.saldo, i.saldo) * i.cmc;
+    if (CONTRADICAO.includes(d.destino) && d.decidido_em) {
+      for (const p of a.compras ?? []) if (p > d.decidido_em) m.contradicoes.push({ sku: i.sku, destino: d.destino, pedido_em: p });
+    }
+  }
+  m.caixa_liberado = m.vendido + m.liquidado + m.trocado;
+  return m;
+}

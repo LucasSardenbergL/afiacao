@@ -115,3 +115,38 @@ test('listaTroca leva o fornecedor (informado vence o do cadastro) e ordena por 
   const l = listaTroca(itens, { 1: { destino: 'trocar' }, 2: { destino: 'trocar' }, 3: { destino: 'trocar', fornecedor_informado: 'ACRE' } });
   assert.deepEqual(l.map((x) => [x.fornecedor, x.sku]), [['ACRE', 3], ['RENNER SAYERLACK S/A', 2], ['SAPIRANGA', 1]]);
 });
+
+import { medir } from './logica.mjs';
+
+const ret = (o) => ({ meta: { hoje: '2026-10-14' }, itens: [{ sku: 1, categoria: 'mercadoria', saldo: 10, cmc: 5, valor: 50, preco_medio_12m: 10, ...o }] });
+
+test('medir limita vendido ao saldo do retrato', () => {
+  const m = medir(ret(), {}, { 1: { saldo: 4, qtd_vendida: 30, receita: 300, compras: [] } });
+  assert.equal(m.vendido, 50);
+  assert.equal(m.liquidado, 0);
+});
+test('medir separa liquidado e margem sacrificada', () => {
+  const m = medir(ret(), {}, { 1: { saldo: 6, qtd_vendida: 4, receita: 20, compras: [] } }); // 5/un < 90% de 10
+  assert.equal(m.liquidado, 20);
+  assert.equal(m.vendido, 0);
+  assert.equal(m.margem_sacrificada, 4 * 10 - 20);
+});
+test('medir soma crédito de troca e não confunde com reclassificação', () => {
+  const r = ret();
+  r.itens.push({ sku: 2, categoria: 'nao_mercadoria', saldo: 1, cmc: 100, valor: 100 });
+  const m = medir(r, { 1: { destino: 'trocar', credito_troca: 30 } }, { 1: { saldo: 10, qtd_vendida: 0, receita: 0, compras: [] } });
+  assert.equal(m.trocado, 30);
+  assert.equal(m.caixa_liberado, 30);
+  assert.equal(m.reclassificado_nao_caixa, 100);
+});
+test('medir acusa recompra após decisão', () => {
+  const m = medir(ret(), { 1: { destino: 'liquidar', decidido_em: '2026-10-20T10:00:00Z' } },
+    { 1: { saldo: 10, qtd_vendida: 0, receita: 0, compras: ['2026-10-19T00:00:00Z', '2026-11-02T00:00:00Z'] } });
+  assert.deepEqual(m.contradicoes, [{ sku: 1, destino: 'liquidar', pedido_em: '2026-11-02T00:00:00Z' }]);
+});
+test('medir: SKU ausente da medição atual não vira zero', () => {
+  const m = medir(ret(), {}, {});
+  assert.equal(m.vendido, 0);
+  assert.equal(m.parado, 50);
+  assert.deepEqual(m.sem_medicao, [1]);
+});
