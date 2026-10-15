@@ -113,4 +113,21 @@ describe('cortar', () => {
     const r = cortar([c('A', 1, 900, 50)], base(1_000_000), 224_000, 1_000);
     expect(r.estado).toMatchObject({ tipo: 'viavel', piso: 1_000_000 });
   });
+  it('R15a: pedido com protegida sem desembolso nunca é zerado pelo mínimo', () => {
+    const r = cortar([c('P', 1, null as unknown as number, null, { protegida: true }), c('A', 1, 100, 5)], base(1_000_000), 224_000, 1_000);
+    expect(r.aceitas.map((x) => x.sku)).toEqual(['A']);
+    expect(r.cortadas.map((x) => [x.c.sku, x.motivo])).toEqual([['P', 'sem_score']]);
+    expect(r.pedidosAbaixoMinimo).toEqual([1]);
+    expect(r.estado.tipo).toBe('indeterminado');
+    expect(r.estado.tipo === 'indeterminado' && r.estado.camadas).toContain('protegido_sem_desembolso');
+  });
+  it('R15b: zerar a raiz preserva sem_score e converte o resto em minimo', () => {
+    const r = cortar([c('A', 1, 100, 5), c('B', 1, 10, null)], base(1_000_000), 224_000, 1_000);
+    expect(r.cortadas.map((x) => [x.c.sku, x.motivo]).sort()).toEqual([['A', 'minimo'], ['B', 'sem_score']]);
+  });
+  it('R15c: k depois de protegida sem desembolso herda sem_score (sem falsa escassez)', () => {
+    const r = cortar([c('P', 1, null as unknown as number, null, { protegida: true }), c('P', 2, 10, 5)], base(1_000_000_000), 224_000, 0);
+    expect(r.cortadas.map((x) => [x.c.k, x.motivo]).sort()).toEqual([[1, 'sem_score'], [2, 'sem_score']]);
+    expect(r.escassezCaixa).toBe(false);
+  });
 });

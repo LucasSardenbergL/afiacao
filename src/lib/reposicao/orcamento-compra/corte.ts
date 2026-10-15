@@ -69,9 +69,10 @@ export function cortar(cands: Candidata[], base: BaseCaixa, reserva: number, min
   for (const lista of todosPorSku.values()) {
     lista.sort((a, b) => a.k - b.k);
     let teto = Infinity;
+    const minKProtNula = Math.min(Infinity, ...cands.filter((p) => p.protegida && p.desembolso == null && chaveSku(p) === chaveSku(lista[0])).map((p) => p.k));
     let quebrou = false;
     for (const c of lista) {
-      if (quebrou || c.deltaV == null || c.desembolso == null || !(c.desembolso > 0)) {
+      if (quebrou || c.k > minKProtNula || c.deltaV == null || c.desembolso == null || !(c.desembolso > 0)) {
         quebrou = true;
         cortadas.push({ c, motivo: 'sem_score' });
         continue;
@@ -96,6 +97,8 @@ export function cortar(cands: Candidata[], base: BaseCaixa, reserva: number, min
   if (minimoPedido > 0) {
     const raizes = new Set(cands.map((c) => c.pedidoRaizId));
     for (const raiz of raizes) {
+      // qualquer protegida da raiz (aceita ou sem desembolso) imuniza o pedido contra o zeramento
+      const temProtegida = cands.some((c) => c.protegida && c.pedidoRaizId === raiz);
       const doPedido = () => aceitas.filter((c) => c.pedidoRaizId === raiz);
       const total = () => doPedido().reduce((s, c) => s + (c.desembolso as number), 0);
       if (total() === 0 || total() >= minimoPedido) continue;
@@ -110,7 +113,6 @@ export function cortar(cands: Candidata[], base: BaseCaixa, reserva: number, min
         aceitas.push(x.c); marcar(x.c); fluxos.push(fluxoDe(x.c)); adicionadas.push(x);
       }
       const somaDeltaV = doPedido().reduce((s, c) => s + (c.deltaV ?? 0), 0);
-      const temProtegida = doPedido().some((c) => c.protegida);
       if (total() >= minimoPedido && (somaDeltaV > 0 || temProtegida)) continue;
       // não fechou o mínimo de forma útil: desfaz as adicionadas (aceitas, prefixo, fluxo) devolvendo o motivo original
       for (const a of adicionadas) {
@@ -126,7 +128,7 @@ export function cortar(cands: Candidata[], base: BaseCaixa, reserva: number, min
         retirarFluxo(c);
         cortadas.push({ c, motivo: 'minimo' });
       }
-      for (const x of cortadas) if (x.c.pedidoRaizId === raiz) x.motivo = 'minimo';
+      for (const x of cortadas) if (x.c.pedidoRaizId === raiz && x.motivo !== 'sem_score') x.motivo = 'minimo';
     }
   }
 
