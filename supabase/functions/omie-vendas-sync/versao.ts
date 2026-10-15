@@ -16,7 +16,7 @@
 // "respondeu" de "é o bundle que eu deployei", e é o que esta fatia instala.
 //
 // A CANÁRIA NÃO É SUBSTITUÍDA — mesma divisão de papéis que o #2009 assentou na `carteira-rebuild`:
-// o `contrato` (`identidade-a2-client-to-user-v3`) nomeia a fatia que a FIXTURE verifica e pode
+// o `contrato` (`identidade-a2-client-to-user-v4`) nomeia a fatia que a FIXTURE verifica e pode
 // ficar estável de forma legítima; o `VERSAO` prova QUAL BUNDLE está no ar e muda a cada fatia.
 // Aqui os dois viajam JUNTOS na resposta da canária (o `identidade_probe` passa a ecoar `versao`),
 // que é o desenho da `generate-tactical-plan`: quem verifica a canária lê o discriminador de

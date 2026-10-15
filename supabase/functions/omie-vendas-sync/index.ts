@@ -4196,7 +4196,7 @@ Deno.serve(async (req) => {
           // a única que sobrevive a um deploy em que o Lovable reinterpreta o código (#1272,
           // #1445→#1478). Bumpar aqui exige bumpar junto o gate de `edge-money-path-invariants`, a
           // tabela de `docs/agent/deploy.md` e o mapa de `_shared/sonda-versao-contrato_test.ts`.
-          contrato: "identidade-a2-client-to-user-v3",
+          contrato: "identidade-a2-client-to-user-v4",
           // O `contrato` acima nomeia a FATIA que a fixture verifica; o `versao` diz QUAL BUNDLE
           // respondeu. São papéis distintos e o `contrato` pode ficar parado de forma legítima —
           // por isso o discriminador de bundle viaja JUNTO, como na `generate-tactical-plan`:

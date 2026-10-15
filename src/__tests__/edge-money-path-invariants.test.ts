@@ -3995,7 +3995,7 @@ describe('canária VERSIONADA: omie-vendas-sync (identidade fail-closed)', () =>
   // anterior nasceu no #1922, DEPOIS do #1888, então já provava aquela fatia por transitividade
   // — mas responderia idêntico antes e depois da prova COMPORTAMENTAL, que é a única a
   // sobreviver a um deploy em que o Lovable reinterpreta o código (#1272, #1445→#1478).
-  const CONTRATO = 'identidade-a2-client-to-user-v3';
+  const CONTRATO = 'identidade-a2-client-to-user-v4';
   // Sobre a fonte SEM comentários: a prosa que EXPLICA o campo cita o campo (`// \`canary: true\`
   // acompanha o probe_no_ar...`), então um assert POSITIVO sobre o texto cru passa lendo o
   // comentário e sobrevive à remoção do código. Falsificação S3 pegou exatamente isso.
