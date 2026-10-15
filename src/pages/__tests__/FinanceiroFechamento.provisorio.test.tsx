@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -51,7 +51,7 @@ function montar() {
 }
 
 describe('FinanceiroFechamento — resultado provisório só avisa', () => {
-  let confirmar: ReturnType<typeof vi.spyOn>;
+  let confirmar: MockInstance<(message?: string) => boolean>;
   beforeEach(() => { falharSnapshots = false; atualizar.mockClear(); confirmar = vi.spyOn(window, 'confirm'); });
   afterEach(() => { confirmar.mockRestore(); });
 
