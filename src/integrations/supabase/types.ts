@@ -21007,6 +21007,16 @@ export type Database = {
       get_meu_mixgap_for: { Args: { p_target: string }; Returns: Json }
       get_minha_positivacao: { Args: never; Returns: Json }
       get_minha_positivacao_for: { Args: { p_target: string }; Returns: Json }
+      get_planos_margem: {
+        Args: { p_plan_ids: string[] }
+        Returns: {
+          cluster_avg_margin_pct: number
+          current_margin_pct: number
+          expected_result: Json
+          margem_visivel: boolean
+          plan_id: string
+        }[]
+      }
       get_preco_cockpit: { Args: { p_itens: Json }; Returns: Json }
       get_public_tool_history: { Args: { p_tool_id: string }; Returns: Json }
       get_regua_preco: {
