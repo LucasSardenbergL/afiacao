@@ -57,14 +57,14 @@ disparados as (
          array_remove(array_agg(distinct t.nfe_numero::text), null) as nfs
   from pedido_compra_sugerido p
   left join purchase_orders_tracking t on t.omie_codigo_pedido::text = p.omie_pedido_compra_id
-  where p.empresa = 'OBEN' and p.status = 'disparado' and p.data_ciclo >= current_date - 120
+  where p.empresa = 'OBEN' and p.fornecedor_nome ilike '%sayerlack%' and p.status = 'disparado' and p.data_ciclo >= current_date - 180
   group by 1, 2, 3
 ),
 titulos_say as (
-  select id::text as id, numero_documento_fiscal as nf, valor_documento as valor, created_at
+  select id::text as id, numero_documento_fiscal as nf, valor_documento as valor, data_emissao, created_at
   from fin_contas_pagar
   where company = 'oben' and omie_codigo_cliente_fornecedor = 8689681266
-    and status_titulo <> 'CANCELADO' and data_emissao >= current_date - 150
+    and status_titulo <> 'CANCELADO' and data_emissao >= current_date - 270
 ),
 pagos_nao_say as (
   select b.data_baixa_final as data, sum(b.valor_baixado) as valor

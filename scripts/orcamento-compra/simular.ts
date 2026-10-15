@@ -14,7 +14,7 @@ import { fluxosDeSemanaAgregada, type EstadoCaixa, type Fluxo } from '@/lib/repo
 import { conciliarCompromissos, projetarRitmo, provisaoContinuidade, ritmoPorDiaDoMes } from '@/lib/reposicao/orcamento-compra/camadas';
 import { cortar, type BaseCaixa, type Candidata, type ResultadoCorte } from '@/lib/reposicao/orcamento-compra/corte';
 import { classificarCorte, replaySku, type ClasseCorte } from '@/lib/reposicao/orcamento-compra/replay';
-import { deduplicarEpisodios, deltaDio, precisaoDoCorte } from '@/lib/reposicao/orcamento-compra/medicao';
+import { deduplicarEpisodios, deltaDio, precisaoDoCorte, type Episodio } from '@/lib/reposicao/orcamento-compra/medicao';
 
 export interface Config {
   reservaDias: number; fretePerc: number; minimoPedido: number; minOcorrencias: number;
@@ -25,7 +25,24 @@ export const CONFIG_PADRAO: Config = {
   intervaloOportunidadeDias: 1, horizonteDias: 91, horizontePromoDias: 90,
 };
 
+/** Horizonte FIXO do replay do ΔDIO/caixa liberado (R25). */
+const HORIZONTE_DIO_DIAS = 30;
+
+/** O que o backtest assume e NÃO reconstrói as-of — vai no resultado.json (R22). */
+export const PREMISSAS: string[] = [
+  'preco_venda_medio é o atual (v_sku_parametros_sugeridos), não o vigente na data do ciclo',
+  'lags p10 (pedido→faturamento, emissão→vencimento) e p50 (pedido→chegada) calculados sobre 180 dias até hoje',
+  'cm_anual (custo de capital) é o atual de empresa_configuracao_custos',
+  'reserva = saída média diária: pagos não-Sayerlack por data de baixa + títulos Sayerlack por data de EMISSÃO (criados até o momento do ciclo)',
+  'recebimentos = quantidade PEDIDA (produtos_consulta.nQtde) na data t4 do tracking; pedido sem t4 não entra (o erro de fechamento pega o buraco)',
+  'saídas atrasadas do snapshot (data < dia do ciclo) entram no dia 0; se já estavam pagas, contam em dobro (viés conservador)',
+  'obsolescência = 0 no custo de carregamento',
+  'corte guloso com score ajustado não-crescente por SKU: heurística não-ótima (score marginal, não preço-sombra)',
+  'demanda média/desvio do ciclo derivados da série as-of [data−180, data−1] (dias não censurados); params.demanda_media_diaria só no CMV diário do resumo',
+];
+
 type Num = number | null;
+type Saida = { data: DataISO; valor: number; id_origem?: string; origem?: string };
 export interface Fatos {
   meta: { gerado_em: string; hoje: DataISO };
   ciclos: { id: number; status: string; data_ciclo: DataISO; horario_geracao: string; horario_disparo_real: string | null; valor_total: Num; omie_pedido_compra_id: string | null }[];
@@ -34,19 +51,25 @@ export interface Fatos {
   recebimentos: { sku: string; data: DataISO; qtde: Num }[];
   estoque: { sku: string; estoque_fisico: Num }[];
   params: { sku: string; preco_venda_medio: Num; demanda_media_diaria: Num; demanda_sigma_diario: Num }[];
-  snapshots: { dia: DataISO; snapshot_at: string; saldo_tesouraria: Num; dados: { inicio: DataISO; fim: DataISO; total_entradas?: number; saidas?: { data: DataISO; valor: number; id_origem?: string }[]; entradas?: { data?: DataISO; valor: number }[] }[] }[];
+  snapshots: { dia: DataISO; snapshot_at: string; saldo_tesouraria: Num; dados: { inicio: DataISO; fim: DataISO; total_entradas?: number; saidas?: Saida[]; entradas?: { data?: DataISO; valor: number }[] }[] }[];
   disparados: { id: number; valor_total: Num; momento: string; nfs: string[] }[];
-  titulos_sayerlack: { id: string; nf: string | null; valor: Num; created_at: string }[];
+  titulos_sayerlack: { id: string; nf: string | null; valor: Num; data_emissao: DataISO; created_at: string }[];
   pagos_nao_sayerlack: { data: DataISO; valor: Num }[];
   lags: { faturamento_p10: Num; vencimento_p10: Num; chegada_p50: Num };
   cm_anual: Num;
 }
 
 export interface DetalheCorte {
-  sku: string; k: number; valor: number; motivo: string; classe: ClasseCorte | null;
-  /** estoque médio (un) no replay com/sem a embalagem; null se não classificado */
+  sku: string; k: number; qtde: number;
+  /** desembolso da embalagem; null = sem preço (fora do valor cortado, conta em cortesSemPreco) */
+  valor: number | null;
+  motivo: string;
+  /** null = sem score ou ciclo não disparado (R26: replay só nos disparados) */
+  classe: ClasseCorte | null;
+  /** estoque médio (un) no replay até hoje com/sem a embalagem; null se não classificado */
   estoqueMedioCom: number | null; estoqueMedioSem: number | null;
   precoUnit: number | null;
+  fechamentoOk: boolean;
 }
 
 export interface ResultadoCiclo {
@@ -54,6 +77,7 @@ export interface ResultadoCiclo {
   /** Σ desembolso das embalagens COM preço; as sem preço contam em embalagensSemDesembolso */
   valorMotor: number; valorAceito: number; aceitas: number; cortadas: number;
   embalagensSemDesembolso: number;
+  protegidas: number;
   cortesPorMotivo: Record<string, number>;
   estado: EstadoCaixa; scoreMarginal: number | null; escassezCaixa: boolean;
   semScore: { sku: string; motivo: string }[];
@@ -121,6 +145,16 @@ function serieDoSku(f: Fatos, sku: string, de: DataISO, ate: DataISO): { serie: 
   return { serie: marcarCensura(dem, estoqueFim).slice(0, n), estoqueFim: estoqueFim.slice(0, n) };
 }
 
+/** Média e desvio-padrão amostral dos dias NÃO censurados da série as-of (R22). */
+function momentosDaSerie(serie: SerieDiaria): { media: number | null; sigma: number | null } {
+  const xs = serie.filter((v): v is number => v !== null);
+  if (xs.length === 0) return { media: null, sigma: null };
+  const media = xs.reduce((s, x) => s + x, 0) / xs.length;
+  if (xs.length < 2) return { media, sigma: null };
+  const sigma = Math.sqrt(xs.reduce((s, x) => s + (x - media) ** 2, 0) / (xs.length - 1));
+  return { media, sigma };
+}
+
 function baseDeCaixa(f: Fatos, data: DataISO, momento: string, cfg: Config, reserva: number, lagPagamento: number): BaseCaixa {
   const ausencias: string[] = [];
   // as-of: só vale snapshot tirado ATÉ o momento do ciclo (o de 07h do próprio dia não vale para ciclo das 05h)
@@ -132,22 +166,25 @@ function baseDeCaixa(f: Fatos, data: DataISO, momento: string, cfg: Config, rese
     return { saldoInicial: 0, inicio: data, dias: cfg.horizonteDias, fluxos: [], ausencias };
   }
   const fluxos: Fluxo[] = [];
-  const idsSay = new Set(f.titulos_sayerlack.map((t) => t.id));
   const fimJanela = addDias(data, cfg.horizonteDias);
-  // R8: só títulos não-Sayerlack com vencimento DENTRO de [inicio, inicio+dias) descontam o ritmo do mês
+  // R8 + R23: só títulos do CP (origem cp_omie) com vencimento DENTRO de [inicio, inicio+dias) descontam
+  // o ritmo do mês — o ritmo é medido no CP; eventos recorrentes/eventuais não estão nele.
   const tituladoNaoSayPorMes: Record<string, number> = {};
   for (const sem of snap.dados) {
+    // saídas passadas (atrasadas) ficam: caem no dia 0 (pior caso — ver PREMISSAS)
     for (const s of sem.saidas ?? []) {
       fluxos.push({ data: s.data, valor: -s.valor, camada: 'base_titulos' });
-      const naoSay = !s.id_origem || !idsSay.has(s.id_origem);
-      if (naoSay && s.data >= data && s.data < fimJanela) {
+      if (s.origem === 'cp_omie' && s.data >= data && s.data < fimJanela) {
         const mes = s.data.slice(0, 7);
         tituladoNaoSayPorMes[mes] = (tituladoNaoSayPorMes[mes] ?? 0) + s.valor;
       }
     }
+    // R20: entrada com data anterior ao ciclo NÃO entra (seria caixa que já devia estar no saldo — aprova a mais)
     const entradas = sem.entradas ?? [];
-    if (entradas.every((e) => e.data)) for (const e of entradas) fluxos.push({ data: e.data as DataISO, valor: e.valor, camada: 'base_titulos' });
-    else fluxos.push(...fluxosDeSemanaAgregada(sem.inicio, sem.fim, sem.total_entradas ?? 0, 0).filter((x) => x.valor !== 0));
+    const candidatas: Fluxo[] = entradas.every((e) => e.data)
+      ? entradas.map((e) => ({ data: e.data as DataISO, valor: e.valor, camada: 'base_titulos' as const }))
+      : fluxosDeSemanaAgregada(sem.inicio, sem.fim, sem.total_entradas ?? 0, 0).filter((x) => x.valor !== 0);
+    fluxos.push(...candidatas.filter((x) => x.data >= data));
   }
   const anteriores = f.disparados.filter((p) => ts(p.momento) < ts(momento) && p.momento.slice(0, 10) >= addDias(data, -60));
   const titulosAteSnap = f.titulos_sayerlack.filter((t) => ts(t.created_at) <= ts(snap.snapshot_at) && t.nf);
@@ -161,7 +198,9 @@ function baseDeCaixa(f: Fatos, data: DataISO, momento: string, cfg: Config, rese
   const pagos = f.pagos_nao_sayerlack
     .filter((p) => p.data < data && p.data >= addDias(data, -180))
     .map((p) => ({ data: p.data, valor: exigir(p.valor, 'pagos_nao_sayerlack.valor') }));
-  fluxos.push(...projetarRitmo(data, cfg.horizonteDias, ritmoPorDiaDoMes(pagos, 6), tituladoNaoSayPorMes));
+  // sem histórico de pagamento a camada não existe — nunca "ritmo 0" calado
+  if (pagos.length === 0) ausencias.push('ritmo_sem_historico');
+  else fluxos.push(...projetarRitmo(data, cfg.horizonteDias, ritmoPorDiaDoMes(pagos, 6), tituladoNaoSayPorMes));
   return { saldoInicial: Number(snap.saldo_tesouraria), inicio: data, dias: cfg.horizonteDias, fluxos, ausencias };
 }
 
@@ -175,9 +214,11 @@ function mediaCompraPorDiaUtil(f: Fatos, data: DataISO): number {
   return uteis ? total / uteis : 0;
 }
 
-export function reservaDe(f: Fatos, data: DataISO, dias: number): number {
-  const pagos = f.pagos_nao_sayerlack.filter((p) => p.data < data && p.data >= addDias(data, -180));
-  const say = f.titulos_sayerlack.filter((t) => t.created_at.slice(0, 10) < data && t.created_at.slice(0, 10) >= addDias(data, -180));
+/** Reserva = (pagos não-Sayerlack por baixa + títulos Sayerlack por EMISSÃO) / 180 × dias; janela [data−180, data). */
+export function reservaDe(f: Fatos, data: DataISO, momento: string, dias: number): number {
+  const de = addDias(data, -180);
+  const pagos = f.pagos_nao_sayerlack.filter((p) => p.data < data && p.data >= de);
+  const say = f.titulos_sayerlack.filter((t) => t.data_emissao < data && t.data_emissao >= de && ts(t.created_at) <= ts(momento));
   const total = pagos.reduce((s, p) => s + exigir(p.valor, 'pagos_nao_sayerlack.valor'), 0)
     + say.reduce((s, t) => s + exigir(t.valor, 'titulos_sayerlack.valor'), 0);
   return (total / 180) * dias;
@@ -187,7 +228,8 @@ export function simularCiclo(f: Fatos, cicloId: number, cfg: Config): ResultadoC
   const ciclo = f.ciclos.find((c) => c.id === cicloId);
   if (!ciclo) throw new Error(`ciclo ${cicloId} não está nos fatos`);
   const data = ciclo.data_ciclo;
-  const reserva = reservaDe(f, data, cfg.reservaDias);
+  const momento = ciclo.horario_disparo_real ?? ciclo.horario_geracao;
+  const reserva = reservaDe(f, data, momento, cfg.reservaDias);
   const lags = { faturamentoP10: exigir(f.lags.faturamento_p10, 'lags.faturamento_p10'), vencimentoP10: exigir(f.lags.vencimento_p10, 'lags.vencimento_p10') };
   const L = exigir(f.lags.chegada_p50, 'lags.chegada_p50');
   const T = L + cfg.intervaloOportunidadeDias;
@@ -200,10 +242,16 @@ export function simularCiclo(f: Fatos, cicloId: number, cfg: Config): ResultadoC
   let sensiveis = 0;
   for (const l of f.linhas.filter((x) => x.raiz === cicloId)) {
     const p = f.params.find((x) => x.sku === l.sku_codigo_omie);
+    const qtde = numOuNull(l.qtde);
+    if (qtde == null) {
+      // sem quantidade não há embalagem para quebrar — a linha aparece, não some calada
+      semScore.push({ sku: l.sku_codigo_omie, motivo: 'qtde_ausente' });
+      continue;
+    }
     const estoqueEfetivo = numOuNull(l.estoque_atual);
     const precoUnitario = precoOuNull(l.preco_unitario);
     const linha: LinhaMotor = {
-      pedidoId: l.pedido_id, pedidoRaizId: l.raiz, sku: l.sku_codigo_omie, qtdeFinal: numOuNull(l.qtde) ?? 0,
+      pedidoId: l.pedido_id, pedidoRaizId: l.raiz, sku: l.sku_codigo_omie, qtdeFinal: qtde,
       fatorEmbalagem: numOuNull(l.fator_embalagem_portal), precoUnitario,
       precoVendaMedio: precoOuNull(p?.preco_venda_medio ?? null),
       // NaN (não 0) quando ausente: veneno que nunca vira número plausível; a linha sai sem score abaixo
@@ -229,8 +277,8 @@ export function simularCiclo(f: Fatos, cicloId: number, cfg: Config): ResultadoC
       }
       continue;
     }
-    const d = numOuNull(p?.demanda_media_diaria ?? null);
-    // demanda média ausente = histórico insuficiente: sem amostras e sem proteção (nunca d = 0)
+    // R22: demanda as-of — média/desvio da própria série [data−180, data−1], nunca o params atual
+    const { media: d, sigma } = momentosDaSerie(serie);
     const suficiente = d != null && historicoSuficiente(serie, cfg.minOcorrencias);
     const amostras = suficiente ? amostrasEmpiricas(serie, L, T) : [];
     const margem = linha.precoVendaMedio != null && precoUnitario != null ? linha.precoVendaMedio - precoUnitario : null;
@@ -241,7 +289,6 @@ export function simularCiclo(f: Fatos, cicloId: number, cfg: Config): ResultadoC
     };
     const qtdes = embs.map((e) => e.qtde);
     const valores = valorDasEmbalagens(estoqueEfetivo, qtdes, amostras, params);
-    const sigma = numOuNull(p?.demanda_sigma_diario ?? null);
     const gauss = suficiente && d != null && sigma != null
       ? valorDasEmbalagens(estoqueEfetivo, qtdes, amostrasGaussianas(d, sigma, L, T, 400), params)
       : null;
@@ -256,7 +303,6 @@ export function simularCiclo(f: Fatos, cicloId: number, cfg: Config): ResultadoC
       acumulado += e.qtde;
     });
   }
-  const momento = ciclo.horario_disparo_real ?? ciclo.horario_geracao;
   const lagPagamento = lags.faturamentoP10 + lags.vencimentoP10;
   const base = baseDeCaixa(f, data, momento, cfg, reserva, lagPagamento);
   base.fluxos.push(...provisaoContinuidade(data, cfg.horizonteDias, mediaCompraPorDiaUtil(f, data), lagPagamento, 0));
@@ -265,54 +311,71 @@ export function simularCiclo(f: Fatos, cicloId: number, cfg: Config): ResultadoC
   const valorAceito = r.aceitas.reduce((s, c) => s + (c.desembolso ?? 0), 0);
   const cortesPorMotivo: Record<string, number> = {};
   for (const x of r.cortadas) cortesPorMotivo[x.motivo] = (cortesPorMotivo[x.motivo] ?? 0) + (x.c.desembolso ?? 0);
+  const disparado = ciclo.status === 'disparado';
   const cortesDetalhe: DetalheCorte[] = r.cortadas.map((x) => {
     const linha = f.linhas.find((l) => l.raiz === x.c.pedidoRaizId && l.sku_codigo_omie === x.c.sku);
     const precoUnit = precoOuNull(linha?.preco_unitario ?? null);
-    const base0 = { sku: x.c.sku, k: x.c.k, valor: x.c.desembolso ?? 0, motivo: x.motivo, precoUnit };
-    if (x.motivo === 'sem_score') return { ...base0, classe: null, estoqueMedioCom: null, estoqueMedioSem: null };
+    const fechamentoOk = fechaOk.get(x.c.sku) ?? false;
+    const base0 = { sku: x.c.sku, k: x.c.k, qtde: x.c.qtde, valor: x.c.desembolso, motivo: x.motivo, precoUnit, fechamentoOk };
+    const nulo = { classe: null, estoqueMedioCom: null, estoqueMedioSem: null };
+    // R26: ciclo não disparado — a compra não aconteceu; tirar a embalagem da realidade não é contrafactual
+    if (!disparado || x.motivo === 'sem_score') return { ...base0, ...nulo };
     // fechamento ruim: a trajetória reconstruída não bate com o gravado → o replay não mede nada
-    if (!fechaOk.get(x.c.sku)) return { ...base0, classe: 'indeterminado' as const, estoqueMedioCom: null, estoqueMedioSem: null };
-    return { ...base0, ...classificarCorteDoSku(f, x.c, data, L, numOuNull(linha?.ponto_pedido ?? null)) };
+    if (!fechamentoOk) return { ...base0, ...nulo, classe: 'indeterminado' as const };
+    return { ...base0, ...classificarCorteDoSku(f, x.c.sku, x.c.qtde, data, L, numOuNull(linha?.ponto_pedido ?? null)) };
   });
   return {
     cicloId, data, status: ciclo.status, valorMotor, valorAceito,
     aceitas: r.aceitas.length, cortadas: r.cortadas.length,
     embalagensSemDesembolso: cands.filter((c) => c.desembolso == null).length,
+    protegidas: cands.filter((c) => c.protegida).length,
     cortesPorMotivo,
     estado: r.estado, scoreMarginal: r.scoreMarginal, escassezCaixa: r.escassezCaixa,
     semScore, sensiveisAoModelo: sensiveis, fechamento, cortesDetalhe,
   };
 }
 
-/** Replay do SKU a partir do ciclo, com e sem a embalagem (a chegada real é aproximada pela mediana L). */
-function classificarCorteDoSku(
-  f: Fatos, c: Candidata, data: DataISO, L: number, pontoPedido: number | null,
-): { classe: ClasseCorte; estoqueMedioCom: number | null; estoqueMedioSem: number | null } {
-  const ate = f.meta.hoje;
-  if (diffDias(data, ate) < L + 1) return { classe: 'indeterminado', estoqueMedioCom: null, estoqueMedioSem: null };
-  const { serie, estoqueFim } = serieDoSku(f, c.sku, addDias(data, -1), ate);
+/** Replay com e sem `qtde` removida na chegada (mediana L), de `data` até `ate`. */
+function replayComSem(f: Fatos, sku: string, qtde: number, data: DataISO, ate: DataISO, L: number, pontoPedido: number | null) {
+  const { serie, estoqueFim } = serieDoSku(f, sku, addDias(data, -1), ate);
   const estoqueInicial = estoqueFim[0];
   const demanda = serie.slice(1);
   const recebimentos = f.recebimentos
-    .filter((r) => r.sku === c.sku && r.data >= data && r.data <= ate)
+    .filter((r) => r.sku === sku && r.data >= data && r.data <= ate)
     .map((r) => ({ dia: diffDias(data, r.data), qtde: exigir(r.qtde, 'recebimentos.qtde') }));
   const diaChegada = Math.min(L, demanda.length - 1);
   const politica = pontoPedido != null ? { pontoPedido, leadTimeDias: L } : null;
   const com = replaySku({ estoqueInicial, demanda, recebimentos, removido: null, politica: null });
-  const sem = replaySku({ estoqueInicial, demanda, recebimentos, removido: { dia: diaChegada, qtde: c.qtde }, politica });
+  const sem = replaySku({ estoqueInicial, demanda, recebimentos, removido: { dia: diaChegada, qtde }, politica });
+  return { com, sem };
+}
+
+/** Classificação do corte: replay até HOJE. */
+function classificarCorteDoSku(
+  f: Fatos, sku: string, qtde: number, data: DataISO, L: number, pontoPedido: number | null,
+): { classe: ClasseCorte; estoqueMedioCom: number | null; estoqueMedioSem: number | null } {
+  const ate = f.meta.hoje;
+  if (diffDias(data, ate) < L + 1) return { classe: 'indeterminado', estoqueMedioCom: null, estoqueMedioSem: null };
+  const { com, sem } = replayComSem(f, sku, qtde, data, ate, L, pontoPedido);
   return { classe: classificarCorte(com, sem), estoqueMedioCom: com.estoqueMedio, estoqueMedioSem: sem.estoqueMedio };
+}
+
+/** Valor cortado com preço, somado por (ciclo, SKU) — a unidade que vira episódio. */
+function cortesPorCicloSku(ciclos: ResultadoCiclo[]) {
+  const m = new Map<string, { cicloId: number; sku: string; data: DataISO; valor: number }>();
+  for (const c of ciclos) for (const x of c.cortesDetalhe) {
+    if (x.valor == null) continue; // sem preço: fora do valor (conta em cortesSemPreco)
+    const k = `${c.cicloId}|${x.sku}`;
+    const atual = m.get(k) ?? { cicloId: c.cicloId, sku: x.sku, data: c.data, valor: 0 };
+    atual.valor += x.valor;
+    m.set(k, atual);
+  }
+  return [...m.values()];
 }
 
 /** Soma o valor cortado do SKU dentro do ciclo e só então deduplica entre ciclos (gap 7d, valor máximo). */
 function valorDeduplicado(ciclos: ResultadoCiclo[]): number {
-  const porCicloSku = new Map<string, { sku: string; data: DataISO; valor: number }>();
-  for (const c of ciclos) for (const x of c.cortesDetalhe) {
-    const k = `${c.cicloId}|${x.sku}`;
-    const atual = porCicloSku.get(k) ?? { sku: x.sku, data: c.data, valor: 0 };
-    atual.valor += x.valor;
-    porCicloSku.set(k, atual);
-  }
-  return deduplicarEpisodios([...porCicloSku.values()], 7).reduce((s, e) => s + e.valor, 0);
+  return deduplicarEpisodios(cortesPorCicloSku(ciclos), 7).reduce((s, e) => s + e.valor, 0);
 }
 
 /** CMV diário do universo do motor: Σ_sku demanda_media_diaria × preço (linha mais recente com preço); null se nenhum. */
@@ -335,27 +398,52 @@ function cmvDiarioDoUniverso(f: Fatos): number | null {
   return algum ? total : null;
 }
 
+/**
+ * R25: ΔDIO/caixa liberado por EPISÓDIO dos cortes efetivos. Por episódio, o 1º corte (1º ciclo do
+ * episódio; todas as embalagens com preço daquele SKU nele, removidas juntas); replay de 30 dias fixos.
+ */
+function dioPorEpisodio(f: Fatos, efetivos: ResultadoCiclo[], L: number) {
+  const unidades = cortesPorCicloSku(efetivos);
+  const episodios: Episodio[] = deduplicarEpisodios(unidades, 7);
+  let custoCom = 0;
+  let custoSem = 0;
+  let n = 0;
+  let semHorizonte = 0;
+  let indeterminados = 0;
+  for (const ep of episodios) {
+    const primeiro = unidades
+      .filter((u) => u.sku === ep.sku && u.data === ep.inicio)
+      .sort((a, b) => a.cicloId - b.cicloId)[0];
+    const ciclo = efetivos.find((c) => c.cicloId === primeiro.cicloId)!;
+    const cortes = ciclo.cortesDetalhe.filter((x) => x.sku === ep.sku && x.valor != null);
+    if (addDias(ep.inicio, HORIZONTE_DIO_DIAS) > f.meta.hoje) { semHorizonte++; continue; }
+    const preco = cortes[0]?.precoUnit ?? null;
+    if (preco == null || !cortes.every((x) => x.fechamentoOk)) { indeterminados++; continue; }
+    const qtde = cortes.reduce((s, x) => s + x.qtde, 0);
+    const linha = f.linhas.find((l) => l.raiz === ciclo.cicloId && l.sku_codigo_omie === ep.sku);
+    const ate = addDias(ep.inicio, HORIZONTE_DIO_DIAS - 1);
+    const { com, sem } = replayComSem(f, ep.sku, qtde, ep.inicio, ate, L, numOuNull(linha?.ponto_pedido ?? null));
+    if (com.indeterminado || sem.indeterminado || com.estoqueMedio == null || sem.estoqueMedio == null) { indeterminados++; continue; }
+    custoCom += com.estoqueMedio * preco;
+    custoSem += sem.estoqueMedio * preco;
+    n++;
+  }
+  return { custoCom, custoSem, n, semHorizonte, indeterminados };
+}
+
 export function backtest(f: Fatos, cfg: Config) {
   const ciclos = f.ciclos.map((c) => simularCiclo(f, c.id, cfg));
   const efetivos = ciclos.filter((c) => c.status === 'disparado');
   const naoEfetivos = ciclos.filter((c) => c.status !== 'disparado');
-  const itensClasse = efetivos.flatMap((c) => c.cortesDetalhe.filter((x) => x.classe).map((x) => ({ classe: x.classe as ClasseCorte, valor: x.valor })));
-  const episodios = deduplicarEpisodios(
-    efetivos.flatMap((c) => c.cortesDetalhe.map((x) => ({ sku: x.sku, data: c.data, valor: x.valor }))), 7,
-  );
+  const itensClasse = efetivos.flatMap((c) => c.cortesDetalhe
+    .filter((x) => x.classe && x.valor != null)
+    .map((x) => ({ classe: x.classe as ClasseCorte, valor: x.valor as number })));
+  const episodios = deduplicarEpisodios(cortesPorCicloSku(efetivos), 7);
 
-  // ΔDIO / caixa liberado: só cortes efetivos classificados (≠ indeterminado) com os dois estoques médios
-  let custoCom = 0;
-  let custoSem = 0;
-  let nDio = 0;
-  for (const c of efetivos) for (const x of c.cortesDetalhe) {
-    if (x.classe == null || x.classe === 'indeterminado' || x.estoqueMedioCom == null || x.estoqueMedioSem == null || x.precoUnit == null) continue;
-    custoCom += x.estoqueMedioCom * x.precoUnit;
-    custoSem += x.estoqueMedioSem * x.precoUnit;
-    nDio++;
-  }
+  const L = exigir(f.lags.chegada_p50, 'lags.chegada_p50');
+  const dio = dioPorEpisodio(f, efetivos, L);
   const cmvDiarioBase = cmvDiarioDoUniverso(f);
-  const caixaLiberado = nDio > 0 ? custoCom - custoSem : null;
+  const caixaLiberado = dio.n > 0 ? dio.custoCom - dio.custoSem : null;
 
   const avaliados = new Set<string>();
   const ruins = new Set<string>();
@@ -372,6 +460,7 @@ export function backtest(f: Fatos, cfg: Config) {
   return {
     config: cfg,
     gerado_em: f.meta.gerado_em,
+    premissas: PREMISSAS,
     ciclos,
     resumo: {
       nCiclos: ciclos.length,
@@ -380,6 +469,7 @@ export function backtest(f: Fatos, cfg: Config) {
       valorAceitoDisparados: efetivos.reduce((s, c) => s + c.valorAceito, 0),
       valorCortadoEfetivo: valorDeduplicado(efetivos),
       valorCortadoExpirado: valorDeduplicado(naoEfetivos),
+      cortesSemPreco: ciclos.reduce((s, c) => s + c.cortesDetalhe.filter((x) => x.valor == null).length, 0),
       estados: ciclos.reduce<Record<string, number>>((m, c) => ({ ...m, [c.estado.tipo]: (m[c.estado.tipo] ?? 0) + 1 }), {}),
       precisao: precisaoDoCorte(itensClasse),
       episodios: episodios.length,
@@ -387,7 +477,10 @@ export function backtest(f: Fatos, cfg: Config) {
       /** rótulo: "CMV diário do universo do motor" */
       cmvDiarioBase,
       caixaLiberado,
-      deltaDio: nDio > 0 ? deltaDio(custoCom, custoSem, cmvDiarioBase) : null,
+      deltaDio: dio.n > 0 ? deltaDio(dio.custoCom, dio.custoSem, cmvDiarioBase) : null,
+      episodiosDio: dio.n,
+      episodiosSemHorizonte: dio.semHorizonte,
+      episodiosDioIndeterminados: dio.indeterminados,
       skusAvaliados: avaliados.size,
       skusFechamentoRuim: ruins.size,
     },
