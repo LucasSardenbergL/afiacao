@@ -22,6 +22,17 @@
 > POSIÇÃO aparece como `-CREATE` sem `+` pareado e simula remoção — fabricou aqui um falso "sumiu
 > `fin_movimentacoes`"): **+67 objetos, 1 remoção real** — `_quarantine_omie_clientes_20260722` com 2
 > policies e 2 triggers, versionada em `20261011120500_drop_quarentena_omie_clientes` (ausente em prod).
+> **O re-dump matou 9 provas do núcleo (CI do #3096), em duas classes — consertadas no próprio PR:**
+> (a) 4 da `db/lib/corpo-vivo.sh` (fornecedores-classificacao, melhorias-rpcs, whatsapp-funil/proposta):
+> `CV_INICIO` 20261008010000 → **20261015120100**, medido pelo audit contra prod (53/54 aplicadas; a ❌
+> `20261013180000` não toca objeto guardado). (b) 5 provas de MIGRATION HISTÓRICA (tint-fase5-desativacao,
+> tint-grants-escrita-staff, tint-promote-tombstone-fase5, tint-tombstone-fase5-imutavel,
+> motor-desconta-comprometido): o dump absorveu a migration que cada uma testa **e** objetos que em prod
+> vieram DEPOIS dela (o trigger `tint_tombstone_fase5_imutavel` barra o UPDATE que a Fase 5 faz; o motor
+> já está na `20261010210000`) — re-aplicar inverte a ordem de prod. **Ancoradas no snapshot de 10-08 pelo
+> id do blob** (`c4f6a319…`, endereçado por conteúdo), que é a base contra a qual foram escritas. ⇒ No
+> próximo re-dump: prova que testa migration já absorvida → ancore no blob da base dela; não a reescreva
+> contra o vivo (deixaria de provar a migration).
 >
 > **Geração 2026-10-08 (por quê):** o caminho 3 do acervo (exclusão nominal do total líquido) criou em
 > prod uma tabela (`pedido_total_liquido_excecao`) e patcheou o corpo de `pedido_total_liquido_converter`
