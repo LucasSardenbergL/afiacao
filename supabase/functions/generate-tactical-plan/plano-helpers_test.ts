@@ -10,8 +10,8 @@ import {
   ehJaNaFilaDaRpc,
   ehSkipLegitimoDaRpc,
   extrairToolUseUnico,
+  insumosSemMargem,
   montarPlano,
-  normalizarCenarios,
   normalizarLtv,
   normalizarObjecoes,
   normalizarPerguntas,
@@ -22,6 +22,7 @@ import {
   objetivoFinal,
   objetivoValido,
   statusDeErroIa,
+  systemDoModo,
   textoValido,
   toolDoModo,
 } from "./plano-helpers.ts";
@@ -149,27 +150,8 @@ Deno.test("normalizarObjecoes: objecao sem texto e descartada", () => {
 });
 
 // ---------------------------------------------------------------------------
-// cenários de margem e LTV — o núcleo money-path
+// LTV — o núcleo money-path (os cenários de margem saíram da tool no FU4-F)
 // ---------------------------------------------------------------------------
-
-Deno.test("normalizarCenarios: margem nao medida fica null, NUNCA 0", () => {
-  const r = normalizarCenarios({
-    best_case_margin: null,
-    likely_margin: 18.5,
-    worst_case_margin: "",
-  });
-  assertEquals(r, { best_case_margin: null, likely_margin: 18.5, worst_case_margin: null });
-});
-
-Deno.test("normalizarCenarios: os tres ausentes viram bloco null", () => {
-  // Três traços na tela é ruído; a ausência do bloco diz o mesmo sem simular projeção.
-  assertEquals(
-    normalizarCenarios({ best_case_margin: null, likely_margin: null, worst_case_margin: null }),
-    null,
-  );
-  assertEquals(normalizarCenarios(null), null);
-  assertEquals(normalizarCenarios("nao medido"), null);
-});
 
 Deno.test("normalizarLtv: campo ilegivel vira null e nao contamina os outros", () => {
   assertEquals(normalizarLtv({ current_annual: 120000, projected_annual: "n/a", growth_pct: null }), {
@@ -330,7 +312,8 @@ Deno.test("montarPlano: modo estrategico preserva os campos completos", () => {
   assertEquals(r.plano.approach_strategy_b, "plano B");
   assertEquals(r.plano.implication_question, "quanto custa a parada?");
   assertEquals(r.plano.ltv_projection?.growth_pct, 50);
-  assertEquals(r.plano.expected_result?.likely_margin, 22);
+  // FU4-F: cenários de MARGEM não são gravados nem se o modelo os devolver (a tool não os pede mais).
+  assertEquals(r.plano.expected_result, null);
   assertEquals(r.plano.operational_risks, ["prazo"]);
 });
 
@@ -437,22 +420,74 @@ Deno.test("toolDoModo: os dois modos usam o MESMO nome de tool", () => {
 
 Deno.test("toolDoModo: estrategico expoe os campos que o essencial nao tem", () => {
   const props = toolDoModo("estrategico").input_schema.properties as Record<string, unknown>;
-  for (const campo of ["approach_strategy_b", "implication_question", "ltv_projection", "expected_result"]) {
+  for (const campo of ["approach_strategy_b", "implication_question", "ltv_projection"]) {
     assert(campo in props, `tool estratégica deveria expor ${campo}`);
   }
+  // FU4-F: sem a margem no contexto, pedir cenários de margem seria pedir número inventado.
+  assert(!("expected_result" in props), "tool estratégica NÃO pode pedir cenários de margem");
   const essencial = toolDoModo("essencial").input_schema.properties as Record<string, unknown>;
   assert(!("ltv_projection" in essencial), "tool essencial não deveria expor ltv_projection");
 });
 
-Deno.test("tool: margem e probabilidade aceitam null no schema", () => {
-  // Sem `null` no tipo, o modelo é forçado a inventar um número para dizer "não medi".
+Deno.test("tool: probabilidade da objecao aceita null no schema", () => {
+  // Sem `null` no tipo, o modelo é forçado a inventar um número para dizer "não sei".
   const props = toolDoModo("estrategico").input_schema.properties as Record<
     string,
-    { properties?: Record<string, { type?: unknown }> }
+    { items?: { properties?: Record<string, { type?: unknown }> } }
   >;
-  const cenarios = props.expected_result.properties!;
-  for (const campo of ["best_case_margin", "likely_margin", "worst_case_margin"]) {
-    assertEquals(cenarios[campo].type, ["number", "null"], `${campo} precisa aceitar null`);
+  assertEquals(props.probable_objections.items!.properties!.probability.type, ["number", "null"]);
+});
+
+// ─────────────────────────────── margem fora do prompt (FU4-F) ───────────────────────────────
+
+Deno.test("insumosSemMargem: tira a margem do cliente e a dos pares, mantém o resto do contexto", () => {
+  const r = insumosSemMargem({
+    customerContext: { name: "X", healthScore: 40, grossMarginPct: 37.73, clusterAvgMargin: 55.25, profile: "misto" },
+    bundleContext: null,
+    diagnosticData: { strategicObjective: "consolidacao_margem" },
+  });
+  assertEquals(r.customerContext, { name: "X", healthScore: 40, profile: "misto" });
+  // O objetivo decidido pela margem SEGUE — é o sinal.
+  assertEquals(r.diagnosticData, { strategicObjective: "consolidacao_margem" });
+});
+
+Deno.test("insumosSemMargem: bundle (e 2o bundle) só com produtos e probabilidade", () => {
+  // Modo front: o browser manda `lie`/`margin` do bundle (derivados de custo).
+  const r = insumosSemMargem({
+    customerContext: {},
+    bundleContext: { products: ["a"], probability: 0.4, lie: 120, margin: 33 },
+    diagnosticData: { strategicObjective: "expansao_mix", secondBundle: { products: ["b"], probability: 0.2, lie: 80, margin: 41 } },
+  });
+  assertEquals(r.bundleContext, { products: ["a"], probability: 0.4 });
+  assertEquals(r.diagnosticData, { strategicObjective: "expansao_mix", secondBundle: { products: ["b"], probability: 0.2 } });
+});
+
+Deno.test("insumosSemMargem: nenhuma chave do JSON enviado ao modelo carrega margem", () => {
+  // O que vai ao prompt é JSON.stringify do resultado — o teste olha o MESMO texto que o modelo lê.
+  const r = insumosSemMargem({
+    customerContext: { grossMarginPct: 37.73, clusterAvgMargin: 55.25, avgMonthlySpend: 8070 },
+    bundleContext: { products: [], probability: 0.1, margin: 33 },
+    diagnosticData: { strategicObjective: "upsell_premium", secondBundle: { margin: 41 } },
+  });
+  const texto = JSON.stringify(r);
+  assert(!/margin|margem|37\.73|55\.25|\b33\b|\b41\b/i.test(texto), `vazou margem no prompt: ${texto}`);
+  assert(texto.includes("8070"), "o gasto médio (receita, não custo) segue no contexto");
+});
+
+Deno.test("insumosSemMargem: contexto ausente segue ausente (sem fabricar objeto)", () => {
+  const r = insumosSemMargem({ customerContext: undefined, bundleContext: null, diagnosticData: undefined });
+  assertEquals(r.customerContext, undefined);
+  assertEquals(r.bundleContext, null);
+  assertEquals(r.diagnosticData, undefined);
+});
+
+Deno.test("systemDoModo: os dois modos carregam a regra de margem interna", () => {
+  for (const modo of ["essencial", "estrategico"] as const) {
+    const sys = systemDoModo(modo);
+    assert(sys.includes("MARGEM É DADO INTERNO"), `${modo} sem a regra de margem interna`);
+    assert(/NÃO\s+é a margem do cliente/.test(sys), `${modo} sem a desambiguação margem Colacor × cliente`);
+    // os exemplos de DADO AUSENTE não podem citar campos que deixaram de existir no contexto
+    assert(!sys.includes("grossMarginPct"), `${modo} ainda cita grossMarginPct como exemplo`);
   }
 });
 
