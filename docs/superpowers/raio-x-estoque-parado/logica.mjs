@@ -19,6 +19,9 @@ function diasEntre(data, hoje) {
 
 export function categorizar(it) {
   const d = it.descricao ?? '';
+  // tipo do item no Omie (SPED): 07 uso e consumo, 01 matéria-prima, 03 em processo, 08 imobilizado
+  if (['07', '01', '03'].includes(it.tipo_produto)) return { categoria: 'uso_consumo', motivo: `tipo do item ${it.tipo_produto} no Omie (consumido aqui, não vendido)` };
+  if (it.tipo_produto === '08') return { categoria: 'nao_mercadoria', motivo: 'tipo do item 08 (imobilizado) no Omie' };
   if (it.familia === 'Imobilizado') return { categoria: 'nao_mercadoria', motivo: 'família Imobilizado' };
   const m = d.match(RE_NAO_MERC);
   if (m && it.q12 === 0) return { categoria: 'nao_mercadoria', motivo: `descrição contém ${m[0].toUpperCase()} e sem venda em 12m` };
@@ -181,4 +184,25 @@ export function lerNumero(texto) {
   if (texto === null || texto === undefined || String(texto).trim() === '') return { valor: null, erro: false };
   const v = parseValorBR(texto);
   return v === null ? { valor: null, erro: true } : { valor: v, erro: false };
+}
+
+// Categoria marcada à mão na página (ex.: item de revenda no cadastro que na prática é consumido).
+export function categoriaEfetiva(it, decisoes) {
+  return decisoes[it.sku]?.categoria_informada || it.categoria;
+}
+
+export function aplicarCategorias(itens, decisoes) {
+  return itens.map((i) => {
+    const c = decisoes[i.sku]?.categoria_informada;
+    return c && c !== i.categoria ? { ...i, categoria: c, motivo_categoria: 'marcado como uso e consumo na página' } : i;
+  });
+}
+
+// Valor do saldo a preço de venda: o praticado nos 12m vence o de tabela; sem preço → null.
+// margem_pct = margem sobre a venda (quanto dá para descontar antes de vender abaixo do custo).
+export function valorVenda(it) {
+  const [preco, fonte] = it.preco_medio_12m > 0 ? [it.preco_medio_12m, 'praticado_12m']
+    : it.preco_tabela > 0 ? [it.preco_tabela, 'tabela'] : [null, null];
+  if (preco === null) return null;
+  return { valor: it.saldo * preco, fonte, margem_pct: Math.round(((preco - it.cmc) / preco) * 1000) / 10 };
 }

@@ -79,3 +79,5 @@ Depois atualize **`schema-snapshot.manifest.md`** com as novas contagens — o d
 ## Cadência
 
 Artefato periódico, não sincronização contínua. Re-gerar: após qualquer módulo/tabela/RPC nova criada pelo Lovable, antes de criar staging ou migrar projeto, no mínimo mensalmente se o banco muda, ou sob demanda quando suspeitar de drift.
+
+**Quando re-gerar — medido, não lembrado:** `bash db/snapshot-parity-check.sh` compara o snapshot com prod por nome (read-only, segundos). `exit 0` em dia · `1` deriva **sensível** (função em `private` ou policy) · `2` deriva comum · `3` não consegui medir (nunca leia como "em dia"). Limite: não vê objeto com o MESMO nome e corpo diferente — esse só o re-dump pega (#1509).

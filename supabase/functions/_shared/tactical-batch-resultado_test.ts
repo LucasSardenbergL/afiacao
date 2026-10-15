@@ -144,3 +144,44 @@ Deno.test("agregar: reproduz o incidente real (30 gerados / 28 erros)", () => {
   assertEquals(r.erros, 28);
   assertEquals(r.erros_por_motivo, { http_429: 28 });
 });
+
+// ── Registro server-side (incidente 2026-10-09) ──────────────────────────────────────────
+// O cron marcou `succeeded` e criou ZERO planos — e a causa é irrecuperável: a resposta da
+// edge só existia em net._http_response (TTL ~6h). O registro em acoes_execucoes precisa
+// guardar o MESMO corpo que a resposta HTTP devolve, senão volta a ser um resumo de segunda mão.
+import { corpoDoLote, detalhesDoRegistro } from "./tactical-batch-resultado.ts";
+
+const CONTEXTO = { farmers: 3, alvos: 6, mascarados_ignorados: 10, sem_margem_indecidivel: 4675, ja_na_fila: 12 };
+
+Deno.test("registro: detalhes contêm o corpo da resposta INTEIRO, chave a chave", () => {
+  const resumo = agregar([
+    { tipo: "gerado" },
+    { tipo: "pulado", motivo: "ja_na_fila" },
+    { tipo: "erro", motivo: "http_429" },
+  ]);
+  const corpo = corpoDoLote(resumo, CONTEXTO);
+  const det = detalhesDoRegistro(corpo, new Date("2026-10-15T08:00:05Z"));
+  for (const [k, v] of Object.entries(corpo)) {
+    assertEquals(det[k], v, `detalhes.${k} difere do corpo da resposta`);
+  }
+  assertEquals(corpo.ok, false, "erro no lote ⇒ ok falso também no registro");
+  assertEquals(corpo.erros_por_motivo, { http_429: 1 });
+  assertEquals(corpo.ja_na_fila, 12);
+});
+
+Deno.test("registro: zero alvos é gravado como zero EXPLÍCITO (o caso de 2026-10-09)", () => {
+  const corpo = corpoDoLote(agregar([]), { ...CONTEXTO, alvos: 0 });
+  const det = detalhesDoRegistro(corpo, new Date("2026-10-09T08:00:05Z"));
+  assertEquals(det.alvos, 0);
+  assertEquals(det.gerados, 0);
+  assertEquals(det.farmers, 3);
+});
+
+Deno.test("registro: dia operacional é BRT, não o dia UTC", () => {
+  const corpo = corpoDoLote(agregar([]), CONTEXTO);
+  // 08:00 UTC de 15/10 = 05:00 BRT de 15/10
+  assertEquals(detalhesDoRegistro(corpo, new Date("2026-10-15T08:00:00Z")).dia_operacional_brt, "2026-10-15");
+  // 01:00 UTC de 15/10 = 22:00 BRT de 14/10 — o dia UTC erraria aqui
+  assertEquals(detalhesDoRegistro(corpo, new Date("2026-10-15T01:00:00Z")).dia_operacional_brt, "2026-10-14");
+  assertEquals(detalhesDoRegistro(corpo, new Date("2026-10-15T08:00:00Z")).registrado_em, "2026-10-15T08:00:00.000Z");
+});

@@ -38,7 +38,7 @@ conector (15/15 hashes, Active, sensor `SEM_EDICAO`) → sonda `omie-financeiro`
 (`v1.5-dre-fora-dre-composicao`, fonte = hash do script) recibo #439 → mapa colacor recibo #441
 (24 pares) → recálculo caixa #442 e competência #443 (jan–out, 2 levas cada).
 Decisões do founder: 2.03.78/2.08.01/2.05.99/2.06.06/2.06.94/2.06.95 sem mapa; 2.03.76 fora_dre;
-fechamento com resultado provisório **só avisa** (aviso na tela de fechamento: pendente).
+fechamento com resultado provisório **só avisa**: a grade marca o mês e Fechar/Aprovar pedem confirmação; leitura que falha também avisa (PR do aviso, 2026-10-15).
 
 ## Antes × depois (colacor 2026, psql-ro)
 

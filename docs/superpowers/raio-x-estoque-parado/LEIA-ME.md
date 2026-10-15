@@ -1,7 +1,7 @@
 # Raio-X do estoque parado — como medir
 
 Spec: `docs/superpowers/specs/2026-10-14-raio-x-estoque-parado-design.md` · Plano: `docs/superpowers/plans/2026-10-14-raio-x-estoque-parado.md`
-Artifact: https://claude.ai/artifact/MyvzRxHFpMnhfAufb6zg3p (retrato de 2026-10-14)
+Artifact: https://claude.ai/artifact/MyvzRxHFpMnhfAufb6zg3p (retrato de 2026-10-15; uso e consumo pelo tipo do item do Omie)
 
 Gerar um retrato novo: `node gerar.mjs --banco $RAIOX_OUT [AAAA-MM-DD]` (psql-ro, read-only; pré-voo exige sync < 24h).
 

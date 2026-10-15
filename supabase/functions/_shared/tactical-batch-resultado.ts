@@ -15,6 +15,14 @@
 //   1. `ok` é falso quando há erro — resultado parcial não pode ler como sucesso.
 //   2. Todo erro carrega o STATUS HTTP no motivo — é o que separa 429 de 402 de 500,
 //      que exigem correções OPOSTAS (backoff não resolve crédito esgotado).
+//
+// REGISTRO SERVER-SIDE — incidente 2026-10-09: o cron marcou `succeeded` e criou ZERO planos
+// (inclusive para vendedoras com 52 e 93 candidatos), e a causa ficou IRRECUPERÁVEL: o corpo
+// da resposta só existia em net._http_response (TTL ~6h) e cron.job_run_details registra só o
+// enqueue. `corpoDoLote` é a ÚNICA fonte do corpo — a resposta HTTP e o registro em
+// acoes_execucoes (`detalhesDoRegistro`) saem dele, então não podem divergir.
+
+import { inicioDiaOperacional } from "./dia-operacional.ts";
 
 export type Classificacao =
   | { tipo: "gerado" }
@@ -75,4 +83,33 @@ export function agregar(classificacoes: Classificacao[]): ResumoLote {
   }
 
   return { ok: erros === 0, gerados, pulados, erros, erros_por_motivo, pulados_por_motivo };
+}
+
+/** Campos de CONTEXTO da execução (fora da agregação por alvo) — ver comentários no index.ts. */
+export interface ContextoLote {
+  farmers: number;
+  alvos: number;
+  mascarados_ignorados: number;
+  sem_margem_indecidivel: number;
+  ja_na_fila: number;
+}
+
+export type CorpoLote = ResumoLote & ContextoLote;
+
+/** O corpo da resposta HTTP do batch. Fonte ÚNICA — o registro deriva dele. */
+export function corpoDoLote(resumo: ResumoLote, contexto: ContextoLote): CorpoLote {
+  return { ...resumo, ...contexto };
+}
+
+/**
+ * `detalhes` do registro em acoes_execucoes: o corpo INTEIRO + quando foi gravado + o dia
+ * operacional BRT (a régua da idempotência e da rotação; o dia UTC erra entre 21h e 24h BRT).
+ * `agora` é parâmetro para ser testável sem relógio.
+ */
+export function detalhesDoRegistro(corpo: CorpoLote, agora: Date): Record<string, unknown> {
+  return {
+    ...corpo,
+    registrado_em: agora.toISOString(),
+    dia_operacional_brt: inicioDiaOperacional(agora).slice(0, 10),
+  };
 }
