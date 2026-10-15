@@ -21984,7 +21984,6 @@ export type Database = {
       tint_promocao_tick: { Args: never; Returns: Json }
       tint_promocao_watchdog: { Args: never; Returns: Json }
       tint_promote_sync_run: { Args: { p_sync_run_id: string }; Returns: Json }
-      tint_reaplicar_snapshot_tick: { Args: never; Returns: Json }
       tint_recalc_preco_oficial: {
         Args: {
           p_account: string
