@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **640** custom migrations totais
-- **2050** objetos esperados (criados por estas migrations)
+- **641** custom migrations totais
+- **2054** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 719
+  - `function`: 723
   - `rls_policy`: 471
   - `index`: 276
   - `cron_job`: 184
@@ -5175,6 +5175,15 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.get_defasagem_cliente` | — |
+
+### `20261015003200_fin_ciclo_rpcs_gate.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._fin_ciclo_gate_master` | — |
+| `function` | `public.fin_ciclo_cliente_resumo` | — |
+| `function` | `public.fin_ciclo_empresa_coorte` | — |
+| `function` | `public.fin_ciclo_titulos_cliente` | — |
 
 ### `20261015120000_tactical_plans_margem_rpc_saneia_texto.sql`
 
