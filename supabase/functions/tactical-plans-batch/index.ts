@@ -60,7 +60,7 @@
 // Depois de criar: versione o cron numa migration — cron que vive só no banco some sem rastro
 // (docs/agent/sync.md; o de vendas ficou 8 dias morto por isso).
 
-import { createClient } from 'npm:@supabase/supabase-js@2';
+import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { authorizeCron, corsHeaders } from '../_shared/auth.ts';
 import { fetchAll } from '../_shared/paginate.ts';
 import {
@@ -72,7 +72,11 @@ import {
   agregar,
   type Classificacao,
   classificarAlvo,
+  type CorpoLote,
+  corpoDoLote,
+  detalhesDoRegistro,
 } from '../_shared/tactical-batch-resultado.ts';
+import { comRegistro, type DbRegistro } from '../_shared/registro-execucao.ts';
 import {
   type CarteiraFarmer,
   intercalarPorFarmer,
@@ -89,6 +93,8 @@ import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } fro
 // founder em 2026-08-08). Era 25 — que somado à regeração diária produzia 169 planos vivos
 // para 35 clientes. Para mudar o tamanho da fila, mexa AQUI, não na janela.
 const TOP_N = 2;
+// Slug em acoes_execucoes. UM escritor: só esta edge grava (cron-only — não há botão no front).
+const ACAO_REGISTRO = 'tactical_plans_batch.pregerar';
 const CONCURRENCY = 5; // cada chamada faz 1 LLM (~3-5s); 5 em paralelo ~5s/chunk
 
 // Ausente ≠ zero (money-path): revenue_potential nunca teve writer — NULL em 6.633/6.633
@@ -146,6 +152,42 @@ Deno.serve(async (req) => {
     console.warn('[tactical-plans-batch] CRON_SECRET not set; downstream calls will be rejected');
   }
 
+  // 4. REGISTRO server-side em acoes_execucoes (incidente 2026-10-09: o cron marcou
+  //    `succeeded`, ZERO planos foram criados, e a causa se perdeu — o corpo da resposta só
+  //    existia em net._http_response, TTL ~6h). `comRegistro` abre a linha ANTES do lote, então
+  //    há três leituras distinguíveis: linha ausente (nem começou/registro falhou), linha aberta
+  //    em `executando` (morreu no meio — wall-clock/timeout) e fechada com o corpo em `detalhes`.
+  //    FAIL-OPEN por desenho (_shared/registro-execucao.ts): falha ao gravar só loga (warn),
+  //    nunca derruba o lote nem altera o corpo devolvido.
+  let corpo: CorpoLote;
+  try {
+    corpo = await comRegistro(
+      supabase as unknown as DbRegistro,
+      ACAO_REGISTRO,
+      auth,
+      () => executarLote(supabase, selfUrl, cronSecret),
+      (c) => detalhesDoRegistro(c, new Date()),
+    );
+  } catch (e) {
+    return new Response(
+      JSON.stringify({ ok: false, error: mensagemDeErro(e) ?? 'falha no tactical-plans-batch' }),
+      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+    );
+  }
+
+  return new Response(JSON.stringify(corpo), {
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+  });
+});
+
+// ── Lote ─────────────────────────────────────────────────────────────────────
+// Falha de LEITURA lança (falhar ALTO, passos 0/1/1b): o handler responde 500 e o registro
+// fecha em `erro` com a mensagem.
+async function executarLote(
+  supabase: SupabaseClient,
+  selfUrl: string,
+  cronSecret: string,
+): Promise<CorpoLote> {
   // 0. ALLOWLIST de clientes elegíveis (máscara `eligible` — #1398/#1416).
   //    farmer_client_scores é lido via service_role (bypassa RLS) e NÃO tem coluna de
   //    elegibilidade: sem este passo, o batch geraria plano tático de cliente mascarado
@@ -169,10 +211,7 @@ Deno.serve(async (req) => {
   } catch (e) {
     // Falhar ALTO: seguir com allowlist parcial geraria menos planos em silêncio, e
     // seguir sem allowlist reabriria o furo. Nenhum dos dois é aceitável.
-    return new Response(
-      JSON.stringify({ ok: false, error: e instanceof Error ? e.message : String(e) }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
-    );
+    throw new Error(mensagemDeErro(e) ?? 'falha ao ler a allowlist de clientes elegíveis');
   }
 
   // 1. Pagina farmer_client_scores (fetchAll: LANÇA em error E em data:null sem error — o
@@ -226,10 +265,7 @@ Deno.serve(async (req) => {
   } catch (e) {
     // Mesma política do passo 0 (falhar ALTO): seguir com seleção parcial geraria menos
     // planos em silêncio.
-    return new Response(
-      JSON.stringify({ ok: false, error: e instanceof Error ? e.message : String(e) }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
-    );
+    throw new Error(mensagemDeErro(e) ?? 'falha ao ler farmer_client_scores');
   }
 
   // 1b. FILA ABERTA: quem já tem plano dentro da janela não volta a disputar vaga.
@@ -277,10 +313,7 @@ Deno.serve(async (req) => {
     // O gate estrutural erro-object-object-gate (classe #1642) vigia isso por CONTAGEM por
     // arquivo; as 2 ocorrências antigas deste arquivo são dívida baselinada, e sítio novo não
     // pode aumentá-la.
-    return new Response(
-      JSON.stringify({ ok: false, error: mensagemDeErro(e) ?? 'falha ao ler a fila aberta de planos táticos' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
-    );
+    throw new Error(mensagemDeErro(e) ?? 'falha ao ler a fila aberta de planos táticos');
   }
 
   // 2. Por farmer: ordena por priority desc, tira quem já está na fila, filtra gate R$/h,
@@ -348,46 +381,42 @@ Deno.serve(async (req) => {
     ));
   }
 
+  // `ok` vem do AGREGADO: falso se qualquer alvo falhou. Antes era `true` fixo —
+  // em 2026-07-21 devolveu ok:true com 28 de 58 alvos quebrados e uma vendedora
+  // inteira sem plano, e o cron marcou `succeeded`.
   const resumo = agregar(classificacoes);
 
-  return new Response(
-    JSON.stringify({
-      // `ok` vem do AGREGADO: falso se qualquer alvo falhou. Antes era `true` fixo —
-      // em 2026-07-21 devolveu ok:true com 28 de 58 alvos quebrados e uma vendedora
-      // inteira sem plano, e o cron marcou `succeeded`.
-      ...resumo,
-      farmers: porFarmer.size,
-      alvos: alvos.length,
-      // transparência do que foi DESCARTADO pela máscara: um corte silencioso leria como
-      // "cobri todo mundo" sem ter coberto (money-path — no silent caps).
-      mascarados_ignorados: mascaradosIgnorados,
-      // clientes que saíram do ranking por FALTA DE MARGEM (gate indecidível), não por
-      // reprovação no gate. NÃO é disjunto de `ja_na_fila`: é contado sobre a carteira toda
-      // de propósito, para que encher a fila não o faça "melhorar" sozinho.
-      //
-      // ⚠️ NÃO leia este número como "o batch está cego" — a medição desmente. Ele conta a
-      // CARTEIRA (os elegíveis de carteira_assignments), não todos os scores: `gross_margin_pct
-      // IS NULL` sobre a carteira. Cruzamento em prod (psql-ro 2026-10-10 · 6.633 scores · 1.459
-      // mascarados ⇒ 5.174 na carteira):
-      //     NULL, compra ≤12m:     3      (comprou, mas item sem custo/preço — resíduo)
-      //     NULL, sem compra ≤12m: 4.672  (sem compra no período ⇒ nada a calcular)
-      //   ⇒ sem_margem_indecidivel = 4.675. Sobre os 6.633 scores o NULL é 6.131; a diferença
-      //     (1.456) são mascarados, contados em `mascarados_ignorados`, NÃO aqui.
-      // A JANELA DE 12 MESES de #2898 (2026-10-09: margem só de pedidos dos últimos 12m — custo
-      // ATUAL não vale para preço antigo) derrubou o pool COM margem de ~1.075 (08/ago) para 502
-      // em 10/out — queda DELIBERADA, não regressão (dos 502, `>0`=501; 1 de margem NEGATIVA é
-      // veredito REAL, CONHECIDO, e não entra aqui). O writer FUNCIONA: dos 501 elegíveis que
-      // compraram em 12m, 498 têm margem (99,4%). O número é alto porque ~90% da carteira não
-      // comprou nos últimos 12 meses — ausência honesta, não writer quebrado. Tratá-la como bug
-      // levaria a "consertar" um writer que está certo; o que este número mede é o tamanho do pool vivo.
-      sem_margem_indecidivel: semMargemIndecidivel,
-      // clientes que não disputaram vaga por JÁ TEREM plano aberto na janela. Antes eram
-      // regerados e viravam cópia; agora são pulados ANTES da chamada paga à IA. Publicado
-      // porque um corte silencioso leria como "não havia mais ninguém" (money-path: no
-      // silent caps) — e porque é este número que mostra a fila circulando: ele sobe
-      // enquanto a fila enche e cai conforme os planos expiram ou são concluídos.
-      ja_na_fila: jaNaFila,
-    }),
-    { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
-  );
-});
+  return corpoDoLote(resumo, {
+    farmers: porFarmer.size,
+    alvos: alvos.length,
+    // transparência do que foi DESCARTADO pela máscara: um corte silencioso leria como
+    // "cobri todo mundo" sem ter coberto (money-path — no silent caps).
+    mascarados_ignorados: mascaradosIgnorados,
+    // clientes que saíram do ranking por FALTA DE MARGEM (gate indecidível), não por
+    // reprovação no gate. NÃO é disjunto de `ja_na_fila`: é contado sobre a carteira toda
+    // de propósito, para que encher a fila não o faça "melhorar" sozinho.
+    //
+    // ⚠️ NÃO leia este número como "o batch está cego" — a medição desmente. Ele conta a
+    // CARTEIRA (os elegíveis de carteira_assignments), não todos os scores: `gross_margin_pct
+    // IS NULL` sobre a carteira. Cruzamento em prod (psql-ro 2026-10-10 · 6.633 scores · 1.459
+    // mascarados ⇒ 5.174 na carteira):
+    //     NULL, compra ≤12m:     3      (comprou, mas item sem custo/preço — resíduo)
+    //     NULL, sem compra ≤12m: 4.672  (sem compra no período ⇒ nada a calcular)
+    //   ⇒ sem_margem_indecidivel = 4.675. Sobre os 6.633 scores o NULL é 6.131; a diferença
+    //     (1.456) são mascarados, contados em `mascarados_ignorados`, NÃO aqui.
+    // A JANELA DE 12 MESES de #2898 (2026-10-09: margem só de pedidos dos últimos 12m — custo
+    // ATUAL não vale para preço antigo) derrubou o pool COM margem de ~1.075 (08/ago) para 502
+    // em 10/out — queda DELIBERADA, não regressão (dos 502, `>0`=501; 1 de margem NEGATIVA é
+    // veredito REAL, CONHECIDO, e não entra aqui). O writer FUNCIONA: dos 501 elegíveis que
+    // compraram em 12m, 498 têm margem (99,4%). O número é alto porque ~90% da carteira não
+    // comprou nos últimos 12 meses — ausência honesta, não writer quebrado. Tratá-la como bug
+    // levaria a "consertar" um writer que está certo; o que este número mede é o tamanho do pool vivo.
+    sem_margem_indecidivel: semMargemIndecidivel,
+    // clientes que não disputaram vaga por JÁ TEREM plano aberto na janela. Antes eram
+    // regerados e viravam cópia; agora são pulados ANTES da chamada paga à IA. Publicado
+    // porque um corte silencioso leria como "não havia mais ninguém" (money-path: no
+    // silent caps) — e porque é este número que mostra a fila circulando: ele sobe
+    // enquanto a fila enche e cai conforme os planos expiram ou são concluídos.
+    ja_na_fila: jaNaFila,
+  });
+}

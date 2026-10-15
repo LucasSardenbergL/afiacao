@@ -157,7 +157,6 @@ const A_DIVIDA: ReadonlyMap<string, number> = new Map([
   ['supabase/functions/scoring-recalc-batch/index.ts', 1],
   ['supabase/functions/scoring-recalc-client/index.ts', 1],
   ['supabase/functions/sync-reprocess/index.ts', 3],
-  ['supabase/functions/tactical-plans-batch/index.ts', 2],
   ['supabase/functions/tint-omie-sync/index.ts', 1],
   ['supabase/functions/tint-sync-agent/index.ts', 2],
   ['supabase/functions/visit-score-recalc-batch/index.ts', 2],
