@@ -197,3 +197,12 @@ export function aplicarCategorias(itens, decisoes) {
     return c && c !== i.categoria ? { ...i, categoria: c, motivo_categoria: 'marcado como uso e consumo na página' } : i;
   });
 }
+
+// Valor do saldo a preço de venda: o praticado nos 12m vence o de tabela; sem preço → null.
+// margem_pct = margem sobre a venda (quanto dá para descontar antes de vender abaixo do custo).
+export function valorVenda(it) {
+  const [preco, fonte] = it.preco_medio_12m > 0 ? [it.preco_medio_12m, 'praticado_12m']
+    : it.preco_tabela > 0 ? [it.preco_tabela, 'tabela'] : [null, null];
+  if (preco === null) return null;
+  return { valor: it.saldo * preco, fonte, margem_pct: Math.round(((preco - it.cmc) / preco) * 1000) / 10 };
+}

@@ -214,3 +214,16 @@ test('categoria informada na decisão vence a do retrato e sai do placar de merc
   assert.equal(placar(ef, dec).total, 50);
   assert.equal(itens.find((i) => i.sku === 1).categoria, 'mercadoria'); // não muta o retrato
 });
+
+import { valorVenda } from './logica.mjs';
+test('valorVenda: preço praticado em 12m vence o de tabela; margem sobre o custo', () => {
+  assert.deepEqual(valorVenda(base({ saldo: 10, cmc: 5, preco_medio_12m: 8, preco_tabela: 9 })), { valor: 80, fonte: 'praticado_12m', margem_pct: 37.5 });
+  assert.deepEqual(valorVenda(base({ saldo: 10, cmc: 5, preco_medio_12m: null, preco_tabela: 10 })), { valor: 100, fonte: 'tabela', margem_pct: 50 });
+});
+test('valorVenda: sem preço nenhum é null (ausente ≠ zero)', () => {
+  assert.equal(valorVenda(base({ preco_medio_12m: null, preco_tabela: null })), null);
+  assert.equal(valorVenda(base({ preco_medio_12m: 0, preco_tabela: 0 })), null);
+});
+test('valorVenda: preço abaixo do custo dá margem negativa', () => {
+  assert.equal(valorVenda(base({ saldo: 1, cmc: 10, preco_medio_12m: 8 })).margem_pct, -25);
+});

@@ -48,7 +48,7 @@ dialog{position:fixed;inset:0;margin:auto;height:fit-content;max-height:calc(100
   <dialog id="dlg"><div id="dlgCorpo"></div><div class="acoes"><button id="dlgCopiar">Copiar</button><button id="dlgFechar">Fechar</button></div></dialog>
 </main>
 <script type="module">
-import { placar, listaTroca, vendaDirigidaPorCliente, diffContagem, lerNumero, mesclarDecisao, aplicarCategorias, DESTINOS, ROTULOS } from './logica.mjs';
+import { placar, listaTroca, vendaDirigidaPorCliente, diffContagem, lerNumero, mesclarDecisao, aplicarCategorias, valorVenda, DESTINOS, ROTULOS } from './logica.mjs';
 
 const brl = (v) => v == null ? '—' : v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 });
 const num = (v, d = 1) => v == null ? '—' : Number(v).toLocaleString('pt-BR', { maximumFractionDigits: d });
@@ -114,6 +114,16 @@ function filtrados() {
   });
 }
 
+function linhaVenda(i) {
+  const v = valorVenda(i);
+  if (!v) return el('div', { class: 'muted' }, 'a preço de venda: sem preço (sem venda em 12m e sem preço de tabela)');
+  const fonte = v.fonte === 'praticado_12m' ? 'preço praticado em 12m' : 'preço de tabela';
+  return el('div', { class: 'linha num' },
+    el('span', {}, 'a preço de venda'), el('b', {}, brl(v.valor)),
+    el('span', { class: 'muted' }, fonte),
+    el('span', { style: `color:var(${v.margem_pct < 0 ? '--bad' : '--muted'})` }, `margem ${num(v.margem_pct, 1)}% — desconto máximo sem vender abaixo do custo`));
+}
+
 function cardMercadoria(i) {
   const d = decisoes[i.sku] ?? {};
   const escolhido = DESTINOS.includes(d.destino) ? d.destino : null;
@@ -123,8 +133,9 @@ function cardMercadoria(i) {
       i.top ? el('span', { class: 'tag top' }, 'Top 61') : '',
       el('span', {}, i.familia ?? '—'), el('span', {}, i.fornecedor ?? 'fornecedor ?')),
     el('div', { class: 'linha num' },
-      el('span', {}, `saldo ${num(i.saldo)}`), el('b', {}, brl(i.valor)),
+      el('span', {}, `saldo ${num(i.saldo)}`), el('b', {}, brl(i.valor)), el('span', { class: 'muted' }, 'a custo'),
       el('span', {}, `última venda ${dt(i.ult_venda)}`), el('span', {}, `cobertura ${i.cobertura == null ? 'sem venda em 12m' : num(i.cobertura, 0) + ' d'}`)),
+    linhaVenda(i),
     el('div', {}, el('b', {}, `Sugestão: ${ROTULOS[i.destino_sugerido]}`), ' — ', el('span', { class: 'muted' }, i.motivo_destino)),
   );
   if (i.clientes?.length) {

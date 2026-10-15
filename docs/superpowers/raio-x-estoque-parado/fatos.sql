@@ -30,7 +30,7 @@ base as (
          coalesce(sp.fornecedor_nome, rec.forn_rec, 'marca: ' || nullif(p.metadata->>'marca', '')) fornecedor,
          rec.ult_entrada, e.saldo, e.cmc, sp.sku_codigo_omie is not null motor, sp.classe_abc,
          v.uv::date ult_venda, coalesce(v.q12, 0) q12, coalesce(v.ncli, 0) ncli,
-         round(v.preco_medio_12m::numeric, 4) preco_medio_12m, coalesce(cli.clientes, '[]') clientes,
+         round(v.preco_medio_12m::numeric, 4) preco_medio_12m, case when p.valor_unitario > 0 then p.valor_unitario end preco_tabela, coalesce(cli.clientes, '[]') clientes,
          case when coalesce(v.q12, 0) > 0 then e.saldo / (v.q12 / 365.0) end cob
   from e
   left join sku_parametros sp on sp.empresa = 'OBEN' and sp.sku_codigo_omie = e.sku
