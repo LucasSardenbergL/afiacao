@@ -4,14 +4,25 @@
 
 | Campo | Valor |
 |---|---|
-| Gerado em | 2026-10-08 (anterior: 2026-09-05 — ver as notas por geração abaixo) |
+| Gerado em | 2026-10-15 (anterior: 2026-10-08 — ver as notas por geração abaixo) |
 | Fonte | produção (Supabase Lovable, `fzvklzpomgnyikkfkzai`) — **gerado via `pg_dump` por `~/.config/afiacao/psql-ro`** (read-only, role `claude_ro`). Idêntico objeto-por-objeto ao dump do chat do Lovable (cross-validado no #1093); difere só no **preâmbulo** do `pg_dump`: token `\restrict`, versão 17.9→17.10, e `client_encoding` SQL_ASCII→UTF8 / `standard_conforming_strings` off→on (estilo da ferramenta, **não** conteúdo — corpo dos objetos idêntico; cada dump é internamente consistente; replay valida o restore). |
 | Versão do banco | PostgreSQL 17.6 |
 | pg_dump | 17.10 (Homebrew, via psql-ro) |
 | Flags | `--schema-only --schema=public --schema=private --no-owner --no-privileges` |
-| Linhas do arquivo | 56.647 (anterior: 51.692) |
-| Tamanho | ~2,4 MB |
+| Linhas do arquivo | 60.629 (anterior: 56.647) |
+| Tamanho | ~2,6 MB |
 
+> **Geração 2026-10-15 (por quê):** 7 dias depois da anterior, `db/snapshot-parity-check.sh` (novo nesta
+> geração) mediu deriva **sensível**: 8 tabelas (módulo `picking_*` inteiro), 5 views (`v_ciclo_*`),
+> 38 funções — 7 delas em `private`, incluindo saneamento de margem (`sanear_jsonb_margem`,
+> `tactical_plan_saneia_margem`) e `estoque_reservas_pv_write_once` — e 5 policies. Um DR naquele dia
+> perderia controles de dado sensível da semana. Gerado por `db/refresh-snapshot.sh`: integridade ok,
+> paridade **0/0** (354/89/409/716), replay com enforcement de RLS ok, 105 `cron.job` capturados.
+> Revisão por **conjunto de nomes** snapshot-antigo × novo (não por `git diff -U0`: linha que só MUDOU DE
+> POSIÇÃO aparece como `-CREATE` sem `+` pareado e simula remoção — fabricou aqui um falso "sumiu
+> `fin_movimentacoes`"): **+67 objetos, 1 remoção real** — `_quarantine_omie_clientes_20260722` com 2
+> policies e 2 triggers, versionada em `20261011120500_drop_quarentena_omie_clientes` (ausente em prod).
+>
 > **Geração 2026-10-08 (por quê):** o caminho 3 do acervo (exclusão nominal do total líquido) criou em
 > prod uma tabela (`pedido_total_liquido_excecao`) e patcheou o corpo de `pedido_total_liquido_converter`
 > por envelope em `db/` — **fora** de `supabase/migrations/`, então até este dump os dois só existiam no DR
