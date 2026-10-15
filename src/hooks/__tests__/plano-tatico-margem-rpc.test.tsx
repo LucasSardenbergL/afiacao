@@ -53,7 +53,13 @@ vi.mock('@/integrations/supabase/client', () => ({
     from: (t: string) => chain(t),
     rpc: (fn: string, args: unknown) => {
       rpcs.push({ fn, args });
-      return Promise.resolve(fn === 'get_planos_margem' ? respostaRpc : { data: null, error: null });
+      const resposta = fn === 'get_planos_margem' ? respostaRpc : { data: null, error: null };
+      // A RPC é paginada (`.order().range()` via fetchAllPages): o builder é encadeável e "thenable".
+      const b: Record<string, unknown> = {};
+      b.order = () => b;
+      b.range = () => b;
+      b.then = (resolve: (v: unknown) => void) => resolve(resposta);
+      return b;
     },
   },
 }));

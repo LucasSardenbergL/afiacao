@@ -1,4 +1,5 @@
 import { supabase } from '@/integrations/supabase/client';
+import { fetchAllPages } from '@/lib/postgrest';
 import { margemConhecida } from '@/lib/scoring/margin';
 
 /**
@@ -70,17 +71,21 @@ function cenariosDe(v: unknown): CenariosMargem | null {
  * Margem dos planos pedidos. LANÇA em falha — "não consegui ler" nunca vira "margem restrita" nem
  * "não apurada"; o chamador decide degradar para `MARGEM_PLANO_INDISPONIVEL`.
  * Plano ausente do mapa = o servidor não o devolveu (fora do escopo do caller).
- * Sem `.range()`: a RPC só devolve os ids pedidos, e a fila pede no máximo `LIMITE_FILA`.
+ * Paginada mesmo devolvendo só os ids pedidos: a capa de 1.000 do PostgREST vale para `.rpc()` e o
+ * gate `rpc-set-returning-paginacao-gate` não aceita chamada nova sem `.range()`.
  */
 export async function buscarMargensPlanos(planIds: string[]): Promise<Map<string, MargemPlano>> {
   if (planIds.length === 0) return new Map();
-  const { data, error } = (await supabase.rpc('get_planos_margem', { p_plan_ids: planIds })) as unknown as {
-    data: LinhaMargemPlano[] | null;
-    error: unknown;
-  };
-  if (error) throw error;
+  const linhas = await fetchAllPages<LinhaMargemPlano>(
+    (de, ate) =>
+      supabase
+        .rpc('get_planos_margem', { p_plan_ids: planIds })
+        .order('plan_id', { ascending: true })
+        .range(de, ate) as unknown as PromiseLike<{ data: LinhaMargemPlano[] | null; error: unknown }>,
+    'get_planos_margem',
+  );
   const mapa = new Map<string, MargemPlano>();
-  for (const l of data ?? []) {
+  for (const l of linhas) {
     const visivel = l.margem_visivel === true;
     mapa.set(l.plan_id, {
       acesso: visivel ? 'concedida' : 'restrita',
