@@ -199,7 +199,9 @@ export const useFarmerPerformance = () => {
       // Fetch tactical plans for the period
       const { data: plans } = (await supabase
         .from('farmer_tactical_plans')
-        .select('*')
+        // Só o que o IPF usa. `select('*')` inclui as colunas de margem, fechadas para
+        // authenticated (FU4-F, 20261015120100) — a query inteira cairia com 42501.
+        .select('status, plan_followed, bundle_recommendation_id, actual_margin, call_duration_seconds')
         .eq('farmer_id', farmerId)
         .gte('created_at', startStr)) as unknown as { data: TacticalPlanRow[] | null };
 

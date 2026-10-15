@@ -26,7 +26,6 @@ const NUCLEO = 'supabase/functions/_shared/';
 const LEGADO: Record<string, number> = {
   'supabase/functions/analyze-unified-order/index.ts': 1,
   'supabase/functions/cmc-snapshot-backfill/index.ts': 1,
-  'supabase/functions/cmc-snapshot-smoke/index.ts': 1,
   'supabase/functions/omie-analytics-sync/index.ts': 1,
   'supabase/functions/omie-cliente/index.ts': 1,
   'supabase/functions/omie-desconto-backfill/index.ts': 1,

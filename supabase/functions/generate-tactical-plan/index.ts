@@ -18,6 +18,7 @@ import {
   ehJaNaFilaDaRpc,
   ehSkipLegitimoDaRpc,
   extrairToolUseUnico,
+  insumosSemMargem,
   MAX_TOKENS,
   MODELO,
   type Modo,
@@ -311,14 +312,19 @@ Deno.serve(async (req) => {
     const modo: Modo = mode === 'estrategico' ? 'estrategico' : 'essencial';
     const tool = toolDoModo(modo);
 
+    // FU4-F: a margem (do cliente, dos pares e do bundle) não vai ao modelo em NENHUM modo — o texto do
+    // plano é lido por toda a equipe de vendas. Ela já decidiu objetivo e perfil acima; o número fica
+    // no servidor. No modo front isto também neutraliza o build velho do PWA, que ainda a envia.
+    const paraOModelo = insumosSemMargem({ customerContext, bundleContext, diagnosticData });
+
     const userPrompt = `Dados do cliente:
-${JSON.stringify(customerContext || {}, null, 2)}
+${JSON.stringify(paraOModelo.customerContext || {}, null, 2)}
 
 Bundle prioritário:
-${JSON.stringify(bundleContext || {}, null, 2)}
+${JSON.stringify(paraOModelo.bundleContext || {}, null, 2)}
 
 Dados diagnósticos:
-${JSON.stringify(diagnosticData || {}, null, 2)}
+${JSON.stringify(paraOModelo.diagnosticData || {}, null, 2)}
 
 Objeções históricas do cluster:
 ${JSON.stringify(historicalObjections || [], null, 2)}`;

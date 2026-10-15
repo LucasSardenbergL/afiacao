@@ -333,7 +333,8 @@ Deno.test("INVARIANTE — redigir o segredo não muda a classe de nenhuma mensag
 // remove os dois.
 import { removerComentarios as semComentarios } from "./limpeza-fonte.ts";
 
-const EDGES = ["cmc-snapshot-smoke", "cmc-snapshot-backfill"];
+// `cmc-snapshot-smoke` foi removida em 2026-10-14 (gate da Fase 2b, sem chamador nem cron).
+const EDGES = ["cmc-snapshot-backfill"];
 const FONTES = new Map<string, string>(
   await Promise.all(
     EDGES.map(async (nome) =>

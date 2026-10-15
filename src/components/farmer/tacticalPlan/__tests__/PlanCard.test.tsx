@@ -18,6 +18,7 @@ function makePlan(overrides: Partial<TacticalPlan> = {}): TacticalPlan {
     mixGap: 3,
     currentMarginPct: 12.5,
     clusterAvgMarginPct: 15,
+    acessoMargem: "concedida",
     expansionPotential: 40,
     strategicObjective: "recuperacao",
     customerProfile: "misto",
@@ -205,6 +206,42 @@ describe("PlanCard", () => {
     });
   });
 
+  // FU4-F: a margem do plano sai da RPC get_planos_margem com gate de projeção. Sem cap_custo_ler o
+  // número nem chega ao browser; o card não pode trocar "não concedida" por "não apurada" ("—").
+  describe("[MARGEM-ACESSO] margem do plano só com acesso concedido", () => {
+    const cenarios = { best_case_margin: 55.23, likely_margin: 48, worst_case_margin: 40.97 };
+
+    it("concedida: mostra margem, cluster e a simulação de margem em PERCENTUAL (não R$)", () => {
+      setup({ expanded: true, plan: makePlan({ planType: "estrategico", expectedResult: cenarios }) });
+      expect(valorDaMetrica("Margem atual")).toBe("12.5%");
+      expect(valorDaMetrica("Média cluster")).toBe("15.0%");
+      expect(valorDaMetrica("Cenário provável")).toBe("48%");
+      expect(screen.queryByText(/R\$\s*48/)).toBeNull();
+    });
+
+    it("restrita: nenhuma linha de margem, nenhum travessão, e o motivo dito", () => {
+      setup({ expanded: true, plan: makePlan({ acessoMargem: "restrita", currentMarginPct: null, clusterAvgMarginPct: null, expectedResult: null }) });
+      expect(screen.queryByText("Margem atual")).toBeNull();
+      expect(screen.queryByText("Média cluster")).toBeNull();
+      expect(screen.queryByText("Simulação de Margem")).toBeNull();
+      expect(screen.getByText(/margem restrita a quem lê custo/)).toBeTruthy();
+    });
+
+    it("restrita com cenários presentes por engano: a simulação NÃO aparece", () => {
+      // defesa no card: só o acesso decide, nunca a presença do dado
+      setup({ expanded: true, plan: makePlan({ acessoMargem: "restrita", expectedResult: cenarios }) });
+      expect(screen.queryByText("Simulação de Margem")).toBeNull();
+      expect(screen.queryByText("Margem atual")).toBeNull();
+    });
+
+    it("indisponivel: não afirma 'restrita' nem 'não apurada'", () => {
+      setup({ expanded: true, plan: makePlan({ acessoMargem: "indisponivel", currentMarginPct: null, clusterAvgMarginPct: null }) });
+      expect(screen.queryByText("Margem atual")).toBeNull();
+      expect(screen.queryByText(/margem restrita/)).toBeNull();
+      expect(screen.getByText(/não foi possível carregar/)).toBeTruthy();
+    });
+  });
+
   // Mesmo raciocínio da margem, no campo irmão que ficou para trás. `expansion_score` não tem
   // writer: é NULL em 6.633/6.633 linhas de farmer_client_scores (psql-ro, 2026-07-29), então
   // "0%" aqui não seria um caso de borda — era o que a vendedora via para TODO cliente, lido
@@ -260,8 +297,9 @@ describe("PlanCard", () => {
           expectedResult: { best_case_margin: null, likely_margin: 22, worst_case_margin: null },
         }),
       });
-      expect(screen.getByText("R$ 22,00")).toBeTruthy();
-      expect(screen.getAllByText("—").length).toBeGreaterThan(0);
+      // Cenário de MARGEM é percentual — o "R$ 22,00" que este teste fixava era o bug de formato.
+      expect(valorDaMetrica("Cenário provável")).toBe("22%");
+      expect(valorDaMetrica("Melhor cenário")).toBe("—");
     });
 
     it("objeção sem probabilidade estimada não exibe badge de 0%", () => {
