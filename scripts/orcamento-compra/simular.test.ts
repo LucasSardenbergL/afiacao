@@ -245,6 +245,8 @@ describe('backtest', () => {
     const b = backtest({ ...f, linhas: [{ ...f.linhas[0], preco_unitario: null }] }, cfg);
     expect(b.resumo.valorCortadoEfetivo).toBe(0);
     expect(b.resumo.cortesSemPreco).toBe(4);
+    // corte sem preço não vira episódio de R$ 0 (Number(null) somado = 0 fabricado)
+    expect(b.resumo.episodios).toBe(0);
   });
   it('premissas declaradas no resultado', () => {
     const b = backtest(fatos, cfg);
