@@ -122,7 +122,7 @@ const ret = (o) => ({ meta: { hoje: '2026-10-14' }, itens: [{ sku: 1, categoria:
 
 test('medir limita vendido ao saldo do retrato', () => {
   const m = medir(ret(), {}, { 1: { saldo: 4, qtd_vendida: 30, receita: 300, compras: [] } });
-  assert.equal(m.vendido, 50);
+  assert.equal(m.vendido, 30); // só o que saiu do saldo do retrato (10→4)
   assert.equal(m.liquidado, 0);
 });
 test('medir separa liquidado e margem sacrificada', () => {
@@ -147,6 +147,50 @@ test('medir acusa recompra após decisão', () => {
 test('medir: SKU ausente da medição atual não vira zero', () => {
   const m = medir(ret(), {}, {});
   assert.equal(m.vendido, 0);
-  assert.equal(m.parado, 50);
+  assert.equal(m.parado, 0);
+  assert.equal(m.sem_medicao_valor, 50);
   assert.deepEqual(m.sem_medicao, [1]);
+});
+
+import { mesclarDecisao, lerNumero } from './logica.mjs';
+
+test('I1: medir não conta como liberado o que foi recomprado', () => {
+  const m = medir(ret(), {}, { 1: { saldo: 10, qtd_vendida: 10, receita: 100, compras: [] } });
+  assert.equal(m.vendido, 0);
+  assert.equal(m.caixa_liberado, 0);
+  assert.equal(m.recomprado, 50);
+  assert.equal(m.parado, 50);
+});
+test('I2: SKU ausente da medição ainda conta o crédito de troca informado', () => {
+  const m = medir(ret(), { 1: { destino: 'trocar', credito_troca: 40 } }, {});
+  assert.equal(m.trocado, 40);
+  assert.equal(m.parado, 0);
+});
+test('I5b: contradição compara instante, não texto (offset -03)', () => {
+  const m = medir(ret(), { 1: { destino: 'liquidar', decidido_em: '2026-10-20T16:00:00Z' } },
+    { 1: { saldo: 10, qtd_vendida: 0, receita: 0, compras: ['2026-10-20T15:00:00-03:00'] } });
+  assert.equal(m.contradicoes.length, 1);
+});
+test('I7: unidade de venda ≠ estoque vai para sem_medicao, sem número', () => {
+  const m = medir(ret({ unidade_estoque: 'GL', unidades_venda: ['L'] }), {}, { 1: { saldo: 4, qtd_vendida: 6, receita: 60, compras: [] } });
+  assert.equal(m.vendido, 0);
+  assert.deepEqual(m.sem_medicao, [1]);
+  assert.equal(m.sem_medicao_valor, 50);
+});
+test('I3/I5a: mesclarDecisao preserva campos e só carimba quem/quando ao mudar destino', () => {
+  const a = mesclarDecisao({}, { observacao: 'nota' }, 'u1', '2026-10-15T10:00:00Z');
+  assert.equal(a.decidido_em, undefined);
+  const b = mesclarDecisao(a, { destino: 'trocar' }, 'u1', '2026-10-15T11:00:00Z');
+  assert.deepEqual(b, { observacao: 'nota', destino: 'trocar', decidido_por: 'u1', decidido_em: '2026-10-15T11:00:00Z' });
+  const c = mesclarDecisao(b, { credito_troca: 10 }, 'u2', '2026-10-16T09:00:00Z');
+  assert.equal(c.decidido_em, '2026-10-15T11:00:00Z');
+  assert.equal(c.decidido_por, 'u1');
+  assert.equal(c.credito_troca, 10);
+});
+test('I4: lerNumero distingue vazio de inválido', () => {
+  assert.deepEqual(lerNumero(''), { valor: null, erro: false });
+  assert.deepEqual(lerNumero('12'), { valor: 12, erro: false });
+  assert.deepEqual(lerNumero('12,5'), { valor: 12.5, erro: false });
+  assert.equal(lerNumero('abc').erro, true);
+  assert.equal(lerNumero('12.5').erro, true);
 });

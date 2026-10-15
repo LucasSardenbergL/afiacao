@@ -48,7 +48,7 @@ dialog{position:fixed;inset:0;margin:auto;height:fit-content;max-height:calc(100
   <dialog id="dlg"><div id="dlgCorpo"></div><div class="acoes"><button id="dlgCopiar">Copiar</button><button id="dlgFechar">Fechar</button></div></dialog>
 </main>
 <script type="module">
-import { placar, listaTroca, vendaDirigidaPorCliente, diffContagem, parseValorBR, DESTINOS, ROTULOS } from './logica.mjs';
+import { placar, listaTroca, vendaDirigidaPorCliente, diffContagem, lerNumero, mesclarDecisao, DESTINOS, ROTULOS } from './logica.mjs';
 
 const brl = (v) => v == null ? '—' : v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 });
 const num = (v, d = 1) => v == null ? '—' : Number(v).toLocaleString('pt-BR', { maximumFractionDigits: d });
@@ -83,16 +83,17 @@ function renderPlacar() {
   );
 }
 
-async function salvar(sku, patch) {
+const filas = new Map(); // uma gravação por vez por SKU: a 2ª parte do estado já mesclado
+function salvar(sku, patch) {
   if (!db || somenteLeitura) return;
-  const atual = decisoes[sku] ?? {};
-  const corpo = { ...atual, ...patch, decidido_por: uid, decidido_em: new Date().toISOString() };
-  try {
-    await db.collection('decisoes').doc(String(sku)).set(corpo);
-  } catch (e) {
+  const corpo = mesclarDecisao(decisoes[sku] ?? {}, patch, uid, new Date().toISOString());
+  decisoes = { ...decisoes, [sku]: corpo }; // otimista: o próximo patch parte daqui, não do snapshot velho
+  if ('destino' in patch) render();
+  const p = (filas.get(sku) ?? Promise.resolve()).then(() => db.collection('decisoes').doc(String(sku)).set(corpo)).catch((e) => {
     if (e?.code === 'invalid_argument') { somenteLeitura = true; avisar('Você não tem permissão para registrar decisões nesta página.'); render(); }
-    else avisar(`Não salvou (${e?.code ?? 'erro'}). Tente de novo.`);
-  }
+    else avisar(`Não salvou (${e?.code ?? 'erro'}). Recarregue a página e confira este SKU.`);
+  });
+  filas.set(sku, p);
 }
 
 function avisar(msg) { document.getElementById('aviso').replaceChildren(msg ? el('div', { class: 'aviso' }, msg) : ''); }
@@ -143,7 +144,7 @@ function cardMercadoria(i) {
     }
     if (escolhido === 'trocar') {
       card.append(el('input', { placeholder: 'Troca concluída: crédito R$', inputmode: 'decimal', value: d.credito_troca ?? '',
-        onchange: (ev) => { const v = parseValorBR(ev.target.value); if (ev.target.value && v === null) { avisar('Crédito inválido — use por exemplo 1.234,56'); return; } salvar(i.sku, { credito_troca: v }); } }));
+        onchange: (ev) => { const r = lerNumero(ev.target.value); if (r.erro) { avisar('Crédito inválido — use por exemplo 1.234,56'); return; } avisar(''); salvar(i.sku, { credito_troca: r.valor }); } }));
     }
   } else if (escolhido) {
     card.append(el('div', {}, `Decidido: ${ROTULOS[escolhido]}`));
@@ -162,7 +163,7 @@ function cardContagem(i) {
   );
   if (!somenteLeitura) {
     card.append(el('input', { placeholder: 'Quantidade contada', inputmode: 'decimal', value: d.qtd_contada ?? '',
-      onchange: (ev) => { const v = parseValorBR(ev.target.value); salvar(i.sku, { qtd_contada: v }); } }));
+      onchange: (ev) => { const r = lerNumero(ev.target.value); if (r.erro) { avisar('Quantidade inválida — use número inteiro ou com vírgula, por exemplo 12,5'); return; } avisar(''); salvar(i.sku, { qtd_contada: r.valor }); render(); } }));
   }
   return card;
 }

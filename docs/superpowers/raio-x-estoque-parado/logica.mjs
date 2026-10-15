@@ -132,29 +132,53 @@ const CONTRADICAO = ['trocar', 'liquidar', 'manter_suspender_recompra'];
 const LIMIAR_LIQUIDACAO = 0.9;
 
 export function medir(retrato, decisoes, atual) {
-  const m = { vendido: 0, liquidado: 0, margem_sacrificada: 0, trocado: 0, caixa_liberado: 0, parado: 0,
-    reclassificado_nao_caixa: 0, contradicoes: [], sem_medicao: [] };
+  const m = { vendido: 0, liquidado: 0, margem_sacrificada: 0, trocado: 0, caixa_liberado: 0, parado: 0, recomprado: 0,
+    reclassificado_nao_caixa: 0, contradicoes: [], sem_medicao: [], sem_medicao_valor: 0 };
   for (const i of retrato.itens) {
     if (i.categoria === 'nao_mercadoria') { m.reclassificado_nao_caixa += i.valor; continue; }
     if (i.categoria !== 'mercadoria') continue;
     const d = decisoes[i.sku] ?? {};
+    // crédito de troca vem da decisão, não do estoque: conta mesmo se o SKU sumiu da medição
+    if (d.destino === 'trocar' && typeof d.credito_troca === 'number') m.trocado += d.credito_troca;
     const a = atual[i.sku];
-    if (!a) { m.sem_medicao.push(i.sku); m.parado += i.valor; continue; }
-    const qtd = Math.min(a.qtd_vendida, i.saldo);
+    const unidadeDivergente = (i.unidades_venda ?? []).some((u) => u !== i.unidade_estoque);
+    if (!a || unidadeDivergente) { m.sem_medicao.push(i.sku); m.sem_medicao_valor += i.valor; continue; }
+    // só conta como saída o que de fato deixou o saldo do retrato; venda acima disso foi recomprada
+    const saiu = Math.max(0, i.saldo - a.saldo);
+    const vendidoNoPeriodo = Math.min(a.qtd_vendida, i.saldo);
+    const qtd = Math.min(vendidoNoPeriodo, saiu);
+    m.recomprado += (vendidoNoPeriodo - qtd) * i.cmc;
     const custo = qtd * i.cmc;
     const precoPeriodo = a.qtd_vendida > 0 ? a.receita / a.qtd_vendida : null;
     if (precoPeriodo !== null && i.preco_medio_12m && precoPeriodo < LIMIAR_LIQUIDACAO * i.preco_medio_12m) {
       m.liquidado += custo;
-      m.margem_sacrificada += qtd * i.preco_medio_12m - (a.receita * qtd) / a.qtd_vendida;
+      m.margem_sacrificada += qtd * (i.preco_medio_12m - precoPeriodo);
     } else {
       m.vendido += custo;
     }
-    if (d.destino === 'trocar' && typeof d.credito_troca === 'number') m.trocado += d.credito_troca;
     m.parado += Math.min(a.saldo, i.saldo) * i.cmc;
     if (CONTRADICAO.includes(d.destino) && d.decidido_em) {
-      for (const p of a.compras ?? []) if (p > d.decidido_em) m.contradicoes.push({ sku: i.sku, destino: d.destino, pedido_em: p });
+      const t0 = Date.parse(d.decidido_em);
+      for (const p of a.compras ?? []) if (Date.parse(p) > t0) m.contradicoes.push({ sku: i.sku, destino: d.destino, pedido_em: p });
     }
   }
   m.caixa_liberado = m.vendido + m.liquidado + m.trocado;
   return m;
+}
+
+// Mescla um patch na decisão atual; quem/quando só mudam quando o destino muda.
+export function mesclarDecisao(atual, patch, uid, agoraIso) {
+  const novo = { ...atual, ...patch };
+  if ('destino' in patch && patch.destino !== atual?.destino) {
+    novo.decidido_por = uid;
+    novo.decidido_em = agoraIso;
+  }
+  return novo;
+}
+
+// Campo numérico digitado: vazio limpa (null), texto inválido é erro (nunca vira null calado).
+export function lerNumero(texto) {
+  if (texto === null || texto === undefined || String(texto).trim() === '') return { valor: null, erro: false };
+  const v = parseValorBR(texto);
+  return v === null ? { valor: null, erro: true } : { valor: v, erro: false };
 }
