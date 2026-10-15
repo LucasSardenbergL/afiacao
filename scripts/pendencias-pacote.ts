@@ -123,6 +123,7 @@ import {
 } from './lib/deriva-corpo';
 import { montarPacote, type PacoteFonte } from './lib/pacote-entrega';
 import {
+  caminhoDoManifesto,
   ondaSemOrdemDeclarada,
   type ParAlvo,
   planejarOndas,
@@ -145,6 +146,8 @@ export const CONSUMIDOR_NUVEM = 'pendencias-pacote';
 /** O `--json` do `pendencias:deploy` lido por inteiro: a leva, os vereditos CRUS e o instante da medição. */
 interface RelatorioLido {
   nomes: string[];
+  /** `NUNCA_ATESTADA` do ledger — candidatas só quando a REF tem `deploy-ordem.json` para elas (ver `incluirNovasComOrdem`). */
+  nuncaAtestadas: string[];
   vereditos: unknown[];
   geradoEm: Date | null;
 }
@@ -179,7 +182,28 @@ export function lerRelatorio(bruto: string): RelatorioLido {
     }
     geradoEm = new Date(t);
   }
-  return { nomes: selecionarParaDeploy(rel.vereditos), vereditos: rel.vereditos, geradoEm };
+  const nuncaAtestadas = (rel.vereditos as { edge?: unknown; estado?: unknown }[])
+    .filter((v) => v && v.estado === 'NUNCA_ATESTADA' && typeof v.edge === 'string')
+    .map((v) => v.edge as string);
+  return { nomes: selecionarParaDeploy(rel.vereditos), nuncaAtestadas, vereditos: rel.vereditos, geradoEm };
+}
+
+/**
+ * Edge NOVA com ordem declarada (#3075, 2026-10-14): `sayerlack-importar-pedido-portal` nunca subiu (404 em prod) e
+ * tem `deploy-ordem.json` esperando `disparar-pedidos-aprovados`. Pelo ledger ela é `NUNCA_ATESTADA` — fora de
+ * `ESTADOS_DE_DEPLOY`, porque em geral ausência de dado pede SONDA, não deploy; pelo NOME o planejador a retém, porque
+ * sem ledger não há como provar a predecessora. Nenhum dos dois caminhos emitia a onda dela, com a predecessora
+ * PROVADA (CONFERE há 0,2 h). A régua: `NUNCA_ATESTADA` entra na leva do ledger SÓ com manifesto na REF — o único
+ * caso que o caminho por nome não cobre; a prova da predecessora segue com o `planejarOndas`, sem afrouxar nada.
+ * Sem manifesto continua fora (1ª sonda, não deploy). Pura: quem lê a REF é o chamador.
+ */
+export function incluirNovasComOrdem(
+  nomes: readonly string[],
+  nuncaAtestadas: readonly string[],
+  temManifestoNaRef: (edge: string) => boolean,
+): string[] {
+  const extra = nuncaAtestadas.filter((e) => !nomes.includes(e) && temManifestoNaRef(e));
+  return [...new Set([...nomes, ...extra])].sort((a, b) => a.localeCompare(b, 'en'));
 }
 
 /**
@@ -294,10 +318,21 @@ export function main(
 
   let nomes: string[];
   let relatorio: RelatorioLido | null = null;
+  // A REF resolvida UMA vez: quando o ledger traz edge nunca atestada, o manifesto dela é lido no MESMO sha que
+  // o pacote vai fatiar — duas resoluções de `origin/main` podiam falar de commits diferentes (Codex, #2428).
+  let procCedo: Procedencia | null = null;
   try {
     if (nomesArg.length === 1 && nomesArg[0] === '-') {
       relatorio = lerRelatorio(lerEntrada());
       nomes = relatorio.nomes;
+      if (relatorio.nuncaAtestadas.length > 0) {
+        const pc: Procedencia = { ref: REF_DEPLOYADA, sha: sincronizarRef(git, semRede) };
+        procCedo = pc;
+        nomes = incluirNovasComOrdem(nomes, relatorio.nuncaAtestadas, (edge) =>
+          // `show`, o mesmo leitor do `lerManifestosDaRef`. Falha do git = sem manifesto = edge FORA da leva (o lado seguro).
+          git(['show', `${pc.sha}:${caminhoDoManifesto(edge)}`]).ok,
+        );
+      }
     } else {
       nomes = nomesArg;
     }
@@ -327,7 +362,7 @@ export function main(
   try {
     // A fatia sai da MESMA ref que o Lovable deploya, não do disco: é o contrato do #2362, e o
     // pacote herda dele o sha256 por arquivo — hash que o outro lado consegue refazer.
-    proc = { ref: REF_DEPLOYADA, sha: sincronizarRef(git, semRede) };
+    proc = procCedo ?? { ref: REF_DEPLOYADA, sha: sincronizarRef(git, semRede) };
     // A árvore sai do SHA, não do NOME da ref: `origin/main` é mutável e outra worktree pode
     // movê-la no meio desta execução — o pacote sairia com a fatia de um commit, o hash de outro e
     // as migrations de um terceiro. O `proc.sha` já foi resolvido; é ele que manda (Codex, #2428).

@@ -1,4 +1,5 @@
-// Leituras da aba "Ciclo" (master-only). Fatos das views v_ciclo_*; regra no helper puro.
+// Leituras da aba "Ciclo" (master-only). Fatos das views v_ciclo_* lidos por RPC SECURITY DEFINER com gate
+// master (fin_ciclo_*; a view sob RLS por linha estourava o statement_timeout). Regra no helper puro.
 // Erro de leitura LANÇA (react-query expõe `error`) — nunca vira lista vazia.
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
@@ -16,7 +17,7 @@ export function useCicloResumo() {
     queryFn: async (): Promise<ResumoCliente[]> => {
       const linhas = await fetchAllPages<ResumoClienteRow>(
         (de, ate) =>
-          supabase.from('v_ciclo_cliente_resumo' as never).select('*')
+          supabase.rpc('fin_ciclo_cliente_resumo').select('*')
             .order('company', { ascending: true })
             .order('omie_codigo_cliente', { ascending: true })
             .range(de, ate) as unknown as PromiseLike<{ data: ResumoClienteRow[] | null; error: unknown }>,
@@ -37,9 +38,14 @@ export function useCicloCoorte() {
   return useQuery({
     queryKey: ['financeiro', 'ciclo', 'coorte'],
     queryFn: async (): Promise<CoorteMes[]> => {
-      const { data, error } = await supabase.from('v_ciclo_empresa_coorte' as never).select('*')
-        .order('company', { ascending: true }).order('mes_vencimento', { ascending: true });
-      if (error) throw error;
+      // .rpc() set-returning também é capado em 1.000 linhas pelo PostgREST → paginar sempre.
+      const data = await fetchAllPages<Record<string, unknown>>(
+        (de, ate) =>
+          supabase.rpc('fin_ciclo_empresa_coorte').select('*')
+            .order('company', { ascending: true }).order('mes_vencimento', { ascending: true })
+            .range(de, ate) as unknown as PromiseLike<{ data: Record<string, unknown>[] | null; error: unknown }>,
+        'fin_ciclo_empresa_coorte',
+      );
       // Linha com dinheiro/chave ausente é DESCARTADA (nunca default fabricado): as 3 colunas vêm de coalesce(…,0) na view.
       const out: CoorteMes[] = [];
       for (const r of (data ?? []) as unknown as Record<string, unknown>[]) {
@@ -124,8 +130,7 @@ export function useCicloTitulosCliente(company: Company | null, cliente: number 
     queryFn: async (): Promise<TituloCliente[]> => {
       const linhas = await fetchAllPages<Record<string, unknown>>(
         (de, ate) =>
-          supabase.from('v_ciclo_cr_titulos' as never).select('*')
-            .eq('company', company as string).eq('omie_codigo_cliente', cliente as number)
+          supabase.rpc('fin_ciclo_titulos_cliente', { p_company: company as string, p_cliente: cliente as number }).select('*')
             .order('data_vencimento', { ascending: false })
             .order('omie_codigo_lancamento', { ascending: true })
             .range(de, ate) as unknown as PromiseLike<{ data: Record<string, unknown>[] | null; error: unknown }>,

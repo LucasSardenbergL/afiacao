@@ -9,6 +9,15 @@ import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { eventoDaCarga, type SaidaDaCarga } from '@/lib/tactical/telemetria-fila-plano';
 import { track } from '@/lib/analytics';
 import { buscarMargemScore, buscarMargensScores } from '@/lib/scoring/margemScores';
+import {
+  buscarMargensPlanos,
+  COLUNAS_PLANO_TATICO,
+  MARGEM_PLANO_INDISPONIVEL,
+  type AcessoMargemPlano,
+  type CenariosMargem,
+  type MargemPlano,
+} from '@/lib/tactical/margemPlanos';
+import { captureException } from '@/lib/analytics';
 import { ownersAtivosDoAlvo } from '@/lib/carteira/escopo-clientes';
 import { useAuth } from '@/contexts/AuthContext';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
@@ -31,9 +40,12 @@ export interface TacticalPlan {
   healthScore: number;
   churnRisk: number;
   mixGap: number;
-  /** PERCENTUAL (0–100), ou null quando a margem era desconhecida na geração do plano. */
+  /** PERCENTUAL (0–100), ou null quando a margem era desconhecida na geração do plano — ou não foi
+   *  concedida/lida (ver `acessoMargem`). Sai da RPC get_planos_margem, nunca da tabela (FU4-F). */
   currentMarginPct: number | null;
   clusterAvgMarginPct: number | null;
+  /** `restrita` = sem cap_custo_ler (a tela não fala de margem); `indisponivel` = a leitura falhou. */
+  acessoMargem: AcessoMargemPlano;
   /** PERCENTUAL, ou null quando o potencial não foi medido — hoje, 100% da base
    *  (farmer_client_scores.expansion_score é NULL em 6.633/6.633; nenhum writer o calcula). */
   expansionPotential: number | null;
@@ -72,7 +84,8 @@ export interface TacticalPlan {
   // ausente ≠ zero). O objeto pode vir PARCIALMENTE medido, então o guard `&& (...)`
   // do PlanCard não basta: cada campo é null-checado na renderização.
   ltvProjection: { current_annual: number | null; projected_annual: number | null; growth_pct: number | null } | null;
-  expectedResult: { best_case_margin: number | null; likely_margin: number | null; worst_case_margin: number | null } | null;
+  /** Cenários de MARGEM (percentual). Planos novos não os têm: a IA não recebe mais a margem (FU4-F). */
+  expectedResult: CenariosMargem | null;
   operationalRisks: string[];
 
   // Efficiency
@@ -98,8 +111,8 @@ interface TacticalPlanRow {
   health_score: number | string | null;
   churn_risk: number | string | null;
   mix_gap: number | string | null;
-  current_margin_pct: number | string | null;
-  cluster_avg_margin_pct: number | string | null;
+  // Sem current_margin_pct / cluster_avg_margin_pct / expected_result: fechadas para authenticated
+  // (FU4-F, 20261015120100). A margem do plano vem de `buscarMargensPlanos`.
   expansion_potential: number | string | null;
   strategic_objective: string;
   customer_profile: string;
@@ -116,7 +129,6 @@ interface TacticalPlanRow {
   offer_transition: string | null;
   probable_objections: TacticalPlan['probableObjections'] | unknown;
   ltv_projection: TacticalPlan['ltvProjection'] | unknown;
-  expected_result: TacticalPlan['expectedResult'] | unknown;
   operational_risks: string[] | unknown;
   status: string;
   plan_followed?: boolean | null;
@@ -204,6 +216,7 @@ interface AiPlanResponse {
   approach_strategy?: string;
   approach_strategy_b?: string;
   ltv_projection?: TacticalPlan['ltvProjection'];
+  /** A edge devolve sempre null desde o FU4-F (cenários de margem saíram da tool). */
   expected_result?: TacticalPlan['expectedResult'];
   operational_risks?: string[];
 }
@@ -289,6 +302,21 @@ function recorteDaFila<Q extends { eq: (c: string, v: string) => Q; gte: (c: str
   return q.eq('status', 'gerado').gte('generated_at', desdeIso);
 }
 
+/**
+ * Margem dos planos pela RPC com gate de projeção. A falha NÃO derruba a fila nem o plano ativo: a
+ * margem é um campo do diagnóstico, o roteiro da ligação é o que a vendedora precisa. Cada plano cai
+ * em `indisponivel` (a tela não afirma nada sobre a margem) e a falha vai para o captureException —
+ * mesma degradação do Customer 360 no #3072.
+ */
+async function margensDosPlanos(planIds: string[], origem: 'fila' | 'plano_ativo'): Promise<Map<string, MargemPlano>> {
+  try {
+    return await buscarMargensPlanos(planIds);
+  } catch (e) {
+    captureException(e, { fonte: `get_planos_margem/${origem}` });
+    return new Map();
+  }
+}
+
 export const useTacticalPlan = () => {
   const { user } = useAuth();
   // Lente "Ver como" + COBERTURA (#980): as leituras de EXIBIÇÃO (lista de planos, plano ativo do
@@ -316,11 +344,10 @@ export const useTacticalPlan = () => {
   // default da próxima carga, não deve disparar render.
   const filtroAtual = useRef<FiltroFila>('pendentes');
 
-  const parsePlan = (d: TacticalPlanRow, profileMap: Map<string, string>): TacticalPlan => {
+  const parsePlan = (d: TacticalPlanRow, profileMap: Map<string, string>, margem: MargemPlano): TacticalPlan => {
     const topBundle: BundleSnapshot = d.top_bundle || {};
     const secondBundle: BundleSnapshot = d.second_bundle || {};
     const ltvProjection = d.ltv_projection;
-    const expectedResult = d.expected_result;
     const avgCallMinutes = 15;
     // [money-path "ausente ≠ zero"] A LEITURA é a metade que faltava: corrigir só os dois
     // writers deixaria a correção INERTE (money-path.md §2) — o null gravado voltaria a
@@ -343,8 +370,10 @@ export const useTacticalPlan = () => {
       mixGap: Number(d.mix_gap || 0),
       // O plano persistido grava a margem do cliente no INSTANTE da geração; pós-#1495 ela
       // pode ser null, e `Number(null || 0)` a exibiria como "0,0%" — margem nula apurada.
-      currentMarginPct: margemConhecida(d.current_margin_pct),
-      clusterAvgMarginPct: d.cluster_avg_margin_pct == null ? null : Number(d.cluster_avg_margin_pct),
+      // Desde o FU4-F ela chega pela RPC já tri-estado (margemConhecida aplicado em margemPlanos.ts).
+      currentMarginPct: margem.atual,
+      clusterAvgMarginPct: margem.cluster,
+      acessoMargem: margem.acesso,
       // Mesma razão do currentMarginPct logo acima, e o irmão que ficou para trás: o plano
       // persistido pode ter gravado null (potencial não medido na geração), e
       // `Number(null || 0)` o exibiria como "0%" — um veredito de "cliente sem espaço para
@@ -371,9 +400,7 @@ export const useTacticalPlan = () => {
       ltvProjection: ltvProjection && typeof ltvProjection === 'object'
         ? (ltvProjection as TacticalPlan['ltvProjection'])
         : null,
-      expectedResult: expectedResult && typeof expectedResult === 'object'
-        ? (expectedResult as TacticalPlan['expectedResult'])
-        : null,
+      expectedResult: margem.cenarios,
       operationalRisks: Array.isArray(d.operational_risks) ? (d.operational_risks as string[]) : [],
       estimatedProfitPerHour,
       status: d.status,
@@ -444,7 +471,8 @@ export const useTacticalPlan = () => {
       // mesmo `setPlans([])` de uma fila legitimamente vazia. Ele agora é lido — só para
       // DECLARAR o motivo na telemetria; o que a tela renderiza é idêntico ao de antes.
       const { data, error: erroLista } = (await recorteDaFila(
-        supabase.from('farmer_tactical_plans').select('*').in('farmer_id', owners),
+        // Lista explícita: `select('*')` inclui as colunas de margem, fechadas para authenticated (FU4-F).
+        supabase.from('farmer_tactical_plans').select(COLUNAS_PLANO_TATICO).in('farmer_id', owners),
         filtro,
         desdeIso,
       )
@@ -495,7 +523,8 @@ export const useTacticalPlan = () => {
       const profileMap = new Map<string, string>(
         (profiles || []).map((p) => [p.user_id ?? '', p.name ?? 'Cliente'])
       );
-      setPlans(data.map((d) => parsePlan(d, profileMap)));
+      const margens = await margensDosPlanos(data.map((d) => d.id), 'fila');
+      setPlans(data.map((d) => parsePlan(d, profileMap, margens.get(d.id) ?? MARGEM_PLANO_INDISPONIVEL)));
       emitir({ tipo: 'lista', nExibidos: data.length });
     } catch (err) {
       console.error('Error loading plans:', err);
@@ -852,7 +881,7 @@ export const useTacticalPlan = () => {
     const owners = await fetchOwnerScope(effectiveUserId);
     const { data } = (await supabase
       .from('farmer_tactical_plans')
-      .select('*')
+      .select(COLUNAS_PLANO_TATICO)
       .in('farmer_id', owners)
       .eq('customer_user_id', customerId)
       .eq('status', 'gerado')
@@ -868,7 +897,8 @@ export const useTacticalPlan = () => {
       .single()) as unknown as { data: ProfileLite | null };
 
     const profileMap = new Map<string, string>([[customerId, profile?.name || 'Cliente']]);
-    return parsePlan(data[0], profileMap);
+    const margens = await margensDosPlanos([data[0].id], 'plano_ativo');
+    return parsePlan(data[0], profileMap, margens.get(data[0].id) ?? MARGEM_PLANO_INDISPONIVEL);
   }, [effectiveUserId, fetchOwnerScope]);
 
   // Record post-call results

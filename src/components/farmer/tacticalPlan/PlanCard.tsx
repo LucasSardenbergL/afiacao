@@ -14,6 +14,7 @@ import { RecordResultDialog } from './RecordResultDialog';
 import { BotoesDesfecho, rotuloDoDesfecho } from './BotoesDesfecho';
 import type { RecordResultPayload } from './types';
 import { formatMargemPct } from '@/lib/format';
+import { MARGEM_RESTRITA } from '@/lib/scoring/margemScores';
 
 export const PlanCard = ({
   plan, expanded, onToggle, onCopy, copiedText, onRecordResult,
@@ -91,8 +92,20 @@ export const PlanCard = ({
           <div className="mt-3 space-y-3">
             {/* Diagnosis */}
             <Section title="Diagnóstico Resumido" icon={Heart}>
-              <MetricRow label="Margem atual" value={formatMargemPct(plan.currentMarginPct)} />
-              <MetricRow label="Média cluster" value={plan.clusterAvgMarginPct == null ? '—' : `${plan.clusterAvgMarginPct.toFixed(1)}%`} />
+              {/* FU4-F: a margem só aparece com o número concedido pelo servidor (cap_custo_ler). Sem
+                  ele a tela não fala de margem; "—" leria como "não apurada", fato que ninguém mediu. */}
+              {plan.acessoMargem === 'concedida' && (
+                <>
+                  <MetricRow label="Margem atual" value={formatMargemPct(plan.currentMarginPct)} />
+                  <MetricRow label="Média cluster" value={plan.clusterAvgMarginPct == null ? '—' : `${plan.clusterAvgMarginPct.toFixed(1)}%`} />
+                </>
+              )}
+              {plan.acessoMargem === 'restrita' && (
+                <p className="text-[10px] text-muted-foreground">Margem: {MARGEM_RESTRITA}</p>
+              )}
+              {plan.acessoMargem === 'indisponivel' && (
+                <p className="text-[10px] text-muted-foreground">Margem: não foi possível carregar agora</p>
+              )}
               {/* "—" e não "0%": expansion_score não tem writer (NULL em 6.633/6.633 linhas), e
                   "0%" leria como veredito de que o cliente não tem espaço para crescer. Mesmo
                   tratamento do clusterAvgMarginPct logo acima. */}
@@ -113,11 +126,13 @@ export const PlanCard = ({
             )}
 
             {/* Expected Result (strategic only) */}
-            {plan.expectedResult && (
-              <Section title="Simulação de Resultado" icon={TrendingUp}>
-                <MetricRow label="Melhor cenário" value={fmt(plan.expectedResult.best_case_margin)} />
-                <MetricRow label="Cenário provável" value={fmt(plan.expectedResult.likely_margin)} />
-                <MetricRow label="Pior cenário" value={fmt(plan.expectedResult.worst_case_margin)} />
+            {/* Cenários de MARGEM em percentual (eram formatados como R$: "R$ 48,00" para 48%). Só com
+                acesso concedido; planos gerados depois do FU4-F não os têm. */}
+            {plan.acessoMargem === 'concedida' && plan.expectedResult && (
+              <Section title="Simulação de Margem" icon={TrendingUp}>
+                <MetricRow label="Melhor cenário" value={formatMargemPct(plan.expectedResult.best_case_margin)} />
+                <MetricRow label="Cenário provável" value={formatMargemPct(plan.expectedResult.likely_margin)} />
+                <MetricRow label="Pior cenário" value={formatMargemPct(plan.expectedResult.worst_case_margin)} />
               </Section>
             )}
 

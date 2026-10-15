@@ -54,7 +54,16 @@ function chain(table: string): unknown {
 vi.mock('@/integrations/supabase/client', () => ({
   supabase: {
     from: (t: string) => chain(t),
-    rpc: () => Promise.resolve({ data: null, error: erroRpc }),
+    // `get_planos_margem` (FU4-F) é paginada: `.order().range()` sobre um builder "thenable". As outras
+    // RPCs (registrar_resultado_plano) são aguardadas direto — o mesmo objeto serve às duas.
+    rpc: (fn: string) => {
+      const resposta = fn === 'get_planos_margem' ? { data: [], error: null } : { data: null, error: erroRpc };
+      const b: Record<string, unknown> = {};
+      b.order = () => b;
+      b.range = () => b;
+      b.then = (resolve: (v: unknown) => void) => resolve(resposta);
+      return b;
+    },
   },
 }));
 vi.mock('@/contexts/ImpersonationContext', () => ({
@@ -62,7 +71,7 @@ vi.mock('@/contexts/ImpersonationContext', () => ({
 }));
 vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({ user: { id: MASTER }, isStaff: true }) }));
 vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn(), info: vi.fn() } }));
-vi.mock('@/lib/analytics', () => ({ track: vi.fn() }));
+vi.mock('@/lib/analytics', () => ({ track: vi.fn(), captureException: vi.fn() }));
 
 import { track } from '@/lib/analytics';
 import { useTacticalPlan } from '../useTacticalPlan';

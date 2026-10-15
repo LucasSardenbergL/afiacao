@@ -45,8 +45,12 @@ import { MODELO, toolDoModo } from "./plano-helpers.ts";
  * `v1.2-sonda-cron-onda2` nomeia os dois fixes que a fatia carrega: EOF por página VAZIA
  * (não mais página curta, #1889) e cursor comparado à PRIMEIRA linha da página (#1901). Um bundle
  * que responde esta string é necessariamente ≥ esta fatia — e, por transitividade, ≥ o #1520.
+ *
+ * `v1.5-margem-fora-do-prompt` (FU4-F, plano tático): a margem do cliente, a dos pares e a do bundle
+ * saem do contexto do modelo nos DOIS modos (`insumosSemMargem`), o system prompt ganha a regra
+ * "margem é dado interno" e a tool estratégica deixa de pedir cenários de margem (`expected_result`).
  */
-export const VERSAO = "v1.4-cliente-ia-com-coleira";
+export const VERSAO = "v1.5-margem-fora-do-prompt";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
