@@ -14,7 +14,8 @@ export interface SaidaReplay {
   primeiroDiaRuptura: number | null;
   unidadesPerdidas: number;
   indeterminado: boolean;
-  estoqueMedio: number;
+  estoqueMedio: number | null;
+  estoqueFinal: number;
   reposicaoPropria: boolean;
 }
 export type ClasseCorte = 'teria_rompido' | 'adiado' | 'eliminado' | 'indeterminado';
@@ -23,7 +24,7 @@ export function replaySku(e: EntradaReplay): SaidaReplay {
   let estoque = e.estoqueInicial;
   let perdidas = 0;
   let primeiro: number | null = null;
-  let indeterminado = false;
+  let indeterminado = !Number.isFinite(e.estoqueInicial);
   let somaEstoque = 0;
   let chegadaPropria: number | null = null;
   let reposicaoPropria = false;
@@ -32,15 +33,19 @@ export function replaySku(e: EntradaReplay): SaidaReplay {
     if (e.removido && e.removido.dia === t) estoque -= e.removido.qtde;
     if (chegadaPropria === t && e.removido) { estoque += e.removido.qtde; chegadaPropria = null; }
     const d = e.demanda[t];
-    if (d === null) indeterminado = true;
-    else if (estoque >= d) estoque -= d;
+    if (d === null || !Number.isFinite(d)) indeterminado = true;
     else {
-      perdidas += d - Math.max(estoque, 0);
-      estoque = 0;
-      if (primeiro === null) primeiro = t;
+      // o déficit da remoção persiste (estoque pode ficar negativo) até um recebimento cobri-lo
+      const vendido = Math.min(d, Math.max(estoque, 0));
+      estoque -= vendido;
+      const perde = d - vendido;
+      if (perde > 0) {
+        perdidas += perde;
+        if (primeiro === null) primeiro = t;
+      }
     }
     if (e.politica && e.removido && !reposicaoPropria && t >= e.removido.dia && estoque <= e.politica.pontoPedido) {
-      chegadaPropria = t + e.politica.leadTimeDias;
+      chegadaPropria = t + Math.max(1, Math.ceil(e.politica.leadTimeDias));
       reposicaoPropria = true;
     }
     somaEstoque += estoque;
@@ -50,13 +55,14 @@ export function replaySku(e: EntradaReplay): SaidaReplay {
     primeiroDiaRuptura: primeiro,
     unidadesPerdidas: perdidas,
     indeterminado,
-    estoqueMedio: e.demanda.length ? somaEstoque / e.demanda.length : 0,
+    estoqueMedio: e.demanda.length ? somaEstoque / e.demanda.length : null,
+    estoqueFinal: estoque,
     reposicaoPropria,
   };
 }
 
 export function classificarCorte(com: SaidaReplay, sem: SaidaReplay): ClasseCorte {
   if (com.indeterminado || sem.indeterminado) return 'indeterminado';
-  if (sem.unidadesPerdidas > com.unidadesPerdidas) return 'teria_rompido';
+  if (sem.unidadesPerdidas > com.unidadesPerdidas + 1e-9) return 'teria_rompido';
   return sem.reposicaoPropria ? 'adiado' : 'eliminado';
 }
