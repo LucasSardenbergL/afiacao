@@ -12,7 +12,7 @@ export interface PontoTrajetoria { data: DataISO; saldo: number }
 export type EstadoCaixa =
   | { tipo: 'viavel'; piso: number; dataPiso: DataISO }
   | { tipo: 'inviavel'; primeiraViolacao: DataISO; deficitMax: number }
-  | { tipo: 'indeterminado'; camadas: string[]; piso: number };
+  | { tipo: 'indeterminado'; camadas: string[]; piso: number | null };
 
 export function trajetoriaDiaria(saldoInicial: number, inicio: DataISO, dias: number, fluxos: Fluxo[]): PontoTrajetoria[] {
   let n = dias;
@@ -27,6 +27,8 @@ export function trajetoriaDiaria(saldoInicial: number, inicio: DataISO, dias: nu
 }
 
 export function avaliarEstado(traj: PontoTrajetoria[], reserva: number, ausencias: string[]): EstadoCaixa {
+  // Trajetória vazia = nada a avaliar: fail-closed (nunca 'viavel' com piso Infinity).
+  if (traj.length === 0) return { tipo: 'indeterminado', camadas: [...ausencias, 'trajetoria_vazia'], piso: null };
   let piso = Infinity;
   let dataPiso = traj[0]?.data ?? '';
   let primeiraViolacao: DataISO | null = null;

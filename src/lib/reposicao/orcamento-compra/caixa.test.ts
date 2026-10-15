@@ -33,6 +33,9 @@ describe('trajetória diária e estado', () => {
     const t = trajetoriaDiaria(300_000, '2026-10-01', 5, [f('2026-10-03', -50_000), f('2026-10-04', 20_000)]);
     expect(avaliarEstado(t, 224_000, [])).toEqual({ tipo: 'viavel', piso: 250_000, dataPiso: '2026-10-03' });
   });
+  it('trajetória vazia → indeterminado fail-closed, nunca viável com piso Infinity', () => {
+    expect(avaliarEstado([], 50, [])).toEqual({ tipo: 'indeterminado', camadas: ['trajetoria_vazia'], piso: null });
+  });
   it('semana agregada: saídas no 1º dia, entradas no último (limite inferior)', () => {
     expect(fluxosDeSemanaAgregada('2026-10-19', '2026-10-25', 50, 30)).toEqual([
       { data: '2026-10-19', valor: -30, camada: 'base_titulos' },
@@ -68,6 +71,34 @@ describe('conciliação pedido → NF → CP (spec §8 teste 3)', () => {
     expect(r.fluxos).toEqual([{ data: '2026-10-01', valor: -8_000, camada: 'compromisso_nao_conciliado' }]);
     expect(r.naoConciliado).toBe(8_000);
   });
+  it('NF vazia/zero não é coringa: pedidos sem NF válida ficam não conciliados', () => {
+    const r = conciliarCompromissos(
+      [
+        { pedidoId: 1, valorTotal: 30_000, dataPedido: '2026-10-01', nfs: ['0'] },
+        { pedidoId: 2, valorTotal: 20_000, dataPedido: '2026-10-01', nfs: [''] },
+      ],
+      [{ nf: '', valor: 45_000 }], '2026-10-01', 0,
+    );
+    expect(r.fluxos.reduce((s, x) => s + x.valor, 0)).toBe(-50_000);
+    expect(r.fluxos.length).toBe(2);
+    expect(r.naoConciliado).toBe(50_000);
+  });
+  it('NF informada sem título casado → não conciliado', () => {
+    const r = conciliarCompromissos([{ pedidoId: 5, valorTotal: 10_000, dataPedido: '2026-10-01', nfs: ['77'] }], [], '2026-10-01', 3);
+    expect(r.fluxos).toEqual([{ data: '2026-10-04', valor: -10_000, camada: 'compromisso_nao_conciliado' }]);
+    expect(r.naoConciliado).toBe(10_000);
+  });
+  it('união transitiva A-B-C por NFs compartilhadas vira um só componente', () => {
+    const r = conciliarCompromissos(
+      [
+        { pedidoId: 1, valorTotal: 10_000, dataPedido: '2026-10-01', nfs: ['1'] },
+        { pedidoId: 2, valorTotal: 10_000, dataPedido: '2026-10-01', nfs: ['1', '2'] },
+        { pedidoId: 3, valorTotal: 10_000, dataPedido: '2026-10-01', nfs: ['2'] },
+      ],
+      [{ nf: '1', valor: 5_000 }, { nf: '2', valor: 5_000 }], '2026-10-01', 0,
+    );
+    expect(r.fluxos).toEqual([{ data: '2026-10-01', valor: -20_000, camada: 'compromisso_conciliado' }]);
+  });
   it('título maior que o pedido não gera entrada', () => {
     const r = conciliarCompromissos([{ pedidoId: 4, valorTotal: 10, dataPedido: '2026-10-01', nfs: ['1'] }], [{ nf: '1', valor: 12 }], '2026-10-01', 0);
     expect(r.fluxos).toEqual([]);
@@ -81,6 +112,17 @@ describe('ritmo não-Sayerlack', () => {
     const fl = projetarRitmo('2026-10-01', 31, ritmo, { '2026-10': 200 });
     expect(fl).toEqual([{ data: '2026-10-05', valor: -300, camada: 'saida_nao_sayerlack' }]);
   });
+  it('mês parcial: o desconto vale sobre o total da janela (dia 5 fora da janela)', () => {
+    const ritmo = new Array(32).fill(0); ritmo[5] = 1000; ritmo[20] = 500;
+    const fl = projetarRitmo('2026-10-15', 17, ritmo, { '2026-10': 100 });
+    expect(fl.length).toBe(1);
+    expect(fl[0].data).toBe('2026-10-20');
+    expect(fl[0].camada).toBe('saida_nao_sayerlack');
+    expect(fl[0].valor).toBeCloseTo(-400, 9);
+  });
+  it('ritmoPorDiaDoMes rejeita meses <= 0', () => {
+    expect(() => ritmoPorDiaDoMes([], 0)).toThrow('meses deve ser > 0');
+  });
   it('dia 31 em mês de 30 dias vai para o último dia', () => {
     const ritmo = new Array(32).fill(0); ritmo[31] = 100;
     expect(projetarRitmo('2026-11-01', 30, ritmo, {})).toEqual([{ data: '2026-11-30', valor: -100, camada: 'saida_nao_sayerlack' }]);
@@ -88,6 +130,12 @@ describe('ritmo não-Sayerlack', () => {
 });
 
 describe('continuidade do motor', () => {
+  it('início do laço em lag+1 (seg, lag 1 → primeira provisão qua 21)', () => {
+    expect(provisaoContinuidade('2026-10-19', 4, 100, 1, 0)).toEqual([
+      { data: '2026-10-21', valor: -100, camada: 'continuidade_motor' },
+      { data: '2026-10-22', valor: -100, camada: 'continuidade_motor' },
+    ]);
+  });
   it('provisão em dia útil após o lag; a compra aceita consome a provisão mais cedo', () => {
     // início sex 2026-10-16, lag 2 → primeiro dia possível 2026-10-19 (seg)
     const fl = provisaoContinuidade('2026-10-16', 6, 100, 2, 150);

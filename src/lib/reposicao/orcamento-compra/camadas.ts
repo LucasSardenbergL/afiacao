@@ -20,6 +20,7 @@ export function conciliarCompromissos(
   const titulosPorNf = new Map<string, number>();
   for (const t of titulos) {
     const k = normalizarNf(t.nf);
+    if (k === '') continue; // NF vazia/zero não identifica nada (coringa fail-open)
     titulosPorNf.set(k, (titulosPorNf.get(k) ?? 0) + t.valor);
   }
   const pai = new Map<string, string>();
@@ -31,7 +32,7 @@ export function conciliarCompromissos(
   const nosPedido = pedidos.map((p) => `p:${p.pedidoId}`);
   nosPedido.forEach((n) => pai.set(n, n));
   pedidos.forEach((p, i) => {
-    for (const nf of p.nfs.map(normalizarNf)) {
+    for (const nf of p.nfs.map(normalizarNf).filter((x) => x !== '')) {
       const n = `n:${nf}`;
       if (!pai.has(n)) pai.set(n, n);
       unir(nosPedido[i], n);
@@ -40,10 +41,10 @@ export function conciliarCompromissos(
   const componentes = new Map<string, { valor: number; data: DataISO; nfs: Set<string>; semNf: boolean }>();
   pedidos.forEach((p, i) => {
     const raiz = achar(nosPedido[i]);
-    const c = componentes.get(raiz) ?? { valor: 0, data: p.dataPedido, nfs: new Set<string>(), semNf: p.nfs.length === 0 };
+    const c = componentes.get(raiz) ?? { valor: 0, data: p.dataPedido, nfs: new Set<string>(), semNf: false };
     c.valor += p.valorTotal;
     if (p.dataPedido < c.data) c.data = p.dataPedido;
-    p.nfs.forEach((nf) => c.nfs.add(normalizarNf(nf)));
+    p.nfs.map(normalizarNf).filter((x) => x !== '').forEach((nf) => c.nfs.add(nf));
     componentes.set(raiz, c);
   });
   const fluxos: Fluxo[] = [];
@@ -51,16 +52,19 @@ export function conciliarCompromissos(
   for (const c of componentes.values()) {
     const titulado = [...c.nfs].reduce((s, nf) => s + (titulosPorNf.get(nf) ?? 0), 0);
     const residuo = c.valor - titulado;
+    // Sem NF válida, ou NF sem nenhum título casado: nada comprova o faturamento → não conciliado (spec §6.2).
+    const semNf = c.nfs.size === 0 || titulado === 0;
     if (residuo <= 0) continue;
     const dataPrevista = addDias(c.data, lagDias);
     const data = dataPrevista < inicio ? inicio : dataPrevista;
-    if (c.semNf) naoConciliado += residuo;
-    fluxos.push({ data, valor: -residuo, camada: c.semNf ? 'compromisso_nao_conciliado' : 'compromisso_conciliado' });
+    if (semNf) naoConciliado += residuo;
+    fluxos.push({ data, valor: -residuo, camada: semNf ? 'compromisso_nao_conciliado' : 'compromisso_conciliado' });
   }
   return { fluxos, naoConciliado };
 }
 
 export function ritmoPorDiaDoMes(pagamentos: { data: DataISO; valor: number }[], meses: number): number[] {
+  if (!(meses > 0)) throw new Error('meses deve ser > 0');
   const ritmo = new Array<number>(32).fill(0);
   for (const p of pagamentos) ritmo[Number(p.data.slice(8, 10))] += p.valor / meses;
   return ritmo;
@@ -71,6 +75,10 @@ const ultimoDiaDoMes = (d: DataISO) => {
   return new Date(Date.UTC(a, m, 0)).getUTCDate();
 };
 
+/**
+ * `jaTituladoPorMes[mes]` deve conter APENAS títulos em aberto (não-Sayerlack) com vencimento
+ * dentro de [inicio, inicio+dias) daquele mês; o desconto é aplicado sobre o total da janela.
+ */
 export function projetarRitmo(inicio: DataISO, dias: number, ritmo: number[], jaTituladoPorMes: Record<string, number>): Fluxo[] {
   const porMes = new Map<string, { data: DataISO; bruto: number }[]>();
   for (let i = 0; i < dias; i++) {
