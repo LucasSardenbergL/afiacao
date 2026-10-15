@@ -267,6 +267,44 @@ Fechado por REVOKE SELECT de tabela + GRANT das 30 outras colunas (o idioma do `
   (984/984 planos, policy staff-wide sem escopo de carteira) e o **texto** do plano gerado pelo LLM
   (826/984 citam "margem … N%"). São entrega própria.
 
+### 13. A margem no plano tático: coluna E texto — e o texto vazava para o CLIENTE (2026-10-15)
+
+As duas vias que o #3072 deixou registradas, fechadas juntas. `farmer_tactical_plans` tinha SELECT de
+tabela para authenticated e policy **staff-wide** (`master OR employee`, sem carteira); `current_margin_pct`
+e `cluster_avg_margin_pct` com valor em 984/984 planos e `expected_result` (cenários de margem que a IA
+projetava a partir do número) em 896.
+
+- **Coluna:** mesmo idioma do #3072 — RPC `get_planos_margem` (gate de projeção sob `cap_custo_ler`,
+  escopo = a policy, sem ids → 0 linhas) + REVOKE de tabela e GRANT das 38 colunas restantes (B).
+- **Texto:** fechar coluna não fecha texto. 902/984 planos citavam "margem … N%". Duas metades:
+  1. a edge `generate-tactical-plan` para de mandar a margem ao modelo (`insumosSemMargem`, nos dois
+     modos — cobre o build velho do PWA e o cron com service_role), ganha a regra "margem é dado
+     interno" e deixa de pedir cenários de margem;
+  2. a migration A saneia o que já está gravado e o que vier: `private.sanear_texto_margem` remove a
+     frase com número-de-margem e as frases com número da SEQUÊNCIA que fala de margem; trigger em toda
+     gravação; original num backup em `private` sem GRANT, e o backfill recalcula SEMPRE do original.
+- **O achado que mudou a leitura do problema:** não era só a vendedora lendo. Em **273** planos o número
+  estava nas falas que ela diz AO CLIENTE (pergunta de implicação, transição, resposta a objeção), e em
+  **294** a IA tratava a margem da Colacor como a do cliente ("sua margem de 40,97% está abaixo dos
+  pares"). Tirar o número do prompt foi também correção de qualidade, não só de autorização.
+- **Os detectores mediam com a mesma cegueira da regra:** a primeira versão do saneador zerava os dois
+  detectores em prod e mesmo assim deixava "Recuperar 4 p.p. de margem" — o ponto da abreviação partia
+  a frase em duas, e os detectores (`[^.]{0,80}`) paravam no mesmo ponto. Quem pegou foi o seed do
+  harness, escrito no formato da prod. ⇒ medir em prod não substitui um caso adversarial escrito à mão:
+  o detector herda as premissas de quem o escreveu.
+- **O challenge do Codex derrubou a 1ª regra** (contiguidade de 1 passo, exigindo número na frase de
+  contexto): "A margem está comprimida. Hoje, fica em 37,73%." passava, e uma sequência de 3 frases
+  deixava a última. Também "R$ 380 de margem" e "por cento" por extenso. Os detectores zerados NÃO
+  provavam ausência — provavam ausência do que eles sabiam procurar.
+- **Medido com a regra final (só agregados):** 1.747 de 35.922 frases removidas (4,9%), 89 só pela
+  sequência; resíduo 916 → 0 (detector bidirecional), 551 → 0 (valor literal da margem com 2 casas),
+  87 → 0 (R$/fração/por extenso junto de margem). O inteiro arredondado sobra em 22 planos, todos
+  coincidência conferida (churn 64%, "30% mais vida útil").
+- **Fora deste fecho, de propósito:** o escopo de carteira da policy (staff-wide). Depois disto o plano
+  não carrega número derivado de custo; o que sobra é conteúdo comercial entre vendedoras, com o
+  trade-off já registrado em `useTacticalPlan.ts` (carteira VIVA ⇒ plano sumiria retroativamente da
+  métrica do dono anterior). E `bundle_lie`/`bundle_incremental_margin` seguem abertas: 0/984 com valor.
+
 ## Limite honesto herdado do #1465
 
 `get_preco_cockpit` mascara o número mas continua sendo **oráculo por bisseção**: o caller escolhe o
@@ -316,6 +354,11 @@ negativo**: a proteção vem da delegação (variante da lição 10).
   (linhas 125-135), então aplicar a `20260725130000` em prod **não** o deixa vermelho — depois do
   apply a mensagem dele ("a porta segue aberta até lá") fica verdadeira no fixture e falsa em prod.
   Corrigir o `L1` continua sendo follow-up do apply, não pré-requisito dele.
+- `db/test-tactical-plans-margem.sh` — 116 asserts, 15 falsificações com vermelho EXATO (GRANT de tabela e de
+  coluna devolvidos, projeção, gate de staff, EXECUTE de anon, backup legível, trigger removido, contexto sem
+  'margem', sem sequência, sequência só por frase com número, sem R$, jsonb sem recursão, backfill sem UPDATE,
+  sem normalizar "p.p.", POS8 aborta E desfaz o apply).
+  Writers de prod via fixture (`db/fixtures/tactical-plans-margem-prod-20261015.sql`).
 - `db/test-fcs-margem-coluna-fechada.sh` — 63 asserts, 7 falsificações com vermelho EXATO (GRANT de tabela devolvido, margem
   na lista do GRANT, projeção, escopo, fail-closed, EXECUTE de anon, policy aberta). Linha de base L1 prova
   o furo com o ACL de prod antes das migrations.

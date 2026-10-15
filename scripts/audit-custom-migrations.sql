@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 638
+-- Total de custom migrations: 640
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -699,7 +699,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261014120000', 'fin_ciclo_cliente_views', '20261014120000_fin_ciclo_cliente_views.sql'),
   ('20261014120000', 'sayerlack_importar_pedido_portal', '20261014120000_sayerlack_importar_pedido_portal.sql'),
   ('20261014120100', 'fcs_margem_fecha_coluna', '20261014120100_fcs_margem_fecha_coluna.sql'),
-  ('20261014211500', 'defasagem_desconto_valor', '20261014211500_defasagem_desconto_valor.sql')
+  ('20261014211500', 'defasagem_desconto_valor', '20261014211500_defasagem_desconto_valor.sql'),
+  ('20261015120000', 'tactical_plans_margem_rpc_saneia_texto', '20261015120000_tactical_plans_margem_rpc_saneia_texto.sql'),
+  ('20261015120100', 'tactical_plans_margem_fecha_coluna', '20261015120100_tactical_plans_margem_fecha_coluna.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2712,7 +2714,13 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('fin_ciclo_cliente_views', 'view', 'public', 'v_ciclo_empresa_coorte', ''),
   ('sayerlack_importar_pedido_portal', 'function', 'public', 'sayerlack_importar_pedido_portal', ''),
   ('sayerlack_importar_pedido_portal', 'index', 'public', 'ux_pedido_compra_sugerido_portal_protocolo', 'pedido_compra_sugerido'),
-  ('defasagem_desconto_valor', 'function', 'public', 'get_defasagem_cliente', '')
+  ('defasagem_desconto_valor', 'function', 'public', 'get_defasagem_cliente', ''),
+  ('tactical_plans_margem_rpc_saneia_texto', 'function', 'private', 'sanear_texto_margem', ''),
+  ('tactical_plans_margem_rpc_saneia_texto', 'function', 'private', 'sanear_jsonb_margem', ''),
+  ('tactical_plans_margem_rpc_saneia_texto', 'function', 'private', 'tactical_plan_saneia_margem', ''),
+  ('tactical_plans_margem_rpc_saneia_texto', 'function', 'public', 'get_planos_margem', ''),
+  ('tactical_plans_margem_rpc_saneia_texto', 'table', 'private', 'farmer_tactical_plans_texto_original', ''),
+  ('tactical_plans_margem_rpc_saneia_texto', 'trigger', 'public', 'trg_tactical_plan_saneia_margem', 'farmer_tactical_plans')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4773,7 +4781,13 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('fin_ciclo_cliente_views', 'view', 'public', 'v_ciclo_empresa_coorte', ''),
   ('sayerlack_importar_pedido_portal', 'function', 'public', 'sayerlack_importar_pedido_portal', ''),
   ('sayerlack_importar_pedido_portal', 'index', 'public', 'ux_pedido_compra_sugerido_portal_protocolo', 'pedido_compra_sugerido'),
-  ('defasagem_desconto_valor', 'function', 'public', 'get_defasagem_cliente', '')
+  ('defasagem_desconto_valor', 'function', 'public', 'get_defasagem_cliente', ''),
+  ('tactical_plans_margem_rpc_saneia_texto', 'function', 'private', 'sanear_texto_margem', ''),
+  ('tactical_plans_margem_rpc_saneia_texto', 'function', 'private', 'sanear_jsonb_margem', ''),
+  ('tactical_plans_margem_rpc_saneia_texto', 'function', 'private', 'tactical_plan_saneia_margem', ''),
+  ('tactical_plans_margem_rpc_saneia_texto', 'function', 'public', 'get_planos_margem', ''),
+  ('tactical_plans_margem_rpc_saneia_texto', 'table', 'private', 'farmer_tactical_plans_texto_original', ''),
+  ('tactical_plans_margem_rpc_saneia_texto', 'trigger', 'public', 'trg_tactical_plan_saneia_margem', 'farmer_tactical_plans')
 )
 SELECT
   e.migration,

@@ -41,7 +41,7 @@ export const FONTE_SHA256: Record<string, string> = {
   "fin-valor-cockpit": "1ed02206fb6b033ec92d351a8595dc0b92ac39f9e99e485d5491047f8d58aa29",
   "fin-valor-engine": "3254748b99af9d87e12d777181170ab6d3598daac8542a21ac47987671a4187a",
   "generate-bundle-argument": "4844fc382ff2708fb0c9e351a47eb2c48bb0f57bd24d9f46fdd705221a158f15",
-  "generate-tactical-plan": "c62690e7df4b22c6828d4b6a3d74e8547652e401cc20398660927e90cac92886",
+  "generate-tactical-plan": "bba99a973472ad11bb710827eeba74a33f6d3e85ee53da174126552b9aa8521b",
   "gerar-pedidos-diario": "1494440f221d1b45418c7a73fdaca80690d4b77277ab869025165a7523bd1101",
   "gmail-webhook-receiver": "cc47dc5aa76bccfc02e124d260967e5c6cf10ee1958b5e460c152b110f7f333b",
   "identify-tool": "953b25d2551d44bd9a7898ca2b2c8c7c7aa981eabfd882e3defc4bfbe269fc85",

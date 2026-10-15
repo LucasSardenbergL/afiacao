@@ -47,12 +47,6 @@ export interface Objecao {
   probability?: number;
 }
 
-export interface Cenarios {
-  best_case_margin: number | null;
-  likely_margin: number | null;
-  worst_case_margin: number | null;
-}
-
 export interface Ltv {
   current_annual: number | null;
   projected_annual: number | null;
@@ -68,7 +62,8 @@ interface Plano {
   offer_transition: string | null;
   probable_objections: Objecao[];
   ltv_projection: Ltv | null;
-  expected_result: Cenarios | null;
+  /** Sempre null: os cenários de MARGEM saíram da tool (a IA não recebe mais a margem — FU4-F). */
+  expected_result: null;
   operational_risks: string[];
 }
 
@@ -247,25 +242,6 @@ export function normalizarObjecoes(v: unknown): { objecoes: Objecao[]; descartad
   return { objecoes, descartadas };
 }
 
-/**
- * Cenários de margem. Cada campo é número medido ou null.
- * Se os TRÊS forem null, o objeto inteiro vira null — um card de cenários com três
- * traços é ruído; a ausência do bloco diz a mesma coisa sem simular uma projeção.
- */
-export function normalizarCenarios(v: unknown): Cenarios | null {
-  if (v === null || typeof v !== "object") return null;
-  const cru = v as Record<string, unknown>;
-  const cenarios: Cenarios = {
-    best_case_margin: numeroValido(cru.best_case_margin),
-    likely_margin: numeroValido(cru.likely_margin),
-    worst_case_margin: numeroValido(cru.worst_case_margin),
-  };
-  const algum = cenarios.best_case_margin !== null ||
-    cenarios.likely_margin !== null ||
-    cenarios.worst_case_margin !== null;
-  return algum ? cenarios : null;
-}
-
 /** Projeção de LTV. Mesma regra dos cenários: tudo null → bloco null. */
 export function normalizarLtv(v: unknown): Ltv | null {
   if (v === null || typeof v !== "object") return null;
@@ -381,9 +357,61 @@ export function montarPlano(
       offer_transition: textoValido(cru.offer_transition),
       probable_objections: objecoes,
       ltv_projection: estrategico ? normalizarLtv(cru.ltv_projection) : null,
-      expected_result: estrategico ? normalizarCenarios(cru.expected_result) : null,
+      // Cenários de MARGEM: sem a margem no contexto (FU4-F) a IA só poderia inventá-los, e com ela
+      // eram o próprio número reescrito (likely_margin ≈ margem atual em prod). Sai sempre null — mesmo
+      // que o modelo devolva o campo, que a tool não pede mais.
+      expected_result: null,
       operational_risks: estrategico ? normalizarRiscos(cru.operational_risks) : [],
     },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Margem fora do prompt (FU4-F)
+// ---------------------------------------------------------------------------
+
+/** Chaves do contexto do cliente que carregam a margem bruta (do cliente e da média dos pares). */
+const CHAVES_MARGEM_DO_CONTEXTO = ["grossMarginPct", "clusterAvgMargin"] as const;
+
+function semChaves(v: unknown, chaves: readonly string[]): unknown {
+  if (v === null || typeof v !== "object" || Array.isArray(v)) return v;
+  const copia = { ...(v as Record<string, unknown>) };
+  for (const c of chaves) delete copia[c];
+  return copia;
+}
+
+/** Bundle no prompt: só produtos e probabilidade. `lie` e `margin` são derivados de custo. */
+function bundleSemMargem(v: unknown): unknown {
+  if (v === null || typeof v !== "object" || Array.isArray(v)) return v;
+  const b = v as Record<string, unknown>;
+  return { products: b.products, probability: b.probability };
+}
+
+/**
+ * Tira a margem de TUDO que vai ao modelo, nos dois modos.
+ *
+ * O plano gravado é lido por toda a equipe de vendas (policy staff-wide) e o texto que a IA escreve
+ * repete o que recebe: com a margem no prompt, 902 de 984 planos a citavam (prod, 2026-10-15). Cortar
+ * na fronteira da edge — e não no front — cobre também o build VELHO do PWA, que segue mandando
+ * `grossMarginPct` para quem tem `cap_custo_ler`, e o modo self-contained do cron, que lê a margem com
+ * service_role. O servidor continua usando a margem para DECIDIR (objetivo, perfil, gate de R$/h);
+ * só o número não chega ao texto.
+ */
+export function insumosSemMargem(insumos: {
+  customerContext: unknown;
+  bundleContext: unknown;
+  diagnosticData: unknown;
+}): { customerContext: unknown; bundleContext: unknown; diagnosticData: unknown } {
+  const diag = insumos.diagnosticData;
+  let diagnosticData = diag;
+  if (diag !== null && typeof diag === "object" && !Array.isArray(diag) && "secondBundle" in diag) {
+    const d = diag as Record<string, unknown>;
+    diagnosticData = { ...d, secondBundle: bundleSemMargem(d.secondBundle) };
+  }
+  return {
+    customerContext: semChaves(insumos.customerContext, CHAVES_MARGEM_DO_CONTEXTO),
+    bundleContext: bundleSemMargem(insumos.bundleContext),
+    diagnosticData,
   };
 }
 
@@ -391,20 +419,32 @@ export function montarPlano(
 // Contrato com o modelo
 // ---------------------------------------------------------------------------
 
-// Os exemplos citam os QUATRO campos que hoje chegam null de verdade — os dois de margem
-// (#1495) e os dois de potencial, nulados pela 20260727130000_farmer_scores_colunas_orfas_null
-// porque nenhum writer os calcula (6.633/6.633 NULL em prod, medido 2026-07-29). Manter a lista
-// alinhada com o que o contexto REALMENTE traz importa: exemplo que não corresponde ao dado
-// ensina o modelo a esperar outra coisa.
+// Os exemplos citam os DOIS campos que hoje chegam null de verdade — os de potencial, nulados pela
+// 20260727130000_farmer_scores_colunas_orfas_null porque nenhum writer os calcula (6.633/6.633 NULL em
+// prod, medido 2026-07-29). Os dois de margem saíram dos exemplos porque saíram do CONTEXTO
+// (contextoSemMargem, FU4-F). Manter a lista alinhada com o que o contexto REALMENTE traz importa:
+// exemplo que não corresponde ao dado ensina o modelo a esperar outra coisa.
 const REGRA_DADO_AUSENTE =
-  `DADO AUSENTE: campo com valor null no contexto (ex.: "grossMarginPct": null, "clusterAvgMargin": null,
-"revenuePotential": null, "expansionPotential": null) significa NÃO MEDIDO — não é zero nem valor baixo.
-NUNCA estime, preencha ou infira um número para ele, e não construa argumento sobre margem, potencial de
-receita ou expansão a partir dele. Em especial: "revenuePotential": null NÃO significa cliente sem
+  `DADO AUSENTE: campo com valor null no contexto (ex.: "revenuePotential": null, "expansionPotential": null)
+significa NÃO MEDIDO — não é zero nem valor baixo. NUNCA estime, preencha ou infira um número para ele, e
+não construa argumento sobre potencial de receita ou expansão a partir dele. Em especial: "revenuePotential": null NÃO significa cliente sem
 potencial, e "expansionPotential": null NÃO significa cliente sem espaço para crescer — significa que
 ninguém mediu. Se um campo numérico da sua resposta dependeria de um dado não medido, responda null nele
 em vez de um número plausível. Um número inventado que chega à vendedora como medido é pior do que a
 ausência do campo.`;
+
+// FU4-F: a margem bruta por cliente é custo derivado e o plano é lido por toda a equipe de vendas — o
+// número fica FORA do contexto (contextoSemMargem) e do texto. Medido em prod (2026-10-15, 984 planos):
+// com o número no prompt, 902 planos o citavam, 273 punham a margem nas falas que a vendedora diz AO
+// CLIENTE e 294 a tratavam como margem DO CLIENTE ("sua margem de 40,97%") — ela é a margem da Colacor
+// na venda para ele. O sinal continua: o objetivo e o perfil já chegam decididos pelo servidor.
+const REGRA_MARGEM_INTERNA =
+  `MARGEM É DADO INTERNO: a margem que a Colacor tem nas vendas para este cliente NÃO está no contexto e NÃO
+é a margem do cliente. Não cite percentual, pontos percentuais ou valor de margem ou de lucro da Colacor,
+não compare margem com a de outros clientes e nunca peça ao vendedor que fale de margem com o cliente.
+Se o objetivo for "consolidacao_margem", isso quer dizer que a venda para este cliente rende menos que a
+média de clientes parecidos: trabalhe mix de maior valor agregado, serviço e redução de desconto, sem
+números de margem. Perfil "sensivel_preco" ou "orientado_qualidade" já resume o que importa da margem.`;
 
 const REGRA_SEM_HISTORICO =
   `Se "salesHistoryStatus" for "sem_historico" (SEM venda válida registrada — pode nunca ter comprado OU
@@ -419,6 +459,8 @@ ${REGRA_SEM_HISTORICO}
 
 ${REGRA_DADO_AUSENTE}
 
+${REGRA_MARGEM_INTERNA}
+
 Use SEMPRE a tool registrar_plano_tatico. Não responda em texto fora dela.`;
 
 const SYSTEM_ESTRATEGICO =
@@ -428,6 +470,8 @@ Gere um Plano Tático ESTRATÉGICO COMPLETO para o vendedor (Farmer), personaliz
 ${REGRA_SEM_HISTORICO}
 
 ${REGRA_DADO_AUSENTE}
+
+${REGRA_MARGEM_INTERNA}
 
 Use SEMPRE a tool registrar_plano_tatico. Não responda em texto fora dela.`;
 
@@ -477,7 +521,8 @@ const TOOL_ESSENCIAL = {
   },
 };
 
-/** Tool do modo estratégico: acrescenta plano B, implicação, LTV, cenários e riscos. */
+/** Tool do modo estratégico: acrescenta plano B, implicação, LTV e riscos.
+ *  Sem cenários de margem (`expected_result`): a IA não recebe a margem (FU4-F). */
 const TOOL_ESTRATEGICO = {
   name: "registrar_plano_tatico",
   description: "Registra o plano tático estratégico completo de abordagem ao cliente.",
@@ -498,16 +543,6 @@ const TOOL_ESTRATEGICO = {
           current_annual: { type: ["number", "null"], description: "Faturamento anual atual estimado" },
           projected_annual: { type: ["number", "null"], description: "Faturamento anual projetado após a ação" },
           growth_pct: { type: ["number", "null"], description: "Percentual de crescimento estimado" },
-        },
-      },
-      expected_result: {
-        type: ["object", "null"],
-        description:
-          "Cenários de margem. Se a margem atual do cliente não estiver medida (null no contexto), responda null nos três — não projete margem a partir de dado ausente.",
-        properties: {
-          best_case_margin: { type: ["number", "null"], description: "Margem no melhor cenário" },
-          likely_margin: { type: ["number", "null"], description: "Margem mais provável" },
-          worst_case_margin: { type: ["number", "null"], description: "Margem no pior cenário" },
         },
       },
       operational_risks: { type: "array", items: { type: "string" }, description: "Riscos operacionais" },
