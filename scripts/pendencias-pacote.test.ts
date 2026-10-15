@@ -15,7 +15,7 @@ import {
   TOKEN_SEM_CORPO,
   TOKEN_SIM,
 } from './lib/precondicao-banco';
-import { CONSUMIDOR_NUVEM, lerRelatorio, main, separarSaida } from './pendencias-pacote';
+import { CONSUMIDOR_NUVEM, incluirNovasComOrdem, lerRelatorio, main, separarSaida } from './pendencias-pacote';
 import { type ExecutorGitBytes } from './pendencias-prompt';
 import { ARQ_MAPA, fingerprintDaEdge, RAIZ_EDGES, renderizarMapa } from './sonda-fingerprint';
 
@@ -84,6 +84,18 @@ describe('lerRelatorio — o contrato com o pendencias:deploy --json', () => {
 
   it('NUNCA_ATESTADA não entra — ausência de dado pede SONDA, não deploy', () => {
     expect(nomes(JSON.stringify(veredito('NUNCA_ATESTADA')))).toEqual([]);
+  });
+
+  it('NUNCA_ATESTADA vem à parte em `nuncaAtestadas` — candidata, não leva', () => {
+    const r = lerRelatorio(JSON.stringify({
+      formato: 'pendencias-deploy/1',
+      vereditos: [
+        { edge: 'nova-com-ordem', estado: 'NUNCA_ATESTADA' },
+        { edge: 'copilot-analyze', estado: 'DIVERGE_P1' },
+        { edge: 'ok', estado: 'CONFERE' },
+      ],
+    }));
+    expect([r.nomes, r.nuncaAtestadas]).toEqual([['copilot-analyze'], ['nova-com-ordem']]);
   });
 
   it('formato desconhecido LANÇA — não adivinha a leva', () => {
@@ -972,6 +984,27 @@ describe('pendencias:pacote — a ordem entre edges vira ONDA', () => {
     expect(pacote).toMatch(/`edge-b`\*\* — ADIADA/);
   });
 
+  it('[PACOTE_B_NOVA_COM_ORDEM_LIBERADA_EXIT_0] B NUNCA_ATESTADA com manifesto + A provada: B sai pelo ledger (#3075)', () => {
+    const novaB = veredito(B, { estado: 'NUNCA_ATESTADA', observado: null, versao: null, via: null, idadeHoras: null });
+    const { codigo, colagem } = rodar(repo(), ledger(veredito(A), novaB));
+    expect(codigo).toBe(0);
+    expect(colagem).toContain(`\`${B}\``);
+  });
+
+  it('[PACOTE_B_NOVA_COM_ORDEM_A_NAO_PROVADA_EXIT_3] B nova com manifesto e A também nunca atestada: retida', () => {
+    const nunca = (e: string) => veredito(e, { estado: 'NUNCA_ATESTADA', observado: null, versao: null, via: null, idadeHoras: null });
+    const { codigo, colagem } = rodar(repo(), ledger(nunca(A), nunca(B)));
+    expect(codigo).toBe(3);
+    expect(colagem).toBe('');
+  });
+
+  it('[PACOTE_B_NOVA_SEM_MANIFESTO_FICA_FORA] B NUNCA_ATESTADA sem manifesto: nada a emitir (1ª sonda, não deploy)', () => {
+    const novaB = veredito(B, { estado: 'NUNCA_ATESTADA', observado: null, versao: null, via: null, idadeHoras: null });
+    const { codigo, colagem } = rodar(repo({ manifesto: null }), ledger(veredito(A), novaB));
+    expect(codigo).toBe(1);
+    expect(colagem).toBe('');
+  });
+
   it('[PACOTE_A_PROVADA_LIBERA_B_EXIT_0] controle: A servindo o par da REF há 31 min libera B', () => {
     const { codigo, colagem } = rodar(repo(), ledger(veredito(A), divergente(B)));
     expect(codigo).toBe(0);
@@ -1049,5 +1082,29 @@ describe('pendencias:pacote — a ordem entre edges vira ONDA', () => {
     expect(codigo).toBe(0);
     expect(colagem).toContain(`\`${A}\``);
     expect(colagem).toContain(`\`${B}\``);
+  });
+});
+
+describe('[EDGE_NOVA_COM_ORDEM] incluirNovasComOrdem — a edge nova que nenhum caminho emitia (#3075)', () => {
+  const comManifesto = new Set(['sayerlack-importar-pedido-portal']);
+  const tem = (e: string) => comManifesto.has(e);
+
+  it('NUNCA_ATESTADA com deploy-ordem.json na REF entra na leva (a prova da predecessora segue com o planejador)', () => {
+    expect(incluirNovasComOrdem([], ['sayerlack-importar-pedido-portal'], tem)).toEqual(['sayerlack-importar-pedido-portal']);
+  });
+
+  it('NUNCA_ATESTADA SEM manifesto continua fora — ausência de dado pede sonda, não deploy', () => {
+    expect(incluirNovasComOrdem(['copilot-analyze'], ['sem-manifesto'], tem)).toEqual(['copilot-analyze']);
+  });
+
+  it('junta com a leva pendente, sem duplicar, em ordem estável', () => {
+    expect(incluirNovasComOrdem(['z-pendente', 'sayerlack-importar-pedido-portal'], ['sayerlack-importar-pedido-portal'], tem))
+      .toEqual(['sayerlack-importar-pedido-portal', 'z-pendente']);
+  });
+
+  it('não consulta a REF para quem já está na leva', () => {
+    const consultadas: string[] = [];
+    incluirNovasComOrdem(['a'], ['a'], (e) => { consultadas.push(e); return true; });
+    expect(consultadas).toEqual([]);
   });
 });
