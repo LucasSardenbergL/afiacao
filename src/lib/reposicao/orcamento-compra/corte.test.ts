@@ -48,11 +48,13 @@ describe('cortar', () => {
     const r = cortar([c('A', 1, 10, null, { motivoSemScore: 'historico_insuficiente' })], base(1_000_000), 224_000, 0);
     expect(r.cortadas.map((x) => x.motivo)).toEqual(['sem_score']);
   });
-  it('split equivalente: filhos com a mesma raiz dão o mesmo resultado do pedido inteiro (spec §8 teste 4)', () => {
-    const inteiro = [c('A', 1, 10, 5), c('B', 1, 10, 4)];
-    const splitado = [c('A', 1, 10, 5, { pedidoRaizId: 1 }), c('B', 1, 10, 4, { pedidoRaizId: 1 })];
-    const chave = (r: ReturnType<typeof cortar>) => r.aceitas.map((x) => `${x.sku}:${x.k}`).sort();
-    expect(chave(cortar(splitado, base(1_000_000), 224_000, 50))).toEqual(chave(cortar(inteiro, base(1_000_000), 224_000, 50)));
+  it('split: filhos com a MESMA raiz somam para o mínimo; raízes distintas zeram (spec §8 teste 4)', () => {
+    const mesma = cortar([c('A', 1, 10, 5, { pedidoRaizId: 7 }), c('B', 1, 10, 4, { pedidoRaizId: 7 })], base(1_000_000), 224_000, 15);
+    expect(mesma.aceitas.map((x) => x.sku).sort()).toEqual(['A', 'B']);
+    expect(mesma.pedidosAbaixoMinimo).toEqual([]);
+    const distintas = cortar([c('A', 1, 10, 5, { pedidoRaizId: 1 }), c('B', 1, 10, 4, { pedidoRaizId: 2 })], base(1_000_000), 224_000, 15);
+    expect(distintas.aceitas).toHaveLength(0);
+    expect(distintas.cortadas.map((x) => x.motivo)).toEqual(['minimo', 'minimo']);
   });
   it('mínimo por pedido: completa com a melhor cortada quando cabe e ainda soma ΔV positivo', () => {
     const r = cortar([c('A', 1, 900, 50), c('A', 2, 100, -1)], base(1_000_000), 224_000, 1_000);
@@ -67,5 +69,48 @@ describe('cortar', () => {
     const r = cortar([c('A', 1, 900, 50, { protegida: true })], base(1_000_000), 224_000, 1_000);
     expect(r.aceitas).toHaveLength(1);
     expect(r.pedidosAbaixoMinimo).toEqual([1]);
+  });
+  it('R10: k-1 sem score derruba k (sem_score), sem fabricar escassez de caixa', () => {
+    const r = cortar([c('A', 1, 10, null), c('A', 2, 10, 5)], base(1_000_000_000), 224_000, 0);
+    expect(r.cortadas.map((x) => [x.c.k, x.motivo]).sort()).toEqual([[1, 'sem_score'], [2, 'sem_score']]);
+    expect(r.aceitas).toHaveLength(0);
+    expect(r.escassezCaixa).toBe(false);
+  });
+  it('R11: protegida sem desembolso → sem_score e estado indeterminado (camada protegido_sem_desembolso)', () => {
+    const r = cortar([c('A', 1, null as unknown as number, null, { protegida: true })], base(224_005), 224_000, 0);
+    expect(r.cortadas.map((x) => x.motivo)).toEqual(['sem_score']);
+    expect(r.estado.tipo).toBe('indeterminado');
+    expect(r.estado.tipo === 'indeterminado' && r.estado.camadas).toContain('protegido_sem_desembolso');
+  });
+  it('R12: protegida que não alcança o mínimo desfaz as adicionadas (A2 volta como econômico)', () => {
+    const r = cortar([c('A', 1, 100, 5, { protegida: true }), c('A', 2, 100, -50)], base(1_000_000), 224_000, 1_000);
+    expect(r.aceitas.map((x) => x.k)).toEqual([1]);
+    expect(r.cortadas.map((x) => [x.c.k, x.motivo])).toEqual([[2, 'economico']]);
+    expect(r.pedidosAbaixoMinimo).toEqual([1]);
+    expect(r.estado).toMatchObject({ tipo: 'viavel', piso: 999_900 });
+  });
+  it('R13: pedido zerado → scoreMarginal null e TODAS as cortadas dele viram minimo', () => {
+    const r = cortar([c('A', 1, 60, 60), c('B', 1, 50, 49)], base(224_100), 224_000, 1_000);
+    expect(r.aceitas).toHaveLength(0);
+    expect(r.cortadas.map((x) => x.motivo)).toEqual(['minimo', 'minimo']);
+    expect(r.scoreMarginal).toBeNull();
+  });
+  it('R13c: empate de score desempata por pedidoRaizId asc', () => {
+    const r = cortar([c('A', 1, 60, 60, { pedidoRaizId: 2 }), c('A', 1, 60, 60, { pedidoRaizId: 1 })], base(224_100), 224_000, 0);
+    expect(r.aceitas.map((x) => x.pedidoRaizId)).toEqual([1]);
+  });
+  it('R14i: sem k=1 no caixa, k=2 (menor, cabe) NÃO entra — prefixo', () => {
+    const r = cortar([c('A', 1, 60, 60), c('A', 2, 10, 9)], base(224_050), 224_000, 0);
+    expect(r.aceitas).toHaveLength(0);
+    expect(r.cortadas.map((x) => [x.c.k, x.motivo]).sort()).toEqual([[1, 'financeiro'], [2, 'financeiro']]);
+  });
+  it('R14ii: mínimo alcançado só com ΔV total ≤ 0 zera o pedido', () => {
+    const r = cortar([c('A', 1, 900, 1), c('A', 2, 100, -5)], base(1_000_000), 224_000, 1_000);
+    expect(r.aceitas).toHaveLength(0);
+    expect(r.cortadas.map((x) => x.motivo)).toEqual(['minimo', 'minimo']);
+  });
+  it('R14iii: zerar o pedido devolve o fluxo (piso = saldo da base)', () => {
+    const r = cortar([c('A', 1, 900, 50)], base(1_000_000), 224_000, 1_000);
+    expect(r.estado).toMatchObject({ tipo: 'viavel', piso: 1_000_000 });
   });
 });

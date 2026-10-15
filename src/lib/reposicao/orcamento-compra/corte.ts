@@ -34,15 +34,20 @@ export function cortar(cands: Candidata[], base: BaseCaixa, reserva: number, min
     avaliarEstado(trajetoriaDiaria(base.saldoInicial, base.inicio, base.dias, [...fluxos, ...extra]), reserva, []).tipo === 'viavel';
 
   const aceitas: Candidata[] = [];
+  const retirarFluxo = (c: Candidata) => {
+    const i = fluxos.findIndex((f) => f.camada === 'candidato' && f.data === c.dataPagamento && f.valor === -(c.desembolso as number));
+    if (i >= 0) fluxos.splice(i, 1);
+  };
   const cortadas: { c: Candidata; motivo: MotivoCorte }[] = [];
   const aceitaKs = new Set<string>();
   const marcar = (c: Candidata) => aceitaKs.add(`${chaveSku(c)}|${c.k}`);
   const temAnterior = (c: Candidata) => c.k === 1 || aceitaKs.has(`${chaveSku(c)}|${c.k - 1}`);
 
-  // 1. protegidas
+  // 1. protegidas (protegida sem desembolso: caixa desconhecido → estado final indeterminado)
+  let protegidoSemDesembolso = false;
   for (const c of cands) {
     if (!c.protegida) continue;
-    if (c.desembolso == null) { cortadas.push({ c, motivo: 'sem_score' }); continue; }
+    if (c.desembolso == null) { cortadas.push({ c, motivo: 'sem_score' }); protegidoSemDesembolso = true; continue; }
     aceitas.push(c); marcar(c); fluxos.push(fluxoDe(c));
   }
   const estadoProtegidas = avaliarEstado(trajetoriaDiaria(base.saldoInicial, base.inicio, base.dias, fluxos), reserva, []);
@@ -54,32 +59,36 @@ export function cortar(cands: Candidata[], base: BaseCaixa, reserva: number, min
   // 2. score ajustado não-crescente por SKU (respeita o prefixo)
   const discricionarias = cands.filter((c) => !c.protegida);
   const ajustado = new Map<Candidata, number>();
-  const porSku = new Map<string, Candidata[]>();
+  const todosPorSku = new Map<string, Candidata[]>();
   for (const c of discricionarias) {
-    if (c.deltaV == null || c.desembolso == null || c.desembolso <= 0) continue;
     const k = chaveSku(c);
-    if (!porSku.has(k)) porSku.set(k, []);
-    porSku.get(k)!.push(c);
+    if (!todosPorSku.has(k)) todosPorSku.set(k, []);
+    todosPorSku.get(k)!.push(c);
   }
-  for (const lista of porSku.values()) {
+  // Prefixo: a 1ª embalagem sem score derruba ela e TODAS as seguintes do mesmo (pedido, SKU) — nunca entram no guloso.
+  for (const lista of todosPorSku.values()) {
     lista.sort((a, b) => a.k - b.k);
     let teto = Infinity;
+    let quebrou = false;
     for (const c of lista) {
-      teto = Math.min(teto, (c.deltaV as number) / (c.desembolso as number));
+      if (quebrou || c.deltaV == null || c.desembolso == null || !(c.desembolso > 0)) {
+        quebrou = true;
+        cortadas.push({ c, motivo: 'sem_score' });
+        continue;
+      }
+      teto = Math.min(teto, c.deltaV / c.desembolso);
       ajustado.set(c, teto);
     }
   }
-  for (const c of discricionarias) if (!ajustado.has(c)) cortadas.push({ c, motivo: 'sem_score' });
 
   const ordem = [...ajustado.keys()].sort(
-    (a, b) => ajustado.get(b)! - ajustado.get(a)! || a.sku.localeCompare(b.sku) || a.k - b.k,
+    (a, b) => ajustado.get(b)! - ajustado.get(a)! || a.pedidoRaizId - b.pedidoRaizId || a.sku.localeCompare(b.sku) || a.k - b.k,
   );
-  let scoreMarginal: number | null = null;
   for (const c of ordem) {
     const s = ajustado.get(c)!;
     if (s <= 0) { cortadas.push({ c, motivo: 'economico' }); continue; }
     if (!temAnterior(c) || !cabe([fluxoDe(c)])) { cortadas.push({ c, motivo: 'financeiro' }); continue; }
-    aceitas.push(c); marcar(c); fluxos.push(fluxoDe(c)); scoreMarginal = s;
+    aceitas.push(c); marcar(c); fluxos.push(fluxoDe(c));
   }
 
   // 3. mínimo por pedido
@@ -93,36 +102,38 @@ export function cortar(cands: Candidata[], base: BaseCaixa, reserva: number, min
       const candidatasAoMinimo = cortadas
         .filter((x) => x.c.pedidoRaizId === raiz && x.motivo !== 'sem_score' && ajustado.has(x.c))
         .sort((a, b) => ajustado.get(b.c)! - ajustado.get(a.c)! || a.c.k - b.c.k);
-      const adicionadas: Candidata[] = [];
+      const adicionadas: { c: Candidata; motivo: MotivoCorte }[] = [];
       for (const x of candidatasAoMinimo) {
         if (total() >= minimoPedido) break;
         if (!temAnterior(x.c) || !cabe([fluxoDe(x.c)])) continue;
-        aceitas.push(x.c); marcar(x.c); fluxos.push(fluxoDe(x.c)); adicionadas.push(x.c);
+        cortadas.splice(cortadas.indexOf(x), 1);
+        aceitas.push(x.c); marcar(x.c); fluxos.push(fluxoDe(x.c)); adicionadas.push(x);
       }
       const somaDeltaV = doPedido().reduce((s, c) => s + (c.deltaV ?? 0), 0);
       const temProtegida = doPedido().some((c) => c.protegida);
-      if (total() >= minimoPedido && (somaDeltaV > 0 || temProtegida)) {
-        for (const a of adicionadas) cortadas.splice(cortadas.findIndex((x) => x.c === a), 1);
-        continue;
+      if (total() >= minimoPedido && (somaDeltaV > 0 || temProtegida)) continue;
+      // não fechou o mínimo de forma útil: desfaz as adicionadas (aceitas, prefixo, fluxo) devolvendo o motivo original
+      for (const a of adicionadas) {
+        aceitas.splice(aceitas.indexOf(a.c), 1);
+        aceitaKs.delete(`${chaveSku(a.c)}|${a.c.k}`);
+        retirarFluxo(a.c);
+        cortadas.push(a);
       }
-      if (temProtegida) {
-        for (const a of adicionadas) cortadas.splice(cortadas.findIndex((x) => x.c === a), 1);
-        pedidosAbaixoMinimo.push(raiz);
-        continue;
-      }
-      // zera o pedido: tira do aceito e dos fluxos
+      if (temProtegida) { pedidosAbaixoMinimo.push(raiz); continue; }
+      // zera o pedido: tudo dele (aceito ou já cortado, qualquer motivo) vira 'minimo' e sai dos fluxos
       for (const c of doPedido()) {
         aceitas.splice(aceitas.indexOf(c), 1);
-        const iFluxo = fluxos.findIndex((f) => f.camada === 'candidato' && f.data === c.dataPagamento && f.valor === -(c.desembolso as number));
-        fluxos.splice(iFluxo, 1);
-        const jaCortada = cortadas.findIndex((x) => x.c === c);
-        if (jaCortada >= 0) cortadas[jaCortada] = { c, motivo: 'minimo' };
-        else cortadas.push({ c, motivo: 'minimo' });
+        retirarFluxo(c);
+        cortadas.push({ c, motivo: 'minimo' });
       }
+      for (const x of cortadas) if (x.c.pedidoRaizId === raiz) x.motivo = 'minimo';
     }
   }
 
-  const estado = avaliarEstado(trajetoriaDiaria(base.saldoInicial, base.inicio, base.dias, fluxos), reserva, base.ausencias);
+  const aceitasDiscricionarias = aceitas.filter((c) => !c.protegida);
+  const scoreMarginal = aceitasDiscricionarias.length === 0 ? null : Math.min(...aceitasDiscricionarias.map((c) => ajustado.get(c)!));
+
+  const estado = avaliarEstado(trajetoriaDiaria(base.saldoInicial, base.inicio, base.dias, fluxos), reserva, protegidoSemDesembolso ? [...base.ausencias, 'protegido_sem_desembolso'] : base.ausencias);
   return {
     aceitas,
     cortadas,
