@@ -371,7 +371,7 @@ export function montarPlano(
 // ---------------------------------------------------------------------------
 
 /** Chaves do contexto do cliente que carregam a margem bruta (do cliente e da média dos pares). */
-export const CHAVES_MARGEM_DO_CONTEXTO = ["grossMarginPct", "clusterAvgMargin"] as const;
+const CHAVES_MARGEM_DO_CONTEXTO = ["grossMarginPct", "clusterAvgMargin"] as const;
 
 function semChaves(v: unknown, chaves: readonly string[]): unknown {
   if (v === null || typeof v !== "object" || Array.isArray(v)) return v;
