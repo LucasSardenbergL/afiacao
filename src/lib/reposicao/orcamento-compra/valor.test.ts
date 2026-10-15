@@ -5,7 +5,7 @@ import { atendidas, quantidadeProtegida, valorDasEmbalagens, type ParamsValor } 
 
 const p: ParamsValor = {
   margemUnit: 5, custoUnit: 10, hDia: 0.15 / 365, diasAteChegada: 14, demandaMediaDiaria: 1,
-  horizonteMaxDias: 365, promoBeneficioUnit: 0, horizontePromoDias: 90,
+  diasJanela: 1, promoBeneficioUnit: 0, horizontePromoDias: 90,
 };
 
 describe('atendidas', () => {
@@ -59,5 +59,27 @@ describe('quantidadeProtegida', () => {
     expect(quantidadeProtegida(-2, 1, 14, 15)).toBe(3);
     // estoque que sobra na chegada cobre tudo → 0
     expect(quantidadeProtegida(20, 1, 14, 15)).toBe(0);
+  });
+});
+
+describe('carregamento limitado à janela de adiamento (spec §5.2)', () => {
+  it('slow mover: 20 un, d=0,05, janela 1 dia -> atende >0 e ΔV>0', () => {
+    // carregamento = 10*(0,15/365)*20*min(10/0,05, 1) = 0,0822; receita = 5 * (~1/20 un) ~ 0,25 > 0,0822
+    const serie = Array.from({ length: 180 }, (_, i) => (i % 20 === 0 ? 1 : 0));
+    const amostras = amostrasEmpiricas(serie, 14, 15);
+    const v = valorDasEmbalagens(0, [20], amostras, { ...p, demandaMediaDiaria: 0.05 });
+    expect(v[0].unidadesAtendidas!).toBeGreaterThan(0);
+    expect(v[0].deltaV!).toBeGreaterThan(0);
+  });
+  it('backlog atravessando embalagens: sem carregamento no que cobre backlog', () => {
+    const v = valorDasEmbalagens(-3, [2, 2], [{ ateChegada: 0, total: 0 }], p);
+    expect(v[0].unidadesAtendidas).toBe(2);
+    expect(v[0].deltaV).toBe(2 * 5);
+    expect(v[1].unidadesAtendidas).toBe(1);
+    expect(v[1].deltaV!).toBeLessThan(1 * 5);
+  });
+  it('custo null -> sem score', () => {
+    const v = valorDasEmbalagens(0, [1], [{ ateChegada: 0, total: 5 }], { ...p, custoUnit: null });
+    expect(v[0]).toEqual({ deltaV: null, unidadesAtendidas: null, motivoSemScore: 'preco_ou_margem_ausente' });
   });
 });

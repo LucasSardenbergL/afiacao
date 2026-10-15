@@ -11,7 +11,8 @@ export interface ParamsValor {
   hDia: number;
   diasAteChegada: number;
   demandaMediaDiaria: number;
-  horizonteMaxDias: number;
+  /** janela de carregamento = diasTotal − diasAteChegada; spec §5.2 */
+  diasJanela: number;
   /** (preço cheio − preço promo) por unidade; 0 sem promoção */
   promoBeneficioUnit: number;
   horizontePromoDias: number;
@@ -55,7 +56,7 @@ export function valorDasEmbalagens(
     // parte da embalagem que vai para a prateleira (não cobre backlog)
     const qEstocada = Math.max(qAtual - backlog, 0) - Math.max(qAnterior - backlog, 0);
     const posicaoAntes = onhandMedio + Math.max(qAnterior - backlog, 0);
-    const dias = d > 0 ? Math.min((posicaoAntes + qEstocada / 2) / d, p.horizonteMaxDias) : p.horizonteMaxDias;
+    const dias = d > 0 ? Math.min((posicaoAntes + qEstocada / 2) / d, p.diasJanela) : p.diasJanela;
     const carregamento = p.custoUnit * p.hDia * qEstocada * dias;
     const promo = dias <= p.horizontePromoDias ? p.promoBeneficioUnit * qEstocada : 0;
     out.push({ deltaV: p.margemUnit * unidades - carregamento + promo, unidadesAtendidas: unidades, motivoSemScore: null });
