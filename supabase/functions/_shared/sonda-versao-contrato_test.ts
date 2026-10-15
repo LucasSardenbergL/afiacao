@@ -39,6 +39,9 @@ import * as valorEngine from "../fin-valor-engine/versao.ts";
 import * as nextBestAction from "../fin-next-best-action/versao.ts";
 import * as regimeTributario from "../fin-regime-tributario/versao.ts";
 import * as suggestMapping from "../fin-suggest-mapping/versao.ts";
+import * as elevenlabsScribeToken from "../elevenlabs-scribe-token/versao.ts";
+import * as structureCustomerProcess from "../structure-customer-process/versao.ts";
+import * as omieSondaRecebimento from "../omie-sonda-recebimento/versao.ts";
 import * as finFunding from "../fin-funding/versao.ts";
 import * as algoAudit from "../algorithm-a-audit/versao.ts";
 import * as positivacao from "../carteira-positivacao-snapshot/versao.ts";
@@ -157,6 +160,11 @@ const EDGES: Array<{ nome: string; mod: ModSonda }> = [
   { nome: "fin-next-best-action", mod: nextBestAction },
   { nome: "fin-regime-tributario", mod: regimeTributario },
   { nome: "fin-suggest-mapping", mod: suggestMapping },
+  // As 3 edges ATIVAS que restavam sem sonda (2026-10-14). As dos módulos congelados ficam fora
+  // até a reavaliação dos 90 dias (plano 2026-09-05 §0.3).
+  { nome: "elevenlabs-scribe-token", mod: elevenlabsScribeToken },
+  { nome: "structure-customer-process", mod: structureCustomerProcess },
+  { nome: "omie-sonda-recebimento", mod: omieSondaRecebimento },
   { nome: "fin-funding", mod: finFunding },
   { nome: "algorithm-a-audit", mod: algoAudit },
   { nome: "carteira-positivacao-snapshot", mod: positivacao },
@@ -429,6 +437,10 @@ const FORMA_NORMALIZADA = [
   "fin-next-best-action",
   "fin-regime-tributario",
   "fin-suggest-mapping",
+  // As 3 ativas restantes (2026-10-14): nasceram já nesta forma.
+  "elevenlabs-scribe-token",
+  "structure-customer-process",
+  "omie-sonda-recebimento",
   "algorithm-a-audit",
   "carteira-positivacao-snapshot",
   "omie-financeiro",
@@ -478,6 +490,8 @@ const FORMA_NORMALIZADA = [
  * que é o desfecho certo: melhor um gate que para do que um que mede a coisa errada.
  */
 const ANCORA_CLIENT: Record<string, string> = {
+  // `structure-customer-process` não cria client do banco: o IO dela é o modelo da Anthropic.
+  "structure-customer-process": "new Anthropic(",
   // `fin-next-best-action` não cria client: o IO dela começa na primeira invocação de outra edge
   // (`invoke<…>(…)`, fetch com service_role para fin-cashflow-engine/fin-valor-engine). A sonda
   // tem de responder antes dessas sete invocações pesadas.
@@ -1002,6 +1016,8 @@ Deno.test("gate próprio: onde o gate da edge não aceita cron-secret, a sonda N
  * de fora em silêncio.
  */
 const BEARER_NO_HANDLER = [
+  // Depois do `authorizeCronOrStaff`, o handler testa `startsWith("Bearer ")` de usuário.
+  "elevenlabs-scribe-token",
   "recommend",
   "analyze-unified-order",
   // 12ª leva: as quatro de IA têm o `startsWith` próprio, e nas quatro a sonda vem antes dele.

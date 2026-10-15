@@ -38,6 +38,7 @@
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff, corsHeaders as sharedCors } from "../_shared/auth.ts";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import {
   buscarValorProfundo,
   caminhosDeChave,
@@ -426,6 +427,10 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
   try {
     const corpo = await req.json().catch(() => ({})) as Record<string, unknown>;
+    // Sonda de versão — depois do gate (que aceita `x-cron-secret`) e antes da 1ª chamada ao Omie.
+    const decisaoSonda = classificarSonda(corpo);
+    if (decisaoSonda.tipo === "sonda") return json(respostaSonda(VERSAO) as unknown as Record<string, unknown>, 200);
+    if (decisaoSonda.tipo === "ambiguo") return json({ error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }, 400);
     const empresa = typeof corpo.empresa === "string" ? corpo.empresa : "OBEN";
     const limite = typeof corpo.limite === "number"
       ? Math.max(1, Math.min(10, corpo.limite))
