@@ -17322,6 +17322,7 @@ export type Database = {
           date_to: string
           heartbeat_at: string | null
           last_error_kind: string | null
+          lease_token: string | null
           next_page: number | null
           running_since: string | null
           updated_at: string
@@ -17333,6 +17334,7 @@ export type Database = {
           date_to: string
           heartbeat_at?: string | null
           last_error_kind?: string | null
+          lease_token?: string | null
           next_page?: number | null
           running_since?: string | null
           updated_at?: string
@@ -17344,6 +17346,7 @@ export type Database = {
           date_to?: string
           heartbeat_at?: string | null
           last_error_kind?: string | null
+          lease_token?: string | null
           next_page?: number | null
           running_since?: string | null
           updated_at?: string
@@ -22037,6 +22040,18 @@ export type Database = {
         }
         Returns: undefined
       }
+      vendas_sync_finish_fenced: {
+        Args: {
+          p_account: string
+          p_complete: boolean
+          p_date_from: string
+          p_date_to: string
+          p_last_error_kind: string
+          p_lease_token: string
+          p_next_page: number
+        }
+        Returns: boolean
+      }
       vendas_sync_heartbeat: {
         Args: {
           p_account: string
@@ -22046,9 +22061,23 @@ export type Database = {
         }
         Returns: undefined
       }
+      vendas_sync_heartbeat_fenced: {
+        Args: {
+          p_account: string
+          p_date_from: string
+          p_date_to: string
+          p_lease_token: string
+          p_page: number
+        }
+        Returns: boolean
+      }
       vendas_sync_lease_acquire: {
         Args: { p_account: string; p_date_from: string; p_date_to: string }
         Returns: number
+      }
+      vendas_sync_lease_acquire_fenced: {
+        Args: { p_account: string; p_date_from: string; p_date_to: string }
+        Returns: Json
       }
       vendas_sync_release: {
         Args: {
@@ -22058,6 +22087,16 @@ export type Database = {
           p_last_error_kind: string
         }
         Returns: undefined
+      }
+      vendas_sync_release_fenced: {
+        Args: {
+          p_account: string
+          p_date_from: string
+          p_date_to: string
+          p_last_error_kind: string
+          p_lease_token: string
+        }
+        Returns: boolean
       }
       vendas_sync_semear_janela: {
         Args: { p_accounts?: string[]; p_date_from: string; p_date_to: string }

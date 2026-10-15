@@ -139,7 +139,7 @@ cen_antigo_rouba_cercado() {     # acquire antigo rouba lease cercado morto → 
   OUT="$a|$h|$(estado "$1")"
 }
 cen_corrida() {   # A (lease morto) faz heartbeat ENQUANTO B rouba numa transação aberta
-  seed "$1" 3; local ta sig="$TMPROOT/sig.$1" blk="sem_bloqueio" i a np xpid apid
+  seed "$1" 3; local ta sig="$TMPROOT/sig.$1" blk="sem_bloqueio" a np xpid apid
   ta=$(acq "$1"); envelhece "$1"; rm -f "$sig"
   P -q -tA > "$TMPROOT/x.$1" 2>&1 <<SQL &
 BEGIN;
@@ -149,11 +149,11 @@ SELECT pg_sleep(3);
 COMMIT;
 SQL
   xpid=$!
-  for i in $(seq 1 100); do [ -f "$sig" ] && break; sleep 0.1; done
+  for _ in $(seq 1 100); do [ -f "$sig" ] && break; sleep 0.1; done
   [ -f "$sig" ] || { OUT="TIMEOUT_LARGADA"; wait "$xpid" || true; return; }
   Pq -c "SELECT public.vendas_sync_heartbeat_fenced('oben','$1',(DATE '$1' + 30),'$ta'::uuid,50);" > "$TMPROOT/a.$1" 2>&1 &
   apid=$!
-  for i in $(seq 1 100); do
+  for _ in $(seq 1 100); do
     if [ "$(Pq -c "SELECT count(*) FROM pg_stat_activity WHERE datname='prove' AND cardinality(pg_blocking_pids(pid)) > 0;")" != "0" ]; then
       blk="bloqueio_observado"; break
     fi
@@ -247,6 +247,9 @@ case "$V" in "✅"*) ok "V1 validador aprova o banco bom" ;; *) bad "V1 validado
 # Cada uma mira um cenário com janela NOVA (estado limpo) e confere o validador quando ele cobre.
 # ══════════════════════════════════════════════════════════════════════════════
 echo "-- F: falsificacao --"
+mordeu() {  # $1 rotulo  $2 veredito sob sabotagem  $3 veredito VERDE (tem de diferir)
+  if [ "$2" != "$3" ]; then ok "$1 ($2)"; else bad "$1 — sabotei e o assert seguiu verde ($2)"; fi
+}
 restaura() { PGOPTIONS="-c client_min_messages=warning" P -q -f "$MIG" >/dev/null; }
 valida_reprova() {  # $1 rotulo  $2 trecho esperado na reprovacao
   local v; v=$(Pq -f "$VALIDA")
@@ -264,7 +267,7 @@ RETURNS boolean LANGUAGE sql SECURITY DEFINER SET search_path = public, pg_temp 
 $f$;
 SQL
 cen_zumbi_heartbeat 2027-01-01
-[ "$OUT" != "f|3/true/false/TB" ] && ok "F1 sem token o zumbi move o next_page de B ($OUT) — N1 tem dente" || bad "F1 sabotei e N1 seguiu verde"
+mordeu "F1 sem token o zumbi move o next_page de B — N1 tem dente" "$OUT" "f|3/true/false/TB"
 valida_reprova "F1b validador reprova heartbeat sem token" "nao exige o token"
 restaura
 
@@ -283,7 +286,7 @@ RETURNS boolean LANGUAGE sql SECURITY DEFINER SET search_path = public, pg_temp 
 $f$;
 SQL
 cen_zumbi_finish 2027-02-01
-[ "$OUT" != "f|3/true/false/TB" ] && ok "F2 sem token o zumbi FECHA a janela de B ($OUT) — N2 tem dente" || bad "F2 sabotei e N2 seguiu verde"
+mordeu "F2 sem token o zumbi FECHA a janela de B — N2 tem dente" "$OUT" "f|3/true/false/TB"
 restaura
 
 # F3 → N3: release cercado SEM o predicado do token
@@ -297,7 +300,7 @@ RETURNS boolean LANGUAGE sql SECURITY DEFINER SET search_path = public, pg_temp 
 $f$;
 SQL
 cen_zumbi_release 2027-03-01
-[ "$OUT" != "f|3/true/false/TB" ] && ok "F3 sem token o zumbi SOLTA o lease de B ($OUT) — N3 tem dente" || bad "F3 sabotei e N3 seguiu verde"
+mordeu "F3 sem token o zumbi SOLTA o lease de B — N3 tem dente" "$OUT" "f|3/true/false/TB"
 restaura
 
 # F4 → N1: o roubo NÃO troca o token (reaproveita o do morto)
@@ -313,7 +316,7 @@ RETURNS jsonb LANGUAGE sql SECURITY DEFINER SET search_path = public, pg_temp AS
 $f$;
 SQL
 cen_zumbi_heartbeat 2027-04-01
-[ "$OUT" != "f|3/true/false/TB" ] && ok "F4 roubo sem token novo deixa o zumbi valido ($OUT) — N1 tem dente" || bad "F4 sabotei e N1 seguiu verde"
+mordeu "F4 roubo sem token novo deixa o zumbi valido — N1 tem dente" "$OUT" "f|3/true/false/TB"
 valida_reprova "F4b validador reprova acquire sem token novo" "nao emite token novo"
 restaura
 
@@ -329,7 +332,7 @@ RETURNS boolean LANGUAGE sql SECURITY DEFINER SET search_path = public, pg_temp 
 $f$;
 SQL
 cen_token_nulo 2027-05-01
-[ "$OUT" != "fff|4/true/false/null" ] && ok "F5 IS NOT DISTINCT FROM: token NULL vira chave-mestra ($OUT) — N6 tem dente" || bad "F5 sabotei e N6 seguiu verde"
+mordeu "F5 IS NOT DISTINCT FROM: token NULL vira chave-mestra — N6 tem dente" "$OUT" "fff|4/true/false/null"
 restaura
 
 # F6 → L1: heartbeat ANTIGO sem o guard lease_token IS NULL
@@ -341,7 +344,7 @@ RETURNS void LANGUAGE sql SECURITY DEFINER SET search_path = public, pg_temp AS 
 $f$;
 SQL
 cen_antigo_nao_toca_cercado 2027-06-01
-[ "$OUT" != "5/true/false/T" ] && ok "F6 sem o guard a edge velha mexe no lease cercado ($OUT) — L1 tem dente" || bad "F6 sabotei e L1 seguiu verde"
+mordeu "F6 sem o guard a edge velha mexe no lease cercado — L1 tem dente" "$OUT" "5/true/false/T"
 valida_reprova "F6b validador reprova RPC antiga sem guard" "RPC antiga ainda age"
 restaura
 

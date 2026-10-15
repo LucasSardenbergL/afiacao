@@ -1461,6 +1461,51 @@ describe('guardrail money-path: syncPedidos resolve user pela view fresca accoun
   // (ver o invariante do espelho no topo); esta via segue vigiada pelo assert do cache acima.
 });
 
+// ── Fencing token do lease do backfill (vendas_sync_cursor, migration 20261015221600) ──
+// O banco recusa o worker que perdeu o lease; a edge tem de (a) usar SÓ as RPCs cercadas e passar o
+// token, (b) PARAR o laço quando o heartbeat volta 'perdido' e (c) não chamar o finish nesse caso.
+// O lado SQL está provado no PG17 (db/test-vendas-sync-cursor-fencing.sh) e os helpers no Deno
+// (cursor-lease_test.ts); aqui fica o WIRING, contra a reversão do bot do Lovable.
+const VENDAS_LEASE = 'supabase/functions/omie-vendas-sync/cursor-lease.ts';
+
+describe('guardrail money-path: backfill de pedidos usa o lease CERCADO (fencing token)', () => {
+  const edge = removerComentarios(read(VENDAS_SYNC));
+  const lease = removerComentarios(read(VENDAS_LEASE));
+
+  it('sentinela: leu os arquivos reais', () => {
+    expect(edge).toContain('syncPedidos');
+    expect(lease).toContain('export async function heartbeatVendasCursor');
+  });
+
+  it('as 4 chamadas são às RPCs _fenced, com o token em heartbeat/finish/release', () => {
+    for (const nome of ['lease_acquire', 'heartbeat', 'finish', 'release']) {
+      expect(lease, `cursor-lease.ts não chama vendas_sync_${nome}_fenced`).toContain(`db.rpc("vendas_sync_${nome}_fenced"`);
+    }
+    expect(count(lease, 'p_lease_token: lease.leaseToken'), 'heartbeat/finish/release têm de mandar o token').toBe(3);
+  });
+
+  it('nenhuma chamada às RPCs ANTIGAS (sem cerca) sobrou na edge ou no módulo', () => {
+    const antigas = /\.rpc\(\s*['"]vendas_sync_(lease_acquire|heartbeat|finish|release)['"]/;
+    expect(edge, 'REVERSÃO Lovable? a edge voltou a chamar a RPC de lease sem cerca').not.toMatch(antigas);
+    expect(lease).not.toMatch(antigas);
+  });
+
+  it('o laço PARA quando o heartbeat volta perdido', () => {
+    expect(
+      edge,
+      'REGRESSÃO: o syncPedidos não para o laço no lease perdido — o zumbi seguiria trabalhando na janela do sucessor',
+    ).toMatch(/heartbeatVendasCursor\([^)]*cursor\.lease, pagina\)\)\s*===\s*'perdido'\)\s*\{\s*leasePerdido = true;\s*break;/);
+    expect(edge, 'lease perdido não pode contar como janela completa').toContain('const complete = reachedEnd && !leasePerdido;');
+  });
+
+  it('o finish NÃO é chamado com lease perdido', () => {
+    expect(
+      edge,
+      'REGRESSÃO: o finish voltou a ser chamado incondicionalmente depois do syncPedidos',
+    ).toMatch(/r\.leasePerdido\s*\?\s*"lease_perdido"\s*:\s*await finishVendasCursor\(/);
+  });
+});
+
 // ── P0-B-bis (incidente carteira, ponta 1/2): o writer popula o vendedor de recomendacoes NA PROOF ──
 // A carteira estava 100% Hunter: o writer gravava omie_codigo_vendedor lendo só c.codigo_vendedor (raiz
 // vazio) → proof NULL → todo cliente órfão. O vendedor mora em recomendacoes.codigo_vendedor. O writer
