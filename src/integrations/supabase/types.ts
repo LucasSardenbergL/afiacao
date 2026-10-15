@@ -9635,6 +9635,8 @@ export type Database = {
           horario_disparo_real: string | null
           horario_geracao: string | null
           id: number
+          importado_portal_em: string | null
+          importado_portal_por: string | null
           justificativa_cancelamento: string | null
           mensagem_bloqueio: string | null
           num_parcelas: number | null
@@ -9698,6 +9700,8 @@ export type Database = {
           horario_disparo_real?: string | null
           horario_geracao?: string | null
           id?: number
+          importado_portal_em?: string | null
+          importado_portal_por?: string | null
           justificativa_cancelamento?: string | null
           mensagem_bloqueio?: string | null
           num_parcelas?: number | null
@@ -9761,6 +9765,8 @@ export type Database = {
           horario_disparo_real?: string | null
           horario_geracao?: string | null
           id?: number
+          importado_portal_em?: string | null
+          importado_portal_por?: string | null
           justificativa_cancelamento?: string | null
           mensagem_bloqueio?: string | null
           num_parcelas?: number | null
@@ -18179,6 +18185,70 @@ export type Database = {
         }
         Relationships: []
       }
+      v_ciclo_cliente_resumo: {
+        Row: {
+          atraso_max_observado: number | null
+          atraso_p50: number | null
+          atraso_p80: number | null
+          atraso_p80_valor: number | null
+          atraso_pond: number | null
+          company: string | null
+          dias_vencido_max: number | null
+          excesso_carencia_pond: number | null
+          n_documentos: number | null
+          n_parcelas: number | null
+          n_status_ambiguo: number | null
+          n_vencidas: number | null
+          nome_cliente: string | null
+          omie_codigo_cliente: number | null
+          pct_valor_atrasado: number | null
+          prazo_concedido_pond: number | null
+          prazo_real_pond: number | null
+          primeira_emissao: string | null
+          saldo_vencido: number | null
+          saldo_vencido_90: number | null
+          ultima_baixa: string | null
+          valor_pago: number | null
+          valor_pago_sem_baixa: number | null
+          volume_emitido_12m: number | null
+        }
+        Relationships: []
+      }
+      v_ciclo_cr_titulos: {
+        Row: {
+          atraso_dias: number | null
+          company: string | null
+          data_baixa: string | null
+          data_emissao: string | null
+          data_vencimento: string | null
+          dias_vencido: number | null
+          nome_cliente: string | null
+          numero_documento: string | null
+          omie_codigo_cliente: number | null
+          omie_codigo_lancamento: number | null
+          prazo_concedido_dias: number | null
+          prazo_real_dias: number | null
+          saldo: number | null
+          situacao: string | null
+          valor_documento: number | null
+        }
+        Relationships: []
+      }
+      v_ciclo_empresa_coorte: {
+        Row: {
+          atraso_pond_pagas: number | null
+          company: string | null
+          mes_parcial: boolean | null
+          mes_vencimento: string | null
+          pct_valor_pago: number | null
+          prazo_concedido_pond: number | null
+          prazo_real_pond_pagas: number | null
+          valor_em_aberto: number | null
+          valor_pago: number | null
+          valor_vencido_no_mes: number | null
+        }
+        Relationships: []
+      }
       v_cliente_interacoes: {
         Row: {
           at: string | null
@@ -21696,6 +21766,16 @@ export type Database = {
       sayerlack_aplicar_custo_portal: {
         Args: { p_itens: Json; p_pedido_id: number; p_valor_total: number }
         Returns: number
+      }
+      sayerlack_importar_pedido_portal: {
+        Args: {
+          p_data_entrega: string
+          p_itens: Json
+          p_operador: string
+          p_protocolo: string
+          p_valor_total: number
+        }
+        Returns: Json
       }
       sayerlack_ipi_itens: {
         Args: { p_pedido_id: number }
