@@ -16,7 +16,7 @@ export function useCicloResumo() {
     queryFn: async (): Promise<ResumoCliente[]> => {
       const linhas = await fetchAllPages<ResumoClienteRow>(
         (de, ate) =>
-          supabase.from('v_ciclo_cliente_resumo' as never).select('*')
+          supabase.from('v_ciclo_cliente_resumo').select('*')
             .order('company', { ascending: true })
             .order('omie_codigo_cliente', { ascending: true })
             .range(de, ate) as unknown as PromiseLike<{ data: ResumoClienteRow[] | null; error: unknown }>,
@@ -37,7 +37,7 @@ export function useCicloCoorte() {
   return useQuery({
     queryKey: ['financeiro', 'ciclo', 'coorte'],
     queryFn: async (): Promise<CoorteMes[]> => {
-      const { data, error } = await supabase.from('v_ciclo_empresa_coorte' as never).select('*')
+      const { data, error } = await supabase.from('v_ciclo_empresa_coorte').select('*')
         .order('company', { ascending: true }).order('mes_vencimento', { ascending: true });
       if (error) throw error;
       // Linha com dinheiro/chave ausente é DESCARTADA (nunca default fabricado): as 3 colunas vêm de coalesce(…,0) na view.
@@ -124,7 +124,7 @@ export function useCicloTitulosCliente(company: Company | null, cliente: number 
     queryFn: async (): Promise<TituloCliente[]> => {
       const linhas = await fetchAllPages<Record<string, unknown>>(
         (de, ate) =>
-          supabase.from('v_ciclo_cr_titulos' as never).select('*')
+          supabase.from('v_ciclo_cr_titulos').select('*')
             .eq('company', company as string).eq('omie_codigo_cliente', cliente as number)
             .order('data_vencimento', { ascending: false })
             .order('omie_codigo_lancamento', { ascending: true })
