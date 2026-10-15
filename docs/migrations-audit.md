@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **638** custom migrations totais
-- **2044** objetos esperados (criados por estas migrations)
+- **640** custom migrations totais
+- **2050** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 715
+  - `function`: 719
   - `rls_policy`: 471
   - `index`: 276
   - `cron_job`: 184
-  - `table`: 177
+  - `table`: 178
   - `view`: 113
-  - `trigger`: 104
+  - `trigger`: 105
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -5175,6 +5175,21 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.get_defasagem_cliente` | — |
+
+### `20261015120000_tactical_plans_margem_rpc_saneia_texto.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.sanear_texto_margem` | — |
+| `function` | `private.sanear_jsonb_margem` | — |
+| `function` | `private.tactical_plan_saneia_margem` | — |
+| `function` | `public.get_planos_margem` | — |
+| `table` | `private.farmer_tactical_plans_texto_original` | — |
+| `trigger` | `public.trg_tactical_plan_saneia_margem` | `farmer_tactical_plans` |
+
+### `20261015120100_tactical_plans_margem_fecha_coluna.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ## Próximos passos por status
 
