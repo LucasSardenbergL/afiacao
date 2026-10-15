@@ -69,9 +69,11 @@ export function IntelligenceStrategicTab() {
     queryFn: async () => {
       // Amostra dos 500 pedidos de VENDA mais recentes (universo canônico, ordem estável). Antes:
       // 500 linhas sem ordem nem universo — qualquer status, qualquer época.
+      // O desconto do pedido vem dos ITENS (`desconto_valor`): `sales_orders.discount` é 0 por desenho
+      // (o Omie distribui o desconto de capa aos itens). É uma AMOSTRA declarada, não a carteira.
       const { data, error } = await supabase
         .from('sales_orders')
-        .select('total, discount, created_at, customer_user_id')
+        .select('created_at, order_items(desconto_valor)')
         .not('status', 'in', STATUS_NAO_VENDA_POSTGREST)
         .is('deleted_at', null)
         .order('created_at', { ascending: false })
@@ -84,7 +86,16 @@ export function IntelligenceStrategicTab() {
   const { data: orderItems } = useQuery({
     queryKey: ['intel-order-items-strategic'],
     queryFn: async () => {
-      const { data, error } = await supabase.from('order_items').select('unit_price, discount, quantity, product_id').limit(1000);
+      // ⚠️ SUB-AMOSTRA: 1.000 itens com `.limit` single-shot (sem `.range()` nem universo de pedidos —
+      // entra item de cancelado/orçamento). A elasticidade é indicativa da amostra, não da carteira;
+      // ordem estável por created_at desc para a amostra ser a RECENTE (onde o desconto é apurado)
+      // e a mesma entre recargas. Baseline em single-shot-truncado-gate.test.ts.
+      const { data, error } = await supabase
+        .from('order_items')
+        .select('desconto_valor, quantity')
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: true })
+        .limit(1000);
       if (error) throw error;
       return data || [];
     },
@@ -132,7 +143,7 @@ export function IntelligenceStrategicTab() {
   // de leitura; aqui a leitura foi OK e o dado é que não existe.)
   const concentracaoIndisponivel = totalRevenue === 0;
 
-  // Desconto: as duas colunas são 0 em 100% das linhas — sem desconto > 0 na amostra, "—" (ver desconto-kpis).
+  // Desconto: `order_items.desconto_valor`, com não-apurado (NULL) FORA da conta e contado (ver desconto-kpis).
   const desconto = kpisDesconto(salesOrders, orderItems);
 
   const uniqueCustomers = new Set(allScores?.map(c => c.customer_user_id)).size;
@@ -293,7 +304,12 @@ export function IntelligenceStrategicTab() {
           title="Elasticidade de Preço"
           value={desconto.elasticidade === null ? '—' : `${desconto.elasticidade.toFixed(1)}%`}
           icon={TrendingUp}
-          subtitle={desconto.elasticidade === null ? 'desconto não registrado nos itens' : 'Δ qty c/ desconto'}
+          subtitle={
+            desconto.elasticidade === null
+              ? orderItems ? 'sem itens com e sem desconto apurado na amostra' : 'itens indisponíveis'
+              : `Δ qty c/ desconto · amostra de ${orderItems?.length ?? 0} itens`
+                + (desconto.itensDesconhecidos > 0 ? ` (${desconto.itensDesconhecidos} sem desconto apurado)` : '')
+          }
         />
         <KpiCard
           title="Sensibilidade a Desconto"
@@ -301,8 +317,9 @@ export function IntelligenceStrategicTab() {
           icon={Percent}
           subtitle={
             desconto.sensibilidade !== null
-              ? `${desconto.pedidosComDesconto} de ${desconto.pedidos} pedidos recentes`
-              : salesOrders ? 'desconto não registrado no pedido' : 'pedidos indisponíveis'
+              ? `${desconto.pedidosComDesconto} de ${desconto.pedidosApurados} pedidos recentes`
+                + (desconto.pedidosDesconhecidos > 0 ? ` · ${desconto.pedidosDesconhecidos} sem desconto apurado` : '')
+              : salesOrders ? 'desconto não apurado nos pedidos recentes' : 'pedidos indisponíveis'
           }
         />
         <KpiCard title="Market Share Est." value={ou(`${marketSharePct.toFixed(1)}%`)} icon={Target} subtitle={scoresIndisponivel ? 'base indisponível' : `${uniqueCustomers} de ~${estimatedMarket} clientes`} />

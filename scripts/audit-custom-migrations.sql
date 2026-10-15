@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 637
+-- Total de custom migrations: 638
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -698,7 +698,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261014120000', 'fcs_margem_rpc_projecao', '20261014120000_fcs_margem_rpc_projecao.sql'),
   ('20261014120000', 'fin_ciclo_cliente_views', '20261014120000_fin_ciclo_cliente_views.sql'),
   ('20261014120000', 'sayerlack_importar_pedido_portal', '20261014120000_sayerlack_importar_pedido_portal.sql'),
-  ('20261014120100', 'fcs_margem_fecha_coluna', '20261014120100_fcs_margem_fecha_coluna.sql')
+  ('20261014120100', 'fcs_margem_fecha_coluna', '20261014120100_fcs_margem_fecha_coluna.sql'),
+  ('20261014211500', 'defasagem_desconto_valor', '20261014211500_defasagem_desconto_valor.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2710,7 +2711,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('fin_ciclo_cliente_views', 'view', 'public', 'v_ciclo_cliente_resumo', ''),
   ('fin_ciclo_cliente_views', 'view', 'public', 'v_ciclo_empresa_coorte', ''),
   ('sayerlack_importar_pedido_portal', 'function', 'public', 'sayerlack_importar_pedido_portal', ''),
-  ('sayerlack_importar_pedido_portal', 'index', 'public', 'ux_pedido_compra_sugerido_portal_protocolo', 'pedido_compra_sugerido')
+  ('sayerlack_importar_pedido_portal', 'index', 'public', 'ux_pedido_compra_sugerido_portal_protocolo', 'pedido_compra_sugerido'),
+  ('defasagem_desconto_valor', 'function', 'public', 'get_defasagem_cliente', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4770,7 +4772,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('fin_ciclo_cliente_views', 'view', 'public', 'v_ciclo_cliente_resumo', ''),
   ('fin_ciclo_cliente_views', 'view', 'public', 'v_ciclo_empresa_coorte', ''),
   ('sayerlack_importar_pedido_portal', 'function', 'public', 'sayerlack_importar_pedido_portal', ''),
-  ('sayerlack_importar_pedido_portal', 'index', 'public', 'ux_pedido_compra_sugerido_portal_protocolo', 'pedido_compra_sugerido')
+  ('sayerlack_importar_pedido_portal', 'index', 'public', 'ux_pedido_compra_sugerido_portal_protocolo', 'pedido_compra_sugerido'),
+  ('defasagem_desconto_valor', 'function', 'public', 'get_defasagem_cliente', '')
 )
 SELECT
   e.migration,
@@ -5194,6 +5197,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'get_defasagem_cliente', 1, '20260627180100_get_defasagem_cliente.sql', '1a06e51e5eae154d94216eee56471734'),
   ('public', 'get_defasagem_cliente', 2, '20260905225613_preco_ausente_nao_e_zero.sql', '7856c3052596d66a6f5ac8eb0a06c1c0'),
   ('public', 'get_defasagem_cliente', 3, '20261001014210_universo_pedidos_preco.sql', 'fbe6a5aa78a32deed6860218a9b68d7c'),
+  ('public', 'get_defasagem_cliente', 4, '20261014211500_defasagem_desconto_valor.sql', '66bea8e4923ed3d289d72aae2e66c8b5'),
   ('public', 'venda_gate_credito', 1, '20260702233000_trava_credito_fase2.sql', '72e6d3ff4dd4a438d5ca84cb9d214ec8'),
   ('public', 'venda_gate_credito', 2, '20260703140000_trava_credito_gate_excecao_por_par.sql', '1fb9610a4c6f70fb2a67d5d01396c767'),
   ('public', 'fin_sync_kicks_perdidos', 1, '20260704102000_fin_sync_retry_kick_perdido.sql', '9f591fc2a7b823b7195085b816db6713'),

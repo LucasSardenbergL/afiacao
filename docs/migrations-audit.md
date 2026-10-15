@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **637** custom migrations totais
-- **2043** objetos esperados (criados por estas migrations)
+- **638** custom migrations totais
+- **2044** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 714
+  - `function`: 715
   - `rls_policy`: 471
   - `index`: 276
   - `cron_job`: 184
@@ -5169,6 +5169,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20261014120100_fcs_margem_fecha_coluna.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20261014211500_defasagem_desconto_valor.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_defasagem_cliente` | — |
 
 ## Próximos passos por status
 
