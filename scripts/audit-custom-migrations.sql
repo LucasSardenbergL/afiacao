@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 641
+-- Total de custom migrations: 642
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -701,6 +701,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261014120100', 'fcs_margem_fecha_coluna', '20261014120100_fcs_margem_fecha_coluna.sql'),
   ('20261014211500', 'defasagem_desconto_valor', '20261014211500_defasagem_desconto_valor.sql'),
   ('20261015003200', 'fin_ciclo_rpcs_gate', '20261015003200_fin_ciclo_rpcs_gate.sql'),
+  ('20261015090000', 'tint_drop_reaplicar_snapshot_tick', '20261015090000_tint_drop_reaplicar_snapshot_tick.sql'),
   ('20261015120000', 'tactical_plans_margem_rpc_saneia_texto', '20261015120000_tactical_plans_margem_rpc_saneia_texto.sql'),
   ('20261015120100', 'tactical_plans_margem_fecha_coluna', '20261015120100_tactical_plans_margem_fecha_coluna.sql')
 ),
