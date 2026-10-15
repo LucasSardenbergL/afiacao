@@ -79,7 +79,11 @@ export async function buscarMargensPlanos(planIds: string[]): Promise<Map<string
   const linhas = await fetchAllPages<LinhaMargemPlano>(
     (de, ate) =>
       supabase
-        .rpc('get_planos_margem', { p_plan_ids: planIds })
+        // `as never`: a RPC vem da migration 20261015120000, de apply MANUAL. Enquanto ela não estiver em
+        // prod, o types.ts regenerado pelo Lovable não a tipa e o nome cru deixa a main vermelha. Em
+        // runtime a ausência é tratada: a chamada falha, o chamador degrada para `indisponivel` e não
+        // derruba a fila. Quando o types passar a tipá-la, o `casts:stale` acusa e o cast sai.
+        .rpc('get_planos_margem' as never, { p_plan_ids: planIds } as never)
         .order('plan_id', { ascending: true })
         .range(de, ate) as unknown as PromiseLike<{ data: LinhaMargemPlano[] | null; error: unknown }>,
     'get_planos_margem',
