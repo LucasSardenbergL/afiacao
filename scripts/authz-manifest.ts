@@ -43,6 +43,14 @@ export const AUTHZ_MANIFEST: Record<string, AuthzEntry> = {
     requiredGate: { anyOf: [{ call: 'cap_custo_ler' }] },
     motivo: 'folga negativa de margem vs piso de markup — cockpit financeiro; E2/FU4 estreitou p/ estrategico+',
   },
+  // 2026-10-16 — Raio-X do estoque parado (PR 1 da fase B): grava a foto saldo×cmc lida de
+  // inventory_position como DEFINER e desliga o SKU no motor (sku_parametros). Mesmo gate de quem
+  // já lê inventory_position em prod (policy cap_custo_ler) — employee comum recebe 42501.
+  'public.raio_x_decidir': {
+    sensitive: true,
+    requiredGate: { anyOf: [{ call: 'cap_custo_ler' }] },
+    motivo: 'decisão do Raio-X: foto de custo (saldo×cmc) + tirar/restaurar o SKU no motor de compras',
+  },
   // 2026-08-15 — a alternativa `pode_ver_carteira_completa` SAIU do anyOf destas duas. Dívida de
   // contrato medida no PR #1751 (§8.1 de docs/historico/sentinela-authz-controle-nao-mencao.md) e
   // reconfirmada por psql-ro no corpo VIVO: em prod nenhuma das duas a CHAMA (na
