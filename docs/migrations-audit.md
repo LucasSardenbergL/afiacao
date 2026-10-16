@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **642** custom migrations totais
-- **2054** objetos esperados (criados por estas migrations)
+- **643** custom migrations totais
+- **2063** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 723
-  - `rls_policy`: 471
+  - `function`: 728
+  - `rls_policy`: 473
   - `index`: 276
   - `cron_job`: 184
-  - `table`: 178
+  - `table`: 180
   - `view`: 113
   - `trigger`: 105
   - `enum_value`: 4
@@ -5203,6 +5203,20 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20261015120100_tactical_plans_margem_fecha_coluna.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20261016120000_raio_x_estoque_parado.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.raio_x_estoque_fatos` | — |
+| `function` | `public.raio_x_decidir` | — |
+| `function` | `public.raio_x_contar` | — |
+| `function` | `public.raio_x_classificar` | — |
+| `function` | `public.raio_x_medicao` | — |
+| `table` | `public.raio_x_classificacao_manual` | — |
+| `table` | `public.raio_x_decisao` | — |
+| `rls_policy` | `public.raio_x_classificacao_manual_select_staff` | `raio_x_classificacao_manual` |
+| `rls_policy` | `public.raio_x_decisao_select_staff` | `raio_x_decisao` |
 
 ## Próximos passos por status
 

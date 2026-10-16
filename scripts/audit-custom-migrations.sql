@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 642
+-- Total de custom migrations: 643
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -703,7 +703,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261015003200', 'fin_ciclo_rpcs_gate', '20261015003200_fin_ciclo_rpcs_gate.sql'),
   ('20261015090000', 'tint_drop_reaplicar_snapshot_tick', '20261015090000_tint_drop_reaplicar_snapshot_tick.sql'),
   ('20261015120000', 'tactical_plans_margem_rpc_saneia_texto', '20261015120000_tactical_plans_margem_rpc_saneia_texto.sql'),
-  ('20261015120100', 'tactical_plans_margem_fecha_coluna', '20261015120100_tactical_plans_margem_fecha_coluna.sql')
+  ('20261015120100', 'tactical_plans_margem_fecha_coluna', '20261015120100_tactical_plans_margem_fecha_coluna.sql'),
+  ('20261016120000', 'raio_x_estoque_parado', '20261016120000_raio_x_estoque_parado.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2726,7 +2727,16 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('tactical_plans_margem_rpc_saneia_texto', 'function', 'private', 'tactical_plan_saneia_margem', ''),
   ('tactical_plans_margem_rpc_saneia_texto', 'function', 'public', 'get_planos_margem', ''),
   ('tactical_plans_margem_rpc_saneia_texto', 'table', 'private', 'farmer_tactical_plans_texto_original', ''),
-  ('tactical_plans_margem_rpc_saneia_texto', 'trigger', 'public', 'trg_tactical_plan_saneia_margem', 'farmer_tactical_plans')
+  ('tactical_plans_margem_rpc_saneia_texto', 'trigger', 'public', 'trg_tactical_plan_saneia_margem', 'farmer_tactical_plans'),
+  ('raio_x_estoque_parado', 'function', 'public', 'raio_x_estoque_fatos', ''),
+  ('raio_x_estoque_parado', 'function', 'public', 'raio_x_decidir', ''),
+  ('raio_x_estoque_parado', 'function', 'public', 'raio_x_contar', ''),
+  ('raio_x_estoque_parado', 'function', 'public', 'raio_x_classificar', ''),
+  ('raio_x_estoque_parado', 'function', 'public', 'raio_x_medicao', ''),
+  ('raio_x_estoque_parado', 'table', 'public', 'raio_x_classificacao_manual', ''),
+  ('raio_x_estoque_parado', 'table', 'public', 'raio_x_decisao', ''),
+  ('raio_x_estoque_parado', 'rls_policy', 'public', 'raio_x_classificacao_manual_select_staff', 'raio_x_classificacao_manual'),
+  ('raio_x_estoque_parado', 'rls_policy', 'public', 'raio_x_decisao_select_staff', 'raio_x_decisao')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4797,7 +4807,16 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('tactical_plans_margem_rpc_saneia_texto', 'function', 'private', 'tactical_plan_saneia_margem', ''),
   ('tactical_plans_margem_rpc_saneia_texto', 'function', 'public', 'get_planos_margem', ''),
   ('tactical_plans_margem_rpc_saneia_texto', 'table', 'private', 'farmer_tactical_plans_texto_original', ''),
-  ('tactical_plans_margem_rpc_saneia_texto', 'trigger', 'public', 'trg_tactical_plan_saneia_margem', 'farmer_tactical_plans')
+  ('tactical_plans_margem_rpc_saneia_texto', 'trigger', 'public', 'trg_tactical_plan_saneia_margem', 'farmer_tactical_plans'),
+  ('raio_x_estoque_parado', 'function', 'public', 'raio_x_estoque_fatos', ''),
+  ('raio_x_estoque_parado', 'function', 'public', 'raio_x_decidir', ''),
+  ('raio_x_estoque_parado', 'function', 'public', 'raio_x_contar', ''),
+  ('raio_x_estoque_parado', 'function', 'public', 'raio_x_classificar', ''),
+  ('raio_x_estoque_parado', 'function', 'public', 'raio_x_medicao', ''),
+  ('raio_x_estoque_parado', 'table', 'public', 'raio_x_classificacao_manual', ''),
+  ('raio_x_estoque_parado', 'table', 'public', 'raio_x_decisao', ''),
+  ('raio_x_estoque_parado', 'rls_policy', 'public', 'raio_x_classificacao_manual_select_staff', 'raio_x_classificacao_manual'),
+  ('raio_x_estoque_parado', 'rls_policy', 'public', 'raio_x_decisao_select_staff', 'raio_x_decisao')
 )
 SELECT
   e.migration,
