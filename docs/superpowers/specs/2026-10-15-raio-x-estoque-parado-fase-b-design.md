@@ -83,9 +83,9 @@ Duas tabelas novas, RLS ligada, leitura e escrita só staff (escrita só via RPC
 - `qtd_contada`, `contado_por`, `contado_em` (contagem física dos blocos não-mercadoria/uso e consumo);
 - `origem` (`app` | `artifact_fase_a`).
 
-### 4.1 RPC `raio_x_decidir(p_empresa, p_sku, p_destino, p_observacao, p_fornecedor, p_credito_troca, p_tirar_do_motor, p_restaurar_motor)`
+### 4.1 RPC `raio_x_decidir(p_empresa, p_sku, p_destino, p_categoria, p_observacao, p_fornecedor, p_credito_troca, p_tirar_do_motor, p_restaurar_motor)`
 
-SECURITY INVOKER, checa staff, `REVOKE` de `PUBLIC` e `anon`. **Uma transação:**
+SECURITY DEFINER (as tabelas não têm política de escrita; o gate de staff é a 1ª linha da função), checa staff, `REVOKE` de `PUBLIC` e `anon`. **Uma transação:**
 1. Upsert da decisão com a semântica do `mesclarDecisao` + foto congelada.
 2. Se `p_tirar_do_motor` (só aceito com destino `trocar`, `liquidar` ou `manter_suspender_recompra`): grava `motor_antes` e atualiza `sku_parametros`:
    - `trocar` / `liquidar` → `tipo_reposicao='descontinuado'`, `habilitado_reposicao_automatica=false`;
