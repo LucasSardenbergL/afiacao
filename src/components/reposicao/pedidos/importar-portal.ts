@@ -22,6 +22,8 @@ interface RespostaImportacao {
   situacao_portal?: string | null;
   ja_existia?: boolean;
   itens?: ItemImportado[];
+  /** Passos do navegador remoto — a edge devolve quando a LEITURA do portal falha. */
+  trace?: unknown[] | null;
 }
 
 type TomResultado = 'sucesso' | 'aviso' | 'erro';
@@ -35,6 +37,8 @@ export interface ResultadoTela {
   itens: ItemImportado[];
   situacaoPortal: string | null;
   valorTotal: number | null;
+  /** Diagnóstico da leitura do portal (só em falha de leitura): o que o navegador remoto fez, passo a passo. */
+  detalheTecnico: string | null;
 }
 
 /**
@@ -50,6 +54,7 @@ export function interpretarRespostaImportacao(data: unknown, protocolo: string):
     itens: Array.isArray(r.itens) ? r.itens : [],
     situacaoPortal: r.situacao_portal ?? null,
     valorTotal: typeof r.valor_total === 'number' ? r.valor_total : (typeof r.valor_total_portal === 'number' ? r.valor_total_portal : null),
+    detalheTecnico: Array.isArray(r.trace) && r.trace.length > 0 ? JSON.stringify(r.trace, null, 1) : null,
   };
   if (r.ok === true && r.etapa === 'concluido') {
     return {
