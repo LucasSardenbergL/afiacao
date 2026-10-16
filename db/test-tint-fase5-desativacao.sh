@@ -684,7 +684,7 @@ aplica_m7() { desforja; P -q -f "$1" >/dev/null 2>&1; local rc=$?; forja; return
 
 # Linha de base: sob a Fase 5 CRUA o furo tem de ESTAR LÁ. Sem isto, V10 verde
 # provaria só que o seed não exerce o caso (controle verde ≠ controle exercido).
-eq "V10-base sob a Fase 5 crua o carimbo forjado ENTRA (o furo existe)" "$(v10)" "990|990|f"
+eq "V10-base sob a Fase 5 crua o carimbo forjado ENTRA (o furo existe)" "$(v10)" "990|990|false"
 
 # O pré-voo morde: com carimbo fora da '1' presente, a migration ABORTA inteira.
 PRE_OUT="$(P -f "$MIGRATION7" 2>&1 || true)"
@@ -692,10 +692,10 @@ case "$PRE_OUT" in
   *"ENDURECIMENTO ABORTADO: 2 linha"*) ok "V10-pre o PRÉ-VOO aborta com 2 carimbos fora da geração '1' (delta ≠ 0 não passa calado)" ;;
   *) bad "V10-pre o pré-voo NÃO abortou com carimbo forjado: $(printf '%s' "$PRE_OUT" | tr '\n' ' ' | cut -c1-200)" ;;
 esac
-eq "V10-pre-b o aborto reverteu tudo (view segue a da Fase 5)" "$(v10)" "990|990|f"
+eq "V10-pre-b o aborto reverteu tudo (view segue a da Fase 5)" "$(v10)" "990|990|false"
 
 aplica_m7 "$MIGRATION7" || { echo "FALHA: o endurecimento não aplicou"; exit 1; }
-eq "V10 tombstone de geração ≠ '1' e de OUTRA conta ficam FORA (rótulo|piso|is_sl)" "$(v10)" "400|400|f"
+eq "V10 tombstone de geração ≠ '1' e de OUTRA conta ficam FORA (rótulo|piso|is_sl)" "$(v10)" "400|400|false"
 # A versão ENTREGUE tem de manter tudo o que a Fase 5 provava (lição #1517:
 # versão coberta ≠ versão entregue). K11 não toca os V1-V6, então é TODOS_OK.
 OUT="$(roda_asserts_sql 2>&1 || true)"
@@ -720,13 +720,14 @@ else
     *) bad "F5a a pós-condição NÃO abortou a versão sabotada: $(printf '%s' "$F5_OUT" | tr '\n' ' ' | cut -c1-200)" ;;
   esac
   # (b) sem a pós-condição (camada de baixo), o assert de comportamento cai sozinho
+  # shellcheck disable=SC2016  # $pos$ é o delimitador dollar-quote do SQL, literal
   sed '/^-- ── PÓS-CONDIÇÃO/,/^\$pos\$;$/d' "$SAB" > "$SAB.sempos"
   if command grep -q 'pós-condição: o endurecimento' "$SAB.sempos"; then
     bad "F5b não consegui remover a pós-condição (sed sem efeito)"
   else
     aplica_m7 "$SAB.sempos" || true
     case "$(v10)" in
-      "400|400|f") bad "F5b V10 seguiu verde sem a exigência de geração '1' — assert sem dente" ;;
+      "400|400|false") bad "F5b V10 seguiu verde sem a exigência de geração '1' — assert sem dente" ;;
       *) ok "F5b sem a exigência o rótulo volta a $(v10 | cut -d'|' -f1) — V10 tem dente" ;;
     esac
   fi
@@ -748,7 +749,7 @@ fi
 rm -f "$SAB"
 
 aplica_m7 "$MIGRATION7" || { echo "FALHA: restaurar o endurecimento"; exit 1; }
-eq "R2 restauração: endurecimento real de volta" "$(v10)" "400|400|f"
+eq "R2 restauração: endurecimento real de volta" "$(v10)" "400|400|false"
 
 echo
 echo "════════════════════════════════════════════"

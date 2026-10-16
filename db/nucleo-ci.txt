@@ -213,7 +213,7 @@ db/test-tint-tombstone-fase5-imutavel.sh   16
 # negados nas 4 tabelas, medido pelo GATE real (o ataque de "fabricar legado" destravava um manual
 # barrado); a pós-condição aborta o apply que revoga de menos OU de mais (T1-T5).
 db/test-tint-grants-escrita-staff.sh      15
-db/test-tint-fase5-desativacao.sh          37
+db/test-tint-fase5-desativacao.sh          49
 
 # ── Eixo 4 — CONCORRÊNCIA / TOCTOU ────────────────────────────────────────────────
 # A janela entre dois round-trips PostgREST, com uma chamada HTTP que cria pedido de
