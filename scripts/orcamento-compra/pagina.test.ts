@@ -118,6 +118,18 @@ describe('gerarPagina — integração (R36, R48, R49, R51, R53)', () => {
     expect(html).toContain('positivo = menos estoque');
     expect(html).toContain('soma dos episódios medidos, não média do período');
   });
+  it('R56: modo público (repo público) não imprime nenhum valor em R$, nem o diagnóstico datado', () => {
+    const r = completo();
+    r.ciclos.push({ ...r.ciclos[0], estado: { tipo: 'inviavel', primeiraViolacao: '2026-10-01', deficitMax: 1 } } as Resultado['ciclos'][number]);
+    const pub = gerarPagina(r, { publico: true });
+    expect(pub).not.toMatch(/R\$\s?\d/);
+    expect(pub).toContain('valor omitido (repo público)');
+    expect(pub).not.toContain('Diagnóstico datado');
+    // controle: o modo privado (Artifact) continua com os valores e o diagnóstico
+    const priv = gerarPagina(r);
+    expect(priv).toMatch(/R\$\s?\d/);
+    expect(priv).toContain('Diagnóstico datado');
+  });
   it('R49: premissas declaram oportunidade de 1 dia, margem cheia sobre backlog e promoção tudo-ou-nada', () => {
     const txt = PREMISSAS.join(' | ');
     expect(txt).toContain('intervalo de oportunidade de 1 dia');

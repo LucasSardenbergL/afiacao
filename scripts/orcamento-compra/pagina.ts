@@ -16,8 +16,12 @@ export const PREMISSAS_EXTRAS: string[] = [
 const AUSENTE = '—';
 const finito = (v: number | null | undefined): v is number => v != null && Number.isFinite(v);
 
+// R56: o repo é público — a página commitada sai sem R$; os valores ficam só no Artifact privado.
+let modoPublico = false;
 export const brl = (v: number | null | undefined): string =>
-  finito(v) ? v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 }) : AUSENTE;
+  !finito(v) ? AUSENTE
+    : modoPublico ? '<span class="nota">valor omitido (repo público)</span>'
+      : v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 });
 export const pct = (v: number | null | undefined): string =>
   finito(v) ? `${(v * 100).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%` : AUSENTE;
 export const num = (v: number | null | undefined, casas = 0): string =>
@@ -101,8 +105,8 @@ export function secaoCenarioGuarda(r: Resultado): string {
   const outras = r.sensibilidade.filter((s) => s.reservaDias !== r.config.reservaDias).map((s) => `${num(s.reservaDias)}`).join(' e ');
   return `<h2>O que o backtest diz sobre o cenário-guarda</h2>
 <p>Sem nenhuma venda nova, a guarda de caixa olha ${h} dias à frente e exige que o saldo fique acima de ${res} dias de saídas em todos os dias. Nesta rodada, <b>${num(inv.length)} de ${num(r.ciclos.length)} ciclos (${pct(fracInv)}) ficaram inviáveis</b>, no período de ${faixa}. Entre os disparados foram ${num(invDisp.length)} de ${num(disp.length)}: o motor pediu ${brl(motorInv)} nesses ciclos e a guarda aceitaria ${brl(aceitoInv)}.</p>
-<div class="diag"><p class="rot">Diagnóstico datado 2026-10-15, não recalculado</p>
-<p>Nos inviáveis da rodada de 2026-10-15, a base de caixa sozinha, sem nenhuma candidata, já furava a reserva (mediana: 72 dias à frente). Exemplo do ciclo de 20/07: saldo de R$ 355 mil, reserva de R$ 291 mil. Em 91 dias, a continuidade do motor tirava R$ 199 mil e as saídas não-Sayerlack R$ 190 mil, contra R$ 108 mil de títulos a receber. O piso projetado ficava em R$ 57 mil.</p></div>
+${modoPublico ? '' : `<div class="diag"><p class="rot">Diagnóstico datado 2026-10-15, não recalculado</p>
+<p>Nos inviáveis da rodada de 2026-10-15, a base de caixa sozinha, sem nenhuma candidata, já furava a reserva (mediana: 72 dias à frente). Exemplo do ciclo de 20/07: a reserva era ~82% do saldo e, em 91 dias, a continuidade do motor somada às saídas não-Sayerlack tirava ~3,6× o que entrava de títulos a receber; o piso projetado ficava em ~16% do saldo, abaixo da reserva.</p></div>`}
 <p>Quando a base sozinha fura a reserva, a condição de reserva <b>como especificada não distingue um pedido de outro</b> e não serve para decidir compras. A próxima decisão é do founder, entre três caminhos (sem ordem de preferência):</p>
 <ul>
 <li><b>Calibrar um cenário de entrada de vendas</b>: substituir o “zero venda nova” por uma entrada conservadora medida.</li>
@@ -111,7 +115,16 @@ export function secaoCenarioGuarda(r: Resultado): string {
 </ul>`;
 }
 
-export function gerarPagina(r: Resultado): string {
+export function gerarPagina(r: Resultado, opts: { publico?: boolean } = {}): string {
+  modoPublico = opts.publico === true;
+  try {
+    return montarPagina(r);
+  } finally {
+    modoPublico = false;
+  }
+}
+
+function montarPagina(r: Resultado): string {
   const res = r.resumo;
   const estados = res.estados as Record<string, number | undefined>;
   const contagem = (t: string) => num(estados[t] ?? null);
@@ -214,8 +227,10 @@ ${secaoCenarioGuarda(r)}
 }
 
 if (import.meta.main) {
-  const [entrada, saida] = process.argv.slice(2);
-  if (!entrada || !saida) throw new Error('uso: bun scripts/orcamento-compra/pagina.ts <resultado.json> <index.html>');
-  writeFileSync(saida, gerarPagina(JSON.parse(readFileSync(entrada, 'utf8')) as Resultado));
+  const args = process.argv.slice(2);
+  const publico = args.includes('--publico');
+  const [entrada, saida] = args.filter((a) => a !== '--publico');
+  if (!entrada || !saida) throw new Error('uso: bun scripts/orcamento-compra/pagina.ts [--publico] <resultado.json> <index.html>');
+  writeFileSync(saida, gerarPagina(JSON.parse(readFileSync(entrada, 'utf8')) as Resultado, { publico }));
   console.log('fim|ok');
 }

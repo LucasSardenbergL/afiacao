@@ -16,49 +16,51 @@ tail -c 1500 /tmp/oc-run.log; [ "$rc" -eq 0 ] && grep -c '^fim|ok$' /tmp/oc-run.
 # exit 2 = pré-voo reprovado → corrigir a FONTE, nunca afrouxar o pré-voo
 
 # 2) página
-bun scripts/orcamento-compra/pagina.ts docs/superpowers/orcamento-compra/saida/resultado.json docs/superpowers/orcamento-compra/index.html > /tmp/oc-pag.log 2>&1; rc=$?
+bun scripts/orcamento-compra/pagina.ts --publico docs/superpowers/orcamento-compra/saida/resultado.json docs/superpowers/orcamento-compra/index.html > /tmp/oc-pag.log 2>&1; rc=$?
 tail -1 /tmp/oc-pag.log; [ "$rc" -eq 0 ]   # esperado: fim|ok
 ```
 
 ## Resultado da rodada de 2026-10-15, após a onda final R32–R53 (fatos de hoje = 2026-10-15; ciclos de 2026-07-18 a 2026-10-15)
 
+> **Repo público (decisão do founder, 2026-10-15):** valores em dinheiro aparecem como **% do que o motor pediu nos disparados** (= 100%). Os absolutos ficam só na saída local git-ignorada (`saida/`) e no Artifact privado. A página commitada é gerada com `--publico`.
+
 | Medida | Valor |
 |---|---|
 | Ciclos / disparados | 268 / 119 (+140 expirados, 7 cancelados, 2 pendentes) |
-| Motor pediu (disparados, com frete 2,5%) | R$ 378.033 |
-| **Orçamento aceitaria** (disparados **com guarda de caixa**, R51) | R$ 0 — só 2 disparados têm veredito de caixa (ambos inviáveis; motor R$ 1.838 neles) |
-| Aceito **sem guarda de caixa** (117 disparados indeterminados; só o gate econômico) | R$ 176.627 |
-| Cortes nos disparados por motivo | econômico R$ 167.996 · financeiro R$ 1.838 · sem score R$ 31.571 |
-| Valor cortado efetivo / expirado (dedup. por episódio; sem score fora, R48) | R$ 134.717 / R$ 87.097 |
-| **Revisão humana** (sem score, disparados; R48) | 91 embalagens, R$ 27.223 (dedup.), 0 sem preço |
+| Motor pediu (disparados, com frete 2,5%) | 100% (base) |
+| **Orçamento aceitaria** (disparados **com guarda de caixa**, R51) | 0% — só 2 disparados têm veredito de caixa (ambos inviáveis; 0,5% do pedido do motor neles) |
+| Aceito **sem guarda de caixa** (117 disparados indeterminados; só o gate econômico) | 46,7% |
+| Cortes nos disparados por motivo | econômico 44,4% · financeiro 0,5% · sem score 8,4% |
+| Valor cortado efetivo / expirado (dedup. por episódio; sem score fora, R48) | 35,6% / 23,0% |
+| **Revisão humana** (sem score, disparados; R48) | 91 embalagens, 7,2% (dedup.), 0 sem preço |
 | Cortes sem preço (todos os ciclos) | 60 |
 | Episódios de corte (efetivos, dedup. 7d) | 215 |
-| **Precisão por episódio** (portão) | **84,9%** — 41 classificados, 174 indeterminados → cobertura **19,1%**; valor classificado R$ 32.975 |
-| Precisão por corte | 87,3% — 147 classificados, 720 indeterminados; valor classificado R$ 39.387 |
+| **Precisão por episódio** (portão) | **84,9%** — 41 classificados, 174 indeterminados → cobertura **19,1%**; valor classificado 8,7% |
+| Precisão por corte | 87,3% — 147 classificados, 720 indeterminados; valor classificado 10,4% |
 | Classes dos cortes classificados (replay conjunto por SKU, R32) | adiado 120 · eliminado 1 · **teria_rompido 26** |
 | Cortes com chegada aproximada (pedido sem t4, R33) | 151 |
-| ΔDIO (positivo = menos estoque; soma dos episódios medidos) / caixa liberado | 0,84 dia / R$ 3.999 — 16 episódios medidos (16 no subconjunto do CMV), 88 sem horizonte, 111 indeterminados |
-| CMV diário do universo do motor (cobertura R46) | R$ 4.755 — 85,6% dos SKUs com preço e demanda |
+| ΔDIO (positivo = menos estoque; soma dos episódios medidos) / caixa liberado | 0,84 dia / 1,1% — 16 episódios medidos (16 no subconjunto do CMV), 88 sem horizonte, 111 indeterminados |
+| CMV diário do universo do motor (cobertura R46) | valor omitido (repo público) — 85,6% dos SKUs com preço e demanda |
 | Embalagens sensíveis ao modelo | 603 |
 | Estados de caixa (todos os ciclos) | **indeterminado 264** · inviável 4 · viável 0 (disparados: 117 · 2 · 0) |
 | Indeterminado por camada | compromisso_nao_conciliado 262 · snapshot 2 (2026-10-15, snapshot do dia ainda não tirado) |
 | Inviáveis | ciclos 1302, 1303 (24/07, disparados) e 1316, 1317 (25/07, expirados) — 1ª violação no dia 0 |
-| Sensibilidade (disparados) | 15d: R$ 0 com guarda, 0 inviáveis, 119 indeterminados (R$ 177.313 sem guarda) · 30d: R$ 0, 2, 117 (R$ 176.627) · 45d: R$ 36.413, 36, 60 (R$ 87.536) |
+| Sensibilidade (disparados) | 15d: 0% com guarda, 0 inviáveis, 119 indeterminados (46,9% sem guarda) · 30d: 0%, 2, 117 (46,7%) · 45d: 9,6%, 36, 60 (23,2%) |
 
 ### O que mudou em relação à rodada R31 (e por quê)
 
 - **Precisão caiu de 100% para 84,9%.** O replay agora tira **todas** as embalagens cortadas do SKU juntas (R32), no dia em que o pedido chegou de fato (R33). Medir uma a uma escondia ruptura: 26 cortes classificados agora romperiam. A revisão final tinha estimado ~88,8%.
 - **Quase todo ciclo virou indeterminado (264 de 268).** A causa é o fim do corte de 60 dias (R38): pedido disparado sem NF, de qualquer idade dentro de 180 dias, volta a ser compromisso inteiro. Com 15 dias ou mais, ele é "não conciliado".
-  - **Diagnóstico datado 2026-10-15, não recalculado:** 13 pedidos disparados em maio/junho **sem nenhuma NF no tracking** somam R$ 28.029 (× 1,025 de frete). Eles ficam em todas as janelas de 180 dias e, junto com títulos fora da base (R35), passam do limiar de 10% da reserva.
-  - Numa variante de diagnóstico **sem esses 13 pedidos** (só para medir o peso deles, não é resultado): 196 viáveis · 63 inviáveis · 9 indeterminados; aceito com guarda R$ 126.415.
+  - **Diagnóstico datado 2026-10-15, não recalculado:** 13 pedidos disparados em maio/junho **sem nenhuma NF no tracking** somam 7,4% do pedido do motor nos disparados (× 1,025 de frete). Eles ficam em todas as janelas de 180 dias e, junto com títulos fora da base (R35), passam do limiar de 10% da reserva.
+  - Numa variante de diagnóstico **sem esses 13 pedidos** (só para medir o peso deles, não é resultado): 196 viáveis · 63 inviáveis · 9 indeterminados; aceito com guarda 33,4%.
   - **Pergunta para o founder:** esses 13 pedidos de maio/junho foram de fato faturados e pagos (fora do tracking) ou nunca saíram? Se foram pagos, o caminho é trazer a evidência de pagamento para os fatos (não reintroduzir o corte de idade).
 - **Inviáveis caíram de 61 para 4** só porque os outros ciclos agora são indeterminados — a guarda não deu veredito neles. Isso não é melhora do caixa.
-- **"Orçamento aceitaria" caiu para R$ 0** porque agora só soma ciclos com veredito de caixa (R51). O que só o gate econômico aceitou (R$ 176.627) aparece à parte, como "sem guarda de caixa".
+- **"Orçamento aceitaria" caiu para 0%** porque agora só soma ciclos com veredito de caixa (R51). O que só o gate econômico aceitou (46,7%) aparece à parte, como "sem guarda de caixa".
 
 ### Conferências de sanidade
 
 - `nDisparados` = 119; nenhum pai `split_em_filhos` na janela (R45 sem efeito nesta rodada, coberto por teste) ✅
-- `valorMotorDisparados` = R$ 378.032,87, igual à rodada R31 (o universo de ciclos disparados não mudou) ✅
+- `valorMotorDisparados` igual à rodada R31 ao centavo (o universo de ciclos disparados não mudou) ✅
 - Fatos novos: 426 ids de título Sayerlack (R34), 122 títulos na janela (110 com baixa, R35), 268 chegadas de pedido (57 com t4, R33), linhas de lag 381 faturamento / 128 vencimento / 299 chegada (R39), 176 disparados desde 2026-04-30 (R38).
 - Nenhuma semana de snapshot tem `total_saidas` diferente do detalhe (R42 sem efeito nesta rodada, coberto por teste).
 - Fechamento do estoque reconstruído: 107 de 153 SKUs com erro de fechamento em ao menos um ciclo. **Limitação, não escondida:** o replay desses SKUs vira `indeterminado`, e por isso a cobertura é baixa.
@@ -71,7 +73,7 @@ R35: um título só desconta o compromisso se está **representado no snapshot**
 
 ### R29 — por que havia 61 inviáveis (diagnóstico datado 2026-10-15, não recalculado)
 
-Na rodada R31, a base de caixa sozinha, sem nenhuma candidata, já furava a reserva em todos os 61 inviáveis (mediana de 72 dias até a 1ª violação). Exemplo do ciclo 1239 (20/07): saldo R$ 355k, reserva R$ 291k, piso da base R$ 57k; em 91 dias a continuidade do motor tirava R$ 199k e as saídas não-Sayerlack R$ 190k, contra R$ 108k de títulos a receber.
+Na rodada R31, a base de caixa sozinha, sem nenhuma candidata, já furava a reserva em todos os 61 inviáveis (mediana de 72 dias até a 1ª violação). Exemplo do ciclo 1239 (20/07): a reserva era ~82% do saldo e, em 91 dias, continuidade do motor + saídas não-Sayerlack somavam ~3,6× os títulos a receber.
 
 ## O que o backtest diz sobre o cenário-guarda
 
@@ -128,9 +130,9 @@ Para refazer, rode, para cada linha da tabela abaixo:
 
 ## Perguntas abertas (spec §10)
 
-1. **Mínimo da Sayerlack**: por pedido no portal ou por NF? Qual valor? (a v1 simula com mínimo = R$ 0, i.e. não modelado).
+1. **Mínimo da Sayerlack**: por pedido no portal ou por NF? Qual valor? (a v1 simula com mínimo = 0, i.e. não modelado).
 2. Tabela Sayerlack 28/42/56d (encargo, parcela única/parcelado, desconto de 2%) — não usada na v1; registrada para a v2.
-3. ~R$ 33k/mês entre CP Sayerlack liquidado (~R$ 133k) e compra disparada pelo motor (~R$ 100k): compras fora do motor? O backtest só mede o que passa pelo motor; o caixa usa o CP real.
+3. O CP Sayerlack liquidado fica ~33% acima da compra disparada pelo motor (por mês): compras fora do motor? O backtest só mede o que passa pelo motor; o caixa usa o CP real.
 
 ## Portão da v2 (re-executável — não é recado)
 
