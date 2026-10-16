@@ -14,7 +14,7 @@ import { DICA_COBERTURA_LINHAS, formatMargemPct, legendaCoberturaItens, legendaM
 import { coberturaCustoCliente } from '@/lib/scoring/margin';
 import { whatsappLink } from '@/lib/phone';
 import {
-  formatDateOrDash, initials, healthTone, churnTone, formatDocument,
+  formatDateOrDash, initials, healthTone, churnTone, formatDocument, margemTone,
 } from './format';
 import type { Customer, CustomerScore } from './viewTypes';
 
@@ -150,15 +150,8 @@ export function CustomerHero({
                   title={coberturaItens ? DICA_COBERTURA_LINHAS : undefined}
                   className={cn(
                     'inline-flex items-center gap-1.5 px-2 py-1 rounded-md border',
-                    // Limiares em PERCENTUAL (30 / 15), não em fração (0.3 / 0.15): a coluna é
-                    // percentual, como useTacticalPlan e useBundleArguments já assumem. Com 0.3 a
-                    // faixa nunca discriminava — qualquer margem real (ex.: 53,47) passa de 0.3 e
-                    // tudo ficava verde. Enquanto a coluna era 0 em toda a base isso não aparecia.
-                    s.gross_margin_pct >= 30
-                      ? 'bg-status-success-bg text-status-success-bold border-status-success/20'
-                      : s.gross_margin_pct >= 15
-                        ? 'bg-status-warning-bg text-status-warning-bold border-status-warning/20'
-                        : 'bg-status-error-bg text-status-error-bold border-status-error/20',
+                    // Cortes 55 / 30 em percentual — decisão de produto, ver MARGEM_BOA_MIN.
+                    margemTone(s.gross_margin_pct).className,
                   )}
                 >
                   <Activity className="w-3 h-3" />
