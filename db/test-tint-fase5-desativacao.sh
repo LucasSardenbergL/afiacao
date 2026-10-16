@@ -717,6 +717,11 @@ eq "V11d security_invoker=on sobreviveu" "$(Pq -c "SELECT COALESCE((SELECT 'on' 
 #       Codex de 2026-10-16 pegou: erro de consulta caía no ramo de sucesso).
 #   esperado_b = "-" ⇒ mutante que só a pós-condição distingue (sem efeito de valor
 #   observável em K11).
+# ⚠️ Toda expressão sed é ENDEREÇADA à linha do predicado (`/OR (g2.desativada_motivo/`).
+# Sem o endereço, F6/F7 mutavam TAMBÉM o trecho que a pós-condição procura (ele contém
+# `s3.account = g2.account` e `s3.id = g2.subcolecao_id` literalmente) — view e guard
+# mudavam juntos, de forma consistente, e o guard "aprovava". Sabotar o guard junto com
+# o alvo é falsificar nada: a sentinela não pode conter o texto que o alvo emite.
 falsifica() { # <rotulo> <expressao sed> <esperado_b|-> <descricao>
   local rot="$1" expr="$2" esp="$3" desc="$4" sab out r rc
   sab="$(mktemp "${TMPDIR:-/tmp}/fase5-$rot.XXXXXX")"
@@ -751,11 +756,11 @@ falsifica() { # <rotulo> <expressao sed> <esperado_b|-> <descricao>
   aplica_m7 "$MIGRATION7" || { echo "FALHA: restaurar o endurecimento após $rot"; exit 1; }
 }
 
-falsifica F5 "s/ AND EXISTS (SELECT 1 FROM public.tint_subcolecoes s3 WHERE s3.id = g2.subcolecao_id AND s3.account = g2.account AND s3.id_subcolecao_sayersystem = '1')//" \
+falsifica F5 "/OR (g2\.desativada_motivo/ s/ AND EXISTS (SELECT 1 FROM public.tint_subcolecoes s3 WHERE s3.id = g2.subcolecao_id AND s3.account = g2.account AND s3.id_subcolecao_sayersystem = '1')//" \
   "990|990|false" "tirar a exigência de geração '1' (volta a confiar só no motivo)"
-falsifica F6 's/ AND s3\.account = g2\.account//' \
+falsifica F6 '/OR (g2\.desativada_motivo/ s/ AND s3\.account = g2\.account//' \
   "990|990|false" "tirar SÓ o guard de conta (a '1' de colacor entra)"
-falsifica F7 's/s3\.id = g2\.subcolecao_id AND //' \
+falsifica F7 '/OR (g2\.desativada_motivo/ s/s3\.id = g2\.subcolecao_id AND //' \
   "990|990|false" "tirar a correlação por id (qualquer '1' da conta valida qualquer linha)"
 # F8: agrupamento ((ativa OR carimbada) AND geração). Em K11 não muda valor (a única
 # ativa é a '1' legítima), então só a pós-condição o distingue — esperado_b "-".
