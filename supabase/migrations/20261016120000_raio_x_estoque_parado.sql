@@ -52,10 +52,11 @@ CREATE POLICY raio_x_classificacao_manual_select_staff ON public.raio_x_classifi
   FOR SELECT TO authenticated
   USING ((SELECT public.has_role(auth.uid(), 'employee') OR public.has_role(auth.uid(), 'master')));
 
+-- raio_x_decisao carrega foto_cmc/foto_valor (custo): mesma capacidade de ler custo do inventory_position.
 DROP POLICY IF EXISTS raio_x_decisao_select_staff ON public.raio_x_decisao;
 CREATE POLICY raio_x_decisao_select_staff ON public.raio_x_decisao
   FOR SELECT TO authenticated
-  USING ((SELECT public.has_role(auth.uid(), 'employee') OR public.has_role(auth.uid(), 'master')));
+  USING ((SELECT private.cap_custo_ler((SELECT auth.uid()))));
 -- Sem policy de INSERT/UPDATE/DELETE de proposito: so as RPCs SECURITY DEFINER (Task 2) escrevem.
 
 CREATE OR REPLACE FUNCTION public.raio_x_estoque_fatos(p_empresa text)
@@ -74,16 +75,18 @@ DECLARE
   v_est  text;
   v_cad  text;
   v_vnd  text;
+  v_wh   text;
   v_hoje date := (now() AT TIME ZONE 'America/Sao_Paulo')::date;
 BEGIN
-  -- Gate staff na 1a instrucao (a funcao e INVOKER: o RLS das tabelas-fonte vale por cima).
-  IF NOT (public.has_role(auth.uid(), 'employee') OR public.has_role(auth.uid(), 'master')) THEN
+  -- Gate na 1a instrucao: mesma capacidade que o RLS de inventory_position exige em prod (master, ou employee
+  -- estrategico/super_admin). Sem ela o INVOKER devolveria 0 linhas mudas. (INVOKER: o RLS das fontes vale por cima.)
+  IF NOT private.cap_custo_ler(auth.uid()) THEN
     RAISE EXCEPTION 'RAIO_X_SO_STAFF' USING ERRCODE = '42501';
   END IF;
 
   CASE p_empresa
-    WHEN 'oben'    THEN v_est := 'oben';           v_cad := 'oben';    v_vnd := 'OBEN';
-    WHEN 'colacor' THEN v_est := 'colacor_vendas'; v_cad := 'colacor'; v_vnd := NULL;
+    WHEN 'oben'    THEN v_est := 'oben';           v_cad := 'oben';    v_vnd := 'OBEN';    v_wh := 'OB';
+    WHEN 'colacor' THEN v_est := 'colacor_vendas'; v_cad := 'colacor'; v_vnd := NULL;     v_wh := 'CC';
     ELSE RAISE EXCEPTION 'RAIO_X_EMPRESA_INVALIDA: %', coalesce(p_empresa, '<null>') USING ERRCODE = '22023';
   END CASE;
 
@@ -109,21 +112,24 @@ BEGIN
              / nullif(sum(vh.quantidade) FILTER (WHERE vh.data_emissao >= v_hoje - 365), 0) AS pm12,
            array_agg(DISTINCT vh.sku_unidade) FILTER (WHERE vh.sku_unidade IS NOT NULL) AS unidades
       FROM vh GROUP BY vh.sku),
-  cli AS (
-    SELECT t.sku, jsonb_agg(jsonb_build_object('nome', t.nome, 'ult', t.ult, 'qtd', t.qtd) ORDER BY t.qtd DESC, t.nome) AS clientes
+  cli AS (  -- top 5 por codigo de cliente (homonimos nao fundem); nome = razao social da NF mais recente
+    SELECT t.sku, jsonb_agg(jsonb_build_object('nome', t.nome, 'ult', t.ult, 'qtd', t.qtd) ORDER BY t.qtd DESC, t.cod) AS clientes
       FROM (
-        SELECT vh.sku, vh.cliente_razao_social AS nome, max(vh.data_emissao)::date AS ult, sum(vh.quantidade) AS qtd,
-               row_number() OVER (PARTITION BY vh.sku ORDER BY sum(vh.quantidade) DESC, vh.cliente_razao_social) AS rn
+        SELECT vh.sku, min(vh.cliente_codigo_omie) AS cod,
+               (array_agg(vh.cliente_razao_social ORDER BY vh.data_emissao DESC, vh.cliente_razao_social))[1] AS nome,
+               max(vh.data_emissao)::date AS ult, sum(vh.quantidade) AS qtd,
+               row_number() OVER (PARTITION BY vh.sku ORDER BY sum(vh.quantidade) DESC, min(vh.cliente_codigo_omie)) AS rn
           FROM vh WHERE vh.data_emissao >= v_hoje - 365
-         GROUP BY vh.sku, vh.cliente_razao_social) t
+         GROUP BY vh.sku, vh.cliente_codigo_omie) t
      WHERE t.rn <= 5 GROUP BY t.sku),
-  rec AS (  -- ultima NF de entrada por produto (sem coluna de empresa na tabela: so Oben)
+  rec AS (  -- ultima NF de entrada por produto, SO do armazem da empresa (codigos Omie colidem entre contas)
     SELECT DISTINCT ON (ri.produto_omie_id)
            ri.produto_omie_id AS pid, r.razao_social_emitente AS forn_rec, r.data_emissao::date AS ult_entrada
       FROM public.nfe_recebimento_itens ri
       JOIN public.nfe_recebimentos r ON r.id = ri.nfe_recebimento_id
-     WHERE p_empresa = 'oben' AND ri.produto_omie_id IS NOT NULL
-     ORDER BY ri.produto_omie_id, r.data_emissao DESC)
+      JOIN public.warehouses w ON w.id = r.warehouse_id
+     WHERE w.code = v_wh AND ri.produto_omie_id IS NOT NULL
+     ORDER BY ri.produto_omie_id, r.data_emissao DESC NULLS LAST, r.id DESC)
   SELECT e.sku,
          p.codigo, p.descricao, p.familia, p.tipo_produto, p.ativo,
          e.saldo,

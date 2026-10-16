@@ -43,6 +43,8 @@ Pq() { P -tA "$@"; }
 U_STAFF="22222222-2222-2222-2222-222222222222"
 U_MASTER="11111111-1111-1111-1111-111111111111"
 U_CUST="44444444-4444-4444-4444-444444444444"
+U_EST="55555555-5555-5555-5555-555555555555"   # employee COM commercial_role estrategico
+# U_STAFF = employee SEM commercial_role (nao le custo em prod)
 
 preparar_banco() {
   "$PGBIN/dropdb" -p "$PORT" -h /tmp -U postgres --if-exists prove
@@ -56,9 +58,29 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authentic
 GRANT USAGE ON SCHEMA auth, public TO anon, authenticated;  -- Supabase concede; auth.uid() precisa
 GRANT EXECUTE ON FUNCTION auth.uid() TO anon, authenticated;
 CREATE TABLE public.user_roles (user_id uuid, role text);
+CREATE TABLE public.commercial_roles (user_id uuid, commercial_role text);
+-- Espelha prod (psql-ro 2026-10-16): authenticated tem USAGE em private e EXECUTE em cap_custo_ler; anon nao.
+CREATE SCHEMA private;
+GRANT USAGE ON SCHEMA private TO authenticated;
 CREATE FUNCTION public.has_role(_user_id uuid, _role text) RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
   SELECT EXISTS (SELECT 1 FROM public.user_roles r WHERE r.user_id = _user_id AND r.role = _role) $$;
+
+CREATE FUNCTION private.cap_custo_ler(_uid uuid) RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public' AS $$
+  SELECT COALESCE(
+    _uid IS NOT NULL
+    AND (
+      public.has_role(_uid, 'master')
+      OR (
+        public.has_role(_uid, 'employee')
+        AND EXISTS (SELECT 1 FROM public.commercial_roles cr
+                     WHERE cr.user_id = _uid AND cr.commercial_role IN ('estrategico','super_admin'))
+      )
+    ), false);
+$$;
+REVOKE ALL ON FUNCTION private.cap_custo_ler(uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION private.cap_custo_ler(uuid) TO authenticated;
 
 CREATE TABLE public.inventory_position (
   omie_codigo_produto bigint, saldo numeric, cmc numeric, preco_medio numeric, account text, synced_at timestamptz);
@@ -71,7 +93,8 @@ CREATE TABLE public.sku_parametros (
 CREATE TABLE public.v_venda_items_history_efetivo (
   empresa text, data_emissao date, cliente_codigo_omie bigint, cliente_razao_social text,
   sku_codigo_omie bigint, sku_unidade text, quantidade numeric, valor_total numeric, valor_unitario numeric);
-CREATE TABLE public.nfe_recebimentos (id uuid PRIMARY KEY, razao_social_emitente text, data_emissao date);
+CREATE TABLE public.warehouses (id uuid PRIMARY KEY, code text);
+CREATE TABLE public.nfe_recebimentos (id uuid PRIMARY KEY, razao_social_emitente text, data_emissao date, warehouse_id uuid);
 CREATE TABLE public.nfe_recebimento_itens (id uuid DEFAULT gen_random_uuid(), nfe_recebimento_id uuid, produto_omie_id bigint);
 
 -- Captura SO a SQLSTATE esperada (o resto propaga e derruba a prova). Roda como o chamador (INVOKER).
@@ -87,7 +110,9 @@ END $$;
 INSERT INTO public.user_roles VALUES
   ('11111111-1111-1111-1111-111111111111','master'),
   ('22222222-2222-2222-2222-222222222222','employee'),
-  ('44444444-4444-4444-4444-444444444444','customer');
+  ('44444444-4444-4444-4444-444444444444','customer'),
+  ('55555555-5555-5555-5555-555555555555','employee');
+INSERT INTO public.commercial_roles VALUES ('55555555-5555-5555-5555-555555555555','estrategico');
 
 DO $f$
 DECLARE h date := (now() AT TIME ZONE 'America/Sao_Paulo')::date;
@@ -128,14 +153,28 @@ BEGIN
     ('OBEN', h - 10, 101, 'CLI A', 3, 'UN', 6, 60, 10),
     ('OBEN', h - 5,  102, 'CLI B', 3, 'CX', 4, 60, 15),
     ('OBEN', h - 400, 103, 'CLI C', 3, 'UN', 100, 100, 1),
-    ('COLACOR', h - 3, 999, 'CLI Z', 3, 'UN', 50, 500, 10);
+    ('COLACOR', h - 3, 999, 'CLI Z', 3, 'UN', 50, 500, 10),
+    -- sku 1: dois clientes HOMONIMOS (codigos 201/202) e um cliente (203) cujo nome mudou entre NFs
+    ('OBEN', h - 2, 201, 'HOMONIMO', 1, 'UN', 3, 30, 10),
+    ('OBEN', h - 1, 202, 'HOMONIMO', 1, 'UN', 2, 20, 10),
+    ('OBEN', h - 9, 203, 'NOME ANTIGO', 1, 'UN', 1, 10, 10),
+    ('OBEN', h - 3, 203, 'NOME NOVO', 1, 'UN', 1, 10, 10);
 
+  INSERT INTO warehouses VALUES
+    ('cccccccc-0000-0000-0000-00000000000b', 'OB'),
+    ('cccccccc-0000-0000-0000-00000000000c', 'CC');
   INSERT INTO nfe_recebimentos VALUES
-    ('aaaaaaaa-0000-0000-0000-000000000001', 'FORN VELHO', h - 100),
-    ('aaaaaaaa-0000-0000-0000-000000000002', 'FORN NOVO', h - 20);
+    ('aaaaaaaa-0000-0000-0000-000000000001', 'FORN VELHO', h - 100, 'cccccccc-0000-0000-0000-00000000000b'),
+    ('aaaaaaaa-0000-0000-0000-000000000002', 'FORN NOVO', h - 20, 'cccccccc-0000-0000-0000-00000000000b'),
+    ('aaaaaaaa-0000-0000-0000-000000000003', 'FORN CC', h - 5, 'cccccccc-0000-0000-0000-00000000000c'),
+    ('bbbbbbbb-0000-0000-0000-000000000001', 'EMPATE A', h - 30, 'cccccccc-0000-0000-0000-00000000000b'),
+    ('bbbbbbbb-0000-0000-0000-000000000002', 'EMPATE B', h - 30, 'cccccccc-0000-0000-0000-00000000000b');
   INSERT INTO nfe_recebimento_itens (nfe_recebimento_id, produto_omie_id) VALUES
     ('aaaaaaaa-0000-0000-0000-000000000001', 3),
-    ('aaaaaaaa-0000-0000-0000-000000000002', 3);
+    ('aaaaaaaa-0000-0000-0000-000000000002', 3),
+    ('aaaaaaaa-0000-0000-0000-000000000003', 3),
+    ('bbbbbbbb-0000-0000-0000-000000000001', 6),
+    ('bbbbbbbb-0000-0000-0000-000000000002', 6);
 END $f$;
 SQL
 }
@@ -174,58 +213,70 @@ suite() {
   # A migration (ou a sabotagem) TEM de aplicar: erro de SQL nao pode passar por "vermelho".
   P -f "$1" || { echo "APLICACAO FALHOU: $1"; return 99; }
   P -c "INSERT INTO public.raio_x_decisao (empresa, sku_codigo_omie, destino) VALUES ('oben', 1, 'liquidar')"
+  P -c "INSERT INTO public.raio_x_classificacao_manual (empresa, sku_codigo_omie, categoria, motivo) VALUES ('oben', 1, 'uso_consumo', 'teste')"
 
   # (a) dedup: sku 1 tem 2 linhas, volta 1 vez com a mais recente; sku 7 (mais recente saldo 0) some
-  oks "$U_STAFF" "SELECT count(*) || '|' || max(saldo) || '|' || max(cmc) FROM $FOB WHERE sku_codigo_omie = 1" "1|9|12" "a sku1 uma linha com o saldo mais recente"
-  oks "$U_STAFF" "SELECT count(*) FROM $FOB WHERE sku_codigo_omie = 7" "0" "a sku7 mais recente com saldo 0 nao aparece"
+  oks "$U_EST" "SELECT count(*) || '|' || max(saldo) || '|' || max(cmc) FROM $FOB WHERE sku_codigo_omie = 1" "1|9|12" "a sku1 uma linha com o saldo mais recente"
+  oks "$U_EST" "SELECT count(*) FROM $FOB WHERE sku_codigo_omie = 7" "0" "a sku7 mais recente com saldo 0 nao aparece"
 
   # (b) conta vendas nunca aparece
-  oks "$U_STAFF" "SELECT count(*) FROM $FOB WHERE sku_codigo_omie = 2" "0" "b sku so da conta vendas nunca aparece"
-  oks "$U_STAFF" "SELECT saldo FROM $FOB WHERE sku_codigo_omie = 3" "20" "b sku3 oben usa o saldo da conta oben"
+  oks "$U_EST" "SELECT count(*) FROM $FOB WHERE sku_codigo_omie = 2" "0" "b sku so da conta vendas nunca aparece"
+  oks "$U_EST" "SELECT saldo FROM $FOB WHERE sku_codigo_omie = 3" "20" "b sku3 oben usa o saldo da conta oben"
 
   # (c) colacor: estoque colacor_vendas; q12/ncli/ult_venda/clientes (e derivados) NULL
-  oks "$U_STAFF" "SELECT saldo || '|' || tipo_produto || '|' || no_motor FROM $FCO WHERE sku_codigo_omie = 3" "4|08|false" "c colacor sku3 le colacor_vendas e cadastro colacor"
-  oks "$U_STAFF" "SELECT (q12 IS NULL AND ncli IS NULL AND ult_venda IS NULL AND clientes IS NULL AND preco_medio_12m IS NULL AND unidades_venda IS NULL AND fornecedor IS NULL AND ult_entrada IS NULL) FROM $FCO WHERE sku_codigo_omie = 3" "t" "c colacor q12 ncli ult_venda clientes IS NULL"
-  oks "$U_STAFF" "SELECT count(*) FROM $FCO" "11" "c colacor 11 skus"
+  oks "$U_EST" "SELECT saldo || '|' || tipo_produto || '|' || no_motor FROM $FCO WHERE sku_codigo_omie = 3" "4|08|false" "c colacor sku3 le colacor_vendas e cadastro colacor"
+  oks "$U_EST" "SELECT (q12 IS NULL AND ncli IS NULL AND ult_venda IS NULL AND clientes IS NULL AND preco_medio_12m IS NULL AND unidades_venda IS NULL) FROM $FCO WHERE sku_codigo_omie = 3" "t" "c colacor q12 ncli ult_venda clientes IS NULL"
+  oks "$U_EST" "SELECT count(*) FROM $FCO" "11" "c colacor 11 skus"
 
   # oben com venda: sku 3 (janela de 12m ignora a NF de 400 dias e a de COLACOR)
-  oks "$U_STAFF" "SELECT q12 || '|' || ncli || '|' || (ult_venda = (now() AT TIME ZONE 'America/Sao_Paulo')::date - 5) || '|' || preco_medio_12m FROM $FOB WHERE sku_codigo_omie = 3" "10|2|true|12.0000" "c oben sku3 q12 ncli ult_venda preco"
-  oks "$U_STAFF" "SELECT (clientes->0->>'nome') || '|' || (clientes->0->>'qtd') || '|' || jsonb_array_length(clientes) || '|' || array_to_string(unidades_venda, ',') FROM $FOB WHERE sku_codigo_omie = 3" "CLI A|6|2|CX,UN" "c oben sku3 clientes top e unidades"
-  oks "$U_STAFF" "SELECT (q12 = 0 AND ncli = 0 AND ult_venda IS NULL AND clientes = '[]'::jsonb) FROM $FOB WHERE sku_codigo_omie = 1" "t" "c oben sem venda: q12 0, clientes vazio"
-  oks "$U_STAFF" "SELECT no_motor || '|' || fornecedor || '|' || classe_abc FROM $FOB WHERE sku_codigo_omie = 1" "true|FORN SP|B" "c oben sku1 motor e fornecedor do motor"
-  oks "$U_STAFF" "SELECT no_motor || '|' || fornecedor || '|' || (ult_entrada = (now() AT TIME ZONE 'America/Sao_Paulo')::date - 20) FROM $FOB WHERE sku_codigo_omie = 3" "true|FORN NOVO|true" "c oben sku3 fornecedor da ultima NF de entrada"
+  oks "$U_EST" "SELECT q12 || '|' || ncli || '|' || (ult_venda = (now() AT TIME ZONE 'America/Sao_Paulo')::date - 5) || '|' || preco_medio_12m FROM $FOB WHERE sku_codigo_omie = 3" "10|2|true|12.0000" "c oben sku3 q12 ncli ult_venda preco"
+  oks "$U_EST" "SELECT (clientes->0->>'nome') || '|' || (clientes->0->>'qtd') || '|' || jsonb_array_length(clientes) || '|' || array_to_string(unidades_venda, ',') FROM $FOB WHERE sku_codigo_omie = 3" "CLI A|6|2|CX,UN" "c oben sku3 clientes top e unidades"
+  oks "$U_EST" "SELECT (q12 = 0 AND ncli = 0 AND ult_venda IS NULL AND clientes = '[]'::jsonb) FROM $FOB WHERE sku_codigo_omie = 6" "t" "c oben sem venda: q12 0, clientes vazio"
+  oks "$U_EST" "SELECT no_motor || '|' || fornecedor || '|' || classe_abc FROM $FOB WHERE sku_codigo_omie = 1" "true|FORN SP|B" "c oben sku1 motor e fornecedor do motor"
+  oks "$U_EST" "SELECT no_motor || '|' || fornecedor || '|' || (ult_entrada = (now() AT TIME ZONE 'America/Sao_Paulo')::date - 20) FROM $FOB WHERE sku_codigo_omie = 3" "true|FORN NOVO|true" "c oben sku3 fornecedor da ultima NF de entrada"
+
+  # NF de entrada por armazem: mesmo produto 3 com NF no CC (mais nova) e no OB
+  oks "$U_EST" "SELECT fornecedor || '|' || (ult_entrada = (now() AT TIME ZONE 'America/Sao_Paulo')::date - 20) FROM $FOB WHERE sku_codigo_omie = 3" "FORN NOVO|true" "c oben pega so a NF do armazem OB"
+  oks "$U_EST" "SELECT fornecedor || '|' || (ult_entrada = (now() AT TIME ZONE 'America/Sao_Paulo')::date - 5) FROM $FCO WHERE sku_codigo_omie = 3" "FORN CC|true" "c colacor pega so a NF do armazem CC"
+  oks "$U_EST" "SELECT fornecedor FROM $FOB WHERE sku_codigo_omie = 6" "EMPATE B" "c empate de data na NF desempata por id desc"
+  # clientes por codigo: homonimos nao fundem; nome = NF mais recente
+  oks "$U_EST" "SELECT jsonb_array_length(clientes) || '|' || (SELECT count(*) FROM jsonb_array_elements(clientes) e WHERE e->>'nome' = 'HOMONIMO') || '|' || (SELECT count(*) FROM jsonb_array_elements(clientes) e WHERE e->>'nome' = 'NOME NOVO') || '|' || (SELECT count(*) FROM jsonb_array_elements(clientes) e WHERE e->>'nome' = 'NOME ANTIGO') FROM $FOB WHERE sku_codigo_omie = 1" "3|2|1|0" "c clientes homonimos nao fundem e nome da NF mais recente"
 
   # (d) cmc 0 / ausente => NULL
-  oks "$U_STAFF" "SELECT (cmc IS NULL) FROM $FOB WHERE sku_codigo_omie = 4" "t" "d cmc zero volta NULL (oben)"
-  oks "$U_STAFF" "SELECT (cmc IS NULL) FROM $FOB WHERE sku_codigo_omie = 5" "t" "d cmc ausente volta NULL (oben)"
-  oks "$U_STAFF" "SELECT (cmc IS NULL) FROM $FCO WHERE sku_codigo_omie = 5002" "t" "d cmc zero volta NULL (colacor)"
-  oks "$U_STAFF" "SELECT cmc FROM $FOB WHERE sku_codigo_omie = 3" "2.5" "d cmc positivo preservado"
+  oks "$U_EST" "SELECT (cmc IS NULL) FROM $FOB WHERE sku_codigo_omie = 4" "t" "d cmc zero volta NULL (oben)"
+  oks "$U_EST" "SELECT (cmc IS NULL) FROM $FOB WHERE sku_codigo_omie = 5" "t" "d cmc ausente volta NULL (oben)"
+  oks "$U_EST" "SELECT (cmc IS NULL) FROM $FCO WHERE sku_codigo_omie = 5002" "t" "d cmc zero volta NULL (colacor)"
+  oks "$U_EST" "SELECT cmc FROM $FOB WHERE sku_codigo_omie = 3" "2.5" "d cmc positivo preservado"
 
   # (e) sem omie_products: nao some, tipo_produto NULL
-  oks "$U_STAFF" "SELECT count(*) || '|' || bool_and(tipo_produto IS NULL AND codigo IS NULL) FROM $FOB WHERE sku_codigo_omie = 6" "1|true" "e sku sem omie_products volta com tipo_produto NULL"
+  oks "$U_EST" "SELECT count(*) || '|' || bool_and(tipo_produto IS NULL AND codigo IS NULL) FROM $FOB WHERE sku_codigo_omie = 6" "1|true" "e sku sem omie_products volta com tipo_produto NULL"
 
   # (f) 1.205 SKUs, ordem estritamente crescente
-  oks "$U_STAFF" "SELECT count(*) || '|' || count(DISTINCT sku_codigo_omie) FROM $FOB" "1205|1205" "f oben 1205 skus distintos"
-  oks "$U_STAFF" "SELECT (array_agg(s) = array_agg(s ORDER BY s)) FROM (SELECT sku_codigo_omie AS s FROM $FOB) t" "t" "f ordem crescente por sku"
+  oks "$U_EST" "SELECT count(*) || '|' || count(DISTINCT sku_codigo_omie) FROM $FOB" "1205|1205" "f oben 1205 skus distintos"
+  oks "$U_EST" "SELECT (array_agg(s) = array_agg(s ORDER BY s)) FROM (SELECT sku_codigo_omie AS s FROM $FOB) t" "t" "f ordem crescente por sku"
   oks "$U_MASTER" "SELECT count(*) FROM $FOB" "1205" "f master tambem le"
 
   # (g) empresa invalida / nula
-  oks "$U_STAFF" "SELECT public.t_lanca('SELECT * FROM public.raio_x_estoque_fatos(''colacor_sc'')', '22023')" "22023|RAIO_X_EMPRESA_INVALIDA: colacor_sc" "g empresa colacor_sc erro 22023"
-  oks "$U_STAFF" "SELECT public.t_lanca('SELECT * FROM public.raio_x_estoque_fatos(NULL)', '22023')" "22023|RAIO_X_EMPRESA_INVALIDA: <null>" "g empresa nula erro 22023"
+  oks "$U_EST" "SELECT public.t_lanca('SELECT * FROM public.raio_x_estoque_fatos(''colacor_sc'')', '22023')" "22023|RAIO_X_EMPRESA_INVALIDA: colacor_sc" "g empresa colacor_sc erro 22023"
+  oks "$U_EST" "SELECT public.t_lanca('SELECT * FROM public.raio_x_estoque_fatos(NULL)', '22023')" "22023|RAIO_X_EMPRESA_INVALIDA: <null>" "g empresa nula erro 22023"
 
   # (h) gate staff + ACL
   oks "$U_CUST" "SELECT public.t_lanca('SELECT * FROM public.raio_x_estoque_fatos(''oben'')', '42501')" "42501|RAIO_X_SO_STAFF" "h customer barrado 42501"
+  oks "$U_STAFF" "SELECT public.t_lanca('SELECT * FROM public.raio_x_estoque_fatos(''oben'')', '42501')" "42501|RAIO_X_SO_STAFF" "h employee sem commercial_role barrado 42501"
+  oks "$U_EST" "SELECT count(*) FROM $FOB" "1205" "h employee com estrategico passa"
   oks "" "SELECT public.t_lanca('SELECT * FROM public.raio_x_estoque_fatos(''oben'')', '42501')" "42501|RAIO_X_SO_STAFF" "h sem claims barrado 42501"
   okp "SELECT has_function_privilege('anon','$FSIG','EXECUTE')" "f" "h anon sem EXECUTE"
   okp "SELECT has_function_privilege('public','$FSIG','EXECUTE')" "f" "h public sem EXECUTE"
   okp "SELECT has_function_privilege('authenticated','$FSIG','EXECUTE')" "t" "h authenticated com EXECUTE"
 
   # (i) RLS das tabelas novas
-  oks "$U_STAFF" "SELECT count(*) FROM public.raio_x_decisao" "1" "i controle: staff ve a linha de raio_x_decisao"
+  oks "$U_EST" "SELECT count(*) FROM public.raio_x_decisao" "1" "i controle: estrategico ve a linha de raio_x_decisao"
+  oks "$U_STAFF" "SELECT count(*) FROM public.raio_x_decisao" "0" "i employee sem commercial_role ve 0 linhas em raio_x_decisao (custo)"
+  oks "$U_STAFF" "SELECT count(*) FROM public.raio_x_classificacao_manual" "1" "i classificacao_manual segue staff"
   oks "$U_CUST" "SELECT count(*) FROM public.raio_x_decisao" "0" "i customer ve 0 linhas em raio_x_decisao"
   oks "$U_CUST" "SELECT count(*) FROM public.raio_x_classificacao_manual" "0" "i customer ve 0 linhas em raio_x_classificacao_manual"
   oks "$U_CUST" "SELECT public.t_lanca('INSERT INTO public.raio_x_decisao (empresa, sku_codigo_omie) VALUES (''oben'', 9)', '42501')" "$RLSMSG" "i customer insert barrado por RLS"
-  oks "$U_STAFF" "SELECT public.t_lanca('INSERT INTO public.raio_x_decisao (empresa, sku_codigo_omie) VALUES (''oben'', 9)', '42501')" "$RLSMSG" "i staff tambem nao escreve direto"
+  oks "$U_EST" "SELECT public.t_lanca('INSERT INTO public.raio_x_decisao (empresa, sku_codigo_omie) VALUES (''oben'', 9)', '42501')" "$RLSMSG" "i staff tambem nao escreve direto"
   return "$falhas"
 }
 
@@ -261,11 +312,24 @@ sabotar "4 cmc zero passa direto" \
   "s/CASE WHEN e.cmc > 0 THEN e.cmc END/e.cmc/" \
   "d cmc zero volta NULL (oben)"
 sabotar "5 sem gate staff" \
-  "s/IF NOT (public.has_role(auth.uid(), 'employee') OR public.has_role(auth.uid(), 'master')) THEN/IF false THEN/" \
+  "s/IF NOT private.cap_custo_ler(auth.uid()) THEN/IF false THEN/" \
   "h customer barrado 42501"
 sabotar "6 policy de raio_x_decisao aberta (USING true)" \
   "/CREATE POLICY raio_x_decisao_select_staff/,/;/{s/^  USING.*/  USING (true);/;}" \
   "i customer ve 0 linhas em raio_x_decisao"
+
+sabotar "8 gate volta para has_role(employee)" \
+  "s/IF NOT private.cap_custo_ler(auth.uid()) THEN/IF NOT (public.has_role(auth.uid(), 'employee') OR public.has_role(auth.uid(), 'master')) THEN/" \
+  "h employee sem commercial_role barrado 42501"
+sabotar "9 sem filtro de armazem na NF de entrada" \
+  "s/WHERE w.code = v_wh AND ri.produto_omie_id IS NOT NULL/WHERE ri.produto_omie_id IS NOT NULL/" \
+  "c oben pega so a NF do armazem OB"
+sabotar "10 clientes agrupados por razao social" \
+  "s/GROUP BY vh.sku, vh.cliente_codigo_omie) t/GROUP BY vh.sku, vh.cliente_razao_social) t/" \
+  "c clientes homonimos nao fundem e nome da NF mais recente"
+sabotar "11 policy de decisao volta para staff comum" \
+  "s/USING ((SELECT private.cap_custo_ler((SELECT auth.uid()))));/USING ((SELECT public.has_role(auth.uid(), 'employee') OR public.has_role(auth.uid(), 'master')));/" \
+  "i employee sem commercial_role ve 0 linhas em raio_x_decisao (custo)"
 
 # 7) tirar anon do REVOKE: a postcondicao embutida aborta o apply (rc=99) — vermelho pelo motivo certo.
 sed "s/REVOKE ALL ON FUNCTION public.raio_x_estoque_fatos(text) FROM PUBLIC, anon;/REVOKE ALL ON FUNCTION public.raio_x_estoque_fatos(text) FROM PUBLIC;/" "$MIG" > "$TMPD/sab.sql"
