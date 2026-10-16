@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 645
+-- Total de custom migrations: 646
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -709,7 +709,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261015120100', 'tactical_plans_margem_fecha_coluna', '20261015120100_tactical_plans_margem_fecha_coluna.sql'),
   ('20261015221600', 'vendas_sync_cursor_fencing_token', '20261015221600_vendas_sync_cursor_fencing_token.sql'),
   ('20261015221700', 'vendas_sync_cursor_falha_honesta', '20261015221700_vendas_sync_cursor_falha_honesta.sql'),
-  ('20261016013000', 'sayerlack_importar_pedido_portal_safeupdate', '20261016013000_sayerlack_importar_pedido_portal_safeupdate.sql')
+  ('20261016013000', 'sayerlack_importar_pedido_portal_safeupdate', '20261016013000_sayerlack_importar_pedido_portal_safeupdate.sql'),
+  ('20261016140000', 'tint_tombstone_exige_geracao_1', '20261016140000_tint_tombstone_exige_geracao_1.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2749,7 +2750,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('vendas_sync_cursor_falha_honesta', 'function', 'public', 'vendas_sync_release', ''),
   ('vendas_sync_cursor_falha_honesta', 'function', 'public', 'vendas_sync_semear_janela', ''),
   ('vendas_sync_cursor_falha_honesta', 'function', 'public', 'vendas_sync_rearmar_janela', ''),
-  ('sayerlack_importar_pedido_portal_safeupdate', 'function', 'public', 'sayerlack_importar_pedido_portal', '')
+  ('sayerlack_importar_pedido_portal_safeupdate', 'function', 'public', 'sayerlack_importar_pedido_portal', ''),
+  ('tint_tombstone_exige_geracao_1', 'view', 'public', 'v_tint_formula_canonica', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4837,7 +4839,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('vendas_sync_cursor_falha_honesta', 'function', 'public', 'vendas_sync_release', ''),
   ('vendas_sync_cursor_falha_honesta', 'function', 'public', 'vendas_sync_semear_janela', ''),
   ('vendas_sync_cursor_falha_honesta', 'function', 'public', 'vendas_sync_rearmar_janela', ''),
-  ('sayerlack_importar_pedido_portal_safeupdate', 'function', 'public', 'sayerlack_importar_pedido_portal', '')
+  ('sayerlack_importar_pedido_portal_safeupdate', 'function', 'public', 'sayerlack_importar_pedido_portal', ''),
+  ('tint_tombstone_exige_geracao_1', 'view', 'public', 'v_tint_formula_canonica', '')
 )
 SELECT
   e.migration,
